@@ -32,7 +32,7 @@ todos:
       frontmatter 之后的正文。
       **不解析正文内容、不从正文推导 todo 状态**——只做注册面拦截。
       allowlist 与 pre-frontmatter allowlist 的既有豁免语义不变。
-    status: pending
+    status: completed
   - id: t2-migrate-blind-plans
     content: >
       迁移 4 个含未勾正文项的在窗 plan，两种形态各自处置：
@@ -46,7 +46,7 @@ todos:
       纪律：迁移**只搬状态不改状态**——正文未勾的一律落 `pending`/`in_progress`，
       不得借迁移之机关闭任何待办；发现正文与 frontmatter 状态冲突时以**更保守**的一侧为准
       并在 plan 内登记该冲突。
-    status: pending
+    status: completed
   - id: t3-tests-and-convention
     content: >
       ① 单测放 **dev-only 的 `scripts/tests/check-plan-version.unit.mjs`**
@@ -64,13 +64,16 @@ todos:
       **预期账**（其他状态不变时）：当前 10 → 迁移完成且本 plan 自身完成后 **11**
       —— 本 plan 退出 −1，`d8c5f3a7` / `e9c4a7f3` 进入 +2。
       拦截数上升是**修复生效的正向信号**，不得为压低数字而回退迁移或关闭待办。
-    status: pending
+    status: in_progress
 isProject: false
 ---
 
 # plan 待办 SSOT — frontmatter todos 唯一真源，正文未勾项拦截（a3e7d1c9）
 
-状态：**待实施**（2026-08-12 立项，用户裁定「② 元门禁 + ③ 迁移」，明确不扩展成正文解析器）
+状态（2026-08-12）：**t1 completed / t2 completed / t3 in_progress**。
+t1 元门禁与 t2 存量迁移已实施；t3 的单测已落（9 例全绿：六个必需分支 + 三个围栏回归），
+**仅剩 ② AGENTS.md 约定成文**——`AGENTS.md` 当前有 `f3a8c6d2` 的未提交改动，
+为不干扰该 plan 的本地开发，本条待 f3a8c6d2 提交后补。
 
 **开工次序**：本 plan **可独立实施**——只碰仓根 `scripts/`，与 `f3a8c6d2` 无交叉。
 同批派生的另三项（`e9c4a7f3` s6-locator、`c6d8f2b4` t2b、`420a5005` run-directory-freshness）
@@ -125,5 +128,6 @@ isProject: false
 
 - `check-plan-version` 默认模式：4 个存量 plan 迁移前 FAIL、迁移后 PASS；
 - `--release` 模式：迁移后拦截清单包含原先不可见的 plan（拦截数上升即为修复生效）；
-- 单测六分支全绿；`AGENTS.md` 约定成文；
+- 单测六分支全绿（实际 9 例：六个必需分支 + 三个围栏回归——普通围栏、嵌套四包三、围栏后真待办）；
+  `AGENTS.md` 约定成文；
 - `git diff --check` 干净、EOL 为 LF。

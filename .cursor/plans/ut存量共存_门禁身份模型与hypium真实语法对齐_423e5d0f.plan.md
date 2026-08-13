@@ -205,7 +205,9 @@ Git diff / context 提及只是**发现候选**的线索，不决定责任。当
 - [x] R2. 存量文件裸 tsc 实况：**已实锤**（TS2749 假错，同文件真实 hvigor PASS）→ 驱动 P0-1。
 - [x] R3a. 一轮回灌完成：框架四项修复全部生效；暴露 #12 同族误伤、tsc 假错与 runtime downgrade 断链，均已修。
 - [x] R3b. 反馈修正版宿主重跑**通过，P0 关账**（2026-08-08）：存量三条全部不再 FAIL（mockkit/标签豁免生效、tsc WARN+口径说明原样呈现）；ut_hvigor_build PASS（signed HAP）；唯一阻塞=ut_hvigor_test externalBlocked（设备拔线，归因/next_action/partial_readiness 全部正确，verdict=INCOMPLETE 不假 PASS）；宿主未修改任何存量/源码/配置。满足"全绿或仅剩环境项"关账条件。
-- [ ] R3c（收尾确认，不阻塞关账）：用户回到设备旁后解锁+授权卸载旧包+重跑真机环节，确认 hypium 用例真实执行。
+- **R3c**（收尾确认，不阻塞关账）：用户回到设备旁后解锁+授权卸载旧包+重跑真机环节，确认 hypium 用例真实执行。
+  —— 状态以 frontmatter `r3c-host-device-verification` 为准（当前 `pending`）；
+  正文不再用复选框记待办（plan a3e7d1c9：frontmatter todos 为唯一机器 SSOT）。
 
 ## 八、移出主线（后续小变更备忘，不是本 plan 必要条件）
 

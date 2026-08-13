@@ -368,19 +368,21 @@ promote，记 sha256）→ 宿主安装 candidate zip 统一回归（d8 的干�
 
 ## Todos
 
-- [x] 1. `ui_diff_within_declared_files` 门禁：UI 文件级 scope 门，白名单=**plan PASS
+> 状态以 frontmatter `todos:` 为准（唯一机器 SSOT，plan a3e7d1c9）；本节仅作可读清单，不用复选框。
+
+- **1.** `ui_diff_within_declared_files` 门禁：UI 文件级 scope 门，白名单=**plan PASS
       snapshot 冻结的 contracts.files**（快照缺失/损坏 fail-closed，禁退 live）；
       **pre-coding 锚定**：plan 正常 PASS 必建快照 + 首次 coding agent 起跑前记
       coding_base_sha（resume 复用原 SHA）；diff 基线 = coding_base_sha，覆盖四态含
       删除/重命名 base 侧分类；注册进 coding 阶段 checker
-- [x] 2. 六个用例：
+- **2.** 六个用例：
       ① HomeTab 未声明却修改 → **best_effort 也 BLOCKER**（本案直接回归）；
       ② CardPackPage 已声明修改 → PASS；
       ③ **只改 live contracts（不重跑 plan）→ 仍 FAIL**（防绕过冻结）；
       ④ scope expansion：更新 contracts.files + 重取 plan PASS snapshot → PASS；
       ⑤ **正常 plan PASS（非 advance_blocked）也建快照**（runner 用例）；
       ⑥ **agent 改码并自行 commit 后仍检出越界文件**（coding_base_sha 基线用例）
-- [ ] 3. 【2026-08-12 重新打开——见下「Todo 3 重新打开」段】精简 bc-openCard consumer
+- **3.** 【2026-08-12 重新打开——见下「Todo 3 重新打开」段】精简 bc-openCard consumer
       golden evaluator：**固定 golden screen contract**
       （10 个固定正向需求屏 = 9 P0 + P1 bank_card_list_sheet，declared↔capture ID 映射
       一并固定，精确集合相等——缺失/重复/替换/多余均 FAIL；随 candidate zip 发布）
@@ -392,12 +394,12 @@ promote，记 sha256）→ 宿主安装 candidate zip 统一回归（d8 的干�
       ① golden 显式选择 P1 bank_card_list_sheet → 产出 bank_card_list_sheet__overlay__0；
       ② 普通 visual-diff 不传 golden targets → 仍不采普通 P1（防全局扩面）；
       ③ contract 要求的 declared screen 在 ui-spec 缺失/非 overlay root → fail-closed FAIL
-- [x] 4. candidate 模式：candidate = **持久化 zip + sidecar manifest + zip sha256**；
+- **4.** candidate 模式：candidate = **持久化 zip + sidecar manifest + zip sha256**；
       完成测试+pack+zip 内容校验，唯一跳过项 = 发布 plan 完成门禁；evaluator 打进
       zip 并校验 manifest sha256 / 宿主 run ID 匹配（不匹配 FAIL，旧结果不复用）；
       PASS 后补门禁**移动同一字节 zip** promote，禁止重新 pack；其他在研 plan 未完
       时只标 candidate eligible；普通 JSON 诊断报告（不签名、不复用）
-- [ ] 5. 一次真实宿主回归（与 d8c5f3a7 复演同一次）：两 run + fault-injection +
+- **5.** 一次真实宿主回归（与 d8c5f3a7 复演同一次）：两 run + fault-injection +
       golden 十固定屏 + HomeTab + AllBanks，evaluator 裁决并归档
 
 ## Todo 5 首轮宿主执行结果（2026-08-12，bc-openCard · build `ea97ac522049`）—— **Todo 5 保持 pending**

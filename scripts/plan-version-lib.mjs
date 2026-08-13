@@ -62,14 +62,15 @@ export function listPlanFiles(repoRoot) {
 
 /**
  * @param {string} content
- * @returns {{ version?: string, deferred_to?: string, deferred_from?: string, name?: string, overview?: string, todos: { id?: string, content?: string, status: string }[], rawFrontmatter: string }}
+ * @returns {{ version?: string, deferred_to?: string, deferred_from?: string, name?: string, overview?: string, todos: { id?: string, content?: string, status: string }[], rawFrontmatter: string, body: string }}
  */
 export function parsePlanFile(content) {
   const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
   if (!match) {
-    return { todos: [], rawFrontmatter: '' };
+    return { todos: [], rawFrontmatter: '', body: content };
   }
   const fm = match[1];
+  const body = content.slice(match.index + match[0].length);
   /** @type {{ version?: string, deferred_to?: string, deferred_from?: string, name?: string, overview?: string, todos: { id?: string, content?: string, status: string }[] }} */
   const out = { todos: [] };
 
@@ -94,7 +95,51 @@ export function parsePlanFile(content) {
     });
   }
 
-  return { ...out, rawFrontmatter: fm };
+  return { ...out, rawFrontmatter: fm, body };
+}
+
+/**
+ * plan a3e7d1c9：frontmatter `todos:` 是唯一机器待办 SSOT——正文里的未勾 `- [ ]`
+ * 门禁看不见，会形成假绿（实测 d8c5f3a7/e9c4a7f3 两份 plan 整体不进发布统计）。
+ * 本函数只做**注册面**检出：找出正文中的未勾复选框，**不解析其内容、不推导 todo 状态**。
+ *
+ * 已勾 `- [x]` 不计——历史勾选可保留作叙述，重新打开任务时须先在 frontmatter 登记。
+ * 围栏代码块内的示例复选框不计（plan 正文常含 markdown 示例，误报会逼人删文档）。
+ *
+ * @param {string} body plan 正文（frontmatter 之后）
+ * @returns {{ line: number, text: string }[]} 未勾项，行号以正文首行为 1
+ */
+export function findOpenChecklistItems(body) {
+  if (typeof body !== 'string' || !body) return [];
+  const lines = body.split(/\r?\n/);
+  /** @type {{ line: number, text: string }[]} */
+  const out = [];
+  let fenceChar = '';
+  let fenceLen = 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    // CommonMark：closing fence 须与 opening **同字符**、长度 **不少于** opening，且其后只允许空白。
+    // 只记字符不记长度会让「四反引号外层包三反引号」提前闭合，把文档示例里的 `- [ ]` 误当待办。
+    const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (fence) {
+      const [, run, rest] = fence;
+      if (!fenceChar) {
+        fenceChar = run[0];
+        fenceLen = run.length;
+        continue;
+      }
+      if (run[0] === fenceChar && run.length >= fenceLen && rest.trim() === '') {
+        fenceChar = '';
+        fenceLen = 0;
+      }
+      continue;
+    }
+    if (fenceChar) continue;
+    if (/^\s*[-*+]\s+\[ \]/.test(line)) {
+      out.push({ line: i + 1, text: line.trim().slice(0, 80) });
+    }
+  }
+  return out;
 }
 
 /**

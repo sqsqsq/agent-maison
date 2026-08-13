@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import {
   compareSemver,
+  findOpenChecklistItems,
   hasOpenTodos,
   isLegacyAllowlistEligible,
   isValidSemver,
@@ -36,7 +37,7 @@ export function checkPlanVersions(opts = {}) {
 
   for (const { basename, rel, parsed } of plans) {
     const inAllowlist = allowlist.has(basename);
-    const { version, deferred_to, todos, rawFrontmatter } = parsed;
+    const { version, deferred_to, todos, rawFrontmatter, body } = parsed;
     const open = hasOpenTodos(todos);
 
     if (!rawFrontmatter?.trim()) {
@@ -69,6 +70,27 @@ export function checkPlanVersions(opts = {}) {
     }
 
     const cmp = compareSemver(version, current);
+
+    // plan a3e7d1c9：frontmatter todos 是唯一机器待办 SSOT。既有 version/deferred_to 合法性
+    // 校验通过后，对**所有 version >= 当前窗口**的 plan 检查正文——合法 deferred_to **不构成
+    // 豁免**（否则新 plan 可以靠顺延绕开登记）。已有 frontmatter todos 也不豁免（双账本漂移面）。
+    // 本条在**默认模式**即生效：是登记面缺陷，不该拖到发布时才暴露。
+    if (cmp >= 0) {
+      const openBoxes = findOpenChecklistItems(body);
+      if (openBoxes.length > 0) {
+        const sample = openBoxes
+          .slice(0, 3)
+          .map((b) => `正文第 ${b.line} 行「${b.text}」`)
+          .join('；');
+        hits.push({
+          file: rel,
+          reason:
+            `正文含 ${openBoxes.length} 处未勾 \`- [ ]\`（${sample}${openBoxes.length > 3 ? ' …' : ''}）——` +
+            '待办须登记到 frontmatter todos（唯一机器 SSOT）；正文 checklist 门禁不可见，会形成假绿。' +
+            '历史 `- [x]` 可保留但不作机器状态；重新打开任务须先在 frontmatter 登记',
+        });
+      }
+    }
 
     if (cmp > 0) {
       if (!deferred_to || deferred_to !== version) {

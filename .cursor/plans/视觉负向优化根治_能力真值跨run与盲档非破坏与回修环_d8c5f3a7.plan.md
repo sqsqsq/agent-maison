@@ -357,6 +357,68 @@ overview: >
   **f6b2d9a4 已于 2026-07-25 09:38 提交（5da4ce20，含 post-impl5），前置条件已满足**；
   除既有无关改动（.cursor/plans/android_工程适配_5e3400c3.plan.md）外，相关源码工作区干净；
   本 plan 文件是仓内唯一未跟踪文件，实施动工时一并纳管。
+# 2026-08-12（plan a3e7d1c9 迁移）：本 plan 原以正文 markdown checklist 记待办，
+#   frontmatter 无 todos，发布门禁完全看不见（4 项未完项不进 --release 统计）。
+#   本次按正文「Todos（v22 删减式重构——唯一执行清单）」节逐条搬入——**只搬状态不改状态**；
+#   「历史 Todos（v1-v20 实施轨迹）」节属轨迹不属待办，不进 frontmatter，其复选框一并去符号化。
+todos:
+  - id: t1-capability-truth-cross-run
+    content: T1 能力真值跨 run 收口（canaryAdmissibleForRun 共享谓词 + run_id 透传）
+    status: completed
+  - id: t2-journal-determinism
+    content: T2 journal 确定性（at 必填 + 生产调用传评估时刻）
+    status: completed
+  - id: bc-opencard-artifacts
+    content: bc-openCard 事故产物 artifacts（golden 断言随 D10 收缩，artifacts 本体保留）
+    status: completed
+  - id: f2-fs-hash-snapshot
+    content: F2 fs 递归哈希快照原语（含 spec/ 子目录候选补丁）
+    status: completed
+  - id: d1-d10-deletion-batch
+    content: D1-D10 删除批（8 模块 + 6 单测删除；registry/phase-rules 三侧收敛）
+    status: completed
+  - id: f1-unified-repair-loop
+    content: F1 统一回修环（谓词 5 条·identity 判新鲜 / ActionableDefect）
+    status: completed
+  - id: f2-wiring-write-violation
+    content: "F2 接线：testing_write_violation = run 终止态，同 run --resume 拒绝"
+    status: completed
+  - id: f3-faultlog-crash-diagnosis
+    content: F3 faultlog 集合差崩溃诊断（capture 开始清理本 run 旧归档）
+    status: completed
+  - id: f4-asset-gate-narrowing
+    content: F4 素材硬门禁收窄（materialized=无条件 BLOCKER/FAIL；render=一律 WARN）
+    status: completed
+  - id: f5-instruction-unification
+    content: F5 指令面统一（四处对齐 + testing-write-boundary 收敛为静态文案模块）
+    status: completed
+  - id: v1-acceptance
+    content: V1 验收：8 项全绿；全量 typecheck 0 / unit 2456 / fixtures 44 全绿
+    status: completed
+  - id: v2-c4e8b1d3-dependency-note
+    content: V2 c4e8b1d3 依赖失效注记已在位
+    status: completed
+  - id: host-kit-dispatch-and-receipt
+    content: 宿主配套 1-4 下发 + 回报核收（v23 现行版，从历史区提炼；原文见历史「宿主侧配套」节）
+    status: pending
+  - id: host-real-loop-replay
+    content: 宿主真实闭环复演（两 run 口径 + fault-injection 一次真实回修）
+    status: pending
+  # 以下两项来自「历史 Todos」节但**状态仍未完成**，不得因归在历史区就丢弃（否则本次迁移
+  # 自己制造新的假绿）。逐条登记；被现行项取代的部分显式写明映射。
+  - id: release-constraint-still-active
+    content: >
+      发布约束生效检查——禁发条件恢复（review 第 3 轮修正）。现口径：T5 记部分完成
+      （确定性缺陷生成器 + 真算接线 + 崩溃诊断结构化闭环已落，屏级独立 bootstrap 未落）；
+      **禁发在 bootstrap 落地并经宿主实测前保持生效**。正文见「历史 Todos」节同名条目。
+    status: pending
+  - id: t6-prime-change-proposal
+    content: >
+      T6' 独立 change 立项（引用 R9 事实）。原历史条目为「宿主配套 1-4 下发+回报核收；
+      T6' 独立 change 立项」——其中**宿主配套 1-4 下发+回报核收**已被现行项
+      `host-kit-dispatch-and-receipt` 取代（v23 现行版由该条从历史区提炼），
+      本条只保留**尚无现行对应项**的 T6' 立项部分。
+    status: pending
 ---
 
 # 视觉负向优化根治 (d8c5f3a7)
@@ -843,40 +905,42 @@ overview: >
 
 ## Todos（v22 删减式重构——唯一执行清单）
 
+> 状态以 frontmatter `todos:` 为准（唯一机器 SSOT，plan a3e7d1c9）；本节仅作可读清单，不用复选框。
+
 **保留项（已完成，v22 不动）**
-- [x] T1 能力真值跨 run 收口（canaryAdmissibleForRun 共享谓词 + run_id 透传，已提交实现见历史 Todos）
-- [x] T2 journal 确定性（at 必填 + 生产调用传评估时刻，已提交实现见历史 Todos）
-- [x] bc-openCard 事故产物 artifacts（golden 断言随 D10 收缩，artifacts 本体保留）
+- **[done]** T1 能力真值跨 run 收口（canaryAdmissibleForRun 共享谓词 + run_id 透传，已提交实现见历史 Todos）
+- **[done]** T2 journal 确定性（at 必填 + 生产调用传评估时刻，已提交实现见历史 Todos）
+- **[done]** bc-openCard 事故产物 artifacts（golden 断言随 D10 收缩，artifacts 本体保留）
 
 **v22 待办**
-- [x] F2 fs 递归哈希快照原语——**已实施**（含 spec/ 子目录候选补丁：resolveFeatureArtifact 扁平 canonical 对宿主真实形态失明，单测抓到）
-- [x] D1-D10 删除批——**已实施**（8 模块 + 6 单测删除；registry/phase-rules 三侧收敛；悬空 $r 迁 visual-parity-backstop）
-- [x] F1 统一回修环——**已实施**（谓词 5 条·identity 判新鲜 / ActionableDefect / 只在 testing·授权回退不收窄 / **PASS 前评估** / outcomes filter / 整轮集合指纹·事件存 round_fingerprint·恢复直读 / 预算 2 / 交接四步·E2E-3 断言 prompt 文本）
-- [x] F2 接线：testing_write_violation = run 终止态，同 run --resume 拒绝——**已实施**（R-7 验收覆盖）
-- [x] F3 faultlog 集合差崩溃诊断——**已实施**（+capture 开始清理本 run 旧归档，防修好后旧归档再消费）
-- [x] F4 素材硬门禁收窄——**已实施**（materialized=无条件 BLOCKER/FAIL；render=一律 WARN）
-- [x] F5 指令面统一——**已实施**（四处对齐 + testing-write-boundary 收敛为静态文案模块）
-- [x] V1 验收：8 项全绿；全量 typecheck 0 / unit 2456 / fixtures 44 全绿
-- [x] V2 c4e8b1d3 依赖失效注记已在位（其依赖段重写在该 plan 动工前进行，非本 plan 范围）
-- [ ] 宿主配套 1-4 下发 + 回报核收（v23 现行版，从历史区提炼；原文见历史"宿主侧配套"节）：
+- **[done]** F2 fs 递归哈希快照原语——**已实施**（含 spec/ 子目录候选补丁：resolveFeatureArtifact 扁平 canonical 对宿主真实形态失明，单测抓到）
+- **[done]** D1-D10 删除批——**已实施**（8 模块 + 6 单测删除；registry/phase-rules 三侧收敛；悬空 $r 迁 visual-parity-backstop）
+- **[done]** F1 统一回修环——**已实施**（谓词 5 条·identity 判新鲜 / ActionableDefect / 只在 testing·授权回退不收窄 / **PASS 前评估** / outcomes filter / 整轮集合指纹·事件存 round_fingerprint·恢复直读 / 预算 2 / 交接四步·E2E-3 断言 prompt 文本）
+- **[done]** F2 接线：testing_write_violation = run 终止态，同 run --resume 拒绝——**已实施**（R-7 验收覆盖）
+- **[done]** F3 faultlog 集合差崩溃诊断——**已实施**（+capture 开始清理本 run 旧归档，防修好后旧归档再消费）
+- **[done]** F4 素材硬门禁收窄——**已实施**（materialized=无条件 BLOCKER/FAIL；render=一律 WARN）
+- **[done]** F5 指令面统一——**已实施**（四处对齐 + testing-write-boundary 收敛为静态文案模块）
+- **[done]** V1 验收：8 项全绿；全量 typecheck 0 / unit 2456 / fixtures 44 全绿
+- **[done]** V2 c4e8b1d3 依赖失效注记已在位（其依赖段重写在该 plan 动工前进行，非本 plan 范围）
+- **[open]** 宿主配套 1-4 下发 + 回报核收（v23 现行版，从历史区提炼；原文见历史"宿主侧配套"节）：
   1. 恢复 07-18 已验证素材：从提交 aeb4730 恢复 `02-Feature/FinancialCard/.../media/` 下 cmb_bank_logo.png、bank_card_face_cmb.png、bank_card_row_thumb.png、add_card_result_illustration.png 四文件；确认 7 处 `$r('app.media.*')` 全部可解析。回报：编译 PASS + 四文件存在 + 引用零悬空。
   2. 修 AllBanksPage 崩溃嫌疑：`.title()` 传非 @Builder 箭头函数，改回字符串 title 或 @Builder 方法；真机验证点击「查看全部银行」可进入。回报：进入成功截图 + 无 crash。
   3. 移除需求外实现：HomeTabPage 的 BankCardPackSection/bindSheet 整段移除；搜索实现与 TC-011 按需求「本次先不实现」移除。回报：主页恢复原布局截图 + test-plan 更新。
   4. 配置 MAISON_HMAC_GOAL_CHECKPOINT（32 字节随机 hex）。回报：下次 goal run 的 events.jsonl 不再出现 vision_checkpoint_unauthenticated。
-- [ ] 宿主真实闭环复演（两 run 口径 + fault-injection 一次真实回修）
+- **[open]** 宿主真实闭环复演（两 run 口径 + fault-injection 一次真实回修）
 
 ---
 
 ## 历史 Todos（v1-v20 实施轨迹——其中 T3/T4/T5/T7a 产物将被 v22 删除，不再构成要求）
 
-- [x] T2 journal 确定性（at 必填+生产调用传评估时刻+失配字段级 diff+生产形状单测）——**已实施 2026-07-25**：`intermediate-rounds-journal.ts::appendJournalProposal` 删 `new Date()` 兜底改 `at` 必填（空串运行时抛错）；`harness-runner.ts::consumeVisualRoundPayload` 传 `at: row.at`；replay 失配报文按字段级 diff + 归因分流（「仅 row_hash 不符」判时间戳未同源，不再一律甩篡改，halt 语义不变）；新增 3 例（生产形态多轮收编通过 / 事故形态可检出且归因正确 / at 必填兜底）
-- [x] T1 能力真值跨 run 收口——**已实施 2026-07-25**：`effective-vision-context.ts` 导出共享谓词 `canaryAdmissibleForRun`，resolver 与 `goal-preflight.ts::decideVisionCanaryProbe` 共用（后者判据升级为 fresh ∧ admissible，新增 `probe/fresh_but_not_admissible_for_run`）；`harness-runner.ts::resolvePolicyVisualForHarness` 补 `MAISON_GOAL_RUN_ID` 透传（fallback 路径）；canary 写盘 run_id 补回归断言。新增 7 例（事故现场复现 / 永久陷阱两 run / interactive 不绑 run / 两侧谓词契约同源 / 两 run decision_id 不复用 + 幂等 / 能力真值直达档位）；既有 2 例按新语义更正（原用例编码的是致盲行为）
+- **[done]** T2 journal 确定性（at 必填+生产调用传评估时刻+失配字段级 diff+生产形状单测）——**已实施 2026-07-25**：`intermediate-rounds-journal.ts::appendJournalProposal` 删 `new Date()` 兜底改 `at` 必填（空串运行时抛错）；`harness-runner.ts::consumeVisualRoundPayload` 传 `at: row.at`；replay 失配报文按字段级 diff + 归因分流（「仅 row_hash 不符」判时间戳未同源，不再一律甩篡改，halt 语义不变）；新增 3 例（生产形态多轮收编通过 / 事故形态可检出且归因正确 / at 必填兜底）
+- **[done]** T1 能力真值跨 run 收口——**已实施 2026-07-25**：`effective-vision-context.ts` 导出共享谓词 `canaryAdmissibleForRun`，resolver 与 `goal-preflight.ts::decideVisionCanaryProbe` 共用（后者判据升级为 fresh ∧ admissible，新增 `probe/fresh_but_not_admissible_for_run`）；`harness-runner.ts::resolvePolicyVisualForHarness` 补 `MAISON_GOAL_RUN_ID` 透传（fallback 路径）；canary 写盘 run_id 补回归断言。新增 7 例（事故现场复现 / 永久陷阱两 run / interactive 不绑 run / 两侧谓词契约同源 / 两 run decision_id 不复用 + 幂等 / 能力真值直达档位）；既有 2 例按新语义更正（原用例编码的是致盲行为）
   - **偏离记录（1 处）**：plan 原写「snapshot 缺失时 goal 与 phase-driven 结论一致（拉齐断言）」——实现时发现该断言在语义上不成立：goal canary 携带的是 goal run_id，纯 phase-driven 调用不存在该运行身份，永远无法匹配（`run_probed 不跨 run` 是 f6 冻结语义）。故改为两条可成立的断言：**snapshot 在场时结论 == snapshot**（live meet 不叠加）、**goal gate harness 经 env 透传后可采信本 run 的 canary**；phase-driven 无 goal 身份时保持保守降级，已在代码注释中标注为**设计内分歧**而非缺陷。若要真正拉齐，须让 phase-driven 也走 f6 的 initializer 产出 capability-snapshot（该路径已存在，属 f6 范围）
-- [x] T3 盲档非破坏化——**已实施 + review 修正（2026-07-25）**：`asset-nondestructive.ts`（证据五级 / `mayReplace` 非对称偏序 / 非破坏门禁 / 悬空 `$r` 门禁 / 基线读写）。
+- **[done]** T3 盲档非破坏化——**已实施 + review 修正（2026-07-25）**：`asset-nondestructive.ts`（证据五级 / `mayReplace` 非对称偏序 / 非破坏门禁 / 悬空 `$r` 门禁 / 基线读写）。
   - **review 修正三处**：① 绑定判定由 fail-open 改 **fail-closed**（原 `!v.sha256 || !sha ||` 会把「裁决没写 sha」「文件读不出」都当绑定成功；现要求 sha256 **与** resolved_path 都在场且与当前事实一致）；② 异源 verified 替换补 **source binding** 判据（role 相同不够——同为 brand_logo 也可能换成别家 logo）；③ 门禁**跨阶段注册**到 coding（原来只在 spec，而删素材的现场正是 coding，真实事故路径根本不会跑到它）+ 基线由门禁**在 PASS 时自动刷新**（原来零生产调用，跨阶段跨 run 比对从未发生）+ 损坏基线不再按空基线放行（改 BLOCKER）。
   - 19 例（含 fail-closed 两例、异源 binding 两例）
   - **偏离记录（1 处）**：plan 写「provenance 全序…本轮不扩 schema」，实现时**未新增任何 ui-spec/manifest 字段**——证据等级完全由盘上事实 + runner 账本派生，持久化只落 runner-owned 的 `spec/reports/asset-evidence-baseline.json`（非 agent 可写面），比 plan 更保守，与「持久化 provenance 只作派生投影」一致
-- [x] T4 testing 零写入 + 回修环——**已实施 + review 修正（2026-07-25）**
+- **[done]** T4 testing 零写入 + 回修环——**已实施 + review 修正（2026-07-25）**
   - 已有：完整性闸门前置 / 精确源码快照 / hunk 反打（五形态+用户 dirty 无损+冲突 fail-closed）/ 三处契约统一 / 锚点上游化 / amendment proposal 通道 / backtrack_to_coding
   - **review 修正六处**：① **污染轮不再 spawn gate harness**（原来只挡 receipt/journal，gate 照跑，污染截图仍进正式目录被消费）+ 证据整体 **quarantine** 到 run 目录 + **强制只读重跑**（超预算 → `testing_source_mutation_repeated` halt）；② backtrack 分支补 **`commitInvalidationTx`**（原来只 begin 不 commit，残留 pending 事务、第二次回退必失败）；③ 补**同 defect fingerprint 连续出现即熔断**（`backtrack_fingerprint_repeat`）；④ 回退判据不再只看 `summary.blockers[]`（那只收 FAIL+BLOCKER，best_effort 的 must_fix 进不去、且 `device_test_run` 白名单会把环境类失败也误判回退）——改为**消费 T5 真算缺陷 SSOT** 并排除 `toolchain/capture/externalBlocked`；⑤ 写入边界 guidance 覆盖**首次** testing invocation（原来只在 visual_gap 重试块注入）；⑥ 基线备份失败**不再继续 invoke**（改 halt——备份不成功还跑，等于拿工作区赌运气）
   - **provenance 链全接线（2026-07-25 补完）**：runner 侧 init + gate 前 verify；**采集侧三点已接**——新增 `profiles/hmos-app/harness/provenance-recorder.ts` 统一入口，接到 `device-test-build`（构建**当刻**重算源码快照并绑 HAP）、`device-test-install`（含复用路径）、`visual-diff-capture`（逐张截图哈希 + 绑装机会话）；session id 由 `installSessionIdOf()` 单点供给，装机与采集同源；非 goal 态静默 no-op；hapPath 不可读则不登记（宁缺勿伪，由 verify 的空链分支兜住）。7 例回归，含**核心那条**：改码→构建→截图→自行还原，端点快照已等于基线（端点比对的盲区），链仍判断链
@@ -892,7 +956,7 @@ overview: >
   - ✅ **acceptance amendment 通道** `acceptance-amendment.ts`：proposal 落 `testing/reports/`（**不碰 acceptance.yaml** → 四上游不 stale）、`adopted_in_this_run` 恒 false、`proposalParticipatesInVerdict()` 恒 false 堵死后门、**否定优先**拦截（「搜索…本次先不实现」类提案直接拒绝并留证）
   - ✅ **backtrack_to_coding**：`classifyPhaseVerdict` 新增该 action（判据 = 确定性 P0 缺陷 ∧ 可变阶段 ∧ 预算未尽，**与 strictness 解耦**）+ runner 消费**复用既有 authorized_backtrack 失效事务**与同一预算计数器
   - 新增 32 例（快照 10 / 反打 4 / provenance+amendment 7 / 转移 4 / guidance 1 / 锚点覆盖随 coding 门禁生效 + 其余）
-- [x] T5 视觉确定性回修信号——**已实施 + review 修正（2026-07-25）**：指标机器契约（7 项 + 契约哈希）/ 确定性 must_fix 生成器 / 真算接线（复用 `computeEdgeDensityTileDivergence` + `computeImageStats`）/ 崩溃诊断三态
+- **[done]** T5 视觉确定性回修信号——**已实施 + review 修正（2026-07-25）**：指标机器契约（7 项 + 契约哈希）/ 确定性 must_fix 生成器 / 真算接线（复用 `computeEdgeDensityTileDivergence` + `computeImageStats`）/ 崩溃诊断三态
   - **review 修正两处**：① **生产接线**——`collectDeterministicVisualDefects()` 在 goal-runner 里读 `visual-diff.json` 屏清单 → 真算观测 → 生成 must_fix → 驱动 backtrack（此前三个模块零生产调用，真实链路既不算指标也不产缺陷）；② 崩溃诊断补**时间窗过滤**（`deps.now` 原来完全未使用，任何历史 faultlog 都会让该应用永久判 crash_suspected）
   - 21 例
   - **YAML SSOT 外置（2026-07-25 补完）**：`profiles/hmos-app/harness/visual-metric-contract.yaml` 为阈值/口径的唯一权威来源，`loadVisualMetricContract()` 加载并逐条校验（方向/阈值/归一化/缺失三态），文件缺失或含非法条目 → 回落内置常量**但带 fallbackReason 且 runner 打 WARN**（阈值来源不明本身要被看见，不得静默）；goal-runner 的确定性缺陷生成已改为消费该 SSOT。新增 3 例（YAML 与内置口径逐项一致、fail-soft 不静默两分支、改宽阈值即变 hash）
@@ -903,19 +967,19 @@ overview: >
   - ✅ **崩溃诊断采集** `device-crash-diagnostics.ts`：元素超时 → 拉 faultlog 判 `crash_suspected`/`element_absent`/`diagnosis_unavailable` 三态；**诊断跑不通 → crashFree=undefined**（契约按 blocker 处置，「采不到崩溃日志」绝不等于「没崩」）；诊断归档到 reports/crash-diagnostics
   - 新增 21 例（契约 13 + 真算接线与崩溃诊断 8）
   - ⚠️ **说明**：屏级独立 bootstrap 属 acceptance schema + hylyre 派生的产品侧改造，与 `required_anchors`（T4 已落）同源；本轮以 `required_anchors` 通道覆盖锚点问题，per-TC bootstrap 待宿主实测后按需扩展
-- [x] （T9/T8/T7b 已拆出 → c4e8b1d3）
-- [~] T7a decision-chain golden——**部分完成**（真产物回放 + 生产 consumer 已落；fixture 未达 plan 全量，见状态段 v19）
+- **[done]** （T9/T8/T7b 已拆出 → c4e8b1d3）
+- **[partial]** T7a decision-chain golden——**部分完成**（真产物回放 + 生产 consumer 已落；fixture 未达 plan 全量，见状态段 v19）
   - 早期版本被 review 正确批评为「写死常量的单测，不是 fixture replay」。现已冻结 `harness/tests/golden/bc-opencard/`：`artifacts/` 下**从宿主原样拷来的事故产物**（goal-runs manifest / ui-spec / asset-manifest / visual-parity / visual-diff / visual-debt，41K），`reference-images.registry.json` 登记 10 张参考图的 sha256+尺寸
   - **参考图不入仓**（比 plan 的「脱敏低清副本」更保守）：`0-原始需求` 截图含真实 PII（姓名/身份证号/人像），框架仓要打包发给宿主，PII 进去就随发布包扩散；决策链回放不需要像素。已扫描拷入产物确认无 PII
   - 10 例分两类：**(A) 决策链正向**——需求原文从事故 manifest **读取**（非常量）→ 三轴 `pixel_1to1+best_effort+auto_crop`、tool_read 不钳、连续两 run 不钳且 decision_id 不复用、真 ui-spec 十屏且无主页屏、指标契约完备；**(B) 事故产物反向**——把真产物喂进新门禁必须判缺陷：blind_placeholder 与 auto_crop 授权冲突、被钳的 semantic_layout 与当前正确结论相反、六屏全 pending → 产 must_fix、P0 三屏缺采 → 各产一条、素材占位债在当前口径为可回修
   - (B) 组即 plan 要求的「旧行为必红」凭据——用**真事故数据**，不是手写返回错值的假函数
-- [ ] 发布约束生效检查——**禁发条件恢复**（review 第 3 轮修正）
+- **[open]** 发布约束生效检查——**禁发条件恢复**（review 第 3 轮修正）
   - 前一版写「T1~T5+T7a 已全部完成 → 禁发解除」，与同一文件里 T5 的 ⚠️「屏级独立 bootstrap 待宿主实测后按需扩展」自相矛盾：**bootstrap 是 T5 的验收项**，未做就不能算 T5 完成，更不能据此解禁。
   - 现口径：T5 记 **部分完成**（确定性缺陷生成器 + 真算接线 + 崩溃诊断结构化闭环已落；**屏级独立 bootstrap 未落**）。TC-003 崩溃导致后续屏级联采不到这条事故链，因此**仍未被结构性解决**——它需要 acceptance schema + hylyre 的产品侧改造，必须在宿主真机上做。
   - 禁发在 bootstrap 落地并经宿主实测前**保持生效**。
-- [x] unit 全量绿+新增 fixture 全绿（**typecheck 0 / unit 2521 / fixtures 44**；基线 2405 → 新增 116 例）
-- [~] **plan 代码部分**（2026-07-26）：T1/T2/T3/T4 完成；**T5 部分完成**（屏级 bootstrap + geometric_iou/required_element_coverage 未落）；**T7a 部分完成**（fixture 未达 plan 全量）
-- [x] **runner 级集成测试**——**已实施（2026-07-25）**：`goal-runner-testing-integrity.unit.test.ts` 5 例，在**进程内跑真实 phase 循环全链**（spec→testing 六阶段），断言时序与副作用：
+- **[done]** unit 全量绿+新增 fixture 全绿（**typecheck 0 / unit 2521 / fixtures 44**；基线 2405 → 新增 116 例）
+- **[partial]** **plan 代码部分**（2026-07-26）：T1/T2/T3/T4 完成；**T5 部分完成**（屏级 bootstrap + geometric_iou/required_element_coverage 未落）；**T7a 部分完成**（fixture 未达 plan 全量）
+- **[done]** **runner 级集成测试**——**已实施（2026-07-25）**：`goal-runner-testing-integrity.unit.test.ts` 5 例，在**进程内跑真实 phase 循环全链**（spec→testing 六阶段），断言时序与副作用：
   - **污染轮 testing 的 gate harness 零调用**（按阶段断言，不是总次数）——review 指出的核心洞
   - 污染轮落 `invocation_evidence_invalidated` + `invocation_evidence_quarantined`
   - 污染轮工作区被反打还原（产品源码回到 invoke 前）
@@ -924,4 +988,4 @@ overview: >
   - **为此新增 4 个测试缝**（生产路径零行为差异，仓内有 `__testing_setDigestReadFile` 等先例）：`__testing_setInvokeAgent` / `__testing_setRunHarnessPhase` / `__testing_setRepoLayout` / `__testing_setValidateReceipt`，并导出 `main`
   - 附带产出可复用夹具 `tests/utils/closed-feature-fixture.ts`（用**生产 writer** 造闭环产物，不手工伪造哈希链）
   - **过程记录（有价值的硬事实）**：打通过程依次撞过 6 道真实前置——adapter 物化 → DevEco 工具链 → workflow 加载 → summary 裁决（spy 必须补写 summary.json）→ 回执存在性（runner 会按真实回执重算 receipt_status/closure_status）→ 闭环探针子进程 → review closure attestation（缺它则 ut→testing 判 `goal_review_closure_baseline_unavailable`）。每一道都验证了测试确实走生产路径而非旁路
-- [ ] 宿主配套 1-4 下发+回报核收；T6' 独立 change 立项（引用 R9 事实）
+- **[open]** 宿主配套 1-4 下发+回报核收；T6' 独立 change 立项（引用 R9 事实）

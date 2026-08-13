@@ -8,6 +8,7 @@
     "harness:install": "npm --prefix harness install",
     "openspec": "openspec",
     "openspec:validate": "openspec validate --all --strict",
+    "release:check-plans-test": "node --test scripts/tests/*.unit.mjs",
     "release:all": "node scripts/release-all.mjs",
     "candidate:build": "node scripts/candidate-release.mjs build",
     "candidate:promote": "node scripts/candidate-release.mjs promote",
