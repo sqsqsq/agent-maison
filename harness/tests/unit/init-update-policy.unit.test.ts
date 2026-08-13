@@ -248,6 +248,45 @@ const cases: Case[] = [
     },
   },
   {
+    name: 't7 体检表（buildStdoutTable）：header 恒含 framework 包身份行（valid/legacy/corrupt/absent 各态如实呈现，不阻断）',
+    run: () => {
+      const mkReport = (framework_identity: import('../../scripts/utils/framework-integrity').FrameworkPackageIdentity) =>
+        ({
+          schema_version: '1.1',
+          mode: 'update',
+          adapter: 'claude',
+          inspections: [],
+          blockers: [],
+          verdict: 'PASS',
+          generated_at: '2026-08-13T00:00:00.000Z',
+          framework_identity,
+        }) as Parameters<typeof __testing.buildStdoutTable>[0];
+      // valid 新包
+      const validTable = __testing.buildStdoutTable(mkReport({
+        state: 'valid', version: '3.0.0',
+        source_commit: '5de7e35329ed0ba2ad7c1e34e6e1193442520316',
+        built_at: '2026-08-13T07:00:00.000Z', error: null,
+      }));
+      assert(validTable.includes('framework 包身份: version=3.0.0 source_commit=5de7e35329ed0ba2ad7c1e34e6e1193442520316 built_at=2026-08-13T07:00:00.000Z'), 'header 须呈现三字段');
+      // legacy：字段 unknown
+      const legacyTable = __testing.buildStdoutTable(mkReport({
+        state: 'valid', version: '2.4.0', source_commit: 'unknown', built_at: 'unknown', error: null,
+      }));
+      assert(legacyTable.includes('framework 包身份: version=2.4.0 source_commit=unknown built_at=unknown'), '旧包如实显示 unknown');
+      // corrupt：不得误报 source/dev layout，须带错误说明
+      const corruptTable = __testing.buildStdoutTable(mkReport({
+        state: 'corrupt', version: 'unknown', source_commit: 'unknown', built_at: 'unknown', error: 'Unexpected token',
+      }));
+      assert(corruptTable.includes('解析失败'), corruptTable);
+      assert(!corruptTable.includes('source/dev layout'), 'corrupt 不得误报 source/dev layout');
+      // absent
+      const absentTable = __testing.buildStdoutTable(mkReport({
+        state: 'absent', version: 'unknown', source_commit: 'unknown', built_at: 'unknown', error: null,
+      }));
+      assert(absentTable.includes('source/dev layout'), 'absent 才允许 source/dev layout 文案');
+    },
+  },
+  {
     name: 'applyInitMechanismSync：漂移 hooks 对齐模板',
     run: () =>
       withTmpProject(root => {

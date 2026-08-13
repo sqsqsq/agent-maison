@@ -3,6 +3,7 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { createWriteStream } from 'fs';
 import archiver from 'archiver';
@@ -45,6 +46,20 @@ function readVersion() {
     throw new Error('package.json missing version');
   }
   return pkg.version;
+}
+
+// t7（f3a8c6d2）包身份：source_commit=打包源仓 HEAD commit（40 位小写 hex）。
+// 发布件必须能追溯到打包时刻的源仓提交——缺 git 环境属于发布链配置错误，fail-fast。
+function resolveSourceCommit() {
+  const r = spawnSync('git', ['rev-parse', 'HEAD'], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
+  });
+  if (r.status !== 0 || !/^[0-9a-f]{40}$/.test((r.stdout ?? '').trim())) {
+    throw new Error(`无法解析打包源仓 HEAD commit（source_commit）：${(r.stderr ?? r.stdout ?? '').trim() || '非 git 检出'}`);
+  }
+  return r.stdout.trim();
 }
 
 /**
@@ -127,15 +142,24 @@ const RELEASE_MANIFEST_SIDECAR_NAME = 'RELEASE-MANIFEST.sha256';
  * 末尾 LF = manifest 原始字节 sha256；**不入 manifest.files[]**——manifest hash ↔ sidecar
  * hash 循环依赖）。consumer preflight 的 framework_manifest_selfcheck 据此发现"manifest
  * 被本地重算迁就漂移"（2026-07-09 宿主事故实锤路径）。
+ * t7（f3a8c6d2）：包身份两字段只增不减——source_commit（打包源仓 HEAD）+ built_at
+ * （打包 UTC 时间）；不加 worktree digest，files[] 哈希与 sidecar 链语义不变
+ * （与 c2e9f4d7 的截图级 build 指纹链划界）。
  * @param {string} stagingRoot @param {string} version @param {string[]} included repo 相对路径（= framework 内相对路径）
  * @returns {string} 包内 manifest 自身 sha256（写进 dist sidecar 做链式校验）
  */
-function writeInZipManifest(stagingRoot, version, included) {
+export function writeInZipManifest(stagingRoot, version, included) {
   const files = included.map(rel => ({
     path: rel,
     sha256: sha256File(path.join(stagingRoot, rel)),
   }));
-  const manifest = { schema_version: '1.0', version, files };
+  const manifest = {
+    schema_version: '1.0',
+    version,
+    source_commit: resolveSourceCommit(),
+    built_at: new Date().toISOString(),
+    files,
+  };
   const out = path.join(stagingRoot, RELEASE_MANIFEST_NAME);
   fs.writeFileSync(out, normalizeReleaseTextEol(`${JSON.stringify(manifest, null, 2)}\n`), 'utf8');
   const manifestSha = sha256File(out);

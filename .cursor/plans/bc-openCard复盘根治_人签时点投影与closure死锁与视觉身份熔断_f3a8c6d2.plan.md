@@ -598,7 +598,46 @@ todos:
       纳入本 plan 发布门（重打包前执行）。
       验收：金丝雀硬失败夹具退出后 run-control=released 且无 lock；
       RELEASE-MANIFEST 新字段过 release:verify；3.2 勾选有据。
-    status: pending
+      ---
+      **实施记录（2026-08-13，任务 A/B/C 完成情况；同日 codex review 修两 P1 后收口）**：
+      A) 包身份可见：scripts/pack-release.mjs writeInZipManifest 增 source_commit
+      （打包源仓 HEAD，40 位小写 hex，非 git 检出 fail-fast）+ built_at（UTC ISO），
+      files[] 逐文件哈希与 sidecar 链语义零改动、不加 worktree digest；
+      scripts/verify-release-pack.mjs 新增纯函数 validateReleaseIdentityFields 并在
+      assertInZipManifest 接入两字段存在+格式校验（缺字段/非 40 位 hex 拒；
+      built_at 为**严格** UTC ISO：形状 `YYYY-MM-DDTHH:mm:ss(.mmm)Z` 且
+      `new Date(v).toISOString() === v` 往返一致——`2026-08-13Z`、美式日期、
+      `2026-02-30T00:00:00.000Z`（Date 归一到三月）等宽松可解析值全部判非法，
+      生成端 toISOString 值域即合法值域；**无效日期（如 `2026-13-01T00:00:00.000Z`
+      的 13 月）先经 Number.isNaN(getTime()) 判非法再比往返，校验器不得抛
+      RangeError**（codex review 第三轮 P1 抓到首次实现会抛，已修并补精确反例）。
+      **消费者呈现（codex review P1 后重做，不再只挂 CheckResult）**：
+      真实 S1 入口 init-orchestrate → probeInitTaskPlan 的 InitTaskPlan 输出携带
+      `framework_identity`（CLI JSON 实跑可见）；check-init 体检表 header 恒有
+      `framework 包身份:` 行（有效字段原样呈现、legacy 带 unknown 标注）；check-init.json
+      报告落盘同字段；CheckResult 保留作全 harness 通道兜底。**manifest 装载三态化**：
+      framework-integrity 新增唯一装载器 loadReleaseManifest，防漂移 preflight 与
+      身份读取共用同一 parser（不再各自 JSON.parse）——absent（文件不存在）/
+      corrupt（存在但不可解析，**不得再误说成 source/dev layout**，呈现 WARN 带解析
+      错误）/ valid。最小目标测试：scripts/tests/release-identity.unit.mjs（打包生成→
+      verify 校验同一字段契约 + 严格 ISO 反例矩阵 3 用例）+ framework-integrity.unit
+      .test.ts 消费者四态 4 用例 + init-orchestrate-smoke S1 plan 携带断言 +
+      init-update-policy 体检表 header 各态断言。
+      B) 异常退出残留：在既有真实 main 路径夹具（goal-canary-hard-cli-d7f3a9c4
+      测试 E）上补断言——金丝雀 CLI 硬失败 return 1 后 run-control.owner.state=
+      released 且 .runner.lock 已回收。**实测通过：现版本已覆盖**（canaryHardCliFailure
+      在保护性 try 内 return 1，finally→releaseAllLocks→releaseRunOwner(state=released)
+      +releaseLock(unlink)），**未改任何生产逻辑**，仅补回归证据；宿主历史残留清理
+      属宿主侧动作，不处理。
+      C) 发布门现状：openspec:validate 34/34 PASS、node scripts/check-plan-version.mjs
+      PASS、cd harness && npm test 全绿（typecheck + unit 3251/3251 + fixtures
+      44/44）、release:check-plans-test 12/12。npm run release:verify 在 plan version
+      (--release) 门禁被拦：12 个 open plan（含本 plan t3/t4 in_progress）——
+      **非 t7 失败**；以 --skip-plan-release-gate（candidate 语义，promote 补跑）验证
+      pack→zip 全链 [release:verify] ALL PASS（763 files，identity 字段过
+      assertInZipManifest 含严格 ISO 校验）。3.2 未勾。**status 维持 in_progress**：
+      待 t3/t4 收口且 3.2 全部有据通过后标 completed。
+    status: in_progress
 ---
 
 # 背景与证据速查

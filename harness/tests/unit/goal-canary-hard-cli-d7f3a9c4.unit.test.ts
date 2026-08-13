@@ -414,6 +414,23 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         // manifest 已落盘 → run 目录可监控、可表达 --resume（与 declared_product_layer_missing
         // 启动期 HALT 同款：此模式在 run_start 之前 return，不要求 run_start 事件）
         assert(fs.existsSync(path.join(reportDir, 'manifest.json')), 'manifest 须已写盘（run 可监控）');
+        // t7（f3a8c6d2）异常退出残留：金丝雀 CLI 硬失败 return 1 后，
+        // run-control 必须 released、.runner.lock 必须已回收（finally→releaseAllLocks）。
+        // 根因核实：canaryHardCliFailure 分支在保护性 try 内 return 1（goal-runner.ts:4323），
+        // finally（:8853）releaseAllLocks → releaseRunOwner(state=released) + releaseLock
+        // （unlink .runner.lock）。此断言证明异常退出路径未漏锁、未残留 active 态。
+        const control = JSON.parse(
+          fs.readFileSync(path.join(reportDir, 'run-control.json'), 'utf-8'),
+        ) as { owner?: { state?: string } };
+        assert.strictEqual(
+          control.owner?.state,
+          'released',
+          `run-control.owner.state 应为 released（金丝雀硬失败退出不得残留 active），实际=${String(control.owner?.state)}`,
+        );
+        assert(
+          !fs.existsSync(path.join(reportDir, '.runner.lock')),
+          '.runner.lock 不得残留（异常退出须回收）',
+        );
       } finally {
         __testing_resetGoalRunnerSeams();
         process.argv = prevArgv;

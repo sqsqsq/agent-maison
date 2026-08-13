@@ -32,6 +32,10 @@ const TMP_HYGIENE_DESC =
 interface IntegrityManifest {
   schema_version?: string;
   version?: string;
+  /** t7（f3a8c6d2）：打包源仓 HEAD commit；旧包缺省（unknown） */
+  source_commit?: string;
+  /** t7（f3a8c6d2）：打包 UTC 时间；旧包缺省（unknown） */
+  built_at?: string;
   files?: Array<{ path: string; sha256: string }>;
 }
 
@@ -40,6 +44,131 @@ interface IntegrityOptOut {
   drift_allowlist: Set<string>;
   /** P1-5：无效放行配置的说明（legacy 形态/缺签名等），随 details 上桌 */
   invalid_notes: string[];
+}
+
+/** t7（f3a8c6d2）包身份（来源=同一个包内 RELEASE-MANIFEST.json 读取链）。 */
+export type FrameworkPackageIdentityState = 'valid' | 'corrupt' | 'absent';
+export interface FrameworkPackageIdentity {
+  /** manifest 在场且可解析=valid；在场但解析失败=corrupt（不得误报 source/dev）；
+   *  文件不存在=absent（source/dev layout） */
+  state: FrameworkPackageIdentityState;
+  version: string;
+  source_commit: string;
+  built_at: string;
+  /** corrupt 时的解析错误说明（valid/absent 为 null） */
+  error: string | null;
+}
+
+/**
+ * t7（f3a8c6d2）：包内 RELEASE-MANIFEST.json 唯一装载器——preflight 的防漂移校验与
+ * 包身份读取共用同一 parser（不再各自 JSON.parse 造成口径分叉）。区分三态：
+ * absent（文件不存在）/ corrupt（存在但不可解析，含读 IO 失败）/ valid。
+ */
+export function loadReleaseManifest(frameworkRoot: string): {
+  state: FrameworkPackageIdentityState;
+  doc: IntegrityManifest | null;
+  raw: Buffer | null;
+  error: string | null;
+} {
+  const manifestPath = path.join(frameworkRoot, MANIFEST_NAME);
+  if (!fs.existsSync(manifestPath)) return { state: 'absent', doc: null, raw: null, error: null };
+  let raw: Buffer;
+  try {
+    raw = fs.readFileSync(manifestPath);
+  } catch (e) {
+    return { state: 'corrupt', doc: null, raw: null, error: (e as Error).message };
+  }
+  let doc: unknown;
+  try {
+    doc = JSON.parse(raw.toString('utf-8'));
+  } catch (e) {
+    return { state: 'corrupt', doc: null, raw: null, error: (e as Error).message };
+  }
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) {
+    return { state: 'corrupt', doc: null, raw: null, error: 'manifest 根节点非对象' };
+  }
+  return { state: 'valid', doc: doc as IntegrityManifest, raw, error: null };
+}
+
+/**
+ * t7（f3a8c6d2）：读消费者安装的发布包身份。**复用**本文件的 manifest 读取链
+ * （loadReleaseManifest，与防漂移 preflight 同一 parser），不另造身份文件、不解析
+ * git 真源——source_commit/built_at 就是打包时写入包内的字段，消费侧只呈现不重算。
+ * 旧包/异常缺字段 → 如实显示 'unknown'（legacy/unknown 语义），**绝不阻断**；
+ * 损坏 manifest → state='corrupt' + error，不得再误说成 source/dev layout。
+ */
+export function readFrameworkPackageIdentity(frameworkRoot: string): FrameworkPackageIdentity {
+  const loaded = loadReleaseManifest(frameworkRoot);
+  if (loaded.state === 'absent') {
+    return { state: 'absent', version: 'unknown', source_commit: 'unknown', built_at: 'unknown', error: null };
+  }
+  if (loaded.state === 'corrupt' || !loaded.doc) {
+    return {
+      state: 'corrupt', version: 'unknown', source_commit: 'unknown', built_at: 'unknown',
+      error: loaded.error ?? 'manifest 解析失败',
+    };
+  }
+  const strField = (v: unknown): string =>
+    typeof v === 'string' && v.trim().length > 0 ? v.trim() : 'unknown';
+  return {
+    state: 'valid',
+    version: strField(loaded.doc.version),
+    source_commit: strField(loaded.doc.source_commit),
+    built_at: strField(loaded.doc.built_at),
+    error: null,
+  };
+}
+
+/**
+ * t7：包身份的非阻断呈现（CheckResult，severity=MINOR）。
+ * - valid → PASS（legacy 缺字段时 details 如实带 'unknown'）；
+ * - corrupt → WARN（details 带解析错误——WARN 的 details 在控制台可见）;
+ * - absent → SKIP（source/dev 布局）。
+ * 三种形态都不产生 FAIL——身份只是诊断信息，不参与框架运行门禁。
+ */
+export function buildFrameworkIdentityResult(identity: FrameworkPackageIdentity): CheckResult {
+  const base = {
+    id: 'framework_identity',
+    category: 'structure' as const,
+    description: 'framework 发布包身份（RELEASE-MANIFEST.json）',
+    severity: 'MINOR' as const,
+  };
+  if (identity.state === 'absent') {
+    return {
+      ...base,
+      status: 'SKIP' as const,
+      details: `未发现包内 ${MANIFEST_NAME}（source/dev layout）；发布包部署后自动呈现 version/source_commit/built_at。`,
+    };
+  }
+  if (identity.state === 'corrupt') {
+    return {
+      ...base,
+      status: 'WARN' as const,
+      details: `包内 ${MANIFEST_NAME} 存在但解析失败（identity 无法读取）：${identity.error ?? '未知错误'}。防漂移 preflight 会另行给出 BLOCKER 判定。`,
+    };
+  }
+  const legacyNote = identity.source_commit === 'unknown' || identity.built_at === 'unknown'
+    ? '（旧包缺 identity 字段，如实显示 unknown）'
+    : '';
+  return {
+    ...base,
+    status: 'PASS' as const,
+    details: `version=${identity.version} source_commit=${identity.source_commit} built_at=${identity.built_at}${legacyNote}`,
+  };
+}
+
+/** 身份摘要行（供 S1/体检表等 stdout 呈现，原样搬运；state 异常时不误导）。 */
+export function formatFrameworkPackageIdentity(identity: FrameworkPackageIdentity): string {
+  if (identity.state === 'absent') {
+    return 'framework 包身份: 未找到发布件 RELEASE-MANIFEST.json（source/dev layout）';
+  }
+  if (identity.state === 'corrupt') {
+    return `framework 包身份: RELEASE-MANIFEST.json 解析失败（${identity.error ?? '未知错误'}）`;
+  }
+  const legacy = identity.source_commit === 'unknown' || identity.built_at === 'unknown'
+    ? '（legacy/unknown）'
+    : '';
+  return `framework 包身份: version=${identity.version} source_commit=${identity.source_commit} built_at=${identity.built_at}${legacy}`;
 }
 
 function sha256Bytes(buf: Buffer): string {
@@ -412,26 +541,23 @@ export function runFrameworkIntegrityPreflight(opts: {
   projectRoot: string;
 }): CheckResult[] {
   const { frameworkRoot, projectRoot } = opts;
-  const manifestPath = path.join(frameworkRoot, MANIFEST_NAME);
   // G4b：卫生扫描始终独立执行（三条返回路径都带上，与其余检查互不吞没）
   const hygiene = runWorkspaceTmpHygieneScan(projectRoot);
 
   // P2a：无包内 manifest → no-op（source/dev layout 或未经发布集成）
-  if (!fs.existsSync(manifestPath)) {
+  const loaded = loadReleaseManifest(frameworkRoot);
+  if (loaded.state === 'absent') {
     return [result('MINOR', 'SKIP',
       `未发现包内 ${MANIFEST_NAME}（source/dev layout 或未经发布集成）；跳过防漂移校验。`), hygiene];
   }
-
-  let manifest: IntegrityManifest;
-  let manifestRaw: Buffer;
-  try {
-    manifestRaw = fs.readFileSync(manifestPath);
-    manifest = JSON.parse(manifestRaw.toString('utf-8')) as IntegrityManifest;
-  } catch (e) {
+  if (loaded.state === 'corrupt' || !loaded.doc || !loaded.raw) {
+    // 与 readFrameworkPackageIdentity 同一装载器；损坏 manifest 属部署损坏，BLOCKER
     return [result('BLOCKER', 'FAIL',
-      `包内 ${MANIFEST_NAME} 解析失败：${(e as Error).message}`,
+      `包内 ${MANIFEST_NAME} 解析失败：${loaded.error ?? '未知错误'}`,
       { failure_kind: 'framework_manifest_corrupt', blocking_class: 'integrity' }), hygiene];
   }
+  const manifest = loaded.doc;
+  const manifestRaw = loaded.raw;
 
   // G3b：①manifest 解析（上）→ ②sidecar 自校验——不匹配即停（manifest 不可信，per-file/
   // foreign 比对无意义）；缺失 → BLOCKER FAIL 且继续 ③④（本检查代码随 ≥3.0.0 包同树，

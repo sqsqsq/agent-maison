@@ -15,6 +15,7 @@ import {
   inspectionsForInit034Prompt,
   type InitMode,
 } from '../check-init';
+import type { FrameworkPackageIdentity } from './framework-integrity';
 import { detectLegacySkillBridgePresence } from './legacy-skill-bridge-cleanup';
 import {
   resolveMaterializedAdaptersFromContext,
@@ -59,6 +60,8 @@ export interface InitTaskPlan {
   tasks: InitTask[];
   /** project scope 运行时由 probe 填充；type 可选避免破坏手写 plan fixture */
   adapter_catalog?: AdapterCatalogEntry[];
+  /** t7（f3a8c6d2）：framework 发布包身份（S1 探测输出携带；可选避免破坏手写 fixture） */
+  framework_identity?: FrameworkPackageIdentity;
 }
 
 function inspectionToStatus(ins: Inspection): TaskStatus {
@@ -493,7 +496,7 @@ export function probeInitTaskPlan(options: PlanProbeOptions): InitTaskPlan {
       : resolveProjectInitAdapterHint(cfgSources, options.adapter);
 
   const probe = runInitProbe({ projectRoot, adapterHint });
-  const { mode, inspections } = probe;
+  const { mode, inspections, framework_identity } = probe;
 
   const materialized =
     scope === 'personal'
@@ -527,6 +530,7 @@ export function probeInitTaskPlan(options: PlanProbeOptions): InitTaskPlan {
     mode,
     generated_at: new Date().toISOString(),
     tasks,
+    framework_identity,
   };
 
   if (scope === 'project') {

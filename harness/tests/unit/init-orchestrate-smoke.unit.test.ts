@@ -48,6 +48,30 @@ function harnessCtx(projectRoot: string): InitExecutionContext {
 
 const cases: Array<{ name: string; run: () => void }> = [
   {
+    name: 't7 S1 探测：probeInitTaskPlan 输出携带 framework_identity（runInitProbe 同源），三字段形状合法',
+    run: () => {
+      const root = mkTmp();
+      try {
+        const plan = probeInitTaskPlan({ projectRoot: root, scope: 'project', adapter: 'generic' });
+        assert(plan.framework_identity, 'S1 plan 必须携带 framework_identity');
+        const id = plan.framework_identity!;
+        assert(['valid', 'corrupt', 'absent'].includes(id.state), `state 须在枚举内，实际=${id.state}`);
+        assert(typeof id.version === 'string' && id.version.length > 0);
+        assert(typeof id.source_commit === 'string' && id.source_commit.length > 0);
+        assert(typeof id.built_at === 'string' && id.built_at.length > 0);
+        assert(typeof id.error === 'string' || id.error === null, 'error 须为 string|null');
+        if (id.state === 'absent') {
+          assert.strictEqual(id.version, 'unknown', 'source/dev 布局如实显示 unknown');
+        }
+        const probe = runInitProbe({ projectRoot: root, adapterHint: 'generic' });
+        assert.strictEqual(probe.framework_identity.state, id.state, 'plan 与 runInitProbe 须同一装载器读数');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        clearFrameworkConfigCache();
+      }
+    },
+  },
+  {
     name: 'probeInitTaskPlan project scope 不修改 .gitignore / 不创建 local',
     run: () => {
       const root = mkTmp();

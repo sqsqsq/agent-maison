@@ -196,6 +196,58 @@ function sha256File(filePath) {
 }
 
 /**
+ * t7（f3a8c6d2）包身份字段校验（纯函数，供单测直接驱动）：
+ * - source_commit：非空 40 位小写 hex（打包源仓 HEAD commit）；
+ * - built_at：**严格** UTC ISO-8601——形状须为 `YYYY-MM-DDTHH:mm:ss(.mmm)?Z` 且
+ *   日期确实有效时 `new Date(v).toISOString() === v` 往返一致。杜绝 Date.parse 的
+ *   宽松归一：`2026-08-13Z`、`08/13/2026 07:00:00Z`、以及 `2026-02-30T00:00:00.000Z`
+ *   （被归一到三月）全部判非法；**形状合法但日期无效（如 `2026-13-01T00:00:00.000Z`
+ *   的 13 月）必须先经 `Number.isNaN(date.getTime())` 判定为非法再比较往返**——
+ *   Date 无效时直接 `.toISOString()` 会抛 RangeError 而非返回 identity 错误。
+ *   生成端固定写 toISOString()，合法值必含毫秒；往返校验要求的值域 == 生成端值域，
+ *   无平行格式。
+ * 两项任一缺失/格式非法即禁止该包通过发布门；旧包缺字段按 FAIL 处理（旧包不再
+ * 走本门，重新发布即可带上身份），消费者侧则只如实显示 unknown、不阻断。
+ * @param {unknown} manifest 包内 RELEASE-MANIFEST.json 已解析对象
+ * @returns {string[]} 错误列表；空数组=合法
+ */
+const UTC_ISO_SHAPE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+
+/** 形状已通过时再验语义：构造 Date，无效日期（NaN）直接非法，有效再比往返一致。
+ * 返回 true=非法。绝不抛异常——校验器是发布门，任何输入都须以错误数组回应。 */
+function isInvalidUtcIso(value) {
+  let date;
+  try {
+    date = new Date(value);
+  } catch {
+    return true;
+  }
+  if (Number.isNaN(date.getTime())) return true;
+  return date.toISOString() !== value;
+}
+
+export function validateReleaseIdentityFields(manifest) {
+  const errors = [];
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
+    return ['manifest 非对象'];
+  }
+  const { source_commit, built_at } = manifest;
+  if (typeof source_commit !== 'string' || !/^[0-9a-f]{40}$/.test(source_commit.trim())) {
+    errors.push(`source_commit 缺失或非 40 位小写 hex（实际=${JSON.stringify(source_commit)}）`);
+  } else if (source_commit !== source_commit.trim()) {
+    errors.push('source_commit 不得含首尾空白');
+  }
+  if (
+    typeof built_at !== 'string' ||
+    !UTC_ISO_SHAPE.test(built_at) ||
+    isInvalidUtcIso(built_at)
+  ) {
+    errors.push(`built_at 缺失或非严格 UTC ISO-8601（实际=${JSON.stringify(built_at)}）`);
+  }
+  return errors;
+}
+
+/**
  * c1: 校验包内 RELEASE-MANIFEST.json —— 存在性 + 逐文件哈希自洽 + 覆盖完整 + sidecar 链式引用。
  * （导出供 G3b 单测直接驱动——release:verify 主流程的 plan 门禁在本断言之前，源仓有 open plan
  * 时走不到这里，测试需要独立入口。）
@@ -209,6 +261,12 @@ export function assertInZipManifest(frameworkRoot, sidecarManifestPath) {
   const manifest = JSON.parse(fs.readFileSync(manifestAbs, 'utf8'));
   if (!Array.isArray(manifest.files) || manifest.files.length === 0) {
     fail('in-zip manifest has no files[]');
+  }
+
+  // t7（f3a8c6d2）：包身份字段（source_commit / built_at）存在且格式合法
+  const identityErrors = validateReleaseIdentityFields(manifest);
+  if (identityErrors.length > 0) {
+    fail(`in-zip manifest identity: ${identityErrors.join('; ')}`);
   }
 
   // per-file 哈希自洽：每个 files[] 与解包文件字节一致（防漂移门禁的 SSOT）

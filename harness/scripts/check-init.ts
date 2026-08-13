@@ -48,6 +48,12 @@ import {
 import { loadLocalConfig } from './utils/framework-local-config';
 import { computeHooksConfigUpsert } from './utils/hooks-config-upsert';
 import { PhaseChecker, CheckContext, CheckResult } from './utils/types';
+import {
+  buildFrameworkIdentityResult,
+  formatFrameworkPackageIdentity,
+  type FrameworkPackageIdentity,
+  readFrameworkPackageIdentity,
+} from './utils/framework-integrity';
 import { loadFrameworkConfig, relFeaturesDir } from '../config';
 import {
   readAgentBundlePathsFromConfig,
@@ -124,6 +130,8 @@ export interface CheckInitReport {
   blockers: string[];
   verdict: 'PASS' | 'FAIL';
   generated_at: string;
+  /** t7（f3a8c6d2）：framework 发布包身份（valid/corrupt/absent；缺失字段显示 unknown） */
+  framework_identity?: FrameworkPackageIdentity;
   /** init 通过后自动对齐 auto_overwrite 机制产物时的备份目录（相对实例根），无对齐时为 null */
   mechanism_backup_rel_dir?: string | null;
   mechanism_synced_files?: number;
@@ -2069,6 +2077,8 @@ export interface InitProbeResult {
   cfg: RawFrameworkConfig;
   renderEnv: RenderEnv | null;
   inspections: Inspection[];
+  /** t7（f3a8c6d2）：framework 发布包身份（复用 framework-integrity 同一 manifest loader） */
+  framework_identity: FrameworkPackageIdentity;
 }
 
 function prepareAdapterForProbe(
@@ -2113,15 +2123,21 @@ export function runInitProbe(options: InitProbeOptions): InitProbeResult {
     inspect10(inspectorEnv),
     inspect11(inspectorEnv),
   ];
-  return { mode, adapterPick, adapter, cfg, renderEnv, inspections };
+  // t7（f3a8c6d2）：框架发布包身份——与防漂移 preflight 共用同一 manifest loader
+  const framework_identity = readFrameworkPackageIdentity(FRAMEWORK_ROOT);
+  return { mode, adapterPick, adapter, cfg, renderEnv, inspections, framework_identity };
 }
 
 function buildStdoutTable(report: CheckInitReport): string {
   // check-init 体检表（6 列；#3 可展开）
+  const identityLine = report.framework_identity
+    ? formatFrameworkPackageIdentity(report.framework_identity)
+    : 'framework 包身份: 未探测';
   const header = [
     `Init 体检报告 [mode=${report.mode}, adapter=${report.adapter ?? 'N/A'}]`,
     `生成时间: ${report.generated_at}`,
     `verdict: ${report.verdict}${report.blockers.length > 0 ? `（${report.blockers.length} BLOCKER）` : ''}`,
+    identityLine,
   ].join('\n');
 
   const cols = ['#', '产物', '状态', 'update_policy', '计划动作', '诊断'];
@@ -2451,6 +2467,8 @@ const checker: PhaseChecker = {
       blockers,
       verdict,
       generated_at: new Date().toISOString(),
+      // t7（f3a8c6d2）：framework 包身份随 check-init.json 落盘（S1 probe 同源）
+      framework_identity: probe.framework_identity,
       gitignore_sync: null,
     };
 
@@ -2524,6 +2542,8 @@ const checker: PhaseChecker = {
       tableCompleteResult,
       diffResult,
       goalCapResult,
+      // t7（f3a8c6d2）：framework 发布包身份——非阻断诊断（PASS/WARN/SKIP，绝不 FAIL）
+      buildFrameworkIdentityResult(probe.framework_identity),
     ];
     for (const ins of inspections) {
       const policyTag =

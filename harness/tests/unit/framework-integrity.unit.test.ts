@@ -9,7 +9,12 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { runFrameworkIntegrityPreflight } from '../../scripts/utils/framework-integrity';
+import {
+  buildFrameworkIdentityResult,
+  formatFrameworkPackageIdentity,
+  readFrameworkPackageIdentity,
+  runFrameworkIntegrityPreflight,
+} from '../../scripts/utils/framework-integrity';
 import type { UnitCaseResult } from '../run-unit';
 
 const CASES: Array<{ name: string; run: () => void | Promise<void> }> = [];
@@ -588,6 +593,112 @@ test('g3b_sidecar_strict_lf_format（与 release:verify 口径一致：缺末尾
   fs.writeFileSync(path.join(frameworkRoot, 'RELEASE-MANIFEST.sha256'), sha, 'utf-8'); // 无 LF
   const sc = selfcheckOf(runFrameworkIntegrityPreflight({ frameworkRoot, projectRoot }));
   assert.strictEqual(sc.status, 'FAIL', '缺 LF 的 sidecar 不合法（防手写伪造格式漂移）');
+});
+
+// ==========================================================================
+// t7（f3a8c6d2）：包身份可见——readFrameworkPackageIdentity / buildFrameworkIdentityResult
+// 消费者读的是 pack 写入 RELEASE-MANIFEST.json 的同一字段（source_commit/built_at）；
+// 与防漂移 preflight 共用同一 manifest loader（loadReleaseManifest）；旧包缺字段只如实
+// 显示 unknown、绝不阻断（PASS/WARN/SKIP，无 FAIL 形态）；损坏 manifest 不得误报
+// source/dev layout（state=corrupt）。
+// ==========================================================================
+
+test('t7 消费者呈现：新包（version+source_commit+built_at 在场）→ 同一字段如实读出且 PASS', () => {
+  const onDisk = {
+    schema_version: '1.0',
+    version: '3.0.0',
+    source_commit: '5de7e35329ed0ba2ad7c1e34e6e1193442520316',
+    built_at: '2026-08-13T07:00:00.000Z',
+    files: [{ path: 'a.ts', sha256: '0'.repeat(64) }],
+  };
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fw-id-new-'));
+  try {
+    const frameworkRoot = path.join(root, 'framework');
+    fs.mkdirSync(frameworkRoot, { recursive: true });
+    fs.writeFileSync(path.join(frameworkRoot, 'RELEASE-MANIFEST.json'), JSON.stringify(onDisk, null, 2), 'utf-8');
+    const identity = readFrameworkPackageIdentity(frameworkRoot);
+    assert.strictEqual(identity.state, 'valid');
+    assert.strictEqual(identity.version, '3.0.0');
+    assert.strictEqual(identity.source_commit, '5de7e35329ed0ba2ad7c1e34e6e1193442520316');
+    assert.strictEqual(identity.built_at, '2026-08-13T07:00:00.000Z');
+    assert.strictEqual(identity.error, null);
+    const r = buildFrameworkIdentityResult(identity);
+    assert.strictEqual(r.id, 'framework_identity');
+    assert.strictEqual(r.status, 'PASS', '新包呈现为 PASS（非阻断）');
+    assert.strictEqual(r.severity, 'MINOR');
+    assert.ok(r.details.includes('version=3.0.0') && r.details.includes('source_commit=5de7e353') && r.details.includes('built_at=2026-08-13T07:00:00.000Z'), r.details);
+    assert.ok(!r.details.includes('unknown'), '新包不得出现 legacy/unknown 标注');
+    assert.ok(formatFrameworkPackageIdentity(identity).includes('version=3.0.0'), '身份摘要行须含三字段');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('t7 消费者呈现：旧包缺身份字段 → 如实显示 unknown 且不阻断（PASS）', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fw-id-legacy-'));
+  try {
+    const frameworkRoot = path.join(root, 'framework');
+    fs.mkdirSync(frameworkRoot, { recursive: true });
+    // legacy 包：只有 schema_version/version/files（t7 前形态）
+    fs.writeFileSync(
+      path.join(frameworkRoot, 'RELEASE-MANIFEST.json'),
+      JSON.stringify({ schema_version: '1.0', version: '2.4.0', files: [] }, null, 2),
+      'utf-8',
+    );
+    const identity = readFrameworkPackageIdentity(frameworkRoot);
+    assert.strictEqual(identity.state, 'valid');
+    assert.strictEqual(identity.version, '2.4.0');
+    assert.strictEqual(identity.source_commit, 'unknown', '旧包 source_commit → unknown');
+    assert.strictEqual(identity.built_at, 'unknown', '旧包 built_at → unknown');
+    const r = buildFrameworkIdentityResult(identity);
+    assert.strictEqual(r.status, 'PASS', '旧包缺字段不阻断（不得 FAIL）');
+    assert.ok(r.details.includes('unknown'), `details 应如实标注 unknown：${r.details}`);
+    assert.ok(r.details.includes('version=2.4.0'), r.details);
+    assert.ok(formatFrameworkPackageIdentity(identity).includes('legacy/unknown'), '摘要行须带 legacy/unknown 标注');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('t7 消费者呈现：无 manifest（source/dev layout）→ state=absent 且 SKIP（不阻断）', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fw-id-skip-'));
+  try {
+    const frameworkRoot = path.join(root, 'framework');
+    fs.mkdirSync(frameworkRoot, { recursive: true });
+    const identity = readFrameworkPackageIdentity(frameworkRoot);
+    assert.strictEqual(identity.state, 'absent');
+    assert.strictEqual(identity.version, 'unknown');
+    assert.strictEqual(identity.source_commit, 'unknown');
+    assert.strictEqual(identity.built_at, 'unknown');
+    const r = buildFrameworkIdentityResult(identity);
+    assert.strictEqual(r.status, 'SKIP');
+    assert.strictEqual(r.severity, 'MINOR');
+    assert.match(formatFrameworkPackageIdentity(identity), /source\/dev layout/, 'absent 摘要行须指 source/dev 而非损坏');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('t7 消费者呈现：manifest 损坏/非对象 → state=corrupt（不得误报 source/dev layout）+ WARN', () => {
+  for (const bad of ['{not json', '"just-a-string"', '[]', '42']) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fw-id-corrupt-'));
+    try {
+      const frameworkRoot = path.join(root, 'framework');
+      fs.mkdirSync(frameworkRoot, { recursive: true });
+      fs.writeFileSync(path.join(frameworkRoot, 'RELEASE-MANIFEST.json'), bad, 'utf-8');
+      const identity = readFrameworkPackageIdentity(frameworkRoot);
+      assert.strictEqual(identity.state, 'corrupt', `损坏 manifest ${JSON.stringify(bad)} 必须判 corrupt，不得误报 absent（source/dev）`);
+      assert.strictEqual(identity.version, 'unknown');
+      assert.ok(typeof identity.error === 'string' && identity.error.length > 0, 'corrupt 须带解析错误说明');
+      const r = buildFrameworkIdentityResult(identity);
+      assert.strictEqual(r.status, 'WARN', '损坏→WARN（细节可见），仍不阻断');
+      assert.strictEqual(r.severity, 'MINOR');
+      assert.ok(!/source\/dev layout/.test(r.details), 'corrupt 文案不得误指 source/dev layout');
+      assert.ok(!/source\/dev layout/.test(formatFrameworkPackageIdentity(identity)), '摘要行同样不得误报 source/dev layout');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
 });
 
 export async function runAll(): Promise<UnitCaseResult[]> {
