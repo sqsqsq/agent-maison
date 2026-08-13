@@ -98,6 +98,8 @@ Cursor 命令：`/opsx-propose` `/opsx-apply` `/opsx-archive` `/opsx-explore`（
 
 **含义澄清**：「不要改 plan 文件」= **不要改计划内容**；勾选 todo 完成状态**不算**改 plan。
 
+**待办唯一真源（BLOCKER）**：在窗 plan 的未完成待办必须登记在 frontmatter `todos:`；正文不得使用未完成的 `- [ ]` 承载待办。历史 `- [x]` 可保留但不作为机器状态；重新打开任务必须先在 frontmatter 登记。
+
 ## 回复语言（BLOCKER）
 
 面向用户的自然语言回复默认使用 **中文**。
