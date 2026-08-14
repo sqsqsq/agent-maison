@@ -169,28 +169,52 @@ const IDENTITY_ADD_BANK = new Map([[
   },
 ]]);
 
+/** 双屏夹具（t4 混合轮 / 全 mismatched 轮） */
+const UI_DOC_TWO_P0 = {
+  screens: [
+    { id: 'add_bank', priority: 'P0', ref_id: 'ref_a', root: { type: 'navigation_frame', order: 0 } },
+    { id: 'all_banks', priority: 'P0', ref_id: 'ref_b', root: { type: 'navigation_frame', order: 0 } },
+  ],
+  tokens: {},
+  assets: [],
+} as unknown as UiSpecDoc;
+
+const IDENTITY_TWO_P0 = new Map([
+  ['add_bank', { all_of: [{ id: 'maison:demo:add_bank:add_bank_frame' }] }],
+  ['all_banks', { all_of: [{ id: 'maison:demo:all_banks:all_banks_frame' }] }],
+]);
+
 function runCaptureWithDump(
   root: string,
   dump: unknown | null,
-  opts?: { dumpOk?: boolean; badJson?: boolean },
+  opts?: {
+    dumpOk?: boolean;
+    badJson?: boolean;
+    noLayoutDumpFn?: boolean;
+    /** 逐屏 dump（screenId → dump 树）；缺省回落 opts 单一 dump 或 dump == null */
+    dumpByScreen?: Record<string, unknown>;
+  },
 ): ReturnType<typeof captureVisualDiff> {
   return captureVisualDiff({
     projectRoot: root,
     feature: 'demo',
-    uiDoc: UI_DOC_ONE_P0,
+    uiDoc: opts?.dumpByScreen ? UI_DOC_TWO_P0 : UI_DOC_ONE_P0,
     currentBuildFingerprint: null,
     screenshotFn: args => {
       fs.mkdirSync(path.dirname(args.destAbs), { recursive: true });
       fs.writeFileSync(args.destAbs, Buffer.from('png'));
       return { ok: true };
     },
-    layoutDumpFn: args => {
-      if (opts?.dumpOk === false) return { ok: false, error: 'dump-ui 执行失败（设备无响应）' };
-      fs.mkdirSync(path.dirname(args.destAbs), { recursive: true });
-      fs.writeFileSync(args.destAbs, opts?.badJson ? '{not json' : JSON.stringify(dump), 'utf-8');
-      return { ok: true };
-    },
-    screenIdentity: IDENTITY_ADD_BANK,
+    layoutDumpFn: opts?.noLayoutDumpFn
+      ? undefined
+      : args => {
+          if (opts?.dumpOk === false) return { ok: false, error: 'dump-ui 执行失败（设备无响应）' };
+          fs.mkdirSync(path.dirname(args.destAbs), { recursive: true });
+          const tree = opts?.dumpByScreen?.[args.screenId] ?? dump;
+          fs.writeFileSync(args.destAbs, opts?.badJson ? '{not json' : JSON.stringify(tree), 'utf-8');
+          return { ok: true };
+        },
+    screenIdentity: opts?.dumpByScreen ? IDENTITY_TWO_P0 : IDENTITY_ADD_BANK,
   });
 }
 
@@ -238,21 +262,32 @@ test('t4_matrix_lockscreen_dump_is_not_mismatch', () => {
       false,
       '锁屏页身份不命中 ≠ 应用错页——不得作为内容正证据（前几版在此误判）',
     );
-    // 诊断一致性：身份不通过按 spec 记 screen_identity_mismatch，但**不得越过证据**
-    // 断言成因（既不说"确是错页"、也不说"确非错页"）——须与 fuseEligibility 同口径。
+    // 诊断一致性：身份不通过按 spec 记 screen_identity_mismatch；锁屏 dump 无页面
+    // 组件前缀 ⇒ probe_failed（不得断言"是错页"，锁屏/桌面/系统态同此分支）。
     const detail = r.errors.find(e => e.includes('add_bank')) ?? '';
     assert.ok(/screen_identity_mismatch/.test(detail), `记法须遵循 spec：${detail}`);
-    assert.ok(/成因未确证/.test(detail), `须如实标注成因未确证：${detail}`);
+    assert.ok(/无页面组件前缀/.test(detail), `须标注无页面组件前缀（probe_failed 依据）：${detail}`);
     assert.ok(!/非错页/.test(detail), `不得断言"确非错页"（同样越过证据）：${detail}`);
+    assert.ok(!/无页面组件前缀.*(mismatched|错页)/.test(detail), `无前缀不得并入错页语气：${detail}`);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test('t4_matrix_missing_screens_stay_ineligible_until_t3_lands', () => {
+test('t4_matrix_wrong_page_missing_screen_is_actionable', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-t4-wrongpage-'));
   try {
-    // 看起来最"干净"的错页形态：dump 成功、身份不命中、且树里有本应用组件 id。
-    // 即便如此也**不得**放行——t3 已确认 dump 会残留旧页组件树，"锁屏节点 + 残留旧页
-    // 节点"的组合同样满足该前缀，故前缀不能证明应用当前在前台（review 实测复现）。
+    // 预置**已有错误旧条目**（复放 0.997 错页高分）——确定性 mismatch 后必须瞬时失效，
+    // 旧 score/verdict 不得继续被消费。
+    const shotsDir = path.join(root, 'doc', 'features', 'demo', 'device-testing', 'device-screenshots');
+    fs.mkdirSync(shotsDir, { recursive: true });
+    fs.writeFileSync(path.join(shotsDir, 'visual-diff.json'), JSON.stringify({
+      schema_version: '1.1',
+      screens: [{
+        screen_id: 'add_bank', verdict: 'pending', score_floor: 0.997, screenshot_hash: 'h-wrongpage',
+      }],
+    }, null, 2));
+    // 应用内错页形态：dump 成功、目标身份不命中、但树里有本应用**页面组件** id 前缀
+    //（宿主校准：锁屏/桌面 dump 的页面组件前缀命中为 0，前缀在场 ⇒ 应用页面树在场）。
+    // t3 收口后此形态=确定性 mismatched ⇒ 内容可行动缺屏，进 missing_screen 指纹。
     const wrongPage = {
       schema_version: 'hylyre-hypium-ui-dump-v1',
       tree: {
@@ -263,29 +298,35 @@ test('t4_matrix_missing_screens_stay_ineligible_until_t3_lands', () => {
       },
     };
     const r = runCaptureWithDump(root, wrongPage);
-    assert.strictEqual(r.fuseEligibility?.eligible, false, 't3 收口前缺屏一律无熔断资格');
-    assert.deepStrictEqual(r.fuseEligibility?.actionableMissingIds, []);
-    assert.ok(/缺屏熔断通道未开通/.test(r.fuseEligibility?.reason ?? ''), r.fuseEligibility?.reason);
+    assert.ok((r.p0CaptureFailures ?? []).includes('add_bank'), '错页仍记 P0 采集失败（缺可用截图）');
+    assert.strictEqual(r.fuseEligibility?.eligible, true, '确定错页缺屏须具备熔断资格');
+    assert.deepStrictEqual(r.fuseEligibility?.actionableMissingIds, ['add_bank'], '缺屏 id 进 actionable');
+    // 旧裁决须瞬时失效（0.997 错页高分不得跨轮存活）
+    const after = JSON.parse(fs.readFileSync(path.join(shotsDir, 'visual-diff.json'), 'utf-8')) as {
+      screens: Array<{ screen_id: string }>;
+    };
+    assert.ok(!after.screens.some(s => s.screen_id === 'add_bank'), 'mismatch 缺屏不得残留旧裁决');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test('t4_matrix_lockscreen_plus_stale_app_nodes_must_not_be_eligible', () => {
+test('t4_matrix_lock_desktop_dump_is_probe_failed_and_preserves_verdict', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-t4-stale-'));
   try {
-    // review 复现的**已知风险形态**：锁屏节点与残留的应用旧页节点同时在树里。
-    // 任何"看到应用 id 前缀就算前台"的启发式都会在此误判成内容问题并进熔断。
-    const lockPlusStale = {
+    // 宿主实测锁屏/桌面 dump 形态（2026-08-13 校准）：**无页面组件前缀**，即使出现
+    // 宿主 bundle（桌面应用图标 id）也不是页面组件前缀——一律 probe_failed。
+    // 绝不会被误判成 mismatched，也绝不会删除旧裁决（review 曾把环境故障算成内容问题）。
+    const lockScreen = {
       schema_version: 'hylyre-hypium-ui-dump-v1',
       tree: {
         attributes: { bounds: '[0,0][1260,2720]' },
         children: [
           { attributes: { text: '上滑解锁', bounds: '[0,2400][1260,2500]' } },
-          // 被锁屏遮住、但仍留在树里的应用旧页
-          { attributes: { id: 'maison:demo:all_banks:all_banks_frame', bounds: '[0,0][1260,2720]' } },
+          // 桌面 dump 的真实成分：宿主 bundle 应用图标（非页面组件前缀）
+          { attributes: { id: 'AppIconCommonView_com.example.simulatedwallet.PhoneAbility', bounds: '[0,2500][1260,2600]' } },
         ],
       },
     };
-    // 预置一条**已有真人裁决**的旧条目——误删它就会再次要求人工签字（t1 要消灭的现象）
+    // 预置一条**已有真人裁决**的旧条目——probe_failed 不得删除它（t1 要消灭误删重签）
     const shotsDir = path.join(root, 'doc', 'features', 'demo', 'device-testing', 'device-screenshots');
     fs.mkdirSync(shotsDir, { recursive: true });
     fs.writeFileSync(path.join(shotsDir, 'visual-diff.json'), JSON.stringify({
@@ -298,21 +339,85 @@ test('t4_matrix_lockscreen_plus_stale_app_nodes_must_not_be_eligible', () => {
       }],
     }, null, 2));
 
-    const r = runCaptureWithDump(root, lockPlusStale);
+    const r = runCaptureWithDump(root, lockScreen);
     assert.strictEqual(
       r.fuseEligibility?.eligible,
       false,
-      '锁屏 + 残留应用节点绝不能被判成内容问题（前缀启发式在此必然误判）',
+      '锁屏/桌面（无页面组件前缀）不得被判成内容问题（bundle 图标命中不是页面组件前缀）',
     );
     assert.deepStrictEqual(r.fuseEligibility?.actionableMissingIds, []);
-    // **不熔断还不够——更不能误删旧裁决**（review 抓出的消费端遗漏）。
-    // 该形态下无法确证"是错页"，删除旧条目会清掉已有的真人签字。
+    // probe_failed：不删旧裁决——误删会清掉已有的真人签字
     const after = JSON.parse(fs.readFileSync(path.join(shotsDir, 'visual-diff.json'), 'utf-8')) as {
       screens: Array<{ screen_id: string; confirmed_by?: string }>;
     };
     const kept = after.screens.find(s => s.screen_id === 'add_bank');
-    assert.ok(kept, `未确证的失配不得删除旧裁决，实得 screens=${JSON.stringify(after.screens)}`);
+    assert.ok(kept, `probe_failed 不得删除旧条目，实得 screens=${JSON.stringify(after.screens)}`);
     assert.strictEqual(kept?.confirmed_by, 'human@example.com', '真人裁决必须原样保留');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('t3_non_maison_colon_ids_are_not_page_prefix_probe_failed', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-t3-nonmaison-'));
+  try {
+    // review P1：页面组件前缀只认规范 `maison:`。identity 锚为任意三段式冒号 id
+    //（`foo:bar:*`）时不得推导为页面组件前缀——dump 中即使出现同族 `foo:bar:*` id
+    //（目标锚缺失）也不得判 mismatched / 删旧裁决 / 进熔断，必须 probe_failed。
+    const identity = new Map([[
+      'add_bank',
+      { all_of: [{ id: 'foo:bar:add_bank_frame' }] },
+    ]]);
+    const shotsDir = path.join(root, 'doc', 'features', 'demo', 'device-testing', 'device-screenshots');
+    fs.mkdirSync(shotsDir, { recursive: true });
+    fs.writeFileSync(path.join(shotsDir, 'visual-diff.json'), JSON.stringify({
+      schema_version: '1.1',
+      screens: [{
+        screen_id: 'add_bank', verdict: 'pass', screenshot_hash: 'h-old',
+        confirmed_by: 'human@example.com',
+      }],
+    }, null, 2));
+
+    const r = captureVisualDiff({
+      projectRoot: root,
+      feature: 'demo',
+      uiDoc: UI_DOC_ONE_P0,
+      currentBuildFingerprint: null,
+      screenshotFn: args => {
+        fs.mkdirSync(path.dirname(args.destAbs), { recursive: true });
+        fs.writeFileSync(args.destAbs, Buffer.from('png'));
+        return { ok: true };
+      },
+      layoutDumpFn: args => {
+        fs.mkdirSync(path.dirname(args.destAbs), { recursive: true });
+        // 同族 foo:bar:* id（非目标锚）——过宽实现会把它当页面前缀而误判 mismatched
+        fs.writeFileSync(args.destAbs, JSON.stringify({
+          schema_version: 'hylyre-hypium-ui-dump-v1',
+          tree: {
+            attributes: { bounds: '[0,0][1260,2720]' },
+            children: [{ attributes: { id: 'foo:bar:all_banks_frame', bounds: '[0,0][1260,2720]' } }],
+          },
+        }), 'utf-8');
+        return { ok: true };
+      },
+      screenIdentity: identity,
+    });
+    assert.ok((r.p0CaptureFailures ?? []).includes('add_bank'), '仍记 P0 采集失败');
+    assert.strictEqual(
+      r.fuseEligibility?.eligible,
+      false,
+      '非 Maison 冒号 ID 不构成页面组件前缀——不得进熔断（probe_failed）',
+    );
+    assert.deepStrictEqual(r.fuseEligibility?.actionableMissingIds, []);
+    // probe_failed：不得删除旧裁决 / confirmed_by
+    const after = JSON.parse(fs.readFileSync(path.join(shotsDir, 'visual-diff.json'), 'utf-8')) as {
+      screens: Array<{ screen_id: string; confirmed_by?: string }>;
+    };
+    const kept = after.screens.find(s => s.screen_id === 'add_bank');
+    assert.ok(kept, '非 Maison 前缀不得删除旧条目');
+    assert.strictEqual(kept?.confirmed_by, 'human@example.com', '真人裁决保留');
+    assert.ok(
+      r.errors.some(e => e.includes('add_bank') && /无页面组件前缀/.test(e)),
+      `诊断须标注无页面组件前缀：${r.errors.join('|')}`,
+    );
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -320,6 +425,187 @@ test('t4_matrix_capture_not_run_verdict_is_ineligible', () => {
   assert.strictEqual(CAPTURE_NOT_RUN_ELIGIBILITY.eligible, false);
   assert.deepStrictEqual(CAPTURE_NOT_RUN_ELIGIBILITY.actionableMissingIds, []);
   assert.ok(/capture_not_run/.test(CAPTURE_NOT_RUN_ELIGIBILITY.reason));
+});
+
+test('t3_gate_confirmed_identity_without_dump_ability_is_probe_failed', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-t3-nodump-'));
+  try {
+    // 事故根因（t3 裁定 4）：confirmed identity 但无 layoutDumpFn 时，旧实现直接
+    // matched——未经身份验证的截图仍可进正式目录（历史 0.997 条目即
+    // layout_dump_status=unavailable 时代的产物）。必须 probe_failed：不落正式截图、
+    // 不得视为内容问题、不删旧裁决。
+    const shotsDir = path.join(root, 'doc', 'features', 'demo', 'device-testing', 'device-screenshots');
+    fs.mkdirSync(shotsDir, { recursive: true });
+    fs.writeFileSync(path.join(shotsDir, 'visual-diff.json'), JSON.stringify({
+      schema_version: '1.1',
+      screens: [{
+        screen_id: 'add_bank', verdict: 'pass', screenshot_hash: 'h-old',
+        confirmed_by: 'human@example.com',
+      }],
+    }, null, 2));
+
+    const r = captureVisualDiff({
+      projectRoot: root,
+      feature: 'demo',
+      uiDoc: UI_DOC_ONE_P0,
+      currentBuildFingerprint: null,
+      screenshotFn: args => {
+        fs.mkdirSync(path.dirname(args.destAbs), { recursive: true });
+        fs.writeFileSync(args.destAbs, Buffer.from('png'));
+        return { ok: true };
+      },
+      // 无 layoutDumpFn——身份验真能力缺失
+      screenIdentity: IDENTITY_ADD_BANK,
+    });
+    assert.ok((r.p0CaptureFailures ?? []).includes('add_bank'), '缺 dump 能力的轮次须记 P0 采集失败');
+    assert.strictEqual(r.fuseEligibility?.eligible, false, '身份无法验真不得有熔断资格');
+    assert.deepStrictEqual(r.fuseEligibility?.actionableMissingIds, []);
+    assert.ok(!fs.existsSync(path.join(shotsDir, 'shot-add_bank.png')), '正式截图目录零写入');
+    // probe_failed：旧条目与 confirmed_by 原样保留
+    const after = JSON.parse(fs.readFileSync(path.join(shotsDir, 'visual-diff.json'), 'utf-8')) as {
+      screens: Array<{ screen_id: string; confirmed_by?: string }>;
+    };
+    const kept = after.screens.find(s => s.screen_id === 'add_bank');
+    assert.ok(kept, 'probe_failed 不得删除旧条目');
+    assert.strictEqual(kept?.confirmed_by, 'human@example.com', 'confirmed_by 真人裁决必须保留');
+    // 诊断必须点名身份确认却无法验真
+    assert.ok(
+      r.errors.some(e => e.includes('add_bank') && /无法验真|无 layoutDumpFn|dump 能力缺失/.test(e)),
+      `诊断须点明无法验真：${r.errors.join('|')}`,
+    );
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('t4_matrix_mixed_round_mismatch_plus_probe_failed_is_ineligible', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-t4-mixed-'));
+  try {
+    // 混合轮：一屏确证错页（mismatched，有页面前缀）、一屏证据不足（probe_failed，
+    // 锁屏形态无前缀）——整轮 fail-safe ineligible，缺屏一律不进 actionable。
+    const r = runCaptureWithDump(root, null, {
+      dumpByScreen: {
+        add_bank: {
+          schema_version: 'hylyre-hypium-ui-dump-v1',
+          tree: {
+            attributes: { bounds: '[0,0][1260,2720]' },
+            children: [
+              { attributes: { id: 'maison:demo:all_banks:all_banks_frame', bounds: '[0,0][1260,2720]' } },
+            ],
+          },
+        },
+        all_banks: {
+          schema_version: 'hylyre-hypium-ui-dump-v1',
+          tree: {
+            attributes: { bounds: '[0,0][1260,2720]' },
+            children: [{ attributes: { text: '上滑解锁', bounds: '[0,2400][1260,2500]' } }],
+          },
+        },
+      },
+    });
+    assert.strictEqual(r.fuseEligibility?.eligible, false, '混合轮必须整轮 ineligible（fail-safe）');
+    assert.deepStrictEqual(r.fuseEligibility?.actionableMissingIds, []);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('t4_matrix_all_mismatched_missing_screens_are_actionable_sorted', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-t4-allmm-'));
+  try {
+    // 两屏均确证错页（各自的 dump 都含**另一页**的页面前缀，目标锚缺失）→ 整轮合格，
+    // actionableMissingIds=去重、稳定排序后的全部缺屏。
+    const r = runCaptureWithDump(root, null, {
+      dumpByScreen: {
+        add_bank: {
+          schema_version: 'hylyre-hypium-ui-dump-v1',
+          tree: {
+            attributes: { bounds: '[0,0][1260,2720]' },
+            children: [
+              { attributes: { id: 'maison:demo:all_banks:all_banks_frame', bounds: '[0,0][1260,2720]' } },
+            ],
+          },
+        },
+        all_banks: {
+          schema_version: 'hylyre-hypium-ui-dump-v1',
+          tree: {
+            attributes: { bounds: '[0,0][1260,2720]' },
+            children: [
+              { attributes: { id: 'maison:demo:add_bank:add_bank_frame', bounds: '[0,0][1260,2720]' } },
+            ],
+          },
+        },
+      },
+    });
+    assert.strictEqual(r.fuseEligibility?.eligible, true, '全 mismatch 缺屏轮须有熔断资格');
+    assert.deepStrictEqual(
+      r.fuseEligibility?.actionableMissingIds,
+      ['add_bank', 'all_banks'],
+      'actionableMissingIds=全部缺屏、稳定排序',
+    );
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('t3_overlay_mismatch_invalidates_same_rule_as_main_screen', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-t3-overlay-'));
+  try {
+    // overlay 屏（P0 屏内 sheet 子节点）走同一 gate：确定性 mismatched → 同样瞬时失效。
+    const doc = {
+      screens: [{
+        id: 'add_bank', priority: 'P0', ref_id: 'ref_a',
+        root: {
+          type: 'navigation_frame', order: 0,
+          children: [{ id: 'my_sheet', type: 'sheet', order: 1 }],
+        },
+      }],
+      tokens: {}, assets: [],
+    } as unknown as UiSpecDoc;
+    const overlayId = 'add_bank__overlay__my_sheet';
+    const identity = new Map([[overlayId, { all_of: [{ id: 'maison:demo:overlay:my_sheet_frame' }] }]]);
+    const shotsDir = path.join(root, 'doc', 'features', 'demo', 'device-testing', 'device-screenshots');
+    fs.mkdirSync(shotsDir, { recursive: true });
+    fs.writeFileSync(path.join(shotsDir, 'visual-diff.json'), JSON.stringify({
+      schema_version: '1.1',
+      screens: [{
+        screen_id: overlayId, verdict: 'pass', screenshot_hash: 'h-old',
+        confirmed_by: 'human@example.com',
+      }],
+    }, null, 2));
+
+    const r = captureVisualDiff({
+      projectRoot: root,
+      feature: 'demo',
+      uiDoc: doc,
+      currentBuildFingerprint: null,
+      // overlay 有到达步骤；主屏空步骤（无 identity 走既有放行路径，专注 overlay 语义）
+      navConfig: { add_bank: [], [overlayId]: [{ touch: { by_id: 'x' } }] },
+      navExecutorFn: () => ({ ok: true }),
+      screenshotFn: args => {
+        fs.mkdirSync(path.dirname(args.destAbs), { recursive: true });
+        fs.writeFileSync(args.destAbs, Buffer.from('png'));
+        return { ok: true };
+      },
+      layoutDumpFn: args => {
+        fs.mkdirSync(path.dirname(args.destAbs), { recursive: true });
+        // overlay 目标锚不中，但树含主屏页面前缀 ⇒ 确定性 mismatched
+        fs.writeFileSync(args.destAbs, JSON.stringify({
+          schema_version: 'hylyre-hypium-ui-dump-v1',
+          tree: {
+            attributes: { bounds: '[0,0][1260,2720]' },
+            children: [
+              { attributes: { id: 'maison:demo:add_bank:add_bank_frame', bounds: '[0,0][1260,2720]' } },
+            ],
+          },
+        }), 'utf-8');
+        return { ok: true };
+      },
+      screenIdentity: identity,
+    });
+    assert.ok((r.p0CaptureFailures ?? []).includes(overlayId), 'overlay 错页记 P0 采集失败');
+    assert.strictEqual(r.fuseEligibility?.eligible, true, 'overlay 与主屏同资格判据');
+    assert.deepStrictEqual(r.fuseEligibility?.actionableMissingIds, [overlayId]);
+    assert.ok(!fs.existsSync(path.join(shotsDir, `shot-${overlayId}.png`)), 'overlay 正式截图零写入');
+    const after = JSON.parse(fs.readFileSync(path.join(shotsDir, 'visual-diff.json'), 'utf-8')) as {
+      screens: Array<{ screen_id: string }>;
+    };
+    assert.ok(!after.screens.some(s => s.screen_id === overlayId), 'overlay mismatch 旧裁决须失效（与主屏同规则）');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test('t4_matrix_none_of_hit_is_not_ownership_proof', () => {

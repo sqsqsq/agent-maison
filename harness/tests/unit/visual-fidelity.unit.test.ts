@@ -4096,5 +4096,290 @@ export function runAll(): UnitCaseResult[] {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  run('t4 e2e: all-mismatched missing-only 轮——capture 端到账本 fuse 整链打通（review P1）', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    const prevRunId = process.env.MAISON_GOAL_RUN_ID;
+    const prevAttempt = process.env.MAISON_GOAL_ATTEMPT;
+    delete process.env.MAISON_GOAL_RUN_ID;
+    delete process.env.MAISON_GOAL_ATTEMPT;
+    try {
+      fs.writeFileSync(
+        path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'),
+        '```yaml\nui_change: new_or_changed\n```\n',
+      );
+      const uiSpec = JSON.stringify({
+        schema_version: '1.0',
+        screens: [{ id: 'home', priority: 'P0', ref_id: 'home', root: { type: 'navigation_frame', order: 0, children: [] } }],
+        tokens: {},
+        assets: [],
+      });
+      fs.writeFileSync(uiSpecAbsPath(root, 'bank-card'), uiSpec, 'utf-8');
+      const identity = new Map([[
+        'home',
+        { all_of: [{ id: 'maison:demo:home:home_frame' }] },
+      ]]);
+      // 采集端：dump 全是他页（应用页面前缀在场、目标锚缺失）→ 全部确定性 mismatched
+      const wrongDump = {
+        schema_version: 'hylyre-hypium-ui-dump-v1',
+        tree: {
+          attributes: { bounds: '[0,0][1260,2720]' },
+          children: [
+            { attributes: { id: 'maison:demo:all_banks:all_banks_frame', bounds: '[0,0][1260,2720]' } },
+          ],
+        },
+      };
+      const cap = captureVisualDiff({
+        projectRoot: root,
+        feature: 'bank-card',
+        uiDoc: JSON.parse(uiSpec),
+        currentBuildFingerprint: null,
+        screenshotFn: args => {
+          fs.mkdirSync(path.dirname(args.destAbs), { recursive: true });
+          fs.writeFileSync(args.destAbs, Buffer.from('png'));
+          return { ok: true };
+        },
+        layoutDumpFn: args => {
+          fs.mkdirSync(path.dirname(args.destAbs), { recursive: true });
+          fs.writeFileSync(args.destAbs, JSON.stringify(wrongDump), 'utf-8');
+          return { ok: true };
+        },
+        screenIdentity: identity,
+      });
+      if (cap.fuseEligibility?.eligible !== true) {
+        throw new Error(`全 mismatched 缺屏轮采集端须给资格，实得 ${JSON.stringify(cap.fuseEligibility)}`);
+      }
+      if (!(cap.fuseEligibility?.actionableMissingIds ?? []).includes('home')) {
+        throw new Error(`缺屏 id 须进 actionableMissingIds：${JSON.stringify(cap.fuseEligibility)}`);
+      }
+      // 零成功采集 → 正式报告不存在（旧条目亦无）——消费端不得在此提前返回
+      const shotsJson = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots', 'visual-diff.json');
+      if (fs.existsSync(shotsJson)) throw new Error('全 mismatch 轮不应产出正式报告');
+      // check-testing 注入同一裁决对象（:2884 生产方式一致）
+      const ctxOpts = {
+        fidelityTarget: 'pixel_1to1' as const,
+        visualFuseEligibility: cap.fuseEligibility,
+      };
+      const r1 = checkVisualDiff(baseCtx(root, ctxOpts));
+      const hit1 = r1[0] as { status: string; details?: string; failure_kind?: string; structured?: VisualDiffStructuredPayload };
+      const p1 = hit1.structured;
+      if (!p1) throw new Error('missing-only 轮须产出结构化 payload（不再被空报告 WARN 拦截）');
+      if (p1.fingerprintable !== true) {
+        throw new Error(`合格缺屏轮 fingerprintable 必须为 true，实得 ${p1.fingerprintable}`);
+      }
+      if (!p1.defect_fingerprints.includes('missing_screen|home')) {
+        throw new Error(`须含 missing_screen|home 指纹：${JSON.stringify(p1.defect_fingerprints)}`);
+      }
+      if (p1.actionable_residual !== true) {
+        throw new Error('确定性缺屏轮 actionable_residual 必须为 true（修采集也是有事可修）');
+      }
+      if (p1.round?.disposition !== 'appended') {
+        throw new Error(`缺屏轮应正常进账本：${JSON.stringify(p1.round)}`);
+      }
+      // 第二轮同签名（伪造上一轮同指纹、不同 screens_hash）→ fused（与合格轮对照同判据）
+      const ledgerPath = visualRoundsLedgerPath(root, 'bank-card');
+      const prior = evaluateVisualRound(ledgerPath, {
+        loopId: p1.loop_id,
+        attemptId: null,
+        goalRunId: null,
+        buildFingerprint: p1.build_fingerprint ?? '',
+        screensHash: 'prev-round-screens',
+        defectFingerprints: p1.defect_fingerprints,
+        sourceFailHitIds: p1.source_fail_hit_ids,
+        fingerprintable: true,
+        awaitHumanOnly: false,
+        actionableResidual: true,
+      });
+      appendVisualRound(ledgerPath, prior.row);
+      const r2 = checkVisualDiff(baseCtx(root, ctxOpts));
+      const hit2 = r2[0] as { details?: string; failure_kind?: string };
+      if (hit2.failure_kind !== 'no_progress_fuse') {
+        throw new Error(`确定性缺屏轮同指纹两轮必须熔断，实得 failure_kind=${hit2.failure_kind}；details=${(hit2.details ?? '').slice(0, 400)}`);
+      }
+      // 无该资格的空报告不得被放行（既有失败语义保持）：清掉资格 → WARN 提前返回
+      const r3 = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const hit3 = r3[0] as { status?: string; details?: string };
+      if (hit3.status === 'FAIL' && /无法解析为可校验报告/.test(hit3.details ?? '')) {
+        throw new Error('无资格时空报告仍应按既有语义处理');
+      }
+      if (hit3.status === 'WARN' && /报告尚未产出/.test(hit3.details ?? '')) {
+        // 旧报告被剪除后 json 缺失——无资格时保持"报告缺失"警告语义（不误放行）
+      } else if (!(hit3.status === 'WARN' || hit3.status === 'FAIL' || hit3.status === 'SKIP')) {
+        throw new Error(`无资格时空报告不得被静默放行，实得 status=${hit3.status}`);
+      }
+    } finally {
+      if (prevRunId === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = prevRunId;
+      if (prevAttempt === undefined) delete process.env.MAISON_GOAL_ATTEMPT; else process.env.MAISON_GOAL_ATTEMPT = prevAttempt;
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+  run('t4 e2e: 混合轮（一屏成功一屏 mismatched）——成功屏照常消费，只缺 mismatched 屏（review P1）', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    const prevRunId = process.env.MAISON_GOAL_RUN_ID;
+    const prevAttempt = process.env.MAISON_GOAL_ATTEMPT;
+    delete process.env.MAISON_GOAL_RUN_ID;
+    delete process.env.MAISON_GOAL_ATTEMPT;
+    try {
+      fs.writeFileSync(
+        path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'),
+        '```yaml\nui_change: new_or_changed\n```\n',
+      );
+      const uiSpec = JSON.stringify({
+        schema_version: '1.0',
+        screens: [
+          { id: 'home', priority: 'P0', ref_id: 'home', root: { type: 'navigation_frame', order: 0, children: [] } },
+          { id: 'all_banks', priority: 'P0', ref_id: 'all_banks', root: { type: 'navigation_frame', order: 0, children: [] } },
+        ],
+        tokens: {},
+        assets: [],
+      });
+      fs.writeFileSync(uiSpecAbsPath(root, 'bank-card'), uiSpec, 'utf-8');
+      const identity = new Map([
+        ['home', { all_of: [{ id: 'maison:demo:home:home_frame' }] }],
+        ['all_banks', { all_of: [{ id: 'maison:demo:all_banks:all_banks_frame' }] }],
+      ]);
+      const wrongDump = (id: string) => ({
+        schema_version: 'hylyre-hypium-ui-dump-v1',
+        tree: {
+          attributes: { bounds: '[0,0][1260,2720]' },
+          children: [{ attributes: { id, bounds: '[0,0][1260,2720]' } }],
+        },
+      });
+      const cap = captureVisualDiff({
+        projectRoot: root,
+        feature: 'bank-card',
+        uiDoc: JSON.parse(uiSpec),
+        currentBuildFingerprint: null,
+        screenshotFn: args => {
+          fs.mkdirSync(path.dirname(args.destAbs), { recursive: true });
+          fs.writeFileSync(args.destAbs, Buffer.from('png'));
+          return { ok: true };
+        },
+        layoutDumpFn: args => {
+          fs.mkdirSync(path.dirname(args.destAbs), { recursive: true });
+          const dump = args.screenId === 'home'
+            ? wrongDump('maison:demo:home:home_frame')   // 目标锚命中 → matched
+            : wrongDump('maison:demo:home:home_frame');  // 目标锚缺失 → mismatched（错页）
+          fs.writeFileSync(args.destAbs, JSON.stringify(dump), 'utf-8');
+          return { ok: true };
+        },
+        screenIdentity: identity,
+      });
+      if (cap.fuseEligibility?.eligible !== true) {
+        throw new Error(`混合轮资格应 eligible（唯一缺屏 all_banks 确证 mismatched）：${JSON.stringify(cap.fuseEligibility)}`);
+      }
+      if (!(cap.fuseEligibility?.actionableMissingIds ?? []).includes('all_banks')) {
+        throw new Error(`混合轮只把 mismatched 屏列入 actionable：${JSON.stringify(cap.fuseEligibility)}`);
+      }
+      // 成功屏（home）进入正式报告，且视作已有人工裁决（fail + must_fix）——必须被消费
+      const shotsJson = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots', 'visual-diff.json');
+      if (!fs.existsSync(shotsJson)) throw new Error('混合轮应产出正式报告（含成功屏）');
+      const report = JSON.parse(fs.readFileSync(shotsJson, 'utf-8')) as { screens: Array<Record<string, unknown>> };
+      const home = report.screens.find(s => s.screen_id === 'home');
+      if (!home) throw new Error(`成功屏 home 应写入报告：${JSON.stringify(report.screens)}`);
+      home.verdict = 'fail';
+      home.must_fix = ['修复 close 与卡面的重叠'];
+      home.reverse_missing = [];
+      home.defects = [{
+        class: 'overlap', element: 'close', bbox: [0.1, 0.1, 0.2, 0.2],
+        severity: 'major', note: 'x', must_fix_refs: [0],
+      }];
+      fs.writeFileSync(shotsJson, JSON.stringify(report), 'utf-8');
+
+      const ctxOpts = {
+        fidelityTarget: 'pixel_1to1' as const,
+        visualFuseEligibility: cap.fuseEligibility,
+      };
+      const r1 = checkVisualDiff(baseCtx(root, ctxOpts));
+      const hit1 = r1[0] as { status: string; details?: string; structured?: VisualDiffStructuredPayload };
+      const d1 = hit1.details ?? '';
+      // 成功屏被消费：screens=1（home 在场）、fail=1（verdict=fail 生效）——不是空骨架全 P0 未覆盖
+      if (!/screens=1/.test(d1) || !/fail=1/.test(d1)) {
+        throw new Error(`成功屏 verdict/defects 必须被消费（screens=1/fail=1）：${d1.slice(0, 400)}`);
+      }
+      const p1 = hit1.structured;
+      if (!p1) throw new Error('混合轮应产出结构化 payload');
+      if (!p1.defect_fingerprints.includes('missing_screen|all_banks')) {
+        throw new Error(`缺屏指纹须含 mismatched 屏：${JSON.stringify(p1.defect_fingerprints)}`);
+      }
+      if (p1.defect_fingerprints.some(f => f === 'missing_screen|home')) {
+        throw new Error(`成功屏 home 不得列入 missing_screen：${JSON.stringify(p1.defect_fingerprints)}`);
+      }
+      if (p1.actionable_residual !== true) {
+        throw new Error('混合轮（有 mismatched 缺屏）actionable_residual 必须为 true');
+      }
+      // P0 未覆盖只报 all_banks，不报 home（成功屏已覆盖）
+      if (!/P0 屏\/overlay 未覆盖或被 skipped\/pending：all_banks/.test(d1)) {
+        throw new Error(`P0 未覆盖应只点名 mismatched 屏：${d1.slice(0, 400)}`);
+      }
+      if (/未覆盖或被 skipped\/pending：home/.test(d1)) {
+        throw new Error(`成功屏 home 不得被判为未覆盖：${d1.slice(0, 400)}`);
+      }
+      // 混合轮同指纹两轮（缺屏指纹相同）→ 也应熔断（内容态缺屏可行动）
+      const ledgerPath = visualRoundsLedgerPath(root, 'bank-card');
+      const prior = evaluateVisualRound(ledgerPath, {
+        loopId: p1.loop_id,
+        attemptId: null,
+        goalRunId: null,
+        buildFingerprint: p1.build_fingerprint ?? '',
+        screensHash: 'prev-round-screens',
+        defectFingerprints: p1.defect_fingerprints,
+        sourceFailHitIds: p1.source_fail_hit_ids,
+        fingerprintable: true,
+        awaitHumanOnly: false,
+        actionableResidual: true,
+      });
+      appendVisualRound(ledgerPath, prior.row);
+      const r2 = checkVisualDiff(baseCtx(root, ctxOpts));
+      const hit2 = r2[0] as { failure_kind?: string };
+      if (hit2.failure_kind !== 'no_progress_fuse') {
+        throw new Error(`混合轮同指纹两轮应熔断（内容态缺屏）：${hit2.failure_kind}`);
+      }
+    } finally {
+      if (prevRunId === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = prevRunId;
+      if (prevAttempt === undefined) delete process.env.MAISON_GOAL_ATTEMPT; else process.env.MAISON_GOAL_ATTEMPT = prevAttempt;
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('t4 e2e: 损坏 JSON 即使有资格也不放行（review P1）', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    const prevRunId = process.env.MAISON_GOAL_RUN_ID;
+    const prevAttempt = process.env.MAISON_GOAL_ATTEMPT;
+    delete process.env.MAISON_GOAL_RUN_ID;
+    delete process.env.MAISON_GOAL_ATTEMPT;
+    try {
+      fs.writeFileSync(
+        path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'),
+        '```yaml\nui_change: new_or_changed\n```\n',
+      );
+      const dir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'visual-diff.md'), '# diff');
+      fs.writeFileSync(path.join(dir, 'visual-diff.json'), '{not json', 'utf-8');
+      const r = checkVisualDiff(baseCtx(root, {
+        fidelityTarget: 'pixel_1to1' as const,
+        visualFuseEligibility: {
+          eligible: true,
+          actionableMissingIds: ['home'],
+          reason: '确定性缺屏轮（资格在场）',
+        },
+      }));
+      const hit = r[0] as { status?: string; details?: string };
+      if (hit.status !== 'FAIL' || !/解析失败/.test(hit.details ?? '')) {
+        throw new Error(`损坏 JSON 不得因资格在场被放行，实得 status=${hit.status} details=${(hit.details ?? '').slice(0, 300)}`);
+      }
+    } finally {
+      if (prevRunId === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = prevRunId;
+      if (prevAttempt === undefined) delete process.env.MAISON_GOAL_ATTEMPT; else process.env.MAISON_GOAL_ATTEMPT = prevAttempt;
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
   return results;
 }

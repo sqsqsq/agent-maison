@@ -1035,54 +1035,105 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     }];
   }
 
-  if (!fs.existsSync(mdPath) && !fs.existsSync(jsonPath)) {
-    return [{
-      id: 'visual_diff',
-      category: 'structure',
-      description: desc,
-      severity: 'MAJOR',
-      status: 'WARN',
-      details:
-        'visual-diff 报告尚未产出。device-testing 须执行 Hylyre 截图 QA + 多模态 vs 原图对照，写入 device-testing/visual-diff.md。',
-      suggestion: '见 device-testing SKILL visual diff 步骤；MVP 先覆盖可直达顶层屏。',
-      affected_files: [reportRel],
-    }];
-  }
+  // t4（plan f3a8c6d2）：确定性 **all-mismatched 缺屏轮（missing-only）**——capture 端
+  // 已确证"本轮全部 P0 缺屏均为应用内错页"（`visualFuseEligibility.eligible=true` 且
+  // actionableMissingIds 非空），但**零成功采集**会使正式报告不产生或产生空 screens：
+  // 身份失配屏本轮零写入、旧裁决在 merge 前被瞬时失效剔除 → json 可能不存在、也可能
+  // 被剪成空 screens 数组。若在此处因"报告缺失/空 screens"提前 WARN/FAIL 返回，
+  // missing_screen 指纹与账本 fuse 永远走不到（t4 正向目标落空）。
+  //
+  // **空骨架的启用范围（review P1 收窄，勿再放宽）**：仅在「正式报告不存在」或
+  // 「json 成功解析且 screens 明确为空数组」时使用 `screens: []` 骨架。部分屏成功、
+  // 部分屏 mismatched 的混合轮（eligible=true + actionableMissingIds 存在，但报告
+  // 非空）**必须走正常解析与消费**——成功屏的 verdict/defects/证据照常参与判定，
+  // 只有 mismatched 的缺屏经资格对象承载；损坏 JSON 维持既有 FAIL（不因资格放行）。
+  // 缺屏指纹来源已移交资格对象，空骨架继续走既有链（P0 未覆盖 FAIL hit 照常产生、
+  // 缺屏指纹与 actionable 全部由资格对象承载）。**没有该资格时保持既有 WARN/FAIL 语义不变**。
+  const missingOnlyEligible =
+    ctx.visualFuseEligibility?.eligible === true &&
+    (ctx.visualFuseEligibility.actionableMissingIds?.length ?? 0) > 0;
 
-  if (!fs.existsSync(jsonPath)) {
-    return [{
-      id: 'visual_diff',
-      category: 'structure',
-      description: desc,
-      severity: 'MAJOR',
-      status: 'WARN',
-      details: 'visual-diff.md 存在但缺少 device-screenshots/visual-diff.json 结构化报告。',
-      affected_files: [reportRel],
-    }];
+  let rep: VisualDiffReport | null = null;
+  let schemaErrors: string[] = [];
+  let uiDoc: ReturnType<typeof loadUiSpecFile> = null;
+  const jsonExists = fs.existsSync(jsonPath);
+  if (!jsonExists) {
+    // 报告不存在：仅确定性 missing-only 轮放行为空骨架；其余保持既有 WARN 语义
+    if (!missingOnlyEligible) {
+      const mdExists = fs.existsSync(mdPath);
+      return [{
+        id: 'visual_diff',
+        category: 'structure',
+        description: desc,
+        severity: 'MAJOR',
+        status: 'WARN',
+        details: mdExists
+          ? 'visual-diff.md 存在但缺少 device-screenshots/visual-diff.json 结构化报告。'
+          : 'visual-diff 报告尚未产出。device-testing 须执行 Hylyre 截图 QA + 多模态 vs 原图对照，写入 device-testing/visual-diff.md。',
+        ...(mdExists ? {} : {
+          suggestion: '见 device-testing SKILL visual diff 步骤；MVP 先覆盖可直达顶层屏。',
+        }),
+        affected_files: [reportRel],
+      }];
+    }
+    rep = { schema_version: '1.1', screens: [] };
+    // 缺失/空报告分支同样需要 ui-spec 的 P0 目标集合（下方 p0Ids 计算）
+    uiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
+  } else {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+    } catch (e) {
+      // 损坏 JSON：**不因资格放行**，维持既有 FAIL
+      return [{
+        id: 'visual_diff',
+        category: 'structure',
+        description: desc,
+        severity: 'MAJOR',
+        status: 'FAIL',
+        details: `visual-diff.json 解析失败：${(e as Error).message}`,
+        affected_files: [reportRel],
+      }];
+    }
+    const parsedEmptyScreens =
+      parsed !== null &&
+      typeof parsed === 'object' &&
+      !Array.isArray(parsed) &&
+      Array.isArray((parsed as { screens?: unknown }).screens) &&
+      ((parsed as { screens: unknown[] }).screens.length === 0);
+    if (missingOnlyEligible && parsedEmptyScreens) {
+      // 合法空 screens（身份失配旧裁决被瞬时失效剔除后的形态）：空骨架继续
+      rep = { schema_version: '1.1', screens: [] };
+      uiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
+    } else {
+      // 非空报告（含部分成功+部分 mismatched 的混合轮）与结构损坏：正常解析/校验
+      uiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
+      const refIds = specMd ? collectAuthoritativeRefIds(specMd, uiDoc) : new Set<string>();
+      const validated = validateVisualDiffJson(parsed, ctx.projectRoot, { authoritativeRefIds: refIds });
+      const bestEffortReport = validated.report;
+      if (validated.fatal || !bestEffortReport) {
+        // root 非法 / screens 数组缺失（含非空但 shape 损坏）：无可门禁对象。
+        // UI change=new_or_changed 且有 P0 目标屏时不得静默放行（视为「无有效视觉
+        // 证据」），升 BLOCKER。
+        const p0Targets = collectP0VisualTargetIds(uiDoc);
+        const fatalBlocker = uiChange === 'new_or_changed' && p0Targets.length > 0;
+        return [{
+          id: 'visual_diff',
+          category: 'structure',
+          description: desc,
+          severity: fatalBlocker ? 'BLOCKER' : 'MAJOR',
+          status: 'FAIL',
+          details: `visual-diff.json 无法解析为可校验报告：${validated.errors.join('；')}`,
+          affected_files: [reportRel],
+        }];
+      }
+      rep = bestEffortReport;
+      schemaErrors = validated.errors;
+    }
   }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
-  } catch (e) {
-    return [{
-      id: 'visual_diff',
-      category: 'structure',
-      description: desc,
-      severity: 'MAJOR',
-      status: 'FAIL',
-      details: `visual-diff.json 解析失败：${(e as Error).message}`,
-      affected_files: [reportRel],
-    }];
-  }
-
-  const uiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
-  const refIds = specMd ? collectAuthoritativeRefIds(specMd, uiDoc) : new Set<string>();
-  const validated = validateVisualDiffJson(parsed, ctx.projectRoot, { authoritativeRefIds: refIds });
-  const bestEffortReport = validated.report;
-  if (validated.fatal || !bestEffortReport) {
-    // root 非法 / screens 数组缺失：无可门禁对象。UI change=new_or_changed 且有 P0 目标屏时
-    // 不得静默放行（视为「无有效视觉证据」），升 BLOCKER。
+  if (!rep) {
+    // 确定赋值不变量：上方每条路径要么已 return，要么已为 rep 赋值。
+    // 此处**不 fail-open**——按"无可门禁对象"显式 FAIL（不得静默返回空结果）。
     const p0Targets = collectP0VisualTargetIds(uiDoc);
     const fatalBlocker = uiChange === 'new_or_changed' && p0Targets.length > 0;
     return [{
@@ -1091,14 +1142,12 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       description: desc,
       severity: fatalBlocker ? 'BLOCKER' : 'MAJOR',
       status: 'FAIL',
-      details: `visual-diff.json 无法解析为可校验报告：${validated.errors.join('；')}`,
+      details: 'visual-diff 报告装载失败（内部不变量违反：无报告且无资格兜底）',
       affected_files: [reportRel],
     }];
   }
 
   // G0：非 fatal 的 schema 问题（缺图 / 非法 ref_id 等）转 finding 追加，绝不掩盖下方实质门禁。
-  const rep = bestEffortReport;
-  const schemaErrors = validated.errors;
   const mustFix = rep.screens.flatMap(s => s.must_fix ?? []);
   const failScreens = rep.screens.filter(s => s.verdict === 'fail');
   const warnScreens = rep.screens.filter(s => s.verdict === 'warn');

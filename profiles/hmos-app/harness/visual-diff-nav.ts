@@ -315,10 +315,11 @@ function parseDumpBounds(raw: unknown): { x1: number; y1: number; x2: number; y2
  *
  * t3（plan f3a8c6d2）：**不可见/零尺寸/屏外节点不得参与身份判定**。
  * 事故（bc-openCard）：`shot-add_card_home_collapsed.png` 实拍为「全部银行」页，却顶着
- * add_card_home_collapsed 身份入库并算出 score_floor=0.997。身份门（runScreenIdentityGate，
- * 653734e3 起就在）与 nav 身份锚（每屏唯一 `<screen>_frame` id）本身都没问题——放行说明
- * 判定被骗过：HarmonyOS Navigation push 新页后旧页组件树仍留在 dump 中，旧页的
- * `add_card_home_collapsed_frame` 于是照样命中 all_of。
+ * add_card_home_collapsed 身份入库并算出 score_floor=0.997。历史条目（
+ * `archive/20260812-pre-refresh/visual-diff.json`）显示其 `layout_dump_status=unavailable`
+ * ——**身份验真在当时没有实际执行**（无 dump 的旧采集路径直接放行），并非"身份门被
+ * 残留旧页节点骗过"。01-08-12 五轮 42 份应用态 dump + 08-13 锁屏/桌面校准 dump 均未
+ * 复现"旧页组件树残留"形态；锁屏/桌面 dump 的 `maison:` 页面组件前缀命中为 0。
  *
  * 剪枝语义（保守，避免过度推断）：
  *   · `visible === 'false'` **明确为假** → 跳过该节点**及其整棵子树**（渲染语义上父不可见
@@ -326,14 +327,13 @@ function parseDumpBounds(raw: unknown): { x1: number; y1: number; x2: number; y2
  *   · 零尺寸/完全屏外 → 只跳过该节点自身，仍遍历子树（滚动容器父子可见性不同向，
  *     不做强假设）。视口取根节点 bounds；根节点无合法 bounds 时不做屏外判定。
  *
- * **已知边界（实测证伪，勿当作根因已修）**：宿主 08-09/08-10 真机 dump 抽样统计
- * `visible="true"` 121 处、`visible="false"` **0 处**——该字段在此宿主上**没有区分度**；
+ * **已知边界（实测校准）**：宿主 08-09/08-10 真机 dump 抽样统计 `visible="true"` 121 处、
+ * `visible="false"` **0 处**——该字段在此宿主上**没有区分度**；
  * `docs/operations/layout-oracle-calibration.md:33` 亦记载"不可见/离屏节点表达方式未知
- * （无 visibility 字段）→ 真机步骤 D4"。若残留旧页节点保持正常全屏 bounds 且 visible=true，
- * 本过滤**不会剪掉它**，错页身份仍会命中。
- * 因此本函数的三类剪枝是**正确但可能无效的加固**（形态出现时必然拦住，此宿主暂未出现），
- * 张冠李戴的根因仍需实机 dump 取证后另定判据（候选：zIndex / hostWindowId / hierarchy /
- * 最上层可见 NavDestination）。plan f3a8c6d2 t3 据此保持未完成。
+ * （无 visibility 字段）→ 真机步骤 D4"。capture 链 dump 亦无 zIndex/hostWindowId/
+ * hierarchy 字段。故本函数的三类剪枝是**正确但可能无效的加固**，身份判定的主判据是
+ * runScreenIdentityGate 的**页面组件前缀所有权**（见 visual-diff-capture.ts）：有前缀且
+ * 锚缺失 = 应用页面树在场但错页（mismatched）；无前缀 = 锁屏/桌面/系统态（probe_failed）。
  */
 export function extractLayoutDumpFacets(dumpJson: unknown): {
   texts: string[];

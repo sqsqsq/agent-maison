@@ -197,8 +197,11 @@ export function runAll(): UnitCaseResult[] {
   // ==========================================================================
   // t3（plan f3a8c6d2）：身份判定只认可见节点。
   // 事故：shot-add_card_home_collapsed.png 实拍为「全部银行」页却以添卡首页身份入库并
-  // 算出 score_floor=0.997。身份门与 nav 锚（每屏唯一 <screen>_frame id）都在且正确，
-  // 放行只能是被 dump 里残留的旧页节点骗过（Navigation push 后旧页组件树仍在树中）。
+  // 算出 score_floor=0.997。事后取证（archive/20260812-pre-refresh/visual-diff.json）：
+  // 该条目 layout_dump_status=unavailable——身份验真当时未执行（无 dump 采集路径直接
+  // 放行），并非"身份门被残留旧页节点骗过"；08-13 锁屏/桌面校准 dump 亦未复现旧页树
+  // 残留。本组用例验证的仍是**必要的加固**：可见性剪枝在宿主无 visible 字段时无区分度，
+  // 但显式 visible=false 的节点不参与身份判定是正确语义，保留。
   // ==========================================================================
   run('t3: 明确 visible=false 的子树整体不参与身份判定（旧页残留不得伪命中）', () => {
     const dump = {
@@ -365,13 +368,13 @@ export function runAll(): UnitCaseResult[] {
       });
       if (canonicalShots !== 0) throw new Error('mismatch 屏不得写正式截图');
       if (!(r.p0CaptureFailures ?? []).includes('add_bank_collapsed')) throw new Error('须记 P0 采集失败');
-      // t4：本夹具的 identity 是**纯文本锚**，dump 里拿不到应用组件 id ⇒ 无法证明
-      // "应用在前台、只是错页"，故归 probe_failed（保守）。零写入/证据图/记 P0 失败
-      // 这三条既有行为不变——它们与所有权判定无关。
-      // 记法仍遵循 openspec（screen_identity_mismatch），但措辞不得断言成因。
+      // t4/t3：本夹具的 identity 是**纯文本锚**，appComponentIdPrefixes 推导不出页面
+      // 组件前缀，dump 中亦无前缀 ⇒ 无法证明"应用页面树在场"，归 probe_failed（保守）。
+      // 零写入/证据图/记 P0 失败这三条既有行为不变——它们与所有权判定无关。
+      // 记法仍遵循 openspec（screen_identity_mismatch），并如实标注无页面组件前缀。
       const detail = r.errors.find(e => e.includes('add_bank_collapsed')) ?? '';
-      if (!/screen_identity_mismatch/.test(detail) || !/成因未确证/.test(detail)) {
-        throw new Error(`须记 spec 标识并标注成因未确证：${r.errors.join('|')}`);
+      if (!/screen_identity_mismatch/.test(detail) || !/无页面组件前缀/.test(detail)) {
+        throw new Error(`须记 spec 标识并标注无页面组件前缀（probe_failed）：${r.errors.join('|')}`);
       }
       if (r.fuseEligibility?.eligible !== false) {
         throw new Error('拿不到应用所有权事实时不得给熔断资格');

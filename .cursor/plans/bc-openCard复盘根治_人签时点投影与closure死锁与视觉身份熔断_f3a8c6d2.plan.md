@@ -303,7 +303,7 @@ todos:
       visible/bounds/zIndex 实际取值。
       当前验收：unit 3232+、fixtures 44/44、typecheck 干净；三处突变（去可见性剪枝 /
       不丢弃失配屏旧条目 / 缺屏不计 actionable）各自被对应用例抓住。
-    status: pending
+    status: completed
   - id: t4-fuse-blindspot-empty-fingerprint
     content: >
       【P0】熔断资格补齐——**内容可行动的 P0 缺屏**进入现有 actionable 与指纹
@@ -441,7 +441,7 @@ todos:
       验收：unit 3234/3234、fixtures 44/44、typecheck 干净；七处突变（缺屏不计 actionable /
       去可见性剪枝 / 不丢弃旧条目 / 删 check-testing 注入接线 / 去 fail_hit 元 /
       overlay 不记失效 / **去资格闸短路** / 去"链路存活"资格）各自被对应用例抓住。
-    status: in_progress
+    status: completed
   - id: t5-degradation-wording-recovery-refcheck
     content: >
       【P1】保真降级修补：现有 capability 通道阻断 / 措辞修正 / 现有机制恢复。
@@ -798,3 +798,69 @@ capability/device gate（更靠后）。
   偏差（surface-plan-deviations 纪律），不在本 plan 内扩容。
 - codex 审计中两条不收录为缺陷：coding/ut receipt claimed_attempt_id 空与
   next.json mode=manual——goal 中断后手动驱动的合法状态，非缺陷。
+
+# 实施记录（2026-08-13，t3/t4 收口）
+
+> 按 review 要求，实施记录挂在 plan 文末，不塞入 frontmatter content（曾因缩进损坏
+> YAML，已回退并在此区外追加）。
+
+## t3（截图身份验真）完成记录
+
+1. **真实漏口确认**：历史 0.997 条目 `layout_dump_status=unavailable`（
+   `archive/20260812-pre-refresh/visual-diff.json` 实证）——事故来源是"confirmed
+   identity 但无 layoutDumpFn 时 gate 直接返回 matched，身份验真未执行即放行"，并非
+   "身份门被残留旧页节点骗过"；08-13 宿主校准（lock-screen.json 119 节点 /
+   desktop.json 231 节点，`maison:` 页面组件前缀 0 命中）未复现旧页树残留形态，
+   原表述已收回。
+2. **runScreenIdentityGate**（visual-diff-capture.ts）：confirmed identity 无
+   layoutDumpFn ⇒ probe_failed（不再 matched、正式目录零写入，堵住历史漏口）；
+   identity 不中 + 页面组件前缀在场 ⇒ mismatched；不中 + 无前缀（含仅宿主 bundle
+   图标的桌面 dump）⇒ probe_failed。
+3. **前缀收紧（review P1）**：`appComponentIdPrefixes` 只认规范 `maison:` 前缀——
+   任意三段式冒号 id（`foo:bar:*`）不推导为页面组件前缀，配套反例用例
+   （`t3_non_maison_colon_ids_are_not_page_prefix_probe_failed`）钉死：非 Maison
+   冒号 ID 只得 probe_failed，不删旧裁决、不进熔断。
+4. **identityMismatchIds 接线**：主屏与 overlay 同规则，仅确定性 mismatched 加入 ⇒
+   merge 时经 invalidateScreenIds 剔除旧条目（旧 0.997 错页高分瞬时失效）；
+   probe_failed 绝不加入（confirmed_by 真人裁决保留）。
+5. **all-mismatched 缺屏轮消费端打通（review P1）**：全错页轮零成功采集 → 正式
+   报告缺失/空 screens，checkVisualDiff 曾在此提前 WARN/FAIL 返回，missing_screen
+   指纹与账本 fuse 永远走不到。现复用 `ctx.visualFuseEligibility`（eligible=true 且
+   actionableMissingIds 非空）为空 screens 骨架放行，P0 未覆盖 FAIL hit 照常产生、
+   指纹与 actionable 由资格对象承载；无该资格时空报告保持既有 WARN/FAIL 语义。
+   端到端用例 `t4 e2e: all-mismatched missing-only 轮` 贯穿
+   captureVisualDiff → checkVisualDiff → ledger → fuse。
+6. 测试走真实生产接线（structured-findings.unit.test.ts 18 用例 + visual-diff-nav
+   集成 + visual-fidelity e2e）：无误 dump 能力 / 锁屏 / 桌面 bundle 图标 /
+   非 Maison 前缀 / 应用内错页含旧条目失效 / 正确页 / 混合轮 / 全 mismatch /
+   overlay 一致性 / missing-only 两轮真熔断。
+
+## t4（缺屏熔断资格）完成记录
+
+1. `resolveVisualFuseEligibility` 最终矩阵：无 P0 缺屏 → eligible（既有 defects
+   通道）；**全部缺屏均确证 mismatched** → eligible=true 且 actionableMissingIds=
+   去重、稳定排序后的全部缺屏 id（进 missing_screen 指纹与既有两轮阈值）；**任一
+   probe_failed 或无 screenEvidence**（导航失败/截图失败/golden 失败等）→ 整轮
+   ineligible、actionableMissingIds=[]。混合轮 fail-safe，环境阻断绝不改口成
+   no_progress_fuse；element_absent/screensWritten/none_of/bundle 命中旧代理未恢复。
+2. 消费端沿用既有裁决通道并补 missing-only 接线（review 二轮修正）：check-testing
+   在 capture 未运行时补 `CAPTURE_NOT_RUN_ELIGIBILITY`；visual-diff-check 用同一
+   `visualFuseEligibility` 同时约束 `fingerprintable` 与 `actionable_residual`；缺屏
+   签名 `missing_screen|<id>` 与 `fail_hit|<id>` 并入现有 roundFingerprints。
+   **空骨架启用范围（review 收窄）**：仅在正式报告不存在、或 json 成功解析且
+   screens 明确为空数组时使用 `screens: []` 骨架；部分成功+部分 mismatched 的
+   混合轮走正常解析消费（成功屏 verdict/defects 照常参与、P0 未覆盖只点名
+   mismatched 屏）；损坏 JSON 维持既有 FAIL（不因资格放行）；无 fail-open 兜底
+   （`if (!rep)` 显式 FAIL）。
+3. 端到端对照组（visual-fidelity）：合格轮同指纹两轮真熔断（对照组）；不合格轮
+   （capture_not_run）同一链路上绝不熔断；missing-only 全错页轮经真实
+   captureVisualDiff 产出资格后两轮 fuse 打通。
+
+## 验收结果（t3/t4 共同）
+
+- `cd harness && npm test`：typecheck 干净 + unit **3257/3257** + fixtures **44/44**
+- `node scripts/check-plan-version.mjs`：PASS
+- `npm run openspec:validate`：34/34 PASS
+- `git diff --check`：干净
+- frontmatter YAML 经仓内 `yaml` 解析器实测合法（此前 review 抓出的缩进损坏已修复）
+- t7 不在本批关闭（仍 in_progress，待 OpenSpec 3.2 与发布/宿主正式验收）
