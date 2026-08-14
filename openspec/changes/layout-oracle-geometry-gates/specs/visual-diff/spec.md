@@ -110,10 +110,14 @@ Enforcement: `skills/reference/device-testing-workflow-detail.md`, `skills/featu
 ### Requirement: Layout dump files have one canonical address
 
 Layout dump files SHALL be addressed through a single resolution path. New writes SHALL use the
-canonical sanitized slug; a legacy raw `screen_id` filename SHALL be accepted as a read-only
-compatibility fallback. When both a canonical-slug file and a legacy-raw file exist for the same
-screen, or when two distinct `screen_id` values normalize to the same slug, resolution SHALL
-fail closed rather than pick either candidate.
+canonical sanitized slug (`layout-<sanitizeVisualDiffScreenSlug(screen_id)>.json`,
+`__overlay__` 等归一为单下划线); a legacy raw `screen_id` filename SHALL be accepted as a
+read-only compatibility fallback. When both a canonical-slug file and a legacy-raw file exist for
+the same screen, or when two distinct `screen_id` values normalize to the same slug, resolution
+SHALL fail closed rather than pick either candidate; capture SHALL detect slug collisions on the
+target set before crawling and skip **both** conflicting screens (owner and collider) with a P0
+capture failure — record `layout_dump_status` readers (`visual-diff-check`, calibrate,
+runtime-mount-conformance) SHALL all use the same shared resolver.
 
 #### Scenario: canonical slug wins for new writes
 
@@ -126,12 +130,13 @@ fail closed rather than pick either candidate.
 - **WHEN** only a legacy `layout-<raw screen_id>.json` exists for a screen
 - **THEN** resolution SHALL accept it and the report SHALL note the legacy address
 
-#### Scenario: ambiguous address fails closed
+#### Scenario: canonical/legacy coexistence fails closed
 
 - **WHEN** both canonical-slug and legacy-raw dumps exist for one screen, or two `screen_id`
   values collide after normalization
 - **THEN** resolution SHALL fail closed with an explicit ambiguity diagnostic, and SHALL NOT
-  silently prefer one file
+  silently prefer one file; capture SHALL skip both colliding screens (owner and collider) with
+  zero writes
 
 #### Scenario: naming mismatch is not reported as corruption
 

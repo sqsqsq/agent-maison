@@ -28,6 +28,7 @@ import {
   LOCATOR_COVERAGE_THRESHOLD,
   type LayoutOracleScreenResult,
 } from '../../layout-oracle-check';
+import { collectLocatorRequiredElements } from '../../coding-visual-parity-check';
 import {
   collectSelfreportDegeneracy,
   validateVisualDiffJson,
@@ -208,8 +209,10 @@ cases.push({
   fn: () => {
     const screen = mkScreen({
       id: 'sheet',
+      // S6（e9c4a7f3）：A 类需要声明的元素参与 locator-required 分母——title_row 声明
+      // bbox 成为 bbox_geometry_target，否则新收窄分母不含纯展示节点。
       root: uiNode({ type: 'overlay_panel', order: 0, children: [
-        uiNode({ type: 'content_display', order: 1, id: 'title_row' }),
+        uiNode({ type: 'content_display', order: 1, id: 'title_row', bbox: [0.03, 0.33, 0.94, 0.06] }),
       ] }),
     });
     const res = runOracle(screen, mkDump([
@@ -225,7 +228,7 @@ cases.push({
     const screen2 = mkScreen({
       id: 's2',
       root: uiNode({ type: 'navigation_frame', order: 0, children: [
-        uiNode({ type: 'content_display', order: 1, id: 'runaway' }),
+        uiNode({ type: 'content_display', order: 1, id: 'runaway', bbox: [0.05, 0.1, 0.9, 0.05] }),
       ] }),
     });
     const res2 = runOracle(screen2, mkDump([node('[1200,2100][1400,2200]', { id: 'runaway' })]));
@@ -238,10 +241,12 @@ cases.push({
   fn: () => {
     const screen = mkScreen({
       id: 's',
+      // S6（e9c4a7f3）：B 类断言目标须进 locator-required 分母——a/b/c 声明 bbox
+      // 成为 bbox_geometry_target（纯展示节点不再被全 id 分母纳入）。
       root: uiNode({ type: 'navigation_frame', order: 0, children: [
-        uiNode({ type: 'content_display', order: 1, id: 'a', layout_group: 'row1' }),
-        uiNode({ type: 'content_display', order: 2, id: 'b', layout_group: 'row1' }),
-        uiNode({ type: 'content_display', order: 3, id: 'c' }),
+        uiNode({ type: 'content_display', order: 1, id: 'a', layout_group: 'row1', bbox: [0.05, 0.1, 0.9, 0.05] }),
+        uiNode({ type: 'content_display', order: 2, id: 'b', layout_group: 'row1', bbox: [0.05, 0.35, 0.9, 0.05] }),
+        uiNode({ type: 'content_display', order: 3, id: 'c', bbox: [0.05, 0.6, 0.9, 0.05] }),
       ] }),
     });
     // a/b 声明同组，但运行时纵向分离且不共直接父容器 → B1 warn；c(order=3) 在 b(order=2) 上方 → B3 warn
@@ -540,6 +545,225 @@ cases.push({
       source: { producer: 'T8', finding_id: 'aaaa111122223333', signal: 'B1_sibling_order' },
     });
     assert(t8a === t8aAgain, '同 finding_id：像素抖动/措辞改写仍同指纹（稳定身份跨轮成立）');
+  },
+});
+
+// ============================================================================
+// S6（e9c4a7f3 s6-locator-calibrate）：locator-required 七类分母 + 覆盖
+// ============================================================================
+
+cases.push({
+  name: 'S6: collectDeclaredElements 只收 locator-required 集——纯展示节点不进分母',
+  fn: () => {
+    const screen = mkScreen({
+      id: 's',
+      must_have_elements: ['mh_a'],
+      forbidden_overlap: [['fo_b', 'fo_c']],
+      protected_region: ['prot_d'],
+      root: uiNode({ type: 'navigation_frame', order: 0, children: [
+        // 展示型（无 bbox/无 block/非交互）——旧全 id 分母会收，新分母不收
+        uiNode({ type: 'content_display', order: 1, id: 'plain_deco' }),
+        // bbox 几何断言目标 → 收
+        uiNode({ type: 'content_display', order: 2, id: 'bbox_t', bbox: [0.05, 0.1, 0.9, 0.1] }),
+        // kit block 实例 → 收
+        uiNode({ type: 'content_display', order: 3, id: 'kit_inst', block: 'nav_bar' }),
+        // 交互类型（nav 缺失时的回退）→ 收；显式启用回退（模拟 nav 不存在场景）
+        uiNode({ type: 'primary_button', order: 4, id: 'act_btn' }),
+      ] }),
+    });
+    const els = collectDeclaredElements(screen, { interactiveFallbackEnabled: true });
+    const ids = new Set(els.map(e => e.elementId));
+    for (const expected of ['bbox_t', 'kit_inst', 'act_btn', 'mh_a', 'fo_b', 'fo_c', 'prot_d']) {
+      assert(ids.has(expected), `locator-required 应含 ${expected}，实得 ${JSON.stringify(els.map(e => e.elementId))}`);
+    }
+    assert(!ids.has('plain_deco'), '纯展示节点不得进 locator-required 分母');
+  },
+});
+
+cases.push({
+  name: 'S6: nav 步骤触达 by_id 进分母（测试步骤触达语义）；覆盖率随之下降',
+  fn: () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 's6-nav-'));
+    try {
+      // nav 2.0：screen_b 的步骤 touch by_id=nav_target（且该节点无 bbox/block/交互类型）
+      const navDir = path.join(root, 'doc', 'features', 'demo', 'device-testing');
+      fs.mkdirSync(navDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(navDir, 'visual-diff-nav.json'),
+        JSON.stringify({
+          schema_version: '2.0',
+          screens: {
+            screen_b: {
+              steps: [{ touch: { by_id: 'maison:demo:screen_b:nav_target' } }],
+            },
+          },
+        }),
+        'utf-8',
+      );
+      const screen = mkScreen({
+        id: 'screen_b',
+        root: uiNode({ type: 'navigation_frame', order: 0, children: [
+          uiNode({ type: 'content_display', order: 1, id: 'maison:demo:screen_b:nav_target' }),
+        ] }),
+      });
+      // 无 navStepIds → 纯展示节点不进分母 → 分母空（coverage=1）
+      const empty = collectDeclaredElements(screen);
+      assert(!empty.some(e => e.elementId === 'maison:demo:screen_b:nav_target'), '无 nav 上下文时纯展示不参与');
+      // 带 navStepIds → 触达目标进分母
+      const req = collectLocatorRequiredElements(screen, new Set(), {
+        navStepIds: new Set(['maison:demo:screen_b:nav_target']),
+      });
+      assert(req.some(e => e.elementId === 'maison:demo:screen_b:nav_target' && e.reason === 'nav_step_target'), 'nav 触达目标入分母');
+      const withNav = collectDeclaredElements(screen, { navStepIds: new Set(['maison:demo:screen_b:nav_target']) });
+      assert(withNav.some(e => e.elementId === 'maison:demo:screen_b:nav_target'), 'nav 上下文下进分母');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  },
+});
+
+cases.push({
+  name: 'S6: attest 元素并入分母；T8 coverage 反映收窄分母',
+  fn: () => {
+    const screen = mkScreen({
+      id: 's',
+      root: uiNode({ type: 'navigation_frame', order: 0, children: [
+        uiNode({ type: 'content_display', order: 1, id: 'att_el', bbox: [0.05, 0.1, 0.9, 0.1] }),
+      ] }),
+    });
+    const req = collectLocatorRequiredElements(screen, new Set(), {
+      attestRegions: new Set(['att_el', 'att_only']),
+    });
+    assert(req.some(e => e.elementId === 'att_only' && e.reason === 'region_attest_element'), 'attest region 入分母');
+    // T8 集成：att_only 无法定位（dump 无该 id）→ 覆盖率下降
+    const res = collectLayoutOracleForScreen({
+      screenId: 's',
+      screen,
+      dump: parseHypiumDump(mkDump([node('[40,200][640,320]', { id: 'att_el' })]))!,
+      locatorCtx: { attestRegions: new Set(['att_el', 'att_only']) },
+    });
+    assert(res.coverage < 1 && res.coverage >= 0.5, `attest 不可定位应拉低覆盖率：${res.coverage}`);
+  },
+});
+
+cases.push({
+  name: 'S6: attest/nav 上下文按屏隔离——A 屏区域与触达不污染 B 屏分母',
+  fn: () => {
+    const screenA = mkScreen({
+      id: 'screen_a',
+      root: uiNode({ type: 'navigation_frame', order: 0, children: [
+        // 纯展示节点——仅凭 A 屏 attest 才进分母
+        uiNode({ type: 'content_display', order: 1, id: 'only_a_attested' }),
+      ] }),
+    });
+    const screenB = mkScreen({
+      id: 'screen_b',
+      root: uiNode({ type: 'navigation_frame', order: 0, children: [
+        uiNode({ type: 'content_display', order: 1, id: 'only_a_attested' }),
+        uiNode({ type: 'content_display', order: 2, id: 'b_own', bbox: [0.1, 0.1, 0.5, 0.1] }),
+      ] }),
+    });
+    // A 屏的 attest region 只该进 A 屏分母——B 屏拿 A 的 attest 会被污染
+    const reqBWithAGlobbed = collectLocatorRequiredElements(screenB, new Set(), {
+      attestRegions: new Set(['only_a_attested']), // 模拟全局汇总把 A 的区域塞给 B
+    });
+    assert(reqBWithAGlobbed.some(e => e.elementId === 'only_a_attested'), '旧全局口径下 B 被 A 污染');
+    // 按屏上下文：B 屏的 attest 集合不含 A 的区域 → 没有 A 的元素
+    const backend = require('../../coding-visual-parity-check') as typeof import('../../coding-visual-parity-check');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 's6-isolate-'));
+    try {
+      const navDir = path.join(root, 'doc', 'features', 'demo', 'device-testing');
+      fs.mkdirSync(navDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(navDir, 'visual-diff-nav.json'),
+        JSON.stringify({
+          schema_version: '2.0',
+          screens: { screen_a: { steps: [{ touch: { by_id: 'only_a_attested' } }] } },
+        }),
+        'utf-8',
+      );
+      const navByScreen = backend.collectNavStepTargetIdsByScreen(root, 'demo');
+      assert(navByScreen.has('screen_a'), 'A 屏有触达');
+      assert(!navByScreen.has('screen_b'), 'B 屏无触达（隔离）');
+      assert(navByScreen.get('screen_a')!.has('only_a_attested'), 'A 屏触达 id 正确');
+      // 用按屏上下文：B 不因 A 的触达进分母
+      const reqBIsolated = collectLocatorRequiredElements(screenB, new Set(), {
+        navStepIds: navByScreen.get('screen_b') ?? new Set(),
+        attestRegions: new Set(),
+      });
+      assert(!reqBIsolated.some(e => e.elementId === 'only_a_attested'), 'B 屏分母不得含 A 屏 attest/触达元素');
+      assert(reqBIsolated.some(e => e.elementId === 'b_own'), 'B 屏自身 bbox 元素仍在分母');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  },
+});
+
+cases.push({
+  name: 'S6: within.by_id 递归提取——嵌套 selector 内 by_id 也进分母',
+  fn: () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 's6-within-'));
+    try {
+      const navDir = path.join(root, 'doc', 'features', 'demo', 'device-testing');
+      fs.mkdirSync(navDir, { recursive: true });
+      // 真实形态：scroll_to 带 in.by_type、touch 带 within.by_id 嵌套
+      fs.writeFileSync(
+        path.join(navDir, 'visual-diff-nav.json'),
+        JSON.stringify({
+          schema_version: '2.0',
+          screens: {
+            s1: {
+              steps: [
+                { scroll_to: { by_id: 'list_anchor', in: { by_type: 'List' } } },
+                { touch: { within: { by_id: 'cell_row' }, by_id: 'inner_btn' } },
+              ],
+            },
+          },
+        }),
+        'utf-8',
+      );
+      const backend = require('../../coding-visual-parity-check') as typeof import('../../coding-visual-parity-check');
+      const navByScreen = backend.collectNavStepTargetIdsByScreen(root, 'demo');
+      const ids = navByScreen.get('s1');
+      assert(ids, 's1 应有触达集合');
+      assert(ids!.has('list_anchor'), 'scroll_to.in 内 by_id 递归提取');
+      assert(ids!.has('cell_row'), 'within.by_id 递归提取');
+      assert(ids!.has('inner_btn'), '顶层 by_id 提取');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  },
+});
+
+cases.push({
+  name: 'S6: nav 存在时不启用 interactive 类型回退——仅在 nav 缺失时启发式兜底',
+  fn: () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 's6-fallback-'));
+    try {
+      const screen = mkScreen({
+        id: 's',
+        root: uiNode({ type: 'navigation_frame', order: 0, children: [
+          // 交互类型节点但无任何 by_id 触达
+          uiNode({ type: 'primary_button', order: 1, id: 'btn_a' }),
+          uiNode({ type: 'list_selection', order: 2, id: 'opt_b' }),
+        ] }),
+      });
+      const navDir = path.join(root, 'doc', 'features', 'demo', 'device-testing');
+      fs.mkdirSync(navDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(navDir, 'visual-diff-nav.json'),
+        JSON.stringify({ schema_version: '2.0', screens: {} }),
+        'utf-8',
+      );
+      const backend = require('../../coding-visual-parity-check') as typeof import('../../coding-visual-parity-check');
+      const navExists = backend.navConfigExists(root, 'demo');
+      assert(navExists, 'nav 配置存在');
+      // nav 存在且本屏无触达 → 不得启用 interactive 回退
+      const withNav = collectLocatorRequiredElements(screen, new Set(), {
+        interactiveFallbackEnabled: !navExists,
+      });
+      assert(!withNav.some(e => e.reason === 'interactive'), 'nav 在场时不得拿交互类型凑分母');
+      // nav 缺失 → 启发式回退可用
+      const noNav = collectLocatorRequiredElements(screen, new Set(), {
+        interactiveFallbackEnabled: true,
+      });
+      assert(noNav.some(e => e.elementId === 'btn_a' && e.reason === 'interactive'), 'nav 缺失时交互类型回退');
+      assert(noNav.some(e => e.elementId === 'opt_b' && e.reason === 'interactive'), 'nav 缺失时 list_selection 回退');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
   },
 });
 

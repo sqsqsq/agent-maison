@@ -42,6 +42,7 @@ import {
   loadExplicitSkipTcIds,
   lintDerivedHylyrePlanSteps,
   lintHylyrePlanStepRules,
+  prepareFreshHylyreRunDir,
   type NavLintViolation,
   type StepLintViolation,
 } from './utils/derived-hylyre-plan';
@@ -2628,7 +2629,29 @@ function checkDeviceTestRunGate(
     }
 
     const bundleName = readBundleNameFromAppScope(ctx.projectRoot);
-    const hylyreOutDir = path.dirname(derivedPath);
+    // run-directory-freshness（plan 420a5005）：每次执行新建 `<timestamp>/hylyre/` 目录并
+    // 原样复制选中的派生计划（含 derive-manifest.json）；本轮 report/trace/failures 全写
+    // 新目录。原派生目录保持字节不变（只读输入）；目录冲突 fail-closed，不覆盖不复用。
+    // 新目录 mtime 最新 → 既有选择器/evidence 消费者自然落在此目录，无需改消费者。
+    const freshRun = prepareFreshHylyreRunDir({
+      reportsBase,
+      sourceHylyrePlanAbsPath: path.resolve(derivedPath),
+    });
+    if (!freshRun.ok) {
+      return [
+        {
+          id,
+          category: 'structure',
+          description: desc,
+          severity: 'BLOCKER',
+          status: 'FAIL',
+          details: `无法为本轮执行准备全新目录（run-directory-freshness）：${freshRun.error}`,
+          suggestion: '勿复用/覆盖旧 timestamp 目录；清理冲突目录或等待下一轮新目录后重试。',
+        },
+      ];
+    }
+    const hylyreOutDir = freshRun.runDir;
+    const runPlanPath = freshRun.hylyrePlanAbsPath;
     const hylyreCfg = resolveHylyreToolConfig(ctx.projectRoot);
     const appSnapshotCacheAbs = path.resolve(ctx.projectRoot, hylyreCfg.app_snapshot_cache_dir);
     fs.mkdirSync(appSnapshotCacheAbs, { recursive: true });
@@ -2644,7 +2667,7 @@ function checkDeviceTestRunGate(
       feature: ctx.feature,
       phase: ctx.phase,
       pythonPath: ready.pythonPath,
-      derivedPlanPath: path.resolve(derivedPath),
+      derivedPlanPath: runPlanPath,
       reportOutPath: path.resolve(path.join(hylyreOutDir, 'test-report.md')),
       traceOutPath: path.resolve(path.join(hylyreOutDir, 'trace.json')),
       bundleName,

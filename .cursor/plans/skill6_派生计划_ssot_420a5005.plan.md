@@ -64,7 +64,7 @@ todos:
       **开工前置**：本项改 `check-testing.ts`，与 `f3a8c6d2` 有交叉——须待 f3a8c6d2 提交后
       对新基线重新核对再动手。
       不改前 6 项的历史完成状态——它们按当时范围确实交付。
-    status: pending
+    status: completed
 isProject: false
 ---
 
@@ -269,3 +269,25 @@ Agent 在 Skill 6 会话中：harness FAIL → 读 hint → 写**新** `testing/
 2. 新派生目录 mtime 最新且覆盖（或登记 skip）→ harness **PASS**，Hylyre 跑完整派生集。
 3. `npm run test:unit` 新增用例全绿。
 4. Skill 6 文档与 verify-testing 与行为一致。
+
+
+# 实施记录（2026-08-14，run-directory-freshness 收口·二轮 review 修复）
+
+> 只改 todo frontmatter 状态，不改正文；记录追加在文末。二轮 review 有 1 组 P1，已修复。
+
+## 一轮实现（见初版记录文案，git history 前轮）
+
+## 二轮 review P1 修复（2026-08-14）
+- **毫秒精度**：timestamp 从秒级截断改为 `<YYYYMMDD>T<HHMMSS>Z-<ms>`（保留毫秒），
+  同秒连续执行仍互异；hylyreRunTimestamp 形态用例更新 + 同秒不同毫秒用例。
+- **原子认领**：目录占位从 `existsSync + mkdirSync({recursive:true})`（存在 TOCTOU）
+  改为**排他式原子 mkdir**（非 recursive；已存在即 `EEXIST` → fail-closed，零写入、
+  不覆盖、不复用）。prepareFreshHylyreRunDir 捕获 EEXIST 返回 BLOCKER 文案；冲突/源缺失
+  两用例保留并适配。
+- **验收**：typecheck 干净；`cd harness && npm test` unit **3276/3276**、fixtures **44/44**
+  （derived-hylyre-plan 22/22）；openspec:validate 34/34；check-plan-version PASS；
+  `git diff --check` 干净。
+- OpenSpec：条款归入新建最小 active change `device-test-run-directory-freshness`
+  （specs/harness-gates delta，含毫秒+原子 mkdir 语义与两 Scenario）；canonical
+  harness-gates 已还原（无直改残留），后续经 archive 合入。
+- 未提交，等待三批统一提交策略。

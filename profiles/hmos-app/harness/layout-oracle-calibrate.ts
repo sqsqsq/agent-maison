@@ -33,7 +33,13 @@ import {
 } from './layout-oracle-check';
 import { collectP0VisualTargetIds } from './visual-diff-targets';
 import { canonicalOverlayBase } from './visual-diff-nav';
-import { deviceScreenshotsDir } from './visual-diff-capture';
+import { deviceScreenshotsDir, resolveLayoutDumpPath } from './visual-diff-capture';
+import {
+  collectNavIdentityIdMembers,
+  collectNavStepTargetIdsByScreen,
+  collectRegionAttestElementIdsByScreen,
+  navConfigExists,
+} from './coding-visual-parity-check';
 import { cropAssetFromBbox, isJimpAvailable } from './image-toolkit';
 import {
   sampleQuiescent,
@@ -155,8 +161,14 @@ export function runLayoutOracleCalibration(opts: {
   const screensMissingDump: string[] = [];
   const dumps = new Map<string, ParsedLayoutDump>();
   for (const id of p0Ids) {
-    const dumpAbs = path.join(reportDir, `layout-${id}.json`);
-    const dump = loadLayoutDumpFile(dumpAbs);
+    // t2b（plan c6d8f2b4）：统一寻址——canonical slug 优先，legacy raw 兼容；冲突 fail-closed
+    const resolved = resolveLayoutDumpPath(reportDir, id);
+    if (resolved.status === 'conflict') {
+      screensMissingDump.push(`${id}（命名冲突：canonical 与 legacy 并存，须清理后重采）`);
+      continue;
+    }
+    const dumpAbs = resolved.status === 'missing' ? '' : resolved.abs;
+    const dump = dumpAbs ? loadLayoutDumpFile(dumpAbs) : null;
     if (dump) {
       dumps.set(id, dump);
       screensAnalyzed.push(id);
@@ -193,10 +205,19 @@ export function runLayoutOracleCalibration(opts: {
     ...newItem('locator_coverage', '.id() 覆盖率（exact_id/unique_text/structural/unmatched 分布，D3 半自动）', 'automated_conclusion'),
     per_screen: [],
   };
+  // S6（e9c4a7f3）：按屏隔离上下文 + nav 缺失才启用交互回退，预收集一次
+  const navStepIdsByScreen = collectNavStepTargetIdsByScreen(opts.projectRoot, opts.feature);
+  const attestByScreen = collectRegionAttestElementIdsByScreen(opts.projectRoot, opts.feature);
+  const interactiveFallbackEnabled = !navConfigExists(opts.projectRoot, opts.feature);
   for (const [id, dump] of dumps) {
     const uiScreen = uiById.get(id) ?? uiById.get(canonicalOverlayBase(id));
     if (!uiScreen) continue;
-    const declared = collectDeclaredElements(uiScreen);
+    const declared = collectDeclaredElements(uiScreen, {
+      identityIds: collectNavIdentityIdMembers(opts.projectRoot, opts.feature),
+      navStepIds: navStepIdsByScreen.get(id),
+      attestRegions: attestByScreen.get(id),
+      interactiveFallbackEnabled,
+    });
     const { located, coverage } = locateElements(declared, dump.appRoot);
     const byConfidence: Record<string, number> = {};
     for (const e of located.values()) {
@@ -253,7 +274,18 @@ export function runLayoutOracleCalibration(opts: {
   for (const [id, dump] of dumps) {
     const uiScreen = uiById.get(id) ?? uiById.get(canonicalOverlayBase(id));
     if (!uiScreen) continue;
-    const res = collectLayoutOracleForScreen({ screenId: id, screen: uiScreen, dump });
+    const res = collectLayoutOracleForScreen({
+      screenId: id,
+      screen: uiScreen,
+      dump,
+      // S6（e9c4a7f3 s6-locator-calibrate）：与 coding/T8 同一收窄分母口径（按屏上下文）
+      locatorCtx: {
+        identityIds: collectNavIdentityIdMembers(opts.projectRoot, opts.feature),
+        navStepIds: navStepIdsByScreen.get(id),
+        attestRegions: attestByScreen.get(id),
+        interactiveFallbackEnabled,
+      },
+    });
     for (const f of res.findings) {
       if (f.signal === 'A3_close_overlap_default') {
         closeDryRun.hits.push({ screen_id: id, finding_id: f.finding_id, note: f.note });

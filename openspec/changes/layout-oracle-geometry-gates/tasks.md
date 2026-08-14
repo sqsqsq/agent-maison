@@ -23,7 +23,7 @@
 
 - [x] 4.1 locator：exact_id > unique_text > structural-lite + 覆盖率门禁（<80% B 类 SKIP）+ coding .id() lint（visual_parity_element_id_lint，观察期 WARN）
 - [x] 4.2 capture 每屏 dump layout-<screen_id>.json + layout_dump_status + 跳采屏不重 dump（layoutDumpFn 注入式 + buildHylyreLayoutDumpFn + check-testing 装配）
-- [ ] 4.2b dump 寻址口径统一（2026-08-12 宿主实测新边界，不否定 4.2 的完成态）：
+- [x] 4.2b dump 寻址口径统一（2026-08-12 宿主实测新边界，不否定 4.2 的完成态）：
       写侧 visual-diff-capture.ts:285/:332 与读侧 visual-diff-check.ts:1950 均用 raw `screen_id`，
       而同目录 probe/identity 产物（:335/:648）用 `sanitizeVisualDiffScreenSlug` 后的 slug——两套并存。
       宿主 out-of-band 采集按 slug 命名后，两个 overlay 屏（双下划线被压成单下划线）对不上，
@@ -31,6 +31,8 @@
       落点：单一寻址入口——新写入统一 canonical slug、legacy raw 仅作兼容 fallback、
       raw 与 slug 并存或跨 screen_id 归一后 slug 冲突时 fail-closed（不做无优先级双查）；
       缺文件诊断区分「命名不符」与「文件损坏/被删」。
+      （2026-08-14 完成：resolveLayoutDumpPath 四态 + 写侧统一 slug + owner/collider 双 skip
+       + runtime-mount 接入共享 resolver；spec delta 见本 change visual-diff「one canonical address」。）
 - [x] 4.3 layout-oracle-check.ts：A-1 显式声明 BLOCKER / A-2 越界 BLOCKER / A-3 close 默认 advisory / A-4 两两扫描 advisory（上限 8）/ B 类 WARN / C 类 advisory；findings 以 check hits 报告（D3——critic 转录 defects/must_fix，harness 不写判定文件）；dump 声称 captured 却缺失/损坏 → 显式 WARN 不静默
 
 ## 5. B 线闭环（t5/t7/t9）

@@ -21,7 +21,14 @@ import { collectP0VisualTargetIds } from './visual-diff-targets';
 import { collectOutOfBoundsGlobalElements, collectGrossMissingAnchorText, collectTextPlacementSignals, collectVerdictAbandonment } from './visual-diff-ocr-gates';
 import { buildAuthoritativeRefImageIndex, resolveRefSourceImage } from './authoritative-ref-images';
 import { canonicalOverlayBase } from './visual-diff-nav';
+import { resolveLayoutDumpPath, sanitizeVisualDiffScreenSlug } from './visual-diff-capture';
 import { collectVisualDiffTamperArtifacts } from './evidence-tamper-scan';
+import {
+  collectNavIdentityIdMembers,
+  collectNavStepTargetIdsByScreen,
+  collectRegionAttestElementIdsByScreen,
+  navConfigExists,
+} from './coding-visual-parity-check';
 import { checkRenderVisibilityCalibrate } from './render-visibility';
 import { checkUiKitRuntimeConformance } from './ui-kit-conformance-check';
 import { checkRuntimeMountConformance } from './runtime-mount-conformance';
@@ -1996,6 +2003,11 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   const t8UnstableFindings: Array<{ screen_id: string; finding: LayoutFinding }> = [];
   if (uiDoc) {
     const uiScreensById = new Map((uiDoc.screens ?? []).map(s => [s.id, s] as const));
+    // S6（e9c4a7f3 s6-locator-calibrate）：nav 触达 / region attest **按屏隔离**，
+    // 交互类型启发式仅 nav 缺失时回退——循环外预收集，避免每屏重复扫 nav/报告
+    const navStepIdsByScreen = collectNavStepTargetIdsByScreen(ctx.projectRoot, ctx.feature);
+    const attestByScreen = collectRegionAttestElementIdsByScreen(ctx.projectRoot, ctx.feature);
+    const interactiveFallbackEnabled = !navConfigExists(ctx.projectRoot, ctx.feature);
     const hardLines: string[] = [];
     const warnLines: string[] = [];
     const unstableLines: string[] = [];
@@ -2005,19 +2017,42 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       if (s.verdict === 'skipped') continue;
       const uiScreen = uiScreensById.get(s.screen_id) ?? uiScreensById.get(canonicalOverlayBase(s.screen_id));
       if (!uiScreen) continue;
-      const layoutAbs = path.join(reportDir, `layout-${s.screen_id}.json`);
-      const dump = loadLayoutDumpFile(layoutAbs);
+      const layoutResolved = resolveLayoutDumpPath(reportDir, s.screen_id);
+      if (layoutResolved.status === 'conflict') {
+        // t2b（plan c6d8f2b4）：raw 与 slug 两套文件名并存，无法判别归属——fail-closed，
+        // 不得无优先级双查（可能读到旧文件）。与"损坏/被删"区分开：这是命名问题。
+        dumpMissing.push(
+          `${s.screen_id}（布局 dump 命名冲突：layout-${sanitizeVisualDiffScreenSlug(s.screen_id) ?? '?'}.json 与 ` +
+            `layout-${s.screen_id}.json 并存——疑似新旧寻址口径混写，须清理/统一后重采）`,
+        );
+        continue;
+      }
+      const layoutAbs = layoutResolved.status === 'missing' ? '' : layoutResolved.abs;
+      const dump = layoutAbs ? loadLayoutDumpFile(layoutAbs) : null;
       if (!dump) {
         // rev7（codex P1）：status=captured 却解析不出=文件事后被删/损坏/schema 不符——
         // 任何屏都不许静默跳过（声称有证据而证据不可用，比"没采"更可疑）。
         if (s.layout_dump_status === 'captured' || s.layout_dump_status === 'unstable') {
-          dumpMissing.push(`${s.screen_id}（声称已采集但 layout-${s.screen_id}.json 缺失/不可解析——文件被删或损坏，须重采）`);
+          dumpMissing.push(
+            `${s.screen_id}（声称已采集但 ${layoutResolved.status === 'legacy' ? `legacy 命名 ${layoutResolved.rel}` : `layout-${sanitizeVisualDiffScreenSlug(s.screen_id) ?? '?'}.json`} 缺失/不可解析——文件被删或损坏，须重采）`,
+          );
         } else if (pixel1to1 && p0Set.has(canonicalOverlayBase(s.screen_id))) {
           dumpMissing.push(`${s.screen_id}（${s.layout_dump_status ?? '未采集'}）`);
         }
         continue;
       }
-      const res = collectLayoutOracleForScreen({ screenId: s.screen_id, screen: uiScreen, dump });
+      const res = collectLayoutOracleForScreen({
+        screenId: s.screen_id,
+        screen: uiScreen,
+        dump,
+        // S6（e9c4a7f3 s6-locator-calibrate）：T8 分母与 coding 侧同一收窄口径（按屏上下文）
+        locatorCtx: {
+          identityIds: collectNavIdentityIdMembers(ctx.projectRoot, ctx.feature),
+          navStepIds: navStepIdsByScreen.get(s.screen_id),
+          attestRegions: attestByScreen.get(s.screen_id),
+          interactiveFallbackEnabled,
+        },
+      });
       // t4b（f7a3d9c2）：unstable 屏（静稳采样重试耗尽，图/树可能非同状态）——T8 命中全体
       // 降档走独立 id（capability degradation：不进 candidate-blocking、免 t2 转录、T2 批量
       // 消息明示真人复核）。A/B/C 不豁免 A 类——过渡态下 A 类同样瞬时误报（rev3 codex/claude）。

@@ -9,7 +9,7 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { captureVisualDiff, CAPTURE_NOT_RUN_ELIGIBILITY } from '../../visual-diff-capture';
+import { captureVisualDiff, CAPTURE_NOT_RUN_ELIGIBILITY, resolveLayoutDumpPath } from '../../visual-diff-capture';
 import { evaluateVisualRound } from '../../../../../harness/scripts/utils/visual-rounds-ledger';
 import type { UiSpecDoc } from '../../../../../harness/scripts/utils/ui-spec-shared';
 import {
@@ -684,6 +684,174 @@ test('screens_hash_order_free_and_binding_sensitive', () => {
   assert.strictEqual(computeScreensHash(a), computeScreensHash(b), '屏序无关');
   const c = [{ ...a[0], evaluated_screenshot_hash: 'h9' } as VisualDiffScreenEntry, a[1]];
   assert.notStrictEqual(computeScreensHash(a), computeScreensHash(c), '绑定 hash 变 → 状态变');
+});
+
+// ============================================================================
+// t2b（plan c6d8f2b4）：布局 dump 统一寻址
+// ============================================================================
+
+test('t2b_resolve_layout_dump_path_canonical_priority', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 't2b-canon-'));
+  try {
+    const dir = path.join(root, 'shots');
+    fs.mkdirSync(dir, { recursive: true });
+    // canonical slug 存在 → canonical
+    fs.writeFileSync(path.join(dir, 'layout-select_card_type_sheet.json'), '{}', 'utf-8');
+    fs.writeFileSync(path.join(dir, 'layout-select_card_type_sheet__overlay__x.json'), '{}', 'utf-8');
+    const r = resolveLayoutDumpPath(dir, 'select_card_type_sheet');
+    assert.strictEqual(r.status, 'canonical', `canonical 应优先：${JSON.stringify(r)}`);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('t2b_resolve_layout_dump_path_legacy_fallback_and_conflict', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 't2b-legacy-'));
+  try {
+    const dir = path.join(root, 'shots');
+    fs.mkdirSync(dir, { recursive: true });
+    // 仅 legacy raw（与 canonical 不同名）→ 兼容回退
+    const rawName = 'layout-select_card_type_sheet__overlay__select_card_type_sheet_frame.json';
+    fs.writeFileSync(path.join(dir, rawName), '{}', 'utf-8');
+    const legacy = resolveLayoutDumpPath(dir, 'select_card_type_sheet__overlay__select_card_type_sheet_frame');
+    assert.strictEqual(legacy.status, 'legacy', `legacy 回退：${JSON.stringify(legacy)}`);
+    // raw 与 slug 并存 → conflict（fail-closed，无优先级双查）
+    fs.writeFileSync(
+      path.join(dir, 'layout-select_card_type_sheet_overlay_select_card_type_sheet_frame.json'),
+      '{}',
+      'utf-8',
+    );
+    const conflict = resolveLayoutDumpPath(dir, 'select_card_type_sheet__overlay__select_card_type_sheet_frame');
+    assert.strictEqual(conflict.status, 'conflict', `并存须 fail-closed：${JSON.stringify(conflict)}`);
+    // 均不存在 → missing
+    const missing = resolveLayoutDumpPath(dir, 'no_such_screen');
+    assert.strictEqual(missing.status, 'missing');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('t2b_capture_writes_canonical_slug_layout_dump', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 't2b-capture-'));
+  try {
+    const doc = {
+      screens: [{ id: 'select_card_type_sheet__overlay__select_card_type_sheet_frame', priority: 'P0', ref_id: 'r', root: { type: 'navigation_frame', order: 0 } }],
+      tokens: {},
+      assets: [],
+    } as unknown as UiSpecDoc;
+    const outDir = path.join(root, 'doc', 'features', 'demo', 'device-testing', 'device-screenshots');
+    const r = captureVisualDiff({
+      projectRoot: root,
+      feature: 'demo',
+      uiDoc: doc,
+      currentBuildFingerprint: null,
+      screenshotFn: args => {
+        fs.mkdirSync(path.dirname(args.destAbs), { recursive: true });
+        fs.writeFileSync(args.destAbs, Buffer.from('png'));
+        return { ok: true };
+      },
+      layoutDumpFn: args => {
+        fs.mkdirSync(path.dirname(args.destAbs), { recursive: true });
+        fs.writeFileSync(args.destAbs, JSON.stringify({ schema_version: 'hylyre-hypium-ui-dump-v1', tree: {} }), 'utf-8');
+        return { ok: true };
+      },
+    });
+    // 写侧统一 canonical slug 名（双下划线压成单下划线）
+    const canonicalPath = path.join(outDir, 'layout-select_card_type_sheet_overlay_select_card_type_sheet_frame.json');
+    const rawPath = path.join(outDir, 'layout-select_card_type_sheet__overlay__select_card_type_sheet_frame.json');
+    assert.ok(fs.existsSync(canonicalPath), `canonical 文件应存在：${canonicalPath}`);
+    assert.ok(!fs.existsSync(rawPath), '不应写 raw 名文件（t2b 统一 canonical slug）');
+    assert.strictEqual(r.screensWritten, 1, '采集成功');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('t2b_slug_collision_skips_owner_and_collider_with_zero_writes', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 't2b-collide-'));
+  try {
+    // 两个不同 screen_id 归一到同一 canonical slug（双下划线 vs 单下划线）——冲突双方
+    // （owner 与 collider）都必须 fail-closed：双方进 p0CaptureFailures、采集循环跳过、
+    // 零写入（不产出任何 screenshot/layout dump 文件）。
+    const doc = {
+      screens: [
+        { id: 'a__b', priority: 'P0', ref_id: 'r1', root: { type: 'navigation_frame', order: 0 } },
+        { id: 'a_b', priority: 'P0', ref_id: 'r2', root: { type: 'navigation_frame', order: 0 } },
+      ],
+      tokens: {},
+      assets: [],
+    } as unknown as UiSpecDoc;
+    const outDir = path.join(root, 'doc', 'features', 'demo', 'device-testing', 'device-screenshots');
+    fs.mkdirSync(outDir, { recursive: true });
+    const r = captureVisualDiff({
+      projectRoot: root,
+      feature: 'demo',
+      uiDoc: doc,
+      currentBuildFingerprint: null,
+      screenshotFn: args => {
+        fs.mkdirSync(path.dirname(args.destAbs), { recursive: true });
+        fs.writeFileSync(args.destAbs, Buffer.from('png'));
+        return { ok: true };
+      },
+      layoutDumpFn: args => {
+        fs.mkdirSync(path.dirname(args.destAbs), { recursive: true });
+        fs.writeFileSync(args.destAbs, JSON.stringify({ schema_version: 'hylyre-hypium-ui-dump-v1', tree: {} }), 'utf-8');
+        return { ok: true };
+      },
+    });
+    // 冲突双方都记 P0 采集失败
+    const failures = r.p0CaptureFailures ?? [];
+    assert.ok(failures.includes('a__b') && failures.includes('a_b'), `双方都进 p0CaptureFailures：${failures}`);
+    // 零写入：无 screenshot、无 layout dump
+    assert.strictEqual(r.screensWritten, 0, '冲突屏不采集');
+    const entries = fs.readdirSync(outDir).filter(n => !n.startsWith('.'));
+    assert.deepStrictEqual(entries, [], `零写入，实得：${entries.join(',')}`);
+    assert.ok(r.errors.some(e => /slug 归一冲突/.test(e)), `errors 应点名 slug 冲突：${r.errors.join('|')}`);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('t2b_runtime_mount_uses_shared_resolver_legacy_fallback_and_conflict', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 't2b-rtmount-'));
+  try {
+    const dir = path.join(root, 'doc', 'features', 'demo', 'device-testing', 'device-screenshots');
+    fs.mkdirSync(dir, { recursive: true });
+    const { checkRuntimeMountConformance } = require('../../runtime-mount-conformance') as typeof import('../../runtime-mount-conformance');
+    const { loadUiSpecFile, uiSpecAbsPath } = require('../../../../../harness/scripts/utils/ui-spec-shared') as typeof import('../../../../../harness/scripts/utils/ui-spec-shared');
+    fs.mkdirSync(path.join(root, 'doc', 'features', 'demo', 'spec'), { recursive: true });
+    fs.writeFileSync(
+      uiSpecAbsPath(root, 'demo'),
+      JSON.stringify({
+        schema_version: '1.0',
+        screens: [{ id: 'a__b', priority: 'P0', root: { type: 'navigation_frame', order: 0, children: [{ id: 'el', type: 'content_display', order: 1, bbox: [0.1, 0.1, 0.5, 0.1] }] } }],
+        tokens: {},
+        assets: [],
+      }),
+      'utf-8',
+    );
+    fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({
+      schema_version: '1.0',
+      project_profile: { name: 'hmos-app' },
+      paths: { features_dir: 'doc/features' },
+    }), 'utf-8');
+    // legacy-only：共享 resolver 应回退读取（不静默忽略）
+    const legacyPath = path.join(dir, 'layout-a__b.json');
+    fs.writeFileSync(legacyPath, JSON.stringify({
+      schema_version: 'hylyre-hypium-ui-dump-v1',
+      tree: { attributes: { bounds: '[0,0][1000,2000]' }, children: [{ attributes: { id: 'el', bounds: '[0,0][500,200]', type: 'Column' } }] },
+    }), 'utf-8');
+    // canonical 并存 → conflict → 不读取、fail-closed 语义（SKIP 且点名命名冲突）
+    fs.writeFileSync(path.join(dir, 'layout-a_b.json'), JSON.stringify({
+      schema_version: 'hylyre-hypium-ui-dump-v1',
+      tree: { attributes: { bounds: '[0,0][1000,2000]' }, children: [] },
+    }), 'utf-8');
+    const ctx = {
+      projectRoot: root,
+      feature: 'demo',
+      frameworkRoot: root,
+      frameworkRel: '',
+      harnessRoot: path.join(root, 'harness'),
+      resolvedProfile: { name: 'hmos-app' },
+      phase: 'testing',
+    } as never;
+    const out = checkRuntimeMountConformance(ctx);
+    const hit = out[0] as { status: string; details: string };
+    assert.strictEqual(hit.status, 'SKIP', `并存冲突应 SKIP 且不读取：${hit.details}`);
+    assert.ok(/命名冲突/.test(hit.details), `SKIP 文案应点名命名冲突：${hit.details}`);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 export function runAll(): UnitCaseResult[] {

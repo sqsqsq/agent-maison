@@ -160,7 +160,7 @@ todos:
       **开工前置**：本项改 `visual-diff-capture.ts` / `visual-diff-check.ts`，与 `f3a8c6d2`
       有交叉——须待 f3a8c6d2 提交后对新基线重新核对再动手。
       不改 t2 的历史完成状态——t2 按当时范围确实交付，本项是宿主实测暴露的新边界。
-    status: pending
+    status: completed
   - id: t3-layout-invariants-gate
     content: >
       新确定性信号 T8 `visual_diff_layout_invariants`（新文件
@@ -686,3 +686,29 @@ candidate-pass 前无 T2 批量确认请求）。
 故 A1 即便命中也只会是 WARN，**BLOCKER 档验收须待 pixel_1to1 解锁后重跑**。
 （判读纠错留痕：本段先后写错两版——第一版直接归因 attestation，第二版反过来说「与
 attestation 无关」；正确表述是上面这条分层链。）
+
+
+# 实施记录（2026-08-14，t2b-layout-dump-addressing 收口·二轮 review 修复）
+
+> 只改 todo frontmatter 状态，不改正文；记录追加在文末。二轮 review 有 1 组 P1，已修复。
+
+## 一轮实现（见初版记录文案，git history 前轮）
+
+## 二轮 review P1 修复（2026-08-14）
+- **slug 冲突集合含 owner 与 collider**：原实现只登记后出现的 collider，原 owner 漏登记；
+  现冲突集合同时加入双方（slugOwners 首次登记者在碰撞时也被剔除）。
+- **采集循环跳过**：主屏循环与 overlay 循环入口均按冲突集合 `continue`（此前冲突屏
+  仍会进入采集裸写，互相覆盖 canonical 文件）。新增真实 capture 回归：
+  `t2b_slug_collision_skips_owner_and_collider_with_zero_writes`（双方进 p0CaptureFailures、
+  screensWritten=0、输出目录零写入、errors 点名 slug 冲突）。
+- **runtime-mount 接入共享 resolver**：不再直接拼 `layout-<slug>.json`，改用
+  `resolveLayoutDumpPath`——legacy-only 文件可回退读取，canonical+legacy 并存 →
+  conflict fail-closed（SKIP 并点名命名冲突）。新增
+  `t2b_runtime_mount_uses_shared_resolver_legacy_fallback_and_conflict` 用例。
+- **验收**：typecheck 干净；`cd harness && npm test` unit **3276/3276**、fixtures **44/44**
+  （structured-findings 23/23）；openspec:validate 34/34；check-plan-version PASS；
+  `git diff --check` 干净。
+- OpenSpec：条款收敛进 layout-oracle-geometry-gates delta（one canonical address，
+  补 owner/collider 双 skip 与零写入场景；场景标题改 canonical/legacy coexistence
+  fails closed）；canonical visual-diff spec 已还原（无直改残留）；4.2b task 勾选。
+- 未提交，等待三批统一提交策略。

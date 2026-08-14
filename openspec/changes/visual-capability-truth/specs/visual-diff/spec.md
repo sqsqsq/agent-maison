@@ -37,7 +37,9 @@ Enforcement: `profiles/hmos-app/harness/hylyre-spawn.ts`, hylyre doctor 扩项�
 
 ### Requirement: locator coverage remains a terminal diagnostic measurement
 
-The locator-required denominator SHALL include only: identity anchor members, bbox geometry assertion targets, forbidden-overlap participants, must_have_elements, region-attest elements, interaction targets, and UI-kit block instance anchors. `visual_parity_element_id_lint` SHALL remain a WARN with persisted coverage: it measures the availability of locator-dependent assertions and a low result causes those B-class assertions to SKIP rather than claiming a product defect. Two real host runs MAY calibrate the denominator and fixtures, but SHALL NOT automatically enable a P0 coverage BLOCKER/enforce path. A future hard gate requires a separate evidence-backed change.
+The locator-required denominator SHALL include only: identity anchor members, bbox geometry assertion targets, forbidden-overlap participants (forbidden_overlap pairs and protected_region), must_have_elements, region-attest elements, interaction targets, and UI-kit block instance anchors. `visual_parity_element_id_lint` SHALL remain a WARN with persisted coverage: it measures the availability of locator-dependent assertions and a low result causes those B-class assertions to SKIP rather than claiming a product defect. Two real host runs MAY calibrate the denominator and fixtures, but SHALL NOT automatically enable a P0 coverage BLOCKER/enforce path. A future hard gate requires a separate evidence-backed change.
+
+**按屏隔离（review 2026-08-14）**：nav 触达与 region-attest 上下文 SHALL 按 `screen_id` 提供——A 屏的步骤/attest 区域不得进入 B 屏分母。nav 步骤内 by_id SHALL 递归提取（含 `within.by_id`、`scroll_to.in.by_id` 等嵌套形态）。interactive 节点类型启发式 SHALL 仅在 nav 配置缺失时作为回退启用；nav 存在时（即使某屏无触达）SHALL 禁用该启发式，交互目标语义以测试步骤 by_id 触达为准。
 
 Enforcement: `profiles/hmos-app/harness/coding-visual-parity-check.ts`
 
@@ -45,3 +47,18 @@ Enforcement: `profiles/hmos-app/harness/coding-visual-parity-check.ts`
 
 - **WHEN** a P0 screen declares a dynamic bank list with dozens of OCR text nodes, of which only the identity anchors, interaction targets and must-have elements are locator-required
 - **THEN** coverage SHALL be computed over the locator-required set only, and plain decorative/OCR-noise nodes SHALL NOT count toward the denominator
+
+#### Scenario: per-screen context does not cross screens
+
+- **WHEN** screen A declares nav steps / region-attest regions that screen B does not
+- **THEN** screen B's denominator SHALL NOT include A's interaction targets or attest regions
+
+#### Scenario: nested selectors contribute their by_id
+
+- **WHEN** a nav step carries `within.by_id` or `scroll_to.in.by_id` nested selectors
+- **THEN** those by_id targets SHALL be counted as locator-required interaction targets
+
+#### Scenario: interactive-type fallback requires missing nav
+
+- **WHEN** a nav config exists but a screen has no touched by_id targets
+- **THEN** interactive node-type heuristics SHALL NOT add nodes to the denominator（仅 nav 缺失时回退）

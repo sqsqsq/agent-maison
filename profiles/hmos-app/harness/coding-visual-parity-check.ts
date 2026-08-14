@@ -45,7 +45,6 @@ import { collectSpecTextUniverse } from './capture-completeness-check';
 import { loadRefElementsFile, refElementsAbsPath } from '../../../harness/scripts/utils/fidelity-shared';
 import { checkStructureDeclarationLedger } from './structure-ledger';
 import { isHardPixelContract, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
-import { collectDeclaredElements } from './layout-oracle-check';
 import { resourceKeyToRef, scanFeatureSourceTree, scanResourceRefModules } from './source-ref-scan';
 
 function ruleDesc(
@@ -65,7 +64,11 @@ function loadSpecMarkdown(ctx: CheckContext): string | null {
   return fs.readFileSync(p, 'utf-8');
 }
 
-/** S6（P1-H）：locator-required 分母——只含 identity 锚点 id/must_have/交互目标/kit block 实例。 */
+/** S6（P1-H calibrate）：locator-required 分母七类——identity 锚点 id 成员 / bbox 几何断言
+ * 目标 / forbidden-overlap 参与元素 / must_have_elements / region attest 元素 /
+ * 交互目标（测试步骤触达）/ UI kit block 实例锚点。动态列表行、纯装饰/OCR 噪声节点不
+ * 进分母（全量分母会海量误报 + 反向激励：spec 越细覆盖率越低、B 类越易 SKIP）。
+ * 交互节点类型启发式仅作 nav 配置缺失时的透明回退（新分母优先测步骤 by_id 触达）。 */
 const LOCATOR_INTERACTIVE_TYPES = new Set([
   'primary_button', 'selector_group', 'sms_code_field', 'list_selection', 'nav_bar',
   'sheet_scaffold', 'list_row', 'tab_bar', 'input_field', 'action_button',
@@ -74,6 +77,20 @@ const LOCATOR_INTERACTIVE_TYPES = new Set([
 export function collectLocatorRequiredElements(
   screen: import('../../../harness/scripts/utils/ui-spec-shared').UiSpecScreen,
   identityIds: ReadonlySet<string>,
+  opts?: {
+    /** 测试步骤触达（仅本屏 by_id 集合；递归提取 selector 内 by_id）；缺省空 */
+    navStepIds?: ReadonlySet<string>;
+    /** region attest 元素（仅本屏 visual-diff.json region_attest[].region）；缺省空 */
+    attestRegions?: ReadonlySet<string>;
+    /**
+     * 显式区分「nav 配置不存在」与「nav 存在但本屏无触达」（review P1）：
+     * - nav 配置**不存在**（feature 级）→ true：交互节点类型启发式作为透明回退；
+     * - nav 配置**存在** → false：交互类型启发式**不得**无条件进分母
+     *   （触达语义以步骤 by_id 为准；本屏无触达=无交互目标，而非"全部交互"）。
+     * 缺省 false（nav 存在语义，安全侧）。
+     */
+    interactiveFallbackEnabled?: boolean;
+  },
 ): Array<{ elementId: string; reason: string }> {
   const out: Array<{ elementId: string; reason: string }> = [];
   const seen = new Set<string>();
@@ -84,16 +101,28 @@ export function collectLocatorRequiredElements(
     out.push({ elementId: t, reason });
   };
   const walk = (n: import('../../../harness/scripts/utils/ui-spec-shared').UiSpecComponentNode): void => {
-    const rec = n as { id?: unknown; type?: unknown; block?: unknown };
+    const rec = n as { id?: unknown; type?: unknown; block?: unknown; bbox?: unknown };
     if (typeof rec.id === 'string' && rec.id.trim()) {
       if (identityIds.has(rec.id.trim())) add(rec.id, 'identity_anchor');
       else if (typeof rec.block === 'string' && rec.block.trim()) add(rec.id, 'kit_block_instance');
-      else if (typeof rec.type === 'string' && LOCATOR_INTERACTIVE_TYPES.has(rec.type)) add(rec.id, 'interactive');
+      else if (opts?.navStepIds?.has(rec.id.trim())) add(rec.id, 'nav_step_target');
+      else if (Array.isArray(rec.bbox) && rec.bbox.length >= 4) add(rec.id, 'bbox_geometry_target');
+      else if (opts?.interactiveFallbackEnabled && typeof rec.type === 'string' && LOCATOR_INTERACTIVE_TYPES.has(rec.type)) {
+        add(rec.id, 'interactive');
+      }
     }
     for (const c of n.children ?? []) walk(c);
   };
   if (screen.root) walk(screen.root);
+  // forbidden-overlap / protected_region 参与元素（A1 断言对/保护区——缺 locator 则声明永不生效）
+  for (const pair of screen.forbidden_overlap ?? []) {
+    if (Array.isArray(pair)) for (const id of pair) if (typeof id === 'string') add(id, 'forbidden_overlap_participant');
+  }
+  for (const id of screen.protected_region ?? []) {
+    if (typeof id === 'string') add(id, 'forbidden_overlap_participant');
+  }
   for (const mh of screen.must_have_elements ?? []) add(mh, 'must_have');
+  for (const r of opts?.attestRegions ?? []) add(r, 'region_attest_element');
   return out;
 }
 
@@ -110,6 +139,86 @@ export function collectNavIdentityIdMembers(projectRoot: string, feature: string
       }
     }
   } catch { /* nav 不可读 → 空集 */ }
+  return out;
+}
+
+/** nav 2.0 存在性（feature 级）——决定交互类型启发式是否可作回退（review P1：
+ * nav 已存在时不得无条件用交互类型凑分母）。 */
+export function navConfigExists(projectRoot: string, feature: string): boolean {
+  try {
+    return loadVisualDiffNavConfigV2(projectRoot, feature) !== null;
+  } catch {
+    return false;
+  }
+}
+
+/** 递归提取任意 nav 步骤对象内的 `by_id`（含 within.by_id / scroll_to.in.by_id 等嵌套形态）。 */
+function collectByIdsDeep(value: unknown, out: Set<string>): void {
+  if (Array.isArray(value)) {
+    for (const v of value) collectByIdsDeep(v, out);
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  const rec = value as Record<string, unknown>;
+  const byId = rec['by_id'];
+  if (typeof byId === 'string' && byId.trim()) out.add(byId.trim());
+  for (const [k, v] of Object.entries(rec)) {
+    if (k === 'by_id') continue;
+    collectByIdsDeep(v, out);
+  }
+}
+
+/**
+ * nav 2.0 **各屏**测试步骤中 by_id 触达的交互目标（locator-required「测试步骤触达」分母，
+ * **按 screen_id 隔离**——A 屏的步骤不得进 B 屏分母）。
+ * 语义=该屏步骤真正要 touch/wait 的元素；导航配置缺失 → 空 Map。
+ */
+export function collectNavStepTargetIdsByScreen(
+  projectRoot: string,
+  feature: string,
+): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  try {
+    const v2 = loadVisualDiffNavConfigV2(projectRoot, feature);
+    for (const [screenId, entry] of Object.entries(v2?.screens ?? {})) {
+      const ids = new Set<string>();
+      for (const step of entry.steps) collectByIdsDeep(step, ids);
+      if (ids.size > 0) out.set(screenId, ids);
+    }
+  } catch { /* nav 不可读 → 空 Map */ }
+  return out;
+}
+
+/**
+ * 既有 visual-diff.json 中 region_attest[].region 的集合（locator-required「region attest
+ * 元素」分母；critic 承诺逐区域举证的对象须可 locator）。**按 screen_id 隔离**——A 屏的
+ * attest 区域不得进 B 屏分母；无报告/不可解析 → 空 Map。
+ */
+export function collectRegionAttestElementIdsByScreen(
+  projectRoot: string,
+  feature: string,
+): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  try {
+    const jsonPath = path.join(
+      featureDir(projectRoot, feature),
+      'device-testing',
+      'device-screenshots',
+      'visual-diff.json',
+    );
+    if (!fs.existsSync(jsonPath)) return out;
+    const rep = JSON.parse(fs.readFileSync(jsonPath, 'utf-8')) as {
+      screens?: Array<{ screen_id?: unknown; region_attest?: Array<{ region?: unknown }> }>;
+    };
+    for (const s of rep.screens ?? []) {
+      if (typeof s.screen_id !== 'string' || !s.screen_id.trim()) continue;
+      const regions = new Set<string>();
+      for (const a of s.region_attest ?? []) {
+        if (typeof a.region === 'string' && a.region.trim()) regions.add(a.region.trim());
+      }
+      if (regions.size > 0) out.set(s.screen_id.trim(), regions);
+    }
+  } catch { /* 报告不可读 → 空 Map（calibrate 数据面不阻断） */ }
   return out;
 }
 
@@ -275,18 +384,28 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
       const sourceText = scan.etsFiles.map(f => {
         try { return fs.readFileSync(f, 'utf-8'); } catch { return ''; }
       }).join('\n');
-      // S6（visual-capability-truth P1-H calibrate）：分母收窄为 locator-required 集
-      // （identity 锚点 id 成员 / must_have / 交互目标 / UI kit block 实例）——动态列表行、
-      // 纯装饰/OCR 噪声节点不进分母（codex plan 审查二轮：全量分母会海量误报）。
+      // S6（visual-capability-truth P1-H calibrate，e9c4a7f3 s6-locator-calibrate 重开）：
+      // 分母=locator-required 七类集（identity 锚点 id 成员 / bbox 几何断言目标 /
+      // forbidden-overlap 参与元素 / must_have_elements / region attest 元素 /
+      // 交互目标（测试步骤触达）/ UI kit block 实例锚点）——动态列表行、纯装饰/OCR
+      // 噪声节点不进分母（全量分母会海量误报 + 反向激励：spec 越细覆盖率越低）。
       // 终态诊断：WARN + 覆盖率落盘（locator-coverage.json）；宿主两 run 只回灌分母/夹具，
       // 不预留 <80% 自动升 BLOCKER。定位覆盖率是断言能力量测，不直接表达产品质量或 visual-debt。
       const identityIds = collectNavIdentityIdMembers(ctx.projectRoot, ctx.feature);
+      // nav 触达 / region attest **按屏隔离**；interactive 类型启发式仅 nav 缺失时回退
+      const navStepIdsByScreen = collectNavStepTargetIdsByScreen(ctx.projectRoot, ctx.feature);
+      const attestByScreen = collectRegionAttestElementIdsByScreen(ctx.projectRoot, ctx.feature);
+      const interactiveFallbackEnabled = !navConfigExists(ctx.projectRoot, ctx.feature);
       const missingIds: string[] = [];
       let requiredTotal = 0;
       let requiredCovered = 0;
       for (const s of doc.screens ?? []) {
         if (s.priority !== 'P0') continue;
-        for (const el of collectLocatorRequiredElements(s, identityIds)) {
+        for (const el of collectLocatorRequiredElements(s, identityIds, {
+          navStepIds: navStepIdsByScreen.get(s.id),
+          attestRegions: attestByScreen.get(s.id),
+          interactiveFallbackEnabled,
+        })) {
           requiredTotal++;
           const idRe = new RegExp(`\\.id\\(\\s*['"\`]${el.elementId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"\`]\\s*\\)`);
           if (idRe.test(sourceText)) requiredCovered++;

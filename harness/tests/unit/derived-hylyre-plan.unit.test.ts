@@ -16,6 +16,8 @@ import {
   lintHylyrePlanMarkdown,
   normalizePlannedStepsCell,
   isFullscreenHorizontalSwipeStep,
+  hylyreRunTimestamp,
+  prepareFreshHylyreRunDir,
 } from '../../scripts/utils/derived-hylyre-plan';
 
 export interface UnitCaseResult {
@@ -310,6 +312,151 @@ const cases: Case[] = [
       assertTrue(pick.selected !== null, 'selected');
       assertEq(path.normalize(pick.selected!.hylyrePath), path.normalize(goodPath), 'path');
       assertEq(pick.rejectedPlaceholders.length, 1, 'placeholder rejected then valid picked');
+    },
+  },
+  // ==========================================================================
+  // run-directory-freshness（plan 420a5005）——验收四例
+  // ==========================================================================
+  {
+    name: 'hylyreRunTimestamp: UTC ISO 压缩形态 <YYYYMMDD>T<HHMMSS>Z-<ms>，保留毫秒精度（review P1）',
+    run: () => {
+      const iso = Date.parse('2026-08-12T04:47:08.123Z');
+      assertEq(hylyreRunTimestamp(iso), '20260812T044708Z-123', 'stamp');
+      // 同秒不同毫秒 → 互异戳（连续执行互斥）
+      const isoB = Date.parse('2026-08-12T04:47:08.456Z');
+      assertTrue(hylyreRunTimestamp(iso) !== hylyreRunTimestamp(isoB), '同秒不同毫秒须互异');
+    },
+  },
+  {
+    name: 'run-directory-freshness ①: 同一源计划连续执行两次 → 两个不同目录（含同秒不同毫秒）',
+    run: () => {
+      const base = fs.mkdtempSync(path.join(os.tmpdir(), 'hylyre-fresh-'));
+      const srcDir = path.join(base, '20260810T184000-codex-testing', 'hylyre');
+      fs.mkdirSync(srcDir, { recursive: true });
+      const srcPath = path.join(srcDir, 'test-plan.hylyre.md');
+      fs.writeFileSync(srcPath, `${minimalTable('| TC-001 | a |')}`, 'utf-8');
+      const t1 = Date.parse('2026-08-12T04:47:08.000Z');
+      const t2 = Date.parse('2026-08-12T04:48:09.000Z');
+      // 源派生为旧执行产物：mtime 早于两轮执行时点（只读输入角色）
+      const srcOld = Date.parse('2026-08-10T18:40:00.000Z');
+      fs.utimesSync(srcPath, srcOld / 1000, srcOld / 1000);
+      const r1 = prepareFreshHylyreRunDir({ reportsBase: base, sourceHylyrePlanAbsPath: srcPath, nowMs: t1 });
+      const r2 = prepareFreshHylyreRunDir({ reportsBase: base, sourceHylyrePlanAbsPath: srcPath, nowMs: t2 });
+      assertTrue(r1.ok && r2.ok, 'both ok');
+      if (!r1.ok || !r2.ok) return;
+      assertTrue(r1.runDir !== r2.runDir, 'two distinct run dirs');
+      assertTrue(r1.runDir.endsWith(path.join('20260812T044708Z-000', 'hylyre')), `r1 dir: ${r1.runDir}`);
+      assertTrue(r2.runDir.endsWith(path.join('20260812T044809Z-000', 'hylyre')), `r2 dir: ${r2.runDir}`);
+      // 同秒连续两次（毫秒不同）→ 仍互异
+      const tSameSec1 = Date.parse('2026-08-12T04:50:00.100Z');
+      const tSameSec2 = Date.parse('2026-08-12T04:50:00.900Z');
+      const rs1 = prepareFreshHylyreRunDir({ reportsBase: base, sourceHylyrePlanAbsPath: srcPath, nowMs: tSameSec1 });
+      const rs2 = prepareFreshHylyreRunDir({ reportsBase: base, sourceHylyrePlanAbsPath: srcPath, nowMs: tSameSec2 });
+      assertTrue(rs1.ok && rs2.ok, 'same-second both ok');
+      if (!rs1.ok || !rs2.ok) return;
+      assertTrue(rs1.runDir !== rs2.runDir, '同秒不同毫秒 → 两独立目录');
+      // 每次执行都产生独立新目录：最后一次选中 mtime 最新 → 新目录被选中（选择器回归）
+      const pick = selectBestNonPlaceholderDerivedPlan(base);
+      assertTrue(pick.selected !== null, 'selected');
+      assertEq(path.normalize(pick.selected!.hylyrePath), path.normalize(rs2.hylyrePlanAbsPath), 'latest picked');
+    },
+  },
+  {
+    name: 'run-directory-freshness ②: 原输入目录字节不变（只读输入）',
+    run: () => {
+      const base = fs.mkdtempSync(path.join(os.tmpdir(), 'hylyre-fresh-ro-'));
+      const srcDir = path.join(base, '20260810T184000-codex-testing', 'hylyre');
+      fs.mkdirSync(srcDir, { recursive: true });
+      const srcPath = path.join(srcDir, 'test-plan.hylyre.md');
+      const manifestSrc = path.join(srcDir, 'derive-manifest.json');
+      const planBody = `---\nexplicit_skip_tc_ids: [TC-002]\n---\n${minimalTable('| TC-001 | a |')}`;
+      fs.writeFileSync(srcPath, planBody, 'utf-8');
+      fs.writeFileSync(manifestSrc, JSON.stringify({ explicit_skip_tc_ids: ['TC-002'] }), 'utf-8');
+      const srcBefore = fs.readFileSync(srcPath, 'utf-8');
+      const manBefore = fs.readFileSync(manifestSrc, 'utf-8');
+      const r = prepareFreshHylyreRunDir({
+        reportsBase: base,
+        sourceHylyrePlanAbsPath: srcPath,
+        nowMs: Date.parse('2026-08-12T04:47:08.000Z'),
+      });
+      assertTrue(r.ok, `ok: ${r.ok === false ? r.error : ''}`);
+      if (!r.ok) return;
+      assertEq(fs.readFileSync(srcPath, 'utf-8'), srcBefore, 'src plan unchanged');
+      assertEq(fs.readFileSync(manifestSrc, 'utf-8'), manBefore, 'src manifest unchanged');
+      // 复制件字节一致 + manifest 一并复制
+      assertEq(fs.readFileSync(r.hylyrePlanAbsPath, 'utf-8'), srcBefore, 'copied plan identical');
+      assertEq(r.copiedManifest, true, 'manifest copied along');
+      assertEq(
+        fs.readFileSync(path.join(r.runDir, 'derive-manifest.json'), 'utf-8'),
+        manBefore,
+        'copied manifest identical',
+      );
+    },
+  },
+  {
+    name: 'run-directory-freshness ③: 第二轮无 trace 时 resolver 返回无有效 trace，不回退第一轮',
+    run: () => {
+      const base = fs.mkdtempSync(path.join(os.tmpdir(), 'hylyre-fresh-res-'));
+      const srcDir = path.join(base, '20260810T184000-codex-testing', 'hylyre');
+      fs.mkdirSync(srcDir, { recursive: true });
+      const srcPath = path.join(srcDir, 'test-plan.hylyre.md');
+      fs.writeFileSync(srcPath, `${minimalTable('| TC-001 | a |')}`, 'utf-8');
+      // 第一轮：新目录已写 trace；第二轮：新目录无 trace（resolver 应返回 null，不回退第一轮）
+      const r1 = prepareFreshHylyreRunDir({
+        reportsBase: base,
+        sourceHylyrePlanAbsPath: srcPath,
+        nowMs: Date.parse('2026-08-12T04:47:08.000Z'),
+      });
+      assertTrue(r1.ok, 'r1 ok');
+      if (!r1.ok) return;
+      fs.writeFileSync(path.join(r1.runDir, 'trace.json'), JSON.stringify({ outcome: 'success' }), 'utf-8');
+      const r2 = prepareFreshHylyreRunDir({
+        reportsBase: base,
+        sourceHylyrePlanAbsPath: srcPath,
+        nowMs: Date.parse('2026-08-12T04:48:09.000Z'),
+      });
+      assertTrue(r2.ok, 'r2 ok');
+      if (!r2.ok) return;
+      // 第二轮目录存在、无 trace——resolver 从选中（最新=第二轮）目录取 trace，得 null
+      assertTrue(!fs.existsSync(path.join(r2.runDir, 'trace.json')), 'r2 has no trace');
+      const { resolveAuthoritativeHylyreTracePath } = require('../../scripts/utils/testing-trace-gates') as typeof import('../../scripts/utils/testing-trace-gates');
+      const trace = resolveAuthoritativeHylyreTracePath(base);
+      assertEq(trace, null, 'no fallback to first round（不回退第一轮）');
+    },
+  },
+  {
+    name: 'run-directory-freshness ④: 目录冲突 → fail-closed，零写入、不覆盖不复用',
+    run: () => {
+      const base = fs.mkdtempSync(path.join(os.tmpdir(), 'hylyre-fresh-cl-'));
+      const srcDir = path.join(base, '20260810T184000-codex-testing', 'hylyre');
+      fs.mkdirSync(srcDir, { recursive: true });
+      const srcPath = path.join(srcDir, 'test-plan.hylyre.md');
+      fs.writeFileSync(srcPath, `${minimalTable('| TC-001 | a |')}`, 'utf-8');
+      const t = Date.parse('2026-08-12T04:47:08.000Z');
+      const r1 = prepareFreshHylyreRunDir({ reportsBase: base, sourceHylyrePlanAbsPath: srcPath, nowMs: t });
+      assertTrue(r1.ok, 'r1 ok');
+      if (!r1.ok) return;
+      const planBefore = fs.readFileSync(path.join(r1.runDir, 'test-plan.hylyre.md'), 'utf-8');
+      // 同秒再次准备 → fail-closed：覆盖/复用被拒
+      const r2 = prepareFreshHylyreRunDir({ reportsBase: base, sourceHylyrePlanAbsPath: srcPath, nowMs: t });
+      assertTrue(!r2.ok, 'conflict must fail-closed');
+      assertIncludes(r2.ok === false ? r2.error : '', '已存在', 'error mentions exists');
+      // 零写入：原复制内容未被改动、未新增多余文件
+      assertEq(fs.readFileSync(path.join(r1.runDir, 'test-plan.hylyre.md'), 'utf-8'), planBefore, 'no rewrite');
+      const entries = fs.readdirSync(r1.runDir).filter(n => !n.startsWith('.'));
+      assertEq(entries.length, 1, `zero extra writes, got ${entries.join(',')}`);
+    },
+  },
+  {
+    name: 'run-directory-freshness: 源不存在 → fail-closed',
+    run: () => {
+      const base = fs.mkdtempSync(path.join(os.tmpdir(), 'hylyre-fresh-miss-'));
+      const r = prepareFreshHylyreRunDir({
+        reportsBase: base,
+        sourceHylyrePlanAbsPath: path.join(base, 'nope', 'test-plan.hylyre.md'),
+        nowMs: Date.parse('2026-08-12T04:47:08.000Z'),
+      });
+      assertTrue(!r.ok, 'missing source fail-closed');
     },
   },
 ];

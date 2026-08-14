@@ -261,6 +261,66 @@ export function resolveShotPaths(
   return { rel, abs, slug };
 }
 
+// --- t2b（plan c6d8f2b4，2026-08-12 宿主实测纠偏项）：布局 dump 统一寻址 ---
+// 事故：写侧用 raw `layout-<screen_id>.json`，读侧有的也用 raw、有的用 slug
+// （sanitizeVisualDiffScreenSlug）——两套命名并存。宿主 out-of-band 采集按 slug 命名，
+// overlay 屏（`select_card_type_sheet__overlay__…` 双下划线压成单下划线）对不上，
+// 把命名问题误导成「文件被删或损坏，须重采」。
+// 落点：新写入统一 canonical slug（`layout-<slug>.json`）；读取按 canonical 优先，
+// legacy raw 仅作兼容 fallback；raw 与 slug 同时存在、或不同 screen_id 归一后 slug
+// 冲突 → fail-closed（不做无优先级的双查——否则可能读到旧文件且无法判别）。
+// ----------------------------------------------------------------------------
+
+/** layout dump 的 canonical 文件名：`layout-<slug>.json`（slug=sanitizeVisualDiffScreenSlug）。 */
+export function layoutDumpCanonicalFileName(screenId: string): string | null {
+  const slug = sanitizeVisualDiffScreenSlug(screenId);
+  if (!slug) return null;
+  return `layout-${slug}.json`;
+}
+
+/** legacy raw 文件名：`layout-<raw screen_id>.json`（历史口径；仅作兼容 fallback）。 */
+export function layoutDumpLegacyFileName(screenId: string): string {
+  return `layout-${screenId}.json`;
+}
+
+export type LayoutDumpResolvedPath =
+  | { status: 'canonical'; abs: string; rel: string }
+  | { status: 'legacy'; abs: string; rel: string }
+  | { status: 'conflict'; canonicalAbs: string; legacyAbs: string }
+  | { status: 'missing' };
+
+/**
+ * 统一解析某屏 layout dump 的落盘文件（device-screenshots 目录内）。
+ * - canonical 文件存在 → 用之；
+ * - 仅 legacy raw 文件存在（且与 canonical 不同名）→ 兼容回退，rel 标注 legacy；
+ * - 两者同时存在 → conflict（fail-closed：不得无优先级双查）；
+ * - 均不存在且 screen_id 本身已是合法 slug（canonical 与 legacy 同名）→ missing；
+ * - screen_id 非法（sanitize 拒绝）→ missing。
+ * 不同 screen_id 归一后 slug 冲突由调用方（capture 层）在目标集合上 fail-closed。
+ */
+export function resolveLayoutDumpPath(
+  reportDir: string,
+  screenId: string,
+): LayoutDumpResolvedPath {
+  const canonicalName = layoutDumpCanonicalFileName(screenId);
+  if (!canonicalName) return { status: 'missing' };
+  const canonicalAbs = path.join(reportDir, canonicalName);
+  const legacyName = layoutDumpLegacyFileName(screenId);
+  const legacyAbs = legacyName === canonicalName ? '' : path.join(reportDir, legacyName);
+  const hasCanonical = fs.existsSync(canonicalAbs);
+  const hasLegacy = legacyAbs !== '' && fs.existsSync(legacyAbs);
+  if (hasCanonical && hasLegacy) {
+    return { status: 'conflict', canonicalAbs, legacyAbs };
+  }
+  if (hasCanonical) {
+    return { status: 'canonical', abs: canonicalAbs, rel: canonicalName };
+  }
+  if (hasLegacy) {
+    return { status: 'legacy', abs: legacyAbs, rel: legacyName };
+  }
+  return { status: 'missing' };
+}
+
 /** MVP：navigation_frame @ order 0 视为可直达顶层屏 */
 export function isLikelyTopLevelScreen(screen: UiSpecScreen): boolean {
   const root = screen.root;
@@ -277,8 +337,9 @@ export function collectP0CaptureTargets(uiDoc: UiSpecDoc | null): UiSpecScreen[]
 }
 
 /**
- * t2：布局树 dump 单屏执行——写 `layout-<screen_id>.json` 到 device-screenshots。
- * 无 layoutDumpFn=能力缺失（unavailable）；有但失败=failed（错误记 errors 不中断采集）。
+ * t2：布局树 dump 单屏执行——写 `layout-<slug>.json`（canonical；t2b 统一寻址，
+ * legacy raw 名仅作读取兼容）。无 layoutDumpFn=能力缺失（unavailable）；
+ * 有但失败=failed（错误记 errors 不中断采集）。
  */
 function runLayoutDump(
   opts: VisualDiffCaptureOptions,
@@ -287,7 +348,12 @@ function runLayoutDump(
   errors: string[],
 ): 'captured' | 'failed' | 'unavailable' {
   if (!opts.layoutDumpFn) return 'unavailable';
-  const destAbs = path.join(reportDir, `layout-${screenId}.json`);
+  const canonicalName = layoutDumpCanonicalFileName(screenId);
+  if (!canonicalName) {
+    errors.push(`${screenId}: screen_id 非法（sanitize 拒绝），无法写布局树 dump`);
+    return 'failed';
+  }
+  const destAbs = path.join(reportDir, canonicalName);
   try {
     const r = opts.layoutDumpFn({ screenId, destAbs, deviceSn: opts.deviceSn, bundleName: opts.bundleName });
     if (r.ok && fs.existsSync(destAbs)) return 'captured';
@@ -334,7 +400,8 @@ function acquireScreenArtifacts(
   const qDir = path.join(reportDir, '_quiescence');
   fs.mkdirSync(qDir, { recursive: true });
   const slug = sanitizeVisualDiffScreenSlug(screenId) ?? 'screen';
-  const dumpAbs = path.join(reportDir, `layout-${screenId}.json`);
+  // t2b：canonical slug 命名（与 runLayoutDump 同口径）
+  const dumpAbs = path.join(reportDir, layoutDumpCanonicalFileName(screenId) ?? `layout-${slug}.json`);
   const q = sampleQuiescent({
     probeShotAbs: path.join(qDir, `shot-${slug}.probe.png`),
     probeDumpAbs: path.join(qDir, `layout-${slug}.probe.json`),
@@ -949,6 +1016,45 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
 
   const capturedScreens: Array<{ entry: VisualDiffScreenEntry; hash: string }> = [];
   const p0CaptureFailures: string[] = [];
+  // t2b（plan c6d8f2b4）：**归一 slug 冲突 fail-closed**——不同 screen_id 归一到同一个
+  // canonical slug（如 `a__b` 与 `a_b`、或 overlay 双下划线被压成单下划线）时，布局
+  // dump / probe / 截图会互相覆盖，读侧无法判别归属。采集开始前在目标集合上检测，
+  // **冲突双方（owner 与 collider）全部**记 P0 采集失败并跳过（不写、不猜），
+  // 两条采集循环（主屏 / overlay）入口均须跳过冲突屏。
+  const slugConflictIds = new Set<string>();
+  {
+    const slugOwners = new Map<string, string>();
+    for (const id of [...targets.map(t => t.id), ...overlayTargets.map(o => o.id)]) {
+      const slug = sanitizeVisualDiffScreenSlug(id);
+      if (!slug) continue;
+      const prev = slugOwners.get(slug);
+      if (prev !== undefined && prev !== id) {
+        // 原 owner 与后出现者都进冲突集合——owner 此前已被登记，须一并剔除
+        slugConflictIds.add(prev);
+        slugConflictIds.add(id);
+        continue;
+      }
+      slugOwners.set(slug, id);
+    }
+    if (slugConflictIds.size > 0) {
+      const bySlug = new Map<string, string[]>();
+      for (const id of slugConflictIds) {
+        const slug = sanitizeVisualDiffScreenSlug(id);
+        if (!slug) continue;
+        const list = bySlug.get(slug) ?? [];
+        list.push(id);
+        bySlug.set(slug, list);
+      }
+      for (const [slug, ids] of bySlug) {
+        errors.push(
+          `slug 归一冲突（fail-closed）：${ids.join('、')} 归一到同一 ` +
+            `canonical 文件名 layout-${slug}.json——布局 dump/截图会互相覆盖，本屏不采集。` +
+            `须改 screen_id 命名（避免双下划线/下划线混用）后重试。`,
+        );
+        for (const id of ids) p0CaptureFailures.push(id);
+      }
+    }
+  }
   // t3（plan f3a8c6d2）：本轮**确证**身份失配屏的瞬时失效集合——不落盘、不进 schema，
   // 仅用于 merge 前剔除该屏的旧条目（见 mergeVisualDiffReports 的 invalidateScreenIds）。
   // 只加入 identity gate 的确定性 `mismatched`（页面组件前缀在场 + 目标锚缺失＝应用页面
@@ -996,6 +1102,8 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
     }
   }
   for (const screen of targets) {
+    // t2b：slug 冲突屏（owner 与 collider）采集入口直接跳过——已在冲突检测处记 P0 失败
+    if (slugConflictIds.has(screen.id)) continue;
     // root 即 overlay 的 base 屏（manage_non_local）由下方 overlay 循环采集，主循环跳过（避免重复/误判缺 nav）。
     if (isOverlayRootScreen(screen)) continue;
     if (
@@ -1111,6 +1219,8 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
   }
 
   for (const ov of overlayTargets) {
+    // t2b：slug 冲突屏（owner 与 collider）同规则跳过——overlay 与主屏一致
+    if (slugConflictIds.has(ov.id)) continue;
     if (capturedScreens.some(c => c.entry.screen_id === ov.id)) continue;
     if (
       canSkipRecaptureForScreen(existingById.get(ov.id), opts.projectRoot, currentFp) &&

@@ -17,6 +17,7 @@
 import * as fs from 'fs';
 import { createHash } from 'crypto';
 import type { UiSpecComponentNode, UiSpecScreen } from '../../../harness/scripts/utils/ui-spec-shared';
+import { collectLocatorRequiredElements } from './coding-visual-parity-check';
 
 // ---------------------------------------------------------------------------
 // dump 解析
@@ -149,23 +150,58 @@ export interface DeclaredElement {
   text?: string;
 }
 
-/** 声明元素清单：屏组件树节点 id + 逐字 text（供 unique_text 回退） */
-export function collectDeclaredElements(screen: UiSpecScreen): DeclaredElement[] {
-  const out: DeclaredElement[] = [];
-  const seen = new Set<string>();
+/**
+ * 声明元素清单（T8 的 locator 分母）：屏组件树节点 id + must_have_elements。
+ * S6（plan e9c4a7f3 s6-locator-calibrate，2026-08-12 重开）：**只收集 locator-required
+ * 元素**——identity anchor 成员、bbox 几何断言目标、forbidden-overlap 参与元素、
+ * must_have_elements、region attest 元素、交互目标（测试步骤触达）、UI kit block
+ * 实例锚点。不再递归收集组件树**全部带 id 节点**（全分母会随 spec 越写越细而稀释
+ * 覆盖率、反向激励 B 类 SKIP）。
+ * 实现：从 coding-visual-parity-check 的收窄收集器取 elementId 集合，再回查声明元素
+ * 文本（供 unique_text 回退）——保持 locator 协议单一分母源。
+ */
+export function collectDeclaredElements(
+  screen: UiSpecScreen,
+  locatorCtx?: {
+    identityIds?: ReadonlySet<string>;
+    navStepIds?: ReadonlySet<string>;
+    attestRegions?: ReadonlySet<string>;
+    /** nav 缺失时允许交互类型启发式回退（review P1：nav 在场则禁用） */
+    interactiveFallbackEnabled?: boolean;
+  },
+): DeclaredElement[] {
+  const required = collectLocatorRequiredElements(screen, locatorCtx?.identityIds ?? new Set<string>(), {
+    navStepIds: locatorCtx?.navStepIds,
+    attestRegions: locatorCtx?.attestRegions,
+    interactiveFallbackEnabled: locatorCtx?.interactiveFallbackEnabled,
+  });
+  const byId = new Map<string, DeclaredElement>();
   const walk = (n: UiSpecComponentNode): void => {
-    if (typeof n.id === 'string' && n.id.trim() && !seen.has(n.id.trim())) {
-      seen.add(n.id.trim());
-      out.push({ elementId: n.id.trim(), text: typeof n.text === 'string' && n.text.trim() ? n.text.trim() : undefined });
+    if (typeof n.id === 'string' && n.id.trim()) {
+      byId.set(n.id.trim(), {
+        elementId: n.id.trim(),
+        text: typeof n.text === 'string' && n.text.trim() ? n.text.trim() : undefined,
+      });
     }
     for (const c of n.children ?? []) walk(c);
   };
   if (screen.root) walk(screen.root);
+  const out: DeclaredElement[] = [];
+  const seen = new Set<string>();
+  for (const req of required) {
+    if (seen.has(req.elementId)) continue;
+    seen.add(req.elementId);
+    const nodeMeta = byId.get(req.elementId);
+    out.push({
+      elementId: req.elementId,
+      text: nodeMeta?.text,
+    });
+  }
+  // must_have_elements 未在组件树中声明 id 的兜底登记（保持既有行为：分母含它）
   for (const mh of screen.must_have_elements ?? []) {
-    if (!seen.has(mh)) {
-      seen.add(mh);
-      out.push({ elementId: mh });
-    }
+    if (seen.has(mh)) continue;
+    seen.add(mh);
+    out.push({ elementId: mh });
   }
   return out;
 }
@@ -294,6 +330,14 @@ export interface LayoutOracleScreenInput {
   dump: ParsedLayoutDump;
   /** C-1 间距比例 advisory 阈（校准 D6 前缺省 0.25，仅展示不 gate） */
   gapTolerance?: number;
+  /** S6（e9c4a7f3 s6-locator-calibrate）：locator-required 分母上下文（identity 锚 /
+   * nav 步骤触达 / region attest）；缺省=仅 must_have + 交互类型启发式（透明回归） */
+  locatorCtx?: {
+    identityIds?: ReadonlySet<string>;
+    navStepIds?: ReadonlySet<string>;
+    attestRegions?: ReadonlySet<string>;
+    interactiveFallbackEnabled?: boolean;
+  };
 }
 
 export interface LayoutOracleScreenResult {
@@ -323,7 +367,7 @@ export function collectLayoutOracleForScreen(input: LayoutOracleScreenInput): La
       note,
     });
   };
-  const declared = collectDeclaredElements(screen);
+  const declared = collectDeclaredElements(screen, input.locatorCtx);
   const { located, coverage } = locateElements(declared, dump.appRoot);
   const get = (id: string): LocatedElement | undefined => {
     const e = located.get(id);

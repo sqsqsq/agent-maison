@@ -647,3 +647,87 @@ export function selectBestNonPlaceholderDerivedPlan(reportsBase: string): Select
   }
   return { selected: null, rejectedPlaceholders, allCandidates: all };
 }
+
+// ============================================================================
+// run-directory-freshness（plan 420a5005，2026-08-12 宿主实测纠偏项）
+// ============================================================================
+// 事故：执行产物写回旧 timestamp 目录——宿主 bc-openCard 08-12 的 trace/report 被写进
+// `testing/reports/20260810T184000-codex-testing/`（目录名 08-10、内容 08-12），同目录
+// 顶层 test-report.md 仍是 08-10 旧件，读者无法从目录名判断执行时间。
+// 落点（复制前移，零新机制）：每次执行新建 <timestamp>/hylyre/ 目录，把选中的
+// test-plan.hylyre.md（及同目录 derive-manifest.json，若存在）**原样复制**到新目录；
+// 本轮 test-report.md / trace.json / failures/ 全写入新目录；原派生目录保持字节不变
+// （只读输入）；新目录已存在则 fail-closed，不覆盖、不复用。
+// 消费者无需改动：选择器按 mtime 从新到旧取，刚复制的新目录 mtime 最新自然被选中；
+// evidence composer / trace resolver 从 dirname(trace) 读取，因同置于新目录而继续成立。
+// ----------------------------------------------------------------------------
+
+/**
+ * `<timestamp>` 目录名：UTC ISO 压缩形态（如 `20260814T024500Z-123`），与宿主惯例
+ * 一致并保留毫秒精度——同秒连续执行仍产生互异目录（review P1：秒级截断会让同秒
+ * 第二次执行撞同名目录）。
+ */
+export function hylyreRunTimestamp(nowMs?: number): string {
+  const d = new Date(nowMs ?? Date.now());
+  const ms = String(d.getUTCMilliseconds()).padStart(3, '0');
+  return d
+    .toISOString()
+    .replace(/[-:.]/g, '')
+    .replace(/(\d{4}T\d{6})\d+Z$/, `$1Z-${ms}`);
+}
+
+export type FreshHylyreRunDirResult =
+  | { ok: true; runDir: string; hylyrePlanAbsPath: string; copiedManifest: boolean }
+  | { ok: false; error: string };
+
+/**
+ * 为本轮执行准备全新的 `<reportsBase>/<timestamp>/hylyre/` 目录并复制选中派生计划。
+ * fail-closed：目标目录已存在 → 返回失败（不覆盖、不复用、零写入）。
+ * **原子认领（review P1）**：用排他式 mkdir（无 recursive）作目录占位——`recursive:true`
+ * 的 mkdir 在目录已存在时只是成功返回，配合前置 existsSync 存在 TOCTOU，两个并发进程
+ * 可能同时通过检查后各自复制覆盖；`mkdir` 非 recursive 时对已存在目录抛 `EEXIST`，
+ * 天然互斥，捕获 EEXIST 即按冲突 fail-closed。
+ */
+export function prepareFreshHylyreRunDir(opts: {
+  reportsBase: string;
+  sourceHylyrePlanAbsPath: string;
+  nowMs?: number;
+}): FreshHylyreRunDirResult {
+  const { reportsBase, sourceHylyrePlanAbsPath } = opts;
+  if (!fs.existsSync(sourceHylyrePlanAbsPath)) {
+    return { ok: false, error: `源派生计划不存在：${sourceHylyrePlanAbsPath}` };
+  }
+  const stamp = hylyreRunTimestamp(opts.nowMs);
+  const runDir = path.join(reportsBase, stamp, 'hylyre');
+  try {
+    // 排他式认领：父目录需先存在——reportsBase 由调用方保证（featurePhaseReportsDir 建模）
+    fs.mkdirSync(path.dirname(runDir), { recursive: true });
+    fs.mkdirSync(runDir);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === 'EEXIST') {
+      return {
+        ok: false,
+        error: `本轮执行目录已存在（原子认领冲突）：${runDir}——不覆盖、不复用（run-directory-freshness fail-closed；如为并发/重入，请勿复用旧 timestamp 目录，改由下一轮新目录承载）`,
+      };
+    }
+    return { ok: false, error: `无法创建本轮执行目录：${(e as Error).message}` };
+  }
+  const hylyrePlanAbsPath = path.join(runDir, 'test-plan.hylyre.md');
+  fs.copyFileSync(sourceHylyrePlanAbsPath, hylyrePlanAbsPath);
+
+  // 同目录 derive-manifest.json 若存在一并复制（显式 skip 登记随执行目录走）
+  const manifestSrc = path.join(path.dirname(sourceHylyrePlanAbsPath), 'derive-manifest.json');
+  let copiedManifest = false;
+  if (fs.existsSync(manifestSrc)) {
+    fs.copyFileSync(manifestSrc, path.join(runDir, 'derive-manifest.json'));
+    copiedManifest = true;
+  }
+  // 复制件的 mtime 以本次执行时点为准（选择器按 mtime 从新到旧取，新目录须为最新）
+  const stampMs = opts.nowMs ?? Date.now();
+  fs.utimesSync(hylyrePlanAbsPath, stampMs / 1000, stampMs / 1000);
+  if (copiedManifest) {
+    fs.utimesSync(path.join(runDir, 'derive-manifest.json'), stampMs / 1000, stampMs / 1000);
+  }
+  return { ok: true, runDir, hylyrePlanAbsPath, copiedManifest };
+}

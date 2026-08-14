@@ -65,7 +65,7 @@
 - [x] 6.1 contracts `integration_points` 机器块 + `integration_scope_consistency`（plan 期 FAIL + binding 实存验证）
 - [x] 6.2 headless `plan.scope_expansion` 与 integration_points 矛盾 → halt 问人
 - [x] 6.3 `host_entry_reachability`（coding 期静态走查）
-- [ ] 6.4 locator 终态诊断（七类分母 + 覆盖率落盘 WARN）—— **2026-08-12 重开**：七类规格正文正确，
+- [x] 6.4 locator 终态诊断（七类分母 + 覆盖率落盘 WARN）—— **2026-08-12 重开**：七类规格正文正确，
       但生产接线不完整。`collectLocatorRequiredElements`（coding-visual-parity-check.ts，
       `denominator: 'locator_required_v1'`）只收 identity_anchor / kit_block_instance /
       interactive / must_have **4 类**，缺 bbox 几何断言目标、forbidden-overlap 参与元素、
@@ -74,6 +74,8 @@
       递归收组件树全部带 id 节点作分母，`coverage`/`bClassSkipped` 均建立其上，未复用收窄分母。
       宿主 08-12 实测 overlay 60% / 17% 系**全分母口径**，不得用作七类分母的误报面验证。
       规格正文无需扩写，本项只补接线。
+      （2026-08-14 完成：七类齐 + nav/attest 按屏隔离 + within.by_id 递归提取 +
+      interactive 回退仅 nav 缺失时启用；T8/calibrate/runtime-mount 同一收窄分母口径。）
 - [ ] 6.5 locator 宿主两 run 回灌（需用户宿主配合；只校准分母/夹具，不作为自动升级条件）
 - [x] 6.6 locator 独立 enforce 取消（3.0.0 收尾决定）：覆盖率是定位断言能力量测，低覆盖导致 B 类断言 SKIP，不直接表达产品质量或 visual-debt；宿主两 run 不触发自动 BLOCKER。
 - [x] 6.7a `test_case_flow` machine block + Markdown 一致性门禁 + 级联三分归类（BLOCKED_BY 非 PASS：进分母/阻 completion/verdict 不变）

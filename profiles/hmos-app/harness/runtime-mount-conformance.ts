@@ -14,8 +14,14 @@ import type { CheckContext, CheckResult } from '../../../harness/scripts/utils/t
 import { loadUiSpecFile, uiSpecAbsPath } from '../../../harness/scripts/utils/ui-spec-shared';
 import { isHardPixelContract } from '../../../harness/scripts/utils/fidelity-shared';
 import { extractLayoutDumpFacets } from './visual-diff-nav';
-import { deviceScreenshotsDir, sanitizeVisualDiffScreenSlug } from './visual-diff-capture';
-import { collectLocatorRequiredElements, collectNavIdentityIdMembers } from './coding-visual-parity-check';
+import { deviceScreenshotsDir, resolveLayoutDumpPath } from './visual-diff-capture';
+import {
+  collectLocatorRequiredElements,
+  collectNavIdentityIdMembers,
+  collectNavStepTargetIdsByScreen,
+  collectRegionAttestElementIdsByScreen,
+  navConfigExists,
+} from './coding-visual-parity-check';
 
 export function checkRuntimeMountConformance(ctx: CheckContext): CheckResult[] {
   const id = 'runtime_mount_conformance';
@@ -24,24 +30,38 @@ export function checkRuntimeMountConformance(ctx: CheckContext): CheckResult[] {
   if (!doc) return [];
   const shotsDir = deviceScreenshotsDir(ctx.projectRoot, ctx.feature);
   const identityIds = collectNavIdentityIdMembers(ctx.projectRoot, ctx.feature);
+  // S6（e9c4a7f3 s6-locator-calibrate）：按屏隔离上下文 + nav 缺失才启用交互回退
+  const navStepIdsByScreen = collectNavStepTargetIdsByScreen(ctx.projectRoot, ctx.feature);
+  const attestByScreen = collectRegionAttestElementIdsByScreen(ctx.projectRoot, ctx.feature);
+  const interactiveFallbackEnabled = !navConfigExists(ctx.projectRoot, ctx.feature);
   let total = 0;
   let mounted = 0;
   const missing: string[] = [];
   let dumpsSeen = 0;
+  let addressConflicts = 0;
   for (const s of doc.screens ?? []) {
     if (s.priority !== 'P0') continue;
-    const slug = sanitizeVisualDiffScreenSlug(s.id) ?? s.id;
-    const dumpPath = path.join(shotsDir, `layout-${slug}.json`);
-    if (!fs.existsSync(dumpPath)) continue;
+    // t2b：与 T8/calibrate 同一共享寻址解析器——canonical 优先、legacy 兼容、并存 fail-closed
+    const resolved = resolveLayoutDumpPath(shotsDir, s.id);
+    if (resolved.status === 'conflict') {
+      addressConflicts++;
+      missing.push(`${s.id}（命名冲突：canonical 与 legacy 并存，须清理后重采）`);
+      continue;
+    }
+    if (resolved.status === 'missing') continue;
     let facets: { texts: string[]; ids: string[] };
     try {
-      facets = extractLayoutDumpFacets(JSON.parse(fs.readFileSync(dumpPath, 'utf-8')));
+      facets = extractLayoutDumpFacets(JSON.parse(fs.readFileSync(resolved.abs, 'utf-8')));
     } catch {
       continue;
     }
     dumpsSeen++;
     const idSet = new Set(facets.ids);
-    for (const el of collectLocatorRequiredElements(s, identityIds)) {
+    for (const el of collectLocatorRequiredElements(s, identityIds, {
+      navStepIds: navStepIdsByScreen.get(s.id),
+      attestRegions: attestByScreen.get(s.id),
+      interactiveFallbackEnabled,
+    })) {
       total++;
       if (idSet.has(el.elementId)) mounted++;
       else missing.push(`${s.id}/${el.elementId}`);
@@ -52,9 +72,11 @@ export function checkRuntimeMountConformance(ctx: CheckContext): CheckResult[] {
       id, category: 'structure', description,
       severity: 'MINOR', status: 'SKIP',
       details:
-        dumpsSeen === 0
-          ? '无设备 uitree dump（layout-*.json）——运行时挂载轴不适用（无设备环境不装死；静态轴照常）。'
-          : 'P0 屏无 locator-required 声明元素——挂载轴无分母。',
+        addressConflicts > 0
+          ? `布局 dump 命名冲突（${addressConflicts} 屏 canonical/legacy 并存——须清理后重采；不读取、不猜测）。`
+          : dumpsSeen === 0
+            ? '无设备 uitree dump（layout-*.json）——运行时挂载轴不适用（无设备环境不装死；静态轴照常）。'
+            : 'P0 屏无 locator-required 声明元素——挂载轴无分母。',
     }];
   }
   const rate = mounted / total;
