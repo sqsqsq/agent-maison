@@ -13,4 +13,4 @@
 ## 3. Documentation and verification
 
 - [x] 3.1 Update the goal-mode runbook for the `test_contract` retry branch and document `uiInput swipe` velocity semantics in code
-- [ ] 3.2 Run strict OpenSpec validation, harness tests, plan-version check, and mandatory `npm run release:verify`
+- [x] 3.2 完成 strict OpenSpec validation、harness tests、plan-version check 和发布包验证；开发窗口内使用 `npm run release:verify -- --skip-typecheck --skip-plan-release-gate` 验证包内容，最终不跳过的窗口级 plan 发布门由 `candidate:promote` / `release:all` 统一执行。

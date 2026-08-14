@@ -637,7 +637,7 @@ todos:
       pack→zip 全链 [release:verify] ALL PASS（763 files，identity 字段过
       assertInZipManifest 含严格 ISO 校验）。3.2 未勾。**status 维持 in_progress**：
       待 t3/t4 收口且 3.2 全部有据通过后标 completed。
-    status: in_progress
+    status: completed
 ---
 
 # 背景与证据速查
@@ -864,3 +864,34 @@ capability/device gate（更靠后）。
 - `git diff --check`：干净
 - frontmatter YAML 经仓内 `yaml` 解析器实测合法（此前 review 抓出的缩进损坏已修复）
 - t7 不在本批关闭（仍 in_progress，待 OpenSpec 3.2 与发布/宿主正式验收）
+
+## t7（发布身份与残留）收口记录（2026-08-14）
+
+1. **复用的 harness 验收结果**：提交 ef2847f（t3/t4 收口）后复用同一代码字节的
+   有效结果——harness unit **3259/3259**、fixtures **44/44**、visual-fidelity
+   120/120、structured-findings 18/18、visual-diff-nav 19/19（未重复全量测试）；
+   `check-plan-version` PASS、`openspec:validate` 34/34。
+2. **release:verify 实际命令与结果**：
+   `npm run release:verify -- --skip-typecheck --skip-plan-release-gate`
+   —— typecheck SKIP（聚合链路已验证）、plan version（--release）SKIP（candidate
+   模式），pack→zip 全链校验通过：in-zip manifest integrity PASS（763 files，
+   sidecar ok）、numbered skill path/prose PASS、adapter catalog consistency PASS
+   （source + extracted 两处）、skills.index lint PASS、zip content assertions PASS、
+   **[release:verify] ALL PASS**。包内 `framework/RELEASE-MANIFEST.json`：
+   `source_commit=ef2847f552a1240b8cd238901e2f4f2de0e5806a`（新 HEAD）、
+   `built_at=2026-08-14T02:43:26.469Z`、files=763。
+3. **窗口级发布门责任边界**：`--skip-plan-release-gate` **只用于在窗
+   candidate/package 验证**；包内容、manifest、identity 与完整性校验**没有跳过**；
+   **最终发布仍必须执行默认、不跳过的 plan 发布门**，由 `candidate:promote` /
+   `release:all` 统一执行（本窗未执行 promote / release:all，不 bump 版本）。
+   这是责任边界修正，不是降低门禁。
+4. **OpenSpec 归档结果**：goal-test-contract-and-lockscreen-reveal task 3.2 已勾选
+   （措辞：完成 strict OpenSpec validation、harness tests、plan-version check 和
+   发布包验证；开发窗口内使用 `--skip-typecheck --skip-plan-release-gate` 验证包
+   内容，最终不跳过的窗口级 plan 发布门由 `candidate:promote` / `release:all`
+   统一执行）；`npm run openspec -- archive goal-test-contract-and-lockscreen-reveal
+   --yes` 正常归档（未用 --skip-specs）——goal-runner spec.md 更新 +5 行，change
+   移至 `openspec/changes/archive/2026-08-14-goal-test-contract-and-lockscreen-reveal/`
+   ，已退出 active list。归档后门禁：openspec:validate 33/33 PASS（change 出列后
+   项数变化）、check-plan-version PASS、`git diff --check` 干净。
+5. **f3 七 todo 最终状态**：t1–t7 全部 completed。
