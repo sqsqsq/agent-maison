@@ -150,46 +150,59 @@ export interface VisualDiffCaptureOptions {
   goldenForbidden?: GoldenForbiddenTarget[];
 }
 
-/** env MAISON_GOLDEN_CONTRACT → contract 的 positive_screens；未设/不可读 → null（普通模式）。
- * 设了却读不出（路径错/JSON 坏/shape 非法）→ 抛错（fail-closed：golden 回归不许静默降级成 P0-only）。 */
-export function loadGoldenContractTargetsFromEnv(projectRoot: string): GoldenScreenTarget[] | null {
+export interface GoldenContractEnvLoad {
+  /** env 未设 → null（普通模式）；设了 → contract positive_screens 条目 */
+  targets: GoldenScreenTarget[] | null;
+  /** env 未设 / contract 无 forbidden 数组 → [] */
+  forbidden: GoldenForbiddenTarget[];
+}
+
+/**
+ * env MAISON_GOLDEN_CONTRACT → positive_screens + forbidden 的**单次**装载（两字段同文件、
+ * 单次 JSON.parse——调用方解析一次后显式传给消费方，不得各自重读 env）。
+ * 未设 env → { targets: null, forbidden: [] }（普通模式）。
+ * 设了却读不出（路径错/JSON 坏/shape 非法）→ 抛错（fail-closed：golden 回归不许静默降级成 P0-only）。
+ */
+export function loadGoldenContractFromEnv(projectRoot: string): GoldenContractEnvLoad {
   const raw = process.env.MAISON_GOLDEN_CONTRACT?.trim();
-  if (!raw) return null;
+  if (!raw) return { targets: null, forbidden: [] };
   const abs = path.isAbsolute(raw) ? raw : path.resolve(projectRoot, raw);
   if (!fs.existsSync(abs)) {
     throw new Error(`[golden-contract] MAISON_GOLDEN_CONTRACT 指向的文件不存在：${abs}`);
   }
-  const doc = JSON.parse(fs.readFileSync(abs, 'utf-8')) as { positive_screens?: unknown };
+  const doc = JSON.parse(fs.readFileSync(abs, 'utf-8')) as { positive_screens?: unknown; forbidden?: unknown };
   if (!Array.isArray(doc.positive_screens) || doc.positive_screens.length === 0) {
     throw new Error(`[golden-contract] contract 缺 positive_screens：${abs}`);
   }
-  const out: GoldenScreenTarget[] = [];
+  const targets: GoldenScreenTarget[] = [];
   for (const s of doc.positive_screens as Array<Record<string, unknown>>) {
     if (typeof s?.declared !== 'string' || typeof s?.capture !== 'string' || !s.declared || !s.capture) {
       throw new Error(`[golden-contract] positive_screens 条目 shape 非法：${JSON.stringify(s)}`);
     }
-    out.push({ declared: s.declared, capture: s.capture });
+    targets.push({ declared: s.declared, capture: s.capture });
   }
-  return out;
+  const forbidden: GoldenForbiddenTarget[] = [];
+  for (const f of (Array.isArray(doc.forbidden) ? doc.forbidden : []) as Array<Record<string, unknown>>) {
+    if (typeof f?.id !== 'string' || typeof f?.anchor !== 'string' || typeof f?.evidence !== 'string' ||
+        !f.id || !f.anchor || !f.evidence) {
+      throw new Error(`[golden-contract] forbidden 条目 shape 非法：${JSON.stringify(f)}`);
+    }
+    forbidden.push({ id: f.id, anchor: f.anchor, evidence: f.evidence });
+  }
+  return { targets, forbidden };
+}
+
+/** env MAISON_GOLDEN_CONTRACT → contract 的 positive_screens；未设/不可读 → null（普通模式）。
+ * 设了却读不出（路径错/JSON 坏/shape 非法）→ 抛错（fail-closed：golden 回归不许静默降级成 P0-only）。
+ * （委托 loadGoldenContractFromEnv——同一解析器，避免第二套 golden contract 解析。） */
+export function loadGoldenContractTargetsFromEnv(projectRoot: string): GoldenScreenTarget[] | null {
+  return loadGoldenContractFromEnv(projectRoot).targets;
 }
 
 /** env contract 的 forbidden 负向目标（round20 P1：证据生产接线的输入）；未设 env → []；
  * 设了但条目 shape 非法 → 抛错（与 targets 装载器同 fail-closed 语义）。 */
 export function loadGoldenContractForbiddenFromEnv(projectRoot: string): GoldenForbiddenTarget[] {
-  const raw = process.env.MAISON_GOLDEN_CONTRACT?.trim();
-  if (!raw) return [];
-  const abs = path.isAbsolute(raw) ? raw : path.resolve(projectRoot, raw);
-  const doc = JSON.parse(fs.readFileSync(abs, 'utf-8')) as { forbidden?: unknown };
-  if (!Array.isArray(doc.forbidden)) return [];
-  const out: GoldenForbiddenTarget[] = [];
-  for (const f of doc.forbidden as Array<Record<string, unknown>>) {
-    if (typeof f?.id !== 'string' || typeof f?.anchor !== 'string' || typeof f?.evidence !== 'string' ||
-        !f.id || !f.anchor || !f.evidence) {
-      throw new Error(`[golden-contract] forbidden 条目 shape 非法：${JSON.stringify(f)}`);
-    }
-    out.push({ id: f.id, anchor: f.anchor, evidence: f.evidence });
-  }
-  return out;
+  return loadGoldenContractFromEnv(projectRoot).forbidden;
 }
 
 export interface VisualDiffCaptureResult {
@@ -957,13 +970,17 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
     };
   }
 
-  // c4e8b1d3 G3：golden 显式 targets（不受 P0 过滤；普通模式两者皆无 → 纯 P0-only 原行为）
-  const goldenSpec = opts.goldenTargets ?? loadGoldenContractTargetsFromEnv(opts.projectRoot);
+  // c4e8b1d3 G3 / Todo 3：golden 显式 targets（不受 P0 过滤；普通模式两者皆无 → 纯 P0-only 原行为）。
+  // **单解析契约**：未显式注入 targets 时只调一次 loadGoldenContractFromEnv（单次 JSON.parse
+  // 同时取 targets/forbidden）——禁止 targets 与 forbidden 分两次读 env（两次读取间文件内容
+  // 可能漂移，违背本 change 自己的单解析契约）；显式注入路径不读 env。
+  const goldenEnvLoad = opts.goldenTargets ? null : loadGoldenContractFromEnv(opts.projectRoot);
+  const goldenSpec = opts.goldenTargets ?? (goldenEnvLoad ? goldenEnvLoad.targets : null);
   const golden = goldenSpec ? resolveGoldenCaptureTargets(uiDoc, goldenSpec) : null;
   // round20 P1：负向目标（证据生产）——opts 注入优先；opts.goldenTargets 注入而未给
-  // forbidden 时不读 env（测试注入面独立），env 路径两者一体装载。
+  // forbidden 时不读 env（测试注入面独立），env 路径两者一体装载（同一 goldenEnvLoad）。
   const goldenForbidden: GoldenForbiddenTarget[] = golden
-    ? (opts.goldenForbidden ?? (opts.goldenTargets ? [] : loadGoldenContractForbiddenFromEnv(opts.projectRoot)))
+    ? (opts.goldenForbidden ?? (opts.goldenTargets ? [] : (goldenEnvLoad ? goldenEnvLoad.forbidden : [])))
     : [];
   const p0Screens = collectP0CaptureTargets(uiDoc);
   const targets = golden

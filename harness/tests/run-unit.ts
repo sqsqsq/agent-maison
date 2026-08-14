@@ -123,6 +123,9 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'ui-scope-gate', modulePath: './unit/ui-scope-gate.unit.test' },
   // plan c4e8b1d3 G3：bc-openCard consumer golden evaluator（结果聚合 + 绑定校验）
   { id: 'consumer-golden', modulePath: './unit/consumer-golden.unit.test' },
+  // plan c4e8b1d3 Todo 3：golden/nav/capture target 集合统一——check-testing 入口级接线
+  // （nav 校验/identity/capture 共用 P0 ∪ golden positive ∪ golden forbidden 集合）
+  { id: 'golden-nav-capture-wiring', modulePath: './unit/golden-nav-capture-wiring.unit.test' },
   // plan b7e4d2a9 Todo3：vision 账本单写者谓词（2026-07-27 宿主误杀根治）
   { id: 'single-writer-predicate', modulePath: './unit/single-writer-predicate.unit.test' },
   // plan b7e4d2a9 Todo1：测试 trust 隔离（probe 与 blackbox 两 suite id 不得子串包含）

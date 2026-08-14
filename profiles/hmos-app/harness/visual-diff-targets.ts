@@ -143,6 +143,16 @@ export function collectP0ScreenIds(uiDoc: UiSpecDoc | null): string[] {
 }
 
 /**
+ * golden 解析结果的 **canonical 正向 target ID**（extraScreens 的 declared 屏 id +
+ * extraOverlays 的 capture id，如 `bank_card_list_sheet__overlay__0`）。
+ * nav 校验 / identity 解析 / capture 三方共用此集合（c4e8b1d3 Todo 3：不得直接拼 raw
+ * contract 名称，否则又是一处双真源）。
+ */
+export function collectGoldenPositiveTargetIds(res: GoldenTargetResolution): string[] {
+  return [...res.extraScreens.map(s => s.id), ...res.extraOverlays.map(o => o.id)];
+}
+
+/**
  * P0 屏 + P0 overlay target（visual_diff 必须覆盖的最小集合）。
  * root 即 overlay 的 base 屏（manage_non_local）由其同基 overlay id 代表、不重复计入——否则 base 屏
  * 永远找不到采集条目/nav 键 → 误判"未覆盖"/"缺 nav 配置"（本轮 review 四轮实测 FP 根治点）。

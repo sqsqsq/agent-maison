@@ -266,6 +266,55 @@ test('env 设了却读不出（路径错）→ 抛错 fail-closed（golden 回�
   }
 });
 
+test('c4e8b1d3 Todo 3 守门：direct capture env 路径只读一次 contract 文件（单解析契约）', () => {
+  const prev = process.env.MAISON_GOLDEN_CONTRACT;
+  const root = mkRoot();
+  const contractAbs = path.join(root, 'golden-contract.json');
+  fs.writeFileSync(contractAbs, JSON.stringify({
+    schema_version: '1.0',
+    positive_screens: GOLDEN,
+    forbidden: [{ id: 'HomeTab', anchor: 'bank_card_section', evidence: 'device-testing/device-screenshots/layout-HomeTab.json' }],
+  }, null, 2));
+  process.env.MAISON_GOLDEN_CONTRACT = contractAbs;
+  // 单解析契约守门：contract 文件（含 "positive_screens" 字段）只被 JSON.parse 一次
+  //（fs 命名空间在 ESM/CJS 混合下不可重定义，改从全局 JSON.parse 计数，可靠且与模块解析无关）。
+  const origParse = JSON.parse;
+  let parses = 0;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (JSON as any).parse = (text: string, reviver?: (this: unknown, key: string, value: unknown) => unknown): any => {
+    if (typeof text === 'string' && text.includes('"positive_screens"')) parses++;
+    return origParse(text, reviver);
+  };
+  try {
+    const r = captureVisualDiff({
+      projectRoot: root,
+      feature: 'bc-openCard',
+      uiDoc: UI_DOC,
+      // forbidden 证据生产所需（layoutDumpFn + nav）——env 路径须同一次装载即够
+      navConfig: { all_banks: [], HomeTab: [] },
+      navExecutorFn: () => ({ ok: true }),
+      layoutDumpFn: args => {
+        fs.mkdirSync(path.dirname(args.destAbs), { recursive: true });
+        fs.writeFileSync(args.destAbs, JSON.stringify({ schema_version: 'hylyre-hypium-ui-dump-v1', tree: { attributes: { bounds: '[0,0][1080,2400]', type: 'stack', id: 'r' }, children: [] } }));
+        return { ok: true };
+      },
+      screenshotFn: args => {
+        fs.mkdirSync(path.dirname(args.destAbs), { recursive: true });
+        fs.writeFileSync(args.destAbs, crypto.randomBytes(64));
+        return { ok: true };
+      },
+    });
+    assert.strictEqual(r.ok, true, r.errors.join('; '));
+    assert.strictEqual(parses, 1,
+      `direct capture env 路径须只解析一次 contract 文件（解析 ${parses} 次）——两次读取间内容可能漂移`);
+  } finally {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (JSON as any).parse = origParse;
+    if (prev === undefined) delete process.env.MAISON_GOLDEN_CONTRACT;
+    else process.env.MAISON_GOLDEN_CONTRACT = prev;
+  }
+});
+
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
   for (const c of cases) {

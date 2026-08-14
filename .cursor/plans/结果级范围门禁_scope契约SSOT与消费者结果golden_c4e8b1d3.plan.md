@@ -46,7 +46,7 @@ todos:
     status: completed
   - id: 3
     content: "consumer golden evaluator：固定 golden screen contract（10 固定正向需求屏含 P1 bank_card_list_sheet + capture ID 映射，精确集合相等）+ 生产接线（golden 显式 targets 绕 P0 过滤，普通 visual-diff 仍 P0-only，缺失/形态不符 fail-closed）+ HomeTab forbidden anchor + 三用例。【2026-08-12 重新打开】生产接线只验到 capture 函数层：三个接线用例均把 goldenTargets 直接注入 opts（profiles/hmos-app/harness/tests/unit/golden-capture-targets.unit.test.ts:56/164/210/239），绕过了真实入口的 nav 校验。真实入口下 check-testing.ts:2627 只构建纯 P0 集合交 validateNavConfigV2 做严格集合相等，golden 点名的 P1 屏无处声明导航步骤、写入即判「多余/错写屏名」（宿主 bank_card_detail 实测命中）。补齐项：nav 校验与采集共用同一份解析后 canonical target 集合 P0 ∪ golden positive ∪ golden forbidden nav targets（forbidden 不可漏，HomeTab 负向证据同样需导航步骤），并补入口级测试（经 check-testing 而非注入 opts）"
-    status: in_progress
+    status: completed
   - id: 4
     content: "candidate 模式：candidate=持久化 zip+sidecar manifest+zip sha256，只跳发布 plan 门禁；evaluator 随包发布并校验 manifest/run ID；PASS 后补门禁移动同一字节 zip，禁止重新 pack"
     status: completed
@@ -472,3 +472,54 @@ P0 targets ∪ golden positive targets（extraScreens/extraOverlays）∪ golden
 
 **同类教训**：与既有记录「验收必须对准生产接线而非夹具」同一类——夹具注入口径通过
 不等于调用方接线通过，调用方接线需单独覆盖。
+
+## 实施记录（2026-08-14，Todo 3 重新关闭）
+
+Todo 3 已按「Todo 3 重新打开」段补齐项完成并重新标记 `completed`（frontmatter 唯一真源）；
+以下为实施说明，不改变 plan 目标/设计与验收正文。
+
+- **接线**：`check-testing.ts` 把 device_test.run 后的 visual_diff 采集块原样抽取为
+  入口 `runDeviceVisualDiffCapture(ctx, hapHolder, devices)`（生产调用点仍为
+  `checkDeviceTestRunGate`，设备传输面由调用方按 hylyre 构建器装配）。入口内
+  **单次**解析 golden contract（`loadGoldenContractFromEnv`，单次 JSON.parse；
+  `loadGoldenContractTargetsFromEnv` / `loadGoldenContractForbiddenFromEnv` 收敛为
+  委托同一实现——不新增平行解析器），解析后的 canonical target 集合
+  `P0 ∪ golden positive capture targets ∪ golden forbidden nav targets`
+  （positive 经 `resolveGoldenCaptureTargets` 的 extraScreens/extraOverlays 解析 id，
+  forbidden 取 contract 条目 id）同时供 `validateNavConfigV2`、identity 解析
+  （`resolveIdentityForTargets`）与 `captureVisualDiff`（`goldenTargets`/`goldenForbidden`
+  显式传入，capture 不再各自读 env）。
+- **fail-closed 前置**：golden 解析 failures（declared 缺失/形态漂移/capture id 失配）
+  在 nav 门禁直接 BLOCKER/FAIL 点名（`golden_contract:<declared>`）；
+  slug 冲突仍由 capture 层 fail-closed（t2b 不变）。
+- **普通模式零变化**：env 未设 → targets=null、target 集合=纯 P0；普通 P1/负向键写入
+  nav 仍判「多余/错写屏名」；capture 不扩面。
+- **测试**：新增入口级套件 `harness/tests/unit/golden-nav-capture-wiring.unit.test.ts`
+  （已注册 run-unit CORE_SUITES），8 用例全 PASS：①golden P1 屏 nav 校验通过并产出
+  `__overlay__0` 采集；②forbidden HomeTab 进 nav 集合、被导航并产出 run/build 绑定
+  wrapper 证据；③a 无 golden 严格 P0-only（P1 不采集）；③b 无 golden 时 P1 键仍判
+  「多余/错写屏名」（宿主 incident 形态）；④/④b golden declared 缺失/形态漂移
+  nav gate fail-closed 点名；⑤a golden P1 屏 identity 被 capture 消费
+  （identity_fingerprint 落条目）；⑤b forbidden 屏纳入 identity 需求集
+  （pixel hard 下缺已确认 identity 即被 nav 校验拦截）。
+- **验证**：`cd harness && npm test` 全 PASS（unit 3284 + fixtures 44）；
+  `npm run openspec:validate` 35/35（新增 active change
+  `openspec/changes/golden-nav-target-unification/` 承载本改动，未动 canonical spec）；
+  `node scripts/check-plan-version.mjs` PASS；`git diff --check` 干净。
+- **未处理**：Todo 5（宿主统一回归）保持 pending；本章仅代码+仓内验证，未构建
+  candidate、未发布、未改宿主。
+
+### 实施记录·review 修复（2026-08-14，两处 review P1 全采纳）
+
+- **P1-1 direct capture env 双读**：`captureVisualDiff` env 回退原为 targets 装载器与
+  forbidden 装载器各调一次（各自委托 combined loader → 各读盘、解析一次，两次读取间文件
+  内容可漂移）。已改：未显式注入 targets 时只调一次 `loadGoldenContractFromEnv`，同一份
+  结果同时消费 targets/forbidden；显式注入路径保持不读 env。补守门测试
+  （`golden-capture-targets.unit.test.ts`）：direct capture env 路径 readFileSync 计数=1。
+- **P1-2 OpenSpec delta MODIFIED 头无 canonical 对象**：canonical visual-diff spec 无同名
+  Requirement，validate 不报但 archive 会失败。已将该 Requirement 改入 `## ADDED
+  Requirements`（第二条），未动 canonical。
+- 复核：typecheck OK；golden-capture-targets（8/8，含新守门例）+ golden-nav-capture-wiring
+  （8/8）PASS；`npm run openspec:validate` 35/35；`git diff --check` 干净。
+- 第 2 轮 review 终判「可提交」：本批（c4e8b1d3 Todo 3：check-testing 入口统一 canonical
+  target 集合 + loader 单解析 + 入口级测试 + OpenSpec change）按指定 7 文件范围提交。

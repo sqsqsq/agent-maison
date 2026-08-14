@@ -105,6 +105,10 @@ import { isPhaseDisabledByProfile } from '../profile-loader';
 import {
   CAPTURE_NOT_RUN_ELIGIBILITY,
   captureVisualDiff,
+  loadGoldenContractFromEnv,
+  type VisualDiffScreenshotFn,
+  type VisualDiffNavExecutorFn,
+  type VisualDiffLayoutDumpFn,
 } from '../../profiles/hmos-app/harness/visual-diff-capture';
 import { computeHapBuildFingerprint } from '../../profiles/hmos-app/harness/build-fingerprint';
 import { buildHylyreVisualDiffScreenshotFn, buildHylyreNavExecutorFn, buildHylyreLayoutDumpFn, readDeviceTestRunHylyreNavOpts } from '../../profiles/hmos-app/harness/visual-diff-hylyre-screenshot';
@@ -118,7 +122,7 @@ import {
   validateNavConfig,
   validateNavConfigV2,
 } from '../../profiles/hmos-app/harness/visual-diff-nav';
-import { collectP0VisualTargetIds } from '../../profiles/hmos-app/harness/visual-diff-targets';
+import { collectGoldenPositiveTargetIds, collectP0VisualTargetIds, resolveGoldenCaptureTargets } from '../../profiles/hmos-app/harness/visual-diff-targets';
 import { resolveHylyreRuntimeWorkDir } from '../../profiles/hmos-app/harness/hylyre-spawn';
 import { parseUiChangeFromSpecMarkdown, loadUiSpecFile, uiSpecAbsPath } from './utils/ui-spec-shared';
 import { lintDerivedPlanSelectorContract } from '../../profiles/hmos-app/harness/selector-contract';
@@ -2806,53 +2810,10 @@ function checkDeviceTestRunGate(
             ctx.phase,
             ctx.frameworkRoot,
           );
-          // round5 P1-A：有固化 nav 配置则按屏导航到位再截（根除多屏截同一帧）。
-          // S2 P0-C（visual-capability-truth）：升 2.0 归一读取——identity 锚点随屏配置；
-          // pixel_1to1 下 P0 屏须有已确认 identity（proposed 候选不作数）。
-          const navConfigV2 = loadVisualDiffNavConfigV2(ctx.projectRoot, ctx.feature);
-          const navConfig = navConfigV2 ? toLegacyNavConfig(navConfigV2) : null;
-          // P1-A fail-fast（消费 validateNavConfig，不静默裸采）：≥2 P0 屏须导航区分；缺配置/配置不一致=明确失败，不进 capture（防误导 PASS）。
-          const navUiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
-          const navP0TargetIds = collectP0VisualTargetIds(navUiDoc);
-          const navValidation = navConfigV2
-            ? validateNavConfigV2(navConfigV2, navP0TargetIds, {
-                // plan f6b2d9a4 P0-1：真人确认要求=裁决类——只在 hard contract 生效
-                //（best_effort 记债不阻塞；执行类采集仍看 pixel target）。
-                requireConfirmedIdentity: isHardPixelContract(ctx),
-              })
-            : null;
-          // goal-fakepass-hardening t7：nav 配置缺失/非法=完备性 BLOCKER，与保真档位脱钩
-          // （bc-openCard 洞④：semantic_layout 下 fidelityRatchet 把缺 nav 降成 WARN，
-          //  9 个 P0 屏的视觉比对被静默吞掉——nav 配置是 agent 可产出的普通 artifact，
-          //  缺失属"活没干完"而非保真严格度问题）；门槛从 ≥2 改为 ≥1（单屏不逃）。
-          const navGateError = navConfig
-            ? (navValidation && !navValidation.ok
-                ? `nav 配置与 ui-spec 屏集不一致/步骤非法：${navValidation.errors.slice(0, 6).join('；')}${navValidation.errors.length > 6 ? '…' : ''}`
-                : null)
-            : (navP0TargetIds.length >= 1
-                ? `缺固化 nav 配置：${navP0TargetIds.length} 个 P0 屏须按屏导航到位采集（≥2 屏另防多屏截同一帧）`
-                : null);
-          if (navGateError) {
-            out.push({
-              id: 'visual_diff_capture',
-              category: 'structure',
-              description: 'device_test.run 后 visual_diff 自动截图与骨架采集',
-              severity: 'BLOCKER',
-              status: 'FAIL',
-              details: `【nav 配置门禁·完备性（档位无关）】${navGateError}\n不静默裸采（防多屏截同一帧）；补齐 device-testing/visual-diff-nav.json（key=屏标识含 overlay、value=touch/wait_for/back 到达步骤）后重跑。真到不了的屏用 unreachable 显式登记（仅限外部阻塞枚举+绑定失败证据），任一 P0 unreachable → run 封顶非成功状态。`,
-              suggestion: '为每个 P0 屏（含 overlay）写固化到达步骤；页面结构无变化则复用、不需重生成。',
-            });
-          } else {
-          // P0-9a：当前构建指纹现算自实际安装 hap（hapHolder.hapPath 即 build→install 的产物）；
-          // 算不出=null → capture 一律不跳采（codex 硬前提）。
-          const currentBuildFingerprint = computeHapBuildFingerprint(hapHolder.hapPath);
-          const cap = captureVisualDiff({
-            projectRoot: ctx.projectRoot,
-            feature: ctx.feature,
-            specMd,
-            ctx,
-            computeScoreFloor: true,
-            currentBuildFingerprint,
+          // c4e8b1d3 Todo 3：nav 校验 / identity 解析 / capture 的 target 集合统一在
+          // runDeviceVisualDiffCapture 内（入口级接线），此处只装配设备传输面（hylyre
+          // 构建器）；单测在入口注入 mock 传输面，禁止直注 captureVisualDiff opts（goldenTargets）。
+          out.push(...runDeviceVisualDiffCapture(ctx, hapHolder, {
             bundleName,
             deviceSn: process.env.HARNESS_HDC_TARGET,
             screenshotFn: buildHylyreVisualDiffScreenshotFn({
@@ -2864,123 +2825,24 @@ function checkDeviceTestRunGate(
             // t2（plan c6d8f2b4）：截图同时点 dump 布局树（layout-<screen_id>.json），T8 几何不变量消费。
             // 轻量化守恒（rev8/D11）：仅 pixel_1to1 档采集——semantic_layout/reference_only 不付
             // 每屏 dump-ui 设备调用成本（T8 对低档本就只 WARN 观察，重量跟着保真承诺走）。
-            ...(isPixel1to1(ctx)
-              ? {
-                  layoutDumpFn: buildHylyreLayoutDumpFn({
-                    pythonPath: ready.pythonPath,
-                    hypiumWorkDir,
-                    deviceSn: process.env.HARNESS_HDC_TARGET,
-                    logPath: run.logPath,
-                  }),
-                  // t4b（f7a3d9c2，2026-07-11 bc-openCard 真机双拍数据回填后启用）：静稳采样
-                  // ——与 layoutDumpFn 同守卫仅 pixel_1to1；实测 5/8 屏整图 hash 漂移而
-                  // app 裁剪判据 8/8 稳、动效屏 3 组内收敛（默认重试 2 已够）。
-                  quiescenceSampling: true,
-                }
-              : {}),
-            ...(navConfig
-              ? {
-                  navConfig,
-                  navExecutorFn: buildHylyreNavExecutorFn({
-                    pythonPath: ready.pythonPath,
-                    hypiumWorkDir,
-                    deviceSn: process.env.HARNESS_HDC_TARGET,
-                    bundleName,
-                    logPath: run.logPath,
-                    // 与 device_test.run 的 app 启动方式对齐（宿主热修回收，round6 收尾批 P0-3）
-                    ...readDeviceTestRunHylyreNavOpts(run.logPath),
-                  }),
-                }
-              : {}),
-            // S2 P0-C：identity gate 输入（proposed 候选由 capture 层跳过；pixel 强制在上方校验层）
-            ...(navConfigV2
-              ? { screenIdentity: resolveIdentityForTargets(navConfigV2, navP0TargetIds) }
-              : {}),
-          });
-          const p0Failed = cap.p0CaptureFailures ?? [];
-          // t4（plan f3a8c6d2）：把"哪些缺屏属内容可行动"注入 ctx，供随后的 visual diff
-          // 熔断资格判定消费（同 run 内存传递，比照 refElementsManifest；不落盘、无新协议）。
-          //
-          // t4（plan f3a8c6d2）：熔断资格由 capture **单点**裁决，此处只做透传。
-          // 不再扫 CheckResult 分类反推——那条路四版都漏（device 阻断的 id 是参数化的、
-          // run.ok=false 写的是 device_toolchain、build/install/ready 多数连字段都没有）。
-          ctx.visualFuseEligibility = cap.fuseEligibility;
-          // P0-9c："新鲜"重定义——build 指纹有效的跳采（screensPreservedBuildValid）＝合法新鲜，
-          // 不算陈旧证据；stalePreserved 只拦"未刷新且非 build 有效"的 preserved（采集失败回退
-          // 旧 json / legacy 无指纹 preserved 照旧 FAIL，反陈旧证据语义不丢）。
-          const preservedBuildValid = cap.screensPreservedBuildValid ?? 0;
-          const stalePreserved =
-            cap.screensWritten === 0 && (cap.screensPreserved ?? 0) > 0;
-          if (cap.ok && (p0Failed.length > 0 || stalePreserved)) {
-            // E1/E2：P0 截图失败 / 全靠 preserved 旧证据充数 → 不得静默 PASS（pixel_1to1 FAIL，否则 blocking WARN）。
-            // 宿主 homepage 实测：6 屏全 Permission denied、screens=0+preserved=1 仍 PASS，等于在陈旧/错图上闭环。
-            const ratchet = fidelityRatchetFailOrWarn(ctx, true);
-            out.push({
-              id: 'visual_diff_capture',
-              category: 'structure',
-              description: 'device_test.run 后 visual_diff 自动截图与骨架采集',
-              severity: ratchet.severity,
-              status: ratchet.status,
-              details: [
-                p0Failed.length > 0
-                  ? `P0 屏截图失败（采集证据未刷新）：${p0Failed.join(', ')}`
-                  : 'screensWritten=0：未刷新任何截图，沿用 preserved 旧 visual-diff 判定（证据陈旧）',
-                `screens=${cap.screensWritten}`,
-                ...(typeof cap.screensPreserved === 'number' && cap.screensPreserved > 0
-                  ? [`preserved=${cap.screensPreserved}`]
-                  : []),
-                'pixel_1to1 下不得以陈旧/缺失证据通过；沿用旧 shot/旧 verdict 闭环＝假证据。',
-                ...(cap.errors.length ? [`notes:\n${cap.errors.map(e => `  - ${e}`).join('\n')}`] : []),
-              ].join('\n'),
-              suggestion: '修复截图采集（Permission denied/锁屏/设备占用）后重采 P0 屏；不得沿用旧 shot/旧 verdict。',
-            });
-          } else if (cap.ok) {
-            out.push({
-              id: 'visual_diff_capture',
-              category: 'structure',
-              description: 'device_test.run 后 visual_diff 自动截图与骨架采集',
-              severity: 'MAJOR',
-              status: 'PASS',
-              details: [
-                `screens=${cap.screensWritten}`,
-                ...(typeof cap.screensPreserved === 'number' && cap.screensPreserved > 0
-                  ? [`preserved=${cap.screensPreserved}`]
-                  : []),
-                ...(preservedBuildValid > 0
-                  ? [`preserved_build_valid=${preservedBuildValid}（build 指纹有效跳采，判定持久·P0-9a）`]
-                  : []),
-                ...(typeof cap.screensInvalidated === 'number' && cap.screensInvalidated > 0
-                  ? [`invalidated=${cap.screensInvalidated}`]
-                  : []),
-                'json=device-testing/device-screenshots/visual-diff.json',
-                ...(cap.errors.length ? [`notes:\n${cap.errors.map(e => `  - ${e}`).join('\n')}`] : []),
-              ].join('\n'),
-            });
-          } else if (cap.skippedReason !== 'no_p0_targets') {
-            // E1：no_captures（全失败）或有 P0 截图失败 → pixel_1to1 FAIL，否则 WARN；
-            // 纯环境缺失（如 no_screenshot_fn）维持 WARN（与 degraded 同档）。
-            const captureFailed =
-              cap.skippedReason === 'no_captures' || (cap.p0CaptureFailures?.length ?? 0) > 0;
-            const ratchet = captureFailed
-              ? fidelityRatchetFailOrWarn(ctx, true)
-              : { severity: 'MAJOR' as const, status: 'WARN' as const };
-            out.push({
-              id: 'visual_diff_capture',
-              category: 'structure',
-              description: 'device_test.run 后 visual_diff 自动截图与骨架采集',
-              severity: ratchet.severity,
-              status: ratchet.status,
-              details: [
-                `采集未完成：${cap.skippedReason ?? 'unknown'}`,
-                ...((cap.p0CaptureFailures?.length ?? 0) > 0
-                  ? [`P0 屏截图失败：${cap.p0CaptureFailures!.join(', ')}`]
-                  : []),
-                ...cap.errors,
-              ].join('\n'),
-              suggestion: '确认 Hylyre 可 `screenshot`（排查 Permission denied/锁屏/占用）；非顶层屏须 device-testing 导航后重跑采集。',
-            });
-          }
-          }
+            layoutDumpFn: isPixel1to1(ctx)
+              ? buildHylyreLayoutDumpFn({
+                  pythonPath: ready.pythonPath,
+                  hypiumWorkDir,
+                  deviceSn: process.env.HARNESS_HDC_TARGET,
+                  logPath: run.logPath,
+                })
+              : undefined,
+            // 与 device_test.run 的 app 启动方式对齐（宿主热修回收，round6 收尾批 P0-3）
+            navExecutorFn: buildHylyreNavExecutorFn({
+              pythonPath: ready.pythonPath,
+              hypiumWorkDir,
+              deviceSn: process.env.HARNESS_HDC_TARGET,
+              bundleName,
+              logPath: run.logPath,
+              ...readDeviceTestRunHylyreNavOpts(run.logPath),
+            }),
+          }));
         }
       }
     }
@@ -3012,6 +2874,220 @@ function checkDeviceTestRunGate(
       },
     ];
   }
+}
+
+/**
+ * c4e8b1d3 Todo 3（golden/nav/capture target 集合统一入口）：
+ * device_test.run 成功后的 visual_diff 自动采集。
+ *
+ * - nav 校验 / identity 解析 / capture **共用同一份**解析后 canonical target 集合：
+ *   `P0 targets ∪ golden positive capture targets ∪ golden forbidden nav targets`
+ *   （golden 模式）；普通模式（env 未设）target 集合 = 纯 P0，行为逐字节不变
+ *   （普通 P1 屏写进 nav 配置仍判「多余/错写屏名」，不全局扩面采集）。
+ * - golden contract **只解析一次**（loadGoldenContractFromEnv，单次 JSON.parse），
+ *   解析结果显式传入 capture（goldenTargets/goldenForbidden）——nav 校验、identity
+ *   解析与 capture 不各自读 env，绝不会得到不同集合。
+ * - golden target 缺失 / 形态漂移 → 在本入口 fail-closed（不得借跳过 nav 校验解决，
+ *   也不静默）; slug 冲突继续由 capture 层 fail-closed（t2b 既有行为不变）。
+ * - 设备传输面（screenshotFn/layoutDumpFn/navExecutorFn）由调用方装配=hylyre 构建器；
+ *   单测在**入口**注入 mock 传输面走真实接线（禁止直注 captureVisualDiff opts）。
+ */
+export interface DeviceVisualDiffCaptureDevices {
+  bundleName: string;
+  deviceSn?: string;
+  screenshotFn: VisualDiffScreenshotFn;
+  layoutDumpFn?: VisualDiffLayoutDumpFn;
+  navExecutorFn?: VisualDiffNavExecutorFn;
+}
+
+export function runDeviceVisualDiffCapture(
+  ctx: CheckContext,
+  hapHolder: DeviceTestPipelineHolder,
+  devices: DeviceVisualDiffCaptureDevices,
+): CheckResult[] {
+  const id = 'visual_diff_capture';
+  // round5 P1-A：有固化 nav 配置则按屏导航到位再截（根除多屏截同一帧）。
+  // S2 P0-C（visual-capability-truth）：升 2.0 归一读取——identity 锚点随屏配置；
+  // pixel_1to1 下目标屏须有已确认 identity（proposed 候选不作数）。
+  const navConfigV2 = loadVisualDiffNavConfigV2(ctx.projectRoot, ctx.feature);
+  const navConfig = navConfigV2 ? toLegacyNavConfig(navConfigV2) : null;
+  // P1-A fail-fast（消费 validateNavConfigV2，不静默裸采）：≥2 目标屏须导航区分；
+  // 缺配置/配置不一致=明确失败，不进 capture（防误导 PASS）。
+  const navUiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
+  const p0TargetIds = collectP0VisualTargetIds(navUiDoc);
+  // c4e8b1d3 Todo 3：golden contract 只解析一次，解析后的 canonical target 集合
+  // 同时供 nav 校验、identity 解析与 capture（显式传入 goldenTargets/goldenForbidden）。
+  // 不得拼 raw contract 名称（否则又是一处双真源）；forbidden（HomeTab）必须进
+  // nav 到达集合——负向证据同样需要导航步骤，只采 positive 会漏负向证据目标。
+  const goldenEnv = loadGoldenContractFromEnv(ctx.projectRoot);
+  const goldenTargets = goldenEnv.targets;
+  const goldenForbidden = goldenTargets === null ? [] : goldenEnv.forbidden;
+  const goldenRes = goldenTargets ? resolveGoldenCaptureTargets(navUiDoc, goldenTargets) : null;
+  const goldenNavTargetIds = goldenRes
+    ? [...collectGoldenPositiveTargetIds(goldenRes), ...goldenForbidden.map(f => f.id)]
+    : [];
+  const navTargetIds = [...new Set([...p0TargetIds, ...goldenNavTargetIds])];
+  const navValidation = navConfigV2
+    ? validateNavConfigV2(navConfigV2, navTargetIds, {
+        // plan f6b2d9a4 P0-1：真人确认要求=裁决类——只在 hard contract 生效
+        //（best_effort 记债不阻塞；执行类采集仍看 pixel target）。
+        requireConfirmedIdentity: isHardPixelContract(ctx),
+      })
+    : null;
+  // goal-fakepass-hardening t7：nav 配置缺失/非法=完备性 BLOCKER，与保真档位脱钩
+  // （bc-openCard 洞④：semantic_layout 下 fidelityRatchet 把缺 nav 降成 WARN，
+  //  9 个 P0 屏的视觉比对被静默吞掉——nav 配置是 agent 可产出的普通 artifact，
+  //  缺失属"活没干完"而非保真严格度问题）；门槛从 ≥2 改为 ≥1（单屏不逃）。
+  const goldenGateErrors = goldenRes
+    ? goldenRes.failures.map(f => `golden_contract:${f.declared}: ${f.reason}`)
+    : [];
+  const navGateError = goldenGateErrors.length > 0
+    ? `golden contract 解析失败（fail-closed——declared 缺失/形态漂移不得静默跳过）：${goldenGateErrors.join('；')}`
+    : navConfig
+      ? (navValidation && !navValidation.ok
+          ? `nav 配置与 ui-spec 屏集不一致/步骤非法：${navValidation.errors.slice(0, 6).join('；')}${navValidation.errors.length > 6 ? '…' : ''}`
+          : null)
+      : (navTargetIds.length >= 1
+          ? `缺固化 nav 配置：${navTargetIds.length} 个目标屏（P0 ∪ golden 显式目标，含 forbidden 负向屏）须按屏导航到位采集（≥2 屏另防多屏截同一帧）`
+          : null);
+  if (navGateError) {
+    return [
+      {
+        id,
+        category: 'structure',
+        description: 'device_test.run 后 visual_diff 自动截图与骨架采集',
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details: `【nav 配置门禁·完备性（档位无关）】${navGateError}\n不静默裸采（防多屏截同一帧）；补齐 device-testing/visual-diff-nav.json（key=屏标识含 overlay、value=touch/wait_for/back 到达步骤）后重跑。真到不了的屏用 unreachable 显式登记（仅限外部阻塞枚举+绑定失败证据），任一 P0 unreachable → run 封顶非成功状态。`,
+        suggestion: '为每个 P0/target 屏（含 overlay）写固化到达步骤；页面结构无变化则复用、不需重生成。',
+      },
+    ];
+  }
+
+  // P0-9a：当前构建指纹现算自实际安装 hap（hapHolder.hapPath 即 build→install 的产物）；
+  // 算不出=null → capture 一律不跳采（codex 硬前提）。
+  const currentBuildFingerprint = computeHapBuildFingerprint(hapHolder.hapPath);
+  const specMd = loadSpecMarkdown(ctx.projectRoot, ctx.feature);
+  const cap = captureVisualDiff({
+    projectRoot: ctx.projectRoot,
+    feature: ctx.feature,
+    specMd,
+    ctx,
+    computeScoreFloor: true,
+    currentBuildFingerprint,
+    bundleName: devices.bundleName,
+    deviceSn: devices.deviceSn,
+    screenshotFn: devices.screenshotFn,
+    ...(devices.layoutDumpFn
+      ? {
+          layoutDumpFn: devices.layoutDumpFn,
+          // t4b（f7a3d9c2，2026-07-11 bc-openCard 真机双拍数据回填后启用）：静稳采样
+          // ——与 layoutDumpFn 同守卫（生产仅在 pixel_1to1 装配）；实测 5/8 屏整图 hash
+          // 漂移而 app 裁剪判据 8/8 稳、动效屏 3 组内收敛（默认重试 2 已够）。
+          quiescenceSampling: true,
+        }
+      : {}),
+    ...(navConfig && devices.navExecutorFn ? { navConfig, navExecutorFn: devices.navExecutorFn } : {}),
+    // S2 P0-C：identity gate 输入（proposed 候选由 capture 层跳过；pixel 强制在上方校验层）。
+    // 与 nav 校验共用 navTargetIds——identity 解析消费的集合与 nav/capture 相同。
+    ...(navConfigV2
+      ? { screenIdentity: resolveIdentityForTargets(navConfigV2, navTargetIds) }
+      : {}),
+    // c4e8b1d3 Todo 3：解析结果显式传给 capture（capture 不再各自重读 env）
+    ...(goldenTargets ? { goldenTargets } : {}),
+    ...(goldenForbidden.length > 0 ? { goldenForbidden } : {}),
+  });
+  const p0Failed = cap.p0CaptureFailures ?? [];
+  // t4（plan f3a8c6d2）：把"哪些缺屏属内容可行动"注入 ctx，供随后的 visual diff
+  // 熔断资格判定消费（同 run 内存传递，比照 refElementsManifest；不落盘、无新协议）。
+  //
+  // t4（plan f3a8c6d2）：熔断资格由 capture **单点**裁决，此处只做透传。
+  // 不再扫 CheckResult 分类反推——那条路四版都漏（device 阻断的 id 是参数化的、
+  // run.ok=false 写的是 device_toolchain、build/install/ready 多数连字段都没有）。
+  ctx.visualFuseEligibility = cap.fuseEligibility;
+  // P0-9c："新鲜"重定义——build 指纹有效的跳采（screensPreservedBuildValid）＝合法新鲜，
+  // 不算陈旧证据；stalePreserved 只拦"未刷新且非 build 有效"的 preserved（采集失败回退
+  // 旧 json / legacy 无指纹 preserved 照旧 FAIL，反陈旧证据语义不丢）。
+  const preservedBuildValid = cap.screensPreservedBuildValid ?? 0;
+  const stalePreserved = cap.screensWritten === 0 && (cap.screensPreserved ?? 0) > 0;
+  if (cap.ok && (p0Failed.length > 0 || stalePreserved)) {
+    // E1/E2：P0 截图失败 / 全靠 preserved 旧证据充数 → 不得静默 PASS（pixel_1to1 FAIL，否则 blocking WARN）。
+    // 宿主 homepage 实测：6 屏全 Permission denied、screens=0+preserved=1 仍 PASS，等于在陈旧/错图上闭环。
+    const ratchet = fidelityRatchetFailOrWarn(ctx, true);
+    return [
+      {
+        id,
+        category: 'structure',
+        description: 'device_test.run 后 visual_diff 自动截图与骨架采集',
+        severity: ratchet.severity,
+        status: ratchet.status,
+        details: [
+          p0Failed.length > 0
+            ? `P0 屏截图失败（采集证据未刷新）：${p0Failed.join(', ')}`
+            : 'screensWritten=0：未刷新任何截图，沿用 preserved 旧 visual-diff 判定（证据陈旧）',
+          `screens=${cap.screensWritten}`,
+          ...(typeof cap.screensPreserved === 'number' && cap.screensPreserved > 0
+            ? [`preserved=${cap.screensPreserved}`]
+            : []),
+          'pixel_1to1 下不得以陈旧/缺失证据通过；沿用旧 shot/旧 verdict 闭环＝假证据。',
+          ...(cap.errors.length ? [`notes:\n${cap.errors.map(e => `  - ${e}`).join('\n')}`] : []),
+        ].join('\n'),
+        suggestion: '修复截图采集（Permission denied/锁屏/设备占用）后重采 P0 屏；不得沿用旧 shot/旧 verdict。',
+      },
+    ];
+  }
+  if (cap.ok) {
+    return [
+      {
+        id,
+        category: 'structure',
+        description: 'device_test.run 后 visual_diff 自动截图与骨架采集',
+        severity: 'MAJOR',
+        status: 'PASS',
+        details: [
+          `screens=${cap.screensWritten}`,
+          ...(typeof cap.screensPreserved === 'number' && cap.screensPreserved > 0
+            ? [`preserved=${cap.screensPreserved}`]
+            : []),
+          ...(preservedBuildValid > 0
+            ? [`preserved_build_valid=${preservedBuildValid}（build 指纹有效跳采，判定持久·P0-9a）`]
+            : []),
+          ...(typeof cap.screensInvalidated === 'number' && cap.screensInvalidated > 0
+            ? [`invalidated=${cap.screensInvalidated}`]
+            : []),
+          'json=device-testing/device-screenshots/visual-diff.json',
+          ...(cap.errors.length ? [`notes:\n${cap.errors.map(e => `  - ${e}`).join('\n')}`] : []),
+        ].join('\n'),
+      },
+    ];
+  }
+  if (cap.skippedReason !== 'no_p0_targets') {
+    // E1：no_captures（全失败）或有 P0 截图失败 → pixel_1to1 FAIL，否则 WARN；
+    // 纯环境缺失（如 no_screenshot_fn）维持 WARN（与 degraded 同档）。
+    const captureFailed =
+      cap.skippedReason === 'no_captures' || (cap.p0CaptureFailures?.length ?? 0) > 0;
+    const ratchet = captureFailed
+      ? fidelityRatchetFailOrWarn(ctx, true)
+      : { severity: 'MAJOR' as const, status: 'WARN' as const };
+    return [
+      {
+        id,
+        category: 'structure',
+        description: 'device_test.run 后 visual_diff 自动截图与骨架采集',
+        severity: ratchet.severity,
+        status: ratchet.status,
+        details: [
+          `采集未完成：${cap.skippedReason ?? 'unknown'}`,
+          ...((cap.p0CaptureFailures?.length ?? 0) > 0
+            ? [`P0 屏截图失败：${cap.p0CaptureFailures!.join(', ')}`]
+            : []),
+          ...cap.errors,
+        ].join('\n'),
+        suggestion: '确认 Hylyre 可 `screenshot`（排查 Permission denied/锁屏/占用）；非顶层屏须 device-testing 导航后重跑采集。',
+      },
+    ];
+  }
+  return [];
 }
 
 /** Test seam: static derived-plan validation must happen before install-based runtime SKIP. */
