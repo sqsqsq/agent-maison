@@ -408,17 +408,34 @@ todos:
   # 自己制造新的假绿）。逐条登记；被现行项取代的部分显式写明映射。
   - id: release-constraint-still-active
     content: >
-      发布约束生效检查——禁发条件恢复（review 第 3 轮修正）。现口径：T5 记部分完成
-      （确定性缺陷生成器 + 真算接线 + 崩溃诊断结构化闭环已落，屏级独立 bootstrap 未落）；
-      **禁发在 bootstrap 落地并经宿主实测前保持生效**。正文见「历史 Todos」节同名条目。
-    status: pending
+      【2026-08-14 归属裁定 · cancelled】发布约束生效检查——禁发条件恢复（review 第 3 轮
+      修正）。正文「发布约束（v23，替代 v13）」现行边界明确：**屏级 bootstrap、通用
+      视觉指标、结果级 receipt 已移出本 plan「不再作为禁发条件（需要时另行立项）」**，
+      解禁条件只剩三项（v23 重构完成 / 8 项验收+全量 unit·fixtures 全绿 / 宿主真实闭环
+      复演）。本条系 2026-08-12 frontmatter 迁移时从「历史 Todos（v1-v20 实施轨迹）」节
+      **保守迁移遗留的过期约束**：其「bootstrap 未落地即禁发」口径与新 v23 边界相矛盾，
+      且其后无任何新版本把 bootstrap 重新纳入本 plan。本项不发禁、不实施（不开发
+      bootstrap、不新建机制），按过期约束置 cancelled——现行发布门禁以 v23 三项解禁条件
+      与 c4e8b1d3 的独立门禁为准。
+    status: cancelled
   - id: t6-prime-change-proposal
     content: >
-      T6' 独立 change 立项（引用 R9 事实）。原历史条目为「宿主配套 1-4 下发+回报核收；
-      T6' 独立 change 立项」——其中**宿主配套 1-4 下发+回报核收**已被现行项
-      `host-kit-dispatch-and-receipt` 取代（v23 现行版由该条从历史区提炼），
-      本条只保留**尚无现行对应项**的 T6' 立项部分。
-    status: pending
+      【2026-08-14 归属裁定 · completed】T6' 独立 change 立项（引用 R9 事实）。链路核实
+      （非仅名称）：R9 三条（legacy 迁移先于 head 比对 / tamper·absent 裸 throw→优雅
+      halt / HMAC 未配置引导）已由 openspec change **visual-capability-truth** 的
+      3.9 系列**完整承接并实现**——3.9c（resume anchor 五态分立 ok/ok_unauthenticated/
+      mismatch/invalid/absent，替代裸 throw）、3.9d（legacy 无链迁移「先验后迁」：
+      tamper 检查先于迁移）、3.9e（无 HMAC key → CHAIN_SLICE_COMPLETED 封顶
+      AWAITING_HUMAN_REVIEW + ack 两级引导），全部 [x]（codex 五~七轮 review）；
+      代码证据 `harness/scripts/goal-runner.ts`（verifyVisionCheckpoint / 迁移编排 /
+      capRunStatusForVisionTrust），随 plan e9c4a7f3 批次提交 **653734e3**。实施路径为
+      「并入既有 change 的 3.9 系列」而非独立 change（偏离原文「独立立项」措辞，实质等价）。
+      【后续状态】plan e5d8a2c4（框架可靠性总纲）T2 5a **有意净删除** vision 认证控制面
+      （提交 7792165c）：签名维度整体退出（MAISON_HMAC_GOAL_CHECKPOINT 惰性无效）、legacy
+      迁移分支随 checkpoint 基线退役、checkpoint 退化为账本恢复缓存（四态，全部不停死、
+      不求人）——R9 三条随机制退役而失效，属后续设计的**有意简化**（删除清单/硬指标在
+      e5d8a2c4 案内），非遗留缺口。本项已实现且其后被新版设计替代，置 completed。
+    status: completed
 ---
 
 # 视觉负向优化根治 (d8c5f3a7)
@@ -988,4 +1005,32 @@ todos:
   - **为此新增 4 个测试缝**（生产路径零行为差异，仓内有 `__testing_setDigestReadFile` 等先例）：`__testing_setInvokeAgent` / `__testing_setRunHarnessPhase` / `__testing_setRepoLayout` / `__testing_setValidateReceipt`，并导出 `main`
   - 附带产出可复用夹具 `tests/utils/closed-feature-fixture.ts`（用**生产 writer** 造闭环产物，不手工伪造哈希链）
   - **过程记录（有价值的硬事实）**：打通过程依次撞过 6 道真实前置——adapter 物化 → DevEco 工具链 → workflow 加载 → summary 裁决（spy 必须补写 summary.json）→ 回执存在性（runner 会按真实回执重算 receipt_status/closure_status）→ 闭环探针子进程 → review closure attestation（缺它则 ut→testing 判 `goal_review_closure_baseline_unavailable`）。每一道都验证了测试确实走生产路径而非旁路
-- **[open]** 宿主配套 1-4 下发+回报核收；T6' 独立 change 立项（引用 R9 事实）
+- **[open]** 宿主配套 1-4 下发+回报核收（引用 R9 事实）
+- **[done]** T6' 独立 change 立项——**2026-08-14 账实裁定**：R9 三条已由 openspec change `visual-capability-truth` 3.9 系列完整实现（3.9c/3.9d/3.9e，提交 653734e3），后经 plan e5d8a2c4 T2 5a 有意净删除退役（7792165c），非遗留缺口；详见文末实施记录
+
+## 实施记录（2026-08-14，3.0.0 剩余本地 Todo 账实核对）
+
+- **release-constraint-still-active → cancelled**：正文「发布约束（v23，替代 v13）」现行
+  边界已将**屏级 bootstrap 移出本 plan「不再作为禁发条件（需要时另行立项）」**，解禁条件
+  只剩三项（v23 重构完成 / 8 项验收+全量 unit·fixtures 全绿 / 宿主真实闭环复演）；
+  2026-08-12 frontmatter 迁移后无任何新版本把 bootstrap 重新纳入本 plan。本条系从
+  「历史 Todos（v1-v20 实施轨迹）」节保守迁移遗留的**过期约束**（「bootstrap 未落地即
+  禁发」与新 v23 边界相矛盾），按过期约束置 cancelled——不开发 bootstrap、不新建机制。
+- **t6-prime-change-proposal → completed**：沿链路核实（非仅凭名称）——R9 三条
+  （legacy 迁移先于 head 比对 / tamper·absent 裸 throw→优雅 halt / HMAC 未配置引导）
+  已由 openspec change `visual-capability-truth` 3.9 系列完整承接并实现：3.9c（五态
+  分立 ok/ok_unauthenticated/mismatch/invalid/absent）、3.9d（legacy 迁移先验后迁）、
+  3.9e（无 HMAC key → 封顶 AWAITING_HUMAN_REVIEW + ack 两级），任务 [x]（codex 五~七轮
+  review）；代码证据 `harness/scripts/goal-runner.ts`（verifyVisionCheckpoint / 迁移编排 /
+  capRunStatusForVisionTrust），随 plan e9c4a7f3 批次提交 **653734e3**。实施路径并入既有
+  change 3.9 系列而非独立 change（对原文「独立立项」措辞的实质等价偏离）。**后续状态**：
+  plan e5d8a2c4（框架可靠性总纲）T2 5a 有意净删除 vision 认证控制面（提交 7792165c）——
+  签名维度整体退出、legacy 迁移分支退役、checkpoint 退化为账本恢复缓存（四态，全部
+  不停死不求人），R9 三条随机制退役失效，属后续设计的有意简化（删除清单/硬指标在
+  e5d8a2c4 案内），非遗留缺口。
+- 其余 pending 不动：`host-kit-dispatch-and-receipt` / `host-real-loop-replay`
+  （宿主配合项，与 c4e8b1d3 Todo 5 同一批统一回归）。
+- 本批仅为账实核对与状态/归属修正，未改目标/设计/验收正文，未开发生产代码，未动
+  OpenSpec 与 3.1.0 plan。验证：`node scripts/check-plan-version.mjs` PASS；
+  `npm run release:check-plans`（整体门禁仍可能被宿主类 Todo 阻塞，见报告）；
+  `git diff --check` 干净；两 plan frontmatter YAML 可解析、文本 LF。未提交。
