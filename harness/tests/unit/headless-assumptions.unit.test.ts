@@ -11,11 +11,9 @@ import * as path from 'path';
 import {
   collectAutoDecisions,
   countPendingMustReview,
-  crossCheckLedgerAgainstRegistry,
   headlessLedgerPath,
   parseHeadlessAssumptionsJsonl,
   parseLegacyAssumptionsMd,
-  registryGateIdsForPhase,
 } from '../../scripts/utils/headless-assumptions';
 import { featureFilePath, clearFrameworkConfigCache } from '../../config';
 import type { UnitCaseResult } from '../run-unit';
@@ -96,45 +94,6 @@ const cases: Case[] = [
       assert.ok(r.errors.some((e) => /phase 失配/.test(e.error)));
       r = parseHeadlessAssumptionsJsonl(mk({}), { expectedRunId: 'r2' });
       assert.ok(r.errors.some((e) => /run_id 失配/.test(e.error)));
-    },
-  },
-  {
-    name: 'registry 交叉核验：phase 前缀过滤 + missing 判定 + n/a 行算覆盖',
-    run: () => {
-      const root = mkProject();
-      const reg = path.join(root, 'confirmation-registry.yaml');
-      fs.writeFileSync(reg, [
-        'schema_version: "2.0"',
-        'entries:',
-        '  - id: spec.terminology',
-        '    skill: spec',
-        '  - id: spec.freeze',
-        '    skill: spec',
-        '  - id: testing.plan_confirm',
-        '    skill: device-testing',
-        '  - id: phase.next_step',
-        '    skill: _cross_phase',
-      ].join('\n'), 'utf-8');
-      const regRes = registryGateIdsForPhase(reg, 'spec');
-      assert.strictEqual(regRes.readable, true);
-      const ids = regRes.ids;
-      assert.deepStrictEqual(ids, ['spec.freeze', 'spec.terminology']);
-      // fail-closed：文件缺失/YAML 坏 → readable=false（消费方必须 FAIL，不得静默零 gate）
-      assert.strictEqual(registryGateIdsForPhase(path.join(root, 'nope.yaml'), 'spec').readable, false);
-      const badReg = path.join(root, 'bad.yaml');
-      fs.writeFileSync(badReg, 'entries: [unclosed', 'utf-8');
-      assert.strictEqual(registryGateIdsForPhase(badReg, 'spec').readable, false);
-      const { entries } = parseHeadlessAssumptionsJsonl([
-        VALID_LINE,
-        JSON.stringify({
-          decision_id: 'd3', run_id: 'r1', phase: 'spec', gate_id: 'spec.terminology', class: 'artifact_checkbox',
-          decision: 'n/a: 无新术语', must_review: false, source: 'agent', ts: '2026-07-13T00:00:00Z',
-        }),
-      ].join('\n'));
-      assert.strictEqual(crossCheckLedgerAgainstRegistry(entries, ids).ok, true);
-      const partial = crossCheckLedgerAgainstRegistry([entries[0]], ids);
-      assert.strictEqual(partial.ok, false);
-      assert.deepStrictEqual(partial.missing_gate_ids, ['spec.terminology']);
     },
   },
   {

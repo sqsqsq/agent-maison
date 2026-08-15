@@ -50,7 +50,6 @@ import {
 import { loadFeatureTrackDecl } from './utils/feature-track';
 import { normalizePhaseId } from './utils/phase-alias';
 import { assertGateFingerprintFresh, computeGateFingerprint } from './utils/gate-fingerprint';
-import { validateLedgerForClosure } from './utils/headless-assumptions';
 import { finalizePhaseClosure } from './utils/phase-closure-finalizer';
 import { assessAndRenderNextStep } from './utils/assess-renderer';
 import { isClaudeKernelAdapter } from './utils/types';
@@ -1039,25 +1038,12 @@ function main(): void {
     }
   }
 
-  if (inGoalReceiptContext) {
-    // P1-2 + 七轮 P2-2：goal orchestration 下 run identity 必填——缺 MAISON_GOAL_RUN_ID
-    // 不得静默降级（跳过 run 对账），fail-closed。
-    const currentRunId = process.env.MAISON_GOAL_RUN_ID?.trim();
-    if (!currentRunId) {
-      issues.push({
-        id: 'headless_assumptions_ledger',
-        severity: 'BLOCKER',
-        message: 'goal 环境缺 MAISON_GOAL_RUN_ID——run identity 是闭环必填项，不得静默降级（fail-closed）。',
-      });
-    } else {
-      const ledger = validateLedgerForClosure(projectRoot, frameworkRoot, feature, phase, {
-        expectedRunId: currentRunId,
-      });
-      for (const e of ledger.errors) {
-        issues.push({ id: 'headless_assumptions_ledger', severity: 'BLOCKER', message: e });
-      }
-    }
-  }
+  // headless-assumptions 账本闭环否决已退役（openspec runner-owned-machine-facts；宿主
+  // 实锤 run 20260815T083127Z-edfe38：账本是 feature 级跨 run 累积留痕，58 条旧 run 行被
+  // run 绑定判"非法"+2 条初 run 已物化的决议被判"缺登记"，一份完整且身份等值的回执因此
+  // 恒 failed）。账本自身声明"仅留痕、不构成授权"——留痕不得反向拥有 closure 否决权；
+  // feature_path/terminology 等已有真正门禁复核，无需账本重复证明。run identity 的
+  // fail-closed 对账由上方 slim summary 段承载（slim_summary_run_identity_unavailable）。
 
   // --------------------------------------------------------------------
   // 输出

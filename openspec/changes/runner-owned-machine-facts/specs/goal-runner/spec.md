@@ -15,3 +15,14 @@ Enforcement: `harness/scripts/utils/receipt-scaffold.ts`, `harness/harness-runne
 
 - **WHEN** a further closure attempt `i4` begins while a filled receipt claiming `i3` exists
 - **THEN** the runner regenerates the unfilled scaffold with `claimed_attempt_id: "i4"` and completion observation does not treat the `i3` receipt as current
+
+### Requirement: Spec closure-only prompts mandate read-only visual re-evidencing
+
+For spec closure-only attempts the runner prompt SHALL state that FROZEN applies to artifacts, not to read-only evidencing, and SHALL list every authoritative reference image (derived from the spec visual handoff) with an instruction to read each one during the current invocation — because the `vl_multimodal` final sign-off is invocation-bound and MUST NOT be relaxed or satisfied by reusing a previous invocation's refs receipt. Modifying artifacts remains forbidden.
+
+Enforcement: `harness/scripts/goal-runner.ts`（`buildClosureVisualEvidenceBlock`）, `harness/scripts/check-spec.ts`（gate 判定不变）
+
+#### Scenario: a closure-only attempt can pass the invocation-bound visual sign-off
+
+- **WHEN** a spec closure-only attempt starts with 10 authoritative reference images and the agent follows the prompt's read-only evidencing list
+- **THEN** the refs receipt for this invocation is complete and `ui_spec_fidelity_gate` no longer fails structurally on the closure attempt

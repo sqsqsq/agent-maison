@@ -8,13 +8,12 @@
 // 本模块（openspec goal-runner/harness-gates delta）：
 //   - SSOT 改为 <phase>/headless-assumptions.jsonl（每行一条决议，schema 校验）；
 //     markdown 降级为人读投影；
-//   - registry 完整性交叉核验：confirmation-registry.yaml 中 id 前缀=该 phase 的
-//     in-phase gate，账本必须逐一有 decision 或显式 n/a 行；registry 外自由决策
-//     诚实不可证（由 t2/t3/t4 确定性门禁兜底）；
 //   - legacy md 兼容读取（保守策略：无法辨识 must-review 语义的表格行**全量**计入
 //     待复核——宁可多报）；
 //   - 账本仅留痕：任何 hard-gate-lowering 授权走 confirmation receipt（t10），
-//     账本记录不构成授权。
+//     账本记录不构成授权——**也不构成否决**：registry 交叉核验/closure 门禁已退役
+//     （openspec runner-owned-machine-facts；账本是 feature 级跨 run 累积留痕，
+//     曾以 run 绑定+registry 覆盖否决 closure，把完整且身份等值的回执恒判 failed）。
 // ============================================================================
 
 import * as fs from 'fs';
@@ -141,55 +140,6 @@ export function loadHeadlessLedger(
 }
 
 // ----------------------------------------------------------------------------
-// registry 交叉核验
-// ----------------------------------------------------------------------------
-
-export interface RegistryGateIdsResult {
-  /** registry 文件可读且解析成功——false 时消费方必须 fail-closed（codex 五轮 P1：
-   * 读失败静默零 gate = crossCheck 恒 ok，与"完整性核验"目标相反） */
-  readable: boolean;
-  ids: string[];
-}
-
-/**
- * confirmation-registry.yaml 中属于该 phase 的 in-phase gate id（id 前缀约定
- * `<phase>.`；虚拟 `_cross_phase`（phase.next_step 等）由 runner 编排，不入本核验）。
- */
-export function registryGateIdsForPhase(registryYamlPath: string, phase: string): RegistryGateIdsResult {
-  if (!fs.existsSync(registryYamlPath)) return { readable: false, ids: [] };
-  try {
-    const doc = YAML.parse(fs.readFileSync(registryYamlPath, 'utf-8')) as {
-      entries?: Array<{ id?: string; skill?: string }>;
-    };
-    if (!doc || !Array.isArray(doc.entries)) return { readable: false, ids: [] };
-    return {
-      readable: true,
-      ids: doc.entries
-        .map((e) => e.id)
-        .filter((id): id is string => typeof id === 'string' && id.startsWith(`${phase}.`))
-        .sort(),
-    };
-  } catch {
-    return { readable: false, ids: [] };
-  }
-}
-
-export interface RegistryCrossCheckResult {
-  ok: boolean;
-  missing_gate_ids: string[];
-}
-
-/** registry 有而账本无（decision 或显式 n/a）→ missing；registry 外条目合法（自由决策留痕） */
-export function crossCheckLedgerAgainstRegistry(
-  entries: HeadlessDecisionEntry[],
-  registryGateIds: string[],
-): RegistryCrossCheckResult {
-  const covered = new Set(entries.map((e) => e.gate_id));
-  const missing = registryGateIds.filter((id) => !covered.has(id));
-  return { ok: missing.length === 0, missing_gate_ids: missing };
-}
-
-// ----------------------------------------------------------------------------
 // legacy markdown 兼容读取（投影/旧现场）
 // ----------------------------------------------------------------------------
 
@@ -308,56 +258,6 @@ export function countPendingMustReview(items: AutoDecisionSummaryItem[]): number
   return items.filter((i) => i.must_review).length;
 }
 
-// ----------------------------------------------------------------------------
-// 闭环消费（check-receipt goal 环境 BLOCKER 门禁）
-// ----------------------------------------------------------------------------
-
-export function registryYamlPath(frameworkRoot: string): string {
-  return path.join(frameworkRoot, 'skills', 'reference', 'confirmation-registry.yaml');
-}
-
-export interface LedgerClosureValidation {
-  ok: boolean;
-  errors: string[];
-}
-
-/**
- * goal 无头闭环时的账本门禁（openspec harness-gates delta）：
- * ①JSONL 存在且 schema 全合法（phase 目录一致性强校验）；
- * ②registry 可读（不可读=fail-closed，不得静默零 gate）；
- * ③registry 该 phase 全部 in-phase gate 在账本有行（decision 或显式 n/a）。
- */
-export function validateLedgerForClosure(
-  projectRoot: string,
-  frameworkRoot: string,
-  feature: string,
-  phase: string,
-  opts?: FeaturePathOptions & { expectedRunId?: string },
-): LedgerClosureValidation {
-  const errors: string[] = [];
-  const ledgerAbs = headlessLedgerPath(projectRoot, feature, phase, opts);
-  if (!fs.existsSync(ledgerAbs)) {
-    return {
-      ok: false,
-      errors: [
-        `缺 ${HEADLESS_ASSUMPTIONS_JSONL}（goal 无头闭环强制；markdown 仅为人读投影）：${ledgerAbs}`,
-      ],
-    };
-  }
-  const parsed = parseHeadlessAssumptionsJsonl(fs.readFileSync(ledgerAbs, 'utf-8'), {
-    expectedPhase: phase,
-    expectedRunId: opts?.expectedRunId,
-  });
-  for (const e of parsed.errors) errors.push(`账本第 ${e.line} 行非法：${e.error}`);
-
-  const reg = registryGateIdsForPhase(registryYamlPath(frameworkRoot), phase);
-  if (!reg.readable) {
-    errors.push('confirmation-registry.yaml 不可读/解析失败——fail-closed，不得按零 gate 放行');
-  } else {
-    const cross = crossCheckLedgerAgainstRegistry(parsed.entries, reg.ids);
-    for (const id of cross.missing_gate_ids) {
-      errors.push(`registry gate 无账本记录（须 decision 或显式 n/a·理由）：${id}`);
-    }
-  }
-  return { ok: errors.length === 0, errors };
-}
+// 闭环消费段已退役（openspec runner-owned-machine-facts）：validateLedgerForClosure /
+// registryGateIdsForPhase / crossCheckLedgerAgainstRegistry 整族删除——账本仅留痕与
+// 投影（goal-report 自动决议汇总），不再拥有 closure 否决权。

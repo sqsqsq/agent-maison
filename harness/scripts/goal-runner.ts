@@ -2387,6 +2387,31 @@ export function reconcileMutablePhaseSourceDrift(args: {
 }
 
 /** 回退后 review 的增量重点复审块（seam 变更不豁免——注入重审焦点而非跳过）。 */
+/**
+ * runner-owned-machine-facts 追补（codex review）：spec closure-only 轮的只读取证指令。
+ * 冻结的是产物，不是只读视觉取证——vl_multimodal 终签 invocation-bound，只认**本次
+ * invoke** 的逐张验读回执；closure 轮不读图 → refs 回执 partial → 终签结构性拒收
+ * （宿主实锤 run 20260815T070732Z-013297：i3 零读图，content_retry_exhausted 终局）。
+ * 本块把"必须重新读、允许读、仍禁改"讲给 agent；不放宽 gate、不复用旧 invocation 回执。
+ */
+export function buildClosureVisualEvidenceBlock(refRelPaths: string[]): string {
+  if (refRelPaths.length === 0) return '';
+  return [
+    '',
+    '## Mandatory read-only visual evidencing for THIS invocation (spec closure — REQUIRED)',
+    '',
+    'FROZEN applies to artifacts, NOT to read-only evidencing. The vl_multimodal final sign-off is',
+    'invocation-bound: it only accepts reference images actually read during THIS invocation.',
+    'Before filling the receipt, read EVERY authoritative reference image below with your file-read',
+    'tool. Reading them is required and allowed; modifying any artifact remains forbidden:',
+    '',
+    ...refRelPaths.map(p => `- ${p}`),
+    '',
+    'Skipping any image leaves the refs receipt partial and fails ui_spec_fidelity_gate for this attempt.',
+    '',
+  ].join('\n');
+}
+
 export function buildBacktrackReviewFocusBlock(files: string[]): string {
   if (files.length === 0) return '';
   return [
@@ -4711,6 +4736,23 @@ Goal runner — tool-agnostic multi-phase orchestrator
               'Do NOT redo analysis or rewrite artifacts. Complete the phase closure only.',
               '',
             ].join('\n');
+          })() +
+          // runner-owned-machine-facts 追补（codex review）：spec closure-only 轮必须重新
+          // 只读取证——冻结豁免的是"重做分析/改产物"，不豁免 invocation-bound 的视觉验读。
+          (() => {
+            if (trustedSnapshot.kind !== 'active' || phase !== 'spec') return '';
+            try {
+              const specMdForClosure = loadSpecMarkdown(projectRoot, manifest.feature);
+              const refAbsForClosure = specMdForClosure
+                ? collectAuthoritativeImagePaths(projectRoot, specMdForClosure, p =>
+                    path.isAbsolute(p) ? p : path.resolve(projectRoot, p))
+                : [];
+              return buildClosureVisualEvidenceBlock(
+                refAbsForClosure.map(p => path.relative(projectRoot, p).replace(/\\/g, '/')),
+              );
+            } catch {
+              return ''; // best-effort：列不出路径时不阻断 prompt（gate 侧判定不变）
+            }
           })();
         fs.writeFileSync(promptPath, prompt, 'utf-8');
         progressSubstep = 'prompt';
@@ -5802,6 +5844,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
               );
             }
           } else {
+            // codex review（回归三轮）：receipt 校验未过时把真实 message 落 detach.log——
+            // 此前失败原因无处可查（goal 态 state 不落盘、事件只有 status），只能靠人猜根因
+            //（宿主实锤：ledger 58 连错的真因藏了两个 run 才被定位）。
+            console.warn(
+              `[closure] in-flow receipt 校验未通过（status=${receiptValidation.status}）：` +
+                `${(receiptValidation.message ?? '无 message').slice(0, 600)}`,
+            );
             applyClosurePatchFromReceiptValidation(
               projectRoot, manifest.feature, phase, receiptValidation, frameworkRoot,
             );

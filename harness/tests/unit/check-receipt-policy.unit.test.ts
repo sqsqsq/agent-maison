@@ -14,7 +14,6 @@ import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { runSyncClosureDetailed, tryValidateReceipt } from '../../scripts/utils/phase-state';
-import { registryGateIdsForPhase } from '../../scripts/utils/headless-assumptions';
 import { statefilePath } from '../../config';
 
 export interface UnitCaseResult {
@@ -47,9 +46,9 @@ interface ReceiptOpts {
   claimedAttemptId?: string;
   /**
    * 环 C：goal 身份在场时 check-receipt 另行强制 headless-assumptions 账本
-   * （registry 中该 phase 的每个 gate 都须有记录）。传入 runId 即补齐合法账本，
-   * 使 attempt 等值成为**唯一**被消融的变量——否则两个用例都会栽在账本 BLOCKER 上，
-   * 负向用例的"失败"与 attempt 校验无关（假绿）。
+   * （registry 中该 phase 的每个 gate 都须有记录）。账本 closure 否决已退役
+   * （runner-owned-machine-facts）——本选项保留仅为可写旧 run 账本行，钉住
+   * 「账本内容不参与闭环裁决」。
    */
   goalLedgerRunId?: string;
 }
@@ -166,30 +165,21 @@ function buildProject(phase: string, opts: ReceiptOpts): { root: string; sha: st
   ].join('\n');
   fs.writeFileSync(path.join(featureDir, 'phase-completion-receipt.md'), receipt, 'utf-8');
 
-  // 环 C：goal 夹具补齐 headless-assumptions 账本——registry 中本 phase 的每个 gate
-  // 都须有条目（crossCheckLedgerAgainstRegistry），否则闭环栽在账本 BLOCKER 上，
-  // attempt 等值根本走不到，负向用例就成了假绿。
+  // runner-owned-machine-facts：账本 closure 否决已退役——这里刻意写一条**旧 run** 的
+  // 账本行（run_id 与当前 goal run 不同），钉住「账本内容（含旧 run 行/未覆盖 registry
+  // gate）不再参与闭环裁决」；attempt 等值仍是唯一被消融变量。
   if (opts.goalLedgerRunId) {
-    const gateIds = registryGateIdsForPhase(
-      path.join(HARNESS_ROOT, '..', 'skills', 'reference', 'confirmation-registry.yaml'),
+    const ledger = JSON.stringify({
+      decision_id: `${phase}-fixture-stale`,
+      run_id: 'stale-prior-run',
       phase,
-    );
-    if (!gateIds.readable) throw new Error('夹具前提失效：confirmation-registry.yaml 不可读');
-    const ledger = gateIds.ids
-      .map((gateId, idx) =>
-        JSON.stringify({
-          decision_id: `${phase}-fixture-${idx}`,
-          run_id: opts.goalLedgerRunId,
-          phase,
-          gate_id: gateId,
-          class: 'artifact_checkbox',
-          decision: 'n/a: unit fixture',
-          must_review: false,
-          source: 'agent',
-          ts: '2026-07-08T10:00:00.000Z',
-        }),
-      )
-      .join('\n');
+      gate_id: `${phase}.freeze`,
+      class: 'artifact_checkbox',
+      decision: 'n/a: unit fixture（旧 run 留痕）',
+      must_review: false,
+      source: 'agent',
+      ts: '2026-07-08T10:00:00.000Z',
+    });
     fs.writeFileSync(path.join(featureDir, 'headless-assumptions.jsonl'), `${ledger}\n`, 'utf-8');
   }
 

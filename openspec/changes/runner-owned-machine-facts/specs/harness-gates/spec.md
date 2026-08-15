@@ -20,3 +20,9 @@ Enforcement: `harness/scripts/check-spec.ts`, `harness/scripts/check-testing.ts`
 
 - **WHEN** a P0 AC's `requirement_ref.snippet` does not exist verbatim in the referenced source document
 - **THEN** the gate SHALL FAIL naming the AC (引文伪造/漂移)
+
+## REMOVED Requirements
+
+### Requirement: Headless assumption ledgers are schema-validated and registry-complete
+
+**Reason**: The ledger is a feature-level, cross-run append-only record that by its own charter "leaves a trace, grants no authorization" — it must not hold closure veto power either. In production (host run `20260815T083127Z-edfe38`) the run-id binding declared 58 prior-run lines "illegal" and the registry-coverage check demanded re-registration of decisions already materialized in artifacts (`spec.feature_path`, `spec.terminology`), permanently failing a complete, identity-matching receipt. Gate-level facts those entries once notarized are enforced by their own deterministic gates; the ledger remains for observability (goal-report auto-decision summary) and human review only. When receipt validation fails, the goal runner SHALL surface the validator's actual error output in its log (detach.log) instead of a bare `receipt_status=failed`.

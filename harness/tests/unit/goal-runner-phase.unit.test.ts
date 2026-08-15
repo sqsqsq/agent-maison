@@ -36,6 +36,7 @@ import { resolveGoalRunStatus } from '../../scripts/utils/phase-transition-polic
 import type { GoalPhaseOutcome } from '../../scripts/utils/goal-report-generator';
 import { loadGoalCapability } from '../../scripts/utils/goal-adapter-capability';
 import {
+  buildClosureVisualEvidenceBlock,
   buildPhasePrompt,
   extractPriorFailureContext,
   type SummaryJson,
@@ -722,6 +723,24 @@ cases.push(
     run: () => {
       const prompt = buildPhasePrompt(MINIMAL_MANIFEST, FRAMEWORK_ROOT, 'ut', FRAMEWORK_ROOT, []);
       assert(!prompt.includes('Prior attempt failure'), '首跑不回喂');
+    },
+  },
+  {
+    name: 'buildClosureVisualEvidenceBlock: 列出参考图+「允许读/禁改」话术；空集返回空串',
+    run: () => {
+      const block = buildClosureVisualEvidenceBlock([
+        'doc/features/demo/ux-reference/1-home.jpg',
+        'doc/features/demo/ux-reference/2-list.png',
+      ]);
+      assert(block.includes('Mandatory read-only visual evidencing for THIS invocation'), '标题在场');
+      assert(block.includes('- doc/features/demo/ux-reference/1-home.jpg'), '逐张列路径');
+      assert(block.includes('- doc/features/demo/ux-reference/2-list.png'), '逐张列路径 2');
+      assert(
+        block.includes('Reading them is required and allowed; modifying any artifact remains forbidden'),
+        '必须同时讲清「允许且必需读」与「仍禁改产物」——冻结豁免的是改产物，不是只读取证',
+      );
+      assert(block.includes('ui_spec_fidelity_gate'), '点名不读图的后果（refs 回执 partial → 终签拒收）');
+      assert(buildClosureVisualEvidenceBlock([]) === '', '无参考图不注入');
     },
   },
 );

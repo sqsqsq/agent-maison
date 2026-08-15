@@ -69,6 +69,9 @@ interface SlimOpts {
   sentinelWorktreeDigest?: string;
   /** t2 v6 负例（codex 第五轮 P1）：校验前删除 .git——当前侧 no-git + HEAD 不可解析 */
   dropGitDirBeforeValidate?: boolean;
+  /** runner-owned-machine-facts 正例：写一条**旧 run** 的账本行（且不覆盖 registry gate）——
+   *  账本是跨 run 累积留痕，不再拥有 closure 否决权 */
+  staleLedgerFromPriorRun?: boolean;
 }
 
 function buildSlimProject(opts: SlimOpts): { root: string } {
@@ -118,6 +121,23 @@ function buildSlimProject(opts: SlimOpts): { root: string } {
     'utf-8',
   );
   fs.writeFileSync(path.join(reportsDir, 'verifier.report.md'), 'verdict: PASS\n', 'utf-8');
+  if (opts.staleLedgerFromPriorRun) {
+    fs.writeFileSync(
+      path.join(featureDir, 'headless-assumptions.jsonl'),
+      `${JSON.stringify({
+        decision_id: 'stale-1',
+        run_id: 'r-prior',
+        phase: PHASE,
+        gate_id: `${PHASE}.freeze`,
+        class: 'artifact_checkbox',
+        decision: 'n/a: 旧 run 留痕',
+        must_review: false,
+        source: 'agent',
+        ts: '2026-07-08T10:00:00.000Z',
+      })}\n`,
+      'utf-8',
+    );
+  }
   // t2 v4：根级构建配置（tracked）——worktree digest 必须把根配置输入纳入绑定
   fs.writeFileSync(path.join(root, 'build-profile.json5'), '{ "app": { "sdk": "6.0" } }\n', 'utf-8');
 
@@ -532,6 +552,24 @@ const cases: Array<{ name: string; run: () => void }> = [
         (v.message ?? '').includes('slim_summary_run_id_mismatch'),
         `应命中 run_id 失配 BLOCKER：${v.message}`,
       );
+    },
+  },
+  {
+    name: 'runner-owned-machine-facts：旧 run 账本行在场+registry gate 未覆盖 → 不再否决闭环（goal 态 passed）',
+    run: () => {
+      // 宿主实锤 run 20260815T083127Z-edfe38：账本 58 条旧 run 行 + 2 条初 run 已物化决议
+      // 曾把完整且身份等值的回执恒判 failed。账本仅留痕，closure 否决权已退役。
+      const v = runCase(
+        { summaryRunId: 'r-new', claimedAttemptId: 'i2', staleLedgerFromPriorRun: true },
+        {
+          MAISON_GOAL_RUNNER: '1',
+          MAISON_GOAL_HEADLESS: undefined,
+          MAISON_GOAL_RUN_ID: 'r-new',
+          MAISON_GOAL_ATTEMPT: 'i2',
+          MAISON_GOAL_ATTEMPT_PHASE: PHASE,
+        },
+      );
+      assert(v.status === 'passed', `账本留痕不得否决完整且身份等值的回执：${v.status} ${v.message ?? ''}`);
     },
   },
   {
