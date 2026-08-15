@@ -26,11 +26,11 @@ import {
   loadReviewClosureAttestation,
   reconcileSourceTreeAgainstAttestation,
 } from './closure-attestation';
-import { classifyGoalRunsDir, collectRequirementIntentText, collectRequirementSsotPaths, computeRunRequirementSha } from './fidelity-shared';
+import { classifyGoalRunsDir, collectRequirementSsotPaths, computeRunRequirementSha } from './fidelity-shared';
 import { validateSummaryV11 } from './quality-axes';
 import { buildSourceInventory } from './closure-attestation';
 import { defaultTrustRegistryPath, validateConfirmationReceiptFile } from './confirmation-receipt';
-import { evaluateFlowContract, isP0DeviceInteractive, loadAcceptanceFlowsDoc } from './p0-semantic-gates';
+import { isP0DeviceInteractive, loadAcceptanceFlowsDoc } from './p0-semantic-gates';
 import {
   computeCanonicalReceiptSha256,
   loadPhaseEvidenceManifest,
@@ -100,8 +100,9 @@ export interface CompletionVerdict {
  * clean_pass 违例分类（codex 七轮 P1-2）：
  * - `needs_fix`：确定性故障（verdict FAIL / 血缘 stale-tampered / attestation 缺失失配）
  *   ——须修复或重跑，投影 FEATURE_INCOMPLETE，**不**是"待人工确认"；
- * - `needs_human`：设计内求人（flow_contract 缺 receipt / waiver / 档位钳制 /
- *   运行时证据未采集）——封顶 AWAITING_HUMAN_REVIEW。
+ * - `needs_human`：设计内求人（waiver / 档位钳制 / 运行时证据未采集）——封顶
+ *   AWAITING_HUMAN_REVIEW。（flow_contract 缺 receipt 已退出本枚举：签发端未建成，
+ *   只保留 check-spec WARN 提醒——codex 方案二，用户裁定 08-15。）
  * 两类都令 clean_pass 失败（不生成 completion），但 run 级状态投影不同。
  */
 export type CleanPassIssueKind = 'needs_fix' | 'needs_human';
@@ -293,7 +294,7 @@ export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[]
   // ②【已删除 · codex 收口刀（runner-owned-machine-facts 追补）】账本 must_review 对
   // clean-pass/run 终态的控制退役：账本是跨 run 累积留痕（宿主实锤 45 条历史待复核把
   // 终态永久压住、旧行不可消解），只保留 goal-report 报告展示；真实门禁（visual axis/
-  // flow_contract/waiver/档位钳制）的 needs_human 封顶不受影响。
+  // waiver/档位钳制/运行时证据）的 needs_human 封顶不受影响。
 
   // ③ 无 waiver（needs_human：真人签发/裁决）
   for (const phase of chain) {
@@ -343,17 +344,12 @@ export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[]
     }
   }
 
-  // ⑦ flow_contract receipt（needs_human）——首次结构化流程模型须真人确认。
-  {
-    const fc = evaluateFlowContract(
-      projectRoot,
-      feature,
-      collectRequirementIntentText(projectRoot, feature),
-    );
-    if (fc[0]?.status === 'WARN') {
-      issues.push({ phase: 'spec', condition: 'flow_contract_receipt', detail: fc[0].details.split('。')[0], kind: 'needs_human' });
-    }
-  }
+  // ⑦【已删除 · codex 方案二（用户裁定 08-15）】flow_contract receipt 对 clean_pass 的
+  // needs_human 封顶退役：签发端（confirmation-credential-issuance）未建成，密码学 receipt
+  // 谁都签不出——"验票闸机装了、售票窗口没有"，把所有 full-track UI feature 结构性挡在
+  // FEATURE_COMPLETED 外。保留提醒、删除无法完成的强制手续：check-spec 的
+  // acceptance_flow_contract WARN 与结构化硬检查（38 条 P0 checkpoint/flow 合成）原样保留；
+  // 将来签发体系落地或真实事故证明须人工裁决时再评估恢复。
 
   // ⑧ P0 运行时忠实性证据（codex 八轮 P0-1：不再用文件存在性——空文件即可解除是后门）——
   // 有 P0 device flow 的 feature，在 Hylyre provider step 采集落地前，"计划写对+TC 自报
@@ -419,9 +415,9 @@ export function classifyCleanPassIssues(issues: CleanPassIssue[]): {
 
 /**
  * P1-1（codex 六轮）+ P1-2（七轮）：run 结束"是否有**待人工**事项"只消费 needs_human 类
- * clean_pass 违例（flow_contract 缺 receipt / waiver / 档位钳制 / 待复核 / 运行时证据
- * 未采集）——确定性故障（needs_fix：verdict FAIL / stale-tampered / attestation 失配）
- * 不投影为 AWAITING（那是修复/重跑事项，非人工确认）。与 completion 生成同源 issues 集。
+ * clean_pass 违例（waiver / 档位钳制 / 运行时证据未采集）——确定性故障（needs_fix：
+ * verdict FAIL / stale-tampered / attestation 失配）不投影为 AWAITING（那是修复/重跑
+ * 事项，非人工确认）。与 completion 生成同源 issues 集。
  */
 export function hasPendingHumanReview(opts: CleanPassOptions): boolean {
   return classifyCleanPassIssues(collectCleanPassIssues(opts)).needsHuman;

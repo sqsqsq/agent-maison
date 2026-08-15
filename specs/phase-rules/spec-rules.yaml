@@ -54,8 +54,8 @@ structure_checks:
     description: >
       结构化流程模型真人确认点（t4b/codex 四轮 P0-3）：flow_contract receipt 绑定
       requirement/acceptance/flows/ui-spec 哈希，任一改动即 stale；无有效 receipt →
-      WARN（工作可继续）但 clean_pass 拒绝、run 封顶 AWAITING_HUMAN_REVIEW、
-      不得 FEATURE_COMPLETED。
+      仅 advisory WARN（codex 方案二，08-15：签发端未建成前不影响 clean_pass /
+      FEATURE_COMPLETED；结构化硬检查与 receipt 机制本体不变）。
 
   ux_reference_mapping:
     description: >

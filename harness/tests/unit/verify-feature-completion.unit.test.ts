@@ -193,6 +193,35 @@ const cases: Case[] = [
     },
   },
   {
+    name: 'codex 方案二：flow_contract 缺 receipt 不进 clean_pass（签发端未建成）；runtime_fidelity 等其他 receipt 校验不动',
+    run: () => {
+      const root = mkProject();
+      seedCleanChain(root);
+      // 带 P0 device flow 的 acceptance（flow_contract/runtime_fidelity 两门都 applicable；无任何 receipt）
+      writeArtifact(root, 'acceptance.yaml', [
+        'flows:',
+        '  main:',
+        '    screens: [a, b]',
+        'criteria:',
+        '  - id: AC-1',
+        '    priority: P0',
+        '    ut_layer: device',
+        '    linked_flow: main',
+      ].join('\n'));
+      const issues = collectCleanPassIssues({ projectRoot: root, feature: FEATURE, chain: CHAIN });
+      assert.strictEqual(
+        issues.some((i) => i.condition === 'flow_contract_receipt'),
+        false,
+        'flow_contract 缺 receipt 不得再产生 clean_pass issue——保留 WARN 提醒、删除签不出来的强制手续',
+      );
+      assert.strictEqual(
+        issues.some((i) => i.condition === 'runtime_step_evidence'),
+        true,
+        '其他 receipt 校验（runtime fidelity attestation）保持不动（对照组）',
+      );
+    },
+  },
+  {
     name: 'codex 收口刀定向回归①：run 终态分类按实际执行切片——下游未跑不得判 needs_fix（宿主 PARTIAL 误报形态）',
     run: () => {
       const root = mkProject();

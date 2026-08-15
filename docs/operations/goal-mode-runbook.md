@@ -78,7 +78,7 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
 | 最终状态 | 含义 |
 |----------|------|
 | `CHAIN_SLICE_COMPLETED` | **本 run 的链切片**全 PASS——不等于需求完成；feature 级只认 `verify-feature-completion`（goal-status 尾行 `feature_status=`） |
-| `AWAITING_HUMAN_REVIEW` | 链切片 PASS 但存在待人工事项（账本待复核 / waiver / 档位钳制 / flow_contract 缺 receipt）——封顶态，不得视为干净成功 |
+| `AWAITING_HUMAN_REVIEW` | 链切片 PASS 但存在待人工事项（waiver / 档位钳制 / P0 device flow 的 runtime_fidelity_attestation 缺 receipt）——封顶态，不得视为干净成功。（账本待复核与 flow_contract 缺 receipt 已退出封顶枚举：前者只留报告展示，后者签发端未建成前仅 advisory WARN——runner-owned-machine-facts，08-15） |
 | `DEFERRED_CAPABILITY_MISSING` | preflight 终态：需求强 1:1 意图但 adapter 无视觉能力，不盲跑全链；继续须带外签发 fidelity_downgrade receipt 后 `--fidelity` + `--fidelity-receipt` |
 | `DEFERRED` | 到达 end 但存在外部阻塞未闭环 |
 | `PARTIAL` | 中途停止或未到 end 且有 DEFERRED |

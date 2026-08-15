@@ -7653,7 +7653,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       advance_blocked: o.advance_blocked,
     }));
     // t8/P1-1/P1-2：全链跑完时消费真实门禁信号（与 completion 生成同源 issues 集）——
-    // needs_human（flow_contract/waiver/档位钳制/待复核/运行时证据）→ AWAITING_HUMAN_REVIEW；
+    // needs_human（waiver/档位钳制/运行时证据）→ AWAITING_HUMAN_REVIEW；
     // needs_fix（verdict FAIL/stale/tampered/attestation 失配）→ 不得 CHAIN_SLICE_COMPLETED
     // （codex 八轮 P1-2：needs_fix 之前被写成成功态是强错觉）。
     let pendingHumanReview = false;

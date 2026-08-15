@@ -181,14 +181,18 @@ const cases: Case[] = [
     },
   },
   {
-    name: 't4b flow_contract：适用+无 receipt → WARN（封顶语义）；无 P0 flow → SKIP',
+    name: 't4b flow_contract：适用+无 receipt → 仅 advisory WARN（不再宣称封顶）；无 P0 flow → SKIP',
     run: () => {
       const root = mkProject();
       seedReqDoc(root);
       writeAcceptance(root);
       const r = evaluateFlowContract(root, FEATURE, 'req text');
       assert.strictEqual(r[0].status, 'WARN');
-      assert.ok(r[0].details.includes('AWAITING_HUMAN_REVIEW'));
+      // codex 方案二文案返修：WARN 必须自述 advisory，不得再谎报封顶/不得完成
+      //（生产已取消 clean_pass 拒绝，文案与行为不得两张皮）
+      assert.ok(r[0].details.includes('advisory'), r[0].details);
+      assert.ok(!r[0].details.includes('AWAITING_HUMAN_REVIEW'), '不得再宣称 run 封顶');
+      assert.ok(!/不得 FEATURE_COMPLETED|clean_pass 拒绝/.test(r[0].details), '不得再宣称阻断完成');
       const empty = mkProject();
       assert.strictEqual(evaluateFlowContract(empty, FEATURE, 'x')[0].status, 'SKIP');
     },

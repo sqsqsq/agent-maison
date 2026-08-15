@@ -234,9 +234,11 @@ export function flowContractReceiptPath(projectRoot: string, feature: string): s
 }
 
 /**
- * t4b flow_contract 确认点（codex 四轮 P0-3）：首次生成的结构化流程模型须真人确认；
+ * t4b flow_contract 确认点（codex 四轮 P0-3）：结构化流程模型的真人确认凭据；
  * AC/checkpoint/flow/ui-spec/需求任一改动 → 绑定哈希失配自动 stale。
- * 无有效 receipt：WARN（工作可继续）+ 完成侧 clean_pass 拒绝（不得 FEATURE_COMPLETED）。
+ * 无有效 receipt：仅 advisory WARN（codex 方案二，用户裁定 08-15——签发端
+ * confirmation-credential-issuance 未建成，谁都签不出，不再影响 clean_pass /
+ * FEATURE_COMPLETED；签发落地后 receipt 机制原样可用）。
  */
 export function evaluateFlowContract(
   projectRoot: string,
@@ -263,8 +265,8 @@ export function evaluateFlowContract(
     severity: 'MAJOR', status: 'WARN',
     details:
       `flow_contract receipt 缺失/无效/已 stale：${v.reasons.join('；')}。` +
-      '结构化流程模型（AC 集是否完整转写需求）无法全机器证明——须真人确认；' +
-      '工作可继续，但 feature 不得 FEATURE_COMPLETED（clean_pass 拒绝），run 封顶 AWAITING_HUMAN_REVIEW。',
+      '结构化流程模型（AC 集是否完整转写需求）无法全机器证明——建议真人复核；' +
+      '本提示仅为 advisory，不影响 clean_pass 或 FEATURE_COMPLETED（签发体系落地前无人能产出合法 receipt）。',
   }];
 }
 
