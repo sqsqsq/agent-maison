@@ -331,12 +331,13 @@ const REQUIREMENT_DOC_MAX_BYTES = 256 * 1024;
 export function dereferenceRequirementDocs(
   projectRoot: string,
   requirement: string | null | undefined,
-  opts?: { featuresDirRel?: string },
+  opts?: { featuresDirRel?: string; excludePrefixes?: string[] },
 ): { combined: string; resolvedPaths: string[] } {
   const base = typeof requirement === 'string' ? requirement : '';
   if (!base.trim()) return { combined: base, resolvedPaths: [] };
   const featuresDirRel = (opts?.featuresDirRel ?? 'doc/features').replace(/\\/g, '/');
   const allowedPrefixes = ['doc/', featuresDirRel.endsWith('/') ? featuresDirRel : `${featuresDirRel}/`];
+  const excludedPrefixes = (opts?.excludePrefixes ?? []).map((p) => p.replace(/\\/g, '/'));
   const seen = new Set<string>();
   const parts = [base];
   const resolvedPaths: string[] = [];
@@ -347,6 +348,7 @@ export function dereferenceRequirementDocs(
     if (seen.has(rel)) continue;
     seen.add(rel);
     if (!allowedPrefixes.some((p) => rel.startsWith(p))) continue;
+    if (excludedPrefixes.some((p) => rel.startsWith(p))) continue;
     const abs = path.resolve(projectRoot, rel);
     if (!abs.startsWith(path.resolve(projectRoot) + path.sep)) continue; // 越界防线
     try {
@@ -437,7 +439,10 @@ export function collectRequirementIntentText(
     try {
       const m = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as { requirement?: string };
       if (typeof m.requirement === 'string' && m.requirement.trim()) {
-        parts.push(dereferenceRequirementDocs(projectRoot, m.requirement, { featuresDirRel }).combined);
+        parts.push(dereferenceRequirementDocs(projectRoot, m.requirement, {
+          featuresDirRel,
+          excludePrefixes: [`${featuresDirRel.replace(/\\/g, '/')}/${feature}/`],
+        }).combined);
       }
     } catch { /* 单 manifest 损坏跳过 */ }
   }
@@ -467,7 +472,10 @@ export function collectRequirementSsotPaths(
       out.add(path.join(featuresDirRel, feature, 'goal-runs', runId, 'manifest.json').split(path.sep).join('/'));
       try {
         const m = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as { requirement?: string };
-        for (const rel of dereferenceRequirementDocs(projectRoot, m.requirement, { featuresDirRel }).resolvedPaths) {
+        for (const rel of dereferenceRequirementDocs(projectRoot, m.requirement, {
+          featuresDirRel,
+          excludePrefixes: [`${featuresDirRel.replace(/\\/g, '/')}/${feature}/`],
+        }).resolvedPaths) {
           out.add(rel);
         }
       } catch { /* 单 manifest 损坏跳过 */ }
@@ -522,24 +530,18 @@ export function computeRequirementShaFromText(
   requirement: string,
   featuresDirRel = 'doc/features',
 ): string {
-  const deref = dereferenceRequirementDocs(projectRoot, requirement, { featuresDirRel });
+  const currentFeaturePrefix = `${featuresDirRel.replace(/\\/g, '/')}/${feature}/`;
+  const deref = dereferenceRequirementDocs(projectRoot, requirement, {
+    featuresDirRel,
+    excludePrefixes: [currentFeaturePrefix],
+  });
   const parts = [`inline:${requirement}`];
   for (const rel of deref.resolvedPaths.sort()) {
     try {
       parts.push(`${rel}:${fs.readFileSync(path.join(projectRoot, rel), 'utf-8')}`);
     } catch { /* skip */ }
   }
-  // ux-reference 文件内容摘要（存在才计）
-  const uxDir = path.join(projectRoot, featuresDirRel, feature, 'ux-reference');
-  try {
-    if (fs.existsSync(uxDir)) {
-      for (const f of fs.readdirSync(uxDir).sort()) {
-        if (!/\.(jpe?g|png|webp|bmp)$/i.test(f)) continue;
-        const buf = fs.readFileSync(path.join(uxDir, f));
-        parts.push(`ux:${f}:${crypto.createHash('sha256').update(buf).digest('hex')}`);
-      }
-    }
-  } catch { /* skip */ }
+  // 参考图片由 reference receipt/gate 单独绑定；运行中生成的 feature 产物不得改变需求身份。
   return crypto.createHash('sha256').update(parts.join('\n'), 'utf-8').digest('hex');
 }
 

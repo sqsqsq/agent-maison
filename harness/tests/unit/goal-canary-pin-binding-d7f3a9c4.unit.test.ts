@@ -674,24 +674,35 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
-    name: 't3 无 pin 中央退化回归锁：decideVisionCanaryProbe 与三轴 resolver 无 pin 时仍执行 run 绑定（防 v5 公式退化）',
+    name: 't3 无 pin 行为回归：旧 run canary 不得被当前 preflight 或 capability resolver 复用',
     run: () => {
-      const src = fs.readFileSync(path.join(__dirname, '../../scripts/utils/goal-preflight.ts'), 'utf-8');
-      assert(
-        /if \(canaryAdmissibleForExecution\(canary, \{ runId: manifest\.run_id, modelPin \}\)\)/.test(src),
-        'decideVisionCanaryProbe 必须无条件调用执行身份谓词（无 pin 退化为 canaryAdmissibleForRun）',
-      );
-      const evcSrc = fs.readFileSync(path.join(__dirname, '../../scripts/utils/effective-vision-context.ts'), 'utf-8');
-      assert(
-        /if \(canaryAdmissibleForExecution\(canary, \{ runId: args\.runId, modelPin: args\.modelPin \}\)\)/.test(evcSrc),
-        '三轴 resolver 必须无条件调用执行身份谓词',
-      );
-      // 关注点分离回归：isVisionCanaryFresh 签名不得被改动（3 参，恒无 modelPin）
-      const mmSrc = fs.readFileSync(path.join(__dirname, '../../scripts/utils/multimodal-probe.ts'), 'utf-8');
-      assert(
-        /export function isVisionCanaryFresh\(\s*canary: FrameworkLocalConfigVisionCanary \| undefined \| null,\s*adapter: string,\s*now: number = Date\.now\(\),\s*\): boolean/.test(mmSrc),
-        'isVisionCanaryFresh 签名与行为不得被改动（新鲜度与身份分离）',
-      );
+      const root = mkTmp();
+      try {
+        const fw = claudeFrameworkFixture(root);
+        writeLocalConfig(root, {
+          schema_version: '1.0',
+          agent_adapter: 'claude',
+          vision: { canary: {
+            adapter: 'claude', verdict: 'tool_read',
+            probed_at: new Date(Date.now() - 60_000).toISOString(),
+            probed_via: 'goal', probe_version: VISION_CANARY_PROBE_VERSION,
+            run_id: 'R1',
+          } },
+        });
+        const manifest = baseManifest({ adapter: 'claude', adapter_model_pin: undefined });
+        assert.deepStrictEqual(
+          decideVisionCanaryProbe({ projectRoot: root, manifest, chain: ['spec'], dryRun: false }),
+          { action: 'probe', reason: 'fresh_but_not_admissible_for_run' },
+          '无 pin 也必须按 run_id 重探',
+        );
+        const vctx = resolveEffectiveVisionContext({
+          projectRoot: root, feature: 'demo', runId: 'run-R2',
+          adapter: 'claude', frameworkRoot: fw,
+        });
+        assert.notStrictEqual(vctx.vision_capability.scope, 'run_probed', '无 pin 也不得采信 R1 缓存');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
     },
   },
 ];

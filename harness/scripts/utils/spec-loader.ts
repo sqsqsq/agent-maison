@@ -263,7 +263,30 @@ export class SpecLoader {
 
   /** 根节点须为 YAML map；null/标量/数组 → 留痕并按"无法解析"返回 null（不 throw）。 */
   private loadYamlMappingOrNull<T>(filePath: string, shapeIssues: string[]): T | null {
-    const doc = this.loadYaml<unknown>(filePath);
+    let doc: unknown;
+    try {
+      doc = this.loadYaml<unknown>(filePath);
+    } catch (error) {
+      const parsed = error as {
+        code?: unknown;
+        message?: unknown;
+        linePos?: Array<{ line?: unknown; col?: unknown }>;
+      };
+      const code = typeof parsed.code === 'string' && parsed.code.trim() ? parsed.code.trim() : null;
+      const firstPos = Array.isArray(parsed.linePos) ? parsed.linePos[0] : undefined;
+      const line = typeof firstPos?.line === 'number' ? firstPos.line : null;
+      const col = typeof firstPos?.col === 'number' ? firstPos.col : null;
+      const location = line !== null ? `（line ${line}${col !== null ? `, column ${col}` : ''}）` : '';
+      const message = typeof parsed.message === 'string'
+        ? parsed.message.split(/\r?\n/, 1)[0].trim()
+        : String(error);
+      const issue =
+        `${path.basename(filePath)} YAML 解析失败${code ? ` [${code}]` : ''}${location}：${message}` +
+        '——文件已按"无法解析"处理；请修复该行 YAML（plain scalar 含 `: ` 时加引号）后重跑';
+      shapeIssues.push(issue);
+      console.warn(`[spec-loader] ${filePath} YAML 解析失败，按无法解析处理：${issue}`);
+      return null;
+    }
     if (doc && typeof doc === 'object' && !Array.isArray(doc)) return doc as T;
     const kind = doc === null ? 'null（空文件/仅注释）' : Array.isArray(doc) ? 'array' : typeof doc;
     shapeIssues.push(

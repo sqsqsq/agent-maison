@@ -256,7 +256,7 @@ async function runChain(
     forceResume?: boolean;
     /** b7e4d2a9 Todo2：--supersede 目标（可多个） */
     supersede?: string[];
-    /** b7e4d2a9 Todo2：设 HMAC 密钥跑（vision checkpoint 认证 → clean run 可达 CHAIN_SLICE_COMPLETED） */
+    /** 为兼容共用测试驱动保留 HMAC 注入；视觉链已不再消费它。 */
     hmacKey?: string;
     /** device-readiness t3：覆盖设备就绪门（默认注入 READY(physical)；传入可验三态行为） */
     deviceGate?: unknown;
@@ -577,18 +577,17 @@ test('⑤ c4e8b1d3：正常 plan PASS（非 advance_blocked）也建快照，且
   assert(baseShaInWindow === String(baseEv!.base_sha), 'coding 窗口内 trust 文件 base_sha 须与事件一致');
 });
 
-test('b7e4d2a9 Todo2：HMAC 干净 run → CHAIN_SLICE_COMPLETED 封卷 + 场外状态即刻回收 + 同 run resume 被 sealed 绝对拒绝（force 无效、零新增事件、feature 级锚保留）', async () => {
+test('干净 run → CHAIN_SLICE_COMPLETED 封卷 + per-run 场外状态回收 + sealed resume 绝对拒绝', async () => {
   const { root } = setupHost();
   const probe = await runChain(root, { hmacKey: 'test-hmac-secret', onTesting: ({ root: r }) => writeCleanTesting(r) });
   const st = runEndStatus(probe.events);
-  assert(st === 'CHAIN_SLICE_COMPLETED', `HMAC 干净 run 须达封卷终态，实得 ${st}（exit=${probe.exitCode}）`);
+  assert(st === 'CHAIN_SLICE_COMPLETED', `干净 run 须达封卷终态，实得 ${st}（exit=${probe.exitCode}）`);
   const runId = path.basename(probe.reportDir);
-  // 场外状态即刻回收：flat checkpoint + run 目录都不在；feature 级锚（vision-heads/HWM）保留
+  // 场外状态即刻回收：旧 flat checkpoint 与当前 run 目录都不在。
   const hash = projectIdentityHash(root);
   const featTrust = path.join(root, 'trust-cp', hash, FEATURE);
   assert(!fs.existsSync(path.join(featTrust, `${runId}.json`)), '封卷后 flat checkpoint 须被回收');
   assert(!fs.existsSync(path.join(featTrust, runId)), '封卷后 run 目录（pass-snapshots 等）须被回收');
-  assert(fs.existsSync(path.join(root, 'trust-cp', 'vision-heads', hash)), 'feature 级 vision-heads/HWM 不得被回收');
   // sealed 绝对拒绝：--force-resume 也无效；events 零新增（封卷后归档不再被修改）
   const eventsFile = path.join(probe.reportDir, 'events.jsonl');
   const before = fs.readFileSync(eventsFile);
@@ -643,73 +642,6 @@ test('b7e4d2a9 Todo2：--supersede 指向当前 run → BLOCKER（不删自身�
       `run B 事件序列=${JSON.stringify(probeB.events.map(e => e.type))}；exit=${probeB.exitCode}`,
   );
   assert(!aStateExists(), 'supersede 后目标 run 场外状态须被回收');
-});
-
-test('b7e4d2a9 Todo3：agent 窗口内自跑 check-spec（cursor 丢 env 形态）→ 反证真执行但账本零写入，无 vision_ledger_tampered', async () => {
-  const { root } = setupHost();
-  const visionAtt = path.join(root, 'doc', 'features', FEATURE, 'vision', 'artifact-attestations.jsonl');
-  const visionDown = path.join(root, 'doc', 'features', FEATURE, 'vision', 'policy-downgrades.jsonl');
-  let scanRan = false;
-  const probe = await runChain(root, {
-    onSpec: ctx => {
-      // spec agent 正常产出（含 evidence_gap 形态：ui-spec 文本无参考映射 + ref-elements 在场）
-      writeFile(ctx.root, `doc/features/${FEATURE}/spec/ui-spec.yaml`, [
-        'schema_version: "1.0"', 'screens:',
-        '  - id: add_card_home', '    priority: P0', '    ref_id: add_card_home',
-        '    root:', '      type: navigation_frame', '      order: 0',
-        '      children:',
-        '        - id: hint_text', '          type: content_display', '          order: 0',
-        '          text: "首页无映射文案"', '',
-      ].join('\n'));
-      writeFile(ctx.root, `doc/features/${FEATURE}/spec/ref-elements.yaml`,
-        'schema_version: "1.0"\nelements:\n  - element_id: e1\n    screen_ref_id: add_card_home\n    text: "银行卡"\n');
-      // 模拟 agent 自跑 check-spec：cursor 实锤 env 形态（RUN_ID/ATTEMPT 在、HEADLESS/RUNNER/GATE 无）
-      const keys = ['MAISON_GOAL_RUN_ID', 'MAISON_GOAL_ATTEMPT', 'MAISON_GOAL_RUNNER', 'MAISON_GOAL_HEADLESS', 'MAISON_GOAL_GATE_HARNESS'];
-      const prev: Record<string, string | undefined> = {};
-      for (const k of keys) { prev[k] = process.env[k]; delete process.env[k]; }
-      process.env.MAISON_GOAL_RUN_ID = ctx.runId;
-      process.env.MAISON_GOAL_ATTEMPT = `${ctx.runId}-i1`;
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const { checkVisionOutputCounterevidence } = require('../../scripts/check-spec') as {
-          checkVisionOutputCounterevidence: (c: unknown) => Array<{ details: string }>;
-        };
-        const res = checkVisionOutputCounterevidence({ projectRoot: ctx.root, feature: FEATURE });
-        scanRan = res.length > 0 && res[0].details.includes('evidence_gap');
-      } finally {
-        for (const k of keys) {
-          if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k];
-        }
-      }
-      assert(!fs.existsSync(visionAtt) && !fs.existsSync(visionDown),
-        'agent 窗口内正式账本必须保持 absent（agent 侧只算不写）');
-    },
-    onTesting: ({ root: r }) => writeCleanTesting(r),
-  });
-  assert(scanRan, '反证扫描必须真执行且得 evidence_gap（防空跑假绿）');
-  assert(!hasEvent(probe.events, 'vision_ledger_tamper'),
-    `不得出现 vision_ledger_tamper：${probe.events.filter(e => e.type === 'vision_ledger_tamper').length} 条`);
-  assert(!probe.events.some(e => e.type === 'phase_halt' && e.halt_reason === 'vision_ledger_tampered'),
-    '不得因账本被 halt');
-  // 随后 gate harness 形态（GATE=1）正式写入两行合法记录（单写者授权面）
-  const keys2 = ['MAISON_GOAL_RUN_ID', 'MAISON_GOAL_ATTEMPT', 'MAISON_GOAL_GATE_HARNESS'];
-  const prev2: Record<string, string | undefined> = {};
-  for (const k of keys2) prev2[k] = process.env[k];
-  process.env.MAISON_GOAL_RUN_ID = 'post-run';
-  process.env.MAISON_GOAL_ATTEMPT = 'post-run-i1';
-  process.env.MAISON_GOAL_GATE_HARNESS = '1';
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { checkVisionOutputCounterevidence } = require('../../scripts/check-spec') as {
-      checkVisionOutputCounterevidence: (c: unknown) => unknown;
-    };
-    checkVisionOutputCounterevidence({ projectRoot: root, feature: FEATURE });
-  } finally {
-    for (const k of keys2) {
-      if (prev2[k] === undefined) delete process.env[k]; else process.env[k] = prev2[k];
-    }
-  }
-  assert(fs.existsSync(visionAtt) && fs.existsSync(visionDown), 'gate harness（GATE=1）须能正式写入两份账本');
 });
 
 test('E2E-2a testing 改产品源码 → violation：gate 不运行、halt、精确报文件', async () => {
@@ -837,39 +769,6 @@ test('E2E-5 素材确定性事实 → coding 门禁档位无关 FAIL（$r 悬空
   assert(!!r && r.status === 'FAIL' && r.severity === 'BLOCKER',
     `悬空 $r 须 BLOCKER FAIL：${JSON.stringify(rs)}`);
   assert(r!.details.includes('cmb_bank_logo'), `须点名悬空 key：${r!.details}`);
-});
-
-test('E2E-2c ledger+源码并发篡改 → 两类事件都落（源码取证不因 ledger 早退丢失）+ resume 仍被拒', async () => {
-  // review 第 10 轮 P2：旧时序 ledger tamper 检查在前且 continue 早退——同时改 ledger+源码
-  // 时源码 violation 不落事件、resume 不受终止态保护。现在源码检测先落事件再裁决 halt。
-  const { root } = setupHost();
-  const first = await runChain(root, {
-    onTesting: ({ root: r }) => {
-      writeCleanTesting(r);
-      writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("both") } }');
-      writeFile(r, `doc/features/${FEATURE}/vision/artifact-attestations.jsonl`,
-        '{"forged":true}\n');
-    },
-  });
-  assert(hasEvent(first.events, 'testing_write_violation'),
-    `源码 violation 事件必须在场（不因 ledger tamper 早退丢失）：${first.events.map(e => e.type).join(',')}`);
-  assert(hasEvent(first.events, 'vision_ledger_tamper'),
-    `ledger tamper 事件也必须在场：${first.events.map(e => e.type).join(',')}`);
-  assert(first.harnessPhases.filter(p => p === 'testing').length === 0, 'gate 不得运行');
-  // review 第 12 轮：锁死 halt **优先级**——source violation 在场时终止态为主。旧的错误
-  // 实现（ledger 分支先 halt 并提示 --resume）同样能过"两类事件都在"的断言，必须按
-  // halt_reason 断言才防回潮。
-  const haltReasons = first.events.filter(e => e.type === 'phase_halt')
-    .map(e => (e as { halt_reason?: string }).halt_reason);
-  assert(haltReasons.includes('testing_write_violation'),
-    `最终 halt 须为 testing_write_violation：${JSON.stringify(haltReasons)}`);
-  assert(!haltReasons.includes('vision_ledger_tampered'),
-    `violation 在场时不得以 ledger halt 为主（那会提示 --resume 又拒 resume）：${JSON.stringify(haltReasons)}`);
-  // resume 终止态保护按 violation **事件**判（不看 halt reason 归谁）
-  const runId = path.basename(first.reportDir);
-  const second = await runChain(root, { resume: runId, forceResume: true, onTesting: ({ root: r }) => writeCleanTesting(r) });
-  assert(second.exitCode !== 0 && second.invokedPhases.length === 0,
-    `并发篡改后的 resume 仍须被拒，实得 exit=${second.exitCode} phases=[${second.invokedPhases.join(',')}]`);
 });
 
 test('R-6a identity 不匹配/缺失的 must_fix 一律不回退（③④ 缺身份=fail-closed）', async () => {

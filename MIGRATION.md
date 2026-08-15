@@ -197,44 +197,12 @@ open/closed/accepted 三态审计分立）；确定性视觉反馈（visual-feed
    proposal——**按 goal run 隔离**，attempt 序号跨 run 重号不再互相污染；runner 顺序
    重放重算后收编；`disposition: journaled` 新枚举）；交互态直写不变。attempt 内中途
    重跑 harness 不再产生孤儿行误熔断（20260718 halt 直接触发器根治）。
-6. **vision 账本行链 + 单写者 + legacy 迁移（S3 收口）**：
-   `vision/artifact-attestations.jsonl` 与 `vision/policy-downgrades.jsonl` 从此**行级
-   hash 链**（seq/prev_row_hash/row_hash；未链/断链行按 corrupt fail-closed 剔除）且
-   goal 态**单写者**（agent 自跑 harness 只算不写，gate harness 收口落盘；agent 调用
-   窗口内的账本写入被 runner 快照括号检出 → `vision_ledger_tampered` halt）。**存量
-   宿主升级**：首次 goal run 启动时自动迁移旧无链账本——原文件 quarantine 为
-   `*.legacy-<ts>.bak`（events 记录原 sha256），downgrade/contradicted 行保守继承，
-   **旧 verified/supersede 不自动升级**（verified 须当前 spec gate 重新铸造、supersede
-   须 runner 重新签发）；mixed/不可解析文件不自动修复（保持 corrupt fail-closed，转
-   人工处置）。场外观察缓存两级：feature 级 head
-   `~/.maison/goal-checkpoints/vision-heads/<projectHash>/<feature>.json`（跨 run 连续性
-   观察锚，fresh run/resume 都先验）+ per-run checkpoint
-   `~/.maison/goal-checkpoints/<projectHash>/<feature>/<runId>.json`（resume 恢复缓存；
-   env `MAISON_GOAL_CHECKPOINT_DIR` 可覆盖，该 env 不进 agent 环境）。停机窗口改
-   manifest（含 pre_authorized_mutations 扩权）由 **events 出生基线**的身份 drift 检测
-   拦截，见下。
-   **vision 信任链已简化（T2 5a 完成+收口刀，2026-08-07）**：HMAC 签验、HWM 高水位链、
-   reseal 流程与全部 ack 参数**整体退役**。head（唯一连续性观察锚）与 per-run
-   checkpoint（resume 加速缓存）均为**无签名**纯内容快照：内容一致=ok；失配/损坏=
-   自动 discontinuity 重建或丢缓存重算，**不停死、不求人**；场外缓存**写失败同样不中断
-   run**（记 `vision_anchor_persist_failed` 后继续）。`MAISON_HMAC_GOAL_CHECKPOINT`
-   对 vision 链不再有任何作用；`--ack-unverified-ledgers` / `--ack-receipt` /
-   `--reseal-receipt` 参数已移除（旧脚本传入会被 CLI 忽略）。旧 `.hwm.jsonl` 与
-   reseal journal 文件成为无消费者的惰性遗留物（lineage reset 事务只处理 head，
-   HWM 本体及其 `.reset-*.bak/.absent` 残留一律不读取/不改名/不识别），可安全人工
-   删除；head 若被异常实体顶替（如目录）同样只按缓存不可用继续，不中断 run。
-   **manifest 出生基线由 events 承载（收口刀）**：drift 检测的可信旧基线=首个
-   `run_start` 逐字段身份 → 历次授权 rebase 事件前进；checkpoint 的存在与否**不影响
-   任何裁决**（旧版"1.1 聚合迁移/未认证弱信任"随之消失）。**resume 无须任何 ack
-   （2026-08-06 起：记录信任状态后直接继续，完成态不封顶）**；pre_run_manifest
-   预授权源降级为不可机器采信（须 human receipt）。manifest **非授权字段**
-   （requirement/chain/budget/allowed_tools/fidelity/预授权）
-   在停机窗口被改会被身份哈希漂移检测（**锁内、副作用前**执行）拦截——合法变更走 `--override-manifest`
-   （整体）或 `--override-start`/`--override-end`（**仅授权对应字段**，裸旗标不放行无关字段
-   漂移）；`--fidelity`/`--fidelity-receipt` 经 **transition 前置校验**（fresh/resume 都执行：
-   枚举硬校验、降档须 fidelity_downgrade receipt 验真，垃圾值/无效凭证=BLOCKER）后仅精确授权
-   对应档位字段；authorized transition 会 rebase 持久化，下次 resume 不复报。run_id 格式升级为
-   `YYYYMMDDThhmmssZ-<6hex>`（随机后缀，防同秒跨工程碰撞）。
+6. **vision 信任状态退役（当前版本）**：
+   `vision/artifact-attestations.jsonl`、`vision/policy-downgrades.jsonl` 及其 hash-chain、
+   supersede、迁移、checkpoint/head/HWM、`vision_lineage` 已全部退出运行时。升级宿主
+   **无需迁移或清理**；旧文件即使损坏也不会再被读取、写入或影响路由/恢复。当前视觉能力
+   只看本次 probe/capability receipt，`vl_multimodal` 只核本次 capability/reference receipts
+   与当次反证结果。旧文件可按普通无消费者文件人工删除。
 
 ---
 

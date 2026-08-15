@@ -30,7 +30,6 @@ export function renderWriteBoundaryGuidance(cfg: WriteBoundaryConfig): string[] 
     `- WRITABLE: \`${featuresDir}/${cfg.feature}/testing/**\` and \`${featuresDir}/${cfg.feature}/device-testing/**\` (test plan / report / screenshots / traces / diagnostics), and build output dirs.`,
     `- FORBIDDEN (pre/post snapshot; violation = RUN-TERMINATING: evidence discarded, gate skipped, run halts, --resume refused, your changes left in place for human inspection) — product source: ${cfg.productLayerDirs.map(d => `\`${toPosix(d)}/**\``).join(', ') || '(none declared)'}. Not even to add \`.id()\` test anchors: record the missing anchor in that screen's \`must_fix\` — the runner backtracks to coding to implement it.`,
     '- FORBIDDEN (same snapshot check) — requirement SSOT: `acceptance.yaml`, `contracts.yaml`, `ui-spec.yaml`, `spec.md`, `plan.md`, `use-cases.yaml`; and root build config: `build-profile.json5`, `oh-package.json5`, `hvigorfile.ts`, `AppScope/`. Editing SSOT invalidates the upstream evidence chain of spec/plan/coding/review at once (that is exactly how the 2026-07-24 run deadlocked). If acceptance criteria look wrong, note it in your test report for humans.',
-    '- FORBIDDEN (dedicated ledger check; halt for human review) — vision ledgers (`vision/artifact-attestations.jsonl`, `vision/policy-downgrades.jsonl`).',
     '- Runner-owned, read-only by convention (NOT snapshot-covered, no machine protection here — the runner itself writes to it; you still have zero reason to touch it): `goal-runs/**` run manifests/events.',
   ];
 }

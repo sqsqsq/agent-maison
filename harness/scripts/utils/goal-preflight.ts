@@ -322,8 +322,7 @@ export function decideVisionCanaryProbe(input: {
   // plan d8c5f3a7 T1：**skip 的前提是消费端将会采信**——新鲜度只答「证据是否过期」，
   // 还须合取 canaryAdmissibleForRun 答「证据是否属于当前执行身份」。否则出现
   // 2026-07-24 事故形态：goal canary 因 TTL 内被判 fresh 而跳过重探，却因 run_id 不匹配
-  // 在三轴 resolver 处落 adapter_declared → blind_safe，凭空致盲；且 goal·tool_read
-  // 正结论 TTL=7d，等于「每 7 天只有第一个 run 有视觉，其余全盲」的永久陷阱。
+  // 无法供当前执行复用。新鲜度与执行身份必须同时满足，避免把旧 run 结果误当当前能力。
   const canary = local?.vision?.canary;
   // plan d7f3a9c4 t3：**中央重探判定**——始终 `fresh && canaryAdmissibleForExecution(...)`。
   // 无 pin 时 modelPin=undefined，谓词精确退化为 canaryAdmissibleForRun（run 绑定一步不少，
@@ -500,15 +499,12 @@ import {
   type FidelityTarget,
   type RequirementProvenance,
 } from './fidelity-shared';
-import { resolveEffectiveVisionContext, sha256File as sha256FileVc } from './effective-vision-context';
-import { uiSpecAbsPath as uiSpecAbsPathT6 } from './ui-spec-shared';
 import { resolveContextAdapterImageInput } from './multimodal-probe';
 import {
   defaultTrustRegistryPath,
   validateConfirmationReceiptFile,
 } from './confirmation-receipt';
 import { featureFilePath } from '../../config';
-import * as fsT6 from 'fs';
 
 export type FidelityPreflightAction =
   | { action: 'proceed'; effective?: FidelityTarget; note?: string; routing?: FidelityRoutingDecision }
@@ -526,39 +522,6 @@ export interface FidelityPreflightInput {
   /** manifest.fidelity 是否来自 CLI 显式旗标（decision.source=explicit_cli） */
   fidelityFromCli?: boolean;
   now?: () => Date;
-}
-
-/** S3 policy meet（与 goal-runner advisory 同一 resolveEffectiveVisionContext 判定链——
- * 单源在 effective-vision-context；异常 fail-closed 默认盲）。
- * post-impl2 P0-1：必须带 run 身份（runId/adapter/frameworkRoot/phase）——goal canary
- * 只认 run_id 匹配（effective-vision-context:328），缺身份会把已证明有视觉的模型误判盲档。 */
-function resolvePolicyVisualForRouting(
-  projectRoot: string,
-  feature: string,
-  identity?: { runId?: string; adapter?: string; frameworkRoot?: string; phase?: string; modelPin?: string },
-): boolean {
-  try {
-    let artifactHashes: string[] | undefined;
-    const uiSpecAbs = uiSpecAbsPathT6(projectRoot, feature);
-    if (fsT6.existsSync(uiSpecAbs)) {
-      const h = sha256FileVc(uiSpecAbs);
-      if (!h) return false;
-      artifactHashes = [h];
-    }
-    const vctx = resolveEffectiveVisionContext({
-      projectRoot,
-      feature,
-      ...(identity?.runId ? { runId: identity.runId } : {}),
-      ...(identity?.adapter ? { adapter: identity.adapter } : {}),
-      ...(identity?.frameworkRoot ? { frameworkRoot: identity.frameworkRoot } : {}),
-      ...(identity?.phase ? { phase: identity.phase } : {}),
-      ...(identity?.modelPin ? { modelPin: identity.modelPin } : {}),
-      ...(artifactHashes ? { artifactHashes } : {}),
-    } as Parameters<typeof resolveEffectiveVisionContext>[0]);
-    return vctx.effective_policy.mode === 'visual';
-  } catch {
-    return false;
-  }
 }
 
 export interface FidelityRoutingInitInput {
@@ -589,7 +552,7 @@ export interface FidelityRoutingInitInput {
  * plan f6b2d9a4 T2：路由初始化唯一执行实现（runner-owned）——goal 模式由 goal-runner
  * 在 agent invoke 前调用；phase-driven 由 skills/feature/spec Step 1 经
  * fidelity-intent-init CLI 调用（薄入口只透传，agent-adapters 约束）。职责：
- * 解引用需求 → 降档 receipt 验真 → capability 探测（vision probe × S3 policy meet、
+ * 解引用需求 → 降档 receipt 验真 → 当前执行 capability 探测（vision probe、
  * OCR）→ 三段式路由 → 落 capability-snapshot.json + fidelity-intent.json（唯一 SSOT）。
  * harness-runner/check-spec 只加载复核，不首产。
  */
@@ -598,6 +561,7 @@ export function initializeFidelityRouting(
 ): { routing: FidelityRoutingDecision; receiptNote: string; requirementSha: string } {
   const deref = dereferenceRequirementDocs(input.projectRoot, input.requirement, {
     featuresDirRel: input.featuresDirRel,
+    excludePrefixes: [`${input.featuresDirRel.replace(/\\/g, '/')}/${input.feature}/`],
   });
   // 降档 receipt 验真（唯一降档通道；绑定 feature + 合并需求 object_hash + expiry，
   // 不绑定物理 run_id，故同一语义任务的 successor 可复用）。
@@ -618,21 +582,12 @@ export function initializeFidelityRouting(
     downgradeReceiptValid = v.valid;
     if (!v.valid) receiptNote = `降档 receipt 无效：${v.reasons.join('；')}`;
   }
-  // capability snapshot（v3 P1-4 同源：一次探测，preflight/prompt/check-spec/intent 四消费面共用）
-  // plan d7f3a9c4 t3：probe（image_input 旁路）与 policy meet（中央三轴 resolver）都带
-  // {runId, modelPin} 执行身份——pin 在场时旧模型缓存不得影响能力探测。
+  // capability snapshot：只记录当前执行的真实输入能力。产物验证结果不得反向改写模型能力。
   const probe = resolveContextAdapterImageInput(input.projectRoot, input.frameworkRoot, input.adapter, {
     runId: input.runIdForReceipt,
     ...(input.modelPin ? { modelPin: input.modelPin } : {}),
   });
-  const policyVisual = resolvePolicyVisualForRouting(input.projectRoot, input.feature, {
-    runId: input.runIdForReceipt,
-    adapter: input.adapter,
-    frameworkRoot: input.frameworkRoot,
-    phase: 'spec',
-    ...(input.modelPin ? { modelPin: input.modelPin } : {}),
-  });
-  const hasVision = probe.supported && policyVisual;
+  const hasVision = probe.supported;
   const ocrAvailable = resolveOcrAvailableForRun(input.projectRoot, input.profileDir ?? '', input.adapter, {
     runId: input.runIdForReceipt,
     ...(input.modelPin ? { modelPin: input.modelPin } : {}),
@@ -655,7 +610,7 @@ export function initializeFidelityRouting(
     decision_id: routing.decision.decision_id,
     vision: {
       verdict: hasVision,
-      source: `probe:${probe.imageInput ?? 'none'}·policy:${policyVisual ? 'visual' : 'blind_safe'}`,
+      source: `probe:${probe.imageInput ?? 'none'}`,
     },
     ocr: { verdict: ocrAvailable, source: input.profileDir ? 'profile_probe_or_canary' : 'canary_signal' },
   });
@@ -777,6 +732,7 @@ export function evaluateFidelityTransitionAuthorization(
   }
   const deref = dereferenceRequirementDocs(input.projectRoot, manifest.requirement, {
     featuresDirRel: input.featuresDirRel,
+    excludePrefixes: [`${input.featuresDirRel.replace(/\\/g, '/')}/${manifest.feature}/`],
   });
   // ② 降档凭证验真（唯一降档通道；绑定语义，与 initializeFidelityRouting 同源：
   //    object_hash=解引用合并需求文本 sha256 + feature + expiry，跨 successor run 复用）

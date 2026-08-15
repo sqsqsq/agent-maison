@@ -30,8 +30,7 @@ export interface CounterevidenceScan {
   /**
    * codex 实施 review 二轮 P0-2：正向 provenance 成立=OCR 工作流在场（refTexts 非空）
    * 且**全部** UI 文本与参考元素文本正向匹配（exact/substring）。source_ref 解析成功只是
-   * "结构性可信的声明"，不计入正向证明。verified attestation 只允许在本标志为 true 时签发；
-   * 反证缺席（clean）本身最多得 unverified_clean。
+   * "结构性可信的声明"，不计入正向证明。反证缺席（clean）本身也不等于正向 provenance。
    */
   positive_provenance: boolean;
   /** observe-only 计数（落盘供两轮真实 run 回灌定阈值） */
@@ -134,8 +133,8 @@ export function scanUiSpecCounterevidence(
   );
 
   // codex 实施 review 二轮 P0-2：source_ref 是**声明**不是证明——任意非空字符串即视为
-  // "有映射"曾是自签通道（补 source_ref: x 即可消 evidence_gap → 换取 verified → 自动
-  // 解除 blind-safe 降级）。source_ref 至少须解析到已知 reference id（ref-elements 的
+  // "有映射"若只看非空字符串会形成自证通道（补 source_ref: x 即可消 evidence_gap）。
+  // source_ref 至少须解析到已知 reference id（ref-elements 的
   // element_id / screen_ref_id 或 ui-spec 屏的 ref_id）；悬空引用按 evidence_gap 记。
   const knownRefIds = new Set<string>();
   for (const e of refElements ?? []) {

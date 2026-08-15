@@ -97,6 +97,22 @@ const cases: Array<{ name: string; run: () => void }> = [
       if (!a || a !== b) throw new Error(`sha 口径不一致：disk=${a} mem=${b}`);
     },
   },
+  {
+    name: 'T1a: 当前 feature 运行产物创建后 requirement sha 保持稳定',
+    run: () => {
+      const root = tmpDir('sha-feature-output');
+      const source = path.join(root, 'doc/requirements/open-card.md');
+      fs.mkdirSync(path.dirname(source), { recursive: true });
+      fs.writeFileSync(source, '用户输入：完全参考给定截图实现开卡流程。', 'utf-8');
+      const requirement = '实现 doc/requirements/open-card.md；产物写到 doc/features/bc-openCard/ux-reference/README.md';
+      const before = computeRequirementShaFromText(root, 'bc-openCard', requirement);
+      const output = path.join(root, 'doc/features/bc-openCard/ux-reference/README.md');
+      fs.mkdirSync(path.dirname(output), { recursive: true });
+      fs.writeFileSync(output, 'spec attempt 1 generated output', 'utf-8');
+      const after = computeRequirementShaFromText(root, 'bc-openCard', requirement);
+      if (before !== after) throw new Error(`feature 产物污染 requirement sha: ${before} != ${after}`);
+    },
+  },
   // ------------------------------------------------------------ T1b
   {
     name: 'T1b: resolveGoalReportDir dry 落 goal-runs/.dry/<run_id>（run_id 不变）',

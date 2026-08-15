@@ -310,14 +310,7 @@ function latestRunId(root: string, feature: string): string | null {
 }
 
 /**
- * 场景：`seed_head_mismatch` —— 种一份与当前账本快照失配的 feature head，
- * 然后 fresh 启动且**不声明** `--vision-lineage=reset`。这就是宿主主仓 run1
- * （6a969a）"启动 11 秒即死"的形态：head 存场外、账本在 repo 内，跨存储域失配
- * 是结构常态而非攻击信号。
- */
-/**
  * 场景清单（e5d8a2c4 步骤 1 起）：
- * - `seed_head_mismatch`：#8"第一死"回放（generic 宿主）；
  * - `device_park`：设备停放——hmos-app 宿主 + 注入设备门 BLOCKED（`WAITING(external)`
  *   + `halted:false`，与 fa0663 同形）→ run PARTIAL 停放。`--start ut`；
  * - `resume_after_park`：`--resume <extra=runId>`——恢复场景的行为面。
@@ -325,16 +318,6 @@ function latestRunId(root: string, feature: string): string | null {
  *   的 WAITING(external) phase 重新入队，ut `phase_start` 重现（`phaseStartsThisCall`）；
  * - `resume_with_device_ready`：同上但设备门注入 READY——验证"设备恢复后同一 run
  *   无钥匙真正完成"（后半闭环）。
- * - `trust_dir_unwritable`：收口刀（codex P1-2）复现——checkpoint 根被普通文件顶住
- *   （场外一切写入 ENOTDIR）。目标行为：缓存写失败只记录 `vision_anchor_persist_failed`
- *   后继续，run 正常收官（旧行为=uncaught_exception 零 phase）。
- * - `head_is_directory`：收口刀二/三（codex P1-1'+P1）复现——head 路径是**目录**且
- *   旁边有旧 `head.reset-old.bak` 残留（rollback 还原目标被目录顶住＝最危险组合，
- *   旧行为=rollback rmSync EISDIR 零 phase）。目标行为：rollback 跳过告警、quarantine
- *   不读异常实体、新 head 写失败走 persist_failed 降级，spec 照常执行、正常收官。
- * - `trust_namespace_is_file`：收口刀三（codex P1）复现——`vision-heads/<projectHash>`
- *   本身是**文件**（残留枚举 readdirSync ENOTDIR）。目标行为：枚举失败=无残留，
- *   head 写失败走 persist_failed，spec 照常执行、正常收官。
  */
 async function runScenario(args: {
   scenario: string;
@@ -364,38 +347,6 @@ async function runScenario(args: {
     __testing_setAfterInvalidationRequested?: (fn: (() => void) | null) => void;
   };
   process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'trust-cp');
-  if (scenario === 'trust_dir_unwritable') {
-    // codex P1-2 实测形态：trust 根路径中段是普通文件 → mkdir/write 全程 ENOTDIR
-    fs.writeFileSync(path.join(root, 'trust-poison'), 'not a directory\n', 'utf-8');
-    process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'trust-poison', 'cp');
-  }
-
-  if (scenario === 'head_is_directory') {
-    // codex 实测形态：场外 head 是目录（异常实体）——verify=invalid，恢复路径不得再读；
-    // 收口刀三追加旧 .bak 残留（rollback 还原目标被目录顶住＝最危险组合，须跳过不抛）
-    const headPath = (goal.visionFeatureHeadPath as (r: string, f: string) => string)(root, feature);
-    fs.mkdirSync(headPath, { recursive: true });
-    fs.writeFileSync(`${headPath}.reset-old.bak`, '{"generation":1}', 'utf-8');
-  }
-  if (scenario === 'trust_namespace_is_file') {
-    // codex 实测形态：namespace 目录本身是文件——残留枚举 readdirSync ENOTDIR
-    const headPath = (goal.visionFeatureHeadPath as (r: string, f: string) => string)(root, feature);
-    const nsDir = path.dirname(headPath);
-    fs.mkdirSync(path.dirname(nsDir), { recursive: true });
-    fs.writeFileSync(nsDir, 'not a directory\n', 'utf-8');
-  }
-
-  if (scenario === 'seed_head_mismatch') {
-    // **用生产 writer 种 head**，不手拼 JSON：writer 与 reader 同源，
-    // 否则又是"夹具与真实 writer 形状不符"（第五批 P0 的原样重演）。
-    (goal.writeVisionFeatureHead as (a: unknown) => unknown)({
-      projectRoot: root,
-      feature,
-      runId: 'seeded-prior-run',
-      files: [{ path: `doc/features/${feature}/ux-reference/vision-ledger.json`, sha256: 'f'.repeat(64) }],
-      generation: 3,
-    });
-  }
 
   (goal.__testing_setRepoLayout as (l: unknown) => void)(deriveRepoLayout(root, frameworkRoot));
   let agentCalls = 0;
@@ -430,9 +381,7 @@ async function runScenario(args: {
     || scenario === 'crash_scope_seed' || scenario === 'crash_after_scope_event'
     || scenario === 'resume_after_crash_scope';
   const isSeedRunScenario = scenario === 'cache_miss_seed' || scenario === 'crash_scope_seed';
-  // T2 5a-1：桩集对**全部场景**统一（此前仅设备场景）——seed_head_mismatch 翻转为
-  // 目标行为后要验"自动 discontinuity 且 spec 真 PASS 收官"，同样需要写盘桩/闭环
-  // 探针桩/capability 桩；多注入对旧行为无影响（generic 宿主本就用不到设备 capability）。
+  // 写盘桩对全部场景统一；generic 宿主不会消费设备 capability，多注入不改变行为。
   {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const req = (rel: string): Record<string, unknown> =>
@@ -709,14 +658,10 @@ async function runScenario(args: {
   } else if (scenario === 'device_park') {
     // 全链启动：spec→review 由写盘桩 PASS 走过（截断链 preflight 消费的是文件，
     // `--start ut` 空宿主必被"上游 missing/stale"拒启——实证过），ut 撞设备门停放。
-    // `--vision-lineage reset`＝T4#3 的完整前提（"reset 已消费"）：fresh 声明 reset
-    // → 启动期消费（discontinuity+committed）→ 四阶段 PASS → 停放；resume 一并验证
-    // "已消费的出生 reset 不再阻断"（T1③(b) 的整机面）。
     process.argv = [
       ...argvBase,
       '--requirement', `T4 driver scenario=${scenario}`,
       '--start', 'spec', '--end', 'testing', '--force',
-      '--vision-lineage', 'reset',
     ];
   } else if (scenario === 'successor_manifest_probe') {
     if (!extra) throw new Error('successor_manifest_probe 需要 extra=source runId');
@@ -732,7 +677,6 @@ async function runScenario(args: {
       ...argvBase,
       '--requirement', `T4 driver scenario=${scenario}`,
       '--start', 'spec', '--end', 'testing', '--force',
-      ...(scenario === 'successor_source_crash' ? ['--vision-lineage', 'reset'] : []),
     ];
   } else {
     process.argv = [

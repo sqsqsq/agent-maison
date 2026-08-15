@@ -192,6 +192,29 @@ const cases: Case[] = [
     }),
   },
   {
+    name: 'review follow-up: bc-openCard 毒 YAML（plain scalar 内含 subtitle_position: below）→ 当轮 shape_issues，不抛致命异常',
+    run: () => withTmpProject(root => {
+      const feature = 'bc-openCard';
+      writeFile(
+        path.join(root, 'doc', 'features', feature, 'acceptance.yaml'),
+        [
+          'feature: bc-openCard',
+          'criteria:',
+          '  - id: AC-1',
+          '    device_focus: 文案逐字一致、营销标签位于华夏行下方（subtitle_position: below）',
+        ].join('\n'),
+      );
+      const loader = new SpecLoader(root);
+      const spec = loader.loadFeatureSpec(feature);
+      assertEq(spec.acceptance === undefined, true, '语法损坏的 acceptance 须按不可用处理');
+      const joined = (spec.shape_issues ?? []).join('|');
+      assertEq(/acceptance\.yaml YAML 解析失败/.test(joined), true, `须点名文件：${joined}`);
+      assertEq(/BLOCK_AS_IMPLICIT_KEY/.test(joined), true, `须保留 parser code：${joined}`);
+      assertEq(/line 4, column/.test(joined), true, `须保留行列：${joined}`);
+      assertEq(/plain scalar 含 `: ` 时加引号/.test(joined), true, `须给一句可执行修法：${joined}`);
+    }),
+  },
+  {
     name: 'P0-2 spec-loader: contracts.modules/components 与 acceptance.criteria/boundaries dict 形 → 归空+留痕',
     run: () => withTmpProject(root => {
       const feature = 'bc-open';

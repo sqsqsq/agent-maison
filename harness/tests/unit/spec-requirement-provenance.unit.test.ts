@@ -18,18 +18,14 @@ import {
 import { initializeFidelityRouting, evaluateFidelityTierPreflight } from '../../scripts/utils/goal-preflight';
 import { resolveRequirementInput } from '../../scripts/utils/goal-manifest';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
-import { resolvePhaseCapabilityAdvisory } from '../../scripts/goal-runner';
 import { detectRepoLayout } from '../../repo-layout';
 import {
   loadFidelityIntentSsot,
   loadFidelityIntentSsotState,
   fidelityIntentSsotPath,
   resolveFidelityRoutingDecision,
-  writeCapabilitySnapshot,
   type FidelityRoutingDecision,
 } from '../../scripts/utils/fidelity-shared';
-import { loadResolvedProfile } from '../../profile-loader';
-import { clearFrameworkConfigCache, featureFilePath, loadFrameworkConfig } from '../../config';
 import type { UnitCaseResult } from '../run-unit';
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '..', '..', '..');
@@ -408,7 +404,7 @@ const cases: Case[] = [
     },
   },
   {
-    name: 't1-⑥\' 三调用点接线为**行为断言**（读回 SSOT 落盘 provenance，非源码正则）：goal-preflight 产 goal_manifest；initializer 产 explicit_cli / intent_fallback',
+    name: 't1-⑥\' 两类写入入口为**行为断言**（读回 SSOT 落盘 provenance，非源码正则）：goal-preflight 产 goal_manifest；initializer 产 explicit_cli / intent_fallback',
     run: () => {
       const root = mkProject();
       try {
@@ -423,47 +419,6 @@ const cases: Case[] = [
           featuresDirRel: 'doc/features', chainStartsAtSpec: false,
         });
         assert(readProvenance() === 'goal_manifest', `goal-preflight 应落 goal_manifest，实际=${readProvenance()}`);
-        // ①' 第三个调用点 goal-runner（resolvePhaseCapabilityAdvisory 的 vision policy 收紧重建）→ 落 goal_manifest
-        // 触发条件：capability snapshot 记 vision.verdict=true 而 live policy 判盲（收紧重建路径）。
-        // 需要最小 framework.config.json + framework.local.json + spec.md（UI 相关）使 advisory 不致提前 return null。
-        fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({
-          schema_version: '1.1', project_name: 'prov-test',
-          project_profile: { name: 'generic' },
-          paths: { features_dir: 'doc/features', docs_committed: false },
-          materialized_adapters: ['generic'],
-        }), 'utf-8');
-        fs.writeFileSync(path.join(root, 'framework.local.json'),
-          JSON.stringify({ schema_version: '1.0', agent_adapter: 'generic' }), 'utf-8');
-        clearFrameworkConfigCache();
-        const specPath = featureFilePath(root, 'demo', path.join('spec', 'spec.md'));
-        fs.mkdirSync(path.dirname(specPath), { recursive: true });
-        fs.writeFileSync(specPath, '# spec\n\n```yaml\nui_change: new_or_changed\n```\n', 'utf-8');
-        // 造一份 vision.verdict=true 的 capability snapshot（live policy 无视觉 → 触发 runner 收紧重建）
-        const dRule = resolveFidelityRoutingDecision({
-          requirementText: '账户页。', capability: { hasVision: true, ocrAvailable: true },
-          executionIdentity: 'r-prov-runner', requirementSha: 'b'.repeat(64),
-        });
-        writeCapabilitySnapshot(root, 'demo', {
-          execution_identity: 'r-prov-runner',
-          decision_id: dRule.decision.decision_id,
-          vision: { verdict: true, source: 'test-vision' },
-          ocr: { verdict: true, source: 'test-ocr' },
-        });
-        const runnerManifest = {
-          feature: 'demo', run_id: 'r-prov-runner', requirement: '账户页。', adapter: 'generic',
-        } as unknown as GoalManifest;
-        resolvePhaseCapabilityAdvisory(
-          runnerManifest, root, FRAMEWORK_ROOT,
-          loadResolvedProfile(root, loadFrameworkConfig(root)), 'spec',
-        );
-        // review P2：单断言 provenance=goal_manifest 有假阳性——前面 evaluateFidelityTierPreflight
-        // 已写过 goal_manifest（identity=r-prov-goal），即使本调用没触发收紧重建也会通过。
-        // 同时断言 execution_identity==='r-prov-runner' 才能证明第三个调用点**确实重建**了 SSOT。
-        const runnerSsot = loadFidelityIntentSsot(root, 'demo')!;
-        assert(runnerSsot.requirement_provenance === 'goal_manifest',
-          `goal-runner 收紧重建应落 goal_manifest，实际=${runnerSsot.requirement_provenance}`);
-        assert(runnerSsot.execution_identity === 'r-prov-runner',
-          `goal-runner 收紧重建应重签 SSOT（identity=r-prov-runner），实际=${runnerSsot.execution_identity}`);
         // ② initializer 显式非空需求 → explicit_cli
         writeRealSsot(root, { requirement: '账户页。', provenance: 'explicit_cli' });
         assert(readProvenance() === 'explicit_cli', `explicit_cli 应落盘，实际=${readProvenance()}`);

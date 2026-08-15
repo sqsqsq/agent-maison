@@ -2,7 +2,7 @@
 // test-trust-bootstrap.ts — 测试进程的场外 trust 状态隔离（b7e4d2a9 Todo 1）
 // ============================================================================
 // 背景（2026-07-27 审计实锤）：runner 级单测跑真实 runGoal，mkdtemp 临时宿主路径唯一 →
-// project hash 唯一 → vision checkpoint/pass snapshot 直写真实 ~/.maison/goal-checkpoints，
+// project hash 唯一 → pass snapshot 直写真实 ~/.maison/goal-checkpoints，
 // 三天堆出 899 个死目录。
 //
 // 契约：

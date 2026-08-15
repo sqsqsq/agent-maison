@@ -109,8 +109,7 @@ function safeFeatureName(feature: string): string {
   return feature.replace(/[^\w.-]/g, '_');
 }
 
-/** 快照命名空间：<trust>/<projectHash>/<feature>/<runId>/pass-snapshots/…（独立于
- * vision checkpoint 单文件 <runId>.json 与 vision-heads/ 子树，互不触碰） */
+/** 快照命名空间：<trust>/<projectHash>/<feature>/<runId>/pass-snapshots/…。 */
 export function passSnapshotRunDir(projectRoot: string, feature: string, runId: string): string {
   return path.join(
     goalTrustRootDir(),
@@ -164,9 +163,8 @@ export function codingBasePath(projectRoot: string, feature: string, runId: stri
 
 // ---------------------------------------------------------------------------
 // per-run 场外状态回收（b7e4d2a9 Todo2）：场外数据 = 活跃/可恢复 run 的临时恢复区，
-// 成功封卷或明确 supersede 即删。逻辑删除单元 = 同 runId 的 flat vision checkpoint
-// （<feature>/<runId>.json）+ run 目录（<feature>/<runId>/，含 pass-snapshots/
-// invalidation/coding-base）。**不动** vision-heads/HWM（feature 级单调锚，独立子树）。
+// 成功封卷或明确 supersede 即删。逻辑删除单元 = 同 runId 的目录
+// （<feature>/<runId>/，含 pass-snapshots/invalidation/coding-base）。
 // ---------------------------------------------------------------------------
 
 export interface RunTrustGcResult {
@@ -248,8 +246,6 @@ const MUTABLE_CONTROL_PLANE_FILES: ReadonlySet<string> = new Set([
   'spec/fidelity-downgrade.receipt.json',
   'vision/capability-receipt.json',
   'vision/spec-refs-receipt.json',
-  'vision/artifact-attestations.jsonl',
-  'vision/policy-downgrades.jsonl',
 ]);
 const MUTABLE_CONTROL_PLANE_DIR_SUFFIX: ReadonlyArray<{ dir: string; suffix: string }> = [
   { dir: 'spec/crop-provenance/', suffix: '.receipt.json' },

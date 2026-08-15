@@ -121,6 +121,26 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: 'review follow-up: 盲档 token/asset 诚实元数据合法，null crop_confirmed_by 不冒充授权',
+    run: () => {
+      const doc = baseDoc();
+      doc.tokens = {
+        brand: {
+          kind: 'color', value: '#808080', placeholder: true,
+          value_source: 'blind_inference_neutral_placeholder',
+        },
+      };
+      doc.assets = [{
+        key: 'bank_logo_placeholder', acquisition: 'placeholder', placeholder: true,
+        rationale: '当前执行无法验真品牌素材',
+        crop_confirmed_by: null,
+        blind_fallback_reason: '无可靠视觉/外部工具证据，保留中性占位',
+      }];
+      const errs = validateUiSpecSchema(doc as unknown as UiSpecDoc);
+      if (errs.length) throw new Error(`盲档合法元数据不应产生 schema 噪音：${JSON.stringify(errs)}`);
+    },
+  },
+  {
     name: 'strict: 三方漂移——validator 派生键集 ≡ schema properties ≡ TS 类型键集',
     run: () => {
       const tsScreen = Object.keys(TS_SCREEN_KEYS).sort();

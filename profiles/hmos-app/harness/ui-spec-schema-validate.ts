@@ -110,7 +110,10 @@ function pushUnknownKeyErrors(
   }
 }
 
-const TOKEN_ALLOWED_KEYS = new Set(['kind', 'value', 'source_bbox', 'source_ref', 'sampled']);
+const TOKEN_ALLOWED_KEYS = new Set([
+  'kind', 'value', 'source_bbox', 'source_ref', 'sampled',
+  'placeholder', 'value_source',
+]);
 const ASSET_ALLOWED_KEYS = new Set([
   'key', 'acquisition', 'source_ref', 'source_bbox',
   'resolved_path', 'placeholder', 'rationale', 'human_crop_confirmed', 'crop_confirmed_by',
@@ -120,6 +123,8 @@ const ASSET_ALLOWED_KEYS = new Set([
   'bbox_verified_by',
   // blind-visual-hardening：crop 产物来源记录 / role 声明（机器派生为准，声明供交叉对账）/ 占位形态
   'crop_provenance', 'role', 'placeholder_kind',
+  // review follow-up：盲档回退的诚实原因说明（不构成验真/授权）
+  'blind_fallback_reason',
 ]);
 const ROOT_ALLOWED_KEYS = new Set(['schema_version', 'verified', 'verified_method', 'screens', 'tokens', 'assets', 'global_elements']);
 
@@ -345,6 +350,12 @@ export function validateUiSpecSchema(doc: UiSpecDoc): string[] {
       if (t.sampled !== undefined && typeof t.sampled !== 'boolean') {
         errors.push(`token ${key}.sampled 须为布尔`);
       }
+      if (t.placeholder !== undefined && typeof t.placeholder !== 'boolean') {
+        errors.push(`token ${key}.placeholder 须为布尔`);
+      }
+      if (t.value_source !== undefined && typeof t.value_source !== 'string') {
+        errors.push(`token ${key}.value_source 须为字符串`);
+      }
     }
   }
 
@@ -376,10 +387,13 @@ export function validateUiSpecSchema(doc: UiSpecDoc): string[] {
       if (as.source_bbox !== undefined && !isBbox(as.source_bbox)) {
         errors.push(`assets[${i}].source_bbox 须为 4 元归一化 [x,y,w,h]`);
       }
-      for (const k of ['source_ref', 'resolved_path', 'rationale', 'crop_confirmed_by', 'baked_text_defer_by', 'bbox_verified_by'] as const) {
+      for (const k of ['source_ref', 'resolved_path', 'rationale', 'blind_fallback_reason', 'baked_text_defer_by', 'bbox_verified_by'] as const) {
         if (as[k] !== undefined && typeof as[k] !== 'string') {
           errors.push(`assets[${i}].${k} 须为字符串`);
         }
+      }
+      if (as.crop_confirmed_by !== undefined && as.crop_confirmed_by !== null && typeof as.crop_confirmed_by !== 'string') {
+        errors.push(`assets[${i}].crop_confirmed_by 须为字符串或 null`);
       }
       for (const k of ['placeholder', 'human_crop_confirmed', 'baked_text_defer'] as const) {
         if (as[k] !== undefined && typeof as[k] !== 'boolean') {

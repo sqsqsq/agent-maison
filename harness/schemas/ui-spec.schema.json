@@ -219,10 +219,13 @@
         "kind": { "type": "string", "enum": ["color", "spacing", "font_size", "radius", "divider"] },
         "value": { "type": "string" },
         "source_bbox": { "$ref": "#/definitions/bbox" },
+        "source_ref": { "type": "string" },
         "sampled": {
           "type": "boolean",
           "description": "true 表示 value 由脚本像素采样（半确定性）"
-        }
+        },
+        "placeholder": { "type": "boolean", "description": "true 表示盲档/缺证下的中性占位 token，不构成实测颜色或视觉证明" },
+        "value_source": { "type": "string", "description": "token 值来源说明；例如 blind_inference_neutral_placeholder，仅作诚实 provenance" }
       }
     },
     "asset": {
@@ -237,7 +240,8 @@
         "placeholder": { "type": "boolean" },
         "rationale": { "type": "string" },
         "human_crop_confirmed": { "type": "boolean" },
-        "crop_confirmed_by": { "type": "string", "description": "G4b：crop 裁剪**授权**来源；headless 下须为非自动化身份或 user_requirement（堵自报）。授权≠验真：产物验真见 asset_crop_validation 与 bbox_verified_by" },
+        "crop_confirmed_by": { "type": ["string", "null"], "description": "G4b：crop 裁剪授权来源；null 明确表示尚未授权，不构成放行。headless 下有效值须为非自动化身份或 user_requirement。授权≠验真：产物验真见 asset_crop_validation 与 bbox_verified_by" },
+        "blind_fallback_reason": { "type": "string", "description": "盲档回退/占位原因说明；只记录未验证事实，不构成授权或视觉证明" },
         "baked_text_defer": { "type": "boolean", "description": "round5 P0-A：显式放行素材图内含声明文本（营销/装饰插画确需含字）" },
         "baked_text_defer_by": { "type": "string", "description": "round5 P0-A：baked_text_defer 真人署名（非自动化身份）；缺则 defer 无效" },
         "bbox_verified_by": { "type": "string", "description": "P0-C：crop 产物验真的真人确认署名（对照 contact-sheet）；与授权正交，是 VL 辨认不可用/失配时的唯一逃生阀（自动化身份不算）" },

@@ -45,6 +45,7 @@ import {
   buildPhasePrompt,
   extractPriorFailureContext,
   buildCapabilityBlock,
+  formatHarnessFailureTail,
   resolvePhaseCapabilityAdvisory,
   TRANSIENT_API_BACKOFF_MS,
   VISUAL_GAP_RETRY_GUIDANCE,
@@ -1194,6 +1195,7 @@ export function runAll(): UnitCaseResult[] {
         const advisory: CapabilityAdvisory = {
           hasVision: true,
           ocrAvailable: false,
+          selectedFidelity: 'pixel_1to1',
           effectiveFidelity: 'pixel_1to1',
           fidelityClamped: false,
           ocrJsonPaths: [],
@@ -1201,7 +1203,8 @@ export function runAll(): UnitCaseResult[] {
         const text = buildCapabilityBlock(advisory).join('\n');
         assert(/Vision.*YES/.test(text), 'should declare vision YES');
         assert(!/do NOT have vision/i.test(text), 'hasVision=true 不应出现盲档指令');
-        assert(!/auto-clamped/.test(text), '未钳制不应提示 auto-clamped');
+        assert(text.includes('Selected fidelity contract'), '应明确 selected 合同档位');
+        assert(text.includes('Effective execution fidelity ceiling'), '应明确 effective 执行上限');
         assert(!/headless-assumptions\.md/.test(text), '未钳制不应提示记录 headless-assumptions.md');
       },
     },
@@ -1211,6 +1214,7 @@ export function runAll(): UnitCaseResult[] {
         const advisory: CapabilityAdvisory = {
           hasVision: false,
           ocrAvailable: true,
+          selectedFidelity: 'pixel_1to1',
           effectiveFidelity: 'semantic_layout',
           fidelityClamped: true,
           ocrJsonPaths: ['doc/features/bc/spec/reports/ocr/home.ocr.json'],
@@ -1221,7 +1225,8 @@ export function runAll(): UnitCaseResult[] {
         assert(/ground truth/i.test(text), '应指示 OCR JSON 为 ground truth');
         assert(/blind-review pending/i.test(text), '应指示登记待复核清单而非反复猜测');
         assert(text.includes('doc/features/bc/spec/reports/ocr/home.ocr.json'), '应列出 OCR JSON 路径');
-        assert(/auto-clamped/.test(text), '钳制生效应提示 auto-clamped');
+        assert(/Selected fidelity contract.*pixel_1to1/.test(text), 'fidelity_target 应保持 selected=pixel_1to1');
+        assert(/Effective execution fidelity ceiling.*semantic_layout/.test(text), '执行上限应单列 semantic_layout');
         assert(/headless-assumptions\.md/.test(text), 'cursor review：钳制决策应提示记录进 headless-assumptions.md（审计留痕）');
       },
     },
@@ -1231,6 +1236,7 @@ export function runAll(): UnitCaseResult[] {
         const advisory: CapabilityAdvisory = {
           hasVision: false,
           ocrAvailable: false,
+          selectedFidelity: 'pixel_1to1',
           effectiveFidelity: 'reference_only',
           fidelityClamped: true,
           ocrJsonPaths: [],
@@ -1240,6 +1246,15 @@ export function runAll(): UnitCaseResult[] {
         assert(/No OCR JSON available/i.test(text), '应如实声明无 OCR JSON');
         assert(/requirement text only/i.test(text), '应指示仅凭需求文字工作');
         assert(/headless-assumptions\.md/.test(text), '钳制生效应提示记录进 headless-assumptions.md（即便无 OCR）');
+      },
+    },
+    {
+      name: 'retry: harness fatal output 有界保真回喂',
+      run: () => {
+        const fatal = formatHarnessFailureTail(`noise\n\u001b[31mYAMLException: bad indentation at ui-spec.yaml:42\u001b[0m\n`);
+        assert(Boolean(fatal?.includes('YAMLException: bad indentation')), '应保留真实 fatal 文本');
+        assert(!Boolean(fatal?.includes('\u001b[')), '应去除 ANSI 控制符');
+        assert((formatHarnessFailureTail('x'.repeat(5_000), 128)?.length ?? 0) === 128, '必须有界截断');
       },
     },
     {

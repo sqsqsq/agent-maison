@@ -8,7 +8,6 @@
 //   ④ 元门禁：goal-runner 的 halt_reason 全集必须在 INCIDENT_REGISTRY 注册（未注册即红）
 //   ⑤ 立项两事故的闭环断言（含「agent 自行触发 reset 一无所获」负例）
 //   ⑥ lint：新增 gate 不得直接读 goal env（存量 legacy 豁免清单）
-//   ⑦ 旧 manifest 兼容：无 vision_lineage 键不得注入身份字段集
 // ============================================================================
 
 import * as fs from 'fs';
@@ -44,7 +43,6 @@ import {
 import { resolveRequirementInput } from '../../scripts/utils/goal-manifest';
 import { reduceRunState, supervisorAction } from '../../scripts/utils/run-state-reducer';
 import {
-  renderLineageDiscontinuitySection,
   renderPhaseDiagnosticProse,
   renderPhaseDispositionCell,
 } from '../../scripts/utils/goal-report-generator';
@@ -52,18 +50,8 @@ import {
   buildGoalManifestFromInput,
   computeManifestIdentityFields,
   inheritSuccessorManifest,
-  manifestIdentityFieldDigest,
-  resolveVisionLineage,
   type GoalManifest,
 } from '../../scripts/utils/goal-manifest';
-import {
-  finalizeLineageResetQuarantine,
-  quarantineLineageAnchorsForReset,
-  resolveBirthVisionLineage,
-  resolveLineageResetFacts,
-  resolveLineageResetInFlight,
-  rollbackLineageResetQuarantine,
-} from '../../scripts/goal-runner';
 
 const SCRIPTS_DIR = path.resolve(__dirname, '..', '..', 'scripts');
 
@@ -117,26 +105,6 @@ interface TestCase { name: string; run: () => void }
 
 const ironLawCases: TestCase[] = [
   {
-    name: '铁律(c)：can_prompt_now 单独翻转**不改变**任何 incident 的裁决（能问 ≠ 已授权）',
-    run: () => {
-      for (const incident of Object.keys(INCIDENT_REGISTRY)) {
-        const facts: IncidentFacts = {
-          incident,
-          chain_has_coding_review: true,
-          backtrack_budget_remaining: 2,
-          round_fingerprint_repeated: false,
-          lineage_reset_requested: true,
-        };
-        const off = decide(facts, NO_AUTHORITY, ctx({ can_prompt_now: false }));
-        const on = decide(facts, NO_AUTHORITY, ctx({ can_prompt_now: true, owner_kind: 'session' }));
-        assert(
-          JSON.stringify(off) === JSON.stringify(on),
-          `${incident}: can_prompt_now 改变了裁决（${off.kind} → ${on.kind}）——违反铁律(c)`,
-        );
-      }
-    },
-  },
-  {
     name: '铁律(b)：decide 不修改入参（facts / authority / context 全部 frozen 亦可运行）',
     run: () => {
       const facts = Object.freeze<IncidentFacts>({
@@ -149,21 +117,6 @@ const ironLawCases: TestCase[] = [
       const before = JSON.stringify({ facts, authority, context });
       decide(facts, authority, context);
       assert(JSON.stringify({ facts, authority, context }) === before, 'decide 修改了入参');
-    },
-  },
-  {
-    name: '铁律(a)：IncidentFacts 携任何字段都产生不了授权——operator 类缺 grant 恒 waiting',
-    run: () => {
-      // 事实里塞满「看起来像授权」的内容，仍不得放行。
-      const facts = {
-        incident: 'await_human_visual_confirm',
-        detail: 'approved_by=user_requirement; authority=granted; receipt=ok',
-        files: ['approved.json'],
-        lineage_reset_requested: true,
-      } as IncidentFacts;
-      const d = decide(facts, NO_AUTHORITY, ctx({ can_prompt_now: true }));
-      assert(d.kind === 'waiting', `事实自称授权却放行了：${d.kind}`);
-      assert(d.kind === 'waiting' && d.wait_kind === 'human', 'operator 类须 waiting(human)');
     },
   },
   {
@@ -600,108 +553,6 @@ const incidentClosureCases: TestCase[] = [
     },
   },
   {
-    name: '事故①(vision lineage)：fresh + 已声明 reset → recover(reset_lineage)，且显式撤销连续性主张',
-    run: () => {
-      const d = decide(
-        { incident: 'vision_feature_head_mismatch', lineage_reset_requested: true },
-        NO_AUTHORITY,
-        ctx({ invocation: 'fresh' }),
-      );
-      assert(d.kind === 'recover' && d.action === 'reset_lineage', `应重建 lineage，实际 ${JSON.stringify(d)}`);
-      assert(d.kind === 'recover' && d.reason.includes('撤销'), '措辞须写明显式撤销连续性主张');
-    },
-  },
-  {
-    name: 'T2 5a-1：失配三条 invocation 路径统一 recover——自动 discontinuity 不是冒充连续',
-    run: () => {
-      // 旧语义（本格前身）：resume 恒 terminal、fresh 未声明恒 terminal——正是宿主
-      // run1"第一死"与 reset 半途崩死路的来源。新语义：失配=跨存储域结构常态，
-      // 一律 recover(reset_lineage)（显式记录断裂+全量重验=撤销主张，非冒充）。
-      const onResume = decide(
-        { incident: 'vision_feature_head_mismatch', lineage_reset_requested: true },
-        NO_AUTHORITY,
-        ctx({ invocation: 'resume' }),
-      );
-      assert(onResume.kind === 'recover' && onResume.action === 'reset_lineage',
-        `resume 失配应自动重建，实际 ${JSON.stringify(onResume)}`);
-      const undeclared = decide(
-        { incident: 'vision_feature_head_mismatch', lineage_reset_requested: false },
-        NO_AUTHORITY,
-        ctx({ invocation: 'fresh' }),
-      );
-      assert(undeclared.kind === 'recover' && undeclared.action === 'reset_lineage',
-        `未声明失配同样自动重建（不停死），实际 ${JSON.stringify(undeclared)}`);
-      assert(undeclared.kind === 'recover' && /不冒充连续/.test(undeclared.reason),
-        '自动重建的措辞须写明"不冒充连续"（显式断裂 ≠ 冒充）');
-    },
-  },
-  {
-    name: '负例：agent 自行触发 reset **一无所获**——不进 grants、必留断裂、不得声称连续',
-    run: () => {
-      const d = decide(
-        { incident: 'vision_feature_head_mismatch', lineage_reset_requested: true },
-        NO_AUTHORITY,
-        ctx({ invocation: 'fresh' }),
-      );
-      // ① reset 走 recover 而非 continue —— 不是「放行」，是「重新证明一遍」
-      assert(d.kind === 'recover', 'reset 必须走恢复路而非放行');
-      // ② 该路径不消费也不产生任何 authority grant
-      const withFakeGrant = decide(
-        { incident: 'vision_feature_head_mismatch', lineage_reset_requested: true },
-        { grants: [{ action: 'vision_lineage_reset', source: 'verified_receipt', binding: 'x' }] },
-        ctx({ invocation: 'fresh' }),
-      );
-      assert(
-        JSON.stringify(withFakeGrant) === JSON.stringify(d),
-        'reset 裁决不得受 grants 影响（它不是授权路径）',
-      );
-      // ③ 结论口径：只能声称「新 lineage 已全链验证」
-      assert(d.kind === 'recover' && d.reason.includes('全链重验'), '须声明全链重验');
-      assert(d.kind === 'recover' && !d.reason.includes('连续性得以保持'), '不得声称连续性保持');
-    },
-  },
-  {
-    name: '事故①事务边界：reset 提交点在 head + checkpoint 之后（HWM 已随 5a 退役）',
-    run: () => {
-      const src = stripComments(fs.readFileSync(path.join(SCRIPTS_DIR, 'goal-runner.ts'), 'utf8'));
-      const headWrite = src.indexOf('const headWrite = writeVisionFeatureHead');
-      const cpWrite = src.indexOf('writeVisionCheckpoint({');
-      const finalize = src.indexOf('finalizeLineageResetQuarantine({ projectRoot, feature: manifest.feature })');
-      assert(headWrite > 0 && cpWrite > 0 && finalize > 0, '锚点缺失');
-      assert(finalize > headWrite, '提交点须在 head 写入之后');
-      assert(finalize > cpWrite, '提交点须在 checkpoint 写入之后');
-      // T2 5a 完成刀：HWM/appendVisionHwm 已整体退役——两件套写毕即提交，
-      // 崩溃窗兜底=「head absent + 已声明 reset」自然重入（rollback→重做）
-      assert(!/appendVisionHwm\(/.test(src), 'HWM 追加不得复活（5a 完成刀）');
-    },
-  },
-  {
-    name: '事故①：显式 reset 不得因 head 状态被静默忽略（无条件遵从）',
-    run: () => {
-      const src = stripComments(fs.readFileSync(path.join(SCRIPTS_DIR, 'goal-runner.ts'), 'utf8'));
-      assert(
-        /if \(lineageResetGranted\) \{/.test(src),
-        'reset 执行不得再被 head.state 限定——否则「fresh 显式声明 reset 但 head 正常」变静默 no-op',
-      );
-      // 前置字符不得是 `!`——否则会把合法的 `!lineageResetGranted && (head.state === 'ok'`
-      // 当成残留（本仓硬学习：散文/代码断言的子串误判）。
-      assert(
-        !/[^!]lineageResetGranted && \(head\.state ===/.test(src),
-        '残留 head.state 限定（reset 执行仍被 head 状态圈住）',
-      );
-      // 且后续基于 head.state 的处置必须让位。
-      // T2 5a-3（2026-08-07）：invalid **独立分支已整体删除**（并入
-      // lineageIncidentPresent 走自动重建——reseal 出路退役）；"让位"的新形态=
-      // 不存在独立 invalid 处置 + 事故在场判定含 invalid。
-      assert(!/head\.state === 'invalid' && !lineageResetGranted/.test(src),
-        'invalid 不得再有独立处置分支（应并入自动重建）');
-      assert(/head\.state === 'invalid'\s*$/m.test(src) || /\|\| head\.state === 'invalid'/.test(src),
-        'lineageIncidentPresent 须含 invalid（锚不可复用=与失配同路重建）');
-      assert(/!lineageResetGranted && head\.state === 'ok'/.test(src), 'ok 分支未让位');
-      assert(/head\.state === 'absent' && ledgersPresent && !lineageResetGranted/.test(src), 'absent ack 未让位');
-    },
-  },
-  {
     name: '事故②跨 resume：drift 指纹须落 events 且从 priorEvents 回放（重启不得失忆白吃预算）',
     run: () => {
       const src = stripComments(fs.readFileSync(path.join(SCRIPTS_DIR, 'goal-runner.ts'), 'utf8'));
@@ -745,224 +596,7 @@ const incidentClosureCases: TestCase[] = [
       );
     },
   },
-  {
-    name: 'lineage quarantine 事务（收口刀 head-only）：head 改名让路、HWM 原地不动 → 提交后场外无残留',
-    run: () => withTrustDir((root, feature) => {
-      const runId = '20260802T000000Z-aaaaaa';
-      const q0 = quarantineLineageAnchorsForReset({ projectRoot: root, feature, runId });
-      assert(q0.old_head_sha256 === null && q0.head_backup === null, '无锚时应 no-op');
-
-      const { headPath, hwmPath } = seedAnchors(root, feature);
-      const hwmBytes = fs.readFileSync(hwmPath, 'utf8');
-      const q = quarantineLineageAnchorsForReset({ projectRoot: root, feature, runId });
-      assert(q.old_head_sha256 !== null, '应记录旧 head hash');
-      assert(!fs.existsSync(headPath), '旧 head 应已改名让路');
-      // codex P1-3 核心：HWM 已退出事务——不读、不改名（惰性遗留物）
-      assert(fs.existsSync(hwmPath) && fs.readFileSync(hwmPath, 'utf8') === hwmBytes,
-        '旧 .hwm.jsonl 必须原地不动（reset 事务只涉 head）');
-      assert(fs.existsSync(q.head_backup!), '备份应在场（供事务失败回滚）');
-
-      const removed = finalizeLineageResetQuarantine({ projectRoot: root, feature, runId });
-      assert(removed === 1, `提交应删除 1 个场外备份（head-only），实际 ${removed}`);
-      assert(!fs.existsSync(q.head_backup!), '场外不得残留（不是历史档案库）');
-      assert(finalizeLineageResetQuarantine({ projectRoot: root, feature, runId }) === 0, '提交须幂等');
-    }),
-  },
-  {
-    name: 'lineage 事务**中途崩溃可回滚**：改名后崩溃 → 下次启动还原旧 head，不伪装成「head 被删」',
-    run: () => withTrustDir((root, feature) => {
-      const { headPath, hwmPath } = seedAnchors(root, feature);
-      const headSha = fs.readFileSync(headPath, 'utf8');
-      // run A：quarantine 后崩溃（不写新 head、不提交）
-      quarantineLineageAnchorsForReset({ projectRoot: root, feature, runId: 'runA' });
-      assert(!fs.existsSync(headPath), '崩溃时原位为空');
-
-      // 下次启动：无条件回滚 → 旧 head 原样还原（而不是让人看见「head 缺失」这个假象）
-      const restored = rollbackLineageResetQuarantine({ projectRoot: root, feature });
-      assert(restored.length === 1, `应还原 1 个锚（head-only），实际 ${JSON.stringify(restored)}`);
-      assert(fs.readFileSync(headPath, 'utf8') === headSha, '还原内容须逐字节一致');
-      assert(fs.existsSync(hwmPath), 'HWM 全程不参与（原地未动）');
-      assert(rollbackLineageResetQuarantine({ projectRoot: root, feature }) .length === 0, '回滚须幂等');
-    }),
-  },
-  {
-    name: '收口刀（codex P1-3 实测反例转正）：旧 .hwm.jsonl 是**异常实体（目录）**时 reset 照常工作——EISDIR 死点已删',
-    run: () => withTrustDir((root, feature) => {
-      // codex 复现：宿主遗留 .hwm.jsonl 为目录 → 旧实现 quarantine 读它 EISDIR，
-      // run 在 phase 前 uncaught 中断。现 HWM 零参与，异常实体不再有炸 run 的机会。
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const gr = require('../../scripts/goal-runner') as {
-        visionFeatureHeadPath: (r: string, f: string) => string;
-      };
-      const headPath = gr.visionFeatureHeadPath(root, feature);
-      const hwmPath = headPath.replace(/\.json$/, '.hwm.jsonl');
-      fs.mkdirSync(path.dirname(headPath), { recursive: true });
-      fs.writeFileSync(headPath, '{"generation":7,"feature":"bc-openCard"}', 'utf8');
-      fs.mkdirSync(hwmPath, { recursive: true }); // 异常实体：目录顶着 HWM 的名字
-      const q = quarantineLineageAnchorsForReset({ projectRoot: root, feature, runId: 'runD' });
-      assert(q.old_head_sha256 !== null, '异常 HWM 在场时 head quarantine 照常成功');
-      const restored = rollbackLineageResetQuarantine({ projectRoot: root, feature });
-      assert(restored.length === 1 && fs.existsSync(headPath), '回滚照常还原 head');
-      assert(fs.statSync(hwmPath).isDirectory(), '异常实体原样不动（不读不删不改名）');
-    }),
-  },
-  {
-    name: '收口刀四（codex P1 实测反例转正）：**目录形态的 .bak** 零识别——不得被改名成 canonical head，finalize 不虚假提交',
-    run: () => withTrustDir((root, feature) => {
-      // codex 复现链：目录形态 .bak → 旧 finalize 吞删除失败照常返回 → committed 照写
-      // → 下次 rollback 删新 head、把目录改名成 canonical head → head 永久变目录。
-      // 现残留只认普通文件：目录 bak 零识别（不还原、不清扫、不计数），
-      // 已识别普通文件备份的删除失败则**上抛**交 commitVisionAnchors catch
-      // （persist_failed+继续，committed 不写——虚假提交根除）。
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const gr = require('../../scripts/goal-runner') as {
-        visionFeatureHeadPath: (r: string, f: string) => string;
-      };
-      const headPath = gr.visionFeatureHeadPath(root, feature);
-      fs.mkdirSync(path.dirname(headPath), { recursive: true });
-      fs.writeFileSync(headPath, '{"generation":9}', 'utf8');
-      fs.mkdirSync(`${headPath}.reset-runDir.bak`, { recursive: true }); // 异常形态残留
-      const restored = rollbackLineageResetQuarantine({ projectRoot: root, feature });
-      assert(restored.length === 0, `目录 bak 不得被还原：${JSON.stringify(restored)}`);
-      assert(fs.readFileSync(headPath, 'utf8') === '{"generation":9}',
-        'canonical head 不得被目录顶替（原文件原样在场）');
-      assert(finalizeLineageResetQuarantine({ projectRoot: root, feature }) === 0,
-        '目录 bak 不计入清扫（零识别，留给人工删除）');
-      assert(fs.existsSync(`${headPath}.reset-runDir.bak`), '异常形态残留原样不动');
-    }),
-  },
-  {
-    name: '收口终刀二（codex P1 故障注入）：删除/枚举失败 finalize 必须抛出（交 commit catch，committed 不写）；rollback 侧降级',
-    run: () => withTrustDir((root, feature) => {
-      // codex 口径订正：上一格只验目录 bak 被过滤——即使 finalize 加回 catch 它照样绿。
-      // 本格用 fs 定向故障注入直接命中"吞错=虚假提交"分支（不加生产 seam）。
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const gr = require('../../scripts/goal-runner') as {
-        visionFeatureHeadPath: (r: string, f: string) => string;
-      };
-      const headPath = gr.visionFeatureHeadPath(root, feature);
-      fs.mkdirSync(path.dirname(headPath), { recursive: true });
-      const bak = `${headPath}.reset-runF.bak`;
-      fs.writeFileSync(bak, '{"generation":2}', 'utf8');
-      // 注入必须打在**裸 require 的 fs 模块单例**上——`import * as fs` 的命名空间是
-      // 只读 getter 包装，且与生产模块内的 fs 不保证同一实例
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const fsMod = require('fs') as { rmSync: typeof fs.rmSync; readdirSync: typeof fs.readdirSync };
-      // ① 已识别普通文件备份删除失败 → finalize 上抛（committed 由 commit catch 拦住不写）
-      const realRm = fsMod.rmSync;
-      let delThrew = '';
-      fsMod.rmSync = ((..._a: unknown[]) => { throw new Error('injected-delete-denied'); }) as unknown as typeof fs.rmSync;
-      try {
-        try { finalizeLineageResetQuarantine({ projectRoot: root, feature }); } catch (e) { delThrew = (e as Error).message; }
-      } finally { fsMod.rmSync = realRm; }
-      assert(delThrew.includes('injected-delete-denied'), `删除失败必须上抛，实得：${delThrew || '(未抛)'}`);
-      assert(fs.existsSync(bak), '备份仍在场（"事务未完成"是真实事实，不得宣称已提交）');
-      // ② 枚举失败 → finalize 同样上抛（"无法确认备份是否清空"≠"没有备份"）；
-      //    rollback 在自己的调用点降级为无残留继续（不抛）
-      const realReaddir = fsMod.readdirSync;
-      let scanThrew = '';
-      fsMod.readdirSync = ((..._a: unknown[]) => { throw new Error('injected-scan-denied'); }) as unknown as typeof fs.readdirSync;
-      try {
-        try { finalizeLineageResetQuarantine({ projectRoot: root, feature }); } catch (e) { scanThrew = (e as Error).message; }
-        assert(rollbackLineageResetQuarantine({ projectRoot: root, feature }).length === 0,
-          'rollback 侧枚举失败＝无残留继续（降级只在需要它的一侧）');
-      } finally { fsMod.readdirSync = realReaddir; }
-      assert(scanThrew.includes('injected-scan-denied'), `枚举失败必须上抛，实得：${scanThrew || '(未抛)'}`);
-      // 注入解除后清扫恢复正常（残留不留给后续用例）
-      assert(finalizeLineageResetQuarantine({ projectRoot: root, feature }) === 1, '注入解除后清扫成功');
-    }),
-  },
-  {
-    name: '收口刀二（codex P1-2\' 实测反例转正）：canonical HWM=目录 + 旧 .reset-*.bak 在场 → rollback 零识别零抛错',
-    run: () => withTrustDir((root, feature) => {
-      // codex 复现：上一刀的"legacy hwm 残留兼容回滚"自身是死点——还原目标是目录时
-      // rmSync 撞 ERR_FS_EISDIR，启动即崩。现残留扫描彻底不识别 HWM：残留原样留着
-      // （人工删除即可），head 侧照常工作。
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const gr = require('../../scripts/goal-runner') as {
-        visionFeatureHeadPath: (r: string, f: string) => string;
-      };
-      const headPath = gr.visionFeatureHeadPath(root, feature);
-      const hwmPath = headPath.replace(/\.json$/, '.hwm.jsonl');
-      fs.mkdirSync(path.dirname(headPath), { recursive: true });
-      fs.mkdirSync(hwmPath, { recursive: true });                       // canonical HWM=目录
-      fs.writeFileSync(`${hwmPath}.reset-runOld.bak`, '{"seq":9}\n', 'utf8'); // 旧版本残留
-      fs.writeFileSync(`${hwmPath}.reset-runOld2.absent`, '', 'utf8');        // 旧墓碑残留
-      const restored = rollbackLineageResetQuarantine({ projectRoot: root, feature });
-      assert(restored.length === 0, `HWM 残留不得被识别/回滚：${JSON.stringify(restored)}`);
-      assert(fs.existsSync(`${hwmPath}.reset-runOld.bak`) && fs.statSync(hwmPath).isDirectory(),
-        'HWM 残留与异常实体原样不动（惰性遗留物，允许人工删除）');
-      // head 侧不受影响：正常 quarantine/回滚照走
-      fs.writeFileSync(headPath, '{"generation":5}', 'utf8');
-      quarantineLineageAnchorsForReset({ projectRoot: root, feature, runId: 'runE' });
-      assert(rollbackLineageResetQuarantine({ projectRoot: root, feature }).length === 1,
-        'head 残留照常回滚（HWM 零参与不连坐）');
-    }),
-  },
-  {
-    name: 'lineage 事务：无任何旧锚时 reset = 首次建链，不留墓碑（正常首建不该变成未提交事务）',
-    run: () => withTrustDir((root, feature) => {
-      const q = quarantineLineageAnchorsForReset({ projectRoot: root, feature, runId: 'runN' });
-      assert(q.old_head_sha256 === null, '无锚时无旧 hash');
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const gr = require('../../scripts/goal-runner') as { visionFeatureHeadPath: (r: string, f: string) => string };
-      const dir = path.dirname(gr.visionFeatureHeadPath(root, feature));
-      const residue = fs.existsSync(dir)
-        ? fs.readdirSync(dir).filter((n) => /\.reset-/.test(n))
-        : [];
-      assert(residue.length === 0, `首建不应留墓碑：${JSON.stringify(residue)}`);
-      assert(rollbackLineageResetQuarantine({ projectRoot: root, feature }).length === 0, '无残留可回滚');
-    }),
-  },
-  {
-    name: 'lineage 事务：崩溃残留不得成为孤儿——新 run 提交时清扫**全部** .reset-*.bak',
-    run: () => withTrustDir((root, feature) => {
-      const { headPath } = seedAnchors(root, feature);
-      quarantineLineageAnchorsForReset({ projectRoot: root, feature, runId: 'runA' }); // 崩溃
-      // run B 重做：quarantine 前置回滚会先还原 runA 的备份，再以 runB 名义改名
-      const qB = quarantineLineageAnchorsForReset({ projectRoot: root, feature, runId: 'runB' });
-      assert(qB.rolled_back_from.length === 1, `应先回滚上一次残留（head-only），实际 ${JSON.stringify(qB.rolled_back_from)}`);
-      assert(qB.old_head_sha256 !== null, 'runB 应拿到旧 head hash');
-      const dir = path.dirname(headPath);
-      const baks = fs.readdirSync(dir).filter((n) => /\.reset-.*\.bak$/.test(n));
-      assert(baks.length === 1, `场外任一时刻最多一代备份，实际 ${JSON.stringify(baks)}`);
-      assert(baks.every((n) => n.includes('runB')), `残留应只属当前 run：${JSON.stringify(baks)}`);
-
-      finalizeLineageResetQuarantine({ projectRoot: root, feature, runId: 'runB' });
-      assert(
-        fs.readdirSync(dir).filter((n) => /\.reset-.*\.bak$/.test(n)).length === 0,
-        '提交后场外不得有任何 reset 残留',
-      );
-    }),
-  },
 ];
-
-/** 把场外 trust 根指向临时目录跑（避免污染真实 ~/.maison）。 */
-function withTrustDir(run: (projectRoot: string, feature: string) => void): void {
-  tmpProject((root) => {
-    const prev = process.env.MAISON_GOAL_CHECKPOINT_DIR;
-    process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'home', 'goal-checkpoints');
-    try { run(root, 'bc-openCard'); } finally {
-      if (prev === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR;
-      else process.env.MAISON_GOAL_CHECKPOINT_DIR = prev;
-    }
-  });
-}
-
-/** 走真实路径函数造出旧 head；旁边再放一份惰性 .hwm.jsonl 遗留物（生产已无该路径
- * 函数——`visionHwmPath` 随收口刀二删除，测试按文件名惯例自拼，用于证明"零参与"）。 */
-function seedAnchors(projectRoot: string, feature: string): { headPath: string; hwmPath: string } {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const gr = require('../../scripts/goal-runner') as {
-    visionFeatureHeadPath: (r: string, f: string) => string;
-  };
-  const headPath = gr.visionFeatureHeadPath(projectRoot, feature);
-  const hwmPath = headPath.replace(/\.json$/, '.hwm.jsonl');
-  fs.mkdirSync(path.dirname(headPath), { recursive: true });
-  fs.writeFileSync(headPath, '{"generation":23,"feature":"bc-openCard"}', 'utf8');
-  fs.writeFileSync(hwmPath, '{"seq":1}\n', 'utf8');
-  return { headPath, hwmPath };
-}
 
 // ---------------------------------------------------------------------------
 // ⑥ lint：新增 gate 不得直接读 goal env
@@ -1056,232 +690,11 @@ function baseManifestInput(over: Record<string, unknown> = {}): Record<string, u
 
 const manifestCompatCases: TestCase[] = [
   {
-    name: '旧 manifest（无 vision_lineage 键）身份字段集**不得注入该键**——否则既有 run resume 误判漂移',
-    run: () => tmpProject((root) => {
-      const legacy = buildGoalManifestFromInput(baseManifestInput(), { projectRoot: root });
-      assert(!('vision_lineage' in legacy), 'fresh 未声明时不得落键');
-      const fields = computeManifestIdentityFields(legacy);
-      assert(!('vision_lineage' in fields), '身份字段集不得凭空多出 vision_lineage');
-      assert(resolveVisionLineage(legacy) === 'continue', '缺键行为按 continue');
-    }),
-  },
-  {
-    name: '声明后：键在场即入身份字段集（停机期间被补写仍会被既有 drift 检测发现）',
-    run: () => tmpProject((root) => {
-      const declared = buildGoalManifestFromInput(
-        baseManifestInput({ vision_lineage: 'reset' }),
-        { projectRoot: root },
-      );
-      assert(declared.vision_lineage === 'reset', '应落键');
-      const fields = computeManifestIdentityFields(declared);
-      assert('vision_lineage' in fields, '键在场须入身份字段集');
-      // 篡改为 continue → 身份字段变化可被检出
-      const tampered = computeManifestIdentityFields({ ...declared, vision_lineage: 'continue' });
-      assert(fields.vision_lineage !== tampered.vision_lineage, '改写该键须导致身份字段漂移');
-    }),
-  },
-  {
-    name: 'vision_lineage 非法枚举 fail-closed；中途升级 reset 的防线=身份 drift+出生冻结（decide 恒 recover）',
-    run: () => tmpProject((root) => {
-      let msg = '';
-      try {
-        buildGoalManifestFromInput(baseManifestInput({ vision_lineage: 'nuke' }), { projectRoot: root });
-      } catch (e) { msg = (e as Error).message; }
-      assert(msg.includes('vision_lineage'), `应拒绝非法枚举，实际：${msg}`);
-
-      // e5d8a2c4 T1③：基于出生字段的 resume 硬拒**已删除**（它把「已消费的出生声明」
-      // 与「中途塞入」连坐）。此处改为钉住接替它的两道门仍在：
-      // ① vision_lineage 计入 manifest 身份字段 → 停机期被补写会被 events 出生基线 drift 检出；
-      const withReset = buildGoalManifestFromInput(
-        baseManifestInput({ vision_lineage: 'reset' }), { projectRoot: root });
-      const withoutReset = buildGoalManifestFromInput(baseManifestInput({}), { projectRoot: root });
-      const fReset = computeManifestIdentityFields(withReset);
-      const fPlain = computeManifestIdentityFields(withoutReset);
-      assert('vision_lineage' in fReset, 'reset 在场须入身份字段集（否则中途补写检测不到）');
-      assert(!('vision_lineage' in fPlain), '未声明时不得凭空补键（否则旧 run resume 误判漂移）');
-      // ② T2 5a-1 后 decide 层不再裁"声明合法性"（三路径统一 recover）——"中途升级"
-      // 的防线整体移交：①的身份字段 drift 检测（events 出生基线，停机改 manifest 先被拦）
-      // + 出生冻结值判据（补写拿不到 in_flight）。此处只钉 decide 恒 recover 的新契约。
-      const midRunReset = decide(
-        { incident: 'vision_feature_head_mismatch', lineage_reset_requested: true },
-        NO_AUTHORITY,
-        { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: 'resume' },
-      );
-      assert(midRunReset.kind === 'recover', `5a-1 后失配裁决恒 recover，实得 ${midRunReset.kind}`);
-
-      // T1③(b)(c)：**未完成的 reset 事务**判据——它不是"中途升级"（那条被出生冻结值
-      // 挡在判据之外），而是同一笔已获准事务的幂等完成。崩溃窗实锤（立项时旧语义）：
-      // discontinuity 已写、committed 未写时崩溃，resume 回滚旧锚后 reset 被静默丢弃。
-      const ev = (t: string): Record<string, unknown> => ({ type: t });
-      assert(
-        resolveLineageResetInFlight('reset', [ev('lineage_discontinuity')]) === true,
-        'discontinuity 无 committed → 未完成，须幂等续做',
-      );
-      assert(
-        resolveLineageResetInFlight('reset', [ev('lineage_discontinuity'), ev('lineage_reset_committed')]) === false,
-        'committed 在场 → 已消费，不得重做',
-      );
-      // codex 二轮：一个 run **只有一次出生 reset**，"committed 后再起新事务"不是合法
-      // 形态——原用例连同那套可反复开合的状态机一并删除。
-      assert(
-        resolveLineageResetInFlight('reset', [ev('lineage_reset_committed'), ev('lineage_discontinuity')]) === false,
-        'committed 一旦出现即已消费，其后再有 discontinuity 也不重开',
-      );
-      // **覆盖更早的崩溃窗**：quarantine 已改场外锚、discontinuity 尚未落盘时崩溃，
-      // 事件里什么都没有——初版判据在此返回 false（旧锚失配→terminal / 旧锚有效→静默跳过）。
-      assert(
-        resolveLineageResetInFlight('reset', [ev('run_start')]) === true,
-        'discontinuity 落盘前崩溃 → 仍须判未完成（出生声明为起点，不依赖过程事件）',
-      );
-      assert(
-        resolveLineageResetInFlight('continue', [ev('lineage_discontinuity')]) === false,
-        '出生未声明 reset 时恒 false——单靠伪造过程事件拿不到 reset',
-      );
-      assert(
-        resolveLineageResetInFlight('reset', []) === true,
-        '声明了 reset 且无 committed → 待消费（判据是出生声明，不是过程事件）',
-      );
-    }),
-  },
-  {
-    // codex 三轮 P1：上一版判据读的是**当前盘上的 manifest**，注释却写"出生冻结"。
-    // 真实攻击面不是伪造 events，而是**停机窗口改 manifest**——首次 vision checkpoint
-    // 尚未生成时 drift 按「无基线」放行，于是中途补写 reset 就能骗到 recover，
-    // 正好绕过"中途升级 reset 无效"这条红线（当时的裁决还是 terminal，现恒 recover——
-    // 红线的承载者是出生冻结判据本身，不是裁决种类）。
-    name: 'T1③ 出生冻结 lineage：resume 只认首个 run_start，停机期改 manifest 无效',
-    run: () => {
-      const reset = { vision_lineage: 'reset' } as Pick<GoalManifest, 'vision_lineage'>;
-      // **夹具必须按真实 writer 的形状造**（fable 四批 P0）：生产写进 run_start 的
-      // `manifest_identity_fields` 是逐字段 sha256 截断，**不是原值**。初版夹具手写
-      // `{vision_lineage:'reset'}`，于是判据里那句 `=== 'reset'` 在夹具上成立、在
-      // 生产上恒 false——功能等于没修，还全绿穿过了四轮 review。
-      const runStart = (lineage?: string): Record<string, unknown> => ({
-        type: 'run_start',
-        ...(lineage === undefined
-          ? {}
-          : { manifest_identity_fields: { vision_lineage: manifestIdentityFieldDigest(lineage) } }),
-      });
-
-      // 形状断言：夹具里存的必须是指纹。手写回原值 → 这一格立刻红。
-      const fields = (runStart('reset').manifest_identity_fields ?? {}) as Record<string, string>;
-      assert(
-        /^[0-9a-f]{16}$/.test(fields.vision_lineage) && fields.vision_lineage !== 'reset',
-        `夹具须与真实 writer 同形状（逐字段 sha256 截断），实得 ${fields.vision_lineage}`,
-      );
-      // 并且这个指纹确实来自真实 writer——不是本用例自己另算一份
-      assertEq(
-        fields.vision_lineage,
-        computeManifestIdentityFields(
-          buildGoalManifestFromInput(baseManifestInput({ vision_lineage: 'reset' }), { projectRoot: process.cwd() }),
-        ).vision_lineage,
-        '夹具指纹须与 computeManifestIdentityFields 的产出逐字节一致',
-      );
-
-      // fresh：本 run 尚未落 run_start → 当前 manifest 就是出生值
-      assertEq(resolveBirthVisionLineage([], reset), 'reset', 'fresh 取当前 manifest');
-
-      // resume 且出生确实声明了 reset → 续做成立
-      assertEq(
-        resolveBirthVisionLineage([runStart('reset')], { vision_lineage: 'continue' }),
-        'reset',
-        '出生为 reset 时，即便当前 manifest 已被改回 continue 也须认出生值',
-      );
-
-      // **攻击面正例**：出生是 continue，停机期把 manifest 改成 reset
-      assertEq(
-        resolveBirthVisionLineage([runStart('continue')], reset),
-        'continue',
-        '停机期补写 reset 不得被认成出生声明',
-      );
-      // 出生时压根没有该键（未声明）——身份字段集里也不会有它
-      assertEq(
-        resolveBirthVisionLineage([{ type: 'run_start', manifest_identity_fields: {} }], reset),
-        'continue',
-        '出生未声明该键 → 中途补写同样无效',
-      );
-      // 旧 schema：run_start 无身份字段快照 → 出生意图不可证 → fail-closed，
-      // **不得**回落到当前 manifest（那个回落就是攻击面本身）
-      assertEq(
-        resolveBirthVisionLineage([runStart(undefined)], reset),
-        'continue',
-        '缺身份字段快照须 fail-closed，不得回落当前 manifest',
-      );
-
-      // 端到端：篡改后的 resume 必须仍然 terminal
-      const tamperedInFlight = resolveLineageResetInFlight(
-        resolveBirthVisionLineage([runStart('continue')], reset),
-        [runStart('continue')],
-      );
-      assertEq(tamperedInFlight, false, '篡改后不得判为未完成事务');
-      const verdict = decide(
-        {
-          incident: 'vision_feature_head_mismatch',
-          lineage_reset_requested: true,          // 盘上 manifest 确实写着 reset
-          lineage_reset_in_flight: tamperedInFlight,
-        },
-        NO_AUTHORITY,
-        { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: 'resume' },
-      );
-      // T2 5a-1：decide 恒 recover——补写者"一无所获"的保证不再由 decide 承担：
-      // 重建=撤销主张+全量重验（非权限），且停机改 manifest 早被身份 drift 检测拦下。
-      assertEq(verdict.kind, 'recover', '5a-1 后失配裁决恒 recover（防线在 drift 层）');
-    },
-  },
-  {
-    // codex 四批 P1：同一次裁决里 lineage_reset_in_flight 用出生冻结值、
-    // lineage_reset_requested 却读当前盘上 manifest = **同一事实两个来源**。
-    name: 'T1③ reset 两项事实同源：出生 reset + 停机期改回 continue + 未 committed + resume → recover',
-    run: () => {
-      const birthReset = [{
-        type: 'run_start',
-        manifest_identity_fields: { vision_lineage: manifestIdentityFieldDigest('reset') },
-      }];
-      // 盘上 manifest 已被改回 continue（或干脆删了该键）——出生值不因此改变
-      const birthLineage = resolveBirthVisionLineage(birthReset, { vision_lineage: 'continue' });
-      assertEq(birthLineage, 'reset', '出生值只认首个 run_start');
-
-      // **消费生产的组装点**（codex 五批 P1）：此前这里手拼 `birthLineage === 'reset'`，
-      // 与 goal-runner 调用点各写一遍——于是"把生产改回读当前 manifest"这个变异
-      // 咬不到本用例，而我把它记成了咬中（变异脚本改的是本文件自己＝自证循环）。
-      const facts = resolveLineageResetFacts(birthReset, { vision_lineage: 'continue' });
-      assertEq(facts.lineage_reset_requested, true, 'requested 须取出生值，不读当前 manifest');
-      assertEq(facts.lineage_reset_in_flight, true, '无 committed → 事务未完成');
-      const decision = decide(
-        { incident: 'vision_feature_head_mismatch', ...facts },
-        NO_AUTHORITY,
-        { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: 'resume' },
-      );
-      assertEq(decision.kind, 'recover', `未完成的出生事务须幂等续做，实得 ${decision.kind}`);
-
-      // 对照：出生就是 continue（真·中途升级）→ 补写者拿不到出生事实（in_flight=false），
-      // 红线没被这条修复削弱——裁决虽恒 recover，但 recover 不授予任何权限
-      const midRunDecision = decide(
-        {
-          incident: 'vision_feature_head_mismatch',
-          ...resolveLineageResetFacts(
-            [{
-              type: 'run_start',
-              manifest_identity_fields: { vision_lineage: manifestIdentityFieldDigest('continue') },
-            }],
-            { vision_lineage: 'reset' },   // 停机期补写 reset
-          ),
-        },
-        NO_AUTHORITY,
-        { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: 'resume' },
-      );
-      // T2 5a-1：同源判据仍然成立（in_flight=false 因出生是 continue），只是裁决
-      // 从 terminal 改 recover——重建不授予任何权限，补写者依旧一无所获。
-      assertEq(midRunDecision.kind, 'recover', '5a-1 后失配裁决恒 recover（同源判据不变）');
-    },
-  },
-  {
     name: 'T3 后继 manifest 继承源 run 的完整启动契约与去重指纹，不继承阶段完成态',
     run: () => tmpProject((root) => {
       const source = buildGoalManifestFromInput(baseManifestInput({
         run_id: '20260807T000000Z-source',
         end_phase: 'ut',
-        vision_lineage: 'reset',
         requirement: 'source requirement',
         adapter: 'source-adapter',
         chain_override: ['spec', 'coding', 'review', 'ut'],
@@ -1319,18 +732,6 @@ const manifestCompatCases: TestCase[] = [
         assertEq(JSON.stringify(successor[key]), JSON.stringify(source[key]), `后继不得丢失 ${key}`);
       }
       assertEq(successor.successor_of, source.run_id, '后继须绑定源 run');
-      assert(!Object.prototype.hasOwnProperty.call(successor, 'vision_lineage'),
-        '后继不得继承已消费的一次性 vision_lineage 出生指令');
-      assertEq(resolveVisionLineage(successor), 'continue', '后继默认继续源 lineage，不得重复 reset');
-      const explicitReset = buildGoalManifestFromInput(baseManifestInput({
-        run_id: '20260807T000002Z-successor-reset',
-        vision_lineage: 'reset',
-      }), { projectRoot: root });
-      const resetSuccessor = inheritSuccessorManifest(explicitReset, source, { round: [], drift: [] });
-      assert(Object.prototype.hasOwnProperty.call(resetSuccessor, 'vision_lineage'),
-        'fresh successor 显式声明 reset 时必须保留该出生字段');
-      assertEq(resolveVisionLineage(resetSuccessor), 'reset',
-        'fresh successor 显式 reset 不得被继承清理逻辑静默吞掉');
       assertEq(JSON.stringify(successor.inherited_round_fingerprints), JSON.stringify(['round-a']), 'round 指纹须去重');
       assertEq(JSON.stringify(successor.inherited_drift_fingerprints), JSON.stringify(['drift-a', 'drift-b']), 'drift 指纹须去重');
       const identity = computeManifestIdentityFields(successor);
@@ -1390,7 +791,7 @@ const projectionCases: TestCase[] = [
     name: 'T1⑤：敏感集合由注册表派生（recoverable 非 terminal）；等价家族兜底=生产点计算逐字段一致',
     run: () => {
       // 集合派生正确性（不手写第二份清单的机器面）
-      for (const id of ['unauthorized_source_mutation', 'vision_feature_head_mismatch',
+      for (const id of ['unauthorized_source_mutation',
         'goal_post_review_source_mutation_unresolved', 'pass_snapshot_unavailable',
         'pass_snapshot_restore_refused', 'pass_snapshot_journal_unverifiable',
         'closure_finalization_failed', 'goal_review_closure_baseline_unavailable']) {
@@ -1609,24 +1010,6 @@ const projectionCases: TestCase[] = [
     },
   },
   {
-    name: 't5③ lineage 断裂展示：报告须显示连续性已撤销，且全文无「连续性保持」口径',
-    run: () => {
-      const md = renderLineageDiscontinuitySection([
-        {
-          type: 'lineage_discontinuity', reason: '账本与 feature head 失配',
-          old_head_sha256: 'aaa', old_generation: 23, continuity_claim: 'revoked',
-        },
-        { type: 'lineage_reset_committed', new_head_sha256: 'bbb', new_generation: 1 },
-      ]).join('\n');
-      assert(md.includes('历史连续性'), '须点明连续性话题');
-      assert(/撤销|revoked/.test(md), `须明示已撤销：${md}`);
-      assert(md.includes('aaa') && md.includes('bbb'), '须含新旧 hash 供核对');
-      assert(!/连续性得以保持|连续性保持/.test(md), '**绝不得**出现连续性保持口径');
-      // 无断裂事件时不产生该节（不给未 reset 的 run 平白加噪音）
-      assert(renderLineageDiscontinuitySection([], 'CHAIN_SLICE_COMPLETED').length === 0, '无断裂应无该节');
-    },
-  },
-  {
     name: 'reducer 映射订正：可 --resume 的 run_end status **不得**判 TERMINAL',
     run: () => {
       // codex 实锤：runner 的封卷守卫只对 CHAIN_SLICE_COMPLETED / COMPLETED 拒绝启动面，
@@ -1706,51 +1089,6 @@ const projectionCases: TestCase[] = [
         /run_wait_kind === 'external'/.test(src),
         '等人与等环境必须给出不同 next_action',
       );
-    },
-  },
-  {
-    name: 't5③ lineage 声明**逐级递进**：未提交 / 未走完全链时不得宣称「已全链验证」',
-    run: () => {
-      const discontinuity = {
-        type: 'lineage_discontinuity', reason: 'r', old_head_sha256: 'aaa', continuity_claim: 'revoked',
-      };
-      // ① 只有断裂：不得说已建立、更不得说已全链验证
-      const onlyBroken = renderLineageDiscontinuitySection([discontinuity]).join('\n');
-      assert(onlyBroken.includes('已撤销'), '须声明连续性已撤销');
-      assert(onlyBroken.includes('尚未建立'), `reset 未提交却宣称已建立：${onlyBroken}`);
-      assert(!/已全链验证(?!」)/.test(onlyBroken.replace(/尚不能声称「已全链验证」/g, '')),
-        `未走完全链却宣称已全链验证：${onlyBroken}`);
-      // ② 已提交但 run 没走完：可说已建立，仍不得说已全链验证
-      const committedOnly = renderLineageDiscontinuitySection([
-        discontinuity, { type: 'lineage_reset_committed', new_head_sha256: 'bbb', new_generation: 1 },
-        { type: 'run_end', status: 'HALTED' },
-      ]).join('\n');
-      assert(committedOnly.includes('已建立'), '已提交应可声明已建立');
-      assert(committedOnly.includes('尚不能声称'), `HALTED 收尾仍宣称全链验证：${committedOnly}`);
-      // ③ 已提交 + 完成终态：才可声明已全链验证。**终态由调用方传 report.status**——
-      // 生产顺序是 writeGoalReport 先于 emit(run_end)，报告生成时事件流里还没有本次终态。
-      const committedEvents = [
-        discontinuity,
-        { type: 'lineage_reset_committed', new_head_sha256: 'bbb', new_generation: 1 },
-      ];
-      const full = renderLineageDiscontinuitySection(committedEvents, 'CHAIN_SLICE_COMPLETED').join('\n');
-      assert(full.includes('已全链验证'), '完成终态应可声明全链验证');
-      assert(!full.includes('尚不能声称'), '完成终态不应再说尚不能声称');
-      // 反向钉死生产时序陷阱：**光靠事件里的 run_end 不算数**（那时它还没落盘）。
-      // 若哪天有人把判据改回扫事件，本断言会红。
-      const eventsOnly = renderLineageDiscontinuitySection(
-        [...committedEvents, { type: 'run_end', status: 'CHAIN_SLICE_COMPLETED' }],
-        undefined,
-      ).join('\n');
-      assert(
-        eventsOnly.includes('尚不能声称'),
-        '判据回退到扫 events 了——生产时序下报告生成早于 run_end 落盘，' +
-        '每个成功 run 都会被写成「尚不能声称已全链验证」',
-      );
-      // 三种情形都不得出现「连续性保持」
-      for (const md of [onlyBroken, committedOnly, full]) {
-        assert(!/连续性得以保持|连续性保持/.test(md), '绝不得出现连续性保持口径');
-      }
     },
   },
   {
@@ -1963,7 +1301,7 @@ const projectionCases: TestCase[] = [
       // codex 复核 P2：resume 携该参数必须**显式拒绝**，不得静默忽略
       assert(
         /argv\.resume && typeof argv\['requirement-file'\][\s\S]{0,300}?process\.exit\(2\)/.test(runner),
-        'resume 携 --requirement-file 须 fail-closed（同 --vision-lineage 的禁止静默忽略原则）',
+        'resume 携 --requirement-file 须 fail-closed（禁止静默忽略显式输入）',
       );
       // codex 复核 P2：manifest override 校验必须在 requirement 解析之后，
       // 否则 `--manifest + --requirement-file` 未带 override 时内容被静默忽略

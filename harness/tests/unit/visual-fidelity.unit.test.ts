@@ -208,11 +208,8 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
-  // 三轮 review P0-1/P0-2（收编二轮 P0-1）：vl_multimodal 终签全链——runner 事件锚回执
-  // （精确 invoke/adapter 绑定 + refs 逐张 hash 核对）+ attestation=verified + policy=visual。
-  // 六形态：全链 PASS / 旧 attempt 拒 / endsWith 后缀旁路拒 / unverified_clean 拒 /
-  // 无 runner 事件锚（agent 伪造回执）拒 / 空 refs 回执（不覆盖当前参考图）拒。
-  run('ui_spec_vl_sign_full_chain_and_five_bypass_rejections', () => {
+  // vl_multimodal 只绑定当前 capability/reference receipts；旧 attestation/policy 文件不参与。
+  run('ui_spec_vl_sign_current_receipts_and_legacy_ledgers_ignored', () => {
     const root = mkProject();
     const prevRunId = process.env.MAISON_GOAL_RUN_ID;
     const prevAttempt = process.env.MAISON_GOAL_ATTEMPT;
@@ -237,7 +234,6 @@ export function runAll(): UnitCaseResult[] {
         'tokens: {}',
         'assets: []',
       ].join('\n'));
-      const uiSpecHash = evc.sha256File(uiSpecAbs)!;
       // authoritative ref 图 + spec.md（chain 从磁盘 loadSpecMarkdown 重算 refs）
       const refAbs = path.join(featureAbs, 'spec', 'reference', 'home.png');
       fs.mkdirSync(path.dirname(refAbs), { recursive: true });
@@ -250,13 +246,6 @@ export function runAll(): UnitCaseResult[] {
       const runDir = path.join(featureAbs, 'goal-runs', 'runx');
       fs.mkdirSync(runDir, { recursive: true });
       fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify({ adapter: 'claude', run_id: 'runx' }), 'utf-8');
-      // 四轮 P1：binding 验真需要 framework 指纹面（package.json + spec 阶段 rules）；
-      // workflows 目录=consumer 布局判型依据（inferRepoLayout 据此解析 frameworkRoot）
-      fs.mkdirSync(path.join(root, 'framework', 'workflows'), { recursive: true });
-      fs.mkdirSync(path.join(root, 'framework', 'specs', 'phase-rules'), { recursive: true });
-      fs.writeFileSync(path.join(root, 'framework', 'package.json'), JSON.stringify({ version: '0.0.0-test' }), 'utf-8');
-      fs.writeFileSync(path.join(root, 'framework', 'specs', 'phase-rules', 'spec-rules.yaml'), 'rules: test\n', 'utf-8');
-
       const refsPath = path.join(featureAbs, 'vision', 'spec-refs-receipt.json');
       const writeChain = (opts: {
         invoke?: string;
@@ -288,65 +277,45 @@ export function runAll(): UnitCaseResult[] {
           JSON.stringify({ type: 'spec_refs_receipt_produced', invoke_id: invokeId, status: 'complete', receipt_sha256: refsSha }),
         ].join('\n') + '\n', 'utf-8');
       };
-      const attest = (verdict: 'verified' | 'unverified', reasons: string[], invokeOverride?: string): void => {
-        // 四轮 P1：verified 行 binding 必填且须与当前一致（同源计算——resolver 验的就是这套值）
-        const binding =
-          verdict === 'verified'
-            ? { run_id: 'runx', invoke_id: invokeOverride ?? 'spec-i2', ...evc.computeCurrentBindingContext(root, 'bank-card') }
-            : undefined;
-        evc.appendArtifactAttestation(root, 'bank-card', {
-          artifact_path: 'doc/features/bank-card/spec/ui-spec.yaml', artifact_hash: uiSpecHash,
-          verdict, reasons, source: 'test',
-          ...(binding ? { binding } : {}),
-        });
-      };
       const gate = (): { status: string; details?: string } => {
         const r = checkUiSpecFidelityGate(baseCtx(root), specMd);
         return r.find((x: { id: string }) => x.id === 'ui_spec_fidelity_gate') as { status: string; details?: string };
       };
 
-      // ① unverified_clean attestation → 拒（P0-1 核心：clean≠verified 不可终签）
+      // ① 当前调用两份回执 + runner 事件锚完整 → PASS
       writeChain();
-      attest('unverified', ['counterevidence_clean_no_provenance']);
       const h1 = gate();
-      if (h1.status !== 'FAIL' || !/unverified/.test(h1.details ?? '')) {
-        throw new Error(`unverified_clean 应拒签：${(h1.details ?? '').slice(0, 400)}`);
-      }
-      // ② verified + 全链 → PASS
-      attest('verified', ['counterevidence_clean', 'provenance_mapped', 'signing_chain_bound']);
-      const h2 = gate();
-      if (h2.status !== 'PASS') throw new Error(`全链应通过：${(h2.details ?? '').slice(0, 500)}`);
-      // ③ 旧 attempt（spec-i1）→ 拒
+      if (h1.status !== 'PASS') throw new Error(`当前回执链应通过：${(h1.details ?? '').slice(0, 500)}`);
+      // ② 旧 attempt（spec-i1）→ 拒
       writeChain({ invoke: 'spec-i1' });
+      const h2 = gate();
+      if (h2.status !== 'FAIL' || !/属旧 invocation/.test(h2.details ?? '')) {
+        throw new Error(`旧 attempt 应拒：${(h2.details ?? '').slice(0, 400)}`);
+      }
+      // ③ endsWith 后缀旁路（coding-i2）→ 拒（精确等值）
+      writeChain({ invoke: 'coding-i2' });
       const h3 = gate();
       if (h3.status !== 'FAIL' || !/属旧 invocation/.test(h3.details ?? '')) {
-        throw new Error(`旧 attempt 应拒：${(h3.details ?? '').slice(0, 400)}`);
+        throw new Error(`coding-i2 后缀旁路应拒：${(h3.details ?? '').slice(0, 400)}`);
       }
-      // ④ endsWith 后缀旁路（coding-i2）→ 拒（三轮 P1：精确等值）
-      writeChain({ invoke: 'coding-i2' });
-      const h4 = gate();
-      if (h4.status !== 'FAIL' || !/属旧 invocation/.test(h4.details ?? '')) {
-        throw new Error(`coding-i2 后缀旁路应拒：${(h4.details ?? '').slice(0, 400)}`);
-      }
-      // ⑤ 无 runner 事件锚（agent 伪造回执文件）→ 拒
+      // ④ 无 runner 事件锚（agent 伪造回执文件）→ 拒
       writeChain({ skipEvents: true });
-      const h5 = gate();
-      if (h5.status !== 'FAIL' || !/(runner 事件锚|events 不可读)/.test(h5.details ?? '')) {
-        throw new Error(`无事件锚应拒：${(h5.details ?? '').slice(0, 400)}`);
+      const h4 = gate();
+      if (h4.status !== 'FAIL' || !/(runner 事件锚|events 不可读)/.test(h4.details ?? '')) {
+        throw new Error(`无事件锚应拒：${(h4.details ?? '').slice(0, 400)}`);
       }
-      // ⑥ 空 refs 回执（不覆盖当前 authoritative refs）→ 拒
+      // ⑤ 空 refs 回执（不覆盖当前 authoritative refs）→ 拒
       writeChain({ emptyRefs: true });
-      const h6 = gate();
-      if (h6.status !== 'FAIL' || !/未覆盖当前参考图/.test(h6.details ?? '')) {
-        throw new Error(`空 refs 回执应拒：${(h6.details ?? '').slice(0, 400)}`);
+      const h5 = gate();
+      if (h5.status !== 'FAIL' || !/未覆盖当前参考图/.test(h5.details ?? '')) {
+        throw new Error(`空 refs 回执应拒：${(h5.details ?? '').slice(0, 400)}`);
       }
-      // ⑦（五轮 P1）跨 invocation 铸造的 verified（binding invoke=spec-i1）→ 终签拒
+      // ⑥ 遗留账本即使损坏/声明 blind_safe，也不得改变当前终签结果。
       writeChain();
-      attest('verified', ['counterevidence_clean', 'provenance_mapped', 'signing_chain_bound'], 'spec-i1');
-      const h7 = gate();
-      if (h7.status !== 'FAIL' || !/签发身份与当前 invocation 不一致/.test(h7.details ?? '')) {
-        throw new Error(`跨 invocation verified 应拒：${(h7.details ?? '').slice(0, 400)}`);
-      }
+      fs.writeFileSync(path.join(featureAbs, 'vision', 'artifact-attestations.jsonl'), '{legacy-broken\n', 'utf-8');
+      fs.writeFileSync(path.join(featureAbs, 'vision', 'policy-downgrades.jsonl'), '{"mode":"blind_safe"}\n', 'utf-8');
+      const h6 = gate();
+      if (h6.status !== 'PASS') throw new Error(`遗留账本不得致盲：${(h6.details ?? '').slice(0, 500)}`);
     } finally {
       if (prevRunId !== undefined) process.env.MAISON_GOAL_RUN_ID = prevRunId; else delete process.env.MAISON_GOAL_RUN_ID;
       if (prevAttempt !== undefined) process.env.MAISON_GOAL_ATTEMPT = prevAttempt; else delete process.env.MAISON_GOAL_ATTEMPT;
@@ -3927,18 +3896,11 @@ export function runAll(): UnitCaseResult[] {
     return { p1, hit2: r2[0] as { details?: string; failure_kind?: string; structured?: VisualDiffStructuredPayload } };
   };
 
-  run('t5: 钳制成因分家——能力实测有视觉时须说"策略性按盲处理"，不得说"无视觉能力"', () => {
+  run('t5: 落盘 clamp 与当前能力不一致时要求刷新，不制造策略盲解释', () => {
     const root = mkProject();
-    const prevHeadless = process.env.MAISON_GOAL_HEADLESS;
     try {
-      process.env.MAISON_GOAL_HEADLESS = '1';
-      const reqDir = path.join(root, 'doc', 'features', '原始需求');
-      fs.mkdirSync(reqDir, { recursive: true });
-      fs.writeFileSync(path.join(reqDir, '原始需求.md'), '本需求页面布局完全参考 1.首页-无卡.jpg，数据全部 mock。');
       const specMd = [
-        '```yaml', 'ui_change: new_or_changed', 'fidelity_target: pixel_1to1',
-        'visual_handoff:', '  kind: screenshot_pack', '  authoritative_refs:',
-        '    - id: home', '      path: doc/features/原始需求/1.png', '```',
+        '```yaml', 'ui_change: new_or_changed', 'fidelity_target: pixel_1to1', '```',
       ].join('\n');
       const ctx = baseCtx(root, {
         fidelityTarget: 'semantic_layout',
@@ -3946,67 +3908,18 @@ export function runAll(): UnitCaseResult[] {
         fidelityClamped: true,
         fidelityClampReason: 'no_vision_ocr_available',
       });
-      // 事故形态：金丝雀实测**有**视觉（tool_read），却因证据缺口走盲档。
-      // 旧文案一句"当前宿主无视觉能力"把策略问题说成能力问题，用户与复盘者都据此认定
-      // "这台机器看不见"，两天没人去补参考图（真正的解）。
       writeCapabilitySnapshot(root, 'bank-card', {
         decision_id: 'd1',
         execution_identity: 'phase:bank-card:spec',
-        vision: { verdict: true, source: 'run_probed' },
+        vision: { verdict: true, source: 'probe:tool_read' },
         ocr: { verdict: true, source: 'profile' },
       });
-      const declared = checkFidelityGovernance(ctx, specMd).find(x => x.id === 'fidelity_target_declared');
-      const details = String(declared?.details ?? '');
-      // 「能力钳制」四字是下游 readiness signal 的消费契约，必须保留
-      if (!details.includes('能力钳制')) throw new Error(`消费方契约词不得丢：${details}`);
-      if (/无视觉能力/.test(details)) {
-        throw new Error(`能力实测有视觉时不得声称"无视觉能力"（策略盲≠能力盲）：${details}`);
-      }
-      if (!/策略性按盲处理/.test(details)) throw new Error(`须点明是策略降级：${details}`);
-      if (!/换模型无助于此/.test(details)) throw new Error(`须给出正确处方（补证据而非换模型）：${details}`);
-
-      // ---- review 纠正：unknown ≠ none，三分而非两分 ----
-      // canary probed_via=interactive 不绑 run（canaryAdmissibleForRun），本 check 不传 runId
-      // 也可采信——用真实 canary 通道造能力轴，不 stub。
-      const writeCanary = (verdict: string): void => {
-        fs.writeFileSync(path.join(root, 'framework.local.json'), JSON.stringify({
-          schema_version: '1.0',
-          agent_adapter: 'cursor',
-          vision: {
-            canary: {
-              adapter: 'cursor', verdict, probed_at: new Date().toISOString(),
-              probed_via: 'interactive', probe_version: VISION_CANARY_PROBE_VERSION,
-            },
-          },
-        }), 'utf-8');
-        clearFrameworkConfigCache();
-      };
-
-      // ① unknown（探针未给出结论）：保守降级，但**不得**说成"无视觉能力"
-      writeCanary('ocr_capable');
-      const unk = String(checkFidelityGovernance(ctx, specMd)
+      const details = String(checkFidelityGovernance(ctx, specMd)
         .find(x => x.id === 'fidelity_target_declared')?.details ?? '');
-      if (!unk.includes('能力钳制')) throw new Error(`消费方契约词不得丢：${unk}`);
-      if (/无视觉能力/.test(unk)) {
-        throw new Error(`unknown 只是尚未证实，不等于 none，不得声称"无视觉能力"：${unk}`);
-      }
-      if (!/尚未证实/.test(unk)) throw new Error(`unknown 须说明是"尚未证实"：${unk}`);
-      // unknown 也不得挪用"策略盲"结论——那要以"能力实测有视觉"为前提，此刻并没有
-      if (/策略性按盲处理/.test(unk)) {
-        throw new Error(`unknown 尚无能力结论，不得断言是策略盲：${unk}`);
-      }
-
-      // ② none（实测确认无视觉）：这才是真·能力盲，保留旧措辞与"换模型"处方
-      writeCanary('none');
-      const noneDetails = String(checkFidelityGovernance(ctx, specMd)
-        .find(x => x.id === 'fidelity_target_declared')?.details ?? '');
-      if (!/无视觉能力/.test(noneDetails)) {
-        throw new Error(`能力实测 none 时必须如实说无视觉能力：${noneDetails}`);
-      }
-      if (!/能力实测=none/.test(noneDetails)) throw new Error(`须标注判据来源：${noneDetails}`);
+      if (!/与落盘 clamp 不一致/.test(details)) throw new Error(`须指出快照不一致：${details}`);
+      if (!/重新运行 initializer/.test(details)) throw new Error(`须给出刷新动作：${details}`);
+      if (/策略性按盲处理|blind_safe/.test(details)) throw new Error(`不得复活策略盲解释：${details}`);
     } finally {
-      if (prevHeadless === undefined) delete process.env.MAISON_GOAL_HEADLESS;
-      else process.env.MAISON_GOAL_HEADLESS = prevHeadless;
       clearFrameworkConfigCache();
       fs.rmSync(root, { recursive: true, force: true });
     }

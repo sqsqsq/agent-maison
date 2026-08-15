@@ -130,7 +130,7 @@ const cases: TestCase[] = [
     name: '**反重建等价性**：固定 beacon+disposition+预算，任意替换 halt_reason，决策逐字不变',
     run: () => {
       const reasons = [
-        'testing_write_violation', 'vision_ledger_tampered', 'unauthorized_source_mutation',
+        'testing_write_violation', 'unauthorized_source_mutation',
         'device_not_ready', 'framework_bug', 'brand_new_unregistered_reason',
       ];
       for (const d of ['RESUME_READY', 'RECOVERY_PENDING', 'WAITING', 'TERMINAL'] as const) {

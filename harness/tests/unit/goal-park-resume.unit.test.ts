@@ -60,13 +60,11 @@ export function runAll(): UnitCaseResult[] {
   const host = setupMinimalHost('recovery-park', 'hmos-app');
   let runId: string | null = null;
   try {
-    run('恢复场景/park：fresh+reset 消费 → 四阶段 PASS → ut/testing 设备停放 PARTIAL（T4#3 前提全齐）', () => {
+    run('恢复场景/park：四阶段 PASS → ut/testing 设备停放 PARTIAL', () => {
       const out = runDriver('device_park', 'recovery-park', host);
       const detail = JSON.stringify({ ...out, eventTypes: undefined });
       assert(out.error === null, `park 不应抛异常：${detail}`);
       assert(out.exitCode === 2, `PARTIAL 停放应 exit 2：${detail}`);
-      assert(out.eventTypes.includes('lineage_reset_committed'),
-        `出生 reset 应在启动期消费完毕（T4#3 的"reset 已消费"前提）：${detail}`);
       assert(
         ['spec', 'plan', 'coding', 'review', 'ut', 'testing']
           .every(p => out.phaseStartsThisCall.includes(p)),

@@ -70,19 +70,6 @@ export interface GoalManifest {
   budget: Required<GoalBudget>;
   dependency_policy: Required<DependencyPolicy>;
   unattended: UnattendedContract;
-  /**
-   * plan a5f9c3e2 t3①：vision lineage 处置意图。**是 recovery intent，不是 authority**
-   * ——CLI 旗标可被模型拼出、无 key 部署下 manifest 整链在 agent 可写面，故本字段
-   * 绝不进 AuthorityFacts.grants。其安全性由「仅 fresh 可选 + 断裂显式记事件 +
-   * 禁止声称历史连续性 + 全链重验」保证：危险的不是 reset 本身，是静默的 reset。
-   *
-   * 唯一入口 CLI `--vision-lineage=reset`；缺省 continue；**resume 显式携带该旗标**直接拒绝
-   * （出生 manifest 里的 reset 不再据此拒绝——e5d8a2c4 T1③）；运行中不得自动升级为 reset。
-   *
-   * **旧 manifest 兼容**：文档中无该键时行为按 `continue`，且身份字段集**不注入该键**
-   * （见 computeManifestIdentityFields）——否则既有 run resume 会多出一个身份字段而误判漂移。
-   */
-  vision_lineage?: 'continue' | 'reset';
   run_id: string;
   report_dir: string;
   created_at: string;
@@ -155,13 +142,7 @@ export function computeManifestIdentityFields(manifest: GoalManifest): Record<st
     unattended: manifest.unattended,
     pre_authorized_mutations: manifest.pre_authorized_mutations ?? null,
   };
-  // plan a5f9c3e2 t3①：vision_lineage **仅在文档中实际存在该键时**入身份字段集。
-  // 凭空给旧 manifest 补默认值会让既有 run resume 多出一个字段 → 误判漂移。
-  // 键在场即入哈希，故停机期间被补写仍会被既有 drift 检测发现（安全性不打折）。
-  if (Object.prototype.hasOwnProperty.call(manifest, 'vision_lineage')) {
-    fields.vision_lineage = manifest.vision_lineage ?? null;
-  }
-  // plan d7f3a9c4 t2：adapter_model_pin 按 vision_lineage 同款条件入集——键在场即在
+  // adapter_model_pin 条件入集——键在场即在
   // 哈希，旧 manifest 无键不受影响（凭空补默认会让既有 run resume 多出字段→误判漂移）。
   if (Object.prototype.hasOwnProperty.call(manifest, 'adapter_model_pin')) {
     fields.adapter_model_pin = manifest.adapter_model_pin ?? null;
@@ -185,10 +166,7 @@ export function computeManifestIdentityFields(manifest: GoalManifest): Record<st
  * **不是原值**。任何想问"出生时这个字段是不是某个值"的代码，都必须拿本函数算出期望
  * 指纹再比，**不能拿原值去比**——那样恒不相等，且失败得毫无声息。
  *
- * 这不是假设：`resolveBirthVisionLineage` 初版正是拿 `=== 'reset'` 去比哈希，生产上
- * 恒 false（＝出生 reset 续做永不触发），却因为测试夹具**手写了原值**而全绿，
- * 穿过了四轮 review。对应本仓硬学习"消费方须按真实 writer 的 schema 造夹具"。
- * 抽成同一个函数即消除了"两处各写一遍哈希口径"的漂移面。
+   * 消费方必须使用 writer 的同一摘要口径，不能拿原值与指纹直接比较。
  */
 export function manifestIdentityFieldDigest(value: unknown): string {
   return crypto.createHash('sha256').update(stableJson(value), 'utf-8').digest('hex').slice(0, 16);
@@ -527,13 +505,6 @@ export function buildGoalManifestFromInput(
     typeof input.fidelity_receipt === 'string' && input.fidelity_receipt.trim()
       ? input.fidelity_receipt.trim().replace(/\\/g, '/')
       : undefined;
-  // t3①：仅在输入显式给出该键时写入（缺省不落键——旧 manifest 兼容与身份字段集同源约束）
-  const rawLineage = input.vision_lineage;
-  if (rawLineage !== undefined && rawLineage !== 'continue' && rawLineage !== 'reset') {
-    throw new Error(
-      `[goal-manifest] vision_lineage 值非法（${String(rawLineage)}）——须 continue|reset`,
-    );
-  }
   // plan d7f3a9c4 t1：---manifest 文件可携带 adapter_model_pin（fresh 由
   // resolveFinalModelPin 落键；此处仅保真解析 + shape 校验）
   const adapterModelPin = normalizeAdapterModelPin(input.adapter_model_pin);
@@ -541,7 +512,6 @@ export function buildGoalManifestFromInput(
   return {
     ...(rawFidelity ? { fidelity: rawFidelity as GoalManifest['fidelity'] } : {}),
     ...(rawFidelityReceipt ? { fidelity_receipt: rawFidelityReceipt } : {}),
-    ...(rawLineage !== undefined ? { vision_lineage: rawLineage } : {}),
     ...(adapterModelPin ? { adapter_model_pin: adapterModelPin } : {}),
     schema_version: '1.0',
     start_phase: normalizePhase(input.start_phase, 'spec'),
@@ -585,15 +555,8 @@ export function inheritSuccessorManifest(
   // supersede 链的合同 SSOT。只替换新 run 的身份与明确要求的新起点；其余字段（end/
   // requirement/adapter/chain/fidelity/dependency/预授权等）全部原样继承。阶段完成态
   // 不在 manifest 中，故不会跨 run 复制；预算/无人值守深拷贝只是避免调用方后续改写源对象。
-  const freshHasVisionLineage = Object.prototype.hasOwnProperty.call(manifest, 'vision_lineage');
   const inherited = JSON.parse(JSON.stringify(source)) as GoalManifest;
-  // `vision_lineage` from source is a one-shot birth instruction. The source
-  // run has already consumed it; carrying it into a fresh successor would
-  // repeat the reset/quarantine path. A fresh successor may explicitly issue
-  // its own birth instruction, which is restored below.
-  delete inherited.vision_lineage;
-  // plan d7f3a9c4 t2：adapter_model_pin **与 vision_lineage 语义相反**——是出生持续
-  // 的模型钉，successor 默认继承源 run pin（覆盖继承值须显式 --adapter-model 出生
+  // adapter_model_pin 是出生持续的模型钉，successor 默认继承源 run pin（覆盖继承值须显式 --adapter-model 出生
   // 输入，由 resolveFinalModelPin 裁决）。故此处**不得剥离**，随 ...inherited 原样继承。
   // successor 换 adapter 时禁止把旧 adapter 的模型字符串回放给新 adapter——继承 pin
   // 的 adapter 若与最终 effective adapter 不一致，resolveFinalModelPin 会 BLOCKER。
@@ -605,7 +568,6 @@ export function inheritSuccessorManifest(
     run_id: manifest.run_id,
     report_dir: manifest.report_dir,
     created_at: manifest.created_at,
-    ...(freshHasVisionLineage ? { vision_lineage: manifest.vision_lineage } : {}),
     successor_of: source.run_id,
     inherited_round_fingerprints: unique([...sourceRound, ...fingerprints.round]),
     inherited_drift_fingerprints: unique([...sourceDrift, ...fingerprints.drift]),
@@ -622,38 +584,6 @@ export function inheritSuccessorManifest(
  * 用户手写 --manifest 的 3600 是显式选择，须按"扁平覆盖所有 phase"契约尊重，不可误删。
  */
 const LEGACY_FLAT_TIMEOUT_SECONDS = 3600;
-/**
- * plan a5f9c3e2 t3①：lineage 意图解析（唯一读取点）。缺键 → `continue`。
- * 注意：**读到 `reset` 只表示「已声明放弃历史连续性」这一 recovery intent**，
- * 不表示任何授权；调用方仍须按 fresh-only + 断裂记事件 + 禁连续性主张 + 全链重验落地。
- */
-export function resolveVisionLineage(manifest: Pick<GoalManifest, 'vision_lineage'>): 'continue' | 'reset' {
-  return manifest.vision_lineage === 'reset' ? 'reset' : 'continue';
-}
-
-/**
- * 【已删除 · e5d8a2c4 T1③，2026-08-05】`visionLineageResumeIssue()`
- *
- * 它按 manifest 的**出生字段**在启动期硬拒 resume，分不清两件完全不同的事：
- * ① 出生时声明 reset、**已在启动时消费完毕**（quarantine + lineage_discontinuity +
- *    新链三件套齐备后 `lineage_reset_committed`），其后阶段全 PASS；
- * ② 跑到一半往 manifest 里塞 reset，想把已建立的链一笔勾销。
- * manifest 是 run 的出生记录，reset 键**永远留在里面**，于是 ① 被 ② 的防线连坐——
- * 任何声明过 reset 的 run 遇设备锁屏/超时/崩溃即**结构性不可 resume**
- * （`--force-resume` 也无效）。2026-08-05 宿主实锤：PARTIAL 停放后框架自己的停放话术
- * 让人 resume，自己的启动门拒绝 resume。
- *
- * 删除而非重写，因为它想防的 ② **已被两道现成的门覆盖**：
- * · `computeManifestIdentityFields` 把 `vision_lineage` 计入 manifest 身份字段
- *   （停机期被补写会被 events 出生基线的 drift 检测发现——T2 5a 收口后基线由 events
- *   承载，MAC 已整体退役）；
- * · 执行判据只认**出生冻结值**（resolveBirthVisionLineage——中途补写拿不到出生值；
- *   decide 对失配本身恒 recover，见 5a-1，不再有 terminal 分支）。
- * 一件事三道门、其中一道分不清合法与非法——收敛回前两道。
- * 命令行 `--vision-lineage` **显式旗标**在 resume 上的拒绝**保留**（goal-runner.ts）——
- * 那才是真的"中途升级"；出生 manifest 里的 reset 不再据此拒绝。
- */
-
 export function applyLegacyTimeoutMigration(manifest: GoalManifest): GoalManifest {
   const u = manifest.unattended;
   if (u && u.timeout_seconds === LEGACY_FLAT_TIMEOUT_SECONDS && !u.phase_timeout_seconds) {

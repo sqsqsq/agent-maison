@@ -101,16 +101,6 @@ export interface IncidentFacts {
   backtrack_budget_remaining?: number;
   /** 整轮 actionable 集合指纹是否与上次回退完全相同（回退震荡）。 */
   round_fingerprint_repeated?: boolean;
-  /** manifest 声明 vision_lineage=reset（**recovery intent，不是授权**）。 */
-  lineage_reset_requested?: boolean;
-  /**
-   * e5d8a2c4 T1③(c)：出生已声明 reset 且尚无 `lineage_reset_committed`——
-   * **同一笔已获准事务未完成**，与"resume 中途升级 reset"是两回事（后者被出生冻结
-   * 判据挡在事实之外：补写拿不到出生值，另有 events 出生基线的身份 drift 检测兜底；
-   * decide 对失配本身恒 recover，见 5a-1）。
-   * 由调用方从「出生冻结的 manifest + events」派生；覆盖 discontinuity 落盘前后的崩溃窗。
-   */
-  lineage_reset_in_flight?: boolean;
   /** 相关文件（诊断用；不参与裁决）。 */
   files?: string[];
 }
@@ -191,10 +181,7 @@ export interface IncidentSpec {
   suspected_misclassified?: boolean;
 }
 
-export type RecoverAction = 'backtrack_to_coding' | 'reset_lineage' | 'retry_transaction';
-
-/** vision reset 的 recovery intent id（**不是** grant action——见文件头红线）。 */
-export const LINEAGE_RESET_INTENT = 'vision_lineage_reset';
+export type RecoverAction = 'backtrack_to_coding' | 'retry_transaction';
 
 /**
  * canonical incident 注册表（唯一产地）。
@@ -204,8 +191,6 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   // --- 本 plan 打通的两条恢复路 -------------------------------------------
   /** ut/testing 期产品源码漂移：保守恢复=失效旧 coding closure 及其后阶段、回退重验。 */
   unauthorized_source_mutation: { class: 'recoverable', recover_action: 'backtrack_to_coding' },
-  /** 跨 run vision 账本与 feature head 失配（启动期 fail-closed 家族的入口）。 */
-  vision_feature_head_mismatch: { class: 'recoverable', recover_action: 'reset_lineage' },
 
   // --- 结构上无法在本 run 继续 ---------------------------------------------
   authorized_mutation_requires_full_chain: { class: 'operator', structurally_terminal: true },
@@ -213,7 +198,6 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   backtrack_fingerprint_repeat: { class: 'recoverable', structurally_terminal: true },
   backtrack_target_absent: { class: 'recoverable', structurally_terminal: true },
   testing_write_violation: { class: 'operator', structurally_terminal: true },
-  vision_ledger_tampered: { class: 'operator', structurally_terminal: true },
   visual_ledger_integrity: { class: 'operator', structurally_terminal: true },
 
   // --- 需要人的决定（可问则问，不可问则停放） -------------------------------
@@ -422,8 +406,7 @@ const NEUTRAL_PROJECTION_CONTEXT: ExecutionContext = {
 
 /**
  * **结构敏感 incident**（e5d8a2c4 T1⑤）：`decide()` 的输出依赖 incident id **之外**
- * 的结构 facts（backtrackBlocked 读回退预算/截断链/指纹；reset_lineage 读
- * lineage_reset_requested/in_flight）。这类事件的投影**必须在事故生产点**用完整
+ * 的结构 facts（backtrackBlocked 读回退预算/截断链/指纹）。这类事件的投影**必须在事故生产点**用完整
  * facts 计算——写盘层兜底只有 halt_reason，会把 TERMINAL 化妆成 RECOVERY_PENDING
  * （d6b1a8e3 t5④ 的原始反例）。集合由注册表**派生**，不手写第二份清单：
  * `class==='recoverable' && !structurally_terminal`（structurally_terminal 在
@@ -539,32 +522,6 @@ export function decide(
       const action = spec.recover_action;
       if (!action) {
         return { kind: 'waiting', wait_kind: 'human', reason: `${facts.incident}：可恢复但未声明恢复动作` };
-      }
-      if (action === 'reset_lineage') {
-        // reset 是 **recovery intent 不是 authority**：不查 grants。
-        //
-        // 【T2 5a-1（2026-08-07）：invocation×3 行为表——三条路径统一为 recover】
-        // 此前三分（resume→terminal :495 / fresh 未声明→terminal :501 / fresh 声明→
-        // recover :507），前两条 terminal 正是宿主 run1"第一死"（tamper+裸 throw）与
-        // reset 半途崩死路的来源。按总纲推论与理念裁定：**失配是跨存储域的结构常态，
-        // 不是攻击信号**——head 存场外、账本在 repo 内，任何一侧独立演化即失配。
-        // 处置=自动 discontinuity：quarantine 旧锚 → 显式记录断裂
-        // （continuity_claim:'revoked'）→ 新 generation 全量重采重验。
-        // **与"绝不冒充连续"自洽**：自动重建**显式撤销**连续性主张，不是冒充连续
-        // ——冒充=沿用旧 lineage 却宣称连续；这里是记下断裂、从零重证。
-        // **"中途塞 reset"的防线不受影响**：那防的是停机窗口改 manifest 骗过身份
-        // 检测，由 manifest 身份字段 drift 检测（events 出生基线）+ 出生冻结判据承接
-        // （T1③ 注记的两道门）；decide 这里裁决的是"失配如何恢复"，不是"声明是否合法"。
-        // 声明/自动只是意图来源不同（事件 declared_by 区分），恢复动作同一条。
-        return {
-          kind: 'recover',
-          action,
-          reason: facts.lineage_reset_requested === true || facts.lineage_reset_in_flight === true
-            ? '已声明放弃历史连续性：quarantine 旧锚 → 建新 lineage → 全链重验' +
-              '（显式撤销连续性主张，不伪造保证）'
-            : 'lineage 失配（跨存储域结构常态）：自动 discontinuity——quarantine 旧锚 → ' +
-              '显式记录断裂 → 新 generation 全量重采重验（不冒充连续，也不停死）',
-        };
       }
       // retry_transaction 只重跑当前责任阶段，不消费回退预算，也不依赖 coding/review
       // 链；预算/截断/指纹只约束真正跨阶段的 backtrack_to_coding。

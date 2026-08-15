@@ -163,42 +163,20 @@ import {
 import * as YAML from 'yaml';
 import { detectRepoLayout, frameworkAbs, frameworkRelPath, frameworkLogicalRelPath, inferRepoLayout, type RepoLayout } from './repo-layout';
 import { probeAdapterImageInput, collectAuthoritativeImagePaths, resolveContextAdapterImageInput } from './scripts/utils/multimodal-probe';
-import { resolveEffectiveVisionContext, sha256File } from './scripts/utils/effective-vision-context';
+import { resolveEffectiveVisionContext } from './scripts/utils/effective-vision-context';
 
-/** S3：phase harness 侧 policy meet（codex P0-1d：异常 fail-closed 默认盲——异常默认
- * visual 会让非多模态模型重回视觉链路）。四轮 review P1：ui-spec 已存在时以当前 hash 参与
- * meet——unverified 产物（含 unverified_clean）即令无独立降级行也不得 visual；文件在但
- * hash 不可算 → blind-safe。
- *
- * plan d8c5f3a7 T1-3（legacy/fallback 兼容）：补 **run 身份透传**。本函数只在
- * **capability-snapshot 缺失**时才被消费（见下方 `capSnap ? … : …`——snapshot 在场时
- * live meet 完全不参与），故它服务的是 legacy feature / 交互式 / 未经 initializer 的
- * phase-driven 场景。此前不传 runId，goal 探测的 canary 在此**永远**不可采信
- * （`run_probed 不跨 run`）→ 同一份实测证据在 goal gate harness 与本路径上结论相反。
- * 现从 `MAISON_GOAL_RUN_ID` 取运行身份：goal 态 gate harness 由 runner spawn 且带该 env，
- * 与写 canary 时的 run 身份同源 → 可采信；纯 phase-driven 无该 env → 保持保守降级
- * （那是**设计内**的分歧：跨执行上下文的实测证据本就不该被另一次执行直接采信）。 */
-function resolvePolicyVisualForHarness(projectRoot: string, feature: string): boolean {
+/** capability-snapshot 缺失时的当前执行能力回落；产物文件不参与判定。 */
+function resolveCurrentVisualForHarness(projectRoot: string, feature: string): boolean {
   try {
-    let artifactHashes: string[] | undefined;
-    const uiSpecAbs = uiSpecAbsPath(projectRoot, feature);
-    if (fs.existsSync(uiSpecAbs)) {
-      const h = sha256File(uiSpecAbs);
-      if (!h) return false;
-      artifactHashes = [h];
-    }
     const goalRunId = process.env.MAISON_GOAL_RUN_ID?.trim();
     const modelPin = process.env[MAISON_GOAL_MODEL_PIN_ENV]?.trim();
     const vctx = resolveEffectiveVisionContext({
       projectRoot,
       feature,
       ...(goalRunId ? { runId: goalRunId } : {}),
-      // plan d7f3a9c4 t3：model pin 随 env 注入链到达 gate harness——本 legacy/fallback
-      // 路径同样走中央 resolver 的 pin-aware 采信（取不到即按无 pin，现状语义）。
       ...(modelPin ? { modelPin } : {}),
-      ...(artifactHashes ? { artifactHashes } : {}),
     });
-    return vctx.effective_policy.mode === 'visual';
+    return vctx.vision_capability.verdict === 'tool_read' || vctx.vision_capability.verdict === 'native';
   } catch {
     return false;
   }
@@ -601,7 +579,7 @@ async function main(): Promise<void> {
           // DEFER）。snapshot 缺失（legacy/交互式）回落本地探测+meet。
           hasVision: capSnap
             ? capSnap.vision.verdict
-            : mmProbe.supported && resolvePolicyVisualForHarness(projectRoot, feature),
+            : mmProbe.supported && resolveCurrentVisualForHarness(projectRoot, feature),
           ocrAvailable: capSnap
             ? capSnap.ocr.verdict
             : resolveOcrAvailableForRun(projectRoot, resolvedProfile.profileDir, fwConfig.agent_adapter),

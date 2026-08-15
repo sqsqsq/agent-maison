@@ -337,59 +337,6 @@ export function renderPhaseDiagnosticProse(p: {
 }
 
 
-/**
- * plan d6b1a8e3 t5③：**lineage 断裂展示**。
- * 上游 a5f9c3e2 只负责写 `lineage_discontinuity` / `lineage_reset_committed` 事件并
- * 禁止连续性主张；把它讲给人听是报告的事。
- * 铁律：结论只能声称「新 lineage 已全链验证」，**不得**出现「历史连续性得以保持」。
- * 无断裂事件时返回空数组——不给未 reset 的 run 平白加一节。
- */
-export function renderLineageDiscontinuitySection(
-  events: ReadonlyArray<Record<string, unknown>>,
-  /**
-   * 本 run 的终态（`report.status`）。**必须由调用方传入，不能从 events 里找 run_end**
-   * ——生产顺序是 writeGoalReport 先于 emit(run_end)，报告生成时事件流里永远还没有
-   * 本次终态，靠扫事件会让**每一个成功 run 都被写成「尚不能声称已全链验证」**。
-   * 传 status 而不是重排落盘顺序：重排会造出「run_end 已落、报告却说失败」的反向不一致。
-   */
-  runStatus?: string,
-): string[] {
-  const broken = events.filter((e) => e.type === 'lineage_discontinuity');
-  if (broken.length === 0) return [];
-  const committed = events.filter((e) => e.type === 'lineage_reset_committed');
-  const lines: string[] = ['## Vision lineage', '', '> **历史连续性已撤销**（本 run 显式放弃旧 lineage 并重建）。', ''];
-  for (const b of broken) {
-    const oldHead = typeof b.old_head_sha256 === 'string' ? b.old_head_sha256 : '(absent)';
-    const gen = b.old_generation ?? '(n/a)';
-    lines.push(`- 断裂原因：${String(b.reason ?? '(未记录)')}`);
-    lines.push(`- 旧锚：head=\`${oldHead}\` · 世代 ${String(gen)}`);
-  }
-  for (const c of committed) {
-    lines.push(`- 新 lineage：head=\`${String(c.new_head_sha256 ?? '(pending)')}\` · 世代 ${String(c.new_generation ?? '(pending)')}`);
-  }
-  // codex 订正：此前只要见到 discontinuity 就宣称「新 lineage 已全链验证」——
-  // reset 中途失败、或后续阶段 HALTED 时那就是**假话**。三个事实按证据**递进**：
-  //   ①有 discontinuity            → 只能说「历史连续性已撤销」
-  //   ②有 lineage_reset_committed  → 才能加一句「新 lineage 已建立」
-  //   ③run 真的走完（CHAIN_SLICE_COMPLETED/COMPLETED）→ 才能说「已全链验证」
-  const chainCompleted =
-    runStatus === 'CHAIN_SLICE_COMPLETED' || runStatus === 'COMPLETED';
-  lines.push('', '结论口径（按已有证据逐级给出，不越级）：');
-  lines.push('- 历史连续性**已撤销**——旧 lineage 的判定不因本次重建而延续，也不因本次重建而被洗白（断裂已如实记账）。');
-  if (committed.length > 0) {
-    lines.push('- 新 lineage **已建立**（reset 事务已提交，旧场外锚已清理）。');
-  } else {
-    lines.push('- 新 lineage **尚未建立**：reset 事务未提交（中途中断）——旧锚备份仍在，下次启动会先回滚再重做。');
-  }
-  if (committed.length > 0 && chainCompleted) {
-    lines.push('- 新 lineage **已全链验证**（本 run 走完整链并取得完成终态）。');
-  } else {
-    lines.push('- **尚不能声称「已全链验证」**：本 run 未取得完成终态，新 lineage 的验证不完整。');
-  }
-  lines.push('');
-  return lines;
-}
-
 export function generateGoalReportMarkdown(
   report: GoalReport,
   options: GoalReportMarkdownOptions = {},
@@ -531,11 +478,6 @@ export function generateGoalReportMarkdown(
     }
   }
 
-  // t5③：lineage 断裂展示（上游只写事件+禁连续性主张，讲给人听归报告）
-  if (options.events?.length) {
-    const section = renderLineageDiscontinuitySection(options.events, report.status);
-    if (section.length > 0) lines.push('', ...section);
-  }
 
   // P1-6（plan 7c4f2e9b）：no_progress/超时族 halt 附四轴 attempt 时间线——事故文案
   // 「连续超时且产物零进展」双分句失实（3/5 超时、产物一直在变），死模板降为兜底一行，

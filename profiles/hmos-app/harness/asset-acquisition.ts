@@ -31,11 +31,11 @@ import { isGoalHeadlessEnv } from '../../../harness/scripts/utils/phase-state';
  * round6 事故即把它误当 23 个 bbox 的逐框验真，废图全免检——授权恒不豁免验真。
  */
 function isCropAuthorized(
-  a: { human_crop_confirmed?: boolean; crop_confirmed_by?: string },
+  a: { human_crop_confirmed?: boolean; crop_confirmed_by?: string | null },
   headless: boolean,
 ): boolean {
   if (a.human_crop_confirmed !== true) return false;
-  if (isAutomationSigner(a.crop_confirmed_by)) return false;
+  if (isAutomationSigner(a.crop_confirmed_by ?? undefined)) return false;
   // headless：须有前置授权者——user_requirement(用户 NL 前置授权) 或真人署名；缺/自动化=自报。
   if (headless) {
     const by = typeof a.crop_confirmed_by === 'string' ? a.crop_confirmed_by.trim() : '';
