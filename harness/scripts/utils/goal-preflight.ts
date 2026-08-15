@@ -486,10 +486,12 @@ export function goalRequiredPrerequisites(
 
 import * as cryptoT6 from 'crypto';
 import {
+  clampFidelityByCapability,
   computeRequirementShaFromText,
   dereferenceRequirementDocs,
   detectDesiredFidelity,
   isValidFidelityTarget,
+  loadFidelityIntentSsotState,
   resolveFidelityRoutingDecision,
   resolveOcrAvailableForRun,
   resolveRequestedFidelity,
@@ -633,8 +635,15 @@ export function initializeFidelityRouting(
  */
 export function evaluateFidelityTierPreflight(input: FidelityPreflightInput): FidelityPreflightAction {
   const { projectRoot, frameworkRoot, manifest } = input;
-  // post-impl P1-5：init 不被 chainStartsAtSpec 短路——截断链/resume 换档同样要刷新
-  // SSOT/snapshot（否则 manifest 已换档而决策层用旧数据）；仅 DEFER 判定限 spec 起点链。
+  // runner-owned-machine-facts 追补（codex 定点；宿主实锤 run 20260815T112821Z-6cb1da）：
+  // fidelity-intent.json / capability-snapshot.json 是 spec-owned、被 spec closure 冻结进
+  // evidence manifest 的决策文件。下游起点 run 无条件重写它们（execution_identity 每 run
+  // 必变，旧注释所称"幂等重算"并不幂等）= runner 亲手把上游 spec closure 弄 stale →
+  // 收尾 assess 推荐 rerun_phase:spec → 本链不含 spec 无路由 → catch-all framework_bug halt。
+  // 链首非 spec 改为**读取复用（零写盘）**；需求/显式档位真变了 → 明确要求从 spec 重跑。
+  if (!input.chainStartsAtSpec) {
+    return evaluateDownstreamStartFidelity(input);
+  }
   const { routing, receiptNote } = initializeFidelityRouting({
     projectRoot,
     frameworkRoot,
@@ -673,19 +682,122 @@ export function evaluateFidelityTierPreflight(input: FidelityPreflightInput): Fi
         (receiptNote ? ` ${receiptNote}` : ''),
     };
   }
-  if (!input.chainStartsAtSpec) {
-    return {
-      action: 'proceed',
-      effective: routing.effective,
-      routing,
-      note: 'chain 起点非 spec：SSOT/snapshot 已按当前 manifest 刷新，档位对账由 check-spec 承担',
-    };
-  }
   return {
     action: 'proceed',
     effective: routing.effective,
     routing,
     note: routing.decision.rationale,
+  };
+}
+
+/**
+ * 链首非 spec 的下游起点：读取复用 spec 冻结的 fidelity 决策，**零写盘**。
+ * - SSOT 损坏 / 需求 sha 失配 / 显式档位与冻结 selected 不一致 → 明确要求从 spec 重跑
+ *   （上游审的不是当前需求/决策，续跑无意义；下游重建同样会污染 spec closure 输入集）；
+ * - SSOT 缺失 → 非 UI/legacy 流程合法，不新建直接 proceed（UI 缺失由上游 closure 校验拦）；
+ * - 唯一真冲突保留（post-impl4 P0-1 语义不因本改动削弱）：能力按当前执行**内存重探**，
+ *   pixel ∧ hard ∧ 当前能力钳 → DEFER。
+ */
+function evaluateDownstreamStartFidelity(input: FidelityPreflightInput): FidelityPreflightAction {
+  const { projectRoot, frameworkRoot, manifest } = input;
+  const ssotState = loadFidelityIntentSsotState(projectRoot, manifest.feature);
+  if (ssotState.state === 'corrupt') {
+    return {
+      action: 'defer_capability_missing',
+      detail:
+        'fidelity-intent.json（spec 冻结的档位决策 SSOT）存在但损坏——下游起点不得重建它' +
+        '（重写会使上游 spec closure stale）。请从 spec 重跑（--start spec）恢复合法决策链。',
+    };
+  }
+  // 需求内容级 sha 与当前执行能力（内存探测，不写盘）——missing/valid 两分支共用
+  const deref = dereferenceRequirementDocs(projectRoot, manifest.requirement, {
+    featuresDirRel: input.featuresDirRel,
+    excludePrefixes: [`${input.featuresDirRel.replace(/\\/g, '/')}/${manifest.feature}/`],
+  });
+  const currentSha = computeRequirementShaFromText(
+    projectRoot, manifest.feature, manifest.requirement ?? deref.combined, input.featuresDirRel,
+  );
+  const identity = {
+    runId: manifest.run_id,
+    ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
+  };
+  const probe = resolveContextAdapterImageInput(projectRoot, frameworkRoot, manifest.adapter, identity);
+  const ocrAvailable = resolveOcrAvailableForRun(projectRoot, input.profileDir ?? '', manifest.adapter, identity);
+  if (ssotState.state === 'missing') {
+    // 无既有 SSOT（legacy 现场/非 UI 流程/交互态闭环）：**内存推导**路由做真冲突判定
+    //（post-impl4 P0-1 语义不因零写盘削弱——盲 ∧ hard ∧ pixel 不许盲跑全链），
+    // resolveFidelityRoutingDecision 是纯函数，不落任何文件。降档 receipt 在下游起点
+    // 不验真（downgradeReceiptValid=false，只升不降保守生效）——降档裁决归 spec。
+    const routing = resolveFidelityRoutingDecision({
+      requirementText: deref.combined,
+      manifestFidelity: manifest.fidelity,
+      manifestFidelitySource: input.fidelityFromCli ? 'explicit_cli' : 'manifest_declared',
+      downgradeReceiptValid: false,
+      capability: { hasVision: probe.supported, ocrAvailable },
+      executionIdentity: manifest.run_id,
+      requirementSha: currentSha,
+    });
+    if (routing.defer) {
+      return {
+        action: 'defer_capability_missing',
+        routing,
+        detail:
+          `需求为 pixel_1to1 目标且严格度=hard（不接受降级），而当前能力不足` +
+          `（${routing.clampReason ?? 'capability_clamped'}）。不盲跑全链；出路三选一：` +
+          '①换有视觉能力的模型/配置后重跑；②真人签发 fidelity_downgrade receipt 后以 ' +
+          '`--fidelity <tier> --fidelity-receipt <path>` 重跑；③修改需求措辞放宽严格度。',
+      };
+    }
+    return {
+      action: 'proceed',
+      effective: routing.effective,
+      routing,
+      note: 'chain 起点非 spec 且无既有 fidelity SSOT——内存推导路由，不新建文件（避免改写 spec closure 输入集）；档位对账由 check-spec 承担',
+    };
+  }
+  const ssot = ssotState.doc;
+  // ① 需求变更侦测——与 SSOT 写入口径同源（内容级 sha，跨 run 稳定）
+  if (currentSha !== ssot.requirement_sha256) {
+    return {
+      action: 'defer_capability_missing',
+      detail:
+        '需求内容与 spec 冻结的档位决策 SSOT 失配（requirement sha 变更）——上游 spec 审的' +
+        '不是当前需求，从下游续跑无意义；请从 spec 重跑（--start spec）。',
+    };
+  }
+  // ② 显式档位变更侦测
+  if (
+    typeof manifest.fidelity === 'string' &&
+    isValidFidelityTarget(manifest.fidelity) &&
+    manifest.fidelity !== ssot.selected_fidelity
+  ) {
+    return {
+      action: 'defer_capability_missing',
+      detail:
+        `--fidelity=${manifest.fidelity} 与 spec 冻结的 selected=${ssot.selected_fidelity} 不一致` +
+        '——档位决策变更须回 spec 重新裁决（--start spec），下游起点不得改写冻结决策。',
+    };
+  }
+  // ③ 唯一真冲突：当前执行能力（前置内存重探）钳 spec 冻结的 selected
+  const reclamp = clampFidelityByCapability(ssot.selected_fidelity, {
+    hasVision: probe.supported,
+    ocrAvailable,
+  });
+  if (ssot.selected_fidelity === 'pixel_1to1' && ssot.acceptance_strictness === 'hard' && reclamp.clamped) {
+    return {
+      action: 'defer_capability_missing',
+      detail:
+        `需求为 pixel_1to1 目标且严格度=hard（不接受降级），而当前能力不足（${reclamp.reason ?? 'capability_clamped'}）。` +
+        '不盲跑全链；出路三选一：①换有视觉能力的模型/配置后重跑；②真人签发 fidelity_downgrade receipt 后以 ' +
+        '`--fidelity <tier> --fidelity-receipt <path>` 重跑；③修改需求措辞放宽严格度。',
+    };
+  }
+  return {
+    action: 'proceed',
+    effective: ssot.effective_fidelity,
+    note:
+      'chain 起点非 spec：复用 spec 冻结的 fidelity 决策（零写盘——下游 run 不得改写被 closure ' +
+      '冻结的 spec-owned SSOT）；档位对账由 check-spec 承担',
   };
 }
 

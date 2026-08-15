@@ -4008,8 +4008,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // SSOT（goal 模式的路由初始化唯一入口——agent invoke 前）。
     // post-impl P1-5：resume 且 fidelity transition 字段被授权（--fidelity/--fidelity-receipt
     // 生效）时必须重建路由——否则 manifest 已换档而 SSOT/snapshot/prompt/CheckContext 全用旧决策。
-    // post-impl3 P1-5：非 dry 一律幂等重算路由（resume 含 adapter/OCR/需求引用图/盲→视觉
-    // 恢复等能力变化——只靠 fidelity CLI transition 触发会复用旧决策；重算确定性幂等）。
+    // post-impl3 P1-5 → runner-owned-machine-facts 追补修订：非 dry 一律调用 preflight，
+    // 但**写盘只在链首为 spec 时发生**——下游起点读取复用 spec 冻结的 SSOT/snapshot
+    //（execution_identity 每 run 必变，旧"幂等重算"并不幂等：无条件重写会把上游 spec
+    // closure 弄 stale → assess 推荐 rerun_phase:spec 无路由 → framework_bug halt，
+    // 宿主实锤 run 20260815T112821Z-6cb1da）。能力变化在下游起点以内存重探判 DEFER。
     if (!dryRun) {
       const fidelityAction = evaluateFidelityTierPreflight({
         projectRoot,

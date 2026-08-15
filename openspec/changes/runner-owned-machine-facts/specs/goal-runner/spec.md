@@ -55,3 +55,19 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/verify-fea
 
 - **WHEN** the cross-run ledger accumulates dozens of `must_review` entries from prior runs
 - **THEN** they appear in the goal report only; clean-pass classification emits no `no_pending_must_review` issue and completion generation is not blocked
+
+### Requirement: Downstream-start runs must not rewrite spec-owned frozen decision files
+
+When a goal run's chain does not start at spec, fidelity preflight SHALL read and reuse the existing `fidelity-intent.json` / `capability-snapshot.json` without writing either file — `execution_identity` differs per run, so an unconditional rewrite is not idempotent and stales the upstream spec closure that froze these files as evidence inputs (the runner then recommends `rerun_phase:spec`, which the current chain cannot execute, fail-closing into a spurious `framework_bug` halt). If the requirement content hash or an explicitly requested fidelity tier differs from the frozen SSOT, preflight SHALL stop before invoking any agent with guidance to re-run from spec; a corrupt SSOT gets the same guidance, and a missing SSOT proceeds without creating one. The genuine hard-pixel capability conflict (pixel ∧ hard ∧ current capability clamped) SHALL still defer, evaluated via in-memory probing only. Stale-closure gap details SHALL include the concrete changed paths so operators do not have to guess the cause.
+
+Enforcement: `harness/scripts/utils/goal-preflight.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/assess.ts`
+
+#### Scenario: a plan-start run no longer stales its own upstream spec closure
+
+- **WHEN** a fresh run starts with `--start plan` after spec closed cleanly and neither the requirement nor the requested tier changed
+- **THEN** preflight reuses the frozen decision byte-for-byte, the run proceeds, and the closing assess finds spec still fresh
+
+#### Scenario: a changed requirement is stopped before burning downstream attempts
+
+- **WHEN** a downstream-start run carries requirement text whose content hash differs from the frozen SSOT
+- **THEN** preflight defers before any agent invocation with guidance to re-run from spec, and the frozen files remain untouched

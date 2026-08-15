@@ -247,11 +247,22 @@ const cases: Case[] = [
     },
   },
   {
-    name: 'stale closure requires rerun',
+    name: 'stale closure requires rerun（gap detail 携带 changed_paths 原文——读者不用猜根因）',
     run: () => {
-      const result = assessObservation(observation({ closure: 'stale' }));
+      const result = assessObservation(observation({
+        closure: 'stale',
+        closure_stale_detail: 'doc/features/demo/spec/reports/fidelity-intent.json',
+      }));
       assert(result.gaps[0]?.kind === 'stale', JSON.stringify(result.gaps));
       assert(result.recommendation.action === 'rerun_phase', result.recommendation.action);
+      // codex 定点（宿主 run 6cb1da 两连误判归因的根治）：detail 必须含具体变更路径原文
+      assert(
+        (result.gaps[0]?.detail ?? '').includes('doc/features/demo/spec/reports/fidelity-intent.json'),
+        `stale gap detail 应携带 changed_paths 原文：${result.gaps[0]?.detail}`,
+      );
+      // 无明细时保持旧文案（不崩、不带空括号）
+      const bare = assessObservation(observation({ closure: 'stale' }));
+      assert(bare.gaps[0]?.detail === 'phase evidence manifest 非 fresh', bare.gaps[0]?.detail);
     },
   },
   {

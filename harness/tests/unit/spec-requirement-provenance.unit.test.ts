@@ -411,12 +411,14 @@ const cases: Case[] = [
         const readProvenance = (): string | undefined =>
           loadFidelityIntentSsot(root, 'demo')?.requirement_provenance;
         // ① goal-preflight 真实调用点 evaluateFidelityTierPreflight → 落 goal_manifest
+        //（runner-owned-machine-facts 后写盘只在链首为 spec 时发生——本用例测写入口
+        //  provenance，故传 chainStartsAtSpec: true；下游起点的零写盘复用见专门用例）
         const goalManifest = {
           feature: 'demo', run_id: 'r-prov-goal', requirement: 'goal 需求：账户页。',
         } as unknown as GoalManifest;
         evaluateFidelityTierPreflight({
           projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, manifest: goalManifest,
-          featuresDirRel: 'doc/features', chainStartsAtSpec: false,
+          featuresDirRel: 'doc/features', chainStartsAtSpec: true,
         });
         assert(readProvenance() === 'goal_manifest', `goal-preflight 应落 goal_manifest，实际=${readProvenance()}`);
         // ② initializer 显式非空需求 → explicit_cli
@@ -449,6 +451,63 @@ const cases: Case[] = [
         // 既有 closure 血缘（capabilityResolutionEvidenceInputs → productionEvidence）以该路径的
         // exists:false + 无 sha 记录为输入证据；文件由缺失变为存在 → 记录失配 → 旧 closure 判 stale。
         // —— 该链的完整 closure 级 stale 翻转断言（真产 closure + receipt 链）归批 2（P2-2）。
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: 'runner-owned-machine-facts：链首非 spec 零写盘复用——同需求 proceed 字节不变；需求/档位变更 defer 指引回 spec；SSOT missing 不新建',
+    run: () => {
+      const root = mkProject();
+      try {
+        // 以 spec 起点身份用真实 writer 落 SSOT（模拟上游 spec closure 冻结态；需求刻意无强 1:1 措辞）
+        evaluateFidelityTierPreflight({
+          projectRoot: root, frameworkRoot: FRAMEWORK_ROOT,
+          manifest: { feature: 'demo', run_id: 'r-spec', requirement: '需求 A：账户页。' } as unknown as GoalManifest,
+          featuresDirRel: 'doc/features', chainStartsAtSpec: true,
+        });
+        const ssotPath = fidelityIntentSsotPath(root, 'demo');
+        const frozen = fs.readFileSync(ssotPath, 'utf-8');
+        // ① 下游起点+同需求：proceed 且零写盘（execution_identity 不得被新 run 改写——
+        //    宿主实锤 run 20260815T112821Z-6cb1da：改写=亲手把上游 spec closure 弄 stale）
+        const a = evaluateFidelityTierPreflight({
+          projectRoot: root, frameworkRoot: FRAMEWORK_ROOT,
+          manifest: { feature: 'demo', run_id: 'r-plan-NEW', requirement: '需求 A：账户页。' } as unknown as GoalManifest,
+          featuresDirRel: 'doc/features', chainStartsAtSpec: false,
+        });
+        assert(a.action === 'proceed', `同需求下游起点应 proceed，实际=${a.action}`);
+        assert(fs.readFileSync(ssotPath, 'utf-8') === frozen, '下游起点不得改写 spec 冻结的 fidelity-intent.json');
+        // ② 需求变更 → defer 且明确指引回 spec（零写盘）
+        const changed = evaluateFidelityTierPreflight({
+          projectRoot: root, frameworkRoot: FRAMEWORK_ROOT,
+          manifest: { feature: 'demo', run_id: 'r-plan-2', requirement: '需求 B：完全不同的功能。' } as unknown as GoalManifest,
+          featuresDirRel: 'doc/features', chainStartsAtSpec: false,
+        });
+        assert(changed.action === 'defer_capability_missing', `需求变更应 defer，实际=${changed.action}`);
+        assert(
+          changed.action === 'defer_capability_missing' && changed.detail.includes('--start spec'),
+          '指引应明确回 spec 重跑',
+        );
+        assert(fs.readFileSync(ssotPath, 'utf-8') === frozen, '失配路径同样零写盘');
+        // ③ 显式档位与冻结 selected 不一致 → defer（需求 A 无强措辞，冻结 selected 非 pixel_1to1）
+        const tier = evaluateFidelityTierPreflight({
+          projectRoot: root, frameworkRoot: FRAMEWORK_ROOT,
+          manifest: {
+            feature: 'demo', run_id: 'r-plan-3', requirement: '需求 A：账户页。', fidelity: 'pixel_1to1',
+          } as unknown as GoalManifest,
+          featuresDirRel: 'doc/features', chainStartsAtSpec: false,
+        });
+        assert(tier.action === 'defer_capability_missing', `显式档位与冻结 selected 不一致应 defer，实际=${tier.action}`);
+        // ④ SSOT missing：不新建（新建同样污染上游 closure 输入集）
+        const root2 = mkProject();
+        try {
+          const b = evaluateFidelityTierPreflight({
+            projectRoot: root2, frameworkRoot: FRAMEWORK_ROOT,
+            manifest: { feature: 'demo', run_id: 'r-x', requirement: '任意需求。' } as unknown as GoalManifest,
+            featuresDirRel: 'doc/features', chainStartsAtSpec: false,
+          });
+          assert(b.action === 'proceed', `SSOT missing 应 proceed，实际=${b.action}`);
+          assert(!fs.existsSync(fidelityIntentSsotPath(root2, 'demo')), '不得新建 SSOT');
+        } finally { fs.rmSync(root2, { recursive: true, force: true }); }
       } finally { fs.rmSync(root, { recursive: true, force: true }); }
     },
   },

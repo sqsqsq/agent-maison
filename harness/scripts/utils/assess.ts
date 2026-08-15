@@ -97,6 +97,8 @@ export interface AssessPhaseObservation {
   schema_version: string | null;
   verdict: string | null;
   closure: 'open' | 'closed' | 'stale';
+  /** stale/tampered 时的具体变更路径与传染来源（codex 定点：不丢 changed_paths，读者不用猜） */
+  closure_stale_detail?: string | null;
   assurance: string;
   required_assurance: string | null;
   assurance_satisfied: boolean | null;
@@ -398,7 +400,7 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
   const staleness = new Map(
     recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, phases, {
       frameworkRoot,
-    }).map((entry) => [entry.phase, entry.verdict]),
+    }).map((entry) => [entry.phase, entry]),
   );
 
   const observedPhases = phases.map((phase): AssessPhaseObservation => {
@@ -453,7 +455,18 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
       : assurance === 'blocked' || assurance === 'degraded' || assurance === 'full'
         ? assuranceSatisfies(assurance as Assurance, requiredAssurance as MinimumAssurance)
         : false;
-    const evidenceVerdict = staleness.get(phase);
+    const stalenessEntry = staleness.get(phase);
+    const evidenceVerdict = stalenessEntry?.verdict;
+    // codex 定点（宿主 run 6cb1da 归因两连猜错的根治）：stale 的具体 changed_paths 不再
+    // 在投影层丢弃——"非 fresh"四个字逼着读者猜根因。
+    const staleDetail = stalenessEntry && stalenessEntry.verdict !== 'fresh'
+      ? [
+          ...stalenessEntry.changed_paths,
+          ...(stalenessEntry.receipt_changed ? ['<receipt>'] : []),
+          ...(stalenessEntry.propagated_from ? [`<传染自 ${stalenessEntry.propagated_from}>`] : []),
+          ...(stalenessEntry.integrity_errors ?? []),
+        ].join(', ')
+      : null;
     let closure: AssessPhaseObservation['closure'] = 'open';
     if (track === 'full') {
       const commit = summary.closure_commit as { schema_version?: unknown } | undefined;
@@ -479,6 +492,7 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
       schema_version: schemaVersion,
       verdict,
       closure,
+      closure_stale_detail: staleDetail,
       assurance,
       required_assurance: requiredAssurance,
       assurance_satisfied: assuranceSatisfied,
@@ -629,7 +643,13 @@ function gapsFromObservation(observation: AssessObservation): AssessGap[] {
       continue;
     }
     if (phase.closure === 'stale') {
-      gaps.push({ phase: phase.phase, kind: 'stale', detail: 'phase evidence manifest 非 fresh' });
+      gaps.push({
+        phase: phase.phase,
+        kind: 'stale',
+        detail:
+          'phase evidence manifest 非 fresh' +
+          (phase.closure_stale_detail ? `（changed: ${phase.closure_stale_detail}）` : ''),
+      });
       continue;
     }
     if (phase.closure !== 'closed') {
