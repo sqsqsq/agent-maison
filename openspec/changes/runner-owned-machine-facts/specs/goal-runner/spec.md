@@ -26,3 +26,19 @@ Enforcement: `harness/scripts/goal-runner.ts`（`buildClosureVisualEvidenceBlock
 
 - **WHEN** a spec closure-only attempt starts with 10 authoritative reference images and the agent follows the prompt's read-only evidencing list
 - **THEN** the refs receipt for this invocation is complete and `ui_spec_fidelity_gate` no longer fails structurally on the closure attempt
+
+### Requirement: Run end-state classification uses the executed slice; the assumptions ledger never gates it
+
+When a goal run reaches its configured end phase, end-state classification SHALL evaluate clean-pass issues over the **actually executed chain slice**, not the full workflow chain — downstream phases that were never part of this run MUST NOT be classified as `needs_fix` (a spec-only run with human-signature items pending SHALL end `AWAITING_HUMAN_REVIEW`, not `PARTIAL`). Feature-completion generation keeps evaluating the full chain (different question: whole-feature completion). The headless-assumptions ledger's `must_review` entries SHALL NOT feed run end-state or clean-pass gating in any branch — they remain report-only (goal-report auto-decision summary); genuine gates (visual axis, flow-contract, waivers, fidelity caps) keep their `needs_human` capping.
+
+Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/verify-feature-completion.ts`
+
+#### Scenario: a spec-only run is not misprojected as PARTIAL
+
+- **WHEN** a `--start spec --end spec` run closes spec cleanly while plan/coding/review/ut/testing have never run
+- **THEN** classification over `['spec']` yields no `needs_fix` and the run ends `AWAITING_HUMAN_REVIEW` when only human-signature items remain
+
+#### Scenario: historical must_review entries do not cap the end state
+
+- **WHEN** the cross-run ledger accumulates dozens of `must_review` entries from prior runs
+- **THEN** they appear in the goal report only; clean-pass classification emits no `no_pending_must_review` issue and completion generation is not blocked

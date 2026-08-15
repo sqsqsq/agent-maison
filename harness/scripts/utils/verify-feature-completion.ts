@@ -26,7 +26,6 @@ import {
   loadReviewClosureAttestation,
   reconcileSourceTreeAgainstAttestation,
 } from './closure-attestation';
-import { collectAutoDecisions, countPendingMustReview } from './headless-assumptions';
 import { classifyGoalRunsDir, collectRequirementIntentText, collectRequirementSsotPaths, computeRunRequirementSha } from './fidelity-shared';
 import { validateSummaryV11 } from './quality-axes';
 import { buildSourceInventory } from './closure-attestation';
@@ -291,12 +290,10 @@ export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[]
     }
   }
 
-  // ② 无 pending must-review（needs_human）
-  const decisions = collectAutoDecisions(projectRoot, feature, chain);
-  const pending = countPendingMustReview(decisions);
-  if (pending > 0) {
-    issues.push({ phase: '*', condition: 'no_pending_must_review', detail: `${pending} 项自动决议待人工复核`, kind: 'needs_human' });
-  }
+  // ②【已删除 · codex 收口刀（runner-owned-machine-facts 追补）】账本 must_review 对
+  // clean-pass/run 终态的控制退役：账本是跨 run 累积留痕（宿主实锤 45 条历史待复核把
+  // 终态永久压住、旧行不可消解），只保留 goal-report 报告展示；真实门禁（visual axis/
+  // flow_contract/waiver/档位钳制）的 needs_human 封顶不受影响。
 
   // ③ 无 waiver（needs_human：真人签发/裁决）
   for (const phase of chain) {

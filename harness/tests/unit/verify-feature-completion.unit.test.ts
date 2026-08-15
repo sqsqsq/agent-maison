@@ -158,7 +158,7 @@ interface Case { name: string; run: () => void }
 
 const cases: Case[] = [
   {
-    name: 'clean_pass 违例拒生成：verdict 非 PASS / 待复核账本 / waiver 存在 / 档位钳制',
+    name: 'clean_pass 违例拒生成：verdict 非 PASS / waiver 存在 / 档位钳制；账本待复核不再阻断（只留报告展示）',
     run: () => {
       const root = mkProject();
       seedCleanChain(root);
@@ -166,22 +166,48 @@ const cases: Case[] = [
       assert.throws(() => generate(root), /verdict_pass/);
       writeSummary(root, 'plan', 'PASS');
 
-      const mdPath = featureFilePath(root, FEATURE, 'spec/headless-assumptions.md');
-      fs.writeFileSync(mdPath, '| # | Gate | 决议 |\n|---|---|---|\n| 1 | x | y |\n', 'utf-8');
-      assert.throws(() => generate(root), /no_pending_must_review/);
-      fs.rmSync(mdPath);
-
       const waiver = featureFilePath(root, FEATURE, 'testing/skip-waivers.yaml');
       fs.mkdirSync(path.dirname(waiver), { recursive: true });
       fs.writeFileSync(waiver, 'waivers:\n  - tc_id: TC-1\n', 'utf-8');
       assert.throws(() => generate(root), /no_waivers/);
       fs.rmSync(waiver);
 
+      // 真实门禁的 needs_human 封顶不受账本退役影响（档位钳制仍在）
       assert.strictEqual(
         collectCleanPassIssues({ projectRoot: root, feature: FEATURE, chain: CHAIN, fidelityCapped: true })
           .some((i) => i.condition === 'no_fidelity_cap'),
         true,
       );
+
+      // codex 收口刀定向回归②：历史 must_review 行只出现在报告中，不得控制终态/生成——
+      // 跨 run 累积账本曾把 45 条旧待复核永久压在 clean-pass 上（旧行不可消解）。
+      const mdPath = featureFilePath(root, FEATURE, 'spec/headless-assumptions.md');
+      fs.writeFileSync(mdPath, '| # | Gate | 决议 |\n|---|---|---|\n| 1 | x | y |\n', 'utf-8');
+      assert.strictEqual(
+        collectCleanPassIssues({ projectRoot: root, feature: FEATURE, chain: CHAIN })
+          .some((i) => i.condition === 'no_pending_must_review'),
+        false,
+        '账本 must_review 不得再产生 clean-pass issue',
+      );
+      assert.doesNotThrow(() => generate(root), '账本待复核不得阻断 completion 生成');
+    },
+  },
+  {
+    name: 'codex 收口刀定向回归①：run 终态分类按实际执行切片——下游未跑不得判 needs_fix（宿主 PARTIAL 误报形态）',
+    run: () => {
+      const root = mkProject();
+      seedCleanChain(root); // 只闭环 spec+plan
+      // 实际切片（本 run 跑过的部分）：干净——needsFix/needsHuman 双 false
+      const sliced = classifyCleanPassIssues(
+        collectCleanPassIssues({ projectRoot: root, feature: FEATURE, chain: CHAIN }),
+      );
+      assert.strictEqual(sliced.needsFix, false, `实际切片不得 needs_fix：${JSON.stringify(sliced)}`);
+      // 全链视角（含从未执行的 coding）：lineage missing → needs_fix——这正是宿主
+      // run 20260815T093217Z-42d1bc 被误投 PARTIAL 的形态；终态分类必须用实际切片。
+      const fullChain = classifyCleanPassIssues(
+        collectCleanPassIssues({ projectRoot: root, feature: FEATURE, chain: [...CHAIN, 'coding'] }),
+      );
+      assert.strictEqual(fullChain.needsFix, true, '未执行下游按全链算必产 needs_fix（对照组）');
     },
   },
   {

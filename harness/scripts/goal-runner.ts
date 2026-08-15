@@ -90,7 +90,7 @@ import {
   type GoalRunStatus,
   type HarnessVerdict,
 } from './utils/phase-transition-policy';
-import { collectAutoDecisions, countPendingMustReview, loadHeadlessLedger } from './utils/headless-assumptions';
+import { loadHeadlessLedger } from './utils/headless-assumptions';
 import { recomputePhaseEvidenceStaleness, stableStringify } from './utils/phase-evidence-manifest';
 import {
   defaultTrustRegistryPath,
@@ -7659,11 +7659,16 @@ Goal runner — tool-agnostic multi-phase orchestrator
     let pendingHumanReview = false;
     let blockingFix = false;
     if (reachedEnd) {
+      // codex 收口刀（宿主实锤 run 20260815T093217Z-42d1bc）：本次 run 终态分类只看**实际
+      // 执行切片** chain——传 fullWorkflowChain 会把「下游阶段尚未跑」判成 needs_fix，
+      // spec-only run 明明该 AWAITING_HUMAN_REVIEW 却被投成 PARTIAL。feature completion
+      // 生成（verify-feature-completion 调用侧）继续用完整链，语义不同：那是「feature
+      // 是否整体完成」，这里是「本 run 跑过的部分是什么终态」。
       const cls = classifyCleanPassIssues(
         collectCleanPassIssues({
           projectRoot,
           feature: manifest.feature,
-          chain: fullWorkflowChain.map(String),
+          chain: chain.map(String),
           currentRequirementSha: computeRunRequirementSha(projectRoot, manifest.feature, manifest.run_id, featuresDir),
           frameworkRoot,
         }),
@@ -7674,14 +7679,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
         console.error(`[probe-cls] ${JSON.stringify(collectCleanPassIssues({
           projectRoot,
           feature: manifest.feature,
-          chain: fullWorkflowChain.map(String),
+          chain: chain.map(String),
           currentRequirementSha: computeRunRequirementSha(projectRoot, manifest.feature, manifest.run_id, featuresDir),
           frameworkRoot,
         }))}`);
       }
-    } else {
-      pendingHumanReview = countPendingMustReview(collectAutoDecisions(projectRoot, manifest.feature, chain.map(String))) > 0;
     }
+    // 账本 must_review 不再控制 run 终态（codex 收口刀：账本仅留痕与报告展示——跨 run
+    // 累积的 45 条历史待复核曾把终态永久压住，旧行又不可消解）。未达链尾的 run 保持
+    // pendingHumanReview=false；真人复核清单仍在 goal-report 自动决议汇总里完整呈现。
     // 【已删除 · 收口刀二（codex P2）】`uiRelevantAtEnd` 运行末态 UI 相关性判定——
     // 唯一消费者 capRunStatusForVisionTrust 已删（完成态不再因认证状态封顶），只算不用。
     const rawStatus = resolveGoalRunStatus(phaseRecords, reachedEnd, { pendingHumanReview, blockingFix });
