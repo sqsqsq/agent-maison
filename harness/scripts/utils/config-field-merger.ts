@@ -174,8 +174,8 @@ export const FRAMEWORK_GENERIC_BACKFILL_FIELDS: ReadonlyArray<BackfillField> = [
   },
   {
     path: 'toolchain.hvigor.analyze',
-    defaultValue: 'advanced',
-    note: "toolchain.hvigor.analyze 缺失：回填 'advanced'",
+    defaultValue: 'normal',
+    note: "toolchain.hvigor.analyze 缺失：回填 'normal'（与 DevEco 默认对齐；已有值不覆盖）",
   },
 ];
 

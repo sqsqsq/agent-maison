@@ -284,7 +284,7 @@ const DEFAULT_HVIGOR_OPTIONS: ResolvedHvigorOptions = {
   daemon: true,
   parallel: true,
   incremental: true,
-  analyze: 'advanced',
+  analyze: 'normal',
 };
 
 // 真实"依赖解析失败"信号。**刻意不含** /oh_modules/ 或 /ohpm/——那两个是路径/工具名，
@@ -826,12 +826,31 @@ export function buildUtHvigorTuningArgs(projectRoot: string): string[] {
  *   > hvigor ERROR: ArkTS:ERROR File: xxx.ets:12:34
  *   error TS2322: ...
  *   ArkTS:ERROR xxx.ets(12, 34): Some message
+ *
+ * 逐行判定前先剥 ANSI（宿主真实日志为 `> hvigor ^[[91mERROR:`，见 plan c9e3f7d1 t2①，
+ * 与 detectHvigorConfigError 同源处理）；`Failed :<module>:<target>@<Task>` 失败任务行与
+ * `BUILD FAILED` 是包装行，不入 errors（t2⑤）。
  */
-function parseBuildErrors(log: string): HvigorError[] {
+
+/**
+ * 失败任务行判据 SSOT（plan c9e3f7d1 t2④⑤）：只认精确形态 `Failed :<module>:<target>@<Task>`。
+ * parseBuildErrors 的包装行排除与 buildHvigorDiagnostics 的失败任务提取共用同一正则，
+ * 避免两套判据漂移；模块/产品名允许 `-` `.`（与 sanitizeLogModuleName 的 [^\w.-] 口径一致）。
+ * 不匹配 `Failed: <正文>`（冒号后直接文本）之类的真实错误正文。
+ */
+const HVIGOR_FAILED_TASK_RE = /Failed\s*:\s*([\w.-]+:[\w.-]+@[\w.-]+)/;
+
+export function parseBuildErrors(log: string): HvigorError[] {
   const errors: HvigorError[] = [];
-  const lines = log.split(/\r?\n/);
+  const lines = log.split(/\r?\n/).map(stripAnsi);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+
+    // 包装行：失败任务 / 构建汇总，不构成错误条目（实际错误按日志顺序进 errors）。
+    // 判据与 buildHvigorDiagnostics 共用 HVIGOR_FAILED_TASK_RE，避免两套正则漂移。
+    if (HVIGOR_FAILED_TASK_RE.test(line) || /BUILD FAILED\b/.test(line)) {
+      continue;
+    }
 
     // TypeScript style: `file.ts(12,34): error TS1234: message`
     const mTsc = line.match(/^(.+?)\((\d+),\s*(\d+)\):\s*error\s+(TS\d+):\s*(.+)$/);
@@ -890,35 +909,65 @@ function parseBuildErrors(log: string): HvigorError[] {
 
 export function buildHvigorDiagnostics(log: string): string[] {
   const diagnostics: string[] = [];
-  const hasIncrementalInputMissing =
-    /00308018/i.test(log) || /Failed to find the incremental input file/i.test(log);
+  // 与 parseBuildErrors 同源：判据一律在剥 ANSI 后的文本上（宿主日志含 ^[[91m 等转义）
+  const clean = stripAnsi(log);
+  // 仅正文命中才算"增量输入缺失"；00308018 本身是 hvigor 的 Unknown Error 码，不用于定性
+  const hasIncrementalInputMissing = /Failed to find the incremental input file/i.test(clean);
+
+  // 失败任务：全量日志中首个 `Failed :<module>:<target>@<Task>`（plan c9e3f7d1 t2④）。
+  // 与 parseBuildErrors 的包装行排除共用 HVIGOR_FAILED_TASK_RE，避免两套正则漂移。
+  const failedTask = clean.match(HVIGOR_FAILED_TASK_RE);
+  if (failedTask) {
+    // 捕获组可能带尾部省略号（`entry:product@CompileArkTS...`），清理后再展示
+    const task = failedTask[1].replace(/^:+|\.+$/g, '');
+    diagnostics.push(
+      `检测到失败任务：${task}。该任务未成功完成，具体错误见 errors 与完整日志。`,
+    );
+  }
+
+  // 00308018 且正文不匹配增量判据 → SDK/hvigor 内部未知错误，不做根因猜测（t2③）。
+  // 正文 = 含码行 + 后续堆栈行（如 ets-loader 的 `t.isReferencedAliasDeclaration ...`）。
+  const unknown00308018 = /00308018/i.test(clean) && !hasIncrementalInputMissing;
+  if (unknown00308018) {
+    const allLines = clean.split(/\r?\n/);
+    const codeLineIdx = allLines.findIndex(l => /00308018/i.test(l));
+    const excerpt = allLines
+      .slice(codeLineIdx < 0 ? 0 : codeLineIdx, codeLineIdx < 0 ? 1 : codeLineIdx + 4)
+      .filter(l => l.trim().length > 0)
+      .map(l => l.trim())
+      .join(' | ')
+      .slice(0, 500);
+    diagnostics.push(
+      `检测到 SDK/hvigor 内部未知错误（00308018 即 hvigor 的 Unknown Error 码）。原始错误正文：${excerpt || 'Error Code: 00308018 Unknown Error'}。请以 errors 与完整日志中的堆栈为准，本报告不为其编造根因。`,
+    );
+  }
 
   if (hasIncrementalInputMissing) {
-    const inputMatch = log.match(/Failed to find the incremental input file[:：]?\s*([^\r\n]+)/i);
+    const inputMatch = clean.match(/Failed to find the incremental input file[:：]?\s*([^\r\n]+)/i);
     diagnostics.push(
       [
-        '检测到 hvigor 增量输入缺失（00308018 / Failed to find the incremental input file）。',
+        '检测到 hvigor 增量输入缺失（Failed to find the incremental input file）。',
         inputMatch?.[1]?.trim() ? `缺失输入：${inputMatch[1].trim()}` : '',
         '这通常不是 ArkTS 编译错误，而是签名/打包链路的增量状态引用了不存在的 unsigned 产物。',
       ].filter(Boolean).join(' '),
     );
   }
 
-  if (hasIncrementalInputMissing && /onlineSign|SignHap|archivePackage/i.test(log)) {
+  if (hasIncrementalInputMissing && /onlineSign|SignHap|archivePackage/i.test(clean)) {
     diagnostics.push(
       '日志同时出现 onlineSign/SignHap/archivePackage 线索：请优先核对自定义签名任务是否声明 inputs/outputs，以及 unsigned/signed 文件命名是否与标准 PackageHap/SignHap 产物一致。',
     );
   }
 
-  if (/--analyze=advanced/.test(log)) {
+  if (/--analyze=advanced/.test(clean)) {
     diagnostics.push(
-      '`--analyze=advanced` 已启用；它适合诊断构建图，不建议作为日常 harness 默认参数。请回传关闭 analyze 后的 warm build 对比。',
+      '`--analyze=advanced` 已显式开启（非默认，默认与 DevEco 对齐为 normal）；它适合诊断构建图，如非必要可去掉该配置再跑。',
     );
   }
 
-  if (hasIncrementalInputMissing && /--daemon/.test(log)) {
+  if (hasIncrementalInputMissing && /--daemon/.test(clean)) {
     diagnostics.push(
-      '`--daemon` 已启用；若 00308018 只在命令行 harness 复现，请补充 daemon=false 的对比日志，以排除 daemon 复用脏增量状态。',
+      '`--daemon` 已启用；若增量输入缺失只在命令行 harness 复现，请补充 daemon=false 的对比日志，以排除 daemon 复用脏增量状态。',
     );
   }
 

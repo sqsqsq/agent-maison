@@ -59,14 +59,14 @@ node <DevEco>/tools/node/node.exe <DevEco>/tools/hvigor/bin/hvigorw.js \
   --mode module \
   -p product=<detectProduct()> \
   -p buildMode=debug \
-  --daemon --parallel --incremental --analyze=advanced \
+  --daemon --parallel --incremental --analyze=normal \
   assembleHap
 
 # coding 可选：项目级 assembleApp（toolchain.hvigor.coding.driver = assemble_app_project）
 hvigorw --mode project \
   -p product=<detectProduct()> \
   -p buildMode=debug \
-  --daemon --parallel --incremental --analyze=advanced \
+  --daemon --parallel --incremental --analyze=normal \
   assembleApp
 
 # UT：genOnDeviceTestHap（与 DevEco Run ohosTest 对齐；task 在后，analyze=normal）
@@ -89,7 +89,7 @@ node <DevEco>/tools/node/node.exe <DevEco>/tools/hvigor/bin/hvigorw.js \
       "daemon": true,
       "parallel": true,
       "incremental": true,
-      "analyze": "advanced"
+      "analyze": "normal"
     }
   }
 }
@@ -102,9 +102,9 @@ node <DevEco>/tools/node/node.exe <DevEco>/tools/hvigor/bin/hvigorw.js \
 | `daemon` | `true` | `false` 传 `--no-daemon`；`true` 传 `--daemon` |
 | `parallel` | `true` | 是否传 `--parallel` |
 | `incremental` | `true` | 是否传 `--incremental` |
-| `analyze` | `"advanced"` | `"off"` 不传；`"normal"` / `"advanced"` 分别传 `--analyze=normal` / `--analyze=advanced` |
+| `analyze` | `"normal"` | `"off"` 不传；`"normal"` / `"advanced"` 分别传 `--analyze=normal` / `--analyze=advanced` |
 
-`coding_hvigor_build` 报告现在会打印实际 hvigor 命令；若日志命中 `00308018` / `Failed to find the incremental input file`，会追加诊断提示，帮助区分 ArkTS 编译错误和签名/打包增量状态问题。
+`coding_hvigor_build` 报告现在会打印实际 hvigor 命令；错误解析在剥 ANSI 后进行。日志命中 `Failed to find the incremental input file` 会追加增量输入 / 自定义签名任务 / daemon 三条提示；**仅**命中 `00308018` 则报告「SDK/hvigor 内部未知错误」（该码是 hvigor 的 Unknown Error 码，不再单凭码定性增量问题）；首个 `Failed :<module>:<target>@<Task>` 作为失败任务提示。`Failed :` 任务行与 `BUILD FAILED` 是 hvigor 包装行，不计入 errors。
 
 | Flag                  | 收益来源                                                                  | 风险点                                                                            |
 | --------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
@@ -112,7 +112,7 @@ node <DevEco>/tools/node/node.exe <DevEco>/tools/hvigor/bin/hvigorw.js \
 | `-p buildMode=debug`（coding 默认任务均会传） | 项目级 `assembleApp` 默认偏 `release`；固定 debug 缩短门禁耗时 | 模块级 ut 任务默认即 debug，装配时不重复写 `buildMode` |
 | `--parallel`          | 多模块工程开 hvigor task 并发，cold path 受益                              | **小工程（≤ 5 模块）反而是负收益**：worker spinup + 协调开销 > 并发节省；warm 路径下尤其明显 |
 | `--incremental`       | 缓存命中时 hvigor 跳过更激进，warm path 受益                           | cold path 缓存为空，开销基本中性；额外缓存扫描有微小负收益                        |
-| `--analyze=advanced`  | 产出更详细构建诊断信息，适合定位任务图 / 缓存问题                            | 日常 harness 不建议默认开启；可能显著增加 I/O 与分析耗时                         |
+| `--analyze=advanced`  | 产出更详细构建诊断信息，适合定位任务图 / 缓存问题                            | 仅显式 opt-in 时启用（默认 `normal`，与 DevEco 对齐）；可能显著增加 I/O 与分析耗时                         |
 
 ### 小工程 benchmark（仅供参考）
 

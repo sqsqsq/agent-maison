@@ -99,7 +99,7 @@
       "daemon": true,
       "parallel": true,
       "incremental": true,
-      "analyze": "advanced"
+      "analyze": "normal"
     },
     "hmosDevice": {}
   },

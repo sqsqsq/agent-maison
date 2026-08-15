@@ -108,7 +108,7 @@ toolchain.devEcoStudio.installPath（用户跳过，未配置）
       "daemon": true,
       "parallel": true,
       "incremental": true,
-      "analyze": "advanced"
+      "analyze": "normal"
     }
   }
 }

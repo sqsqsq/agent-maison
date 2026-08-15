@@ -36,6 +36,7 @@ import {
   detectHvigorTaskNotFound,
   moduleDeclaresOhosTestTarget,
   sanitizeLogModuleName,
+  parseBuildErrors,
 } from '../../../../../harness/scripts/utils/hvigor-runner';
 import { clearFrameworkConfigCache } from '../../../../../harness/config';
 import { DEFAULT_LAYOUT } from '../../../../../harness/tests/utils/layout-test-helper';
@@ -96,6 +97,27 @@ function writeFile(p: string, content: string): void {
   fs.writeFileSync(p, content, 'utf-8');
 }
 
+// 宿主 08-13 build_maison_fail.txt 真实失败日志逐字切片（plan c9e3f7d1，保留 ANSI 原文与行序）：
+//   L202  `> hvigor ^[[91mERROR: Failed :entry:product@CompileArkTS...`（失败任务，尾窗之外）
+//   L1488 `> hvigor ^[[91mERROR: ^[[31mError Code: 00308018 Unknown Error`（ANSI 前缀后即错误正文）
+//   L1489 `isReferencedAliasDeclaration is not a function`
+//   L1490 `COMPILE RESULT:FAIL`
+//   L1493 `This error is unknown, view the detailed error logs:`
+//   L1501 `> hvigor ^[[91mERROR: BUILD FAILED in 55 s 595 ms`（包装行）
+// 中间区间（430 条 ArkTS WARN 等）省略；process_lazy_import 堆栈与 etsLoaderVersion 属
+// `.hvigor` 内部 build.log（plan 立项事实节一），不在本切片中。
+const HOST_FAIL_SLICE_ANSI = [
+  '> hvigor \x1b[91mERROR: Failed :entry:product@CompileArkTS...',
+  '…（L203–L1487：430 条 ArkTS WARN 等，省略）…',
+  '> hvigor \x1b[91mERROR: \x1b[31mError Code: 00308018 Unknown Error',
+  'isReferencedAliasDeclaration is not a function',
+  'COMPILE RESULT:FAIL',
+  '…（L1491–L1492，省略）…',
+  'This error is unknown, view the detailed error logs:',
+  '…（L1494–L1500，省略）…',
+  '> hvigor \x1b[91mERROR: BUILD FAILED in 55 s 595 ms',
+].join('\n');
+
 const cases: Array<{ name: string; run: () => void }> = [
   {
     name: 'buildAssembleAppArgs: 含 buildMode=debug + parallel + incremental + product 自动探测，extraArgs 在 task 前',
@@ -115,7 +137,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       assertContains(args, '--parallel', '应含 --parallel');
       assertContains(args, '--incremental', '应含 --incremental');
       assertContains(args, '--daemon', '应含 --daemon');
-      assertContains(args, '--analyze=advanced', '应含 --analyze=advanced');
+      assertContains(args, '--analyze=normal', '应含 --analyze=normal');
       assertNotContains(args, '--no-daemon', '默认不应再传 --no-daemon');
 
       const buildModes = findFlagValues(args, 'buildMode');
@@ -338,6 +360,24 @@ const cases: Array<{ name: string; run: () => void }> = [
     }),
   },
   {
+    // plan c9e3f7d1 t1：config 缺省（无 toolchain.hvigor）时默认 analyze=normal（与 DevEco 对齐）
+    name: 'hvigor tuning: config 缺省 → 默认 --analyze=normal（assembleApp 与 coding 两条路径）',
+    run: () => withTmpDir(root => {
+      writeFile(
+        path.join(root, 'build-profile.json5'),
+        JSON.stringify({ app: { products: [{ name: 'product' }] } }),
+      );
+
+      const assembleArgs = buildAssembleAppArgs(root, 'assembleHap');
+      assertContains(assembleArgs, '--analyze=normal', 'assembleApp 路径 config 缺省时应回退 normal');
+      assertNotContains(assembleArgs, '--analyze=advanced', 'assembleApp 路径缺省时不得出现 advanced');
+
+      const codingArgs = buildCodingHvigorArgs(root);
+      assertContains(codingArgs, '--analyze=normal', 'coding 路径 config 缺省时应回退 normal');
+      assertNotContains(codingArgs, '--analyze=advanced', 'coding 路径缺省时不得出现 advanced');
+    }),
+  },
+  {
     name: 'hvigor diagnostics: 00308018 + onlineSign + analyze/daemon 给出定向提示',
     run: () => {
       const diagnostics = buildHvigorDiagnostics([
@@ -349,8 +389,8 @@ const cases: Array<{ name: string; run: () => void }> = [
       ].join('\n'));
 
       assertEq(diagnostics.length, 4, '应识别增量输入缺失、onlineSign、analyze、daemon 四类提示');
-      if (!diagnostics.some(d => d.includes('00308018'))) {
-        throw new Error(`诊断中应包含 00308018：${JSON.stringify(diagnostics)}`);
+      if (!diagnostics.some(d => d.includes('增量输入缺失'))) {
+        throw new Error(`诊断中应包含增量输入缺失：${JSON.stringify(diagnostics)}`);
       }
       if (!diagnostics.some(d => d.includes('onlineSign'))) {
         throw new Error(`诊断中应包含 onlineSign：${JSON.stringify(diagnostics)}`);
@@ -437,6 +477,125 @@ const cases: Array<{ name: string; run: () => void }> = [
         'Archive HAP Package task start.',
       ].join('\n'));
       assertEq(diagnostics.length, 4, '不应因新增 sign-skip 规则而多出诊断条目');
+    },
+  },
+  {
+    // plan c9e3f7d1 t2：宿主 08-13 真实失败日志切片（保留 ANSI 原文）
+    // build_maison_fail.txt 实证三处 ERROR：
+    //   L202  `> hvigor ^[[91mERROR: Failed :entry:product@CompileArkTS...`（失败任务）
+    //   L1488 `> hvigor ^[[91mERROR: ^[[31mError Code: 00308018 Unknown Error^[[0m`（实质错误 + ets-loader 堆栈）
+    //   L1501 `> hvigor ^[[91mERROR: BUILD FAILED in 55 s 595 ms^[[0m`（包装行）
+    name: 'buildHvigorDiagnostics: ANSI 宿主切片 → 失败任务 entry:product@CompileArkTS 进 diagnostics（t2 a）',
+    run: () => {
+      const diagnostics = buildHvigorDiagnostics(HOST_FAIL_SLICE_ANSI);
+      if (!diagnostics.some(d => d.includes('失败任务') && d.includes('entry:product@CompileArkTS'))) {
+        throw new Error(
+          `应从 ANSI 日志解析出失败任务 entry:product@CompileArkTS：${JSON.stringify(diagnostics)}`,
+        );
+      }
+    },
+  },
+  {
+    name: 'buildHvigorDiagnostics: 00308018 无增量正文 → 不产增量/签名/daemon 指引，只报 SDK 未知错误（t2 b）',
+    run: () => {
+      const diagnostics = buildHvigorDiagnostics(HOST_FAIL_SLICE_ANSI);
+      if (diagnostics.some(d => d.includes('增量输入缺失'))) {
+        throw new Error(`不得给增量指引：${JSON.stringify(diagnostics)}`);
+      }
+      if (diagnostics.some(d => d.includes('onlineSign') || d.includes('自定义签名任务'))) {
+        throw new Error(`不得给签名指引：${JSON.stringify(diagnostics)}`);
+      }
+      if (diagnostics.some(d => d.includes('daemon'))) {
+        throw new Error(`不得给 daemon 指引：${JSON.stringify(diagnostics)}`);
+      }
+      const unknown = diagnostics.find(d => d.includes('00308018 即 hvigor 的 Unknown Error 码'));
+      if (!unknown) {
+        throw new Error(`应有 SDK/hvigor 内部未知错误诊断：${JSON.stringify(diagnostics)}`);
+      }
+      if (!unknown.includes('isReferencedAliasDeclaration is not a function')) {
+        throw new Error(`未知错误诊断应保留原始错误正文：${unknown}`);
+      }
+      const errors = parseBuildErrors(HOST_FAIL_SLICE_ANSI);
+      const first = errors[0];
+      if (!first || !first.message.includes('Error Code: 00308018 Unknown Error')) {
+        throw new Error(`errors 首条应为 00308018 实质错误：${JSON.stringify(errors)}`);
+      }
+      if (!first.message.includes('isReferencedAliasDeclaration is not a function')) {
+        throw new Error(`errors 原始正文应保留堆栈首行：${JSON.stringify(errors)}`);
+      }
+    },
+  },
+  {
+    name: 'parseBuildErrors: ANSI 宿主切片 → 包装行不进 errors，首条即主错误（t2 a/c/d 防回归）',
+    run: () => {
+      const errors = parseBuildErrors(HOST_FAIL_SLICE_ANSI);
+      if (errors.some(e => e.message.includes('BUILD FAILED'))) {
+        throw new Error(`BUILD FAILED 包装行不得进 errors：${JSON.stringify(errors)}`);
+      }
+      if (errors.some(e => e.message.includes('Failed :'))) {
+        throw new Error(`Failed : 失败任务包装行不得进 errors：${JSON.stringify(errors)}`);
+      }
+      assertEq(errors.length, 1, '1700WARN 场景应只解析出 1 条实质错误');
+    },
+  },
+  {
+    name: 'parseBuildErrors + buildHvigorDiagnostics: 模块/产品名含 -/.（base-common / hms.core）的失败任务仍识别且不进 errors',
+    run: () => {
+      // 点号模块名单独验证（plan t2④：全量日志只报首个失败任务，多行场景验证的是首条）
+      const dotted = buildHvigorDiagnostics('> hvigor ERROR: Failed :hms.core:default@CompileArkTS...');
+      if (!dotted.some(d => d.includes('hms.core:default@CompileArkTS'))) {
+        throw new Error(`应识别点号模块名失败任务：${JSON.stringify(dotted)}`);
+      }
+      assertEq(parseBuildErrors('> hvigor ERROR: Failed :hms.core:default@CompileArkTS...').length, 0, '点号模块名包装行不进 errors');
+
+      // 多行场景：任一失败任务行都不进 errors；诊断只报首个（连字符模块名）
+      const log = [
+        '> hvigor ERROR: Failed :base-common:product@CompileArkTS...',
+        '> hvigor ERROR: Failed :hms.core:default@CompileArkTS...',
+      ].join('\n');
+      const errors = parseBuildErrors(log);
+      assertEq(errors.length, 0, '失败任务包装行不得进 errors');
+      const diagnostics = buildHvigorDiagnostics(log);
+      if (!diagnostics.some(d => d.includes('base-common:product@CompileArkTS'))) {
+        throw new Error(`应识别连字符模块名失败任务：${JSON.stringify(diagnostics)}`);
+      }
+    },
+  },
+  {
+    name: 'parseBuildErrors: 正文含 "Failed:" 的真实错误不被吞（签名/编译器消息），errors 逐条保留',
+    run: () => {
+      const log = [
+        '> hvigor ERROR: Error Message: Failed: cannot resolve symbol',
+        'ERROR: Failed: cannot open signing profile',
+        'ArkTS:ERROR File: a.ets:1:2 Build Failed: bad token',
+      ].join('\n');
+      const errors = parseBuildErrors(log);
+      assertEq(errors.length, 3, `三条真实错误均应保留（不得被包装行排除吞掉）：${JSON.stringify(errors)}`);
+      if (!errors.some(e => e.message.includes('cannot open signing profile'))) {
+        throw new Error(`签名消息应进 errors：${JSON.stringify(errors)}`);
+      }
+      if (!errors.some(e => e.message.includes('bad token'))) {
+        throw new Error(`ArkTS 错误应进 errors：${JSON.stringify(errors)}`);
+      }
+    },
+  },
+  {
+    name: 'buildHvigorDiagnostics: Failed to find the incremental input file 仍走原增量分支（t2 c 防回归）',
+    run: () => {
+      const diagnostics = buildHvigorDiagnostics([
+        '> hvigor ERROR: Failed :entry:product@CompileArkTS...',
+        'Error Code: 00308018 Unknown Error - Failed to find the incremental input file:',
+        'D:/repo/build/product/outputs/product/demo-product-unsigned.hap',
+      ].join('\n'));
+      if (!diagnostics.some(d => d.includes('增量输入缺失'))) {
+        throw new Error(`正文命中时仍应走增量分支：${JSON.stringify(diagnostics)}`);
+      }
+      if (diagnostics.some(d => d.includes('00308018 即 hvigor 的 Unknown Error 码'))) {
+        throw new Error(`正文命中时不得额外给未知错误诊断：${JSON.stringify(diagnostics)}`);
+      }
+      if (!diagnostics.some(d => d.includes('失败任务') && d.includes('entry:product@CompileArkTS'))) {
+        throw new Error(`失败任务诊断仍应给出：${JSON.stringify(diagnostics)}`);
+      }
     },
   },
   {

@@ -235,6 +235,12 @@ const cases: Array<{ name: string; run: () => void }> = [
         true,
         'toolchain.hvigor.parallel 应被回填',
       );
+      // plan c9e3f7d1 t1：analyze 缺失 → 回填新默认 normal
+      assert.strictEqual(
+        ((merged as { toolchain: { hvigor: { analyze?: string } } }).toolchain).hvigor.analyze,
+        'normal',
+        'toolchain.hvigor.analyze 缺失应回填 normal',
+      );
       // report.appliedFields 不应包含 schema_version / paths.features_dir / toolchain.hvigor.daemon
       const appliedPaths = report.appliedFields.map(f => f.path);
       assert(!appliedPaths.includes('schema_version'));
@@ -243,6 +249,24 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(appliedPaths.includes('paths.extension_dir'));
       assert(appliedPaths.includes('active_workflow'));
       assert(appliedPaths.includes('toolchain.hvigor.parallel'));
+      assert(appliedPaths.includes('toolchain.hvigor.analyze'));
+    },
+  },
+  {
+    name: 'mergeBackfillFields：analyze 已写 advanced → 保留不覆盖（plan c9e3f7d1：不做值迁移）',
+    run: () => {
+      const { merged, report } = mergeBackfillFields({
+        toolchain: { hvigor: { analyze: 'advanced' } },
+      });
+      assert.strictEqual(
+        ((merged as { toolchain: { hvigor: { analyze: string } } }).toolchain).hvigor.analyze,
+        'advanced',
+        '已有 analyze=advanced 不得被覆盖为 normal',
+      );
+      assert(
+        !report.appliedFields.some(f => f.path === 'toolchain.hvigor.analyze'),
+        'analyze 已存在时不得进入 appliedFields',
+      );
     },
   },
   {
