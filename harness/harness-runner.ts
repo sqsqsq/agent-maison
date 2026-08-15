@@ -164,6 +164,7 @@ import * as YAML from 'yaml';
 import { detectRepoLayout, frameworkAbs, frameworkRelPath, frameworkLogicalRelPath, inferRepoLayout, type RepoLayout } from './repo-layout';
 import { probeAdapterImageInput, collectAuthoritativeImagePaths, resolveContextAdapterImageInput } from './scripts/utils/multimodal-probe';
 import { resolveEffectiveVisionContext } from './scripts/utils/effective-vision-context';
+import { writeReceiptScaffold } from './scripts/utils/receipt-scaffold';
 
 /** capability-snapshot 缺失时的当前执行能力回落；产物文件不参与判定。 */
 function resolveCurrentVisualForHarness(projectRoot: string, feature: string): boolean {
@@ -1450,20 +1451,18 @@ function writeReceiptSkeletonIfMissing(
   try {
     if (verdict !== 'PASS') return;
     if (resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature)) === 'lite') return;
-    const receiptPath = resolveReceiptFilePath(projectRoot, feature, phase).path;
-    if (fs.existsSync(receiptPath)) return;
-    const templatePath = path.join(__dirname, 'templates', 'phase-completion-receipt.md');
-    if (!fs.existsSync(templatePath)) return;
-    const skeleton = fs
-      .readFileSync(templatePath, 'utf-8')
-      .replace('feature: "<feature-name>"', `feature: "${feature}"`)
-      .replace('phase: "<spec | plan | coding | review | ut | testing>"', `phase: "${phase}"`);
-    fs.mkdirSync(path.dirname(receiptPath), { recursive: true });
-    fs.writeFileSync(receiptPath, skeleton, 'utf-8');
-    console.log(
-      `   ✓ 已生成瘦身回执骨架（PASS-gated）：${path.relative(projectRoot, receiptPath).replace(/\\/g, '/')}` +
-        '——自证字段待真实填写、反假设 checkbox 待勾选，骨架不构成闭环。',
-    );
+    // openspec runner-owned-machine-facts：身份字段（feature/phase/claimed_attempt_id）
+    // 由骨架预填——goal 态取本次 harness 进程的 attempt 身份（与 check-receipt 等值
+    // 校验同源），agent 不再从环境抄写机器已知的值。
+    const res = writeReceiptScaffold(projectRoot, feature, phase, {
+      attemptId: process.env.MAISON_GOAL_ATTEMPT?.trim() || undefined,
+    });
+    if (res.wrote && res.receiptPath) {
+      console.log(
+        `   ✓ 已生成瘦身回执骨架（PASS-gated）：${path.relative(projectRoot, res.receiptPath).replace(/\\/g, '/')}` +
+          '——身份字段已预填（不得改动）；自证字段待真实填写、反假设 checkbox 待勾选，骨架不构成闭环。',
+      );
+    }
   } catch {
     /* best-effort：骨架失败不阻断，agent 仍可全手填 */
   }

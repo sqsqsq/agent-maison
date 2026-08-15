@@ -1022,8 +1022,8 @@ function main(): void {
         id: 'receipt_attempt_identity',
         severity: 'BLOCKER',
         message:
-          `回执缺 claimed_attempt_id——请填当前 attempt（env MAISON_GOAL_ATTEMPT=${currentAttempt}）。` +
-          '该字段是"本回执属于哪一轮"的唯一凭据，缺失会让完成观测把上一轮的旧声明当成本轮完成。',
+          `回执缺 claimed_attempt_id——goal 态该字段由 runner 在骨架中预填（当前 attempt=${currentAttempt}）。` +
+          '骨架缺失/被删时重跑本阶段 harness 重新生成；不要手填或从别处抄写身份值。',
       });
     } else if (attemptPhase === phase && claimedAttempt !== currentAttempt) {
       // **只有同阶段**才做等值：跨阶段时 currentAttempt 属于别的 phase，比了必假
@@ -1033,7 +1033,8 @@ function main(): void {
         severity: 'BLOCKER',
         message:
           `回执 claimed_attempt_id="${claimedAttempt}" 与本次 attempt="${currentAttempt}" 不一致` +
-          '——这通常意味着回执是从上一轮抄来的；请按本轮实际情况重填，不要复制旧回执。',
+          '——身份字段由 runner 预填，不一致通常是旧 attempt 回执残留或该字段被手改；' +
+          '不要手写/猜测身份值，重跑本阶段 harness（或等 runner 重建骨架）后只填自证字段。',
       });
     }
   }

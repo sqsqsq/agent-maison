@@ -16,6 +16,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { tryValidateReceipt } from '../../scripts/utils/phase-state';
+import { writeReceiptScaffold } from '../../scripts/utils/receipt-scaffold';
 import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
 import { computeProductWorktreeDigest } from '../../scripts/utils/worktree-digest';
 
@@ -530,6 +531,38 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(
         (v.message ?? '').includes('slim_summary_run_id_mismatch'),
         `应命中 run_id 失配 BLOCKER：${v.message}`,
+      );
+    },
+  },
+  {
+    name: 'runner-owned-machine-facts：骨架身份预填（attemptId）/幂等不覆盖/force 重建作废旧回执/非 goal 留空',
+    run: () => {
+      // goal 态预填：claimed_attempt_id 由 runner 写入骨架
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'receipt-scaffold-'));
+      const r1 = writeReceiptScaffold(root, 'demo', PHASE, { attemptId: 'i3' });
+      assert(r1.wrote && r1.receiptPath !== null, '首次生成应写盘');
+      const text1 = fs.readFileSync(r1.receiptPath!, 'utf-8');
+      assert(text1.includes('claimed_attempt_id: "i3"'), `身份应预填 i3：${text1.slice(0, 300)}`);
+      assert(text1.includes('feature: "demo"') && text1.includes(`phase: "${PHASE}"`), 'feature/phase 应预填');
+      // 幂等：已存在 + 非 force → 不覆盖（harness PASS 语义，agent 已填内容不丢）
+      fs.appendFileSync(r1.receiptPath!, '\n<!-- agent-filled -->\n', 'utf-8');
+      const r2 = writeReceiptScaffold(root, 'demo', PHASE, { attemptId: 'i4' });
+      assert(!r2.wrote, '已存在时非 force 不得覆盖');
+      assert(fs.readFileSync(r1.receiptPath!, 'utf-8').includes('agent-filled'), '既有内容应保留');
+      // force：closure attempt 前重建——旧回执作废、身份换新、骨架回到未完成态
+      const r3 = writeReceiptScaffold(root, 'demo', PHASE, { attemptId: 'i4', force: true });
+      assert(r3.wrote, 'force 应重建');
+      const text3 = fs.readFileSync(r3.receiptPath!, 'utf-8');
+      assert(text3.includes('claimed_attempt_id: "i4"'), '身份应更新为 i4');
+      assert(!text3.includes('agent-filled'), '上一 attempt 的旧回执内容应被作废（防旧声明误命中完成观测）');
+      assert(/- \[ \]/.test(text3), '反假设 checkbox 应回到未勾（骨架不构成闭环）');
+      // 非 goal（人工态）：attemptId 省略 → 字段留空
+      const root2 = fs.mkdtempSync(path.join(os.tmpdir(), 'receipt-scaffold-'));
+      const r4 = writeReceiptScaffold(root2, 'demo', PHASE, {});
+      assert(r4.wrote && r4.receiptPath !== null, '非 goal 也应能生成骨架');
+      assert(
+        fs.readFileSync(r4.receiptPath!, 'utf-8').includes('claimed_attempt_id: ""'),
+        '非 goal 态身份字段保持留空',
       );
     },
   },

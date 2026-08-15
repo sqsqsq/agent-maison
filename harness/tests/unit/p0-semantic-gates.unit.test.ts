@@ -4,7 +4,6 @@
 // bank_list→add_success 跳边、10 P0 skip + 结论「达标」、requirement_ref 引文伪造。
 
 import assert from 'assert';
-import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -37,7 +36,6 @@ function writeFile(root: string, rel: string, content: string): void {
 }
 
 function writeAcceptance(root: string, over?: { jumpEdge?: boolean; badSnippet?: boolean; noCheckpoint?: boolean }): void {
-  const sha = crypto.createHash('sha256').update(SNIPPET, 'utf-8').digest('hex');
   const yaml = [
     'schema_version: "1.0"',
     `feature: ${FEATURE}`,
@@ -52,7 +50,9 @@ function writeAcceptance(root: string, over?: { jumpEdge?: boolean; badSnippet?:
     '    requirement_ref:',
     `      source_path: ${REQ_DOC_REL}`,
     `      snippet: "${over?.badSnippet ? '需求里不存在的句子' : SNIPPET}"`,
-    `      snippet_sha256: ${over?.badSnippet ? crypto.createHash('sha256').update('需求里不存在的句子', 'utf-8').digest('hex') : sha}`,
+    // 存量遗留字段（与 snippet 必然失配）——runner-owned-machine-facts 后被忽略，
+    // 默认 PASS 用例即钉住「存量 snippet_sha256 不参与判定、无需迁移」。
+    `      snippet_sha256: ${'0'.repeat(64)}`,
     ...(over?.noCheckpoint
       ? []
       : [
@@ -69,7 +69,6 @@ function writeAcceptance(root: string, over?: { jumpEdge?: boolean; badSnippet?:
     '    requirement_ref:',
     `      source_path: ${REQ_DOC_REL}`,
     `      snippet: "${SNIPPET}"`,
-    `      snippet_sha256: ${sha}`,
     '    checkpoint:',
     '      pre_screen: card_type_sheet',
     '      action: { type: touch, target_element_id: card_type_agree_btn }',
@@ -157,7 +156,7 @@ const cases: Case[] = [
     },
   },
   {
-    name: 't4a：合法模型 PASS；缺 checkpoint FAIL；跳边（bank_list→add_success）FAIL；引文伪造 FAIL',
+    name: 't4a：合法模型 PASS（存量失配 snippet_sha256 被忽略/无该字段同 PASS）；缺 checkpoint FAIL；跳边 FAIL；引文伪造 FAIL',
     run: () => {
       const root = mkProject();
       seedReqDoc(root);

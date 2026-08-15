@@ -284,6 +284,7 @@ import {
   syncPhaseStateOnReceiptPassStrict,
   tryValidateReceipt,
 } from './utils/phase-state';
+import { writeReceiptScaffold } from './utils/receipt-scaffold';
 import { loadGoalCapability } from './utils/goal-adapter-capability';
 import { deriveReconcileObservation } from './utils/goal-reconcile-observation';
 import { validateMinimumAssurance } from './utils/skill-contract';
@@ -4997,6 +4998,19 @@ Goal runner — tool-agnostic multi-phase orchestrator
           halted = true;
           phaseDone = true;
           continue;
+        }
+        // openspec runner-owned-machine-facts：closure-only attempt 由 runner 重建未完成
+        // 回执骨架并预填本轮 attempt 身份——agent 只填自证字段，不再抄写机器已知的身份值
+        // （宿主实锤 run 20260815T023016Z-8c66cf：agent 从 progress.json 抄了 "3"，而 runner
+        // 身份是 "i3"，两次 advance_blocked 直达 closure_wall_repeated）。force 同时作废上一
+        // attempt 的旧回执：旧完整声明不得让本 attempt 被完成观测提前判完。位置刻意在
+        // capability/device/快照等全部前置门**之后**、agent_invoke_start 之前——前置门
+        // HALT（agent 未启动）时不得提前销毁旧回执现场（codex review）。
+        if (closureOnlyAttempt && !dryRun) {
+          writeReceiptScaffold(projectRoot, manifest.feature, String(phase), {
+            attemptId: visualAttemptId,
+            force: true,
+          });
         }
         goalEvents.emit({
           type: 'agent_invoke_start',

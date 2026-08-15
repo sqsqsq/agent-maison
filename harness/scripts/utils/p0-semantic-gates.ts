@@ -55,7 +55,8 @@ export interface AcRequirementRef {
   source_path?: string;
   locator?: string;
   snippet?: string;
-  snippet_sha256?: string;
+  // snippet_sha256 已退役（openspec runner-owned-machine-facts）：hash 是机器可派生
+  // 事实，门禁自行读源文档验 snippet 逐字在场——存量 YAML 中的该字段被忽略，无需迁移。
 }
 
 export interface AcceptanceCriterion {
@@ -134,16 +135,14 @@ export function evaluateAcceptanceFlowStructure(projectRoot: string, feature: st
     }
   }
 
-  // ② requirement_ref 验存：snippet 哈希一致 且 逐字存在于源文档（引文级可追溯）
+  // ② requirement_ref 验存：snippet 逐字存在于源文档（引文级可追溯）。
+  //    snippet_sha256 已退役——hash 是机器可派生事实，不让 agent 用 shell 计算再抄写
+  //    （宿主实锤 20260815：无 shell 权限的 headless agent 在此烧掉整个 attempt）；
+  //    存量 YAML 里的该字段被忽略，不校验、不要求迁移。
   for (const ac of p0) {
     const ref = ac.requirement_ref;
-    if (!ref?.source_path || !ref.snippet || !ref.snippet_sha256) {
-      failures.push(`${ac.id}：缺 requirement_ref{source_path,snippet,snippet_sha256}`);
-      continue;
-    }
-    const snippetSha = crypto.createHash('sha256').update(ref.snippet, 'utf-8').digest('hex');
-    if (snippetSha !== ref.snippet_sha256) {
-      failures.push(`${ac.id}：requirement_ref.snippet 与 snippet_sha256 失配`);
+    if (!ref?.source_path || !ref.snippet) {
+      failures.push(`${ac.id}：缺 requirement_ref{source_path,snippet}`);
       continue;
     }
     const abs = path.resolve(projectRoot, ref.source_path);
@@ -203,7 +202,7 @@ export function evaluateAcceptanceFlowStructure(projectRoot: string, feature: st
       severity: 'BLOCKER', status: 'FAIL',
       details: `P0 结构化流程模型不完整（${failures.length} 项）：\n` + failures.slice(0, 10).join('\n') + (failures.length > 10 ? '\n…' : ''),
       suggestion:
-        '为每个 P0 交互 AC 补 checkpoint（pre/action/post/required）与 requirement_ref（源文档逐字片段+sha256）；' +
+        '为每个 P0 交互 AC 补 checkpoint（pre/action/post/required）与 requirement_ref（source_path + 源文档逐字 snippet）；' +
         'flows 声明有序屏链且每条边由 ≥1 P0 AC 拥有。',
     }];
   }
