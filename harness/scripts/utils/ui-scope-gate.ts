@@ -3,10 +3,12 @@
 // ============================================================================
 // UI 文件级 scope 门：越界 UI 文件 = 本次 changed UI files − 冻结 contracts.files。
 //
-// 钉死口径（plan v17）：
-//   1. 白名单 = **同 run plan PASS snapshot 冻结的 contracts.files**——快照缺失/失效/
-//      损坏一律 BLOCKER，禁止退回 live ctx.featureSpec.contracts（coding 期 agent 可写，
-//      读它=门禁形同虚设）。
+// 钉死口径（plan v17；白名单来源经 runner-owned-machine-facts 裁剪修订）：
+//   1. 白名单 = **plan closure（phase-evidence-manifest）冻结的 contracts.yaml**——
+//      当前盘上文件 hash 与 closure 记录相等才读取；manifest 缺失/破损/指针断裂/hash
+//      失配一律 BLOCKER，禁止退回未经核对的 live contracts（coding 期 agent 可写）。
+//      （旧口径用 per-run pass snapshot——快照是 closure-retry 的 TOCTOU 缓存、不是授权
+//      载体，跨 run 下游起点名下天然无快照，曾让合法 --start coding 结构性 FAIL。）
 //   2. diff 基线 = runner 在首次 coding agent invoke 前锚定的 coding_base_sha
 //      （覆盖 committed/staged/unstaged/untracked 四态；agent 自行 commit 的越界文件
 //      同样检出）。缺失与缺快照同罚 BLOCKER，不回退 trace.start_commit（那是 agent
@@ -21,21 +23,28 @@
 // 冻结锚 → SKIP（诚实声明 goal-only；normal 模式过渡按 plan 发布约束人工核对）。
 // ============================================================================
 
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
+import { readCodingBase } from './pass-snapshot';
 import {
-  PASS_SNAPSHOT_ANCHOR_ENV,
-  loadTrustedSnapshotContext,
-  parseSnapshotAnchorEnv,
-  readCodingBase,
-  readFrozenSnapshotFile,
-} from './pass-snapshot';
+  loadPhaseEvidenceManifest,
+  readReceiptManifestPointer,
+} from './phase-evidence-manifest';
 import { diffChangedFilesWithStatus, readFileAtRef, StatusDiffEntry } from './git-diff';
 
 // --------------------------------------------------------------------------
 // UI 敏感文件三类判据（plan v14 G1）
 // --------------------------------------------------------------------------
+
+function sha256FileOrNull(abs: string): string | null {
+  try {
+    return crypto.createHash('sha256').update(fs.readFileSync(abs)).digest('hex');
+  } catch {
+    return null;
+  }
+}
 
 /** 路径判据：pages/components/presentation 目录下的 .ets */
 export function isUiSensitivePath(rel: string): boolean {
@@ -183,79 +192,77 @@ export function runUiDiffWithinDeclaredFiles(input: UiScopeGateInput): UiScopeGa
     };
   }
 
-  // ④ 有 UI 变更 → 冻结白名单必须可用（fail-closed，禁退 live contracts）
-  // b3e8d4c7 t4：**内存锚接线**。此前恒传 null，把 loadTrustedSnapshotContext 的
-  // 换代检测整个关掉——agent 自建 epoch/head 也会被当授权面（宿主实锤自我扩权）。
-  // 锚由 runner 经 MAISON_GOAL_SCOPE_ANCHOR 注入本 gate harness；缺 env（非 goal /
-  // 人工跑）时仍为 null，既有行为不变。
-  const anchorParse = parseSnapshotAnchorEnv(process.env[PASS_SNAPSHOT_ANCHOR_ENV], 'plan');
-  if (anchorParse.kind === 'invalid') {
-    // env 在场但损坏 → **fail-closed**，绝不降级为"没有锚"再去相信盘上的 head
-    //（codex 复核 P1：本仓已多次实锤 env 传播缺失，静默降级等于把 t4 防线还回去）。
-    return {
-      status: 'FAIL',
-      // **责任类别必须是框架侧**：锚 env 损坏是 runner→gate 的传播异常，不是产品代码问题。
-      // 用 ui_scope_frozen_contract_missing（未登记在 FailureKind 分类表）会退化成
-      // code_regression → 把环境问题丢给 coding agent 重试，t5 落地后还可能被误送 replan。
-      failureKind: 'framework_bug',
-      details: `scope 锚 env（${PASS_SNAPSHOT_ANCHOR_ENV}）在场但不可解析：${anchorParse.reason}`,
-      suggestion: '这是 runner→gate 的锚传播异常（非产品问题）。核查 goal-runner 的 env 注入后重跑。',
-    };
-  }
-  const snap = loadTrustedSnapshotContext(
-    projectRoot,
-    feature,
-    runId,
-    'plan',
-    anchorParse.kind === 'ok' ? anchorParse.anchor : null,
-  );
-  if (snap.kind === 'none') {
+  // ④ 有 UI 变更 → 冻结白名单必须可用（fail-closed，禁退未经核对的 live contracts）
+  // runner-owned-machine-facts 裁剪（codex 定案；宿主实锤 run 20260815T162931Z-3aa520 同族）：
+  // 白名单校验源=plan closure 的 phase-evidence-manifest（跨 run 稳定、由回执指针锚定
+  // 完整性），不再依赖 per-run pass snapshot（那是 closure-retry 的 TOCTOU 缓存，跨 run
+  // 下游起点名下天然没有）。当前盘上 contracts.yaml 与 closure 冻结 hash 相等才读取；
+  // 失配=live 漂移，按越界同罚 FAIL（post-agent 的 plan 授权检查走既有 replan 处置）。
+  const planEvidence = loadPhaseEvidenceManifest(projectRoot, feature, 'plan');
+  if (!planEvidence) {
     return {
       status: 'FAIL',
       failureKind: 'ui_scope_frozen_contract_missing',
       details:
-        `检出 ${uiChanged.size} 个 changed UI 文件，但本 run（${runId}）无 plan PASS snapshot——` +
-        'UI scope 白名单必须来自冻结的 contracts.files（live contracts coding 期 agent 可写，不可作依据）。',
-      suggestion: '请从 plan 阶段起跑 goal run（plan 正常 PASS 时 runner 必建快照）；第一版不做跨 run 自动寻找快照。',
+        `检出 ${uiChanged.size} 个 changed UI 文件，但 plan closure 的 evidence manifest 缺失——` +
+        'UI scope 白名单必须来自 plan closure 冻结的 contracts.yaml（live contracts coding 期 agent 可写，不可作依据）。',
+      suggestion: '请先完成 plan 闭环（含 plan 的 goal run 或重闭环 plan）后再进入 coding。',
     };
   }
-  if (snap.kind === 'inactive') {
+  if (!planEvidence.integrityOk) {
     return {
       status: 'FAIL',
       failureKind: 'ui_scope_frozen_contract_missing',
-      details: '本 run 的 plan PASS snapshot 已失效（superseded）——plan 须重新 PASS 后再进入 coding。',
-      suggestion: '重跑 plan 阶段取得新的 PASS snapshot（scope expansion 的唯一合法路径）。',
+      details: `plan evidence manifest 完整性破损：${(planEvidence.integrityErrors ?? []).join('；')}`,
+      suggestion: '重跑 plan 重新闭环（manifest 由 closure 重新生成）。',
     };
   }
-  if (snap.kind === 'fail_closed') {
+  const pointer = readReceiptManifestPointer(projectRoot, feature, 'plan');
+  if (pointer === null || pointer !== planEvidence.fileSha256) {
     return {
       status: 'FAIL',
       failureKind: 'ui_scope_frozen_contract_missing',
-      details: `plan PASS snapshot 可信加载失败：${snap.reason}`,
-      suggestion: '人工核查 trust-state（~/.maison/goal-checkpoints）后重跑 plan 或 --resume。',
+      details:
+        pointer === null
+          ? 'plan 回执缺 evidence_manifest_sha256 指针——证据链断裂，白名单来源不可信。'
+          : 'plan 回执指针与 evidence manifest 当前文件哈希失配（manifest 被整体改写）。',
+      suggestion: '重跑 plan 重新闭环恢复证据链。',
     };
   }
-  const contractsEntry = snap.manifest.files.find(f => path.posix.basename(f.rel) === 'contracts.yaml');
-  if (!contractsEntry) {
+  const contractsEntry = [...planEvidence.manifest.outputs, ...planEvidence.manifest.inputs].find(
+    (f) => path.posix.basename(f.path.replace(/\\/g, '/')) === 'contracts.yaml',
+  );
+  if (!contractsEntry || !contractsEntry.sha256) {
     return {
       status: 'FAIL',
       failureKind: 'ui_scope_frozen_contract_missing',
-      details: 'plan PASS snapshot 内无 contracts.yaml 条目——PASS 态与产出表不一致（不变量违例）。',
-      suggestion: '重跑 plan 阶段产出 contracts.yaml 并重新取得 PASS snapshot。',
+      details: 'plan closure 记录中无 contracts.yaml 条目/无哈希——closure 与产出表不一致（不变量违例）。',
+      suggestion: '重跑 plan 阶段产出 contracts.yaml 并重新闭环。',
     };
   }
-  const contractsBuf = readFrozenSnapshotFile(snap.phaseDir, contractsEntry.rel, contractsEntry.sha256);
-  if (!contractsBuf) {
+  const contractsAbs = path.join(projectRoot, contractsEntry.path);
+  const liveSha = sha256FileOrNull(contractsAbs);
+  if (liveSha === null) {
     return {
       status: 'FAIL',
       failureKind: 'ui_scope_frozen_contract_missing',
-      details: `快照存储的 ${contractsEntry.rel} 缺失或字节验哈希失败——快照被改毁。`,
-      suggestion: '人工核查 trust-state 后重跑 plan 重建快照。',
+      details: `盘上 ${contractsEntry.path} 缺失/不可读，而 plan closure 记录了它——冻结面已被破坏。`,
+      suggestion: '恢复 contracts.yaml 或重跑 plan 重新闭环。',
+    };
+  }
+  if (liveSha !== contractsEntry.sha256) {
+    return {
+      status: 'FAIL',
+      failureKind: 'ui_scope_frozen_contract_missing',
+      details:
+        `盘上 ${contractsEntry.path} 与 plan closure 冻结哈希失配（live 漂移）——` +
+        'coding 期不得以漂移后的 contracts 作白名单（expansion 唯一路径=回 plan 更新并重新闭环）。',
+      suggestion: '若 scope 确需扩：回 plan 更新 contracts.files 并重新闭环；否则恢复文件后重跑。',
     };
   }
   let declaredFiles: Set<string>;
   try {
-    const doc = YAML.parse(contractsBuf.toString('utf-8')) as { files?: unknown } | null;
+    const doc = YAML.parse(fs.readFileSync(contractsAbs, 'utf-8')) as { files?: unknown } | null;
     declaredFiles = new Set(
       Array.isArray(doc?.files) ? doc!.files.map(x => normalizeRel(String(x))).filter(Boolean) : [],
     );
@@ -275,7 +282,7 @@ export function runUiDiffWithinDeclaredFiles(input: UiScopeGateInput): UiScopeGa
       status: 'PASS',
       details:
         `changed UI files ${uiChanged.size} 个全部在冻结 contracts.files 白名单内` +
-        `（base=${baseShort}，diff 条目 ${diff.entries.length} 个，快照 epoch=${snap.head.pass_epoch}）。`,
+        `（base=${baseShort}，diff 条目 ${diff.entries.length} 个，白名单源=plan closure 冻结 contracts.yaml ${contractsEntry.sha256.slice(0, 12)}）。`,
     };
   }
 
@@ -287,10 +294,10 @@ export function runUiDiffWithinDeclaredFiles(input: UiScopeGateInput): UiScopeGa
       violations.slice(0, 15).map(v => `  - ${v}`).join('\n') +
       (violations.length > 15 ? `\n  ... 还有 ${violations.length - 15} 项` : '') +
       `\n\nbase=${baseShort}（coding_base_sha，覆盖 committed/staged/unstaged/untracked 四态）；` +
-      `白名单来源=plan PASS snapshot epoch=${snap.head.pass_epoch} 的 contracts.files（${declaredFiles.size} 项）。`,
+      `白名单来源=plan closure 冻结 contracts.yaml（sha ${contractsEntry.sha256.slice(0, 12)}，${declaredFiles.size} 项）。`,
     suggestion:
       '未声明的 UI 文件默认就是受保护范围。确属本需求必改 → 回 plan 把文件加进 contracts.yaml files ' +
-      '并重新通过 plan（重取 PASS snapshot 是 expansion 的唯一路径，改 live contracts 无效）；' +
+      '并重新闭环 plan（重新闭环是 expansion 的唯一路径，改 live contracts 无效）；' +
       '属误改 → git restore 撤销这些文件。',
     affectedFiles: violations,
   };

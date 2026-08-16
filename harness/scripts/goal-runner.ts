@@ -180,8 +180,6 @@ import {
   diffFrozenAgainstManifest,
   loadTrustedSnapshotContext,
   phaseHasFrozenSurface,
-  PASS_SNAPSHOT_ANCHOR_ENV,
-  formatSnapshotAnchorEnv,
   readPassSnapshotHead,
   resolveFrozenDeliverables,
   passSnapshotPhaseDir,
@@ -827,23 +825,9 @@ export function __testing_setCanaryProbeInvoke(fn: InvokeAgentFn | null): void {
   injectedCanaryProbeInvoke = fn;
 }
 
-/**
- * b3e8d4c7 t4：把 runner 内存里的 **plan** PASS 快照锚编成 gate harness 的 env。
- * 只有 plan 锚需要跨进程——ui-scope-gate 的白名单唯一来源就是它。
- * 内存里没有（未到 plan PASS / 已被合法 supersede 清除）→ 不注入，消费方退回既有行为。
- */
-function scopeAnchorEnv(
-  memory: Map<string, { epoch: number; memoryDigest: { manifestSha256: string } }>,
-): Record<string, string> {
-  const planAnchor = memory.get('plan');
-  if (!planAnchor) return {};
-  return {
-    [PASS_SNAPSHOT_ANCHOR_ENV]: formatSnapshotAnchorEnv('plan', {
-      epoch: planAnchor.epoch,
-      manifestSha256: planAnchor.memoryDigest.manifestSha256,
-    }),
-  };
-}
+// 【已删除 · runner-owned-machine-facts 裁剪（codex 定案）】scopeAnchorEnv（b3e8d4c7 t4
+// 的 plan 快照锚跨进程注入）：ui-scope-gate 的白名单校验源已改为 plan closure 的
+// phase-evidence-manifest（跨 run 稳定、回执指针锚定完整性），不再消费快照锚 env。
 
 /** gate harness 注入（测试用；**spy 它有没有被调用**是"污染轮不 spawn"的核心断言） */
 type RunHarnessFn = (
@@ -4037,6 +4021,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
       }
       if (fidelityAction.routing) {
         console.log(`[goal-runner] fidelity 路由：${fidelityAction.routing.decision.rationale}（source=${fidelityAction.routing.decision.source}）`);
+      } else if (fidelityAction.action === 'proceed' && fidelityAction.note) {
+        // codex 定点：下游起点零写盘复用分支只带 note 不带 routing——此前这行日志在该
+        // 路径上结构性不可达（宿主实锤：detach.log「复用/零写盘」0 命中）。
+        console.log(`[goal-runner] fidelity 路由：${fidelityAction.note}`);
       }
     }
 
@@ -4594,16 +4582,16 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // halt），调用方须 `phaseDone = true; continue;`。
         const runPlanAuthorityGate = (boundary: 'pre_spawn' | 'post_agent'): boolean => {
           if (dryRun || phase !== ('coding' as FeaturePhase)) return false;
+          // runner-owned-machine-facts 裁剪（codex 定案）：授权=仓内 fresh 的 plan
+          // closure（recomputePhaseEvidenceStaleness 同一把尺），跨 run 稳定——fresh
+          // --start coding 无需本 run 快照即可开工；pass snapshot 只承担同阶段
+          // closure-retry 的 TOCTOU 保护，与授权彻底解耦（不再派生/不再写内存锚）。
           const authority = checkPlanAuthority({
             projectRoot,
             feature: manifest.feature,
-            runId: manifest.run_id,
-            memoryAnchor: passSnapshotMemory.get('plan'),
+            frameworkRoot,
           });
           if (authority.kind === 'ok') {
-            // loader 读出的缓存锚必须写回内存——scopeAnchorEnv 才会把**同一个值**传给
-            // gate；否则「preflight 读 A、gate 又读 B」是 TOCTOU。
-            passSnapshotMemory.set('plan', authority.anchor);
             return false;
           }
           const replan = tryScopeReplan({
@@ -4644,14 +4632,17 @@ Goal runner — tool-agnostic multi-phase orchestrator
             phaseIdx = replan.planIdx - 1; // for 循环 ++ 后落回 plan
             return true;
           }
-          // chain 不含 plan 仍是证据缓存故障的保守恢复：留下 RECOVERY_PENDING，
-          // 截断链按 successor_required 开后继 run。**但回退预算耗尽已有明确的
-          // backtrack_limit 终局语义**，不得继续投影 RECOVERY_PENDING 让 supervisor
-          // 无限重启同一个 run。
+          // runner-owned-machine-facts 收口（codex 三轮）：授权已是 closure 语义——链不含
+          // plan 时的正名是 upstream_closure_gap（上游 closure 缺口/漂移，与截断链 preflight
+          // 拒启同语义），不再借用已退役的 pass_snapshot_unavailable。它的裁决是
+          // operator → WAITING(human)，supervisor 对 WAITING 恒 no_op——所以这里**诚实
+          // 停下等人**，不带 successor_required/successor_start_phase（挂在 WAITING 事件上
+          // 是永远不会被执行的死信，日志还谎称"等待自动恢复"）。显式 successor 起点机制
+          // 保留给真正可自动恢复的路径（review 基线缺口的 RECOVERY_PENDING → coding）。
           const guidance = `${authority.detail}；自动回退不可用：${replan.detail}`;
           const budgetExhausted =
             replan.kind === 'unavailable' && replan.reason === 'backtrack_budget_exhausted';
-          const haltReason = budgetExhausted ? 'backtrack_limit' : 'pass_snapshot_unavailable';
+          const haltReason = budgetExhausted ? 'backtrack_limit' : 'upstream_closure_gap';
           const authorityDecision = decide(
             { incident: haltReason, phase: String(phase) },
             NO_AUTHORITY,
@@ -4666,12 +4657,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
             halt_reason: haltReason,
             detail: guidance,
             halt_guidance: guidance,
-            successor_required: !budgetExhausted && replan.kind === 'unavailable' && replan.reason === 'chain_lacks_plan',
             ...runDispositionFields(authorityDecision),
           });
           console.error(
             `\n===== ${haltReason} =====\n${guidance}\n` +
-              (budgetExhausted ? '回退预算已耗尽，当前 run 终止。\n' : '等待 supervisor 自动恢复。\n'),
+              (budgetExhausted
+                ? '回退预算已耗尽，当前 run 终止。\n'
+                : '请以 fresh goal run 从 plan 重新闭环（--start plan）后再从 coding 续跑。\n'),
           );
           outcomes.push({
             phase, verdict: 'FAIL', halted: true, retries,
@@ -5735,7 +5727,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // expectedAnchor=null 加载 plan 快照，于是 agent 自建的 epoch/head 也被当授权面
           // （宿主实锤：agent 自调 takePassSnapshot 造 epoch 2，scope 门禁随之消失）。
           // 锚只给 gate harness，**不进 agent env**——信任材料不下发。
-          { ...gateDeviceEnv, ...scopeAnchorEnv(passSnapshotMemory) },
+          // runner-owned-machine-facts 裁剪：快照锚 env 注入已退役——ui-scope-gate 白名单
+          // 校验源改为 plan closure 的 evidence manifest（盘上自证，无需跨进程锚）。
+          { ...gateDeviceEnv },
         );
         const harnessExit = harnessRun.exitCode;
         const harnessEndedAtMs = Date.now();
@@ -7029,6 +7023,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 verdict,
                 halt_guidance: baselineGuidance,
                 successor_required: true,
+                // runner-owned-machine-facts 收口（codex）：后继起点显式声明——halt 发生在
+                // review，但语义要求回 coding 建基线；不带此字段时 supervisor 按 event.phase
+                // 推导会从 review 重启，原地重撞。
+                successor_start_phase: 'coding',
                 ...runDispositionFields({ kind: 'recover', action: 'backtrack_to_coding', reason: baselineDecision.reason }),
               });
               console.error(`\n===== goal_review_closure_baseline_unavailable =====\n${baselineGuidance}\n`);
@@ -7726,11 +7724,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
     const reportEvents = loadAuthoritativeEvents(
       path.join(projectRoot, manifest.report_dir, 'events.jsonl'),
     ) as unknown as Array<Record<string, unknown>>;
+    const enrichedOutcomes = enrichOutcomesWithProjection(outcomes, reportEvents);
     const report = generateGoalReportJson(
       manifest.run_id,
       manifest.feature,
       status,
-      enrichOutcomesWithProjection(outcomes, reportEvents),
+      enrichedOutcomes,
     );
     writeGoalReport(projectRoot, manifest.report_dir, report, {
       workflowChain: fullWorkflowChain.map(String),
@@ -7739,10 +7738,29 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // halt_reason——取最后一个 halted outcome 的原因（await_human_capability_gap 等），
     // 消费方无需回扫 phase_halt 事件即可分类终态。v5 抽 helper 使语义可单测。
     const lastHaltReason = resolveLastHaltReason(outcomes);
+    // runner-owned-machine-facts 追补（codex 定点，二轮修正）：结构敏感 incident 的
+    // run_end 不能靠写盘层兜底投影（withRunDisposition 拒绝化妆是设计正确的）——把
+    // phase_halt 生产点已算好的投影（经 enrichOutcomesWithProjection 从 events 回放）
+    // 显式复制到 run_end。**reason 与 disposition 必须取自同一个「最后 halted outcome」**：
+    // 分别检索"最后 halt reason"与"最后带投影的 halt"会在最新 halt 无投影时借用更早
+    // halt 的 disposition（张冠李戴）；最新 halt 无投影时宁缺（不二次 decide()）。
+    const lastHalted = [...enrichedOutcomes].reverse().find((o) => o.halted) as
+      | (Record<string, unknown> & { run_disposition?: unknown; run_wait_kind?: unknown })
+      | undefined;
+    const lastHaltedProjected =
+      lastHalted && typeof lastHalted.run_disposition === 'string' ? lastHalted : undefined;
     goalEvents.emit({
       type: 'run_end',
       status,
       ...(status === 'HALTED' && lastHaltReason ? { halt_reason: lastHaltReason } : {}),
+      ...(status === 'HALTED' && lastHaltedProjected
+        ? {
+            run_disposition: lastHaltedProjected.run_disposition,
+            ...(typeof lastHaltedProjected.run_wait_kind === 'string'
+              ? { run_wait_kind: lastHaltedProjected.run_wait_kind }
+              : {}),
+          }
+        : {}),
     });
 
     // P0-4（rev8 偏离① 定稿口径）：硬上界只覆盖 agent/harness/backoff 三路径；run_end 后

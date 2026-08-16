@@ -51,46 +51,12 @@ import type { Phase } from './types';
  * **只注入 gate harness，不进 agent env**——信任材料不下发（与 GATE_HARNESS 同款口径）。
  * 缺 env 时消费方退回 null（非 goal / 人工跑 harness 的既有行为不变）。
  */
-export const PASS_SNAPSHOT_ANCHOR_ENV = 'MAISON_GOAL_SCOPE_ANCHOR';
-
-export function formatSnapshotAnchorEnv(
-  phase: string,
-  anchor: { epoch: number; manifestSha256: string },
-): string {
-  return `${phase}:${anchor.epoch}:${anchor.manifestSha256}`;
-}
-
-/**
- * 解析 scope 锚 env。
- *
- * **必须区分"不存在"与"损坏"（codex 复核 P1）**：初版把两者都返回 null，于是 env 传播
- * 出错/被截断时不是 fail-closed，而是**退回相信盘上的 head**——本仓已多次实锤环境变量
- * 传播缺失，这不是理论问题。
- *   · `absent`：非 goal / 人工跑 harness → 消费方按既有 resume 策略处理；
- *   · `invalid`：env 在场但形状/phase 不符 → 消费方**直接 FAIL**，不得降级为弱快照。
- */
-export type SnapshotAnchorParse =
-  | { kind: 'absent' }
-  | { kind: 'invalid'; reason: string }
-  | { kind: 'ok'; anchor: { epoch: number; manifestSha256: string } };
-
-export function parseSnapshotAnchorEnv(
-  raw: string | undefined,
-  expectedPhase: string,
-): SnapshotAnchorParse {
-  const text = (raw ?? '').trim();
-  if (!text) return { kind: 'absent' };
-  const parts = text.split(':');
-  if (parts.length !== 3) return { kind: 'invalid', reason: `期望 <phase>:<epoch>:<sha256>，实得 ${parts.length} 段` };
-  const [phase, epochRaw, manifestSha256] = parts;
-  if (phase !== expectedPhase) {
-    return { kind: 'invalid', reason: `锚 phase=${phase} 与消费方 ${expectedPhase} 不符` };
-  }
-  const epoch = Number(epochRaw);
-  if (!Number.isInteger(epoch) || epoch <= 0) return { kind: 'invalid', reason: `epoch 非法：${epochRaw}` };
-  if (!/^[0-9a-f]{64}$/.test(manifestSha256)) return { kind: 'invalid', reason: 'manifest sha256 形状非法' };
-  return { kind: 'ok', anchor: { epoch, manifestSha256 } };
-}
+// 【已删除 · runner-owned-machine-facts 裁剪（codex 定案）】scope 锚 env 三件
+// （PASS_SNAPSHOT_ANCHOR_ENV / formatSnapshotAnchorEnv / parseSnapshotAnchorEnv）：
+// ui-scope-gate 的白名单校验源已改为 plan closure 的 phase-evidence-manifest（跨 run
+// 稳定、由 aggregate + 回执指针自证完整性），无需跨进程传锚；上文注释中的自我扩权
+// 事故形态由「live contracts 与 closure 冻结 hash 失配即拒读」接替拦截。pass snapshot
+// 从此只承担同阶段 PASS 后 closure-only retry 的 TOCTOU 保护。
 
 export function goalTrustRootDir(): string {
   const dirOverride = process.env.MAISON_GOAL_CHECKPOINT_DIR?.trim();

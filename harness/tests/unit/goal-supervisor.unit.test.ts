@@ -73,6 +73,43 @@ const cases: TestCase[] = [
     },
   },
   {
+    name: 'runner-owned-machine-facts（codex 三轮）：WAITING(human) 上挂 successor 字段=死信——supervisor 仍 no_op，不得自动拉起',
+    run: () => {
+      // 生产曾出现的半接线组合：upstream_closure_gap → WAITING(human)，事件却带
+      // successor_required/successor_start_phase。supervisor 对 WAITING 恒 no_op，
+      // 这些字段永远不会被执行——生产 emit 点已删；本用例钉住语义防回潮。
+      const events: unknown[] = [
+        { type: 'run_start' },
+        {
+          type: 'phase_halt', phase: 'coding', halt_reason: 'upstream_closure_gap',
+          run_disposition: 'WAITING', run_wait_kind: 'human',
+          successor_required: true, successor_start_phase: 'plan',
+        },
+      ];
+      const d = decideSupervision({ events, restartsSoFar: 0, beaconStale: true });
+      assert(d.action === 'no_op', `WAITING(human) 不因 successor 字段被拉起，实际 ${d.action}`);
+    },
+  },
+  {
+    name: 'runner-owned-machine-facts（codex 三轮）：RECOVERY_PENDING + 显式 successor_start_phase → resume 且起点取显式值（不按 halt 现场 phase）',
+    run: () => {
+      const events: unknown[] = [
+        { type: 'run_start' },
+        {
+          type: 'phase_halt', phase: 'review', halt_reason: 'goal_review_closure_baseline_unavailable',
+          run_disposition: 'RECOVERY_PENDING',
+          successor_required: true, successor_start_phase: 'coding',
+        },
+      ];
+      const d = decideSupervision({ events, restartsSoFar: 0, beaconStale: true });
+      assert(d.action === 'resume', `RECOVERY_PENDING 应拉起，实际 ${d.action}`);
+      assert(
+        d.action === 'resume' && d.successor_start_phase === 'coding',
+        `后继起点须取事件显式声明（coding），不得按 halt 现场 phase（review）推导：${JSON.stringify(d)}`,
+      );
+    },
+  },
+  {
     name: '空事件流也有确定判据（reducer 是 total function）——stale + 无事件 → resume',
     run: () => {
       const d = decideSupervision({ events: [], restartsSoFar: 0, beaconStale: true });

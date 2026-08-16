@@ -30,11 +30,8 @@
 // 退位/内存锚清理都可重复执行，崩溃后 resume 只需重放同一条记录。
 // ============================================================================
 
-import {
-  discardPassSnapshotCache,
-  diffFrozenAgainstManifest,
-  loadTrustedSnapshotContext,
-} from './pass-snapshot';
+import { discardPassSnapshotCache } from './pass-snapshot';
+import { recomputePhaseEvidenceStaleness } from './phase-evidence-manifest';
 import { validateProjectRelativePath } from './project-relative-path';
 
 /** 触发面的**闭集**——跨 resume 回放时只认这三个值，未知一律不采信 */
@@ -190,12 +187,12 @@ export interface PlanScopeAnchor {
 }
 
 export type PlanAuthorityOutcome =
-  /** 授权成立——调用方须把 anchor 固定进 passSnapshotMemory 后再 spawn */
-  | { kind: 'ok'; anchor: PlanScopeAnchor }
+  /** 授权成立（plan closure fresh——closure 即授权，无需内存锚） */
+  | { kind: 'ok' }
   /** 授权不成立 / live 已漂移——**不得 spawn coding**，走 tryScopeReplan */
   | {
       kind: 'replan';
-      reason: 'snapshot_untrusted' | 'live_drift';
+      reason: 'closure_untrusted' | 'live_drift';
       detail: string;
       affectedFiles: string[];
     };
@@ -205,10 +202,17 @@ export type PlanAuthorityOutcome =
  *
  * · **spawn 前**（`agent_invoke_start` 之前）——防"拿着证明不了的旧授权开工"；
  * · **agent 返回后、harness 之前**——防"本轮 agent 自己把 plan 产物改了"。
- *   少了后一次，coding agent 改掉 `plan.md` / `contracts.yaml` 后只要 coding gate 仍 PASS
- *   就能直接 advance 到 review：既有 post-agent 冻结检查只看**当前 phase** 的
- *   trustedSnapshot，而普通 coding attempt 没有 coding 快照（kind='none'）→ 整块被跳过。
  *   两次调用同一个函数、同一条 `tryScopeReplan` 路由，**不另建检测器**。
+ *
+ * runner-owned-machine-facts 裁剪（codex 定案）后语义统一为一句话：
+ * **授权 = 仓内 fresh 的 plan closure**。检查复用 recomputePhaseEvidenceStaleness
+ * （与截断链 preflight / assess 同一把尺）：manifest 完整性 + 回执指针锚 + 冻结面
+ * （plan.md / contracts.yaml 等 outputs∪inputs）逐文件哈希比对 + 环境重算——覆盖面
+ * 较旧的 per-run 快照方案只多不少，且跨 run 稳定：fresh 的 --start coding 无需本 run
+ * 快照即可开工；resume 语义相同（无内存态依赖）。pass snapshot 从此只承担同阶段
+ * PASS 后 closure-only retry 的 TOCTOU 保护，与授权彻底解耦。
+ *
+ * 下面的历史注释保留背景（旧快照方案的动机与缺陷分析，均已被上述统一语义取代）：
  *
  * 为什么 spawn 前那次必须前移（三条事实，均已逐行核实）：
  * ① 既有 pre-spawn 可信加载读的是**当前 phase** 快照（goal-runner.ts:5795）——进 coding
@@ -242,68 +246,47 @@ export type PlanAuthorityOutcome =
 export function checkPlanAuthority(input: {
   projectRoot: string;
   feature: string;
-  runId: string;
-  /** `passSnapshotMemory.get('plan')`；resume 后恒为 undefined */
-  memoryAnchor: PlanScopeAnchor | null | undefined;
-  load?: typeof loadTrustedSnapshotContext;
-  diff?: typeof diffFrozenAgainstManifest;
+  /** framework 根（gate 指纹重算口径）；缺省由 recompute 侧从 projectRoot 推导 */
+  frameworkRoot?: string;
 }): PlanAuthorityOutcome {
-  const mem = input.memoryAnchor;
-  // 显式投影：内存 map 存的是 memoryDigest 结构，loader 的 expectedAnchor 只要
-  // { epoch, manifestSha256 }——整体传入是类型错误。仓内同款投影另见
-  // goal-runner.ts:5805（既有 pre-spawn 加载）与 scopeAnchorEnv（goal-runner.ts:753）。
-  const expectedAnchor = mem
-    ? { epoch: mem.epoch, manifestSha256: mem.memoryDigest.manifestSha256 }
-    : null;
-
-  const ctx = (input.load ?? loadTrustedSnapshotContext)(
-    input.projectRoot,
-    input.feature,
-    input.runId,
-    'plan',
-    expectedAnchor,
-  );
-  if (ctx.kind !== 'active') {
+  // runner-owned-machine-facts 裁剪（codex 定案；宿主实锤 run 20260815T162931Z-3aa520）：
+  // 授权唯一依据=仓内 fresh 的 **plan closure**（phase-evidence-manifest + 回执指针，
+  // 跨 run 稳定）。per-run pass snapshot 只是同阶段 closure-retry 的 TOCTOU 缓存，
+  // 不是授权载体——旧实现按当前 runId 查快照，跨 run 下游起点（--start coding）必得
+  // kind=none → 无处回退 → halt，合法分段续跑结构性跑不通。
+  // 复用 recomputePhaseEvidenceStaleness（与 assess/preflight 同一把尺）：
+  //   fresh → ok（closure 即授权，live 冻结面逐文件哈希已由它比对）；
+  //   stale → live_drift replan（changed_paths 即漂移面）；
+  //   missing/tampered → closure_untrusted replan。
+  const plan = recomputePhaseEvidenceStaleness(input.projectRoot, input.feature, ['plan'], {
+    ...(input.frameworkRoot ? { frameworkRoot: input.frameworkRoot } : {}),
+  })[0];
+  if (!plan || plan.verdict === 'missing' || plan.verdict === 'tampered') {
     return {
       kind: 'replan',
-      reason: 'snapshot_untrusted',
+      reason: 'closure_untrusted',
       detail:
-        `plan PASS 快照不可信（kind=${ctx.kind}` +
-        (ctx.kind === 'fail_closed' ? `：${ctx.reason}` : '') +
-        '）——证明不了旧授权，回 plan 重新签发',
+        `plan closure 不可信（${plan?.verdict ?? 'unresolved'}` +
+        (plan?.integrity_errors?.length ? `：${plan.integrity_errors.join('；')}` : '') +
+        '）——证明不了授权，回 plan 重新闭环',
       affectedFiles: [],
     };
   }
-  // loader 已核对缓存内容、上下文与 manifest 绑定；这里不再叠加凭据验证。
-  const diffs = (input.diff ?? diffFrozenAgainstManifest)({
-    projectRoot: input.projectRoot,
-    feature: input.feature,
-    phase: 'plan',
-    manifest: ctx.manifest,
-  });
-  if (diffs.length > 0) {
+  if (plan.verdict === 'stale') {
+    // role=both 的条目（如 contracts.yaml）在 manifest.inputs 与 outputs 各有一份——去重
+    const uniquePaths = [...new Set(plan.changed_paths)];
+    const fileChanges = uniquePaths.filter((p) => !p.startsWith('<environment:'));
+    const envChanges = uniquePaths.filter((p) => p.startsWith('<environment:'));
     return {
       kind: 'replan',
       reason: 'live_drift',
       detail:
-        `plan 快照可信，但宿主 live 产物已偏离冻结面（${diffs.length} 项：` +
-        diffs.slice(0, 5).map(d => `${d.rel}[${d.class}]`).join('、') +
-        '）——不在漂移的授权面上开工，回 plan 重新裁决',
-      affectedFiles: diffs.map(d => d.rel),
+        `plan closure 冻结面已偏离（${[...fileChanges, ...envChanges, ...(plan.receipt_changed ? ['<receipt>'] : [])].join('、')}）` +
+        '——不在漂移的授权面上开工，回 plan 重新裁决',
+      affectedFiles: fileChanges,
     };
   }
-
-  // **不读第三次盘**：锚直接由同一个 ctx 折出，与 takePassSnapshot 的 memoryDigest
-  // 同构（pass-snapshot.ts:642-644 —— fileHashes[f.rel] = f.sha256，源就是 manifest.files）。
-  const fileHashes: Record<string, string> = {};
-  for (const f of ctx.manifest.files) fileHashes[f.rel] = f.sha256;
-  return {
-    kind: 'ok',
-    anchor: {
-      epoch: ctx.head.pass_epoch,
-      memoryDigest: { manifestSha256: ctx.head.manifest_sha256, fileHashes },
-    },
-  };
+  return { kind: 'ok' };
 }
 
 // ---------------------------------------------------------------------------

@@ -1549,7 +1549,11 @@ test('t5④post-agent coding 本轮改了 plan 产物 + gate 本会 PASS → gat
   const bt = probe.events.find(e => e.type === 'phase_backtrack_requested'
     && e.reason === 'plan_authority_unverifiable');
   assert(!!bt, `须在 gate 之前拦下并回退 plan：${probe.events.map(e => e.type).join(',')}`);
-  assert(String(bt!.detail ?? '').includes('live'), `须归因 live 漂移：${bt!.detail}`);
+  // runner-owned-machine-facts 裁剪后文案：closure 冻结面偏离（live 漂移语义不变）且点名文件
+  assert(
+    String(bt!.detail ?? '').includes('偏离') && String(bt!.detail ?? '').includes('contracts.yaml'),
+    `须归因冻结面偏离并点名文件：${bt!.detail}`,
+  );
   // **判别式断言**：plan gate 跑了两次 = 真的回去重跑了。
   // 只数 coding gate 次数不行——没有本修复时 coding gate 同样只跑一次（PASS 后直接 advance）。
   const planHarnessRuns = probe.harnessPhases.filter(p => p === 'plan').length;
@@ -1564,22 +1568,23 @@ test('t5④post-agent coding 本轮改了 plan 产物 + gate 本会 PASS → gat
   );
 });
 
-test('t5④负向 unsigned cache miss resume：plan 重新签发前 coding agent 调用次数必须为 0', async () => {
+test('t5④负向 closure 缺失 resume：plan 重新闭环前 coding agent 调用次数必须为 0', async () => {
   const { root } = setupHost();
   const { runId } = await haltAtCoding(root);
-  // resume：把 plan head 变成不可读缓存；新协议丢弃缓存并先回 plan，不能开工。
-  withCheckpointDir(root, () => {
-    const headPath = passSnapshotHeadPath(root, FEATURE, runId, 'plan');
-    assert(readPassSnapshotHead(root, FEATURE, runId, 'plan').body !== null, '前置：plan head 应存在');
-    fs.writeFileSync(headPath, '{"corrupt":true}', 'utf-8');
-  });
+  // runner-owned-machine-facts 裁剪：授权=plan closure。删掉 evidence manifest =
+  // 授权证据消失（快照/缓存状态与此无关）→ 回 plan 重新闭环，不得开工 coding。
+  const manifestAbs = path.join(
+    root, 'doc', 'features', FEATURE, 'plan', 'reports', 'phase-evidence-manifest.json',
+  );
+  assert(fs.existsSync(manifestAbs), '前置：plan evidence manifest 应存在');
+  fs.rmSync(manifestAbs);
   const resumed = await runChain(root, {
     resume: runId, forceResume: true,
     onTesting: ({ root: hostRoot }) => writeCleanTesting(hostRoot),
   });
   assert(
     codingInvokesBeforeFirstPlan(resumed.invokedPhases) === 0,
-    `plan 重签前不得拉起 coding agent（实得序列 ${resumed.invokedPhases.join('→')}）`,
+    `plan 重新闭环前不得拉起 coding agent（实得序列 ${resumed.invokedPhases.join('→')}）`,
   );
   assert(
     resumed.events.some(e => e.type === 'phase_backtrack_requested'
@@ -1588,32 +1593,33 @@ test('t5④负向 unsigned cache miss resume：plan 重新签发前 coding agent
   );
 });
 
-test('t5④正向对照 unsigned cache resume：不回退 plan、coding 正常启动，且 gate 收到与 preflight 同一个锚', async () => {
+test('t5④正向对照 resume：closure fresh → 不回退 plan、coding 正常启动；快照 head 损坏无关授权；锚 env 已退役', async () => {
   const { root } = setupHost();
   const { runId } = await haltAtCoding(root);
-  // **锚必须在 resume 之前读**：它只是 unsigned cache 的内容绑定，不是授权凭据。
-  // resume 不重跑 plan，故这就是 preflight 将要认定的那个锚。
-  const head = withCheckpointDir(root, () => readPassSnapshotHead(root, FEATURE, runId, 'plan').body);
-  assert(!!head, 'plan head 应在盘');
-  const expected = `plan:${head!.pass_epoch}:${head!.manifest_sha256}`;
+  // runner-owned-machine-facts 裁剪判别点：把 plan 快照 head 写坏——旧语义这会触发
+  // "回 plan 重签"；新语义快照与授权解耦（closure fresh 即授权），resume 须照常 coding。
+  withCheckpointDir(root, () => {
+    const headPath = passSnapshotHeadPath(root, FEATURE, runId, 'plan');
+    if (fs.existsSync(headPath)) fs.writeFileSync(headPath, '{"corrupt":true}', 'utf-8');
+  });
   const resumed = await runChain(root, {
     resume: runId, forceResume: true,
     onTesting: ({ root: hostRoot }) => writeCleanTesting(hostRoot),
   });
   assert(
     resumed.invokedPhases[0] === 'coding',
-    `有效 HMAC 的 resume 须直接进 coding、不烧回退预算（实得 ${resumed.invokedPhases.join('→')}）`,
+    `closure fresh 的 resume 须直接进 coding、不烧回退预算（实得 ${resumed.invokedPhases.join('→')}）`,
   );
   assert(
     !resumed.events.some(e => e.type === 'phase_backtrack_requested'
       && e.reason === 'plan_authority_unverifiable'),
-    '不得产生授权回退',
+    '不得产生授权回退（快照 head 损坏不构成授权问题）',
   );
-  // **断锚值相等，不是只断"有锚"**：preflight 固定的锚必须原样传到 gate harness
+  // 锚 env 通道已整体退役——gate env 不得再携带 MAISON_GOAL_SCOPE_ANCHOR
   const codingEnv = resumed.harnessDeviceEnvs.find(x => x.phase === 'coding')?.env ?? {};
   assert(
-    codingEnv.MAISON_GOAL_SCOPE_ANCHOR === expected,
-    `gate 收到的锚须与 preflight 固定的一致：期望 ${expected}，实得 ${codingEnv.MAISON_GOAL_SCOPE_ANCHOR}`,
+    codingEnv.MAISON_GOAL_SCOPE_ANCHOR === undefined,
+    `快照锚 env 应已退役，实得 ${codingEnv.MAISON_GOAL_SCOPE_ANCHOR}`,
   );
 });
 
@@ -1636,8 +1642,8 @@ test('t5④live 漂移 有效 HMAC 但 live contracts 已改：coding agent 调�
     && e.reason === 'plan_authority_unverifiable');
   assert(!!bt, '须落授权回退事件');
   assert(
-    String(bt!.detail ?? '').includes('live'),
-    `事件须说明是 live 漂移而非快照不可信：${bt!.detail}`,
+    String(bt!.detail ?? '').includes('偏离') && String(bt!.detail ?? '').includes('contracts.yaml'),
+    `事件须说明是冻结面偏离（而非 closure 不可信）并点名文件：${bt!.detail}`,
   );
 });
 

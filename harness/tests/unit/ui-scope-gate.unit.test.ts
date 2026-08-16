@@ -1,36 +1,37 @@
 // ============================================================================
 // ui-scope-gate.unit.test.ts — ui_diff_within_declared_files（c4e8b1d3 G1）
 // ----------------------------------------------------------------------------
-// plan v17 Todo 2 的门禁侧用例（⑤ 正常 plan PASS 建快照为 runner 级，见
-// goal-runner-testing-integrity 套件）：
+// plan v17 Todo 2 的门禁侧用例（白名单来源经 runner-owned-machine-facts 裁剪修订：
+// plan closure 的 phase-evidence-manifest，不再是 per-run pass snapshot）：
 //   ① HomeTab 未声明却修改 → FAIL（门禁结构上无档位——任何 strictness 均 BLOCKER）
 //   ② CardPackPage 已声明修改 → PASS
-//   ③ 只改 live contracts（不重跑 plan）→ 仍 FAIL（白名单只认冻结快照）
-//   ④ expansion：更新 contracts.files + 重取 plan PASS snapshot → PASS
+//   ③ 只改 live contracts（不重新闭环 plan）→ 仍 FAIL（hash 与 closure 冻结值失配）
+//   ④ expansion：更新 contracts.files + 重新闭环 plan → PASS
 //   ⑥ agent 改码并自行 commit → 仍检出越界（coding_base_sha 基线覆盖 committed）
-// 附基础设施负例：缺快照/缺 coding_base/非 goal run/无 ui-spec/删除文件 base 侧分类/
-// untracked 新 UI 文件。
+// 附基础设施负例：缺 closure/篡改 manifest/缺 coding_base/非 goal run/无 ui-spec/
+// 删除文件 base 侧分类/untracked 新 UI 文件。
 // ============================================================================
 
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
-import {
-  recordCodingBase,
-  resolveFrozenDeliverables,
-  PASS_SNAPSHOT_ANCHOR_ENV,
-  formatSnapshotAnchorEnv,
-  takePassSnapshot,
-} from '../../scripts/utils/pass-snapshot';
+import { recordCodingBase } from '../../scripts/utils/pass-snapshot';
 import {
   hasUiContentMarkers,
   isUiSensitivePath,
   runUiDiffWithinDeclaredFiles,
 } from '../../scripts/utils/ui-scope-gate';
-import { classifyFailureKind } from '../../scripts/utils/goal-failure-classifier';
+import {
+  resolvePhaseEvidenceManifest,
+  writePhaseEvidenceManifest,
+  writeReceiptManifestPointer,
+} from '../../scripts/utils/phase-evidence-manifest';
+import type { Phase } from '../../scripts/utils/types';
 import { clearFrameworkConfigCache } from '../../config';
 import type { UnitCaseResult } from '../run-unit';
+
+const FRAMEWORK_ROOT = path.resolve(__dirname, '..', '..', '..');
 
 const FEATURE = 'bc-openCard';
 const RUN_ID = 'run-uiscope-1';
@@ -116,15 +117,21 @@ function withTrust<T>(root: string, fn: () => T): T {
   }
 }
 
-/** plan PASS 快照 + coding 基线锚（= runner pre-coding 锚定完成后的形态） */
-function anchor(root: string, opts: { snapshot?: boolean; base?: boolean; epoch?: number } = {}): void {
-  if (opts.snapshot !== false) {
-    const frozen = resolveFrozenDeliverables({ projectRoot: root, feature: FEATURE, phase: 'plan' });
-    takePassSnapshot({
-      projectRoot: root, feature: FEATURE, runId: RUN_ID, phase: 'plan',
-      epoch: opts.epoch ?? 1, files: frozen,
-    });
-  }
+/** plan closure（生产 writer：回执 → evidence manifest → 回执指针）——与真实闭环同源 */
+function closePlan(root: string): void {
+  w(root, `doc/features/${FEATURE}/plan/phase-completion-receipt.md`, `feature: "${FEATURE}"\nphase: "plan"\n`);
+  const manifest = resolvePhaseEvidenceManifest({
+    projectRoot: root, feature: FEATURE, phase: 'plan' as Phase,
+    extraInputs: [], extraOutputs: [], frameworkRoot: FRAMEWORK_ROOT, requirementSha: null,
+  });
+  const written = writePhaseEvidenceManifest(root, manifest);
+  const rel = path.relative(root, written.absPath).split(path.sep).join('/');
+  writeReceiptManifestPointer(root, FEATURE, 'plan', rel, written.sha256);
+}
+
+/** plan closure + coding 基线锚（= runner pre-coding 锚定完成后的形态） */
+function anchor(root: string, opts: { closure?: boolean; base?: boolean } = {}): void {
+  if (opts.closure !== false) closePlan(root);
   if (opts.base !== false) {
     const head = git(root, ['rev-parse', 'HEAD']);
     const rec = recordCodingBase({ projectRoot: root, feature: FEATURE, runId: RUN_ID, baseSha: head });
@@ -172,26 +179,28 @@ export function runAll(): UnitCaseResult[] {
     });
   });
 
-  run(results, '③ 只改 live contracts（不重跑 plan）→ 仍 FAIL（白名单只认冻结快照）', () => {
+  run(results, '③ 只改 live contracts（不重新闭环 plan）→ 仍 FAIL（hash 与 closure 冻结值失配）', () => {
     const { root } = setupHost();
     withTrust(root, () => {
       anchor(root);
-      // agent 把 HomeTab 塞进 live contracts——绕过冻结的经典形态
+      // agent 把 HomeTab 塞进 live contracts——绕过冻结的经典形态；新语义下 live 文件
+      // 与 plan closure 冻结 hash 失配即拒读（不以漂移后的 contracts 作白名单）
       w(root, `doc/features/${FEATURE}/contracts.yaml`, contractsYaml([DECLARED, UNDECLARED]));
       w(root, UNDECLARED, '@Entry\n@Component\nstruct HomeTabPage { build() { Text("sneak") } }');
       const r = gate(root);
       assert(r.status === 'FAIL', `live contracts 声明不得生效，got ${r.status}: ${r.details}`);
-      assert((r.affectedFiles ?? []).includes(UNDECLARED), 'HomeTab 仍须越界');
+      assert(r.failureKind === 'ui_scope_frozen_contract_missing', `failureKind=${r.failureKind}`);
+      assert((r.details ?? '').includes('失配'), `应点名 live 漂移：${r.details}`);
     });
   });
 
-  run(results, '④ expansion：更新 contracts.files + 重取 plan PASS snapshot → PASS', () => {
+  run(results, '④ expansion：更新 contracts.files + 重新闭环 plan → PASS', () => {
     const { root } = setupHost();
     withTrust(root, () => {
       anchor(root);
-      // 合法 expansion：contracts 更新后 plan 重新 PASS（epoch 2 新快照）
+      // 合法 expansion：contracts 更新后 plan 重新闭环（manifest+指针重新冻结）
       w(root, `doc/features/${FEATURE}/contracts.yaml`, contractsYaml([DECLARED, UNDECLARED]));
-      anchor(root, { snapshot: true, base: false, epoch: 2 });
+      closePlan(root);
       w(root, UNDECLARED, '@Entry\n@Component\nstruct HomeTabPage { build() { Text("approved change") } }');
       const r = gate(root);
       assert(r.status === 'PASS', `expansion 后须 PASS，got ${r.status}: ${r.details}`);
@@ -235,13 +244,28 @@ export function runAll(): UnitCaseResult[] {
     });
   });
 
-  run(results, '缺同 run plan snapshot → FAIL ui_scope_frozen_contract_missing（fail-closed，禁退 live）', () => {
+  run(results, '缺 plan closure → FAIL ui_scope_frozen_contract_missing（fail-closed，禁退 live）', () => {
     const { root } = setupHost();
     withTrust(root, () => {
-      anchor(root, { snapshot: false });
+      anchor(root, { closure: false });
       w(root, DECLARED, 'struct CardPackPage { build() { Text("v2") } }');
       const r = gate(root);
-      assert(r.status === 'FAIL', `缺快照须 FAIL，got ${r.status}`);
+      assert(r.status === 'FAIL', `缺 closure 须 FAIL，got ${r.status}`);
+      assert(r.failureKind === 'ui_scope_frozen_contract_missing', `failureKind=${r.failureKind}`);
+    });
+  });
+
+  run(results, '篡改 plan evidence manifest → FAIL（回执指针失配——白名单来源防伪，接替旧快照锚防线）', () => {
+    const { root } = setupHost();
+    withTrust(root, () => {
+      anchor(root);
+      const manifestAbs = path.join(root, 'doc', 'features', FEATURE, 'plan', 'reports', 'phase-evidence-manifest.json');
+      const doc = JSON.parse(fs.readFileSync(manifestAbs, 'utf-8')) as Record<string, unknown>;
+      doc.generated_at = '2099-01-01T00:00:00.000Z';
+      fs.writeFileSync(manifestAbs, JSON.stringify(doc, null, 2), 'utf-8');
+      w(root, DECLARED, 'struct CardPackPage { build() { Text("v2") } }');
+      const r = gate(root);
+      assert(r.status === 'FAIL', `manifest 被改写须 FAIL，got ${r.status}: ${r.details}`);
       assert(r.failureKind === 'ui_scope_frozen_contract_missing', `failureKind=${r.failureKind}`);
     });
   });
@@ -288,10 +312,10 @@ export function runAll(): UnitCaseResult[] {
     });
   });
 
-  run(results, '无 UI 文件变更 → PASS（白名单不咨询；缺快照不误伤非 UI 改动）', () => {
+  run(results, '无 UI 文件变更 → PASS（白名单不咨询；缺 closure 不误伤非 UI 改动）', () => {
     const { root } = setupHost();
     withTrust(root, () => {
-      anchor(root, { snapshot: false }); // 故意不建快照——无 UI 改动时不得因此 FAIL
+      anchor(root, { closure: false }); // 故意不闭环——无 UI 改动时不得因此 FAIL
       w(root, '02-Feature/FinancialCard/src/main/ets/model/CardData.ets', 'export const cards = [];');
       const r = gate(root);
       assert(r.status === 'PASS', `非 UI 改动须 PASS，got ${r.status}: ${r.details}`);
@@ -315,104 +339,12 @@ export function runAll(): UnitCaseResult[] {
     });
   });
 
-  // ==========================================================================
-  // b3e8d4c7 t4 —— scope 内存锚跨进程接线（**真跑 gate**，不是扫源码）
-  // 宿主实锤 run 20260804T033834Z-99c0a1：agent 撞 ui_scope_violation 后扩写
-  // contracts.yaml，再自调 takePassSnapshot 造出 epoch 2，scope 门禁照单全收 → 自我扩权。
-  // 根因：ui-scope-gate 此前恒传 expectedAnchor=null，把 loadTrustedSnapshotContext
-  // 的换代检测整个关掉。以下三例锁住锚真的生效。
-  // ==========================================================================
-
-  /** 用 runner 侧同款编码设置锚 env，执行完还原 */
-  function withAnchorEnv<T>(raw: string | undefined, fn: () => T): T {
-    const prev = process.env[PASS_SNAPSHOT_ANCHOR_ENV];
-    if (raw === undefined) delete process.env[PASS_SNAPSHOT_ANCHOR_ENV];
-    else process.env[PASS_SNAPSHOT_ANCHOR_ENV] = raw;
-    try {
-      return fn();
-    } finally {
-      if (prev === undefined) delete process.env[PASS_SNAPSHOT_ANCHOR_ENV];
-      else process.env[PASS_SNAPSHOT_ANCHOR_ENV] = prev;
-    }
-  }
-
-  run(results, 't4 锚与盘上 head 一致：声明内修改照常 PASS（防过严回归）', () => {
-    const { root } = setupHost();
-    withTrust(root, () => {
-      const frozen = resolveFrozenDeliverables({ projectRoot: root, feature: FEATURE, phase: 'plan' });
-      const taken = takePassSnapshot({
-        projectRoot: root, feature: FEATURE, runId: RUN_ID, phase: 'plan', epoch: 1, files: frozen,
-      });
-      anchor(root, { snapshot: false });
-      w(root, DECLARED, 'struct CardPackPage { build() { Text("v2") } }');
-      const raw = formatSnapshotAnchorEnv('plan', {
-        epoch: 1, manifestSha256: taken.memoryDigest.manifestSha256,
-      });
-      const r = withAnchorEnv(raw, () => gate(root));
-      assert(r.status === 'PASS', `锚一致 + 声明内修改应 PASS，实得 ${r.status}：${r.details}`);
-    });
-  });
-
-  run(results, 't4 事故形态：runner 锚 epoch1、盘上被换成 epoch2 → 真 gate FAIL（自我扩权被拦）', () => {
-    const { root } = setupHost();
-    withTrust(root, () => {
-      const frozen = resolveFrozenDeliverables({ projectRoot: root, feature: FEATURE, phase: 'plan' });
-      const epoch1 = takePassSnapshot({
-        projectRoot: root, feature: FEATURE, runId: RUN_ID, phase: 'plan', epoch: 1, files: frozen,
-      });
-      anchor(root, { snapshot: false });
-      // agent 自行重取快照（宿主实锤动作）：盘上 head 变成 epoch 2
-      takePassSnapshot({
-        projectRoot: root, feature: FEATURE, runId: RUN_ID, phase: 'plan', epoch: 2, files: frozen,
-      });
-      w(root, DECLARED, 'struct CardPackPage { build() { Text("v2") } }');
-      const raw = formatSnapshotAnchorEnv('plan', {
-        epoch: 1, manifestSha256: epoch1.memoryDigest.manifestSha256,
-      });
-      const r = withAnchorEnv(raw, () => gate(root));
-      assert(
-        r.status === 'FAIL',
-        `runner 只签发过 epoch1，盘上却是 epoch2——必须判篡改，实得 ${r.status}：${r.details}`,
-      );
-      // 对照：不传锚（旧行为）时同一现场会被放过——证明本用例真的在测锚，不是别的原因
-      const without = withAnchorEnv(undefined, () => gate(root));
-      assert(
-        without.status !== 'FAIL',
-        `对照组应因缺锚而放过（证明 FAIL 确由锚导致），实得 ${without.status}`,
-      );
-    });
-  });
-
-  run(results, 't4 锚 env 在场但损坏 → FAIL（不得静默降级回"没有锚"）', () => {
-    const { root } = setupHost();
-    withTrust(root, () => {
-      anchor(root);
-      w(root, DECLARED, 'struct CardPackPage { build() { Text("v2") } }');
-      const r = withAnchorEnv('plan:not-a-number:zzz', () => gate(root));
-      assert(r.status === 'FAIL', `损坏锚必须 fail-closed，实得 ${r.status}`);
-      assert(
-        (r.details ?? '').includes(PASS_SNAPSHOT_ANCHOR_ENV),
-        `应点名锚 env 传播异常：${r.details}`,
-      );
-      // **责任类别断言**：锚传播异常是框架侧问题。用未登记的 kind 会被 classifier 兜底成
-      // code_regression（goal-failure-classifier.ts:585），于是环境问题被丢给 coding 重试。
-      assert(
-        r.failureKind === 'framework_bug',
-        `锚传播异常须归框架侧，实得 ${r.failureKind}——未登记 kind 会退化成 code_regression`,
-      );
-      // 经既有 classifier 走一遍：blockers[].classification 才是它读的字段
-      // （isAllFrameworkBugBlockers，goal-failure-classifier.ts:465）。
-      // **断等值不断"不等于 code_regression"**（codex）：后者在将来退化成任何别的
-      // kind 时仍会假绿。
-      assert(
-        classifyFailureKind({
-          verdict: 'FAIL',
-          blockers: [{ id: 'ui_diff_within_declared_files', classification: r.failureKind }],
-        } as never) === 'framework_bug',
-        '经既有 classifier 后须落 framework_bug（环境异常不得被当产品问题重试）',
-      );
-    });
-  });
+  // 【已删除 · runner-owned-machine-facts 裁剪（codex 定案）】b3e8d4c7 t4 的三例
+  // 快照锚跨进程接线用例（锚一致 PASS / epoch 换代 FAIL / 锚 env 损坏 fail-closed）：
+  // 锚 env 机制随白名单源切换到 plan closure evidence manifest 整体退役。旧防线语义
+  // （agent 自建授权面被拦）由上方「③ live contracts 失配」与「篡改 evidence manifest
+  // → 回执指针失配 FAIL」两例接替——manifest 的完整性由 closure 链（aggregate + 回执
+  // 指针）自证，无需跨进程传锚。
 
   return results;
 }

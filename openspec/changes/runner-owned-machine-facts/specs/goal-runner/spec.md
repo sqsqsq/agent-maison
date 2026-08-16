@@ -71,3 +71,24 @@ Enforcement: `harness/scripts/utils/goal-preflight.ts`, `harness/scripts/goal-ru
 
 - **WHEN** a downstream-start run carries requirement text whose content hash differs from the frozen SSOT
 - **THEN** preflight defers before any agent invocation with guidance to re-run from spec, and the frozen files remain untouched
+
+### Requirement: Segmented-start eligibility is closure-only; pass snapshots never gate downstream phases
+
+For any `--start X`, start eligibility SHALL be judged solely by the freshness of all in-repo phase closures upstream of X (the truncated-chain preflight's evidence-staleness recomputation); per-run pass snapshots SHALL serve only same-phase closure-only retry protection (TOCTOU) and SHALL NOT gate any downstream phase's start — no cross-run snapshot search, no snapshot derivation for other runs, no per-phase snapshot or authorization layer for review/ut/testing. The coding plan-authority check SHALL judge the plan closure directly via the same evidence-staleness recomputation (manifest integrity + receipt pointer + frozen-surface file hashes + environment): fresh → authorized; stale → the existing live-drift replan path (changed paths named); missing/tampered → closure-untrusted replan. The coding UI-scope whitelist SHALL be read from the on-disk `contracts.yaml` only after its current hash matches the hash frozen in the plan phase-evidence-manifest (receipt-pointer-anchored); a mismatch is live drift handled by the existing stale/replan disposition — the snapshot-anchor env channel is retired. Deleting the goal-checkpoints temporary cache SHALL NOT affect legitimate segmented starts. When a run ends HALTED on a structurally-sensitive incident, the `run_end` event SHALL carry the disposition already computed at the `phase_halt` production site (replayed from events), never a second `decide()` nor a write-layer fabrication. The downstream-start fidelity-reuse note SHALL be printed to the run log.
+
+Enforcement: `harness/scripts/utils/scope-replan.ts`（`checkPlanAuthority`）, `harness/scripts/utils/ui-scope-gate.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/phase-evidence-manifest.ts`
+
+#### Scenario: a fresh coding-start run passes the plan authority gate without executing plan
+
+- **WHEN** run A closed plan cleanly and run B starts fresh with `--start coding --end testing`, with no plan snapshot under run B and the goal-checkpoints cache absent
+- **THEN** `checkPlanAuthority` judges the plan closure fresh and returns ok, coding starts normally — no `pass_snapshot_unavailable` halt
+
+#### Scenario: genuine contracts drift is still caught
+
+- **WHEN** `contracts.yaml` on disk no longer matches the hash frozen in the plan evidence manifest
+- **THEN** the plan-authority check reports live drift naming the file (existing replan path) and the UI-scope gate refuses to read the drifted whitelist
+
+#### Scenario: a halted run's terminal event carries its disposition
+
+- **WHEN** a run halts on `pass_snapshot_unavailable` (a structurally-sensitive incident)
+- **THEN** the `run_end` event carries the `run_disposition` computed at the halt production site, and the write-layer guard has nothing to refuse

@@ -93,10 +93,17 @@ function currentSuccessorRequest(
   sourceEventIndex: number | null,
 ): string | null {
   const event = eventAtCurrentProjection(events, sourceEventIndex);
-  return event?.type === 'phase_halt' && event.successor_required === true &&
-    typeof event.phase === 'string' && event.phase.trim()
-    ? event.phase.trim()
-    : null;
+  if (event?.type !== 'phase_halt' || event.successor_required !== true) return null;
+  // runner-owned-machine-facts 收口（codex）：事件显式声明后继起点时**优先**——halt 发生
+  // 的 phase 不一定是该重跑的 phase（coding-start 链 plan closure 漂移：halt 在 coding、
+  // 后继须从 plan 起；review 基线缺口：halt 在 review、后继须回 coding）。按 event.phase
+  // 推导会原地重启、反复撞同一缺口。
+  const explicit =
+    typeof event.successor_start_phase === 'string' && event.successor_start_phase.trim()
+      ? event.successor_start_phase.trim()
+      : null;
+  if (explicit) return explicit;
+  return typeof event.phase === 'string' && event.phase.trim() ? event.phase.trim() : null;
 }
 
 /**

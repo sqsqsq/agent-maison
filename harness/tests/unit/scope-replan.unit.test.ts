@@ -22,8 +22,18 @@ import {
   type PlanScopeAnchor,
 } from '../../scripts/utils/scope-replan';
 import { buildScopeReplanContextBlock } from '../../scripts/goal-runner';
+import {
+  recomputePhaseEvidenceStaleness,
+  resolvePhaseEvidenceManifest,
+  writePhaseEvidenceManifest,
+  writeReceiptManifestPointer,
+} from '../../scripts/utils/phase-evidence-manifest';
+import { makeClosedFeatureFixture } from '../utils/closed-feature-fixture';
+import type { Phase } from '../../scripts/utils/types';
 import { clearFrameworkConfigCache } from '../../config';
 import type { UnitCaseResult } from '../run-unit';
+
+const FRAMEWORK_ROOT = path.resolve(__dirname, '..', '..', '..');
 
 const FEATURE = 'bc-openCard';
 const RUN_ID = 'run-scope-replan-1';
@@ -95,106 +105,68 @@ function takePlanSnapshot(root: string, epoch = 1): PlanScopeAnchor {
   return { epoch, memoryDigest: taken.memoryDigest };
 }
 
-function digestFromDisk(root: string): PlanScopeAnchor {
-  const head = readPassSnapshotHead(root, FEATURE, RUN_ID, 'plan').body;
-  assert(Boolean(head), '盘上应存在 plan head');
-  const manifestPath = path.join(
-    path.dirname(passSnapshotHeadPath(root, FEATURE, RUN_ID, 'plan')),
-    String(head!.pass_epoch), 'manifest.json',
-  );
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as {
-    files: Array<{ rel: string; sha256: string }>;
-  };
-  const fileHashes: Record<string, string> = {};
-  for (const file of manifest.files) fileHashes[file.rel] = file.sha256;
-  return { epoch: head!.pass_epoch, memoryDigest: { manifestSha256: head!.manifest_sha256, fileHashes } };
-}
-
-function check(root: string, memoryAnchor: PlanScopeAnchor | null) {
-  return checkPlanAuthority({
-    projectRoot: root, feature: FEATURE, runId: RUN_ID, memoryAnchor,
+/** 生产 writer 造 plan closure（回执 → evidence manifest → 回执指针）——与真实闭环同源 */
+function closePlan(root: string): void {
+  writeFile(root, `doc/features/${FEATURE}/plan/phase-completion-receipt.md`, `feature: "${FEATURE}"\nphase: "plan"\n`);
+  const manifest = resolvePhaseEvidenceManifest({
+    projectRoot: root, feature: FEATURE, phase: 'plan' as Phase,
+    extraInputs: [], extraOutputs: [], frameworkRoot: FRAMEWORK_ROOT, requirementSha: null,
   });
+  const written = writePhaseEvidenceManifest(root, manifest);
+  const rel = path.relative(root, written.absPath).split(path.sep).join('/');
+  writeReceiptManifestPointer(root, FEATURE, 'plan', rel, written.sha256);
 }
 
-function rewriteHeadHash(root: string): void {
-  const headPath = passSnapshotHeadPath(root, FEATURE, RUN_ID, 'plan');
-  const head = JSON.parse(fs.readFileSync(headPath, 'utf-8')) as Record<string, unknown>;
-  const manifestPath = path.join(path.dirname(headPath), String(head.pass_epoch), 'manifest.json');
-  const raw = fs.readFileSync(manifestPath);
-  head.manifest_sha256 = sha256Buf(raw);
-  fs.writeFileSync(headPath, JSON.stringify(head, null, 2), 'utf-8');
+function check(root: string) {
+  return checkPlanAuthority({ projectRoot: root, feature: FEATURE, frameworkRoot: FRAMEWORK_ROOT });
 }
 
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
 
-  run(results, 'A1 同进程锚与盘上 unsigned cache 一致 → ok', () => {
+  // A 组：plan 授权=仓内 fresh closure（runner-owned-machine-facts 裁剪后语义）。
+  // 快照与授权彻底解耦——本组不建任何 pass snapshot；快照的 closure-retry 用途见 B 组。
+
+  run(results, 'A1 plan closure fresh → ok（closure 即授权，无需任何 run 级快照/内存锚）', () => {
     const root = setupHost();
-    withTrust(root, () => {
-      const memory = takePlanSnapshot(root);
-      const result = check(root, memory);
-      assert(result.kind === 'ok', `应放行，实得 ${result.kind}`);
-      if (result.kind !== 'ok') return;
-      assert(result.anchor.epoch === memory.epoch, 'epoch 应一致');
-      assert(result.anchor.memoryDigest.manifestSha256 === memory.memoryDigest.manifestSha256, 'manifest hash 应一致');
-      assert(JSON.stringify(result.anchor.memoryDigest.fileHashes) === JSON.stringify(memory.memoryDigest.fileHashes), '文件 hash 应一致');
-    });
+    closePlan(root);
+    const result = check(root);
+    assert(result.kind === 'ok', `应放行：${JSON.stringify(result)}`);
   });
 
-  run(results, 'A2 盘上换成新 epoch → 旧内存锚 replan；新锚可放行', () => {
+  run(results, 'A2（codex 验收 a+c）fresh coding-start 等价场景：无本 run 快照、无 checkpoint 缓存目录 → 照常放行', () => {
     const root = setupHost();
-    withTrust(root, () => {
-      const old = takePlanSnapshot(root, 1);
-      takePlanSnapshot(root, 2);
-      const stale = check(root, old);
-      assert(stale.kind === 'replan' && stale.reason === 'snapshot_untrusted', `应识别缓存失配：${JSON.stringify(stale)}`);
-      assert(check(root, digestFromDisk(root)).kind === 'ok', '当前 epoch 应可放行');
-    });
+    closePlan(root);
+    // 刻意不设 MAISON_GOAL_CHECKPOINT_DIR（不进 withTrust）——新实现不读 goal-checkpoints
+    // 临时缓存；宿主实锤 run 3aa520：旧实现在此必得 kind=none → 无处回退 → halt。
+    const result = check(root);
+    assert(result.kind === 'ok', `合法分段启动不得依赖临时缓存：${JSON.stringify(result)}`);
   });
 
-  run(results, 'A3 resume 无内存锚也可读取 unsigned cache，不再依赖 HMAC', () => {
+  run(results, 'A3（codex 验收 d）contracts.yaml 真漂移 → live_drift 且点名文件', () => {
     const root = setupHost();
-    withTrust(root, () => {
-      takePlanSnapshot(root);
-      const result = check(root, null);
-      assert(result.kind === 'ok', `unsigned resume 不应回退：${JSON.stringify(result)}`);
-    });
+    closePlan(root);
+    writeFile(root, `doc/features/${FEATURE}/contracts.yaml`, 'feature: changed\nfiles: []\n');
+    const result = check(root);
+    assert(result.kind === 'replan' && result.reason === 'live_drift', `实得 ${JSON.stringify(result)}`);
+    if (result.kind === 'replan') {
+      assert(result.affectedFiles.some(file => file.endsWith('contracts.yaml')), '应点名漂移文件');
+    }
   });
 
-  run(results, 'A4 legacy mac 字段与 HMAC env 均不改变缓存读取语义', () => {
+  run(results, 'A4 closure 缺失/回执指针断裂 → closure_untrusted（证明不了授权）', () => {
     const root = setupHost();
-    withTrust(root, () => {
-      takePlanSnapshot(root);
-      const headPath = passSnapshotHeadPath(root, FEATURE, RUN_ID, 'plan');
-      const head = JSON.parse(fs.readFileSync(headPath, 'utf-8')) as Record<string, unknown>;
-      const manifestPath = path.join(path.dirname(headPath), String(head.pass_epoch), 'manifest.json');
-      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as Record<string, unknown>;
-      manifest.mac = 'legacy';
-      fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf-8');
-      rewriteHeadHash(root);
-      assert(check(root, null).kind === 'ok', 'legacy mac 不应成为信任门禁');
-    });
-  });
-
-  run(results, 'A5 live contracts 漂移仍归因 live_drift', () => {
-    const root = setupHost();
-    withTrust(root, () => {
-      takePlanSnapshot(root);
-      writeFile(root, `doc/features/${FEATURE}/contracts.yaml`, 'feature: changed\nfiles: []\n');
-      const result = check(root, null);
-      assert(result.kind === 'replan' && result.reason === 'live_drift', `实得 ${JSON.stringify(result)}`);
-      if (result.kind === 'replan') assert(result.affectedFiles.some(file => file.endsWith('contracts.yaml')), '应点名漂移文件');
-    });
-  });
-
-  run(results, 'A6 head 丢失只触发 replan，不直接终止', () => {
-    const root = setupHost();
-    withTrust(root, () => {
-      const memory = takePlanSnapshot(root);
-      fs.rmSync(passSnapshotHeadPath(root, FEATURE, RUN_ID, 'plan'));
-      const result = check(root, memory);
-      assert(result.kind === 'replan', `实得 ${result.kind}`);
-    });
+    // 未闭环：manifest 缺失
+    const missing = check(root);
+    assert(missing.kind === 'replan' && missing.reason === 'closure_untrusted', `manifest 缺失应拒：${JSON.stringify(missing)}`);
+    // 闭环后整体改写 manifest（指针失配 → tampered）
+    closePlan(root);
+    const manifestAbs = path.join(root, 'doc', 'features', FEATURE, 'plan', 'reports', 'phase-evidence-manifest.json');
+    const doc = JSON.parse(fs.readFileSync(manifestAbs, 'utf-8')) as Record<string, unknown>;
+    doc.generated_at = '2099-01-01T00:00:00.000Z';
+    fs.writeFileSync(manifestAbs, JSON.stringify(doc, null, 2), 'utf-8');
+    const tampered = check(root);
+    assert(tampered.kind === 'replan' && tampered.reason === 'closure_untrusted', `manifest 改写应拒：${JSON.stringify(tampered)}`);
   });
 
   run(results, 'B1 chain 缺 plan → unavailable 且零副作用', () => {
@@ -365,6 +337,34 @@ export function runAll(): UnitCaseResult[] {
       const result = discardPassSnapshotCache({ projectRoot: root, feature: FEATURE, runId: RUN_ID, phases: ['plan'] });
       assert(result.diagnostics.length === 0 && !fs.existsSync(head), `malformed head 应可丢弃：${JSON.stringify(result)}`);
     });
+  });
+
+  // （codex 验收 e 的说明：pass snapshot 仅在同阶段 PASS 后 closure-only retry 中发挥
+  //   作用——该用途由 B 组 tryScopeReplan/缓存退位用例与 goal-runner 的 closure retry
+  //   冻结路径承载；A 组已证授权链完全不依赖它。）
+
+  run(results, '表驱动（codex 验收 b）：--start coding/review/ut/testing 的启动资格只由上游 closure freshness 判定——无快照/无 checkpoint 缓存依赖', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'seg-start-'));
+    try {
+      clearFrameworkConfigCache();
+      // 生产 writer 造五阶段闭环（closed-feature-fixture：不伪造哈希，全部现算）
+      makeClosedFeatureFixture({ projectRoot: root, feature: FEATURE, frameworkRoot: FRAMEWORK_ROOT });
+      const FULL = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
+      // 刻意全程不设 MAISON_GOAL_CHECKPOINT_DIR、不建任何 pass snapshot——
+      // 启动资格判定（preflight 同一把尺 recomputePhaseEvidenceStaleness）必须与它们无关
+      for (const start of ['coding', 'review', 'ut', 'testing']) {
+        const upstream = FULL.slice(0, FULL.indexOf(start));
+        const res = recomputePhaseEvidenceStaleness(root, FEATURE, upstream, {
+          frameworkRoot: FRAMEWORK_ROOT,
+        });
+        assert(
+          res.every((r) => r.verdict === 'fresh'),
+          `--start ${start}：上游 closure 应全 fresh（即启动资格成立）：${JSON.stringify(res.filter((r) => r.verdict !== 'fresh'))}`,
+        );
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   return results;
