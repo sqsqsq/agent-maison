@@ -64,7 +64,7 @@ expansions_with_user_approval:
 | `state_management` | 状态管理方案 | — |
 | `navigation` | 路由/导航设计 | — |
 | `files` | 目录/文件结构规划 | 完整文件清单 |
-| `resource_keys` | 宿主资源引用 | **媒体资源 `path` 必须指向模块实际资源目录**（如 `<module>/src/main/resources/base/media/<key>.<ext>`），不得写工程根相对路径——门禁以模块资源目录真实文件判定，曾发生 1×1 占位绕过 `resource_integrity` 假 PASS |
+| `resource_keys` | 宿主资源引用 | **媒体资源 `path` 必须指向模块实际资源目录**（如 `<module>/src/main/resources/base/media/<key>.<ext>`），不得写工程根相对路径——visual-parity 素材门禁以模块资源目录真实文件判定，曾发生 1×1 占位借工程根路径假 PASS |
 | `prd_to_code_traceability` | spec 功能映射表 | — |
 
 **边界用例补充**：若 `acceptance.yaml` 已由 spec 产出，检查并补充 plan 阶段新发现的边界场景；若 spec 未产出（历史原因）则从 spec.md 提取创建。

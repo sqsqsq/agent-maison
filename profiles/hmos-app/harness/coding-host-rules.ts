@@ -81,71 +81,6 @@ function ruleDesc(
   return checks?.[id]?.description?.trim() ?? id;
 }
 
-function collectResourceKeys(projectRoot: string, contracts: ContractsSpec): Map<string, Set<string>> {
-  const keys = new Map<string, Set<string>>();
-  const resourceFiles = contracts.files.filter(f => f.includes('/resources/') && f.endsWith('.json'));
-
-  for (const relPath of resourceFiles) {
-    const fullPath = path.join(projectRoot, relPath);
-    if (!fs.existsSync(fullPath)) continue;
-    try {
-      const content = JSON.parse(fs.readFileSync(fullPath, 'utf-8'));
-      const basename = path.basename(relPath, '.json');
-      if (Array.isArray(content[basename])) {
-        if (!keys.has(basename)) keys.set(basename, new Set());
-        const set = keys.get(basename)!;
-        for (const item of content[basename]) {
-          if (item.name) set.add(item.name);
-        }
-      }
-    } catch {
-      /* skip malformed */
-    }
-  }
-
-  // HarmonyOS media：PNG/JPG/SVG 在 <module>/src/main/resources/base/media/，无 element JSON。
-  // F：以【模块实际资源目录】为准注册 key（ArkUI $r('app.media.<key>') 的真实解析路径），
-  // 绝不信 contracts.resource_keys[].path 的根相对路径——根/contracts 路径放 70B 占位曾绕过
-  // resource_integrity（宿主 homepage 实测：./media/*.png + contracts path 指根目录）。
-  const MEDIA_EXT_RE = /\.(png|jpg|jpeg|webp|svg|gif|bmp)$/i;
-  const registerMediaDir = (dir: string): void => {
-    if (!fs.existsSync(dir)) return;
-    if (!keys.has('media')) keys.set('media', new Set());
-    const set = keys.get('media')!;
-    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (ent.isFile() && MEDIA_EXT_RE.test(ent.name)) {
-        set.add(ent.name.replace(MEDIA_EXT_RE, ''));
-      }
-    }
-  };
-  for (const mod of contracts.modules ?? []) {
-    registerMediaDir(path.join(projectRoot, mod.package_path, 'src', 'main', 'resources', 'base', 'media'));
-  }
-  // 兼容：仅当 contracts entry.path 指向【模块 resources/base/media 内】的真实文件时才补登记，
-  // 杜绝工程根 media/ 等模块外路径冒充（与 visual_parity_asset_materialized 同口径）。
-  const rk = contracts.resource_keys as
-    | Record<string, Record<string, Array<{ key: string; path?: string }>>>
-    | undefined;
-  if (rk) {
-    const normMediaSeg = `${path.sep}src${path.sep}main${path.sep}resources${path.sep}base${path.sep}media${path.sep}`;
-    for (const mod of Object.values(rk)) {
-      const mediaEntries = mod.media;
-      if (!Array.isArray(mediaEntries)) continue;
-      if (!keys.has('media')) keys.set('media', new Set());
-      const set = keys.get('media')!;
-      for (const entry of mediaEntries) {
-        if (!entry.key || !entry.path) continue;
-        const abs = path.resolve(projectRoot, entry.path);
-        if (abs.includes(normMediaSeg) && fs.existsSync(abs)) {
-          set.add(entry.key);
-        }
-      }
-    }
-  }
-
-  return keys;
-}
-
 function truncateList(items: string[], max: number): string {
   const shown = items.slice(0, max).map(i => `  - ${i}`).join('\n');
   return items.length > max ? `${shown}\n  ... 还有 ${items.length - max} 项` : shown;
@@ -186,99 +121,6 @@ function checkNoHardcodedStrings(ctx: CheckContext, analyses: FileAnalysis[]): C
       }`,
       affected_files: [...new Set(hits.map(h => h.file))],
       suggestion: "请将 UI 文本替换为 $r('app.string.xxx') 资源引用。",
-    },
-  ];
-}
-
-function checkResourceIntegrity(ctx: CheckContext, analyses: FileAnalysis[]): CheckResult[] {
-  const contracts = ctx.featureSpec.contracts;
-  if (!contracts) {
-    return [
-      {
-        id: 'resource_integrity',
-        category: 'structure',
-        description: ruleDesc(ctx, 'structure_checks', 'resource_integrity'),
-        severity: 'BLOCKER',
-        status: 'SKIP',
-        details: 'contracts.yaml 不存在，跳过资源引用检查。',
-      },
-    ];
-  }
-
-  const resourceKeys = collectResourceKeys(ctx.projectRoot, contracts);
-  const totalKeys = Array.from(resourceKeys.values()).reduce((s, set) => s + set.size, 0);
-  const totalRefs = analyses.reduce((s, a) => s + a.resourceRefs.length, 0);
-
-  if (totalKeys === 0 && totalRefs > 0) {
-    return [
-      {
-        id: 'resource_integrity',
-        category: 'structure',
-        description: ruleDesc(ctx, 'structure_checks', 'resource_integrity'),
-        severity: 'BLOCKER',
-        status: 'SKIP',
-        details: '未找到资源 JSON 文件，无法验证 $r() 引用。',
-      },
-    ];
-  }
-  if (totalRefs === 0) {
-    return [
-      {
-        id: 'resource_integrity',
-        category: 'structure',
-        description: ruleDesc(ctx, 'structure_checks', 'resource_integrity'),
-        severity: 'BLOCKER',
-        status: 'SKIP',
-        details: '未发现 $r() 引用。',
-      },
-    ];
-  }
-
-  const missing: Array<{ file: string; ref: string; type: string; key: string; line: number }> = [];
-  for (const a of analyses) {
-    for (const ref of a.resourceRefs) {
-      const set = resourceKeys.get(ref.resourceType);
-      if (!set || !set.has(ref.key)) {
-        missing.push({
-          file: a.filePath,
-          ref: ref.raw,
-          type: ref.resourceType,
-          key: ref.key,
-          line: ref.lineNumber,
-        });
-      }
-    }
-  }
-
-  if (missing.length === 0) {
-    return [
-      {
-        id: 'resource_integrity',
-        category: 'structure',
-        description: ruleDesc(ctx, 'structure_checks', 'resource_integrity'),
-        severity: 'BLOCKER',
-        status: 'PASS',
-        details: `全部 ${totalRefs} 处 $r() 引用均有对应资源定义。`,
-      },
-    ];
-  }
-
-  const details = missing
-    .slice(0, 10)
-    .map(m => `  - ${m.file}:${m.line} → ${m.ref} (${m.type}.${m.key} 未定义)`)
-    .join('\n');
-  return [
-    {
-      id: 'resource_integrity',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'resource_integrity'),
-      severity: 'BLOCKER',
-      status: 'FAIL',
-      details: `${missing.length} 处 $r() 引用缺少资源定义：\n${details}${
-        missing.length > 10 ? `\n  ... 还有 ${missing.length - 10} 处` : ''
-      }`,
-      affected_files: [...new Set(missing.map(m => m.file))],
-      suggestion: '在对应模块的 resources/base/element/*.json 中补充缺失的资源 key。',
     },
   ];
 }
@@ -1462,7 +1304,7 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
 function runStructureChecks(ctx: CheckContext, analyses: FileAnalysis[]): CheckResult[] {
   const out: CheckResult[] = [];
   out.push(...checkNoHardcodedStrings(ctx, analyses));
-  out.push(...checkResourceIntegrity(ctx, analyses));
+  // resource_integrity 已退役：资源合法性唯一真源=coding_compile 真实构建
   out.push(...checkHarIndexExport(ctx));
   out.push(...checkModuleConfigRegistered(ctx));
   out.push(...checkOhPackageDependencies(ctx));

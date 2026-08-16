@@ -6,7 +6,7 @@
 
 1. **必须 `Read`**：`authoritative_refs` 指向的每一张原图 + `ui-spec.yaml` 全文。UI 实现以**原图 + ui-spec 的 token/组件树/逐字文案/资产 key**为准；禁止占位图标、全局主题色、泛化文案静默替代。资产缺失须按 ui-spec `assets[]` 显式 `placeholder`，不得静默替换。
 
-2. **资产物化（crop 真图落地·禁占位冒充）**：对 `assets[]` 中 `acquisition: crop` 且非 `placeholder` 的每个 key，读其 `resolved_path`（spec 阶段真裁图）并**复制**进引用它的模块 `<module>/src/main/resources/base/media/<key>.<ext>`。**严禁**：①生成 1×1/纯色/空 PNG 占位冒充真图；②在工程根建 `media/` 目录冒充资源。缺真图按显式 `placeholder` 停下求人，不得静默糊弄。门禁 `visual_parity_asset_materialized`（pixel_1to1→BLOCKER）校验模块 media 为真图；`resource_integrity` 以模块资源目录实际文件判可用性，工程根/契约路径占位不被采信。**物化前置**：只有 spec 阶段 `asset_crop_validation` 判 `verified` 的 crop 才可物化——门禁 `visual_parity_unverified_crop` 重算产物 sha256 与验真裁决比对，物化须从 `resolved_path` **原样字节复制**（不得再加工/压缩/换图）。
+2. **资产物化（crop 真图落地·禁占位冒充）**：对 `assets[]` 中 `acquisition: crop` 且非 `placeholder` 的每个 key，读其 `resolved_path`（spec 阶段真裁图）并**复制**进引用它的模块 `<module>/src/main/resources/base/media/<key>.<ext>`。**严禁**：①生成 1×1/纯色/空 PNG 占位冒充真图；②在工程根建 `media/` 目录冒充资源。缺真图按显式 `placeholder` 停下求人，不得静默糊弄。门禁 `visual_parity_asset_materialized`（pixel_1to1→BLOCKER）校验模块 media 为真图（工程根/契约路径占位不被采信）；`$r()` 资源引用合法性以真实编译（`coding_compile`）为唯一真源。**物化前置**：只有 spec 阶段 `asset_crop_validation` 判 `verified` 的 crop 才可物化——门禁 `visual_parity_unverified_crop` 重算产物 sha256 与验真裁决比对，物化须从 `resolved_path` **原样字节复制**（不得再加工/压缩/换图）。
 
 3. **可见文案白名单**：源码 `Text()/Button()` 字面量与被 `$r('app.string.*')` 引用的 value 中，用户可见 CJK 文本**必须来自 ui-spec/ref-elements 文本集**——原图没有的文案严禁无中生有（历史事故：zone 名被脑补成可见标题）。想加分组标题须回 spec 补建模，不许 coding 自造。确属功能必需的非原图文案（toast/错误提示/空态兜底）→ 登记 `<features_dir>/<feature>/coding/visible-text-exemptions.yaml`（`entries[].text` + **非空 `rationale`**，无理由不生效；review 视觉维度逐条复核）。门禁 `visible_text_whitelist` 拦截。
 

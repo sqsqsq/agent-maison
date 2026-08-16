@@ -141,7 +141,7 @@
   3. 对于每条问题，判断其分类是否能对应到 `coding-rules.yaml` 中的具体规则：
      - "分层违规" → layer_compliance / inter_module_dependency
      - "接口不一致" → interface_signature_consistency
-     - "资源引用" → resource_integrity
+     - "资源引用" → coding_compile（真实构建为唯一真源；静态 resource_integrity 已退役）
      - "命名规范" → naming_conventions
      - "硬编码" → no_hardcoded_strings
      - "逻辑错误" → business_logic_correctness

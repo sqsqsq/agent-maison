@@ -35,11 +35,9 @@
 
 ### 1.4 资源引用完整性
 
-- [ ] 每个 `$r('app.string.xxx')` 引用的 key 在 string.json 中已定义
-- [ ] 每个 `$r('app.color.xxx')` 引用的 key 在 color.json 中已定义
-- [ ] 每个 `$r('app.float.xxx')` 引用的 key 在 float.json 中已定义
+- [ ] `$r('app.*')` 资源引用以**真实编译结果为唯一真源**（`coding_compile` 门禁）——编译 PASS 即资源定义齐备，无需人工逐 key 核对（静态 `resource_integrity` 门禁已退役：它曾在编译 PASS 时按 contracts 子集误杀既有模块资源）
 
-**依据**: `framework/specs/phase-rules/coding-rules.yaml > resource_integrity`
+**依据**: 真实构建 `coding_compile`（runner-owned-machine-facts 收口）
 
 ---
 

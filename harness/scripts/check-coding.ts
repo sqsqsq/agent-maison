@@ -6,7 +6,7 @@
 //
 // 检查项（与 coding-rules.yaml 对应）：
 //   Structure:     file_completeness, layer_compliance, inter_module_dependency,
-//                  no_hardcoded_strings, resource_integrity, har_index_export,
+//                  no_hardcoded_strings, har_index_export,
 //                  module_config_registered, oh_package_dependencies,
 //                  page_registration, naming_conventions, no_any_type,
 //                  async_await_pattern

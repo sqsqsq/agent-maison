@@ -577,7 +577,8 @@ function checkIssueToCodingRule(ctx: CheckContext, report: string): CheckResult[
   const categoryToRule: Record<string, string> = {
     '分层违规': 'layer_compliance / inter_module_dependency',
     '接口不一致': 'interface_signature_consistency',
-    '资源引用': 'resource_integrity',
+    // resource_integrity 已退役：资源引用类问题的机器依据=真实构建（coding_compile）
+    '资源引用': 'coding_compile',
     '命名规范': 'naming_conventions',
     '硬编码': 'no_hardcoded_strings',
     '逻辑错误': 'business_logic_correctness',

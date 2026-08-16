@@ -72,15 +72,9 @@ structure_checks:
         - "constant_definitions_in_shared"
         - "test_files"
 
-  resource_integrity:
-    description: >
-      所有 $r('app.string.xxx')、$r('app.color.xxx')、$r('app.float.xxx')
-      引用的资源 key 必须在对应模块的 resources/ 下的 JSON 文件中定义
-    severity: BLOCKER
-    rule:
-      for_each_resource_ref:
-        pattern: '\$r\(''app\.(string|color|float)\.([^'']+)''\)'
-        validate: "key_exists_in_resource_json"
+  # resource_integrity 已退役（runner-owned-machine-facts 收口·codex 定案）：与真实编译
+  # 重复的影子解析曾在 coding_compile PASS 时按 contracts 子集误杀既有模块资源（宿主
+  # run 20260816T025643Z-269beb 三轮预算烧尽）。$r() 资源合法性以 coding_compile 为唯一真源。
 
   har_index_export:
     description: >
