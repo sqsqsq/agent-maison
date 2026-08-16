@@ -22,8 +22,11 @@ export interface ReceiptScaffoldOptions {
 
 export interface ReceiptScaffoldResult {
   wrote: boolean;
-  /** 写入（或已存在）的回执绝对路径；模板缺失等 best-effort 失败时为 null。 */
+  /** 写入（或已存在）的回执绝对路径；模板缺失等失败时为 null。 */
   receiptPath: string | null;
+  /** 未写入且非幂等跳过时的真实原因（路径 + I/O 错误）。goal runner 消费它 fail-closed：
+   *  写失败不得静默吞（否则旧身份回执存活 → receipt_attempt_identity → closure_wall）。 */
+  failure?: string;
 }
 
 /** 模板绝对路径（编译产物与源仓目录结构一致：scripts/utils → ../../templates）。 */
@@ -34,8 +37,9 @@ export function receiptTemplatePath(): string {
 /**
  * 写回执骨架。身份字段（feature/phase/claimed_attempt_id）由 runner 预填——agent 不得
  * 编辑（goal 态 check-receipt 与 runner 身份精确等值即物理拦截）；自证字段保持占位、
- * 反假设 checkbox 未勾，骨架不构成闭环。任何失败静默返回 wrote:false（best-effort：
- * agent 仍可从模板手抄自证字段，身份等值校验兜底）。
+ * 反假设 checkbox 未勾，骨架不构成闭环。失败不抛出，但 `failure` 携带真实原因——
+ * goal runner（单点写者）须 fail-closed 停下；非 goal 手动流程可继续 best-effort
+ * （agent 从模板手抄自证字段，身份等值校验兜底）。
  */
 export function writeReceiptScaffold(
   projectRoot: string,
@@ -43,13 +47,16 @@ export function writeReceiptScaffold(
   phase: string,
   opts?: ReceiptScaffoldOptions,
 ): ReceiptScaffoldResult {
+  let receiptPath: string | null = null;
   try {
-    const receiptPath = resolveReceiptFilePath(projectRoot, feature, phase).path;
+    receiptPath = resolveReceiptFilePath(projectRoot, feature, phase).path;
     if (!opts?.force && fs.existsSync(receiptPath)) {
       return { wrote: false, receiptPath };
     }
     const templatePath = receiptTemplatePath();
-    if (!fs.existsSync(templatePath)) return { wrote: false, receiptPath: null };
+    if (!fs.existsSync(templatePath)) {
+      return { wrote: false, receiptPath: null, failure: `回执模板缺失：${templatePath}` };
+    }
     const skeleton = fs
       .readFileSync(templatePath, 'utf-8')
       .replace('feature: "<feature-name>"', `feature: "${feature}"`)
@@ -58,7 +65,11 @@ export function writeReceiptScaffold(
     fs.mkdirSync(path.dirname(receiptPath), { recursive: true });
     fs.writeFileSync(receiptPath, skeleton, 'utf-8');
     return { wrote: true, receiptPath };
-  } catch {
-    return { wrote: false, receiptPath: null };
+  } catch (e) {
+    return {
+      wrote: false,
+      receiptPath: null,
+      failure: `骨架写入失败（${receiptPath ?? '<路径解析失败>'}）：${(e as Error).message}`,
+    };
   }
 }

@@ -604,6 +604,34 @@ const cases: Array<{ name: string; run: () => void }> = [
       );
     },
   },
+  {
+    name: '骨架写失败携带真实原因（failure 非空）——runner 消费它 fail-closed，静默吞已根治',
+    run: () => {
+      // 让回执路径落在一个"以文件占位"的目录下：mkdirSync 必然 EEXIST/ENOTDIR
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'receipt-scaffold-fail-'));
+      const featuresDir = path.join(root, 'doc', 'features');
+      fs.mkdirSync(path.dirname(featuresDir), { recursive: true });
+      fs.writeFileSync(featuresDir, 'not-a-directory', 'utf-8');
+      const r = writeReceiptScaffold(root, 'demo', PHASE, { attemptId: 'i2', force: true });
+      assert(!r.wrote, '写失败不得报 wrote');
+      assert(
+        typeof r.failure === 'string' && r.failure.length > 0,
+        `失败必须携带真实原因（路径+I/O 错误），实得：${JSON.stringify(r)}`,
+      );
+    },
+  },
+  {
+    name: 'goal 态 harness-runner 第二写入点让位：writeReceiptSkeletonIfMissing 见 MAISON_GOAL_ATTEMPT 即返回（生产接线）',
+    run: () => {
+      // 源码正则钉接线：goal 态骨架唯一写者=goal runner（invoke 前 force 写入）；
+      // harness PASS 后的幂等首建只服务非 goal 手动流程。双写者会掩盖 runner 写失败。
+      const harness = fs.readFileSync(path.resolve(__dirname, '../../harness-runner.ts'), 'utf8');
+      assert(
+        /function writeReceiptSkeletonIfMissing[\s\S]{0,400}if \(process\.env\.MAISON_GOAL_ATTEMPT\?\.trim\(\)\) return;/.test(harness),
+        'goal 态（MAISON_GOAL_ATTEMPT 存在）必须直接返回——不得保留第二写入点',
+      );
+    },
+  },
 ];
 
 export function runAll(): UnitCaseResult[] {

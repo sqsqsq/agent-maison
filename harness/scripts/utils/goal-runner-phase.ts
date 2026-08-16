@@ -227,8 +227,7 @@ export interface GoalRunEvent {
   silent_killed?: boolean;
   lingering_pipe?: boolean;
   recovered?: boolean;
-  /** agent_invoke_end 既有字段（skipDecision 命中时 runner 写 true）——环 B
-   * responsibilityRerunPending 据此区分"真实跑过"与"被 skip"，此处仅补类型声明。 */
+  /** agent_invoke_end 既有字段（dry-run invoke 写 true；"证据齐全即跳过"机制已删）。 */
   skipped?: boolean;
   invoke_id?: string;
   invoke_start_ts?: string;
@@ -442,47 +441,8 @@ export function lastPhaseVerdictTransientApiError(
   return false;
 }
 
-/**
- * 环 B（plan f3a8c6d2 t2）：该 phase 是否处于"缓存失效后重跑责任阶段"待办态。
- *
- * 事故（bc-openCard run 20260808T071335Z-4b0136）：三处 `phaseIdx--` 出口
- * （pre_invoke 快照不可用 / post-agent 漂移 / plan-freeze 失败）重入 phase 循环时
- * `let retries = 0` 重新执行 → decideSkipAgentInvoke 判"非重试轮"→ 每轮 skip agent
- * （i5/i6/i8 agent_duration_ms=0），而 closure 只有 agent 重签 receipt 才能闭合，
- * 于是空转到 closure_wall TERMINAL。
- *
- * **不复用 retries**：retries 兼作内容重试配额（goal-runner.ts:7048/:7377 的
- * max_retries_per_phase 判据、assess retriesUsed），而既有设计明确"缓存缺失不烧
- * 预算"（:5512）、"与 retries 彻底解耦"（:5267）——递增它会让框架侧缓存事件吃掉
- * agent 的内容重试配额。故本判据独立且**零新增事件/字段/持久状态**：完全从既有
- * `phase_halt(pass_snapshot_unavailable)` 与 `agent_invoke_end` 重建，跨 --resume
- * 同样成立（events.jsonl 是唯一事实源）。
- *
- * 判据：该 phase 最后一次 pass_snapshot_unavailable halt 之后，是否已有一次**真实**
- * agent 调用结束（`agent_invoke_end` 且 `skipped !== true`）。
- * 没有 → pending（本轮必须真跑）；有 → 已消费。
- * 注意 skip 路径同样会发 `agent_invoke_start`（runner 先发 start 再判 skipDecision，
- * 宿主 events 实锤 i5：start→completion_evidence_pre_existing(skip)→end{skipped:true}），
- * 故消费判据取 end.skipped=false，只看 start 会把"被 skip 的那轮"误记为已消费。
- */
-export function responsibilityRerunPending(events: GoalRunEvent[], phase: string): boolean {
-  let haltIdx = -1;
-  for (let i = events.length - 1; i >= 0; i--) {
-    const e = events[i];
-    if (e.type === 'phase_halt' && e.phase === phase && e.halt_reason === 'pass_snapshot_unavailable') {
-      haltIdx = i;
-      break;
-    }
-  }
-  if (haltIdx < 0) return false;
-  for (let i = haltIdx + 1; i < events.length; i++) {
-    const e = events[i];
-    if (e.type !== 'agent_invoke_end' || e.phase !== phase) continue;
-    if (e.skipped === true) continue; // 被 skip 的一轮不构成消费
-    return false;
-  }
-  return true;
-}
+// 【已删除 · pass snapshot 退役】responsibilityRerunPending（"缓存失效后重跑责任阶段"
+// 待办态）：其唯一置位源 phase_halt(pass_snapshot_unavailable) 已不再产生。
 
 /**
  * E4（案B chrys 银行卡实证：8 attempt/4h19m，advance_blocked 两次分别以不同 reason
@@ -1040,6 +1000,22 @@ export function deriveContinuationFromEvents(
     return { cause: 'content_retry', ...(fk ? { failureKind: fk } : {}) };
   }
   return end.timed_out === true ? { cause: 'agent_timeout' } : { cause: 'unknown' };
+}
+
+/**
+ * The next invocation is closure-only exactly when the latest authoritative
+ * outcome for this phase requested a retry after PASS solely to finish closure.
+ * Pass snapshots may protect frozen files, but are not workflow state.
+ */
+export function isClosureOnlyRetryPending(events: GoalRunEvent[], phase: string): boolean {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i];
+    if (event.phase !== phase) continue;
+    if (event.type === 'phase_halt' || event.type === 'phase_invalidated') return false;
+    if (event.type !== 'phase_verdict') continue;
+    return event.verdict === 'PASS' && event.advance_blocked === true && event.action === 'retry';
+  }
+  return false;
 }
 
 /** Last agent_invoke_start without a matching agent_invoke_end (invoke_id first, phase fallback). */

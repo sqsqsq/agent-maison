@@ -26,11 +26,9 @@
 //
 // 与既有两处回退调用点（goal-runner.ts:8118 授权/漂移回退、:8369 缺陷回退）的关系：
 // 那两处目标是 **coding**，本模块目标是 **plan**，触发面与失效下限都不同，故并存。
-// 事件顺序：**事件先落盘，缓存副作用后做**。事件本身是失效事实的原子记录；缓存
-// 退位/内存锚清理都可重复执行，崩溃后 resume 只需重放同一条记录。
+// 事件即失效事实的原子记录（pass snapshot 已退役，事件之外无缓存副作用）。
 // ============================================================================
 
-import { discardPassSnapshotCache } from './pass-snapshot';
 import { recomputePhaseEvidenceStaleness } from './phase-evidence-manifest';
 import { validateProjectRelativePath } from './project-relative-path';
 
@@ -72,9 +70,6 @@ export function __testing_setAfterInvalidationRequested(fn: (() => void) | null)
   injectedAfterInvalidationRequested = fn;
 }
 
-/** 只用到 delete——不耦合 runner 的内存锚具体形状 */
-type AnchorMemory = { delete(key: string): boolean };
-
 export interface ScopeReplanInput {
   projectRoot: string;
   feature: string;
@@ -105,8 +100,6 @@ export interface ScopeReplanInput {
   fingerprint?: string;
   /** 人类可读的触发说明，进事件供排障 */
   detail: string;
-  dryRun: boolean;
-  passSnapshotMemory: AnchorMemory;
   emit: (event: Record<string, unknown>) => void;
 }
 
@@ -143,8 +136,8 @@ export function tryScopeReplan(input: ScopeReplanInput): ScopeReplanOutcome {
   const txId = `${input.runId}-scopebt${ordinal}`;
   const files = (input.affectedFiles ?? []).slice(0, 20);
 
-  // 这条记录必须是失效事实的唯一落点：invalidated_phases/to_phase/reason 及交接上下文
-  // 同时写入；后续缓存退位只是可重复副作用，不再有 pending/completed journal。
+  // 这条记录是失效事实的唯一落点：invalidated_phases/to_phase/reason 及交接上下文
+  // 同时写入（pass snapshot 退役后不再有任何缓存副作用）。
   input.emit({
     type: 'phase_backtrack_requested',
     phase: input.causePhase,
@@ -159,18 +152,8 @@ export function tryScopeReplan(input: ScopeReplanInput): ScopeReplanOutcome {
     fingerprint: input.fingerprint ?? null,
     invalidation_tx_id: txId,
   });
-  // 只用于子进程故障回放：record 已落盘即逻辑失效已生效，下面动作必须可重复。
+  // 只用于子进程故障回放：record 已落盘即逻辑失效已生效。
   injectedAfterInvalidationRequested?.();
-
-  if (!input.dryRun) {
-    for (const phase of invalidatedPhases) input.passSnapshotMemory.delete(phase);
-    discardPassSnapshotCache({
-      projectRoot: input.projectRoot,
-      feature: input.feature,
-      runId: input.runId,
-      phases: invalidatedPhases,
-    });
-  }
 
   input.emit({ type: 'phase_backtrack_started', to_phase: 'plan' });
   return { kind: 'replanned', planIdx, invalidatedPhases, txId };
@@ -179,12 +162,6 @@ export function tryScopeReplan(input: ScopeReplanInput): ScopeReplanOutcome {
 // ---------------------------------------------------------------------------
 // ④ plan 授权检查 —— coding **spawn 前**与 **agent 返回后** 各调用一次
 // ---------------------------------------------------------------------------
-
-/** runner 内存锚的形状（goal-runner.ts:5418 的 passSnapshotMemory 值类型） */
-export interface PlanScopeAnchor {
-  epoch: number;
-  memoryDigest: { manifestSha256: string; fileHashes: Record<string, string> };
-}
 
 export type PlanAuthorityOutcome =
   /** 授权成立（plan closure fresh——closure 即授权，无需内存锚） */
@@ -207,41 +184,10 @@ export type PlanAuthorityOutcome =
  * runner-owned-machine-facts 裁剪（codex 定案）后语义统一为一句话：
  * **授权 = 仓内 fresh 的 plan closure**。检查复用 recomputePhaseEvidenceStaleness
  * （与截断链 preflight / assess 同一把尺）：manifest 完整性 + 回执指针锚 + 冻结面
- * （plan.md / contracts.yaml 等 outputs∪inputs）逐文件哈希比对 + 环境重算——覆盖面
- * 较旧的 per-run 快照方案只多不少，且跨 run 稳定：fresh 的 --start coding 无需本 run
- * 快照即可开工；resume 语义相同（无内存态依赖）。pass snapshot 从此只承担同阶段
- * PASS 后 closure-only retry 的 TOCTOU 保护，与授权彻底解耦。
- *
- * 下面的历史注释保留背景（旧快照方案的动机与缺陷分析，均已被上述统一语义取代）：
- *
- * 为什么 spawn 前那次必须前移（三条事实，均已逐行核实）：
- * ① 既有 pre-spawn 可信加载读的是**当前 phase** 快照（goal-runner.ts:5795）——进 coding
- *    时它检 coding 快照，不检 plan scope 快照；
- * ② `passSnapshotMemory` 每进程新建（goal-runner.ts:5418），**resume 后恒空**；
- * ③ gate 的锚来自 `scopeAnchorEnv` → `memory.get('plan')`，取不到就不注入，gate 退回
- *    无锚行为会被视为缓存不可用并重建，不以凭据或弱信任放行。
- * 合起来即：**t4 的锚保护在 resume 后自然蒸发**。不前移的话，无可信 plan 授权的 resume
- * 会先跑完一轮 coding、再由 post-agent gate 发现问题——白烧一次 attempt，且 agent 在
- * 授权未确认时已经动过代码。
- *
- * 两条信任路径**收敛到同一次 loader 调用**：
- * · 同进程 → 传 `expectedAnchor`，loader 已内建「盘上消失/退位/换代即篡改」
- *   （pass-snapshot.ts:919-926），`kind='active'` 即锚已核对，无需另写比较；
- * · resume → `expectedAnchor` 为 null，按无内存锚读取 unsigned cache；内容或绑定异常
- *   直接判 cache miss，由责任阶段重跑。
- * 两者随后消费**同一个 `ctx.manifest`**——不存在「先比 head、再重新读另一份 manifest」
- * 的 TOCTOU。
- *
- * live 漂移必须单独比（`loadTrustedSnapshotContext` 不做这件事）：它只证明**快照本身**
- * 可信、绑定正确、存储完整，读的是快照目录里的 manifest.json，**从不去哈希宿主 live 的
- * plan.md / contracts.yaml**（pass-snapshot.ts:983 直接返回 active）。而既有唯一
- * `diffFrozenAgainstManifest` 调用点在 **post-agent** 的 closure-only 块
- * （goal-runner.ts:6710），且吃的是**当前 phase** 的快照——普通 coding attempt 根本没有
- * coding 快照（kind='none'），整块被跳过。**即：一次普通 coding attempt 期间，plan 冻结面
- * 的 live 漂移在 spawn 前后都没有任何地方在比。**
- *
- * 有 diff 时直接进入 replan：缓存只提供观察基线，不能把宿主旧字节写回；replan 会重出
- * plan 产物并由 runner 重新建立缓存。
+ * （plan.md / contracts.yaml 等 outputs∪inputs）逐文件哈希比对 + 环境重算——跨 run
+ * 稳定：fresh 的 --start coding 无需本 run 状态即可开工；resume 语义相同（无内存态
+ * 依赖）。pass snapshot 已整体退役（旧 per-run 快照/内存锚方案的动机与缺陷分析见
+ * git history）。有 diff 时直接进入 replan：不把旧字节写回宿主，replan 重出 plan 产物。
  */
 export function checkPlanAuthority(input: {
   projectRoot: string;

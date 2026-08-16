@@ -287,6 +287,8 @@ const HALT_DIAGNOSTIC_PROSE: Readonly<Record<string, string>> = {
     'closure-only attempt（PASS 已冻结仅补关环）超时——不回内容重试；人工核查 receipt/closure 后 --resume',
   pass_snapshot_unavailable:
     'PASS 快照不可复用（head 损坏/快照失败/预期快照消失）——丢弃缓存，重跑责任阶段；若存储不可写则等待 external probe',
+  receipt_scaffold_unwritable:
+    '回执骨架无法写入（目录只读/模板缺失/文件占用）——未启动 agent、未烧 attempt；修复存储条件后 --resume',
   closure_probe_error:
     'receipt 探针自身执行失败（framework/toolchain 坏，非产物问题）——不派 agent 修 receipt，人工修复环境/回灌源仓后 --resume',
   closure_state_invariant:

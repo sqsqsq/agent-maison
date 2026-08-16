@@ -44,8 +44,6 @@ import { hashScreenshotFile } from '../../../profiles/hmos-app/harness/visual-di
 import {
   projectIdentityHash,
   readCodingBase,
-  readPassSnapshotHead,
-  passSnapshotHeadPath,
 } from '../../scripts/utils/pass-snapshot';
 import { computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
 import type { UnitCaseResult } from '../run-unit';
@@ -541,39 +539,30 @@ test('E2E-1 pre-existing dirty 合法：invoke 前已有未提交 acceptance/源
   assertRunReachedEnd(probe, 'E2E-1');
 });
 
-test('⑤ c4e8b1d3：正常 plan PASS（非 advance_blocked）也建快照，且首次 coding 前锚定 coding_base_sha', async () => {
+test('⑤ c4e8b1d3：首次 coding 前锚定 coding_base_sha（pass snapshot 已退役，plan PASS 不再建快照）', async () => {
   const { root } = setupHost();
   let codingRunId = '';
   // trust 文件真值在 **coding 窗口内**采（b7e4d2a9 Todo2 起，成功封卷会即刻回收 per-run
   // 场外状态——run 结束后再查文件查的是"回收后"，不是锚定语义本身）
-  let headActiveInWindow = false;
   let baseShaInWindow = '';
   const probe = await runChain(root, {
     onCoding: ctx => {
       codingRunId = ctx.runId;
-      const head = readPassSnapshotHead(ctx.root, FEATURE, ctx.runId, 'plan');
-      headActiveInWindow = head.body?.state === 'active';
       const base = readCodingBase(ctx.root, FEATURE, ctx.runId);
       baseShaInWindow = base.body?.base_sha ?? '';
     },
     onTesting: ({ root: r }) => writeCleanTesting(r),
   });
   assertRunReachedEnd(probe, '⑤');
-  const types = probe.events.map(e => e.type);
-  const snapIdx = probe.events.findIndex(e => e.type === 'pass_snapshot_taken' && e.phase === 'plan');
-  assert(snapIdx >= 0, `plan 正常 PASS 须落 pass_snapshot_taken(plan)：${types.join(',')}`);
+  // 退役判别：plan 正常 PASS 不得再落 pass_snapshot_taken
+  assert(!probe.events.some(e => e.type === 'pass_snapshot_taken'),
+    'pass snapshot 已退役——不得再产生 pass_snapshot_taken 事件');
   const baseEv = probe.events.find(e => e.type === 'coding_base_recorded') as
     { base_sha?: string } | undefined;
   assert(!!baseEv && /^[0-9a-f]{40}$/.test(String(baseEv.base_sha ?? '')),
     `coding_base_recorded 须带 40-hex base_sha：${JSON.stringify(baseEv)}`);
-  // 时序：plan 快照先于首次 coding agent invoke（pre-coding 锚定语义）
-  const codingInvokeIdx = probe.events.findIndex(
-    e => e.type === 'agent_invoke_start' && e.phase === 'coding',
-  );
-  assert(codingInvokeIdx > snapIdx, `plan 快照须先于 coding agent invoke（snap@${snapIdx}, invoke@${codingInvokeIdx}）`);
   // coding 窗口内的 trust 文件真值（不只信事件）
   assert(!!codingRunId, 'coding attempt 须带 MAISON_GOAL_RUN_ID');
-  assert(headActiveInWindow, 'coding 窗口内 plan snapshot head 须 active');
   assert(baseShaInWindow === String(baseEv!.base_sha), 'coding 窗口内 trust 文件 base_sha 须与事件一致');
 });
 
@@ -1593,15 +1582,11 @@ test('t5④负向 closure 缺失 resume：plan 重新闭环前 coding agent 调�
   );
 });
 
-test('t5④正向对照 resume：closure fresh → 不回退 plan、coding 正常启动；快照 head 损坏无关授权；锚 env 已退役', async () => {
+test('t5④正向对照 resume：closure fresh → 不回退 plan、coding 正常启动；锚 env 已退役', async () => {
   const { root } = setupHost();
   const { runId } = await haltAtCoding(root);
-  // runner-owned-machine-facts 裁剪判别点：把 plan 快照 head 写坏——旧语义这会触发
-  // "回 plan 重签"；新语义快照与授权解耦（closure fresh 即授权），resume 须照常 coding。
-  withCheckpointDir(root, () => {
-    const headPath = passSnapshotHeadPath(root, FEATURE, runId, 'plan');
-    if (fs.existsSync(headPath)) fs.writeFileSync(headPath, '{"corrupt":true}', 'utf-8');
-  });
+  // runner-owned-machine-facts：pass snapshot 已整体退役——授权=closure fresh，
+  // resume 不读任何场外快照状态，须照常直接进 coding。
   const resumed = await runChain(root, {
     resume: runId, forceResume: true,
     onTesting: ({ root: hostRoot }) => writeCleanTesting(hostRoot),
@@ -1613,7 +1598,7 @@ test('t5④正向对照 resume：closure fresh → 不回退 plan、coding 正�
   assert(
     !resumed.events.some(e => e.type === 'phase_backtrack_requested'
       && e.reason === 'plan_authority_unverifiable'),
-    '不得产生授权回退（快照 head 损坏不构成授权问题）',
+    '不得产生授权回退（closure fresh 即授权，无场外状态依赖）',
   );
   // 锚 env 通道已整体退役——gate env 不得再携带 MAISON_GOAL_SCOPE_ANCHOR
   const codingEnv = resumed.harnessDeviceEnvs.find(x => x.phase === 'coding')?.env ?? {};

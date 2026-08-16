@@ -1441,6 +1441,10 @@ function writeRunSummaryBase(
  * t2 receipt-slim：瘦身回执骨架——仅 verdict=PASS 且回执缺失时幂等生成（FAIL 跑不留半真骨架）；
  * lite track 豁免（receipt 机制 not_applicable）。骨架自证字段占位、反假设 checkbox 全未勾，
  * 不构成闭环；生成失败不阻断门禁（best-effort，agent 可自行从模板复制）。
+ * openspec runner-owned-machine-facts：**goal 态让位**——骨架由 goal runner 在每次 invoke
+ * 前单点 force 写入（写失败 fail-closed 不启动 agent），本函数不再兼任第二写入点
+ * （双写者会掩盖 runner 写失败，且 PASS 后才建骨架迫使 closure 必然多跑一轮）。
+ * 非 goal 手动流程无 runner 可依，保留 PASS-gated 幂等首建。
  */
 function writeReceiptSkeletonIfMissing(
   projectRoot: string,
@@ -1449,13 +1453,11 @@ function writeReceiptSkeletonIfMissing(
   verdict: string,
 ): void {
   try {
+    if (process.env.MAISON_GOAL_ATTEMPT?.trim()) return;
     if (verdict !== 'PASS') return;
     if (resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature)) === 'lite') return;
-    // openspec runner-owned-machine-facts：身份字段（feature/phase/claimed_attempt_id）
-    // 由骨架预填——goal 态取本次 harness 进程的 attempt 身份（与 check-receipt 等值
-    // 校验同源），agent 不再从环境抄写机器已知的值。
     const res = writeReceiptScaffold(projectRoot, feature, phase, {
-      attemptId: process.env.MAISON_GOAL_ATTEMPT?.trim() || undefined,
+      attemptId: undefined,
     });
     if (res.wrote && res.receiptPath) {
       console.log(

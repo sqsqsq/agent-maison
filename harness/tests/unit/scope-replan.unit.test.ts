@@ -1,25 +1,18 @@
 // ============================================================================
-// scope-replan.unit.test.ts — 5b/5c: cache miss + single invalidation record
+// scope-replan.unit.test.ts — plan 授权（closure-only 语义）+ 单条失效记录
+// 【pass snapshot 已退役 · runner-owned-machine-facts】原 B 组快照断言（head 退位/
+// 内存锚/discard 幂等/字节不恢复）随机制删除；失效事实唯一落点=phase_backtrack_requested
+// 事件本身。
 // ============================================================================
 
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
-  discardPassSnapshotCache,
-  passSnapshotHeadPath,
-  passSnapshotRunDir,
-  readPassSnapshotHead,
-  resolveFrozenDeliverables,
-  sha256Buf,
-  takePassSnapshot,
-} from '../../scripts/utils/pass-snapshot';
-import {
   checkPlanAuthority,
   resolveScopeReplanContext,
   sanitizeScopeReplanFiles,
   tryScopeReplan,
-  type PlanScopeAnchor,
 } from '../../scripts/utils/scope-replan';
 import { buildScopeReplanContextBlock } from '../../scripts/goal-runner';
 import {
@@ -80,31 +73,6 @@ function setupHost(): string {
   return root;
 }
 
-function withTrust<T>(root: string, fn: () => T): T {
-  const previous = process.env.MAISON_GOAL_CHECKPOINT_DIR;
-  const previousHmac = process.env.MAISON_HMAC_GOAL_CHECKPOINT;
-  process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'trust-cp');
-  // Legacy secret must be inert: cache readers must not consult it.
-  process.env.MAISON_HMAC_GOAL_CHECKPOINT = 'legacy-test-key';
-  try {
-    return fn();
-  } finally {
-    if (previous === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR;
-    else process.env.MAISON_GOAL_CHECKPOINT_DIR = previous;
-    if (previousHmac === undefined) delete process.env.MAISON_HMAC_GOAL_CHECKPOINT;
-    else process.env.MAISON_HMAC_GOAL_CHECKPOINT = previousHmac;
-  }
-}
-
-function takePlanSnapshot(root: string, epoch = 1): PlanScopeAnchor {
-  const files = resolveFrozenDeliverables({ projectRoot: root, feature: FEATURE, phase: 'plan' });
-  assert(files.length > 0, 'plan 冻结面不得为空');
-  const taken = takePassSnapshot({
-    projectRoot: root, feature: FEATURE, runId: RUN_ID, phase: 'plan', epoch, files,
-  });
-  return { epoch, memoryDigest: taken.memoryDigest };
-}
-
 /** 生产 writer 造 plan closure（回执 → evidence manifest → 回执指针）——与真实闭环同源 */
 function closePlan(root: string): void {
   writeFile(root, `doc/features/${FEATURE}/plan/phase-completion-receipt.md`, `feature: "${FEATURE}"\nphase: "plan"\n`);
@@ -125,7 +93,7 @@ export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
 
   // A 组：plan 授权=仓内 fresh closure（runner-owned-machine-facts 裁剪后语义）。
-  // 快照与授权彻底解耦——本组不建任何 pass snapshot；快照的 closure-retry 用途见 B 组。
+  // pass snapshot 已整体退役——授权链与任何 run 级缓存无关。
 
   run(results, 'A1 plan closure fresh → ok（closure 即授权，无需任何 run 级快照/内存锚）', () => {
     const root = setupHost();
@@ -134,11 +102,11 @@ export function runAll(): UnitCaseResult[] {
     assert(result.kind === 'ok', `应放行：${JSON.stringify(result)}`);
   });
 
-  run(results, 'A2（codex 验收 a+c）fresh coding-start 等价场景：无本 run 快照、无 checkpoint 缓存目录 → 照常放行', () => {
+  run(results, 'A2（codex 验收 a+c）fresh coding-start 等价场景：无 checkpoint 缓存目录 → 照常放行', () => {
     const root = setupHost();
     closePlan(root);
-    // 刻意不设 MAISON_GOAL_CHECKPOINT_DIR（不进 withTrust）——新实现不读 goal-checkpoints
-    // 临时缓存；宿主实锤 run 3aa520：旧实现在此必得 kind=none → 无处回退 → halt。
+    // 刻意不设 MAISON_GOAL_CHECKPOINT_DIR——授权不读 goal-checkpoints 临时缓存；
+    // 宿主实锤 run 3aa520：旧实现在此必得 kind=none → 无处回退 → halt。
     const result = check(root);
     assert(result.kind === 'ok', `合法分段启动不得依赖临时缓存：${JSON.stringify(result)}`);
   });
@@ -169,127 +137,78 @@ export function runAll(): UnitCaseResult[] {
     assert(tampered.kind === 'replan' && tampered.reason === 'closure_untrusted', `manifest 改写应拒：${JSON.stringify(tampered)}`);
   });
 
-  run(results, 'B1 chain 缺 plan → unavailable 且零副作用', () => {
+  // B 组：tryScopeReplan——事件即失效事实的唯一落点（快照副作用已随机制删除）。
+
+  run(results, 'B1 chain 缺 plan → unavailable 且零事件', () => {
     const root = setupHost();
-    withTrust(root, () => {
-      takePlanSnapshot(root);
-      const before = readPassSnapshotHead(root, FEATURE, RUN_ID, 'plan').body;
-      const events: Array<Record<string, unknown>> = [];
-      const result = tryScopeReplan({
-        projectRoot: root, feature: FEATURE, runId: RUN_ID, chain: ['coding', 'review'],
-        endPhaseIdx: 1, phasesWithOutcome: null, backtracksUsed: 0, maxBacktracks: 2,
-        trigger: 'ui_scope_violation', causePhase: 'coding', detail: 'x', dryRun: false,
-        passSnapshotMemory: new Map(), emit: event => events.push(event),
-      });
-      const after = readPassSnapshotHead(root, FEATURE, RUN_ID, 'plan').body;
-      assert(result.kind === 'unavailable' && result.reason === 'chain_lacks_plan', '应返回 chain_lacks_plan');
-      assert(events.length === 0, '不可落副作用事件');
-      assert(after?.generation === before?.generation && after?.state === before?.state, 'head 不得变化');
+    const events: Array<Record<string, unknown>> = [];
+    const result = tryScopeReplan({
+      projectRoot: root, feature: FEATURE, runId: RUN_ID, chain: ['coding', 'review'],
+      endPhaseIdx: 1, phasesWithOutcome: null, backtracksUsed: 0, maxBacktracks: 2,
+      trigger: 'ui_scope_violation', causePhase: 'coding', detail: 'x',
+      emit: event => events.push(event),
     });
+    assert(result.kind === 'unavailable' && result.reason === 'chain_lacks_plan', '应返回 chain_lacks_plan');
+    assert(events.length === 0, '不可落副作用事件');
   });
 
-  run(results, 'B2 回退预算耗尽 → unavailable 且不动 head', () => {
+  run(results, 'B2 回退预算耗尽 → unavailable 且零事件', () => {
     const root = setupHost();
-    withTrust(root, () => {
-      takePlanSnapshot(root);
-      const events: Array<Record<string, unknown>> = [];
-      const result = tryScopeReplan({
-        projectRoot: root, feature: FEATURE, runId: RUN_ID, chain: CHAIN,
-        endPhaseIdx: 2, phasesWithOutcome: null, backtracksUsed: 2, maxBacktracks: 2,
-        trigger: 'ui_scope_violation', causePhase: 'coding', detail: 'x', dryRun: false,
-        passSnapshotMemory: new Map(), emit: event => events.push(event),
-      });
-      assert(result.kind === 'unavailable' && result.reason === 'backtrack_budget_exhausted', '应返回预算耗尽');
-      assert(events.length === 0, '不可落副作用事件');
-      assert(readPassSnapshotHead(root, FEATURE, RUN_ID, 'plan').body?.state === 'active', 'head 应保持 active');
+    const events: Array<Record<string, unknown>> = [];
+    const result = tryScopeReplan({
+      projectRoot: root, feature: FEATURE, runId: RUN_ID, chain: CHAIN,
+      endPhaseIdx: 2, phasesWithOutcome: null, backtracksUsed: 2, maxBacktracks: 2,
+      trigger: 'ui_scope_violation', causePhase: 'coding', detail: 'x',
+      emit: event => events.push(event),
     });
+    assert(result.kind === 'unavailable' && result.reason === 'backtrack_budget_exhausted', '应返回预算耗尽');
+    assert(events.length === 0, '不可落副作用事件');
   });
 
-  run(results, 'B3 正常回退 → head superseded、内存清除、只写一条失效请求', () => {
+  run(results, 'B3 正常回退 → 只写一条原子失效请求 + 一条 started', () => {
     const root = setupHost();
-    withTrust(root, () => {
-      const memory = new Map<string, PlanScopeAnchor>([['plan', takePlanSnapshot(root)]]);
-      const events: Array<Record<string, unknown>> = [];
-      const result = tryScopeReplan({
-        projectRoot: root, feature: FEATURE, runId: RUN_ID, chain: CHAIN,
-        endPhaseIdx: 2, phasesWithOutcome: ['plan', 'coding'], backtracksUsed: 0, maxBacktracks: 2,
-        trigger: 'ui_scope_violation', causePhase: 'coding', affectedFiles: ['a.ets'], defects: ['d1'],
-        fingerprint: 'fp-1', detail: 'scope drift', dryRun: false, passSnapshotMemory: memory,
-        emit: event => events.push(event),
-      });
-      assert(result.kind === 'replanned', `实得 ${JSON.stringify(result)}`);
-      assert(readPassSnapshotHead(root, FEATURE, RUN_ID, 'plan').body?.state === 'superseded', 'head 应 superseded');
-      assert(!memory.has('plan'), '内存锚应清除');
-      assert(JSON.stringify(events.map(event => event.type)) === JSON.stringify(['phase_backtrack_requested', 'phase_backtrack_started']), '事件序列应收敛');
-      const request = events[0];
-      assert(Array.isArray(request.invalidated_phases) && JSON.stringify(request.invalidated_phases) === JSON.stringify(['plan', 'coding']), '失效范围应在单条记录中');
-      assert(request.to_phase === 'plan' && request.reason === 'ui_scope_violation', '交接字段应完整');
-      assert(request.invalidation_tx_id === (result.kind === 'replanned' ? result.txId : ''), 'tx id 应绑定');
+    const events: Array<Record<string, unknown>> = [];
+    const result = tryScopeReplan({
+      projectRoot: root, feature: FEATURE, runId: RUN_ID, chain: CHAIN,
+      endPhaseIdx: 2, phasesWithOutcome: ['plan', 'coding'], backtracksUsed: 0, maxBacktracks: 2,
+      trigger: 'ui_scope_violation', causePhase: 'coding', affectedFiles: ['a.ets'], defects: ['d1'],
+      fingerprint: 'fp-1', detail: 'scope drift',
+      emit: event => events.push(event),
     });
+    assert(result.kind === 'replanned', `实得 ${JSON.stringify(result)}`);
+    assert(JSON.stringify(events.map(event => event.type)) === JSON.stringify(['phase_backtrack_requested', 'phase_backtrack_started']), '事件序列应收敛');
+    const request = events[0];
+    assert(Array.isArray(request.invalidated_phases) && JSON.stringify(request.invalidated_phases) === JSON.stringify(['plan', 'coding']), '失效范围应在单条记录中');
+    assert(request.to_phase === 'plan' && request.reason === 'ui_scope_violation', '交接字段应完整');
+    assert(request.invalidation_tx_id === (result.kind === 'replanned' ? result.txId : ''), 'tx id 应绑定');
   });
 
-  run(results, 'B4 崩溃协议不再有 pending/completed journal，缓存退位可重复', () => {
+  run(results, 'B4 失效记录原子：不写逐 phase 失效事件、不建任何场外 journal', () => {
     const root = setupHost();
-    withTrust(root, () => {
-      takePlanSnapshot(root);
-      const events: Array<Record<string, unknown>> = [];
-      tryScopeReplan({
-        projectRoot: root, feature: FEATURE, runId: RUN_ID, chain: CHAIN, endPhaseIdx: 2,
-        phasesWithOutcome: ['plan', 'coding'], backtracksUsed: 0, maxBacktracks: 2,
-        trigger: 'plan_authority_unverifiable', causePhase: 'coding', detail: 'cache miss',
-        affectedFiles: ['doc/features/bc-openCard/plan/plan.md'], defects: ['missing'], fingerprint: 'fp-2',
-        dryRun: false, passSnapshotMemory: new Map(), emit: event => events.push(event),
-      });
-      assert(events[0]?.type === 'phase_backtrack_requested', '第一条必须是原子失效请求');
-      assert(!events.some(event => event.type === 'phase_invalidated'), '不得再写逐 phase 失效事件');
-      assert(!fs.existsSync(path.join(passSnapshotRunDir(root, FEATURE, RUN_ID), 'invalidation.json')), '不得创建旧 journal');
-      const again = discardPassSnapshotCache({ projectRoot: root, feature: FEATURE, runId: RUN_ID, phases: ['plan'] });
-      assert(again.diagnostics.length === 0, '重复缓存退位应幂等');
+    const events: Array<Record<string, unknown>> = [];
+    tryScopeReplan({
+      projectRoot: root, feature: FEATURE, runId: RUN_ID, chain: CHAIN, endPhaseIdx: 2,
+      phasesWithOutcome: ['plan', 'coding'], backtracksUsed: 0, maxBacktracks: 2,
+      trigger: 'plan_authority_unverifiable', causePhase: 'coding', detail: 'closure untrusted',
+      affectedFiles: ['doc/features/bc-openCard/plan/plan.md'], defects: ['missing'], fingerprint: 'fp-2',
+      emit: event => events.push(event),
     });
+    assert(events[0]?.type === 'phase_backtrack_requested', '第一条必须是原子失效请求');
+    assert(!events.some(event => event.type === 'phase_invalidated'), '不得再写逐 phase 失效事件');
   });
 
   run(results, 'B5 启动期 phasesWithOutcome=null → plan 到链尾全量失效', () => {
     const root = setupHost();
-    withTrust(root, () => {
-      takePlanSnapshot(root);
-      const events: Array<Record<string, unknown>> = [];
-      const result = tryScopeReplan({
-        projectRoot: root, feature: FEATURE, runId: RUN_ID, chain: CHAIN,
-        endPhaseIdx: CHAIN.length - 1, phasesWithOutcome: null, backtracksUsed: 0, maxBacktracks: 2,
-        trigger: 'invalidation_journal_untrusted', causePhase: 'spec', detail: 'restart', dryRun: false,
-        passSnapshotMemory: new Map(), emit: event => events.push(event),
-      });
-      assert(result.kind === 'replanned', '应完成启动期重跑');
-      if (result.kind === 'replanned') assert(JSON.stringify(result.invalidatedPhases) === JSON.stringify(CHAIN.slice(1)), '失效范围应为 plan→链尾');
-      assert(Array.isArray(events[0]?.invalidated_phases), '上下文必须进入同一条记录');
+    const events: Array<Record<string, unknown>> = [];
+    const result = tryScopeReplan({
+      projectRoot: root, feature: FEATURE, runId: RUN_ID, chain: CHAIN,
+      endPhaseIdx: CHAIN.length - 1, phasesWithOutcome: null, backtracksUsed: 0, maxBacktracks: 2,
+      trigger: 'invalidation_journal_untrusted', causePhase: 'spec', detail: 'restart',
+      emit: event => events.push(event),
     });
-  });
-
-  run(results, 'B6 dryRun 只投影事件，不退位 head 或内存锚', () => {
-    const root = setupHost();
-    withTrust(root, () => {
-      const memory = new Map<string, PlanScopeAnchor>([['plan', takePlanSnapshot(root)]]);
-      const events: Array<Record<string, unknown>> = [];
-      const result = tryScopeReplan({
-        projectRoot: root, feature: FEATURE, runId: RUN_ID, chain: CHAIN, endPhaseIdx: 2,
-        phasesWithOutcome: null, backtracksUsed: 0, maxBacktracks: 2, trigger: 'ui_scope_violation',
-        causePhase: 'coding', detail: 'dry', dryRun: true, passSnapshotMemory: memory, emit: event => events.push(event),
-      });
-      assert(result.kind === 'replanned' && events.length === 2, 'dryRun 应投影两条事件');
-      assert(readPassSnapshotHead(root, FEATURE, RUN_ID, 'plan').body?.state === 'active', 'dryRun 不得退位 head');
-      assert(memory.has('plan'), 'dryRun 不得清内存锚');
-    });
-  });
-
-  run(results, 'B7 失效缓存后宿主字节不被恢复，后续 diff 仍可诊断', () => {
-    const root = setupHost();
-    withTrust(root, () => {
-      takePlanSnapshot(root);
-      const target = path.join(root, `doc/features/${FEATURE}/plan/plan.md`);
-      fs.writeFileSync(target, '# changed by agent\n');
-      discardPassSnapshotCache({ projectRoot: root, feature: FEATURE, runId: RUN_ID, phases: ['plan'] });
-      assert(fs.readFileSync(target, 'utf-8') === '# changed by agent\n', '缓存退位不得 restore 旧字节');
-    });
+    assert(result.kind === 'replanned', '应完成启动期重跑');
+    if (result.kind === 'replanned') assert(JSON.stringify(result.invalidatedPhases) === JSON.stringify(CHAIN.slice(1)), '失效范围应为 plan→链尾');
+    assert(Array.isArray(events[0]?.invalidated_phases), '上下文必须进入同一条记录');
   });
 
   run(results, 'C1 scope reason 只接受既有闭集，未知事件不进入 prompt', () => {
@@ -328,21 +247,6 @@ export function runAll(): UnitCaseResult[] {
     assert(!bare.includes('```') && /rolled back automatically/i.test(bare), '无路径场景应只保留原因句');
   });
 
-  run(results, 'C6 malformed head 可丢弃且不抛异常', () => {
-    const root = setupHost();
-    withTrust(root, () => {
-      const head = passSnapshotHeadPath(root, FEATURE, RUN_ID, 'plan');
-      fs.mkdirSync(path.dirname(head), { recursive: true });
-      fs.writeFileSync(head, '{broken', 'utf-8');
-      const result = discardPassSnapshotCache({ projectRoot: root, feature: FEATURE, runId: RUN_ID, phases: ['plan'] });
-      assert(result.diagnostics.length === 0 && !fs.existsSync(head), `malformed head 应可丢弃：${JSON.stringify(result)}`);
-    });
-  });
-
-  // （codex 验收 e 的说明：pass snapshot 仅在同阶段 PASS 后 closure-only retry 中发挥
-  //   作用——该用途由 B 组 tryScopeReplan/缓存退位用例与 goal-runner 的 closure retry
-  //   冻结路径承载；A 组已证授权链完全不依赖它。）
-
   run(results, '表驱动（codex 验收 b）：--start coding/review/ut/testing 的启动资格只由上游 closure freshness 判定——无快照/无 checkpoint 缓存依赖', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'seg-start-'));
     try {
@@ -350,8 +254,8 @@ export function runAll(): UnitCaseResult[] {
       // 生产 writer 造五阶段闭环（closed-feature-fixture：不伪造哈希，全部现算）
       makeClosedFeatureFixture({ projectRoot: root, feature: FEATURE, frameworkRoot: FRAMEWORK_ROOT });
       const FULL = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
-      // 刻意全程不设 MAISON_GOAL_CHECKPOINT_DIR、不建任何 pass snapshot——
-      // 启动资格判定（preflight 同一把尺 recomputePhaseEvidenceStaleness）必须与它们无关
+      // 刻意全程不设 MAISON_GOAL_CHECKPOINT_DIR——启动资格判定（preflight 同一把尺
+      // recomputePhaseEvidenceStaleness）必须与任何场外缓存无关
       for (const start of ['coding', 'review', 'ut', 'testing']) {
         const upstream = FULL.slice(0, FULL.indexOf(start));
         const res = recomputePhaseEvidenceStaleness(root, FEATURE, upstream, {

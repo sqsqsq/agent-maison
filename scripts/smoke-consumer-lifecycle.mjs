@@ -74,8 +74,8 @@ const CASE_REGISTRY = [
     // 判据=phaseStartsThisCall 含 'ut'（start_index 收口形态在此必挂，T4#3 收紧判据）。
     note: 'goal stage 端到端：park（reset 消费+停放）→ resume（零 ack + ut 真重跑）',
   },
-  { id: 4, name: 'snapshot 缺失/损坏 → 自动丢弃重跑，不求人', status: 'covered', coveredBy: 'goal',
-    note: 'goal driver 用真实 pass snapshot writer 制造 cache miss，验证 phase_backtrack_requested 后 plan/coding 重跑且 exit 0' },
+  { id: 4, name: '全链推进不依赖任何场外快照缓存（pass snapshot 已退役）', status: 'covered', coveredBy: 'goal',
+    note: 'runner-owned-machine-facts：pass snapshot 机制整体退役——goal stage 全链（fresh→park→resume→ready 收官）在零快照世界端到端跑通即覆盖本用例；原"cache miss 自动丢弃重跑"场景不复存在' },
   { id: 5, name: 'UT 改源码 → 自动回 coding', status: 'covered', coveredBy: 'goal',
     note: 'goal driver 在 UT agent 窗口真实改产品源码，runner 以 source-drift 原子失效回 coding 后重新闭环' },
   { id: 6, name: '恢复中途各崩溃窗口：阶段不漏失效 + 交接上下文不丢', status: 'covered', coveredBy: 'goal',
@@ -531,30 +531,10 @@ function stageGoal(ctx) {
   }
   ctx.log('goal/ready：设备恢复后同一 run 无钥匙完整收官（报告 CHAIN_SLICE_COMPLETED、零 WAITING 残留）');
 
-  // 第五段（T2 5b）：unsigned pass snapshot 只是可丢弃缓存。生产 writer 先种出
-  // plan 快照，再在其真正落盘后制造损坏；目标是 phase_backtrack_requested → plan/coding
-  // 自动重跑，且整个 run 不落人审/终局。
-  const snapshotFeature = 'snapshot-cache-miss';
-  runDriver('provision', null, snapshotFeature);
-  const cacheMiss = runDriver('cache_miss_in_run', null, snapshotFeature);
-  const cacheRecord = cacheMiss.invalidationRecords.find(r =>
-    r.reason === 'plan_authority_unverifiable'
-      && r.invalidated_phases?.includes('plan')
-      && r.to_phase === 'plan');
-  if (cacheMiss.error !== null || cacheMiss.exitCode !== 0
-    || !cacheMiss.eventTypes.includes('phase_backtrack_requested')
-    || !cacheMiss.phaseStartsThisCall.includes('plan')
-    || !cacheMiss.phaseStartsThisCall.includes('coding')
-    || !cacheRecord
-    || (cacheMiss.phaseHalts ?? []).some(h =>
-      h.halt_reason === 'awaiting_human_review'
-      || h.halt_reason === 'goal_review_closure_baseline_unavailable')) {
-    throw new Error(
-      'goal/#4：snapshot cache miss 应自动丢弃并重跑 plan/coding，纯证据故障不得求人/终局。实得 '
-      + JSON.stringify(cacheMiss),
-    );
-  }
-  ctx.log('goal/#4：snapshot 缺失自动丢弃，plan/coding 重跑，无 human/terminal');
+  // 【第五段已删除 · pass snapshot 退役（runner-owned-machine-facts）】原"cache miss
+  // 自动丢弃重跑"场景不复存在——#4 的新语义（全链推进零场外快照依赖）由上面
+  // fresh→park→resume→ready 全链真跑天然覆盖。
+  ctx.log('goal/#4：pass snapshot 已退役——全链零场外快照依赖（前四段覆盖）');
 
   // 第六段（T4#5）：UT agent 窗口真实改产品源码。runner 必须把 review closure
   // 后的漂移作为未受信事实，原子失效 coding/review/ut 并自动回 coding；不得把它

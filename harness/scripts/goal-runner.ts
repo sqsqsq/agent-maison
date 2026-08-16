@@ -151,7 +151,7 @@ import {
   writeDeviceSession,
   type DeviceTargetKind,
 } from './utils/device-session';
-import { createCompletionProbe, decideSkipAgentInvoke } from './utils/phase-completion-probe';
+import { createCompletionProbe } from './utils/phase-completion-probe';
 import { tryCloseUpstreamPhase } from './utils/upstream-closure';
 import {
   deriveResumeInspection,
@@ -176,15 +176,6 @@ import {
 } from './utils/agent-invoke';
 import { extractClaudeFinalResultText, parseClaudeInitModel, planUsesClaudeStreamJson, resolvePinVerifyMismatch } from './utils/claude-envelope';
 import {
-  discardPassSnapshotCache,
-  diffFrozenAgainstManifest,
-  loadTrustedSnapshotContext,
-  phaseHasFrozenSurface,
-  readPassSnapshotHead,
-  resolveFrozenDeliverables,
-  passSnapshotPhaseDir,
-  nextPassSnapshotEpoch,
-  takePassSnapshot,
   recordCodingBase,
   resolveGitHeadSha,
   deleteRunTrustState,
@@ -247,6 +238,7 @@ import {
   isSummaryFresh,
   countConsecutiveAgentTimeouts,
   deriveContinuationFromEvents,
+  isClosureOnlyRetryPending,
   loadAuthoritativeEvents,
   loadEventsJsonl,
   resolveEffectiveRunEnd,
@@ -262,7 +254,6 @@ import {
   countRepeatedSignatureInFamily,
   classifyClosureKind,
   resolveClosureSyncOutcome,
-  responsibilityRerunPending,
   shouldHaltClosureTimeout,
   type ContinuationCause,
 } from './utils/goal-runner-phase';
@@ -891,12 +882,6 @@ export function __testing_setInvokeCapabilityGate(fn: InvokeCapabilityGateFn | n
   injectedCapabilityGate = fn;
 }
 
-/** 测试缝：仅在真实 pass snapshot 落盘后触发一次副作用注入；生产路径永不设置。 */
-let injectedAfterPassSnapshot: (() => void) | null = null;
-export function __testing_setAfterPassSnapshot(fn: (() => void) | null): void {
-  injectedAfterPassSnapshot = fn;
-}
-
 /** 一次性清空所有测试注入（测试 finally 调用，防串味） */
 export function __testing_resetGoalRunnerSeams(): void {
   injectedValidateReceipt = null;
@@ -905,7 +890,6 @@ export function __testing_resetGoalRunnerSeams(): void {
   injectedLayout = null;
   injectedDeviceGate = null;
   injectedCapabilityGate = null;
-  injectedAfterPassSnapshot = null;
   injectedCanaryProbeInvoke = null;
 }
 
@@ -4087,22 +4071,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
       }
       // S4：invalidation 消费——resume 起点推导剔除已失效且未重新完成的 phase
       // （被失效旧 PASS 不得作为续跑依据；十消费面矩阵之 resume 项）。
+      // pass snapshot 已退役：失效事件本身即事实全部，无缓存需要退位。
       const inv = applyInvalidationsToResume(chain, outcomes, priorEvents);
       outcomes = inv.outcomes;
       chainStartIndex = Math.min(chainStartIndex, inv.startIndex);
-      if (!dryRun && inv.invalidatedPhases.length > 0) {
-        // 失效事件已在 events.jsonl 中成为事实；缓存退位是可重复副作用，崩溃后
-        // resume 仍会从同一条记录重做，不需要 pending/completed journal。
-        const discarded = discardPassSnapshotCache({
-          projectRoot,
-          feature: manifest.feature,
-          runId: manifest.run_id,
-          phases: inv.invalidatedPhases,
-        });
-        if (discarded.diagnostics.length > 0) {
-          console.warn(`[pass-snapshot] resume 丢弃失效缓存遇到外部故障：${discarded.diagnostics.join('；')}`);
-        }
-      }
       goalEvents.emit({
         type: 'resume',
         start_index: chainStartIndex,
@@ -4153,14 +4125,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
       console.error(`\n===== budget_wall_clock =====\n${guidance}\n`);
       return guidance;
     };
-
-    // PASS 快照只在当前进程作为内容缓存使用。失效事件已由 applyInvalidationsToResume
-    // 统一回放；缓存 head 的退位是可重复副作用，不再读取/恢复旧 journal。
-    const passSnapshotMemory = new Map<
-      string,
-      { epoch: number; memoryDigest: { manifestSha256: string; fileHashes: Record<string, string> } }
-    >();
-
 
     for (let phaseIdx = chainStartIndex; phaseIdx < chain.length && !halted; phaseIdx++) {
       const phase = chain[phaseIdx];
@@ -4312,10 +4276,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
         //   ② events 五态窗口（--resume 跨进程，见 deriveContinuationFromEvents）；
         //   ③ checkpoint timed_out（仅用于把 ② 的 unknown 升级为 agent_timeout——旧日志
         //      end 事件可能缺 timed_out 标记）。
-        const persistedContinuation = deriveContinuationFromEvents(
-          loadAuthoritativeEvents(eventsPath),
-          phase,
-        );
+        const attemptHistory = loadAuthoritativeEvents(eventsPath);
+        const persistedContinuation = deriveContinuationFromEvents(attemptHistory, phase);
         let continuation: { cause: ContinuationCause; process_resumed: boolean } | null = null;
         if (priorAttemptApiError) {
           continuation = { cause: 'transient_api_error', process_resumed: false };
@@ -4506,75 +4468,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
         }
 
-        // **spawn agent 之前**做一次统一缓存加载，整个 attempt 复用内存副本。缓存坏掉只
-        // 触发「丢缓存、重跑当前责任阶段」；不恢复旧字节，也不把缓存故障交给人裁决。
-        const psMemAnchor = passSnapshotMemory.get(String(phase));
-        const trustedSnapshot = dryRun
-          ? ({ kind: 'none' } as const)
-          : loadTrustedSnapshotContext(
-              projectRoot,
-              manifest.feature,
-              manifest.run_id,
-              String(phase),
-              // 同进程内存锚在场时，head 消失/退位/换代即缓存失效；随后重跑当前阶段。
-              psMemAnchor
-                ? { epoch: psMemAnchor.epoch, manifestSha256: psMemAnchor.memoryDigest.manifestSha256 }
-                : null,
-            );
-        if (trustedSnapshot.kind === 'fail_closed') {
-          const discarded = discardPassSnapshotCache({
-            projectRoot,
-            feature: manifest.feature,
-            runId: manifest.run_id,
-            phases: [String(phase)],
-          });
-          goalEvents.emit({
-            type: 'phase_halt',
-            phase,
-            halt_reason: 'pass_snapshot_unavailable',
-            detail: `pre-spawn 可信快照加载失败：${trustedSnapshot.reason}`,
-            ...runDispositionFields(decide(
-              { incident: 'pass_snapshot_unavailable', phase: String(phase) },
-              NO_AUTHORITY,
-              { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
-            )),
-          });
-          if (discarded.diagnostics.length > 0) {
-            goalEvents.emit({
-              type: 'phase_halt',
-              phase,
-              halt_reason: 'pre_invoke_snapshot_failed',
-              detail: `缓存丢弃失败：${discarded.diagnostics.join('；')}`,
-              probe: 'storage_ready',
-              ...runDispositionFields(decide(
-                { incident: 'pre_invoke_snapshot_failed', phase: String(phase) },
-                NO_AUTHORITY,
-                { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
-              )),
-            });
-            console.error(`\n===== pre_invoke_snapshot_failed =====\n缓存丢弃失败：${discarded.diagnostics.join('；')}\n等待外部存储条件恢复后 probe。\n`);
-            outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'pre_invoke_snapshot_failed' });
-            halted = true;
-            phaseDone = true;
-            continue;
-          }
-          passSnapshotMemory.delete(String(phase));
-          // for 的 ++ 后仍落回当前 phase；缓存缺失不烧 backtrack 预算。
-          phaseIdx--;
-          console.warn(`\n===== pass_snapshot_unavailable =====\n${trustedSnapshot.reason}\n缓存已丢弃，重跑责任阶段。\n`);
-          phaseDone = true;
-          continue;
-        }
-        // P1#5（post-impl review）：attempt 级 closure-only 状态——本 attempt 是否处于
-        // 「PASS 已冻结、只许关环」上下文；超时分流据此走 closure_timeout（不回内容重试）。
-        const closureOnlyAttempt = trustedSnapshot.kind === 'active';
+        // 【pass snapshot 已整体退役 · runner-owned-machine-facts（codex 审计定案）】
+        // closure-only 是上一轮权威 phase_verdict 的流程状态（PASS+advance_blocked+retry）。
+        // PASS 产物的防篡改不再靠冻结快照/恢复：改坏了下一轮 harness FAIL，改了仍合法则
+        // 重新通过完整门禁，closure manifest 恒绑定当前字节——快照只徒增故障面。
+        const closureOnlyAttempt = isClosureOnlyRetryPending(attemptHistory, String(phase));
 
         // ------------------------------------------------------------------
         // b3e8d4c7 t5④：**进 coding、agent_invoke_start 之前**的 plan 授权预检。
-        // 上面那次可信加载读的是**当前 phase** 快照（进 coding 时=coding 快照，而普通
-        // coding attempt 根本没有 coding 快照 → kind='none'），**不检 plan scope 快照**；
-        // 而 passSnapshotMemory 每进程新建（:5418）resume 后恒空，scopeAnchorEnv 取不到
-        // 就不注入，gate 退回无锚行为——**t4 的锚保护在 resume 后自然蒸发**。
         // 不前移的话：无可信 plan 授权的 resume 会先跑完一轮 coding、再由 post-agent gate
         // 发现问题，白烧一次 attempt，且 agent 在授权未确认时已经动过代码。
         // ------------------------------------------------------------------
@@ -4607,8 +4508,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
             causePhase: String(phase),
             affectedFiles: authority.affectedFiles,
             detail: authority.detail,
-            dryRun,
-            passSnapshotMemory,
             emit: (e: Record<string, unknown>) => goalEvents.emit(e),
           });
           if (replan.kind === 'replanned') {
@@ -4711,31 +4610,23 @@ Goal runner — tool-agnostic multi-phase orchestrator
           (phase === 'plan' && scopeReplanContext
             ? buildScopeReplanContextBlock(scopeReplanContext)
             : '') +
-          // P0-3（plan 7c4f2e9b）：closure-only attempt——frozen 清单只读声明。提示词只是
-          // 第一道；硬保护在 harness 前的差异判定+恢复（提示词级约束对弱模型无约束力）。
-          (() => {
-            // post-impl round2 P0#2：frozen 清单取自 pre-spawn 可信加载的内存副本
-            if (trustedSnapshot.kind !== 'active') return '';
-            const frozenRels = trustedSnapshot.manifest.files.map(f => f.rel);
-            if (frozenRels.length === 0) return '';
-            return [
-              '',
-              '## PASS artifacts are FROZEN — closure-only attempt (BLOCKER)',
-              '',
-              'This phase already reached a PASS verdict; only the closure steps (receipt / harness re-run) remain.',
-              'The following deliverables are FROZEN and READ-ONLY — any modification will be detected,',
-              'reverted from a trusted snapshot, and counted as a violation (repeated violations halt the run):',
-              '',
-              ...frozenRels.map(r => `- ${r} (frozen)`),
-              '',
-              'Do NOT redo analysis or rewrite artifacts. Complete the phase closure only.',
-              '',
-            ].join('\n');
-          })() +
+          // closure-only 提示由上一轮裁决决定（pass snapshot 已退役——"不要重写产物"仍是
+          // 提示级约束；硬保护=改坏必被下一轮完整 harness 抓住，closure manifest 绑当前字节）。
+          (closureOnlyAttempt
+            ? [
+                '',
+                '## Closure-only attempt (BLOCKER)',
+                '',
+                'This phase already reached a PASS verdict; only the closure steps (receipt / harness re-run) remain.',
+                '',
+                'Do NOT redo analysis or rewrite artifacts. Complete the phase closure only.',
+                '',
+              ].join('\n')
+            : '') +
           // runner-owned-machine-facts 追补（codex review）：spec closure-only 轮必须重新
           // 只读取证——冻结豁免的是"重做分析/改产物"，不豁免 invocation-bound 的视觉验读。
           (() => {
-            if (trustedSnapshot.kind !== 'active' || phase !== 'spec') return '';
+            if (!closureOnlyAttempt || phase !== 'spec') return '';
             try {
               const specMdForClosure = loadSpecMarkdown(projectRoot, manifest.feature);
               const refAbsForClosure = specMdForClosure
@@ -5036,18 +4927,45 @@ Goal runner — tool-agnostic multi-phase orchestrator
           phaseDone = true;
           continue;
         }
-        // openspec runner-owned-machine-facts：closure-only attempt 由 runner 重建未完成
-        // 回执骨架并预填本轮 attempt 身份——agent 只填自证字段，不再抄写机器已知的身份值
-        // （宿主实锤 run 20260815T023016Z-8c66cf：agent 从 progress.json 抄了 "3"，而 runner
-        // 身份是 "i3"，两次 advance_blocked 直达 closure_wall_repeated）。force 同时作废上一
-        // attempt 的旧回执：旧完整声明不得让本 attempt 被完成观测提前判完。位置刻意在
-        // capability/device/快照等全部前置门**之后**、agent_invoke_start 之前——前置门
-        // HALT（agent 未启动）时不得提前销毁旧回执现场（codex review）。
-        if (closureOnlyAttempt && !dryRun) {
-          writeReceiptScaffold(projectRoot, manifest.feature, String(phase), {
+        // openspec runner-owned-machine-facts：回执骨架由 runner 在**每次真实 invoke 前**
+        // 单点 force 写入并预填本轮 attempt 身份——agent 只填自证字段，不抄写机器已知的
+        // 身份值（宿主实锤 run 20260815T023016Z-8c66cf：agent 手抄 "3"≠"i3"；run
+        // 20260816T071553Z-e72aee：coding 无 pass snapshot 时旧判据漏掉 force 重建，i4 身份
+        // 存活到 i5）。force 同时作废上一 attempt 的旧回执：旧完整声明不得让本 attempt 被
+        // 完成观测提前判完；agent 从内容轮起即见骨架，closure 可在同一 attempt 内完成
+        // （testing 不再必然多跑一轮真机流水线）。位置刻意在 capability/device 等全部
+        // 前置门**之后**、agent_invoke_start 之前——前置门 HALT（agent 未启动）时不得
+        // 提前销毁旧回执现场（codex review）。写失败即停：不启动 agent、不烧 attempt——
+        // 静默吞掉会让旧身份回执存活，receipt_attempt_identity 死结原样复发。
+        if (!dryRun && goalTrack !== 'lite') {
+          const scaffold = writeReceiptScaffold(projectRoot, manifest.feature, String(phase), {
             attemptId: visualAttemptId,
             force: true,
           });
+          if (!scaffold.wrote) {
+            const scaffoldFailure = scaffold.failure ?? '骨架未写入且无原因（框架缺陷）';
+            goalEvents.emit({
+              type: 'phase_halt',
+              phase,
+              halt_reason: 'receipt_scaffold_unwritable',
+              detail: scaffoldFailure,
+              probe: 'storage_ready',
+              ...runDispositionFields(decide(
+                { incident: 'receipt_scaffold_unwritable', phase: String(phase), detail: scaffoldFailure },
+                NO_AUTHORITY,
+                { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+              )),
+            });
+            console.error(
+              `\n===== receipt_scaffold_unwritable =====\n${scaffoldFailure}\n`
+              + '本轮回执骨架无法写入——不启动 agent（旧身份回执存活会复发 receipt_attempt_identity 死结）。\n'
+              + '等待存储条件恢复后由 probe 唤醒。\n',
+            );
+            outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'receipt_scaffold_unwritable' });
+            halted = true;
+            phaseDone = true;
+            continue;
+          }
         }
         goalEvents.emit({
           type: 'agent_invoke_start',
@@ -5085,63 +5003,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 startedAtMs: Date.now(),
               },
             });
-        // R7 的处置（**与 review 建议部分分歧，已实证**）：
-        //
-        // review 要求"基线证据已完整时跳过本次 agent 调用"。实现后集成测试实锤：这会
-        // 破坏 **backtrack 语义**——回退到 coding 重跑时，上一轮的 receipt/summary 仍在
-        // 盘上，基线判"已完整"就直接跳过，于是 coding 只跑一次、crash/must_fix 修复指令
-        // 永远注入不进去（4 个既有用例同时红）。
-        //
-        // 根因是判据不足：`证据齐全` ≠ `本轮无需工作`。要安全地跳过，需要"证据确属本轮
-        // 需求与本轮回退上下文"的新鲜度判据，而不只是文件齐全。该判据设计留待下一轮
-        // （openspec tasks R7）。此处**只记事件不跳过**——保留一个已知的次优行为，
-        // 好过引入一个破坏回退闭环的行为。
-        //
-        // 注意：observer 在基线已完整时**恒不命中**（见 createCompletionProbe），所以
-        // 不会出现"启动后立刻被自己杀掉"的情形；这条路径的代价只是多烧一轮 agent。
-        // R7：证据齐全**且**通过新鲜度判据时才跳过 agent 调用。
-        // 只判"齐全"会破坏 backtrack——回退重跑时上一轮 receipt 仍在盘上，跳过会让
-        // coding 只跑一次、修复指令注入不进去（实证：4 个集成用例同时红）。
-        // 环 B（plan f3a8c6d2 t2）：缓存失效重跑待办态从 phaseStartEvents 派生。
-        // 用 phase 循环体开头读盘的快照即可、无需在 attempt 内重读：三处 `phaseIdx--`
-        // 出口都先 emit halt 再 continue，for 的 ++ 落回本 phase 时 :5136 重新读盘，
-        // 故重入首轮必见该 halt；而同 phase 内的第 2+ 个 attempt 必有 retries>0
-        // （closure retry 与内容 retry 都走 :8529/:8531 递增），本就不会 skip——
-        // 快照陈旧不会影响任何 skip 决策。跨 --resume 同理（events.jsonl 是事实源）。
-        const rerunPending = responsibilityRerunPending(phaseStartEvents, String(phase));
-        const skipDecision = completion
-          ? decideSkipAgentInvoke({
-              baselineComplete: completion.baselineComplete,
-              retries,
-              pendingHandoffCount: backtrackCodingContext.length,
-              evidenceRunId: completion.baselineRunId,
-              currentRunId: manifest.run_id,
-              responsibilityRerunPending: rerunPending,
-            })
-          : { skip: false, reason: 'dry-run' };
-        if (completion?.baselineComplete) {
-          goalEvents.emit({
-            type: 'completion_evidence_pre_existing',
-            phase,
-            invoke_id: invokeId,
-            action: skipDecision.skip ? 'skip_agent_invoke' : 'invoke_anyway',
-            reason: skipDecision.reason,
-          });
-          if (skipDecision.skip) {
-            console.log(`[goal-runner] ${phase}: ${skipDecision.reason} → 跳过本轮 agent 调用，直接跑 gate 复验。`);
-          }
-        }
-        if (!skipDecision.skip) assertGoalBoundary('phase_invoke');
-        const invoke = skipDecision.skip
-          ? ({
-              exitCode: 0,
-              stdout: '',
-              stderr: '',
-              command: '(skipped: completion evidence fresh)',
-              skipped: true,
-              duration_ms: 0,
-            } as Awaited<ReturnType<typeof invokeAgentHeadless>>)
-          : await (injectedInvokeAgent ?? invokeAgentHeadless)(invokePlan, projectRoot, {
+        // 【skip 机制已删除 · codex 收尾】runner 在 invoke 前对每轮 force 重建未完成
+        // 骨架（上方单点写入），完成基线结构上恒不完整——"证据齐全即跳过"整链
+        // （跳过判定、跳过观测事件、伪造 invoke 结果）成为不可达死代码，一并删除。
+        // completion probe 保留唯一职责：观察本轮 agent 把骨架从未完成填成完整。
+        assertGoalBoundary('phase_invoke');
+        const invoke = await (injectedInvokeAgent ?? invokeAgentHeadless)(invokePlan, projectRoot, {
           dryRun,
           timeoutMs: effectiveAgentTimeoutMs,
           outputLogPath,
@@ -5572,82 +5439,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
         }
 
-        // ------------------------------------------------------------------
-        // closure-only 冻结差异判定：发现漂移即丢缓存并重跑责任阶段；不恢复旧字节。
-        // ------------------------------------------------------------------
-        if (!dryRun) {
-          // 复用 pre-spawn 可信加载的内存副本——不再从盘上重读 head/manifest。
-          if (trustedSnapshot.kind === 'active') {
-            const psHeadBody = trustedSnapshot.head;
-            const psManifest = { body: trustedSnapshot.manifest };
-            if (psManifest.body) {
-              const diffs = diffFrozenAgainstManifest({
-                projectRoot, feature: manifest.feature, phase: String(phase), manifest: psManifest.body,
-              });
-              if (diffs.length > 0) {
-                goalEvents.emit({
-                  type: 'pass_snapshot_violation',
-                  phase,
-                  invoke_id: invokeId,
-                  pass_epoch: psHeadBody.pass_epoch,
-                  diffs: diffs.slice(0, 30),
-                });
-                const discarded = discardPassSnapshotCache({
-                  projectRoot,
-                  feature: manifest.feature,
-                  runId: manifest.run_id,
-                  phases: [String(phase)],
-                });
-                passSnapshotMemory.delete(String(phase));
-                if (discarded.diagnostics.length > 0) {
-                  goalEvents.emit({
-                    type: 'phase_halt',
-                    phase,
-                    halt_reason: 'pre_invoke_snapshot_failed',
-                    detail: `缓存丢弃失败：${discarded.diagnostics.join('；')}`,
-                    probe: 'storage_ready',
-                    ...runDispositionFields(decide(
-                      { incident: 'pre_invoke_snapshot_failed', phase: String(phase) },
-                      NO_AUTHORITY,
-                      { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
-                    )),
-                  });
-                  console.error(`\n===== pre_invoke_snapshot_failed =====\n缓存丢弃失败：${discarded.diagnostics.join('；')}\n等待外部存储条件恢复后 probe。\n`);
-                  outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'pre_invoke_snapshot_failed' });
-                  halted = true;
-                  phaseDone = true;
-                  continue;
-                }
-                // t2（plan f3a8c6d2）：**漂移条目必须呈现给人**——原实现只报数量，
-                // 具体文件仅存在于 pass_snapshot_violation 事件里；bc-openCard 事故中
-                // 真凶 `plan/context-exploration.md` 因此要靠挖 events.jsonl 才能定位，
-                // 而它恰是可无限重复的结构性漂移。复用既有 detail 字段，不新增字段。
-                const driftDigest = diffs
-                  .slice(0, 5)
-                  .map(d => `${d.rel}(${d.class})`)
-                  .join('、') + (diffs.length > 5 ? ` …共 ${diffs.length} 项` : '');
-                goalEvents.emit({
-                  type: 'phase_halt',
-                  phase,
-                  halt_reason: 'pass_snapshot_unavailable',
-                  detail: `PASS 快照检测到 ${diffs.length} 项漂移：${driftDigest}；缓存已丢弃，重跑责任阶段。`,
-                  ...runDispositionFields(decide(
-                    { incident: 'pass_snapshot_unavailable', phase: String(phase) },
-                    NO_AUTHORITY,
-                    { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
-                  )),
-                });
-                console.warn(
-                  `[pass-snapshot] closure-only attempt 检出 ${diffs.length} 项漂移：${driftDigest}；` +
-                  '丢弃缓存，重跑责任阶段。',
-                );
-                phaseIdx--;
-                phaseDone = true;
-                continue;
-              }
-            }
-          }
-        }
+        // 【pass snapshot 冻结差异判定已退役】closure 轮改产物的硬约束由完整 harness
+        // 重验承担：改坏=FAIL 回内容轮；改了仍合法=当前字节重新过全部门禁并进 closure
+        // manifest。快照 diff/丢弃/责任重跑整链删除（runner-owned-machine-facts）。
 
         // P0-4 rev6：harness 启动判据——扣除收尾预留后的可用预算 ≤0 即不 spawn，直接
         // budget_wall_clock 终局（"原始 remaining>0 但扣 reserve 后 ≤0"也不 spawn；
@@ -5702,10 +5496,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
 
         // b3e8d4c7 t5④（codex P1 补齐）：**agent 返回后、harness 之前**再检一次 plan 授权面。
         // 只做 spawn 前那一次不够——coding agent 若在本轮改了 plan.md / contracts.yaml，
-        // 而 coding gate 仍 PASS，就会带着漂移的授权面直接 advance 到 review：既有 post-agent
-        // 冻结检查（closure-only 块）只看**当前 phase** 的 trustedSnapshot，而普通 coding
-        // attempt 没有 coding 快照（kind='none'）→ 整块被跳过。gate 跑之前拦截，本轮产出
-        // 不予采信（"不立即获得权限，但触发同一个自动 replan"）。
+        // 而 coding gate 仍 PASS，就会带着漂移的授权面直接 advance 到 review。gate 跑之前
+        // 拦截，本轮产出不予采信（"不立即获得权限，但触发同一个自动 replan"）。
         if (runPlanAuthorityGate('post_agent')) {
           phaseDone = true;
           if (featureLock) touchLock(featureLock.path, featureLock.ownerId);
@@ -6419,73 +6211,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
             driverGuardAction = 'halt';
             haltReason = resolved.advance_block_reason ?? 'closure_open';
           }
-          // P0-3（plan 7c4f2e9b）：PASS+advance_blocked → 冻结 frozen deliverables。
-          // 事故 i2 正是此态被重试后产物遭 i3 冷启动重写毁掉——快照落 runner trust-state
-          // 独立命名空间，内存 digest 为同进程信任锚；已有活跃快照（violation 循环）不重取。
-          // **可信快照完整建立是 closure retry 的前置条件**——
-          // head 损坏/建立失败/表非空却零产物都不在无保护下 retry；仅"该 phase 本无 frozen 保护面"（coding/ut 源码树
-          // 产出走 closure-attestation）时按设计跳过。
-          if (driverGuardAction === 'retry' && !dryRun) {
-            let protectionFailure: string | null = null;
-            try {
-              const headNow = readPassSnapshotHead(projectRoot, manifest.feature, manifest.run_id, String(phase));
-              if (headNow.status === 'invalid') {
-                protectionFailure = 'pass_snapshot head 损坏/上下文不匹配——不得在无保护下 closure retry';
-              } else if (!passSnapshotMemory.has(String(phase)) || headNow.body?.state !== 'active') {
-                if (!phaseHasFrozenSurface(phase)) {
-                  // 设计内不适用（产出表全空：源码树产出由 closure-attestation 承载）
-                } else {
-                  const frozen = resolveFrozenDeliverables({ projectRoot, feature: manifest.feature, phase });
-                  if (frozen.length === 0) {
-                    protectionFailure = 'frozen 产出表非空但磁盘零产物——PASS 无产物属不变量违例';
-                  } else {
-                    const epoch = nextPassSnapshotEpoch(
-                      projectRoot, manifest.feature, manifest.run_id, String(phase),
-                    );
-                    const taken = takePassSnapshot({
-                      projectRoot,
-                      feature: manifest.feature,
-                      runId: manifest.run_id,
-                      phase: String(phase),
-                      epoch,
-                      files: frozen,
-                    });
-                    passSnapshotMemory.set(String(phase), { epoch, memoryDigest: taken.memoryDigest });
-                    goalEvents.emit({
-                      type: 'pass_snapshot_taken',
-                      phase,
-                      invoke_id: invokeId,
-                      pass_epoch: epoch,
-                      manifest_sha256: taken.manifestSha256,
-                      files: frozen.map(f => ({ rel: f.rel, sha256: f.sha256 })),
-                    });
-                  }
-                }
-              }
-            } catch (e) {
-              protectionFailure = `快照建立失败：${(e as Error).message}`;
-            }
-            if (protectionFailure) {
-              driverGuardAction = 'halt';
-              haltReason = 'pre_invoke_snapshot_failed';
-              goalEvents.emit({
-                type: 'phase_halt',
-                phase,
-                halt_reason: 'pre_invoke_snapshot_failed',
-                detail: protectionFailure,
-                probe: 'storage_ready',
-                ...runDispositionFields(decide(
-                  { incident: 'pre_invoke_snapshot_failed', phase: String(phase), detail: protectionFailure },
-                  NO_AUTHORITY,
-                  { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
-                )),
-              });
-              console.error(
-                `\n===== pre_invoke_snapshot_failed =====\nPASS 产物无法建立可信冻结保护（${protectionFailure}）。\n` +
-                '不做无保护 closure retry；等待存储条件恢复后由 probe 唤醒。\n',
-              );
-            }
-          }
+          // 【closure retry 前建 pass snapshot 已退役 · runner-owned-machine-facts】
+          // PASS 产物不再靠冻结快照保护：closure 轮改坏产物=下一轮完整 harness FAIL；
+          // 改了仍合法=当前字节重新过全部门禁。快照建立失败曾是独立 halt 面
+          // （pre_invoke_snapshot_failed），随机制一并消失。
           // ------------------------------------------------------------
           // P0-5（plan 7c4f2e9b）：closure_kind 确定性分类——探针真值 total function，
           // 不从 advance_block_reason 映射（其 agentTimedOut 先行返回会掩盖 receipt 真值，
@@ -6621,110 +6350,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
         }
 
-        // c4e8b1d3 G1-1（pre-coding 锚定）：**plan 正常 PASS advance 前必建 pass snapshot**
-        // ——coding 的 ui_diff_within_declared_files 白名单唯一来源。原实现只在
-        // PASS+advance_blocked closure retry 时建（上方 E4 分支），正常 PASS 直进 coding
-        // 无快照时建立新的缓存；缓存坏掉重跑 plan，写入失败则等待外部存储条件。
-        if (
-          verdict === 'PASS' &&
-          driverGuardAction !== 'halt' &&
-          phase === ('plan' as FeaturePhase) &&
-          !dryRun
-        ) {
-          let planFreezeFailure: string | null = null;
-          let planFreezeCacheMiss = false;
-          try {
-            const headNow = readPassSnapshotHead(projectRoot, manifest.feature, manifest.run_id, String(phase));
-            if (headNow.status === 'invalid') {
-              planFreezeCacheMiss = true;
-              planFreezeFailure = 'pass_snapshot head 损坏/上下文不匹配——缓存需重建';
-            } else if (headNow.body?.state === 'active') {
-              if (!passSnapshotMemory.has(String(phase))) {
-                const trusted = loadTrustedSnapshotContext(
-                  projectRoot, manifest.feature, manifest.run_id, String(phase), null,
-                );
-                if (trusted.kind !== 'active') {
-                  planFreezeCacheMiss = trusted.kind === 'fail_closed';
-                  planFreezeFailure = `盘上 head active 但可信加载失败：${
-                    trusted.kind === 'fail_closed' ? trusted.reason : trusted.kind}`;
-                }
-              }
-              // 本进程已建（closure retry 分支）→ 不重取
-            } else {
-              const frozen = resolveFrozenDeliverables({ projectRoot, feature: manifest.feature, phase });
-              if (frozen.length === 0) {
-                planFreezeFailure = 'frozen 产出表非空但磁盘零产物——PASS 无产物属不变量违例';
-              } else {
-                const epoch = nextPassSnapshotEpoch(
-                  projectRoot, manifest.feature, manifest.run_id, String(phase),
-                );
-                const taken = takePassSnapshot({
-                  projectRoot,
-                  feature: manifest.feature,
-                  runId: manifest.run_id,
-                  phase: String(phase),
-                  epoch,
-                  files: frozen,
-                });
-                passSnapshotMemory.set(String(phase), { epoch, memoryDigest: taken.memoryDigest });
-                goalEvents.emit({
-                  type: 'pass_snapshot_taken',
-                  phase,
-                  invoke_id: invokeId,
-                  pass_epoch: epoch,
-                  manifest_sha256: taken.manifestSha256,
-                  files: frozen.map(f => ({ rel: f.rel, sha256: f.sha256 })),
-                });
-                injectedAfterPassSnapshot?.();
-              }
-            }
-          } catch (e) {
-            planFreezeFailure = `快照建立失败：${(e as Error).message}`;
-          }
-          if (planFreezeFailure) {
-            if (planFreezeCacheMiss) {
-              const discarded = discardPassSnapshotCache({
-                projectRoot,
-                feature: manifest.feature,
-                runId: manifest.run_id,
-                phases: [String(phase)],
-              });
-              if (discarded.diagnostics.length === 0) {
-                passSnapshotMemory.delete(String(phase));
-                goalEvents.emit({
-                  type: 'phase_halt',
-                  phase,
-                  halt_reason: 'pass_snapshot_unavailable',
-                  detail: `${planFreezeFailure}；缓存已丢弃，重跑 plan。`,
-                  ...runDispositionFields(decide(
-                    { incident: 'pass_snapshot_unavailable', phase: String(phase) },
-                    NO_AUTHORITY,
-                    { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
-                  )),
-                });
-                phaseIdx--;
-                phaseDone = true;
-                continue;
-              }
-              planFreezeFailure += `；缓存丢弃失败：${discarded.diagnostics.join('；')}`;
-            }
-            driverGuardAction = 'halt';
-            haltReason = 'pre_invoke_snapshot_failed';
-            goalEvents.emit({
-              type: 'phase_halt', phase, halt_reason: 'pre_invoke_snapshot_failed', detail: planFreezeFailure,
-              probe: 'storage_ready',
-              ...runDispositionFields(decide(
-                { incident: 'pre_invoke_snapshot_failed', phase: String(phase), detail: planFreezeFailure },
-                NO_AUTHORITY,
-                { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
-              )),
-            });
-            console.error(
-              `\n===== pre_invoke_snapshot_failed =====\nplan PASS 产物无法建立可信冻结保护（${planFreezeFailure}）。\n` +
-              '不做无冻结 advance；等待存储条件恢复后由 probe 唤醒。\n',
-            );
-          }
-        }
+        // 【plan PASS 建 pass snapshot 已退役 · runner-owned-machine-facts】原自述目的
+        // "coding 的 ui_diff_within_declared_files 白名单唯一来源"已被取代：白名单来自
+        // plan closure manifest 冻结的 contracts.yaml hash（ui-scope-gate 直读，盘上失配
+        // =live 漂移拒读），与本 run 快照无关——这段是与现状矛盾的死机制。
 
         const agentWarn = buildAgentWarn(invoke);
         const reconcileObservation = deriveReconcileObservation({
@@ -7188,15 +6817,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
               fingerprint: driftDecision.driftFingerprint ?? null,
               invalidation_tx_id: invalidationTxId,
             });
-            if (!dryRun) {
-              for (const p of invalidatedPhases) passSnapshotMemory.delete(String(p));
-              discardPassSnapshotCache({
-                projectRoot,
-                feature: manifest.feature,
-                runId: manifest.run_id,
-                phases: invalidatedPhases.map(String),
-              });
-            }
             goalEvents.emit({ type: 'phase_backtrack_started', to_phase: chain[Math.max(codingIdx, 0)] });
             // 被失效 attempt 从 outcomes 剔除（goal report/resume 只见最新有效 attempt；
             // 常驻 summary 将被回退后的重跑覆盖，upstream gate 消费面天然新鲜化）
@@ -7350,8 +6970,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
               detail:
                 `coding 改了 plan 冻结白名单外的 ${scopeViolationFiles.length} 个 UI 文件` +
                 `（${scopeViolationFiles.slice(0, 5).join('、')}）——交回 plan 独立裁决是否纳入 scope`,
-              dryRun,
-              passSnapshotMemory,
               emit: (e: Record<string, unknown>) => goalEvents.emit(e),
             });
             if (replan.kind === 'replanned') {
@@ -7367,7 +6985,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 `\n===== ui_scope_violation → 自动回退 plan =====\n` +
                 `${scopeViolationFiles.length} 个 UI 文件不在冻结白名单内：` +
                 `${scopeViolationFiles.slice(0, 6).join('、')}\n` +
-                `→ 回 plan 重新裁决 scope（越界文件作为未受信上下文交接），PASS 后重新签发快照并回到 coding。\n` +
+                `→ 回 plan 重新裁决 scope（越界文件作为未受信上下文交接），PASS 闭环后回到 coding。\n` +
                 `（第 ${backtracksUsed} 次回退，共用预算 ${DEFAULT_MAX_BACKTRACKS} 次/run；tx=${replan.txId}）\n`,
               );
               phaseIdx = replan.planIdx - 1; // for 循环 ++ 后落回 plan
@@ -7516,15 +7134,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
               fingerprint: roundFp,
               invalidation_tx_id: txIdBt,
             });
-            if (!dryRun) {
-              for (const p of invalidatedBt) passSnapshotMemory.delete(String(p));
-              discardPassSnapshotCache({
-                projectRoot,
-                feature: manifest.feature,
-                runId: manifest.run_id,
-                phases: invalidatedBt.map(String),
-              });
-            }
             console.error(
               `\n===== backtrack_to_coding =====\n`
               + `${phase} 检出 ${driverActionableDefects.length} 项可回修缺陷（`

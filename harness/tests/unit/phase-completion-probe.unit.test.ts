@@ -8,7 +8,6 @@ import * as path from 'path';
 import {
   collectCompletionEvidence,
   createCompletionProbe,
-  decideSkipAgentInvoke,
   isCompletionEvidenceComplete,
   isEvidenceFromCurrentInvocation,
   type CompletionEvidenceState,
@@ -275,69 +274,15 @@ export function runAll(): UnitCaseResult[] {
     assertEq(probe(), false, '命中后锁存，不得重复触发 kill');
   });
 
-  run(results, 'R7：跳过 agent 须过**新鲜度判据**——回退/重试/跨 run 一律不跳', () => {
-    const base = {
-      baselineComplete: true,
-      retries: 0,
-      pendingHandoffCount: 0,
-      evidenceRunId: 'run-A',
-      currentRunId: 'run-A',
-    };
-    assertEq(decideSkipAgentInvoke(base).skip, true, '四条都满足才可跳过');
-
-    // ① 证据不全 → 不跳
-    assertEq(decideSkipAgentInvoke({ ...base, baselineComplete: false }).skip, false, '证据不全不跳');
-
-    // ② **重试轮**不跳——上一轮判了失败，失败轮的证据不代表本轮不用干活
-    const retry = decideSkipAgentInvoke({ ...base, retries: 1 });
-    assertEq(retry.skip, false, '重试轮必须真跑');
-    assert(retry.reason.includes('上一轮判失败'), retry.reason);
-
-    // ③ **有回退交接待修**不跳——这正是"跳过会破坏 backtrack"的那条
-    const handoff = decideSkipAgentInvoke({ ...base, pendingHandoffCount: 2 });
-    assertEq(handoff.skip, false, '有待修项必须真跑');
-    assert(handoff.reason.includes('回退交接'), handoff.reason);
-
-    // ④ 跨 run 遗留不跳
-    assertEq(
-      decideSkipAgentInvoke({ ...base, evidenceRunId: 'run-OLD' }).skip,
-      false,
-      '其它 run 的证据不代表本轮已完成',
-    );
-    assertEq(
-      decideSkipAgentInvoke({ ...base, evidenceRunId: null }).skip,
-      false,
-      '证据缺 run 身份 → 不跳（fail-safe）',
-    );
-  });
-
-  // ==========================================================================
-  // 环 B（plan f3a8c6d2 t2）：缓存失效后重跑责任阶段 → 必须真跑。
-  // 事故：三处 phaseIdx-- 出口重入 phase 循环令 retries 归零 → 判"非重试轮"→ skip
-  // → closure 只能由 agent 重签却永远等不到 agent（bc-openCard i5/i6/i8 全 0ms）。
-  // ==========================================================================
-  run(results, '环B：responsibilityRerunPending=true 必不 skip，且不占用 retries 配额', () => {
-    const base = {
-      baselineComplete: true,
-      retries: 0,
-      pendingHandoffCount: 0,
-      evidenceRunId: 'run-A',
-      currentRunId: 'run-A',
-    };
-    assertEq(decideSkipAgentInvoke(base).skip, true, '前提：四条满足本可跳过');
-
-    const pending = decideSkipAgentInvoke({ ...base, responsibilityRerunPending: true });
-    assertEq(pending.skip, false, '缓存失效重跑轮必须真跑');
-    assert(pending.reason.includes('缓存失效后重跑责任阶段'), pending.reason);
-
-    // 预算不变量：pending 不是"重试轮"——理由不得复用 retries 文案，
-    // 调用方也无须递增 retries（retries 是内容重试配额，缓存失效按既有设计不烧它）。
-    assert(!pending.reason.includes('上一轮判失败'), `不得伪装成内容重试轮：${pending.reason}`);
-    assertEq(
-      decideSkipAgentInvoke({ ...base, responsibilityRerunPending: false }).skip,
-      true,
-      'pending=false 时行为与改动前逐字一致（回归）',
-    );
+  // 【skip 判定已删除 · codex 收尾】R7 decideSkipAgentInvoke 与环 B
+  // responsibilityRerunPending 用例随机制删除：runner 每轮 invoke 前 force 重建
+  // 未完成骨架，baselineComplete 结构上恒 false，"证据齐全即跳过"不可达。
+  run(results, 'skip 机制退役判别：生产代码不得残留 decideSkipAgentInvoke / skip 事件', () => {
+    const runner = fs.readFileSync(
+      path.join(__dirname, '..', '..', 'scripts', 'goal-runner.ts'), 'utf-8');
+    assert(!runner.includes('decideSkipAgentInvoke'), 'goal-runner 不得再引用 skip 判定');
+    assert(!runner.includes('completion_evidence_pre_existing'), '不得再发 skip 观测事件');
+    assert(!runner.includes('skip_agent_invoke'), '不得再有 skip action');
   });
 
   run(results, '有界参数取定值：poll 2s / grace 5s（防实现漂移成无限等待）', () => {
@@ -544,27 +489,6 @@ export function runAll(): UnitCaseResult[] {
       isEvidenceFromCurrentInvocation(s, { runId: 'run-A', attemptId: 'i5', startedAtMs: Date.now() }),
       false,
       '跨 run 遗留证据不得算本次完成',
-    );
-  });
-
-  run(results, 't1 护栏：身份绑定不得改变 decideSkipAgentInvoke 的既有正例', () => {
-    // codex 三轮订正：调用前的跳过判据**不得**要求匹配"尚未开始的新 attempt"，
-    // 否则「证据须属当前 attempt」与「调用前已完整则跳过」会变成互相不可达。
-    assertEq(
-      decideSkipAgentInvoke({
-        baselineComplete: true, retries: 0, pendingHandoffCount: 0,
-        evidenceRunId: 'run-A', currentRunId: 'run-A',
-      }).skip,
-      true,
-      '同 run、非重试、无待修、证据齐全 → 仍须可跳过',
-    );
-    assertEq(
-      decideSkipAgentInvoke({
-        baselineComplete: true, retries: 1, pendingHandoffCount: 0,
-        evidenceRunId: 'run-A', currentRunId: 'run-A',
-      }).skip,
-      false,
-      '重试轮仍须真跑（立项事故里 attempt 2/3 正是靠这条正确地没被跳过）',
     );
   });
 

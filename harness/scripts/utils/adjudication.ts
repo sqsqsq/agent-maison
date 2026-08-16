@@ -333,6 +333,10 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
     class: 'recoverable', recover_action: 'retry_transaction', suspected_misclassified: true,
   },
   pre_invoke_snapshot_failed: { class: 'external', suspected_misclassified: true },
+  /** runner-owned-machine-facts：invoke 前回执骨架写失败（目录只读/模板缺失/文件占用）。
+   *  不启动 agent、不烧 attempt——静默吞会让旧身份回执存活，receipt_attempt_identity
+   *  死结复发；外部存储条件恢复后 probe 续跑。 */
+  receipt_scaffold_unwritable: { class: 'external' },
   closure_finalization_failed: {
     class: 'recoverable', recover_action: 'retry_transaction', suspected_misclassified: true,
   },

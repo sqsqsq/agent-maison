@@ -11,13 +11,40 @@ Enforcement: `harness/scripts/utils/verify-feature-completion.ts`, `harness/scri
 - **WHEN** a feature has P0 device flows, all structural gates pass, and no `flow_contract` receipt exists because the issuance system is not built
 - **THEN** clean_pass emits no `flow_contract_receipt` issue, the `acceptance_flow_contract` WARN still appears in reports, and other receipt gates (e.g. `runtime_fidelity_attestation`) keep their needs_human capping
 
+### Requirement: Process-level safety guards remain enforced by the driver
+
+Timeout handling, budgets, backoff, child cleanup, trust ledgers, device gates, source-write protection, monitor, usage capture, and detached survival SHALL remain enforced by existing goal-runner utilities and MUST NOT be weakened by assess rewiring.
+
+#### Scenario: Phase process exceeds its timeout
+
+- **WHEN** the active child exceeds the effective timeout
+- **THEN** the runner SHALL apply the existing process timeout/cleanup policy and supply the resulting fact to reconciliation
+
+## REMOVED Requirements
+
+### Requirement: A blocked PASS freezes phase deliverables under a runner-owned snapshot epoch
+
+**Reason**: pass snapshot 机制整体退役（见 ADDED「The pass-snapshot mechanism is retired」）——PASS 产物防篡改由下一轮完整 harness 重验与 closure manifest 绑定当前字节承担；artifact-class resolver、冻结快照、diff/violation/restore 全链删除。
+
+### Requirement: Snapshot trust is two-tier and restore is path- and TOCTOU-safe
+
+**Reason**: 随快照机制退役——不再存在恢复路径，双层信任/HMAC 分级/restore 的 TOCTOU 安全约束失去对象。
+
+### Requirement: Pass-snapshot protocol domains separate immutable manifest from mutable head
+
+**Reason**: 随快照机制退役——manifest/head 协议域、epoch、完整性对账均已删除；跨协议替换防护随存储消失。
+
+### Requirement: Invalidation is a recoverable run-level journal transaction
+
+**Reason**: 失效不再有缓存副作用需要事务保护——原子 `phase_backtrack_requested` 事件本身即失效事实的全部（invalidation journal 与 head 退位删除）。
+
 ## ADDED Requirements
 
 ### Requirement: Receipt identity fields are runner-owned
 
-The phase-completion receipt scaffold SHALL be generated with `feature`, `phase` and — under goal orchestration — `claimed_attempt_id` pre-filled from the runner/harness attempt identity (`i<totalTurns>`); agents MUST NOT be required to copy machine-known identity values from the environment or derive them from progress files. Before each closure-only invocation the runner SHALL regenerate an unfilled scaffold carrying the upcoming attempt identity, invalidating the previous attempt's receipt so a stale complete receipt cannot satisfy completion observation for the new attempt. The strict goal-mode equality between `claimed_attempt_id` and the runner attempt identity SHALL remain unchanged (no `"3"`/`"i3"` aliasing); non-goal manual flows keep the empty-field and timestamp-freshness behavior.
+The phase-completion receipt scaffold SHALL be generated with `feature`, `phase` and — under goal orchestration — `claimed_attempt_id` pre-filled from the runner/harness attempt identity (`i<totalTurns>`); agents MUST NOT be required to copy machine-known identity values from the environment or derive them from progress files. Under goal orchestration the runner SHALL be the **single scaffold writer**: before **every** real agent invocation (content and closure attempts alike; lite track and dry-run excluded) it SHALL force-regenerate the unfilled scaffold carrying the upcoming attempt identity, invalidating the previous attempt's receipt so a stale complete receipt cannot satisfy completion observation for the new attempt — and so the agent sees the scaffold from the content attempt onward, allowing closure to complete within the same attempt (testing no longer necessarily burns a second on-device gate pass). A scaffold write failure SHALL halt before starting the agent (`receipt_scaffold_unwritable`, external/probe semantics) with the real path and I/O error — it MUST NOT be swallowed, because a surviving stale-identity receipt deterministically reproduces the `receipt_attempt_identity` closure wall. The harness-side PASS-gated skeleton generation SHALL stand down under goal orchestration (goal attempt env present → no write) and remains only for non-goal manual flows. Closure-only state SHALL be derived from the latest authoritative phase verdict (`PASS` + `advance_blocked` + `action=retry`): phases such as coding/ut with no frozen deliverable surface still get the current invocation identity and closure-only prompt. A later halt/invalidation or non-closure verdict clears that state. The strict goal-mode equality between `claimed_attempt_id` and the runner attempt identity SHALL remain unchanged (no `"3"`/`"i3"` aliasing); non-goal manual flows keep the empty-field and timestamp-freshness behavior.
 
-Enforcement: `harness/scripts/utils/receipt-scaffold.ts`, `harness/harness-runner.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/check-receipt.ts`
+Enforcement: `harness/scripts/utils/receipt-scaffold.ts`, `harness/harness-runner.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/check-receipt.ts`, `harness/scripts/utils/adjudication.ts`
 
 #### Scenario: a closure attempt no longer dies on a copied identity
 
@@ -28,6 +55,16 @@ Enforcement: `harness/scripts/utils/receipt-scaffold.ts`, `harness/harness-runne
 
 - **WHEN** a further closure attempt `i4` begins while a filled receipt claiming `i3` exists
 - **THEN** the runner regenerates the unfilled scaffold with `claimed_attempt_id: "i4"` and completion observation does not treat the `i3` receipt as current
+
+#### Scenario: a phase without a frozen surface still gets a closure identity
+
+- **WHEN** coding attempt `i4` reaches PASS but closure remains open
+- **THEN** attempt `i5` is still classified closure-only from the `i4` verdict, its prompt says to perform closure only, and the runner force-regenerates the scaffold with `claimed_attempt_id: "i5"`
+
+#### Scenario: an unwritable scaffold stops the attempt instead of reviving the identity wall
+
+- **WHEN** the runner cannot write the receipt scaffold before an invocation (read-only directory, missing template, or file lock)
+- **THEN** the run halts `receipt_scaffold_unwritable` reporting the real path and error, the agent is never started, and no attempt budget is burned
 
 ### Requirement: Spec closure-only prompts mandate read-only visual re-evidencing
 
@@ -74,14 +111,14 @@ Enforcement: `harness/scripts/utils/goal-preflight.ts`, `harness/scripts/goal-ru
 
 ### Requirement: Segmented-start eligibility is closure-only; pass snapshots never gate downstream phases
 
-For any `--start X`, start eligibility SHALL be judged solely by the freshness of all in-repo phase closures upstream of X (the truncated-chain preflight's evidence-staleness recomputation); per-run pass snapshots SHALL serve only same-phase closure-only retry protection (TOCTOU) and SHALL NOT gate any downstream phase's start — no cross-run snapshot search, no snapshot derivation for other runs, no per-phase snapshot or authorization layer for review/ut/testing. The coding plan-authority check SHALL judge the plan closure directly via the same evidence-staleness recomputation (manifest integrity + receipt pointer + frozen-surface file hashes + environment): fresh → authorized; stale → the existing live-drift replan path (changed paths named); missing/tampered → closure-untrusted replan. The coding UI-scope whitelist SHALL be read from the on-disk `contracts.yaml` only after its current hash matches the hash frozen in the plan phase-evidence-manifest (receipt-pointer-anchored); a mismatch is live drift handled by the existing stale/replan disposition — the snapshot-anchor env channel is retired. Deleting the goal-checkpoints temporary cache SHALL NOT affect legitimate segmented starts. When a run ends HALTED on a structurally-sensitive incident, the `run_end` event SHALL carry the disposition already computed at the `phase_halt` production site (replayed from events), never a second `decide()` nor a write-layer fabrication. The downstream-start fidelity-reuse note SHALL be printed to the run log.
+For any `--start X`, start eligibility SHALL be judged solely by the freshness of all in-repo phase closures upstream of X (the truncated-chain preflight's evidence-staleness recomputation) — no cross-run snapshot search, no snapshot derivation for other runs, no per-phase snapshot or authorization layer for review/ut/testing. The coding plan-authority check SHALL judge the plan closure directly via the same evidence-staleness recomputation (manifest integrity + receipt pointer + frozen-surface file hashes + environment): fresh → authorized; stale → the existing live-drift replan path (changed paths named); missing/tampered → closure-untrusted replan. The coding UI-scope whitelist SHALL be read from the on-disk `contracts.yaml` only after its current hash matches the hash frozen in the plan phase-evidence-manifest (receipt-pointer-anchored); a mismatch is live drift handled by the existing stale/replan disposition — the snapshot-anchor env channel is retired. Deleting the goal-checkpoints temporary cache SHALL NOT affect legitimate segmented starts. When a run ends HALTED on a structurally-sensitive incident, the `run_end` event SHALL carry the disposition already computed at the `phase_halt` production site (replayed from events), never a second `decide()` nor a write-layer fabrication. The downstream-start fidelity-reuse note SHALL be printed to the run log.
 
 Enforcement: `harness/scripts/utils/scope-replan.ts`（`checkPlanAuthority`）, `harness/scripts/utils/ui-scope-gate.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/phase-evidence-manifest.ts`
 
 #### Scenario: a fresh coding-start run passes the plan authority gate without executing plan
 
-- **WHEN** run A closed plan cleanly and run B starts fresh with `--start coding --end testing`, with no plan snapshot under run B and the goal-checkpoints cache absent
-- **THEN** `checkPlanAuthority` judges the plan closure fresh and returns ok, coding starts normally — no `pass_snapshot_unavailable` halt
+- **WHEN** run A closed plan cleanly and run B starts fresh with `--start coding --end testing`, with the goal-checkpoints cache absent
+- **THEN** `checkPlanAuthority` judges the plan closure fresh and returns ok, coding starts normally
 
 #### Scenario: genuine contracts drift is still caught
 
@@ -90,5 +127,21 @@ Enforcement: `harness/scripts/utils/scope-replan.ts`（`checkPlanAuthority`）, 
 
 #### Scenario: a halted run's terminal event carries its disposition
 
-- **WHEN** a run halts on `pass_snapshot_unavailable` (a structurally-sensitive incident)
+- **WHEN** a run halts on a structurally-sensitive incident (e.g. `receipt_scaffold_unwritable`)
 - **THEN** the `run_end` event carries the `run_disposition` computed at the halt production site, and the write-layer guard has nothing to refuse
+
+### Requirement: The pass-snapshot mechanism is retired; PASS artifacts are protected by full re-verification
+
+The per-run PASS frozen-snapshot mechanism (take/diff/restore/discard, trusted-context loading, epoch/head/journal, memory anchors, the `pass_snapshot_unavailable` / snapshot-flavored `pre_invoke_snapshot_failed` halt family, and the responsibility-rerun pending state) SHALL be removed and MUST NOT be reintroduced as workflow state, authorization, or start eligibility. PASS-artifact tamper protection SHALL rest on the facts that already exist: a closure attempt that breaks an artifact fails the next full harness re-verification; an edit that still passes re-earns every gate on the current bytes; and the phase closure manifest always binds the current bytes — the closure-only prompt keeps its "do not rewrite artifacts" instruction as guidance. Invalidation (backtrack/replan) SHALL be complete with the atomic `phase_backtrack_requested` event alone — no cache demotion side effects. The retained residents of the trust-state namespace are the coding base anchor (`coding-base.json`, the UI-scope diff baseRef — unrelated to snapshots) and per-run trust-state GC (`deleteRunTrustState`, which also sweeps legacy snapshot directories from older runs). Read-side incident mappings for historical ledgers MAY keep the retired incident ids. Independent mechanisms that share similar names SHALL NOT be removed: review closure source attestation, UT product-source immutability, testing invoke-boundary source write-protection (`product-source-snapshot`), and the device readiness gate.
+
+Enforcement: `harness/scripts/utils/pass-snapshot.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/scope-replan.ts`, `harness/scripts/utils/goal-runner-phase.ts`, `harness/scripts/utils/phase-completion-probe.ts`
+
+#### Scenario: a legitimate UT PASS with no optional artifacts no longer trips an invariant
+
+- **WHEN** a `repair_existing_ut` run reaches UT PASS with closure open and none of the optional UT artifacts on disk
+- **THEN** the closure retry proceeds normally — there is no frozen-surface resolution, no "non-empty registry but zero deliverables" invariant halt
+
+#### Scenario: a closure attempt that edits a PASS artifact is caught by re-verification, not by a snapshot
+
+- **WHEN** a closure-only attempt modifies a previously passing artifact in a way that breaks a gate
+- **THEN** the phase's next full harness run fails on the current bytes and the run takes the normal content-retry path — no snapshot diff, no restore, no cache-discard halt

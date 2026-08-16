@@ -112,8 +112,7 @@ export function collectCompletionEvidence(
       if (out.receipt) {
         out.receiptSha = shaRaw.toLowerCase();
         // f9c2e6b4 t1：attempt 新鲜度素材。两者都**只采集不判定**——判定在
-        // isEvidenceFromCurrentInvocation，因为"完整"与"属于本次调用"是两个问题
-        // （前者还要喂 decideSkipAgentInvoke，那条路径不得要求匹配尚未开始的 attempt）。
+        // isEvidenceFromCurrentInvocation，因为"完整"与"属于本次调用"是两个问题。
         const attemptRaw = receiptField(text, 'claimed_attempt_id');
         if (attemptRaw && attemptRaw.length > 0 && !RECEIPT_PLACEHOLDER.test(`x: ${attemptRaw}`)) {
           out.attemptId = attemptRaw;
@@ -237,70 +236,17 @@ export function isEvidenceFromCurrentInvocation(
   );
 }
 
+// 【skip 判定已删除 · codex 收尾（runner-owned-machine-facts）】decideSkipAgentInvoke
+// （R7"证据齐全即跳过"）：runner 现在每轮 invoke 前 force 重建未完成骨架，
+// baselineComplete 结构上恒 false——判定不可达，整链（含 completion_evidence_pre_existing
+// 事件与伪造 skipped invoke）删除。探针唯一职责=观察本轮 agent 把骨架填成完整。
+
 /**
  * 构造 observer 探针：闭包捕获 invoke 前基线，只在**本次调用内发生跃迁**时返回 true。
  *
- * - 基线已完整 → 恒返回 false（调用方应在 invoke 前就跳过本次调用，而不是启动后即杀）；
+ * - 基线已完整 → 恒返回 false（骨架单点写入后结构上不出现；防御性保留）；
  * - 基线不完整 → 变完整即命中一次（内部锁存，避免重复触发 kill）。
  */
-export interface SkipDecision {
-  /** 可安全跳过本次 agent 调用 */
-  skip: boolean;
-  reason: string;
-}
-
-/**
- * R7：**能否安全跳过本次 agent 调用**。
- *
- * "证据齐全"本身不足以跳过——回退重跑（backtrack）时上一轮的 receipt/summary 仍在盘上，
- * 直接跳过会让 coding 只跑一次、crash/must_fix 修复指令永远注入不进去（实证：4 个既有
- * 集成用例同时红）。跳过必须同时满足：
- *
- *   ① 基线证据齐全；
- *   ② **不是回退/带交接上下文的重跑**——有 must_fix/crash 要修就必须真的跑；
- *   ③ **不是本 phase 的重试轮**（retries=0）——重试意味着上一轮判了失败，
- *      而失败轮留下的证据不能代表"这一轮不用干活"；
- *   ④ 证据的需求身份与本 run 一致（换了需求就得重跑）。
- *
- * 四条都成立时，跳过是安全的：证据属于同一需求、同一 phase、且没有任何待修项。
- */
-export function decideSkipAgentInvoke(input: {
-  baselineComplete: boolean;
-  /** 本 phase 已重试次数（>0 = 上一轮判失败） */
-  retries: number;
-  /** 回退交接的待修项数量（>0 = 必须真跑） */
-  pendingHandoffCount: number;
-  /** 证据自报的 run 身份（缺失 = 无从校验 → 不跳过） */
-  evidenceRunId?: string | null;
-  /** 当前 run 身份 */
-  currentRunId?: string | null;
-  /**
-   * 环 B（plan f3a8c6d2 t2）：该 phase 处于"缓存失效后重跑责任阶段"待办态
-   * （三处 pass_snapshot_unavailable 出口置位，由 responsibilityRerunPending 从既有
-   * events 重建、跨 resume 成立）。与 retries **不共用**：retries 是内容重试配额，
-   * 缓存失效按既有设计不烧该配额，故独立入参而非递增 retries。
-   */
-  responsibilityRerunPending?: boolean;
-}): SkipDecision {
-  if (!input.baselineComplete) return { skip: false, reason: '基线证据不完整' };
-  if (input.responsibilityRerunPending) {
-    return { skip: false, reason: '缓存失效后重跑责任阶段——须真跑' };
-  }
-  if (input.retries > 0) {
-    return { skip: false, reason: `本 phase 第 ${input.retries + 1} 轮（上一轮判失败）——须真跑` };
-  }
-  if (input.pendingHandoffCount > 0) {
-    return { skip: false, reason: `存在 ${input.pendingHandoffCount} 项回退交接待修——须真跑` };
-  }
-  if (!input.evidenceRunId || !input.currentRunId) {
-    return { skip: false, reason: '证据缺少 run 身份，无从校验新鲜度' };
-  }
-  if (input.evidenceRunId !== input.currentRunId) {
-    return { skip: false, reason: '证据来自其它 run（跨 run 遗留不代表本轮已完成）' };
-  }
-  return { skip: true, reason: '本 run 同一 phase、非重试轮、无待修项且证据齐全' };
-}
-
 export function createCompletionProbe(input: {
   projectRoot: string;
   feature: string;

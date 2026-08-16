@@ -373,14 +373,13 @@ async function runScenario(args: {
   (goal.__testing_setRunHarnessPhase as (f: unknown) => void)(async () => ({ verdict: 'PASS', blockers: [] }));
 
   const isDeviceScenario = scenario === 'device_park' || scenario === 'resume_after_park'
-    || scenario === 'resume_with_device_ready' || scenario === 'cache_miss_seed'
-    || scenario === 'cache_miss_resume' || scenario === 'cache_miss_in_run'
+    || scenario === 'resume_with_device_ready'
     || scenario === 'crash_scope_in_run' || scenario === 'successor_source_crash'
     || scenario === 'successor_manifest_probe'
     || scenario === 'ut_source_mutation' || scenario === 'ut_build_failure'
     || scenario === 'crash_scope_seed' || scenario === 'crash_after_scope_event'
     || scenario === 'resume_after_crash_scope';
-  const isSeedRunScenario = scenario === 'cache_miss_seed' || scenario === 'crash_scope_seed';
+  const isSeedRunScenario = scenario === 'crash_scope_seed';
   // 写盘桩对全部场景统一；generic 宿主不会消费设备 capability，多注入不改变行为。
   {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -490,18 +489,7 @@ async function runScenario(args: {
         status: 'passed', receipt_path: `doc/features/${feat}/${ph}/phase-completion-receipt.md`, exit_code: 0,
       }),
     );
-    if (scenario === 'cache_miss_in_run') {
-      let corrupted = false;
-      (goal.__testing_setAfterPassSnapshot as (f: (() => void) | null) => void)(() => {
-        if (corrupted) return;
-        corrupted = true;
-        const passSnapshot = req('harness/scripts/utils/pass-snapshot');
-        const headPath = (passSnapshot.passSnapshotHeadPath as (p: string, f: string, r: string, h: string) => string)(
-          root, feature, (latestRunId(root, feature) ?? ''), 'plan',
-        );
-        fs.writeFileSync(headPath, '{"corrupt":true}\n', 'utf-8');
-      });
-    }
+    // 【cache_miss_in_run 场景已删除 · pass snapshot 退役（runner-owned-machine-facts）】
     // 设备门桩：两种形态——
     // · BLOCKED（halted:false + externalBlocked，fa0663 同形）：park / 仍锁 resume；
     // · READY（`resume_with_device_ready`，codex 第九批 P0）：验证"设备恢复后同一 run
@@ -535,16 +523,6 @@ async function runScenario(args: {
         };
       },
     );
-  }
-
-  if (scenario === 'cache_miss_resume') {
-    if (!extra) throw new Error('cache_miss_resume 需要 extra=runId');
-    const passSnapshot = require(path.join(frameworkRoot, 'harness/scripts/utils/pass-snapshot')) as {
-      passSnapshotHeadPath: (projectRoot: string, feature: string, runId: string, phase: string) => string;
-    };
-    const headPath = passSnapshot.passSnapshotHeadPath(root, feature, extra, 'plan');
-    if (!fs.existsSync(headPath)) throw new Error(`cache_miss_resume 缺 plan head：${headPath}`);
-    fs.writeFileSync(headPath, '{"corrupt":true}\n', 'utf-8');
   }
 
   if (scenario === 'crash_after_scope_event') {
@@ -651,7 +629,7 @@ async function runScenario(args: {
       '--project-root', root,
     ];
   } else if (scenario === 'resume_after_park' || scenario === 'resume_with_device_ready'
-    || scenario === 'cache_miss_resume' || scenario === 'crash_after_scope_event'
+    || scenario === 'crash_after_scope_event'
     || scenario === 'resume_after_crash_scope') {
     if (!extra) throw new Error(`${scenario} 需要 extra=runId`);
     process.argv = [...argvBase, '--resume', extra];
@@ -670,7 +648,7 @@ async function runScenario(args: {
       '--requirement', `T4 driver scenario=${scenario}`,
       '--start', 'coding', '--end', 'testing', '--force', '--supersede', extra,
     ];
-  } else if (scenario === 'cache_miss_in_run' || scenario === 'crash_scope_in_run'
+  } else if (scenario === 'crash_scope_in_run'
     || scenario === 'successor_source_crash'
     || scenario === 'ut_source_mutation' || scenario === 'ut_build_failure' || isSeedRunScenario) {
     process.argv = [

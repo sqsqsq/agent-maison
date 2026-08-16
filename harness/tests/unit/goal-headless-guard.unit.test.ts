@@ -36,6 +36,7 @@ import {
   countCumulativeAdvanceBlocked,
   countRepeatedSignatureInFamily,
   deriveContinuationFromEvents,
+  isClosureOnlyRetryPending,
   findLatestEffectiveTimeoutMs,
   isAgentNoOutputSignal,
   lastPhaseVerdictTransientApiError,
@@ -1856,6 +1857,54 @@ export function runAll(): UnitCaseResult[] {
         assert(countCumulativeAdvanceBlocked(events, 'spec') === 2, `应数到 2，reason 不同也累计；实得 ${countCumulativeAdvanceBlocked(events, 'spec')}`);
         assert(countCumulativeAdvanceBlocked(events, 'plan') === 1, '不同 phase 隔离统计');
         assert(countCumulativeAdvanceBlocked(events, 'coding') === 0, '未出现的 phase 为 0');
+      },
+    },
+    {
+      name: 'closure-only 由最新 PASS+advance_blocked retry 派生，不依赖 pass snapshot',
+      run: () => {
+        const pending: GoalRunEvent[] = [
+          { type: 'phase_verdict', phase: 'coding', invoke_id: 'coding-i4', verdict: 'PASS', advance_blocked: true, action: 'retry' },
+        ];
+        assert(isClosureOnlyRetryPending(pending, 'coding') === true, 'coding 无冻结面也必须进入 closure-only');
+        assert(isClosureOnlyRetryPending(pending, 'ut') === false, 'phase 必须隔离');
+
+        const contentRetry: GoalRunEvent[] = [
+          { type: 'phase_verdict', phase: 'coding', verdict: 'FAIL', advance_blocked: false, action: 'retry' },
+        ];
+        assert(isClosureOnlyRetryPending(contentRetry, 'coding') === false, '内容失败 retry 不是 closure-only');
+
+        const resetByDrift: GoalRunEvent[] = [
+          ...pending,
+          { type: 'phase_halt', phase: 'coding', halt_reason: 'pass_snapshot_unavailable' },
+        ];
+        assert(isClosureOnlyRetryPending(resetByDrift, 'coding') === false, '快照漂移要求重跑责任阶段时须退出 closure-only');
+
+        const newerHalt: GoalRunEvent[] = [
+          ...pending,
+          { type: 'phase_verdict', phase: 'coding', verdict: 'PASS', advance_blocked: true, action: 'halt' },
+        ];
+        assert(isClosureOnlyRetryPending(newerHalt, 'coding') === false, '已 halt 的最新裁决不得再派 closure-only');
+      },
+    },
+    {
+      name: 'closure-only 生产接线消费 verdict 派生；骨架在每次 invoke 前单点 force 写入且写失败即停',
+      run: () => {
+        const runner = fs.readFileSync(path.resolve(__dirname, '../../scripts/goal-runner.ts'), 'utf8');
+        assert(
+          /const closureOnlyAttempt = isClosureOnlyRetryPending\(attemptHistory, String\(phase\)\)/.test(runner),
+          'closure-only 不得再由 trustedSnapshot.kind 推断',
+        );
+        assert(!/trustedSnapshot/.test(runner.replace(/\/\/[^\n]*/g, '')), 'pass snapshot 可信加载不得回归生产代码');
+        // 单点写入：全轮（内容轮+closure 轮）invoke 前 force 写骨架——不再限 closureOnlyAttempt
+        assert(
+          /if \(!dryRun && goalTrack !== 'lite'\) \{[\s\S]{0,250}writeReceiptScaffold[\s\S]{0,180}force: true/.test(runner),
+          '每次 invoke 前必须无条件 force 写入当前 attempt 身份骨架（lite/dryRun 除外）',
+        );
+        // 写失败 fail-closed：不启动 agent（静默吞=旧身份回执存活=身份死结复发）
+        assert(
+          /if \(!scaffold\.wrote\) \{[\s\S]{0,700}receipt_scaffold_unwritable/.test(runner),
+          '骨架写失败必须 halt（receipt_scaffold_unwritable），不得静默继续启动 agent',
+        );
       },
     },
     {
