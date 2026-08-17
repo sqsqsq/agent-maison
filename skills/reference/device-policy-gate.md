@@ -31,13 +31,35 @@ JSON 就没法直接 parse 了。这与 [personal-setup-gate](personal-setup-gat
 1. **退出码 0 且 stdout 是合法 JSON** → 探测正常完成，**一切看 `code` 字段**。
    `device_policy_unset` 属于正常结果，不是命令失败——见到它就去问用户，别当成挂了。
 2. **退出码非零，或 stdout 不是合法 JSON** → **执行失败，必须停止**并把原因交回用户。
-   典型场景：`framework.local.json` 损坏（实测 `exit=1` 且 stdout 为空）、路径/权限问题。
-   这种情况**绝不能**忽略退出码继续往下走。
+   典型场景：`framework.local.json` 损坏（实测 `exit=1` 且 stdout 为空）、
+   **凭据库不可读**（凭据服务异常/权限/非 Windows 平台——此时"凭据到底能不能用"
+   根本没读到，既不能当 `ok` 继续，也**不能**当"未配置"去引导用户重新登记）、
+   路径/权限问题。这种情况**绝不能**忽略退出码继续往下走。
 
 | `code` | 行为 |
 |--------|------|
-| `ok` | 已配置 → 继续本阶段 |
+| `ok` | 当前**有一条可用的设备路径** → 继续本阶段 |
 | `device_policy_unset` | **必须先问用户四选一**（见下），落盘后重跑确认 `code=ok` |
+
+**`code` 是唯一的处置真源**——`configured` 只表示"是否**表达过**策略意图"，两者刻意解耦：
+配置里写了 `unlock.mode=credential` 但凭据库里那条凭据已 `burned`/不存在时，
+`configured=true` 而 `code=device_policy_unset`。别拿 `configured` 判处置（人读模式的
+退出码同样以 `code` 为准：`ok`→0，`device_policy_unset`→3）。
+
+`code=ok` 的三种成立方式：`unlock.mode=manual`；`unlock.mode=credential` 且凭据处于
+`ready` 或 `in_flight`；`emulator_fallback` 为 `existing`/`managed`。
+两处易错：
+
+- **`emulator_fallback=disabled` 不算可用路径**——它是"明确不降级"的表达，不能掩盖
+  一条坏掉的解锁凭据。
+- **`in_flight` 的含义是"无需重新选择策略"，不是"一定解得开"**：凭据正被另一进程
+  使用，或上次解锁崩在临界区。**不要立即**重新登记（并发在途时生成新版本会隐式回退
+  不到旧版本）；若确认无并发任务且该状态**持续存在**，那是上次崩在临界区的遗留 claim
+  ——它**不会**自行恢复（claim 里的口令永远用不上，等价 disabled），唯一出路是
+  `device:enroll` 登记新版本。只说"稍后重试"会让人永久等待。
+
+`device_policy_unset` 的 `guidance` 已按形态区分该 **enroll** 还是 **rebind**（凭据不存在
+/已烧毁/形态不支持/引用丢失各有首行说明）——照着它问，不要自己猜。
 
 ## 四选一（registry `setup.device_policy`）
 
@@ -83,10 +105,12 @@ cd framework/harness && npm run device:enroll -- --serial <设备序列号>
 
 ## 已登记但引用丢失时：显式 rebind（不重输 PIN）
 
-若凭据**已登记过**（OS 凭据库里有 `MaisonDeviceUnlock:<serial>:v<N>`），只是
-`framework.local.json` 的 `device.unlock.credential_ref` 被抹掉（事故根因），框架会报
-`device_policy_unset`。此时**可复用已登记凭据**恢复引用，无需重输 PIN。仍由**用户自己
-的终端**执行：
+若凭据**已登记过**（OS 凭据库里有 `MaisonDeviceUnlock:<serial>:v<N>`），但框架当前指不到
+它，探测会报 `device_policy_unset`。三种形态都属于这一类，处置相同：
+`device.unlock.credential_ref` 整段被抹掉（白名单 merge 事故根因）、`credential_ref`
+写坏指向不存在的版本、或引用还在但那条凭据在**本机**凭据库里不存在（跨机拷贝项目目录
+时最常见——`framework.local.json` 随目录走，凭据是本机 Windows 用户的本地状态，不跟着走）。
+此时**可复用已登记凭据**恢复引用，无需重输 PIN。仍由**用户自己的终端**执行：
 
 ```bash
 cd framework/harness && npm run device:rebind -- --serial <设备序列号> --version <N>

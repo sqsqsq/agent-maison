@@ -79,6 +79,7 @@ export function runAll(): UnitCaseResult[] {
   run(results, '只允许模拟器降级（不启用自动解锁）也算已配置', () => {
     const s = collectPolicyStatus(hostWith({ emulator_fallback: 'managed' }));
     assertEq(s.configured, true, '模拟器档位也是明确表达');
+    assertEq(s.code, 'ok', 'managed 是可用降级路径');
     assertEq(s.emulator_fallback, 'managed', 'fallback 透出');
     assertEq(s.unlock_mode, null, '未启用自动解锁');
   });
@@ -106,9 +107,170 @@ export function runAll(): UnitCaseResult[] {
     const burned = collectPolicyStatus(root, ready);
     assertEq(burned.credential_state, 'burned', '烧毁 → burned');
 
-    // 状态输出里绝不能出现口令字样，也不能泄露 blob 内容
-    assert(!/pin|password|passcode/i.test(JSON.stringify(burned)), 'CLI 输出不得含口令字段');
-    assert(!/123456/.test(JSON.stringify(burned)), 'CLI 输出不得含口令内容');
+    // 状态输出不得泄露口令。**口径分两层**（b3f7d9a2 t1 收窄）：
+    //   ① 结构化字段（除人读 guidance 外的全部）不得出现 pin/password/passcode
+    //      这类字段名或取值——这是"输出结构里夹带秘密"的真实风险面；
+    //   ② 口令**内容**在整个输出（含 guidance）里任何地方都不得出现。
+    // 旧断言把 ①扩到整个 JSON，会误伤 guidance 里"绝不要让用户把口令发到对话里 /
+    // 无需重输 PIN"这类**指引正文**（unset 态必然带四选一文案）。
+    const { guidance: _guidance, ...structured } = burned;
+    assert(
+      !/pin|password|passcode/i.test(JSON.stringify(structured)),
+      `结构化字段不得含口令字段/取值：${JSON.stringify(structured)}`,
+    );
+    assert(!/123456/.test(JSON.stringify(burned)), 'CLI 输出（含 guidance）不得含口令内容');
+  });
+
+  // ==========================================================================
+  // b3f7d9a2 t1：`code` 必须反映**凭据真值**，不能只看"表达过意图"
+  //
+  // 事故（2026-08-17 另一台宿主）：mode=credential 但凭据库里那条凭据根本不可用，
+  // 旧判定 `configured = Boolean(mode || fallback)` 照报 `code=ok`，gate 判定表只
+  // 分支 code → agent 按契约"已配置"就不问用户，普通模式 UT 一路撞到锁屏。
+  // 下面每条都对旧判定必红。
+  // ==========================================================================
+
+  run(results, 't1 credential + 凭据不可用（absent/burned/unsupported）→ code=unset（旧判定报 ok，本条必红）', () => {
+    const root = hostWith({
+      unlock: { mode: 'credential', credential_ref: 'maison/device/PHONE-1/v3' },
+    });
+    const id = { serial: 'PHONE-1', version: 3 };
+
+    // absent（未登记，或跨机拷贝后凭据留在原机）
+    const absent = collectPolicyStatus(root, new FakeCredentialProvider());
+    assertEq(absent.credential_state, 'absent', 'state 透出 absent');
+    assertEq(absent.code, 'device_policy_unset', 'absent 必须触发四选一');
+    assertEq(absent.configured, true, 'configured 仍是"表达过意图"（与 code 解耦）');
+    assert(absent.guidance.includes('四选一'), 'unset 须带四选一');
+    assert(absent.guidance.includes('--rebind'), 'absent 须提示可 rebind 复用已登记凭据');
+
+    // burned
+    const burnedProvider = new FakeCredentialProvider();
+    burnedProvider.burnCredential(id, '口令错误');
+    const burned = collectPolicyStatus(root, burnedProvider);
+    assertEq(burned.credential_state, 'burned', 'state 透出 burned');
+    assertEq(burned.code, 'device_policy_unset', 'burned 必须触发四选一');
+    assert(burned.guidance.includes('重新登记'), 'burned 指引须指向重新登记');
+    assert(burned.guidance.includes('墓碑'), 'burned 须说明墓碑不可用');
+
+    // unsupported（形态不受支持）
+    const unsupportedProvider = new FakeCredentialProvider();
+    unsupportedProvider.blobs.set('MaisonDeviceUnlock:PHONE-1:v3', 'abcd');
+    const unsupported = collectPolicyStatus(root, unsupportedProvider);
+    assertEq(unsupported.credential_state, 'unsupported', 'state 透出 unsupported');
+    assertEq(unsupported.code, 'device_policy_unset', 'unsupported 必须触发四选一');
+    assert(unsupported.guidance.includes('数字 PIN'), 'unsupported 须说明受支持形态');
+  });
+
+  run(results, 't1 credential 但 credential_ref 缺失 / 非法 → code=unset 且优先指引 rebind', () => {
+    // ref 整段缺失（白名单 merge 抹引用的历史事故形态）
+    const missing = collectPolicyStatus(hostWith({ unlock: { mode: 'credential' } }), new FakeCredentialProvider());
+    assertEq(missing.credential_ref, null, 'ref 缺失');
+    assertEq(missing.credential_state, null, '无 ref 时不查凭据库');
+    assertEq(missing.code, 'device_policy_unset', 'ref 缺失必须触发四选一');
+    assert(missing.guidance.includes('credential_ref 缺失'), '须点名 ref 缺失');
+    assert(missing.guidance.includes('--rebind'), '须优先指引 rebind（凭据本体可能还在）');
+
+    // ref 非法（手改配置写坏）→ 指不到任何凭据，与未登记同处置
+    const bad = collectPolicyStatus(
+      hostWith({ unlock: { mode: 'credential', credential_ref: 'not-a-ref' } }),
+      new FakeCredentialProvider(),
+    );
+    assertEq(bad.credential_state, 'absent', '非法 ref → absent');
+    assertEq(bad.code, 'device_policy_unset', '非法 ref 必须触发四选一');
+  });
+
+  run(results, 't1 ready → ok；in_flight → ok 但指引"勿立即重登记"（不是"可用"的承诺）', () => {
+    const root = hostWith({
+      unlock: { mode: 'credential', credential_ref: 'maison/device/PHONE-1/v3' },
+    });
+    const id = { serial: 'PHONE-1', version: 3 };
+
+    const ready = new FakeCredentialProvider();
+    ready.seedReady(id, '123456');
+    const okStatus = collectPolicyStatus(root, ready);
+    assertEq(okStatus.code, 'ok', 'ready → ok');
+    assertEq(okStatus.guidance, '设备策略已配置', 'ready 用简短确认文案');
+
+    const inflight = new FakeCredentialProvider();
+    inflight.seedClaim(id, 'aaaaaaaaaaaaaaaa', '123456');
+    const inflightStatus = collectPolicyStatus(root, inflight);
+    assertEq(inflightStatus.credential_state, 'in_flight', 'state 透出 in_flight');
+    assertEq(inflightStatus.code, 'ok', 'in_flight 不触发重新选择策略（重登记会隐式回退不到旧版本）');
+    assert(inflightStatus.guidance.includes('in_flight'), 'in_flight 须说明当前形态');
+    assert(
+      inflightStatus.guidance.includes('不要') && inflightStatus.guidance.includes('重新登记'),
+      `in_flight 须明确不要重新登记：${inflightStatus.guidance}`,
+    );
+    assert(inflightStatus.guidance.includes('不要立即'), 'in_flight 须说"不要**立即**重登记"');
+    // 崩在临界区遗留的 claim 是**持久**状态（device-credential-store 文件头：claim 里的口令
+    // 永远用不上，等价 disabled，解除只有重新登记新版本一条路）。只说"稍后重试"会让用户
+    // 永久卡住——guidance 必须给出这条出路。
+    assert(
+      inflightStatus.guidance.includes('持续') && inflightStatus.guidance.includes('不会'),
+      `in_flight 须说明持续存在的遗留 claim 不会自行恢复：${inflightStatus.guidance}`,
+    );
+    assert(inflightStatus.guidance.includes('device:enroll'), 'in_flight 须给出登记新版本这条唯一出路');
+    assert(!/123456/.test(JSON.stringify(inflightStatus)), 'in_flight 输出不得泄露 claim 里的口令');
+  });
+
+  run(results, 't1 fallback 仅 existing|managed 算可用：disabled 不得掩盖坏凭据，也不得单独算已配置', () => {
+    // disabled 单独存在 → 表达过意图但无可用路径
+    const onlyDisabled = collectPolicyStatus(hostWith({ emulator_fallback: 'disabled' }));
+    assertEq(onlyDisabled.configured, true, 'disabled 也是表达过意图');
+    assertEq(onlyDisabled.code, 'device_policy_unset', 'disabled 不构成可用设备路径（旧判定报 ok）');
+    assert(onlyDisabled.guidance.includes('disabled'), '须点名 disabled 不算可用路径');
+
+    // 坏凭据 + disabled → 仍 unset
+    const badCredDisabled = collectPolicyStatus(
+      hostWith({
+        unlock: { mode: 'credential', credential_ref: 'maison/device/PHONE-1/v3' },
+        emulator_fallback: 'disabled',
+      }),
+      new FakeCredentialProvider(),
+    );
+    assertEq(badCredDisabled.code, 'device_policy_unset', 'disabled 不得掩盖 absent 凭据');
+
+    // 坏凭据 + existing → ok（模拟器是真的能走的路）
+    const badCredExisting = collectPolicyStatus(
+      hostWith({
+        unlock: { mode: 'credential', credential_ref: 'maison/device/PHONE-1/v3' },
+        emulator_fallback: 'existing',
+      }),
+      new FakeCredentialProvider(),
+    );
+    assertEq(badCredExisting.code, 'ok', '已授权模拟器降级 → 有可用路径');
+    assertEq(badCredExisting.credential_state, 'absent', '凭据状态仍如实透出');
+
+    // 坏凭据 + managed → ok
+    const badCredManaged = collectPolicyStatus(
+      hostWith({
+        unlock: { mode: 'credential', credential_ref: 'maison/device/PHONE-1/v3' },
+        emulator_fallback: 'managed',
+      }),
+      new FakeCredentialProvider(),
+    );
+    assertEq(badCredManaged.code, 'ok', 'managed 同样是可用路径');
+  });
+
+  run(results, 't1 凭据库不可读 → **抛出执行失败**，既不 ok 也不 unset（不得误导重新登记）', () => {
+    const root = hostWith({
+      unlock: { mode: 'credential', credential_ref: 'maison/device/PHONE-1/v3' },
+    });
+    const broken = new FakeCredentialProvider({ inspectError: 'cred vault unreachable' });
+    let thrown: Error | null = null;
+    try {
+      collectPolicyStatus(root, broken);
+    } catch (e) {
+      thrown = e as Error;
+    }
+    assert(thrown !== null, '凭据库不可读须抛出（走执行失败通道），不得返回任何 code');
+    assert(/凭据库不可读/.test(thrown!.message), `须报告 provider 错误：${thrown!.message}`);
+    assert(/cred vault unreachable/.test(thrown!.message), '须带上 provider 原始错误');
+    assert(
+      /不是.*未配置|不要据此重新登记/.test(thrown!.message),
+      `须明确这不是"未配置"、不要据此重新登记：${thrown!.message}`,
+    );
   });
 
   run(results, '**非 TTY 拒绝登记**（口令绝不能经 agent 管道输入）', () => {
@@ -256,6 +418,13 @@ export function runAll(): UnitCaseResult[] {
       inflight.seedClaim(id, 'aaaaaaaaaaaaaaaa', '123456');
       assertEq(rebind(root, 'PHONE-1', '3', inflight) !== 0, true, 'in_flight 须拒绝');
       assert(errs.join('\n').includes('稍后重试'), 'in_flight 指引须先稍后重试，不得默认立即重登记');
+      // 但**不得只写"稍后重试"**：崩在临界区遗留的 claim 是持久状态、不会自愈
+      //（device-credential-store 文件头），只说重试会让用户永久等待。三处文案须一致：
+      // collectPolicyStatus 的 guidance、本 rebind 出口、device-policy-gate.md。
+      assert(
+        errs.join('\n').includes('持续存在') && errs.join('\n').includes('device:enroll'),
+        `in_flight 须同时给出"持续存在则登记新版本"这条唯一出路：${errs.join('\n')}`,
+      );
 
       // unsupported
       errs.length = 0;
@@ -409,6 +578,70 @@ export function runAll(): UnitCaseResult[] {
     assert(
       /framework\.local\.json|JSON/i.test(r.stderr ?? ''),
       `失败原因须进 stderr 供人排查：${(r.stderr ?? '').slice(0, 200)}`,
+    );
+  });
+
+  run(results, 't1 **进程级**：坏凭据下 JSON 与人读模式一致（configured=true 但 code=unset → 人读 exit 3）', () => {
+    // 事故形态：code 与 configured 解耦后，人读退出码若仍看 configured 就会
+    // 在坏凭据下静默 exit 0——shell 里等于"没事"，与 --json 的 code 自相矛盾。
+    const root = hostWith({
+      // 指向一条**不存在**的凭据（真机凭据库里不会有 PHONE-NOPE），
+      // 用真实 windowsCredentialProvider 走进程级路径：非 Windows 平台
+      // provider.available() 为 false，inspect 会带 error → 走执行失败通道，
+      // 故这条只在 Windows 上断言 unset，其余平台断言"执行失败"形态。
+      unlock: { mode: 'credential', credential_ref: 'maison/device/PHONE-NOPE/v1' },
+    });
+    const script = path.join(__dirname, '..', '..', 'scripts', 'device-policy.ts');
+    const spawn = (args: string[]) =>
+      spawnSync(
+        process.execPath,
+        ['-r', 'ts-node/register/transpile-only', script, ...args, '--project-root', root],
+        { encoding: 'utf-8', cwd: path.join(__dirname, '..', '..'), timeout: 60_000, env: { ...process.env, TS_NODE_TRANSPILE_ONLY: 'true' } },
+      );
+
+    const json = spawn(['--check', '--json']);
+    const human = spawn(['--check']);
+
+    if (process.platform === 'win32') {
+      const parsed = JSON.parse(json.stdout ?? '') as { code?: string; configured?: boolean };
+      assertEq(json.status, 0, '正常态（含 unset）--json 退出码 0');
+      assertEq(parsed.code, 'device_policy_unset', '不存在的凭据 → unset');
+      assertEq(parsed.configured, true, 'configured 仍表示"表达过意图"');
+      assertEq(human.status, 3, `人读模式须以 code 为准 → exit 3（实得 ${human.status}）`);
+      assert(/device_policy_unset/.test(human.stdout ?? ''), '人读须打印 code');
+    } else {
+      // 非 Windows：provider 不可用 → inspect 带 error → 执行失败通道
+      assert(json.status !== 0, `非 Windows 凭据库不可读须非零（实得 ${json.status}）`);
+      let parseable = true;
+      try { JSON.parse(json.stdout ?? ''); } catch { parseable = false; }
+      assertEq(parseable, false, '执行失败时 stdout 不得是合法 JSON');
+      assert(human.status !== 0, '人读模式同样非零');
+    }
+  });
+
+  run(results, 't1 **进程级**：凭据库不可读 → 非零退出 + stdout 无 JSON + stderr 说明"不是未配置"', () => {
+    // 用非 Windows 平台的等价形态无法在 win32 上构造真实 provider 故障，
+    // 因此这条走 collectPolicyStatus 的注入点在上面的单元用例里覆盖；
+    // 进程级这条只钉住"抛出后 main 的出口形态"——用损坏配置触发同一条 catch。
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'device-policy-fail-'));
+    tmpRoots.push(root);
+    fs.writeFileSync(
+      path.join(root, 'framework.config.json'),
+      JSON.stringify({ schema_version: '1.1', project_name: 'T' }),
+      'utf-8',
+    );
+    fs.writeFileSync(path.join(root, 'framework.local.json'), '{ broken', 'utf-8');
+    const script = path.join(__dirname, '..', '..', 'scripts', 'device-policy.ts');
+    const r = spawnSync(
+      process.execPath,
+      ['-r', 'ts-node/register/transpile-only', script, '--check', '--json', '--project-root', root],
+      { encoding: 'utf-8', cwd: path.join(__dirname, '..', '..'), timeout: 60_000, env: { ...process.env, TS_NODE_TRANSPILE_ONLY: 'true' } },
+    );
+    assert(r.status !== 0, `执行失败须非零（实得 ${r.status}）`);
+    assertEq((r.stdout ?? '').trim(), '', '执行失败时 stdout 须为空（不得输出半个 JSON）');
+    assert(
+      !/at\s+\w+\s+\(/.test(r.stderr ?? ''),
+      `失败原因须是人读消息而非裸栈：${(r.stderr ?? '').slice(0, 200)}`,
     );
   });
 

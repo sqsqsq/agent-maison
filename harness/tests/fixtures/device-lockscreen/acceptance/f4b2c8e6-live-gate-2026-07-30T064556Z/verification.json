@@ -27,7 +27,7 @@
   },
   "superseded_by_source_change": {
     "recorded_at": "2026-08-05",
-    "by": "e5d8a2c4 T3（解锁诊断三分类 + 结构化 failureKind 全链贯通 + reveal 后固定间隔重取样）；2026-08-17 f4c8d2b7 t3 再次改动 device-unlock-helper.ts（删 layout_unsupported 首帧早退，所有失败 kind 跑满有界重采样窗口）——current_sha256 已刷新，待复验范围不变",
+    "by": "e5d8a2c4 T3（解锁诊断三分类 + 结构化 failureKind 全链贯通 + reveal 后固定间隔重取样）；2026-08-17 f4c8d2b7 t3 再次改动 device-unlock-helper.ts（删 layout_unsupported 首帧早退，所有失败 kind 跑满有界重采样窗口）；2026-08-17 b3f7d9a2 t2 在 device-readiness-gate.ts 新增普通模式入口适配层 runPhaseEntryDeviceGate（与 goal 适配层共用同一 ensureDeviceReady 核心，未改核心解锁/降级逻辑）——current_sha256 已刷新，待复验范围不变",
     "status": "PENDING_REAL_DEVICE_REVERIFICATION",
     "note": "上面 source_sha256 是 2026-07-30 真机验收当时所验源码的哈希，**不得为迁就代码改动而重写**——那等于伪造真机证据。本次改动后需在真机上重跑同一验收流程并落新记录；在此之前本条证据只证明「旧代码曾在真机上通过」。",
     "new_dependencies_not_covered": [
@@ -38,7 +38,7 @@
       {
         "path": "harness/scripts/utils/device-readiness-gate.ts",
         "verified_sha256": "aeaba9741a737fc0f5972dfabc9acdde4656645636b259a271f88cb6458bb30a",
-        "current_sha256": "074b259eb39bb7046c431bbc495fcf2457649ee86e846bf275f970eb32cedde9"
+        "current_sha256": "60365ea121714063605c2916886ca2552447101003a77c0fe907c3b89128a6b1"
       },
       {
         "path": "harness/scripts/utils/device-readiness-deps.ts",

@@ -132,7 +132,13 @@ entries:
       `npx ts-node scripts/device-policy.ts --check --json`（直接调脚本，`npm run` 会往
       stdout 插 banner）。**判定两段**：退出码 0 **且** stdout 合法 JSON → 看 `code`
       （`device_policy_unset` 属正常结果）；非零 **或** stdout 非合法 JSON → 执行失败
-      （如 framework.local.json 损坏），必须停止并把原因交回用户，不得忽略退出码继续。
+      （如 framework.local.json 损坏、**凭据库不可读**），必须停止并把原因交回用户，
+      不得忽略退出码继续，也**不得**把执行失败当成「未配置」去引导重新登记。
+      **`code` 是唯一处置真源**，不要看 `configured`（后者只表示「表达过意图」）：配置里
+      写了 credential 但凭据已 burned/不存在时，`configured=true` 而 `code=unset`。
+      同理 `emulator_fallback=disabled` 不算可用路径。
+      普通模式另有**进程级**入口门（harness-runner 在需设备 phase 于任何设备操作前自检
+      同一 `code`），所以漏问不会静默跑到锁屏，但门只会 fail-fast——四选一仍须 agent 来问。
     options:
       - value: manual_unlock
         label: "手工解锁 — 人保证设备可用，框架永不碰口令"

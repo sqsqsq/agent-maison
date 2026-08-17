@@ -27,6 +27,7 @@ import {
   type DeviceTargetKind,
   type ManagedProcessIdentity,
 } from './device-session';
+import type { CheckResult } from './types';
 
 export type DeviceReadinessState = 'READY' | 'BLOCKED' | 'AMBIGUOUS';
 
@@ -625,6 +626,216 @@ export async function runDeviceReadinessGate(opts: {
       ...(probe ? { probe } : {}),
     },
     notes: res.notes,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 普通模式入口适配层（b3f7d9a2 t2）
+// ---------------------------------------------------------------------------
+
+/**
+ * 普通模式（`harness-runner --phase ut|testing`）的设备前置。
+ *
+ * 与 `runDeviceReadinessGate`（goal 适配层）**共用同一就绪核心 ensureDeviceReady**，
+ * 只是出口语义不同：goal 侧翻译成 outcome/事件，这里翻译成"前脚本 fail-fast"。
+ *
+ * 为什么必须有这个门（2026-08-17 宿主事故）：
+ *   ① 解锁链的目标解析只认显式 serial / `HARNESS_HDC_TARGET`，而普通模式**没人注入**
+ *      该 env（只有 goal 的就绪门经 deviceEnvFor 注入）；同时 hdc 经 hdcTargetPrefix
+ *      在 env 未设时**隐式选唯一在线设备**。于是 UT 能对设备装机执行，解锁链却
+ *      "不知道对哪台动手"而整体跳过——凭据 ready 也不会被使用。
+ *   ② 普通模式此前只有 SKILL 文档要求跑 `device-policy --check`，无进程级门；
+ *      agent 直跑 hvigor/aa test 就绕过了四选一。
+ *
+ * 契约：**目标只解析一次**，解析结果经 `deviceEnvFor` 注入本进程 env，后续
+ * wake/解锁/`bm dump`/install/`aa test` 全链经 hdcTargetPrefix 共用同一 serial。
+ */
+export interface PhaseEntryDeviceGateDecision {
+  ok: boolean;
+  /** 未通过时的人读原因（调用方原样打印后非零退出，不再调用任何 checker/provider） */
+  reason?: string;
+  notes: string[];
+  /** 通过且本次真的解析了目标时给出；调用方据此注入 env */
+  env?: Record<string, string>;
+  target?: DeviceTarget;
+  /**
+   * 本次托管启动的模拟器（调用方须注册退出回收）。
+   *
+   * **READY 与非 READY 都可能有**：托管实例"起来了但没就绪"（boot 超时/仍锁屏）
+   * 是普通的可执行清理失败路径——丢掉它那个进程就零凭证泄漏。故与 goal 适配层
+   * 同款投影 `orphanManaged`，且调用方必须在任何退出分支**之前**登记回收。
+   */
+  managed?: ManagedProcessIdentity;
+  /** 非 READY 时孤儿实例的 serial（可能为 null：启动失败时就没拿到 serial） */
+  orphanSerial?: string | null;
+  /** true = 命中 goal 已冻结的 attempt 上下文，本门整体让路（零解析、零策略查询） */
+  reusedFrozen?: boolean;
+}
+
+/**
+ * 冻结上下文的判据是**双字段**。
+ *
+ * goal 的就绪门成功时经 `deviceEnvFor` **成组**注入 target/session/frozen；只看
+ * `MAISON_DEVICE_ATTEMPT_FROZEN` 一个字段就让路，等于"手工设一个环境变量即可绕过本门
+ * 并重获隐式设备路径"。故 frozen 但缺 target = 冻结上下文损坏，**fail-closed**。
+ */
+function readFrozenContext(env: NodeJS.ProcessEnv): { frozen: boolean; target: string | null } {
+  return {
+    frozen: env.MAISON_DEVICE_ATTEMPT_FROZEN === '1',
+    target: env.HARNESS_HDC_TARGET?.trim() || null,
+  };
+}
+
+export async function runPhaseEntryDeviceGate(opts: {
+  projectRoot: string;
+  phase: string;
+  /** 注入点：默认读真实 process.env */
+  env?: NodeJS.ProcessEnv;
+  /** 注入点：默认 collectPolicyStatus（可抛 = 策略检查执行失败，由调用方 fail-fast） */
+  policy?: () => { code: 'ok' | 'device_policy_unset'; guidance: string };
+  /** 注入点：默认 buildDeviceReadinessInput(projectRoot) */
+  buildInput?: () => DeviceReadinessInput;
+  /** 注入点：默认 ensureDeviceReady */
+  ensureReady?: (input: DeviceReadinessInput) => Promise<DeviceReadinessResult>;
+  /** 注入点：默认 deviceEnvFor */
+  sessionId?: string;
+}): Promise<PhaseEntryDeviceGateDecision> {
+  const env = opts.env ?? process.env;
+  const notes: string[] = [];
+
+  // ① 冻结优先（双字段）
+  const { frozen, target: envTarget } = readFrozenContext(env);
+  if (frozen) {
+    if (!envTarget) {
+      return {
+        ok: false,
+        notes,
+        reason:
+          '[device] attempt 已标记冻结（MAISON_DEVICE_ATTEMPT_FROZEN=1）却没有 HARNESS_HDC_TARGET——\n' +
+          '  冻结上下文损坏，拒绝继续（不回落"隐式选唯一在线设备"，否则手工设一个环境变量即可绕过设备门）。\n' +
+          '  正常情况下二者由 goal 的设备就绪门成组注入。请清掉该环境变量后重跑，或经 goal 模式启动。',
+      };
+    }
+    notes.push(`复用已冻结的 attempt 目标 ${envTarget}（不重解析、不重查策略）`);
+    return { ok: true, notes, reusedFrozen: true };
+  }
+
+  // ② 策略检查（provider 读失败会抛 → 调用方按"执行失败"停止）
+  const status = opts.policy
+    ? opts.policy()
+    : // eslint-disable-next-line @typescript-eslint/no-require-imports
+      (require('../device-policy') as typeof import('../device-policy')).collectPolicyStatus(opts.projectRoot);
+  if (status.code !== 'ok') {
+    return {
+      ok: false,
+      notes,
+      reason:
+        `[device] 本阶段需要设备，但设备策略不可用（code=${status.code}）。\n` +
+        `${status.guidance}`,
+    };
+  }
+  notes.push('设备策略检查通过（code=ok）');
+
+  // ③ 目标解析 + 就绪：**唯一路径** buildDeviceReadinessInput → ensureDeviceReady。
+  // 显式 env 优先于 config：否则手工设了 HARNESS_HDC_TARGET 而 config 另指一台时，
+  // 解锁链解析到 config 那台、hdc 却用 env 那台——正是本次要消灭的目标分裂。
+  const base = opts.buildInput
+    ? opts.buildInput()
+    : // eslint-disable-next-line @typescript-eslint/no-require-imports
+      (require('./device-readiness-deps') as typeof import('./device-readiness-deps')).buildDeviceReadinessInput(
+        opts.projectRoot,
+      );
+  const input: DeviceReadinessInput = envTarget ? { ...base, configuredSerial: envTarget } : base;
+  const res = await (opts.ensureReady ?? ensureDeviceReady)(input);
+  notes.push(...res.notes);
+
+  if (res.state !== 'READY') {
+    const head =
+      res.state === 'AMBIGUOUS'
+        ? '[device] 设备目标无法唯一确定——停止求人（继续跑等于赌一台别人的手机）。'
+        : '[device] 设备未就绪，已在执行任何设备操作之前阻断。';
+    return {
+      ok: false,
+      notes,
+      // 孤儿托管实例随失败一起交出（与 goal 适配层的 orphanManaged 投影同款）：
+      // 调用方必须先登记回收再退出，否则这个已启动的进程再无回收凭证。
+      ...(res.state === 'BLOCKED' && res.orphanManaged
+        ? { managed: res.orphanManaged, orphanSerial: res.orphanSerial ?? null }
+        : {}),
+      reason:
+        `${head}\n  ${res.reason}\n` +
+        '  修复建议：按上面的具体原因处理（人工解锁 / 稍后重试 / 重新登记凭据 / 配置 device.target_serial ' +
+        '/ 启用已授权的模拟器降级），然后重跑本阶段。',
+    };
+  }
+
+  return {
+    ok: true,
+    notes,
+    // 复用 deviceEnvFor：env 形状**只有一份**。此前 profile 侧手拼字段漏了 settle，
+    // 造成真机恒零等待（见 device-recovery-bridge 头注），不再手拼第二份。
+    env: deviceEnvFor(res.target, opts.sessionId ?? `harness-${opts.phase}-${process.pid}`, input.credentialRef ?? null),
+    target: res.target,
+    ...(res.managed ? { managed: res.managed } : {}),
+  };
+}
+
+/**
+ * 把门产出的冻结上下文**整组原子**应用到一个 env 对象（普通模式：该对象就是
+ * `process.env`）。提成函数是为了让"原子性"能被行为测试直接验证，而不是只靠源码正则。
+ *
+ * 规则：**整组以 `gateEnv` 为准**。
+ * - `MAISON_DEVICE_*` 是本次 attempt 的冻结上下文，应用后 MUST 恰好等于 `gateEnv` 的产出
+ *   ——**未返回的键一律删除**。此前逐键"不存在才写"会留下继承来的陈旧
+ *   `MAISON_DEVICE_CREDENTIAL_REF`，而 `resolveAttemptCredentialRef` 优先取它，于是
+ *   **manual 策略下也会自动输入 PIN**：这是越权路径，不是配置瑕疵。
+ * - `HARNESS_HDC_TARGET` **同样以门返回值为准，不保留旧值**。显式目标的优先级已经在门的
+ *   **输入阶段**兑现（envTarget → configuredSerial），到这一步 `gateEnv` 里的 target 就是
+ *   最终裁决：没降级时它本来就等于显式值；发生**已授权降级**时它是模拟器 serial。
+ *   此前在这里保留旧值，会造出 `HARNESS_HDC_TARGET=离线真机` 与
+ *   `MAISON_DEVICE_TARGET_KIND=emulator` 并存的**目标分裂**——hdc 去操作离线真机，而门与
+ *   testing 封顶都以为目标是模拟器，正是本 change 要消灭的那个形态。
+ */
+export function applyFrozenDeviceEnv(
+  procEnv: NodeJS.ProcessEnv,
+  gateEnv: Record<string, string>,
+): void {
+  for (const k of Object.keys(procEnv)) {
+    if (k.startsWith('MAISON_DEVICE_') && !(k in gateEnv)) delete procEnv[k];
+  }
+  for (const [k, v] of Object.entries(gateEnv)) {
+    procEnv[k] = v;
+  }
+}
+
+/**
+ * 模拟器/未知目标的 testing 结论封顶（harness-gates spec：`target_kind ∈ {emulator,
+ * unknown}` 时 MUST 封顶，MUST NOT 判定整体通过；`unknown` 与模拟器同等处理，禁反向推断）。
+ *
+ * 判据复用既有 `capsTestingConclusion`；归因走既有 `externalBlocked`/`device_blocked`
+ * 通道（环境类可 defer，不是代码回归）。**不依赖 agent 自报**——分类由设备门给出。
+ * 返回 `undefined` = 无需封顶。
+ */
+export function buildTestingTargetKindCap(phase: string, target: DeviceTarget): CheckResult | undefined {
+  if (!capsTestingConclusion(phase, target.targetKind)) return undefined;
+  const isUnknown = target.targetKind === 'unknown';
+  return {
+    id: 'device_target_kind_caps_testing',
+    category: 'structure',
+    description: 'testing 结论不得由模拟器/未知目标冒充真机通过',
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    details:
+      `本次 testing 的设备目标 ${target.serial} 分类为 \`${target.targetKind}\`（非 physical），` +
+      '依 harness-gates 规格**结论封顶**，不得判定整体通过。\n' +
+      (isUnknown
+        ? '  `unknown` = 未能由正面证据确认是真机（禁反向推断），与模拟器同等封顶。'
+        : '  模拟器上的 testing 不能替代真机验收。'),
+    suggestion: isUnknown
+      ? '接入真机并完成 physical attestation 校准后重跑 testing；或如实按模拟器结论对待本轮。'
+      : '接入真机后重跑 testing；模拟器结论只能作为过程证据。',
+    blocking_class: 'externalBlocked',
+    failure_kind: 'device_blocked',
   };
 }
 

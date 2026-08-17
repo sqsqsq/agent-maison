@@ -115,6 +115,17 @@ import { buildSummaryRepairCandidates } from './scripts/utils/repair-candidates'
 import { evaluateConfigPlacementGate } from './scripts/utils/config-placement-gate';
 import { resolvePhasePersonalPrerequisites } from './scripts/utils/phase-personal-prerequisites';
 import { runCapabilityPreflight, emitHarnessPreflightGap } from './scripts/utils/capability-preflight';
+import {
+  applyFrozenDeviceEnv,
+  buildTestingTargetKindCap,
+  runPhaseEntryDeviceGate,
+} from './scripts/utils/device-readiness-gate';
+import { phaseRequiresDevice } from './scripts/utils/phase-device-requirement';
+import {
+  defaultProcessProbe,
+  reclaimManagedDevice,
+  registerManagedDeviceCleanup,
+} from './scripts/utils/device-session';
 import { computeProductWorktreeDigest } from './scripts/utils/worktree-digest';
 import {
   isAgentSideGoalHarness,
@@ -529,6 +540,97 @@ async function main(): Promise<void> {
     }
   }
 
+  // ==========================================================================
+  // 普通模式设备前置（b3f7d9a2 t2）——排在 Step 2 之前，即**任何设备操作之前**
+  //
+  // 事故（2026-08-17 宿主）：普通模式 UT 撞上锁屏，自动解锁链从未启动。两条根因都在
+  // 这里收口：① 解锁链的目标解析只认 `HARNESS_HDC_TARGET`，而普通模式没人注入它，
+  // hdc 却隐式选唯一在线设备 → 解锁链"不知道对哪台动手"整体跳过；② 普通模式的
+  // `device-policy --check` + 四选一只有 SKILL 文档约束，无进程级门。
+  //
+  // 与 goal 侧共用**同一就绪核心**（ensureDeviceReady），此处只做出口翻译：
+  // 未通过 = 前脚本 fail-fast（打印 guidance + 非零退出，**不调用任何 checker/provider**）。
+  // 通过则把解析到的目标经 deviceEnvFor 注入本进程 env，后续 wake/解锁/bm dump/
+  // install/aa test 全链经 hdcTargetPrefix 共用同一 serial（目标只解析一次）。
+  //
+  // 写 process.env 与 deviceEnvFor 头注"不写全局 process.env"不冲突：那条约束防的是
+  // **长驻的 goal-runner** 跨 phase/run 串 target；此处进程生命周期**就是**单个 phase。
+  // ==========================================================================
+  /**
+   * 模拟器/未知目标的 testing 结论封顶（Step 2 之后与其它 CheckResult 一并入账）。
+   * 在门这里生成、稍后 push——目标分类只有门知道，而 checks 数组要到 Step 2 才存在。
+   */
+  let deviceConclusionCap: CheckResult | undefined;
+  if (phaseRequiresDevice(phase, resolvedProfile)) {
+    {
+      let gate;
+      try {
+        gate = await runPhaseEntryDeviceGate({ projectRoot, phase });
+      } catch (err) {
+        // 策略检查/就绪核心自身执行失败（凭据库不可读、配置损坏…）：与
+        // `device_policy_unset`（正常态）严格区分——必须停止，不得当成"未配置"
+        // 去引导用户重新登记凭据。
+        console.error(`   ✗ 设备策略检查执行失败：${(err as Error).message.replace(/\n/g, '\n     ')}`);
+        process.exit(1);
+      }
+      for (const n of gate.notes) console.log(`   · [device] ${n}`);
+      // **回收登记必须早于任何退出分支**（codex 二轮 P1）：托管模拟器"起来了但没就绪"
+      // （boot 超时/仍锁屏）是**普通、可执行清理的失败路径**，不是 SIGKILL 边界。
+      // 此前把这段放在 `!gate.ok` 之后，那个实例会零凭证泄漏。
+      if (gate.managed) {
+        // 普通模式的设备生命周期**就是本进程**，故身份留在内存、退出即回收，不落
+        // device-session.json（单文件 session + 跨 run 对账是 goal 的模型，normal
+        // 模式没有 run 目录也没有对账方，写了也无人消费）。
+        // **诚实边界**：进程被硬杀（SIGKILL/断电）留下的孤儿实例，普通模式没有兜底
+        // 对账，需用户手动关闭——goal 模式才有下次启动对账那张网。
+        const identity = gate.managed;
+        const serial = gate.target?.serial ?? gate.orphanSerial ?? null;
+        registerManagedDeviceCleanup(() => {
+          const out = reclaimManagedDevice(
+            {
+              schema_version: '1.0',
+              serial,
+              target_kind: 'emulator',
+              started_by_run: `harness-${phase}-${process.pid}`,
+              managed: identity,
+              status: gate.ok ? 'ready' : 'failed',
+              updated_at: new Date().toISOString(),
+            },
+            defaultProcessProbe(),
+          );
+          if (out.action === 'reclaimed') {
+            console.log(`[device] 退出：已回收本次托管启动的模拟器（pid=${out.pid}）`);
+          } else if (out.action === 'refused') {
+            console.error(
+              `[device] 退出：托管模拟器未能回收（${out.reason}）——请手动结束 pid=${identity.pid}`,
+            );
+          }
+        });
+      }
+      if (!gate.ok) {
+        console.error(`   ✗ ${(gate.reason ?? '设备前置未通过').replace(/\n/g, '\n     ')}`);
+        process.exit(1);
+      }
+      if (gate.env) {
+        // **整组原子注入**（codex 二轮 P0 + 三轮 P1）：逐键"不存在才写"会留下继承来的
+        // 陈旧 MAISON_DEVICE_CREDENTIAL_REF（manual 策略下被运行期优先取用 → 自动输 PIN）；
+        // 保留旧 HARNESS_HDC_TARGET 则会在已授权降级后造出"hdc 操作离线真机、门以为是
+        // 模拟器"的目标分裂。规则与理由见 applyFrozenDeviceEnv（提成函数以便行为测试）。
+        applyFrozenDeviceEnv(process.env, gate.env);
+        console.log(`   ✓ 设备目标已解析并注入：${process.env.HARNESS_HDC_TARGET}`);
+      }
+      // 模拟器/未知目标上的 testing **不得冒充真机整体通过**（harness-gates spec）。
+      // 既有封顶判据只在 goal-runner 被消费；普通模式此前根本没有 target kind 可用，
+      // 新门产出后直接复用同一函数，不依赖 agent 自报。
+      if (gate.target) {
+        deviceConclusionCap = buildTestingTargetKindCap(phase, gate.target);
+        if (deviceConclusionCap) {
+          console.log(`   ⚠ [device] testing 结论将被封顶（target_kind=${gate.target.targetKind}，非 physical）`);
+        }
+      }
+    }
+  }
+
   // Step 2: 运行脚本 Harness
   console.log('\n🔧 Step 2: 运行脚本 Harness...');
   const fwConfig = fwConfigEarly;
@@ -737,6 +839,10 @@ async function main(): Promise<void> {
   );
 
   checks.push(...(await emitLifecycle('post_check', { checkScript: `check-${phase}.ts` })));
+
+  // 设备目标分类导致的 testing 结论封顶：与 checker 事实同账，参与 violations/报告/退出码。
+  // 由入口设备门产出（只有它知道 target_kind），不依赖 agent 自报。
+  if (deviceConclusionCap) checks.push(deviceConclusionCap);
 
   const violations = checks.filter(
     c => c.status === 'FAIL' && (c.severity === 'BLOCKER' || c.severity === 'MAJOR'),

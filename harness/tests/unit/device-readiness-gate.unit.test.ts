@@ -4,10 +4,14 @@
 // ============================================================================
 
 import {
+  applyFrozenDeviceEnv,
+  buildTestingTargetKindCap,
   deviceEnvFor,
   ensureDeviceReady,
   runDeviceReadinessGate,
+  runPhaseEntryDeviceGate,
   type DeviceReadinessDeps,
+  type DeviceReadinessInput,
   type DeviceReadinessResult,
   type EmulatorFallback,
 } from '../../scripts/utils/device-readiness-gate';
@@ -612,6 +616,389 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     const attemptEvent = events.find(e => e.type === 'device_unlock_attempt');
     assertEq(attemptEvent?.failure_kind, 'credential_unavailable', '事件须带结构化归因');
     assertEq(attemptEvent?.serial, 'phone-1', '失败事件同样须带 serial（此前非 READY 分支根本不写）');
+  });
+
+  // ==========================================================================
+  // b3f7d9a2 t2：普通模式入口设备前置（目标只解析一次，全链共用）
+  //
+  // 事故（2026-08-17 宿主）：普通模式 UT 撞锁屏，自动解锁链从未启动——解锁链只认
+  // HARNESS_HDC_TARGET 而普通模式没人注入，hdc 却隐式选唯一在线设备。
+  // ==========================================================================
+
+  /** 入口门夹具：策略与就绪核心都可注入，用于断言"零调用"这类否定命题 */
+  function entryBench(opts: {
+    policyCode?: 'ok' | 'device_policy_unset';
+    policyThrows?: string;
+    result?: DeviceReadinessResult;
+    input?: Partial<DeviceReadinessInput>;
+  }) {
+    const calls = { policy: 0, ensure: 0, inputs: [] as DeviceReadinessInput[] };
+    const base: DeviceReadinessInput = {
+      configuredSerial: null,
+      credentialRef: 'maison/device/dev-1/v1',
+      emulatorFallback: 'disabled',
+      deps: { listTargets: () => ['dev-1'], isLocked: () => false, wake: () => {} },
+      ...opts.input,
+    };
+    return {
+      calls,
+      args: {
+        projectRoot: '/tmp/does-not-matter',
+        phase: 'ut',
+        policy: () => {
+          calls.policy += 1;
+          if (opts.policyThrows) throw new Error(opts.policyThrows);
+          return { code: opts.policyCode ?? 'ok', guidance: '四选一：① 手工解锁 …' } as const;
+        },
+        buildInput: () => base,
+        ensureReady: async (input: DeviceReadinessInput) => {
+          calls.ensure += 1;
+          calls.inputs.push(input);
+          return (
+            opts.result ?? { state: 'READY' as const, target: { serial: 'dev-1', targetKind: 'physical' as const }, notes: ['ok'] }
+          );
+        },
+      },
+    };
+  }
+
+  await run(results, 't2 冻结上下文判据是**双字段**：frozen+target → 复用，零重解析零重查策略', async () => {
+    const b = entryBench({});
+    const d = await runPhaseEntryDeviceGate({
+      ...b.args,
+      env: { MAISON_DEVICE_ATTEMPT_FROZEN: '1', HARNESS_HDC_TARGET: 'goal-phone' },
+    });
+    assertEq(d.ok, true, 'goal 已冻结的 attempt 须放行');
+    assertEq(d.reusedFrozen, true, '须标记为复用冻结上下文');
+    assertEq(d.env, undefined, '复用时不得再产出 env 片段（目标已注入）');
+    assertEq(b.calls.policy, 0, '**不得**重查策略（attempt 已冻结）');
+    assertEq(b.calls.ensure, 0, '**不得**重解析目标');
+    assert(d.notes.join(' ').includes('goal-phone'), 'note 须记录复用的目标');
+  });
+
+  await run(results, 't2 **只有 frozen 没有 target → fail-closed**（否则手工设一个 env 就能绕过设备门）', async () => {
+    const b = entryBench({});
+    const d = await runPhaseEntryDeviceGate({
+      ...b.args,
+      env: { MAISON_DEVICE_ATTEMPT_FROZEN: '1' },
+    });
+    assertEq(d.ok, false, '冻结上下文损坏必须阻断');
+    assert(/冻结上下文损坏/.test(d.reason ?? ''), `须点名冻结上下文损坏：${d.reason}`);
+    assert(/隐式/.test(d.reason ?? ''), '须说明不回落隐式选设备');
+    assertEq(b.calls.ensure, 0, 'fail-closed 时不得去解析目标');
+    assertEq(b.calls.policy, 0, 'fail-closed 时不得继续查策略');
+  });
+
+  await run(results, 't2 策略 unset → fail-fast：原文透传 guidance，且**零就绪调用**（不碰设备）', async () => {
+    const b = entryBench({ policyCode: 'device_policy_unset' });
+    const d = await runPhaseEntryDeviceGate({ ...b.args, env: {} });
+    assertEq(d.ok, false, 'unset 必须阻断');
+    assert(/device_policy_unset/.test(d.reason ?? ''), '须带上 code');
+    assert(/四选一/.test(d.reason ?? ''), 'guidance 须原文透传（四选一文案 SSOT 在 device-policy）');
+    assertEq(b.calls.ensure, 0, '**零就绪调用**：策略没配好就不该唤醒/解锁任何设备');
+  });
+
+  await run(results, 't2 策略检查执行失败（凭据库不可读）→ 抛出，由调用方停止（既不 ok 也不 unset）', async () => {
+    const b = entryBench({ policyThrows: '[device-policy] 凭据库不可读（vault down）' });
+    let thrown: Error | null = null;
+    try {
+      await runPhaseEntryDeviceGate({ ...b.args, env: {} });
+    } catch (e) {
+      thrown = e as Error;
+    }
+    assert(thrown !== null, '执行失败须抛出，不得降级成任何 code');
+    assert(/凭据库不可读/.test(thrown!.message), `须原样带上原因：${thrown!.message}`);
+    assertEq(b.calls.ensure, 0, '执行失败时不得碰设备');
+  });
+
+  await run(results, 't2 显式 env 目标**优先于** config（否则解锁 A、hdc 操作 B）', async () => {
+    const b = entryBench({ input: { configuredSerial: 'config-phone' } });
+    const d = await runPhaseEntryDeviceGate({ ...b.args, env: { HARNESS_HDC_TARGET: 'env-phone' } });
+    assertEq(d.ok, true, '应通过');
+    assertEq(b.calls.inputs[0]?.configuredSerial, 'env-phone', 'env 指定的目标须覆盖 config，避免目标分裂');
+  });
+
+  await run(results, 't2 未设 env 时用 config/单台在线的解析结果，并产出 deviceEnvFor 完整片段', async () => {
+    const b = entryBench({ input: { configuredSerial: 'config-phone' } });
+    const d = await runPhaseEntryDeviceGate({ ...b.args, env: {}, sessionId: 'sess-entry' });
+    assertEq(b.calls.inputs[0]?.configuredSerial, 'config-phone', '无 env 时按 config 解析');
+    assertEq(d.env?.HARNESS_HDC_TARGET, 'dev-1', '解析到的目标须进 env 片段');
+    assertEq(d.env?.MAISON_DEVICE_TARGET_KIND, 'physical', 'kind 须一并注入');
+    assertEq(d.env?.MAISON_DEVICE_SESSION_ID, 'sess-entry', 'session id 须注入');
+    // 复用 deviceEnvFor 的证据：冻结标记与凭据引用都在（手拼片段曾漏字段导致真机恒零等待）
+    assertEq(d.env?.MAISON_DEVICE_ATTEMPT_FROZEN, '1', '须带冻结标记（防运行期回落读实时配置提权）');
+    assertEq(d.env?.MAISON_DEVICE_CREDENTIAL_REF, 'maison/device/dev-1/v1', '须冻结本次凭据引用');
+  });
+
+  await run(results, 't2 BLOCKED / AMBIGUOUS 都 fail-fast，且原因指向"处理环境"而非改代码', async () => {
+    const blocked = entryBench({
+      result: { state: 'BLOCKED', reason: '设备 dev-1 仍处于锁屏', notes: ['wake(dev-1)'] },
+    });
+    const b1 = await runPhaseEntryDeviceGate({ ...blocked.args, env: {} });
+    assertEq(b1.ok, false, 'BLOCKED 须阻断');
+    assert(/仍处于锁屏/.test(b1.reason ?? ''), '须带上核心给出的具体原因');
+    assert(/任何设备操作之前/.test(b1.reason ?? ''), '须说明是在设备操作前阻断');
+    assert(b1.notes.includes('wake(dev-1)'), '核心 notes 须透传（供事故日志裁决）');
+
+    const ambiguous = entryBench({
+      result: {
+        state: 'AMBIGUOUS',
+        reason: '检测到多个设备（a, b）且未配置 target_serial，无法唯一确定目标',
+        notes: [],
+      },
+    });
+    const b2 = await runPhaseEntryDeviceGate({ ...ambiguous.args, env: {} });
+    assertEq(b2.ok, false, 'AMBIGUOUS 须阻断');
+    assert(/赌一台/.test(b2.reason ?? ''), '多设备须明确"不赌"');
+    assert(/target_serial/.test(b2.reason ?? ''), '须指向配置 target_serial');
+  });
+
+  await run(results, 't2 config 目标离线：无 fallback → 阻断；已授权 existing → 走降级（绝不隐式换设备）', async () => {
+    // 真实核心（不注入 ensureReady），用可编程 deps 造"配置目标不在线"
+    const offlineNoFallback = await ensureDeviceReady({
+      configuredSerial: 'config-phone',
+      emulatorFallback: 'disabled',
+      deps: { listTargets: () => ['other-phone'], isLocked: () => false, wake: () => {} },
+    });
+    assertEq(offlineNoFallback.state, 'BLOCKED', '配置目标离线且无降级 → 阻断');
+    const entryBlocked = await runPhaseEntryDeviceGate({
+      projectRoot: '/tmp/x',
+      phase: 'ut',
+      env: {},
+      policy: () => ({ code: 'ok', guidance: '设备策略已配置' }),
+      buildInput: () => ({
+        configuredSerial: 'config-phone',
+        emulatorFallback: 'disabled',
+        deps: { listTargets: () => ['other-phone'], isLocked: () => false, wake: () => {} },
+      }),
+    });
+    assertEq(entryBlocked.ok, false, '**绝不**跳过检查后让 hdc 隐式选中 other-phone');
+    assert(
+      !JSON.stringify(entryBlocked.env ?? {}).includes('other-phone'),
+      '阻断时不得把在线的另一台设备当作目标注入',
+    );
+
+    // 已授权 existing：复用用户已开的模拟器
+    const withFallback = await runPhaseEntryDeviceGate({
+      projectRoot: '/tmp/x',
+      phase: 'ut',
+      env: {},
+      policy: () => ({ code: 'ok', guidance: '设备策略已配置' }),
+      buildInput: () => ({
+        configuredSerial: 'config-phone',
+        emulatorFallback: 'existing',
+        deps: {
+          listTargets: () => ['127.0.0.1:5555'],
+          isLocked: () => false,
+          wake: () => {},
+          knownEmulatorSerials: () => ['127.0.0.1:5555'],
+        },
+      }),
+    });
+    assertEq(withFallback.ok, true, '已授权 existing 降级须放行');
+    assertEq(withFallback.env?.HARNESS_HDC_TARGET, '127.0.0.1:5555', '降级目标须注入');
+    assertEq(withFallback.env?.MAISON_DEVICE_TARGET_KIND, 'emulator', '降级目标分类为 emulator');
+  });
+
+  await run(results, 't2 harness-runner 接线：需设备 phase 才起门 / 冻结不二次处理 / env 已设不覆盖', async () => {
+    const fsMod = await import('fs');
+    const pathMod = await import('path');
+    const src = fsMod.readFileSync(pathMod.join(__dirname, '..', '..', 'harness-runner.ts'), 'utf-8');
+    assert(
+      /phaseRequiresDevice\(phase, resolvedProfile\)/.test(src),
+      '入口门须由 phaseRequiresDevice 派生（不得硬编码 phase 名）',
+    );
+    assert(/await runPhaseEntryDeviceGate\(/.test(src), '须调用入口门');
+    // 门必须排在 Step 2（脚本 harness=设备操作发生地）之前
+    const gateIdx = src.indexOf('runPhaseEntryDeviceGate(');
+    const stepTwoIdx = src.indexOf("console.log('\\n🔧 Step 2");
+    assert(gateIdx > 0 && stepTwoIdx > 0, '两个锚点都须存在');
+    assert(gateIdx < stepTwoIdx, '设备前置必须排在 Step 2 脚本 harness 之前（任何设备操作之前）');
+    // env 注入与 testing 封顶都走**生产函数**（行为由下面独立用例验证，此处只钉接线）
+    assert(
+      /applyFrozenDeviceEnv\(process\.env, gate\.env\)/.test(src),
+      'env 注入须走 applyFrozenDeviceEnv（原子整组，不得逐键"不存在才写"）',
+    );
+    assert(
+      !/if \(!process\.env\[k\]\) process\.env\[k\] = v/.test(src),
+      '不得逐键"不存在才写"——那会把陈旧的冻结上下文留在 env 里',
+    );
+    assert(
+      /buildTestingTargetKindCap\(phase, gate\.target\)/.test(src),
+      'testing 封顶须走 buildTestingTargetKindCap（复用既有 capsTestingConclusion 判据）',
+    );
+    assert(
+      /if \(deviceConclusionCap\) checks\.push\(deviceConclusionCap\)/.test(src),
+      '封顶结果须入 checks 账（参与 violations/报告/退出码），否则等于没封',
+    );
+    // 托管实例必须注册回收，且**早于**任何退出分支
+    assert(/registerManagedDeviceCleanup\(/.test(src), '托管模拟器须注册退出回收，否则进程泄漏');
+    const cleanupIdx = src.indexOf('registerManagedDeviceCleanup(');
+    const exitIdx = src.indexOf("console.error(`   ✗ ${(gate.reason");
+    assert(cleanupIdx > 0 && exitIdx > 0, '两个锚点都须存在');
+    assert(
+      cleanupIdx < exitIdx,
+      '回收登记必须排在 !gate.ok 的退出分支之前——托管实例"起来了但没就绪"是普通失败路径，晚登记即泄漏',
+    );
+    // 编译跳过 flag 不得用来免除设备门：UT 的真机执行只受 HARNESS_SKIP_HVIGOR_TEST 控制，
+    // testing 更完全不认这个编译 flag——用它让路等于门形同虚设。
+    assert(
+      !/HARNESS_SKIP_HVIGOR\b/.test(src),
+      'harness-runner 不得用 HARNESS_SKIP_HVIGOR 免除设备门（它只跳过编译，装机/跑机照旧）',
+    );
+    // 执行失败与 unset 须走不同出口
+    assert(
+      /设备策略检查执行失败/.test(src),
+      '策略检查执行失败须与 device_policy_unset 分开报告（不得引导重新登记）',
+    );
+  });
+
+  await run(results, 't2-fix P0 冻结上下文整组原子注入：陈旧 CREDENTIAL_REF 必须被删除（manual 策略不得自动输 PIN）', async () => {
+    // 事故形态：进程继承了上一次/别处的 MAISON_DEVICE_CREDENTIAL_REF，本次策略是 manual
+    //（deviceEnvFor 不返回 ref）。逐键"不存在才写"会把旧 ref 留下，而
+    // resolveAttemptCredentialRef 优先取它 → manual 策略下也会自动输入 PIN（越权）。
+    const procEnv: NodeJS.ProcessEnv = {
+      MAISON_DEVICE_CREDENTIAL_REF: 'maison/device/OLD-PHONE/v9',
+      MAISON_DEVICE_SESSION_ID: 'stale-session',
+      MAISON_DEVICE_TARGET_KIND: 'physical',
+      UNRELATED_VAR: 'keep-me',
+    };
+    const manualEnv = deviceEnvFor({ serial: 'dev-1', targetKind: 'emulator' }, 'fresh-session');
+    assertEq(manualEnv.MAISON_DEVICE_CREDENTIAL_REF, undefined, '前提：manual 策略不产出 ref');
+    applyFrozenDeviceEnv(procEnv, manualEnv);
+    assertEq(
+      procEnv.MAISON_DEVICE_CREDENTIAL_REF, undefined,
+      '**陈旧 ref 必须被删除**——留着就是"手工策略却自动输入 PIN"的越权路径',
+    );
+    assertEq(procEnv.MAISON_DEVICE_SESSION_ID, 'fresh-session', '陈旧 session 须被本次覆盖');
+    assertEq(procEnv.MAISON_DEVICE_TARGET_KIND, 'emulator', '陈旧 kind 须被本次覆盖');
+    assertEq(procEnv.MAISON_DEVICE_ATTEMPT_FROZEN, '1', '冻结标记须注入');
+    assertEq(procEnv.HARNESS_HDC_TARGET, 'dev-1', '目标须注入');
+    assertEq(procEnv.UNRELATED_VAR, 'keep-me', '非 MAISON_DEVICE_* 的键不得被动到');
+
+    // 已授权时 ref 如实注入
+    const authed: NodeJS.ProcessEnv = {};
+    applyFrozenDeviceEnv(
+      authed,
+      deviceEnvFor({ serial: 'dev-1', targetKind: 'physical' }, 's2', 'maison/device/dev-1/v1'),
+    );
+    assertEq(authed.HARNESS_HDC_TARGET, 'dev-1', '空白 target 须被写入');
+    assertEq(authed.MAISON_DEVICE_CREDENTIAL_REF, 'maison/device/dev-1/v1', '已授权时 ref 须注入');
+
+    // **HARNESS_HDC_TARGET 同样以门返回值为准**：显式目标的优先级在门的**输入阶段**
+    // 已兑现，这里保留旧值会造成目标分裂（见下一条用例的端到端复现）。
+    const stale: NodeJS.ProcessEnv = { HARNESS_HDC_TARGET: 'phone-offline' };
+    applyFrozenDeviceEnv(stale, deviceEnvFor({ serial: 'emu-x', targetKind: 'emulator' }, 's3'));
+    assertEq(stale.HARNESS_HDC_TARGET, 'emu-x', '门解析出的目标须覆盖旧值（否则 target 分裂）');
+    assertEq(stale.MAISON_DEVICE_TARGET_KIND, 'emulator', 'kind 与 target 必须同源');
+  });
+
+  await run(results, 't2-fix P1 显式真机离线 → 已授权降级：最终 env 的 target 必须是模拟器 serial（不得与 kind 分裂）', async () => {
+    // 事故形态（codex 三轮 P1，已在真实代码上复现）：显式 HARNESS_HDC_TARGET 指向离线真机，
+    // 门按授权降级到模拟器后，若注入时保留旧 target，就得到
+    //   HARNESS_HDC_TARGET=phone-offline + MAISON_DEVICE_TARGET_KIND=emulator
+    // ——hdc 去操作离线真机，而门与 testing 封顶都以为目标是模拟器。
+    const procEnv: NodeJS.ProcessEnv = { HARNESS_HDC_TARGET: 'phone-offline' };
+    const d = await runPhaseEntryDeviceGate({
+      projectRoot: '/tmp/x',
+      phase: 'testing',
+      env: procEnv,
+      policy: () => ({ code: 'ok', guidance: '设备策略已配置' }),
+      buildInput: () => ({
+        configuredSerial: null,
+        emulatorFallback: 'existing',
+        deps: {
+          listTargets: () => ['127.0.0.1:5555'],
+          isLocked: () => false,
+          wake: () => {},
+          knownEmulatorSerials: () => ['127.0.0.1:5555'],
+        },
+      }),
+    });
+    assertEq(d.ok, true, '已授权 existing 降级须放行');
+    // 显式目标的优先级在**输入阶段**兑现：门确实拿 phone-offline 去解析，发现离线才降级
+    assert(d.notes.join(' ').includes('phone-offline'), '门须记录"显式目标不在线"这一事实');
+    assertEq(d.target?.serial, '127.0.0.1:5555', '门的裁决是模拟器');
+    applyFrozenDeviceEnv(procEnv, d.env!);
+    assertEq(
+      procEnv.HARNESS_HDC_TARGET, '127.0.0.1:5555',
+      '**最终 env 的 target 必须是降级目标**——否则 hdc 操作离线真机而门以为是模拟器',
+    );
+    assertEq(procEnv.MAISON_DEVICE_TARGET_KIND, 'emulator', 'kind 与 target 同源');
+    // 封顶判据与最终目标一致（testing 在模拟器上不得整体通过）
+    const cap = buildTestingTargetKindCap('testing', d.target!);
+    assert(!!cap && cap.details.includes('127.0.0.1:5555'), '封顶须指向真正被使用的那个目标');
+  });
+
+  await run(results, 't2-fix P1 托管实例启动后未就绪 → orphan 随失败一起交出（可执行清理路径不得泄漏）', async () => {
+    const identity = {
+      pid: 9911,
+      startedAtMs: 1_700_000_000_111,
+      executable: 'C:/DevEco/tools/emulator/Emulator.exe',
+      profile: 'Pura 90',
+    };
+    const d = await runPhaseEntryDeviceGate({
+      projectRoot: '/tmp/x',
+      phase: 'ut',
+      env: {},
+      policy: () => ({ code: 'ok', guidance: '设备策略已配置' }),
+      buildInput: () => ({
+        configuredSerial: null,
+        emulatorFallback: 'managed',
+        deps: { listTargets: () => [], isLocked: () => false, wake: () => {} },
+      }),
+      ensureReady: async () => ({
+        state: 'BLOCKED',
+        reason: '模拟器 emu-x 启动后未在预算内就绪',
+        notes: ['launch(emu-x)'],
+        orphanManaged: identity,
+        orphanSerial: 'emu-x',
+      }),
+    });
+    assertEq(d.ok, false, '未就绪须阻断');
+    assertEq(d.managed?.pid, identity.pid, '**孤儿托管身份必须随失败交出**，否则该进程零回收凭证');
+    assertEq(d.orphanSerial, 'emu-x', 'orphan serial 须一并交出');
+  });
+
+  await run(results, 't2-fix P1 testing 封顶：emulator/unknown 必须封顶且走 externalBlocked，physical 与 ut 不封顶', async () => {
+    const emu = buildTestingTargetKindCap('testing', { serial: '127.0.0.1:5555', targetKind: 'emulator' });
+    assert(!!emu, '模拟器上的 testing 必须封顶');
+    assertEq(emu!.status, 'FAIL', '封顶须是 FAIL（不得整体通过）');
+    assertEq(emu!.severity, 'BLOCKER', '须 BLOCKER');
+    assertEq(emu!.blocking_class, 'externalBlocked', '走既有外部阻断通道（环境类可 defer）');
+    assertEq(emu!.failure_kind, 'device_blocked', '归因复用既有 device_blocked');
+    assert(emu!.details.includes('127.0.0.1:5555'), '须点名具体目标');
+
+    const unknown = buildTestingTargetKindCap('testing', { serial: 'phone-x', targetKind: 'unknown' });
+    assert(!!unknown, 'unknown 与模拟器同等封顶（禁反向推断为真机）');
+    assert(unknown!.details.includes('禁反向推断'), 'unknown 须说明禁反向推断');
+    assert(unknown!.suggestion!.includes('attestation'), 'unknown 须指向真机 attestation 校准');
+
+    assertEq(
+      buildTestingTargetKindCap('testing', { serial: 'phone-1', targetKind: 'physical' }), undefined,
+      '真机 testing 不封顶',
+    );
+    assertEq(
+      buildTestingTargetKindCap('ut', { serial: '127.0.0.1:5555', targetKind: 'emulator' }), undefined,
+      'ut 允许在模拟器上 PASS（既有语义不得被改宽或改严）',
+    );
+  });
+
+  await run(results, 't2 bridge 收缩：只消费已注入的目标，**不得**自建第三套解析（不读 config）', async () => {
+    const fsMod = await import('fs');
+    const pathMod = await import('path');
+    const bridge = pathMod.join(
+      __dirname, '..', '..', '..', 'profiles', 'hmos-app', 'harness', 'device-recovery-bridge.ts',
+    );
+    const src = fsMod.readFileSync(bridge, 'utf-8');
+    assert(
+      !/resolveConfiguredSerial|loadLocalConfig|target_serial/.test(src),
+      'bridge 不得自行从 config 解析目标——目标只在入口解析一次（否则"解锁 A、hdc 操作 B"）',
+    );
+    assert(
+      /HARNESS_HDC_TARGET/.test(src),
+      'bridge 仍消费入口注入的 HARNESS_HDC_TARGET',
+    );
   });
 
   return results;

@@ -5,8 +5,11 @@
 // ----------------------------------------------------------------------------
 // 两个子命令：
 //   --check --json   机器可读的策略状态。**由主 agent 在启动 detached runner 之前**跑；
-//                    未配置时输出 device_policy_unset，交互层据此询问四选一。
+//                    无可用设备路径时输出 device_policy_unset，交互层据此询问四选一。
 //                    本命令**不读 stdin、不弹交互**（与 capability-preflight 同款纪律）。
+//                    三态严格区分：`ok`（有可用路径）/ `device_policy_unset`（正常态，
+//                    去问用户）/ **执行失败**（非零退出 + stdout 无 JSON：配置损坏、
+//                    凭据库不可读——调用方必须停止，不得当成"未配置"去引导重新登记）。
 //   --enroll         凭据登记。**必须在用户控制的真实 TTY 上运行**：口令经 TTY 隐藏
 //                    输入 → 直接写入 OS 凭据库，全程不进 argv / env / pipe / agent stdin。
 //
@@ -29,7 +32,12 @@ import {
   type CredentialState,
 } from './utils/device-credential-store';
 
-interface PolicyStatus {
+export interface PolicyStatus {
+  /**
+   * 「是否**表达过**策略意图」。**不是处置真源**——坏凭据下可以
+   * `configured=true` 同时 `code=device_policy_unset`（表达过 ≠ 当前有可用能力）。
+   * 消费方（gate、人读退出码）一律看 `code`。
+   */
   configured: boolean;
   unlock_mode: 'manual' | 'credential' | null;
   emulator_fallback: 'disabled' | 'existing' | 'managed' | null;
@@ -39,6 +47,44 @@ interface PolicyStatus {
   credential_state: CredentialState | null;
   code: 'ok' | 'device_policy_unset';
   guidance: string;
+}
+
+/**
+ * 可用的模拟器降级档位。**`disabled` 不算**——它是"明确不降级"的表达，
+ * 不能拿来掩盖一条坏掉的解锁凭据（否则 credential 不可用 + disabled 会被算成"已配置"）。
+ */
+const USABLE_EMULATOR_FALLBACKS: ReadonlySet<string> = new Set(['existing', 'managed']);
+
+/** 四选一（未配置/凭据不可用时都用同一份文案，SSOT 只此一处） */
+const FOUR_CHOICE_GUIDANCE = [
+  '请向用户询问四选一：',
+  '  ① 手工解锁（人工保证设备可用；框架不碰口令）',
+  '  ② 启用自动解锁 → 在**用户自己的终端**运行：npx ts-node scripts/device-policy.ts --enroll --serial <序列号>（登记后设备阶段由框架自动解锁，PIN 全程不经对话与 agent）',
+  '  ③ 允许模拟器降级（existing 复用已开实例 / managed 由框架起停）',
+  '  ④ 本次停止',
+  '注意：口令只能在真实 TTY 中输入，**绝不要**让用户把口令发到对话里。',
+  '若凭据**已登记过**（OS 凭据库里已有 `MaisonDeviceUnlock:<serial>:v<N>`），只是 framework.local.json 里的引用丢失，',
+  '可**复用已登记凭据**恢复引用，无需重输 PIN：npx ts-node scripts/device-policy.ts --rebind --serial <序列号> --version <N>',
+  '（版本 N 看 enroll 输出回显，或凭据管理器的非秘密 target 名；含 `#burned` 后缀者为墓碑不可用）。',
+  'rebind 只允许 `ready` 状态的凭据，**不枚举版本、不选最高、不回退旧版本**。',
+].join('\n');
+
+/**
+ * `credential` 模式下"凭据不可用"的首行说明——让 agent 不必再猜该 enroll 还是 rebind。
+ * 与 rebind 的状态映射同源（device-policy rebind 的 switch）。
+ */
+function credentialUnusableHeadline(state: CredentialState | null, ref: string | null): string {
+  if (!ref) {
+    return '已选「启用自动解锁」但**配置里没有凭据引用**（credential_ref 缺失）——凭据本体可能仍在 OS 凭据库里，优先用下面的 rebind 恢复引用。';
+  }
+  switch (state) {
+    case 'burned':
+      return '已登记的凭据版本**已因失败被永久禁用（burned）**——须重新登记生成新版本，rebind 不接受墓碑。';
+    case 'unsupported':
+      return '已登记的凭据**形态不受支持**（仅支持 4–16 位数字 PIN）——须重新登记。';
+    default:
+      return '已选「启用自动解锁」但引用指向的凭据**不存在**（未登记，或此前失败后已被烧毁）——须登记，或用下面的 rebind 指向一条已登记的 `ready` 版本。';
+  }
 }
 
 function resolveProjectRoot(): string {
@@ -59,11 +105,69 @@ export function collectPolicyStatus(
   let credentialState: PolicyStatus['credential_state'] = null;
   if (mode === 'credential' && ref) {
     const id = parseCredentialRef(ref);
-    credentialState = id ? provider.inspect(id).state : 'absent';
+    if (!id) {
+      // ref 非法（手改配置写坏）= 指不到任何凭据，与"未登记"同处置
+      credentialState = 'absent';
+    } else {
+      const read = provider.inspect(id);
+      if (read.error) {
+        // **策略检查自身执行失败**，不是"未配置"：
+        //   - 报 `ok` 会继续制造假阳性（凭据到底能不能用根本没读到）；
+        //   - 报 `device_policy_unset` 会误导用户去重新登记一条其实可能好着的凭据。
+        // 故走 CLI 既有的第 2 段契约（"非零退出 / stdout 非合法 JSON = 执行失败必须
+        // 停止并把原因交回用户"），零新状态、零新枚举。
+        throw new Error(
+          `[device-policy] 凭据库不可读（${read.error}）——无法判定设备策略。` +
+            '请先排查凭据库读取（非 Windows 平台/凭据服务异常/权限）；' +
+            '这**不是**"未配置"，不要据此重新登记凭据。',
+        );
+      }
+      credentialState = read.state;
+    }
   }
 
-  // 「已配置」= 至少显式表达过一次意图（解锁方式或模拟器降级档位）
+  // 「已配置」= 至少显式表达过一次意图（解锁方式或模拟器降级档位）。
+  // 保留原语义**不参与处置**——见 PolicyStatus.configured 的说明。
   const configured = Boolean(mode || fallback);
+
+  // 处置真源：当前**是否真有一条可走的设备路径**。
+  //   - manual：人保证设备可用，框架不碰口令 → 一直算可用；
+  //   - credential：只有 ready / in_flight 算；`in_flight` 的含义是**无需重新选择策略**
+  //     （并发占用或上次崩在临界区，重登记只会隐式回退不到旧版本），**不等于**运行时
+  //     一定解得开——运行期解锁失败仍按既有零输入分支处理；
+  //   - fallback：仅 existing / managed（disabled 是"明确不降级"，不能掩盖坏凭据）。
+  const credentialUsable = credentialState === 'ready' || credentialState === 'in_flight';
+  const usableFallback = fallback !== null && USABLE_EMULATOR_FALLBACKS.has(fallback);
+  const policyUsable = mode === 'manual' || (mode === 'credential' && credentialUsable) || usableFallback;
+
+  let guidance: string;
+  if (policyUsable) {
+    guidance =
+      mode === 'credential' && credentialState === 'in_flight'
+        ? [
+            '设备策略已配置；但凭据当前处于 `in_flight`——正被另一进程使用，或上次解锁崩在临界区。',
+            '**不要立即**重新登记（并发在途时新版本会隐式回退不到旧版本）。',
+            // 崩在临界区遗留的 claim 是**持久**状态：claim 里的口令永远用不上，等价于
+            // disabled，解除只有"重新登记生成新版本"一条路（device-credential-store 文件头）。
+            // 只说"稍后重试"会让用户永久卡住。
+            '若确认没有并发任务且该状态持续存在，那是上次崩在临界区的遗留 claim——它**不会**自行恢复，',
+            '此时唯一出路是重新登记生成新版本（`device:enroll`）。',
+          ].join('\n')
+        : '设备策略已配置';
+  } else if (mode === 'credential') {
+    guidance = [
+      `本链路含需要设备的阶段，${credentialUnusableHeadline(credentialState, ref)}`,
+      FOUR_CHOICE_GUIDANCE,
+    ].join('\n');
+  } else {
+    guidance = [
+      fallback === 'disabled'
+        ? '本链路含需要设备的阶段。已配置 `emulator_fallback=disabled`（明确不降级），但**尚未配置解锁方式**——disabled 不构成可用的设备路径。'
+        : '本链路含需要设备的阶段，但尚未配置设备策略。',
+      FOUR_CHOICE_GUIDANCE,
+    ].join('\n');
+  }
+
   return {
     configured,
     unlock_mode: mode,
@@ -71,21 +175,8 @@ export function collectPolicyStatus(
     target_serial: device?.target_serial ?? null,
     credential_ref: ref,
     credential_state: credentialState,
-    code: configured ? 'ok' : 'device_policy_unset',
-    guidance: configured
-      ? '设备策略已配置'
-      : [
-          '本链路含需要设备的阶段，但尚未配置设备策略。请向用户询问四选一：',
-          '  ① 手工解锁（人工保证设备可用；框架不碰口令）',
-          '  ② 启用自动解锁 → 在**用户自己的终端**运行：npx ts-node scripts/device-policy.ts --enroll --serial <序列号>（登记后设备阶段由框架自动解锁，PIN 全程不经对话与 agent）',
-          '  ③ 允许模拟器降级（existing 复用已开实例 / managed 由框架起停）',
-          '  ④ 本次停止',
-          '注意：口令只能在真实 TTY 中输入，**绝不要**让用户把口令发到对话里。',
-          '若凭据**已登记过**（OS 凭据库里已有 `MaisonDeviceUnlock:<serial>:v<N>`），只是 framework.local.json 里的引用丢失，',
-          '可**复用已登记凭据**恢复引用，无需重输 PIN：npx ts-node scripts/device-policy.ts --rebind --serial <序列号> --version <N>',
-          '（版本 N 看 enroll 输出回显，或凭据管理器的非秘密 target 名；含 `#burned` 后缀者为墓碑不可用）。',
-          'rebind 只允许 `ready` 状态的凭据，**不枚举版本、不选最高、不回退旧版本**。',
-        ].join('\n'),
+    code: policyUsable ? 'ok' : 'device_policy_unset',
+    guidance,
   };
 }
 
@@ -249,7 +340,10 @@ export function rebind(
     case 'in_flight':
       console.error(
         '[device-policy] 该凭据正被另一进程使用，或上次解锁崩在临界区——' +
-          '请稍后重试；不要立即重新登记（生成新版本会隐式回退不到旧版本）。',
+          '请稍后重试；不要立即重新登记（并发在途时生成新版本会隐式回退不到旧版本）。\n' +
+          // 崩在临界区遗留的 claim 是**持久**状态（device-credential-store 文件头：claim 里
+          // 的口令永远用不上，等价 disabled）。只说"稍后重试"会让用户永久等待。
+          '  若确认无并发任务且该状态持续存在，它**不会**自行恢复，须 device:enroll 登记新版本。',
       );
       return 1;
     case 'unsupported':
@@ -316,21 +410,32 @@ export function main(argv: string[]): number {
     }
     return enroll(projectRoot, serial);
   }
-  const status = collectPolicyStatus(projectRoot);
+  let status: PolicyStatus;
+  try {
+    status = collectPolicyStatus(projectRoot);
+  } catch (err) {
+    // **执行失败通道**（配置损坏、凭据库不可读…）：stderr 报原因、stdout 不出 JSON、
+    // 非零退出。这正是 gate 文档第 2 段契约要求调用方"必须停止"的形态——
+    // 与 `device_policy_unset`（正常且可预期的状态）严格区分。
+    console.error((err as Error).message);
+    return 1;
+  }
   if (argv.includes('--json')) {
     // **纯 JSON 契约**（review：文档承诺"仅解析 stdout JSON"，实现却不满足）：
     //   - stdout 只有 JSON，不掺任何前缀/日志（人读信息在 `guidance` 字段里）；
-    //   - **退出码一律 0**。`device_policy_unset` 是一个**正常且可预期的状态**，
-    //     不是命令失败——此前返回 3，调用方（尤其 agent）很容易当成"命令挂了"
-    //     而不是"读 code 去问用户"，四选一的闭环就此断掉。
-    //     真正的失败（参数非法等）仍走上面的非零返回。
+    //   - **退出码 0 覆盖两个正常态 ok / device_policy_unset**。`device_policy_unset`
+    //     是一个**正常且可预期的状态**，不是命令失败——此前返回 3，调用方（尤其
+    //     agent）很容易当成"命令挂了"而不是"读 code 去问用户"，四选一的闭环就此断掉。
+    //     真正的失败（参数非法、配置损坏、凭据库不可读）走非零返回 + stdout 无 JSON。
     process.stdout.write(`${JSON.stringify(status, null, 2)}\n`);
     return 0;
   }
-  // 人读模式保留非零：在 shell 里 `code=device_policy_unset` 就该是"要你处理"的信号
+  // 人读模式保留非零：在 shell 里 `code=device_policy_unset` 就该是"要你处理"的信号。
+  // **以 code 为准**，不是 configured——两者已解耦（坏凭据下 configured=true 而
+  // code=device_policy_unset），照 configured 退出会在坏凭据下静默 exit 0。
   console.log(`[device-policy] code=${status.code}`);
   console.log(status.guidance);
-  return status.configured ? 0 : 3;
+  return status.code === 'ok' ? 0 : 3;
 }
 
 if (require.main === module) {
