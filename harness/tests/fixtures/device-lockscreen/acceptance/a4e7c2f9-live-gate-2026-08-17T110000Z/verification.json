@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "purpose": "a4e7c2f9 lockscreen-reveal-execution-truth 真机验收：生产就绪门从真正的时钟锁屏态自动完成 reveal→十键→输入→复验",
+  "started_at": "2026-08-17T11:33:29.339Z",
+  "finished_at": "2026-08-17T11:33:41.408Z",
+  "project_root": "D:/1.code/SimulatedWalletForHmos",
+  "framework_root": "D:\\1.code\\agent-maison",
+  "serial": "3UJ0225321000395",
+  "invocation": "runDeviceReadinessGate(buildDeviceReadinessInput(hostRoot))",
+  "credential_material_recorded": false,
+  "operator_unlocked_manually": false,
+  "start_state_proof": {
+    "note": "起始态必须被**证明**而非声明。旧记录的 precondition 只写「suspend immediately before」，但 2026-08-17 实测 suspend 后 3s 不触发自动锁定、45s 才锁——只声明做过 suspend 不足以保证真的进入锁屏，而首帧若已停在 PIN 页就会绕过 reveal（宿主首轮 succeeded 正是这么来的），等于没验到本次修复的那条路径。",
+    "method": "power-shell suspend → 等待 → power-shell wakeup → uitest dumpLayout → 生产 parser 判定",
+    "waited_ms": [45000],
+    "screen_lock_root_present": true,
+    "pin_container_present": false,
+    "keypad_diag_reason": "pin_container_not_found",
+    "equivalence": "该形态与宿主 run 20260817T065727Z-1896c1 两次失败时的 `container=absent digits=0/10` 完全同形——即本次验收的起点就是修复前必然误判为 layout_unsupported 的那一帧。"
+  },
+  "source_sha256": {
+    "harness/scripts/utils/device-readiness-gate.ts": "fd0e6deb64ecf16a01c853084fa5426dbaefdc0eccb82cce75a58e8eb24627a1",
+    "harness/scripts/utils/device-readiness-deps.ts": "4a26d263fec16ac300349daed1de128bef3ed196636c6e1a11827b1387c69c82",
+    "harness/scripts/utils/device-unlock-helper.ts": "9543fd5ca64212b4f57e052e7ab86c93e4ac17ced692dd39540ae05e01d8584c",
+    "harness/scripts/utils/bounded-sync-wait.ts": "363ebaaca88c50d9f6e6ae9ee47750821de923027ebe4b2dbca5715f8581d251"
+  },
+  "source_sha256_note": "含 bounded-sync-wait.ts——它是解锁链的实际依赖（settle 原语），2026-07-30 验收时尚不存在，旧记录 new_dependencies_not_covered 明确列出并刻意未纳入；本次一并纳入。",
+  "result": {
+    "passed": true,
+    "event_types": [
+      "device_unlock_attempt",
+      "device_ready"
+    ],
+    "unlock_outcome": "succeeded",
+    "unlock_note": "已用登记凭据解锁并复验",
+    "device_ready": true,
+    "target_kind": "physical",
+    "serial_unchanged": true,
+    "credential_state_after": "ready",
+    "reveal_executed": true,
+    "elapsed_ms": 12069
+  },
+  "supersedes": {
+    "record": "harness/tests/fixtures/device-lockscreen/acceptance/f4b2c8e6-live-gate-2026-07-30T064556Z",
+    "closes": "PENDING_REAL_DEVICE_REVERIFICATION",
+    "note": "旧记录的**历史证据部分**原样保留、未被改写：source_sha256、2026-07-30 的验收结论、changed_files 的 verified_sha256（重写它们等于伪造真机证据，该纪律由旧记录自身载明）。旧记录文件本身确有修改，但仅限**状态字段**：superseded_by_source_change.status 由 PENDING_REAL_DEVICE_REVERIFICATION 改为 CLOSED_BY_LATER_ACCEPTANCE，并新增 closed_by 指针指向本记录。本条是针对当前源码的独立新验收，故 acceptance 判据面改为指向本目录。"
+  },
+  "privacy": "本记录与同目录 events.jsonl 均不含 PIN、通知原文或任何未脱敏 UI 内容；解锁口令自始至终留在 Windows 凭据管理器与 helper 进程内，未进入驱动进程、日志或事件。"
+}

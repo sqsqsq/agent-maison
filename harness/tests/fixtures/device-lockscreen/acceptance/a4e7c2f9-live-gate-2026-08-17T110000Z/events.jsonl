@@ -1,0 +1,2 @@
+{"ts":"2026-08-17T11:33:41.408Z","type":"device_unlock_attempt","phase":"testing","serial":"3UJ0225321000395","outcome":"succeeded","probe":"device_readiness","note":"已用登记凭据解锁并复验"}
+{"ts":"2026-08-17T11:33:41.408Z","type":"device_ready","phase":"testing","serial":"3UJ0225321000395","target_kind":"physical","managed":false,"notes":["wake(3UJ0225321000395)","unlock: 已用登记凭据解锁并复验"]}

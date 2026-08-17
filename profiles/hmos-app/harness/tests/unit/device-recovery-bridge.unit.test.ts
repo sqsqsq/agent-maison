@@ -161,7 +161,7 @@ export function runAll(): UnitCaseResult[] {
       deps: {
         snapshot: () => ({ locked: true, keypad: [], cooldown: { state: 'not_cooldown', ruleId: 'test_clear' } }),
         wake: () => {},
-        reveal: () => {},
+        reveal: () => ({ ok: true, timedOut: false }),
         tap: () => {},
         settle: () => {},
       },
@@ -176,7 +176,7 @@ export function runAll(): UnitCaseResult[] {
       deps: {
         snapshot: () => ({ locked: undefined, keypad: [], cooldown: { state: 'ambiguous', ruleId: 'test_unknown' } }),
         wake: () => {},
-        reveal: () => {},
+        reveal: () => ({ ok: true, timedOut: false }),
         tap: () => {},
         settle: () => {},
       },
@@ -297,6 +297,43 @@ export function runAll(): UnitCaseResult[] {
     const kindIdx = checkTesting.indexOf("if (installDiagnosisKind === 'device_locked')");
     const rediagIdx = checkTesting.indexOf('const diag = diagnoseInstallBlocking(ctx.projectRoot);');
     assert(kindIdx > 0 && kindIdx < rediagIdx, 'provider 诊断须优先于重新探测');
+  });
+
+  run(results, 'a4e7c2f9 桥的两个出口都原样保留 reveal_failed 与执行事实（真正经过 profile bridge）', () => {
+    /* eslint-disable @typescript-eslint/no-require-imports */
+    const recovery = require('../../../../../harness/scripts/utils/device-runtime-recovery') as {
+      ensureDeviceReadyAtRuntime: unknown;
+    };
+    const bridge = require('../../device-recovery-bridge') as typeof import('../../device-recovery-bridge');
+    /* eslint-enable @typescript-eslint/no-require-imports */
+
+    // 桩在**运行期恢复**这一层，让本用例真正流经 bridge 自身的透传代码
+    // （此前那条同名用例只直接调 ensureDeviceReadyAtRuntime，根本没经过桥）。
+    const original = recovery.ensureDeviceReadyAtRuntime;
+    recovery.ensureDeviceReadyAtRuntime = () => ({
+      recovered: false,
+      note: 'unlock_blocked:reveal_failed:timeout（零输入；timed_out=true error_code=ETIMEDOUT signal=SIGTERM status=none）',
+      authorized: true,
+      reason: 'unlock_failed',
+      failureKind: 'reveal_failed',
+      revealFact: { ok: false, timedOut: true, signal: 'SIGTERM', status: null, errorCode: 'ETIMEDOUT' },
+    });
+    try {
+      withEnv({ HARNESS_HDC_TARGET: 'PHONE-STUB' }, () => {
+        const pre = bridge.ensureReadyBefore(process.cwd());
+        assertEq(pre.ready, false, 'reveal 失败不得放行');
+        assertEq(pre.blocked, true, '确认锁着且没解开 ⇒ 外部阻断');
+        assertEq(pre.failureKind, 'reveal_failed', '前检出口须带归因');
+        assertEq(pre.revealFact?.errorCode, 'ETIMEDOUT', '前检出口须带 errorCode（不得只留在 note）');
+
+        const rec = bridge.recoverAfterLockFailure(process.cwd());
+        assertEq(rec.recovered, false, '后置恢复不得报成功');
+        assertEq(rec.failureKind, 'reveal_failed', '**后置恢复出口**同样须保留归因');
+        assertEq(rec.revealFact?.errorCode, 'ETIMEDOUT', '**后置恢复出口**同样须保留执行事实');
+      });
+    } finally {
+      recovery.ensureDeviceReadyAtRuntime = original;
+    }
   });
 
   run(results, 'P1：桥不可用时 recoverAfterLockFailure **不得**报 recovered:true', () => {

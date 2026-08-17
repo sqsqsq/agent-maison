@@ -19,7 +19,7 @@
 // 等于永远处理不了"锁屏了没注意"这个真实场景。
 // ============================================================================
 
-import type { LockScreenSnapshot, UnlockFailureKind } from './device-unlock-helper';
+import type { LockScreenSnapshot, RevealOutcome, UnlockFailureKind } from './device-unlock-helper';
 
 import {
   capsTestingConclusion,
@@ -177,6 +177,12 @@ export interface UnlockAttemptFact {
    * 第四、第五种未登记分类而编译器不报警，等于把刚删掉的兜底类从边界重新放回来。
    */
   failureKind?: UnlockFailureKind;
+  /**
+   * a4e7c2f9：`reveal_failed` 路径的设备命令执行事实（`timedOut`/`errorCode`/`signal`/
+   * `status`）。规格要求执行事实**随解锁结论上浮**——只留 `failureKind` 的话，
+   * `ETIMEDOUT` 与 `ENOENT` 在事件层无从区分，消费方就又得回去解析 note 文案。
+   */
+  revealFact?: RevealOutcome;
   note: string;
 }
 
@@ -228,7 +234,12 @@ export interface DeviceReadinessDeps {
    * t6 注入的凭据解锁能力。**本 Todo 不实现**——但 gate 必须调用它，
    * 否则"启动时已锁屏 → BLOCKED → agent 不启动 → 运行期 wrapper 永无机会执行"成死锁。
    */
-  unlockWithCredential?(serial: string): { ok: boolean; note: string; failureKind?: UnlockFailureKind };
+  unlockWithCredential?(serial: string): {
+    ok: boolean;
+    note: string;
+    failureKind?: UnlockFailureKind;
+    revealFact?: RevealOutcome;
+  };
   /** 托管启动模拟器（Todo 2 能力）；返回其 serial 与进程身份 */
   launchManagedEmulator?(): Promise<{ ok: boolean; serial?: string; identity?: ManagedProcessIdentity; note: string }>;
   /**
@@ -311,6 +322,7 @@ export async function ensureDeviceReady(input: DeviceReadinessInput): Promise<De
         serial,
         outcome: 'failed',
         ...(attempt.failureKind ? { failureKind: attempt.failureKind } : {}),
+        ...(attempt.revealFact ? { revealFact: attempt.revealFact } : {}),
         note: attempt.note,
       };
       if (attempt.ok) {
@@ -569,6 +581,18 @@ export async function runDeviceReadinessGate(opts: {
       serial: attempt.serial,
       outcome: attempt.outcome,
       ...(attempt.failureKind ? { failure_kind: attempt.failureKind } : {}),
+      // a4e7c2f9：reveal 命令执行事实（全脱敏枚举/数字）。消费方按 error_code 区分
+      // ETIMEDOUT 与 ENOENT，无须解析 note 文案。
+      ...(attempt.revealFact
+        ? {
+            reveal_exec: {
+              timed_out: attempt.revealFact.timedOut,
+              error_code: attempt.revealFact.errorCode ?? null,
+              signal: attempt.revealFact.signal ?? null,
+              status: attempt.revealFact.status ?? null,
+            },
+          }
+        : {}),
       ...(probe ? { probe } : {}),
       note: attempt.note,
     });

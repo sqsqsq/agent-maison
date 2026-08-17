@@ -16,7 +16,7 @@
 // 静态依赖会在部分入口形成环。
 // ============================================================================
 
-import type { UnlockFailureKind } from '../../../harness/scripts/utils/device-unlock-helper';
+import type { RevealOutcome, UnlockFailureKind } from '../../../harness/scripts/utils/device-unlock-helper';
 
 export interface DeviceReadyOutcome {
   ready: boolean;
@@ -41,6 +41,11 @@ export interface DeviceReadyOutcome {
    * 这里是 `import type`（编译期擦除），不会形成本文件头注说的那种 require 环。
    */
   failureKind?: UnlockFailureKind;
+  /**
+   * a4e7c2f9：`reveal_failed` 的设备命令执行事实（`timedOut`/`errorCode`/`signal`/`status`）。
+   * 与 `failureKind` 同理——消费方据此区分 `ETIMEDOUT` 与 `ENOENT`，禁止解析 `note`。
+   */
+  revealFact?: RevealOutcome;
 }
 
 function loadDeps(): {
@@ -98,6 +103,7 @@ export function ensureReadyBefore(projectRoot: string, serial?: string | null): 
       authorized: r.recovered ? true : r.authorized,
       blocked,
       ...(!r.recovered && r.failureKind ? { failureKind: r.failureKind } : {}),
+      ...(!r.recovered && r.revealFact ? { revealFact: r.revealFact } : {}),
     };
   } catch (err) {
     // 桥自身加载/执行失败：这是框架问题，不是设备阻断。放行让实际操作去暴露真实原因，
@@ -118,13 +124,21 @@ export function ensureReadyBefore(projectRoot: string, serial?: string | null): 
 export function recoverAfterLockFailure(
   projectRoot: string,
   serial?: string | null,
-): { recovered: boolean; note: string } {
+): { recovered: boolean; note: string; failureKind?: UnlockFailureKind; revealFact?: RevealOutcome } {
   const target = (serial ?? process.env.HARNESS_HDC_TARGET)?.trim();
   if (!target) return { recovered: false, note: '未显式指定 HARNESS_HDC_TARGET，不对未知目标做恢复' };
   const r = ensureReadyBefore(projectRoot, target);
   // 桥不可用时 `ready:true` 只代表"没做检查"，**不代表恢复成功**——
   // 若照搬会让调用方以为设备已恢复而去重试原操作（P1，三轮 review）。
-  if (!r.ready || r.blocked) return { recovered: false, note: r.note };
-  if (/检查不可用/.test(r.note)) return { recovered: false, note: r.note };
+  //
+  // a4e7c2f9：失败出口 MUST 原样保留结构化归因与执行事实。此前这里只回
+  // `{recovered, note}`，`ensureReadyBefore` 已经分好的 failureKind 在这一跳被整个丢掉
+  // ——后置恢复路径的消费方于是又只剩解析文案一条路，正是本 change 要治的病。
+  const structured = {
+    ...(r.failureKind ? { failureKind: r.failureKind } : {}),
+    ...(r.revealFact ? { revealFact: r.revealFact } : {}),
+  };
+  if (!r.ready || r.blocked) return { recovered: false, note: r.note, ...structured };
+  if (/检查不可用/.test(r.note)) return { recovered: false, note: r.note, ...structured };
   return { recovered: true, note: r.note };
 }

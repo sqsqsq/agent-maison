@@ -13,7 +13,12 @@
 //     （热切会产出一半真机一半模拟器的混合证据，而 target_kind 只记一个）。
 // ============================================================================
 
-import { ensureUnlocked, type UnlockDeps, type UnlockFailureKind } from './device-unlock-helper';
+import {
+  ensureUnlocked,
+  type RevealOutcome,
+  type UnlockDeps,
+  type UnlockFailureKind,
+} from './device-unlock-helper';
 import type { CredentialProvider } from './device-credential-store';
 
 export interface RuntimeRecoveryInput {
@@ -56,6 +61,12 @@ export type RuntimeRecoveryResult =
        * `note` 文案或**再分类一次**（=第二份分类表，本纲要治的正是这个）。
        */
       failureKind?: UnlockFailureKind;
+      /**
+       * a4e7c2f9：`reveal_failed` 的设备命令执行事实。**这条路径尤其不能丢**——
+       * 宿主 run 20260817T065727Z-1896c1 两次实际撞到的就是运行期恢复
+       *（`ut_hvigor_test` 装机步骤内部），而非 runner 级就绪门。
+       */
+      revealFact?: RevealOutcome;
     };
 
 /**
@@ -109,6 +120,7 @@ export function ensureDeviceReadyAtRuntime(input: RuntimeRecoveryInput): Runtime
         authorized: true,
         reason: 'unlock_failed',
         ...(r.failureKind ? { failureKind: r.failureKind } : {}),
+        ...(r.revealFact ? { revealFact: r.revealFact } : {}),
       };
 }
 

@@ -61,7 +61,7 @@ function depsWith(lockSeq: Array<boolean | undefined>, taps: number[] = []): Unl
       };
     },
     wake: () => {},
-    reveal: () => {},
+    reveal: () => ({ ok: true, timedOut: false }),
     tap: (_s, x) => { taps.push(x); },
     settle: () => {},   // 本套件不测 settle 时序（见 device-unlock-helper 套件）
   };
@@ -117,6 +117,43 @@ export function runAll(): UnitCaseResult[] {
       'credential_unavailable',
       '归因须原样上浮，不得被压平成 reason',
     );
+  });
+
+  run(results, 'a4e7c2f9 reveal 失败 → reveal_failed 原样上浮（运行期恢复/bridge 消费面）', () => {
+    const taps: number[] = [];
+    const provider = readyProvider(taps);
+    const r = ensureDeviceReadyAtRuntime({
+      serial: SERIAL, credentialRef: REF, provider,
+      deps: {
+        // 无键盘 ⇒ 必然走 reveal；reveal 被超时砍断 ⇒ 立即零输入退出
+        snapshot: () => ({
+          locked: true,
+          keypad: [],
+          cooldown: { state: 'not_cooldown', ruleId: 'test_clear' },
+          lockBounds: { left: 0, top: 0, right: 100, bottom: 200 },
+        }),
+        wake: () => {},
+        reveal: () => ({ ok: false, timedOut: true, signal: 'SIGTERM', status: null, errorCode: 'ETIMEDOUT' }),
+        tap: (_s, x) => { taps.push(x); },
+        settle: () => {},
+      },
+    });
+    assertEq(r.recovered, false, 'reveal 没成功不得放行');
+    assertEq(r.recovered === false ? r.reason : undefined, 'unlock_failed', '处置枚举仍是 unlock_failed');
+    assertEq(
+      r.recovered === false ? r.failureKind : undefined,
+      'reveal_failed',
+      '第四类归因须原样上浮，不得被压平成 reason',
+    );
+    // 宿主两次实际撞的就是这条运行期恢复路径（ut_hvigor_test 装机步骤内部），
+    // 执行事实在这里丢掉等于现场归零。
+    assertEq(
+      r.recovered === false ? r.revealFact?.errorCode : undefined,
+      'ETIMEDOUT',
+      'errorCode 须随运行期恢复结论上浮',
+    );
+    assertEq(taps.length, 0, '零输入');
+    assertEq(provider.clickCount, 0, '零 PIN 点击');
   });
 
   run(results, 'withDeviceRecovery：锁屏失败 → 恢复一次 → 重试原操作成功', () => {

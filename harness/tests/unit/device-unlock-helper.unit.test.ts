@@ -12,6 +12,7 @@ import {
   SETTLE_INTERVAL_MS,
   type KeypadKey,
   type LockScreenSnapshot,
+  type RevealOutcome,
   type UnlockDeps,
   type UnlockOutcome,
 } from '../../scripts/utils/device-unlock-helper';
@@ -71,23 +72,31 @@ interface Bench {
   taps: Array<{ x: number; y: number }>;
   wakes: number;
   reveals: number;
+  /** a4e7c2f9 t5：reveal 失败后必须「零 settle / snapshot 不再增加」，故需计数 */
+  settles: number;
+  snapshots: number;
 }
 function bench(
   over: {
     lockSeq?: Array<boolean | undefined>;
     keypad?: KeypadKey[];
     cooldown?: 'cooldown' | 'not_cooldown' | 'ambiguous';
+    /** a4e7c2f9 t3：注入 reveal 执行事实（缺省成功）——用于钉 reveal_failed 行为 */
+    revealOutcome?: RevealOutcome;
     tap?: UnlockDeps['tap'];
   } = {},
 ): Bench {
   const taps: Array<{ x: number; y: number }> = [];
   let wakes = 0;
   let reveals = 0;
+  let settles = 0;
+  let snapshots = 0;
   const seq = over.lockSeq;
   let i = 0;
   const deps: UnlockDeps = {
     // P0-2：锁屏判定与键位来自**同一份快照**
     snapshot: () => {
+      snapshots += 1;
       const locked = seq ? seq[Math.min(i++, seq.length - 1)] : true;
       return {
         locked,
@@ -97,11 +106,17 @@ function bench(
       };
     },
     wake: () => { wakes += 1; },
-    reveal: () => { reveals += 1; },
+    reveal: () => { reveals += 1; return over.revealOutcome ?? { ok: true, timedOut: false }; },
     tap: over.tap ?? ((_s, x, y) => { taps.push({ x, y }); }),
-    settle: () => {},   // 本 bench 不测 settle 时序（见 benchFrames 与 T3#3 用例）
+    settle: () => { settles += 1; },   // 本 bench 只数次数；时序见 benchFrames 与 T3#3 用例
   };
-  return { deps, taps, get wakes() { return wakes; }, get reveals() { return reveals; } } as Bench;
+  return {
+    deps, taps,
+    get wakes() { return wakes; },
+    get reveals() { return reveals; },
+    get settles() { return settles; },
+    get snapshots() { return snapshots; },
+  } as Bench;
 }
 
 /**
@@ -116,10 +131,13 @@ function benchFrames(
     /** 逐帧 cooldown（缺省 not_cooldown）——用于钉「重采样期间 cooldown 每帧优先」 */
     cooldown?: LockScreenSnapshot['cooldown'];
   }>,
+  /** a4e7c2f9 t3：reveal 执行事实（缺省成功）——失败时 helper 必须立即零输入退出 */
+  revealOutcome: RevealOutcome = { ok: true, timedOut: false },
 ): {
-  deps: UnlockDeps; settles: number; settleArgs: number[]; snapshots: number;
+  deps: UnlockDeps; settles: number; settleArgs: number[]; snapshots: number; reveals: number;
 } {
   let snapshots = 0;
+  let reveals = 0;
   const settleArgs: number[] = [];
   const deps: UnlockDeps = {
     snapshot: () => {
@@ -133,7 +151,7 @@ function benchFrames(
       };
     },
     wake: () => { /* no-op */ },
-    reveal: () => { /* no-op */ },
+    reveal: () => { reveals += 1; return revealOutcome; },
     tap: () => { /* no-op */ },
     // 记录**被请求的间隔**——只数次数看不出"到底等够了没有"
     settle: ms => { settleArgs.push(ms); },
@@ -143,7 +161,8 @@ function benchFrames(
     get settles() { return settleArgs.length; },
     get settleArgs() { return settleArgs; },
     get snapshots() { return snapshots; },
-  } as { deps: UnlockDeps; settles: number; settleArgs: number[]; snapshots: number };
+    get reveals() { return reveals; },
+  } as { deps: UnlockDeps; settles: number; settleArgs: number[]; snapshots: number; reveals: number };
 }
 
 export function runAll(): UnitCaseResult[] {
@@ -282,6 +301,75 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
+  // ── a4e7c2f9：reveal 执行真值。宿主 run 20260817T065727Z-1896c1 两次撞的形态是
+  //    「reveal 被 5s 超时 SIGTERM 砍断 → 页面仍是时钟页 → 被误判 layout_unsupported」。
+  //    真机实测同参数不限超时可跑完（5.2s）并正确识别十键——布局从来没问题。─────────
+
+  run(results, 'a4e7c2f9 reveal 超时 → reveal_failed；零 settle / 零点击 / reveal 后不再取样', () => {
+    const p = providerOf();
+    const b = bench({
+      keypad: [],   // 首帧无键盘 ⇒ 必然走 reveal
+      revealOutcome: { ok: false, timedOut: true, signal: 'SIGTERM', status: null, errorCode: 'ETIMEDOUT' },
+    });
+    const r = ensureUnlocked({ serial: SERIAL, credentialRef: REF, deps: b.deps, provider: p });
+    assertEq(r.ok, false, 'reveal 未完成即不得宣称解锁');
+    assertEq(r.ok === false ? r.failureKind : undefined, 'reveal_failed', '须归 reveal_failed');
+    // 执行事实必须**结构化**随结论上浮：只留 failureKind 的话，ETIMEDOUT 与 ENOENT
+    // 在消费面无从区分，消费方就又得回去解析 note 文案（本模块明令禁止的做法）。
+    assertEq(
+      r.ok === false ? r.revealFact?.errorCode : undefined, 'ETIMEDOUT',
+      'errorCode 须随解锁结论上浮，不得只落在 note 里',
+    );
+    assertEq(r.ok === false ? r.revealFact?.timedOut : undefined, true, 'timedOut 须随结论上浮');
+    assert(r.note.includes('error_code=ETIMEDOUT'), `note 也应带 error_code：${r.note}`);
+    assert(r.ok === false && r.attempted === false, '零输入');
+    assertEq(p.clickCount, 0, '**零 PIN 点击**');
+    assertEq(p.inspect(ID).state, 'ready', '零输入则凭据不得被烧');
+    assertEq(b.reveals, 1, '同一 attempt 最多 reveal 一次——不得原地自动重滑');
+    assertEq(b.settles, 0, 'reveal 失败后不得进入重采样窗口');
+    assertEq(b.snapshots, 1, 'reveal 失败后不得再取样（只剩 reveal 前那一帧）');
+    assert(r.note.includes('timed_out=true'), `须带结构化执行事实：${r.note}`);
+  });
+
+  run(results, 'a4e7c2f9 reveal 失败后即便快照恰为时钟页形态，也绝不产出 layout_unsupported', () => {
+    // 这正是宿主看到的那张脸：container=absent digits=0/10。区别只在 reveal 有没有成功——
+    // 有成功证据才允许谈布局，没有就只能谈命令执行（否则就是把人指向"须真机校准"这条死路）。
+    const clockPage = {
+      keypad: [] as KeypadKey[],
+      diag: { reason: 'pin_container_not_found' as const, found: 0, containerFound: false, hiddenSkipped: false },
+    };
+    const b = benchFrames(
+      [clockPage, clockPage, clockPage, clockPage, clockPage],
+      { ok: false, timedOut: true, signal: 'SIGTERM', status: null },
+    );
+    const r = ensureUnlocked({ serial: SERIAL, credentialRef: REF, deps: b.deps, provider: providerOf() });
+    assertEq(r.ok === false ? r.failureKind : undefined, 'reveal_failed', '须 reveal_failed 而非 layout_unsupported');
+    assert(!/layout_unsupported/.test(r.note), `note 不得出现 layout_unsupported：${r.note}`);
+    assert(!/真机校准/.test(r.note), `note 不得出现"须真机校准"——那正是把人引向错误方向的话：${r.note}`);
+    assertEq(b.settles, 0, 'reveal 失败后零 settle');
+    assertEq(b.snapshots, 1, 'reveal 失败后不再取样');
+  });
+
+  run(results, 'a4e7c2f9 reveal 非超时执行失败（exec_failed）→ 同样 reveal_failed 且零输入', () => {
+    const p = providerOf();
+    const b = bench({
+      keypad: [],
+      revealOutcome: { ok: false, timedOut: false, signal: null, status: 127, errorCode: 'ENOENT' },
+    });
+    const r = ensureUnlocked({ serial: SERIAL, credentialRef: REF, deps: b.deps, provider: p });
+    assertEq(r.ok === false ? r.failureKind : undefined, 'reveal_failed', '非超时失败同样归 reveal_failed');
+    assert(r.note.includes('exec_failed'), `须区分 timeout 与 exec_failed：${r.note}`);
+    // ENOENT（hdc 缺失/设备掉线）必须可与 ETIMEDOUT 区分——这正是丢 errorCode 时
+    // 退化最严重的一类：只剩 `exec_failed + signal=none status=none`，诊断归零。
+    assertEq(
+      r.ok === false ? r.revealFact?.errorCode : undefined, 'ENOENT',
+      'ENOENT 须结构化上浮，不得与 ETIMEDOUT 混同',
+    );
+    assertEq(r.ok === false ? r.revealFact?.status : undefined, 127, 'status 须随结论上浮');
+    assertEq(p.clickCount, 0, '零 PIN 点击');
+    assertEq(b.settles, 0, '零 settle');
+  });
+
   run(results, 'f4c8d2b7 t3 重采样中途出现 cooldown → 每帧优先判、立即零输入退出（不继续烧窗口）', () => {
     const absentFrame = { keypad: [] as KeypadKey[], diag: { reason: 'pin_container_not_found' as const, found: 0, containerFound: false, hiddenSkipped: false } };
     const cooldownFrame = { ...absentFrame, cooldown: { state: 'cooldown' as const, ruleId: 'auth_cooldown_explicit' } };
@@ -397,7 +485,7 @@ export function runAll(): UnitCaseResult[] {
     let reveals = 0;
     const deps: UnlockDeps = {
       wake: () => {},
-      reveal: () => { reveals += 1; },
+      reveal: () => { reveals += 1; return { ok: true, timedOut: false }; },
       tap: () => {},
       settle: () => {},
       snapshot: () => {

@@ -64,13 +64,44 @@ export interface LockScreenSnapshot {
   lockBounds?: ScreenBounds;
 }
 
+/**
+ * reveal 手势的**执行事实**（脱敏；a4e7c2f9 t3）。
+ *
+ * 为什么必须有返回值：此前 `reveal` 返回 `void`，其底层 `runHdc` 的 ok 无人消费，
+ * 于是"滑动命令被超时 SIGTERM 砍断"这一事实在证据链上根本不存在，helper 只能拿
+ * reveal **之后**的快照去分类——那当然还是时钟页，于是被误判成
+ * `layout_unsupported`（"须真机校准"）。宿主 run 20260817T065727Z-1896c1 两次撞此。
+ *
+ * **注意本类型只让事实"可用"，不能强制调用方消费**——TS 对同步函数返回值没有
+ * must-use 语义。真正的保证是 {@link ensureUnlocked} 的行为契约（reveal 不 ok 即
+ * 立即零输入返回）与其对应的行为回归，不是类型系统。
+ *（对照 T3#3 把 `settle` 从可选改必填：那是**接口字段**必填，类型确实能强制；
+ *  与"返回值必须被读取"不是一回事，早期设计稿混淆过这两者。）
+ */
+export interface RevealOutcome {
+  ok: boolean;
+  /** 命令超时被终止（下游据此归 reveal_failed 而非布局问题） */
+  timedOut: boolean;
+  signal?: string | null;
+  status?: number | null;
+  /**
+   * 枚举化错误码（`ETIMEDOUT` / `ENOENT` …）。
+   *
+   * **必须随结论上浮，不得只落进 note**：消费方按类别行动时禁止解析文案（本模块既有纪律）。
+   * 初版在这一跳把它丢了，后果不只是超时少一个字段——`ENOENT`（hdc 缺失/设备掉线）会
+   * 整个退化成 `exec_failed` + `signal=none status=none`，诊断信息归零，
+   * 与本 change 要治的"执行事实丢失"是同一个病。
+   */
+  errorCode?: string | null;
+}
+
 export interface UnlockDeps {
   /** 取**一份**锁屏 UI 快照：锁屏判定、键位、冷却同源 */
   snapshot(serial: string): LockScreenSnapshot;
   /** 非秘密唤醒 */
   wake(serial: string): void;
-  /** 仅展示 PIN 键盘的非秘密上滑；坐标由当前锁屏 bounds 推导。 */
-  reveal(serial: string, bounds: ScreenBounds): void;
+  /** 仅展示 PIN 键盘的非秘密上滑；坐标由当前锁屏 bounds 推导。返回执行事实供 helper 消费。 */
+  reveal(serial: string, bounds: ScreenBounds): RevealOutcome;
   /** 点击坐标（argv 只出现数字坐标，**不出现 PIN 字符**） */
   tap(serial: string, x: number, y: number): void;
   /**
@@ -113,16 +144,35 @@ export const MAX_RESAMPLES = 3;
  * 被兜底类**错归**了；剩下的冷却、锁屏状态判不出、并发抢占，处置各不相同，
  * 合成一类等于没分类，只是凭空扩大了下游值空间。故 `failureKind` **可选**：
  * 三类之外**不带 kind**，照走既有 `device_not_ready` 通道（与本改动前一致）。
+ *
+ * a4e7c2f9 t4 增设第四类 `reveal_failed`，判据**收窄到"reveal 命令自身执行失败/超时"**。
+ * 它符合上面那条"按处置差异收敛"的既有裁决，而不是被驳回过的兜底类：其下一步是
+ * **排查 hdc/设备连通性**，与重新登记凭据（credential_unavailable）、等 UI 稳定
+ * （ui_not_settled）、真机校准布局（layout_unsupported）三者都不同。
+ * 「可重试」**不含自动重试**：同一 attempt 最多 reveal 一次，不得因本类在原地重复
+ * swipe；重试指人工排查后经新 invocation 或 `--resume` 再来。
  */
 export type UnlockFailureKind =
   | 'credential_unavailable'
   | 'ui_not_settled'
-  | 'layout_unsupported';
+  | 'layout_unsupported'
+  | 'reveal_failed';
 
 export type UnlockOutcome =
   | { ok: true; note: string }
   /** `failureKind` 缺省 = 无可行动类别（前置/并发/等待类），调用方按既有通道处置 */
-  | { ok: false; note: string; attempted: boolean; failureKind?: UnlockFailureKind };
+  | {
+      ok: false;
+      note: string;
+      attempted: boolean;
+      failureKind?: UnlockFailureKind;
+      /**
+       * reveal 命令的执行事实（仅 `reveal_failed` 路径带）。
+       * 整份上浮而非只挑 errorCode：挑字段就是下一次"少带一个"的开始，
+       * 而这个类型本身已经是脱敏闭集（枚举码 / 信号名 / 退出码），无额外暴露面。
+       */
+      revealFact?: RevealOutcome;
+    };
 
 export interface UnlockInput {
   serial: string;
@@ -204,6 +254,22 @@ export function ensureUnlocked(input: UnlockInput): UnlockOutcome {
     return `unlock_blocked:${cls}:${reason}（零输入；${facts}；${hint}）`;
   };
 
+  /**
+   * a4e7c2f9 t4：reveal 命令自身失败的文案。与 {@link unlockBlockedNote} 分开是因为
+   * 二者归因来源不同——这条只陈述**设备命令执行事实**，不含任何 UI 布局判断，
+   * 更**绝不出现"须真机校准"**（那正是把人引向完全错误方向的那句话）。
+   */
+  const revealBlockedNote = (r: RevealOutcome): string => {
+    const reason = r.timedOut ? 'timeout' : 'exec_failed';
+    const facts = `timed_out=${r.timedOut} error_code=${r.errorCode ?? 'none'}` +
+      ` signal=${r.signal ?? 'none'} status=${r.status ?? 'none'}`;
+    // 措辞刻意**完全不出现"真机校准"字样**（连"勿做真机校准"也不写）：回归用例
+    // 严格禁止该词出现在本类 note 里，这样将来任何人把误导指引加回来都会当场变红。
+    return `unlock_blocked:reveal_failed:${reason}（零输入；${facts}；` +
+      `展示 PIN 键盘的滑动命令未完成（超时或被中止）——**不是**布局问题，` +
+      `无需改动布局适配；请排查 hdc/设备连通性后重跑）`;
+  };
+
   const completeKeypad = (s: LockScreenSnapshot): Map<string, KeypadKey> | null => {
     const map = new Map(s.keypad.map(k => [k.digit, k]));
     return s.keypad.length === 10 && map.size === 10 &&
@@ -216,7 +282,28 @@ export function ensureUnlocked(input: UnlockInput): UnlockOutcome {
       return { ok: false, note: 'unlock_blocked:lock_bounds_missing（无法安全展示键盘，零输入）', attempted: false };
     }
     // 非秘密状态迁移：一次 reveal。**不读取凭据、不输入任何数字。**
-    deps.reveal(serial, snap.lockBounds);
+    // 「一次」是硬约束：reveal_failed **不得**在本 attempt 内自动重滑（见 UnlockFailureKind）。
+    const revealed = deps.reveal(serial, snap.lockBounds);
+
+    // a4e7c2f9 t3/t4：**控制流即硬闸**。reveal 没成功就立即零输入退出，绝不拿
+    // "reveal 之后的快照"去做任何布局结论——那正是宿主 run 20260817T065727Z-1896c1
+    // 两次被误判的成因：滑动被 5s 超时 SIGTERM 砍断 → 页面仍停在时钟页 → 分类器
+    // 如实报告"没有 PIN 容器" → 文案却断言"锁屏布局与当前适配不符，须真机校准"。
+    // 真机实测：同一参数不限超时可跑完（5.2s）并正确识别十键，布局从无问题。
+    //
+    // 硬闸放在这里、而**不是**把 reveal 事实作为入参喂给 unlockFailureKindOf，是
+    // 刻意的：分类器只对**成功 reveal 后的 UI 快照**负责，把设备命令状态耦合进布局
+    // 分类会让真源分叉；reveal 失败时它根本不会被调用，layout_unsupported 在结构上
+    // 就产不出来——比"传参进去再判一次"强。
+    if (!revealed.ok) {
+      return {
+        ok: false,
+        note: revealBlockedNote(revealed),
+        attempted: false,
+        failureKind: 'reveal_failed',
+        revealFact: revealed,
+      };
+    }
 
     // e5d8a2c4 T3#3：**有界 settle + 重取样**。此前 reveal 后**零等待**直接二帧取样，
     // 于是任何动画延迟都变成"永久零输入 → 无人值守停机等人"（2026-08-05 宿主实况）。

@@ -618,6 +618,44 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     assertEq(attemptEvent?.serial, 'phone-1', '失败事件同样须带 serial（此前非 READY 分支根本不写）');
   });
 
+  await run(results, 'a4e7c2f9 reveal_failed 原样投影到 device_unlock_attempt 与 phase_halt', async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const decision = await runDeviceReadinessGate({
+      phase: 'ut', retries: 0, sessionId: 'reveal-kind',
+      input: {
+        configuredSerial: 'phone-1', credentialRef: 'opaque-ref', emulatorFallback: 'disabled',
+        deps: {
+          listTargets: () => ['phone-1'],
+          isLocked: () => true,
+          wake: () => {},
+          knownEmulatorSerials: () => [],
+          unlockWithCredential: () => ({
+            ok: false,
+            note: 'unlock_blocked:reveal_failed:timeout（零输入；timed_out=true error_code=ETIMEDOUT signal=SIGTERM status=none）',
+            failureKind: 'reveal_failed',
+            revealFact: { ok: false, timedOut: true, signal: 'SIGTERM', status: null, errorCode: 'ETIMEDOUT' },
+          }),
+        },
+      },
+      emitEvent: event => events.push(event),
+    });
+    assertEq(decision.outcome?.halt_reason, 'device_not_ready', '仍走既有 external_block 通道');
+    const attemptEvent = events.find(e => e.type === 'device_unlock_attempt');
+    assertEq(attemptEvent?.failure_kind, 'reveal_failed', '第四类归因须原样落事件，不得被压回旧三类');
+    // 执行事实须**结构化**落到事件上：消费方据 error_code 区分 ETIMEDOUT / ENOENT，
+    // 不必（也不允许）解析 note 文案。
+    const revealExec = attemptEvent?.reveal_exec as Record<string, unknown> | undefined;
+    assertEq(revealExec?.error_code, 'ETIMEDOUT', '事件须带 reveal_exec.error_code');
+    assertEq(revealExec?.timed_out, true, '事件须带 reveal_exec.timed_out');
+    assertEq(revealExec?.signal, 'SIGTERM', '事件须带 reveal_exec.signal');
+    const halt = events.find(e => e.type === 'phase_halt');
+    assertEq(halt?.unlock_failure_kind, 'reveal_failed', 'halt 须带第四类归因');
+    assert(
+      !JSON.stringify(events).includes('真机校准'),
+      'reveal 失败与布局无关——事件链不得出现"须真机校准"这类误导指引',
+    );
+  });
+
   // ==========================================================================
   // b3f7d9a2 t2：普通模式入口设备前置（目标只解析一次，全链共用）
   //

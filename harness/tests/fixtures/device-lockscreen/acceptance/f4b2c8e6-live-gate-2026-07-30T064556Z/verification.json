@@ -27,8 +27,13 @@
   },
   "superseded_by_source_change": {
     "recorded_at": "2026-08-05",
-    "by": "e5d8a2c4 T3（解锁诊断三分类 + 结构化 failureKind 全链贯通 + reveal 后固定间隔重取样）；2026-08-17 f4c8d2b7 t3 再次改动 device-unlock-helper.ts（删 layout_unsupported 首帧早退，所有失败 kind 跑满有界重采样窗口）；2026-08-17 b3f7d9a2 t2 在 device-readiness-gate.ts 新增普通模式入口适配层 runPhaseEntryDeviceGate（与 goal 适配层共用同一 ensureDeviceReady 核心，未改核心解锁/降级逻辑）——current_sha256 已刷新，待复验范围不变",
-    "status": "PENDING_REAL_DEVICE_REVERIFICATION",
+    "by": "e5d8a2c4 T3（解锁诊断三分类 + 结构化 failureKind 全链贯通 + reveal 后固定间隔重取样）；2026-08-17 f4c8d2b7 t3 再次改动 device-unlock-helper.ts（删 layout_unsupported 首帧早退，所有失败 kind 跑满有界重采样窗口）；2026-08-17 b3f7d9a2 t2 在 device-readiness-gate.ts 新增普通模式入口适配层 runPhaseEntryDeviceGate（与 goal 适配层共用同一 ensureDeviceReady 核心，未改核心解锁/降级逻辑）——current_sha256 已刷新，待复验范围不变；2026-08-17 a4e7c2f9 改动 device-readiness-deps.ts、device-unlock-helper.ts 与 device-readiness-gate.ts（后者：UnlockAttemptFact 携带 reveal 执行事实 + device_unlock_attempt 事件新增脱敏 reveal_exec 投影）：runHdc 产结构化执行事实（status/signal/timedOut/errorCode）、reveal 的 velocity 与 timeout 收编为同一策略（1500px/s + 10s，旧值 300px/s + 5s 在真机上稳定超时被 SIGTERM 砍断）、reveal 返回 typed outcome 并由 ensureUnlocked 消费、新增 reveal_failed 第四类归因且 reveal 失败即零输入退出不进重采样。**本次直接改动解锁链核心路径，待复验范围随之扩大**：新验收须从真正的时钟锁屏态起步并覆盖 reveal 成功→识别十键→输入→复验解锁全链，且新 source_sha256 须一并纳入 bounded-sync-wait.ts",
+    "status": "CLOSED_BY_LATER_ACCEPTANCE",
+    "closed_by": {
+      "record": "harness/tests/fixtures/device-lockscreen/acceptance/a4e7c2f9-live-gate-2026-08-17T110000Z",
+      "at": "2026-08-17T11:33:41.408Z",
+      "note": "该次验收在**当前源码**上从真正的时钟锁屏态（ScreenLockRootComponent 在场、PIN 容器不在场）起步，经生产 gate 自动完成 reveal→十键→输入→复验，unlock outcome=succeeded、凭据回到 ready。本记录自此为历史档案：source_sha256 与下方 changed_files 的 verified/current 均原样保留，不再作为活跃欠账指示。"
+    },
     "note": "上面 source_sha256 是 2026-07-30 真机验收当时所验源码的哈希，**不得为迁就代码改动而重写**——那等于伪造真机证据。本次改动后需在真机上重跑同一验收流程并落新记录；在此之前本条证据只证明「旧代码曾在真机上通过」。",
     "new_dependencies_not_covered": [
       "harness/scripts/utils/bounded-sync-wait.ts"
@@ -38,17 +43,17 @@
       {
         "path": "harness/scripts/utils/device-readiness-gate.ts",
         "verified_sha256": "aeaba9741a737fc0f5972dfabc9acdde4656645636b259a271f88cb6458bb30a",
-        "current_sha256": "60365ea121714063605c2916886ca2552447101003a77c0fe907c3b89128a6b1"
+        "current_sha256": "fd0e6deb64ecf16a01c853084fa5426dbaefdc0eccb82cce75a58e8eb24627a1"
       },
       {
         "path": "harness/scripts/utils/device-readiness-deps.ts",
         "verified_sha256": "a80f72383700737b04cbf5b0d03408526bb80514dd7baad833c8eeb325e85234",
-        "current_sha256": "391793f2048e4feac972e443b22ed5c0da164908928987de2e67287f54dfcb5d"
+        "current_sha256": "4a26d263fec16ac300349daed1de128bef3ed196636c6e1a11827b1387c69c82"
       },
       {
         "path": "harness/scripts/utils/device-unlock-helper.ts",
         "verified_sha256": "a3b0dc7262eb3db010ce574889b9ff409de5ab09f89193a50fb1d9628275fed4",
-        "current_sha256": "cc5b602eece1ce3852dd3a60526cd8c7b19e69dfe74367a5e532fed579ea9d98"
+        "current_sha256": "9543fd5ca64212b4f57e052e7ab86c93e4ac17ced692dd39540ae05e01d8584c"
       }
     ]
   }
