@@ -53,10 +53,18 @@ export function touchedCategories(a: CorrectionAnswers): CorrectionCategory[] {
 // 类别 → phase（track 投影）
 // --------------------------------------------------------------------------
 
+/** 类别→候选 phase 名的共享偏好表（correction 路由与责任阶段路由共用——非平行表）。 */
+function categoryPhasePreference(track: FeatureTrack): Record<CorrectionCategory, string[]> {
+  return track === 'lite'
+    ? { spec: ['change'], plan: ['change'], coding: ['coding'], verification: ['exit'] }
+    : { spec: ['spec'], plan: ['plan'], coding: ['coding'], verification: ['ut', 'testing'] };
+}
+
 /**
  * 把根因类别投影到当前 track 的 phase。full：spec/plan/coding 同名，verification→ut；
  * lite：spec/plan 职能由 change.md 承载 → change，verification→exit。
  * 投影结果不在该 track 链内时回退链首（防 workflow 自定义链缺 phase 时产出幽灵 phase）。
+ * （correction 修正意见路由语义保留；责任阶段回退路由须用下面的严格版本。）
  */
 export function mapCategoryToPhase(
   category: CorrectionCategory,
@@ -64,14 +72,24 @@ export function mapCategoryToPhase(
   track: FeatureTrack,
 ): string {
   const chain = resolvePhaseChain(spec, track).featureOrdered;
-  const preferred: Record<CorrectionCategory, string[]> =
-    track === 'lite'
-      ? { spec: ['change'], plan: ['change'], coding: ['coding'], verification: ['exit'] }
-      : { spec: ['spec'], plan: ['plan'], coding: ['coding'], verification: ['ut', 'testing'] };
-  for (const p of preferred[category]) {
+  return mapCategoryToChainPhase(category, chain, track) ?? chain[0];
+}
+
+/**
+ * 责任阶段路由的**严格**类别→phase 映射（plan b6e4c9f2 t2，codex 三轮）：
+ * 映射不到当前 resolved chain 的真实节点时返回 **null**——消费方走既有
+ * backtrack_target_absent 语义。禁止静默回链首（未知责任误投错误阶段的根源）；
+ * lite/custom workflow 不出现幽灵 spec/plan。
+ */
+export function mapCategoryToChainPhase(
+  category: CorrectionCategory,
+  chain: readonly string[],
+  track: FeatureTrack,
+): string | null {
+  for (const p of categoryPhasePreference(track)[category]) {
     if (chain.includes(p)) return p;
   }
-  return chain[0];
+  return null;
 }
 
 // --------------------------------------------------------------------------

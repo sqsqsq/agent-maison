@@ -45,6 +45,7 @@ import {
   projectIdentityHash,
   readCodingBase,
 } from '../../scripts/utils/pass-snapshot';
+import { collectPhaseRepairCandidates } from '../../scripts/utils/repair-candidates';
 import { computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -346,6 +347,24 @@ async function runChain(
       if (failOverride) {
         const failDir = path.join(pr, 'doc', 'features', feat, String(ph), 'reports');
         fs.mkdirSync(failDir, { recursive: true });
+        // 责任阶段统一路由：桩必须与**真实 writer 同源**产出候选——harness-runner 在
+        // summary 落盘前调 collectPhaseRepairCandidates（checks 形态见 check-coding：
+        // failure_kind → classification）。桩若只写 blockers，端到端就测不到统一路由。
+        const repairCandidates = collectPhaseRepairCandidates({
+          phase: String(ph),
+          reviewReportText: null,
+          verifierReportText: null,
+          reportValidity: 'PASS',
+          conditionalReceiptValid: false,
+          checks: failOverride.blockers.map((b) => ({
+            id: String(b.id ?? ''),
+            status: String(b.status ?? 'FAIL'),
+            severity: String(b.severity ?? 'BLOCKER'),
+            details: String(b.details_excerpt ?? ''),
+            classification: b.classification === undefined ? undefined : String(b.classification),
+            affected_files: (b.affected_files as string[] | undefined) ?? [],
+          })),
+        });
         fs.writeFileSync(path.join(failDir, 'summary.json'), JSON.stringify({
           schema_version: '1.2', assurance: 'full',
           capability_resolutions: [], capability_resolution_contract_fingerprint: null,
@@ -354,6 +373,7 @@ async function runChain(
           report_validity: 'PASS', release_readiness: 'BLOCKED',
           completion_status: 'complete',
           blockers: failOverride.blockers, checks: [],
+          ...(repairCandidates.length > 0 ? { repair_candidates: repairCandidates } : {}),
         }, null, 2), 'utf-8');
         return { exitCode: 1, timedOut: false };
       }
@@ -685,8 +705,9 @@ test('E2E-3 PASS+新鲜 must_fix → 回 coding（prompt 含原始 must_fix）�
   assert(probe.codingPrompts.length >= 2, `coding 须被调 2 次，实得 ${probe.codingPrompts.length}`);
   assert(probe.codingPrompts[1].includes(MUST_FIX_TEXT),
     '第二次 coding prompt 必须包含首轮 testing 的原始 must_fix（fake agent 无法靠改文件绕过本断言）');
-  assert(probe.codingPrompts[1].includes('Testing defects to fix'),
-    'prompt 须含必做段标题');
+  // 统一路由收编后：testing 缺陷经 repair_candidates 注入，段标题归一为候选块标题
+  assert(probe.codingPrompts[1].includes('Verified repair candidates for this phase'),
+    'prompt 须含候选必做段标题');
   // 修复后正常到达终点：outcomes 对齐（被失效阶段旧条目已剔除，否则 length 必超）
   assertRunReachedEnd(probe, 'E2E-3');
 });
@@ -1484,8 +1505,10 @@ test('t5① coding 撞冻结白名单 → 自动回退 plan 重新裁决，再�
       phase === 'coding' && attempt === 1 ? { blockers: [SCOPE_BLOCKER] } : null,
     onTesting: ({ root: hostRoot }) => writeCleanTesting(hostRoot),
   });
+  // 责任阶段统一路由收编后：scope 越界经 repair_candidates（plan 类机器归属）走同一条
+  // backtrack_to_phase 路径，事件 reason 由专用 'ui_scope_violation' 归一为 'repair_candidates'
   const bt = probe.events.filter(
-    e => e.type === 'phase_backtrack_requested' && e.reason === 'ui_scope_violation',
+    e => e.type === 'phase_backtrack_requested' && e.reason === 'repair_candidates',
   );
   assert(bt.length === 1, `须恰好一次 scope 自动回退，实得 ${bt.length}`);
   assert(bt[0].to_phase === 'plan', `回退目标须是 plan，实得 ${bt[0].to_phase}`);
@@ -1493,6 +1516,11 @@ test('t5① coding 撞冻结白名单 → 自动回退 plan 重新裁决，再�
   assert(
     Array.isArray(bt[0].files) && (bt[0].files as string[]).some(f => f.includes('HomeTabPage')),
     `越界文件须作为未受信上下文交接：${JSON.stringify(bt[0].files)}`,
+  );
+  const btCandidates = (bt[0].candidates ?? []) as Array<{ id?: string; category?: string }>;
+  assert(
+    btCandidates.some(c => c.id === 'ui_scope_violation' && c.category === 'plan'),
+    `候选须带 plan 类机器归属（即使涉及文件是产品源码）：${JSON.stringify(btCandidates)}`,
   );
   // plan 真的被重新拉起，且之后 coding 又继续——run 不停在 scope 违规上
   const seq = probe.invokedPhases.join('→');
@@ -1505,8 +1533,8 @@ test('t5① coding 撞冻结白名单 → 自动回退 plan 重新裁决，再�
     probe.events.some(e => e.type === 'phase_backtrack_requested'
       && Array.isArray(e.invalidated_phases)
       && (e.invalidated_phases as string[]).includes('plan')
-      && e.reason === 'ui_scope_violation'),
-    'plan 必须在原子失效事件中被标记失效（旧快照不得继续生效）',
+      && e.reason === 'repair_candidates'),
+    'plan 必须在原子失效事件中被标记失效（旧产物不得继续生效）',
   );
   // **闭环最后一段电线**：plan 必须知道自己为何被重跑、哪些文件要重新裁决。
   // 只断"顺序是 coding→plan→coding"证明不了这一点——真实 plan agent 会原样重跑，

@@ -111,6 +111,7 @@ import {
 import {
   ensurePersonalSetup,
 } from './scripts/utils/personal-setup-gate';
+import { buildSummaryRepairCandidates } from './scripts/utils/repair-candidates';
 import { evaluateConfigPlacementGate } from './scripts/utils/config-placement-gate';
 import { resolvePhasePersonalPrerequisites } from './scripts/utils/phase-personal-prerequisites';
 import { runCapabilityPreflight, emitHarnessPreflightGap } from './scripts/utils/capability-preflight';
@@ -1274,6 +1275,52 @@ function applyVisualDebtPipeline(
  * 完整 schema-valid、原子写。closure 字段以"未闭环/等待 receipt"初值填充，由后续
  * patchRunSummaryClosure 定稿；进程中途崩溃不会留下非法 JSON 或残留旧 closed 态。
  */
+/** best-effort 文本读取（repair candidates 的输入面：缺文件=null=零候选，不抛） */
+function readTextOrNull(absPath: string): string | null {
+  try {
+    return fs.existsSync(absPath) ? fs.readFileSync(absPath, 'utf-8') : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 读 feature 文档（canonical + legacy 全候选）——**必须走既有 artifact resolver**：
+ * 正式 review 报告在 `<feature>/review/review-report.md`，手拼 `<feature>/<doc>` 会读成
+ * null，导致 review 候选恒不生成（codex review 冻结项①：纯函数测试绕过生产读取路径，
+ * 出现假绿）。不新增路径规则或兼容层。
+ */
+function readFeatureDocOrNull(
+  projectRoot: string,
+  feature: string,
+  docName: string,
+): string | null {
+  const resolved = resolveFeatureArtifact(projectRoot, feature, docName);
+  return resolved.exists ? readTextOrNull(resolved.actualPath) : null;
+}
+
+/** 与 check-review conditional_pass_closure 同款校验：receipt 绑定当前报告 hash 才有效。 */
+function isConditionalReviewReceiptValid(
+  projectRoot: string,
+  feature: string,
+): boolean {
+  try {
+    const report = readFeatureDocOrNull(projectRoot, feature, 'review-report.md');
+    if (!report) return false;
+    const reportSha = crypto.createHash('sha256').update(report, 'utf-8').digest('hex');
+    const receiptPath = featureFilePath(
+      projectRoot, feature, path.join('review', 'conditional-authorization.receipt.json'),
+    );
+    return validateConfirmationReceiptFile(
+      receiptPath,
+      defaultTrustRegistryPath(projectRoot),
+      { action: 'conditional_review_authorization', feature, object_hash: reportSha },
+    ).valid;
+  } catch {
+    return false;
+  }
+}
+
 function writeRunSummaryBase(
   projectRoot: string,
   report: ScriptReport,
@@ -1427,6 +1474,34 @@ function writeRunSummaryBase(
   const compileFirstError = extractCompileFirstError(report);
   if (compileFirstError) {
     summary.compile_first_error = compileFirstError;
+  }
+  // 责任阶段统一路由（plan b6e4c9f2 t1）：可信可修缺陷的单一共享事实——harness 派生
+  // 非 agent 自报；manual/batch/goal 消费同一字段（goal 的 deterministic_defects 只是
+  // 其指纹投影）。信任闸：report_validity 非 PASS 一律零 candidate；review 侧另叠
+  // verifier 逐条 confirmed + conditional receipt 抑制（组装函数内部把关）。
+  // agent 自跑轮 verifier.report.md 可能尚未存在 → 零 candidate（gate 轮自然出现）。
+  try {
+    // 生产接线走**共享实现** buildSummaryRepairCandidates（测试调同一函数——
+    // 源码正则冒充接线验证已被 codex 二轮冻结项③点名禁止）
+    const repairCandidates = buildSummaryRepairCandidates({
+      phase: report.phase,
+      checks: report.checks,
+      reportValidity: lattice.report_validity,
+      reviewReportText:
+        report.phase === 'review'
+          ? readFeatureDocOrNull(projectRoot, report.feature, 'review-report.md')
+          : null,
+      verifierReportText: readTextOrNull(path.join(dir, 'verifier.report.md')),
+      conditionalReceiptValid:
+        report.phase === 'review'
+          ? isConditionalReviewReceiptValid(projectRoot, report.feature)
+          : false,
+      parseClassificationFromDetails: extractFailureClassification,
+    });
+    if (repairCandidates.length > 0) summary.repair_candidates = repairCandidates;
+  } catch (e) {
+    // best-effort 事实层：组装失败不阻断 summary（无 candidate=落回既有 retry/halt 行为）
+    console.warn(`   ⚠ [repair-candidates] 组装失败（零候选继续）：${(e as Error).message}`);
   }
   // Writer fail-fast：1.2 extends the quality lattice with assurance provenance and closure state.
   const v11Errors = validateSummaryV11(summary);

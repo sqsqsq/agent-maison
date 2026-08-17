@@ -123,7 +123,10 @@ const cases: TestCase[] = [
     },
   },
   {
-    name: 'deterministic testing defect is recommended and mapped back to coding',
+    // 责任阶段统一路由（plan b6e4c9f2）翻案：缺陷回退的唯一输入是 phase summary 的
+    // repair_candidates（挂在 phase 观测上），deterministic_defects 已降为诊断投影、
+    // **不再驱动路由**。本例保持"testing 缺陷→回 coding"的行为语义，只换事实来源。
+    name: 'testing 可信缺陷（repair_candidates）→ assess 推荐 coding 并映射为回退',
     run: () => {
       const phases: AssessObservation['phases'] = chain.map((phase) => ({
         phase,
@@ -137,12 +140,19 @@ const cases: TestCase[] = [
         deferred: false,
         summary_fingerprint: phase,
         evidence_fingerprint: phase,
+        ...(phase === 'testing'
+          ? {
+              repair_candidates: [{
+                id: 'visual_diff:add_card_home', category: 'coding' as const,
+                item_fingerprint: 'd'.repeat(64), summary: 'must_fix 原文',
+              }],
+            }
+          : {}),
       }));
       const reconcile = observation({
         phase_outcome: {
-          phase: 'testing', verdict: 'FAIL', legacy_action: 'backtrack_to_coding',
+          phase: 'testing', verdict: 'FAIL', legacy_action: 'retry',
         },
-        deterministic_defects: ['visual_score_floor'],
         invalidatable_phases: ['coding', 'review', 'ut', 'testing'],
       });
       const assessed = assessObservation({
@@ -165,21 +175,23 @@ const cases: TestCase[] = [
         currentPhase: 'testing',
         chain,
         driverGuardAction: 'retry',
-      }) === 'backtrack_to_coding', 'runner mapping');
+      }) === 'backtrack_to_phase', 'runner mapping（统一路由后唯一回退动作）');
     },
   },
   {
     name: 'invalid backtrack target preserves explicit backtrack action for runner halt classification',
     run: () => {
+      // 统一路由后唯一回退动作是 backtrack_to_phase；目标不在链内时仍须把回退意图带到
+      // runner（由它落 backtrack_target_absent），不得在 driver 层吞成 halt。
       const recommendation: AssessRecommendation = {
-        action: 'run_phase', phase: 'missing', reason: 'deterministic defect',
-        requires_driver_authorization: true, runner_action: 'backtrack_to_coding',
+        action: 'rerun_phase', phase: 'missing', reason: 'repair_candidates',
+        requires_driver_authorization: true, runner_action: 'backtrack_to_phase',
       };
       assert(selectRunnerActionFromAssess({
         assessment: result(recommendation),
-        observation: observation({ deterministic_defects: ['gate'], invalidatable_phases: ['missing'] }),
+        observation: observation({ invalidatable_phases: ['missing'] }),
         currentPhase: 'testing', chain, driverGuardAction: 'none',
-      }) === 'backtrack_to_coding', 'invalid target must reach explicit backtrack classification');
+      }) === 'backtrack_to_phase', 'invalid target must reach explicit backtrack classification');
     },
   },
   {

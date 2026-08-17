@@ -337,6 +337,9 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
    *  不启动 agent、不烧 attempt——静默吞会让旧身份回执存活，receipt_attempt_identity
    *  死结复发；外部存储条件恢复后 probe 续跑。 */
   receipt_scaffold_unwritable: { class: 'external' },
+  /** 责任阶段统一路由（plan b6e4c9f2）：可信缺陷候选写不回 summary（唯一真源）——
+   *  assess 因此看不见缺陷、回退链断裂。存储条件问题，修好后 probe 续跑。 */
+  repair_candidates_unwritable: { class: 'external' },
   closure_finalization_failed: {
     class: 'recoverable', recover_action: 'retry_transaction', suspected_misclassified: true,
   },

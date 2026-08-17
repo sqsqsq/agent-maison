@@ -109,6 +109,12 @@ export function recommendationAuthorized(
   recommendation: AssessRecommendation,
   authorization: AssessAuthorizationContext,
   chain: string[],
+  opts?: {
+    /** batch 授权区间**下界**（plan b6e4c9f2 t3，codex 三轮）：用户授权起点
+     *  （manifest.start_phase）。回退型推荐（backtrack_to_phase）目标须落在
+     *  [start_phase, through_phase] 才自动执行；区间外返回 false → 转 manual 确认。 */
+    startPhase?: string;
+  },
 ): boolean {
   if (recommendation.action === 'stop') return false;
   if (authorization.mode === 'goal_mode') return true;
@@ -117,6 +123,14 @@ export function recommendationAuthorized(
   const targetIndex = chain.indexOf(recommendation.phase);
   const throughIndex = chain.indexOf(authorization.through_phase);
   if (targetIndex < 0 || throughIndex < 0 || targetIndex > throughIndex) return false;
+  if (recommendation.runner_action === 'backtrack_to_phase') {
+    // 回退型：按显式授权区间判定（custom/lite 用实际 chain 顺序，不用固定全轨序）。
+    // 缺 startPhase（旧调用方/无起点记录）按 fail-closed 处理——不自动回退。
+    if (!opts?.startPhase) return false;
+    const startIndex = chain.indexOf(opts.startPhase);
+    if (startIndex < 0) return false;
+    return targetIndex >= startIndex;
+  }
   const fromPhase = targetIndex > 0 ? chain[targetIndex - 1] : chain[targetIndex];
   return recommendation.phase === fromPhase ||
     isPhaseWithinBatchRange(fromPhase, recommendation.phase, authorization.through_phase);
@@ -238,7 +252,9 @@ export async function runInSessionRound(
     };
   }
   const chain = assessment.observed.phases.map((item) => item.phase);
-  if (!recommendationAuthorized(recommendation, options.authorization, chain)) {
+  if (!recommendationAuthorized(recommendation, options.authorization, chain, {
+    startPhase: options.manifest.start_phase ? String(options.manifest.start_phase) : undefined,
+  })) {
     const waiting = `推荐 ${recommendation.action}/${phase ?? 'none'} 尚未获授权`;
     return {
       status: 'waiting', assessment, waiting_item: waiting,

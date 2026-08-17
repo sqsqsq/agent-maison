@@ -91,6 +91,10 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'summary-schema',   modulePath: './unit/summary-schema.unit.test' },
   { id: 'ut-artifact-parse', modulePath: './unit/ut-artifact-parse.unit.test' },
   { id: 'ut-artifact-validate', modulePath: './unit/ut-artifact-validate.unit.test' },
+  // plan f4c8d2b7：UT 契约冲突收口（boundary 双形态/模板类名口径回归钉/invalid suggestion 分产物/路径 SSOT/ut prompt 注入）
+  { id: 'ut-contract-caliber', modulePath: './unit/ut-contract-caliber.unit.test' },
+  // plan a8e5c3f9：统一 headless 全权限执行契约（bypass argv/effective 归一化/chrys 拒绝/adapter.yaml 一致性）
+  { id: 'headless-full-permission', modulePath: './unit/headless-full-permission.unit.test' },
   { id: 'ut-it-blocks', modulePath: './unit/ut-it-blocks.unit.test' },
   { id: 'ut-dag-loader', modulePath: './unit/ut-dag-loader.unit.test' },
   { id: 'ut-coverage-gate-diagnostics', modulePath: './unit/ut-coverage-gate-diagnostics.unit.test' },
@@ -203,6 +207,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'runtime-policy', modulePath: './unit/runtime-policy.unit.test' },
   { id: 'diff-scope', modulePath: './unit/diff-scope.unit.test' },
   { id: 'correction-routing', modulePath: './unit/correction-routing.unit.test' },
+  { id: 'repair-candidates', modulePath: './unit/repair-candidates.unit.test' },
   { id: 'usage-capture', modulePath: './unit/usage-capture.unit.test' },
   { id: 'check-receipt-policy', modulePath: './unit/check-receipt-policy.unit.test' },
   { id: 'compat-loader', modulePath: './unit/compat-loader.unit.test' },

@@ -23,6 +23,7 @@
 import type { CheckResult, Phase } from './types';
 import type { CapabilityResolutionReport } from './capability-resolution';
 import { resolveVerdictFromChecks } from './report-generator';
+import { validateRepairCandidatesShape } from './repair-candidates';
 
 export type AxisId = 'functional' | 'visual' | 'asset' | 'evidence';
 export const AXIS_IDS: readonly AxisId[] = ['functional', 'visual', 'asset', 'evidence'];
@@ -462,6 +463,9 @@ const NEGATIVE_VERDICTS = new Set<AxisVerdict>(['FAIL', 'UNVERIFIED', 'STALE', '
 export function validateSummaryV11(summary: unknown): string[] {
   if (!summary || typeof summary !== 'object') return ['summary 非对象'];
   const s = summary as Record<string, unknown>;
+  // 责任阶段统一路由（plan b6e4c9f2）：repair_candidates 可选字段——存在即须形状合法
+  const rcErrors = validateRepairCandidatesShape(s.repair_candidates);
+  if (rcErrors.length > 0) return rcErrors;
   if (s.schema_version !== '1.1' && s.schema_version !== '1.2') {
     return [`schema_version=${String(s.schema_version)} 非 1.1/1.2`];
   }

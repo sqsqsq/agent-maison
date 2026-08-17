@@ -568,6 +568,20 @@ export interface HarnessRunSummary {
   next_action: string;
   receipt_status?: string;
   closure_status?: 'open' | 'closed';
+  /**
+   * 责任阶段统一路由（plan b6e4c9f2）：可信可修缺陷的单一共享事实（可选字段；
+   * 缺失=本轮无可信候选）。harness 派生非 agent 自报——review 逐条 verifier 验证/
+   * 机器 check id 归属/路径域兜底，形状见 repair-candidates.ts。goal 的
+   * deterministic_defects 是其指纹投影；manual/batch 消费同一事实。
+   */
+  repair_candidates?: Array<{
+    id: string;
+    category: 'spec' | 'plan' | 'coding';
+    files: string[];
+    summary: string;
+    item_fingerprint: string;
+    source_phase: string;
+  }>;
   /** Mechanical capability projection; legacy summaries read as unknown. */
   assurance?: 'blocked' | 'degraded' | 'full' | 'not_applicable';
   /** Immutable capability preflight result written by the runner. */

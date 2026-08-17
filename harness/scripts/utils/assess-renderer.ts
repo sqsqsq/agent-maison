@@ -8,6 +8,7 @@ import {
   type AssessResult,
 } from './assess';
 import { loadGoalManifestFromRun } from './goal-manifest';
+import { mapCategoryToChainPhase } from './correction-routing';
 
 export interface AssessRenderOptions {
   projectRoot: string;
@@ -48,6 +49,43 @@ export function formatAssessNextStep(
 }
 
 /**
+ * 责任阶段统一路由（plan b6e4c9f2 t3·manual）：当前 phase 的可信可修缺陷
+ * （summary.repair_candidates，harness 共享事实层产出）在人工链路渲染为**确认菜单**
+ * ——manual 绝不擅自跨阶段改文件，只自动诊断责任阶段并把选择权给用户；
+ * 用户选 1 后由当前人工 agent 切换对应 Skill 继续，不新增执行器。
+ * goal/batch 模式不渲染（自动路径由 runner/授权区间承载）。
+ */
+export function formatRepairCandidatesMenu(
+  result: AssessResult,
+  options: Pick<AssessRenderOptions, 'phase' | 'mode'>,
+): string | null {
+  if (options.mode !== 'manual') return null;
+  // 候选来自 assess 观测（其唯一真源=phase summary）——不再单独读文件，三模式同事实。
+  const candidates = result.observed.phases.find((p) => p.phase === options.phase)?.repair_candidates ?? [];
+  if (candidates.length === 0) return null;
+  const chainPhases = result.observed.phases.map((p) => p.phase);
+  const targets = [...new Set(candidates.map((c) => c.category))]
+    .map((category) => mapCategoryToChainPhase(category, chainPhases, result.track))
+    .filter((p): p is string => p !== null && p !== options.phase);
+  const upstream = targets.sort(
+    (a, b) => chainPhases.indexOf(a) - chainPhases.indexOf(b),
+  )[0];
+  if (!upstream) return null;
+  return [
+    '',
+    'REPAIR_CANDIDATES',
+    `${options.phase} 发现 ${candidates.length} 个可信可修缺陷，责任阶段为 ${upstream}：`,
+    ...candidates.slice(0, 6).map((c) => `  - ${c.id}: ${oneLine(c.summary ?? '', 120)}`),
+    '',
+    `1. 返回 ${upstream} 修复，随后重新执行 ${options.phase}`,
+    '2. 暂停',
+    '3. 其它处理方式',
+    '（请向用户呈现以上选项并等待确认——manual 模式不得未经确认跨阶段修改文件）',
+    'END_REPAIR_CANDIDATES',
+  ].join('\n');
+}
+
+/**
  * Process-wide once guard prevents an outer CLI from rendering twice. Nested
  * check-receipt calls use --skip-state-sync and never invoke this helper.
  */
@@ -78,6 +116,8 @@ export function assessAndRenderNextStep(options: AssessRenderOptions): AssessRes
     });
     console.log('');
     console.log(formatAssessNextStep(result, options));
+    const menu = formatRepairCandidatesMenu(result, options);
+    if (menu) console.log(menu);
     return result;
   } catch (error) {
     console.warn('');

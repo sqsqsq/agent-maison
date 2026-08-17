@@ -83,6 +83,31 @@
     "next_action": { "type": "string", "minLength": 1 },
     "receipt_status": { "type": "string" },
     "closure_status": { "type": "string", "enum": ["open", "closed"] },
+    "repair_candidates": {
+      "type": "array",
+      "description": "责任阶段统一路由（plan b6e4c9f2）：可信可修缺陷的唯一真源——harness 派生非 agent 自报；goal/manual/batch 三链共用（assess 直读本字段）。缺失=本轮无可信候选。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "category", "files", "summary", "item_fingerprint", "source_phase"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "category": {
+            "type": "string",
+            "enum": ["spec", "plan", "coding"],
+            "description": "责任类别（既有 CorrectionCategory 子集；phase 由 assess 按 workflow 映射，不存 phase 名）"
+          },
+          "files": { "type": "array", "items": { "type": "string" } },
+          "summary": { "type": "string" },
+          "item_fingerprint": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "缺陷身份指纹；整轮防震荡指纹=排序后集合 hash（不落盘，消费方现算）"
+          },
+          "source_phase": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
     "assurance": {
       "type": "string",
       "enum": ["blocked", "degraded", "full", "not_applicable"],

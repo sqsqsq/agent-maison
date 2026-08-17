@@ -93,6 +93,8 @@ export function deriveReconcileObservation(
       actionability: actionability(item.blocking_class),
       ...(item.blocking_class ? { blocking_class: item.blocking_class } : {}),
     })),
+    // 责任阶段统一路由：候选**不进 reconcile**（唯一真源=phase summary，assess 直读）——
+    // 避免第二份事实与 batch/in-session 链路漏传（codex review 冻结项②③）。
     deterministic_defects: [...new Set(input.deterministicDefects ?? [])].sort(),
     budgets: {
       retries_used: Math.max(0, Math.trunc(input.retriesUsed)),

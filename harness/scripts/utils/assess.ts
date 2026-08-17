@@ -28,6 +28,7 @@ import {
   type DependencyPolicy,
   type PhaseVerdictAction,
 } from './phase-transition-policy';
+import { mapCategoryToChainPhase } from './correction-routing';
 import {
   assuranceSatisfies,
   type Assurance,
@@ -93,6 +94,12 @@ export interface ReconcileObservationV1 {
 
 export interface AssessPhaseObservation {
   phase: string;
+  /**
+   * 责任阶段统一路由（plan b6e4c9f2）：该 phase summary 的可信可修缺陷候选
+   * （**唯一真源=summary.repair_candidates[]**；assess 直读，不经 reconcile 复制——
+   * goal/manual/batch 三链共用同一判断，codex review 冻结项③）。
+   */
+  repair_candidates?: Array<{ id: string; category: 'spec' | 'plan' | 'coding'; item_fingerprint: string; summary?: string }>;
   summary_state: 'missing' | 'corrupt' | 'legacy' | 'current';
   schema_version: string | null;
   verdict: string | null;
@@ -258,6 +265,35 @@ function sliceThrough(phases: string[], end: string): string[] {
     throw new Error(`[assess] goal_end=${end} 不在 active workflow/track phase chain`);
   }
   return phases.slice(0, index + 1);
+}
+
+/**
+ * 责任阶段统一路由（plan b6e4c9f2；codex review 冻结项③）：从 phase summary 读可信
+ * 可修候选——**唯一真源**。assess 直读它，goal/manual/batch 三链因此共用同一裁决，
+ * 不再各自复制一份（reconcile observation 不承载候选，manual 也不另读文件）。
+ * 形状非法条目静默剔除（写侧已由 validateRepairCandidatesShape fail-fast）。
+ */
+function readRepairCandidatesFromSummary(
+  summary: Record<string, unknown>,
+): NonNullable<AssessPhaseObservation['repair_candidates']> {
+  const raw = summary.repair_candidates;
+  if (!Array.isArray(raw)) return [];
+  const out: NonNullable<AssessPhaseObservation['repair_candidates']> = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const c = item as Record<string, unknown>;
+    const category = String(c.category ?? '');
+    if (category !== 'spec' && category !== 'plan' && category !== 'coding') continue;
+    if (typeof c.id !== 'string' || !c.id.trim()) continue;
+    if (typeof c.item_fingerprint !== 'string' || !/^[0-9a-f]{64}$/.test(c.item_fingerprint)) continue;
+    out.push({
+      id: c.id,
+      category,
+      item_fingerprint: c.item_fingerprint,
+      ...(typeof c.summary === 'string' ? { summary: c.summary } : {}),
+    });
+  }
+  return out;
 }
 
 function isDeferredSummary(summary: Record<string, unknown>): boolean {
@@ -496,6 +532,10 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
       assurance,
       required_assurance: requiredAssurance,
       assurance_satisfied: assuranceSatisfied,
+      // 责任阶段统一路由：直读 summary 的可信候选（唯一真源）——三模式共用
+      ...(readRepairCandidatesFromSummary(summary).length > 0
+        ? { repair_candidates: readRepairCandidatesFromSummary(summary) }
+        : {}),
       // plan c8e5b3f1 t2 D：不把 verdict=INCOMPLETE 一律当 deferred——本地 blocked capability
       //（unresolved attempts 均无 upstream_producer）应走 failed；真 device/external 仍 deferred。
       deferred: isDeferredSummary(summary) && !hasLocalBlockedCapability(summary),
@@ -720,31 +760,50 @@ function recommendationForObservation(
   gaps: AssessGap[],
   fused: boolean,
 ): AssessRecommendation {
+  // 责任阶段统一路由（plan b6e4c9f2 t2）：可信可修缺陷按责任类别经**当前 workflow/track**
+  // 严格映射回退目标——多类别并存选**最上游**（级联失效天然覆盖下游；分组事实由 runner
+  // 的 backtrack 事件承载，链重走到各责任阶段只注入属于它的候选）。映射不到当前 chain
+  // 的真实节点=null=不参与选择；全部映射失败 → phase:null 的回退意图，由 driver/runner
+  // 落既有 backtrack_target_absent（禁静默回链首/幽灵 phase）。
   if (!fused) {
     const reconcile = observation.reconcile;
     const currentPhase = reconcile?.phase_outcome?.phase;
-    const codingTarget = reconcile?.invalidatable_phases?.find((phase) => phase === 'coding');
-    if (
-      reconcile?.state === 'active' &&
-      currentPhase &&
-      codingTarget &&
-      currentPhase !== codingTarget &&
-      (reconcile.deterministic_defects?.length ?? 0) > 0
-    ) {
-      const target = observation.phases.find((phase) => phase.phase === codingTarget);
-      const recommendationAction = classifyPhaseVerdict({
-        assessment_gap: 'deterministic_defects',
-        target_state: target?.summary_state === 'missing' ? 'missing' : 'current',
-      });
-      const runnerAction: PhaseVerdictAction = 'backtrack_to_coding';
+    // 候选唯一真源=phase summary（assess 直读，不经 reconcile 复制）——goal 的 detached
+    // runner、in-session/batch driver、manual 渲染因此共用同一事实与同一裁决。
+    const candidates = currentPhase
+      ? observation.phases.find((p) => p.phase === currentPhase)?.repair_candidates ?? []
+      : [];
+    if (reconcile?.state === 'active' && currentPhase && candidates.length > 0) {
+      const chainPhases = observation.phases.map((p) => p.phase);
+      const targets = [...new Set(candidates.map((c) => c.category))]
+        .map((category) => mapCategoryToChainPhase(category, chainPhases, observation.track))
+        .filter((p): p is string => p !== null && p !== currentPhase);
+      const upstream = targets.sort(
+        (a, b) => chainPhases.indexOf(a) - chainPhases.indexOf(b),
+      )[0] ?? null;
+      const reason =
+        `repair_candidates: ${candidates.map((c) => `${c.id}(${c.category})`).join(', ')}`;
+      if (upstream === null) {
+        return {
+          action: 'stop',
+          phase: null,
+          reason: `${reason}——责任类别映射不到当前 workflow 链内节点（backtrack_target_absent）`,
+          requires_driver_authorization: true,
+          runner_action: 'backtrack_to_phase',
+        };
+      }
       return {
-        action: recommendationAction,
-        phase: codingTarget,
-        reason: `deterministic_defects: ${reconcile.deterministic_defects!.join(', ')}`,
+        action: 'rerun_phase',
+        phase: upstream,
+        reason,
         requires_driver_authorization: true,
-        runner_action: runnerAction,
+        runner_action: 'backtrack_to_phase',
       };
     }
+    // 【deterministic_defects → backtrack_to_coding 旧裁决链已删除 · 责任阶段统一路由】
+    // 缺陷路由唯一入口=上面的 repair_candidates 分支（唯一真源=phase summary）。
+    // deterministic_defects 保留为诊断/指纹投影，**不再决定路由**——两条路并存正是
+    // 「summary 写不进去就悄悄走旧路」的绕过口（codex 二轮冻结项①）。
   }
   const phaseOutcome = observation.reconcile?.phase_outcome;
   if (!fused && phaseOutcome && ['PASS', 'FAIL', 'INCOMPLETE'].includes(phaseOutcome.verdict)) {

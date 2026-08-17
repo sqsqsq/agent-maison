@@ -121,6 +121,7 @@ import {
   type RawRunInput,
   overrideAuthorizedIdentityFields,
   writeGoalManifest,
+  effectiveHeadlessUnattended,
   type GoalManifest,
 } from './utils/goal-manifest';
 import {
@@ -268,12 +269,20 @@ import {
   isGoalHeadlessEnv,
   MAISON_GOAL_MODEL_PIN_ENV,
   MAISON_GOAL_RUNNER_ENV,
-  MAISON_GOAL_ALLOWED_TOOLS_ENV,
   runSyncClosureDetailed,
   syncPhaseStateOnReceiptPassStrict,
   tryValidateReceipt,
 } from './utils/phase-state';
 import { writeReceiptScaffold } from './utils/receipt-scaffold';
+import {
+  actionableDefectsToCandidates,
+  mergeRepairCandidatesIntoSummary,
+  resolveInvalidatablePhases,
+  restoreBacktrackCandidatesFromEvents,
+  roundFingerprintOfCandidates,
+  type RepairCandidate,
+} from './utils/repair-candidates';
+import { mapCategoryToChainPhase } from './utils/correction-routing';
 import { loadGoalCapability } from './utils/goal-adapter-capability';
 import { deriveReconcileObservation } from './utils/goal-reconcile-observation';
 import { validateMinimumAssurance } from './utils/skill-contract';
@@ -371,6 +380,8 @@ import {
 } from './utils/product-source-snapshot';
 // v23 F2 预防层：写入边界 prompt 文案（检测=fs 快照前后对比，违规=halt 求人）
 import { renderWriteBoundaryGuidance } from './utils/testing-write-boundary';
+// plan f4c8d2b7 t6：ut 阶段 prompt 注入机器产物格式契约（路径解析自 skill-assets SSOT）
+import { renderUtFormatContractLines } from './utils/ut-template-paths';
 
 
 /** features_dir 相对路径（写入边界判定用） */
@@ -958,10 +969,8 @@ async function runHarnessPhase(
   // Windows 子进程读取哪个是未定义行为）。
   deleteEnvKeyCaseInsensitive(childEnv, 'MAISON_GOAL_GATE_HARNESS');
   childEnv.MAISON_GOAL_GATE_HARNESS = '1';
-  const allowedTools = manifest?.unattended?.allowed_tools;
-  if (allowedTools?.length) {
-    childEnv[MAISON_GOAL_ALLOWED_TOOLS_ENV] = allowedTools.join(',');
-  }
+  // MAISON_GOAL_ALLOWED_TOOLS 注入已退役（plan a8e5c3f9 t1）：allowed_tools 是审批清单，
+  // headless 全权限下不存在审批面，也不再参与多模态能力判断。
   const child = spawn(
     process.platform === 'win32' ? 'npx.cmd' : 'npx',
     ['ts-node', 'harness-runner.ts', '--phase', phase, '--feature', feature, '--summary'],
@@ -1161,7 +1170,8 @@ function buildUnattendedExecutionBlock(
   projectRoot: string,
   capabilityAdvisory?: CapabilityAdvisory,
 ): string[] {
-  const approval = manifest.unattended?.approval_mode ?? 'never';
+  // plan a8e5c3f9 t6：prompt 用 effective 权限（恒 never）——不再随旧 manifest 摇摆。
+  const approval = effectiveHeadlessUnattended(manifest.unattended).approval_mode;
   const assumptionsRel = relFeatureFile(projectRoot, manifest.feature, `${phase}/headless-assumptions.jsonl`);
   const assumptionsMdRel = relFeatureFile(projectRoot, manifest.feature, `${phase}/headless-assumptions.md`);
   // E0（cursor 采纳：同 prompt 自相矛盾预防）——原文硬编码「唯一出路是 pixel_1to1 P0 屏人工
@@ -2482,6 +2492,10 @@ export function buildPhasePrompt(
     '',
     `Read and follow the phase skill: ${PHASE_SKILL_REL[phase]}`,
     `Skill absolute path: ${skillAbs}`,
+    // plan f4c8d2b7 t6：仅 ut 阶段注入两产物格式契约与 SSOT 解析后的模板真实路径——
+    // headless agent 拿不到 profile-skill-asset 多跳指针后面的 OUTPUT CONTRACT（宿主
+    // 实锤：精准踩中模板明文禁止的 Markdown 表格）。通用注入属 d8f4b7e2 范围，落地后本块退役。
+    ...(phase === 'ut' ? ['', ...renderUtFormatContractLines(projectRoot)] : []),
     '',
     'After producing artifacts, run harness for this phase and ensure summary.json is written.',
     'Do NOT claim phase complete if harness verdict is INCOMPLETE or FAIL.',
@@ -3192,7 +3206,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
             ? String(argv['run-id']).trim()
             : undefined,
         unattended: {
-          write_mode: 'workspace-write',
+          // plan a8e5c3f9 t6：新 manifest 直接写 effective 值——headless 即全权限
+          //（non-interactive + no approval + full execution），不再默认 workspace-write。
+          write_mode: 'full-access',
           approval_mode: 'never',
           max_turns: 20,
           // 不再硬编码扁平 timeout_seconds：开箱走 goal-timeout 的 per-phase 默认表
@@ -3345,7 +3361,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
     detachedChild: Boolean(argv['detached-child']),
     dryRun,
     foregroundOk: Boolean(argv['foreground-ok']),
-    approvalMode: manifest.unattended?.approval_mode,
+    // plan a8e5c3f9 t6：effective 恒 never——所有 headless run 均属无人值守，存活门一律适用。
+    approvalMode: effectiveHeadlessUnattended(manifest.unattended).approval_mode,
   });
   if (survivalPosture === 'block') {
     console.error(
@@ -3738,6 +3755,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
 
     // v23 F1：缺陷交接上下文——回退后注入下一次 coding prompt；进程重启从 events 恢复
     let backtrackCodingContext: ActionableDefect[] = [];
+    // 责任阶段统一路由（plan b6e4c9f2）：repair candidates 整组交接（mixed-owner 不丢）；
+    // prompt 注入按当前 phase 类别过滤——链重走到各责任阶段只注入属于它的候选。
+    let backtrackRepairCandidates: RepairCandidate[] = [];
     // v23 F1：整轮集合指纹熔断——启动时从本 run 有效 events 初始化（进程重启后同集合
     // 不得再回退），随后内存实时更新
     const seenRoundFingerprints = new Set<string>();
@@ -3816,6 +3836,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         to_phase?: string; reason?: string;
         files?: unknown;
         defects?: ActionableDefect[];
+        candidates?: RepairCandidate[];
       };
       if (ev.type !== 'phase_backtrack_requested') continue;
       if (typeof ev.round_fingerprint === 'string' && ev.round_fingerprint) {
@@ -3836,6 +3857,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
       // 后续授权回退仍携带早已修好的旧缺陷。每条回退事件都重置 context 为其 defects ?? []。
       backtrackCodingContext = Array.isArray(ev.defects) ? ev.defects : [];
     }
+    // 责任阶段统一路由（codex 冻结项④）：候选交接上下文跨 resume 恢复走**共享实现**
+    // （测试调同一函数验证恢复与清空语义，不用源码正则）。
+    backtrackRepairCandidates = restoreBacktrackCandidatesFromEvents(
+      priorEvents as ReadonlyArray<{ type?: string; candidates?: unknown }>,
+    );
 
     if (argv.resume) {
       const halfRecovery = detectHalfCompletedPhaseRecovery(
@@ -4020,10 +4046,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
       const headlessCmd = cap.capability?.external_runner?.headless_invoke ?? '';
       const adapterBinary = headlessCmd.trim().split(/\s+/)[0] || manifest.adapter!;
       const adapterVersion = await probeAdapterVersion(adapterBinary);
+      // plan a8e5c3f9 t6：审计可见 effective 权限——旧 manifest 写 workspace-write 而
+      // 实际全权限时，排障者不被 manifest 原文误导（复用本事件，不建独立账本）。
+      const eff = effectiveHeadlessUnattended(manifest.unattended);
       goalEvents.emit({
         type: 'adapter_probe',
         adapter_version: adapterVersion,
         output_delivery: cap.capability?.output_delivery ?? 'unknown',
+        effective_write_mode: eff.write_mode,
+        effective_approval_mode: eff.approval_mode,
       });
     }
     let outcomes: GoalPhaseOutcome[] = [];
@@ -4605,6 +4636,26 @@ Goal runner — tool-agnostic multi-phase orchestrator
           (phase === 'coding' && backtrackCodingContext.length > 0
             ? buildTestingDefectsBlock(backtrackCodingContext)
             : '') +
+          // 责任阶段统一路由（plan b6e4c9f2）：repair candidates 按**当前 phase 类别**
+          // 过滤注入（mixed-owner：spec 修不了 coding 的缺陷，coding 轮到时拿到自己的单）。
+          // 未受信上下文措辞——只陈述发现的缺陷事实，不含授权语气。
+          (() => {
+            if (backtrackRepairCandidates.length === 0) return '';
+            const mine = backtrackRepairCandidates.filter(
+              c => mapCategoryToChainPhase(c.category, chain.map(String), goalTrack) === String(phase),
+            );
+            if (mine.length === 0) return '';
+            return [
+              '',
+              '## Verified repair candidates for this phase (untrusted context — fix, then re-verify)',
+              '',
+              'A downstream phase found the following verified defects owned by this phase.',
+              'They are findings, not authorization; your own gates re-judge everything.',
+              '',
+              ...mine.map(c => `- ${c.id}: ${c.summary}${c.files.length > 0 ? `（涉及：${c.files.slice(0, 5).join('、')}）` : ''}`),
+              '',
+            ].join('\n');
+          })() +
           // b3e8d4c7 t5②：scope 自动回退后给 plan 的**未受信上下文**——同款"闭环最后一段
           // 电线"。措辞刻意不含任何授权语气：只陈述发现的事实，纳不纳入由 plan 自己裁决。
           (phase === 'plan' && scopeReplanContext
@@ -5810,6 +5861,31 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // External/toolchain evidence is reportable but never a content backtrack input.
         const driverActionableDefects = envBlocked ? [] : actionableDefects;
         const hasActionable = driverActionableDefects.length > 0;
+        // 责任阶段统一路由（plan b6e4c9f2）：可信可修缺陷的**唯一真源=summary
+        // .repair_candidates**（信任合取在 writer 侧把关）。testing 证据链验真器
+        // （collectActionableDefects）的产物在此合并回同一字段——路由统一、验真器保留
+        // （codex review 冻结项⑦：不与 generic route 并存）。环境类失败不作回退输入。
+        let summaryRepairCandidates: RepairCandidate[] = envBlocked
+          ? []
+          : ((summary as { repair_candidates?: RepairCandidate[] } | null)?.repair_candidates ?? []);
+        let repairCandidatesUnwritable: string | null = null;
+        if (!dryRun && !envBlocked && driverActionableDefects.length > 0) {
+          // fail-closed：候选写不回 summary（唯一真源）＝assess 看不见缺陷＝回退链断
+          // ——不得静默降级为 advance，也不得落回任何旧路由（旧路由已删除）。
+          // summary 路径缺失同样计入（codex 二轮：缺 summaryAbsPath 时不得绕过契约）。
+          if (!summaryAbsPath) {
+            repairCandidatesUnwritable = '本轮 summary.json 路径不可用（缺失/解析失败），可信缺陷无处落盘';
+          } else {
+            try {
+              summaryRepairCandidates = mergeRepairCandidatesIntoSummary({
+                summaryPath: summaryAbsPath,
+                candidates: actionableDefectsToCandidates(driverActionableDefects, String(phase)),
+              });
+            } catch (e) {
+              repairCandidatesUnwritable = (e as Error).message;
+            }
+          }
+        }
         // review 第 11 轮 P1：可信缺陷优先回退；**只有 unverified** 时既不回退（不可信
         // 不能驱动改码）也不 advance（must_fix 在场不能装干净）——testing 内 retry 引导
         // 重采/补身份，耗尽 halt。
@@ -5821,6 +5897,25 @@ Goal runner — tool-agnostic multi-phase orchestrator
 
         let haltReason: string | undefined;
         let awaitConfirmGuidance: string | undefined;
+        // 责任阶段统一路由 fail-closed（codex 冻结项⑦）：验真器已判可信缺陷，但候选
+        // 写不回 summary（唯一真源）→ assess 看不见缺陷，回退链断；停下求人，不 advance。
+        if (repairCandidatesUnwritable) {
+          driverGuardAction = 'halt';
+          haltReason = 'repair_candidates_unwritable';
+          goalEvents.emit({
+            type: 'phase_halt', phase, halt_reason: 'repair_candidates_unwritable',
+            detail: repairCandidatesUnwritable, probe: 'storage_ready',
+            ...runDispositionFields(decide(
+              { incident: 'repair_candidates_unwritable', phase: String(phase), detail: repairCandidatesUnwritable },
+              NO_AUTHORITY,
+              { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+            )),
+          });
+          console.error(
+            `\n===== repair_candidates_unwritable =====\n${repairCandidatesUnwritable}\n`
+            + '可信缺陷写不回 summary——assess 将看不到它、回退链断裂，停下求人。\n',
+          );
+        }
         if (!unverifiableOnly) previousUnverifiedRound = null;
         if (unverifiableOnly) {
           const notes = actionableResult.unverified.slice(0, 6)
@@ -6381,12 +6476,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
               ) + 1
             : 0,
           residualFingerprints: currentBlockerSignature ? [currentBlockerSignature] : [],
-          invalidatablePhases:
-            hasActionable &&
-            (phase === 'ut' || phase === 'testing') &&
-            chain.includes('coding' as FeaturePhase)
-              ? chain.slice(Math.max(0, chain.indexOf('coding' as FeaturePhase)))
-              : [],
+          // 失效面：testing 缺陷特例（既有）∪ repair candidates 的最上游目标及其下游
+          // （目标不在链内=空——driver 判 target 缺席走 backtrack_target_absent）。
+          invalidatablePhases: resolveInvalidatablePhases({
+            chain: chain.map(String),
+            hasActionable: hasActionable && (phase === 'ut' || phase === 'testing'),
+            candidateCategories: summaryRepairCandidates.map((c) => c.category),
+            track: goalTrack,
+          }),
           timedOut: invoke.timed_out,
           operatorInterrupted: haltReason === 'operator_interrupt',
           apiDisconnected: apiErrorSentinel !== null,
@@ -6826,6 +6923,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
             // review 第 10 轮（P1-4）：授权回退**不携带**缺陷清单——必须清空缺陷交接上下文，
             // 否则上一次 visual 回退已修好的旧缺陷会被再次注入 coding prompt。
             backtrackCodingContext = [];
+            // 同款纪律（codex 冻结项④）：非 repair 回退必须清空候选交接，否则旧 CR 会
+            // 继续注入后续 prompt。
+            backtrackRepairCandidates = [];
             backtrackToIdx = Math.max(codingIdx, 0);
             goalEvents.emit({ type: 'phase_backtrack_completed', to_phase: chain[backtrackToIdx] });
             console.log(
@@ -6926,78 +7026,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
         }
 
-        // ------------------------------------------------------------------
-        // b3e8d4c7 t5①：`ui_scope_violation` **不再只给文字建议**——coding 发现需要扩
-        // 范围是开发中最常见的正常事，把它变成人工决策问题违背无人值守目标。
-        // 进既有 backtrack/invalidation 通道：自动回 plan 更新 scope → plan **独立裁决** →
-        // PASS 后 runner 重新签发快照 → 自动回到 coding 继续，run 不停。
-        // 越界文件只作为**未受信上下文**交给 plan（是"发现事实"，不是授权）——这与
-        // 「coding 自行扩写 contracts.yaml 再自建 snapshot」的自我授权是两回事，后者仍禁。
-        // **不新增**"是否符合需求"分类器（那句话没有机器判据，很容易再长出一张规则表）：
-        // 合不合理由 plan 阶段及其既有 harness 判断。
-        // 防震荡沿用既有 seenRoundFingerprints 同款纪律：同一越界文件集合只换一次回退——
-        // plan 若坚持不加，第二次不再烧预算，落回既有 retry/halt。
-        // ------------------------------------------------------------------
-        if (!dryRun && phase === ('coding' as FeaturePhase)) {
-          // 判据用 blocker 的 **classification**：check 层的 `failure_kind` 经
-          // buildSummaryBlockers（summary-blockers.ts:42）落到该字段；同一 rule id
-          // 还承载 ui_scope_frozen_contract_missing 等**环境类**失败，那些不是"发现要
-          // 扩范围"，不得走 replan（它们在 t5④ 的 spawn 前预检里处理）。
-          const scopeViolationFiles = [
-            ...new Set(
-              (summary?.blockers ?? [])
-                .filter(
-                  b =>
-                    b.id === 'ui_diff_within_declared_files' &&
-                    b.classification === 'ui_scope_violation',
-                )
-                .flatMap(b => b.affected_files ?? []),
-            ),
-          ].sort();
-          if (scopeViolationFiles.length > 0) {
-            const replan = tryScopeReplan({
-              projectRoot,
-              feature: manifest.feature,
-              runId: manifest.run_id,
-              chain: chain.map(String),
-              endPhaseIdx: phaseIdx,
-              phasesWithOutcome: outcomes.map(o => String(o.phase)),
-              backtracksUsed,
-              maxBacktracks: DEFAULT_MAX_BACKTRACKS,
-              trigger: 'ui_scope_violation',
-              causePhase: String(phase),
-              affectedFiles: scopeViolationFiles,
-              detail:
-                `coding 改了 plan 冻结白名单外的 ${scopeViolationFiles.length} 个 UI 文件` +
-                `（${scopeViolationFiles.slice(0, 5).join('、')}）——交回 plan 独立裁决是否纳入 scope`,
-              emit: (e: Record<string, unknown>) => goalEvents.emit(e),
-            });
-            if (replan.kind === 'replanned') {
-              backtracksUsed++;
-              // t5②：越界文件作为**未受信上下文**交给下一轮 plan（闭环最后一段电线）
-              scopeReplanContext = resolveScopeReplanContext({
-                projectRoot,
-                reason: 'ui_scope_violation',
-                files: scopeViolationFiles,
-              });
-              outcomes = outcomes.filter(o => !replan.invalidatedPhases.includes(String(o.phase)));
-              console.error(
-                `\n===== ui_scope_violation → 自动回退 plan =====\n` +
-                `${scopeViolationFiles.length} 个 UI 文件不在冻结白名单内：` +
-                `${scopeViolationFiles.slice(0, 6).join('、')}\n` +
-                `→ 回 plan 重新裁决 scope（越界文件作为未受信上下文交接），PASS 闭环后回到 coding。\n` +
-                `（第 ${backtracksUsed} 次回退，共用预算 ${DEFAULT_MAX_BACKTRACKS} 次/run；tx=${replan.txId}）\n`,
-              );
-              phaseIdx = replan.planIdx - 1; // for 循环 ++ 后落回 plan
-              phaseDone = true;
-              continue;
-            }
-            // 预算耗尽 / chain 不含 plan → **不新造 halt 分类**，落回既有 action 处理
-            console.error(
-              `\n[t5①] ui_scope_violation 自动回退不可用：${replan.detail}——落回既有 ${action} 处理。\n`,
-            );
-          }
-        }
+        // 【ui_scope_violation → plan 专用回退分支已删除 · 责任阶段统一路由收编】
+        // 该事实现由 harness 侧共享层产出 plan 类 repair candidate（check id 机器归属，
+        // 见 repair-candidates.ts CHECK_ID_OWNER_REGISTRY），经 assess 统一裁决走
+        // backtrack_to_phase——与 review/ut/testing 缺陷同一条路，不再有平行特例。
+        // 未受信上下文交接由候选注入块承担（按目标阶段过滤）。tryScopeReplan 本身保留：
+        // plan_authority_unverifiable / invalidation_journal_untrusted 仍是它的触发面。
 
         if (action === 'advance') {
           const snap = snapshotPhaseHarness(
@@ -7061,23 +7095,28 @@ Goal runner — tool-agnostic multi-phase orchestrator
           continue;
         }
 
-        // v23 F1：统一回修环——testing 有 actionable 缺陷（含 best_effort 的 WARN）即回
-        // coding，缺陷内容经 backtrackCodingContext 真实交接进下一次 coding prompt。
-        // 熔断按**整轮集合指纹**：只有整轮 actionable 集合完全相同才算无进展（{A,B}
-        // 修成 {B} 允许再回退）；预算与授权回退共用 DEFAULT_MAX_BACKTRACKS。
-        if (action === 'backtrack_to_coding') {
-          const codingIdxBt = chain.indexOf('coding' as FeaturePhase);
-          const roundFp = roundFingerprintOf(driverActionableDefects);
-          if (codingIdxBt < 0 || backtracksUsed >= DEFAULT_MAX_BACKTRACKS || seenRoundFingerprints.has(roundFp)) {
+        // 【backtrack_to_coding 专用执行分支已删除 · 责任阶段统一路由收编】
+        // testing 证据链验真器的 actionable 缺陷现已在上游合并进 summary.repair_candidates
+        // （唯一真源），与 review/ut/plan 侧候选走同一条 backtrack_to_phase 路径；
+        // 熔断/预算/事件/注入全部复用下面这一份实现，不再有平行特例。
+
+        // 责任阶段统一路由（plan b6e4c9f2 t2/t3）：repair candidates 驱动的通用回退——
+        // 目标由 assess 的 recommendation.phase 承载（严格 workflow 映射；null/不在链内
+        // =backtrack_target_absent）。预算/整轮指纹熔断与 testing 特例共用同一池同一集合
+        // （seenRoundFingerprints/DEFAULT_MAX_BACKTRACKS）；mixed-owner 整组事实进事件，
+        // prompt 注入按目标阶段过滤（链重走到各责任阶段只注入属于它的候选）。
+        if (action === 'backtrack_to_phase') {
+          const targetPhaseBt = assessment?.recommendation?.phase ?? null;
+          const targetIdxBt = targetPhaseBt ? chain.indexOf(targetPhaseBt as FeaturePhase) : -1;
+          const roundFp = roundFingerprintOfCandidates(summaryRepairCandidates);
+          if (targetIdxBt < 0 || backtracksUsed >= DEFAULT_MAX_BACKTRACKS || seenRoundFingerprints.has(roundFp)) {
             action = 'halt';
-            haltReason = codingIdxBt < 0
+            haltReason = targetIdxBt < 0
               ? 'backtrack_target_absent'
               : seenRoundFingerprints.has(roundFp) ? 'backtrack_fingerprint_repeat' : 'backtrack_limit';
-            // 对齐其他 halt 分支惯例：专项事件落盘（resume/审计按事件恢复语境，
-            // outcome.halt_reason 只进 goal report）
-            const backtrackLimitReached =
-              codingIdxBt >= 0 && backtracksUsed >= DEFAULT_MAX_BACKTRACKS && !seenRoundFingerprints.has(roundFp);
-            const backtrackLimitDecision = backtrackLimitReached
+            const limitReached =
+              targetIdxBt >= 0 && backtracksUsed >= DEFAULT_MAX_BACKTRACKS && !seenRoundFingerprints.has(roundFp);
+            const limitDecision = limitReached
               ? decide(
                   { incident: 'backtrack_limit', phase: String(phase) },
                   NO_AUTHORITY,
@@ -7091,62 +7130,61 @@ Goal runner — tool-agnostic multi-phase orchestrator
               type: 'phase_halt', phase, halt_reason: haltReason,
               round_fingerprint: roundFp,
               backtracks_used: backtracksUsed,
-              ...(backtrackLimitDecision ? runDispositionFields(backtrackLimitDecision) : {}),
+              ...(limitDecision ? runDispositionFields(limitDecision) : {}),
             });
             console.error(
               `\n===== ${haltReason} =====\n`
               + (haltReason === 'backtrack_fingerprint_repeat'
-                ? `整轮 actionable 缺陷集合与上次回退完全相同（roundFingerprint=${roundFp.slice(0, 12)}…）——\n回退→修不动→同集合再现，继续回退只会空转。halt 求人。\n`
+                ? `整轮 repair candidates 集合与上次回退完全相同（roundFingerprint=${roundFp.slice(0, 12)}…）——继续回退只会空转。halt 求人。\n`
                 : haltReason === 'backtrack_limit'
                   ? `回退预算已耗尽（共用 ${DEFAULT_MAX_BACKTRACKS} 次/run）——halt 求人。\n`
-                  : `执行链不含 coding，无处回退——halt 求人。\n`),
+                  : `责任阶段映射不到当前执行链（recommendation.phase=${targetPhaseBt ?? '<unmapped>'}）——无处回退，halt 求人。\n`),
             );
           } else {
             backtracksUsed++;
             seenRoundFingerprints.add(roundFp);
-            backtrackCodingContext = driverActionableDefects.slice(0, 20);
+            // mixed-owner：整组候选保留（prompt 注入按当前 phase 类别过滤——见
+            // buildRepairCandidatesBlock 消费点）；有界 20 条与 testing 通道同款。
+            backtrackRepairCandidates = summaryRepairCandidates.slice(0, 20);
             const invalidatedBt = chain
-              .slice(codingIdxBt, phaseIdx + 1)
+              .slice(targetIdxBt, phaseIdx + 1)
               .filter(ph => outcomes.some(o => o.phase === ph));
-            const txIdBt = `${manifest.run_id}-defectbt${backtracksUsed}`;
-            // 事件先落盘，缓存退位随后执行；两者都可在 resume 中重复。
+            const txIdBt = `${manifest.run_id}-repairbt${backtracksUsed}`;
             goalEvents.emit({
               type: 'phase_backtrack_requested',
               phase: String(phase),
               from_phase: String(phase),
-              to_phase: 'coding',
+              to_phase: String(targetPhaseBt),
               invalidated_phases: invalidatedBt.map(String),
               invoke_id: invokeId,
-              reason: 'actionable_testing_defects',
+              reason: 'repair_candidates',
               authorized: false,
-              // v23：完整 round_fingerprint（熔断恢复唯一依据）+ 有界 defects[]（交接内容；
-              // 指纹恢复**不**从它反算——截断+上限 20 无法可靠重建）
               round_fingerprint: roundFp,
-              defects: backtrackCodingContext.map(d => ({
-                source: d.source,
-                screen_or_case_id: d.screen_or_case_id,
-                fingerprint: d.fingerprint,
-                instructions: d.instructions.map(t => t.length > 400 ? `${t.slice(0, 400)}…` : t),
-                evidence_path: d.evidence_path,
+              // 整组事实（含非目标阶段的分组）——链重走时按阶段过滤注入，不丢 mixed-owner
+              candidates: backtrackRepairCandidates.map(c => ({
+                id: c.id,
+                category: c.category,
+                files: c.files.slice(0, 10),
+                summary: c.summary.length > 400 ? `${c.summary.slice(0, 400)}…` : c.summary,
+                item_fingerprint: c.item_fingerprint,
+                source_phase: c.source_phase,
               })),
-              defect_count: driverActionableDefects.length,
-              files: driverActionableDefects.map(d => d.evidence_path).filter(Boolean).slice(0, 20),
+              defect_count: summaryRepairCandidates.length,
+              files: summaryRepairCandidates.flatMap(c => c.files).slice(0, 20),
               fingerprint: roundFp,
               invalidation_tx_id: txIdBt,
             });
             console.error(
-              `\n===== backtrack_to_coding =====\n`
-              + `${phase} 检出 ${driverActionableDefects.length} 项可回修缺陷（`
-              + driverActionableDefects.slice(0, 6).map(d => `${d.source}:${d.screen_or_case_id}`).join('、')
-              + `）——修复需要改产品码，而 ${phase} 阶段禁止写源码。\n`
-              + `回退 coding（缺陷清单已注入下一次 coding prompt），再重走 review/ut/${phase}。\n`
+              `\n===== backtrack_to_phase =====\n`
+              + `${phase} 检出 ${summaryRepairCandidates.length} 项可信可修缺陷（`
+              + summaryRepairCandidates.slice(0, 6).map(c => `${c.id}→${c.category}`).join('、')
+              + `）——责任阶段=${targetPhaseBt}。\n`
+              + `回退 ${targetPhaseBt}（候选清单按阶段注入后续 prompt），再级联重走下游。\n`
               + `（第 ${backtracksUsed} 次回退，共用预算 ${DEFAULT_MAX_BACKTRACKS} 次/run）\n`,
             );
-            // v23：被失效阶段的旧 outcome 必须剔除——完成判定是 outcomes.length===chain.length，
-            // 不剔除则回退重跑后永远无法正常完成（review 第 6 轮实锤）。对齐 authorized_backtrack。
             outcomes = outcomes.filter(o => !invalidatedBt.includes(o.phase));
-            goalEvents.emit({ type: 'phase_backtrack_started', to_phase: 'coding' });
-            phaseIdx = codingIdxBt - 1; // for 循环 ++ 后落回 coding
+            goalEvents.emit({ type: 'phase_backtrack_started', to_phase: String(targetPhaseBt) });
+            phaseIdx = targetIdxBt - 1; // for 循环 ++ 后落回目标阶段
             phaseDone = true;
             if (featureLock) touchLock(featureLock.path, featureLock.ownerId);
             continue;

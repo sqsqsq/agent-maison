@@ -74,20 +74,27 @@ export function selectRunnerActionFromAssess(
   if (recommendation.action === 'validate_feature_completion') return 'advance';
 
   const relation = targetRelation(recommendation, input.currentPhase, input.chain);
-  // Preserve assess's backtrack intent even when the target is absent from the chain;
-  // the runner owns the explicit backtrack_target_absent halt classification.
-  if (relation === 'invalid' && recommendation.runner_action === 'backtrack_to_coding') {
-    return 'backtrack_to_coding';
+  // 责任阶段统一路由（plan b6e4c9f2）：**唯一**回退动作是 backtrack_to_phase——目标缺席
+  // （phase:null 或不在链内）时保留回退意图，由 runner 落既有 backtrack_target_absent。
+  // 旧的 deterministic_defects → backtrack_to_coding fallback 已删除（缺陷路由不得有
+  // 第二条路；源码漂移等其它恢复机制仍可使用 backtrack_to_coding 动作，与本路由无关）。
+  if ((relation === 'invalid' || relation === 'none') && recommendation.runner_action === 'backtrack_to_phase') {
+    return 'backtrack_to_phase';
   }
   if (relation === 'same') return 'retry';
   if (relation === 'later') return 'advance';
   if (relation === 'earlier') {
     const target = recommendation.phase;
-    const allowed = target === 'coding' &&
-      input.observation.deterministic_defects !== undefined &&
-      input.observation.deterministic_defects.length > 0 &&
-      input.observation.invalidatable_phases?.includes(target);
-    return allowed ? 'backtrack_to_coding' : 'halt';
+    // 可信=assess 已从 phase summary（唯一真源）判出候选并给出 backtrack_to_phase 意图，
+    // 且失效面覆盖目标（不再硬编码只允许 coding）。
+    if (
+      recommendation.runner_action === 'backtrack_to_phase' &&
+      target !== null &&
+      input.observation.invalidatable_phases?.includes(target)
+    ) {
+      return 'backtrack_to_phase';
+    }
+    return 'halt';
   }
   return 'halt';
 }
