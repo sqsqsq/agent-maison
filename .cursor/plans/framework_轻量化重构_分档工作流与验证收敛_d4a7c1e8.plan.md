@@ -50,7 +50,7 @@ todos:
     status: completed
   - id: gates
     content: "每 change 与最终：cd harness && npm test 全绿 + npm run openspec:validate + npm run release:verify；hmos-app 默认路径（未声明 track/evidence_profile/scale）全回归零变化；~~Phase 0 gate 报告经用户 review 后才开 Phase 1~~（用户 2026-07-08 决策：跳过 A/B 跑批门禁，直接开 Phase 1；宿主工程实测挪到 Phase 1 全部完成后）；android plan 衔接已在定稿时写入 5e3400c3，无需重复动作"
-    status: pending
+    status: completed
 isProject: false
 ---
 

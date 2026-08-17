@@ -415,7 +415,7 @@ todos:
       ⑤终审故意打回一屏（选 human_issue_kind）+ overrule 一个信号 → ledger 两类样本
       落账、校准报告 FP/FN 表出数；中断 CLI 验证 reconciliation 恢复；
       ⑥未达项如实登记；gate 升档决策留待 ledger 数据累积，本期不动档位。
-    status: pending
+    status: cancelled
 ---
 
 # 三方 review 对账（2026-07-11，立项依据；基线=c6d8f2b4 rev10）

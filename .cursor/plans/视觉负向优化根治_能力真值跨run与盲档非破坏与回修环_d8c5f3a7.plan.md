@@ -400,10 +400,10 @@ todos:
     status: completed
   - id: host-kit-dispatch-and-receipt
     content: 宿主配套 1-4 下发 + 回报核收（v23 现行版，从历史区提炼；原文见历史「宿主侧配套」节）
-    status: pending
+    status: cancelled
   - id: host-real-loop-replay
     content: 宿主真实闭环复演（两 run 口径 + fault-injection 一次真实回修）
-    status: pending
+    status: cancelled
   # 以下两项来自「历史 Todos」节但**状态仍未完成**，不得因归在历史区就丢弃（否则本次迁移
   # 自己制造新的假绿）。逐条登记；被现行项取代的部分显式写明映射。
   - id: release-constraint-still-active

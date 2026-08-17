@@ -52,7 +52,7 @@ todos:
     status: completed
   - id: 5
     content: "一次真实宿主回归（与 d8 复演同次）：两 run+fault-injection+golden 十固定屏+HomeTab+AllBanks，evaluator 裁决归档"
-    status: pending
+    status: cancelled
 ---
 
 # 结果级范围门禁——UI 文件级 scope 门 + 消费者结果 golden (c4e8b1d3)

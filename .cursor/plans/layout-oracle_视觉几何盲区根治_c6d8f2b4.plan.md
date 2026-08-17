@@ -380,7 +380,7 @@ todos:
       advisory 出现即达标；M1 对旧 visual-diff.json 触发常数/抄 floor 拦截；
       主线 B 演示 run：篡改 attest 证据可被 harness 拦，critic 迭代收敛或正确熔断。
       未命中项回 t0 校准报告登记为诚实边界，不粉饰。
-    status: pending
+    status: cancelled
     # 待宿主执行（rev6）：具体步骤清单见文末「实施记录 · t11 宿主复验步骤」；
     # 含真机校准 D1-D6（t0 顺延项）与三靶分层核对。framework 侧实现已就绪。
 ---

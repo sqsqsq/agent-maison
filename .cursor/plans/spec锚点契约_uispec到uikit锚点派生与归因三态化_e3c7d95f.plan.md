@@ -207,7 +207,7 @@ todos:
       不是四态归因产物，**不得记作 product_state 实证**。
       关闭条件：须经 **goal 正式 gate** 跑一次（`MAISON_GOAL_GATE_HARNESS=1` + 真实安装非
       reuse），产出 `device-test-evidence.json` 后，才能按零命中条款判完成。
-    status: in_progress
+    status: cancelled
 isProject: false
 ---
 

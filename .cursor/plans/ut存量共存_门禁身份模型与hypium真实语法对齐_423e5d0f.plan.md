@@ -16,7 +16,7 @@ todos:
     status: completed
   - id: r3c-host-device-verification
     content: 宿主真机收尾：设备接回后解锁+用户授权卸载旧包+重跑真机执行环节，确认 hypium 用例真实运行与棘轮/两结论输出。
-    status: pending
+    status: cancelled
 overview: >
   宿主 2.3.0 UT 实锤暴露：框架只支持"发现存量 UT 并按当前 feature 问责"，不支持存量身份。
   P0 解除 mockkit 自创语法误判/CHAR 死锁/hvigor 诊断遮蔽，tsc 在真实编译能力在场时恒 WARN、降级恒等用户确认，

@@ -87,7 +87,7 @@ const CASE_REGISTRY = [
   // 这正是本文件声称要防的假绿形态，被 codex 当场抓出（第七批 P1）。
   {
     id: 8,
-    name: 'fresh + head 失配 + 未声明 reset → 自动 discontinuity 续跑，不 TERMINAL 不裸崩',
+    name: 'fresh + head 失配 → 自动续跑收官，不 TERMINAL 不裸崩',
     status: 'covered',
     coveredBy: 'goal',
     // T2 5a-1（2026-08-07）落地后由棘轮第二次翻转转正：decide 对失配三条 invocation
@@ -474,20 +474,25 @@ function stageGoal(ctx) {
   }
   // 参数只是 supervisor 的意图；再启动一次真实 goal-runner，读取生产 writer
   // 写出的最终 successor manifest，钉住一次性出生字段不会被整对象深拷贝带过来。
+  //
+  // 2026-08-17：删去两条 `vision_lineage` 断言（源须为 'reset'、后继须不带该字段）。
+  // 该字段随 e5d8a2c4 T2 5a **有意净删除 vision 认证控制面**（提交 7792165c）一并退役
+  // ——签名维度整体退出、checkpoint 退化为账本恢复缓存。全仓生产代码现零引用，
+  // 只剩此处断言，于是它永远索取一个再也不会被写出的字段，成为发版死结。
+  // 机制已删而断言留存属遗留清理，不是放宽验证：successor 身份仍由 successor_of
+  // 绑定 + 新 runId + 从 coding 起步三条钉住。
   const successorRun = runDriver('successor_manifest_probe', truncated.runId, successorFeature);
   const successorManifest = successorRun.manifest;
   if (successorRun.error !== null || !successorRun.runId || successorRun.runId === truncated.runId
     || !successorRun.phaseStartsThisCall.includes('coding')
     || !successorManifest
-    || successorManifest.successor_of !== truncated.runId
-    || Object.prototype.hasOwnProperty.call(successorManifest, 'vision_lineage')
-    || truncated.manifest?.vision_lineage !== 'reset') {
+    || successorManifest.successor_of !== truncated.runId) {
     throw new Error(
-      'goal/T3①：真实后继必须消费源 reset 并写出 continue 语义 manifest。实得 '
+      'goal/T3①：真实后继必须新起 run、从 coding 起步并写出 successor_of 绑定的 manifest。实得 '
       + JSON.stringify({ truncated, successorWake, successorRun }),
     );
   }
-  ctx.log('goal/T3①：截断链自动 supersede，真实后继从 coding 起步；源 reset 已消费且未继承');
+  ctx.log('goal/T3①：截断链自动 supersede，真实后继从 coding 起步且 successor_of 绑定源 run');
 
   const resume = runDriver('resume_after_park', park.runId);
   // ---- 目标断言（2026-08-06 垂直闭环落地，棘轮翻转而来；fa0663 的解）：
@@ -615,22 +620,26 @@ function stageGoal(ctx) {
   }
   ctx.log('goal/#7：build 失败保留 code_regression 归因，在 phase retry 上限收口且不无限空转');
 
-  // 第四段（T2 5a-1，#8 整机面）：fresh + head 失配 + 未声明 reset → **自动
-  // discontinuity 续跑**，不 TERMINAL 不裸崩——宿主 run1"第一死"的整机级回放。
-  // 独立 feature（first-death），与 recovery-park 的 head 文件天然隔离。
+  // 第四段（#8 整机面）：fresh + head 失配 → **自动续跑**，不 TERMINAL 不裸崩
+  // ——宿主 run1"第一死"的整机级回放。独立 feature（first-death），与 recovery-park
+  // 的 head 文件天然隔离。
+  //
+  // 2026-08-17：删去 `lineage_discontinuity` / `vision_ledger_tamper` 两个事件断言。
+  // vision lineage 全家（feature head / 世代计数 / lineage_discontinuity）已由
+  // plan a1f4d8e6「视觉机制减法」整体剪除，全仓生产代码零引用；这两个事件再也不会
+  // 被发出，前者遂成永久失败、后者恒真。**被验的行为本身没变也没放宽**：失配后
+  // 仍须自动续跑（spec 真跑）、不裸崩、正常收口——只是不再索取已退役的事件名。
   const fd = runDriver('seed_head_mismatch', null, 'first-death');
   const fdOk = fd.error === null && (fd.exitCode === 0 || fd.exitCode === 2)
-    && fd.eventTypes.includes('lineage_discontinuity')
-    && !fd.eventTypes.includes('vision_ledger_tamper')
     && fd.phaseStartsThisCall.includes('spec')
     && fd.runEndReason !== 'uncaught_exception';
   if (!fdOk) {
     throw new Error(
-      'goal/#8：失配应自动 discontinuity 并续跑（无 tamper、无裸崩、spec 真跑）。实得 '
+      'goal/#8：head 失配应自动续跑（spec 真跑、不裸崩、正常收口）。实得 '
       + JSON.stringify(fd),
     );
   }
-  ctx.log('goal/#8：head 失配自动 discontinuity 续跑（第一死根治，整机面）');
+  ctx.log('goal/#8：head 失配自动续跑收官（第一死根治，整机面）');
 }
 
 /**
