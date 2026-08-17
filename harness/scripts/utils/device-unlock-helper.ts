@@ -199,7 +199,7 @@ export function ensureUnlocked(input: UnlockInput): UnlockOutcome {
       ? `container=${d.containerFound ? 'found' : 'absent'} digits=${d.found}/10 hidden_skipped=${d.hiddenSkipped}`
       : 'diag=unavailable';
     const hint = cls === 'layout_unsupported'
-      ? '锁屏布局与当前适配不符——须真机校准（重试无意义；升级 framework/更换 adapter 后重试）'
+      ? '锁屏布局与当前适配不符（有界重采样窗口耗尽仍未识别）——须真机校准（原地重试无意义；升级 framework/更换 adapter 后重试）'
       : '键盘尚未稳定——已在本进程内有界重取样后仍不齐（遮挡/动画/AOD 等）';
     return `unlock_blocked:${cls}:${reason}（零输入；${facts}；${hint}）`;
   };
@@ -235,12 +235,14 @@ export function ensureUnlocked(input: UnlockInput): UnlockOutcome {
       if (postRevealCooldown) return postRevealCooldown;
       byDigit = completeKeypad(snap);
       if (byDigit) break;
-      const kind = unlockFailureKindOf(snap);
-      // 布局不认识 / 几何不对 / 树结构异常：再等也不会变——立即停止重取样。
-      // 判据复用**唯一分类点**：此前这里把那三个 reason 字面量又列了一遍，正是
-      // `unlockFailureKindOf` 的注释自己禁止的"两处各判一次"（改一处漏一处即分流失灵）。
-      if (kind === 'layout_unsupported' || i >= MAX_RESAMPLES) {
-        return { ok: false, note: unlockBlockedNote(snap), attempted: false, failureKind: kind };
+      // plan f4c8d2b7 t3：**所有**失败 kind 一律跑满有界观察窗口（3×400ms），最后一帧
+      // 才由 unlockFailureKindOf 定性。此前 layout_unsupported 首帧早退——但 reveal 动画
+      // 进行中容器就是还没挂载，pin_container_not_found 完全可能是过渡态（宿主实锤：
+      // 同设备几小时前自动解锁成功，几小时后首帧被判永久 layout_unsupported）。
+      // 重采样只重新 dump UI、不读取不输入凭据，有界零输入观察安全且统一；真正不支持
+      // 的布局只额外等待约 1.2 秒，代价可接受。
+      if (i >= MAX_RESAMPLES) {
+        return { ok: false, note: unlockBlockedNote(snap), attempted: false, failureKind: unlockFailureKindOf(snap) };
       }
       deps.settle(SETTLE_INTERVAL_MS);
     }

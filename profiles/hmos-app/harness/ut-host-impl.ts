@@ -4,7 +4,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import type { UtHostImpl, UtHostSuggestionPaths } from '../../../harness/profile-host-loader';
+import type { UtHostImpl } from '../../../harness/profile-host-loader';
 import type { CheckContext, CheckResult } from '../../../harness/scripts/utils/types';
 import { compileTestFiles } from '../../../harness/scripts/utils/ts-compile';
 import { findFilesRecursive } from '../../../harness/scripts/utils/find-files-recursive';
@@ -130,19 +130,8 @@ function checkUtFileNaming(
   ];
 }
 
-function getUtSuggestionPaths(): UtHostSuggestionPaths {
-  return {
-    useCasesSchemaTemplateRel:
-      'framework/profiles/hmos-app/skills/business-ut/templates/use-cases-schema.md',
-    mockPlanSchemaTemplateRel:
-      'framework/profiles/hmos-app/skills/business-ut/templates/mock-plan-schema.md',
-    testabilityAuditTemplateRel:
-      'framework/profiles/hmos-app/skills/business-ut/templates/testability-audit-template.md',
-    branchExampleTestRel:
-      'framework/profiles/hmos-app/skills/business-ut/examples/sample-flow/sample_flow.test.ets',
-    utHostImplRefRel: 'framework/profiles/hmos-app/harness/ut-host-impl.ts',
-  };
-}
+// getUtSuggestionPaths 已退役（plan f4c8d2b7 t5）：模板路径统一解析自
+// profiles/hmos-app/skills/skill-assets.yaml（framework/harness/scripts/utils/ut-template-paths.ts）。
 
 function checkUtFrameworkImport(
   ctx: CheckContext,
@@ -1118,7 +1107,6 @@ export const utHostImpl: UtHostImpl = {
   checkUtHvigorBuild,
   checkUtHvigorTest,
   checkTestRegistration,
-  getUtSuggestionPaths,
   isSuiteEntryShim: isSuiteEntryShimContent,
   collectHarnessPollutionExtras,
 };

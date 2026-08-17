@@ -100,11 +100,10 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert.ok(ut, '应加载 ut-host-impl');
       assert.strictEqual(typeof ut!.loadUtFiles, 'function');
       assert.strictEqual(typeof ut!.checkUtHvigorBuild, 'function');
-      assert.strictEqual(typeof ut!.getUtSuggestionPaths, 'function');
       assert.strictEqual(typeof ut!.isSuiteEntryShim, 'function');
-      const sp = ut!.getUtSuggestionPaths();
-      assert.ok(sp.useCasesSchemaTemplateRel.length > 0);
-      assert.ok(sp.utHostImplRefRel.includes('ut-host-impl'));
+      // getUtSuggestionPaths 已退役（plan f4c8d2b7 t5）：模板路径统一走 skill-assets SSOT，
+      // host impl 不得再暴露平行路径表。
+      assert.strictEqual((ut as Record<string, unknown>)['getUtSuggestionPaths'], undefined);
     },
   },
 ];

@@ -1,7 +1,12 @@
 adapter_name: chrys
 description: |
   Chrys agent adapter——shared `.agents` bridge bundle（AGENTS.md + .agents/skills/.agents/rules 跳板），
-  headless = `chrys run`（`--agent Code --json`；非交互 bypass flag 待宿主侧 `chrys run --help` 核实后对齐 agent-invoke.ts）。
+  headless = `chrys run`（`--agent Code --json`）。
+  **plan a8e5c3f9：当前不支持 Maison Goal/headless**——headless 契约=non-interactive + no
+  approval prompt + full execution，chrys 的等价 bypass 旗标至今未经宿主核实，preflight 以
+  `adapter_headless_permission_unsupported` 明确拒绝（不静默以未知/残权限启动）。宿主侧
+  `chrys run --help` 核实旗标后在 agent-invoke.ts（assertAdapterHeadlessFullPermission +
+  chrysArgv）与本文件接入即可解锁。
 
 agent_entry_file:
   template_path: templates/AGENTS.md.template
@@ -33,9 +38,11 @@ goal_capability:
   # unknown/buffered 的运维含义：API 断流哨兵对本 adapter 可能失效，断流表现为整 attempt 超时。
   output_delivery: unknown
   external_runner:
+    # plan a8e5c3f9：本声明为「bypass 旗标核实后」的接入形态预留；核实前 preflight 拒绝
+    # （见 description）。unattended 对齐 effective 契约值（headless 即全权限）。
     headless_invoke: 'chrys run --task {{PROMPT_FILE}} -C {{PROJECT_ROOT}} --agent Code --json'
     unattended:
-      write_mode: workspace-write
+      write_mode: full-access
       approval_mode: never
 
 post_install_hooks: []

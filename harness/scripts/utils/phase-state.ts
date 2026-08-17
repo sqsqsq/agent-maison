@@ -86,7 +86,8 @@ export const MAISON_GOAL_RUNNER_ENV = 'MAISON_GOAL_RUNNER';
 export const MAISON_GOAL_HEADLESS_ENV = 'MAISON_GOAL_HEADLESS';
 
 /** Comma-separated goal manifest `unattended.allowed_tools` for harness-runner image_input 降级。 */
-export const MAISON_GOAL_ALLOWED_TOOLS_ENV = 'MAISON_GOAL_ALLOWED_TOOLS';
+// MAISON_GOAL_ALLOWED_TOOLS_ENV 已退役（plan a8e5c3f9 t1）：注入与消费一并删除——
+// allowed_tools 是审批清单，headless 全权限下不构成任何执行/能力判断的输入。
 
 /**
  * plan d7f3a9c4 t3：最终裁决后的 model pin value（生产代码与测试共用同一 SSOT）。

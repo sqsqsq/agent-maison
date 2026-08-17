@@ -25,13 +25,9 @@ export type ProfileCodingHost = {
   checkCodingLint?(ctx: CheckContext): CheckResult[] | Promise<CheckResult[]>;
 };
 
-export type UtHostSuggestionPaths = {
-  useCasesSchemaTemplateRel: string;
-  mockPlanSchemaTemplateRel: string;
-  testabilityAuditTemplateRel: string;
-  branchExampleTestRel: string;
-  utHostImplRefRel: string;
-};
+// UtHostSuggestionPaths / getUtSuggestionPaths 已退役（plan f4c8d2b7 t5）：
+// 模板路径统一解析自 profiles/<profile>/skills/skill-assets.yaml（见 utils/ut-template-paths.ts），
+// 不再由各 profile host impl 维护平行硬编码路径表。
 
 export type UtFileEntry = { path: string; content: string };
 
@@ -74,7 +70,6 @@ export type UtHostImpl = {
     ctx: CheckContext,
     utFiles: Array<{ path: string }>,
   ): CheckResult[];
-  getUtSuggestionPaths(): UtHostSuggestionPaths;
   isSuiteEntryShim(content: string): boolean;
   /** 可选：profile 额外扫描 harnessRoot 下宿主测试产物（如 ohosTest / *.test.ets） */
   collectHarnessPollutionExtras?(ctx: CheckContext): string[];
@@ -133,7 +128,6 @@ export function tryLoadUtHostImpl(profileDir: string): UtHostImpl | null {
     'checkUtHvigorBuild',
     'checkUtHvigorTest',
     'checkTestRegistration',
-    'getUtSuggestionPaths',
     'isSuiteEntryShim',
   ];
   for (const k of keys) {

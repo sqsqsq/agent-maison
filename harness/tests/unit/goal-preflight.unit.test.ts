@@ -253,6 +253,71 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
+    // 复检意见 2（plan a8e5c3f9 t5）：行为级验证——不再只做源码 include 断言。
+    name: 'runGoalPreflight: 未核实 bypass 的 adapter（chrys/codeagent）非 dry-run 硬失败',
+    run: () => {
+      for (const adapter of ['chrys', 'codeagent']) {
+        const root = mkTmp();
+        writeProjectConfig(root, [adapter]);
+        fs.writeFileSync(path.join(root, 'AGENTS.md'), '# stub\n');
+        clearFrameworkConfigCache();
+        const manifest = baseManifest(adapter);
+        const { resolvedProfile, chain } = preflightCtx(root, manifest);
+        assert.throws(
+          () =>
+            runGoalPreflight({
+              projectRoot: root,
+              frameworkRoot: FRAMEWORK_ROOT,
+              manifest,
+              provenance: 'argv_adapter',
+              dryRun: false,
+              chain,
+              resolvedProfile,
+            }),
+          /adapter_headless_permission_unsupported/,
+          `${adapter}: 非 dry-run 必须以 adapter_headless_permission_unsupported 硬失败`,
+        );
+        fs.rmSync(root, { recursive: true, force: true });
+        clearFrameworkConfigCache();
+      }
+    },
+  },
+  {
+    name: 'runGoalPreflight: 未核实 bypass 的 adapter dry-run 只 WARN 不阻断',
+    run: () => {
+      for (const adapter of ['chrys', 'codeagent']) {
+        const root = mkTmp();
+        writeProjectConfig(root, [adapter]);
+        fs.writeFileSync(path.join(root, 'AGENTS.md'), '# stub\n');
+        clearFrameworkConfigCache();
+        const manifest = baseManifest(adapter);
+        const { resolvedProfile, chain } = preflightCtx(root, manifest);
+        const warns: string[] = [];
+        const origWarn = console.warn;
+        console.warn = (...a: unknown[]) => { warns.push(a.map(String).join(' ')); };
+        try {
+          runGoalPreflight({
+            projectRoot: root,
+            frameworkRoot: FRAMEWORK_ROOT,
+            manifest,
+            provenance: 'argv_adapter',
+            dryRun: true,
+            chain,
+            resolvedProfile,
+          });
+        } finally {
+          console.warn = origWarn;
+        }
+        assert.ok(
+          warns.some(w => w.includes('adapter_headless_permission_unsupported')),
+          `${adapter}: dry-run 必须落 WARN（实得：${warns.join(' | ') || '（无警告）'}）`,
+        );
+        fs.rmSync(root, { recursive: true, force: true });
+        clearFrameworkConfigCache();
+      }
+    },
+  },
+  {
     name: 'runGoalPreflight: adapter 不在 materialized BLOCKER',
     run: () => {
       const root = mkTmp();

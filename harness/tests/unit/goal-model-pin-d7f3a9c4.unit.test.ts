@@ -86,10 +86,11 @@ const cases: Array<{ name: string; run: () => void }> = [
 
   // ------------------------- t1：五家带 pin argv 逐元素 -------------------------
   {
-    name: 't1 codex 带 pin：exec --model <v> --sandbox workspace-write（审批旗标前置）',
+    name: 't1 codex 带 pin：exec --model <v> --sandbox danger-full-access（审批旗标前置）',
     run: () => {
+      // plan a8e5c3f9 t2：headless 恒 danger-full-access（不再随 manifest write_mode 摇摆）。
       assert.deepStrictEqual(planArgv('codex', 'gpt-4o'), [
-        '--ask-for-approval', 'never', 'exec', '--model', 'gpt-4o', '--sandbox', 'workspace-write',
+        '--ask-for-approval', 'never', 'exec', '--model', 'gpt-4o', '--sandbox', 'danger-full-access',
       ]);
     },
   },
@@ -98,7 +99,8 @@ const cases: Array<{ name: string; run: () => void }> = [
     run: () => {
       const argv = planArgv('claude', 'gpt-4o');
       assert.strictEqual(argv.slice(-2).join(' '), '--model gpt-4o');
-      assert(argv.includes('--permission-mode') && argv.includes('dontAsk'), argv.join(' '));
+      // plan a8e5c3f9 t1：bypass 取代 dontAsk。
+      assert(argv.includes('--dangerously-skip-permissions'), argv.join(' '));
     },
   },
   {
@@ -134,11 +136,11 @@ const cases: Array<{ name: string; run: () => void }> = [
     name: 't1 无 pin：五家 argv 无 model 旗标且结构与基线一致',
     run: () => {
       assert.deepStrictEqual(planArgv('codex'), [
-        '--ask-for-approval', 'never', 'exec', '--sandbox', 'workspace-write',
+        '--ask-for-approval', 'never', 'exec', '--sandbox', 'danger-full-access',
       ]);
       const claude = planArgv('claude');
       assert(!claude.includes('--model'), claude.join(' '));
-      assert(claude.includes('--permission-mode') && claude.includes('dontAsk'), claude.join(' '));
+      assert(claude.includes('--dangerously-skip-permissions'), claude.join(' '));
       const cursor = planArgv('cursor');
       assert(!cursor.includes('--model'), cursor.join(' '));
       assert.deepStrictEqual(cursor.slice(0, 3), ['-p', '--force', '--trust']);

@@ -28,9 +28,11 @@ image_input: none
 goal_capability:
   mode: external_runner
   external_runner:
+    # plan a8e5c3f9：headless 全权限契约——本 adapter 一直是唯一正确样板（恒 bypass），
+    # 仅把 unattended 声明对齐 effective 值。
     headless_invoke: 'opencode run --dangerously-skip-permissions --dir {{PROJECT_ROOT}}'
     unattended:
-      write_mode: workspace-write
+      write_mode: full-access
       approval_mode: never
 
 post_install_hooks: []

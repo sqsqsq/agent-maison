@@ -23,12 +23,13 @@ import {
   loadGoalCapability,
   validateGoalCapabilityForRunner,
 } from './goal-adapter-capability';
-import { resolveGoalEffectiveImageInput, isVisionCanaryFresh, canaryAdmissibleForExecution } from './multimodal-probe';
+import { isVisionCanaryFresh, canaryAdmissibleForExecution } from './multimodal-probe';
 // plan d8c5f3a7 T1：与三轴 resolver 共用同一采信谓词（禁两把尺子——见函数内注释）
 // plan d7f3a9c4 t3：执行身份升级 `{runId, modelPin}` 二元——重探判定与采信判定共用
 // canaryAdmissibleForExecution（无 pin 时精确退化为 canaryAdmissibleForRun）。
 import { planUsesClaudeStreamJson } from './claude-envelope';
 import {
+  assertAdapterHeadlessFullPermission,
   invokeAgentHeadless,
   resolveHeadlessInvokePlan,
   validateHeadlessBinaryForPlan,
@@ -200,6 +201,17 @@ export function runGoalPreflight(input: GoalPreflightInput): void {
     throw new Error(`[goal-runner] preflight BLOCKER:\n${v.issues.map((i) => `  - ${i}`).join('\n')}`);
   }
 
+  // plan a8e5c3f9 t5：headless 全权限支持性——不支持的内建 adapter 明确失败，不静默降级
+  //（dry-run 与 binary 检查同待遇：降为 WARN，便于无宿主环境演练脚本）。
+  const fullPerm = assertAdapterHeadlessFullPermission(adapter);
+  if (!fullPerm.ok) {
+    if (dryRun) {
+      console.warn(`[goal-runner] preflight WARN: ${fullPerm.reason}`);
+    } else {
+      throw new Error(`[goal-runner] preflight BLOCKER: ${fullPerm.reason}`);
+    }
+  }
+
   if (provenance === 'fallback') {
     throw new Error(
       '[goal-runner] preflight BLOCKER: 未检测到个人 Framework 设置（framework.local.json）。' +
@@ -251,23 +263,8 @@ export function runGoalPreflight(input: GoalPreflightInput): void {
     throw new Error(binaryCheck.message);
   }
 
-  const effectiveMm = resolveGoalEffectiveImageInput(
-    projectRoot,
-    frameworkRoot,
-    adapter,
-    manifest.unattended,
-    // plan d7f3a9c4 t3：preflight 能力探测带最终裁决 pin（review P1-1 补漏）。
-    { runId: manifest.run_id, modelPin: manifest.adapter_model_pin?.value },
-  );
-  if (
-    effectiveMm.imageInput === 'none' &&
-    effectiveMm.reason.includes('缺 Read')
-  ) {
-    console.warn(
-      `[goal-runner] preflight WARN: image_input 声明 tool_read 但 goal allowed_tools 缺 Read；` +
-        `运行时视觉多模态将诚实降级为 none（${effectiveMm.reason}）`,
-    );
-  }
+  // plan a8e5c3f9 t1：「allowed_tools 缺 Read → 视觉降级」WARN 已随降级链一并退役——
+  // headless 全权限下审批清单不存在，也不再参与多模态能力判断。
 }
 
 export type VisionCanaryProbeSkipReason =

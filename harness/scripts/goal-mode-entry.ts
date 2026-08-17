@@ -230,7 +230,9 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
       adapter_provenance: 'entry_declared',
       start_phase: options.startPhase ?? 'spec',
       end_phase: options.endPhase ?? 'testing',
-      unattended: { write_mode: 'workspace-write', approval_mode: 'on-request', max_turns: 30 },
+      // plan a8e5c3f9 t6：headless 即全权限——新 manifest 直接写 effective 值
+      //（此前 workspace-write + on-request 让 claude 连 dontAsk 都拿不到，与无人值守自相矛盾）。
+      unattended: { write_mode: 'full-access', approval_mode: 'never', max_turns: 30 },
     },
     { projectRoot: options.projectRoot },
   );

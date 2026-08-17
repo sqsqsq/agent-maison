@@ -70,8 +70,8 @@ import {
   getLastProfileHarnessLoadError,
   tryLoadDiffExcludeTestPathRegexes,
   type UtHostImpl,
-  type UtHostSuggestionPaths,
 } from '../profile-host-loader';
+import { resolveUtTemplateRef, type UtTemplateKey } from './utils/ut-template-paths';
 import { isSuiteEntryShimContent } from '../ut-suite-entry-shim';
 import {
   buildMockPlanPresetIndex,
@@ -141,20 +141,22 @@ function tryLoadUtUiImportBan(profileDir: string): UtUiImportBanModule | null {
   }
 }
 
-/** UT 诊断里指向模板/示例的相对路径：由 profile ut-host-impl 提供；无 host 时用中性占位（避免根脚本硬编码某 profile）。 */
-function utSuggestionPaths(ctx: CheckContext): UtHostSuggestionPaths {
-  const h = tryLoadUtHostImpl(ctx.resolvedProfile.profileDir);
-  if (h) return h.getUtSuggestionPaths();
+/** UT 诊断里指向模板/示例的路径：统一解析自 profiles/<profile>/skills/skill-assets.yaml
+ * （SSOT，plan f4c8d2b7 t5）；清单不可用时回落 profile-skill-asset 占位符原文，
+ * 绝不拼接猜测的物理路径（历史幻影路径教训）。 */
+function utSuggestionPaths(ctx: CheckContext): {
+  useCasesSchemaTemplateRel: string;
+  mockPlanSchemaTemplateRel: string;
+  testabilityAuditTemplateRel: string;
+  branchExampleTestRel: string;
+} {
+  const rel = (key: UtTemplateKey): string =>
+    resolveUtTemplateRef(ctx.projectRoot, ctx.resolvedProfile.name, key).rel;
   return {
-    useCasesSchemaTemplateRel:
-      '（当前 project_profile skills/feature/business-ut/templates/use-cases-schema.md，见 profile addendum）',
-    mockPlanSchemaTemplateRel:
-      '（当前 project_profile skills/feature/business-ut/templates/mock-plan-schema.md，见 profile addendum）',
-    testabilityAuditTemplateRel:
-      '（当前 project_profile skills/feature/business-ut/templates/testability-audit-template.md，见 profile addendum）',
-    branchExampleTestRel:
-      '（当前 project_profile skills/feature/business-ut/examples/，见 profile addendum）',
-    utHostImplRefRel: '（当前 project_profile harness/ut-host-impl.ts）',
+    useCasesSchemaTemplateRel: rel('use_cases_schema'),
+    mockPlanSchemaTemplateRel: rel('mock_plan_schema'),
+    testabilityAuditTemplateRel: rel('testability_audit_template'),
+    branchExampleTestRel: rel('sample_flow_dir'),
   };
 }
 
@@ -173,7 +175,7 @@ function structureRuleDefined(ctx: CheckContext, id: string): boolean {
 // Types
 // --------------------------------------------------------------------------
 
-interface DagNode {
+export interface DagNode {
   id: string;
   type: string;
   description?: string;
@@ -188,11 +190,14 @@ interface DagNode {
   mock_data?: Record<string, unknown>;
   /** 引用 mock-plan.yaml > spies[].methods[].presets[].id（与 port_call_* / async_call 配合） */
   spy_preset?: string;
-  boundary?: {
-    name?: string;
-    type?: string;
-    method?: string;
-  };
+  /** 对象 {name,type,method} 是唯一推荐格式；string 为旧产物兼容形态（值=data_boundaries[].name） */
+  boundary?:
+    | {
+        name?: string;
+        type?: string;
+        method?: string;
+      }
+    | string;
   intervention?: Record<string, unknown>;
   task?: Record<string, unknown>;
   navigation?: Record<string, unknown>;
@@ -213,7 +218,7 @@ interface DagNode {
   }>;
 }
 
-interface DagFile {
+export interface DagFile {
   flow_id?: string;
   flow_name?: string;
   flow_type?: 'usecase_driven' | 'spec_driven' | 'characterization' | string;
@@ -1582,7 +1587,21 @@ function checkDagLinkedUseCase(
   }];
 }
 
-function checkDagBoundaryMatchesSpec(
+/** boundary 双形态归一取 name：对象（唯一推荐）取 .name；旧字符串 boundary / 旧字段 port 回落整值。 */
+function dagBoundaryName(node: DagNode): string | undefined {
+  const b = node.boundary;
+  if (typeof b === 'string') return b.trim() || undefined;
+  if (b && typeof b === 'object' && typeof b.name === 'string') return b.name.trim() || undefined;
+  const port = (node as { port?: unknown }).port;
+  return typeof port === 'string' ? port.trim() || undefined : undefined;
+}
+
+/** boundary 对象形态（旧字符串形态无 type/method，返回 undefined）。 */
+function dagBoundaryObject(node: DagNode): { name?: string; type?: string; method?: string } | undefined {
+  return node.boundary && typeof node.boundary === 'object' ? node.boundary : undefined;
+}
+
+export function checkDagBoundaryMatchesSpec(
   ctx: CheckContext,
   dags: Array<{ path: string; dag: DagFile }>,
 ): CheckResult[] {
@@ -1610,15 +1629,14 @@ function checkDagBoundaryMatchesSpec(
     const boundaryNames = new Set((uc.data_boundaries ?? []).map(b => b.name));
     for (const node of dag.nodes ?? []) {
       if (node.type !== 'port_call_cloud' && node.type !== 'port_call_local') continue;
-      const bname = (node as { boundary?: string; port?: string }).boundary
-        ?? (node as { boundary?: string; port?: string }).port;
+      const bname = dagBoundaryName(node);
       if (!bname) {
-        issues.push(`${p} > ${node.id}: ${node.type} 节点缺 boundary 字段`);
+        issues.push(`${p} > ${node.id}: ${node.type} 节点缺 boundary.name`);
         affected.push(p);
         continue;
       }
       if (!boundaryNames.has(bname)) {
-        issues.push(`${p} > ${node.id}: boundary="${bname}" 不在 UseCase ${uc.id} 的 data_boundaries 中`);
+        issues.push(`${p} > ${node.id}: boundary.name="${bname}" 不在 UseCase ${uc.id} 的 data_boundaries 中`);
         affected.push(p);
       }
     }
@@ -1643,7 +1661,7 @@ function checkDagBoundaryMatchesSpec(
     status: 'WARN',
     details: `${issues.length} 处 boundary 不对齐：\n${truncateList(issues, 10)}`,
     affected_files: [...new Set(affected)],
-    suggestion: 'port_call_cloud / port_call_local 节点必须设置 boundary 字段，其值应等于 use-cases.yaml > data_boundaries[].name（旧字段名 port 仍兼容）。',
+    suggestion: 'port_call_cloud / port_call_local 节点必须声明 boundary 对象（{name,type,method}），boundary.name 应匹配 use-cases.yaml > data_boundaries[].name。',
   }];
 }
 
@@ -3159,6 +3177,14 @@ export function checkUtMachineArtifactParseable<T>(
     }];
   }
   if (observed.status === 'invalid') {
+    // plan f4c8d2b7 t4：两产物格式契约不同，suggestion 按 id 分别生成——
+    // audit 允许 fenced yaml 或纯 YAML（根 records[]），mock-plan 必须纯 YAML（根 spies[]/doubles[]），
+    // 不得用 audit 的契约指导 mock-plan（反之亦然）。
+    const sp = utSuggestionPaths(ctx);
+    const contract =
+      id === 'ut_testability_audit_parseable'
+        ? `格式契约：机器可读内容须为 fenced \`\`\`yaml 块或纯 YAML 全文，根字段 records[]；禁止用 Markdown 表格代替机器记录。模板：${sp.testabilityAuditTemplateRel}`
+        : `格式契约：必须为纯 YAML（禁止 fenced code block、Markdown 标题/表格），根字段 spies[] 或 doubles[]。Schema：${sp.mockPlanSchemaTemplateRel}`;
     return [{
       id,
       category: 'structure',
@@ -3170,7 +3196,7 @@ export function checkUtMachineArtifactParseable<T>(
         `canonical_rel=${observed.relPath}\ncanonical_abs=${observed.absPath}\n` +
         truncateList(observed.errors, 12),
       affected_files: [observed.relPath],
-      suggestion: `修复 ${observed.relPath} 的 YAML/根节点/字段格式；文件已被 harness 找到，不需要 git add。`,
+      suggestion: `修复 ${observed.relPath} 的 YAML/根节点/字段格式；文件已被 harness 找到，不需要 git add。${contract}`,
     }];
   }
   return [{
@@ -3394,7 +3420,7 @@ function checkUtUnsupportedTargetsHandled(
   }];
 }
 
-function checkUtMockPlanPresent(
+export function checkUtMockPlanPresent(
   ctx: CheckContext,
   records: TestabilityAuditRecord[],
   observed: UtMachineArtifactObservation<MockPlanSpec>,
@@ -3445,7 +3471,10 @@ function checkUtMockPlanPresent(
       if (kind === 'pure') continue;
       const ok = entries.some(s => s.target_class === d.name);
       if (!ok) {
-        missingSpyForDep.push(`${rec.acceptance_id}: 依赖 ${d.name}（kind=${d.kind || '?'}) 缺少 mock-plan target_class`);
+        missingSpyForDep.push(
+          `${rec.acceptance_id}: 依赖 ${d.name}（kind=${d.kind || '?'}) 缺少 mock-plan target_class` +
+          (d.name?.includes('.') ? `（注意：dependencies[].name 与 target_class 口径均为纯类名，「${d.name}」疑似「类.方法」——方法级信息写 entry_point.symbol 或 mock-plan methods[]，不写入 name）` : ''),
+        );
       }
     }
   }
@@ -3459,7 +3488,8 @@ function checkUtMockPlanPresent(
       status: 'FAIL',
       details: `mock-plan 缺少与审计依赖对齐的 spy：\n${truncateList(missingSpyForDep, 15)}`,
       suggestion:
-        '补全 testability-audit.md 的 dependencies，或在 mock-plan.yaml 中为非 pure 外部依赖声明 test double（勿将被测 entry_point 写入 mock-plan）。',
+        '补全 testability-audit.md 的 dependencies，或在 mock-plan.yaml 中为非 pure 外部依赖声明 test double（勿将被测 entry_point 写入 mock-plan）。' +
+        '口径：dependencies[].name 与 target_class 均为纯类名；方法级信息写 entry_point.symbol、mock-plan methods[] 或相应方法字段，不写入 dependency name。',
     }];
   }
 
@@ -3672,7 +3702,7 @@ function checkUtMockPlanTyped(ctx: CheckContext, plan: MockPlanSpec | null): Che
   }];
 }
 
-function checkUtMockPlanContractsConsistent(ctx: CheckContext, plan: MockPlanSpec | null): CheckResult[] {
+export function checkUtMockPlanContractsConsistent(ctx: CheckContext, plan: MockPlanSpec | null): CheckResult[] {
   const id = 'ut_mock_plan_contracts_consistent';
   const contracts = ctx.featureSpec.contracts;
   if (!mockPlanHasEntries(plan)) {
@@ -3734,7 +3764,7 @@ function checkUtMockPlanContractsConsistent(ctx: CheckContext, plan: MockPlanSpe
   }];
 }
 
-function checkDagSpyPresetResolvable(
+export function checkDagSpyPresetResolvable(
   ctx: CheckContext,
   dags: Array<{ path: string; dag: DagFile }>,
   plan: MockPlanSpec | null,
@@ -3759,8 +3789,8 @@ function checkDagSpyPresetResolvable(
       let cls: string | undefined;
       let meth: string | undefined;
       if (node.type === 'port_call_cloud' || node.type === 'port_call_local') {
-        cls = node.boundary?.type;
-        meth = node.boundary?.method;
+        cls = dagBoundaryObject(node)?.type;
+        meth = dagBoundaryObject(node)?.method;
       } else if (node.type === 'async_call') {
         cls = resolveDagNodeClassName(ctx, node);
         meth = node.source?.function;

@@ -296,29 +296,30 @@ function attachResolvedBinary(
 // Windows 铁律：prompt 不进 argv。claude 无 .exe 只有 claude.cmd → 必经 cmd.exe，
 // 命令行遇换行即截断（实测多行 prompt 只剩 2 字符），故 prompt 一律走 stdin（见 defaultHeadlessInvokePlan）。
 // binary 参数化（plan c7a9e2f4）：codeagent（codeagentcli）与 claude argv 逐 flag 等价
-//（-p / --allowedTools / --output-format stream-json --verbose / --permission-mode dontAsk
-// 均 2026-07-29 宿主实证可用），复用全套。
+//（-p / --output-format stream-json --verbose 均 2026-07-29 宿主实证可用），复用全套。
+//
+// plan a8e5c3f9 t1：headless 全权限契约——用户主动启动 Goal/headless 即授权
+// non-interactive + no approval prompt + full execution，adapter 只翻译不降级：
+// · --dangerously-skip-permissions 取代 --permission-mode dontAsk/acceptEdits
+//   （dontAsk=「不询问、未批准即拒绝」并非 bypass——宿主实锤：prompt 要求自跑 harness，
+//   npx 未预批准 → permission_denied，agent 只能盲猜退出烧 retry）；
+// · --allowedTools 整体移除：它是审批清单，bypass 下无审批意义，保留只会延续错误抽象
+//   （manifest 的 allowed_tools 字段 deprecated/ignored，不再影响任何执行面）。
+// · 本函数不再读取 unattended 权限字段——argv 结构上不可能随 manifest 摇摆。
+// （--dangerously-skip-permissions 于 claude CLI 2026-08-17 本机探针确认存在；
+//   codeagentcli 旗标等价性沿 c7a9e2f4 宿主实证结论，最终以宿主实测为准。）
 function claudeArgv(
-  unattended: UnattendedContract,
   toolEventProvenance?: 'none' | 'structured_events' | 'session_transcript',
   binary: string = 'claude',
   modelPin?: string,
 ): string[] {
-  const tools = unattended.allowed_tools?.length
-    ? unattended.allowed_tools
-    : ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep'];
-  const argv = [binary, '-p', '--allowedTools', tools.join(',')];
+  const argv = [binary, '-p', '--dangerously-skip-permissions'];
   // t3a/f7a3d9c2：adapter 声明 structured_events → stdout 输出 NDJSON 事件流（含
   // tool_use/Read 验读记录，t3b runner attestation 的证据源）。2026-07-11 宿主实采样本
   // 确认事件形状；agent-output.log 仍为混合人读投影（三文件分流见 spawnHeadlessAsync），
   // 断流哨兵已适配结构化信封（goal-headless-sentinel parseClaudeStreamJsonApiError）。
   if (toolEventProvenance === 'structured_events') {
     argv.push('--output-format', 'stream-json', '--verbose');
-  }
-  if (unattended.approval_mode === 'never') {
-    argv.push('--permission-mode', 'dontAsk');
-  } else {
-    argv.push('--permission-mode', 'acceptEdits');
   }
   // plan d7f3a9c4 t1：显式模型钉回放（claude 与 codeagent 共用本函数，仅 binary 不同）。
   if (modelPin !== undefined) {
@@ -327,23 +328,21 @@ function claudeArgv(
   return argv;
 }
 
-function codexArgv(unattended: UnattendedContract, modelPin?: string): string[] {
+function codexArgv(modelPin?: string): string[] {
   // 事故修复（plan c9f4e7a2 t2）：`--ask-for-approval` 是 **codex 顶层旗标**，必须放在
   // `exec` 之前。0.138.0 实测：`codex -a never exec --help` 成功；
   // `codex exec -a never --help` → `unexpected argument '-a' found`。
-  const argv = [
-    'codex',
-    '--ask-for-approval',
-    unattended.approval_mode === 'never' ? 'never' : 'on-request',
-    'exec',
-  ];
+  // plan a8e5c3f9 t2：headless 全权限固定化——恒 approval never + danger-full-access，
+  // 不再读取 manifest 的 write_mode/approval_mode 决定 argv（任意旧 unattended 输入
+  // 最终 argv 相同）。
+  const argv = ['codex', '--ask-for-approval', 'never', 'exec'];
   // plan d7f3a9c4 t1：显式模型钉回放——`--model` 置于 `exec` 与 `--sandbox` 之间
   // （位置随 c9 t2 修正后形态：exec --model <v> --sandbox <m>）。取消数据裸值陷阱：
   // 不使用 `-c model=<raw>`。
   if (modelPin !== undefined) {
     argv.push('--model', modelPin);
   }
-  argv.push('--sandbox', unattended.write_mode === 'full-access' ? 'danger-full-access' : 'workspace-write');
+  argv.push('--sandbox', 'danger-full-access');
   // prompt 走 stdin（codex exec 读 stdin：实测 stderr "Reading prompt from stdin..."），不进 argv。
   return argv;
 }
@@ -351,19 +350,15 @@ function codexArgv(unattended: UnattendedContract, modelPin?: string): string[] 
 /**
  * Cursor headless — prompt via stdin (NOT argv: cursor-agent is a Windows .cmd shim,
  * argv prompt gets truncated at the first newline by cmd.exe). -p includes write/shell.
- * approval_mode=never → --force --trust (unattended workspace trust).
+ * plan a8e5c3f9 t3：headless 恒 --force --trust（全权限契约，不再随旧 approval_mode 摇摆）。
  */
 export function cursorHeadlessPlan(
-  unattended: UnattendedContract,
   prompt: string,
   resolved: ResolvedHeadlessBinary | null,
   modelPin?: string,
 ): HeadlessInvokePlan {
   const binary = resolved?.path ?? 'cursor-agent';
-  const argv = [binary, '-p'];
-  if (unattended.approval_mode === 'never') {
-    argv.push('--force', '--trust');
-  }
+  const argv = [binary, '-p', '--force', '--trust'];
   // plan d7f3a9c4 t1：显式模型钉回放——`--model <v>`。
   if (modelPin !== undefined) {
     argv.push('--model', modelPin);
@@ -386,6 +381,52 @@ function genericStdinPlan(prompt: string): HeadlessInvokePlan {
     stdin: prompt,
     label: 'agent-cli - (stdin)',
   };
+}
+
+/**
+ * plan a8e5c3f9 t5：headless 全权限支持性判定（内建 adapter 由框架维护映射）。
+ * · claude：bypass 旗标已固化且**宿主实跑验收通过**（2026-08-17：
+ *   `claude -p --output-format stream-json --verbose --dangerously-skip-permissions`
+ *   真实执行 `npx ts-node --version` 成功，permission_denials=[]——正是 cb1583 事故里
+ *   被 dontAsk 拒绝的命令类型）；
+ * · codex/cursor/opencode：bypass 旗标已固化在本文件 argv 构造中；
+ * · codeagent：argv 与 claude 共用（claudeArgv，binary=codeagentcli），但
+ *   `--dangerously-skip-permissions` 在 codeagentcli 上**未经宿主实测**（2026-08-17
+ *   本机 PATH 无 codeagentcli 可探；c7a9e2f4 家族等价是旧旗标集的实证，不能外推到新
+ *   bypass 旗标）——复检裁定：核实前与 chrys 同待遇明确拒绝，不得以推定宣称支持。
+ *   宿主核实（codeagentcli --help 含该旗标 + 实跑一条 shell 命令）后删除下方分支即接入；
+ * · chrys：非交互全权限（bypass）参数**至今未经宿主核实**（adapter.yaml 自注「待核实」，
+ *   2026-08-17 本机 PATH 无 chrys 可探）——契约要求 non-interactive + no approval +
+ *   full execution，核实前不得宣称支持 Goal/headless 却以未知/残权限静默启动；
+ * · 其余名字视为 custom adapter：external_runner.headless_invoke 即提供方契约
+ *  （声明=断言该命令为 non-interactive full-permission 启动命令），Maison 不猜旗标、
+ *   不加白名单、不新增 attestation schema。
+ */
+export function assertAdapterHeadlessFullPermission(
+  adapterName: string,
+): { ok: true } | { ok: false; reason: string } {
+  if (adapterName === 'chrys') {
+    return {
+      ok: false,
+      reason:
+        'adapter_headless_permission_unsupported: chrys 的非交互全权限（bypass）CLI 参数未经核实。' +
+        'Maison headless 契约=non-interactive + no approval prompt + full execution，' +
+        '不得以未知/残权限静默启动。请在宿主运行 `chrys run --help` 核实等价旗标后接入' +
+        '（agent-invoke.ts + agents/chrys/adapter.yaml），或改用 claude/codex/cursor/opencode。',
+    };
+  }
+  if (adapterName === 'codeagent') {
+    return {
+      ok: false,
+      reason:
+        'adapter_headless_permission_unsupported: codeagentcli 的 --dangerously-skip-permissions ' +
+        '未经宿主实测（同内核家族推定不能替代对新 bypass 旗标的实证）。' +
+        '请在宿主运行 `codeagentcli --help` 确认该旗标存在并实跑一条 shell 命令验证后接入' +
+        '（删除 agent-invoke.ts 本分支 + 更新 agents/codeagent/adapter.yaml），' +
+        '或改用 claude/codex/cursor/opencode。',
+    };
+  }
+  return { ok: true };
 }
 
 /** Chrys headless — file prompt when PROMPT_FILE set; positional fallback for preflight. */
@@ -499,25 +540,25 @@ export function defaultHeadlessInvokePlan(
   modelPin?: string,
 ): HeadlessInvokePlan {
   if (adapterName === 'claude') {
-    const argv = claudeArgv(unattended, toolEventProvenance, 'claude', modelPin);
+    const argv = claudeArgv(toolEventProvenance, 'claude', modelPin);
     const plan = attachResolvedBinary(argv, CLAUDE_HEADLESS_BINARY_CANDIDATES, 'claude -p …');
     return { ...plan, adapterName, useStdin: true, stdin: promptContent };
   }
   // codeagent（plan c7a9e2f4）：Claude Code 内核 fork，argv 全套复用（仅二进制名不同）；
   // prompt 走 stdin 同款铁律（codeagentcli 亦为 Windows cmd shim，实证 stdin 喂 prompt 可用）。
   if (adapterName === 'codeagent') {
-    const argv = claudeArgv(unattended, toolEventProvenance, 'codeagentcli', modelPin);
+    const argv = claudeArgv(toolEventProvenance, 'codeagentcli', modelPin);
     const plan = attachResolvedBinary(argv, CODEAGENT_HEADLESS_BINARY_CANDIDATES, 'codeagentcli -p …');
     return { ...plan, adapterName, useStdin: true, stdin: promptContent };
   }
   if (adapterName === 'codex') {
-    const argv = codexArgv(unattended, modelPin);
+    const argv = codexArgv(modelPin);
     const plan = attachResolvedBinary(argv, CODEX_HEADLESS_BINARY_CANDIDATES, 'codex exec …');
     return { ...plan, adapterName, useStdin: true, stdin: promptContent };
   }
   if (adapterName === 'cursor') {
     const resolved = resolveHeadlessBinary([...CURSOR_HEADLESS_BINARY_CANDIDATES]);
-    return { ...cursorHeadlessPlan(unattended, promptContent, resolved, modelPin), adapterName };
+    return { ...cursorHeadlessPlan(promptContent, resolved, modelPin), adapterName };
   }
   if (adapterName === 'chrys') {
     return {

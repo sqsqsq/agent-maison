@@ -276,7 +276,8 @@ const cases: Array<{ name: string; run: () => void }> = [
       const codeagentPlan = defaultHeadlessInvokePlan('codeagent', unattended, 'probe', 'structured_events');
       const claudePlan = defaultHeadlessInvokePlan('claude', unattended, 'probe', 'structured_events');
       assert.deepStrictEqual(codeagentPlan.argv.slice(1), claudePlan.argv.slice(1), 'flags 须逐项同构');
-      for (const flag of ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'dontAsk']) {
+      // plan a8e5c3f9 t1：headless 全权限——bypass 取代 --permission-mode dontAsk/allowedTools。
+      for (const flag of ['-p', '--dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose']) {
         assert(codeagentPlan.argv.includes(flag), `缺 flag ${flag}: ${codeagentPlan.argv.join(' ')}`);
       }
       assert.strictEqual(codeagentPlan.useStdin, true, 'prompt 必须走 stdin（Windows cmd shim 截断铁律）');

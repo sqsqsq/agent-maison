@@ -19,10 +19,7 @@ import {
 } from '../../scripts/utils/multimodal-probe';
 import { VISION_CANARY_PROBE_VERSION } from '../../scripts/utils/vision-canary';
 import { writeLocalConfig } from '../../scripts/utils/framework-local-config';
-import {
-  MAISON_GOAL_ALLOWED_TOOLS_ENV,
-  MAISON_GOAL_RUNNER_ENV,
-} from '../../scripts/utils/phase-state';
+import { MAISON_GOAL_RUNNER_ENV } from '../../scripts/utils/phase-state';
 import { detectRepoLayout } from '../../repo-layout';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -74,43 +71,33 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'goal allowed_tools 缺 Read → 降级 none',
+    // plan a8e5c3f9 t1：allowed_tools 降级链退役——审批清单不再参与能力判断。
+    name: 'a8e5c3f9 t1 allowed_tools 缺 Read 不再降级（audit 清单退出能力判断）',
     run: () => {
       const r = resolveGoalEffectiveImageInput(REPO_ROOT, FRAMEWORK_ROOT, 'claude', {
         write_mode: 'accept-edits',
         approval_mode: 'never',
         allowed_tools: ['Bash', 'Edit'],
       });
-      assert(r.imageInput === 'none', r.reason);
-      assert(r.reason.includes('Read'), r.reason);
+      assert(r.imageInput === 'tool_read', `缺 Read 不得再降级 none：${r.imageInput} ${r.reason}`);
+      assert(!r.reason.includes('缺 Read'), `reason 不得再出现 allowed_tools 降级话术：${r.reason}`);
     },
   },
   {
-    name: 'goal allowed_tools 含 Read → 保持 tool_read',
-    run: () => {
-      const r = resolveGoalEffectiveImageInput(REPO_ROOT, FRAMEWORK_ROOT, 'claude', {
-        write_mode: 'accept-edits',
-        approval_mode: 'never',
-        allowed_tools: ['Bash', 'Read', 'Edit'],
-      });
-      assert(r.imageInput === 'tool_read', r.reason);
-    },
-  },
-  {
-    name: 'resolveContextAdapterImageInput goal env 缺 Read → none',
+    name: 'a8e5c3f9 t1 goal 编排态 resolveContextAdapterImageInput 不再消费工具清单 env',
     run: () => {
       const prevRunner = process.env[MAISON_GOAL_RUNNER_ENV];
-      const prevTools = process.env[MAISON_GOAL_ALLOWED_TOOLS_ENV];
+      const prevTools = process.env['MAISON_GOAL_ALLOWED_TOOLS'];
       try {
         process.env[MAISON_GOAL_RUNNER_ENV] = '1';
-        process.env[MAISON_GOAL_ALLOWED_TOOLS_ENV] = 'Bash,Edit';
+        process.env['MAISON_GOAL_ALLOWED_TOOLS'] = 'Bash,Edit'; // 旧 runner 残留也不得再生效
         const r = resolveContextAdapterImageInput(REPO_ROOT, FRAMEWORK_ROOT, 'claude');
-        assert(r.imageInput === 'none', r.reason);
+        assert(r.imageInput === 'tool_read', `goal env 工具清单不得再降级：${r.imageInput} ${r.reason}`);
       } finally {
         if (prevRunner === undefined) delete process.env[MAISON_GOAL_RUNNER_ENV];
         else process.env[MAISON_GOAL_RUNNER_ENV] = prevRunner;
-        if (prevTools === undefined) delete process.env[MAISON_GOAL_ALLOWED_TOOLS_ENV];
-        else process.env[MAISON_GOAL_ALLOWED_TOOLS_ENV] = prevTools;
+        if (prevTools === undefined) delete process.env['MAISON_GOAL_ALLOWED_TOOLS'];
+        else process.env['MAISON_GOAL_ALLOWED_TOOLS'] = prevTools;
       }
     },
   },

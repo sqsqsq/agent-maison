@@ -81,9 +81,12 @@ goal_capability:
     # Declarative only for capability validation. Runtime SSOT: agent-invoke.ts defaultHeadlessInvokePlan
     # (claude -p …, prompt via STDIN — NOT the {{PROMPT}} argv below; a multi-line prompt as an argv
     # element is truncated at the first newline by cmd.exe on the Windows claude.cmd shim).
-    headless_invoke: 'claude -p "{{PROMPT}}" --allowedTools Bash,Read,Write,Edit,Glob,Grep --permission-mode dontAsk'
+    # plan a8e5c3f9：headless 全权限契约——--dangerously-skip-permissions（bypass）；
+    # 不再声明 --permission-mode dontAsk/acceptEdits（非 bypass，宿主实锤 npx permission_denied），
+    # 不再声明 --allowedTools（审批清单，bypass 下无意义，deprecated/ignored）。
+    headless_invoke: 'claude -p --dangerously-skip-permissions "{{PROMPT}}"'
     unattended:
-      write_mode: accept-edits
+      write_mode: full-access
       approval_mode: never
 
 post_install_hooks: []

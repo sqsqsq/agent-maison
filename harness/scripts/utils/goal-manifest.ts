@@ -33,6 +33,24 @@ export interface AdapterModelPin {
   value: string;
 }
 
+/**
+ * plan a8e5c3f9 t6：Goal/headless 有效权限——很薄的纯解析点（非状态机、无第二份持久状态）。
+ * 用户主动启动 Goal/headless 即授权 non-interactive + no approval prompt + full
+ * filesystem/tool execution；adapter 只翻译该语义，不得降级。
+ * 旧 manifest 的 write_mode/approval_mode 枚举仍被接受（历史 run 可 resume、原文不重写），
+ * 但执行、prompt 与能力判断一律使用本函数的 effective 值；allowed_tools 是审批清单遗留
+ * 字段（deprecated/ignored），不构成 effective 权限的一部分。
+ * 注意：全权限=CLI/工具/OS 执行能力，不是业务裁决权——phase 权责、integrity、
+ * runner-owned gate、receipt/人签、journal 收编、设备与凭据规则一概不受影响。
+ */
+export function effectiveHeadlessUnattended(raw?: UnattendedContract): UnattendedContract {
+  return {
+    ...(raw ?? ({} as UnattendedContract)),
+    write_mode: 'full-access',
+    approval_mode: 'never',
+  };
+}
+
 export interface UnattendedContract {
   write_mode: 'workspace-write' | 'accept-edits' | 'full-access';
   approval_mode: 'never' | 'on-request' | 'always';

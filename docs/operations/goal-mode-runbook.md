@@ -139,11 +139,30 @@ UI 相关 goal 首跑会真实探测一次 adapter 的读图能力（几何/颜�
 
 ## Headless 路径（MVP 硬化）
 
-- Claude：`claude -p` + `--permission-mode dontAsk` / `--allowedTools`（结构化 argv，不经 shell tokenize）
-- CodeAgent：`codeagentcli -p`——Claude Code 内核 fork，flags 与 Claude 全套等价（2026-07-29 宿主实证含 stream-json/dontAsk/stdin prompt），agent-invoke 按家族谓词复用 claude argv；宿主身份 env=`CODEAGENT=1`，hook 进程注入 `CODEAGENT3_PROJECT_DIR`
-- Codex：`codex --ask-for-approval never|on-request exec --sandbox workspace-write`（审批旗标为**顶层旗标**，必须放 `exec` 之前）
-- Cursor：`cursor-agent`（回落 `agent`）`-p` + prompt **positional argv**（`-p` 已含 write/shell；`approval_mode=never` 时加 `--force --trust`）。**禁止** `cursor agent --print`。Windows `.cmd` 垫片经 **cross-spawn** spawn（`harness` 依赖 `cross-spawn`）。
-- Chrys：`chrys run --task <PROMPT_FILE> -C <PROJECT_ROOT> --agent Code --json`（文件传 prompt；preflight 空 `PROMPT_FILE` 时回退 positional）。前置：CLI 在 PATH 或 `%LOCALAPPDATA%\chrys\bin`；`bootstrap_runtime` 需 provider 凭据（`~/.chrys` 或 `.env`）；先手跑 `chrys run "hi" --agent Code` 验证。无流式输出（`agent-output.log` phase 结束前可能为空）；退出码 0/1(stderr JSON)/124/130。
+**全权限契约（plan a8e5c3f9）**：用户主动启动 Goal/headless 即授权 agent 无人值守全权限执行
+（non-interactive + no approval prompt + full filesystem/tool execution）；adapter 只把该语义翻译成
+自家 CLI 参数，不得降级。全权限=执行能力，不是业务裁决权——phase 权责、integrity、runner-owned
+gate、receipt/人签、设备与凭据规则不变；agent 自跑 harness 只是快速反馈，runner 的正式 gate 仍是
+唯一裁决真源。headless 下**无须也不应**再为单个命令（npx/npm/node/hvigor/hdc…）做预批准。
+
+- Claude：`claude -p --dangerously-skip-permissions`（结构化 argv，不经 shell tokenize；不再用
+  `--permission-mode dontAsk`——那是"不询问、未批准即拒绝"而非 bypass，也不再传 `--allowedTools`。
+  2026-08-17 宿主实跑验收：该 argv 组合下真实执行 `npx ts-node --version` 成功、`permission_denials=[]`）
+- CodeAgent：**当前不支持 Goal/headless**——argv 与 Claude 共用（`codeagentcli -p
+  --dangerously-skip-permissions`），但该 bypass 旗标在 codeagentcli 上未经宿主实测（2026-07-29 家族
+  等价实证只覆盖旧旗标集），preflight 以 `adapter_headless_permission_unsupported` 明确拒绝。解锁路径：
+  宿主跑 `codeagentcli --help` 确认旗标存在并实跑一条 shell 命令，然后删除 agent-invoke.ts
+  `assertAdapterHeadlessFullPermission` 的 codeagent 分支（argv 无须再改）。宿主身份 env=`CODEAGENT=1`，
+  hook 进程注入 `CODEAGENT3_PROJECT_DIR`
+- Codex：`codex --ask-for-approval never exec --sandbox danger-full-access`（恒定，不随 manifest 摇摆；
+  审批旗标为**顶层旗标**，必须放 `exec` 之前）
+- Cursor：`cursor-agent`（回落 `agent`）`-p --force --trust`（恒定）+ prompt stdin。**禁止**
+  `cursor agent --print`。Windows `.cmd` 垫片经 **cross-spawn** spawn（`harness` 依赖 `cross-spawn`）。
+- Chrys：**当前不支持 Goal/headless**——其非交互全权限（bypass）参数未经宿主核实，preflight 以
+  `adapter_headless_permission_unsupported` 明确拒绝（不静默以未知/残权限启动）。解锁路径：宿主跑
+  `chrys run --help` 把等价旗标带回来，接入 agent-invoke.ts 与 agents/chrys/adapter.yaml。
+  （原调用形态存档：`chrys run --task <PROMPT_FILE> -C <PROJECT_ROOT> --agent Code --json`；文件传
+  prompt；CLI 在 PATH 或 `%LOCALAPPDATA%\chrys\bin`；无流式输出；退出码 0/1(stderr JSON)/124/130。）
 - OpenCode：`opencode run --dangerously-skip-permissions --dir <PROJECT_ROOT>` + **stdin 灌 prompt**（**勿用 `-p`**，其为 `--password`）。前置：`npm i -g opencode-ai`，bin 名 `opencode`；模型/凭据由 opencode config/auth 提供，先手跑 `opencode run "hi"` 验证。**skill 落 opencode 自有原生目录 `.opencode/skill/<id>/SKILL.md`**（opencode 长期稳定的主 skill 目录，兼容当前版本及传统原生目录；不依赖较新的 `.agents` 外部 skill 发现）。`AGENTS.md` 仍在项目根（opencode 原生读为 instructions）。opencode **自动加载的只有** `AGENTS.md` + `.opencode/{skill,skills}/**/SKILL.md`；`.opencode/rules/*` 不自动加载（引用可达，非有效规则入口），maison 不碰用户 `.opencode/opencode.json`。默认开关全开（勿设 `OPENCODE_DISABLE_PROJECT_CONFIG` 等禁用 bundle 的 env）。Windows `.cmd` 经 cross-spawn。
 
 **模型钉（`--adapter-model <id>`）**：并发多窗口跑不同模型、或要钉住本 run 模型时，启动 goal run 传 `--adapter-model`，该值是**权威输入**并随 headless argv 回放（codex/claude/codeagent/cursor 用 `--model <id>`，opencode 用 `-m <id>`），写入 manifest `adapter_model_pin`。`chrys`/`generic` **不支持**（传了即 BLOCKER fail-fast）。CLI、loaded manifest、successor 继承**均无 pin** 时 = 现状零变化；pinned run 的 resume 不传 flag 仍继承并回放冻结 pin。**仅 headless/unattended（含 `--detach`）；有人在场 in-session 不适用**。

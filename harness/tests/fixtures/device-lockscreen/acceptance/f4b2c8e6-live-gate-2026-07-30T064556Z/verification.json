@@ -27,7 +27,7 @@
   },
   "superseded_by_source_change": {
     "recorded_at": "2026-08-05",
-    "by": "e5d8a2c4 T3（解锁诊断三分类 + 结构化 failureKind 全链贯通 + reveal 后固定间隔重取样）",
+    "by": "e5d8a2c4 T3（解锁诊断三分类 + 结构化 failureKind 全链贯通 + reveal 后固定间隔重取样）；2026-08-17 f4c8d2b7 t3 再次改动 device-unlock-helper.ts（删 layout_unsupported 首帧早退，所有失败 kind 跑满有界重采样窗口）——current_sha256 已刷新，待复验范围不变",
     "status": "PENDING_REAL_DEVICE_REVERIFICATION",
     "note": "上面 source_sha256 是 2026-07-30 真机验收当时所验源码的哈希，**不得为迁就代码改动而重写**——那等于伪造真机证据。本次改动后需在真机上重跑同一验收流程并落新记录；在此之前本条证据只证明「旧代码曾在真机上通过」。",
     "new_dependencies_not_covered": [
@@ -48,7 +48,7 @@
       {
         "path": "harness/scripts/utils/device-unlock-helper.ts",
         "verified_sha256": "a3b0dc7262eb3db010ce574889b9ff409de5ab09f89193a50fb1d9628275fed4",
-        "current_sha256": "543e589e70452d26c211c52f0570ee07f2eea4751f92205a59283a2295436811"
+        "current_sha256": "cc5b602eece1ce3852dd3a60526cd8c7b19e69dfe74367a5e532fed579ea9d98"
       }
     ]
   }

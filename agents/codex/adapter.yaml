@@ -38,9 +38,11 @@ goal_capability:
   external_runner:
     # Declarative only for capability validation. Runtime SSOT: agent-invoke.ts defaultHeadlessInvokePlan
     # (codex exec …, prompt via STDIN — NOT the {{PROMPT}} argv below).
-    headless_invoke: 'codex --ask-for-approval never exec --sandbox workspace-write "{{PROMPT}}"'
+    # plan a8e5c3f9：headless 全权限契约——恒 approval never + danger-full-access，
+    # 不再随 manifest write_mode 摇摆声明 workspace-write。
+    headless_invoke: 'codex --ask-for-approval never exec --sandbox danger-full-access "{{PROMPT}}"'
     unattended:
-      write_mode: workspace-write
+      write_mode: full-access
       approval_mode: never
 
 post_install_hooks: []

@@ -37,7 +37,7 @@
 | `acceptance_id` | ✅ | 如 `AC-1` / `BD-2`，须与 acceptance.yaml  id 一致 |
 | `entry_point` | 推荐 | `symbol`（类.方法）、`file`（相对仓库根路径） |
 | `testability_level` | ✅ | `L0` \| `L1` \| `L2` \| `L3` |
-| `dependencies` | 推荐 | `name` / `kind` / `seam` |
+| `dependencies` | 推荐 | `name` / `kind` / `seam`；**`name` 必须为纯类名**（与 mock-plan `target_class` 同口径；方法级信息写 `entry_point.symbol` 或 mock-plan `methods[]`，不写入 `name`） |
 | `verdict` | ✅ | `testable` \| `downgrade_device` \| `needs_seam` |
 | `recommendation` | L3 推荐 | `option_a` / `option_b` 文字说明 |
 | `selected` | **L3 必填** | `option_a` \| `option_b` |

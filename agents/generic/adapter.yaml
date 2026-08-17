@@ -29,10 +29,14 @@ image_input: none
 goal_capability:
   mode: external_runner
   external_runner:
+    # plan a8e5c3f9：custom adapter 的 headless_invoke 契约=**adapter 提供方给出的
+    # non-interactive full-permission 启动命令**（声明即断言：无审批提示、完整文件系统/
+    # 工具执行权限）。Maison 不猜第三方 CLI 旗标、不加命令白名单、不新增审批层；
+    # 无法满足该契约的 CLI 不得声明支持 Goal/headless。
     headless_invoke: '{{PROMPT}} | agent-cli -'
     unattended:
-      write_mode: workspace-write
-      approval_mode: on-request
+      write_mode: full-access
+      approval_mode: never
 
 post_install_hooks: []
 

@@ -335,9 +335,22 @@ optional_fields:
               命令模板（goal-runner 结构化 spawn，不经 shell）；占位符 {{PROMPT}}（内联 prompt 正文）、
               {{PROMPT_FILE}} {{SKILL_PATH}} {{PROJECT_ROOT}} {{FRAMEWORK_ROOT}} {{FEATURE}} {{PHASE}}。
               勿使用 $(cat …) 等 shell 语法。
+              **权限契约（plan a8e5c3f9）**：本命令即 adapter 提供方断言的
+              non-interactive full-permission 启动命令——无审批提示、完整文件系统/工具执行
+              权限（用户主动启动 Goal/headless 即为该授权）。Maison 不猜第三方 CLI 旗标、
+              不加命令白名单；无法满足者不得声明支持 Goal/headless。内建已知 CLI
+              （claude/codeagent/codex/cursor/opencode）运行时以 agent-invoke.ts 硬化 argv
+              为 SSOT，本字段仅声明面（两者须一致，防双口径）。
+              注意：全权限=执行能力，不是业务裁决权——phase 权责、integrity、runner-owned
+              gate、receipt/人签、设备与凭据规则不受影响。
           unattended:
             type: object
-            description: 默认 unattended 契约；manifest 可覆盖
+            description: |
+              unattended 契约声明。plan a8e5c3f9 起 Goal/headless 运行时统一归一化为
+              effective 值（write_mode: full-access + approval_mode: never，见
+              goal-manifest.ts effectiveHeadlessUnattended）；旧 manifest 的其他枚举仍被
+              接受（历史 run 可 resume）但不再降低实际执行权限；allowed_tools 为审批清单
+              遗留字段（deprecated/ignored）。
 
   user_confirmation:
     type: object | null

@@ -110,7 +110,12 @@ function bench(
  * 任何动画延迟都变成永久零输入 → 无人值守停机，2026-08-05 宿主实况）。
  */
 function benchFrames(
-  frames: Array<{ keypad: KeypadKey[]; diag?: LockScreenSnapshot['keypadDiag'] }>,
+  frames: Array<{
+    keypad: KeypadKey[];
+    diag?: LockScreenSnapshot['keypadDiag'];
+    /** 逐帧 cooldown（缺省 not_cooldown）——用于钉「重采样期间 cooldown 每帧优先」 */
+    cooldown?: LockScreenSnapshot['cooldown'];
+  }>,
 ): {
   deps: UnlockDeps; settles: number; settleArgs: number[]; snapshots: number;
 } {
@@ -123,7 +128,7 @@ function benchFrames(
         locked: true,
         keypad: f.keypad,
         ...(f.diag ? { keypadDiag: f.diag } : {}),
-        cooldown: { state: 'not_cooldown', ruleId: 'test_rule' },
+        cooldown: f.cooldown ?? { state: 'not_cooldown', ruleId: 'test_rule' },
         lockBounds: { left: 0, top: 0, right: 1000, bottom: 2000 },
       };
     },
@@ -239,17 +244,54 @@ export function runAll(): UnitCaseResult[] {
     assert(Date.now() - t0 >= 20, 'buildUnlockDeps().settle 必须真的等待');
   });
 
-  run(results, 'T3#2 布局不认识（容器未找到）→ 立即停、不重取样，归类 layout_unsupported', () => {
-    const b = benchFrames([
-      { keypad: [], diag: { reason: 'pin_container_not_found', found: 0, containerFound: false, hiddenSkipped: false } },
-      { keypad: [], diag: { reason: 'pin_container_not_found', found: 0, containerFound: false, hiddenSkipped: false } },
-    ]);
+  run(results, 'f4c8d2b7 t3 容器持续未找到 → 跑满有界窗口后归类 layout_unsupported（不再首帧早退）', () => {
+    const absentFrame = { keypad: [] as KeypadKey[], diag: { reason: 'pin_container_not_found' as const, found: 0, containerFound: false, hiddenSkipped: false } };
+    const b = benchFrames([absentFrame, absentFrame, absentFrame, absentFrame, absentFrame]);
     const r = ensureUnlocked({ serial: SERIAL, credentialRef: REF, deps: b.deps, provider: providerOf() });
     assertEq(r.ok, false, '不应解锁');
     assert(r.ok === false && r.attempted === false, '零输入（绝不因诊断增强而输入）');
-    assertEq(r.ok === false ? r.failureKind : undefined, 'layout_unsupported', '须归 layout_unsupported');
+    assertEq(r.ok === false ? r.failureKind : undefined, 'layout_unsupported', '窗口耗尽后仍归 layout_unsupported');
     assert(r.note.includes('container=absent'), `须带结构化事实：${r.note}`);
-    assertEq(b.settles, 0, '布局不认识时再等也没用——不得浪费 settle');
+    // 首帧早退已删（宿主实锤：reveal 动画中容器未挂载是过渡态）——须跑满整个观察窗口
+    assertEq(b.settles, MAX_RESAMPLES, `容器缺失也须跑满有界窗口（实得 ${b.settles}/${MAX_RESAMPLES}）`);
+  });
+
+  run(results, 'f4c8d2b7 t3 容器晚挂载（前两帧缺席、后一帧齐）→ 恢复并继续走解锁输入（观察期零输入,不判永久布局不支持）', () => {
+    const absentFrame = { keypad: [] as KeypadKey[], diag: { reason: 'pin_container_not_found' as const, found: 0, containerFound: false, hiddenSkipped: false } };
+    const b = benchFrames([absentFrame, absentFrame, { keypad: FULL_KEYPAD }]);
+    const p = providerOf();
+    const r = ensureUnlocked({ serial: SERIAL, credentialRef: REF, deps: b.deps, provider: p });
+    assert(!/layout_unsupported/.test(r.note), `过渡态容器缺席不得判永久布局不支持：${r.note}`);
+    assert(b.settles >= 1 && b.settles <= MAX_RESAMPLES, `观察须有界（实得 ${b.settles}）`);
+  });
+
+  run(results, 'f4c8d2b7 t3 表驱动：geometry_insane / digit_invalid 同样跑满有界窗口后才归 layout_unsupported', () => {
+    // 复检意见 3：t3 承诺「所有失败 kind 统一有界观察」，不只 pin_container_not_found。
+    const table: Array<{ reason: 'geometry_insane' | 'digit_invalid'; found: number }> = [
+      { reason: 'geometry_insane', found: 10 },
+      { reason: 'digit_invalid', found: 7 },
+    ];
+    for (const { reason, found } of table) {
+      const frame = { keypad: [] as KeypadKey[], diag: { reason, found, containerFound: true, hiddenSkipped: false } };
+      const b = benchFrames([frame, frame, frame, frame, frame]);
+      const r = ensureUnlocked({ serial: SERIAL, credentialRef: REF, deps: b.deps, provider: providerOf() });
+      assertEq(r.ok, false, `${reason}: 不应解锁`);
+      assert(r.ok === false && r.attempted === false, `${reason}: 零输入`);
+      assertEq(r.ok === false ? r.failureKind : undefined, 'layout_unsupported', `${reason}: 窗口耗尽后归 layout_unsupported`);
+      assertEq(b.settles, MAX_RESAMPLES, `${reason}: 须跑满有界窗口（实得 ${b.settles}/${MAX_RESAMPLES}）`);
+    }
+  });
+
+  run(results, 'f4c8d2b7 t3 重采样中途出现 cooldown → 每帧优先判、立即零输入退出（不继续烧窗口）', () => {
+    const absentFrame = { keypad: [] as KeypadKey[], diag: { reason: 'pin_container_not_found' as const, found: 0, containerFound: false, hiddenSkipped: false } };
+    const cooldownFrame = { ...absentFrame, cooldown: { state: 'cooldown' as const, ruleId: 'auth_cooldown_explicit' } };
+    // 帧序：初始快照（无 cooldown）→ reveal → 循环第一帧即 cooldown
+    const b = benchFrames([absentFrame, cooldownFrame, absentFrame, absentFrame]);
+    const r = ensureUnlocked({ serial: SERIAL, credentialRef: REF, deps: b.deps, provider: providerOf() });
+    assertEq(r.ok, false, '不应解锁');
+    assert(r.ok === false && r.attempted === false, '零输入');
+    assert(r.note.includes('auth_cooldown_explicit') && r.note.includes('冷却'), `须以 cooldown 归因退出：${r.note}`);
+    assertEq(b.settles, 0, `cooldown 优先于窗口推进——不得再 settle（实得 ${b.settles}）`);
   });
 
   run(results, 'T3#2 键盘始终不齐 → 有界重取样后归类 ui_not_settled，且携带 digits=N/10', () => {

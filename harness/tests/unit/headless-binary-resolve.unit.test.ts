@@ -32,7 +32,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     name: 'cursorHeadlessPlan: stdin prompt + --force --trust',
     run: () => {
       const prompt = 'hello\nworld "quoted"';
-      const plan = cursorHeadlessPlan(unattended, prompt, {
+      const plan = cursorHeadlessPlan(prompt, {
         path: 'C:\\bin\\cursor-agent.exe',
         kind: 'exe',
       });
@@ -47,21 +47,19 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'cursorHeadlessPlan: on-request approval omits --force --trust',
+    // plan a8e5c3f9 t3：headless 恒 --force --trust——不再接受 unattended 权限旋钮，
+    // 函数签名已不含 unattended（结构上不可能随 manifest 摇摆）。
+    name: 'cursorHeadlessPlan: 恒 --force --trust（无 approval_mode 旋钮）',
     run: () => {
-      const plan = cursorHeadlessPlan(
-        { ...unattended, approval_mode: 'on-request' },
-        'x',
-        { path: '/usr/bin/agent', kind: 'bare' },
-      );
-      assert.deepStrictEqual(plan.argv, ['/usr/bin/agent', '-p']);
+      const plan = cursorHeadlessPlan('x', { path: '/usr/bin/agent', kind: 'bare' });
+      assert.deepStrictEqual(plan.argv, ['/usr/bin/agent', '-p', '--force', '--trust']);
       assert.strictEqual(plan.stdin, 'x');
     },
   },
   {
     name: 'cursorHeadlessPlan: win32 .cmd uses cross-spawn when available',
     run: () => {
-      const plan = cursorHeadlessPlan(unattended, 'p', {
+      const plan = cursorHeadlessPlan('p', {
         path: 'C:\\x\\agent.cmd',
         kind: 'cmd',
       });

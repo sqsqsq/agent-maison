@@ -17,6 +17,7 @@
 | Markdown 表格列 AC-1 / L1 / testable | `records:` 数组 + `acceptance_id: AC-1` |
 | 只有 prose 段落无 yaml 块 | 至少一个 ` ```yaml ` 块含 `records:` |
 | `acceptance_id: AC-1-a`（子编号） | 只用 acceptance.yaml 已有 ID，如 `AC-1`、`BD-1` |
+| `name: HAFullChainService.getData`（类.方法） | `name: HAFullChainService`（纯类名；方法级信息写 `entry_point.symbol` 或 mock-plan `methods[]`） |
 
 ## EXACT OUTPUT FORMAT — COPY AND FILL
 
@@ -30,10 +31,10 @@ records:
       file: 02-Feature/FinancialCard/src/main/ets/BankCard/presentation/component/openCard/openHWP/BankCardPetalOpenHwpInteraction.ets
     testability_level: L1
     dependencies:
-      - name: HAFullChainService.getData
+      - name: HAFullChainService
         kind: di_injectable
         seam: subclass_override
-      - name: BundleUtil.isVersionControl
+      - name: BundleUtil
         kind: di_injectable
         seam: subclass_override
     verdict: testable
@@ -43,10 +44,10 @@ records:
       file: 02-Feature/FinancialCard/src/main/ets/BankCard/presentation/component/openCard/openHWP/BankCardPetalOpenHwpInteraction.ets
     testability_level: L1
     dependencies:
-      - name: HAFullChainService.getData
+      - name: HAFullChainService
         kind: di_injectable
         seam: subclass_override
-      - name: BundleUtil.isVersionControl
+      - name: BundleUtil
         kind: di_injectable
         seam: subclass_override
     verdict: testable
@@ -56,7 +57,7 @@ records:
       file: 02-Feature/FinancialCard/src/main/ets/BankCard/presentation/component/openCard/openHWP/BankCardPetalOpenHwpInteraction.ets
     testability_level: L1
     dependencies:
-      - name: HAFullChainService.getData
+      - name: HAFullChainService
         kind: di_injectable
         seam: subclass_override
     verdict: testable
@@ -98,7 +99,7 @@ records:
 | `acceptance_id` | ✅ | 如 `AC-1` / `BD-2`，须与 acceptance.yaml  id 一致 |
 | `entry_point` | 推荐 | `symbol`（类.方法）、`file`（相对仓库根路径） |
 | `testability_level` | ✅ | `L0` \| `L1` \| `L2` \| `L3` |
-| `dependencies` | 推荐 | `name` / `kind` / `seam` |
+| `dependencies` | 推荐 | `name` / `kind` / `seam`；**`name` 必须为纯类名**（与 mock-plan `target_class` 同口径；方法级信息写 `entry_point.symbol` 或 mock-plan `methods[]`，不写入 `name`） |
 | `verdict` | ✅ | `testable` \| `downgrade_device` \| `needs_seam` |
 | `recommendation` | L3 推荐 | `option_a` / `option_b` 文字说明 |
 | `selected` | **L3 必填** | `option_a` \| `option_b` |

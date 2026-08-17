@@ -224,6 +224,10 @@ export interface GoalRunEvent {
   output_delivery?: string;
   /** P1-7：adapter 版本运行时探测（adapter_probe 事件；探测失败记 unknown 不阻塞）。 */
   adapter_version?: string;
+  /** plan a8e5c3f9 t6：adapter_probe 事件带 effective 权限——旧 manifest 原文（如
+   * workspace-write）不再反映实际执行权限，审计以本字段为准。 */
+  effective_write_mode?: string;
+  effective_approval_mode?: string;
   silent_killed?: boolean;
   lingering_pipe?: boolean;
   recovered?: boolean;

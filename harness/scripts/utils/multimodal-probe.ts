@@ -7,11 +7,7 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 import { inferRepoLayout } from '../../repo-layout';
 import type { UnattendedContract } from './goal-manifest';
-import {
-  isGoalOrchestrationEnv,
-  MAISON_GOAL_ALLOWED_TOOLS_ENV,
-  MAISON_GOAL_MODEL_PIN_ENV,
-} from './phase-state';
+import { MAISON_GOAL_MODEL_PIN_ENV } from './phase-state';
 import { loadLocalConfig, type FrameworkLocalConfigVisionCanary } from './framework-local-config';
 import { isClaudeKernelAdapter } from './types';
 import { VISION_CANARY_PROBE_VERSION } from './vision-canary';
@@ -216,8 +212,8 @@ function warnStaleInteractiveCanaryOnce(adapter: string, probedAt: string): void
 
 const IMAGE_INPUT_VALUES = new Set<ImageInputMode>(['none', 'tool_read', 'native_attach']);
 
-/** goal headless：tool_read 依赖的读图工具名（claude --allowedTools） */
-export const GOAL_TOOL_READ_TOOL_NAMES = ['Read'] as const;
+// GOAL_TOOL_READ_TOOL_NAMES 已退役（plan a8e5c3f9 t1）：--allowedTools 审批面整体移除，
+// image_input 能力判断不再消费任何工具清单。
 
 const deprecatedMultimodalWarned = new Set<string>();
 
@@ -414,46 +410,27 @@ export function resolveAdapterMultimodal(
 }
 
 /**
- * goal 态 effective image_input：tool_read 但 allowed_tools 缺 Read → 诚实降级 none。
+ * goal 态 effective image_input（plan a8e5c3f9 t1：allowed_tools 降级链退役）。
+ * headless 全权限（bypass）下工具审批清单不存在，「allowed_tools 缺 Read → 降级 none」
+ * 不再成立；unattended 权限字段不再参与能力判断。保留函数名与签名以稳住调用面，
+ * 语义 = resolveBaseImageInput。
  */
 export function resolveGoalEffectiveImageInput(
   projectRoot: string,
   frameworkRoot: string,
   adapterName: string | undefined,
-  unattended?: UnattendedContract,
+  _unattended?: UnattendedContract,
   identity?: CanaryExecutionIdentity,
 ): MultimodalProbeResult {
-  const base = resolveBaseImageInput(projectRoot, frameworkRoot, adapterName, identity);
-  if (base.imageInput !== 'tool_read') {
-    return base;
-  }
-  if (!unattended?.allowed_tools?.length) {
-    return base;
-  }
-  const hasRead = unattended.allowed_tools.some(t =>
-    GOAL_TOOL_READ_TOOL_NAMES.some(r => r.toLowerCase() === t.trim().toLowerCase()),
-  );
-  if (hasRead) {
-    return base;
-  }
-  return toProbeResult(
-    base.adapter,
-    'none',
-    `${base.reason}；goal allowed_tools=[${unattended.allowed_tools.join(',')}] 缺 Read→降级 none`,
-  );
+  return resolveBaseImageInput(projectRoot, frameworkRoot, adapterName, identity);
 }
 
-/** 从 goal-runner 注入的环境变量解析 allowed_tools（仅 goal 编排态生效）。 */
-export function parseGoalAllowedToolsFromEnv(): string[] | undefined {
-  if (!isGoalOrchestrationEnv()) return undefined;
-  const raw = process.env[MAISON_GOAL_ALLOWED_TOOLS_ENV]?.trim();
-  if (!raw) return undefined;
-  const tools = raw.split(',').map(t => t.trim()).filter(Boolean);
-  return tools.length ? tools : undefined;
-}
+// parseGoalAllowedToolsFromEnv 已退役（plan a8e5c3f9 t1）：MAISON_GOAL_ALLOWED_TOOLS
+// 环境变量注入与消费一并删除——allowed_tools 是审批清单，不构成任何能力/权限判断的输入。
 
 /**
- * harness 上下文 effective image_input：goal 编排态叠加 allowed_tools 降级；否则读 adapter 声明。
+ * harness 上下文 effective image_input：读 adapter 声明（本地 override/金丝雀链在
+ * resolveBaseImageInput 内）；goal 态不再叠加 allowed_tools 降级（plan a8e5c3f9 t1）。
  */
 export function resolveContextAdapterImageInput(
   projectRoot: string,
@@ -461,14 +438,6 @@ export function resolveContextAdapterImageInput(
   adapterName: string | undefined,
   identity?: CanaryExecutionIdentity,
 ): MultimodalProbeResult {
-  const tools = parseGoalAllowedToolsFromEnv();
-  if (tools?.length) {
-    return resolveGoalEffectiveImageInput(projectRoot, frameworkRoot, adapterName, {
-      allowed_tools: tools,
-      write_mode: 'workspace-write',
-      approval_mode: 'never',
-    }, identity);
-  }
   return resolveBaseImageInput(projectRoot, frameworkRoot, adapterName, identity);
 }
 

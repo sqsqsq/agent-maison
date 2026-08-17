@@ -54,10 +54,12 @@ goal_capability:
   mode: external_runner
   external_runner:
     # Declarative only for capability validation. Runtime SSOT: agent-invoke.ts cursorHeadlessPlan (cursor-agent|agent -p, stdin).
+    # plan a8e5c3f9：headless 全权限契约——恒 --force --trust（不再随旧 approval_mode 摇摆，
+    # 此前声明 on-request 时模板与运行时互相矛盾）。
     headless_invoke: 'cursor-agent -p --force --trust "{{PROMPT}}"'
     unattended:
-      write_mode: workspace-write
-      approval_mode: on-request
+      write_mode: full-access
+      approval_mode: never
 
 post_install_hooks: []
 
