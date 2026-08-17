@@ -75,4 +75,6 @@ harness 归因 `device_locked`，但**自动解锁链从未启动**——宿主 
 - 不改 canonical 路径与 schema，无消费者迁移，`MIGRATION.md` 无需更新。
 - 真机复验欠账：`device-readiness-gate.ts` 变更已按既有纪律刷新验收 fixture 的
   `current_sha256` 并保留 `PENDING_REAL_DEVICE_REVERIFICATION`（`verified_sha256` 不改）。
-- 弹窗式登记 UX（agent 拉起可见 TTY 窗口、用户在窗内输 PIN）**不在本 change**，另立。
+- 弹窗式登记 UX（agent 拉起可见 TTY 窗口、用户在窗内输 PIN）**不做**（2026-08-17 用户
+  裁定，不另立 change）：首次登记与烧毁后重登记继续走「用户在自己终端跑 `device:enroll`」
+  这一条路，引用丢失类由 `device:rebind` 覆盖（本就不需要用户出场）。

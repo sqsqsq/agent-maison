@@ -162,7 +162,8 @@ bm dump/reuse 先于既有前检）。三者叠加：即使凭据登记且 ready
   运行中恢复。
 - **R3 D1**：凭据库不可读 → 既不 ok 也不 unset，走 CLI 既有"执行失败"契约（非零退出/
   非法 JSON = 停止）；fallback 仅 existing|managed；in_flight 措辞收敛。
-- **R4 B 轨**：从本 plan 删除（3.0.0 pending todo 会挡发布门）→ 见"Deferral"。
+- **R4 B 轨**：从本 plan 删除（3.0.0 pending todo 会挡发布门）→ 其后 2026-08-17 用户
+  裁定**整体不做**，见"已裁定不做：弹窗式登记"。
 - **R5 验收**：`cd harness && npm test` 全门禁；删除手工变异仪式，用例设计为"旧行为
   必红"即可证明接线。
 
@@ -194,12 +195,11 @@ bm dump/reuse 先于既有前检）。三者叠加：即使凭据登记且 ready
 - 不碰解锁运行时话术八出口（c9f4e7a2 已收口）。
 - provider 内部不重排 bm dump 顺序（入口门覆盖后属冗余优化，不做）。
 
-# Deferral：弹窗式登记（B 轨，另开 plan/OpenSpec change）
+# 已裁定不做：弹窗式登记（原 B 轨）
 
-方向可接受（薄启动层复用现有 --enroll，凭据内核零改动），本 plan 不做。未来实施时
-按 review 裁剪：不预建"桌面会话探测"状态机（先尝试启动，失败回现行指引）；窗口标题
-与 serial 回显**只是识别提示，不宣称"可信锚"**；agent 轮询 --check 必须有明确超时；
-CredUI 暂不做。
+**2026-08-17 用户裁定：去掉，不需要了。** 不另开 plan/change，也不列为 Deferral——
+首次登记与烧毁后重登记继续走既有"用户在自己终端跑 `device:enroll`"这一条路（引用丢失
+类由 `rebind` 覆盖，本来就不需要用户出场）。留此行防重新提案。
 
 # 安全红线核对（不放宽）
 
