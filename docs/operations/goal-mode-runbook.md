@@ -196,7 +196,7 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
 
 - launcher **秒级 fork 后台 child 并打印一行 JSON**（`{detached, run_id, report_dir, log, pid}`）后 `exit 0`；宿主 shell 拿到干净 0 退出码立即返回，**不触发超时杀树**。
 - child 的 stdio 重定向到 `report_dir/detach.log`，**不继承宿主 shell 的管道**（否则宿主 `communicate()`/阻塞读会一直等到 child 关 pipe，反而拖到超时杀树）。
-- 解析 launcher JSON 取 `run_id`，随后按下文进入 bounded monitor；`--detach` 同样兼容 `--resume <run-id> --feature <f> --detach`。
+- 解析 launcher JSON 取 `run_id`，随后按下文执行启动握手、汇报并交还轮次；`--detach` 同样兼容 `--resume <run-id> --feature <f> --detach`。
 - 适用前提（实测，chrys `foundation/platform/process.py`）：宿主 shell 用 `CREATE_NEW_CONSOLE` 而非 kill-on-close Job Object，且**仅在超时/取消时杀树**——故 launcher 干净退出即可让 detach 存活。
 
 **监控口径（chrys/opencode 无流式）**：`phases/<phase>/agent-output.log` 在 phase 结束前**恒为空**——活性**只**看 `goal-status` / `progress.json` / events 心跳（每 ~60s 一拍），**禁止** tail `agent-output.log` 判断卡死。
@@ -210,7 +210,7 @@ cd framework/harness && npx ts-node scripts/goal-status.ts \
   --feature <feature-slug> --run-id latest --json
 ```
 
-主 agent 启动 runner 后，除非用户明确要求 fire-and-forget，当前活跃轮次内默认使用 bounded monitor：
+主 agent 启动 runner 后，默认执行**有界启动握手**（硬上限 ≤30s，间隔 2–5s，只检查 manifest 落盘 / `detach.log` 增长 / liveness；按结果分类汇报——有可信终态/等待态证据就报真实状态，非终态且进程健康报「已启动」，超窗但进程仍活着报「尚未就绪，进程仍存活」，仅进程确实死亡且无结束证据才报「未存活」），就绪后汇报 `run_id`、进度路径、续查命令并**结束当前轮次**——这是默认，不需要用户开口「后台跑」，也不进入 monitor（禁止用 `sleep`/`for`/`grep events.jsonl` 等自制循环等待 phase/verdict/run_end 事件；启动握手是唯一例外）。仅当用户明确要求盯守时才进入 bounded monitor：
 
 ```bash
 cd framework/harness && npx ts-node scripts/goal-monitor.ts \
@@ -219,7 +219,7 @@ cd framework/harness && npx ts-node scripts/goal-monitor.ts \
   --max-seconds 240 --markdown
 ```
 
-调用 `goal-monitor --max-seconds N` 时，宿主 shell/tool timeout 必须显式设置为 `> N`（建议 `N + 60s`；`--max-seconds 240` 时至少 300s）。不要依赖 Claude Code Bash 等宿主工具的默认 timeout；若宿主无法提升 timeout，就把 `N` 降到安全值并循环。
+调用 `goal-monitor --max-seconds N` 时（仅在 opt-in 盯守实际调用时适用），宿主 shell/tool timeout 必须显式设置为 `> N`（建议 `N + 60s`；`--max-seconds 240` 时至少 300s）。不要依赖 Claude Code Bash 等宿主工具的默认 timeout；若宿主无法提升 timeout，就把 `N` 降到安全值。
 
 | 入口 | 用途 |
 |------|------|
@@ -227,15 +227,15 @@ cd framework/harness && npx ts-node scripts/goal-monitor.ts \
 | `goal-status --json` | 无法直接解析路径时的命令契约；**实时重算** liveness + `generated_at` 新鲜度降级 |
 | `goal-status --markdown` | agent 向用户汇报 |
 | `goal-status --watch` | **仅供人在终端**；agent 勿跑常驻 watch；可加 `--max-ticks N` 限制轮询次数（测试/脚本用） |
-| `goal-monitor --markdown/json` | **agent bounded monitor**；边沿触发、最多等待 `--max-seconds`、输出一次通知后退出 |
+| `goal-monitor --markdown/json` | **仅 opt-in 盯守用**；边沿触发、最多等待 `--max-seconds`、输出一次通知后退出。**不得当状态查询**（默认游标 -1 会重放最早历史 verdict）——状态查询唯一入口是 `goal-status` |
 
 **新鲜度降级**：非终态快照若 `generated_at` 超过 heartbeat 间隔 2–3 倍，不得信任 raw `status: RUNNING`（后台 terminal 随 IDE 会话回收会留下谎报）。终态快照（`COMPLETED`/`DEFERRED`/`PARTIAL`/`HALTED`）不降级。
 
 `goal-monitor` 是纯读取器：它不启动、不续跑、不杀掉、不修改 goal-runner；被宿主 timeout 杀掉无副作用，下一轮可重新调用。它的通知事件包括 `phase_verdict`、`run_end`、硬 liveness 异常，以及低频 ACTIVE heartbeat 摘要。heartbeat 摘要按事件时间累计 `SOFT_STALL_MS = 10min` 判断并去重，不按本次 monitor 调用等待时长判断。
 
-跨轮次接管：若主 agent 轮次中断，新轮 agent 应从 run 目录重新读取 `events.jsonl` / `goal-status` 推导当前状态和最近 verdict；不要假设内存里的 `last_seen` 仍可靠。第一版 framework 脚本不提供跨轮次聊天唤醒；真正 push/wakeup 属于宿主或 adapter 增强（Claude `ScheduleWakeup` / cron、Cursor `notify_on_output` 等）。
+跨轮次接管：若主 agent 轮次中断，新轮 agent 应从 run 目录重新读取 `events.jsonl` / `goal-status` 推导当前状态和最近 verdict；不要假设内存里的 `last_seen` 仍可靠。第一版 framework 脚本不提供跨轮次聊天唤醒；真正 push/wakeup 属于宿主或 adapter 增强（如 Claude `ScheduleWakeup` / cron 等宿主调度能力）。
 
-**不要**把 `agent-output.log` 正文或 runner stdout 日志当协议；stdout 里程碑行 `GOAL_PHASE` / `GOAL_RUN` 是受维护的轻契约和可选加速器，不是通知 SSOT。
+**不要**把 `agent-output.log` 正文或 runner stdout 日志当协议；stdout 里程碑行 `GOAL_PHASE` / `GOAL_RUN` 是受维护的轻契约和可选加速器，不是通知 SSOT，且仅限**当前轮次、非 detached、stdout 仍由宿主持有**的路径（`--detach` 下 runner stdout 已全部重定向进 `detach.log`）。
 
 ## Headless 阶段内闸门（§9）
 

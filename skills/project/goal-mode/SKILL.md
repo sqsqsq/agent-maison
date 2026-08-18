@@ -42,7 +42,7 @@
 
 有人在场由当前会话逐轮驱动，生产入口固定为可执行 `harness/scripts/goal-mode-entry.ts` host bridge（内部调用 `runGoalModeHostBridge()`→`runGoalModeInSession()`→`runInSessionRound()`）；完整命令和 JSONL phase callback 协议见 operations 文档。Skill/宿主不得另拼循环或自行构造 owner token。active adapter 必须为每个 bridge 请求提供隔离 phase context，能力缺失即按上节回退。无人值守必须使用真正的 detached runner；`--detach` 本身即选择无人值守。session 与 detached process 互转时只能走 mailbox handoff：当前 owner 写 `handoff_requested`、静默并释放，新 owner 以 `epoch+1` CAS 接管并写 `handoff_accepted`。禁止复制或转换 ledger。
 
-具体 CLI、adapter 解析、detach 存活检查和 bounded monitor 见 [goal-mode-operations.md](../../reference/goal-mode-operations.md)。
+具体 CLI、adapter 解析、detach 启动握手、进度汇报与 opt-in 盯守见 [goal-mode-operations.md](../../reference/goal-mode-operations.md)。
 
 ## 每轮汇报
 
@@ -53,6 +53,8 @@
 - 本轮结果与下一动作
 - 等待项（没有则省略）
 - `run_id` 与进度文件
+
+无人值守（`--detach`）启动后：先执行**有界启动握手**（≤30s，只查 manifest 落盘 / `detach.log` 增长 / liveness；按结果分类汇报——有可信终态/等待态证据就报真实状态，非终态且进程健康报「已启动」，超窗但进程仍活报「尚未就绪，进程仍存活」，仅进程确实死亡且无结束证据才报「未存活」），汇报 `run_id` 与续查入口后**立即结束当前轮次**；不进入 monitor，除非用户明确要求盯守。查进度唯一入口是 `goal-status`。
 
 遇到 human-only recommendation 时不得启动 phase：有人在场立即询问；无人值守写入等待项并安全停放。`DEFERRED` / `PARTIAL` 不得宣称完成。
 
