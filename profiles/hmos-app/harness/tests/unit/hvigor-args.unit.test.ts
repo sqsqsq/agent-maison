@@ -278,7 +278,7 @@ const cases: Array<{ name: string; run: () => void }> = [
   },
 
   {
-    name: 'detectProduct via preferredProduct=mirror 覆盖时，args 含 -p product=mirror',
+    name: 'preferredProduct 未确认不再覆盖 args；local 确认后生效（plan a7c3f9e2 t5）',
     run: () => withTmpDir(root => {
       writeFile(
         path.join(root, 'build-profile.json5'),
@@ -305,15 +305,33 @@ const cases: Array<{ name: string; run: () => void }> = [
       const assembleArgs = buildAssembleAppArgs(root, 'assembleApp');
       assertEq(
         findFlagValues(assembleArgs, 'product'),
-        ['mirror'],
-        'assembleApp 路径应当以 preferredProduct 覆盖 build-profile',
+        ['default'],
+        '未确认的 preferredProduct 不得冒充用户意图（单候选回落 sole_candidate）',
       );
 
       const utArgs = buildUtHvigorArgs(root, 'FeatureAlpha', 'genOnDeviceTestHap');
+      assertEq(findFlagValues(utArgs, 'product'), ['default'], 'ohosTest 路径同源语义');
+
+      // local 确认后（config 值 === local 确认值）→ explicit_config 生效
+      writeFile(
+        path.join(root, 'framework.local.json'),
+        JSON.stringify(
+          {
+            schema_version: '1.0',
+            toolchain: {
+              productSelection: { confirmed: { value: 'mirror', confirmed_at: '2026-08-17T00:00:00.000Z' } },
+            },
+          },
+          null,
+          2,
+        ),
+      );
+      clearFrameworkConfigCache();
+      const confirmedArgs = buildAssembleAppArgs(root, 'assembleApp');
       assertEq(
-        findFlagValues(utArgs, 'product'),
+        findFlagValues(confirmedArgs, 'product'),
         ['mirror'],
-        'ohosTest 路径同样应当以 preferredProduct 覆盖',
+        'config 值且 local 确认值相等 → explicit_config',
       );
     }),
   },

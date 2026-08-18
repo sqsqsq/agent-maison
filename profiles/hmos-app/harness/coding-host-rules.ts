@@ -16,7 +16,15 @@ import {
   dispatchDepsInstall,
   analyzeCodingDependencyIssueViaProfile,
 } from '../../../harness/capability-registry';
-import { detectHvigorConfigError, type ProjectDependencyIssue } from './hvigor-runner';
+import { detectHvigorConfigError, isHvigorBuildSuccessful, type ProjectDependencyIssue } from './hvigor-runner';
+import {
+  resolveProductSelection,
+  describeProductSelection,
+  buildProductSelectionUnresolvedGuidance,
+  summarizeUnresolvedCause,
+  TRUSTED_PRODUCT_SOURCES,
+  type ProductSelection,
+} from './product-selection';
 import {
   isCrossModuleExportFileStem,
   isLibraryFormat,
@@ -877,7 +885,12 @@ function compileLogText(res: {
     .join('\n');
 }
 
-/** 导出供 harness 单测断言 failure_kind 枚举稳定（勿在业务代码中依赖）。 */
+/**
+ * 导出供 harness 单测断言 failure_kind 枚举稳定（勿在业务代码中依赖）。
+ * 签名第三参：t5（plan a7c3f9e2）注入构建前单次解析的 ProductSelection——
+ * source 非可信集合（explicit_run/confirmed_env/explicit_config，即 sole_candidate）时，
+ * explanation **首句**声明编译形态未经确认（推断值不得冒充用户意图）。
+ */
 export function classifyCodingCompileFailure(
   res: {
     toolMissing?: boolean;
@@ -888,6 +901,43 @@ export function classifyCodingCompileFailure(
     errors?: Array<{ file?: string; line?: number; code?: string; message: string }>;
     successMarkerFound?: boolean;
     /** f9c2e6b4 t2：配置错误判据需要原始日志（与 analyzeProjectDependencyIssue 同源入参） */
+    logAbsPath?: string;
+    logExcerpt?: string;
+  },
+  ctx: CheckContext,
+  selection?: ProductSelection,
+): CodingCompileFailureClassification {
+  return withUnconfirmedFormLead(classifyCodingCompileFailureCore(res, ctx), selection);
+}
+
+/**
+ * 首句声明"编译形态未经确认"（plan a7c3f9e2 t5 ⑧ + review P2 统一）：source 非可信集合
+ * （explicit_run/confirmed_env/explicit_config，即 sole_candidate 等推导形态）时，
+ * explanation **首句**声明形态未经确认——推断值不得冒充用户意图。
+ * 分类器内部与 checkCodingCompile 的 override 分支最终选择处都经本函数收口，防绕过。
+ */
+export function withUnconfirmedFormLead(
+  outcome: CodingCompileFailureClassification,
+  selection?: ProductSelection,
+): CodingCompileFailureClassification {
+  if (!selection?.product || TRUSTED_PRODUCT_SOURCES.has(selection.source)) return outcome;
+  return {
+    ...outcome,
+    explanation:
+      `编译形态未经确认：product=${selection.product} 由工程候选推导（来源：${selection.source}），` +
+      `未曾在 framework.local.json 确认——推断值不得冒充用户意图。\n${outcome.explanation}`,
+  };
+}
+
+function classifyCodingCompileFailureCore(
+  res: {
+    toolMissing?: boolean;
+    skippedByEnv?: boolean;
+    timedOut?: boolean;
+    executed?: boolean;
+    exitCode?: number;
+    errors?: Array<{ file?: string; line?: number; code?: string; message: string }>;
+    successMarkerFound?: boolean;
     logAbsPath?: string;
     logExcerpt?: string;
   },
@@ -1057,15 +1107,9 @@ type CompileRunResult = {
   diagnostics?: string[];
 };
 
-function isCompilePass(res: CompileRunResult): boolean {
-  const errs = res.errors ?? [];
-  return Boolean(
-    res.executed &&
-      !res.timedOut &&
-      res.exitCode === 0 &&
-      errs.length === 0 &&
-      res.successMarkerFound !== false,
-  );
+/** 导出供生产链单测断言（plan a7c3f9e2 t1：与 device-testing 出口共用同一终态判据）。 */
+export function isCompilePass(res: CompileRunResult): boolean {
+  return isHvigorBuildSuccessful(res);
 }
 
 /** 导出供生产链单测断言（failure kind → blocking_class 的唯一映射点）。 */
@@ -1088,11 +1132,17 @@ export function resolveCompileBlockingClass(kind: CodingCompileFailureKind): str
   return kind;
 }
 
-function buildCompilePassDetails(res: CompileRunResult, modulesCount: number, extraNote?: string): string {
+function buildCompilePassDetails(
+  res: CompileRunResult,
+  modulesCount: number,
+  extraNote?: string,
+  selection?: ProductSelection,
+): string {
   return [
     extraNote ? `${extraNote}\n` : '',
     `编译通过（涉及 ${modulesCount} 个 contract 模块，耗时 ${res.durationMs} ms）。`,
     `命令：${res.command ?? '(unknown)'}`,
+    ...(selection ? [describeProductSelection(selection)] : []),
     `元数据：${res.metaPath ?? '(无)'}`,
     `完整日志：${res.logPath ?? '(无)'}`,
     ...(res.diagnostics?.length ? ['诊断提示：', ...res.diagnostics.map((d: string) => `  - ${d}`)] : []),
@@ -1105,6 +1155,7 @@ function buildCompileFailDetails(
   res: CompileRunResult,
   failure: CodingCompileFailureClassification,
   extraLines: string[] = [],
+  selection?: ProductSelection,
 ): string {
   const errs = res.errors ?? [];
   const detailsLines: string[] = [];
@@ -1120,6 +1171,7 @@ function buildCompileFailDetails(
     detailsLines.push(
       `exit_code=${res.exitCode}, durationMs=${res.durationMs}, timedOut=${Boolean(res.timedOut)}, successMarkerFound=${res.successMarkerFound ?? 'n/a'}`,
     );
+    if (selection) detailsLines.push(describeProductSelection(selection));
     detailsLines.push(`失败归因：${failure.kind}`);
     detailsLines.push(`归因说明：${failure.explanation}`);
     detailsLines.push(`命令：${res.command ?? '(unknown)'}`);
@@ -1182,6 +1234,33 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
     ruleDesc(ctx, 'structure_checks', 'coding_compile') ||
     ruleDesc(ctx, 'structure_checks', 'coding_hvigor_build');
 
+  // t5（plan a7c3f9e2 ⑤）：**本作用域内只解析一次**，同一 ProductSelection 对象贯穿
+  // 构建参数与分类/详情生成；构建期间外部配置改变也不得二次解析。
+  const compileSelection = resolveProductSelection({ projectRoot: ctx.projectRoot, purpose: 'coding' });
+
+  // unresolved：构建形态无法确定（四种原因，见 product-selection.ts）——不猜，
+  // 经既有阻断通道停止并要求确认。
+  // blocking_class 复用 externalBlocked（外部/环境类：agent 不该改代码绕过），
+  // goal 无人值守由 goal-runner 启动前置检查先行 halt（本分支在交互式将其落 BLOCKER FAIL）。
+  // env 显式跳过（HARNESS_SKIP_HVIGOR=1）时**让位给既有 skip 语义**——用户明确跳过了
+  // 编译，报"显式跳过不作为出口"比要求确认 product 更对症（fixture 回归锁）。
+  if (compileSelection.source === 'unresolved' && !process.env.HARNESS_SKIP_HVIGOR) {
+    const guidance = buildProductSelectionUnresolvedGuidance(compileSelection);
+    return duplicateCompileResults({
+      category: 'structure',
+      description: desc,
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: ['coding_compile（真实编译）失败：' + summarizeUnresolvedCause(compileSelection), guidance].join('\n'),
+      affected_files: modules.map(m => `${m.name} (module)`),
+      failure_kind: 'project_build_environment_inconsistent',
+      blocking_class: resolveCompileBlockingClass('project_build_environment_inconsistent'),
+      suggestion:
+        '编译形态未确认属外部/工程配置问题，不得通过改代码绕过。' +
+        '请按 details 中的指引确认 product（init.product_selection / record-product-selection / env）后重跑。',
+    });
+  }
+
   const compileBaseOpts = {
     projectRoot: ctx.projectRoot,
     harnessRoot: HARNESS_ROOT,
@@ -1189,6 +1268,7 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
     phase: 'coding',
     skipEnvVar: 'HARNESS_SKIP_HVIGOR',
     frameworkRoot: ctx.frameworkRoot,
+    product: compileSelection.product ?? undefined,
   };
 
   let res: CompileRunResult = dispatchCodingCompile(ctx, compileBaseOpts);
@@ -1199,7 +1279,7 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
   let buildTxnRetryLines: string[] = [];
 
   if (res.toolMissing || res.skippedByEnv || !isCompilePass(res)) {
-    let firstFailure = classifyCodingCompileFailure({ ...res, errors: res.errors ?? [] }, ctx);
+    let firstFailure = classifyCodingCompileFailure({ ...res, errors: res.errors ?? [] }, ctx, compileSelection);
 
     // f9c2e6b4 t2：配置错误但路径实际存在 → **原样重跑一次构建事务**再下结论。
     // 这一步不启动 agent、不消耗内容重试预算：矛盾（"说找不到、但它就在那儿"）本身
@@ -1210,7 +1290,7 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
         `原因：${firstFailure.explanation.split('\n')[0]}`,
       ];
       res = dispatchCodingCompile(ctx, { ...compileBaseOpts, forceNoDaemon: true });
-      const afterRetry = classifyCodingCompileFailure({ ...res, errors: res.errors ?? [] }, ctx);
+      const afterRetry = classifyCodingCompileFailure({ ...res, errors: res.errors ?? [] }, ctx, compileSelection);
       buildTxnRetryLines.push(
         isCompilePass(res)
           ? '重跑结果：PASS（首次失败为一次性环境不一致，已自证）'
@@ -1280,20 +1360,23 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
       description: desc,
       severity: 'BLOCKER',
       status: 'PASS',
-      details: buildCompilePassDetails(res, modules.length, depsAutoFixNote),
+      details: buildCompilePassDetails(res, modules.length, depsAutoFixNote, compileSelection),
     });
   }
 
   const failure =
-    overrideFailure ??
-    classifyCodingCompileFailure({ ...res, errors: res.errors ?? [] }, ctx);
+    // review P2：override 分支（dependency/toolchain/install 自愈文案）同样统一收口
+    // "首句声明形态未经确认"——不得绕过 classify 的装饰。
+    overrideFailure
+      ? withUnconfirmedFormLead(overrideFailure, compileSelection)
+      : classifyCodingCompileFailure({ ...res, errors: res.errors ?? [] }, ctx, compileSelection);
 
   return duplicateCompileResults({
     category: 'structure',
     description: desc,
     severity: 'BLOCKER',
     status: 'FAIL',
-    details: buildCompileFailDetails(res, failure, [...buildTxnRetryLines, ...installExtraLines]),
+    details: buildCompileFailDetails(res, failure, [...buildTxnRetryLines, ...installExtraLines], compileSelection),
     affected_files: modules.map(m => `${m.name} (module)`),
     failure_kind: failure.kind,
     blocking_class: resolveCompileBlockingClass(failure.kind),

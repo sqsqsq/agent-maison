@@ -10,10 +10,18 @@ import {
   discoverAppHapArtifacts,
   detectStaleSignedSuspect,
   stopHvigorDaemon,
+  isHvigorBuildSuccessful,
   type HvigorRunResult,
   type HapDiscoveryCandidate,
 } from '../hvigor-runner';
-import { resolveDeviceTestProduct, resolveDeviceTestBuildMode } from '../testing-build-conventions';
+import {
+  resolveProductSelection,
+  describeProductSelection,
+  buildProductSelectionUnresolvedGuidance,
+  summarizeUnresolvedCause,
+  type ProductSelection,
+} from '../product-selection';
+import { resolveDeviceTestBuildMode } from '../testing-build-conventions';
 import { evaluateDeviceTestBuildReuse } from '../device-test-build-reuse';
 // plan d8c5f3a7 T4 接线：构建**当刻**把源码快照绑定到 HAP——抓 self-revert 的关键一环
 
@@ -52,6 +60,8 @@ export interface DeviceTestBuildResult {
   staleSuspect?: boolean;
   staleSuspectUnsignedPath?: string | null;
   staleSuspectNote?: string;
+  /** t5（plan a7c3f9e2）：本次构建前单次解析的 ProductSelection（分类/报告用），unresolved 时另有 product=null */
+  productSelection?: ProductSelection;
 }
 
 function writeBuildResultSummary(
@@ -74,13 +84,97 @@ function reusedHvigorStub(reason: string): HvigorRunResult {
   };
 }
 
+/** unresolved 阻断桩：exitCode=1 + 引导文案 → 上游（check-testing 门禁）按 FAIL 报告，不崩溃。 */
+function unresolvedHvigorStub(selection: ProductSelection): HvigorRunResult {
+  const guidance = buildProductSelectionUnresolvedGuidance(selection);
+  return {
+    executed: false,
+    exitCode: 1,
+    durationMs: 0,
+    logExcerpt: `[product-selection unresolved]\n${guidance}`,
+    errors: [{ message: summarizeUnresolvedCause(selection) }],
+  };
+}
+
+/**
+ * device-testing 出口的构建成功判据（导出供 t1(f) 生产路径回归：**真实出口函数**，
+ * 与 coding/ut/check-testing 共用 isHvigorBuildSuccessful）。
+ */
+export function isDeviceTestBuildOk(res: HvigorRunResult): boolean {
+  return isHvigorBuildSuccessful(res);
+}
+
 export function runDeviceTestAppBuild(opts: DeviceTestBuildOptions): DeviceTestBuildResult {
+  // review P1（第二轮）：env 显式跳过必须在**任何解析/复用/HAP 扫描/daemon 操作之前**
+  // 短路为 skippedByEnv 失败——否则 unresolved 会让位给 skip，selection.product=null
+  // 空 product 扫到任意旧 HAP 即可 reuse:true，被 check-testing 判 PASS，
+  // 重新引入"未确认编译形态却通过"的核心事故。
+  const skipEnvVar = opts.skipEnvVar ?? 'HARNESS_SKIP_DEVICE_TEST_BUILD';
+  if (process.env[skipEnvVar]) {
+    const hvigor: HvigorRunResult = {
+      executed: false,
+      skippedByEnv: true,
+      durationMs: 0,
+      logExcerpt: `[skipped] env ${skipEnvVar}=${process.env[skipEnvVar]}`,
+      errors: [],
+    };
+    return {
+      hvigor,
+      hapPath: null,
+      resolvedProduct: '(skipped-by-env)',
+      resolvedBuildMode: opts.buildMode ?? 'debug',
+    };
+  }
+
+  // t5（plan a7c3f9e2 ⑤）：本作用域内只解析一次（purpose=device_test，读
+  // HARNESS_DEVICE_TEST_PRODUCT env = confirmed_env，含 goal 冻结注入）；同一对象贯穿
+  // 构建参数、复用判定、result 审计与 metaExtras 落盘（metaExtras 仅审计，不做运行时 carrier）。
+  const selection = resolveProductSelection({
+    projectRoot: opts.projectRoot,
+    purpose: 'device_test',
+    explicitProduct: opts.product,
+  });
+  if (selection.source === 'unresolved') {
+    const hvigor = unresolvedHvigorStub(selection);
+    try {
+      writeBuildResultSummary(
+        featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot),
+        {
+          reused: false,
+          resolvedProduct: '(unresolved)',
+          resolvedBuildMode: opts.buildMode ?? 'debug',
+          hapPath: null,
+          hvigorExecuted: false,
+          hvigorExitCode: 1,
+          hvigorDurationMs: 0,
+          productSelection: {
+            product: null,
+            source: 'unresolved',
+            candidates: selection.candidates,
+            purpose: selection.purpose,
+          },
+          rejected: 'product_selection_unresolved',
+          timestamp: new Date().toISOString(),
+        },
+      );
+    } catch {
+      /* best-effort */
+    }
+    return {
+      hvigor,
+      hapPath: null,
+      resolvedProduct: '(unresolved)',
+      resolvedBuildMode: opts.buildMode ?? 'debug',
+      productSelection: selection,
+    };
+  }
   const reuseDecision = evaluateDeviceTestBuildReuse({
     projectRoot: opts.projectRoot,
-    product: opts.product,
+    // review P2：只传本次解析冻结的 product，reuse evaluator 不再二次解析。
+    product: selection.product!,
     buildMode: opts.buildMode,
   });
-  const resolvedProduct = reuseDecision.resolvedProduct;
+  const resolvedProduct = selection.product!;
   const resolvedBuildMode = reuseDecision.resolvedBuildMode;
   const reportDir = featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot);
 
@@ -103,6 +197,12 @@ export function runDeviceTestAppBuild(opts: DeviceTestBuildOptions): DeviceTestB
       staleSuspectNote: reuseDecision.staleSuspectNote ?? null,
       scannedDirs: reuseDecision.scannedDirs ?? [],
       candidateCount: reuseDecision.candidates?.length ?? 0,
+      productSelection: {
+        product: selection.product,
+        source: selection.source,
+        candidates: selection.candidates,
+        purpose: selection.purpose,
+      },
       timestamp: new Date().toISOString(),
     });
     return {
@@ -120,6 +220,7 @@ export function runDeviceTestAppBuild(opts: DeviceTestBuildOptions): DeviceTestB
       staleSuspectNote: reuseDecision.staleSuspectNote,
       scannedDirs: reuseDecision.scannedDirs,
       candidates: reuseDecision.candidates,
+      productSelection: selection,
     };
   }
 
@@ -142,7 +243,16 @@ export function runDeviceTestAppBuild(opts: DeviceTestBuildOptions): DeviceTestB
     product: resolvedProduct,
     buildMode: resolvedBuildMode,
     logBasename: 'hvigor-app-build.log',
-    metaExtras: { daemonStoppedBeforeBuild: true },
+    metaExtras: {
+      daemonStoppedBeforeBuild: true,
+      // t5：selection 仅作审计落盘（hvigor-*.meta.json），不做运行时传播
+      productSelection: {
+        product: selection.product,
+        source: selection.source,
+        candidates: selection.candidates,
+        purpose: selection.purpose,
+      },
+    },
   });
 
   let hapPath: string | null = null;
@@ -154,12 +264,9 @@ export function runDeviceTestAppBuild(opts: DeviceTestBuildOptions): DeviceTestB
   let staleSuspectUnsignedPath: string | null | undefined;
   let staleSuspectNote: string | undefined;
 
-  const ok =
-    hvigor.executed &&
-    !hvigor.timedOut &&
-    hvigor.exitCode === 0 &&
-    (hvigor.errors?.length ?? 0) === 0 &&
-    hvigor.successMarkerFound !== false;
+  // plan a7c3f9e2 t1：终态判据与 coding 出口共用 isHvigorBuildSuccessful——
+  // errors[] 不参与判定（宿主非致命 `> hvigor ERROR:` 不再误杀真成功构建）。
+  const ok = isDeviceTestBuildOk(hvigor);
 
   if (ok) {
     const discovery = discoverAppHapArtifacts(opts.projectRoot, resolvedProduct);
@@ -201,6 +308,12 @@ export function runDeviceTestAppBuild(opts: DeviceTestBuildOptions): DeviceTestB
       staleSuspect: staleSuspect ?? false,
       staleSuspectUnsignedPath: staleSuspectUnsignedPath ?? null,
       staleSuspectNote: staleSuspectNote ?? null,
+      productSelection: {
+        product: selection.product,
+        source: selection.source,
+        candidates: selection.candidates,
+        purpose: selection.purpose,
+      },
       timestamp: new Date().toISOString(),
     });
   } catch {
@@ -222,5 +335,6 @@ export function runDeviceTestAppBuild(opts: DeviceTestBuildOptions): DeviceTestB
     hapBuiltAt,
     inputsMaxMtimeMs: reuseDecision.inputsMaxMtimeMs,
     reuseReason: reuseDecision.reason,
+    productSelection: selection,
   };
 }

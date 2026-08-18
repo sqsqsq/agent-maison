@@ -4,7 +4,7 @@
 
 > **待补全模板**：未传 `--materialized-adapters` 时，`--emit-staging-template` 输出的 `decision.materialized_adapters` 默认为 `[]`，须用 S2 `init.materialized_adapters` 多选结果替换为非空数组，否则 preflight 阻断。推荐命令直接传入 `--materialized-adapters <list>`。
 >
-> **UPDATE 预填**：`plan.mode === update` 时，emit 的 `context.configWritePayload` 可由 harness 从磁盘 `framework.config.json` 预填最小语义字段（`project_name` / `project_profile` / `architecture`）；**不得**预填 `materialized_adapters`（避免与 S2 decision 冲突触发 cross-check）。**勿**把 `state_machine` / `toolchain` 等写入 payload。execute 时 `decision.materialized_adapters` 为 SSOT，经 `deriveUpdateConfigWritePayload(..., decisionAdapters)` 写入 `configWritePayload.materialized_adapters`。
+> **UPDATE 预填**：`plan.mode === update` 时，emit 的 `context.configWritePayload` 由 harness 从磁盘 `framework.config.json` 预填**完整 baseline 深拷贝**（与写盘授权同源；`active_workflow` / `state_machine` / `toolchain` 等未变更字段原样保留，AI 仅可改白名单字段——t2b 会按磁盘 baseline diff 授权并拒绝越权变更）。**不得**手工把 `preferredProduct` 等 toolchain 字段写进 payload。execute 时 `decision.materialized_adapters` 为 SSOT，经 `deriveUpdateConfigWritePayload(..., decisionAdapters)` 写入 `configWritePayload.materialized_adapters`。
 >
 > **context 禁止**包含 `projectRoot`、`harnessRoot`、`plan`（由 CLI `--project-root` / harness 目录注入）。
 >

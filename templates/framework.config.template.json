@@ -35,7 +35,7 @@
       "toolchain.hvigor.timeoutMs": "可选；hvigor 子进程超时毫秒数（上限 6h）。未设时 coding 默认 45min、ut 相关默认 15min。",
       "tools.hylyre": "可选；hmos-app device-testing 真机自动化消费。vendor_dir / venv_dir / app_snapshot_cache_dir / pypi_extra_index_url / auto_install / doctor_first_run / cold_restart_before_run / hypium_page_name（Hypium start_app ability，空则扫描 entry 模块 mainElement）见 framework/harness/config.ts HylyreToolConfig 与 resolveHylyreToolConfig。",
       "toolchain.hvigor.coding": "可选；coding_hvigor_build 专用。driver: \"node_hvigorw_js\"（默认，与 DevEco node+hvigorw.js 对齐）| \"hvigorw_wrapper\" | \"assemble_app_project\"（项目级 assembleApp）。mode/task/passBuildModeDebug/successMarkers/extraArgs 见 framework/harness/config.ts HvigorCodingConfig。",
-      "toolchain.preferredProduct": "可选；显式覆盖 hvigor -p product= 的探测结果。多 product 工程建议填写（常见为 \"product\"）。",
+      "toolchain.preferredProduct": "可选；覆盖 hvigor -p product= 的解析结果（显式确认渠道）。**只**由用户经 framework-init registry `init.product_selection` 显式选择后由机器写入（`record-product-selection`：同一次操作写本项目与 framework.local.json > toolchain.productSelection.confirmed）；AI 的 configWritePayload 通道不得写本字段（t2b 白名单拒绝）。config 值 且 local 确认值逐字相等才是可信来源（explicit_config）；**未经 local 确认的存量值按未验证处理**，多候选工程构建将停止并要求确认，不替宿主猜测编译形态。",
       "toolchain.hmosDevice": "可选；真机 testing / hdc 调优（project 级）。killHdcServerOnFinish / aaTestTimeoutMs / testRunner 见 framework/harness/config.ts HmosDeviceConfig；personal DevEco 路径仍在 framework.local.json。",
       "toolchain.hmosDevice.killHdcServerOnFinish": "可选；testing 结束后是否 kill hdc server。",
       "toolchain.hmosDevice.aaTestTimeoutMs": "可选；aa test 子进程超时毫秒数。",

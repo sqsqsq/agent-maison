@@ -308,6 +308,20 @@ const metaGateCases: TestCase[] = [
     },
   },
   {
+    // review P1（第二轮）：解析器执行失败 = framework fault（build-profile 侧问题已被
+    // 解析器收敛为判别结果，逃到桥层的只剩 profile 模块/运行时异常）——不得按 external
+    // 给出"等待外部环境恢复"的裁决。
+    name: 'product_selection_probe_failed 须归 framework_fault（非 external / operator）',
+    run: () => {
+      const spec = lookupIncident('product_selection_probe_failed');
+      assert(!!spec, 'product_selection_probe_failed 须在 INCIDENT_REGISTRY 注册');
+      assert(
+        spec!.class === 'framework_fault',
+        `须归 framework_fault（实际 ${spec!.class}）——build-profile 侧问题已被解析器收敛，逃到桥层的只有 profile 模块异常`,
+      );
+    },
+  },
+  {
     name: '元门禁**自证**：注入一个未注册 halt_reason，扫描器必须报出（防空门禁）',
     run: () => {
       // 若扫描器抓不到人为注入的新 halt_reason，说明这道元门禁是摆设——

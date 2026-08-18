@@ -5,7 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { loadFrameworkConfig } from '../../../harness/config';
 import { discoverAppHapArtifacts, detectStaleSignedSuspect, type HapDiscoveryCandidate } from './hvigor-runner';
-import { resolveDeviceTestProduct, resolveDeviceTestBuildMode } from './testing-build-conventions';
+import { resolveDeviceTestBuildMode } from './testing-build-conventions';
 
 const SOURCE_FILE_RE = /\.(ets|ts|json5)$/i;
 const SKIP_DIR_NAMES = new Set([
@@ -20,7 +20,11 @@ const SKIP_DIR_NAMES = new Set([
 
 export interface DeviceTestBuildReuseInput {
   projectRoot: string;
-  product?: string;
+  /**
+   * **已冻结**的选定 product（review P2：由 provider 单次解析传入，本函数**不得**再
+   * 做任何 product 解析——否则会绕开 provider 的 single-resolve 契约，形成隐式二次解析）。
+   */
+  product: string;
   buildMode?: 'debug' | 'release';
 }
 
@@ -122,7 +126,8 @@ export function computeDeviceTestInputsMaxMtimeMs(projectRoot: string): number {
 }
 
 export function evaluateDeviceTestBuildReuse(opts: DeviceTestBuildReuseInput): DeviceTestBuildReuseDecision {
-  const resolvedProduct = resolveDeviceTestProduct(opts.projectRoot, opts.product);
+  // review P2：product 为 provider 冻结值，直接消费、不再调用解析器（防隐式二次解析）。
+  const resolvedProduct = opts.product;
   const resolvedBuildMode = resolveDeviceTestBuildMode(opts.buildMode);
   const inputsMaxMtimeMs = computeDeviceTestInputsMaxMtimeMs(opts.projectRoot);
   const discovery = discoverAppHapArtifacts(opts.projectRoot, resolvedProduct);

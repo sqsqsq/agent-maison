@@ -108,7 +108,7 @@ node <DevEco>/tools/node/node.exe <DevEco>/tools/hvigor/bin/hvigorw.js \
 
 | Flag                  | 收益来源                                                                  | 风险点                                                                            |
 | --------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `-p product=<detect>` | 工程 product 名非 `default` 时需正确注入 | 自动探测：`toolchain.preferredProduct` > `build-profile.json5` 中优先命中名为 `product`/`default` 的项 > 首位 > 兜底 `default` |
+| `-p product=<resolve>` | 工程 product 名非 `default` 时需正确注入 | 单次解析（`resolveProductSelection`）：`explicit_run`（本次显式参数）→ `confirmed_env`（`HARNESS_DEVICE_TEST_PRODUCT`）→ `explicit_config`（config 值 **且** local 确认值逐字相等）→ `sole_candidate`（单候选）→ **`unresolved`：构建形态无法确定即停止并要求确认，不猜**（四种原因：多候选未确认 / build-profile 缺失 / products 为空 / build-profile 不可解析；后三者无真实候选，**不得虚构 `default`**；名称启发式仅供候选展示排序）；未确认的存量 `preferredProduct` 只按未验证处理 |
 | `-p buildMode=debug`（coding 默认任务均会传） | 项目级 `assembleApp` 默认偏 `release`；固定 debug 缩短门禁耗时 | 模块级 ut 任务默认即 debug，装配时不重复写 `buildMode` |
 | `--parallel`          | 多模块工程开 hvigor task 并发，cold path 受益                              | **小工程（≤ 5 模块）反而是负收益**：worker spinup + 协调开销 > 并发节省；warm 路径下尤其明显 |
 | `--incremental`       | 缓存命中时 hvigor 跳过更激进，warm path 受益                           | cold path 缓存为空，开销基本中性；额外缓存扫描有微小负收益                        |

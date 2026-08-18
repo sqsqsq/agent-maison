@@ -29,6 +29,7 @@ import {
 } from '../../scripts/init-orchestrate';
 import type { InitTask } from '../../scripts/utils/init-task-planner';
 import type { InitExecutionContext } from '../../scripts/utils/init-task-executor';
+import { prepareConfigWriteForTask } from '../../scripts/utils/config-builder';
 import {
   prepareInitExecutionPlan,
   prepareInitExecutionPlanWithStaleIds,
@@ -1396,7 +1397,6 @@ const cases: Array<{ name: string; run: () => void }> = [
       const executionContext = {
         materializedAdapters: ['cursor'],
         configWritePayload: {
-          schema_version: '1.1',
           project_name: 'cursor-only',
           project_profile: { name: 'generic' },
           materialized_adapters: ['cursor'],
@@ -1602,7 +1602,6 @@ const cases: Array<{ name: string; run: () => void }> = [
       const context = {
         materializedAdapters: ['claude', 'generic'],
         configWritePayload: {
-          schema_version: '1.1',
           project_name: 'smart-update',
           project_profile: { name: 'generic' },
           materialized_adapters: ['claude', 'generic'],
@@ -1642,7 +1641,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'deriveUpdateConfigWritePayload 保留 paths/tools 并 canonicalize cross_module_exports_file',
+    name: 'deriveUpdateConfigWritePayload 完整磁盘 baseline：保留全部字段，canonicalize 收敛在写盘侧',
     run: () => {
       const root = mkTmp();
       const cfg = {
@@ -1666,6 +1665,8 @@ const cases: Array<{ name: string; run: () => void }> = [
         coding: { visual_parity_enforcement: 'warn' },
         state_machine: { schema_version: '1.1', ttl_hours: 12 },
         toolchain: { hvigor: { daemon: true } },
+        active_workflow: 'spec-driven',
+        lifecycle_hooks_enabled: true,
       };
       fs.writeFileSync(
         path.join(root, 'framework.config.json'),
@@ -1675,9 +1676,11 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(payload);
       assert.strictEqual(payload!.project_name, 'Wallet');
       assert(payload!.architecture);
+      // t2a：derive 是完整深拷贝，不再做投影式 canonicalize（写盘侧统一收口）
       assert.strictEqual(
         (payload!.architecture as { cross_module_exports_file: string }).cross_module_exports_file,
-        'index.ets',
+        'Index.ets',
+        'derive 保留磁盘原值（canonicalize 在写盘侧）',
       );
       assert.deepStrictEqual(payload!.materialized_adapters, ['generic']);
       assert.strictEqual(
@@ -1692,6 +1695,21 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert.deepStrictEqual(payload!.coding, { visual_parity_enforcement: 'warn' });
       assert.strictEqual((payload!.state_machine as { ttl_hours: number }).ttl_hours, 12);
       assert.strictEqual((payload!.toolchain as { hvigor: { daemon: boolean } }).hvigor.daemon, true);
+      // t2a 回归锁：旧 9 字段投影会丢的键必须随 baseline 原样保留
+      assert.strictEqual(payload!.active_workflow, 'spec-driven');
+      assert.strictEqual(payload!.lifecycle_hooks_enabled, true);
+      assert.strictEqual(payload!.schema_version, undefined, 'cfg 未声明 schema_version → 不臆造');
+      // 写盘侧 canonicalize：prepareConfigWriteForTask（UPDATE）归一 Index.ets → index.ets
+      const written = prepareConfigWriteForTask(
+        { projectRoot: root, configWritePayload: payload! },
+        'overwrite',
+      );
+      assert.strictEqual(
+        (written.architecture as { cross_module_exports_file: string }).cross_module_exports_file,
+        'index.ets',
+      );
+      assert.strictEqual(written.active_workflow, 'spec-driven');
+      assert.strictEqual(written.lifecycle_hooks_enabled, true);
       fs.rmSync(root, { recursive: true, force: true });
     },
   },
@@ -1724,7 +1742,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'deriveUpdateConfigWritePayload emit 路径不含磁盘 materialized_adapters',
+    name: 'deriveUpdateConfigWritePayload emit 路径 = 完整磁盘 baseline（不含 decision 覆盖，保留磁盘 adapters）',
     run: () => {
       const root = mkTmp();
       fs.writeFileSync(
@@ -1744,12 +1762,17 @@ const cases: Array<{ name: string; run: () => void }> = [
           2,
         ),
       );
+      // t2a：emit 预填 = 完整磁盘 baseline（"AI 看到的"与"授权基准"同源）——
+      // 磁盘已有的 materialized_adapters 原样保留；decision 覆盖只在 execute 侧注入。
       const payload = deriveUpdateConfigWritePayload(root, []);
       assert(payload);
+      assert.deepStrictEqual(payload!.materialized_adapters, ['claude', 'generic']);
       assert.strictEqual(
-        (payload as Record<string, unknown>).materialized_adapters,
-        undefined,
+        (payload!.architecture as { cross_module_exports_file: string }).cross_module_exports_file,
+        'Index.ets',
       );
+      const withDecision = deriveUpdateConfigWritePayload(root, ['cursor']);
+      assert.deepStrictEqual(withDecision!.materialized_adapters, ['cursor']);
       fs.rmSync(root, { recursive: true, force: true });
     },
   },
@@ -1782,9 +1805,10 @@ const cases: Array<{ name: string; run: () => void }> = [
         (staging.context.configWritePayload as Record<string, unknown>).project_name,
         'Wallet',
       );
-      assert.strictEqual(
+      // t2a：staging 预填 = 完整磁盘 baseline，磁盘 materialized_adapters 原样保留
+      assert.deepStrictEqual(
         (staging.context.configWritePayload as Record<string, unknown>).materialized_adapters,
-        undefined,
+        ['claude'],
       );
       fs.rmSync(root, { recursive: true, force: true });
     },

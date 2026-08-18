@@ -253,6 +253,21 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
    * （--refresh-vision-probe 触发重探）；不是内容失败（agent 做不对），也不是框架缺陷。
    */
   canary_cli_hard_failure: { class: 'external' },
+  /**
+   * plan a7c3f9e2 t4/t5：编译形态无法确定（多候选未确认 / build-profile 缺失 /
+   * products 为空 / build-profile 不可解析——后三者无真实候选，不得虚构 default）——
+   * 工程配置侧问题，需用户经 init.product_selection / record-product-selection / env
+   * 显式确认；不是内容失败（agent 改代码无意义），确认后 --resume 重检即放行。
+   */
+  product_selection_unresolved: { class: 'external' },
+  /**
+   * plan a7c3f9e2 review P1（第二轮）：编译形态解析器执行失败（profile 模块存在但
+   * require/解析抛错）——build-profile 缺失/空/不可解析及普通配置读取错误已被解析器
+   * 正常收敛为判别结果，能逃到这里的是 **profile 模块加载或运行时异常 = framework
+   * fault**；按 external 会给出"等待外部环境恢复"的不合理结论。归类 framework_fault，
+   * 修复框架侧后 --resume 重检。
+   */
+  product_selection_probe_failed: { class: 'framework_fault' },
 
   // --- 预算熔断（本 run 内无从调整——DEFAULT_MAX_BACKTRACKS 是硬常量、
   //     budget 字段已入 manifest identity 冻结） ------------------------------

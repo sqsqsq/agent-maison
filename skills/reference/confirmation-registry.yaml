@@ -256,6 +256,27 @@ entries:
         label: "保持 CREATE — 仍按首次落地处理"
         portable: "2=保持 CREATE"
 
+  - id: init.product_selection
+    skill: "framework-init"
+    class: enum
+    ssot_anchor: "user-confirmation-ux.md §3.2"
+    skill_step: "S1 诊断 / S2 项目元数据（多候选且未确认时出现）"
+    portable_menu: "候选编号见 harness listAvailableProducts 枚举；另含 暂不确认"
+    notes: >-
+      仅多候选工程且 toolchain.preferredProduct 未在本机（framework.local.json）确认时出现；
+      单候选工程与已确认工程**零新增交互**。选项 = harness `listAvailableProducts`
+      真实候选动态枚举 + 「暂不确认」；候选 `product`/`default` 名优先级仅用于展示排序，
+      **不**产出选定值。用户确认后由专用机器路径写入（本条目不承载自由文本）：
+      `npx ts-node framework/harness/scripts/record-product-selection.ts --project-root <repo-root> --product <候选值>`
+      ——同时写 framework.config.json > toolchain.preferredProduct 与
+      framework.local.json > toolchain.productSelection.confirmed。
+      config 值 且 local 确认值逐字相等才是可信来源（explicit_config）；其余按未验证处理，
+      harness 将停止并要求确认。AI 不得把 preferredProduct 写进 configWritePayload（t2b 白名单拒绝）。
+    options:
+      - value: defer_confirm
+        label: "暂不确认 — 本轮不选定 product（多候选工程首次运行将停止并要求确认）"
+        portable: "暂不确认"
+
   # --- catalog-bootstrap catalog ---
   - id: catalog.staging_module
     skill: "catalog-bootstrap"

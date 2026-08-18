@@ -117,6 +117,8 @@ export interface GoalRunOutcome {
   /** 最后一条 run_end 的 reason / error（T1① 优雅收口后，死因在事件里而非 throw） */
   runEndReason: string | null;
   runEndError: string | null;
+  /** 最后一条 run_end 的 status（HALTED / PARTIAL / COMPLETED / …；preflight-halt 断言用） */
+  runEndStatus: string | null;
   failureKinds?: string[];
   phaseHalts: Array<{
     phase?: string;
@@ -246,6 +248,7 @@ interface DriverEvent {
   phase?: string;
   reason?: string;
   halt_reason?: string;
+  status?: string;
   detail?: string;
   error?: string;
   invalidated_phases?: string[];
@@ -278,6 +281,7 @@ function readEvents(root: string, feature: string): DriverEvent[] {
           ...(typeof e.phase === 'string' ? { phase: e.phase } : {}),
           ...(typeof e.reason === 'string' ? { reason: e.reason } : {}),
           ...(typeof e.halt_reason === 'string' ? { halt_reason: e.halt_reason } : {}),
+          ...(typeof e.status === 'string' ? { status: e.status } : {}),
           ...(typeof e.detail === 'string' ? { detail: e.detail } : {}),
           ...(typeof e.error === 'string' ? { error: e.error } : {}),
           ...(Array.isArray(e.invalidated_phases) ? { invalidated_phases: e.invalidated_phases } : {}),
@@ -622,6 +626,16 @@ async function runScenario(args: {
   }
 
   const preCount = readEvents(root, feature).length;
+  // plan a7c3f9e2 review（第三轮）P1：product 启动前置检查场景——子进程内跑真实
+  // goalMain，链路 spec→testing，startup 即 halt（product_selection_unresolved）。
+  // extra 可携带 env 注入（`KEY=VALUE`），用于验证 testing-only env 不能绕过
+  // coding 起点的链路（env 只作用于子进程，父测试进程零残留）。
+  if (scenario === 'product_selection_halt') {
+    if (extra) {
+      const eq = extra.indexOf('=');
+      if (eq > 0) process.env[extra.slice(0, eq)] = extra.slice(eq + 1);
+    }
+  }
   const argvBase = ['node', 'goal-runner.ts', '--feature', feature, '--adapter', 'cursor', '--foreground-ok'];
   if (isSupervisorScenario) {
     process.argv = [
@@ -650,7 +664,8 @@ async function runScenario(args: {
     ];
   } else if (scenario === 'crash_scope_in_run'
     || scenario === 'successor_source_crash'
-    || scenario === 'ut_source_mutation' || scenario === 'ut_build_failure' || isSeedRunScenario) {
+    || scenario === 'ut_source_mutation' || scenario === 'ut_build_failure' || isSeedRunScenario
+    || scenario === 'product_selection_halt') {
     process.argv = [
       ...argvBase,
       '--requirement', `T4 driver scenario=${scenario}`,
@@ -704,6 +719,7 @@ async function runScenario(args: {
       .map(e => e.phase as string),
     runEndReason: lastRunEnd?.reason ?? null,
     runEndError: lastRunEnd?.error ?? null,
+    runEndStatus: (lastRunEnd as { status?: string } | undefined)?.status ?? null,
     failureKinds: all
       .filter(e => e.type === 'phase_verdict' && typeof e.failure_kind_classified === 'string')
       .map(e => e.failure_kind_classified as string),
@@ -753,7 +769,7 @@ if (require.main === module) {
     process.stderr.write(
       'usage: goal-run-driver.ts <scenario> <feature> <frameworkRoot|-> <projectRoot> [extra]\n'
       + '  projectRoot **必填**：driver 不自建宿主，一条整机链只能有一个宿主。\n'
-      + '  extra：resume_after_park 传要续跑的 runId。\n',
+      + '  extra：resume_after_park 传要续跑的 runId；product_selection_halt 传 `KEY=VALUE` 注入子进程 env。\n',
     );
     process.exit(2);
   }

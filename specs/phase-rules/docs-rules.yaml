@@ -60,8 +60,8 @@ structure_checks:
       default_budget: 150
       overrides:
         - skill: framework-init
-          budget: 250
-          reason: "S0-S6 全流程 + adapter 物化矩阵 + portable fallback 规则密度高，C3a 台账批准"
+          budget: 260
+          reason: "S0-S6 全流程 + adapter 物化矩阵 + portable fallback 规则密度高，C3a 台账批准；2026-08 plan a7c3f9e2 增补 S2.1 product 确认契约（init.product_selection / record-product-selection / 可信来源判据）与写盘模型描述，+10 行台账追加"
         - skill: business-ut
           budget: 250
           reason: "三路径路由 + 两处 HARD STOP + 两条代码路径示例，全仓最复杂 skill，C3a 台账批准"

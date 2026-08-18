@@ -82,6 +82,22 @@ export interface FrameworkLocalToolchainProbe {
 }
 
 /**
+ * t3（plan a7c3f9e2）：本机 product 确认凭证。
+ *
+ * 写入方唯一 = `record-product-selection` CLI（用户经 registry `init.product_selection`
+ * 显式选择后由机器写入）；与 `framework.config.json > toolchain.preferredProduct` 由
+ * 同一次操作写入。resolver 判定 `explicit_config` 的充要条件：
+ * config 值 **且** 本字段值逐字相等；无本字段或值不等 → `legacy_unverified_config`
+ * （不作为可信来源）。他人 clone 后 local 无记录 → 各自确认一次。
+ */
+export interface FrameworkLocalToolchainProductSelection {
+  confirmed?: {
+    value: string;
+    confirmed_at?: string;
+  };
+}
+
+/**
  * 设备策略（openspec device-readiness-and-completion t3/t6）——**个人级、gitignored**。
  *
  * 为何不是单个布尔：`auto_unlock=false` 区分不了「人工解锁」与「允许模拟器降级」这两个
@@ -112,6 +128,7 @@ export interface FrameworkLocalConfig {
       hvigorBin?: string;
     };
     probe?: FrameworkLocalToolchainProbe;
+    productSelection?: FrameworkLocalToolchainProductSelection;
   };
   vision?: FrameworkLocalConfigVision;
   device?: FrameworkLocalConfigDevice;
@@ -208,6 +225,48 @@ function validateLocalSchema(parsed: unknown): FrameworkLocalConfig {
         }
       }
       toolchainOut.probe = probeObj as FrameworkLocalToolchainProbe;
+    }
+    // t3（plan a7c3f9e2）：product 确认凭证——键白名单 + value 非空字符串校验
+    const productSelection = tcObj.productSelection;
+    if (productSelection !== undefined) {
+      if (!productSelection || typeof productSelection !== 'object' || Array.isArray(productSelection)) {
+        throw new Error('[framework-local-config] toolchain.productSelection 必须是对象');
+      }
+      const psObj = productSelection as Record<string, unknown>;
+      rejectUnknownObjectKeys(psObj, LOCAL_PRODUCT_SELECTION_KEYS, 'toolchain.productSelection');
+      const psOut: FrameworkLocalToolchainProductSelection = {};
+      const confirmed = psObj.confirmed as Record<string, unknown> | undefined;
+      if (confirmed !== undefined) {
+        if (!confirmed || typeof confirmed !== 'object' || Array.isArray(confirmed)) {
+          throw new Error('[framework-local-config] toolchain.productSelection.confirmed 必须是对象');
+        }
+        rejectUnknownObjectKeys(
+          confirmed,
+          LOCAL_PRODUCT_SELECTION_CONFIRMED_KEYS,
+          'toolchain.productSelection.confirmed',
+        );
+        const value = confirmed.value;
+        if (typeof value !== 'string' || !value.trim()) {
+          throw new Error(
+            '[framework-local-config] toolchain.productSelection.confirmed.value 必须是非空字符串',
+          );
+        }
+        const confirmedAt = confirmed.confirmed_at;
+        if (confirmedAt !== undefined && (typeof confirmedAt !== 'string' || !confirmedAt.trim())) {
+          throw new Error(
+            '[framework-local-config] toolchain.productSelection.confirmed.confirmed_at 必须是非空字符串（ISO 时间戳）',
+          );
+        }
+        psOut.confirmed = {
+          value: value.trim(),
+          ...(typeof confirmedAt === 'string' && confirmedAt.trim()
+            ? { confirmed_at: confirmedAt.trim() }
+            : {}),
+        };
+      }
+      if (Object.keys(psOut).length > 0) {
+        toolchainOut.productSelection = psOut;
+      }
     }
     if (Object.keys(toolchainOut).length > 0) {
       out.toolchain = toolchainOut;
@@ -387,10 +446,13 @@ function validateLocalSchema(parsed: unknown): FrameworkLocalConfig {
   return out;
 }
 
-const LOCAL_TOOLCHAIN_KEYS = new Set(['devEcoStudio', 'probe']);
+const LOCAL_TOOLCHAIN_KEYS = new Set(['devEcoStudio', 'probe', 'productSelection']);
 /** t6 toolchain-probe-truth：probe 分层键与 compile 三态（写入权限见 profiles/hmos-app/harness/toolchain-probe.ts） */
 const LOCAL_PROBE_KEYS = new Set(['binary', 'cli_starts', 'project_compile', 'last_attempt', 'known_quirks']);
 const LOCAL_PROBE_COMPILE_STATUS = new Set(['unknown', 'verified', 'capability_failed']);
+/** t3（plan a7c3f9e2）：productSelection 分层键——确认凭证只含 confirmed{value, confirmed_at} */
+const LOCAL_PRODUCT_SELECTION_KEYS = new Set(['confirmed']);
+const LOCAL_PRODUCT_SELECTION_CONFIRMED_KEYS = new Set(['value', 'confirmed_at']);
 
 /** personal 叶子键 SSOT（与 config-field-ownership 对齐，避免循环 import 重复声明语义） */
 const LOCAL_DEVECO_LEAF_KEYS = new Set(['installPath', 'hvigorBin']);

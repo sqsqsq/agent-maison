@@ -24,6 +24,7 @@ import {
   type InitTaskPlan,
   prepareInitExecutionPlanWithStaleIds,
   probeInitTaskPlan,
+  probeProductSelectionDiagnostic,
   type TaskScope,
 } from './utils/init-task-planner';
 import type { InitNextStep } from './utils/init-next-steps';
@@ -273,13 +274,35 @@ function resolveTemplateAction(task: InitTask): TaskDecision['action'] {
   throw new Error(`[init-orchestrate] 无法为任务生成 staging action: ${task.id}`);
 }
 
-/** UPDATE：从磁盘 config 提取最小语义 payload（不含 builder 自动注入项） */
-const KNOWN_EXPORTS_CANONICAL: Record<string, string> = {
-  'Index.ets': 'index.ets',
-  'INDEX.ETS': 'index.ets',
-  Index: 'index',
-  INDEX: 'index',
-};
+/**
+ * UPDATE：从磁盘 config 派生 staging/执行 payload（plan a7c3f9e2 t2a ⑦⑧）。
+ *
+ * 薄包装，不保留第二套 baseline 真源：payload = 磁盘 `framework.config.json` 原始对象的
+ * **完整深拷贝**，与 `prepareConfigWriteForTask` 写盘授权共用 `readExistingConfigFromDisk`
+ * 同一来源——"AI 看到的"与"授权基准"逐字同源。旧 9 字段投影会丢 `active_workflow` /
+ * `lifecycle_hooks_enabled` / `schema_version` 等顶层键（review 2 实锤现存缺陷），故废弃。
+ * sanitize / BACKFILL / canonicalize 一律收敛在写盘侧（config-builder），不在派生侧放大差异。
+ */
+export function deriveUpdateConfigWritePayload(
+  projectRoot: string,
+  materializedAdapters: string[],
+): Record<string, unknown> | undefined {
+  const existing = readExistingConfigFromDisk(projectRoot);
+  if (!existing) return undefined;
+
+  const payload = JSON.parse(JSON.stringify(existing)) as Record<string, unknown>;
+
+  // 仅当调用方显式传入 decision adapters（execute SSOT）时写入 payload；
+  // emit 预填不得从磁盘带入 materialized_adapters，否则会与 S2 decision 冲突触发 cross-check。
+  const adapters = materializedAdapters
+    .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+    .map(x => x.trim());
+  if (adapters.length) {
+    payload.materialized_adapters = [...new Set(adapters)];
+  }
+
+  return payload;
+}
 
 export function validateMaterializedAdapterSetsCrossCheck(
   primary: string[],
@@ -300,83 +323,6 @@ export function validateMaterializedAdapterSetsCrossCheck(
     return `materialized_adapters 不一致：${labelPrimary} 与 ${labelSecondary} 清单不匹配`;
   }
   return null;
-}
-
-export function deriveUpdateConfigWritePayload(
-  projectRoot: string,
-  materializedAdapters: string[],
-): Record<string, unknown> | undefined {
-  const existing = readExistingConfigFromDisk(projectRoot);
-  if (!existing) return undefined;
-
-  const payload: Record<string, unknown> = {};
-  if (typeof existing.project_name === 'string' && existing.project_name.trim()) {
-    payload.project_name = existing.project_name.trim();
-  }
-  if (
-    existing.project_profile &&
-    typeof existing.project_profile === 'object' &&
-    !Array.isArray(existing.project_profile)
-  ) {
-    payload.project_profile = JSON.parse(JSON.stringify(existing.project_profile));
-  }
-  if (
-    existing.architecture &&
-    typeof existing.architecture === 'object' &&
-    !Array.isArray(existing.architecture)
-  ) {
-    const archClone = JSON.parse(JSON.stringify(existing.architecture)) as Record<string, unknown>;
-    if (typeof archClone.cross_module_exports_file === 'string') {
-      const current = archClone.cross_module_exports_file;
-      if (KNOWN_EXPORTS_CANONICAL[current]) {
-        archClone.cross_module_exports_file = KNOWN_EXPORTS_CANONICAL[current];
-      }
-    }
-    payload.architecture = archClone;
-  }
-  if (existing.paths && typeof existing.paths === 'object' && !Array.isArray(existing.paths)) {
-    const clonedPaths = JSON.parse(JSON.stringify(existing.paths)) as Record<string, unknown>;
-    // inline 已彻底废弃：从磁盘派生 payload 时把残留 inline 归一为 bridge，
-    // 避免 staging 模板 / 执行 payload 把历史污染再写回 config。
-    if (
-      clonedPaths.agent_bundle_skill_mode !== undefined &&
-      clonedPaths.agent_bundle_skill_mode !== 'bridge'
-    ) {
-      clonedPaths.agent_bundle_skill_mode = 'bridge';
-    }
-    payload.paths = clonedPaths;
-  }
-  if (existing.tools && typeof existing.tools === 'object' && !Array.isArray(existing.tools)) {
-    payload.tools = JSON.parse(JSON.stringify(existing.tools));
-  }
-  if (existing.spec && typeof existing.spec === 'object' && !Array.isArray(existing.spec)) {
-    payload.spec = JSON.parse(JSON.stringify(existing.spec));
-  }
-  if (existing.coding && typeof existing.coding === 'object' && !Array.isArray(existing.coding)) {
-    payload.coding = JSON.parse(JSON.stringify(existing.coding));
-  }
-  if (
-    existing.state_machine &&
-    typeof existing.state_machine === 'object' &&
-    !Array.isArray(existing.state_machine)
-  ) {
-    payload.state_machine = JSON.parse(JSON.stringify(existing.state_machine));
-  }
-  if (existing.toolchain && typeof existing.toolchain === 'object' && !Array.isArray(existing.toolchain)) {
-    payload.toolchain = JSON.parse(JSON.stringify(existing.toolchain));
-  }
-
-  // 仅当调用方显式传入 decision adapters（execute SSOT）时写入 payload；
-  // emit 预填不得从磁盘带入 materialized_adapters，否则会与 S2 decision 冲突触发 cross-check。
-  const adapters = materializedAdapters
-    .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
-    .map(x => x.trim());
-  if (adapters.length) {
-    payload.materialized_adapters = [...new Set(adapters)];
-  }
-
-  if (!payload.project_name && !payload.architecture) return undefined;
-  return payload;
 }
 
 export interface DeriveBaseContextResult {
@@ -1015,6 +961,26 @@ export function buildRunSummary(log: InitRunLog, options: RunSummaryOptions = {}
   if (log.project_root) lines.push(`- project_root: ${log.project_root}`);
   if (log.materialized_adapters?.length) {
     lines.push(`- materialized_adapters: ${JSON.stringify(log.materialized_adapters)}`);
+  }
+  // t3（plan a7c3f9e2 ⑥）：S4 摘要列出当前 preferredProduct 值 / 确认状态 / 全部候选。
+  // 尽力而为：无 project_root 或 profile 不支持时省略，不阻塞摘要。
+  if (log.project_root && log.scope === 'project') {
+    try {
+      const diag = probeProductSelectionDiagnostic(log.project_root);
+      if (diag) {
+        lines.push(
+          `- product_selection: preferredProduct=${
+            diag.current_value ?? '(未设置)'
+          }（确认状态：${diag.confirmation_status}）；候选：${diag.candidates.join(', ')}${
+            diag.confirmation_status !== 'confirmed' && diag.candidates.length > 1
+              ? '；多候选未确认 → 构建前须经 init.product_selection 确认（record-product-selection 机器写入）'
+              : ''
+          }`,
+        );
+      }
+    } catch {
+      /* 诊断尽力而为 */
+    }
   }
   if (options.runLogPath) lines.push(`- run_log: ${options.runLogPath}`);
   if (options.summaryPath) lines.push(`- summary: ${options.summaryPath}`);

@@ -5,6 +5,8 @@ import {
   computeDeviceTestInputsMaxMtimeMs,
   evaluateDeviceTestBuildReuse,
 } from '../../device-test-build-reuse';
+import { runDeviceTestAppBuild } from '../../providers/device-test-build';
+import { clearFrameworkConfigCache } from '../../../../../harness/config';
 
 export interface UnitCaseResult {
   name: string;
@@ -65,7 +67,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       const prev = process.env.HARNESS_DEVICE_TEST_FORCE_BUILD;
       process.env.HARNESS_DEVICE_TEST_FORCE_BUILD = '';
       try {
-        const decision = evaluateDeviceTestBuildReuse({ projectRoot: root });
+        const decision = evaluateDeviceTestBuildReuse({ projectRoot: root, product: 'default' });
         if (!decision.reuse) throw new Error('should reuse when hap newer than sources');
         if (!decision.hapPath) throw new Error('hap path resolved');
       } finally {
@@ -84,7 +86,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         const srcFile = path.join(root, '02-Feature', 'Demo', 'src', 'Index.ets');
         const srcMtime = fs.statSync(srcFile).mtimeMs;
         fs.utimesSync(srcFile, (srcMtime + 120_000) / 1000, (srcMtime + 120_000) / 1000);
-        const decision = evaluateDeviceTestBuildReuse({ projectRoot: root });
+        const decision = evaluateDeviceTestBuildReuse({ projectRoot: root, product: 'default' });
         if (decision.reuse) throw new Error('should rebuild when source newer than hap');
       } finally {
         process.env.HARNESS_DEVICE_TEST_FORCE_BUILD = prev ?? '';
@@ -99,7 +101,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       const prev = process.env.HARNESS_DEVICE_TEST_FORCE_BUILD;
       process.env.HARNESS_DEVICE_TEST_FORCE_BUILD = '1';
       try {
-        const decision = evaluateDeviceTestBuildReuse({ projectRoot: root });
+        const decision = evaluateDeviceTestBuildReuse({ projectRoot: root, product: 'default' });
         if (decision.reuse) throw new Error('force build disables reuse');
       } finally {
         process.env.HARNESS_DEVICE_TEST_FORCE_BUILD = prev ?? '';
@@ -121,7 +123,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         const signedMtime = fs.statSync(signed).mtimeMs;
         fs.utimesSync(unsigned, (signedMtime + 60_000) / 1000, (signedMtime + 60_000) / 1000);
 
-        const decision = evaluateDeviceTestBuildReuse({ projectRoot: root });
+        const decision = evaluateDeviceTestBuildReuse({ projectRoot: root, product: 'default' });
         if (!decision.reuse) throw new Error('staleSuspect 是纯观测，不应改变 reuse 判定（HAP 仍新于源码）');
         if (decision.staleSuspect !== true) throw new Error('unsigned 更新时应标记 staleSuspect=true');
         if (decision.staleSuspectUnsignedPath !== unsigned) throw new Error('staleSuspectUnsignedPath 应指向配对 unsigned 文件');
@@ -138,7 +140,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       const prev = process.env.HARNESS_DEVICE_TEST_FORCE_BUILD;
       process.env.HARNESS_DEVICE_TEST_FORCE_BUILD = '';
       try {
-        const decision = evaluateDeviceTestBuildReuse({ projectRoot: root });
+        const decision = evaluateDeviceTestBuildReuse({ projectRoot: root, product: 'default' });
         if (decision.staleSuspect) throw new Error('无 unsigned 配对不应误报 staleSuspect');
       } finally {
         process.env.HARNESS_DEVICE_TEST_FORCE_BUILD = prev ?? '';
@@ -158,7 +160,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         fs.mkdirSync(extraDir, { recursive: true });
         fs.writeFileSync(path.join(extraDir, 'Phone-product-signed.hap'), 'fake-hap-2', 'utf-8');
 
-        const decision = evaluateDeviceTestBuildReuse({ projectRoot: root });
+        const decision = evaluateDeviceTestBuildReuse({ projectRoot: root, product: 'default' });
         if (!decision.reuse) throw new Error('HAP 仍新于源码，应复用');
         if (!decision.scannedDirs || decision.scannedDirs.length === 0) {
           throw new Error('reuse=true 分支应回填 scannedDirs（此前调 findAppSignedHap 薄包装会丢弃）');
@@ -168,6 +170,78 @@ const cases: Array<{ name: string; run: () => void }> = [
         }
       } finally {
         process.env.HARNESS_DEVICE_TEST_FORCE_BUILD = prev ?? '';
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'provider 生产入口：skip env 必须短路——多候选 + skip + 已有旧 HAP 时不得复用、不得解析、最终 FAIL（review P1 第二轮）',
+    run: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dt-skip-'));
+      try {
+        clearFrameworkConfigCache();
+        // 多候选 build-profile（unresolved 会触发）+ 一个**较新**的 signed HAP
+        //（若走到复用判定会命中 reuse → check-testing 假 PASS）
+        fs.writeFileSync(
+          path.join(root, 'build-profile.json5'),
+          JSON.stringify({
+            app: { products: [{ name: 'product' }, { name: 'mirror' }] },
+            modules: [{ name: 'Phone', srcPath: './01-Product/Phone' }],
+          }),
+          'utf-8',
+        );
+        fs.writeFileSync(
+          path.join(root, 'framework.config.json'),
+          JSON.stringify({
+            schema_version: '1.1',
+            project_name: 'SkipInt',
+            project_profile: { name: 'hmos-app', sub_variant: 'app' },
+            architecture: {
+              outer_layers: [{ id: '01-Product', can_depend_on: [], intra_layer_deps: 'forbid' }],
+              module_inner_layers: ['shared'],
+              inner_dependency_direction: 'upward',
+              cross_module_exports_file: 'index.ets',
+            },
+            paths: { features_dir: 'doc/features' },
+          }),
+          'utf-8',
+        );
+        const hapDir = path.join(root, '01-Product', 'Phone', 'build', 'product', 'outputs', 'product');
+        fs.mkdirSync(hapDir, { recursive: true });
+        fs.writeFileSync(path.join(hapDir, 'Phone-product-signed.hap'), 'stale-but-new', 'utf-8');
+
+        const prev = process.env.HARNESS_SKIP_DEVICE_TEST_BUILD;
+        process.env.HARNESS_SKIP_DEVICE_TEST_BUILD = '1';
+        try {
+          const res = runDeviceTestAppBuild({
+            projectRoot: root,
+            harnessRoot: path.join(__dirname, '..', '..', '..', '..', '..', 'harness'),
+            feature: 'skip-int',
+            phase: 'testing',
+          });
+          if (!res.hvigor.skippedByEnv) throw new Error('必须返回 skippedByEnv 失败桩（不得进入解析/复用）');
+          if (res.reused !== undefined && res.reused !== false && res.reused) {
+            throw new Error('skip 路径不得复用 HAP');
+          }
+          if (res.hapPath !== null) throw new Error(`skip 路径不得扫描/命中任何 HAP（实际 ${res.hapPath}）`);
+        } finally {
+          if (prev === undefined) delete process.env.HARNESS_SKIP_DEVICE_TEST_BUILD;
+          else process.env.HARNESS_SKIP_DEVICE_TEST_BUILD = prev;
+        }
+        // 生产源码顺序断言：skip 分支必须先于 resolveProductSelection / reuse / daemon
+        const src = fs.readFileSync(
+          path.join(__dirname, '..', '..', 'providers', 'device-test-build.ts'),
+          'utf-8',
+        );
+        const skipIdx = src.indexOf("process.env[skipEnvVar]");
+        const resolveIdx = src.indexOf('resolveProductSelection({');
+        const reuseIdx = src.indexOf('evaluateDeviceTestBuildReuse({');
+        const daemonIdx = src.indexOf('stopHvigorDaemon({');
+        if (!(skipIdx >= 0 && skipIdx < resolveIdx && skipIdx < reuseIdx && skipIdx < daemonIdx)) {
+          throw new Error(`skip 短路必须先于解析/复用/daemon（skip=${skipIdx}, resolve=${resolveIdx}, reuse=${reuseIdx}, daemon=${daemonIdx}）`);
+        }
+      } finally {
+        clearFrameworkConfigCache();
         fs.rmSync(root, { recursive: true, force: true });
       }
     },

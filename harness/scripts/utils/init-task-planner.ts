@@ -62,6 +62,18 @@ export interface InitTaskPlan {
   adapter_catalog?: AdapterCatalogEntry[];
   /** t7（f3a8c6d2）：framework 发布包身份（S1 探测输出携带；可选避免破坏手写 fixture） */
   framework_identity?: FrameworkPackageIdentity;
+  /**
+   * t3（plan a7c3f9e2）：product 认可诊断（S1 列出当前值 / 确认状态 / 全部候选）。
+   * 由 probe 尽力填充（候选解析失败或缺 profile 支持时省略）；多候选且未确认 →
+   * S2 以 `init.product_selection` 征求用户确认。
+   */
+  product_selection?: InitProductSelectionDiagnostic;
+}
+
+export interface InitProductSelectionDiagnostic {
+  current_value: string | null;
+  confirmation_status: 'confirmed' | 'unconfirmed' | 'no_preferred';
+  candidates: string[];
 }
 
 function inspectionToStatus(ins: Inspection): TaskStatus {
@@ -536,9 +548,48 @@ export function probeInitTaskPlan(options: PlanProbeOptions): InitTaskPlan {
   if (scope === 'project') {
     const frameworkRoot = resolveProbeFrameworkRoot(projectRoot, path.join(__dirname, '..', '..'));
     plan.adapter_catalog = buildAdapterCatalogOrThrow(frameworkRoot);
+    plan.product_selection = probeProductSelectionDiagnostic(projectRoot);
   }
 
   return plan;
+}
+
+/**
+ * t3（plan a7c3f9e2）：product 认可诊断（尽力而为——candidates 解析/profile 支持缺失时
+ * 返回 null，由调用方省略该字段，不得阻塞 init 流程）。
+ */
+export function probeProductSelectionDiagnostic(projectRoot: string): InitProductSelectionDiagnostic | undefined {
+  let candidates: string[];
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const runner = require('./hvigor-runner') as { listAvailableProducts?: (root: string) => string[] };
+    if (typeof runner.listAvailableProducts !== 'function') return undefined;
+    candidates = runner.listAvailableProducts(projectRoot);
+  } catch {
+    return undefined;
+  }
+  let currentValue: string | null = null;
+  let confirmationStatus: InitProductSelectionDiagnostic['confirmation_status'] = 'no_preferred';
+  try {
+    const cfg = loadFrameworkConfigWithSources(projectRoot);
+    const pref = cfg.config.toolchain?.preferredProduct;
+    currentValue = typeof pref === 'string' && pref.trim() ? pref.trim() : null;
+    if (currentValue) {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { loadLocalConfig } = require('./framework-local-config') as {
+        loadLocalConfig: (root: string) => { toolchain?: { productSelection?: { confirmed?: { value?: string } } } } | null;
+      };
+      const confirmed = loadLocalConfig(projectRoot)?.toolchain?.productSelection?.confirmed;
+      confirmationStatus = confirmed?.value === currentValue ? 'confirmed' : 'unconfirmed';
+    }
+  } catch {
+    confirmationStatus = 'no_preferred';
+  }
+  return {
+    current_value: currentValue,
+    confirmation_status: confirmationStatus,
+    candidates,
+  };
 }
 
 export function planTasksNeedingPrompt(plan: InitTaskPlan): InitTask[] {

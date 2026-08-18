@@ -96,6 +96,9 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 
 读 `framework/profiles/<profile>/skills/framework-init/profile-addendum.md`（若存在）；**工具链 installPath 不在本 Skill 写**——走 personal setup。
 
+**product 确认**（仅多候选且未确认时出现；单候选零新增交互）：
+S1 `InitTaskPlan.product_selection` 与 S4 摘要列出当前 `preferredProduct` 值 / 确认状态 / 全部候选（`listAvailableProducts` 真实枚举）。`preferredProduct` **只能**经 registry `init.product_selection` 显式选择后由专用机器路径写盘（`npx ts-node framework/harness/scripts/record-product-selection.ts --project-root <repo-root> --product <候选值>`，同一次操作写 config 与 local、失败回滚），**禁止**写入 `configWritePayload`（t2b 白名单拒绝）；config 值 且 local 确认值逐字相等才是可信来源（`explicit_config`），其余按未验证处理——多候选构建停止并要求确认，**不替宿主猜测编译形态**。
+
 ### S2.2 决策模式与任务批准
 
 1. **`init.task_plan`**（gate）：智能模式 / 手动模式 / 跳过可跳过项。
@@ -116,7 +119,7 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
    - `--decision-file` / `--context-file` **须为绝对路径**（OS 临时目录）；CLI 会拒绝相对路径与 `framework/harness` 内路径
    - `decision.json` **必须**含非空 `materialized_adapters`（机器门禁；与 context 清单集合一致）
    - `context.json` **禁止**含 `projectRoot` / `harnessRoot` / `plan`；示例见 [templates/staging-schema-example.md](templates/staging-schema-example.md)
-   - 生成待补全骨架：`cd framework/harness && npx ts-node scripts/init-orchestrate.ts --emit-staging-template --scope project --project-root <repo-root> --materialized-adapters <S2 多选逗号分隔>`（**不带** `--context-file`）；stdout 拆分写两文件。**UPDATE** 时 stdout `context` 可能已含磁盘预填的最小 `configWritePayload`（仍须 S2 多选写入 `decision.materialized_adapters`）
+   - 生成待补全骨架：`cd framework/harness && npx ts-node scripts/init-orchestrate.ts --emit-staging-template --scope project --project-root <repo-root> --materialized-adapters <S2 多选逗号分隔>`（**不带** `--context-file`）；stdout 拆分写两文件。**UPDATE** 时 stdout `context` 已含磁盘 configWritePayload（**完整磁盘 baseline**，与写盘授权同源；仍须 S2 多选写入 `decision.materialized_adapters`）
    - **通用路径预览 SSOT（BLOCKER）**：若本轮走通用 staging 路径，`init.materialized_adapters` 多选**之后**，须运行上述 `--emit-staging-template --materialized-adapters ...`；per-task action 必须来自 stdout `decision.tasks[].action`（harness `resolveTemplateAction`），**禁止** Agent 自行推导。类别级摘要（下表）仅作面向用户的结构化复述。
    - 禁止沿用旧结构 `mode` / `task_decisions` / 根级无 `schema_version` 的 staging
 
@@ -166,7 +169,7 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 
 - S3 执行器：`executeInitPlan` → `init-task-executor.ts`（gitignore、config merge、adapter 物化、deprecated cleanup、npm install、全局 phase 等）。
 - S3 **preflight**：`init-orchestrate.ts` 在写盘前校验 decision 结构与 config/doc payload；违规时**除 harness 审计 run-log 外零项目写盘**，写 blocked run-log 后 `exit 1`。
-- **`configWritePayload` / `docWritePayload`**：CREATE 须在 S2 写入 `context.json`；**UPDATE** 可依赖 emit 预填或 S2 显式 payload，execute 阶段 harness 亦会从磁盘派生最小 payload（S2 显式优先）。写类 doc 任务（`run`）缺 payload → preflight 原子阻断。
+- **`configWritePayload` / `docWritePayload`**：CREATE 须在 S2 写入 `context.json`；**UPDATE** 可依赖 emit 预填或 S2 显式 payload（= 磁盘完整 baseline 深拷贝），execute 阶段 harness 亦会从磁盘派生同一 baseline（S2 显式优先）。写类 doc 任务（`run`）缺 payload → preflight 原子阻断。
 - preflight 与 executor **共用**同一归一化 `finalContext`（先 cross-check raw adapter，再 sync decision SSOT）。
 - doc 骨架（`write-architecture` / catalog / glossary）若 planner 标记为 needed 且 context 未带内容 → 按 [profiles/.../doc-skeletons/](../../../profiles/) 或用户确认稿本写入后再重跑 S3，或在 S2 决策 **skip** 并在 S4 说明。
 - **失败任务**：摘要中列出；不静默吞掉 `failed` 条目。
@@ -190,14 +193,14 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 
 | 场景 | 写盘路径 | 机制 |
 |------|----------|------|
-| CREATE | `ensure-config run` | config-builder 合成（BACKFILL 默认 + S2 payload） |
-| UPDATE overwrite | `ensure-config overwrite` | config-builder 整文件重写（derive 保留显式 `paths` / `tools` + BACKFILL 补缺） |
+| CREATE | `ensure-config run` | config-builder 合成（BACKFILL 默认 + S2 payload，payload **仅限白名单字段**） |
+| UPDATE overwrite | `ensure-config overwrite` | t2a 无损基底：磁盘 raw 完整深拷贝 + BACKFILL 补缺 + **白名单定点覆盖**，normalize 仅影子校验；AI 越权字段（toolchain/state_machine 等）被拒 |
 | UPDATE keep | 跳过 ensure-config | merge-framework-config 三 pass（backfill / migrate / confirm） |
 
 关键约束：
 
 - overwrite **不经过** merge-framework-config，但 overwrite 后 `backfill-config` / `migrate-config` 仍按 DAG 顺序执行。
-- **默认值变更不得覆盖显式配置**：derive payload 保留磁盘 `paths` / `tools`；框架默认值变更仅通过 BACKFILL（补缺）+ MIGRATION（modernize 已知旧默认）推进。
+- **默认值变更不得覆盖显式配置**：UPDATE 以磁盘 baseline 为基底，未知顶层及任意嵌套扩展字段原样保留；框架默认值变更仅通过 BACKFILL（补缺）+ MIGRATION（modernize 已知旧默认）推进。
 
 ## 核心设计原则
 

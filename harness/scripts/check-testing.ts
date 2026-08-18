@@ -76,6 +76,17 @@ import {
   analyzeProjectDependencyIssueViaProfile,
 } from '../capability-registry';
 import type { DeviceTestBuildResult } from '../../profiles/hmos-app/harness/providers/device-test-build';
+import type { HvigorRunResult } from '../../profiles/hmos-app/harness/hvigor-runner';
+import { isHvigorBuildSuccessful } from './utils/hvigor-runner';
+import { describeProductSelection } from '../../profiles/hmos-app/harness/product-selection';
+
+/**
+ * device_test_build 门禁的 PASS 判据（导出供 t1(f) 生产路径回归：**真实出口函数**）。
+ * 复用 = 包已存在且新鲜（PASS）；否则须 hvigor 真实成功（与 coding/provider 同源判据）。
+ */
+export function deviceTestGateCompileOk(reused: boolean, hv: HvigorRunResult): boolean {
+  return Boolean(reused) || isHvigorBuildSuccessful(hv);
+}
 import type { DeviceTestInstallResult } from '../../profiles/hmos-app/harness/providers/device-test-install';
 import type { HylyreReadyResult, HylyreRunResult } from '../../profiles/hmos-app/harness/providers/device-test-run';
 import {
@@ -1929,13 +1940,8 @@ function checkDeviceTestBuildGate(
       ];
     }
 
-    const compileOk =
-      Boolean(res.reused) ||
-      (hv.executed &&
-        !hv.timedOut &&
-        hv.exitCode === 0 &&
-        (hv.errors?.length ?? 0) === 0 &&
-        hv.successMarkerFound !== false);
+    // plan a7c3f9e2 t1：与 coding/provider 共用同一终态判据（errors[] 不参与判定）
+    const compileOk = deviceTestGateCompileOk(Boolean(res.reused), hv);
 
     if (!compileOk) {
       // P2：复用与 coding/ut 同一套（已根治的）依赖归因器，给弱模型可执行指引，
@@ -1974,6 +1980,8 @@ function checkDeviceTestBuildGate(
           status: 'FAIL',
           details: [
             `device_test.build 失败：exit=${hv.exitCode}, timedOut=${Boolean(hv.timedOut)}, successMarker=${String(hv.successMarkerFound)}`,
+            // t5（plan a7c3f9e2 ⑦）：编译形态与来源单行（unresolved 时 product=null）
+            ...(res.productSelection ? [describeProductSelection(res.productSelection)] : []),
             `命令：${hv.command ?? '(unknown)'}`,
             `日志：${hv.logPath ?? '(无)'}`,
             res.hapPath ? `解析 HAP：${res.hapPath}` : '未解析到 signed 主 HAP（编译失败或未产出）',
@@ -2036,6 +2044,8 @@ function checkDeviceTestBuildGate(
         status: 'PASS',
         details: [
           `product=${res.resolvedProduct} buildMode=${res.resolvedBuildMode}`,
+          // t5（plan a7c3f9e2 ⑦）：报告可见性——编译形态与来源单行
+          ...(res.productSelection ? [describeProductSelection(res.productSelection)] : []),
           `HAP: ${res.hapPath}`,
           reuseLine,
           ...ambiguityLines,

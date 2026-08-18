@@ -232,12 +232,21 @@ export interface ToolchainConfig {
   /**
    * 可选：覆盖 hvigor `-p product=` 装配时的探测结果。
    *
-   * 探测优先级（由 hvigor-runner.ts `detectProduct` 实现）：
-   *   ① toolchain.preferredProduct（本字段，用户显式覆盖）
-   *   ② build-profile.json5 app.products：若存在名为 `product` / `default` 的条目则优先于无序首位，否则取 products[0].name
-   *   ③ 兜底常量 'default'
+   * 解析优先级（由 `resolveProductSelection` 实现，plan a7c3f9e2 t5）：
+   *   explicit_run（本次显式参数）→ confirmed_env（HARNESS_DEVICE_TEST_PRODUCT）
+   *   → **explicit_config（本字段 且 framework.local.json
+   *   toolchain.productSelection.confirmed.value 逐字相等）**
+* → sole_candidate（build-profile.json5 **真实声明**单候选）→ unresolved（**构建形态
+   *   无法确定**：多候选未确认 / build-profile 缺失 / products 为空 / build-profile 不可
+   *   解析——后三者无真实候选，**不得虚构 `default`**；停止并要求确认，不猜）。
    *
-   * 多 product 工程若 harness 不应猜首位，必须在此显式声明（常见为 `"product"`）。空字符串等同未声明。
+   * **用户意图契约**：本字段**只**由机器路径写入——用户经 framework-init registry
+   * `init.product_selection` 显式选择后，`record-product-selection` 同一次操作写本项目
+   * 与 `framework.local.json > toolchain.productSelection.confirmed`（本机确认凭证）。
+   * AI 的 `configWritePayload` 通道不得写本字段（t2b 白名单拒绝）。
+   * **未经 local 确认时按未验证处理**：存量/推断值（含 AI 历史写入的 `rom` 类事故值）
+   * 不作为可信来源，多候选工程会停止并要求确认；来源不明值**不静默删除**，仅不再采信。
+   * 空字符串等同未声明。
    */
   preferredProduct?: string;
 }

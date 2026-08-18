@@ -50,6 +50,32 @@ export function unionPhasePersonalPrerequisites(
 /** record-adapter / init 等无单一 phase 场景：coding+ut+testing 并集，显式含 agent_adapter */
 const ALL_PERSONAL_SETUP_PHASES: FeaturePhase[] = ['coding', 'ut', 'testing'];
 
+/**
+ * 本 phase 是否需要解析/使用编译形态 product（plan a7c3f9e2 t4/t5）。
+ *
+ * 与 phaseRequiresDevice 同款派生链：capability 被 profile 声明为 SKIP 的不算。
+ * product 相关 capability：coding.compile（代码编译）、ut.compile / ut.run（ohosTest
+ * 出包与装机跑测）、device_test.build（testing 主 HAP 打包）。被跳过的 capability
+ * 不产生 product 需求——与既有"跳过的能力不算数"口径一致。
+ */
+export function phaseRequiresProduct(phase: string, resolved: HarnessResolvedProfile): boolean {
+  const caps = PHASE_CAPABILITY_MAP[phase as FeaturePhase] ?? [];
+  return caps.some(capKey => {
+    if (capKey !== 'coding.compile' && capKey !== 'ut.compile' && capKey !== 'ut.run' && capKey !== 'device_test.build') {
+      return false;
+    }
+    return !isCapabilitySkipped(resolved, capKey);
+  });
+}
+
+/** 链路中任一 phase 需要编译形态（goal 启动期决定是否做 product 前置检查） */
+export function chainRequiresProduct(
+  phases: readonly string[],
+  resolved: HarnessResolvedProfile,
+): boolean {
+  return phases.some(p => phaseRequiresProduct(p, resolved));
+}
+
 export function resolveAllPersonalPrerequisites(projectRoot: string): Set<PersonalPrerequisiteId> {
   const cfg = loadFrameworkConfig(projectRoot);
   const resolved = loadResolvedProfile(projectRoot, cfg);

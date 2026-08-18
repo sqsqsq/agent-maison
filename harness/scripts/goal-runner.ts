@@ -142,6 +142,11 @@ import {
 // openspec device-readiness-and-completion t3：设备就绪门（独立异步门，排在 capability
 // gate 之后、agent_invoke_start 之前；未 READY 不调 agent）
 import { phaseRequiresDevice } from './utils/phase-device-requirement';
+import {
+  chainRequiresProduct,
+  goalProductPurpose,
+  resolveProductSelectionViaProfile,
+} from './utils/product-selection-bridge';
 import { runDeviceReadinessGate } from './utils/device-readiness-gate';
 import { buildDeviceReadinessInput } from './utils/device-readiness-deps';
 import {
@@ -3964,6 +3969,80 @@ Goal runner — tool-agnostic multi-phase orchestrator
             '本链路含 testing，须对产品源码层做快照保护——声明的目录必须真实存在。\n' +
             '处置：修正配置声明或补建目录后重跑（--resume 会重检）。\n',
         );
+        return 1;
+      }
+    }
+
+    // t4/t5（plan a7c3f9e2）：编译形态启动前置检查——**第一个 phase agent invocation
+    // 之前**（含 --resume）解析一次 product selection。链路含需 product 的 phase
+    // （coding/ut/testing 任一非 skip capability）且结果为 unresolved（**构建形态无法
+    // 确定**：多候选未确认 / build-profile 缺失 / products 为空 / build-profile 不可解析）
+    // → 复用既有 phase_halt 通道停止
+    // （halt_reason=product_selection_unresolved，不新造停止机制、不烧任何预算）；
+    // 确认（record-product-selection / init.product_selection / env）后 --resume 重检。
+    // 前置原因：错误 product 恰好编译成功时会直接签发 PASS——必须在选定阶段就要求可信来源，
+    // 不允许跑到 coding 阶段中途才停。单候选与已确认工程零摩擦。
+    if (!dryRun && chainRequiresProduct(chain as string[], resolvedProfile)) {
+      const profileHarnessDir = path.join(resolvedProfile.profileDir, 'harness');
+      const probe = resolveProductSelectionViaProfile(
+        projectRoot,
+        profileHarnessDir,
+        goalProductPurpose(chain as string[]),
+      );
+      if (!probe.ok) {
+        if (probe.reason === 'missing') {
+          // profile 无 product-selection 模块（generic 等无构建语义）→ 结构上不适用，跳过
+        } else {
+          // 解析器执行失败：**不得静默跳过**（review P1——否则门禁可被绕过）；
+          // 能逃到这里的只能是 profile 模块加载/运行时异常 = framework fault
+          //（build-profile 缺失/空/不可解析已被解析器收敛为判别结果）。
+          const guidance =
+            `编译形态解析器执行失败（profile=${resolvedProfile.name}）：${probe.message ?? '(无详情)'}\n` +
+            '这是框架侧缺陷（profile product-selection 模块异常），不是内容失败，也不是外部环境问题；' +
+            '请更新/修复 framework 后重跑（--resume 会重检）。';
+          goalEvents.emit({
+            type: 'phase_halt',
+            phase: chain[0],
+            halt_reason: 'product_selection_probe_failed',
+            verdict: 'FAIL',
+            reason: probe.message ?? 'product selection 解析失败',
+          });
+          goalEvents.emit({
+            type: 'run_end', status: 'HALTED', halt_reason: 'product_selection_probe_failed',
+          });
+          runConcluded = true;
+          console.error(`\n===== product_selection_probe_failed =====\n${guidance}\n`);
+          return 1;
+        }
+      } else if (probe.selection.source === 'unresolved') {
+        const candidates = probe.selection.candidates.join(', ');
+        const guidance =
+          probe.selection.candidates.length > 0
+            ? `编译形态无法确定：工程声明了多个 product（${candidates}），` +
+              '且 toolchain.preferredProduct 未经本机确认（framework.local.json 无匹配确认记录）。'
+            : '编译形态无法确定：build-profile.json5 未声明任何真实 product（缺失/为空/不可解析）。';
+        const confirmLines =
+          'framework 不替宿主猜测编译形态——请先确认一次（任选其一）：\n' +
+          `  1. 机器写入：npx ts-node framework/harness/scripts/record-product-selection.ts --project-root ${projectRoot} --product <候选值>；\n` +
+          '  2. 交互式：framework-init 的 registry `init.product_selection`；\n' +
+          '  3. testing 无人值守：HARNESS_DEVICE_TEST_PRODUCT=<候选值>（仅 testing 起点链路生效，env 属显式确认）。\n' +
+          (probe.selection.candidates.length > 0
+            ? `本次可用候选：${candidates}。`
+            : '请先修复构建配置（build-profile.json5 声明 app.products）或使用显式来源指定 product。') +
+          '\n确认后 --resume 继续（会重新检查）。';
+        goalEvents.emit({
+          type: 'phase_halt',
+          phase: chain[0],
+          halt_reason: 'product_selection_unresolved',
+          verdict: 'FAIL',
+          reason: `编译形态无法确定（候选：${candidates || '(无)'}）`,
+          candidates: probe.selection.candidates,
+        });
+        goalEvents.emit({
+          type: 'run_end', status: 'HALTED', halt_reason: 'product_selection_unresolved',
+        });
+        runConcluded = true;
+        console.error(`\n===== product_selection_unresolved =====\n${guidance}\n${confirmLines}\n`);
         return 1;
       }
     }

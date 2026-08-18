@@ -1,0 +1,28 @@
+> hvigor [32mFinished :phone:default@checkImageSyncLoad... after 711 ms [39m
+> hvigor [33mWARN: The project has not explicitly set the 'targetSdkVersion' version at build-profile.json5. It is recommended to configure it. Reference: https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/ide-hvigor-build-profile-app#section45865492619[39m
+> hvigor [32mUP-TO-DATE :ECNY:default@PreBuild...  [39m
+> hvigor [32m[ConfigurationMng] [genDicConfigFile] start.[39m
+> hvigor [91mERROR: [ConfigurationMng] [genDicConfigFile] merge error {"errno":-4058,"syscall":"open","code":"ENOENT","path":"D:\\1.code\\WalletHarmony\\WalletForHarmonyOS\\01-Product\\phone\\src\\main\\resources\\rawfile\\DictionaryConfig.json"}[39m
+> hvigor [32m[ConfigurationMng] [genDicConfigFile] read config file：D:\1.code\WalletHarmony\WalletForHarmonyOS\02-Feature\AccessCard\src\main\resources\rawfile\DictionaryConfig.json 
+{"DictionaryConfig":[{"dicName":"hos_card_designs","itemName":"accesscard_design_series","isIntercept":true,"isEncrypt":false},{"dicName":"hos_accesscard_key_arrays","itemName":"accesscard_key","isIntercept":true,"isEncrypt":true},{"dicName":"hos_accesscard_super_key","itemName":"super_access_copy_content","isIntercept":true,"isEncrypt":false},{"dicName":"hos_common_business","itemName":"city_list","isIntercept":true,"isEncrypt":false},{"dicName":"hos_wear_wallet","itemName":"support_flip_model","isIntercept":true,"isEncrypt":false},{"dicName":"hos_set_swipe_location","itemName":"period","isIntercept":true,"isEncrypt":false},{"dicName":"hos_ac_optimization","itemName":"optimization_time","isIntercept":true,"isEncrypt":false},{"dicName":"hos_accesscard_show_card","itemName":"show_household_policy","isIntercept":true,"isEncrypt":false},{"dicName":"hos_accesscard_super_key","itemName":"simplify_flow_chip_type","isIntercept":true,"isEncrypt":false}]}[39m
+> hvigor [32m[ConfigurationMng] [genDicConfigFile] dicArray : [{"dicName":"hos_card_designs","itemName":"accesscard_design_series","isIntercept":true,"isEncrypt":false},{"dicName":"hos_accesscard_key_arrays","itemName":"accesscard_key","isIntercept":true,"isEncrypt":true},{"dicName":"hos_accesscard_super_key","itemName":"super_access_copy_content","isIntercept":true,"isEncrypt":false},{"dicName":"hos_common_business","itemName":"city_list","isIntercept":true,"isEncrypt":false},{"dicName":"hos_wear_wallet","itemName":"support_flip_model","isIntercept":true,"isEncrypt":false},{"dicName":"hos_set_swipe_location","itemName":"period","isIntercept":true,"isEncrypt":false},{"dicName":"hos_ac_optimization","itemName":"optimization_time","isIntercept":true,"isEncrypt":false},{"dicName":"hos_accesscard_show_card","itemName":"show_household_policy","isIntercept":true,"isEncrypt":false},{"dicName":"hos_accesscard_super_key","itemName":"simplify_flow_chip_type","isIntercept":true,"isEncrypt":false}][39m
+> hvigor [32m[ConfigurationMng] [genDicConfigFile] read config file：D:\1.code\WalletHarmony\WalletForHarmonyOS\02-Feature\CarKeys\src\main\resources\rawfile\DictionaryConfig.json 
+{"DictionaryConfig":[{"dicName":"hos_wear_wallet","itemName":"support_uwb_device","isIntercept":true,"isEncrypt":false},{"dicName":"hos_carkey","itemName":"ccc_share_routing_map","isIntercept":true,"isEncrypt":false},{"dicName":"hos_carkey","itemName":"channel_conflict_config","isIntercept":true,"isEncrypt":false},{"dicName":"hos_carkey","itemName":"ccc_issuer_pass_type_map","isIntercept":true,"isEncrypt":false}]}[39m
+> hvigor [32m[ConfigurationMng] [genDicConfigFile] dicArray : [{"dicName":"hos_wear_wallet","itemName":"support_uwb_device","isIntercept":true,"isEncrypt":false},{"dicName":"hos_carkey","itemName":"ccc_share_routing_map","isIntercept":true,"isEncrypt":false},{"dicName":"hos_carkey","itemName":"channel_conflict_config","isIntercept":true,"isEncrypt":false},{"dicName":"hos_carkey","itemName":"ccc_issuer_pass_type_map","isIntercept":true,"isEncrypt":false}][39m
+> hvigor [91mERROR: [ConfigurationMng] [genDicConfigFile] merge error {"errno":-4058,"syscall":"open","code":"ENOENT","path":"D:\\1.code\\WalletHarmony\\WalletForHarmonyOS\\02-Feature\\TransportCard\\src\\main\\resources\\rawfile\\DictionaryConfig.json"}[39m
+> hvigor [32m[ConfigurationMng] [genDicConfigFile] read config file：D:\1.code\WalletHarmony\WalletForHarmonyOS\02-Feature\FinancialCard\src\main\resources\rawfile\DictionaryConfig.json 
+
+…(中段 79640 行省略，真实日志共 79870 行)…
+
+> hvigor [32mStart archive packages[39m
+> hvigor [32mArchived unsigned HAP file from D:\1.code\WalletHarmony\WalletForHarmonyOS\01-Product\phone\build\product\outputs\product\wallet-product-unsigned.hap to D:\1.code\WalletHarmony\WalletForHarmonyOS\01-Product\phone\build\product\outputs\product\wallet-product-debug-unsigned.hap[39m
+> hvigor [32mArchived signed HAP file from D:\1.code\WalletHarmony\WalletForHarmonyOS\01-Product\phone\build\product\outputs\product\wallet-product-signed.hap to D:\1.code\WalletHarmony\WalletForHarmonyOS\01-Product\phone\build\product\outputs\product\wallet-product-debug-signed.hap[39m
+> hvigor [32mBuild is product-debug, no obfuscation need archive[39m
+> hvigor [32mThis reulst Product is product - debug[39m
+> hvigor [32m[Size Checker] Package size output: D:\1.code\WalletHarmony\packageSize.txt[39m
+> hvigor [32m[Size Checker] params ohos-test-coverage is undefined and coverage-mode is undefined[39m
+> hvigor [32m[Size Checker] Current hap size is 155594779[39m
+> hvigor [32m[Size Checker] Build type is debug, no packageSize.txt output[39m
+> hvigor [32mArchive HAP Package task end at Fri Aug 07 2026 15:23:14 GMT+0800 (中国标准时间).[39m
+> hvigor [32mFinished :phone:assembleHap... after 1 ms [39m
+> hvigor [32mBUILD SUCCESSFUL in 1 min 23 s 619 ms [39m

@@ -33,8 +33,16 @@ import { formatPollutionDisplayPath } from '../../../harness/scripts/utils/harne
 import {
   hasDependencyResolutionFailure as hasDepResolutionFailureSignal,
   detectHvigorTaskNotFound,
+  isHvigorBuildSuccessful,
   moduleDeclaresOhosTestTarget,
 } from './hvigor-runner';
+import {
+  resolveProductSelection,
+  describeProductSelection,
+  buildProductSelectionUnresolvedGuidance,
+  summarizeUnresolvedCause,
+  type ProductSelection,
+} from './product-selection';
 import {
   buildUtHvigorTestFailDetails,
   type UtHvigorTestFailureModule,
@@ -377,6 +385,28 @@ function checkUtHvigorBuild(
     ];
   }
 
+  // t5（plan a7c3f9e2）：本作用域内只解析一次，显式传给 ut 编译；unresolved 不猜、阻断。
+  // env 显式跳过（HARNESS_SKIP_HVIGOR=1）时让位给既有 skip 语义（fixture 回归锁）。
+  const selection = resolveProductSelection({ projectRoot: ctx.projectRoot, purpose: 'ut' });
+  if (selection.source === 'unresolved' && !process.env.HARNESS_SKIP_HVIGOR) {
+    return [
+      {
+        id: 'ut_hvigor_build',
+        category: 'structure',
+        description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_build'),
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details:
+          `ut_hvigor_build：${summarizeUnresolvedCause(selection)}（framework 拒绝猜测）。\n` +
+          buildProductSelectionUnresolvedGuidance(selection),
+        failure_kind: 'project_build_environment_inconsistent',
+        blocking_class: 'externalBlocked',
+        suggestion:
+          '编译形态未确认属外部/工程配置问题，不得通过改代码绕过。请按 details 指引确认 product 后重跑。',
+      },
+    ];
+  }
+
   const perModule: Array<{ module: string; result: any; taskNotFound?: { task: string } }> = [];
   for (const mod of mods) {
     const res = dispatchUtCompile(ctx, {
@@ -387,6 +417,7 @@ function checkUtHvigorBuild(
       moduleName: mod.name,
       target: 'ohosTest',
       skipEnvVar: 'HARNESS_SKIP_HVIGOR',
+      product: selection.product ?? undefined,
     });
     const entry: { module: string; result: any; taskNotFound?: { task: string } } = {
       module: mod.name,
@@ -405,24 +436,25 @@ function checkUtHvigorBuild(
 
   const perModuleStatusLines = [
     '逐模块编译状态：',
+    ...(selection ? [`${describeProductSelection(selection)}（单次解析，贯穿本门禁）`] : []),
     ...perModule.map(x => {
       const r = x.result;
       const st = r.toolMissing ? 'TOOL_MISSING'
         : r.skippedByEnv ? 'ENV_SKIP'
         : !r.executed ? 'NOT_EXECUTED'
-        : r.exitCode === 0 && r.errors.length === 0 ? 'PASS'
+        // plan a7c3f9e2（意见2 P1，第四处出口）：与 coding/device-testing 共用
+        // isHvigorBuildSuccessful——errors[] 不参与终态（宿主非致命 ERROR 不误杀真成功）
+        : isHvigorBuildSuccessful(r) ? 'PASS'
         : x.taskNotFound ? `FAIL（task_not_found: ${x.taskNotFound.task}）` : 'FAIL';
       return `  - ${x.module}: ${st}${r.logPath ? `（日志：${r.logPath}）` : ''}`;
     }),
     ...mods.slice(perModule.length).map(m => `  - ${m.name}: NOT_EXECUTED（前序失败短路）`),
   ];
 
-  const bad = perModule.filter(
-    x =>
-      x.result.toolMissing ||
-      x.result.skippedByEnv ||
-      (x.result.executed && (x.result.exitCode !== 0 || x.result.errors.length > 0)),
-  );
+  // plan a7c3f9e2（意见2 P1，第四处出口）：ut_hvigor_build 的 FAIL 判据与 coding /
+  // device-testing 三处共用 isHvigorBuildSuccessful——toolMissing/skippedByEnv 时
+  // executed=false 天然覆盖，timedOut 比原判据更严谨；errors.length 不再参与终态。
+  const bad = perModule.filter(x => !isHvigorBuildSuccessful(x.result));
 
   if (bad.length === 0) {
     // plan d7e4b2a9 t3③：sign-skip 只做报告可见性，不改变 PASS 判定（编译本身成功，
@@ -754,6 +786,28 @@ function checkUtHvigorTest(
     ];
   }
 
+  // t5（plan a7c3f9e2）：ut.run 同样单次解析编译形态；unresolved 不猜、阻断。
+  // env 显式跳过（HARNESS_SKIP_HVIGOR_TEST=1）时让位给既有 skip 语义（fixture 回归锁）。
+  const selection = resolveProductSelection({ projectRoot: ctx.projectRoot, purpose: 'ut' });
+  if (selection.source === 'unresolved' && !process.env.HARNESS_SKIP_HVIGOR_TEST) {
+    return [
+      {
+        id: 'ut_hvigor_test',
+        category: 'structure',
+        description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test'),
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details:
+          `ut_hvigor_test：${summarizeUnresolvedCause(selection)}（framework 拒绝猜测）。\n` +
+          buildProductSelectionUnresolvedGuidance(selection),
+        failure_kind: 'project_build_environment_inconsistent',
+        blocking_class: 'externalBlocked',
+        suggestion:
+          '编译形态未确认属外部/工程配置问题，不得通过改代码绕过。请按 details 指引确认 product 后重跑。',
+      },
+    ];
+  }
+
   const devProbe = probeUtRunDevices(ctx);
   if (!devProbe.available) {
     const head = devProbe.hdcPresent
@@ -808,6 +862,7 @@ function checkUtHvigorTest(
       phase: 'ut',
       moduleName: mod.name,
       moduleSrcPath: mod.package_path,
+      product: selection.product ?? undefined,
     });
     perModule.push({ module: mod.name, result: res });
     const caseLevelFailure = res.executed && !!res.testResult && (res.testResult.total ?? 0) > 0;

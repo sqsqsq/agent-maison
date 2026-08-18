@@ -95,7 +95,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       const rule = {
         default_budget: 150,
         overrides: [
-          { skill: 'framework-init', budget: 250, reason: 'x' },
+          { skill: 'framework-init', budget: 260, reason: 'S2.1 product 确认契约增补（plan a7c3f9e2），台账 docs-rules.yaml 同步' },
           { skill: 'business-ut', budget: 250, reason: 'x' },
           { skill: 'catalog-bootstrap', budget: 250, reason: 'x' },
         ],

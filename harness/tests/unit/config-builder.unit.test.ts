@@ -362,8 +362,314 @@ const cases: Array<{ name: string; run: () => void }> = [
   },
 ];
 
+// ============================================================================
+// plan a7c3f9e2 t2a/t2b：UPDATE 无损磁盘 baseline + 配置写入权限治理
+// ============================================================================
+
+function writeDiskConfig(root: string, cfg: Record<string, unknown>): void {
+  fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify(cfg, null, 2), 'utf-8');
+}
+
+function fullDiskConfig(): Record<string, unknown> {
+  return {
+    schema_version: '1.1',
+    project_name: 'Wallet',
+    project_profile: { name: 'hmos-app', sub_variant: 'app' },
+    materialized_adapters: ['claude', 'generic'],
+    architecture: {
+      outer_layers: [{ id: '01-Product', can_depend_on: [], intra_layer_deps: 'dag' }],
+      module_inner_layers: ['shared', 'data'],
+      inner_dependency_direction: 'upward',
+      cross_module_exports_file: 'index.ets',
+    },
+    paths: { features_dir: 'doc/features' },
+    state_machine: { schema_version: '1.1', ttl_hours: 12, x_vendor_ext: { keep: 'sm' } },
+    toolchain: {
+      hvigor: { daemon: true, parallel: false, x_vendor_ext: { keep: 'hv' } },
+    },
+    tools: { hylyre: { vendor_dir: 'vendors' } },
+    active_workflow: 'spec-driven',
+    lifecycle_hooks_enabled: true,
+    x_vendor_ext: { keep: 'top' },
+  };
+}
+
+const t2a2bCases: Array<{ name: string; run: () => void }> = [
+  {
+    // t2a (a)：UPDATE 走完整链路后 active_workflow / lifecycle_hooks_enabled / schema_version 逐字保留
+    name: 't2a(a) UPDATE 完整链路：active_workflow / lifecycle_hooks_enabled / schema_version 逐字保留',
+    run: () => {
+      const root = mkTmp();
+      writeDiskConfig(root, fullDiskConfig());
+      const payload = deriveUpdateConfigWritePayload(root, ['claude', 'generic']);
+      assert(payload);
+      const out = prepareConfigWriteForTask(
+        { projectRoot: root, configWritePayload: payload! },
+        'overwrite',
+      );
+      assert.strictEqual(out.active_workflow, 'spec-driven');
+      assert.strictEqual(out.lifecycle_hooks_enabled, true);
+      assert.strictEqual(out.schema_version, '1.1');
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    // t2a (b)：任意 schema-valid 未知字段经 UPDATE 后逐字保持不变——顶层与嵌套必须同时覆盖
+    //（嵌套两处是 v5"归一化结果＋顶层并回"方案的漏网点）
+    name: 't2a(b) UPDATE 无损：顶层 x_vendor_ext / state_machine.x_vendor_ext / toolchain.hvigor.x_vendor_ext 逐字保留',
+    run: () => {
+      const root = mkTmp();
+      writeDiskConfig(root, fullDiskConfig());
+      const payload = deriveUpdateConfigWritePayload(root, ['claude', 'generic']);
+      const out = prepareConfigWriteForTask(
+        { projectRoot: root, configWritePayload: payload! },
+        'overwrite',
+      );
+      assert.deepStrictEqual(out.x_vendor_ext, { keep: 'top' }, '顶层未知扩展键不得丢');
+      const sm = out.state_machine as Record<string, unknown>;
+      assert.deepStrictEqual(sm.x_vendor_ext, { keep: 'sm' }, 'state_machine 嵌套未知扩展键不得丢');
+      const hv = (out.toolchain as Record<string, unknown>).hvigor as Record<string, unknown>;
+      assert.deepStrictEqual(hv.x_vendor_ext, { keep: 'hv' }, 'toolchain.hvigor 嵌套未知扩展键不得丢');
+      // tools：磁盘已有 vendor_dir 原样保留，profile-owned 缺叶由 BACKFILL 补齐
+      const hylyre = (out.tools as Record<string, unknown>).hylyre as Record<string, unknown>;
+      assert.strictEqual(hylyre.vendor_dir, 'vendors');
+      assert.strictEqual(hylyre.venv_dir, '.hylyre/venv', 'BACKFILL 补缺');
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    // t2b (a) / t2a (c)：UPDATE + payload 新增 toolchain.preferredProduct → 抛错且信息含字段路径
+    name: 't2b(a) UPDATE payload 在 toolchain 新增 preferredProduct → 抛错并报告字段路径',
+    run: () => {
+      const root = mkTmp();
+      writeDiskConfig(root, fullDiskConfig());
+      const payload = deriveUpdateConfigWritePayload(root, [])!;
+      (payload.toolchain as Record<string, unknown>).preferredProduct = 'rom';
+      assert.throws(
+        () =>
+          prepareConfigWriteForTask(
+            { projectRoot: root, configWritePayload: payload },
+            'overwrite',
+          ),
+        (e: Error) => {
+          assert(e.message.includes('toolchain.preferredProduct'), `应含字段路径：${e.message}`);
+          assert(e.message.includes('白名单'), `应声明白名单拒绝：${e.message}`);
+          return true;
+        },
+      );
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    // t2b (a) 变体：payload 修改嵌套未知路径（toolchain.hvigor.x_vendor_ext）→ 同样被拒
+    name: 't2b(a2) UPDATE payload 修改嵌套未知路径 toolchain.hvigor.x_vendor_ext → 被拒',
+    run: () => {
+      const root = mkTmp();
+      writeDiskConfig(root, fullDiskConfig());
+      const payload = deriveUpdateConfigWritePayload(root, [])!;
+      ((payload.toolchain as Record<string, unknown>).hvigor as Record<string, unknown>).x_vendor_ext = {
+        hacked: true,
+      };
+      assert.throws(
+        () =>
+          prepareConfigWriteForTask(
+            { projectRoot: root, configWritePayload: payload },
+            'overwrite',
+          ),
+        (e: Error) => e.message.includes('toolchain.hvigor.x_vendor_ext'),
+      );
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    // t2b (b) / t2a (e)：UPDATE payload 仅改白名单字段 → 接受；toolchain / active_workflow 等未变更字段原样保留
+    name: 't2b(b) UPDATE payload 仅改白名单字段（project_name / paths）→ 接受且其余未变更字段保留',
+    run: () => {
+      const root = mkTmp();
+      writeDiskConfig(root, fullDiskConfig());
+      const payload = deriveUpdateConfigWritePayload(root, [])!;
+      payload.project_name = 'Wallet-renamed';
+      (payload.paths as Record<string, unknown>).features_dir = 'custom/docs';
+      const out = prepareConfigWriteForTask(
+        { projectRoot: root, configWritePayload: payload },
+        'overwrite',
+      );
+      assert.strictEqual(out.project_name, 'Wallet-renamed');
+      assert.strictEqual((out.paths as Record<string, unknown>).features_dir, 'custom/docs');
+      assert.strictEqual(out.active_workflow, 'spec-driven');
+      assert.strictEqual(out.schema_version, '1.1');
+      // toolchain：未变更内容从磁盘基底保留；BACKFILL 只补缺失键（analyze/incremental），
+      // 不覆盖磁盘已有值（daemon/parallel 与 x_vendor_ext 原样）。
+      const hv = (out.toolchain as Record<string, unknown>).hvigor as Record<string, unknown>;
+      assert.strictEqual(hv.daemon, true);
+      assert.strictEqual(hv.parallel, false);
+      assert.strictEqual(hv.analyze, 'normal', 'BACKFILL 补缺');
+      assert.strictEqual(hv.incremental, true, 'BACKFILL 补缺');
+      assert.deepStrictEqual(hv.x_vendor_ext, { keep: 'hv' }, 'toolchain.hvigor 未知扩展键保留');
+      assert.deepStrictEqual(out.x_vendor_ext, { keep: 'top' });
+      assert.deepStrictEqual(
+        (out.state_machine as Record<string, unknown>).x_vendor_ext,
+        { keep: 'sm' },
+      );
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    // t2b (c)：UPDATE + payload 原样等于磁盘 baseline → 接受（防 UPDATE 回归）
+    name: 't2b(c) UPDATE payload 原样等于磁盘 baseline → 接受',
+    run: () => {
+      const root = mkTmp();
+      writeDiskConfig(root, fullDiskConfig());
+      const payload = deriveUpdateConfigWritePayload(root, [])!;
+      const baseline = JSON.parse(
+        fs.readFileSync(path.join(root, 'framework.config.json'), 'utf-8'),
+      );
+      assert.deepStrictEqual(payload, baseline, 'payload 应等于磁盘 baseline');
+      const out = prepareConfigWriteForTask(
+        { projectRoot: root, configWritePayload: JSON.parse(JSON.stringify(baseline)) as Record<string, unknown> },
+        'overwrite',
+      );
+      assert.deepStrictEqual(out, prepareConfigWriteForTask(
+        { projectRoot: root, configWritePayload: payload },
+        'overwrite',
+      ));
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    // t2a (c2)：归一化仍在生效——非法 canonical 值 UPDATE 后仍抛错（影子校验被绕过即红）
+    name: 't2a(c2) UPDATE 非法 canonical 值仍抛错（state_machine.grace_period_minutes=999）',
+    run: () => {
+      const root = mkTmp();
+      writeDiskConfig(root, fullDiskConfig());
+      const payload = deriveUpdateConfigWritePayload(root, [])!;
+      (payload.state_machine as Record<string, unknown>).grace_period_minutes = 999;
+      assert.throws(
+        () =>
+          prepareConfigWriteForTask(
+            { projectRoot: root, configWritePayload: payload },
+            'overwrite',
+          ),
+        /999|grace_period/,
+      );
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    // t2b (d)：CREATE + 纯白名单字段 → 正常写入
+    name: 't2b(d) CREATE + 纯白名单字段 → 正常写入',
+    run: () => {
+      const root = mkTmp();
+      const out = prepareConfigWriteForTask(
+        {
+          projectRoot: root,
+          configWritePayload: {
+            project_name: 'fresh',
+            project_profile: { name: 'generic' },
+            materialized_adapters: ['cursor'],
+            architecture: minimalArch(),
+            paths: { features_dir: 'doc/features' },
+            project_scale: 'small',
+            phases_disabled: ['visual'],
+            spec: { visual_handoff_enforcement: 'reachable' },
+          },
+        },
+        'run',
+      );
+      assert.strictEqual(out.project_name, 'fresh');
+      assert.strictEqual(out.schema_version, '1.1', '框架默认仍由 builder 注入');
+      assert.strictEqual(out.project_scale, 'small');
+      assert.deepStrictEqual(out.phases_disabled, ['visual']);
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    // t2b (e)：CREATE + 白名单外字段 → 抛错（不得静默丢弃）
+    name: 't2b(e) CREATE + 白名单外字段（toolchain）→ 抛错',
+    run: () => {
+      const root = mkTmp();
+      assert.throws(
+        () =>
+          prepareConfigWriteForTask(
+            {
+              projectRoot: root,
+              configWritePayload: {
+                project_name: 'fresh',
+                project_profile: { name: 'generic' },
+                materialized_adapters: ['cursor'],
+                architecture: minimalArch(),
+                toolchain: { hvigor: { daemon: false } },
+              },
+            },
+            'run',
+          ),
+        (e: Error) => e.message.includes('toolchain'),
+      );
+      assert(!fs.existsSync(path.join(root, 'framework.config.json')));
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    // t2b (f)：7 行白名单字段逐个正向用例（UPDATE 各自独立修改都接受）
+    name: 't2b(f) 白名单 8 键逐一正向（UPDATE 修改各字段均接受）',
+    run: () => {
+      const root = mkTmp();
+      writeDiskConfig(root, fullDiskConfig());
+      const baseline = fullDiskConfig();
+      const mutations: Array<{ key: string; patch: Record<string, unknown> }> = [
+        { key: 'project_profile', patch: { project_profile: { name: 'hmos-app', sub_variant: 'element-service' } } },
+        { key: 'project_name', patch: { project_name: 'renamed' } },
+        { key: 'architecture', patch: { architecture: { ...(baseline.architecture as Record<string, unknown>), module_inner_layers: ['shared', 'domain'] } } },
+        { key: 'materialized_adapters', patch: { materialized_adapters: ['cursor'] } },
+        { key: 'paths', patch: { paths: { features_dir: 'x/docs', module_catalog: 'x/catalog.yaml' } } },
+        { key: 'project_scale', patch: { project_scale: 'small' } },
+        { key: 'phases_disabled', patch: { phases_disabled: ['visual'] } },
+        { key: 'spec', patch: { spec: { visual_handoff_enforcement: 'strict' } } },
+      ];
+      for (const m of mutations) {
+        const payload = deriveUpdateConfigWritePayload(root, [])!;
+        for (const [k, v] of Object.entries(m.patch)) payload[k] = v;
+        const out = prepareConfigWriteForTask(
+          { projectRoot: root, configWritePayload: payload },
+          'overwrite',
+        );
+        assert(out, `UPDATE 接受 ${m.key} 修改`);
+      }
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    // t2a (d)：既有剥离契约不回归——UPDATE 仍剥离 agent_adapter / project_type / DevEco personal
+    name: 't2a(d) UPDATE 仍剥离 agent_adapter / project_type / DevEco personal（既有契约不回归）',
+    run: () => {
+      const root = mkTmp();
+      const disk = fullDiskConfig();
+      (disk as Record<string, unknown>).agent_adapter = 'claude';
+      (disk as Record<string, unknown>).project_type = 'app';
+      (disk.toolchain as Record<string, unknown>).devEcoStudio = { installPath: 'C:/DevEco' };
+      writeDiskConfig(root, disk);
+      const payload = deriveUpdateConfigWritePayload(root, [])!;
+      // AI 额外提交的 personal 字段同样剥离（不因白名单抛错）
+      (payload as Record<string, unknown>).agent_adapter = 'claude';
+      (payload as Record<string, unknown>).project_type = 'app';
+      (payload.toolchain as Record<string, unknown>).devEcoStudio = { installPath: 'C:/DevEco' };
+      const out = prepareConfigWriteForTask(
+        { projectRoot: root, configWritePayload: payload },
+        'overwrite',
+      );
+      assert.strictEqual(out.agent_adapter, undefined);
+      assert.strictEqual(out.project_type, undefined);
+      assert.strictEqual(
+        (out.toolchain as Record<string, unknown>).devEcoStudio,
+        undefined,
+      );
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+];
+
 export function runAll(): UnitCaseResult[] {
-  return cases.map(c => {
+  return [...cases, ...t2a2bCases].map(c => {
     try {
       c.run();
       return { name: c.name, ok: true };

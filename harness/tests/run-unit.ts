@@ -72,6 +72,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'smoke-lifecycle-registry', modulePath: './unit/smoke-lifecycle-registry.unit.test' },
   // e5d8a2c4 T4 用例 #8：在案"第一死"的行为钉（棘轮——T2 落地改行为后本套必红）
   { id: 'goal-park-resume', modulePath: './unit/goal-park-resume.unit.test' },
+  { id: 'goal-product-preflight', modulePath: './unit/goal-product-preflight.unit.test' },
   { id: 'host-replay-fixes', modulePath: './unit/host-replay-fixes.unit.test' },
   { id: 'doc-freshness',    modulePath: './unit/doc-freshness.unit.test' },
   { id: 'diff-staleness',   modulePath: './unit/diff-staleness.unit.test' },
@@ -218,6 +219,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'config-field-merger', modulePath: './unit/config-field-merger.unit.test' },
   { id: 'config-placement-gate', modulePath: './unit/config-placement-gate.unit.test' },
   { id: 'config-builder', modulePath: './unit/config-builder.unit.test' },
+  { id: 'product-selection', modulePath: './unit/product-selection.unit.test' },
   { id: 'framework-local-config', modulePath: './unit/framework-local-config.unit.test' },
   { id: 'personal-setup-gate', modulePath: './unit/personal-setup-gate.unit.test' },
   { id: 'init-readiness', modulePath: './unit/init-readiness.unit.test' },
@@ -312,6 +314,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
 ];
 
 const SUITES: Array<{ id: string; modulePath: string }> = [...CORE_SUITES, ...discoverProfileUnitSuites()];
+/** 显式注册的 CORE 套件（review P1：缺失必须 FAIL——静默 SKIP 会让"真实行为测试"假绿） */
+const EXPLICIT_SUITE_IDS = new Set(CORE_SUITES.map(s => s.id));
 interface SuiteSummary {
   id: string;
   results: UnitCaseResult[];
@@ -330,7 +334,17 @@ async function main(): Promise<void> {
   for (const suite of toRun) {
     const fullPath = path.resolve(__dirname, suite.modulePath + '.ts');
     if (!fs.existsSync(fullPath)) {
-      console.log(`  [SKIP] suite ${suite.id} 不存在：${fullPath}`);
+      // review P1：显式注册的 CORE 套件缺失 = 测试基建回归，必须 FAIL（静默 SKIP 会假绿）；
+      // 自动发现（profile）套件缺失则 SKIP 属正常（profile 可能未带该测试）。
+      if (EXPLICIT_SUITE_IDS.has(suite.id)) {
+        console.log(`  [FAIL] suite ${suite.id} 缺失：${fullPath}`);
+        summaries.push({
+          id: suite.id,
+          results: [{ name: '<suite-load>', ok: false, error: `显式注册的 CORE 套件文件缺失：${fullPath}` }],
+        });
+      } else {
+        console.log(`  [SKIP] suite ${suite.id} 不存在：${fullPath}`);
+      }
       continue;
     }
     // eslint-disable-next-line @typescript-eslint/no-require-imports

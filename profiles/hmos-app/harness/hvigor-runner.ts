@@ -48,6 +48,10 @@ import type {
 import { inferRepoLayout, harnessRootFromLayout } from '../../../harness/repo-layout';
 import { stripTrustAnchorEnv } from '../../../harness/scripts/utils/process-integrity';
 import {
+  resolveProductSelection,
+  buildProductSelectionUnresolvedGuidance,
+} from './product-selection';
+import {
   classifyHvigorEnvError,
   collectHvigorEnvEvidence,
   computeHvigorInvocationFingerprint,
@@ -112,6 +116,35 @@ export interface HvigorRunResult {
   signSkipped?: boolean;
   /** 日志命中 `No signingConfigs profile is configured`（signSkipped 的已知原因之一） */
   signingConfigMissing?: boolean;
+}
+
+/**
+ * 构建成功判据（plan a7c3f9e2 t1）：**只**由 executed / timedOut / exitCode /
+ * successMarkerFound 决定；`errors[]` 不参与终态判定。
+ *
+ * 为什么去掉 `errors.length === 0`：宿主自定义插件（如 ConfigurationMng）会在构建中打
+ * 两条**非致命** `> hvigor ERROR:` 后继续构建并 `BUILD SUCCESSFUL`——历史死规则
+ * `> hvigor ERROR/` 在剥 ANSI 前从不命中，`2cb124bd` 给 parseBuildErrors 加 stripAnsi 后
+ * 被激活，构建真成功也被判 FAIL（08-17 宿主实证：exitCode=0 / BUILD SUCCESSFUL /
+ * successMarkerFound=true 的日志被判 errors=2 → FAIL）。
+ *
+ * 契约：coding（coding-host-rules `isCompilePass`）与 device-testing
+ * （device-test-build `ok` / check-testing `compileOk`）两个生产出口必须共用本函数，
+ * 不得各自内联判据——errors[] 继续解析、继续进归因与诊断，只是不再单独决定终态。
+ * 不回退 stripAnsi，不新增"致命 ERROR 文本分类器"。
+ */
+export function isHvigorBuildSuccessful(res: {
+  executed?: boolean;
+  timedOut?: boolean;
+  exitCode?: number;
+  successMarkerFound?: boolean;
+}): boolean {
+  return Boolean(
+    res.executed === true &&
+      !res.timedOut &&
+      res.exitCode === 0 &&
+      res.successMarkerFound !== false,
+  );
 }
 
 export interface HvigorError {
@@ -1063,23 +1096,16 @@ function parseHypiumOutput(log: string): HypiumTestResult {
 }
 
 // ----------------------------------------------------------------------------
-// product 探测（v2.7 起）
+// product 探测（plan a7c3f9e2 t5 重定义）
 // ----------------------------------------------------------------------------
 //
 // hvigor `-p product=` 指定使用的 product 名（来自 build-profile.json5
-// app.products[].name）。v2.6 之前 hvigor-runner 把这个值写死成 'default'，
-// 但内网工程实际可能叫 'mirror' / 'phone' / 'tablet'，写死会让 hvigor 报
-// `product not found`，无法过编译。
-//
-// 探测优先级（高 → 低）：
-//   ① framework.config.json > toolchain.preferredProduct（用户显式覆盖渠道）
-//   ② build-profile.json5 app.products：若存在名为 `product` / `default` 的条目优先于无序首位
-//   ③ 否则取 products[0].name
-//   ④ 兜底常量 'default'（让 hvigor 自己报 product not found，不抢报错）
-//
-// 容错纪律：任一阶段失败（文件不存在 / JSON5 解析失败 / 字段缺失 / 字段非字符串）
-// 一律安静回退到下一档，不抛异常 —— framework harness 是个门禁脚本，product
-// 探测本身不应该成为编译失败的原因。
+// app.products[].name）。**生产解析一律走 `product-selection.ts` 的
+// `resolveProductSelection`**（五源优先级：explicit_run → confirmed_env →
+// explicit_config → sole_candidate → unresolved；名称启发式仅用于候选展示排序）。
+// 本节的 `detectProduct` 只是供既有 9 处消费点的薄包装（unresolved 抛错）。
+// 历史静默猜测语义（preferredProduct 直接覆盖、名称启发式选值、无来源兜底 default）已作废：
+// 它把推断值冒充用户意图，猜错且恰好编译成功时会直接签发 PASS。
 
 /** 简易 JSON5 解析（容忍 // / /* 注释与尾逗号） */
 export function parseProductJson5(content: string): unknown {
@@ -1091,71 +1117,93 @@ export function parseProductJson5(content: string): unknown {
 }
 
 /**
- * 探测当前工程应当传给 hvigor `-p product=` 的 product 名。
+ * 探测当前工程应当传给 hvigor `-p product=` 的 product 名（plan a7c3f9e2 t5 ⑥）。
  *
- * 不抛异常；任何阶段失败都安静兜底到 `'default'`。
+ * **薄包装**：等价 `resolveProductSelection({ projectRoot, purpose: 'coding' })`——
+ * 唯一区别是 unresolved（**构建形态无法确定**：多候选未确认 / build-profile 缺失 /
+ * products 为空 / build-profile 不可解析）时**抛错**而非静默兜底 `'default'`
+ * （历史上正是那个兜底把宿主推到错误形态并签发假 PASS；后三者无真实候选，
+ * 不得虚构 default）。
  *
- * 单测覆盖：framework/harness/tests/unit/detect-product.test.ts。
+ * 调用语境核验（9 处既有消费点，实施记录）：
+ *   - buildCodingHvigorArgs / buildAssembleAppArgs / runHvigorAssembleApp：coding 与
+ *     device-testing 调用方在 dispatch 前已自解析并显式传 product，此处仅作兜底；
+ *   - buildUtHvigorArgs / buildModuleHapArgs / runHvigorBuild / runHvigorTest：
+ *     ut-host 已解析并显式传 product，其余上游（goal/交互式）有 try/catch 或
+ *     provider 先行阻断，抛错不会打崩门禁脚本；
+ *   - testing-build-conventions.resolveDeviceTestProduct：goal-runner 走 try/catch
+ *     （resolveFrozenDeviceTestConfig），device-test-build provider 先行处理 unresolved。
+ *
+ * 单测覆盖：profiles/hmos-app/harness/tests/unit/detect-product.unit.test.ts。
  */
 export function detectProduct(projectRoot: string): string {
-  // ① framework.config.json > toolchain.preferredProduct
-  try {
-    const cfg = loadFrameworkConfig(projectRoot);
-    const pref = cfg.toolchain?.preferredProduct;
-    if (typeof pref === 'string' && pref.trim().length > 0) {
-      return pref.trim();
-    }
-  } catch {
-    // 加载 framework.config.json 失败 → 继续兜底
+  const sel = resolveProductSelection({ projectRoot, purpose: 'coding' });
+  if (sel.source === 'unresolved') {
+    throw new Error(
+      `[product-selection] 编译形态无法确定——${buildProductSelectionUnresolvedGuidance(sel)}`,
+    );
   }
-
-  // ② build-profile.json5：优先命中名为 product / default 的条目，其次首位
-  try {
-    const buildProfile = path.join(projectRoot, 'build-profile.json5');
-    if (fs.existsSync(buildProfile)) {
-      const raw = fs.readFileSync(buildProfile, 'utf-8');
-      const obj = parseProductJson5(raw) as {
-        app?: { products?: Array<{ name?: string }> };
-      };
-      const products = obj?.app?.products ?? [];
-      const names = products
-        .map((p) => (typeof p?.name === 'string' ? p.name.trim() : ''))
-        .filter((n) => n.length > 0);
-      if (names.length > 0) {
-        if (names.includes('product')) return 'product';
-        if (names.includes('default')) return 'default';
-        return names[0]!;
-      }
-    }
-  } catch {
-    // build-profile.json5 不可解析 → 继续兜底
-  }
-
-  // ③ fallback
-  return 'default';
+  return sel.product!;
 }
 
 /**
- * 枚举 build-profile.json5 中声明的全部 product 名（供 device-testing 真机打包前展示选项）。
- * 解析失败或为空时返回 `['default']`。
+ * 探测 build-profile.json5 声明的 product 候选（**真实枚举**，plan a7c3f9e2 review P1）。
+ *
+ * 与 `listAvailableProducts` 的区别：后者是展示辅助（缺失/为空/不可解析时返回 `[]`
+ * 而非虚构 `default`），本函数额外给出**原因状态**供解析器区分
+ * 「单候选（sole_candidate 合法）」与「无法确定（stop，不得产出选定值）」。
+ * 虚构 `default` 被冒充成 `sole_candidate` 会重新引入"猜 default 后可能错误 PASS"
+ * 的核心风险——08-17 事故正是 framework 替宿主猜形态。
+ */
+export type DeclaredProductsStatus = 'ok' | 'missing' | 'empty' | 'unparseable';
+
+export interface DeclaredProductsProbe {
+  status: DeclaredProductsStatus;
+  /** status==='ok' 时为全部真实声明名（可能为空）；其余恒 [] */
+  names: string[];
+}
+
+export function probeDeclaredProducts(projectRoot: string): DeclaredProductsProbe {
+  const buildProfile = path.join(projectRoot, 'build-profile.json5');
+  if (!fs.existsSync(buildProfile)) {
+    return { status: 'missing', names: [] };
+  }
+  let raw: string;
+  try {
+    raw = fs.readFileSync(buildProfile, 'utf-8');
+  } catch {
+    return { status: 'unparseable', names: [] };
+  }
+  let obj: unknown;
+  try {
+    obj = parseProductJson5(raw);
+  } catch {
+    return { status: 'unparseable', names: [] };
+  }
+  const app = (obj as { app?: unknown } | null)?.app;
+  if (!app || typeof app !== 'object' || Array.isArray(app)) {
+    return { status: 'empty', names: [] };
+  }
+  const products = (app as { products?: unknown }).products;
+  if (!Array.isArray(products)) {
+    return { status: 'empty', names: [] };
+  }
+  const names = products
+    .map((p) => {
+      const n = (p as { name?: unknown } | null)?.name;
+      return typeof n === 'string' ? n.trim() : '';
+    })
+    .filter((n) => n.length > 0);
+  return names.length > 0 ? { status: 'ok', names } : { status: 'empty', names: [] };
+}
+
+/**
+ * 枚举 build-profile.json5 中声明的全部 product 名（**真实枚举**，无虚构兜底）。
+ * 缺失 / 为空 / 解析失败 → `[]`（展示方与解析器都必须如实呈现"没有真实候选"，
+ * 不得把历史展示兜底 `['default']` 冒充成工程声明——见 probeDeclaredProducts）。
  */
 export function listAvailableProducts(projectRoot: string): string[] {
-  try {
-    const buildProfile = path.join(projectRoot, 'build-profile.json5');
-    if (!fs.existsSync(buildProfile)) {
-      return ['default'];
-    }
-    const raw = fs.readFileSync(buildProfile, 'utf-8');
-    const obj = parseProductJson5(raw) as {
-      app?: { products?: Array<{ name?: string }> };
-    };
-    const names = (obj?.app?.products ?? [])
-      .map((p) => (typeof p?.name === 'string' ? p.name.trim() : ''))
-      .filter((n) => n.length > 0);
-    return names.length > 0 ? names : ['default'];
-  } catch {
-    return ['default'];
-  }
+  return probeDeclaredProducts(projectRoot).names;
 }
 
 export interface BuildProfileModuleEntry {
@@ -1773,6 +1821,11 @@ export function runHvigorBuild(
     /** 对应 build 目标；ohosTest 模块用 'ohosTest' */
     target?: 'default' | 'ohosTest';
     /**
+     * t5（plan a7c3f9e2）：本次构建显式 product（由上游单次解析传入）；
+     * 缺省时才回落到 detectProduct 薄包装（unresolved 抛错，调用方须已处置）。
+     */
+    product?: string;
+    /**
      * 要执行的 hvigor task 名（unqualified hook task）。
      * - 默认：default 目标 → 'assembleHap'；ohosTest 目标 → 'genOnDeviceTestHap'。
      *   两者都是 hvigor 命令行直接接受的 hook task：
@@ -1798,9 +1851,10 @@ export function runHvigorBuild(
 
   const target = opts.target ?? 'default';
   const task = opts.task ?? (target === 'ohosTest' ? 'genOnDeviceTestHap' : 'assembleHap');
+  const resolvedProduct = opts.product?.trim() || detectProduct(opts.projectRoot);
 
   if (target === 'ohosTest') {
-    const utArgs = buildUtHvigorArgs(opts.projectRoot, opts.moduleName, task);
+    const utArgs = buildUtHvigorArgs(opts.projectRoot, opts.moduleName, task, resolvedProduct);
     const resolved = resolveUtHvigorSpawnPlan(opts.projectRoot, utArgs);
     if ('toolMissing' in resolved) {
       return {
@@ -1811,7 +1865,7 @@ export function runHvigorBuild(
         errors: [],
       };
     }
-    const product = detectProduct(opts.projectRoot);
+    const product = resolvedProduct;
     return applyBuildProbe(
       opts.projectRoot,
       { module: opts.moduleName, target: 'ohosTest', task, product, buildMode: 'test' },
@@ -1836,10 +1890,10 @@ export function runHvigorBuild(
     );
   }
 
-  const args = buildModuleHapArgs(opts.projectRoot, opts.moduleName, 'default', task);
+  const args = buildModuleHapArgs(opts.projectRoot, opts.moduleName, 'default', task, resolvedProduct);
   return applyBuildProbe(
     opts.projectRoot,
-    { module: opts.moduleName, target: 'default', task, product: detectProduct(opts.projectRoot), buildMode: 'default' },
+    { module: opts.moduleName, target: 'default', task, product: resolvedProduct, buildMode: 'default' },
     invokeHvigor({
       ...opts,
       args,
@@ -2041,21 +2095,24 @@ export function buildAssembleAppArgs(
  * 装配 ohosTest / `genOnDeviceTestHap` 的 hvigor args（ut_hvigor_build / ut_hvigor_test 共用）。
  *
  * 与 DevEco Studio「Run ohosTest」默认对齐：`node hvigorw.js --mode module`
- * + `-p module=<name>@ohosTest` + `-p isOhosTest=true` + `-p product=<detectProduct()>`
+ * + `-p module=<name>@ohosTest` + `-p isOhosTest=true` + `-p product=<productOverride|detectProduct()>`
  * + `-p buildMode=test` + task + `--analyze=normal`（analyze 非 off 时）+ parallel/incremental/daemon。
  *
  * **不**写入通用 `framework.config` 模板；平台默认收敛在本函数与 `resolveUtHvigorSpawnPlan`。
+ * t5（plan a7c3f9e2）：显式 product 由调用方（ut-host 单次解析）传入；
+ * 缺省回落 detectProduct 薄包装（unresolved 抛错）。
  */
 export function buildUtHvigorArgs(
   projectRoot: string,
   moduleName: string,
   task: string = 'genOnDeviceTestHap',
+  productOverride?: string,
 ): string[] {
   return [
     '--mode', 'module',
     '-p', `module=${moduleName}@ohosTest`,
     '-p', 'isOhosTest=true',
-    '-p', `product=${detectProduct(projectRoot)}`,
+    '-p', `product=${productOverride?.trim() || detectProduct(projectRoot)}`,
     '-p', 'buildMode=test',
     task,
     ...buildUtHvigorTuningArgs(projectRoot),
@@ -2066,19 +2123,21 @@ export function buildUtHvigorArgs(
  * 装配模块级 default target 的 hvigor args（历史路径：不传 `--mode`，与 wrapper 直跑兼容）。
  *
  * **ohosTest** 请使用 `buildUtHvigorArgs`（`runHvigorBuild(..., target: 'ohosTest')` 已内置）。
+ * t5（plan a7c3f9e2）：显式 product 由调用方传入；缺省回落 detectProduct 薄包装。
  */
 export function buildModuleHapArgs(
   projectRoot: string,
   moduleName: string,
   target: 'default' | 'ohosTest',
   task: string,
+  productOverride?: string,
 ): string[] {
   if (target === 'ohosTest') {
-    return buildUtHvigorArgs(projectRoot, moduleName, task);
+    return buildUtHvigorArgs(projectRoot, moduleName, task, productOverride);
   }
   return [
     '-p', `module=${moduleName}@${target}`,
-    '-p', `product=${detectProduct(projectRoot)}`,
+    '-p', `product=${productOverride?.trim() || detectProduct(projectRoot)}`,
     ...buildHvigorTuningArgs(projectRoot),
     task,
   ];
@@ -2161,6 +2220,8 @@ export function runHvigorTest(
     moduleName: string;
     /** 模块源码相对路径（相对 projectRoot），如 '02-Feature/FeatureAlpha' */
     moduleSrcPath: string;
+    /** t5（plan a7c3f9e2）：本次构建显式 product（由 ut-host 单次解析传入） */
+    product?: string;
   },
 ): HvigorRunResult {
   const t0 = Date.now();
@@ -2173,6 +2234,7 @@ export function runHvigorTest(
     moduleName: opts.moduleName,
     target: 'ohosTest',
     task: 'genOnDeviceTestHap',
+    product: opts.product,
   });
   if (!buildRes.executed || (buildRes.exitCode !== undefined && buildRes.exitCode !== 0)) {
     // build 失败/被跳过：直接把 build 结果原样返回，让 check-ut 沿用 ut_hvigor_build 的失败语义。
@@ -2206,7 +2268,7 @@ export function runHvigorTest(
   // 这里通过 require 动态导入，避免 hvigor-runner ↔ hdc-runner 之间形成 import 环。
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { runOnDeviceUt } = require('./hdc-runner') as typeof import('./hdc-runner');
-  const resolvedProduct = detectProduct(opts.projectRoot);
+  const resolvedProduct = opts.product?.trim() || detectProduct(opts.projectRoot);
   // plan d7e4b2a9 t3③④：模块级签名诊断——同函数内直传，不跨阶段传输，防多 ohosTest 模块串诊断。
   // mainAppSignedPath 仅扫描磁盘、不核对来源（codex round5 P1）：不得断言"本轮/本环境
   // 已验证签名链路可用"，只作为"headless 全局不支持签名"这一归因不成立的弱证据，
