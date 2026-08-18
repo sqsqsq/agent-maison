@@ -553,6 +553,43 @@ export function buildGoalManifestFromInput(
   };
 }
 
+/**
+ * e9d4b7a3 t1：successor 显式 requirement 增量的稳定分节标记（也是机器检测锚——
+ * isSuccessorRepairRequirement 据此识别"本轮修复增量"是否存在；coding 侧能力块
+ * 依此收紧 auto_crop 优先级，见 goal-runner buildCapabilityBlock）。
+ */
+export const SUCCESSOR_REQUIREMENT_INCREMENT_MARKER =
+  '## 本轮修复增量 (successor requirement increment)';
+
+/** 合并后的 requirement 是否携带显式修复增量段。 */
+export function isSuccessorRepairRequirement(requirement: string | undefined | null): boolean {
+  return typeof requirement === 'string' && requirement.includes(SUCCESSOR_REQUIREMENT_INCREMENT_MARKER);
+}
+
+/**
+ * e9d4b7a3 t1：explicit 增量与源 requirement 合并——源正文在前、增量段在后（唯一任务
+ * 真源仍是 manifest.requirement 原文，coding prompt 逐字可见两段）。源已含标记（重复
+ * 合并/增量自带标记）时不二次嵌套标记段——增量直接续接在既有标记段之后，标记恒一个。
+ */
+export function mergeSuccessorRequirement(
+  sourceRequirement: string | undefined,
+  increment: string,
+): string {
+  const source = (sourceRequirement ?? '').trim();
+  const inc = increment.trim();
+  if (source.includes(SUCCESSOR_REQUIREMENT_INCREMENT_MARKER)) {
+    return [source, '', inc].filter(l => l !== '').join('\n');
+  }
+  return [source, '', SUCCESSOR_REQUIREMENT_INCREMENT_MARKER, '', inc].filter(l => l !== '').join('\n');
+}
+
+/**
+ * e9d4b7a3 t1（二轮 review P1 修正）：successor 的**显式 requirement 增量合并**不在本函数
+ * 做——本函数只做合同继承（requirement 逐字继承源 run）；「是否显式提供 --requirement /
+ * --requirement-file」是 CLI 输入事实，与 manifest 字段值无关（--manifest 自带不同文本
+ * 不得被误判为增量）。合并由 goal-runner 在捕获显式 flag + applyManifestCliOverrides 全部
+ * 完成之后调用 mergeSuccessorRequirement 一次性执行（唯一合并点）。
+ */
 export function inheritSuccessorManifest(
   manifest: GoalManifest,
   source: GoalManifest,
@@ -569,7 +606,7 @@ export function inheritSuccessorManifest(
     );
   }
 
-  // 后继不是一个“默认 fresh manifest 再补预算”的新契约：源 manifest 才是本条
+  // 后继不是一个"默认 fresh manifest 再补预算"的新契约：源 manifest 才是本条
   // supersede 链的合同 SSOT。只替换新 run 的身份与明确要求的新起点；其余字段（end/
   // requirement/adapter/chain/fidelity/dependency/预授权等）全部原样继承。阶段完成态
   // 不在 manifest 中，故不会跨 run 复制；预算/无人值守深拷贝只是避免调用方后续改写源对象。

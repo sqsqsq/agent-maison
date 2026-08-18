@@ -15,15 +15,24 @@ import {
   formatGoalStatusJson,
   formatGoalStatusText,
   generateProgressMarkdown,
-  projectGoalProgress,
+  projectGoalProgress as projectGoalProgressRaw,
   resolveChainFromEvents,
   resolveLatestRunId,
   runStatusWatchLoop,
   shouldThrottleSnapshot,
   writeProgressSnapshotAtomic,
 } from '../../scripts/utils/goal-progress';
+// e9d4b7a3 t4（二轮 review P1）：featuresDir 为必传参数——测试统一注入默认
+// 'doc/features'（与 fixtures 的布局一致）；显式传入的 featuresDir 优先。
+type ProgressInput = Parameters<typeof projectGoalProgressRaw>[0];
+function projectGoalProgress(input: ProgressInput | Omit<ProgressInput, 'featuresDir'>) {
+  return projectGoalProgressRaw({
+    ...input,
+    featuresDir: 'featuresDir' in input && input.featuresDir ? input.featuresDir : 'doc/features',
+  });
+}
 import { isLockStale } from '../../scripts/utils/goal-run-lock';
-import type { GoalRunEvent } from '../../scripts/utils/goal-runner-phase';
+import { loadEventsJsonl, type GoalRunEvent } from '../../scripts/utils/goal-runner-phase';
 import type { UnitCaseResult } from '../run-unit';
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '../../..');
@@ -159,6 +168,72 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       });
       assert(snap.status === 'COMPLETED', `status ${snap.status}`);
       assert(snap.chain.phases.length === 6, 'chain len');
+    },
+  },
+  {
+    name: 'e9d4b7a3 t4: progress.json 与 runner 同源——supersede lineage 折叠（25 祖先 + 5 当前 = 30/30），非当前 run 假象',
+    run: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'goal-progress-lineage-'));
+      try {
+        const mkEvents = (pathRel: string, lines: string[]): void => {
+          const abs = path.join(root, pathRel);
+          fs.mkdirSync(path.dirname(abs), { recursive: true });
+          fs.writeFileSync(abs, lines.join('\n') + '\n', 'utf-8');
+        };
+        // 祖先 run：25 次 invoke，10 分钟活跃段（run_end 闭合）
+        const anc: string[] = [
+          JSON.stringify({ ts: '2026-08-03T00:00:00.000Z', type: 'run_start', dry_run: false, chain: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] }),
+        ];
+        for (let i = 1; i <= 25; i++) {
+          anc.push(JSON.stringify({ ts: `2026-08-03T00:00:${String(i).padStart(2, '0')}.000Z`, type: 'agent_invoke', phase: 'spec' }));
+        }
+        anc.push(JSON.stringify({ ts: '2026-08-03T00:10:00.000Z', type: 'run_end', status: 'HALTED' }));
+        mkEvents('doc/features/feat-a/goal-runs/run-ancestor/events.jsonl', anc);
+        // 当前 run：supersede 祖先 + 5 次 invoke + run_end
+        const cur: string[] = [
+          JSON.stringify({ ts: '2026-08-03T01:00:00.000Z', type: 'run_start', dry_run: false, chain: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] }),
+          JSON.stringify({ ts: '2026-08-03T01:00:01.000Z', type: 'supersede', target_run_id: 'run-ancestor' }),
+        ];
+        for (let i = 1; i <= 5; i++) {
+          cur.push(JSON.stringify({ ts: `2026-08-03T01:00:0${i}.000Z`, type: 'agent_invoke', phase: 'spec' }));
+        }
+        cur.push(JSON.stringify({ ts: '2026-08-03T01:05:00.000Z', type: 'run_end', status: 'AWAITING_HUMAN_REVIEW' }));
+        mkEvents('doc/features/feat-a/goal-runs/run-current/events.jsonl', cur);
+
+        const manifest = mkManifest({
+          run_id: 'run-current',
+          report_dir: 'doc/features/feat-a/goal-runs/run-current',
+          budget: { ...mkManifest().budget, max_total_turns: 30 },
+        });
+        mkEvents('doc/features/feat-a/goal-runs/run-current/manifest.json', [
+          JSON.stringify({ run_id: 'run-current' }),
+        ]);
+        const snap = projectGoalProgress({
+          projectRoot: root,
+          manifest,
+          events: loadEventsJsonl(path.join(root, 'doc/features/feat-a/goal-runs/run-current/events.jsonl')),
+          workflow,
+          nowMs: new Date('2026-08-03T01:06:00.000Z').getTime(),
+          featuresDir: 'doc/features',
+        });
+        assert(snap.budget.turns_used === 30,
+          `lineage turns 应折叠累计 30（25 祖先 + 5 当前），实得 ${snap.budget.turns_used}（旧实现=当前 run 5）`);
+        assert(snap.budget.turns_limit === 30, `turns_limit=${snap.budget.turns_limit}`);
+        assert(snap.budget.wall_elapsed_ms === 15 * 60 * 1000,
+          `wall 应折叠累计 15m（祖先 10m + 当前 5m），实得 ${snap.budget.wall_elapsed_ms}`);
+        // 无 supersede 的普通视图：折叠空 → 恒等于当前 run（既有断言不回归）
+        const noSup = projectGoalProgress({
+          projectRoot: root,
+          manifest,
+          events: cur.filter((l) => !l.includes('"supersede"')).map((l) => JSON.parse(l) as GoalRunEvent),
+          workflow,
+          nowMs: new Date('2026-08-03T01:06:00.000Z').getTime(),
+          featuresDir: 'doc/features',
+        });
+        assert(noSup.budget.turns_used === 5, `无 supersede 时只计当前 run：${noSup.budget.turns_used}`);
+      } finally {
+        try { fs.rmSync(root, { recursive: true, force: true }); } catch { /* best-effort */ }
+      }
     },
   },
   {

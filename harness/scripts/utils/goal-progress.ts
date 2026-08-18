@@ -16,6 +16,7 @@ import {
   countAgentInvokeStarts,
   filterAuthoritativeEvents,
   findLatestEffectiveTimeoutMs,
+  foldBudgetLineage,
   loadEventsJsonl,
   partitionExecutionSessions,
   resolveEffectiveRunEnd,
@@ -179,6 +180,12 @@ export interface ProjectProgressInput {
   nowMs?: number;
   /** When projecting for goal-status with live lock probe. */
   liveProbe?: boolean;
+  /**
+   * e9d4b7a3 t4（二轮 review P1）：预算 lineage 折叠所需的 featuresDir，**必传**——
+   * 不接受反向推导（旧实现从 report_dir 反推会多带 feature 段，in-session 路径
+   * 折叠错到 `.../feat-a/feat-a/goal-runs`；真实来源是 cfg.paths.features_dir）。
+   */
+  featuresDir: string;
 }
 
 interface PhaseSpan {
@@ -743,15 +750,25 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
   // 实施 round2 P1：预算轴与 runner T2 同构——turns 只计权威段；wall_elapsed=活跃时间
   //（Σ 历史段 activeMs + 直播段 now−段首），不再用「首个 run_start→now」日历跨度
   //（隔夜 resume 面板秒报预算耗尽=4035d4 形态）。dry 视图保留 raw 口径。
+  // e9d4b7a3 t4：与 runner 熔断/heartbeat 同一折叠入口（foldBudgetLineage 沿 supersede
+  // 链收祖先 events）——supersede 链下 progress 显示 lineage 累计（30/30），不再 5/30。
   let turnsUsed: number;
   let wallElapsed: number;
   if (!partition) {
     turnsUsed = countAgentInvokeStarts(events);
     wallElapsed = nowMs - resolveWallClockStartMs(events);
   } else {
-    turnsUsed = partition.totalTurns;
-    const auth = partition.sessions.filter((s) => s.mode === 'authoritative');
+    const featuresDir = input.featuresDir;
+    const fold = foldBudgetLineage({
+      projectRoot,
+      featuresDir,
+      feature: input.manifest.feature,
+      currentEvents: events,
+    });
+    const foldPartition = partitionExecutionSessions(fold.budgetFoldEvents);
+    const auth = foldPartition.sessions.filter((s) => s.mode === 'authoritative');
     const last = auth.length > 0 ? auth[auth.length - 1] : null;
+    turnsUsed = foldPartition.totalTurns;
     if (!last) {
       wallElapsed = 0;
     } else if (!lastRunEnd && Number.isFinite(last.startMs) && last.startMs > 0) {
@@ -762,7 +779,7 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
         auth.slice(0, -1).reduce((a, s) => a + s.activeMs, 0) +
         Math.max(0, nowMs - last.startMs);
     } else {
-      wallElapsed = partition.priorActiveMs;
+      wallElapsed = foldPartition.priorActiveMs;
     }
   }
   // 与 goal-runner 共用同一 resolver，杜绝"runner 等 90min 但 progress 按 60min 报 STALLED"脑裂。
@@ -931,6 +948,7 @@ export function buildLiveGoalStatusSnapshot(opts: {
   projectRoot: string;
   manifest: GoalManifest;
   workflow: WorkflowSpec;
+  /** e9d4b7a3 t4：必传（cfg.paths.features_dir 派生）——折叠 lineage 与锁路径共用 */
   featuresDir: string;
   feature: string;
   runId: string;
@@ -956,6 +974,7 @@ export function buildLiveGoalStatusSnapshot(opts: {
     runnerLock,
     nowMs,
     liveProbe: true,
+    featuresDir: opts.featuresDir,
   });
   snapshot = applyFreshnessDegradation(snapshot, {
     liveProbe: true,

@@ -10,6 +10,7 @@ import {
   resolveResumedBudget,
   collectSupersededAncestorEvents,
   extractSupersedeTargets,
+  foldBudgetLineage,
   resolveWallClockStartMs,
 } from '../../scripts/utils/goal-runner-phase';
 import { isGoalHeadlessEnv, MAISON_GOAL_HEADLESS_ENV } from '../../scripts/utils/phase-state';
@@ -29,6 +30,11 @@ import {
 } from '../../scripts/utils/goal-manifest-cli';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 import { killProcessTree } from '../../scripts/utils/agent-invoke';
+import {
+  isBudgetOnlyIdentityChange,
+  resolveManifestDriftDecision,
+  buildBacktrackTargetAbsentGuidance,
+} from '../../scripts/goal-runner';
 import type { UnitCaseResult } from '../run-unit';
 
 function assert(condition: boolean, message: string): void {
@@ -157,6 +163,128 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
+    name: 'e9d4b7a3 t4: foldBudgetLineage 唯一共享入口——显式种子 ∪ events 派生种子；空种子=当前 run 事件恒等',
+    run: () => {
+      const store: Record<string, Array<Record<string, unknown>>> = {
+        'anc-1': [
+          { type: 'run_start', ts: '2026-08-01T00:00:00.000Z' },
+          { type: 'agent_invoke', phase: 'spec', ts: '2026-08-01T00:01:00.000Z' },
+          { type: 'agent_invoke', phase: 'plan', ts: '2026-08-01T00:02:00.000Z' },
+        ],
+        'anc-2': [
+          { type: 'run_start', ts: '2026-08-02T00:00:00.000Z' },
+          { type: 'agent_invoke', phase: 'coding', ts: '2026-08-02T00:01:00.000Z' },
+          { type: 'agent_invoke', phase: 'review', ts: '2026-08-02T00:02:00.000Z' },
+        ],
+      };
+      const current = [
+        { type: 'run_start', ts: '2026-08-03T00:00:00.000Z' },
+        { type: 'agent_invoke', phase: 'spec', ts: '2026-08-03T00:01:00.000Z' },
+        { type: 'agent_invoke', phase: 'plan', ts: '2026-08-03T00:01:30.000Z' },
+        { type: 'agent_invoke', phase: 'review', ts: '2026-08-03T00:02:00.000Z' },
+      ];
+      const loadEvents = (abs: string) => {
+        const m = abs.replace(/\\/g, '/').match(/goal-runs\/([^/]+)\/events\.jsonl$/);
+        return (m && store[m[1]] ? store[m[1]] : []) as never;
+      };
+      // ① 显式 CLI 种子（fresh --supersede 路径）∪ 事件派生（resume 路径）
+      const explicit = foldBudgetLineage({
+        projectRoot: '/x', featuresDir: 'doc/features', feature: 'f',
+        seedTargets: ['anc-1'], currentEvents: current, loadEvents,
+      });
+      assert(explicit.foldSeeds.join(',') === 'anc-1', `foldSeeds=${explicit.foldSeeds.join(',')}`);
+      assert(
+        explicit.budgetFoldEvents.filter(e => (e as { type?: string }).type === 'agent_invoke').length === 5,
+        '显式种子折叠：anc-1(2) + current(3) 共 5 个 invoke',
+      );
+      const acgResume = [
+        ...current,
+        { type: 'supersede', target_run_id: 'anc-2', ts: '2026-08-03T00:03:00.000Z' },
+      ];
+      const fromEvents = foldBudgetLineage({
+        projectRoot: '/x', featuresDir: 'doc/features', feature: 'f',
+        currentEvents: acgResume, loadEvents,
+      });
+      assert(fromEvents.foldSeeds.join(',') === 'anc-2', `事件派生种子：${fromEvents.foldSeeds.join(',')}`);
+      assert(
+        fromEvents.budgetFoldEvents.filter(e => (e as { type?: string }).type === 'agent_invoke').length === 5,
+        '事件派生种子折叠：anc-2(2) + current(3) 共 5 个 invoke',
+      );
+      // ② 双源合并（CLI 种子 + 事件种子）
+      const dual = foldBudgetLineage({
+        projectRoot: '/x', featuresDir: 'doc/features', feature: 'f',
+        seedTargets: ['anc-1'], currentEvents: acgResume, loadEvents,
+      });
+      assert(dual.foldSeeds.join(',') === 'anc-1,anc-2', `双源种子：${dual.foldSeeds.join(',')}`);
+      assert(
+        dual.budgetFoldEvents.filter(e => (e as { type?: string }).type === 'agent_invoke').length === 7,
+        '双源折叠：anc-1(2)+anc-2(2)+current(3)=7',
+      );
+      // ③ 无种子（普通 progress/heartbeat 视图）→ 恒等于当前 run 事件
+      const empty = foldBudgetLineage({
+        projectRoot: '/x', featuresDir: 'doc/features', feature: 'f',
+        currentEvents: current, loadEvents,
+      });
+      assert(empty.foldSeeds.length === 0 && empty.ancestorEvents.length === 0, '空种子无祖先');
+      assert(empty.budgetFoldEvents.length === current.length, '空种子时 budgetFoldEvents 与当前 run 等长');
+      assert(JSON.stringify(empty.budgetFoldEvents) === JSON.stringify(current), '空种子时 budgetFoldEvents 即当前 run 内容');
+      const b = resolveResumedBudget(empty.budgetFoldEvents as never);
+      assert(b.totalTurns === 3, `无折叠 turns=${b.totalTurns}`);
+    },
+  },
+  {
+    name: 'e9d4b7a3 t5: resolveManifestDriftDecision 全分支顶层 changedFields——budget-only 授权得 [budget]；无漂移恒空数组',
+    run: () => {
+      const birth = {
+        requirement: 'req1', budget: 'budget-a', feature: 'f',
+      };
+      const withBudget = {
+        ...birth, budget: 'budget-b',
+      };
+      const dr = {
+        currentFields: withBudget,
+        currentHash: 'h2',
+        birthFields: birth,
+        overrides: { 'override-manifest': true, 'override-start': false, 'override-end': false },
+        fidelityTransitionFields: new Set<string>(),
+      };
+      const authorized = resolveManifestDriftDecision(dr);
+      assert(authorized.rebaseApplied === true, 'override-manifest 授权须 rebase');
+      assert(authorized.changedFields.join(',') === 'budget', `budget-only changedFields=${authorized.changedFields.join(',')}`);
+      assert(isBudgetOnlyIdentityChange(authorized.changedFields), '预算独变须命中 budget-only 判据');
+
+      // 无漂移：稳定空数组（不得 undefined/null）
+      const noneDrift = resolveManifestDriftDecision({
+        ...dr, currentFields: birth, currentHash: 'h1',
+      });
+      assert(noneDrift.rebaseApplied === false && noneDrift.halt === null, '无漂移不得 rebase/halt');
+      assert(Array.isArray(noneDrift.changedFields) && noneDrift.changedFields.length === 0,
+        `无漂移 changedFields 须为稳定空数组（实得 ${JSON.stringify(noneDrift.changedFields)}）`);
+      assert(!isBudgetOnlyIdentityChange(noneDrift.changedFields), '空变更不算 budget-only');
+
+      // 无基线：同样稳定空数组
+      const noBaseline = resolveManifestDriftDecision({ ...dr, birthFields: null });
+      assert(Array.isArray(noBaseline.changedFields) && noBaseline.changedFields.length === 0,
+        '无基线分支 changedFields 须为空数组');
+
+      // 未授权漂移：顶层 changedFields 与 halt.changedFields 一致
+      const unauthorized = resolveManifestDriftDecision({
+        ...dr,
+        overrides: { 'override-manifest': false, 'override-start': false, 'override-end': false },
+      });
+      assert(unauthorized.halt !== null, '未授权须 halt');
+      assert(
+        unauthorized.changedFields.join(',') === unauthorized.halt!.changedFields.join(','),
+        '顶层与 halt 内 changedFields 一致',
+      );
+      assert(unauthorized.changedFields.join(',') === 'budget', `未授权分支顶层 changedFields=${unauthorized.changedFields.join(',')}`);
+
+      // 非 budget-only（字段混变）不得命中 budget-only 判据
+      assert(!isBudgetOnlyIdentityChange(['budget', 'requirement']), '混合变更不算 budget-only');
+      assert(!isBudgetOnlyIdentityChange([]), '空变更不算 budget-only');
+    },
+  },
+  {
     name: 'resolveWallClockStartMs: falls back to now when no run_start',
     run: () => {
       const before = Date.now();
@@ -215,6 +343,31 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       });
       assert(!r.allowed, 'cooldown blocks force');
       assert(Boolean(r.reason?.includes('cooldown')), r.reason ?? 'no reason');
+    },
+  },
+  {
+    name: 'e9d4b7a3 t1（review1）：backtrack_target_absent 指引三处可见——builder 文案要素 + 事件/outcome 接线（b3f7d9a2 硬学习）',
+    run: () => {
+      const guidance = buildBacktrackTargetAbsentGuidance('coding');
+      assert(guidance.includes('--supersede'), '须含 --supersede 交接路径');
+      assert(guidance.includes('--requirement-file'), '须用 --requirement-file 携带增量');
+      assert(guidance.includes('任务点名'), '增量须含任务点名');
+      assert(guidance.includes('关键证据摘要'), '增量须含关键证据摘要');
+      assert(guidance.includes('coding'), `须带 recommendation.phase：${guidance}`);
+      // 三处可见接线（b3f7d9a2 硬学习：同一文案契约枚举全部承载处）——
+      // ① phase_halt 事件 halt_guidance；② outcome halt_guidance；
+      // ③ console banner。detach 停机后宿主只读 events/goal-report，console 早滚走。
+      const src = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'goal-runner.ts'), 'utf-8');
+      const snippet = '...(backtrackHaltGuidance ? { halt_guidance: backtrackHaltGuidance } : {})';
+      const emitIdx = src.indexOf(snippet);
+      const outcomeIdx = src.indexOf(snippet, emitIdx + 1);
+      const consoleIdx = src.indexOf('===== ${haltReason} =====');
+      assert(emitIdx >= 0, 'phase_halt 事件须带 halt_guidance（backtrack 家族分支）');
+      assert(outcomeIdx >= 0 && outcomeIdx > emitIdx, '结局 outcome 须带 halt_guidance（与事件同源）');
+      assert(consoleIdx >= 0, 'console banner 路径保留');
+      assert(src.includes('buildBacktrackTargetAbsentGuidance'), '三处文案须出自同一 builder（单点生成）');
+      assert(src.indexOf('buildBacktrackTargetAbsentGuidance') < src.indexOf(snippet),
+        'builder 调用须早于事件 emit（同一文案单点生成后分发）');
     },
   },
   {

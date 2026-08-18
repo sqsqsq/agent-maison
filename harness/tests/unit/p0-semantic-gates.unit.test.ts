@@ -97,10 +97,119 @@ const PLAN_MD = [
   '| TC-012 | 列表半模态 | P1 | AC-10 |',
 ].join('\n');
 
+// e9d4b7a3 t2：AC-G* 泛化编号回归夹具（bc-openCard test-plan.md 实况：TC-024→AC-G1、
+// TC-026→AC-G3、TC-027→AC-G4）——旧 /AC-\d+/gi 解析吃不下 AC-G* → 恒报零覆盖。
+// 含数字 AC 行（TC-006→AC-5 / TC-009→AC-9）保持双词法同表。
+const PLAN_MD_ACG = [
+  '# 测试计划',
+  '',
+  '## 测试用例',
+  '',
+  '| 用例编号 | 用例名称 | 优先级 | 关联 AC |',
+  '|---------|---------|--------|---------|',
+  '| TC-024 | 卡片列表刷新 | P0 | AC-G1 |',
+  '| TC-026 | 全局视觉规范 | P0 | AC-G3 |',
+  '| TC-027 | 全局可访问性 | P0 | AC-G4 |',
+  '| TC-006 | 选卡类型 | P0 | AC-5 |',
+  '| TC-009 | 结果页 | P0 | AC-9 |',
+].join('\n');
+
 function writePlan(root: string): void {
   const p = resolveFeatureArtifact(root, FEATURE, 'test-plan.md').canonicalPath;
   fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(p, PLAN_MD, 'utf-8');
+}
+
+/**
+ * e9d4b7a3 t2：AC-G 夹具——acceptance 含 AC-G1（P0 device 交互，完整 checkpoint +
+ * requirement_ref；与 AC-5/AC-9 同形），test-plan 用 PLAN_MD_ACG。
+ */
+function writePlanAcG(root: string): void {
+  const p = resolveFeatureArtifact(root, FEATURE, 'test-plan.md').canonicalPath;
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, PLAN_MD_ACG, 'utf-8');
+}
+
+function writeAcceptanceWithAcG(root: string, variant: 'good' | 'fastpath' = 'good'): void {
+  const acG1Checkpoint = [
+    '  - id: AC-G1',
+    '    priority: P0',
+    '    ut_layer: device',
+    '    linked_flow: main_add_card',
+    '    requirement_ref:',
+    `      source_path: ${REQ_DOC_REL}`,
+    `      snippet: "${SNIPPET}"`,
+    '    checkpoint:',
+    '      pre_screen: bank_list',
+    '      action: { type: touch, target_element_id: bank_row_cmb }',
+    '      post_screen: card_type_sheet',
+    '      required_element_ids: [card_type_agree_btn]',
+  ].join('\n');
+  const yaml = [
+    'schema_version: "1.0"',
+    `feature: ${FEATURE}`,
+    'flows:',
+    '  main_add_card:',
+    '    screens: [bank_list, card_type_sheet, add_success]',
+    'criteria:',
+    '  - id: AC-5',
+    '    priority: P0',
+    '    ut_layer: device',
+    '    linked_flow: main_add_card',
+    '    requirement_ref:',
+    `      source_path: ${REQ_DOC_REL}`,
+    `      snippet: "${SNIPPET}"`,
+    '    checkpoint:',
+    '      pre_screen: bank_list',
+    '      action: { type: touch, target_element_id: bank_row_cmb }',
+    '      post_screen: card_type_sheet',
+    '      required_element_ids: [card_type_agree_btn]',
+    acG1Checkpoint,
+    '  - id: AC-9',
+    '    priority: P0',
+    '    ut_layer: device',
+    '    linked_flow: main_add_card',
+    '    requirement_ref:',
+    `      source_path: ${REQ_DOC_REL}`,
+    `      snippet: "${SNIPPET}"`,
+    '    checkpoint:',
+    '      pre_screen: card_type_sheet',
+    '      action: { type: touch, target_element_id: card_type_agree_btn }',
+    '      post_screen: add_success',
+    '      required_element_ids: [add_result_done]',
+  ].join('\n');
+  const p = resolveFeatureArtifact(root, FEATURE, 'acceptance.yaml').canonicalPath;
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, yaml, 'utf-8');
+}
+
+/** e9d4b7a3 t2：AC-G 派生计划——TC-024 走合规步序（good）或事故形态（fastpath）。 */
+function writeDerivedAcG(root: string, variant: 'good' | 'fastpath', skips: string[] = []): void {
+  const steps024 =
+    variant === 'good'
+      ? '{"touch":{"by_id":"bank_row_cmb"}}; {"wait_for":{"by_id":"card_type_agree_btn","timeout":10}}'
+      : '{"wait_for":{"by_text":"添加成功","timeout":10}}';
+  const steps009 =
+    variant === 'good'
+      ? '{"touch":{"by_id":"card_type_agree_btn"}}; {"wait_for":{"by_id":"add_result_done","timeout":10}}'
+      : '{"wait_for":{"by_text":"添加成功","timeout":10}}';
+  const steps006 = '{"touch":{"by_id":"bank_row_cmb"}}; {"wait_for":{"by_id":"card_type_agree_btn","timeout":10}}';
+  const md = [
+    '---',
+    `explicit_skip_tc_ids: [${skips.join(', ')}]`,
+    '---',
+    '',
+    '# 派生 Hylyre 计划',
+    '',
+    '## 测试用例清单',
+    '',
+    '| 用例编号 | 用例名称 | 测试步骤 | 优先级 | 关联 AC |',
+    '|---------|---------|---------|--------|---------|',
+    `| TC-024 | 卡片列表刷新 | ${steps024} | P0 | AC-G1 |`,
+    `| TC-006 | 选卡类型 | ${steps006} | P0 | AC-5 |`,
+    `| TC-009 | 结果页 | ${steps009} | P0 | AC-9 |`,
+  ].join('\n');
+  writeFile(root, `doc/features/${FEATURE}/testing/reports/20260713-010000/hylyre/test-plan.hylyre.md`, md);
 }
 
 /** 派生计划：good=完整状态迁移步序；fastpath=事故形态（动作不指向目标/纯 wait） */
@@ -130,12 +239,12 @@ function writeDerived(root: string, variant: 'good' | 'fastpath', skips: string[
   writeFile(root, `doc/features/${FEATURE}/testing/reports/20260713-010000/hylyre/test-plan.hylyre.md`, md);
 }
 
-function inputs(root: string, statuses: Record<string, string>, conclusion: string | null) {
+function inputs(root: string, statuses: Record<string, string>, conclusion: string | null, planMd = PLAN_MD) {
   const report = `# 测试报告\n\n## 五、结论\n\n**测试结论**: ${conclusion ?? ''}\n`;
   return {
     projectRoot: root,
     feature: FEATURE,
-    planMd: PLAN_MD,
+    planMd,
     reportMd: report,
     traceCaseStatus: new Map(Object.entries(statuses)),
     reportConclusion: conclusion,
@@ -153,6 +262,42 @@ const cases: Case[] = [
       assert.strictEqual(entries.length, 4);
       assert.deepStrictEqual(entries.find((e) => e.id === 'TC-006')!.acRefs, ['AC-5']);
       assert.strictEqual(entries.filter((e) => e.priority === 'P0').length, 3);
+    },
+  },
+  {
+    name: 'e9d4b7a3 t2：AC-G* 行内引用解析（TC-024/026/027 → AC-G1/G3/G4），纯数字 AC 行为不变',
+    run: () => {
+      const entries = parsePlanTcEntries(PLAN_MD_ACG);
+      assert.strictEqual(entries.length, 5);
+      assert.deepStrictEqual(entries.find((e) => e.id === 'TC-024')!.acRefs, ['AC-G1'],
+        'AC-G1 须被识别（旧 /AC-\\d+/gi 吃不下）');
+      assert.deepStrictEqual(entries.find((e) => e.id === 'TC-026')!.acRefs, ['AC-G3']);
+      assert.deepStrictEqual(entries.find((e) => e.id === 'TC-027')!.acRefs, ['AC-G4']);
+      assert.deepStrictEqual(entries.find((e) => e.id === 'TC-009')!.acRefs, ['AC-9'],
+        '纯数字 AC 解析行为不得改变');
+      const numericAgain = parsePlanTcEntries(PLAN_MD);
+      assert.deepStrictEqual(numericAgain.map((e) => [e.id, e.acRefs.join(',')]),
+        [['TC-006', 'AC-5'], ['TC-009', 'AC-9'], ['TC-011', 'AC-8'], ['TC-012', 'AC-10']],
+        '数字 AC 全集解析结果逐条不变');
+    },
+  },
+  {
+    name: 'e9d4b7a3 t2：AC-G1 语义覆盖闭环——合规步序 PASS（此前零覆盖恒 FAIL）；fastpath 仍 FAIL',
+    run: () => {
+      const root = mkProject();
+      seedReqDoc(root);
+      writeAcceptanceWithAcG(root);
+      writePlanAcG(root);
+      writeDerivedAcG(root, 'good');
+      const ok = evaluateP0SemanticCoverage(inputs(root, { 'TC-024': '通过', 'TC-006': '通过', 'TC-009': '通过' }, '达标', PLAN_MD_ACG));
+      assert.strictEqual(ok[0].status, 'PASS', ok[0].details);
+      const boundary = ok.find((r) => r.id === 'p0_runtime_step_evidence_boundary');
+      assert.ok(boundary && boundary.status === 'WARN', 'AC-G 场景同款运行时证据边界 WARN');
+
+      writeDerivedAcG(root, 'fastpath');
+      const bad = evaluateP0SemanticCoverage(inputs(root, { 'TC-024': '通过', 'TC-006': '通过', 'TC-009': '通过' }, '达标', PLAN_MD_ACG));
+      assert.strictEqual(bad[0].status, 'FAIL', bad[0].details);
+      assert.ok(bad[0].details.includes('纯 wait'), bad[0].details);
     },
   },
   {

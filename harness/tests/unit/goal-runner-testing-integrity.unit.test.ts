@@ -47,6 +47,7 @@ import {
 } from '../../scripts/utils/pass-snapshot';
 import { collectPhaseRepairCandidates } from '../../scripts/utils/repair-candidates';
 import { computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
+import { mergeSuccessorRequirement } from '../../scripts/utils/goal-manifest';
 import type { UnitCaseResult } from '../run-unit';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
@@ -255,6 +256,19 @@ async function runChain(
     forceResume?: boolean;
     /** b7e4d2a9 Todo2：--supersede 目标（可多个） */
     supersede?: string[];
+    /** e9d4b7a3 t5：fresh 启动走 --manifest 注入预算（goal-runner 无 --budget CLI 旗标）——
+     * 用于重放「预算撞墙 → 提额 → resume」的确定性首 run */
+    freshBudget?: { max_total_turns: number };
+    /** e9d4b7a3 t5：resume 附加 argv（如 --override-manifest 授权预算提额） */
+    resumeExtraArgs?: string[];
+    /** e9d4b7a3 t1（入口测试）：--requirement 文本覆盖（缺省 '真机测试银行卡开卡流程'） */
+    freshRequirement?: string;
+    /** e9d4b7a3 t1（入口测试）：不传 --requirement（无显式增量路径） */
+    omitRequirement?: boolean;
+    /** e9d4b7a3 t1（入口测试）：--requirement-file 内容（与 --requirement 互斥） */
+    freshRequirementFile?: string;
+    /** e9d4b7a3 t1（入口测试）：--manifest 完整 YAML 内容（覆盖 budget-manifest 场景） */
+    freshManifestContent?: string;
     /** 为兼容共用测试驱动保留 HMAC 注入；视觉链已不再消费它。 */
     hmacKey?: string;
     /** device-readiness t3：覆盖设备就绪门（默认注入 READY(physical)；传入可验三态行为） */
@@ -271,6 +285,9 @@ async function runChain(
     onHarnessSummary?: (ctx: { phase: string; attempt: number }) =>
       | { blockers: Array<Record<string, unknown>> }
       | null;
+    /** e9d4b7a3 t5 负向：按 (attemptId, phase) 强制 receipt 复验 failed（模拟旧回执身份
+     * 损坏等真实失败路径——桩默认已 identity-aware，此选项只做注入，不改变默认语义） */
+    failReceiptFor?: (attemptId: string, phase: string) => boolean;
   } = {},
 ): Promise<RunProbe> {
   const invokedPhases: string[] = [];
@@ -330,11 +347,37 @@ async function runChain(
           };
         })) as never,
     );
-    __testing_setValidateReceipt(((_hr: string, _pr: string, ph: string, feat: string) => ({
-      status: 'passed' as const,
-      receipt_path: `doc/features/${feat}/${ph}/phase-completion-receipt.md`,
-      exit_code: 0,
-    })) as never);
+    __testing_setValidateReceipt(((_hr: string, _pr: string, ph: string, feat: string, validateOpts?: {
+      goalIdentity?: { runId?: string; attemptId?: string; attemptPhase?: string };
+    }) => {
+      // e9d4b7a3 t5（二轮 review P1）：**identity-aware 桩**——镜像 check-receipt 的同阶段
+      // claimed_attempt_id 严格等值（不得无条件 passed）：回执文件在场的 claimed 与请求
+      // attempt 不一致 → failed。这使「刷新伪造 refresh-* attempt」在测试里必然红。
+      const attempt = validateOpts?.goalIdentity?.attemptId ?? '';
+      if (attempt && opts.failReceiptFor?.(attempt, String(ph))) {
+        return {
+          status: 'failed' as const,
+          receipt_path: `doc/features/${feat}/${ph}/phase-completion-receipt.md`,
+          message: `injected failure for attempt=${attempt} phase=${ph}`,
+        };
+      }
+      const receiptPath = path.join(_pr, 'doc', 'features', feat, String(ph), 'phase-completion-receipt.md');
+      if (attempt && fs.existsSync(receiptPath)) {
+        const claimed = /claimed_attempt_id:\s*"([^"]*)"/.exec(fs.readFileSync(receiptPath, 'utf-8'))?.[1] ?? '';
+        if (claimed && claimed !== attempt) {
+          return {
+            status: 'failed' as const,
+            receipt_path: `doc/features/${feat}/${ph}/phase-completion-receipt.md`,
+            message: `identity mismatch: claimed="${claimed}" attempt="${attempt}"`,
+          };
+        }
+      }
+      return {
+        status: 'passed' as const,
+        receipt_path: `doc/features/${feat}/${ph}/phase-completion-receipt.md`,
+        exit_code: 0,
+      };
+    }) as never);
     __testing_setRunHarnessPhase(async (pr, _fr, ph, feat, _dry, gm, roundIdentity, _timeout, deviceTargetEnv) => {
       harnessPhases.push(String(ph));
       harnessDeviceEnvs.push({ phase: String(ph), env: deviceTargetEnv });
@@ -388,9 +431,12 @@ async function runChain(
       const phaseDir = path.join(pr, 'doc', 'features', feat, String(ph));
       const dir = path.join(phaseDir, 'reports');
       fs.mkdirSync(dir, { recursive: true });
+      // e9d4b7a3 t5：回执写入 claimed_attempt_id（roundIdentity 身份）——identity-aware
+      // validateReceipt 桩据此做同阶段等值校验（镜像 check-receipt 语义）。
       fs.writeFileSync(path.join(phaseDir, 'phase-completion-receipt.md'), [
         `# ${String(ph)} 阶段完成回执`, '',
         `- 模块: ${feat}`, `- 阶段: ${String(ph)}`, '- 结论: PASS',
+        `- claimed_attempt_id: "${roundIdentity?.attemptId ?? ''}"`,
         '- 脚本 harness: 退出码 0，零 BLOCKER', '- verifier: PASS', '',
       ].join('\n'), 'utf-8');
       fs.writeFileSync(path.join(dir, 'verifier.report.md'), '# verifier\nverdict: PASS\n', 'utf-8');
@@ -439,6 +485,25 @@ async function runChain(
       return { exitCode: 0, timedOut: false };
     });
     const supersedeArgs = (opts.supersede ?? []).flatMap(id => ['--supersede', id]);
+    // e9d4b7a3 t5：fresh 预算注入——goal-runner 无 --budget 旗标，走 --manifest +
+    // --override-manifest（requirement/adapter 亦经 override 应用，行为等价纯 CLI）
+    if (!opts.resume && (opts.freshBudget || opts.freshManifestContent)) {
+      const manifestYaml = opts.freshManifestContent
+        ?? [
+          `feature: ${FEATURE}`,
+          `budget:`,
+          `  max_total_turns: ${opts.freshBudget!.max_total_turns}`,
+          `unattended:`,
+          `  write_mode: full-access`,
+          `  approval_mode: never`,
+          `  max_turns: 20`,
+        ].join('\n');
+      writeFile(root, 'budget-manifest.yaml', manifestYaml);
+    }
+    if (!opts.resume && opts.freshRequirementFile) {
+      writeFile(root, 'increment-req.txt', opts.freshRequirementFile);
+    }
+    const useManifestPath = Boolean(opts.freshBudget || opts.freshManifestContent);
     process.argv = opts.resume
       ? [
           'node', 'goal-runner.ts', '--resume', opts.resume, '--feature', FEATURE,
@@ -446,14 +511,21 @@ async function runChain(
           // 无 HMAC 测试宿主的 resume 须弱 ack vision 账本（生产合法路径；终态封顶人工复核）
           ...(opts.forceResume ? ['--force-resume', '--ack-unverified-ledgers'] : []),
           ...supersedeArgs,
+          ...(opts.resumeExtraArgs ?? []),
         ]
       : [
           'node', 'goal-runner.ts',
           '--feature', FEATURE,
-          '--requirement', '真机测试银行卡开卡流程',
+          ...(!opts.omitRequirement && !opts.freshRequirementFile
+            ? ['--requirement', opts.freshRequirement ?? '真机测试银行卡开卡流程']
+            : []),
+          ...(opts.freshRequirementFile ? ['--requirement-file', 'increment-req.txt'] : []),
           '--start', 'spec', '--end', 'testing',
           '--adapter', 'cursor',
           '--foreground-ok', '--force',
+          ...(!useManifestPath
+            ? []
+            : ['--manifest', 'budget-manifest.yaml', '--override-manifest', '--override-start', '--override-end']),
           ...supersedeArgs,
         ];
     process.chdir(root);
@@ -651,6 +723,259 @@ test('b7e4d2a9 Todo2：--supersede 指向当前 run → BLOCKER（不删自身�
       `run B 事件序列=${JSON.stringify(probeB.events.map(e => e.type))}；exit=${probeB.exitCode}`,
   );
   assert(!aStateExists(), 'supersede 后目标 run 场外状态须被回收');
+});
+
+test('e9d4b7a3 t5: 预算撞墙 → 提额(--override-manifest) → resume：budget-only rebase 先确定性刷新上游证据，0 个 review invoke 被 stale 烧掉', async () => {
+  const { root } = setupHost();
+  // ① 首 run：turns 预算 3 → spec/plan/coding 各 1 次 invoke 后，review 起点 budget_turns 撞墙
+  const first = await runChain(root, {
+    freshBudget: { max_total_turns: 3 },
+    onTesting: ({ root: r }) => writeCleanTesting(r),
+  });
+  assert(runEndStatus(first.events) === 'HALTED', `前置：首 run 须 HALTED，实得 ${runEndStatus(first.events)}`);
+  assert(first.events.some(e => e.type === 'budget_turns'), '首 run 须 budget_turns 撞墙（turns 3/3）');
+  assert(!first.invokedPhases.includes('review'), '首 run 不得启动 review agent（预算在 review 前撞墙）');
+  const runId = path.basename(first.reportDir);
+
+  // ② 宿主提预算（--override-manifest 授权的 manifest 编辑）：直接改 goal-runs manifest budget
+  const manifestAbs = path.join(root, 'doc/features', FEATURE, 'goal-runs', runId, 'manifest.json');
+  const raw = JSON.parse(fs.readFileSync(manifestAbs, 'utf-8'));
+  raw.budget.max_total_turns = 99;
+  fs.writeFileSync(manifestAbs, JSON.stringify(raw, null, 2) + '\n', 'utf-8');
+
+  // cooldown 硬防线（同 supersede 用例：回拨 run_end 10 分钟）
+  {
+    const evPath = path.join(first.reportDir, 'events.jsonl');
+    const patched = fs.readFileSync(evPath, 'utf-8').split('\n').map(l => {
+      if (!l.trim()) return l;
+      try {
+        const e = JSON.parse(l) as { type?: string; ts?: string };
+        if (e.type === 'run_end' && e.ts) {
+          e.ts = new Date(Date.parse(e.ts) - 10 * 60 * 1000).toISOString();
+          return JSON.stringify(e);
+        }
+      } catch { /* keep */ }
+      return l;
+    });
+    fs.writeFileSync(evPath, patched.join('\n'), 'utf-8');
+  }
+
+  // ③ resume：budget-only 授权 rebase → review agent 启动前确定性刷新已完成上游证据
+  const resumed = await runChain(root, {
+    resume: runId,
+    forceResume: true,
+    resumeExtraArgs: ['--override-manifest'],
+    onTesting: ({ root: r }) => writeCleanTesting(r),
+  });
+  const rebaseEv = resumed.events.find(e => e.type === 'manifest_identity_rebase') as
+    { changed_fields?: string[] } | undefined;
+  assert(!!rebaseEv, 'resume 须落 manifest_identity_rebase（基线前进）');
+  assert(
+    JSON.stringify([...(rebaseEv!.changed_fields ?? [])].sort()) === JSON.stringify(['budget']),
+    `budget-only rebase 事件须带 changed_fields=["budget"]，实得 ${JSON.stringify(rebaseEv!.changed_fields)}`,
+  );
+  const refreshEv = resumed.events.find(e => e.type === 'upstream_evidence_deterministic_refresh') as
+    { phases?: string[] } | undefined;
+  assert(!!refreshEv, 'budget-only rebase 须触发上游证据确定性刷新事件');
+  assert(
+    JSON.stringify([...(refreshEv!.phases ?? [])].sort()) === JSON.stringify(['coding', 'plan', 'spec']),
+    `刷新对象=受影响的已完成上游 spec/plan/coding，实得 ${JSON.stringify(refreshEv!.phases)}`,
+  );
+  const refreshComplete = resumed.events.find(e => e.type === 'upstream_evidence_deterministic_refresh_complete');
+  assert(!!refreshComplete, '须落刷新完成事件');
+  assert(
+    JSON.stringify((refreshComplete as { failures?: string[] }).failures ?? []) === '[]',
+    `确定性刷新不得静默失败：${JSON.stringify((refreshComplete as { failures?: string[] }).failures)}`,
+  );
+  // ④ 顺序与计数：刷新 harness 调用先于任何 review invoke；review 恰好一次（0 次被 stale 白烧）
+  assert(
+    resumed.harnessPhases.slice(0, 3).join(',') === 'spec,plan,coding',
+    `刷新 harness 必须先于任何 review invoke：harness 序=${resumed.harnessPhases.join(',')}`,
+  );
+  assert(
+    resumed.invokedPhases.filter(p => p === 'review').length === 1,
+    `review 不得被 stale 重试白烧（应恰 1 次 invoke）：${JSON.stringify(resumed.invokedPhases)}`,
+  );
+  assert(resumed.invokedPhases[0] === 'review', `resume 从 review 续跑：${resumed.invokedPhases.join(',')}`);
+  const refreshedStates = resumed.harnessPhases.slice(0, 3);
+  assert(refreshedStates.every(p => p !== 'review'), '刷新阶段集合不得包含 review（未完成阶段不得刷新）');
+  // 终态：resume 续跑到底（首 run 的 budget_turns phase_halt 属设计内，不断言零 phase_halt）
+  const st = runEndStatus(resumed.events);
+  const capped = hasEvent(resumed.events, 'vision_trust_completion_cap');
+  assert(
+    st === 'CHAIN_SLICE_COMPLETED' || st === 'COMPLETED' || (st === 'PARTIAL' && capped),
+    `resume 后 run 须到达终点（实得 status=${st}, visionCap=${capped}, exit=${resumed.exitCode}）`,
+  );
+  // 二轮 review P1：刷新不得伪造同阶段新 attempt（refresh-*）——回执 identity 复验用
+  // 原 attempt（跨阶段复验语义，不 re-sign）；源码级接线断言防回归。
+  const runnerSrc = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'goal-runner.ts'), 'utf-8');
+  assert(!/attemptId: `refresh-\$\{phase\}`/.test(runnerSrc), '刷新不得再伪造 refresh-* attempt');
+  assert(/originalAttempt/.test(runnerSrc), '刷新须从 events 恢复原 attempt id');
+});
+
+test('e9d4b7a3 t5 负向：刷新期原 attempt 复验失败 → review 前一次性 HALT，0 个 review invoke（不复发 i28/i29）', async () => {
+  const { root } = setupHost();
+  const first = await runChain(root, {
+    freshBudget: { max_total_turns: 3 },
+    onTesting: ({ root: r }) => writeCleanTesting(r),
+  });
+  assert(runEndStatus(first.events) === 'HALTED', `前置：首 run 须 HALTED，实得 ${runEndStatus(first.events)}`);
+  const runId = path.basename(first.reportDir);
+  const manifestAbs = path.join(root, 'doc/features', FEATURE, 'goal-runs', runId, 'manifest.json');
+  const raw = JSON.parse(fs.readFileSync(manifestAbs, 'utf-8'));
+  raw.budget.max_total_turns = 99;
+  fs.writeFileSync(manifestAbs, JSON.stringify(raw, null, 2) + '\n', 'utf-8');
+  {
+    const evPath = path.join(first.reportDir, 'events.jsonl');
+    const patched = fs.readFileSync(evPath, 'utf-8').split('\n').map(l => {
+      if (!l.trim()) return l;
+      try {
+        const e = JSON.parse(l) as { type?: string; ts?: string };
+        if (e.type === 'run_end' && e.ts) {
+          e.ts = new Date(Date.parse(e.ts) - 10 * 60 * 1000).toISOString();
+          return JSON.stringify(e);
+        }
+      } catch { /* keep */ }
+      return l;
+    });
+    fs.writeFileSync(evPath, patched.join('\n'), 'utf-8');
+  }
+  // 刷新阶段的 receipt 复验全部失败（i1-i3 为 run1 的 spec/plan/coding 原 attempt 身份，
+  // refresh 恢复后复验失败=旧回执身份损坏/证据真坏）——任一失败必须 review 前一次性
+  // halt，不得继续烧。
+  const resumed = await runChain(root, {
+    resume: runId,
+    forceResume: true,
+    resumeExtraArgs: ['--override-manifest'],
+    failReceiptFor: (attempt, ph) => /^i[1-3]$/.test(attempt) && ['spec', 'plan', 'coding'].includes(ph),
+    onTesting: ({ root: r }) => writeCleanTesting(r),
+  });
+  assert(runEndStatus(resumed.events) === 'HALTED', `刷新失败须 HALTED（实得 ${runEndStatus(resumed.events)}）`);
+  assert(!resumed.invokedPhases.includes('review'), `review 一次都不得启动：${JSON.stringify(resumed.invokedPhases)}`);
+  const complete = resumed.events.find(e => e.type === 'upstream_evidence_deterministic_refresh_complete') as
+    { failures?: string[] } | undefined;
+  assert(!!complete, '须落刷新完成事件');
+  assert((complete!.failures ?? []).length >= 1, `刷新失败须如实登记：${JSON.stringify(complete!.failures)}`);
+  const haltEv = [...resumed.events].reverse().find(e => e.type === 'phase_halt') as
+    { halt_reason?: string; halt_guidance?: string } | undefined;
+  assert(!!haltEv, '须落 phase_halt');
+  assert(haltEv!.halt_reason === 'upstream_closure_gap', `halt_reason=${haltEv!.halt_reason}`);
+  assert(Boolean(haltEv!.halt_guidance), 'halt 须带 guidance（event 承载，report 经 rebuild 透传）');
+});
+
+test('e9d4b7a3 t1 入口①：--supersede 无显式 requirement → successor 逐字继承源 requirement（无标记）', async () => {
+  const { root } = setupHost();
+  const sourceReq = 'SOURCE-REQ-银行卡开卡源需求原文';
+  const A = await runChain(root, {
+    freshRequirement: sourceReq,
+    onTesting: ({ root: r }) =>
+      writeVisualDiff(r, [{ id: 'all_banks', verdict: 'warn', mustFix: [MUST_FIX_TEXT], buildFp: false }]),
+  });
+  assert(runEndStatus(A.events) === 'HALTED', `前置：源 run A 须 HALTED（实得 ${runEndStatus(A.events)}）`);
+  const runA = path.basename(A.reportDir);
+  const B = await runChain(root, {
+    supersede: [runA],
+    omitRequirement: true,
+    onTesting: ({ root: r }) => writeCleanTesting(r),
+  });
+  assertRunReachedEnd(B, 't1 入口①');
+  const manifestB = JSON.parse(fs.readFileSync(path.join(B.reportDir, 'manifest.json'), 'utf-8')) as
+    { requirement?: string };
+  assert(manifestB.requirement === sourceReq,
+    `无显式增量须逐字继承：${JSON.stringify(manifestB.requirement)}`);
+  assert(!manifestB.requirement!.includes('本轮修复增量'), '逐字继承不得带合并标记');
+});
+
+test('e9d4b7a3 t1 入口②：--supersede + --requirement 纯 CLI 增量 → 源正文 + 增量段合并为唯一任务真源', async () => {
+  const { root } = setupHost();
+  const sourceReq = 'SOURCE-REQ-银行卡开卡源需求原文';
+  const incr = 'INCREMENT-29 项 logo 必须物化 + TC-014 诊断上下文';
+  const A = await runChain(root, {
+    freshRequirement: sourceReq,
+    onTesting: ({ root: r }) =>
+      writeVisualDiff(r, [{ id: 'all_banks', verdict: 'warn', mustFix: [MUST_FIX_TEXT], buildFp: false }]),
+  });
+  const runA = path.basename(A.reportDir);
+  const B = await runChain(root, {
+    supersede: [runA],
+    freshRequirement: incr,
+    onTesting: ({ root: r }) => writeCleanTesting(r),
+  });
+  assertRunReachedEnd(B, 't1 入口②');
+  const manifestB = JSON.parse(fs.readFileSync(path.join(B.reportDir, 'manifest.json'), 'utf-8')) as
+    { requirement?: string };
+  const expected = mergeSuccessorRequirement(sourceReq, incr);
+  assert(manifestB.requirement === expected,
+    `纯 CLI 增量须合并：（期望 ${JSON.stringify(expected)}，实得 ${JSON.stringify(manifestB.requirement)}）`);
+});
+
+test('e9d4b7a3 t1 入口③：--supersede + --manifest + --requirement-file + --override-manifest → 合并一次，源不丢、manifest 自带文本不冒充增量', async () => {
+  const { root } = setupHost();
+  const sourceReq = 'SOURCE-REQ-银行卡开卡源需求原文';
+  const nativeReq = 'MANIFEST-NATIVE-自在需求文本';
+  const fileIncr = 'FILE-增量-物化清单与证据摘要';
+  const A = await runChain(root, {
+    freshRequirement: sourceReq,
+    onTesting: ({ root: r }) =>
+      writeVisualDiff(r, [{ id: 'all_banks', verdict: 'warn', mustFix: [MUST_FIX_TEXT], buildFp: false }]),
+  });
+  const runA = path.basename(A.reportDir);
+  const B = await runChain(root, {
+    supersede: [runA],
+    freshManifestContent: [
+      `feature: ${FEATURE}`,
+      `requirement: ${nativeReq}`,
+      'unattended:',
+      '  write_mode: full-access',
+      '  approval_mode: never',
+      '  max_turns: 20',
+    ].join('\n'),
+    freshRequirementFile: fileIncr,
+    onTesting: ({ root: r }) => writeCleanTesting(r),
+  });
+  assertRunReachedEnd(B, 't1 入口③');
+  const manifestB = JSON.parse(fs.readFileSync(path.join(B.reportDir, 'manifest.json'), 'utf-8')) as
+    { requirement?: string };
+  const expected = mergeSuccessorRequirement(sourceReq, fileIncr);
+  assert(manifestB.requirement === expected,
+    `manifest+override 路径须合并一次（源+文件增量）：期望 ${JSON.stringify(expected)}，实得 ${JSON.stringify(manifestB.requirement)}`);
+  assert(!manifestB.requirement!.includes(nativeReq), 'manifest 自带文本不得冒充显式增量');
+});
+
+test('e9d4b7a3 t1 入口④（三轮 review 阻断回归）：源=A、manifest 自带=B、显式文件内容=A → 逐字继承源（B 不冒充增量）', async () => {
+  const { root } = setupHost();
+  const sourceReq = 'SOURCE-REQ-SRC-A';
+  const nativeReq = 'MANIFEST-NATIVE-B';
+  const A = await runChain(root, {
+    freshRequirement: sourceReq,
+    onTesting: ({ root: r }) =>
+      writeVisualDiff(r, [{ id: 'all_banks', verdict: 'warn', mustFix: [MUST_FIX_TEXT], buildFp: false }]),
+  });
+  assert(runEndStatus(A.events) === 'HALTED', `前置：源 run A 须 HALTED（实得 ${runEndStatus(A.events)}）`);
+  const runA = path.basename(A.reportDir);
+  // 显式 --requirement-file 内容 == 源 requirement（A）：applyManifestCliOverrides 后
+  // manifest.requirement=A；唯一合并点只消费显式文本 A（== 源 → 不合并），
+  // manifest 自带文本 B 不得因 fallback 被误当增量。
+  const B = await runChain(root, {
+    supersede: [runA],
+    freshManifestContent: [
+      `feature: ${FEATURE}`,
+      `requirement: ${nativeReq}`,
+      'unattended:',
+      '  write_mode: full-access',
+      '  approval_mode: never',
+      '  max_turns: 20',
+    ].join('\n'),
+    freshRequirementFile: sourceReq,
+    onTesting: ({ root: r }) => writeCleanTesting(r),
+  });
+  assertRunReachedEnd(B, 't1 入口④');
+  const manifestB = JSON.parse(fs.readFileSync(path.join(B.reportDir, 'manifest.json'), 'utf-8')) as
+    { requirement?: string };
+  assert(manifestB.requirement === sourceReq,
+    `显式文本==源 时不合并，须逐字继承源：${JSON.stringify(manifestB.requirement)}`);
+  assert(!manifestB.requirement!.includes('本轮修复增量'), '逐字继承不得带合并标记');
+  assert(!manifestB.requirement!.includes(nativeReq), 'manifest 自带文本 B 不得被合并进后继任务');
 });
 
 test('E2E-2a testing 改产品源码 → violation：gate 不运行、halt、精确报文件', async () => {

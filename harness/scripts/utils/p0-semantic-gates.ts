@@ -29,6 +29,8 @@ import {
   defaultTrustRegistryPath,
   validateConfirmationReceiptFile,
 } from './confirmation-receipt';
+// e9d4b7a3 t2：AC/BD id 词法 SSOT 由 acceptance 侧承载，行内引用解析不再自写第二套正则
+import { extractAcceptanceIdRefs } from './check-acceptance';
 import {
   extractDerivedPlanCases,
   loadExplicitSkipTcIds,
@@ -280,7 +282,8 @@ interface PlanTcEntry {
   acRefs: string[];
 }
 
-/** 顶层 test-plan.md 用例表：id + 优先级 + 行内 AC-\d+ 引用 */
+/** 顶层 test-plan.md 用例表：id + 优先级 + 行内 AC/BD 引用（词法 SSOT=ACCEPTANCE_ID_PATTERN，
+ * e9d4b7a3 t2：旧 `/AC-\d+/gi` 吃不下 AC-G* → 与 acceptance 侧全集不对称，恒报零覆盖） */
 export function parsePlanTcEntries(planMd: string): PlanTcEntry[] {
   const section = getSectionContent(planMd, '测试用例') ?? planMd;
   const out: PlanTcEntry[] = [];
@@ -291,7 +294,7 @@ export function parsePlanTcEntries(planMd: string): PlanTcEntry[] {
     for (const row of table.rows) {
       const m = (row[iId] ?? '').match(/TC-\d+/i);
       if (!m) continue;
-      const acRefs = [...new Set((row.join(' ').match(/AC-\d+/gi) ?? []).map((s) => s.toUpperCase()))];
+      const acRefs = extractAcceptanceIdRefs(row.join(' '));
       out.push({ id: m[0].toUpperCase(), priority: (row[iPri] ?? '').trim(), acRefs });
     }
     if (out.length > 0) break;

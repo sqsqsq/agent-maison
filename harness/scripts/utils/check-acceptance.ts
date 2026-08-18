@@ -18,6 +18,27 @@ import {
   normalizeUtLayer,
 } from './acceptance-layering';
 
+/**
+ * e9d4b7a3 t2：acceptance 侧 AC/BD id **词法 SSOT**（全匹配=合法 id）——AC-N 与泛化
+ * AC-GN 同一词法（BD 同构）。所有"行内 AC 引用解析"的承载点必须以本词法为唯一
+ * 依据（p0-semantic-gates 曾自写 `/AC-\d+/gi` 第二套规则 → AC-G* 恒报零覆盖）。
+ */
+export const ACCEPTANCE_ID_PATTERN = /^(AC|BD)-(G\d+|\d+)$/i;
+
+/**
+ * e9d4b7a3 t2：从任意文本做**包含匹配**提取行内 AC/BD 引用（test-plan 用例行/正文），
+ * 同一词法归一大写去重。\d 界外不做 \w 粘连判定——AC-G1:138 这类即按 token 提取。
+ */
+export function extractAcceptanceIdRefs(text: string): string[] {
+  const out: string[] = [];
+  const re = /(AC|BD)-[A-Z]*\d+/gi;
+  for (const m of text.matchAll(re)) {
+    const token = m[0].toUpperCase();
+    if (ACCEPTANCE_ID_PATTERN.test(token)) out.push(token);
+  }
+  return [...new Set(out)];
+}
+
 // 与各 phase checker 的 ruleDesc 签名对齐（section 为 phase-rules YAML 桶名）
 type RuleDescFn = (ctx: CheckContext, section: string, id: string) => string;
 

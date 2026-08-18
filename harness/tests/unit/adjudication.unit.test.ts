@@ -50,6 +50,9 @@ import {
   buildGoalManifestFromInput,
   computeManifestIdentityFields,
   inheritSuccessorManifest,
+  isSuccessorRepairRequirement,
+  mergeSuccessorRequirement,
+  SUCCESSOR_REQUIREMENT_INCREMENT_MARKER,
   type GoalManifest,
 } from '../../scripts/utils/goal-manifest';
 
@@ -717,6 +720,7 @@ const manifestCompatCases: TestCase[] = [
         run_id: '20260807T000001Z-successor',
         budget: { max_total_turns: 99, max_backtracks: 99 },
         unattended: { write_mode: 'workspace-write', approval_mode: 'never', max_turns: 99 },
+        requirement: 'fresh 字段值（非 CLI 显式 flag——不得被误判为增量）',
       }), { projectRoot: root });
       const successor = inheritSuccessorManifest(fresh, source, {
         round: ['round-a', 'round-a', ''],
@@ -729,8 +733,10 @@ const manifestCompatCases: TestCase[] = [
         'end_phase', 'requirement', 'adapter', 'chain_override', 'minimum_assurance',
         'fidelity', 'fidelity_receipt', 'dependency_policy', 'pre_authorized_mutations',
       ] as const) {
-        assertEq(JSON.stringify(successor[key]), JSON.stringify(source[key]), `后继不得丢失 ${key}`);
+        assertEq(JSON.stringify(successor[key]), JSON.stringify(source[key]),
+          `后继不得丢失 ${key}（requirement 逐字继承源——增量合并是 runner 侧显式 flag 门控，不在本函数）`);
       }
+      assert(!isSuccessorRepairRequirement(successor.requirement), '合同继承不得带合并标记');
       assertEq(successor.successor_of, source.run_id, '后继须绑定源 run');
       assertEq(JSON.stringify(successor.inherited_round_fingerprints), JSON.stringify(['round-a']), 'round 指纹须去重');
       assertEq(JSON.stringify(successor.inherited_drift_fingerprints), JSON.stringify(['drift-a', 'drift-b']), 'drift 指纹须去重');
@@ -739,6 +745,20 @@ const manifestCompatCases: TestCase[] = [
         && 'inherited_drift_fingerprints' in identity, '后继身份字段须绑定继承元数据');
       assert(!('phase_outcomes' in successor), '后继不得复制源 run 阶段完成态');
     }),
+  },
+  {
+    name: 'e9d4b7a3 t1：mergeSuccessorRequirement 幂等（不二次嵌套标记）；检测器只看标记在场',
+    run: () => {
+      const once = mergeSuccessorRequirement('源', '增量：logo 29 项');
+      assert(once.includes('源') && once.includes('增量：logo 29 项'), '合并须同时含源正文与增量');
+      assert(once.includes(SUCCESSOR_REQUIREMENT_INCREMENT_MARKER), '合并须带稳定标记');
+      assert(isSuccessorRepairRequirement(once), '合并产物须被检测器识别');
+      const twice = mergeSuccessorRequirement(once, '第二轮增量');
+      assertEq((twice.match(new RegExp(SUCCESSOR_REQUIREMENT_INCREMENT_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length, 1,
+        '重复合并不得二次嵌套标记');
+      assert(!isSuccessorRepairRequirement(undefined), 'undefined 不是修复增量');
+      assert(!isSuccessorRepairRequirement(''), '空串不是修复增量');
+    },
   },
 ];
 

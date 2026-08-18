@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { loadFrameworkConfig } from '../../config';
 import type { GoalManifest } from './goal-manifest';
 import { writeGoalManifest } from './goal-manifest';
 import { loadEventsJsonl, type GoalRunEvent } from './goal-runner-phase';
@@ -51,6 +52,10 @@ export function writeInSessionProgressFenced(
   assertFencedOwner(runDir, token, 'in_session_progress_write');
   const eventsPath = path.join(projectRoot, manifest.report_dir, 'events.jsonl');
   const events = (fs.existsSync(eventsPath) ? loadEventsJsonl(eventsPath) : []) as GoalRunEvent[];
+  // e9d4b7a3 t4（二轮 review P1）：featuresDir 必传——真实来源是 cfg.paths.features_dir
+  //（report_dir 反推会多带 feature 段，折叠错路径）。session 模式由 config SSOT 派生。
+  const featuresDir = (loadFrameworkConfig(projectRoot).paths?.features_dir ?? 'doc/features')
+    .replace(/\\/g, '/');
   const snapshot = projectGoalProgress({
     projectRoot,
     manifest,
@@ -59,6 +64,7 @@ export function writeInSessionProgressFenced(
     featureLock: null,
     runnerLock: null,
     liveProbe: false,
+    featuresDir,
   });
   writeProgressSnapshotAtomic(projectRoot, manifest.report_dir, snapshot, true);
 }

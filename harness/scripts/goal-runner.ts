@@ -119,6 +119,8 @@ import {
   resolveRawRunInput,
   resolveRequirementInput,
   type RawRunInput,
+  isSuccessorRepairRequirement,
+  mergeSuccessorRequirement,
   overrideAuthorizedIdentityFields,
   writeGoalManifest,
   effectiveHeadlessUnattended,
@@ -245,12 +247,11 @@ import {
   resolveEffectiveRunEnd,
   resolvePhaseHarnessVerdict,
   resolveResumedBudget,
+  foldBudgetLineage,
   collectSupersededAncestorEvents,
-  extractSupersedeTargets,
   resolveResumeFromEvents,
   rebuildOutcomesFromEvents,
   resolveResumeState,
-  resolveWallClockStartMs,
   countCumulativeAdvanceBlocked,
   countRepeatedSignatureInFamily,
   classifyClosureKind,
@@ -1037,6 +1038,21 @@ async function runHarnessPhase(
   }
 }
 
+/**
+ * e9d4b7a3 t1（review1 阻断修复）：backtrack_target_absent 的跨 run 修复任务交接指引——
+ * 单点生成，phase_halt 事件 / outcome / console 三处消费同一文案（b3f7d9a2 硬学习：
+ * 同一文案契约须枚举全部承载处含测试断言）。检测器只保证文案要素在场。
+ */
+export function buildBacktrackTargetAbsentGuidance(targetPhase: string | null): string {
+  return (
+    `责任阶段映射不到当前执行链（recommendation.phase=${targetPhase ?? '<unmapped>'}）——无处回退，halt 求人。\n` +
+    '修复任务交接：起 fresh successor run，用 `--supersede <本 run id>` 废弃本 run，并以 ' +
+    '`--requirement-file <增量文件>` 携带本轮修复增量（须含：**任务点名** + **关键证据摘要**，' +
+    '如缺陷 id / 责任文件路径 / 复现要点 / 必要素材清单）。增量会与源 requirement 合并，' +
+    '成为 successor coding prompt 的唯一任务真源。'
+  );
+}
+
 /** 把 gate 的真实末尾错误压缩成可直接回喂下一轮的有界文本。 */
 export function formatHarnessFailureTail(raw: string | undefined, maxChars = 3_000): string | undefined {
   if (!raw?.trim()) return undefined;
@@ -1084,6 +1100,9 @@ export interface CapabilityAdvisory {
   /** plan f6b2d9a4：三轴 SSOT 下发（SSOT 缺失=best_effort/undefined 回落） */
   acceptanceStrictness?: 'best_effort' | 'hard';
   assetAcquisitionMode?: 'approximate' | 'auto_crop' | 'user_dir';
+  /** e9d4b7a3 t3：继任 run 是否携带显式修复增量（requirement 合并标记在场）。增量中被
+   * 点名要求物化的素材本轮为强契约（真裁或 FAIL），不可走 best_effort 逐项占位兜底。 */
+  successorRepairRequirement?: boolean;
   /** post-impl3 P0-3：mid-chain vision 收紧触发 pixel∧hard∧clamped 真冲突——runner 须在 spawn 前 halt */
   deferTriggered?: boolean;
 }
@@ -1140,6 +1159,20 @@ export function buildCapabilityBlock(advisory: CapabilityAdvisory): string[] {
             '  verification available), mark THAT item `placeholder: true` + register it as visual debt and continue',
             '  — feature-level auto_crop does not mean every single item must crop successfully. Never loop retrying',
             '  an unverifiable crop.',
+            ...(advisory.successorRepairRequirement
+              ? [
+                  // e9d4b7a3 t3：显式 successor repair requirement > best_effort 逐项 fallback。
+                  // 增量点名项不存在「占位 + PASS」第三态；旧台账（needs_human/占位记录）不得
+                  // carry-over 直接 PASS——环境已修好就必须本轮真裁。
+                  '  **Priority rule (this round is a successor repair round)**: assets explicitly named in the',
+                  '  requirement increment as must-materialize are a HARD contract this round — actually crop/deliver',
+                  '  them (asset-manifest placeholder → false + media file present), or FAIL honestly with the',
+                  '  blocking reason. "placeholder + PASS" is NOT a valid outcome for named items, and carry-over',
+                  '  ledger notes from earlier rounds (prior needs_human / placeholder records) do NOT settle them:',
+                  '  re-assess this round and execute if the environment supports it. Unnamed items keep the',
+                  '  per-item fallback above.',
+                ]
+              : []),
           ]
         : [
             '- Icons/logos/illustrations: use placeholder assets + asset-manifest.yaml (existing mechanism) — do NOT',
@@ -1237,6 +1270,158 @@ function buildUnattendedExecutionBlock(
     '  human-named {rationale, approved_by}; agent-added entries are void. Found a framework bug? HALT and report.',
     ...deterministicDetectorLines,
   ];
+}
+
+/**
+ * e9d4b7a3 t5：budget-only 授权 rebase 后，**任何 review agent 启动之前**对受影响的
+ * 已完成上游阶段执行一次**确定性 harness 刷新证据**（不启动 agent）——重放
+ * 「599/600 撞墙 → 提预算 → resume」时，coding 等上游证据在预算 rebase 后重新闭环，
+ * review 不再因 stale 白烧 invoke（i28/i29 实锤形态）。
+ *
+ * 复用既有执行原语：runHarnessPhase（gate+summary 重算）→ tryValidateReceipt →
+ * finalizePhaseClosure（evidence manifest / 回执指针按当前 run 身份重新发布），与
+ * 主循环 closure-only 段同一套函数，**不复制任何公式**。不做 verdict 推进：刷新只
+ * 重发布证据，不产生新的 phase outcome。
+ *
+ * 二轮 review P1 修订：
+ *  - **不伪造同阶段新 attempt**：旧回执仍绑定原 attempt（如 coding-i26），check-receipt
+ *    对同阶段严格校验 claimed_attempt_id——伪造 refresh-* 必然 failed。本函数从 events
+ *    恢复该 phase 的**原 attempt id** 复用于 harness/闭环节点（既有「跨阶段复验」语义：
+ *    同 run 内用原 attempt 校验旧回执，不建 re-sign 系统）；events 中无法恢复 → 该阶段
+ *    记为失败（fail-closed，不猜不造）。
+ *  - **任一刷新失败 → review 前一次性 HALT**（调用方执行）：不得带着未刷新的真 stale
+ *    证据继续烧 review（原样复发 i28/i29）。
+ *  - 每阶段 wall 预算按绝对 deadline 逐次重算剩余（剩余≤0 即停），不再分配带 60 秒
+ *    地板的均分预算（三阶段合计不得突破剩余 wall）。
+ */
+async function refreshCompletedUpstreamEvidenceDeterministic(opts: {
+  projectRoot: string;
+  frameworkRoot: string;
+  manifest: GoalManifest;
+  chain: FeaturePhase[];
+  /** resume 起点（含）之前为已完成上游 */
+  chainStartIndex: number;
+  /** 绝对 wall deadline（与主循环 wallDeadlineMs 同源；逐阶段重算 remaining） */
+  wallDeadlineMs: number;
+  /** 当前 run 的历史事件（恢复各阶段原 attempt id；authoritative 视图） */
+  events: ReadonlyArray<{ type?: string; phase?: string; invoke_id?: string }>;
+  emit: (event: Record<string, unknown>) => void;
+}): Promise<string[]> {
+  const { projectRoot, frameworkRoot, manifest, chain } = opts;
+  const upstream = chain.slice(0, opts.chainStartIndex);
+  const completed = upstream.filter(ph => {
+    try {
+      return fs.existsSync(
+        path.join(receiptDirPath(projectRoot, manifest.feature, String(ph)), 'reports', 'summary.json'),
+      );
+    } catch {
+      return false;
+    }
+  });
+  if (completed.length === 0) return [];
+  opts.emit({
+    type: 'upstream_evidence_deterministic_refresh',
+    cause: 'budget_only_rebase',
+    phases: completed.map(String),
+  });
+  console.log(
+    `[goal-runner] budget-only rebase：对已完成上游阶段执行确定性 harness 刷新（不起 agent）：${completed.join(', ')}`,
+  );
+  const failures: string[] = [];
+  for (const ph of completed) {
+    const phase = ph;
+    // --- 原 attempt 身份恢复（不伪造同阶段新 attempt；缺失即 fail-closed）---
+    let originalAttempt: string | null = null;
+    for (let i = opts.events.length - 1; i >= 0; i--) {
+      const e = opts.events[i];
+      if ((e.type !== 'agent_invoke' && e.type !== 'agent_invoke_start') || e.phase !== phase) continue;
+      const m = String(e.invoke_id ?? '').match(/-(i\d+)$/);
+      originalAttempt = m ? m[1] : null;
+      break;
+    }
+    if (!originalAttempt) {
+      failures.push(`${phase}：events 中无法恢复该阶段原 attempt id——拒绝伪造新 attempt（回执 identity 校验必失败）`);
+      continue;
+    }
+    const remainingMs = opts.wallDeadlineMs - Date.now() - FINALIZE_RESERVE_MS;
+    if (remainingMs <= 0) {
+      failures.push(`${phase}：确定性刷新 wall 预算已耗尽（按绝对 deadline 重算，不得突破剩余预算）`);
+      break;
+    }
+    try {
+      // 与主循环同款 fresh 判定（summary mtime 窗口前后跃迁）——刷新必须真实重写证据
+      const beforeMtime = getSummaryMtime(readPhaseSummary(projectRoot, manifest.feature, phase).summaryAbsPath);
+      const harnessRun = await runHarnessPhase(
+        projectRoot,
+        frameworkRoot,
+        phase,
+        manifest.feature,
+        false,
+        manifest,
+        { runId: manifest.run_id, attemptId: originalAttempt },
+        remainingMs,
+      );
+      if (harnessRun.exitCode !== 0) {
+        failures.push(`${phase}：harness 刷新失败（${formatHarnessFailureTail(harnessRun.outputTail, 600) ?? '无输出'}）`);
+        continue;
+      }
+      const { summary, summaryAbsPath } = readPhaseSummary(projectRoot, manifest.feature, phase);
+      if (summary?.verdict !== 'PASS' || !isSummaryFresh(beforeMtime, getSummaryMtime(summaryAbsPath))) {
+        failures.push(`${phase}：harness 刷新后无 fresh PASS summary`);
+        continue;
+      }
+      assertGoalBoundary('closure_finalizer');
+      const receiptValidation = (injectedValidateReceipt ?? tryValidateReceipt)(
+        path.join(frameworkRoot, 'harness'),
+        projectRoot,
+        phase,
+        manifest.feature,
+        {
+          goalIdentity: {
+            runId: manifest.run_id, attemptId: originalAttempt, attemptPhase: String(phase),
+            ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
+          },
+        },
+      );
+      if (receiptValidation.status !== 'passed') {
+        failures.push(`${phase}：原 attempt（${originalAttempt}）receipt 复验未过（status=${receiptValidation.status}）`);
+        continue;
+      }
+      finalizePhaseClosure({
+        projectRoot,
+        frameworkRoot,
+        feature: manifest.feature,
+        phase,
+        receipt: { ...receiptValidation, status: 'passed' },
+        goalRunId: manifest.run_id,
+        blockerCount: summary?.blockers?.length ?? 0,
+        persistPhaseState: () =>
+          syncPhaseStateOnReceiptPassStrict(
+            projectRoot,
+            manifest.feature,
+            phase,
+            receiptValidation,
+            { blocker_count: summary?.blockers?.length ?? 0, frameworkRoot },
+          ),
+        now: () => new Date(),
+      });
+    } catch (error) {
+      failures.push(`${phase}：${(error as Error).message.slice(0, 300)}`);
+    }
+  }
+  opts.emit({
+    type: 'upstream_evidence_deterministic_refresh_complete',
+    cause: 'budget_only_rebase',
+    phases: completed.map(String),
+    failures,
+  });
+  if (failures.length > 0) {
+    console.error(
+      `[goal-runner] budget-only rebase 确定性刷新存在失败（review 前一次性 halt，不烧 review invoke）：\n` +
+        failures.map(f => `  - ${f}`).join('\n'),
+    );
+  }
+  return failures;
 }
 
 /**
@@ -2086,6 +2271,9 @@ export function resolvePhaseCapabilityAdvisory(
     ocrJsonPaths,
     acceptanceStrictness: effectiveIntent?.acceptance_strictness ?? 'best_effort',
     assetAcquisitionMode: effectiveIntent?.asset_acquisition_mode,
+    // e9d4b7a3 t3：显式 successor 修复增量判定（合并标记在场）——编码代理据此知道
+    // 本轮增量点名素材为硬契约（见 buildCapabilityBlock 优先级段）。
+    successorRepairRequirement: isSuccessorRepairRequirement(manifest.requirement),
   };
 }
 
@@ -2192,6 +2380,10 @@ export function resolveManifestDriftDecision(args: {
   effectiveHash: string;
   rebaseApplied: boolean;
   rebaseAuthorizedBy: string | null;
+  /** e9d4b7a3 t5：**所有分支**的顶层字段级变更清单（无漂移=稳定空数组）——
+   * 授权 rebase 的分支此前把 diffManifestIdentityFields 结果丢弃，emit 只写 to_fields
+   * （完整哈希表非 diff）——budget-only 刷新判定无从谈起。 */
+  changedFields: string[];
   halt: { message: string; changedFields: string[]; authorized: string[] | 'all' } | null;
 } {
   const base = {
@@ -2199,6 +2391,7 @@ export function resolveManifestDriftDecision(args: {
     effectiveHash: args.currentHash,
     rebaseApplied: false,
     rebaseAuthorizedBy: null as string | null,
+    changedFields: [] as string[],
     halt: null as { message: string; changedFields: string[]; authorized: string[] | 'all' } | null,
   };
   if (args.birthFields === null) return base;
@@ -2218,6 +2411,7 @@ export function resolveManifestDriftDecision(args: {
   if (!authorized) {
     return {
       ...base,
+      changedFields: changed,
       halt: {
         message:
           `manifest 身份字段在停机窗口漂移且未被对应 override 授权（变更字段：${changed.join('、')}；` +
@@ -2231,9 +2425,20 @@ export function resolveManifestDriftDecision(args: {
   }
   return {
     ...base,
+    changedFields: changed,
     rebaseApplied: true,
     rebaseAuthorizedBy: authAll ? 'override-manifest' : [...(authSet ?? [])].sort().join(','),
   };
+}
+
+/**
+ * e9d4b7a3 t5：budget-only 授权 rebase 判定（precision 判据：非空 且 全部字段恰为 budget）。
+ * 只有这种把 manifest 编辑降级为"纯预算提额、不影响任何产物语义"的 rebase 才允许
+ * 确定性刷新上游证据；非 budget-only rebase（requirement/chain/fidelity 等变更）必须
+ * 走正常 halt/重跑路径，不得顺带用刷新假装证据仍然可信。
+ */
+export function isBudgetOnlyIdentityChange(changedFields: readonly string[]): boolean {
+  return changedFields.length === 1 && changedFields[0] === 'budget';
 }
 
 // ---------------------------------------------------------------------------
@@ -2854,6 +3059,8 @@ function setupProgressHooks(
         runnerLock: ctx.runnerLock,
         nowMs: now,
         liveProbe: false,
+        // e9d4b7a3 t4：progress.json 与 runner 熔断同一折叠入口（supersede lineage）
+        featuresDir,
       });
       writeProgressSnapshotAtomic(projectRoot, manifest.report_dir, snapshot, writeMd);
       writerState.lastWriteMs = now;
@@ -2879,12 +3086,22 @@ function setupProgressHooks(
       const lockRec = featureLock ? readLockRecord(featureLock.path) : null;
       const eventsPath = path.join(projectRoot, manifest.report_dir, 'events.jsonl');
       const events = loadAuthoritativeEvents(eventsPath);
+      // e9d4b7a3 t4：heartbeat 与 runner 熔断/progress.json 同源——先沿 supersede 链折叠，
+      // 再 resolveResumedBudget（旧实现 countAgentInvokeStarts(当前 run) → supersede 链
+      // 下显示 5/30 假象，宿主看不到余量撞墙）。
+      const lineage = foldBudgetLineage({
+        projectRoot, featuresDir, feature: manifest.feature, currentEvents: events,
+      });
+      const budget = resolveResumedBudget(lineage.budgetFoldEvents, { nextSessionStartMs: Date.now() });
+      // 二轮 review P1：elapsed_ms 用**活跃段累计**（nextSessionStartMs 钳制后
+      // priorActiveMs 已含当前直播段至 now）——旧 Date.now()-wallClockStartMs 会把
+      // halt/人工介入/隔夜停摆计入（runner/progress 用活跃口径，三方须真同源）。
       appendEvent(manifest.report_dir, projectRoot, {
         type: 'heartbeat',
         phase: progressPhase,
         substep: progressSubstep,
-        elapsed_ms: Date.now() - resolveWallClockStartMs(events),
-        turns_used: countAgentInvokeStarts(events),
+        elapsed_ms: budget.priorActiveMs,
+        turns_used: budget.totalTurns,
         lock_updated_at: lockRec?.updated_at ?? null,
         agent_output_mtime: agentOutputMtime,
         agent_output_bytes: agentOutputBytes,
@@ -3107,6 +3324,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
       process.exit(2);
     }
   }
+  // e9d4b7a3 t1（三轮 review P1）：显式增量判定以 **CLI 输入事实**为准（字段值 ≠ 显式
+  // 授权）——--manifest 自带的不同 requirement 文本不得被误判为修复增量。此处**直接
+  // 保存解析后的显式 CLI 文本**（--requirement 或 --requirement-file 内容），唯一合并点
+  // 只消费该文本，不再读任何 manifest 字段（inherit/override 后字段值不可信）。
+  const explicitRequirementIncrementText =
+    !argv.resume && typeof argv.requirement === 'string'
+      ? argv.requirement.trim() || undefined
+      : undefined;
   // codex 复核订正：manifest override 校验必须在 requirement 解析**之后**——否则
   // `--manifest + --requirement-file`（未带 --override-manifest）不会被前置拦截，
   // 文件内容被静默忽略。
@@ -3223,6 +3448,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
   // T3①：自动后继的唯一 manifest 写入点继承源 run 的预算与指纹账本。
   // 审计权仍来自后续 fresh run 的 supersede 事件；这里仅把启动约束和防震荡
   // 指纹带入新 manifest，不能单独让旧 run 的阶段 PASS 跨 run 生效。
+  // e9d4b7a3 t1（二轮 review P1）：`supersedeSourceRequirement` 只在此块成功加载源后
+  // 赋值——合并单点（applyManifestCliOverrides 之后）以此判断是否处于 supersede 上下文。
+  // **增量文本只取 CLI 解析结果**（explicitRequirementIncrementText）——绝不读
+  // manifest 字段（--manifest 自带文本没有增量授权，inherit 后字段值更不可信）。
+  let supersedeSourceRequirement: string | undefined;
   if (!argv.resume && !dryRunMode) {
     const requestedSupersedeTargets =
       Array.isArray(argv.supersede)
@@ -3237,6 +3467,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
           feature: manifest.feature,
           featuresDir,
         });
+        // e9d4b7a3 t1（二轮 review P1）：捕获源 requirement 供合并单点使用
+        //（merge 在 applyManifestCliOverrides 之后统一执行，见下方合并块）。
+        supersedeSourceRequirement = source.requirement;
         const sourceEvents = collectSupersededAncestorEvents({
           projectRoot,
           featuresDir,
@@ -3299,6 +3532,23 @@ Goal runner — tool-agnostic multi-phase orchestrator
       process.exit(1);
     }
     fidelityTransitionFields = ft.authorizedFields;
+  }
+
+  // e9d4b7a3 t1（二轮 review P1，三轮订正）：successor 显式 requirement 增量**唯一合并点**
+  // ——增量文本只认 CLI 解析结果（explicitRequirementIncrementText），与
+  // --manifest/override/inherit 的字段状态完全解耦：显式文本为空或与源逐字相同 →
+  // 逐字继承（无标记）；否则合并源正文 + 显式文本一次。三轮 review 阻断案例
+  // （源=A、manifest 自带=B、显式文件内容=A）：显式文本=A == 源 → 不合并，B 不被
+  // 冒充增量。
+  if (supersedeSourceRequirement !== undefined && explicitRequirementIncrementText) {
+    const sourceRequirement = (supersedeSourceRequirement ?? '').trim();
+    const inc = explicitRequirementIncrementText;
+    if (inc !== sourceRequirement && !isSuccessorRepairRequirement(inc)) {
+      manifest.requirement = mergeSuccessorRequirement(supersedeSourceRequirement, inc);
+      console.log(
+        `[goal-runner] supersede 显式 requirement 增量已与源 requirement 合并（successor 任务真源=manifest.requirement）。`,
+      );
+    }
   }
 
   // 运行身份对账（G1）：framework.local.json agent_adapter 为权威 SSOT。用 raw argv.adapter（不归一）
@@ -3917,10 +4167,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
     if (manifestDrift.rebaseApplied) {
       // 基线承载事件（收口刀）：resolveManifestIdentityBaseline 消费本事件把出生基线
       // 前进到 to_fields——授权 rebase 过一次后，后续 resume 不再复报同一漂移
+      // e9d4b7a3 t5：同时写入 changed_fields（diff 而非完整哈希表）——budget-only
+      // rebase 的确定性刷新判定在 resume 起点读取本事件字段。
       goalEvents.emit({
         type: 'manifest_identity_rebase',
         to_fields: manifestDrift.currentFields,
         authorized_by: manifestDrift.rebaseAuthorizedBy,
+        ...(manifestDrift.changedFields.length > 0
+          ? { changed_fields: manifestDrift.changedFields }
+          : {}),
       });
     }
     goalEvents.emit({
@@ -4071,15 +4326,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // 开后继"就是绕过 DEFAULT_MAX_BACKTRACKS 与 wall 熔断的无限循环通道。种子=
     // 本次 CLI 的 --supersede（fresh）∪ 本 run events 里的 audited supersede（resume）。
     // **阶段完成状态仍只读当前 run**（进度不跨 run 折叠，见 collectSupersededAncestorEvents 头注）。
-    const budgetFoldSeeds = [...supersededRunIds, ...extractSupersedeTargets(priorEvents)];
-    const ancestorBudgetEvents = budgetFoldSeeds.length > 0
-      ? collectSupersededAncestorEvents({
-          projectRoot, featuresDir, feature: manifest.feature, seedTargets: budgetFoldSeeds,
-        })
-      : [];
-    const budgetFoldEvents = ancestorBudgetEvents.length > 0
-      ? [...ancestorBudgetEvents, ...priorEvents]
-      : priorEvents;
+    // e9d4b7a3 t4：折叠逻辑收敛到 foldBudgetLineage 唯一共享入口（runner 熔断 /
+    // progress.json / heartbeat 同源，不再各自复制公式）。
+    const budgetLineage = foldBudgetLineage({
+      projectRoot, featuresDir, feature: manifest.feature,
+      seedTargets: supersededRunIds, currentEvents: priorEvents,
+    });
+    const ancestorBudgetEvents = budgetLineage.ancestorEvents;
+    const budgetFoldEvents = budgetLineage.budgetFoldEvents;
     const budgetBase = resolveResumedBudget(budgetFoldEvents, { nextSessionStartMs: sessionStartMs });
     let totalTurns = budgetBase.totalTurns;
     const priorActiveMs = budgetBase.priorActiveMs;
@@ -4132,6 +4386,76 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // P0-A：显式 timeout 低于建议地板只 WARN 不抬升（尊重显式 override 契约）。
     for (const warn of collectPhaseTimeoutWarnings(manifest, chain)) {
       console.warn(warn);
+    }
+
+    // e9d4b7a3 t4：run_start / resume 起步即打印 lineage 口径预算余量（turns + wall 两维
+    // used/limit/remaining）——预算不足在阶段启动前可见，不再闭环后才改 manifest 撞墙。
+    // 口径与熔断同源（foldBudgetLineage → resolveResumedBudget）。
+    {
+      const activeElapsedMs = budgetBase.priorActiveMs + (Date.now() - sessionStartMs);
+      const remainingTurns = Math.max(0, manifest.budget.max_total_turns - budgetBase.totalTurns);
+      const remainingWallMs = Math.max(0, wallMs - activeElapsedMs);
+      const min = Math.round.bind(null);
+      console.log(
+        `[goal-runner] ${argv.resume ? 'resume' : 'run_start'} 预算（supersede lineage 折叠口径）: ` +
+          `turns ${budgetBase.totalTurns}/${manifest.budget.max_total_turns}（remaining ${remainingTurns}）；` +
+          `wall ${min(activeElapsedMs / 60000)}m/${min(wallMs / 60000)}m（remaining ~${min(remainingWallMs / 60000)}m）`,
+      );
+    }
+
+    // e9d4b7a3 t5：**budget-only 授权 rebase**（--override-manifest 提额后 resume）——
+    // 在任何 review agent 启动之前，对受影响的已完成上游阶段执行一次确定性 harness
+    // 刷新证据（不起 agent）。重放「599/600 撞墙 → 提预算 → resume」时上游证据不再
+    // stale，review 不被白烧（i28/i29）。非 budget-only rebase / 无 rebase / dry-run
+    // 一律不走该路径（非 budget-only 漂移须 halt 或走正常重跑，不得用刷新假装可信）。
+    // 二轮 review P1：**任一刷新失败 → review 前一次性 HALT**（继续烧 review=原样
+    // 复发 i28/i29）；刷新只做 evidence 重发布，不伪造 attempt、不 re-sign、不加状态。
+    if (!dryRun && argv.resume && manifestDrift.rebaseApplied
+        && isBudgetOnlyIdentityChange(manifestDrift.changedFields)) {
+      const refreshFailures = await refreshCompletedUpstreamEvidenceDeterministic({
+        projectRoot,
+        frameworkRoot,
+        manifest,
+        chain,
+        chainStartIndex,
+        wallDeadlineMs,
+        events: startupEvents,
+        emit: (e) => goalEvents.emit(e),
+      });
+      if (refreshFailures.length > 0) {
+        halted = true;
+        const haltPhase = chain[chainStartIndex];
+        const guidance =
+          `budget-only rebase 后上游证据确定性刷新失败（${refreshFailures.length} 项，` +
+          `已在 review 之前 halt，未消耗任何 review invoke）：\n` +
+          refreshFailures.map(f => `  - ${f}`).join('\n') +
+          '\n处置：修复对应上游阶段证据（重跑其 harness 补齐 closure / 修复回执身份）后 --resume 继续。';
+        const disposition = decide(
+          { incident: 'upstream_closure_gap', phase: String(haltPhase), detail: guidance },
+          NO_AUTHORITY,
+          {
+            orchestration: 'goal', owner_kind: 'process', can_prompt_now: false,
+            invocation: 'resume',
+          },
+        );
+        console.error(`\n===== upstream_closure_gap =====\n${guidance}\n`);
+        goalEvents.emit({
+          type: 'phase_halt',
+          phase: haltPhase,
+          halt_reason: 'upstream_closure_gap',
+          halt_guidance: guidance,
+          detail: guidance,
+          ...runDispositionFields(disposition),
+        });
+        outcomes.push({
+          phase: haltPhase,
+          verdict: 'FAIL',
+          halted: true,
+          retries: 0,
+          halt_reason: 'upstream_closure_gap',
+          halt_guidance: guidance,
+        });
+      }
     }
 
     // T2(c)：wall 预算熔断统一发射器——reason+guidance 三处可见（phase_halt 事件/
@@ -7100,11 +7424,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // （唯一真源），与 review/ut/plan 侧候选走同一条 backtrack_to_phase 路径；
         // 熔断/预算/事件/注入全部复用下面这一份实现，不再有平行特例。
 
-        // 责任阶段统一路由（plan b6e4c9f2 t2/t3）：repair candidates 驱动的通用回退——
-        // 目标由 assess 的 recommendation.phase 承载（严格 workflow 映射；null/不在链内
-        // =backtrack_target_absent）。预算/整轮指纹熔断与 testing 特例共用同一池同一集合
-        // （seenRoundFingerprints/DEFAULT_MAX_BACKTRACKS）；mixed-owner 整组事实进事件，
-        // prompt 注入按目标阶段过滤（链重走到各责任阶段只注入属于它的候选）。
+        // t3/三处可见契约（b3f7d9a2 硬学习）：halt 文案的枚举承载处 = phase_halt 事件 /
+        // outcome / console banner——detach 停机后宿主只读 events/goal-report，
+        // console 早滚走，文案必须同时落事件与 outcome（rebuildOutcomesFromEvents
+        // 会把事件 halt_guidance 透传到 report）。
+        let backtrackHaltGuidance: string | undefined;
         if (action === 'backtrack_to_phase') {
           const targetPhaseBt = assessment?.recommendation?.phase ?? null;
           const targetIdxBt = targetPhaseBt ? chain.indexOf(targetPhaseBt as FeaturePhase) : -1;
@@ -7114,6 +7438,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
             haltReason = targetIdxBt < 0
               ? 'backtrack_target_absent'
               : seenRoundFingerprints.has(roundFp) ? 'backtrack_fingerprint_repeat' : 'backtrack_limit';
+            // e9d4b7a3 t1：跨 run 修复任务交接指引——候选注入通道只活在当前 run 内，
+            // successor 以显式 requirement 增量携带任务点名 + 关键证据摘要。
+            backtrackHaltGuidance = haltReason === 'backtrack_target_absent'
+              ? buildBacktrackTargetAbsentGuidance(targetPhaseBt ?? null)
+              : undefined;
             const limitReached =
               targetIdxBt >= 0 && backtracksUsed >= DEFAULT_MAX_BACKTRACKS && !seenRoundFingerprints.has(roundFp);
             const limitDecision = limitReached
@@ -7131,14 +7460,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
               round_fingerprint: roundFp,
               backtracks_used: backtracksUsed,
               ...(limitDecision ? runDispositionFields(limitDecision) : {}),
+              ...(backtrackHaltGuidance ? { halt_guidance: backtrackHaltGuidance } : {}),
             });
             console.error(
               `\n===== ${haltReason} =====\n`
-              + (haltReason === 'backtrack_fingerprint_repeat'
+              + (backtrackHaltGuidance ?? (haltReason === 'backtrack_fingerprint_repeat'
                 ? `整轮 repair candidates 集合与上次回退完全相同（roundFingerprint=${roundFp.slice(0, 12)}…）——继续回退只会空转。halt 求人。\n`
                 : haltReason === 'backtrack_limit'
                   ? `回退预算已耗尽（共用 ${DEFAULT_MAX_BACKTRACKS} 次/run）——halt 求人。\n`
-                  : `责任阶段映射不到当前执行链（recommendation.phase=${targetPhaseBt ?? '<unmapped>'}）——无处回退，halt 求人。\n`),
+                  : '')),
             );
           } else {
             backtracksUsed++;
@@ -7264,6 +7594,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // plan e7c2a4d8 T3c（codex 二轮采纳）：凡有 guidance 一律附着——渲染侧
           //（goal-report-generator）本已 reason 无关，枚举白名单是第三处漂移点，废。
           ...(awaitConfirmGuidance ? { halt_guidance: awaitConfirmGuidance } : {}),
+          // e9d4b7a3 t1（review1 阻断）：backtrack_target_absent 的 successor 交接指引
+          // 三处可见（事件/outcome/console）——detach 停机后宿主只读 events/report。
+          ...(backtrackHaltGuidance ? { halt_guidance: backtrackHaltGuidance } : {}),
           // P0-5：integrity subtype 多值透传进最终报告。
           ...(integritySubtypes.length > 0 ? { integrity_subtypes: integritySubtypes } : {}),
           interaction_question: interactionSentinel?.error,

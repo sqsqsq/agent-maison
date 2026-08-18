@@ -29,7 +29,15 @@ import {
   tryAcquireLock,
   type LockRecord,
 } from '../../scripts/utils/goal-run-lock';
-import { projectGoalProgress } from '../../scripts/utils/goal-progress';
+import { projectGoalProgress as projectGoalProgressRaw } from '../../scripts/utils/goal-progress';
+// e9d4b7a3 t4（二轮 review P1）：featuresDir 为必传——host-replay 夹具统一注入默认值。
+type ReplayProgressInput = Parameters<typeof projectGoalProgressRaw>[0];
+function projectGoalProgress(input: ReplayProgressInput | Omit<ReplayProgressInput, 'featuresDir'>) {
+  return projectGoalProgressRaw({
+    ...input,
+    featuresDir: 'featuresDir' in input && input.featuresDir ? input.featuresDir : 'doc/features',
+  });
+}
 import { checkGoalRunIdentityIntact } from '../../scripts/check-spec';
 import { loadWorkflowSpec } from '../../workflow-loader';
 import {

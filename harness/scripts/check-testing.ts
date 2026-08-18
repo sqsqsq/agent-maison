@@ -88,7 +88,7 @@ import {
   collectDeviceScopeP0P1,
   isDeviceUtLayer,
 } from './utils/acceptance-layering';
-import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
+import { runAcceptanceYamlStructureChecks, ACCEPTANCE_ID_PATTERN } from './utils/check-acceptance';
 import { checkUpstreamVerdictGate, readUpstreamPhaseView } from './utils/upstream-verdict-gate';
 import { countBlockingDebt, loadVisualDebtEx } from './utils/visual-debt';
 import {
@@ -1210,9 +1210,8 @@ function extractTestCaseACRefs(plan: string): Map<string, string[]> {
     const tcId = (row[idCol] || '').trim();
     const acRefs = (row[acCol] || '').trim();
     if (tcId && acRefs) {
-      const refs = acRefs.split(/[,，、\s]+/).filter(r =>
-        r.match(/^(AC|BD)-(G\d+|\d+)$/i),
-      );
+      // e9d4b7a3 t2：词法 SSOT（ACCEPTANCE_ID_PATTERN）——不再本地复写第二套 ^(AC|BD)- 规则
+      const refs = acRefs.split(/[,，、\s]+/).filter(r => ACCEPTANCE_ID_PATTERN.test(r));
       result.set(tcId, refs);
     }
   }

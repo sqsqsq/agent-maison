@@ -580,6 +580,52 @@ export function collectSupersededAncestorEvents(opts: {
   return chainEvents.sort((a, b) => String(a.ts ?? '').localeCompare(String(b.ts ?? '')));
 }
 
+/**
+ * e9d4b7a3 t4：预算 lineage 折叠**唯一共享入口**——budgetFoldSeeds（CLI --supersede ∪
+ * currentEvents 内 audited supersede）→ 收集祖先事件 → 拼 budgetFoldEvents。
+ * runner 熔断 / progress.json / heartbeat 三处必须消费本入口，禁止各自复制公式
+ * （曾经 progress/heartbeat 只计当前 run events → supersede 链显示 5/30 假象）。
+ * seedTargets 为调用方 CLI 显式 --supersede（resume/progress 消费面传空——它们的事件
+ * 流里已有 audited supersede 事件）；currentEvents 恒传当前 run 的权威事件。
+ */
+export interface BudgetLineageFold {
+  /** 祖先 + 当前 run 事件（预算/回退计数/transient 的唯一计算源） */
+  budgetFoldEvents: GoalRunEvent[];
+  /** 仅祖先部分（runner 侧 transient 计数等已折叠消费仍需要） */
+  ancestorEvents: GoalRunEvent[];
+  /** 折叠种子（显式 ∪ 事件派生，去重保序） */
+  foldSeeds: string[];
+}
+
+export function foldBudgetLineage(opts: {
+  projectRoot: string;
+  featuresDir: string;
+  feature: string;
+  seedTargets?: readonly string[];
+  currentEvents?: readonly GoalRunEvent[];
+  /** 注入供测试；缺省读盘 */
+  loadEvents?: (absPath: string) => GoalRunEvent[];
+}): BudgetLineageFold {
+  const current = [...(opts.currentEvents ?? [])];
+  const foldSeeds = [
+    ...new Set([...(opts.seedTargets ?? []), ...extractSupersedeTargets(current)]),
+  ];
+  const ancestorEvents = foldSeeds.length > 0
+    ? collectSupersededAncestorEvents({
+        projectRoot: opts.projectRoot,
+        featuresDir: opts.featuresDir,
+        feature: opts.feature,
+        seedTargets: foldSeeds,
+        ...(opts.loadEvents ? { loadEvents: opts.loadEvents } : {}),
+      })
+    : [];
+  return {
+    budgetFoldEvents: ancestorEvents.length > 0 ? [...ancestorEvents, ...current] : current,
+    ancestorEvents,
+    foldSeeds,
+  };
+}
+
 export function resolveResumedBudget(
   events: GoalRunEvent[],
   opts?: {

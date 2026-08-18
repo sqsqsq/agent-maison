@@ -1250,6 +1250,35 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
+      name: 'e9d4b7a3 t3: successorRepairRequirement=true → auto_crop 块含增量点名硬契约（真裁或 FAIL）；未带标记 → 无硬契约段、逐项 fallback 原样',
+      run: () => {
+        const base: CapabilityAdvisory = {
+          hasVision: false,
+          ocrAvailable: false,
+          selectedFidelity: 'semantic_layout',
+          effectiveFidelity: 'semantic_layout',
+          fidelityClamped: false,
+          ocrJsonPaths: [],
+          assetAcquisitionMode: 'auto_crop',
+        };
+        const plain = buildCapabilityBlock(base).join('\n');
+        const hardened = buildCapabilityBlock({ ...base, successorRepairRequirement: true }).join('\n');
+
+        // 两条路径都保留通用 best_effort 逐项 fallback（未点名素材契约不动）
+        assert(/Per-item fallback IS allowed and expected/.test(plain), '普通 auto_crop 须保留逐项 fallback');
+        assert(/Per-item fallback IS allowed and expected/.test(hardened), '硬契约不下沉到未点名素材');
+
+        // 硬契约段只在 successor 修复轮出现
+        assert(!/successor repair round/.test(plain), '无修复增量标记时不得出现优先级段');
+        assert(/successor repair round/.test(hardened), '增量在场须声明本轮优先级');
+        assert(/"placeholder \+ PASS" is NOT a valid outcome/.test(hardened), '点名项不得「占位 + PASS」');
+        assert(/ledger notes from earlier rounds/i.test(hardened), '旧台账不得直接 settle 点名项');
+        assert(/re-assess this round/i.test(hardened), '台账 carry-over 须本轮重评');
+        assert(/FAIL honestly/.test(hardened), '无法执行须如实 FAIL');
+        assert(/\*\*Priority rule/.test(hardened), '优先级须显式标注');
+      },
+    },
+    {
       name: 'retry: harness fatal output 有界保真回喂',
       run: () => {
         const fatal = formatHarnessFailureTail(`noise\n\u001b[31mYAMLException: bad indentation at ui-spec.yaml:42\u001b[0m\n`);
