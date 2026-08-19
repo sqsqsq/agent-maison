@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // check-plan-version.mjs — plan 版本标签校验（default / --release）
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import {
   compareSemver,
@@ -16,6 +17,22 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
+const RELATION_VALUES = new Set([
+  'knowledge-provider',
+  'app-asset-provider',
+  'verification-provider',
+  'execution-trust-foundation',
+  'core',
+]);
+const LAYER_VALUES = new Set([
+  'knowledge',
+  'capability-handoff',
+  'component-blueprint',
+  'change-unit',
+  'closure',
+  'governance',
+]);
+const GOAL_ID_RE = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
 
 /**
  * @typedef {{ file: string, reason: string }} Hit
@@ -49,6 +66,8 @@ export function checkPlanVersions(opts = {}) {
       });
       continue;
     }
+
+    hits.push(...checkParentGoalDeclarations({ repoRoot, rel, parsed }));
 
     if (inAllowlist) {
       if (isLegacyAllowlistEligible(parsed)) continue;
@@ -119,6 +138,151 @@ export function checkPlanVersions(opts = {}) {
   }
 
   return { ok: hits.length === 0, hits, current };
+}
+
+/**
+ * @param {string} content
+ * @returns {string | undefined}
+ */
+function readGoalId(content) {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
+  if (!match) return undefined;
+  const id = /^id:[ \t]*(.+)$/m.exec(match[1]);
+  if (!id) return undefined;
+  return id[1].trim().replace(/^(["'])(.*)\1$/, '$2');
+}
+
+/**
+ * @param {string} content
+ * @returns {{ ids: Set<string>, error?: string }}
+ */
+function readGoalTargetIds(content) {
+  const lines = content.split(/\r?\n/);
+  const section = lines.findIndex((line) => /^#{1,6}\s+0\.1(?:\s|$)/.test(line));
+  if (section < 0) return { ids: new Set(), error: '未找到 §0.1 目标表' };
+
+  const ids = new Set();
+  for (let i = section + 1; i < lines.length; i += 1) {
+    if (/^#{1,6}\s+/.test(lines[i])) break;
+    const match = /^\s*\|\s*`([^`]+)`\s*\|/.exec(lines[i]);
+    if (match) ids.add(match[1]);
+  }
+  if (ids.size === 0) return { ids, error: '§0.1 目标表首列未提取到任何反引号目标 id' };
+  return { ids };
+}
+
+/**
+ * @param {string} repoRoot
+ * @param {string} parentGoal
+ * @returns {{ abs: string, content: string }[]}
+ */
+function findGoalMatches(repoRoot, parentGoal) {
+  const goalsDir = path.join(repoRoot, '.cursor', 'goals');
+  if (!fs.existsSync(goalsDir)) return [];
+  return fs
+    .readdirSync(goalsDir)
+    .filter((name) => name.endsWith('.goal.md'))
+    .sort()
+    .map((name) => path.join(goalsDir, name))
+    .map((abs) => ({ abs, content: fs.readFileSync(abs, 'utf8') }))
+    .filter(({ content }) => readGoalId(content) === parentGoal);
+}
+
+/**
+ * @param {{ repoRoot: string, rel: string, parsed: ReturnType<import('./plan-version-lib.mjs').parsePlanFile> }} opts
+ * @returns {Hit[]}
+ */
+export function checkParentGoalDeclarations({ repoRoot, rel, parsed }) {
+  if (!parsed.parentGoalDeclared) return [];
+  /** @type {Hit[]} */
+  const hits = [];
+  const missing = (field) => {
+    hits.push({ file: rel, reason: `${field}: 缺失（父目标声明的必填字段）` });
+  };
+
+  if (!parsed.parent_goal?.trim()) {
+    hits.push({ file: rel, reason: 'parent_goal: 缺失或为空（须唯一匹配 .cursor/goals/*.goal.md 的 frontmatter id）' });
+  }
+  if (!parsed.advances) {
+    missing('advances');
+  } else if (!Array.isArray(parsed.advances) || parsed.advances.length === 0) {
+    hits.push({ file: rel, reason: 'advances: 必须为非空 block-list' });
+  }
+  if (!parsed.relation) {
+    missing('relation');
+  } else if (!RELATION_VALUES.has(parsed.relation)) {
+    hits.push({
+      file: rel,
+      reason: `relation: 非法值「${parsed.relation}」（允许：${[...RELATION_VALUES].join(', ')}）`,
+    });
+  }
+  if (!parsed.layer) {
+    missing('layer');
+  } else if (!LAYER_VALUES.has(parsed.layer)) {
+    hits.push({
+      file: rel,
+      reason: `layer: 非法值「${parsed.layer}」（允许：${[...LAYER_VALUES].join(', ')}）`,
+    });
+  }
+  for (const field of ['goal_requires', 'goal_provides']) {
+    const value = parsed[field];
+    if (!value) {
+      missing(field);
+      continue;
+    }
+    if (!Array.isArray(value)) {
+      hits.push({ file: rel, reason: `${field}: 必须为行内 [] 或非空 block-list` });
+      continue;
+    }
+    for (const item of value) {
+      if (!GOAL_ID_RE.test(item)) {
+        hits.push({ file: rel, reason: `${field}: 非法条目「${item}」（须匹配 ${GOAL_ID_RE}）` });
+      }
+    }
+  }
+  if (!parsed.real_host_validation?.trim()) {
+    hits.push({ file: rel, reason: 'real_host_validation: 缺失或为空（折叠/字面块的缩进正文必须非空）' });
+  }
+  if (parsed.parallel_authority_added === undefined || parsed.parallel_authority_added === '') {
+    missing('parallel_authority_added');
+  } else if (parsed.parallel_authority_added !== 'false') {
+    hits.push({
+      file: rel,
+      reason: 'parallel_authority_added: 必须为 false；如需放开，须先修订总纲并更新本 capability spec',
+    });
+  }
+
+  if (!parsed.parent_goal?.trim()) return hits;
+  const matches = findGoalMatches(repoRoot, parsed.parent_goal.trim());
+  if (matches.length === 0) {
+    hits.push({
+      file: rel,
+      reason: `parent_goal: id「${parsed.parent_goal.trim()}」未唯一匹配 .cursor/goals/*.goal.md（匹配 0 份）`,
+    });
+    return hits;
+  }
+  if (matches.length > 1) {
+    hits.push({
+      file: rel,
+      reason: `parent_goal: id「${parsed.parent_goal.trim()}」匹配多个 goal 文件（匹配 ${matches.length} 份）`,
+    });
+    return hits;
+  }
+
+  const targetIds = readGoalTargetIds(matches[0].content);
+  if (targetIds.error) {
+    hits.push({ file: rel, reason: `advances: ${targetIds.error}（goal 文件 §0.1，fail-closed）` });
+  } else if (Array.isArray(parsed.advances)) {
+    for (const item of parsed.advances) {
+      if (!targetIds.ids.has(item)) {
+        hits.push({
+          file: rel,
+          reason: `advances: 非法目标 id「${item}」；合法集合来自 goal 文件 §0.1 表格首列`,
+        });
+      }
+    }
+  }
+  return hits;
 }
 
 /**

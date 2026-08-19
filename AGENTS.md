@@ -100,19 +100,19 @@ Cursor 命令：`/opsx-propose` `/opsx-apply` `/opsx-archive` `/opsx-explore`（
 
 **待办唯一真源（BLOCKER）**：在窗 plan 的未完成待办必须登记在 frontmatter `todos:`；正文不得使用未完成的 `- [ ]` 承载待办。历史 `- [x]` 可保留但不作为机器状态；重新打开任务必须先在 frontmatter 登记。
 
-## 父目标对齐声明（复杂能力总纲，人工核对）
+## 父目标对齐声明（复杂能力总纲，机器校验）
 
 总纲：[`.cursor/goals/复杂能力建设目标_能力架构蓝图到部件演进与变更单元闭环_75411223.goal.md`](.cursor/goals/复杂能力建设目标_能力架构蓝图到部件演进与变更单元闭环_75411223.goal.md)
 
-声称服务总纲的 plan 必须按总纲 §12 携带父目标对齐声明（`parent_goal` / `advances` / `relation` / `layer` 等）。**该声明的机器检查尚未建设**（`check-plan-version.mjs` 不识别这些字段），现阶段由 agent 在撰写与 review plan 时人工核对：
+声称服务总纲的 plan 按总纲 §12 携带父目标对齐声明（`parent_goal` / `advances` / `relation` / `layer` 等）。该声明已并入现有 `check-plan-version` 扫描器：
 
-- 机器声明必须位于 frontmatter——正文提及不构成声明（2026-08-13 裁定，总纲 §12 已同步）；
-- `parent_goal` 指向的 goal 文件存在且唯一匹配；
-- `advances` 中的目标 id 是总纲 §0.1 表格声明的 G1–G8 之一；
-- `relation` / `layer` 取值在总纲 §12 枚举内，八个字段全必填（`goal_requires`/`goal_provides` 空值须显式 `[]`）；
-- 未声明 `parent_goal` 的 plan 不受此约束，不强制所有 plan 挂靠总纲。
+- 运行 `node scripts/check-plan-version.mjs` 做默认模式校验；发布门禁运行 `npm run release:check-plans`（`--release`）。两种模式均校验父目标声明；
+- 机器声明必须位于 frontmatter，正文提及不构成声明；声明了 `parent_goal` 即要求八字段齐全，数组字段支持显式行内 `[]` 或非空 block-list，块文本按实际缩进正文判空；
+- `parent_goal` 指向的 goal 文件必须按 frontmatter `id` 唯一匹配；`advances` 目标 id 只取该 goal §0.1 目标表首列；枚举、格式、`parallel_authority_added: false` 均由扫描器 fail-closed 校验；
+- 校验位于 future/deferred 与 legacy allowlist 提前返回之前，顺延或 allowlist plan 的非法声明不得假绿；
+- 未声明 `parent_goal` 的 plan 跳过该校验，不新增告警，不强制所有 plan 挂靠总纲；
+- 完整字段契约与失败语义见 [OpenSpec capability spec](openspec/specs/complex-capability-meta-model/spec.md)。
 
-机器校验设计已由 OpenSpec change `complex-capability-meta-model`（plan e7b3a9d4）承载：声明了才校验、未声明不告警、校验先于 future/allowlist 提前返回；实施落地后本节收编为指向机器校验。
 
 ## 回复语言（BLOCKER）
 

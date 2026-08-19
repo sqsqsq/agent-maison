@@ -7,6 +7,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const SEMVER_RE = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/;
 const TERMINAL_TODO = new Set(['completed', 'cancelled']);
+const PARENT_GOAL_ARRAY_KEYS = new Set(['advances', 'goal_requires', 'goal_provides']);
+const PARENT_GOAL_KEYS = new Set([
+  'parent_goal',
+  'advances',
+  'relation',
+  'layer',
+  'goal_requires',
+  'goal_provides',
+  'real_host_validation',
+  'parallel_authority_added',
+]);
 
 /**
  * @param {string} v
@@ -47,6 +58,125 @@ export function readCurrentVersion(repoRoot) {
 }
 
 /**
+ * @param {string} value
+ * @returns {string}
+ */
+function unquoteScalar(value) {
+  return value.trim().replace(/^(["'])(.*)\1$/, '$2');
+}
+
+/**
+ * 读取一个顶层 key 后的缩进块。这里不试图实现完整 YAML，只为 plan 声明提供
+ * 一层 block-list 与折叠/字面块所需的受限形态。
+ *
+ * @param {string[]} lines
+ * @param {number} start
+ * @returns {{ lines: string[], nextIndex: number }}
+ */
+function readIndentedBlock(lines, start) {
+  const blockLines = [];
+  let baseIndent = null;
+  let i = start + 1;
+  for (; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (line.trim() === '') {
+      if (baseIndent !== null) blockLines.push('');
+      continue;
+    }
+    const indent = (line.match(/^[ \t]*/) ?? [''])[0].length;
+    if (indent === 0) break;
+    if (baseIndent === null) baseIndent = indent;
+    if (indent < baseIndent) break;
+    blockLines.push(line.slice(baseIndent));
+  }
+  return { lines: blockLines, nextIndex: i - 1 };
+}
+
+/**
+ * @param {string[]} lines
+ * @param {number} start
+ * @returns {{ value: string, nextIndex: number }}
+ */
+function parseBlockText(lines, start) {
+  const block = readIndentedBlock(lines, start);
+  const meaningful = block.lines
+    .filter((line) => line.trim() !== '' && !/^\s*#/.test(line))
+    .map((line) => line.trim());
+  const marker = lines[start].replace(/^\S+:\s*/, '').trim()[0];
+  return {
+    value: marker === '|' ? meaningful.join('\n') : meaningful.join(' '),
+    nextIndex: block.nextIndex,
+  };
+}
+
+/**
+ * @param {string[]} lines
+ * @param {number} start
+ * @returns {{ value: string[] | undefined, nextIndex: number }}
+ */
+function parseArrayField(lines, start) {
+  const raw = /^\S+:\s*(.*)$/.exec(lines[start])?.[1]?.trim() ?? '';
+  if (raw === '[]') return { value: [], nextIndex: start };
+  if (raw !== '') return { value: undefined, nextIndex: start };
+
+  const block = readIndentedBlock(lines, start);
+  const items = [];
+  for (const line of block.lines) {
+    if (line.trim() === '') continue;
+    const item = /^-\s+(.+)$/.exec(line);
+    if (!item) return { value: undefined, nextIndex: block.nextIndex };
+    items.push(unquoteScalar(item[1]));
+  }
+  return items.length > 0
+    ? { value: items, nextIndex: block.nextIndex }
+    : { value: undefined, nextIndex: block.nextIndex };
+}
+
+/**
+ * @param {string} fm
+ * @returns {{
+ *   parentGoalDeclared: boolean,
+ *   parent_goal?: string,
+ *   advances?: string[],
+ *   relation?: string,
+ *   layer?: string,
+ *   goal_requires?: string[],
+ *   goal_provides?: string[],
+ *   real_host_validation?: string,
+ *   parallel_authority_added?: string,
+ * }}
+ */
+function parseParentGoalFields(fm) {
+  const lines = fm.split(/\r?\n/);
+  const out = { parentGoalDeclared: false };
+  for (let i = 0; i < lines.length; i += 1) {
+    const match = /^([A-Za-z0-9_]+):(?:[ \t]*(.*))?$/.exec(lines[i]);
+    if (!match || !PARENT_GOAL_KEYS.has(match[1])) continue;
+
+    const key = match[1];
+    const raw = (match[2] ?? '').trim();
+    if (key === 'parent_goal') out.parentGoalDeclared = true;
+
+    if (PARENT_GOAL_ARRAY_KEYS.has(key)) {
+      const parsed = parseArrayField(lines, i);
+      out[key] = parsed.value;
+      i = parsed.nextIndex;
+      continue;
+    }
+
+    if (key === 'real_host_validation' && /^[>|](?:[-+]\d*)?$/.test(raw)) {
+      const parsed = parseBlockText(lines, i);
+      out[key] = parsed.value;
+      i = parsed.nextIndex;
+      continue;
+    }
+
+    out[key] = unquoteScalar(raw);
+  }
+  return out;
+}
+
+/**
  * @param {string} repoRoot
  * @returns {string[]}
  */
@@ -62,12 +192,12 @@ export function listPlanFiles(repoRoot) {
 
 /**
  * @param {string} content
- * @returns {{ version?: string, deferred_to?: string, deferred_from?: string, name?: string, overview?: string, todos: { id?: string, content?: string, status: string }[], rawFrontmatter: string, body: string }}
+ * @returns {{ version?: string, deferred_to?: string, deferred_from?: string, name?: string, overview?: string, todos: { id?: string, content?: string, status: string }[], parentGoalDeclared: boolean, parent_goal?: string, advances?: string[], relation?: string, layer?: string, goal_requires?: string[], goal_provides?: string[], real_host_validation?: string, parallel_authority_added?: string, rawFrontmatter: string, body: string }}
  */
 export function parsePlanFile(content) {
   const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
   if (!match) {
-    return { todos: [], rawFrontmatter: '', body: content };
+    return { todos: [], parentGoalDeclared: false, rawFrontmatter: '', body: content };
   }
   const fm = match[1];
   const body = content.slice(match.index + match[0].length);
@@ -95,7 +225,7 @@ export function parsePlanFile(content) {
     });
   }
 
-  return { ...out, rawFrontmatter: fm, body };
+  return { ...out, ...parseParentGoalFields(fm), rawFrontmatter: fm, body };
 }
 
 /**
