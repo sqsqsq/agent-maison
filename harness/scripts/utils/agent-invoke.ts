@@ -931,6 +931,13 @@ export interface AgentInvokeOptions {
   onActiveChild?: (ctx: { pid: number; kill: () => Promise<KillTreeResult> }) => void;
   onChildExit?: () => void;
   /**
+   * t2（plan c6a9e4d2）：Windows agent containment 上下文。非空且 win32 时，
+   * agent 经 guardian（KILL_ON_JOB_CLOSE Job）启动：spawn 返回的 child.pid 即
+   * **guardian** 的 pid，agent 是 Job 成员——kill guardian = 整树团灭。
+   * 身份 token（t3）由 guardian argv 显式携带：`<runId>/<invokeId>`。
+   */
+  containment?: { runId: string; invokeId: string } | null;
+  /**
    * openspec device-readiness-and-completion t4：**完成观测探针**。
    *
    * 背景（07-28 事故）：agent 的 turn 已 `turn_ended status=success`、receipt 四条件齐全
@@ -987,31 +994,88 @@ export function buildAgentSpawnEnv(
   return stripTrustAnchorEnv(sanitizeSpawnEnv(merged).env).env;
 }
 
-function spawnHeadlessChild(
+function spawnGuardianFailureStub(message: string, code: string): ChildProcess {
+  // containment 结构性不可用（powershell/脚本/binary 解析失败）——不 spawn，
+  // 返回一个立即失败的桩 child（与 spawn error 同构，调用方按 spawn 失败处理）。
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { EventEmitter } = require('events') as typeof import('events');
+  const stub = new EventEmitter() as ChildProcess;
+  process.nextTick(() => {
+    const err = new Error(message) as NodeJS.ErrnoException;
+    err.code = code;
+    stub.emit('error', err);
+  });
+  return stub;
+}
+
+// win32 + containment 时 child.pid 是 **guardian** 的 pid（agent 为 Job 成员）。
+// guardian 自身不产生任何 stdout 消费（stdio 透传 agent），kill guardian =
+// 整树团灭（KILL_ON_JOB_CLOSE），与 killProcessTree(pid) 的既有语义兼容。
+export function spawnHeadlessChild(
   plan: HeadlessInvokePlan,
   cwd: string,
-  extraEnv?: Record<string, string>,
+  opts: Pick<AgentInvokeOptions, 'extraEnv' | 'containment'>,
 ): ChildProcess {
   const isWin = process.platform === 'win32';
   const stdio: ['pipe' | 'ignore', 'pipe', 'pipe'] = plan.useStdin
     ? ['pipe', 'pipe', 'pipe']
     : ['ignore', 'pipe', 'pipe'];
 
-  const opts = {
+  // t2（plan c6a9e4d2）：Windows containment 分支——agent 先入 KILL_ON_JOB_CLOSE
+  // Job 再执行用户代码（guardian 内部 SUSPENDED → assign → resume，无竞态窗口）。
+  // 失败=invoke 失败如实上浮（fail-closed），绝不绕过 containment 放行。
+  // 非 Windows / attended / dry-run 零变化（本分支不进）。
+  if (isWin && opts.containment) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const containment = require('./agent-containment') as typeof import('./agent-containment');
+    const token = `${opts.containment.runId}/${opts.containment.invokeId}`;
+    // P1-7/二轮 review：command line 组装/转义收在本层（标准 Windows argv quoting；
+    // cmd shim 一律**解包到 direct 目标**，不经 cmd /C——%VAR% 展开在引号内仍生效
+    // 且无可靠转义，实测），guardian 只做 CreateProcess(appName, commandLine)。
+    const resolved = containment.resolveAgentCommand(plan.argv);
+    if ('error' in resolved) {
+      return spawnGuardianFailureStub(resolved.error, 'MAISON_GUARDIAN_BINARY_UNRESOLVED');
+    }
+    const invocation = containment.buildGuardianInvocation(
+      {
+        argv: plan.argv,
+        cwd,
+        commandLine: resolved.commandLine,
+        appName: resolved.appName,
+      },
+      process.pid,
+      token,
+    );
+    if ('error' in invocation) {
+      return spawnGuardianFailureStub(invocation.error, 'MAISON_GUARDIAN_UNAVAILABLE');
+    }
+    return spawn(invocation.file, invocation.args, {
+      cwd,
+      env: buildAgentSpawnEnv(process.env, opts.extraEnv),
+      stdio,
+      shell: false as const,
+      windowsHide: true,
+    });
+  }
+
+  const opts2 = {
     cwd,
     // P0-7①：agent 子进程剥离 NODE_OPTIONS 预加载注入（防经 agent 环境二次传导进工具链）。
     // t10（codex 六轮 P0-2）：信任锚材料不进 agent env。
     // b7e4d2a9 Todo3：合并后统一 strip + HEADLESS 最后定档（见 buildAgentSpawnEnv）。
-    env: buildAgentSpawnEnv(process.env, extraEnv),
+    env: buildAgentSpawnEnv(process.env, opts.extraEnv),
     stdio,
     detached: !isWin,
     shell: false as const,
+    // plan c6a9e4d2 t4：spawn 卫生——每 invoke 不弹可见控制台窗（0xC000013A
+    // 控制台中断类退出的预防面；guardian 分支见上方的 windowsHide）。
+    windowsHide: true,
   };
 
   if (plan.useCrossSpawn) {
-    return crossSpawn(plan.argv[0], plan.argv.slice(1), opts) as ChildProcess;
+    return crossSpawn(plan.argv[0], plan.argv.slice(1), opts2) as ChildProcess;
   }
-  return spawn(plan.argv[0], plan.argv.slice(1), opts);
+  return spawn(plan.argv[0], plan.argv.slice(1), opts2);
 }
 
 async function spawnHeadlessAsync(
@@ -1020,7 +1084,7 @@ async function spawnHeadlessAsync(
   opts: AgentInvokeOptions,
 ): Promise<AgentInvokeResult> {
   const started = Date.now();
-  const child = spawnHeadlessChild(plan, cwd, opts.extraEnv);
+  const child = spawnHeadlessChild(plan, cwd, opts);
   const pid = child.pid ?? 0;
 
   let stdout = '';

@@ -756,13 +756,26 @@ export function rebuildOutcomesFromEvents(
   for (const phase of chain) {
     const halt = lastHalt.get(phase);
     if (halt) {
-      const h = halt as { verdict?: string; halt_reason?: string; halt_guidance?: string };
+      const h = halt as {
+        verdict?: string; halt_reason?: string; halt_guidance?: string;
+        run_disposition?: string; run_wait_kind?: string;
+      };
+      // 设备停放 WAITING 语义不得回退（fa0663）：phase_halt 事件的
+      // run_disposition/run_wait_kind 投影字段必须原样带到重建 outcome——
+      // resolveResumeState 的 WAITING(external) 续跑判据消费这两个字段。
       outcomes.push({
         phase,
         verdict: (h.verdict ?? 'FAIL') as string,
         halted: true,
         ...(h.halt_reason ? { halt_reason: h.halt_reason } : {}),
         ...(h.halt_guidance ? { halt_guidance: h.halt_guidance } : {}),
+        // 投影字段原样透传（type 收窄：事件侧由写盘层统一投影判定落盘，读回即信任）。
+        ...(typeof h.run_disposition === 'string'
+          ? { run_disposition: h.run_disposition as GoalPhaseOutcome['run_disposition'] }
+          : {}),
+        ...(typeof h.run_wait_kind === 'string'
+          ? { run_wait_kind: h.run_wait_kind as GoalPhaseOutcome['run_wait_kind'] }
+          : {}),
       });
       break;
     }
@@ -832,6 +845,37 @@ export function loadEventsJsonl(absPath: string): GoalRunEvent[] {
     }
   }
   return out;
+}
+
+export interface EventsLoadStrictResult {
+  events: GoalRunEvent[];
+  missing: boolean;
+  corruptLines: Array<{ line: number; snippet: string }>;
+}
+
+/**
+ * t1（plan c6a9e4d2）：resume 决策面的**严格** events 加载——逐行校验，任何一行 JSON
+ * 损坏都不静默跳过（loadEventsJsonl 的 skip-malformed 只适合审计/展示读取）。
+ * 消费方（resume 起点、terminal guard）必须 fail-closed：events 缺失或损坏 → 拒绝
+ * resume 并命名损坏物。snippet 截断 300 字符（events 行可能携带长 payload，不整行外泄）。
+ */
+export function loadEventsJsonlStrict(absPath: string): EventsLoadStrictResult {
+  if (!fs.existsSync(absPath)) return { events: [], missing: true, corruptLines: [] };
+  const raw = fs.readFileSync(absPath, 'utf-8');
+  const lines = raw.split(/\r?\n/);
+  const events: GoalRunEvent[] = [];
+  const corruptLines: Array<{ line: number; snippet: string }> = [];
+  for (let idx = 0; idx < lines.length; idx++) {
+    const trimmed = lines[idx].trim();
+    if (!trimmed) continue;
+    try {
+      events.push(JSON.parse(trimmed) as GoalRunEvent);
+    } catch {
+      const snippet = trimmed.length > 300 ? `${trimmed.slice(0, 300)}…` : trimmed;
+      corruptLines.push({ line: idx + 1, snippet });
+    }
+  }
+  return { events, missing: false, corruptLines };
 }
 
 /** plan e7c2a4d8 T1c：权威消费面视图——按会话段剔除 dry-run 段（.dry 隔离后新文件

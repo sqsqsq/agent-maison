@@ -45,6 +45,9 @@ import {
   resolveResumedBudget,
   rebuildOutcomesFromEvents,
   filterAuthoritativeEvents,
+  loadEventsJsonlStrict,
+  resolveResumeFromEvents,
+  checkTerminalResumeGuard,
   SESSION_HEARTBEAT_MS,
   type GoalRunEvent,
 } from '../../scripts/utils/goal-runner-phase';
@@ -751,6 +754,155 @@ const cases: Array<{ name: string; run: () => void }> = [
           try { fs.rmdirSync(j); } catch { /* best-effort */ }
         }
         try { fs.rmSync(temp, { recursive: true, force: true }); } catch { /* best-effort */ }
+      }
+    },
+  },
+  // ------------------------------------------------------------ t1（plan c6a9e4d2）
+  // events-only resume：resume 起点/priorOutcomes 一律由 authoritative events 回放，
+  // goal-report.json 永不参与恢复决策；events 缺失/损坏 fail-closed；terminal guard
+  // priorStatus 从 events 投影。
+  {
+    name: 't1: 陈旧 report（review halted）+ 新 events（review/ut advance）→ 起点=testing',
+    run: () => {
+      const T = Date.parse('2026-08-18T03:54:20.000Z');
+      const chain = ['coding', 'review', 'ut', 'testing'];
+      // 陈旧 goal-report.json 形态：审合时 review halted（报告只在 run_end 落盘，
+      // 崩溃后停留在旧 halt）；events 已前进到 review/ut 双 PASS。
+      const events: GoalRunEvent[] = [
+        ev({ ts: new Date(T).toISOString(), type: 'run_start' }),
+        ev({ ts: new Date(T + 60_000).toISOString(), type: 'phase_verdict', phase: 'coding', verdict: 'PASS', action: 'advance' }),
+        ev({ ts: new Date(T + 120_000).toISOString(), type: 'phase_verdict', phase: 'review', verdict: 'PASS', action: 'advance' }),
+        ev({ ts: new Date(T + 180_000).toISOString(), type: 'phase_verdict', phase: 'ut', verdict: 'PASS', action: 'advance' }),
+      ];
+      // 旧代码的 report 分支（priorReport?.phases 优先）会以 review halt 起步——
+      // 本用例直接验证 events-only 口径的起点不依赖任何 report。
+      const resume = resolveResumeFromEvents(chain, events);
+      if (resume.startIndex !== 3) {
+        throw new Error(`起点应为 testing(idx=3)，实得 ${resume.startIndex}（outcomes=${JSON.stringify(resume.priorOutcomes)}）`);
+      }
+      if (resume.priorOutcomes.length !== 3) {
+        throw new Error(`priorOutcomes 应为 3（coding/review/ut PASS），实得 ${resume.priorOutcomes.length}`);
+      }
+      // 接线断言：goal-runner resume 分支不得再读取 report 的 phases 做起点。
+      const runnerSrc = fs.readFileSync(
+        path.join(__dirname, '../../scripts/goal-runner.ts'), 'utf-8',
+      );
+      if (/priorReport\?\.phases/.test(runnerSrc)) {
+        throw new Error('goal-runner.ts 仍存在 report 优先的 resume 起点分支（priorReport?.phases）');
+      }
+    },
+  },
+  {
+    name: 't1: events 损坏→resume 决策面 fail-closed（loadEventsJsonlStrict 命名损坏行）',
+    run: () => {
+      const dir = tmpDir('ev-corrupt');
+      const eventsPath = path.join(dir, 'events.jsonl');
+      fs.writeFileSync(
+        eventsPath,
+        `${JSON.stringify({ ts: '2026-08-18T00:00:00.000Z', type: 'run_start' })}\n` +
+        `{"ts":"2026-08-18T00:00:01.000Z","type":"phase_verdict",broken\n`,
+        'utf-8',
+      );
+      const strict = loadEventsJsonlStrict(eventsPath);
+      if (strict.corruptLines.length !== 1 || strict.corruptLines[0].line !== 2) {
+        throw new Error(`损坏行未识别：${JSON.stringify(strict.corruptLines)}`);
+      }
+      if (strict.events.length !== 1) throw new Error('严格加载不得吞掉合法行');
+      const missing = loadEventsJsonlStrict(path.join(dir, 'nope.jsonl'));
+      if (!missing.missing || missing.corruptLines.length !== 0) {
+        throw new Error('缺失文件应报 missing=true 且无损坏行');
+      }
+      // P1-8（review）：空文件/全空白同样不是真源——strict 返回 0 events 但非 missing，
+      // 上层（resume 检查）须据此 fail-closed。
+      fs.writeFileSync(path.join(dir, 'empty.jsonl'), '', 'utf-8');
+      const empty = loadEventsJsonlStrict(path.join(dir, 'empty.jsonl'));
+      if (empty.missing || empty.corruptLines.length !== 0 || empty.events.length !== 0) {
+        throw new Error(`空文件应报告 events=[] 且非 missing：${JSON.stringify(empty)}`);
+      }
+      fs.writeFileSync(path.join(dir, 'blank.jsonl'), '  \n\t\n', 'utf-8');
+      const blank = loadEventsJsonlStrict(path.join(dir, 'blank.jsonl'));
+      if (blank.events.length !== 0) throw new Error('全空白应解析为 0 事件');
+      // 接线断言：goal-runner resume 分支在恢复决策前必须消费严格视图。
+      const runnerSrc = fs.readFileSync(
+        path.join(__dirname, '../../scripts/goal-runner.ts'), 'utf-8',
+      );
+      if (!runnerSrc.includes('loadEventsJsonlStrict(eventsPath)')) {
+        throw new Error('goal-runner.ts resume 分支未接线 events 严格加载（fail-closed 缺失）');
+      }
+      if (!runnerSrc.includes('authoritativeResumeEvents.some')) {
+        throw new Error('goal-runner.ts 未做 authoritative run_start 存在性检查（P1-8 fail-closed 缺失）');
+      }
+      fs.rmSync(dir, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 't1: terminal guard priorStatus 从 events run_end 投影（HALTED 拒绝非 force resume）',
+    run: () => {
+      const T = Date.now() - 10 * 60_000; // 明确过去（cooldown=0 时也不触发负 elapsed）
+      // report 显示 COMPLETED（陈旧）、events run_end=HALTED——guard 以 events 为准拒绝。
+      const events: GoalRunEvent[] = [
+        ev({ ts: new Date(T).toISOString(), type: 'run_start' }),
+        ev({ ts: new Date(T + 60_000).toISOString(), type: 'phase_verdict', phase: 'spec', verdict: 'PASS', action: 'advance' }),
+        ev({ ts: new Date(T + 120_000).toISOString(), type: 'run_end', status: 'HALTED' }),
+      ];
+      const last = [...events].reverse().find((e) => e.type === 'run_end');
+      const guard = checkTerminalResumeGuard({
+        priorStatus: last?.status,
+        lastRunEndTs: last?.ts,
+        forceResume: false,
+        cooldownMinutes: 0,
+      });
+      if (guard.allowed) throw new Error('events run_end=HALTED 必须拒绝裸 resume');
+      const forced = checkTerminalResumeGuard({
+        priorStatus: last?.status,
+        lastRunEndTs: last?.ts,
+        forceResume: true,
+        cooldownMinutes: 0,
+      });
+      if (!forced.allowed) throw new Error('--force-resume 应放行（cooldown=0）');
+      // 接线断言：resume guard 的 priorStatus 不再回退 report.status。
+      const runnerSrc = fs.readFileSync(
+        path.join(__dirname, '../../scripts/goal-runner.ts'), 'utf-8',
+      );
+      if (/priorReport\?\.status/.test(runnerSrc)) {
+        throw new Error('goal-runner.ts terminal guard 仍回退 report.status（plan t1 同病未除）');
+      }
+    },
+  },
+  {
+    name: 't1: events 重建的 halt outcome 携带 run_disposition/run_wait_kind 投影（WAITING 停放语义）',
+    run: () => {
+      const T = Date.parse('2026-08-10T08:00:00.000Z');
+      const chain = ['coding', 'review', 'ut', 'testing'];
+      const events: GoalRunEvent[] = [
+        ev({ ts: new Date(T).toISOString(), type: 'run_start' }),
+        ev({ ts: new Date(T + 60_000).toISOString(), type: 'phase_verdict', phase: 'coding', verdict: 'PASS', action: 'advance' }),
+        ev({ ts: new Date(T + 120_000).toISOString(), type: 'phase_verdict', phase: 'review', verdict: 'PASS', action: 'advance' }),
+        ev({
+          ts: new Date(T + 180_000).toISOString(), type: 'phase_halt', phase: 'ut',
+          halt_reason: 'device_unready', run_disposition: 'WAITING', run_wait_kind: 'external',
+        }),
+      ];
+      const rebuilt = rebuildOutcomesFromEvents(events, chain);
+      if (rebuilt.length !== 3) throw new Error(`重建 outcome 数应为 3，实得 ${rebuilt.length}`);
+      const haltedUt = rebuilt[2];
+      if (!haltedUt || !haltedUt.halted || haltedUt.phase !== 'ut') {
+        throw new Error(`ut halt 未重建为 halted outcome：${JSON.stringify(rebuilt)}`);
+      }
+      if (haltedUt.run_disposition !== 'WAITING' || haltedUt.run_wait_kind !== 'external') {
+        throw new Error(
+          `halt 重建丢失 run_disposition/run_wait_kind 投影：${JSON.stringify(haltedUt)}`,
+        );
+      }
+      // fa0663：WAITING(external) 停放不得被计入 done——resume 起点必须回到 ut。
+      const resume = resolveResumeFromEvents(chain, events);
+      if (resume.startIndex !== 2) {
+        throw new Error(`设备停放场景起点应为 ut(idx=2)，实得 ${resume.startIndex}`);
+      }
+      // 弹出 halted phase 后的 prefix 不得残留 WAITING outcome 自身（resolveResumeState
+      // 的 halted 弹出语义）——但数据库（未 halt 的）先序 outcome 必须保留。
+      if (resume.priorOutcomes.length !== 2) {
+        throw new Error(`halted 弹出后 prefix 应为 2，实得 ${resume.priorOutcomes.length}`);
       }
     },
   },

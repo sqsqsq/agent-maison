@@ -169,7 +169,6 @@ import {
 } from './utils/goal-checkpoint';
 import {
   generateGoalReportJson,
-  loadGoalReportJson,
   writeGoalReport,
   type GoalPhaseOutcome,
 } from './utils/goal-report-generator';
@@ -256,7 +255,7 @@ import {
   collectSupersededAncestorEvents,
   resolveResumeFromEvents,
   rebuildOutcomesFromEvents,
-  resolveResumeState,
+  loadEventsJsonlStrict,
   countCumulativeAdvanceBlocked,
   countRepeatedSignatureInFamily,
   classifyClosureKind,
@@ -265,6 +264,12 @@ import {
   type ContinuationCause,
 } from './utils/goal-runner-phase';
 import { finalizePhaseClosure } from './utils/phase-closure-finalizer';
+import {
+  awaitGuardianGone,
+  identifyWithRetry,
+  reconcileGuardianOwnership,
+  terminateGuardianProcessOnly,
+} from './utils/goal-containment-reconcile';
 import {
   reconcileLedgerWithEvents,
   visualRoundsLedgerPath,
@@ -989,6 +994,8 @@ async function runHarnessPhase(
       // process.kill(-pid) 以进程组为前提，不 detached 时组杀必然 ESRCH 回落单杀，
       // 孙进程（harness 再 spawn 的编译/设备子进程）漏杀。与 agent invoke 同口径。
       detached: process.platform !== 'win32',
+      // plan c6a9e4d2 t4：gate-harness spawn 卫生——防每 invoke 弹可见控制台窗。
+      windowsHide: true,
     },
   );
   activeHarnessKill = async () => {
@@ -4111,6 +4118,54 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // 都不是可直接拼进提示词的可信输入。仅贴 "UNTRUSTED" 标签不是安全边界。
     let scopeReplanContext: ScopeReplanPromptContext | null = null;
     let priorEvents = loadAuthoritativeEvents(eventsPath);
+
+    // t1（plan c6a9e4d2）：resume 决策面 events 必须**缺失/损坏即 fail-closed**——
+    // 不静默跳过坏行、不回退 report、不猜测起点。authoritative events 是 resume 起点/
+    // 预算/terminal guard 的唯一真源；损坏时继续 = 用截断历史做恢复决策。
+    if (argv.resume) {
+      const strictEvents = loadEventsJsonlStrict(eventsPath);
+      if (strictEvents.missing) {
+        console.error(
+          `[goal-runner] BLOCKER: --resume 需要 events 真源，但文件缺失：${eventsPath}\n`
+          + '  处置：不猜测起点——核对 run 目录完整性后手动处置（events 被删的 run 无法安全续跑）。',
+        );
+        return 1;
+      }
+      if (strictEvents.corruptLines.length > 0) {
+        const corrupt = strictEvents.corruptLines
+          .map((c) => `  - 第 ${c.line} 行：${c.snippet}`)
+          .slice(0, 5)
+          .join('\n');
+        console.error(
+          `[goal-runner] BLOCKER: events.jsonl 存在损坏行（共 ${strictEvents.corruptLines.length} 条），`
+          + '其为 resume 决策真源，不得忽略：\n'
+          + `${corrupt}\n`
+          + `  文件：${eventsPath}\n`
+          + '  处置：人工核查损坏原因与行内容后处置；绝不基于残缺 events 续跑。',
+        );
+        return 1;
+      }
+      // P1-8（review）：空文件/全空白/无有效 authoritative run_start 同样是“无真源”——
+      // resume 从空历史猜起点=用猜测做恢复决策，fail-closed。
+      if (strictEvents.events.length === 0) {
+        console.error(
+          `[goal-runner] BLOCKER: --resume 需要 events 真源，但文件为空（0 行）：${eventsPath}\n`
+          + '  处置：不猜测起点——人工核查 run 目录完整性（events 被清空的 run 无法安全续跑）。',
+        );
+        return 1;
+      }
+      const authoritativeResumeEvents = strictEvents.events.filter((e) =>
+        (e as { dry_run?: unknown }).dry_run !== true);
+      if (!authoritativeResumeEvents.some((e) => (e as { type?: string }).type === 'run_start')) {
+        console.error(
+          `[goal-runner] BLOCKER: --resume 需要 events 含有效 authoritative run_start，`
+          + `但该文件没有（raw=${strictEvents.events.length} 行，authoritative=${authoritativeResumeEvents.length} 行）：${eventsPath}\n`
+          + '  处置：resume 起点无源可依——人工核查 run 目录（非本 run 的 events / 文件被整体替换/清空）。',
+        );
+        return 1;
+      }
+    }
+
     let previousUnverifiedRound: { phase: string; fingerprint: string } | null = null;
     for (const event of priorEvents) {
       const item = event as {
@@ -4205,10 +4260,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
         priorEvents = loadAuthoritativeEvents(eventsPath);
       }
 
-      const priorReport = loadGoalReportJson(projectRoot, manifest.report_dir);
+      // t1（plan c6a9e4d2）：terminal resume guard 的 priorStatus 只从**有效 events
+      // 投影**取（run_end 事件），不再回退到 goal-report.json——report 纯展示投影，
+      // 只 run_end 落盘，崩溃现场其状态陈旧（review/ut 已 advance 仍显示 halt）。
       const lastRunEnd = findLastRunEnd(priorEvents);
       const guard = checkTerminalResumeGuard({
-        priorStatus: priorReport?.status ?? lastRunEnd?.status,
+        priorStatus: lastRunEnd?.status,
         lastRunEndTs: lastRunEnd?.ts,
         forceResume,
         cooldownMinutes: RESUME_COOLDOWN_MINUTES,
@@ -4421,18 +4478,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
     const wallClockStartMs = budgetBase.firstAuthoritativeStartMs ?? sessionStartMs;
 
     if (argv.resume) {
-      const priorReport = loadGoalReportJson(projectRoot, manifest.report_dir);
-      if (priorReport?.phases?.length) {
-        const resume = resolveResumeState(chain, priorReport.phases);
-        outcomes = [...resume.priorOutcomes];
-        deferredUpstream = [...resume.deferredUpstream];
-        chainStartIndex = resume.startIndex;
-      } else {
-        const resume = resolveResumeFromEvents(chain, priorEvents);
-        outcomes = [...resume.priorOutcomes];
-        deferredUpstream = [...resume.deferredUpstream];
-        chainStartIndex = resume.startIndex;
-      }
+      // t1（plan c6a9e4d2）：resume 起点/priorOutcomes 一律从 **authoritative events
+      // 回放**（resolveResumeFromEvents）。goal-report.json 不再参与恢复决策——纯展示
+      // 投影只在 run_end 落盘，旧 run 崩溃后其 phases 落后于 events（review/ut 已
+      // advance 仍显示旧 halt），曾造成每次 resume 把已 PASS 闭环回滚重跑。事件缺失/
+      // 损坏已在上方 fail-closed（本分支可达时 events 必完整）。
+      const resume = resolveResumeFromEvents(chain, priorEvents);
+      outcomes = [...resume.priorOutcomes];
+      deferredUpstream = [...resume.deferredUpstream];
+      chainStartIndex = resume.startIndex;
       // S4：invalidation 消费——resume 起点推导剔除已失效且未重新完成的 phase
       // （被失效旧 PASS 不得作为续跑依据；十消费面矩阵之 resume 项）。
       // pass snapshot 已退役：失效事件本身即事实全部，无缓存需要退位。
@@ -4444,6 +4498,81 @@ Goal runner — tool-agnostic multi-phase orchestrator
         start_index: chainStartIndex,
         start_phase: chain[chainStartIndex],
       });
+    }
+
+    // t2/t3（plan c6a9e4d2）：Windows guardian 接管对账——resume 起点前遗留的
+    // 未闭合 agent_process_bound 必须**逐一对账**处置干净才允许续跑（设备安全域，
+    // fail-closed；真实事故曾出现多个并发孤儿，只处理最后一个会漏掉更早者）：
+    //   · 旧版 run（从未有绑定事件且存在**未闭合** invoke）→ 拒绝 resume，提示
+    //     人工清理；人工完成后以 --force-resume 显式确认（可审计）——supervisor
+    //     不代其自动确认；
+    //   · guardian 已不存在 → 依「guardian=Job 唯一持柄」契约判定 Job 已关闭，无需回收；
+    //   · guardian 身份四元组严格匹配且存活 → 新 epoch（本进程锁接管）已取得，终止
+    //     guardian 由 Job 关闭团灭全部后代（只杀 owner，绝不逐个 killProcessTree）；
+    //   · 身份不匹配/不可核实/命令行缺 token → 不杀不阻断，仅警告。
+    // 任一匹配但杀不死 → 拒绝续跑（真冲突，勿自动覆盖）。
+    // 所有拒绝路径经 concludeStartupBlocker 优雅收口（run_start 已落，直接 return
+    // 会留僵尸 RUNNING 投影）。非 Windows 平台不启用（无 Job 语义，零变化）。
+    if (argv.resume && !dryRun && process.platform === 'win32') {
+      const reconcile = reconcileGuardianOwnership(priorEvents, defaultProcessProbe());
+      if (reconcile.kind === 'legacy_run') {
+        const msg =
+          '[goal-runner] BLOCKER: 本 run 存在未闭合 agent invoke 记录但没有任何 Job 绑定事件\n'
+          + '  （agent_process_bound）——旧版 run 的遗留进程无法按 guardian 身份契约接管。\n'
+          + `  原因：${reconcile.reason}`;
+        if (forceResume) {
+          // P1-4 review：人工清理后以 --force-resume 显式确认（可审计指令）。
+          goalEvents.emit({
+            type: 'legacy_run_override',
+            run_id: manifest.run_id,
+            reason: 'operator acknowledged legacy run via --force-resume',
+          });
+          console.warn(
+            `[goal-runner] ⚠ 旧版 run 经 --force-resume 显式确认放行（${reconcile.unclosedInvokes}`
+            + ' 个未闭合 invoke 无 Job 绑定——请已按提示人工清理残留 CLI 进程）',
+          );
+        } else {
+          console.error(`${msg}\n处置：人工核查进程树后清理残留 CLI 后代后，`
+            + '以 --force-resume 显式确认（可审计）后 resume——不猜测、不自动回收、'
+            + 'supervisor 不代其确认。');
+          concludeStartupBlocker('legacy_run_requires_manual_cleanup', msg);
+          return 1;
+        }
+      } else if (reconcile.kind === 'outcomes') {
+        for (const item of reconcile.items) {
+          if (item.kind === 'guardian_gone') {
+            console.log(
+              `[goal-runner] 接管对账：guardian(pid=${item.bound.pid}) 已不存在——`
+              + '依唯一持柄契约判定 Job 已关闭，无需回收',
+            );
+          } else if (item.kind === 'guardian_alive_matching') {
+            const pid = item.bound.pid;
+            const killed = terminateGuardianProcessOnly(pid);
+            if (!killed || !awaitGuardianGone(pid)) {
+              const msg =
+                `[goal-runner] BLOCKER: guardian(pid=${pid}) 身份严格匹配（token=` +
+                `${item.bound.token}）但无法终止——拒绝续跑（真冲突，勿自动覆盖）。\n`
+                + '  处置：人工核查该 guardian 终止失败原因（权限/句柄占用）后重试。';
+              console.error(msg);
+              concludeStartupBlocker('guardian_termination_failed', msg);
+              return 1;
+            }
+            goalEvents.emit({
+              type: 'orphan_reclaimed',
+              run_id: manifest.run_id,
+              invoke_id: item.bound.invoke_id,
+              pid,
+              method: 'terminate_job_owner',
+            });
+            console.log(
+              `[goal-runner] 接管对账：已终止匹配 guardian(pid=${pid})，Job 关闭团灭其全部后代`
+              + '（孤儿已回收）',
+            );
+          } else {
+            console.warn(`[goal-runner] ⚠ 接管对账：${item.reason}（不杀、不阻断）`);
+          }
+        }
+      }
     }
 
     let halted = false;
@@ -5462,7 +5591,21 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // （跳过判定、跳过观测事件、伪造 invoke 结果）成为不可达死代码，一并删除。
         // completion probe 保留唯一职责：观察本轮 agent 把骨架从未完成填成完整。
         assertGoalBoundary('phase_invoke');
-        const invoke = await (injectedInvokeAgent ?? invokeAgentHeadless)(invokePlan, projectRoot, {
+        // t2（plan c6a9e4d2）：Windows containment 上下文——非 dry-run 的真实 headless
+        // invoke 在 win32 上恒经 guardian（KILL_ON_JOB_CLOSE Job）启动（headless 即
+        // unattended；attended/非 Windows 零变化）。身份 token=run_id/invoke_id。
+        const guardianToken = `${manifest.run_id}/${invokeId}`;
+        const containmentCtx =
+          !dryRun && process.platform === 'win32' ? { runId: manifest.run_id, invokeId } : null;
+        // t3（plan c6a9e4d2）：guardian 绑定状态——onActiveChild 落 agent_process_bound；
+        // 身份不可得/argv 缺 token = 绑定失败（guardianBoundError），invoke 后按
+        // containment 失败处置（fail-closed：绝不对外宣称已受控，也不按正常 invoke
+        // 结果续跑）。P0-2 review：guardian 未证明消失（kill 失败/复验仍活）时置
+        // guardianStillAlive——不得落 settled、不得继续下一 invoke（halt 阻断）。
+        let guardianBoundError: string | null = null;
+        let guardianStillAlive = false;
+        let guardianPidForCheck = 0;
+        let invoke = await (injectedInvokeAgent ?? invokeAgentHeadless)(invokePlan, projectRoot, {
           dryRun,
           timeoutMs: effectiveAgentTimeoutMs,
           outputLogPath,
@@ -5488,17 +5631,106 @@ Goal runner — tool-agnostic multi-phase orchestrator
           },
           // t3a：adapter 声明 structured_events 时三文件分流（events/stderr/人读投影）
           toolEventCapture: cap.capability?.tool_event_provenance ?? 'none',
+          // t2：containment 上下文——仅在 win32 非 dry 时非空（agent-invoke 据此走
+          // guardian 分支；非 Windows/attended 零变化）。
+          containment: containmentCtx,
           // C-ab-eval：按 adapter goal_capability.usage_capture 声明采集（缺省 none → proxy）
           usageCapture: cap.capability?.usage_capture,
-          onActiveChild: ({ kill }) => {
+          onActiveChild: ({ pid, kill }) => {
             activeAgentKill = async () => {
               await kill();
             };
+            // t3（plan c6a9e4d2）：guardian 绑定事件——invoke 开始即落
+            // agent_process_bound（ManagedProcessIdentity 四元组逐字段复用：
+            // pid + OS 启动时刻严格等值 + executable 绝对路径 + token 槽位）。
+            // P0-2 review：身份读取做**有界重试**（CIM 存在数百毫秒可见延迟，
+            // 首次探测可能暂不可见）；四元组完整性校验含 executable 绝对路径。
+            // 二轮 review P0：绑定失败 → **同步** taskkill（不依赖异步 kill 承诺）
+            // 并用**独立 PID existence 通道**（Get-Process，非 CIM）复验消失——
+            // CIM identify 的 null 可能=暂不可见/查询失败，不得当作死亡证明；
+            // 未证明消失置 guardianStillAlive（invoke 后阻断续跑，绝不落 settled）。
+            if (containmentCtx && pid > 0) {
+              guardianPidForCheck = pid;
+              const identity = identifyWithRetry(pid, defaultProcessProbe());
+              const executableOk = typeof identity?.executable === 'string'
+                && identity.executable.trim().length > 0
+                && /^[a-zA-Z]:[\\/]/.test(identity.executable.trim());
+              if (!identity?.commandLine || !executableOk) {
+                guardianBoundError =
+                  `guardian(pid=${pid}) 身份不可得/命令行不可读/可执行文件非绝对路径——` +
+                  'Windows containment 绑定失败，立即团灭并复验消失（fail-closed）';
+                const killed = terminateGuardianProcessOnly(pid);
+                const gone = awaitGuardianGone(pid);
+                if (!killed || !gone) guardianStillAlive = true;
+                return;
+              }
+              if (!identity.commandLine.includes(guardianToken)) {
+                guardianBoundError =
+                  `guardian(pid=${pid}) 命令行不含身份 token「${guardianToken}」——` +
+                  '绑定失败，立即团灭并复验消失（fail-closed）';
+                const killed = terminateGuardianProcessOnly(pid);
+                const gone = awaitGuardianGone(pid);
+                if (!killed || !gone) guardianStillAlive = true;
+                return;
+              }
+              goalEvents.emit({
+                type: 'agent_process_bound',
+                phase,
+                invoke_id: invokeId,
+                run_id: manifest.run_id,
+                pid,
+                started_at_ms: identity.startedAtMs,
+                executable: identity.executable,
+                token: guardianToken,
+              });
+            }
           },
           onChildExit: () => {
             activeAgentKill = null;
           },
         });
+
+        // t2 fail-closed：containment 绑定失败的 invoke 结果不得按正常结果续跑——
+        // 覆盖为失败（exit 1 + 诊断附 stderr；timed_out/completion 等成功性标记清除）。
+        if (guardianBoundError) {
+          const diag = `\n[maison-guardian] ${guardianBoundError}`;
+          invoke = {
+            ...invoke,
+            exitCode: 1,
+            timed_out: undefined,
+            silent_killed: undefined,
+            completion_observed: undefined,
+            stderr: `${(invoke.stderr ?? '').slice(-4096)}${diag}`,
+          };
+        }
+        // P0-2（review）：绑定失败且 guardian **未证明消失**（kill 失败/复验仍活）——
+        // 旧 guardian/agent 仍在野跑且无身份记录可接管：不得落 settled、不得继续下一
+        // invoke。halt 阻断（fail-closed；真冲突求人，不自动清理）。
+        if (guardianBoundError && guardianStillAlive) {
+          const detailMsg =
+            `guardian(pid=${guardianPidForCheck}) 绑定失败且未证明消失——` +
+            '旧 agent 无 Job 契约仍在野，halt 阻断续跑（真冲突勿自动覆盖）。' +
+            `原始失败：${guardianBoundError}`;
+          goalEvents.emit({
+            type: 'phase_halt',
+            phase,
+            halt_reason: 'agent_containment_unresolved',
+            detail: detailMsg.slice(0, 1000),
+            ...runDispositionFields(decide(
+              { incident: 'agent_containment_unresolved', phase: String(phase), detail: detailMsg },
+              NO_AUTHORITY,
+              { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+            )),
+          });
+          console.error(`\n===== agent_containment_unresolved =====\n${detailMsg}\n`);
+          outcomes.push({
+            phase, verdict: 'FAIL', halted: true, retries,
+            halt_reason: 'agent_containment_unresolved',
+          });
+          halted = true;
+          phaseDone = true;
+          continue;
+        }
 
         goalEvents.emit({
           type: 'agent_invoke_end',
@@ -5526,6 +5758,19 @@ Goal runner — tool-agnostic multi-phase orchestrator
           output_bytes: fs.existsSync(outputLogPath) ? fs.statSync(outputLogPath).size : 0,
           output_delivery: cap.capability?.output_delivery ?? 'unknown',
         });
+        // t3（plan c6a9e4d2）：invoke 收尾落 settled 事件——在 agent_invoke_end 之后
+        // 追加（run 结束/接管对账据其闭合 invoke，恢复决策永不用 report）。
+        // P0-2（review）：仅**绑定成功**才落 settled——绑定失败且 guardian 未证明消失
+        // 时不得声称已收纳（上方已 halt 阻断，本分支不可达；此处条件为结构保障）。
+        if (containmentCtx && !guardianBoundError) {
+          goalEvents.emit({
+            type: 'agent_process_settled',
+            phase,
+            invoke_id: invokeId,
+            run_id: manifest.run_id,
+            exit_code: invoke.exitCode,
+          });
+        }
         // P1-9（plan 7c4f2e9b）：模型身份 telemetry——共享 parser 读**纯 events 文件**的
         // init 事件，append-only 新事件承载；不回写冻结 manifest / 不改 run 前 adapter_probe
         // / 不为 telemetry 造 capability receipt / 不参与能力真值与任何策略分支。
@@ -6200,7 +6445,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           AGENT_NO_OUTPUT_MAX_DURATION_MS,
         );
         // E4（案B chrys 实录：exit=3221225786 两次被误判 code_regression/agent_no_output）：
-        // 用户手动 Ctrl+C，不是任何一种"失败"信号，最高优先单独识别。
+        // 控制台中断类退出（Ctrl+C/关窗/conhost 终止，可能来自操作者或宿主环境清理），
+        // 不是任何一种"失败"信号，最高优先单独识别。
         const operatorInterrupt = isOperatorInterruptSignal(invoke.exitCode, invoke.signal);
         const baseFailureKind = classifyFailureKind(summary, manifest.dependency_policy, {
           agentTimedOut: invoke.timed_out === true,
@@ -6403,8 +6649,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
         }
         // P0-D.3 哨兵优先级：operator_interrupt > agent_timeout > headless_interaction_required >
-        // transient_api_error > blocker。E4：用户手动中断压过一切（含 verdict===PASS 的边缘情况——
-        // 中断就是中断，不因为脚本恰好跑完就当没发生）。
+        // transient_api_error > blocker。E4：控制台中断类退出压过一切（含 verdict===PASS 的边缘情况——
+        // 中断就是中断，不因为脚本恰好跑完就当没发生；归因不武断写成"用户关窗"）。
         if (operatorInterrupt) {
           driverGuardAction = 'halt';
           haltReason = 'operator_interrupt';

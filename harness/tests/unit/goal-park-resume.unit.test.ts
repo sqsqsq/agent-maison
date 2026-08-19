@@ -27,6 +27,34 @@ import type { UnitCaseResult } from '../run-unit';
 const DRIVER = path.resolve(__dirname, '..', 'helpers', 'goal-run-driver.ts');
 const TS_NODE = path.resolve(__dirname, '..', '..', 'node_modules', 'ts-node', 'dist', 'bin.js');
 
+/**
+ * plan c6a9e4d2 t3 适配：3.0.0 起 resume 前对账要求 run 有过 Job 绑定事件
+ * （agent_process_bound）。测试桩代际的 events 由基线 runner 产出（无该事件）；
+ * 追补一对闭合的 bound/settled 模拟 3.0.0 干净收尾形态（对账归 no_unclosed_bounds）。
+ */
+function sealLegacyInvokes(host: string, feature: string, runId: string): void {
+  const eventsPath = path.join(host, 'doc', 'features', feature, 'goal-runs', runId, 'events.jsonl');
+  if (!fs.existsSync(eventsPath)) return;
+  const raw = fs.readFileSync(eventsPath, 'utf-8');
+  if (raw.includes('agent_process_bound')) return;
+  const now = new Date().toISOString();
+  fs.appendFileSync(
+    eventsPath,
+    [
+      JSON.stringify({
+        type: 'agent_process_bound', phase: 'spec', invoke_id: 'legacy-close',
+        run_id: runId, pid: 1, started_at_ms: 1,
+        executable: 'C:\\x\\powershell.exe', token: `${runId}/legacy-close`, ts: now,
+      }),
+      JSON.stringify({
+        type: 'agent_process_settled', phase: 'spec', invoke_id: 'legacy-close',
+        run_id: runId, exit_code: 0, ts: now,
+      }),
+    ].join('\n') + '\n',
+    'utf-8',
+  );
+}
+
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(msg);
 }
@@ -79,6 +107,7 @@ export function runAll(): UnitCaseResult[] {
 
     run('恢复场景/resume：**目标行为**（垂直闭环已落地）——零 ack、WAITING(external) 重新入队、ut 真正重跑', () => {
       assert(runId !== null, 'park 未产出 runId，前置失败');
+      sealLegacyInvokes(host, 'recovery-park', runId as string);
       const out = runDriver('resume_after_park', 'recovery-park', host, runId as string);
       const detail = JSON.stringify({ ...out, eventTypes: undefined });
 
@@ -102,6 +131,7 @@ export function runAll(): UnitCaseResult[] {
 
     run('恢复场景/READY：设备恢复后同一 run 无钥匙**真正完成**（codex 第九批 P0 后半闭环）', () => {
       assert(runId !== null, 'park 未产出 runId，前置失败');
+      sealLegacyInvokes(host, 'recovery-park', runId as string);
       const out = runDriver('resume_with_device_ready', 'recovery-park', host, runId as string);
       const detail = JSON.stringify({ ...out, eventTypes: undefined });
       assert(out.error === null && out.exitCode === 0,

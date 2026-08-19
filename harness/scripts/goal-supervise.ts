@@ -17,7 +17,7 @@
 // 退出码：0=已处理（含判定不介入）；1=参数/环境错误。**决策为不重启不算失败**。
 // ============================================================================
 
-import { spawn, spawnSync } from 'child_process';
+import { spawn, spawnSync, type ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import minimist from 'minimist';
@@ -26,6 +26,12 @@ import { loadFrameworkConfig } from '../config';
 import { loadResolvedProfile } from '../profile-loader';
 import { loadAuthoritativeEvents } from './utils/goal-runner-phase';
 import { superviseRun, schedulerSupport, restartBackoffMs } from './utils/goal-supervisor';
+import { defaultProcessProbe } from './utils/device-session';
+import {
+  pidExists,
+  reconcileGuardianOwnership,
+  type PidExistenceProbe,
+} from './utils/goal-containment-reconcile';
 import {
   probeDeviceReadiness,
 } from './utils/device-readiness-deps';
@@ -86,6 +92,31 @@ export function __testing_setConditionProbe(
   probe: ((probe: string, phase?: string) => { ready: boolean; reason?: string }) | null,
 ): void {
   injectedConditionProbe = probe;
+}
+// plan c6a9e4d2 P1-3：接管守卫的进程探针注入（单测无需真起进程；null=生产 defaultProcessProbe）
+let injectedProcessProbe: ReturnType<typeof defaultProcessProbe> | null = null;
+export function __testing_setProcessProbe(probe: ReturnType<typeof defaultProcessProbe> | null): void {
+  injectedProcessProbe = probe;
+}
+function activeProcessProbe(): ReturnType<typeof defaultProcessProbe> {
+  return injectedProcessProbe ?? defaultProcessProbe();
+}
+// P0（二轮 review）：PID existence 通道注入（单测避开真实进程表；null=生产 pidExists）
+let injectedPidExists: PidExistenceProbe | null = null;
+export function __testing_setPidExists(probe: PidExistenceProbe | null): void {
+  injectedPidExists = probe;
+}
+function activePidExists(): PidExistenceProbe {
+  return injectedPidExists ?? pidExists;
+}
+// P1-3：spawn 注入（行为面测试：断言拉起参数且零副效应；null=生产 spawn）
+let injectedSpawnImpl:
+  | ((file: string, args: string[], opts: object) => Pick<ChildProcess, 'pid' | 'unref'>)
+  | null = null;
+export function __testing_setSpawnImpl(
+  fn: ((file: string, args: string[], opts: object) => Pick<ChildProcess, 'pid' | 'unref'>) | null,
+): void {
+  injectedSpawnImpl = fn;
 }
 function runnerScriptPath(): string {
   return injectedRunnerScript ?? path.join(__dirname, 'goal-runner.ts');
@@ -239,6 +270,59 @@ async function main(): Promise<number> {
     return 0;
   }
 
+  // t3（plan c6a9e4d2）：接管守卫——只允许在确认旧 owner（guardian）死亡后拉起：
+  //   · 任一 guardian 严格身份匹配且存活 → 旧 owner 未死 → 维持退避、保留 cooldown，
+  //     不拉起（多未闭合逐项检查，不漏更早孤儿）；
+  //   · 未闭合 invoke 却无任何 Job 绑定（旧版 run）→ fail-closed，人工清理，
+  //     不自动拉起（--force-resume 是人工确认路径，supervisor 不代其确认）；
+  //   · guardian 已不存在/身份不匹配/不可核实 → 不阻断（警告），确认旧 owner 死亡
+  //     成立后照常拉起；
+  //   · P1-3（review）：**所有允许拉起的分支统一追加受控 --force-resume**——旧 owner
+  //     确认死亡即视为受控恢复现场；若最后一个 events run_end 是 HALTED，不带 force
+  //     会被 terminal guard 拒绝，恢复再次失效。cooldown 语义保留在 runner 端
+  //     （force 不 bypass cooldown）。
+  const guardianState = reconcileGuardianOwnership(events, activeProcessProbe(), activePidExists());
+  if (guardianState.kind === 'legacy_run') {
+    console.log(
+      `[goal-supervise] 旧版 run 无 Job 绑定事件（${guardianState.reason}）——`
+      + 'fail-closed 需人工清理，supervisor 不自动拉起',
+    );
+    if (!hasObservation(events, 'legacy_needs_manual')) {
+      appendSupervisorEvent(run.eventsPath, {
+        type: 'supervisor_observation',
+        run_id: run.runId,
+        action: 'legacy_needs_manual',
+        reason: guardianState.reason,
+      });
+    }
+    return 0;
+  }
+  if (guardianState.kind === 'outcomes') {
+    const aliveMatch = guardianState.items.find((i) => i.kind === 'guardian_alive_matching');
+    if (aliveMatch && aliveMatch.kind === 'guardian_alive_matching') {
+      console.log(
+        `[goal-supervise] 接管守卫：guardian(pid=${aliveMatch.bound.pid}) 仍存活且身份严格匹配` +
+        '——旧 owner 未死，维持退避不拉起',
+      );
+      if (!hasObservation(events, 'owner_alive')) {
+        appendSupervisorEvent(run.eventsPath, {
+          type: 'supervisor_observation',
+          run_id: run.runId,
+          action: 'owner_alive',
+          reason: `guardian(pid=${aliveMatch.bound.pid}) 身份匹配且存活——不拉起`,
+        });
+      }
+      return 0;
+    }
+    for (const item of guardianState.items) {
+      if (item.kind === 'guardian_identity_unverifiable') {
+        console.warn(`[goal-supervise] ⚠ 接管守卫：${item.reason}（不杀、不阻断，照常拉起）`);
+      }
+    }
+  }
+  // 到达此处 = 旧 owner 死亡已确认（guardian 不存在/不可核实/无未闭合）——统一受控 force。
+  const allowedForceResume = true;
+
   // 退避（首次为 0）——防重启风暴，退避值与重启序号同源自决策核
   if (decision.backoff_ms > 0) {
     console.log(`[goal-supervise] 退避 ${Math.round(decision.backoff_ms / 1000)}s 后重启…`);
@@ -276,9 +360,14 @@ async function main(): Promise<number> {
         runnerScriptPath(),
         '--feature', feature,
         '--resume', run.runId,
+        // t3（plan c6a9e4d2）：受控 force——仅当确认旧 owner（guardian）死亡（guardian
+        // 不存在=Job 已关，唯一持柄契约）后才追加 --force-resume；owner 存活时上层
+        // 已维持退避。cooldown 语义保留在 runner 端（force 不 bypass cooldown）。
+        ...(allowedForceResume ? ['--force-resume'] : []),
         '--detach',
       ];
-  const child = spawn(process.execPath, [require.resolve('ts-node/dist/bin.js'), ...runnerArgs], {
+  const spawnImpl = injectedSpawnImpl ?? spawn;
+  const child = spawnImpl(process.execPath, [require.resolve('ts-node/dist/bin.js'), ...runnerArgs], {
     cwd: projectRoot,
     detached: true,
     stdio: 'ignore',

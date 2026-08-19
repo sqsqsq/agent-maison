@@ -1542,6 +1542,84 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       fs.rmSync(root, { recursive: true, force: true });
     },
   },
+  {
+    name: 'plan c6a9e4d2: snapshot 只读投影未闭合 guardian 绑定与存活性（无副作用）',
+    run: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'goal-live-g-'));
+      const manifest = mkManifest({
+        report_dir: 'doc/features/feat-a/goal-runs/20260610T120000Z-g',
+      });
+      const reportDir = path.join(root, manifest.report_dir);
+      fs.mkdirSync(reportDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(reportDir, 'manifest.json'),
+        JSON.stringify(manifest, null, 2),
+        'utf-8',
+      );
+      const boundEvents = [
+        { ts: '2026-06-10T12:00:00.000Z', type: 'run_start' },
+        {
+          ts: '2026-06-10T12:00:01.000Z', type: 'agent_invoke_start',
+          phase: 'spec', invoke_id: 'i1',
+        },
+        {
+          ts: '2026-06-10T12:00:02.000Z', type: 'agent_process_bound',
+          phase: 'spec', invoke_id: 'i1', run_id: manifest.run_id,
+          pid: 99999999, started_at_ms: 1, executable: 'C:\\x\\powershell.exe',
+          token: `${manifest.run_id}/i1`,
+        },
+      ];
+      fs.writeFileSync(
+        path.join(reportDir, 'events.jsonl'),
+        boundEvents.map((e) => JSON.stringify(e)).join('\n') + '\n',
+        'utf-8',
+      );
+      const snap = buildLiveGoalStatusSnapshot({
+        projectRoot: root,
+        manifest,
+        workflow,
+        featuresDir: 'doc/features',
+        feature: 'feat-a',
+        runId: manifest.run_id,
+      });
+      assert(snap.guardian !== undefined, 'guardian 投影缺失');
+      assert(snap.guardian!.unclosed_bounds === 1, `unclosed_bounds=${snap.guardian!.unclosed_bounds}`);
+      assert(snap.guardian!.bounds.length === 1, 'bounds 应为 1（P0-1 全量投影）');
+      assert(snap.guardian!.bounds[0].pid === 99999999, 'bound[0].pid 不匹配');
+      assert(snap.guardian!.bounds[0].token === `${manifest.run_id}/i1`, 'bound[0].token 不匹配');
+      if (process.platform === 'win32') {
+        // 99999999 不存在 → win32 下应报 alive=false（探针只读）
+        assert(snap.guardian!.bounds[0].alive === false, `alive 应为 false（备用 pid），实得 ${snap.guardian!.bounds[0].alive}`);
+      }
+      // settled 闭合后不再投影未闭合绑定
+      const settledEvents = [
+        ...boundEvents,
+        {
+          ts: '2026-06-10T12:05:00.000Z', type: 'agent_invoke_end',
+          phase: 'spec', invoke_id: 'i1', exit_code: 0,
+        },
+        {
+          ts: '2026-06-10T12:05:01.000Z', type: 'agent_process_settled',
+          phase: 'spec', invoke_id: 'i1', run_id: manifest.run_id, exit_code: 0,
+        },
+      ];
+      fs.writeFileSync(
+        path.join(reportDir, 'events.jsonl'),
+        settledEvents.map((e) => JSON.stringify(e)).join('\n') + '\n',
+        'utf-8',
+      );
+      const snap2 = buildLiveGoalStatusSnapshot({
+        projectRoot: root,
+        manifest,
+        workflow,
+        featuresDir: 'doc/features',
+        feature: 'feat-a',
+        runId: manifest.run_id,
+      });
+      assert(snap2.guardian === undefined, 'settled 后 guardian 投影不应存在（绑定已闭合）');
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
 ];
 
 export async function runAll(): Promise<UnitCaseResult[]> {

@@ -185,6 +185,17 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
 
 **存活是环境属性**：会**整组/整树杀**进程的敌对宿主（部分公司沙箱 / CI；Node `detached:true` 不设 `CREATE_BREAKAWAY_FROM_JOB`，挡不住 `taskkill /T` / kill-on-close Job）下 `--detach` 也保不住，须用 OS 调度任务（cron / Windows Task Scheduler）托管 run。下面 chrys / opencode 是"阻塞型宿主"的具体落地。
 
+**本次实测（2026-08-18，Windows Claude Desktop 工具环境；措辞仅限定该宿主环境，不概括"Claude Code 一律必死"）**：工具 shell、会话后端、detached 探针的 `IsProcessInJob` 全部为 `true`，且 `detached:true` 无法请求 breakaway——该环境下 `--detach` 的 runner 三次在宿主轮次交还后的延迟回收中被硬杀（无部分退出钩子足迹，进程整体消失）。教训：**只要宿主进程在 kill-on-close Job Object 里，--detach 就是临时存活；真无人值守必须脱离该宿主进程的生命周期**。
+
+### 恢复路线分级（真无人值守 ≠ 用户终端临跑）
+
+| 路线 | 级别 | 说明 |
+|------|------|------|
+| **Task Scheduler（推荐，真无人值守）** | `goal-supervise --install-schtasks --feature <f> --every-minutes 5` | OS 计划任务独立于宿主会话/进程树；supervisor 自愈（run 崩溃/被杀后按 beacon×run_disposition 决策自动 `--resume`，且在有 Job 守卫下确认旧 owner 死亡后才受控拉起）。**显式手动执行才安装**，框架绝不自动写持久计划任务；`goal-supervise --uninstall-schtasks --feature <f>` 卸载 |
+| **用户自开终端 `--detach`** | 一次性临时路线 | 当前终端/宿主会话内能活（关闭启动窗口无碍），但**无 supervisor 自愈——run 崩了没人拉起**，宿主整树清理时也会被杀。适合"我看着这一轮 / 短任务"的临时场景，不写成与 Task Scheduler 同级保证 |
+
+不做 **Job flags 运行时自动探测或自动路由**（探测≠保护；containment 才是保护）——宿主环境是否 kill-on-close 一律由上面这条人工分级决定，不自动判。
+
 ### 从无后台能力的宿主 shell 启动（chrys / opencode TUI 等）→ 必须 `--detach`
 
 当**编排 agent 自己**（如 chrys TUI 的内置 shell 工具）去启动 goal-runner，而该 shell **仅阻塞、有超时上限、无后台模式**时：直接跑会秒级超时 → runner 变孤儿后台续跑 → agent 误判超时又重复起 run → 子进程互杀（chrys 实测）。**加 `--detach`**：

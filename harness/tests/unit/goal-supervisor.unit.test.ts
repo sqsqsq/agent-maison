@@ -270,11 +270,15 @@ const cases: TestCase[] = [
       const src = fs.readFileSync(cliPath, 'utf8');
       assert(/superviseRun\s*\(/.test(src), 'CLI 未调用决策核');
       assert(/type: 'supervisor_restart'/.test(src), 'CLI 未落 supervisor_restart 事件');
-      assert(/'--resume'/.test(src) && /spawn\(/.test(src), 'CLI 未真正 spawn --resume');
+      // P1-3 review 后形态：spawn 经注入缝 `spawnImpl ?? spawn`（行为面由
+      // agent-containment 套件「受控 force 行为测试」真调用 main 断言 argv =
+      // --resume/--force-resume——此处只锁执行链在场）。
+      assert(/'--resume'/.test(src) && /spawnImpl\(process\.execPath/.test(src)
+        && /__testing_setSpawnImpl/.test(src), 'CLI 未真正 spawn --resume（注入缝缺失）');
       assert(/schtasks/.test(src), '缺 Windows 计划任务安装/卸载入口');
       // 先记账再拉起：崩在 spawn 之前也已计数，避免「拉起失败没记账」导致无限重试
       const restartIdx = src.indexOf("type: 'supervisor_restart'");
-      const spawnIdx = src.indexOf('spawn(process.execPath');
+      const spawnIdx = src.indexOf('spawnImpl(process.execPath');
       assert(
         restartIdx > 0 && spawnIdx > restartIdx,
         '必须先落 supervisor_restart 再 spawn——顺序反了会出现「拉起失败但没记账」的无限重试',

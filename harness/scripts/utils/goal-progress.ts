@@ -41,6 +41,8 @@ import { normalizePhaseId } from './phase-alias';
 import { resolvePhaseTimeoutMs, resolveWallClockMs } from './goal-timeout';
 import type { WorkflowSpec } from '../../workflow-loader';
 import { reduceRunState } from './run-state-reducer';
+import { findUnclosedGuardianBounds } from './goal-containment-reconcile';
+import { defaultProcessProbe } from './device-session';
 import type { Disposition, WaitKind } from './adjudication';
 
 export const PROGRESS_SCHEMA_VERSION = '1.0';
@@ -161,6 +163,24 @@ export interface GoalProgressSnapshot {
   };
   recent_events: Array<{ ts: string; type: string; phase?: string }>;
   next_action: string;
+  /**
+   * plan c6a9e4d2 t3：guardian 接管**只读投影**——报告**全部**未闭合 invoke 的绑定
+   * guardian 及各自存活性（P0-1 review：只聚合最后一个会漏报更早孤儿）。goal-status/
+   * monitor 只读消费它（识别绑定/存活性），**绝不据其回收**；回收只发生在 goal-runner
+   * resume 对账 / goal-supervise 的受控 force 决策里。
+   * alive=null 表示无法探测（非 win32 / 探针不可用）。
+   */
+  guardian?: {
+    unclosed_bounds: number;
+    any_alive: boolean | null;
+    bounds: Array<{
+      pid: number;
+      token: string;
+      invoke_id: string;
+      phase: string;
+      alive: boolean | null;
+    }>;
+  };
   phases_summary: Array<{
     phase: FeaturePhase;
     status: ProgressPhaseStatus;
@@ -981,6 +1001,33 @@ export function buildLiveGoalStatusSnapshot(opts: {
     featureLock,
     nowMs,
   });
+
+  // plan c6a9e4d2 t3：guardian 只读投影（**全部**未闭合绑定 + 各自存活性；探针只读，
+  // 不杀进程）。非 win32 或探针不可用 → alive=null；any_alive 为聚合三态。
+  const guardianBounds = findUnclosedGuardianBounds(events);
+  if (guardianBounds.length > 0) {
+    const bounds = guardianBounds.map((b) => {
+      let alive: boolean | null = null;
+      if (process.platform === 'win32') {
+        try {
+          alive = defaultProcessProbe().identify(b.pid) !== null;
+        } catch {
+          alive = null;
+        }
+      }
+      return { pid: b.pid, token: b.token, invoke_id: b.invoke_id, phase: b.phase, alive };
+    });
+    const hasAlive = bounds.some((b) => b.alive === true);
+    const hasDead = bounds.some((b) => b.alive === false);
+    snapshot = {
+      ...snapshot,
+      guardian: {
+        unclosed_bounds: bounds.length,
+        any_alive: hasAlive ? true : hasDead ? false : null,
+        bounds,
+      },
+    };
+  }
 
   if (opts.tailN && opts.tailN > 0) {
     // 实施 round2 P1：tail 与投影同视图（普通 run 权威过滤、dry 视图 raw）——

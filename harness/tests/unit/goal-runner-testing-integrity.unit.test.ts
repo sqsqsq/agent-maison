@@ -254,6 +254,9 @@ async function runChain(
     onSpec?: (ctx: AgentCtx) => void;
     resume?: string;
     forceResume?: boolean;
+    /** plan c6a9e4d2：sealed 拒绝等「不达 resume 恢复流程」用例跳过 legacy bound 追补
+     *（该用例断言 events 字节零变化，夹具不得写盘） */
+    skipLegacySeal?: boolean;
     /** b7e4d2a9 Todo2：--supersede 目标（可多个） */
     supersede?: string[];
     /** e9d4b7a3 t5：fresh 启动走 --manifest 注入预算（goal-runner 无 --budget CLI 旗标）——
@@ -504,6 +507,36 @@ async function runChain(
       writeFile(root, 'increment-req.txt', opts.freshRequirementFile);
     }
     const useManifestPath = Boolean(opts.freshBudget || opts.freshManifestContent);
+    if (opts.resume && !opts.skipLegacySeal) {
+      // plan c6a9e4d2 t3 适配：3.0.0 起 resume 前对账要求 run 有过 Job 绑定事件
+      // （agent_process_bound）。测试桩代际的 events 由基线 runner 产出、无该事件
+      // （旧版 run 语义）；追补一对闭合的 bound/settled 模拟 3.0.0 干净收尾形态
+      // （真实 3.0.0 run 每次 invoke 都落），对账归 no_unclosed_bounds。
+      const resumeEventsPath = path.join(
+        root, 'doc/features', FEATURE, 'goal-runs', opts.resume, 'events.jsonl',
+      );
+      if (fs.existsSync(resumeEventsPath)) {
+        const raw = fs.readFileSync(resumeEventsPath, 'utf-8');
+        if (!raw.includes('agent_process_bound')) {
+          const now = new Date().toISOString();
+          fs.appendFileSync(
+            resumeEventsPath,
+            [
+              JSON.stringify({
+                type: 'agent_process_bound', phase: 'spec', invoke_id: 'legacy-close',
+                run_id: opts.resume, pid: 1, started_at_ms: 1,
+                executable: 'C:\\x\\powershell.exe', token: `${opts.resume}/legacy-close`, ts: now,
+              }),
+              JSON.stringify({
+                type: 'agent_process_settled', phase: 'spec', invoke_id: 'legacy-close',
+                run_id: opts.resume, exit_code: 0, ts: now,
+              }),
+            ].join('\n') + '\n',
+            'utf-8',
+          );
+        }
+      }
+    }
     process.argv = opts.resume
       ? [
           'node', 'goal-runner.ts', '--resume', opts.resume, '--feature', FEATURE,
@@ -672,7 +705,9 @@ test('干净 run → CHAIN_SLICE_COMPLETED 封卷 + per-run 场外状态回收 +
   // sealed 绝对拒绝：--force-resume 也无效；events 零新增（封卷后归档不再被修改）
   const eventsFile = path.join(probe.reportDir, 'events.jsonl');
   const before = fs.readFileSync(eventsFile);
-  const resumed = await runChain(root, { resume: runId, forceResume: true, hmacKey: 'test-hmac-secret' });
+  const resumed = await runChain(root, {
+    resume: runId, forceResume: true, hmacKey: 'test-hmac-secret', skipLegacySeal: true,
+  });
   assert(resumed.exitCode === 1, `sealed resume 须 exit 1，实得 ${resumed.exitCode}`);
   assert(resumed.invokedPhases.length === 0, 'sealed 拒绝不得 invoke 任何 agent');
   const after = fs.readFileSync(eventsFile);

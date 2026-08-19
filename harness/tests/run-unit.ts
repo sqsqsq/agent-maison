@@ -74,6 +74,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'goal-park-resume', modulePath: './unit/goal-park-resume.unit.test' },
   { id: 'goal-product-preflight', modulePath: './unit/goal-product-preflight.unit.test' },
   { id: 'host-replay-fixes', modulePath: './unit/host-replay-fixes.unit.test' },
+  // plan c6a9e4d2 t2/t3：Windows containment 装帧 + guardian 接管对账矩阵（只读投影/匹配才终止）
+  { id: 'agent-containment', modulePath: './unit/agent-containment.unit.test' },
   { id: 'doc-freshness',    modulePath: './unit/doc-freshness.unit.test' },
   { id: 'diff-staleness',   modulePath: './unit/diff-staleness.unit.test' },
   { id: 'feature-artifacts', modulePath: './unit/feature-artifacts.unit.test' },

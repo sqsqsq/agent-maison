@@ -352,6 +352,10 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
    *  不启动 agent、不烧 attempt——静默吞会让旧身份回执存活，receipt_attempt_identity
    *  死结复发；外部存储条件恢复后 probe 续跑。 */
   receipt_scaffold_unwritable: { class: 'external' },
+  /** plan c6a9e4d2 P0-2：Windows containment 绑定失败且 guardian 未证明消失——
+   *  旧 agent 无 Job 契约仍在野（kill 失败/复验仍活），halt 阻断续跑求人（真冲突
+   *  勿自动覆盖）；人工清理后 --resume（接管对账再拦/放行）。 */
+  agent_containment_unresolved: { class: 'external' },
   /** 责任阶段统一路由（plan b6e4c9f2）：可信缺陷候选写不回 summary（唯一真源）——
    *  assess 因此看不见缺陷、回退链断裂。存储条件问题，修好后 probe 续跑。 */
   repair_candidates_unwritable: { class: 'external' },
