@@ -85,6 +85,8 @@ cover_existing_code / repair 模式下须同时给显式基线锚 `HARNESS_DIFF_
 
 **缺 use-cases.yaml**：不阻塞，按 acceptance.yaml + dag.yaml 直接写 UT；WARN 非 BLOCKER；严禁为此回头要求补 use-cases.yaml 套架构。**缺 acceptance.yaml**：提示先运行 spec 阶段（**例外**：提供脱敏日志切片时走 path-c characterization，不要求先补 spec，见三路径路由）。
 
+**CU-bound 例外**：存在 `contracts.change_unit` 时，是否需要 use-cases.yaml/DAG 由 `contracts.state_management` 的有序步骤、失败/恢复、共享消费者、生命周期事实与 `acceptance.ut_layer` 机械派生；派生为 required 时缺失即 BLOCKER，不得 authored opt-out。简单只读/首次加载且无上述复杂事实时仍走退化模式，不制造假 mutation/subscription。
+
 **保证等级**：Harness 在 checker 前一次性解析 contract capabilities 与输入 source chain，机械写入 `summary.assurance` 和 `capability_resolutions`；Skill 不得手写 `full/basic` 档位。可裁剪能力会以受控理由投影到质量轴，核心输入缺失仍不可闭环；acceptance 追溯、真实 toolchain 编译/测试、反假 PASS 与源码变更红线一律不降级。
 
 ## 规约参考

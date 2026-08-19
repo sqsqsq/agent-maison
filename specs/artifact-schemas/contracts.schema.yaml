@@ -5,4 +5,11 @@ x-artifact-id: contracts@1
 x-version: 1
 x-authority: "Compatibility identity; field-level checks remain in spec-loader and phase checkers."
 type: object
+properties:
+  change_unit:
+    type: object
+    description: ID-only construction projection bound to one canonical change-unit@1 ref; semantic completeness is enforced by phase checkers.
+  state_management:
+    type: array
+    description: Sole Feature runtime-construction authority, including CU-bound runtime details when applicable.
 additionalProperties: true

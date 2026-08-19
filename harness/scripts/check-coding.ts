@@ -26,6 +26,7 @@ import {
 } from './utils/types';
 import { AstAnalyzer, FileAnalysis } from './utils/ast-analyzer';
 import { checkFactsArtifact } from './utils/context-facts';
+import { checkChangeUnitFeatureProjection } from './utils/change-unit-feature-projection';
 import { checkUpstreamVerdictGate } from './utils/upstream-verdict-gate';
 import { probeConsumerBinding } from './utils/integration-scope';
 import { parseScope, describeScopeError } from './utils/scope-parser';
@@ -719,6 +720,7 @@ const checker: PhaseChecker = {
     );
     results.push(...safeRun(() => checkNamedBusinessHandlerCoding(ctx), 'named_business_handler'));
     results.push(...safeRun(() => checkCoordinatorFileExistsIfDeclared(ctx), 'coordinator_file_exists_if_declared'));
+    results.push(...safeRun(() => checkChangeUnitFeatureProjection(ctx, 'coding'), 'change_unit_feature_projection'));
     results.push(...safeRun(() => host.checkCodingCompile(ctx), 'coding_compile'));
 
     if (isCodingVisualParitySkipped(ctx.resolvedProfile)) {

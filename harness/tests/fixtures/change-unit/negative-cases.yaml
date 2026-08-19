@@ -1,0 +1,9 @@
+cases:
+  - { id: authored-ready, surface: artifact, mutator: authored-ready, expected_issue: change_unit_forbidden_authority_field }
+  - { id: unsafe-intermediate, surface: artifact, mutator: unsafe-intermediate, expected_issue: change_unit_safe_intermediate_state_invalid }
+  - { id: mixed-blueprint-revision, surface: artifact, mutator: mixed-revision, expected_issue: change_unit_blueprint_identity_mismatch }
+  - { id: dangling-design-target, surface: design, mutator: dangling-design, expected_issue: change_unit_design_ref_unresolvable }
+  - { id: omitted-scenario-closure, surface: design, mutator: omit-scenario, expected_issue: change_unit_design_closure_incomplete }
+  - { id: copied-cu-definition, surface: projection, mutator: copied-definition, expected_issue: change_unit_definition_copied }
+  - { id: parallel-runtime-authority, surface: projection, mutator: parallel-runtime, expected_issue: change_unit_parallel_runtime_authority }
+  - { id: missing-use-case, surface: projection, mutator: missing-use-case, expected_issue: change_unit_use_cases_required }

@@ -1,0 +1,64 @@
+artifact: change-unit@1
+component_id: ledger
+change_unit_id: ledger-summary
+revision: 1
+priority: 20
+component_blueprint_ref:
+  artifact: component-blueprint@1
+  component_id: ledger
+  blueprint_id: ledger-app-blueprint
+  revision: 2
+  source_fingerprint: sha256:e7139f2fef7d7b3dbfcdb04931e729e50eac8f8df2b9dc6efa16f40eb5d21a25
+  artifact_sha256: sha256:35bcd5251b1524f1210be0039eeee0fae413a8e7d0b4b3fcc31bcd32bbbc610e
+  target: { kind: blueprint, id: ledger-app-blueprint }
+provenance:
+  source_kind: component-blueprint
+  source_ref: blueprint/component/ledger/component-blueprint.yaml#blueprint:ledger-app-blueprint
+  source_revision: revision-2
+  observed_at: 2026-08-19T12:00:00+08:00
+  evidence_strength: authoritative
+  extraction_method: consumer-validated-decomposition
+purpose: Deliver the ledger-summary vertical slice from the admitted ledger blueprint.
+preconditions: []
+requires:
+  - { require_id: need-refresh-summary, from_change_unit_id: ledger-refresh, provide_id: ledger-refresh-vertical-slice }
+provides:
+  - { provide_id: ledger-summary-ready, description: 'ledger-summary vertical output is complete.' }
+design_refs:
+  - { artifact: component-blueprint@1, component_id: ledger, blueprint_id: ledger-app-blueprint, revision: 2, source_fingerprint: 'sha256:e7139f2fef7d7b3dbfcdb04931e729e50eac8f8df2b9dc6efa16f40eb5d21a25', artifact_sha256: 'sha256:35bcd5251b1524f1210be0039eeee0fae413a8e7d0b4b3fcc31bcd32bbbc610e', target: { kind: node, view_id: logical, id: ledger-domain } }
+  - { artifact: component-blueprint@1, component_id: ledger, blueprint_id: ledger-app-blueprint, revision: 2, source_fingerprint: 'sha256:e7139f2fef7d7b3dbfcdb04931e729e50eac8f8df2b9dc6efa16f40eb5d21a25', artifact_sha256: 'sha256:35bcd5251b1524f1210be0039eeee0fae413a8e7d0b4b3fcc31bcd32bbbc610e', target: { kind: node, view_id: runtime, id: ledger-repository } }
+  - { artifact: component-blueprint@1, component_id: ledger, blueprint_id: ledger-app-blueprint, revision: 2, source_fingerprint: 'sha256:e7139f2fef7d7b3dbfcdb04931e729e50eac8f8df2b9dc6efa16f40eb5d21a25', artifact_sha256: 'sha256:35bcd5251b1524f1210be0039eeee0fae413a8e7d0b4b3fcc31bcd32bbbc610e', target: { kind: node, view_id: runtime, id: ledger-store } }
+  - { artifact: component-blueprint@1, component_id: ledger, blueprint_id: ledger-app-blueprint, revision: 2, source_fingerprint: 'sha256:e7139f2fef7d7b3dbfcdb04931e729e50eac8f8df2b9dc6efa16f40eb5d21a25', artifact_sha256: 'sha256:35bcd5251b1524f1210be0039eeee0fae413a8e7d0b4b3fcc31bcd32bbbc610e', target: { kind: flow, view_id: runtime, id: ledger-refresh-flow } }
+  - &development { artifact: component-blueprint@1, component_id: ledger, blueprint_id: ledger-app-blueprint, revision: 2, source_fingerprint: 'sha256:e7139f2fef7d7b3dbfcdb04931e729e50eac8f8df2b9dc6efa16f40eb5d21a25', artifact_sha256: 'sha256:35bcd5251b1524f1210be0039eeee0fae413a8e7d0b4b3fcc31bcd32bbbc610e', target: { kind: node, view_id: development, id: ledger-module } }
+  - { artifact: component-blueprint@1, component_id: ledger, blueprint_id: ledger-app-blueprint, revision: 2, source_fingerprint: 'sha256:e7139f2fef7d7b3dbfcdb04931e729e50eac8f8df2b9dc6efa16f40eb5d21a25', artifact_sha256: 'sha256:35bcd5251b1524f1210be0039eeee0fae413a8e7d0b4b3fcc31bcd32bbbc610e', target: { kind: node, view_id: scenarios, id: add-entry-scenario } }
+  - { artifact: component-blueprint@1, component_id: ledger, blueprint_id: ledger-app-blueprint, revision: 2, source_fingerprint: 'sha256:e7139f2fef7d7b3dbfcdb04931e729e50eac8f8df2b9dc6efa16f40eb5d21a25', artifact_sha256: 'sha256:35bcd5251b1524f1210be0039eeee0fae413a8e7d0b4b3fcc31bcd32bbbc610e', target: { kind: relation, id: repository-publishes-store } }
+  - { artifact: component-blueprint@1, component_id: ledger, blueprint_id: ledger-app-blueprint, revision: 2, source_fingerprint: 'sha256:e7139f2fef7d7b3dbfcdb04931e729e50eac8f8df2b9dc6efa16f40eb5d21a25', artifact_sha256: 'sha256:35bcd5251b1524f1210be0039eeee0fae413a8e7d0b4b3fcc31bcd32bbbc610e', target: { kind: relation, id: domain-owned-by-module } }
+  - { artifact: component-blueprint@1, component_id: ledger, blueprint_id: ledger-app-blueprint, revision: 2, source_fingerprint: 'sha256:e7139f2fef7d7b3dbfcdb04931e729e50eac8f8df2b9dc6efa16f40eb5d21a25', artifact_sha256: 'sha256:35bcd5251b1524f1210be0039eeee0fae413a8e7d0b4b3fcc31bcd32bbbc610e', target: { kind: contract, id: create-entry-v1 } }
+  - { artifact: component-blueprint@1, component_id: ledger, blueprint_id: ledger-app-blueprint, revision: 2, source_fingerprint: 'sha256:e7139f2fef7d7b3dbfcdb04931e729e50eac8f8df2b9dc6efa16f40eb5d21a25', artifact_sha256: 'sha256:35bcd5251b1524f1210be0039eeee0fae413a8e7d0b4b3fcc31bcd32bbbc610e', target: { kind: decision, id: seam-shape } }
+touches:
+  - { owner: ledger-team, design_ref: *development, write_refs: ['planned:src/ledger/ledger-summary', 'planned:test/ledger/ledger-summary'] }
+preserved_invariants:
+  - { invariant_id: repository-authority, description: 'Repository commit remains authoritative.', evidence_refs: ['verify:ledger-flow'] }
+target_predicates:
+  - { predicate_id: behavior, role: behavior, description: 'ledger-summary behavior is executable.', provide_ids: [ledger-summary-ready], verification_refs: ['verify:ledger-summary:behavior'] }
+  - { predicate_id: owner, role: owner, description: 'LedgerRepository owns durable state.', provide_ids: [ledger-summary-ready], verification_refs: ['verify:ledger-summary:owner'] }
+  - { predicate_id: consumer, role: consumer, description: 'Ledger page is a real consumer.', provide_ids: [ledger-summary-ready], verification_refs: ['verify:ledger-summary:consumer'] }
+  - { predicate_id: contract, role: contract, description: 'create-entry-v1 remains authoritative.', provide_ids: [ledger-summary-ready], verification_refs: ['verify:ledger-summary:contract'] }
+  - { predicate_id: provider, role: provider, description: 'Host LedgerRepository is the first Provider.', provide_ids: [ledger-summary-ready], verification_refs: ['verify:ledger-summary:provider'] }
+  - { predicate_id: recovery, role: recovery, description: 'Repository snapshot restores state.', provide_ids: [ledger-summary-ready], verification_refs: ['verify:ledger-summary:recovery'] }
+verification_refs: ['verify:ledger-summary:vertical']
+safe_intermediate_state:
+  description: The slice builds and recovers independently.
+  build_validation_refs: ['verify:ledger-summary:build']
+  compatibility_refs: ['verify:ledger-summary:compatibility']
+  recovery_refs: ['verify:ledger-summary:recovery']
+blockers:
+  - blocker_id: release-approval
+    gate: execution
+    owner: release-owner
+    reason: A current release decision is pending.
+    unlock_condition: The authoritative approval revision advances.
+    observation: human
+    source_refs: ['approval:ledger']
+    source_revision: approval-r1
+    authority_ref: authority:release-owner

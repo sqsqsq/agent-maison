@@ -31,6 +31,8 @@
 
 **Scope 守门**：编码 git diff 不得越界到 plan.md `in_scope_modules` 之外（`diff_within_scope` 会在 Step 7 阻断）；发现要改 scope 外模块**立刻停下**（`coding.scope_stop`：`1=回 plan 走扩展` `2=收窄实现`）。**逐文件 Lint 门禁**：单文件 Lint 不过不得进入下一文件，严禁批量生成后统一 lint。
 
+**CU-bound Feature**：`contracts.change_unit` 全程只读。实现必须覆盖每个 canonical predicate/provide/design-ref mapping，并保持 Feature id 与 `change_unit_ref` 一致；运行时事实只实现 `contracts.state_management`，禁止复制 CU/蓝图或新增 `runtime_flow_slices`。若代码事实证明蓝图 owner、主链、contract 或当前决策失效，停止编码并路由 P1 调和，不在 Feature 内改写 CU 定义。
+
 ## 核心架构认知
 
 开始编码前必须读 `doc/architecture.md`，以 `framework.config.json > architecture` 为机器可读依赖规则：外层依赖按 `can_depend_on`；同层按 `intra_layer_deps`；模块内按 `module_inner_layers`+`inner_dependency_direction`；跨模块经 `cross_module_exports_file` 出口；profile 专属细则见 Step 0 addendum。

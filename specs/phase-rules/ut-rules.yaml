@@ -37,7 +37,10 @@ structure_checks:
 
 semantic_checks: {}
 
-traceability_checks: {}
+traceability_checks:
+  change_unit_feature_projection:
+    description: CU-bound Feature 的复杂流必须按机械事实提供 use-case/DAG 并链接可执行验证
+    severity: BLOCKER
 
 exploration_thresholds:
   min_files_inspected: 5

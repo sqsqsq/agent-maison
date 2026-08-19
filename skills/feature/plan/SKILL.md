@@ -28,6 +28,8 @@
 
 coding/review/UT/harness **一律优先读 `contracts.yaml`**，避免与 plan.md 双源分叉。
 
+**CU-bound Feature**：先解析 `contracts.change_unit.change_unit_ref`，Feature id 必须为 canonical CU identity 的确定性派生值。`contracts.change_unit` 只按 canonical predicate/provide/design ref ID 映射 implementation/symbol/test，不复制 CU/蓝图正文；运行时施工细节只写既有 `contracts.state_management`。新事实若推翻蓝图，返回 P1 调和，不在 plan 首次发明部件 owner、主链或外部契约。
+
 ## 触发条件
 
 "实现计划"、"写 plan"、"模块规划"、"接口草案"，或明确指向一份 spec.md 要求生成实现计划。
@@ -62,7 +64,7 @@ coding/review/UT/harness **一律优先读 `contracts.yaml`**，避免与 plan.m
 5. **功能拆分到模块**：逐功能点分配模块（须落在 in_scope 内），输出拆分表（`plan.split_table`：`1=确认` `2=修改`）。
 6. **设计模块架构**：Mermaid 依赖图 + 目录/文件结构规划 + 模块配置变更清单。
 7. **设计数据层**：数据模型（interface/class+字段）、数据仓库（方法签名+来源+异步策略）、端云接口（如有远程数据）。
-8. **设计领域层**（条件式，详见 reference 复杂度判定）：满足阈值才产出 `use-cases.yaml`；否则跳过，交 business-ut 退化模式处理。
+8. **设计领域层**（条件式，详见 reference 复杂度判定）：普通 Feature 满足阈值才产出 `use-cases.yaml`；CU-bound Feature 由 ordered steps、失败/恢复、共享消费者和生命周期事实机械派生，不接受 authored opt-out。
 9. **设计展示层**：页面组件树 + Props/回调 + 状态管理方案 + 路由设计；UI 需求须对齐 spec Visual Handoff 真源，产出 `plan/visual-parity.yaml`（映射 asset/token/组件节点 → contracts 可测项；只读 lock 规划不联网不对图）。
 10. **构建 spec 功能映射表**：spec 功能编号→优先级→层→模块→内层级→关键文件→说明，须与 Step 5 一致，P0/P1 全覆盖。
 11. **质量门禁自检**（14 项，含 Scope 守门/架构合规/模块最小化/功能拆分准确性/文件路径/数据类型/接口签名/无 TBD/组件树/状态管理/路由设计/UseCase 规约达阈值时）：不通过则自动补充重新自检直到全部通过。

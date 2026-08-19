@@ -43,6 +43,8 @@ expansions_with_user_approval:
 
 **仅当至少满足下列一条**才产出 `use-cases.yaml`：①多 UI 节点共享状态（≥2 页面/组件订阅同一业务状态且互相渲染依赖）；②多步云侧调用（一个动作触发 ≥2 次独立请求且顺序受前一次结果影响）；③存在回滚/补偿分支；④多路人机交互（≥2 次真实用户输入）。全部不满足则**不产出**，business-ut 走退化模式基于 `acceptance.yaml`+`dag.yaml` 直接对 data 层写 UT。
 
+**P2 CU-bound 覆盖规则**：存在 `contracts.change_unit` 时不使用作者自选阈值。use-case 义务由至少两个有序步骤、失败/重试/恢复/补偿、同状态多消费者或生命周期/后台/定时/外部恢复事实机械派生；DAG 再结合 `acceptance.ut_layer=unit|both` 与跨步骤/分支/多消费者事实派生。简单只读/首次加载、单步、无分支、无共享消费者且无生命周期恢复时不得伪造 mutation/subscription 或多余流产物。
+
 **若决定产出**，两份文档：
 
 1. **plan.md「业务流程 UseCase 清单」章节**（模板 `` `profile-skill-asset:plan/plan_template` `` 的 `## 六`）：业务入口映射表（ui_bindings 人话版）、状态机 Mermaid（`stateDiagram-v2`，覆盖成功/失败/取消/回滚）、数据边界清单（引用 `contracts.yaml > interfaces[].class` 已存在的 data 层类，不新造 Port）、分支清单表（每条标注对应 AC/BD）。
@@ -61,7 +63,8 @@ expansions_with_user_approval:
 | `data_models` | 数据模型定义 | `name`/`module`/`file`/`kind`（interface/class/enum）/`fields`（name+type+required） |
 | `interfaces` | 服务层接口定义 | `module`/`layer`/`file`/`class`/`methods`（name+params+return+async+description）。**UT/mock-plan 门禁**：`params` 须含完整类型文本，`return` 须准确含 `Promise<...>`——下游 `ut_mock_plan_contracts_consistent` 依赖此信息 |
 | `components` | 页面组件树+状态管理方案 | `name`/`module`/`file`/`kind`（page/component/utility）/`state`/`props`/`events`/`children` |
-| `state_management` | 状态管理方案 | — |
+| `change_unit` | canonical CU（仅 CU-bound Feature） | `change_unit_ref` + `predicate_mappings`/`provide_mappings`/`design_ref_mappings`；只映射既有 ID 到 implementation/symbol/test refs，不复制定义 |
+| `state_management` | 状态管理方案 | 运行时施工事实唯一权威；CU-bound 时以 `design_ref` 关联 P1 flow，并可含 owner/contract、ordered steps、conditional mutation/publication/subscription/consumer、lifecycle 与 recovery；禁止平行 `runtime_flow_slices` |
 | `navigation` | 路由/导航设计 | — |
 | `files` | 目录/文件结构规划 | 完整文件清单 |
 | `resource_keys` | 宿主资源引用 | **媒体资源 `path` 必须指向模块实际资源目录**（如 `<module>/src/main/resources/base/media/<key>.<ext>`），不得写工程根相对路径——visual-parity 素材门禁以模块资源目录真实文件判定，曾发生 1×1 占位借工程根路径假 PASS |

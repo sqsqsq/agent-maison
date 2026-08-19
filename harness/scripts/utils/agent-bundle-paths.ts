@@ -35,6 +35,8 @@ export const BUILTIN_SKILL_BRIDGE_DESCRIPTIONS: Record<string, string> = {
     '模块级 Code Graph 建图与漂移门禁（完整流程见 framework/skills/project/code-graph/SKILL.md）',
   'app-component-blueprint':
     'App 部件发现、4+1 蓝图与调和（完整流程见 framework/skills/project/app-component-blueprint/SKILL.md）',
+  'change-unit-progression':
+    '从部件蓝图派生 Change Unit、选择单个就绪单元并连续推进（完整流程见 framework/skills/project/change-unit-progression/SKILL.md）',
   'goal-mode':
     '目标模式 goal-runner 薄入口（完整流程见 framework/skills/project/goal-mode/SKILL.md）',
   'change-lite':

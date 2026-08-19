@@ -60,6 +60,13 @@ skills:
     description: >
       App 部件发现、4+1 蓝图、运行时数据流、独立质询与调和
 
+  - id: change-unit-progression
+    scope: project
+    source_rel: project/change-unit-progression
+    order: 4
+    description: >
+      Change Unit 设计消费、ready/blocker 派生与单并发 Goal Mode 连续推进
+
   - id: goal-mode
     scope: project
     source_rel: project/goal-mode

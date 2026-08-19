@@ -1,0 +1,20 @@
+feature: cu-bGVkZ2VyAGxlZGdlci1yZWZyZXNo
+source: P2 canonical fixture
+version: '1'
+modules: []
+module_dependencies: {}
+data_models: []
+interfaces: []
+components: []
+files: []
+change_unit:
+  change_unit_ref:
+    artifact: change-unit@1
+    component_id: ledger
+    change_unit_id: ledger-refresh
+    revision: 1
+    artifact_sha256: sha256:d018c22e8046467aeef82cd6fd94e69093146401cc6e4ced2d803a85e4d24cfb
+  predicate_mappings: []
+  provide_mappings: []
+  design_ref_mappings: []
+state_management: []

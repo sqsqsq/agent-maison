@@ -1,0 +1,240 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentmaison.dev/schemas/change-unit.schema.json",
+  "title": "AgentMaison Change Unit",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact",
+    "component_id",
+    "change_unit_id",
+    "revision",
+    "priority",
+    "component_blueprint_ref",
+    "provenance",
+    "purpose",
+    "preconditions",
+    "requires",
+    "provides",
+    "design_refs",
+    "touches",
+    "preserved_invariants",
+    "target_predicates",
+    "verification_refs",
+    "safe_intermediate_state",
+    "blockers"
+  ],
+  "properties": {
+    "artifact": { "const": "change-unit@1" },
+    "component_id": { "$ref": "#/$defs/safeSegment" },
+    "change_unit_id": { "$ref": "#/$defs/safeSegment" },
+    "revision": { "type": "integer", "minimum": 1 },
+    "priority": { "type": "integer" },
+    "component_blueprint_ref": { "$ref": "#/$defs/blueprintRef" },
+    "provenance": { "$ref": "#/$defs/provenance" },
+    "purpose": { "type": "string", "minLength": 1 },
+    "preconditions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/precondition" }
+    },
+    "requires": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/requirement" }
+    },
+    "provides": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/provide" }
+    },
+    "design_refs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/blueprintRef" }
+    },
+    "touches": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/touch" }
+    },
+    "preserved_invariants": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/invariant" }
+    },
+    "target_predicates": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/predicate" }
+    },
+    "verification_refs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "safe_intermediate_state": { "$ref": "#/$defs/safeIntermediateState" },
+    "blockers": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/blocker" }
+    },
+    "revises": { "$ref": "#/$defs/changeUnitRef" },
+    "supersedes": { "$ref": "#/$defs/changeUnitRef" }
+  },
+  "$defs": {
+    "safeSegment": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "stableId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@-]*$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_kind", "source_ref", "observed_at", "evidence_strength", "extraction_method"],
+      "properties": {
+        "source_kind": { "type": "string", "minLength": 1 },
+        "source_ref": { "type": "string", "minLength": 1 },
+        "source_revision": { "type": "string", "minLength": 1 },
+        "observed_at": { "type": "string", "minLength": 1 },
+        "evidence_strength": { "enum": ["authoritative", "observed", "inferred", "unknown"] },
+        "extraction_method": { "type": "string", "minLength": 1 }
+      }
+    },
+    "blueprintTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": { "enum": ["blueprint", "view", "node", "relation", "flow", "decision", "contract"] },
+        "id": { "$ref": "#/$defs/stableId" },
+        "view_id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "blueprintRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact", "component_id", "blueprint_id", "revision", "source_fingerprint", "artifact_sha256", "target"],
+      "properties": {
+        "artifact": { "const": "component-blueprint@1" },
+        "component_id": { "$ref": "#/$defs/safeSegment" },
+        "blueprint_id": { "$ref": "#/$defs/stableId" },
+        "revision": { "type": "integer", "minimum": 1 },
+        "source_fingerprint": { "$ref": "#/$defs/sha256" },
+        "artifact_sha256": { "$ref": "#/$defs/sha256" },
+        "target": { "$ref": "#/$defs/blueprintTarget" }
+      }
+    },
+    "changeUnitRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact", "component_id", "change_unit_id", "revision", "artifact_sha256"],
+      "properties": {
+        "artifact": { "const": "change-unit@1" },
+        "component_id": { "$ref": "#/$defs/safeSegment" },
+        "change_unit_id": { "$ref": "#/$defs/safeSegment" },
+        "revision": { "type": "integer", "minimum": 1 },
+        "artifact_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "precondition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["precondition_id", "description", "source_refs"],
+      "properties": {
+        "precondition_id": { "$ref": "#/$defs/stableId" },
+        "description": { "type": "string", "minLength": 1 },
+        "source_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "requirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["require_id", "from_change_unit_id", "provide_id"],
+      "properties": {
+        "require_id": { "$ref": "#/$defs/stableId" },
+        "from_change_unit_id": { "$ref": "#/$defs/safeSegment" },
+        "provide_id": { "$ref": "#/$defs/stableId" }
+      }
+    },
+    "provide": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provide_id", "description"],
+      "properties": {
+        "provide_id": { "$ref": "#/$defs/stableId" },
+        "description": { "type": "string", "minLength": 1 }
+      }
+    },
+    "touch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "design_ref", "write_refs"],
+      "properties": {
+        "owner": { "type": "string", "minLength": 1 },
+        "design_ref": { "$ref": "#/$defs/blueprintRef" },
+        "write_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "invariant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["invariant_id", "description", "evidence_refs"],
+      "properties": {
+        "invariant_id": { "$ref": "#/$defs/stableId" },
+        "description": { "type": "string", "minLength": 1 },
+        "evidence_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "predicate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["predicate_id", "role", "description", "provide_ids", "verification_refs"],
+      "properties": {
+        "predicate_id": { "$ref": "#/$defs/stableId" },
+        "role": { "enum": ["behavior", "owner", "consumer", "contract", "provider", "recovery"] },
+        "description": { "type": "string", "minLength": 1 },
+        "provide_ids": { "type": "array", "items": { "$ref": "#/$defs/stableId" } },
+        "verification_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "safeIntermediateState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["description", "build_validation_refs", "compatibility_refs", "recovery_refs"],
+      "properties": {
+        "description": { "type": "string", "minLength": 1 },
+        "build_validation_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "compatibility_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "recovery_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "ref", "expected"],
+      "properties": {
+        "kind": { "enum": ["file_exists", "command", "contract", "manual_input"] },
+        "ref": { "type": "string", "minLength": 1 },
+        "expected": { "type": "string", "minLength": 1 }
+      }
+    },
+    "blocker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["blocker_id", "gate", "owner", "reason", "unlock_condition", "observation", "source_refs"],
+      "properties": {
+        "blocker_id": { "$ref": "#/$defs/stableId" },
+        "gate": { "enum": ["design", "execution"] },
+        "owner": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 },
+        "unlock_condition": { "type": "string", "minLength": 1 },
+        "observation": { "enum": ["machine", "human"] },
+        "source_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "source_revision": { "type": "string", "minLength": 1 },
+        "authority_ref": { "type": "string", "minLength": 1 },
+        "probe": { "$ref": "#/$defs/probe" }
+      }
+    }
+  }
+}

@@ -100,6 +100,9 @@ structure_checks:
 semantic_checks: {}
 
 traceability_checks:
+  change_unit_feature_projection:
+    description: CU-bound Feature 的 predicate/provide/design-ref 映射须落到真实施工文件与测试，运行时只读 state_management 真源
+    severity: BLOCKER
   ui_diff_within_declared_files:
     description: >
       UI 文件级 scope 门（plan c4e8b1d3 G1）：越界 UI 文件 = 本次 changed UI files −

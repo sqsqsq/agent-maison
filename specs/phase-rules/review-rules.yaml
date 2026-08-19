@@ -222,6 +222,10 @@ semantic_checks:
 # --------------------------------------------------------------------------
 traceability_checks:
 
+  change_unit_feature_projection:
+    description: 审查 CU-bound Feature identity、ID-only mappings、运行时唯一真源与真实纵向接缝完整性
+    severity: BLOCKER
+
   issue_to_file:
     description: >
       问题清单中每条的「涉及文件」必须是工程中真实存在的文件路径

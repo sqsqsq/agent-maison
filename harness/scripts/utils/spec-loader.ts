@@ -183,6 +183,27 @@ export class SpecLoader {
         // 消费者；非法条目剔除并经 shape_issues → feature_spec_shape 结构化 BLOCKER。
         normalizeContractsModulePaths(contracts, contractsPath, this.projectRoot, shapeIssues);
         normalizeArrayField(contracts as unknown as Record<string, unknown>, 'components', contractsPath, shapeIssues);
+        normalizeArrayField(contracts as unknown as Record<string, unknown>, 'state_management', contractsPath, shapeIssues);
+        if (contracts.change_unit && typeof contracts.change_unit === 'object' && !Array.isArray(contracts.change_unit)) {
+          const changeUnit = contracts.change_unit as unknown as Record<string, unknown>;
+          normalizeArrayField(changeUnit, 'predicate_mappings', contractsPath, shapeIssues, 'change_unit');
+          normalizeArrayField(changeUnit, 'provide_mappings', contractsPath, shapeIssues, 'change_unit');
+          normalizeArrayField(changeUnit, 'design_ref_mappings', contractsPath, shapeIssues, 'change_unit');
+        }
+        for (const state of contracts.state_management ?? []) {
+          if (!state || typeof state !== 'object') continue;
+          const record = state as unknown as Record<string, unknown>;
+          for (const field of ['contract_refs', 'ordered_steps', 'lifecycle_triggers']) {
+            if (Object.prototype.hasOwnProperty.call(record, field)) {
+              normalizeStringArrayField(record, field, contractsPath, shapeIssues, `state_management[${String(record.data ?? '?')}]`);
+            }
+          }
+          for (const field of ['mutations', 'publications', 'subscriptions', 'consumers']) {
+            if (Object.prototype.hasOwnProperty.call(record, field)) {
+              normalizeArrayField(record, field, contractsPath, shapeIssues, `state_management[${String(record.data ?? '?')}]`);
+            }
+          }
+        }
         // S6（visual-capability-truth P1-F）：integration_points 机器块归一——map 数组 +
         // consumer_module/provider_module 必填字符串（缺失剔除 + shape_issues 留痕，
         // 镜像 modules[] 边界行为——feature_spec_shape 结构化 BLOCKER 消费）。
@@ -454,6 +475,28 @@ function coerceToPathString(raw: unknown): string | null {
     if (typeof candidate === 'string') return candidate;
   }
   return null;
+}
+
+function normalizeStringArrayField(
+  obj: Record<string, unknown>,
+  field: string,
+  filePath: string,
+  shapeIssues: string[],
+  parentLabel?: string,
+): void {
+  const label = parentLabel ? `${parentLabel}.${field}` : field;
+  const value = obj[field];
+  if (value === undefined || value === null) return;
+  if (!Array.isArray(value)) {
+    shapeIssues.push(`${path.basename(filePath)} 的 \`${label}\` 应为 string[]——已按空数组防崩处理`);
+    obj[field] = [];
+    return;
+  }
+  const strings = value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+  if (strings.length !== value.length) {
+    shapeIssues.push(`${path.basename(filePath)} 的 \`${label}\` 含非空字符串以外条目——非法条目已剔除`);
+  }
+  obj[field] = strings;
 }
 
 /**

@@ -55,6 +55,8 @@ review 阶段不执行宿主包管理器依赖安装命令，也不使用 `HARNE
 
 **能力解析与上下文**：报告头必须写 `保证等级`，其值只来自 harness summary 1.2 的 `assurance` 与 `capability_resolutions`，不得手写 `full/basic` 或另一套缺失输入政策。review contract 的结构化 source chain 决定 artifact/derive 回退；显式非 UI 由 applicability preflight 判定为不适用，输入存在却不能解析仍是 invalid/blocking，不能伪装为降级。输入裁剪不降低代码问题判真标准。`missing_review_report` 仍须补齐后重跑；`missing_source_from_contracts` 仍须确认 coding 是否完成或同步契约。
 
+**CU-bound Feature**：额外核对 Feature id/`change_unit_ref`、predicate/provide/design-ref ID-only mapping 与真实文件/符号/测试一一落地；`contracts.state_management` 是运行时施工唯一真源。任何复制/重定义 CU/蓝图、平行 runtime section、空 Store/EventBus/interface 或施工发现的蓝图冲突均为 BLOCKER；蓝图冲突回 P1，不在 review 中补造定义。
+
 ## 流程骨架
 
 1. **收集审查上下文**：确认模块名（`review.module_name`：`1=确认` `2=修改`）；读 plan.md/spec.md（若存在）/architecture.md/coding-rules.yaml/contracts.yaml/acceptance.yaml；按 `contracts.yaml > files` 读全部源代码；展示审查范围摘要。

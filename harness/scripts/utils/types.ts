@@ -279,12 +279,48 @@ export interface ContractsSpec {
     priority: string;
     key_files: string[];
   }>;
+  /** P2：canonical CU 义务到本 Feature 施工落点的 ID-only 投影。 */
+  change_unit?: {
+    change_unit_ref: import('./change-unit-model').ChangeUnitRef;
+    predicate_mappings: Array<{
+      predicate_id: string;
+      implementation_refs: string[];
+      test_refs: string[];
+    }>;
+    provide_mappings: Array<{
+      provide_id: string;
+      implementation_refs: string[];
+      test_refs: string[];
+    }>;
+    design_ref_mappings: Array<{
+      design_ref: import('./component-blueprint-model').ComponentBlueprintRef;
+      implementation_refs: string[];
+      verification_refs: string[];
+    }>;
+  };
   state_management?: Array<{
     data: string;
     scope: string;
     decorator: string;
     holder: string;
     module: string;
+    /** P2 CU-bound runtime construction：仍在既有 state_management 内，不新增平行 runtime section。 */
+    design_ref?: import('./component-blueprint-model').ComponentBlueprintRef;
+    owner_ref?: string;
+    contract_refs?: string[];
+    ordered_steps?: string[];
+    lifecycle_triggers?: string[];
+    failure_recovery?: Record<string, unknown>;
+    mutations?: Array<{ mutation_id: string; kind?: string; publication_ref?: string; recovery_ref?: string }>;
+    publications?: Array<{ publication_id: string }>;
+    subscriptions?: Array<{
+      subscription_id: string;
+      consumer_ref: string;
+      publication_ref?: string;
+      replay_or_snapshot?: string;
+      cleanup?: string;
+    }>;
+    consumers?: Array<{ consumer_id: string; initial_load_ref?: string; update_ref?: string }>;
   }>;
   navigation?: Record<string, unknown>;
 }

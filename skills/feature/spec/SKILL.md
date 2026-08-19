@@ -34,6 +34,8 @@
 
 用户仅表达"修订 spec/改验收/Scope/术语表"未同时要求"做实现计划/改 contracts"时，**只激活 spec 阶段**，不得自动滑入 plan。spec-only 回合内**不得**新建/实质改写 plan.md 技术章节或 contracts.yaml 接口契约（本 Skill 允许产物仅限 spec.md + Step 6 的 acceptance.yaml）。中途修正先跑 `--correction-init`（按 AGENTS §4.0 修正三问分层）；`.current-correction.json.auto_confirm_eligible=true` 可直接实施，否则须经 `correction.layer` 1/2 确认。spec.md 落盘后须**先于**宣称"可进 plan"执行 Step 7.1（阶段边界推进原则见 AGENTS §3.8）。
 
+**CU-bound Feature**：若目标 Feature id 以 canonical `change_unit_ref` 派生，spec 只引用该 CU 的 purpose、target predicate/provide ID 和用户可见语义，不复制或改写 CU/蓝图定义；发现部件级 owner、主链或外部契约与蓝图冲突时停止并回 P1 调和，不在 Feature spec 用 TBD 补模。
+
 ## 流程骨架
 
 1. **收集输入**：功能文字描述 / 界面截图 / 功能模块名（必需）；竞品截图（可选）。**保真路由初始化（BLOCKER 前置，plan f6b2d9a4 + c8e5b3f1）**：在生成任何 spec 产物**之前**、于 `framework/harness` 目录执行 `node -r ts-node/register/transpile-only scripts/fidelity-intent-init.ts --feature <feature> --requirement "<用户需求原文（含引用文档路径）>"`（超长需求可用 `--requirement-file <path>`，两者互斥）——落 `spec/reports/fidelity-intent.json`（质量目标/严格度/素材策略三轴唯一 SSOT）与 capability-snapshot。后续 ui-spec 的 `fidelity_target`/`asset_acquisition_mode` 是该 SSOT 的**投影**（照抄，不自行判断；`fidelity_capability_pregate` 会复核一致性）。goal 模式该文件已由 goal-runner 首产——CLI 会自动探测并跳过，**绝不覆盖** goal 决策（writer 唯一）。**因果提示（勿让 agent 猜）**：阶段驱动路径的 `derive.requirement` 只认 SSOT 里 provenance=`explicit_cli`（=本次显式给了非空 `--requirement`/`--requirement-file`）且身份匹配的需求——**若不给需求文本**（CLI 只会落 `intent_fallback`），spec 的 requirement capability 保持 blocked → 阶段 INCOMPLETE → check-receipt 拒绝闭环，重跑多少次都一样。显式传空 `--requirement`（`""` / 空格）会 fail-fast，不会静默降级读 README/笔记/spec.md 解锁。

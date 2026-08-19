@@ -40,6 +40,7 @@ import {
 } from './utils/confirmation-receipt';
 import { checkFactsArtifact } from './utils/context-facts';
 import { checkUpstreamVerdictGate } from './utils/upstream-verdict-gate';
+import { checkChangeUnitFeatureProjection } from './utils/change-unit-feature-projection';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -846,6 +847,7 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkIssueToFile(ctx, report), 'issue_to_file'));
     results.push(...safeRun(() => checkIssueToCodingRule(ctx, report), 'issue_to_coding_rule'));
     results.push(...safeRun(() => checkReviewScopeToDesign(ctx, report), 'review_scope_to_design'));
+    results.push(...safeRun(() => checkChangeUnitFeatureProjection(ctx, 'review'), 'change_unit_feature_projection'));
 
     // --- goal-fakepass-hardening 洞⑥：有条件通过闭环门禁 ---
     results.push(...safeRun(() => checkConditionalPassClosure(ctx, report), 'conditional_pass_closure'));

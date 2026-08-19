@@ -34,6 +34,7 @@ import {
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { checkFactsArtifact } from './utils/context-facts';
 import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
+import { checkChangeUnitFeatureProjection } from './utils/change-unit-feature-projection';
 import {
   extractHeadings,
   getSectionContent,
@@ -1010,6 +1011,7 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkStateManagementTable(ctx, design), 'state_management_table'));
     results.push(...safeRun(() => checkRouteDesignTable(ctx, design), 'route_design_table'));
     results.push(...safeRun(() => checkMetadataHeader(ctx, design), 'metadata_header'));
+    results.push(...safeRun(() => checkChangeUnitFeatureProjection(ctx, 'plan'), 'change_unit_feature_projection'));
 
     if (isPlanVisualParitySkipped(ctx.resolvedProfile)) {
       results.push({

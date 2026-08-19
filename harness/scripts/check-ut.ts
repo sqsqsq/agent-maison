@@ -48,6 +48,7 @@ import {
 /** re-export：单测与既有消费方从 check-ut 导入（实现已移至 ut-target-resolver，P1-1） */
 export const computeUtFileBaseline = resolverComputeUtFileBaseline;
 import { findFilesRecursive } from './utils/find-files-recursive';
+import { checkChangeUnitFeatureProjection } from './utils/change-unit-feature-projection';
 import {
   CANONICAL_UT_COMPILE_ID,
   LEGACY_UT_COMPILE_ID,
@@ -4136,6 +4137,10 @@ const checker: PhaseChecker = {
     const results: CheckResult[] = [
       ...featureArtifactLayoutWarnings(ctx.projectRoot, ctx.feature, ['spec.md', 'plan.md']),
     ];
+    results.push(...safeRun(
+      () => checkChangeUnitFeatureProjection(ctx, 'ut', dags),
+      'change_unit_feature_projection',
+    ));
 
     // repair/cover_existing 模式 fail-closed（codex 五轮 #4）：显式目标未命中/缺基线锚
     // 不得静默继续——配合历史失败基线可能把真正要修的失败全部豁免。

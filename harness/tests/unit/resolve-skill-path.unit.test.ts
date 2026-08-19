@@ -33,12 +33,12 @@ function readWorkflowSkillDocs(): string[] {
 
 const cases: Array<{ name: string; run: () => void }> = [
   {
-    name: 'loadSkillsIndex: 12 个 builtin skill 且路径可解析',
+    name: 'loadSkillsIndex: 13 个 builtin skill 且路径可解析',
     run: () => {
       const index = loadSkillsIndex(FRAMEWORK_DIR, true);
-      assert(index.skills.length === 12, `skills.length=${index.skills.length}`);
+      assert(index.skills.length === 13, `skills.length=${index.skills.length}`);
       const ids = listBuiltinSkillIds(FRAMEWORK_DIR);
-      assert(ids.length === 12, `ids.length=${ids.length}`);
+      assert(ids.length === 13, `ids.length=${ids.length}`);
       for (const id of ids) {
         const r = resolveSkillPath(FRAMEWORK_DIR, id);
         assert(fs.existsSync(skillMdAbs(FRAMEWORK_DIR, id)), `missing ${r.skillMdFrameworkRel}`);
