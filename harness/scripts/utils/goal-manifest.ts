@@ -33,6 +33,15 @@ export interface AdapterModelPin {
   value: string;
 }
 
+export const RUN_ADAPTER_PROVENANCES = [
+  'user_explicit',
+  'entry_declared',
+  'local_config',
+  'registry',
+  'override',
+] as const;
+export type RunAdapterProvenance = (typeof RUN_ADAPTER_PROVENANCES)[number];
+
 /**
  * plan a8e5c3f9 t6：Goal/headless 有效权限——很薄的纯解析点（非状态机、无第二份持久状态）。
  * 用户主动启动 Goal/headless 即授权 non-interactive + no approval prompt + full
@@ -741,10 +750,98 @@ export function resolveRawRunInput(
   return { feature, runId, isResume, dryRun };
 }
 
+/**
+ * Resume 只是在既有 run 上重新取得执行身份；effective adapter 未变化时，manifest 中
+ * 记录的仍应是该 run 出生时的来源。把一次 local 对账写成 `override` 会改动冻结
+ * manifest 的全文件 hash，进而把 phase-evidence-manifest 全部误判为 stale。
+ */
+export function resolvePersistedAdapterProvenance(opts: {
+  isResume: boolean;
+  originalAdapter?: string;
+  originalProvenance?: string;
+  effectiveAdapter: string;
+  decisionProvenance: RunAdapterProvenance;
+}): string | undefined {
+  if (opts.isResume && opts.originalAdapter === opts.effectiveAdapter) {
+    return opts.originalProvenance;
+  }
+  return opts.decisionProvenance;
+}
+
+function serializeGoalManifest(manifest: GoalManifest): string {
+  return JSON.stringify(manifest, null, 2) + '\n';
+}
+
+function serializedGoalManifestSha256(manifest: GoalManifest): string {
+  return crypto.createHash('sha256').update(serializeGoalManifest(manifest), 'utf-8').digest('hex');
+}
+
+/**
+ * phase evidence 的旧条目保存的是全文件 hash，无法直接迁移为字段级 hash。兼容判断只
+ * 枚举 adapter_provenance（身份哈希明确排除的审计元数据）；命中意味着其它每个字节
+ * 都与闭环时一致。adapter/requirement/budget 等真实字段不参与枚举，仍 fail-closed。
+ */
+export function goalManifestHashMatchesModuloAdapterProvenance(
+  manifest: GoalManifest,
+  expectedHash: string | null,
+): boolean {
+  if (!/^[0-9a-f]{64}$/.test(expectedHash ?? '')) return false;
+  if (serializedGoalManifestSha256(manifest) === expectedHash) return true;
+  const candidates: Array<RunAdapterProvenance | undefined> = [undefined, ...RUN_ADAPTER_PROVENANCES];
+  return candidates.some((provenance) => {
+    const candidate = { ...manifest };
+    if (provenance === undefined) delete candidate.adapter_provenance;
+    else candidate.adapter_provenance = provenance;
+    return serializedGoalManifestSha256(candidate) === expectedHash;
+  });
+}
+
+export type FrozenAdapterProvenanceRepair =
+  | { repaired: false; manifest: GoalManifest }
+  | { repaired: true; manifest: GoalManifest; from: 'override'; to: string | undefined };
+
+/**
+ * 3.0.0 兼容修复：旧 runner 曾在同 adapter resume 时把 `adapter_provenance` 改为
+ * `override`。只在“仅还原该字段即可逐字命中首个 run_start 冻结 hash”时恢复；若
+ * requirement、预算、adapter 等还有任何漂移，所有候选均不命中并保持 fail-closed。
+ */
+export function restoreFrozenAdapterProvenance(
+  manifest: GoalManifest,
+  frozenManifestHash: string | null,
+): FrozenAdapterProvenanceRepair {
+  if (manifest.adapter_provenance !== 'override' || !/^[0-9a-f]{64}$/.test(frozenManifestHash ?? '')) {
+    return { repaired: false, manifest };
+  }
+  if (serializedGoalManifestSha256(manifest) === frozenManifestHash) {
+    return { repaired: false, manifest };
+  }
+
+  const candidates: Array<RunAdapterProvenance | undefined> = [
+    undefined,
+    ...RUN_ADAPTER_PROVENANCES.filter((provenance) => provenance !== 'override'),
+  ];
+  const matches: Array<{ manifest: GoalManifest; provenance: string | undefined }> = [];
+  for (const provenance of candidates) {
+    const candidate = { ...manifest };
+    if (provenance === undefined) delete candidate.adapter_provenance;
+    else candidate.adapter_provenance = provenance;
+    if (serializedGoalManifestSha256(candidate) === frozenManifestHash) {
+      matches.push({ manifest: candidate, provenance });
+    }
+  }
+  if (matches.length !== 1) return { repaired: false, manifest };
+  return {
+    repaired: true,
+    manifest: matches[0].manifest,
+    from: 'override',
+    to: matches[0].provenance,
+  };
+}
+
 export function writeGoalManifest(manifest: GoalManifest, projectRoot: string): string {
   const abs = path.join(projectRoot, manifest.report_dir, 'manifest.json');
   fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, JSON.stringify(manifest, null, 2) + '\n', 'utf-8');
+  fs.writeFileSync(abs, serializeGoalManifest(manifest), 'utf-8');
   return abs;
 }
 

@@ -31,6 +31,10 @@
 
 4. 若阶梯 2 自动写入了 local.json（`ensured` 含 `auto_selected_adapter`），须在汇报中说明：「我按当前运行宿主选了 `<X>`（个人级 `framework.local.json`，gitignored）；要换别的 adapter 请讲」。
 
+同一 run resume 时，若 effective adapter 与 manifest 冻结值相同，`--override-adapter` 只负责
+对账并回写个人级 local，**不得**把 manifest 出生时的 `adapter_provenance` 改成 `override`。
+phase evidence 对历史 3.0.0 事故 manifest 仅容忍该审计字段差异；其它任意字节漂移仍判 stale。
+
 **边界**：写 `framework.local.json`（个人、gitignored）由 `--select-adapter --ensure` 或 `record-adapter` 完成，**允许**；「不写项目产物」指 `.cursor/**`、`framework.config.json`、物化清单——二者不混为一谈。
 
 ## 可执行命令（从实例工程的 `framework/harness/` 目录运行）

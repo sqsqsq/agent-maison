@@ -7,6 +7,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import {
   computeRequirementShaFromText,
   computeRunRequirementSha,
@@ -15,13 +16,23 @@ import {
 } from '../../scripts/utils/fidelity-shared';
 import {
   buildGoalManifestFromInput,
+  goalManifestHashMatchesModuloAdapterProvenance,
   isDryReportDir,
   loadGoalManifestFromRun,
+  resolvePersistedAdapterProvenance,
   resolveGoalReportDir,
   resolveRawRunInput,
+  restoreFrozenAdapterProvenance,
+  writeGoalManifest,
   DRY_RUNS_SUBDIR,
   type GoalManifest,
 } from '../../scripts/utils/goal-manifest';
+import {
+  recomputePhaseEvidenceStaleness,
+  resolvePhaseEvidenceManifest,
+  writePhaseEvidenceManifest,
+  writeReceiptManifestPointer,
+} from '../../scripts/utils/phase-evidence-manifest';
 import {
   isLockStale,
   formatLockBlocker,
@@ -94,6 +105,140 @@ function overnightEvents(): GoalRunEvent[] {
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
+  {
+    name: 'c7e4a2d9 宿主回放：同 adapter resume 保留出生 provenance，实际换 adapter 才记录新来源',
+    run: () => {
+      const same = resolvePersistedAdapterProvenance({
+        isResume: true,
+        originalAdapter: 'claude',
+        originalProvenance: 'local_config',
+        effectiveAdapter: 'claude',
+        decisionProvenance: 'override',
+      });
+      if (same !== 'local_config') throw new Error(`同 adapter resume 改写了 provenance：${String(same)}`);
+
+      const changed = resolvePersistedAdapterProvenance({
+        isResume: true,
+        originalAdapter: 'claude',
+        originalProvenance: 'local_config',
+        effectiveAdapter: 'codex',
+        decisionProvenance: 'override',
+      });
+      if (changed !== 'override') throw new Error(`实际换 adapter 未记录 override：${String(changed)}`);
+
+      const fresh = resolvePersistedAdapterProvenance({
+        isResume: false,
+        originalAdapter: undefined,
+        originalProvenance: undefined,
+        effectiveAdapter: 'claude',
+        decisionProvenance: 'entry_declared',
+      });
+      if (fresh !== 'entry_declared') throw new Error(`fresh provenance 丢失：${String(fresh)}`);
+    },
+  },
+  {
+    name: 'c7e4a2d9 宿主事故回放：新旧 evidence 跨 provenance hash 等价；冻结 hash 证明后恢复 manifest',
+    run: () => {
+      const root = tmpDir('adapter-provenance-repair');
+      try {
+        const feature = 'f1';
+        const runId = '20260818T035420Z-f555c2';
+        const manifest = buildGoalManifestFromInput(
+          {
+            feature,
+            run_id: runId,
+            requirement: '银行卡开卡需求',
+            adapter: 'claude',
+            adapter_provenance: 'local_config',
+            unattended: { write_mode: 'full-access', approval_mode: 'never' },
+          },
+          { projectRoot: root, runId },
+        );
+        const manifestAbs = writeGoalManifest(manifest, root);
+        const frozenHash = crypto.createHash('sha256').update(fs.readFileSync(manifestAbs)).digest('hex');
+
+        const receiptAbs = path.join(root, 'doc/features', feature, 'spec', 'phase-completion-receipt.md');
+        fs.mkdirSync(path.dirname(receiptAbs), { recursive: true });
+        fs.writeFileSync(receiptAbs, '# spec completion\nstatus: passed\n', 'utf-8');
+        const evidence = resolvePhaseEvidenceManifest({
+          projectRoot: root,
+          feature,
+          phase: 'spec',
+          extraInputs: [manifestAbs],
+          now: () => new Date('2026-08-18T00:00:00.000Z'),
+        });
+        const written = writePhaseEvidenceManifest(root, evidence);
+        writeReceiptManifestPointer(
+          root,
+          feature,
+          'spec',
+          path.relative(root, written.absPath).replace(/\\/g, '/'),
+          written.sha256,
+        );
+        const before = recomputePhaseEvidenceStaleness(root, feature, ['spec']);
+        if (before[0]?.verdict !== 'fresh') throw new Error(`出生 evidence 非 fresh：${JSON.stringify(before)}`);
+
+        const poisoned = { ...manifest, adapter_provenance: 'override' };
+        writeGoalManifest(poisoned, root);
+        const poisonedHash = crypto.createHash('sha256').update(fs.readFileSync(manifestAbs)).digest('hex');
+        if (poisonedHash === frozenHash) throw new Error('夹具未制造 provenance 全文件 hash 漂移');
+        if (!goalManifestHashMatchesModuloAdapterProvenance(poisoned, frozenHash)) {
+          throw new Error('provenance-only 漂移未被识别为语义等价');
+        }
+        const specStillFresh = recomputePhaseEvidenceStaleness(root, feature, ['spec']);
+        if (specStillFresh[0]?.verdict !== 'fresh') {
+          throw new Error(`旧 spec evidence 被审计元数据误伤：${JSON.stringify(specStillFresh)}`);
+        }
+
+        // 模拟事故中 plan 已在污染后的 manifest 下重跑闭环；修复 manifest 后，新 plan
+        // evidence 也必须继续 fresh，不能再吃一次 backtrack 预算。
+        const planReceiptAbs = path.join(root, 'doc/features', feature, 'plan', 'phase-completion-receipt.md');
+        fs.mkdirSync(path.dirname(planReceiptAbs), { recursive: true });
+        fs.writeFileSync(planReceiptAbs, '# plan completion\nstatus: passed\n', 'utf-8');
+        const planEvidence = resolvePhaseEvidenceManifest({
+          projectRoot: root,
+          feature,
+          phase: 'plan',
+          extraInputs: [manifestAbs],
+          now: () => new Date('2026-08-19T00:00:00.000Z'),
+        });
+        const planWritten = writePhaseEvidenceManifest(root, planEvidence);
+        writeReceiptManifestPointer(
+          root,
+          feature,
+          'plan',
+          path.relative(root, planWritten.absPath).replace(/\\/g, '/'),
+          planWritten.sha256,
+        );
+
+        const repair = restoreFrozenAdapterProvenance(poisoned, frozenHash);
+        if (!repair.repaired || repair.to !== 'local_config') {
+          throw new Error(`冻结 hash 未恢复 provenance：${JSON.stringify(repair)}`);
+        }
+        writeGoalManifest(repair.manifest, root);
+        const repairedHash = crypto.createHash('sha256').update(fs.readFileSync(manifestAbs)).digest('hex');
+        if (repairedHash !== frozenHash) throw new Error(`恢复后 hash 未命中冻结值：${repairedHash}`);
+        const freshAgain = recomputePhaseEvidenceStaleness(root, feature, ['spec', 'plan']);
+        if (freshAgain.some((result) => result.verdict !== 'fresh')) {
+          throw new Error(`恢复后新旧 evidence 未同时 fresh：${JSON.stringify(freshAgain)}`);
+        }
+
+        const mixedDrift = restoreFrozenAdapterProvenance(
+          { ...poisoned, requirement: '被额外改写的需求' },
+          frozenHash,
+        );
+        if (mixedDrift.repaired) throw new Error('provenance 之外仍有漂移时不得猜测恢复');
+        if (goalManifestHashMatchesModuloAdapterProvenance(
+          { ...poisoned, requirement: '被额外改写的需求' },
+          frozenHash,
+        )) {
+          throw new Error('真实字段漂移不得被 provenance 兼容判断放行');
+        }
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
   // ------------------------------------------------------------ T1a
   {
     name: 'T1a: 内容级/读盘级 requirement sha 两口径逐字节同构',

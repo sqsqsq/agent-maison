@@ -97,6 +97,12 @@ closure（phase-evidence-manifest staleness + review attestation），manifest �
 
 **运行身份权威 = `framework.local.json agent_adapter`（SSOT）**。解析阶梯（用户显式 > 跳板/入口声明 > registry 交互，**永不默认 claude/cursor**）只产 `requestedAdapter`；effective 以合法 local 为准——`requestedAdapter` 仅在「首启无 local」或 `--override-adapter` 时才生效。goal-runner 在写 manifest 到盘前对账：`--adapter` 与合法 local 冲突 → **BLOCKER STOP**（不静默覆盖、不写 manifest），除非 `--override-adapter`（按请求回写 local 并留痕）。manifest 记 `adapter_provenance`（user_explicit|entry_declared|local_config|registry|override）供回溯。
 
+`adapter_provenance` 记录 run **出生时**的 adapter 来源：resume 的 effective adapter 未变化时，
+即使本次需要 `--override-adapter` 对账 local，也保留出生值，不改冻结 manifest。3.0.0 曾有旧
+runner 把该字段改成 `override`，造成 phase evidence 全文件 hash 假 stale；兼容读取只在两份
+manifest 除 `adapter_provenance` 外逐字一致时视为 fresh，requirement、adapter、预算等任何
+真实字段变化仍 fail-closed。
+
 1. goal-mode Skill 启动 runner **前**跑 `check-personal-setup.ts --json --ensure --select-adapter <requested>`（见 [personal-setup-gate.md](../../skills/reference/personal-setup-gate.md)）；用返回的 `activeAdapter` 作 `--adapter`。
 2. 多 adapter 且 local 未设 → `needs_adapter_choice` → registry `setup.adapter` → `init-orchestrate --scope personal` → `record-adapter`（写 `framework.local.json`，非项目产物）。
 3. **`adapter_conflict`**（local 已记录 X、本次请求 Y≠X）→ 默认尊重 X；确要换 Y：永久走 `record-adapter`，本次即时换加 goal-runner `--override-adapter`。
