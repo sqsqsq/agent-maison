@@ -100,6 +100,20 @@ Cursor 命令：`/opsx-propose` `/opsx-apply` `/opsx-archive` `/opsx-explore`（
 
 **待办唯一真源（BLOCKER）**：在窗 plan 的未完成待办必须登记在 frontmatter `todos:`；正文不得使用未完成的 `- [ ]` 承载待办。历史 `- [x]` 可保留但不作为机器状态；重新打开任务必须先在 frontmatter 登记。
 
+## 父目标对齐声明（复杂能力总纲，人工核对）
+
+总纲：[`.cursor/goals/复杂能力建设目标_能力架构蓝图到部件演进与变更单元闭环_75411223.goal.md`](.cursor/goals/复杂能力建设目标_能力架构蓝图到部件演进与变更单元闭环_75411223.goal.md)
+
+声称服务总纲的 plan 必须按总纲 §12 携带父目标对齐声明（`parent_goal` / `advances` / `relation` / `layer` 等）。**该声明的机器检查尚未建设**（`check-plan-version.mjs` 不识别这些字段），现阶段由 agent 在撰写与 review plan 时人工核对：
+
+- 机器声明必须位于 frontmatter——正文提及不构成声明（2026-08-13 裁定，总纲 §12 已同步）；
+- `parent_goal` 指向的 goal 文件存在且唯一匹配；
+- `advances` 中的目标 id 是总纲 §0.1 表格声明的 G1–G8 之一；
+- `relation` / `layer` 取值在总纲 §12 枚举内，八个字段全必填（`goal_requires`/`goal_provides` 空值须显式 `[]`）；
+- 未声明 `parent_goal` 的 plan 不受此约束，不强制所有 plan 挂靠总纲。
+
+机器校验设计已由 OpenSpec change `complex-capability-meta-model`（plan e7b3a9d4）承载：声明了才校验、未声明不告警、校验先于 future/allowlist 提前返回；实施落地后本节收编为指向机器校验。
+
 ## 回复语言（BLOCKER）
 
 面向用户的自然语言回复默认使用 **中文**。
@@ -117,6 +131,21 @@ Cursor 命令：`/opsx-propose` `/opsx-apply` `/opsx-archive` `/opsx-explore`（
 | **patch** | 小 bugfix、小型 plan 修补；多项可合并 | `2.1.0` → `2.1.1` |
 | **minor** | 中/大型 plan 及后续小演进、bugfix | `2.1.0` → `2.2.0` |
 | **major** | 超大型框架重构、架构变更 | `2.1.0` → `3.0.0` |
+
+### Release branch 并行窗口
+
+当前版本因宿主回归或发布验收尚未闭环、但已形成可提交的稳定切点时，可以显式切出
+release branch，让主干提前进入下一开发窗口；不得靠未提交工作区或隐藏状态完成交接：
+
+1. release branch 必须从已提交的 cutoff 创建，保留版本 `N`，并成为 `N` 的 plan/OpenSpec、
+   回归、发布说明、打包与 tag 唯一责任分支；
+2. main 中仍属 `N` 的未完成 plan todo 必须按事实 `completed/cancelled`；责任转交使用
+   `cancelled` 并在原 todo 写明 release branch，取消只表示 main 不再拥有任务，不代表验收完成；
+3. main 通过既有 `release:version -- bump` 进入 `N+1`，不新增窗口 manifest 或平行版本真源；
+4. `N` 的通用修复以 `git cherry-pick -x` 逐提交前向传播到 main，禁止整体 merge release
+   branch 把旧 `package.json`、plan 状态和发布专用改动带回；规范归档等需保留的开发资产单独提交、
+   单独前向传播；
+5. `N+1` 的正式发布仍须晚于 `N`，且各分支分别通过自身版本的既有发布门禁。
 
 ### 窗口生命周期
 
