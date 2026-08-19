@@ -7,3 +7,8 @@ cases:
   - { id: copied-cu-definition, surface: projection, mutator: copied-definition, expected_issue: change_unit_definition_copied }
   - { id: parallel-runtime-authority, surface: projection, mutator: parallel-runtime, expected_issue: change_unit_parallel_runtime_authority }
   - { id: missing-use-case, surface: projection, mutator: missing-use-case, expected_issue: change_unit_use_cases_required }
+  - { id: unsafe-construction-path, surface: projection, mutator: unsafe-construction-path, expected_issue: change_unit_mapping_path_invalid }
+  - { id: missing-construction-symbol, surface: projection, mutator: missing-construction-symbol, expected_issue: change_unit_mapping_symbol_missing }
+  - { id: missing-construction-test, surface: projection, mutator: missing-construction-test, expected_issue: change_unit_mapping_file_missing }
+  - { id: missing-construction-verification, surface: projection, mutator: missing-construction-verification, expected_issue: change_unit_mapping_file_missing }
+  - { id: invented-runtime-chain, surface: projection, mutator: invented-runtime-chain, expected_issue: change_unit_runtime_stable_id_mismatch }

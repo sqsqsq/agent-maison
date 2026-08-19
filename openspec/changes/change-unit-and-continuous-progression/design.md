@@ -154,7 +154,7 @@ completion observation 是四态适配层而不是新状态账本：不存在 co
 
 ### Decision 10: 宿主演进接缝首次落地必须是纵切 CU
 
-当 `design_refs` 指向 P1 中裁决为建立接缝、且尚未落地的变化轴 decision 时，首个 CU 必须同时映射稳定契约、首个真实 Provider、真实 Consumer 和契约测试四类 target predicate/verification。后续 Provider 可以是独立 CU，但仍显式 requires 稳定契约并不得修改既有 Consumer；若契约或 Consumer 必须改变，先路由蓝图调和/版本化，而不是伪装成 Provider 替换。
+当 `design_refs` 指向 P1 中裁决为建立接缝、且尚未落地的变化轴 decision 时，首个 CU 必须同时映射稳定契约、首个真实 Provider、真实 Consumer 和契约测试四类 target predicate/verification。后续 Provider 可以是独立 CU，但必须继续引用该权威 decision，并通过精确 `requires.from_change_unit_id + provide_id` 消费已落地稳定契约。P2 不得以 priority 或 Consumer/Provider 描述字符串推断“首个/后续”关系；若契约或 Consumer 必须改变，该 delta 必须由当前获准 design/decision refs 明示，否则路由蓝图调和/版本化。
 
 ### Decision 11: 可替换能力只设三张 Seam Card，首期静态接线
 

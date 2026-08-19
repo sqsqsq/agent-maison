@@ -34,7 +34,6 @@ export function evaluateChangeUnitCarryForward(
   for (const historicRef of historical.design_refs) {
     const currentRef = {
       ...historicRef,
-      blueprint_id: String(blueprint.blueprint_id),
       revision: Number(blueprint.revision),
       source_fingerprint: String(blueprint.source_fingerprint),
       artifact_sha256: current.artifactSha256,

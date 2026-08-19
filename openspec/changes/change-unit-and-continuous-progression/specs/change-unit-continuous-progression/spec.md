@@ -270,17 +270,17 @@ P2 不提供多 writer/distributed lock 保证，不新增锁或常驻 scheduler
 
 ### Requirement: First host evolution seam lands as one vertical Change Unit
 
-当 CU 首次落实蓝图中获批的宿主演进接缝 decision 时，同一 CU MUST 覆盖稳定契约、首个真实 Provider、真实 Consumer 与契约测试，且具备真实 target predicates、touches 与 verification refs；空接口横向 CU MUST 被拒绝。后续 Provider MAY 是独立 CU，但 MUST 显式 requires 稳定契约，并保持既有 Consumer 不变；若契约或 Consumer 必须变化，MUST 先触发蓝图调和、契约版本化或迁移裁决。
+当 CU 首次落实蓝图中获批的宿主演进接缝 decision 时，同一 CU MUST 覆盖稳定契约、首个真实 Provider、真实 Consumer 与契约测试，且具备真实 target predicates、touches 与 verification refs；空接口横向 CU MUST 被拒绝。后续 Provider MAY 是独立 CU，但 MUST 继续引用该权威 decision，并以精确 `requires.from_change_unit_id + provide_id` 消费已落地稳定契约。P2 MUST NOT 以 priority 或 Consumer/Provider 描述字符串推断 Provider 演进顺序；若契约或 Consumer 必须变化，该 delta MUST 由当前获准 design/decision refs 明示，否则先触发蓝图调和、契约版本化或迁移裁决。
 
 #### Scenario: First seam slice is complete
 
 - **WHEN** 蓝图批准把记账来源作为接缝且当前尚未落地
 - **THEN** 首个 CU 同时施工 contract、首个真实来源 Provider、实际记账 Consumer 和 contract test，不能只提交 interface/factory
 
-#### Scenario: Provider replacement changes the consumer
+#### Scenario: Provider evolution is not inferred from prose or priority
 
-- **WHEN** 后续 Provider CU 需要修改稳定契约或既有 Consumer 才能接入
-- **THEN** 该工作不得按普通替换放行，必须返回蓝图调和/版本化/迁移裁决
+- **WHEN** 两个 Provider CU 的 priority 或 Consumer 描述字符串暗示先后，但没有权威 decision ref 与精确 contract require/provide 关系
+- **THEN** P2 不得推断 Provider 演进；只有明确依赖和当前获准 design refs 参与施工与调和裁决
 
 > **Enforced by (P2 implementation):** `harness/scripts/utils/change-unit-evolution-seam.ts`, `harness/scripts/utils/change-unit-design-gate.ts`, `harness/scripts/check-review.ts`
 

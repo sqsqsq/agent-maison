@@ -1,6 +1,9 @@
 import * as fs from 'fs';
+import * as path from 'path';
 import { featureFilePath } from '../../config';
 import { resolveWorkflowSpec } from '../../workflow-loader';
+import { classifyGoalRunsDir } from './fidelity-shared';
+import { filterAuthoritativeEvents, loadEventsJsonl, resolveEffectiveRunEnd } from './goal-runner-phase';
 import { featurePhasesFromWorkflow } from './phase-transition-policy';
 import { loadFeatureTrackDecl } from './feature-track';
 import { resolveFeatureTrack } from './runtime-policy';
@@ -31,6 +34,19 @@ export interface ChangeUnitCompletionAdapterOptions {
     expectedTrack: string;
     expectedChain: string[];
   }) => CompletionVerdict;
+  successfulTerminalRunExists?: (projectRoot: string, featureId: string) => boolean;
+}
+
+const SUCCESSFUL_RUN_END_STATUSES = new Set(['CHAIN_SLICE_COMPLETED', 'COMPLETED']);
+
+export function hasSuccessfulTerminalChangeUnitRun(projectRoot: string, featureId: string): boolean {
+  const runsDir = featureFilePath(projectRoot, featureId, 'goal-runs');
+  for (const runId of classifyGoalRunsDir(runsDir).runs) {
+    const events = filterAuthoritativeEvents(loadEventsJsonl(path.join(runsDir, runId, 'events.jsonl')));
+    const runEnd = resolveEffectiveRunEnd(events);
+    if (runEnd?.status && SUCCESSFUL_RUN_END_STATUSES.has(runEnd.status)) return true;
+  }
+  return false;
 }
 
 export function resolveChangeUnitExpectedExecution(
@@ -60,6 +76,15 @@ export function observeChangeUnitCompletion(
   const projectionExists = options.projectionExists
     ?? ((root: string, feature: string) => fs.existsSync(featureFilePath(root, feature, 'feature-completion.json')));
   if (!projectionExists(projectRoot, featureId)) {
+    const successfulTerminalRunExists = options.successfulTerminalRunExists
+      ?? hasSuccessfulTerminalChangeUnitRun;
+    if (successfulTerminalRunExists(projectRoot, featureId)) {
+      return {
+        state: 'INVALID',
+        featureId,
+        reasons: ['Goal run reducer 已确认成功终局，但 feature-completion 投影缺失；不得降级为 ABSENT。'],
+      };
+    }
     return { state: 'ABSENT', featureId, reasons: ['从未形成可验证 feature-completion 投影。'] };
   }
   let expected: { expectedTrack: string; expectedChain: string[] };

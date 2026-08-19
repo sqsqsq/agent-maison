@@ -4,7 +4,8 @@ import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { featureDir } from '../../config';
-import { ComponentBlueprintRef } from '../../scripts/utils/component-blueprint-model';
+import { BlueprintRecord, ComponentBlueprintRef } from '../../scripts/utils/component-blueprint-model';
+import { resolveComponentBlueprintRef } from '../../scripts/utils/component-blueprint-path';
 import { checkCanonicalChangeUnit } from '../../scripts/check-change-unit';
 import {
   ChangeUnitResolutionError,
@@ -42,7 +43,7 @@ import {
   dropUnacceptedChangeUnitCandidates,
   validateChangeUnitProviderBoundary,
 } from '../../scripts/utils/change-unit-provider-boundary';
-import { validateProviderEvolutionSequence } from '../../scripts/utils/change-unit-evolution-seam';
+import { validateChangeUnitEvolutionSeam } from '../../scripts/utils/change-unit-evolution-seam';
 import { clearSkillsIndexCache, resolveSkillPath } from '../../scripts/utils/resolve-skill-path';
 
 interface UnitCaseResult {
@@ -156,7 +157,7 @@ function projectionContracts(projectRoot: string, changeUnitId = 'ledger-refresh
       failure_recovery: { strategy: 'reload repository snapshot' },
       mutations: [{ mutation_id: 'add-entry', kind: 'user', publication_ref: 'publication:ledger-changed', recovery_ref: 'recovery:reload-ledger' }],
       publications: [{ publication_id: 'ledger-changed' }],
-      subscriptions: [{ subscription_id: 'ledger-page', consumer_ref: 'consumer:ledger-page', publication_ref: 'publication:ledger-changed', replay_or_snapshot: 'latest', cleanup: 'detach observer' }],
+      subscriptions: [{ subscription_id: 'ledger-page-subscription', consumer_ref: 'consumer:ledger-page', publication_ref: 'publication:ledger-changed', replay_or_snapshot: 'latest', cleanup: 'detach observer' }],
       consumers: [{ consumer_id: 'ledger-page', initial_load_ref: 'initial-load:repository-snapshot', update_ref: 'publication:ledger-changed' }],
     }] : [],
   } as unknown as ContractsSpec;
@@ -203,6 +204,7 @@ function progressionUnits(): ReturnType<typeof asChangeUnitArtifact>[] {
 function completionAdapter(state: Map<string, ChangeUnitCompletionState>) {
   return {
     projectionExists: (_root: string, feature: string) => (state.get(feature) ?? 'ABSENT') !== 'ABSENT',
+    successfulTerminalRunExists: () => false,
     resolveExpected: () => ({ expectedTrack: 'full', expectedChain: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] }),
     verify: (input: { feature: string }): CompletionVerdict => {
       const verdict = state.get(input.feature) ?? 'INVALID';
@@ -371,6 +373,9 @@ export async function runAll(): Promise<UnitCaseResult[]> {
   results.push(test('Feature loader and projection accept complete ID-only mappings', () => {
     withTempProject(projectRoot => {
       const fixture = projectionContracts(projectRoot);
+      fixture.contracts.state_management!.push({
+        data: 'unrelated-local-state', scope: 'page', decorator: 'none', holder: 'LocalPage', module: 'ledger',
+      });
       bindFeatureContracts(projectRoot, fixture.feature, fixture.contracts);
       const loaded = new SpecLoader(
         projectRoot,
@@ -433,6 +438,62 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     });
   }));
 
+  results.push(test('construction refs must resolve through safe project paths and real symbols/tests/verifications', () => {
+    withTempProject(projectRoot => {
+      const fixture = projectionContracts(projectRoot);
+      fixture.contracts.change_unit!.predicate_mappings[0].implementation_refs = ['../outside.ets'];
+      fixture.contracts.change_unit!.predicate_mappings[0].test_refs = ['test:not-real'];
+      fixture.contracts.change_unit!.provide_mappings[0].implementation_refs = ['src/ledger/LedgerFeature.ets#NotRealSymbol'];
+      fixture.contracts.change_unit!.design_ref_mappings[0].verification_refs = ['verify:not-real'];
+      bindFeatureContracts(projectRoot, fixture.feature, fixture.contracts);
+      const result = validateChangeUnitFeatureProjection(
+        projectRoot,
+        fixture.feature,
+        fixture.contracts,
+        fixture.acceptance,
+        true,
+        'coding',
+        fixture.dags,
+      );
+      const ids = result.issues.map(item => item.id);
+      expectIssue(ids, 'change_unit_mapping_path_invalid');
+      expectIssue(ids, 'change_unit_mapping_ref_unconsumable');
+      expectIssue(ids, 'change_unit_mapping_symbol_missing');
+    });
+  }));
+
+  results.push(test('runtime construction must preserve P1 stable ids instead of inventing a closed fake chain', () => {
+    withTempProject(projectRoot => {
+      const fixture = projectionContracts(projectRoot);
+      const state = fixture.contracts.state_management![0];
+      state.mutations = [{ mutation_id: 'invented-mutation', kind: 'user', publication_ref: 'publication:invented', recovery_ref: 'recovery:invented' }];
+      state.publications = [{ publication_id: 'invented' }];
+      state.subscriptions = [{
+        subscription_id: 'invented-subscription',
+        consumer_ref: 'consumer:invented',
+        publication_ref: 'publication:invented',
+        replay_or_snapshot: 'latest',
+        cleanup: 'detach',
+      }];
+      state.consumers = [{ consumer_id: 'invented', initial_load_ref: 'initial-load:invented', update_ref: 'publication:invented' }];
+      bindFeatureContracts(projectRoot, fixture.feature, fixture.contracts);
+      const result = validateChangeUnitFeatureProjection(projectRoot, fixture.feature, fixture.contracts, fixture.acceptance, true, 'plan', fixture.dags);
+      expectIssue(result.issues.map(item => item.id), 'change_unit_runtime_stable_id_mismatch');
+    });
+  }));
+
+  results.push(test('Feature phase projection reuses the current P1 design gate', () => {
+    withTempProject((projectRoot, cuPath) => {
+      const cu = YAML.parse(fs.readFileSync(cuPath, 'utf8')) as ChangeUnitRecord;
+      (cu.design_refs as ComponentBlueprintRef[])[0].target.id = 'not-real-in-current-blueprint';
+      fs.writeFileSync(cuPath, YAML.stringify(cu), 'utf8');
+      const fixture = projectionContracts(projectRoot);
+      bindFeatureContracts(projectRoot, fixture.feature, fixture.contracts);
+      const result = validateChangeUnitFeatureProjection(projectRoot, fixture.feature, fixture.contracts, fixture.acceptance, true, 'plan', fixture.dags);
+      expectIssue(result.issues.map(item => item.id), 'change_unit_design_ref_unresolvable');
+    });
+  }));
+
   results.push(test('mechanically required use-case and DAG cannot be authored away', () => {
     withTempProject(projectRoot => {
       const fixture = projectionContracts(projectRoot);
@@ -445,22 +506,37 @@ export async function runAll(): Promise<UnitCaseResult[]> {
   }));
 
   results.push(test('simple read-only CU does not require fake mutation, subscription, use-case or DAG', () => {
-    withTempProject(projectRoot => {
+    withTempProject((projectRoot, cuPath) => {
       const source = validChangeUnit();
       source.change_unit_id = 'read-only';
+      const blueprintPath = path.join(projectRoot, 'blueprint', 'component', 'ledger', 'component-blueprint.yaml');
+      const blueprint = YAML.parse(fs.readFileSync(blueprintPath, 'utf8')) as ChangeUnitRecord;
+      const developmentView = (blueprint.design_views as ChangeUnitRecord[])
+        .find(view => view.view_id === 'development')!;
+      const isolatedNode = clone((developmentView.nodes as ChangeUnitRecord[])[0]);
+      isolatedNode.node_id = 'ledger-read-model';
+      isolatedNode.design_basis_refs = ['decision:seam-shape'];
+      (developmentView.nodes as ChangeUnitRecord[]).push(isolatedNode);
+      fs.writeFileSync(blueprintPath, YAML.stringify(blueprint), 'utf8');
       const developmentRef = (source.design_refs as ComponentBlueprintRef[])
         .find(ref => ref.target.kind === 'node' && ref.target.view_id === 'development')!;
-      source.design_refs = [developmentRef];
+      const decisionRef = (source.design_refs as ComponentBlueprintRef[])
+        .find(ref => ref.target.kind === 'decision')!;
+      developmentRef.target.id = 'ledger-read-model';
+      developmentRef.artifact_sha256 = sha256(blueprintPath);
+      decisionRef.artifact_sha256 = developmentRef.artifact_sha256;
+      (source.component_blueprint_ref as ComponentBlueprintRef).artifact_sha256 = developmentRef.artifact_sha256;
+      source.design_refs = [developmentRef, decisionRef];
       source.touches = [{ owner: 'ledger-team', design_ref: developmentRef, write_refs: ['planned:src/ledger/read.ts'] }];
-      const cuPath = path.join(projectRoot, 'blueprint', 'component', 'ledger', 'change-units', 'read-only.yaml');
-      fs.writeFileSync(cuPath, YAML.stringify(source), 'utf8');
+      const readOnlyPath = path.join(path.dirname(cuPath), 'read-only.yaml');
+      fs.writeFileSync(readOnlyPath, YAML.stringify(source), 'utf8');
       const fixture = projectionContracts(projectRoot, 'read-only');
       fixture.contracts.state_management = [{ data: 'ledger-read', scope: 'page', decorator: 'none', holder: 'LedgerPage', module: 'ledger' }];
       fixture.acceptance.criteria[0].verification_steps = ['read snapshot'];
       fixture.acceptance.criteria[0].description = 'read current snapshot';
       bindFeatureContracts(projectRoot, fixture.feature, fixture.contracts, false);
       const result = validateChangeUnitFeatureProjection(projectRoot, fixture.feature, fixture.contracts, fixture.acceptance, false, 'ut', []);
-      assert(result.issues.length === 0, `read-only 被迫制造流：${result.issues.map(item => item.id).join(', ')}`);
+      assert(result.issues.length === 0, `read-only 被迫制造流：${result.issues.map(item => `${item.id}:${item.message}`).join(', ')}`);
       assert(!result.useCasesRequired && !result.dagRequired, 'read-only 不应派生复杂流产物');
     });
   }));
@@ -487,6 +563,47 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     }
   }));
 
+  results.push(test('successful terminal Goal run without completion evidence is INVALID, never ABSENT', () => {
+    withTempProject(projectRoot => {
+      const fixture = projectionContracts(projectRoot);
+      bindFeatureContracts(projectRoot, fixture.feature, fixture.contracts);
+      const runDir = path.join(featureDir(projectRoot, fixture.feature), 'goal-runs', '20260820T000000Z-a1b2c3');
+      fs.mkdirSync(runDir, { recursive: true });
+      fs.writeFileSync(path.join(runDir, 'manifest.json'), '{}\n', 'utf8');
+      fs.writeFileSync(path.join(runDir, 'events.jsonl'), [
+        JSON.stringify({ ts: '2026-08-20T00:00:00Z', type: 'run_start' }),
+        JSON.stringify({ ts: '2026-08-20T00:01:00Z', type: 'run_end', status: 'CHAIN_SLICE_COMPLETED' }),
+        '',
+      ].join('\n'), 'utf8');
+      const observation = observeChangeUnitCompletion(projectRoot, asChangeUnitArtifact(loadCanonicalChangeUnit(projectRoot, 'ledger', 'ledger-refresh').changeUnit));
+      assert(observation.state === 'INVALID', `成功终局缺 completion 被降为 ${observation.state}`);
+    });
+  }));
+
+  results.push(test('STALE completion re-enters ready only after current design and Feature mapping revalidate', () => {
+    withTempProject(projectRoot => {
+      const fixture = projectionContracts(projectRoot);
+      bindFeatureContracts(projectRoot, fixture.feature, fixture.contracts);
+      const unit = asChangeUnitArtifact(loadCanonicalChangeUnit(projectRoot, 'ledger', 'ledger-refresh').changeUnit);
+      const state = new Map([[fixture.feature, 'STALE' as ChangeUnitCompletionState]]);
+      let ready = deriveChangeUnitReadySet(projectRoot, 'ledger', { units: [unit], completion: completionAdapter(state) });
+      assert(ready.ready[0]?.change_unit_id === 'ledger-refresh', `已重验 STALE CU 无合法重执行路径：${ready.units[0].blockers.map(item => `${item.id}:${item.message}`).join(',')}`);
+      fixture.contracts.change_unit!.change_unit_ref.artifact_sha256 = `sha256:${'f'.repeat(64)}`;
+      bindFeatureContracts(projectRoot, fixture.feature, fixture.contracts);
+      ready = deriveChangeUnitReadySet(projectRoot, 'ledger', { units: [unit], completion: completionAdapter(state) });
+      assert(ready.ready.length === 0 && ready.units[0].blockers.some(item => item.id === 'change_unit_identity_mismatch'), '未重绑 mapping 的 STALE CU 仍进入 ready');
+    });
+  }));
+
+  results.push(test('invalid canonical CU never enters ready or completed handoff', () => {
+    const unit = clone(progressionUnits()[0]);
+    (unit as unknown as ChangeUnitRecord).ready = true;
+    const state = new Map([[deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id), 'ABSENT' as ChangeUnitCompletionState]]);
+    const ready = deriveChangeUnitReadySet(VALID_PROJECT, 'ledger', { units: [unit], completion: completionAdapter(state) });
+    assert(ready.ready.length === 0 && !ready.allCompleted, '非法 CU 进入 ready/completed handoff');
+    assert(ready.units[0].blockers.some(item => item.id === 'change_unit_forbidden_authority_field'), 'ready 未复用 CU validator');
+  }));
+
   results.push(test('exact dependencies and stable selector preserve independent same-priority candidates', () => {
     const units = progressionUnits();
     const state = new Map(units.map(unit => [deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id), unit.change_unit_id === 'a-foundation' ? 'VALID' as const : 'ABSENT' as const]));
@@ -510,7 +627,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       source_revision: 'r1', authority_ref: 'authority:release-owner',
     }];
     assert(deriveChangeUnitBlockers(blocked, { projectRoot: VALID_PROJECT })[0].active, 'human blocker 被自报解除');
-    assert(isSilentProgressStall({ unfinishedPredicateCount: 1, readyCount: 0, activeRunCount: 0, legalBlockerCount: 0 }), 'silent_progress_stall 未识别');
+    assert(isSilentProgressStall({ unfinishedPredicateCount: 1, readyCount: 0, legalBlockerCount: 0 }), 'silent_progress_stall 未识别');
   }));
 
   results.push(test('completed provides carry forward only while every historical target remains admitted', () => {
@@ -520,6 +637,18 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     replaced.design_refs[0].target.id = 'replaced-stable-id';
     const stale = evaluateChangeUnitCarryForward(VALID_PROJECT, replaced);
     assert(!stale.allowed && stale.reasons.some(reason => reason.includes('不可解析')), '替换/缺失 target 未路由 P1');
+  }));
+
+  results.push(test('carry-forward preserves historical blueprint identity across current blueprint replacement', () => {
+    withTempProject(projectRoot => {
+      const historical = asChangeUnitArtifact(validChangeUnit());
+      const blueprintPath = path.join(projectRoot, 'blueprint', 'component', 'ledger', 'component-blueprint.yaml');
+      const blueprint = YAML.parse(fs.readFileSync(blueprintPath, 'utf8')) as ChangeUnitRecord;
+      blueprint.blueprint_id = 'replacement-blueprint';
+      fs.writeFileSync(blueprintPath, YAML.stringify(blueprint), 'utf8');
+      const verdict = evaluateChangeUnitCarryForward(projectRoot, historical);
+      assert(!verdict.allowed && verdict.reasons.some(reason => reason.includes('blueprint_id')), 'carry-forward 擅自把历史 ref 改绑到 replacement blueprint');
+    });
   }));
 
   results.push(test('CU revision drift stales future mapping without rewriting completed history', () => {
@@ -540,13 +669,27 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     });
   }));
 
-  results.push(test('later Provider requires prior contract and cannot silently change Consumer', () => {
-    const units = progressionUnits().slice(0, 2);
-    units[1].requires = [];
-    units[1].target_predicates.find(item => item.role === 'consumer')!.description = 'A replacement consumer';
-    const issues = validateProviderEvolutionSequence(units).map(item => item.id);
-    expectIssue(issues, 'change_unit_provider_replacement_contract_requirement_missing');
-    expectIssue(issues, 'change_unit_provider_replacement_consumer_change');
+  results.push(test('Provider evolution consumes decision ref and exact require, never priority or Consumer prose', () => {
+    const base = asChangeUnitArtifact(validChangeUnit());
+    const decisionRef = base.design_refs.find(ref => ref.target.kind === 'decision')!;
+    const decision = resolveComponentBlueprintRef(VALID_PROJECT, decisionRef).target as BlueprintRecord;
+    const later = clone(base);
+    later.priority = -100;
+    later.requires = [{ require_id: 'stable-contract', from_change_unit_id: 'ledger-refresh', provide_id: 'ledger-refresh-vertical-slice' }];
+    later.target_predicates = [clone(later.target_predicates.find(item => item.role === 'provider')!)];
+    later.target_predicates[0].description = 'Description changes do not establish sequence';
+    const issues = validateChangeUnitEvolutionSeam(later, decisionRef, decision);
+    assert(issues.length === 0, `精确 require 的 later Provider 被 priority/描述启发式误判：${issues.map(item => item.id).join(',')}`);
+    later.requires = [];
+    expectIssue(validateChangeUnitEvolutionSeam(later, decisionRef, decision).map(item => item.id), 'change_unit_evolution_vertical_role_missing');
+  }));
+
+  results.push(test('selector uses Unicode code-point order rather than locale collation', () => {
+    const [first, second] = progressionUnits();
+    first.priority = second.priority = 10;
+    first.change_unit_id = 'Z-unit';
+    second.change_unit_id = 'a-unit';
+    assert(selectNextChangeUnit([second, first])?.change_unit_id === 'Z-unit', 'tie-break 未按 code-point 升序');
   }));
 
   asynchronous.push(asyncTest('fake Goal Mode advances A to B to C one at a time and rereads completion', async () => {
@@ -670,6 +813,28 @@ export async function runAll(): Promise<UnitCaseResult[]> {
         if (fixtureCase.mutator === 'copied-definition') (fixture.contracts.change_unit as unknown as ChangeUnitRecord).purpose = 'copied';
         if (fixtureCase.mutator === 'parallel-runtime') (fixture.contracts as unknown as ChangeUnitRecord).runtime_flow_slices = [];
         if (fixtureCase.mutator === 'missing-use-case') useCasesPresent = false;
+        if (fixtureCase.mutator === 'unsafe-construction-path') {
+          fixture.contracts.change_unit!.predicate_mappings[0].implementation_refs = ['../outside.ets'];
+        }
+        if (fixtureCase.mutator === 'missing-construction-symbol') {
+          fixture.contracts.change_unit!.provide_mappings[0].implementation_refs = ['src/ledger/LedgerFeature.ets#NotRealSymbol'];
+        }
+        if (fixtureCase.mutator === 'missing-construction-test') {
+          fixture.contracts.change_unit!.predicate_mappings[0].test_refs = ['test/ledger/NotReal.test.ets'];
+        }
+        if (fixtureCase.mutator === 'missing-construction-verification') {
+          fixture.contracts.change_unit!.design_ref_mappings[0].verification_refs = ['test/ledger/NotReal.verify.ets'];
+        }
+        if (fixtureCase.mutator === 'invented-runtime-chain') {
+          const state = fixture.contracts.state_management![0];
+          state.mutations = [{ mutation_id: 'invented-mutation', kind: 'user', publication_ref: 'publication:invented', recovery_ref: 'recovery:invented' }];
+          state.publications = [{ publication_id: 'invented' }];
+          state.subscriptions = [{
+            subscription_id: 'invented-subscription', consumer_ref: 'consumer:invented',
+            publication_ref: 'publication:invented', replay_or_snapshot: 'latest', cleanup: 'detach',
+          }];
+          state.consumers = [{ consumer_id: 'invented', initial_load_ref: 'initial-load:invented', update_ref: 'publication:invented' }];
+        }
         bindFeatureContracts(projectRoot, fixture.feature, fixture.contracts, useCasesPresent);
         const result = validateChangeUnitFeatureProjection(projectRoot, fixture.feature, fixture.contracts, fixture.acceptance, useCasesPresent, 'plan', fixture.dags);
         expectIssue(result.issues.map(item => item.id), fixtureCase.expected_issue);

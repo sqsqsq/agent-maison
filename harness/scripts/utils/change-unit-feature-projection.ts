@@ -26,6 +26,8 @@ import {
 } from './change-unit-path';
 import { AcceptanceSpec, CheckContext, CheckResult, ContractsSpec } from './types';
 import { validateChangeUnitEvolutionSeam } from './change-unit-evolution-seam';
+import { validateChangeUnitDesign } from './change-unit-design-gate';
+import { validateProjectRelativePath } from './project-relative-path';
 
 type ProjectionPhase = 'plan' | 'coding' | 'review' | 'ut';
 
@@ -76,10 +78,60 @@ function duplicates(values: string[]): string[] {
   return [...duplicate].sort();
 }
 
-function concreteRefExists(projectRoot: string, ref: string): boolean {
-  const clean = ref.replace(/^planned:/, '').split('#', 1)[0].trim();
-  if (!clean || /^(verify|test|symbol|contract|decision|evidence|architecture):/.test(clean)) return true;
-  return fs.existsSync(path.resolve(projectRoot, clean));
+function checkConstructionRefs(
+  projectRoot: string,
+  refs: string[],
+  phase: ProjectionPhase,
+  role: 'implementation' | 'test' | 'verification',
+  owner: string,
+): ChangeUnitProjectionIssue[] {
+  const out: ChangeUnitProjectionIssue[] = [];
+  const plannedAllowed = role === 'implementation' ? phase === 'plan' : phase !== 'ut';
+  for (const rawRef of refs) {
+    const planned = rawRef.startsWith('planned:');
+    const ref = planned ? rawRef.slice('planned:'.length) : rawRef;
+    if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(ref)) {
+      out.push(issue(
+        'change_unit_mapping_ref_unconsumable',
+        `${owner} 的 ${role} ref=${rawRef} 是未绑定的命名引用；请使用 project-relative file[#symbol]。`,
+      ));
+      continue;
+    }
+    const hash = ref.indexOf('#');
+    const pathPart = (hash >= 0 ? ref.slice(0, hash) : ref).trim();
+    const symbol = hash >= 0 ? ref.slice(hash + 1).trim() : '';
+    if (hash >= 0 && !symbol) {
+      out.push(issue('change_unit_mapping_symbol_missing', `${owner} 的 ${role} ref=${rawRef} 缺 #symbol。`));
+      continue;
+    }
+    let normalized: string;
+    try {
+      normalized = validateProjectRelativePath(projectRoot, pathPart, `${owner}.${role}`);
+    } catch (error) {
+      out.push(issue('change_unit_mapping_path_invalid', (error as Error).message));
+      continue;
+    }
+    if (planned && !plannedAllowed) {
+      out.push(issue(
+        'change_unit_mapping_planned_ref_not_allowed',
+        `${owner} 的 ${role} ref=${rawRef} 在 ${phase} 阶段必须已有真实消费落点。`,
+      ));
+      continue;
+    }
+    if (planned) continue;
+    const absolute = path.resolve(projectRoot, normalized);
+    if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) {
+      out.push(issue('change_unit_mapping_file_missing', `${owner} 的 ${role} 文件不存在：${normalized}`));
+      continue;
+    }
+    if (symbol) {
+      const source = fs.readFileSync(absolute, 'utf8');
+      if (!source.includes(symbol)) {
+        out.push(issue('change_unit_mapping_symbol_missing', `${owner} 的符号 ${symbol} 不存在于 ${normalized}。`));
+      }
+    }
+  }
+  return out;
 }
 
 function checkIdMappings(
@@ -105,12 +157,9 @@ function checkIdMappings(
     if (implementationRefs.length === 0 || testRefs.length === 0) {
       out.push(issue(`change_unit_${kind}_mapping_incomplete`, `${String(mapping[key])} 必须映射 implementation_refs 与 test_refs。`));
     }
-    if (phase !== 'plan') {
-      const missingFiles = implementationRefs.filter(ref => !concreteRefExists(projectRoot, ref));
-      if (missingFiles.length > 0) {
-        out.push(issue(`change_unit_${kind}_implementation_missing`, `${String(mapping[key])} 施工文件不存在：${missingFiles.join(', ')}`));
-      }
-    }
+    const owner = `${kind}:${String(mapping[key])}`;
+    out.push(...checkConstructionRefs(projectRoot, implementationRefs, phase, 'implementation', owner));
+    out.push(...checkConstructionRefs(projectRoot, testRefs, phase, 'test', owner));
     for (const forbidden of ['description', 'purpose', 'verification_refs', 'provide_ids']) {
       if (Object.prototype.hasOwnProperty.call(mapping, forbidden)) {
         out.push(issue('change_unit_definition_copied', `${kind} mapping 不得复制/重定义 ${forbidden}。`));
@@ -145,10 +194,9 @@ function checkDesignMappings(
     if (implementationRefs.length === 0 || verificationRefs.length === 0) {
       out.push(issue('change_unit_design_mapping_incomplete', `${ref ? blueprintRefAddress(ref) : index} 缺施工/验证落点。`));
     }
-    if (phase !== 'plan') {
-      const missingFiles = implementationRefs.filter(item => !concreteRefExists(projectRoot, item));
-      if (missingFiles.length > 0) out.push(issue('change_unit_design_implementation_missing', `施工文件不存在：${missingFiles.join(', ')}`));
-    }
+    const owner = `design:${ref ? blueprintRefAddress(ref) : index}`;
+    out.push(...checkConstructionRefs(projectRoot, implementationRefs, phase, 'implementation', owner));
+    out.push(...checkConstructionRefs(projectRoot, verificationRefs, phase, 'verification', owner));
     for (const forbidden of ['description', 'target_state', 'delta', 'purpose']) {
       if (Object.prototype.hasOwnProperty.call(mapping, forbidden)) {
         out.push(issue('change_unit_definition_copied', `design mapping 不得复制/重定义 ${forbidden}。`));
@@ -255,6 +303,81 @@ function checkVerticalSlice(
             ));
           }
         }
+        const mappedRecord = mapped as unknown as BlueprintRecord;
+        for (const [field, idField] of [
+          ['mutations', 'mutation_id'],
+          ['publications', 'publication_id'],
+          ['subscriptions', 'subscription_id'],
+          ['consumers', 'consumer_id'],
+        ] as const) {
+          const expectedItems = asRecords(flow[field]);
+          const actualItems = asRecords(mappedRecord[field]);
+          const expectedIds = new Set(expectedItems.map(item => String(item[idField] ?? '')).filter(Boolean));
+          const actualIds = new Set(actualItems.map(item => String(item[idField] ?? '')).filter(Boolean));
+          const missing = [...expectedIds].filter(id => !actualIds.has(id));
+          const unknown = [...actualIds].filter(id => !expectedIds.has(id));
+          if (missing.length > 0 || unknown.length > 0) {
+            issues.push(issue(
+              'change_unit_runtime_stable_id_mismatch',
+              `${blueprintRefAddress(ref)} 的 ${field} 稳定 ID 不一致：missing=${missing.join(',') || '-'}; unknown=${unknown.join(',') || '-'}。`,
+            ));
+          }
+        }
+        const expectedOwner = String(asRecord(flow.state_owner)?.ref ?? '');
+        if (expectedOwner && mapped.owner_ref !== expectedOwner) {
+          issues.push(issue('change_unit_runtime_stable_id_mismatch', `${blueprintRefAddress(ref)} owner_ref 必须为 ${expectedOwner}。`));
+        }
+        const expectedContracts = new Set(asStrings(flow.logical_contract_refs));
+        const actualContracts = new Set(asStrings(mapped.contract_refs));
+        if ([...expectedContracts].some(id => !actualContracts.has(id))
+          || [...actualContracts].some(id => !expectedContracts.has(id))) {
+          issues.push(issue('change_unit_runtime_stable_id_mismatch', `${blueprintRefAddress(ref)} contract_refs 与 P1 flow 不一致。`));
+        }
+        const expectedMutations = new Map(asRecords(flow.mutations).map(item => [String(item.mutation_id), item]));
+        for (const actual of asRecords(mappedRecord.mutations)) {
+          const expected = expectedMutations.get(String(actual.mutation_id));
+          if (!expected) continue;
+          for (const edge of ['publication_ref', 'recovery_ref'] as const) {
+            if (nonEmptyString(expected[edge]) && actual[edge] !== expected[edge]) {
+              issues.push(issue(
+                'change_unit_runtime_propagation_edge_mismatch',
+                `mutation:${String(actual.mutation_id)}.${edge} 必须保持 P1 稳定边 ${String(expected[edge])}。`,
+              ));
+            }
+          }
+        }
+        const expectedConsumers = new Map(asRecords(flow.consumers).map(item => [String(item.consumer_id), item]));
+        for (const actual of asRecords(mappedRecord.consumers)) {
+          const expected = expectedConsumers.get(String(actual.consumer_id));
+          if (!expected) continue;
+          for (const edge of ['initial_load_ref', 'update_ref'] as const) {
+            if (nonEmptyString(expected[edge]) && actual[edge] !== expected[edge]) {
+              issues.push(issue(
+                'change_unit_runtime_propagation_edge_mismatch',
+                `consumer:${String(actual.consumer_id)}.${edge} 必须保持 P1 稳定边 ${String(expected[edge])}。`,
+              ));
+            }
+          }
+        }
+        const expectedSubscriptions = new Map(asRecords(flow.subscriptions).map(item => [String(item.subscription_id), item]));
+        for (const actual of asRecords(mappedRecord.subscriptions)) {
+          const expected = expectedSubscriptions.get(String(actual.subscription_id));
+          if (!expected) continue;
+          if (nonEmptyString(expected.consumer_ref) && actual.consumer_ref !== expected.consumer_ref) {
+            issues.push(issue(
+              'change_unit_runtime_propagation_edge_mismatch',
+              `subscription:${String(actual.subscription_id)}.consumer_ref 必须保持 P1 稳定边 ${String(expected.consumer_ref)}。`,
+            ));
+          }
+          const consumerId = String(expected.consumer_ref ?? '').replace(/^consumer:/, '');
+          const expectedPublication = expectedConsumers.get(consumerId)?.update_ref;
+          if (nonEmptyString(expectedPublication) && actual.publication_ref !== expectedPublication) {
+            issues.push(issue(
+              'change_unit_runtime_propagation_edge_mismatch',
+              `subscription:${String(actual.subscription_id)}.publication_ref 必须闭合到 ${String(expectedPublication)}。`,
+            ));
+          }
+        }
       } catch (error) {
         issues.push(issue('change_unit_design_ref_unresolvable', (error as Error).message, 'reconcile_blueprint'));
       }
@@ -305,6 +428,12 @@ export function validateChangeUnitFeatureProjection(
   if (feature !== expectedFeature) {
     issues.push(issue('change_unit_feature_identity_mismatch', `Feature=${feature}，canonical 派生 identity=${expectedFeature}。`));
   }
+  const design = validateChangeUnitDesign(projectRoot, cu as unknown as ChangeUnitRecord);
+  issues.push(...design.issues.map(item => issue(
+    item.id,
+    item.message,
+    item.route === 'reconcile_blueprint' ? 'reconcile_blueprint' : 'repair_change_unit',
+  )));
   for (const forbidden of ['purpose', 'target_predicates', 'provides', 'design_refs', 'verification_refs']) {
     if (Object.prototype.hasOwnProperty.call(section, forbidden)) {
       issues.push(issue('change_unit_definition_copied', `contracts.change_unit 不得复制 canonical ${forbidden}。`));
