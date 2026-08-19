@@ -45,7 +45,12 @@ import {
   projectIdentityHash,
   readCodingBase,
 } from '../../scripts/utils/pass-snapshot';
-import { collectPhaseRepairCandidates } from '../../scripts/utils/repair-candidates';
+import { buildSummaryRepairCandidates } from '../../scripts/utils/repair-candidates';
+import { buildSummaryBlockers } from '../../scripts/utils/summary-blockers';
+import { evaluateP0CoverageIntegrity } from '../../scripts/utils/p0-semantic-gates';
+import { checkPassRateCalculated } from '../../scripts/check-testing';
+import { writeRunSummaryBase } from '../../harness-runner';
+import type { CheckContext, CheckResult, Phase, ScriptReport } from '../../scripts/utils/types';
 import { computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
 import { mergeSuccessorRequirement } from '../../scripts/utils/goal-manifest';
 import type { UnitCaseResult } from '../run-unit';
@@ -284,9 +289,14 @@ async function runChain(
     /**
      * b3e8d4c7 t5：让用例把某轮 gate 产出改成 **FAIL + 指定 blockers**，驱动真实失败
      * 路径（scope 违规回退 / 内容重试耗尽 halt）。返回 null = 沿用默认 PASS 产出。
+     * c7e4a2d9（review 二轮 P1）：`{ checks }` 形态走**真实 summary writer**
+     * （writeRunSummaryBase）——lattice/report_validity/blockers/repair_candidates 全部由
+     * 生产 writer 派生并落盘，runner 读盘消费，禁止手搓 summary；`{ blockers }` 形态
+     * 保留为 legacy 用例（桩内手写 summary）。
      */
     onHarnessSummary?: (ctx: { phase: string; attempt: number }) =>
       | { blockers: Array<Record<string, unknown>> }
+      | { checks: CheckResult[] }
       | null;
     /** e9d4b7a3 t5 负向：按 (attemptId, phase) 强制 receipt 复验 failed（模拟旧回执身份
      * 损坏等真实失败路径——桩默认已 identity-aware，此选项只做注入，不改变默认语义） */
@@ -393,32 +403,69 @@ async function runChain(
       if (failOverride) {
         const failDir = path.join(pr, 'doc', 'features', feat, String(ph), 'reports');
         fs.mkdirSync(failDir, { recursive: true });
-        // 责任阶段统一路由：桩必须与**真实 writer 同源**产出候选——harness-runner 在
-        // summary 落盘前调 collectPhaseRepairCandidates（checks 形态见 check-coding：
-        // failure_kind → classification）。桩若只写 blockers，端到端就测不到统一路由。
-        const repairCandidates = collectPhaseRepairCandidates({
+        // 责任阶段统一路由（c7e4a2d9 review 二轮 P1）：`checks` 形态走**真实 summary writer**
+        // writeRunSummaryBase（与 harness-runner 生产同一实现）——lattice（report_validity）/
+        // blockers / repair_candidates 全部由 writer 派生并持久化，runner 读盘消费；
+        // 事故测试的 report_validity=FAIL 由真实 gate（pass_rate_calculated 结论=达标）产出。
+        // `blockers` 形态（legacy 用例）保留既有手写 summary 语义。
+        const rawChecks: CheckResult[] = 'checks' in failOverride
+          ? (failOverride as { checks: CheckResult[] }).checks
+          : (failOverride as { blockers: Array<Record<string, unknown>> }).blockers.map((b) => ({
+              id: String(b.id ?? ''),
+              category: 'structure' as const,
+              description: '',
+              severity: (String(b.severity ?? 'BLOCKER')) as CheckResult['severity'],
+              status: (String(b.status ?? 'FAIL')) as CheckResult['status'],
+              details: String(b.details_excerpt ?? ''),
+              ...(b.classification !== undefined ? { failure_kind: String(b.classification) } : {}),
+              ...(b.blocking_class !== undefined ? { blocking_class: String(b.blocking_class) } : {}),
+              ...(b.actionability !== undefined
+                ? { actionability: String(b.actionability) as CheckResult['actionability'] } : {}),
+              ...(Array.isArray(b.affected_files) ? { affected_files: b.affected_files as string[] } : {}),
+            }));
+        if ('checks' in failOverride) {
+          const scriptReport: ScriptReport = {
+            phase: String(ph) as Phase,
+            feature: feat,
+            timestamp: new Date().toISOString(),
+            project_root: pr,
+            assurance: 'full',
+            capability_resolutions: [],
+            capability_resolution_contract_fingerprint: null,
+            checks: rawChecks,
+            summary: {
+              total: rawChecks.length,
+              pass: rawChecks.filter(c => c.status === 'PASS').length,
+              fail: rawChecks.filter(c => c.status === 'FAIL').length,
+              warn: 0,
+              skip: 0,
+              blockers: rawChecks.filter(c => c.status === 'FAIL' && c.severity === 'BLOCKER').length,
+              verdict: 'FAIL',
+            },
+          };
+          // 生产 writer 落盘（真实 lattice/blockers/candidates 派生 + validateSummaryV11 +
+          // atomicWriteJson）——不再手写 summary.json
+          writeRunSummaryBase(pr, scriptReport, _fr);
+          return { exitCode: 1, timedOut: false };
+        }
+        const blockers = buildSummaryBlockers(rawChecks, TEST_EXCERPT, TEST_FAILURE_CLASSIFICATION);
+        const repairCandidates = buildSummaryRepairCandidates({
           phase: String(ph),
+          checks: rawChecks,
+          reportValidity: 'PASS',
           reviewReportText: null,
           verifierReportText: null,
-          reportValidity: 'PASS',
           conditionalReceiptValid: false,
-          checks: failOverride.blockers.map((b) => ({
-            id: String(b.id ?? ''),
-            status: String(b.status ?? 'FAIL'),
-            severity: String(b.severity ?? 'BLOCKER'),
-            details: String(b.details_excerpt ?? ''),
-            classification: b.classification === undefined ? undefined : String(b.classification),
-            affected_files: (b.affected_files as string[] | undefined) ?? [],
-          })),
+          parseClassificationFromDetails: TEST_FAILURE_CLASSIFICATION,
         });
         fs.writeFileSync(path.join(failDir, 'summary.json'), JSON.stringify({
           schema_version: '1.2', assurance: 'full',
           capability_resolutions: [], capability_resolution_contract_fingerprint: null,
-          verdict: 'FAIL', blocker_count: failOverride.blockers.length,
+          verdict: 'FAIL', blocker_count: blockers.length,
           receipt_status: 'missing', closure_status: 'open', next_action: 'fix_blockers',
           report_validity: 'PASS', release_readiness: 'BLOCKED',
           completion_status: 'complete',
-          blockers: failOverride.blockers, checks: [],
+          blockers, checks: [],
           ...(repairCandidates.length > 0 ? { repair_candidates: repairCandidates } : {}),
         }, null, 2), 'utf-8');
         return { exitCode: 1, timedOut: false };
@@ -2053,6 +2100,312 @@ test('t5② 伪造 backtrack 事件（events 无 MAC、agent 可写）→ 恶意
     assert(!p.includes('IGNORE ALL PREVIOUS'), `plan prompt #${i} 混入了注入指令`);
     assert(!p.includes('etc/passwd'), `plan prompt #${i} 混入了越根路径`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// c7e4a2d9：P0 未豁免 skip 默认修复——候选路由回归（事故 run 20260818T035420Z-f555c2 形状）
+// 事故组合走**真实 gate**：evaluateP0CoverageIntegrity（真实输出形状）→ 桩内经生产函数
+// buildSummaryBlockers（failure_kind/actionability 字段保真）→ buildSummaryRepairCandidates
+// （writer 侧唯一实现）→ summary 落盘 → runner 读盘消费。任一断点（gate 输出形状 /
+// blocker 字段保真 / writer 接线 / 候选持久化）断裂，本套即红——禁止手搓 blocker/candidate。
+// ---------------------------------------------------------------------------
+
+/** 与 harness-runner 注入 buildSummaryBlockers 的同一正则语义（details 兜底归因） */
+function TEST_FAILURE_CLASSIFICATION(details: string): string | undefined {
+  const match = details.match(/失败归因：([a-zA-Z0-9_]+)/);
+  return match?.[1];
+}
+
+/** 与 harness-runner excerpt 同语义（details_excerpt 截断） */
+function TEST_EXCERPT(text: string, max: number): string {
+  const compact = text.replace(/\r/g, '').trim();
+  return compact.length <= max ? compact : `${compact.slice(0, max)}...`;
+}
+
+/** P0 事故夹具（TC-018 explicit skip、无 waiver、非 external DEFERRED）：真实 gate 输入 */
+const P0_PLAN_MD = [
+  '# 测试计划', '',
+  '## 测试用例', '',
+  '| 用例编号 | 用例名称 | 优先级 | 关联 AC |',
+  '|---------|---------|--------|---------|',
+  '| TC-001 | 收起态 | P0 | AC-1 |',
+  '| TC-018 | 空数据态 | P0 | AC-2 |',
+].join('\n');
+
+const P0_DERIVED_MD = [
+  '---',
+  'explicit_skip_tc_ids: [TC-018]',
+  '---', '',
+  '# 派生 Hylyre 计划', '',
+  '## 测试用例清单', '',
+  '| 用例编号 | 用例名称 | 测试步骤 | 优先级 | 关联 AC |',
+  '|---------|---------|---------|--------|---------|',
+  '| TC-001 | 收起态 | {"touch":{"by_id":"hc_bank_row_cmb"}} | P0 | AC-1 |',
+].join('\n');
+
+/** 写盘事故夹具产物（临时宿主内，测试结束随临时目录清理；不复制/脱敏落仓 fixture） */
+function writeP0Artifacts(root: string): void {
+  writeFile(root, `doc/features/${FEATURE}/testing/test-plan.md`, P0_PLAN_MD);
+  const runDirAbs = path.join(
+    root, 'doc', 'features', FEATURE, 'testing', 'reports', '20260101T000000Z', 'hylyre',
+  );
+  fs.mkdirSync(runDirAbs, { recursive: true });
+  fs.writeFileSync(path.join(runDirAbs, 'test-plan.hylyre.md'), P0_DERIVED_MD);
+  fs.writeFileSync(path.join(runDirAbs, 'trace.json'), JSON.stringify({
+    schema_version: '0.2-p4', feature: FEATURE, phase: 'testing',
+    outcome: 'partial',
+    cases: [{ id: 'TC-001', status: '通过' }],
+  }, null, 2), 'utf-8');
+}
+
+/** 事故报告（trace 逐条「通过」+ 披露弱化旗标）；conclusion 决定 report_validity 真值：
+ *  · 达标 → 真实 pass_rate_calculated FAIL → summary writer 派生 report_validity=FAIL
+ *    （5.2 冻结的 report_validity=FAIL 现场在新语义下的真实复现——旧 reportedPass>0 规则已退役）；
+ *  · 不达标 → pass_rate_calculated PASS → report_validity=PASS（t4 ⑦ 对照，同样回退 coding）。 */
+function accidentReportMd(conclusion: '达标' | '不达标'): string {
+  return [
+    '## 测试环境',
+    '执行命令含 --skip-assert-expected（动作链执行完成，自然语言预期未断言）',
+    '',
+    '## 通过率统计',
+    'P0 通过率 100%，P1 通过率 100%，总计 100%',
+    '',
+    '## 测试执行结果',
+    '',
+    '| 用例编号 | 执行状态 |',
+    '|---|---|',
+    '| TC-001 | 通过 |',
+    '',
+    '## 结论',
+    `**测试结论**: ${conclusion}`,
+  ].join('\n');
+}
+
+/** 真实 gate 输出集合（evaluateP0CoverageIntegrity + checkPassRateCalculated）——经真实
+ *  summary writer（writeRunSummaryBase）派生 lattice/blockers/candidates 后由 runner 消费。 */
+function accidentChecks(root: string, conclusion: '达标' | '不达标'): CheckResult[] {
+  const reportsDir = path.join(root, 'doc/features', FEATURE, 'testing', 'reports');
+  fs.mkdirSync(reportsDir, { recursive: true });
+  fs.writeFileSync(path.join(reportsDir, 'device-test-run.meta.json'), JSON.stringify({
+    command: `python -m hylyre run --plan p.md --skip-assert-expected --feature ${FEATURE}`,
+    ok: true, exit_code: 0,
+  }), 'utf-8');
+  const reportMd = accidentReportMd(conclusion);
+  const passRate = checkPassRateCalculated({
+    phase: 'testing', feature: FEATURE, projectRoot: root,
+    phaseRule: { structure_checks: { pass_rate_calculated: { description: 'd' } } },
+    featureSpec: { feature: FEATURE },
+  } as unknown as CheckContext, reportMd)[0];
+  if (conclusion === '达标') {
+    assert(passRate.status === 'FAIL', `前置：事故报告须使 pass_rate_calculated FAIL：${passRate.details}`);
+  } else {
+    assert(passRate.status === 'PASS', `前置：披露+不达标须使 pass_rate_calculated PASS：${passRate.details}`);
+  }
+  const p0 = evaluateP0CoverageIntegrity({
+    projectRoot: root,
+    feature: FEATURE,
+    planMd: P0_PLAN_MD,
+    reportMd: reportMd,
+    traceCaseStatus: new Map([['TC-001', '通过']]),
+    reportConclusion: conclusion,
+  });
+  const cov = p0.find(x => x.id === 'p0_coverage_integrity')!;
+  assert(cov.status === 'FAIL' && cov.failure_kind === 'code_regression',
+    `前置：真实 gate 须产出 code_regression 合取：${JSON.stringify(cov)}`);
+  return [...p0, passRate];
+}
+
+/** 读回 writer 落盘的 summary（证明候选被真实 writer 持久化） */
+function writtenSummary(root: string): { report_validity?: string; repair_candidates?: Array<{ id?: string }> } {
+  const p = path.join(root, 'doc/features', FEATURE, 'testing', 'reports', 'summary.json');
+  assert(fs.existsSync(p), `writer 须落盘 summary.json：${p}`);
+  return JSON.parse(fs.readFileSync(p, 'utf-8')) as {
+    report_validity?: string;
+    repair_candidates?: Array<{ id?: string }>;
+  };
+}
+
+function haltReasons(events: Array<Record<string, unknown>>): string[] {
+  // guard halt 的 halt_reason 落在 phase_verdict 事件上；backtrack 熔断等走独立 phase_halt
+  return events
+    .filter(e => (e.type === 'phase_halt' || e.type === 'phase_verdict') && typeof e.halt_reason === 'string')
+    .map(e => String(e.halt_reason));
+}
+
+test('c7e4a2d9-① 事故组合：report_validity=FAIL + P0 explicit-only 缺口 + 三条视觉候选 → 单次 repair 回退 coding（无 await_human_p0_skip / WAITING）', async () => {
+  const { root } = setupHost();
+  writeP0Artifacts(root);
+  // writer 持久化证明：attempt-2（回退重走 testing）agent 调用时盘上仍是 attempt-1 的
+  // FAIL summary（PASS 覆写发生在其后 harness）——report_validity=FAIL（事故条件）仍含 p0 候选
+  const probe = await runChain(root, {
+    // testing 首轮：真实 gate 输出（evaluateP0CoverageIntegrity → code_regression 合取 +
+    // pass_rate_calculated 结论「达标」→ FAIL）→ **真实 summary writer**（writeRunSummaryBase）
+    // 派生 report_validity=FAIL 与候选并落盘；视觉候选由 writeVisualDiff(warn+must_fix, fresh)
+    // 经既有 actionable 验真器并入 summary。
+    onHarnessSummary: ({ phase, attempt }) =>
+      phase === 'testing' && attempt === 1 ? { checks: accidentChecks(root, '达标') } : null,
+    onTesting: ({ root: r, attempt }) => {
+      if (attempt === 1) {
+        writeVisualDiff(r, [
+          { id: 'all_banks', verdict: 'warn', mustFix: [MUST_FIX_TEXT] },
+          { id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT] },
+          { id: 'card_type_sheet', verdict: 'warn', mustFix: [MUST_FIX_TEXT] },
+        ]);
+      } else {
+        const written = writtenSummary(r);
+        assert(written.report_validity === 'FAIL',
+          `writer 须派生 report_validity=FAIL（事故条件）：${JSON.stringify(written)}`);
+        assert(
+          (written.repair_candidates ?? []).some(c => c.id === 'p0_coverage_integrity'),
+          `report_validity=FAIL 时机器候选必须被 writer 持久化：${JSON.stringify(written.repair_candidates)}`,
+        );
+        writeCleanTesting(r);
+      }
+    },
+  });
+  const bt = probe.events.filter(
+    e => e.type === 'phase_backtrack_requested' && e.reason === 'repair_candidates',
+  );
+  assert(bt.length === 1, `须恰好一次 repair 回退（p0+视觉混合），实得 ${bt.length}`);
+  assert(bt[0].to_phase === 'coding', `回退目标须 coding，实得 ${bt[0].to_phase}`);
+  const cands = (bt[0].candidates ?? []) as Array<{ id?: string; category?: string }>;
+  assert(
+    cands.some(c => c.id === 'p0_coverage_integrity' && c.category === 'coding'),
+    `p0 机器候选须进入回退交接：${JSON.stringify(cands)}`,
+  );
+  assert(
+    cands.filter(c => c.id !== 'p0_coverage_integrity' && c.category === 'coding').length === 3,
+    `三条视觉候选须随整组交接：${JSON.stringify(cands)}`,
+  );
+  const halts = haltReasons(probe.events);
+  assert(!halts.includes('await_human_p0_skip'), `不得产生 await_human_p0_skip halt：${halts.join(',')}`);
+  assert(!halts.includes('await_human_gate_deferral'), '有可修候选时不得走通用求人');
+  assert(
+    !probe.events.some(e => e.run_wait_kind === 'human' || e.run_disposition === 'WAITING'),
+    'P0 修复回退不得落 WAITING/human',
+  );
+  assert(probe.codingPrompts.length >= 2, `coding 须被重新调用（回修轮）：${probe.codingPrompts.length}`);
+  assert(probe.codingPrompts[1].includes('p0_coverage_integrity'),
+    '回修 coding prompt 须含 p0 机器候选（check id + 门禁 details 原样交接）');
+  assertRunReachedEnd(probe, 'c7e4a2d9-①');
+});
+
+test('c7e4a2d9-② P0 candidate 单独存在（无视觉候选；披露+结论不达标 → report_validity=PASS）→ 仍回 coding', async () => {
+  const { root } = setupHost();
+  writeP0Artifacts(root);
+  const probe = await runChain(root, {
+    onHarnessSummary: ({ phase, attempt }) =>
+      phase === 'testing' && attempt === 1 ? { checks: accidentChecks(root, '不达标') } : null,
+    onTesting: ({ root: r, attempt }) => {
+      if (attempt === 2) {
+        // attempt-2 agent 调用时盘上仍是 attempt-1 的 FAIL summary（PASS 覆写在其后 harness）
+        const written = writtenSummary(r);
+        assert(written.report_validity === 'PASS',
+          `披露+不达标时 report_validity 须 PASS（writer 真实派生）：${JSON.stringify(written)}`);
+        assert(
+          (written.repair_candidates ?? []).some(c => c.id === 'p0_coverage_integrity'),
+          'report_validity=PASS 时 p0 候选同样须被 writer 持久化',
+        );
+      }
+      writeCleanTesting(r);
+    },
+  });
+  const bt = probe.events.filter(
+    e => e.type === 'phase_backtrack_requested' && e.reason === 'repair_candidates',
+  );
+  assert(bt.length === 1, `P0 单独须回退一次，实得 ${bt.length}`);
+  assert(bt[0].to_phase === 'coding', `目标须 coding，实得 ${bt[0].to_phase}`);
+  const cands = (bt[0].candidates ?? []) as Array<{ id?: string }>;
+  assert(cands.length === 1 && cands[0].id === 'p0_coverage_integrity', `仅 p0 候选：${JSON.stringify(cands)}`);
+  assert(!haltReasons(probe.events).includes('await_human_p0_skip'), '不得 halt 求人');
+  assertRunReachedEnd(probe, 'c7e4a2d9-②');
+});
+
+test('c7e4a2d9-⑥ 同候选原样重现 → 既有整轮指纹熔断（backtrack_fingerprint_repeat），不无限回退', async () => {
+  const { root } = setupHost();
+  writeP0Artifacts(root);
+  const probe = await runChain(root, {
+    // testing 首轮与回退后的第二轮走**同一真实 gate 输入**→ 完全相同的候选
+    // （同 details → 同 item/round 指纹）
+    onHarnessSummary: ({ phase, attempt }) =>
+      phase === 'testing' && (attempt === 1 || attempt === 2) ? { checks: accidentChecks(root, '达标') } : null,
+    onTesting: ({ root: r }) => writeCleanTesting(r),
+  });
+  // 第二轮 FAIL summary 由真实 writer 落盘且未再被覆写（run 已在指纹熔断处 halt）——
+  // report_validity=FAIL 且 p0 候选持久化
+  const written = writtenSummary(root);
+  assert(written.report_validity === 'FAIL',
+    `重复轮 writer 仍须派生 report_validity=FAIL：${JSON.stringify(written)}`);
+  assert(
+    (written.repair_candidates ?? []).some(c => c.id === 'p0_coverage_integrity'),
+    '重复轮 p0 候选仍被 writer 持久化（fingerprint 熔断依赖它）',
+  );
+  const bts = probe.events.filter(
+    e => e.type === 'phase_backtrack_requested' && e.reason === 'repair_candidates',
+  );
+  assert(bts.length === 1, `首次回退须成功一次，实得 ${bts.length}`);
+  const halts = haltReasons(probe.events);
+  assert(halts.includes('backtrack_fingerprint_repeat'),
+    `同指纹重现须复用既有熔断 halt：${halts.join(',')}`);
+  assert(probe.codingPrompts.length >= 2, '回退后 coding 确实被重拉（否则断言无效）');
+});
+
+test('c7e4a2d9-⑤ 零候选且真正 human_only blocker → 仍走通用 await_human_gate_deferral 求人', async () => {
+  const { root } = setupHost();
+  const probe = await runChain(root, {
+    onHarnessSummary: ({ phase, attempt }) =>
+      phase === 'testing' && attempt === 1
+        ? { blockers: [{ id: 'fidelity_deferrals_human_sign', severity: 'BLOCKER', status: 'FAIL', classification: 'await_human_fidelity_tier', details_excerpt: '降档须真人签字' }] }
+        : null,
+    onTesting: ({ root: r }) => writeCleanTesting(r),
+  });
+  const halts = haltReasons(probe.events);
+  assert(halts.includes('await_human_gate_deferral'),
+    `零候选 + 全 human_only 仍须求人：${halts.join(',')}`);
+  assert(
+    !probe.events.some(e => e.type === 'phase_backtrack_requested' && e.reason === 'repair_candidates'),
+    '零候选不得回退 coding',
+  );
+  assert(runEndStatus(probe.events) === 'HALTED', `run 须 HALTED：${runEndStatus(probe.events)}`);
+});
+
+test('c7e4a2d9-④ 机器 envBlocked 在场 → 外部路径不误投 coding（即使真实 writer 已持久化 p0 候选）', async () => {
+  const { root } = setupHost();
+  writeP0Artifacts(root);
+  const toolchainCheck: CheckResult = {
+    id: 'device_test_build', category: 'structure', description: 'device build',
+    severity: 'BLOCKER', status: 'FAIL',
+    details: 'hvigor build 失败：失败归因：toolchain',
+    failure_kind: 'toolchain', blocking_class: 'device_toolchain', actionability: 'toolchain_blocked',
+  };
+  const probe = await runChain(root, {
+    onHarnessSummary: ({ phase, attempt }) =>
+      phase === 'testing' && attempt === 1
+        ? { checks: [toolchainCheck, ...accidentChecks(root, '达标')] }
+        : null,
+    onTesting: ({ root: r }) => writeCleanTesting(r),
+  });
+  // writer 确实持久化了 p0 候选（envBlocked 抑制发生在 runner 侧，不在此抹掉机器事实；
+  // run 在 attempt-1 halt，FAIL summary 未被后续覆写）
+  const written = writtenSummary(root);
+  assert(written.report_validity === 'FAIL', `writer 须派生 report_validity=FAIL：${JSON.stringify(written)}`);
+  assert(
+    (written.repair_candidates ?? []).some(c => c.id === 'p0_coverage_integrity'),
+    'envBlocked 轮 writer 仍须持久化 p0 候选（runner 侧 envBlocked 前置才清空）',
+  );
+  assert(
+    !probe.events.some(e => e.type === 'phase_backtrack_requested' && e.reason === 'repair_candidates'),
+    `envBlocked 时不得回 coding：${probe.events.map(e => e.type).join(',')}`,
+  );
+  assert(
+    !probe.events.some(e => e.type === 'phase_backtrack_requested' && e.to_phase === 'coding'),
+    'envBlocked 不得产生 coding 回退意图',
+  );
+  // 机器 envBlocked 的既有出口=外部 halt（await_operator_toolchain），不是 coding 回退
+  assert(
+    haltReasons(probe.events).includes('await_operator_toolchain'),
+    `envBlocked 须走既有外部 halt：${haltReasons(probe.events).join(',')}`,
+  );
 });
 
 // ---------------------------------------------------------------------------

@@ -208,6 +208,10 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   unverifiable_must_fix: { class: 'operator' },
   headless_interaction_required: { class: 'operator' },
   operator_interrupt: { class: 'operator' },
+  /** c7e4a2d9：**只读兼容**——历史 3.0.0 前 events.jsonl 可能含
+   * `halt_reason=await_human_p0_skip`，本映射供状态读取/归档工具解释旧事件；
+   * 新 run 不再写该 halt（P0 未豁免 explicit skip 默认回 coding，见 p0-semantic-gates/
+   * repair-candidates），本条目**不是**新 run 的写入口，不参与 driver 决策。 */
   await_human_p0_skip: { class: 'operator', requires_grant: 'p0_skip_waiver' },
   /** 闭环墙：脚本门禁反复 PASS 但回执关不了环（多为只能真人签的确认项）。 */
   closure_open: { class: 'operator' },
@@ -311,8 +315,8 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   no_progress_capture: { class: 'external' },
   /** CUMULATIVE 家族（原按 failureKind 模板生成 id，已收敛为稳定 literal）。
    *  codex 八轮 P1：**必须拆两个**——CUMULATIVE_HALT_FAMILY 同时含 `toolchain`（等环境）
-   *  与 `await_human_confirm` / `await_human_p0_skip`（等人），压成一个会让 wait_kind
-   *  真值永久丢失，而下游被禁止读 failure_kind_classified 自行纠正。 */
+   *  与 `await_human_confirm`（等人；c7e4a2d9 已把 await_human_p0_skip 移出家族），
+   *  压成一个会让 wait_kind 真值永久丢失，而下游被禁止读 failure_kind_classified 自行纠正。 */
   no_progress_cumulative_external: { class: 'external' },
   no_progress_cumulative_human: { class: 'operator' },
   /** 设备就绪门（delegated producer：device-readiness-gate）。 */

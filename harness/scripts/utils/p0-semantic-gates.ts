@@ -354,10 +354,13 @@ export interface P0GateInputs {
 }
 
 /**
- * t5：P0 覆盖 fail-closed。skip/未执行的 P0 须逐条 receipt waiver（p0_skip_waiver），
- * 否则 BLOCKER（failure_kind=await_human_p0_skip → goal 首触 halt 求人）；
- * waived 仅降级 WARN；任何 P0 skip 存在时报告结论不得无条件「达标」；
- * 双口径（全分母执行覆盖率+通过率）写入 details，与"已执行子集 100%"话术对账。
+ * t5→c7e4a2d9：P0 覆盖 fail-closed。skip/未执行的 P0 须逐条 receipt waiver（p0_skip_waiver），
+ * 否则 BLOCKER；未豁免缺口**全部属于既有 explicit_skip_tc_ids 登记**时才复用既有
+ * failure_kind=code_regression + actionability=agent_fixable（默认回 coding 恢复可测性/
+ * 修复产品缺陷——不降低验收标准，修复不是授权行为）；status 为空或未经登记的 trace skip
+ * 不产 coding 候选（留在 testing 补执行/派生事实）；外部条件仍由既有 envBlocked/DEFERRED
+ * 优先处置，不伪装 explicit skip；waived 仅降级 WARN；任何 P0 skip 存在时报告结论不得
+ * 无条件「达标」；双口径（全分母执行覆盖率+通过率）写入 details，与"已执行子集 100%"话术对账。
  */
 export function evaluateP0CoverageIntegrity(inp: P0GateInputs): CheckResult[] {
   const id = 'p0_coverage_integrity';
@@ -376,11 +379,15 @@ export function evaluateP0CoverageIntegrity(inp: P0GateInputs): CheckResult[] {
 
   const status = (tc: string): string => inp.traceCaseStatus?.get(tc) ?? '';
   const executedPassed = p0.filter((e) => status(e.id) === '通过');
+  // 三组分别计算（c7e4a2d9）：explicit skip（既有 explicit_skip_tc_ids 登记）/
+  // trace 明确 skip（未经登记的「跳过」）/ status 为空（未执行且无任何登记）。
   const skipped = p0.filter((e) => explicitSkips.has(e.id) || status(e.id) === '跳过' || status(e.id) === '');
+  const isExplicit = (tc: string): boolean => explicitSkips.has(tc);
 
   const waivers = loadSkipWaivers(inp.projectRoot, inp.feature);
   const registryPath = defaultTrustRegistryPath(inp.projectRoot);
-  const unwaived: string[] = [];
+  const unwaivedExplicit: string[] = [];
+  const unwaivedTraceOrEmpty: string[] = [];
   const waived: string[] = [];
   for (const e of skipped) {
     const w = waivers.find((x) => x.tc_id?.toUpperCase() === e.id);
@@ -394,27 +401,41 @@ export function evaluateP0CoverageIntegrity(inp: P0GateInputs): CheckResult[] {
         waived.push(e.id);
         continue;
       }
-      unwaived.push(`${e.id}（waiver receipt 无效：${v.reasons.slice(0, 2).join('；')}）`);
+      (isExplicit(e.id) ? unwaivedExplicit : unwaivedTraceOrEmpty)
+        .push(`${e.id}（waiver receipt 无效：${v.reasons.slice(0, 2).join('；')}）`);
       continue;
     }
-    unwaived.push(e.id);
+    (isExplicit(e.id) ? unwaivedExplicit : unwaivedTraceOrEmpty).push(e.id);
   }
 
   const coverage = `${executedPassed.length}/${p0.length}`;
   const dual = `全分母口径：P0 执行通过 ${coverage}（覆盖率 ${Math.round((executedPassed.length / p0.length) * 100)}%），skip ${skipped.length}（waived ${waived.length}）`;
 
   const results: CheckResult[] = [];
-  if (unwaived.length > 0) {
-    results.push({
+  if (unwaivedExplicit.length > 0 || unwaivedTraceOrEmpty.length > 0) {
+    const explicitOnly = unwaivedTraceOrEmpty.length === 0;
+    const items = [...unwaivedExplicit, ...unwaivedTraceOrEmpty];
+    const fail: CheckResult = {
       id, category: 'structure', description,
       severity: 'BLOCKER', status: 'FAIL',
-      failure_kind: 'await_human_p0_skip',
       details:
-        `P0 用例被跳过/未执行且无有效凭证 waiver（${unwaived.length}）：${unwaived.slice(0, 10).join('、')}${unwaived.length > 10 ? '…' : ''}。\n${dual}。\n` +
-        'P0 skip 不可由 agent 自决：外部环境阻塞走 DEFERRED；非外部原因（selector 缺失/计划未写完/产品 bug）请修复后执行；' +
-        '真人豁免须 skip-waivers.yaml 逐条 receipt（p0_skip_waiver）。',
-      suggestion: '这是设计内求人时刻（首触即 halt）：请真人裁决各 skip 的去留后 resume。',
-    });
+        `P0 用例被跳过/未执行且无有效凭证 waiver（${items.length}）：${items.slice(0, 10).join('、')}${items.length > 10 ? '…' : ''}。\n${dual}。\n` +
+        (explicitOnly
+          ? '全部未豁免缺口均属既有 explicit_skip_tc_ids 登记——仓内需恢复可执行性的缺陷（code_regression），' +
+            '默认回 coding 修复最小可测性/产品缺陷并重测；不降低 P0 标准，真人豁免仍须 skip-waivers.yaml 逐条 receipt（p0_skip_waiver）。'
+          : '含 status 为空或未经 explicit_skip_tc_ids 登记的 trace skip——留在 testing 恢复执行/派生计划；' +
+            '外部环境阻塞走既有 DEFERRED；真人豁免须 skip-waivers.yaml 逐条 receipt（p0_skip_waiver）。'),
+      suggestion: explicitOnly
+        ? '不降低验收标准的修复不是授权行为：回 coding 恢复可测性/修复缺陷后重跑；同指纹无进展由既有熔断收口。'
+        : '在 testing 补 P0 执行或派生事实后重跑；外部阻塞按 DEFERRED 登记。',
+    };
+    if (explicitOnly) {
+      // c7e4a2d9：未豁免缺口全为 explicit skip → 复用既有 code_regression（agent_fixable），
+      // testing summary writer 据此产普通 RepairCandidate(category=coding)，不注册整个 check。
+      fail.failure_kind = 'code_regression';
+      fail.actionability = 'agent_fixable';
+    }
+    results.push(fail);
   } else if (skipped.length > 0) {
     results.push({
       id, category: 'structure', description,

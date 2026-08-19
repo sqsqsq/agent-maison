@@ -82,7 +82,7 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
 | `DEFERRED_CAPABILITY_MISSING` | preflight 终态：需求强 1:1 意图但 adapter 无视觉能力，不盲跑全链；继续须带外签发 fidelity_downgrade receipt 后 `--fidelity` + `--fidelity-receipt` |
 | `DEFERRED` | 到达 end 但存在外部阻塞未闭环 |
 | `PARTIAL` | 中途停止或未到 end 且有 DEFERRED |
-| `HALTED` | FAIL 重试耗尽或 policy 拒绝续行；新 halt 类：`await_human_p0_skip`（P0 用例被 skip 待真人裁决——修可测性 / DEFERRED 登记 / receipt waiver 三选一后 resume）、`await_human_fidelity_tier`（需求意图 ambiguous+有参考图，`--fidelity` 预授权后重跑） |
+| `HALTED` | FAIL 重试耗尽或 policy 拒绝续行；halt 类示例：`await_human_fidelity_tier`（需求意图 ambiguous+有参考图，`--fidelity` 预授权后重跑）。P0 未豁免 skip **不再首触求人**（c7e4a2d9）：explicit-only 缺口默认回 coding 修复并重测，status 为空/未登记 skip 留 testing 恢复执行，外部阻塞走 DEFERRED；只有确需降低标准才由真人签 waiver（WARN 封顶 AWAITING_HUMAN_REVIEW） |
 | `COMPLETED` | legacy（旧 run 事件读取兼容），新 run 不再写出 |
 
 **任何 run 级状态 ≠ 需求完成**：feature 完成唯一判据 = `verify-feature-completion`

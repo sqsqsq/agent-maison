@@ -1427,7 +1427,8 @@ function isConditionalReviewReceiptValid(
   }
 }
 
-function writeRunSummaryBase(
+/** c7e4a2d9：测试入口导出（runner 集成测试经桩调用真实 writer 落盘，禁止手搓 summary）。 */
+export function writeRunSummaryBase(
   projectRoot: string,
   report: ScriptReport,
   frameworkRoot: string,
@@ -1583,9 +1584,12 @@ function writeRunSummaryBase(
   }
   // 责任阶段统一路由（plan b6e4c9f2 t1）：可信可修缺陷的单一共享事实——harness 派生
   // 非 agent 自报；manual/batch/goal 消费同一字段（goal 的 deterministic_defects 只是
-  // 其指纹投影）。信任闸：report_validity 非 PASS 一律零 candidate；review 侧另叠
-  // verifier 逐条 confirmed + conditional receipt 抑制（组装函数内部把关）。
-  // agent 自跑轮 verifier.report.md 可能尚未存在 → 零 candidate（gate 轮自然出现）。
+  // 其指纹投影）。信任闸（c7e4a2d9 收窄）：report_validity 只抑制**依赖报告自由文本**
+  // 的 review 候选；机器 check / verifier 合取候选（含 p0_coverage_integrity FAIL+
+  // code_regression）不得因产品负面结论被整体清空（负面结论恰是回修候选最需要存活的
+  // 时刻）。review 侧另叠 verifier 逐条 confirmed + conditional receipt 抑制
+  // （组装函数内部把关）。agent 自跑轮 verifier.report.md 可能尚未存在 → 零 candidate
+  // （gate 轮自然出现）。
   try {
     // 生产接线走**共享实现** buildSummaryRepairCandidates（测试调同一函数——
     // 源码正则冒充接线验证已被 codex 二轮冻结项③点名禁止）

@@ -595,15 +595,34 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assertEq(undisclosed.status, 'FAIL', '未披露弱化旗标须 FAIL');
       assertTrue(/未披露/.test(undisclosed.details), undisclosed.details);
 
-      // ④ **review P0 的核心反例**：披露了、也加了免责声明，但执行结果表仍写"通过"
-      //    → 仍须 FAIL。加一句声明不改变分子口径。
+      // ④ **c7e4a2d9 口径收口**：披露了、也加了免责声明，执行结果表忠实投影 trace 的「通过」
+      //    → 不再被 reportedPass>0 单独打死（报告允许按 trace 写"通过"，动作链通过≠验收通过）。
+      //    加一句免责声明已足够进入下一层判定（结论词/机器对账），不改变 trace 表投影口径。
       const disclaimerOnly = checkPassRateCalculated(
         ctxT,
         '## 测试环境\n执行命令含 --skip-assert-expected（动作链执行完成，自然语言预期未断言）\n' +
         RATE + execTable('通过'),
       )[0];
-      assertEq(disclaimerOnly.status, 'FAIL', '免责声明+表里仍写"通过"须 FAIL');
-      assertTrue(/计入验收通过分子即为假通过/.test(disclaimerOnly.details), disclaimerOnly.details);
+      assertEq(disclaimerOnly.status, 'PASS', '披露+口径区分+trace 忠实投影「通过」不再被 reportedPass>0 打死');
+
+      // ④b **结论规则（原位替换）**：同一证据下报告结论声明「达标」→ 直接 FAIL（不依赖 fresh 负面 summary）
+      const claimPass = checkPassRateCalculated(
+        ctxT,
+        '## 测试环境\n执行命令含 --skip-assert-expected（动作链执行完成，自然语言预期未断言）\n' +
+        RATE + execTable('通过') + '## 结论\n**测试结论**: 达标\n',
+      )[0];
+      assertEq(claimPass.status, 'FAIL', '弱化旗标在场 + 结论=达标 必须 FAIL');
+      assertTrue(/达标/.test(claimPass.details), claimPass.details);
+
+      // ④c **事故组合正例（t4 ⑦）**：trace「通过」逐条投影 + 充分披露 + 负面结论「不达标」→ 一致性门禁 PASS
+      const honestNegative = checkPassRateCalculated(
+        ctxT,
+        '## 测试环境\n执行命令含 --skip-assert-expected（动作链执行完成，自然语言预期未断言）\n' +
+        RATE + execTable('通过') + '## 结论\n**测试结论**: 不达标\n',
+      )[0];
+      assertEq(honestNegative.status, 'PASS', `负面结论 + 忠实投影可通过一致性门禁：${honestNegative.details}`);
+
+      // ④d trace/report 不一致仍 FAIL（report_trace_reconciliation 严格性回归，见 testing-trace-gates 套件）
 
       // ⑤ **review 抓出的假正例**：表里 1 条全"跳过"，通过率栏却写 100% —— 必须 FAIL。
       //    （第一版把这个形态当作"如实报告"的正例，等于放行"全跳过 + 100%"。）
@@ -701,6 +720,51 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       const skippedClaimedPass = checkPassRateCalculated(ctxT, RATE + execTable('通过'))[0];
       assertEq(skippedClaimedPass.status, 'FAIL', 'trace=跳过的用例不得被报告成通过');
       assertTrue(/blocked=0、skipped=1/.test(skippedClaimedPass.details), skippedClaimedPass.details);
+    }),
+  },
+  {
+    // c7e4a2d9 t4：真实 gate 输出（checkPassRateCalculated 的 CheckResult）**直接**进入生产
+    // 消费链 deriveSummaryVerdictLattice（summary writer 的既有入口）——report_validity 与
+    // projected_verdict 保持同一裁决，不只测试孤立函数、不重新手造 check 输入。
+    name: 'c7e4a2d9：pass_rate_calculated 真实 gate 输出经 deriveSummaryVerdictLattice 消费保持同一裁决',
+    run: async () => withTmpProject(async root => {
+      const ctxT = {
+        phase: 'testing', feature: 'demo', projectRoot: root,
+        phaseRule: { structure_checks: { pass_rate_calculated: { description: 'd' } } },
+      } as unknown as CheckContext;
+      const reportsDir = path.join(featureDir(root, 'demo'), 'testing', 'reports');
+      fs.mkdirSync(reportsDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(reportsDir, 'device-test-run.meta.json'),
+        JSON.stringify({ command: 'python -m hylyre run --plan p.md --skip-assert-expected', ok: true, exit_code: 0 }),
+        'utf-8',
+      );
+      const RATE = '## 通过率统计\nP0 通过率 100%，P1 通过率 100%，总计 100%\n';
+      const execTable = (status: string): string =>
+        '## 测试执行结果\n\n| 用例编号 | 执行状态 |\n|---|---|\n| TC-001 | ' + status + ' |\n\n';
+      const reportPass =
+        '## 测试环境\n执行命令含 --skip-assert-expected（动作链执行完成，自然语言预期未断言）\n' +
+        RATE + execTable('通过');
+      const reportFail = reportPass + '## 结论\n**测试结论**: 达标\n';
+      const passGate = checkPassRateCalculated(ctxT, reportPass)[0];
+      const failGate = checkPassRateCalculated(ctxT, reportFail)[0];
+      assertEq(passGate.status, 'PASS', '前置：gate PASS');
+      assertEq(failGate.status, 'FAIL', '前置：gate FAIL');
+      // 生产消费面：summary writer 把 checks 交给 deriveSummaryVerdictLattice（REPORT_VALIDITY
+      // 输入面含 pass_rate_calculated）——真实 gate CheckResult 原样进入，不重新手造。
+      const qa = require('../../scripts/utils/quality-axes') as typeof import('../../scripts/utils/quality-axes');
+      const opts = { phase: 'testing', visualApplicable: false, assetApplicable: false };
+      // 功能性轴 PASS 检查（与 gate 无耦合的产品 check；使 PASS 臂的推进投影有意义）
+      const productPass: CheckResult = {
+        id: 'device_case_contract', category: 'traceability', description: 'd',
+        severity: 'BLOCKER', status: 'PASS', details: 'ok',
+      };
+      const latticePass = qa.deriveSummaryVerdictLattice([passGate, productPass], opts);
+      assertEq(latticePass.report_validity, 'PASS', 'gate PASS → report_validity=PASS');
+      assertEq(latticePass.projected_verdict, 'PASS', 'gate PASS → 推进投影不变（PASS）');
+      const latticeFail = qa.deriveSummaryVerdictLattice([failGate, productPass], opts);
+      assertEq(latticeFail.report_validity, 'FAIL', 'gate FAIL → report_validity=FAIL');
+      assertEq(latticeFail.projected_verdict, 'FAIL', 'gate FAIL → 推进投影阻断（FAIL，报告工件坏）');
     }),
   },
 ];

@@ -6750,21 +6750,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }).join('\n');
           // P0-10a 补强②：halt 时 console/detach.log 原样打印（看日志者亦撞见）。
           console.log(`\n===== await_human_visual_confirm =====\n${awaitConfirmGuidance}\n`);
-        } else if (failureKind === 'await_human_p0_skip' && verdict !== 'PASS') {
-          // t5（goal-fakepass-hardening）：P0 用例 skip 无凭证 waiver——agent 不可自决
-          // P0 去留，重试只会复现同 skip → 首触即 halt 求人；skip 清单与双口径在
-          // blocker details（p0_coverage_integrity）。
-          driverGuardAction = 'halt';
-          haltReason = 'await_human_p0_skip';
-          awaitConfirmGuidance = [
-            '===== await_human_p0_skip（P0 用例被跳过，须真人裁决）=====',
-            `feature=${manifest.feature} run_id=${manifest.run_id}`,
-            '- 被跳过的 P0 用例与全分母双口径见 testing summary 的 p0_coverage_integrity blocker details。',
-            '- 三条出路：①修复可测性后去 skip 重跑；②外部环境阻塞 → 按 DEFERRED 流程登记；',
-            '  ③确需豁免 → 真人经带外体系签发 p0_skip_waiver receipt，写入 testing/skip-waivers.yaml',
-            '  （逐条 tc_id + receipt_path），然后 --resume。waiver 只降级不洗白（run 封顶 AWAITING_HUMAN_REVIEW）。',
-          ].join('\n');
-          console.log(`\n${awaitConfirmGuidance}\n`);
         } else if (failureKind === 'no_progress_fuse' && verdict !== 'PASS') {
           // t1（f7a3d9c2）：指纹级无进展熔断——check 层已比对轮次账本判"两有效轮指纹集
           // 相等且仍有 loop-actionable 残差"（含 duplicate 重放，rev5）。重试只会复现同
@@ -6872,9 +6857,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
           driverGuardAction = 'halt';
           // 同上（codex 七轮 P0）：原按 failureKind 模板生成 id，值域随 FailureKind
           // 膨胀。改为**稳定 literal**——但不能压成一个：CUMULATIVE_HALT_FAMILY 同时含
-          // `toolchain`（等环境）与 `await_human_confirm` / `await_human_p0_skip`（等人），
-          // 压成单一 id 会让 wait_kind 真值永久丢失，而下游又被禁止读 failure_kind_classified
-          // 自行纠正（codex 八轮 P1）。故按等待对象拆两个稳定 literal，不恢复模板 id。
+          // `toolchain`（等环境）与 `await_human_confirm`（等人；c7e4a2d9 已把
+          // await_human_p0_skip 移出家族），压成单一 id 会让 wait_kind 真值永久丢失，
+          // 而下游又被禁止读 failure_kind_classified 自行纠正（codex 八轮 P1）。
+          // 故按等待对象拆两个稳定 literal，不恢复模板 id。
           haltReason =
             failureKind === 'toolchain'
               ? 'no_progress_cumulative_external'

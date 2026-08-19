@@ -92,11 +92,15 @@
   开关默认 `true` = `product_behavior_switch_scan` BLOCKER（bc-openCard 事故：点银行直写卡
   跳结果页）。可测性接缝限 `.id()` 锚点等**不改行为**的改动——且 review 闭环后任何产品
   源码变更都会被 `review_closure_attestation` 拦下，须回跑 review 重审。
-- **P0 用例 skip 不可自决**：explicit_skip/未执行的 P0 → `p0_coverage_integrity` BLOCKER，
-  goal 首触 halt（`await_human_p0_skip`）。出路只有三条：修可测性去 skip / 外部阻塞按
-  DEFERRED 登记 / 真人签发 p0_skip_waiver receipt（仅降级 WARN，run 封顶
-  AWAITING_HUMAN_REVIEW）。通过率必须双口径（skip 计入分母），存在 P0 skip 时结论不得
-  无条件「达标」。
+- **P0 用例 skip 默认修复（c7e4a2d9）**：explicit_skip/未执行的 P0 → `p0_coverage_integrity`
+  BLOCKER（fail-closed 不变）。未豁免缺口**全部属于既有 explicit_skip_tc_ids 登记**时，
+  gate 复用 failure_kind=code_regression + agent_fixable → summary 自动产 coding 候选 →
+  assess 回退 coding 修复并重测（**不降低验收标准，修复不是授权行为**；同指纹无进展由
+  既有熔断收口）。status 为空或未经登记的 trace skip 不产 coding 候选、留在 testing 恢复
+  执行/派生计划；外部阻塞按 DEFERRED 登记；只有确需降低标准时才由真人签发
+  p0_skip_waiver receipt（仅降级 WARN，run 封顶 AWAITING_HUMAN_REVIEW）。通过率必须
+  双口径（skip 计入分母），存在 P0 skip 时结论不得无条件「达标」；不再有
+  await_human_p0_skip 首触求人 halt。
 - **P0 状态迁移证据**：派生计划各 P0 TC 须动作指向 acceptance checkpoint 的
   `target_element_id` 且其后 `wait_for` required 元素；flow 每条中间屏边须有已执行且通过
   的 owning TC（纯 wait 冒充/直达结果页=`p0_semantic_coverage_integrity` FAIL）。

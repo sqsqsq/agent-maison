@@ -150,6 +150,7 @@ import {
 import {
   evaluateP0CoverageIntegrity,
   evaluateP0SemanticCoverage,
+  parsePlanTcEntries,
 } from './utils/p0-semantic-gates';
 import { parseHylyreTrace } from '../../profiles/hmos-app/harness/providers/device-test-run';
 import type { UseCasesSpec } from './utils/types';
@@ -893,10 +894,15 @@ export function checkSkipFlagDisclosure(ctx: CheckContext, report: string): stri
       '不得据此把用例计入验收通过分子。',
     );
   }
-  if (reportedPass > 0) {
+  // c7e4a2d9 t3：原位替换「reportedPass>0 即 FAIL」——该断言要求报告表里不得出现 trace 的
+  // 合法状态「通过」，与 report_trace_reconciliation 的逐条投影互斥（goal 路径恒开旗标时
+  // 两条门禁不可同时满足）。改为复用既有结论解析器 parseReportConclusionVerdict 的直接规则：
+  // 弱化旗标在场且报告结论声明「达标」即 FAIL——动作链通过不能被洗成完整验收通过；
+  // 不依赖 fresh 负面 summary 间接兜底，也不破坏 trace 状态表的忠实投影。
+  if (parseReportConclusionVerdict(report) === '达标') {
     issues.push(
-      `执行结果表仍有 ${reportedPass} 条标为"通过"，而本轮预期断言被 ${used.join('、')} 跳过——` +
-      '这些用例只是"执行完成"，把它们计入验收通过分子即为假通过（加免责声明不改变分子口径）。',
+      `命令含弱化旗标 ${used.join('、')} 且报告结论声明「达标」——trace 的「通过」只表示动作链` +
+      '执行完成，自然语言预期/性能/视觉断言未跑；结论须为「不达标」/「有条件达标」并维持既有披露。',
     );
   }
   return issues;
@@ -1284,7 +1290,7 @@ function checkDeviceCaseNormalization(ctx: CheckContext): CheckResult[] {
   }];
 }
 
-function checkAcceptanceToTestCase(ctx: CheckContext, plan: string | null): CheckResult[] {
+export function checkAcceptanceToTestCase(ctx: CheckContext, plan: string | null): CheckResult[] {
   const id = 'acceptance_to_test_case';
   const acceptance = ctx.featureSpec.acceptance;
 
@@ -1334,11 +1340,24 @@ function checkAcceptanceToTestCase(ctx: CheckContext, plan: string | null): Chec
   const p0Covered = p0Device.filter(c => allCoveredACs.has(c.id.toUpperCase().replace(/\s/g, ''))).length;
   const p1Covered = p1Device.filter(c => allCoveredACs.has(c.id.toUpperCase().replace(/\s/g, ''))).length;
 
+  // c7e4a2d9 t1：冻结 acceptance P0 优先级锚——device/both 的每个 P0 AC 必须被至少一条
+  // priority=P0 的 TC 引用（复用既有 parsePlanTcEntries，不另写优先级/AC 解析器）。
+  // 锚防「TC 从 P0 降为 P2 后退出 p0_coverage_integrity 分母」的逃逸：降档后引用还在
+  // （普通覆盖率仍命中）但 P0 优先级对齐缺失 → 本检查原地 BLOCKER FAIL，owner=testing。
+  const p0TcEntries = parsePlanTcEntries(plan).filter(e => e.priority.trim().toUpperCase() === 'P0');
+  const p0PriorityGaps = p0Device.filter(c => {
+    const normalized = c.id.toUpperCase().replace(/\s/g, '');
+    return !p0TcEntries.some(tc =>
+      tc.acRefs.some(r => r.toUpperCase().replace(/\s/g, '') === normalized),
+    );
+  });
+
   const details: string[] = [];
   details.push(`追溯分母：ut_layer∈{device,both} 的 P0/P1（不含 unit 层 AC）`);
   details.push(`P0 AC 覆盖率: ${p0Covered}/${p0Device.length}`);
   details.push(`P1 AC 覆盖率: ${p1Covered}/${p1Device.length}`);
   details.push(`BD 覆盖率: ${deviceBoundaries.length - uncoveredBD.length}/${deviceBoundaries.length}`);
+  details.push(`P0 优先级对齐覆盖率: ${p0Device.length - p0PriorityGaps.length}/${p0Device.length}（每个 device/both P0 AC 须被至少一条 priority=P0 的 TC 引用；TC P0→P2 降档即缺口）`);
 
   if (uncovered.length > 0) {
     details.push('未被测试用例覆盖的 P0/P1 AC:');
@@ -1349,8 +1368,17 @@ function checkAcceptanceToTestCase(ctx: CheckContext, plan: string | null): Chec
       details.push(`  ... 还有 ${uncovered.length - 10} 条`);
     }
   }
+  if (p0PriorityGaps.length > 0) {
+    details.push('P0 AC 无任何 priority=P0 的 TC 引用（仅被 P1/P2/P3 TC 引用或无引用）:');
+    for (const c of p0PriorityGaps.slice(0, 10)) {
+      details.push(`  - ${c.id}: ${c.description}`);
+    }
+    if (p0PriorityGaps.length > 10) {
+      details.push(`  ... 还有 ${p0PriorityGaps.length - 10} 条`);
+    }
+  }
 
-  if (uncovered.length === 0) {
+  if (uncovered.length === 0 && p0PriorityGaps.length === 0) {
     return [{
       id,
       category: 'traceability',
@@ -1368,7 +1396,14 @@ function checkAcceptanceToTestCase(ctx: CheckContext, plan: string | null): Chec
     severity: 'BLOCKER',
     status: 'FAIL',
     details: details.join('\n'),
-    suggestion: `请为未覆盖的 ${uncovered.length} 个 device 层 P0/P1 AC 补充测试用例（见 acceptance.yaml device_focus）。`,
+    suggestion:
+      (uncovered.length > 0
+        ? `请为未覆盖的 ${uncovered.length} 个 device 层 P0/P1 AC 补充测试用例（见 acceptance.yaml device_focus）。`
+        : '') +
+      (p0PriorityGaps.length > 0
+        ? `请为 ${p0PriorityGaps.length} 个 device/both P0 AC 提供至少一条 priority=P0 的测试用例引用` +
+          '（TC 不得以 P0→P2 降档退出 P0 全分母）。'
+        : ''),
   }];
 }
 

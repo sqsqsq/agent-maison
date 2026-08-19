@@ -4,16 +4,19 @@
 // bank_list→add_success 跳边、10 P0 skip + 结论「达标」、requirement_ref 引文伪造。
 
 import assert from 'assert';
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
 import { clearFrameworkConfigCache, resolveFeatureArtifact } from '../../config';
+import { canonicalReceiptPayload, defaultTrustRegistryPath } from '../../scripts/utils/confirmation-receipt';
 import {
   evaluateAcceptanceFlowStructure,
   evaluateFlowContract,
   evaluateP0CoverageIntegrity,
   evaluateP0SemanticCoverage,
+  p0SkipObjectHash,
   parsePlanTcEntries,
   skipWaiversPath,
 } from '../../scripts/utils/p0-semantic-gates';
@@ -343,7 +346,7 @@ const cases: Case[] = [
     },
   },
   {
-    name: 't5：P0 skip 无 waiver → FAIL(await_human_p0_skip)；结论「达标」→ 双口径 FAIL（事故 10-skip 形态）',
+    name: 't5→c7e4a2d9：P0 explicit skip 无 waiver → FAIL(code_regression/agent_fixable)；结论「达标」→ 双口径 FAIL（事故 10-skip 形态）',
     run: () => {
       const root = mkProject();
       seedReqDoc(root);
@@ -353,7 +356,9 @@ const cases: Case[] = [
       const r = evaluateP0CoverageIntegrity(inputs(root, { 'TC-006': '通过', 'TC-009': '通过' }, '达标'));
       const cov = r.find((x) => x.id === 'p0_coverage_integrity')!;
       assert.strictEqual(cov.status, 'FAIL');
-      assert.strictEqual(cov.failure_kind, 'await_human_p0_skip');
+      // c7e4a2d9：全部未豁免缺口 ∈ explicit_skip_tc_ids → 复用 code_regression + agent_fixable
+      assert.strictEqual(cov.failure_kind, 'code_regression');
+      assert.strictEqual(cov.actionability, 'agent_fixable');
       assert.ok(cov.details.includes('TC-011'));
       const dual = r.find((x) => x.id === 'p0_pass_rate_dual_metrics')!;
       assert.strictEqual(dual.status, 'FAIL', '已执行子集冒充全量达标');
@@ -361,6 +366,42 @@ const cases: Case[] = [
       writeDerived(root, 'good');
       const ok = evaluateP0CoverageIntegrity(inputs(root, { 'TC-006': '通过', 'TC-009': '通过', 'TC-011': '通过' }, '达标'));
       assert.ok(ok.every((x) => x.status === 'PASS'), JSON.stringify(ok.map((x) => [x.id, x.status])));
+    },
+  },
+  {
+    name: 'c7e4a2d9：缺口含 status 为空/未经登记的 trace skip → FAIL 且**不**写 code_regression（留 testing），explicit-only 才产 coding 归因',
+    run: () => {
+      const root = mkProject();
+      seedReqDoc(root);
+      writeAcceptance(root);
+      // 计划含第五条 P0 TC-014（不入 explicit_skip，trace 标「跳过」= 未经登记 skip）
+      const planWith014 = '# 测试计划\n\n## 测试用例\n\n| 用例编号 | 用例名称 | 优先级 | 关联 AC |\n|---------|---------|--------|---------|\n' +
+        '| TC-006 | 选卡类型 | P0 | AC-5 |\n| TC-009 | 结果页 | P0 | AC-9 |\n' +
+        '| TC-011 | 卡包展示 | P0 | AC-8 |\n| TC-014 | 新增用例 | P0 | AC-9 |\n';
+      writeFile(root, 'doc/features/p0-fixture/test-plan.md', planWith014);
+      // explicit_skip 只登记 TC-011；TC-014 仅 trace「跳过」且未登记
+      writeDerived(root, 'good', ['TC-011']);
+      const mixed = evaluateP0CoverageIntegrity(inputs(root, {
+        'TC-006': '通过', 'TC-009': '通过', 'TC-014': '跳过',
+      }, '不达标', planWith014));
+      const mixedCov = mixed.find((x) => x.id === 'p0_coverage_integrity')!;
+      assert.strictEqual(mixedCov.status, 'FAIL');
+      assert.ok(mixedCov.failure_kind === undefined, `未经登记的 trace skip 不得冒充 coding 缺陷：${String(mixedCov.failure_kind)}`);
+      assert.ok(mixedCov.actionability === undefined, '不得自报 agent_fixable');
+      assert.ok(mixedCov.details.includes('TC-014'), mixedCov.details);
+      // 仅 explicit 缺口（TC-011）且 TC-014 已执行通过 → code_regression（对照臂）
+      const explicitOnly = evaluateP0CoverageIntegrity(inputs(root, {
+        'TC-006': '通过', 'TC-009': '通过', 'TC-014': '通过',
+      }, '不达标', planWith014));
+      const expCov = explicitOnly.find((x) => x.id === 'p0_coverage_integrity')!;
+      assert.strictEqual(expCov.failure_kind, 'code_regression', 'explicit-only 合取必须产 coding 归因');
+      // 反例：完全不登记（无 explicit_skip）、不执行（status 为空）的 P0 → 无 coding 归因
+      writeDerived(root, 'good', []);
+      const unregistered = evaluateP0CoverageIntegrity(inputs(root, {
+        'TC-006': '通过', 'TC-009': '通过', 'TC-014': '通过',
+      }, '不达标', planWith014));
+      const unregCov = unregistered.find((x) => x.id === 'p0_coverage_integrity')!;
+      assert.ok(unregCov.failure_kind === undefined, `status 为空且未登记不得写 code_regression：${String(unregCov.failure_kind)}`);
     },
   },
   {
@@ -390,7 +431,59 @@ const cases: Case[] = [
     },
   },
   {
-    name: 't5 waiver 路径：skip-waivers.yaml 无 receipt 不生效（仍 FAIL）',
+    name: 'c7e4a2d9：有效 p0_skip_waiver → WARN（不产 coding 归因、不洗白）；结论「达标」仍双口径 FAIL',
+    run: () => {
+      const root = mkProject();
+      seedReqDoc(root);
+      writeAcceptance(root);
+      writePlan(root);
+      writeDerived(root, 'good', ['TC-011']);
+      // 与 confirmation-receipt 套件同构：ed25519 签名 + trust registry 落盘（生产校验入口）
+      const kp = crypto.generateKeyPairSync('ed25519');
+      const payload = {
+        action: 'p0_skip_waiver' as const,
+        feature: FEATURE,
+        object_hash: p0SkipObjectHash(FEATURE, 'TC-011'),
+        issued_at: '2026-07-13T11:00:00.000Z',
+        expiry: '2026-07-20T00:00:00.000Z',
+      };
+      const receipt = {
+        schema_version: '1.0', receipt_id: 'r-p0-1', issuer_id: 'ops-team', key_id: 'k1',
+        alg: 'ed25519', payload_schema_version: '1.0', payload,
+        signature: crypto.sign(null, canonicalReceiptPayload(payload), kp.privateKey).toString('base64'),
+      };
+      const regPath = defaultTrustRegistryPath(root);
+      fs.mkdirSync(path.dirname(regPath), { recursive: true });
+      fs.writeFileSync(regPath, JSON.stringify({
+        schema_version: '1.0',
+        issuers: [{
+          issuer_id: 'ops-team',
+          keys: [{ key_id: 'k1', alg: 'ed25519', public_key_pem: kp.publicKey.export({ type: 'spki', format: 'pem' }).toString() }],
+        }],
+      }, null, 2), 'utf-8');
+      const wp = skipWaiversPath(root, FEATURE);
+      fs.mkdirSync(path.dirname(wp), { recursive: true });
+      fs.writeFileSync(wp, [
+        'waivers:',
+        '  - tc_id: TC-011',
+        '    receipt_path: doc/features/p0-fixture/testing/p0-waiver-TC-011.receipt.json',
+      ].join('\n'), 'utf-8');
+      fs.mkdirSync(path.join(root, 'doc/features/p0-fixture/testing'), { recursive: true });
+      fs.writeFileSync(
+        path.join(root, 'doc/features/p0-fixture/testing/p0-waiver-TC-011.receipt.json'),
+        JSON.stringify(receipt, null, 2), 'utf-8',
+      );
+      const r = evaluateP0CoverageIntegrity(inputs(root, { 'TC-006': '通过', 'TC-009': '通过' }, '达标'));
+      const cov = r.find((x) => x.id === 'p0_coverage_integrity')!;
+      assert.strictEqual(cov.status, 'WARN', cov.details);
+      assert.ok(cov.failure_kind === undefined, `waived 不得产 coding 归因：${String(cov.failure_kind)}`);
+      assert.ok(cov.details.includes('AWAITING_HUMAN_REVIEW'), 'waiver 只降级不洗白（run 封顶人工复核）');
+      const dual = r.find((x) => x.id === 'p0_pass_rate_dual_metrics')!;
+      assert.strictEqual(dual.status, 'FAIL', '存在 P0 skip 时结论不得无条件「达标」');
+    },
+  },
+  {
+    name: 't5 waiver 路径：skip-waivers.yaml 无 receipt 不生效（仍 FAIL + explicit-only code_regression）',
     run: () => {
       const root = mkProject();
       seedReqDoc(root);
@@ -403,6 +496,7 @@ const cases: Case[] = [
       const r = evaluateP0CoverageIntegrity(inputs(root, { 'TC-006': '通过', 'TC-009': '通过' }, '有条件达标'));
       const cov = r.find((x) => x.id === 'p0_coverage_integrity')!;
       assert.strictEqual(cov.status, 'FAIL', '无 receipt 的 waiver 不生效');
+      assert.strictEqual(cov.failure_kind, 'code_regression', '无效 waiver = 未豁免 explicit skip → 默认修复');
     },
   },
 ];

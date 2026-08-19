@@ -251,8 +251,9 @@ export function runAll(): UnitCaseResult[] {
 
   // --- 阶段级组装 ----------------------------------------------------------
 
-  run(results, '组装闸：report_validity 非 PASS 一律零候选', () => {
-    const out = collectPhaseRepairCandidates({
+  run(results, '组装闸（c7e4a2d9）：report_validity 只抑制 review 自由文本候选；机器 check / verifier 合取候选存活', () => {
+    // review 候选依赖报告内容：report invalid → 仍零候选
+    const review = collectPhaseRepairCandidates({
       phase: 'review',
       reviewReportText: reviewReport({ verdict: '有条件通过', rows: [CR1] }),
       verifierReportText: verifierWith([{ id: 'CR-001', verdict: 'confirmed' }]),
@@ -260,7 +261,29 @@ export function runAll(): UnitCaseResult[] {
       conditionalReceiptValid: false,
       checks: [],
     });
-    assert(out.length === 0, '报告不可信零候选');
+    assert(review.length === 0, '报告不可信 → review 自由文本候选被抑制');
+    // 机器 check 候选（plan 生产点）：report invalid 不得清空
+    const plan = collectPhaseRepairCandidates({
+      phase: 'plan', reviewReportText: null, verifierReportText: null,
+      reportValidity: 'FAIL', conditionalReceiptValid: false,
+      checks: [{ id: 'scope_consistency_with_spec', status: 'FAIL', details: 'spec Scope 无法解析' }],
+    });
+    assert(plan.length === 1 && plan[0].category === 'spec', `机器候选不受报告结论抑制：${JSON.stringify(plan)}`);
+    // verifier 合取候选（ut product assertion）：report invalid 同样存活
+    const ut = collectPhaseRepairCandidates({
+      phase: 'ut', reviewReportText: null,
+      verifierReportText: [
+        '  - id: end_to_end_driving', '    status: PASS',
+        '  - id: business_assertion_value', '    status: PASS',
+      ].join('\n'),
+      reportValidity: 'FAIL', conditionalReceiptValid: false,
+      checks: [{
+        id: 'ut_hvigor_test', status: 'FAIL', severity: 'BLOCKER',
+        classification: 'code_regression', details: '断言失败',
+        affected_files: ['02-Feature/F/src/main/ets/BankCardRepository.ets'],
+      }],
+    });
+    assert(ut.length === 1 && ut[0].category === 'coding', 'verifier 合取候选不得被负面结论整体清空');
   });
 
   run(results, '组装生产点：plan scope FAIL→spec；ut verifier device_ac FAIL→spec；coding scope 越界→plan', () => {
@@ -282,6 +305,54 @@ export function runAll(): UnitCaseResult[] {
       checks: [{ id: 'ui_diff_within_declared_files', status: 'FAIL', classification: 'ui_scope_violation', details: '越界 2 文件', affected_files: ['a.ets'] }],
     });
     assert(coding.length === 1 && coding[0].category === 'plan', `coding 生产点：${JSON.stringify(coding)}`);
+  });
+
+  run(results, 'c7e4a2d9 testing 生产点：p0_coverage_integrity FAIL+code_regression 合取 → coding 候选（report_validity=FAIL 仍存活）；仅 FAIL 不产；envBlocked 不误投', () => {
+    // 事故组合（bc-openCard TC-018）：经生产 writer 共享实现 buildSummaryRepairCandidates
+    // （与 harness-runner summary writer 同一函数），report_validity=FAIL 输入=真实事故条件
+    const produced = buildSummaryRepairCandidates({
+      phase: 'testing',
+      reportValidity: 'FAIL',
+      reviewReportText: null, verifierReportText: null,
+      conditionalReceiptValid: false,
+      checks: [{
+        id: 'p0_coverage_integrity', status: 'FAIL', severity: 'BLOCKER',
+        details: 'P0 用例被跳过且无有效凭证 waiver（1）：TC-018。\n全分母口径：P0 执行通过 15/16',
+        failure_kind: 'code_regression',
+      }],
+    });
+    assert(produced.length === 1, `P0 机器合取应产 1 条候选：${JSON.stringify(produced)}`);
+    assert(produced[0].id === 'p0_coverage_integrity' && produced[0].category === 'coding', 'id/类别');
+    assert(produced[0].source_phase === 'testing', 'source_phase');
+    assert(/^[0-9a-f]{64}$/.test(produced[0].item_fingerprint), '指纹形状');
+    // 同 check 仅 FAIL、无 code_regression → 不产 coding 候选（status 为空/未登记 skip 留 testing）
+    const noKind = buildSummaryRepairCandidates({
+      phase: 'testing', reportValidity: 'PASS', reviewReportText: null, verifierReportText: null,
+      conditionalReceiptValid: false,
+      checks: [{ id: 'p0_coverage_integrity', status: 'FAIL', severity: 'BLOCKER', details: 'TC-014 status 为空' }],
+    });
+    assert(noKind.length === 0, '无 code_regression 合取不得产 coding 候选');
+    // 报告散文自称 external、无机器 envBlocked 信号 → 不抑制 explicit-only 机器候选
+    const proseExternal = buildSummaryRepairCandidates({
+      phase: 'testing', reportValidity: 'PASS', reviewReportText: null, verifierReportText: null,
+      conditionalReceiptValid: false,
+      checks: [{
+        id: 'p0_coverage_integrity', status: 'FAIL', severity: 'BLOCKER',
+        details: 'TC-018 explicit skip；报告自称外部环境阻塞',
+        failure_kind: 'code_regression',
+      }],
+    });
+    assert(proseExternal.length === 1, '无机器 envBlocked 信号时报告散文不得抑制机器候选');
+    // 机器 envBlocked 归因（toolchain 等）→ 不产 coding 候选（runner 侧 envBlocked 前置 + 既有 DEFERRED）
+    const envBlocked = collectPhaseRepairCandidates({
+      phase: 'testing', reviewReportText: null, verifierReportText: null,
+      reportValidity: 'PASS', conditionalReceiptValid: false,
+      checks: [{
+        id: 'p0_coverage_integrity', status: 'FAIL', severity: 'BLOCKER',
+        classification: 'toolchain', details: '设备不可用',
+      }],
+    });
+    assert(envBlocked.length === 0, 'envBlocked 归因不产 coding 候选（走既有 DEFERRED）');
   });
 
   // --- summary 形状校验 ----------------------------------------------------

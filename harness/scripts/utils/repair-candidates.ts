@@ -366,7 +366,8 @@ export interface PhaseCandidateInput {
   reviewReportText: string | null;
   /** reports/verifier.report.md 全文（agent 自跑轮可能尚无——零 candidate，gate 轮出现） */
   verifierReportText: string | null;
-  /** summary.report_validity（harness 派生）——非 PASS 时报告不可信，零 candidate */
+  /** summary.report_validity（harness 派生）——非 PASS 时**报告自由文本**派生候选抑制
+   * （c7e4a2d9：机器 check / verifier 合取候选不受此闸，负面结论不得抹掉机器修复事实） */
   reportValidity: 'PASS' | 'FAIL' | 'UNVERIFIED';
   /** 有效 conditional_review_authorization receipt 在场（review 阶段） */
   conditionalReceiptValid: boolean;
@@ -382,23 +383,26 @@ export interface PhaseCandidateInput {
 }
 
 /**
- * 按阶段组装 repair_candidates。生产点（plan b6e4c9f2 t1）：
+ * 按阶段组装 repair_candidates。生产点（plan b6e4c9f2 t1 + c7e4a2d9）：
  * · review：问题表 × verifier 逐条 confirmed × 路径域归属（信任合取见 collectReview…）；
  * · plan：scope_consistency_with_spec FAIL → spec（机器归属）；
  * · ut：verifier device_ac_delegation FAIL → spec（机器归属）；
  *   （ut→coding 的 assertion 合取与 testing 缺陷并入在 t4 端到端接线时接入）
+ * · testing：p0_coverage_integrity FAIL + code_regression 机器合取 → coding（c7e4a2d9——
+ *   不注册整个 check，只消费 gate 已写出的既有 failure kind；report_validity 不抑制机器事实）；
  * · coding：ui_diff_within_declared_files 的 ui_scope_violation 分类 → plan（机器归属）。
- * 报告不可信（report_validity!==PASS）→ 一律零 candidate。
+ * report_validity 只约束**依赖报告自由文本**的 review 候选（c7e4a2d9 §2.3）：机器 check /
+ * verifier 合取候选不得因产品负面结论而被整体清空——负面结论恰恰是回修候选最需要存活的时刻。
  */
 export function collectPhaseRepairCandidates(input: PhaseCandidateInput): RepairCandidate[] {
-  if (input.reportValidity !== 'PASS') return [];
   const out: RepairCandidate[] = [];
   if (input.phase === 'review' && input.reviewReportText) {
     out.push(...collectReviewRepairCandidates({
       reportText: input.reviewReportText,
       verifierReportText: input.verifierReportText,
       conditionalReceiptValid: input.conditionalReceiptValid,
-      reportValidityBlocked: false, // 已由上方 reportValidity 闸统一把关
+      // c7e4a2d9：review 候选依赖报告内容——report invalid 时继续抑制；机器候选不受此闸
+      reportValidityBlocked: input.reportValidity !== 'PASS',
     }));
   }
   if (input.phase === 'plan') {
@@ -455,6 +459,31 @@ export function collectPhaseRepairCandidates(input: PhaseCandidateInput): Repair
         summary,
         item_fingerprint: itemFingerprintOf('ut_product_assertion_failure', files, summary),
         source_phase: 'ut',
+      });
+    }
+  }
+  if (input.phase === 'testing') {
+    // c7e4a2d9 t1：P0 未豁免缺口全部为 explicit skip 的机器合取（id + FAIL + code_regression
+    // 同时在场）→ 普通 RepairCandidate(category=coding)。不注册整个 check 到
+    // CHECK_ID_OWNER_REGISTRY：status 为空/未经登记的 trace skip（无 code_regression）必须
+    // 留在 testing 修复，不能靠 check id 一刀切误投 coding；外部条件由 envBlocked/DEFERRED
+    // 优先处置。候选只携带既有 check id、TC 清单/门禁 details、稳定指纹与 source_phase，
+    // 不新增 skip_reason_class / responsible_phase 等 agent 自报字段。
+    const p0Integrity = input.checks.find(
+      c => c.id === 'p0_coverage_integrity' && c.status === 'FAIL' && c.classification === 'code_regression',
+    );
+    if (p0Integrity) {
+      const files = normalizeFiles(p0Integrity.affected_files ?? []);
+      const summary = normalizeSummary(
+        p0Integrity.details ?? 'P0 未豁免缺口全部为既有 explicit skip——默认回 coding 恢复可测性/修复产品缺陷',
+      );
+      out.push({
+        id: 'p0_coverage_integrity',
+        category: 'coding',
+        files,
+        summary,
+        item_fingerprint: itemFingerprintOf('p0_coverage_integrity', files, summary),
+        source_phase: 'testing',
       });
     }
   }

@@ -289,6 +289,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'confirmation-receipt', modulePath: './unit/confirmation-receipt.unit.test' },
   { id: 'behavior-switch-scan', modulePath: './unit/behavior-switch-scan.unit.test' },
   { id: 'p0-semantic-gates', modulePath: './unit/p0-semantic-gates.unit.test' },
+  // plan c7e4a2d9 t1：acceptance_to_test_case P0 优先级对齐锚（device/both P0 AC 须 P0 TC 覆盖）
+  { id: 'check-testing-traceability', modulePath: './unit/check-testing-traceability.unit.test' },
   { id: 'fidelity-intent', modulePath: './unit/fidelity-intent.unit.test' },
   { id: 'blocker-suggestion-ratchet', modulePath: './unit/blocker-suggestion-ratchet.unit.test' },
   { id: 'report-suggestion-normalize', modulePath: './unit/report-suggestion-normalize.unit.test' },
