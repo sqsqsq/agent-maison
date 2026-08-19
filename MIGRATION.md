@@ -104,8 +104,17 @@ goal_capability:
 4. **P0 AC 结构化 checkpoint 强制**：存在 P0 device 交互 AC 的 feature，acceptance.yaml
    须声明 `flows`（有序屏链）与逐 AC `checkpoint`/`requirement_ref`（源片段 sha256 验存）
    ——存量 feature 重跑 spec 时须补齐（check-spec `acceptance_flow_structure` BLOCKER）。
-   P0 用例 skip 须逐条 `p0_skip_waiver` confirmation receipt，否则 testing FAIL 且 goal
-   首触 halt（`await_human_p0_skip`）。
+   P0 用例 skip 继续 fail-closed：只有确需降低标准时才由真人逐条签发
+   `p0_skip_waiver` confirmation receipt（仅降级为 WARN，并封顶
+   `AWAITING_HUMAN_REVIEW`）。未豁免缺口全部属于既有 `explicit_skip_tc_ids` 登记时，
+   testing 保持 FAIL，但会产出 coding repair candidate，由 goal 回退 coding 修复并重测；
+   status 为空或未经登记的 trace skip 留在 testing 恢复执行；只有带机器
+   `failure_kind`/`blocking_class` 信号的外部阻塞才走既有 DEFERRED。
+   `await_human_p0_skip` 主动首触 halt 已退役，仅保留历史事件读取兼容。
+   此外，每条 `ut_layer=device|both` 的 P0 AC 必须由至少一条 P0 TC 覆盖；把相关 TC
+   降为 P1/P2 会由既有 `acceptance_to_test_case` 原地 BLOCKER，不得借降档退出 P0 分母。
+   真机命令含 `--skip-assert-expected` 时，报告用例表仍须忠实投影 trace 的逐条状态，
+   但测试结论只能声明「不达标」或「有条件达标」，不得声明「达标」。
 
 配套：confirmation receipt 消费面已落地（`confirmation-trust-registry.json` 预置信任锚；
 签发体系为后继 change `confirmation-credential-issuance`——落地前所有降硬门禁授权不可用，
