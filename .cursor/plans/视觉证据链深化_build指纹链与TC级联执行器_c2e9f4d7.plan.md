@@ -1,7 +1,6 @@
 ---
 name: 视觉证据链深化 — build fingerprint 链接入 / TC 执行器级联控制
 version: 3.1.0
-deferred_to: 3.1.0
 parent_goal: complex-capability-construction-75411223
 advances:
   - g7-component-assembly-and-coverage-closure

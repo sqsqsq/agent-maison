@@ -1,7 +1,6 @@
 ---
 name: 工程惯例（conventions）— 第五类知识资产与 review 后置核对闭环
 version: 3.1.0
-deferred_to: 3.1.0
 parent_goal: complex-capability-construction-75411223
 advances:
   - g3-component-discovery-and-design-lenses

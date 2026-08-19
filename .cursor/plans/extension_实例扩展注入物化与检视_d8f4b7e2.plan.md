@@ -1,7 +1,6 @@
 ---
 name: extension — 实例扩展注入、物化与检视（实例扩展管理 project skill）
 version: 3.1.0
-deferred_to: 3.1.0
 parent_goal: complex-capability-construction-75411223
 advances:
   - g8-real-host-development-and-governance
