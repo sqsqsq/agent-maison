@@ -1,0 +1,13 @@
+{
+  "plan_name_contains": "P1_App部件发现蓝图与调和",
+  "expected_version": "3.1.0",
+  "require_unfinished_todos": true,
+  "required_delegation_phrases": [
+    "总计划 m5/MG",
+    "P1 不执行、不勾选、不宣称"
+  ],
+  "forbidden_p1_commands": [
+    "node scripts/check-plan-version.mjs --release",
+    "npm run release:verify"
+  ]
+}

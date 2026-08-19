@@ -1,0 +1,13 @@
+cases:
+  - id: fingerprint-mismatch-still-current
+    mutator: keep-mismatched-derived-current
+    expected_issue: blueprint_stale_conclusion_residual
+  - id: stale-result-without-superseding-revision
+    mutator: stale-derived-without-superseding
+    expected_issue: blueprint_stale_provenance_missing
+  - id: malformed-derived-result
+    mutator: remove-derived-result-id
+    expected_issue: blueprint_derived_result_invalid
+  - id: p1-writes-p2-ready-set
+    mutator: add-p2-ready-set
+    expected_issue: blueprint_downstream_state_owned_by_p1

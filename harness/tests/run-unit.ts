@@ -51,6 +51,7 @@ function discoverProfileUnitSuites(): Array<{ id: string; modulePath: string }> 
 }
 
 const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
+  { id: 'component-blueprint', modulePath: './unit/component-blueprint.unit.test' },
   // plan a5f9c3e2 t4：统一裁决内核契约 + 元门禁（未注册 incident / 新增 gate 读 goal env 即红）
   { id: 'adjudication',     modulePath: './unit/adjudication.unit.test' },
   // plan d6b1a8e3 t2：monitor stale 误报的 replay fixture（先复现后改）

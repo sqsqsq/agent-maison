@@ -1,0 +1,43 @@
+cases:
+  - id: writer-self-attests
+    mutator: questioning-writer-provider
+    expected_issue: blueprint_questioning_self_attested
+  - id: questioning-provider-missing
+    mutator: remove-questioning
+    expected_issue: blueprint_questioning_provider_missing
+  - id: required-provider-missing
+    mutator: remove-current-facts-provider
+    expected_issue: blueprint_required_provider_missing
+  - id: optional-provider-degradation-missing
+    mutator: disable-contract-provider-without-disposition
+    expected_issue: blueprint_optional_provider_degradation_missing
+  - id: repeated-frontier-over-budget
+    mutator: exceed-frontier-budget
+    expected_issue: blueprint_questioning_frontier_budget_exceeded
+  - id: unknown-erased
+    mutator: erase-unknown-with-na
+    expected_issue: blueprint_unknown_erased_by_na
+  - id: future-open-decision-uncontrolled
+    mutator: remove-future-gap-owner
+    expected_issue: blueprint_future_gap_uncontrolled
+  - id: provider-writes-downstream
+    mutator: provider-writes-p2-ready
+    expected_issue: blueprint_provider_boundary_violation
+  - id: questioning-must-cover-every-real-scope
+    mutator: remove-questioning-scope
+    expected_issue: blueprint_questioning_coverage_missing
+  - id: admission-is-derived-not-self-asserted
+    mutator: remove-questioning-scope
+    expected_issue: blueprint_admission_self_asserted
+  - id: admission-consumes-source-fingerprint-blockers
+    mutator: source-fingerprint-self-reported
+    expected_issue: blueprint_admission_false_pass
+  - id: duplicate-provider-authority-forbidden
+    mutator: duplicate-authority-provider
+    expected_issue: blueprint_provider_duplicate_authority
+  - id: conditional-provider-requirement-forbidden
+    mutator: conditional-provider
+    expected_issue: blueprint_provider_requirement_invalid
+  - id: static-provider-authority-rule-is-frozen
+    mutator: tamper-provider-authority
+    expected_issue: blueprint_provider_authority_rule_mismatch

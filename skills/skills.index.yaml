@@ -53,6 +53,13 @@ skills:
           command_id: code-graph
           param_hint: "<ModuleName>"
 
+  - id: app-component-blueprint
+    scope: project
+    source_rel: project/app-component-blueprint
+    order: 3
+    description: >
+      App 部件发现、4+1 蓝图、运行时数据流、独立质询与调和
+
   - id: goal-mode
     scope: project
     source_rel: project/goal-mode

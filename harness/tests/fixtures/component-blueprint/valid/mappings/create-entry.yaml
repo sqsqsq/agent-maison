@@ -1,0 +1,25 @@
+mappings:
+  request-amount:
+    mapping_id: request-amount
+    kind: direct
+    source_fields: [amount]
+    target_field: LedgerEntry.amount
+    rule: Parse decimal without changing currency scale.
+  request-parent-level:
+    mapping_id: request-parent-level
+    kind: derivation
+    source_fields: [parent_id]
+    target_field: LedgerEntry.parent_level_id
+    rule: Resolve parent hierarchy level from parent_id; this is not a wire field.
+  request-currency:
+    mapping_id: request-currency
+    kind: direct
+    source_fields: [currency]
+    target_field: LedgerEntry.currency
+    rule: Preserve the ISO-4217 currency code.
+  response-entry-id:
+    mapping_id: response-entry-id
+    kind: direct
+    source_fields: [entry_id]
+    target_field: LedgerEntry.id
+    rule: Preserve stable identity.

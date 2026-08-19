@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentmaison.dev/schemas/runtime-data-flow.schema.json",
+  "title": "AgentMaison Runtime Data Flow",
+  "type": "object",
+  "required": [
+    "flow_id",
+    "data_domain_refs",
+    "external_contract_refs",
+    "source_of_truth",
+    "triggers",
+    "initial_load",
+    "state_owner",
+    "mutations",
+    "publications",
+    "subscriptions",
+    "consumers",
+    "failure_recovery",
+    "decisions_and_gaps",
+    "evidence_refs",
+    "verification_refs",
+    "logical_contract_refs",
+    "development_owner_ref",
+    "lifecycle_coverage"
+  ],
+  "properties": {
+    "flow_id": { "type": "string", "minLength": 1 },
+    "data_domain_refs": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "external_contract_refs": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "source_of_truth": {
+      "type": "object",
+      "required": ["authority", "persistence", "projections_and_caches", "reconciliation"],
+      "properties": {
+        "projections_and_caches": { "type": "array", "minItems": 1 }
+      }
+    },
+    "triggers": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["kind", "timing", "idempotency"]
+      }
+    },
+    "initial_load": {
+      "type": "object",
+      "required": ["initial_load_id", "strategy", "owner", "data_scope", "freshness"]
+    },
+    "state_owner": {
+      "type": "object",
+      "required": ["ref", "states"],
+      "properties": { "states": { "type": "array", "minItems": 1 } }
+    },
+    "mutations": { "type": "array" },
+    "publications": { "type": "array" },
+    "subscriptions": { "type": "array" },
+    "consumers": { "type": "array" },
+    "failure_recovery": { "type": "object", "required": ["recovery_id"] },
+    "decisions_and_gaps": { "type": "array" },
+    "evidence_refs": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "verification_refs": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "logical_contract_refs": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "development_owner_ref": { "type": "string", "minLength": 1 },
+    "lifecycle_coverage": { "type": "object" }
+  }
+}

@@ -1,0 +1,49 @@
+operations:
+  createEntry:
+    operation_id: createEntry
+    direction: app-to-ledger-service
+    version: v1
+
+dtos:
+  CreateEntryRequestV1:
+    dto_id: CreateEntryRequestV1
+    fields:
+      - field_id: amount
+        type: decimal-string
+        required: true
+        nullable: false
+        semantics: signed ledger amount
+      - field_id: currency
+        type: iso-4217
+        required: true
+        nullable: false
+        semantics: entry currency
+      - field_id: parent_id
+        type: string
+        required: false
+        nullable: true
+        semantics: optional parent category
+  CreateEntryResponseV1:
+    dto_id: CreateEntryResponseV1
+    fields:
+      - field_id: entry_id
+        type: string
+        required: true
+        nullable: false
+        semantics: stable entry identity
+
+errors:
+  createEntry:
+    items:
+      validation_error: request rejected without mutation
+      conflict: idempotent replay returns existing entry
+
+idempotency:
+  createEntry:
+    rule: client_request_id scoped to active account
+
+nfr:
+  createEntry:
+    requirements:
+      freshness: UI refresh within one publication turn
+      durability: repository commit precedes publication

@@ -1,0 +1,23 @@
+cases:
+  - id: direct-to-seam-old-pass
+    result_kind: p1_blueprint_completeness
+    old_status: current
+    expected_after: stale
+  - id: old-mapping
+    result_kind: p1_contract_mapping
+    old_status: current
+    expected_after: stale
+  - id: old-graph
+    result_kind: p1_graph_projection
+    old_status: current
+    expected_after: stale
+  - id: old-flow-completeness
+    result_kind: p1_flow_completeness
+    old_status: current
+    expected_after: stale
+  - id: old-questioning-admission
+    result_kind: p1_admission
+    old_status: current
+    expected_after: stale
+downstream_mismatch_fields: [revision, source_fingerprint, artifact_sha256]
+forbidden_p1_state_writes: [p2_ready_set, p3_closure]

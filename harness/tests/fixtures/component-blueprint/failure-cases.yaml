@@ -1,0 +1,58 @@
+cases:
+  - id: component-identity-mismatch
+    mutator: yaml-component-id
+    expected_issue: component_identity_mismatch
+  - id: required-view-missing
+    mutator: remove-logical-view
+    expected_issue: blueprint_required_view_missing
+  - id: scenario-owner-missing
+    mutator: remove-scenario-owner
+    expected_issue: blueprint_scenario_trace_missing
+  - id: runtime-contract-missing
+    mutator: remove-runtime-logical-contract
+    expected_issue: blueprint_runtime_logical_contract_missing
+  - id: module-design-basis-missing
+    mutator: remove-development-design-basis
+    expected_issue: blueprint_design_basis_missing
+  - id: module-design-basis-address-must-resolve
+    mutator: dangling-design-basis-ref
+    expected_issue: blueprint_cross_view_ref_missing
+  - id: view-decision-address-must-resolve
+    mutator: dangling-view-decision-ref
+    expected_issue: blueprint_cross_view_ref_missing
+  - id: deployment-fake-na
+    mutator: remove-deployment-na-evidence
+    expected_issue: blueprint_deployment_na_evidence_missing
+  - id: operation-dto-mapping-conflict
+    mutator: nullable-mapping-conflict
+    expected_issue: blueprint_contract_mapping_conflict
+  - id: operation-dto-mapping-missing
+    mutator: remove-contract-mappings
+    expected_issue: blueprint_contract_mapping_missing
+  - id: fabricated-contract-field
+    mutator: fabricate-wire-field
+    expected_issue: blueprint_contract_field_fabricated
+  - id: same-shape-diff-forbidden
+    mutator: enable-same-shape-diff
+    expected_issue: blueprint_contract_same_shape_diff_forbidden
+  - id: provenance-missing
+    mutator: remove-node-provenance
+    expected_issue: blueprint_provenance_missing
+  - id: semantic-conflict
+    mutator: add-owner-conflict
+    expected_issue: blueprint_cross_view_semantic_conflict
+  - id: applicable-views-cannot-be-empty-shells
+    mutator: empty-applicable-views
+    expected_issue: blueprint_view_content_empty
+  - id: cross-view-addresses-must-resolve
+    mutator: dangling-cross-view-refs
+    expected_issue: blueprint_cross_view_ref_missing
+  - id: source-fingerprint-must-be-derived
+    mutator: source-fingerprint-self-reported
+    expected_issue: blueprint_source_fingerprint_mismatch
+  - id: authority-contract-must-match-source
+    mutator: contract-authority-mismatch
+    expected_issue: blueprint_contract_authority_mismatch
+  - id: authority-contract-source-must-exist
+    mutator: contract-authority-source-missing
+    expected_issue: blueprint_contract_authority_source_unavailable

@@ -1,0 +1,509 @@
+artifact: component-blueprint@1
+component_id: ledger
+blueprint_id: ledger-app-blueprint
+revision: 2
+source_fingerprint: sha256:e7139f2fef7d7b3dbfcdb04931e729e50eac8f8df2b9dc6efa16f40eb5d21a25
+decision_fingerprint: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+supersedes: ledger-app-blueprint-r1
+provenance: &repo_provenance
+  source_kind: code
+  source_ref: src/ledger/LedgerRepository.ts
+  source_revision: fixture-r2
+  observed_at: 2026-08-19T10:00:00+08:00
+  evidence_strength: observed
+  extraction_method: static-inspection
+
+review_summary:
+  title: Ledger App component blueprint
+  summary: Ledger data is persisted by the repository and projected through a replaying store to the UI.
+  authored_by: blueprint-writer
+  questioning:
+    status: complete
+    provider_id: independent-design-questioning
+    isolated_context: true
+    frontier_budget: 2
+    repeated_frontier_count: 0
+    writes_ssot: false
+    items:
+      - question_id: q-view-logical
+        scope_kind: view
+        scope_ref: view:logical
+        question: Is the logical view supported by current evidence and an explicit target delta?
+        answer: LedgerRepository owns durable state; LedgerStore owns the UI projection.
+        disposition: answered_with_evidence
+        frontier_fingerprint: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+        owner: architecture-owner
+        evidence_refs: [src/ledger/LedgerRepository.ts, test/ledger/repository.test.ts]
+        verification_refs: [verify:state-owner]
+        provenance: *repo_provenance
+      - { question_id: q-view-runtime, scope_kind: view, scope_ref: 'view:runtime', question: Is runtime ownership and lifecycle closed?, answer: The runtime flow closes load through recovery., disposition: answered_with_evidence, frontier_fingerprint: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', owner: architecture-owner, evidence_refs: [src/ledger/LedgerStore.ts], verification_refs: ['verify:runtime-question'], provenance: *repo_provenance }
+      - { question_id: q-view-development, scope_kind: view, scope_ref: 'view:development', question: Is development ownership explicit?, answer: The ledger module owns the implementation seam., disposition: answered_with_evidence, frontier_fingerprint: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', owner: architecture-owner, evidence_refs: [src/ledger], verification_refs: ['verify:development-question'], provenance: *repo_provenance }
+      - { question_id: q-view-scenarios, scope_kind: view, scope_ref: 'view:scenarios', question: Are scenarios traceable across views?, answer: Add-entry traces to logical runtime and development objects., disposition: answered_with_evidence, frontier_fingerprint: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', owner: architecture-owner, evidence_refs: ['verify:add-entry-scenario'], verification_refs: ['verify:scenario-question'], provenance: *repo_provenance }
+      - { question_id: q-flow-ledger-refresh, scope_kind: flow, scope_ref: 'flow:ledger-refresh-flow', question: Does the flow close mutation publication subscription and recovery?, answer: Every local flow reference resolves to a declared object., disposition: answered_with_evidence, frontier_fingerprint: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', owner: architecture-owner, evidence_refs: ['verify:ledger-flow'], verification_refs: ['verify:flow-question'], provenance: *repo_provenance }
+      - { question_id: q-relation-repository-store, scope_kind: relation, scope_ref: 'relation:repository-publishes-store', question: Is repository publication linked to the store?, answer: The relation is explicit and verified., disposition: answered_with_evidence, frontier_fingerprint: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', owner: architecture-owner, evidence_refs: ['verify:repository-store-relation'], verification_refs: ['verify:relation-question'], provenance: *repo_provenance }
+      - { question_id: q-relation-domain-module, scope_kind: relation, scope_ref: 'relation:domain-owned-by-module', question: Is the logical domain assigned to a development owner?, answer: The domain is implemented by the ledger module., disposition: answered_with_evidence, frontier_fingerprint: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', owner: architecture-owner, evidence_refs: ['verify:domain-module-relation'], verification_refs: ['verify:relation-owner-question'], provenance: *repo_provenance }
+      - { question_id: q-lens-module-boundaries, scope_kind: app_lens, scope_ref: 'app_lens:module_boundaries', question: Are module boundaries explicit?, answer: Ledger boundaries are explicit., disposition: answered_with_evidence, frontier_fingerprint: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', owner: architecture-owner, evidence_refs: [src/ledger], verification_refs: ['verify:lens-module-boundaries'], provenance: *repo_provenance }
+      - { question_id: q-lens-capability-seams, scope_kind: app_lens, scope_ref: 'app_lens:capability_seams', question: Are capability seams explicit?, answer: LedgerDataSource is explicitly decided., disposition: answered_with_evidence, frontier_fingerprint: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', owner: architecture-owner, evidence_refs: ['decision:seam-shape'], verification_refs: ['verify:lens-capability-seams'], provenance: *repo_provenance }
+      - { question_id: q-lens-feature-flags, scope_kind: app_lens, scope_ref: 'app_lens:feature_flags', question: Are feature flags accounted for?, answer: No flag changes the current ledger slice., disposition: answered_with_evidence, frontier_fingerprint: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', owner: architecture-owner, evidence_refs: [src/ledger], verification_refs: ['verify:lens-feature-flags'], provenance: *repo_provenance }
+      - { question_id: q-lens-producers-consumers, scope_kind: app_lens, scope_ref: 'app_lens:data_producers_consumers', question: Are producers and consumers known?, answer: Repository publication and page consumption are explicit., disposition: answered_with_evidence, frontier_fingerprint: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', owner: architecture-owner, evidence_refs: ['verify:ledger-flow'], verification_refs: ['verify:lens-producers-consumers'], provenance: *repo_provenance }
+      - { question_id: q-lens-lifecycle-triggers, scope_kind: app_lens, scope_ref: 'app_lens:lifecycle_triggers', question: Are lifecycle triggers assessed?, answer: All six trigger conditions are evidence-backed., disposition: answered_with_evidence, frontier_fingerprint: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', owner: architecture-owner, evidence_refs: ['verify:cold-start'], verification_refs: ['verify:lens-lifecycle-triggers'], provenance: *repo_provenance }
+      - { question_id: q-lens-state-owners, scope_kind: app_lens, scope_ref: 'app_lens:state_owners', question: Is every state owner unambiguous?, answer: LedgerRepository owns durable ledger state., disposition: answered_with_evidence, frontier_fingerprint: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', owner: architecture-owner, evidence_refs: [src/ledger/LedgerRepository.ts], verification_refs: ['verify:lens-state-owners'], provenance: *repo_provenance }
+      - { question_id: q-lens-initialization, scope_kind: app_lens, scope_ref: 'app_lens:initialization', question: Is initialization explicit?, answer: Repository snapshot precedes subscription attach., disposition: answered_with_evidence, frontier_fingerprint: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', owner: architecture-owner, evidence_refs: ['verify:cold-start'], verification_refs: ['verify:lens-initialization'], provenance: *repo_provenance }
+      - { question_id: q-lens-pub-sub, scope_kind: app_lens, scope_ref: 'app_lens:publication_subscription', question: Are publication and subscription closed?, answer: Publication references and subscription cleanup are explicit., disposition: answered_with_evidence, frontier_fingerprint: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', owner: architecture-owner, evidence_refs: ['verify:ledger-flow'], verification_refs: ['verify:lens-publication-subscription'], provenance: *repo_provenance }
+      - { question_id: q-lens-ui-refresh, scope_kind: app_lens, scope_ref: 'app_lens:ui_refresh', question: Is UI refresh freshness explicit?, answer: Refresh occurs within one publication turn., disposition: answered_with_evidence, frontier_fingerprint: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', owner: architecture-owner, evidence_refs: ['verify:ledger-flow'], verification_refs: ['verify:lens-ui-refresh'], provenance: *repo_provenance }
+      - { question_id: q-lens-process-recovery, scope_kind: app_lens, scope_ref: 'app_lens:process_recovery', question: Is process recovery explicit?, answer: The store rebuilds from the repository snapshot., disposition: answered_with_evidence, frontier_fingerprint: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', owner: architecture-owner, evidence_refs: ['verify:process-recreation'], verification_refs: ['verify:lens-process-recovery'], provenance: *repo_provenance }
+  admission:
+    status: pass
+    root_questions_complete: true
+    current_slice:
+      slice_id: cu-ledger-refresh
+      contracts_ready: true
+      design_refs_ready: true
+      controlled_fakes: []
+    blocker_refs: []
+
+design_views:
+  - view_id: logical
+    viewpoint_contract: app-logical@1
+    applicability: applicable
+    stakeholders: [product, development, test]
+    purpose: Define ledger concepts and external operations.
+    current_state: Existing repository and create operation.
+    target_state: Explicit ledger projection contract.
+    delta: Freeze stable contract and state ownership.
+    decisions_and_gaps: [decision:seam-shape]
+    verification_refs: [verify:logical]
+    nodes:
+      - node_id: ledger-domain
+        label: Ledger domain
+        owner: ledger-team
+        current_state: Repository entities
+        target_state: Stable ledger domain projection
+        provenance: *repo_provenance
+        verification_refs: [verify:ledger-domain]
+  - view_id: runtime
+    viewpoint_contract: app-runtime@1
+    applicability: applicable
+    stakeholders: [development, test, operations]
+    purpose: Close loading, mutation, publication, subscription, and recovery.
+    current_state: Repository loads and UI subscribes.
+    target_state: Replaying publication with lifecycle cleanup.
+    delta: Add explicit freshness and reconciliation.
+    decisions_and_gaps: [decision:seam-shape]
+    verification_refs: [verify:runtime]
+    nodes:
+      - node_id: ledger-repository
+        label: LedgerRepository
+        owner: ledger-team
+        current_state: Persists entries
+        target_state: Authoritative local source
+        design_basis_refs: [view:logical/node:ledger-domain]
+        provenance: *repo_provenance
+        verification_refs: [verify:repository]
+      - node_id: ledger-store
+        label: LedgerStore
+        owner: app-state-team
+        current_state: In-memory projection
+        target_state: Replayable projection
+        design_basis_refs: [view:logical/node:ledger-domain]
+        provenance: *repo_provenance
+        verification_refs: [verify:store]
+    runtime_data_flows:
+      - flow_id: ledger-refresh-flow
+        data_domain_refs: [data-domain:ledger]
+        external_contract_refs: [contract:create-entry-v1]
+        source_of_truth:
+          authority: view:runtime/node:ledger-repository
+          persistence: sqlite:ledger-entry
+          projections_and_caches: [view:runtime/node:ledger-store]
+          reconciliation: Repository revision wins; pending UI writes are retried idempotently.
+        triggers:
+          - kind: user_mutation
+            timing: immediate
+            idempotency: operation request id
+          - kind: cold_start
+            timing: before-first-render
+            idempotency: replace projection at repository revision
+        initial_load:
+          initial_load_id: repository-snapshot
+          strategy: repository snapshot before subscription attach
+          owner: app-state-team
+          data_scope: active account ledger
+          freshness: repository revision at attach time
+        state_owner:
+          ref: view:runtime/node:ledger-repository
+          states: [durable-ledger]
+        mutations:
+          - mutation_id: add-entry
+            kind: user
+            persistence_ref: sqlite:ledger-entry
+            publication_ref: publication:ledger-changed
+            recovery_ref: recovery:reload-ledger
+        publications:
+          - publication_id: ledger-changed
+            snapshot: full-current-ledger
+        subscriptions:
+          - subscription_id: ledger-page-subscription
+            consumer_ref: consumer:ledger-page
+            attach: page mount after snapshot
+            detach: page unmount
+            cleanup: remove observer token
+            replay_or_snapshot: latest ledger snapshot
+            ordering: repository revision order
+        consumers:
+          - consumer_id: ledger-page
+            initial_load_ref: initial-load:repository-snapshot
+            update_ref: publication:ledger-changed
+        failure_recovery:
+          recovery_id: reload-ledger
+          persistence_failure: keep prior snapshot and expose retry
+          subscription_failure: reload repository snapshot
+          process_recreation: rebuild store from repository
+        decisions_and_gaps: []
+        evidence_refs: [src/ledger/LedgerRepository.ts, src/ledger/LedgerStore.ts]
+        verification_refs: [verify:ledger-flow]
+        logical_contract_refs: [contract:create-entry-v1]
+        development_owner_ref: view:development/node:ledger-module
+        lifecycle_coverage:
+          cold_start: { status: covered, evidence_refs: [verify:cold-start] }
+          warm_resume: { status: covered, evidence_refs: [verify:warm-resume] }
+          page_attach: { status: covered, evidence_refs: [verify:page-attach] }
+          page_detach: { status: covered, evidence_refs: [verify:page-detach] }
+          account_switch: { status: covered, evidence_refs: [verify:account-switch] }
+          process_recreation: { status: covered, evidence_refs: [verify:process-recreation] }
+          background_write: { status: not_applicable, evidence_refs: [decision:no-background-writer] }
+        provenance: *repo_provenance
+  - view_id: development
+    viewpoint_contract: app-development@1
+    applicability: applicable
+    stakeholders: [development, test]
+    purpose: Assign implementation ownership and module seams.
+    current_state: Ledger files are grouped by technical type.
+    target_state: Ledger module owns repository and projection contract.
+    delta: Establish explicit module owner without introducing a Maison provider.
+    decisions_and_gaps: [decision:seam-shape]
+    verification_refs: [verify:development]
+    nodes:
+      - node_id: ledger-module
+        label: Ledger module
+        owner: ledger-team
+        current_state: Existing source package
+        target_state: Host-owned ledger seam
+        design_basis_refs: [view:logical/node:ledger-domain]
+        provenance: *repo_provenance
+        verification_refs: [verify:ledger-module]
+  - view_id: deployment
+    viewpoint_contract: app-deployment@1
+    applicability: not_applicable
+    applicability_evidence:
+      disposition: not_applicable
+      evidence_refs: [architecture:single-process-local-ledger]
+      retrigger_condition: A remote service or second process enters the component boundary.
+    stakeholders: [architecture, operations]
+    purpose: Decide whether deployment topology is in this component boundary.
+    current_state: Single process and local persistence.
+    target_state: No deployment delta for this slice.
+    delta: none
+    decisions_and_gaps: [decision:deployment-na]
+    verification_refs: [verify:deployment-na]
+    nodes: []
+  - view_id: scenarios
+    viewpoint_contract: app-scenarios@1
+    applicability: applicable
+    stakeholders: [product, development, test]
+    purpose: Tie user-visible scenarios to design and implementation owners.
+    current_state: Add-entry flow exists.
+    target_state: Refresh and recovery are explicit.
+    delta: Add lifecycle coverage.
+    decisions_and_gaps: [decision:seam-shape]
+    verification_refs: [verify:scenarios]
+    nodes:
+      - node_id: add-entry-scenario
+        label: Add entry and refresh other consumers
+        owner: ledger-team
+        current_state: User adds an entry
+        target_state: All consumers see a fresh snapshot
+        logical_refs: [view:logical/node:ledger-domain, contract:create-entry-v1]
+        runtime_refs: [view:runtime/flow:ledger-refresh-flow]
+        development_owner_ref: view:development/node:ledger-module
+        provenance: *repo_provenance
+        verification_refs: [verify:add-entry-scenario]
+
+relations:
+  - relation_id: repository-publishes-store
+    from: view:runtime/node:ledger-repository
+    to: view:runtime/node:ledger-store
+    relation_type: publishes_snapshot
+    applicability: current-slice
+    owner: app-state-team
+    provenance: *repo_provenance
+    verification_refs: [verify:repository-store-relation]
+  - relation_id: domain-owned-by-module
+    from: view:logical/node:ledger-domain
+    to: view:development/node:ledger-module
+    relation_type: implemented_by
+    applicability: current-slice
+    owner: ledger-team
+    provenance: *repo_provenance
+    verification_refs: [verify:domain-module-relation]
+
+contracts:
+  - contract_id: create-entry-v1
+    operation:
+      operation_id: createEntry
+      direction: app-to-ledger-service
+      version: v1
+      source_ref: contracts/ledger-api.yaml#/operations/createEntry
+      verification_refs: [verify:create-entry-operation]
+    request_dto:
+      dto_id: CreateEntryRequestV1
+      source_ref: contracts/ledger-api.yaml#/dtos/CreateEntryRequestV1
+      verification_refs: [verify:create-entry-request]
+      fields:
+        - field_id: amount
+          type: decimal-string
+          required: true
+          nullable: false
+          semantics: signed ledger amount
+          source_ref: contracts/ledger-api.yaml#/dtos/CreateEntryRequestV1/fields/0
+          provenance: &contract_provenance
+            source_kind: interface
+            source_ref: contracts/ledger-api.yaml
+            source_revision: v1
+            observed_at: 2026-08-19T10:00:00+08:00
+            evidence_strength: authoritative
+            extraction_method: schema-loader
+        - field_id: currency
+          type: iso-4217
+          required: true
+          nullable: false
+          semantics: entry currency
+          source_ref: contracts/ledger-api.yaml#/dtos/CreateEntryRequestV1/fields/1
+          provenance: *contract_provenance
+        - field_id: parent_id
+          type: string
+          required: false
+          nullable: true
+          semantics: optional parent category
+          source_ref: contracts/ledger-api.yaml#/dtos/CreateEntryRequestV1/fields/2
+          provenance: *contract_provenance
+    response_dto:
+      dto_id: CreateEntryResponseV1
+      source_ref: contracts/ledger-api.yaml#/dtos/CreateEntryResponseV1
+      verification_refs: [verify:create-entry-response]
+      fields:
+        - field_id: entry_id
+          type: string
+          required: true
+          nullable: false
+          semantics: stable entry identity
+          source_ref: contracts/ledger-api.yaml#/dtos/CreateEntryResponseV1/fields/0
+          provenance: *contract_provenance
+    mappings:
+      - mapping_id: request-amount
+        kind: direct
+        source_fields: [amount]
+        target_field: LedgerEntry.amount
+        rule: Parse decimal without changing currency scale.
+        source_ref: mappings/create-entry.yaml#/mappings/request-amount
+        provenance: &mapping_provenance
+          source_kind: interface
+          source_ref: mappings/create-entry.yaml
+          source_revision: v1
+          observed_at: 2026-08-19T10:00:00+08:00
+          evidence_strength: authoritative
+          extraction_method: schema-loader
+        verification_refs: [verify:mapping-amount]
+      - mapping_id: request-parent-level
+        kind: derivation
+        source_fields: [parent_id]
+        target_field: LedgerEntry.parent_level_id
+        rule: Resolve parent hierarchy level from parent_id; this is not a wire field.
+        source_ref: mappings/create-entry.yaml#/mappings/request-parent-level
+        provenance: *mapping_provenance
+        verification_refs: [verify:mapping-parent-level]
+      - mapping_id: request-currency
+        kind: direct
+        source_fields: [currency]
+        target_field: LedgerEntry.currency
+        rule: Preserve the ISO-4217 currency code.
+        source_ref: mappings/create-entry.yaml#/mappings/request-currency
+        provenance: *mapping_provenance
+        verification_refs: [verify:mapping-currency]
+      - mapping_id: response-entry-id
+        kind: direct
+        source_fields: [entry_id]
+        target_field: LedgerEntry.id
+        rule: Preserve stable identity.
+        source_ref: mappings/create-entry.yaml#/mappings/response-entry-id
+        provenance: *mapping_provenance
+        verification_refs: [verify:mapping-entry-id]
+    errors:
+      source_ref: contracts/ledger-api.yaml#/errors/createEntry
+      verification_refs: [verify:create-entry-errors]
+      items:
+        validation_error: request rejected without mutation
+        conflict: idempotent replay returns existing entry
+    idempotency:
+      source_ref: contracts/ledger-api.yaml#/idempotency/createEntry
+      verification_refs: [verify:create-entry-idempotency]
+      rule: client_request_id scoped to active account
+    nfr:
+      source_ref: contracts/ledger-api.yaml#/nfr/createEntry
+      verification_refs: [verify:create-entry-nfr]
+      requirements:
+        freshness: UI refresh within one publication turn
+        durability: repository commit precedes publication
+    owner: ledger-contract-owner
+    needed_by: cu-ledger-refresh
+    provenance: *contract_provenance
+
+decisions_and_gaps:
+  decisions:
+    - decision_id: seam-shape
+      kind: evolution_candidate
+      status: decided_with_authority
+      owner: architecture-owner
+      variation_evidence: [evidence:local-and-cloud-ledger-sources]
+      impact: Source variation affects lifecycle, tests, and reconciliation.
+      stable_contract: LedgerDataSource
+      provider: Host LedgerRepository implementations
+      consumer: Host LedgerStore
+      binding_time: App composition root
+      failure_semantics: Surface source failure and preserve prior projection.
+      tests: [verify:ledger-source-contract]
+      human_decision: keep_direct
+      reextract_condition: A second source ships in the same release window.
+      namespace: host_design
+      provenance: *repo_provenance
+      verification_refs: [verify:seam-decision]
+    - decision_id: deployment-na
+      status: not_applicable
+      owner: architecture-owner
+      provenance: *repo_provenance
+      verification_refs: [verify:deployment-na]
+  gaps:
+    - gap_id: cloud-sync-future
+      knowledge_state: unknown
+      status: open_decision
+      owner: cloud-contract-owner
+      needed_by: cu-cloud-sync-future
+      unlock_condition: Approved cloud sync contract becomes accessible.
+      provenance:
+        source_kind: external-contract
+        source_ref: se-input:cloud-sync-pending
+        observed_at: 2026-08-19T10:00:00+08:00
+        evidence_strength: unknown
+        extraction_method: authority-gap-record
+
+providers:
+  - provider_id: current-facts-discovery
+    definition: Current repository facts with provenance, conflicts, and unknowns.
+    consumer: [blueprint-builder, app-design-lens, independent-design-questioning]
+    provider: static current-facts discovery
+    requirement: required
+    authority_rule: Code, schema, interface, config, and tests are current-state authority.
+    source_rule: Every assertion carries source_ref and source revision when available.
+    missing_behavior: Block with owner and unlock condition.
+    replacement_behavior: Preserve protocol and stale affected P1 results.
+    exit_behavior: Drop temporary caches; retain canonical provenance.
+    conflict_behavior: Fail closed and retain all sources; never last-write-wins.
+    available: true
+    writes: [canonical_blueprint_input]
+  - provider_id: se-manual-contracts
+    definition: Authorized operation, DTO, mapping, error, idempotency, and NFR input.
+    consumer: [contract-checker, blueprint-builder]
+    provider: static SE/manual adapter
+    requirement: required
+    authority_rule: Authorized SE or contract owner is external-contract authority.
+    source_rule: Every contract segment carries source_ref, verification ref, and provenance.
+    missing_behavior: Keep unknown as open_decision or blocker; never fabricate fields.
+    replacement_behavior: Preserve protocol and stale dependent P1 results.
+    exit_behavior: Retain formal gaps and provenance.
+    conflict_behavior: Fail closed with field and version conflicts.
+    available: true
+    writes: [canonical_blueprint_input]
+  - provider_id: app-design-lens
+    definition: App view projection and mandatory root questions.
+    consumer: [blueprint-builder, admission, review]
+    provider: static App design lens
+    requirement: required
+    authority_rule: Lens is not fact authority and cannot override inputs.
+    source_rule: Projection cites inputs, viewpoint contract, and lens rule version.
+    missing_behavior: Block review; never emit an empty PASS blueprint.
+    replacement_behavior: Preserve projection protocol and recompute P1 results.
+    exit_behavior: Invalidate projections only; retain canonical facts.
+    conflict_behavior: Fail closed and preserve conflicting sources.
+    available: true
+    writes: [canonical_blueprint_projection]
+  - provider_id: independent-design-questioning
+    definition: Isolated question, evidence, disposition, and frontier protocol.
+    consumer: [admission, review]
+    provider: static isolated questioning provider
+    requirement: required
+    authority_rule: Questioning is not fact or decision authority.
+    source_rule: Answers cite isolated blueprint, evidence package, and registered external inputs.
+    missing_behavior: Block review and do not self-attest.
+    replacement_behavior: Preserve result protocol and rerun questioning.
+    exit_behavior: Drop temporary context and keep canonical outcomes.
+    conflict_behavior: Preserve conflict as frontier or blocker.
+    available: true
+    writes: [questioning_process_evidence]
+
+discovery:
+  source_fingerprint: sha256:e7139f2fef7d7b3dbfcdb04931e729e50eac8f8df2b9dc6efa16f40eb5d21a25
+  facts:
+    - fact_id: fact-ledger-owner
+      subject: ledger.state.owner
+      value: LedgerRepository
+      provenance: *repo_provenance
+  conflicts: []
+  inputs:
+    product_requirements: [requirements/ledger.md]
+    external_inputs: [contracts/ledger-api.yaml]
+    repository_facts: [src/ledger/LedgerRepository.ts, src/ledger/LedgerStore.ts]
+    knowledge_assets: [doc/architecture.yaml, doc/module-catalog.yaml, code-graph:ledger]
+    optional_component_assets: []
+
+app_lens:
+  module_boundaries: &lens_answer
+    disposition: answered_with_evidence
+    answer: Ledger module owns repository and store integration.
+    evidence_refs: [src/ledger]
+  capability_seams: *lens_answer
+  feature_flags: *lens_answer
+  data_producers_consumers: *lens_answer
+  lifecycle_triggers: *lens_answer
+  state_owners: *lens_answer
+  initialization: *lens_answer
+  publication_subscription: *lens_answer
+  ui_refresh: *lens_answer
+  process_recovery: *lens_answer
+  runtime_flow_trigger_assessment:
+    persistent_or_remote_ui: { applies: true, evidence_refs: [evidence:sqlite-to-ui] }
+    multiple_consumers: { applies: true, evidence_refs: [evidence:list-and-summary] }
+    background_system_external_scheduled_write: { applies: false, evidence_refs: [decision:no-background-writer] }
+    cold_start_resume_mount_account_switch: { applies: true, evidence_refs: [evidence:lifecycle-load] }
+    user_mutation_refreshes_other_consumers: { applies: true, evidence_refs: [evidence:add-entry-refresh] }
+    cache_sync_freshness_consistency_process_recreation: { applies: true, evidence_refs: [evidence:store-rebuild] }
+
+derived_results:
+  - result_id: blueprint-completeness-r2
+    kind: p1_blueprint_completeness
+    status: current
+    input_revision: 2
+    source_fingerprint: sha256:e7139f2fef7d7b3dbfcdb04931e729e50eac8f8df2b9dc6efa16f40eb5d21a25
+    decision_fingerprint: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    provenance: *repo_provenance
+
+generated_graphs:
+  - graph_id: graph:runtime
+    format: mermaid
+    source_view_id: runtime
+    content: |
+      flowchart TD
+        n1["LedgerRepository"]
+        n2["LedgerStore"]
+        n1 -->|publishes_snapshot| n2
+    node_refs: [view:runtime/node:ledger-repository, view:runtime/node:ledger-store]
+    relation_refs: [relation:repository-publishes-store]

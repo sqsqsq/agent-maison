@@ -35,6 +35,7 @@
     "goal:supervise": "ts-node scripts/goal-supervise.ts",
     "validate:ut-artifact": "ts-node scripts/validate-ut-artifact.ts",
     "bootstrap:code-graph": "ts-node scripts/bootstrap-code-graph.ts",
+    "check:component-blueprint": "ts-node scripts/check-component-blueprint.ts",
     "visual-diff-nav:migrate": "ts-node ../profiles/hmos-app/harness/visual-diff-nav-migrate.ts",
     "device:policy": "ts-node scripts/device-policy.ts --check --json",
     "device:enroll": "ts-node scripts/device-policy.ts --enroll",

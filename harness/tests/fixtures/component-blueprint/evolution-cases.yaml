@@ -1,0 +1,13 @@
+cases:
+  - id: candidate-without-variation-evidence
+    mutator: remove-evolution-evidence
+    expected_issue: blueprint_evolution_candidate_evidence_missing
+  - id: decision-card-field-missing
+    mutator: remove-evolution-impact
+    expected_issue: blueprint_evolution_decision_incomplete
+  - id: keep-direct-without-reextract-condition
+    mutator: remove-evolution-reextract-condition
+    expected_issue: blueprint_evolution_reextract_condition_missing
+  - id: host-seam-enters-maison-namespace
+    mutator: move-evolution-to-maison-namespace
+    expected_issue: blueprint_host_seam_namespace_violation

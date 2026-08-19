@@ -1,0 +1,43 @@
+cases:
+  - id: no-initial-load
+    mutator: remove-initial-load-strategy
+    expected_issue: runtime_flow_initial_load_missing
+  - id: mutation-no-propagation
+    mutator: remove-mutation-publication
+    expected_issue: runtime_flow_mutation_propagation_missing
+  - id: mutation-publication-must-reach-a-consumer
+    mutator: orphan-mutation-publication
+    expected_issue: runtime_flow_mutation_consumer_missing
+  - id: consumer-must-have-a-real-source
+    mutator: orphan-consumer
+    expected_issue: runtime_flow_consumer_orphan
+  - id: late-subscription-no-snapshot
+    mutator: remove-subscription-snapshot
+    expected_issue: runtime_flow_late_subscription_snapshot_missing
+  - id: background-no-recovery
+    mutator: background-without-recovery
+    expected_issue: runtime_flow_background_recovery_missing
+  - id: subscription-no-cleanup
+    mutator: remove-subscription-cleanup
+    expected_issue: runtime_flow_subscription_lifecycle_missing
+  - id: state-owner-conflict
+    mutator: duplicate-flow-conflicting-owner
+    expected_issue: runtime_flow_state_owner_conflict
+  - id: trigger-assessment-item-missing
+    mutator: remove-runtime-trigger-assessment-item
+    expected_issue: runtime_flow_trigger_assessment_missing
+  - id: trigger-requires-flow
+    mutator: remove-flow-while-triggered
+    expected_issue: runtime_flow_required
+  - id: all-triggers-false-without-na-evidence
+    mutator: all-runtime-triggers-false-without-na
+    expected_issue: runtime_flow_na_evidence_missing
+  - id: runtime-flow-cannot-be-empty-shell
+    mutator: empty-runtime-flow-content
+    expected_issue: runtime_flow_content_empty
+  - id: runtime-local-addresses-must-resolve
+    mutator: dangling-runtime-local-refs
+    expected_issue: runtime_flow_reference_missing
+  - id: runtime-local-addresses-must-be-unique
+    mutator: duplicate-runtime-local-id
+    expected_issue: runtime_flow_local_id_duplicate

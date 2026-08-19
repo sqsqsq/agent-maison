@@ -30,7 +30,7 @@
 
 ## 5. Verify
 
-- [ ] `node scripts/check-plan-version.mjs` 与 `--release` 双模式 PASS
+- [ ] `node scripts/check-plan-version.mjs` 与 `--release` 双模式 PASS（P0 未执行 release 模式整仓检查；由总计划 m5/MG 在批次收尾承担，执行前不宣称通过）
 - [x] `npm run release:check-plans-test` 全绿
 - [x] `npm run openspec:validate` 全绿
-- [ ] `npm run release:verify`（随批次收尾统跑）
+- [ ] `npm run release:verify`（P0 未执行 release；由总计划 m5/MG 在批次收尾承担，执行前不宣称通过）
