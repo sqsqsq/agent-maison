@@ -4,7 +4,7 @@
 
 import type { FrameworkPersonalSetupStatus } from '../../config';
 import type { HarnessResolvedProfile } from '../../scripts/utils/types';
-import type { GoalManifest } from './goal-manifest';
+import type { GoalManifest, RunAdapterProvenance } from './goal-manifest';
 import {
   adapterEntryExists,
   evaluatePersonalSetupGate,
@@ -62,14 +62,6 @@ export function resolveAdapterProvenance(
   if (adapterStatus.source === 'project_legacy') return 'config_legacy';
   return 'fallback';
 }
-
-/** 运行身份语义来源（写入 manifest.adapter_provenance，供回溯）。 */
-export type RunAdapterProvenance =
-  | 'user_explicit'
-  | 'entry_declared'
-  | 'local_config'
-  | 'registry'
-  | 'override';
 
 export interface RunAdapterDecision {
   effectiveAdapter: string;

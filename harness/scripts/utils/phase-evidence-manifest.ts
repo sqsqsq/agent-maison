@@ -43,6 +43,10 @@ import {
 import { inferRepoLayout } from '../../repo-layout';
 import { computeGateFingerprint } from './gate-fingerprint';
 import {
+  goalManifestHashMatchesModuloAdapterProvenance,
+  type GoalManifest,
+} from './goal-manifest';
+import {
   REQUIRED_FEATURE_FILES_BY_PHASE,
   OPTIONAL_FEATURE_FILES_BY_PHASE,
 } from './spec-loader';
@@ -171,6 +175,26 @@ export function sha256File(absPath: string): string | null {
     return crypto.createHash('sha256').update(fs.readFileSync(absPath)).digest('hex');
   } catch {
     return null;
+  }
+}
+
+function isGoalRunManifestPath(relPath: string): boolean {
+  return /(?:^|\/)goal-runs\/(?:\.dry\/)?[^/]+\/manifest\.json$/.test(relPath.replace(/\\/g, '/'));
+}
+
+function evidenceEntryMatchesCurrentFile(
+  projectRoot: string,
+  entry: EvidenceEntry,
+): boolean {
+  const absPath = path.join(projectRoot, entry.path);
+  const current = sha256File(absPath);
+  if (current === entry.sha256) return true;
+  if (!isGoalRunManifestPath(entry.path) || entry.sha256 === null || !fs.existsSync(absPath)) return false;
+  try {
+    const manifest = JSON.parse(fs.readFileSync(absPath, 'utf-8')) as GoalManifest;
+    return goalManifestHashMatchesModuloAdapterProvenance(manifest, entry.sha256);
+  } catch {
+    return false;
   }
 }
 
@@ -642,8 +666,7 @@ export function recomputePhaseEvidenceStaleness(
     const { manifest } = loaded;
     const changed: string[] = [];
     for (const entry of [...manifest.inputs, ...manifest.outputs]) {
-      const current = sha256File(path.join(projectRoot, entry.path));
-      if (current !== entry.sha256) changed.push(entry.path);
+      if (!evidenceEntryMatchesCurrentFile(projectRoot, entry)) changed.push(entry.path);
     }
     const currentReceipt = computeCanonicalReceiptSha256(projectRoot, feature, phase);
     const receiptChanged = currentReceipt !== manifest.receipt_sha256;

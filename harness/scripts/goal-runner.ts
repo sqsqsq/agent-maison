@@ -119,8 +119,10 @@ import {
   loadGoalManifestFromRun,
   newRunId,
   resolveGoalReportDir,
+  resolvePersistedAdapterProvenance,
   resolveRawRunInput,
   resolveRequirementInput,
+  restoreFrozenAdapterProvenance,
   type RawRunInput,
   isSuccessorRepairRequirement,
   mergeSuccessorRequirement,
@@ -3531,6 +3533,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
   // reconcile 又会读 local——若此刻才捕获，local 已被别窗切走时会把"换 adapter"误判为未变。
   // 故在 applyManifestCliOverrides 之前捕获 manifest 既有 adapter。
   const manifestAdapterBeforeCliOverrides = manifest.adapter;
+  const manifestAdapterProvenanceBeforeCliOverrides = manifest.adapter_provenance;
   {
     applyManifestCliOverrides(manifest, manifestArgv);
     const ft = evaluateFidelityTransitionAuthorization({
@@ -3585,7 +3588,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
       adapterSource: argv['adapter-source'] ? String(argv['adapter-source']).trim() : undefined,
     });
     manifest.adapter = adapterDecision.effectiveAdapter;
-    manifest.adapter_provenance = adapterDecision.provenance;
+    manifest.adapter_provenance = resolvePersistedAdapterProvenance({
+      isResume: Boolean(argv.resume),
+      originalAdapter: manifestAdapterBeforeCliOverrides,
+      originalProvenance: manifestAdapterProvenanceBeforeCliOverrides,
+      effectiveAdapter: adapterDecision.effectiveAdapter,
+      decisionProvenance: adapterDecision.provenance,
+    });
     if (adapterDecision.writeLocal) pendingAdapterWriteback = adapterDecision.effectiveAdapter;
   }
 
@@ -3731,6 +3740,24 @@ Goal runner — tool-agnostic multi-phase orchestrator
         '如需继续请新开 run（--feature ... --start <phase>）。',
       );
       return 1;
+    }
+  }
+
+  // 3.0.0 宿主回放修复：旧实现会在“adapter 值未变、仅用 --override-adapter 对账
+  // local”时把出生 provenance 改为 override，污染被 phase evidence 收录的 manifest
+  // 全文件 hash。仅当还原 provenance 后逐字命中首个 run_start.manifest_hash 才修复；
+  // 任何其它字段漂移均不猜、不放行。真正落盘仍复用下方 writeGoalManifest 单点。
+  if (argv.resume && manifestAdapterBeforeCliOverrides === manifest.adapter) {
+    const provenanceRepair = restoreFrozenAdapterProvenance(
+      manifest,
+      resolveFrozenManifestHash(startupEvents, null),
+    );
+    if (provenanceRepair.repaired) {
+      manifest = provenanceRepair.manifest;
+      console.warn(
+        `[goal-runner] 已恢复同 adapter resume 污染的 manifest.adapter_provenance：` +
+          `override → ${provenanceRepair.to ?? '<absent>'}（完整 manifest hash 已命中 run_start 冻结值）。`,
+      );
     }
   }
 
