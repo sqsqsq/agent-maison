@@ -657,9 +657,11 @@ async function runScenario(args: {
     ];
   } else if (scenario === 'successor_manifest_probe') {
     if (!extra) throw new Error('successor_manifest_probe 需要 extra=source runId');
+    // 本场景只验证 successor 出生字段的继承，不宣告新的 requirement 增量。
+    // 若在此显式传 --requirement，runner 会正确合并为修复增量，旧 spec/plan
+    // closure 也应随之 stale，与“从 coding 截断继承”的本测试意图冲突。
     process.argv = [
       ...argvBase,
-      '--requirement', `T4 driver scenario=${scenario}`,
       '--start', 'coding', '--end', 'testing', '--force', '--supersede', extra,
     ];
   } else if (scenario === 'crash_scope_in_run'
