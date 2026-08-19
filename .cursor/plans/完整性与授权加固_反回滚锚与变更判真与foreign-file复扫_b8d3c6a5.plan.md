@@ -2,6 +2,21 @@
 name: 完整性与授权加固 — 反回滚独立锚 / 变更判真分类器
 version: 3.1.0
 deferred_to: 3.1.0
+parent_goal: complex-capability-construction-75411223
+advances:
+  - g6-change-unit-feature-pipeline-integration
+  - g7-component-assembly-and-coverage-closure
+relation: execution-trust-foundation
+layer: governance
+goal_requires: []
+goal_provides:
+  - anti-rollback-integrity-anchor
+  - authorized-change-kind-classification
+real_host_validation: >
+  本 plan 是执行与证据可信的前置能力；以真实运行恢复区回滚和伪装成 test_seam 的产品行为
+  变更做对抗验证。独立锚只约束证据宣称，不得成为 run 生命周期裁决或第三本事件账；本 plan
+  不单独宣称 Change Unit 或部件闭环完成。
+parallel_authority_added: false
 # 版本说明：3.0.0 盘点（2026-07-30）顺延而来；保留两项"信任锚与授权判真"能力。
 overview: >
   承载两项 3.0.0 未实施的完整性/授权缺口：① visual-capability-truth 3.9j 反回滚独立锚

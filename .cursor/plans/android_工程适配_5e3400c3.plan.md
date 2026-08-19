@@ -1,17 +1,16 @@
 ---
 name: android 工程适配
-version: 3.1.0
-deferred_to: 3.1.0
+version: 3.2.0
+deferred_to: 3.2.0
 # 版本说明：原在 3.0.0 窗口（与轻量化重构同窗、重构先行）→ 2026-07-09 顺延 3.0.1 →
-# 用户 2026-07-21 改定 **3.1.0**（3.0.0 即将发布；android 适配含新 profile + 新 workspace
-# 拓扑维度，属特性级增量，落 minor 窗口而非 patch 窗口更贴合语义）。3.0.0 收口为「轻量化
-# 收尾 + b7e42d19 交互式视觉实测」后打发布件去宿主统一回归，android 适配基于回归后的稳定
-# 基线开工（check-plan-version.mjs：version > current 且 deferred_to === version → 放行，
-# 不阻 3.0.0 发版）。
-overview: 在 maison 3.1.0 窗口落地 Android 工程支持：新增 android-app profile（Gradle/AGP/JUnit 工具链）与一个全新的、与 profile 正交的「workspace 拓扑」维度（single_tree / binary_deps / source_overlay），与真实工程"自下而上 AAR 分层集成"的生产构建同构，不造平行构建体系。交付物 = 1 份 master .plan.md + 4 个 OpenSpec change。
+# 2026-07-21 改定 3.1.0 → 2026-08-11 用户决定顺延至 3.2.0。3.1.0 优先承载复杂能力建设
+# 总纲的首批建设；本 plan 当前不纳入该总纲映射。android 适配仍是新 profile + 新 workspace
+# 拓扑维度的特性级增量，scope 与实施顺序不变（check-plan-version.mjs：version > current 且
+# deferred_to === version → 放行，不阻 3.0.0 发版）。
+overview: 在 maison 3.2.0 窗口落地 Android 工程支持：新增 android-app profile（Gradle/AGP/JUnit 工具链）与一个全新的、与 profile 正交的「workspace 拓扑」维度（single_tree / binary_deps / source_overlay），与真实工程"自下而上 AAR 分层集成"的生产构建同构，不造平行构建体系。交付物 = 1 份 master .plan.md + 4 个 OpenSpec change。
 todos:
   - id: scaffold-docs
-    content: "创建 master .plan.md（frontmatter version: 3.1.0 / deferred_to: 3.1.0，顺延窗口）并用 npm run openspec -- new change 脚手架 4 个 change 目录（android-app-profile / workspace-topology-core / topology-binary-deps / topology-source-overlay）"
+    content: "创建 master .plan.md（frontmatter version: 3.2.0 / deferred_to: 3.2.0，顺延窗口）并用 npm run openspec -- new change 脚手架 4 个 change 目录（android-app-profile / workspace-topology-core / topology-binary-deps / topology-source-overlay）"
     status: pending
   - id: c1-android-profile
     content: C1 android-app-profile：profiles/android-app/ + gradle/android_lint/junit providers + gradle_resolve(决策1) + build_variant 可配置（多形态/多环境 apk）+ architecture DSL 增 export_strategy=gradle_api 与 artifact:<group>；profile 资产按轻量化重构 C3 瘦身契约编写；虚拟单仓钱包 single_tree 全链路 PASS + 单模块 feature lite track 试点 PASS
@@ -31,17 +30,18 @@ todos:
 isProject: false
 ---
 
-# Android 工程适配（maison 3.1.0）
+# Android 工程适配（maison 3.2.0）
 
 ## 版本绑定（BLOCKER 合规）
 
-- **目标窗口 3.1.0**（用户 2026-07-21 改定）：窗口演进轨迹 = 3.0.0（原同窗）→ 3.0.1（07-09 顺延）→ **3.1.0**。理由：3.0.0 即将发布，而 android 适配交付新 profile + 全新 workspace 拓扑维度，属特性级增量，落 minor 窗口比 patch 窗口贴合语义。frontmatter `version: 3.1.0` + `deferred_to: 3.1.0`。
-- 实施顺序不变：轻量化重构（d4a7c1e8）+ b7e42d19 随 3.0.0 发布件去宿主统一回归，本 plan 基于回归后的稳定契约开工；实施期脚手架出的 master .plan.md 沿用 `version: 3.1.0` / `deferred_to: 3.1.0`。
-- `release:check-plans`：`version(3.1.0) > current(3.0.0)` 且 `deferred_to === version` → 放行，**不阻 3.0.0 发版**；3.1.0 发版前 todos 须全 completed。
+- **目标窗口 3.2.0**（用户 2026-08-11 改定）：窗口演进轨迹 = 3.0.0（原同窗）→ 3.0.1（07-09 顺延）→ 3.1.0（07-21 改定）→ **3.2.0**。本次顺延让 3.1.0 聚焦复杂能力建设总纲的首批建设；android scope 与优先级不在本次重评。frontmatter `version: 3.2.0` + `deferred_to: 3.2.0`。
+- 本 plan 当前不声明 `parent_goal: complex-capability-construction-75411223`，不计入该总纲进度；后续若要接入，须单独评审它对具体 G 目标的实际贡献。
+- 实施顺序不变：轻量化重构（d4a7c1e8）+ b7e42d19 随 3.0.0 发布件去宿主统一回归，本 plan 基于回归后的稳定契约开工；实施期脚手架出的 master .plan.md 沿用 `version: 3.2.0` / `deferred_to: 3.2.0`。
+- `release:check-plans`：`version(3.2.0) > current(3.0.0)` 且 `deferred_to === version` → 放行，**不阻 3.0.0 发版**；3.2.0 发版前 todos 须全 completed。
 
 ## 前置依赖：轻量化重构先行（用户拍板 2026-07-06）
 
-本 plan 依赖 **framework 轻量化重构**（[.cursor/plans/framework_轻量化重构_分档工作流与验证收敛_d4a7c1e8.plan.md](.cursor/plans/framework_轻量化重构_分档工作流与验证收敛_d4a7c1e8.plan.md)，3.0.0 窗口），**重构先行、本 plan（顺延 3.1.0）基于瘦身后契约开工**。两处衔接：
+本 plan 依赖 **framework 轻量化重构**（[.cursor/plans/framework_轻量化重构_分档工作流与验证收敛_d4a7c1e8.plan.md](.cursor/plans/framework_轻量化重构_分档工作流与验证收敛_d4a7c1e8.plan.md)，3.0.0 窗口），**重构先行、本 plan（顺延 3.2.0）基于瘦身后契约开工**。两处衔接：
 
 1. **profile 资产密度**：C1 的 profile-addendum / `skills/skill-assets.yaml` 等资产按重构 C3 瘦身后契约编写（主干 ≤150 行 + 条件加载 + 主干行数 lint 在场），hmos-app 资产树仅作**能力覆盖面**对照，不作行文密度范本。
 2. **lite track 试点**：C1 验收在 single_tree 全链路 PASS 外，增加一条「虚拟单仓钱包单模块 feature 走 lite track（change→coding→exit）」试点——android 是轻量化路径的第一个真实用户。lite `exit` 复用 profile coding host（compile+lint+diff_within_scope）+ `[unit]` 验收标记触发的条件 UT，即 android 的 coding-host / ut providers 必须在 `change`/`exit` phase 同样可跑。
@@ -70,7 +70,7 @@ flowchart LR
   subgraph today [今天: 单一 projectRoot]
     PR[projectRoot = 技术栈 + 代码来源 + 构建根]
   end
-  subgraph future [3.1.0: 三根分离]
+  subgraph future [3.2.0: 三根分离]
     WR[workspaceRoot<br/>构建/验证/config/reports]
     MR["moduleRoot(m)<br/>workspace 内 = workspaceRoot + path<br/>overlay = 独立 checkout 路径"]
     RR["repoRoot(m)<br/>git 归属: diff/scope/trace/commit"]
@@ -102,7 +102,7 @@ framework 只以**离线发布件**（现有 RELEASE-MANIFEST.json + `framework_
 
 OpenSpec 承载框架自身演进（[AGENTS.md](AGENTS.md) OpenSpec 节）。每个 change 含 `proposal.md` / `design.md` / `tasks.md` / `specs/<capability>/spec.md`，并须过 `npm run openspec:validate`。
 
-- **master plan**: `.cursor/plans/android-工程适配_<hash>.plan.md`（伞形蓝本，version/deferred_to=3.1.0，引用 4 个 change 作为实施清单）
+- **master plan**: `.cursor/plans/android-工程适配_<hash>.plan.md`（伞形蓝本，version/deferred_to=3.2.0，引用 4 个 change 作为实施清单）
 - **C1 `android-app-profile`**（P1，轴A）
 - **C2 `workspace-topology-core`**（轴B 基础设施，C3/C4 共同依赖）
 - **C3 `topology-binary-deps`**（P2a，>50% 工程 + 原 per_repo 场景）
@@ -284,4 +284,4 @@ flowchart TD
 - **out-of-tree 路径归一化**：overlay 仓的 diff 路径需以 module 前缀表达并贯穿 in_scope/受保护前缀判定，harness 夹具先行覆盖（2~3 仓小规模夹具）。
 - `export_strategy` 分叉若处理不当可能回归影响 hmos-app 的 `har_index_export` 检查（profile 层 structure_check）；需保证默认值与既有夹具全绿。
 - 误配守卫（C2）是兜底：任何用户把 maison 指到 submodule 树而未声明拓扑时，宁可 BLOCKER 也不允许 diff 门禁静默全绿。
-- **e6a3c9f4（host-feedback-dx-hardening）尚未提交**：capability-preflight 泛化点、toolchain 分类边界等契约以其收口终态为准；android 开工前（3.1.0）须复核该 plan 落地后的最终形状（本 plan 2026-07-16 对账基于其工作区版本）。
+- **e6a3c9f4（host-feedback-dx-hardening）尚未提交**：capability-preflight 泛化点、toolchain 分类边界等契约以其收口终态为准；android 开工前（3.2.0）须复核该 plan 落地后的最终形状（本 plan 2026-07-16 对账基于其工作区版本）。
