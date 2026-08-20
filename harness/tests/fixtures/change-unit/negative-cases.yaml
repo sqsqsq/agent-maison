@@ -14,3 +14,24 @@ cases:
   - { id: missing-construction-test, surface: projection, mutator: missing-construction-test, expected_issue: change_unit_mapping_file_missing }
   - { id: missing-construction-verification, surface: projection, mutator: missing-construction-verification, expected_issue: change_unit_mapping_file_missing }
   - { id: invented-runtime-chain, surface: projection, mutator: invented-runtime-chain, expected_issue: change_unit_runtime_stable_id_mismatch }
+  - { id: planned-impl-ref-at-ut, surface: projection, mutator: planned-impl-ref-at-ut, expected_issue: change_unit_mapping_planned_ref_not_allowed }
+  - { id: duplicate-predicate-mapping, surface: projection, mutator: duplicate-predicate-mapping, expected_issue: change_unit_predicate_mapping_duplicate }
+  - { id: unknown-predicate-mapping, surface: projection, mutator: unknown-predicate-mapping, expected_issue: change_unit_predicate_mapping_unknown }
+  - { id: incomplete-predicate-mapping, surface: projection, mutator: incomplete-predicate-mapping, expected_issue: change_unit_predicate_mapping_incomplete }
+  - { id: duplicate-provide-mapping, surface: projection, mutator: duplicate-provide-mapping, expected_issue: change_unit_provide_mapping_duplicate }
+  - { id: missing-provide-mapping, surface: projection, mutator: missing-provide-mapping, expected_issue: change_unit_provide_mapping_missing }
+  - { id: incomplete-provide-mapping, surface: projection, mutator: incomplete-provide-mapping, expected_issue: change_unit_provide_mapping_incomplete }
+  - { id: missing-design-mapping, surface: projection, mutator: missing-design-mapping, expected_issue: change_unit_design_mapping_missing }
+  - { id: duplicate-design-mapping, surface: projection, mutator: duplicate-design-mapping, expected_issue: change_unit_design_mapping_duplicate }
+  - { id: unknown-design-mapping, surface: projection, mutator: unknown-design-mapping, expected_issue: change_unit_design_mapping_unknown }
+  - { id: incomplete-design-mapping, surface: projection, mutator: incomplete-design-mapping, expected_issue: change_unit_design_mapping_incomplete }
+  - { id: unresolvable-mutation-publication, surface: projection, mutator: unresolvable-mutation-publication, expected_issue: change_unit_runtime_publication_missing }
+  - { id: publication-chain-open, surface: projection, mutator: publication-chain-open, expected_issue: change_unit_runtime_chain_open }
+  - { id: vertical-role-missing, surface: projection, mutator: vertical-role-missing, expected_issue: change_unit_runtime_vertical_role_missing }
+  - { id: flow-state-mapping-missing, surface: projection, mutator: flow-state-mapping-missing, expected_issue: change_unit_runtime_state_mapping_missing }
+  - { id: owner-contract-missing, surface: projection, mutator: owner-contract-missing, expected_issue: change_unit_runtime_owner_contract_missing }
+  - { id: runtime-fact-mapping-missing, surface: projection, mutator: runtime-fact-mapping-missing, expected_issue: change_unit_runtime_fact_mapping_missing }
+  - { id: propagation-edge-mismatch, surface: projection, mutator: propagation-edge-mismatch, expected_issue: change_unit_runtime_propagation_edge_mismatch }
+  - { id: unknown-projection-field, surface: projection, mutator: unknown-projection-field, expected_issue: change_unit_projection_unknown_field }
+  - { id: feature-identity-mismatch, surface: projection, mutator: feature-identity-mismatch, expected_issue: change_unit_feature_identity_mismatch }
+  - { id: dag-use-case-link-missing, surface: projection, mutator: dag-use-case-link-missing, expected_issue: change_unit_dag_use_case_link_missing }

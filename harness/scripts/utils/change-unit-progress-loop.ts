@@ -1,6 +1,6 @@
-import * as fs from 'fs';
 import * as path from 'path';
 import { featureFilePath } from '../../config';
+import { classifyGoalRunsDir } from './fidelity-shared';
 import { filterAuthoritativeEvents, loadEventsJsonl, resolveEffectiveRunEnd } from './goal-runner-phase';
 import { ChangeUnitArtifact } from './change-unit-model';
 import {
@@ -22,6 +22,17 @@ export type ChangeUnitProgressionAction = 'resume_active' | 'select_one' | 'bloc
 export interface ActiveChangeUnitRun {
   featureId: string;
   runId: string;
+}
+
+export interface CorruptChangeUnitRun {
+  featureId: string;
+  runId: string;
+  reason: string;
+}
+
+export interface ChangeUnitRunsInspection {
+  active: ActiveChangeUnitRun[];
+  corrupt: CorruptChangeUnitRun[];
 }
 
 export interface ChangeUnitProgressionDecision {
@@ -52,7 +63,7 @@ export type ChangeUnitGoalCaller = (handoff: ChangeUnitGoalHandoff) => Promise<C
 
 export interface ChangeUnitProgressLoopOptions {
   ready?: DeriveChangeUnitReadySetOptions;
-  inspectActiveRuns?: (projectRoot: string, units: ChangeUnitArtifact[]) => ActiveChangeUnitRun[];
+  inspectActiveRuns?: (projectRoot: string, units: ChangeUnitArtifact[]) => ChangeUnitRunsInspection;
   caller: ChangeUnitGoalCaller;
   buildHandoff?: (projectRoot: string, unit: ChangeUnitArtifact) => ChangeUnitGoalHandoff;
   maxUnits?: number;
@@ -61,17 +72,15 @@ export interface ChangeUnitProgressLoopOptions {
 export function inspectActiveChangeUnitRuns(
   projectRoot: string,
   units: ChangeUnitArtifact[],
-): ActiveChangeUnitRun[] {
+): ChangeUnitRunsInspection {
   const active: ActiveChangeUnitRun[] = [];
+  const corrupt: CorruptChangeUnitRun[] = [];
   for (const unit of units) {
     const featureId = deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id);
     const runsDir = featureFilePath(projectRoot, featureId, 'goal-runs');
-    if (!fs.existsSync(runsDir)) continue;
-    const runIds = fs.readdirSync(runsDir, { withFileTypes: true })
-      .filter(entry => entry.isDirectory() && !entry.name.startsWith('.'))
-      .map(entry => entry.name)
-      .sort();
-    for (const runId of runIds.reverse()) {
+    const classified = classifyGoalRunsDir(runsDir);
+    for (const item of classified.corruptRuns) corrupt.push({ featureId, runId: item.runId, reason: item.reason });
+    for (const runId of [...classified.runs].reverse()) {
       const events = filterAuthoritativeEvents(loadEventsJsonl(path.join(runsDir, runId, 'events.jsonl')));
       if (events.length > 0 && !resolveEffectiveRunEnd(events)) {
         active.push({ featureId, runId });
@@ -79,13 +88,22 @@ export function inspectActiveChangeUnitRuns(
       }
     }
   }
-  return active;
+  return { active, corrupt };
 }
 
 export function deriveChangeUnitProgressionDecision(
   readySet: ChangeUnitReadySet,
-  activeRuns: ActiveChangeUnitRun[],
+  inspection: ChangeUnitRunsInspection,
 ): ChangeUnitProgressionDecision {
+  if (inspection.corrupt.length > 0) {
+    return {
+      action: 'blocked',
+      reasons: inspection.corrupt.map(item =>
+        `${item.featureId}: goal-run ${item.runId} 损坏：${item.reason}——人工核查该目录（恢复 manifest 或确认废弃）后重验`),
+      readySet,
+    };
+  }
+  const activeRuns = inspection.active;
   if (activeRuns.length > 0) {
     return { action: 'resume_active', activeRun: activeRuns[0], reasons: ['已有 Goal Mode run 未终局。'], readySet };
   }
@@ -135,8 +153,8 @@ export async function runChangeUnitProgression(
   while (true) {
     const readySet = deriveChangeUnitReadySet(projectRoot, componentId, options.ready);
     const units = readySet.units.map(item => item.changeUnit);
-    const activeRuns = (options.inspectActiveRuns ?? inspectActiveChangeUnitRuns)(projectRoot, units);
-    const decision = deriveChangeUnitProgressionDecision(readySet, activeRuns);
+    const inspection = (options.inspectActiveRuns ?? inspectActiveChangeUnitRuns)(projectRoot, units);
+    const decision = deriveChangeUnitProgressionDecision(readySet, inspection);
     if (decision.action !== 'select_one' || !decision.selected || invoked >= maxUnits) return decision;
     const result = await options.caller((options.buildHandoff ?? buildChangeUnitGoalHandoff)(projectRoot, decision.selected));
     invoked++;

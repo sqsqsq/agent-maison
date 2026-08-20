@@ -36,6 +36,7 @@ import { selectNextChangeUnit } from '../../scripts/utils/change-unit-selection'
 import {
   ChangeUnitGoalHandoff,
   deriveChangeUnitProgressionDecision,
+  inspectActiveChangeUnitRuns,
   runChangeUnitProgression,
 } from '../../scripts/utils/change-unit-progress-loop';
 import {
@@ -633,6 +634,53 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     });
   }));
 
+  results.push(test('corrupt goal run (started but manifest destroyed) is INVALID with forensic reason, never ABSENT', () => {
+    withTempProject(projectRoot => {
+      const fixture = projectionContracts(projectRoot);
+      bindFeatureContracts(projectRoot, fixture.feature, fixture.contracts);
+      const runDir = path.join(featureDir(projectRoot, fixture.feature), 'goal-runs', '20260820T000000Z-c0ffee');
+      fs.mkdirSync(runDir, { recursive: true });
+      fs.writeFileSync(path.join(runDir, 'events.jsonl'), `${JSON.stringify({ ts: '2026-08-20T00:00:00Z', type: 'run_start' })}\n`, 'utf8');
+      const observation = observeChangeUnitCompletion(projectRoot, asChangeUnitArtifact(loadCanonicalChangeUnit(projectRoot, 'ledger', 'ledger-refresh').changeUnit));
+      assert(observation.state === 'INVALID', `corrupt run 被折叠为 ${observation.state}`);
+      assert(observation.reasons.some(reason => reason.includes('20260820T000000Z-c0ffee') && reason.includes('损坏')), `corrupt 法证文案缺失：${observation.reasons.join(';')}`);
+    });
+  }));
+
+  results.push(test('progress loop inspection routes corrupt run to blocked and ignores bootstrap-only residue', () => {
+    withTempProject(projectRoot => {
+      const unit = asChangeUnitArtifact(loadCanonicalChangeUnit(projectRoot, 'ledger', 'ledger-refresh').changeUnit);
+      const feature = deriveChangeUnitFeatureId('ledger', 'ledger-refresh');
+      const runsDir = path.join(featureDir(projectRoot, feature), 'goal-runs');
+      const bootstrapDir = path.join(runsDir, '20260820T000001Z-b00t');
+      fs.mkdirSync(bootstrapDir, { recursive: true });
+      fs.writeFileSync(path.join(bootstrapDir, 'detach.log'), 'bootstrap only\n', 'utf8');
+      let inspection = inspectActiveChangeUnitRuns(projectRoot, [unit]);
+      assert(inspection.active.length === 0 && inspection.corrupt.length === 0, 'bootstrap-only 残留被误判 active/corrupt');
+      const corruptDir = path.join(runsDir, '20260820T000002Z-dead');
+      fs.mkdirSync(corruptDir, { recursive: true });
+      fs.writeFileSync(path.join(corruptDir, 'events.jsonl'), `${JSON.stringify({ ts: '2026-08-20T00:00:00Z', type: 'run_start' })}\n`, 'utf8');
+      inspection = inspectActiveChangeUnitRuns(projectRoot, [unit]);
+      assert(inspection.corrupt.length === 1 && inspection.corrupt[0].runId === '20260820T000002Z-dead', `corrupt run 未被巡检点名：${JSON.stringify(inspection)}`);
+      const state = new Map([[feature, 'ABSENT' as ChangeUnitCompletionState]]);
+      const ready = deriveChangeUnitReadySet(projectRoot, 'ledger', { units: [unit], completion: completionAdapter(state) });
+      const decision = deriveChangeUnitProgressionDecision(ready, inspection);
+      assert(decision.action === 'blocked', `corrupt run 未阻断推进：${decision.action}`);
+      assert(decision.reasons.some(reason => reason.includes('20260820T000002Z-dead') && reason.includes('人工核查该目录')), `blocked 未透传法证文案：${decision.reasons.join(';')}`);
+    });
+    // 隔离断言：readySet 干净（本会 select_one），blocked 只能来自决策级 corrupt 分支——
+    // 防止 completion 侧 corrupt→INVALID 的纵深防御掩护本分支被删。
+    const cleanUnits = progressionUnits().slice(0, 1);
+    const cleanState = new Map(cleanUnits.map(item => [deriveChangeUnitFeatureId(item.component_id, item.change_unit_id), 'ABSENT' as ChangeUnitCompletionState]));
+    const cleanReady = deriveChangeUnitReadySet(VALID_PROJECT, 'ledger', { units: cleanUnits, completion: completionAdapter(cleanState) });
+    assert(cleanReady.ready.length === 1, '隔离前提不成立：干净 readySet 本应恰有一个 ready 候选');
+    const isolated = deriveChangeUnitProgressionDecision(cleanReady, {
+      active: [],
+      corrupt: [{ featureId: 'isolated-feature', runId: 'run-isolated', reason: '目录已有 events/progress/phases 证据但 manifest.json 缺失——曾启动的 run 被破坏' }],
+    });
+    assert(isolated.action === 'blocked' && isolated.reasons.some(reason => reason.includes('run-isolated') && reason.includes('人工核查该目录')), `决策级 corrupt 分支未独立生效：${isolated.action}:${isolated.reasons.join(';')}`);
+  }));
+
   results.push(test('STALE completion re-enters ready only after current design and Feature mapping revalidate', () => {
     withTempProject(projectRoot => {
       const fixture = projectionContracts(projectRoot);
@@ -817,7 +865,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     const calls: string[] = [];
     const result = await runChangeUnitProgression(VALID_PROJECT, 'ledger', {
       ready: { units, completion: completionAdapter(state) },
-      inspectActiveRuns: () => [],
+      inspectActiveRuns: () => ({ active: [], corrupt: [] }),
       buildHandoff: (_root, unit): ChangeUnitGoalHandoff => ({
         featureId: deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id),
         canonicalPath: `fixture:${unit.change_unit_id}`,
@@ -841,7 +889,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     let calls = 0;
     const result = await runChangeUnitProgression(VALID_PROJECT, 'ledger', {
       ready: { units, completion: completionAdapter(state) },
-      inspectActiveRuns: () => [],
+      inspectActiveRuns: () => ({ active: [], corrupt: [] }),
       buildHandoff: (_root, unit) => ({
         featureId: deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id), canonicalPath: 'fixture',
         changeUnitRef: { artifact: 'change-unit@1', component_id: unit.component_id, change_unit_id: unit.change_unit_id, revision: 1, artifact_sha256: `sha256:${'a'.repeat(64)}` },
@@ -858,7 +906,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     const state = new Map(units.map(unit => [deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id), 'ABSENT' as ChangeUnitCompletionState]));
     let calls = 0;
     const result = await runChangeUnitProgression(VALID_PROJECT, 'ledger', {
-      ready: { units, completion: completionAdapter(state) }, inspectActiveRuns: () => [],
+      ready: { units, completion: completionAdapter(state) }, inspectActiveRuns: () => ({ active: [], corrupt: [] }),
       buildHandoff: (_root, unit) => ({
         featureId: deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id), canonicalPath: 'fixture',
         changeUnitRef: { artifact: 'change-unit@1', component_id: unit.component_id, change_unit_id: unit.change_unit_id, revision: 1, artifact_sha256: `sha256:${'a'.repeat(64)}` },
@@ -868,7 +916,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     });
     assert(calls === 1 && result.action === 'resume_active', 'pause 后启动了第二 CU');
     const ready = deriveChangeUnitReadySet(VALID_PROJECT, 'ledger', { units, completion: completionAdapter(state) });
-    assert(deriveChangeUnitProgressionDecision(ready, [{ featureId: 'active', runId: 'run-active' }]).action === 'resume_active', 'active run 未优先恢复');
+    assert(deriveChangeUnitProgressionDecision(ready, { active: [{ featureId: 'active', runId: 'run-active' }], corrupt: [] }).action === 'resume_active', 'active run 未优先恢复');
   }));
 
   asynchronous.push(asyncTest('failure and awaiting-human both stop before a second CU', async () => {
@@ -877,7 +925,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       const state = new Map(units.map(unit => [deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id), 'ABSENT' as ChangeUnitCompletionState]));
       let calls = 0;
       const result = await runChangeUnitProgression(VALID_PROJECT, 'ledger', {
-        ready: { units, completion: completionAdapter(state) }, inspectActiveRuns: () => [],
+        ready: { units, completion: completionAdapter(state) }, inspectActiveRuns: () => ({ active: [], corrupt: [] }),
         buildHandoff: (_root, unit) => ({
           featureId: deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id), canonicalPath: 'fixture',
           changeUnitRef: { artifact: 'change-unit@1', component_id: unit.component_id, change_unit_id: unit.change_unit_id, revision: 1, artifact_sha256: `sha256:${'a'.repeat(64)}` },
@@ -945,8 +993,14 @@ export async function runAll(): Promise<UnitCaseResult[]> {
         expectIssue(result.issues.map(item => item.id), fixtureCase.expected_issue);
         return;
       }
-      withTempProject(projectRoot => {
+      withTempProject((projectRoot, cuPath) => {
+        if (fixtureCase.mutator === 'vertical-role-missing') {
+          const cu = YAML.parse(fs.readFileSync(cuPath, 'utf8')) as ChangeUnitRecord;
+          cu.target_predicates = (cu.target_predicates as ChangeUnitRecord[]).filter(item => item.role !== 'recovery');
+          fs.writeFileSync(cuPath, YAML.stringify(cu), 'utf8');
+        }
         const fixture = projectionContracts(projectRoot);
+        let featureName = fixture.feature;
         let useCasesPresent = true;
         let phase: 'plan' | 'ut' = 'plan';
         let dags = fixture.dags;
@@ -985,8 +1039,57 @@ export async function runAll(): Promise<UnitCaseResult[]> {
           }];
           state.consumers = [{ consumer_id: 'invented', initial_load_ref: 'initial-load:invented', update_ref: 'publication:invented' }];
         }
+        if (fixtureCase.mutator === 'planned-impl-ref-at-ut') {
+          fixture.contracts.change_unit!.predicate_mappings[0].implementation_refs = ['planned:src/ledger/Planned.ets'];
+          phase = 'ut';
+        }
+        if (fixtureCase.mutator === 'duplicate-predicate-mapping') {
+          fixture.contracts.change_unit!.predicate_mappings.push(clone(fixture.contracts.change_unit!.predicate_mappings[0]));
+        }
+        if (fixtureCase.mutator === 'unknown-predicate-mapping') {
+          fixture.contracts.change_unit!.predicate_mappings.push({
+            predicate_id: 'not-real', implementation_refs: ['src/ledger/LedgerFeature.ets'], test_refs: ['test/ledger/LedgerFeature.test.ets'],
+          });
+        }
+        if (fixtureCase.mutator === 'incomplete-predicate-mapping') fixture.contracts.change_unit!.predicate_mappings[0].test_refs = [];
+        if (fixtureCase.mutator === 'duplicate-provide-mapping') {
+          fixture.contracts.change_unit!.provide_mappings.push(clone(fixture.contracts.change_unit!.provide_mappings[0]));
+        }
+        if (fixtureCase.mutator === 'missing-provide-mapping') fixture.contracts.change_unit!.provide_mappings = [];
+        if (fixtureCase.mutator === 'incomplete-provide-mapping') fixture.contracts.change_unit!.provide_mappings[0].implementation_refs = [];
+        if (fixtureCase.mutator === 'missing-design-mapping') {
+          fixture.contracts.change_unit!.design_ref_mappings = fixture.contracts.change_unit!.design_ref_mappings.slice(1);
+        }
+        if (fixtureCase.mutator === 'duplicate-design-mapping') {
+          fixture.contracts.change_unit!.design_ref_mappings.push(clone(fixture.contracts.change_unit!.design_ref_mappings[0]));
+        }
+        if (fixtureCase.mutator === 'unknown-design-mapping') {
+          const foreign = clone(fixture.contracts.change_unit!.design_ref_mappings[0]);
+          (foreign.design_ref as unknown as ChangeUnitRecord & { target: { id: string } }).target.id = 'not-real-address';
+          fixture.contracts.change_unit!.design_ref_mappings.push(foreign);
+        }
+        if (fixtureCase.mutator === 'incomplete-design-mapping') fixture.contracts.change_unit!.design_ref_mappings[0].verification_refs = [];
+        if (fixtureCase.mutator === 'unresolvable-mutation-publication') {
+          fixture.contracts.state_management![0].mutations![0].publication_ref = 'publication:not-declared';
+        }
+        if (fixtureCase.mutator === 'publication-chain-open') {
+          const state = fixture.contracts.state_management![0];
+          delete state.consumers![0].update_ref;
+          delete state.subscriptions![0].publication_ref;
+        }
+        if (fixtureCase.mutator === 'flow-state-mapping-missing') fixture.contracts.state_management = [];
+        if (fixtureCase.mutator === 'owner-contract-missing') delete fixture.contracts.state_management![0].owner_ref;
+        if (fixtureCase.mutator === 'runtime-fact-mapping-missing') fixture.contracts.state_management![0].mutations = [];
+        if (fixtureCase.mutator === 'propagation-edge-mismatch') {
+          fixture.contracts.state_management![0].subscriptions![0].publication_ref = 'publication:stale-alias';
+        }
+        if (fixtureCase.mutator === 'unknown-projection-field') {
+          (fixture.contracts.change_unit as unknown as ChangeUnitRecord).surplus_field = true;
+        }
+        if (fixtureCase.mutator === 'feature-identity-mismatch') featureName = 'cu-not-the-derived-identity';
+        if (fixtureCase.mutator === 'dag-use-case-link-missing') dags = [{ dag: { branches: [] } }];
         bindFeatureContracts(projectRoot, fixture.feature, fixture.contracts, useCasesPresent);
-        const result = validateChangeUnitFeatureProjection(projectRoot, fixture.feature, fixture.contracts, fixture.acceptance, useCasesPresent, phase, dags);
+        const result = validateChangeUnitFeatureProjection(projectRoot, featureName, fixture.contracts, fixture.acceptance, useCasesPresent, phase, dags);
         expectIssue(result.issues.map(item => item.id), fixtureCase.expected_issue);
       });
     }));

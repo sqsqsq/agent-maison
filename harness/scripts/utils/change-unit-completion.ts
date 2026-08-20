@@ -76,6 +76,17 @@ export function observeChangeUnitCompletion(
   const projectionExists = options.projectionExists
     ?? ((root: string, feature: string) => fs.existsSync(featureFilePath(root, feature, 'feature-completion.json')));
   if (!projectionExists(projectRoot, featureId)) {
+    // 曾启动却缺 manifest 的 corrupt run 在场 → fail-closed（与 verify-feature-completion
+    // goal_run_identity_intact 同一文案契约），不得折叠为 ABSENT 后静默重开新 run。
+    const corruptRuns = classifyGoalRunsDir(featureFilePath(projectRoot, featureId, 'goal-runs')).corruptRuns;
+    if (corruptRuns.length > 0) {
+      return {
+        state: 'INVALID',
+        featureId,
+        reasons: corruptRuns.map(item =>
+          `goal-run ${item.runId} 损坏：${item.reason}——人工核查该目录（恢复 manifest 或确认废弃）后重验`),
+      };
+    }
     const successfulTerminalRunExists = options.successfulTerminalRunExists
       ?? hasSuccessfulTerminalChangeUnitRun;
     if (successfulTerminalRunExists(projectRoot, featureId)) {
