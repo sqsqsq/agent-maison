@@ -391,6 +391,81 @@ export function runAll(): UnitCaseResult[] {
     });
   }));
 
+  results.push(test('every authored closure field diverging from recomputation is caught, and stale input fingerprint cannot pass', () => {
+    withProject(projectRoot => {
+      const expected = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions()).closure;
+      const fieldBreaks: Array<{ issue: string; tamper: (closure: ComponentClosureArtifact) => void }> = [
+        {
+          issue: 'component_closure_blueprint_binding_mismatch',
+          tamper: closure => { closure.component_blueprint_ref = { ...closure.component_blueprint_ref, revision: Number(closure.component_blueprint_ref.revision) + 1 }; },
+        },
+        { issue: 'component_closure_input_manifest_mismatch', tamper: closure => { closure.inputs = { ...closure.inputs, change_units: [] }; } },
+        { issue: 'component_closure_provider_observation_mismatch', tamper: closure => { closure.provider_observations = []; } },
+        { issue: 'component_closure_coverage_mismatch', tamper: closure => { closure.coverage_rows = closure.coverage_rows.slice(1); } },
+        { issue: 'component_closure_knowledge_mismatch', tamper: closure => { closure.knowledge_writeback_refs = []; } },
+        { issue: 'component_closure_degradation_mismatch', tamper: closure => { closure.degradations = []; } },
+        {
+          issue: 'component_closure_gap_mismatch',
+          tamper: closure => {
+            closure.gaps = [...closure.gaps, {
+              gap_id: 'authored-fake-gap',
+              classification: 'incomplete',
+              obligation_refs: ['obligation:authored'],
+              source_refs: [],
+              owner: 'nobody',
+              needed_by: 'component-closure',
+              reason: 'authored by hand',
+              unlock_condition: 'never',
+            } as unknown as ComponentClosureArtifact['gaps'][number]];
+          },
+        },
+        { issue: 'component_closure_verdict_mismatch', tamper: closure => { closure.verdict = 'PASS'; } },
+      ];
+      for (const fieldBreak of fieldBreaks) {
+        const tampered = clone(expected);
+        fieldBreak.tamper(tampered);
+        expectIssue(validateComponentClosure(tampered, projectRoot, 'ledger', evaluationOptions()).issues, fieldBreak.issue);
+      }
+      const stale = clone(expected);
+      stale.input_fingerprint = `sha256:${'0'.repeat(64)}`;
+      expectIssue(validateComponentClosure(stale, projectRoot, 'ledger', evaluationOptions()).issues, 'component_closure_input_fingerprint_stale');
+    });
+  }));
+
+  results.push(test('current blueprint design decision without any CU or combination owner fails cross-view closure', () => {
+    withProject(projectRoot => {
+      const evaluated = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions());
+      expectIssue(evaluated.issues, 'component_closure_design_unconsumed');
+      assert(evaluated.closure.verdict === 'FAIL', '无 owner 的蓝图设计决策未使 closure 失败');
+    }, blueprint => {
+      const decisionsAndGaps = asRecord(blueprint.decisions_and_gaps)!;
+      const decisions = asRecords(decisionsAndGaps.decisions);
+      const authority = decisions.find(item => item.decision_id === 'seam-shape')!;
+      decisionsAndGaps.decisions = [...decisions, {
+        ...clone(authority),
+        decision_id: 'unconsumed-structural-decision',
+        kind: 'structural',
+        status: 'decided_with_authority',
+      }];
+    });
+  }));
+
+  results.push(test('CU design address outside current closure obligations fails as design bypass', () => {
+    withProject(projectRoot => {
+      const cuFile = path.join(projectRoot, 'blueprint', 'component', 'ledger', 'change-units', 'ledger-refresh.yaml');
+      const cu = YAML.parse(fs.readFileSync(cuFile, 'utf8')) as BlueprintRecord;
+      const blueprint = YAML.parse(fs.readFileSync(componentBlueprintPath(projectRoot, 'ledger'), 'utf8')) as BlueprintRecord;
+      const bypassRef = clone(asRecords(cu.design_refs)[0]);
+      bypassRef.target = { kind: 'blueprint', id: String(blueprint.blueprint_id) };
+      cu.design_refs = [...asRecords(cu.design_refs), bypassRef];
+      fs.writeFileSync(cuFile, YAML.stringify(cu), 'utf8');
+      prepareCompleteProject(projectRoot);
+      const evaluated = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions());
+      expectIssue(evaluated.issues, 'component_closure_design_bypass');
+      assert(evaluated.closure.verdict === 'FAIL', '绕过 obligation 粒度的设计地址未使 closure 失败');
+    });
+  }));
+
   results.push(test('Provider cannot cover rows with an unrequested same-feature or completion-like observation', () => {
     withProject(projectRoot => {
       const options = evaluationOptions();

@@ -18,7 +18,10 @@ export function validateComponentClosureCrossView(
       ));
     }
   }
-  const blueprintAddresses = new Set(rows.flatMap(row => row.blueprint_refs));
+  // 地址全集只取蓝图派生义务：CU touch 与 Feature mapping 义务的 blueprint_refs 是
+  // CU/Feature 自身的回声，计入即允许"CU 引用蓝图外地址 + contracts 同步映射"自我洗白。
+  const selfDerivedKinds = new Set(['construction_touch', 'feature_construction_mapping', 'feature_runtime_construction']);
+  const blueprintAddresses = new Set(rows.filter(row => !selfDerivedKinds.has(row.kind)).flatMap(row => row.blueprint_refs));
   for (const unit of inputs.currentUnits) {
     for (const ref of unit.changeUnit.design_refs) {
       const address = ref.target.kind === 'node' || ref.target.kind === 'flow'

@@ -11,3 +11,15 @@ cases:
   - id: host-seam-enters-maison-namespace
     mutator: move-evolution-to-maison-namespace
     expected_issue: blueprint_host_seam_namespace_violation
+  - id: human-decision-outside-enum
+    mutator: evolution-human-decision-unknown
+    expected_issue: blueprint_evolution_human_decision_invalid
+  - id: establish-seam-missing-proof
+    mutator: establish-seam-missing-proof
+    expected_issue: blueprint_evolution_closure_proofs_incomplete
+  - id: establish-seam-aliased-proofs
+    mutator: establish-seam-aliased-proofs
+    expected_issue: blueprint_evolution_closure_proofs_aliased
+  - id: establish-seam-proof-outside-tests
+    mutator: establish-seam-proof-outside-tests
+    expected_issue: blueprint_evolution_closure_proof_not_tested

@@ -56,3 +56,21 @@ cases:
   - id: authority-contract-source-must-exist
     mutator: contract-authority-source-missing
     expected_issue: blueprint_contract_authority_source_unavailable
+  - id: current-scope-item-duplicate
+    mutator: duplicate-current-scope-item
+    expected_issue: blueprint_current_scope_item_duplicate
+  - id: current-scope-provenance-mismatch
+    mutator: current-scope-provenance-mismatch
+    expected_issue: blueprint_current_scope_provenance_mismatch
+  - id: traceability-mapping-duplicate
+    mutator: duplicate-traceability-mapping
+    expected_issue: blueprint_requirement_traceability_duplicate
+  - id: traceability-mapping-extra
+    mutator: traceability-extra-item
+    expected_issue: blueprint_requirement_traceability_extra
+  - id: traceability-refs-empty
+    mutator: traceability-empty-refs
+    expected_issue: blueprint_requirement_traceability_empty
+  - id: traceability-ref-dangling
+    mutator: traceability-dangling-ref
+    expected_issue: blueprint_requirement_traceability_dangling

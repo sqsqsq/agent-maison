@@ -77,6 +77,8 @@ function mutate(blueprint: BlueprintRecord, mutator: string): void {
   const evolutionDecision = asRecords(asRecord(blueprint.decisions_and_gaps)?.decisions)
     .find(item => item.kind === 'evolution_candidate')!;
   const derivedResult = asRecords(blueprint.derived_results)[0];
+  const scopeItems = asRecords(asRecord(asRecord(blueprint.discovery)?.inputs)?.current_scope_items);
+  const traceMappings = asRecords(asRecord(blueprint.discovery)?.requirement_traceability);
   switch (mutator) {
     case 'yaml-component-id': blueprint.component_id = 'other-component'; break;
     case 'remove-logical-view': blueprint.design_views = asRecords(blueprint.design_views).filter(view => view.view_id !== 'logical'); break;
@@ -196,6 +198,52 @@ function mutate(blueprint: BlueprintRecord, mutator: string): void {
     case 'remove-evolution-impact': delete evolutionDecision.impact; break;
     case 'remove-evolution-reextract-condition': delete evolutionDecision.reextract_condition; break;
     case 'move-evolution-to-maison-namespace': evolutionDecision.namespace = 'goal_requires'; break;
+    case 'evolution-human-decision-unknown': evolutionDecision.human_decision = 'defer_to_next_release'; break;
+    case 'duplicate-current-scope-item':
+      asRecord(asRecord(blueprint.discovery)!.inputs)!.current_scope_items = [...scopeItems, clone(scopeItems[0])];
+      break;
+    case 'current-scope-provenance-mismatch': asRecord(scopeItems[0].provenance)!.source_ref = 'requirements/other.md#REQ-OTHER'; break;
+    case 'duplicate-traceability-mapping':
+      asRecord(blueprint.discovery)!.requirement_traceability = [...traceMappings, clone(traceMappings[0])];
+      break;
+    case 'traceability-extra-item':
+      asRecord(blueprint.discovery)!.requirement_traceability = [
+        ...traceMappings,
+        { item_id: 'not-a-current-scope-item', blueprint_refs: ['view:runtime/flow:ledger-refresh-flow'] },
+      ];
+      break;
+    case 'traceability-empty-refs': traceMappings[0].blueprint_refs = []; break;
+    case 'traceability-dangling-ref': traceMappings[0].blueprint_refs = ['view:logical/node:not-real']; break;
+    case 'establish-seam-missing-proof': {
+      evolutionDecision.human_decision = 'establish_seam';
+      evolutionDecision.closure_proofs = {
+        contract_compatibility: 'test/ledger/closure.test.ts#proveSeamContractCompatibility',
+        provider_replacement: 'test/ledger/closure.test.ts#proveSeamProviderReplacement',
+        absence_failure: 'test/ledger/closure.test.ts#proveSeamAbsenceFailure',
+      };
+      evolutionDecision.tests = Object.values(evolutionDecision.closure_proofs as Record<string, string>);
+      break;
+    }
+    case 'establish-seam-aliased-proofs': {
+      const aliased = 'test/ledger/closure.test.ts#proveSeamContractCompatibility';
+      evolutionDecision.human_decision = 'establish_seam';
+      evolutionDecision.closure_proofs = {
+        contract_compatibility: aliased, provider_replacement: aliased, absence_failure: aliased, consumer_no_bypass: aliased,
+      };
+      evolutionDecision.tests = [aliased];
+      break;
+    }
+    case 'establish-seam-proof-outside-tests': {
+      evolutionDecision.human_decision = 'establish_seam';
+      evolutionDecision.closure_proofs = {
+        contract_compatibility: 'test/ledger/closure.test.ts#proveSeamContractCompatibility',
+        provider_replacement: 'test/ledger/closure.test.ts#proveSeamProviderReplacement',
+        absence_failure: 'test/ledger/closure.test.ts#proveSeamAbsenceFailure',
+        consumer_no_bypass: 'test/ledger/closure.test.ts#proveSeamConsumerNoBypass',
+      };
+      evolutionDecision.tests = Object.values(evolutionDecision.closure_proofs as Record<string, string>).slice(0, 3);
+      break;
+    }
     case 'keep-mismatched-derived-current': derivedResult.input_revision = 1; derivedResult.status = 'current'; break;
     case 'stale-derived-without-superseding': derivedResult.status = 'stale'; delete derivedResult.superseded_by_revision; break;
     case 'remove-derived-result-id': delete derivedResult.result_id; break;
@@ -372,6 +420,14 @@ export function runAll(): UnitCaseResult[] {
     const scopes = requiredQuestioningScopes(validBlueprint());
     assert(scopes.has('view:logical') && scopes.has('view:runtime') && scopes.has('view:development') && scopes.has('view:scenarios'), '适用视图必须进入质询范围');
     assert(!scopes.has('view:deployment'), 'not_applicable deployment 不应成为强制质询 scope');
+  }));
+
+  results.push(test('current-scope source validation without projectRoot context fails closed', () => {
+    const issues = validateComponentBlueprint(validBlueprint(), { canonicalPath: VALID_PATH });
+    assert(
+      issues.some(item => item.id === 'blueprint_current_scope_source_context_missing'),
+      `缺 projectRoot 上下文未 fail-closed：${issues.map(item => item.id).join(', ')}`,
+    );
   }));
 
   for (const fixtureFile of [
