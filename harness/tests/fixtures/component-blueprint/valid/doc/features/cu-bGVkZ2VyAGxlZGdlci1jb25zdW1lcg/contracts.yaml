@@ -13,7 +13,7 @@ change_unit:
     component_id: ledger
     change_unit_id: ledger-consumer
     revision: 1
-    artifact_sha256: sha256:aaf093f9d92ab808ddff48477b5c390ba0b2aa4ccd49a3e79d521984ed6df3b9
+    artifact_sha256: sha256:44580795a99c6e5c90087bd7aa740e7b8d719d5f2fbd0253b08bb2f780137ea8
   predicate_mappings: []
   provide_mappings: []
   design_ref_mappings: []

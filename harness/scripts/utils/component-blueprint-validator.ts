@@ -21,7 +21,8 @@ import { validateGeneratedBlueprintGraphs } from './blueprint-graph-generator';
 import { validateBlueprintReconciliation } from './blueprint-reconciliation';
 import { validateEvolutionDecisions } from './blueprint-evolution-decisions';
 import { validateBlueprintProviders } from './blueprint-provider-boundary';
-import { fingerprintDiscoveryFacts } from './blueprint-discovery';
+import { fingerprintDiscoverySources } from './blueprint-discovery';
+import { currentScopeItems, validateRequirementTraceability } from './blueprint-requirement-traceability';
 
 export interface ComponentBlueprintValidationContext {
   projectRoot?: string;
@@ -51,7 +52,7 @@ export function validateComponentBlueprint(
     out.push(issue('blueprint_address_duplicate', '$', (error as Error).message));
   }
   const discovery = asRecord(blueprint.discovery);
-  const computedSourceFingerprint = fingerprintDiscoveryFacts(asRecords(discovery?.facts));
+  const computedSourceFingerprint = fingerprintDiscoverySources(asRecords(discovery?.facts), currentScopeItems(blueprint));
   if (discovery?.source_fingerprint !== computedSourceFingerprint || blueprint.source_fingerprint !== computedSourceFingerprint) {
     out.push(issue(
       'blueprint_source_fingerprint_mismatch',
@@ -61,6 +62,7 @@ export function validateComponentBlueprint(
   }
   const upstream = [
     ...validateBlueprintProvenance(blueprint),
+    ...validateRequirementTraceability(blueprint, context.projectRoot),
     ...validateBlueprintViews(blueprint),
     ...validateBlueprintContracts(blueprint, { projectRoot: context.projectRoot }),
     ...validateRuntimeDataFlows(blueprint),

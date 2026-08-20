@@ -427,6 +427,7 @@ export function validateChangeUnitFeatureProjection(
   useCasesPresent: boolean,
   phase: ProjectionPhase,
   dags: DagProjectionLike[] = [],
+  options: { changeUnitOverride?: ChangeUnitArtifact } = {},
 ): ChangeUnitProjectionResult {
   const section = asRecord(contracts?.change_unit);
   if (!section) return { applicable: false, issues: [], useCasesRequired: false, dagRequired: false };
@@ -439,14 +440,16 @@ export function validateChangeUnitFeatureProjection(
       issues.push(issue('change_unit_parallel_runtime_authority', `contracts.${forbidden} 不得成为第二运行时/派生义务真源。`));
     }
   }
-  let cu: ChangeUnitArtifact | undefined;
-  try {
-    const loaded = resolveChangeUnitRef(projectRoot, section.change_unit_ref);
-    cu = asChangeUnitArtifact(loaded.changeUnit);
-  } catch (error) {
-    const code = error instanceof ChangeUnitResolutionError ? error.code : 'change_unit_ref_unresolvable';
-    issues.push(issue(code, (error as Error).message, code.includes('blueprint') ? 'reconcile_blueprint' : 'repair_feature_mapping'));
-    return { applicable: true, issues, useCasesRequired: false, dagRequired: false };
+  let cu: ChangeUnitArtifact | undefined = options.changeUnitOverride;
+  if (!cu) {
+    try {
+      const loaded = resolveChangeUnitRef(projectRoot, section.change_unit_ref);
+      cu = asChangeUnitArtifact(loaded.changeUnit);
+    } catch (error) {
+      const code = error instanceof ChangeUnitResolutionError ? error.code : 'change_unit_ref_unresolvable';
+      issues.push(issue(code, (error as Error).message, code.includes('blueprint') ? 'reconcile_blueprint' : 'repair_feature_mapping'));
+      return { applicable: true, issues, useCasesRequired: false, dagRequired: false };
+    }
   }
   const expectedFeature = deriveChangeUnitFeatureId(cu.component_id, cu.change_unit_id);
   if (feature !== expectedFeature) {

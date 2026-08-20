@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { featureDir } from '../../config';
-import { BlueprintRecord, ComponentBlueprintRef } from '../../scripts/utils/component-blueprint-model';
+import { BlueprintRecord, ComponentBlueprintRef, asRecord } from '../../scripts/utils/component-blueprint-model';
 import { resolveComponentBlueprintRef } from '../../scripts/utils/component-blueprint-path';
 import { checkCanonicalChangeUnit } from '../../scripts/check-change-unit';
 import {
@@ -580,7 +580,23 @@ export async function runAll(): Promise<UnitCaseResult[]> {
 
   results.push(test('first host evolution seam rejects an empty provider abstraction', () => {
     withTempProject((projectRoot, cuPath) => {
+      const blueprintPath = path.join(projectRoot, 'blueprint', 'component', 'ledger', 'component-blueprint.yaml');
+      const blueprint = YAML.parse(fs.readFileSync(blueprintPath, 'utf8')) as BlueprintRecord;
+      const decision = (asRecord(blueprint.decisions_and_gaps)!.decisions as BlueprintRecord[])
+        .find(item => item.decision_id === 'seam-shape')!;
+      decision.human_decision = 'establish_seam';
+      decision.closure_proofs = {
+        contract_compatibility: 'test/ledger/closure.test.ts#proveSeamContractCompatibility',
+        provider_replacement: 'test/ledger/closure.test.ts#proveSeamProviderReplacement',
+        absence_failure: 'test/ledger/closure.test.ts#proveSeamAbsenceFailure',
+        consumer_no_bypass: 'test/ledger/closure.test.ts#proveSeamConsumerNoBypass',
+      };
+      decision.tests = Object.values(asRecord(decision.closure_proofs)!);
+      fs.writeFileSync(blueprintPath, YAML.stringify(blueprint), 'utf8');
       const cu = YAML.parse(fs.readFileSync(cuPath, 'utf8')) as ChangeUnitRecord;
+      const artifactSha256 = sha256(blueprintPath);
+      (cu.component_blueprint_ref as ComponentBlueprintRef).artifact_sha256 = artifactSha256;
+      for (const ref of cu.design_refs as ComponentBlueprintRef[]) ref.artifact_sha256 = artifactSha256;
       const provider = (cu.target_predicates as ChangeUnitRecord[]).find(item => item.role === 'provider')!;
       provider.description = 'Store';
       fs.writeFileSync(cuPath, YAML.stringify(cu), 'utf8');
@@ -722,7 +738,8 @@ export async function runAll(): Promise<UnitCaseResult[]> {
   results.push(test('Provider evolution consumes decision ref and exact require, never priority or Consumer prose', () => {
     const base = asChangeUnitArtifact(validChangeUnit());
     const decisionRef = base.design_refs.find(ref => ref.target.kind === 'decision')!;
-    const decision = resolveComponentBlueprintRef(VALID_PROJECT, decisionRef).target as BlueprintRecord;
+    const decision = clone(resolveComponentBlueprintRef(VALID_PROJECT, decisionRef).target as BlueprintRecord);
+    decision.human_decision = 'establish_seam';
     base.provides.push({ provide_id: 'ledger-data-source-contract', description: 'Stable LedgerDataSource contract.' });
     const baseContract = base.target_predicates.find(item => item.role === 'contract')!;
     baseContract.provide_ids = ['ledger-data-source-contract'];
@@ -774,6 +791,16 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       new Map([[base.change_unit_id, { allowed: true, reasons: [] }]]),
     );
     assert(ordinaryDependency.issues.length === 0, `非 evolution 精确依赖被误挡：${ordinaryDependency.issues.map(item => item.id).join(',')}`);
+  }));
+
+  results.push(test('keep_direct evolution candidate follows ordinary CU rules without seam roles', () => {
+    const base = asChangeUnitArtifact(validChangeUnit());
+    const decisionRef = base.design_refs.find(ref => ref.target.kind === 'decision')!;
+    const decision = resolveComponentBlueprintRef(VALID_PROJECT, decisionRef).target as BlueprintRecord;
+    assert(decision.human_decision === 'keep_direct', 'fixture 必须锁定 keep_direct');
+    base.target_predicates = base.target_predicates.filter(item => item.role === 'behavior');
+    const issues = validateChangeUnitEvolutionSeam(base, decisionRef, decision, []);
+    assert(issues.length === 0, `keep_direct 被错误要求接缝纵切：${issues.map(item => item.id).join(',')}`);
   }));
 
   results.push(test('selector uses Unicode code-point order rather than locale collation', () => {

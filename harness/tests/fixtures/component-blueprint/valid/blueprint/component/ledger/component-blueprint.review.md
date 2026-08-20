@@ -4,8 +4,8 @@ derived_from:
   component_id: ledger
   blueprint_id: ledger-app-blueprint
   revision: 2
-  source_fingerprint: sha256:e7139f2fef7d7b3dbfcdb04931e729e50eac8f8df2b9dc6efa16f40eb5d21a25
-  artifact_sha256: sha256:35bcd5251b1524f1210be0039eeee0fae413a8e7d0b4b3fcc31bcd32bbbc610e
+  source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
+  artifact_sha256: sha256:0088e288a249023036c869d08d8af7e8b36f63070abe793f1f680ca4c324f163
 projection: component-blueprint-review@1
 ---
 
@@ -104,7 +104,7 @@ Nodes:
 - State owner: view:runtime/node:ledger-repository; states=durable-ledger
 - Recovery: id=reload-ledger; persistence=keep prior snapshot and expose retry; subscription=reload repository snapshot; process=rebuild store from repository
 - Evidence: src/ledger/LedgerRepository.ts, src/ledger/LedgerStore.ts
-- Verification: verify:ledger-flow
+- Verification: test/ledger/closure.test.ts#verifyLedgerFlow
 
 Triggers:
 
@@ -177,7 +177,7 @@ Subscriptions and consumers:
 
 ## Decisions and gaps
 
-- decision seam-shape: decided_with_authority; owner=architecture-owner; verification=verify:seam-decision
+- decision seam-shape: decided_with_authority; owner=architecture-owner; verification=test/ledger/closure.test.ts#verifySeamDecision
 - decision deployment-na: not_applicable; owner=architecture-owner; verification=verify:deployment-na
 - gap cloud-sync-future: open_decision; owner=cloud-contract-owner; needed_by=cu-cloud-sync-future; unlock=Approved cloud sync contract becomes accessible.
 

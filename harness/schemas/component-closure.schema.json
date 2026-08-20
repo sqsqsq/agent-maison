@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentmaison.dev/schemas/component-closure.schema.json",
+  "title": "AgentMaison Component Closure Projection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact",
+    "component_id",
+    "component_blueprint_ref",
+    "input_fingerprint",
+    "evaluated_at",
+    "inputs",
+    "coverage_rows",
+    "provider_observations",
+    "knowledge_writeback_refs",
+    "degradations",
+    "gaps",
+    "verdict"
+  ],
+  "properties": {
+    "artifact": { "const": "component-closure@1" },
+    "component_id": { "$ref": "#/$defs/safeSegment" },
+    "component_blueprint_ref": { "$ref": "#/$defs/blueprintRef" },
+    "input_fingerprint": { "$ref": "#/$defs/sha256" },
+    "evaluated_at": { "type": "string", "minLength": 1 },
+    "inputs": { "$ref": "#/$defs/inputManifest" },
+    "coverage_rows": { "type": "array", "items": { "$ref": "#/$defs/coverageRow" } },
+    "provider_observations": { "type": "array", "items": { "$ref": "#/$defs/providerObservation" } },
+    "knowledge_writeback_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "degradations": { "type": "array", "items": { "$ref": "#/$defs/degradation" } },
+    "gaps": { "type": "array", "items": { "$ref": "#/$defs/gap" } },
+    "verdict": { "enum": ["PASS", "PASS_WITH_DEGRADATION", "FAIL"] }
+  },
+  "$defs": {
+    "safeSegment": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "stableId": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/-]*$" },
+    "sha256": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "blueprintTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": { "enum": ["blueprint", "view", "node", "relation", "flow", "decision", "contract"] },
+        "id": { "$ref": "#/$defs/stableId" },
+        "view_id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "blueprintRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact", "component_id", "blueprint_id", "revision", "source_fingerprint", "artifact_sha256", "target"],
+      "properties": {
+        "artifact": { "const": "component-blueprint@1" },
+        "component_id": { "$ref": "#/$defs/safeSegment" },
+        "blueprint_id": { "$ref": "#/$defs/stableId" },
+        "revision": { "type": "integer", "minimum": 1 },
+        "source_fingerprint": { "$ref": "#/$defs/sha256" },
+        "artifact_sha256": { "$ref": "#/$defs/sha256" },
+        "target": { "$ref": "#/$defs/blueprintTarget" }
+      }
+    },
+    "inputManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requirements", "change_units", "features"],
+      "properties": {
+        "requirements": { "type": "array", "items": { "type": "object" } },
+        "change_units": { "type": "array", "items": { "type": "object" } },
+        "features": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "coverageRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["obligation_id", "kind", "required", "source_refs", "blueprint_refs", "owner_change_unit_ids", "feature_ids", "feature_mapping_refs", "evidence_level", "evidence_identities", "observation"],
+      "properties": {
+        "obligation_id": { "$ref": "#/$defs/stableId" },
+        "kind": { "type": "string", "minLength": 1 },
+        "required": { "type": "boolean" },
+        "source_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "blueprint_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "owner_change_unit_ids": { "type": "array", "items": { "$ref": "#/$defs/safeSegment" } },
+        "feature_ids": { "type": "array", "items": { "$ref": "#/$defs/safeSegment" } },
+        "feature_mapping_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "evidence_level": { "enum": ["fact", "unit_contract", "integration_combination", "ui_device", "manual_risk"] },
+        "evidence_identities": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "observation": { "enum": ["covered", "uncovered", "blocked", "stale", "invalid"] }
+      }
+    },
+    "providerObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider_id", "available", "observations", "status"],
+      "properties": {
+        "provider_id": { "$ref": "#/$defs/stableId" },
+        "available": { "type": "boolean" },
+        "observations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["evidence_identity", "authority_ref", "source_sha256", "status"],
+            "properties": {
+              "evidence_identity": { "type": "string", "minLength": 1 },
+              "authority_ref": { "type": "string", "minLength": 1 },
+              "source_sha256": { "$ref": "#/$defs/sha256" },
+              "status": { "enum": ["current", "stale", "invalid"] }
+            }
+          }
+        },
+        "status": { "enum": ["current", "missing", "stale", "conflict"] }
+      }
+    },
+    "degradation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["degradation_id", "impact", "owner", "retrigger_condition"],
+      "properties": {
+        "degradation_id": { "$ref": "#/$defs/stableId" },
+        "impact": { "type": "string", "minLength": 1 },
+        "owner": { "type": "string", "minLength": 1 },
+        "retrigger_condition": { "type": "string", "minLength": 1 }
+      }
+    },
+    "gap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gap_id", "classification", "obligation_refs", "source_refs", "owner", "needed_by", "reason", "unlock_condition", "route"],
+      "properties": {
+        "gap_id": { "$ref": "#/$defs/stableId" },
+        "classification": { "enum": ["incomplete", "blocked", "stale", "invalid", "conflict"] },
+        "obligation_refs": { "type": "array", "items": { "$ref": "#/$defs/stableId" } },
+        "source_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "owner": { "type": "string", "minLength": 1 },
+        "needed_by": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 },
+        "unlock_condition": { "type": "string", "minLength": 1 },
+        "route": { "enum": ["repair_feature_or_evidence", "repair_or_add_change_unit", "reconcile_blueprint", "resolve_authority_or_risk"] }
+      }
+    }
+  }
+}

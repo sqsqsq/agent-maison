@@ -46,7 +46,26 @@
     "relations": { "type": "array", "items": { "$ref": "#/$defs/relation" } },
     "contracts": { "type": "array", "items": { "type": "object", "required": ["contract_id"] } },
     "providers": { "type": "array", "items": { "type": "object", "required": ["provider_id"] } },
-    "discovery": { "type": "object" },
+    "discovery": {
+      "type": "object",
+      "required": ["source_fingerprint", "facts", "conflicts", "inputs", "requirement_traceability"],
+      "properties": {
+        "source_fingerprint": { "$ref": "#/$defs/sha256" },
+        "facts": { "type": "array", "items": { "type": "object" } },
+        "conflicts": { "type": "array", "items": { "type": "object" } },
+        "inputs": {
+          "type": "object",
+          "required": ["current_scope_items"],
+          "properties": {
+            "current_scope_items": { "type": "array", "items": { "$ref": "#/$defs/currentScopeItem" } }
+          }
+        },
+        "requirement_traceability": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/requirementTraceability" }
+        }
+      }
+    },
     "app_lens": { "type": "object" },
     "derived_results": { "type": "array", "items": { "type": "object", "required": ["result_id", "status"] } },
     "generated_graphs": { "type": "array", "items": { "type": "object" } }
@@ -64,6 +83,29 @@
         "observed_at": { "type": "string", "minLength": 1 },
         "evidence_strength": { "enum": ["authoritative", "observed", "inferred", "unknown"] },
         "extraction_method": { "type": "string", "minLength": 1 }
+      }
+    },
+    "currentScopeItem": {
+      "type": "object",
+      "required": ["item_id", "kind", "source_ref", "source_sha256", "provenance"],
+      "properties": {
+        "item_id": { "$ref": "#/$defs/stableId" },
+        "kind": { "enum": ["requirement", "goal", "invariant", "high_risk"] },
+        "source_ref": { "type": "string", "minLength": 1 },
+        "source_revision": { "type": "string", "minLength": 1 },
+        "source_sha256": { "$ref": "#/$defs/sha256" },
+        "provenance": { "$ref": "#/$defs/provenance" }
+      }
+    },
+    "requirementTraceability": {
+      "type": "object",
+      "required": ["item_id", "blueprint_refs"],
+      "properties": {
+        "item_id": { "$ref": "#/$defs/stableId" },
+        "blueprint_refs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
       }
     },
     "view": {
@@ -128,6 +170,7 @@
         "decision_id": { "$ref": "#/$defs/stableId" },
         "status": { "enum": ["answered_with_evidence", "decided_with_authority", "open_decision", "blocker", "not_applicable"] },
         "owner": { "type": "string", "minLength": 1 },
+        "human_decision": { "enum": ["establish_seam", "keep_direct"] },
         "provenance": { "$ref": "#/$defs/provenance" },
         "verification_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } }
       }

@@ -4,6 +4,7 @@ import {
   asRecords,
   nonEmptyString,
 } from './component-blueprint-model';
+import type { CurrentScopeItem } from './blueprint-requirement-traceability';
 
 export interface DiscoveryInput {
   assertion_id: string;
@@ -17,7 +18,7 @@ export interface DiscoveryInput {
   extraction_method: string;
 }
 
-function stableJson(value: unknown): string {
+export function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
   if (value && typeof value === 'object') {
     const record = value as Record<string, unknown>;
@@ -47,6 +48,39 @@ export function fingerprintDiscoveryFacts(facts: BlueprintRecord[]): string {
     };
   });
   return fingerprintDiscoveryInputs(inputs);
+}
+
+export function fingerprintDiscoverySources(
+  facts: BlueprintRecord[],
+  scopeItems: CurrentScopeItem[],
+): string {
+  const factInputs = facts.map(fact => {
+    const provenance = (fact.provenance ?? {}) as BlueprintRecord;
+    return {
+      assertion_id: String(fact.fact_id ?? ''),
+      subject: String(fact.subject ?? ''),
+      value: fact.value,
+      source_kind: String(provenance.source_kind ?? ''),
+      source_ref: String(provenance.source_ref ?? ''),
+      source_revision: typeof provenance.source_revision === 'string' ? provenance.source_revision : undefined,
+      evidence_strength: String(provenance.evidence_strength ?? 'unknown'),
+      observed_at: String(provenance.observed_at ?? ''),
+      extraction_method: String(provenance.extraction_method ?? ''),
+    };
+  });
+  const currentScopeSources = scopeItems.map(item => ({
+    item_id: item.item_id,
+    kind: item.kind,
+    source_ref: item.source_ref,
+    source_revision: item.source_revision,
+    source_sha256: item.source_sha256,
+    provenance: item.provenance,
+  }));
+  const normalized = {
+    facts: factInputs.sort((a, b) => a.assertion_id < b.assertion_id ? -1 : a.assertion_id > b.assertion_id ? 1 : 0),
+    current_scope_items: currentScopeSources.sort((a, b) => a.item_id < b.item_id ? -1 : a.item_id > b.item_id ? 1 : 0),
+  };
+  return `sha256:${crypto.createHash('sha256').update(stableJson(normalized)).digest('hex')}`;
 }
 
 export function buildDiscoveryBundle(inputs: DiscoveryInput[]): BlueprintRecord {

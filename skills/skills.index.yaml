@@ -67,10 +67,17 @@ skills:
     description: >
       Change Unit 设计消费、ready/blocker 派生与单并发 Goal Mode 连续推进
 
+  - id: component-closure
+    scope: project
+    source_rel: project/component-closure
+    order: 5
+    description: >
+      从蓝图、Change Unit、Feature completion 与现有证据机械派生 Component closure
+
   - id: goal-mode
     scope: project
     source_rel: project/goal-mode
-    order: 5
+    order: 6
     description: >
       目标模式生产入口（有人在场先 prepare-run 再走 goal-mode-entry host bridge，无人值守走 detached runner）
     init_next_steps:

@@ -1,0 +1,17 @@
+cases:
+  - id: missing-requirement-source
+    expected_issue: blueprint_current_scope_source_unresolvable
+  - id: missing-requirement-mapping
+    expected_issue: blueprint_requirement_traceability_missing
+  - id: swapped-owner
+    expected_issue: component_closure_coverage_mismatch
+  - id: unrelated-valid-evidence
+    expected_issue: component_closure_coverage_mismatch
+  - id: stale-completion
+    expected_issue: component_closure_completion_stale
+  - id: invalid-completion
+    expected_issue: component_closure_completion_invalid
+  - id: missing-combination-result
+    expected_issue: component_closure_dependency_assembly_unverified
+  - id: provider-conflict
+    expected_issue: component_closure_provider_authority_conflict

@@ -1,0 +1,5 @@
+component: ledger
+authority: LedgerRepository
+decision: Repository commit precedes publication.
+stable_conclusions:
+  - "decision:seam-shape"

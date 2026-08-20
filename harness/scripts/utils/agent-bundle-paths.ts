@@ -37,6 +37,8 @@ export const BUILTIN_SKILL_BRIDGE_DESCRIPTIONS: Record<string, string> = {
     'App 部件发现、4+1 蓝图与调和（完整流程见 framework/skills/project/app-component-blueprint/SKILL.md）',
   'change-unit-progression':
     '从部件蓝图派生 Change Unit、选择单个就绪单元并连续推进（完整流程见 framework/skills/project/change-unit-progression/SKILL.md）',
+  'component-closure':
+    '从蓝图、Change Unit、Feature completion 与既有证据派生部件闭环（完整流程见 framework/skills/project/component-closure/SKILL.md）',
   'goal-mode':
     '目标模式 goal-runner 薄入口（完整流程见 framework/skills/project/goal-mode/SKILL.md）',
   'change-lite':

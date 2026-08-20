@@ -2,7 +2,7 @@ artifact: component-blueprint@1
 component_id: ledger
 blueprint_id: ledger-app-blueprint
 revision: 2
-source_fingerprint: sha256:e7139f2fef7d7b3dbfcdb04931e729e50eac8f8df2b9dc6efa16f40eb5d21a25
+source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
 decision_fingerprint: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 supersedes: ledger-app-blueprint-r1
 provenance: &repo_provenance
@@ -118,30 +118,38 @@ design_views:
           projections_and_caches: [view:runtime/node:ledger-store]
           reconciliation: Repository revision wins; pending UI writes are retried idempotently.
         triggers:
-          - kind: user_mutation
+          - trigger_id: committed-user-mutation
+            kind: user_mutation
             timing: immediate
             idempotency: operation request id
-          - kind: cold_start
+            verification_refs: [test/ledger/closure.test.ts#verifyUserMutationTrigger]
+          - trigger_id: cold-start-load
+            kind: cold_start
             timing: before-first-render
             idempotency: replace projection at repository revision
+            verification_refs: [test/ledger/closure.test.ts#verifyColdStartTrigger]
         initial_load:
           initial_load_id: repository-snapshot
           strategy: repository snapshot before subscription attach
           owner: app-state-team
           data_scope: active account ledger
           freshness: repository revision at attach time
+          verification_refs: [test/ledger/closure.test.ts#verifyInitialLoad]
         state_owner:
           ref: view:runtime/node:ledger-repository
           states: [durable-ledger]
+          verification_refs: [test/ledger/closure.test.ts#verifyStateOwner]
         mutations:
           - mutation_id: add-entry
             kind: user
             persistence_ref: sqlite:ledger-entry
             publication_ref: publication:ledger-changed
             recovery_ref: recovery:reload-ledger
+            verification_refs: [test/ledger/closure.test.ts#verifyMutationPropagation]
         publications:
           - publication_id: ledger-changed
             snapshot: full-current-ledger
+            verification_refs: [test/ledger/closure.test.ts#verifyPublication]
         subscriptions:
           - subscription_id: ledger-page-subscription
             consumer_ref: consumer:ledger-page
@@ -150,27 +158,30 @@ design_views:
             cleanup: remove observer token
             replay_or_snapshot: latest ledger snapshot
             ordering: repository revision order
+            verification_refs: [test/ledger/closure.test.ts#verifySubscription]
         consumers:
           - consumer_id: ledger-page
             initial_load_ref: initial-load:repository-snapshot
             update_ref: publication:ledger-changed
+            verification_refs: [test/ledger/closure.test.ts#verifyConsumerRefresh]
         failure_recovery:
           recovery_id: reload-ledger
           persistence_failure: keep prior snapshot and expose retry
           subscription_failure: reload repository snapshot
           process_recreation: rebuild store from repository
+          verification_refs: [test/ledger/closure.test.ts#verifyRecovery]
         decisions_and_gaps: []
         evidence_refs: [src/ledger/LedgerRepository.ts, src/ledger/LedgerStore.ts]
-        verification_refs: [verify:ledger-flow]
+        verification_refs: [test/ledger/closure.test.ts#verifyLedgerFlow]
         logical_contract_refs: [contract:create-entry-v1]
         development_owner_ref: view:development/node:ledger-module
         lifecycle_coverage:
-          cold_start: { status: covered, evidence_refs: [verify:cold-start] }
-          warm_resume: { status: covered, evidence_refs: [verify:warm-resume] }
-          page_attach: { status: covered, evidence_refs: [verify:page-attach] }
-          page_detach: { status: covered, evidence_refs: [verify:page-detach] }
-          account_switch: { status: covered, evidence_refs: [verify:account-switch] }
-          process_recreation: { status: covered, evidence_refs: [verify:process-recreation] }
+          cold_start: { status: covered, evidence_refs: [test/ledger/closure.test.ts#verifyColdStartLifecycle] }
+          warm_resume: { status: covered, evidence_refs: [test/ledger/closure.test.ts#verifyWarmResumeLifecycle] }
+          page_attach: { status: covered, evidence_refs: [test/ledger/closure.test.ts#verifyPageAttachLifecycle] }
+          page_detach: { status: covered, evidence_refs: [test/ledger/closure.test.ts#verifyPageDetachLifecycle] }
+          account_switch: { status: covered, evidence_refs: [test/ledger/closure.test.ts#verifyAccountSwitchLifecycle] }
+          process_recreation: { status: covered, evidence_refs: [test/ledger/closure.test.ts#verifyProcessRecreationLifecycle] }
           background_write: { status: not_applicable, evidence_refs: [decision:no-background-writer] }
         provenance: *repo_provenance
   - view_id: development
@@ -375,8 +386,9 @@ decisions_and_gaps:
       human_decision: keep_direct
       reextract_condition: A second source ships in the same release window.
       namespace: host_design
+      knowledge_refs: [doc/architecture.yaml#decision:seam-shape]
       provenance: *repo_provenance
-      verification_refs: [verify:seam-decision]
+      verification_refs: [test/ledger/closure.test.ts#verifySeamDecision]
     - decision_id: deployment-na
       status: not_applicable
       owner: architecture-owner
@@ -451,7 +463,7 @@ providers:
     writes: [questioning_process_evidence]
 
 discovery:
-  source_fingerprint: sha256:e7139f2fef7d7b3dbfcdb04931e729e50eac8f8df2b9dc6efa16f40eb5d21a25
+  source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
   facts:
     - fact_id: fact-ledger-owner
       subject: ledger.state.owner
@@ -464,6 +476,25 @@ discovery:
     repository_facts: [src/ledger/LedgerRepository.ts, src/ledger/LedgerStore.ts]
     knowledge_assets: [doc/architecture.yaml, doc/module-catalog.yaml, code-graph:ledger]
     optional_component_assets: []
+    current_scope_items:
+      - item_id: req-ledger-refresh
+        kind: requirement
+        source_ref: requirements/ledger.md#REQ-LEDGER-REFRESH
+        source_revision: fixture-r1
+        source_sha256: sha256:1cb261b1d7fa9e60c5a113c6f1a8029a9101809ee206836d6ca8a885123cc988
+        provenance:
+          source_kind: product_requirement
+          source_ref: requirements/ledger.md#REQ-LEDGER-REFRESH
+          source_revision: fixture-r1
+          observed_at: 2026-08-20T10:00:00+08:00
+          evidence_strength: authoritative
+          extraction_method: authorized-current-scope-input
+  requirement_traceability:
+    - item_id: req-ledger-refresh
+      blueprint_refs:
+        - view:scenarios/node:add-entry-scenario
+        - view:runtime/flow:ledger-refresh-flow
+        - contract:create-entry-v1
 
 app_lens:
   module_boundaries: &lens_answer
@@ -492,7 +523,7 @@ derived_results:
     kind: p1_blueprint_completeness
     status: current
     input_revision: 2
-    source_fingerprint: sha256:e7139f2fef7d7b3dbfcdb04931e729e50eac8f8df2b9dc6efa16f40eb5d21a25
+    source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
     decision_fingerprint: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
     provenance: *repo_provenance
 

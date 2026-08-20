@@ -138,7 +138,7 @@ export const PHASE_OPTIONAL_OUTPUT_RELPATHS_BY_PHASE: Partial<Record<Phase, stri
  * collectCleanPassIssues 消费 summary.json 的 verdict，summary/verifier/trace 必须
  * 在 manifest 保护面内，否则闭环后把 FAIL 改 PASS 不触发 staleness。
  */
-export const PHASE_REPORTS_OUTPUT_FILES = ['summary.json', 'verifier.report.md', 'trace.json'] as const;
+export const PHASE_REPORTS_OUTPUT_FILES = ['summary.json', 'script-report.json', 'verifier.report.md', 'trace.json'] as const;
 
 export interface ResolveManifestOptions {
   projectRoot: string;

@@ -13,7 +13,7 @@ change_unit:
     component_id: ledger
     change_unit_id: ledger-refresh
     revision: 1
-    artifact_sha256: sha256:d018c22e8046467aeef82cd6fd94e69093146401cc6e4ced2d803a85e4d24cfb
+    artifact_sha256: sha256:506433d02509385a1cdcf181548e30dfdef7b8af611e57e49fa6c7f08f2f59b1
   predicate_mappings: []
   provide_mappings: []
   design_ref_mappings: []

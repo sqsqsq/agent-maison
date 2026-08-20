@@ -31,7 +31,9 @@ export function validateChangeUnitEvolutionSeam(
   decision: BlueprintRecord,
   units: ChangeUnitArtifact[] = [],
 ): EvolutionSeamIssue[] {
-  if (decision.kind !== 'evolution_candidate') return [];
+  if (decision.kind !== 'evolution_candidate'
+    || decision.status !== 'decided_with_authority'
+    || decision.human_decision !== 'establish_seam') return [];
   const issues: EvolutionSeamIssue[] = [];
   const predicates = changeUnit.target_predicates;
   const roles = new Set(predicates.map(item => item.role));
