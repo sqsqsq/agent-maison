@@ -1,5 +1,5 @@
 import { BlueprintRecord, ComponentBlueprintRef, nonEmptyString } from './component-blueprint-model';
-import { ChangeUnitArtifact } from './change-unit-model';
+import { ChangeUnitArtifact, sameBlueprintTarget } from './change-unit-model';
 
 export interface EvolutionSeamIssue {
   id: string;
@@ -10,22 +10,47 @@ export interface EvolutionSeamIssue {
 
 const EMPTY_ABSTRACTION = /^(store|eventbus|interface|provider|consumer)$/i;
 
+export function providerSuppliesEvolutionContract(
+  provider: ChangeUnitArtifact,
+  decisionRef: ComponentBlueprintRef,
+  provideId: string,
+): boolean {
+  const referencesDecision = provider.design_refs.some(ref => sameBlueprintTarget(ref, decisionRef));
+  const contractProvides = provider.target_predicates.some(predicate => (
+    predicate.role === 'contract' && predicate.provide_ids.includes(provideId)
+  ));
+  const nonContractProvides = provider.target_predicates.some(predicate => (
+    predicate.role !== 'contract' && predicate.provide_ids.includes(provideId)
+  ));
+  return referencesDecision && contractProvides && !nonContractProvides;
+}
+
 export function validateChangeUnitEvolutionSeam(
   changeUnit: ChangeUnitArtifact,
   decisionRef: ComponentBlueprintRef,
   decision: BlueprintRecord,
+  units: ChangeUnitArtifact[] = [],
 ): EvolutionSeamIssue[] {
   if (decision.kind !== 'evolution_candidate') return [];
   const issues: EvolutionSeamIssue[] = [];
   const predicates = changeUnit.target_predicates;
   const roles = new Set(predicates.map(item => item.role));
-  const exactPriorContractRequirement = changeUnit.requires.some(requirement => (
-    nonEmptyString(requirement.from_change_unit_id) && nonEmptyString(requirement.provide_id)
-  ));
   const laterProvider = roles.has('provider')
     && !roles.has('contract')
-    && !roles.has('consumer')
-    && exactPriorContractRequirement;
+    && !roles.has('consumer');
+  if (laterProvider) {
+    const exactPriorContractRequirement = changeUnit.requires.some(requirement => {
+      if (!nonEmptyString(requirement.from_change_unit_id) || !nonEmptyString(requirement.provide_id)) return false;
+      const provider = units.find(unit => unit.change_unit_id === requirement.from_change_unit_id);
+      return Boolean(provider && providerSuppliesEvolutionContract(provider, decisionRef, requirement.provide_id));
+    });
+    if (!exactPriorContractRequirement) {
+      issues.push({
+        id: 'change_unit_evolution_contract_requirement_invalid',
+        message: `${decisionRef.target.id} 的后续 Provider 必须精确 requires 同 decision 前置 CU 的 contract-only provide。`,
+      });
+    }
+  }
   const requiredRoles = laterProvider ? ['provider'] as const : ['contract', 'provider', 'consumer'] as const;
   for (const role of requiredRoles) {
     const predicate = predicates.find(item => item.role === role);

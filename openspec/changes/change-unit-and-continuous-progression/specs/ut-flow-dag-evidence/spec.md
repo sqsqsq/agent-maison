@@ -16,6 +16,11 @@ The framework SHALL derive `dag_required` independently for `ut_layer ∈ {unit,
 - **WHEN** `contracts.state_management` shows one state owner feeding two consumers
 - **THEN** `use-cases.yaml` is required, and a unit/both propagation target also requires a DAG covering both consumers
 
+#### Scenario: Acceptance-only ordered unit path requires a DAG
+
+- **WHEN** a unit/both acceptance target has two or more ordered verification steps even though runtime facts alone are simple
+- **THEN** `use-cases.yaml` and an ephemeral DAG are both required; runtime-only complexity calculation cannot waive the DAG
+
 #### Scenario: Simple unit path may use direct coverage
 
 - **WHEN** a unit/both target is one implementation step with no branch, shared consumers, or lifecycle recovery

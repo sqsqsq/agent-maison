@@ -55,12 +55,15 @@ export function acceptChangeUnitCandidate(projectRoot: string, candidate: Change
   if (!provenance.extraction_method.includes(candidate.providerId)) {
     throw new Error('change_unit_candidate_provider_provenance_missing');
   }
-  assertValidChangeUnit(candidate.artifact as unknown as Record<string, unknown>);
+  const target = changeUnitPath(projectRoot, candidate.artifact.component_id, candidate.artifact.change_unit_id);
+  assertValidChangeUnit(candidate.artifact as unknown as Record<string, unknown>, {
+    projectRoot,
+    canonicalPath: target,
+  });
   const design = validateChangeUnitDesign(projectRoot, candidate.artifact as unknown as Record<string, unknown>);
   if (design.verdict !== 'constructable') {
     throw new Error(`change_unit_candidate_design_rejected:${design.issues.map(item => item.id).join(',')}`);
   }
-  const target = changeUnitPath(projectRoot, candidate.artifact.component_id, candidate.artifact.change_unit_id);
   if (fs.existsSync(target)) throw new Error(`change_unit_candidate_already_exists:${target}`);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   const temporary = `${target}.candidate-${process.pid}`;

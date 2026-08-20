@@ -270,6 +270,18 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     const providerCu = validChangeUnit();
     (providerCu.provenance as ChangeUnitRecord).source_ref = 'provider:auto-decomposer';
     expectIssue(issueIds(providerCu), 'change_unit_provenance_authority_invalid');
+    const selfClaimed = validChangeUnit();
+    (selfClaimed.provenance as ChangeUnitRecord).source_ref = 'does-not-exist';
+    (selfClaimed.provenance as ChangeUnitRecord).evidence_strength = 'authoritative';
+    expectIssue(issueIds(selfClaimed), 'change_unit_provenance_source_unrecognized');
+    const acceptedExternal = validChangeUnit();
+    (acceptedExternal.provenance as ChangeUnitRecord).source_kind = 'interface';
+    (acceptedExternal.provenance as ChangeUnitRecord).source_ref = 'contracts/ledger-api.yaml#/operations/createEntry';
+    assert(!issueIds(acceptedExternal).some(id => id.startsWith('change_unit_provenance_')), 'P1 已承认的权威契约来源被误拒');
+    const observedAsAuthority = validChangeUnit();
+    (observedAsAuthority.provenance as ChangeUnitRecord).source_kind = 'code';
+    (observedAsAuthority.provenance as ChangeUnitRecord).source_ref = 'src/ledger/LedgerRepository.ts';
+    expectIssue(issueIds(observedAsAuthority), 'change_unit_provenance_authority_invalid');
   }));
 
   results.push(test('second blueprint ownership and mixed revision refs fail closed', () => {
@@ -505,6 +517,31 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     });
   }));
 
+  results.push(test('unit acceptance with multiple verification steps independently requires a DAG', () => {
+    withTempProject(projectRoot => {
+      const fixture = projectionContracts(projectRoot);
+      const state = fixture.contracts.state_management![0];
+      delete state.ordered_steps;
+      delete state.failure_recovery;
+      delete state.lifecycle_triggers;
+      fixture.acceptance.criteria[0].verification_steps = ['invoke boundary', 'assert observable result'];
+      fixture.acceptance.criteria[0].ut_layer = 'unit';
+      bindFeatureContracts(projectRoot, fixture.feature, fixture.contracts);
+      const result = validateChangeUnitFeatureProjection(
+        projectRoot,
+        fixture.feature,
+        fixture.contracts,
+        fixture.acceptance,
+        true,
+        'ut',
+        [],
+      );
+      assert(result.useCasesRequired, 'acceptance 多步事实未派生 use-case');
+      assert(result.dagRequired, 'unit acceptance 多步事实未独立派生 DAG');
+      expectIssue(result.issues.map(item => item.id), 'change_unit_dag_required');
+    });
+  }));
+
   results.push(test('simple read-only CU does not require fake mutation, subscription, use-case or DAG', () => {
     withTempProject((projectRoot, cuPath) => {
       const source = validChangeUnit();
@@ -627,6 +664,19 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       source_revision: 'r1', authority_ref: 'authority:release-owner',
     }];
     assert(deriveChangeUnitBlockers(blocked, { projectRoot: VALID_PROJECT })[0].active, 'human blocker 被自报解除');
+    const escaped = clone(progressionUnits()[0]);
+    escaped.blockers = [{
+      blocker_id: 'escaped-file', gate: 'execution', owner: 'build-owner', reason: 'wait for file',
+      unlock_condition: 'project file exists', observation: 'machine', source_refs: ['probe:escaped-file'],
+      probe: { kind: 'file_exists', ref: '../../../../../package.json', expected: 'present' },
+    }];
+    const escapedProbe = deriveChangeUnitBlockers(escaped, { projectRoot: VALID_PROJECT })[0];
+    assert(escapedProbe.active && !escapedProbe.legal && escapedProbe.reason.includes('不得包含'), '工程外 file_exists probe 解除了 blocker');
+    const escapedState = new Map([[deriveChangeUnitFeatureId(escaped.component_id, escaped.change_unit_id), 'ABSENT' as ChangeUnitCompletionState]]);
+    const escapedReady = deriveChangeUnitReadySet(VALID_PROJECT, 'ledger', {
+      units: [escaped], completion: completionAdapter(escapedState),
+    });
+    assert(escapedReady.ready.length === 0, '工程外 file_exists probe 使 CU 进入 ready');
     assert(isSilentProgressStall({ unfinishedPredicateCount: 1, readyCount: 0, legalBlockerCount: 0 }), 'silent_progress_stall 未识别');
   }));
 
@@ -673,15 +723,57 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     const base = asChangeUnitArtifact(validChangeUnit());
     const decisionRef = base.design_refs.find(ref => ref.target.kind === 'decision')!;
     const decision = resolveComponentBlueprintRef(VALID_PROJECT, decisionRef).target as BlueprintRecord;
+    base.provides.push({ provide_id: 'ledger-data-source-contract', description: 'Stable LedgerDataSource contract.' });
+    const baseContract = base.target_predicates.find(item => item.role === 'contract')!;
+    baseContract.provide_ids = ['ledger-data-source-contract'];
     const later = clone(base);
+    later.change_unit_id = 'cloud-ledger-provider';
     later.priority = -100;
-    later.requires = [{ require_id: 'stable-contract', from_change_unit_id: 'ledger-refresh', provide_id: 'ledger-refresh-vertical-slice' }];
+    later.requires = [{ require_id: 'stable-contract', from_change_unit_id: 'ledger-refresh', provide_id: 'ledger-data-source-contract' }];
     later.target_predicates = [clone(later.target_predicates.find(item => item.role === 'provider')!)];
     later.target_predicates[0].description = 'Description changes do not establish sequence';
-    const issues = validateChangeUnitEvolutionSeam(later, decisionRef, decision);
+    const issues = validateChangeUnitEvolutionSeam(later, decisionRef, decision, [base]);
     assert(issues.length === 0, `精确 require 的 later Provider 被 priority/描述启发式误判：${issues.map(item => item.id).join(',')}`);
-    later.requires = [];
-    expectIssue(validateChangeUnitEvolutionSeam(later, decisionRef, decision).map(item => item.id), 'change_unit_evolution_vertical_role_missing');
+    const validDependency = evaluateChangeUnitDependencies(
+      later,
+      [base, later],
+      new Map([[base.change_unit_id, { state: 'VALID', featureId: 'base', reasons: [] }]]),
+      new Map([[base.change_unit_id, { allowed: true, reasons: [] }]]),
+    );
+    assert(validDependency.issues.length === 0, `合法 contract provide 依赖被误拒：${validDependency.issues.map(item => item.id).join(',')}`);
+
+    const unrelated = asChangeUnitArtifact(loadCanonicalChangeUnit(VALID_PROJECT, 'ledger', 'ledger-summary').changeUnit);
+    later.requires = [{ require_id: 'unrelated-output', from_change_unit_id: 'ledger-summary', provide_id: 'ledger-summary-ready' }];
+    expectIssue(
+      validateChangeUnitEvolutionSeam(later, decisionRef, decision, [unrelated]).map(item => item.id),
+      'change_unit_evolution_contract_requirement_invalid',
+    );
+    const invalidDependency = evaluateChangeUnitDependencies(
+      later,
+      [unrelated, later],
+      new Map([[unrelated.change_unit_id, { state: 'VALID', featureId: 'summary', reasons: [] }]]),
+      new Map([[unrelated.change_unit_id, { allowed: true, reasons: [] }]]),
+    );
+    assert(invalidDependency.issues.length === 0, '通用 dependency checker 不应重复推断 evolution 语义');
+
+    const ordinaryDecisionRef = clone(decisionRef);
+    ordinaryDecisionRef.target.id = 'deployment-na';
+    const ordinaryDecision = resolveComponentBlueprintRef(VALID_PROJECT, ordinaryDecisionRef).target as BlueprintRecord;
+    const ordinary = clone(later);
+    ordinary.change_unit_id = 'ordinary-ledger-provider';
+    ordinary.requires = [{ require_id: 'ordinary-contract', from_change_unit_id: 'ledger-refresh', provide_id: 'ledger-data-source-contract' }];
+    ordinary.design_refs = ordinary.design_refs.map(ref => ref.target.kind === 'decision' ? clone(ordinaryDecisionRef) : ref);
+    const ordinaryPath = path.join(VALID_PROJECT, 'blueprint', 'component', 'ledger', 'change-units', 'ordinary-ledger-provider.yaml');
+    assert(validateChangeUnit(ordinary, { projectRoot: VALID_PROJECT, canonicalPath: ordinaryPath }).length === 0, '非 evolution Provider CU artifact 非法');
+    assert(validateChangeUnitDesign(VALID_PROJECT, ordinary as unknown as ChangeUnitRecord).issues.length === 0, '非 evolution Provider CU design 非法');
+    assert(validateChangeUnitEvolutionSeam(ordinary, ordinaryDecisionRef, ordinaryDecision, [base]).length === 0, '非 evolution decision 被 seam 误判');
+    const ordinaryDependency = evaluateChangeUnitDependencies(
+      ordinary,
+      [base, ordinary],
+      new Map([[base.change_unit_id, { state: 'VALID', featureId: 'base', reasons: [] }]]),
+      new Map([[base.change_unit_id, { allowed: true, reasons: [] }]]),
+    );
+    assert(ordinaryDependency.issues.length === 0, `非 evolution 精确依赖被误挡：${ordinaryDependency.issues.map(item => item.id).join(',')}`);
   }));
 
   results.push(test('selector uses Unicode code-point order rather than locale collation', () => {
@@ -714,6 +806,24 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     });
     assert(calls.map(feature => parseChangeUnitFeatureId(feature).changeUnitId).join(',') === 'a-foundation,b-consumer,c-recovery', `推进顺序错误：${calls.join(',')}`);
     assert(result.action === 'ready_for_component_closure', `末态不应宣称 closure，仅应 handoff：${result.action}`);
+  }));
+
+  asynchronous.push(asyncTest('caller completed without VALID completion stops as no-progress', async () => {
+    const units = progressionUnits().slice(0, 1);
+    const state = new Map(units.map(unit => [deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id), 'ABSENT' as ChangeUnitCompletionState]));
+    let calls = 0;
+    const result = await runChangeUnitProgression(VALID_PROJECT, 'ledger', {
+      ready: { units, completion: completionAdapter(state) },
+      inspectActiveRuns: () => [],
+      buildHandoff: (_root, unit) => ({
+        featureId: deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id), canonicalPath: 'fixture',
+        changeUnitRef: { artifact: 'change-unit@1', component_id: unit.component_id, change_unit_id: unit.change_unit_id, revision: 1, artifact_sha256: `sha256:${'a'.repeat(64)}` },
+        componentBlueprintRef: unit.component_blueprint_ref, expectedTrack: 'full', expectedChain: ['spec'], requirement: unit.purpose,
+      }),
+      caller: async () => { calls++; return { status: 'completed' }; },
+    });
+    assert(calls === 1, `无完成事实时同一 CU 被重复调用 ${calls} 次`);
+    assert(result.action === 'blocked' && result.reasons.some(reason => reason.includes('change_unit_no_progress_after_completed')), '无进展 completed 未 fail-closed 停止');
   }));
 
   asynchronous.push(asyncTest('pause or active run suppresses every second CU', async () => {
@@ -791,6 +901,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       if (fixtureCase.surface === 'artifact') {
         const cu = validChangeUnit();
         if (fixtureCase.mutator === 'authored-ready') cu.ready = true;
+        if (fixtureCase.mutator === 'self-claimed-provenance') (cu.provenance as ChangeUnitRecord).source_ref = 'does-not-exist';
         if (fixtureCase.mutator === 'unsafe-intermediate') (cu.safe_intermediate_state as ChangeUnitRecord).recovery_refs = [];
         if (fixtureCase.mutator === 'mixed-revision') (cu.design_refs as ChangeUnitRecord[])[0].revision = 1;
         expectIssue(issueIds(cu), fixtureCase.expected_issue);
@@ -810,9 +921,21 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       withTempProject(projectRoot => {
         const fixture = projectionContracts(projectRoot);
         let useCasesPresent = true;
+        let phase: 'plan' | 'ut' = 'plan';
+        let dags = fixture.dags;
         if (fixtureCase.mutator === 'copied-definition') (fixture.contracts.change_unit as unknown as ChangeUnitRecord).purpose = 'copied';
         if (fixtureCase.mutator === 'parallel-runtime') (fixture.contracts as unknown as ChangeUnitRecord).runtime_flow_slices = [];
         if (fixtureCase.mutator === 'missing-use-case') useCasesPresent = false;
+        if (fixtureCase.mutator === 'acceptance-multistep-missing-dag') {
+          const state = fixture.contracts.state_management![0];
+          delete state.ordered_steps;
+          delete state.failure_recovery;
+          delete state.lifecycle_triggers;
+          fixture.acceptance.criteria[0].verification_steps = ['invoke boundary', 'assert observable result'];
+          fixture.acceptance.criteria[0].ut_layer = 'unit';
+          phase = 'ut';
+          dags = [];
+        }
         if (fixtureCase.mutator === 'unsafe-construction-path') {
           fixture.contracts.change_unit!.predicate_mappings[0].implementation_refs = ['../outside.ets'];
         }
@@ -836,7 +959,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
           state.consumers = [{ consumer_id: 'invented', initial_load_ref: 'initial-load:invented', update_ref: 'publication:invented' }];
         }
         bindFeatureContracts(projectRoot, fixture.feature, fixture.contracts, useCasesPresent);
-        const result = validateChangeUnitFeatureProjection(projectRoot, fixture.feature, fixture.contracts, fixture.acceptance, useCasesPresent, 'plan', fixture.dags);
+        const result = validateChangeUnitFeatureProjection(projectRoot, fixture.feature, fixture.contracts, fixture.acceptance, useCasesPresent, phase, dags);
         expectIssue(result.issues.map(item => item.id), fixtureCase.expected_issue);
       });
     }));

@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { ChangeUnitArtifact, ChangeUnitBlocker } from './change-unit-model';
+import { validateProjectRelativePath } from './project-relative-path';
 
 export interface ChangeUnitBlockerObservation {
   blockerId: string;
@@ -45,11 +46,18 @@ export function deriveChangeUnitBlockers(
     }
     let cleared = false;
     let evidence = 'probe 未执行或不支持；fail-closed 保持 active';
+    let legal = Boolean(blocker.probe);
     if (blocker.probe?.kind === 'file_exists') {
-      const probePath = path.resolve(context.projectRoot, blocker.probe.ref);
-      const exists = fs.existsSync(probePath);
-      cleared = blocker.probe.expected === 'present' ? exists : blocker.probe.expected === 'absent' ? !exists : false;
-      evidence = `${blocker.probe.ref} exists=${exists}, expected=${blocker.probe.expected}`;
+      try {
+        const safeRef = validateProjectRelativePath(context.projectRoot, blocker.probe.ref, `blocker:${blocker.blocker_id}.probe.ref`);
+        const probePath = path.resolve(context.projectRoot, safeRef);
+        const exists = fs.existsSync(probePath);
+        cleared = blocker.probe.expected === 'present' ? exists : blocker.probe.expected === 'absent' ? !exists : false;
+        evidence = `${safeRef} exists=${exists}, expected=${blocker.probe.expected}`;
+      } catch (error) {
+        legal = false;
+        evidence = (error as Error).message;
+      }
     }
     return {
       blockerId: blocker.blocker_id,
@@ -57,7 +65,7 @@ export function deriveChangeUnitBlockers(
       reason: evidence,
       owner: blocker.owner,
       unlockCondition: blocker.unlock_condition,
-      legal: Boolean(blocker.probe),
+      legal,
     };
   });
 }

@@ -148,5 +148,18 @@ export async function runChangeUnitProgression(
         readySet: deriveChangeUnitReadySet(projectRoot, componentId, options.ready),
       };
     }
+    const refreshed = deriveChangeUnitReadySet(projectRoot, componentId, options.ready);
+    const selectedAfterCall = refreshed.units.find(item => (
+      item.changeUnit.change_unit_id === decision.selected!.change_unit_id
+    ));
+    if (selectedAfterCall?.completion.state !== 'VALID') {
+      return {
+        action: 'blocked',
+        reasons: [
+          `change_unit_no_progress_after_completed:${decision.selected.change_unit_id}:completion=${selectedAfterCall?.completion.state ?? 'MISSING'}`,
+        ],
+        readySet: refreshed,
+      };
+    }
   }
 }

@@ -66,7 +66,7 @@ safe_intermediate_state: ...
 blockers: []
 ```
 
-根对象不允许 `execution.feature_id`、`status`、`ready`、`completed` 或 P3 closure 字段。`component_blueprint_ref` 必须 target blueprint；尚未完成 CU 的所有 `design_refs` 必须与当前 owner ref 的 component/blueprint/revision/`source_fingerprint`/`artifact_sha256` 完全一致。`provenance` 复用 P1 的 `source_kind/source_ref/source_revision?/observed_at/evidence_strength/extraction_method` 结构，记录正式 CU 所依据的蓝图/权威事实；Provider 名称只能出现在 extraction method，不能成为权威来源。
+根对象不允许 `execution.feature_id`、`status`、`ready`、`completed` 或 P3 closure 字段。`component_blueprint_ref` 必须 target blueprint；尚未完成 CU 的所有 `design_refs` 必须与当前 owner ref 的 component/blueprint/revision/`source_fingerprint`/`artifact_sha256` 完全一致。`provenance` 复用 P1 的 `source_kind/source_ref/source_revision?/observed_at/evidence_strength/extraction_method` 结构，记录正式 CU 所依据的蓝图/权威事实：`source_ref` 必须是 owner blueprint 的 canonical ref，或已由该 P1 blueprint 收录的来源；若 CU 声称 `authoritative`，外部来源还必须位于 P1 的 authoritative provenance 覆盖下。Provider 名称只能出现在 extraction method，不能成为权威来源。
 
 Feature identity 不由作者填写，而由 consumer 以 `cu-` + `base64url(UTF-8(component_id + "\0" + change_unit_id))` 确定性派生。安全单路径段不含 NUL，base64url 对输入字节可逆，因此该映射对 `(component_id, change_unit_id)` 单射且跨部件唯一。schema 拒绝任何 Feature id override；若派生 Feature 目录已绑定另一 `change_unit_ref`，或既有非空 Feature 没有匹配绑定，identity gate 报冲突而不接管目录。Feature 侧使用 `change_unit_ref`（artifact、component_id、change_unit_id、revision、CU YAML 原始字节 `artifact_sha256`）绑定当前施工 revision；CU 文件不在自身内容里自报自哈希。
 
@@ -76,7 +76,7 @@ Feature identity 不由作者填写，而由 consumer 以 `cu-` + `base64url(UTF
 
 首版 `provides[]` 每项拥有部件内稳定 `provide_id`；`requires[]` 必须同时声明精确 `provide_id` 和 `from_change_unit_id`。analyzer 不做名称相似、类型推断或跨命名空间匹配：provider CU 必须真实声明同一 `provide_id`，其派生 Feature completion 经既有验证入口返回 `VALID`，且全部历史 design target 在当前蓝图仍可解析并获准，该 require 才满足。已有外部契约、当前代码事实或人工裁决属于 precondition/design ref/probe，不伪装为另一个 CU 的 provides。
 
-`blockers[]` 表达仍未解除的条件，至少包含 blocker id、影响门槛、责任方、原因、解除条件和事实来源；机器可观测条件必须带 probe，只有需要人类判断/授权的 blocker 才可省略 probe。blocker 是否仍成立由 probe/权威输入重算，不接受 `resolved: true` 自报。需要移除已经解除的人类 blocker 时，依据权威证据发布新 CU revision，而不是维护状态账本。
+`blockers[]` 表达仍未解除的条件，至少包含 blocker id、影响门槛、责任方、原因、解除条件和事实来源；机器可观测条件必须带 probe，只有需要人类判断/授权的 blocker 才可省略 probe。`file_exists` probe 的 `ref` 必须通过既有 project-relative path 校验，工程外文件不得解除 blocker。blocker 是否仍成立由 probe/权威输入重算，不接受 `resolved: true` 自报。需要移除已经解除的人类 blocker 时，依据权威证据发布新 CU revision，而不是维护状态账本。
 
 备选方案是先实现六类关系及 `depends_on` DAG。真实 P2 消费点只需要严格施工前置和 blocker，完整模型会提前固化无消费者字段，因此拒绝。
 
@@ -142,7 +142,7 @@ completion observation 是四态适配层而不是新状态账本：不存在 co
 
 `priority` 是选择提示，不是依赖。selector 先按较小整数 priority，再按 `change_unit_id` Unicode code-point 升序稳定选出一个候选。一次决策最多返回一个 `selected`；ready set 保留其它候选且不创建它们之间的边。
 
-薄推进循环的状态机只有派生动作：`resume_active | select_one | blocked | ready_for_component_closure`。它通过注入的既有 Goal Mode 调用入口执行选中 Feature；调用结束后必须重新读取 completion 和蓝图/CU hashes，再派生下一步。Goal Mode 失败、暂停或待人工时循环停止并返回现有 run 的恢复动作，不启动第二个 CU。中断后重新调用即可从既有事实恢复，无需 P2 checkpoint。
+薄推进循环的状态机只有派生动作：`resume_active | select_one | blocked | ready_for_component_closure`。它通过注入的既有 Goal Mode 调用入口执行选中 Feature；调用结束后必须重新读取 completion 和蓝图/CU hashes，再派生下一步。即使 caller 返回 `completed`，当前 CU completion 仍须已成为 `VALID`；否则立即以 no-progress blocker 停止，不得再次选择同一 CU。Goal Mode 失败、暂停或待人工时循环停止并返回现有 run 的恢复动作，不启动第二个 CU。中断后重新调用即可从既有事实恢复，无需 P2 checkpoint。
 
 首版不承诺两个独立协调者并发竞争时的分布式互斥；使用者是单个主 Agent/进程。出现真实多 writer 需求前不增加锁或全局 owner。
 
@@ -154,7 +154,7 @@ completion observation 是四态适配层而不是新状态账本：不存在 co
 
 ### Decision 10: 宿主演进接缝首次落地必须是纵切 CU
 
-当 `design_refs` 指向 P1 中裁决为建立接缝、且尚未落地的变化轴 decision 时，首个 CU 必须同时映射稳定契约、首个真实 Provider、真实 Consumer 和契约测试四类 target predicate/verification。后续 Provider 可以是独立 CU，但必须继续引用该权威 decision，并通过精确 `requires.from_change_unit_id + provide_id` 消费已落地稳定契约。P2 不得以 priority 或 Consumer/Provider 描述字符串推断“首个/后续”关系；若契约或 Consumer 必须改变，该 delta 必须由当前获准 design/decision refs 明示，否则路由蓝图调和/版本化。
+当 `design_refs` 指向 P1 中裁决为建立接缝、且尚未落地的变化轴 decision 时，首个 CU 必须同时映射稳定契约、首个真实 Provider、真实 Consumer 和契约测试四类 target predicate/verification。后续 Provider 可以是独立 CU，但必须继续引用该权威 decision，并通过精确 `requires.from_change_unit_id + provide_id` 消费已落地稳定契约；前置 CU 必须引用同一 decision，且该 `provide_id` 必须由其 contract predicate 单独绑定，不能拿所有 predicates 共用的整单元 outcome 冒充稳定契约。P2 不得以 priority 或 Consumer/Provider 描述字符串推断“首个/后续”关系；若契约或 Consumer 必须改变，该 delta 必须由当前获准 design/decision refs 明示，否则路由蓝图调和/版本化。
 
 ### Decision 11: 可替换能力只设三张 Seam Card，首期静态接线
 

@@ -1,5 +1,6 @@
 cases:
   - { id: authored-ready, surface: artifact, mutator: authored-ready, expected_issue: change_unit_forbidden_authority_field }
+  - { id: self-claimed-provenance, surface: artifact, mutator: self-claimed-provenance, expected_issue: change_unit_provenance_source_unrecognized }
   - { id: unsafe-intermediate, surface: artifact, mutator: unsafe-intermediate, expected_issue: change_unit_safe_intermediate_state_invalid }
   - { id: mixed-blueprint-revision, surface: artifact, mutator: mixed-revision, expected_issue: change_unit_blueprint_identity_mismatch }
   - { id: dangling-design-target, surface: design, mutator: dangling-design, expected_issue: change_unit_design_ref_unresolvable }
@@ -7,6 +8,7 @@ cases:
   - { id: copied-cu-definition, surface: projection, mutator: copied-definition, expected_issue: change_unit_definition_copied }
   - { id: parallel-runtime-authority, surface: projection, mutator: parallel-runtime, expected_issue: change_unit_parallel_runtime_authority }
   - { id: missing-use-case, surface: projection, mutator: missing-use-case, expected_issue: change_unit_use_cases_required }
+  - { id: acceptance-multistep-missing-dag, surface: projection, mutator: acceptance-multistep-missing-dag, expected_issue: change_unit_dag_required }
   - { id: unsafe-construction-path, surface: projection, mutator: unsafe-construction-path, expected_issue: change_unit_mapping_path_invalid }
   - { id: missing-construction-symbol, surface: projection, mutator: missing-construction-symbol, expected_issue: change_unit_mapping_symbol_missing }
   - { id: missing-construction-test, surface: projection, mutator: missing-construction-test, expected_issue: change_unit_mapping_file_missing }

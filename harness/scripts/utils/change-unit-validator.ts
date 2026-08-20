@@ -2,9 +2,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import {
   ComponentBlueprintRef,
+  BlueprintRecord,
   asRecord,
 } from './component-blueprint-model';
-import { validateComponentBlueprintRefShape } from './component-blueprint-path';
+import { resolveComponentBlueprintRef, validateComponentBlueprintRefShape } from './component-blueprint-path';
 import { validateLiteSchema } from './lite-json-schema';
 import {
   CHANGE_UNIT_ARTIFACT,
@@ -57,6 +58,76 @@ function validateBlueprintRef(
 
 function arrayHasContent(value: unknown): boolean {
   return Array.isArray(value) && value.length > 0;
+}
+
+function collectBlueprintSourceRefs(
+  value: unknown,
+  inheritedAuthoritative = false,
+  all = new Set<string>(),
+  authoritative = new Set<string>(),
+): { all: Set<string>; authoritative: Set<string> } {
+  if (Array.isArray(value)) {
+    for (const item of value) collectBlueprintSourceRefs(item, inheritedAuthoritative, all, authoritative);
+    return { all, authoritative };
+  }
+  const record = asRecord(value);
+  if (!record) return { all, authoritative };
+  const provenance = asRecord(record.provenance);
+  const underAuthority = inheritedAuthoritative || provenance?.evidence_strength === 'authoritative';
+  if (changeUnitNonEmpty(record.source_ref)) {
+    const ref = String(record.source_ref);
+    all.add(ref);
+    if (underAuthority) authoritative.add(ref);
+  }
+  for (const child of Object.values(record)) {
+    collectBlueprintSourceRefs(child, underAuthority, all, authoritative);
+  }
+  return { all, authoritative };
+}
+
+function validateProvenanceSource(
+  provenance: BlueprintRecord,
+  ownerRef: ComponentBlueprintRef | undefined,
+  context: ChangeUnitValidationContext,
+  out: ChangeUnitIssue[],
+): void {
+  if (!ownerRef) return;
+  if (!context.projectRoot) {
+    out.push(changeUnitIssue(
+      'change_unit_provenance_context_missing',
+      '$.provenance.source_ref',
+      '校验正式 CU provenance 必须提供 projectRoot，以绑定 owner blueprint 或其已承认来源。',
+    ));
+    return;
+  }
+  try {
+    const resolved = resolveComponentBlueprintRef(context.projectRoot, ownerRef);
+    const ownerSourceRef = `${path.relative(context.projectRoot, resolved.canonicalPath).replace(/\\/g, '/')}#blueprint:${ownerRef.blueprint_id}`;
+    const sourceRef = String(provenance.source_ref ?? '');
+    if (sourceRef === ownerSourceRef) return;
+    const acknowledged = collectBlueprintSourceRefs(resolved.blueprint);
+    if (!acknowledged.all.has(sourceRef)) {
+      out.push(changeUnitIssue(
+        'change_unit_provenance_source_unrecognized',
+        '$.provenance.source_ref',
+        `source_ref=${sourceRef} 既未绑定 owner blueprint，也未被该 P1 blueprint 承认。`,
+      ));
+      return;
+    }
+    if (provenance.evidence_strength === 'authoritative' && !acknowledged.authoritative.has(sourceRef)) {
+      out.push(changeUnitIssue(
+        'change_unit_provenance_authority_invalid',
+        '$.provenance',
+        `source_ref=${sourceRef} 虽在 P1 blueprint 中出现，但不处于 authoritative provenance 下。`,
+      ));
+    }
+  } catch (error) {
+    out.push(changeUnitIssue(
+      'change_unit_provenance_owner_unresolvable',
+      '$.provenance.source_ref',
+      `无法通过 owner blueprint 校验 provenance：${(error as Error).message}`,
+    ));
+  }
 }
 
 function validateCanonicalIdentity(
@@ -145,6 +216,7 @@ export function validateChangeUnit(
     if (!changeUnitNonEmpty(provenance.observed_at) || Number.isNaN(Date.parse(String(provenance.observed_at)))) {
       out.push(changeUnitIssue('change_unit_provenance_time_invalid', '$.provenance.observed_at', 'observed_at 必须是可解析时间。'));
     }
+    validateProvenanceSource(provenance, ownerRef, context, out);
   }
 
   if (!changeUnitNonEmpty(cu.purpose)) {

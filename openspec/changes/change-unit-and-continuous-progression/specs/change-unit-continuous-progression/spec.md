@@ -10,7 +10,7 @@
 
 凡归属复杂能力蓝图的 Change Unit MUST 使用 `change-unit@1` canonical YAML，唯一位置为 `<project_root>/blueprint/component/<component_id>/change-units/<change_unit_id>.yaml`。`component_id` 与 `change_unit_id` MUST 是安全单路径段；loader MUST 由两个 identity 确定性解析精确路径，不接受调用方任意 path，不扫描 Feature/legacy 目录，不新增全局 registry。按部件装载单元集合时只允许对该 canonical `change-units/` 目录的 YAML 做稳定排序枚举。
 
-根 `component_id`/`change_unit_id` MUST 与 path 一致，并包含正整数 `revision`。`component_blueprint_ref` MUST 指向 `target.kind: blueprint`，且一个 CU MUST 只归属一份蓝图。根 `provenance` MUST 复用 P1 的 `source_kind/source_ref/source_revision?/observed_at/evidence_strength/extraction_method` 结构并指向正式蓝图/权威输入；Provider 身份不得冒充权威来源。根对象 MUST NOT 含可手改 `execution.feature_id`、`status`、`ready`、`completed`、P2 选择队列或 P3 closure 字段；蓝图 MUST NOT 反向登记 CU 运行状态。
+根 `component_id`/`change_unit_id` MUST 与 path 一致，并包含正整数 `revision`。`component_blueprint_ref` MUST 指向 `target.kind: blueprint`，且一个 CU MUST 只归属一份蓝图。根 `provenance` MUST 复用 P1 的 `source_kind/source_ref/source_revision?/observed_at/evidence_strength/extraction_method` 结构并指向正式蓝图/权威输入：`source_ref` MUST 是 owner blueprint canonical ref 或已由该 P1 blueprint 收录的来源；外部来源若声明 `authoritative`，MUST 位于 P1 authoritative provenance 覆盖下。Provider 身份不得冒充权威来源。根对象 MUST NOT 含可手改 `execution.feature_id`、`status`、`ready`、`completed`、P2 选择队列或 P3 closure 字段；蓝图 MUST NOT 反向登记 CU 运行状态。
 
 P2 SHALL 以 `cu-` + `base64url(UTF-8(component_id + "\0" + change_unit_id))` 派生唯一 Feature identity，不接受 authored override。安全 identity 不含 NUL 且 base64url 可逆，因此不同 CU identity MUST NOT 复用同一 Feature；若派生 Feature 路径已绑定其它 `change_unit_ref`，或已有非空 Feature 未绑定当前 CU，identity gate MUST fail-closed，不得接管。
 
@@ -139,7 +139,7 @@ CU MUST 只保存 P1 runtime flow/design 的稳定 refs，不得新增或复制 
 
 首版每个 `provides[]` 项 MUST 有部件内稳定 `provide_id`；每个 `requires[]` 项 MUST 显式声明精确 `provide_id` 与 `from_change_unit_id`。匹配 MUST 是同一 component/blueprint 下的精确 identity 对账，不得按名称相似、priority、实际执行顺序、plan `goal_requires` 或 capability seam 依赖推导。
 
-`blockers[]` MUST 包含 id、影响门槛、owner、原因、解除条件和 source refs；机器可观测解除条件 MUST 有 probe，只有真正需要人类判断/授权的 blocker 才允许没有 probe。blocker 的活动性 MUST 从 probe/权威事实重算，不接受 `resolved: true` 或手工 done 台账。
+`blockers[]` MUST 包含 id、影响门槛、owner、原因、解除条件和 source refs；机器可观测解除条件 MUST 有 probe，只有真正需要人类判断/授权的 blocker 才允许没有 probe。`file_exists` probe MUST 使用通过既有 project-relative path 校验的工程内引用，工程外路径不得解除 blocker。blocker 的活动性 MUST 从 probe/权威事实重算，不接受 `resolved: true` 或手工 done 台账。
 
 #### Scenario: Exact provider completion satisfies a require
 
@@ -236,6 +236,8 @@ P2 不提供多 writer/distributed lock 保证，不新增锁或常驻 scheduler
 
 单元完成 MUST 只认现有 `verifyFeatureCompletion()=VALID` 及与当前 `change_unit_ref` 一致的施工契约；失败、暂停、待人工、resume、retry 和 Feature 内 backtrack MUST 继续由既有 Goal Mode events/reducer/receipt/evidence 负责。循环中断后 MUST 可通过重读这些事实恢复，不得创建跨单元 checkpoint/ledger 或直接写 completion。
 
+caller 返回 `completed` 后，薄循环 MUST 立即重读当前 CU completion；若结果不是 `VALID`，MUST 以 no-progress blocker 停止，且 MUST NOT 再次选择同一 CU。caller 返回值本身不得充当完成事实。
+
 #### Scenario: Three dependent units progress continuously
 
 - **WHEN** fixture 有 A→B→C 三个合法 CU，fake Goal Mode 每次为选中 Feature 产生可验证 completion
@@ -245,6 +247,11 @@ P2 不提供多 writer/distributed lock 保证，不新增锁或常驻 scheduler
 
 - **WHEN** Goal Mode 对当前 CU 返回失败、暂停或 awaiting-human 且无 VALID completion
 - **THEN** P2 停止选择新 CU，返回同一 run 的恢复/阻塞信息，不把失败投影成 provides 已满足
+
+#### Scenario: Completed return without completion fact makes no progress
+
+- **WHEN** caller 返回 `completed`，但重读后当前 CU completion 仍为 ABSENT、STALE 或 INVALID
+- **THEN** P2 立即返回 no-progress blocker，只调用该 CU 一次，不循环重启同一 Feature
 
 > **Enforced by (P2 implementation):** `harness/scripts/utils/change-unit-progress-loop.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/verify-feature-completion.ts`
 
@@ -270,7 +277,7 @@ P2 不提供多 writer/distributed lock 保证，不新增锁或常驻 scheduler
 
 ### Requirement: First host evolution seam lands as one vertical Change Unit
 
-当 CU 首次落实蓝图中获批的宿主演进接缝 decision 时，同一 CU MUST 覆盖稳定契约、首个真实 Provider、真实 Consumer 与契约测试，且具备真实 target predicates、touches 与 verification refs；空接口横向 CU MUST 被拒绝。后续 Provider MAY 是独立 CU，但 MUST 继续引用该权威 decision，并以精确 `requires.from_change_unit_id + provide_id` 消费已落地稳定契约。P2 MUST NOT 以 priority 或 Consumer/Provider 描述字符串推断 Provider 演进顺序；若契约或 Consumer 必须变化，该 delta MUST 由当前获准 design/decision refs 明示，否则先触发蓝图调和、契约版本化或迁移裁决。
+当 CU 首次落实蓝图中获批的宿主演进接缝 decision 时，同一 CU MUST 覆盖稳定契约、首个真实 Provider、真实 Consumer 与契约测试，且具备真实 target predicates、touches 与 verification refs；空接口横向 CU MUST 被拒绝。后续 Provider MAY 是独立 CU，但 MUST 继续引用该权威 decision，并以精确 `requires.from_change_unit_id + provide_id` 消费已落地稳定契约。前置 CU MUST 引用同一 evolution decision，且该 `provide_id` MUST 由其 contract predicate 单独绑定；被所有 predicates 共用的整单元 outcome 不得冒充稳定契约。P2 MUST NOT 以 priority 或 Consumer/Provider 描述字符串推断 Provider 演进顺序；若契约或 Consumer 必须变化，该 delta MUST 由当前获准 design/decision refs 明示，否则先触发蓝图调和、契约版本化或迁移裁决。
 
 #### Scenario: First seam slice is complete
 

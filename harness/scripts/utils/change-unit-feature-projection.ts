@@ -22,6 +22,7 @@ import {
   ChangeUnitResolutionError,
   asChangeUnitArtifact,
   deriveChangeUnitFeatureId,
+  loadCanonicalChangeUnit,
   resolveChangeUnitRef,
 } from './change-unit-path';
 import { AcceptanceSpec, CheckContext, CheckResult, ContractsSpec } from './types';
@@ -254,11 +255,23 @@ function runtimeFacts(contracts: ContractsSpec): {
   return { useCasesRequired: ordered || recovery || sharedConsumers || lifecycle, dagComplexity: ordered || recovery || sharedConsumers, issues };
 }
 
+function acceptanceItemHasFlowComplexity(
+  item: AcceptanceSpec['criteria'][number] | AcceptanceSpec['boundaries'][number],
+): boolean {
+  return ('verification_steps' in item ? item.verification_steps?.length ?? 0 : 0) >= 2
+    || /retry|recover|compensat|恢复|重试|补偿/i.test(item.description ?? '');
+}
+
 function acceptanceNeedsUseCase(acceptance: AcceptanceSpec | undefined): boolean {
   return [...(acceptance?.criteria ?? []), ...(acceptance?.boundaries ?? [])]
+    .some(acceptanceItemHasFlowComplexity);
+}
+
+function acceptanceNeedsDag(acceptance: AcceptanceSpec | undefined): boolean {
+  return [...(acceptance?.criteria ?? []), ...(acceptance?.boundaries ?? [])]
     .some(item => (
-      ('verification_steps' in item ? item.verification_steps?.length ?? 0 : 0) >= 2
-      || /retry|recover|compensat|恢复|重试|补偿/i.test(item.description ?? '')
+      (item.ut_layer === 'unit' || item.ut_layer === 'both')
+      && acceptanceItemHasFlowComplexity(item)
     ));
 }
 
@@ -386,7 +399,18 @@ function checkVerticalSlice(
   for (const ref of cu.design_refs.filter(item => item.target.kind === 'decision')) {
     try {
       const decision = resolveComponentBlueprintRef(projectRoot, ref).target as BlueprintRecord;
-      issues.push(...validateChangeUnitEvolutionSeam(cu, ref, decision)
+      const providers = cu.requires.flatMap(requirement => {
+        try {
+          return [asChangeUnitArtifact(loadCanonicalChangeUnit(
+            projectRoot,
+            cu.component_id,
+            requirement.from_change_unit_id,
+          ).changeUnit)];
+        } catch {
+          return [];
+        }
+      });
+      issues.push(...validateChangeUnitEvolutionSeam(cu, ref, decision, providers)
         .map(item => issue(item.id, item.message, 'repair_change_unit')));
     } catch (error) {
       issues.push(issue('change_unit_design_ref_unresolvable', (error as Error).message, 'reconcile_blueprint'));
@@ -458,7 +482,7 @@ export function validateChangeUnitFeatureProjection(
   issues.push(...runtime.issues);
   issues.push(...checkVerticalSlice(projectRoot, cu, contracts!));
   const useCasesRequired = runtime.useCasesRequired || acceptanceNeedsUseCase(acceptance);
-  const dagRequired = hasUnitScope(acceptance) && runtime.dagComplexity;
+  const dagRequired = acceptanceNeedsDag(acceptance) || (hasUnitScope(acceptance) && runtime.dagComplexity);
   if (useCasesRequired && !useCasesPresent) {
     issues.push(issue('change_unit_use_cases_required', '机械派生事实要求 use-cases.yaml，但产物缺失。'));
   }
