@@ -8,16 +8,18 @@
 
 ### Requirement: Canonical Change Unit identity has one blueprint owner
 
-凡归属复杂能力蓝图的 Change Unit MUST 使用 `change-unit@1` canonical YAML，唯一位置为 `<project_root>/blueprint/component/<component_id>/change-units/<change_unit_id>.yaml`。`component_id` 与 `change_unit_id` MUST 是安全单路径段；loader MUST 由两个 identity 确定性解析精确路径，不接受调用方任意 path，不扫描 Feature/legacy 目录，不新增全局 registry。按部件装载单元集合时只允许对该 canonical `change-units/` 目录的 YAML 做稳定排序枚举。
+凡归属复杂能力蓝图的 Change Unit MUST 使用 `change-unit@1` canonical YAML，唯一位置为该次演进工作区内的 `<features_dir>/<blueprint_id>/<change_unit_id>/change-unit.yaml`（`<features_dir>` 即 `paths.features_dir`，默认 `doc/features`，经既有配置解析；文件名固定为 `change-unit.yaml`，目录名即 `change_unit_id`）。该目录同时就是该 CU 派生 Feature 的施工目录，CU 契约与其 phase-scoped 施工产物同目录内聚。`blueprint_id` 与 `change_unit_id` MUST 是安全单路径段（`^[A-Za-z0-9][A-Za-z0-9._-]*$`，拒绝 `.`、`..` 与分隔符），`change_unit_id` MUST NOT 为保留名 `blueprint`；loader MUST 由 `(blueprint_id, change_unit_id)` 两个 identity 经 `paths.features_dir` 确定性解析精确路径，不接受调用方任意 path，不读取或回退已废止的 `blueprint/component/<component_id>/change-units/` 根路径，不扫描 legacy 目录，不新增全局 registry。按蓝图装载单元集合时只允许枚举**同一工作区**下含 `change-unit.yaml` 的子目录（跳过保留目录 `blueprint/`），按目录名稳定排序，且每个 YAML 根 `change_unit_id` MUST 等于其目录名；另一 `blueprint_id` 工作区的 CU MUST NOT 进入该集合。
 
-根 `component_id`/`change_unit_id` MUST 与 path 一致，并包含正整数 `revision`。`component_blueprint_ref` MUST 指向 `target.kind: blueprint`，且一个 CU MUST 只归属一份蓝图。根 `provenance` MUST 复用 P1 的 `source_kind/source_ref/source_revision?/observed_at/evidence_strength/extraction_method` 结构并指向正式蓝图/权威输入：`source_ref` MUST 是 owner blueprint canonical ref 或已由该 P1 blueprint 收录的来源；外部来源若声明 `authoritative`，MUST 位于 P1 authoritative provenance 覆盖下。Provider 身份不得冒充权威来源。根对象 MUST NOT 含可手改 `execution.feature_id`、`status`、`ready`、`completed`、P2 选择队列或 P3 closure 字段；蓝图 MUST NOT 反向登记 CU 运行状态。
+根 `blueprint_id`/`change_unit_id` MUST 与 path 段一致，根 `component_id` MUST 与 owner 蓝图的 `component_id` 一致，并包含正整数 `revision`。`component_blueprint_ref` MUST 指向 `target.kind: blueprint`，其 `blueprint_id` MUST 等于根 `blueprint_id`，因此一个 CU MUST 只归属一份蓝图。`ChangeUnitRef` MUST 包含必填 `blueprint_id`、`component_id`、`change_unit_id`、正整数 `revision` 与 `artifact_sha256`；`component_id` 只做所有权与一致性核验，不充当路径键或 CLI 定位参数，CLI `check-change-unit` 与 Skill 命令以 `--blueprint <blueprint_id> --unit <change_unit_id>` 定位。根 `provenance` MUST 复用 P1 的 `source_kind/source_ref/source_revision?/observed_at/evidence_strength/extraction_method` 结构并指向正式蓝图/权威输入：`source_ref` MUST 是 owner blueprint canonical ref 或已由该 P1 blueprint 收录的来源；外部来源若声明 `authoritative`，MUST 位于 P1 authoritative provenance 覆盖下。Provider 身份不得冒充权威来源。根对象 MUST NOT 含可手改 `execution.feature_id`、`status`、`ready`、`completed`、P2 选择队列或 P3 closure 字段；蓝图 MUST NOT 反向登记 CU 运行状态。
 
-P2 SHALL 以 `cu-` + `base64url(UTF-8(component_id + "\0" + change_unit_id))` 派生唯一 Feature identity，不接受 authored override。安全 identity 不含 NUL 且 base64url 可逆，因此不同 CU identity MUST NOT 复用同一 Feature；若派生 Feature 路径已绑定其它 `change_unit_ref`，或已有非空 Feature 未绑定当前 CU，identity gate MUST fail-closed，不得接管。
+P2 SHALL 以 `cu-` + `base64url(UTF-8(blueprint_id + "\0" + change_unit_id))` 派生唯一的**逻辑** Feature identity（events/receipt/reports/manifest 全框架引用的全局键），不接受 authored override；其**物理**施工目录是 `<features_dir>/<blueprint_id>/<change_unit_id>`，即 CU canonical YAML 所在目录。逻辑 identity 到物理路径 MUST 只经 `feature-artifact-layout` 规定的唯一 Feature 路径 SSOT 解析，P2 不得自行拼接。安全 identity 不含 NUL 且 base64url 可逆，因此不同 CU identity MUST NOT 复用同一 Feature；不同 `blueprint_id` 工作区允许使用相同 `change_unit_id`，其逻辑 identity 与物理路径均不冲突。以 `cu-` 开头但 payload 非法（不可解码、缺唯一 NUL、段非安全路径、re-derive 不等）的 identity MUST fail-closed，MUST NOT 回退为平铺 Feature。
+
+CU 目录与 Feature 目录合一后，派生 Feature 绑定 MUST 按以下状态判定：目录只含 `change-unit.yaml` → `available`（CU 已立、未开工）；含 `change-unit.yaml` 与部分 phase-scoped 施工产物、尚无 `contracts.yaml` → `in_progress`（合法：spec 完成、plan 进行中、contracts 尚未形成）；含 `contracts.yaml` → 校验其中 `change_unit.change_unit_ref` 与本 CU identity，得 `matched` 或 `conflict`；工作区子目录含 Feature 施工产物但缺 `change-unit.yaml` → 孤儿 Feature，MUST fail-closed；无任何已知 Feature 标志的辅助目录 → 忽略。`conflict` 与孤儿状态下 identity gate MUST fail-closed，不得接管。
 
 #### Scenario: Canonical CU resolves deterministically
 
-- **WHEN** consumer 以 `component_id=ledger-app`、`change_unit_id=cu-ledger-write` 装载 CU
-- **THEN** loader 只读取 `blueprint/component/ledger-app/change-units/cu-ledger-write.yaml`，并校验 path/YAML identity 与唯一 blueprint owner
+- **WHEN** consumer 以 `blueprint_id=ledger-evolution`、`change_unit_id=cu-ledger-write` 装载 CU
+- **THEN** loader 只读取 `<features_dir>/ledger-evolution/cu-ledger-write/change-unit.yaml`，并校验 path/YAML identity（blueprint_id、change_unit_id）、owner 蓝图 `component_id` 一致与唯一 blueprint owner
 
 #### Scenario: Manual status ledger is rejected
 
@@ -26,8 +28,33 @@ P2 SHALL 以 `cu-` + `base64url(UTF-8(component_id + "\0" + change_unit_id))` �
 
 #### Scenario: Duplicate Feature identity cannot be authored
 
-- **WHEN** 两个 CU 试图通过 `execution.feature_id` 指向同一 Feature，或派生 Feature 路径已绑定另一 CU
+- **WHEN** 两个 CU 试图通过 `execution.feature_id` 指向同一 Feature，或派生 Feature 目录的 `contracts.yaml` 已绑定另一 CU 的 `change_unit_ref`
 - **THEN** schema 拒绝 override 或 identity gate 报绑定冲突；不得让两个 CU 共享一份完成事实
+
+#### Scenario: Same change_unit_id in two workspaces does not collide
+
+- **WHEN** 工作区 `ledger-evolution` 与 `ledger-evolution-2` 各有一个 `change_unit_id=cu-ledger-write` 的 CU
+- **THEN** 两者派生的逻辑 Feature identity 不同、物理目录不同，互不可见；枚举任一工作区的 CU 集合 MUST NOT 含另一工作区的单元
+
+#### Scenario: Construction in progress without contracts is legal
+
+- **WHEN** CU 目录含 `change-unit.yaml` 与 `spec/spec.md`，尚无 `contracts.yaml`
+- **THEN** 绑定状态为 `in_progress`，loader/identity gate MUST NOT 报 conflict；该 CU 仍可被当前 Goal run 恢复
+
+#### Scenario: Orphan Feature inside a workspace fails closed
+
+- **WHEN** 工作区子目录含 phase-scoped 施工产物但缺 `change-unit.yaml`
+- **THEN** 枚举与 identity gate MUST fail-closed 并定位该目录，不得把它当作平铺 Feature 或静默忽略
+
+#### Scenario: Invalid cu- payload fails closed
+
+- **WHEN** 某 Feature identity 以 `cu-` 开头但 base64url 不可解码、缺唯一 NUL 分隔、段含分隔符或 re-derive 结果不等
+- **THEN** 路径解析 MUST 报错定位，不得回退为 `<features_dir>/<identity>` 平铺目录
+
+#### Scenario: Retired CU root path is never consulted
+
+- **WHEN** 仅存在旧根 `blueprint/component/<component_id>/change-units/<change_unit_id>.yaml` 而工作区 CU 缺失
+- **THEN** loader MUST 报 canonical Change Unit 缺失，不回退、不扫描
 
 > **Enforced by (P2 implementation):** `harness/schemas/change-unit.schema.json`, `harness/scripts/utils/change-unit-path.ts`, `harness/scripts/utils/change-unit-validator.ts`
 
@@ -87,7 +114,7 @@ CU MUST 声明非空 `purpose`、至少一个 `provides`、至少一个 `design_
 
 ### Requirement: Feature artifacts bind the exact Change Unit revision
 
-归属 CU 的派生 Feature MUST 在机器施工契约中携带 `change_unit_ref`，至少包含 `artifact: change-unit@1`、component/unit identity、正整数 revision 与 CU canonical YAML 原始字节 `artifact_sha256`。`contracts.yaml.change_unit` MUST 只按 canonical CU 的稳定 ID 保存施工映射：每个 `predicate_id`/`provide_id` 映射到真实 implementation/test refs，每个完整 `design_ref` 映射到 implementation/verification refs。Feature MUST NOT 复制或重新定义 CU purpose、predicate/provide 描述、verification obligation，也不得映射 canonical CU 中不存在的 ID。
+归属 CU 的派生 Feature MUST 在机器施工契约中携带 `change_unit_ref`，至少包含 `artifact: change-unit@1`、`blueprint_id`、`component_id`、`change_unit_id`、正整数 revision 与 CU canonical YAML 原始字节 `artifact_sha256`。`contracts.yaml.change_unit` MUST 只按 canonical CU 的稳定 ID 保存施工映射：每个 `predicate_id`/`provide_id` 映射到真实 implementation/test refs，每个完整 `design_ref` 映射到 implementation/verification refs。Feature MUST NOT 复制或重新定义 CU purpose、predicate/provide 描述、verification obligation，也不得映射 canonical CU 中不存在的 ID。
 
 `spec.md`/`acceptance.yaml` SHALL 以引用方式解释 purpose、用户可见语义和目标谓词；`plan.md` SHALL 精确展开当前 delta。CU design gate 负责 predicate/provide/design-ref/验证义务是否形成可施工设计；Feature mapping gate MUST 独立验证 canonical CU 中每个 required ID 都有具体文件/符号/测试落点且没有未知 ID。Feature 产物不得复制完整 review summary、全部 design views、全量 decisions/flows 或把 `contracts.yaml` 升级为第二蓝图。CU/派生 Feature/Goal Mode identity MUST 一致；CU revision/hash 变化后，旧 Feature mapping 即 stale。
 
@@ -137,7 +164,7 @@ CU MUST 只保存 P1 runtime flow/design 的稳定 refs，不得新增或复制 
 
 ### Requirement: Requires, provides, and blockers are explicit construction facts
 
-首版每个 `provides[]` 项 MUST 有部件内稳定 `provide_id`；每个 `requires[]` 项 MUST 显式声明精确 `provide_id` 与 `from_change_unit_id`。匹配 MUST 是同一 component/blueprint 下的精确 identity 对账，不得按名称相似、priority、实际执行顺序、plan `goal_requires` 或 capability seam 依赖推导。
+首版每个 `provides[]` 项 MUST 有部件内稳定 `provide_id`；每个 `requires[]` 项 MUST 显式声明精确 `provide_id` 与 `from_change_unit_id`。匹配 MUST 是同一 `blueprint_id` 工作区内的精确 identity 对账：`from_change_unit_id` 只在当前工作区的 canonical CU 集合中解析，另一 `blueprint_id` 工作区（含同一 `component_id` 的前次演进）的 CU 与其 provides MUST NOT 满足本工作区任何 requires；不得按名称相似、priority、实际执行顺序、plan `goal_requires` 或 capability seam 依赖推导。新演进依赖前次演进成果的唯一合法通道是 P1 discovery 从当前代码与归位真源重新发现当前态（总纲 §5.3）。
 
 `blockers[]` MUST 包含 id、影响门槛、owner、原因、解除条件和 source refs；机器可观测解除条件 MUST 有 probe，只有真正需要人类判断/授权的 blocker 才允许没有 probe。`file_exists` probe MUST 使用通过既有 project-relative path 校验的工程内引用，工程外路径不得解除 blocker。blocker 的活动性 MUST 从 probe/权威事实重算，不接受 `resolved: true` 或手工 done 台账。
 
@@ -178,7 +205,7 @@ P2 adapter SHALL 暴露 `ABSENT|VALID|STALE|INVALID`，但不持久化该 verdic
 
 ### Requirement: Ready set is derived from blueprint, blockers, and authoritative completion
 
-P2 SHALL 每次从有效 CU artifacts、当前 blueprint identity、design gate、blocker probes、派生 Feature 的现有 Goal Mode run 状态与四态 completion observation 重建 gate-specific ready set。execution-ready CU MUST 绑定当前 blueprint revision、设计可施工、全部 requires 已由 `VALID` 且对当前蓝图仍有效的 provider CU 满足、无 design/execution blocker、且同部件没有应优先恢复的 active Goal run。`ABSENT` 表示首次/继续执行候选；`STALE` 仅在当前 CU/design/Feature mapping 已重新校验后表示重执行候选；`INVALID` 表示证据完整性故障并阻塞，三者 MUST NOT 混成同一原因。
+P2 SHALL 每次从有效 CU artifacts、当前 blueprint identity、design gate、blocker probes、派生 Feature 的现有 Goal Mode run 状态与四态 completion observation 重建 gate-specific ready set。execution-ready CU MUST 绑定当前 blueprint revision、设计可施工、全部 requires 已由 `VALID` 且对当前蓝图仍有效的 provider CU 满足、无 design/execution blocker、且同一 `blueprint_id` 工作区没有应优先恢复的 active Goal run。`ABSENT` 表示首次/继续执行候选；`STALE` 仅在当前 CU/design/Feature mapping 已重新校验后表示重执行候选；`INVALID` 表示证据完整性故障并阻塞，三者 MUST NOT 混成同一原因。
 
 ready set MUST 只表示当前可选择，可以含多个单元，但 MUST NOT 表示并发授权。派生结果、报告或缓存 MUST 可删除后重建；provider 退出、蓝图/CU hash 变化或完成事实变化时 MUST stale 并重新派生。文件存在、Markdown 结论、CU 自报或未经验证的 completion MUST NOT 放行。
 
@@ -259,7 +286,7 @@ caller 返回 `completed` 后，薄循环 MUST 立即重读当前 CU completion�
 
 蓝图 revision、`source_fingerprint` 或 `artifact_sha256` 变化时，尚未完成 CU 的旧 blueprint binding/design gate/ready projection MUST stale；CU revision/hash 变化时，旧 Feature projection MUST stale。下游 SHALL 从新 identity 自行重新派生，P1 MUST NOT 创建、修改或移除 P2 ready set。
 
-已完成 CU 的 canonical artifact、原始 blueprint/design refs、Goal Mode events/receipt/evidence/completion MUST 保留，MUST NOT 因重新规划改回 pending 或原位升 revision。P2 SHALL 以历史 refs 的每个稳定 target `kind/id/view_id?` 构造当前 blueprint ref，并只复用当前 P1 resolver/admission：仅当全部 target 在当前有效蓝图中仍可解析且仍获准、无 unknown/open decision/blocker 时，整个 CU 的历史 provides 才 carry forward。任一 target 缺失、因替换而原 ID 不再解析、当前 disposition 为 unknown/open decision/blocker，或蓝图/相关设计未准入时，历史 provides MUST NOT 满足依赖，未来 CU MUST 阻塞并回到 P1 调和。
+已完成 CU 的 canonical artifact、原始 blueprint/design refs、Goal Mode events/receipt/evidence/completion MUST 保留，MUST NOT 因重新规划改回 pending 或原位升 revision。P2 SHALL 以历史 refs 的每个稳定 target `kind/id/view_id?` 构造当前 blueprint ref，并只复用当前 P1 resolver/admission：仅当全部 target 在当前有效蓝图中仍可解析且仍获准、无 unknown/open decision/blocker 时，整个 CU 的历史 provides 才 carry forward；carry-forward 只在同一 `blueprint_id` 内跨 revision 生效，另一 `blueprint_id` 工作区的历史 CU MUST NOT 参与任何 carry-forward 或依赖满足。任一 target 缺失、因替换而原 ID 不再解析、当前 disposition 为 unknown/open decision/blocker，或蓝图/相关设计未准入时，历史 provides MUST NOT 满足依赖，未来 CU MUST 阻塞并回到 P1 调和。
 
 首期判定 MUST 是全有或全无的地址/准入重校验，不得假设 P1 存在 semantic diff、`invalidates` 或 decision-flip 引擎，也不得新增此类 registry/ledger。结果 MUST 可从正式产物和当前蓝图重建。纠正已完成结果 MUST 创建新的 `change_unit_id`，可通过 `revises`/`supersedes` 引用旧 `change_unit_ref`；只有尚未实施 CU 可在蓝图调和后原位升 revision。P2 MUST NOT 创建或修改 P3 closure 状态。
 

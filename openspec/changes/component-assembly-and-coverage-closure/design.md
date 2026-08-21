@@ -29,16 +29,22 @@ P0 已冻结单向引用：Component closure 只能由一份部件蓝图、归�
 
 ## Decisions
 
-### Decision 1: closure 是 component-owned 派生投影，不是第三套完成事实
+### Decision 1: closure 是演进工作区内 blueprint-owned 的派生投影，不是第三套完成事实
 
-当前闭环投影使用唯一确定性路径：
+> 2026-08-21 修订（M5A 演进工作区纠偏，总纲 §3.2/§5.3 裁决）：closure 随其蓝图归入该次演进的工作区，
+> 原 `<project_root>/blueprint/component/<component_id>/` 根路径已废止并硬切，不读取、不双写、不迁移。
+
+当前闭环投影使用唯一确定性路径，与其蓝图同处工作区 `blueprint/` 目录：
 
 ```text
-<project_root>/blueprint/component/<component_id>/component-closure.yaml
-<project_root>/blueprint/component/<component_id>/component-closure.md
+<features_dir>/<blueprint_id>/blueprint/component-closure.yaml
+<features_dir>/<blueprint_id>/blueprint/component-closure.md
 ```
 
-YAML 根对象为 `component-closure@1`，至少包含 `component_id`、target=blueprint 的完整 `component_blueprint_ref`、`input_fingerprint`、`evaluated_at`、排序后的 requirement-source/CU/Feature observation、coverage rows、provider observations、knowledge writeback refs、degradations、gaps 与派生 verdict。YAML 不保存自哈希；loader 从原始字节返回 `artifact_sha256`。若未来上游需要引用 closure，只使用 loader 返回的 `(artifact, component_id, component_blueprint_ref, input_fingerprint, artifact_sha256)`，不增加注册表或任意路径 fallback。
+`<features_dir>` 即 `paths.features_dir`（默认 `doc/features`）；`blueprint_id` 是一次演进的路径键，同一 `component_id`
+的多次演进各有自己的 closure，互不覆盖。closure ref 中承担路径身份的 `blueprint_id` 收紧为安全路径段；CLI
+`check-component-closure` 与 Skill 命令以 `--blueprint <blueprint_id>` 定位，`component_id` 只作核验输出。
+YAML 根对象为 `component-closure@1`，至少包含与路径一致的 `blueprint_id`、`component_id`、target=blueprint 的完整 `component_blueprint_ref`、`input_fingerprint`、`evaluated_at`、排序后的 requirement-source/CU/Feature observation、coverage rows、provider observations、knowledge writeback refs、degradations、gaps 与派生 verdict。YAML 不保存自哈希；loader 从原始字节返回 `artifact_sha256`。若未来上游需要引用 closure，只使用 loader 返回的 `(artifact, blueprint_id, component_id, component_blueprint_ref, input_fingerprint, artifact_sha256)`，不增加注册表或任意路径 fallback。
 
 `input_fingerprint` 从排序后的输入 manifest 确定性计算：P1 已验证的 `current_scope_items` source identity、完整 requirement traceability mappings、蓝图 ref/原始字节 hash、所有 canonical CU ref/原始字节 hash、派生 Feature identity、Feature contracts/acceptance/completion 绑定、权威 evidence/receipt hashes 和会影响裁决的 provider observation identity。时间戳、展示顺序和 Markdown 不进入 fingerprint。checker 每次由稳定内核重新枚举输入、派生完整 obligation/coverage row/verdict 并与 YAML 逐字段对账；作者写入 `PASS`、遗漏 row、调换 owner/evidence 或伪造输入 hash 均失败。
 
@@ -46,9 +52,9 @@ YAML 根对象为 `component-closure@1`，至少包含 `component_id`、target=b
 
 备选方案是在蓝图根写 `closure_status`。这会让 P1 拥有 P3 状态并在每次执行事实变化时重写蓝图，故拒绝。只输出临时控制台文本又无法形成可复核团队评审材料，亦拒绝。
 
-### Decision 2: 输入集合只按既有 component path 和显式 supersedes 计算
+### Decision 2: 输入集合只按单一 `blueprint_id` 工作区路径和显式 supersedes 计算
 
-稳定内核先加载当前 component blueprint，要求 P1 schema、identity、fingerprint、questioning/admission 全部有效。P1 在既有 `discovery.inputs.current_scope_items` 中保存权威输入包已识别的 `requirement|goal|invariant|high_risk` 闭集：每项带稳定 `item_id`、kind、指向精确来源/fragment 的可解析 `source_ref`；项目内文件必须绑定实际原始字节 hash，revision 只能作为附加 identity。`source_fingerprint` 只从规范化 discovery facts、这些 current-scope source identities 及其 provenance/revision/hash 重算。`discovery.requirement_traceability` 必须以相同 `item_id` 与之双向一一覆盖，并映射至少一个真实 blueprint stable address，但 mapping 不进入 `source_fingerprint`；mapping 变化通过 blueprint revision、原始 `artifact_sha256` 与 P3 `input_fingerprint` 失配体现。P3 还会重读相同本地来源，把实际 raw hash 放入既有 input manifest，避免人工 revision/hash 未刷新时旧 closure 假绿。来源缺失/越界/不可解析、source hash 缺失或不符、重复 ID、任一输入无 traceability、额外 traceability、空映射或悬空/外部 component 映射直接形成 blocker。随后只枚举同一 component 的 canonical `change-units/*.yaml`。P3 不解析 PRD 自然语言，也不从目录猜需求；无法提供稳定 source fragment 的非结构化材料由既有人工权威输入先给出 current-scope item identity，而不是由 closure 猜取。首期不新增 `traceability_fingerprint` 或其它状态。
+稳定内核先加载当前 component blueprint，要求 P1 schema、identity、fingerprint、questioning/admission 全部有效。P1 在既有 `discovery.inputs.current_scope_items` 中保存权威输入包已识别的 `requirement|goal|invariant|high_risk` 闭集：每项带稳定 `item_id`、kind、指向精确来源/fragment 的可解析 `source_ref`；项目内文件必须绑定实际原始字节 hash，revision 只能作为附加 identity。`source_fingerprint` 只从规范化 discovery facts、这些 current-scope source identities 及其 provenance/revision/hash 重算。`discovery.requirement_traceability` 必须以相同 `item_id` 与之双向一一覆盖，并映射至少一个真实 blueprint stable address，但 mapping 不进入 `source_fingerprint`；mapping 变化通过 blueprint revision、原始 `artifact_sha256` 与 P3 `input_fingerprint` 失配体现。P3 还会重读相同本地来源，把实际 raw hash 放入既有 input manifest，避免人工 revision/hash 未刷新时旧 closure 假绿。来源缺失/越界/不可解析、source hash 缺失或不符、重复 ID、任一输入无 traceability、额外 traceability、空映射或悬空/外部 component 映射直接形成 blocker。随后只枚举同一 `<features_dir>/<blueprint_id>/` 工作区内含 `change-unit.yaml` 的 CU 子目录，经唯一 Feature 路径 SSOT 解析其 Feature observation 与证据；另一 `blueprint_id` 工作区（含同一 `component_id` 的前次演进）的 CU 与证据一律不进入输入集。P3 不解析 PRD 自然语言，也不从目录猜需求；无法提供稳定 source fragment 的非结构化材料由既有人工权威输入先给出 current-scope item identity，而不是由 closure 猜取。首期不新增 `traceability_fingerprint` 或其它状态。
 
 当前有效 CU 集默认包含目录内全部合法 CU。若一个合法 CU 通过现有精确 `supersedes` ref 指向另一 canonical CU，则被指向者仅作为历史输入保留，不再单独承担当前 closure obligation；superseding CU 必须完成并覆盖当前蓝图切片。一个历史 CU 被多个当前 CU 冲突 supersede、ref/hash 不匹配或 supersedes 形成环时 fail-closed。`revises` 只表达修订关系，不自动退休旧 CU。首期不建设迁移表或 semantic diff。
 
@@ -140,7 +146,7 @@ required evidence provider/层级缺失形成 blocker；optional provider 缺失
 - **[Risk] closure YAML 自身变成手工覆盖表。** → obligation 闭集、input fingerprint、observation 与 verdict 全部由 checker 重算；Markdown 单向派生。
 - **[Risk] optional visual/device provider 缺失被误报为 PASS。** → 只有当前 obligation 未要求该层时才允许 degradation；已分配 UI/device/manual 层则 provider 缺失直接 FAIL。
 - **[Risk] 历史 CU 与当前蓝图变化需要语义 diff。** → 仅复用 P2 stable-target carry-forward 和精确 supersedes；首期不猜等价、不建迁移表。
-- **[Risk] closure 计算成本随 CU/证据增长。** → 只枚举单 component canonical path，以 input hash 缓存可丢弃中间结果；缓存不是权威，首期不做 daemon。
+- **[Risk] closure 计算成本随 CU/证据增长。** → 只枚举单一 `blueprint_id` 工作区的 canonical path，以 input hash 缓存可丢弃中间结果；缓存不是权威，首期不做 daemon。
 
 ## Migration Plan
 

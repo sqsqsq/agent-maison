@@ -7,7 +7,7 @@ P0 已冻结复杂能力建设的对象边界、权威边界、unknown/dispositi
 ## What Changes
 
 - 新增 provider-neutral 的 App 部件发现与蓝图协议，区分 `viewpoint contract` 与蓝图内 `view instance`，并固定稳定的 `logical`、`runtime`、`development`、条件式 `deployment`、`scenarios` 视图 id。
-- 将蓝图落为 blueprint/component 归属的 canonical YAML 机器产物，复用既有 YAML/schema/hash 能力，仅增加最小部件蓝图路径解析；定义 `component_blueprint_ref` 以 `component_id`、`blueprint_id`、revision、`source_fingerprint` 和 `artifact_sha256` 确定性寻址 blueprint、view、node、relation、flow、decision、contract，其中外部契约以稳定 `contract_id` 寻址；resolver 在解析 target 前执行 canonical schema/完整性门；Markdown 只是在评审前由 YAML 完整派生的 projection，不形成第二真源。
+- 将蓝图落为该次演进工作区 `<features_dir>/<blueprint_id>/blueprint/` 内的 canonical YAML 机器产物（2026-08-21 M5A 修订：以 `blueprint_id` 为路径键，蓝图是一次演进而非部件单例，原 `blueprint/component/<component-id>/` 根路径废止硬切），复用既有 YAML/schema/hash 与 `paths.features_dir` 能力，仅增加最小蓝图路径解析；定义 `component_blueprint_ref` 以 `component_id`、`blueprint_id`、revision、`source_fingerprint` 和 `artifact_sha256` 确定性寻址 blueprint、view、node、relation、flow、decision、contract，其中外部契约以稳定 `contract_id` 寻址；resolver 在解析 target 前执行 canonical schema/完整性门；Markdown 只是在评审前由 YAML 完整派生的 projection，不形成第二真源。
 - 锁定适配 4+1 的同源内容、稳定节点寻址、跨视图关系与完整性门；图只作为生成/检查时的派生表达，不替代完整对象、证据、映射和完整性校验。
 - 建立证据驱动的独立设计质询：逐适用视图、逐关系、逐运行时流和十个 App 根问题检查静默假设与断链；覆盖范围与分层准入均由 canonical 内容及全部准入前 checker 结果派生，不接受编写方自报完成。
 - 固化 App 运行时数据流最小形状与条件式闭环校验，覆盖触发、首次加载、状态 owner、mutation、发布/失效、订阅、consumer、失败/恢复、provenance 与验证引用；只读/首次加载流不伪造写入或订阅，已声明 producer 必须闭合到所有受影响 consumer，未闭合边进入 frontier。

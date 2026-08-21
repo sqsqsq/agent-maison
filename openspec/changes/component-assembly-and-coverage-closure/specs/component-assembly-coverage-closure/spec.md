@@ -2,7 +2,7 @@
 
 ### Requirement: Component closure projection has deterministic identity and input binding
 
-The framework SHALL materialize the current Component closure at `blueprint/component/<component_id>/component-closure.yaml` as `component-closure@1`. The root MUST bind the same `component_id` in path/content, one complete `component_blueprint_ref` targeting the blueprint, a deterministically derived `input_fingerprint`, sorted requirement-source/CU/Feature observations, coverage rows, provider observations, knowledge writeback refs, degradations, gaps and a derived verdict. The artifact MUST NOT contain an authored self-hash, P2 ready state, Goal Mode completion state or P3 history ledger.
+The framework SHALL materialize the current Component closure inside the evolution workspace of its blueprint at `<features_dir>/<blueprint_id>/blueprint/component-closure.yaml` as `component-closure@1` (with the derived Markdown `component-closure.md` beside it), where `<features_dir>` is `paths.features_dir` (default `doc/features`) and `<blueprint_id>` is the path key of one evolution (2026-08-21 M5A revision: the retired `blueprint/component/<component_id>/` root is hard-cut, never read, never dual-written). The root MUST bind the same `blueprint_id` in path/content/ref and the same `component_id` in content/ref, one complete `component_blueprint_ref` targeting the blueprint, and the path-bearing `blueprint_id` of the closure ref MUST be a safe path segment (`^[A-Za-z0-9][A-Za-z0-9._-]*$`) while other stable ids keep their character set; a deterministically derived `input_fingerprint`, sorted requirement-source/CU/Feature observations, coverage rows, provider observations, knowledge writeback refs, degradations, gaps and a derived verdict. The artifact MUST NOT contain an authored self-hash, P2 ready state, Goal Mode completion state or P3 history ledger.
 
 The loader SHALL compute the closure artifact SHA-256 from raw bytes. The checker MUST rebuild the ordered input manifest from P1 current-scope requirement traceability and its source revision/hash plus the exact blueprint/CU/Feature/completion/evidence identities, then reject any path/content/ref mismatch, stale fingerprint, omitted input, changed requirement source or authored verdict disagreement. The existing CLI MUST support a first-generation `--write` path that evaluates current inputs, atomically writes canonical YAML, computes its raw hash, generates Markdown from that exact YAML/hash, and revalidates through the production checker. No arbitrary path, Feature-directory, legacy or registry fallback is allowed.
 
@@ -11,16 +11,21 @@ The loader SHALL compute the closure artifact SHA-256 from raw bytes. The checke
 - **WHEN** a closure YAML says `PASS` but the blueprint revision, a CU raw hash or bound completion evidence changed after `input_fingerprint` was produced
 - **THEN** the checker MUST reject the projection as stale and recompute from current authoritative inputs; the authored verdict cannot pass
 
-#### Scenario: Another component cannot be rebound into the path
+#### Scenario: Another blueprint cannot be rebound into the workspace path
 
-- **WHEN** the path names component A while YAML or blueprint ref names component B
-- **THEN** path/content/ref identity validation MUST fail without scanning another component or adopting the artifact
+- **WHEN** the workspace path segment names `blueprint_id` A while the closure YAML root or its `component_blueprint_ref` names `blueprint_id` B
+- **THEN** path/content/ref `blueprint_id` validation MUST fail, reporting all three values, without scanning another workspace or adopting the artifact
+
+#### Scenario: Component ownership disagrees between content and ref
+
+- **WHEN** the closure YAML root `component_id` differs from `component_blueprint_ref.component_id`, or from the `component_id` of the loaded owner blueprint
+- **THEN** content/ref `component_id` validation MUST fail, reporting the disagreeing values; `component_id` is never used to locate a path or to pick another workspace
 
 > **Enforced by (P3 implementation):** `harness/schemas/component-closure.schema.json`, `harness/scripts/utils/component-closure-path.ts`, `harness/scripts/check-component-closure.ts`
 
 ### Requirement: Closure input set is component-bounded and reuses P2 completion truth
 
-P3's stable kernel MUST load one valid current P1 blueprint, consume its validated current-scope requirement traceability, and enumerate only canonical `change-units/*.yaml` under the same component. Input membership MUST NOT be delegated to a replaceable Provider. A CU without that blueprint ownership, a standalone Feature without `change_unit_ref`, a foreign component CU or an arbitrary Feature discovered by repository scan MUST NOT enter closure.
+P3's stable kernel MUST load one valid current P1 blueprint, consume its validated current-scope requirement traceability, and enumerate only canonical `<change_unit_id>/change-unit.yaml` subdirectories inside the same `<features_dir>/<blueprint_id>/` workspace. Input membership MUST NOT be delegated to a replaceable Provider. A CU without that blueprint ownership, a standalone Feature without `change_unit_ref`, a CU of another `blueprint_id` workspace (including an earlier evolution of the same `component_id`), a foreign component CU or an arbitrary Feature discovered by repository scan MUST NOT enter closure; CU/Feature observations and evidence are resolved only through the single Feature path SSOT under that workspace. The closure CLI `check-component-closure` and Skill command MUST address the workspace by `--blueprint <blueprint_id>`; `component_id` is verification output only.
 
 Every current CU MUST pass the existing P2 artifact, design and Feature construction projection gates. A CU bound to the current blueprint requires `observeChangeUnitCompletion()=VALID`; a completed historical CU MAY contribute only when the existing P2 carry-forward verdict allows every historical stable target under the current blueprint. `ABSENT`, `STALE` and `INVALID` MUST remain distinct failing reasons. P3 MUST NOT write completion, ready or carry-forward state.
 
@@ -35,6 +40,21 @@ An exact valid `supersedes` ref MAY retire the referenced CU from current obliga
 
 - **WHEN** a completed CU references an older blueprint identity and one historical stable target no longer resolves or is now open/blocking
 - **THEN** its provides and coverage MUST NOT carry forward; closure fails with a P1 reconciliation route while preserving the historical completion
+
+#### Scenario: Another workspace never feeds closure
+
+- **WHEN** `<features_dir>/ledger-evolution-2/` holds a VALID CU whose provides would satisfy an obligation of blueprint `ledger-evolution`, and both workspaces share `component_id=ledger-app`
+- **THEN** closure of `ledger-evolution` MUST NOT enumerate, observe or credit that CU or its evidence; the obligation stays uncovered and the row fails with its own workspace located
+
+#### Scenario: Two closures of the same component coexist
+
+- **WHEN** `ledger-evolution` and `ledger-evolution-2` each materialize a closure
+- **THEN** each closure lives at its own `<features_dir>/<blueprint_id>/blueprint/component-closure.yaml`; writing or recomputing one MUST NOT modify any byte of the other workspace's blueprint, CUs or closure
+
+#### Scenario: Retired closure root path is never consulted
+
+- **WHEN** only `blueprint/component/<component_id>/component-closure.yaml` exists and the workspace has no closure
+- **THEN** the checker MUST treat the closure as absent and recompute from current inputs; it MUST NOT read, migrate or dual-write the retired path
 
 > **Enforced by (P3 implementation):** `harness/scripts/utils/component-closure-inputs.ts`, `harness/scripts/utils/change-unit-completion.ts`, `harness/scripts/utils/change-unit-reconciliation.ts`, `harness/scripts/utils/change-unit-feature-projection.ts`
 

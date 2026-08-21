@@ -40,12 +40,23 @@ Stakeholder 分工如下：Agent 负责仓内事实调查和证据包；App desi
 
 ### 1.1 正式产物存放、解析与评审投影
 
-机器可校验的蓝图 SSOT 定位为 blueprint/component 归属的唯一 canonical artifact：
-`<project_root>/blueprint/component/<component-id>/component-blueprint.yaml`。`component-id` 是组件身份的路径
-键，不从 feature 名称、feature 目录或 feature artifact 推导。实施时只复用既有 YAML 解析、schema 校验和 SHA-256
-文件 hash 能力；增加一个最小的 `component-id`→canonical path 解析器，不新增全局 registry、独立索引、动态
-注册系统或第二 loader。解析器必须拒绝空值、路径分隔符和 `..`，调用方不得传入任意 path；不存在旧路径时不做
-legacy fallback，也不扫描 feature 目录。
+> 2026-08-21 修订（M5A 演进工作区纠偏，总纲 §3.2/§5.3 裁决）：蓝图是一次演进的设计权威而非部件常驻单例，
+> 原 `<project_root>/blueprint/component/<component-id>/` 根路径以部件为键、工作树单例，已废止并硬切，不保留
+> 兼容读取；下文为修订后的定位与解析规则。
+
+机器可校验的蓝图 SSOT 定位为该次演进工作区内的唯一 canonical artifact：
+`<features_dir>/<blueprint_id>/blueprint/component-blueprint.yaml`，`<features_dir>` 即 `paths.features_dir`
+（默认 `doc/features`），经既有配置解析而不写死。`blueprint_id` 是一次部件演进的稳定路径键：一份蓝图对应一次
+演进，同一 `component_id` 可先后存在多个 `blueprint_id` 工作区且互不覆盖；`component_id` 只做所有权与一致性
+核验，不充当路径键、CLI 定位参数，也不从 feature 名称、feature 目录或 feature artifact 推导。承担路径身份的
+`blueprint_id`（蓝图根字段与 ref 字段）收紧为安全路径段（`^[A-Za-z0-9][A-Za-z0-9._-]*$`）；schema 中其它
+`stableId`（view/node/relation/flow/decision/contract）保留含 `:` 的原字符集，不全局收紧。实施时只复用既有 YAML
+解析、schema 校验、SHA-256 文件 hash 与 `paths.features_dir` 解析能力；增加一个最小的 `blueprint_id`→canonical
+path 解析器，不新增全局 registry、独立索引、动态注册系统或第二 loader。解析器必须拒绝空值、路径分隔符和 `..`，
+调用方不得传入任意 path；不做 legacy fallback，不读取旧根路径，也不扫描 feature 目录。CLI
+`check-component-blueprint` 与 Skill 命令以 `--blueprint <blueprint_id>` 定位，`component_id` 只作核验输出。
+
+蓝图 Markdown 评审投影（`component-blueprint.review.md`）与 canonical YAML 同处工作区 `blueprint/` 目录。
 
 `component_blueprint_ref` 是结构化引用，不把文件路径当作稳定身份：
 
@@ -63,10 +74,11 @@ component_blueprint_ref:
     view_id: <required-for-node-flow; optional-association-otherwise>
 ```
 
-解析顺序固定为：校验 ref 形状 → 由 `component_id` 解析唯一 canonical path → 读取 canonical YAML 原始字节并用
-现有 SHA-256 能力计算 `artifact_sha256` → 按既有 schema/YAML loader 解析 → 校验 path 中 component-id、YAML 根
-`component_id`、ref `component_id` 三者完全一致 → 精确匹配 `blueprint_id`、`revision`、`source_fingerprint`、
-`artifact_sha256` → 运行 canonical schema 与完整性 checker → 解析 target。`target.kind=blueprint` 时 id 必须等于 `blueprint_id`；`view` 时 id 就是稳定 view id；只有
+解析顺序固定为：校验 ref 形状 → 由 `blueprint_id` 经 `paths.features_dir` 解析唯一 canonical path → 读取 canonical
+YAML 原始字节并用现有 SHA-256 能力计算 `artifact_sha256` → 按既有 schema/YAML loader 解析 → 校验 path 段
+`blueprint_id`、YAML 根 `blueprint_id`、ref `blueprint_id` 三者完全一致，且 YAML 根 `component_id` 与 ref
+`component_id` 一致 → 精确匹配 `revision`、`source_fingerprint`、`artifact_sha256` → 运行 canonical schema 与完整性
+checker → 解析 target。`target.kind=blueprint` 时 id 必须等于 `blueprint_id`；`view` 时 id 就是稳定 view id；只有
 `node`/`flow` 必须携带 `view_id` 并在该 view 下存在；`relation` 在蓝图关系集合中稳定寻址；`decision` 与 `contract`
 是顶层稳定对象，分别按 decision id 与 `contract_id` 寻址，`view_id` 仅作可选关联且存在时必须可解析。解析不接受
 第二路径，不回退、不扫描旧目录，因此每个稳定引用都能确定性定位到 blueprint 以及

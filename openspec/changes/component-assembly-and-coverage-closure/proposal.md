@@ -4,7 +4,7 @@ P1 已能产出可稳定寻址、可调和的 App 部件蓝图，P2 已能把获
 
 ## What Changes
 
-- 新增 `component-closure@1` 派生投影与确定性 component-owned 路径，绑定一份精确的 `component_blueprint_ref`、canonical CU 集、派生 Feature identity、四态 completion observation、carry-forward verdict、施工映射和现有证据；既有 CLI 的 `--write` 入口按 evaluate→原子写 YAML→raw hash→派生 Markdown→重校验生成首份产物，投影可删除重建，不是完成台账或恢复权威。
+- 新增 `component-closure@1` 派生投影与确定性路径 `<features_dir>/<blueprint_id>/blueprint/component-closure.yaml`（2026-08-21 M5A 修订：随蓝图归入演进工作区，以 `blueprint_id` 为键，原 `blueprint/component/<component_id>/` 根路径废止硬切），绑定一份精确的 `component_blueprint_ref`、canonical CU 集、派生 Feature identity、四态 completion observation、carry-forward verdict、施工映射和现有证据；既有 CLI 的 `--write` 入口按 evaluate→原子写 YAML→raw hash→派生 Markdown→重校验生成首份产物，投影可删除重建，不是完成台账或恢复权威。
 - 收紧 P1 discovery traceability：在既有 `discovery.inputs` 内形成 current-scope 稳定输入清单，当前范围的原始需求、目标、不变量和高风险必须以稳定 ID、可解析来源及蓝图稳定地址映射与该清单一一闭合；只有输入清单及其 source/provenance/revision/hash 进入 `source_fingerprint`，设计映射由 blueprint revision/`artifact_sha256` 和 P3 `input_fingerprint` 捕获，不新增 fingerprint。P3 不建设通用 PRD 解析器或来源注册表。
 - 从蓝图与 CU 契约机械派生 coverage obligations，覆盖需求/目标谓词、不变量、高风险、设计决策、适用 4+1 视图节点、跨视图关系、关键 scenario、外部契约、迁移/NFR、requires/provides、临时资产去留和宿主演进接缝；作者不能用自报布尔值减少义务。
 - 建立从 obligation 到 owner CU/组合 owner、Feature plan/contracts/实现、适当验证层级、可信 evidence identity 与实际结果的机械派生；YAML 只物化完整 row，checker 逐字段重算，无法唯一派生时返回上游修复，不允许 closure 作者补选。

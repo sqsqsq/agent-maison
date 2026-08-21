@@ -56,41 +56,66 @@ App 部件发现 MUST 为每个当前态断言、设计输入、冲突和 unknow
 
 ### Requirement: Formal blueprint artifact resolves through existing YAML schema and hash infrastructure
 
-机器可校验的蓝图 SSOT MUST 使用 blueprint/component 归属的唯一 canonical 路径
-`<project_root>/blueprint/component/<component-id>/component-blueprint.yaml`。`component-id` 是组件身份的路径键，
-不得从 feature 名称、feature 目录或 feature artifact 推导。实现 MUST 复用既有 YAML 解析、schema 校验和 SHA-256
-文件 hash 能力，只增加最小的 `component-id`→canonical path 解析；不得新增全局 registry、独立索引、动态注册系统
-或第二 loader，调用方也不得传入任意 path。解析器 MUST 拒绝空值、路径分隔符和 `..`；不存在 legacy fallback，
-也不得扫描 feature 目录。
+机器可校验的蓝图 SSOT MUST 存放于该次演进的**工作区**内，使用唯一 canonical 路径
+`<features_dir>/<blueprint_id>/blueprint/component-blueprint.yaml`，其中 `<features_dir>` 即 `paths.features_dir`
+（默认 `doc/features`），所有蓝图路径 MUST 经该配置解析，不得写死 `doc/features`。`blueprint_id` 是一次部件演进的
+稳定路径键：一份蓝图对应一次演进，同一 `component_id` 可以先后存在多个 `blueprint_id` 工作区且互不覆盖；
+`component_id` 只承担所有权与一致性核验，不得充当路径键或 CLI 定位参数，也不得从 feature 名称、feature 目录或
+feature artifact 推导。承担路径身份的 `blueprint_id`（蓝图根字段与 `component_blueprint_ref.blueprint_id`）MUST 是
+安全路径段（`^[A-Za-z0-9][A-Za-z0-9._-]*$`，拒绝 `.`、`..` 与分隔符）；view、节点、关系、flow、decision、contract
+等其它 stable id 保留原有字符集，不得为此全局收紧。实现 MUST 复用既有 YAML 解析、schema 校验、SHA-256 文件 hash
+与 `paths.features_dir` 解析能力，只增加最小的 `blueprint_id`→canonical path 解析；不得新增全局 registry、独立索引、
+动态注册系统或第二 loader，调用方也不得传入任意 path。解析器 MUST 拒绝空值、路径分隔符和 `..`；不存在 legacy
+fallback，不得读取或回退到已废止的 `blueprint/component/<component-id>/` 根路径，也不得扫描 feature 目录。
 
-canonical YAML 根对象 MUST 包含与路径组件身份一致的 `component_id`，并在同一文件内包含 `review_summary`、`design_views`、`decisions_and_gaps` 三组同源内容。`component_blueprint_ref`
+canonical YAML 根对象 MUST 包含与路径段一致的 `blueprint_id` 和与 ref 一致的 `component_id`，并在同一文件内包含 `review_summary`、`design_views`、`decisions_and_gaps` 三组同源内容。`component_blueprint_ref`
 MUST 至少包含 `artifact: component-blueprint@1`、`component_id`、`blueprint_id`、正整数 `revision`、
 `source_fingerprint: sha256:<hex>`、`artifact_sha256: sha256:<hex>` 和
 `target: { kind: blueprint|view|node|relation|flow|decision|contract, id, view_id? }`。`source_fingerprint` 是本 revision
 所依据的规范化来源/权威输入集合的语义指纹；`artifact_sha256` 是 canonical YAML 原始字节的 SHA-256，二者 MUST
-分开计算、分开比对，不能互相替代。path 中 `<component-id>`、canonical YAML 根 `component_id`、ref
-`component_id` MUST 三者完全一致。`target.kind: blueprint` 的 id MUST 等于 `blueprint_id`；`view` 的 id MUST 是稳定
+分开计算、分开比对，不能互相替代。path 中 `<blueprint_id>`、canonical YAML 根 `blueprint_id`、ref
+`blueprint_id` MUST 三者完全一致；canonical YAML 根 `component_id` 与 ref `component_id` MUST 一致。
+`target.kind: blueprint` 的 id MUST 等于 `blueprint_id`；`view` 的 id MUST 是稳定
 view id；只有 `node`/`flow` MUST 提供 `view_id` 并在该 view 下存在。`relation` MUST 在蓝图关系集合中稳定寻址并
 校验其 from/to 稳定引用；`decision` 与 `contract` MUST 是顶层稳定对象，分别按 decision id 与稳定 `contract_id`
 寻址，`view_id` 只允许作为可选关联且存在时 MUST 可解析。
 
-解析顺序 MUST 固定为：校验 ref 形状 → 由 `component_id` 解析唯一 canonical path → 读取 canonical YAML 原始字节并
-计算 `artifact_sha256` → 按既有 schema/YAML loader 解析 → 校验 path/YAML/ref 三处 component identity → 精确比对 blueprint、revision、
-`source_fingerprint`、`artifact_sha256` → 执行 canonical schema/完整性门 → 解析 target。hash 匹配但结构非法的蓝图 MUST fail-closed。解析不接受第二路径、不回退、不扫描旧目录。进入团队评审前生成的
-Markdown/HTML 是 canonical YAML 三组内容的 derived projection，必须携带 `derived_from`（artifact、component_id、
+解析顺序 MUST 固定为：校验 ref 形状 → 由 `blueprint_id` 经 `paths.features_dir` 解析唯一 canonical path → 读取
+canonical YAML 原始字节并计算 `artifact_sha256` → 按既有 schema/YAML loader 解析 → 校验 path/YAML/ref 三处 blueprint
+identity 与 YAML/ref component identity → 精确比对 revision、`source_fingerprint`、`artifact_sha256` → 执行 canonical
+schema/完整性门 → 解析 target。hash 匹配但结构非法的蓝图 MUST fail-closed。解析不接受第二路径、不回退、不扫描旧目录。
+进入团队评审前生成的 Markdown/HTML 是 canonical YAML 三组内容的 derived projection，MUST 与 canonical YAML 同处工作区
+`blueprint/` 目录（`component-blueprint.review.md`），必须携带 `derived_from`（artifact、component_id、
 blueprint_id、revision、source_fingerprint、artifact_sha256），并完整投影视图 current/target/delta、runtime flow、契约 mapping、跨视图关系、质询与准入；它不能反向覆盖 SSOT 或成为解析输入。
 
 #### Scenario: A stable ref resolves one blueprint slice
 
 - **WHEN** 消费者提供包含 component、blueprint、revision、source/artifact fingerprints 和 `target.kind/id` 的
   `component_blueprint_ref`
-- **THEN** resolver MUST 从 `component_id` 推导唯一 canonical path，读取同一正式 YAML，并精确定位到指定 blueprint、
-  view、node、relation、flow、decision 或 contract；调用方不需要也不能提供第二个文件路径
+- **THEN** resolver MUST 从 `blueprint_id` 经 `paths.features_dir` 推导唯一 canonical path，读取同一正式 YAML，并精确
+  定位到指定 blueprint、view、node、relation、flow、decision 或 contract；调用方不需要也不能提供第二个文件路径
 
-#### Scenario: Component identity disagrees across path content and ref
+#### Scenario: Blueprint or component identity disagrees across path content and ref
 
-- **WHEN** canonical path 的 `<component-id>`、YAML 根 `component_id`、`component_blueprint_ref.component_id` 任一不同
-- **THEN** schema/resolver MUST fail-closed 并同时报告三处值，不得按其中任一继续解析 target
+- **WHEN** canonical path 的 `<blueprint_id>`、YAML 根 `blueprint_id`、`component_blueprint_ref.blueprint_id` 任一不同，
+  或 YAML 根 `component_id` 与 `component_blueprint_ref.component_id` 不同
+- **THEN** schema/resolver MUST fail-closed 并同时报告各处值，不得按其中任一继续解析 target
+
+#### Scenario: Two evolutions of the same component coexist
+
+- **WHEN** 同一 `component_id` 在 `<features_dir>` 下存在两个不同 `blueprint_id` 的工作区
+- **THEN** 两份蓝图 MUST 各自独立解析、互不覆盖；引用其中一个 `blueprint_id` 的 ref 不得解析到另一个工作区，
+  创建或修订其中一个工作区不得改变另一个工作区的任何字节
+
+#### Scenario: Path-unsafe blueprint identity is rejected
+
+- **WHEN** 蓝图根 `blueprint_id` 或 ref `blueprint_id` 含 `:`、路径分隔符，或为 `.`/`..`
+- **THEN** schema 与 resolver MUST fail-closed；其它 stable id（view/node/relation/flow/decision/contract）的字符集不受影响
+
+#### Scenario: Retired root path is never consulted
+
+- **WHEN** 工作区 canonical path 不存在，而旧根 `blueprint/component/<component-id>/component-blueprint.yaml` 存在
+- **THEN** resolver MUST 报告 canonical blueprint 缺失，不得回退读取旧根路径，也不得扫描任何目录寻找替代文件
 
 #### Scenario: A top-level contract is referenced without a view owner
 

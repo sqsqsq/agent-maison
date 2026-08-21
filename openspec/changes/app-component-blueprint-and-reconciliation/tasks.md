@@ -54,3 +54,13 @@
 - [x] 6.7 若实现实际改变消费者可见蓝图输入或发布件契约，先补充兼容/迁移设计并更新 `MIGRATION.md`；若没有破坏性变化，保留“不需要迁移”的验证记录。
 
 > 迁移评估（2026-08-19）：本 change 新增可选的蓝图 artifact、checker 与 Skill，不改变既有消费者输入、既有 phase 行为或已有 artifact schema；无需更新 `MIGRATION.md`。
+
+## 7. M5A 演进工作区与蓝图身份纠偏（2026-08-21 追加，plan e2a7c4b9）
+
+> 1.6 的 `blueprint/component/<component-id>/` 路径与 `component-id` 路径键表述已由本节 superseded；1.6 作为实施历史保留不改写。该根路径从未发布、无真实存量，硬切不做兼容层、双读或迁移器。
+
+- [ ] 7.1 canonical path 改为 `<features_dir>/<blueprint_id>/blueprint/component-blueprint.yaml`（`paths.features_dir` 默认 `doc/features`，经既有配置解析）；`component-blueprint-path.ts` 的 `componentBlueprintPath`/`loadCanonicalBlueprint`/`resolveComponentBlueprintRef` 改以 `blueprint_id` 定位，并核对 path 段/YAML 根/ref 三处 `blueprint_id` 一致与 YAML/ref `component_id` 一致；删除旧根路径拼接，不读取、不回退、不扫描。
+- [ ] 7.2 `harness/schemas/app-component-blueprint.schema.json` 只对蓝图根 `blueprint_id` 与 `component_blueprint_ref.blueprint_id` 收紧为安全路径段 pattern（`^[A-Za-z0-9][A-Za-z0-9._-]*$`）；其它 `stableId` 字符集保持不变。
+- [ ] 7.3 `check-component-blueprint` CLI、`skills/project/app-component-blueprint/SKILL.md`、Provider candidate 写入与内部调用签名改为 `--blueprint <blueprint_id>` 寻址，`component_id` 只作核验输出；评审投影 `component-blueprint.review.md` 与 closure 投影同处工作区 `blueprint/` 目录，`derived_from` 同步。
+- [ ] 7.4 fixture 树从 `blueprint/component/<component-id>/` 迁移到 `<features_dir>/<blueprint_id>/blueprint/`，测试路径常量与 CLI 参数同步；新增正反用例：同一 `component_id` 双 `blueprint_id` 工作区共存互不覆盖、`blueprint_id` 含 `:`/分隔符被拒、旧根路径存在而工作区缺失时报 missing 不回退、自定义 `paths.features_dir` 下完整解析。
+- [ ] 7.5 运行 `cd harness && npm test`、`npm run openspec:validate`、`node scripts/check-plan-version.mjs`（default 档）并记录；本节不触碰 6.6，不改 `tests/fixtures/component-blueprint/release-semantics.json`，release 门仍由总计划 m5 在 M0+M6+MG 回归齐备后收口。
