@@ -29,6 +29,13 @@ import {
   verifyFeatureCompletion,
 } from '../../scripts/utils/verify-feature-completion';
 import { canonicalReceiptPayload } from '../../scripts/utils/confirmation-receipt';
+import {
+  seedCleanCompletionChain,
+  writeFeatureArtifact,
+  writePhaseReceipt,
+  writePhaseSummary,
+  writeRunEvents as seedWriteRunEvents,
+} from '../utils/completion-chain-seed';
 import * as crypto from 'crypto';
 import type { Phase } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
@@ -43,39 +50,14 @@ function mkProject(): string {
   return root;
 }
 
+// 造场景的四个 writer 与 seedCleanChain 已提到 tests/utils/completion-chain-seed.ts
+// （plan 2d6b4f83 mg1：唯一实现，MG 跨层链共用）；此处只做绑定 FEATURE 的薄委托。
 function writeArtifact(root: string, name: string, content: string): void {
-  const p = resolveFeatureArtifact(root, FEATURE, name).canonicalPath;
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, content, 'utf-8');
-}
-
-/** 最小合法 lattice（过 validateQualityAxes：P0-3 裸 1.1 拒收后夹具须带轴） */
-function minimalAxes(): Record<string, unknown> {
-  const na = { applicable: false, required_for_release: false, verdict: 'NOT_APPLICABLE', blocking_class: null, source_checks: [], resolution: null };
-  return {
-    functional: { applicable: true, required_for_release: true, verdict: 'PASS', blocking_class: null, source_checks: [], resolution: null },
-    visual: na, asset: na, evidence: na,
-  };
+  writeFeatureArtifact(root, FEATURE, name, content);
 }
 
 function writeSummary(root: string, phase: string, verdict: string): void {
-  const p = path.join(receiptDirPath(root, FEATURE, phase), 'reports', 'summary.json');
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  // completion 干净依据须 summary 1.2 + lattice + closure commit；
-  // legacy 1.0 拒绝行为由专门用例覆盖（writeLegacySummary）。
-  fs.writeFileSync(p, JSON.stringify({
-    schema_version: '1.2',
-    verdict,
-    report_validity: 'PASS',
-    quality_axes: minimalAxes(),
-    release_readiness: 'READY',
-    completion_status: 'COMPLETE',
-    assurance: 'full',
-    capability_resolutions: [],
-    capability_resolution_contract_fingerprint: null,
-    closure_status: 'closed',
-    closure_commit: { schema_version: '1.0' },
-  }), 'utf-8');
+  writePhaseSummary(root, FEATURE, phase, verdict);
 }
 
 function writeLegacySummary(root: string, phase: string, verdict: string): void {
@@ -85,55 +67,16 @@ function writeLegacySummary(root: string, phase: string, verdict: string): void 
 }
 
 function writeReceipt(root: string, phase: string): void {
-  const p = receiptPathForPhase(root, FEATURE, phase);
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, `feature: "${FEATURE}"\nphase: "${phase}"\nverdict: PASS\n`, 'utf-8');
+  writePhaseReceipt(root, FEATURE, phase);
 }
 
 function writeRunEvents(root: string, runId: string, events: Array<Record<string, unknown>>): void {
-  const p = featureFilePath(root, FEATURE, path.join('goal-runs', runId, 'events.jsonl'));
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, events.map((e) => JSON.stringify(e)).join('\n') + '\n', 'utf-8');
-  // plan e7c2a4d8 T1d：真实 runner 恒在启动即写 manifest——fixture 同步落一份，
-  // 否则「有 events 无 manifest」会被残留二分正确判为 corrupt run（v22 P1 契约）。
-  const manifestAbs = featureFilePath(root, FEATURE, path.join('goal-runs', runId, 'manifest.json'));
-  if (!fs.existsSync(manifestAbs)) {
-    // requirement 字段留空：feature 级 intent 拼接（collectRequirementIntentText）
-    // 对空 requirement 零贡献——后建 run 不因 fixture 需求文本重复而翻转需求 SSOT。
-    fs.writeFileSync(
-      manifestAbs,
-      JSON.stringify({ schema_version: '1.0', feature: FEATURE, run_id: runId }),
-      'utf-8',
-    );
-  }
+  seedWriteRunEvents(root, FEATURE, runId, events);
 }
 
-/**
- * 全链干净现场：artifacts + PASS summaries + receipts + evidence manifests(+回执指针) +
- * RUN1 事件（含每 phase 的 phase_start + 成功 run_end，满足 codex P0-4 血缘核验）。
- */
+/** 全链干净现场——实现见 tests/utils/completion-chain-seed.ts（唯一实现，MG 跨层链共用）。 */
 function seedCleanChain(root: string): void {
-  writeArtifact(root, 'spec.md', '# spec\n');
-  writeArtifact(root, 'acceptance.yaml', 'criteria: []\n');
-  writeArtifact(root, 'plan.md', '# plan\n');
-  writeArtifact(root, 'contracts.yaml', 'files: []\n');
-  // plan e7c2a4d8 T1d：先落 RUN1 manifest（真实 runner 启动即写）——evidence 血缘
-  // 与残留二分（有 events 无 manifest=corrupt）都以其在场为前提；requirementSha
-  // 绑定 closure（八/九轮 requirement 血缘契约）。
-  writeRunEvents(root, 'RUN1', [
-    { ts: '2026-07-12T23:00:00.000Z', type: 'run_start', chain: CHAIN },
-    ...CHAIN.map((phase, i) => ({ ts: `2026-07-12T23:0${i + 1}:00.000Z`, type: 'phase_start', phase })),
-    { ts: '2026-07-12T23:30:00.000Z', type: 'run_end', status: 'CHAIN_SLICE_COMPLETED' },
-  ]);
-  const reqSha = computeRunRequirementSha(root, FEATURE, 'RUN1');
-  for (const phase of CHAIN) {
-    writeSummary(root, phase, 'PASS');
-    writeReceipt(root, phase);
-    const written = writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({
-      projectRoot: root, feature: FEATURE, phase: phase as Phase, now: FIXED_NOW, requirementSha: reqSha,
-    }));
-    writeReceiptManifestPointer(root, FEATURE, phase, `doc/features/${FEATURE}/${phase}/reports/phase-evidence-manifest.json`, written.sha256);
-  }
+  seedCleanCompletionChain({ projectRoot: root, feature: FEATURE, chain: CHAIN, now: FIXED_NOW });
 }
 
 function runDirAbs(root: string, runId: string): string {

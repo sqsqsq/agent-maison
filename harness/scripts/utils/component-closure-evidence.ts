@@ -121,6 +121,7 @@ export function verifyClosureEvidenceIdentity(
       split.pathPart,
       split.symbol,
       expectedProviderId,
+      payload.source_sha256,
     ));
     return {
       evidence_identity: identity,
@@ -203,6 +204,28 @@ function currentFeatureReports(
   return reports;
 }
 
+/**
+ * 该 phase 的 fresh manifest 是否把 authority 文件按**当次执行的字节**登记为输入。
+ *
+ * 没有这一条，`freshness` 对 authority 文件就是空门：manifest 里根本没有它，改动它不会让
+ * 任何阶段 stale，旧 PASS 报告会继续为改动后的源码背书（MG plan §16 单变量实验实证）。
+ */
+function manifestTracksAuthority(
+  projectRoot: string,
+  featureId: string,
+  phase: string,
+  normalizedAuthorityPath: string,
+  expectedSourceSha256: string,
+): boolean {
+  const loaded = loadPhaseEvidenceManifest(projectRoot, featureId, phase);
+  if (!loaded?.integrityOk) return false;
+  const expectedHex = expectedSourceSha256.replace(/^sha256:/, '');
+  return loaded.manifest.inputs.some(entry =>
+    normalizedReportPath(entry.path) === normalizedAuthorityPath
+    && entry.exists
+    && entry.sha256 === expectedHex);
+}
+
 function hasCurrentAuthoritativeExecution(
   projectRoot: string,
   inputs: ResolvedComponentClosureInputs,
@@ -210,14 +233,17 @@ function hasCurrentAuthoritativeExecution(
   authorityPath: string,
   symbol: string,
   providerId: ClosureProviderObservation['provider_id'],
+  expectedSourceSha256: string,
 ): boolean {
   const allowed = allowedEvidencePhases(providerId);
   const normalizedAuthorityPath = normalizedReportPath(authorityPath);
   return [...currentFeatureReports(projectRoot, inputs, featureId)].some(([phase, report]) => {
     if (!allowed.has(phase)) return false;
-    return report.checks.some(check => check.id === symbol
+    const executed = report.checks.some(check => check.id === symbol
       && check.status === 'PASS'
       && (check.affected_files ?? []).some(file => normalizedReportPath(file) === normalizedAuthorityPath));
+    if (!executed) return false;
+    return manifestTracksAuthority(projectRoot, featureId, phase, normalizedAuthorityPath, expectedSourceSha256);
   });
 }
 

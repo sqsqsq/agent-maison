@@ -222,16 +222,10 @@ export function validateChangeUnitDesign(
     }
   }
 
-  const admission = asRecord(asRecord(blueprint.review_summary)?.admission);
-  if (admission?.status !== 'pass') {
-    issues.push(changeUnitIssue(
-      'change_unit_blueprint_not_admitted',
-      '$.component_blueprint_ref',
-      '当前 canonical blueprint admission 不是 pass。',
-      'BLOCKER',
-      'reconcile_blueprint',
-    ));
-  }
+  // admission 不为 pass 的情形不在此重判：`resolveComponentBlueprintRef` 先跑完整 P1 校验，
+  // admission 与派生值一致时必有上游 BLOCKER、不一致时必出 `blueprint_admission_false_pass`，
+  // 两种情形都在上面的 catch 里落成 `change_unit_blueprint_unresolvable`（message 携具体
+  // 上游 issue id）。曾经的本地复判是不可达分支，已删（plan 2d6b4f83 mg7）。
   if ((options.blueprintInvalidatingFacts ?? []).length > 0) {
     issues.push(changeUnitIssue(
       'change_unit_blueprint_reconciliation_required',

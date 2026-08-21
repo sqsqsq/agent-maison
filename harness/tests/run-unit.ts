@@ -54,6 +54,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'component-blueprint', modulePath: './unit/component-blueprint.unit.test' },
   { id: 'change-unit-progression', modulePath: './unit/change-unit-progression.unit.test' },
   { id: 'component-closure', modulePath: './unit/component-closure.unit.test' },
+  { id: 'mechanical-loop-closure', modulePath: './unit/mechanical-loop-closure.unit.test' },
   // plan a5f9c3e2 t4：统一裁决内核契约 + 元门禁（未注册 incident / 新增 gate 读 goal env 即红）
   { id: 'adjudication',     modulePath: './unit/adjudication.unit.test' },
   // plan d6b1a8e3 t2：monitor stale 误报的 replay fixture（先复现后改）

@@ -25,6 +25,7 @@ import {
   writeReceiptManifestPointer,
 } from './phase-evidence-manifest';
 import { isPidAlive } from './goal-run-lock';
+import { validateProjectRelativePath } from './project-relative-path';
 import type { EvidencePolicySnapshot } from './runtime-policy';
 import type { HarnessRunSummary, Phase } from './types';
 
@@ -136,6 +137,50 @@ function capabilityResolutionEvidenceInputs(
   return [...paths].sort();
 }
 
+/**
+ * 本阶段 PASS check 实际引用、且真实存在的项目文件（去重、项目根相对）。
+ *
+ * 这些文件就是该阶段证据的"被执行对象"。不把它们登记进 manifest，血缘对它们就是空门：
+ * 改动它们不会让任何阶段 stale，旧 PASS 报告会继续为改动后的源码背书
+ * （下游消费点 `component-closure-evidence.ts` 的 `manifestTracksAuthority`）。
+ */
+function executedEvidenceInputs(
+  projectRoot: string,
+  feature: string,
+  phase: string,
+  frameworkRoot?: string,
+): string[] {
+  const reportAbs = path.join(featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot), 'script-report.json');
+  if (!fs.existsSync(reportAbs)) return [];
+  let checks: Array<{ status?: unknown; affected_files?: unknown }>;
+  try {
+    const doc = JSON.parse(fs.readFileSync(reportAbs, 'utf-8')) as { checks?: unknown };
+    checks = Array.isArray(doc.checks) ? (doc.checks as typeof checks) : [];
+  } catch {
+    // 报告本身损坏由所在阶段的门禁负责报告，这里不臆造证据链。
+    return [];
+  }
+  const out = new Set<string>();
+  for (const check of checks) {
+    if (check?.status !== 'PASS' || !Array.isArray(check.affected_files)) continue;
+    for (const raw of check.affected_files) {
+      if (typeof raw !== 'string' || raw.trim() === '') continue;
+      // 路径边界只认既有 SSOT，不另起一套判断（它显式禁止 `rel.startsWith('..')`，
+      // 也拒绝绝对路径——两者本模块都不得自行放宽）。
+      let rel: string;
+      try {
+        rel = validateProjectRelativePath(projectRoot, raw, `evidence affected_file:${raw}`);
+      } catch {
+        continue;
+      }
+      const abs = path.resolve(projectRoot, rel);
+      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) continue;
+      out.add(rel);
+    }
+  }
+  return [...out];
+}
+
 function productionEvidence(
   opts: FinalizePhaseClosureOptions,
   summaryPath: string,
@@ -186,6 +231,7 @@ function productionEvidence(
     extraInputs: [...new Set([
       ...collectRequirementSsotPaths(opts.projectRoot, opts.feature, featuresDirRel),
       ...capabilityResolutionEvidenceInputs(summaryPath, opts.projectRoot),
+      ...executedEvidenceInputs(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot),
     ])].sort(),
     extraOutputs,
     requirementSha,

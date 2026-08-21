@@ -144,6 +144,60 @@ function finalizeWithProductionEvidence(fixture: ReturnType<typeof mkProject>) {
 }
 const cases: Case[] = [
   {
+    name: 'production evidence binds the project files that PASS checks actually executed',
+    run: () => {
+      const fixture = mkProject();
+      const outsideRel = `../outside-${path.basename(fixture.root)}.ts`;
+      const outsideAbs = path.resolve(fixture.root, outsideRel);
+      try {
+        // 被执行的证明源码：真实存在的项目文件，由 PASS check 的 affected_files 点名。
+        const executed = path.join(fixture.root, 'src', 'demo', 'Executed.ts');
+        fs.mkdirSync(path.dirname(executed), { recursive: true });
+        fs.writeFileSync(executed, 'export function proven(): boolean { return true; }\n', 'utf8');
+        // 两个负例必须单变量：文件都真实存在，被拒的原因只能是「check 非 PASS」和
+        // 「路径越出项目根」，而不是被"文件不存在"顺带滤掉。
+        const notExecuted = path.join(fixture.root, 'src', 'demo', 'NotExecuted.ts');
+        fs.writeFileSync(notExecuted, 'export function unproven(): boolean { return true; }\n', 'utf8');
+        fs.writeFileSync(outsideAbs, 'export function outside(): boolean { return true; }\n', 'utf8');
+        const reportPath = path.join(
+          featurePhaseReportsDir(fixture.root, FEATURE, PHASE, FRAMEWORK_ROOT),
+          'script-report.json',
+        );
+        fs.writeFileSync(reportPath, JSON.stringify({
+          feature: FEATURE,
+          phase: PHASE,
+          summary: { verdict: 'PASS' },
+          checks: [
+            { id: 'proven', status: 'PASS', affected_files: ['src/demo/Executed.ts'] },
+            { id: 'skipped', status: 'FAIL', affected_files: ['src/demo/NotExecuted.ts'] },
+            { id: 'ghost', status: 'PASS', affected_files: ['src/demo/DoesNotExist.ts'] },
+            { id: 'escape', status: 'PASS', affected_files: [outsideRel] },
+          ],
+        }, null, 2), 'utf8');
+        finalizeWithProductionEvidence(fixture);
+        const manifest = loadPhaseEvidenceManifest(fixture.root, FEATURE, PHASE)!;
+        const inputs = manifest.manifest.inputs.map((entry) => entry.path);
+        // 没有这条绑定，改动被执行源码不会让任何阶段 stale，旧 PASS 报告会继续为其背书
+        // （下游 component-closure-evidence.manifestTracksAuthority 正是消费它）。
+        assert(inputs.includes('src/demo/Executed.ts'), `执行过的源码未进 manifest：${inputs.join(', ')}`);
+        assert(fs.existsSync(notExecuted), 'NotExecuted.ts 未建出——该负例退化成"文件不存在"');
+        assert(!inputs.some((p) => p.includes('NotExecuted')), '非 PASS check 的文件不得入证据链');
+        assert(!inputs.some((p) => p.includes('DoesNotExist')), '不存在的文件不得入证据链');
+        assert(fs.existsSync(outsideAbs), '越界文件未建出——该负例退化成"文件不存在"');
+        assert(!inputs.some((p) => p.includes('outside')), '越出项目根的路径不得入证据链');
+        const bound = manifest.manifest.inputs.find((entry) => entry.path === 'src/demo/Executed.ts')!;
+        assert(bound.exists === true && typeof bound.sha256 === 'string', '被执行源码未按字节登记');
+        fs.writeFileSync(executed, 'export function proven(): boolean { return false; }\n', 'utf8');
+        const stale = require('../../scripts/utils/phase-evidence-manifest')
+          .recomputePhaseEvidenceStaleness(fixture.root, FEATURE, [PHASE]);
+        assert(stale[0].verdict !== 'fresh', '改动被执行源码后该阶段仍判 fresh');
+      } finally {
+        fs.rmSync(outsideAbs, { force: true });
+        fs.rmSync(fixture.root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
     name: 'production evidence binds project fallback attempts but never framework contracts',
     run: () => {
       const fixture = mkProject();

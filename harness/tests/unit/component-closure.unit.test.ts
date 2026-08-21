@@ -65,7 +65,8 @@ function withProject(run: (projectRoot: string) => void, mutateBlueprint?: (blue
   }
 }
 
-function prepareCompleteProject(projectRoot: string, mutateBlueprint?: (blueprint: BlueprintRecord) => void): void {
+/** MG 跨层链（mechanical-loop-closure）复用同一现场——唯一实现，不另造第二套夹具装配。 */
+export function prepareCompleteProject(projectRoot: string, mutateBlueprint?: (blueprint: BlueprintRecord) => void): void {
   fs.mkdirSync(path.join(projectRoot, 'skills'), { recursive: true });
   const blueprintFile = componentBlueprintPath(projectRoot, 'ledger');
   const blueprint = YAML.parse(fs.readFileSync(blueprintFile, 'utf8')) as BlueprintRecord;
