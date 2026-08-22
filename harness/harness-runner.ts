@@ -950,12 +950,25 @@ async function main(): Promise<void> {
   if (!phaseIsGlobal) {
     writeReceiptSkeletonIfMissing(projectRoot, feature, phase, finalReport.summary.verdict);
   }
-  const receiptValidation = phaseIsGlobal ? null : tryValidateReceipt(harnessRoot, projectRoot, phase, feature);
   const closureTrack = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature));
+  // adjudicated-repair-loop P0 宿主回放：goal-runner 只有等本 gate 子进程返回后，才能从
+  // script-report.json 读取 uncertain/disputed 信号。full track 若在这里先验 receipt 并关环，
+  // 外层随后 halt 会形成 PASS/closed + WAITING 的矛盾权威态。现有 gate 标志即所有权边界：
+  // 子进程只落 base summary；外层 goal-runner 完成裁决后独占 receipt validation/finalization。
+  // standalone 与无 testing 的 lite track 保持原有闭环语义。
+  const deferFullClosureToGoalRunner =
+    !phaseIsGlobal &&
+    closureTrack === 'full' &&
+    process.env.MAISON_GOAL_GATE_HARNESS === '1';
+  const receiptValidation =
+    phaseIsGlobal || deferFullClosureToGoalRunner
+      ? null
+      : tryValidateReceipt(harnessRoot, projectRoot, phase, feature);
   let runSummary: HarnessRunSummary = baseSummary;
   let closureFinalized = false;
   if (
     !phaseIsGlobal &&
+    !deferFullClosureToGoalRunner &&
     closureTrack === 'full' &&
     finalReport.summary.verdict === 'PASS' &&
     receiptValidation?.status === 'passed'
