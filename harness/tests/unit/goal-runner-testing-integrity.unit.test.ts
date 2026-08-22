@@ -2331,13 +2331,22 @@ function accidentChecks(root: string, conclusion: '达标' | '不达标'): Check
   return [...p0, passRate];
 }
 
-/** 读回 writer 落盘的 summary（证明候选被真实 writer 持久化） */
-function writtenSummary(root: string): { report_validity?: string; repair_candidates?: Array<{ id?: string }> } {
+/** 读回 writer 落盘的 summary（证明候选与 closure 状态被真实 writer 持久化） */
+function writtenSummary(root: string): {
+  report_validity?: string;
+  repair_candidates?: Array<{ id?: string }>;
+  receipt_status?: string;
+  closure_status?: string;
+  closure_commit?: unknown;
+} {
   const p = path.join(root, 'doc/features', FEATURE, 'testing', 'reports', 'summary.json');
   assert(fs.existsSync(p), `writer 须落盘 summary.json：${p}`);
   return JSON.parse(fs.readFileSync(p, 'utf-8')) as {
     report_validity?: string;
     repair_candidates?: Array<{ id?: string }>;
+    receipt_status?: string;
+    closure_status?: string;
+    closure_commit?: unknown;
   };
 }
 
@@ -2603,6 +2612,18 @@ test('M2-1 唯一 uncertain 其余全 PASS → 停等 repair_adjudication_pendin
   const testingReceiptCalls = probe.receiptValidationCalls.filter(c => c.phase === 'testing');
   assert(testingReceiptCalls.length === 0,
     `uncertain 停等不得调用 receipt validator（closure 未执行）：${JSON.stringify(testingReceiptCalls)}`);
+  const pendingSummary = writtenSummary(root);
+  assert(pendingSummary.closure_status === 'open',
+    `uncertain 停等时盘上 summary 必须保持 open：${JSON.stringify(pendingSummary)}`);
+  assert(pendingSummary.closure_commit === undefined,
+    `uncertain 停等时不得存在 closure_commit：${JSON.stringify(pendingSummary)}`);
+  const pendingNextPath = path.join(root, 'doc', 'features', FEATURE, 'next.json');
+  assert(fs.existsSync(pendingNextPath), `uncertain 停等后须保留 next.json 投影：${pendingNextPath}`);
+  const pendingNext = JSON.parse(fs.readFileSync(pendingNextPath, 'utf-8')) as {
+    run_status_candidate?: string | null;
+  };
+  assert(pendingNext.run_status_candidate !== 'CHAIN_SLICE_COMPLETED',
+    `uncertain 停等后的 next.json 不得宣称链完成：${JSON.stringify(pendingNext)}`);
 });
 
 test('M2-2 明确未写 uncertain 的轮次不受影响（script-report 无载体 → 正常完成）', async () => {
@@ -2616,6 +2637,11 @@ test('M2-2 明确未写 uncertain 的轮次不受影响（script-report 无载�
       (e as { halt_reason?: string }).halt_reason === 'repair_adjudication_pending'),
     '无 uncertain 载体不得停等',
   );
+  const closedSummary = writtenSummary(root);
+  assert(closedSummary.receipt_status === 'passed' && closedSummary.closure_status === 'closed',
+    `无 pending 时外层 goal-runner 须正常完成唯一 closure：${JSON.stringify(closedSummary)}`);
+  assert(probe.receiptValidationCalls.some(c => c.phase === 'testing'),
+    '无 pending 时外层 goal-runner 须执行 testing receipt validation');
 });
 
 test('M2-3 actionable + defect-review disputed（agent 反对）→ 停等、原样呈理由、不物化不回退', async () => {

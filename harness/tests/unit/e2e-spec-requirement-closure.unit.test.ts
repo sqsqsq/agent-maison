@@ -3,6 +3,7 @@
 // 可重跑 E2E：临时 consumer 工程，真实运行 fidelity-intent-init + harness-runner + check-receipt，
 // 不设 MAISON_GOAL_RUN_ID。
 //   正例：带 --requirement → summary PASS + check-receipt exit 0（完整闭环回执）。
+//   goal gate：有效 receipt 在场也只落 PASS/open base；standalone 仍可正常关环。
 //   反例：不带 requirement（合法 intent_fallback SSOT）→ requirement capability blocked →
 //         INCOMPLETE + readiness(next_action/assess/merged-report) + check-receipt slim_summary_not_pass 拒。
 // 随机临时目录 + 严格清理；测试前后 repo 的 doc/features 不得新增。
@@ -69,11 +70,21 @@ function run(harnessDir: string, script: string, args: string[], root: string): 
   return { status: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 }
 
-function runHarness(harnessDir: string, args: string[], root: string): { status: number; stdout: string } {
+function runHarness(
+  harnessDir: string,
+  args: string[],
+  root: string,
+  envOverrides: Record<string, string | undefined> = {},
+): { status: number; stdout: string } {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const [key, value] of Object.entries(envOverrides)) {
+    if (value === undefined) delete env[key];
+    else env[key] = value;
+  }
   const r = spawnSync(
     process.platform === 'win32' ? 'npx.cmd' : 'npx',
     ['ts-node', path.join(harnessDir, 'harness-runner.ts'), ...args],
-    { cwd: harnessDir, encoding: 'utf-8', shell: process.platform === 'win32' },
+    { cwd: harnessDir, encoding: 'utf-8', shell: process.platform === 'win32', env },
   );
   return { status: r.status ?? -1, stdout: r.stdout ?? '' };
 }
@@ -148,6 +159,22 @@ function readJson(root: string, rel: string): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(path.join(root, rel), 'utf-8'));
 }
 
+function writeValidSpecReceipt(root: string, summary: Record<string, unknown>): void {
+  const reportsDir = path.join(root, 'doc/features/demo/spec/reports');
+  fs.writeFileSync(path.join(reportsDir, 'verifier.report.md'), '# spec verifier\nverdict: PASS\n', 'utf-8');
+  fs.writeFileSync(path.join(reportsDir, 'trace.json'), '{"trace": []}', 'utf-8');
+  fs.writeFileSync(path.join(root, 'doc/features/demo/spec/phase-completion-receipt.md'), [
+    '---', 'receipt_schema: "2.0"', 'feature: "demo"', 'phase: "spec"', 'agent_model: "e2e"', 'agent_runtime: "e2e"',
+    'claimed_completion_at: "2026-08-11T10:00:00+08:00"',
+    `claimed_completion_commit_sha: "${String(summary.source_commit_sha)}"`, 'claimed_attempt_id: ""',
+    'verifier_subagent:', '  invoked_via: "Task(subagent_type=verifier)"',
+    '  prompt_template: "framework/harness/prompts/verify-spec.md"',
+    '  report_path: "doc/features/demo/spec/reports/verifier.report.md"', '  verdict: "PASS"',
+    '  ran_at: "2026-08-11T10:00:00+08:00"', '---', '',
+    '## 反假设条款回顾', '', '- [x] 我没有引用不存在规则', '- [x] 若曾认为受限已逐字 quote', '- [x] 没有把假设当借口', '',
+  ].join('\n'), 'utf-8');
+}
+
 function repoDocFeatures(): string[] {
   const dir = path.join(FRAMEWORK_ROOT, 'doc', 'features');
   if (!fs.existsSync(dir)) return [];
@@ -173,18 +200,67 @@ const cases: Case[] = [
         assert((summary.capability_resolutions as Array<{ id: string; state: string }>)
           .find((c) => c.id === 'capability_spec_requirement')?.state === 'resolved', 'requirement 应 resolved');
         // 完整闭环回执（verifier + trace + slim）
-        const sha = String(summary.source_commit_sha);
-        fs.writeFileSync(path.join(root, 'doc/features/demo/spec/reports/verifier.report.md'), '# spec verifier\nverdict: PASS\n', 'utf-8');
-        fs.writeFileSync(path.join(root, 'doc/features/demo/spec/reports/trace.json'), '{"trace": []}', 'utf-8');
-        fs.writeFileSync(path.join(root, 'doc/features/demo/spec/phase-completion-receipt.md'), [
-          '---', 'receipt_schema: "2.0"', 'feature: "demo"', 'phase: "spec"', 'agent_model: "e2e"', 'agent_runtime: "e2e"',
-          'claimed_completion_at: "2026-08-11T10:00:00+08:00"', `claimed_completion_commit_sha: "${sha}"`, 'claimed_attempt_id: ""',
-          'verifier_subagent:', '  invoked_via: "Task(subagent_type=verifier)"', '  prompt_template: "framework/harness/prompts/verify-spec.md"',
-          '  report_path: "doc/features/demo/spec/reports/verifier.report.md"', '  verdict: "PASS"', '  ran_at: "2026-08-11T10:00:00+08:00"', '---', '',
-          '## 反假设条款回顾', '', '- [x] 我没有引用不存在规则', '- [x] 若曾认为受限已逐字 quote', '- [x] 没有把假设当借口', '',
-        ].join('\n'), 'utf-8');
+        writeValidSpecReceipt(root, summary);
         const rc = run(harnessDir, 'check-receipt.ts', ['--feature', 'demo', '--phase', 'spec', '--project-root', root], root);
         assert(rc.status === 0, `正例 check-receipt 应 exit 0，got ${rc.status}：${rc.stderr}\n${rc.stdout}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        assert(JSON.stringify(repoDocFeatures()) === JSON.stringify(before), 'E2E 不得新增 repo doc/features');
+      }
+    },
+  },
+  {
+    name: 'E2E goal gate：真实 harness-runner 只写 open base，外层 goal-runner 独占 full-track closure',
+    run: () => {
+      const before = repoDocFeatures();
+      const { root, harnessDir } = provisionFramework();
+      try {
+        scaffoldFeature(root);
+        const init = run(harnessDir, 'fidelity-intent-init.ts', ['--feature', 'demo', '--requirement', '设计账户页，含余额展示与转账入口。'], root);
+        assert(init.status === 0, `Step1 init 失败：${init.stderr}`);
+
+        // 先用真实 runner 生成可供 slim receipt 绑定的 PASS base，再铺一份可通过校验的回执。
+        const first = runHarness(harnessDir, ['--phase', 'spec', '--feature', 'demo', '--summary'], root);
+        assert(first.status === 0, `初始 harness 失败：${first.stdout}`);
+        writeValidSpecReceipt(root, readJson(root, 'doc/features/demo/spec/reports/summary.json'));
+
+        // 事故边界：goal gate 子进程即使看见有效回执，也只能产 open base；不得自己校验/关环。
+        const gated = runHarness(
+          harnessDir,
+          ['--phase', 'spec', '--feature', 'demo', '--summary'],
+          root,
+          {
+            MAISON_GOAL_GATE_HARNESS: '1',
+            MAISON_GOAL_RUNNER: undefined,
+            MAISON_GOAL_HEADLESS: undefined,
+            MAISON_GOAL_RUN_ID: undefined,
+            MAISON_GOAL_ATTEMPT: undefined,
+            MAISON_GOAL_ATTEMPT_PHASE: undefined,
+          },
+        );
+        assert(gated.status === 0, `goal gate harness 失败：${gated.stdout}`);
+        const gatedSummary = readJson(root, 'doc/features/demo/spec/reports/summary.json');
+        assert(gatedSummary.verdict === 'PASS', `goal gate 仍须产 PASS base：${JSON.stringify(gatedSummary)}`);
+        assert(gatedSummary.closure_status === 'open', `goal gate 不得先关环：${JSON.stringify(gatedSummary)}`);
+        assert(!('closure_commit' in gatedSummary), 'goal gate 不得写 closure_commit');
+        assert(!('receipt_status' in gatedSummary), 'goal gate 不得运行 receipt validation');
+        const gatedNext = readJson(root, 'doc/features/demo/next.json');
+        assert(gatedNext.run_status_candidate !== 'CHAIN_SLICE_COMPLETED',
+          `open gate 不得投影完成态：${JSON.stringify(gatedNext)}`);
+
+        // 非 goal 的 standalone 行为保持原样：同一有效回执由真实 harness-runner 正常校验并关环。
+        const standalone = runHarness(
+          harnessDir,
+          ['--phase', 'spec', '--feature', 'demo', '--summary'],
+          root,
+          { MAISON_GOAL_GATE_HARNESS: undefined },
+        );
+        assert(standalone.status === 0, `standalone harness 失败：${standalone.stdout}`);
+        const closedSummary = readJson(root, 'doc/features/demo/spec/reports/summary.json');
+        assert(closedSummary.receipt_status === 'passed', `standalone 须校验 receipt：${JSON.stringify(closedSummary)}`);
+        assert(closedSummary.closure_status === 'closed', `standalone 须正常关环：${JSON.stringify(closedSummary)}`);
+        assert(typeof closedSummary.closure_commit === 'object' && closedSummary.closure_commit !== null,
+          'standalone 须写 closure_commit');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
         assert(JSON.stringify(repoDocFeatures()) === JSON.stringify(before), 'E2E 不得新增 repo doc/features');
