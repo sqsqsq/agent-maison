@@ -116,6 +116,37 @@ export function runAll(): UnitCaseResult[] {
     assert(res.uncertainSignals[0].reason.includes('编辑距离'), '原因须注明编辑距离混淆');
   });
 
+  run('collectTextPlacementSignals：OCR 行完整包含候选（返回箭头粘连）不产 uncertain/must_fix', () => {
+    const texts = new Map<string, string[]>([[
+      'add_card_home',
+      ['添加银行卡', '免输卡号添卡'],
+    ]]);
+    const refWords = ocrOf([
+      { text: '添加银行卡', y: 100 },
+      { text: '免输卡号添卡', y: 400 },
+    ]);
+    const shotWords = ocrOf([
+      { text: '《添加银行卡', y: 100 }, // 返回 chevron 被 OCR 并入标题行
+      { text: '免输卡号添卡', y: 400 },
+    ]);
+    const res = collectTextPlacementSignals(
+      texts,
+      [screenEntry('add_card_home', 'shot-a.png')],
+      shotAbs,
+      () => 'ref.png',
+      (p: string) => (p === 'shot-a.png' ? shotWords : refWords),
+    );
+    const screen = res.perScreen.find((p) => p.screen_id === 'add_card_home');
+    assert(
+      res.uncertainSignals.length === 0,
+      `完整候选被 OCR 行包含时不得产 uncertain：${JSON.stringify(res.uncertainSignals)}`,
+    );
+    assert(
+      !screen,
+      `候选与位置均正确时不得产任何布局信号：${JSON.stringify(screen)}`,
+    );
+  });
+
   run('collectTextPlacementSignals：整页参考图 vs 单视口 → 纵序比较降级 uncertain（注明口径缺口）', () => {
     // 参考图高 4350（整页拼接）> 截图高 2120（单视口）——「中信银行」在上、「添加卡片」在下，
     // 截图中 y 序颠倒（口径错配下不可靠）
