@@ -581,6 +581,8 @@ export interface HarnessRunSummary {
     summary: string;
     item_fingerprint: string;
     source_phase: string;
+    /** adjudicated-repair-loop（plan e2b7c4a9）：信号级候选标记；缺省=legacy check-domain。 */
+    identity_schema?: 'signal@1';
   }>;
   /** Mechanical capability projection; legacy summaries read as unknown. */
   assurance?: 'blocked' | 'degraded' | 'full' | 'not_applicable';

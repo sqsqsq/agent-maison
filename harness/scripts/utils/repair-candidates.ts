@@ -43,6 +43,13 @@ export interface RepairCandidate {
   item_fingerprint: string;
   /** 生产阶段（审计与注入定位；不参与归属判定） */
   source_phase: string;
+  /**
+   * adjudicated-repair-loop（plan e2b7c4a9）：信号级候选标记。
+   * 仅 testing 视觉信号候选携带 `'signal@1'`（identity = sha256(computeDefectFingerprint)）；
+   * 无字段 = legacy check-domain 候选——可诊断/路由，但**不参与**累计 one-shot 收敛
+   * 与 no-op 判定（新旧同为 64-hex，不可凭内容区分，只能凭本标记）。
+   */
+  identity_schema?: 'signal@1';
 }
 
 // ---------------------------------------------------------------------------
@@ -102,6 +109,75 @@ export function deriveCategoryFromFiles(files: readonly string[]): RepairOwnerCa
 // verifier 逐条验证块（issue-verification fenced block——与 read-image-evidence
 // 同款「prompt 产出端与解析端共用 SSOT」契约）
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// testing 侧 defect-review fenced 块（adjudicated-repair-loop M2 · plan e2b7c4a9 t2.2）
+// ---------------------------------------------------------------------------
+// 契约：testing 报告（test-report.md）可附带逐信号复核块——**裁决发生在候选物化之前**：
+// ```defect-review
+// - signal: 添加银行卡标题
+//   verdict: confirmed     # confirmed（同向）| disputed（反对，须理由）
+//   rationale: 截图/证据核对后确认为真缺陷
+// ```
+//  · 无块/块内无该信号条目 = unreviewed（fail-closed：actionable 未复核 → 停等）；
+//  · verdict=disputed → 停等（原样呈理由），无自动 refuted；
+//  · verdict=confirmed → 与 producer actionable 同向 → 物化为常规候选（signal@1）可回退。
+// ---------------------------------------------------------------------------
+
+export const DEFECT_REVIEW_FENCE = 'defect-review';
+
+export interface DefectReviewEntry {
+  /** 信号引用（producer 给出的信号身份/文本锚，与 uncertain_signals 的 target 呼应） */
+  signal: string;
+  verdict: 'confirmed' | 'disputed';
+  rationale?: string;
+}
+
+const DEFECT_REVIEW_FENCE_RE = new RegExp(
+  '```' + DEFECT_REVIEW_FENCE + '\\s*\\r?\\n([\\s\\S]*?)```',
+  'i',
+);
+
+/**
+ * 从 testing 报告解析 defect-review 块。无块/空块 → ok:false（unreviewed，fail-closed）。
+ * verdict 非法值按 disputed 处理（不明确不产候选，停等）。
+ */
+export function parseDefectReviewBlock(text: string): {
+  ok: boolean;
+  entries: DefectReviewEntry[];
+  reason: string;
+} {
+  if (!text || !text.trim()) return { ok: false, entries: [], reason: 'testing 报告为空' };
+  const m = DEFECT_REVIEW_FENCE_RE.exec(text);
+  if (!m) return { ok: false, entries: [], reason: `缺 ${DEFECT_REVIEW_FENCE} fenced 块` };
+  const entries: DefectReviewEntry[] = [];
+  const lines = m[1].split(/\r?\n/);
+  let i = 0;
+  while (i < lines.length) {
+    const signalMatch = /^\s*-\s*signal:\s*(.+?)\s*$/.exec(lines[i]);
+    if (!signalMatch) { i++; continue; }
+    i++;
+    const verdictMatch = i < lines.length ? /^\s*verdict:\s*(\S+)\s*$/.exec(lines[i]) : null;
+    if (!verdictMatch) continue;
+    const raw = verdictMatch[1].toLowerCase();
+    i++;
+    let rationale: string | undefined;
+    if (i < lines.length) {
+      const raMatch = /^\s*rationale:\s*(.+?)\s*$/.exec(lines[i]);
+      if (raMatch) {
+        rationale = raMatch[1].trim();
+        i++;
+      }
+    }
+    entries.push({
+      signal: signalMatch[1].trim(),
+      verdict: raw === 'confirmed' ? 'confirmed' : 'disputed',
+      ...(rationale ? { rationale } : {}),
+    });
+  }
+  if (entries.length === 0) return { ok: false, entries: [], reason: 'defect-review 块无合法条目' };
+  return { ok: true, entries, reason: `${entries.length} 条逐信号复核` };
+}
 
 export const ISSUE_VERIFICATION_FENCE = 'issue-verification';
 
@@ -591,6 +667,8 @@ export function actionableDefectsToCandidates(
     instructions: string[];
     fingerprint: string;
     evidence_path: string;
+    /** adjudicated-repair-loop：仅结构化视觉信号进 signal@1；缺省=legacy */
+    signal_identity?: boolean;
   }>,
   sourcePhase: string,
 ): RepairCandidate[] {
@@ -599,8 +677,13 @@ export function actionableDefectsToCandidates(
     category: 'coding' as const,
     files: normalizeFiles(d.evidence_path ? [d.evidence_path] : []),
     summary: normalizeSummary(d.instructions.join('；')),
+    // M1（plan e2b7c4a9）：信号级身份——collectActionableDefects 已把 fingerprint 存为
+    // 单条 computeDefectFingerprint(screen, defect)；这里 sha256 成 64-hex identity。
     item_fingerprint: sha256Hex(d.fingerprint),
     source_phase: sourcePhase,
+    // review 修复：仅结构化视觉信号（signal_identity=true）标 signal@1；crash /
+    // device_test / 纯文本 must_fix 兜底保持 legacy（不入累计收敛、不需 defect-review）。
+    ...(d.signal_identity === true ? { identity_schema: 'signal@1' as const } : {}),
   }));
 }
 
@@ -687,6 +770,10 @@ export function validateRepairCandidatesShape(value: unknown): string[] {
     if (!Array.isArray(r.files)) errors.push(`repair_candidates[${i}].files 非数组`);
     if (typeof r.item_fingerprint !== 'string' || !/^[0-9a-f]{64}$/.test(r.item_fingerprint)) {
       errors.push(`repair_candidates[${i}].item_fingerprint 非 sha256`);
+    }
+    // M1（plan e2b7c4a9 t1.2）：identity_schema 可选；存在时仅接受 'signal@1'（信号级）。
+    if (r.identity_schema !== undefined && r.identity_schema !== null && r.identity_schema !== 'signal@1') {
+      errors.push(`repair_candidates[${i}].identity_schema 非法（${String(r.identity_schema)}；仅允许 signal@1 或缺失）`);
     }
   });
   return errors;

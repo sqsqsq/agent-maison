@@ -254,6 +254,10 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'codeagent-adapter', modulePath: './unit/codeagent-adapter.unit.test' },
   { id: 'agent-invoke-settle', modulePath: './unit/agent-invoke-settle.unit.test' },
   { id: 'goal-runner-hardening', modulePath: './unit/goal-runner-hardening.unit.test' },
+  // adjudicated-repair-loop M1：信号级身份 + 累计 one-shot 收敛 + no-op（plan e2b7c4a9 t1.8）
+  { id: 'goal-runner-repair-convergence', modulePath: './unit/goal-runner-repair-convergence.unit.test' },
+  // adjudicated-repair-loop M2：producer uncertain 归类 + defect-review 裁决纯函数（plan e2b7c4a9 t2.6）
+  { id: 'adjudicated-repair-loop', modulePath: './unit/adjudicated-repair-loop.unit.test' },
   { id: 'goal-headless-guard', modulePath: './unit/goal-headless-guard.unit.test' },
   { id: 'patch-openspec-artifacts', modulePath: './unit/patch-openspec-artifacts.unit.test' },
   { id: 'goal-closure-gate', modulePath: './unit/goal-closure-gate.unit.test' },

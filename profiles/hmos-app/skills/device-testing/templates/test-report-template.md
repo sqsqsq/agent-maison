@@ -71,6 +71,26 @@
 | MINOR | N | N | N | N | N |
 | **合计** | **N** | **N** | **N** | **N** | **N** |
 
+### 逐信号复核（defect-review，**存在 actionable 视觉信号时必填**）
+
+> **adjudicated-repair-loop（plan e2b7c4a9）**：producer 判定为 actionable 的结构化视觉信号
+> （visual-diff.json 的 defects）必须在本块**逐信号、一对一**复核——confirmed（同向）才会物化为
+> 可回退候选；disputed / 未复核 / producer 归为 uncertain 一律停等求人。
+> **signal 必须精确填该 defect 的稳定指纹**（`screen|class|element|bbox_bucket[|producer#finding_id]`，
+> 可从 visual-diff.json 的 defects 条目复制的结构键），不填屏名/指令文本（防同屏多缺陷歧义）。
+> 人工恢复**不走本块**（本块是 agent 复核结论，无人工终裁效力）：人审阅截图后经
+> visual-confirm 通道（`visual-diff.json` 屏条目 `confirmed_by` 填真人人签）或改 verdict/must_fix
+> 后 resume。格式（fenced 块，**逐信号一条**，禁止 inline 注释）：
+
+```defect-review
+- signal: add_card_home_collapsed|shape_mismatch|hc_page_title|0.1,0.2,0.3,0.4
+  verdict: confirmed
+  rationale: 截图/证据核对后确认为真缺陷
+- signal: add_card_home_collapsed|overlap|hc_bank_row|0.5,0.6,0.7,0.8
+  verdict: disputed
+  rationale: OCR 混淆/口径错配，非真缺陷
+```
+
 ---
 
 ## 四、通过率统计

@@ -406,6 +406,96 @@ test('applyInvalidationsToResume：失效未重跑 → 剔除 + 起点回退；�
   assert(r.startIndex === 3, `起点回退到 review（idx3），got ${r.startIndex}`);
 });
 
+test('applyInvalidationsToResume：失效窗口内目标 phase 已 settled（agent 执行后崩溃）→ 标 postAgentPhases，resume 不重新 invoke agent', () => {
+  const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] as never[];
+  const outcomes = [
+    { phase: 'coding', verdict: 'PASS' },
+    { phase: 'review', verdict: 'PASS' },
+    { phase: 'ut', verdict: 'PASS' },
+  ] as never[];
+  const events = [
+    // 回退请求（失效 coding 及下游）→ coding agent 已重新执行（settled，invoke_id 在案）→ 在
+    // harness/verdict 之间崩溃（无 phase_verdict）→ resume
+    { type: 'phase_backtrack_requested' as const, invalidated_phases: ['coding', 'review', 'ut'] },
+    { type: 'agent_process_settled' as const, phase: 'coding', invoke_id: 'coding-i7' },
+  ];
+  const r = applyInvalidationsToResume(chain, outcomes, events);
+  assert(!r.outcomes.some(o => (o as { phase: string }).phase === 'coding'),
+    'coding 旧 outcome 须剔除（settled 后需重验 harness/verdict）');
+  assert(r.startIndex === 2, `起点到 coding（idx2，不再更深），got ${r.startIndex}`);
+  // review 收口：精确断言——仅 coding（其 settled 在窗口内）被标 postAgent；review/ut
+  // 虽同被失效但无 settled，不得污染（跨 phase 污染曾导致 review/ut 被错误跳过）。
+  assert(
+    r.postAgentPhases.length === 1 && r.postAgentPhases[0] === 'coding',
+    `仅 coding 进 postAgentPhases（跨 phase 不得污染）：${JSON.stringify(r.postAgentPhases)}`,
+  );
+  assert(
+    r.postAgentAttemptIds.coding === 'coding-i7' &&
+      r.postAgentAttemptIds.review === undefined &&
+      r.postAgentAttemptIds.ut === undefined,
+    `仅复用 coding 的 settled invoke_id：${JSON.stringify(r.postAgentAttemptIds)}`,
+  );
+  // 对照：未 settled（纯 request-only 崩溃）→ 不进 postAgentPhases、起点仍最深回退
+  const r2 = applyInvalidationsToResume(chain, outcomes, [
+    { type: 'phase_backtrack_requested' as const, invalidated_phases: ['coding', 'review', 'ut'] },
+  ]);
+  assert(r2.postAgentPhases.length === 0, 'request-only 崩溃不得标 postAgent（候选须恢复后重新执行，crash/resume 契约不破）');
+  assert(r2.startIndex === 2, 'request-only 起点仍到 coding');
+});
+
+test('applyInvalidationsToResume：settled 后又出现新 agent_invoke_start（i8 崩溃）→ 不跳过 agent（按最后执行事件判定）', () => {
+  const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] as never[];
+  const outcomes = [{ phase: 'coding', verdict: 'PASS' }] as never[];
+  const events = [
+    { type: 'phase_backtrack_requested' as const, invalidated_phases: ['coding', 'review', 'ut'] },
+    { type: 'agent_process_settled' as const, phase: 'coding', invoke_id: 'coding-i7' },
+    { type: 'agent_invoke_start' as const, phase: 'coding', invoke_id: 'coding-i8' }, // 新 attempt 已开始
+    // i8 崩溃（无 settled）
+  ];
+  const r = applyInvalidationsToResume(chain, outcomes, events);
+  assert(!r.postAgentPhases.includes('coding'),
+    `settled 后有新 start → 不得跳过（最后执行=start）：${JSON.stringify(r.postAgentPhases)}`);
+  assert(r.postAgentAttemptIds['coding'] === undefined, '不得复用旧 i7 身份');
+});
+
+test('applyInvalidationsToResume：最新 settled 为超时/kill（timed_out）→ 不跳过 agent', () => {
+  const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] as never[];
+  const outcomes = [{ phase: 'coding', verdict: 'PASS' }] as never[];
+  const events = [
+    { type: 'phase_backtrack_requested' as const, invalidated_phases: ['coding', 'review', 'ut'] },
+    { type: 'agent_process_settled' as const, phase: 'coding', invoke_id: 'coding-i7' },
+    { type: 'agent_process_settled' as const, phase: 'coding', invoke_id: 'coding-i8', timed_out: true, kill_reason: 'agent_timeout' },
+  ];
+  const r = applyInvalidationsToResume(chain, outcomes, events);
+  assert(!r.postAgentPhases.includes('coding'),
+    `最新 settled 为超时 → 不得跳过（须重新 invoke）：${JSON.stringify(r.postAgentPhases)}`);
+});
+
+test('applyInvalidationsToResume：settled 后已有 FAIL phase_verdict → 正常失败恢复，不走 validation-only', () => {
+  const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] as never[];
+  const outcomes = [{ phase: 'coding', verdict: 'PASS' }] as never[];
+  const events = [
+    { type: 'phase_backtrack_requested' as const, invalidated_phases: ['coding', 'review', 'ut'] },
+    { type: 'agent_process_settled' as const, phase: 'coding', invoke_id: 'coding-i7' },
+    { type: 'phase_verdict', phase: 'coding', verdict: 'FAIL' },
+  ];
+  const r = applyInvalidationsToResume(chain, outcomes, events);
+  assert(!r.postAgentPhases.includes('coding'),
+    `settled 后有 FAIL verdict → 不得跳过 agent：${JSON.stringify(r.postAgentPhases)}`);
+});
+
+test('applyInvalidationsToResume：settled 无 invoke_id（身份不完整）→ 不跳过 agent', () => {
+  const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] as never[];
+  const outcomes = [{ phase: 'coding', verdict: 'PASS' }] as never[];
+  const events = [
+    { type: 'phase_backtrack_requested' as const, invalidated_phases: ['coding', 'review', 'ut'] },
+    { type: 'agent_process_settled' as const, phase: 'coding' }, // 无 invoke_id
+  ];
+  const r = applyInvalidationsToResume(chain, outcomes, events);
+  assert(!r.postAgentPhases.includes('coding'),
+    `无 invoke_id 的 settled 身份不完整 → 不得跳过：${JSON.stringify(r.postAgentPhases)}`);
+});
+
 // ---------------- 环境层标注 ----------------
 
 test('S4 环境层：ut FAIL + device_locked → 指引说"修环境重跑"不引向改码', () => {

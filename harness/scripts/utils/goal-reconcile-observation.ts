@@ -26,6 +26,17 @@ export interface GoalReconcileObservationInput {
   maxRetriesPerPhase?: number;
   backtracksUsed: number;
   repeatedCount?: number;
+  /** adjudicated-repair-loop M1（plan e2b7c4a9 t1.3）：整轮 repair candidates 集合指纹
+   *  （roundFingerprintOfCandidates）——缺省回落 stableFingerprint。assess 把它连同
+   *  count 消费入 stop 理由（整轮全等→无进展）。 */
+  repeatedRoundFingerprint?: string;
+  /** adjudicated-repair-loop M1（plan e2b7c4a9 t1.3）：信号级候选收敛状态
+   *  （runner backtrack 决策点计算；assess 消费见 ReconcileObservationV1）。 */
+  repairConvergence?: {
+    eligibleEmpty: boolean;
+    openSignalCount: number;
+    attemptedSignalCount: number;
+  };
   residualFingerprints?: string[];
   invalidatablePhases?: string[];
   timedOut?: boolean;
@@ -104,9 +115,18 @@ export function deriveReconcileObservation(
       backtracks_used: Math.max(0, Math.trunc(input.backtracksUsed)),
     },
     repeated_round: {
-      fingerprint,
+      fingerprint: input.repeatedRoundFingerprint?.trim() || fingerprint,
       count: Math.max(0, Math.trunc(input.repeatedCount ?? 0)),
     },
+    ...(input.repairConvergence
+      ? {
+          repair_convergence: {
+            eligible_empty: input.repairConvergence.eligibleEmpty,
+            open_signal_count: Math.max(0, Math.trunc(input.repairConvergence.openSignalCount)),
+            attempted_signal_count: Math.max(0, Math.trunc(input.repairConvergence.attemptedSignalCount)),
+          },
+        }
+      : {}),
     invalidatable_phases: [...new Set(input.invalidatablePhases ?? [])],
     signals: {
       timed_out: input.timedOut === true,

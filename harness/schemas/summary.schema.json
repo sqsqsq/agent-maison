@@ -104,6 +104,11 @@
             "pattern": "^[0-9a-f]{64}$",
             "description": "缺陷身份指纹；整轮防震荡指纹=排序后集合 hash（不落盘，消费方现算）"
           },
+          "identity_schema": {
+            "type": "string",
+            "enum": ["signal@1"],
+            "description": "adjudicated-repair-loop（plan e2b7c4a9）：信号级候选标记——仅 testing 结构化视觉信号候选携带（identity = sha256(computeDefectFingerprint(screen, defect))）；无字段 = legacy check-domain 候选（可诊断/路由，不入累计 one-shot 收敛与 no-op 判定）。可选、向后兼容。"
+          },
           "source_phase": { "type": "string", "minLength": 1 }
         }
       }

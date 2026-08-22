@@ -84,6 +84,17 @@ export interface ReconcileObservationV1 {
     fingerprint: string;
     count: number;
   };
+  /**
+   * adjudicated-repair-loop M1（plan e2b7c4a9 t1.4）：信号级候选收敛状态。
+   * runner 在 backtrack 决策点计算后填入：open 中全部 signal@1 身份均已 attempted
+   * （eligible 空）→ eligible_empty=true。assess 消费入 stop 理由（stop/fused/
+   * repair_not_converging），缺省 undefined=无信号级收敛参与。
+   */
+  repair_convergence?: {
+    eligible_empty: boolean;
+    open_signal_count: number;
+    attempted_signal_count: number;
+  };
   invalidatable_phases?: string[];
   signals?: {
     timed_out: boolean;
@@ -869,7 +880,27 @@ export function assessObservation(
     alternatives: [] as AssessRecommendation[],
     stop: {
       fused,
-      reason: fused ? observation.reconcile?.reason ?? 'reconcile_fused' : null,
+      // adjudicated-repair-loop M1（plan e2b7c4a9 t1.4）：assess 消费 runner 填入的
+      // 信号级收敛事实（repair_convergence / repeated_round）进 stop 理由——
+      // eligible 空 → 明确 repair_not_converging 语义；整轮候选集合重复在案 → 附指纹。
+      reason: fused
+        ? (() => {
+            const base = observation.reconcile?.reason ?? 'reconcile_fused';
+            const conv = observation.reconcile?.repair_convergence;
+            if (conv?.eligible_empty) {
+              return (
+                `repair_not_converging: 信号级候选 ${conv.open_signal_count} 条 open、` +
+                `${conv.attempted_signal_count} 条均已 attempted（累计 one-shot），eligible 空——` +
+                `停止自动回退求人裁决。${base}`
+              );
+            }
+            const rr = observation.reconcile?.repeated_round;
+            if (rr && rr.count > 0) {
+              return `整轮候选集合重复 ${rr.count} 次（roundFingerprint=${rr.fingerprint.slice(0, 12)}…）——${base}`;
+            }
+            return base;
+          })()
+        : null,
     },
     run_status_candidate: reconciled ? 'CHAIN_SLICE_COMPLETED' as const : null,
     feature_completion: reconciled ? 'REQUIRES_VALIDATION' as const : null,
