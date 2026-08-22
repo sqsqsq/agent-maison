@@ -558,6 +558,27 @@ export const LEGACY_DEFAULT_DSL: ArchitectureDsl = {
   cross_module_exports_file: 'index.ets',
 };
 
+/**
+ * M5A t4 proof 12（P2 spec “Custom features_dir is honored end to end… no path
+ * construction SHALL hardcode doc/features”）：当 raw config 未**显式**提供
+ * receipt_dir_pattern / reports_dir_pattern 时，默认形态从 features_dir 派生
+ * （`<features_dir>/<feature>/<phase>` 与 `<features_dir>/<feature>/<phase>/reports`），
+ * 而不是字面量 doc/features。显式配置（含 BACKFILL 写入）原样保留。
+ */
+function deriveDefaultPatternsFromFeaturesDir(
+  merged: FrameworkPaths,
+  rawPaths: Record<string, unknown>,
+): FrameworkPaths {
+  const next = { ...merged };
+  if (typeof rawPaths.receipt_dir_pattern !== 'string' || !rawPaths.receipt_dir_pattern.trim()) {
+    next.receipt_dir_pattern = `${merged.features_dir}/<feature>/<phase>`;
+  }
+  if (typeof rawPaths.reports_dir_pattern !== 'string' || !rawPaths.reports_dir_pattern.trim()) {
+    next.reports_dir_pattern = `${merged.features_dir}/<feature>/<phase>/reports`;
+  }
+  return next;
+}
+
 function mergeAgentBundlePathDefaults(paths: FrameworkPaths, agentAdapter: string): FrameworkPaths {
   const next = { ...paths };
   // inline 已彻底废弃（DEPRECATED）：config 中任何残留/显式 `inline` 在 normalize（load + 写盘 candidate）
@@ -1056,7 +1077,10 @@ export function normalizeConfig(raw: Partial<FrameworkConfig>): FrameworkConfig 
       ? normalizeArchitecture(raw.architecture, fallback.architecture)
       : fallback.architecture,
     paths: mergeAgentBundlePathDefaults(
-      { ...fallback.paths, ...(raw.paths ?? {}) },
+      deriveDefaultPatternsFromFeaturesDir(
+        { ...fallback.paths, ...(raw.paths ?? {}) },
+        (raw.paths ?? {}) as Record<string, unknown>,
+      ),
       raw.agent_adapter ?? fallback.agent_adapter,
     ),
     toolchain: normalizeToolchain(raw.toolchain),
@@ -1946,11 +1970,11 @@ export function statefilePath(projectRoot: string): string {
 
 /**
  * 将 receipt_dir_pattern 中的 `<feature>` / `<phase>` 占位符替换为实参，并返回绝对路径。
- * 默认指向 `doc/features/<feature>/<phase>` 目录。
+ * 默认形态跟随 features_dir（normalizeConfig 已从 features_dir 派生未显式配置的 pattern）。
  */
 export function receiptDirPath(projectRoot: string, feature: string, phase: string): string {
   const cfg = loadFrameworkConfig(projectRoot);
-  const pattern = cfg.paths.receipt_dir_pattern ?? DEFAULT_PATHS.receipt_dir_pattern!;
+  const pattern = cfg.paths.receipt_dir_pattern ?? `${cfg.paths.features_dir}/<feature>/<phase>`;
   // M5A §4.3：<feature> 占位符替换为物理相对路径（CU=<blueprint_id>/<change_unit_id>），
   // 绝不落 <features_dir>/<encoded-featureId> 影子目录（proof 13/14）。
   const rel = pattern.replace(/<feature>/g, featureRelativePath(feature)).replace(/<phase>/g, phase);

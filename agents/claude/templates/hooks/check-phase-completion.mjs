@@ -577,7 +577,10 @@ function resolveFeaturePhaseReportDir(projectRoot, feature, phase) {
       const rel = pattern.replace(/<feature>/g, featureRel).replace(/<phase>/g, phase);
       return path.resolve(projectRoot, rel);
     }
-    return path.resolve(projectRoot, 'framework/harness/reports', featureRel, phase);
+    // M5A t4：无 reports_dir_pattern 时默认形态跟随 features_dir（P2 spec
+    // “Custom features_dir … no path construction SHALL hardcode doc/features”），
+    // 而非硬编码 framework/harness/reports。
+    return path.resolve(projectRoot, readFeaturesDirFromConfig(projectRoot), featureRel, phase, "reports");
   } catch {
     return path.resolve(projectRoot, 'framework/harness/reports', feature, phase);
   }

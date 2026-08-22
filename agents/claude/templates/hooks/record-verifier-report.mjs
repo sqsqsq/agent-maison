@@ -187,7 +187,20 @@ function resolveFeaturePhaseReportDir(projectRoot, feature, phase) {
       const rel = pattern.replace(/<feature>/g, featureRel).replace(/<phase>/g, phase);
       return path.resolve(projectRoot, rel);
     }
-    return path.resolve(projectRoot, 'framework/harness/reports', featureRel, phase);
+    // M5A t4：无 reports_dir_pattern 时默认形态跟随 features_dir（P2 spec
+    // “Custom features_dir … no path construction SHALL hardcode doc/features”），
+    // 而非硬编码 framework/harness/reports。
+    let featuresDir = 'doc/features';
+    try {
+      if (fs.existsSync(cfgPath)) {
+        const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+        const fd = cfg?.paths?.features_dir;
+        if (typeof fd === 'string' && fd.trim()) featuresDir = fd.trim().replace(/\\/g, '/');
+      }
+    } catch {
+      featuresDir = 'doc/features';
+    }
+    return path.resolve(projectRoot, featuresDir, featureRel, phase, "reports");
   } catch {
     // M5A：cu- 前缀绝不拼出编码 id 路径——返回 null 走 state 目录兜底；legacy 原样。
     return typeof feature === 'string' && feature.startsWith('cu-')

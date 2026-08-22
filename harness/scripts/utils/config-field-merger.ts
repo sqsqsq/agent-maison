@@ -733,10 +733,29 @@ export function detectMissingBackfillFields(raw: unknown, profileName?: string):
       note: f.note,
     }));
   }
+  // M5A t4（P2 spec “Custom features_dir is honored end to end… no path
+  // construction SHALL hardcode doc/features”）：BACKFILL 缺失 pattern 时从
+  // raw 自定义 features_dir 派生默认形态，避免回填字面量 doc/features 把自定义
+  // features_dir 宿主锁死（与 config.ts deriveDefaultPatternsFromFeaturesDir 同源）。
+  const rawPaths = (raw as Record<string, unknown>).paths as Record<string, unknown> | undefined;
+  const rawFeaturesDir =
+    rawPaths && typeof rawPaths.features_dir === 'string' && rawPaths.features_dir.trim()
+      ? rawPaths.features_dir.trim()
+      : undefined;
+  const derived: Partial<Record<string, string>> = rawFeaturesDir && rawFeaturesDir !== 'doc/features'
+    ? {
+        'paths.receipt_dir_pattern': `${rawFeaturesDir}/<feature>/<phase>`,
+        'paths.reports_dir_pattern': `${rawFeaturesDir}/<feature>/<phase>/reports`,
+      }
+    : {};
   const out: MissingFieldEntry[] = [];
   for (const f of fields) {
     if (!hasDottedKey(raw, f.path)) {
-      out.push({ path: f.path, defaultValue: f.defaultValue, note: f.note });
+      out.push({
+        path: f.path,
+        defaultValue: derived[f.path] ?? f.defaultValue,
+        note: f.note,
+      });
     }
   }
   return out;
@@ -771,11 +790,30 @@ export function mergeBackfillFields(raw: unknown, profileName?: string): {
     raw && typeof raw === 'object' && !Array.isArray(raw)
       ? (deepClone(raw) as Record<string, unknown>)
       : {};
+  // M5A t4：自定义 features_dir 时 receipt/reports pattern 从 features_dir 派生
+  //（与 detectMissingBackfillFields 同源，见 P2 spec “no path construction SHALL
+  // hardcode doc/features”）。
+  const basePaths =
+    base.paths && typeof base.paths === 'object' && !Array.isArray(base.paths)
+      ? (base.paths as Record<string, unknown>)
+      : {};
+  const baseFeaturesDir =
+    typeof basePaths.features_dir === 'string' && basePaths.features_dir.trim()
+      ? basePaths.features_dir.trim()
+      : 'doc/features';
+  const derivedPatterns: Record<string, string> =
+    baseFeaturesDir !== 'doc/features'
+      ? {
+          'paths.receipt_dir_pattern': `${baseFeaturesDir}/<feature>/<phase>`,
+          'paths.reports_dir_pattern': `${baseFeaturesDir}/<feature>/<phase>/reports`,
+        }
+      : {};
   const applied: MissingFieldEntry[] = [];
   for (const f of fields) {
     if (!hasDottedKey(base, f.path)) {
-      setDottedKey(base, f.path, f.defaultValue);
-      applied.push({ path: f.path, defaultValue: f.defaultValue, note: f.note });
+      const value = derivedPatterns[f.path] ?? f.defaultValue;
+      setDottedKey(base, f.path, value);
+      applied.push({ path: f.path, defaultValue: value, note: f.note });
     }
   }
   return {

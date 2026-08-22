@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
-import { featureFilePath } from '../../config';
+import { featureFilePath, featuresDirPath } from '../../config';
 import * as closureEvidenceChecks from '../fixtures/component-blueprint/valid/test/ledger/closure.test';
 import { BlueprintRecord, asRecord, asRecords } from '../../scripts/utils/component-blueprint-model';
 import { blueprintRefAddress } from '../../scripts/utils/change-unit-model';
@@ -73,7 +73,9 @@ export function prepareCompleteProject(projectRoot: string, mutateBlueprint?: (b
   mutateBlueprint?.(blueprint);
   fs.writeFileSync(blueprintFile, YAML.stringify(blueprint), 'utf8');
   const blueprintHash = sha256Bytes(fs.readFileSync(blueprintFile));
-  const unitsDir = path.join(projectRoot, 'doc', 'features', 'ledger-app-blueprint');
+  // M5A t4：unitsDir 从 features_dir 派生（prepareCompleteProject 在 custom features_dir
+  // 工程上工作所需的唯一硬编码点；默认 doc/features 时行为不变）
+  const unitsDir = path.join(featuresDirPath(projectRoot), 'ledger-app-blueprint');
   for (const dirName of fs.readdirSync(unitsDir, { withFileTypes: true })) {
     if (!dirName.isDirectory() || dirName.name === 'blueprint') continue;
     const file = path.join(unitsDir, dirName.name, 'change-unit.yaml');

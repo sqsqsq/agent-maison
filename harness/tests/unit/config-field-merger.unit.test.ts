@@ -379,6 +379,30 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    // M5A t4（P2 spec “Custom features_dir … no path construction SHALL hardcode doc/features”）：
+    // 自定义 features_dir 时 BACKFILL 派生的 pattern 从 features_dir 出，而非字面 doc/features。
+    name: 'M5A：自定义 features_dir 时 BACKFILL 回填 pattern 跟随 features_dir（receipt+reports）',
+    run: () => {
+      const { merged } = mergeBackfillFields({ paths: { features_dir: 'requirements/features' } });
+      const paths = (merged as { paths: { receipt_dir_pattern: string; reports_dir_pattern: string } }).paths;
+      assert.strictEqual(paths.receipt_dir_pattern, 'requirements/features/<feature>/<phase>');
+      assert.strictEqual(paths.reports_dir_pattern, 'requirements/features/<feature>/<phase>/reports');
+    },
+  },
+  {
+    name: 'M5A：显式配置 pattern 时 BACKFILL 保留原值（不覆盖）',
+    run: () => {
+      const { merged } = mergeBackfillFields({
+        paths: {
+          features_dir: 'requirements/features',
+          receipt_dir_pattern: 'custom/<feature>/<phase>',
+        },
+      });
+      const paths = (merged as { paths: { receipt_dir_pattern: string; reports_dir_pattern: string } }).paths;
+      assert.strictEqual(paths.receipt_dir_pattern, 'custom/<feature>/<phase>');
+    },
+  },
+  {
     name: 'module_graphs_dir_to_module_root：旧默认路径 → 迁移',
     run: () => {
       const raw = { paths: { module_graphs_dir: 'doc/modules/<module>/code-graph.yaml' } };

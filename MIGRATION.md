@@ -3,6 +3,40 @@
 本文描述**实例工程**在 framework 子模块或配置演进时的预期做法。详细操作以 Skill 正文为准。
 
 
+## 3.1.0：默认 receipt/reports 目录模式跟随 `paths.features_dir`（行为变化）
+
+3.1.0 起，未显式配置 `receipt_dir_pattern` / `reports_dir_pattern` 时，默认模式从
+`paths.features_dir` 派生（`<features_dir>/<feature>/<phase>` 与
+`<features_dir>/<feature>/<phase>/reports`），不再使用固定的字面量 `doc/features/...`。
+
+**触发条件**：实例工程满足以下**全部**条件时行为变化——
+
+1. 自定义了 `paths.features_dir`（非默认 `doc/features`）；
+2. `framework.config.json` **磁盘上未显式写入** `receipt_dir_pattern` / `reports_dir_pattern`。
+
+> 边界按“磁盘上是否已有显式 pattern”判定（2026-08-22 更正）：**缺失 pattern 时，
+> 3.1 的 normalize 与 framework-init UPDATE 的 BACKFILL 都从 `paths.features_dir` 派生**
+> 默认形态；**已有显式 pattern（包括旧版本曾写入的字面量 `doc/features/...`）原样保留**。
+> 因此“经过 BACKFILL 的宿主”并不豁免——若 BACKFILL 发生在自定义 features_dir 之后，
+> 其派生值同样指向自定义目录。
+
+**影响**：receipt（`phase-completion-receipt.md`）与 harness/report 产物落点从
+`doc/features/<feature>/<phase>/...` 搬到 `<features_dir>/<feature>/<phase>/...`。
+已闭环 receipt 若在新旧两个位置都被 harness 检查到，可能短暂出现重复/缺失提示；
+重跑对应 phase harness 后收敛。
+
+**不触发条件**（原样保留）：显式配置的 pattern 一律原样保留（只替换 `<feature>` /
+`<phase>` 占位符、不搬到 features_dir 下）；默认 `doc/features` 宿主行为不变。
+
+**处置**：若要维持旧落点，在 `framework.config.json` 显式写入
+`"receipt_dir_pattern": "doc/features/<feature>/<phase>"` 与
+`"reports_dir_pattern": "doc/features/<feature>/<phase>/reports"`；否则无需操作，
+重跑受影响 phase 即可。
+
+> 同一发版的演进工作区目录契约（`<features_dir>/<blueprint_id>/...`）不产生消费者迁移：
+> 该路径形态此前未发布、工作树无真实存量（见 M5A plan §3）。
+
+
 ## 3.0.0：Skill 契约、assess 调和循环与 Goal 单写者
 
 3.0.0 把 phase 合格性与 goal 跨阶段推进收敛为机器契约：
