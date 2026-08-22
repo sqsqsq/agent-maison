@@ -46,7 +46,9 @@ import {
   lookupTerm,
 } from './utils/glossary-parser';
 import { isSpecVisualHandoffSkipped, dispatchSpecVisualHandoff, isSpecUiSpecSkipped, dispatchSpecUiSpec, isSpecAssetAcquisitionSkipped, dispatchSpecAssetAcquisition } from '../capability-registry';
-import { relCatalog, relGlossary, relFeatureArtifact, relFeatureFile, loadFrameworkConfig, featureFilePath } from '../config';
+import { relCatalog, relGlossary, relFeatureArtifact, relFeatureFile, loadFrameworkConfig, featureFilePath, relFeaturesDir } from '../config';
+// M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT（素材路径 fallback 不得拼接逻辑 id）
+import { featureRelativePath } from './utils/feature-identity';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import {
   clampFidelityByCapability,
@@ -340,7 +342,7 @@ export function maybeWriteAssetRequest(ctx: CheckContext): void {
     ...items.map(a => {
       const role = /(logo|brand)/i.test(a.key) ? 'brand_logo' : 'illustration';
       const size = role === 'brand_logo' ? '96×96（正方形，透明底 png/svg）' : '≥320×200（png/svg）';
-      const drop = a.resolved_path ?? `doc/features/${ctx.feature}/spec/assets/${a.key}.png`;
+      const drop = a.resolved_path ?? `${relFeaturesDir(ctx.projectRoot)}/${featureRelativePath(ctx.feature)}/spec/assets/${a.key}.png`;
       const ph = role === 'brand_logo' ? 'text_avatar（首字色块）' : 'illustration_frame（中性占位框）';
       return `| ${a.key} | ${role} | ${size} | ${drop} | ${ph} |`;
     }),

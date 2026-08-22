@@ -1,7 +1,7 @@
 cases:
-  - id: component-identity-mismatch
-    mutator: yaml-component-id
-    expected_issue: component_identity_mismatch
+  - id: blueprint-identity-mismatch
+    mutator: yaml-blueprint-id
+    expected_issue: component_blueprint_identity_mismatch
   - id: required-view-missing
     mutator: remove-logical-view
     expected_issue: blueprint_required_view_missing

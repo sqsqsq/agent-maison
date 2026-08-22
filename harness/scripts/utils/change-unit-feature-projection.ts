@@ -403,7 +403,7 @@ function checkVerticalSlice(
         try {
           return [asChangeUnitArtifact(loadCanonicalChangeUnit(
             projectRoot,
-            cu.component_id,
+            cu.blueprint_id,
             requirement.from_change_unit_id,
           ).changeUnit)];
         } catch {
@@ -451,7 +451,7 @@ export function validateChangeUnitFeatureProjection(
       return { applicable: true, issues, useCasesRequired: false, dagRequired: false };
     }
   }
-  const expectedFeature = deriveChangeUnitFeatureId(cu.component_id, cu.change_unit_id);
+  const expectedFeature = deriveChangeUnitFeatureId(cu.blueprint_id, cu.change_unit_id);
   if (feature !== expectedFeature) {
     issues.push(issue('change_unit_feature_identity_mismatch', `Feature=${feature}，canonical 派生 identity=${expectedFeature}。`));
   }

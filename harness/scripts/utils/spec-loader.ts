@@ -25,8 +25,11 @@ import {
   resolvePaths,
   featuresDirPath,
   resolveFeatureArtifact,
+  enumerateFeatures,
   type FeaturePathOptions,
 } from '../../config';
+// M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT
+import { featureRelativePath } from './feature-identity';
 import { validateProjectRelativePath } from './project-relative-path';
 
 export type FeatureArtifactVerdict =
@@ -114,6 +117,11 @@ export class SpecLoader {
     return { featuresDirAbs: this.featuresDir };
   }
 
+  /** M5A §4.3：feature 目录绝对路径 = featuresDir + 唯一 SSOT 物理相对路径（含 featuresDir 覆盖）。 */
+  private featureDirAbs(feature: string): string {
+    return path.join(this.featuresDir, featureRelativePath(feature));
+  }
+
   // --------------------------------------------------------------------------
   // 阶段级规约
   // --------------------------------------------------------------------------
@@ -155,7 +163,7 @@ export class SpecLoader {
   // --------------------------------------------------------------------------
 
   loadFeatureSpec(feature: string): FeatureSpec {
-    const featureDir = path.join(this.featuresDir, feature);
+    const featureDir = this.featureDirAbs(feature);
 
     const spec: FeatureSpec = { feature };
     // P0-2（plan d9b4f7e2 复审）：形状偏差留痕——由 harness-runner 产出结构化 FAIL
@@ -318,7 +326,7 @@ export class SpecLoader {
   }
 
   inspectFeatureArtifacts(feature: string, phase?: Phase): FeatureArtifactInspection {
-    const featureDir = path.join(this.featuresDir, feature);
+    const featureDir = this.featureDirAbs(feature);
     const featureDirParent = this.featuresDir;
     const requiredFiles = phase ? REQUIRED_FEATURE_FILES_BY_PHASE[phase] ?? [] : [];
     const optionalFiles = phase ? OPTIONAL_FEATURE_FILES_BY_PHASE[phase] ?? [] : [];
@@ -387,10 +395,9 @@ export class SpecLoader {
 
   listAvailableFeatures(): string[] {
     if (!fs.existsSync(this.featuresDir)) return [];
-
-    return fs.readdirSync(this.featuresDir, { withFileTypes: true })
-      .filter(entry => entry.isDirectory())
-      .map(entry => entry.name);
+    // M5A §5.2/§5.3：共享枚举函数——返回逻辑 featureId（legacy=<目录名>，
+    // CU=`cu-`+base64url）；工作区容器只下钻不返回；孤儿/歧义/缺 yaml fail-closed。
+    return enumerateFeatures(this.projectRoot, this.featurePathOpts(this.projectRoot)).map(item => item.featureId);
   }
 
   // --------------------------------------------------------------------------

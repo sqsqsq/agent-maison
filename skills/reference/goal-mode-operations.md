@@ -48,7 +48,7 @@ npx ts-node scripts/goal-runner.ts --feature <feature> --requirement-file <path/
 ```
 
 路径相对**实例工程根**解析，可以直接指向权威需求文件本身（例如
-`doc/features/原始需求/<模块>/原始需求.md`），不必另抄一份。内容在 fresh 启动时读取并**冻结进
+`<features_dir>/原始需求/<模块>/原始需求.md`（`<features_dir>` 默认 `doc/features`），不必另抄一份。内容在 fresh 启动时读取并**冻结进
 manifest**，`--resume` 只认冻结值、不会重读源文件——所以源文件长期复用是安全的，改了它也
 不会污染已在跑的 run。
 

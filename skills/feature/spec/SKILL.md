@@ -8,7 +8,7 @@
 
 **Harness 运行时前置**：满足 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md) 与 [Shell cwd 契约](../../reference/harness-cli-cwd.md)。**Personal setup（BLOCKER）**：[personal-setup-gate](../../reference/personal-setup-gate.md)：`check-personal-setup.ts --json --ensure`；仅解析 JSON。**视觉能力自测（UI 相关需求·交互式）**：personal-setup `ok` 后按 [interactive-vision-canary](../../reference/interactive-vision-canary.md) 后台跑自测卷判卷 CLI（防死锁编排逐步照做）。
 
-**Feature 归档定位协议**：先基于 `framework.config.json > paths.features_dir` 解析 `<features_dir>/<feature>/`（本文档下称 `<features_dir>`）。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`（或 `harness-runner --sync-closure`）；exit 0 → 已闭环，**停等 `phase.next_step`**，禁止仅凭 stale state 判未闭环。已存在目录 → 续写 `spec/spec.md`/`acceptance.yaml`；同级归档/同名前缀条目仅作旁证，不得当正式 feature；精确路径存在但非目录 → 停下请用户确认（`spec.feature_path`：`1=换名 2=清理恢复`）。
+**Feature 归档定位协议**：先基于 `framework.config.json > paths.features_dir` 解析 `<features_dir>/<feature>/`（本文档下称 `<features_dir>`）。 `<feature>` 语义见 [路径术语表](../../reference/agents-entry-detail.md)（物理 Feature 路径）；定位一律经框架解析（CLI/SSOT/harness 产物路径），不得手工拼接逻辑 identity（含编码 `cu-…`）。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`（或 `harness-runner --sync-closure`）；exit 0 → 已闭环，**停等 `phase.next_step`**，禁止仅凭 stale state 判未闭环。已存在目录 → 续写 `spec/spec.md`/`acceptance.yaml`；同级归档/同名前缀条目仅作旁证，不得当正式 feature；精确路径存在但非目录 → 停下请用户确认（`spec.feature_path`：`1=换名 2=清理恢复`）。
 
 ## 条件加载索引
 

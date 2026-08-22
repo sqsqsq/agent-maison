@@ -20,10 +20,13 @@ import {
   featureArtifactPath,
   receiptDirPath,
   relFeatureFile,
+  relFeaturesDir,
   resolveFeatureArtifact,
 } from '../config';
 import { detectRepoLayout, type RepoLayout } from '../repo-layout';
 import { deleteEnvKeyCaseInsensitive, sanitizeSpawnEnv } from './utils/process-integrity';
+// M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT（goal-runs 等路径必须经它展开）
+import { featureRelativePath } from './utils/feature-identity';
 // d9e4b7c1 T2：device_test 缺陷进回修环——evidence schema/路径、权威 trace 二次核验、根/级联三分
 import {
   deviceTestEvidencePath,
@@ -1817,7 +1820,7 @@ export function collectActionableDefects(
       resolveCurrentBuildFingerprint: (root: string, feature: string, phase?: string) => string | null;
     };
     const diffRel = path.posix.join(
-      featuresDirRelOf(projectRoot), feature, 'device-testing', 'device-screenshots', 'visual-diff.json',
+      featuresDirRelOf(projectRoot), featureRelativePath(feature), 'device-testing', 'device-screenshots', 'visual-diff.json',
     );
     const diffAbs = path.join(projectRoot, ...diffRel.split('/'));
     if (fs.existsSync(diffAbs)) {
@@ -1894,7 +1897,7 @@ export function collectActionableDefects(
   // ---- B) crash：本 run 的集合差归档 ----
   try {
     const diagRel = path.posix.join(
-      featuresDirRelOf(projectRoot), feature, 'device-testing', 'reports', 'crash-diagnostics',
+      featuresDirRelOf(projectRoot), featureRelativePath(feature), 'device-testing', 'reports', 'crash-diagnostics',
     );
     const diagAbs = path.join(projectRoot, ...diagRel.split('/'));
     if (fs.existsSync(diagAbs)) {
@@ -2232,7 +2235,7 @@ export function resolvePhaseCapabilityAdvisory(
     // t6：意图检测在解引用后的合并文本上做——manifest 摘要只写 SSOT 路径+弱措辞而
     // 原始需求.md「完全参考」×7 是强信号（bc-openCard 事故原形）。
     const deref = dereferenceRequirementDocs(projectRoot, manifest.requirement, {
-      excludePrefixes: [`doc/features/${manifest.feature}/`],
+      excludePrefixes: [`${relFeaturesDir(projectRoot)}/${featureRelativePath(manifest.feature)}/`],
     });
     isUiRelevant = detectUiRelevantRequirement(deref.combined);
     desired = detectPixel1to1Intent(deref.combined) ? 'pixel_1to1' : 'semantic_layout';
@@ -2945,7 +2948,7 @@ function guardOrphanedFeatureRun(
   force: boolean,
 ): void {
   if (force) return;
-  const featureRunsDirAbs = path.join(projectRoot, featuresDir, feature, 'goal-runs');
+  const featureRunsDirAbs = path.join(projectRoot, featuresDir, featureRelativePath(feature), 'goal-runs');
   const orphan = resolveOrphanedIncompleteRun(featureRunsDirAbs, projectRoot);
   if (!orphan) return;
   if (orphan.runMode === 'unknown') {
@@ -2977,7 +2980,7 @@ function acquireGoalLocks(
   },
 ): void {
   const { runId, reportDir, runMode } = run;
-  const featureRunsDir = path.join(projectRoot, featuresDir, feature, 'goal-runs');
+  const featureRunsDir = path.join(projectRoot, featuresDir, featureRelativePath(feature), 'goal-runs');
   const featureLockPath = path.join(featureRunsDir, FEATURE_LOCK_NAME);
   // plan e7c2a4d8 T1b''：per-run lock 从 canonical manifest.report_dir 派生
   //（dry 落 goal-runs/.dry/<run_id>/）；feature 串行锁继续共享（同 feature 串行）。
@@ -4357,7 +4360,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         concludeStartupBlocker('supersede_target_invalid', msg);
         return 1;
       }
-      const targetRunDir = path.join(projectRoot, featuresDir, manifest.feature, 'goal-runs', target);
+      const targetRunDir = path.join(projectRoot, featuresDir, featureRelativePath(manifest.feature), 'goal-runs', target);
       const targetEvents = path.join(targetRunDir, 'events.jsonl');
       if (!fs.existsSync(targetEvents)) {
         const msg = `--supersede 目标 run 不存在：${target}`;
@@ -6744,8 +6747,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
             feature: manifest.feature,
             runId: manifest.run_id,
             phase,
-            screenshotsDirRel: path.posix.join(featuresDir.replace(/\\/g, '/'), manifest.feature, 'device-testing', 'device-screenshots'),
-            visualDiffJsonRel: path.posix.join(featuresDir.replace(/\\/g, '/'), manifest.feature, 'device-testing', 'device-screenshots', 'visual-diff.json'),
+            screenshotsDirRel: path.posix.join(featuresDir.replace(/\\/g, '/'), featureRelativePath(manifest.feature), 'device-testing', 'device-screenshots'),
+            visualDiffJsonRel: path.posix.join(featuresDir.replace(/\\/g, '/'), featureRelativePath(manifest.feature), 'device-testing', 'device-screenshots', 'visual-diff.json'),
             harnessPrefixRel: layout.frameworkRel ? path.posix.join(layout.frameworkRel, 'harness') : 'harness',
           }).join('\n');
           // P0-10a 补强②：halt 时 console/detach.log 原样打印（看日志者亦撞见）。

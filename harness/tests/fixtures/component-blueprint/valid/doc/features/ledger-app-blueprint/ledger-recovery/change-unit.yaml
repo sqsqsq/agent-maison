@@ -1,0 +1,195 @@
+artifact: change-unit@1
+component_id: ledger
+change_unit_id: ledger-recovery
+revision: 1
+priority: 30
+component_blueprint_ref:
+  artifact: component-blueprint@1
+  component_id: ledger
+  blueprint_id: ledger-app-blueprint
+  revision: 2
+  source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
+  artifact_sha256: sha256:0088e288a249023036c869d08d8af7e8b36f63070abe793f1f680ca4c324f163
+  target:
+    kind: blueprint
+    id: ledger-app-blueprint
+provenance:
+  source_kind: component-blueprint
+  source_ref: doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml#blueprint:ledger-app-blueprint
+  source_revision: revision-2
+  observed_at: 2026-08-19T12:00:00+08:00
+  evidence_strength: authoritative
+  extraction_method: consumer-validated-decomposition
+purpose: Deliver the ledger-recovery vertical slice from the admitted ledger blueprint.
+preconditions: []
+requires:
+  - require_id: need-consumer
+    from_change_unit_id: ledger-consumer
+    provide_id: ledger-consumer-ready
+provides:
+  - provide_id: ledger-recovery-ready
+    description: ledger-recovery vertical output is complete.
+design_refs:
+  - artifact: component-blueprint@1
+    component_id: ledger
+    blueprint_id: ledger-app-blueprint
+    revision: 2
+    source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
+    artifact_sha256: sha256:0088e288a249023036c869d08d8af7e8b36f63070abe793f1f680ca4c324f163
+    target:
+      kind: node
+      view_id: logical
+      id: ledger-domain
+  - artifact: component-blueprint@1
+    component_id: ledger
+    blueprint_id: ledger-app-blueprint
+    revision: 2
+    source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
+    artifact_sha256: sha256:0088e288a249023036c869d08d8af7e8b36f63070abe793f1f680ca4c324f163
+    target:
+      kind: node
+      view_id: runtime
+      id: ledger-repository
+  - artifact: component-blueprint@1
+    component_id: ledger
+    blueprint_id: ledger-app-blueprint
+    revision: 2
+    source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
+    artifact_sha256: sha256:0088e288a249023036c869d08d8af7e8b36f63070abe793f1f680ca4c324f163
+    target:
+      kind: node
+      view_id: runtime
+      id: ledger-store
+  - artifact: component-blueprint@1
+    component_id: ledger
+    blueprint_id: ledger-app-blueprint
+    revision: 2
+    source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
+    artifact_sha256: sha256:0088e288a249023036c869d08d8af7e8b36f63070abe793f1f680ca4c324f163
+    target:
+      kind: flow
+      view_id: runtime
+      id: ledger-refresh-flow
+  - &a1
+    artifact: component-blueprint@1
+    component_id: ledger
+    blueprint_id: ledger-app-blueprint
+    revision: 2
+    source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
+    artifact_sha256: sha256:0088e288a249023036c869d08d8af7e8b36f63070abe793f1f680ca4c324f163
+    target:
+      kind: node
+      view_id: development
+      id: ledger-module
+  - artifact: component-blueprint@1
+    component_id: ledger
+    blueprint_id: ledger-app-blueprint
+    revision: 2
+    source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
+    artifact_sha256: sha256:0088e288a249023036c869d08d8af7e8b36f63070abe793f1f680ca4c324f163
+    target:
+      kind: node
+      view_id: scenarios
+      id: add-entry-scenario
+  - artifact: component-blueprint@1
+    component_id: ledger
+    blueprint_id: ledger-app-blueprint
+    revision: 2
+    source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
+    artifact_sha256: sha256:0088e288a249023036c869d08d8af7e8b36f63070abe793f1f680ca4c324f163
+    target:
+      kind: relation
+      id: repository-publishes-store
+  - artifact: component-blueprint@1
+    component_id: ledger
+    blueprint_id: ledger-app-blueprint
+    revision: 2
+    source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
+    artifact_sha256: sha256:0088e288a249023036c869d08d8af7e8b36f63070abe793f1f680ca4c324f163
+    target:
+      kind: relation
+      id: domain-owned-by-module
+  - artifact: component-blueprint@1
+    component_id: ledger
+    blueprint_id: ledger-app-blueprint
+    revision: 2
+    source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
+    artifact_sha256: sha256:0088e288a249023036c869d08d8af7e8b36f63070abe793f1f680ca4c324f163
+    target:
+      kind: contract
+      id: create-entry-v1
+  - artifact: component-blueprint@1
+    component_id: ledger
+    blueprint_id: ledger-app-blueprint
+    revision: 2
+    source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
+    artifact_sha256: sha256:0088e288a249023036c869d08d8af7e8b36f63070abe793f1f680ca4c324f163
+    target:
+      kind: decision
+      id: seam-shape
+touches:
+  - owner: ledger-team
+    design_ref: *a1
+    write_refs:
+      - planned:src/ledger/ledger-recovery
+      - planned:test/ledger/ledger-recovery
+preserved_invariants:
+  - invariant_id: repository-authority
+    description: Repository commit remains authoritative.
+    evidence_refs:
+      - verify:ledger-flow
+target_predicates:
+  - predicate_id: behavior
+    role: behavior
+    description: ledger-recovery behavior is executable.
+    provide_ids:
+      - ledger-recovery-ready
+    verification_refs:
+      - verify:ledger-recovery:behavior
+  - predicate_id: owner
+    role: owner
+    description: LedgerRepository owns durable state.
+    provide_ids:
+      - ledger-recovery-ready
+    verification_refs:
+      - verify:ledger-recovery:owner
+  - predicate_id: consumer
+    role: consumer
+    description: Ledger page is a real consumer.
+    provide_ids:
+      - ledger-recovery-ready
+    verification_refs:
+      - verify:ledger-recovery:consumer
+  - predicate_id: contract
+    role: contract
+    description: create-entry-v1 remains authoritative.
+    provide_ids:
+      - ledger-recovery-ready
+    verification_refs:
+      - verify:ledger-recovery:contract
+  - predicate_id: provider
+    role: provider
+    description: Host LedgerRepository is the first Provider.
+    provide_ids:
+      - ledger-recovery-ready
+    verification_refs:
+      - verify:ledger-recovery:provider
+  - predicate_id: recovery
+    role: recovery
+    description: Repository snapshot restores state.
+    provide_ids:
+      - ledger-recovery-ready
+    verification_refs:
+      - verify:ledger-recovery:recovery
+verification_refs:
+  - verify:ledger-recovery:vertical
+safe_intermediate_state:
+  description: The slice builds and recovers independently.
+  build_validation_refs:
+    - verify:ledger-recovery:build
+  compatibility_refs:
+    - verify:ledger-recovery:compatibility
+  recovery_refs:
+    - verify:ledger-recovery:recovery
+blockers: []
+blueprint_id: ledger-app-blueprint

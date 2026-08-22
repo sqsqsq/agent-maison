@@ -7,6 +7,7 @@
   "required": [
     "artifact",
     "component_id",
+    "blueprint_id",
     "change_unit_id",
     "revision",
     "priority",
@@ -27,6 +28,7 @@
   "properties": {
     "artifact": { "const": "change-unit@1" },
     "component_id": { "$ref": "#/$defs/safeSegment" },
+    "blueprint_id": { "$ref": "#/$defs/safeSegment" },
     "change_unit_id": { "$ref": "#/$defs/safeSegment" },
     "revision": { "type": "integer", "minimum": 1 },
     "priority": { "type": "integer" },
@@ -118,7 +120,7 @@
       "properties": {
         "artifact": { "const": "component-blueprint@1" },
         "component_id": { "$ref": "#/$defs/safeSegment" },
-        "blueprint_id": { "$ref": "#/$defs/stableId" },
+        "blueprint_id": { "$ref": "#/$defs/safeSegment" },
         "revision": { "type": "integer", "minimum": 1 },
         "source_fingerprint": { "$ref": "#/$defs/sha256" },
         "artifact_sha256": { "$ref": "#/$defs/sha256" },
@@ -128,10 +130,11 @@
     "changeUnitRef": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["artifact", "component_id", "change_unit_id", "revision", "artifact_sha256"],
+      "required": ["artifact", "component_id", "blueprint_id", "change_unit_id", "revision", "artifact_sha256"],
       "properties": {
         "artifact": { "const": "change-unit@1" },
         "component_id": { "$ref": "#/$defs/safeSegment" },
+        "blueprint_id": { "$ref": "#/$defs/safeSegment" },
         "change_unit_id": { "$ref": "#/$defs/safeSegment" },
         "revision": { "type": "integer", "minimum": 1 },
         "artifact_sha256": { "$ref": "#/$defs/sha256" }

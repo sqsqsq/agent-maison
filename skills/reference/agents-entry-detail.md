@@ -2,6 +2,17 @@
 
 > SSOT 索引见实例根 `AGENTS.md`（由 `framework/templates/AGENTS.md.template` 渲染）。本文承载该模板 §三 红线清单每条的完整判据文本、§4.1 主 agent/verifier 职责切分反误读全文、§4.2 实例扩展生命周期钩子细则、§5 交付凭证与闭环判定/会话边界/跨会话恢复完整机制、§六 交互硬规则完整表述。实例路径（架构文档/模块画像/术语表等）以渲染后 AGENTS.md §二 SSOT 表为准，本文不重复模板占位符。
 
+## 路径术语表（共享 reference，M5A 定义一次）
+
+框架文档与技能中的 `<features_dir>/<feature>/…` 指**物理 Feature 路径**，其中：
+
+- `<features_dir>` = `paths.features_dir`（默认 `doc/features`），为根目录 SSOT，全框架经唯一解析；
+- `<feature>` = **物理相对路径**，由框架唯一 SSOT（逻辑 featureId → 物理路径的纯函数）解析：
+  - 老式平铺 Feature：`<feature> = <feature_id>`（目录名即身份）；
+  - Change-Unit Feature（逻辑 id = `cu-` + base64url(`blueprint_id\0change_unit_id`)）：`<feature> = <blueprint_id>/<change_unit_id>`，即演进工作区子目录，同时持有该 CU 的 `change-unit.yaml`。
+
+`<features_dir>/<feature>/…` 一律由框架解析（CLI 输出 / SSOT / harness 产物路径），**不得**手工把逻辑 identity（含编码后的 `cu-…`）拼接进路径；`cu-` 前缀的非法 payload 一律 fail-closed。
+
 ## 架构守门（BLOCKER）
 
 1. 层间依赖方向严格按 `framework.config.json` → `architecture.outer_layers` 声明，任何反向依赖一律拒绝。
@@ -37,8 +48,8 @@
 ## 文档与代码同步
 
 - plan.md 与 `contracts.yaml`（文件路径/接口签名/数据模型/组件 Props/资源 key）是编码阶段的强契约；机器可读真源以 `contracts.yaml`/`use-cases.yaml` 为准，实现必须与之一致。
-- `doc/features/<feature>/` 默认不假定提交进主代码仓——由 `framework.config.json` → `paths.docs_committed` 管控；脚本 harness 与工作区快照优先，completion receipt 不强求未入库即失败。含 UI 形态的 spec 应当声明 `ui_change`/Visual Handoff；非 UI/后端类需求不做硬性要求。
-- feature 需求交付不自动触发架构文档更新——架构文档只承载架构级契约，不承担 feature 级变更日志（后者由 git 与 `doc/features/<feature>/` 承担）。
+- `<features_dir>/<feature>/`（默认 `doc/features`）默认不假定提交进主代码仓——由 `framework.config.json` → `paths.docs_committed` 管控；脚本 harness 与工作区快照优先，completion receipt 不强求未入库即失败。含 UI 形态的 spec 应当声明 `ui_change`/Visual Handoff；非 UI/后端类需求不做硬性要求。
+- feature 需求交付不自动触发架构文档更新——架构文档只承载架构级契约，不承担 feature 级变更日志（后者由 git 与 `<features_dir>/<feature>/` 承担）。
 - 仅当 plan.md 的架构影响声明 `impact != none`（`dsl_change`/`module_set_change`/`responsibility_rewrite`）时，按 plan · Step 12 分支更新架构文档/模块画像/`framework.config.json` 的相应段落，并在架构文档的「架构级变更记录」追加一行。
 - 模块画像是模块职责/公共能力/易混点的唯一 SSOT；不要把这些细节复制到架构文档。
 

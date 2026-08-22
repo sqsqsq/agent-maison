@@ -39,6 +39,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { applyDefaults, loadProfileConfigDefaults } from './profile-loader';
 import { inferRepoLayout } from './repo-layout';
+// M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT（零依赖 CJS，见 feature-identity.d.ts）
+import { featureRelativePath, encodeCuFeatureId, classifyFeatureId } from './scripts/utils/feature-identity';
 import {
   type AgentAdapterSource,
   type FrameworkLocalConfig,
@@ -1670,10 +1672,12 @@ export function featuresDirPath(projectRoot: string): string {
 }
 
 function featureDirResolved(projectRoot: string, feature: string, opts?: FeaturePathOptions): string {
+  // M5A §4.3：唯一 SSOT——featureId → 物理相对路径（legacy=<feature_id>，CU=<blueprint_id>/<change_unit_id>）
+  const rel = featureRelativePath(feature);
   if (opts?.featuresDirAbs) {
-    return path.join(path.resolve(opts.featuresDirAbs), feature);
+    return path.join(path.resolve(opts.featuresDirAbs), rel);
   }
-  return path.join(featuresDirPath(projectRoot), feature);
+  return path.join(featuresDirPath(projectRoot), rel);
 }
 
 /** 某 feature 的完整目录（<features_dir>/<feature>） */
@@ -1836,12 +1840,12 @@ function receiptDirPathResolved(
   const pattern = cfg.paths.receipt_dir_pattern ?? DEFAULT_PATHS.receipt_dir_pattern!;
   const configuredRel = toPosix(cfg.paths.features_dir ?? DEFAULT_PATHS.features_dir!);
   const overrideRel = toPosix(path.relative(projectRoot, path.resolve(opts.featuresDirAbs)));
-  let rel = pattern.replace(/<feature>/g, feature).replace(/<phase>/g, phase);
+  let rel = pattern.replace(/<feature>/g, featureRelativePath(feature)).replace(/<phase>/g, phase);
   if (overrideRel !== configuredRel) {
     if (rel.startsWith(`${configuredRel}/`)) {
       rel = `${overrideRel}${rel.slice(configuredRel.length)}`;
     } else {
-      rel = `${overrideRel}/${feature}/${phase}`;
+      rel = `${overrideRel}/${featureRelativePath(feature)}/${phase}`;
     }
   }
   return path.resolve(projectRoot, rel);
@@ -1947,7 +1951,9 @@ export function statefilePath(projectRoot: string): string {
 export function receiptDirPath(projectRoot: string, feature: string, phase: string): string {
   const cfg = loadFrameworkConfig(projectRoot);
   const pattern = cfg.paths.receipt_dir_pattern ?? DEFAULT_PATHS.receipt_dir_pattern!;
-  const rel = pattern.replace(/<feature>/g, feature).replace(/<phase>/g, phase);
+  // M5A §4.3：<feature> 占位符替换为物理相对路径（CU=<blueprint_id>/<change_unit_id>），
+  // 绝不落 <features_dir>/<encoded-featureId> 影子目录（proof 13/14）。
+  const rel = pattern.replace(/<feature>/g, featureRelativePath(feature)).replace(/<phase>/g, phase);
   return path.resolve(projectRoot, rel);
 }
 
@@ -2013,10 +2019,11 @@ export function featurePhaseReportsDir(
   const cfg = loadFrameworkConfig(projectRoot);
   const pattern = cfg.paths.reports_dir_pattern;
   if (typeof pattern === 'string' && pattern.trim().length > 0) {
-    const rel = pattern.replace(/<feature>/g, feature).replace(/<phase>/g, phase);
+    // M5A §4.3：<feature> 替换为物理相对路径，配置相对工程根、只替换占位符（plan §3 pattern 语义）
+    const rel = pattern.replace(/<feature>/g, featureRelativePath(feature)).replace(/<phase>/g, phase);
     return path.resolve(projectRoot, rel);
   }
-  return path.join(fRoot, 'harness', 'reports', feature, phase);
+  return path.join(fRoot, 'harness', 'reports', featureRelativePath(feature), phase);
 }
 
 /** `featurePhaseReportsDir` 相对 `projectRoot` 的 POSIX 风格路径（用于日志 / summary）。 */
@@ -2063,7 +2070,133 @@ export function relFeaturesDir(projectRoot: string): string {
  * `relFeatureSpec` 现均由本函数承担。
  */
 export function relFeatureFile(projectRoot: string, feature: string, fileName: string): string {
-  return `${relFeaturesDir(projectRoot)}/${feature}/${fileName}`;
+  // M5A §4.3：展示路径同样经唯一 SSOT（CU=<blueprint_id>/<change_unit_id>）
+  return `${relFeaturesDir(projectRoot)}/${featureRelativePath(feature)}/${fileName}`;
+}
+
+// --------------------------------------------------------------------------
+// 共享 Feature 枚举（M5A §5.2/§5.3 判别规则唯一实现）
+// --------------------------------------------------------------------------
+
+/** 工作区/子目录“已知 Feature 标志”检测清单：复用现有 artifact layout /
+ * PHASE_SCOPED_ARTIFACTS / 既有 feature 级目录约定，不另写第二份检测清单。
+ * 文件标志同时覆盖既有 artifact 名与 feature 根级契约/登记文件。 */
+const FEATURE_MARKER_FILES: ReadonlySet<string> = new Set([
+  ...Object.keys(PHASE_SCOPED_ARTIFACTS),
+  'contracts.yaml',
+  'acceptance.yaml',
+  'use-cases.yaml',
+  'state-management.yaml',
+  'change.md',
+  'feature.yaml',
+  'boundaries.yaml',
+  'compat.yaml',
+]);
+
+/** 目录标志：phase 目录名从 PHASE_SCOPED_ARTIFACTS 值派生（spec/plan/review/ut/testing），
+ * 外加既有 feature 级目录约定。 */
+const FEATURE_MARKER_DIRS: ReadonlySet<string> = new Set([
+  ...Object.values(PHASE_SCOPED_ARTIFACTS),
+  'goal-runs',
+  'context',
+  'ux-reference',
+  'device-testing',
+]);
+
+/** 目录是否携带已知 Feature 施工标志（文件或子目录任一命中即可）。 */
+export function hasFeatureConstructionMarkers(dirAbs: string): boolean {
+  let entries: string[] = [];
+  try {
+    entries = fs.readdirSync(dirAbs);
+  } catch {
+    return false;
+  }
+  return entries.some((name) => {
+    if (FEATURE_MARKER_FILES.has(name)) return true;
+    if (!FEATURE_MARKER_DIRS.has(name)) return false;
+    try {
+      return fs.statSync(path.join(dirAbs, name)).isDirectory();
+    } catch {
+      return false;
+    }
+  });
+}
+
+export interface EnumeratedFeature {
+  /** 逻辑 featureId（legacy=<目录名>；CU=`cu-` + base64url 编码，与 §4.3 往返一致） */
+  featureId: string;
+  /** 物理相对路径（相对 <features_dir>；legacy=<feature_id>，CU=<blueprint_id>/<change_unit_id>） */
+  relativePath: string;
+  kind: 'legacy' | 'cu';
+}
+
+/**
+ * 共享枚举函数（M5A §5.2）：只返回可执行 Feature（legacy | cu）；工作区是容器、
+ * 只负责下钻，不作为 Feature 返回。判别规则（§5.3）：
+ *   - 含 blueprint/ 子目录：缺 component-blueprint.yaml → fail-closed；
+ *     同时含平铺 Feature 产物 → 歧义 fail-closed；否则为 workspace 容器下钻：
+ *       blueprint/ → 跳过；含 change-unit.yaml → CU Feature；
+ *       有施工产物缺 change-unit.yaml → 孤儿 fail-closed；无标志 → 忽略。
+ *   - 否则 → legacy 平铺 Feature。
+ * `cu-` + 非法 payload 的目录名同样 fail-closed（§4.3，不回退平铺）。
+ */
+export function enumerateFeatures(projectRoot: string, opts?: FeaturePathOptions): EnumeratedFeature[] {
+  const featuresDirAbs = opts?.featuresDirAbs
+    ? path.resolve(opts.featuresDirAbs)
+    : featuresDirPath(projectRoot);
+  if (!fs.existsSync(featuresDirAbs)) return [];
+  const out: EnumeratedFeature[] = [];
+  for (const dirent of fs.readdirSync(featuresDirAbs, { withFileTypes: true })) {
+    if (!dirent.isDirectory()) continue;
+    const dAbs = path.join(featuresDirAbs, dirent.name);
+    const blueprintDirAbs = path.join(dAbs, 'blueprint');
+    if (fs.existsSync(blueprintDirAbs) && fs.statSync(blueprintDirAbs).isDirectory()) {
+      // §5.3 workspace 判别
+      if (!fs.existsSync(path.join(blueprintDirAbs, 'component-blueprint.yaml'))) {
+        throw new Error(
+          `[enumerateFeatures] 不完整 workspace（缺 blueprint/component-blueprint.yaml），fail-closed：${dirent.name}`,
+        );
+      }
+      if (hasFeatureConstructionMarkers(dAbs)) {
+        throw new Error(
+          `[enumerateFeatures] 歧义：${dirent.name} 同时含 blueprint/ 工作区与平铺 Feature 产物，fail-closed。`,
+        );
+      }
+      // workspace 容器下钻（不返回自身）
+      for (const sub of fs.readdirSync(dAbs, { withFileTypes: true })) {
+        if (!sub.isDirectory() || sub.name === 'blueprint') continue;
+        const subAbs = path.join(dAbs, sub.name);
+        if (fs.existsSync(path.join(subAbs, 'change-unit.yaml'))) {
+          const featureId = encodeFeatureIdFromWorkspace(dirent.name, sub.name);
+          out.push({ featureId, relativePath: `${dirent.name}/${sub.name}`, kind: 'cu' });
+        } else if (hasFeatureConstructionMarkers(subAbs)) {
+          throw new Error(
+            `[enumerateFeatures] 孤儿 Feature（工作区 ${dirent.name} 子目录 ${sub.name} 有施工产物但缺 change-unit.yaml），fail-closed。`,
+          );
+        }
+        // 无任何已知 Feature 标志 → 普通辅助目录，忽略
+      }
+    } else {
+      // legacy 平铺 Feature（原样）；`cu-` 非法 payload 由 SSOT fail-closed；
+      // 合法 `cu-` 编码目录 = 旧布局影子目录（proof 14 探测点），fail-closed 报出
+      // 而非静默改指向 <blueprint_id>/<change_unit_id>。
+      const classified = classifyFeatureId(dirent.name);
+      if (classified.kind === 'cu') {
+        throw new Error(
+          `[enumerateFeatures] <features_dir> 顶层目录 ${dirent.name} 是编码后的 CU Feature 影子目录`
+          + `（对应 ${classified.blueprintId}/${classified.changeUnitId}），须先迁移或清除；fail-closed。`,
+        );
+      }
+      out.push({ featureId: dirent.name, relativePath: featureRelativePath(dirent.name), kind: 'legacy' });
+    }
+  }
+  out.sort((a, b) => (a.featureId < b.featureId ? -1 : a.featureId > b.featureId ? 1 : 0));
+  return out;
+}
+
+/** 从 (工作区目录名, 子目录名) 重建 CU featureId，并与 §4.3 往返一致（proof 11）。 */
+export function encodeFeatureIdFromWorkspace(blueprintId: string, changeUnitId: string): string {
+  return encodeCuFeatureId(blueprintId, changeUnitId);
 }
 
 // --------------------------------------------------------------------------

@@ -76,7 +76,7 @@ export function inspectActiveChangeUnitRuns(
   const active: ActiveChangeUnitRun[] = [];
   const corrupt: CorruptChangeUnitRun[] = [];
   for (const unit of units) {
-    const featureId = deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id);
+    const featureId = deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id);
     const runsDir = featureFilePath(projectRoot, featureId, 'goal-runs');
     const classified = classifyGoalRunsDir(runsDir);
     for (const item of classified.corruptRuns) corrupt.push({ featureId, runId: item.runId, reason: item.reason });
@@ -118,8 +118,8 @@ export function deriveChangeUnitProgressionDecision(
 }
 
 export function buildChangeUnitGoalHandoff(projectRoot: string, unit: ChangeUnitArtifact): ChangeUnitGoalHandoff {
-  const loaded = loadCanonicalChangeUnit(projectRoot, unit.component_id, unit.change_unit_id);
-  const featureId = deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id);
+  const loaded = loadCanonicalChangeUnit(projectRoot, unit.blueprint_id, unit.change_unit_id);
+  const featureId = deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id);
   const expected = resolveChangeUnitExpectedExecution(projectRoot, featureId);
   const ref = createChangeUnitRef(loaded);
   return {
@@ -140,18 +140,18 @@ export function buildChangeUnitGoalHandoff(projectRoot: string, unit: ChangeUnit
 
 export async function runChangeUnitProgression(
   projectRoot: string,
-  componentId: string,
+  blueprintId: string,
   options: ChangeUnitProgressLoopOptions,
 ): Promise<ChangeUnitProgressionDecision> {
   const providerBoundary = validateChangeUnitProviderBoundary();
   if (!providerBoundary.ok) {
-    const readySet = deriveChangeUnitReadySet(projectRoot, componentId, options.ready);
+    const readySet = deriveChangeUnitReadySet(projectRoot, blueprintId, options.ready);
     return { action: 'blocked', reasons: providerBoundary.blockers, readySet };
   }
   const maxUnits = options.maxUnits ?? Number.MAX_SAFE_INTEGER;
   let invoked = 0;
   while (true) {
-    const readySet = deriveChangeUnitReadySet(projectRoot, componentId, options.ready);
+    const readySet = deriveChangeUnitReadySet(projectRoot, blueprintId, options.ready);
     const units = readySet.units.map(item => item.changeUnit);
     const inspection = (options.inspectActiveRuns ?? inspectActiveChangeUnitRuns)(projectRoot, units);
     const decision = deriveChangeUnitProgressionDecision(readySet, inspection);
@@ -161,12 +161,12 @@ export async function runChangeUnitProgression(
     if (result.status !== 'completed') {
       return {
         action: result.status === 'paused' || result.status === 'awaiting_human' ? 'resume_active' : 'blocked',
-        activeRun: result.runId ? { featureId: deriveChangeUnitFeatureId(decision.selected.component_id, decision.selected.change_unit_id), runId: result.runId } : undefined,
+        activeRun: result.runId ? { featureId: deriveChangeUnitFeatureId(decision.selected.blueprint_id, decision.selected.change_unit_id), runId: result.runId } : undefined,
         reasons: [result.reason ?? `Goal Mode returned ${result.status}; no second CU was started.`],
-        readySet: deriveChangeUnitReadySet(projectRoot, componentId, options.ready),
+        readySet: deriveChangeUnitReadySet(projectRoot, blueprintId, options.ready),
       };
     }
-    const refreshed = deriveChangeUnitReadySet(projectRoot, componentId, options.ready);
+    const refreshed = deriveChangeUnitReadySet(projectRoot, blueprintId, options.ready);
     const selectedAfterCall = refreshed.units.find(item => (
       item.changeUnit.change_unit_id === decision.selected!.change_unit_id
     ));

@@ -24,7 +24,9 @@ export function evaluateChangeUnitCarryForward(
   const reasons: string[] = [];
   let current;
   try {
-    current = loadCanonicalBlueprint(projectRoot, historical.component_id);
+    // M5A §5.5/§8.5：carry-forward 仅在历史 CU 的 blueprint_id 工作区内跨 revision 生效；
+    // 跨工作区（含同 component_id 早期演进）的 provides 不参与依赖满足（proof 4）。
+    current = loadCanonicalBlueprint(projectRoot, historical.blueprint_id);
   } catch (error) {
     return { allowed: false, reasons: [(error as Error).message] };
   }

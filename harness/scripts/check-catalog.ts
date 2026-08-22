@@ -40,6 +40,7 @@ import {
   resolveFeatureArtifact,
   relFeatureArtifact,
   loadFrameworkConfig,
+  enumerateFeatures,
 } from '../config';
 import { getCatalogAllowedModuleFormats } from '../profile-loader';
 
@@ -686,11 +687,12 @@ function checkFeatureScopeIntegrity(
   const affected = new Set<string>([relCatalog(ctx.projectRoot)]);
   let scannedCount = 0;
 
-  const dirents = fs.readdirSync(featuresDir, { withFileTypes: true });
-  for (const dirent of dirents) {
-    if (!dirent.isDirectory()) continue;
+  // M5A §5.2/§5.3：共享枚举函数（工作区容器下钻、孤儿/歧义 fail-closed）；
+  // 路径 helper 只接受逻辑 featureId（内部经唯一 SSOT 展开为物理相对路径）；
+  // `relativePath` 仅用于直接扫描实际目录（见 enumerateFeatures 返回值语义）。
+  for (const item of enumerateFeatures(ctx.projectRoot)) {
     for (const fileName of ['spec.md', 'plan.md']) {
-      const resolved = resolveFeatureArtifact(ctx.projectRoot, dirent.name, fileName);
+      const resolved = resolveFeatureArtifact(ctx.projectRoot, item.featureId, fileName);
       if (!resolved.exists) continue;
       const content = fs.readFileSync(resolved.actualPath, 'utf-8');
       const { scope } = parseScope(content);
@@ -706,7 +708,7 @@ function checkFeatureScopeIntegrity(
       if (inMissing.length > 0) where.push(`in_scope_modules:[${inMissing.join(', ')}]`);
       if (outMissing.length > 0) where.push(`out_of_scope_modules:[${outMissing.join(', ')}]`);
 
-      const rel = relFeatureArtifact(ctx.projectRoot, dirent.name, fileName);
+      const rel = relFeatureArtifact(ctx.projectRoot, item.featureId, fileName);
       broken.push({ file: rel, missing: allMissing, in_or_out: where });
       affected.add(rel);
     }

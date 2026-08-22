@@ -3,6 +3,8 @@
 // （features_dir 解析自实例 framework.config.json > paths.features_dir，默认 doc/features）
 
 import { relFeaturesDir } from './config';
+// M5A §4.3：`{feature}` 占位符替换为物理相对路径（CU=<blueprint_id>/<change_unit_id>）
+import { featureRelativePath } from './scripts/utils/feature-identity';
 
 export const SUGGESTION_CONTEXT_EXPLORATION_MISSING = [
   '两种解决路径任选其一：',
@@ -44,6 +46,6 @@ export function fillCompatMessage(
 ): string {
   return template
     .replace(/\{features_dir\}/g, relFeaturesDir(projectRoot))
-    .replace(/\{feature\}/g, feature)
+    .replace(/\{feature\}/g, featureRelativePath(feature))
     .replace(/\{phase\}/g, phase);
 }

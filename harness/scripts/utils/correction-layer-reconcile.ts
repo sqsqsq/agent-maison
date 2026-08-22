@@ -11,6 +11,8 @@
 
 import * as path from 'path';
 import { featuresDirPath } from '../../config';
+// M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT
+import { featureRelativePath } from './feature-identity';
 
 export interface LayerReconcileResult {
   /** 从 diff 推导出的实际触及层（去重）。 */
@@ -62,7 +64,7 @@ export function reconcileTouchedLayers(
   changedFiles: readonly string[],
 ): LayerReconcileResult {
   const featureRel = feature
-    ? path.relative(projectRoot, path.join(featuresDirPath(projectRoot), feature)).replace(/\\/g, '/')
+    ? path.relative(projectRoot, path.join(featuresDirPath(projectRoot), ...featureRelativePath(feature).split('/'))).replace(/\\/g, '/')
     : null;
 
   const byLayer: Record<string, string[]> = {};

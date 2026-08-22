@@ -8,6 +8,8 @@ import * as path from 'path';
 import minimist from 'minimist';
 import * as YAML from 'yaml';
 import { loadFrameworkConfig, receiptDirPath, resolveFeatureArtifact } from '../config';
+// M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT
+import { featureRelativePath } from './utils/feature-identity';
 import { normalizePhaseId } from './utils/phase-alias';
 import { CANONICAL_FEATURE_PHASES } from './utils/phase-alias';
 import { LEGACY_EXPLORATION_PHASES } from './utils/runtime-policy';
@@ -311,7 +313,7 @@ async function main(): Promise<void> {
   }
 
   const cfg = loadFrameworkConfig(projectRoot);
-  const featureAbs = path.join(projectRoot, cfg.paths.features_dir, feature);
+  const featureAbs = path.join(projectRoot, cfg.paths.features_dir, ...featureRelativePath(feature).split('/'));
   const featureDirRel = path.relative(projectRoot, featureAbs).replace(/\\/g, '/');
 
   if (!fs.existsSync(featureAbs)) {

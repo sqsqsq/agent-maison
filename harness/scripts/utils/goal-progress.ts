@@ -5,6 +5,8 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+// M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT（锁/run 路径必须经它展开）
+import { featureRelativePath } from './feature-identity';
 import { isDryReportDir, type GoalManifest } from './goal-manifest';
 import {
   LEGACY_FEATURE_PHASE_ORDER,
@@ -1289,7 +1291,7 @@ export function resolveFeatureLockPath(
   featuresDir: string,
   feature: string,
 ): string {
-  return path.join(projectRoot, featuresDir, feature, 'goal-runs', FEATURE_LOCK_NAME);
+  return path.join(projectRoot, featuresDir, featureRelativePath(feature), 'goal-runs', FEATURE_LOCK_NAME);
 }
 
 export function resolveRunnerLockPath(
@@ -1304,7 +1306,7 @@ export function resolveRunnerLockPath(
   if (reportDir) {
     return path.join(projectRoot, ...reportDir.replace(/\\/g, '/').split('/'), RUN_LOCK_NAME);
   }
-  return path.join(projectRoot, featuresDir, feature, 'goal-runs', runId, RUN_LOCK_NAME);
+  return path.join(projectRoot, featuresDir, featureRelativePath(feature), 'goal-runs', runId, RUN_LOCK_NAME);
 }
 
 export function loadProgressContext(
@@ -1332,7 +1334,7 @@ export function resolveLatestRunId(
   featuresDir: string,
   feature: string,
 ): string | null {
-  const runsDir = path.join(projectRoot, featuresDir, feature, 'goal-runs');
+  const runsDir = path.join(projectRoot, featuresDir, featureRelativePath(feature), 'goal-runs');
   if (!fs.existsSync(runsDir)) return null;
 
   let best: { runId: string; ts: number } | null = null;

@@ -5,6 +5,7 @@ import * as YAML from 'yaml';
 import {
   BlueprintRecord,
   ComponentBlueprintRef,
+  ComponentBlueprintResolutionError,
   asRecord,
   asRecords,
 } from '../../scripts/utils/component-blueprint-model';
@@ -20,7 +21,7 @@ import { buildDiscoveryBundle } from '../../scripts/utils/blueprint-discovery';
 import { reconcileP1DerivedResults } from '../../scripts/utils/blueprint-reconciliation';
 import { downstreamRefNeedsRecompute } from '../../scripts/utils/derived-conclusion-freshness';
 import { requiredQuestioningScopes } from '../../scripts/utils/blueprint-questioning';
-import { checkCanonicalComponentBlueprint } from '../../scripts/check-component-blueprint';
+import { checkCanonicalComponentBlueprint, resolveCliRefTarget } from '../../scripts/check-component-blueprint';
 import { clearSkillsIndexCache, resolveSkillPath } from '../../scripts/utils/resolve-skill-path';
 
 interface UnitCaseResult {
@@ -31,7 +32,7 @@ interface UnitCaseResult {
 
 const FIXTURE_ROOT = path.resolve(__dirname, '..', 'fixtures', 'component-blueprint');
 const VALID_PROJECT = path.join(FIXTURE_ROOT, 'valid');
-const VALID_PATH = path.join(VALID_PROJECT, 'blueprint', 'component', 'ledger', 'component-blueprint.yaml');
+const VALID_PATH = path.join(VALID_PROJECT, 'doc', 'features', 'ledger-app-blueprint', 'blueprint', 'component-blueprint.yaml');
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -81,6 +82,7 @@ function mutate(blueprint: BlueprintRecord, mutator: string): void {
   const traceMappings = asRecords(asRecord(blueprint.discovery)?.requirement_traceability);
   switch (mutator) {
     case 'yaml-component-id': blueprint.component_id = 'other-component'; break;
+    case 'yaml-blueprint-id': blueprint.blueprint_id = 'other-blueprint'; break;
     case 'remove-logical-view': blueprint.design_views = asRecords(blueprint.design_views).filter(view => view.view_id !== 'logical'); break;
     case 'remove-scenario-owner': delete scenario.development_owner_ref; break;
     case 'remove-runtime-logical-contract': flow.logical_contract_refs = []; break;
@@ -278,7 +280,7 @@ function withTempProject(run: (projectRoot: string, filePath: string) => void): 
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-blueprint-'));
   const projectRoot = path.join(tempRoot, 'project');
   fs.cpSync(VALID_PROJECT, projectRoot, { recursive: true });
-  const filePath = componentBlueprintPath(projectRoot, 'ledger');
+  const filePath = componentBlueprintPath(projectRoot, 'ledger-app-blueprint');
   try { run(projectRoot, filePath); } finally { fs.rmSync(tempRoot, { recursive: true, force: true }); }
 }
 
@@ -294,22 +296,84 @@ function test(name: string, run: () => void): UnitCaseResult {
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
 
+  // M5A §7.4：同一 component_id 的两个 blueprint_id 工作区共存，互不覆盖、无可见副作用（proof 1）
+  results.push(test('two workspaces of the same component coexist without overwriting (proof 1)', () => {
+    withTempProject((projectRoot, filePath) => {
+      const blueprint = readYaml(filePath);
+      // 第二工作区 = 同 component_id、新 blueprint_id、同布局副本
+      const secondBpId = 'ledger-app-blueprint-v2';
+      const secondDir = path.join(projectRoot, 'doc', 'features', secondBpId, 'blueprint');
+      fs.mkdirSync(secondDir, { recursive: true });
+      const beforeFirst = fs.readFileSync(filePath);
+      const second = clone(blueprint);
+      second.blueprint_id = secondBpId;
+      second.revision = 3;
+      const secondPath = path.join(secondDir, 'component-blueprint.yaml');
+      fs.writeFileSync(secondPath, YAML.stringify(second), 'utf8');
+      // 双工作区各自解析、字节互不覆盖
+      const first = loadCanonicalBlueprint(projectRoot, 'ledger-app-blueprint');
+      const loadedSecond = loadCanonicalBlueprint(projectRoot, secondBpId);
+      assert(String(first.blueprint.blueprint_id) === 'ledger-app-blueprint', '第一工作区被第二工作区覆盖');
+      assert(String(loadedSecond.blueprint.blueprint_id) === secondBpId, '第二工作区解析失败');
+      assert(String(loadedSecond.blueprint.component_id) === String(blueprint.component_id), '同一 component_id 未保留');
+      assert(fs.readFileSync(filePath).equals(beforeFirst), '解析第二工作区不得改写第一工作区字节');
+      assert(componentBlueprintPath(projectRoot, secondBpId).replace(/\\/g, '/')
+        .endsWith(`/doc/features/${secondBpId}/blueprint/component-blueprint.yaml`), '第二工作区路径错误');
+    });
+  }));
+
+  // M5A review：CLI 组合入口反例——`--blueprint` 与 `--ref` 跨工作区混用必须失败
+  results.push(test('CLI --blueprint and --ref must bind the same blueprint_id (cross-workspace mix FAIL)', () => {
+    withTempProject((projectRoot, filePath) => {
+      // 第二工作区（同 component_id、新 blueprint_id）
+      const secondBpId = 'ledger-app-blueprint-v2';
+      const secondDir = path.join(projectRoot, 'doc', 'features', secondBpId, 'blueprint');
+      fs.mkdirSync(secondDir, { recursive: true });
+      const second = clone(readYaml(filePath));
+      second.blueprint_id = secondBpId;
+      second.revision = 3;
+      fs.writeFileSync(path.join(secondDir, 'component-blueprint.yaml'), YAML.stringify(second), 'utf8');
+      // 合法 A 工作区 ref（artifact_sha256 按 A 字节）
+      const loadedA = loadCanonicalBlueprint(projectRoot, 'ledger-app-blueprint');
+      const refA = {
+        artifact: 'component-blueprint@1', component_id: 'ledger', blueprint_id: 'ledger-app-blueprint',
+        revision: Number(loadedA.blueprint.revision), source_fingerprint: String(loadedA.blueprint.source_fingerprint),
+        artifact_sha256: loadedA.artifactSha256, target: { kind: 'blueprint', id: 'ledger-app-blueprint' },
+      };
+      // 同工作区绑定：resolveCliRefTarget 正常返回 target
+      assert(resolveCliRefTarget(projectRoot, 'ledger-app-blueprint', refA) !== undefined, '同工作区 ref 绑定被误拒');
+      // 跨工作区混用：--blueprint A + ref 指向 B → 必须失败并携带两值
+      const refB = { ...refA, blueprint_id: secondBpId, target: { kind: 'blueprint', id: secondBpId } };
+      let code = '';
+      let message = '';
+      try {
+        resolveCliRefTarget(projectRoot, 'ledger-app-blueprint', refB);
+      } catch (error) {
+        code = (error as ComponentBlueprintResolutionError).code;
+        message = (error as Error).message;
+      }
+      assert(code === 'component_blueprint_ref_mismatch', `跨工作区 ref 未 fail：code=${code}`);
+      assert(message.includes('ledger-app-blueprint') && message.includes(secondBpId), `诊断应报告 A/B 两值：${message}`);
+    });
+  }));
+
   results.push(test('canonical fixture passes all P1 completeness checks', () => {
     const issues = validateFixture(validBlueprint());
     assert(issues.length === 0, issues.map(item => `[${item.id}] ${item.path}: ${item.message}`).join('\n'));
   }));
 
-  results.push(test('canonical path is component-owned and rejects arbitrary path identities', () => {
-    assert(componentBlueprintPath('C:/project', 'ledger').replace(/\\/g, '/').endsWith('/blueprint/component/ledger/component-blueprint.yaml'), 'canonical path 错误');
+  results.push(test('canonical path is workspace-owned and rejects arbitrary path identities', () => {
+    assert(componentBlueprintPath('C:/project', 'ledger-app-blueprint').replace(/\\/g, '/')
+      .endsWith('/doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml'), 'canonical path 错误');
     for (const id of ['', '..', 'a/b', 'a\\b']) {
       let failed = false;
       try { componentBlueprintPath('C:/project', id); } catch { failed = true; }
-      assert(failed, `非法 component_id 应失败：${JSON.stringify(id)}`);
+      assert(failed, `非法 blueprint_id 应失败：${JSON.stringify(id)}`);
     }
   }));
 
   results.push(test('resolver separates source fingerprint from artifact hash and resolves all target kinds', () => {
-    const loaded = loadCanonicalBlueprint(VALID_PROJECT, 'ledger');
+    const loaded = loadCanonicalBlueprint(VALID_PROJECT, 'ledger-app-blueprint');
     assert(loaded.artifactSha256 !== loaded.blueprint.source_fingerprint, 'source_fingerprint 不得复用 artifact_sha256');
     const targets: ComponentBlueprintRef['target'][] = [
       { kind: 'blueprint', id: 'ledger-app-blueprint' },
@@ -326,7 +390,7 @@ export function runAll(): UnitCaseResult[] {
   }));
 
   results.push(test('node and flow require view_id while decision and contract keep it optional', () => {
-    const loaded = loadCanonicalBlueprint(VALID_PROJECT, 'ledger');
+    const loaded = loadCanonicalBlueprint(VALID_PROJECT, 'ledger-app-blueprint');
     let nodeFailed = false;
     try {
       resolveComponentBlueprintRef(VALID_PROJECT, makeRef(loaded.artifactSha256, { kind: 'node', id: 'ledger-domain' }));
@@ -336,15 +400,16 @@ export function runAll(): UnitCaseResult[] {
     assert(resolveComponentBlueprintRef(VALID_PROJECT, makeRef(loaded.artifactSha256, { kind: 'contract', id: 'create-entry-v1' })).target, 'contract 顶层寻址失败');
   }));
 
-  results.push(test('path YAML and ref component identity mismatch fails closed with three identities', () => {
+  results.push(test('path YAML and ref blueprint/component identity mismatch fails closed with identities', () => {
     withTempProject((projectRoot, filePath) => {
       const blueprint = readYaml(filePath);
       blueprint.component_id = 'other-component';
       fs.writeFileSync(filePath, YAML.stringify(blueprint), 'utf8');
-      const loaded = loadCanonicalBlueprint(projectRoot, 'ledger');
+      const loaded = loadCanonicalBlueprint(projectRoot, 'ledger-app-blueprint');
       let message = '';
       try { resolveComponentBlueprintRef(projectRoot, makeRef(loaded.artifactSha256, { kind: 'blueprint', id: 'ledger-app-blueprint' })); } catch (error) { message = (error as Error).message; }
-      assert(message.includes('path=ledger') && message.includes('yaml=other-component') && message.includes('ref=ledger'), `三方诊断不完整：${message}`);
+      // M5A §4.1：blueprint_id 三方（path/yaml/ref）+ component_id 两方（yaml/ref）
+      assert(message.includes('yaml=other-component') && message.includes('ref=ledger'), `身份诊断不完整：${message}`);
     });
   }));
 
@@ -353,7 +418,7 @@ export function runAll(): UnitCaseResult[] {
       const blueprint = readYaml(filePath);
       delete blueprint.design_views;
       fs.writeFileSync(filePath, YAML.stringify(blueprint), 'utf8');
-      const loaded = loadCanonicalBlueprint(projectRoot, 'ledger');
+      const loaded = loadCanonicalBlueprint(projectRoot, 'ledger-app-blueprint');
       let message = '';
       try { resolveComponentBlueprintRef(projectRoot, makeRef(loaded.artifactSha256, { kind: 'blueprint', id: 'ledger-app-blueprint' })); } catch (error) { message = (error as Error).message; }
       assert(message.includes('component_blueprint_invalid') || message.includes('canonical blueprint 未通过'), `非法 canonical blueprint 不应被解析：${message}`);
@@ -369,7 +434,7 @@ export function runAll(): UnitCaseResult[] {
   }));
 
   results.push(test('review Markdown is a one-way derived projection with full binding', () => {
-    const loaded = loadCanonicalBlueprint(VALID_PROJECT, 'ledger');
+    const loaded = loadCanonicalBlueprint(VALID_PROJECT, 'ledger-app-blueprint');
     const markdown = renderBlueprintReviewMarkdown(loaded.blueprint, loaded.artifactSha256);
     for (const expected of [
       'derived_from:',
@@ -439,13 +504,23 @@ export function runAll(): UnitCaseResult[] {
   ]) {
     for (const fixtureCase of readCases(fixtureFile)) {
       results.push(test(`${fixtureFile}: ${fixtureCase.id}`, () => {
-        if (fixtureCase.mutator === 'yaml-component-id') {
+        if (fixtureCase.mutator === 'yaml-component-id' || fixtureCase.mutator === 'yaml-blueprint-id') {
           withTempProject((projectRoot, filePath) => {
             const blueprint = readYaml(filePath);
             mutate(blueprint, fixtureCase.mutator);
             fs.writeFileSync(filePath, YAML.stringify(blueprint), 'utf8');
-            const issues = checkCanonicalComponentBlueprint(projectRoot, 'ledger').issues;
-            assert(issues.some(item => item.id === fixtureCase.expected_issue), `缺期望诊断 ${fixtureCase.expected_issue}`);
+            // M5A review：身份失败原样抛 ComponentBlueprintResolutionError（CLI catch 出口），
+            // 不构造伪造的成功形状——fixture 断言错误码/诊断。
+            let errorCode = '';
+            let message = '';
+            try {
+              checkCanonicalComponentBlueprint(projectRoot, 'ledger-app-blueprint');
+            } catch (error) {
+              errorCode = (error as ComponentBlueprintResolutionError).code;
+              message = (error as Error).message;
+            }
+            assert(errorCode === fixtureCase.expected_issue, `缺期望诊断 ${fixtureCase.expected_issue}；实际 errorCode=${errorCode}`);
+            assert(message.includes('blueprint identity 不一致'), `诊断应含三方身份信息：${message}`);
           });
           return;
         }

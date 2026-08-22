@@ -70,7 +70,7 @@ import type { UnitCaseResult } from '../run-unit';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 const FIXTURE_PROJECT = path.resolve(__dirname, '..', 'fixtures', 'component-blueprint', 'valid');
-const COMPONENT = 'ledger';
+const COMPONENT = 'ledger-app-blueprint';
 const STABLE_FLOW_ID = 'ledger-refresh-flow';
 const RUN_ID = 'RUN1';
 const FIXED_TIME = '2026-08-20T00:00:00.000Z';
@@ -286,7 +286,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
         assert(owningUnits.length > 0, `没有任何 CU 的 design_refs 引用稳定流 ${STABLE_FLOW_ID}`);
         for (const loaded of owningUnits) {
           const unit = asChangeUnitArtifact(loaded.changeUnit);
-          const feature = deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id);
+          const feature = deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id);
           const contracts = YAML.parse(fs.readFileSync(featureFilePath(projectRoot, feature, 'contracts.yaml'), 'utf8')) as BlueprintRecord;
           const states = asRecords(contracts.state_management);
           assert(
@@ -436,7 +436,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       name: 'design bypass passes P1 and P2 but component closure still catches it',
       options: {
         mutateProject: projectRoot => {
-          const cuFile = path.join(projectRoot, 'blueprint', 'component', COMPONENT, 'change-units', 'ledger-refresh.yaml');
+          const cuFile = path.join(projectRoot, 'doc', 'features', COMPONENT, 'ledger-refresh', 'change-unit.yaml');
           const cu = YAML.parse(fs.readFileSync(cuFile, 'utf8')) as BlueprintRecord;
           const blueprint = YAML.parse(fs.readFileSync(componentBlueprintPath(projectRoot, COMPONENT), 'utf8')) as BlueprintRecord;
           const bypass = JSON.parse(JSON.stringify(asRecords(cu.design_refs)[0])) as BlueprintRecord;
@@ -871,7 +871,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
 
       for (const loaded of enumerateCanonicalChangeUnits(projectRoot, COMPONENT)) {
         const unit = asChangeUnitArtifact(loaded.changeUnit);
-        const feature = deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id);
+        const feature = deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id);
         const requirementSha = computeRunRequirementSha(projectRoot, feature, RUN_ID);
         for (const phase of ['ut', 'testing'] as const) {
           const current = loadPhaseEvidenceManifest(projectRoot, feature, phase);

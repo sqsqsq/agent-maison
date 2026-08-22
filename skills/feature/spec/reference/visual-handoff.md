@@ -71,7 +71,7 @@
 | **`reachable`**（推荐 opt-in） | WARN | WARN | WARN（`agent-reachable=false`） |
 | `off` | SKIP | SKIP | SKIP |
 
-### `doc/features/` 是否入库
+### `<features_dir>/`（默认 `doc/features/`）是否入库
 
 与 `paths.docs_committed` 相关：默认 **`false`** 表示过程文档**不假定**进主仓；.harness / receipt 语义见 `framework/docs/visual-handoff-config-migration.md`。
 

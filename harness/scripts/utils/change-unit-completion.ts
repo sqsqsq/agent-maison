@@ -63,8 +63,8 @@ export function observeChangeUnitCompletion(
   changeUnit: ChangeUnitArtifact,
   options: ChangeUnitCompletionAdapterOptions = {},
 ): ChangeUnitCompletionObservation {
-  const featureId = deriveChangeUnitFeatureId(changeUnit.component_id, changeUnit.change_unit_id);
-  const binding = inspectDerivedFeatureBinding(projectRoot, changeUnit.component_id, changeUnit.change_unit_id);
+  const featureId = deriveChangeUnitFeatureId(changeUnit.blueprint_id, changeUnit.change_unit_id);
+  const binding = inspectDerivedFeatureBinding(projectRoot, changeUnit.blueprint_id, changeUnit.change_unit_id, changeUnit.component_id);
   if (binding.status === 'conflict') {
     return { state: 'INVALID', featureId, reasons: [binding.reason] };
   }
@@ -121,7 +121,7 @@ export function observeChangeUnitCompletion(
 
 function changeUnitRefHash(projectRoot: string, changeUnit: ChangeUnitArtifact): string {
   try {
-    return loadCanonicalChangeUnit(projectRoot, changeUnit.component_id, changeUnit.change_unit_id).artifactSha256;
+    return loadCanonicalChangeUnit(projectRoot, changeUnit.blueprint_id, changeUnit.change_unit_id).artifactSha256;
   } catch {
     return '';
   }

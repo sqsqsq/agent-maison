@@ -76,7 +76,8 @@ function featureInput(
   completion: ChangeUnitCompletionObservation,
   currentBlueprintRef: ComponentBlueprintRef,
 ): ClosureFeatureInput {
-  const featureId = deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id);
+  // M5A §4.3：新编码 = base64url(blueprint_id \0 change_unit_id)；物理路径经 featureFilePath SSOT。
+  const featureId = deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id);
   const spec = new SpecLoader(projectRoot).loadFeatureSpec(featureId);
   const historical = !sameBlueprintIdentity(unit.component_blueprint_ref, currentBlueprintRef);
   const projectionContracts = historical
@@ -153,6 +154,7 @@ function inspectRetirement(
     const target = byId.get(targetRef.change_unit_id);
     if (!target
       || targetRef.component_id !== unit.changeUnit.component_id
+      || targetRef.blueprint_id !== unit.changeUnit.blueprint_id
       || target.ref.revision !== targetRef.revision
       || target.ref.artifact_sha256 !== targetRef.artifact_sha256) {
       issues.push(closureIssue(
@@ -199,14 +201,14 @@ function inspectRetirement(
 
 export function resolveComponentClosureInputs(
   projectRoot: string,
-  componentId: string,
+  blueprintId: string,
   options: ComponentClosureInputOptions = {},
 ): ResolvedComponentClosureInputs {
   const issues: ComponentClosureIssue[] = [];
-  const blueprint = loadCanonicalBlueprint(projectRoot, componentId);
+  const blueprint = loadCanonicalBlueprint(projectRoot, blueprintId);
   const blueprintRef: ComponentBlueprintRef = {
     artifact: 'component-blueprint@1',
-    component_id: componentId,
+    component_id: String(blueprint.blueprint.component_id),
     blueprint_id: String(blueprint.blueprint.blueprint_id),
     revision: Number(blueprint.blueprint.revision),
     source_fingerprint: String(blueprint.blueprint.source_fingerprint),
@@ -240,7 +242,10 @@ export function resolveComponentClosureInputs(
     .sort((a, b) => compareCodePoint(a.item_id, b.item_id));
 
   const rawUnits: Array<{ loaded: LoadedChangeUnit; ref: ChangeUnitRef; changeUnit: ChangeUnitArtifact }> = [];
-  for (const loaded of enumerateCanonicalChangeUnits(projectRoot, componentId)) {
+  // M5A §8.2：输入枚举限定同一 <features_dir>/<blueprint_id>/ 工作区（enumerateCanonicalChangeUnits
+  // 只枚举该工作区含 change-unit.yaml 的子目录）；跨工作区 CU（含同 component_id 的早期演进）
+  // 既不进入输入集、也不为任何 row 计分（proof 5）。
+  for (const loaded of enumerateCanonicalChangeUnits(projectRoot, blueprintId)) {
     try {
       const ref = createChangeUnitRef(loaded);
       const artifact = asChangeUnitArtifact(loaded.changeUnit);
@@ -251,7 +256,7 @@ export function resolveComponentClosureInputs(
         const artifactIssues = blockerChangeUnitIssues(validateChangeUnit(loaded.changeUnit, { canonicalPath: loaded.canonicalPath }))
           .filter(item => item.id !== 'change_unit_provenance_context_missing');
         if (artifactIssues.length > 0) throw new Error(artifactIssues.map(item => `${item.id}@${item.path}`).join(', '));
-        const binding = inspectDerivedFeatureBinding(projectRoot, artifact.component_id, artifact.change_unit_id);
+        const binding = inspectDerivedFeatureBinding(projectRoot, artifact.blueprint_id, artifact.change_unit_id, artifact.component_id);
         if (binding.status !== 'matched'
           || binding.ref.revision !== ref.revision
           || binding.ref.artifact_sha256 !== ref.artifact_sha256) {

@@ -1,8 +1,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
-import { assertComponentId, sha256Bytes } from './component-blueprint-path';
+import { featuresDirPath } from '../../config';
+import { sha256Bytes } from './component-blueprint-path';
 import { COMPONENT_CLOSURE_ARTIFACT, ComponentClosureArtifact } from './component-closure-model';
+import { assertBlueprintId } from './component-blueprint-path';
 
 export class ComponentClosureResolutionError extends Error {
   constructor(public readonly code: string, message: string) {
@@ -11,14 +13,15 @@ export class ComponentClosureResolutionError extends Error {
   }
 }
 
-export function componentClosurePath(projectRoot: string, componentId: string): string {
-  assertComponentId(componentId);
-  return path.resolve(projectRoot, 'blueprint', 'component', componentId, 'component-closure.yaml');
+/** M5A §8.1：closure 投影落入工作区 blueprint/ 子目录。 */
+export function componentClosurePath(projectRoot: string, blueprintId: string): string {
+  assertBlueprintId(blueprintId);
+  return path.join(featuresDirPath(projectRoot), blueprintId, 'blueprint', 'component-closure.yaml');
 }
 
-export function componentClosureReviewPath(projectRoot: string, componentId: string): string {
-  assertComponentId(componentId);
-  return path.resolve(projectRoot, 'blueprint', 'component', componentId, 'component-closure.md');
+export function componentClosureReviewPath(projectRoot: string, blueprintId: string): string {
+  assertBlueprintId(blueprintId);
+  return path.join(featuresDirPath(projectRoot), blueprintId, 'blueprint', 'component-closure.md');
 }
 
 export interface LoadedComponentClosure {
@@ -28,8 +31,8 @@ export interface LoadedComponentClosure {
   closure: ComponentClosureArtifact;
 }
 
-export function loadCanonicalComponentClosure(projectRoot: string, componentId: string): LoadedComponentClosure {
-  const canonicalPath = componentClosurePath(projectRoot, componentId);
+export function loadCanonicalComponentClosure(projectRoot: string, blueprintId: string): LoadedComponentClosure {
+  const canonicalPath = componentClosurePath(projectRoot, blueprintId);
   if (!fs.existsSync(canonicalPath)) {
     throw new ComponentClosureResolutionError('component_closure_missing', `canonical Component closure 不存在：${canonicalPath}`);
   }
@@ -47,11 +50,20 @@ export function loadCanonicalComponentClosure(projectRoot: string, componentId: 
   if (closure.artifact !== COMPONENT_CLOSURE_ARTIFACT) {
     throw new ComponentClosureResolutionError('component_closure_artifact_invalid', `artifact 必须为 ${COMPONENT_CLOSURE_ARTIFACT}。`);
   }
+  // M5A §8.1/8.4：path/content/ref 三方 blueprint_id 一致；content/ref（与 owner
+  // blueprint）的 component_id 一致；任一方不符即以三值齐报（不依赖路径查找）。
+  const refBlueprint = closure.component_blueprint_ref?.blueprint_id;
   const refComponent = closure.component_blueprint_ref?.component_id;
-  if (closure.component_id !== componentId || refComponent !== componentId) {
+  if (closure.blueprint_id !== blueprintId || refBlueprint !== blueprintId) {
     throw new ComponentClosureResolutionError(
       'component_closure_identity_mismatch',
-      `component identity 不一致：path=${componentId}, yaml=${String(closure.component_id)}, blueprint_ref=${String(refComponent)}。`,
+      `blueprint identity 不一致：path=${blueprintId}, yaml=${String(closure.blueprint_id)}, blueprint_ref=${String(refBlueprint)}。`,
+    );
+  }
+  if (closure.component_id !== refComponent) {
+    throw new ComponentClosureResolutionError(
+      'component_closure_identity_mismatch',
+      `component identity 不一致：yaml=${String(closure.component_id)}, blueprint_ref=${String(refComponent)}。`,
     );
   }
   if (closure.component_blueprint_ref?.target?.kind !== 'blueprint') {

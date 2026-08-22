@@ -4,6 +4,7 @@
 
 ## 前置
 
+- **Feature 归档定位协议**（本阶段是消费者）：先基于 `paths.features_dir` 精确定位 `<features_dir>/<feature>/`。 `<feature>` 语义见 [路径术语表](../../reference/agents-entry-detail.md)（物理 Feature 路径）；定位一律经框架解析（CLI/SSOT/harness 产物路径），不得手工拼接逻辑 identity（含编码 `cu-…`）。
 - 工程已完成 [`framework-init`](../../project/framework-init/SKILL.md)（`framework.config.json` 有效，`paths` / `architecture` 已写入）。
 - 跑 harness 前须满足 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md) 与 [Shell cwd 契约](../../reference/harness-cli-cwd.md)。
 - **Personal setup（BLOCKER）**：`cd framework/harness && npx ts-node scripts/check-personal-setup.ts --json --ensure`；仅解析 JSON（[personal-setup-gate](../../reference/personal-setup-gate.md)）。

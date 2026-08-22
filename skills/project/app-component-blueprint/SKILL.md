@@ -1,21 +1,21 @@
 # App Component Blueprint Skill
 
-为一个 App 部件建立、检查和调和 provider-neutral 的 canonical 蓝图。蓝图是 P1 设计真源；本 Skill 不创建 Change Unit、P2 ready set 或 P3 closure。
+为一个 App 部件建立、检查和调和 provider-neutral 的 canonical 蓝图。蓝图是一次演进的设计权威（2026-08-21 裁决：不是部件常驻真源）；本 Skill 不创建 Change Unit、P2 ready set 或 P3 closure。
 
 ## 触发条件
 
 - “发现 App 部件 / 建部件蓝图 / 适配 4+1 / 调和蓝图”
-- `/app-component-blueprint <component-id>`
+- `/app-component-blueprint <blueprint-id>`
 
 ## 正式产物
 
-唯一机器 SSOT：
+唯一机器 SSOT（演进工作区布局，硬切无兼容）：
 
 ```text
-blueprint/component/<component-id>/component-blueprint.yaml
+<features_dir>/<blueprint_id>/blueprint/component-blueprint.yaml
 ```
 
-`component-id` 必须是单个安全路径段。不得用 feature 身份定位，不扫描 legacy 目录，不建立 registry。进入团队评审前从 canonical YAML 生成 Markdown；投影必须带完整 `derived_from`，并展示视图 current/target/delta、runtime flow、契约 mapping、跨视图关系、质询和准入，不得反向覆盖 YAML。
+`<features_dir>` 为 `paths.features_dir`（默认 `doc/features`，经框架解析，不硬编码）。`blueprint_id` 是稳定路径标识，必须是单个安全路径段（`^[A-Za-z0-9][A-Za-z0-9._-]*$`）；一次演进定名后不改，不为展示名改名。`component_id` 保留在 YAML 与所有 ref 中做所有权/一致性核验，**不再充当任何路径键**。不得用 feature 身份定位，不扫描 legacy 目录，不回退旧根 `blueprint/component/`，不建立 registry。同目录生成评审投影 `component-blueprint.review.md`（`derived_from` 指回 YAML），展示视图 current/target/delta、runtime flow、契约 mapping、跨视图关系、质询和准入，不得反向覆盖 YAML。
 
 ## 静态 provider 顺序
 
@@ -62,10 +62,10 @@ scenario 必须追到 logical/runtime/development 以及适用 deployment；runt
 在消费者工程的 `framework/harness` 中运行：
 
 ```bash
-npm run check:component-blueprint -- --project-root <宿主根> --component <component-id>
+npm run check:component-blueprint -- --project-root <宿主根> --blueprint <blueprint-id>
 ```
 
-需要解析稳定切片时，传入序列化 `component_blueprint_ref`。target 支持 `blueprint|view|node|relation|flow|decision|contract`；只有 node/flow 强制 `view_id`，decision/contract 是顶层稳定对象，contract 以 `contract_id` 寻址。resolver 在返回 target 前必须先通过 canonical schema/完整性门。
+需要解析稳定切片时，传入序列化 `component_blueprint_ref`。target 支持 `blueprint|view|node|relation|flow|decision|contract`；只有 node/flow 强制 `view_id`，decision/contract 是顶层稳定对象，contract 以 `contract_id` 寻址。resolver 在返回 target 前必须先通过 canonical schema/完整性门。蓝图/评审投影/closure 投影同处工作区 `blueprint/` 目录。
 
 只有本轮生成 Mermaid 时才校验其 parser 和引用。未生成图不阻塞；生成图可解析也不替代结构化完整性。
 

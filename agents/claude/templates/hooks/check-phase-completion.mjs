@@ -43,6 +43,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+
+// 发布件内共享 SSOT 加载（M5A §4.3）：hook 不携带 decoder 副本；CJS 模块经
+// createRequire 同步 require（Node ESM → CJS 互操作）。
+const requireNodeModule = (() => {
+  try {
+    return createRequire(import.meta.url);
+  } catch {
+    return null;
+  }
+})();
 
 // --------------------------------------------------------------------------
 // HOOK 端默认时间常量
@@ -187,13 +198,37 @@ function readFeaturesDirFromConfig(projectRoot) {
 }
 
 /**
+ * M5A §4.3：解析 feature 的物理相对路径（经发布件内唯一 SSOT）。
+ * - legacy id：原样返回（不依赖 SSOT，保持旧行为）；
+ * - `cu-` 前缀：必须经 SSOT 展开——SSOT 缺失/损坏/抛错（含非法 payload 的
+ *   fail-closed 异常）时返回 null，调用方 fail-closed（阻断或走州文件兜底），
+ *   **绝不**把编码后的逻辑 id 当物理路径（spec：“Invalid cu- identity fails
+ *   closed” / “hooks SHALL NOT read or write a path containing the encoded identity”）。
+ */
+function resolveFeatureRel(projectRoot, feature) {
+  if (typeof feature !== 'string' || !feature.startsWith('cu-')) return feature;
+  try {
+    const ssotAbs = path.resolve(projectRoot, 'framework', 'harness', 'scripts', 'utils', 'feature-identity.js');
+    if (!fs.existsSync(ssotAbs) || !requireNodeModule) return null;
+    return requireNodeModule(ssotAbs).featureRelativePath(feature);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 回执目标 rel 路径（codex review 采纳）：回执目录 SSOT 是 paths.receipt_dir_pattern
  * （与 harness config.ts receiptDirPath 同语义：pattern 相对工程根、<feature>/<phase>
  * 占位替换），仅拼 features_dir 默认结构会在自定义 pattern（如
  * doc/features/<feature>/phases/<phase>）宿主下引导 agent 写错目录。
  * 无 pattern 字段时回退 <features_dir>/<feature>/<phase>。
+ * M5A：<feature> 占位符替换为物理相对路径（CU=<blueprint_id>/<change_unit_id>），
+ * 经发布件内唯一 SSOT 展开——Hook 不得自带 decoder 副本；`cu-` 前缀解析失败
+ * 时返回 null（fail-closed，由调用方输出阻断理由而非算出一条错误路径）。
  */
 function resolveReceiptRelFromConfig(projectRoot, feature, phase) {
+  const featureRel = resolveFeatureRel(projectRoot, feature);
+  if (featureRel === null) return null;
   try {
     const cfgPath = path.resolve(projectRoot, 'framework.config.json');
     if (fs.existsSync(cfgPath)) {
@@ -202,7 +237,7 @@ function resolveReceiptRelFromConfig(projectRoot, feature, phase) {
       if (typeof pattern === 'string' && pattern.trim()) {
         const dirRel = pattern
           .trim()
-          .replace(/<feature>/g, feature)
+          .replace(/<feature>/g, featureRel)
           .replace(/<phase>/g, phase)
           .replace(/\\/g, '/')
           .replace(/\/+$/, '');
@@ -212,7 +247,7 @@ function resolveReceiptRelFromConfig(projectRoot, feature, phase) {
   } catch {
     /* fall through to default */
   }
-  return `${readFeaturesDirFromConfig(projectRoot)}/${feature}/${phase}/phase-completion-receipt.md`;
+  return `${readFeaturesDirFromConfig(projectRoot)}/${featureRel}/${phase}/phase-completion-receipt.md`;
 }
 
 /**
@@ -523,6 +558,10 @@ function resolveFeaturePhaseReportDir(projectRoot, feature, phase) {
     if (feature === '_global') {
       return path.resolve(projectRoot, 'framework/harness/reports/_global', phase);
     }
+    // M5A：<feature> 占位符替换为物理相对路径（唯一 SSOT 展开，见 resolveFeatureRel）；
+    // `cu-` 前缀解析失败 → null（fail-closed，禁止把编码 id 当物理路径）。
+    const featureRel = resolveFeatureRel(projectRoot, feature);
+    if (featureRel === null) return null;
     let pattern = null;
     try {
       const cfgPath = path.resolve(projectRoot, 'framework.config.json');
@@ -535,10 +574,10 @@ function resolveFeaturePhaseReportDir(projectRoot, feature, phase) {
       pattern = null;
     }
     if (pattern) {
-      const rel = pattern.replace(/<feature>/g, feature).replace(/<phase>/g, phase);
+      const rel = pattern.replace(/<feature>/g, featureRel).replace(/<phase>/g, phase);
       return path.resolve(projectRoot, rel);
     }
-    return path.resolve(projectRoot, 'framework/harness/reports', feature, phase);
+    return path.resolve(projectRoot, 'framework/harness/reports', featureRel, phase);
   } catch {
     return path.resolve(projectRoot, 'framework/harness/reports', feature, phase);
   }
@@ -627,7 +666,7 @@ function buildBlockReason(state, missingItems, summaryHint = null, progress = nu
     `     传入 feature/phase/报告路径。`,
     `  3. 填写阶段完成回执：`,
     `       模板：framework/harness/templates/phase-completion-receipt.md`,
-    `       目标：${receiptRel ?? `${featuresDir}/${feature}/${phase}/phase-completion-receipt.md`}`,
+    `       目标：${receiptRel ?? '（无法解析回执物理路径：CU Feature 身份非法或 SSOT 不可用——先修复后重跑）'}`,
     `  4. 重跑 harness-runner.ts，使其回填 receipt.status=passed 后再尝试 stop。`,
     '',
     '如果你想【放弃这个阶段，转去做别的事】，先执行：',
@@ -850,12 +889,14 @@ async function main() {
     return;
   }
 
-  // 未达阈值 → 动作优先文案 + exit 2
+  // 未达阈值 → 动作优先文案 + exit 2。receipt 路径解析失败（CU Feature 且 SSOT
+  // 不可用/identity 非法）时输出明确阻断理由，绝不把编码后的逻辑 id 当物理路径。
+  const receiptRel = resolveReceiptRelFromConfig(projectRoot, state.feature ?? 'unknown', state.phase ?? 'unknown');
   const reason = buildBlockReason(state, result.missing, readSummaryHint(projectRoot, state), {
     count,
     max: maxConsecutiveBlocks,
   }, readFeaturesDirFromConfig(projectRoot),
-  resolveReceiptRelFromConfig(projectRoot, state.feature ?? 'unknown', state.phase ?? 'unknown'));
+  receiptRel ?? '（无法解析 CU Feature 物理路径：framework SSOT 缺失/损坏或 identity 非法——请先修复 framework 安装或 CU 身份后重跑）');
   const decision = {
     decision: 'block',
     reason,

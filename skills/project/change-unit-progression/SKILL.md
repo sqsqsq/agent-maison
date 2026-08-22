@@ -5,13 +5,14 @@ description: Validate and continuously execute canonical Change Units from an ad
 
 # Change Unit progression
 
-Use this Skill only when a component has an admitted canonical blueprint and one or more canonical `change-unit@1` artifacts under `blueprint/component/<component_id>/change-units/`.
+Use this Skill only when a blueprint has an admitted canonical artifact and one or more canonical `change-unit@1` artifacts in its evolution workspace: `<features_dir>/<blueprint_id>/<change_unit_id>/change-unit.yaml`（`<features_dir>` 默认 `doc/features`，经框架解析；CU 目录即该 CU 的 Feature 施工目录）。
 
 ## Authority and entry
 
-- Run `check:change-unit` for each candidate before deriving readiness. A decomposition Provider may propose only temporary/in-memory candidates; only the consumer validator may accept a provenance-bearing canonical CU.
+- Run `check:change-unit`（`--blueprint <blueprint_id> --unit <change_unit_id>`）for each candidate before deriving readiness. A decomposition Provider may propose only temporary/in-memory candidates; only the consumer validator may accept a provenance-bearing canonical CU.
 - Read CU intent, predicates, provides and design targets from the canonical artifact. Read component design from `component_blueprint_ref`; never copy either definition into a Feature.
-- Derive the Feature id from `(component_id, change_unit_id)`. `contracts.change_unit` contains only ID mappings; `contracts.state_management` remains the sole runtime-construction authority.
+- Derive the Feature identity from `(blueprint_id, change_unit_id)`：逻辑 id = `cu-` + base64url 编码，物理路径 = `<features_dir>/<blueprint_id>/<change_unit_id>`（经框架 SSOT 解析，不手工拼接）。`contracts.change_unit` contains only ID mappings; `contracts.state_management` remains the sole runtime-construction authority.
+- `blueprint_id` 是路径键；`component_id` 只做所有权/一致性核验。requires/provides、carry-forward 与 ready set 全部限定同一 `blueprint_id` 工作区，跨工作区 CU（含同部件早期演进）不满足依赖。
 - Resolve workflow track and expected phase chain from the existing workflow/track SSOT. Goal Mode events, receipts, evidence and verified feature completion remain execution truth.
 
 ## Progression

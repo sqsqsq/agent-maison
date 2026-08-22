@@ -32,6 +32,8 @@ import os from 'os';
 import path from 'path';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
+// M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT（零依赖 CJS；dev 脚本直接静态消费，不带副本）
+import { featureRelativePath } from '../harness/scripts/utils/feature-identity.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -523,7 +525,8 @@ function stageGoal(ctx) {
   }
   // codex 第九批收尾 P2：注释声称的两条必须真的断言——**读发布件宿主上的报告**
   // （开发仓 unit 验过一遍不算数：这里验的是 clone 出来的字节跑出的报告）
-  const reportPath = path.join(ctx.cloneRoot, 'doc', 'features', feature, 'goal-runs',
+  // M5A §4.3：读发布件宿主上的报告——feature 逻辑 id 经唯一 SSOT 展开为物理相对路径
+  const reportPath = path.join(ctx.cloneRoot, 'doc', 'features', featureRelativePath(feature), 'goal-runs',
     park.runId, 'goal-report.json');
   const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
   if (report.status !== 'CHAIN_SLICE_COMPLETED') {

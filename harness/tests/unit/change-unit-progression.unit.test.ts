@@ -54,7 +54,7 @@ interface UnitCaseResult {
 }
 
 const VALID_PROJECT = path.resolve(__dirname, '..', 'fixtures', 'component-blueprint', 'valid');
-const VALID_CU_PATH = path.join(VALID_PROJECT, 'blueprint', 'component', 'ledger', 'change-units', 'ledger-refresh.yaml');
+const VALID_CU_PATH = path.join(VALID_PROJECT, 'doc', 'features', 'ledger-app-blueprint', 'ledger-refresh', 'change-unit.yaml');
 const CHANGE_UNIT_FIXTURES = path.resolve(__dirname, '..', 'fixtures', 'change-unit');
 
 function test(name: string, body: () => void): UnitCaseResult {
@@ -95,7 +95,7 @@ function withTempProject(body: (projectRoot: string, cuPath: string) => void): v
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-p2-cu-'));
   try {
     fs.cpSync(VALID_PROJECT, temp, { recursive: true });
-    body(temp, path.join(temp, 'blueprint', 'component', 'ledger', 'change-units', 'ledger-refresh.yaml'));
+    body(temp, path.join(temp, 'doc', 'features', 'ledger-app-blueprint', 'ledger-refresh', 'change-unit.yaml'));
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }
@@ -123,9 +123,9 @@ function projectionContracts(projectRoot: string, changeUnitId = 'ledger-refresh
   acceptance: AcceptanceSpec;
   dags: DagProjectionLike[];
 } {
-  const loaded = loadCanonicalChangeUnit(projectRoot, 'ledger', changeUnitId);
+  const loaded = loadCanonicalChangeUnit(projectRoot, 'ledger-app-blueprint', changeUnitId);
   const cu = loaded.changeUnit;
-  const feature = deriveChangeUnitFeatureId('ledger', changeUnitId);
+  const feature = deriveChangeUnitFeatureId('ledger-app-blueprint', changeUnitId);
   const implementationRef = 'src/ledger/LedgerFeature.ets';
   const testRef = 'test/ledger/LedgerFeature.test.ets';
   fs.mkdirSync(path.join(projectRoot, 'src', 'ledger'), { recursive: true });
@@ -219,16 +219,16 @@ export async function runAll(): Promise<UnitCaseResult[]> {
   const asynchronous: Array<Promise<UnitCaseResult>> = [];
 
   results.push(test('canonical CU passes artifact and constructability production entrypoint', () => {
-    const result = checkCanonicalChangeUnit(VALID_PROJECT, 'ledger', 'ledger-refresh');
+    const result = checkCanonicalChangeUnit(VALID_PROJECT, 'ledger-app-blueprint', 'ledger-refresh');
     assert(result.issues.length === 0, `valid CU 意外失败：${result.issues.map(item => item.id).join(', ')}`);
     assert(result.design?.verdict === 'constructable', 'valid CU 未得到 constructable');
   }));
 
   results.push(test('canonical fixture set contains dependent vertical CUs, distinct Features, tie candidates and a structured blocker', () => {
-    const loaded = enumerateCanonicalChangeUnits(VALID_PROJECT, 'ledger');
+    const loaded = enumerateCanonicalChangeUnits(VALID_PROJECT, 'ledger-app-blueprint');
     const units = loaded.map(item => asChangeUnitArtifact(item.changeUnit));
     assert(units.length === 4, `预期 4 个 canonical CU，实际 ${units.length}`);
-    const featureIds = new Set(units.map(unit => deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id)));
+    const featureIds = new Set(units.map(unit => deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id)));
     assert(featureIds.size === units.length, 'canonical fixtures 的派生 Feature identity 不唯一');
     const consumer = units.find(unit => unit.change_unit_id === 'ledger-consumer')!;
     const recovery = units.find(unit => unit.change_unit_id === 'ledger-recovery')!;
@@ -237,37 +237,47 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     assert(consumer.priority === summary.priority, '独立 same-priority fixture 缺失');
     assert(summary.blockers.length === 1 && summary.blockers[0].observation === 'human', '当前结构化 blocker fixture 缺失');
     for (const unit of units) {
-      const result = checkCanonicalChangeUnit(VALID_PROJECT, 'ledger', unit.change_unit_id);
+      const result = checkCanonicalChangeUnit(VALID_PROJECT, 'ledger-app-blueprint', unit.change_unit_id);
       assert(result.issues.length === 0, `${unit.change_unit_id} fixture 未通过生产入口：${result.issues.map(item => item.id).join(',')}`);
     }
   }));
 
   results.push(test('CU Feature identity is injective, reversible, and cannot be authored', () => {
-    const a = deriveChangeUnitFeatureId('ledger', 'ledger-refresh');
+    const a = deriveChangeUnitFeatureId('ledger-app-blueprint', 'ledger-refresh');
     const b = deriveChangeUnitFeatureId('ledger-other', 'ledger-refresh');
-    assert(a !== b, '跨部件 Feature id 冲突');
-    assert(JSON.stringify(parseChangeUnitFeatureId(a)) === JSON.stringify({ componentId: 'ledger', changeUnitId: 'ledger-refresh' }), 'Feature id 不可逆');
+    assert(a !== b, '跨工作区 Feature id 冲突');
+    assert(JSON.stringify(parseChangeUnitFeatureId(a)) === JSON.stringify({ blueprintId: 'ledger-app-blueprint', changeUnitId: 'ledger-refresh' }), 'Feature id 不可逆');
     const cu = validChangeUnit();
     cu.feature_id = a;
     expectIssue(issueIds(cu), 'change_unit_forbidden_authority_field');
   }));
 
-  results.push(test('canonical enumeration is stable and ignores non-yaml siblings', () => {
+  results.push(test('canonical enumeration is stable, sorted, and ignores non-CU subdirectories', () => {
     withTempProject(projectRoot => {
-      const dir = path.join(projectRoot, 'blueprint', 'component', 'ledger', 'change-units');
-      fs.writeFileSync(path.join(dir, 'notes.md'), 'not a CU\n', 'utf8');
+      const dir = path.join(projectRoot, 'doc', 'features', 'ledger-app-blueprint');
+      // 非 CU 辅助子目录（无 change-unit.yaml）必须忽略
+      fs.mkdirSync(path.join(dir, 'notes-dir'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'notes-dir', 'notes.md'), 'not a CU\n', 'utf8');
+      // 新 CU 子目录
       const second = validChangeUnit();
       second.change_unit_id = 'aaa-first';
-      fs.writeFileSync(path.join(dir, 'aaa-first.yaml'), YAML.stringify(second), 'utf8');
-      const ids = enumerateCanonicalChangeUnits(projectRoot, 'ledger').map(item => item.changeUnit.change_unit_id);
+      second.blueprint_id = 'ledger-app-blueprint';
+      fs.mkdirSync(path.join(dir, 'aaa-first'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'aaa-first', 'change-unit.yaml'), YAML.stringify(second), 'utf8');
+      const ids = enumerateCanonicalChangeUnits(projectRoot, 'ledger-app-blueprint').map(item => item.changeUnit.change_unit_id);
       assert(ids.join(',') === 'aaa-first,ledger-consumer,ledger-recovery,ledger-refresh,ledger-summary', `枚举不稳定：${ids.join(',')}`);
     });
   }));
 
   results.push(test('path identity and provenance authority mismatches fail closed', () => {
+    // M5A：blueprint_id 是路径身份——根 blueprint_id 与目录路径段不一致 → path identity mismatch
     const cu = validChangeUnit();
-    cu.component_id = 'other';
+    cu.blueprint_id = 'other-blueprint';
     expectIssue(issueIds(cu), 'change_unit_path_identity_mismatch');
+    // component_id 只做所有权核验：root/owner 不一致 → owner mismatch（fail-closed）
+    const ownerCu = validChangeUnit();
+    ownerCu.component_id = 'other';
+    expectIssue(issueIds(ownerCu), 'change_unit_blueprint_owner_mismatch');
     const providerCu = validChangeUnit();
     (providerCu.provenance as ChangeUnitRecord).source_ref = 'provider:auto-decomposer';
     expectIssue(issueIds(providerCu), 'change_unit_provenance_authority_invalid');
@@ -309,7 +319,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
 
   results.push(test('raw-byte CU ref rejects tampering', () => {
     withTempProject((projectRoot, cuPath) => {
-      const loaded = loadCanonicalChangeUnit(projectRoot, 'ledger', 'ledger-refresh');
+      const loaded = loadCanonicalChangeUnit(projectRoot, 'ledger-app-blueprint', 'ledger-refresh');
       const ref = createChangeUnitRef(loaded);
       fs.appendFileSync(cuPath, '\n# tampered\n', 'utf8');
       let code = '';
@@ -320,7 +330,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
 
   results.push(test('derived Feature directory cannot be rebound or silently adopted', () => {
     withTempProject(projectRoot => {
-      const featureId = deriveChangeUnitFeatureId('ledger', 'ledger-refresh');
+      const featureId = deriveChangeUnitFeatureId('ledger-app-blueprint', 'ledger-refresh');
       const boundFeatureDir = featureDir(projectRoot, featureId);
       fs.mkdirSync(boundFeatureDir, { recursive: true });
       fs.writeFileSync(path.join(boundFeatureDir, 'contracts.yaml'), YAML.stringify({
@@ -331,7 +341,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
           },
         },
       }), 'utf8');
-      const ref = createChangeUnitRef(loadCanonicalChangeUnit(projectRoot, 'ledger', 'ledger-refresh'));
+      const ref = createChangeUnitRef(loadCanonicalChangeUnit(projectRoot, 'ledger-app-blueprint', 'ledger-refresh'));
       let code = '';
       try { resolveChangeUnitRef(projectRoot, ref); } catch (error) { code = (error as ChangeUnitResolutionError).code; }
       assert(code === 'change_unit_feature_binding_conflict', `重复 Feature binding 未阻断：${code}`);
@@ -359,7 +369,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     const valid = validateChangeUnitDesign(VALID_PROJECT, validChangeUnit());
     assert(valid.verdict === 'constructable', '闭包外 cloud-sync future gap 不应阻塞当前 CU');
     withTempProject((projectRoot, cuPath) => {
-      const blueprintPath = path.join(projectRoot, 'blueprint', 'component', 'ledger', 'component-blueprint.yaml');
+      const blueprintPath = path.join(projectRoot, 'doc', 'features', 'ledger-app-blueprint', 'blueprint', 'component-blueprint.yaml');
       const blueprint = YAML.parse(fs.readFileSync(blueprintPath, 'utf8')) as ChangeUnitRecord;
       const decisions = ((blueprint.decisions_and_gaps as ChangeUnitRecord).decisions as ChangeUnitRecord[]);
       decisions[0].status = 'open_decision';
@@ -374,7 +384,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
 
   results.push(test('blueprint hash/schema drift and invalidating construction facts route reconciliation', () => {
     withTempProject(projectRoot => {
-      const blueprintPath = path.join(projectRoot, 'blueprint', 'component', 'ledger', 'component-blueprint.yaml');
+      const blueprintPath = path.join(projectRoot, 'doc', 'features', 'ledger-app-blueprint', 'blueprint', 'component-blueprint.yaml');
       fs.appendFileSync(blueprintPath, '\n# drift\n', 'utf8');
       const result = validateChangeUnitDesign(projectRoot, validChangeUnit());
       expectIssue(result.issues.map(item => item.id), 'change_unit_blueprint_unresolvable');
@@ -393,7 +403,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       const loaded = new SpecLoader(
         projectRoot,
         undefined,
-        path.dirname(featureDir(projectRoot, fixture.feature)),
+        path.join(projectRoot, 'doc', 'features'),
         path.resolve(__dirname, '..', '..', '..'),
       ).loadFeatureSpec(fixture.feature);
       assert(loaded.contracts?.change_unit?.predicate_mappings.length === 6, 'loader 未保留/归一 CU mappings');
@@ -547,7 +557,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     withTempProject((projectRoot, cuPath) => {
       const source = validChangeUnit();
       source.change_unit_id = 'read-only';
-      const blueprintPath = path.join(projectRoot, 'blueprint', 'component', 'ledger', 'component-blueprint.yaml');
+      const blueprintPath = path.join(projectRoot, 'doc', 'features', 'ledger-app-blueprint', 'blueprint', 'component-blueprint.yaml');
       const blueprint = YAML.parse(fs.readFileSync(blueprintPath, 'utf8')) as ChangeUnitRecord;
       const developmentView = (blueprint.design_views as ChangeUnitRecord[])
         .find(view => view.view_id === 'development')!;
@@ -566,8 +576,9 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       (source.component_blueprint_ref as ComponentBlueprintRef).artifact_sha256 = developmentRef.artifact_sha256;
       source.design_refs = [developmentRef, decisionRef];
       source.touches = [{ owner: 'ledger-team', design_ref: developmentRef, write_refs: ['planned:src/ledger/read.ts'] }];
-      const readOnlyPath = path.join(path.dirname(cuPath), 'read-only.yaml');
-      fs.writeFileSync(readOnlyPath, YAML.stringify(source), 'utf8');
+      const readOnlyDir = path.join(path.dirname(path.dirname(cuPath)), 'read-only');
+      fs.mkdirSync(readOnlyDir, { recursive: true });
+      fs.writeFileSync(path.join(readOnlyDir, 'change-unit.yaml'), YAML.stringify(source), 'utf8');
       const fixture = projectionContracts(projectRoot, 'read-only');
       fixture.contracts.state_management = [{ data: 'ledger-read', scope: 'page', decorator: 'none', holder: 'LedgerPage', module: 'ledger' }];
       fixture.acceptance.criteria[0].verification_steps = ['read snapshot'];
@@ -581,7 +592,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
 
   results.push(test('first host evolution seam rejects an empty provider abstraction', () => {
     withTempProject((projectRoot, cuPath) => {
-      const blueprintPath = path.join(projectRoot, 'blueprint', 'component', 'ledger', 'component-blueprint.yaml');
+      const blueprintPath = path.join(projectRoot, 'doc', 'features', 'ledger-app-blueprint', 'blueprint', 'component-blueprint.yaml');
       const blueprint = YAML.parse(fs.readFileSync(blueprintPath, 'utf8')) as BlueprintRecord;
       const decision = (asRecord(blueprint.decisions_and_gaps)!.decisions as BlueprintRecord[])
         .find(item => item.decision_id === 'seam-shape')!;
@@ -610,7 +621,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
 
   results.push(test('completion adapter distinguishes ABSENT, VALID, STALE and INVALID', () => {
     const unit = asChangeUnitArtifact(validChangeUnit());
-    const feature = deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id);
+    const feature = deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id);
     for (const expected of ['ABSENT', 'VALID', 'STALE', 'INVALID'] as ChangeUnitCompletionState[]) {
       const observation = observeChangeUnitCompletion(VALID_PROJECT, unit, completionAdapter(new Map([[feature, expected]])));
       assert(observation.state === expected, `completion ${expected} 被折叠为 ${observation.state}`);
@@ -629,7 +640,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
         JSON.stringify({ ts: '2026-08-20T00:01:00Z', type: 'run_end', status: 'CHAIN_SLICE_COMPLETED' }),
         '',
       ].join('\n'), 'utf8');
-      const observation = observeChangeUnitCompletion(projectRoot, asChangeUnitArtifact(loadCanonicalChangeUnit(projectRoot, 'ledger', 'ledger-refresh').changeUnit));
+      const observation = observeChangeUnitCompletion(projectRoot, asChangeUnitArtifact(loadCanonicalChangeUnit(projectRoot, 'ledger-app-blueprint', 'ledger-refresh').changeUnit));
       assert(observation.state === 'INVALID', `成功终局缺 completion 被降为 ${observation.state}`);
     });
   }));
@@ -641,7 +652,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       const runDir = path.join(featureDir(projectRoot, fixture.feature), 'goal-runs', '20260820T000000Z-c0ffee');
       fs.mkdirSync(runDir, { recursive: true });
       fs.writeFileSync(path.join(runDir, 'events.jsonl'), `${JSON.stringify({ ts: '2026-08-20T00:00:00Z', type: 'run_start' })}\n`, 'utf8');
-      const observation = observeChangeUnitCompletion(projectRoot, asChangeUnitArtifact(loadCanonicalChangeUnit(projectRoot, 'ledger', 'ledger-refresh').changeUnit));
+      const observation = observeChangeUnitCompletion(projectRoot, asChangeUnitArtifact(loadCanonicalChangeUnit(projectRoot, 'ledger-app-blueprint', 'ledger-refresh').changeUnit));
       assert(observation.state === 'INVALID', `corrupt run 被折叠为 ${observation.state}`);
       assert(observation.reasons.some(reason => reason.includes('20260820T000000Z-c0ffee') && reason.includes('损坏')), `corrupt 法证文案缺失：${observation.reasons.join(';')}`);
     });
@@ -649,8 +660,8 @@ export async function runAll(): Promise<UnitCaseResult[]> {
 
   results.push(test('progress loop inspection routes corrupt run to blocked and ignores bootstrap-only residue', () => {
     withTempProject(projectRoot => {
-      const unit = asChangeUnitArtifact(loadCanonicalChangeUnit(projectRoot, 'ledger', 'ledger-refresh').changeUnit);
-      const feature = deriveChangeUnitFeatureId('ledger', 'ledger-refresh');
+      const unit = asChangeUnitArtifact(loadCanonicalChangeUnit(projectRoot, 'ledger-app-blueprint', 'ledger-refresh').changeUnit);
+      const feature = deriveChangeUnitFeatureId('ledger-app-blueprint', 'ledger-refresh');
       const runsDir = path.join(featureDir(projectRoot, feature), 'goal-runs');
       const bootstrapDir = path.join(runsDir, '20260820T000001Z-b00t');
       fs.mkdirSync(bootstrapDir, { recursive: true });
@@ -663,7 +674,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       inspection = inspectActiveChangeUnitRuns(projectRoot, [unit]);
       assert(inspection.corrupt.length === 1 && inspection.corrupt[0].runId === '20260820T000002Z-dead', `corrupt run 未被巡检点名：${JSON.stringify(inspection)}`);
       const state = new Map([[feature, 'ABSENT' as ChangeUnitCompletionState]]);
-      const ready = deriveChangeUnitReadySet(projectRoot, 'ledger', { units: [unit], completion: completionAdapter(state) });
+      const ready = deriveChangeUnitReadySet(projectRoot, 'ledger-app-blueprint', { units: [unit], completion: completionAdapter(state) });
       const decision = deriveChangeUnitProgressionDecision(ready, inspection);
       assert(decision.action === 'blocked', `corrupt run 未阻断推进：${decision.action}`);
       assert(decision.reasons.some(reason => reason.includes('20260820T000002Z-dead') && reason.includes('人工核查该目录')), `blocked 未透传法证文案：${decision.reasons.join(';')}`);
@@ -671,8 +682,8 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     // 隔离断言：readySet 干净（本会 select_one），blocked 只能来自决策级 corrupt 分支——
     // 防止 completion 侧 corrupt→INVALID 的纵深防御掩护本分支被删。
     const cleanUnits = progressionUnits().slice(0, 1);
-    const cleanState = new Map(cleanUnits.map(item => [deriveChangeUnitFeatureId(item.component_id, item.change_unit_id), 'ABSENT' as ChangeUnitCompletionState]));
-    const cleanReady = deriveChangeUnitReadySet(VALID_PROJECT, 'ledger', { units: cleanUnits, completion: completionAdapter(cleanState) });
+    const cleanState = new Map(cleanUnits.map(item => [deriveChangeUnitFeatureId(item.blueprint_id, item.change_unit_id), 'ABSENT' as ChangeUnitCompletionState]));
+    const cleanReady = deriveChangeUnitReadySet(VALID_PROJECT, 'ledger-app-blueprint', { units: cleanUnits, completion: completionAdapter(cleanState) });
     assert(cleanReady.ready.length === 1, '隔离前提不成立：干净 readySet 本应恰有一个 ready 候选');
     const isolated = deriveChangeUnitProgressionDecision(cleanReady, {
       active: [],
@@ -685,13 +696,13 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     withTempProject(projectRoot => {
       const fixture = projectionContracts(projectRoot);
       bindFeatureContracts(projectRoot, fixture.feature, fixture.contracts);
-      const unit = asChangeUnitArtifact(loadCanonicalChangeUnit(projectRoot, 'ledger', 'ledger-refresh').changeUnit);
+      const unit = asChangeUnitArtifact(loadCanonicalChangeUnit(projectRoot, 'ledger-app-blueprint', 'ledger-refresh').changeUnit);
       const state = new Map([[fixture.feature, 'STALE' as ChangeUnitCompletionState]]);
-      let ready = deriveChangeUnitReadySet(projectRoot, 'ledger', { units: [unit], completion: completionAdapter(state) });
+      let ready = deriveChangeUnitReadySet(projectRoot, 'ledger-app-blueprint', { units: [unit], completion: completionAdapter(state) });
       assert(ready.ready[0]?.change_unit_id === 'ledger-refresh', `已重验 STALE CU 无合法重执行路径：${ready.units[0].blockers.map(item => `${item.id}:${item.message}`).join(',')}`);
       fixture.contracts.change_unit!.change_unit_ref.artifact_sha256 = `sha256:${'f'.repeat(64)}`;
       bindFeatureContracts(projectRoot, fixture.feature, fixture.contracts);
-      ready = deriveChangeUnitReadySet(projectRoot, 'ledger', { units: [unit], completion: completionAdapter(state) });
+      ready = deriveChangeUnitReadySet(projectRoot, 'ledger-app-blueprint', { units: [unit], completion: completionAdapter(state) });
       assert(ready.ready.length === 0 && ready.units[0].blockers.some(item => item.id === 'change_unit_identity_mismatch'), '未重绑 mapping 的 STALE CU 仍进入 ready');
     });
   }));
@@ -699,16 +710,16 @@ export async function runAll(): Promise<UnitCaseResult[]> {
   results.push(test('invalid canonical CU never enters ready or completed handoff', () => {
     const unit = clone(progressionUnits()[0]);
     (unit as unknown as ChangeUnitRecord).ready = true;
-    const state = new Map([[deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id), 'ABSENT' as ChangeUnitCompletionState]]);
-    const ready = deriveChangeUnitReadySet(VALID_PROJECT, 'ledger', { units: [unit], completion: completionAdapter(state) });
+    const state = new Map([[deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id), 'ABSENT' as ChangeUnitCompletionState]]);
+    const ready = deriveChangeUnitReadySet(VALID_PROJECT, 'ledger-app-blueprint', { units: [unit], completion: completionAdapter(state) });
     assert(ready.ready.length === 0 && !ready.allCompleted, '非法 CU 进入 ready/completed handoff');
     assert(ready.units[0].blockers.some(item => item.id === 'change_unit_forbidden_authority_field'), 'ready 未复用 CU validator');
   }));
 
   results.push(test('exact dependencies and stable selector preserve independent same-priority candidates', () => {
     const units = progressionUnits();
-    const state = new Map(units.map(unit => [deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id), unit.change_unit_id === 'a-foundation' ? 'VALID' as const : 'ABSENT' as const]));
-    const ready = deriveChangeUnitReadySet(VALID_PROJECT, 'ledger', { units, completion: completionAdapter(state) });
+    const state = new Map(units.map(unit => [deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id), unit.change_unit_id === 'a-foundation' ? 'VALID' as const : 'ABSENT' as const]));
+    const ready = deriveChangeUnitReadySet(VALID_PROJECT, 'ledger-app-blueprint', { units, completion: completionAdapter(state) });
     assert(ready.ready.map(item => item.change_unit_id).join(',') === 'b-consumer,d-summary', `same-priority ready set 错误：${ready.ready.map(item => item.change_unit_id).join(',')}`);
     assert(selectNextChangeUnit(ready.ready)?.change_unit_id === 'b-consumer', 'selector 未按 priority + stable id');
     const bad = clone(units[1]);
@@ -736,8 +747,8 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     }];
     const escapedProbe = deriveChangeUnitBlockers(escaped, { projectRoot: VALID_PROJECT })[0];
     assert(escapedProbe.active && !escapedProbe.legal && escapedProbe.reason.includes('不得包含'), '工程外 file_exists probe 解除了 blocker');
-    const escapedState = new Map([[deriveChangeUnitFeatureId(escaped.component_id, escaped.change_unit_id), 'ABSENT' as ChangeUnitCompletionState]]);
-    const escapedReady = deriveChangeUnitReadySet(VALID_PROJECT, 'ledger', {
+    const escapedState = new Map([[deriveChangeUnitFeatureId(escaped.blueprint_id, escaped.change_unit_id), 'ABSENT' as ChangeUnitCompletionState]]);
+    const escapedReady = deriveChangeUnitReadySet(VALID_PROJECT, 'ledger-app-blueprint', {
       units: [escaped], completion: completionAdapter(escapedState),
     });
     assert(escapedReady.ready.length === 0, '工程外 file_exists probe 使 CU 进入 ready');
@@ -756,20 +767,22 @@ export async function runAll(): Promise<UnitCaseResult[]> {
   results.push(test('carry-forward preserves historical blueprint identity across current blueprint replacement', () => {
     withTempProject(projectRoot => {
       const historical = asChangeUnitArtifact(validChangeUnit());
-      const blueprintPath = path.join(projectRoot, 'blueprint', 'component', 'ledger', 'component-blueprint.yaml');
+      const blueprintPath = path.join(projectRoot, 'doc', 'features', 'ledger-app-blueprint', 'blueprint', 'component-blueprint.yaml');
       const blueprint = YAML.parse(fs.readFileSync(blueprintPath, 'utf8')) as ChangeUnitRecord;
       blueprint.blueprint_id = 'replacement-blueprint';
       fs.writeFileSync(blueprintPath, YAML.stringify(blueprint), 'utf8');
       const verdict = evaluateChangeUnitCarryForward(projectRoot, historical);
-      assert(!verdict.allowed && verdict.reasons.some(reason => reason.includes('blueprint_id')), 'carry-forward 擅自把历史 ref 改绑到 replacement blueprint');
+      // M5A：in-place 改根 blueprint_id 触发 loader 的 path↔yaml blueprint 身份校验（fail-closed）
+      assert(!verdict.allowed && verdict.reasons.some(reason => reason.includes('blueprint identity 不一致')),
+        'carry-forward 擅自把历史 ref 改绑到 replacement blueprint');
     });
   }));
 
   results.push(test('CU revision drift stales future mapping without rewriting completed history', () => {
     withTempProject((projectRoot, cuPath) => {
       const before = fs.readFileSync(cuPath, 'utf8');
-      const loaded = loadCanonicalChangeUnit(projectRoot, 'ledger', 'ledger-refresh');
-      const feature = deriveChangeUnitFeatureId('ledger', 'ledger-refresh');
+      const loaded = loadCanonicalChangeUnit(projectRoot, 'ledger-app-blueprint', 'ledger-refresh');
+      const feature = deriveChangeUnitFeatureId('ledger-app-blueprint', 'ledger-refresh');
       const contracts = projectionContracts(projectRoot).contracts;
       bindFeatureContracts(projectRoot, feature, contracts);
       const next = clone(loaded.changeUnit);
@@ -807,7 +820,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     );
     assert(validDependency.issues.length === 0, `合法 contract provide 依赖被误拒：${validDependency.issues.map(item => item.id).join(',')}`);
 
-    const unrelated = asChangeUnitArtifact(loadCanonicalChangeUnit(VALID_PROJECT, 'ledger', 'ledger-summary').changeUnit);
+    const unrelated = asChangeUnitArtifact(loadCanonicalChangeUnit(VALID_PROJECT, 'ledger-app-blueprint', 'ledger-summary').changeUnit);
     later.requires = [{ require_id: 'unrelated-output', from_change_unit_id: 'ledger-summary', provide_id: 'ledger-summary-ready' }];
     expectIssue(
       validateChangeUnitEvolutionSeam(later, decisionRef, decision, [unrelated]).map(item => item.id),
@@ -828,7 +841,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     ordinary.change_unit_id = 'ordinary-ledger-provider';
     ordinary.requires = [{ require_id: 'ordinary-contract', from_change_unit_id: 'ledger-refresh', provide_id: 'ledger-data-source-contract' }];
     ordinary.design_refs = ordinary.design_refs.map(ref => ref.target.kind === 'decision' ? clone(ordinaryDecisionRef) : ref);
-    const ordinaryPath = path.join(VALID_PROJECT, 'blueprint', 'component', 'ledger', 'change-units', 'ordinary-ledger-provider.yaml');
+    const ordinaryPath = path.join(VALID_PROJECT, 'doc', 'features', 'ledger-app-blueprint', 'ordinary-ledger-provider', 'change-unit.yaml');
     assert(validateChangeUnit(ordinary, { projectRoot: VALID_PROJECT, canonicalPath: ordinaryPath }).length === 0, '非 evolution Provider CU artifact 非法');
     assert(validateChangeUnitDesign(VALID_PROJECT, ordinary as unknown as ChangeUnitRecord).issues.length === 0, '非 evolution Provider CU design 非法');
     assert(validateChangeUnitEvolutionSeam(ordinary, ordinaryDecisionRef, ordinaryDecision, [base]).length === 0, '非 evolution decision 被 seam 误判');
@@ -861,15 +874,15 @@ export async function runAll(): Promise<UnitCaseResult[]> {
 
   asynchronous.push(asyncTest('fake Goal Mode advances A to B to C one at a time and rereads completion', async () => {
     const units = progressionUnits().slice(0, 3);
-    const state = new Map(units.map(unit => [deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id), 'ABSENT' as ChangeUnitCompletionState]));
+    const state = new Map(units.map(unit => [deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id), 'ABSENT' as ChangeUnitCompletionState]));
     const calls: string[] = [];
-    const result = await runChangeUnitProgression(VALID_PROJECT, 'ledger', {
+    const result = await runChangeUnitProgression(VALID_PROJECT, 'ledger-app-blueprint', {
       ready: { units, completion: completionAdapter(state) },
       inspectActiveRuns: () => ({ active: [], corrupt: [] }),
       buildHandoff: (_root, unit): ChangeUnitGoalHandoff => ({
-        featureId: deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id),
+        featureId: deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id),
         canonicalPath: `fixture:${unit.change_unit_id}`,
-        changeUnitRef: { artifact: 'change-unit@1', component_id: unit.component_id, change_unit_id: unit.change_unit_id, revision: unit.revision, artifact_sha256: `sha256:${'a'.repeat(64)}` },
+        changeUnitRef: { artifact: 'change-unit@1', component_id: unit.component_id, blueprint_id: unit.blueprint_id, change_unit_id: unit.change_unit_id, revision: unit.revision, artifact_sha256: `sha256:${'a'.repeat(64)}` },
         componentBlueprintRef: unit.component_blueprint_ref,
         expectedTrack: 'full', expectedChain: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'], requirement: unit.purpose,
       }),
@@ -885,14 +898,14 @@ export async function runAll(): Promise<UnitCaseResult[]> {
 
   asynchronous.push(asyncTest('caller completed without VALID completion stops as no-progress', async () => {
     const units = progressionUnits().slice(0, 1);
-    const state = new Map(units.map(unit => [deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id), 'ABSENT' as ChangeUnitCompletionState]));
+    const state = new Map(units.map(unit => [deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id), 'ABSENT' as ChangeUnitCompletionState]));
     let calls = 0;
-    const result = await runChangeUnitProgression(VALID_PROJECT, 'ledger', {
+    const result = await runChangeUnitProgression(VALID_PROJECT, 'ledger-app-blueprint', {
       ready: { units, completion: completionAdapter(state) },
       inspectActiveRuns: () => ({ active: [], corrupt: [] }),
       buildHandoff: (_root, unit) => ({
-        featureId: deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id), canonicalPath: 'fixture',
-        changeUnitRef: { artifact: 'change-unit@1', component_id: unit.component_id, change_unit_id: unit.change_unit_id, revision: 1, artifact_sha256: `sha256:${'a'.repeat(64)}` },
+        featureId: deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id), canonicalPath: 'fixture',
+        changeUnitRef: { artifact: 'change-unit@1', component_id: unit.component_id, blueprint_id: unit.blueprint_id, change_unit_id: unit.change_unit_id, revision: 1, artifact_sha256: `sha256:${'a'.repeat(64)}` },
         componentBlueprintRef: unit.component_blueprint_ref, expectedTrack: 'full', expectedChain: ['spec'], requirement: unit.purpose,
       }),
       caller: async () => { calls++; return { status: 'completed' }; },
@@ -903,32 +916,32 @@ export async function runAll(): Promise<UnitCaseResult[]> {
 
   asynchronous.push(asyncTest('pause or active run suppresses every second CU', async () => {
     const units = progressionUnits().slice(0, 3);
-    const state = new Map(units.map(unit => [deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id), 'ABSENT' as ChangeUnitCompletionState]));
+    const state = new Map(units.map(unit => [deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id), 'ABSENT' as ChangeUnitCompletionState]));
     let calls = 0;
-    const result = await runChangeUnitProgression(VALID_PROJECT, 'ledger', {
+    const result = await runChangeUnitProgression(VALID_PROJECT, 'ledger-app-blueprint', {
       ready: { units, completion: completionAdapter(state) }, inspectActiveRuns: () => ({ active: [], corrupt: [] }),
       buildHandoff: (_root, unit) => ({
-        featureId: deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id), canonicalPath: 'fixture',
-        changeUnitRef: { artifact: 'change-unit@1', component_id: unit.component_id, change_unit_id: unit.change_unit_id, revision: 1, artifact_sha256: `sha256:${'a'.repeat(64)}` },
+        featureId: deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id), canonicalPath: 'fixture',
+        changeUnitRef: { artifact: 'change-unit@1', component_id: unit.component_id, blueprint_id: unit.blueprint_id, change_unit_id: unit.change_unit_id, revision: 1, artifact_sha256: `sha256:${'a'.repeat(64)}` },
         componentBlueprintRef: unit.component_blueprint_ref, expectedTrack: 'full', expectedChain: ['spec'], requirement: unit.purpose,
       }),
       caller: async () => { calls++; return { status: 'paused', runId: 'run-a', reason: 'device waiting' }; },
     });
     assert(calls === 1 && result.action === 'resume_active', 'pause 后启动了第二 CU');
-    const ready = deriveChangeUnitReadySet(VALID_PROJECT, 'ledger', { units, completion: completionAdapter(state) });
+    const ready = deriveChangeUnitReadySet(VALID_PROJECT, 'ledger-app-blueprint', { units, completion: completionAdapter(state) });
     assert(deriveChangeUnitProgressionDecision(ready, { active: [{ featureId: 'active', runId: 'run-active' }], corrupt: [] }).action === 'resume_active', 'active run 未优先恢复');
   }));
 
   asynchronous.push(asyncTest('failure and awaiting-human both stop before a second CU', async () => {
     for (const status of ['failed', 'awaiting_human'] as const) {
       const units = progressionUnits().slice(0, 3);
-      const state = new Map(units.map(unit => [deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id), 'ABSENT' as ChangeUnitCompletionState]));
+      const state = new Map(units.map(unit => [deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id), 'ABSENT' as ChangeUnitCompletionState]));
       let calls = 0;
-      const result = await runChangeUnitProgression(VALID_PROJECT, 'ledger', {
+      const result = await runChangeUnitProgression(VALID_PROJECT, 'ledger-app-blueprint', {
         ready: { units, completion: completionAdapter(state) }, inspectActiveRuns: () => ({ active: [], corrupt: [] }),
         buildHandoff: (_root, unit) => ({
-          featureId: deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id), canonicalPath: 'fixture',
-          changeUnitRef: { artifact: 'change-unit@1', component_id: unit.component_id, change_unit_id: unit.change_unit_id, revision: 1, artifact_sha256: `sha256:${'a'.repeat(64)}` },
+          featureId: deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id), canonicalPath: 'fixture',
+          changeUnitRef: { artifact: 'change-unit@1', component_id: unit.component_id, blueprint_id: unit.blueprint_id, change_unit_id: unit.change_unit_id, revision: 1, artifact_sha256: `sha256:${'a'.repeat(64)}` },
           componentBlueprintRef: unit.component_blueprint_ref, expectedTrack: 'full', expectedChain: ['spec'], requirement: unit.purpose,
         }),
         caller: async () => { calls++; return { status, runId: `run-${status}`, reason: status }; },

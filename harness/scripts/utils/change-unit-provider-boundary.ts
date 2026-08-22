@@ -55,7 +55,7 @@ export function acceptChangeUnitCandidate(projectRoot: string, candidate: Change
   if (!provenance.extraction_method.includes(candidate.providerId)) {
     throw new Error('change_unit_candidate_provider_provenance_missing');
   }
-  const target = changeUnitPath(projectRoot, candidate.artifact.component_id, candidate.artifact.change_unit_id);
+  const target = changeUnitPath(projectRoot, candidate.artifact.blueprint_id, candidate.artifact.change_unit_id);
   assertValidChangeUnit(candidate.artifact as unknown as Record<string, unknown>, {
     projectRoot,
     canonicalPath: target,
@@ -74,5 +74,5 @@ export function acceptChangeUnitCandidate(projectRoot: string, candidate: Change
     if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
     throw error;
   }
-  return loadCanonicalChangeUnit(projectRoot, candidate.artifact.component_id, candidate.artifact.change_unit_id);
+  return loadCanonicalChangeUnit(projectRoot, candidate.artifact.blueprint_id, candidate.artifact.change_unit_id);
 }

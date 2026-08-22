@@ -55,6 +55,9 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'change-unit-progression', modulePath: './unit/change-unit-progression.unit.test' },
   { id: 'component-closure', modulePath: './unit/component-closure.unit.test' },
   { id: 'mechanical-loop-closure', modulePath: './unit/mechanical-loop-closure.unit.test' },
+  // M5A（plan e2a7c4b9）t2 返修验收：新布局生产入口最小合成用例（resolveChangeUnitRef
+  // → enumerateFeatures → closure inputs 零 BLOCKER），t4 证明 11/12 的底座
+  { id: 'evolution-workspace-path', modulePath: './unit/evolution-workspace-path.unit.test' },
   // plan a5f9c3e2 t4：统一裁决内核契约 + 元门禁（未注册 incident / 新增 gate 读 goal env 即红）
   { id: 'adjudication',     modulePath: './unit/adjudication.unit.test' },
   // plan d6b1a8e3 t2：monitor stale 误报的 replay fixture（先复现后改）

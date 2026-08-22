@@ -7,6 +7,8 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
+// M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT（goal-runs 路径必须经它展开）
+import { featureRelativePath } from './feature-identity';
 import type { FeaturePhase } from './phase-transition-policy';
 import {
   DEFAULT_DEPENDENCY_POLICY,
@@ -314,9 +316,12 @@ export function resolveGoalReportDir(opts: {
   if (!feature) {
     throw new Error('[goal-manifest] feature 必填');
   }
+  // M5A §4.3：物理相对路径经唯一 SSOT 展开（CU=<blueprint_id>/<change_unit_id>），
+  // 绝不把编码后的逻辑 id 落进 goal-runs 目录（proof 13/14）。
+  const featureRel = featureRelativePath(feature);
   const segs = opts.dryRun
-    ? [opts.featuresDir.replace(/\\/g, '/'), feature, 'goal-runs', DRY_RUNS_SUBDIR, opts.runId]
-    : [opts.featuresDir.replace(/\\/g, '/'), feature, 'goal-runs', opts.runId];
+    ? [opts.featuresDir.replace(/\\/g, '/'), featureRel, 'goal-runs', DRY_RUNS_SUBDIR, opts.runId]
+    : [opts.featuresDir.replace(/\\/g, '/'), featureRel, 'goal-runs', opts.runId];
   return path.join(...segs).replace(/\\/g, '/');
 }
 
@@ -803,7 +808,7 @@ export function loadGoalManifestFromRun(
     );
   }
   const featuresDir = opts.featuresDir ?? DEFAULT_FEATURES_DIR;
-  const abs = path.join(projectRoot, featuresDir, feature, 'goal-runs', runId, 'manifest.json');
+  const abs = path.join(projectRoot, featuresDir, featureRelativePath(feature), 'goal-runs', runId, 'manifest.json');
   if (!fs.existsSync(abs)) {
     throw new Error(`[goal-manifest] 未找到 run manifest: ${abs}`);
   }

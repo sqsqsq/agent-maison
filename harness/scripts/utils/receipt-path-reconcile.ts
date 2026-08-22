@@ -13,6 +13,7 @@ import {
   loadFrameworkConfig,
   receiptFilePath,
   relFeaturePhaseReportsDir,
+  enumerateFeatures,
 } from '../../config';
 
 const LEGACY_REPORTS_PREFIX = 'framework/harness/reports/';
@@ -193,11 +194,15 @@ function listReceiptTargets(
   }
 
   const out: Array<{ feature: string; phase: string; receiptAbs: string }> = [];
-  for (const feature of fs.readdirSync(featuresDir)) {
+  // M5A §5.2/§5.3：共享枚举函数（工作区容器下钻；孤儿/歧义/缺 yaml fail-closed）。
+  // 路径 helper（receiptFilePath）只接受逻辑 featureId，内部经唯一 SSOT 展开为
+  // 物理相对路径；`relativePath` 仅用于直接扫描实际目录（proof 11/14）。
+  for (const item of enumerateFeatures(projectRoot)) {
+    const feature = item.featureId;
     if (filter?.feature && feature !== filter.feature) {
       continue;
     }
-    const featureDir = path.join(featuresDir, feature);
+    const featureDir = path.join(featuresDir, ...item.relativePath.split('/'));
     if (!fs.statSync(featureDir).isDirectory()) {
       continue;
     }

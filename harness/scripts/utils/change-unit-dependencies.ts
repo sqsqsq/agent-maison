@@ -20,11 +20,16 @@ export function evaluateChangeUnitDependencies(
   carryForward: Map<string, ChangeUnitCarryForwardVerdict>,
 ): ChangeUnitDependencyResult {
   const issues: ChangeUnitDependencyIssue[] = [];
-  const byId = new Map(units.map(unit => [unit.change_unit_id, unit]));
+  // M5A §5.5/§8.5：requires/provides 满足域限定同一 blueprint_id 工作区。以
+  // (blueprint_id, change_unit_id) 复合键建表（blueprint_id 是安全路径段、不含冒号，
+  // 分隔符无歧义）——另一工作区的同名 CU 永不可见（ref 层失败 + 派生层不可见双证，
+  // proof 3）。
+  const workspaceKey = (blueprintId: string, changeUnitId: string): string => `${blueprintId}:${changeUnitId}`;
+  const byId = new Map(units.map(unit => [workspaceKey(unit.blueprint_id, unit.change_unit_id), unit]));
   for (const requirement of changeUnit.requires) {
-    const provider = byId.get(requirement.from_change_unit_id);
+    const provider = byId.get(workspaceKey(changeUnit.blueprint_id, requirement.from_change_unit_id));
     if (!provider) {
-      issues.push({ id: 'change_unit_dependency_provider_missing', changeUnitId: changeUnit.change_unit_id, message: `provider CU ${requirement.from_change_unit_id} 不存在于同一部件。` });
+      issues.push({ id: 'change_unit_dependency_provider_missing', changeUnitId: changeUnit.change_unit_id, message: `provider CU ${requirement.from_change_unit_id} 不存在于同一工作区 ${changeUnit.blueprint_id}。` });
       continue;
     }
     if (!provider.provides.some(item => item.provide_id === requirement.provide_id)) {

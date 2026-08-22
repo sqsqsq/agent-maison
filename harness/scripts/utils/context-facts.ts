@@ -15,6 +15,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { featuresDirPath } from '../../config';
+// M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT
+import { featureRelativePath } from './feature-identity';
 import { CheckResult } from './types';
 import {
   checkContextExplorationArtifact,
@@ -35,7 +37,7 @@ export function isFactsEstablishingPhase(phase: string): boolean {
 }
 
 export function resolveFactsAbsPath(projectRoot: string, feature: string): string {
-  return path.join(featuresDirPath(projectRoot), feature, 'context', 'facts.md');
+  return path.join(featuresDirPath(projectRoot), ...featureRelativePath(feature).split('/'), 'context', 'facts.md');
 }
 
 interface PhaseDeltaSection {

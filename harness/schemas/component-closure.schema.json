@@ -7,6 +7,7 @@
   "required": [
     "artifact",
     "component_id",
+    "blueprint_id",
     "component_blueprint_ref",
     "input_fingerprint",
     "evaluated_at",
@@ -21,6 +22,7 @@
   "properties": {
     "artifact": { "const": "component-closure@1" },
     "component_id": { "$ref": "#/$defs/safeSegment" },
+    "blueprint_id": { "$ref": "#/$defs/safeSegment" },
     "component_blueprint_ref": { "$ref": "#/$defs/blueprintRef" },
     "input_fingerprint": { "$ref": "#/$defs/sha256" },
     "evaluated_at": { "type": "string", "minLength": 1 },
@@ -53,7 +55,7 @@
       "properties": {
         "artifact": { "const": "component-blueprint@1" },
         "component_id": { "$ref": "#/$defs/safeSegment" },
-        "blueprint_id": { "$ref": "#/$defs/stableId" },
+        "blueprint_id": { "$ref": "#/$defs/safeSegment" },
         "revision": { "type": "integer", "minimum": 1 },
         "source_fingerprint": { "$ref": "#/$defs/sha256" },
         "artifact_sha256": { "$ref": "#/$defs/sha256" },

@@ -44,10 +44,10 @@ function loadClosureSchema(): Record<string, unknown> {
 
 export function evaluateComponentClosure(
   projectRoot: string,
-  componentId: string,
+  blueprintId: string,
   options: ComponentClosureEvaluationOptions = {},
 ): ComponentClosureEvaluation {
-  const inputs = resolveComponentClosureInputs(projectRoot, componentId, options);
+  const inputs = resolveComponentClosureInputs(projectRoot, blueprintId, options);
   const obligations = deriveComponentClosureObligations(projectRoot, inputs);
   let rows = deriveComponentClosureCoverage(projectRoot, inputs, obligations);
   const providers = deriveClosureProviderObservations(projectRoot, inputs, rows, options.evidenceProviders);
@@ -109,7 +109,8 @@ export function evaluateComponentClosure(
   return {
     closure: {
       artifact: COMPONENT_CLOSURE_ARTIFACT,
-      component_id: componentId,
+      component_id: inputs.blueprintRef.component_id,
+      blueprint_id: blueprintId,
       component_blueprint_ref: inputs.blueprintRef,
       input_fingerprint: inputFingerprint,
       evaluated_at: options.evaluatedAt ?? new Date().toISOString(),
@@ -140,7 +141,7 @@ function compareField(
 export function validateComponentClosure(
   value: unknown,
   projectRoot: string,
-  componentId: string,
+  blueprintId: string,
   options: ComponentClosureEvaluationOptions = {},
 ): ComponentClosureEvaluation {
   const out: ComponentClosureIssue[] = [];
@@ -151,15 +152,24 @@ export function validateComponentClosure(
   for (const violation of validateLiteSchema(actual, loadClosureSchema())) {
     out.push(closureIssue('component_closure_schema_invalid', violation.path, violation.message));
   }
-  if (actual.component_id !== componentId || actual.component_blueprint_ref?.component_id !== componentId) {
-    out.push(closureIssue('component_closure_identity_mismatch', '$.component_id', `path=${componentId}, yaml=${String(actual.component_id)}, blueprint_ref=${String(actual.component_blueprint_ref?.component_id)}。`));
+  // M5A §8.1/8.4：path/content/ref 三方 blueprint_id 一致 + content/ref component_id 一致
+  const pathBlueprint = blueprintId;
+  const yamlBlueprint = actual.blueprint_id;
+  const refBlueprint = actual.component_blueprint_ref?.blueprint_id;
+  if (yamlBlueprint !== pathBlueprint || refBlueprint !== pathBlueprint) {
+    out.push(closureIssue('component_closure_identity_mismatch', '$.blueprint_id',
+      `blueprint identity 不一致：path=${pathBlueprint}, yaml=${String(yamlBlueprint)}, blueprint_ref=${String(refBlueprint)}。`));
+  }
+  if (actual.component_id !== actual.component_blueprint_ref?.component_id) {
+    out.push(closureIssue('component_closure_identity_mismatch', '$.component_id',
+      `component identity 不一致：yaml=${String(actual.component_id)}, blueprint_ref=${String(actual.component_blueprint_ref?.component_id)}。`));
   }
   try {
     resolveComponentBlueprintRef(projectRoot, actual.component_blueprint_ref);
   } catch (error) {
     out.push(closureIssue('component_closure_blueprint_ref_unresolvable', '$.component_blueprint_ref', (error as Error).message, 'BLOCKER', 'reconcile_blueprint'));
   }
-  const evaluated = evaluateComponentClosure(projectRoot, componentId, { ...options, evaluatedAt: actual.evaluated_at });
+  const evaluated = evaluateComponentClosure(projectRoot, blueprintId, { ...options, evaluatedAt: actual.evaluated_at });
   const expected = evaluated.closure;
   compareField(actual, expected, 'component_blueprint_ref', 'component_closure_blueprint_binding_mismatch', out);
   compareField(actual, expected, 'inputs', 'component_closure_input_manifest_mismatch', out);

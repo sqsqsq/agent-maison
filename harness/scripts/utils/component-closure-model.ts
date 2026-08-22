@@ -96,6 +96,8 @@ export interface ComponentClosureGap {
 export interface ComponentClosureArtifact {
   artifact: typeof COMPONENT_CLOSURE_ARTIFACT;
   component_id: string;
+  /** M5A §8.1：closure 属主演进工作区的 blueprint_id（与 path/ref 三方一致） */
+  blueprint_id: string;
   component_blueprint_ref: ComponentBlueprintRef;
   input_fingerprint: string;
   evaluated_at: string;

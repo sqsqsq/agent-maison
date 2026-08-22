@@ -9,6 +9,8 @@ import { createRequire } from 'module';
 import type { CheckContext } from './types';
 import { parseVisualHandoffYamlRoot, parseUiChangeFromSpecMarkdown, UI_CHANGE_REQUIRES_UI_SPEC } from './ui-spec-shared';
 import { featureFilePath, relFeaturesDir } from '../../config';
+// M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT（fidelity 血缘/ux-reference 路径全链消费）
+import { featureRelativePath } from './feature-identity';
 import { readCanaryOcrCapableSignal } from './multimodal-probe';
 
 const requireHarness = createRequire(path.resolve(__dirname, '../../harness-runner.ts'));
@@ -383,7 +385,7 @@ export function listAuthoritativeGoalRuns(
   feature: string,
   featuresDirRel = 'doc/features',
 ): AuthoritativeGoalRuns {
-  return classifyGoalRunsDir(path.join(projectRoot, featuresDirRel, feature, 'goal-runs'));
+  return classifyGoalRunsDir(path.join(projectRoot, featuresDirRel, featureRelativePath(feature), 'goal-runs'));
 }
 
 /** 绝对路径口径（verify-feature-completion 等经 featureFilePath 解析目录的消费面）。 */
@@ -430,7 +432,7 @@ export function collectRequirementIntentText(
   feature: string,
   featuresDirRel = 'doc/features',
 ): string {
-  const runsDir = path.join(projectRoot, featuresDirRel, feature, 'goal-runs');
+  const runsDir = path.join(projectRoot, featuresDirRel, featureRelativePath(feature), 'goal-runs');
   if (!fs.existsSync(runsDir)) return '';
   const parts: string[] = [];
   // T1d：权威枚举单一入口（跳过 .dry 与残留——dry manifest 不再进需求意图/hash）。
@@ -441,7 +443,7 @@ export function collectRequirementIntentText(
       if (typeof m.requirement === 'string' && m.requirement.trim()) {
         parts.push(dereferenceRequirementDocs(projectRoot, m.requirement, {
           featuresDirRel,
-          excludePrefixes: [`${featuresDirRel.replace(/\\/g, '/')}/${feature}/`],
+          excludePrefixes: [`${featuresDirRel.replace(/\\/g, '/')}/${featureRelativePath(feature)}/`],
         }).combined);
       }
     } catch { /* 单 manifest 损坏跳过 */ }
@@ -461,7 +463,8 @@ export function collectRequirementSsotPaths(
   featuresDirRel = 'doc/features',
 ): string[] {
   const out = new Set<string>();
-  const runsDir = path.join(projectRoot, featuresDirRel, feature, 'goal-runs');
+  const featureRel = featureRelativePath(feature);
+  const runsDir = path.join(projectRoot, featuresDirRel, featureRel, 'goal-runs');
   if (fs.existsSync(runsDir)) {
     // T1d：权威枚举单一入口（.dry/残留不入阶段血缘——更晚 dry run 不得改变 lineage）。
     for (const runId of listAuthoritativeGoalRuns(projectRoot, feature, featuresDirRel).runs) {
@@ -469,12 +472,12 @@ export function collectRequirementSsotPaths(
       // codex 七轮 P0-2：manifest.json 本身入血缘——内联 manifest.requirement 被改
       //（不解引用任何文件）也必须使上游 closure stale。此前只收解引用文件，纯内联
       // 需求改写对 closure 隐形。
-      out.add(path.join(featuresDirRel, feature, 'goal-runs', runId, 'manifest.json').split(path.sep).join('/'));
+      out.add(path.join(featuresDirRel, featureRel, 'goal-runs', runId, 'manifest.json').split(path.sep).join('/'));
       try {
         const m = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as { requirement?: string };
         for (const rel of dereferenceRequirementDocs(projectRoot, m.requirement, {
           featuresDirRel,
-          excludePrefixes: [`${featuresDirRel.replace(/\\/g, '/')}/${feature}/`],
+          excludePrefixes: [`${featuresDirRel.replace(/\\/g, '/')}/${featureRel}/`],
         }).resolvedPaths) {
           out.add(rel);
         }
@@ -482,12 +485,12 @@ export function collectRequirementSsotPaths(
     }
   }
   // ux-reference 参考图
-  const uxDir = path.join(projectRoot, featuresDirRel, feature, 'ux-reference');
+  const uxDir = path.join(projectRoot, featuresDirRel, featureRel, 'ux-reference');
   try {
     if (fs.existsSync(uxDir)) {
       for (const f of fs.readdirSync(uxDir)) {
         if (/\.(jpe?g|png|webp|bmp)$/i.test(f)) {
-          out.add(path.join(featuresDirRel, feature, 'ux-reference', f).split(path.sep).join('/'));
+          out.add(path.join(featuresDirRel, featureRel, 'ux-reference', f).split(path.sep).join('/'));
         }
       }
     }
@@ -508,7 +511,7 @@ export function computeRunRequirementSha(
   featuresDirRel = 'doc/features',
 ): string | null {
   if (!runId) return null;
-  const manifestPath = path.join(projectRoot, featuresDirRel, feature, 'goal-runs', runId, 'manifest.json');
+  const manifestPath = path.join(projectRoot, featuresDirRel, featureRelativePath(feature), 'goal-runs', runId, 'manifest.json');
   if (!fs.existsSync(manifestPath)) return null;
   let requirement: string;
   try {
@@ -530,7 +533,8 @@ export function computeRequirementShaFromText(
   requirement: string,
   featuresDirRel = 'doc/features',
 ): string {
-  const currentFeaturePrefix = `${featuresDirRel.replace(/\\/g, '/')}/${feature}/`;
+  const featureRel = featureRelativePath(feature);
+  const currentFeaturePrefix = `${featuresDirRel.replace(/\\/g, '/')}/${featureRel}/`;
   const deref = dereferenceRequirementDocs(projectRoot, requirement, {
     featuresDirRel,
     excludePrefixes: [currentFeaturePrefix],
@@ -1020,7 +1024,7 @@ export function collectIntentTextWithPhaseFallback(
   const goalText = collectRequirementIntentText(projectRoot, feature, featuresDirRel);
   if (goalText.trim()) return goalText;
   const parts: string[] = [];
-  const featRoot = path.join(projectRoot, featuresDirRel, feature);
+  const featRoot = path.join(projectRoot, featuresDirRel, featureRelativePath(feature));
   const EXCLUDE = new Set(['visual-debt.md']);
   try {
     if (fs.existsSync(featRoot)) {

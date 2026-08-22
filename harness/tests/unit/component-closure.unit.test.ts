@@ -68,14 +68,16 @@ function withProject(run: (projectRoot: string) => void, mutateBlueprint?: (blue
 /** MG 跨层链（mechanical-loop-closure）复用同一现场——唯一实现，不另造第二套夹具装配。 */
 export function prepareCompleteProject(projectRoot: string, mutateBlueprint?: (blueprint: BlueprintRecord) => void): void {
   fs.mkdirSync(path.join(projectRoot, 'skills'), { recursive: true });
-  const blueprintFile = componentBlueprintPath(projectRoot, 'ledger');
+  const blueprintFile = componentBlueprintPath(projectRoot, 'ledger-app-blueprint');
   const blueprint = YAML.parse(fs.readFileSync(blueprintFile, 'utf8')) as BlueprintRecord;
   mutateBlueprint?.(blueprint);
   fs.writeFileSync(blueprintFile, YAML.stringify(blueprint), 'utf8');
   const blueprintHash = sha256Bytes(fs.readFileSync(blueprintFile));
-  const unitsDir = path.join(projectRoot, 'blueprint', 'component', 'ledger', 'change-units');
-  for (const name of fs.readdirSync(unitsDir).filter(name => name.endsWith('.yaml'))) {
-    const file = path.join(unitsDir, name);
+  const unitsDir = path.join(projectRoot, 'doc', 'features', 'ledger-app-blueprint');
+  for (const dirName of fs.readdirSync(unitsDir, { withFileTypes: true })) {
+    if (!dirName.isDirectory() || dirName.name === 'blueprint') continue;
+    const file = path.join(unitsDir, dirName.name, 'change-unit.yaml');
+    if (!fs.existsSync(file)) continue;
     const unit = YAML.parse(fs.readFileSync(file, 'utf8')) as BlueprintRecord;
     if (unit.change_unit_id === 'ledger-summary') unit.blockers = [];
     for (const invariant of asRecords(unit.preserved_invariants)) {
@@ -102,11 +104,11 @@ export function prepareCompleteProject(projectRoot: string, mutateBlueprint?: (b
     }
     fs.writeFileSync(file, YAML.stringify(unit), 'utf8');
   }
-  const loadedUnits = enumerateCanonicalChangeUnits(projectRoot, 'ledger');
+  const loadedUnits = enumerateCanonicalChangeUnits(projectRoot, 'ledger-app-blueprint');
   for (const loaded of loadedUnits) configureFeature(projectRoot, loaded);
   for (const loaded of loadedUnits) {
     const unit = asChangeUnitArtifact(loaded.changeUnit);
-    writeTrustedEvidenceChain(projectRoot, deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id));
+    writeTrustedEvidenceChain(projectRoot, deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id));
   }
 }
 
@@ -115,7 +117,7 @@ function configureFeature(
   loaded: ReturnType<typeof enumerateCanonicalChangeUnits>[number],
 ): void {
     const unit = asChangeUnitArtifact(loaded.changeUnit);
-    const featureId = deriveChangeUnitFeatureId('ledger', unit.change_unit_id);
+    const featureId = deriveChangeUnitFeatureId('ledger-app-blueprint', unit.change_unit_id);
     const contractsFile = featureFilePath(projectRoot, featureId, 'contracts.yaml');
     const contracts = YAML.parse(fs.readFileSync(contractsFile, 'utf8')) as BlueprintRecord;
     contracts.change_unit = {
@@ -154,7 +156,7 @@ function configureFeature(
 
 function runtimeConstruction(projectRoot: string, flowRef: unknown): BlueprintRecord {
   const ref = flowRef as { target: { id: string } };
-  const blueprint = YAML.parse(fs.readFileSync(componentBlueprintPath(projectRoot, 'ledger'), 'utf8')) as BlueprintRecord;
+  const blueprint = YAML.parse(fs.readFileSync(componentBlueprintPath(projectRoot, 'ledger-app-blueprint'), 'utf8')) as BlueprintRecord;
   const runtime = asRecords(blueprint.design_views).find(view => view.view_id === 'runtime')!;
   const flow = asRecords(runtime.runtime_data_flows).find(item => item.flow_id === ref.target.id);
   if (!flow) {
@@ -251,7 +253,7 @@ function evaluationOptions(state: 'VALID' | 'STALE' | 'INVALID' | 'ABSENT' = 'VA
     evaluatedAt: FIXED_TIME,
     observeCompletion: (_root, unit) => ({
       state,
-      featureId: deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id),
+      featureId: deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id),
       expectedTrack: 'default',
       expectedChain: ['ut', 'testing'],
       reasons: state === 'VALID' ? [] : [`fixture-${state.toLowerCase()}`],
@@ -264,7 +266,7 @@ function expectIssue(issues: Array<{ id: string }>, id: string): void {
 }
 
 function writeClosure(projectRoot: string, closure: ComponentClosureArtifact): void {
-  const yamlPath = componentClosurePath(projectRoot, closure.component_id);
+  const yamlPath = componentClosurePath(projectRoot, closure.blueprint_id);
   fs.writeFileSync(yamlPath, YAML.stringify(closure), 'utf8');
   const hash = sha256Bytes(fs.readFileSync(yamlPath));
   fs.writeFileSync(path.join(path.dirname(yamlPath), 'component-closure.md'), renderComponentClosureMarkdown(closure, hash), 'utf8');
@@ -275,7 +277,7 @@ function mutateFeatureContracts(
   changeUnitId: string,
   mutate: (contracts: BlueprintRecord) => void,
 ): void {
-  const feature = deriveChangeUnitFeatureId('ledger', changeUnitId);
+  const feature = deriveChangeUnitFeatureId('ledger-app-blueprint', changeUnitId);
   const file = featureFilePath(projectRoot, feature, 'contracts.yaml');
   const contracts = YAML.parse(fs.readFileSync(file, 'utf8')) as BlueprintRecord;
   mutate(contracts);
@@ -287,8 +289,8 @@ export function runAll(): UnitCaseResult[] {
 
   results.push(test('complete multi-CU fixture reconstructs deterministic Component closure', () => {
     withProject(projectRoot => {
-      const first = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions());
-      const second = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions());
+      const first = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
+      const second = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
       assert(first.issues.length === 0, first.issues.map(issue => `${issue.id}:${issue.message}`).join('\n'));
       assert(first.closure.verdict === 'PASS_WITH_DEGRADATION', `unexpected verdict=${first.closure.verdict}`);
       assert(JSON.stringify(first.closure) === JSON.stringify(second.closure), '相同规范化输入未得到确定性 closure');
@@ -298,18 +300,18 @@ export function runAll(): UnitCaseResult[] {
       assert(recomputePhaseEvidenceStaleness(projectRoot, featureId, ['ut', 'testing']).every(item => item.verdict === 'fresh'), '正向 fixture 未经过既有 receipt/manifest freshness verifier');
       assert(first.closure.provider_observations.some(providerObservation => providerObservation.observations.some(observation => observation.status === 'current')), '真实执行报告未形成 current Provider observation');
       writeClosure(projectRoot, first.closure);
-      const loaded = loadCanonicalComponentClosure(projectRoot, 'ledger');
-      const validated = validateComponentClosure(loaded.closure, projectRoot, 'ledger', evaluationOptions());
+      const loaded = loadCanonicalComponentClosure(projectRoot, 'ledger-app-blueprint');
+      const validated = validateComponentClosure(loaded.closure, projectRoot, 'ledger-app-blueprint', evaluationOptions());
       assert(validated.issues.length === 0, validated.issues.map(issue => `${issue.id}@${issue.path}:${issue.message}`).join('\n'));
     });
   }));
 
   results.push(test('production --write entry atomically materializes YAML, hashes it, derives full review Markdown, then revalidates', () => {
     withProject(projectRoot => {
-      const result = writeCanonicalComponentClosure(projectRoot, 'ledger', evaluationOptions());
+      const result = writeCanonicalComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
       assert(result.issues.length === 0, result.issues.map(issue => `${issue.id}:${issue.message}`).join('\n'));
-      assert(fs.existsSync(componentClosurePath(projectRoot, 'ledger')), 'canonical closure YAML 未生成');
-      const markdownPath = path.join(path.dirname(componentClosurePath(projectRoot, 'ledger')), 'component-closure.md');
+      assert(fs.existsSync(componentClosurePath(projectRoot, 'ledger-app-blueprint')), 'canonical closure YAML 未生成');
+      const markdownPath = path.join(path.dirname(componentClosurePath(projectRoot, 'ledger-app-blueprint')), 'component-closure.md');
       const markdown = fs.readFileSync(markdownPath, 'utf8');
       for (const expected of [
         '| CU | Revision |',
@@ -319,26 +321,27 @@ export function runAll(): UnitCaseResult[] {
         'Needed by',
         'closure_artifact_sha256',
       ]) assert(markdown.includes(expected), `评审投影缺 ${expected}`);
-      const checked = checkCanonicalComponentClosure(projectRoot, 'ledger', evaluationOptions());
+      const checked = checkCanonicalComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
       assert(checked.issues.length === 0, checked.issues.map(issue => issue.id).join(', '));
     });
   }));
 
   results.push(test('closure loader binds path, YAML and blueprint ref component identity', () => {
     withProject(projectRoot => {
-      const evaluated = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions());
+      const evaluated = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
       const tampered = clone(evaluated.closure);
       tampered.component_blueprint_ref.component_id = 'foreign';
       writeClosure(projectRoot, tampered);
       let message = '';
-      try { loadCanonicalComponentClosure(projectRoot, 'ledger'); } catch (error) { message = (error as Error).message; }
-      assert(message.includes('path=ledger') && message.includes('blueprint_ref=foreign'), `三方 identity 未 fail-closed：${message}`);
+      try { loadCanonicalComponentClosure(projectRoot, 'ledger-app-blueprint'); } catch (error) { message = (error as Error).message; }
+      // M5A：blueprint_id 三方（path/yaml/ref）+ component_id 两方（yaml/ref）
+      assert(message.includes('yaml=ledger') && message.includes('blueprint_ref=foreign'), `identity 未 fail-closed：${message}`);
     });
   }));
 
   results.push(test('current-scope requirement source and bidirectional mapping fail closed in P1', () => {
     withProject(projectRoot => {
-      const blueprintFile = componentBlueprintPath(projectRoot, 'ledger');
+      const blueprintFile = componentBlueprintPath(projectRoot, 'ledger-app-blueprint');
       const blueprint = YAML.parse(fs.readFileSync(blueprintFile, 'utf8')) as BlueprintRecord;
       delete asRecords(asRecord(asRecord(blueprint.discovery)?.inputs)?.current_scope_items)[0].source_sha256;
       expectIssue(validateComponentBlueprint(blueprint, { projectRoot, canonicalPath: blueprintFile }), 'blueprint_current_scope_source_hash_missing');
@@ -351,13 +354,13 @@ export function runAll(): UnitCaseResult[] {
 
   results.push(test('local requirement byte change is caught by P1 and changes existing P3 input fingerprint without a new fingerprint kind', () => {
     withProject(projectRoot => {
-      const before = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions()).closure.input_fingerprint;
+      const before = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions()).closure.input_fingerprint;
       const requirementFile = path.join(projectRoot, 'requirements', 'ledger.md');
       fs.appendFileSync(requirementFile, '\nAdditional current-scope constraint.\n', 'utf8');
-      const blueprintFile = componentBlueprintPath(projectRoot, 'ledger');
+      const blueprintFile = componentBlueprintPath(projectRoot, 'ledger-app-blueprint');
       const blueprint = YAML.parse(fs.readFileSync(blueprintFile, 'utf8')) as BlueprintRecord;
       expectIssue(validateComponentBlueprint(blueprint, { projectRoot, canonicalPath: blueprintFile }), 'blueprint_current_scope_source_hash_mismatch');
-      const after = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions()).closure;
+      const after = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions()).closure;
       assert(after.input_fingerprint !== before, '来源原始字节变化未进入既有 P3 input_fingerprint');
       assert(Object.keys(after).every(key => key !== 'traceability_fingerprint'), '错误新增 traceability fingerprint');
     });
@@ -365,15 +368,15 @@ export function runAll(): UnitCaseResult[] {
 
   results.push(test('mapping-only change preserves source_fingerprint but stales closure input fingerprint', () => {
     withProject(projectRoot => {
-      const before = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions()).closure;
-      const blueprintFile = componentBlueprintPath(projectRoot, 'ledger');
+      const before = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions()).closure;
+      const blueprintFile = componentBlueprintPath(projectRoot, 'ledger-app-blueprint');
       const blueprint = YAML.parse(fs.readFileSync(blueprintFile, 'utf8')) as BlueprintRecord;
       const sourceFingerprint = blueprint.source_fingerprint;
       const trace = asRecords(asRecord(blueprint.discovery)?.requirement_traceability)[0];
       trace.blueprint_refs = ['view:runtime/flow:ledger-refresh-flow'];
       blueprint.revision = Number(blueprint.revision) + 1;
       prepareCompleteProject(projectRoot, current => Object.assign(current, blueprint));
-      const after = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions()).closure;
+      const after = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions()).closure;
       assert(after.component_blueprint_ref.source_fingerprint === sourceFingerprint, 'mapping 错误混入 source_fingerprint');
       assert(after.input_fingerprint !== before.input_fingerprint, 'mapping 变化未使 P3 input_fingerprint 变化');
     });
@@ -381,20 +384,20 @@ export function runAll(): UnitCaseResult[] {
 
   results.push(test('coverage full-row recomputation rejects swapped owner and unrelated evidence', () => {
     withProject(projectRoot => {
-      const expected = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions()).closure;
+      const expected = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions()).closure;
       const swapped = clone(expected);
       const row = swapped.coverage_rows.find(item => item.owner_change_unit_ids.length > 1)!;
       row.owner_change_unit_ids = [row.owner_change_unit_ids[0]];
-      expectIssue(validateComponentClosure(swapped, projectRoot, 'ledger', evaluationOptions()).issues, 'component_closure_coverage_mismatch');
+      expectIssue(validateComponentClosure(swapped, projectRoot, 'ledger-app-blueprint', evaluationOptions()).issues, 'component_closure_coverage_mismatch');
       const unrelated = clone(expected);
       unrelated.coverage_rows[0].evidence_identities = ['feature:valid-but-unrelated/evidence'];
-      expectIssue(validateComponentClosure(unrelated, projectRoot, 'ledger', evaluationOptions()).issues, 'component_closure_coverage_mismatch');
+      expectIssue(validateComponentClosure(unrelated, projectRoot, 'ledger-app-blueprint', evaluationOptions()).issues, 'component_closure_coverage_mismatch');
     });
   }));
 
   results.push(test('every authored closure field diverging from recomputation is caught, and stale input fingerprint cannot pass', () => {
     withProject(projectRoot => {
-      const expected = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions()).closure;
+      const expected = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions()).closure;
       const fieldBreaks: Array<{ issue: string; tamper: (closure: ComponentClosureArtifact) => void }> = [
         {
           issue: 'component_closure_blueprint_binding_mismatch',
@@ -425,17 +428,17 @@ export function runAll(): UnitCaseResult[] {
       for (const fieldBreak of fieldBreaks) {
         const tampered = clone(expected);
         fieldBreak.tamper(tampered);
-        expectIssue(validateComponentClosure(tampered, projectRoot, 'ledger', evaluationOptions()).issues, fieldBreak.issue);
+        expectIssue(validateComponentClosure(tampered, projectRoot, 'ledger-app-blueprint', evaluationOptions()).issues, fieldBreak.issue);
       }
       const stale = clone(expected);
       stale.input_fingerprint = `sha256:${'0'.repeat(64)}`;
-      expectIssue(validateComponentClosure(stale, projectRoot, 'ledger', evaluationOptions()).issues, 'component_closure_input_fingerprint_stale');
+      expectIssue(validateComponentClosure(stale, projectRoot, 'ledger-app-blueprint', evaluationOptions()).issues, 'component_closure_input_fingerprint_stale');
     });
   }));
 
   results.push(test('current blueprint design decision without any CU or combination owner fails cross-view closure', () => {
     withProject(projectRoot => {
-      const evaluated = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions());
+      const evaluated = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
       expectIssue(evaluated.issues, 'component_closure_design_unconsumed');
       assert(evaluated.closure.verdict === 'FAIL', '无 owner 的蓝图设计决策未使 closure 失败');
     }, blueprint => {
@@ -453,15 +456,15 @@ export function runAll(): UnitCaseResult[] {
 
   results.push(test('CU design address outside current closure obligations fails as design bypass', () => {
     withProject(projectRoot => {
-      const cuFile = path.join(projectRoot, 'blueprint', 'component', 'ledger', 'change-units', 'ledger-refresh.yaml');
+      const cuFile = path.join(projectRoot, 'doc', 'features', 'ledger-app-blueprint', 'ledger-refresh', 'change-unit.yaml');
       const cu = YAML.parse(fs.readFileSync(cuFile, 'utf8')) as BlueprintRecord;
-      const blueprint = YAML.parse(fs.readFileSync(componentBlueprintPath(projectRoot, 'ledger'), 'utf8')) as BlueprintRecord;
+      const blueprint = YAML.parse(fs.readFileSync(componentBlueprintPath(projectRoot, 'ledger-app-blueprint'), 'utf8')) as BlueprintRecord;
       const bypassRef = clone(asRecords(cu.design_refs)[0]);
       bypassRef.target = { kind: 'blueprint', id: String(blueprint.blueprint_id) };
       cu.design_refs = [...asRecords(cu.design_refs), bypassRef];
       fs.writeFileSync(cuFile, YAML.stringify(cu), 'utf8');
       prepareCompleteProject(projectRoot);
-      const evaluated = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions());
+      const evaluated = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
       expectIssue(evaluated.issues, 'component_closure_design_bypass');
       assert(evaluated.closure.verdict === 'FAIL', '绕过 obligation 粒度的设计地址未使 closure 失败');
     });
@@ -479,7 +482,7 @@ export function runAll(): UnitCaseResult[] {
         provider('ui-device-visual-evidence', true),
         provider('human-acceptance-risk', false),
       ];
-      const evaluated = evaluateComponentClosure(projectRoot, 'ledger', options);
+      const evaluated = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', options);
       expectIssue(evaluated.issues, 'component_closure_provider_authority_conflict');
       assert(evaluated.closure.verdict === 'FAIL', 'Provider 任意 observation 覆盖了精确 row identity');
       assert(evaluated.closure.coverage_rows.some(row => row.evidence_level === 'unit_contract' && row.observation === 'uncovered'), '缺精确 observation 的 row 未保持 uncovered');
@@ -488,15 +491,15 @@ export function runAll(): UnitCaseResult[] {
 
   results.push(test('valid file symbol and hash without a matching successful report cannot cover closure', () => {
     withProject(projectRoot => {
-      for (const loaded of enumerateCanonicalChangeUnits(projectRoot, 'ledger')) {
+      for (const loaded of enumerateCanonicalChangeUnits(projectRoot, 'ledger-app-blueprint')) {
         const unit = asChangeUnitArtifact(loaded.changeUnit);
         writeTrustedEvidenceChain(
           projectRoot,
-          deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id),
+          deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id),
           'componentClosureCombination',
         );
       }
-      const evaluated = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions());
+      const evaluated = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
       assert(evaluated.closure.verdict === 'FAIL', '只有当前文件/symbol/hash、但匹配执行报告失败时仍被覆盖');
       const affected = evaluated.closure.coverage_rows.filter(row => row.evidence_identities.some(identity => {
         const payload = parseClosureEvidenceIdentity(identity);
@@ -510,7 +513,7 @@ export function runAll(): UnitCaseResult[] {
   for (const state of ['STALE', 'INVALID', 'ABSENT'] as const) {
     results.push(test(`${state} completion remains distinct and cannot close Component`, () => {
       withProject(projectRoot => {
-        const evaluated = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions(state));
+        const evaluated = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions(state));
         assert(evaluated.closure.verdict === 'FAIL', `${state} completion 意外放行`);
         expectIssue(evaluated.issues, `component_closure_completion_${state.toLowerCase()}`);
       });
@@ -519,7 +522,7 @@ export function runAll(): UnitCaseResult[] {
 
   results.push(test('historical CU contributes only through exact VALID completion and P2 carry-forward', () => {
     withProject(projectRoot => {
-      const cuFile = path.join(projectRoot, 'blueprint', 'component', 'ledger', 'change-units', 'ledger-summary.yaml');
+      const cuFile = path.join(projectRoot, 'doc', 'features', 'ledger-app-blueprint', 'ledger-summary', 'change-unit.yaml');
       const cu = YAML.parse(fs.readFileSync(cuFile, 'utf8')) as BlueprintRecord;
       const historicalHash = `sha256:${'1'.repeat(64)}`;
       const rootRef = asRecord(cu.component_blueprint_ref)!;
@@ -535,9 +538,9 @@ export function runAll(): UnitCaseResult[] {
         ref.artifact_sha256 = historicalHash;
       }
       fs.writeFileSync(cuFile, YAML.stringify(cu), 'utf8');
-      const loaded = enumerateCanonicalChangeUnits(projectRoot, 'ledger').find(item => item.changeUnit.change_unit_id === 'ledger-summary')!;
+      const loaded = enumerateCanonicalChangeUnits(projectRoot, 'ledger-app-blueprint').find(item => item.changeUnit.change_unit_id === 'ledger-summary')!;
       configureFeature(projectRoot, loaded);
-      const carried = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions());
+      const carried = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
       const summary = carried.closure.inputs.change_units.find(item => item.ref.change_unit_id === 'ledger-summary')!;
       assert(summary.carry_forward && summary.completion === 'VALID', `历史 CU 未按 P2 carry-forward 贡献：${summary.carry_forward_reasons.join(',')}`);
 
@@ -545,8 +548,8 @@ export function runAll(): UnitCaseResult[] {
       const flow = asRecords(broken.design_refs).find(ref => asRecord(ref.target)?.kind === 'flow')!;
       asRecord(flow.target)!.id = 'missing-flow';
       fs.writeFileSync(cuFile, YAML.stringify(broken), 'utf8');
-      configureFeature(projectRoot, enumerateCanonicalChangeUnits(projectRoot, 'ledger').find(item => item.changeUnit.change_unit_id === 'ledger-summary')!);
-      const rejected = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions());
+      configureFeature(projectRoot, enumerateCanonicalChangeUnits(projectRoot, 'ledger-app-blueprint').find(item => item.changeUnit.change_unit_id === 'ledger-summary')!);
+      const rejected = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
       expectIssue(rejected.issues, 'component_closure_carry_forward_rejected');
       assert(rejected.closure.verdict === 'FAIL', '失效历史 stable id 被 carry-forward 放行');
     });
@@ -554,7 +557,7 @@ export function runAll(): UnitCaseResult[] {
 
   results.push(test('missing cross-CU combination evidence fails despite VALID individual completion', () => {
     withProject(projectRoot => {
-      const consumerFeature = deriveChangeUnitFeatureId('ledger', 'ledger-consumer');
+      const consumerFeature = deriveChangeUnitFeatureId('ledger-app-blueprint', 'ledger-consumer');
       const file = featureFilePath(projectRoot, consumerFeature, 'contracts.yaml');
       const contracts = YAML.parse(fs.readFileSync(file, 'utf8')) as BlueprintRecord;
       const section = asRecord(contracts.change_unit)!;
@@ -572,7 +575,7 @@ export function runAll(): UnitCaseResult[] {
         }
       }
       fs.writeFileSync(file, YAML.stringify(contracts), 'utf8');
-      const evaluated = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions());
+      const evaluated = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
       assert(evaluated.closure.verdict === 'FAIL', '独立 completion 误替代组合证据');
       expectIssue(evaluated.issues, 'component_closure_dependency_assembly_unverified');
     });
@@ -580,12 +583,12 @@ export function runAll(): UnitCaseResult[] {
 
   results.push(test('runtime flow must be constructed in every owning Feature state_management', () => {
     withProject(projectRoot => {
-      const feature = deriveChangeUnitFeatureId('ledger', 'ledger-recovery');
+      const feature = deriveChangeUnitFeatureId('ledger-app-blueprint', 'ledger-recovery');
       const file = featureFilePath(projectRoot, feature, 'contracts.yaml');
       const contracts = YAML.parse(fs.readFileSync(file, 'utf8')) as BlueprintRecord;
       contracts.state_management = [];
       fs.writeFileSync(file, YAML.stringify(contracts), 'utf8');
-      const evaluated = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions());
+      const evaluated = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
       expectIssue(evaluated.issues, 'component_closure_runtime_flow_unconstructed');
       assert(evaluated.closure.verdict === 'FAIL', 'runtime 施工断链意外放行');
     });
@@ -593,7 +596,7 @@ export function runAll(): UnitCaseResult[] {
 
   results.push(test('runtime local objects derive distinct mapping and evidence identities instead of one flow placeholder', () => {
     withProject(projectRoot => {
-      const closure = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions()).closure;
+      const closure = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions()).closure;
       const rows = closure.coverage_rows.filter(row => ['runtime_mutation', 'runtime_publication', 'runtime_subscription', 'runtime_consumer'].includes(row.kind));
       assert(rows.length === 4, `runtime local rows=${rows.length}`);
       assert(new Set(rows.flatMap(row => row.feature_mapping_refs)).size >= 4, 'runtime local objects 仍复用同一 flow mapping');
@@ -604,7 +607,7 @@ export function runAll(): UnitCaseResult[] {
 
   results.push(test('read-only initial-load flow derives no fake mutation/publication/subscription obligations', () => {
     withProject(projectRoot => {
-      const evaluated = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions());
+      const evaluated = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
       assert(evaluated.issues.length === 0, evaluated.issues.map(issue => issue.id).join(', '));
       assert(!evaluated.closure.coverage_rows.some(row => ['runtime_mutation', 'runtime_publication', 'runtime_subscription'].includes(row.kind)), 'read-only flow 被强造写入/发布/订阅义务');
     }, blueprint => {
@@ -632,7 +635,7 @@ export function runAll(): UnitCaseResult[] {
     results.push(test(`runtime production entry rejects ${runtimeBreak.id} break`, () => {
       withProject(projectRoot => {
         mutateFeatureContracts(projectRoot, 'ledger-refresh', contracts => runtimeBreak.mutate(asRecords(contracts.state_management)[0]));
-        const evaluated = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions());
+        const evaluated = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
         assert(evaluated.closure.verdict === 'FAIL', `${runtimeBreak.id} runtime break 意外放行`);
         assert(evaluated.issues.some(issue => issue.id.startsWith('component_closure_feature_projection_invalid:')), `${runtimeBreak.id} 未经过 P2 生产施工门`);
       });
@@ -641,11 +644,11 @@ export function runAll(): UnitCaseResult[] {
 
   results.push(test('dangling exact dependency and temporary asset without exit fail assembly closure', () => {
     withProject(projectRoot => {
-      const consumerFile = path.join(projectRoot, 'blueprint', 'component', 'ledger', 'change-units', 'ledger-consumer.yaml');
+      const consumerFile = path.join(projectRoot, 'doc', 'features', 'ledger-app-blueprint', 'ledger-consumer', 'change-unit.yaml');
       const consumer = YAML.parse(fs.readFileSync(consumerFile, 'utf8')) as BlueprintRecord;
       asRecords(consumer.requires)[0].from_change_unit_id = 'missing-provider';
       fs.writeFileSync(consumerFile, YAML.stringify(consumer), 'utf8');
-      const blueprintFile = componentBlueprintPath(projectRoot, 'ledger');
+      const blueprintFile = componentBlueprintPath(projectRoot, 'ledger-app-blueprint');
       const blueprint = YAML.parse(fs.readFileSync(blueprintFile, 'utf8')) as BlueprintRecord;
       const decisionsAndGaps = asRecord(blueprint.decisions_and_gaps)!;
       const decisions = asRecords(decisionsAndGaps.decisions);
@@ -662,7 +665,7 @@ export function runAll(): UnitCaseResult[] {
       }];
       fs.writeFileSync(blueprintFile, YAML.stringify(blueprint), 'utf8');
       prepareCompleteProject(projectRoot);
-      const evaluated = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions());
+      const evaluated = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
       expectIssue(evaluated.issues, 'change_unit_dependency_provider_missing');
       expectIssue(evaluated.issues, 'component_closure_temporary_asset_exit_missing');
     });
@@ -671,7 +674,7 @@ export function runAll(): UnitCaseResult[] {
   results.push(test('unresolved stable knowledge placement remains a blocker', () => {
     withProject(projectRoot => {
       fs.rmSync(path.join(projectRoot, 'doc', 'architecture.yaml'));
-      const evaluated = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions());
+      const evaluated = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
       expectIssue(evaluated.issues, 'component_closure_knowledge_unresolved');
       assert(evaluated.closure.verdict === 'FAIL', '缺失知识真源意外放行');
     });
@@ -681,7 +684,7 @@ export function runAll(): UnitCaseResult[] {
     withProject(projectRoot => {
       const architecture = path.join(projectRoot, 'doc', 'architecture.yaml');
       fs.writeFileSync(architecture, 'component: ledger\nauthority: LedgerRepository\n# decision:seam-shape is only a comment\n', 'utf8');
-      const evaluated = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions());
+      const evaluated = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
       expectIssue(evaluated.issues, 'component_closure_knowledge_unresolved');
       assert(evaluated.closure.verdict === 'FAIL', '仅文件存在被误当作稳定结论已归位');
     });
@@ -689,7 +692,7 @@ export function runAll(): UnitCaseResult[] {
 
   results.push(test('authoritative establish_seam closes only with four distinct resolvable decision-test proofs', () => {
     withProject(projectRoot => {
-      const evaluated = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions());
+      const evaluated = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
       assert(!evaluated.issues.some(issue => issue.id.startsWith('component_closure_seam_')), evaluated.issues.map(issue => issue.id).join(', '));
       const proofRows = evaluated.closure.coverage_rows.filter(row => row.kind.startsWith('evolution_seam_') && row.kind !== 'evolution_seam_decision');
       assert(proofRows.length === 4, `seam proof rows=${proofRows.length}`);
@@ -711,7 +714,7 @@ export function runAll(): UnitCaseResult[] {
   results.push(test('establish_seam requires four exact test proofs and ignores source-string lookalikes', () => {
     withProject(projectRoot => {
       fs.appendFileSync(path.join(projectRoot, 'src', 'ledger', 'ClosureFixture.ts'), '\n// ConcreteLedgerProvider and LedgerDataSource are unrelated text, not a no-bypass proof.\n', 'utf8');
-      const evaluated = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions());
+      const evaluated = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
       expectIssue(evaluated.issues, 'component_closure_seam_proof_unresolvable');
     }, blueprint => {
       const decision = asRecords(asRecord(blueprint.decisions_and_gaps)?.decisions).find(item => item.decision_id === 'seam-shape')!;
@@ -731,22 +734,22 @@ export function runAll(): UnitCaseResult[] {
 
   results.push(test('exact supersedes conflicts and structural cycles fail closed without a migration table', () => {
     withProject(projectRoot => {
-      const loaded = enumerateCanonicalChangeUnits(projectRoot, 'ledger');
+      const loaded = enumerateCanonicalChangeUnits(projectRoot, 'ledger-app-blueprint');
       const summaryRef = createChangeUnitRef(loaded.find(item => item.changeUnit.change_unit_id === 'ledger-summary')!);
       for (const id of ['ledger-consumer', 'ledger-recovery']) {
-        const file = path.join(projectRoot, 'blueprint', 'component', 'ledger', 'change-units', `${id}.yaml`);
+        const file = path.join(projectRoot, 'doc', 'features', 'ledger-app-blueprint', id, 'change-unit.yaml');
         const unit = YAML.parse(fs.readFileSync(file, 'utf8')) as BlueprintRecord;
         unit.supersedes = summaryRef;
         fs.writeFileSync(file, YAML.stringify(unit), 'utf8');
       }
       prepareCompleteProject(projectRoot);
-      expectIssue(evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions()).issues, 'component_closure_supersedes_conflict');
+      expectIssue(evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions()).issues, 'component_closure_supersedes_conflict');
 
-      const after = enumerateCanonicalChangeUnits(projectRoot, 'ledger');
+      const after = enumerateCanonicalChangeUnits(projectRoot, 'ledger-app-blueprint');
       const consumerRef = createChangeUnitRef(after.find(item => item.changeUnit.change_unit_id === 'ledger-consumer')!);
       const recoveryRef = createChangeUnitRef(after.find(item => item.changeUnit.change_unit_id === 'ledger-recovery')!);
-      const consumerFile = path.join(projectRoot, 'blueprint', 'component', 'ledger', 'change-units', 'ledger-consumer.yaml');
-      const recoveryFile = path.join(projectRoot, 'blueprint', 'component', 'ledger', 'change-units', 'ledger-recovery.yaml');
+      const consumerFile = path.join(projectRoot, 'doc', 'features', 'ledger-app-blueprint', 'ledger-consumer', 'change-unit.yaml');
+      const recoveryFile = path.join(projectRoot, 'doc', 'features', 'ledger-app-blueprint', 'ledger-recovery', 'change-unit.yaml');
       const consumer = YAML.parse(fs.readFileSync(consumerFile, 'utf8')) as BlueprintRecord;
       const recovery = YAML.parse(fs.readFileSync(recoveryFile, 'utf8')) as BlueprintRecord;
       consumer.supersedes = recoveryRef;
@@ -754,13 +757,13 @@ export function runAll(): UnitCaseResult[] {
       fs.writeFileSync(consumerFile, YAML.stringify(consumer), 'utf8');
       fs.writeFileSync(recoveryFile, YAML.stringify(recovery), 'utf8');
       prepareCompleteProject(projectRoot);
-      expectIssue(evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions()).issues, 'component_closure_supersedes_cycle');
+      expectIssue(evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions()).issues, 'component_closure_supersedes_cycle');
     });
   }));
 
   results.push(test('keep_direct is not treated as an approved host seam', () => {
     withProject(projectRoot => {
-      const evaluated = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions());
+      const evaluated = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
       assert(!evaluated.closure.coverage_rows.some(row => row.kind.startsWith('evolution_seam_')), 'keep_direct 生成了四项接缝证明');
       assert(!evaluated.issues.some(issue => issue.id.startsWith('component_closure_seam_')), 'keep_direct 被 seam checker 误挡');
     });
@@ -774,9 +777,9 @@ export function runAll(): UnitCaseResult[] {
         provider('ui-device-visual-evidence', false),
         provider('human-acceptance-risk', false),
       ];
-      const failed = evaluateComponentClosure(projectRoot, 'ledger', requiredMissing).closure;
+      const failed = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', requiredMissing).closure;
       assert(failed.verdict === 'FAIL', 'required UI/device provider 缺失被降级放行');
-      const complete = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions()).closure;
+      const complete = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions()).closure;
       assert(failed.input_fingerprint !== complete.input_fingerprint, 'Provider exit/absence 未使 closure input fingerprint stale');
       assert(complete.verdict === 'PASS_WITH_DEGRADATION', 'optional human provider 缺失未形成诚实 degradation');
       assert(complete.degradations.some(item => item.degradation_id.includes('human-acceptance-risk')), '缺 optional provider degradation');
@@ -792,7 +795,7 @@ export function runAll(): UnitCaseResult[] {
         provider('ui-device-visual-evidence', true),
         provider('human-acceptance-risk', false),
       ];
-      const evaluated = evaluateComponentClosure(projectRoot, 'ledger', options);
+      const evaluated = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', options);
       expectIssue(evaluated.issues, 'component_closure_provider_authority_conflict');
       assert(evaluated.closure.verdict === 'FAIL', '重复权威 provider 被注册顺序洗白');
     });
@@ -801,12 +804,12 @@ export function runAll(): UnitCaseResult[] {
   results.push(test('P3 evaluation is read-only over P1/P2/Feature and cannot claim Capability E2E', () => {
     withProject(projectRoot => {
       const protectedFiles = [
-        componentBlueprintPath(projectRoot, 'ledger'),
-        ...enumerateCanonicalChangeUnits(projectRoot, 'ledger').map(item => item.canonicalPath),
-        ...enumerateCanonicalChangeUnits(projectRoot, 'ledger').map(item => featureFilePath(projectRoot, deriveChangeUnitFeatureId('ledger', String(item.changeUnit.change_unit_id)), 'contracts.yaml')),
+        componentBlueprintPath(projectRoot, 'ledger-app-blueprint'),
+        ...enumerateCanonicalChangeUnits(projectRoot, 'ledger-app-blueprint').map(item => item.canonicalPath),
+        ...enumerateCanonicalChangeUnits(projectRoot, 'ledger-app-blueprint').map(item => featureFilePath(projectRoot, deriveChangeUnitFeatureId('ledger-app-blueprint', String(item.changeUnit.change_unit_id)), 'contracts.yaml')),
       ];
       const before = protectedFiles.map(file => fs.readFileSync(file));
-      const evaluated = evaluateComponentClosure(projectRoot, 'ledger', evaluationOptions());
+      const evaluated = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
       protectedFiles.forEach((file, index) => assert(fs.readFileSync(file).equals(before[index]), `P3 反写上游：${file}`));
       assert(!Object.prototype.hasOwnProperty.call(evaluated.closure, 'capability_e2e'), 'Component closure 越权声明 Capability E2E');
       assert(!Object.prototype.hasOwnProperty.call(evaluated.closure, 'p2_ready_set'), 'Component closure 写入 P2 ready state');

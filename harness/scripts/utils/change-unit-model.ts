@@ -5,6 +5,8 @@ export const CHANGE_UNIT_ARTIFACT = 'change-unit@1' as const;
 export interface ChangeUnitRef {
   artifact: typeof CHANGE_UNIT_ARTIFACT;
   component_id: string;
+  /** M5A §4.2：必填；CU 与 ref 均以 blueprint_id 定位演进工作区 */
+  blueprint_id: string;
   change_unit_id: string;
   revision: number;
   artifact_sha256: string;
@@ -58,6 +60,8 @@ export interface ChangeUnitBlocker {
 export interface ChangeUnitArtifact {
   artifact: typeof CHANGE_UNIT_ARTIFACT;
   component_id: string;
+  /** M5A §4.2：CU 根增加必填 blueprint_id（与目录路径段、component_blueprint_ref 一致） */
+  blueprint_id: string;
   change_unit_id: string;
   revision: number;
   priority: number;

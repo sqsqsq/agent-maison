@@ -32,6 +32,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+
+// 发布件内共享 SSOT 加载（M5A §4.3）：hook 不携带 decoder 副本（Node ESM → CJS 互操作）。
+const requireNodeModule = (() => {
+  try {
+    return createRequire(import.meta.url);
+  } catch {
+    return null;
+  }
+})();
 
 // --------------------------------------------------------------------------
 // 1. stdin
@@ -142,13 +152,26 @@ function readStateFileRelFromConfig(projectRoot) {
   }
 }
 
-/** 对齐 harness/config.featurePhaseReportsDir —— Hook 不落 TS，纯 Node 复刻占位符语义 */
+/** 对齐 harness/config.featurePhaseReportsDir —— Hook 不落 TS，纯 Node 复刻占位符语义；
+ * M5A §4.3：<feature> 经发布件内唯一 SSOT（framework/harness/scripts/utils/feature-identity.js）
+ * 展开为物理相对路径（CU=<blueprint_id>/<change_unit_id>），不得自带 decoder 副本；
+ * `cu-` 前缀解析失败 → 返回 null（fail-closed，调用方走 state 目录兜底，绝不把编码 id 当物理路径）。 */
 function resolveFeaturePhaseReportDir(projectRoot, feature, phase) {
   if (!feature || !phase || feature === 'unknown' || phase === 'unknown') return null;
   try {
     const cfgPath = path.resolve(projectRoot, 'framework.config.json');
     if (feature === '_global') {
       return path.resolve(projectRoot, 'framework/harness/reports/_global', phase);
+    }
+    let featureRel = feature;
+    if (feature.startsWith('cu-')) {
+      try {
+        const ssotAbs = path.resolve(projectRoot, 'framework', 'harness', 'scripts', 'utils', 'feature-identity.js');
+        if (!fs.existsSync(ssotAbs) || !requireNodeModule) return null;
+        featureRel = requireNodeModule(ssotAbs).featureRelativePath(feature);
+      } catch {
+        return null;
+      }
     }
     let pattern = null;
     try {
@@ -161,12 +184,15 @@ function resolveFeaturePhaseReportDir(projectRoot, feature, phase) {
       pattern = null;
     }
     if (pattern) {
-      const rel = pattern.replace(/<feature>/g, feature).replace(/<phase>/g, phase);
+      const rel = pattern.replace(/<feature>/g, featureRel).replace(/<phase>/g, phase);
       return path.resolve(projectRoot, rel);
     }
-    return path.resolve(projectRoot, 'framework/harness/reports', feature, phase);
+    return path.resolve(projectRoot, 'framework/harness/reports', featureRel, phase);
   } catch {
-    return path.resolve(projectRoot, 'framework/harness/reports', feature, phase);
+    // M5A：cu- 前缀绝不拼出编码 id 路径——返回 null 走 state 目录兜底；legacy 原样。
+    return typeof feature === 'string' && feature.startsWith('cu-')
+      ? null
+      : path.resolve(projectRoot, 'framework/harness/reports', feature, phase);
   }
 }
 
@@ -333,10 +359,12 @@ async function main() {
   const reportDir =
     resolved ?? path.resolve(projectRoot, 'framework/harness/state');
 
-  const mdPath = useStateDir
+  // M5A：resolved===null 且 useStateDir 时也已落入 state 目录兜底——文件名随之
+  // 用 last-verifier-report.*（与既有兜底同名，不产生新命名空间；review 口径）。
+  const mdPath = resolved
     ? path.join(reportDir, 'verifier.report.md')
     : path.join(reportDir, 'last-verifier-report.md');
-  const jsonPath = useStateDir
+  const jsonPath = resolved
     ? path.join(reportDir, 'verifier.report.json')
     : path.join(reportDir, 'last-verifier-report.json');
 

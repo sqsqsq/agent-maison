@@ -136,13 +136,33 @@ function validateCanonicalIdentity(
   out: ChangeUnitIssue[],
 ): void {
   if (!canonicalPath) return;
-  const fileId = path.basename(canonicalPath, path.extname(canonicalPath));
-  const componentId = path.basename(path.dirname(path.dirname(canonicalPath)));
-  if (cu.change_unit_id !== fileId || cu.component_id !== componentId) {
+  // M5A §3/§4.2 终态布局：`<features_dir>/<blueprint_id>/<change_unit_id>/change-unit.yaml`
+  // 文件名固定 change-unit.yaml；unit=父目录名、blueprint=祖父目录名。
+  const baseName = path.basename(canonicalPath);
+  if (baseName !== 'change-unit.yaml') {
     out.push(changeUnitIssue(
       'change_unit_path_identity_mismatch',
       '$',
-      `Change Unit identity 不一致：path component=${componentId}, unit=${fileId}; yaml component=${String(cu.component_id)}, unit=${String(cu.change_unit_id)}。`,
+      `canonical Change Unit 文件名必须固定为 change-unit.yaml，实际=${baseName}。`,
+    ));
+  }
+  const changeUnitId = path.basename(path.dirname(canonicalPath));
+  const blueprintId = path.basename(path.dirname(path.dirname(canonicalPath)));
+  if (cu.change_unit_id !== changeUnitId || cu.blueprint_id !== blueprintId) {
+    out.push(changeUnitIssue(
+      'change_unit_path_identity_mismatch',
+      '$',
+      `Change Unit identity 不一致：path blueprint=${blueprintId}, unit=${changeUnitId}; yaml blueprint=${String(cu.blueprint_id)}, unit=${String(cu.change_unit_id)}。`,
+    ));
+  }
+  // M5A §4.2：CU 根 blueprint_id 必须等于 owner component_blueprint_ref.blueprint_id；
+  // 根 blueprint_id 已在 schema required 中强制（validateLiteSchema）。
+  const ownerRef = asRecord(cu.component_blueprint_ref);
+  if (ownerRef && ownerRef.blueprint_id !== cu.blueprint_id) {
+    out.push(changeUnitIssue(
+      'change_unit_blueprint_mismatch',
+      '$.component_blueprint_ref.blueprint_id',
+      `owner blueprint_id=${String(ownerRef.blueprint_id)} 与 CU 根 blueprint_id=${String(cu.blueprint_id)} 不一致。`,
     ));
   }
 }

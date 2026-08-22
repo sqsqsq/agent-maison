@@ -63,6 +63,8 @@ import {
   featureDir,
   relFeatureFile,
 } from '../config';
+// M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT
+import { featureRelativePath } from './utils/feature-identity';
 import { driftFactsFromClosureAttestation, partitionDriftByGitStatus } from './utils/source-drift-facts';
 import { classifySourceDrift, computeCurrentDriftFingerprint, loadMutationAuthorizations } from './utils/mutation-authorization';
 import { isGoalOrchestrationEnv } from './utils/phase-state';
@@ -831,12 +833,12 @@ function filterProtected(ctx: CheckContext, changes: string[]): string[] {
  */
 function computeReportsFeatureRoot(projectRoot: string, feature: string): string {
   const override = process.env.HARNESS_REPORTS_ROOT_OVERRIDE;
-  if (override) return path.join(override, feature);
+  if (override) return path.join(override, featureRelativePath(feature));
   const cfg = loadFrameworkConfig(projectRoot);
   if (typeof cfg.paths.reports_dir_pattern === 'string' && cfg.paths.reports_dir_pattern.trim().length > 0) {
-    return path.join(featuresDirPath(projectRoot), feature);
+    return path.join(featuresDirPath(projectRoot), featureRelativePath(feature));
   }
-  return path.join(HARNESS_ROOT, 'reports', feature);
+  return path.join(HARNESS_ROOT, 'reports', featureRelativePath(feature));
 }
 
 function findGapNotesFiles(projectRoot: string, feature: string): string[] {

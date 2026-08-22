@@ -93,4 +93,4 @@ OCR JSON 为文案/位置 ground truth，结构由需求文字推断，图标走
 
 `performance` 章节：`id`（NFR-N）/`metric`/`threshold`。`coverage_summary`：自动统计 P0/P1/P2 功能的 AC 覆盖率，确保每个 P0/P1 功能至少一条 AC 覆盖。
 
-参考已有示例：`doc/features/home-page/acceptance.yaml`。
+参考已有示例：`<features_dir>/<feature>/acceptance.yaml`（`<features_dir>` 默认 `doc/features`）。

@@ -1,6 +1,6 @@
-feature: cu-bGVkZ2VyAGxlZGdlci1jb25zdW1lcg
+feature: cu-bGVkZ2VyLWFwcC1ibHVlcHJpbnQAbGVkZ2VyLWNvbnN1bWVy
 source: P2 canonical fixture
-version: '1'
+version: "1"
 modules: []
 module_dependencies: {}
 data_models: []
@@ -13,7 +13,8 @@ change_unit:
     component_id: ledger
     change_unit_id: ledger-consumer
     revision: 1
-    artifact_sha256: sha256:44580795a99c6e5c90087bd7aa740e7b8d719d5f2fbd0253b08bb2f780137ea8
+    artifact_sha256: sha256:24b683e652b5322d80aaec9abab6984a2c6c957299ee32f0e5fcfdd7ce8dcff2
+    blueprint_id: ledger-app-blueprint
   predicate_mappings: []
   provide_mappings: []
   design_ref_mappings: []

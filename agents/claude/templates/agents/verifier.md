@@ -20,6 +20,8 @@ tools: Read, Glob, Grep
 - （可选）`script_report_path`: 脚本 Harness (`check-<phase>.ts`) 的报告路径
 - （可选）`trace_dir`: `<features_dir>/<feature>/<phase>/reports/<timestamp>/<model>-<phase>/`（未配置 `paths.reports_dir_pattern` 时 legacy：`framework/harness/reports/...`）
 
+> **路径解析（BLOCKER）**：`<features_dir>/<feature>/…` 一律经框架解析——`<feature>` 是物理 Feature 路径（语义见 [路径术语表](../../framework/skills/reference/agents-entry-detail.md)），由调用方/CLI 输出给出；不得把逻辑 identity（含编码 `cu-…`）拼接进路径。
+
 ## 工作流
 
 0. **脚本门禁（BLOCKER，coding/ut 必做）**：若提供了 `script_report_path`，先 Read 该报告及同目录 `summary.json`。若 `summary.verdict=FAIL`、`coding_run_status`/`ut_run_status` 的 `can_claim_done=false`，或 `coding_compile`/`coding_hvigor_build`/`ut.compile` 等为 FAIL → 仅输出 `coding_compile_gate`（或 ut 等价项）FAIL，**summary.verdict=FAIL**，不要对其余项给 PASS。父 agent 在脚本未 PASS 时调用你属于流程违规。

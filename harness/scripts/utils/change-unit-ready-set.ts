@@ -61,7 +61,7 @@ function validateStaleReexecution(
   unit: ChangeUnitArtifact,
 ): Array<{ id: string; message: string; legal: boolean }> {
   try {
-    const featureId = deriveChangeUnitFeatureId(unit.component_id, unit.change_unit_id);
+    const featureId = deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id);
     const frameworkRoot = path.resolve(__dirname, '..', '..', '..');
     const featureSpec = new SpecLoader(projectRoot, undefined, undefined, frameworkRoot).loadFeatureSpec(featureId);
     if ((featureSpec.shape_issues ?? []).length > 0) {
@@ -98,12 +98,23 @@ function validateStaleReexecution(
 
 export function deriveChangeUnitReadySet(
   projectRoot: string,
-  componentId: string,
+  blueprintId: string,
   options: DeriveChangeUnitReadySetOptions = {},
 ): ChangeUnitReadySet {
+  // M5A §8.5：注入 seams 同样 fail-closed——options.units 出现 foreign workspace 的
+  // CU（含同 component_id 的早期演进）直接拒绝，不依赖默认枚举“碰巧同域”。
+  if (options.units) {
+    const foreign = options.units.filter(unit => unit.blueprint_id !== blueprintId);
+    if (foreign.length > 0) {
+      throw new Error(
+        `[deriveChangeUnitReadySet] options.units 含 foreign workspace CU：`
+        + foreign.map(unit => `${unit.blueprint_id}/${unit.change_unit_id}`).join('、') + `；仅允许同一 blueprint_id=${blueprintId} 工作区。`,
+      );
+    }
+  }
   const entries = options.units
     ? options.units.map(changeUnit => ({ changeUnit, canonicalPath: undefined as string | undefined }))
-    : enumerateCanonicalChangeUnits(projectRoot, componentId)
+    : enumerateCanonicalChangeUnits(projectRoot, blueprintId)
       .map(item => ({ changeUnit: asChangeUnitArtifact(item.changeUnit), canonicalPath: item.canonicalPath }));
   const units = entries.map(item => item.changeUnit);
   const artifactIssuesByUnit = new Map<ChangeUnitArtifact, ReturnType<typeof blockerChangeUnitIssues>>();
@@ -121,7 +132,7 @@ export function deriveChangeUnitReadySet(
     if (artifactIssues.length > 0) {
       let featureId = '';
       try {
-        featureId = deriveChangeUnitFeatureId(String(unit.component_id), String(unit.change_unit_id));
+        featureId = deriveChangeUnitFeatureId(String(unit.blueprint_id), String(unit.change_unit_id));
       } catch { /* invalid identity is already reported by the CU validator */ }
       completionById.set(unit.change_unit_id, {
         state: 'INVALID',
