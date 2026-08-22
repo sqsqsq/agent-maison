@@ -202,6 +202,21 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
 
   // --- 需要人的决定（可问则问，不可问则停放） -------------------------------
   await_human_visual_confirm: { class: 'operator', requires_grant: 'human_visual_acceptance' },
+  /**
+   * adjudicated-repair-loop（plan e2b7c4a9）：信号级候选累计 one-shot 收敛——
+   * open 中全部 signal@1 身份均已 attempted（eligible 空），或回退目标 phase 零改动
+   * no-op（修复无效）——不再自动回退，停等人工裁决。恢复=既有人工通道
+   * （manual driver 确认流 / visual-confirm 人签路径），不新增 receipt 体系。
+   */
+  repair_not_converging: { class: 'operator' },
+  /**
+   * adjudicated-repair-loop（plan e2b7c4a9）：物化前两态裁决受阻——producer 判
+   * actionable 的信号被 agent 反对/未复核，或 producer 直接归 uncertain（OCR 混淆 /
+   * 口径缺口）。**不物化候选、不自动回退、无自动 refuted**——原样呈证据停等人工。
+   * 恢复=既有 manual driver / visual-confirm / confirmation-receipts 通道（后者仅
+   * 真正豁免硬门禁时），guidance 写明入口与 resume 命令（WAITING 可接受未来输入）。
+   */
+  repair_adjudication_pending: { class: 'operator' },
   await_human_verification_evidence: { class: 'operator', requires_grant: 'runtime_fidelity_attestation' },
   capability_tightened_hard_pixel: { class: 'operator', requires_grant: 'fidelity_downgrade' },
   declared_product_layer_missing: { class: 'operator' },

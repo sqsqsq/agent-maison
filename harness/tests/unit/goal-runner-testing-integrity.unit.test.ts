@@ -22,6 +22,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { createHash } from 'crypto';
 import { spawnSync } from 'child_process';
 import {
   __testing_resetGoalRunnerSeams,
@@ -191,6 +192,13 @@ function writeVisualDiff(
     withEvalHash?: boolean;
     /** true=evaluation_invalidated（评估被判无效待重评） */
     invalidated?: boolean;
+    /** visual-confirm 人签通道：真人人签（isHumanVerified 谓词校验） */
+    confirmed_by?: string;
+    /** adjudicated-repair-loop：结构化 defects（进入 signal@1 身份 + defect-review 复核） */
+    defects?: Array<{
+      class?: string; element?: string; bbox?: number[]; severity: string; note: string;
+      must_fix_refs?: number[];
+    }>;
   }>,
 ): void {
   const rows = screens.map(sc => {
@@ -210,6 +218,8 @@ function writeVisualDiff(
       }),
       ...(fp === undefined ? {} : { evaluated_build_fingerprint: fp }),
       ...(sc.invalidated ? { evaluation_invalidated: true } : {}),
+      ...(sc.confirmed_by ? { confirmed_by: sc.confirmed_by } : {}),
+      ...(sc.defects ? { defects: sc.defects } : {}),
     };
   });
   writeFile(
@@ -241,6 +251,8 @@ interface RunProbe {
   testingExtraEnvs: Array<Record<string, string>>;
   /** d9e4b7c1 T2（v13 缝扩展）：gate harness 各 phase 收到的注入 env */
   harnessDeviceEnvs: Array<{ phase: string; env: Record<string, string> | undefined }>;
+  /** adjudicated-repair-loop：receipt validator 实际调用次数（uncertain 停等断言=0） */
+  receiptValidationCalls: Array<{ phase: string }>;
   exitCode: number;
   root: string;
   reportDir: string;
@@ -301,6 +313,9 @@ async function runChain(
     /** e9d4b7a3 t5 负向：按 (attemptId, phase) 强制 receipt 复验 failed（模拟旧回执身份
      * 损坏等真实失败路径——桩默认已 identity-aware，此选项只做注入，不改变默认语义） */
     failReceiptFor?: (attemptId: string, phase: string) => boolean;
+    /** adjudicated-repair-loop M2（plan e2b7c4a9 t2.6）：向 testing PASS summary 注入
+     * 额外字段（如 visual_round 回执）——验证 uncertain 提前停等不丢既有事件投影。 */
+    testingSummaryExtras?: Record<string, unknown>;
   } = {},
 ): Promise<RunProbe> {
   const invokedPhases: string[] = [];
@@ -312,6 +327,7 @@ async function runChain(
   const testingPrompts: string[] = [];
   const testingExtraEnvs: Array<Record<string, string>> = [];
   const harnessDeviceEnvs: Array<{ phase: string; env: Record<string, string> | undefined }> = [];
+  const receiptValidationCalls: Array<{ phase: string }> = [];
   const attempts = new Map<string, number>();
   const prevArgv = process.argv;
   const prevCwd = process.cwd();
@@ -363,6 +379,7 @@ async function runChain(
     __testing_setValidateReceipt(((_hr: string, _pr: string, ph: string, feat: string, validateOpts?: {
       goalIdentity?: { runId?: string; attemptId?: string; attemptPhase?: string };
     }) => {
+      receiptValidationCalls.push({ phase: String(ph) });
       // e9d4b7a3 t5（二轮 review P1）：**identity-aware 桩**——镜像 check-receipt 的同阶段
       // claimed_attempt_id 严格等值（不得无条件 passed）：回执文件在场的 claimed 与请求
       // attempt 不一致 → failed。这使「刷新伪造 refresh-* attempt」在测试里必然红。
@@ -515,6 +532,8 @@ async function runChain(
           asset: axis('PASS'), evidence: axis('PASS'),
         },
         blockers: [], checks: [],
+        // adjudicated-repair-loop M2：测试注入（visual_round 回执等，验证提前停等不丢投影）
+        ...(String(ph) === 'testing' ? (opts.testingSummaryExtras ?? {}) : {}),
       }, null, 2), 'utf-8');
       // phase-evidence-manifest + 回执指针（生产 writer 同源；lineage_fresh 巡检消费）。
       // frameworkRoot 不传——verify 侧重算 environment 时也是 guess 口径，两侧必须同源，
@@ -632,6 +651,7 @@ async function runChain(
     return {
       invokedPhases, harnessPhases, deviceGatePhases, codingPrompts, planPrompts, testingPrompts, testingExtraEnvs,
       harnessDeviceEnvs,
+      receiptValidationCalls,
       exitCode, root, reportDir,
       events: readEvents(reportDir),
     };
@@ -677,6 +697,42 @@ function assertRunReachedEnd(probe: RunProbe, label: string): void {
 }
 
 /** 干净 testing 轮的标准产物：全 pass、无 must_fix（advance 条件） */
+/**
+ * adjudicated-repair-loop M2（plan e2b7c4a9）：写 testing 报告 defect-review 复核块——
+ * 视觉信号须逐条 confirmed（与 producer actionable 同向）才物化为候选；disputed/未复核
+ * 一律停等。signal 用结构化指纹（screen|class|element|bbox_bucket）精确绑定。
+ */
+function writeConfirmedReview(root: string, signals: string[]): void {
+  writeFile(root, `doc/features/${FEATURE}/testing/test-report.md`, [
+    '# 测试报告', '', '## 三、缺陷清单', '',
+    '| 缺陷编号 | 严重程度 | 描述 | 状态 |',
+    '|--|--|--|--|',
+    '| DEF-001 | MAJOR | 视觉差异 | 待修复 |', '',
+    '```defect-review',
+    ...signals.map((s) => `- signal: ${s}\n  verdict: confirmed\n  rationale: 截图核对确认为真缺陷`),
+    '```',
+  ].join('\n'));
+}
+
+/** defect-review 块：disputed（未终裁——应停等；或带 resolve） 或 confirmed 等自定义条目 */
+function writeDefectReview(root: string, lines: string[]): void {
+  writeFile(root, `doc/features/${FEATURE}/testing/test-report.md`, [
+    '# 测试报告', '', '## 三、缺陷清单', '',
+    '| 缺陷编号 | 严重程度 | 描述 | 状态 |',
+    '|--|--|--|--|',
+    '| DEF-001 | MAJOR | 视觉差异 | 待修复 |', '',
+    '```defect-review',
+    ...lines,
+    '```',
+  ].join('\n'));
+}
+
+/** 结构化视觉信号指纹（与 collectActionableDefects 的 computeDefectFingerprint 同构） */
+function signalFp(screenId: string, cls: string, element: string, bbox: number[]): string {
+  const bucket = bbox.map((n) => (Math.round(n * 10) / 10).toFixed(1)).join(',');
+  return `${screenId}|${cls}|${element}|${bucket}`;
+}
+
 function writeCleanTesting(root: string): void {
   writeVisualDiff(root, [{ id: 'all_banks', verdict: 'pass', mustFix: [] }]);
 }
@@ -1100,10 +1156,16 @@ test('E2E-3 PASS+新鲜 must_fix → 回 coding（prompt 含原始 must_fix）�
       if (attempt === 1) {
         // 第一轮：gate PASS（best_effort 下视觉缺陷=warn），但 must_fix 非空且新鲜
         writeVisualDiff(r, [{ id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT] }]);
+        // M2：视觉信号须复核 confirmed（同向）才物化
+        writeConfirmedReview(r, [MUST_FIX_TEXT]);
       } else {
         // 回退修复后的第二轮：干净
         writeCleanTesting(r);
       }
+    },
+    // adjudicated-repair-loop M1 no-op 语义：回修轮须真实改动产品源码（否则快照 pre/post 相等 = no-op → 停等 repair_not_converging，这是新契约而非 bug）。
+    onCoding: ({ root: r, attempt }) => {
+      if (attempt > 1) writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("fixed") } }');
     },
   });
   assert(hasEvent(probe.events, 'phase_backtrack_requested'),
@@ -1132,11 +1194,17 @@ test('E2E-4 本 run crash 归档 → 回 coding（prompt 含 crash 指令+诊断
             schema_version: '1.2', screen_or_case: 'all_banks', run_id: runId,
             diagnosis: { kind: 'crash_suspected', bundleName: 'com.x', faultFiles: ['cppcrash-com.x-1'], excerpt: 'SIGSEGV' },
           }));
+          // M2：crash 信号同样须复核 confirmed（同向）才物化
+          writeConfirmedReview(r, ['all_banks']);
         } else {
           // 修复轮：模拟 capture 侧清理（真实链路 capture 开始时清本 run 旧归档）
           fs.rmSync(path.join(r, diagRel), { force: true });
           writeCleanTesting(r);
         }
+      },
+      // M1 no-op 语义：崩溃修复=产品代码改动（否则快照相等 → no-op 停等）
+      onCoding: ({ root: r, attempt }) => {
+        if (attempt > 1) writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("crash-fixed") } }');
       },
     });
     assert(hasEvent(probe.events, 'phase_backtrack_requested'),
@@ -1286,6 +1354,11 @@ test('R-6b 上一 run 遗留但 build+截图一致的 must_fix → 仍回退（i
   const probe = await runChain(root, {
     onTesting: ({ root: r, attempt }) => {
       if (attempt > 1) writeCleanTesting(r);   // 修复后干净；第一轮不动盘上遗留（agent 只采证）
+      else writeConfirmedReview(r, [MUST_FIX_TEXT]); // M2：须复核 confirmed 才物化
+    },
+    // M1 no-op 语义：回修轮须真实改动产品源码
+    onCoding: ({ root: r, attempt }) => {
+      if (attempt > 1) writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("fixed") } }');
     },
   });
   assert(hasEvent(probe.events, 'phase_backtrack_requested'),
@@ -1317,28 +1390,46 @@ test('R-7 violation 后同 run --resume 被拒绝（run 终止态；防遗留修
 
 test('R-8 进程重启后同 roundFingerprint 仍熔断；集合变化不熔断', async () => {
   const { root } = setupHost();
-  // 第一次 run：testing 每轮都产出**同一条** must_fix（coding 修不动）→ 回退 1 次后
-  // 第二次 testing 同集合 → 同进程熔断 halt
+  // adjudicated-repair-loop M1（plan e2b7c4a9）：修不动（零改动修复）的循环现在被
+  // **更早的防线**掐断——结构化信号候选回退目标 coding 执行后快照 pre/post 相等 →
+  // no-op（result='noop'）→ 停 repair_not_converging，不再等到第二次 testing 的同集合
+  // repeat 熔断。整轮全等指纹降为兜底（本测试保留它作为 resume 场景的回归面：resume
+  // 后 attempted 回放 → 同一身份仍 open 且 eligible 空 → 同样 repair_not_converging，
+  // 不再回退）。
+  const FP = signalFp('add_card_home', 'shape_mismatch', 'hc_page_title', [0.1, 0.2, 0.3, 0.4]);
   const first = await runChain(root, {
     onTesting: ({ root: r }) => {
-      writeVisualDiff(r, [{ id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT] }]);
+      writeVisualDiff(r, [{
+        id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT],
+        defects: [{
+          class: 'shape_mismatch', element: 'hc_page_title', bbox: [0.1, 0.2, 0.3, 0.4],
+          severity: 'major', note: '标题错位', must_fix_refs: [0],
+        }],
+      }]);
+      // M2：复核 confirmed 才发生第一次回退（随后 coding 修不动 → no-op 停等）
+      writeConfirmedReview(r, [FP]);
     },
+    // 修不动：fake coding 任何 attempt 都不改产品源码
   });
   assert(runEndStatus(first.events) === 'HALTED', `修不动须 halt，实得 ${runEndStatus(first.events)}`);
   const bt1 = first.events.filter(e => e.type === 'phase_backtrack_requested');
   assert(bt1.length === 1, `同集合只允许回退一次，实得 ${bt1.length}`);
   assert(
     first.events.some(e => e.type === 'phase_halt' &&
-      (e as { halt_reason?: string }).halt_reason === 'backtrack_fingerprint_repeat'),
-    `halt 原因须为同集合熔断：${JSON.stringify(first.events.filter(e => e.type === 'phase_halt'))}`,
+      (e as { halt_reason?: string }).halt_reason === 'repair_not_converging'),
+    `修不动须 halt repair_not_converging（no-op 短路，先于整轮 repeat 熔断）：\n` +
+      JSON.stringify(first.events.filter(e => e.type === 'phase_halt')),
+  );
+  assert(
+    first.events.some(e => e.type === 'phase_backtrack_completed' && (e as { result?: string }).result === 'noop'),
+    `须记 phase_backtrack_completed.result=noop：` +
+      JSON.stringify(first.events.filter(e => e.type === 'phase_backtrack_completed')),
   );
   const rf = (bt1[0] as { round_fingerprint?: string }).round_fingerprint;
   assert(typeof rf === 'string' && rf.length > 0, '回退事件须持久化完整 round_fingerprint');
 
   // "重启"：--resume 同一 run（新一次 goalMain 调用 = priorEvents 从盘上恢复）。
-  // 同缺陷再现 → 不得再回退（seenRoundFingerprints 从事件 round_fingerprint 字段恢复）。
-  const repeatHalts1 = first.events.filter(e => e.type === 'phase_halt' &&
-    (e as { halt_reason?: string }).halt_reason === 'backtrack_fingerprint_repeat').length;
+  // 同缺陷再现 → attempted 回放使其 eligible 空 → 不得再回退（累计 one-shot）。
   const runId = path.basename(first.reportDir);
   // cooldown 是硬防线（判定在 forceResume 之前，force 只解 terminal 拒绝）——不为测试
   // 改语义。模拟"5 分钟后真实重启"：把 run_end 时间戳回拨 10 分钟（时间流逝的正当模拟）。
@@ -1362,18 +1453,35 @@ test('R-8 进程重启后同 roundFingerprint 仍熔断；集合变化不熔断'
     resume: runId,
     forceResume: true,
     onTesting: ({ root: r }) => {
-      writeVisualDiff(r, [{ id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT] }]);
+      writeVisualDiff(r, [{
+        id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT],
+        defects: [{
+          class: 'shape_mismatch', element: 'hc_page_title', bbox: [0.1, 0.2, 0.3, 0.4],
+          severity: 'major', note: '标题错位', must_fix_refs: [0],
+        }],
+      }]);
+      // 放行轮同样须复核 confirmed 才物化回退
+      writeConfirmedReview(r, [FP]);
     },
   });
   assert(second.invokedPhases.includes('testing'),
     `resume 须真正重入 testing，实得 [${second.invokedPhases.join(',')}]`);
+  // adjudicated-repair-loop（review 修复）：「再修一次」的许可 = resume 动作本身（halt 后
+  // 人工 resume = 一次显式放行）。故 resume 后**放行一轮**：同集合再回退一次（attempted 清空），
+  // 随后 coding 零改动 → 再次 no-op → 再 halt。attempted 不变式保证每轮只多修一次，
+  // 不会自动继续（每次都需要新的人工 resume）。
   const bt2 = second.events.filter(e => e.type === 'phase_backtrack_requested');
-  assert(bt2.length === bt1.length,
-    `重启后同集合不得再回退（事件数须不变），实得 ${bt2.length} vs ${bt1.length}`);
-  const repeatHalts2 = second.events.filter(e => e.type === 'phase_halt' &&
-    (e as { halt_reason?: string }).halt_reason === 'backtrack_fingerprint_repeat').length;
-  assert(repeatHalts2 === repeatHalts1 + 1,
-    `resume 后须**新增一条** repeat 熔断（${repeatHalts1} → ${repeatHalts2}）——从事件 round_fingerprint 恢复生效的直接证据`);
+  assert(bt2.length === bt1.length + 1,
+    `resume 放行一轮（同集合再回退一次），实得 ${bt2.length} vs 首轮 ${bt1.length}`);
+  assert(
+    second.events.some(e => e.type === 'phase_backtrack_completed' && (e as { result?: string }).result === 'noop'),
+    `放行轮 coding 零改动 → 再 no-op：${JSON.stringify(second.events.filter(e => e.type === 'phase_backtrack_completed'))}`,
+  );
+  const convergenceHalts2 = second.events.filter(e => e.type === 'phase_halt' &&
+    (e as { halt_reason?: string }).halt_reason === 'repair_not_converging').length;
+  assert(convergenceHalts2 >= 1,
+    `resume 后须再落 repair_not_converging（no-op 停等）——` +
+      `每轮放行一次的直接证据：${JSON.stringify(second.events.filter(e => e.type === 'phase_halt'))}`);
 });
 
 // ---------------------------------------------------------------------------
@@ -1737,7 +1845,15 @@ test('T2-2 全链回修：正式 gate 写 evidence（product_actionable×physica
       fs.writeFileSync(deviceTestEvidencePath(reportsDir), JSON.stringify(doc, null, 2), 'utf-8');
     };
     const probe = await runChain(root, {
-      onTesting: ({ root: r }) => writeCleanTesting(r),
+      onTesting: ({ root: r }) => {
+        writeCleanTesting(r);
+        // M2：device_test 缺陷同样须复核 confirmed（同向）才物化
+        writeConfirmedReview(r, ['TC-001']);
+      },
+      // M1 no-op 语义：device_test 回修轮须真实改动产品源码
+      onCoding: ({ root: r, attempt }) => {
+        if (attempt > 1) writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("device-fixed") } }');
+      },
       onTestingHarness: ({ runId, attemptId, attempt }) => {
         // 正式 gate 单写者：第 1 轮产出真机缺陷 evidence；回修后第 2 轮干净
         evidenceForAttempt(runId, attemptId, attempt === 1);
@@ -2251,6 +2367,8 @@ test('c7e4a2d9-① 事故组合：report_validity=FAIL + P0 explicit-only 缺口
           { id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT] },
           { id: 'card_type_sheet', verdict: 'warn', mustFix: [MUST_FIX_TEXT] },
         ]);
+        // M2：三条视觉候选须复核 confirmed（同向）才随整组交接
+        writeConfirmedReview(r, [MUST_FIX_TEXT, MUST_FIX_TEXT, MUST_FIX_TEXT]);
       } else {
         const written = writtenSummary(r);
         assert(written.report_validity === 'FAIL',
@@ -2261,6 +2379,10 @@ test('c7e4a2d9-① 事故组合：report_validity=FAIL + P0 explicit-only 缺口
         );
         writeCleanTesting(r);
       }
+    },
+    // M1 no-op 语义：回修轮须真实改动产品源码（否则快照相等 → no-op 停等）
+    onCoding: ({ root: r, attempt }) => {
+      if (attempt > 1) writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("fixed") } }');
     },
   });
   const bt = probe.events.filter(
@@ -2406,6 +2528,246 @@ test('c7e4a2d9-④ 机器 envBlocked 在场 → 外部路径不误投 coding（�
     haltReasons(probe.events).includes('await_operator_toolchain'),
     `envBlocked 须走既有外部 halt：${haltReasons(probe.events).join(',')}`,
   );
+});
+
+// ---------------------------------------------------------------------------
+// adjudicated-repair-loop M2（plan e2b7c4a9 t2.6）：物化前裁决 + uncertain 判停时序
+// ---------------------------------------------------------------------------
+
+test('M2-1 唯一 uncertain 其余全 PASS → 停等 repair_adjudication_pending；不 finalize closure；visual_round 投影不丢', async () => {
+  const { root } = setupHost();
+  const uncertainSig = {
+    item_fingerprint: 'c'.repeat(64),
+    reason: 'OCR 识别文本「中国银行」与候选「中信银行」编辑距离 ≤1——两源冲突，不自动裁定谁对',
+    evidence_ref: 'doc/features/bc-openCard/device-testing/visual-diff.md#add_card_home',
+  };
+  const probe = await runChain(root, {
+    // testing agent 首轮只采证（visual-diff.json 干净），不写 must_fix
+    onTesting: ({ root: r }) => {
+      writeVisualDiff(r, [{ id: 'add_card_home', verdict: 'pass', mustFix: [] }]);
+    },
+    onTestingHarness: ({ root: r, attempt }) => {
+      if (attempt !== 1) return;
+      // 真实载体：check 产 VisualDiffStructuredPayload（checks[].structured.uncertain_signals[]）
+      // → 随 script-report.json 落盘（report-generator 既有 checks 通道）。
+      const reportsDir = path.join(r, 'doc/features', FEATURE, 'testing', 'reports');
+      fs.mkdirSync(reportsDir, { recursive: true });
+      fs.writeFileSync(path.join(reportsDir, 'script-report.json'), JSON.stringify({
+        phase: 'testing', feature: FEATURE,
+        timestamp: new Date().toISOString(), project_root: r,
+        checks: [{
+          id: 'visual_diff', category: 'structure', description: '', severity: 'MAJOR', status: 'PASS',
+          details: '不确定信号注记',
+          structured: {
+            kind: 'visual_diff', loop_id: 'L1', attempt_id: null, goal_run_id: null,
+            build_fingerprint: null, screens_hash: 's', defect_fingerprints: [], fingerprintable: true,
+            source_fail_hit_ids: [], source_warn_ids: [], await_human_only: false, actionable_residual: false,
+            t8_findings: [],
+            uncertain_signals: [uncertainSig],
+          },
+        }],
+        summary: {
+          total: 1, pass: 1, fail: 0, warn: 0, skip: 0, blockers: 0, verdict: 'PASS',
+        },
+      }, null, 2), 'utf-8');
+    },
+    // visual_round 回执在场（既有投影的输入）——验证提前停等不丢投影
+    testingSummaryExtras: {
+      visual_round: {
+        loop_id: 'L1', attempt: 'a1', row_hash: 'h1',
+        disposition: 'appended', decision: { fused: false },
+      },
+    },
+  });
+  // 判停：halt repair_adjudication_pending，run 停在 WAITING(human)
+  assert(
+    probe.events.some(e => e.type === 'phase_halt' &&
+      (e as { halt_reason?: string }).halt_reason === 'repair_adjudication_pending'),
+    `须 halt repair_adjudication_pending：${JSON.stringify(probe.events.filter(e => e.type === 'phase_halt'))}`,
+  );
+  assert(
+    probe.events.some(e => e.run_disposition === 'WAITING' && e.run_wait_kind === 'human'),
+    '须落 WAITING(human)（operator 类）',
+  );
+  // 不得进入普通 verdict advance / candidate merge / 回退
+  assert(
+    !probe.events.some(e => e.type === 'phase_backtrack_requested'),
+    'uncertain 不得驱动回退',
+  );
+  // 既有 visual_round 投影仍完成（不因提前停等丢失）
+  const vr = probe.events.filter(e => e.type === 'visual_round');
+  assert(vr.length >= 1, `visual_round 投影必须保留：${probe.events.map(e => e.type).join(',')}`);
+  assert((vr[0] as { row_hash?: string }).row_hash === 'h1', '投影携带回执哈希');
+  // review 修复（P1）：**不得调用/完成 receipt validation / closure finalization**——
+  // uncertain pending 早于 PASS closure；closure 前必经 receipt validator（fake 计数=0）。
+  const testingReceiptCalls = probe.receiptValidationCalls.filter(c => c.phase === 'testing');
+  assert(testingReceiptCalls.length === 0,
+    `uncertain 停等不得调用 receipt validator（closure 未执行）：${JSON.stringify(testingReceiptCalls)}`);
+});
+
+test('M2-2 明确未写 uncertain 的轮次不受影响（script-report 无载体 → 正常完成）', async () => {
+  const { root } = setupHost();
+  const probe = await runChain(root, {
+    onTesting: ({ root: r }) => writeCleanTesting(r),
+  });
+  assertRunReachedEnd(probe, 'M2-2');
+  assert(
+    !probe.events.some(e => e.type === 'phase_halt' &&
+      (e as { halt_reason?: string }).halt_reason === 'repair_adjudication_pending'),
+    '无 uncertain 载体不得停等',
+  );
+});
+
+test('M2-3 actionable + defect-review disputed（agent 反对）→ 停等、原样呈理由、不物化不回退', async () => {
+  const { root } = setupHost();
+  const FP = signalFp('add_card_home', 'shape_mismatch', 'hc_page_title', [0.1, 0.2, 0.3, 0.4]);
+  const probe = await runChain(root, {
+    onTesting: ({ root: r, attempt }) => {
+      if (attempt === 1) {
+        writeVisualDiff(r, [{
+          id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT],
+          defects: [{
+            class: 'shape_mismatch', element: 'hc_page_title', bbox: [0.1, 0.2, 0.3, 0.4],
+            severity: 'major', note: '标题错位', must_fix_refs: [0],
+          }],
+        }]);
+        // agent 反对（未终裁）：defect-review 块 disputed + 理由
+        writeDefectReview(r, [
+          `- signal: ${FP}`, '  verdict: disputed', '  rationale: OCR 混淆/口径错配，非真缺陷（两源冲突不证明实现错）',
+        ]);
+      }
+    },
+  });
+  const halts = probe.events.filter(e => e.type === 'phase_halt' &&
+    (e as { halt_reason?: string }).halt_reason === 'repair_adjudication_pending');
+  assert(halts.length >= 1, `agent 反对须停等：${JSON.stringify(probe.events.filter(e => e.type === 'phase_halt'))}`);
+  const dispute = (halts[0] as { dispute_rows?: string[] }).dispute_rows ?? [];
+  assert(
+    dispute.some((r) => r.includes('OCR 混淆')),
+    `反对理由须原样呈现：${JSON.stringify(dispute)}`,
+  );
+  assert(
+    !probe.events.some(e => e.type === 'phase_backtrack_requested'),
+    'disputed 不得驱动回退',
+  );
+});
+
+test('M2-3b 人签屏（visual-confirm confirmed_by 真人人签）→ 信号人工接受不阻塞、不物化、正常完成', async () => {
+  const { root } = setupHost();
+  const probe = await runChain(root, {
+    onTesting: ({ root: r, attempt }) => {
+      if (attempt === 1) {
+        writeVisualDiff(r, [{
+          id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT],
+          // 人工已过目认可该屏视觉（visual-confirm 人签通道：confirmed_by 真人人签，isHumanVerified）
+          confirmed_by: '张三-20260821',
+          defects: [{
+            class: 'shape_mismatch', element: 'hc_page_title', bbox: [0.1, 0.2, 0.3, 0.4],
+            severity: 'major', note: '标题错位', must_fix_refs: [0],
+          }],
+        }]);
+        // agent 反对（未终裁）；恢复=既有 visual-confirm 人签（已在上方 confirmed_by）
+        writeDefectReview(r, [
+          `- signal: ${signalFp('add_card_home', 'shape_mismatch', 'hc_page_title', [0.1, 0.2, 0.3, 0.4])}`, '  verdict: disputed', '  rationale: OCR 混淆/口径错配，非真缺陷',
+        ]);
+      }
+    },
+  });
+  assert(
+    !probe.events.some(e => e.type === 'phase_halt' &&
+      (e as { halt_reason?: string }).halt_reason === 'repair_adjudication_pending'),
+    `人签屏不得停等：${probe.events.filter(e => e.type === 'phase_halt').map(e => (e as { halt_reason?: string }).halt_reason).join(',')}`,
+  );
+  assert(
+    !probe.events.some(e => e.type === 'phase_backtrack_requested' && e.reason === 'repair_candidates'),
+    '人签接受屏信号不得回退',
+  );
+  assertRunReachedEnd(probe, 'M2-3b');
+});
+
+test('M2-3c confirmed_by 为自动化身份（user_requirement）→ 不构成人签，照常停等（fail-closed）', async () => {
+  const { root } = setupHost();
+  const probe = await runChain(root, {
+    onTesting: ({ root: r, attempt }) => {
+      if (attempt === 1) {
+        writeVisualDiff(r, [{
+          id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT],
+          // 自动化/授权哨兵身份（isHumanVerified 拒绝 user_requirement 等）不是人签
+          confirmed_by: 'user_requirement',
+          defects: [{
+            class: 'shape_mismatch', element: 'hc_page_title', bbox: [0.1, 0.2, 0.3, 0.4],
+            severity: 'major', note: '标题错位', must_fix_refs: [0],
+          }],
+        }]);
+        writeDefectReview(r, [
+          `- signal: ${signalFp('add_card_home', 'shape_mismatch', 'hc_page_title', [0.1, 0.2, 0.3, 0.4])}`, '  verdict: disputed', '  rationale: OCR 混淆',
+        ]);
+      }
+    },
+  });
+  const halts = probe.events.filter(e => e.type === 'phase_halt' &&
+    (e as { halt_reason?: string }).halt_reason === 'repair_adjudication_pending');
+  assert(halts.length >= 1,
+    `自动化身份不得解除阻塞（照常停等）：${probe.events.filter(e => e.type === 'phase_halt').map(e => (e as { halt_reason?: string }).halt_reason).join(',')}`);
+});
+
+test('M2-4 actionable 无复核块（unreviewed）→ 停等（fail-closed 无得利路径）', async () => {
+  const { root } = setupHost();
+  const probe = await runChain(root, {
+    onTesting: ({ root: r, attempt }) => {
+      if (attempt === 1) {
+        writeVisualDiff(r, [{
+          id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT],
+          defects: [{
+            class: 'shape_mismatch', element: 'hc_page_title', bbox: [0.1, 0.2, 0.3, 0.4],
+            severity: 'major', note: '标题错位', must_fix_refs: [0],
+          }],
+        }]);
+        // 不写 test-report.md（无 defect-review 块）
+      }
+    },
+  });
+  const halts = probe.events.filter(e => e.type === 'phase_halt' &&
+    (e as { halt_reason?: string }).halt_reason === 'repair_adjudication_pending');
+  assert(halts.length >= 1, `未复核须停等（fail-closed）：${probe.events.map(e => e.type).join(',')}`);
+  assert(
+    (((halts[0] as { dispute_rows?: string[] }).dispute_rows ?? []).some((r) => r.includes('unreviewed'))),
+    '未复核条目须点名 unreviewed',
+  );
+});
+
+test('M2-5 actionable + defect-review confirmed（同向）→ 物化为常规候选、仍回退（v23 F1 修订版：PASS+harness-adjudicated-confirmed）', async () => {
+  const { root } = setupHost();
+  const FP = signalFp('add_card_home', 'shape_mismatch', 'hc_page_title', [0.1, 0.2, 0.3, 0.4]);
+  const probe = await runChain(root, {
+    onTesting: ({ root: r, attempt }) => {
+      if (attempt === 1) {
+        writeVisualDiff(r, [{
+          id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT],
+          defects: [{
+            class: 'shape_mismatch', element: 'hc_page_title', bbox: [0.1, 0.2, 0.3, 0.4],
+            severity: 'major', note: '标题错位', must_fix_refs: [0],
+          }],
+        }]);
+        writeDefectReview(r, [
+          `- signal: ${FP}`, '  verdict: confirmed', '  rationale: 截图核对确认为真缺陷',
+        ]);
+      } else {
+        writeCleanTesting(r);
+      }
+    },
+    // M1 no-op 语义：回修轮须真实改动产品源码
+    onCoding: ({ root: r, attempt }) => {
+      if (attempt > 1) writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("adjudicated-fixed") } }');
+    },
+  });
+  assert(
+    probe.events.some(e => e.type === 'phase_backtrack_requested' && e.reason === 'repair_candidates'),
+    `confirmed 同向须回退：${probe.events.map(e => e.type).join(',')}`,
+  );
+  assert(probe.codingPrompts.length >= 2 && probe.codingPrompts[1].includes(MUST_FIX_TEXT),
+    '回修 coding prompt 须含 confirmed 信号（物化候选注入）');
+  assertRunReachedEnd(probe, 'M2-5');
 });
 
 // ---------------------------------------------------------------------------

@@ -587,8 +587,15 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assert(src.includes('for (const item of reconcile.items)'), '多未闭合逐项处置缺失');
       assert(src.includes("type: 'legacy_run_override'"), 'legacy force 确认事件缺失');
       const settledIdx = src.indexOf("type: 'agent_process_settled'");
-      const settledCondIdx = src.indexOf('if (containmentCtx && !guardianBoundError)');
-      assert(settledCondIdx >= 0 && settledCondIdx < settledIdx, 'settled 未受 bound 成功条件约束');
+      // adjudicated-repair-loop：resumePostAgent（跳过已 settled 的 agent）不再重复 emit——
+      // settled 仍受 bound 成功约束（且 resumePostAgent 分支排除）
+      const settledCondIdx = src.indexOf('if (containmentCtx && !guardianBoundError && !resumePostAgent)');
+      const settledCondIdxLegacy = src.indexOf('if (containmentCtx && !guardianBoundError)');
+      assert(
+        (settledCondIdx >= 0 && settledCondIdx < settledIdx) ||
+          (settledCondIdxLegacy >= 0 && settledCondIdxLegacy < settledIdx),
+        'settled 未受 bound 成功条件约束',
+      );
       assert(src.includes("concludeStartupBlocker('legacy_run_requires_manual_cleanup'"), 'legacy BLOCKER 未收口');
       assert(src.includes("concludeStartupBlocker('guardian_termination_failed'"), '杀不死 BLOCKER 未收口');
       const killTreeCallSites = src.match(/killProcessTree\(/g) ?? [];

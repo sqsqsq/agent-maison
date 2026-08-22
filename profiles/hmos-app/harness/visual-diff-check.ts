@@ -19,6 +19,7 @@ import {
 import { extractCodeBlocks } from '../../../harness/scripts/utils/markdown-parser';
 import { collectP0VisualTargetIds } from './visual-diff-targets';
 import { collectOutOfBoundsGlobalElements, collectGrossMissingAnchorText, collectTextPlacementSignals, collectVerdictAbandonment } from './visual-diff-ocr-gates';
+import type { OcrFn } from './visual-diff-ocr-gates';
 import { buildAuthoritativeRefImageIndex, resolveRefSourceImage } from './authoritative-ref-images';
 import { canonicalOverlayBase } from './visual-diff-nav';
 import { resolveLayoutDumpPath, sanitizeVisualDiffScreenSlug } from './visual-diff-capture';
@@ -822,6 +823,22 @@ export interface VisualDiffStructuredPayload {
     elements: string[];
     bbox?: number[];
   }>;
+  /**
+   * adjudicated-repair-loop M2（plan e2b7c4a9 t2.1）：producer 归类的 uncertain 信号。
+   * 逐条携带信号身份（item_fingerprint，sha256 稳定）、原因与证据引用；经既有
+   * checks[].structured 随 script-report.json 落盘，goal-runner 读 fresh summary +
+   * script-report 时形成 pending 标志 → 停等 repair_adjudication_pending。
+   * **不回写 visual-diff.json**、不进 candidates（uncertain 不是 trusted actionable）。
+   */
+  uncertain_signals?: Array<{
+    item_fingerprint: string;
+    /** 信号所在屏（人签通道恢复绑定键：visual-confirm confirmed_by 按屏签署） */
+    screen_id: string;
+    /** 稳定候选锚（OCR 混淆=候选文本；整页缺口='whole-page'） */
+    target: string;
+    reason: string;
+    evidence_ref: string;
+  }>;
 }
 
 /**
@@ -937,6 +954,12 @@ function finalizeVisualDiffHits(
 
 /** device-testing 渲染回环报告校验 */
 /** 入口：core 判定 + blind-visual-hardening d2/d3 附加面（渲染可见性 calibrate + 三段闭环运行时段） */
+// adjudicated-repair-loop：OCR 注入缝（测试用；缺省走 collectTextPlacementSignals 默认 ocrImageWords）
+let injectedVisualDiffOcrFn: OcrFn | null = null;
+export function __testing_setVisualDiffOcrFn(fn: OcrFn | null): void {
+  injectedVisualDiffOcrFn = fn;
+}
+
 export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
   const results = checkVisualDiffCore(ctx);
   // P0-B④ calibrate：采集物（shot-*/layout-*）在即评，自守卫（无目录/无配对→零结果）；
@@ -1003,6 +1026,11 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   const reportRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'visual-diff.md');
   // P0-9 顺手项：走 featureDir 尊重 paths.features_dir 配置
   const reportDir = path.join(featureDir(ctx.projectRoot, ctx.feature), 'device-testing', 'device-screenshots');
+
+  // adjudicated-repair-loop M2（plan e2b7c4a9 t2.1）：producer 归类的 uncertain 信号收集器
+  // （OCR 混淆 / 整页参考图 vs 单视口口径缺口）——最终物化为 structuredPayload
+  // .uncertain_signals[] 随 script-report.json 落盘；不回写 visual-diff.json。
+  let collectedUncertainSignals: Array<{ screen_id: string; target: string; reason: string }> = [];
 
   const specMd = loadSpecMarkdown(ctx);
   const uiChange = specMd ? parseUiChangeFromSpecMarkdown(specMd) : null;
@@ -1491,7 +1519,11 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       rep.screens,
       rel => resolveShotPath(ctx.projectRoot, rel),
       s => resolveRefSourceImage(refIndex, refIdFor(s)).path,
+      // adjudicated-repair-loop：OCR 注入缝（测试用；缺省走真实 ocrImageWords）
+      injectedVisualDiffOcrFn ?? undefined,
     );
+    // M2：producer 归类的 uncertain 信号（OCR 混淆 / 口径缺口）——留下供 structuredPayload 物化
+    collectedUncertainSignals = placement.uncertainSignals;
     const p0BaseSet = new Set(p0Ids.map(canonicalOverlayBase));
     const failScreensPlacement = placement.perScreen.filter(
       p => p.fail_signals.length > 0 && p0BaseSet.has(canonicalOverlayBase(p.screen_id)),
@@ -2585,6 +2617,16 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     });
   }
 
+  // M2（plan e2b7c4a9 t2.1）：producer 归类的 uncertain 信号注记（报告可见；不替代停等——
+  // runner 依据 structured.uncertain_signals[] 判停，WARN 注记只是让 agent/人看见证据）。
+  if (collectedUncertainSignals.length > 0) {
+    referenceNotes.push(
+      `[adjudication] ${collectedUncertainSignals.length} 项不确定信号（producer 未裁定，交人裁决；` +
+        `见 structured.uncertain_signals）：` +
+        collectedUncertainSignals.map((u) => `${u.screen_id}: ${u.reason}`).slice(0, 8).join('；'),
+    );
+  }
+
   const detailsWithNotes = referenceNotes.length > 0 ? `${details}\n${referenceNotes.join('\n')}` : details;
   const finalResult = finalizeVisualDiffHits(desc, reportRel, detailsWithNotes, hits);
 
@@ -2657,6 +2699,24 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       elements: finding.elements,
       ...(finding.bbox ? { bbox: finding.bbox } : {}),
     })),
+    // M2（plan e2b7c4a9 t2.1，review 修复）：producer 归类的 uncertain 信号物化——
+    // item_fingerprint 用**稳定**信号级身份（sha256(screen|ocr_uncertain|target)，target=候选
+    // 文本锚，非动态 reason）；随 checks[].structured 落盘，不回写 visual-diff.json。
+    // target 字段供恢复链路绑定：人工/agent 在 testing 报告 defect-review 块里用 target
+    // 精确引用该信号（confirmed/disputed）即可 resume，不再重复停等。
+    ...(collectedUncertainSignals.length > 0
+      ? {
+          uncertain_signals: collectedUncertainSignals.map((sig) => ({
+            item_fingerprint: createHash('sha256')
+              .update(`${sig.screen_id}|ocr_uncertain|${sig.target}`, 'utf-8')
+              .digest('hex'),
+            screen_id: sig.screen_id,
+            target: sig.target,
+            reason: sig.reason,
+            evidence_ref: `${reportRel}#${sig.screen_id}`,
+          })),
+        }
+      : {}),
   };
   finalResult.structured = structuredPayload;
   return [finalResult];

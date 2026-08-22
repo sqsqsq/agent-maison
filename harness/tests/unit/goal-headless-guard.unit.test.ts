@@ -1924,10 +1924,11 @@ export function runAll(): UnitCaseResult[] {
           'closure-only 不得再由 trustedSnapshot.kind 推断',
         );
         assert(!/trustedSnapshot/.test(runner.replace(/\/\/[^\n]*/g, '')), 'pass snapshot 可信加载不得回归生产代码');
-        // 单点写入：全轮（内容轮+closure 轮）invoke 前 force 写骨架——不再限 closureOnlyAttempt
+        // 单点写入：全轮（内容轮+closure 轮）invoke 前 force 写骨架——不再限 closureOnlyAttempt；
+        // adjudicated-repair-loop 例外：resume 跳过已 settled 的 agent 时不覆盖（复用原产物身份）。
         assert(
-          /if \(!dryRun && goalTrack !== 'lite'\) \{[\s\S]{0,250}writeReceiptScaffold[\s\S]{0,180}force: true/.test(runner),
-          '每次 invoke 前必须无条件 force 写入当前 attempt 身份骨架（lite/dryRun 除外）',
+          /if \(!dryRun && goalTrack !== 'lite' && !resumePostAgent\) \{[\s\S]{0,250}writeReceiptScaffold[\s\S]{0,180}force: true/.test(runner),
+          '每次 invoke 前必须无条件 force 写入当前 attempt 身份骨架（lite/dryRun/resumePostAgent 除外）',
         );
         // 写失败 fail-closed：不启动 agent（静默吞=旧身份回执存活=身份死结复发）
         assert(

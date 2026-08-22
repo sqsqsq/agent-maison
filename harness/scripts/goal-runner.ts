@@ -72,6 +72,7 @@ import {
   detectPixel1to1Intent,
   detectUiRelevantRequirement,
   discoverReferenceImagesForOcrPrescan,
+  isHumanVerified,
   loadProfileOcrToolkit,
   loadSpecMarkdown,
   parseFidelityTargetFromHandoffDoc,
@@ -95,10 +96,7 @@ import {
 } from './utils/phase-transition-policy';
 import { loadHeadlessLedger } from './utils/headless-assumptions';
 import { recomputePhaseEvidenceStaleness, stableStringify } from './utils/phase-evidence-manifest';
-import {
-  defaultTrustRegistryPath,
-  validateConfirmationReceiptFile,
-} from './utils/confirmation-receipt';
+import { defaultTrustRegistryPath } from './utils/confirmation-receipt';
 import { loadReviewClosureAttestation } from './utils/closure-attestation';
 import {
   classifyCleanPassIssues,
@@ -293,6 +291,7 @@ import { writeReceiptScaffold } from './utils/receipt-scaffold';
 import {
   actionableDefectsToCandidates,
   mergeRepairCandidatesIntoSummary,
+  parseDefectReviewBlock,
   resolveInvalidatablePhases,
   restoreBacktrackCandidatesFromEvents,
   roundFingerprintOfCandidates,
@@ -1599,6 +1598,13 @@ export interface ActionableDefect {
   fingerprint: string;
   /** 证据路径——由 runner 按已知目录结构拼接，**不信任产物自报**（防指向任意文件） */
   evidence_path: string;
+  /**
+   * adjudicated-repair-loop（plan e2b7c4a9）：是否**结构化视觉信号**（来自 visual-diff
+   * json 的结构化 defect，identity = sha256(computeDefectFingerprint(screen, defect))）。
+   * 仅此类进入 signal@1 身份与 M2 物化前复核；crash / device_test / 纯文本 must_fix
+   * 兜底保持既有 legacy 契约（不入累计收敛、不需 defect-review）。
+   */
+  signal_identity: boolean;
 }
 
 /** 整轮集合指纹：只有整轮 actionable 集合完全相同才算无进展（{A,B}→{B} 允许再回退） */
@@ -1618,6 +1624,116 @@ export function evaluateUnverifiedRound(
     fingerprint,
     repeatedWithoutProgress: previous?.phase === phase && previous.fingerprint === fingerprint,
   };
+}
+
+// ---------------------------------------------------------------------------
+// adjudicated-repair-loop M1（plan e2b7c4a9 t1.3）：累计 one-shot 收敛（纯函数层）
+// ---------------------------------------------------------------------------
+// attempted 派生规则（冻结公式，v4 修正）：候选身份从 `phase_backtrack_requested
+// .candidates[]` 取（仅 identity_schema='signal@1'），但**仅当同一回退窗口之后出现
+// 目标 phase 的 `agent_process_settled` 或 `phase_verdict` 事件**才计入 attempted——
+// request 后、目标 phase 执行前崩溃的候选不算已修（既有 crash/resume 契约：request-only
+// 候选恢复后必须执行）；目标 phase settled 后崩溃则已计入，resume 不得再自动修。
+// 全部从既有 events 派生，零新账本/状态机。
+// ---------------------------------------------------------------------------
+
+/**
+ * adjudicated-repair-loop（review 收口）：人工恢复的唯一真源 = **既有 visual-confirm 人签
+ * 语义**——visual-diff.json 屏条目 `confirmed_by` 为真人人签（isHumanVerified 谓词，
+ * 同 await_human_visual_confirm / visual-confirm CLI 的同一判据）。
+ * 不再叠加 ledger/receipt/registry（本 change 不建签发体系；人工真实性整体强化属
+ * 全框架 visual-confirm 权威模型另立 change 的范畴）。人签=人工确认该屏视觉无需修复。
+ * 返回人签 screen_id 集合（空=无人签；读失败=空，fail-safe：不解除阻塞）。
+ */
+export function humanConfirmedScreens(projectRoot: string, feature: string): Set<string> {
+  const out = new Set<string>();
+  try {
+    const featuresDir = featuresDirRelOf(projectRoot);
+    const diffRel = path.posix.join(
+      featuresDir, feature, 'device-testing', 'device-screenshots', 'visual-diff.json',
+    );
+    const diffAbs = path.join(projectRoot, ...diffRel.split('/'));
+    if (!fs.existsSync(diffAbs)) return out;
+    const doc = JSON.parse(fs.readFileSync(diffAbs, 'utf-8')) as {
+      screens?: Array<{ screen_id?: string; confirmed_by?: string }>;
+    };
+    for (const sc of doc.screens ?? []) {
+      const id = typeof sc.screen_id === 'string' ? sc.screen_id.trim() : '';
+      if (!id) continue;
+      if (isHumanVerified(sc.confirmed_by)) out.add(id);
+    }
+  } catch {
+    // 读失败：无人签可消费（fail-safe：不解除任何阻塞）
+  }
+  return out;
+}
+
+export interface BacktrackWindowEvent {
+  type?: string;
+  phase?: unknown;
+  to_phase?: unknown;
+  candidates?: unknown;
+}
+
+function signalCandidateFingerprints(candidates: unknown): string[] {
+  if (!Array.isArray(candidates)) return [];
+  const out: string[] = [];
+  for (const c of candidates) {
+    if (!c || typeof c !== 'object') continue;
+    const r = c as Record<string, unknown>;
+    if (r.identity_schema !== 'signal@1') continue; // legacy check-domain 候选不入收敛
+    if (typeof r.item_fingerprint !== 'string' || !/^[0-9a-f]{64}$/.test(r.item_fingerprint)) continue;
+    out.push(r.item_fingerprint);
+  }
+  return out;
+}
+
+/**
+ * 从既有 events 回放全部「已实际执行过自动修复」的信号级身份。
+ * 窗口语义：一条 phase_backtrack_requested 开启窗口；窗口内出现目标 phase 的
+ * agent_process_settled/phase_verdict 即关闭并累计；新 request（或 run 结束）时若
+ * 窗口仍未关闭 → 该批候选**不计入**（request-only 崩溃，仍 eligible）。
+ */
+export function replayAttemptedSignalIdentities(
+  events: ReadonlyArray<BacktrackWindowEvent>,
+): Set<string> {
+  const attempted = new Set<string>();
+  let window: { toPhase: string; fingerprints: string[] } | null = null;
+  const targetExecuted = (e: BacktrackWindowEvent): boolean => {
+    if (!window) return false;
+    if (typeof e.phase !== 'string' || e.phase !== window.toPhase) return false;
+    return e.type === 'agent_process_settled' || e.type === 'phase_verdict';
+  };
+  for (const e of events) {
+    if (e.type === 'phase_backtrack_requested') {
+      // 上一窗口未执行即开启新窗口 → 丢弃（=request-only 崩溃，候选仍 eligible）
+      window = {
+        toPhase: typeof e.to_phase === 'string' ? e.to_phase : '',
+        fingerprints: signalCandidateFingerprints(e.candidates),
+      };
+      continue;
+    }
+    if (window && targetExecuted(e)) {
+      for (const fp of window.fingerprints) attempted.add(fp);
+      window = null;
+    }
+  }
+  return attempted;
+}
+
+/**
+ * eligible = current open（信号级候选）× 尚未 attempted。
+ * 仅作用于 identity_schema='signal@1'；legacy 候选（无字段）保持既有可能回退语义
+ * （不参与本收敛判定）。返回可回退的候选子集。
+ */
+export function computeEligibleSignalIdentities(
+  open: readonly RepairCandidate[],
+  attempted: ReadonlySet<string>,
+): RepairCandidate[] {
+  return open.filter((c) => {
+    if (c.identity_schema !== 'signal@1') return true; // legacy 保持原样
+    return !attempted.has(c.item_fingerprint);
+  });
 }
 
 export interface UnverifiedDefect {
@@ -1875,19 +1991,63 @@ export function collectActionableDefects(
         if (!evalFp) { pushVisualUnverified(id, 'evaluated_build_fingerprint_missing', '缺 evaluated_build_fingerprint（build 身份未绑定）'); continue; }
         if (evalFp !== currentFp) { pushVisualUnverified(id, 'build_identity_mismatch', 'build 身份不匹配（改码重装后该屏尚未按当前 HAP 重评）'); continue; } // ④
         if (vd.isStaleVisualDiffVerdict(sc, projectRoot, { currentBuildFingerprint: currentFp })) continue; // ⑤ stale
-        const structural = (sc.defects ?? []).map(d => vd.computeDefectFingerprint(id, d)).filter(Boolean);
-        const fingerprint = structural.length > 0
-          ? structural.slice().sort().join('&')
-          : `${id}|text:${createHash('sha256')
-              .update(mustFix.map(m => m.trim().replace(/\s+/g, ' ')).slice().sort().join('\n'), 'utf-8')
-              .digest('hex').slice(0, 16)}`;
-        out.push({
-          source: 'visual_diff',
-          screen_or_case_id: id,
-          instructions: mustFix.slice(0, 8),
-          fingerprint,
-          evidence_path: `${diffRel}#${id}`,
-        });
+        // ---- adjudicated-repair-loop M1（plan e2b7c4a9 t1）：信号级候选 ----
+        // 从「每屏一条聚合候选」改为「每结构化 defect 一条候选」：
+        //   · identity = sha256(computeDefectFingerprint(screen, defect))——复用既有单条
+        //     稳定指纹（screen|class|element|bbox_bucket[|producer#finding_id]），屏级集合
+        //     拼接 hash 随缺陷集合/build 漂移、复发不可见，已废弃；
+        //   · 指令=该 defect 的 note + 经既有 `defect.must_fix_refs` 反向解析出的 must_fix
+        //     原文（门禁强制 must_fix 须被 refs 引用，refs 缺失由既有 BLOCKER 兜底）；
+        //   · 纯文本 must_fix（无结构化 defect 锚）→ 保留既有整屏文案 hash 兜底（legacy
+        //     语义，不入 signal@1 收敛判定——见 repair-candidates.ts identity_schema）。
+        const scDefects = Array.isArray(sc.defects) ? sc.defects : [];
+        const structural = scDefects
+          .map((d) => {
+            const fp = vd.computeDefectFingerprint(id, d);
+            return fp ? { d, fp } : null;
+          })
+          .filter((x): x is { d: unknown; fp: string } => x !== null);
+        if (structural.length > 0) {
+          // 每信号一条候选；defect.must_fix_refs 反向解析到该屏 must_fix 原文作指令
+          for (const { d, fp } of structural) {
+            const refs = Array.isArray((d as { must_fix_refs?: unknown }).must_fix_refs)
+              ? ((d as { must_fix_refs?: number[] }).must_fix_refs ?? [])
+                .filter((i): i is number => Number.isInteger(i) && i >= 0 && i < mustFix.length)
+              : [];
+            const linked = refs.map((i) => mustFix[i]).filter(Boolean);
+            const note = typeof (d as { note?: unknown }).note === 'string'
+              ? String((d as { note?: unknown }).note).trim() : '';
+            const instructions: string[] = [];
+            if (note) instructions.push(note);
+            instructions.push(...linked.slice(0, 8));
+            if (instructions.length === 0) instructions.push(...mustFix.slice(0, 8));
+            out.push({
+              source: 'visual_diff',
+              screen_or_case_id: id,
+              instructions: instructions.slice(0, 8),
+              // 单条稳定指纹（screen|class|element|bbox_bucket[|producer#finding_id]）
+              // ——不变拼接序、不排序聚合；identity=sha256 由 repair-candidates 层计算
+              fingerprint: fp,
+              evidence_path: `${diffRel}#${id}`,
+              // 结构化视觉信号：进入 signal@1 身份 + M2 物化前复核
+              signal_identity: true,
+            });
+          }
+        } else {
+          // 纯文本 must_fix 保底：整屏文案 hash（legacy；信号级收敛不作用于其后代候选）
+          const fingerprint = `${id}|text:${createHash('sha256')
+            .update(mustFix.map(m => m.trim().replace(/\s+/g, ' ')).slice().sort().join('\n'), 'utf-8')
+            .digest('hex').slice(0, 16)}`;
+          out.push({
+            source: 'visual_diff',
+            screen_or_case_id: id,
+            instructions: mustFix.slice(0, 8),
+            fingerprint,
+            evidence_path: `${diffRel}#${id}`,
+            // 纯文本兜底 = legacy：不入 signal@1 收敛、不需 defect-review 复核
+            signal_identity: false,
+          });
+        }
       }
     }
   } catch (e) {
@@ -1924,6 +2084,8 @@ export function collectActionableDefects(
             // 同屏崩溃视为同一缺陷（faultlog 文件名含时间戳，入纹会让熔断永不命中）
             fingerprint: `crash|${id}`,
             evidence_path: `${diagRel}/${n}`,
+            // crash 非结构化视觉：保持 legacy 契约（不入 signal@1 收敛、不需复核）
+            signal_identity: false,
           });
         } catch { /* 单份诊断损坏 → 该文件不产信号（不拖垮整批） */ }
       }
@@ -2045,6 +2207,8 @@ export function collectActionableDefects(
                     `${c.classification}|${c.case_id}|step:${c.failing_step.index}|` +
                     `${c.failing_step.selector_kind}:${c.failing_step.selector}`,
                   evidence_path: `${path.relative(projectRoot, evPath).split(path.sep).join('/')}#${c.case_id}`,
+                  // device_test 非结构化视觉：保持 legacy 契约（不入 signal@1 收敛、不需复核）
+                  signal_identity: false,
                 });
               } else if (actionableClassification) {
                 pushUnverified(
@@ -2325,8 +2489,22 @@ export function applyInvalidationsToResume(
     verdict?: string;
     invalidated_phases?: unknown;
   }>,
-): { outcomes: GoalPhaseOutcome[]; startIndex: number; invalidatedPhases: string[] } {
+): { outcomes: GoalPhaseOutcome[]; startIndex: number; invalidatedPhases: string[]; postAgentPhases: string[]; postAgentAttemptIds: Record<string, string> } {
   const stillInvalidated = new Set<string>();
+  // postAgentAttemptIds：phase → 原 settled invocation 的 invoke_id（主循环复用身份，
+  // 不新建 attempt）——完全从既有 events 派生。
+  const postAgentAttemptIds: Record<string, string> = {};
+  // adjudicated-repair-loop（review 修复）：postAgentPhases **只从最新一条
+  // phase_backtrack_requested 的窗口派生**——旧窗口的 settled 不得污染更新的 request-only
+  // 窗口（request1→settled→FAIL→request2→crash 时，request2 是最新窗口且无 settled，
+  // coding 必须重新 invoke）。stillInvalidated 仍按全部 request 累计（被失效且未重验的
+  // phase 都要剔除/回退）。
+  // 超时/被杀的 settled（agent_process_settled 带 timed_out/kill_reason）不算已完成。
+  const postAgentPhases = new Set<string>();
+  let lastRequestIdx = -1;
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].type === 'phase_backtrack_requested') { lastRequestIdx = i; break; }
+  }
   events.forEach((e, idx) => {
     const phases = e.type === 'phase_backtrack_requested' && Array.isArray(e.invalidated_phases)
       ? e.invalidated_phases.filter((p): p is string => typeof p === 'string')
@@ -2334,19 +2512,69 @@ export function applyInvalidationsToResume(
         ? [e.phase]
         : [];
     for (const phase of phases) {
-      const revalidated = events
-        .slice(idx + 1)
-        .some(later => later.type === 'phase_verdict' && later.phase === phase && later.verdict === 'PASS');
-      if (!revalidated) stillInvalidated.add(phase);
-      else stillInvalidated.delete(phase);
+      // 窗口切片：本 request 之后、下一条 phase_backtrack_requested 之前的事件
+      let windowEnd = events.length;
+      for (let j = idx + 1; j < events.length; j++) {
+        if (events[j].type === 'phase_backtrack_requested') {
+          if (j === idx) continue;
+          windowEnd = j;
+          break;
+        }
+      }
+      const later = events.slice(idx + 1, windowEnd);
+      const revalidated = later.some(
+        later => later.type === 'phase_verdict' && later.phase === phase && later.verdict === 'PASS',
+      );
+      // review 收口：**只看最新 request 窗口内该 target phase 的最后一条执行事件**——
+      // 判据（与复用身份同一判据，消除「有 settled 即跳、却取最后一条」的不一致）：
+      //   · 最后是**非超时** agent_process_settled 且带明确 invoke_id → validation-only
+      //     恢复（复用该 ID）；
+      //   · 最后是 agent_invoke_start / 超时或 kill 的 settled / FAIL phase_verdict /
+      //     身份不完整（无 invoke_id）→ 不跳过 agent（正常恢复，候选上下文保留）。
+      const phaseEvents = later.filter(
+        (x) =>
+          x.phase === phase &&
+          (x.type === 'agent_invoke_start' ||
+            x.type === 'agent_process_settled' ||
+            x.type === 'phase_verdict'),
+      );
+      const lastExec = phaseEvents[phaseEvents.length - 1] ?? null;
+      const settledOk =
+        lastExec?.type === 'agent_process_settled' &&
+        (lastExec as { timed_out?: boolean; kill_reason?: string }).timed_out !== true &&
+        (lastExec as { kill_reason?: string }).kill_reason !== 'agent_timeout' &&
+        typeof (lastExec as { invoke_id?: string }).invoke_id === 'string' &&
+        (lastExec as { invoke_id?: string }).invoke_id!.length > 0 &&
+        // settled 之后不得再有该 phase 的失败 verdict（FAIL 已判定=正常失败恢复）
+        !later.some(
+          (x) => x.type === 'phase_verdict' && x.phase === phase && x.verdict === 'FAIL',
+        );
+      if (!revalidated) {
+        if (settledOk) {
+          // 最新执行=已完成（非超时、身份齐）：agent 工作已完成（崩溃在 harness/verdict 边界）
+          // ——outcomes 旧条目仍剔除（要重验），起点到该 phase（不再更深），resume 主循环
+          // skip invoke 只走验证边界。**仅最新 request 窗口的 settled 计入 postAgent**。
+          stillInvalidated.add(phase);
+          if (idx === lastRequestIdx) {
+            postAgentPhases.add(phase);
+            postAgentAttemptIds[phase] = String((lastExec as { invoke_id?: string }).invoke_id);
+          }
+        } else {
+          stillInvalidated.add(phase);
+        }
+      } else {
+        stillInvalidated.delete(phase);
+      }
     }
   });
-  if (stillInvalidated.size === 0) return { outcomes, startIndex: chain.length, invalidatedPhases: [] };
+  if (stillInvalidated.size === 0) {
+    return { outcomes, startIndex: chain.length, invalidatedPhases: [], postAgentPhases: [...postAgentPhases], postAgentAttemptIds };
+  }
   const filtered = outcomes.filter(o => !stillInvalidated.has(o.phase));
   const earliest = Math.min(
     ...[...stillInvalidated].map(p => chain.indexOf(p as FeaturePhase)).filter(i => i >= 0),
   );
-  return { outcomes: filtered, startIndex: earliest, invalidatedPhases: [...stillInvalidated] };
+  return { outcomes: filtered, startIndex: earliest, invalidatedPhases: [...stillInvalidated], postAgentPhases: [...postAgentPhases], postAgentAttemptIds };
 }
 
 /**
@@ -2802,7 +3030,17 @@ export function buildPhasePrompt(
         '**These failures may have been introduced by a prior attempt in this same goal run.** Before making new changes:',
         '1. Inspect the files changed relative to the goal-run start commit (trace.json.start_commit) and judge whether one of them is the actual root cause;',
         '2. If a change a prior attempt made for troubleshooting itself broke things (e.g. turned a valid config into an invalid schema, deleted the wrong file), **revert that change first** rather than stacking new code on a broken state;',
-        '3. Only after confirming the root cause, apply a minimal fix and re-run this phase harness to verify.',
+        // adjudicated-repair-loop M2（plan e2b7c4a9 t2.5，review 修复）：**仅 review 阶段**
+        // 不得代改产物——旧文案「apply a minimal fix」被宿主实录为 review 走私改码的授权
+        // 依据（review/headless-assumptions.jsonl）；coding 等其余 phase 的编译/UT 重试
+        // 仍保留「确认真因后应用最小修复并重跑」的正常指导（不改就永远修不好）。
+        ...(phase === 'review'
+          ? [
+              '3. Only after confirming the root cause via review evidence, register the finding as a repair candidate with verifier-confirmed evidence so the adjudicated repair route drives the fix—do NOT modify application source from the review phase.',
+            ]
+          : [
+              '3. Only after confirming the root cause, apply a minimal fix and re-run this phase harness to verify.',
+            ]),
       );
     } else if (priorFailureKind === 'deterministic_gate_or_artifact_missing') {
       parts.push(
@@ -4273,6 +4511,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
     }
     // 责任阶段统一路由（codex 冻结项④）：候选交接上下文跨 resume 恢复走**共享实现**
     // （测试调同一函数验证恢复与清空语义，不用源码正则）。
+    // review 收口：**不再对恢复候选做 attempted 预过滤**——validation-only 分支（settled
+    // 恢复）不调用 agent、无需候选；需要重新 invoke 的窗口（request-only 崩溃 / 超时 /
+    // FAIL verdict）必须保留原候选上下文（否则 agent 重跑看不到修复任务）。eligible 过滤
+    // 由 backtrack 决策点按 events 回放统一执行，此处过滤既重复又会误伤。
     backtrackRepairCandidates = restoreBacktrackCandidatesFromEvents(
       priorEvents as ReadonlyArray<{ type?: string; candidates?: unknown }>,
     );
@@ -4481,6 +4723,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
     let outcomes: GoalPhaseOutcome[] = [];
     let deferredUpstream: Array<{ phase: FeaturePhase; reason: string }> = [];
     let chainStartIndex = 0;
+    // adjudicated-repair-loop（review 修复）：resume 不重新 invoke 已 settled 的失效窗口
+    // phase——主循环对该集合内的 phase 跳过 agent invoke，直接从验证边界（harness）继续。
+    let resumePostAgentPhases: Set<string> = new Set();
+    // adjudicated-repair-loop：phase → 原 settled invoke_id（reducer 从 events 派生，
+    // 主循环 resumePostAgent 时复用该 attempt 身份，不新建）
+    let resumePostAgentAttemptIds: Record<string, string> = {};
 
     // plan e7c2a4d8 T2：wall-clock 预算改**活跃时间**累计——sessionStartMs 为当前进程
     // 起点；priorActiveMs 由 partitionExecutionSessions 从历史段求和（崩溃段保守补收
@@ -4523,10 +4771,21 @@ Goal runner — tool-agnostic multi-phase orchestrator
       const inv = applyInvalidationsToResume(chain, outcomes, priorEvents);
       outcomes = inv.outcomes;
       chainStartIndex = Math.min(chainStartIndex, inv.startIndex);
+      resumePostAgentPhases = new Set(inv.postAgentPhases);
+      resumePostAgentAttemptIds = inv.postAgentAttemptIds;
+      if (resumePostAgentPhases.size > 0) {
+        console.warn(
+          `[goal-runner] resume：${[...resumePostAgentPhases].join(',')} 已在失效窗口内完成 agent 执行` +
+            '（settled 在案）——不再重新 invoke agent，从验证边界（harness）继续',
+        );
+      }
       goalEvents.emit({
         type: 'resume',
         start_index: chainStartIndex,
         start_phase: chain[chainStartIndex],
+        ...(resumePostAgentPhases.size > 0
+          ? { post_agent_phases: [...resumePostAgentPhases] }
+          : {}),
       });
     }
 
@@ -4719,6 +4978,18 @@ Goal runner — tool-agnostic multi-phase orchestrator
       return guidance;
     };
 
+    // adjudicated-repair-loop M1（plan e2b7c4a9 t1.5/t1.6）：回退链完成跟踪（循环外内存态）。
+    // phase_backtrack_completed 必须在回退链**真正完成后**发出（修 :7592 提前发射时序）：
+    // 目标 phase 执行完毕（agent_process_settled/phase_verdict 在案）后补发；
+    // repair+signal@1 时顺带做 no-op 快照判定（pre/post 相等 → 不重跑下游 +
+    // result='noop' + 走空 eligible 停等）。resume 重启后内存态丢失——attempted 判定
+    // 只依赖 settled/verdict 事件（不依赖 completed），crash 场景语义不破（1.3 契约）。
+    let pendingBacktrackCompletion: {
+      toPhase: string;
+      signalDriven: boolean;
+      preSnapshot: ProductSourceSnapshotDetail | null;
+    } | null = null;
+
     for (let phaseIdx = chainStartIndex; phaseIdx < chain.length && !halted; phaseIdx++) {
       const phase = chain[phaseIdx];
       let retries = 0;
@@ -4852,7 +5123,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
         }
 
-        totalTurns++;
+        // adjudicated-repair-loop（review 修复）：resume 不重新 invoke 已 settled 的
+        // 失效窗口 phase——**在任何新 attempt 分配（totalTurns++/visualAttemptId）之前**
+        // 决定，复用原 settled invocation 的身份（attempted 不变式不破、不产生无 start 的
+        // 幽灵 attempt）。retry 边界：仅首 attempt（retries===0）跳过，消费即删。
+        const resumePostAgent =
+          argv.resume && resumePostAgentPhases.has(phase) && retries === 0;
+        if (resumePostAgent) resumePostAgentPhases.delete(phase);
+
+        if (!resumePostAgent) totalTurns++;
         const phaseDir = path.join(projectRoot, manifest.report_dir, 'phases', phase);
         fs.mkdirSync(phaseDir, { recursive: true });
         const promptPath = path.join(phaseDir, 'prompt.md');
@@ -5122,6 +5401,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
               `（第 ${backtracksUsed} 次回退，共用预算 ${DEFAULT_MAX_BACKTRACKS} 次/run）\n`,
             );
             phaseIdx = replan.planIdx - 1; // for 循环 ++ 后落回 plan
+            // adjudicated-repair-loop M1（review 修复）：scope-replan 回退路径同样记录
+            // 完成跟踪——completed 在目标 plan 真正执行完（settled/verdict）后经统一补发点
+            // 发出（此前 scope 路径缺发 completed，事件链不完整）。signalDriven=false。
+            pendingBacktrackCompletion = {
+              toPhase: 'plan',
+              signalDriven: false,
+              preSnapshot: null,
+            };
             return true;
           }
           // runner-owned-machine-facts 收口（codex 三轮）：授权已是 closure 语义——链不含
@@ -5290,12 +5577,25 @@ Goal runner — tool-agnostic multi-phase orchestrator
         }
 
         const outputLogPath = path.join(phaseDir, 'agent-output.log');
-        // t1（f7a3d9c2，终审遗留②）：invoke_id 升级为 run 级持久序数（totalTurns 从 events
-        // 回放恢复，跨 --resume 单调），不再只靠系统时钟。visualAttemptId=轮次账本的
-        // attempt 身份：同一 invocation 的 agent 自跑 harness 与外层 gate 共用；任何
-        // 下一次 invocation（retry/detach/resume）必不同；崩溃恢复不重用（事件已落盘
-        // 则 totalTurns 回放计入）。禁 phase 内 retries+1（resume 归零会撞旧 round_key）。
-        const visualAttemptId = `i${totalTurns}`;
+        // visualAttemptId=轮次账本的 attempt 身份：同一 invocation 的 agent 自跑 harness
+        // 与外层 gate 共用；任何下一次 invocation（retry/detach/resume）必不同；崩溃恢复
+        // 不重用（事件已落盘则 totalTurns 回放计入）。禁 phase 内 retries+1（resume 归零会
+        // 撞旧 round_key）。adjudicated-repair-loop：resumePostAgent（已 settled 的验证边界
+        // 恢复）**复用原 settled invocation 的 attempt 身份**——不从 events 取新序数、不产生
+        // 幽灵 attempt（无 start 的 invoke_end）。
+        const visualAttemptId = resumePostAgent
+          ? (() => {
+              // 复用 reducer 从既有 events 派生的原 settled invoke_id（postAgentAttemptIds——
+              // 与 postAgent 判定同一判据；精确身份缺失时不应到本分支，兜底不用全局历史猜）
+              const reuse = resumePostAgentAttemptIds[phase];
+              if (reuse) {
+                const m = /^[a-z-]+-i(\d+)$/.exec(reuse);
+                if (m) return `i${m[1]}`;
+                return reuse;
+              }
+              return `i${totalTurns}`;
+            })()
+          : `i${totalTurns}`;
         const invokeId = `${phase}-${visualAttemptId}`;
 
         // t3-min（openspec capability-gap-preflight）：invoke 前共享 preflight——每 phase
@@ -5540,6 +5840,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           phaseDone = true;
           continue;
         }
+        // adjudicated-repair-loop（review 修复，续）：resumePostAgent 已在 attempt 分配
+        // 之前判定（见 totalTurns 前声明）——此处只保留 scaffold 跳过 + invoke_start 跳过。
         // openspec runner-owned-machine-facts：回执骨架由 runner 在**每次真实 invoke 前**
         // 单点 force 写入并预填本轮 attempt 身份——agent 只填自证字段，不抄写机器已知的
         // 身份值（宿主实锤 run 20260815T023016Z-8c66cf：agent 手抄 "3"≠"i3"；run
@@ -5550,7 +5852,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // 前置门**之后**、agent_invoke_start 之前——前置门 HALT（agent 未启动）时不得
         // 提前销毁旧回执现场（codex review）。写失败即停：不启动 agent、不烧 attempt——
         // 静默吞掉会让旧身份回执存活，receipt_attempt_identity 死结原样复发。
-        if (!dryRun && goalTrack !== 'lite') {
+        if (!dryRun && goalTrack !== 'lite' && !resumePostAgent) {
           const scaffold = writeReceiptScaffold(projectRoot, manifest.feature, String(phase), {
             attemptId: visualAttemptId,
             force: true,
@@ -5580,16 +5882,25 @@ Goal runner — tool-agnostic multi-phase orchestrator
             continue;
           }
         }
-        goalEvents.emit({
-          type: 'agent_invoke_start',
-          phase,
-          invoke_id: invokeId,
-          command: invokePlan.label,
-          // P0-4：timeout 单一事实源——progress/status/dead-man 优先读本字段判 liveness
-          // （升档后 manifest 静态解析会把合法运行 attempt 误报 STALLED，脑裂实锤）。
-          effective_timeout_ms: effectiveAgentTimeoutMs,
-        });
-        flushProgress();
+        // adjudicated-repair-loop（review 修复，续）：伪造 invoke 对象仅承载「已完成」
+        // 语义；settled 事件由 containmentCtx=null 天然不重复（此分支不发）。
+        if (!resumePostAgent) {
+          goalEvents.emit({
+            type: 'agent_invoke_start',
+            phase,
+            invoke_id: invokeId,
+            command: invokePlan.label,
+            // P0-4：timeout 单一事实源——progress/status/dead-man 优先读本字段判 liveness
+            // （升档后 manifest 静态解析会把合法运行 attempt 误报 STALLED，脑裂实锤）。
+            effective_timeout_ms: effectiveAgentTimeoutMs,
+          });
+          flushProgress();
+        } else {
+          console.warn(
+            `[goal-runner] resume 跳过 coding agent invoke（settled 在案，仅补验证/收尾）：phase=${phase}`,
+          );
+          flushProgress();
+        }
 
         // P0-4 rev7：调用 adapter 前断言——0 传给 invoke timer = 关闭超时，结构性禁止。
         if (!(effectiveAgentTimeoutMs > 0)) {
@@ -5635,7 +5946,22 @@ Goal runner — tool-agnostic multi-phase orchestrator
         let guardianBoundError: string | null = null;
         let guardianStillAlive = false;
         let guardianPidForCheck = 0;
-        let invoke = await (injectedInvokeAgent ?? invokeAgentHeadless)(invokePlan, projectRoot, {
+        let invoke = resumePostAgent
+          ? ({
+              exitCode: 0,
+              timed_out: false,
+              silent_killed: false,
+              completion_observed: false,
+              duration_ms: 0,
+              stderr: '',
+              stdout: '',
+              command: '',
+              skipped: true,
+              kill_attempted: false,
+              usage: null,
+              signal: null,
+            } as unknown as Awaited<ReturnType<InvokeAgentFn>>)
+          : await (injectedInvokeAgent ?? invokeAgentHeadless)(invokePlan, projectRoot, {
           dryRun,
           timeoutMs: effectiveAgentTimeoutMs,
           outputLogPath,
@@ -5762,8 +6088,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
           continue;
         }
 
-        goalEvents.emit({
-          type: 'agent_invoke_end',
+        // adjudicated-repair-loop：resumePostAgent（验证边界恢复）不发 invoke_end——
+        // 原 settled invocation 的 invoke_end 已在盘上，伪造 invoke 不得再落一条。
+        if (!resumePostAgent) {
+          goalEvents.emit({
+            type: 'agent_invoke_end',
           phase,
           invoke_id: invokeId,
           exit_code: invoke.exitCode,
@@ -5787,18 +6116,24 @@ Goal runner — tool-agnostic multi-phase orchestrator
           effective_timeout_ms: effectiveAgentTimeoutMs,
           output_bytes: fs.existsSync(outputLogPath) ? fs.statSync(outputLogPath).size : 0,
           output_delivery: cap.capability?.output_delivery ?? 'unknown',
-        });
+          });
+        }
         // t3（plan c6a9e4d2）：invoke 收尾落 settled 事件——在 agent_invoke_end 之后
         // 追加（run 结束/接管对账据其闭合 invoke，恢复决策永不用 report）。
         // P0-2（review）：仅**绑定成功**才落 settled——绑定失败且 guardian 未证明消失
         // 时不得声称已收纳（上方已 halt 阻断，本分支不可达；此处条件为结构保障）。
-        if (containmentCtx && !guardianBoundError) {
+        // adjudicated-repair-loop：resumePostAgent（跳过已 settled 的 agent）不重复 emit
+        // settled——原 settled invocation 的事件已在盘上，伪造 invoke 不得再落一个。
+        if (containmentCtx && !guardianBoundError && !resumePostAgent) {
           goalEvents.emit({
             type: 'agent_process_settled',
             phase,
             invoke_id: invokeId,
             run_id: manifest.run_id,
             exit_code: invoke.exitCode,
+            // adjudicated-repair-loop：settled 承载超时/杀语义——resume 恢复判定据此
+            // 区分「已完成」（可跳过 agent）与「超时半成品」（须重新 invoke）
+            ...(invoke.timed_out === true ? { timed_out: true as const, kill_reason: 'agent_timeout' as const } : {}),
           });
         }
         // P1-9（plan 7c4f2e9b）：模型身份 telemetry——共享 parser 读**纯 events 文件**的
@@ -6233,6 +6568,29 @@ Goal runner — tool-agnostic multi-phase orchestrator
           continue;
         }
 
+        // adjudicated-repair-loop M1（review 修复）：no-op 判定的 post 快照**在 agent 退出后、
+        // gate harness 运行前**拍摄——harness 的 hvigor 构建会重写生成物（BuildProfile.ets 等），
+        // 若等 harness 结束后再拍，pre≠post 几乎必然（构建副作用污染），no-op 判定形同虚设。
+        // 判定结果暂存，completed 补发点（summary 后）据此决策：noop → 停等；否则全量继续。
+        let pendingNoopResult: 'noop' | 'changed' | null = null;
+        if (
+          !dryRun &&
+          pendingBacktrackCompletion &&
+          phase === pendingBacktrackCompletion.toPhase &&
+          pendingBacktrackCompletion.signalDriven &&
+          pendingBacktrackCompletion.preSnapshot &&
+          isUsableSnapshot(pendingBacktrackCompletion.preSnapshot.sha256)
+        ) {
+          const postNoopSnapshot = computeProductSourceSnapshotDetail(
+            projectRoot, productLayerDirsOf(projectRoot), manifest.feature,
+          );
+          pendingNoopResult =
+            isUsableSnapshot(postNoopSnapshot.sha256) &&
+            postNoopSnapshot.sha256 === pendingBacktrackCompletion.preSnapshot.sha256
+              ? 'noop'
+              : 'changed'; // 含快照不可核实 → fail-closed 回落全量
+        }
+
         const harnessRun = await runHarnessPhase(
           projectRoot,
           frameworkRoot,
@@ -6315,11 +6673,217 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const summaryMtimeAfter = getSummaryMtime(summaryAbsPath);
         const freshSummary = isSummaryFresh(summaryMtimeBefore, summaryMtimeAfter);
 
+        // M1 t1.5/t1.6（adjudicated-repair-loop，review 修复）：回退链完成收口——补发
+        // phase_backtrack_completed（移到回退链真正完成之后，修 :7592 时序；repair/scope
+        // 路径统一在此补发）。no-op 判定用 **harness 之前** 拍好的 pendingNoopResult
+        //（agent 退出即拍——不被 gate harness 的构建生成物污染）：
+        //  · 'noop' → 不重跑下游，completed.result='noop'，候选并入 attempted（settled 已
+        //    触发回放）→ 空 eligible 停等 repair_not_converging；
+        //  · 'changed' / null（非 signalDriven / 快照不可核实）→ fail-closed 回落现行全量。
+        if (!dryRun && pendingBacktrackCompletion && phase === pendingBacktrackCompletion.toPhase) {
+          const executed = invoke.exitCode !== undefined || invoke.completion_observed === true;
+          if (executed) {
+            const { toPhase, signalDriven, preSnapshot } = pendingBacktrackCompletion;
+            if (pendingNoopResult === 'noop' && signalDriven && preSnapshot) {
+              // no-op：零改动只证明修复无效、不证明候选已解决；不复用下游 closure 继续。
+              goalEvents.emit({
+                type: 'phase_backtrack_completed', to_phase: toPhase, result: 'noop',
+                pre_snapshot: preSnapshot.sha256,
+                post_snapshot: preSnapshot.sha256,
+              });
+              const noopGuidance = [
+                '===== repair_not_converging（no-op）=====',
+                `feature=${manifest.feature} run_id=${manifest.run_id} phase=${phase}`,
+                `回退目标 ${toPhase} 执行后产品源码/需求 SSOT/根构建配置快照 pre/post 完全一致` +
+                  '（pre-existing dirty 合法，本 invocation 零改动）——本次修复为 no-op。',
+                '零改动只证明修复无效、不证明候选已解决：不再重跑下游、候选已计入 attempted',
+                '（累计 one-shot），停止自动回退求人裁决：',
+                '  · 确需再修一次：`framework/harness/scripts/goal-runner.ts --resume`（resume 本身',
+                '    即一次显式放行；attempted 重新计入后须再次人工 resume）；',
+                '  · 判为误报/已解决：先走 visual-confirm 人签接受该屏（visual-diff.json confirmed_by',
+                '    真人人签），再 --resume。',
+              ].join('\n');
+              goalEvents.emit({
+                type: 'phase_halt', phase, halt_reason: 'repair_not_converging',
+                detail: 'backtrack no-op（快照 pre/post 相等）',
+                halt_guidance: noopGuidance,
+                ...runDispositionFields(decide(
+                  { incident: 'repair_not_converging', phase: String(phase) },
+                  NO_AUTHORITY,
+                  { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+                )),
+              });
+              console.error(`\n===== repair_not_converging =====\n${noopGuidance}\n`);
+              outcomes.push({
+                phase, verdict: 'FAIL', halted: true, retries,
+                halt_reason: 'repair_not_converging', halt_guidance: noopGuidance,
+              });
+              halted = true;
+              phaseDone = true;
+              pendingBacktrackCompletion = null;
+              break;
+            }
+            // 普通完成（或 no-op 快照不可核实 → fail-closed 回落现行全量）：补发 completed。
+            goalEvents.emit({ type: 'phase_backtrack_completed', to_phase: toPhase });
+            pendingBacktrackCompletion = null;
+          }
+        }
+
+        // M2（plan e2b7c4a9 t2.3）：uncertain 判停——**时序冻结：早于 PASS closure，不只早于
+        // merge**。读 fresh summary + 本轮 script-report 时即读 checks[].structured 的
+        // visual_diff.uncertain_signals[] 形成局部 pending 标志：
+        //   · 禁止 receipt validation / finalizePhaseClosure（下方 closure 块跳过——否则
+        //     「唯一 uncertain 其余全 PASS」会先完成 phase closure 再停等，成功态与停等并存）；
+        //   · 仍完成既有 visual_round 事件投影与完整性处理（下方独立照常执行）；
+        //   · 随后 halt repair_adjudication_pending——不进入普通 verdict / candidate merge。
+        // 载体 = 既有 checks[].structured（producer-owned VisualDiffStructuredPayload），
+        // 经 script-report.json 既有落盘；不回写 visual-diff.json、零新状态/事件/产物。
+        let uncertainPending: Array<{ item_fingerprint: string; screen_id: string; target: string; reason: string; evidence_ref: string }> = [];
+        if (!dryRun && freshSummary) {
+          try {
+            const scriptReportPath = path.join(
+              featurePhaseReportsDir(projectRoot, manifest.feature, String(phase), frameworkRoot),
+              'script-report.json',
+            );
+            if (fs.existsSync(scriptReportPath)) {
+              const scriptReport = JSON.parse(fs.readFileSync(scriptReportPath, 'utf-8')) as {
+                checks?: Array<{ structured?: unknown }>;
+              };
+              for (const c of scriptReport.checks ?? []) {
+                const st = c.structured as
+                  | { kind?: string; uncertain_signals?: unknown }
+                  | undefined;
+                if (!st || st.kind !== 'visual_diff') continue;
+                const sigs = Array.isArray(st.uncertain_signals) ? st.uncertain_signals : [];
+                for (const s of sigs) {
+                  if (!s || typeof s !== 'object') continue;
+                  const r = s as Record<string, unknown>;
+                  if (typeof r.item_fingerprint !== 'string' || !r.item_fingerprint.trim()) continue;
+                  uncertainPending.push({
+                    item_fingerprint: r.item_fingerprint,
+                    screen_id: typeof r.screen_id === 'string' ? r.screen_id : '',
+                    target: typeof r.target === 'string' ? r.target : r.item_fingerprint,
+                    reason: typeof r.reason === 'string' ? r.reason : 'producer 未注明原因',
+                    evidence_ref: typeof r.evidence_ref === 'string' ? r.evidence_ref : '',
+                  });
+                }
+              }
+            }
+          } catch {
+            // script-report 不可读：不凭空停等（真实损坏已由 harness FAIL 兜底）；
+            // uncertain 载体缺席视为无信号——fail-open 仅限报告损坏这一异常面。
+          }
+        }
+
+        // adjudicated-repair-loop M2（review 修复）：统一可回修缺陷收集**上移到 PASS closure
+        // 之前**——使信号级裁决的 pending 判定（uncertain ∪ 物化前 disputed/unreviewed）能在
+        // closure 前形成统一门禁：PASS + actionable 未复核时不得先完成 phase closure 再停等
+        //（成功态与 WAITING 并存正是 v6 要消除的时序洞）。后续（合并/路由）复用同一结果。
+        const actionableResult: ActionableCollectResult =
+          !dryRun && phase === 'testing'
+            ? collectActionableDefects(projectRoot, manifest.feature, manifest.run_id, {
+                attemptId: visualAttemptId,
+                expectedTarget: {
+                  serial: deviceEnv.HARNESS_HDC_TARGET ?? null,
+                  target_kind: deviceEnv.MAISON_DEVICE_TARGET_KIND ?? null,
+                  session_id: deviceEnv.MAISON_DEVICE_SESSION_ID ?? null,
+                },
+                harnessWindow: { startMs: harnessStartedAtMs, endMs: harnessEndedAtMs },
+                reportsDir: featurePhaseReportsDir(
+                  projectRoot, manifest.feature, String(phase), frameworkRoot,
+                ),
+              })
+            : { defects: [], unverified: [] };
+        // envBlocked 前置（与下方 meta 同源——extractBlockingMeta 只读 summary，closure 前可用）
+        const metaPre = extractBlockingMeta(summary);
+        const envBlockedPre =
+          metaPre.failure_kind === 'toolchain' || metaPre.failure_kind === 'capture' ||
+          metaPre.blocking_class === 'externalBlocked';
+        // 物化前裁决（前置判定，与 closure 门控同点）：仅结构化视觉信号（signal_identity）
+        // 须 defect-review 逐信号精确绑定复核；disputed/unreviewed/歧义/非法 → pending。
+        // 人工恢复（review 修复）：**单一真源 = 既有 visual-confirm 人签**（visual-diff.json
+        // 屏条目 confirmed_by 真人人签，isHumanVerified 谓词；同 await_human_visual_confirm /
+        // visual-confirm CLI 判据）——该屏 pending 信号按「人工接受」解除（不物化、不阻塞；
+        // 人若认为要修，改 verdict=fail + must_fix 走既有 actionable 通道重新进入裁决）。
+        // agent 可写文本（test-report.md 的 defect-review 块 / visual-diff.json 字段）**不承载
+        // 任何人工终裁效力**（人工真实性整体强化属全框架 visual-confirm 权威模型另立 change）。
+        const signalDefects = actionableResult.defects.filter((d) => d.signal_identity === true);
+        const humanSignedScreens = humanConfirmedScreens(projectRoot, manifest.feature);
+        let materializationBlocked: { reason: string; disputeRows: string[] } | null = null;
+        let materializationPending: string[] = []; // 供 halt 呈现
+        const humanExcludedSignals = new Set<string>(); // 人签屏的信号指纹（merge 时剔除）
+        if (!dryRun && !envBlockedPre && signalDefects.length > 0) {
+          let reportText = '';
+          try {
+            const reportPath = path.join(
+              featureDir(projectRoot, manifest.feature), 'testing', 'test-report.md',
+            );
+            if (fs.existsSync(reportPath)) reportText = fs.readFileSync(reportPath, 'utf-8');
+          } catch { /* 报告不可读 = 无复核块（unreviewed，fail-closed 停等） */ }
+          const review = parseDefectReviewBlock(reportText);
+          const disputeRows: string[] = [];
+          const seenSignals = new Map<string, string>();
+          for (const e of review.entries) {
+            const hit = signalDefects.filter((d) => d.fingerprint === e.signal.trim());
+            if (hit.length === 0) {
+              disputeRows.push(`非法条目（signal 无匹配缺陷）：${e.signal.slice(0, 48)}`);
+              continue;
+            }
+            if (hit.length > 1 || seenSignals.has(e.signal)) {
+              disputeRows.push(`歧义/重复条目：${e.signal.slice(0, 48)}`);
+              continue;
+            }
+            seenSignals.set(e.signal, hit[0].fingerprint);
+          }
+          for (const d of signalDefects) {
+            // 人签屏 = 人工确认该屏视觉无需修复 → 信号人工排除（真源=visual-confirm 人签）
+            if (humanSignedScreens.has(d.screen_or_case_id)) {
+              humanExcludedSignals.add(d.fingerprint);
+              continue;
+            }
+            const entry = review.entries.find((e) => e.signal.trim() === d.fingerprint);
+            if (!entry) {
+              // 未复核：不可信（fail-closed）——不产候选、停等
+              disputeRows.push(`unreviewed：${d.fingerprint.slice(0, 16)}…（${(d.instructions[0] ?? '').slice(0, 48)}）`);
+            } else if (entry.verdict === 'confirmed') {
+              // 同向（mechanical actionable + agent 复核同向）→ 通过，走正常物化
+            } else {
+              // disputed：首触停等，理由原样呈现（无自动 refuted；恢复=人签屏排除或
+              // 人改 must_fix 走 actionable 重裁）
+              disputeRows.push(`disputed：${d.fingerprint.slice(0, 16)}…（理由：${entry.rationale ?? '无'}）`);
+            }
+          }
+          if (disputeRows.length > 0) {
+            materializationBlocked = { reason: disputeRows.join('；'), disputeRows };
+            materializationPending = disputeRows;
+          }
+        }
+        // adjudicated-repair-loop M2：uncertain 人签排除**必须在 closure
+        // 门控之前**消费——否则签名解除 pending 后本轮 closure 已被跳过（时序洞）。
+        // 载体=既有 visual-confirm 人签（visual-diff.json 屏条目 confirmed_by 真人人签，
+        // isHumanVerified 谓词，见 humanConfirmedScreens）——单一真源。
+        if (!dryRun && uncertainPending.length > 0) {
+          const humanSignedScreensNow = humanConfirmedScreens(projectRoot, manifest.feature);
+          if (humanSignedScreensNow.size > 0) {
+            const before = uncertainPending.length;
+            uncertainPending = uncertainPending.filter(
+              (u) => !humanSignedScreensNow.has(u.screen_id),
+            );
+            if (uncertainPending.length !== before) {
+              console.warn(
+                `[repair-adjudication] visual-confirm 人签确认 ${before - uncertainPending.length} 项 uncertain ` +
+                  '信号（confirmed_by + isHumanVerified）——解除阻塞',
+              );
+            }
+          }
+        }
+        const adjudicationPending = uncertainPending.length > 0 || materializationBlocked !== null;
+
         // P0-5（plan 7c4f2e9b）：in-flow 探针结果 hoist——closure_kind 分类 fresh 路径
         // 复用本次控制流已取得的 receiptValidation，不重复 spawn（codex 五轮）。
         let inFlowReceiptValidation: ReturnType<typeof tryValidateReceipt> | null = null;
         let closureFinalizationError: string | null = null;
-        if (!dryRun && freshSummary && summary?.verdict === 'PASS') {
+        if (!dryRun && freshSummary && summary?.verdict === 'PASS' && !adjudicationPending) {
           const harnessRoot = path.join(frameworkRoot, 'harness');
           const receiptValidation = (injectedValidateReceipt ?? tryValidateReceipt)(
             harnessRoot,
@@ -6420,6 +6984,53 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
         }
 
+        // M2（plan e2b7c4a9 t2.3）：uncertain 判停（时序冻结）——上面已**禁止** PASS
+        // closure（receipt validation / finalizePhaseClosure），此处仍完成了既有 visual_round
+        // 事件投影与完整性处理，然后才 halt repair_adjudication_pending：不进入普通 verdict
+        // 处理与 candidate merge（杜绝「唯一 uncertain 其余全 PASS 先关环再停等」的
+        // 成功态与停等并存）。halt 提供 producer 证据（原样）+ 既有通道 resume 指引。
+        if (uncertainPending.length > 0 || materializationBlocked !== null) {
+          halted = true;
+          const pendingRows: string[] = [];
+          if (materializationBlocked) pendingRows.push(...materializationBlocked.disputeRows);
+          const uncertainRows = uncertainPending.map((u) => u.reason);
+          pendingRows.push(...uncertainRows);
+          const bb = [
+            '===== repair_adjudication_pending（视觉信号待人工裁决）=====',
+            `feature=${manifest.feature} run_id=${manifest.run_id} phase=${phase}`,
+            ...(uncertainPending.length > 0
+              ? [`producer 将 ${uncertainPending.length} 项视觉信号归为 uncertain（两源冲突/口径缺口，不自动裁定谁对）：`, ...uncertainRows]
+              : []),
+            ...(materializationBlocked
+              ? [`testing agent 的 defect-review 复核未全部同向（或未复核）——不物化候选、不自动回退：`, ...materializationBlocked.disputeRows]
+              : []),
+            '- 人工裁决恢复（既有通道）：',
+            '  1. 逐屏审阅 device-screenshots/shot-*.png 对照参考原图；',
+            '  2. 接受该屏（信号误报/无需修复）→ 走既有 visual-confirm 人签：visual-diff.json' +
+              ' 该屏 confirmed_by 填真人人签（isHumanVerified 谓词，同 visual-confirm CLI 口径）后 --resume；',
+            '  3. 认为确要修复 → 该屏 verdict=fail + must_fix 后 resume（走既有 actionable 通道重新裁决）。',
+            '- 恢复命令：`framework/harness/scripts/goal-runner.ts --resume`（run 处于 WAITING）。',
+          ].join('\n');
+          goalEvents.emit({
+            type: 'phase_halt', phase, halt_reason: 'repair_adjudication_pending',
+            ...(uncertainPending.length > 0 ? { uncertain_signals: uncertainPending } : {}),
+            ...(materializationBlocked ? { dispute_rows: materializationBlocked.disputeRows } : {}),
+            halt_guidance: bb,
+            ...runDispositionFields(decide(
+              { incident: 'repair_adjudication_pending', phase: String(phase) },
+              NO_AUTHORITY,
+              { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+            )),
+          });
+          console.error(`\n===== repair_adjudication_pending =====\n${bb}\n`);
+          outcomes.push({
+            phase, verdict: 'FAIL', halted: true, retries,
+            halt_reason: 'repair_adjudication_pending',
+            halt_guidance: bb,
+          });
+          break;
+        }
+
         const resolved = resolvePhaseHarnessVerdict({
           dryRun,
           agentExitCode: invoke.exitCode,
@@ -6503,26 +7114,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const currentArtifactSnapshot =
           watchedFiles.length > 0 ? snapshotArtifacts(projectRoot, watchedFiles) : {};
 
-        // v23 F1：统一可回修缺陷收集——**只在 testing**（UT 不读视觉产物；既有 ut/testing
-        // authorized-backtrack 路径不受影响）。环境类失败（工具链/采集/外部依赖）回码修不好，
-        // 排除出回退判据。
-        const actionableResult: ActionableCollectResult =
-          !dryRun && phase === 'testing'
-            ? collectActionableDefects(projectRoot, manifest.feature, manifest.run_id, {
-                // d9e4b7c1 T2：device_test 消费上下文——期望设备元组由 runner 内存直传
-                // （禁从"最新事件"反推）；harness 窗口是 written_at/run meta 的唯一裁决窗口
-                attemptId: visualAttemptId,
-                expectedTarget: {
-                  serial: deviceEnv.HARNESS_HDC_TARGET ?? null,
-                  target_kind: deviceEnv.MAISON_DEVICE_TARGET_KIND ?? null,
-                  session_id: deviceEnv.MAISON_DEVICE_SESSION_ID ?? null,
-                },
-                harnessWindow: { startMs: harnessStartedAtMs, endMs: harnessEndedAtMs },
-                reportsDir: featurePhaseReportsDir(
-                  projectRoot, manifest.feature, String(phase), frameworkRoot,
-                ),
-              })
-            : { defects: [], unverified: [] };
+        // v23 F1（adjudicated-repair-loop review 修复）：统一可回修缺陷收集已**上移到
+        // PASS closure 之前**（见上方 actionableResult）——此处复用同一结果做信任精修与合并。
         const actionableDefects = actionableResult.defects;
         const failureKind = refineFailureKindWithTrustedDeviceEvidence(
           baseFailureKind,
@@ -6548,7 +7141,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           ? []
           : ((summary as { repair_candidates?: RepairCandidate[] } | null)?.repair_candidates ?? []);
         let repairCandidatesUnwritable: string | null = null;
-        if (!dryRun && !envBlocked && driverActionableDefects.length > 0) {
+        if (!dryRun && !envBlocked && driverActionableDefects.length > 0 && materializationBlocked === null) {
           // fail-closed：候选写不回 summary（唯一真源）＝assess 看不见缺陷＝回退链断
           // ——不得静默降级为 advance，也不得落回任何旧路由（旧路由已删除）。
           // summary 路径缺失同样计入（codex 二轮：缺 summaryAbsPath 时不得绕过契约）。
@@ -6558,7 +7151,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
             try {
               summaryRepairCandidates = mergeRepairCandidatesIntoSummary({
                 summaryPath: summaryAbsPath,
-                candidates: actionableDefectsToCandidates(driverActionableDefects, String(phase)),
+                // review 修复：人工终裁排除（resolve=excluded）的信号不物化
+                candidates: actionableDefectsToCandidates(
+                  driverActionableDefects.filter((d) => !humanExcludedSignals.has(d.fingerprint)),
+                  String(phase),
+                ),
               });
             } catch (e) {
               repairCandidatesUnwritable = (e as Error).message;
@@ -6570,6 +7167,80 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // 重采/补身份，耗尽 halt。
         const unverifiableOnly =
           phase === 'testing' && !envBlocked && !hasActionable && actionableResult.unverified.length > 0;
+
+        // adjudicated-repair-loop M1（review 修复）：累计收敛状态**在 assess/唯一 boundary
+        // 之前**一次性计算——halt 交由 guard 前置（boundary 发布一致的 halt verdict），不再
+        // 在 backtrack 分支内事后改判（消除两个裁决面）。
+        //   · signal@1 候选按其 item_fingerprint 是否 ∈ attempted（events 回放）过滤；
+        //   · legacy（非 signal@1）候选恒 eligible、不参与收敛；
+        //   · 仅当「存在 signal open 且无任何可回退候选（signal eligible 空 且 无 legacy）」
+        //     才停 repair_not_converging——有 legacy 时继续路由 legacy（不误伤 check-domain）。
+        const signalCandidatesAll = summaryRepairCandidates.filter((c) => c.identity_schema === 'signal@1');
+        const legacyCandidates = summaryRepairCandidates.filter((c) => c.identity_schema !== 'signal@1');
+        // adjudicated-repair-loop（review 修复）：**人签只承担一个语义：「接受该屏」**——
+        // 该屏信号（pending 与 attempted 一致）都不再驱动回退：pending 解除阻塞不物化
+        //（materialization 中已剔除），attempted 的 open 信号**从 eligible 输入中剔除**
+        //（不得删除 attempted——删除会使信号重新 eligible 导致反向驱动回退）。
+        // **「再修一次」的许可 = resume 动作本身，事件驱动一次性**：仅当「最近一条
+        // repair_not_converging halt 之后尚无 resume_release_granted 事件」才放行一次
+        //（attempted 清空一轮 + 重置整轮指纹熔断 + 落审计事件）；release 事件即消费
+        // 标记——同一 resume 进程内第二次决策点不再放行（attempted 重新计入后须再次
+        // 人工 resume）。
+        const humanSignedScreensNow = humanConfirmedScreens(projectRoot, manifest.feature);
+        const humanAcceptedScreens = humanSignedScreensNow;
+        const attemptedSignalNow = replayAttemptedSignalIdentities(loadAuthoritativeEvents(eventsPath));
+        // resume = 一次显式放行（事件驱动一次性）：最近 halt 后无 release 事件才放行，
+        // **且仅当当前 phase 确有 open 信号候选**（spec/plan/coding 等无候选 phase 的
+        // 决策点不消费放行——否则 resume 后首个 phase 就抢走释放，testing 反而拿不到）。
+        if (argv.resume && attemptedSignalNow.size > 0 && signalCandidatesAll.length > 0) {
+          const eventsNow = loadAuthoritativeEvents(eventsPath);
+          let lastConvergenceHaltIdx = -1;
+          for (let i = eventsNow.length - 1; i >= 0; i--) {
+            if (
+              eventsNow[i].type === 'phase_halt' &&
+              (eventsNow[i] as { halt_reason?: string }).halt_reason === 'repair_not_converging'
+            ) {
+              lastConvergenceHaltIdx = i;
+              break;
+            }
+          }
+          const hasReleaseAfterHalt =
+            lastConvergenceHaltIdx >= 0 &&
+            eventsNow.slice(lastConvergenceHaltIdx + 1).some(
+              (e) => e.type === 'resume_release_granted',
+            );
+          if (lastConvergenceHaltIdx >= 0 && !hasReleaseAfterHalt) {
+            const released = [...attemptedSignalNow];
+            for (const fp of released) attemptedSignalNow.delete(fp);
+            seenRoundFingerprints.clear();
+            goalEvents.emit({
+              type: 'resume_release_granted',
+              phase: String(phase),
+              released_identities: released.map((fp) => fp.slice(0, 12)),
+              reason: '人工 --resume 显式放行（attempted 清空一轮；一次性消费标记=本事件）',
+            });
+            console.warn(
+              `[repair-convergence] 人力放行（resume 动作，一次性）：${released.length} 个 attempted 身份` +
+                '清空一轮——attempted 重新计入后须再次人工 resume 才能再放行',
+            );
+          }
+        }
+        const eligibleSignalNow = computeEligibleSignalIdentities(signalCandidatesAll, attemptedSignalNow);
+        // 人签接受屏：该屏信号从 eligible 中剔除（保留 attempted 不变——删除 attempted 会
+        // 反向重获资格；剔除 eligible 输入才表达「不再驱动回退」）。
+        const eligibleForBacktrackRaw = [...eligibleSignalNow, ...legacyCandidates];
+        const eligibleForBacktrack = humanAcceptedScreens.size > 0
+          ? eligibleForBacktrackRaw.filter((c) => {
+              if (c.identity_schema !== 'signal@1') return true;
+              const screen = c.id.replace(/^visual_diff:/, '');
+              return !(screen && humanAcceptedScreens.has(screen));
+            })
+          : eligibleForBacktrackRaw;
+        const signalOpen = signalCandidatesAll.length > 0;
+        const allRepairExhausted =
+          signalOpen &&
+          eligibleForBacktrack.filter((c) => c.identity_schema === 'signal@1').length === 0 &&
+          legacyCandidates.length === 0;
 
         let driverGuardAction: DriverGuardAction = 'none';
 
@@ -6594,6 +7265,48 @@ Goal runner — tool-agnostic multi-phase orchestrator
             `\n===== repair_candidates_unwritable =====\n${repairCandidatesUnwritable}\n`
             + '可信缺陷写不回 summary——assess 将看不到它、回退链断裂，停下求人。\n',
           );
+        }
+        // M2（plan e2b7c4a9 t2.3）：物化前裁决受阻——actionable 信号被 agent 反对或未复核
+        // → 停等 repair_adjudication_pending（producer 证据与反对理由原样呈人）；不写入
+        // candidates（trusted-actionable 契约不变）、无自动 refuted。
+        // （materializationBlocked 的 halt 已并入上方 visual_round 投影后的统一
+        //  repair_adjudication_pending 出口——此处仅剩 guard 分支，避免两个裁决面。）
+        if (materializationBlocked) {
+          driverGuardAction = 'halt';
+          haltReason = 'repair_adjudication_pending';
+        }
+        // adjudicated-repair-loop M1（review 修复）：收敛判停前置（唯一裁决面）——
+        // signal@1 open 但全部已 attempted 且无 legacy 可回退 → guard halt；
+        // 有 legacy 时继续（backtrack 分支用 eligibleForBacktrack 注入，不误伤 check-domain）。
+        if (allRepairExhausted) {
+          driverGuardAction = 'halt';
+          haltReason = 'repair_not_converging';
+          const convergenceGuidance = [
+            '===== repair_not_converging（信号级候选已累计回退、仍未消除）=====',
+            `feature=${manifest.feature} run_id=${manifest.run_id} phase=${phase}`,
+            `以下 ${signalCandidatesAll.length} 个信号级候选身份已在本 run 中实际执行过自动修复（attempted），` +
+              '仍处于 open——累计 one-shot 收敛禁止再次自动回退（防 A/C 交替空转）：',
+            ...signalCandidatesAll.map((c) => `- ${c.item_fingerprint.slice(0, 12)}`),
+            '- 人工裁决恢复（既有通道）：',
+            '  1. 确属真缺陷且要再修一次 → 直接 `framework/harness/scripts/goal-runner.ts --resume`',
+            '     ——**resume 本身即一次显式放行**（attempted 清空一轮；attempted 不变式保证重新执行后',
+            '     重新计入，须再次人工 resume 才能再放行，不自动循环）；',
+            '  2. 判为误报/已解决 → visual-confirm 人签接受该屏（visual-diff.json confirmed_by 真人人签）后 resume',
+            '     ——该屏信号接受不再驱动回退；',
+            '  3. 每次放行都是一次人的动作（resume/人签），attempted 累计不变式不被任何 agent 文本重置。',
+            '- 恢复命令：`framework/harness/scripts/goal-runner.ts --resume`（run 处于 WAITING）。',
+          ].join('\n');
+          goalEvents.emit({
+            type: 'phase_halt', phase, halt_reason: 'repair_not_converging',
+            attempted_identities: signalCandidatesAll.map((c) => c.item_fingerprint.slice(0, 12)),
+            halt_guidance: convergenceGuidance,
+            ...runDispositionFields(decide(
+              { incident: 'repair_not_converging', phase: String(phase) },
+              NO_AUTHORITY,
+              { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+            )),
+          });
+          console.error(`\n===== repair_not_converging =====\n${convergenceGuidance}\n`);
         }
         if (!unverifiableOnly) previousUnverifiedRound = null;
         if (unverifiableOnly) {
@@ -7140,6 +7853,20 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 CUMULATIVE_HALT_FAMILY,
               ) + 1
             : 0,
+          // M1（plan e2b7c4a9 t1.3）：整轮候选集合指纹 + 信号级收敛状态进 reconcile
+          // observation——assess 消费入 stop 理由（见 assess.ts stop.reason）。
+          repeatedRoundFingerprint: roundFingerprintOfCandidates(summaryRepairCandidates),
+          repairConvergence: (() => {
+            const signalCands = summaryRepairCandidates.filter((c) => c.identity_schema === 'signal@1');
+            if (signalCands.length === 0) return undefined;
+            const attemptedNow = replayAttemptedSignalIdentities(loadAuthoritativeEvents(eventsPath));
+            const eligibleNow = signalCands.filter((c) => !attemptedNow.has(c.item_fingerprint));
+            return {
+              eligibleEmpty: eligibleNow.length === 0,
+              openSignalCount: signalCands.length,
+              attemptedSignalCount: signalCands.length - eligibleNow.length,
+            };
+          })(),
           residualFingerprints: currentBlockerSignature ? [currentBlockerSignature] : [],
           // 失效面：testing 缺陷特例（既有）∪ repair candidates 的最上游目标及其下游
           // （目标不在链内=空——driver 判 target 缺席走 backtrack_target_absent）。
@@ -7152,7 +7879,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           timedOut: invoke.timed_out,
           operatorInterrupted: haltReason === 'operator_interrupt',
           apiDisconnected: apiErrorSentinel !== null,
-          fused: driverGuardAction === 'halt' && /^no_progress|repeated/.test(haltReason ?? ''),
+          fused: driverGuardAction === 'halt' && (/^no_progress|repeated/.test(haltReason ?? '') || haltReason === 'repair_not_converging'),
           fuseReason: haltReason,
         });
         if (runControl) {
@@ -7592,7 +8319,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
             // 继续注入后续 prompt。
             backtrackRepairCandidates = [];
             backtrackToIdx = Math.max(codingIdx, 0);
-            goalEvents.emit({ type: 'phase_backtrack_completed', to_phase: chain[backtrackToIdx] });
+            // M1 t1.6（adjudicated-repair-loop）：completed 移到回退链真正完成之后——
+            // 目标 coding 执行完毕（settled/verdict）后补发，不再在此提前发射（修 :7592 时序）。
+            pendingBacktrackCompletion = {
+              toPhase: chain[Math.max(codingIdx, 0)],
+              signalDriven: false,
+              preSnapshot: null,
+            };
             console.log(
               (driftDecision.kind === 'authorized_backtrack'
                 ? `[S4] 授权源码变更（${driftDecision.files.length} 文件，receipts=${driftDecision.matched.map(r => r.approved_by).join(',')}）`
@@ -7774,6 +8507,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
           const targetPhaseBt = assessment?.recommendation?.phase ?? null;
           const targetIdxBt = targetPhaseBt ? chain.indexOf(targetPhaseBt as FeaturePhase) : -1;
           const roundFp = roundFingerprintOfCandidates(summaryRepairCandidates);
+          // adjudicated-repair-loop M1（review 修复）：eligible 状态已在 assess 前一次性
+          // 计算（见 driverGuardAction 链上方 eligibleForBacktrack）——allRepairExhausted
+          // 由 guard 前置 halt（唯一裁决面，boundary 发布一致 verdict），本分支只负责：
+          //   · 注入过滤：signal@1 只回退 eligible 身份，legacy 原样保留（不误伤）；
+          //   · 仍保留既有熔断（target 缺席 / 预算 / 整轮指纹重复）。
           if (targetIdxBt < 0 || backtracksUsed >= DEFAULT_MAX_BACKTRACKS || seenRoundFingerprints.has(roundFp)) {
             action = 'halt';
             haltReason = targetIdxBt < 0
@@ -7814,9 +8552,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
           } else {
             backtracksUsed++;
             seenRoundFingerprints.add(roundFp);
-            // mixed-owner：整组候选保留（prompt 注入按当前 phase 类别过滤——见
+            // mixed-owner：eligible 过滤后的候选保留（prompt 注入按当前 phase 类别过滤——见
             // buildRepairCandidatesBlock 消费点）；有界 20 条与 testing 通道同款。
-            backtrackRepairCandidates = summaryRepairCandidates.slice(0, 20);
+            // M1 收敛（review 修复）：signal@1 只注入 eligible（attempted 已排除），
+            // legacy 恒 eligible 原样保留——eligibleForBacktrack 在 assess 前一次性算出。
+            backtrackRepairCandidates = eligibleForBacktrack.slice(0, 20);
             const invalidatedBt = chain
               .slice(targetIdxBt, phaseIdx + 1)
               .filter(ph => outcomes.some(o => o.phase === ph));
@@ -7839,6 +8579,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 summary: c.summary.length > 400 ? `${c.summary.slice(0, 400)}…` : c.summary,
                 item_fingerprint: c.item_fingerprint,
                 source_phase: c.source_phase,
+                // M1：signal@1 标记随事件持久化——attempted 回放据此识别信号级候选
+                ...(c.identity_schema ? { identity_schema: c.identity_schema } : {}),
               })),
               defect_count: summaryRepairCandidates.length,
               files: summaryRepairCandidates.flatMap(c => c.files).slice(0, 20),
@@ -7855,6 +8597,20 @@ Goal runner — tool-agnostic multi-phase orchestrator
             );
             outcomes = outcomes.filter(o => !invalidatedBt.includes(o.phase));
             goalEvents.emit({ type: 'phase_backtrack_started', to_phase: String(targetPhaseBt) });
+            // M1 t1.5/t1.6（adjudicated-repair-loop）：回退链完成跟踪——completed 在目标
+            // phase 真正执行完（settled/verdict 在案）后补发；signal@1 驱动时拍 pre 快照
+            // 供目标 phase settle 后的 no-op 判定（pre/post 相等 → result='noop' + 停等）。
+            pendingBacktrackCompletion = {
+              toPhase: String(targetPhaseBt),
+              // 仅当本轮有 signal@1 候选实际进入回退才做 no-op 快照判定
+              signalDriven: eligibleForBacktrack.some((c) => c.identity_schema === 'signal@1'),
+              preSnapshot:
+                eligibleForBacktrack.some((c) => c.identity_schema === 'signal@1')
+                  ? computeProductSourceSnapshotDetail(
+                      projectRoot, productLayerDirsOf(projectRoot), manifest.feature,
+                    )
+                  : null,
+            };
             phaseIdx = targetIdxBt - 1; // for 循环 ++ 后落回目标阶段
             phaseDone = true;
             if (featureLock) touchLock(featureLock.path, featureLock.ownerId);
