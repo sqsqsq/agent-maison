@@ -397,13 +397,17 @@ export function collectTextPlacementSignals(
     // 原子组判定：先收集每条候选的混淆状态，再统一决定（不得逐条边遍历边改）
     const confusedSet = new Set<string>(); // 最终 uncertain 的候选（原子：组内成员一起进）
     const confusedReasons = new Map<string, string>(); // 候选 → uncertain 文案
-    // 直接规则（对**所有**候选，含未命中者）：任何截图像识别行文本与候选 t 编辑距离 ≤1
-    // ——未命中也算（短串 dd1：候选「中信」未命中但 OCR 行「中国」与它 dd1 → 不得落 must_fix）。
+    // 直接规则（含未命中候选）：候选未完整出现且 OCR 行与它编辑距离 ≤1 → uncertain。
+    // 精确包含优先：如「《添加银行卡」只是 OCR 把返回箭头并入标题行，候选文本本身没有冲突。
+    // 未命中仍须检测：「中信」vs「中国」距离 1，不得落为存在性 must_fix。
     for (const t of texts) {
       const ref = refClaims.get(t);
       if (!ref || confusedSet.has(t)) continue; // 参考图都读不到该文本——不构成对照
       for (const shotText of shotLineTexts) {
-        if (levenshteinDistance(shotText, t) <= 1 && normPlacement(shotText) !== normPlacement(t)) {
+        const shotNorm = normPlacement(shotText);
+        const targetNorm = normPlacement(t);
+        if (shotNorm.includes(targetNorm)) continue;
+        if (levenshteinDistance(shotNorm, targetNorm) <= 1) {
           confusedSet.add(t);
           confusedReasons.set(
             t,
