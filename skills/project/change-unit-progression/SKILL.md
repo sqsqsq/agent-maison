@@ -7,6 +7,9 @@ description: Validate and continuously execute canonical Change Units from an ad
 
 Use this Skill only when a blueprint has an admitted canonical artifact and one or more canonical `change-unit@1` artifacts in its evolution workspace: `<features_dir>/<blueprint_id>/<change_unit_id>/change-unit.yaml`（`<features_dir>` 默认 `doc/features`，经框架解析；CU 目录即该 CU 的 Feature 施工目录）。
 
+> 真实宿主场景：选中 CU 前的准入与缺失输入三级路由见
+> [真实宿主准入与回灌契约](../../reference/real-host-admission-and-feedback.md)。
+
 ## Authority and entry
 
 - Run `check:change-unit`（`--blueprint <blueprint_id> --unit <change_unit_id>`）for each candidate before deriving readiness. A decomposition Provider may propose only temporary/in-memory candidates; only the consumer validator may accept a provenance-bearing canonical CU.

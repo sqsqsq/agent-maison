@@ -7,6 +7,9 @@
 - “发现 App 部件 / 建部件蓝图 / 适配 4+1 / 调和蓝图”
 - `/app-component-blueprint <blueprint-id>`
 
+> 真实宿主的部件复杂需求在进入蓝图前，材料准入与缺失路由见
+> [真实宿主准入与回灌契约](../../reference/real-host-admission-and-feedback.md)（适用范围内）。
+
 ## 正式产物
 
 唯一机器 SSOT（演进工作区布局，硬切无兼容）：

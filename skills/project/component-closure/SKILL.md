@@ -7,6 +7,9 @@ description: Reconstruct and validate component-level assembly and coverage clos
 
 Use this Skill only after P1 admission and P2 Change Unit execution facts exist for the target component.
 
+> 真实宿主场景：闭环前的宿主证据口径（批次与八条运行时场景）与 provider 自然事件落点见
+> [真实宿主准入与回灌契约](../../reference/real-host-admission-and-feedback.md)。
+
 ## Authority and entry
 
 - Load exactly `<features_dir>/<blueprint_id>/blueprint/component-blueprint.yaml`（`<features_dir>` 默认 `doc/features`，经框架解析）and the same workspace's canonical CU artifacts `<features_dir>/<blueprint_id>/<change_unit_id>/change-unit.yaml`. Input enumeration is limited to that single workspace; CUs of another workspace (including an earlier evolution of the same `component_id`) never enter the input set or credit a row. Do not scan arbitrary Features or delegate input membership to a Provider.
