@@ -2796,6 +2796,180 @@ test('M2-5 actionable + defect-review confirmed（同向）→ 物化为常规�
   assertRunReachedEnd(probe, 'M2-5');
 });
 
+// ===========================================================================
+// plan b5f1d9c3 t2：1c95e3 事件序列聚焦回归（一条）——settled → harness_end →
+// phase_halt(WAITING) → resume → **无新 agent_invoke_start** → 复用原 invoke identity →
+// **恰好一次 gate harness** → PASS 收工（或原样快速再停等）。
+//
+// 非 win32 测试宿主不自动 emit settled——用与 legacy seal 追补相同的既有手法：resume 前
+// 在 events 中 manual 插入 agent_process_settled（invoke_id 取该 phase 真实 harness_end 的
+// invoke_id，严格同 invoke），模拟 3.0.0 win32 干净收尾形态（真实 run 每次 invoke 都落）。
+// ===========================================================================
+
+test('b5f1d9c3 t2：uncertain 停等 → settled 在案 → resume 无新 agent invoke、复用原身份、恰好一次 gate harness、无人签 PASS 收工', async () => {
+  const { root } = setupHost();
+  const uncertainSig = {
+    screen_id: 'add_card_home',
+    item_fingerprint: 'c'.repeat(64),
+    reason: 'OCR 识别文本「中国银行」与候选「中信银行」编辑距离 ≤1——两源冲突，不自动裁定谁对',
+    evidence_ref: 'doc/features/bc-openCard/device-testing/visual-diff.md#add_card_home',
+  };
+  // 首 run：与 M2-1 同构——testing agent 只采证（visual-diff.json 干净），harness 产
+  // uncertain 载体 → 停等 repair_adjudication_pending（WAITING/human）。
+  const probe1 = await runChain(root, {
+    onTesting: ({ root: r }) => {
+      writeVisualDiff(r, [{ id: 'add_card_home', verdict: 'pass', mustFix: [] }]);
+    },
+    onTestingHarness: ({ root: r, attempt }) => {
+      if (attempt !== 1) return;
+      const reportsDir = path.join(r, 'doc/features', FEATURE, 'testing', 'reports');
+      fs.mkdirSync(reportsDir, { recursive: true });
+      fs.writeFileSync(path.join(reportsDir, 'script-report.json'), JSON.stringify({
+        phase: 'testing', feature: FEATURE,
+        timestamp: new Date().toISOString(), project_root: r,
+        checks: [{
+          id: 'visual_diff', category: 'structure', description: '', severity: 'MAJOR', status: 'PASS',
+          details: '不确定信号注记',
+          structured: {
+            kind: 'visual_diff', loop_id: 'L1', attempt_id: null, goal_run_id: null,
+            build_fingerprint: null, screens_hash: 's', defect_fingerprints: [], fingerprintable: true,
+            source_fail_hit_ids: [], source_warn_ids: [], await_human_only: false, actionable_residual: false,
+            t8_findings: [],
+            uncertain_signals: [uncertainSig],
+          },
+        }],
+        summary: { total: 1, pass: 1, fail: 0, warn: 0, skip: 0, blockers: 0, verdict: 'PASS' },
+      }, null, 2), 'utf-8');
+    },
+  });
+  const runId1 = path.basename(probe1.reportDir);
+  assert(
+    probe1.events.some(e => e.type === 'phase_halt' &&
+      (e as { halt_reason?: string }).halt_reason === 'repair_adjudication_pending'),
+    `首 run 须 halt repair_adjudication_pending：${JSON.stringify(probe1.events.filter(e => e.type === 'phase_halt'))}`,
+  );
+  // 提取首 run 真实 harness_end（testing）的 invoke_id——settled 复用同一身份
+  const harnessEnds = probe1.events.filter(e => e.type === 'harness_end' && e.phase === 'testing');
+  assert(harnessEnds.length >= 1, '首 run 须有 testing harness_end');
+  const invokeId = String(harnessEnds[harnessEnds.length - 1].invoke_id ?? '');
+  assert(invokeId.length > 0, `harness_end 须带 invoke_id：${JSON.stringify(harnessEnds)}`);
+
+  // resume 前：events 中在 harness_end **之前**插入同 invoke 的 agent_process_settled（win32 语义）。
+  // **不写人签**——1c95e3 的真实事实正是无人签（三屏 confirmed_by 全 undefined）、
+  // 框架升级后 producer 不再产 uncertain；恢复由 resume 的验证优先（重跑 gate）完成。
+  const evPath = path.join(root, 'doc', 'features', FEATURE, 'goal-runs', runId1, 'events.jsonl');
+  const raw = fs.readFileSync(evPath, 'utf-8');
+  const lines = raw.split('\n').filter(Boolean);
+  const settledLine = JSON.stringify({
+    type: 'agent_process_settled', phase: 'testing', invoke_id: invokeId,
+    run_id: runId1, exit_code: 0, ts: new Date().toISOString(),
+  });
+  // 在最后一条 harness_end(testing) 行前插入 settled
+  let inserted = false;
+  const out: string[] = [];
+  for (const line of lines) {
+    const ev = JSON.parse(line) as Record<string, unknown>;
+    if (!inserted && ev.type === 'harness_end' && ev.phase === 'testing' && ev.invoke_id === invokeId) {
+      out.push(settledLine);
+      inserted = true;
+    }
+    out.push(line);
+  }
+  assert(inserted, 'settled 须插入到 harness_end 前');
+  fs.writeFileSync(evPath, out.join('\n') + '\n', 'utf-8');
+  const preResumeLineCount = out.length; // resume 追加部分切点（settled 已写入）
+
+  // resume：agent 不再被 invoke（验证优先），gate harness 恰好一次，PASS 收工
+  // 人工 resume 契约一字不动：WAITING 停等的 run_end 也是 HALTED 终态（RUN 级投影），
+  // resume 须满足 checkTerminalResumeGuard（cooldown 5m + --force-resume）——真实场景
+  // 人工停等后 resume 自然远超 cooldown；测试模拟时间流逝（run_end 回拨 10 分钟）+
+  // forceResume 显式确认（与 R-8 同手法）。
+  {
+    const lines = fs.readFileSync(evPath, 'utf-8').split('\n');
+    const patched = lines.map(l => {
+      if (!l.trim()) return l;
+      try {
+        const e = JSON.parse(l) as { type?: string; ts?: string };
+        if (e.type === 'run_end' && e.ts && !/CHAIN_SLICE_COMPLETED|COMPLETED/.test(String((e as { status?: string }).status ?? ''))) {
+          e.ts = new Date(Date.parse(e.ts) - 10 * 60 * 1000).toISOString();
+          return JSON.stringify(e);
+        }
+      } catch { /* keep */ }
+      return l;
+    });
+    fs.writeFileSync(evPath, patched.join('\n'), 'utf-8');
+  }
+  const probe2 = await runChain(root, {
+    resume: runId1,
+    forceResume: true,
+    onTesting: ({ root: r }) => {
+      // 若意外 invoke agent（不应发生），仍写干净产物（防干扰断言）
+      writeVisualDiff(r, [{ id: 'add_card_home', verdict: 'pass', mustFix: [] }]);
+    },
+    onTestingHarness: ({ root: r }) => {
+      // 宿主事故模拟：第二次 gate 时框架更新后 producer 不再产 uncertain → clean；
+      // 用「harness 调用次数」区分（runChain 两次调用的回调天然分离），不用 attempt。
+      const reportsDir = path.join(r, 'doc/features', FEATURE, 'testing', 'reports');
+      fs.mkdirSync(reportsDir, { recursive: true });
+      fs.writeFileSync(path.join(reportsDir, 'script-report.json'), JSON.stringify({
+        phase: 'testing', feature: FEATURE,
+        timestamp: new Date().toISOString(), project_root: r,
+        checks: [{
+          id: 'visual_diff', category: 'structure', description: '', severity: 'MAJOR', status: 'PASS',
+          details: '',
+          structured: {
+            kind: 'visual_diff', loop_id: 'L1', attempt_id: null, goal_run_id: null,
+            build_fingerprint: null, screens_hash: 's', defect_fingerprints: [], fingerprintable: true,
+            source_fail_hit_ids: [], source_warn_ids: [], await_human_only: false, actionable_residual: false,
+            t8_findings: [],
+          },
+        }],
+        summary: { total: 1, pass: 1, fail: 0, warn: 0, skip: 0, blockers: 0, verdict: 'PASS' },
+      }, null, 2), 'utf-8');
+    },
+  });
+  // 无人签断言（1c95e3 真实事实：confirmed_by 全 undefined）
+  {
+    const vdPath = path.join(root, 'doc', 'features', FEATURE, 'device-testing', 'device-screenshots', 'visual-diff.json');
+    const vd = JSON.parse(fs.readFileSync(vdPath, 'utf-8')) as { screens?: Array<{ confirmed_by?: string }> };
+    assert(
+      !(vd.screens ?? []).some(s => typeof s.confirmed_by === 'string' && s.confirmed_by.length > 0),
+      '须无人签（本次恢复不是靠 visual-confirm，而是 resume 验证优先）',
+    );
+  }
+  // 首 run 与 resume 写同一 run 目录、同一 events 文件（resume 进程同样发 run_start，
+  // 但都是追加到同一文件）——**resume 追加段 = settled 写入后的行数（preResumeLineCount）
+  // 之后的全部事件**（含 runChain 的 legacy seal 追补 2 行 + resume 进程追加）。
+  const allEvents = readEvents(probe2.reportDir);
+  assert(allEvents.length > preResumeLineCount,
+    `resume 后 events 须有追加：${allEvents.length} vs ${preResumeLineCount}`);
+  const resumedEvents = allEvents.slice(preResumeLineCount);
+  // 无新 agent invoke（testing）：resume 段不得有 testing agent_invoke_start
+  const newInvokeStarts = resumedEvents.filter(
+    e => e.type === 'agent_invoke_start' && e.phase === 'testing',
+  );
+  assert(newInvokeStarts.length === 0,
+    `resume 后不得有新的 testing agent_invoke_start：${JSON.stringify(newInvokeStarts)}`);
+  // gate harness 恰好一次：resume 段 testing harness_end 恰新增 1 条，且复用原 invoke_id
+  const resumedHarnessEnds = resumedEvents.filter(e => e.type === 'harness_end' && e.phase === 'testing');
+  assert(resumedHarnessEnds.length === 1,
+    `gate harness 应恰好一次（resume 段实得 ${resumedHarnessEnds.length}）`);
+  const lastHarnessEnd = resumedHarnessEnds[resumedHarnessEnds.length - 1];
+  assert(lastHarnessEnd.invoke_id === invokeId,
+    `gate harness 须复用原 invoke identity（${lastHarnessEnd.invoke_id} ≠ ${invokeId}）`);
+  // 收工：PASS（第二次 gate clean：框架升级后 producer 不再产 uncertain → 正常 closure）
+  const st = runEndStatus(resumedEvents);
+  const capped = hasEvent(resumedEvents, 'vision_trust_completion_cap');
+  assert(
+    st === 'CHAIN_SLICE_COMPLETED' || st === 'COMPLETED' || (st === 'PARTIAL' && capped),
+    `resume 后 run 须到达终点（status=${st}, visionCap=${capped}, exit=${probe2.exitCode}）`,
+  );
+  assert(
+    !resumedEvents.some(e => e.type === 'phase_halt'),
+    'resume 后不得再 halt（PASS 收工）',
+  );
+});
+
 // ---------------------------------------------------------------------------
 
 export async function runAll(): Promise<UnitCaseResult[]> {
