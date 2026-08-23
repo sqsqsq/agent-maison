@@ -20,6 +20,7 @@ import { createHash } from 'crypto';
 import {
   collectActionableDefects,
   computeEligibleSignalIdentities,
+  deriveHaltValidationOnlyEligibility,
   replayAttemptedSignalIdentities,
   type BacktrackWindowEvent,
 } from '../../scripts/goal-runner';
@@ -232,6 +233,172 @@ export function runAll(): UnitCaseResult[] {
     const eligible = computeEligibleSignalIdentities(open, attempted);
     assert(eligible.length === 1 && eligible[0].identity_schema === undefined,
       'signal 全 attempted 时 legacy 仍保留可回退（守卫只在全空时 halt）');
+  });
+
+  // ==========================================================================
+  // plan b5f1d9c3 t1：resume 验证优先——deriveHaltValidationOnlyEligibility 反例矩阵
+  // （7 条反例一律只断言“不进入 resumePostAgentPhases”（返回 null），不规定其后是否重新
+  //  invoke agent——终态/人工 resume 契约本 change 不动）。
+  // ==========================================================================
+  const haltEv = (extra: Record<string, unknown>) => ({
+    type: 'phase_halt', phase: 'testing', run_disposition: 'WAITING', ...extra,
+  });
+  const settledEv = (extra: Record<string, unknown>) => ({
+    type: 'agent_process_settled', phase: 'testing', invoke_id: 'testing-i4', ...extra,
+  });
+  const harnessEndEv = (extra: Record<string, unknown>) => ({
+    type: 'harness_end', phase: 'testing', invoke_id: 'testing-i4', exit_code: 0, ...extra,
+  });
+  // 正例基线：settled → harness_end → phase_halt(WAITING) →（run_end）→ resume 派生资格
+  const baselineEvents = () => [
+    settledEv({}),
+    harnessEndEv({}),
+    haltEv({}),
+  ];
+
+  run('b5f1d9c3 t1 正例：settled → harness_end → phase_halt(WAITING) → 派生 validation-only 资格', () => {
+    const r = deriveHaltValidationOnlyEligibility(baselineEvents());
+    assert(!!r, '正例应派生资格');
+    assert(r!.phase === 'testing' && r!.invoke_id === 'testing-i4', '应返回 halt phase + 原 invoke_id');
+  });
+
+  run('b5f1d9c3 t1 反例①：settled 之后出现 FAIL phase_verdict → 不派生', () => {
+    const r = deriveHaltValidationOnlyEligibility([
+      settledEv({}),
+      harnessEndEv({}),
+      { type: 'phase_verdict', phase: 'testing', verdict: 'FAIL', action: 'halt' },
+      haltEv({}),
+    ]);
+    assert(r === null, 'FAIL verdict 后不派生（不进入 resumePostAgentPhases）');
+  });
+
+  run('b5f1d9c3 t1 反例②：settled 之后出现更新的 agent_invoke_start → 不派生', () => {
+    const r = deriveHaltValidationOnlyEligibility([
+      settledEv({}),
+      harnessEndEv({}),
+      haltEv({}),
+      { type: 'agent_invoke_start', phase: 'testing', invoke_id: 'testing-i5' },
+    ]);
+    assert(r === null, '更新的 invoke_start 后不派生');
+  });
+
+  run('b5f1d9c3 t1 反例③：settled 带 timeout/kill → 不派生', () => {
+    const r1 = deriveHaltValidationOnlyEligibility([
+      settledEv({ timed_out: true, kill_reason: 'agent_timeout' }),
+      harnessEndEv({}),
+      haltEv({}),
+    ]);
+    assert(r1 === null, 'timed_out settled 不派生');
+    const r2 = deriveHaltValidationOnlyEligibility([
+      settledEv({ kill_reason: 'agent_timeout' }),
+      harnessEndEv({}),
+      haltEv({}),
+    ]);
+    assert(r2 === null, 'kill_reason=agent_timeout 不派生');
+  });
+
+  run('b5f1d9c3 t1 反例④：settled 缺 invoke_id → 不派生', () => {
+    const r = deriveHaltValidationOnlyEligibility([
+      { type: 'agent_process_settled', phase: 'testing' },
+      harnessEndEv({}),
+      haltEv({}),
+    ]);
+    assert(r === null, '缺 invoke_id 的 settled 不派生');
+  });
+
+  run('b5f1d9c3 t1 反例⑤：halt 缺 run_disposition 投影 → 不派生', () => {
+    const r = deriveHaltValidationOnlyEligibility([
+      settledEv({}),
+      harnessEndEv({}),
+      { type: 'phase_halt', phase: 'testing' }, // 无 run_disposition
+    ]);
+    assert(r === null, 'halt 缺投影不派生');
+  });
+
+  run('b5f1d9c3 t1 反例⑥：halt 投影为 TERMINAL / RECOVERY_PENDING → 不派生（终态语义不动）', () => {
+    const r1 = deriveHaltValidationOnlyEligibility([
+      settledEv({}),
+      harnessEndEv({}),
+      haltEv({ run_disposition: 'TERMINAL' }),
+    ]);
+    assert(r1 === null, 'TERMINAL 投影不派生');
+    const r2 = deriveHaltValidationOnlyEligibility([
+      settledEv({}),
+      harnessEndEv({}),
+      haltEv({ run_disposition: 'RECOVERY_PENDING' }),
+    ]);
+    assert(r2 === null, 'RECOVERY_PENDING 投影不派生');
+  });
+
+  run('b5f1d9c3 t1 反例⑦（review P1）：halt 之后出现更新的 backtrack/invalidated 窗口 → 不派生（新窗口优先）', () => {
+    // request-only crash 组合：settled → harness → halt(WAITING) → resume → backtrack → 崩溃
+    const r1 = deriveHaltValidationOnlyEligibility([
+      settledEv({}),
+      harnessEndEv({}),
+      haltEv({}),
+      { type: 'phase_backtrack_requested', to_phase: 'coding' },
+      { type: 'agent_invoke_start', phase: 'coding', invoke_id: 'coding-i5' },
+    ]);
+    assert(r1 === null, 'halt 后出现 backtrack 不派生（资格交给 applyInvalidationsToResume）');
+    const r2 = deriveHaltValidationOnlyEligibility([
+      settledEv({}),
+      harnessEndEv({}),
+      haltEv({}),
+      { type: 'phase_invalidated', phase: 'testing' },
+    ]);
+    assert(r2 === null, 'halt 后出现 invalidation 不派生');
+    // 同一 halt 之前已有 backtrack 的历史窗口不受影响（本函数只看 halt 之后）
+    const r3 = deriveHaltValidationOnlyEligibility([
+      settledEv({}),
+      harnessEndEv({}),
+      { type: 'phase_backtrack_requested', to_phase: 'coding' },
+      settledEv({ invoke_id: 'testing-i4' }),
+      harnessEndEv({ invoke_id: 'testing-i4' }),
+      haltEv({}),
+    ]);
+    assert(!!r3 && r3.invoke_id === 'testing-i4', 'halt 前的旧 backtrack 不影响（用最新 settled 身份）');
+  });
+
+  run('b5f1d9c3 t1 边界：同一 invoke 后无 harness_end → 不派生（窗口不完整）', () => {
+    const r = deriveHaltValidationOnlyEligibility([
+      settledEv({}),
+      haltEv({}), // 无 harness_end
+    ]);
+    assert(r === null, '缺 harness_end 不派生');
+  });
+
+  run('b5f1d9c3 t1 边界：harness_end 在不同 invoke（旧 invoke）→ 不派生', () => {
+    const r = deriveHaltValidationOnlyEligibility([
+      settledEv({}),
+      harnessEndEv({ invoke_id: 'testing-i3' }), // 不同 invoke
+      haltEv({}),
+    ]);
+    assert(r === null, 'harness_end 必须属同一 invoke 才有效');
+  });
+
+  run('b5f1d9c3 t1 边界：最新执行事件是 invoke_start 而非 settled（request-only 崩溃）→ 不派生', () => {
+    const r = deriveHaltValidationOnlyEligibility([
+      settledEv({ invoke_id: 'testing-i3' }),
+      harnessEndEv({ invoke_id: 'testing-i3' }),
+      { type: 'agent_invoke_start', phase: 'testing', invoke_id: 'testing-i4' },
+      haltEv({}),
+    ]);
+    assert(r === null, '最新执行事件为 invoke_start 不派生（resume 重新 invoke agent，保留候选上下文）');
+  });
+
+  run('b5f1d9c3 t1 边界：无 phase_halt 事件 → 不派生', () => {
+    const r = deriveHaltValidationOnlyEligibility([
+      settledEv({}),
+      harnessEndEv({}),
+    ]);
+    assert(r === null, '无 halt 不派生');
+  });
+
+  run('b5f1d9c3 t1 边界：halt phase 无执行事件（0 事件后直接 halt）→ 不派生（缺 settled）', () => {
+    const r = deriveHaltValidationOnlyEligibility([
+      haltEv({}), // 无任何执行事件
+    ]);
+    assert(r === null, '无 settled 不派生');
   });
 
   // 标准执行模式：逐条执行并捕获异常（不可只登记 ok:true——那是假 PASS）

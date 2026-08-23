@@ -2575,6 +2575,107 @@ export function applyInvalidationsToResume(
 }
 
 /**
+ * plan b5f1d9c3 t1：resume 验证优先——普通 `phase_halt` 停等（WAITING 投影）后 `--resume` 时，若事件窗口证明
+ * “agent 工作已完成、只差验证（gate harness）”，则派生 validation-only 资格——复用既有
+ * resumePostAgentPhases 机器（零新事件/状态/账本），跳过重新 invoke agent、直接进 gate harness
+ * 重验（宿主 run 1c95e3：resume 的 51 分钟 agent 时间实为纯废，gate 一轮 2m41s 即 PASS）。
+ *
+ * 判据只消费既有 `run_disposition` 投影 + 事件形状，**不做第二张分类表**（仓库明令下游只读
+ * run_disposition、不得按 halt_reason 再分类；INCIDENT_REGISTRY.class 表达责任归属而非“agent 是否
+ * 已完成”，禁止用作判据）：
+ *   1. 最新一条 `phase_halt` 事件的 `run_disposition === 'WAITING'`（字段在场且为 WAITING；
+ *      RECOVERY_PENDING/TERMINAL/缺字段一律不派生）；
+ *   2. halt phase 的**最新执行事件**是有效 `agent_process_settled`——带非空 `invoke_id`、
+ *      `timed_out !== true`、`kill_reason !== 'agent_timeout'`（超时/被杀的 settled 不算已完成）；
+ *   3. 同一 invoke_id 之后、halt 之前已有 `harness_end`（agent 退出后 gate harness 已跑过——
+ *      agent 做到 harness 边界）；
+ *   4. 该 settled 之后该 phase 无更新的 `agent_invoke_start`/`agent_process_settled`/`phase_verdict`
+ *      （避免把旧 settled 误当最新工作）；
+ *   5. **该 halt 之后无更新的 `phase_backtrack_requested`/`phase_invalidated`**（review P1：新回退/
+ *      失效窗口优先，资格完全交给既有 applyInvalidationsToResume——否则旧 halt 资格会覆盖新的
+ *      backtrack 窗口，导致 resume 重跑回退链却在目标 phase 误跳 agent）。
+ *
+ * 任一不满足 → 返回 null：**只是不从这个旧 halt 派生资格**，后续完全由既有 resume/invalidation
+ * 路径决定（新窗口的 settled 仍可能由 applyInvalidationsToResume 独立派生 validation-only 资格）；
+ * 本函数不修改任何 TERMINAL/RECOVERY_PENDING 投影的终态语义，也不触碰
+ * checkTerminalResumeGuard 的 cooldown/--force-resume 契约。
+ */
+export function deriveHaltValidationOnlyEligibility(
+  events: ReadonlyArray<{
+    type?: string;
+    phase?: string;
+    run_disposition?: unknown;
+    invoke_id?: unknown;
+    timed_out?: unknown;
+    kill_reason?: unknown;
+    verdict?: unknown;
+    action?: unknown;
+    to_phase?: unknown;
+  }>,
+): { phase: string; invoke_id: string } | null {
+  // 最新一条 phase_halt
+  let lastHaltIdx = -1;
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].type === 'phase_halt') { lastHaltIdx = i; break; }
+  }
+  if (lastHaltIdx < 0) return null;
+  const halt = events[lastHaltIdx];
+  // 5. halt 之后不得有更新的 backtrack/invalidation 窗口（review P1：新窗口优先，
+  //    资格完全交给 applyInvalidationsToResume——旧 halt 不得覆盖新回退链）。
+  for (let i = lastHaltIdx + 1; i < events.length; i++) {
+    const e = events[i];
+    if (e.type === 'phase_backtrack_requested' || e.type === 'phase_invalidated') {
+      return null;
+    }
+  }
+  // 1. WAITING 投影（缺字段/非 WAITING → 不派生；TERMINAL/RECOVERY_PENDING 语义本 change 不动）
+  if (halt.run_disposition !== 'WAITING') return null;
+  const phase = typeof halt.phase === 'string' && halt.phase.length > 0 ? halt.phase : null;
+  if (!phase) return null;
+  // 2. 该 phase 最新执行事件必须是有效 settled（倒序找第一条执行事件即最新）
+  let settled: Record<string, unknown> | null = null;
+  let settledIdx = -1;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.phase !== phase) continue;
+    if (e.type !== 'agent_invoke_start' && e.type !== 'agent_process_settled' && e.type !== 'phase_verdict') {
+      continue;
+    }
+    if (e.type === 'agent_process_settled') {
+      const invokeId = typeof e.invoke_id === 'string' && e.invoke_id.length > 0 ? e.invoke_id : null;
+      const timedOut = e.timed_out === true;
+      const killTimeout = e.kill_reason === 'agent_timeout';
+      if (invokeId && !timedOut && !killTimeout) {
+        settled = e;
+        settledIdx = i;
+      }
+    }
+    break; // 最新执行事件已见（无论是否有效 settled）
+  }
+  if (!settled || settledIdx < 0) return null;
+  const invokeId = String(settled.invoke_id);
+  // 3. 同一 invoke 之后、halt 之前已有 harness_end
+  let harnessEnded = false;
+  for (let i = settledIdx + 1; i < lastHaltIdx; i++) {
+    const e = events[i];
+    if (e.type === 'harness_end' && e.phase === phase && e.invoke_id === invokeId) {
+      harnessEnded = true;
+      break;
+    }
+  }
+  if (!harnessEnded) return null;
+  // 4. settled 之后该 phase 无更新的执行事件（harness_end 不属执行事件，可存在）
+  for (let i = settledIdx + 1; i < events.length; i++) {
+    const e = events[i];
+    if (e.phase !== phase) continue;
+    if (e.type === 'agent_invoke_start' || e.type === 'agent_process_settled' || e.type === 'phase_verdict') {
+      return null;
+    }
+  }
+  return { phase, invoke_id: invokeId };
+}
+
+/**
  * T2 5a 收口刀（codex P1-1）：manifest **出生基线**解析——只认仓内 events，不认场外缓存。
  *
  * fold 语义（与 resolveFrozenManifestHash 同构，"首个 run_start
@@ -4770,9 +4871,18 @@ Goal runner — tool-agnostic multi-phase orchestrator
       chainStartIndex = Math.min(chainStartIndex, inv.startIndex);
       resumePostAgentPhases = new Set(inv.postAgentPhases);
       resumePostAgentAttemptIds = inv.postAgentAttemptIds;
+      // plan b5f1d9c3 t1：resume 验证优先——普通 phase_halt 停等（WAITING 投影）后 resume 时，
+      // 若事件窗口证明 agent 已完成、只差验证，同样派生 validation-only 资格（复用同一机器）。
+      // 仅当该 phase 尚未被 invalidation 窗口覆盖时并入（inv 的 settled 判定更严格，优先）；
+      // 不派生（返回 null）= 只是不从旧 halt 派生资格，后续完全由既有 resume/invalidation 路径决定。
+      const haltEligibility = deriveHaltValidationOnlyEligibility(priorEvents);
+      if (haltEligibility && !resumePostAgentPhases.has(haltEligibility.phase)) {
+        resumePostAgentPhases.add(haltEligibility.phase);
+        resumePostAgentAttemptIds[haltEligibility.phase] = haltEligibility.invoke_id;
+      }
       if (resumePostAgentPhases.size > 0) {
         console.warn(
-          `[goal-runner] resume：${[...resumePostAgentPhases].join(',')} 已在失效窗口内完成 agent 执行` +
+          `[goal-runner] resume：${[...resumePostAgentPhases].join(',')} 已完成 agent 执行` +
             '（settled 在案）——不再重新 invoke agent，从验证边界（harness）继续',
         );
       }
