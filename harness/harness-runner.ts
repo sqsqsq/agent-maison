@@ -78,7 +78,8 @@ import {
   intermediateRoundsJournalPath,
 } from './scripts/utils/intermediate-rounds-journal';
 import { runFrameworkIntegrityPreflight } from './scripts/utils/framework-integrity';
-import { runProcessIntegrityPreflight } from './scripts/utils/process-integrity';
+import { deleteEnvKeyCaseInsensitive, runProcessIntegrityPreflight } from './scripts/utils/process-integrity';
+import { validateAttendedGoalContext } from './scripts/utils/attended-goal-context';
 import {
   resolveFidelityContextFromFeature,
   resolveEffectiveFidelityContext,
@@ -130,6 +131,7 @@ import { computeProductWorktreeDigest } from './scripts/utils/worktree-digest';
 import {
   isAgentSideGoalHarness,
   isGoalOrchestrationEnv,
+  MAISON_GOAL_RUNNER_ENV,
   MAISON_GOAL_MODEL_PIN_ENV,
   mergeAndWritePhaseState,
   syncPhaseStateOnReceiptPassStrict,
@@ -202,7 +204,11 @@ import { parseUiChangeFromSpecMarkdown, UI_CHANGE_REQUIRES_UI_SPEC, uiSpecRelPat
 // --------------------------------------------------------------------------
 
 const args = minimist(process.argv.slice(2), {
-  string: ['phase', 'feature', 'ai-report', 'adapter', 'workflow', 'adhoc-cases', 'correction-request', 'q-requirement', 'q-contract', 'q-code'],
+  string: [
+    'phase', 'feature', 'ai-report', 'adapter', 'workflow', 'adhoc-cases', 'correction-request',
+    'q-requirement', 'q-contract', 'q-code', 'goal-run-id', 'goal-attempt-id',
+    'goal-owner-id', 'goal-owner-epoch',
+  ],
   boolean: ['list', 'help', 'verbose', 'clear-state', 'sync-closure', 'summary', 'failures-only', 'skip-visual-handoff', 'skip-ui-spec', 'skip-visual-parity', 'correction-init', 'correction-check', 'adhoc-correction'],
   alias: {
     p: 'phase',
@@ -212,6 +218,50 @@ const args = minimist(process.argv.slice(2), {
     v: 'verbose',
   },
 });
+
+export function bindAttendedGoalContext(input: {
+  projectRoot: string;
+  feature?: string;
+  phase?: string;
+  goalRunId?: string;
+  goalAttemptId?: string;
+  goalOwnerId?: string;
+  goalOwnerEpoch?: string | number;
+  env?: NodeJS.ProcessEnv;
+}): { bound: boolean; runId?: string; attemptId?: string; ownerId?: string; ownerEpoch?: number } {
+  const extraContextPresent =
+    input.goalAttemptId !== undefined || input.goalOwnerId !== undefined || input.goalOwnerEpoch !== undefined;
+  if (input.goalRunId === undefined) {
+    if (extraContextPresent) throw new Error('attended goal 上下文缺 --goal-run-id');
+    return { bound: false };
+  }
+  const runId = input.goalRunId.trim();
+  if (!runId) throw new Error('--goal-run-id 显式给出时不能为空');
+  const attemptId = input.goalAttemptId?.trim() ?? '';
+  const ownerId = input.goalOwnerId?.trim() ?? '';
+  const ownerEpoch = Number(input.goalOwnerEpoch);
+  const context = validateAttendedGoalContext({
+    projectRoot: input.projectRoot,
+    feature: input.feature?.trim() ?? '',
+    runId,
+    phase: input.phase?.trim() ?? '',
+    attemptId,
+    ownerId,
+    ownerEpoch,
+  });
+  const env = input.env ?? process.env;
+  deleteEnvKeyCaseInsensitive(env, 'MAISON_GOAL_RUN_ID');
+  deleteEnvKeyCaseInsensitive(env, MAISON_GOAL_RUNNER_ENV);
+  deleteEnvKeyCaseInsensitive(env, 'MAISON_GOAL_ATTEMPT');
+  deleteEnvKeyCaseInsensitive(env, 'MAISON_GOAL_ATTEMPT_PHASE');
+  deleteEnvKeyCaseInsensitive(env, 'MAISON_GOAL_GATE_HARNESS');
+  env.MAISON_GOAL_RUN_ID = runId;
+  env[MAISON_GOAL_RUNNER_ENV] = '1';
+  env.MAISON_GOAL_ATTEMPT = attemptId;
+  env.MAISON_GOAL_ATTEMPT_PHASE = context.identity.phase;
+  env.MAISON_GOAL_GATE_HARNESS = '1';
+  return { bound: true, runId, attemptId, ownerId, ownerEpoch };
+}
 
 // --------------------------------------------------------------------------
 // 帮助信息
@@ -229,6 +279,10 @@ Harness — Spec/Harness 验证工具
   --workflow <name>         覆盖 framework.config.json 的 active_workflow（CLI 优先）
   -f, --feature <name>      指定功能模块名 (如 home-page)；全局 scope 阶段可不填（默认 _global）
   --adapter <adapter_name>      init 必选；须与 framework/agents/<adapter_name>/ 存在且含 adapter.yaml（其他阶段忽略）
+  --goal-run-id <run_id>    attended phase context；须与下面三项成组传入
+  --goal-attempt-id <id>    attended attempt identity（来自 phase_execute_request）
+  --goal-owner-id <id>      attended fenced session owner identity
+  --goal-owner-epoch <n>    attended fenced session owner epoch
   -l, --list                列出可用的 Spec 文件
   -v, --verbose             展开全部检查项（默认控制台只打印 FAIL/WARN）
   --ai-report <path>        指定 AI Harness 报告文件路径，合并到最终报告
@@ -320,6 +374,28 @@ async function main(): Promise<void> {
   const harnessRoot = __dirname;
   const layout = detectRepoLayout(harnessRoot);
   const { projectRoot, frameworkRoot: resolvedFrameworkRoot, frameworkRel, kind: layoutKind } = layout;
+  try {
+    bindAttendedGoalContext({
+      projectRoot,
+      feature: typeof args.feature === 'string' ? args.feature : undefined,
+      phase: typeof args.phase === 'string' ? args.phase : undefined,
+      goalRunId: Object.prototype.hasOwnProperty.call(args, 'goal-run-id')
+        ? String(args['goal-run-id'])
+        : undefined,
+      goalAttemptId: Object.prototype.hasOwnProperty.call(args, 'goal-attempt-id')
+        ? String(args['goal-attempt-id'])
+        : undefined,
+      goalOwnerId: Object.prototype.hasOwnProperty.call(args, 'goal-owner-id')
+        ? String(args['goal-owner-id'])
+        : undefined,
+      goalOwnerEpoch: Object.prototype.hasOwnProperty.call(args, 'goal-owner-epoch')
+        ? String(args['goal-owner-epoch'])
+        : undefined,
+    });
+  } catch (error) {
+    console.error(`[harness] BLOCKER: ${(error as Error).message}`);
+    process.exit(1);
+  }
   const paths = resolvePaths(projectRoot, resolvedFrameworkRoot);
   const specLoader = new SpecLoader(projectRoot, paths.phaseRulesDir, paths.featuresDir, resolvedFrameworkRoot);
   const phaseRulesRel = path.relative(projectRoot, paths.phaseRulesDir).replace(/\\/g, '/');

@@ -161,11 +161,20 @@ Timeout handling, budgets, backoff, child cleanup, trust ledgers, pass snapshots
 - **THEN** the runner SHALL apply the existing process timeout/cleanup policy and supply the resulting fact to reconciliation
 
 ### Requirement: Detached runner honors handoff mailbox at phase boundaries
-The runner SHALL poll the run-bound handoff mailbox only at safe phase boundaries, validate the current epoch, quiesce cooperatively, and release projections without deleting `run-control@1`.
+
+The runner SHALL poll the run-bound handoff mailbox only at safe phase boundaries, validate the current epoch, quiesce cooperatively, and release projections without deleting `run-control@1`. For non-orphan owners, session↔process conversion MUST use this mailbox handoff. Only an `orphaned_session` MAY bypass mailbox handoff after explicit user authorization by using the existing `--force-resume` / `forceTakeoverRunOwner` epoch takeover; automated supervision MUST NOT trigger this exception.
+
+Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-run-control.ts`, `skills/project/goal-mode/SKILL.md`
 
 #### Scenario: Session requests return from unattended mode
+
 - **WHEN** a valid session-target handoff request is present after a phase boundary
 - **THEN** the detached runner SHALL quiesce and permit the session owner to acquire the next epoch before any further phase starts
+
+#### Scenario: User explicitly takes over an orphaned session as a process
+
+- **WHEN** the session lease has expired into `orphaned_session` and the user authorizes `--force-resume --detach`
+- **THEN** `forceTakeoverRunOwner` SHALL acquire `epoch+1` for the process without requiring a mailbox request, and the supervisor SHALL remain uninvolved
 
 ### Requirement: Loop and process fuses remain distinct
 The runner SHALL treat assess fuse as a phase-boundary reconciliation result, process guards as execution safety, and monitor budgets as read-only polling limits.
@@ -988,4 +997,41 @@ On `--resume`, for a run whose latest `phase_halt` carries a `run_disposition` p
 - **THEN** the runner does not derive validation-only eligibility from that halt; the outcome is
   left entirely to the existing resume/invalidation path (which may still independently derive
   validation-only eligibility from a newer window)
+
+### Requirement: Supervisor respects run-control owner responsibility
+
+The feature supervisor SHALL load and validate the selected run's `run-control@1` before entering the existing beacon × `run_disposition` decision core. Missing or corrupt control MUST fail closed. A handoff mailbox is conclusively complete only when the exported canonical handoff validator accepts its full shape, its run identity matches the selected run, and its status is `accepted` or `rejected`; valid pending/consumed, malformed, unknown, or mismatched mailboxes MUST be no-ops. Every session-owner state (`active`, `quiescing`, `released`, `orphaned_session`) MUST return without spawning and without appending run events. Only a process owner SHALL enter the existing decision core, and run terminality MUST remain derived solely from `run_disposition`, never from owner state or open-invocation counts.
+
+Enforcement: `harness/scripts/goal-supervise.ts`, `harness/scripts/utils/goal-supervisor.ts`, `harness/scripts/utils/goal-run-control.ts`
+
+#### Scenario: Released attended run remains attachable
+
+- **WHEN** a run has `owner.kind=session`, `owner.state=released`, and its latest disposition is not terminal
+- **THEN** a supervisor one-shot SHALL neither spawn a process nor append an event, and the attended bridge MAY reattach through normal owner CAS
+
+#### Scenario: Orphaned session requires an operator
+
+- **WHEN** a run has `owner.kind=session` and `owner.state=orphaned_session`
+- **THEN** the supervisor MUST NOT add `--force-resume`, spawn, or write an event; only a user-authorized takeover MAY proceed
+
+#### Scenario: Released process wakes through the existing core
+
+- **WHEN** a process-owned released run projects external `WAITING` and its same-source condition probe becomes ready
+- **THEN** the supervisor SHALL reach the existing decision core and resume according to that core without deriving terminality from `released`
+
+#### Scenario: Malformed complete-looking mailbox fails closed
+
+- **WHEN** a process-owned run contains a mailbox such as `{"status":"accepted"}` or a canonical-looking record bound to another run
+- **THEN** the supervisor SHALL neither enter the recovery core nor spawn or append an event
+
+### Requirement: Detached launcher resolves framework runtime independently of consumer cwd
+
+The detached goal launcher SHALL resolve its TypeScript preload module to an absolute framework-owned path before starting the child with the consumer project as its working directory. Consumer project roots MUST NOT be required to install framework runtime dependencies.
+
+Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/goal-supervise.ts`
+
+#### Scenario: Supervisor resume starts from project root
+
+- **WHEN** the supervisor spawns a detached resume with `cwd` equal to the consumer project root
+- **THEN** the detached child SHALL load the framework TypeScript runtime and remain alive without resolving `ts-node/register/transpile-only` from the consumer root
 

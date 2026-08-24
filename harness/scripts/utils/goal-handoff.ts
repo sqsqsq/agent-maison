@@ -47,17 +47,29 @@ function atomicWrite(filePath: string, value: GoalHandoffRequestV1): void {
   fs.renameSync(tmp, filePath);
 }
 
-function isValidHandoffRequest(value: unknown): value is GoalHandoffRequestV1 {
+export function isValidHandoffRequest(value: unknown): value is GoalHandoffRequestV1 {
   if (!value || typeof value !== 'object') return false;
   const request = value as Partial<GoalHandoffRequestV1>;
-  return request.schema === 'goal-handoff-request@1' &&
+  const commonValid = request.schema === 'goal-handoff-request@1' &&
     typeof request.request_id === 'string' && request.request_id.length > 0 &&
     typeof request.run_id === 'string' && request.run_id.length > 0 &&
-    Number.isInteger(request.from_epoch) &&
+    Number.isInteger(request.from_epoch) && Number(request.from_epoch) >= 0 &&
     (request.target_owner_kind === 'process' || request.target_owner_kind === 'session') &&
-    typeof request.requested_at === 'string' && typeof request.expires_at === 'string' &&
+    typeof request.requested_at === 'string' && Number.isFinite(new Date(request.requested_at).getTime()) &&
+    typeof request.expires_at === 'string' && Number.isFinite(new Date(request.expires_at).getTime()) &&
     (request.status === 'pending' || request.status === 'consumed' ||
       request.status === 'accepted' || request.status === 'rejected');
+  if (!commonValid) return false;
+  if (request.status === 'pending') return true;
+  if (request.status === 'rejected') {
+    return typeof request.rejection_reason === 'string' && request.rejection_reason.length > 0;
+  }
+  const consumedValid =
+    typeof request.consumed_at === 'string' && Number.isFinite(new Date(request.consumed_at).getTime()) &&
+    typeof request.consumed_by_owner === 'string' && request.consumed_by_owner.length > 0;
+  if (!consumedValid || request.status === 'consumed') return consumedValid;
+  return typeof request.accepted_at === 'string' && Number.isFinite(new Date(request.accepted_at).getTime()) &&
+    Number.isInteger(request.accepted_epoch) && request.accepted_epoch === Number(request.from_epoch) + 1;
 }
 
 function quarantineInvalidMailbox(

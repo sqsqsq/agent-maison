@@ -9,6 +9,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import { spawnSync } from 'child_process';
 import {
   resolveCapabilityReport,
@@ -16,8 +17,17 @@ import {
   type InputResolution,
 } from '../../scripts/utils/capability-resolution';
 import { initializeFidelityRouting, evaluateFidelityTierPreflight } from '../../scripts/utils/goal-preflight';
-import { resolveRequirementInput } from '../../scripts/utils/goal-manifest';
+import {
+  buildGoalManifestFromInput,
+  resolveRequirementInput,
+  writeGoalManifest,
+} from '../../scripts/utils/goal-manifest';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
+import {
+  casAcquireRunOwner,
+  ensureRunControl,
+  releaseRunOwner,
+} from '../../scripts/utils/goal-run-control';
 import { detectRepoLayout } from '../../repo-layout';
 import {
   loadFidelityIntentSsot,
@@ -145,6 +155,76 @@ function writeBroadDocs(root: string, feature = 'demo'): void {
 interface Case { name: string; run: () => void }
 
 const cases: Case[] = [
+  {
+    name: 'attended initializer 从精确 manifest 写 goal 身份并在同 run 重入时保持 SSOT 字节不变',
+    run: () => {
+      const cliProjectRoot = detectRepoLayout(__dirname).projectRoot;
+      const feature = `__attended_init_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+      const runId = `20260824T130000Z-${Math.random().toString(16).slice(2, 8)}`;
+      const featureDir = path.join(cliProjectRoot, 'doc', 'features', feature);
+      try {
+        fs.mkdirSync(featureDir, { recursive: true });
+        const sourceRel = `doc/features/${feature}/original-requirement.md`;
+        fs.writeFileSync(path.join(cliProjectRoot, ...sourceRel.split('/')), '# 原始需求\nattended manifest requirement\n', 'utf-8');
+        const manifest = buildGoalManifestFromInput({
+          feature,
+          run_id: runId,
+          requirement: 'attended manifest requirement',
+          requirement_source_files: [sourceRel],
+          adapter: 'codex',
+          unattended: { write_mode: 'full-access', approval_mode: 'never' },
+        }, { projectRoot: cliProjectRoot, runId });
+        writeGoalManifest(manifest, cliProjectRoot);
+        const runDir = path.resolve(cliProjectRoot, ...manifest.report_dir.split('/'));
+        const control = ensureRunControl(runDir, runId);
+        const acquired = casAcquireRunOwner(runDir, runId, control.current_epoch, {
+          kind: 'session', owner_id: 'attended-init-test', lease_ms: 60_000,
+        });
+        if (!acquired.ok) throw new Error('session owner acquisition failed');
+
+        const cli = path.join(HARNESS_ROOT, 'scripts', 'fidelity-intent-init.ts');
+        const runCli = () => spawnSync(
+          process.platform === 'win32' ? 'npx.cmd' : 'npx',
+          [
+            'ts-node', cli, '--feature', feature, '--goal-run-id', runId, '--goal-phase', 'spec',
+            '--goal-attempt-id', `session-e${acquired.token.epoch}-round-1`,
+            '--goal-owner-id', acquired.token.owner_id,
+            '--goal-owner-epoch', String(acquired.token.epoch),
+          ],
+          { cwd: HARNESS_ROOT, encoding: 'utf-8', shell: process.platform === 'win32' },
+        );
+        const first = runCli();
+        assert(first.status === 0, `attended initializer 首次执行失败：${first.stderr}`);
+        const ssotPath = fidelityIntentSsotPath(cliProjectRoot, feature);
+        const firstBytes = fs.readFileSync(ssotPath);
+        const firstHash = crypto.createHash('sha256').update(firstBytes).digest('hex');
+        const firstDoc = JSON.parse(firstBytes.toString('utf-8')) as {
+          execution_identity?: string;
+          requirement_provenance?: string;
+          requirement_source_files?: string[];
+          decision?: { decision_id?: string };
+        };
+        assert(firstDoc.execution_identity === runId, `execution_identity=${firstDoc.execution_identity}`);
+        assert(firstDoc.requirement_provenance === 'goal_manifest', `provenance=${firstDoc.requirement_provenance}`);
+        assert(firstDoc.requirement_source_files?.[0] === sourceRel, 'manifest source list not preserved');
+
+        const second = runCli();
+        assert(second.status === 0, `attended initializer 重入失败：${second.stderr}`);
+        const secondBytes = fs.readFileSync(ssotPath);
+        assert(crypto.createHash('sha256').update(secondBytes).digest('hex') === firstHash, 'same-run SSOT hash changed');
+        const secondDoc = JSON.parse(secondBytes.toString('utf-8')) as { decision?: { decision_id?: string } };
+        assert(secondDoc.decision?.decision_id === firstDoc.decision?.decision_id, 'same-run decision_id changed');
+
+        releaseRunOwner(runDir, acquired.token);
+        const released = runCli();
+        assert(released.status !== 0, 'released session owner must fail before SSOT write');
+        assert(crypto.createHash('sha256').update(fs.readFileSync(ssotPath)).digest('hex') === firstHash,
+          'failed validation changed SSOT');
+      } finally {
+        fs.rmSync(featureDir, { recursive: true, force: true });
+      }
+    },
+  },
   {
     name: 't1-① goal manifest 在场 → resolved 且 deps 仍为空（goal 路径逐元素零变化锁）',
     run: () => {

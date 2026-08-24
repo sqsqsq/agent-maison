@@ -2,7 +2,13 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { featurePhaseReportsDir } from '../../config';
-import { deriveInSessionFingerprint, prepareGoalModeRun, runGoalModeHostBridge, runGoalModeInSession } from '../../scripts/goal-mode-entry';
+import {
+  buildPhaseExecuteRequest,
+  deriveInSessionFingerprint,
+  prepareGoalModeRun,
+  runGoalModeHostBridge,
+  runGoalModeInSession,
+} from '../../scripts/goal-mode-entry';
 import type { InSessionRoundResult } from '../../scripts/utils/goal-in-session-driver';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
@@ -92,6 +98,20 @@ async function withSession<T>(
 
 interface TestCase { name: string; run: () => Promise<void> | void }
 const cases: TestCase[] = [
+  {
+    name: 'phase executor protocol carries run, attempt, and owner fence',
+    run: () => {
+      const request = buildPhaseExecuteRequest({
+        runId: 'r-authoritative', phase: 'spec', attemptId: 'session-e4-round-2',
+        ownerId: 'owner-4', ownerEpoch: 4,
+      }, { action: 'run_phase' });
+      assert(request.type === 'phase_execute_request', 'request type');
+      assert(request.run_id === 'r-authoritative', 'run_id missing from protocol');
+      assert(request.phase === 'spec', 'phase mismatch');
+      assert(request.attempt_id === 'session-e4-round-2', 'attempt missing');
+      assert(request.owner_id === 'owner-4' && request.owner_epoch === 4, 'owner fence missing');
+    },
+  },
   {
     name: 'run-mode intent: explicit phrases bypass prompt; ambiguous remains null',
     run: () => {
@@ -212,10 +232,12 @@ const cases: TestCase[] = [
           feature: 'demo',
           runId: 'fresh-1',
           adapter: 'codex',
+          adapterSource: 'local_config',
           requirement: 'prepare an attended goal run',
           endPhase: 'spec',
         });
         assert(prepared.manifest.run_id === 'fresh-1', 'run id');
+        assert(prepared.manifest.adapter_provenance === 'local_config', 'truthful adapter provenance');
         assert(fs.existsSync(prepared.manifestPath), 'manifest must be persisted');
         assert(readRunControl(prepared.runDir, 'fresh-1')?.owner === null, 'run-control must start unowned');
         let duplicate = false;
@@ -262,6 +284,69 @@ const cases: TestCase[] = [
     }),
   },
   {
+    name: 'attended attach rejects missing or unattended run-mode before owner CAS',
+    run: async () => {
+      const env = mkProject();
+      try {
+        fs.mkdirSync(env.runDir, { recursive: true });
+        ensureRunControl(env.runDir, 'r1');
+        for (const runMode of [undefined, 'unattended']) {
+          let rejected = false;
+          try {
+            await runGoalModeHostBridge({
+              projectRoot: env.root,
+              frameworkRoot: FRAMEWORK_ROOT,
+              feature: 'demo',
+              runId: 'r1',
+              adapter: 'codex',
+              runMode,
+              executePhase: async (phase) => ({ status: 'passed', phase }),
+            });
+          } catch (error) {
+            rejected = String(error).includes('--run-mode attended');
+          }
+          assert(rejected, `runMode=${runMode ?? '<missing>'} must fail`);
+          const control = readRunControl(env.runDir, 'r1');
+          assert(control?.current_epoch === 0 && control.owner === null, 'run-mode failure mutated owner');
+          assert(!fs.existsSync(path.join(env.runDir, 'events.jsonl')), 'run-mode failure wrote event');
+        }
+      } finally {
+        fs.rmSync(env.root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'attended attach rejects adapter drift before owner CAS',
+    run: async () => {
+      const env = mkProject();
+      try {
+        fs.mkdirSync(env.runDir, { recursive: true });
+        fs.writeFileSync(path.join(env.runDir, 'manifest.json'), `${JSON.stringify(env.manifest, null, 2)}\n`, 'utf8');
+        ensureRunControl(env.runDir, 'r1');
+        let rejected = false;
+        try {
+          await runGoalModeHostBridge({
+            projectRoot: env.root,
+            frameworkRoot: FRAMEWORK_ROOT,
+            feature: 'demo',
+            runId: 'r1',
+            adapter: 'chrys',
+            runMode: 'attended',
+            executePhase: async (phase) => ({ status: 'passed', phase }),
+          });
+        } catch (error) {
+          rejected = String(error).includes('attach adapter mismatch');
+        }
+        assert(rejected, 'wrong adapter must fail before ownership');
+        const control = readRunControl(env.runDir, 'r1');
+        assert(control?.current_epoch === 0 && control.owner === null, 'adapter mismatch mutated owner');
+        assert(!fs.existsSync(path.join(env.runDir, 'events.jsonl')), 'adapter mismatch wrote event');
+      } finally {
+        fs.rmSync(env.root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
     name: 'host bridge loads persisted run, owns session epoch, and invokes canonical loop',
     run: async () => {
       const env = mkProject();
@@ -275,6 +360,7 @@ const cases: TestCase[] = [
           feature: 'demo',
           runId: 'r1',
           adapter: 'codex',
+          runMode: 'attended',
           maxRounds: 1,
           executePhase: async (phase) => {
             invoked += 1;
@@ -304,6 +390,7 @@ const cases: TestCase[] = [
           feature: 'demo',
           runId: 'r1',
           adapter: 'codex',
+          runMode: 'attended',
           maxRounds: 1,
           executePhase: async (phase) => ({ status: 'passed', phase }),
         });
@@ -334,6 +421,7 @@ const cases: TestCase[] = [
         try {
           await runGoalModeHostBridge({
             projectRoot: env.root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', runId: 'r1', adapter: 'codex',
+            runMode: 'attended',
             maxRounds: 1, executePhase: async (phase) => ({ status: 'passed', phase }),
           });
         } catch (error) {
@@ -342,6 +430,7 @@ const cases: TestCase[] = [
         assert(rejected, 'expired owner must require explicit takeover');
         const taken = await runGoalModeHostBridge({
           projectRoot: env.root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', runId: 'r1', adapter: 'codex',
+          runMode: 'attended',
           forceTakeover: true, maxRounds: 1, executePhase: async (phase) => ({ status: 'passed', phase }),
         });
         assert(taken.status === 'fused' || taken.status === 'reconciled', `takeover=${taken.status}`);
@@ -369,6 +458,7 @@ const cases: TestCase[] = [
         try {
           await runGoalModeHostBridge({
             projectRoot: env.root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', runId: 'r1', adapter: 'codex',
+            runMode: 'attended',
             maxRounds: 1, executePhase: async (phase) => ({ status: 'passed', phase }),
           });
         } catch (error) {

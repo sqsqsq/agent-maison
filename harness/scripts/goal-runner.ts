@@ -3656,9 +3656,10 @@ function runDetachLauncher(argv: minimist.ParsedArgs): number {
   const logFd = fs.openSync(logPathAbs, 'a');
 
   const childArgs = buildDetachedChildArgv(process.argv.slice(2), runId, { resume: isResume });
+  const preloadPath = resolveDetachedPreloadPath();
   const child = spawn(
     process.execPath,
-    ['-r', 'ts-node/register/transpile-only', __filename, ...childArgs],
+    ['-r', preloadPath, __filename, ...childArgs],
     {
       detached: true,
       stdio: ['ignore', logFd, logFd],
@@ -3685,6 +3686,11 @@ function runDetachLauncher(argv: minimist.ParsedArgs): number {
     }),
   );
   return 0;
+}
+
+/** Resolve in the framework process; the detached child may start from a dependency-free consumer cwd. */
+export function resolveDetachedPreloadPath(): string {
+  return require.resolve('ts-node/register/transpile-only');
 }
 
 /**

@@ -70,6 +70,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'liveness-beacon', modulePath: './unit/liveness-beacon.unit.test' },
   // plan a4f7e2b1 t2：supervisor 决策核（beacon × run_disposition 矩阵 + 反重建等价性）
   { id: 'goal-supervisor', modulePath: './unit/goal-supervisor.unit.test' },
+  { id: 'attended-goal-context', modulePath: './unit/attended-goal-context.unit.test' },
   // plan a4f7e2b1 t2 原验收：真 /F 强杀 → supervisor 生产链自动恢复（真子进程 + 真 CLI）
   { id: 'supervisor-kill-recovery', modulePath: './unit/supervisor-kill-recovery.unit.test' },
   { id: 'upstream-closure', modulePath: './unit/upstream-closure.unit.test' },

@@ -6,30 +6,23 @@
 
 本 Skill 正文跨宿主共用；**不得**硬编码 `claude` / `cursor` 等。
 
-**关键区分（避免误传 `--adapter`）**：解析阶梯只产出 **`requestedAdapter`（请求身份）**；**真正生效的运行身份以 `framework.local.json agent_adapter`（SSOT 权威）为准**——已有合法记录时一律用它，`requestedAdapter` 仅在「首启无 local」或「`--override-adapter` 显式覆盖」时才成为 effective。**local 不是阶梯的一级**，而是阶梯产物之上的权威。
+运行身份按 **local-first** 解析，**永不硬猜 / 永不默认 claude·cursor**：先不带 `--select-adapter` 执行 personal setup。已有合法 `framework.local.json agent_adapter` 时，直接采用返回的 `activeAdapter`，来源为 `local_config`；不得构造 `requestedAdapter`，也不得重复询问 `setup.adapter`。无 local 且只有一个候选时，允许 `--ensure` 确定性自动选择。无 local 且有多个候选时，才使用 registry **`setup.adapter`**，再由 personal setup 写盘；来源为 `registry`。用户明确要求切换 adapter 时仍走既有永久切换或 `--override-adapter` 契约。
 
-`requestedAdapter` 解析阶梯（优先级从高到低，**永不硬猜 / 永不默认 claude·cursor**）：
-
-1. **用户显式指定**（输入表 `adapter` 列 / 「用 cursor 跑 goal」等）→ 来源 `user_explicit`。
-2. **入口 / 跳板声明**：刚读过的 slash 或 skills-bridge 跳板内 `> 运行身份（RESOLVED_ADAPTER）：<name>` 行（Claude slash、Cursor/Codex/generic bridge 物化时注入）→ 来源 `entry_declared`。
-3. **回退**：入口无身份声明 → registry **`setup.adapter`** 交互选择（见 [user-confirmation-ux.md](user-confirmation-ux.md)）→ 来源 `registry`；**绝不默认**。
-
-启动 goal-runner 时：**`--adapter` 传 check-personal-setup 返回的 `activeAdapter`（即 SSOT），并用 `--adapter-source` 传上面来源**（写入 manifest `adapter_provenance` 供回溯）；**不得**把未经对账的 `requestedAdapter` 猜测直接当 `--adapter`。goal-runner 会以 local 为权威对账：冲突即 STOP（除非 `--override-adapter`）。
+启动入口的 `--adapter` 只传 personal setup 返回的 `activeAdapter`。`--adapter-source` 只传已知的真实来源；无法映射到既有枚举时省略并在 manifest 中保持字段缺省，不得虚构 `unknown` 或把中性 skills-bridge 当成 `entry_declared`。
 
 ### Personal setup + 确定性写盘（严格顺序）
 
-1. 按上节阶梯解析 `RESOLVED_ADAPTER`。
-2. 执行 [personal-setup-gate](personal-setup-gate.md)：`check-personal-setup.ts --json --ensure --select-adapter <RESOLVED_ADAPTER> --project-root <repo-root>`。
-3. **仅解析 stdout JSON**（`ok`, `code`, `activeAdapter`, `candidates`, `message`, `ensured`）。按 `code` 分流：
+1. 执行 [personal-setup-gate](personal-setup-gate.md)：`check-personal-setup.ts --json --ensure --project-root <repo-root>`，首次不得带 `--select-adapter`。
+2. **仅解析 stdout JSON**（`ok`, `code`, `activeAdapter`, `candidates`, `message`, `ensured`）。按 `code` 分流：
 
 | `code` | 行为 |
 |--------|------|
-| `ok` | 已就绪（或 `--ensure` 已自动写入 `framework.local.json`）→ 用返回的 `activeAdapter` 作为 `--adapter` 继续 |
-| `adapter_conflict` | local 已记录 X 但本次请求 Y≠X → **默认尊重 local（X）**；用户确要换 Y → 永久换走 registry `setup.adapter`+`record-adapter`，仅本次即时换则启动加 `--override-adapter`（会回写 local 留痕）。**不得**静默用 Y 覆盖 |
-| `needs_adapter_choice` | `requestedAdapter` ∉ candidates → registry **`setup.adapter`** 交互选择 → `init-orchestrate --scope personal` 的 **`record-adapter`** 写盘；或 **STOP**→`/framework-init` |
+| `ok` | 已有合法 local 时直接用返回的 `activeAdapter`，`adapterSource=local_config`，不再询问；无 local 的单候选由 `--ensure` 自动写入后继续，来源拿不准时省略 `--adapter-source` |
+| `adapter_conflict` | 仅用户明确要求切换时可能出现；默认尊重 local（X）。永久换走 registry `setup.adapter`+`record-adapter`，仅本次即时换则启动加 `--override-adapter`（会回写 local 留痕）。**不得**静默用 Y 覆盖 |
+| `needs_adapter_choice` | 无 local 且多候选 → registry **`setup.adapter`** 交互选择 → `init-orchestrate --scope personal` 的 **`record-adapter`** 写盘；然后用返回的 `activeAdapter`，`adapterSource=registry`；或 **STOP**→`/framework-init` |
 | `no_materialized_adapter` / `not_in_materialized` / `entry_not_materialized` | 先复核 `--project-root`（须指向含 `framework/` 与 `framework.config.json` 的工程根）→ **STOP**，引导 `/framework-init` |
 
-4. 若阶梯 2 自动写入了 local.json（`ensured` 含 `auto_selected_adapter`），须在汇报中说明：「我按当前运行宿主选了 `<X>`（个人级 `framework.local.json`，gitignored）；要换别的 adapter 请讲」。
+3. 若自动写入了 local.json，须在汇报中说明个人级 `framework.local.json` 已记录 `<X>`（gitignored）；要换别的 adapter 请讲。
 
 同一 run resume 时，若 effective adapter 与 manifest 冻结值相同，`--override-adapter` 只负责
 对账并回写个人级 local，**不得**把 manifest 出生时的 `adapter_provenance` 改成 `override`。
@@ -66,7 +59,7 @@ manifest**，`--resume` 只认冻结值、不会重读源文件——所以源�
 > preflight 与 vision 收紧重建写入，与既有空 deps / `goal_requirement:<fp16>` detail 形态完全
 > 一致，goal run 无需任何调整。
 
-同一 run 续跑；只有 session lease 已过期并落为 `orphaned_session` 时，用户明确授权后才加 `--force-resume` 做 epoch takeover：
+同一 run 续跑时，非 orphan 的 session↔process 正常转换只走 mailbox handoff。只有 session lease 已过期并落为 `orphaned_session` 时，用户明确授权后才加 `--force-resume` 做 epoch takeover；supervisor 永不得代为触发：
 
 ```bash
 npx ts-node scripts/goal-runner.ts --resume <run-id> --feature <feature> --adapter <activeAdapter> --adapter-source <adapterSource> --detach
@@ -76,15 +69,21 @@ npx ts-node scripts/goal-runner.ts --resume <run-id> --feature <feature> --adapt
 新起 attended run 先由同一入口准备 manifest 与 run-control（不会启动无人值守 runner），再 attach host bridge：
 
 ```powershell
-npx ts-node scripts/goal-mode-entry.ts --prepare-run --feature <feature> --requirement "<requirement>" --adapter <activeAdapter> --project-root <repo-root> --framework-root <repo-root>/framework [--run-id <run-id>] [--start <phase>] [--end <phase>]
+npx ts-node scripts/goal-mode-entry.ts --prepare-run --run-mode attended --feature <feature> --requirement "<requirement>" --adapter <activeAdapter> --adapter-source <adapterSource> --project-root <repo-root> --framework-root <repo-root>/framework [--run-id <run-id>] [--start <phase>] [--end <phase>]
 ```
 
 命令 stdout 返回 `goal_run_prepared` JSON；解析其中 `run_id`，随后执行下面的 host bridge。重复 `--prepare-run` 不覆盖已有 manifest，恢复已有 run 不得再次 prepare。
 
-有人在场走可执行 host bridge；bridge 自行加载 manifest/workflow、取得 fenced session owner，并逐轮输出一行 `phase_execute_request` JSON。active adapter 必须为每个请求提供一个隔离 phase context，并向 stdin 回一行 `{"status":"passed|failed|waiting","phase":"...","details":"..."}`；不得由 Skill 自建循环或 token：
+有人在场走可执行 host bridge；bridge 自行加载 manifest/workflow、取得 fenced session owner，并逐轮输出一行 `phase_execute_request` JSON，其中权威上下文固定为 `run_id/phase/attempt_id/owner_id/owner_epoch`。attach 的 `--adapter` 必须与 manifest adapter 一致。active adapter 必须为每个请求提供一个隔离 phase context，把这五个字段原样显式传给 initializer、harness 与 closure sync；不得由 Skill 自建循环、token，或依赖兄弟 shell 继承环境。只有 context-bound `harness-runner --sync-closure` exit 0 后，才可向 stdin 回 `{"status":"passed","phase":"..."}`；未闭环只能回 `failed|waiting`：
 
 ```bash
-npx ts-node scripts/goal-mode-entry.ts --feature <feature> --run-id <run-id> --adapter <activeAdapter> --project-root <repo-root> --framework-root <repo-root>/framework
+npx ts-node scripts/goal-mode-entry.ts --run-mode attended --feature <feature> --run-id <run-id> --adapter <activeAdapter> --project-root <repo-root> --framework-root <repo-root>/framework
+```
+
+每个 attended phase 的 harness 与闭环命令均追加同一组参数：
+
+```bash
+--goal-run-id <run_id> --goal-attempt-id <attempt_id> --goal-owner-id <owner_id> --goal-owner-epoch <owner_epoch>
 ```
 
 读取状态（**唯一入口 `goal-status`**；`goal-monitor` 是 opt-in 盯守工具，**不得**当状态查询，见「查进度」与「opt-in 盯守细则」）：

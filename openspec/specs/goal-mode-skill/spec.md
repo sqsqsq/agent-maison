@@ -6,14 +6,14 @@ Define the host-facing goal-mode thin entry (`/goal-mode` / skill id `goal-mode`
 ## Requirements
 ### Requirement: Goal mode skill is a thin entry point
 
-The system SHALL provide `skills/project/goal-mode/SKILL.md` that documents how to invoke `goal-runner` and interpret reports, without duplicating verdict classification logic. Host entry SHALL be `/goal-mode` (Claude slash) or skill id `goal-mode` (cursor/codex/generic bridge). Before starting goal-runner, the agent SHALL run `check-personal-setup.ts --json --ensure` per `personal-setup-gate.md`.
+The system SHALL provide `skills/project/goal-mode/SKILL.md` that documents how to invoke the canonical goal entries and interpret reports, without duplicating verdict classification logic. Host entry SHALL be `/goal-mode` (Claude slash) or skill id `goal-mode` (cursor/codex/generic bridge). Before starting a goal run, the agent SHALL run `check-personal-setup.ts --json --ensure` without `--select-adapter`: an existing valid local `activeAdapter` wins without another question, one materialized candidate MAY be auto-selected, and multiple unresolved candidates SHALL use the setup registry.
 
-Enforcement: `skills/project/goal-mode/SKILL.md`, `skills/skills.index.yaml`, `agents/*/adapter.yaml`
+Enforcement: `skills/project/goal-mode/SKILL.md`, `skills/reference/goal-mode-operations.md`, `skills/reference/personal-setup-gate.md`, `skills/skills.index.yaml`, `agents/*/adapter.yaml`
 
 #### Scenario: Agent reads skill for goal run
 
 - **WHEN** user requests goal mode via `/goal-mode`, natural language（目标模式 / 全自动）, or skill bridge
-- **THEN** agent is directed to self-run goal-runner with manifest fields rather than implementing its own phase loop
+- **THEN** agent is directed to the canonical attended or unattended entry with manifest fields rather than implementing its own phase loop
 
 #### Scenario: Goal mode NL takes priority over batch
 
@@ -22,8 +22,13 @@ Enforcement: `skills/project/goal-mode/SKILL.md`, `skills/skills.index.yaml`, `a
 
 #### Scenario: Personal setup before goal-runner
 
-- **WHEN** personal setup `--ensure` returns `needs_adapter_choice`
-- **THEN** agent completes adapter selection via `init-orchestrate --scope personal` `record-adapter` before starting goal-runner
+- **WHEN** personal setup `--ensure` returns `needs_adapter_choice` because multiple materialized adapters remain and no valid local choice exists
+- **THEN** the agent SHALL complete adapter selection via the setup registry before starting a goal run
+
+#### Scenario: Existing local adapter is not asked again
+
+- **WHEN** personal setup `--ensure` returns a valid local `activeAdapter`
+- **THEN** the goal-mode flow SHALL use it directly and MUST NOT construct a competing requested adapter or ask `setup.adapter`
 
 ### Requirement: Goal mode runs the shared assessment loop
 The goal-mode skill SHALL repeatedly consume `assess@1`, enforce driver authorization, execute one recommended feature skill, and reassess until reconciled or fused. It MUST NOT maintain an independent next-phase decision table. Enforcement SHALL be defined in `skills/goal/goal-mode/SKILL.md` and `harness/scripts/assess.ts`.
@@ -33,11 +38,25 @@ The goal-mode skill SHALL repeatedly consume `assess@1`, enforce driver authoriz
 - **THEN** the skill SHALL execute that phase once and return to assess
 
 ### Requirement: Goal mode exposes two user-facing run modes
-The skill SHALL expose only “有人在场” and “无人值守”. Explicit intent SHALL be reflected without another prompt; ambiguous intent SHALL use `skills/reference/confirmation-registry.yaml > goal.run_mode`; CLI `--detach` SHALL select unattended behavior.
+
+The skill SHALL expose only “有人在场” and “无人值守”. Explicit intent SHALL be reflected without another prompt; ambiguous intent SHALL use `skills/reference/confirmation-registry.yaml > goal.run_mode`; CLI `--detach` SHALL select unattended behavior. Attended prepare and attach commands SHALL declare `--run-mode attended`, and the attach entry MUST reject a missing or non-attended value before acquiring owner CAS. This flag is caller routing input only and MUST NOT be persisted in the manifest, identity, or a parallel declaration event.
+
+Enforcement: `skills/project/goal-mode/SKILL.md`, `skills/reference/goal-mode-operations.md`, `harness/scripts/goal-mode-entry.ts`
 
 #### Scenario: User explicitly requests unattended execution
+
 - **WHEN** the request says the user is leaving or asks the goal to run unattended
-- **THEN** the driver SHALL reflect the unattended interpretation and run the required preflight without asking the run-mode question
+- **THEN** the driver SHALL reflect the unattended interpretation and use `goal-runner --detach` without asking the run-mode question
+
+#### Scenario: Ambiguous run mode uses the registry
+
+- **WHEN** a fresh goal request does not establish whether someone will remain available
+- **THEN** the skill SHALL resolve `goal.run_mode` before selecting attended `goal-mode-entry` or unattended `goal-runner --detach`
+
+#### Scenario: Attended attach fails before ownership on a wrong declaration
+
+- **WHEN** `goal-mode-entry` attach is invoked without `--run-mode attended` or with `--run-mode unattended`
+- **THEN** it MUST fail before owner CAS and MUST NOT write a run-mode event
 
 ### Requirement: In-session autonomous phases use isolated context
 An autonomous in-session goal SHALL execute each phase in a fresh phase-scoped context and return only structured outcome/evidence to the thin driver. Adapters without declared context isolation SHALL fall back to manual harness+assess.
@@ -47,11 +66,25 @@ An autonomous in-session goal SHALL execute each phase in a fresh phase-scoped c
 - **THEN** the framework SHALL use manual harness+assess and explain the effective behavior without exposing internal tier terminology
 
 ### Requirement: In-session execution writes canonical goal evidence
-The in-session driver SHALL use the same manifest, events, progress, phase outcome, and run ID schemas as `harness/scripts/goal-runner.ts`, fenced by `run-control@1`.
+
+The in-session driver SHALL use the same manifest, events, progress, phase outcome, receipt, and run ID schemas as `harness/scripts/goal-runner.ts`, fenced by `run-control@1`. Before owner CAS, attach SHALL reject a caller adapter that differs from `manifest.adapter`, and all downstream routing SHALL use the manifest value. Every emitted `phase_execute_request` SHALL include the authoritative `{run_id, phase, attempt_id, owner_id, owner_epoch}` captured from the current fence. The host SHALL pass that context unchanged to the spec initializer, phase harness, and `harness-runner --sync-closure`; the session driver SHALL create the attempt-bound receipt skeleton before yielding the request. Normal non-orphan session/process conversion SHALL use mailbox handoff; an orphaned session MAY be taken over only through explicit user-authorized `--force-resume` epoch takeover.
+
+Enforcement: `harness/scripts/goal-mode-entry.ts`, `harness/scripts/goal-in-session-driver.ts`, `skills/project/goal-mode/SKILL.md`, `skills/reference/goal-mode-operations.md`
 
 #### Scenario: In-session run hands off to detached runner
+
 - **WHEN** the handoff completes
 - **THEN** the detached runner SHALL resume the same run ID and authoritative event sequence without ledger conversion
+
+#### Scenario: Bridge request carries a fenced closure identity
+
+- **WHEN** the attended driver requests execution of any phase
+- **THEN** its `phase_execute_request` SHALL include the current run, attempt, owner ID, and owner epoch; the host MUST NOT discover a run by scanning the feature directory or inherit context from a sibling shell process
+
+#### Scenario: Wrong attach adapter fails before ownership
+
+- **WHEN** the caller adapter differs from the persisted manifest adapter
+- **THEN** attach SHALL fail before owner CAS with no owner mutation or event, and the session driver SHALL never observe the caller copy
 
 ### Requirement: Goal status remains visible
 Each reconciliation round SHALL present feature, phase, round, user-facing run mode, and waiting items. Internal `in-session`, `headless`, `tier`, and batch implementation labels MUST NOT appear in user menus.

@@ -616,6 +616,23 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           'utf-8',
         );
       };
+      const writeControl = (
+        kind: 'process' | 'session',
+        state: 'active' | 'quiescing' | 'released' | 'orphaned_session',
+      ): void => {
+        fs.writeFileSync(path.join(runDir, 'run-control.json'), JSON.stringify({
+          schema: 'run-control@1',
+          run_id: '20260101T000000Z',
+          current_epoch: 1,
+          owner: {
+            kind, owner_id: `test-${kind}`, epoch: 1, state,
+            ...(kind === 'process'
+              ? { pid: process.pid, hostname: os.hostname() }
+              : { lease_expires_at: new Date(Date.now() + 60_000).toISOString() }),
+          },
+          updated_at: new Date().toISOString(),
+        }, null, 2) + '\n', 'utf-8');
+      };
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const supervise = require('../../scripts/goal-supervise') as typeof import('../../scripts/goal-supervise');
       const eventsPath = path.join(runDir, 'events.jsonl');
@@ -635,6 +652,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         }
       };
       try {
+        writeControl('process', 'released');
         // 场景 1：未闭合 bound + probe 匹配身份 + PID existence 注入（存在）→ owner 存活 → 不拉起
         writeEvents([
           ...base,
@@ -686,6 +704,102 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         supervise.__testing_setProcessProbe(null);
         supervise.__testing_setPidExists(null);
         try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* best-effort */ }
+      }
+    },
+  },
+  {
+    name: 'goal-supervise owner 边界：session 全状态零事件；process/released 的 WAITING probe 可恢复',
+    run: async () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-sup-owner-'));
+      const runId = '20260101T000000Z';
+      const runDir = path.join(tmp, 'doc/features/f1/goal-runs', runId);
+      const eventsPath = path.join(runDir, 'events.jsonl');
+      fs.mkdirSync(runDir, { recursive: true });
+      const supervise = require('../../scripts/goal-supervise') as typeof import('../../scripts/goal-supervise');
+      const writeControl = (kind: 'process' | 'session', state: string): void => {
+        fs.writeFileSync(path.join(runDir, 'run-control.json'), JSON.stringify({
+          schema: 'run-control@1', run_id: runId, current_epoch: 1,
+          owner: {
+            kind, owner_id: `owner-${kind}`, epoch: 1, state,
+            ...(kind === 'process'
+              ? { pid: process.pid, hostname: os.hostname() }
+              : { lease_expires_at: new Date(Date.now() + 60_000).toISOString() }),
+          },
+          updated_at: new Date().toISOString(),
+        }, null, 2) + '\n', 'utf-8');
+      };
+      const runCli = async (): Promise<number> => {
+        const prevArgv = process.argv;
+        process.argv = ['node', 'goal-supervise.ts', '--feature', 'f1', '--project-root', tmp, '--run-id', runId];
+        try { return await supervise.__testing_main(); }
+        finally { process.argv = prevArgv; }
+      };
+      try {
+        let spawned = 0;
+        supervise.__testing_setSpawnImpl(() => {
+          spawned += 1;
+          return { pid: 12345, unref() {} };
+        });
+        const sessionEvents = [
+          { ts: '2026-01-01T00:00:00.000Z', type: 'run_start' },
+          { ts: '2026-01-01T00:01:00.000Z', type: 'phase_backtrack_requested', phase: 'coding', run_disposition: 'RECOVERY_PENDING' },
+        ];
+        for (const state of ['active', 'quiescing', 'released', 'orphaned_session']) {
+          fs.writeFileSync(eventsPath, sessionEvents.map((e) => JSON.stringify(e)).join('\n') + '\n', 'utf-8');
+          writeControl('session', state);
+          const before = fs.readFileSync(eventsPath, 'utf-8');
+          const code = await runCli();
+          assert(code === 0, `session/${state} exit=${code}`);
+          assert(fs.readFileSync(eventsPath, 'utf-8') === before, `session/${state} 不得写事件`);
+        }
+        assert(spawned === 0, `session owner 不得 spawn（${spawned}）`);
+
+        for (const controlCase of ['missing', 'corrupt'] as const) {
+          fs.writeFileSync(eventsPath, sessionEvents.map((e) => JSON.stringify(e)).join('\n') + '\n', 'utf-8');
+          const controlPath = path.join(runDir, 'run-control.json');
+          if (controlCase === 'missing') fs.rmSync(controlPath, { force: true });
+          else fs.writeFileSync(controlPath, '{"schema":"broken"}\n', 'utf-8');
+          const before = fs.readFileSync(eventsPath, 'utf-8');
+          const code = await runCli();
+          assert(code === 0, `${controlCase} run-control exit=${code}`);
+          assert(fs.readFileSync(eventsPath, 'utf-8') === before, `${controlCase} run-control 不得写事件`);
+          assert(spawned === 0, `${controlCase} run-control 不得 spawn`);
+        }
+
+        writeControl('process', 'released');
+        fs.writeFileSync(path.join(runDir, 'handoff-request.json'), JSON.stringify({ status: 'pending' }), 'utf-8');
+        const beforeHandoff = fs.readFileSync(eventsPath, 'utf-8');
+        const handoffCode = await runCli();
+        assert(handoffCode === 0, `pending handoff exit=${handoffCode}`);
+        assert(fs.readFileSync(eventsPath, 'utf-8') === beforeHandoff, 'pending handoff 不得写事件');
+        assert(spawned === 0, 'pending handoff 不得 spawn');
+        for (const status of ['accepted', 'rejected']) {
+          fs.writeFileSync(path.join(runDir, 'handoff-request.json'), JSON.stringify({ status }), 'utf-8');
+          const beforeMalformed = fs.readFileSync(eventsPath, 'utf-8');
+          const malformedCode = await runCli();
+          assert(malformedCode === 0, `malformed ${status} handoff exit=${malformedCode}`);
+          assert(fs.readFileSync(eventsPath, 'utf-8') === beforeMalformed,
+            `malformed ${status} handoff 不得写事件`);
+          assert(spawned === 0, `malformed ${status} handoff 不得 spawn`);
+        }
+        fs.rmSync(path.join(runDir, 'handoff-request.json'), { force: true });
+
+        fs.writeFileSync(eventsPath, [
+          JSON.stringify({ ts: '2026-01-01T00:00:00.000Z', type: 'run_start' }),
+          JSON.stringify({
+            ts: '2026-01-01T00:01:00.000Z', type: 'phase_halt', phase: 'coding',
+            run_disposition: 'WAITING', run_wait_kind: 'external', probe: 'storage_ready',
+          }),
+        ].join('\n') + '\n', 'utf-8');
+        writeControl('process', 'released');
+        supervise.__testing_setConditionProbe(() => ({ ready: true, reason: 'ready' }));
+        const processCode = await runCli();
+        assert(processCode === 0, `process/released exit=${processCode}`);
+        assert(spawned === 1, `process/released + ready probe 应 spawn 一次（${spawned}）`);
+      } finally {
+        supervise.__testing_setSpawnImpl(null);
+        supervise.__testing_setConditionProbe(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
       }
     },
   },

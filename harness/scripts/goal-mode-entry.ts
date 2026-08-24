@@ -3,7 +3,11 @@ import * as fs from 'fs';
 import { createHash } from 'crypto';
 import * as readline from 'readline';
 import minimist from 'minimist';
-import type { InSessionRoundOptions, InSessionRoundResult } from './utils/goal-in-session-driver';
+import type {
+  InSessionPhaseRequestContext,
+  InSessionRoundOptions,
+  InSessionRoundResult,
+} from './utils/goal-in-session-driver';
 import { runInSessionRound } from './utils/goal-in-session-driver';
 import { deriveReconcileObservation } from './utils/goal-reconcile-observation';
 import { appendGoalEventFenced, readInSessionLoopState, writeInSessionLoopStateFenced } from './utils/goal-in-session-evidence';
@@ -19,8 +23,10 @@ import {
   buildGoalManifestFromInput,
   loadGoalManifestFromRun,
   resolveRequirementInput,
+  RUN_ADAPTER_PROVENANCES,
   writeGoalManifest,
   type GoalManifest,
+  type RunAdapterProvenance,
 } from './utils/goal-manifest';
 import { resolveWorkflowSpec } from '../workflow-loader';
 import { validateMinimumAssurance } from './utils/skill-contract';
@@ -203,6 +209,7 @@ export interface PrepareGoalModeRunOptions {
   feature: string;
   runId?: string;
   adapter: string;
+  adapterSource?: RunAdapterProvenance;
   requirement: string;
   /** plan c4e8a1f7 T2：--requirement-file 来源列表（goal-mode-entry 与 goal-runner 同源解析） */
   requirementSourceFiles?: string[];
@@ -232,7 +239,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
         ? { requirement_source_files: options.requirementSourceFiles }
         : {}),
       adapter,
-      adapter_provenance: 'entry_declared',
+      ...(options.adapterSource ? { adapter_provenance: options.adapterSource } : {}),
       start_phase: options.startPhase ?? 'spec',
       end_phase: options.endPhase ?? 'testing',
       // plan a8e5c3f9 t6：headless 即全权限——新 manifest 直接写 effective 值
@@ -262,12 +269,37 @@ export interface GoalModeHostBridgeOptions {
   feature: string;
   runId: string;
   adapter: string;
+  runMode?: string;
   executePhase: InSessionRoundOptions['executePhase'];
   authorization?: InSessionRoundOptions['authorization'];
   leaseMs?: number;
   maxRounds?: number;
   forceTakeover?: boolean;
   onRound?: (result: InSessionRoundResult) => void;
+}
+
+export function assertAttendedRunMode(runMode: string | undefined): void {
+  if (runMode?.trim() !== 'attended') {
+    throw new Error('[goal-mode-entry] attended attach requires --run-mode attended');
+  }
+}
+
+export function buildPhaseExecuteRequest(
+  context: InSessionPhaseRequestContext,
+  recommendation: unknown,
+): {
+  type: 'phase_execute_request'; run_id: string; phase: string; attempt_id: string;
+  owner_id: string; owner_epoch: number; recommendation: unknown;
+} {
+  return {
+    type: 'phase_execute_request',
+    run_id: context.runId,
+    phase: context.phase,
+    attempt_id: context.attemptId,
+    owner_id: context.ownerId,
+    owner_epoch: context.ownerEpoch,
+    recommendation,
+  };
 }
 
 /**
@@ -278,9 +310,18 @@ export interface GoalModeHostBridgeOptions {
 export async function runGoalModeHostBridge(
   options: GoalModeHostBridgeOptions,
 ): Promise<InSessionRoundResult> {
+  // Caller declaration is only a startup assertion. It is deliberately not persisted as mode state.
+  assertAttendedRunMode(options.runMode);
   const manifest = loadGoalManifestFromRun(options.projectRoot, options.runId, {
     feature: options.feature,
   });
+  const callerAdapter = options.adapter.trim();
+  if (!callerAdapter || callerAdapter !== manifest.adapter) {
+    throw new Error(
+      `[goal-mode-entry] attach adapter mismatch: caller=${callerAdapter || '<empty>'}, manifest=${manifest.adapter}`,
+    );
+  }
+  const adapter = manifest.adapter;
   const workflow = resolveWorkflowSpec(options.projectRoot, {
     frameworkRoot: options.frameworkRoot,
   });
@@ -316,7 +357,7 @@ export async function runGoalModeHostBridge(
       token: acquired.token,
       manifest,
       workflow,
-      adapter: options.adapter,
+      adapter,
       mode: 'attended',
       authorization: options.authorization ?? { mode: 'goal_mode' },
       executePhase: options.executePhase,
@@ -332,7 +373,7 @@ export async function runGoalModeHostBridge(
       token: acquired.token,
       manifest,
       workflow,
-      adapter: options.adapter,
+      adapter,
       mode: 'attended',
       authorization: options.authorization ?? { mode: 'goal_mode' },
       executePhase: options.executePhase,
@@ -347,7 +388,7 @@ async function main(): Promise<void> {
   const argv = minimist(process.argv.slice(2), {
     string: [
       'project-root', 'framework-root', 'feature', 'run-id', 'adapter', 'requirement', 'start', 'end',
-      'authorization-mode', 'through-phase',
+      'authorization-mode', 'through-phase', 'run-mode', 'adapter-source',
       // f9c2e6b4 t4：与 goal-runner 同名同义，共用同一读取函数（相对路径按 projectRoot 解析）
       'requirement-file',
     ],
@@ -356,7 +397,7 @@ async function main(): Promise<void> {
   if (argv.help) {
     console.log(
       'Usage: goal-mode-entry.ts --feature <f> --run-id <id> --adapter <name> ' +
-      '[--project-root <root>] [--framework-root <framework>] [--force-takeover]\n' +
+      '--run-mode attended [--project-root <root>] [--framework-root <framework>] [--force-takeover]\n' +
       'Fresh attended run: add --prepare-run --requirement "<text>" (optionally --run-id/--start/--end).\n' +
       'Long / multi-line requirement: use --requirement-file <path> (mutually exclusive with --requirement).\n' +
       'Protocol: stdout emits one JSON phase_execute_request per round; stdin supplies ' +
@@ -367,6 +408,13 @@ async function main(): Promise<void> {
   const feature = String(argv.feature ?? '').trim();
   const runId = String(argv['run-id'] ?? '').trim();
   const adapter = String(argv.adapter ?? '').trim();
+  const runMode = String(argv['run-mode'] ?? '').trim();
+  assertAttendedRunMode(runMode || undefined);
+  const adapterSourceRaw = String(argv['adapter-source'] ?? '').trim();
+  const adapterSources = new Set<string>(RUN_ADAPTER_PROVENANCES);
+  if (adapterSourceRaw && !adapterSources.has(adapterSourceRaw)) {
+    throw new Error(`--adapter-source 非法：${adapterSourceRaw}`);
+  }
   const projectRoot = path.resolve(String(argv['project-root'] ?? process.cwd()));
   const frameworkRoot = path.resolve(String(argv['framework-root'] ?? path.resolve(__dirname, '..')));
   if (Boolean(argv['prepare-run'])) {
@@ -376,6 +424,9 @@ async function main(): Promise<void> {
       feature,
       runId: runId || undefined,
       adapter,
+      ...(adapterSourceRaw
+        ? { adapterSource: adapterSourceRaw as RunAdapterProvenance }
+        : {}),
       // f9c2e6b4 t4：两个启动入口**共用** resolveRequirementInput——互斥判定、相对路径
       // 口径、空文件处置只有一份实现，不写两遍（codex 开工原则②）。
       // plan c4e8a1f7 T2：来源列表一并透传（frozen requirement 的 provenance）。
@@ -418,14 +469,15 @@ async function main(): Promise<void> {
       feature,
       runId,
       adapter,
+      runMode,
       forceTakeover: Boolean(argv['force-takeover']),
       authorization: {
         mode: mode as 'manual' | 'batch_authorized' | 'goal_mode',
         ...(argv['through-phase'] ? { through_phase: String(argv['through-phase']) } : {}),
       },
       onRound: (round) => console.error(round.status_line),
-      executePhase: async (phase, recommendation) => {
-        console.log(JSON.stringify({ type: 'phase_execute_request', phase, recommendation }));
+      executePhase: async (phase, recommendation, context) => {
+        console.log(JSON.stringify(buildPhaseExecuteRequest(context, recommendation)));
         const next = await lines.next();
         if (next.done) throw new Error('phase executor protocol EOF');
         const response = JSON.parse(next.value) as {

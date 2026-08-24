@@ -11,8 +11,12 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import { spawnSync } from 'child_process';
 import type { UnitCaseResult } from '../run-unit';
+import { prepareGoalModeRun, runGoalModeHostBridge } from '../../scripts/goal-mode-entry';
+import type { InSessionPhaseRequestContext } from '../../scripts/utils/goal-in-session-driver';
+import { casAcquireRunOwner, readRunControl } from '../../scripts/utils/goal-run-control';
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '..', '..', '..');
 
@@ -75,7 +79,7 @@ function runHarness(
   args: string[],
   root: string,
   envOverrides: Record<string, string | undefined> = {},
-): { status: number; stdout: string } {
+): { status: number; stdout: string; stderr: string } {
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const [key, value] of Object.entries(envOverrides)) {
     if (value === undefined) delete env[key];
@@ -86,7 +90,7 @@ function runHarness(
     ['ts-node', path.join(harnessDir, 'harness-runner.ts'), ...args],
     { cwd: harnessDir, encoding: 'utf-8', shell: process.platform === 'win32', env },
   );
-  return { status: r.status ?? -1, stdout: r.stdout ?? '' };
+  return { status: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 }
 
 function git(root: string, args: string[]): void {
@@ -159,14 +163,14 @@ function readJson(root: string, rel: string): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(path.join(root, rel), 'utf-8'));
 }
 
-function writeValidSpecReceipt(root: string, summary: Record<string, unknown>): void {
+function writeValidSpecReceipt(root: string, summary: Record<string, unknown>, attemptId = ''): void {
   const reportsDir = path.join(root, 'doc/features/demo/spec/reports');
   fs.writeFileSync(path.join(reportsDir, 'verifier.report.md'), '# spec verifier\nverdict: PASS\n', 'utf-8');
   fs.writeFileSync(path.join(reportsDir, 'trace.json'), '{"trace": []}', 'utf-8');
   fs.writeFileSync(path.join(root, 'doc/features/demo/spec/phase-completion-receipt.md'), [
     '---', 'receipt_schema: "2.0"', 'feature: "demo"', 'phase: "spec"', 'agent_model: "e2e"', 'agent_runtime: "e2e"',
     'claimed_completion_at: "2026-08-11T10:00:00+08:00"',
-    `claimed_completion_commit_sha: "${String(summary.source_commit_sha)}"`, 'claimed_attempt_id: ""',
+    `claimed_completion_commit_sha: "${String(summary.source_commit_sha)}"`, `claimed_attempt_id: "${attemptId}"`,
     'verifier_subagent:', '  invoked_via: "Task(subagent_type=verifier)"',
     '  prompt_template: "framework/harness/prompts/verify-spec.md"',
     '  report_path: "doc/features/demo/spec/reports/verifier.report.md"', '  verdict: "PASS"',
@@ -181,8 +185,97 @@ function repoDocFeatures(): string[] {
   return fs.readdirSync(dir);
 }
 
-interface Case { name: string; run: () => void }
+interface Case { name: string; run: () => void | Promise<void> }
 const cases: Case[] = [
+  {
+    name: 'E2E attended：fenced request → initializer → formal harness → receipt/sync closure，旧 epoch 拒绝',
+    run: async () => {
+      const before = repoDocFeatures();
+      const { root, harnessDir } = provisionFramework();
+      try {
+        scaffoldFeature(root);
+        const runId = '20260825T000000Z-attended-e2e';
+        const prepared = prepareGoalModeRun({
+          projectRoot: root,
+          frameworkRoot: path.join(root, 'framework'),
+          feature: 'demo',
+          runId,
+          adapter: 'codex',
+          adapterSource: 'local_config',
+          requirement: '设计账户页，含余额展示与转账入口。',
+          endPhase: 'spec',
+        });
+        const captured: { value?: InSessionPhaseRequestContext } = {};
+        let fidelityHash = '';
+        const contextFlags = (context: InSessionPhaseRequestContext): string[] => [
+          '--goal-run-id', context.runId,
+          '--goal-attempt-id', context.attemptId,
+          '--goal-owner-id', context.ownerId,
+          '--goal-owner-epoch', String(context.ownerEpoch),
+        ];
+        await runGoalModeHostBridge({
+          projectRoot: root,
+          frameworkRoot: path.join(root, 'framework'),
+          feature: 'demo',
+          runId,
+          adapter: 'codex',
+          runMode: 'attended',
+          leaseMs: 5 * 60_000,
+          maxRounds: 1,
+          executePhase: async (phase, _recommendation, context) => {
+            captured.value = context;
+            assert(phase === 'spec' && context.phase === phase, 'bridge phase context mismatch');
+            const init = run(harnessDir, 'fidelity-intent-init.ts', [
+              '--feature', 'demo', '--goal-phase', phase, ...contextFlags(context),
+            ], root);
+            assert(init.status === 0, `attended initializer 失败：${init.stderr}`);
+            const ssotPath = path.join(root, 'doc/features/demo/spec/reports/fidelity-intent.json');
+            fidelityHash = crypto.createHash('sha256').update(fs.readFileSync(ssotPath)).digest('hex');
+
+            const harness = runHarness(harnessDir, [
+              '--phase', phase, '--feature', 'demo', '--summary', ...contextFlags(context),
+            ], root);
+            assert(harness.status === 0, `attended harness 失败：${harness.stderr}\n${harness.stdout}`);
+            const summary = readJson(root, 'doc/features/demo/spec/reports/summary.json');
+            assert(summary.verdict === 'PASS', `attended verdict=${summary.verdict}`);
+            assert(summary.closure_status === 'open', 'receipt 未填前 closure 必须保持 open');
+            writeValidSpecReceipt(root, summary, context.attemptId);
+
+            const sync = runHarness(harnessDir, [
+              '--sync-closure', '--phase', phase, '--feature', 'demo', ...contextFlags(context),
+            ], root);
+            assert(sync.status === 0, `attended sync-closure 失败：${sync.stderr}\n${sync.stdout}`);
+            const closed = readJson(root, 'doc/features/demo/spec/reports/summary.json');
+            assert(closed.receipt_status === 'passed' && closed.closure_status === 'closed',
+              `attended closure 未闭合：${JSON.stringify(closed)}`);
+            assert(!fs.existsSync(path.join(harnessDir, 'state', '.current-phase.json')),
+              'attended harness 不得产生 .current-phase.json');
+            assert(crypto.createHash('sha256').update(fs.readFileSync(ssotPath)).digest('hex') === fidelityHash,
+              'harness/sync closure 改写了 fidelity SSOT');
+            return { status: 'passed' as const, phase };
+          },
+        });
+        if (!captured.value) throw new Error('bridge 未发出 phase request');
+        const oldContext = captured.value;
+        const control = readRunControl(prepared.runDir, runId);
+        assert(control?.owner?.state === 'released', 'bridge 返回后 session owner 应 released');
+        const next = casAcquireRunOwner(prepared.runDir, runId, control!.current_epoch, {
+          kind: 'session', owner_id: 'attended-e2e-next-owner', lease_ms: 60_000,
+        });
+        assert(next.ok, 'reattach owner acquisition failed');
+        const staleInit = run(harnessDir, 'fidelity-intent-init.ts', [
+          '--feature', 'demo', '--goal-phase', 'spec', ...contextFlags(oldContext),
+        ], root);
+        assert(staleInit.status !== 0, '旧 epoch initializer 不得借用新 owner');
+        const ssotPath = path.join(root, 'doc/features/demo/spec/reports/fidelity-intent.json');
+        assert(crypto.createHash('sha256').update(fs.readFileSync(ssotPath)).digest('hex') === fidelityHash,
+          '旧 epoch 拒绝路径改写了 fidelity SSOT');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        assert(JSON.stringify(repoDocFeatures()) === JSON.stringify(before), 'E2E 不得新增 repo doc/features');
+      }
+    },
+  },
   {
     name: 'E2E 正例：带 --requirement → summary PASS + check-receipt exit 0',
     run: () => {
@@ -319,9 +412,19 @@ const cases: Case[] = [
   },
 ];
 
-export function runAll(): UnitCaseResult[] {
-  return cases.map((c) => {
-    try { c.run(); return { name: `e2e-spec-requirement-closure: ${c.name}`, ok: true }; }
-    catch (err) { return { name: `e2e-spec-requirement-closure: ${c.name}`, ok: false, error: (err as Error).stack ?? (err as Error).message }; }
-  });
+export async function runAll(): Promise<UnitCaseResult[]> {
+  const results: UnitCaseResult[] = [];
+  for (const c of cases) {
+    try {
+      await c.run();
+      results.push({ name: `e2e-spec-requirement-closure: ${c.name}`, ok: true });
+    } catch (err) {
+      results.push({
+        name: `e2e-spec-requirement-closure: ${c.name}`,
+        ok: false,
+        error: (err as Error).stack ?? (err as Error).message,
+      });
+    }
+  }
+  return results;
 }

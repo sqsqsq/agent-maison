@@ -383,6 +383,29 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: 'ensurePersonalSetup: 多 adapter 已有合法 local 时无 select 直接复用 activeAdapter',
+    run: () => {
+      const root = mkTmp();
+      writeProjectConfig(root, ['claude', 'cursor']);
+      fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# stub\n');
+      fs.writeFileSync(path.join(root, 'AGENTS.md'), '# stub\n');
+      fs.writeFileSync(
+        path.join(root, 'framework.local.json'),
+        JSON.stringify({ schema_version: '1.0', agent_adapter: 'cursor' }, null, 2),
+      );
+      clearFrameworkConfigCache();
+
+      const payload = ensurePersonalSetup(root);
+      assert.strictEqual(payload.ok, true);
+      assert.strictEqual(payload.code, 'ok');
+      assert.strictEqual(payload.activeAdapter, 'cursor');
+      assert.strictEqual(payload.ensured, null);
+
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
+  {
     name: 'ensurePersonalSetup: 既有 local=cursor + selectAdapter=claude → adapter_conflict 不静默吞',
     run: () => {
       const root = mkTmp();

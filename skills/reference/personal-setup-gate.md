@@ -8,7 +8,7 @@ Feature phase（catalog-bootstrap / spec … device-testing）与对应 adapter 
 cd framework/harness && npx ts-node scripts/check-personal-setup.ts --json --ensure --project-root <repo-root>
 ```
 
-goal-mode 等多 adapter 工程须加 `--select-adapter <RESOLVED_ADAPTER>`（解析方式见 [goal-mode SKILL](../project/goal-mode/SKILL.md) §运行身份）。
+goal-mode 的 local-first 解析与需要 `--select-adapter` 的条件见 [goal-mode-operations.md](goal-mode-operations.md#运行身份resolved_adapter解析阶梯)；已有合法 local 时不得再传请求身份触发重复选择。
 
 **仅解析 stdout JSON**（稳定字段：`ok`, `code`, `status`, `activeAdapter`, `materializedAdapters`, `ensured`, `candidates`, `message`）。勿依赖人读 stderr/stdout 散文。
 

@@ -43,7 +43,6 @@ export function renderBridgeSkillStubMarkdown(
   skillId: string,
   stubTargetRelPosix: string,
   skillMdRepoRelPosix: string,
-  adapterName?: string,
 ): string {
   const relFromStub = posixRelativeFromSkillStubTo(stubTargetRelPosix, skillMdRepoRelPosix);
   const description = skillDescriptionForDir(skillId);
@@ -56,9 +55,6 @@ export function renderBridgeSkillStubMarkdown(
     '# 跳板文件',
     '',
   ];
-  if (skillId === 'goal-mode' && adapterName?.trim()) {
-    lines.push(`> 运行身份（RESOLVED_ADAPTER）：${adapterName.trim()}`, '');
-  }
   lines.push(
     `完整 Skill 定义请阅读：**[${skillMdRepoRelPosix}](${relFromStub})**`,
     '',
@@ -174,8 +170,6 @@ export interface MaterializeAgentBundleOptions {
   bundle: ResolvedAgentBundlePaths;
   mode?: AgentBundleSkillMode;
   skillIds?: string[];
-  /** 物化 bridge stub 时注入运行身份（goal-mode 等） */
-  adapterName?: string;
 }
 
 export interface MaterializeAgentBundleResult {
@@ -188,7 +182,6 @@ export function materializeAgentBundleSkills(
 ): MaterializeAgentBundleResult {
   const { projectRoot, frameworkDir, bundle } = options;
   const mode = options.mode ?? bundle.skillMode;
-  const adapterName = options.adapterName?.trim();
   const ids = options.skillIds ?? listBuiltinSkillIds(frameworkDir);
   const filesWritten: string[] = [];
   const warnings: string[] = [];
@@ -215,7 +208,7 @@ export function materializeAgentBundleSkills(
     } else {
       mkdirWrite(
         targetRel,
-        renderBridgeSkillStubMarkdown(id, targetRel, skillMdRepoRel, adapterName),
+        renderBridgeSkillStubMarkdown(id, targetRel, skillMdRepoRel),
       );
     }
   }

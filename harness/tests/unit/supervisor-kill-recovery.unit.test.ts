@@ -72,7 +72,18 @@ function writeBeaconFor(root: string, reportDir: string, pid: number): void {
 function tmpRun(): { root: string; reportDir: string; cleanup: () => void } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kill-recovery-'));
   const reportDir = 'doc/features/bc-openCard/goal-runs/' + RUN_ID;
-  fs.mkdirSync(path.join(root, reportDir), { recursive: true });
+  const runDir = path.join(root, reportDir);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-control.json'), JSON.stringify({
+    schema: 'run-control@1',
+    run_id: RUN_ID,
+    current_epoch: 1,
+    owner: {
+      kind: 'process', owner_id: 'supervisor-test-process', epoch: 1, state: 'released',
+      pid: process.pid, hostname: os.hostname(),
+    },
+    updated_at: new Date().toISOString(),
+  }, null, 2) + '\n', 'utf-8');
   return { root, reportDir, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
 }
 

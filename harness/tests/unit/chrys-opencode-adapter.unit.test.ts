@@ -281,8 +281,8 @@ const cases: Array<{ name: string; run: () => void }> = [
       clearFrameworkConfigCache();
 
       const adapters = ['generic', 'chrys', 'opencode'];
-      const agentsSkillRel = '.agents/skills/coding/SKILL.md';
-      const opencodeSkillRel = '.opencode/skill/coding/SKILL.md';
+      const agentsSkillRel = '.agents/skills/goal-mode/SKILL.md';
+      const opencodeSkillRel = '.opencode/skill/goal-mode/SKILL.md';
       let agentsContent: string | null = null;
 
       for (const adapter of adapters) {
@@ -299,6 +299,8 @@ const cases: Array<{ name: string; run: () => void }> = [
           assert.strictEqual(content, agentsContent, `${adapter} changed .agents bridge content`);
         }
         agentsContent = content;
+        assert(!content.includes('RESOLVED_ADAPTER'), `${adapter}: bridge leaked adapter identity`);
+        assert(!content.includes('AskUserQuestion'), `${adapter}: bridge copied renderer-specific interaction text`);
         if (adapter !== 'generic') {
           const effects = result.file_results?.map(r => r.effect) ?? [];
           assert(
@@ -315,6 +317,40 @@ const cases: Array<{ name: string; run: () => void }> = [
 
       fs.rmSync(root, { recursive: true, force: true });
       clearFrameworkConfigCache();
+    },
+  },
+  {
+    name: 'materialize: generic↔chrys shared goal-mode bridge is byte-identical in both orders',
+    run: () => {
+      for (const order of [['generic', 'chrys'], ['chrys', 'generic']] as const) {
+        const root = mkTmp();
+        try {
+          fs.writeFileSync(
+            path.join(root, 'framework.config.json'),
+            JSON.stringify({
+              schema_version: '1.1',
+              project_name: `shared-${order.join('-')}`,
+              materialized_adapters: ['generic', 'chrys'],
+              architecture: minimalArchitecture(),
+              paths: { features_dir: 'doc/features' },
+            }, null, 2),
+          );
+          clearFrameworkConfigCache();
+          let first: Buffer | null = null;
+          for (const adapter of order) {
+            materializeAdapter(root, adapter, ['generic', 'chrys']);
+            const current = fs.readFileSync(path.join(root, '.agents/skills/goal-mode/SKILL.md'));
+            if (first === null) first = current;
+            else assert(current.equals(first), `${order.join('→')} changed shared goal-mode bridge`);
+          }
+          const text = first!.toString('utf-8');
+          assert(!text.includes('RESOLVED_ADAPTER'), `${order.join('→')} leaked identity`);
+          assert(!text.includes('AskUserQuestion'), `${order.join('→')} copied widget contract`);
+        } finally {
+          fs.rmSync(root, { recursive: true, force: true });
+          clearFrameworkConfigCache();
+        }
+      }
     },
   },
   {

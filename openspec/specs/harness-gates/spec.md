@@ -330,9 +330,9 @@ contract-owned axis mapping for every capability-backed check.
 
 ### Requirement: The phase initializer records explicit requirement provenance; derive.requirement accepts it as the phase-driven source
 
-The phase-driven `/spec` path (no goal run identity) SHALL obtain its authoritative requirement from a `fidelity-intent.json` SSOT whose `requirement_provenance` is `explicit_cli` and whose `execution_identity` matches the current `phase:<feature>:spec`. The shared `FidelityRoutingInitInput` SHALL require `requirementProvenance` at every call site: goal mode passes `goal_manifest`, the phase CLI passes `explicit_cli` (explicit non-empty requirement) or `intent_fallback` (broad-intent fallback only) and SHALL NOT emit `goal_manifest`. The `fidelity-intent-init` CLI SHALL accept `--requirement-file` through the same shared resolver, and SHALL fail fast on an explicitly empty `--requirement` rather than silently falling back to broad intent text. Broad intent text (README/notes/`spec.md`) or a missing/`intent_fallback`/legacy SSOT SHALL NOT satisfy `on_missing: fail`; `change.md` remains the legacy fallback.
+The phase-driven `/spec` path without a goal run identity SHALL obtain its authoritative requirement from a `fidelity-intent.json` SSOT whose `requirement_provenance` is `explicit_cli` and whose `execution_identity` matches the current `phase:<feature>:spec`. The attended goal `/spec` path SHALL invoke the same initializer with `--goal-run-id`; after shared context validation, the initializer SHALL take requirement text, adapter, and requirement source files only from that run's manifest and write `requirement_provenance=goal_manifest` with `execution_identity=<run_id>`. The shared `FidelityRoutingInitInput` SHALL require `requirementProvenance` at every call site. Manual phase initialization passes `explicit_cli` (explicit non-empty requirement) or `intent_fallback` (broad-intent fallback only) and SHALL NOT emit `goal_manifest`. The CLI SHALL accept `--requirement-file` through the same shared resolver and SHALL fail fast on an explicitly empty manual `--requirement`. Broad intent text (README/notes/`spec.md`) or a missing/`intent_fallback`/legacy manual SSOT SHALL NOT satisfy `on_missing: fail`; `change.md` remains the legacy fallback. A valid same-run goal SSOT SHALL be reused without changing its file hash or `decision_id`, and plan/coding/review/UT/testing SHALL remain read-only consumers.
 
-Enforcement: `harness/scripts/utils/capability-resolution.ts`, `harness/scripts/utils/fidelity-shared.ts`, `harness/scripts/utils/goal-preflight.ts`, `harness/scripts/fidelity-intent-init.ts`
+Enforcement: `harness/scripts/utils/capability-resolution.ts`, `harness/scripts/utils/fidelity-shared.ts`, `harness/scripts/utils/goal-preflight.ts`, `harness/scripts/fidelity-intent-init.ts`, `skills/feature/spec/SKILL.md`
 
 #### Scenario: manual spec links to an explicit requirement
 
@@ -341,8 +341,18 @@ Enforcement: `harness/scripts/utils/capability-resolution.ts`, `harness/scripts/
 
 #### Scenario: no explicit requirement stays blocked
 
-- **WHEN** Step 1 runs without a requirement (falling back to broad intent text) and no `change.md` exists
+- **WHEN** manual Step 1 runs without a requirement (falling back to broad intent text) and no `change.md` exists
 - **THEN** `derive.requirement` stays absent, the requirement capability stays blocked (INCOMPLETE), and the failure detail lists the attempted sources plus the two repair paths (goal manifest / re-run Step 1 with `--requirement(-file)`); a legacy SSOT without `requirement_provenance` is NOT treated as corrupt
+
+#### Scenario: attended spec writes goal identity at the first writer
+
+- **WHEN** spec Step 1 invokes the initializer with a valid attended `--goal-run-id`
+- **THEN** the SSOT SHALL record the manifest requirement, adapter, and source files with `requirement_provenance: goal_manifest` and `execution_identity: <run_id>` before any spec artifact is produced
+
+#### Scenario: same-run re-entry is byte stable
+
+- **WHEN** the attended initializer is called again for the same valid run or that run reattaches
+- **THEN** it SHALL reuse the existing valid SSOT without changing the file hash or `decision_id`
 
 ### Requirement: Blocked capabilities project deterministically into the diagnostic and decision exits
 
@@ -894,4 +904,35 @@ Enforcement: `harness/scripts/check-receipt.ts`, `skills/reference/confirmation-
 
 - **WHEN** the spec phase registry lists spec.freeze but the ledger has no corresponding entry
 - **THEN** check-receipt SHALL FAIL the phase closure
+
+### Requirement: Attended phase entry validates explicit goal context
+
+An attended `phase_execute_request` SHALL carry its authoritative `{run_id, phase, attempt_id, owner_id, owner_epoch}`. The spec Skill SHALL pass that exact context explicitly to `fidelity-intent-init`, the phase `harness-runner`, and `harness-runner --sync-closure`. All entries MUST use one shared validator before side effects to resolve the exact manifest/run-control, assert the captured owner fence, and verify matching feature, phase, current `session/active` owner, and unexpired lease. Validation failure MUST exit as a BLOCKER before SSOT write, closure write, or goal environment injection. After validation, the harness SHALL inject the existing run/attempt/phase orchestration environment plus `MAISON_GOAL_GATE_HARNESS=1`, so it is a formal gate rather than agent-side; attended closure SHALL finish through the explicit sync-closure entry without a detached runner replay.
+
+Enforcement: `skills/feature/spec/SKILL.md`, `harness/scripts/fidelity-intent-init.ts`, `harness/harness-runner.ts`, `harness/scripts/utils/goal-run-control.ts`
+
+#### Scenario: Wrong feature cannot borrow a live run
+
+- **WHEN** either CLI receives a `--goal-run-id` whose manifest feature differs from `--feature`
+- **THEN** it MUST fail before writing fidelity SSOT or setting goal orchestration environment
+
+#### Scenario: Expired attended owner cannot authorize phase work
+
+- **WHEN** the exact run has a missing, non-session, non-active, or expired owner lease
+- **THEN** both CLI entries MUST fail closed with the same validation contract
+
+#### Scenario: Valid attended context activates existing consumers
+
+- **WHEN** an attended harness command validates the captured session fence
+- **THEN** existing goal consumers SHALL observe run/attempt/phase and formal gate authority, `isAgentSideGoalHarness()` SHALL be false, `.current-phase.json` writes SHALL remain suppressed, and visual/device writers SHALL select their formal path
+
+#### Scenario: Delayed old-epoch request is rejected
+
+- **WHEN** a phase request captured under owner epoch N reaches initializer, harness, or sync closure after epoch N+1 has attached
+- **THEN** that entry SHALL fail before writing or borrowing the new owner, even though the run ID still matches
+
+#### Scenario: Attended receipt closes without a detached runner
+
+- **WHEN** the phase fills its attempt-bound receipt and invokes the context-bound `harness-runner --sync-closure`
+- **THEN** receipt validation and closure finalization SHALL use the same attempt identity and produce a formally closed phase without journal replay by `goal-runner`
 

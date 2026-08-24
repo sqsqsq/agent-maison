@@ -102,7 +102,8 @@ function validateControl(value: unknown, expectedRunId?: string): RunControlV1 {
       (owner.kind !== 'process' && owner.kind !== 'session') ||
       !owner.owner_id ||
       !Number.isInteger(owner.epoch) ||
-      owner.epoch !== record.current_epoch
+      owner.epoch !== record.current_epoch ||
+      !['active', 'quiescing', 'released', 'orphaned_session'].includes(owner.state)
     ) {
       throw new Error('[goal-run-control] owner/epoch 字段非法');
     }
