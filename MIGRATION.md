@@ -317,6 +317,27 @@ git submodule update --remote framework
 
 ## 版本变更记录
 
+### 宿主运行边界真值（Windows CLI 选择 · requirement 来源 · 视觉证据可达 · CodeAgent 放行 · v3.0.0）
+
+**适用范围**：升级到修复三次宿主 run（0.138 模型兼容 400 / guardian error 5 / inline canary 误拒签）并放行 CodeAgent 的 framework 版本。
+
+**行为摘要（非破坏性为主，一个可选新字段）**：
+
+1. **Windows 无头 CLI 选择真值**：解析器不再跨 PATH 目录全局偏好 `.exe`；按 `where.exe`/PATH 目录原顺序取首个明确受支持且可 spawn 的形态（`.cmd/.bat` 经 cross-spawn；无扩展名文件必须为原生 PE（MZ）头像，POSIX/ELF shim 不再仅凭存在入选）。若此前依赖“后置 `.exe` 胜出”，实际执行身份可能变化——以 `adapter_probe` 事件的 `resolved_binary` 字段为准核对。
+2. **probe/invoke 同一绝对路径**：adapter version probe、视觉金丝雀与正式 phase invoke 复用同一 session 解析结果；`adapter_probe` 事件新增 `resolved_binary` / `resolved_binary_kind` / `shadowed_candidates`（诊断）。旧 CSV/报告解析器如按旧字段消费不受影响（仅新增字段）。
+3. **正式 phase invoke 硬失败早停**：child spawn race、guardian containment 建立失败（CreateProcess/Assign/Resume，`[maison-guardian]` + ASCII marker 绑定投影为 `spawn_error`）、CLI/config 参数不兼容、Codex 结构化 `status=400 + invalid_request_error + requires a newer version of Codex`，命中即 `phase_halt(adapter_cli_hard_failure)`（external，零内容 retry、不跑 harness、不伪归因 `spec_file_exists`）。普通内容失败（含无 guardian 诊断的 exit 2）行为不变。
+4. **`--requirement-file` 来源保留（新增可选 manifest 字段）**：fresh manifest 新增可选 `requirement_source_files`（项目根相对列表），条件纳入身份哈希；resume 只读冻结值；successor 继承并在显式 file 增量时去重追加。**旧 manifest 无该字段不受影响**（身份哈希条件包含，resume 不误判漂移）。参考图发现改为单一共享集合：需求正文显式图片 ∪ 项目内来源文件直接父目录一层图片（canonical 去重排序），仅并集为空才回退 `ux-reference/`；capability/OCR 预扫/prompt/refs receipt 生产与验证共用同一分母，spec 漏声明任一发现图片将 FAIL。
+5. **fidelity-intent SSOT 可选 `requirement_source_files`**：旧 doc 缺字段按 legacy 兼容（不判 corrupt）；在场须为字符串数组。
+6. **inline canary 判卷统一 SSOT**：结构化 adapter 读纯 `agent-events.jsonl` 终态、非结构化 adapter 只消费本次 invoke 的 stdout 与退出事实（不再读含 prompt echo 的混合 `agent-output.log`）；能力与可审计性分轴——`tool_event_provenance=none`（如 Codex）即使 canary=tool_read 也不得签 refs receipt/`vl_multimodal`，产物诚实写 `verified: unverified`（best-effort WARN 可继续、hard contract FAIL，门槛不降）。
+7. **CodeAgent 放行**：headless 全权限支持集加入 `codeagent`（复用 `--dangerously-skip-permissions`/stdin/stream-json/Read parser）；Chrys 保持拒绝。真实 CLI flag 错误由统一 hard-CLI 早停承接。
+
+**实例升级 checklist**：
+
+1. 升级 framework 后重跑 goal 前，可在 dry-run 观察 `adapter_probe.resolved_binary` 确认 Windows 下实际选中的 CLI 形态与预期一致（多版本共存合法，PATH 首选项即执行身份）。
+2. 若使用 `--requirement-file`，新 run 的 manifest 会多出 `requirement_source_files`；**不要手工删除**——它是参考图发现的锚点（来源文件直接父目录一层）。
+3. CodeAgent 首次接入建议先 `codeagentcli --help` 记录版本，再做最短 Goal-mode smoke；如遇真实 unknown flag，请保留 stderr 证据（框架会一次停机并据实追加签名，不预猜）。
+4. 旧 run `--resume` 无需迁移：无 `requirement_source_files` 字段时发现语义回退到旧两级输入（正文显式路径 + ux-reference 回退），行为不变。
+
 ### Skill 层 scope 重构（`project/` + `feature/` · 去数字前缀 · v2.3.0）
 
 **适用范围**：升级到根 `skills/` 按生命周期 scope 分 `project/` / `feature/`、逻辑 skill-id 保持扁平 slug 的 framework 版本。
