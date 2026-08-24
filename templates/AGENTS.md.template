@@ -44,13 +44,15 @@
 
 ### 4.0 需求分档路由（L0 / L1 lite / L2 full）
 
-任何新请求**先分档，再动手**。判档评分 SSOT：`framework/specs/phase-rules/change-rules.yaml > track_scoring`；档位经 `feature.track` 确认。拿不准一律进 lite。
+任何新请求**先判路线，再判档**：需求是否符合"部件演进路线（蓝图 + 多 CU）"（见下表后小段）？不符合才进 L0/L1/L2 分档；**先分档，再动手**。判档评分 SSOT：`framework/specs/phase-rules/change-rules.yaml > track_scoring`；档位经 `feature.track` 确认。拿不准一律进 lite。
 
 | 档 | 触发 | 管线 | 门禁 |
 |---|---|---|---|
 | L0 direct | 小修小改/文案/单文件 bug | 不进管线，直接改 | 无框架门禁，仍须原生 test/lint/build + 第三节红线 |
 | L1 lite | 单模块 feature、无像素级 UI 保真 | change → coding → exit（[change-lite](framework/skills/feature/change-lite/SKILL.md)） | 编译+lint+`diff_within_scope`+验收 checkbox+条件 UT |
 | L2 full | 跨模块/pixel_1to1/goal 模式 | spec→plan→coding→review→ut→testing 全链 | 每阶段四重闭环 |
+
+**部件演进路线（蓝图 + 多 CU）**：它是 L0/L1/L2 **之前的路线选择**，不是第四档、也不是 `track_scoring` 机器档位；选中后各 CU 仍按既有分档施工。简短流程：准入（进入判据与时机见 [真实宿主准入契约](framework/skills/reference/real-host-admission-and-feedback.md) §1）→ 蓝图 → 拆 CU → 各 CU 按既有分档施工 → 部件闭环。
 
 **一票升 full**（命中任一）：pixel_1to1 意图；明确跨模块信号；goal 模式运行。lite 实施中出现 scope 越界/跨模块信号→停下走升档确认（`feature.track`）。
 
@@ -74,6 +76,9 @@
 | 0. 模块画像/术语表自举 | [framework/skills/project/catalog-bootstrap/SKILL.md](framework/skills/project/catalog-bootstrap/SKILL.md) |
 | 0. Code Graph 建图与维护 | [framework/skills/project/code-graph/SKILL.md](framework/skills/project/code-graph/SKILL.md) |
 | 0. 目标模式（goal-runner） | [framework/skills/project/goal-mode/SKILL.md](framework/skills/project/goal-mode/SKILL.md) |
+| 部件演进·蓝图 | [framework/skills/project/app-component-blueprint/SKILL.md](framework/skills/project/app-component-blueprint/SKILL.md) |
+| 部件演进·CU 推进 | [framework/skills/project/change-unit-progression/SKILL.md](framework/skills/project/change-unit-progression/SKILL.md) |
+| 部件演进·部件闭环 | [framework/skills/project/component-closure/SKILL.md](framework/skills/project/component-closure/SKILL.md) |
 | L1. Lite 轨 | [framework/skills/feature/change-lite/SKILL.md](framework/skills/feature/change-lite/SKILL.md) |
 | 1-6. Spec/Plan/编码/审查/业务级UT/真机测试 | [framework/skills/feature/{spec,plan,coding,code-review,business-ut,device-testing}/SKILL.md](framework/skills/README.md) |
 

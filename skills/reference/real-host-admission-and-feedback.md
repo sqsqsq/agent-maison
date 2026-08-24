@@ -12,10 +12,10 @@
 
 ## 1. 适用范围与边界
 
-**什么时候必须走本契约**：宿主工程里出现单次 spec/plan 无法承载的 App 单部件大型需求，且该
-部件**准备建立或已经进入**演进工作区 `<features_dir>/<blueprint_id>/`（演进工作区由
-[app-component-blueprint Skill](../project/app-component-blueprint/SKILL.md) 建立）。
-此时每个施工单元（Change Unit，下称 CU）进入、推进、闭环、回流，都按本文执行。
+**什么时候必须走本契约**：宿主需求按本节"进入判据与时机"选择部件演进路线，或已明确归属于
+某个既有 `blueprint_id`（既有演进工作区 `<features_dir>/<blueprint_id>/`，由
+[app-component-blueprint Skill](../project/app-component-blueprint/SKILL.md) 建立）时，必须走本
+契约。随后每个施工单元（Change Unit，下称 CU）的进入、推进、闭环与回流均按本文执行。
 
 **作用域包含 pre-CU 蓝图准入**：在部件蓝图尚未建立、需求准备进入蓝图时，同样先按 §2 准入清单
 逐项核对。缺失项**只有在输入足以形成合法蓝图时**才在首次蓝图创建时写入 `decisions_and_gaps`；
@@ -25,6 +25,34 @@ Skill 的入口链接（[app-component-blueprint](../project/app-component-bluep
 
 **与普通 Feature 的边界**：没有 `change_unit_ref` 的普通 Feature 走各自既有 Skill 与流程，不经过
 本契约。只有进入部件演进工作区、以 canonical CU 为施工单元的单元才在本契约范围内。
+
+**进入判据与时机**：
+
+**判据——三条同时成立（AND）才进蓝图：**
+
+1. 能识别出 **≥2 个各有独立施工/验收意义的 CU**——按能力与契约边界切，不是按模块、阶段或
+   文档章节人为拆分；
+2. 这些 CU **共享部件级设计决策**：数据真源、状态 owner、外部契约或迁移顺序；
+3. **各 CU 单独绿了仍不能证明整体完成**，必须经 Component closure 聚合验证。
+
+三条不同时成立 → 走普通 Feature，再按既有 L0/L1/L2 分档施工。
+
+**决策时机：**
+
+- **建 Feature 目录之前**是主判点——已明确属于某个既有 `blueprint_id` 的直接继续该演进工作区；
+- **spec 阶段是第一道兜底**：普通路线里第一次拿着事实（Context Facts Gate + Scope 守门的
+  in_scope_modules）复核判据；命中即停、转蓝图，只丢一份 spec 草稿；
+- **plan 装不下是最后报警**（TBD 堆积 / 反复 Scope 扩展提议）；coding 之前是转路线的最后合理时机。
+
+**只是升级信号、不能单独投票：** 一份 spec/plan 装不下；命中运行时数据闭环的六类条件（持久化/
+远端数据上 UI、同一数据多页面消费、后台/系统/定时写入、冷启动/恢复/切账号加载、一处改动刷新
+他处、缓存/云同步/进程重建）。**后者是蓝图内部 runtime view 要不要建 `runtime_data_flow` 的判据**
+（P1 spec「Runtime data flows are closed in both directions」），**不是要不要建蓝图的入口条件**；
+把它当入口 OR 条件会吞掉 `complex-capability-meta-model` 明文保留的"无蓝图引用、只走单元闭环"
+轻量路径，也越过本节"没有 `change_unit_ref` 的普通 Feature 不经过本契约"的边界。
+
+**升级不是迁移：** 普通 Feature 已有产物只作为当前事实来源被蓝图消费，不自动转成 CU、不自动
+credit CU completion；不建任何迁移器。
 
 **与 H1 的边界**：本文是真实宿主验证的**入口契约**，本身不执行验证、不产出任何宿主语义 PASS。
 AI 记账等真实宿主验证（H1 批次 1）以本文为入口开展；宿主是否真的"能进、能回流"，只能由真实

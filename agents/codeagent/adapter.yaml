@@ -11,7 +11,7 @@ agent_entry_file:
 
 commands:
   target_dir: .cac/commands                     # 相对于实例工程根
-  template_dir: templates/commands              # 自有 ×12：与 claude 版仅差运行身份行（goal-mode 另有
+  template_dir: templates/commands              # 自有 ×15：与 claude 版仅差运行身份行（goal-mode 另有
                                                 # RESOLVED_ADAPTER 与权威段）；归一化等值由 unit test 守护
   subagents:
     target_dir: .cac/agents
@@ -79,7 +79,7 @@ post_install_hooks: []
 
 notes: |
   - 内核=Claude Code CLI 衍生；模板 SSOT 在 agents/claude/templates/（claude-kernel 家族共享），
-    分叉仅 settings.json（三处差异见上）与 commands ×12（运行身份行；plan c7a9e2f4）。
+    分叉仅 settings.json（三处差异见上）与 commands ×15（运行身份行；plan c7a9e2f4）。
     改动 claude 的 agents/hooks/rules/goal-condition 模板对本 adapter 同时生效。
   - 宿主实证（2026-07-29，plan c7a9e2f4 T0）：hook 进程注入 CODEAGENT3_PROJECT_DIR（正斜杠
     形态）；Bash 子 shell 注入 CODEAGENT=1（宿主身份识别，对照 claude=CLAUDECODE）；

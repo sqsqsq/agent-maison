@@ -84,6 +84,26 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(!text.includes('../../../../skills/'), 'must not escape repo without framework/');
     },
   },
+  {
+    name: 'index skill ↔ 三宿主 commands ↔ skills-bridge 跳板 三方齐全（缺一即红）',
+    run: () => {
+      const ids = listBuiltinSkillIds(FRAMEWORK_DIR);
+      const hosts = ['claude', 'cursor', 'codeagent'] as const;
+      for (const id of ids) {
+        for (const host of hosts) {
+          const cmd = path.join(FRAMEWORK_DIR, 'agents', host, 'templates/commands', `${id}.md`);
+          assert(fs.existsSync(cmd), `index skill ${id} 缺 ${host} commands 模板：${cmd}`);
+        }
+        const bridge = path.join(
+          FRAMEWORK_DIR,
+          'agents/shared/agent-bundle/templates/skills-bridge',
+          id,
+          'SKILL.md',
+        );
+        assert(fs.existsSync(bridge), `index skill ${id} 缺 skills-bridge 跳板：${bridge}`);
+      }
+    },
+  },
 ];
 
 export function runAll(): UnitCaseResult[] {
