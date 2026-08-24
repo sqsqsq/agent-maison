@@ -189,12 +189,13 @@ const cases: Array<{ name: string; run: () => void }> = [
         require('path').join(__dirname, '../../scripts/utils/goal-preflight.ts'),
         'utf-8',
       );
-      // (c) runGoalPreflight L232 plan 构造：5 参（无 modelPin）
-      const preflightCall = src.match(/resolveHeadlessInvokePlan\(\s*adapter,\s*cap\.capability!,\s*manifest\.unattended,\s*vars\.PROMPT,\s*vars,\s*\)/);
-      assert(preflightCall, 'runGoalPreflight 的 binary-gate plan 构造应刻意不带 modelPin（5 参）');
-      // (b) runVisionCanaryProbe L386 plan 构造：6 参（带 manifest.adapter_model_pin.value）
-      const probeCall = src.match(/resolveHeadlessInvokePlan\(\s*adapter,\s*cap\.capability,\s*manifest\.unattended,\s*prompt,\s*vars,\s*manifest\.adapter_model_pin\?\.value,\s*\)/);
-      assert(probeCall, 'runVisionCanaryProbe 的 headless plan 构造应带 manifest.adapter_model_pin.value（6 参）');
+      // (c) runGoalPreflight L232 plan 构造：7 参（无 modelPin；第 6 参 undefined 显式、
+      // 第 7 参 session resolved binary——c4e8a1f7 T1a 新增，仍刻意不带 pin）
+      const preflightCall = src.match(/resolveHeadlessInvokePlan\(\s*adapter,\s*cap\.capability!,\s*manifest\.unattended,\s*vars\.PROMPT,\s*vars,\s*undefined,\s*sessionBinary\.binary,\s*\)/);
+      assert(preflightCall, 'runGoalPreflight 的 binary-gate plan 构造应刻意不带 modelPin（无 model 旗标；session binary 注入）');
+      // (b) runVisionCanaryProbe L386 plan 构造：7 参（带 manifest.adapter_model_pin.value + session binary）
+      const probeCall = src.match(/resolveHeadlessInvokePlan\(\s*adapter,\s*cap\.capability,\s*manifest\.unattended,\s*prompt,\s*vars,\s*manifest\.adapter_model_pin\?\.value,\s*input\.resolvedBinary,\s*\)/);
+      assert(probeCall, 'runVisionCanaryProbe 的 headless plan 构造应带 manifest.adapter_model_pin.value + resolvedBinary（无 model 旗标）');
     },
   },
 

@@ -294,6 +294,9 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'goal-canary-pin-binding-d7f3a9c4', modulePath: './unit/goal-canary-pin-binding-d7f3a9c4.unit.test' },
   // plan d7f3a9c4 t4：金丝雀 CLI 硬失败前置 BLOCKER（spawn race / CLI·config 参数不兼容）
   { id: 'goal-canary-hard-cli-d7f3a9c4', modulePath: './unit/goal-canary-hard-cli-d7f3a9c4.unit.test' },
+  // plan c4e8a1f7：宿主运行边界真值——CLI 选择/guardian 投影/硬失败共享分类/
+  // canary 判卷 SSOT/requirement source provenance/共享参考图集合/refs receipt 分母
+  { id: 'host-runtime-truth', modulePath: './unit/host-runtime-truth.unit.test' },
   { id: 'visual-confirm', modulePath: './unit/visual-confirm.unit.test' },
   { id: 'phase-evidence-manifest', modulePath: './unit/phase-evidence-manifest.unit.test' },
   { id: 'closure-attestation', modulePath: './unit/closure-attestation.unit.test' },

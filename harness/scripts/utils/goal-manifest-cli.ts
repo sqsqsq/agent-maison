@@ -11,6 +11,8 @@ export interface ManifestCliArgv {
   end?: string;
   adapter?: string;
   requirement?: string;
+  /** plan c4e8a1f7 T2：--requirement-file 的来源列表（由 goal-runner 解析后填入，非 CLI 直接旗标） */
+  requirement_source_files?: string[];
   /** t6：--fidelity（只升不降）与 --fidelity-receipt（降档凭证路径） */
   fidelity?: string;
   'fidelity-receipt'?: string;
@@ -56,6 +58,20 @@ export function applyManifestCliOverrides(manifest: GoalManifest, argv: Manifest
   }
   if (argv['override-manifest'] && argv.requirement) {
     manifest.requirement = String(argv.requirement);
+    // plan c4e8a1f7 T2（评审 P0/P1 修复）：来源**随 requirement 替换**——普通
+    // --manifest + --requirement-file + --override-manifest 下，旧来源属于旧需求文本，
+    // 保留/追加会把旧来源目录图片重新引入 capability/prompt/receipt/Visual Handoff
+    // 分母（历史图片污染）。
+    //  · --requirement-file 提供新来源 → 整体替换（不复用 manifest 文件自身旧来源）；
+    //  · inline --requirement（无来源）→ 清空旧来源（inline 需求无 sibling 扫描面）。
+    // successor 显式增量“继承源来源并追加增量来源”由 inheritSuccessorManifest 负责
+    // （发生在 override 之前），本函数不做叠加。
+    const newSources = argv.requirement_source_files;
+    if (newSources && newSources.length > 0) {
+      manifest.requirement_source_files = [...newSources];
+    } else {
+      delete manifest.requirement_source_files;
+    }
   }
   // t6：--fidelity 无需 override 开关（新字段无既有 manifest 冲突面）；只升不降与
   // 降档凭证校验在 fidelity preflight 内执行（flag 本身不构成授权）。

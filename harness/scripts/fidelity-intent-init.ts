@@ -79,7 +79,8 @@ function main(): number {
     return 1;
   }
   // ② 再交给 resolveRequirementInput 做既有的互斥 / projectRoot 相对路径解析 / 读文件 / 空文件判定。
-  let resolvedExplicit: string | undefined;
+  // plan c4e8a1f7 T2：返回 text + sources——来源列表随 SSOT 可选字段保留（不建第二份图片清单）。
+  let resolvedExplicit: ReturnType<typeof resolveRequirementInput> = { text: undefined, sources: [] };
   try {
     resolvedExplicit = resolveRequirementInput({
       requirement: explicitRequirement,
@@ -90,12 +91,13 @@ function main(): number {
     console.error(`[fidelity-intent-init] BLOCKER: ${(error as Error).message}`);
     return 1;
   }
-  const explicitNonEmpty = Boolean(resolvedExplicit && resolvedExplicit.trim());
+  const resolvedText = resolvedExplicit.text;
+  const explicitNonEmpty = Boolean(resolvedText && resolvedText.trim());
   // plan c8e5b3f1 t1-①'：本 CLI 只可能传 explicit_cli（收到显式非空需求）或 intent_fallback
   //（仅靠 collectIntentTextWithPhaseFallback 兜底）；不得判断或写入 goal_manifest。
   const requirementProvenance = explicitNonEmpty ? 'explicit_cli' : 'intent_fallback';
   const requirementEarly = explicitNonEmpty
-    ? resolvedExplicit!
+    ? resolvedText!
     : collectIntentTextWithPhaseFallback(projectRoot, feature, featuresDirRel);
   const newSha = requirementEarly
     ? computeRequirementShaFromText(projectRoot, feature, requirementEarly, featuresDirRel)
@@ -125,6 +127,10 @@ function main(): number {
     profileDir: loadResolvedProfile(projectRoot, cfg).profileDir,
     // plan c8e5b3f1 t1：本 CLI 显式裁决需求来源（explicit_cli / intent_fallback）。
     requirementProvenance,
+    // plan c4e8a1f7 T2：--requirement-file 场景的来源列表随 SSOT 可选字段保留。
+    ...(explicitNonEmpty && resolvedExplicit.sources.length > 0
+      ? { requirementSourceFiles: resolvedExplicit.sources }
+      : {}),
   });
   console.log(
     `[fidelity-intent-init] ${routing.decision.rationale}（source=${routing.decision.source}，` +

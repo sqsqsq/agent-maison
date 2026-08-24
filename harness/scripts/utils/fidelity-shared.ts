@@ -817,6 +817,11 @@ export interface FidelityIntentSsot {
   requirement_sha256: string;
   /** plan c8e5b3f1 t1：可选——writer 从此永远写；缺字段=旧版 doc（legacy 兼容）。 */
   requirement_provenance?: RequirementProvenance;
+  /**
+   * plan c4e8a1f7 T2：可选——requirement source 来源列表（项目根相对；与 goal manifest
+   * 同源）。缺字段=旧版 doc（legacy 兼容，不判 corrupt）；在场须为字符串数组。
+   */
+  requirement_source_files?: string[];
 }
 
 export function fidelityIntentSsotPath(projectRoot: string, feature: string): string {
@@ -864,6 +869,10 @@ function loadFidelityIntentSsotStateInner(projectRoot: string, feature: string):
       // plan c8e5b3f1 t1：requirement_provenance 在场但枚举非法 → corrupt（半写/篡改不得当 legacy）；
       // 缺字段=旧版 doc，按 legacy 兼容不判 corrupt（不 bump schema_version）。
       (doc.requirement_provenance !== undefined && !isValidRequirementProvenance(doc.requirement_provenance)) ||
+      // plan c4e8a1f7 T2：requirement_source_files 在场但形状非法 → corrupt；缺字段=legacy 兼容。
+      (doc.requirement_source_files !== undefined &&
+        (!Array.isArray(doc.requirement_source_files) ||
+         doc.requirement_source_files.some((f) => typeof f !== 'string' || !f.trim()))) ||
       // clamp 关系：clamped=true 须携合法 reason；false 不得携（半改写即 corrupt）
       (doc.clamped === true && doc.clamp_reason !== 'no_vision_ocr_available' && doc.clamp_reason !== 'no_vision_no_ocr') ||
       (doc.clamped === false && doc.clamp_reason !== undefined) ||
@@ -883,7 +892,13 @@ export function writeFidelityIntentSsot(
   projectRoot: string,
   feature: string,
   d: FidelityRoutingDecision,
-  ids: { executionIdentity: string; requirementSha: string; requirementProvenance: RequirementProvenance },
+  ids: {
+    executionIdentity: string;
+    requirementSha: string;
+    requirementProvenance: RequirementProvenance;
+    /** plan c4e8a1f7 T2：可选来源列表（fidelity-intent SSOT 不建第二份图片清单） */
+    requirementSourceFiles?: string[];
+  },
 ): string {
   const p = fidelityIntentSsotPath(projectRoot, feature);
   fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -901,6 +916,9 @@ export function writeFidelityIntentSsot(
     requirement_sha256: ids.requirementSha,
     // plan c8e5b3f1 t1：writer 从此永远写（必填入参，TS 防漏接）。
     requirement_provenance: ids.requirementProvenance,
+    ...(ids.requirementSourceFiles && ids.requirementSourceFiles.length > 0
+      ? { requirement_source_files: ids.requirementSourceFiles }
+      : {}),
   };
   // post-impl3 P1-4：tmp+rename 原子替换（半写崩溃不得留下截断 SSOT）
   const tmp = `${p}.${process.pid}.tmp`;
@@ -1207,6 +1225,9 @@ export function resolveUiRelevanceForRun(
   return detectUiRelevantRequirement(requirement);
 }
 
+/** 参考图受支持扩展名（与声明面统一，review 裁决：png/jpg/jpeg/webp——不含 bmp，
+ * 避免"发现但不能合法声明"的永久假分母）。OCR 预扫、source sibling 扫描与 ux-reference
+ * 回退共用一份枚举。 */
 const OCR_PRESCAN_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
 
 function listImageFilesInDir(absDir: string): string[] {
@@ -1220,6 +1241,10 @@ function listImageFilesInDir(absDir: string): string[] {
   } catch {
     return [];
   }
+}
+
+function listSiblingImageFilesInDir(absDir: string): string[] {
+  return listImageFilesInDir(absDir);
 }
 
 /**
@@ -1253,32 +1278,65 @@ function extractExistingRequirementPathRefs(requirement: string, projectRoot: st
 }
 
 /**
- * E0③（codex 采纳的参考图发现规则）：首次 spec invoke 前 spec.md / visual_handoff.
- * authoritative_refs 尚不存在，不能复用既有"从 spec 收集图片"的路径。deterministic
- * pre-scan 顺序：①requirement 文本中锚定 features_dir 的显式目录/文件路径引用 → 该目录下
- * 图片文件；②回退 feature 既有 ux-reference/ 目录；③扫不到图源 → 空数组（调用方据此跳过
- * OCR 预跑，绝不造假分母）。返回绝对路径，按文件名排序（确定性，供幂等 OCR 落盘用）。
+ * plan c4e8a1f7 T2：**单一 bounded 参考图发现集合**（全消费面共享的期望分母）。
+ * 语义冻结：
+ *   1. 需求文本中可解析的显式项目图片（既有 extractExistingRequirementPathRefs 语义）
+ *      UNION
+ *   2. 项目内 requirement source 各**直接父目录**的一层受支持图片（非递归）
+ *   3. canonical path 去重 + 确定性排序
+ *   4. 仅当并集为空才 fallback 到 feature `ux-reference/`
+ * inline requirement（无 sources）不触发 sibling 扫描；项目外 source 只读正文、不扫描其
+ * sibling。返回绝对路径数组。
  */
-export function discoverReferenceImagesForOcrPrescan(
+export function resolveRequirementReferenceImages(
   projectRoot: string,
   feature: string,
   requirement: string | undefined,
+  opts?: { requirementSourceFiles?: string[] },
 ): string[] {
   const found = new Set<string>();
   if (requirement) {
     for (const abs of extractExistingRequirementPathRefs(requirement, projectRoot)) {
       if (OCR_PRESCAN_IMAGE_EXTENSIONS.has(path.extname(abs).toLowerCase())) {
-        if (fs.statSync(abs).isFile()) found.add(abs);
+        if (fs.existsSync(abs) && fs.statSync(abs).isFile()) found.add(abs);
         continue;
       }
       for (const img of listImageFilesInDir(abs)) found.add(img);
     }
+  }
+  // 项目内 source 直接父目录一层扫描（项目外 source 不扫描）。
+  const projectRootAbs = path.resolve(projectRoot);
+  for (const src of opts?.requirementSourceFiles ?? []) {
+    const srcAbs = path.isAbsolute(src) ? src : path.resolve(projectRoot, src);
+    if (!srcAbs.startsWith(projectRootAbs + path.sep)) continue; // 项目外：只读正文不扫描
+    const parentDir = path.dirname(srcAbs);
+    for (const img of listSiblingImageFilesInDir(parentDir)) found.add(img);
   }
   if (found.size === 0) {
     const uxRefDir = featureFilePath(projectRoot, feature, 'ux-reference');
     for (const img of listImageFilesInDir(uxRefDir)) found.add(img);
   }
   return [...found].sort();
+}
+
+/**
+ * E0③（codex 采纳的参考图发现规则）：首次 spec invoke 前 spec.md / visual_handoff.
+ * authoritative_refs 尚不存在，不能复用既有"从 spec 收集图片"的路径。deterministic
+ * pre-scan 顺序：①requirement 文本中锚定 features_dir 的显式目录/文件路径引用 → 该目录下
+ * 图片文件；②回退 feature 既有 ux-reference/ 目录；③扫不到图源 → 空数组（调用方据此跳过
+ * OCR 预跑，绝不造假分母）。返回绝对路径，按文件名排序（确定性，供幂等 OCR 落盘用）。
+ * plan c4e8a1f7 T2：委托共享发现集合（正文显式 ∪ source 直接父目录一层；仅空集回退
+ * ux-reference）——与 capability/refs receipt/prompt 同一分母，不另实现第二套。
+ */
+export function discoverReferenceImagesForOcrPrescan(
+  projectRoot: string,
+  feature: string,
+  requirement: string | undefined,
+  opts?: { requirementSourceFiles?: string[] },
+): string[] {
+  return resolveRequirementReferenceImages(projectRoot, feature, requirement, {
+    requirementSourceFiles: opts?.requirementSourceFiles,
+  });
 }
 
 /** ocr-toolkit.ts 的 OcrWord/OcrLine 同型（profile 侧真实签名——bbox 为 [x,y,w,h] 归一化，

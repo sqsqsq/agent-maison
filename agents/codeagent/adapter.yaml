@@ -64,12 +64,13 @@ goal_capability:
   external_runner:
     # Declarative only for capability validation. Runtime SSOT: agent-invoke.ts defaultHeadlessInvokePlan
     # (codeagentcli -p …, prompt via STDIN — 与 claude 同款 Windows cmd shim 换行截断铁律)。
-    # plan a8e5c3f9：headless 全权限契约——argv 与 claude 共用（claudeArgv），但
-    # --dangerously-skip-permissions 在 codeagentcli 上**未经宿主实测**（家族等价是旧旗标集
-    # 的实证，不外推到新 bypass 旗标）。复检裁定：核实前 Goal/headless preflight 以
-    # adapter_headless_permission_unsupported 明确拒绝（同 chrys 待遇），不以推定宣称支持。
-    # 解锁：宿主 `codeagentcli --help` 确认旗标 + 实跑一条 shell 命令 → 删 agent-invoke.ts
-    # assertAdapterHeadlessFullPermission 的 codeagent 分支即接入（argv 无须再改）。
+    # plan a8e5c3f9：headless 全权限契约——argv 与 claude 共用（claudeArgv），
+    # --dangerously-skip-permissions / stdin / stream-json / Read parser 全链复用。
+    # plan c4e8a1f7 T1b（用户裁决）：CodeAgent 进入 supported 集合——删除 agent-invoke.ts
+    # assertAdapterHeadlessFullPermission 的专门拒绝后即接入（argv 无须再改）；真实 CLI flag
+    # 错误由统一 hard-CLI 早停（adapter_cli_hard_failure）一次停机并据 stderr 修正，不预猜。
+    # 宿主 smoke：先记录 `codeagentcli --help`/version，再跑最短 Goal-mode。
+    # Chrys 保持拒绝（bypass 旗标仍未经宿主核实）。
     headless_invoke: 'codeagentcli -p --dangerously-skip-permissions "{{PROMPT}}"'
     unattended:
       write_mode: full-access

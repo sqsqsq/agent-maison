@@ -242,10 +242,16 @@ export function runAll(): UnitCaseResult[] {
       const specMd = ['```yaml', 'ui_change: new_or_changed', '```', '', `path: ${refRel}`].join('\n');
       fs.writeFileSync(path.join(featureAbs, 'spec', 'spec.md'), specMd, 'utf-8');
       const refHash = crp.sha256FileFull(refAbs)!;
-      // manifest（run adapter 身份）
+      // manifest（run adapter 身份 + 评审 P1-3d 修复后新增的共享发现分母输入：
+      // verifyVlSigningChain 不再回退 spec.md，期望分母=manifest requirement +
+      // requirement_source_files 重算——fixture 须提供可解析出 home.png 的需求文本）
       const runDir = path.join(featureAbs, 'goal-runs', 'runx');
       fs.mkdirSync(runDir, { recursive: true });
-      fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify({ adapter: 'claude', run_id: 'runx' }), 'utf-8');
+      fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify({
+        adapter: 'claude',
+        run_id: 'runx',
+        requirement: `参考图在 ${refRel}。`,
+      }), 'utf-8');
       const refsPath = path.join(featureAbs, 'vision', 'spec-refs-receipt.json');
       const writeChain = (opts: {
         invoke?: string;

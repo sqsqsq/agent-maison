@@ -110,14 +110,14 @@ function testEffectiveHeadlessUnattended(): void {
   assert(effEmpty.write_mode === 'full-access' && effEmpty.approval_mode === 'never', 'undefined 输入同样归一化');
 }
 
-function testChrysRefusedUntilVerified(): void {
-  // 复检裁定（P1）：未经宿主实测的 bypass 一律拒绝——chrys（旗标未知）与 codeagent
-  //（旗标沿家族推定但 codeagentcli 从未实探）同待遇；核实后删除拒绝分支即接入。
-  for (const refused of ['chrys', 'codeagent']) {
-    const r = assertAdapterHeadlessFullPermission(refused);
-    assert(r.ok === false, `${refused} bypass 未经核实，须明确拒绝而非静默残权限/推定支持`);
-    assert(r.ok === false && r.reason.includes('adapter_headless_permission_unsupported'), (r as { reason?: string }).reason ?? '');
-  }
+function testChrysRefusedCodeagentReleased(): void {
+  // plan c4e8a1f7 T1b（用户裁决）：CodeAgent 进入 supported 集合（复用既有全权限 argv/
+  // stdin/stream-json/Read parser；真实 CLI flag 错误由统一 hard-CLI 早停承接）；
+  // Chrys（bypass 旗标仍未经宿主核实）保持拒绝。
+  const r = assertAdapterHeadlessFullPermission('chrys');
+  assert(r.ok === false, 'chrys bypass 未经核实，须明确拒绝而非静默残权限/推定支持');
+  assert(r.ok === false && r.reason.includes('adapter_headless_permission_unsupported'), (r as { reason?: string }).reason ?? '');
+  assert(assertAdapterHeadlessFullPermission('codeagent').ok === true, 'codeagent 已放行（用户裁决）');
   for (const ok of ['claude', 'codex', 'cursor', 'opencode', 'my-custom-adapter']) {
     assert(assertAdapterHeadlessFullPermission(ok).ok === true, `${ok} 应通过（内建已固化 / custom 走提供方契约）`);
   }
@@ -183,7 +183,7 @@ export function runAll(): UnitCaseResult[] {
     { name: 't3 cursor 恒 --force --trust', fn: testCursorAlwaysTrust },
     { name: 't4 opencode bypass 旗标回归钉', fn: testOpencodePinnedBypass },
     { name: 't6 effectiveHeadlessUnattended 薄解析点', fn: testEffectiveHeadlessUnattended },
-    { name: 't5 chrys 未核实即拒绝；内建/custom 通过', fn: testChrysRefusedUntilVerified },
+    { name: 't5 chrys 未核实即拒绝；codeagent 已放行（用户裁决）；内建/custom 通过', fn: testChrysRefusedCodeagentReleased },
     { name: 't5 preflight 接线全权限判定(源级钉)', fn: testPreflightWiresFullPermissionGate },
     { name: 't6 manifest 默认值与审计字段(源级钉)', fn: testManifestDefaultsSourcePins },
     { name: 't7 七份 adapter.yaml 声明与运行时一致', fn: testAdapterYamlDeclarationsAligned },

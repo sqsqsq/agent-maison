@@ -24,9 +24,9 @@ import {
 } from './skill-contract';
 import {
   collectIntentTextWithPhaseFallback,
-  discoverReferenceImagesForOcrPrescan,
   fidelityIntentSsotPath,
   loadFidelityIntentSsotState,
+  resolveRequirementReferenceImages,
 } from './fidelity-shared';
 
 export type InputResolutionState = 'resolved' | 'absent' | 'invalid' | 'not_applicable';
@@ -89,6 +89,9 @@ export interface CapabilityResolutionOptions {
   track: FeatureTrackName;
   /** Goal/entry input is normalized before resolution; resolver never asks interactively. */
   requirement?: string;
+  /** plan c4e8a1f7 T2：需求来源列表（goal manifest 冻结值；derive.visual-reference 的
+   * source 直接父目录扫描输入——同一共享发现集合，杜绝第二套分母）。 */
+  requirementSourceFiles?: string[];
   adhocCases?: string;
 }
 
@@ -242,7 +245,7 @@ function resolveDerive(
         ? { state: 'resolved', dependencies: deps, detail: change }
         : { state: 'absent', dependencies: deps, detail: 'goal requirement/change.md missing' };
     }
-    // plan f3a8c6d2 t5a：pixel_1to1 意图但一张参考图都取不到＝**输入缺失**，走既有
+    // plan f3a8c6d2 t5a（plan c4e8a1f7 T2 收口）：pixel_1to1 意图但一张参考图都取不到＝**输入缺失**，走既有
     // capability input unresolved 通道（readiness/next_action/assess/merged-report 四处投影
     // 自动获得），不另产 CheckResult、不另造 pregate。
     // 事故（bc-openCard）：需求把参考图指向不存在的 ux-reference/（实际十张图在别处），
@@ -251,7 +254,34 @@ function resolveDerive(
       const featuresDirRel =
         (loadFrameworkConfig(projectRoot).paths?.features_dir ?? 'doc/features').replace(/\\/g, '/');
       const intentText = collectIntentTextWithPhaseFallback(projectRoot, feature, featuresDirRel);
-      const refs = discoverReferenceImagesForOcrPrescan(projectRoot, feature, intentText);
+      // plan c4e8a1f7 T2（评审 P1 修复）：**当前 requirement 恒为优先输入**——普通 inline
+      // goal 的 `options.requirement` 来自 entry input（当前 run manifest 冻结值），不再
+      // 退回"全部历史 run requirement 聚合"（可能混入旧图片；宿主实锤混入形态）。
+      // 仅当 options.requirement 缺失（如阶段驱动无显式需求）才 fallback 宽泛意图文本。
+      const reqInput = options.requirement?.trim() ? options.requirement : intentText;
+      // sources 解析（评审 P1 修复）：① entry input 显式携带（goal 路径）；② 为空时从
+      // **身份匹配**的 fidelity-intent SSOT 读取（phase-driven 路径——fidelity-intent-init
+      // 已写入 requirement_source_files，此处是"只写不读"断桥的读侧）；③ 都缺 → 空。
+      let sources = options.requirementSourceFiles;
+      if (!sources || sources.length === 0) {
+        const ssotState = loadFidelityIntentSsotState(projectRoot, feature);
+        const ssot = ssotState.state === 'valid' ? ssotState.doc : null;
+        const expectedIdentity = `phase:${feature}:${options.phase}`;
+        if (
+          ssot &&
+          ssot.requirement_provenance === 'explicit_cli' &&
+          ssot.execution_identity === expectedIdentity &&
+          ssot.requirement_source_files &&
+          ssot.requirement_source_files.length > 0
+        ) {
+          sources = ssot.requirement_source_files;
+        }
+      }
+      // 单一路径消费共享发现集合（正文显式 ∪ source 直接父目录一层；仅空集回退
+      // ux-reference）——与 OCR 预扫/phase prompt/refs receipt 生产验证同一分母。
+      const refs = resolveRequirementReferenceImages(projectRoot, feature, reqInput, {
+        ...(sources && sources.length > 0 ? { requirementSourceFiles: sources } : {}),
+      });
       // 依赖只绑**真实图片文件**（换图/删图 → 既有 stale 链自然重算）。不绑 ux-reference/
       // 目录本身：证据 manifest 的 hasher 只认 isFile()，目录会被永久记成 exists:false，
       // 图补齐后也不变——那是误导性诊断，不是新鲜度信号。缺图时 capability 直接 blocked、
