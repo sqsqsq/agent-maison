@@ -239,32 +239,30 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'renderBridgeSkillStubMarkdown：goal-mode 注入运行身份',
+    name: 'renderBridgeSkillStubMarkdown：goal-mode 保持 adapter 中性',
     run: () => {
       const md = renderBridgeSkillStubMarkdown(
         'goal-mode',
         '.cursor/skills/goal-mode/SKILL.md',
         'framework/skills/project/goal-mode/SKILL.md',
-        'codex',
       );
-      assert(md.includes('RESOLVED_ADAPTER'));
-      assert(md.includes('codex'));
+      assert(!md.includes('RESOLVED_ADAPTER'));
+      assert(!md.includes('AskUserQuestion'));
     },
   },
   {
-    name: 'renderBridgeSkillStubMarkdown：非 goal-mode 不注入身份',
+    name: 'renderBridgeSkillStubMarkdown：普通 bridge 同样保持中性',
     run: () => {
       const md = renderBridgeSkillStubMarkdown(
         'coding',
         '.cursor/skills/coding/SKILL.md',
         'framework/skills/feature/coding/SKILL.md',
-        'cursor',
       );
       assert(!md.includes('RESOLVED_ADAPTER'));
     },
   },
   {
-    name: 'materializeAgentBundleSkills：goal-mode bridge 注入 adapterName',
+    name: 'materializeAgentBundleSkills：goal-mode bridge 不写身份或交互实现',
     run: () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fw-bundle-goal-'));
       materializeAgentBundleSkills({
@@ -277,13 +275,12 @@ const cases: Array<{ name: string; run: () => void }> = [
           skillMode: 'bridge',
         },
         skillIds: ['goal-mode'],
-        adapterName: 'cursor',
       });
       const p = path.join(dir, '.agents/skills/goal-mode/SKILL.md');
       assert(fs.existsSync(p));
       const txt = fs.readFileSync(p, 'utf8');
-      assert(txt.includes('RESOLVED_ADAPTER'));
-      assert(txt.includes('cursor'));
+      assert(!txt.includes('RESOLVED_ADAPTER'));
+      assert(!txt.includes('AskUserQuestion'));
       fs.rmSync(dir, { recursive: true, force: true });
     },
   },

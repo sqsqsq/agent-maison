@@ -213,3 +213,40 @@ personal setup is reached only via phase pre-gate `--ensure`.
 > **Enforced by:** `agents/shared/agent-bundle/templates/skills-bridge/`,
 > `harness/scripts/utils/agent-bundle-paths.ts`, `harness/tests/unit/generic-bundle.unit.test.ts`
 
+### Requirement: Skills bridges are adapter-identity neutral
+
+Generated skills-bridge stubs SHALL route to the canonical Skill without embedding a static resolved adapter identity. Bridge templates MUST NOT copy platform-specific `AskUserQuestion` or personal-setup option blocks; interaction rendering remains owned by each adapter's renderer, and a bridge MAY contain only renderer-neutral guidance to resolve `goal.run_mode` for an ambiguous fresh run.
+
+Enforcement: `harness/scripts/utils/materialize-agent-bundle-skills.ts`, `harness/scripts/utils/init-task-executor.ts`, `agents/*/adapter.yaml`
+
+#### Scenario: Shared generic and Chrys root is order independent
+
+- **WHEN** generic and Chrys bundles materialize `.agents/skills/goal-mode/SKILL.md` in either order
+- **THEN** the resulting bridge SHALL contain no adapter identity line, SHALL contain no `AskUserQuestion` options, and SHALL remain byte-compatible for coexistence
+
+#### Scenario: Exclusive bridge root stays neutral
+
+- **WHEN** a bridge is materialized under an adapter-exclusive bundle root
+- **THEN** it SHALL still omit static adapter identity because personal setup remains the adapter SSOT
+
+### Requirement: Goal entry records adapter provenance from the resolved source
+
+The attended goal preparation entry SHALL accept adapter provenance returned by personal setup and SHALL write only a valid real source such as `local_config`. Its API type and CLI validation MUST consume the manifest-owned `RunAdapterProvenance` / `RUN_ADAPTER_PROVENANCES` SSOT rather than copying the enum. It MUST NOT hard-code `entry_declared` when the adapter came from local configuration and MUST NOT invent an `unknown` enum; when provenance cannot be established, the optional field SHALL be omitted or preparation SHALL fail closed.
+
+Enforcement: `harness/scripts/goal-mode-entry.ts`, `harness/scripts/utils/personal-setup-gate.ts`, `harness/scripts/utils/goal-manifest.ts`
+
+#### Scenario: Existing local adapter keeps local provenance
+
+- **WHEN** personal setup resolves `activeAdapter=codex` from `framework.local.json` and attended preparation receives that source
+- **THEN** the manifest SHALL record `adapter=codex` with `adapter_provenance=local_config`
+
+#### Scenario: Unavailable provenance is not fabricated
+
+- **WHEN** attended preparation cannot prove the adapter source
+- **THEN** it SHALL omit the optional provenance or BLOCKER-fail, and MUST NOT write `unknown`
+
+#### Scenario: Provenance enum evolves once
+
+- **WHEN** the manifest-owned provenance list changes
+- **THEN** the attended preparation API and CLI SHALL accept exactly that same list without a copied union or validator set
+

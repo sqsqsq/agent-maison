@@ -338,7 +338,6 @@ function syncTemplateTarget(
         'goal-mode',
         norm,
         resolved.skillMdRepoRel,
-        adapter.name,
       ),
       'utf-8',
     );

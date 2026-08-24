@@ -38,10 +38,13 @@ import {
 import { probeCapabilityPreflight } from './utils/capability-preflight';
 import type { ReadinessProbeName } from './utils/device-readiness-gate';
 import { featureDir } from '../config';
+import { readRunControl, type RunControlV1 } from './utils/goal-run-control';
+import { HANDOFF_REQUEST_NAME, isValidHandoffRequest } from './utils/goal-handoff';
 
 interface ResolvedRun {
   runId: string;
   reportDir: string;
+  runDir: string;
   eventsPath: string;
 }
 
@@ -59,7 +62,47 @@ function resolveRun(projectRoot: string, feature: string, wanted: string): Resol
   const reportDir = path
     .relative(projectRoot, path.join(runsRoot, runId))
     .replace(/\\/g, '/');
-  return { runId, reportDir, eventsPath: path.join(projectRoot, reportDir, 'events.jsonl') };
+  const runDir = path.join(projectRoot, reportDir);
+  return { runId, reportDir, runDir, eventsPath: path.join(runDir, 'events.jsonl') };
+}
+
+type OwnerGate =
+  | { action: 'process'; control: RunControlV1 }
+  | { action: 'no_op'; reason: string };
+
+/** Supervisor is read-only outside process ownership; malformed mailbox state fails closed. */
+function hasIncompleteHandoff(runDir: string, runId: string): boolean {
+  const filePath = path.join(runDir, HANDOFF_REQUEST_NAME);
+  if (!fs.existsSync(filePath)) return false;
+  try {
+    const value: unknown = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    if (!isValidHandoffRequest(value) || value.run_id !== runId) return true;
+    return value.status === 'pending' || value.status === 'consumed';
+  } catch {
+    return true;
+  }
+}
+
+function gateSupervisorOwner(runDir: string, runId: string): OwnerGate {
+  let control: RunControlV1 | null;
+  try {
+    control = readRunControl(runDir, runId);
+  } catch (error) {
+    return { action: 'no_op', reason: `run-control 损坏，fail-closed：${(error as Error).message}` };
+  }
+  if (!control?.owner) {
+    return { action: 'no_op', reason: 'run-control owner 缺失，fail-closed' };
+  }
+  if (control.owner.state === 'quiescing' || hasIncompleteHandoff(runDir, runId)) {
+    return { action: 'no_op', reason: 'owner 正在 quiesce 或 handoff 未完成——不抢控制权' };
+  }
+  if (control.owner.kind === 'session') {
+    return {
+      action: 'no_op',
+      reason: `session owner state=${control.owner.state}——仅 attended bridge/操作者可接管`,
+    };
+  }
+  return { action: 'process', control };
 }
 
 /** 该终局结论是否已记过——同一结论只落一次，防周期任务把事件流刷爆。 */
@@ -243,6 +286,11 @@ async function main(): Promise<number> {
   if (!run) {
     console.error(`[goal-supervise] 找不到 feature=${feature} 的 goal run`);
     return 1;
+  }
+  const ownerGate = gateSupervisorOwner(run.runDir, run.runId);
+  if (ownerGate.action === 'no_op') {
+    console.log(`[goal-supervise] run=${run.runId} → no_op：${ownerGate.reason}`);
+    return 0;
   }
   const events = loadAuthoritativeEvents(run.eventsPath) as unknown as Array<Record<string, unknown>>;
   const decision = superviseRun({

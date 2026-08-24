@@ -3,9 +3,11 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
 import {
   buildDetachedChildArgv,
   evaluateForegroundSurvival,
+  resolveDetachedPreloadPath,
   resolveOrphanedIncompleteRun,
 } from '../../scripts/goal-runner';
 import { newRunId } from '../../scripts/utils/goal-manifest';
@@ -51,6 +53,26 @@ function staleLock(runId: string): Record<string, unknown> {
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
+  {
+    name: 'detach preload is absolute and loads from a dependency-free consumer cwd',
+    run: () => {
+      const consumerRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'goal-detach-cwd-'));
+      try {
+        const preload = resolveDetachedPreloadPath();
+        assert(path.isAbsolute(preload), `preload must be absolute: ${preload}`);
+        const result = spawnSync(process.execPath, ['-r', preload, '-e', 'process.stdout.write("ready")'], {
+          cwd: consumerRoot,
+          encoding: 'utf-8',
+          timeout: 30_000,
+          windowsHide: true,
+        });
+        assert(result.status === 0, `preload failed from consumer cwd: ${result.stderr ?? ''}`);
+        assert(result.stdout === 'ready', `unexpected child output: ${result.stdout ?? ''}`);
+      } finally {
+        fs.rmSync(consumerRoot, { recursive: true, force: true });
+      }
+    },
+  },
   {
     name: 'buildDetachedChildArgv: fresh run drops --detach, adds --detached-child + --run-id',
     run: () => {

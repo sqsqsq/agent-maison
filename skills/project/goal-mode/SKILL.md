@@ -9,7 +9,7 @@
 - **有人在场**：自动执行已授权工作；出现必须由人决定或补充的信息时，立即列出等待项并询问。
 - **无人值守**：自动执行已授权工作；把必须由人处理的事项停放为等待项，并确保 run 可脱离当前会话继续或稍后恢复。
 
-明确说“我会看着、需要时问我”按有人在场处理；明确说“我先离开、后台继续、`--detach`”按无人值守处理，不重复确认。意图不明确时使用 [confirmation-registry.yaml](../../reference/confirmation-registry.yaml) 的 `goal.run_mode`，只问“有人在场 / 无人值守”，不向用户暴露 `in-session`、`headless`、tier 等内部术语。
+明确说“我会看着、需要时问我”按有人在场处理；明确说“我先离开、后台继续、`--detach`”按无人值守处理，不重复确认。**当前存在对话不等于用户选择了有人在场**。意图不明确时必须使用 [confirmation-registry.yaml](../../reference/confirmation-registry.yaml) 的 `goal.run_mode`，只问“有人在场 / 无人值守”，不向用户暴露 `in-session`、`headless`、tier 等内部术语。选择有人在场后只走 `goal-mode-entry --prepare-run` / attach，且两次调用都显式传 `--run-mode attended`；选择无人值守后只走 `goal-runner --detach`。
 
 ## 输入
 
@@ -26,7 +26,7 @@
 
 1. **Assess**：读取 `assess@1` 结构化结果；不得凭聊天上下文猜当前阶段。
 2. **Authorize**：driver 校验预算、权限、preflight、device policy、write guard、trust、lease/fencing 与 adapter capability。`assess` 推荐不等于越权许可。
-3. **Execute one phase**：每个 phase 必须使用新鲜的 phase-scoped context，只把结构化 outcome/evidence 写回既有 manifest、events、progress 与 phase artifact。
+3. **Execute one phase**：每个 phase 必须使用新鲜的 phase-scoped context；attended 请求中的 `run_id/phase/attempt_id/owner_id/owner_epoch` 必须原样传给 initializer、harness 与 `--sync-closure`，不得靠兄弟 shell 继承 env。只有 receipt 正式 closed 后才可回传 `passed`。
 4. **Reassess**：重新运行 `assess@1`，然后进入下一轮；不得根据上一轮内存直接决定下一 phase。
 
 若 adapter 未声明 `in_session_reconcile + phase_context_isolation`，回退为“agent 自跑单 phase harness，再 assess”的手动编排；不得伪装为自治循环。无人值守需要 adapter 的 resume/handoff 能力，缺失时停止并明确说明能力缺口。
@@ -38,9 +38,9 @@
 1. [host-harness-readiness.md](../../reference/host-harness-readiness.md) 与 [harness-cli-cwd.md](../../reference/harness-cli-cwd.md)。
 2. [personal-setup-gate.md](../../reference/personal-setup-gate.md)，以返回的 `activeAdapter` 为准。
 3. 链路含设备阶段时执行 [device-policy-gate.md](../../reference/device-policy-gate.md)。`device_policy_unset` 必须先确认（**只看 `code`，不看 `configured`**——坏凭据/只有 `disabled` 时 `configured=true` 而 `code=unset`；退出码非零或 stdout 非 JSON = 执行失败须停止，含凭据库不可读，不得当成"未配置"引导重新登记）；PIN 只能由用户在真实 TTY 登记，**绝不要让用户把 PIN 发到对话里**，也不得代输。
-4. 新 run 先用 operations 文档的 `goal-mode-entry.ts --prepare-run --feature ... --requirement ... --adapter ...` 创建 manifest/run-control；已有 run 只按同一 `run_id` 恢复。随后 host bridge 取得 run-control owner/epoch 后才能执行 phase。
+4. 有人在场的新 run 先用 operations 文档的 `goal-mode-entry.ts --prepare-run --run-mode attended --feature ... --requirement ... --adapter ...` 创建 manifest/run-control；已有 run 只按同一 `run_id` 恢复。attach 同样必须显式传 `--run-mode attended`，且 `--adapter` 必须等于 manifest adapter；host bridge 在取得 run-control owner/epoch 前独立校验。无人值守只走 `goal-runner --detach`。
 
-有人在场由当前会话逐轮驱动，生产入口固定为可执行 `harness/scripts/goal-mode-entry.ts` host bridge（内部调用 `runGoalModeHostBridge()`→`runGoalModeInSession()`→`runInSessionRound()`）；完整命令和 JSONL phase callback 协议见 operations 文档。Skill/宿主不得另拼循环或自行构造 owner token。active adapter 必须为每个 bridge 请求提供隔离 phase context，能力缺失即按上节回退。无人值守必须使用真正的 detached runner；`--detach` 本身即选择无人值守。session 与 detached process 互转时只能走 mailbox handoff：当前 owner 写 `handoff_requested`、静默并释放，新 owner 以 `epoch+1` CAS 接管并写 `handoff_accepted`。禁止复制或转换 ledger。
+有人在场由当前会话逐轮驱动，生产入口固定为可执行 `harness/scripts/goal-mode-entry.ts` host bridge（内部调用 `runGoalModeHostBridge()`→`runGoalModeInSession()`→`runInSessionRound()`）；完整命令和 JSONL phase callback 协议见 operations 文档。Skill/宿主不得另拼循环或自行构造 owner token。active adapter 必须为每个 bridge 请求提供隔离 phase context，能力缺失即按上节回退。无人值守必须使用真正的 detached runner；`--detach` 本身即选择无人值守。**非 orphan 状态下**，session 与 detached process 互转只能走 mailbox handoff：当前 owner 写 `handoff_requested`、静默并释放，新 owner 以 `epoch+1` CAS 接管并写 `handoff_accepted`。仅 `orphaned_session` 可在用户显式授权后通过既有 `--force-resume` / `forceTakeoverRunOwner` 执行 epoch takeover；supervisor 永不得触发该例外。禁止复制或转换 ledger。
 
 具体 CLI、adapter 解析、detach 启动握手、进度汇报与 opt-in 盯守见 [goal-mode-operations.md](../../reference/goal-mode-operations.md)。
 

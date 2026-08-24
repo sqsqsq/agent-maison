@@ -32,6 +32,9 @@ import {
 } from './goal-handoff';
 import { isPhaseWithinBatchRange } from './phase-transition-policy';
 import { deriveReconcileObservation } from './goal-reconcile-observation';
+import { loadFeatureTrackDecl } from './feature-track';
+import { resolveFeatureTrack } from './runtime-policy';
+import { writeReceiptScaffold } from './receipt-scaffold';
 
 export interface InSessionPhaseOutcome {
   status: 'passed' | 'failed' | 'waiting';
@@ -60,7 +63,19 @@ export interface InSessionRoundOptions {
   authorization: AssessAuthorizationContext;
   leaseMs?: number;
   reconcile?: ReconcileObservationV1;
-  executePhase: (phase: string, recommendation: AssessRecommendation) => Promise<InSessionPhaseOutcome>;
+  executePhase: (
+    phase: string,
+    recommendation: AssessRecommendation,
+    context: InSessionPhaseRequestContext,
+  ) => Promise<InSessionPhaseOutcome>;
+}
+
+export interface InSessionPhaseRequestContext {
+  runId: string;
+  phase: string;
+  attemptId: string;
+  ownerId: string;
+  ownerEpoch: number;
 }
 
 function appendHandoffMailboxQuarantined(
@@ -164,6 +179,7 @@ function reconcileObservationForOutcome(
 export async function runInSessionRound(
   options: InSessionRoundOptions,
 ): Promise<InSessionRoundResult> {
+  const attemptId = `session-e${options.token.epoch}-round-${options.round}`;
   const capability = loadGoalCapability(options.frameworkRoot, options.adapter);
   const route = routeGoalCapability(capability, options.mode, {
     unattendedPreflightOk: options.mode === 'attended',
@@ -225,7 +241,7 @@ export async function runInSessionRound(
     authorization: options.authorization,
     reconcile: options.reconcile,
     runId: options.manifest.run_id,
-    attemptId: `session-round-${options.round}`,
+    attemptId,
   });
   const recommendation = assessment.recommendation;
   const phase = recommendation.phase;
@@ -289,7 +305,22 @@ export async function runInSessionRound(
   }, Math.max(250, Math.trunc(leaseMs / 3)));
   let outcome: InSessionPhaseOutcome;
   try {
-    outcome = await options.executePhase(phase, recommendation);
+    if (resolveFeatureTrack(loadFeatureTrackDecl(options.projectRoot, options.manifest.feature)) !== 'lite') {
+      const scaffold = writeReceiptScaffold(options.projectRoot, options.manifest.feature, phase, {
+        attemptId,
+        force: true,
+      });
+      if (!scaffold.wrote) {
+        throw new Error(scaffold.failure ?? '[goal-in-session] receipt 骨架未写入');
+      }
+    }
+    outcome = await options.executePhase(phase, recommendation, {
+      runId: options.manifest.run_id,
+      phase,
+      attemptId,
+      ownerId: options.token.owner_id,
+      ownerEpoch: options.token.epoch,
+    });
     if (leaseError) throw leaseError;
   } catch (error) {
     clearInterval(leaseHeartbeat);
@@ -340,7 +371,7 @@ export async function runInSessionRound(
     authorization: options.authorization,
     reconcile: outcomeReconcile,
     runId: options.manifest.run_id,
-    attemptId: `session-round-${options.round}-after`,
+    attemptId: `${attemptId}-after`,
   });
   return {
     status: outcome.status === 'waiting'

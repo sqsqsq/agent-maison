@@ -41,7 +41,7 @@ in-session 自治必须同时声明 reconcile 与 phase context isolation；缺�
 
 每个权威 run 持久化 `run-control.json`（`run-control@1`）。`current_epoch` 单调递增且 owner 释放后保留；所有 assess、phase invoke、harness/finalizer、event/progress/manifest 写入与终态发布都须通过 fencing。
 
-session 与 detached process 切换使用原子 mailbox。 requester 只写 request；当前 owner 在 phase verdict 边界写 `handoff_requested`、quiesce、释放；新 owner 以 `epoch+1` CAS 后写 `handoff_accepted`。两者继续使用同一 `run_id` 和 events ledger。过期 session 不会被自动接管，须协作 handoff 或显式 force takeover。
+非 orphan 的 session 与 detached process 切换使用原子 mailbox。requester 只写 request；当前 owner 在 phase verdict 边界写 `handoff_requested`、quiesce、释放；新 owner 以 `epoch+1` CAS 后写 `handoff_accepted`。两者继续使用同一 `run_id` 和 events ledger。仅 `orphaned_session` 可由用户显式授权 force takeover；supervisor 永不得触发该例外。
 
 原生 Claude/Codex `/goal` 仅为可选加速层；闭环裁决以 harness `summary.json` + runner 为准。
 
