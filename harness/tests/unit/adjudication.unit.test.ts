@@ -1270,7 +1270,8 @@ const projectionCases: TestCase[] = [
         // 带 BOM + 尾随空行落盘：这正是宿主编辑器写出的真实形态
         fs.writeFileSync(path.join(root, 'doc', 'req.md'), `﻿${body}\n`, 'utf-8');
         const out = resolveRequirementInput({ requirementFile: 'doc/req.md', projectRoot: root });
-        assert(out === body, `内容不符：${JSON.stringify(out)}`);
+        assert(out.text === body, `内容不符：${JSON.stringify(out.text)}`);
+        assert(out.sources.length === 1 && out.sources[0] === 'doc/req.md', `来源列表：${JSON.stringify(out.sources)}`);
       });
     },
   },
@@ -1287,7 +1288,7 @@ const projectionCases: TestCase[] = [
         }
         assert(threw, '两个真值来源同给必须报错');
         assert(
-          resolveRequirementInput({ requirement: 'inline', projectRoot: root }) === 'inline',
+          resolveRequirementInput({ requirement: 'inline', projectRoot: root }).text === 'inline',
           '只给 --requirement 时行为不变',
         );
       });

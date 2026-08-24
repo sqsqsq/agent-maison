@@ -473,34 +473,85 @@ const HARD_CLI_STDERR_SIGNATURES: ReadonlyArray<RegExp> = [
 const HARD_CLI_LINE_CAP = 1024;
 
 /**
- * plan d7f3a9c4 t4：金丝雀探测是否命中**硬失败**（只这两类，其余保持既有非阻断语义）：
- *  - ① child spawn race：`spawn_error` 在场（真实 child 'error' 或 resolvedBinary 短路，
- *    同一种结构化事实）——binary preflight 通过后 spawn 仍失败；
- *  - ② CLI/config 参数不兼容：**同时**满足 nonzero exit + 非 timeout + 非 silent kill +
- *    无有效 stdout + stderr 逐行命中显式枚举签名。
- * "无有效 stdout" = 非有效金丝雀终态答卷（复用 parseCanaryAnswer SSOT，与判卷同源）——
- * CLI banner/升级提示/stream 前导不是有效答卷，不得压掉明确的参数错误签名。
- * 命中返回非空摘要（供 BLOCKER/stderr 头部定性）；未命中返回 null（维持现状语义）。
- * 本函数不写盘、不 spawn、不分类 cache——只做"是否硬失败"的判别。
+ * plan c4e8a1f7 T1a：已恢复的 Codex 结构化模型兼容 400 信封精确签名（脱敏 fixture）：
+ *   {"type":"error","status":400,"error":{"type":"invalid_request_error",
+ *    "message":"The 'gpt-5.6-luna' model requires a newer version of Codex. ..."}}
+ * 判据=签名键值同时在场（stdout/stderr 皆扫）。生产判据**不维护 model→CLI 版本静态表**；
+ * 只对实际调用返回的精确结构化永久错误 fail-fast，普通非零退出仍走原行为。
  */
-export function resolveCanaryHardCliFailure(
+const CODEX_400_REQUIRES_NEWER_SIGNATURES: ReadonlyArray<RegExp> = [
+  /"type"\s*:\s*"error"/,
+  /"status"\s*:\s*400/,
+  /"type"\s*:\s*"invalid_request_error"/,
+  /requires a newer version of Codex/i,
+];
+
+function matchesCodex400RequiresNewer(allOutput: string): boolean {
+  // 防御：只扫前 64KB（真实 400 信封体很小，签名在头部）。
+  const bounded = allOutput.length > HARD_CLI_LINE_CAP * 64
+    ? allOutput.slice(0, HARD_CLI_LINE_CAP * 64)
+    : allOutput;
+  return CODEX_400_REQUIRES_NEWER_SIGNATURES.every((re) => re.test(bounded));
+}
+
+/**
+ * plan c4e8a1f7 T1a：正式 phase invoke 与金丝雀探测共用的**硬失败共享分类**（SSOT）。
+ * 分类三源（任一命中即硬失败）：
+ *   ① child spawn race / guardian 建立失败：`spawn_error` 结构化事实在场
+ *      （resolvedBinary 短路、真实 child error 与 guardian 投影同一种 shape）；
+ *   ② CLI/config 参数不兼容：nonzero exit + 非 timeout/silent + 无有效答卷 +
+ *      stderr 逐行命中显式枚举签名；
+ *   ③ Codex 结构化模型兼容 400 信封（status=400 + invalid_request_error +
+ *      requires a newer version of Codex，stdout/stderr 皆扫）。
+ * 未命中返回 null（维持现状语义：普通内容失败走既有 harness/retry）。
+ */
+export function resolveInvokeHardCliFailure(
   facts: CanaryHardCliFailureFacts,
-  opts?: { answerKey?: CanaryAnswerKey; structuredStdout?: boolean },
+  opts?: {
+    answerKey?: CanaryAnswerKey;
+    structuredStdout?: boolean;
+    /**
+     * plan c4e8a1f7 T1a（评审 P1 修复）：正式 phase invoke 无"答卷"概念——
+     * stdout 非空（banner/进度行）**不得**充当"有效答卷"压掉明确的参数错误签名；
+     * 金丝雀探测（answerKey 在场或默认）保持"banner 不压签名"的既有语义：
+     * 有可解析答卷时视为 agent 作答过、不是参数错误。
+     */
+    formalInvoke?: boolean;
+  },
 ): string | null {
   if (facts.skipped) return null;
   if (facts.timed_out || facts.silent_killed) return null;
-  // ① child spawn race：结构化事实在场即硬失败（不靠 stderr 猜）。
+  // ① child spawn race / guardian 建立失败：结构化事实在场即硬失败（不靠 stderr 猜）。
   if (facts.spawn_error) {
-    return `child spawn error（${facts.spawn_error.code ?? 'spawn'}）：${facts.spawn_error.message}`;
+    const isGuardian =
+      facts.spawn_error.code === 'maison_guardian_containment_failed' ||
+      (facts.stderr || '').includes('[maison-guardian]');
+    return isGuardian
+      ? `guardian containment 建立失败（${facts.spawn_error.message}）`
+      : `child spawn error（${facts.spawn_error.code ?? 'spawn'}）：${facts.spawn_error.message}`;
   }
-  // ② CLI/config 参数不兼容——四必要条件缺一不可。
+  // ③ Codex 结构化模型兼容 400（先于②判——它是 CLI 兼容类硬错误，run 必停机）。
+  if (facts.exitCode !== 0) {
+    const combined = `${facts.stderr}\n${facts.stdout}`;
+    if (matchesCodex400RequiresNewer(combined)) {
+      return 'Codex 模型兼容硬错误：当前 Codex CLI 版本过低，模型要求更新版本（status=400 + invalid_request_error + requires a newer version of Codex）——升级 Codex CLI 后重跑，非内容失败。';
+    }
+  }
+  // ② CLI/config 参数不兼容——必要条件缺一不可。
   if (facts.exitCode === 0) return null;
-  const hasValidAnswer = opts?.answerKey
-    ? parseCanaryAnswer(
-        { stdout: facts.stdout, ...(opts.structuredStdout ? { structured_stdout: true } : {}) },
-        opts.answerKey,
-      ).canonicalAnswer !== null
-    : Boolean(facts.stdout && facts.stdout.trim()); // 无 answerKey 时保守沿用旧语义
+  // 有"有效答卷"不是参数错误：
+  //  · canary 路径（answerKey 在场）：可解析金丝雀答卷才视为作答；banner 不算；
+  //  · 无 answerKey 的 canary 直调（旧语义）：任意非空 stdout 算有效答卷；
+  //  · **formal invoke（formalInvoke=true）**：不存在答卷概念——banner/任意 stdout
+  //    都不压签名（评审 P1 最小复现：exit1 + banner stdout + unknown argument → 必须停机）。
+  const hasValidAnswer = opts?.formalInvoke
+    ? false
+    : opts?.answerKey
+      ? parseCanaryAnswer(
+          { stdout: facts.stdout, ...(opts.structuredStdout ? { structured_stdout: true } : {}) },
+          opts.answerKey,
+        ).canonicalAnswer !== null
+      : Boolean(facts.stdout && facts.stdout.trim()); // 无 answerKey 时保守沿用旧语义
   if (hasValidAnswer) return null; // 有有效答卷不是参数错误
   const lines = facts.stderr.split(/\r?\n/);
   for (const line of lines) {
@@ -512,4 +563,16 @@ export function resolveCanaryHardCliFailure(
     }
   }
   return null;
+}
+
+/**
+ * plan d7f3a9c4 t4：金丝雀探测是否命中**硬失败**——薄委托共享分类
+ * （c4e8a1f7 T1a：与正式 phase invoke 同一 SSOT）。
+ * 本函数不写盘、不 spawn、不分类 cache——只做"是否硬失败"的判别。
+ */
+export function resolveCanaryHardCliFailure(
+  facts: CanaryHardCliFailureFacts,
+  opts?: { answerKey?: CanaryAnswerKey; structuredStdout?: boolean },
+): string | null {
+  return resolveInvokeHardCliFailure(facts, opts);
 }

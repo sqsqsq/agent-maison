@@ -32,9 +32,11 @@ import {
   assertAdapterHeadlessFullPermission,
   invokeAgentHeadless,
   resolveHeadlessInvokePlan,
+  resolveSessionBinary,
   validateHeadlessBinaryForPlan,
   type InvokeTemplateVars,
 } from './agent-invoke';
+import type { ResolvedHeadlessBinary } from './headless-binary-resolve';
 import { resolveUiRelevanceForRun } from './fidelity-shared';
 import {
   buildCanaryPrompt,
@@ -154,7 +156,12 @@ export interface GoalPreflightInput {
   resolvedProfile: HarnessResolvedProfile;
 }
 
-export function runGoalPreflight(input: GoalPreflightInput): void {
+/**
+ * plan c4e8a1f7 T1a：preflight 返回本 execution session 解析出的 resolved binary
+ * （probe/canary/formal invoke 三个消费点共用同一绝对路径；resume 新进程重新解析）。
+ * dry-run WARN 提前返回 / 无结构化候选时返回 null。
+ */
+export function runGoalPreflight(input: GoalPreflightInput): SessionBinaryResolution | null {
   const { projectRoot, frameworkRoot, manifest, provenance, dryRun, chain, resolvedProfile } =
     input;
   const adapter = manifest.adapter?.trim();
@@ -239,24 +246,36 @@ export function runGoalPreflight(input: GoalPreflightInput): void {
   // validateHeadlessBinaryForPlan（只校验 argv[0] 可否 spawn，与后续 flag 无关），
   // 不实际 spawn；chrys/generic 的"不支持 pin"错误在更早的 resolveFinalModelPin()
   // 即 fail-fast 退出，根本走不到此处。
+  // plan c4e8a1f7 T1a：session 级 binary 单点解析——plan 构造与返回值都复用同一结果；
+  // probe/canary/formal invoke 三个消费点拿到的都是这一个绝对路径。
+  const sessionBinary = resolveSessionBinary(adapter);
   const plan = resolveHeadlessInvokePlan(
     adapter,
     cap.capability!,
     manifest.unattended,
     vars.PROMPT,
     vars,
+    undefined,
+    sessionBinary.binary,
   );
   const binaryCheck = validateHeadlessBinaryForPlan(adapter, plan);
   if (!binaryCheck.ok) {
     if (dryRun) {
       console.warn(`[goal-runner] preflight WARN: ${binaryCheck.message}`);
-      return;
+      return null;
     }
     throw new Error(binaryCheck.message);
   }
 
   // plan a8e5c3f9 t1：「allowed_tools 缺 Read → 视觉降级」WARN 已随降级链一并退役——
   // headless 全权限下审批清单不存在，也不再参与多模态能力判断。
+  return sessionBinary;
+}
+
+/** plan c4e8a1f7 T1a：session binary 解析结果（binary=null 时 shadowed 仍携带诊断）。 */
+export interface SessionBinaryResolution {
+  binary: ResolvedHeadlessBinary | null;
+  shadowed: string[];
 }
 
 export type VisionCanaryProbeSkipReason =
@@ -356,6 +375,8 @@ export async function runVisionCanaryProbe(input: {
   invokeFn?: typeof invokeAgentHeadless;
   /** 单测注入（默认随机卷）：canned stdout 夹具须知道卷面答案才能构造有效作答（与 invokeFn 同款缝） */
   answerKeyFn?: typeof generateRandomCanaryAnswerKey;
+  /** plan c4e8a1f7 T1a：session 级 resolved binary（与正式 invoke 同一绝对路径） */
+  resolvedBinary?: ResolvedHeadlessBinary | null;
 }): Promise<{
   ran: boolean;
   outcome?: VisionCanaryProbeOutcome;
@@ -394,6 +415,7 @@ export async function runVisionCanaryProbe(input: {
       prompt,
       vars,
       manifest.adapter_model_pin?.value,
+      input.resolvedBinary,
     );
     const invoke = await (input.invokeFn ?? invokeAgentHeadless)(plan, projectRoot, { timeoutMs: 120_000 });
     // plan d7f3a9c4 t4：硬失败分类在写盘判卷**之前**——child spawn race 与 CLI/config 参数
@@ -536,6 +558,9 @@ export interface FidelityRoutingInitInput {
    * 需求；intent_fallback=仅靠 collectIntentTextWithPhaseFallback 兜底。不提供默认值、不看
    * 环境变量猜、不叠运行时校验。 */
   requirementProvenance: RequirementProvenance;
+  /** plan c4e8a1f7 T2：需求来源列表（项目根相对；goal 态来自 manifest，阶段驱动来自
+   * --requirement-file 解析）——SSOT 以可选字段保留同一来源，不建第二份图片清单。 */
+  requirementSourceFiles?: string[];
   now?: () => Date;
 }
 
@@ -610,6 +635,10 @@ export function initializeFidelityRouting(
     requirementSha,
     // plan c8e5b3f1 t1：writer 必须写调用方显式裁决的需求来源（必填入参，TS 防漏接）。
     requirementProvenance: input.requirementProvenance,
+    // plan c4e8a1f7 T2：同一来源列表随 SSOT 可选字段保留。
+    ...(input.requirementSourceFiles && input.requirementSourceFiles.length > 0
+      ? { requirementSourceFiles: input.requirementSourceFiles }
+      : {}),
   });
   return { routing, receiptNote, requirementSha };
 }
@@ -648,6 +677,10 @@ export function evaluateFidelityTierPreflight(input: FidelityPreflightInput): Fi
     runIdForReceipt: manifest.run_id,
     // plan c8e5b3f1 t1：goal preflight 需求来源=goal manifest。
     requirementProvenance: 'goal_manifest',
+    // plan c4e8a1f7 T2：来源列表随 manifest 冻结值透传（SSOT 可选字段保留同一来源）。
+    ...(manifest.requirement_source_files && manifest.requirement_source_files.length > 0
+      ? { requirementSourceFiles: manifest.requirement_source_files }
+      : {}),
     // plan d7f3a9c4 t3：preflight 能力探测带最终裁决 pin（manifest 派生）。
     ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
     now: input.now,

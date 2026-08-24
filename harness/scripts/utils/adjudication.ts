@@ -273,6 +273,14 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
    */
   canary_cli_hard_failure: { class: 'external' },
   /**
+   * plan c4e8a1f7 T1a：正式 phase invoke 的 CLI/guardian 硬失败（child spawn race /
+   * guardian containment 建立失败 / CLI·config 参数不兼容 / Codex 模型兼容 400）——
+   * agent 根本没有执行任务，缺产物只是症状；harness 前直接停机（零内容 retry、
+   * 不伪归因 spec_file_exists）。修复 adapter 版本/配置/环境/升级 CLI 后可重跑；
+   * 普通内容失败（含无 guardian 诊断的 exit 2）不属此类，保持既有 harness/retry。
+   */
+  adapter_cli_hard_failure: { class: 'external' },
+  /**
    * plan a7c3f9e2 t4/t5：编译形态无法确定（多候选未确认 / build-profile 缺失 /
    * products 为空 / build-profile 不可解析——后三者无真实候选，不得虚构 default）——
    * 工程配置侧问题，需用户经 init.product_selection / record-product-selection / env

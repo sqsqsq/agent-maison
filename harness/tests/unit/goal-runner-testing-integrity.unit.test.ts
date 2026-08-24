@@ -1063,6 +1063,10 @@ test('e9d4b7a3 t1 入口③：--supersede + --manifest + --requirement-file + --
     freshManifestContent: [
       `feature: ${FEATURE}`,
       `requirement: ${nativeReq}`,
+      // plan c4e8a1f7 T2（评审 P1 三轮修复）：manifest 自带旧来源必须被 successor
+      // 来源重设忽略（属于被覆盖的旧需求文档），不得混入最终来源列表。
+      'requirement_source_files:',
+      '  - manifest-native.txt',
       'unattended:',
       '  write_mode: full-access',
       '  approval_mode: never',
@@ -1073,11 +1077,17 @@ test('e9d4b7a3 t1 入口③：--supersede + --manifest + --requirement-file + --
   });
   assertRunReachedEnd(B, 't1 入口③');
   const manifestB = JSON.parse(fs.readFileSync(path.join(B.reportDir, 'manifest.json'), 'utf-8')) as
-    { requirement?: string };
+    { requirement?: string; requirement_source_files?: string[] };
   const expected = mergeSuccessorRequirement(sourceReq, fileIncr);
   assert(manifestB.requirement === expected,
     `manifest+override 路径须合并一次（源+文件增量）：期望 ${JSON.stringify(expected)}，实得 ${JSON.stringify(manifestB.requirement)}`);
   assert(!manifestB.requirement!.includes(nativeReq), 'manifest 自带文本不得冒充显式增量');
+  // plan c4e8a1f7 T2（评审 P1 三轮修复）：successor 来源=源 run 来源 ∪ 显式增量来源，
+  // **忽略 manifest 自带旧来源**——此处源 run 无来源（inline），故最终只剩增量来源。
+  assert(
+    JSON.stringify(manifestB.requirement_source_files) === JSON.stringify(['increment-req.txt']),
+    `successor 来源不得混入 manifest 自带旧来源，实得 ${JSON.stringify(manifestB.requirement_source_files)}`,
+  );
 });
 
 test('e9d4b7a3 t1 入口④（三轮 review 阻断回归）：源=A、manifest 自带=B、显式文件内容=A → 逐字继承源（B 不冒充增量）', async () => {

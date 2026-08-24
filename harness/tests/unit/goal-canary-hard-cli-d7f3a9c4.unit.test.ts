@@ -482,9 +482,11 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     name: 't4 回归：既有 resolved-binary preflight 门禁（runGoalPreflight validateHeadlessBinaryForPlan）行为不变',
     run: () => {
       const gpSrc = fs.readFileSync(path.join(__dirname, '../../scripts/utils/goal-preflight.ts'), 'utf-8');
+      // plan c4e8a1f7 T1a：plan 构造仍不带 modelPin（第 6 参 undefined）——门禁只验
+      // argv[0] 可 spawn；第 7 参为 session resolved binary（null 时同旧语义现场解析）。
       assert(
-        /resolveHeadlessInvokePlan\(\s*adapter,\s*cap\.capability!,\s*manifest\.unattended,\s*vars\.PROMPT,\s*vars,\s*\)/.test(gpSrc),
-        'binary-gate 的 plan 构造必须保持不带 modelPin（5 参）——门禁只验 argv[0] 可 spawn',
+        /resolveHeadlessInvokePlan\(\s*adapter,\s*cap\.capability!,\s*manifest\.unattended,\s*vars\.PROMPT,\s*vars,\s*undefined,\s*sessionBinary\.binary,\s*\)/.test(gpSrc),
+        'binary-gate 的 plan 构造必须保持不带 modelPin（6 参 undefined）——门禁只验 argv[0] 可 spawn',
       );
       assert(/validateHeadlessBinaryForPlan\(adapter, plan\)/.test(gpSrc), 'binary gate 调用保持');
       // 消费侧不重复：resolveCanaryHardCliFailure 不判 binary（spawn_error/stderr 签名），

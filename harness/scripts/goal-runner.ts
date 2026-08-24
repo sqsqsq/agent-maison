@@ -68,12 +68,12 @@ import {
   dereferenceRequirementDocs,
   detectPixel1to1Intent,
   detectUiRelevantRequirement,
-  discoverReferenceImagesForOcrPrescan,
   isHumanVerified,
   loadProfileOcrToolkit,
   loadSpecMarkdown,
   parseFidelityTargetFromHandoffDoc,
   resolveOcrAvailableForRun,
+  resolveRequirementReferenceImages,
   type FidelityTarget,
 } from './utils/fidelity-shared';
 import {
@@ -181,7 +181,7 @@ import {
   resolveHeadlessInvokePlan,
   type InvokeTemplateVars,
 } from './utils/agent-invoke';
-import { extractClaudeFinalResultText, parseClaudeInitModel, planUsesClaudeStreamJson, resolvePinVerifyMismatch } from './utils/claude-envelope';
+import { parseClaudeInitModel, planUsesClaudeStreamJson, resolvePinVerifyMismatch } from './utils/claude-envelope';
 import {
   recordCodingBase,
   resolveGitHeadSha,
@@ -204,10 +204,10 @@ import {
 import { collectAuthoritativeImagePaths } from './utils/multimodal-probe';
 import {
   buildInlineCanaryBlock,
-  classifyCanaryResponse,
   generateRandomCanaryAnswerKey,
-  isCanaryAnswerComplete,
   renderCanaryImage,
+  resolveCanaryCacheDecision,
+  resolveInvokeHardCliFailure,
   type CanaryAnswerKey,
 } from './utils/vision-canary';
 import * as os from 'os';
@@ -1118,6 +1118,12 @@ export interface CapabilityAdvisory {
   successorRepairRequirement?: boolean;
   /** post-impl3 P0-3：mid-chain vision 收紧触发 pixel∧hard∧clamped 真冲突——runner 须在 spawn 前 halt */
   deferTriggered?: boolean;
+  /**
+   * plan c4e8a1f7 T2：共享发现参考图集合（project-relative）——能力块的 authoritative
+   * paths（有视觉时的确定性原图路径下发，fact #13）；T3：按 provenance 分轴的可达出口。
+   */
+  referenceImagePaths: string[];
+  toolEventProvenance: 'none' | 'structured_events' | 'session_transcript';
 }
 
 /**
@@ -1146,6 +1152,31 @@ export function buildCapabilityBlock(advisory: CapabilityAdvisory): string[] {
       : []),
     '',
   ];
+  // plan c4e8a1f7 T2：authoritative 原图路径确定性下发（fact #13：此前有视觉时 prompt 无
+  // 确定性原图路径，agent 只能猜/让 spec 自算分母）。与 refs receipt 期望分母同一集合。
+  if (advisory.referenceImagePaths.length > 0) {
+    lines.push(
+      'Authoritative reference images (runner-discovered — the spec MUST declare and model ALL of',
+      'them; omitting any fails verification; do not shrink this denominator):',
+      '',
+      ...advisory.referenceImagePaths.map(p => `- ${p}`),
+      '',
+    );
+  }
+  // plan c4e8a1f7 T3：能力与可审计性分轴——none-provenance adapter 能看图但不能审计逐图
+  // Read：图片照常用，产物诚实写 verified: unverified；structured_events 才要求本 invoke
+  // 逐图 Read 并争取 vl_multimodal 终签。
+  if (advisory.hasVision && advisory.toolEventProvenance !== 'structured_events') {
+    lines.push(
+      'Your adapter does not emit auditable per-image Read events (tool_event_provenance=' +
+      `${advisory.toolEventProvenance}). You can still look at the reference images to complete ` +
+      'the work, but the per-image Read receipt (and therefore vl_multimodal final signing) is',
+      'structurally unavailable: record `verified: unverified` in ui-spec. Best-effort/reachable',
+      'tiers keep WARN semantics; the hard pixel contract FAILs on unverified — that threshold is',
+      'unchanged. Do NOT fabricate `verified: verified` / `verified_method: vl_multimodal`.',
+      '',
+    );
+  }
   if (advisory.fidelityClamped) {
     lines.push(
       'This capability-based fidelity downgrade is itself a headless auto-decision: record it in',
@@ -2312,7 +2343,14 @@ function runOcrPrescanForSpec(
   manifest: GoalManifest,
   toolkit: NonNullable<ReturnType<typeof loadProfileOcrToolkit>>,
 ): string[] {
-  const images = discoverReferenceImagesForOcrPrescan(projectRoot, manifest.feature, manifest.requirement);
+  // plan c4e8a1f7 T2：OCR 预扫消费与 capability/refs receipt/prompt 同一共享发现集合
+  //（正文显式 ∪ source 直接父目录；仅空集回退 ux-reference）。
+  const images = resolveRequirementReferenceImages(
+    projectRoot,
+    manifest.feature,
+    manifest.requirement,
+    { requirementSourceFiles: manifest.requirement_source_files },
+  );
   if (images.length === 0) return [];
   const ocrDirAbs = path.join(
     featurePhaseReportsDir(projectRoot, manifest.feature, 'spec', frameworkRoot),
@@ -2412,6 +2450,9 @@ export function resolvePhaseCapabilityAdvisory(
   const intentSsot = loadFidelityIntentSsot(projectRoot, manifest.feature);
   if (intentSsot) desired = intentSsot.selected_fidelity;
   const capSnap = loadCapabilitySnapshot(projectRoot, manifest.feature);
+  // plan c4e8a1f7 T3：adapter 工具事件 provenance（能力块可审计分轴出口需要）
+  const toolEventProvenance = loadGoalCapability(frameworkRoot, manifest.adapter ?? 'generic')
+    .capability?.tool_event_provenance ?? 'none';
 
   const mmProbe = resolveContextAdapterImageInput(projectRoot, frameworkRoot, manifest.adapter, {
     runId: manifest.run_id,
@@ -2440,6 +2481,15 @@ export function resolvePhaseCapabilityAdvisory(
       : listExistingOcrPrescanOutputs(projectRoot, frameworkRoot, manifest.feature)
     : [];
 
+  // plan c4e8a1f7 T2：共享发现集合（正文显式 ∪ source 直接父目录；仅空集回退 ux-reference）
+  // ——capability/OCR/prompt/refs receipt 全消费面同一分母（project-relative、确定性排序）。
+  const referenceImagePaths = resolveRequirementReferenceImages(
+    projectRoot,
+    manifest.feature,
+    manifest.requirement,
+    { requirementSourceFiles: manifest.requirement_source_files },
+  ).map(p => path.relative(projectRoot, p).replace(/\\/g, '/'));
+
   return {
     hasVision,
     ocrAvailable: effectiveOcr,
@@ -2449,6 +2499,8 @@ export function resolvePhaseCapabilityAdvisory(
     ocrJsonPaths,
     acceptanceStrictness: effectiveIntent?.acceptance_strictness ?? 'best_effort',
     assetAcquisitionMode: effectiveIntent?.asset_acquisition_mode,
+    referenceImagePaths,
+    toolEventProvenance,
     // e9d4b7a3 t3：显式 successor 修复增量判定（合并标记在场）——编码代理据此知道
     // 本轮增量点名素材为硬契约（见 buildCapabilityBlock 优先级段）。
     successorRepairRequirement: isSuccessorRepairRequirement(manifest.requirement),
@@ -2912,29 +2964,69 @@ export function reconcileMutablePhaseSourceDrift(args: {
   return { ...decision, driftFingerprint: fp?.fingerprint ?? null, driftEntries: fp?.entries ?? null };
 }
 
+/**
+ * plan c4e8a1f7 T3（评审 P1 修复）：closure 读图块的“能看图 × 能审计”两轴判定（纯函数）。
+ * 只有 `hasVision=true ∧ tool_event_provenance==='structured_events'` 才要求本 invoke
+ * 逐图 Read（可签 refs receipt 争取终签）；其余象限（无视觉 / none-provenance /
+ * 盲+structured）一律归一为 'none'——走既有诚实 unverified 出口，不要求不可达终签。
+ * 返回值直接喂 buildClosureVisualEvidenceBlock（helper 只认 structured/none 二态）。
+ */
+export function resolveClosureReadRequirement(
+  hasVision: boolean | undefined,
+  provenance: 'none' | 'structured_events' | 'session_transcript' | undefined,
+): 'structured_events' | 'none' {
+  return hasVision === true && provenance === 'structured_events' ? 'structured_events' : 'none';
+}
+
 /** 回退后 review 的增量重点复审块（seam 变更不豁免——注入重审焦点而非跳过）。 */
 /**
  * runner-owned-machine-facts 追补（codex review）：spec closure-only 轮的只读取证指令。
  * 冻结的是产物，不是只读视觉取证——vl_multimodal 终签 invocation-bound，只认**本次
  * invoke** 的逐张验读回执；closure 轮不读图 → refs 回执 partial → 终签结构性拒收
  * （宿主实锤 run 20260815T070732Z-013297：i3 零读图，content_retry_exhausted 终局）。
- * 本块把"必须重新读、允许读、仍禁改"讲给 agent；不放宽 gate、不复用旧 invocation 回执。
+ *
+ * plan c4e8a1f7 T3（评审 P1 修复）：入参是 `resolveClosureReadRequirement` 归一后的
+ * 二态值（'structured_events' | 'none'）——
+ *  · 'structured_events'（hasVision ∧ 可审计）：本 invoke 逐图 Read 是**可达且被要求**的
+ *    （本 invoke 的 Read 事件可签 refs receipt，争取 vl_multimodal 终签）；
+ *  · 'none'（无视觉 / none-provenance / 盲+structured）：要求"每张 Read"是结构性不可达
+ *    的——图片照常可读可用，但产物必须诚实写 `verified: unverified`，不得宣称
+ *    vl_multimodal（软档 WARN 可继续、hard contract 由既有 gate FAIL）。
+ * 不放宽 gate、不复用旧 invocation 回执。
  */
-export function buildClosureVisualEvidenceBlock(refRelPaths: string[]): string {
+export function buildClosureVisualEvidenceBlock(
+  refRelPaths: string[],
+  requireRead: 'structured_events' | 'none' = 'structured_events',
+): string {
   if (refRelPaths.length === 0) return '';
+  const isStructured = requireRead === 'structured_events';
   return [
     '',
-    '## Mandatory read-only visual evidencing for THIS invocation (spec closure — REQUIRED)',
+    isStructured
+      ? '## Mandatory read-only visual evidencing for THIS invocation (spec closure — REQUIRED)'
+      : '## Visual evidencing for THIS invocation (spec closure — honest unverified exit)',
     '',
     'FROZEN applies to artifacts, NOT to read-only evidencing. The vl_multimodal final sign-off is',
     'invocation-bound: it only accepts reference images actually read during THIS invocation.',
-    'Before filling the receipt, read EVERY authoritative reference image below with your file-read',
-    'tool. Reading them is required and allowed; modifying any artifact remains forbidden:',
+    ...(isStructured
+      ? [
+          'Before filling the receipt, read EVERY authoritative reference image below with your file-read',
+          'tool. Reading them is required and allowed; modifying any artifact remains forbidden:',
+        ]
+      : [
+          'This invocation does not have both working vision and structured per-image Read auditing',
+          '(tool_event_provenance=none, or vision unavailable this invocation), so the per-image Read',
+          'requirement is structurally unreachable here. Read the images',
+          'below to complete your work, but record `verified: unverified` (never fabricate',
+          '`verified: verified` / `verified_method: vl_multimodal`) — best-effort/reachable tiers keep',
+          'WARN semantics and the hard pixel contract still FAILs on unverified.',
+        ]),
     '',
     ...refRelPaths.map(p => `- ${p}`),
     '',
-    'Skipping any image leaves the refs receipt partial and fails ui_spec_fidelity_gate for this attempt.',
-    '',
+    ...(isStructured
+      ? ['Skipping any image leaves the refs receipt partial and fails ui_spec_fidelity_gate for this attempt.', '']
+      : []),
   ].join('\n');
 }
 
@@ -3668,9 +3760,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
         requirementFile: argv['requirement-file'],
         projectRoot,
       });
-      if (resolvedRequirement !== undefined) {
-        argv.requirement = resolvedRequirement;
-        manifestArgv.requirement = resolvedRequirement;
+      if (resolvedRequirement.text !== undefined) {
+        argv.requirement = resolvedRequirement.text;
+        manifestArgv.requirement = resolvedRequirement.text;
+        // plan c4e8a1f7 T2：来源列表随 frozen requirement 一并进 manifest（身份哈希条件包含）
+        if (resolvedRequirement.sources.length > 0) {
+          manifestArgv.requirement_source_files = resolvedRequirement.sources;
+        }
       }
     } catch (err) {
       console.error((err as Error).message);
@@ -3769,6 +3865,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
         end_phase: argv.end ?? 'testing',
         feature: argv.feature,
         requirement: argv.requirement,
+        // plan c4e8a1f7 T2（评审 P0 修复）：fresh 构造必须携带解析出的来源列表——
+        // 此前只写 manifestArgv 未传字面量，`--requirement-file` 来源在正式无人值守
+        // 入口丢失（宿主回灌后同目录图片会再次发现不到）。supersede 路径同样依赖
+        // 此值：inheritSuccessorManifest 在 override 之前去重追加源+显式来源。
+        ...(manifestArgv.requirement_source_files && manifestArgv.requirement_source_files.length > 0
+          ? { requirement_source_files: manifestArgv.requirement_source_files }
+          : {}),
         adapter: argv.adapter ?? cfg.agent_adapter,
         // plan f6b2d9a4 T3：fresh CLI 的 --fidelity/--fidelity-receipt 送入 parser
         //（非法枚举在 parser fail-closed；此前 fresh 路径静默丢弃——宿主实证 papercut）。
@@ -3806,6 +3909,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
   // **增量文本只取 CLI 解析结果**（explicitRequirementIncrementText）——绝不读
   // manifest 字段（--manifest 自带文本没有增量授权，inherit 后字段值更不可信）。
   let supersedeSourceRequirement: string | undefined;
+  // plan c4e8a1f7 T2（评审 P1 三轮修复）：源 run 的需求来源列表（successor 来源重设用）
+  let supersedeSourceSourceFiles: string[] | undefined;
   if (!argv.resume && !dryRunMode) {
     const requestedSupersedeTargets =
       Array.isArray(argv.supersede)
@@ -3823,6 +3928,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // e9d4b7a3 t1（二轮 review P1）：捕获源 requirement 供合并单点使用
         //（merge 在 applyManifestCliOverrides 之后统一执行，见下方合并块）。
         supersedeSourceRequirement = source.requirement;
+        // plan c4e8a1f7 T2（评审 P1 三轮修复）：同步捕获源 run 的来源列表——
+        // successor + manifest override 时继承来源会被 override 整体替换，须在合并块
+        // 以「源来源 ∪ 显式增量来源」重设（忽略 manifest 自带旧来源）。
+        supersedeSourceSourceFiles = source.requirement_source_files;
         const sourceEvents = collectSupersededAncestorEvents({
           projectRoot,
           featuresDir,
@@ -3902,6 +4011,19 @@ Goal runner — tool-agnostic multi-phase orchestrator
       console.log(
         `[goal-runner] supersede 显式 requirement 增量已与源 requirement 合并（successor 任务真源=manifest.requirement）。`,
       );
+    }
+    // plan c4e8a1f7 T2（评审 P1 三轮修复）：successor 的来源语义 = **源 run 来源 + 显式
+    // 增量来源**，忽略 manifest 自带旧来源（它属于被覆盖的旧需求文档——applyManifestCliOverrides
+    // 在 `--override-manifest` 时已把 manifest 来源替换为显式增量来源，若不加处理源来源会丢）。
+    // inline 增量无新来源（explicitFiles 空）时同样重设，保留源 run 来源（inheritSuccessorManifest
+    // 的并集结果被 override 清空后必须在此恢复）。
+    const sourceFiles = supersedeSourceSourceFiles ?? [];
+    const explicitFiles = manifestArgv.requirement_source_files ?? [];
+    const mergedSourceFiles = [...new Set([...sourceFiles, ...explicitFiles])];
+    if (mergedSourceFiles.length > 0) {
+      manifest.requirement_source_files = mergedSourceFiles;
+    } else {
+      delete manifest.requirement_source_files;
     }
   }
 
@@ -4147,7 +4269,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
       manifest.chain_override,
       goalTrack,
     );
-    runGoalPreflight({
+    // plan c4e8a1f7 T1a：preflight 返回 session 级 resolved binary——probe/canary/
+    // 正式 phase invoke 三个消费点复用同一绝对路径，从结构上保证 probe/invoke 同身份。
+    const sessionBinary = runGoalPreflight({
       projectRoot,
       frameworkRoot,
       manifest,
@@ -4236,6 +4360,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
     if (visionProbeDecision.action === 'probe') {
       const probeResult = await runVisionCanaryProbe({
         projectRoot, frameworkRoot, manifest,
+        // plan c4e8a1f7 T1a：canary 复用 session binary（与正式 invoke 同一绝对路径）
+        resolvedBinary: sessionBinary?.binary ?? null,
         ...(injectedCanaryProbeInvoke ? { invokeFn: injectedCanaryProbeInvoke } : {}),
       });
       if (probeResult.outcome === 'hard_cli_failure') {
@@ -4803,9 +4929,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // P1-7（plan d9b4f7e2）：adapter 版本运行时探测——每 run 一次、5s 超时、失败 unknown
     // 不阻塞；进 events（版本随宿主环境漂移，不硬编码 adapter.yaml）。与 output_delivery
     // 一并落 adapter_probe 事件，排障者一眼可见"什么版本、什么输出交付方式"。
+    // plan c4e8a1f7 T1a：探测吃 session 解析出的**绝对路径**（.cmd 走 cross-spawn）——
+    // telemetry 与正式 invoke 结构性同一（不再用裸 token 探、另解析跑）。
     if (!dryRun) {
       const headlessCmd = cap.capability?.external_runner?.headless_invoke ?? '';
-      const adapterBinary = headlessCmd.trim().split(/\s+/)[0] || manifest.adapter!;
+      const adapterBinary =
+        (sessionBinary?.binary?.path ?? headlessCmd.trim().split(/\s+/)[0]) || manifest.adapter!;
       const adapterVersion = await probeAdapterVersion(adapterBinary);
       // plan a8e5c3f9 t6：审计可见 effective 权限——旧 manifest 写 workspace-write 而
       // 实际全权限时，排障者不被 manifest 原文误导（复用本事件，不建独立账本）。
@@ -4816,6 +4945,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
         output_delivery: cap.capability?.output_delivery ?? 'unknown',
         effective_write_mode: eff.write_mode,
         effective_approval_mode: eff.approval_mode,
+        // plan c4e8a1f7 T1a：resolved binary 身份 + 被遮蔽候选诊断（多版本共存合法，
+        // PATH 首选项决定执行身份，其余仅诊断展示）。
+        ...(sessionBinary?.binary ? { resolved_binary: sessionBinary.binary.path, resolved_binary_kind: sessionBinary.binary.kind } : {}),
+        ...(sessionBinary && sessionBinary.shadowed.length > 0
+          ? { shadowed_candidates: sessionBinary.shadowed }
+          : {}),
       });
     }
     let outcomes: GoalPhaseOutcome[] = [];
@@ -5632,17 +5767,30 @@ Goal runner — tool-agnostic multi-phase orchestrator
             : '') +
           // runner-owned-machine-facts 追补（codex review）：spec closure-only 轮必须重新
           // 只读取证——冻结豁免的是"重做分析/改产物"，不豁免 invocation-bound 的视觉验读。
+          // plan c4e8a1f7 T2：权威路径=共享发现集合（不再从 spec.md 自算较小分母）；
+          // T3：按 provenance 分轴——结构化 adapter 才要求本 invoke 逐图 Read（争取终签），
+          // none-provenance adapter 明示不可审计出口（诚实 unverified，不追逐不可达终签）。
           (() => {
             if (!closureOnlyAttempt || phase !== 'spec') return '';
             try {
-              const specMdForClosure = loadSpecMarkdown(projectRoot, manifest.feature);
-              const refAbsForClosure = specMdForClosure
-                ? collectAuthoritativeImagePaths(projectRoot, specMdForClosure, p =>
-                    path.isAbsolute(p) ? p : path.resolve(projectRoot, p))
-                : [];
-              return buildClosureVisualEvidenceBlock(
-                refAbsForClosure.map(p => path.relative(projectRoot, p).replace(/\\/g, '/')),
+              const refAbsForClosure = resolveRequirementReferenceImages(
+                projectRoot,
+                manifest.feature,
+                manifest.requirement,
+                { requirementSourceFiles: manifest.requirement_source_files },
               );
+              const refRel = refAbsForClosure.map(p =>
+                path.relative(projectRoot, p).replace(/\\/g, '/'));
+              // plan c4e8a1f7 T3（评审 P1 修复 2 轮）："能看图 × 能审计"两轴由纯函数
+              // resolveClosureReadRequirement 单点判定——hasVision=false + structured
+              // 必须归一为 'none'（诚实 unverified），**不得**把原始 provenance 透传
+              // （旧三元 `readRequired ? 'structured_events' : provenance` 会让判盲
+              // structured adapter 仍输出 Mandatory Read，评审实锤复现）。
+              const requireRead = resolveClosureReadRequirement(
+                capabilityAdvisory?.hasVision,
+                capabilityAdvisory?.toolEventProvenance,
+              );
+              return buildClosureVisualEvidenceBlock(refRel, requireRead);
             } catch {
               return ''; // best-effort：列不出路径时不阻断 prompt（gate 侧判定不变）
             }
@@ -5672,6 +5820,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           prompt,
           vars,
           manifest.adapter_model_pin?.value,
+          // plan c4e8a1f7 T1a：正式 phase invoke 复用 session binary（probe/invoke 同一身份）
+          sessionBinary?.binary ?? null,
         );
         // plan d7f3a9c4 t1：dry-run 在 plan 输出回显 pin（用户权威输入可见）。
         if (dryRun) {
@@ -6243,6 +6393,57 @@ Goal runner — tool-agnostic multi-phase orchestrator
             ...(invoke.timed_out === true ? { timed_out: true as const, kill_reason: 'agent_timeout' as const } : {}),
           });
         }
+
+        // ===================================================================
+        // plan c4e8a1f7 T1a：正式 phase invoke 硬失败早停（harness 前）
+        // -------------------------------------------------------------------
+        // 共享分类（resolveInvokeHardCliFailure）覆盖：child spawn race / guardian
+        // containment 建立失败 / CLI·config 参数不兼容 / Codex 模型兼容 400。命中 =
+        // agent 根本没有执行任务——缺产物只是症状：不得用 harness 的 spec_file_exists
+        // 覆盖真实原因，也不得消耗内容 retry。incident 登记为 external。
+        // 普通 agent 内容失败（含无 guardian 诊断的 exit 2）保持既有 harness/retry。
+        if (!dryRun && !resumePostAgent) {
+          const hardCli = resolveInvokeHardCliFailure({
+            exitCode: invoke.exitCode,
+            timed_out: invoke.timed_out,
+            silent_killed: invoke.silent_killed,
+            skipped: invoke.skipped,
+            stdout: invoke.stdout ?? '',
+            stderr: invoke.stderr ?? '',
+            ...(invoke.spawn_error ? { spawn_error: invoke.spawn_error } : {}),
+          }, { formalInvoke: true });
+          if (hardCli) {
+            const guidance =
+              `正式 phase invoke 遇 CLI/guardian 硬失败（非需求代码，agent 未执行任务）：${hardCli}\n` +
+              '这是 CLI 版本/兼容性、配置、参数或 Windows containment 建立问题——请核对 adapter ' +
+              '版本/配置/环境后重跑；不是需求或产品代码问题，本轮不进入 gate harness、不消耗内容重试。';
+            goalEvents.emit({
+              type: 'phase_halt',
+              phase,
+              halt_reason: 'adapter_cli_hard_failure',
+              verdict: 'FAIL',
+              reason: hardCli,
+              halt_guidance: guidance,
+              ...runDispositionFields(decide(
+                { incident: 'adapter_cli_hard_failure', phase: String(phase), detail: hardCli },
+                NO_AUTHORITY,
+                { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+              )),
+            });
+            console.error(`\n===== adapter_cli_hard_failure =====\n${guidance}\n`);
+            outcomes.push({
+              phase, verdict: 'FAIL', halted: true, retries,
+              halt_reason: 'adapter_cli_hard_failure',
+              halt_guidance: guidance,
+              agent_exit_code: invoke.exitCode,
+              failure_kind_classified: 'external',
+            });
+            halted = true;
+            phaseDone = true;
+            continue;
+          }
+        }
+
         // P1-9（plan 7c4f2e9b）：模型身份 telemetry——共享 parser 读**纯 events 文件**的
         // init 事件，append-only 新事件承载；不回写冻结 manifest / 不改 run 前 adapter_probe
         // / 不为 telemetry 造 capability receipt / 不参与能力真值与任何策略分支。
@@ -6456,34 +6657,46 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
         }
 
-        // visual-capability-truth S3（路径 B 判卷）：inline canary 答卷 → 签发/拒签
-        // invocation_bound receipt。未答/答错/CANNOT_SEE_IMAGE → 不签（能力停留
-        // run_probed，vl_multimodal 终签自然被拒）——不阻断 phase，走盲档工作法。
+        // visual-capability-truth S3（路径 B 判卷，plan c4e8a1f7 T3）：inline canary 答卷
+        // → 签发/拒签 invocation_bound receipt。未答/答错/CANNOT_SEE_IMAGE → 不签
+        // （能力停留 run_probed，vl_multimodal 终签自然被拒）——不阻断 phase，走盲档工作法。
+        // 判卷 SSOT 统一复用 resolveCanaryCacheDecision/parseCanaryAnswer（不再保留
+        // isCanaryAnswerComplete + classifyCanaryResponse(raw) 分叉）：
+        //  · structured adapter 从**纯 agent-events.jsonl** 的终态 result 语义取答卷
+        //    （parseCanaryAnswer 内部做信封投影；events 缺失/无终态 → 不判卷不签发）；
+        //  · 非结构化 adapter **只消费本次 invoke 的 stdout** 与 exitCode/timed_out/
+        //    silent_killed/skipped 事实——不读 stderr、prompt echo、人读混合日志
+        //    （旧实现读整份 agent-output.log，prompt 自带 CANNOT_SEE_IMAGE 污染判卷，
+        //    宿主 run 20260823T161102Z-68480b 三轮拒签实锤）。
         if (!dryRun && phase === 'spec' && inlineCanaryKey) {
           try {
-            // P0-1（plan 7c4f2e9b / 3.10）：structured adapter 判卷改读**纯 events 文件**
-            // 并取终态 result 文本投影——混合 agent-output.log 里 stderr 可插进 JSON 行
-            // 中间、答卷在信封字符串内永不成独立行（行锚判卷恒空 → 真视觉宿主永久盲档）。
-            // 归一失败（残卷/错误 result/文件缺失）→ outRaw='' → 不签发，维持 fail-closed。
             const structuredStdout = planUsesClaudeStreamJson(
               manifest.adapter ?? 'generic',
               cap.capability?.tool_event_provenance,
             );
-            let outRaw = '';
+            let decisionStdout = '';
             if (structuredStdout) {
               const eventsAbs = agentEventsLogPath(outputLogPath);
               const eventsRaw = fs.existsSync(eventsAbs) ? fs.readFileSync(eventsAbs, 'utf-8') : '';
-              outRaw = eventsRaw ? (extractClaudeFinalResultText(eventsRaw) ?? '') : '';
-              if (!outRaw) {
-                console.log('[S3] inline canary：structured envelope 无终态 success result（残卷/断流/events 缺失）——不判卷不签发');
+              decisionStdout = eventsRaw;
+              if (!decisionStdout) {
+                console.log('[S3] inline canary：agent-events.jsonl 缺失/为空（断流?）——不判卷不签发');
               }
             } else {
-              outRaw = fs.existsSync(outputLogPath) ? fs.readFileSync(outputLogPath, 'utf-8') : '';
+              // 非结构化：本次 invocation 的 stdout 事实（内存保留 64KB 上限，答卷足够）。
+              decisionStdout = invoke.stdout ?? '';
             }
             let issued = false;
-            if (outRaw && isCanaryAnswerComplete(outRaw, inlineCanaryKey)) {
-              const cls = classifyCanaryResponse(outRaw, inlineCanaryKey);
-              if (cls.verdict === 'tool_read') {
+            if (decisionStdout) {
+              const decision = resolveCanaryCacheDecision({
+                stdout: decisionStdout,
+                exitCode: invoke.exitCode,
+                timed_out: invoke.timed_out,
+                silent_killed: invoke.silent_killed,
+                skipped: invoke.skipped,
+                structured_stdout: structuredStdout,
+              }, inlineCanaryKey);
+              if (decision.kind === 'valid' && decision.classify.verdict === 'tool_read') {
                 writeCapabilityReceipt(projectRoot, manifest.feature, {
                   adapter: manifest.adapter ?? 'generic',
                   run_id: manifest.run_id,
@@ -6493,6 +6706,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   model: 'unknown',
                 });
                 issued = true;
+              } else {
+                console.log(
+                  `[S3] inline canary 未通过/未作答（${decision.kind === 'valid' ? `verdict=${decision.classify.verdict}` : decision.detail}）——` +
+                    'invocation_bound 不签发（vl_multimodal 终签将被拒，走盲档/human_gate）',
+                );
               }
             }
             goalEvents.emit({
@@ -6516,14 +6734,17 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // visual-capability-truth S3：spec 期参考图验读回执——vl_multimodal 终签的证据面
         // （canary 只证能看测试图；本回执证"逐张读过本需求参考图"）。无解析器 adapter →
         // 不产出 → 终签结构性被拒（正是 20260718 cursor 自签形态的解药）。
+        // plan c4e8a1f7 T2：期望分母=共享发现集合（正文显式 ∪ source 直接父目录；仅空集
+        // 回退 ux-reference）——不再从 agent 产出的 spec.md 自算较小分母（宿主实锤：spec
+        // 漏一张回执分母跟着缩水，无法证明 runner 发现的全集均已建模/验读）。
         if (!dryRun && phase === 'spec' && (cap.capability?.tool_event_provenance ?? 'none') === 'structured_events') {
           try {
-            const specMdForRefs = loadSpecMarkdown(projectRoot, manifest.feature);
-            const refAbsPaths = specMdForRefs
-              ? collectAuthoritativeImagePaths(projectRoot, specMdForRefs, p =>
-                  path.isAbsolute(p) ? p : path.resolve(projectRoot, p),
-                )
-              : [];
+            const refAbsPaths = resolveRequirementReferenceImages(
+              projectRoot,
+              manifest.feature,
+              manifest.requirement,
+              { requirementSourceFiles: manifest.requirement_source_files },
+            );
             if (refAbsPaths.length > 0) {
               const producedRefs = produceSpecRefsReceipt({
                 projectRoot,

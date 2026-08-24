@@ -340,10 +340,10 @@ const cases: Case[] = [
         let threw = false;
         try { resolveRequirementInput({ requirement: 'a', requirementFile: 'b', projectRoot: root }); } catch { threw = true; }
         assert(threw, '--requirement 与 --requirement-file 互斥须 fail-closed');
-        assert(resolveRequirementInput({ requirement: 'a   ', projectRoot: root }) === 'a   ', 'inline 原样返回（不 trim 不查空——resolver 既有语义）');
+        assert(resolveRequirementInput({ requirement: 'a   ', projectRoot: root }).text === 'a   ', 'inline 原样返回（不 trim 不查空——resolver 既有语义）');
         const file = path.join(root, 'req.txt');
         fs.writeFileSync(file, '  需求文件内容  \n', 'utf-8');
-        assert(resolveRequirementInput({ requirementFile: file, projectRoot: root }) === '需求文件内容', 'file 分支读内容（trim 后）');
+        assert(resolveRequirementInput({ requirementFile: file, projectRoot: root }).text === '需求文件内容', 'file 分支读内容（trim 后）');
         const emptyFile = path.join(root, 'empty.txt');
         fs.writeFileSync(emptyFile, '   \n', 'utf-8');
         threw = false;

@@ -1200,6 +1200,8 @@ export function runAll(): UnitCaseResult[] {
           effectiveFidelity: 'pixel_1to1',
           fidelityClamped: false,
           ocrJsonPaths: [],
+          referenceImagePaths: [],
+          toolEventProvenance: 'structured_events',
         };
         const text = buildCapabilityBlock(advisory).join('\n');
         assert(/Vision.*YES/.test(text), 'should declare vision YES');
@@ -1219,6 +1221,8 @@ export function runAll(): UnitCaseResult[] {
           effectiveFidelity: 'semantic_layout',
           fidelityClamped: true,
           ocrJsonPaths: ['doc/features/bc/spec/reports/ocr/home.ocr.json'],
+          referenceImagePaths: [],
+          toolEventProvenance: 'structured_events',
         };
         const text = buildCapabilityBlock(advisory).join('\n');
         assert(/Vision.*NO/.test(text), 'should declare vision NO');
@@ -1241,6 +1245,8 @@ export function runAll(): UnitCaseResult[] {
           effectiveFidelity: 'reference_only',
           fidelityClamped: true,
           ocrJsonPaths: [],
+          referenceImagePaths: [],
+          toolEventProvenance: 'structured_events',
         };
         const text = buildCapabilityBlock(advisory).join('\n');
         assert(/reference_only/.test(text), '应声明有效档位 reference_only');
@@ -1260,6 +1266,8 @@ export function runAll(): UnitCaseResult[] {
           fidelityClamped: false,
           ocrJsonPaths: [],
           assetAcquisitionMode: 'auto_crop',
+          referenceImagePaths: [],
+          toolEventProvenance: 'structured_events',
         };
         const plain = buildCapabilityBlock(base).join('\n');
         const hardened = buildCapabilityBlock({ ...base, successorRepairRequirement: true }).join('\n');
@@ -1511,6 +1519,8 @@ export function runAll(): UnitCaseResult[] {
           effectiveFidelity: 'semantic_layout',
           fidelityClamped: true,
           ocrJsonPaths: [],
+          referenceImagePaths: [],
+          toolEventProvenance: 'structured_events',
         };
         const prompt = buildPhasePrompt(
           MINIMAL_MANIFEST,
@@ -1537,6 +1547,8 @@ export function runAll(): UnitCaseResult[] {
           effectiveFidelity: 'pixel_1to1',
           fidelityClamped: false,
           ocrJsonPaths: [],
+          referenceImagePaths: [],
+          toolEventProvenance: 'structured_events',
         };
         const pixelPrompt = buildPhasePrompt(
           MINIMAL_MANIFEST,

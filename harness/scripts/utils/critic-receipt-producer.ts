@@ -31,8 +31,8 @@ import {
   readCapabilityReceipt,
   type CapabilityReceipt,
 } from './effective-vision-context';
-import { loadSpecMarkdown } from './fidelity-shared';
-import { collectAuthoritativeImagePaths } from './multimodal-probe';
+import { resolveRequirementReferenceImages } from './fidelity-shared';
+
 
 export interface RunnerAttestation {
   goal_run_id: string;
@@ -318,15 +318,43 @@ export function verifyVlSigningChain(args: {
     failures.push('refs 回执无匹配的 runner 签发事件锚（事件缺失/非 complete/文件 hash 与事件不符）——非 runner 签发不可采信');
   }
 
-  // ④ refs 内容核对：回执必须覆盖**当前** authoritative refs（路径+hash+read=true）
-  const specMd = loadSpecMarkdown(args.projectRoot, args.feature);
-  const currentRefPaths = specMd
-    ? collectAuthoritativeImagePaths(args.projectRoot, specMd, p =>
-        path.isAbsolute(p) ? p : path.resolve(args.projectRoot, p))
-    : [];
+  // ④ refs 内容核对：回执必须覆盖**当前权威期望集合**（路径+hash+read=true）。
+  // plan c4e8a1f7 T2：期望分母=runner 的共享发现集合（从当前 run 冻结 manifest 重算：
+  // 正文显式图片 ∪ source 直接父目录一层，仅空集回退 ux-reference）——不再从 agent 产出
+  // 的 spec.md 自算较小分母（agent/spec 少声明任一发现图片必须失败，禁止自缩分母）。
+  // 评审 P1 修复：goal 态（runId 已在 env）manifest 不可读 → **fail-closed**（不回退
+  // spec.md——回退即重新允许 spec 自缩分母，且 runId 在场说明必是 goal 编排）。
+  let manifestRequirement: string | undefined;
+  let manifestSourceFiles: string[] | undefined;
+  let manifestUnreadable = false;
+  try {
+    const manifestPath = path.join(
+      featureDir(args.projectRoot, args.feature), 'goal-runs', runId, 'manifest.json');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as {
+      requirement?: string;
+      requirement_source_files?: string[];
+    };
+    manifestRequirement = manifest.requirement;
+    manifestSourceFiles = manifest.requirement_source_files;
+  } catch {
+    manifestUnreadable = true;
+  }
+  let currentRefPaths: string[] = [];
+  if (manifestUnreadable) {
+    failures.push('goal run manifest 不可读——无法重算参考图发现分母且**禁止回退 spec 自算分母**（fail-closed）');
+  } else if (typeof manifestRequirement !== 'string' || !manifestRequirement.trim()) {
+    failures.push('goal run manifest 缺少 requirement——无法计算参考图发现分母（fail-closed）');
+  } else {
+    currentRefPaths = resolveRequirementReferenceImages(
+      args.projectRoot,
+      args.feature,
+      manifestRequirement,
+      { requirementSourceFiles: manifestSourceFiles },
+    );
+  }
   const currentRefs: Array<{ path: string; sha256: string }> = [];
   if (currentRefPaths.length === 0) {
-    failures.push('当前 spec 无 authoritative 参考图——vl_multimodal 无验证对象，不可终签（空 refs 回执不构成证明）');
+    failures.push('当前权威参考图发现集为空——vl_multimodal 无验证对象，不可终签（空 refs 回执不构成证明）');
   }
   for (const refAbs of currentRefPaths) {
     const abs = path.resolve(refAbs);

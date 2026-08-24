@@ -13,8 +13,9 @@ import {
 import { createRequire } from 'module';
 import * as path from 'path';
 import { resolveAuthoritativePath } from '../../../harness/scripts/utils/visual-source-resolver';
+import { resolveRequirementReferenceImages } from '../../../harness/scripts/utils/fidelity-shared';
 import { FIDELITY_SNAPSHOT_KIND, parseOnlineVisualHandoff } from '../../../harness/scripts/utils/fidelity-lock-shared';
-import { relFeatureArtifact, VisualHandoffEnforcementMode } from '../../../harness/config';
+import { relFeatureArtifact, VisualHandoffEnforcementMode, featureDir } from '../../../harness/config';
 import type { CheckContext, CheckResult, VisualHandoffResolutionRow } from '../../../harness/scripts/utils/types';
 
 /** `yaml` 安装于 `framework/harness/node_modules`；本文件在 profile 树内，须从 harness 根解析依赖 */
@@ -490,7 +491,7 @@ export function checkVisualHandoff(ctx: CheckContext, prd: string): CheckResult[
   }
 
   const outcome = validateAuthoritativeRefs(ctx, kind, vhObj.authoritative_refs);
-  return resolveRefsCheckResult({
+  const baseResults = resolveRefsCheckResult({
     desc,
     prdRel,
     uiChange,
@@ -500,4 +501,132 @@ export function checkVisualHandoff(ctx: CheckContext, prd: string): CheckResult[
     checkIdRefs: 'visual_handoff_refs',
     checkIdPass: 'visual_handoff',
   });
+  // plan c4e8a1f7 T2（评审 P1 修复）：声明分母复核**收进既有 Visual Handoff 检查**——
+  // 只在此分支（authoritative_refs 形态合法、通过既有 applicability/--skip-
+  // visual-handoff/enforcement=off 处理）后追加，不构成平行门禁。
+  const denominatorResults = visualReferenceDenominatorCoverage(ctx, prd);
+  return denominatorResults.length > 0 ? [...baseResults, ...denominatorResults] : baseResults;
+}
+
+/**
+ * plan c4e8a1f7 T2（评审 P1 修复）：参考图发现集合的**声明分母复核**——spec 漏声明任一
+ * runner 发现图片必须失败，禁止由 spec 自己缩小分母（宿主实锤：bc-openCard 三张真实
+ * 参考图在权威需求文件同目录，正文/ux-reference 两级输入均漏，被误报不存在）。
+ * 分母=goal run manifest 冻结 requirement + requirement_source_files 经共享发现集合
+ * 重算（与 goal-runner refs receipt 生产/验证同一函数）。
+ *
+ * 与既有视觉手令门禁的关系（评审 P1 修复）：本函数是 **checkVisualHandoff 内部的既有
+ * authoritative_refs 分支的后置复核**（非独立 provider、非平行门禁）——applicability /
+ * --skip-visual-handoff / enforcement=off 的早退都在调用前已被既有分支尊重。
+ *
+ * 失败语义：goal 态（MAISON_GOAL_RUN_ID 在场）但 manifest 不可读/损坏 → **fail-closed**
+ * （BLOCKER FAIL，分母不允许消失）；非 goal 态（无 run ID）→ 返回空（不新增阻塞面）。
+ * 复用 `featureDir()` 规范路径（不硬编码 doc/features）；raster 扩展与声明面统一
+ * （png/jpg/jpeg/webp——移除 bmp，避免永远无法合法声明的分母）。
+ */
+function visualReferenceDenominatorCoverage(
+  ctx: CheckContext,
+  specMarkdown: string,
+): CheckResult[] {
+  const runId = (process.env.MAISON_GOAL_RUN_ID ?? '').trim();
+  if (!runId) return [];
+  const prdRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'spec.md');
+  const desc = ruleDesc(ctx, 'structure_checks', 'visual_handoff');
+  interface GoalManifestLite {
+    requirement?: string;
+    requirement_source_files?: string[];
+  }
+  let manifested: GoalManifestLite | null = null;
+  try {
+    // 复用 featureDir()（既有规范路径，兼容自定义 features_dir）
+    const manifestPath = path.join(
+      featureDir(ctx.projectRoot, ctx.feature), 'goal-runs', runId, 'manifest.json');
+    manifested = JSON.parse(require('fs').readFileSync(manifestPath, 'utf-8')) as GoalManifestLite;
+  } catch {
+    // fail-closed：goal 态 manifest 不可读/损坏时分母不得静默消失
+    return [{
+      id: 'visual_handoff_denominator',
+      category: 'structure',
+      description: desc,
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details:
+        `goal 态（MAISON_GOAL_RUN_ID=${runId}）但 run manifest 不可读/损坏——无法计算参考图` +
+        '发现分母，禁止回退由 spec 自算分母。请恢复 run manifest 后重跑 spec。',
+      suggestion: '修复/恢复 goal run manifest（doc/features/.../goal-runs/<run_id>/manifest.json）后重跑 spec。',
+      affected_files: [prdRel],
+    }];
+  }
+  if (typeof manifested?.requirement !== 'string' || !manifested.requirement.trim()) {
+    // 有 run ID 但 manifest 无 requirement：异常态，fail-closed（不得静默放行）
+    return [{
+      id: 'visual_handoff_denominator',
+      category: 'structure',
+      description: desc,
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: 'goal run manifest 缺少 requirement——无法计算参考图发现分母。',
+      suggestion: '修复 run manifest（requirement 字段）后重跑 spec。',
+      affected_files: [prdRel],
+    }];
+  }
+  const expectedAbs = resolveRequirementReferenceImages(
+    ctx.projectRoot,
+    ctx.feature,
+    manifested.requirement,
+    { requirementSourceFiles: manifested.requirement_source_files },
+  );
+  if (expectedAbs.length === 0) return [];
+
+  // spec 声明路径（authoritative_refs；fidelity_snapshot lock 源不属于声明面）
+  const declaredAbs = new Set<string>();
+  for (const b of extractCodeBlocks(specMarkdown, 'yaml')) {
+    try {
+      const doc = YAML.parse(b.content) as Record<string, unknown>;
+      const vh = doc?.visual_handoff as Record<string, unknown> | undefined;
+      if (!vh || typeof vh !== 'object') continue;
+      const refs = vh.authoritative_refs as Array<{ path?: string }> | undefined;
+      if (!Array.isArray(refs)) continue;
+      for (const r of refs) {
+        if (typeof r.path !== 'string' || !/\.(png|jpe?g|webp)$/i.test(r.path)) continue;
+        const resolved = resolveAuthoritativePath(r.path, {
+          projectRoot: ctx.projectRoot,
+          externalRoots: ctx.specVisualSources?.external_roots,
+          allowAbsolutePaths: Boolean(ctx.specVisualSources?.allow_absolute_paths),
+          allowNetworkPaths: Boolean(ctx.specVisualSources?.allow_network_paths),
+        });
+        if (resolved.resolvedAbsolute) declaredAbs.add(path.resolve(resolved.resolvedAbsolute));
+      }
+    } catch { /* skip */ }
+  }
+  const missing = expectedAbs
+    .map(p => path.resolve(p))
+    .filter(p => !declaredAbs.has(p));
+  if (missing.length === 0) {
+    return [{
+      id: 'visual_handoff_denominator',
+      category: 'structure',
+      description: desc,
+      severity: 'MINOR',
+      status: 'PASS',
+      details: `spec 声明覆盖 runner 发现的全部 ${expectedAbs.length} 张参考图（分母一致，无自缩）`,
+      affected_files: [prdRel],
+    }];
+  }
+  return [{
+    id: 'visual_handoff_denominator',
+    category: 'structure',
+    description: desc,
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    details:
+      `spec 漏声明 ${missing.length} 张 runner 发现图片（不得由 spec 缩小验收分母）：\n` +
+      missing.map(m => `  - ${path.relative(ctx.projectRoot, m).split(path.sep).join('/')}`).join('\n') +
+      '\n处置：在 visual_handoff.authoritative_refs 声明全部发现图片（需求正文显式路径或 ' +
+      'requirement source 直接父目录一层），或确认它们确非本特性参考图后调整需求来源。',
+    suggestion:
+      '补齐 spec visual_handoff.authoritative_refs 声明（对照 runner 发现集合逐张核对），' +
+      '或修正需求来源（--requirement-file 即来源锚点）后重跑 spec。',
+    affected_files: [prdRel],
+  }];
 }

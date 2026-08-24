@@ -204,6 +204,8 @@ export interface PrepareGoalModeRunOptions {
   runId?: string;
   adapter: string;
   requirement: string;
+  /** plan c4e8a1f7 T2：--requirement-file 来源列表（goal-mode-entry 与 goal-runner 同源解析） */
+  requirementSourceFiles?: string[];
   startPhase?: string;
   endPhase?: string;
 }
@@ -226,6 +228,9 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
       feature,
       run_id: options.runId,
       requirement,
+      ...(options.requirementSourceFiles && options.requirementSourceFiles.length > 0
+        ? { requirement_source_files: options.requirementSourceFiles }
+        : {}),
       adapter,
       adapter_provenance: 'entry_declared',
       start_phase: options.startPhase ?? 'spec',
@@ -373,12 +378,18 @@ async function main(): Promise<void> {
       adapter,
       // f9c2e6b4 t4：两个启动入口**共用** resolveRequirementInput——互斥判定、相对路径
       // 口径、空文件处置只有一份实现，不写两遍（codex 开工原则②）。
-      requirement:
-        resolveRequirementInput({
+      // plan c4e8a1f7 T2：来源列表一并透传（frozen requirement 的 provenance）。
+      ...(() => {
+        const resolved = resolveRequirementInput({
           requirement: argv.requirement,
           requirementFile: argv['requirement-file'],
           projectRoot,
-        }) ?? '',
+        });
+        return {
+          requirement: resolved.text ?? '',
+          ...(resolved.sources.length > 0 ? { requirementSourceFiles: resolved.sources } : {}),
+        };
+      })(),
       startPhase: String(argv.start ?? 'spec'),
       endPhase: String(argv.end ?? 'testing'),
     });

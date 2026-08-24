@@ -254,9 +254,9 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   },
   {
     // 复检意见 2（plan a8e5c3f9 t5）：行为级验证——不再只做源码 include 断言。
-    name: 'runGoalPreflight: 未核实 bypass 的 adapter（chrys/codeagent）非 dry-run 硬失败',
+    name: 'runGoalPreflight: 未核实 bypass 的 adapter（chrys）非 dry-run 硬失败；codeagent 已放行（用户裁决，T1b）',
     run: () => {
-      for (const adapter of ['chrys', 'codeagent']) {
+      for (const adapter of ['chrys']) {
         const root = mkTmp();
         writeProjectConfig(root, [adapter]);
         fs.writeFileSync(path.join(root, 'AGENTS.md'), '# stub\n');
@@ -283,9 +283,9 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
-    name: 'runGoalPreflight: 未核实 bypass 的 adapter dry-run 只 WARN 不阻断',
+    name: 'runGoalPreflight: 未核实 bypass 的 adapter dry-run 只 WARN 不阻断（chrys）；codeagent 放行后走 binary gate',
     run: () => {
-      for (const adapter of ['chrys', 'codeagent']) {
+      for (const adapter of ['chrys']) {
         const root = mkTmp();
         writeProjectConfig(root, [adapter]);
         fs.writeFileSync(path.join(root, 'AGENTS.md'), '# stub\n');

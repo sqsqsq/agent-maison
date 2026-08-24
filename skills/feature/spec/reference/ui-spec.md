@@ -206,6 +206,7 @@ ui-spec 生成后、进 plan 前：
 2. **多模态 gate**（M3，条件具备）：VL 核对后设 `verified: verified` + `verified_method: vl_multimodal`。
 3. **无 VL + 无人工**：只能 `verified: unverified` → 连带降级 C/D/K（见下表）。
 4. **盲档 + OCR 辅助**（v2.5+，多模态降级阶梯）：无视觉能力时，`verified: unverified`（同 3，机读信号不变——OCR 辅助不等于视觉验真）；提取工作法见下方「盲档工作法」，**禁止假装完成了看图核对**。
+5. **有 VL 但无逐图 Read 审计链**（plan c4e8a1f7 T3，能力与可审计性分轴）：`tool_event_provenance=none` 的 adapter（如 codex）**能看图**但 runner 无法从事件审计「逐张读过」——`verified: verified + vl_multimodal` 的 refs receipt/终签链结构性不可达，只能 `verified: unverified`（best-effort/reachable 档 WARN 可继续、hard contract FAIL，门槛不降）；伪造 `verified: verified` 恒被拒。
 
 | 场景 | ui-spec 状态 | 视觉链行为 |
 |------|-------------|------------|

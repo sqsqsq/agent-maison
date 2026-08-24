@@ -19,6 +19,14 @@ fields:
   requirement:
     type: string
     description: User requirement text or path to requirement file
+  requirement_source_files:
+    type: array
+    items: string
+    description: >
+      plan c4e8a1f7 T2：需求来源文件列表（项目根相对正斜杠；项目外 source 保留绝对
+      路径）。可选字段——仅 fresh --requirement-file 解析写入；旧 manifest 无键不受影响
+      （身份哈希条件包含，resume 不误判漂移）。参考图发现的锚点：项目内 source 各直接
+      父目录一层做受支持图片扫描，与需求正文显式路径取并集。
   adapter:
     type: string
     description: >

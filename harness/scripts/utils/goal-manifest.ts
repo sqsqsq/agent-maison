@@ -77,6 +77,12 @@ export interface GoalManifest {
   end_phase: FeaturePhase;
   feature: string;
   requirement?: string;
+  /**
+   * plan c4e8a1f7 T2：需求来源列表（项目根相对正斜杠；项目外 source 保留绝对路径）。
+   * 可选字段：旧 manifest 无键不受影响（身份哈希条件包含，见 computeManifestIdentityFields）。
+   * 语义=provenance，不是需求正文——参考图发现据此做 source 直接父目录一层扫描。
+   */
+  requirement_source_files?: string[];
   adapter?: string;
   /** 运行身份来源（诚实化回溯）：user_explicit|entry_declared|local_config|registry|override */
   adapter_provenance?: string;
@@ -173,6 +179,11 @@ export function computeManifestIdentityFields(manifest: GoalManifest): Record<st
   // 哈希，旧 manifest 无键不受影响（凭空补默认会让既有 run resume 多出字段→误判漂移）。
   if (Object.prototype.hasOwnProperty.call(manifest, 'adapter_model_pin')) {
     fields.adapter_model_pin = manifest.adapter_model_pin ?? null;
+  }
+  // plan c4e8a1f7 T2：requirement_source_files 同款条件入集——键在场即在哈希（fresh
+  // 由 resolveRequirementInput 来源列表写入）；旧 manifest 无键不受影响（resume 不误判漂移）。
+  if (Object.prototype.hasOwnProperty.call(manifest, 'requirement_source_files')) {
+    fields.requirement_source_files = manifest.requirement_source_files ?? null;
   }
   if (Object.prototype.hasOwnProperty.call(manifest, 'successor_of')) {
     fields.successor_of = manifest.successor_of ?? null;
@@ -452,15 +463,26 @@ function normalizeMinimumAssurance(raw: unknown): Record<string, 'degraded' | 'f
  *   · 相对路径按 **projectRoot** 解析（两个入口同一口径，不依赖各自 cwd）；
  *   · **只读取内容**。防陈旧靠调用方在 fresh 时把内容冻结进 manifest，
  *     **不靠**规定文件命名或禁止复用路径——权威需求文件本就该长期复用。
+ *
+ * plan c4e8a1f7 T2：来源是 provenance、不是需求正文——返回 frozen text + 可选
+ * `requirement_source_files[]`（项目内→项目根相对正斜杠；项目外→保留绝对路径，只读正文、
+ * 不扫描其 sibling；inline → 空数组）。fresh manifest 持久化该列表并纳入身份哈希，
+ * resume 只读冻结值，successor 继承并在显式 file 增量时去重追加。
  */
+export interface ResolvedRequirementInput {
+  text: string | undefined;
+  /** 来源文件（项目根相对或绝对）；inline requirement 为空数组 */
+  sources: string[];
+}
+
 export function resolveRequirementInput(input: {
   requirement?: unknown;
   requirementFile?: unknown;
   projectRoot: string;
-}): string | undefined {
+}): ResolvedRequirementInput {
   const inline = typeof input.requirement === 'string' ? input.requirement : undefined;
   const fileRaw = typeof input.requirementFile === 'string' ? input.requirementFile.trim() : '';
-  if (!fileRaw) return inline;
+  if (!fileRaw) return { text: inline, sources: [] };
   if (inline !== undefined && inline.trim().length > 0) {
     throw new Error(
       '[goal] --requirement 与 --requirement-file 互斥：两者同给时无法判定哪个是真值，' +
@@ -475,7 +497,13 @@ export function resolveRequirementInput(input: {
   if (!text) {
     throw new Error(`[goal] --requirement-file 内容为空：${abs}`);
   }
-  return text;
+  const projectRootAbs = path.resolve(input.projectRoot);
+  const rel = path.relative(projectRootAbs, abs);
+  const sources =
+    rel && !rel.startsWith('..') && !path.isAbsolute(rel)
+      ? [rel.split(path.sep).join('/')]
+      : [abs];
+  return { text, sources };
 }
 
 export function buildGoalManifestFromInput(
@@ -536,10 +564,22 @@ export function buildGoalManifestFromInput(
   // resolveFinalModelPin 落键；此处仅保真解析 + shape 校验）
   const adapterModelPin = normalizeAdapterModelPin(input.adapter_model_pin);
 
+  // plan c4e8a1f7 T2：requirement_source_files 保真解析（字符串数组；空数组/非数组
+  // fail-closed——来源列表是 fresh 解析器产物，手写 manifest 混入形状错误不得静默吞）。
+  let requirementSourceFiles: string[] | undefined;
+  if (Object.prototype.hasOwnProperty.call(input, 'requirement_source_files')) {
+    const raw = input.requirement_source_files;
+    if (!Array.isArray(raw) || raw.some((x) => typeof x !== 'string' || !x.trim())) {
+      throw new Error('[goal-manifest] requirement_source_files 必须为非空字符串数组');
+    }
+    requirementSourceFiles = raw.map((x) => String(x).trim().replace(/\\/g, '/'));
+  }
+
   return {
     ...(rawFidelity ? { fidelity: rawFidelity as GoalManifest['fidelity'] } : {}),
     ...(rawFidelityReceipt ? { fidelity_receipt: rawFidelityReceipt } : {}),
     ...(adapterModelPin ? { adapter_model_pin: adapterModelPin } : {}),
+    ...(requirementSourceFiles ? { requirement_source_files: requirementSourceFiles } : {}),
     schema_version: '1.0',
     start_phase: normalizePhase(input.start_phase, 'spec'),
     end_phase: normalizePhase(input.end_phase, 'testing'),
@@ -626,6 +666,12 @@ export function inheritSuccessorManifest(
   // 的 adapter 若与最终 effective adapter 不一致，resolveFinalModelPin 会 BLOCKER。
   const sourceRound = source.inherited_round_fingerprints ?? [];
   const sourceDrift = source.inherited_drift_fingerprints ?? [];
+  // plan c4e8a1f7 T2：successor 继承源 requirement 来源列表，并在显式 file 增量时
+  // 去重追加（manifest.requirement_source_files 由 CLI 显式 --requirement-file 解析产生）。
+  const sourceFiles =
+    source.requirement_source_files ?? [];
+  const explicitFiles = manifest.requirement_source_files ?? [];
+  const mergedSourceFiles = [...new Set([...sourceFiles, ...explicitFiles])];
   return {
     ...inherited,
     start_phase: manifest.start_phase,
@@ -633,6 +679,7 @@ export function inheritSuccessorManifest(
     report_dir: manifest.report_dir,
     created_at: manifest.created_at,
     successor_of: source.run_id,
+    ...(mergedSourceFiles.length > 0 ? { requirement_source_files: mergedSourceFiles } : {}),
     inherited_round_fingerprints: unique([...sourceRound, ...fingerprints.round]),
     inherited_drift_fingerprints: unique([...sourceDrift, ...fingerprints.drift]),
   };

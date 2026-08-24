@@ -326,7 +326,9 @@ export function checkUiSpecFidelityGate(ctx: CheckContext, specMarkdown: string)
           ...signFailures.map(f => `  - ${f}`),
         ].join('\n'),
         suggestion:
-          '出路：①当前视觉调用补齐 canary 与逐参考图读取；②真人逐屏 [x] 确认改 verified: human_confirmed。',
+          '出路：①当前视觉调用补齐 canary 与逐参考图读取；②真人逐屏 [x] 确认改 verified: human_confirmed；' +
+          '③若 adapter 无逐图 Read 审计能力（tool_event_provenance != structured_events），vl_multimodal 终签' +
+          '结构性不可达——诚实改 verified: unverified（软档 WARN 可继续，hard contract 仍 FAIL，不伪造签名）。',
         affected_files: [uiSpecRel],
       }];
     }
@@ -410,7 +412,12 @@ export function checkUiSpecFidelityGate(ctx: CheckContext, specMarkdown: string)
       ? 'ui-spec verified=unverified 且宿主真视觉实测在位（canary tool_read）+ fidelity_target=pixel_1to1：' +
         '有视觉能力却不核对 ui-spec 与原图，无软档豁免——未验真的 spec 流入下游是几何盲区根因之一（t6⑥）。'
       : 'ui-spec verified=unverified：未经人工 [x] gate 或多模态核对，不得作为保真基线进 plan（可降级继续但须显式标注）。',
-    suggestion: '逐屏人工确认 ui-spec 与原图一致，设 verified: human_confirmed；或用 VL 多模态 gate。',
+    suggestion:
+      '处理：①逐屏人工确认 ui-spec 与原图一致，设 verified: human_confirmed；' +
+      '②adapter 有逐图 Read 审计能力（tool_event_provenance=structured_events）且本 invocation ' +
+      '真视觉在位时，逐张读图并签 refs receipt 后设 verified: verified + verified_method: vl_multimodal；' +
+      '③adapter 无逐图 Read 审计能力（none-provenance）或本 invocation 判盲时，vl_multimodal 结构性不可达，' +
+      '诚实保留 verified: unverified（soft 档 WARN 可继续、hard contract 仍 FAIL，不伪造签名）。',
     affected_files: [uiSpecRel],
   }];
 }
