@@ -14,7 +14,8 @@
 
 import * as crypto from 'crypto';
 import Jimp from 'jimp';
-import { extractClaudeFinalResultText } from './claude-envelope';
+import { extractClaudeFinalResultText, planUsesClaudeStreamJson } from './claude-envelope';
+import { extractCodexAgentMessageText } from './codex-terminal-events';
 
 export type CanaryVerdict = 'tool_read' | 'ocr_capable' | 'none';
 
@@ -303,11 +304,34 @@ export interface CanaryInvocationFacts {
   silent_killed?: boolean;
   skipped?: boolean;
   /**
-   * P0-1（plan 7c4f2e9b / visual-capability-truth 3.10）：stdout 为 claude stream-json
-   * NDJSON 信封流（planUsesClaudeStreamJson 判定）。true 时判卷前先取终态 result 文本
-   * 投影——行锚 ^KEY=value$ 在信封上恒空，直接扫原始 stdout 会把真视觉宿主判成永久盲档。
+   * P0-1（plan 7c4f2e9b / visual-capability-truth 3.10）：stdout 是**结构化信封流**而非
+   * 纯文本。true 时判卷前先做信封投影——行锚 ^KEY=value$ 在信封上恒空，直接扫原始 stdout
+   * 会把真视觉宿主判成永久盲档。
    */
   structured_stdout?: boolean;
+  /**
+   * plan e6b3f8d2 t1：信封**方言**。缺省 `claude_stream_json`（既有语义不变）；
+   * codex 自 `exec --json` 接入后 stdout 亦为 JSONL（`codex_turn_jsonl`），
+   * 投影规则见 codex-terminal-events.extractCodexAgentMessageText。
+   */
+  structured_stdout_format?: CanaryStdoutEnvelope;
+}
+
+/** 判卷前需要投影的 stdout 信封方言（plan e6b3f8d2 t1）。 */
+export type CanaryStdoutEnvelope = 'claude_stream_json' | 'codex_turn_jsonl';
+
+/**
+ * adapter → 判卷 stdout 信封方言（'none' = 纯文本，直接扫）。
+ * 与各自的 argv 注入条件**严格同构**：
+ *   · claude 家族：`--output-format stream-json` 仅在 tool_event_provenance=structured_events 时注入；
+ *   · codex：`--json` 由 codexArgv **无条件**追加（plan e6b3f8d2 t1），故恒为 JSONL。
+ */
+export function resolveCanaryStdoutEnvelope(
+  adapterName: string,
+  toolEventProvenance?: string,
+): 'none' | CanaryStdoutEnvelope {
+  if (adapterName === 'codex') return 'codex_turn_jsonl';
+  return planUsesClaudeStreamJson(adapterName, toolEventProvenance as never) ? 'claude_stream_json' : 'none';
 }
 
 export type CanaryCacheDecision =
@@ -345,14 +369,18 @@ export interface CanaryAnswerParseResult {
 }
 
 export function parseCanaryAnswer(
-  invocation: Pick<CanaryInvocationFacts, 'stdout' | 'structured_stdout'>,
+  invocation: Pick<CanaryInvocationFacts, 'stdout' | 'structured_stdout' | 'structured_stdout_format'>,
   answerKey: CanaryAnswerKey,
 ): CanaryAnswerParseResult {
-  // P0-1 归一（plan 7c4f2e9b）：structured stdout 先投影终态 result 文本。
+  // P0-1 归一（plan 7c4f2e9b）：structured stdout 先投影为可判卷文本。
+  // plan e6b3f8d2 t1：按信封方言分派（缺省仍是 claude stream-json，既有行为不变）。
   let raw = invocation.stdout;
   let structuredProjectedNull = false;
   if (invocation.structured_stdout) {
-    const projected = extractClaudeFinalResultText(invocation.stdout);
+    const projected =
+      invocation.structured_stdout_format === 'codex_turn_jsonl'
+        ? extractCodexAgentMessageText(invocation.stdout)
+        : extractClaudeFinalResultText(invocation.stdout);
     if (projected === null) {
       structuredProjectedNull = true;
       raw = '';
@@ -510,6 +538,8 @@ export function resolveInvokeHardCliFailure(
   opts?: {
     answerKey?: CanaryAnswerKey;
     structuredStdout?: boolean;
+    /** plan e6b3f8d2 t1：信封方言（缺省 claude stream-json）。 */
+    structuredStdoutFormat?: CanaryStdoutEnvelope;
     /**
      * plan c4e8a1f7 T1a（评审 P1 修复）：正式 phase invoke 无"答卷"概念——
      * stdout 非空（banner/进度行）**不得**充当"有效答卷"压掉明确的参数错误签名；
@@ -548,7 +578,11 @@ export function resolveInvokeHardCliFailure(
     ? false
     : opts?.answerKey
       ? parseCanaryAnswer(
-          { stdout: facts.stdout, ...(opts.structuredStdout ? { structured_stdout: true } : {}) },
+          {
+            stdout: facts.stdout,
+            ...(opts.structuredStdout ? { structured_stdout: true } : {}),
+            ...(opts.structuredStdoutFormat ? { structured_stdout_format: opts.structuredStdoutFormat } : {}),
+          },
           opts.answerKey,
         ).canonicalAnswer !== null
       : Boolean(facts.stdout && facts.stdout.trim()); // 无 answerKey 时保守沿用旧语义
@@ -572,7 +606,11 @@ export function resolveInvokeHardCliFailure(
  */
 export function resolveCanaryHardCliFailure(
   facts: CanaryHardCliFailureFacts,
-  opts?: { answerKey?: CanaryAnswerKey; structuredStdout?: boolean },
+  opts?: {
+    answerKey?: CanaryAnswerKey;
+    structuredStdout?: boolean;
+    structuredStdoutFormat?: CanaryStdoutEnvelope;
+  },
 ): string | null {
   return resolveInvokeHardCliFailure(facts, opts);
 }

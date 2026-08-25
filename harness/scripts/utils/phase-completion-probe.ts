@@ -14,6 +14,27 @@
 //
 // 判据边界（诚实）：这里判的是"完成证据是否已确定性落盘"，**不判**质量。质量由
 // gate harness 判——observer 命中后照常走既有 gate 流程，结论仍可能是 FAIL。
+//
+// ----------------------------------------------------------------------------
+// 职责归位（plan e6b3f8d2 t1，文档归位——**判据行为一字未改**）
+// ----------------------------------------------------------------------------
+// 本探针是**「PASS 形态闭环证据」加速器**，不是通用 FAIL 收口器：四条件里的
+// `receipt_status=passed` 与 `closure_status=closed` 在**真实 FAIL 时依设计恒不成立**
+//（runner 每次 invoke 前 force 重写未完成骨架；prompt 明令 FAIL 不得声称完成；宿主
+// 20260825T011950Z-eddfb2 终局回执即骨架）。所以：
+//   · 一个 turn「跑完但结论是 FAIL」时，探针**本就不会命中**，这不是缺陷；
+//   · **绝不能**为了给 FAIL 收口而放宽这四条件——放宽=死修复（半成品被判完成）
+//     + 轮内自修复误杀（agent 正在补救就被 tree-kill），两头都更糟。
+// FAIL 侧的收口责任明确划归 adapter **terminal 契约**：
+//   · 有 terminal 契约的 adapter（现仅 codex，`exec --json` 的 turn.completed/turn.failed）
+//     由 agent-invoke 的 terminal 解析器承接（codex-terminal-events.ts）；
+//   · 无 terminal 契约的 adapter 依赖自然退出 + hard timeout 兜底——**不用无效回执
+//     冒充信号**（造假信号比空等更贵）。
+//
+// 另：本模块回答的是**两个分立的问题**，不得混为一谈——
+//   ① `isCompletionEvidenceComplete`（证据是否齐全，四条件）；
+//   ② `isEvidenceFromCurrentInvocation`（这份齐全证据是否属于**本次 invocation**）。
+// ①成立而②不成立正是立项事故形态（上一轮回执被原样复写 → 跃迁成立 → 提前 tree-kill）。
 // ============================================================================
 
 import * as fs from 'fs';

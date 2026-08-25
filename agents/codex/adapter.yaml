@@ -28,6 +28,17 @@ image_input: none
 
 goal_capability:
   mode: native_goal
+  # plan e6b3f8d2 t1：`codex exec --json` 打印 JSONL 事件流（0.149.0 本机实证）。
+  # · output_delivery=streaming —— stdout 逐事件即时到达（非整段缓冲），活性判据可据此
+  #   把「工作面停滞」与「控制面心跳」分开（goal-progress SUSPECTED_STALL，t4）。
+  # · usage_capture=stdout_json —— 末行 `turn.completed` 自带 usage（input_tokens/
+  #   output_tokens…），既有 fromStdoutJson 解析器直接可读，不新增枚举。
+  # · **tool_event_provenance 刻意保持缺省 none**：该字段是「工具调用证据可审计」能力
+  #   （图片读取事件入册制，docs/operations/adapter-tool-event-provenance.md），
+  #   stdout 有 terminal JSONL ≠ 工具调用可审计。`--json` 由 agent-invoke 的 codexArgv
+  #   独立追加，不借工具证据字段触发，也不签发 verified critic 回执。
+  output_delivery: streaming
+  usage_capture: stdout_json
   in_session_reconcile: true
   phase_context_isolation: true
   supports_resume: true
@@ -40,6 +51,8 @@ goal_capability:
     # (codex exec …, prompt via STDIN — NOT the {{PROMPT}} argv below).
     # plan a8e5c3f9：headless 全权限契约——恒 approval never + danger-full-access，
     # 不再随 manifest write_mode 摇摆声明 workspace-write。
+    # plan e6b3f8d2 t1：运行时 argv 另含 `--json`（terminal 事件收口，见 codexArgv）——
+    # 本模板只用于能力校验，不是运行时真值。
     headless_invoke: 'codex --ask-for-approval never exec --sandbox danger-full-access "{{PROMPT}}"'
     unattended:
       write_mode: full-access

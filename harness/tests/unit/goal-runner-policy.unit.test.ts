@@ -203,7 +203,8 @@ const cases: Array<{ name: string; run: () => void }> = [
         // deepStrictEqual 整个数组：argv[0] 为 binary（'codex' 或解析到的路径），其后固定旗标顺序
         assertDeepStrictEqual(
           plan.argv,
-          [plan.argv[0], '--ask-for-approval', 'never', 'exec', '--sandbox', 'danger-full-access'],
+          // plan e6b3f8d2 t1：尾部固定追加 `--json`（terminal 收口）。
+          [plan.argv[0], '--ask-for-approval', 'never', 'exec', '--sandbox', 'danger-full-access', '--json'],
           `旧输入 ${u.write_mode}/${u.approval_mode} 也须恒定 argv：${plan.argv.join(' ')}`,
         );
         // argv[0] 必须是 codex（或解析到的 codex 二进制）

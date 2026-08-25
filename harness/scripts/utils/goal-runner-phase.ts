@@ -228,7 +228,18 @@ export interface GoalRunEvent {
    * workspace-write）不再反映实际执行权限，审计以本字段为准。 */
   effective_write_mode?: string;
   effective_approval_mode?: string;
+  /** 历史字段：silent watchdog 生产链已于 plan e6b3f8d2 t1 删除，仅读旧 run 事件用。 */
   silent_killed?: boolean;
+  /**
+   * plan e6b3f8d2 t1（agent_invoke_end）：adapter terminal 失败终态（codex `turn.failed`）。
+   * 与 completion_observed 互斥；exit 0 已在 invoke 边界规范化为非零。
+   */
+  terminal_failure_observed?: boolean;
+  /**
+   * plan e6b3f8d2 t1（agent_invoke_end）：terminal 诊断摘要（turn.failed 正文 + 顶层
+   * error 事件）。**纯诊断**——不进任何 settle / classifier / retry 判据。
+   */
+  terminal_error_excerpt?: string;
   lingering_pipe?: boolean;
   recovered?: boolean;
   /** agent_invoke_end 既有字段（dry-run invoke 写 true；"证据齐全即跳过"机制已删）。 */

@@ -23,7 +23,6 @@ import {
   releaseLock,
   tryAcquireLock,
 } from '../../scripts/utils/goal-run-lock';
-import { DEFAULT_SILENT_WATCHDOG_MS } from '../../scripts/utils/agent-invoke';
 import {
   applyManifestCliOverrides,
   validateManifestCliOverrides,
@@ -482,9 +481,19 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
-    name: 'DEFAULT_SILENT_WATCHDOG_MS: disabled by default',
+    // plan e6b3f8d2 t1：silent watchdog 生产链已删除（从未启用的第二判死权威）——
+    // 回归改为**源码锚定**：写侧不得再出现常量/选项/定时器/kill reason 任何一处。
+    name: 'silent watchdog 生产链已删除（写侧零残留；读侧字段保留供历史事件兼容）',
     run: () => {
-      assert(DEFAULT_SILENT_WATCHDOG_MS === 0, String(DEFAULT_SILENT_WATCHDOG_MS));
+      const src = fs.readFileSync(
+        path.resolve(__dirname, '../../scripts/utils/agent-invoke.ts'),
+        'utf-8',
+      );
+      assert(!/DEFAULT_SILENT_WATCHDOG_MS/.test(src), 'watchdog 常量仍在');
+      assert(!/silentWatchdogMs/.test(src), 'silentWatchdogMs 选项仍在');
+      assert(!/silentKilled/.test(src), 'silentKilled 写侧变量仍在');
+      assert(!/killTree\('silent'\)/.test(src), "killTree('silent') 仍在");
+      assert(/silent_killed\?: boolean;/.test(src), '读侧兼容字段不得一并删除');
     },
   },
   {

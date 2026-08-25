@@ -181,7 +181,7 @@ import {
   resolveHeadlessInvokePlan,
   type InvokeTemplateVars,
 } from './utils/agent-invoke';
-import { parseClaudeInitModel, planUsesClaudeStreamJson, resolvePinVerifyMismatch } from './utils/claude-envelope';
+import { parseClaudeInitModel, resolvePinVerifyMismatch } from './utils/claude-envelope';
 import {
   recordCodingBase,
   resolveGitHeadSha,
@@ -207,6 +207,7 @@ import {
   generateRandomCanaryAnswerKey,
   renderCanaryImage,
   resolveCanaryCacheDecision,
+  resolveCanaryStdoutEnvelope,
   resolveInvokeHardCliFailure,
   type CanaryAnswerKey,
 } from './utils/vision-canary';
@@ -6364,6 +6365,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
           duration_ms: invoke.duration_ms,
           timed_out: invoke.timed_out,
           silent_killed: invoke.silent_killed,
+          // plan e6b3f8d2 t1：adapter terminal 契约事实。
+          // · terminal_failure_observed —— codex `turn.failed`（失败终态，与
+          //   completion_observed 互斥；exit 0 已在 invoke 边界规范化为非零）。
+          // · terminal_error_excerpt —— `turn.failed` 正文 + 顶层 `error` 事件的**纯诊断**
+          //   摘要。error 不是契约终态（error→重试成功→turn.completed 合法），因此它
+          //   **不进** api_disconnected / failure classifier / retry 任何判据，只在此留痕。
+          terminal_failure_observed: invoke.terminal_failure_observed,
+          terminal_error_excerpt: invoke.terminal_error_excerpt,
           lingering_pipe: invoke.lingering_pipe,
           // plan d7f3a9c4 t4：spawn race 结构化事实进事件（诊断保真；不改变任何裁决）。
           ...(invoke.spawn_error ? { spawn_error: invoke.spawn_error } : {}),
@@ -6676,12 +6685,16 @@ Goal runner — tool-agnostic multi-phase orchestrator
         //    宿主 run 20260823T161102Z-68480b 三轮拒签实锤）。
         if (!dryRun && phase === 'spec' && inlineCanaryKey) {
           try {
-            const structuredStdout = planUsesClaudeStreamJson(
+            // plan e6b3f8d2 t1：信封方言分派。claude 家族走三文件分流的 agent-events.jsonl；
+            // codex 的 JSONL 就在本次 invoke 的 stdout 上（tool_event_provenance 仍是 none，
+            // 不产 agent-events.jsonl——**terminal 事件流 ≠ 工具证据流**，不得混用）。
+            const canaryEnvelope = resolveCanaryStdoutEnvelope(
               manifest.adapter ?? 'generic',
               cap.capability?.tool_event_provenance,
             );
+            const structuredStdout = canaryEnvelope !== 'none';
             let decisionStdout = '';
-            if (structuredStdout) {
+            if (canaryEnvelope === 'claude_stream_json') {
               const eventsAbs = agentEventsLogPath(outputLogPath);
               const eventsRaw = fs.existsSync(eventsAbs) ? fs.readFileSync(eventsAbs, 'utf-8') : '';
               decisionStdout = eventsRaw;
@@ -6701,6 +6714,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 silent_killed: invoke.silent_killed,
                 skipped: invoke.skipped,
                 structured_stdout: structuredStdout,
+                ...(structuredStdout ? { structured_stdout_format: canaryEnvelope } : {}),
               }, inlineCanaryKey);
               if (decision.kind === 'valid' && decision.classify.verdict === 'tool_read') {
                 writeCapabilityReceipt(projectRoot, manifest.feature, {

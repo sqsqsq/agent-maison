@@ -89,8 +89,9 @@ const cases: Array<{ name: string; run: () => void }> = [
     name: 't1 codex 带 pin：exec --model <v> --sandbox danger-full-access（审批旗标前置）',
     run: () => {
       // plan a8e5c3f9 t2：headless 恒 danger-full-access（不再随 manifest write_mode 摇摆）。
+      // plan e6b3f8d2 t1：尾部固定追加 `--json`（terminal 收口），不改既有旗标顺序。
       assert.deepStrictEqual(planArgv('codex', 'gpt-4o'), [
-        '--ask-for-approval', 'never', 'exec', '--model', 'gpt-4o', '--sandbox', 'danger-full-access',
+        '--ask-for-approval', 'never', 'exec', '--model', 'gpt-4o', '--sandbox', 'danger-full-access', '--json',
       ]);
     },
   },
@@ -136,7 +137,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     name: 't1 无 pin：五家 argv 无 model 旗标且结构与基线一致',
     run: () => {
       assert.deepStrictEqual(planArgv('codex'), [
-        '--ask-for-approval', 'never', 'exec', '--sandbox', 'danger-full-access',
+        '--ask-for-approval', 'never', 'exec', '--sandbox', 'danger-full-access', '--json',
       ]);
       const claude = planArgv('claude');
       assert(!claude.includes('--model'), claude.join(' '));
