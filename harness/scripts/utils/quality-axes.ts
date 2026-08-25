@@ -97,10 +97,8 @@ const VISUAL_PREFIXES = [
   'visible_text',
   'quiescence',
   // S7（visual-capability-truth）：结构保真拆轴——运行时挂载轴（testing 侧）与静态轴分立聚合
-  // cursor 深度 review：实际 check id 为 ui_kit_source_conformance / ui_kit_runtime_conformance，
-  // 'ui_kit_conformance' 前缀两者都匹配不到（漂移归 functional 轴）——放宽到族前缀。
+  // plan e6b3f8d2 t3：`ui_kit_` 族前缀随强制 Maison UI kit 撤销一并删除（已无该族 check id）。
   'runtime_mount_conformance',
-  'ui_kit_',
   'ui_spec_',
 ];
 const EVIDENCE_PREFIXES = [

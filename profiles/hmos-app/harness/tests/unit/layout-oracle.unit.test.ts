@@ -565,15 +565,16 @@ cases.push({
         uiNode({ type: 'content_display', order: 1, id: 'plain_deco' }),
         // bbox 几何断言目标 → 收
         uiNode({ type: 'content_display', order: 2, id: 'bbox_t', bbox: [0.05, 0.1, 0.9, 0.1] }),
-        // kit block 实例 → 收
-        uiNode({ type: 'content_display', order: 3, id: 'kit_inst', block: 'nav_bar' }),
+        // plan e6b3f8d2 t3：原为 `block: 'nav_bar'` 声明（已随 kit 删除）。该节点现在只能
+        // 靠既有四条规则入分母——此处给 bbox 断言目标，验证删除分支后不误伤既有判据。
+        uiNode({ type: 'content_display', order: 3, id: 'structural_inst', bbox: [0.1, 0.2, 0.3, 0.1] }),
         // 交互类型（nav 缺失时的回退）→ 收；显式启用回退（模拟 nav 不存在场景）
         uiNode({ type: 'primary_button', order: 4, id: 'act_btn' }),
       ] }),
     });
     const els = collectDeclaredElements(screen, { interactiveFallbackEnabled: true });
     const ids = new Set(els.map(e => e.elementId));
-    for (const expected of ['bbox_t', 'kit_inst', 'act_btn', 'mh_a', 'fo_b', 'fo_c', 'prot_d']) {
+    for (const expected of ['bbox_t', 'structural_inst', 'act_btn', 'mh_a', 'fo_b', 'fo_c', 'prot_d']) {
       assert(ids.has(expected), `locator-required 应含 ${expected}，实得 ${JSON.stringify(els.map(e => e.elementId))}`);
     }
     assert(!ids.has('plain_deco'), '纯展示节点不得进 locator-required 分母');

@@ -193,6 +193,14 @@ function runCaptureWithDump(
     noLayoutDumpFn?: boolean;
     /** 逐屏 dump（screenId → dump 树）；缺省回落 opts 单一 dump 或 dump == null */
     dumpByScreen?: Record<string, unknown>;
+    /**
+     * plan e6b3f8d2 t3：页面身份判据迁移到 visual-diff-nav screen identity 后，
+     * 「应用页面树在场」的证据 = **任一已声明屏**的正向 id 精确命中。生产上
+     * `screenIdentity` 覆盖 P0 ∪ golden 全部目标屏，故错页场景需显式声明另一屏。
+     */
+    identity?: Map<string, { all_of?: Array<{ id?: string; text?: string; route?: string }>;
+                             any_of?: Array<{ id?: string; text?: string; route?: string }>;
+                             none_of?: Array<{ id?: string; text?: string; route?: string }> }>;
   },
 ): ReturnType<typeof captureVisualDiff> {
   return captureVisualDiff({
@@ -214,7 +222,7 @@ function runCaptureWithDump(
           fs.writeFileSync(args.destAbs, opts?.badJson ? '{not json' : JSON.stringify(tree), 'utf-8');
           return { ok: true };
         },
-    screenIdentity: opts?.dumpByScreen ? IDENTITY_TWO_P0 : IDENTITY_ADD_BANK,
+    screenIdentity: opts?.identity ?? (opts?.dumpByScreen ? IDENTITY_TWO_P0 : IDENTITY_ADD_BANK),
   });
 }
 
@@ -266,9 +274,9 @@ test('t4_matrix_lockscreen_dump_is_not_mismatch', () => {
     // 组件前缀 ⇒ probe_failed（不得断言"是错页"，锁屏/桌面/系统态同此分支）。
     const detail = r.errors.find(e => e.includes('add_bank')) ?? '';
     assert.ok(/screen_identity_mismatch/.test(detail), `记法须遵循 spec：${detail}`);
-    assert.ok(/无页面组件前缀/.test(detail), `须标注无页面组件前缀（probe_failed 依据）：${detail}`);
+    assert.ok(/无任何已声明 identity id/.test(detail), `须标注无已声明 identity id（probe_failed 依据）：${detail}`);
     assert.ok(!/非错页/.test(detail), `不得断言"确非错页"（同样越过证据）：${detail}`);
-    assert.ok(!/无页面组件前缀.*(mismatched|错页)/.test(detail), `无前缀不得并入错页语气：${detail}`);
+    assert.ok(!/无任何已声明 identity id.*(mismatched|错页)/.test(detail), `无所有权证据不得并入错页语气：${detail}`);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -297,7 +305,9 @@ test('t4_matrix_wrong_page_missing_screen_is_actionable', () => {
         ],
       },
     };
-    const r = runCaptureWithDump(root, wrongPage);
+    // plan e6b3f8d2 t3：所有权证据取自**已声明屏**的正向 id——生产上 screenIdentity
+    // 覆盖 P0 ∪ golden 全部目标屏，故此处显式声明 all_banks（设备实际所在页）。
+    const r = runCaptureWithDump(root, wrongPage, { identity: IDENTITY_TWO_P0 });
     assert.ok((r.p0CaptureFailures ?? []).includes('add_bank'), '错页仍记 P0 采集失败（缺可用截图）');
     assert.strictEqual(r.fuseEligibility?.eligible, true, '确定错页缺屏须具备熔断资格');
     assert.deepStrictEqual(r.fuseEligibility?.actionableMissingIds, ['add_bank'], '缺屏 id 进 actionable');
@@ -312,7 +322,7 @@ test('t4_matrix_wrong_page_missing_screen_is_actionable', () => {
 test('t4_matrix_lock_desktop_dump_is_probe_failed_and_preserves_verdict', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-t4-stale-'));
   try {
-    // 宿主实测锁屏/桌面 dump 形态（2026-08-13 校准）：**无页面组件前缀**，即使出现
+    // 宿主实测锁屏/桌面 dump 形态（2026-08-13 校准）：**无任何已声明 identity id**，即使出现
     // 宿主 bundle（桌面应用图标 id）也不是页面组件前缀——一律 probe_failed。
     // 绝不会被误判成 mismatched，也绝不会删除旧裁决（review 曾把环境故障算成内容问题）。
     const lockScreen = {
@@ -343,7 +353,7 @@ test('t4_matrix_lock_desktop_dump_is_probe_failed_and_preserves_verdict', () => 
     assert.strictEqual(
       r.fuseEligibility?.eligible,
       false,
-      '锁屏/桌面（无页面组件前缀）不得被判成内容问题（bundle 图标命中不是页面组件前缀）',
+      '锁屏/桌面（无任何已声明 identity id）不得被判成内容问题（bundle 图标命中不是页面组件前缀）',
     );
     assert.deepStrictEqual(r.fuseEligibility?.actionableMissingIds, []);
     // probe_failed：不删旧裁决——误删会清掉已有的真人签字
@@ -356,12 +366,12 @@ test('t4_matrix_lock_desktop_dump_is_probe_failed_and_preserves_verdict', () => 
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test('t3_non_maison_colon_ids_are_not_page_prefix_probe_failed', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-t3-nonmaison-'));
+test('t3_sibling_id_is_not_ownership_proof_probe_failed', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-t3-sibling-id-'));
   try {
-    // review P1：页面组件前缀只认规范 `maison:`。identity 锚为任意三段式冒号 id
-    //（`foo:bar:*`）时不得推导为页面组件前缀——dump 中即使出现同族 `foo:bar:*` id
-    //（目标锚缺失）也不得判 mismatched / 删旧裁决 / 进熔断，必须 probe_failed。
+    // plan e6b3f8d2 t3：所有权证据是**精确 id 命中已声明正向锚**，**不做任何前缀推导**。
+    // dump 里出现"同族但未被任何屏声明"的 id（`foo:bar:all_banks_frame`）不构成所有权
+    // 证明——不得判 mismatched / 删旧裁决 / 进熔断，必须 probe_failed。
     const identity = new Map([[
       'add_bank',
       { all_of: [{ id: 'foo:bar:add_bank_frame' }] },
@@ -404,7 +414,7 @@ test('t3_non_maison_colon_ids_are_not_page_prefix_probe_failed', () => {
     assert.strictEqual(
       r.fuseEligibility?.eligible,
       false,
-      '非 Maison 冒号 ID 不构成页面组件前缀——不得进熔断（probe_failed）',
+      '未被声明的同族 id 不构成所有权证据——不得进熔断（probe_failed）',
     );
     assert.deepStrictEqual(r.fuseEligibility?.actionableMissingIds, []);
     // probe_failed：不得删除旧裁决 / confirmed_by
@@ -412,11 +422,11 @@ test('t3_non_maison_colon_ids_are_not_page_prefix_probe_failed', () => {
       screens: Array<{ screen_id: string; confirmed_by?: string }>;
     };
     const kept = after.screens.find(s => s.screen_id === 'add_bank');
-    assert.ok(kept, '非 Maison 前缀不得删除旧条目');
+    assert.ok(kept, 'probe_failed 不得删除旧条目');
     assert.strictEqual(kept?.confirmed_by, 'human@example.com', '真人裁决保留');
     assert.ok(
-      r.errors.some(e => e.includes('add_bank') && /无页面组件前缀/.test(e)),
-      `诊断须标注无页面组件前缀：${r.errors.join('|')}`,
+      r.errors.some(e => e.includes('add_bank') && /无任何已声明 identity id/.test(e)),
+      `诊断须标注无已声明 identity id：${r.errors.join('|')}`,
     );
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
@@ -557,7 +567,11 @@ test('t3_overlay_mismatch_invalidates_same_rule_as_main_screen', () => {
       tokens: {}, assets: [],
     } as unknown as UiSpecDoc;
     const overlayId = 'add_bank__overlay__my_sheet';
-    const identity = new Map([[overlayId, { all_of: [{ id: 'maison:demo:overlay:my_sheet_frame' }] }]]);
+    // overlay 目标屏 + 主屏（设备实际所在页）双声明——所有权证据须来自已声明屏正向 id。
+    const identity = new Map([
+      [overlayId, { all_of: [{ id: 'maison:demo:overlay:my_sheet_frame' }] }],
+      ['add_bank', { all_of: [{ id: 'maison:demo:add_bank:add_bank_frame' }] }],
+    ]);
     const shotsDir = path.join(root, 'doc', 'features', 'demo', 'device-testing', 'device-screenshots');
     fs.mkdirSync(shotsDir, { recursive: true });
     fs.writeFileSync(path.join(shotsDir, 'visual-diff.json'), JSON.stringify({
@@ -852,6 +866,98 @@ test('t2b_runtime_mount_uses_shared_resolver_legacy_fallback_and_conflict', () =
     assert.strictEqual(hit.status, 'SKIP', `并存冲突应 SKIP 且不读取：${hit.details}`);
     assert.ok(/命名冲突/.test(hit.details), `SKIP 文案应点名命名冲突：${hit.details}`);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+
+// ============================================================================
+// plan e6b3f8d2 t3③：页面身份三态回归（判据迁移到 visual-diff-nav screen identity）
+// ----------------------------------------------------------------------------
+// 冻结语义（不得漂移）：
+//   · 目标屏正向 id 命中               → matched
+//   · 目标未命中、其他**已声明屏**正向 id 命中 → mismatched（确定性错页）
+//   · 仅 text/route 声明，或系统树无任何已声明 id → probe_failed（证据不足）
+//   · none_of 恒不作所有权证明（仓内已证伪）
+// ============================================================================
+test('t3_page_identity_three_states_frozen', () => {
+  const mkDump = (ids: string[], texts: string[] = []): unknown => ({
+    schema_version: 'hylyre-hypium-ui-dump-v1',
+    tree: {
+      attributes: { bounds: '[0,0][1260,2720]' },
+      children: [
+        ...ids.map(id => ({ attributes: { id, bounds: '[0,0][1260,2720]' } })),
+        ...texts.map(text => ({ attributes: { text, bounds: '[0,0][1260,100]' } })),
+      ],
+    },
+  });
+
+  // ① 目标屏正向 id 命中 → matched（正式截图落盘、无 identity 错误）
+  {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-id3-matched-'));
+    try {
+      const r = runCaptureWithDump(root, mkDump(['maison:demo:add_bank:add_bank_frame']));
+      assert.deepStrictEqual(r.p0CaptureFailures ?? [], [], `目标锚命中须采集成功：${r.errors.join('|')}`);
+      assert.ok(!r.errors.some(e => /screen_identity_mismatch/.test(e)), 'matched 不得记 mismatch');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  }
+
+  // ② 其他已声明屏正向 id 命中 → mismatched（确定性错页：有熔断资格、旧裁决失效）
+  {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-id3-mismatched-'));
+    try {
+      const r = runCaptureWithDump(root, mkDump(['maison:demo:all_banks:all_banks_frame']), {
+        identity: IDENTITY_TWO_P0,
+      });
+      assert.strictEqual(r.fuseEligibility?.eligible, true, '确定性错页须有熔断资格（不得降级成 probe_failed）');
+      assert.deepStrictEqual(r.fuseEligibility?.actionableMissingIds, ['add_bank']);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  }
+
+  // ③-a 系统树无任何已声明 id → probe_failed
+  {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-id3-probe-'));
+    try {
+      const r = runCaptureWithDump(root, mkDump(['AppIconCommonView_com.example.wallet'], ['上滑解锁']), {
+        identity: IDENTITY_TWO_P0,
+      });
+      assert.strictEqual(r.fuseEligibility?.eligible, false, '无所有权证据须 probe_failed（不得当内容正证据）');
+      assert.deepStrictEqual(r.fuseEligibility?.actionableMissingIds, []);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  }
+
+  // ③-b 只声明 text/route（推导不出任何 id）→ 即使树里有别的 id 也只能 probe_failed
+  {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-id3-textonly-'));
+    try {
+      const textOnly = new Map([[
+        'add_bank',
+        { all_of: [{ text: '添加银行卡' }, { text: '招商银行' }] },
+      ]]);
+      const r = runCaptureWithDump(root, mkDump(['maison:demo:all_banks:all_banks_frame']), {
+        identity: textOnly,
+      });
+      assert.strictEqual(r.fuseEligibility?.eligible, false, '纯文本锚工程无 id 所有权证据 → probe_failed');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  }
+
+  // ④ none_of 的 **id** 命中同样不构成所有权证明（与 text 版 none_of 同一裁决）
+  {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-id3-noneof-'));
+    try {
+      const withNoneOfId = new Map([[
+        'add_bank',
+        {
+          all_of: [{ id: 'maison:demo:add_bank:add_bank_frame' }],
+          none_of: [{ id: 'lockscreen:slide_up_hint' }],
+        },
+      ]]);
+      const r = runCaptureWithDump(root, mkDump(['lockscreen:slide_up_hint']), { identity: withNoneOfId });
+      assert.strictEqual(
+        r.fuseEligibility?.eligible,
+        false,
+        'none_of 命中（哪怕是 id）只证明"不是目标页"，不证明"是本应用页面"——不得判 mismatched',
+      );
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  }
 });
 
 export function runAll(): UnitCaseResult[] {

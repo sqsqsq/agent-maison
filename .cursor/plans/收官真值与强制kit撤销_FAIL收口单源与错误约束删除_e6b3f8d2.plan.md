@@ -7,7 +7,7 @@ todos:
     status: completed
   - id: t3-revoke-mandatory-ui-kit
     content: "P0 · 撤销强制 Maison UI kit——删除错误约束，复用既有宿主组件契约链。本次宿主死锁重新归因：不是 plan 少了一道 kit 门禁，而是 framework 把具体 Maison 组件错误升级成了强制产品契约（并经 `paths.ui_kit_target_dir` 四级解析要求宿主指定 vendoring 落点，harness/config.ts:341、ui-kit-scaffolder.ts:50-94）——删除错误约束比在 plan 阶段提前满足错误约束更简单。**①删除源码 vendoring**：`profiles/hmos-app/ui-kit/**`（模板+blocks.json）、`ui-kit-scaffolder.ts`、`ui-kit-conformance-check.ts`、`ui-kit-anchors.ts`、对应单测、`harness/package.json` 的 `ui-kit:scaffold`。**②删除目标目录机制**：`FrameworkPaths.ui_kit_target_dir`、四级 resolver、配置/Skill/文档/报错中的相关说明；不用 contracts 推导新 target——无 scaffold 后不再需要 target 概念。**③删除 Maison 专属契约（含 anchor/selector 链的明确删除语义，非中性化保存）**：`UiSpecComponentNode.block` 与 JSON schema 的 `block` 字段、`BLOCK_SEMANTIC_NODES`、Maison component/file/anchor/hash 契约、`ui_kit_*` check id、blocking class `ui_kit_conformance`、quality-axes 'ui_kit_' 前缀映射（quality-axes.ts:103）；`selector-contract` 不再读 `blocks.json`（:56-58）、不再生成 `maison:` canonical anchor 与 suffix contract，selector 查询回归普通 ui-spec node.id/text；`device-test-evidence` 删除 `maison:` 特殊解析的**全部三处**分支（:280 的 normalizeRuntimeAnchor 节点匹配、:302-306、:500 的第二个 startsWith('maison:')）及对 ui-kit-anchors 的 import（:21），只消费既有 bare ID/text；同步更新 `derive-hylyre-plan-hint` payload 与相关 unit/fixture；**不把 ui-kit-anchors.ts 改名搬成「通用 anchor」文件，不保留第二套锚点机制**；存量带 `maison:` selector 的业务产物在 MIGRATION 说明需重新生成（新宿主 smoke 已规定新 run，正好覆盖）。**页面身份判据迁移（maison: 的第二职责，独立于 kit）**：visual-diff-capture 现由 `maison:<feature>:` 推导应用页面组件前缀（appComponentIdPrefixes，:840-844）并借它区分「应用错页 mismatched」与锁屏/桌面等系统态（:932-938）——删除后页面身份直接复用既有 `visual-diff-nav` screen identity 声明为 SSOT：只收集各屏 `all_of`/`any_of` 的**正向 ID**、按**精确 ID** 判应用页面在场（**不得使用 none_of**——:929-931 已证伪其所有权证明力；不新增前缀/注册表/anchor 文件）；三态语义：目标屏正向 ID 命中 → `matched`；目标未命中但其他已声明屏正向 ID 命中 → `mismatched`；仅 text/route 或系统树无任何已声明 ID → `probe_failed`——不得把视觉错页从确定性 mismatched 降级成普遍 probe_failed。**`scaffold_contract_drift` 完整删除**：共享类型、device-test-evidence（:523）、goal-runner 的 actionable 分类（:2190，其现行为仍会要求产品注入已撤销的 canonical anchor）、回修文案与测试全链清除。引用面按 active tree 零残留门槛收口（见 t7），**不写死文件计数**；已知面含 goal-reconcile-observation、visual-debt、spec-ui-spec-check、visual-diff-check、coding-visual-parity-check、device-test-evidence、asset-integrity 的 kit 兜底文案（:248）、device attribution fixture README、golden visual-debt.json 的 `ui_kit_runtime_conformance`；独立的素材占位入口由 `ui-kit:placeholders` 改名 `asset:placeholders`（asset-placeholder-cli 能力保留、与 kit 解耦）；归档 OpenSpec/历史 plan 不回写。**④保留通用结构语义**：`nav_bar`/`list_row`/`sheet_scaffold` 等继续作为普通 `type` 语义词，不绑定 Maison 实现。**⑤复用既有链路并收紧「产品所有权子集」为硬地板**：ui-spec P0 node → visual-parity.contract_component → contracts.components → contracts.files → 既有源码结构匹配与 runtime visual/layout 检查。现状该链**不是**硬地板（宿主默认 `coding.visual_parity_enforcement=warn`，config-defaults.json:65；warn/reachable 下结构问题只产 MAJOR/WARN，ui-spec-shared.ts:286-292；off 在映射检查前 SKIP，plan-visual-parity-check.ts:52-56；contracts.components 为空反而跳过存在性检查，:161-166；且无 components[].file ∈ contracts.files 校验）——在既有 `visual_parity_coverage` 内收紧三项 ownership/traceability，**不受 enforcement=warn|reachable|off 降级**：UI feature 的 P0 节点必须有 `contract_component`；对应组件必须真实存在于 `contracts.components`（数组为空也判失败）；组件 `file` 必须存在于 `contracts.files`。assets/tokens/结构相似度等视觉质量项继续遵守原 enforcement。**不新增 check id/状态/classifier、不新增通用 kit classifier、不新增 anchor 体系**。盲档视觉地板语义由该既有覆盖链承接（接受精度差异，在 blind-visual-hardening 修订中如实记录）。**⑥OpenSpec 按职责修订在研 change**（blind-visual-hardening 未归档、55/57，blind-ui-kit 是其新增 capability——base specs 从未接纳过它）：撤回 `blind-ui-kit` capability、删除其 spec、tasks 5.x 删除/标记撤回、清理 proposal/design/artifact layout/MIGRATION/replay runbook 中的 kit 内容、P1-G/M4 不再要求 Maison 三段闭环；**不在 e6 的新 change 里叠一份 kit 删除 delta**。门禁贡献契约保留一句纪律：suggestion 不得指令越出该阶段 SKILL 权限的动作，且给出的入口必须可执行。"
-    status: pending
+    status: completed
   - id: t4-liveness-output-stall
     content: "P1 · 活性分离工作面与控制面，观测不干预。现状 activityTypes 含 runner 自写 heartbeat（goal-progress.ts:600-601）恒 ACTIVE，outputSignal='unchanged'（:699-704）只进 signals。修复：存在未闭合 invoke、outputSignal='unchanged'、且**该 run events 的 `adapter_probe.output_delivery`**（缺失即 unknown，历史 run 不被现行 adapter.yaml 重释）为 'streaming' 时，state 降既有枚举 `SUSPECTED_STALL`；查进度补「agent 输出已停滞 X 分钟」，X=now−agentOutputMtime（不得用含 heartbeat 的 seconds_since_activity）。unknown/buffered 不降级。不触发 kill/恢复，不新增枚举或第二 reducer。"
     status: pending
@@ -164,3 +164,65 @@ goal-preflight 与 goal-runner inline canary 两处判卷同源接入；claude �
 
 **验收**：`npm run typecheck` 0 · `npm run test:unit` 3510/3510（基线 3483 → +27） ·
 `npm run test:fixtures` 44/44 · `node scripts/check-plan-version.mjs` PASS。
+
+### t3 · 撤销强制 Maison UI kit（2026-08-25，已完成）
+
+**①源码 vendoring 删除**：`profiles/hmos-app/ui-kit/**`（九模板 + block 清单）、scaffolder、
+三段闭环 check、实例锚点模块、对应单测整体删除；`ui-kit:scaffold` npm 入口删除。
+原单测里**与 kit 无关**的素材占位用例（占位 marker / 三态 plan / no-clobber / 占位 CLI 边界 /
+`$r` 引用模块限定 / 资源名 schema 边界）迁入新套 `asset-placeholder.unit.test.ts`（11 例）。
+
+**②目标目录机制删除**：`FrameworkPaths` 的 kit 目标目录字段与四级 resolver 一并消失。
+
+**③专属契约删除（明确删除语义，非中性化）**：ui-spec `node.block` 字段（TS 类型 + JSON
+schema + 校验分支 + 三方漂移键集）、block↔组件映射、`ui_kit_*` check id 与
+`ui_kit_conformance` blocking class、quality-axes `ui_kit_` 族前缀、visual-debt 标签、
+selector-contract 不再读 block 清单也不再产 canonical anchor / suffix 契约（查询回归
+`screen_id`/`node_id`/`text`/`cardinality`），device-test-evidence 三处 `maison:` 分支与
+锚点 import 全删，锚点漂移缺陷分类整链清除（共享类型 / evidence / goal-runner actionable
+分类与回修文案 / profile addendum）。
+
+**页面身份迁移**：`appComponentIdPrefixes`（`maison:<feature>:` 前缀推导）→
+`declaredScreenIdentityIds`：取**全部已声明屏**的 `all_of`/`any_of` **正向 id**，按**精确 id**
+判在场；`none_of` 明确不作所有权证明。三态语义冻结并加回归
+（`t3_page_identity_three_states_frozen`：matched / mismatched / probe_failed ×2 / none_of 反例）。
+**精度边界（如实记录）**：设备停在**未被任何屏声明**的应用页时，按契约只能判 probe_failed
+（旧前缀机制会判 mismatched）。生产上 `screenIdentity` 覆盖 P0 ∪ golden 全部目标屏，
+故常见错页仍是确定性 mismatched；MIGRATION 已建议每个目标屏至少配一个 id 锚点。
+
+**④通用结构语义保留**：`nav_bar`/`list_row`/`sheet_scaffold` 等词继续作为 ui-spec canonical
+`type`（枚举更名 `STRUCTURAL_SEMANTIC_TYPE_ENUM`），不绑定实现。
+**判断留痕**：layout-oracle 的 locator 分母原有一条「`node.block` → locator-required」分支，
+**选择直接删除而非平移到通用 type**——平移会把 S6 特意收窄过的分母重新放宽（结构语义
+类型恒入分母、nav 在场时也拿交互类型凑分母），那是用新约束替换旧约束；本轮只删错误约束。
+这些节点照常经 identity / nav 触达 / bbox / 交互回退四条既有规则参与判定。
+
+**⑤所有权硬地板**（复用 `visual_parity_coverage`，未新增 check id/状态/classifier）：
+P0 节点须有 `contract_component`、组件须真实存在于 `contracts.components`（**空数组也判失败**）、
+组件 `file` 须在 `contracts.files`——三项**不受 `visual_parity_enforcement=warn|reachable|off`
+降级**；visual-parity.yaml 缺失/不可解析且有 P0 节点时同为硬地板缺口。视觉质量项照旧遵守
+档位（`off` 且所有权通过 → 视觉项 SKIP，详情如实写明所有权已校验）。六态回归已加。
+
+**⑥OpenSpec A 线**：撤回 `blind-ui-kit` capability（删 spec 目录）、proposal 的 d3 改写为
+「已撤回 + 撤回理由 + 诚实精度边界」、Capabilities/Affected specs/Breaking 同步、design 的
+锚点小节与 kit 回滚项标注作废、tasks 第 5 节整段改写为撤回记录（5.R/5.R2/5.R3）、
+P1-G 的 M4 判据换成产品组件所有权链 + `runtime_mount_conformance`。
+**未在 e6 新 change 里叠 kit 删除 delta**。
+
+**夹具迁移（保持仓内字节原样）**：`device-attribution` 历史真机产物不改字节；消费方单测在
+**物化进临时目录时**过一层契约迁移器 `migrateKitAnchors`（`maison:<f>:<s>:<node>` → 裸末段；
+唯一非机械映射 `sheet_scaffold-next` → `sms_next_btn`，依据是该夹具自带 ui-spec 声明的
+`sms_verify.action_button`）。归因语义（跨帧 `product_state` / 零命中 `product_actionable` /
+无 spec 依据 `test_contract`）因此继续用真实数据回归；原「纯锚点漂移」用例随分类删除。
+golden `visual-debt.json` 移除已失效的 `ui_kit_runtime_conformance` 条目（该套的断言不依赖它）。
+
+**删除验收**：新增 `ui-kit-revocation.unit.test.ts`——被删文件/目录不存在 + token 级清单
+（含九个 Maison 组件名）在 active tree 零命中 + `blocks.json` 只查原 kit 精确路径 +
+**合法命名空间反向断言**（`MaisonDeviceUnlock`/`agentmaison://`/`maison:placeholder` 不得被误删）。
+扫描排除 `openspec/changes/archive/**`、`.cursor/plans/**`、`dist/**`（已构建发布件，下次
+`release:pack` 重生成）、运行期产物目录。**两处显式豁免并各配反向断言**：
+①迁移公告文档（MIGRATION / 在研 change 三件）必须写出被删机制原名才说得清迁移；
+②`device-test-backtrack` 用已撤销分类字面量构造「历史 evidence 不再驱动回修」的读侧夹具。
+
+**验收**：`npm run typecheck` 0 · `npm run test:unit` 3503/3503 · `npm run test:fixtures` 44/44 ·
+`npm run openspec:validate` 41/41 · `node scripts/check-plan-version.mjs` PASS。

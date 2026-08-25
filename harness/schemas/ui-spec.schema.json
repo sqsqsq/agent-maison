@@ -110,22 +110,7 @@
             "sms_code_field",
             "detail_section"
           ],
-          "description": "后 9 项为 blind-visual-hardening 语义容器（映射 Maison UI kit blocks，进入三段闭环）"
-        },
-        "block": {
-          "type": "string",
-          "enum": [
-            "nav_bar",
-            "list_card_container",
-            "list_row",
-            "sheet_scaffold",
-            "primary_button",
-            "selector_group",
-            "result_state",
-            "sms_code_field",
-            "detail_section"
-          ],
-          "description": "blind-visual-hardening：语义容器显式声明（与语义 type 直写二选一）"
+          "description": "后 9 项为通用结构语义容器（不绑定任何具体组件实现）"
         },
         "layout": { "type": "string" },
         "order": { "type": "integer", "minimum": 0 },

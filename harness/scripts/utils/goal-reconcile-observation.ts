@@ -51,7 +51,7 @@ export interface GoalReconcileObservationInput {
  *
  * 收编边界（诚实记录）：INCIDENT_REGISTRY 的键空间是 **incident id**（halt_reason 家族
  * 与同形态的 harness blocking_class）。仍有一部分 `blocking_class` 是**内容质量 blocker
- * 类目**而非 incident（asset_integrity / product_verdict / ui_kit_conformance 等），把它们
+ * 类目**而非 incident（asset_integrity / product_verdict / visual_parity 等），把它们
  * 塞进 incident 注册表属于概念错配。故：**注册表命中即以内核为准；未命中保留既有正则
  * 兜底**（legacy，随类目逐步注册而收敛）——不因收编而改判历史 blocking_class。
  */

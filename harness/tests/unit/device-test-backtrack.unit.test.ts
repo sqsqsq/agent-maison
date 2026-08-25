@@ -191,6 +191,30 @@ function setupFixture(): Fixture {
 }
 
 
+/**
+ * plan e6b3f8d2 t3：**契约迁移器**——把 2026-07-29 采集的历史 kit 锚点（`maison:<feature>:
+ * <screen>:<node>[-suffix]`）投影成新契约下的**裸 ui-spec node id**。
+ *
+ * 为什么要它：强制 Maison UI kit 撤销后，selector 真值回归普通 ui-spec `node.id`/`text`，
+ * 产品元素 id 由宿主自己按 ui-spec 命名（MIGRATION：存量带 `maison:` 前缀的产物须重新
+ * 生成）。仓内 fixture **保持字节原样**（历史价值不改），只在物化进临时目录时做这层
+ * 投影——等价于"宿主已按新契约重生成产品与测试计划"，从而让归因语义（跨帧 product_state /
+ * 零命中 product_actionable / 无 spec 依据 test_contract）继续有真实数据回归。
+ *
+ * 唯一一条**非机械**映射：`sheet_scaffold-next` → `sms_next_btn`。依据是该 fixture 自带的
+ * ui-spec——`sms_verify` 屏的 `action_button` 正是 `sms_next_btn`（旧 kit 锚点里那一段是
+ * block 语义名，不是 spec node id，这正是当年 drift 分类存在的原因）。其余一律取末段。
+ */
+function migrateKitAnchorToken(anchor: string): string {
+  const parts = anchor.split(':');
+  const tail = parts[parts.length - 1];
+  return tail === 'sheet_scaffold-next' ? 'sms_next_btn' : tail;
+}
+
+function migrateKitAnchors(text: string): string {
+  return text.replace(/maison:[A-Za-z0-9_.:-]+/g, m => migrateKitAnchorToken(m));
+}
+
 function setupAttributionGoldenFixture(): Fixture {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dt-attribution-golden-'));
   const fixtureDir = path.resolve(__dirname, '../../../profiles/hmos-app/harness/tests/fixtures/device-attribution');
@@ -211,11 +235,11 @@ function setupAttributionGoldenFixture(): Fixture {
   const runDir = path.join(reportsDir, '20260729T223800Z', 'hylyre');
   const failuresDir = path.join(runDir, 'failures');
   fs.mkdirSync(failuresDir, { recursive: true });
+  // TC-012（纯锚点漂移）随 `scaffold_contract_drift` 分类一并删除——plan e6b3f8d2 t3。
   const goldenPlan = fs.readFileSync(path.join(fixtureDir, 'test-plan.hylyre.md'), 'utf8')
-    + '\n| TC-012 | 纯锚点漂移 | 短信屏 | {"wait_for":{"by_id":"maison:bc-opencard:sms_verify:ghost-node","timeout":5}} | 可见 | P1 | AC-X |'
-    + '\n| TC-013 | 未知谓词保真 | 短信屏 | {"wait_for":{"by_id":"maison:bc-opencard:sms_verify:sms_input","custom_probe":{"mode":"strict"}}} | 可见 | P2 | AC-X |'
-    + '\n| TC-090 | spec 节点缺失 | 短信屏 | {"wait_for":{"by_id":"maison:bc-opencard:sms_verify:sms_countdown","timeout":5}} | 可见 | P1 | AC-X |\n';
-  fs.writeFileSync(path.join(runDir, 'test-plan.hylyre.md'), goldenPlan, 'utf8');
+    + '\n| TC-013 | 未知谓词保真 | 短信屏 | {"wait_for":{"by_id":"sms_input","custom_probe":{"mode":"strict"}}} | 可见 | P2 | AC-X |'
+    + '\n| TC-090 | spec 节点缺失 | 短信屏 | {"wait_for":{"by_id":"sms_countdown","timeout":5}} | 可见 | P1 | AC-X |\n';
+  fs.writeFileSync(path.join(runDir, 'test-plan.hylyre.md'), migrateKitAnchors(goldenPlan), 'utf8');
   const trace = JSON.parse(fs.readFileSync(path.join(fixtureDir, 'trace.json'), 'utf8')) as {
     artifacts: { plan: string };
     cases: Array<{ id: string; status: string; notes?: string }>;
@@ -227,19 +251,18 @@ function setupAttributionGoldenFixture(): Fixture {
     ['TC-007', 'wait for: target not in desired state failure_artifacts: ui_dump=TC-007-step-17.json'],
     ['TC-010', "no matching UI target for predicate {'by_text':'查看全部'} failure_artifacts: ui_dump=TC-010-step-2.json"],
     ['TC-011', "no matching UI target for predicate {'by_text':'查看全部'} failure_artifacts: ui_dump=TC-011-step-0.json"],
-    ['TC-012', "can't find component failure_artifacts: ui_dump=TC-012-step-0.json"],
     ['TC-090', "can't find component failure_artifacts: ui_dump=TC-090-step-0.json"],
   ]);
   trace.cases = trace.cases.filter(c => failed.has(c.id))
     .map(c => ({ ...c, status: '失败', notes: failed.get(c.id)! }));
-  trace.cases.push({ id: 'TC-012', status: '失败', notes: failed.get('TC-012')! });
   trace.cases.push({ id: 'TC-090', status: '失败', notes: failed.get('TC-090')! });
   const tracePath = path.join(runDir, 'trace.json');
   fs.writeFileSync(tracePath, JSON.stringify(trace, null, 2), 'utf8');
-  const disabled = fs.readFileSync(path.join(fixtureDir, 'sms-verify-next-disabled.json'), 'utf8');
-  const clipped = fs.readFileSync(path.join(fixtureDir, 'sms-verify-next-clipped.json'), 'utf8');
+  // 仓内 fixture 字节原样；物化进临时目录时统一过契约迁移器（见 migrateKitAnchors）。
+  const disabled = migrateKitAnchors(fs.readFileSync(path.join(fixtureDir, 'sms-verify-next-disabled.json'), 'utf8'));
+  const clipped = migrateKitAnchors(fs.readFileSync(path.join(fixtureDir, 'sms-verify-next-clipped.json'), 'utf8'));
   // README ground truth：006/007 是 clipped；唯一 disabled 证据来自无 spec selector 的 010/011。
-  for (const name of ['TC-006-step-5.json', 'TC-007-step-17.json', 'TC-008-step-0.json', 'TC-012-step-0.json', 'TC-090-step-0.json']) {
+  for (const name of ['TC-006-step-5.json', 'TC-007-step-17.json', 'TC-008-step-0.json', 'TC-090-step-0.json']) {
     fs.writeFileSync(path.join(failuresDir, name), clipped, 'utf8');
   }
   for (const name of ['TC-010-step-2.json', 'TC-011-step-0.json']) {
@@ -449,6 +472,7 @@ export function runAll(): UnitCaseResult[] {
 
   t('归因黄金 fixture：保留完整谓词；跨帧可观测状态优先；无 spec 文本仍是 test_contract', () => {
     const f = setupAttributionGoldenFixture();
+    const fixtureDir = path.resolve(__dirname, '../../../profiles/hmos-app/harness/tests/fixtures/device-attribution');
     try {
       const planText = fs.readFileSync(path.join(f.reportsDir, '20260729T223800Z', 'hylyre', 'test-plan.hylyre.md'), 'utf8');
       const steps = parseDerivedPlanSteps(planText);
@@ -465,17 +489,20 @@ export function runAll(): UnitCaseResult[] {
       nodeAssert.strictEqual(tc6.payload.enabled, true, 'enabled 必须保留');
       nodeAssert.strictEqual(tc6.payload.timeout, 15, 'timeout 属控制字段但仍必须保留');
       nodeAssert.deepStrictEqual(tc10.payload.within, {
-        by_id: 'maison:bc-opencard:card_pack_with_cards:list_card_container',
-      }, 'within 必须保留');
+        by_id: 'list_card_container',
+      }, 'within 必须保留（契约迁移后为裸 ui-spec 语义节点名）');
       const composed = composeOk(f);
       if (!composed.ok) throw new Error('golden compose 失败：' + composed.reason);
       const byId = new Map(composed.doc.cases.map(c => [c.case_id, c]));
       for (const id of ['TC-006', 'TC-007']) {
         const item = byId.get(id)!;
         nodeAssert.strictEqual(item.classification, 'product_state', id + ' 应由跨帧 enabled=false 判 product_state');
-        const drift = item.diagnostics?.find(x => x.code === 'scaffold_contract_drift');
-        nodeAssert.ok(drift, id + ' 双命中时 drift 只作 diagnostics');
-        nodeAssert.ok(!drift!.message.includes('feature='), id + ' drift 必须是 node 级，不能由 feature 大小写误报');
+        // plan e6b3f8d2 t3：`scaffold_contract_drift` 诊断随 anchor 机制一并删除——
+        // 归因只保留「元素在、状态不对」这一条产品事实。
+        nodeAssert.ok(
+          !(item.diagnostics ?? []).some(x => String(x.code).includes('scaffold_contract_drift')),
+          id + ' 不得再产出已删除的 drift 诊断',
+        );
         const observations = item.evidence?.observations ?? [];
         nodeAssert.ok(observations.length > 0 && observations.every(o => ['TC-010', 'TC-011'].includes(o.case_id)),
           id + ' 必须只引用无 spec selector case 的跨帧 disabled 证据：' + JSON.stringify(item.evidence));
@@ -483,18 +510,18 @@ export function runAll(): UnitCaseResult[] {
       for (const id of ['TC-010', 'TC-011']) {
         nodeAssert.strictEqual(byId.get(id)?.classification, 'test_contract', id + ' 无 spec 文本依据，不得误判 product_state');
       }
-      nodeAssert.strictEqual(byId.get('TC-012')?.classification, 'scaffold_contract_drift',
-        '零命中 + 合法 maison anchor 反解不到 ui-spec node，应独立命中纯 drift 分支');
-      nodeAssert.ok(byId.get('TC-012')?.reason?.includes('semantic=ghost-node'),
-        '纯 drift 必须报告 node 级反解失败，而非 feature 大小写漂移');
+      nodeAssert.ok(!byId.has('TC-012'), 'TC-012（纯锚点漂移）随 drift 分类删除，不得复活');
+      nodeAssert.ok(
+        composed.doc.cases.every(c => String(c.classification) !== 'scaffold_contract_drift'),
+        'scaffold_contract_drift 已整链删除，任何 case 都不得再命中',
+      );
       nodeAssert.strictEqual(byId.get('TC-090')?.classification, 'product_actionable',
         'mixed-case 生产 feature 下，spec 可反解节点缺失必须归 product_actionable');
       nodeAssert.strictEqual(byId.get('TC-008')?.classification, 'test_contract',
-        '三段 maison 锚点不满足 canonical 语法，仍归 test_contract');
+        'selector 不是当前 feature ui-spec 声明的节点 id，归 test_contract');
       nodeAssert.ok(!composed.doc.cases.some(c =>
         ['TC-006', 'TC-007', 'TC-010', 'TC-011'].includes(c.case_id)
         && c.classification === 'product_actionable'), 'clipped 帧不得制造元素缺失 product_actionable');
-      const fixtureDir = path.resolve(__dirname, '../../../profiles/hmos-app/harness/tests/fixtures/device-attribution');
       const oldBaseline = JSON.parse(fs.readFileSync(
         path.join(fixtureDir, 'device-test-evidence.misclassified.json'), 'utf8',
       )) as { cases: Array<{ case_id: string; classification: string }> };
@@ -503,12 +530,12 @@ export function runAll(): UnitCaseResult[] {
       nodeAssert.ok(['TC-006', 'TC-007'].every(id =>
         byId.get(id)?.classification !== oldBaseline.cases.find(c => c.case_id === id)?.classification),
       '新分类结果必须显式推翻 TC-006/007 历史误分类基线');
-      const disabledRaw = fs.readFileSync(path.join(
-        f.reportsDir, '20260729T223800Z', 'hylyre', 'failures', 'TC-010-step-2.json',
-      ), 'utf8');
+      // B2 历史数据事实——断言对准**仓内原样 fixture**（迁移器只作用于临时目录副本）：
+      // 异屏同 node 容器存在、目标整锚点不存在。
+      const disabledRaw = fs.readFileSync(path.join(fixtureDir, 'sms-verify-next-disabled.json'), 'utf8');
       nodeAssert.ok(disabledRaw.includes('maison:bc-opencard:card_select:list_card_container'));
       nodeAssert.ok(!disabledRaw.includes('maison:bc-opencard:card_pack_with_cards:list_card_container'),
-        'B2 数据事实：异屏同 node 容器存在，目标整锚点不存在；vendor 精确匹配疑点另行移交');
+        'B2 数据事实：异屏同 node 容器存在，目标整锚点不存在');
     } finally {
       fs.rmSync(f.root, { recursive: true, force: true });
       clearFrameworkConfigCache();
@@ -562,7 +589,7 @@ export function runAll(): UnitCaseResult[] {
   });
 
 
-  t('collector physical 三类白名单：product_state/drift 均回 coding，状态+drift 双命中只生成一条', () => {
+  t('collector physical 两类白名单（plan e6b3f8d2 t3：drift 已删）：只有 product_actionable/product_state 回 coding', () => {
     const f = setupFixture();
     const ctx = writeEvidence(f, doc => {
       const cases = doc.cases as Array<Record<string, unknown>>;
@@ -570,23 +597,22 @@ export function runAll(): UnitCaseResult[] {
       state.classification = 'product_state';
       state.reason_code = 'observable_state_mismatch';
       state.reason = '期望 enabled=true，dump 实际 enabled=false';
-      state.diagnostics = [{ code: 'scaffold_contract_drift', message: '附注漂移' }];
-      const drift = cases.find(c => c.case_id === 'TC-007')!;
-      drift.classification = 'scaffold_contract_drift';
-      drift.reason_code = 'anchor_spec_node_mismatch';
-      drift.reason = 'runtime anchor 无法反解到 ui-spec node';
+      // 历史 run 的 evidence 里可能残留已删除的 drift 诊断码——读侧必须容忍且不据其分叉
+      state.diagnostics = [{ code: 'scaffold_contract_drift', message: '历史残留诊断' }];
+      const stale = cases.find(c => c.case_id === 'TC-007')!;
+      stale.classification = 'scaffold_contract_drift';
+      stale.reason_code = 'anchor_spec_node_mismatch';
+      stale.reason = '历史 evidence 的已撤销分类';
     });
     const res = collectActionableDefects(f.root, FEATURE, 'run-1', ctx);
     const device = res.defects.filter(d => d.source === 'device_test');
-    nodeAssert.deepStrictEqual(device.map(d => d.screen_or_case_id).sort(), ['TC-001', 'TC-007']);
+    nodeAssert.deepStrictEqual(device.map(d => d.screen_or_case_id).sort(), ['TC-001'],
+      '已撤销的 scaffold_contract_drift 不得再驱动回修（要求产品注入已删除的 canonical anchor）');
     nodeAssert.strictEqual(device.filter(d => d.screen_or_case_id === 'TC-001').length, 1,
-      'product_state + drift diagnostics 禁止同 case 双发 defect');
+      '同 case 禁止双发 defect');
     nodeAssert.ok(device.find(d => d.screen_or_case_id === 'TC-001')!.instructions
       .some(x => x.includes('enabled=true') && x.includes('enabled=false')),
     'product_state 指引须包含期望谓词与实际属性');
-    nodeAssert.ok(device.find(d => d.screen_or_case_id === 'TC-007')!.instructions
-      .some(x => x.includes('ui-spec') || x.includes('锚点')),
-    'drift 指引须要求修正 ui-spec/锚点派生链');
   });
 
   t('可信根失败非空且全 test_contract → 精修 kind；混合/绑定失败均不得冒充', () => {

@@ -1,10 +1,16 @@
-import * as fs from 'fs';
-import * as path from 'path';
-import {
-  buildInstanceAnchor,
-  normalizeAnchorSegment,
-  normalizeRuntimeAnchor,
-} from './ui-kit-anchors';
+// ============================================================================
+// selector-contract.ts — 测试计划 selector 的 ui-spec 来源契约（SELECTOR-SPEC-001）
+// ----------------------------------------------------------------------------
+// 规则不变：运行时 dump / snapshot cache 只能**发现候选**，不能成为 selector 真值——
+// `by_id` 必须能反解到 ui-spec 组件节点 id，`by_text` 必须与 ui-spec text 精确等值。
+//
+// plan e6b3f8d2 t3（撤销强制 Maison UI kit）：本模块**不再读 kit 的 block 清单**、
+// 不再生成 `maison:` canonical anchor 与 child suffix 契约——那是随 kit 一并删除的
+// framework 侧组件实现约定，不是宿主产品的 selector 真值。查询回归**普通 ui-spec
+// node.id / text**：合法 selector = 声明在 ui-spec 里的裸 node id，或与节点 text 等值。
+// 存量带 `maison:` 前缀的测试计划产物须重新生成（见 MIGRATION.md）。
+// ============================================================================
+
 import type {
   UiSpecComponentNode,
   UiSpecDoc,
@@ -18,11 +24,8 @@ export interface SelectorContractEntry {
   screen_id: string;
   node_id: string;
   text?: string;
-  canonical_base_anchor: string;
+  /** 同屏同 id 出现多次=repeated（纯 ui-spec 事实，供测试作者判断需不需要 scope 限定）。 */
   cardinality: 'singleton' | 'repeated';
-  instance_key: 'forbidden' | 'required';
-  applicable_suffixes: string[];
-  applicable_suffix_patterns: string[];
 }
 
 export interface SelectorContractViolation {
@@ -47,22 +50,7 @@ function nodesOf(screen: UiSpecScreen): UiSpecComponentNode[] {
   return nodes;
 }
 
-interface BlockSuffixSpec {
-  semantic_node: string;
-  anchor_suffixes?: string[];
-  anchor_suffix_patterns?: string[];
-}
-
-function blockSuffixesBySemantic(): Map<string, BlockSuffixSpec> {
-  const manifestPath = path.resolve(__dirname, '..', 'ui-kit', 'blocks.json');
-  const parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as {
-    blocks?: Record<string, BlockSuffixSpec>;
-  };
-  return new Map(Object.values(parsed.blocks ?? {}).map(block => [block.semantic_node, block]));
-}
-
-export function buildSelectorContractQuery(doc: UiSpecDoc, feature: string): SelectorContractEntry[] {
-  const suffixesBySemantic = blockSuffixesBySemantic();
+export function buildSelectorContractQuery(doc: UiSpecDoc, _feature?: string): SelectorContractEntry[] {
   const entries: SelectorContractEntry[] = [];
   for (const screen of doc.screens ?? []) {
     const nodes = nodesOf(screen);
@@ -72,19 +60,11 @@ export function buildSelectorContractQuery(doc: UiSpecDoc, feature: string): Sel
     }
     for (const node of nodes) {
       if (typeof node.id !== 'string' || !node.id) continue;
-      const repeated = (counts.get(node.id) ?? 0) > 1;
-      const explicitBlock = (node as UiSpecComponentNode & { block?: unknown }).block;
-      const semantic = typeof explicitBlock === 'string' && explicitBlock ? explicitBlock : node.type;
-      const block = typeof semantic === 'string' ? suffixesBySemantic.get(semantic) : undefined;
       entries.push({
         screen_id: screen.id,
         node_id: node.id,
         ...(typeof node.text === 'string' && node.text ? { text: node.text } : {}),
-        canonical_base_anchor: buildInstanceAnchor(feature, screen.id, node.id),
-        cardinality: repeated ? 'repeated' : 'singleton',
-        instance_key: repeated ? 'required' : 'forbidden',
-        applicable_suffixes: [...(block?.anchor_suffixes ?? [])],
-        applicable_suffix_patterns: [...(block?.anchor_suffix_patterns ?? [])],
+        cardinality: (counts.get(node.id) ?? 0) > 1 ? 'repeated' : 'singleton',
       });
     }
   }
@@ -118,30 +98,20 @@ function selectorsOf(step: Record<string, unknown>): Array<{
 export function lintDerivedPlanSelectorContract(
   derivedMd: string,
   doc: UiSpecDoc,
-  feature: string,
+  feature?: string,
 ): SelectorContractViolation[] {
   const query = buildSelectorContractQuery(doc, feature);
   const texts = new Set(query.map(e => e.text).filter((x): x is string => Boolean(x)));
   const bareIds = new Set(query.map(e => e.node_id));
-  const byScreenNode = new Set(query.map(e => `${e.screen_id}\0${e.node_id}`));
   const violations: SelectorContractViolation[] = [];
   for (const row of extractDerivedPlanCases(derivedMd)) {
     const parsed = parsePlannedStepsFromCell(row.steps_raw);
     if (!parsed.ok) continue;
     parsed.steps.forEach((step, stepIndex) => {
       for (const selector of selectorsOf(step)) {
-        let valid = false;
-        if (selector.kind === 'by_text') {
-          valid = texts.has(selector.value);
-        } else if (bareIds.has(selector.value)) {
-          valid = true;
-        } else {
-          const normalized = normalizeRuntimeAnchor(selector.value);
-          valid = normalized.validity === 'valid'
-            && normalized.feature === normalizeAnchorSegment(feature)
-            && Boolean(normalized.screen && normalized.specNode)
-            && byScreenNode.has(`${normalized.screen}\0${normalized.specNode}`);
-        }
+        const valid = selector.kind === 'by_text'
+          ? texts.has(selector.value)
+          : bareIds.has(selector.value);
         if (!valid) {
           violations.push({
             rule_id: SELECTOR_SPEC_RULE_ID,
@@ -151,7 +121,7 @@ export function lintDerivedPlanSelectorContract(
             selector_kind: selector.kind,
             selector: selector.value,
             message: selector.kind === 'by_id'
-              ? 'by_id 无法反解到当前 feature/screen 的 ui-spec node；运行时 dump 只能发现候选，不能成为 selector 真值'
+              ? 'by_id 不是当前 feature ui-spec 声明的组件节点 id；运行时 dump 只能发现候选，不能成为 selector 真值'
               : 'by_text 与 ui-spec text 不精确等值；请先修正 ui-spec/测试计划或显式跳过',
           });
         }

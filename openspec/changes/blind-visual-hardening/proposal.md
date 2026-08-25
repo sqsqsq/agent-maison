@@ -6,7 +6,7 @@
 
 - **d1 verdict lattice 与负面裁决传播**（两切片）：切片一——review「不通过」/testing「不达标」→ phase BLOCKER FAIL（补洞⑥漏掉的分支）；跨阶段传播消费新鲜 summary+receipt（Markdown 只是解析输入，防 TOCTOU）。切片二——summary schema 1.1：顶层 `report_validity`（报告可解析/可信，独立于产品裁决）+ `quality_axes`（functional/visual/asset/evidence 对象化：applicable/required_for_release/verdict/blocking_class/source_checks/resolution）+ 三条 schema 不变量；双投影分立（顶层兼容 verdict 按 required_for_phase_advance；feature completion 按 required_for_release）；旧 verdict 由唯一解析器生成兼容投影；legacy 1.0 summary 不作 1.1 completion 干净依据；resolution 映射严格复用 needs_fix/needs_human 现行语义（FAIL→PARTIAL/FEATURE_INCOMPLETE，人工确认不能解除确定性 FAIL）。
 - **d2 盲档素材完整性**：crop 左移禁令收窄版（禁盲模型执行/自证 crop，四条件齐备的可信外部产物放行为消费态）；role/criticality 机器派生与交叉对账（不信 agent 自报）；物化 sanity 按 role 分档（brand-critical 空白/纯色 → BLOCKER 不分档位）；分角色占位生成（brand_logo→text_avatar / system_symbol→sys symbol / illustration→中性插画占位框，禁空白 PNG）；设备渲染可见性债务门控观察（冻结样本/误报率/阈值版本；findings→visual-debt→release BLOCKED，不设独立 enforce）；素材债务三态清偿（source/binding/render 全 VERIFIED 才关闭）。
-- **d3 可执行盲档 UI kit**：profile 内 ArkUI block 模板 + 确定性 scaffolder 生成进宿主公共层（目录四级解析：config 显式 > profile 推荐 > architecture 推导 > halt 问人）；实例语义锚点 `maison:<feature>:<screen_id>:<semantic_node_id>:<instance_key>`（字符集/长度约束）；ui-spec container 语义节点与 block 映射；声明→源码锚点→uitree 三段闭环 check；kit gallery fixture 防自身退化。
+- **d3 可执行盲档 UI kit —— 已撤回（2026-08-25，plan e6b3f8d2 t3）**：曾计划在 profile 内提供 ArkUI block 模板 + 确定性 scaffolder 生成进宿主公共层、实例语义锚点与三段闭环 check。宿主 run 20260825T011950Z-eddfb2 实锤该设计把**具体组件实现升级成了强制产品契约**，并经 `paths` 下的 kit 目标目录配置要求宿主指定 vendoring 落点——framework 侵入宿主源码形态；且对守规 agent 结构性不可满足（spec 强制声明 kit block、plan 冻结的 contracts 不含 kit、coding 只读 contracts → 不 scaffold 判未物化 / scaffold 判越界，双输烧尽重试预算）。**整段删除、不做替代实现**：盲档结构地板改由既有「产品组件所有权链」承接（ui-spec P0 节点 → visual-parity `contract_component` → contracts.components → contracts.files），并在既有 `visual_parity_coverage` 内收紧为**不受 `visual_parity_enforcement` 降级**的硬地板；`nav_bar`/`list_row`/`sheet_scaffold` 等词保留为**通用结构语义 type**，不绑定实现。**诚实边界**：所有权链证明的是「这个 UI 归谁实现、代码在哪」，不是「平台标准组件质感」——较原 d3 设想有精度差异，本 change 如实记录，不以其他机制补偿。
 - **d4 fidelity 意图三态覆盖扩面**：t6 三态检测（强意图+盲→DEFERRED_CAPABILITY_MISSING / 含混+参考图→await_human_fidelity_tier / 只升不降）从 goal preflight 扩到逐阶段驱动路径（harness-runner spec 前置钩子，同源实现勿 fork）；reference_intent/desired/effective/downgrade_receipt 落盘。
 - **d5 视觉债务 SSOT 与人工验收 receipt**：visual-debt.json（机器派生）+ md 投影；债务→quality_axes 映射（completion_status=FUNCTIONALLY_COMPLETE_VISUAL_PENDING 仅为投影标签，不绕过 verify-feature-completion）；人工视觉验收 receipt（冻结阈值每维 ≥4/5、结构化 screens 映射、rubric_version/policy_hash 绑定、只清偿主观项不洗确定性 FAIL、accepted≠closed 审计分立）。
 - **d6 确定性视觉反馈回路**：visual-feedback.json SSOT + md 投影；两类信号分立（离散事实可直接 visual FAIL；连续指标默认 advisory，超冻结阈值才升级；禁单一全局相似度裁决整体质量）；收敛跟踪扩展 visual-rounds-ledger（不建并行状态机）；deterministic_feedback 采集策略由 harness 按「盲档+UI change」机器派生、与 fidelity 档位解耦（治 capture-completeness pixel-only 早退）；反馈身份用 framework_package_digest（发布包环境无 git commit）。
@@ -18,17 +18,17 @@
 ### New Capabilities
 
 - `verdict-lattice`：report_validity 与产品多轴裁决分离、负面裁决传播、双投影、legacy 政策的完成语义能力。
-- `blind-ui-kit`：盲模型可实例化的 ArkUI block 库 + scaffolder + 三段闭环验证能力。
 
 ### Modified Capabilities
 
 - `harness-gates`：盲档素材完整性门禁面（crop 禁令/role sanity/渲染可见性）、fidelity 意图检测逐阶段扩面。
 - `visual-diff`：确定性反馈 JSON SSOT、两类信号分立、采集档位解耦、ledger 收敛扩展。
 - `confirmation-receipts`：新增 `human_visual_acceptance` 消费动作（冻结 rubric 阈值/结构化 screens/清偿边界）。
-- `feature-artifact-layout`：新 artifacts（visual-debt.json+md、visual-feedback.json+md、asset-request.md、ui-kit manifest、visual-acceptance receipt 落点）。
+- `feature-artifact-layout`：新 artifacts（visual-debt.json+md、visual-feedback.json+md、asset-request.md、visual-acceptance receipt 落点）。
 
 ## Impact
 
-- Affected specs: verdict-lattice（新增）、blind-ui-kit（新增）、harness-gates、visual-diff、confirmation-receipts、feature-artifact-layout
-- Affected code: `harness/scripts/check-{review,testing,spec,coding,receipt}.ts`、`harness/scripts/harness-runner.ts`（spec 前置钩子/quality_axes writer）、`harness/scripts/utils/{fidelity-shared,verify-feature-completion,phase-transition-policy,visual-rounds-ledger,markdown-parser}.ts`、新 utils `{quality-axes,visual-debt,upstream-verdict-gate}.ts`、`harness/schemas/summary.schema.json`（1.1）、`profiles/hmos-app/harness/{asset-*,visual-diff-*,capture-completeness-check}.ts`、新 `profiles/hmos-app/ui-kit/**` + scaffolder、`specs/phase-rules/*.yaml`（gate 登记）、`skills/`（盲档工作法/告知文案对齐）
-- **Breaking / MIGRATION.md**：①review 结论「不通过」从此阻断 phase 闭环——存量 feature 若带未闭环不通过报告，重跑 review 前不得推进；②summary schema 1.1——1.0 消费方兼容读取，但 1.0 summary 不得作为 1.1 completion 干净依据（须当前 gate_fingerprint 重跑或保守 INCOMPLETE）；③盲档下 brand-critical 素材空白物化从 WARN 升 BLOCKER；④UI 需求 spec 阶段新增 fidelity 意图前置检测（逐阶段路径），强意图+盲模型将 DEFERRED 而非静默降档——宿主交互成本属设计内（每条带图需求一次确认）。
+- Affected specs: verdict-lattice（新增）、harness-gates、visual-diff、confirmation-receipts、feature-artifact-layout
+（原计划新增的 `blind-ui-kit` capability 已于 2026-08-25 撤回——base specs 从未接纳过它，故直接删除 delta，无需「先加后删」）
+- Affected code: `harness/scripts/check-{review,testing,spec,coding,receipt}.ts`、`harness/scripts/harness-runner.ts`（spec 前置钩子/quality_axes writer）、`harness/scripts/utils/{fidelity-shared,verify-feature-completion,phase-transition-policy,visual-rounds-ledger,markdown-parser}.ts`、新 utils `{quality-axes,visual-debt,upstream-verdict-gate}.ts`、`harness/schemas/summary.schema.json`（1.1）、`profiles/hmos-app/harness/{asset-*,visual-diff-*,capture-completeness-check}.ts`、`specs/phase-rules/*.yaml`（gate 登记）、`skills/`（盲档工作法/告知文案对齐）。**d3 撤回后**：`profiles/hmos-app/ui-kit/**` 与 scaffolder/锚点/三段闭环 check 不再存在；所有权硬地板落在 `profiles/hmos-app/harness/plan-visual-parity-check.ts`
+- **Breaking / MIGRATION.md**：①review 结论「不通过」从此阻断 phase 闭环——存量 feature 若带未闭环不通过报告，重跑 review 前不得推进；②summary schema 1.1——1.0 消费方兼容读取，但 1.0 summary 不得作为 1.1 completion 干净依据（须当前 gate_fingerprint 重跑或保守 INCOMPLETE）；③盲档下 brand-critical 素材空白物化从 WARN 升 BLOCKER；④UI 需求 spec 阶段新增 fidelity 意图前置检测（逐阶段路径），强意图+盲模型将 DEFERRED 而非静默降档——宿主交互成本属设计内（每条带图需求一次确认）；⑤**d3 撤回连带**（2026-08-25）：ui-spec 组件节点 `block` 字段与 kit 目标目录配置删除、`maison:` selector 语法作废（存量测试计划/产品元素 id 须按 ui-spec 节点重新生成）、`ui-kit:placeholders` 改名 `asset:placeholders`、产品组件所有权三项收紧为档位无关 BLOCKER——详见 MIGRATION.md「撤销强制 Maison UI kit」。

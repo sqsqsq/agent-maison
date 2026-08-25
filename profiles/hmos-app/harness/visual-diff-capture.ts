@@ -828,28 +828,30 @@ export interface ScreenIdentityGateResult {
 }
 
 /**
- * 被测应用的**页面组件** id 前缀（`maison:<feature>:`）——从**已声明的 identity 锚**推导，
- * 不硬编码。dump 里出现任一该前缀 id ⇒ 应用页面组件树在树中＝应用页面在场。
- * 推导不出前缀（identity 只用 text/route）时返回空集，调用方据此 fail-safe。
- * t3（plan f3a8c6d2，review P1 收紧）：**只接受规范的 `maison:` 前缀**——首段必须恰为
- * `maison`。宿主校准与注释的实证均只有 `maison:<feature>:` 形态；任意三段式冒号 id
- * （如 `foo:bar:*`）不是页面组件前缀，不得据此判 mismatched/删旧裁决/进熔断。
- * 页面组件前缀亦不包含宿主 bundle 命中——桌面 dump 的应用图标 id
- * （`AppIconCommonView_com.example.simulatedwallet...`）前缀不符合，故不会被当作页面在场。
+ * 被测应用页面在场的**所有权证据集**：全部已声明屏的 `all_of`/`any_of` **正向 id**。
+ *
+ * plan e6b3f8d2 t3（撤销强制 Maison UI kit）：此前用 `maison:<feature>:` 组件 id 前缀
+ * 推导所有权——那是 kit anchor 机制的副产品，随 kit 一并删除。页面身份判据**迁移到既有
+ * `visual-diff-nav` screen identity 声明**，让它真正成为唯一真源（不新增前缀/注册表/
+ * anchor 文件，不建第二套机制）：
+ *   · 只取 `all_of`/`any_of` 的**正向 id**，按**精确 id** 判在场；
+ *   · **不得使用 `none_of`**——它的契约只是「目标页禁入锚点」，不保证该锚属于本应用
+ *     （`none_of=[上滑解锁]` 配真实锁屏树会把锁屏判成"应用错页"，仓内已证伪）；
+ *   · 只声明 text/route 的工程推导不出任何 id ⇒ 返回空集，调用方 fail-safe 走 probe_failed。
+ * 取**全部已声明屏**而不只是目标屏：任一已声明屏的正向 id 在场，都足以证明被测应用的
+ * 页面树正在渲染（这正是「应用错页」与「锁屏/桌面等系统态」的分界）。
  */
-function appComponentIdPrefixes(opts: VisualDiffCaptureOptions): string[] {
+function declaredScreenIdentityIds(opts: VisualDiffCaptureOptions): Set<string> {
   const out = new Set<string>();
   for (const identity of opts.screenIdentity?.values() ?? []) {
-    const members = [...(identity.all_of ?? []), ...(identity.any_of ?? []), ...(identity.none_of ?? [])];
-    for (const m of members) {
+    // 刻意不含 none_of：禁入锚点不构成所有权证明（见上）。
+    for (const m of [...(identity.all_of ?? []), ...(identity.any_of ?? [])]) {
       if (typeof m.id !== 'string') continue;
-      const parts = m.id.split(':');
-      if (parts.length >= 3 && parts[0].trim() === 'maison' && parts[1].trim()) {
-        out.add(`${parts[0]}:${parts[1]}:`);
-      }
+      const id = m.id.trim();
+      if (id) out.add(id);
     }
   }
-  return [...out];
+  return out;
 }
 
 /**
@@ -916,26 +918,26 @@ function runScreenIdentityGate(
       /* 证据图 best-effort，不影响 mismatch 判定 */
     }
     // 身份不命中还不够——`dump-ui` 不绑 bundle，锁屏页/桌面/系统弹窗同样会"不命中"。
-    // 判"应用错页"必须有**应用页面树所有权**的确定事实：dump 里存在被测应用的
-    // **页面组件 id 前缀**（ArkUI `.id()` 透传，由声明身份锚推导，系统页不会有）。
+    // 判"应用错页"必须有**应用页面树所有权**的确定事实：dump 里精确命中任一**已声明屏**
+    // 的正向 identity id（ArkUI `.id()` 透传，系统页不会有）。
     //
     // 主页校准（2026-08-13 foreground-identity-calibration）：锁屏 119 节点 / 桌面
-    // 231 节点 dump 中 `maison:` 页面组件前缀均为 0 命中——系统态（锁屏/桌面）拿不到
-    // 页面组件前缀；桌面 dump 虽出现 `com.example.simulatedwallet`（AppIcon 图标 id），
-    // 但属**宿主 bundle 命中**而非页面组件前缀，不得作为所有权判据。
-    // 结论：有前缀 + 身份不中 ⇒ 应用页面树在场但非目标页（mismatched，确定性）；
-    //       无前缀 ⇒ probe_failed（锁屏/桌面/系统态，页面一无所知）。
+    // 231 节点 dump 中应用页面组件 id 均为 0 命中——系统态拿不到应用页面 id；桌面 dump
+    // 虽出现 `com.example.simulatedwallet`（AppIcon 图标 id），但属**宿主 bundle 命中**
+    // 而非声明的页面组件 id，不会被当作所有权证据。
+    // 结论：有已声明 id + 身份不中 ⇒ 应用页面树在场但非目标页（mismatched，确定性）；
+    //       无任何已声明 id ⇒ probe_failed（锁屏/桌面/系统态，页面一无所知）。
     //
     // 曾试图把 `none_of` 命中也当所有权证明（为纯文本锚工程兜底）——**已证伪**：
     // `none_of` 的契约只是"目标页禁入锚点"，不保证该锚属于本应用；把
     // `none_of=[上滑解锁]` 配上真实锁屏树，锁屏就会被判成"应用错页"并进熔断。
-    const prefixes = appComponentIdPrefixes(opts);
-    const appRendered = prefixes.length > 0 && facets.ids.some(id => prefixes.some(p => id.startsWith(p)));
+    const declaredIds = declaredScreenIdentityIds(opts);
+    const appRendered = declaredIds.size > 0 && facets.ids.some(id => declaredIds.has(id));
     // 记法遵循 openspec `visual-diff` 契约：身份规则不通过一律记 `screen_identity_mismatch`
     // （证据图归档 _mismatch/、正式目录零写入、该屏按缺证据处理）。
     const cause = appRendered
-      ? 'dump 含页面组件前缀（应用页面树在场）但非目标页'
-      : 'dump 无页面组件前缀（锁屏/桌面/系统态或缺所有权证据）';
+      ? 'dump 含已声明屏的正向 identity id（应用页面树在场）但非目标页'
+      : 'dump 无任何已声明 identity id（锁屏/桌面/系统态，或工程只声明了 text/route）';
     return {
       ok: false,
       status: appRendered ? 'mismatched' : 'probe_failed',

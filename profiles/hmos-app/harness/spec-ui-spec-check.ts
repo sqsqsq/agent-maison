@@ -18,7 +18,6 @@ import {
   type VisualEnforcementMode,
 } from '../../../harness/scripts/utils/ui-spec-shared';
 import { missingUiSpecGateScreens } from './ui-spec-gate';
-import { checkUiKitDeclarationRequired } from './ui-kit-conformance-check';
 import { validateUiSpecSchema } from './ui-spec-schema-validate';
 import { isGoalHeadlessEnv } from '../../../harness/scripts/utils/phase-state';
 import { isHardPixelContract } from '../../../harness/scripts/utils/fidelity-shared';
@@ -261,22 +260,11 @@ export function checkUiSpecStructure(ctx: CheckContext, specMarkdown: string): C
     details: detailParts.join('\n'),
     affected_files: [uiSpecRel],
   }];
-  // blind-visual-hardening（cursor 实施 review P1）：盲档结构容器声明强制——kit 非 opt-in。
-  // 异常=BLOCKER（cursor 四轮 P2：spec 段若异常降 SKIP，coding 见零声明即空转，线框路径复活）。
-  try {
-    out.push(...checkUiKitDeclarationRequired(ctx));
-  } catch (e) {
-    out.push({
-      id: 'ui_kit_declaration_required', category: 'structure',
-      description: '盲档结构容器声明门禁执行异常（地板门禁不得因异常绕过）',
-      severity: 'BLOCKER', status: 'FAIL',
-      details: `执行异常：${(e as Error).message}\n${(e as Error).stack ?? ''}`,
-      suggestion: '框架/环境问题——修复后重跑；不要通过移除 ui-spec 来绕过本门禁。',
-      failure_kind: 'framework_bug',
-      blocking_class: 'ui_kit_conformance',
-      affected_files: [uiSpecRel],
-    });
-  }
+  // plan e6b3f8d2 t3：强制 Maison UI kit 已撤销——「P0 屏必须声明 ≥1 语义容器 block」
+  // 这道门禁把具体组件实现升格成了产品契约（宿主结构上不可满足：spec 强制声明、
+  // contracts 冻结不含 kit、coding 只读 → 不 scaffold 未物化 / scaffold 越界双输）。
+  // 盲档视觉地板改由既有链承接：ui-spec P0 节点 → visual-parity.contract_component →
+  // contracts.components/files（plan-visual-parity-check 的所有权硬地板，不受档位降级）。
   return out;
 }
 

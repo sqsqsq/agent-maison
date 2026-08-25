@@ -26,7 +26,6 @@ import {
   detectPlaceholderMarker,
 } from './asset-integrity';
 import { canonicalPkgPath, findModuleMediaFile } from './visual-parity-backstop';
-import { checkUiKitSourceConformance } from './ui-kit-conformance-check';
 import { computeStaticFidelityScore } from './static-fidelity-score';
 import { collectUnverifiedCropLines } from './asset-crop-validation';
 import {
@@ -104,7 +103,11 @@ export function collectLocatorRequiredElements(
     const rec = n as { id?: unknown; type?: unknown; block?: unknown; bbox?: unknown };
     if (typeof rec.id === 'string' && rec.id.trim()) {
       if (identityIds.has(rec.id.trim())) add(rec.id, 'identity_anchor');
-      else if (typeof rec.block === 'string' && rec.block.trim()) add(rec.id, 'kit_block_instance');
+      // plan e6b3f8d2 t3：原有一条「`node.block`（UI kit block 实例声明）→ locator-required」
+      // 分支，随 `block` 字段与强制 kit 一并**删除**。刻意**不**平移到通用 `type`：那会把
+      // S6 特意收窄过的分母重新放宽（结构语义类型恒入分母，nav 在场时也拿交互类型凑分母），
+      // 属于用新约束替换旧约束——本轮只删错误约束。这些节点照常经 identity / nav 触达 /
+      // bbox / 交互回退四条既有规则参与判定。
       else if (opts?.navStepIds?.has(rec.id.trim())) add(rec.id, 'nav_step_target');
       else if (Array.isArray(rec.bbox) && rec.bbox.length >= 4) add(rec.id, 'bbox_geometry_target');
       else if (opts?.interactiveFallbackEnabled && typeof rec.type === 'string' && LOCATOR_INTERACTIVE_TYPES.has(rec.type)) {
@@ -622,7 +625,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
           ].join('\n'),
           suggestion:
             '用真实素材替换，或在 harness 目录执行占位生成 CLI（正式入口）：' +
-            `npm run ui-kit:placeholders -- --project-root <宿主根> --feature ${ctx.feature} --apply` +
+            `npm run asset:placeholders -- --project-root <宿主根> --feature ${ctx.feature} --apply` +
             '（brand_logo→文字头像 SVG / illustration→中性插画框 / decoration→中性块；禁空白 PNG）；' +
             'unverified=修复 jimp 环境（npm install）后重跑；brand-critical 素材仍为占位时 release 保持 BLOCKED。',
           affected_files: [uiSpecRel],
@@ -728,20 +731,9 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
     }
   }
 
-  // blind-visual-hardening d3（P0-C）：三段闭环·源码段——声明的语义容器须 block 实例化+锚点注入。
-  // 异常=BLOCKER（codex 三轮 P1-3：kit 是盲档视觉地板，执行异常若降 SKIP 即绕过 P0-C）。
-  try {
-    results.push(...checkUiKitSourceConformance(ctx));
-  } catch (e) {
-    results.push({
-      id: 'ui_kit_source_conformance', category: 'structure', description: desc,
-      severity: 'BLOCKER', status: 'FAIL',
-      details: `ui-kit 源码段校验执行异常（地板门禁不得因异常绕过）：${(e as Error).message}\n${(e as Error).stack ?? ''}`,
-      suggestion: '框架/环境问题——修复后重跑；不要通过删除 block 声明来绕过本门禁。',
-      failure_kind: 'framework_bug',
-      blocking_class: 'ui_kit_conformance',
-    });
-  }
+  // plan e6b3f8d2 t3：三段闭环·源码段随强制 Maison UI kit 一并撤销——framework 不再
+  // 规定宿主源码形态（组件实现/vendoring 落点/锚点注入）。源码结构证据继续由本文件
+  // 既有的 presence/结构相似度检查与 plan 侧所有权硬地板承接。
 
   // 透明节点假 presence 拦截（codex 发现的对抗模式，2026-07-03）：spec 文本/资产/符号引用挂在
   // 字面硬不可见节点（opacity(0)/visibility None|Hidden/双零尺寸/fontSize(0)）＝骗静态 presence 扫描。

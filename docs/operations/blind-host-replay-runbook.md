@@ -47,7 +47,7 @@ replay_run:
 | M1 | spec 期 `fidelity_capability_pregate` 触发（强意图→DEFERRED 或人工定档 receipt 留痕） | spec/reports/fidelity-intent.json + summary |
 | M2 | 0 项 `acquisition: crop` 盲档违例（`blind_crop_prohibition` PASS 或素材走 asset-request） | spec summary + spec/asset-request.md |
 | M3 | 0 空白/未披露关键素材（`asset_materialization_sanity` 无 brand-critical FAIL；占位均为可见语义占位） | coding summary |
-| M4 | 基准结构齐全：8 屏声明的 nav_bar/list_card_container/sheet_scaffold/primary_button 等语义容器三段闭环全绿（声明→源码锚点→uitree） | `ui_kit_source_conformance` + `ui_kit_runtime_conformance` |
+| M4 | 产品组件所有权链齐全：8 屏的 P0 节点全部映射到宿主自己的产品组件（ui-spec P0 节点 → visual-parity `contract_component` → contracts.components → contracts.files），且**档位无关**（plan e6b3f8d2 t3 撤销强制 UI kit 后由本链承接盲档结构地板；运行时结构证据另由 `runtime_mount_conformance` 观察） | `visual_parity_coverage`（plan）+ `runtime_mount_conformance`（testing） |
 | M5 | `render_visibility_calibrate` 零"节点在、像素不可见"命中（或命中项全部对应真实缺陷并被修复） | testing summary structured findings |
 | M6 | visual-feedback.json 产出且收敛（converged/converging；stalled/regressing 须有处置记录） | device-testing/visual-feedback.json |
 | M7 | summary 1.1：`quality_axes` 四轴如实（存在占位素材时 visual=UNVERIFIED、`completion_status=FUNCTIONALLY_COMPLETE_VISUAL_PENDING`、`release_readiness=BLOCKED`——**如实=通过**，谎报 COMPLETE=失败） | 各 phase summary.json |
