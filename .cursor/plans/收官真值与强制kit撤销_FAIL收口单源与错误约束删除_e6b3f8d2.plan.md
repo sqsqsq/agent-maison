@@ -293,7 +293,7 @@ prompt 两处（续作块块头/正文、priorFailureKind='agent_timeout' 分支
 （`--ask-for-approval never exec --sandbox danger-full-access --json`）产出 `turn.completed`
 与非 null `usage`，exit 0。
 
-**待执行（外部依赖）**：宿主 `D:.code\SimulatedWalletForHmos` 的新 run smoke——
+**待执行（外部依赖）**：宿主 `D:/1.code/SimulatedWalletForHmos` 的新 run smoke——
 需先把本分支 framework 发布件同步进宿主（宿主 `framework/` 为 git 跟踪的发布件副本，
 当前停在 3591229），并删除宿主 `framework.config.json` 里已废弃的 kit 目标目录键。
 **两条 OpenSpec 线在该 smoke 全过前均不 archive。**
