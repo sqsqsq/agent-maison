@@ -323,40 +323,46 @@ export function runAll(): UnitCaseResult[] {
     assertEq(plain.agent_failed, true, '非收口的非零退出仍须判失败');
   });
 
-  run(results, 'observer 与失败标记互斥：completion 路径不置 timed_out/silent_killed', () => {
+  run(results, 'observer 与失败标记互斥：completion 路径不置 timed_out（silent 生产链已删）', () => {
     const src = fs.readFileSync(
       path.join(__dirname, '..', '..', 'scripts', 'utils', 'agent-invoke.ts'),
       'utf-8',
     );
-    // killTree('completion') 分支不得落入 timedOut/silentKilled 赋值
+    // killTree('completion') 分支不得落入 timedOut 赋值；silent 写侧已整链删除（e6b3f8d2 t1）
     assert(
-      /if \(reason === 'timeout'\) timedOut = true;/.test(src) &&
-        /if \(reason === 'silent'\) silentKilled = true;/.test(src),
-      '既有两标记赋值须保持按 reason 精确匹配',
+      /if \(reason === 'timeout'\) timedOut = true;/.test(src),
+      'timeout 标记须保持按 reason 精确匹配',
     );
+    assert(!/silentKilled/.test(src), 'silent watchdog 写侧须已删除');
     assert(
-      !/reason === 'completion'\) (timedOut|silentKilled)/.test(src),
+      !/reason === 'completion'\) (timedOut|terminalFailureObserved)/.test(src),
       'completion 不得置任何失败标记',
     );
     assert(/completion_observed: completionObserved/.test(src), '结果须回传 completion_observed');
   });
 
-  run(results, '三轮 P1：completion 命中须**同时**停掉 hard timeout 与 silent watchdog', () => {
+  run(results, 'completion 命中须取消 hard timeout；terminal 失败终态**不得**取消（e6b3f8d2 t1）', () => {
     const src = fs.readFileSync(
       path.join(__dirname, '..', '..', 'scripts', 'utils', 'agent-invoke.ts'),
       'utf-8',
     );
-    // 此前只 clearTimeout(timeoutTimer)：5s grace 内 silent watchdog 仍会开枪，
-    // 最终同时得到 completion_observed 与 silent_killed，又被归入失败分类。
-    const hit = /completionObserved = true;[\s\S]{0,900}?const graceBudget/.exec(src);
-    assert(hit !== null, '应能定位 completion 命中分支');
-    assert(/clearTimeout\(timeoutTimer\)/.test(hit![0]), 'completion 命中须取消 hard timeout');
-    assert(/clearInterval\(silentTimer\)/.test(hit![0]), 'completion 命中须停掉 silent watchdog');
-    // 双保险：silent 回调自身也要认 completionObserved（clear 与回调可能已排队）
+    const completionFn = /const observeCompletion = \(\): void => \{[\s\S]*?\n  \};/.exec(src);
+    assert(completionFn !== null, '应能定位 observeCompletion');
+    assert(/completionObserved = true;/.test(completionFn![0]), 'completion 须置 completionObserved');
+    assert(/clearTimeout\(timeoutTimer\)/.test(completionFn![0]), 'completion 命中须取消 hard timeout');
+    assert(/armSettleGrace\('completion'\)/.test(completionFn![0]), 'completion 须走共享 grace 收纳');
+
+    const failureFn = /const observeTerminalFailure = \(\): void => \{[\s\S]*?\n  \};/.exec(src);
+    assert(failureFn !== null, '应能定位 observeTerminalFailure');
     assert(
-      /setInterval\(\(\) => \{[\s\S]{0,400}?if \(completionObserved\) return;[\s\S]{0,300}?killTree\('silent'\)/.test(src),
-      'silent 回调须在 completionObserved 时直接返回',
+      !/completionObserved/.test(failureFn![0]),
+      'terminal 失败终态**不得**触碰 completionObserved（否则失败被洗白）',
     );
+    assert(
+      !/clearTimeout\(timeoutTimer\)/.test(failureFn![0]),
+      'terminal 失败终态不得解除 wall 硬预算兜底',
+    );
+    assert(/armSettleGrace\('terminal_failure'\)/.test(failureFn![0]), 'failed 须走同一 grace 收纳');
   });
 
   // ==========================================================================

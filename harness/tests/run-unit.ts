@@ -157,6 +157,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'device-readiness-gate', modulePath: './unit/device-readiness-gate.unit.test' },
   // openspec device-readiness-and-completion t4：完成观测判据（新鲜度/半写入/收口不算失败）
   { id: 'phase-completion-probe', modulePath: './unit/phase-completion-probe.unit.test' },
+  // plan e6b3f8d2 t1：Codex `exec --json` terminal 收口（真实样本 fixture 钉死两终态）
+  { id: 'codex-terminal-closure', modulePath: './unit/codex-terminal-closure.unit.test' },
   // openspec device-readiness-and-completion t6：凭据身份不可变 + 机器级锁存 + 跨进程互斥
   { id: 'device-credential-store', modulePath: './unit/device-credential-store.unit.test' },
   // openspec device-readiness-and-completion t6：解锁执行器（禁枚举/键位不全零输入/口令不泄露）

@@ -27,7 +27,6 @@ import { isVisionCanaryFresh, canaryAdmissibleForExecution } from './multimodal-
 // plan d8c5f3a7 T1：与三轴 resolver 共用同一采信谓词（禁两把尺子——见函数内注释）
 // plan d7f3a9c4 t3：执行身份升级 `{runId, modelPin}` 二元——重探判定与采信判定共用
 // canaryAdmissibleForExecution（无 pin 时精确退化为 canaryAdmissibleForRun）。
-import { planUsesClaudeStreamJson } from './claude-envelope';
 import { featureRelativePath } from './feature-identity';
 import {
   assertAdapterHeadlessFullPermission,
@@ -45,6 +44,7 @@ import {
   renderCanaryImage,
   resolveCanaryCacheDecision,
   resolveCanaryHardCliFailure,
+  resolveCanaryStdoutEnvelope,
   VISION_CANARY_PROBE_VERSION,
 } from './vision-canary';
 
@@ -423,8 +423,15 @@ export async function runVisionCanaryProbe(input: {
     // 不兼容只这两类升 hard_cli_failure（由 goal-runner 在 action==='probe' 真实路径升 BLOCKER）；
     // 其余 invoke 结果（auth/quota/API/无效答卷/超时/静默杀）保持既有非阻断语义。
     // "无有效 stdout" 复用 parseCanaryAnswer（传 answerKey）——CLI banner 等非答卷不压签名。
-    const canaryStructuredStdout = planUsesClaudeStreamJson(adapter, cap.capability.tool_event_provenance);
-    const hardCli = resolveCanaryHardCliFailure(invoke, { answerKey, structuredStdout: canaryStructuredStdout });
+    // plan e6b3f8d2 t1：信封方言按 adapter 解析——claude 家族看 tool_event_provenance，
+    // codex 自 `--json` 接入后恒为 JSONL（不做投影会把作答判成没作答）。
+    const canaryEnvelope = resolveCanaryStdoutEnvelope(adapter, cap.capability.tool_event_provenance);
+    const canaryStructuredStdout = canaryEnvelope !== 'none';
+    const hardCli = resolveCanaryHardCliFailure(invoke, {
+      answerKey,
+      structuredStdout: canaryStructuredStdout,
+      ...(canaryStructuredStdout ? { structuredStdoutFormat: canaryEnvelope } : {}),
+    });
     if (hardCli) {
       return { ran: true, outcome: 'hard_cli_failure', error: hardCli };
     }
@@ -437,6 +444,7 @@ export async function runVisionCanaryProbe(input: {
       // P0-1（plan 7c4f2e9b）：claude+structured_events 的 stdout 是 NDJSON 信封，
       // 判卷前须归一投影——与 claudeArgv 注入条件严格同构。
       structured_stdout: canaryStructuredStdout,
+      ...(canaryStructuredStdout ? { structured_stdout_format: canaryEnvelope } : {}),
     }, answerKey);
     if (decision.kind !== 'valid') {
       return {
