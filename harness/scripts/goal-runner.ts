@@ -71,7 +71,6 @@ import {
   dereferenceRequirementDocs,
   detectPixel1to1Intent,
   detectUiRelevantRequirement,
-  isHumanVerified,
   loadProfileOcrToolkit,
   loadSpecMarkdown,
   parseFidelityTargetFromHandoffDoc,
@@ -96,7 +95,14 @@ import {
 } from './utils/phase-transition-policy';
 import { loadHeadlessLedger } from './utils/headless-assumptions';
 import { recomputePhaseEvidenceStaleness, stableStringify } from './utils/phase-evidence-manifest';
-import { defaultTrustRegistryPath } from './utils/confirmation-receipt';
+import {
+  defaultTrustRegistryPath,
+  validateConfirmationReceiptFile,
+} from './utils/confirmation-receipt';
+import {
+  validateRubricPolicy,
+  type VisualAcceptancePayload,
+} from './utils/visual-debt';
 import { loadReviewClosureAttestation } from './utils/closure-attestation';
 import {
   classifyCleanPassIssues,
@@ -1669,32 +1675,77 @@ export function evaluateUnverifiedRound(
 // ---------------------------------------------------------------------------
 
 /**
- * adjudicated-repair-loop（review 收口）：人工恢复的唯一真源 = **既有 visual-confirm 人签
- * 语义**——visual-diff.json 屏条目 `confirmed_by` 为真人人签（isHumanVerified 谓词，
- * 同 await_human_visual_confirm / visual-confirm CLI 的同一判据）。
- * 不再叠加 ledger/receipt/registry（本 change 不建签发体系；人工真实性整体强化属
- * 全框架 visual-confirm 权威模型另立 change 的范畴）。人签=人工确认该屏视觉无需修复。
- * 返回人签 screen_id 集合（空=无人签；读失败=空，fail-safe：不解除阻塞）。
+ * adjudicated-repair-loop：人工恢复复用既有 `human_visual_acceptance` confirmation
+ * receipt。receipt 签名绑定 visual-acceptance.json 全体，payload 再逐屏绑定
+ * screen_id + actual_sha256；这里只接受与 visual-diff 当前 evaluated_screenshot_hash
+ * 一致的屏。`confirmed_by`/`signed_by` 均只作展示，不构成授权。
+ * 返回 receipt 验真的 screen_id 集合（缺失/伪造/过期/失配/读失败均为空，fail-safe）。
  */
+export function humanVisualAcceptancePaths(projectRoot: string, feature: string): {
+  diffPath: string;
+  payloadPath: string;
+  receiptPath: string;
+} {
+  const deviceTestingDir = path.join(featureDir(projectRoot, feature), 'device-testing');
+  return {
+    diffPath: path.join(deviceTestingDir, 'device-screenshots', 'visual-diff.json'),
+    payloadPath: path.join(deviceTestingDir, 'visual-acceptance.json'),
+    receiptPath: path.join(deviceTestingDir, 'visual-acceptance.receipt.json'),
+  };
+}
+
 export function humanConfirmedScreens(projectRoot: string, feature: string): Set<string> {
   const out = new Set<string>();
   try {
-    const featuresDir = featuresDirRelOf(projectRoot);
-    const diffRel = path.posix.join(
-      featuresDir, feature, 'device-testing', 'device-screenshots', 'visual-diff.json',
+    const { diffPath: diffAbs, payloadPath, receiptPath } =
+      humanVisualAcceptancePaths(projectRoot, feature);
+    if (!fs.existsSync(diffAbs) || !fs.existsSync(payloadPath) || !fs.existsSync(receiptPath)) return out;
+    const payloadBytes = fs.readFileSync(payloadPath);
+    const payload = JSON.parse(payloadBytes.toString('utf-8')) as VisualAcceptancePayload;
+    const objectHash = createHash('sha256').update(payloadBytes).digest('hex');
+    const trust = validateConfirmationReceiptFile(
+      receiptPath,
+      defaultTrustRegistryPath(projectRoot),
+      { action: 'human_visual_acceptance', feature, object_hash: objectHash },
     );
-    const diffAbs = path.join(projectRoot, ...diffRel.split('/'));
-    if (!fs.existsSync(diffAbs)) return out;
+    if (!trust.valid || validateRubricPolicy(payload).length > 0) return out;
+
+    const acceptedHashes = new Map<string, string>();
+    for (const accepted of payload.screens ?? []) {
+      const id = typeof accepted?.screen_id === 'string' ? accepted.screen_id.trim() : '';
+      const hash = typeof accepted?.actual_sha256 === 'string'
+        ? accepted.actual_sha256.trim().toLowerCase() : '';
+      if (!id || !/^[0-9a-f]{16}([0-9a-f]{48})?$/.test(hash) || acceptedHashes.has(id)) return out;
+      acceptedHashes.set(id, hash);
+    }
+
     const doc = JSON.parse(fs.readFileSync(diffAbs, 'utf-8')) as {
-      screens?: Array<{ screen_id?: string; confirmed_by?: string }>;
+      screens?: Array<{
+        screen_id?: string;
+        screenshot_path?: string;
+        evaluated_screenshot_hash?: string;
+        confirmed_by?: string;
+      }>;
     };
     for (const sc of doc.screens ?? []) {
       const id = typeof sc.screen_id === 'string' ? sc.screen_id.trim() : '';
-      if (!id) continue;
-      if (isHumanVerified(sc.confirmed_by)) out.add(id);
+      const evaluated = typeof sc.evaluated_screenshot_hash === 'string'
+        ? sc.evaluated_screenshot_hash.trim().toLowerCase() : '';
+      const accepted = acceptedHashes.get(id);
+      if (!id || !accepted || !/^[0-9a-f]{16}$/.test(evaluated)) continue;
+      const screenshotPath = typeof sc.screenshot_path === 'string' ? sc.screenshot_path.trim() : '';
+      if (!screenshotPath) continue;
+      const screenshotAbs = path.isAbsolute(screenshotPath)
+        ? screenshotPath : path.resolve(projectRoot, screenshotPath);
+      if (!fs.existsSync(screenshotAbs)) continue;
+      const currentHash = createHash('sha256').update(fs.readFileSync(screenshotAbs)).digest('hex').slice(0, 16);
+      if (currentHash !== evaluated) continue;
+      // visual-diff 的既有截图身份口径是 sha256 前 16 hex；acceptance payload 兼容
+      // 既有 full sha256 与同口径短 hash，两者都必须绑定同一 evaluated hash。
+      if (accepted === evaluated || (accepted.length === 64 && accepted.startsWith(evaluated))) out.add(id);
     }
   } catch {
-    // 读失败：无人签可消费（fail-safe：不解除任何阻塞）
+    // 读/验签失败：无人签可消费（fail-safe：不解除任何阻塞）
   }
   return out;
 }
@@ -7037,8 +7088,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 '（累计 one-shot），停止自动回退求人裁决：',
                 '  · 确需再修一次：`framework/harness/scripts/goal-runner.ts --resume`（resume 本身',
                 '    即一次显式放行；attempted 重新计入后须再次人工 resume）；',
-                '  · 判为误报/已解决：先走 visual-confirm 人签接受该屏（visual-diff.json confirmed_by',
-                '    真人人签），再 --resume。',
+                '  · 判为误报/已解决：由 runner 外签发并注入有效 human_visual_acceptance',
+                '    receipt（逐屏绑定当前截图 hash），再 --resume；confirmed_by 仅展示。',
               ].join('\n');
               goalEvents.emit({
                 type: 'phase_halt', phase, halt_reason: 'repair_not_converging',
@@ -7138,12 +7189,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
           metaPre.blocking_class === 'externalBlocked';
         // 物化前裁决（前置判定，与 closure 门控同点）：仅结构化视觉信号（signal_identity）
         // 须 defect-review 逐信号精确绑定复核；disputed/unreviewed/歧义/非法 → pending。
-        // 人工恢复（review 修复）：**单一真源 = 既有 visual-confirm 人签**（visual-diff.json
-        // 屏条目 confirmed_by 真人人签，isHumanVerified 谓词；同 await_human_visual_confirm /
-        // visual-confirm CLI 判据）——该屏 pending 信号按「人工接受」解除（不物化、不阻塞；
+        // 人工恢复：**单一真源 = 既有 human_visual_acceptance receipt**（可信 registry
+        // 验签；payload 逐屏绑定 evaluated_screenshot_hash）——该屏 pending 信号按
+        // 「人工接受」解除（不物化、不阻塞；
         // 人若认为要修，改 verdict=fail + must_fix 走既有 actionable 通道重新进入裁决）。
-        // agent 可写文本（test-report.md 的 defect-review 块 / visual-diff.json 字段）**不承载
-        // 任何人工终裁效力**（人工真实性整体强化属全框架 visual-confirm 权威模型另立 change）。
+        // agent 可写文本（test-report.md / visual-diff.json 的 confirmed_by / acceptance payload）
+        // **不承载人工终裁效力**；必须有 runner 外可信私钥签发的 receipt。
         const signalDefects = actionableResult.defects.filter((d) => d.signal_identity === true);
         const humanSignedScreens = humanConfirmedScreens(projectRoot, manifest.feature);
         let materializationBlocked: { reason: string; disputeRows: string[] } | null = null;
@@ -7173,7 +7224,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             seenSignals.set(e.signal, hit[0].fingerprint);
           }
           for (const d of signalDefects) {
-            // 人签屏 = 人工确认该屏视觉无需修复 → 信号人工排除（真源=visual-confirm 人签）
+            // receipt 验真屏 = 人工确认该屏视觉无需修复 → 信号人工排除
             if (humanSignedScreens.has(d.screen_or_case_id)) {
               humanExcludedSignals.add(d.fingerprint);
               continue;
@@ -7197,8 +7248,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         }
         // adjudicated-repair-loop M2：uncertain 人签排除**必须在 closure
         // 门控之前**消费——否则签名解除 pending 后本轮 closure 已被跳过（时序洞）。
-        // 载体=既有 visual-confirm 人签（visual-diff.json 屏条目 confirmed_by 真人人签，
-        // isHumanVerified 谓词，见 humanConfirmedScreens）——单一真源。
+        // 载体=既有 human_visual_acceptance receipt（见 humanConfirmedScreens）——单一真源。
         if (!dryRun && uncertainPending.length > 0) {
           const humanSignedScreensNow = humanConfirmedScreens(projectRoot, manifest.feature);
           if (humanSignedScreensNow.size > 0) {
@@ -7208,8 +7258,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
             );
             if (uncertainPending.length !== before) {
               console.warn(
-                `[repair-adjudication] visual-confirm 人签确认 ${before - uncertainPending.length} 项 uncertain ` +
-                  '信号（confirmed_by + isHumanVerified）——解除阻塞',
+                `[repair-adjudication] human_visual_acceptance receipt 确认 ` +
+                  `${before - uncertainPending.length} 项 uncertain 信号——解除阻塞`,
               );
             }
           }
@@ -7343,8 +7393,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
               : []),
             '- 人工裁决恢复（既有通道）：',
             '  1. 逐屏审阅 device-screenshots/shot-*.png 对照参考原图；',
-            '  2. 接受该屏（信号误报/无需修复）→ 走既有 visual-confirm 人签：visual-diff.json' +
-              ' 该屏 confirmed_by 填真人人签（isHumanVerified 谓词，同 visual-confirm CLI 口径）后 --resume；',
+            '  2. 接受该屏（信号误报/无需修复）→ 由 runner 外签发 human_visual_acceptance receipt：' +
+              'visual-acceptance.json 逐屏绑定 screen_id + 当前 evaluated_screenshot_hash，可信 receipt ' +
+              '绑定 action/feature/payload hash/expiry 后 --resume；confirmed_by 仅展示；',
             '  3. 认为确要修复 → 该屏 verdict=fail + must_fix 后 resume（走既有 actionable 通道重新裁决）。',
             '- 恢复命令：`framework/harness/scripts/goal-runner.ts --resume`（run 处于 WAITING）。',
           ].join('\n');
@@ -7514,7 +7565,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         //     才停 repair_not_converging——有 legacy 时继续路由 legacy（不误伤 check-domain）。
         const signalCandidatesAll = summaryRepairCandidates.filter((c) => c.identity_schema === 'signal@1');
         const legacyCandidates = summaryRepairCandidates.filter((c) => c.identity_schema !== 'signal@1');
-        // adjudicated-repair-loop（review 修复）：**人签只承担一个语义：「接受该屏」**——
+        // adjudicated-repair-loop：**验真 receipt 只承担一个语义：「接受该屏」**——
         // 该屏信号（pending 与 attempted 一致）都不再驱动回退：pending 解除阻塞不物化
         //（materialization 中已剔除），attempted 的 open 信号**从 eligible 输入中剔除**
         //（不得删除 attempted——删除会使信号重新 eligible 导致反向驱动回退）。
@@ -7628,9 +7679,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
             '  1. 确属真缺陷且要再修一次 → 直接 `framework/harness/scripts/goal-runner.ts --resume`',
             '     ——**resume 本身即一次显式放行**（attempted 清空一轮；attempted 不变式保证重新执行后',
             '     重新计入，须再次人工 resume 才能再放行，不自动循环）；',
-            '  2. 判为误报/已解决 → visual-confirm 人签接受该屏（visual-diff.json confirmed_by 真人人签）后 resume',
+            '  2. 判为误报/已解决 → 注入有效 human_visual_acceptance receipt 后 resume',
             '     ——该屏信号接受不再驱动回退；',
-            '  3. 每次放行都是一次人的动作（resume/人签），attempted 累计不变式不被任何 agent 文本重置。',
+            '  3. 每次放行都是一次人的动作（resume/可信 receipt），attempted 累计不变式不被任何 agent 文本重置。',
             '- 恢复命令：`framework/harness/scripts/goal-runner.ts --resume`（run 处于 WAITING）。',
           ].join('\n');
           goalEvents.emit({

@@ -28,6 +28,7 @@ import {
   loadFidelityIntentSsotState,
   resolveRequirementReferenceImages,
 } from './fidelity-shared';
+import { featureRelativePath } from './feature-identity';
 
 export type InputResolutionState = 'resolved' | 'absent' | 'invalid' | 'not_applicable';
 export type CapabilityResolutionState = 'resolved' | 'pruned' | 'blocked' | 'not_applicable';
@@ -299,8 +300,8 @@ function resolveDerive(
         detail:
           'fidelity 意图为 pixel_1to1，但一张参考图都取不到——像素级比对没有基准，' +
           '继续跑只会产出无视觉证据的 ui-spec，随后被下游判 evidence_gap 并按盲档降级。' +
-          `已查：需求文本中锚定 ${featuresDirRel}/${feature} 的显式路径引用、以及回退目录 ` +
-          `${featuresDirRel}/${feature}/ux-reference/，均无图片文件。修复路径：` +
+          `已查：需求文本中锚定 ${featuresDirRel}/${featureRelativePath(feature)} 的显式路径引用、以及回退目录 ` +
+          `${featuresDirRel}/${featureRelativePath(feature)}/ux-reference/，均无图片文件。修复路径：` +
           '① 把参考图放到该 feature 的 ux-reference/ 下，或在需求文本里写明它们的真实目录' +
           '（发现器认需求中锚定 features_dir 的显式路径）；② 若本特性确实没有参考图，' +
           '把 fidelity 意图改为 semantic_layout/reference_only 后重新初始化 SSOT，' +

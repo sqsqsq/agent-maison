@@ -1,9 +1,10 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { featurePhaseReportsDir } from '../../config';
+import { clearFrameworkConfigCache, featurePhaseReportsDir } from '../../config';
 import {
   buildPhaseExecuteRequest,
+  defaultGoalModeFrameworkRoot,
   deriveInSessionFingerprint,
   prepareGoalModeRun,
   runGoalModeHostBridge,
@@ -25,6 +26,11 @@ import {
   readRunControl,
 } from '../../scripts/utils/goal-run-control';
 import { consumeHandoffAtBoundary, readHandoffRequest, writeHandoffRequest } from '../../scripts/utils/goal-handoff';
+import { deriveChangeUnitFeatureId } from '../../scripts/utils/change-unit-path';
+import { featureRelativePath } from '../../scripts/utils/feature-identity';
+import { humanVisualAcceptancePaths } from '../../scripts/goal-runner';
+import { goalFeatureSelfReferencePrefix } from '../../scripts/utils/goal-preflight';
+import { dereferenceRequirementDocs } from '../../scripts/utils/fidelity-shared';
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '..', '..', '..');
 
@@ -98,6 +104,14 @@ async function withSession<T>(
 
 interface TestCase { name: string; run: () => Promise<void> | void }
 const cases: TestCase[] = [
+  {
+    name: 'goal-mode CLI default framework root contains workflows',
+    run: () => {
+      const resolved = defaultGoalModeFrameworkRoot(path.join(FRAMEWORK_ROOT, 'harness', 'scripts'));
+      assert(resolved === FRAMEWORK_ROOT, `默认 framework root 错误：${resolved}`);
+      assert(fs.existsSync(path.join(resolved, 'workflows')), '默认 framework root 下必须存在 workflows/');
+    },
+  },
   {
     name: 'phase executor protocol carries run, attempt, and owner fence',
     run: () => {
@@ -259,7 +273,89 @@ const cases: TestCase[] = [
         fs.rmSync(env.root, { recursive: true, force: true });
       }
     },
-  },  {
+  },
+  {
+    name: 'goal path matrix: default/custom features_dir × legacy/CU covers prepare, attach, human recovery, self exclusion',
+    run: async () => {
+      const matrix = [
+        { featuresDir: 'doc/features', feature: 'demo', physical: 'demo' },
+        { featuresDir: 'requirements/features', feature: 'demo', physical: 'demo' },
+        {
+          featuresDir: 'doc/features',
+          feature: deriveChangeUnitFeatureId('bp-demo', 'unit-a'),
+          physical: 'bp-demo/unit-a',
+        },
+        {
+          featuresDir: 'requirements/features',
+          feature: deriveChangeUnitFeatureId('bp-demo', 'unit-a'),
+          physical: 'bp-demo/unit-a',
+        },
+      ];
+      for (const row of matrix) {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'goal-path-matrix-'));
+        try {
+          fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({
+            schema_version: '1.1', project_name: 'goal-path-matrix', active_workflow: 'spec-driven',
+            project_profile: { name: 'generic' }, agent_adapter: 'codex',
+            architecture: {
+              outer_layers: [{ id: 'app', can_depend_on: [], intra_layer_deps: 'forbid' }],
+              module_inner_layers: ['content'], inner_dependency_direction: 'upward',
+              cross_module_exports_file: 'index.ts',
+            },
+            paths: {
+              features_dir: row.featuresDir,
+              reports_dir_pattern: `${row.featuresDir}/<feature>/<phase>/reports`,
+            },
+          }), 'utf8');
+          fs.mkdirSync(path.join(root, ...row.featuresDir.split('/'), ...row.physical.split('/')), { recursive: true });
+          clearFrameworkConfigCache();
+          const prepared = prepareGoalModeRun({
+            projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: row.feature,
+            runId: 'matrix-run', adapter: 'codex', requirement: 'matrix requirement',
+            startPhase: 'spec', endPhase: 'spec',
+          });
+          const expectedRunSuffix = `${row.featuresDir}/${row.physical}/goal-runs/matrix-run`;
+          assert(
+            prepared.runDir.replace(/\\/g, '/').endsWith(expectedRunSuffix),
+            `prepare 落点错误：${prepared.runDir} expected ${expectedRunSuffix}`,
+          );
+          assert(featureRelativePath(row.feature) === row.physical, `feature SSOT 错误：${row.feature}`);
+
+          let invoked = false;
+          await runGoalModeHostBridge({
+            projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: row.feature,
+            runId: 'matrix-run', adapter: 'codex', runMode: 'attended', maxRounds: 1,
+            executePhase: async (phase) => {
+              invoked = true;
+              return { status: 'passed', phase };
+            },
+          });
+          assert(invoked, `attach 未执行：${row.featuresDir}/${row.physical}`);
+
+          const recovery = humanVisualAcceptancePaths(root, row.feature);
+          assert(
+            recovery.receiptPath.replace(/\\/g, '/').endsWith(
+              `${row.featuresDir}/${row.physical}/device-testing/visual-acceptance.receipt.json`,
+            ),
+            `人工恢复落点错误：${recovery.receiptPath}`,
+          );
+
+          const selfRel = `${row.featuresDir}/${row.physical}/self.md`;
+          fs.writeFileSync(path.join(root, ...selfRel.split('/')), 'SHOULD_NOT_DEREFERENCE', 'utf8');
+          const deref = dereferenceRequirementDocs(root, `see ${selfRel}`, {
+            featuresDirRel: row.featuresDir,
+            excludePrefixes: [goalFeatureSelfReferencePrefix(row.featuresDir, row.feature)],
+          });
+          assert(deref.resolvedPaths.length === 0 && !deref.combined.includes('SHOULD_NOT_DEREFERENCE'),
+            `自引用排除失败：${row.featuresDir}/${row.physical}`);
+        } finally {
+          clearFrameworkConfigCache();
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      }
+    },
+  },
+  {
     name: 'production goal-mode entry invokes runInSessionRound through the skill bridge',
     run: () => withSession(async (env) => {
       let invoked = 0;

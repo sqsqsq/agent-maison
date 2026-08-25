@@ -29,6 +29,7 @@ import {
   type RunAdapterProvenance,
 } from './utils/goal-manifest';
 import { resolveWorkflowSpec } from '../workflow-loader';
+import { relFeaturesDir } from '../config';
 import { validateMinimumAssurance } from './utils/skill-contract';
 import type { ReconcileObservationV1 } from './utils/assess';
 
@@ -217,6 +218,11 @@ export interface PrepareGoalModeRunOptions {
   endPhase?: string;
 }
 
+/** harness/scripts → framework root；standalone 与 consumer 的目录层级一致。 */
+export function defaultGoalModeFrameworkRoot(scriptDir = __dirname): string {
+  return path.resolve(scriptDir, '..', '..');
+}
+
 /** Create the persisted manifest/control skeleton for a fresh attended run. */
 export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
   manifest: GoalManifest;
@@ -246,7 +252,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
       //（此前 workspace-write + on-request 让 claude 连 dontAsk 都拿不到，与无人值守自相矛盾）。
       unattended: { write_mode: 'full-access', approval_mode: 'never', max_turns: 30 },
     },
-    { projectRoot: options.projectRoot },
+    { projectRoot: options.projectRoot, featuresDir: relFeaturesDir(options.projectRoot) },
   );
   validateMinimumAssurance(
     options.frameworkRoot,
@@ -314,6 +320,7 @@ export async function runGoalModeHostBridge(
   assertAttendedRunMode(options.runMode);
   const manifest = loadGoalManifestFromRun(options.projectRoot, options.runId, {
     feature: options.feature,
+    featuresDir: relFeaturesDir(options.projectRoot),
   });
   const callerAdapter = options.adapter.trim();
   if (!callerAdapter || callerAdapter !== manifest.adapter) {
@@ -416,7 +423,7 @@ async function main(): Promise<void> {
     throw new Error(`--adapter-source 非法：${adapterSourceRaw}`);
   }
   const projectRoot = path.resolve(String(argv['project-root'] ?? process.cwd()));
-  const frameworkRoot = path.resolve(String(argv['framework-root'] ?? path.resolve(__dirname, '..')));
+  const frameworkRoot = path.resolve(String(argv['framework-root'] ?? defaultGoalModeFrameworkRoot()));
   if (Boolean(argv['prepare-run'])) {
     const prepared = prepareGoalModeRun({
       projectRoot,

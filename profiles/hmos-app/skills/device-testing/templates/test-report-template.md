@@ -78,9 +78,10 @@
 > 可回退候选；disputed / 未复核 / producer 归为 uncertain 一律停等求人。
 > **signal 必须精确填该 defect 的稳定指纹**（`screen|class|element|bbox_bucket[|producer#finding_id]`，
 > 可从 visual-diff.json 的 defects 条目复制的结构键），不填屏名/指令文本（防同屏多缺陷歧义）。
-> 人工恢复**不走本块**（本块是 agent 复核结论，无人工终裁效力）：人审阅截图后经
-> visual-confirm 通道（`visual-diff.json` 屏条目 `confirmed_by` 填真人人签）或改 verdict/must_fix
-> 后 resume。格式（fenced 块，**逐信号一条**，禁止 inline 注释）：
+> 人工恢复**不走本块**（本块是 agent 复核结论，无人工终裁效力）：判为误报或已解决时，
+> 由 runner 外签发并注入可信 `human_visual_acceptance` receipt 后再 resume；确认为真缺陷时，
+> 写 `verdict=fail` + `must_fix` 后再 resume。`confirmed_by` 在本恢复路径仅作展示，不构成授权。
+> 格式（fenced 块，**逐信号一条**，禁止 inline 注释）：
 
 ```defect-review
 - signal: add_card_home_collapsed|shape_mismatch|hc_page_title|0.1,0.2,0.3,0.4

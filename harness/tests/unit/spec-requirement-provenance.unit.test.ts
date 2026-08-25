@@ -28,6 +28,7 @@ import {
   ensureRunControl,
   releaseRunOwner,
 } from '../../scripts/utils/goal-run-control';
+import { appendGoalEventFenced } from '../../scripts/utils/goal-in-session-evidence';
 import { detectRepoLayout } from '../../repo-layout';
 import {
   loadFidelityIntentSsot,
@@ -181,6 +182,12 @@ const cases: Case[] = [
           kind: 'session', owner_id: 'attended-init-test', lease_ms: 60_000,
         });
         if (!acquired.ok) throw new Error('session owner acquisition failed');
+        appendGoalEventFenced(cliProjectRoot, manifest, runDir, acquired.token, {
+          type: 'phase_start', phase: 'spec',
+          attempt_id: `session-e${acquired.token.epoch}-round-1`,
+          owner_id: acquired.token.owner_id, owner_epoch: acquired.token.epoch,
+          driver: 'session', round: 1,
+        });
 
         const cli = path.join(HARNESS_ROOT, 'scripts', 'fidelity-intent-init.ts');
         const runCli = () => spawnSync(

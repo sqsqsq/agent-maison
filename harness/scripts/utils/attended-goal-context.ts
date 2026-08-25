@@ -8,6 +8,7 @@ import {
   assertFencedOwner,
   type RunControlV1,
 } from './goal-run-control';
+import { loadEventsJsonlStrict } from './goal-runner-phase';
 
 export interface AttendedGoalPhaseIdentity {
   runId: string;
@@ -72,6 +73,25 @@ export function validateAttendedGoalContext(input: {
   const leaseExpiresAt = new Date(owner.lease_expires_at).getTime();
   if (!Number.isFinite(leaseExpiresAt) || leaseExpiresAt <= (input.nowMs ?? Date.now())) {
     throw new Error('[attended-goal-context] session lease 已过期或非法');
+  }
+  const loaded = loadEventsJsonlStrict(path.join(runDir, 'events.jsonl'));
+  if (loaded.missing || loaded.corruptLines.length > 0) {
+    throw new Error('[attended-goal-context] 当前 session phase_start 签发记录缺失或损坏');
+  }
+  const issued = [...loaded.events].reverse().find((event) => {
+    const row = event as Record<string, unknown>;
+    return row.type === 'phase_start' && row.driver === 'session' &&
+      row.owner_id === ownerId && row.owner_epoch === ownerEpoch;
+  }) as (Record<string, unknown> | undefined);
+  if (!issued) {
+    throw new Error('[attended-goal-context] 当前 owner fence 未签发 phase_start');
+  }
+  if (issued.phase !== phase || issued.attempt_id !== attemptId) {
+    throw new Error(
+      `[attended-goal-context] phase/attempt 未与当前签发记录精确匹配：` +
+      `issued=${String(issued.phase)}/${String(issued.attempt_id)} ` +
+      `received=${phase}/${attemptId}`,
+    );
   }
   return { manifest, control, runDir, identity };
 }

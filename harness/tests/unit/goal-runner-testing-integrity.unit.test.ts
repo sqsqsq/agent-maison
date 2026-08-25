@@ -22,7 +22,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { createHash } from 'crypto';
+import { createHash, generateKeyPairSync, sign } from 'crypto';
 import { spawnSync } from 'child_process';
 import {
   __testing_resetGoalRunnerSeams,
@@ -53,6 +53,12 @@ import { checkPassRateCalculated } from '../../scripts/check-testing';
 import { writeRunSummaryBase } from '../../harness-runner';
 import type { CheckContext, CheckResult, Phase, ScriptReport } from '../../scripts/utils/types';
 import { computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
+import {
+  canonicalReceiptPayload,
+  CONFIRMATION_RECEIPT_SCHEMA_VERSION,
+  TRUST_REGISTRY_PATH_ENV,
+  type ConfirmationReceipt,
+} from '../../scripts/utils/confirmation-receipt';
 import { mergeSuccessorRequirement } from '../../scripts/utils/goal-manifest';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -227,6 +233,76 @@ function writeVisualDiff(
     `doc/features/${FEATURE}/device-testing/device-screenshots/visual-diff.json`,
     JSON.stringify({ schema_version: '1.0', screens: rows }, null, 2),
   );
+}
+
+/**
+ * human_visual_acceptance 测试签发器。registry 与私钥都在宿主工程外；测试中的 agent
+ * 回调只能把 payload/receipt 写进工程，镜像生产信任边界。
+ */
+function visualAcceptanceFixture(root: string): {
+  registryDir: string;
+  registryPath: string;
+  write: (screenId: string, evaluatedHash: string, valid: boolean) => void;
+} {
+  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-visual-trust-'));
+  const registryPath = path.join(registryDir, 'confirmation-trust-registry.json');
+  const trusted = generateKeyPairSync('ed25519');
+  fs.writeFileSync(registryPath, JSON.stringify({
+    schema_version: '1.0',
+    issuers: [{
+      issuer_id: 'human-review-desk',
+      keys: [{
+        key_id: 'visual-key-1', alg: 'ed25519',
+        public_key_pem: trusted.publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+      }],
+    }],
+  }, null, 2), 'utf-8');
+  return {
+    registryDir,
+    registryPath,
+    write: (screenId: string, evaluatedHash: string, valid: boolean): void => {
+      const payload = {
+        rubric_version: 'r1-frozen',
+        rubric: { container: 4, hierarchy: 4, density: 4, state_color: 4 },
+        screens: [{
+          screen_id: screenId,
+          variant: 'default',
+          reference_sha256: 'a'.repeat(64),
+          actual_sha256: evaluatedHash,
+        }],
+        accepted_debt_ids: [],
+        signed_by: '张三-20260821',
+      };
+      const payloadPath = path.join(
+        root, 'doc', 'features', FEATURE, 'device-testing', 'visual-acceptance.json',
+      );
+      writeFile(root, path.relative(root, payloadPath), `${JSON.stringify(payload, null, 2)}\n`);
+      const payloadHash = createHash('sha256').update(fs.readFileSync(payloadPath)).digest('hex');
+      const receiptPayload = {
+        action: 'human_visual_acceptance' as const,
+        feature: FEATURE,
+        object_hash: payloadHash,
+        issued_at: new Date(Date.now() - 60_000).toISOString(),
+        expiry: new Date(Date.now() + 60 * 60_000).toISOString(),
+      };
+      const signingKey = valid ? trusted.privateKey : generateKeyPairSync('ed25519').privateKey;
+      const receipt: ConfirmationReceipt = {
+        schema_version: CONFIRMATION_RECEIPT_SCHEMA_VERSION,
+        receipt_id: `visual-${valid ? 'valid' : 'forged'}`,
+        issuer_id: 'human-review-desk',
+        key_id: 'visual-key-1',
+        alg: 'ed25519',
+        payload_schema_version: '1.0',
+        payload: receiptPayload,
+        signature: sign(null, canonicalReceiptPayload(receiptPayload), signingKey).toString('base64'),
+      };
+      writeFile(
+        root,
+        `doc/features/${FEATURE}/device-testing/visual-acceptance.receipt.json`,
+        `${JSON.stringify(receipt, null, 2)}\n`,
+      );
+    },
+  };
 }
 
 interface AgentCtx {
@@ -2688,27 +2764,38 @@ test('M2-3 actionable + defect-review disputed（agent 反对）→ 停等、原
   );
 });
 
-test('M2-3b 人签屏（visual-confirm confirmed_by 真人人签）→ 信号人工接受不阻塞、不物化、正常完成', async () => {
+test('M2-3b runner 外注入有效 human_visual_acceptance receipt → 信号人工接受并正常完成', async () => {
   const { root } = setupHost();
-  const probe = await runChain(root, {
-    onTesting: ({ root: r, attempt }) => {
-      if (attempt === 1) {
-        writeVisualDiff(r, [{
-          id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT],
-          // 人工已过目认可该屏视觉（visual-confirm 人签通道：confirmed_by 真人人签，isHumanVerified）
-          confirmed_by: '张三-20260821',
-          defects: [{
-            class: 'shape_mismatch', element: 'hc_page_title', bbox: [0.1, 0.2, 0.3, 0.4],
-            severity: 'major', note: '标题错位', must_fix_refs: [0],
-          }],
-        }]);
-        // agent 反对（未终裁）；恢复=既有 visual-confirm 人签（已在上方 confirmed_by）
-        writeDefectReview(r, [
-          `- signal: ${signalFp('add_card_home', 'shape_mismatch', 'hc_page_title', [0.1, 0.2, 0.3, 0.4])}`, '  verdict: disputed', '  rationale: OCR 混淆/口径错配，非真缺陷',
-        ]);
-      }
-    },
-  });
+  const acceptance = visualAcceptanceFixture(root);
+  const evaluatedHash = createHash('sha256').update('png-bytes-add_card_home').digest('hex').slice(0, 16);
+  // 必须发生在 runChain/agent callback 外，模拟 runner 外部的真人签发注入。
+  acceptance.write('add_card_home', evaluatedHash, true);
+  const previousRegistry = process.env[TRUST_REGISTRY_PATH_ENV];
+  process.env[TRUST_REGISTRY_PATH_ENV] = acceptance.registryPath;
+  let probe: RunProbe;
+  try {
+    probe = await runChain(root, {
+      onTesting: ({ root: r, attempt }) => {
+        if (attempt === 1) {
+          writeVisualDiff(r, [{
+            id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT],
+            confirmed_by: '仅展示-不参与授权',
+            defects: [{
+              class: 'shape_mismatch', element: 'hc_page_title', bbox: [0.1, 0.2, 0.3, 0.4],
+              severity: 'major', note: '标题错位', must_fix_refs: [0],
+            }],
+          }]);
+          writeDefectReview(r, [
+            `- signal: ${signalFp('add_card_home', 'shape_mismatch', 'hc_page_title', [0.1, 0.2, 0.3, 0.4])}`, '  verdict: disputed', '  rationale: OCR 混淆/口径错配，非真缺陷',
+          ]);
+        }
+      },
+    });
+  } finally {
+    if (previousRegistry === undefined) delete process.env[TRUST_REGISTRY_PATH_ENV];
+    else process.env[TRUST_REGISTRY_PATH_ENV] = previousRegistry;
+    fs.rmSync(acceptance.registryDir, { recursive: true, force: true });
+  }
   assert(
     !probe.events.some(e => e.type === 'phase_halt' &&
       (e as { halt_reason?: string }).halt_reason === 'repair_adjudication_pending'),
@@ -2721,30 +2808,42 @@ test('M2-3b 人签屏（visual-confirm confirmed_by 真人人签）→ 信号人
   assertRunReachedEnd(probe, 'M2-3b');
 });
 
-test('M2-3c confirmed_by 为自动化身份（user_requirement）→ 不构成人签，照常停等（fail-closed）', async () => {
+test('M2-3c agent 自填人名并伪造 receipt → 不构成人工授权，照常停等', async () => {
   const { root } = setupHost();
-  const probe = await runChain(root, {
-    onTesting: ({ root: r, attempt }) => {
-      if (attempt === 1) {
-        writeVisualDiff(r, [{
-          id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT],
-          // 自动化/授权哨兵身份（isHumanVerified 拒绝 user_requirement 等）不是人签
-          confirmed_by: 'user_requirement',
-          defects: [{
-            class: 'shape_mismatch', element: 'hc_page_title', bbox: [0.1, 0.2, 0.3, 0.4],
-            severity: 'major', note: '标题错位', must_fix_refs: [0],
-          }],
-        }]);
-        writeDefectReview(r, [
-          `- signal: ${signalFp('add_card_home', 'shape_mismatch', 'hc_page_title', [0.1, 0.2, 0.3, 0.4])}`, '  verdict: disputed', '  rationale: OCR 混淆',
-        ]);
-      }
-    },
-  });
+  const acceptance = visualAcceptanceFixture(root);
+  const previousRegistry = process.env[TRUST_REGISTRY_PATH_ENV];
+  process.env[TRUST_REGISTRY_PATH_ENV] = acceptance.registryPath;
+  let probe: RunProbe;
+  try {
+    probe = await runChain(root, {
+      onTesting: ({ root: r, attempt }) => {
+        if (attempt === 1) {
+          writeVisualDiff(r, [{
+            id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT],
+            confirmed_by: '张三-20260821',
+            defects: [{
+              class: 'shape_mismatch', element: 'hc_page_title', bbox: [0.1, 0.2, 0.3, 0.4],
+              severity: 'major', note: '标题错位', must_fix_refs: [0],
+            }],
+          }]);
+          const evaluatedHash = createHash('sha256').update('png-bytes-add_card_home').digest('hex').slice(0, 16);
+          // 模拟 agent 在自己的写权限域内补 payload + 自签伪 receipt。
+          acceptance.write('add_card_home', evaluatedHash, false);
+          writeDefectReview(r, [
+            `- signal: ${signalFp('add_card_home', 'shape_mismatch', 'hc_page_title', [0.1, 0.2, 0.3, 0.4])}`, '  verdict: disputed', '  rationale: OCR 混淆',
+          ]);
+        }
+      },
+    });
+  } finally {
+    if (previousRegistry === undefined) delete process.env[TRUST_REGISTRY_PATH_ENV];
+    else process.env[TRUST_REGISTRY_PATH_ENV] = previousRegistry;
+    fs.rmSync(acceptance.registryDir, { recursive: true, force: true });
+  }
   const halts = probe.events.filter(e => e.type === 'phase_halt' &&
     (e as { halt_reason?: string }).halt_reason === 'repair_adjudication_pending');
   assert(halts.length >= 1,
-    `自动化身份不得解除阻塞（照常停等）：${probe.events.filter(e => e.type === 'phase_halt').map(e => (e as { halt_reason?: string }).halt_reason).join(',')}`);
+    `自填人名/伪 receipt 不得解除阻塞：${probe.events.filter(e => e.type === 'phase_halt').map(e => (e as { halt_reason?: string }).halt_reason).join(',')}`);
 });
 
 test('M2-4 actionable 无复核块（unreviewed）→ 停等（fail-closed 无得利路径）', async () => {

@@ -5,6 +5,7 @@ import { clearFrameworkConfigCache } from '../../config';
 import { validateAttendedGoalContext } from '../../scripts/utils/attended-goal-context';
 import { buildGoalManifestFromInput, writeGoalManifest } from '../../scripts/utils/goal-manifest';
 import { casAcquireRunOwner, ensureRunControl, releaseRunOwner } from '../../scripts/utils/goal-run-control';
+import { appendGoalEventFenced } from '../../scripts/utils/goal-in-session-evidence';
 import { bindAttendedGoalContext } from '../../harness-runner';
 import { isAgentSideGoalHarness, isGoalOrchestrationEnv } from '../../scripts/utils/phase-state';
 import { writeDeviceTestEvidenceIfEligible } from '../../scripts/check-testing';
@@ -17,6 +18,7 @@ function assert(condition: unknown, message: string): void {
 function withRun(run: (env: {
   root: string; runId: string; runDir: string;
   token: { run_id: string; owner_id: string; epoch: number };
+  issuePhase: (phase: string, attemptId?: string) => void;
 }) => void): void {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'attended-context-'));
   const runId = '20260824T120000Z-test';
@@ -39,7 +41,15 @@ function withRun(run: (env: {
     });
     assert(acquired.ok, 'session owner acquisition failed');
     if (!acquired.ok) throw new Error('session owner acquisition failed');
-    run({ root, runId, runDir, token: acquired.token });
+    const issuePhase = (phase: string, attemptId = 'session-e1-round-1'): void => {
+      appendGoalEventFenced(root, manifest, runDir, acquired.token, {
+        type: 'phase_start', phase, attempt_id: attemptId,
+        owner_id: acquired.token.owner_id, owner_epoch: acquired.token.epoch,
+        driver: 'session', round: 1,
+      });
+    };
+    issuePhase('spec');
+    run({ root, runId, runDir, token: acquired.token, issuePhase });
   } finally {
     clearFrameworkConfigCache();
     fs.rmSync(root, { recursive: true, force: true });
@@ -87,8 +97,34 @@ const cases: Array<{ name: string; run: () => void }> = [
     }),
   },
   {
-    name: 'harness explicit binding injects existing goal env only after validation',
+    name: 'wrong phase cannot borrow a valid owner fence',
     run: () => withRun(({ root, runId, token }) => {
+      let message = '';
+      try {
+        validateAttendedGoalContext({
+          projectRoot: root, feature: 'demo', runId, phase: 'testing',
+          attemptId: 'session-e1-round-1', ownerId: token.owner_id, ownerEpoch: token.epoch,
+        });
+      } catch (error) { message = (error as Error).message; }
+      assert(/phase\/attempt 未与当前签发记录精确匹配/.test(message), `wrong phase 未拒绝：${message}`);
+    }),
+  },
+  {
+    name: 'wrong attempt cannot borrow a valid issued phase',
+    run: () => withRun(({ root, runId, token }) => {
+      let message = '';
+      try {
+        validateAttendedGoalContext({
+          projectRoot: root, feature: 'demo', runId, phase: 'spec',
+          attemptId: 'forged-attempt', ownerId: token.owner_id, ownerEpoch: token.epoch,
+        });
+      } catch (error) { message = (error as Error).message; }
+      assert(/phase\/attempt 未与当前签发记录精确匹配/.test(message), `wrong attempt 未拒绝：${message}`);
+    }),
+  },
+  {
+    name: 'harness explicit binding injects existing goal env only after validation',
+    run: () => withRun(({ root, runId, token, issuePhase }) => {
       const env: NodeJS.ProcessEnv = {
         maison_goal_run_id: 'stale', MAISON_GOAL_RUNNER: '0', maison_goal_gate_harness: '0',
       };
@@ -138,13 +174,14 @@ const cases: Array<{ name: string; run: () => void }> = [
   },
   {
     name: 'formal attended binding reaches the canonical device evidence writer',
-    run: () => withRun(({ root, runId, token }) => {
+    run: () => withRun(({ root, runId, token, issuePhase }) => {
       const keys = [
         'MAISON_GOAL_RUN_ID', 'MAISON_GOAL_RUNNER', 'MAISON_GOAL_ATTEMPT',
         'MAISON_GOAL_ATTEMPT_PHASE', 'MAISON_GOAL_GATE_HARNESS',
       ] as const;
       const before = new Map(keys.map((key) => [key, process.env[key]]));
       try {
+        issuePhase('testing');
         bindAttendedGoalContext({
           projectRoot: root, feature: 'demo', phase: 'testing', goalRunId: runId,
           goalAttemptId: 'session-e1-round-1', goalOwnerId: token.owner_id,

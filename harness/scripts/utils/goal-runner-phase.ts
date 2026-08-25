@@ -234,6 +234,11 @@ export interface GoalRunEvent {
   /** agent_invoke_end 既有字段（dry-run invoke 写 true；"证据齐全即跳过"机制已删）。 */
   skipped?: boolean;
   invoke_id?: string;
+  /** attended session phase_start 的正式签发元组（harness 权限注入前精确对账）。 */
+  attempt_id?: string;
+  owner_id?: string;
+  owner_epoch?: number;
+  driver?: string;
   invoke_start_ts?: string;
   chain?: string[];
   attempt?: number;

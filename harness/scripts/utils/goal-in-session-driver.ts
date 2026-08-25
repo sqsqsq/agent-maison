@@ -294,6 +294,9 @@ export async function runInSessionRound(
   appendGoalEventFenced(options.projectRoot, options.manifest, options.runDir, options.token, {
     type: 'phase_start',
     phase,
+    attempt_id: attemptId,
+    owner_id: options.token.owner_id,
+    owner_epoch: options.token.epoch,
     driver: 'session',
     round: options.round,
   });
