@@ -36,6 +36,7 @@ import {
   countCumulativeAdvanceBlocked,
   countRepeatedSignatureInFamily,
   deriveContinuationFromEvents,
+  findLatestInvokeHarnessFailure,
   isClosureOnlyRetryPending,
   findLatestEffectiveTimeoutMs,
   isAgentNoOutputSignal,
@@ -979,6 +980,7 @@ export function runAll(): UnitCaseResult[] {
           undefined, undefined, [], [],
           undefined,
           { cause: 'agent_timeout', process_resumed: false },
+          null,   // plan e6b3f8d2 t5：无同 invoke 质量事实 = 纯超时，既有文案不变
           2700_000,
         );
         assert(prompt.includes('TIMED OUT'), 'PASS+timeout（无 priorFailure）也须出续作块');
@@ -2207,6 +2209,93 @@ export function runAll(): UnitCaseResult[] {
         );
       },
     },
+    {
+      // ======================================================================
+      // plan e6b3f8d2 t5：超时不得遮蔽新鲜质量事实（只改话术层）
+      // ----------------------------------------------------------------------
+      // 立项事故：i3 的 phase_verdict 同时带 timed_out 与 failure_kind（events 两轴本就
+      // 正交），但 retry prompt 无条件硬写「NOT a content failure」——agent 于是以为
+      // 上轮只是被时钟打断，原样续作已被判不合格的产物。
+      // ======================================================================
+      name: 't5 findLatestInvokeHarnessFailure：只认**同 invoke 窗口**的新鲜质量事实',
+      run: () => {
+        const win = (extra: GoalRunEvent[]): GoalRunEvent[] => [
+          { type: 'agent_invoke_start', phase: 'coding', invoke_id: 'i3' },
+          { type: 'agent_invoke_end', phase: 'coding', invoke_id: 'i3', timed_out: true },
+          ...extra,
+        ];
+        // ① 同 invoke 的 FAIL verdict（两轴同带）→ 命中
+        const hit = findLatestInvokeHarnessFailure(
+          win([{ type: 'phase_verdict', phase: 'coding', invoke_id: 'i3', verdict: 'FAIL', failure_kind: 'code_regression', failure_kind_classified: 'agent_timeout' }]),
+          'coding',
+        );
+        assert(hit?.verdict === 'FAIL' && hit?.failure_kind === 'code_regression',
+          `同 invoke 的质量事实须取到：${JSON.stringify(hit)}`);
+        // ② 同 invoke 但 verdict=PASS → 无质量事实
+        assert(findLatestInvokeHarnessFailure(
+          win([{ type: 'phase_verdict', phase: 'coding', invoke_id: 'i3', verdict: 'PASS' }]), 'coding') === null,
+        'PASS 不是质量事实');
+        // ③ 崩在 agent 段（无 invoke_end）→ harness 从未跑过
+        assert(findLatestInvokeHarnessFailure(
+          [{ type: 'agent_invoke_start', phase: 'coding', invoke_id: 'i9' }], 'coding') === null,
+        '无 invoke_end 时 harness 未跑，不得并陈');
+        // ④ 更早 attempt 的旧 FAIL 不得被当作"本 invoke 的新鲜事实"
+        const stale: GoalRunEvent[] = [
+          { type: 'agent_invoke_start', phase: 'coding', invoke_id: 'i2' },
+          { type: 'agent_invoke_end', phase: 'coding', invoke_id: 'i2' },
+          { type: 'phase_verdict', phase: 'coding', invoke_id: 'i2', verdict: 'FAIL', failure_kind: 'code_regression' },
+          { type: 'agent_invoke_start', phase: 'coding', invoke_id: 'i3' },
+          { type: 'agent_invoke_end', phase: 'coding', invoke_id: 'i3', timed_out: true },
+        ];
+        assert(findLatestInvokeHarnessFailure(stale, 'coding') === null,
+          '上一 attempt 的旧 FAIL 不得并陈（窗口收在最近一次 invoke）');
+        // ⑤ 跨 phase 不串
+        assert(findLatestInvokeHarnessFailure(
+          win([{ type: 'phase_verdict', phase: 'coding', invoke_id: 'i3', verdict: 'FAIL' }]), 'review') === null,
+        '跨 phase 不得串味');
+      },
+    },
+    {
+      name: 't5 prompt：同 invoke 有新鲜 harness FAIL → 两轴并陈，删除无条件「NOT a content failure」断言',
+      run: () => {
+        const prompt = buildPhasePrompt(
+          MINIMAL_MANIFEST, FRAMEWORK_ROOT, 'coding', FRAMEWORK_ROOT, [],
+          'BLOCKER: visual_parity_coverage FAIL', 'agent_timeout' as never, [], [],
+          undefined,
+          { cause: 'agent_timeout', process_resumed: false },
+          { verdict: 'FAIL', failure_kind: 'code_regression' },
+          2700_000,
+        );
+        assert(prompt.includes('TIMED OUT'), 'transport 轴仍须如实说出超时');
+        assert(prompt.includes('two independent facts'), '须点明两轴正交');
+        assert(prompt.includes('code_regression'), '须带上 harness 精修的内容 kind');
+        assert(
+          !prompt.includes('NOT a content failure'),
+          `有新鲜质量事实时不得再断言「NOT a content failure」：${prompt.match(/[^\n]*NOT a content failure[^\n]*/)?.[0]}`,
+        );
+        assert(prompt.includes('do NOT redo exploration'), '续作指导（不重做探索）须保留');
+      },
+    },
+    {
+      name: 't5 prompt：纯超时（同 invoke 无质量事实）保持既有文案，一字不改',
+      run: () => {
+        const mk = (coexisting: { verdict: string; failure_kind?: string } | null): string =>
+          buildPhasePrompt(
+            MINIMAL_MANIFEST, FRAMEWORK_ROOT, 'coding', FRAMEWORK_ROOT, [],
+            undefined, 'agent_timeout' as never, [], [],
+            undefined,
+            { cause: 'agent_timeout', process_resumed: false },
+            coexisting,
+            2700_000,
+          );
+        const pure = mk(null);
+        assert(pure.includes('NOT a content failure'), '纯超时须保留既有断言');
+        assert(pure.includes('TIMED OUT — resume from partial work (NOT a content failure)'),
+          '纯超时块头须与既有一致');
+        assert(!pure.includes('two independent facts'), '纯超时不得并陈不存在的质量事实');
+      },
+    },
+
   ];
 
   for (const c of cases) {

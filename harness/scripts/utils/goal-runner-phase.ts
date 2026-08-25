@@ -1128,6 +1128,62 @@ export function isClosureOnlyRetryPending(events: GoalRunEvent[], phase: string)
   return false;
 }
 
+/**
+ * plan e6b3f8d2 t5：**同一 invoke 窗口**内是否存在新鲜的 harness 质量事实（FAIL/INCOMPLETE）。
+ *
+ * 背景：events 两轴本就正交——超时 attempt 的 `phase_verdict` 同时带 `timed_out` 与
+ * `failure_kind`（harness 精修的内容失败 kind）。失真只发生在 retry prompt 组装层：
+ * 它对 `continuation.cause==='agent_timeout'` 无条件硬写「NOT a content failure」，
+ * 于是 agent 被告知"上轮只是超时"，而上轮 harness 其实已经判了内容 FAIL。
+ *
+ * 判据刻意收在**最近一次 invoke 的窗口**内（与 deriveContinuationFromEvents 同一分窗法：
+ * 最后一个 `agent_invoke_start` → 其配对 `agent_invoke_end` → 窗口内的 `phase_verdict`），
+ * 这样才是"同 invoke 的新鲜事实"，不会把更早 attempt 的旧 FAIL 拿来并陈。
+ *
+ * 返回 null = 该窗口没有质量事实（纯超时/崩在 harness 前/verdict 是 PASS）。
+ */
+export function findLatestInvokeHarnessFailure(
+  events: GoalRunEvent[],
+  phase: string,
+): { verdict: string; failure_kind?: string; blocking_class?: string } | null {
+  let startIdx = -1;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.type === 'agent_invoke_start' && e.phase === phase) {
+      startIdx = i;
+      break;
+    }
+  }
+  if (startIdx < 0) return null;
+  const start = events[startIdx];
+
+  let endIdx = -1;
+  for (let i = startIdx + 1; i < events.length; i++) {
+    const e = events[i];
+    if (e.type !== 'agent_invoke_end' || e.phase !== phase) continue;
+    if (start.invoke_id && e.invoke_id && e.invoke_id !== start.invoke_id) continue;
+    endIdx = i;
+    break;
+  }
+  if (endIdx < 0) return null; // 崩在 agent 段，harness 从未跑过
+
+  const end = events[endIdx];
+  for (let i = endIdx + 1; i < events.length; i++) {
+    const e = events[i];
+    if (e.type === 'agent_invoke_start' && e.phase === phase) break; // 撞到下一 attempt 即关窗
+    if (e.type !== 'phase_verdict' || e.phase !== phase) continue;
+    if (e.invoke_id && end.invoke_id && e.invoke_id !== end.invoke_id) continue;
+    const verdict = typeof e.verdict === 'string' ? e.verdict : '';
+    if (verdict !== 'FAIL' && verdict !== 'INCOMPLETE') return null;
+    return {
+      verdict,
+      ...(e.failure_kind ? { failure_kind: e.failure_kind } : {}),
+      ...(e.blocking_class ? { blocking_class: e.blocking_class } : {}),
+    };
+  }
+  return null;
+}
+
 /** Last agent_invoke_start without a matching agent_invoke_end (invoke_id first, phase fallback). */
 export function findUnclosedAgentInvokeStart(events: GoalRunEvent[]): GoalRunEvent | null {
   const openStarts: GoalRunEvent[] = [];
