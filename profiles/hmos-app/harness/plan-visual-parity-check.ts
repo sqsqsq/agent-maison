@@ -192,6 +192,7 @@ export function checkVisualParityCoverage(ctx: CheckContext): CheckResult[] {
 
   // ---- 所有权子集①：UI feature 的 P0 节点必须映射并带 contract_component ----
   const p0NodeIds = uiDoc ? collectP0ComponentNodeIds(uiDoc) : [];
+  const p0NodeIdSet = new Set(p0NodeIds);
   const componentMappings = vpDoc.mappings?.components ?? [];
   const componentByNode = new Map<string, { ui_spec_node_id?: string; contract_component?: string }>();
   for (const m of componentMappings) {
@@ -238,15 +239,20 @@ export function checkVisualParityCoverage(ctx: CheckContext): CheckResult[] {
       issues.push(`visual-parity token 映射 ${m.contract_resource_key} 不在 contracts.resource_keys`);
     }
   }
-  // ---- 所有权子集②③：组件必须真实存在于 contracts.components（**空数组也判失败**），
-  //      且其 `file` 必须存在于 contracts.files ----
+  // ---- 所有权子集②③：**P0 节点引用的**组件必须真实存在于 contracts.components
+  //      （空数组也判失败），且其 `file` 必须存在于 contracts.files ----
   // 旧实现用 `contractComponents.size > 0` 作前置：contracts.components 为空反而跳过
   // 存在性检查——「没声明任何组件」于是成了最省事的绕过路径。现在空数组即判失败。
+  // plan e6b3f8d2 t3 review：硬地板范围严格止于 P0；P1/非 P0 mapping 的同类陈旧
+  // 仍写入 `issues`，按既有 enforcement 处理，不得被升级成档位无关 BLOCKER。
   for (const m of componentMappings) {
     const name = m.contract_component?.trim();
     if (!name) continue;
+    const targetIssues = p0NodeIdSet.has(m.ui_spec_node_id?.trim() ?? '')
+      ? ownershipIssues
+      : issues;
     if (!contractComponents.has(name)) {
-      ownershipIssues.push(
+      targetIssues.push(
         contractComponentEntries.length === 0
           ? `visual-parity component ${name} 不在 contracts.components（contracts.components 为空数组——组件所有权未声明，不得视为豁免）`
           : `visual-parity component ${name} 不在 contracts.components`,
@@ -255,9 +261,9 @@ export function checkVisualParityCoverage(ctx: CheckContext): CheckResult[] {
     }
     const file = contractComponentFile.get(name)?.trim();
     if (!file) {
-      ownershipIssues.push(`contracts.components 的 ${name} 缺 file（无法定位实现源文件）`);
+      targetIssues.push(`contracts.components 的 ${name} 缺 file（无法定位实现源文件）`);
     } else if (!contractFiles.has(file.replace(/\\/g, '/'))) {
-      ownershipIssues.push(`contracts.components 的 ${name}.file（${file}）不在 contracts.files`);
+      targetIssues.push(`contracts.components 的 ${name}.file（${file}）不在 contracts.files`);
     }
   }
 

@@ -12,7 +12,8 @@ coding i3 于 02:58:52Z 打完终稿并**自证 FAIL**（445,503 tokens，结论
 
 期间还有两处如实性缺口：活性把 runner **自写 heartbeat** 计入 activityTypes，输出停滞 65
 分钟仍恒报 `ACTIVE`；retry prompt 对超时续作**无条件**硬写「NOT a content failure」，而同一
-attempt 的 `phase_verdict` 明明同时带着 `timed_out` 与 harness 精修的 `failure_kind`。
+invoke 窗口的 `agent_invoke_end.timed_out` 与后续 `phase_verdict` 的 harness 精修
+`failure_kind` 明明同时存在。
 
 本 change 只做**收口真值**：给有 terminal 契约的 adapter 接上契约终态，删除从未生效的假权威，
 把活性的工作面与控制面分开，并让超时话术如实并陈两轴。
@@ -24,7 +25,8 @@ attempt 的 `phase_verdict` 明明同时带着 `timed_out` 与 harness 精修的
   旗标顺序）。terminal 解析器**直接消费 stdout chunk**（跨 chunk 行缓冲，不要求产出
   `agent-events.jsonl`），**只认两个契约终态**：`turn.completed` → `completionObserved`（复用
   既有 grace/kill 与 R8 互斥原语）；`turn.failed` → `terminalFailureObserved`（`completionObserved`
-  恒 false，exit 0 时规范化非零，保住 `agentFailed` 语义）。**顶层 `error` 只是诊断**——
+  恒 false，失败优先于 completion probe；若 probe 已撤销 hard timeout，按原 deadline 恢复；
+  exit 0 时规范化非零，保住 `agentFailed` 语义）。**顶层 `error` 只是诊断**——
   `error → 重试成功 → turn.completed` 是官方合法序列，故 error 不设 completionObserved、
   不触发 settle/kill、**不进** api_disconnected / failure classifier / retry 任何判据。
   **`tool_event_provenance` 明确保持 `none`**：stdout 有 terminal JSONL ≠ 工具调用可审计，
@@ -35,8 +37,9 @@ attempt 的 `phase_verdict` 明明同时带着 `timed_out` 与 harness 精修的
   hard timeout 兜底，不用无效回执冒充信号。
 - **T2（P1）活性分离工作面与控制面**：存在未闭合 invoke ∧ `outputSignal='unchanged'` ∧
   **本 run 事件**的 `adapter_probe.output_delivery='streaming'` → 降既有枚举 `SUSPECTED_STALL`；
-  查进度补「agent 输出已停滞 X 分钟」（X=now−`agent-output.log` mtime，**不复用**含 heartbeat 的
-  `seconds_since_activity`）。`buffered`/`unknown` 不降级。**只观测不干预**：不触发 kill/恢复，
+  默认/Markdown 查进度补「agent 输出已停滞 X 分钟」（X=now−`agent-output.log` mtime，
+  **不复用**含 heartbeat 的 `seconds_since_activity`）；该字段与说明也只在三合取成立时出现。
+  `buffered`/`unknown`/已闭合 invoke 不降级也不显示停滞。**只观测不干预**：不触发 kill/恢复，
   不新增枚举或第二 reducer。
 - **T3（P1）超时话术两轴并陈**：同一 invoke 窗口存在新鲜 harness `FAIL`/`INCOMPLETE` 时，
   超时续作块两轴并陈（transport 说超时+产物在盘、quality 说 harness 判了什么 kind），

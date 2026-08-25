@@ -11,6 +11,10 @@ timeout: hitting completion SHALL cancel the hard timeout). A `failed` terminal 
 distinct `terminal_failure_observed` fact, SHALL NOT set `completion_observed`, SHALL NOT cancel the
 hard wall-clock backstop, and SHALL normalize a zero exit code to non-zero so that
 `agentFailed = exitCode !== 0 && completionObserved !== true` still reports failure.
+Terminal failure SHALL take precedence over a completion probe in either arrival order: after a
+failure, the probe cannot establish completion; if failure arrives after the probe canceled the hard
+timeout, the invoke layer SHALL revoke completion and restore the backstop at its original deadline.
+The final invoke result SHALL never report both closure facts as true.
 
 Any other event — including a top-level `error` event — is **diagnostic only**: it SHALL be recorded
 as an excerpt on `agent_invoke_end` and SHALL NOT set `completion_observed`, SHALL NOT trigger
@@ -34,6 +38,20 @@ Enforcement: `harness/scripts/utils/codex-terminal-events.ts`, `harness/scripts/
 - **THEN** the run SHALL NOT kill the process on the `error`, SHALL close the invocation on the
   `completed` event with `completion_observed`, and SHALL record the error only as an
   `agent_invoke_end` diagnostic excerpt
+
+#### Scenario: completion probe fires before the failure terminal event
+
+- **WHEN** the completion probe first establishes completion and the same invocation later emits
+  its `failed` terminal event
+- **THEN** terminal failure SHALL revoke probe completion, restore the hard timeout at its original
+  deadline, and the phase verdict SHALL report `agent_failed=true`
+
+#### Scenario: failure terminal event arrives before a completion probe match
+
+- **WHEN** the invocation emits its `failed` terminal event and the completion probe later matches
+  during settlement grace
+- **THEN** the probe SHALL NOT establish completion, and the phase verdict SHALL report
+  `agent_failed=true`
 
 #### Scenario: an adapter with no terminal contract produces the same stream
 
@@ -89,8 +107,10 @@ streaming, the run SHALL project the existing `SUSPECTED_STALL` liveness state. 
 SHALL be read from the run's recorded events, never re-interpreted from the current adapter
 manifest, and a missing or unrecognized value SHALL be treated as unknown. Buffered and unknown
 delivery SHALL NOT be downgraded, because their logs may legitimately stay silent. The progress
-projection SHALL report the work-plane stall duration computed as now minus the agent output log
-mtime — it SHALL NOT reuse the control-plane activity age, which includes heartbeats. This
+projection SHALL report the work-plane stall duration, in both the default status text and Markdown,
+only while all three conditions hold; otherwise `agent_output_stalled_ms` SHALL be null and no stall
+line SHALL be rendered. The duration is computed as now minus the agent output log mtime — it SHALL
+NOT reuse the control-plane activity age, which includes heartbeats. This
 projection is observation only: it SHALL NOT kill, recover, or retry, and SHALL NOT introduce a new
 liveness state or a second reducer.
 
@@ -107,7 +127,14 @@ Enforcement: `harness/scripts/utils/goal-progress.ts`
 
 - **WHEN** the same silence occurs but the run's `adapter_probe` declared buffered delivery, or
   declared nothing at all
-- **THEN** liveness SHALL NOT be downgraded on that basis
+- **THEN** liveness SHALL NOT be downgraded on that basis, `agent_output_stalled_ms` SHALL be null,
+  and the status renderers SHALL NOT describe the agent output as stalled
+
+#### Scenario: the invocation has already closed
+
+- **WHEN** an old agent output log exceeds the soft-stall window but no unclosed invocation exists
+- **THEN** `agent_output_stalled_ms` SHALL be null and the status renderers SHALL NOT describe the
+  agent output as stalled
 
 ### Requirement: Timeout guidance states the transport and quality axes side by side
 
@@ -124,8 +151,8 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-runne
 
 #### Scenario: timed-out attempt whose harness recorded a content FAIL
 
-- **WHEN** the previous attempt of this phase timed out and its `phase_verdict` carries both
-  `timed_out` and a harness failure kind
+- **WHEN** one invocation window contains `agent_invoke_end.timed_out=true` and a subsequent
+  `phase_verdict` with `FAIL`/`INCOMPLETE` plus a harness failure kind
 - **THEN** the retry prompt SHALL present both axes and SHALL NOT claim the attempt was not a content
   failure
 

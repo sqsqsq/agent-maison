@@ -186,8 +186,9 @@ coding 只读 contracts —— 不 scaffold 就判「未物化」、scaffold 就
    `maison:` 组件 id 前缀，改为复用既有 `visual-diff-nav` 的 **screen identity 声明**：
    只取各屏 `all_of`/`any_of` 的**正向 id**、按**精确 id** 判在场（`none_of` 不作所有权
    证明——它只是「目标页禁入锚点」，不保证该锚属于本应用）。三态语义冻结：目标屏正向 id
-   命中=`matched`；目标未命中但**其他已声明屏**正向 id 命中=`mismatched`（确定性错页）；
-   系统树无任何已声明 id（或工程只声明了 text/route）=`probe_failed`（证据不足，不作内容
+   命中=`matched`；目标未命中但**其他已确认屏**（`proposed=false`）正向 id 命中=
+   `mismatched`（确定性错页）；`proposed=true` 的未确认候选不作应用页面所有权证据。系统树
+   无任何已确认 id（或工程只声明了 text/route）=`probe_failed`（证据不足，不作内容
    正证据）。**建议**：给每个 P0/golden 目标屏都配至少一个 id 锚点，否则错页只能判 probe_failed。
 4. **盲档结构地板改由「产品组件所有权链」承接，并收紧为硬地板**：
    ui-spec P0 节点 → `plan/visual-parity.yaml` 的 `components[].contract_component` →
@@ -195,9 +196,10 @@ coding 只读 contracts —— 不 scaffold 就判「未物化」、scaffold 就
    这三项**不受 `coding.visual_parity_enforcement=warn|reachable|off` 降级**
    （复用既有 `visual_parity_coverage`，不新增 check id）：
    - P0 节点缺 `contract_component` → BLOCKER FAIL（含 `enforcement=off`）；
-   - `contracts.components` **为空数组也判失败**（旧实现反而跳过存在性检查）；
-   - 组件 `file` 未列入 `contracts.files` → BLOCKER FAIL。
-   assets/tokens/结构相似度等**视觉质量项照旧遵守 enforcement**。
+   - P0 mapping 引用的组件在 `contracts.components` 中不存在 → BLOCKER FAIL
+     （数组为空时自然无法满足；旧实现反而跳过存在性检查）；
+   - P0 mapping 引用组件的 `file` 未列入 `contracts.files` → BLOCKER FAIL。
+   非 P0 mapping 与 assets/tokens/结构相似度等**视觉质量项照旧遵守 enforcement**。
    **存量影响**：默认 `warn` 的宿主若此前只写了 P0 节点却没做组件映射，plan 阶段会开始
    BLOCKER——补齐 visual-parity/contracts 映射即可，framework 不规定组件如何实现。
 5. **npm script 改名**：`ui-kit:placeholders` → **`asset:placeholders`**

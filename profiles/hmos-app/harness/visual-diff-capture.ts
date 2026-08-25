@@ -828,7 +828,7 @@ export interface ScreenIdentityGateResult {
 }
 
 /**
- * 被测应用页面在场的**所有权证据集**：全部已声明屏的 `all_of`/`any_of` **正向 id**。
+ * 被测应用页面在场的**所有权证据集**：全部已确认声明屏的 `all_of`/`any_of` **正向 id**。
  *
  * plan e6b3f8d2 t3（撤销强制 Maison UI kit）：此前用 `maison:<feature>:` 组件 id 前缀
  * 推导所有权——那是 kit anchor 机制的副产品，随 kit 一并删除。页面身份判据**迁移到既有
@@ -838,12 +838,16 @@ export interface ScreenIdentityGateResult {
  *   · **不得使用 `none_of`**——它的契约只是「目标页禁入锚点」，不保证该锚属于本应用
  *     （`none_of=[上滑解锁]` 配真实锁屏树会把锁屏判成"应用错页"，仓内已证伪）；
  *   · 只声明 text/route 的工程推导不出任何 id ⇒ 返回空集，调用方 fail-safe 走 probe_failed。
- * 取**全部已声明屏**而不只是目标屏：任一已声明屏的正向 id 在场，都足以证明被测应用的
+ * 取**全部已确认声明屏**而不只是目标屏：任一已确认屏的正向 id 在场，都足以证明被测应用的
  * 页面树正在渲染（这正是「应用错页」与「锁屏/桌面等系统态」的分界）。
  */
 function declaredScreenIdentityIds(opts: VisualDiffCaptureOptions): Set<string> {
   const out = new Set<string>();
   for (const identity of opts.screenIdentity?.values() ?? []) {
+    // proposed=true 是自动预填、未经确认的候选。生产调用会把 resolveIdentityForTargets 的
+    // 完整 map 传入，因此本 SSOT 消费点必须自行 fail-closed；候选既不参与目标 gate，
+    // 也绝不能替其他屏证明「应用页面在场」并把 probe_failed 升成确定性 mismatched。
+    if (identity.proposed === true) continue;
     // 刻意不含 none_of：禁入锚点不构成所有权证明（见上）。
     for (const m of [...(identity.all_of ?? []), ...(identity.any_of ?? [])]) {
       if (typeof m.id !== 'string') continue;
@@ -918,15 +922,15 @@ function runScreenIdentityGate(
       /* 证据图 best-effort，不影响 mismatch 判定 */
     }
     // 身份不命中还不够——`dump-ui` 不绑 bundle，锁屏页/桌面/系统弹窗同样会"不命中"。
-    // 判"应用错页"必须有**应用页面树所有权**的确定事实：dump 里精确命中任一**已声明屏**
+    // 判"应用错页"必须有**应用页面树所有权**的确定事实：dump 里精确命中任一**已确认屏**
     // 的正向 identity id（ArkUI `.id()` 透传，系统页不会有）。
     //
     // 主页校准（2026-08-13 foreground-identity-calibration）：锁屏 119 节点 / 桌面
     // 231 节点 dump 中应用页面组件 id 均为 0 命中——系统态拿不到应用页面 id；桌面 dump
     // 虽出现 `com.example.simulatedwallet`（AppIcon 图标 id），但属**宿主 bundle 命中**
     // 而非声明的页面组件 id，不会被当作所有权证据。
-    // 结论：有已声明 id + 身份不中 ⇒ 应用页面树在场但非目标页（mismatched，确定性）；
-    //       无任何已声明 id ⇒ probe_failed（锁屏/桌面/系统态，页面一无所知）。
+    // 结论：有已确认 id + 身份不中 ⇒ 应用页面树在场但非目标页（mismatched，确定性）；
+    //       无任何已确认 id ⇒ probe_failed（锁屏/桌面/系统态，页面一无所知）。
     //
     // 曾试图把 `none_of` 命中也当所有权证明（为纯文本锚工程兜底）——**已证伪**：
     // `none_of` 的契约只是"目标页禁入锚点"，不保证该锚属于本应用；把

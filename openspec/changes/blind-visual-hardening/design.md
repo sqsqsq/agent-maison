@@ -52,7 +52,8 @@ accepted=仍存在但用户经 receipt 显式接受（记 `accepted_by` + `accep
 原设计规定实例语义锚点的段字符集与长度上界。随 d3 撤回，该锚点机制整体删除：
 selector 真值回归**普通 ui-spec `node.id` / `text`**，不再有 framework 侧规定的
 锚点语法、子件后缀契约或其反解逻辑；页面身份判据改用既有 `visual-diff-nav`
-screen identity 声明（只取 `all_of`/`any_of` 正向 id，按精确 id 判在场）。
+screen identity 声明（只取 `proposed=false` 的已确认 identity 中 `all_of`/`any_of` 正向 id，
+按精确 id 判在场；未确认的 proposed 候选不作页面所有权证据）。
 
 ### 1.8 rubric 首跑预期（cursor 四轮③）
 
