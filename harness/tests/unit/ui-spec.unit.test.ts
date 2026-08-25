@@ -558,6 +558,16 @@ export function runAll(): UnitCaseResult[] {
     '          order: 0',
     '          text: "支持 100 家银行"',
     '          bbox: [0.1, 0.1, 0.8, 0.05]',
+    '  - id: help',
+    '    priority: P1',
+    '    root:',
+    '      type: content_display',
+    '      order: 0',
+    '      children:',
+    '        - id: help_text',
+    '          type: content_display',
+    '          order: 0',
+    '          text: "帮助"',
     'tokens: {}',
     'assets: []',
   ].join('\n');
@@ -715,6 +725,58 @@ export function runAll(): UnitCaseResult[] {
         if (r.status !== 'FAIL' || r.severity !== 'BLOCKER') {
           throw new Error(`enforcement=${enforcement} 缺 visual-parity.yaml 须 BLOCKER：${r.severity}/${r.status}`);
         }
+      }
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('t3⑤ 所有权硬地板⑦：P0 链完整时，P1 mapping 的 component/file 缺口只走 enforcement', () => {
+    const root = mkProject();
+    const vpYaml = [
+      'mappings:',
+      '  assets: []',
+      '  tokens: []',
+      '  components:',
+      '    - ui_spec_node_id: home',
+      '      contract_component: HomePage',
+      '    - ui_spec_node_id: hint_text',
+      '      contract_component: HintText',
+      '    - ui_spec_node_id: help_text',
+      '      contract_component: HelpText',
+    ].join('\n');
+    try {
+      const missingComponent = checkVisualParityCoverage(ownershipCtx(root, {
+        enforcement: 'warn',
+        vpYaml,
+      }))[0];
+      if (missingComponent.status !== 'WARN' || missingComponent.severity !== 'MAJOR') {
+        throw new Error(
+          `P1 component 缺口须遵守 warn、不得硬化：${missingComponent.severity}/${missingComponent.status} — ${missingComponent.details}`,
+        );
+      }
+      if (!missingComponent.details.includes('HelpText 不在 contracts.components')) {
+        throw new Error(`须保留 P1 component 质量诊断：${missingComponent.details}`);
+      }
+
+      const missingFile = checkVisualParityCoverage(ownershipCtx(root, {
+        enforcement: 'warn',
+        vpYaml,
+        components: [
+          { name: 'HomePage', file: 'app/feature/HomePage.ets' },
+          { name: 'HintText', file: 'app/feature/HintText.ets' },
+          { name: 'HelpText', file: 'app/feature/HelpText.ets' },
+        ],
+        files: ['app/feature/HomePage.ets', 'app/feature/HintText.ets'],
+      }))[0];
+      if (missingFile.status !== 'WARN' || missingFile.severity !== 'MAJOR') {
+        throw new Error(
+          `P1 file 缺口须遵守 warn、不得硬化：${missingFile.severity}/${missingFile.status} — ${missingFile.details}`,
+        );
+      }
+      if (!missingFile.details.includes('HelpText.file') || !missingFile.details.includes('contracts.files')) {
+        throw new Error(`须保留 P1 file 质量诊断：${missingFile.details}`);
       }
     } finally {
       clearFrameworkConfigCache();

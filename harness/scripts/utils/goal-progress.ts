@@ -146,7 +146,8 @@ export interface GoalProgressSnapshot {
      * plan e6b3f8d2 t4：**工作面**停滞时长（now − agent-output.log mtime），毫秒。
      * 刻意与 `seconds_since_activity` 分立——后者是**控制面**口径，含 runner 自写
      * heartbeat，agent 一字不吐它也恒新鲜（立项事故：i3 输出 65 分钟零变化，
-     * 活性却一路 ACTIVE）。null = agent-output.log 不存在（尚未产生工作面事实）。
+     * 活性却一路 ACTIVE）。仅在“未闭合 invoke + 输出未变 + streaming”三合取成立时
+     * 有值；其余为 null，避免把 buffered/unknown/已闭合 invoke 误报成输出停滞。
      */
     agent_output_stalled_ms: number | null;
     signals: {
@@ -749,14 +750,15 @@ export function computeLiveness(input: LivenessInput): GoalProgressSnapshot['liv
   // **只观测不干预**：降级到既有枚举 SUSPECTED_STALL，不触发 kill/恢复，不新增枚举或
   // 第二 reducer；且只从 ACTIVE/QUIET 抬（ORPHAN/STALLED/ATTENTION 是更强的控制面结论）。
   const outputDelivery = resolveRunOutputDelivery(events);
-  const agentOutputStalledMs =
-    input.agentOutputMtimeMs != null ? Math.max(0, nowMs - input.agentOutputMtimeMs) : null;
-  if (
-    (state === 'ACTIVE' || state === 'QUIET') &&
+  const outputStallObserved =
     unclosed !== null &&
     outputSignal === 'unchanged' &&
-    outputDelivery === 'streaming'
-  ) {
+    outputDelivery === 'streaming';
+  const agentOutputStalledMs =
+    outputStallObserved && input.agentOutputMtimeMs != null
+      ? Math.max(0, nowMs - input.agentOutputMtimeMs)
+      : null;
+  if ((state === 'ACTIVE' || state === 'QUIET') && outputStallObserved) {
     state = 'SUSPECTED_STALL';
   }
 
@@ -1098,6 +1100,19 @@ export function formatGoalStatusJson(snapshot: GoalProgressSnapshot): string {
   return JSON.stringify(snapshot, null, 2);
 }
 
+function formatAgentOutputStall(liveness: GoalProgressSnapshot['liveness']): string | null {
+  if (
+    liveness.agent_output_stalled_ms == null ||
+    liveness.agent_output_stalled_ms < SOFT_STALL_MS
+  ) {
+    return null;
+  }
+  return (
+    `agent 输出已停滞 ${Math.floor(liveness.agent_output_stalled_ms / 60000)} 分钟` +
+    '（工作面口径：now − agent-output.log mtime；控制面 heartbeat 不计入）'
+  );
+}
+
 export function formatGoalStatusText(
   snapshot: GoalProgressSnapshot,
   feature: string,
@@ -1107,12 +1122,14 @@ export function formatGoalStatusText(
     snapshot.chain.percent_kind === 'indeterminate'
       ? `${snapshot.chain.current_index + 1}/${snapshot.chain.total}`
       : `${snapshot.chain.estimated_percent ?? 0}%`;
-  return (
-    `Goal ${feature} · run ${runId} · ${snapshot.status}\n` +
-    `Current: ${snapshot.phase.name ?? '—'} / ${snapshot.phase.status} (${snapshot.phase.substep ?? '—'})\n` +
-    `Liveness: ${snapshot.liveness.state} · progress ${pct}\n` +
-    `Budget: turns ${snapshot.budget.turns_used}/${snapshot.budget.turns_limit}`
-  );
+  const outputStall = formatAgentOutputStall(snapshot.liveness);
+  return [
+    `Goal ${feature} · run ${runId} · ${snapshot.status}`,
+    `Current: ${snapshot.phase.name ?? '—'} / ${snapshot.phase.status} (${snapshot.phase.substep ?? '—'})`,
+    `Liveness: ${snapshot.liveness.state} · progress ${pct}`,
+    ...(outputStall ? [outputStall] : []),
+    `Budget: turns ${snapshot.budget.turns_used}/${snapshot.budget.turns_limit}`,
+  ].join('\n');
 }
 
 export interface StatusWatchOptions {
@@ -1207,6 +1224,7 @@ export function applyFreshnessDegradation(
 }
 
 export function generateProgressMarkdown(snapshot: GoalProgressSnapshot): string {
+  const outputStall = formatAgentOutputStall(snapshot.liveness);
   const lines: string[] = [
     `# Goal Progress - ${snapshot.feature}`,
     '',
@@ -1220,11 +1238,7 @@ export function generateProgressMarkdown(snapshot: GoalProgressSnapshot): string
     }`,
     // plan e6b3f8d2 t4：工作面口径单列。**不复用 seconds_since_activity**——那条含
     // runner 自写 heartbeat，会把"agent 早不吐字了"读成"刚刚还活着"。
-    ...(snapshot.liveness.agent_output_stalled_ms != null
-      && snapshot.liveness.agent_output_stalled_ms >= SOFT_STALL_MS
-      ? [`- agent 输出已停滞 ${Math.floor(snapshot.liveness.agent_output_stalled_ms / 60000)} 分钟`
-         + `（工作面口径：now − agent-output.log mtime；控制面 heartbeat 不计入）`]
-      : []),
+    ...(outputStall ? [`- ${outputStall}`] : []),
     `- Budget: turns ${snapshot.budget.turns_used}/${snapshot.budget.turns_limit}, wall ${Math.round(snapshot.budget.wall_elapsed_ms / 60000)}m/${Math.round(snapshot.budget.wall_limit_ms / 60000)}m`,
     '',
     '## Phases',

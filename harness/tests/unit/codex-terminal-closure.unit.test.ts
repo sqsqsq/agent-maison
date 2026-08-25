@@ -29,6 +29,7 @@ import {
   type CanaryAnswerKey,
 } from '../../scripts/utils/vision-canary';
 import { loadGoalCapability } from '../../scripts/utils/goal-adapter-capability';
+import { resolvePhaseHarnessVerdict } from '../../scripts/utils/goal-runner-phase';
 import type { UnitCaseResult } from '../run-unit';
 
 function run(results: UnitCaseResult[], name: string, fn: () => void): void {
@@ -108,6 +109,28 @@ function emitFixtureJs(fixtureAbs: string, tail: string): string {
     'process.stdout.write(text);',
     tail,
   ].join(String.fromCharCode(10));
+}
+function emitFixtureAfterJs(fixtureAbs: string, delayMs: number, tail: string): string {
+  return [
+    "const fs = require('fs');",
+    'const text = fs.readFileSync(' + JSON.stringify(fixtureAbs) + ", 'utf-8');",
+    `setTimeout(() => { process.stdout.write(text); ${tail} }, ${delayMs});`,
+  ].join(String.fromCharCode(10));
+}
+function assertPhaseEventAgentFailed(r: AgentInvokeResult, label: string): void {
+  const resolved = resolvePhaseHarnessVerdict({
+    dryRun: false,
+    agentExitCode: r.exitCode,
+    agentSkipped: r.skipped,
+    harnessExitCode: 1,
+    summaryBeforeMtime: null,
+    summaryAfterMtime: null,
+    agentTimedOut: r.timed_out,
+    completionObserved: r.completion_observed,
+  });
+  // goal-runner 的 phase_verdict 事件直接写 `agent_failed: resolved.agent_failed`。
+  const phaseEvent = { type: 'phase_verdict', agent_failed: resolved.agent_failed };
+  assertEq(phaseEvent.agent_failed, true, `${label} phase_verdict.agent_failed`);
 }
 async function invokeFake(
   body: string,
@@ -219,6 +242,20 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     assertEq(s.terminalFailureObserved, false, 'error 不得判失败终态');
     assertEq(s.errorExcerpts.length, 1, 'error 进诊断');
     assertEq(s.failedCalls, 0, 'error 不得触发 onFailed（=不得提前杀进程）');
+  });
+
+  run(results, '异常双终态流由 failed 仲裁优先，scanner 不得输出双真', () => {
+    const completedLine = fixture('codex-terminal-completed.real.jsonl')
+      .split(String.fromCharCode(10))
+      .find(l => l.includes('"turn.completed"'))!;
+    const failedLine = fixture('codex-terminal-failed.real.jsonl')
+      .split(String.fromCharCode(10))
+      .find(l => l.includes('"turn.failed"'))!;
+    for (const text of [`${completedLine}\n${failedLine}\n`, `${failedLine}\n${completedLine}\n`]) {
+      const s = scanAll(text);
+      assertEq(s.terminalFailureObserved, true, 'failed 须优先');
+      assertEq(s.completionObserved, false, 'scanner 终态须互斥');
+    }
   });
 
   run(results, 'item 级错误贯穿全程但 turn.completed 收尾 → 仍判 completed（真实样本）', () => {
@@ -481,6 +518,52 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       assertEq(r.completion_observed, true, 'completion_observed');
       assertEq(r.timed_out, undefined, '不得记超时');
       assertEq(r.terminal_failure_observed, undefined, '不得记失败终态');
+    },
+  );
+
+  await runAsync(
+    results,
+    'E2E probe→turn.failed：failed 撤销 completion、恢复原 hard timeout，phase event 保持 agent_failed',
+    async () => {
+      const r = await invokeFake(
+        emitFixtureAfterJs(
+          path.join(FIXTURES, 'codex-terminal-failed.real.jsonl'),
+          150,
+          'setInterval(() => {}, 1000);',
+        ),
+        {
+          timeoutMs: 800,
+          completionGraceMs: 5_000,
+          completionPollMs: 10,
+          completionProbe: () => true,
+        },
+      );
+      assertEq(r.terminal_failure_observed, true, 'terminal failure 须夺回仲裁位');
+      assertEq(r.completion_observed, undefined, 'probe completion 须被撤销');
+      assertEq(r.timed_out, true, 'probe 取消的 hard timeout 须按原到期时刻恢复');
+      assert(r.exitCode !== 0, '失败终态须保留非零退出语义');
+      assertPhaseEventAgentFailed(r, 'probe→failed');
+    },
+  );
+
+  await runAsync(
+    results,
+    'E2E turn.failed→probe：failure 后 probe 不得再置 completion，phase event 保持 agent_failed',
+    async () => {
+      const r = await invokeFake(
+        emitFixtureJs(path.join(FIXTURES, 'codex-terminal-failed.real.jsonl'), 'setInterval(() => {}, 1000);'),
+        {
+          timeoutMs: 5_000,
+          completionGraceMs: 300,
+          completionPollMs: 100,
+          completionProbe: () => true,
+        },
+      );
+      assertEq(r.terminal_failure_observed, true, 'terminal failure 须成立');
+      assertEq(r.completion_observed, undefined, 'failure 后 probe 不得置 completion');
+      assertEq(r.timed_out, undefined, 'terminal failure grace 正常收口不冒充超时');
+      assert(r.exitCode !== 0, '失败终态须保留非零退出语义');
+      assertPhaseEventAgentFailed(r, 'failed→probe');
     },
   );
 

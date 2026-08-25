@@ -874,9 +874,10 @@ test('t2b_runtime_mount_uses_shared_resolver_legacy_fallback_and_conflict', () =
 // ----------------------------------------------------------------------------
 // 冻结语义（不得漂移）：
 //   · 目标屏正向 id 命中               → matched
-//   · 目标未命中、其他**已声明屏**正向 id 命中 → mismatched（确定性错页）
-//   · 仅 text/route 声明，或系统树无任何已声明 id → probe_failed（证据不足）
+//   · 目标未命中、其他**已确认屏**正向 id 命中 → mismatched（确定性错页）
+//   · 仅 text/route 声明，或系统树无任何已确认 id → probe_failed（证据不足）
 //   · none_of 恒不作所有权证明（仓内已证伪）
+//   · proposed identity 未经确认，同样不得作所有权证明
 // ============================================================================
 test('t3_page_identity_three_states_frozen', () => {
   const mkDump = (ids: string[], texts: string[] = []): unknown => ({
@@ -900,7 +901,7 @@ test('t3_page_identity_three_states_frozen', () => {
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   }
 
-  // ② 其他已声明屏正向 id 命中 → mismatched（确定性错页：有熔断资格、旧裁决失效）
+  // ② 其他已确认屏正向 id 命中 → mismatched（确定性错页：有熔断资格、旧裁决失效）
   {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-id3-mismatched-'));
     try {
@@ -912,7 +913,7 @@ test('t3_page_identity_three_states_frozen', () => {
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   }
 
-  // ③-a 系统树无任何已声明 id → probe_failed
+  // ③-a 系统树无任何已确认 id → probe_failed
   {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-id3-probe-'));
     try {
@@ -956,6 +957,29 @@ test('t3_page_identity_three_states_frozen', () => {
         false,
         'none_of 命中（哪怕是 id）只证明"不是目标页"，不证明"是本应用页面"——不得判 mismatched',
       );
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  }
+
+  // ⑤ 只命中其他屏 proposed id → probe_failed（候选未经确认，不能升级为确定性错页）
+  {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-id3-proposed-'));
+    try {
+      const withProposed = new Map([
+        ['add_bank', { all_of: [{ id: 'maison:demo:add_bank:add_bank_frame' }] }],
+        ['all_banks', {
+          proposed: true,
+          all_of: [{ id: 'maison:demo:all_banks:all_banks_frame' }],
+        }],
+      ]);
+      const r = runCaptureWithDump(root, mkDump(['maison:demo:all_banks:all_banks_frame']), {
+        identity: withProposed,
+      });
+      assert.strictEqual(
+        r.fuseEligibility?.eligible,
+        false,
+        '其他屏 proposed id 未经确认，只能 probe_failed，不得作为 mismatched 内容正证据',
+      );
+      assert.deepStrictEqual(r.fuseEligibility?.actionableMissingIds, []);
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   }
 });

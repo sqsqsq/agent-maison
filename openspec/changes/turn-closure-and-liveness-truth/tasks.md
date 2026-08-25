@@ -16,8 +16,8 @@
 - [x] 1.3 新增 `codex-terminal-events.ts`：单行分类纯函数 + 跨 chunk 行缓冲扫描器；
       只认两终态；顶层 `error` 仅诊断；item 级错误一律 other；诊断摘要条数/长度双封顶。
 - [x] 1.4 `agent-invoke.ts`：`codexArgv` 尾部独立追加 `--json`；stdout chunk 直喂扫描器；
-      `observeCompletion` / `observeTerminalFailure` 共用 `armSettleGrace`（R8 互斥原语复用）；
-      failed 恒不置 `completionObserved`、**不取消** hard timeout、exit 0 规范化非零；
+      completion/terminal failure 走单一仲裁入口（R8 settle grace 原语复用），failure 双顺序优先；
+      probe 已取消 hard timeout 后遇 failure，按原 deadline 恢复；exit 0 规范化非零；
       结果增 `terminal_failure_observed` / `terminal_error_excerpt`。
 - [x] 1.5 删除 silent watchdog **生产链**（常量/选项/定时器/kill reason）；
       `silent_killed?` 字段保留供读侧兼容历史事件；源码锚定回归钉死写侧零残留。
@@ -31,8 +31,9 @@
 
 - [x] 2.1 `goal-progress.ts`：新增纯函数 `resolveRunOutputDelivery`（读**本 run 事件**，
       缺失/非法一律 unknown）；三合取降级到既有枚举 `SUSPECTED_STALL`（只从 ACTIVE/QUIET 抬）。
-- [x] 2.2 snapshot 增 `agent_output_stalled_ms`；查进度独立成行「agent 输出已停滞 X 分钟」，
-      **不复用**含 heartbeat 的 `seconds_since_activity`。
+- [x] 2.2 snapshot 增 `agent_output_stalled_ms`；默认/Markdown 查进度独立成行「agent 输出已停滞
+      X 分钟」，**不复用**含 heartbeat 的 `seconds_since_activity`；字段/说明同样只在三合取
+      成立时出现，buffered/unknown/已闭合 invoke 为 null 且不渲染。
 
 ## 3. T3 · 超时话术两轴并陈（P1）
 
@@ -45,9 +46,10 @@
 - [x] 4.1 `codex-terminal-closure.unit.test.ts`：真实 fixture 逐行分类 + 半行分块（1/3/7/17/64/4096
       字节）+ error→completed 不早杀 + probe 竞争 + argv/能力声明断言 + usage 直读 +
       **受控 fixture 驱动的真子进程 E2E**（completed 后钉住→秒级收口 / failed+exit 0→规范化非零 /
-      error 稍后 completed→不提前 kill / 非 codex adapter 不启用解析器）。
+      error 稍后 completed→不提前 kill / probe→failed 恢复原 hard deadline / failed→probe 不洗白 /
+      两序 phase event 均 `agent_failed=true` / 非 codex adapter 不启用解析器）。
 - [x] 4.2 liveness 5 例（fake clock 固定时钟）：降级正例 + buffered/unknown/缺声明三态豁免 +
-      三合取缺一不降 + 读源断言 + 查进度渲染口径。
+      三合取缺一不降且字段为 null + 读源断言 + 默认 CLI/Markdown 查进度渲染口径。
 - [x] 4.3 超时话术 3 例：窗口判据五态 + 并陈形态 + 纯超时不变。
 - [x] 4.4 全量：`cd harness && npm test`（typecheck + unit + fixtures）与 `npm run openspec:validate`。
 - [ ] 4.5 **宿主 smoke**（外部依赖）：新 run_id 全新 run（不 resume 既有 halt run），

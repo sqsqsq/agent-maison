@@ -136,7 +136,8 @@ export function createCodexTerminalScanner(
     if (!line.trim()) return;
     const c = classifyCodexTerminalLine(line);
     if (c.kind === 'completed') {
-      if (state.completionObserved) return;
+      // 结构化防御：若异常流同时出现两个终态，failed 优先；scanner 自身也不输出双真。
+      if (state.completionObserved || state.terminalFailureObserved) return;
       state.completionObserved = true;
       handlers.onCompleted?.();
       return;
@@ -144,6 +145,7 @@ export function createCodexTerminalScanner(
     if (c.kind === 'failed') {
       if (state.terminalFailureObserved) return;
       state.terminalFailureObserved = true;
+      state.completionObserved = false;
       if (c.excerpt) state.failureExcerpt = c.excerpt;
       handlers.onFailed?.();
       return;

@@ -39,13 +39,15 @@
 
 - [x] 5.R 撤回执行：删除上述全部实现与 `blind-ui-kit` capability spec；selector 回归裸
       ui-spec node id/text；页面身份判据迁移到既有 visual-diff-nav screen identity
-      （只取 `all_of`/`any_of` 正向 id、精确 id 判在场，`none_of` 不作所有权证明）；
+      （只取 `proposed=false` 的已确认 identity 中 `all_of`/`any_of` 正向 id、精确 id 判在场，
+      `proposed=true` 与 `none_of` 均不作所有权证明）；
       锚点漂移缺陷分类整链删除；`ui-kit:placeholders` 改名 `asset:placeholders`
       （素材占位能力保留、与 kit 解耦）。
 - [x] 5.R2 盲档结构地板改由既有产品组件所有权链承接，并在 `visual_parity_coverage` 内
       收紧三项为**不受 `visual_parity_enforcement` 降级**的硬地板：P0 节点须有
-      `contract_component`、组件须真实存在于 `contracts.components`（空数组也判失败）、
-      组件 `file` 须在 `contracts.files`。视觉质量项照旧遵守档位。
+      `contract_component`、该 P0 mapping 引用的组件须真实存在于 `contracts.components`
+      （空数组也判失败）、其 `file` 须在 `contracts.files`。非 P0 mapping 与视觉质量项照旧
+      遵守档位，不提升为所有权硬地板。
 - [x] 5.R3 MIGRATION.md 记 breaking（`block` 字段/kit 目标目录配置删除、`maison:` selector
       作废须重新生成、npm script 改名、所有权三项档位无关）。
 

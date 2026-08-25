@@ -15,6 +15,7 @@ import {
   formatGoalStatusJson,
   formatGoalStatusText,
   generateProgressMarkdown,
+  type GoalProgressSnapshot,
   projectGoalProgress as projectGoalProgressRaw,
   resolveChainFromEvents,
   resolveLatestRunId,
@@ -146,6 +147,29 @@ function happyEvents(): GoalRunEvent[] {
     },
     { ts: '2026-06-10T12:08:02.000Z', type: 'run_end', status: 'COMPLETED' },
   ] as GoalRunEvent[];
+}
+
+function mkStatusSnapshot(
+  liveness: GoalProgressSnapshot['liveness'],
+): GoalProgressSnapshot {
+  return {
+    schema_version: '1.0',
+    run_id: 'r1',
+    feature: 'f',
+    status: 'RUNNING',
+    status_reason: null,
+    run_disposition: 'RESUME_READY',
+    generated_at: new Date(0).toISOString(),
+    source: { events_path: 'e', events_count: 1, last_event_at: null, last_event_type: null },
+    chain: { phases: [], current_phase: null, current_index: 0, total: 0, estimated_percent: null, percent_kind: 'indeterminate' },
+    phase: { name: null, status: 'NOT_STARTED', attempt: 0, started_at: null, elapsed_ms: null, substep: null },
+    liveness,
+    budget: { turns_used: 0, turns_limit: 3, wall_elapsed_ms: 0, wall_limit_ms: 1, phase_timeout_ms: 1 },
+    artifacts: { agent_output_log: null, summary_path: null, goal_report_path: null, progress_path: null },
+    recent_events: [],
+    next_action: 'wait',
+    phases_summary: [],
+  };
 }
 
 const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
@@ -1193,6 +1217,53 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
+    name: 'goal-status CLI: 默认文本显示 streaming agent 工作面停滞',
+    run: () => {
+      const feature = `goal-cli-stall-${process.pid}`;
+      const cliRoot = mkGoalCliProjectRoot();
+      const runId = '20260610T120000Z';
+      const reportRel = `doc/features/${feature}/goal-runs/${runId}`;
+      const reportDir = path.join(cliRoot, reportRel);
+      const phaseDir = path.join(reportDir, 'phases', 'coding');
+      const manifest = mkManifest({
+        feature,
+        report_dir: reportRel,
+        start_phase: 'coding',
+        end_phase: 'coding',
+      });
+      const now = Date.now();
+      const events: GoalRunEvent[] = [
+        { ts: new Date(now - 30 * 60 * 1000).toISOString(), type: 'run_start', chain: ['coding'] },
+        { ts: new Date(now - 30 * 60 * 1000).toISOString(), type: 'adapter_probe', output_delivery: 'streaming' },
+        { ts: new Date(now - 30 * 60 * 1000).toISOString(), type: 'phase_start', phase: 'coding', attempt: 1 },
+        { ts: new Date(now - 30 * 60 * 1000).toISOString(), type: 'agent_invoke_start', phase: 'coding', invoke_id: 'c1' },
+        { ts: new Date(now - 1000).toISOString(), type: 'heartbeat', phase: 'coding' },
+      ];
+      fs.mkdirSync(phaseDir, { recursive: true });
+      fs.writeFileSync(path.join(reportDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
+      fs.writeFileSync(
+        path.join(reportDir, 'events.jsonl'),
+        events.map((e) => JSON.stringify(e)).join('\n') + '\n',
+        'utf-8',
+      );
+      const agentLog = path.join(phaseDir, 'agent-output.log');
+      fs.writeFileSync(agentLog, 'old output\n', 'utf-8');
+      const old = new Date(now - 65 * 60 * 1000);
+      fs.utimesSync(agentLog, old, old);
+      try {
+        const r = runGoalStatusCli(['--feature', feature, '--run-id', runId], cliRoot);
+        assert(r.status === 0, `exit ${r.status} stderr=${r.stderr}`);
+        assert(
+          /agent 输出已停滞 65 分钟/.test(r.stdout),
+          `默认 goal-status 须显示工作面停滞：\n${r.stdout}`,
+        );
+        assert(/控制面 heartbeat 不计入/.test(r.stdout), '默认文本须声明工作面口径');
+      } finally {
+        fs.rmSync(cliRoot, { recursive: true, force: true });
+      }
+    },
+  },
+  {
     name: 'goal-monitor CLI: phase_verdict edge notification',
     run: () => {
       const feature = `goal-monitor-verdict-${process.pid}`;
@@ -1699,6 +1770,15 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           liveness.state === 'ACTIVE',
           `output_delivery=${String(probe)} 不得降级，实得 ${liveness.state}`,
         );
+        assert(
+          liveness.agent_output_stalled_ms === null,
+          `output_delivery=${String(probe)} 不得投影工作面停滞时长`,
+        );
+        const rendered = [
+          formatGoalStatusText(mkStatusSnapshot(liveness), 'f', 'r1'),
+          generateProgressMarkdown(mkStatusSnapshot(liveness)),
+        ].join('\n');
+        assert(!rendered.includes('agent 输出已停滞'), `豁免场景不得渲染停滞说明：\n${rendered}`);
       }
     },
   },
@@ -1733,10 +1813,17 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         now - 65 * 60 * 1000,
       );
       assert(closed.state === 'ACTIVE', `已闭合 invoke 不得降级：${closed.state}`);
+      assert(closed.agent_output_stalled_ms === null, '已闭合 invoke 不得投影工作面停滞时长');
+      const closedRendered = [
+        formatGoalStatusText(mkStatusSnapshot(closed), 'f', 'r1'),
+        generateProgressMarkdown(mkStatusSnapshot(closed)),
+      ].join('\n');
+      assert(!closedRendered.includes('agent 输出已停滞'), `已闭合 invoke 不得渲染停滞说明：\n${closedRendered}`);
       // ② 输出仍在软阈内更新 → outputSignal='updated'
       const fresh = call(base, now - Math.floor(SOFT_STALL_MS / 2));
       assert(fresh.state === 'ACTIVE', `输出仍在更新不得降级：${fresh.state}`);
       assert(fresh.signals.agent_output_log === 'updated', fresh.signals.agent_output_log);
+      assert(fresh.agent_output_stalled_ms === null, '输出仍更新时不得投影停滞时长');
       // ③ 无 agent-output.log（工作面无事实）→ 不猜
       const missing = call(base, null);
       assert(missing.state === 'ACTIVE', `无工作面事实不得降级：${missing.state}`);
@@ -1767,38 +1854,25 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   {
     name: 't4 查进度：工作面停滞独立成行，且**不复用**含 heartbeat 的 seconds_since_activity',
     run: () => {
-      const md = generateProgressMarkdown({
-        schema_version: '1.0',
-        run_id: 'r1',
-        feature: 'f',
-        status: 'RUNNING',
-        status_reason: null,
-        run_disposition: 'ACTIVE',
-        generated_at: new Date(0).toISOString(),
-        source: { events_path: 'e', events_count: 1, last_event_at: null, last_event_type: null },
-        chain: { phases: [], current_phase: null, current_index: 0, total: 0, estimated_percent: null, percent_kind: 'indeterminate' },
-        phase: { name: null, status: 'PENDING', attempt: 0, started_at: null, elapsed_ms: null, substep: null },
-        liveness: {
-          state: 'SUSPECTED_STALL',
-          last_activity_at: null,
-          seconds_since_activity: 1,
-          agent_output_stalled_ms: 65 * 60 * 1000,
-          signals: {
-            feature_lock_heartbeat: 'fresh',
-            runner_lock: 'present',
-            agent_output_log: 'unchanged',
-            child_process: 'unknown',
-            lingering_pipe: false,
-          },
+      const snapshot = mkStatusSnapshot({
+        state: 'SUSPECTED_STALL',
+        last_activity_at: null,
+        seconds_since_activity: 1,
+        agent_output_stalled_ms: 65 * 60 * 1000,
+        signals: {
+          feature_lock_heartbeat: 'fresh',
+          runner_lock: 'present',
+          agent_output_log: 'unchanged',
+          child_process: 'unknown',
+          lingering_pipe: false,
         },
-        budget: { turns_used: 0, turns_limit: 3, wall_elapsed_ms: 0, wall_limit_ms: 1, phase_timeout_ms: 1 },
-        artifacts: { agent_output_log: null, summary_path: null, goal_report_path: null, progress_path: null },
-        recent_events: [],
-        next_action: 'wait',
-        phases_summary: [],
-      } as unknown as Parameters<typeof generateProgressMarkdown>[0]);
+      });
+      const text = formatGoalStatusText(snapshot, 'f', 'r1');
+      const md = generateProgressMarkdown(snapshot);
+      assert(/agent 输出已停滞 65 分钟/.test(text), `默认查进度须给出工作面停滞分钟数：\n${text}`);
       assert(/agent 输出已停滞 65 分钟/.test(md), `查进度须给出工作面停滞分钟数：\n${md}`);
-      assert(/控制面 heartbeat 不计入/.test(md), '须显式声明口径，防再次与控制面混用');
+      assert(/控制面 heartbeat 不计入/.test(text), '默认文本须显式声明口径，防再次与控制面混用');
+      assert(/控制面 heartbeat 不计入/.test(md), 'Markdown 须显式声明口径，防再次与控制面混用');
     },
   },
 
