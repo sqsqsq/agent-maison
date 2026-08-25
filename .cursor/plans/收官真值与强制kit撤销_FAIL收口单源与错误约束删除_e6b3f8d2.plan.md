@@ -264,3 +264,36 @@ prompt 两处（续作块块头/正文、priorFailureKind='agent_timeout' 分支
 回归 3 例：窗口判据五态（同 invoke FAIL / PASS / 无 end / 旧 attempt / 跨 phase）+
 并陈形态断言（含"不得再出现 NOT a content failure"）+ 纯超时文案不变。
 验收：typecheck 0 · unit 3511/3511 · fixtures 44/44。
+
+### t7 · 回归、契约与收口（2026-08-25，仓内部分完成；宿主 smoke 待执行）
+
+**OpenSpec 两条线（均未 archive，按 plan 要求等宿主 smoke 全过）**
+- **A 线**：修订在研 `blind-visual-hardening`——kit 撤回（见 t3⑥）。
+- **B 线**：新 change `turn-closure-and-liveness-truth`，**只装** terminal 收口 / codex adapter
+  声明 / liveness / 超时话术四项，spec delta 落 `goal-runner` 与 `agent-adapters` 两个既有
+  capability（未把 kit 删除或 goal terminal 包装成新大 capability）；tasks 第 5 节写死诚实边界。
+
+**回归总表（本轮新增）**
+| 面 | 位置 | 覆盖 |
+|---|---|---|
+| terminal 收口 | `codex-terminal-closure.unit.test.ts`（27 例） | 真实 fixture 逐行分类 / 半行分块 1·3·7·17·64·4096 字节 / error→completed 不早杀 / probe 竞争 / argv 与能力声明 / usage 直读 / 判卷信封投影 / **真子进程 E2E 五例** |
+| kit 删除 | `ui-kit-revocation.unit.test.ts`（7 例） | 被删文件不存在 / token 零残留 / blocks 精确路径 / 合法命名空间反向断言 / 豁免不得空转 / npm 入口 / config 字段 |
+| 所有权硬地板 | `ui-spec.unit.test.ts`（+7 例） | warn·off 均 BLOCKER / 空数组判失败 / file 缺失判失败 / 完整 PASS / vp 缺失档位无关 / `block` 字段判非法 |
+| 页面身份三态 | `structured-findings.unit.test.ts` | matched / mismatched / probe_failed×2 / none_of 反例 |
+| liveness | `goal-progress.unit.test.ts`（+5 例） | fake clock 降级 / buffered·unknown·缺声明豁免 / 三合取缺一不降 / 读源 / 查进度口径 |
+| 超时话术 | `goal-headless-guard.unit.test.ts`（+3 例） | 窗口判据五态 / 并陈形态 / 纯超时不变 |
+
+**仓内验收（全绿）**：`npm run typecheck` 0 · `npm run test:unit` **3511/3511**（基线 3483）·
+`npm run test:fixtures` **44/44** · `npm run openspec:validate` **42/42** ·
+`node scripts/check-plan-version.mjs` PASS · `git diff --check` 干净。
+
+**「coding FAIL 分钟级收口」已用受控 fixture 驱动**（不赌真实模型 FAIL）：真子进程 E2E 里
+`turn.completed` 后进程钉住 → 秒级 tree-kill 收口且不判超时/失败；`turn.failed`+exit 0 →
+规范化非零且 completion 恒 false。**真实 codex** 侧本机已验生产 argv 形态
+（`--ask-for-approval never exec --sandbox danger-full-access --json`）产出 `turn.completed`
+与非 null `usage`，exit 0。
+
+**待执行（外部依赖）**：宿主 `D:.code\SimulatedWalletForHmos` 的新 run smoke——
+需先把本分支 framework 发布件同步进宿主（宿主 `framework/` 为 git 跟踪的发布件副本，
+当前停在 3591229），并删除宿主 `framework.config.json` 里已废弃的 kit 目标目录键。
+**两条 OpenSpec 线在该 smoke 全过前均不 archive。**
