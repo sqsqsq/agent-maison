@@ -18,6 +18,8 @@ import {
   projectGoalProgress as projectGoalProgressRaw,
   resolveChainFromEvents,
   resolveLatestRunId,
+  resolveRunOutputDelivery,
+  SOFT_STALL_MS,
   runStatusWatchLoop,
   shouldThrottleSnapshot,
   writeProgressSnapshotAtomic,
@@ -1620,6 +1622,186 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       fs.rmSync(root, { recursive: true, force: true });
     },
   },
+  // ==========================================================================
+  // plan e6b3f8d2 t4：活性分离工作面与控制面（fake clock，观测不干预）
+  // --------------------------------------------------------------------------
+  // 立项事故：coding i3 输出停滞 65 分钟，而 runner 自写 heartbeat 让控制面口径恒新鲜，
+  // 活性一路 ACTIVE。修复=三合取降级到既有枚举 SUSPECTED_STALL，且只在 streaming 下降。
+  // ==========================================================================
+  {
+    name: 't4 liveness: streaming + 未闭合 invoke + 输出停滞 → SUSPECTED_STALL（heartbeat 不再遮蔽）',
+    run: () => {
+      const now = 1_800_000_000_000; // fake clock（固定值，杜绝真实时钟抖动）
+      const startedAt = new Date(now - 70 * 60 * 1000).toISOString();
+      const events: GoalRunEvent[] = [
+        { ts: startedAt, type: 'run_start', chain: ['coding'] },
+        { ts: startedAt, type: 'adapter_probe', output_delivery: 'streaming' },
+        { ts: startedAt, type: 'phase_start', phase: 'coding' },
+        { ts: startedAt, type: 'agent_invoke_start', phase: 'coding', invoke_id: 'c1' },
+        // 控制面：runner heartbeat 一直在写（就在 1 秒前）
+        { ts: new Date(now - 1000).toISOString(), type: 'heartbeat', phase: 'coding' },
+      ];
+      const liveness = computeLiveness({
+        events,
+        featureLock: null,
+        runnerLock: null,
+        // 工作面：agent-output.log 65 分钟没动
+        agentOutputMtimeMs: now - 65 * 60 * 1000,
+        phaseTimeoutMs: 90 * 60 * 1000,
+        runEnded: false,
+        terminalStatus: null,
+        nowMs: now,
+        liveProbe: false,
+        lastLingeringPipe: false,
+      });
+      assert(
+        liveness.state === 'SUSPECTED_STALL',
+        `heartbeat 恒新鲜也不得遮蔽工作面停滞，实得 ${liveness.state}`,
+      );
+      assert(liveness.signals.agent_output_log === 'unchanged', 'outputSignal 须为 unchanged');
+      assert(
+        liveness.agent_output_stalled_ms === 65 * 60 * 1000,
+        `工作面停滞时长须为 now−mtime：${liveness.agent_output_stalled_ms}`,
+      );
+      // 控制面口径不得被工作面污染（两轴分立）
+      assert(
+        liveness.seconds_since_activity !== null && liveness.seconds_since_activity <= 2,
+        `控制面口径仍应新鲜（含 heartbeat）：${liveness.seconds_since_activity}`,
+      );
+    },
+  },
+  {
+    name: 't4 liveness: buffered / unknown 不降级（日志本就可能整段憋着，据此降级即误报）',
+    run: () => {
+      const now = 1_800_000_000_000;
+      const startedAt = new Date(now - 70 * 60 * 1000).toISOString();
+      const mk = (probe?: string): GoalRunEvent[] => [
+        { ts: startedAt, type: 'run_start', chain: ['coding'] },
+        ...(probe ? [{ ts: startedAt, type: 'adapter_probe', output_delivery: probe } as GoalRunEvent] : []),
+        { ts: startedAt, type: 'phase_start', phase: 'coding' },
+        { ts: startedAt, type: 'agent_invoke_start', phase: 'coding', invoke_id: 'c1' },
+        { ts: new Date(now - 1000).toISOString(), type: 'heartbeat', phase: 'coding' },
+      ];
+      for (const probe of ['buffered', 'unknown', undefined]) {
+        const liveness = computeLiveness({
+          events: mk(probe),
+          featureLock: null,
+          runnerLock: null,
+          agentOutputMtimeMs: now - 65 * 60 * 1000,
+          phaseTimeoutMs: 90 * 60 * 1000,
+          runEnded: false,
+          terminalStatus: null,
+          nowMs: now,
+          liveProbe: false,
+          lastLingeringPipe: false,
+        });
+        assert(
+          liveness.state === 'ACTIVE',
+          `output_delivery=${String(probe)} 不得降级，实得 ${liveness.state}`,
+        );
+      }
+    },
+  },
+  {
+    name: 't4 liveness: 无未闭合 invoke / 输出仍在更新 → 不降级（三合取缺一不降）',
+    run: () => {
+      const now = 1_800_000_000_000;
+      const startedAt = new Date(now - 70 * 60 * 1000).toISOString();
+      const base: GoalRunEvent[] = [
+        { ts: startedAt, type: 'run_start', chain: ['coding'] },
+        { ts: startedAt, type: 'adapter_probe', output_delivery: 'streaming' },
+        { ts: startedAt, type: 'phase_start', phase: 'coding' },
+        { ts: startedAt, type: 'agent_invoke_start', phase: 'coding', invoke_id: 'c1' },
+        { ts: new Date(now - 1000).toISOString(), type: 'heartbeat', phase: 'coding' },
+      ];
+      const call = (events: GoalRunEvent[], mtime: number | null): ReturnType<typeof computeLiveness> =>
+        computeLiveness({
+          events,
+          featureLock: null,
+          runnerLock: null,
+          agentOutputMtimeMs: mtime,
+          phaseTimeoutMs: 90 * 60 * 1000,
+          runEnded: false,
+          terminalStatus: null,
+          nowMs: now,
+          liveProbe: false,
+          lastLingeringPipe: false,
+        });
+      // ① invoke 已闭合 → 没有"正在跑的 agent"可谈停滞
+      const closed = call(
+        [...base, { ts: new Date(now - 2000).toISOString(), type: 'agent_invoke_end', phase: 'coding', invoke_id: 'c1' }],
+        now - 65 * 60 * 1000,
+      );
+      assert(closed.state === 'ACTIVE', `已闭合 invoke 不得降级：${closed.state}`);
+      // ② 输出仍在软阈内更新 → outputSignal='updated'
+      const fresh = call(base, now - Math.floor(SOFT_STALL_MS / 2));
+      assert(fresh.state === 'ACTIVE', `输出仍在更新不得降级：${fresh.state}`);
+      assert(fresh.signals.agent_output_log === 'updated', fresh.signals.agent_output_log);
+      // ③ 无 agent-output.log（工作面无事实）→ 不猜
+      const missing = call(base, null);
+      assert(missing.state === 'ACTIVE', `无工作面事实不得降级：${missing.state}`);
+      assert(missing.agent_output_stalled_ms === null, '无日志时停滞时长须为 null');
+    },
+  },
+  {
+    name: 't4 liveness: 读源是本 run 的 adapter_probe 事件（历史 run 不被现行 adapter.yaml 重释）',
+    run: () => {
+      assert(resolveRunOutputDelivery([]) === 'unknown', '无事件即 unknown');
+      assert(
+        resolveRunOutputDelivery([{ type: 'adapter_probe' } as GoalRunEvent]) === 'unknown',
+        'adapter_probe 缺字段即 unknown（历史 run 形态）',
+      );
+      assert(
+        resolveRunOutputDelivery([
+          { type: 'adapter_probe', output_delivery: 'buffered' } as GoalRunEvent,
+          { type: 'adapter_probe', output_delivery: 'streaming' } as GoalRunEvent,
+        ]) === 'streaming',
+        '多条时取最后一条（同 run 内 resume 后的最新声明）',
+      );
+      assert(
+        resolveRunOutputDelivery([{ type: 'adapter_probe', output_delivery: 'nonsense' } as GoalRunEvent]) === 'unknown',
+        '非法值即 unknown，不得猜',
+      );
+    },
+  },
+  {
+    name: 't4 查进度：工作面停滞独立成行，且**不复用**含 heartbeat 的 seconds_since_activity',
+    run: () => {
+      const md = generateProgressMarkdown({
+        schema_version: '1.0',
+        run_id: 'r1',
+        feature: 'f',
+        status: 'RUNNING',
+        status_reason: null,
+        run_disposition: 'ACTIVE',
+        generated_at: new Date(0).toISOString(),
+        source: { events_path: 'e', events_count: 1, last_event_at: null, last_event_type: null },
+        chain: { phases: [], current_phase: null, current_index: 0, total: 0, estimated_percent: null, percent_kind: 'indeterminate' },
+        phase: { name: null, status: 'PENDING', attempt: 0, started_at: null, elapsed_ms: null, substep: null },
+        liveness: {
+          state: 'SUSPECTED_STALL',
+          last_activity_at: null,
+          seconds_since_activity: 1,
+          agent_output_stalled_ms: 65 * 60 * 1000,
+          signals: {
+            feature_lock_heartbeat: 'fresh',
+            runner_lock: 'present',
+            agent_output_log: 'unchanged',
+            child_process: 'unknown',
+            lingering_pipe: false,
+          },
+        },
+        budget: { turns_used: 0, turns_limit: 3, wall_elapsed_ms: 0, wall_limit_ms: 1, phase_timeout_ms: 1 },
+        artifacts: { agent_output_log: null, summary_path: null, goal_report_path: null, progress_path: null },
+        recent_events: [],
+        next_action: 'wait',
+        phases_summary: [],
+      } as unknown as Parameters<typeof generateProgressMarkdown>[0]);
+      assert(/agent 输出已停滞 65 分钟/.test(md), `查进度须给出工作面停滞分钟数：\n${md}`);
+      assert(/控制面 heartbeat 不计入/.test(md), '须显式声明口径，防再次与控制面混用');
+    },
+  },
+
 ];
 
 export async function runAll(): Promise<UnitCaseResult[]> {

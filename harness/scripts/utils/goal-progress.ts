@@ -142,6 +142,13 @@ export interface GoalProgressSnapshot {
     state: LivenessState;
     last_activity_at: string | null;
     seconds_since_activity: number | null;
+    /**
+     * plan e6b3f8d2 t4：**工作面**停滞时长（now − agent-output.log mtime），毫秒。
+     * 刻意与 `seconds_since_activity` 分立——后者是**控制面**口径，含 runner 自写
+     * heartbeat，agent 一字不吐它也恒新鲜（立项事故：i3 输出 65 分钟零变化，
+     * 活性却一路 ACTIVE）。null = agent-output.log 不存在（尚未产生工作面事实）。
+     */
+    agent_output_stalled_ms: number | null;
     signals: {
       feature_lock_heartbeat: 'fresh' | 'stale' | 'missing';
       runner_lock: 'present' | 'missing';
@@ -581,6 +588,21 @@ export interface LivenessInput {
   lastLingeringPipe: boolean;
 }
 
+/**
+ * plan e6b3f8d2 t4：**本 run events** 里 `adapter_probe` 声明的输出交付方式。
+ * 刻意读事件而不是现行 `adapter.yaml`——历史 run 不得被今天的声明重新解释
+ *（一个 run 的活性判据只能用它自己当时落盘的事实）。缺失即 unknown。
+ */
+export function resolveRunOutputDelivery(events: GoalRunEvent[]): 'streaming' | 'buffered' | 'unknown' {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.type !== 'adapter_probe') continue;
+    const v = e.output_delivery;
+    return v === 'streaming' || v === 'buffered' ? v : 'unknown';
+  }
+  return 'unknown';
+}
+
 export function computeLiveness(input: LivenessInput): GoalProgressSnapshot['liveness'] {
   const { events, featureLock, nowMs, runEnded, terminalStatus } = input;
 
@@ -589,6 +611,7 @@ export function computeLiveness(input: LivenessInput): GoalProgressSnapshot['liv
       state: 'DONE',
       last_activity_at: events.length > 0 ? (events[events.length - 1].ts ?? null) : null,
       seconds_since_activity: 0,
+      agent_output_stalled_ms: null,
       signals: {
         feature_lock_heartbeat: 'missing',
         runner_lock: 'missing',
@@ -716,11 +739,33 @@ export function computeLiveness(input: LivenessInput): GoalProgressSnapshot['liv
     state = 'QUIET';
   }
 
+  // plan e6b3f8d2 t4：**工作面与控制面分离**。控制面（runner heartbeat）恒新鲜会把
+  // 「agent 一字不吐」盖成 ACTIVE（立项事故：i3 输出停滞 65 分钟仍报 ACTIVE）。
+  // 判据三合取，缺一不降：
+  //   ① 存在未闭合 invoke（确实有个 agent 正在跑）；
+  //   ② 工作面信号 outputSignal='unchanged'（agent-output.log 超软阈未变）；
+  //   ③ 本 run 事件声明 output_delivery='streaming'——**只有流式交付**才能从"日志不长"
+  //      推出"agent 没吐字"；buffered/unknown 下日志本就可能整段憋着，据此降级即误报。
+  // **只观测不干预**：降级到既有枚举 SUSPECTED_STALL，不触发 kill/恢复，不新增枚举或
+  // 第二 reducer；且只从 ACTIVE/QUIET 抬（ORPHAN/STALLED/ATTENTION 是更强的控制面结论）。
+  const outputDelivery = resolveRunOutputDelivery(events);
+  const agentOutputStalledMs =
+    input.agentOutputMtimeMs != null ? Math.max(0, nowMs - input.agentOutputMtimeMs) : null;
+  if (
+    (state === 'ACTIVE' || state === 'QUIET') &&
+    unclosed !== null &&
+    outputSignal === 'unchanged' &&
+    outputDelivery === 'streaming'
+  ) {
+    state = 'SUSPECTED_STALL';
+  }
+
   return {
     state,
     last_activity_at:
       lastActivityMs != null ? new Date(lastActivityMs).toISOString() : null,
     seconds_since_activity: secondsSince,
+    agent_output_stalled_ms: agentOutputStalledMs,
     signals: {
       feature_lock_heartbeat: lockHeartbeat,
       runner_lock: runnerPresent,
@@ -1173,6 +1218,13 @@ export function generateProgressMarkdown(snapshot: GoalProgressSnapshot): string
         ? `, last activity ${snapshot.liveness.seconds_since_activity}s ago`
         : ''
     }`,
+    // plan e6b3f8d2 t4：工作面口径单列。**不复用 seconds_since_activity**——那条含
+    // runner 自写 heartbeat，会把"agent 早不吐字了"读成"刚刚还活着"。
+    ...(snapshot.liveness.agent_output_stalled_ms != null
+      && snapshot.liveness.agent_output_stalled_ms >= SOFT_STALL_MS
+      ? [`- agent 输出已停滞 ${Math.floor(snapshot.liveness.agent_output_stalled_ms / 60000)} 分钟`
+         + `（工作面口径：now − agent-output.log mtime；控制面 heartbeat 不计入）`]
+      : []),
     `- Budget: turns ${snapshot.budget.turns_used}/${snapshot.budget.turns_limit}, wall ${Math.round(snapshot.budget.wall_elapsed_ms / 60000)}m/${Math.round(snapshot.budget.wall_limit_ms / 60000)}m`,
     '',
     '## Phases',
