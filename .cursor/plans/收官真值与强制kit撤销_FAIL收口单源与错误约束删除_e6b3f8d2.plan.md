@@ -13,7 +13,7 @@ todos:
     status: completed
   - id: t5-timeout-prompt-honesty
     content: "P1 · 超时不得遮蔽新鲜质量事实。events 两轴本就正交（i3 verdict 同带 timed_out 与 failure_kind），失真仅在 retry prompt 组装硬写「Prior attempt TIMED OUT — NOT a content failure」（goal-runner.ts:3160、:3261）。修复：同 invoke 存在新鲜 harness FAIL 时两轴并陈，删除无条件断言；纯超时保持既有文案。只改话术层。"
-    status: pending
+    status: completed
   - id: t7-regression-openspec-smoke
     content: "回归、契约与收口（验收可复现）。OpenSpec 两条线：①修订在研 blind-visual-hardening（kit 撤回，见 t3⑥）；②e6 新 change 只承载 goal-runner terminal 收口 + codex adapter（--json/output_delivery/usage）+ liveness + timeout prompt——不把 kit 删除与 goal terminal 包装成新大 capability。回归：terminal parser 真实 fixture（completed/failed/半行/probe 竞争/error→completed 不早杀）；turn.failed+exit 0 规范化非零且 agentFailed 保留；codex argv 含 --json 但 tool_event_provenance=none 且不签发 verified critic receipt；无 `ui_kit_target_dir` 配置正常运行；不再产生任何 `ui_kit_*` check；盲档 P0 节点映射到宿主产品组件时 plan/coding 正常通过；**所有权子集硬地板五态回归**：默认 `warn` 下 P0 缺 `contract_component` 仍 BLOCKER、显式 `off` 下同样 BLOCKER、`contracts.components` 为空判失败、组件 file 未进 `contracts.files` 判失败、完整映射 PASS；selector 回归 bare ID/text 后 device-test-evidence 与 derive-hylyre-plan-hint 单测/fixture 全绿；**页面身份三态回归**（目标屏正向 ID 命中=matched / 他屏正向 ID 命中=mismatched / 仅 text/route 或无声明 ID=probe_failed，确保删 kit 不顺带删应用所有权判据）；**精确删除门槛**（替代不可执行的裸 `maison` 全匹配——`agentmaison://`、`~/.maison/`、`MaisonDeviceUnlock`/`MaisonGuardian`、`maison:placeholder` 均为合法命名空间）：断言被删文件/目录不存在；token 级搜索 `ui_kit_target_dir`、`maison_ui_kit`、`ui-kit:scaffold`、旧 `ui-kit:placeholders`、`blind-ui-kit`、`ui-kit-anchors`、九个 Maison 组件名、`scaffold_contract_drift`、旧 canonical-anchor 格式与解析代码零命中；`blocks.json` 只查原 kit 精确路径不禁通用文件名；范围排除 `openspec/changes/archive/**` 与历史 plans，不依赖人工文件计数；prompt 两轴并陈；liveness fake clock 单测 + unknown/buffered 豁免 + adapter_probe 读源断言；watchdog 删除读侧兼容。全量 `cd harness && npm test` + `npm run openspec:validate`。宿主 smoke（新 run_id，不 resume halt 旧 run，不执行 scaffold）：验证既有 CommUI/feature 产品组件映射可闭环；宿主不生成 `maison_ui_kit` 文件；新 run 不再出现 `ui_kit_not_materialized`/`ui_scope_violation` 双输；coding FAIL 分钟级收口用受控 fixture/E2E（不赌真实模型 FAIL）；真实 codex smoke 验 turn.completed/usage 非 null/宿主 argv，failed 分流用真实捕获 fixture。**诚实边界：本轮消除的是 ~60 分钟收口空等与错误 kit 重试，不承诺缩短 spec/plan/coding 单 turn 推理时长。** smoke 全过前两条 OpenSpec 线均不 archive。"
     status: pending
@@ -245,3 +245,22 @@ golden `visual-debt.json` 移除已失效的 `ui_kit_runtime_conformance` 条目
 回归 5 例（fake clock 固定时钟）：降级正例 + buffered/unknown/缺声明三态豁免 +
 三合取缺一不降（invoke 已闭合 / 输出仍更新 / 无日志）+ 读源断言 + 查进度渲染口径。
 验收：typecheck 0 · unit 3508/3508 · fixtures 44/44。
+
+### t5 · 超时 prompt 两轴并陈（2026-08-25，已完成）
+
+**只改话术层，判据面零改动**：events 两轴本就正交（超时 attempt 的 `phase_verdict` 同带
+`timed_out` 与 harness 精修的 `failure_kind`），失真只在 prompt 组装处无条件硬写
+「Prior attempt TIMED OUT — NOT a content failure」。
+
+新增纯函数 `findLatestInvokeHarnessFailure(events, phase)`：窗口分法与
+`deriveContinuationFromEvents` 同源（最后一个 `agent_invoke_start` → 配对
+`agent_invoke_end` → 窗口内 `phase_verdict`），只认**同 invoke 的新鲜质量事实**
+（FAIL/INCOMPLETE），上一 attempt 的旧 FAIL、PASS、崩在 agent 段一律返回 null。
+
+prompt 两处（续作块块头/正文、priorFailureKind='agent_timeout' 分支）改为：
+有同 invoke 质量事实 → **两轴并陈**（transport 说超时+产物在盘、quality 说 harness 判了
+什么 kind、并明确"别当成只是超时"）；**纯超时保持既有文案一字不改**。
+
+回归 3 例：窗口判据五态（同 invoke FAIL / PASS / 无 end / 旧 attempt / 跨 phase）+
+并陈形态断言（含"不得再出现 NOT a content failure"）+ 纯超时文案不变。
+验收：typecheck 0 · unit 3511/3511 · fixtures 44/44。
