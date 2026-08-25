@@ -10,7 +10,7 @@ todos:
     status: completed
   - id: t4-liveness-output-stall
     content: "P1 · 活性分离工作面与控制面，观测不干预。现状 activityTypes 含 runner 自写 heartbeat（goal-progress.ts:600-601）恒 ACTIVE，outputSignal='unchanged'（:699-704）只进 signals。修复：存在未闭合 invoke、outputSignal='unchanged'、且**该 run events 的 `adapter_probe.output_delivery`**（缺失即 unknown，历史 run 不被现行 adapter.yaml 重释）为 'streaming' 时，state 降既有枚举 `SUSPECTED_STALL`；查进度补「agent 输出已停滞 X 分钟」，X=now−agentOutputMtime（不得用含 heartbeat 的 seconds_since_activity）。unknown/buffered 不降级。不触发 kill/恢复，不新增枚举或第二 reducer。"
-    status: pending
+    status: completed
   - id: t5-timeout-prompt-honesty
     content: "P1 · 超时不得遮蔽新鲜质量事实。events 两轴本就正交（i3 verdict 同带 timed_out 与 failure_kind），失真仅在 retry prompt 组装硬写「Prior attempt TIMED OUT — NOT a content failure」（goal-runner.ts:3160、:3261）。修复：同 invoke 存在新鲜 harness FAIL 时两轴并陈，删除无条件断言；纯超时保持既有文案。只改话术层。"
     status: pending
@@ -226,3 +226,22 @@ golden `visual-debt.json` 移除已失效的 `ui_kit_runtime_conformance` 条目
 
 **验收**：`npm run typecheck` 0 · `npm run test:unit` 3503/3503 · `npm run test:fixtures` 44/44 ·
 `npm run openspec:validate` 41/41 · `node scripts/check-plan-version.mjs` PASS。
+
+### t4 · liveness 工作面/控制面分离（2026-08-25，已完成）
+
+`computeLiveness` 增三合取降级：**存在未闭合 invoke** ∧ `outputSignal='unchanged'` ∧
+**本 run events 的 `adapter_probe.output_delivery='streaming'`** → 状态降既有枚举
+`SUSPECTED_STALL`。读源刻意是**事件**而非现行 `adapter.yaml`（历史 run 不被今天的声明
+重新解释，新增纯函数 `resolveRunOutputDelivery`，缺失/非法值一律 unknown）。
+`buffered`/`unknown` 不降级——那两档日志本就可能整段憋着，据此降级即误报。
+只从 `ACTIVE`/`QUIET` 抬（`ORPHAN_SUSPECTED`/`STALLED`/`ATTENTION` 是更强的控制面结论）。
+
+**只观测不干预**：不触发 kill/恢复，未新增枚举，未新增第二 reducer。
+
+查进度新增独立一行「agent 输出已停滞 X 分钟」，X=now−agent-output.log mtime
+（snapshot 新增 `agent_output_stalled_ms`）——**不复用**含 runner heartbeat 的
+`seconds_since_activity`：那正是立项事故里把"agent 早不吐字"读成"刚刚还活着"的字段。
+
+回归 5 例（fake clock 固定时钟）：降级正例 + buffered/unknown/缺声明三态豁免 +
+三合取缺一不降（invoke 已闭合 / 输出仍更新 / 无日志）+ 读源断言 + 查进度渲染口径。
+验收：typecheck 0 · unit 3508/3508 · fixtures 44/44。
