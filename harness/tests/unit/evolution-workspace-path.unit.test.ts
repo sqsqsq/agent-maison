@@ -930,6 +930,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
         feature: featureId,
         runId,
         adapter: 'codex',
+        runMode: 'attended',
         maxRounds: 1,
         executePhase: async phase => {
           executedFirst = true;
@@ -966,6 +967,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
         feature: featureId,
         runId,
         adapter: 'codex',
+        runMode: 'attended',
         maxRounds: 1,
         executePhase: async phase => {
           executedSecond = true;
