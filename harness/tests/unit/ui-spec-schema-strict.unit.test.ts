@@ -34,7 +34,6 @@ const TS_SCREEN_KEYS: Record<keyof Required<UiSpecScreen>, true> = {
 const TS_NODE_KEYS: Record<keyof Required<UiSpecComponentNode>, true> = {
   id: true,
   type: true,
-  block: true,
   layout: true,
   order: true,
   text: true,

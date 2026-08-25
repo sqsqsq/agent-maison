@@ -50,21 +50,55 @@ export function checkVisualParityCoverage(ctx: CheckContext): CheckResult[] {
   }
 
   const enforcement = ctx.visualParityEnforcement as VisualEnforcementMode | undefined;
-  if (enforcement === 'off') {
-    return [{
-      id: 'visual_parity_coverage',
-      category: 'structure',
-      description: desc,
-      severity: 'MINOR',
-      status: 'SKIP',
-      details: 'visual_parity_enforcement=off',
-      affected_files: [vpRel],
-    }];
-  }
-
   const uiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
   const vpAbs = visualParityAbsPath(ctx.projectRoot, ctx.feature);
+
+  // plan e6b3f8d2 t3⑤：**产品所有权子集是硬地板**——UI feature 的 P0 节点必须能追到
+  // 宿主自己的产品组件（visual-parity.contract_component → contracts.components →
+  // contracts.files）。这一子集**不受 `visual_parity_enforcement=warn|reachable|off`
+  // 降级**：它回答的是「这个 UI 归谁实现、代码在哪」这一所有权/可追溯性问题，不是
+  // 视觉质量问题。assets/tokens/结构相似度等**视觉质量项**照旧遵守 enforcement。
+  //
+  // 为什么必须硬：撤销强制 Maison UI kit 后，盲档视觉地板改由本链承接；而本链此前
+  // 结构上不是地板——宿主默认 `warn` 只出 MAJOR/WARN、`off` 在映射检查前整体 SKIP、
+  // `contracts.components` 为空反而跳过存在性检查、且从无 `file ∈ contracts.files` 校验。
+  const ownershipIssues: string[] = [];
+  const qualityIssues: string[] = [];
+  const enforcementOff = enforcement === 'off';
+
   if (!fs.existsSync(vpAbs)) {
+    // visual-parity.yaml 缺失 = 所有权链整条不存在。P0 UI 节点在场时属硬地板缺口
+    //（enforcement 不得降级）；无 P0 节点时才回落既有档位语义。
+    const p0Missing = uiDoc ? collectP0ComponentNodeIds(uiDoc) : [];
+    if (p0Missing.length > 0) {
+      return [{
+        id: 'visual_parity_coverage',
+        category: 'structure',
+        description: desc,
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details:
+          `${vpRel} 不存在，但 ui-spec 声明了 ${p0Missing.length} 个 P0 组件节点——` +
+          '产品组件所有权链缺失（P0 节点→contract_component→contracts.components/files），' +
+          `不受 visual_parity_enforcement=${enforcement ?? 'default'} 降级。plan Step 7 须产出 visual-parity.yaml。`,
+        affected_files: [planRel, vpRel],
+        suggestion:
+          'UI feature 的每个 P0 节点都要能追到宿主自己的产品组件：plan Step 7 产出 '
+          + 'visual-parity.yaml，components[].contract_component → contracts.yaml components[].name，'
+          + '该组件的 file 须列入 contracts.files。framework 不规定组件如何实现，只要求所有权与源文件可追溯。',
+      }];
+    }
+    if (enforcementOff) {
+      return [{
+        id: 'visual_parity_coverage',
+        category: 'structure',
+        description: desc,
+        severity: 'MINOR',
+        status: 'SKIP',
+        details: 'visual_parity_enforcement=off（且 ui-spec 无 P0 组件节点，无所有权地板可判）',
+        affected_files: [vpRel],
+      }];
+    }
     const { severity, status } = structureFailOrWarn(enforcement);
     return [{
       id: 'visual_parity_coverage',
@@ -85,6 +119,23 @@ export function checkVisualParityCoverage(ctx: CheckContext): CheckResult[] {
     }
     vpDoc = parsed;
   } catch {
+    const p0Broken = uiDoc ? collectP0ComponentNodeIds(uiDoc) : [];
+    if (p0Broken.length > 0) {
+      return [{
+        id: 'visual_parity_coverage',
+        category: 'structure',
+        description: desc,
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details:
+          `${vpRel} YAML 解析失败或根节点不是映射（map）——` +
+          'P0 组件所有权链不可读即视同缺失（硬地板，不受 enforcement 降级）',
+        affected_files: [vpRel],
+        suggestion:
+          '修正 visual-parity.yaml 为合法 YAML 映射（最小合法样例：'
+          + '`mappings: {assets: [], tokens: [], components: []}`），再补齐 P0 节点 → contract_component 映射。',
+      }];
+    }
     const { severity, status } = structureFailOrWarn(enforcement);
     return [{
       id: 'visual_parity_coverage',
@@ -97,7 +148,8 @@ export function checkVisualParityCoverage(ctx: CheckContext): CheckResult[] {
     }];
   }
 
-  const issues: string[] = [];
+  // 视觉质量项（遵守 enforcement）；所有权子集另记 ownershipIssues（不受降级）。
+  const issues = qualityIssues;
 
   // P0-2（plan d9b4f7e2，07-13 现场 :142 `(x ?? []).map is not a function` 实锤）：
   // mappings.* 非数组真值（{}/"" 等）→ 归一为空数组 + 形状留痕进 issues（结构化 FAIL，
@@ -138,18 +190,23 @@ export function checkVisualParityCoverage(ctx: CheckContext): CheckResult[] {
     }
   }
 
+  // ---- 所有权子集①：UI feature 的 P0 节点必须映射并带 contract_component ----
   const p0NodeIds = uiDoc ? collectP0ComponentNodeIds(uiDoc) : [];
-  const mappedComponents = new Set(
-    (vpDoc.mappings?.components ?? [])
-      .map(c => c.ui_spec_node_id)
-      .filter(Boolean) as string[],
-  );
+  const componentMappings = vpDoc.mappings?.components ?? [];
+  const componentByNode = new Map<string, { ui_spec_node_id?: string; contract_component?: string }>();
+  for (const m of componentMappings) {
+    const nodeId = m.ui_spec_node_id?.trim();
+    if (nodeId) componentByNode.set(nodeId, m);
+  }
   for (const nodeId of p0NodeIds) {
-    if (!mappedComponents.has(nodeId)) {
-      issues.push(`P0 节点 ${nodeId} 未在 visual-parity.yaml components 映射`);
+    const mapped = componentByNode.get(nodeId);
+    if (!mapped) {
+      ownershipIssues.push(`P0 节点 ${nodeId} 未在 visual-parity.yaml components 映射`);
+    } else if (!mapped.contract_component?.trim()) {
+      ownershipIssues.push(`P0 节点 ${nodeId} 的 visual-parity 映射缺 contract_component`);
     }
   }
-  for (const m of vpDoc.mappings?.components ?? []) {
+  for (const m of componentMappings) {
     if (!m.ui_spec_node_id?.trim()) {
       issues.push('visual-parity components 项缺 ui_spec_node_id');
     }
@@ -159,10 +216,17 @@ export function checkVisualParityCoverage(ctx: CheckContext): CheckResult[] {
   }
 
   const contractKeys = new Set(flattenResourceKeyEntries(ctx.featureSpec.contracts?.resource_keys).map(r => r.key));
+  const contractComponentEntries = ctx.featureSpec.contracts?.components ?? [];
   const contractComponents = new Set(
-    (ctx.featureSpec.contracts?.components ?? [])
-      .map(c => c.name)
-      .filter(Boolean) as string[],
+    contractComponentEntries.map(c => c.name).filter(Boolean) as string[],
+  );
+  const contractComponentFile = new Map<string, string | undefined>(
+    contractComponentEntries.map(c => [c.name, c.file] as [string, string | undefined]),
+  );
+  const contractFiles = new Set(
+    (ctx.featureSpec.contracts?.files ?? [])
+      .filter((f): f is string => typeof f === 'string' && f.trim().length > 0)
+      .map(f => f.trim().replace(/\\/g, '/')),
   );
   for (const m of vpDoc.mappings?.assets ?? []) {
     if (m.contract_resource_key && contractKeys.size > 0 && !contractKeys.has(m.contract_resource_key)) {
@@ -174,10 +238,63 @@ export function checkVisualParityCoverage(ctx: CheckContext): CheckResult[] {
       issues.push(`visual-parity token 映射 ${m.contract_resource_key} 不在 contracts.resource_keys`);
     }
   }
-  for (const m of vpDoc.mappings?.components ?? []) {
-    if (m.contract_component && contractComponents.size > 0 && !contractComponents.has(m.contract_component)) {
-      issues.push(`visual-parity component ${m.contract_component} 不在 contracts.components`);
+  // ---- 所有权子集②③：组件必须真实存在于 contracts.components（**空数组也判失败**），
+  //      且其 `file` 必须存在于 contracts.files ----
+  // 旧实现用 `contractComponents.size > 0` 作前置：contracts.components 为空反而跳过
+  // 存在性检查——「没声明任何组件」于是成了最省事的绕过路径。现在空数组即判失败。
+  for (const m of componentMappings) {
+    const name = m.contract_component?.trim();
+    if (!name) continue;
+    if (!contractComponents.has(name)) {
+      ownershipIssues.push(
+        contractComponentEntries.length === 0
+          ? `visual-parity component ${name} 不在 contracts.components（contracts.components 为空数组——组件所有权未声明，不得视为豁免）`
+          : `visual-parity component ${name} 不在 contracts.components`,
+      );
+      continue;
     }
+    const file = contractComponentFile.get(name)?.trim();
+    if (!file) {
+      ownershipIssues.push(`contracts.components 的 ${name} 缺 file（无法定位实现源文件）`);
+    } else if (!contractFiles.has(file.replace(/\\/g, '/'))) {
+      ownershipIssues.push(`contracts.components 的 ${name}.file（${file}）不在 contracts.files`);
+    }
+  }
+
+  const affected = [vpRel, relFeatureFile(ctx.projectRoot, ctx.feature, 'contracts.yaml')];
+
+  // 所有权硬地板优先：命中即 BLOCKER FAIL，**任何 enforcement 档位都不降级**。
+  if (ownershipIssues.length > 0) {
+    return [{
+      id: 'visual_parity_coverage',
+      category: 'structure',
+      description: desc,
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: [
+        `【产品组件所有权（硬地板，不受 visual_parity_enforcement=${enforcement ?? 'default'} 降级）】`,
+        ...ownershipIssues.map(x => `  - ${x}`),
+        ...(issues.length > 0 ? ['【视觉质量项（遵守 enforcement）】', ...issues.map(x => `  - ${x}`)] : []),
+      ].join('\n'),
+      affected_files: affected,
+      suggestion:
+        'UI feature 的每个 P0 节点都要能追到宿主自己的产品组件：visual-parity.yaml ' +
+        'components[].contract_component → contracts.yaml components[].name → 该组件的 file ' +
+        '须列入 contracts.files。framework 不规定组件如何实现，只要求所有权与源文件可追溯。',
+    }];
+  }
+
+  // 视觉质量项：照旧遵守 enforcement（off 时下方直接 SKIP）。
+  if (enforcementOff) {
+    return [{
+      id: 'visual_parity_coverage',
+      category: 'structure',
+      description: desc,
+      severity: 'MINOR',
+      status: 'SKIP',
+      details: `visual_parity_enforcement=off（产品组件所有权硬地板已校验通过，P0 节点=${p0NodeIds.length}）`,
+      affected_files: [vpRel],
+    }];
   }
 
   if (issues.length > 0) {
@@ -189,7 +306,7 @@ export function checkVisualParityCoverage(ctx: CheckContext): CheckResult[] {
       severity,
       status,
       details: issues.join('；'),
-      affected_files: [vpRel, relFeatureFile(ctx.projectRoot, ctx.feature, 'contracts.yaml')],
+      affected_files: affected,
     }];
   }
 
@@ -199,7 +316,9 @@ export function checkVisualParityCoverage(ctx: CheckContext): CheckResult[] {
     description: desc,
     severity: 'BLOCKER',
     status: 'PASS',
-    details: `ui-spec assets/tokens 均已映射到 visual-parity.yaml（assets=${assetKeys.size} tokens=${tokenKeys.size}）`,
+    details:
+      `产品组件所有权链完整（P0 节点=${p0NodeIds.length} → contract_component → contracts.components/files）；` +
+      `ui-spec assets/tokens 均已映射到 visual-parity.yaml（assets=${assetKeys.size} tokens=${tokenKeys.size}）`,
     affected_files: [vpRel],
   }];
 }

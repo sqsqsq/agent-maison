@@ -245,7 +245,7 @@ export function generateRolePlaceholder(opts: {
     return {
       kind: 'system_symbol',
       written: false,
-      guidance: '系统符号不落占位文件——代码使用 SymbolGlyph($r("sys.symbol.*"))，缺失由 ui-kit block 的素材缺失行为兜。',
+      guidance: '系统符号不落占位文件——代码使用 SymbolGlyph($r("sys.symbol.*"))，缺失由组件自身的素材缺失行为兜。',
     };
   }
   const color = paletteFor(key);

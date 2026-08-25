@@ -151,11 +151,60 @@ goal_capability:
    出路=换模型/人签 `fidelity_downgrade` receipt/改需求）；含混意图+参考图 → 人工定档。
    **盲宿主上每条带设计截图的需求都会多一次确认，属设计内成本**（vision.blind_tier 动线）。
 
-新增非 breaking 能力：盲档可实例化 UI kit（`profiles/hmos-app/ui-kit/` 九 blocks +
-scaffolder 四级目录解析 + 声明→源码→uitree 三段闭环）；视觉债务 SSOT（visual-debt.json+md，
-open/closed/accepted 三态审计分立）；确定性视觉反馈（visual-feedback.json，两类信号分立，
-盲模型的"文本化眼睛"）；设备渲染可见性 calibrate 观察节点（enforce 升级待实测回灌）。
+新增非 breaking 能力：视觉债务 SSOT（visual-debt.json+md，open/closed/accepted 三态审计
+分立）；确定性视觉反馈（visual-feedback.json，两类信号分立，盲模型的"文本化眼睛"）；
+设备渲染可见性 calibrate 观察节点（enforce 升级待实测回灌）。
 宿主复验规程见 `docs/operations/blind-host-replay-runbook.md`。
+
+> **⚠ 上述批次曾引入的「盲档可实例化 UI kit」已于 3.0.0 收口前整体撤销**，见下节。
+
+
+### 3.0.0：撤销强制 Maison UI kit（Breaking，plan e6b3f8d2 t3）
+
+**为什么撤销**：宿主 run 20260825T011950Z-eddfb2 实锤——framework 把一套具体 ArkUI 组件
+实现升级成了**强制产品契约**，并要求宿主在 `framework.config.json` 里指定 vendoring 落点。
+对守规 agent 这是结构性不可满足：spec 强制声明 kit block、plan 冻结的 contracts 不含 kit、
+coding 只读 contracts —— 不 scaffold 就判「未物化」、scaffold 就判「越界」，双输烧尽重试预算。
+**产品组件归属唯一归宿主：framework 不得规定宿主源码形态。**
+
+1. **删除的机制**（这些能力/配置/入口不再存在）：
+   - `profiles/hmos-app/ui-kit/**`（九个 ArkUI 组件模板 + block 清单）与 scaffolder、
+     三段闭环 check、实例锚点模块及其单测；
+   - `framework.config.json` 的 `paths` 下 **kit 目标目录配置项**与其四级解析
+     （显式配置 → common 层推导 → architecture 推导 → halt）。**存量配置里该键留着无害
+     （多余键不报错），但已完全不被读取，建议删除**；
+   - ui-spec 组件节点的 `block` 字段（**schema 已删除：继续声明会被判非法字段**）；
+   - 全部 `ui_kit_*` check id 与 `ui_kit_conformance` blocking class；
+   - 真机缺陷的**锚点漂移**分类（历史 evidence 里的该分类字符串读侧仍可解析，但不再驱动回修）。
+2. **selector 契约回归裸 ui-spec 节点**：测试计划的 `by_id` 必须是 ui-spec 声明的
+   **组件节点 id**、`by_text` 必须与 ui-spec `text` 精确等值。`maison:<feature>:<screen>:<node>`
+   实例锚点语法与其后缀契约已删除。
+   **存量影响**：带 `maison:` 前缀 selector 的测试计划、以及产品代码里注入的同款元素 id，
+   **须按 ui-spec 节点 id 重新生成**；不重新生成的条目会被判 `test_contract`
+   （selector 无 spec 依据），不会被误判成产品缺陷。
+3. **页面身份判据换源（行为等价，精度边界更明确）**：视觉采集判断「应用错页」不再靠
+   `maison:` 组件 id 前缀，改为复用既有 `visual-diff-nav` 的 **screen identity 声明**：
+   只取各屏 `all_of`/`any_of` 的**正向 id**、按**精确 id** 判在场（`none_of` 不作所有权
+   证明——它只是「目标页禁入锚点」，不保证该锚属于本应用）。三态语义冻结：目标屏正向 id
+   命中=`matched`；目标未命中但**其他已声明屏**正向 id 命中=`mismatched`（确定性错页）；
+   系统树无任何已声明 id（或工程只声明了 text/route）=`probe_failed`（证据不足，不作内容
+   正证据）。**建议**：给每个 P0/golden 目标屏都配至少一个 id 锚点，否则错页只能判 probe_failed。
+4. **盲档结构地板改由「产品组件所有权链」承接，并收紧为硬地板**：
+   ui-spec P0 节点 → `plan/visual-parity.yaml` 的 `components[].contract_component` →
+   `contracts.yaml` 的 `components[].name` → 该组件 `file` ∈ `contracts.files`。
+   这三项**不受 `coding.visual_parity_enforcement=warn|reachable|off` 降级**
+   （复用既有 `visual_parity_coverage`，不新增 check id）：
+   - P0 节点缺 `contract_component` → BLOCKER FAIL（含 `enforcement=off`）；
+   - `contracts.components` **为空数组也判失败**（旧实现反而跳过存在性检查）；
+   - 组件 `file` 未列入 `contracts.files` → BLOCKER FAIL。
+   assets/tokens/结构相似度等**视觉质量项照旧遵守 enforcement**。
+   **存量影响**：默认 `warn` 的宿主若此前只写了 P0 节点却没做组件映射，plan 阶段会开始
+   BLOCKER——补齐 visual-parity/contracts 映射即可，framework 不规定组件如何实现。
+5. **npm script 改名**：`ui-kit:placeholders` → **`asset:placeholders`**
+   （素材占位能力保留、与 kit 解耦）；`ui-kit:scaffold` 删除。
+6. **保留**：`nav_bar` / `list_row` / `sheet_scaffold` 等词继续作为 ui-spec 的**通用结构
+   语义 `type`**，不绑定任何具体组件实现。
+
 
 ---
 

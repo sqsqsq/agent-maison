@@ -18,7 +18,6 @@ import type {
   DeviceTestEvidenceDocDraft,
 } from '../../../harness/scripts/utils/device-test-evidence-shared';
 import { computeHapSha256Full } from './build-fingerprint';
-import { normalizeAnchorSegment, normalizeRuntimeAnchor, type NormalizedRuntimeAnchor } from './ui-kit-anchors';
 
 const ENVIRONMENT_RUN_FAILURE_KINDS: ReadonlySet<string> = new Set([
   'device_locked',
@@ -273,53 +272,33 @@ function nodeSummary(node: DumpNode): DeviceEvidenceObservation['node'] {
   return summary;
 }
 
-function specNodePresentInFrame(frame: { dumpNodes: DumpNode[] }, screen: string, specNode: string): boolean {
-  return frame.dumpNodes.some(node => {
-    if (node.id === specNode) return true;
-    if (!node.id) return false;
-    const normalized = normalizeRuntimeAnchor(node.id);
-    return normalized.validity === 'valid' &&
-      normalized.screen === screen &&
-      normalized.specNode === specNode;
-  });
+/**
+ * plan e6b3f8d2 t3：kit 撤销后**只认裸 ui-spec node id**——`maison:` 锚点反解分支
+ * 随锚点模块一并删除（不保留第二套锚点机制）。screen 参数保留在签名上，
+ * 是为了让调用点继续显式表达"在哪一屏找哪个节点"，判据本身与屏无关。
+ */
+function specNodePresentInFrame(frame: { dumpNodes: DumpNode[] }, _screen: string, specNode: string): boolean {
+  return frame.dumpNodes.some(node => node.id === specNode);
 }
 
 interface SelectorBinding {
   screens: string[];
-  normalized?: NormalizedRuntimeAnchor;
-  drift?: string;
 }
 
+/**
+ * plan e6b3f8d2 t3：selector 归属只走**既有 ui-spec 声明**（裸 node id / text）。
+ * `maison:` anchor 反解与随之而来的锚点漂移归因整链删除——
+ * 那条链要求产品代码注入 framework 侧规定的 canonical anchor，正是本轮撤销的错误约束。
+ */
 function resolveSelectorBinding(
   step: DerivedPlanStep,
   anchors: SpecAnchorIndex,
-  feature: string,
 ): SelectorBinding {
   if (!step.selectorKind || !step.selector) return { screens: [] };
   if (step.selectorKind === 'by_text') {
     return { screens: anchors.textToScreens.get(step.selector) ?? [] };
   }
-  if (!step.selector.startsWith('maison:')) {
-    return { screens: anchors.idToScreens.get(step.selector) ?? [] };
-  }
-  const normalized = normalizeRuntimeAnchor(step.selector);
-  if (normalized.validity !== 'valid' || !normalized.specNode || !normalized.screen) {
-    return { screens: [], normalized };
-  }
-  const canonicalFeature = normalizeAnchorSegment(feature);
-  if (normalized.feature !== canonicalFeature) {
-    return { screens: [], normalized, drift: `anchor feature=${normalized.feature} 与当前 feature=${canonicalFeature} 不一致` };
-  }
-  const declaredScreens = anchors.idToScreens.get(normalized.specNode) ?? [];
-  if (!anchors.screenIds.has(normalized.screen) || !declaredScreens.includes(normalized.screen)) {
-    return {
-      screens: [],
-      normalized,
-      drift:
-        `runtime anchor semantic=${normalized.specNode} 无法反解为 screen=${normalized.screen} 的 ui-spec node`,
-    };
-  }
-  return { screens: [normalized.screen], normalized };
+  return { screens: anchors.idToScreens.get(step.selector) ?? [] };
 }
 
 function prepareFailures(
@@ -488,7 +467,7 @@ export function composeDeviceTestEvidence(
       continue;
     }
 
-    const binding = resolveSelectorBinding(step, anchors, opts.feature);
+    const binding = resolveSelectorBinding(step, anchors);
     const exactHits: Array<{ frame: PoolFrame; node: DumpNode }> = [];
     for (const frame of evidencePool) {
       for (const node of frame.nodes) {
@@ -497,16 +476,17 @@ export function composeDeviceTestEvidence(
             ? node.id === step.selector
             : node.text === step.selector || node.originalText === step.selector;
         if (!exact) continue;
-        if (!step.selector.startsWith('maison:')) {
-          if (binding.screens.length !== 1) continue;
-          const screen = binding.screens[0];
-          const identities = anchors.screenIdentityAnchors.get(screen) ?? [];
-          if (!identities.some(identity => specNodePresentInFrame(
-            { dumpNodes: frame.nodes },
-            screen,
-            identity,
-          ))) continue;
-        }
+        // 同屏确认：命中帧必须同时含该屏的其他 identity 锚点，否则不能确定"在预期页面"。
+        // plan e6b3f8d2 t3：`maison:` 锚点自带屏信息的豁免分支随 anchor 机制一并删除——
+        // 现在**所有** selector 一视同仁走同一条同屏确认。
+        if (binding.screens.length !== 1) continue;
+        const screen = binding.screens[0];
+        const identities = anchors.screenIdentityAnchors.get(screen) ?? [];
+        if (!identities.some(identity => specNodePresentInFrame(
+          { dumpNodes: frame.nodes },
+          screen,
+          identity,
+        ))) continue;
         exactHits.push({ frame, node });
       }
     }
@@ -519,9 +499,6 @@ export function composeDeviceTestEvidence(
     }));
     const expectedState = expectedStateOf(step.payload);
     const expectedStateKeys = Object.keys(expectedState);
-    const driftDiagnostic = binding.drift
-      ? [{ code: 'scaffold_contract_drift', message: binding.drift }]
-      : undefined;
 
     if (exactHits.length > 0) {
       const comparableHits = exactHits.filter(hit =>
@@ -537,9 +514,8 @@ export function composeDeviceTestEvidence(
           reason:
             `selector 在同 attempt 证据池中命中，但可观测状态不满足：` +
             `${JSON.stringify(expectedState)}`,
-          diagnostics: driftDiagnostic,
           failing_step: failingStep,
-          expected_screen: binding.screens[0] ?? binding.normalized?.screen,
+          expected_screen: binding.screens[0],
           evidence: { ...evidenceBase, observations, expected_state: expectedState },
         });
       } else {
@@ -552,25 +528,14 @@ export function composeDeviceTestEvidence(
               : comparableHits.length === 0
                 ? '目标在场，但 dump 未提供完整可观测状态；不能归 product_state'
                 : '跨帧状态观测包含满足谓词的帧，不能稳定归 product_state',
-          diagnostics: driftDiagnostic,
           failing_step: failingStep,
-          expected_screen: binding.screens[0] ?? binding.normalized?.screen,
+          expected_screen: binding.screens[0],
           evidence: { ...evidenceBase, observations, expected_state: expectedState },
         });
       }
       continue;
     }
 
-    if (binding.drift && binding.normalized?.validity === 'valid') {
-      push('scaffold_contract_drift', {
-        reason_code: 'anchor_spec_node_drift',
-        reason: binding.drift,
-        failing_step: failingStep,
-        expected_screen: binding.normalized.screen,
-        evidence: evidenceBase,
-      });
-      continue;
-    }
     if (binding.screens.length === 0) {
       push('test_contract', {
         reason_code: 'selector_without_spec_basis',
@@ -592,7 +557,7 @@ export function composeDeviceTestEvidence(
     const screenId = binding.screens[0];
     const identity = anchors.screenIdentityAnchors.get(screenId) ?? [];
     const otherIdentityHits = identity.filter(identityNode =>
-      !(step.selectorKind === 'by_id' && identityNode === binding.normalized?.specNode) &&
+      !(step.selectorKind === 'by_id' && identityNode === step.selector) &&
       specNodePresentInFrame(item, screenId, identityNode),
     );
     if (identity.length === 0 || otherIdentityHits.length === 0) {
@@ -609,7 +574,7 @@ export function composeDeviceTestEvidence(
     }
     push('product_actionable', {
       reason_code: 'spec_element_missing',
-      reason: `ui-spec 要求 ${screenId} 含 ${binding.normalized?.specNode ?? step.selector}，同 attempt 证据池零精确命中`,
+      reason: `ui-spec 要求 ${screenId} 含 ${step.selector}，同 attempt 证据池零精确命中`,
       failing_step: failingStep,
       expected_screen: screenId,
       evidence: evidenceBase,

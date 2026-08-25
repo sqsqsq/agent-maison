@@ -31,7 +31,6 @@ import {
   navConfigExists,
 } from './coding-visual-parity-check';
 import { checkRenderVisibilityCalibrate } from './render-visibility';
-import { checkUiKitRuntimeConformance } from './ui-kit-conformance-check';
 import { checkRuntimeMountConformance } from './runtime-mount-conformance';
 import { checkVisualFeedback } from './visual-feedback';
 import { EDGE_TILE_ROWS, EDGE_TILE_COLS, EDGE_SENTINEL_MIN_UNCOVERED } from './image-toolkit';
@@ -965,21 +964,8 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
   // P0-B④ calibrate：采集物（shot-*/layout-*）在即评，自守卫（无目录/无配对→零结果）；
   // WARN 观察不阻断，findings 供视觉债务与 enforce 校准消费。
   results.push(...safeCalibrate(ctx));
-  // P0-C③ 运行时段：声明语义容器的锚点须出现在 layout dump（dump 缺失自跳过）。
-  // 异常=BLOCKER（codex 三轮 P1-3：地板门禁不得因异常降 SKIP 绕过）。
-  try {
-    results.push(...checkUiKitRuntimeConformance(ctx));
-  } catch (e) {
-    results.push({
-      id: 'ui_kit_runtime_conformance', category: 'structure',
-      description: 'UI kit 三段闭环·运行时段执行异常（地板门禁不得因异常绕过）',
-      severity: 'BLOCKER', status: 'FAIL',
-      details: `执行异常：${(e as Error).message}\n${(e as Error).stack ?? ''}`,
-      suggestion: '框架/环境问题——修复后重跑；不要通过删除 block 声明来绕过本门禁。',
-      failure_kind: 'framework_bug',
-      blocking_class: 'ui_kit_conformance',
-    });
-  }
+  // plan e6b3f8d2 t3：UI kit 三段闭环·运行时段随强制 kit 一并撤销（锚点机制已删除）。
+  // 运行时结构证据继续由下面的 runtime_mount_conformance（uitree 挂载轴）承担。
   // S7（visual-capability-truth P2-J.1）：结构保真运行时挂载轴——uitree 证据面（拆轴：
   // 静态声明轴照旧；无 dump 自 SKIP 不装死）。
   try {

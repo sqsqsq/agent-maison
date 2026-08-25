@@ -9,9 +9,13 @@
 import type { UiSpecDoc } from '../../../harness/scripts/utils/ui-spec-shared';
 import { ASSET_KEY_RE } from './asset-integrity';
 
-/** blind-visual-hardening d3（codex 五轮 P1-5 契约统一）：语义容器节点入 canonical 枚举——
- * docs/映射器教 `type: nav_bar` 直写，validator 必须同源认可（单测过、真实 spec 阶段挂=假绿）。 */
-export const SEMANTIC_BLOCK_TYPE_ENUM = [
+/**
+ * 结构语义节点入 canonical `type` 枚举——docs/映射器教 `type: nav_bar` 直写，validator
+ * 必须同源认可（单测过、真实 spec 阶段挂=假绿）。
+ * plan e6b3f8d2 t3：这些词**保留为通用结构语义**，但**不再绑定任何具体实现**——
+ * 随强制 Maison UI kit 撤销，`node.block` 字段与 block↔组件映射已删除。
+ */
+export const STRUCTURAL_SEMANTIC_TYPE_ENUM = [
   'nav_bar',
   'list_card_container',
   'list_row',
@@ -31,7 +35,7 @@ export const COMPONENT_TYPE_ENUM = [
   'content_display',
   'list_selection',
   'logic_condition',
-  ...SEMANTIC_BLOCK_TYPE_ENUM,
+  ...STRUCTURAL_SEMANTIC_TYPE_ENUM,
 ] as const;
 
 export const TOKEN_KIND_ENUM = ['color', 'spacing', 'font_size', 'radius', 'divider'] as const;
@@ -185,10 +189,6 @@ function validateComponentNode(
   }
   if (n.subtitle_position !== undefined && n.subtitle_position !== 'trailing' && n.subtitle_position !== 'below') {
     errors.push(`${pathLabel}.subtitle_position 非法：${JSON.stringify(n.subtitle_position)}（须 trailing/below）`);
-  }
-  // blind-visual-hardening：block 显式声明（与语义 type 直写二选一皆合法）
-  if (n.block !== undefined && !(SEMANTIC_BLOCK_TYPE_ENUM as readonly string[]).includes(n.block as string)) {
-    errors.push(`${pathLabel}.block 非法：${JSON.stringify(n.block)}（须 ${SEMANTIC_BLOCK_TYPE_ENUM.join('/')}）`);
   }
   if (typeof n.id === 'string' && n.id.trim()) {
     if (seenNodeIds.has(n.id)) {

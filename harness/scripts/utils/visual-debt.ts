@@ -64,7 +64,6 @@ const DEBT_SOURCE_CHECKS: Record<string, { label: string }> = {
   visual_multimodal_parity: { label: '视觉多模态层降级（盲档 SKIP，保真未验）' },
   capture_completeness_external: { label: '参考图覆盖缺口（盲档待人工复核清单）' },
   visual_diff: { label: '设备视觉对照未产出/未达' },
-  ui_kit_runtime_conformance: { label: '语义容器运行时未命中（渲染路径断）' },
 };
 
 export function visualDebtJsonPath(projectRoot: string, feature: string): string {

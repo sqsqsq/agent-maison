@@ -31,16 +31,29 @@
 - [x] 4.6 独立 enforce 取消（3.0.0 收尾决定）：同一事实已由 visual-debt→visual UNVERIFIED→release BLOCKED 承载；不叠加 phase BLOCKER。P1-G 回灌仅校准阈值/夹具，不触发自动升级。
 - [x] 4.7 单测 21 例（core 6 + profile 15）：禁令条件矩阵/role 失配/brand-critical 阻断/占位确定性/可见性夹具双向（round6 真废图+真 mockup）。验收：typecheck 0 · unit 2117/2117 · fixtures 44/44
 
-## 5. P0-C 盲档 UI kit（实施顺序 5）
+## 5. ~~P0-C 盲档 UI kit~~ —— **整段撤回（2026-08-25，plan e6b3f8d2 t3）**
 
-- [x] 5.1 `profiles/hmos-app/ui-kit/**` 九 blocks 模板 + blocks.json 机读 manifest（锚点注入 .id(anchorId)、sys token 对齐、素材缺失行为逐块声明；PrimaryButton enabled/disabled 分支、ResultState success≠failure 分 variant——事故 CR-006 直接对位）
-- [x] 5.2 `ui-kit-scaffolder.ts`：四级解析（config paths.ui_kit_target_dir > common 层唯一模块 > 全局唯一模块 > halt）+ 幂等三态（written/skipped_identical/conflict 不覆盖）+ CLI（dry-run 缺省）
-- [x] 5.3 `ui-kit-anchors.ts`：maison:五段锚点 + 字符集/长度归一（≤96，超长截 instance_key+4 位 hash）+ 同屏去重
-- [x] 5.4 ui-spec `block` 字段（UiSpecComponentNode 扩展）+ 语义节点↔block 映射（BLOCK_SEMANTIC_NODES 与 blocks.json 单测对账防漂移）
-- [x] 5.5 `ui-kit-conformance-check.ts` 三段闭环：源码段接 coding-visual-parity 链、运行时段接 visual-diff 入口 wrapper（dump 缺失自跳过，完备性归既有 nav BLOCKER）
-- [x] 5.6 gallery **结构段** fixture（存在性/struct 导出/锚点注入/token 使用/硬编码色 lint 白名单/manifest 对账）——**诚实边界**：编译验证+维护者基线截图需 DevEco/真机，归 P1-G 实机段
-- [x] 5.7 盲档 spec 工作法文档升级（ui-spec.md：套 block 模板+OCR 填内容 + crop 禁令指引）
-- [x] 5.8 单测 11 例全绿。验收：typecheck 0 · unit 2128/2128 · fixtures 44/44
+原 5.1–5.8 已实施并已**整体删除**：block 模板与清单、scaffolder（含目标目录四级解析）、
+实例锚点模块、ui-spec `block` 字段、三段闭环 check、gallery 结构 fixture、盲档 spec 工作法里
+的套模板指引、以及对应单测。
+
+- [x] 5.R 撤回执行：删除上述全部实现与 `blind-ui-kit` capability spec；selector 回归裸
+      ui-spec node id/text；页面身份判据迁移到既有 visual-diff-nav screen identity
+      （只取 `all_of`/`any_of` 正向 id、精确 id 判在场，`none_of` 不作所有权证明）；
+      锚点漂移缺陷分类整链删除；`ui-kit:placeholders` 改名 `asset:placeholders`
+      （素材占位能力保留、与 kit 解耦）。
+- [x] 5.R2 盲档结构地板改由既有产品组件所有权链承接，并在 `visual_parity_coverage` 内
+      收紧三项为**不受 `visual_parity_enforcement` 降级**的硬地板：P0 节点须有
+      `contract_component`、组件须真实存在于 `contracts.components`（空数组也判失败）、
+      组件 `file` 须在 `contracts.files`。视觉质量项照旧遵守档位。
+- [x] 5.R3 MIGRATION.md 记 breaking（`block` 字段/kit 目标目录配置删除、`maison:` selector
+      作废须重新生成、npm script 改名、所有权三项档位无关）。
+
+> **撤回理由（宿主实锤）**：run 20260825T011950Z-eddfb2 中，该机制把具体组件实现升级成强制
+> 产品契约并要求宿主指定 vendoring 落点；对守规 agent 结构性不可满足（不 scaffold→未物化 /
+> scaffold→越界双输），3 次重试烧尽 halt，且其官方 scaffold 入口在宿主 Node 环境自身崩溃。
+> **诚实边界**：所有权链证明「UI 归谁实现、代码在哪」，不等于原 d3 设想的「平台标准组件质感」
+> ——存在精度差异，本 change 如实记录，不以其他机制补偿。
 
 ## 6. P0-D 三态扩面 + 视觉债务（实施顺序 6）
 
@@ -73,6 +86,7 @@
 - [x] 9.2 机器验收清单 M1-M10 + 人工 rubric receipt 模板（r1-frozen 冻结规则内联）+ 首轮"显式接受债务"预期声明（§2/§3）
 - [x] 9.3 发布包 digest 记录规程 + 结果回灌表（render-visibility 误报记录→阈值/夹具校准 / gallery 实机段 / visual_feedback 既有 OCR 承载确认）（§0/§4）
 - [ ] 9.4 **实机复验执行**（用户宿主：minimax 2.7 + 真机 + 新发布包）——framework 侧物料已备齐，此项属外部依赖
+      （M4 已随 d3 撤回改判据：不再要求 Maison 三段闭环，改验产品组件所有权链 + runtime_mount_conformance）
 
 ## 10. 全局验证（每切片完成后滚动执行）
 

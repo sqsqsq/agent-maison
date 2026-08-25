@@ -2188,10 +2188,11 @@ export function collectActionableDefects(
             trustedDeviceRootClassifications = rootCases.map((c) => c.classification);
             for (const c of failedCases) {
               if (rootSet && !rootSet.has(c.case_id)) continue; // 级联：根修好自然消失
+              // plan e6b3f8d2 t3：锚点漂移分类已删除——它的回修指令要求产品注入已撤销的
+              // framework 侧 canonical anchor（侵入宿主源码形态），随强制 UI kit 一并清除。
               const actionableClassification =
                 c.classification === 'product_actionable' ||
-                c.classification === 'product_state' ||
-                c.classification === 'scaffold_contract_drift';
+                c.classification === 'product_state';
               if (
                 actionableClassification &&
                 doc.device_target?.target_kind === 'physical' &&
@@ -2209,20 +2210,13 @@ export function collectActionableDefects(
                           `does not satisfy the retained predicate. ${c.reason ?? ''}`.trim(),
                         `Fix product state/binding logic; expected vs actual node observations are in device evidence.`,
                       ]
-                    : c.classification === 'scaffold_contract_drift'
-                      ? [
-                          `On-device test case ${c.case_id} uses a runtime maison anchor that cannot be ` +
-                            `resolved to the ui-spec node for screen ${c.expected_screen ?? '(unknown)'}.`,
-                          `Inject the canonical anchor maison:<feature>:<screen>:<ui-spec-node>[:<instance>] ` +
-                            `in product code; block semantic_node and host-only suffixes are not spec node ids.`,
-                        ]
-                      : [
-                          `On-device test case ${c.case_id} failed at step ${c.failing_step.index} ` +
-                            `(${c.failing_step.action}): ui-spec requires ` +
-                            `${c.failing_step.selector_kind}=${c.failing_step.selector} on screen ` +
-                            `${c.expected_screen ?? '(unknown)'}, but the whole attempt evidence pool has no exact hit.`,
-                          `Implement the canonical ui-spec-derived anchor/text in product code for that screen.`,
-                        ];
+                    : [
+                        `On-device test case ${c.case_id} failed at step ${c.failing_step.index} ` +
+                          `(${c.failing_step.action}): ui-spec requires ` +
+                          `${c.failing_step.selector_kind}=${c.failing_step.selector} on screen ` +
+                          `${c.expected_screen ?? '(unknown)'}, but the whole attempt evidence pool has no exact hit.`,
+                        `Implement the ui-spec-declared element id/text in product code for that screen.`,
+                      ];
                 if (evidenceLine) instructions.push(evidenceLine);
                 if (c.diagnostics?.length) {
                   instructions.push(`Additional diagnostics: ${c.diagnostics.map(d => `${d.code}: ${d.message}`).join('; ')}`);
@@ -7693,7 +7687,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             guidanceParts.push(
               `真机测试有 ${deviceCount} 个用例的缺陷证据不可采信或不可归因：请按 priorFailure `
               + '中的 reason_code 与 selector/ui-spec 对照修复；只有绑定可信的 physical '
-              + 'product_actionable/product_state/scaffold_contract_drift 才驱动回修。',
+              + 'product_actionable/product_state 才驱动回修。',
             );
           }
           if (repeatedWithoutProgress) {

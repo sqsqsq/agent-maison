@@ -91,14 +91,6 @@
       "summary": "设备视觉对照未产出/未达",
       "status": "open",
       "resolution_class": "needs_fix"
-    },
-    {
-      "id": "debt:ui_kit_runtime_conformance",
-      "source_check_id": "ui_kit_runtime_conformance",
-      "severity": "MAJOR",
-      "summary": "语义容器运行时未命中（渲染路径断）",
-      "status": "open",
-      "resolution_class": "needs_human"
     }
   ]
 }

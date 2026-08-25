@@ -11,7 +11,7 @@
 //   - 多模块工程须显式 --module <package_path>（P1-6：不选第一个——写错模块 $r 解析不到
 //     且 findModuleMediaFile 误判已物化）；单模块自动。
 // 用法（在 framework/harness 目录）：
-//   npm run ui-kit:placeholders -- --project-root <宿主根> --feature <feature> [--module <pkg>] [--apply]
+//   npm run asset:placeholders -- --project-root <宿主根> --feature <feature> [--module <pkg>] [--apply]
 // 退出码：0=计划干净；1=存在 blocked（真实素材缺失）；2=参数/环境错误。
 // ============================================================================
 

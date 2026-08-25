@@ -37,10 +37,19 @@ plan e3c7d95f 因此写明「**fixture 化优先于宿主回归**」——先有
 > 三个文件的行尾按仓库 `.gitattributes`（`* text=auto eol=lf`）从 CRLF 规范化为 LF。
 > 若要与宿主原件做 hash 比对，须先统一行尾。
 
-`blocks.json` 不在此处——它是 framework 自有件，已在
-[profiles/hmos-app/ui-kit/blocks.json](../../../ui-kit/blocks.json)
-（`MaisonBottomSheetScaffold.semantic_node = "sheet_scaffold"`，
-`required_children = [sheet_header, close_button, content_slot, primary_action_slot]`）。
+> ### ⚠ 契约迁移注记（plan e6b3f8d2 t3，2026-08-25）
+>
+> 强制 UI kit 已撤销：selector 真值回归**普通 ui-spec `node.id` / `text`**，`maison:` 实例
+> 锚点机制、其 block 清单文件与「锚点漂移」缺陷分类全部删除（MIGRATION：存量带 `maison:`
+> 前缀的测试计划/产品元素 id 须按 ui-spec 节点重新生成）。
+>
+> **本目录文件保持字节原样**（历史价值不改）。消费方单测
+> （`harness/tests/unit/device-test-backtrack.unit.test.ts`）在**物化进临时目录时**过一层
+> 契约迁移器 `migrateKitAnchors`：把 `maison:<feature>:<screen>:<node>[-suffix]` 投影成裸末段，
+> 并把 `sheet_scaffold-next` 映射为本目录 `ui-spec.yaml` 自己声明的 `sms_next_btn`
+>（`sms_verify` 屏的 `action_button`）——等价于「宿主已按新契约重生成产品与测试计划」，
+> 从而让归因语义（跨帧 `product_state` / 零命中 `product_actionable` / 无 spec 依据
+> `test_contract`）继续用真实数据回归。原「纯锚点漂移」用例随分类删除。
 
 ## 五条失败的真实映射（**ground truth，以此为准**）
 

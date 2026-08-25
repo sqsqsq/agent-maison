@@ -11,10 +11,12 @@ export function deviceTestEvidencePath(reportsDir: string): string {
   return path.join(reportsDir, DEVICE_TEST_EVIDENCE_BASENAME);
 }
 
+// plan e6b3f8d2 t3：锚点漂移分类已整链删除——它的语义是「产品代码未注入 framework
+// 规定的 canonical anchor」，而那套强制 anchor 约定本身已被撤销。历史 run 的 evidence
+// 里可能残留该分类字符串，读侧照常解析、但不再据其驱动回修（见 goal-runner actionable 白名单）。
 export type DeviceDefectClassification =
   | 'product_actionable'
   | 'product_state'
-  | 'scaffold_contract_drift'
   | 'environment'
   | 'test_contract'
   | 'unknown'

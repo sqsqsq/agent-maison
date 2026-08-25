@@ -4035,11 +4035,14 @@ export function runAll(): UnitCaseResult[] {
         assets: [],
       });
       fs.writeFileSync(uiSpecAbsPath(root, 'bank-card'), uiSpec, 'utf-8');
-      const identity = new Map([[
-        'home',
-        { all_of: [{ id: 'maison:demo:home:home_frame' }] },
-      ]]);
-      // 采集端：dump 全是他页（应用页面前缀在场、目标锚缺失）→ 全部确定性 mismatched
+      // plan e6b3f8d2 t3：所有权证据 = **已声明屏**的正向 identity id 精确命中
+      //（生产上 screenIdentity 覆盖 P0 ∪ golden 全部目标屏）——故设备实际所在的
+      // all_banks 屏也须在声明集合内，否则按契约只能判 probe_failed。
+      const identity = new Map([
+        ['home', { all_of: [{ id: 'maison:demo:home:home_frame' }] }],
+        ['all_banks', { all_of: [{ id: 'maison:demo:all_banks:all_banks_frame' }] }],
+      ]);
+      // 采集端：dump 全是他页（他屏正向 id 在场、目标锚缺失）→ 全部确定性 mismatched
       const wrongDump = {
         schema_version: 'hylyre-hypium-ui-dump-v1',
         tree: {

@@ -194,7 +194,7 @@ assets:
 | `crop` | 按 `source_bbox` 从原图裁出（宽松框 + auto trim；关键资产须 `human_crop_confirmed`；**G4b headless** 下还须 `crop_confirmed_by` 为真人非自动化身份或 `user_requirement`——表示用户在需求中自然语言授权“可从原图/截图裁剪资源”，堵 agent 自报，对齐 deferral `signed_by`） |
 | `svg_grab` | 抓取品牌矢量 |
 | `repo_ref` | 复用仓内已有资源 |
-| `placeholder` | **盲档可见语义占位声明**（blind-visual-hardening）：不产出真素材，由 coding 期 `ui-kit:placeholders` CLI 按 role 生成可见语义占位（brand_logo→文字头像 / illustration→中性插画框，内嵌 provenance marker）；`asset_placeholder_present` 逐素材入视觉债务，brand-critical 占位 release 保持 BLOCKED，直到真素材落位或人工验收清偿。CLI **只**为此声明生成——真素材缺失绝不代生成 |
+| `placeholder` | **盲档可见语义占位声明**（blind-visual-hardening）：不产出真素材，由 coding 期 `asset:placeholders` CLI 按 role 生成可见语义占位（brand_logo→文字头像 / illustration→中性插画框，内嵌 provenance marker）；`asset_placeholder_present` 逐素材入视觉债务，brand-critical 占位 release 保持 BLOCKED，直到真素材落位或人工验收清偿。CLI **只**为此声明生成——真素材缺失绝不代生成 |
 
 缺资产时 **必须** `acquisition: placeholder`（或旧式 `placeholder: true`）+ `rationale`，禁止静默替换。
 
@@ -229,15 +229,20 @@ ui-spec 生成后、进 plan 前：
 **品牌色事实源纪律（blind-visual-hardening P0-D④）**：品牌色 token 的可信来源优先级=用户提供素材/主题 > 项目既有 Design Token > 官方品牌资源（须人工确认引入）> 标注临时的中性占位。模型「世界知识」猜出的品牌色（如"招商银行是红色"）**只可用于占位中性调色参考，永不写成品牌真值 token**——模型可能记错、品牌可能改版、且涉及品牌资产误用。
 
 - **文案与文本位置**：若 prompt 附带 OCR JSON 路径（`spec/reports/ocr/<screen>.ocr.json`，逐词文本 + 置信度 + 归一化 bbox），**以其为准，不许自造**——文案照抄，位置按其 bbox 归一化坐标换算。
-- **结构与布局（v3.0+ blind-visual-hardening：套 block 模板 + OCR 填内容）**：不再从零推断结构——
-  按 UI kit 语义节点建模：导航区→`nav_bar`、列表容器→`list_card_container`、列表行→`list_row`、
-  半模态→`sheet_scaffold`、主按钮→`primary_button`、单选组→`selector_group`、结果页→`result_state`、
-  验证码行→`sms_code_field`、详情分区→`detail_section`（在节点 `type` 或 `block` 字段声明）。
-  声明即进入三段闭环校验（声明→源码 block 锚点→运行时 uitree），coding 期用
-  `profiles/hmos-app/harness/ui-kit-scaffolder.ts` 落 blocks（目标目录四级解析，冲突不覆盖），
-  实例锚点用 `buildInstanceAnchor(feature, screen, node, instanceKey)` 生成传入 `anchorId`。
-  OCR 只负责"填内容"（文案/顺序/分组），平台质感由 blocks 的 sys token 缺省承担——
-  这是盲档地板从"线框"抬到"平台标准组件"的机制本体。颜色/像素级样式仍不依赖看图判断。
+- **结构与布局（用结构语义词建模 + OCR 填内容）**：不要从零推断结构——按**通用结构语义
+  节点**建模并写在节点的 `type` 上：导航区→`nav_bar`、列表容器→`list_card_container`、
+  列表行→`list_row`、半模态→`sheet_scaffold`、主按钮→`primary_button`、单选组→
+  `selector_group`、结果页→`result_state`、验证码行→`sms_code_field`、详情分区→
+  `detail_section`。OCR 只负责"填内容"（文案/顺序/分组）；颜色/像素级样式仍不依赖看图判断。
+
+  > **v3.0 变更（plan e6b3f8d2 t3）**：这些词是**纯语义词，不绑定任何具体组件实现**。
+  > framework 曾要求把它们映射到一套内置 ArkUI 组件库并 scaffold 进宿主源码（`block` 字段 +
+  > 三段闭环 + 目标目录解析）——该强制约束**已整体撤销**：产品组件归属唯一归宿主。
+  > 现在的地板是**产品组件所有权链**：ui-spec 的 P0 节点 → `plan/visual-parity.yaml`
+  > 的 `components[].contract_component` → `contracts.yaml` 的 `components[].name` →
+  > 该组件的 `file` 列入 `contracts.files`。这条链是**硬地板**（`visual_parity_coverage`，
+  > 不受 `coding.visual_parity_enforcement` 降级）；组件怎么实现由宿主自己决定。
+  > `block` 字段已从 ui-spec schema 删除，写了会被 schema 校验判非法字段。
 - **图标/logo/插画**：走既有 `placeholder: true` + `asset-manifest.yaml` 机制，禁止声称"已核对视觉外观"；
   盲档下**禁止声明 `acquisition: crop`**（`blind_crop_prohibition` BLOCKER——盲模型不能执行/自证裁剪；
   用户/外部工具已裁好的可信产物按 c1-c3 条件放行），占位由 coding 期按 role 生成可见语义占位

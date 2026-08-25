@@ -154,8 +154,8 @@ export interface DeclaredElement {
  * 声明元素清单（T8 的 locator 分母）：屏组件树节点 id + must_have_elements。
  * S6（plan e9c4a7f3 s6-locator-calibrate，2026-08-12 重开）：**只收集 locator-required
  * 元素**——identity anchor 成员、bbox 几何断言目标、forbidden-overlap 参与元素、
- * must_have_elements、region attest 元素、交互目标（测试步骤触达）、UI kit block
- * 实例锚点。不再递归收集组件树**全部带 id 节点**（全分母会随 spec 越写越细而稀释
+ * must_have_elements、region attest 元素、交互目标（测试步骤触达）。
+ * plan e6b3f8d2 t3：原有的「UI kit block 实例锚点」一项随 `node.block` 字段删除。不再递归收集组件树**全部带 id 节点**（全分母会随 spec 越写越细而稀释
  * 覆盖率、反向激励 B 类 SKIP）。
  * 实现：从 coding-visual-parity-check 的收窄收集器取 elementId 集合，再回查声明元素
  * 文本（供 unique_text 回退）——保持 locator 协议单一分母源。

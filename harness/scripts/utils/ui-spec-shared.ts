@@ -41,13 +41,6 @@ export interface UiSpecIconRef {
 export interface UiSpecComponentNode {
   id?: string;
   type: string;
-  /**
-   * blind-visual-hardening d3：容器/结构语义节点 → UI kit block 映射声明
-   * （nav_bar/list_card_container/list_row/sheet_scaffold/primary_button/selector_group/
-   * result_state/sms_code_field/detail_section）。声明后进入三段闭环校验：
-   * 声明 → 源码命中 block 锚点 → 运行时 uitree 出现锚点（ui-kit-conformance）。
-   */
-  block?: string;
   layout?: string;
   order: number;
   text?: string;

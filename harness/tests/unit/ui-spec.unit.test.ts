@@ -533,5 +533,224 @@ export function runAll(): UnitCaseResult[] {
     if (shapeIssues.length !== 1 || !/contracts\.modules/.test(shapeIssues[0])) throw new Error(`takeArray must record: ${shapeIssues.join('|')}`);
   });
 
+
+  // ==========================================================================
+  // plan e6b3f8d2 t3⑤：产品组件所有权硬地板五态回归
+  // --------------------------------------------------------------------------
+  // 撤销强制 Maison UI kit 后，盲档结构地板改由既有产品组件链承接：
+  //   ui-spec P0 节点 → visual-parity.contract_component → contracts.components
+  //   → contracts.files。这三项**不受 visual_parity_enforcement 降级**；
+  //   assets/tokens 等视觉质量项照旧遵守档位。
+  // ==========================================================================
+  const ownershipUiSpec = (): string => [
+    'schema_version: "1.0"',
+    'verified: human_confirmed',
+    'verified_method: human_gate',
+    'screens:',
+    '  - id: home',
+    '    priority: P0',
+    '    root:',
+    '      type: navigation_frame',
+    '      order: 0',
+    '      children:',
+    '        - id: hint_text',
+    '          type: content_display',
+    '          order: 0',
+    '          text: "支持 100 家银行"',
+    '          bbox: [0.1, 0.1, 0.8, 0.05]',
+    'tokens: {}',
+    'assets: []',
+  ].join('\n');
+
+  /** 完整所有权链（P0 节点 → contract_component → contracts.components/files） */
+  const ownershipCtx = (
+    root: string,
+    opts: {
+      enforcement?: 'off' | 'warn' | 'reachable' | 'strict';
+      vpYaml?: string | null;
+      components?: Array<{ name: string; file: string }>;
+      files?: string[];
+    },
+  ): CheckContext => {
+    const featureDir = path.join(root, 'doc', 'features', 'bank-card');
+    fs.mkdirSync(path.join(featureDir, 'plan'), { recursive: true });
+    fs.writeFileSync(path.join(featureDir, 'spec', 'spec.md'), prdNewOrChanged());
+    fs.writeFileSync(path.join(featureDir, 'spec', 'ui-spec.yaml'), ownershipUiSpec());
+    if (opts.vpYaml !== null) {
+      fs.writeFileSync(
+        path.join(featureDir, 'plan', 'visual-parity.yaml'),
+        // 注意：collectP0ComponentNodeIds 的既有语义把**屏 id 本身**也算 P0 节点，
+        // 故完整映射须同时覆盖 home 与 hint_text（本轮只改严重度，不改覆盖集）。
+        opts.vpYaml ?? [
+          'mappings:',
+          '  assets: []',
+          '  tokens: []',
+          '  components:',
+          '    - ui_spec_node_id: home',
+          '      contract_component: HomePage',
+          '    - ui_spec_node_id: hint_text',
+          '      contract_component: HintText',
+        ].join('\n'),
+      );
+    }
+    return baseCtx(root, {
+      phase: 'plan',
+      phaseRule: {
+        phase: 'plan',
+        structure_checks: { visual_parity_coverage: { description: 'vp coverage' } },
+      } as unknown as PhaseRuleSpec,
+      ...(opts.enforcement ? { visualParityEnforcement: opts.enforcement } : {}),
+      featureSpec: {
+        feature: 'bank-card',
+        contracts: {
+          components: opts.components ?? [
+            { name: 'HomePage', file: 'app/feature/HomePage.ets' },
+            { name: 'HintText', file: 'app/feature/HintText.ets' },
+          ],
+          files: opts.files ?? ['app/feature/HomePage.ets', 'app/feature/HintText.ets'],
+        },
+      } as unknown as CheckContext['featureSpec'],
+    });
+  };
+
+  run('t3⑤ 所有权硬地板①：默认 warn 下 P0 缺 contract_component 仍 BLOCKER FAIL（不降级）', () => {
+    const root = mkProject();
+    try {
+      const ctx = ownershipCtx(root, {
+        enforcement: 'warn',
+        vpYaml: ['mappings:', '  assets: []', '  tokens: []', '  components: []'].join('\n'),
+      });
+      const [r] = checkVisualParityCoverage(ctx);
+      if (r.status !== 'FAIL' || r.severity !== 'BLOCKER') {
+        throw new Error(`warn 下所有权缺口须 BLOCKER FAIL：${r.severity}/${r.status} — ${r.details}`);
+      }
+      if (!r.details.includes('hint_text')) throw new Error(`须点名缺映射的 P0 节点：${r.details}`);
+      if (!r.suggestion) throw new Error('BLOCKER 须带可执行 suggestion');
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('t3⑤ 所有权硬地板②：显式 off 同样 BLOCKER（off 不得整体 SKIP 掉所有权链）', () => {
+    const root = mkProject();
+    try {
+      const ctx = ownershipCtx(root, {
+        enforcement: 'off',
+        vpYaml: ['mappings:', '  assets: []', '  tokens: []', '  components: []'].join('\n'),
+      });
+      const [r] = checkVisualParityCoverage(ctx);
+      if (r.status !== 'FAIL' || r.severity !== 'BLOCKER') {
+        throw new Error(`off 下所有权缺口仍须 BLOCKER FAIL：${r.severity}/${r.status} — ${r.details}`);
+      }
+      if (!r.details.includes('off')) throw new Error(`详情须点明档位未降级：${r.details}`);
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('t3⑤ 所有权硬地板③：contracts.components 为空数组也判失败（旧实现反而跳过存在性检查）', () => {
+    const root = mkProject();
+    try {
+      const ctx = ownershipCtx(root, { enforcement: 'warn', components: [], files: [] });
+      const [r] = checkVisualParityCoverage(ctx);
+      if (r.status !== 'FAIL' || r.severity !== 'BLOCKER') {
+        throw new Error(`空 components 须判失败：${r.severity}/${r.status} — ${r.details}`);
+      }
+      if (!r.details.includes('为空数组')) throw new Error(`须点明空数组不是豁免：${r.details}`);
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('t3⑤ 所有权硬地板④：组件 file 未进 contracts.files 判失败', () => {
+    const root = mkProject();
+    try {
+      const ctx = ownershipCtx(root, {
+        enforcement: 'warn',
+        components: [
+          { name: 'HomePage', file: 'app/feature/HomePage.ets' },
+          { name: 'HintText', file: 'app/feature/HintText.ets' },
+        ],
+        files: ['app/feature/HomePage.ets'],
+      });
+      const [r] = checkVisualParityCoverage(ctx);
+      if (r.status !== 'FAIL' || r.severity !== 'BLOCKER') {
+        throw new Error(`file 不在 contracts.files 须判失败：${r.severity}/${r.status} — ${r.details}`);
+      }
+      if (!r.details.includes('contracts.files')) throw new Error(`须点名 files 缺口：${r.details}`);
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('t3⑤ 所有权硬地板⑤：完整映射 → PASS；off 档下视觉质量项 SKIP 但所有权仍已校验', () => {
+    const root = mkProject();
+    try {
+      const pass = checkVisualParityCoverage(ownershipCtx(root, { enforcement: 'warn' }))[0];
+      if (pass.status !== 'PASS') throw new Error(`完整映射须 PASS：${pass.status} — ${pass.details}`);
+      if (!pass.details.includes('产品组件所有权链完整')) {
+        throw new Error(`PASS 详情须点明所有权链：${pass.details}`);
+      }
+      const off = checkVisualParityCoverage(ownershipCtx(root, { enforcement: 'off' }))[0];
+      if (off.status !== 'SKIP') throw new Error(`off 且所有权通过 → 视觉质量项 SKIP：${off.status}`);
+      if (!off.details.includes('所有权硬地板已校验通过')) {
+        throw new Error(`SKIP 详情须如实说明所有权已校验：${off.details}`);
+      }
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('t3⑤ 所有权硬地板⑥：visual-parity.yaml 缺失且有 P0 节点 → BLOCKER（档位无关）', () => {
+    const root = mkProject();
+    try {
+      for (const enforcement of ['warn', 'off', 'reachable'] as const) {
+        const ctx = ownershipCtx(root, { enforcement, vpYaml: null });
+        const [r] = checkVisualParityCoverage(ctx);
+        if (r.status !== 'FAIL' || r.severity !== 'BLOCKER') {
+          throw new Error(`enforcement=${enforcement} 缺 visual-parity.yaml 须 BLOCKER：${r.severity}/${r.status}`);
+        }
+      }
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('t3③ ui-spec 契约：node.block 字段已删除（schema 判非法字段，不得静默接受）', () => {
+    const { validateUiSpecSchema } = require('../../../profiles/hmos-app/harness/ui-spec-schema-validate') as
+      typeof import('../../../profiles/hmos-app/harness/ui-spec-schema-validate');
+    const doc = {
+      schema_version: '1.0', verified: 'unverified', verified_method: 'none',
+      screens: [{
+        id: 's', priority: 'P0',
+        root: {
+          type: 'navigation_frame', order: 0,
+          children: [{ id: 'n', type: 'nav_bar', order: 0, block: 'nav_bar' }],
+        },
+      }],
+      tokens: {}, assets: [],
+    } as never;
+    const errs = validateUiSpecSchema(doc);
+    if (!errs.some(e => e.includes('block'))) {
+      throw new Error(`block 字段须被判非法：${JSON.stringify(errs)}`);
+    }
+    // 结构语义 type 词保留（④）——不绑定实现
+    const ok = validateUiSpecSchema({
+      schema_version: '1.0', verified: 'unverified', verified_method: 'none',
+      screens: [{
+        id: 's', priority: 'P0',
+        root: { type: 'navigation_frame', order: 0, children: [{ id: 'n', type: 'nav_bar', order: 0 }] },
+      }],
+      tokens: {}, assets: [],
+    } as never);
+    if (ok.length !== 0) throw new Error(`语义 type 词须保留合法：${JSON.stringify(ok)}`);
+  });
+
   return results;
 }

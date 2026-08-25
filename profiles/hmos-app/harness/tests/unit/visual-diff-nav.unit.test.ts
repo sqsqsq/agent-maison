@@ -371,10 +371,10 @@ export function runAll(): UnitCaseResult[] {
       // t4/t3：本夹具的 identity 是**纯文本锚**，appComponentIdPrefixes 推导不出页面
       // 组件前缀，dump 中亦无前缀 ⇒ 无法证明"应用页面树在场"，归 probe_failed（保守）。
       // 零写入/证据图/记 P0 失败这三条既有行为不变——它们与所有权判定无关。
-      // 记法仍遵循 openspec（screen_identity_mismatch），并如实标注无页面组件前缀。
+      // 记法仍遵循 openspec（screen_identity_mismatch），并如实标注无任何已声明 identity id。
       const detail = r.errors.find(e => e.includes('add_bank_collapsed')) ?? '';
-      if (!/screen_identity_mismatch/.test(detail) || !/无页面组件前缀/.test(detail)) {
-        throw new Error(`须记 spec 标识并标注无页面组件前缀（probe_failed）：${r.errors.join('|')}`);
+      if (!/screen_identity_mismatch/.test(detail) || !/无任何已声明 identity id/.test(detail)) {
+        throw new Error(`须记 spec 标识并标注无任何已声明 identity id（probe_failed）：${r.errors.join('|')}`);
       }
       if (r.fuseEligibility?.eligible !== false) {
         throw new Error('拿不到应用所有权事实时不得给熔断资格');

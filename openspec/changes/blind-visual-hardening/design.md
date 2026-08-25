@@ -47,12 +47,12 @@ accepted=仍存在但用户经 receipt 显式接受（记 `accepted_by` + `accep
 - `verified_artifact`：既有 asset-crop-validation.json 中 verified 状态 + 产物 hash 一致。
 裸 `user_requirement` 哨兵**不作**验真金牌（沿 P0-6 既有语义：需求级授权≠条目级验真）。
 
-### 1.7 锚点字符集与长度（cursor 四轮②）
+### 1.7 锚点字符集与长度（cursor 四轮②）—— **已作废（2026-08-25，plan e6b3f8d2 t3）**
 
-锚点 `maison:<feature>:<screen_id>:<semantic_node_id>:<instance_key>`：
-段内字符归一为 `[a-z0-9_-]`（非法字符→`-`，小写化）；分隔符 `:`；总长 ≤ 96 字符
-（超长时 instance_key 截断 + 4 位内容 hash 后缀保唯一）。ArkUI `.id()` 接受任意字符串，
-但 uitree 查询与 hypium By.id 匹配按此约束回归测试锁定。
+原设计规定实例语义锚点的段字符集与长度上界。随 d3 撤回，该锚点机制整体删除：
+selector 真值回归**普通 ui-spec `node.id` / `text`**，不再有 framework 侧规定的
+锚点语法、子件后缀契约或其反解逻辑；页面身份判据改用既有 `visual-diff-nav`
+screen identity 声明（只取 `all_of`/`any_of` 正向 id，按精确 id 判在场）。
 
 ### 1.8 rubric 首跑预期（cursor 四轮③）
 
@@ -101,5 +101,5 @@ commit_sha 有值，消费者发布包环境为 null——两者至少其一非�
   按 schema_version 分支天然兼容。
 - 负面裁决 gate（切片一）独立 check id（`negative_verdict_closure`），可按 phase-rules 登记
   开关回滚，不与洞⑥纠缠。
-- UI kit scaffolder 幂等：目标文件已存在且 hash 一致→skip；hash 漂移→BLOCKER 提示（宿主改过
-  kit 文件，不静默覆盖）。
+- ~~UI kit scaffolder 幂等~~ —— d3 已撤回（2026-08-25）：scaffolder 与其幂等三态一并删除，
+  framework 不再向宿主源码树写入任何组件实现，故无回滚项。
