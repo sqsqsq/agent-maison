@@ -37,3 +37,15 @@
 ## 盲档结论后
 
 判卷 `none`/`ocr_capable`（无视觉/仅 OCR）时的用户告知与一次性确认，见 [ui-spec 盲档工作法](../feature/spec/reference/ui-spec.md) 的交互式入口（registry `vision.blind_tier`）。
+
+**盲档不一定只能盲写**（plan ab072691）：判卷为无视觉时，还可以为本轮指定一个**只读视觉 provider**
+——第二个 `(adapter, model)` endpoint，只看图产逐屏结构化评审、物理上不写工程；正式产物唯一写者仍是
+当前会话的你。询问/记录走 [personal-setup-gate.md](./personal-setup-gate.md) 的 **S2.1**
+（registry `setup.visual_provider` → `record-visual-provider` 机器写盘），**只在「local 缺失或现有
+adapter 已不在支持列表」时问一次，跳过即本轮 blind、不重复问**。支持项现算自 adapter catalog，
+本文不写死名单。
+
+配好之后本轮视觉路由变为 `delegated`：你**依旧没有视觉**，盲档工作法一个字都不变；区别只是截图之后
+会有一份来自只读评审器的逐屏 `must_fix`/`defects` 回给你修，参考图旁可能多出 `.visual.json` 观察
+sidecar（与 OCR JSON 同性质的机器上下文，不是结论、不是你亲眼所见）。provider 不可用时本轮自动落回
+盲档：视觉保持 `UNVERIFIED`、release 保持 `VISUAL_PENDING`，阶段照常推进。

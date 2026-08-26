@@ -122,6 +122,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'critic-receipt-producer', modulePath: './unit/critic-receipt-producer.unit.test' },
   { id: 'visual-structure-disorder', modulePath: './unit/visual-structure-disorder.unit.test' },
   { id: 'visual-defect-enum', modulePath: './unit/visual-defect-enum.unit.test' },
+  // plan ab072691：只读视觉 provider（支持列表唯一真源 / 三态路由与窄钳制 / 只读 plan golden）
+  { id: 'visual-provider', modulePath: './unit/visual-provider.unit.test' },
   { id: 'visual-diff-p0-coverage', modulePath: './unit/visual-diff-p0-coverage.unit.test' },
   { id: 'visual-render-faithfulness', modulePath: './unit/visual-render-faithfulness.unit.test' },
   { id: 'arkui-clip-overlap', modulePath: './unit/arkui-clip-overlap.unit.test' },

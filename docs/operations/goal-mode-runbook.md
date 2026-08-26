@@ -173,6 +173,30 @@ gate、receipt/人签、设备与凭据规则不变；agent 自跑 harness 只�
 
 **模型钉（`--adapter-model <id>`）**：并发多窗口跑不同模型、或要钉住本 run 模型时，启动 goal run 传 `--adapter-model`，该值是**权威输入**并随 headless argv 回放（codex/claude/codeagent/cursor 用 `--model <id>`，opencode 用 `-m <id>`），写入 manifest `adapter_model_pin`。`chrys`/`generic` **不支持**（传了即 BLOCKER fail-fast）。CLI、loaded manifest、successor 继承**均无 pin** 时 = 现状零变化；pinned run 的 resume 不传 flag 仍继承并回放冻结 pin。**仅 headless/unattended（含 `--detach`）；有人在场 in-session 不适用**。
 
+**只读视觉 provider（`--visual-adapter <a> --visual-model <id>`，plan ab072691）**：主模型无视觉时，
+可为本 run 指定**第二个只读 endpoint**——它只看图产逐屏结构化评审，物理上不写工程；正式产物唯一写者
+仍是主模型。两个旗标**成对必填**，单给任一即 fail-fast；值写入 manifest `visual_provider_pin` 并条件
+进身份哈希，resume 只认冻结值（不重读个人配置），successor 出生输入可覆盖。优先级 **CLI > manifest
+冻结值 > 个人级 `framework.local.json` 的 `vision.visual_provider`**。
+
+- **支持哪些 adapter 由 adapter catalog 派生**——运行时扫 `agents/<adapter>/adapter.yaml` 的
+  `visual_provider` 完整声明；本文**不另写一份名单**（要看当前支持项，跑一次带不支持 adapter 的
+  `--visual-adapter`，错误会列出）。
+- 显式传了**不受支持**的 adapter → 启动处 BLOCKER fail-fast 并列出支持项；框架**不自动改选**、
+  **不在多个 provider 之间 fallback**。
+- 无人值守读到已失效的旧 local 配置 → WARN + 忽略 + 以 blind 继续，**绝不停 run**。
+- 未配置 = 现状零变化（`native` 或 `blind`）。
+- provider 调用失败/载荷不可信时：本轮视觉反馈降级为盲档，`visual_diff` 出 `{BLOCKER, SKIP}`，
+  经既有债务链把 visual 投影 `UNVERIFIED`、release 保持 `VISUAL_PENDING`，**phase 照常推进**。
+- `pixel_1to1` 的最终**真人逐屏确认不因 provider 减免**。
+
+```bash
+# 只读视觉 provider 示例（主模型盲 + 第二个能看图的 endpoint）
+cd framework/harness && npx ts-node scripts/goal-runner.ts \
+  --feature <feature-slug> --requirement "需求" --adapter codex --adapter-model <coding-model> \
+  --visual-adapter claude --visual-model <vision-model> --detach
+```
+
 ```bash
 # Chrys dry-run 示例
 cd framework/harness && npx ts-node scripts/goal-runner.ts \
