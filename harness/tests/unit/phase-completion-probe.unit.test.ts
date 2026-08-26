@@ -346,23 +346,28 @@ export function runAll(): UnitCaseResult[] {
       path.join(__dirname, '..', '..', 'scripts', 'utils', 'agent-invoke.ts'),
       'utf-8',
     );
-    const completionFn = /const observeCompletion = \(\): void => \{[\s\S]*?\n  \};/.exec(src);
-    assert(completionFn !== null, '应能定位 observeCompletion');
-    assert(/completionObserved = true;/.test(completionFn![0]), 'completion 须置 completionObserved');
-    assert(/clearTimeout\(timeoutTimer\)/.test(completionFn![0]), 'completion 命中须取消 hard timeout');
-    assert(/armSettleGrace\('completion'\)/.test(completionFn![0]), 'completion 须走共享 grace 收纳');
-
-    const failureFn = /const observeTerminalFailure = \(\): void => \{[\s\S]*?\n  \};/.exec(src);
-    assert(failureFn !== null, '应能定位 observeTerminalFailure');
+    const closureFn = /const observeClosure = \([\s\S]*?\n  \};/.exec(src);
+    assert(closureFn !== null, '应能定位统一 observeClosure 仲裁入口');
     assert(
-      !/completionObserved/.test(failureFn![0]),
-      'terminal 失败终态**不得**触碰 completionObserved（否则失败被洗白）',
+      /closureObservation = 'completion';/.test(closureFn![0]),
+      'completion 须占有唯一仲裁态',
+    );
+    assert(/clearTimeout\(timeoutTimer\)/.test(closureFn![0]), 'completion 命中须取消 hard timeout');
+    assert(/armSettleGrace\('completion'\)/.test(closureFn![0]), 'completion 须走共享 grace 收纳');
+    assert(
+      /closureObservation = 'terminal_failure';/.test(closureFn![0]),
+      'terminal failure 须夺取唯一仲裁态',
     );
     assert(
-      !/clearTimeout\(timeoutTimer\)/.test(failureFn![0]),
-      'terminal 失败终态不得解除 wall 硬预算兜底',
+      /supersededCompletion[\s\S]*?armHardTimeout\(\)/.test(closureFn![0]),
+      'terminal failure 覆盖既有 completion 时须按原 deadline 恢复 hard timeout',
     );
-    assert(/armSettleGrace\('terminal_failure'\)/.test(failureFn![0]), 'failed 须走同一 grace 收纳');
+    assert(/armSettleGrace\('terminal_failure'\)/.test(closureFn![0]), 'failed 须走同一 grace 收纳');
+    assert(
+      /const observeCompletion = \(\): void => observeClosure\('completion'\);/.test(src) &&
+        /const observeTerminalFailure = \(\): void => observeClosure\('terminal_failure'\);/.test(src),
+      'completion / failure 两入口都须只委托统一仲裁器',
+    );
   });
 
   // ==========================================================================

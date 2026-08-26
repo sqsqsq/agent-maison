@@ -105,5 +105,5 @@
 
 ## Archive checklist（归档那一刻执行，非实现任务）
 
-- [ ] 归档期 openspec artifacts 重生成：rerun `node scripts/patch-openspec-artifacts.mjs`
+- [x] 归档期 openspec artifacts 重生成：rerun `node scripts/patch-openspec-artifacts.mjs`
       （前提：脚本幂等修复 plan f4b2c8e6 已落地，或人工确认目标文件未被 patch 过）
