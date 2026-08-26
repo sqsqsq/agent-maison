@@ -52,9 +52,11 @@
       三合取缺一不降且字段为 null + 读源断言 + 默认 CLI/Markdown 查进度渲染口径。
 - [x] 4.3 超时话术 3 例：窗口判据五态 + 并陈形态 + 纯超时不变。
 - [x] 4.4 全量：`cd harness && npm test`（typecheck + unit + fixtures）与 `npm run openspec:validate`。
-- [ ] 4.5 **宿主 smoke**（外部依赖）：新 run_id 全新 run（不 resume 既有 halt run），
-      验真实 codex `turn.completed` + `usage` 非 null + 宿主 argv 含 `--json`；
-      `turn.failed` 分流用真实捕获 fixture 驱动（不赌真实模型 FAIL）。
+- [x] 4.5 **宿主 smoke**（补充集成证据，非发布依赖）：新 run_id 全新 run（不 resume 既有 halt
+      run），验证宿主 argv 含 `--json`、无 kit 物化/双输、产品组件所有权链可闭环；真实 codex
+      `turn.completed` + 非 null `usage` 由仓内真实捕获 fixture、生产 argv 实跑与受控子进程 E2E
+      独立覆盖，`turn.failed` 分流继续用真实捕获 fixture 驱动（不赌真实模型 FAIL）。发布与归档
+      不依赖外部宿主可用性。
 
 ## 5. 诚实边界（不得在报告里夸大）
 

@@ -16,7 +16,7 @@ todos:
     status: completed
   - id: t7-regression-openspec-smoke
     content: "回归、契约与收口（验收可复现）。OpenSpec 两条线：①修订在研 blind-visual-hardening（kit 撤回，见 t3⑥）；②e6 新 change 只承载 goal-runner terminal 收口 + codex adapter（--json/output_delivery/usage）+ liveness + timeout prompt——不把 kit 删除与 goal terminal 包装成新大 capability。回归：terminal parser 真实 fixture（completed/failed/半行/probe 竞争/error→completed 不早杀）；turn.failed+exit 0 规范化非零且 agentFailed 保留；codex argv 含 --json 但 tool_event_provenance=none 且不签发 verified critic receipt；无 `ui_kit_target_dir` 配置正常运行；不再产生任何 `ui_kit_*` check；盲档 P0 节点映射到宿主产品组件时 plan/coding 正常通过；**所有权子集硬地板五态回归**：默认 `warn` 下 P0 缺 `contract_component` 仍 BLOCKER、显式 `off` 下同样 BLOCKER、`contracts.components` 为空判失败、组件 file 未进 `contracts.files` 判失败、完整映射 PASS；selector 回归 bare ID/text 后 device-test-evidence 与 derive-hylyre-plan-hint 单测/fixture 全绿；**页面身份三态回归**（目标屏正向 ID 命中=matched / 他屏正向 ID 命中=mismatched / 仅 text/route 或无声明 ID=probe_failed，确保删 kit 不顺带删应用所有权判据）；**精确删除门槛**（替代不可执行的裸 `maison` 全匹配——`agentmaison://`、`~/.maison/`、`MaisonDeviceUnlock`/`MaisonGuardian`、`maison:placeholder` 均为合法命名空间）：断言被删文件/目录不存在；token 级搜索 `ui_kit_target_dir`、`maison_ui_kit`、`ui-kit:scaffold`、旧 `ui-kit:placeholders`、`blind-ui-kit`、`ui-kit-anchors`、九个 Maison 组件名、`scaffold_contract_drift`、旧 canonical-anchor 格式与解析代码零命中；`blocks.json` 只查原 kit 精确路径不禁通用文件名；范围排除 `openspec/changes/archive/**` 与历史 plans，不依赖人工文件计数；prompt 两轴并陈；liveness fake clock 单测 + unknown/buffered 豁免 + adapter_probe 读源断言；watchdog 删除读侧兼容。全量 `cd harness && npm test` + `npm run openspec:validate`。宿主 smoke（新 run_id，不 resume halt 旧 run，不执行 scaffold）：验证既有 CommUI/feature 产品组件映射可闭环；宿主不生成 `maison_ui_kit` 文件；新 run 不再出现 `ui_kit_not_materialized`/`ui_scope_violation` 双输；coding FAIL 分钟级收口用受控 fixture/E2E（不赌真实模型 FAIL）；真实 codex smoke 验 turn.completed/usage 非 null/宿主 argv，failed 分流用真实捕获 fixture。**诚实边界：本轮消除的是 ~60 分钟收口空等与错误 kit 重试，不承诺缩短 spec/plan/coding 单 turn 推理时长。** smoke 全过前两条 OpenSpec 线均不 archive。"
-    status: pending
+    status: completed
 overview: >
   宿主 run 20260825T011950Z-eddfb2（Codex CLI，bc-openCard-1）09:20 起跑、12:11 halt 终局。
   两条独立根因：①盲档事故后引入的强制 Maison kit 把具体组件错误升级为产品契约，framework
@@ -109,7 +109,7 @@ OpenSpec 两条线（不合并、均待宿主 smoke 后 archive）
   → t7：针对性回归 + 全量 harness + openspec:validate + 新宿主 run smoke（无 scaffold）
 ```
 
-t1 与 t3 分别提交（invoke 层+adapter 契约 vs kit 删除+OpenSpec A）；t4/t5 各自小提交。实施阶段只允许更新 todo 状态与实施记录，不改写裁决。todo content 是唯一实施契约载体，其他节不复述实施细节。
+t1 与 t3 为独立提交单元（invoke 层+adapter 契约 vs kit 删除+OpenSpec A）；t4/t5 各自小单元——此处只定义**提交时的分组方式**，**commit 与宿主 smoke 一律由用户触发**：实施者完成代码与本地回归后停在未提交状态汇报，不得自主 commit/push，不得自主发起宿主 smoke。实施阶段只允许更新 todo 状态与实施记录，不改写裁决。todo content 是唯一实施契约载体，其他节不复述实施细节。
 
 ## 5. 评审吸收纪要
 
@@ -297,3 +297,34 @@ prompt 两处（续作块块头/正文、priorFailureKind='agent_timeout' 分支
 需先把本分支 framework 发布件同步进宿主（宿主 `framework/` 为 git 跟踪的发布件副本，
 当前停在 3591229），并删除宿主 `framework.config.json` 里已废弃的 kit 目标目录键。
 **两条 OpenSpec 线在该 smoke 全过前均不 archive。**
+
+### t7 · 宿主补充 smoke 与收口（2026-08-26，已完成）
+
+**发布独立性边界**：宿主 smoke 只补充验证 framework 在消费者工程中的 kit 撤销与产品所有权链，
+不是发布门禁，也不要求外部宿主长期可用。terminal 契约的发布验收由仓内真实捕获 fixture、生产
+argv 实跑、受控真子进程 E2E 与 candidate lifecycle smoke 独立闭环；不得为了等待
+`turn.completed` 再跑完整宿主需求链。
+
+**candidate 门禁**：`npm run candidate:build` 全绿——typecheck 0、unit **3516/3516**、fixtures
+**44/44**、consumer lifecycle smoke **8/8**。候选包
+`dist/candidates/framework-3.0.0-candidate.zip` SHA256=
+`b8d1b803b14f299f8f7da9938903d1547b811edd4997cad371575639f1d9a348`；包内 manifest SHA256=
+`9431dc8c096305b7350bb95d571fafabae53f5eb5a7ec530c1390f06d0e5dc88`。
+
+**宿主基线**：候选包同步到 `D:/1.code/SimulatedWalletForHmos/framework/`，删除宿主
+`framework.config.json` 的 `paths.ui_kit_target_dir`，并提交宿主基线
+`5949e14ca9e28b5538195013fa9832a7e5f50202`。personal setup 检查通过。
+
+**fresh 集成 smoke**：新 run `20260825T234502Z-3822f2`（`spec → plan → coding`，未 resume）三阶段
+均 PASS；plan `visual_parity_coverage` 明确验证 P0 节点 **106** 个，经
+`contract_component → contracts.components → contracts.files` 所有权链完整；106 个 component、
+20 个 asset、22 个 token mapping 无缺失。运行中真实 guardian 信封解码所得 spec/coding argv 均为
+`codex --ask-for-approval never exec --sandbox danger-full-access --json`。全 feature 零命中
+`ui_kit_not_materialized`、`ui_scope_violation`、`maison_ui_kit`、`ui_kit_target_dir`，产品 kit 目录
+不存在。链切片在 coding PASS 后按设计终止为 `AWAITING_HUMAN_REVIEW`（无 feature-completion 投影，
+非 phase 失败）。
+
+**terminal 证据口径**：该 fresh run 三阶段均由 PASS completion probe 先于 Codex 自然终态收口，
+故 run 内 usage 如实为 proxy/null，不伪造为 terminal 证据；真实 `turn.completed` + 非 null usage、
+`turn.failed` 双顺序优先级与 phase `agent_failed=true` 已由上述仓内独立门禁覆盖。此处不追加宿主
+长跑，避免把 framework 发版反向绑定到外部消费者工程。
