@@ -29,7 +29,14 @@ image_input: none
 # 只读手段=结构化权限声明把 edit/bash 等非只读工具置 deny（配合全局 pure 档）；
 # **绝不复用** goal headless 的 --dangerously-skip-permissions argv。
 # 运行时 argv SSOT：harness/scripts/utils/visual-provider-invoke.ts。
-# 入册凭据：待宿主真实 invocation smoke 回填（plan ab072691 t6）。
+# 入册凭据（plan ab072691 tasks 7.7，宿主 opencode 1.18.14 真实 invocation 实证）：
+#   argv `run --pure -m <provider/model> --file <png> --format json`；
+#   一次调用 4.8s outcome=success，16/16 断言全过；随机金丝雀四象限 4/4 + 随机 token 逐字命中；
+#   invoke 前后 `git status --porcelain` 逐字节一致；usage 由既有 invokeAgentHeadless 回填
+#   （capture=stdout_json confidence=proxy）。
+#   `events_json` 终稿信封形状即由本轮真实样本钉死：NDJSON `{type,timestamp,sessionID,part}`，
+#   正文取 `type==='text'` 行的 `part.text`、终止锚点 `type==='step_finish'`、见 `type==='error'`
+#   即判无终稿（实测 401/403 两类 API 错误均在此被挡为 invalid，不会伪造正文）。
 visual_provider:
   readonly_invoke: permission_deny_non_read
   image_transport: native_image_flag

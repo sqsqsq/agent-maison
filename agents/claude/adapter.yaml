@@ -64,10 +64,33 @@ deprecated_artifacts:
     reason: "v4.0 起选项文案合入 confirmation-registry.yaml"
 
 # 视觉委托（plan ab072691）：本 adapter 可作**只读视觉 provider**。
-# 只读手段=锁定版本的 safe mode（隔离 .claude/settings.json、hooks、CLAUDE.md、skills、
-# plugins、MCP 等工程定制）叠加只读工具集合；**绝不复用** goal headless 的全权限 argv。
+# 只读手段=只读工具集合（`--tools Read`）叠加锁定版 safe mode 的定制隔离；
+# **绝不复用** goal headless 的全权限 argv。
 # 运行时 argv SSOT：harness/scripts/utils/visual-provider-invoke.ts（本字段是声明面与资格面）。
-# 入册凭据：待宿主真实 invocation smoke 回填（plan ab072691 t6；smoke 未过前 change 不 archive）。
+#
+# 入册凭据（plan ab072691 tasks 7.7，宿主 claude 2.1.228 真实 invocation 实证）：
+#   argv `-p --safe-mode --tools Read --allowedTools Read --disallowedTools mcp__* --model <m>
+#   --output-format stream-json --verbose`；一次调用 8.8s outcome=success，16/16 断言全过；
+#   随机金丝雀四象限 4/4 + 随机 token 逐字精确命中；`stream_json_result` 投影成立；
+#   invoke 前后 `git status --porcelain` 逐字节一致。
+#   本 adapter 是首批唯一 `input_provenance=verified` 者——有结构化验读事件解析器，事件流实证
+#   本轮图片确实被读取（codex/opencode 只能记 unverified，见 design.md §7 受理与披露分立）。
+#
+# 只读手段的**实测边界**（同轮取得，措辞据此订正，勿改回）：
+#  · **safe mode 不含权限隔离**——其 --help 原文即 "Auth, model selection, built-in tools, and
+#    permissions work normally."。天然 A/B：同一份 argv，用户级 ~/.claude/settings.json 的
+#    permissions.defaultMode 从 bypassPermissions 改为 auto，子进程 init 的 permissionMode
+#    随之从 bypassPermissions 变为 auto ⇒ 该档位**穿透** `--safe-mode`。safe mode 只压定制面
+#    （实测 skills 23→17、slash 64→45）。
+#  · ⇒ 物理只读**由 `--tools Read` 单独承担**，且该单点已在**最坏组合下实证成立**：显式
+#    `--permission-mode bypassPermissions` + 无诱导措辞命令其写文件，模型真实尝试后回报
+#    "I only have the `Read` tool available in this session—there's no Write, Edit, or shell
+#    tool provided"；目标文件未创建、porcelain 前后一致、事件流零写类工具调用。
+#    即：无写工具即无写路径，与 permissionMode 档位无关。
+#  · **裁决：首期不补 `--permission-mode`**（2026-08-26）。权限档位只决定「已有工具是否免确认」，
+#    无法凭空增加写工具；物理只读由工具可见性保证，纵深防御非当前正确性所需，按裁剪原则不加。
+#    **复检触发**：升级 claude CLI 锁定版本时重跑 tasks 7.7 smoke——若 `--tools` 语义或 init 的
+#    `tools` 回报发生变化，本裁决须重审。
 visual_provider:
   readonly_invoke: safe_mode_read_only_tools
   image_transport: prompt_path
