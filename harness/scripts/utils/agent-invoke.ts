@@ -55,7 +55,7 @@ export const CODEX_HEADLESS_BINARY_CANDIDATES = ['codex'] as const;
 export const CHRYS_HEADLESS_BINARY_CANDIDATES = ['chrys'] as const;
 export const OPENCODE_HEADLESS_BINARY_CANDIDATES = ['opencode'] as const;
 
-const STRUCTURED_BINARY_CANDIDATES: Record<string, readonly string[]> = {
+export const STRUCTURED_BINARY_CANDIDATES: Record<string, readonly string[]> = {
   cursor: CURSOR_HEADLESS_BINARY_CANDIDATES,
   claude: CLAUDE_HEADLESS_BINARY_CANDIDATES,
   codeagent: CODEAGENT_HEADLESS_BINARY_CANDIDATES,
