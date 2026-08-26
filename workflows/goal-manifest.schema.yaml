@@ -39,6 +39,13 @@ fields:
       运行身份来源（诚实化回溯）：local_config=取自 framework.local.json SSOT；
       override=经 --override-adapter 显式切换并回写 local；user_explicit/entry_declared/registry=
       首启无 local 时由解析阶梯（用户显式 / 跳板入口声明 / registry 交互）产出的 requested。旧 manifest 可缺省。
+  allow_blind_visual:
+    type: boolean
+    enum: [true]
+    description: >
+      plan ab072691 t7：用户对当前 run 给出的一次明确盲跑授权。仅允许键缺失或值为 true；
+      条件纳入 manifest 身份哈希，不写 framework.local.json。resume 复用冻结值，successor
+      剥离并要求新 run 重新授权。native/delegated 路径可保留该事实，但不改变视觉路由。
   chain_override:
     type: array
     items: string

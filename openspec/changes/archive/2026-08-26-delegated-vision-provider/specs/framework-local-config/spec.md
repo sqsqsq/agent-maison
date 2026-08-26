@@ -16,6 +16,10 @@ The agent SHALL NOT hand-write this JSON. The value SHALL be recorded by a deter
 scope task, following the existing personal-setup discipline (machine-written config plus a
 confirmation-registry entry for the selection).
 
+The run-scoped blind authorization flag `--allow-blind-visual` and manifest field
+`allow_blind_visual` SHALL NOT be accepted or persisted in `framework.local.json`. Personal state may
+remember a provider identity, but SHALL NOT silently authorize future blind runs.
+
 Enforcement: `harness/scripts/utils/config-field-ownership.ts`,
 `harness/scripts/utils/framework-local-config.ts`, `harness/scripts/init-orchestrate.ts`,
 `skills/reference/confirmation-registry.yaml`
@@ -30,3 +34,9 @@ Enforcement: `harness/scripts/utils/config-field-ownership.ts`,
 - **WHEN** the provider selection is recorded on a local config that already holds device unlock and
   toolchain sections
 - **THEN** those sections SHALL be present and unchanged after the write
+
+#### Scenario: blind authorization is never personal state
+
+- **WHEN** a run is started with `--allow-blind-visual`
+- **THEN** no `allow_blind_visual` or equivalent authorization key SHALL be written to
+  `framework.local.json`

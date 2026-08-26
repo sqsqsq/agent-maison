@@ -788,6 +788,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           '--requirement', '银行卡开卡需求，含7个页面，参考图还原布局。',
           '--start', 'spec', '--end', 'spec',
           '--adapter', 'cursor',
+          '--allow-blind-visual',
           '--foreground-ok', '--force',
         ];
         process.chdir(root);
@@ -877,6 +878,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           '--requirement', '银行卡开卡需求，含7个页面，参考图还原布局。',
           '--start', 'spec', '--end', 'spec',
           '--adapter', 'cursor',
+          '--allow-blind-visual',
           '--foreground-ok', '--force',
         ];
         process.chdir(root);

@@ -36,10 +36,16 @@
   「免费档只能用 Auto、不可指定模型」拒于账号面，与 model 真实回放要求互斥）；其
   `ask_mode` / `result_json` 机制留在词表内并有单测覆盖，第二期补回声明即恢复资格——
   这正是「机制 id 而非厂商名」换来的收益：撤一个 adapter 不动运行时一行。
-- **unsupported 按输入形态分流**：普通交互态与 attended goal 在「local 缺失或现有 adapter 不在
-  catalog 支持列表」时提示一次并允许重选，跳过即本轮 blind 且不重复询问；无人值守读到旧 local
-  unsupported 时 WARN、忽略并 blind 继续；显式 CLI `--visual-adapter` unsupported 时 fail-fast 并
-  列出 catalog 派生的支持项。**不自动改选 Claude、不在多个 provider 间 fallback。**
+- **unsupported 按输入形态分流**：普通交互态与 attended goal 在「local 缺失、不可读或现有 adapter
+  不在 catalog 支持列表」时提示一次并允许重选，明确跳过即本次盲跑授权且不重复询问；无人值守读到
+  旧 local unsupported/unavailable 时 WARN + 忽略，并进入统一启动矩阵；显式 CLI
+  `--visual-adapter` unsupported 时 fail-fast 并列出 catalog 派生的支持项。**不自动改选 Claude、
+  不在多个 provider 间 fallback。**
+- **UI blind 启动须一次明确授权**：primary canary 尝试后复用 effective image-input 真值；UI + primary
+  blind + 无合法 provider 时，只有 `--allow-blind-visual` 才放行，否则正式 phase 前 BLOCKER。旗标冻结
+  为 manifest `allow_blind_visual: true` 并条件入身份哈希，不写 personal local；resume 复用冻结值，
+  successor 剥离后重新授权。canary CLI 硬失败保持更高优先级，dry-run 只报 `would_block`，已合法启动的
+  delegated run 在 provider 运行时失败仍走原有 fail-open。
 - **物理只读 invoke**：新增 `utils/visual-provider-invoke.ts`，只构造独立只读 `HeadlessInvokePlan`，
   绝不复用普通全权限 argv（`--dangerously-skip-permissions` / `--sandbox danger-full-access` /
   `--force --trust`）；所有真实调用统一进入既有 `invokeAgentHeadless`——**不得重写或旁路 child
@@ -92,9 +98,10 @@
   `harness/scripts/{goal-runner,check-testing,check-spec}.ts`、
   `profiles/hmos-app/harness/visual-diff-check.ts`、`agents/adapter-schema.yaml` 与
   `agents/{claude,codex,cursor,opencode}/adapter.yaml`。
-- **消费者无需迁移**：未配置 provider 的工程行为逐字不变（`vision_mode=blind|native`），旧
-  `visual-diff.json`、旧 `CapabilitySnapshot`（无 `vision_mode` 键）、旧 manifest（无
-  `visual_provider_pin` 键）一律保持现状语义。`MIGRATION.md` 无破坏性条目。
+- **启动契约收紧**：未配置 provider 的非 UI 或 native 工程行为不变；UI + primary blind 的新 run
+  现在必须配置合法 provider 或显式传 `--allow-blind-visual`。旧 manifest 无
+  `allow_blind_visual` 键仍可加载，但想在 resume 时新增授权须走 `--override-manifest`；旧
+  `visual-diff.json`、旧 `CapabilitySnapshot` 与 provider 运行时 fail-open 语义不变。
 - 文档同步：goal-manifest schema 说明、`skills/reference/personal-setup-gate.md`、goal runbook、
   交互态文档——**只说明声明规则并指向 adapter catalog，不另枚举支持名单**。
 - 宿主 smoke 全过前不 archive；smoke 与 push 均由用户触发，不构成 framework 发版门禁依赖。

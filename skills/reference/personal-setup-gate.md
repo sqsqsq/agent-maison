@@ -12,13 +12,15 @@ goal-mode 的 local-first 解析与需要 `--select-adapter` 的条件见 [goal-
 
 **仅解析 stdout JSON**（稳定字段：`ok`, `code`, `status`, `activeAdapter`, `materializedAdapters`, `ensured`, `candidates`, `message`, `visualProvider`）。勿依赖人读 stderr/stdout 散文。
 
-`visualProvider` 是**纯 advisory**：它**永不**影响 `ok` / `code`——provider 从来不是 personal setup 的
-前置条件，跳过只意味着本轮 blind。消费方式（UI 相关阶段 **且** 主模型无视觉时才看它）：
+`visualProvider` 在本 checker 中仍是**纯 advisory**：它**永不**影响 `ok` / `code`，因为这里缺少
+UI 相关性与 primary effective image-input 上下文，不能全局判失败。它是 goal 启动的**条件
+prerequisite 输入**：`goal-runner` 在 primary canary 尝试后、正式 phase 前统一判断
+「UI 相关 + primary blind + 无合法 provider」是否持有一次明确盲跑授权。
 
 | 字段 | 含义与用法 |
 |------|-----------|
-| `visualProvider.shouldPrompt` | `true` → 按 S2.1 **问一次**；`false` → **不问**（已配置且受支持，或读取不可用） |
-| `visualProvider.state` | `absent` / `ok` / `unsupported` / `unavailable`（读取出错，如实降级为不问） |
+| `visualProvider.shouldPrompt` | `true` → 按 S2.1 **问一次**；`false` → **不问**（已配置且受支持） |
+| `visualProvider.state` | `absent` / `ok` / `unsupported` / `unavailable`；`unavailable` 也须提示修复配置或明确盲跑，不等于授权 |
 | `visualProvider.supported[]` | catalog 现算的支持项——**唯一**支持列表来源，勿在别处枚举 |
 | `visualProvider.prompt` | `shouldPrompt` 时的现成提示语（含「重选」「跳过并 blind」两条出路） |
 | `visualProvider.decisionClass` | 询问用的 registry 条目 id（`setup.visual_provider`） |
@@ -90,8 +92,8 @@ BLOCKER 确认须 progressive enhancement：[user-confirmation-ux.md](./user-con
 ### S2.1 只读视觉 provider（可选，可跳过）
 
 **问不问不靠你判断，读机器字段**：本轮涉及 UI 且**主模型无视觉能力**时，读 S1 那份 stdout JSON 的
-`visualProvider.shouldPrompt`——`true` 才问、且只问一次；`false` 一律不问（已配置且受支持，
-或读取不可用）。该字段的判据就是「local 缺失 **或** 现有 adapter 已不在支持列表内」，
+`visualProvider.shouldPrompt`——`true` 才问、且只问一次；`false` 一律不问（已配置且受支持）。
+该字段的判据就是「local 缺失、现有 adapter 已不在支持列表内、**或配置读取不可用**」，
 由 harness 确定性算出，不要在对话里重新推断。非 UI 轮次不看它。
 
 - provider = **只读**第二 endpoint：只看图产结构化评审，物理上不写工程；正式产物唯一写者仍是主模型。
@@ -103,11 +105,12 @@ BLOCKER 确认须 progressive enhancement：[user-confirmation-ux.md](./user-con
   **不在多个 provider 之间 fallback**。
 - 写盘由 `record-visual-provider` 任务完成（即 `visualProvider.task`；
   `executionContext.visualProvider = {adapter, model}`）；**禁止** agent 手写 `framework.local.json`。
-- **跳过是完全合法的结果**：本轮以 blind 模式继续，视觉保持 UNVERIFIED、release 保持
-  VISUAL_PENDING，不重复询问、不阻断任何阶段。provider **不是** personal setup 的前置条件，
-  跳过不影响 `--ensure` 的就绪判定。
-- 无人值守（goal headless）**不走本步**：读到已失效的旧配置只 WARN 并忽略，按 blind 继续；
-  显式 `--visual-adapter` 不受支持时在启动处 fail-fast 并列出支持项。
+- **跳过必须是一次明确选择**：普通交互态只授权当前操作盲跑；attended goal 会话层须把同一选择
+  转译成启动参数 `--allow-blind-visual`，由 manifest 冻结为当前 run 的授权。它不写入
+  `framework.local.json`，下一个 UI run 仍须重新选择。跳过不影响本 checker 的 `--ensure` 结果。
+- 无人值守（goal headless）**不走本步**：须提前配置合法 provider，或显式传
+  `--allow-blind-visual`。旧配置失效/读取不可用只 WARN 并按「无 provider」进入同一启动矩阵；
+  UI 需求且无授权时在 phase 前 BLOCKER，非 UI 需求不受此条件影响。
 
 ---
 

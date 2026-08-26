@@ -125,10 +125,9 @@
 - [x] 7.9 三组 unsupported 反向测试（`codeagent`/`chrys`/`generic`）
 - [x] 7.10 文档同步（goal-manifest schema 说明 / personal-setup-gate / goal runbook / 交互态文档；
       只说明声明规则并指向 adapter catalog，不另枚举支持名单）
-- [ ] 7.11 archive —— **宿主 smoke 侧门槛已满足**：7.7 三 provider 真实 invocation 全过、
-      7.7a 只读单点负例对照实证成立、7.8 经用户决定取消。
-      **但仍不 archive**：plan t7⑨ 冻结「修订当前 change，不另开 change；archive 条件扩为
-      t7 单测与文档全过」，t7 仍 pending（见下方第 8 节）⇒ 待 t7 收口后一次归档。
+- [x] 7.11 archive —— **宿主 smoke 侧门槛已满足**：7.7 三 provider 真实 invocation 全过、
+      7.7a 只读单点负例对照实证成立、7.8 经用户决定取消；t7 第 8 节与最终评审均已收口。
+      **归档方式**：同步 delta specs 至主规格后，由仓内固定版本 OpenSpec CLI 执行归档。
       （曾一度标为可 archive 并称「t7 另开 change 承载」，与 plan t7⑨ 冲突，已按单源原则回改。）
 
 ## 8. 启动契约：盲跑须一次显式授权（t7）
@@ -136,36 +135,36 @@
 plan t7⑨ 冻结：**修订本 change**（delta 扩充 + tasks 新条目 + 决策矩阵 Scenario），**不另开
 change**；本 change 的 archive 条件扩为本节单测与文档全过。下列条目未实施前 7.11 不得完成。
 
-- [ ] 8.1 统一规则：需求 UI 相关且 primary 无视觉时，进入 blind 必须持有一次明确盲跑授权；
+- [x] 8.1 统一规则：需求 UI 相关且 primary 无视觉时，进入 blind 必须持有一次明确盲跑授权；
       三形态是同一规则的三种授权载体——交互态当场「跳过并盲跑」/ attended goal 转译为
       `--allow-blind-visual` / 无人值守提前配 provider 或显式传旗标（不得两套政策）
-- [ ] 8.2 决策点位置：落在 **primary canary 尝试完成之后**、正式 phase 启动之前的纯决策；
+- [x] 8.2 决策点位置：落在 **primary canary 尝试完成之后**、正式 phase 启动之前的纯决策；
       不新增生命周期、状态机或第二套 gate。`primaryHasVision` 复用既有 effective image-input
       解析链（`resolveContextAdapterImageInput`），不读本次 probeResult、不建第二套视觉真值
-- [ ] 8.3 优先级：`canaryHardCliFailure` 仍由既有 HALT 分支先行，不得用「缺盲跑授权」掩盖
+- [x] 8.3 优先级：`canaryHardCliFailure` 仍由既有 HALT 分支先行，不得用「缺盲跑授权」掩盖
       CLI 硬故障；`--dry-run` 只报 `would_block` WARN、不拦
-- [ ] 8.4 决策矩阵（冻结五分支）：非 UI 需求放行 / primary 有视觉 → native / primary 盲 +
+- [x] 8.4 决策矩阵（冻结五分支）：非 UI 需求放行 / primary 有视觉 → native / primary 盲 +
       合法 provider → delegated / primary 盲 + 无 provider + 授权在场 → blind 放行 /
       primary 盲 + 无 provider + 无授权 → **启动 BLOCKER**（报错并列双出路）
-- [ ] 8.5 授权载体纪律：新增 `--allow-blind-visual` 独立旗标；不得以 `fidelity=reference_only`
+- [x] 8.5 授权载体纪律：新增 `--allow-blind-visual` 独立旗标；不得以 `fidelity=reference_only`
       冒充授权；不得写入 `framework.local.json` 永久化
-- [ ] 8.6 落键与消费分离（v10 定稿）：显式收到旗标即在**身份漂移检查之前无条件**冻结
+- [x] 8.6 落键与消费分离（v10 定稿）：显式收到旗标即在**身份漂移检查之前无条件**冻结
       `allow_blind_visual: true` 进 manifest（条件入身份哈希，与 `visual_provider_pin` 同点位）；
       canary 后的启动决策**只在 UI+blind+无 provider 分支消费**；不做 canary 后二次落键/
       身份 rebase/二次漂移裁决
-- [ ] 8.7 授权生命周期：resume 读冻结授权不重询；resume 新增授权走 `--override-manifest`；
+- [x] 8.7 授权生命周期：resume 读冻结授权不重询；resume 新增授权走 `--override-manifest`；
       **successor 剥离该键**，新 run 必须重新显式传旗标（跨 run 静默授权是潜伏风险）
-- [ ] 8.8 启动契约与运行时降级分立：合法 provider 选定后运行中调用失败仍走 t5 既有 fail-open，
+- [x] 8.8 启动契约与运行时降级分立：合法 provider 选定后运行中调用失败仍走 t5 既有 fail-open，
       不得因运行时故障反复停 run
-- [ ] 8.9 `visualProvider.state=unavailable`（配置存在但读取失败）归入矩阵的「无 provider」
+- [x] 8.9 `visualProvider.state=unavailable`（配置存在但读取失败）归入矩阵的「无 provider」
       分支——读取失败不等价盲跑授权
-- [ ] 8.10 文档：`personal-setup-gate.md` 的「visualProvider advisory 永不影响启动」改述为
+- [x] 8.10 文档：`personal-setup-gate.md` 的「visualProvider advisory 永不影响启动」改述为
       「条件 prerequisite（goal 启动决策点生效）」；`check-personal-setup` 在缺 UI/primary
       上下文时不得全局报失败；goal runbook 与交互态文档同步三形态授权语义
-- [ ] 8.11 回归：五分支决策矩阵单测 / 授权冻结矩阵（无条件落键 + 条件消费）/ resume 读冻结 /
+- [x] 8.11 回归：五分支决策矩阵单测 / 授权冻结矩阵（无条件落键 + 条件消费）/ resume 读冻结 /
       successor 剥离断言 / 不落 local 负向断言 / `state=unavailable` 分支断言 /
       hard CLI HALT 优先于缺授权 BLOCKER / `--dry-run` `would_block` 不拦 / BLOCKER 文案含双出路
-- [ ] 8.12 t6 既有断言条件化复验：原「无人值守 WARN+blind」收窄为「非 UI 或授权在场时维持，
+- [x] 8.12 t6 既有断言条件化复验：原「无人值守 WARN+blind」收窄为「非 UI 或授权在场时维持，
       UI 需求且无授权 → 启动 BLOCKER」；7.7 结果（调用器未改）**有效不重跑**，另补一组窄启动
       路径 smoke（无授权 BLOCKER / 加旗标落键继续 / 合法 provider 不误挡 / resume 用冻结授权）
-- [ ] 8.13 范围冻结：不碰 provider 调用器、review receipt、OCR、`evaluation_invalidated`、视觉 gate
+- [x] 8.13 范围冻结：不碰 provider 调用器、review receipt、OCR、`evaluation_invalidated`、视觉 gate

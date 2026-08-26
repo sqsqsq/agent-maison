@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { clearFrameworkConfigCache, featurePhaseReportsDir } from '../../config';
 import {
+  assertBlindVisualAuthorizationAtPrepare,
   buildPhaseExecuteRequest,
   defaultGoalModeFrameworkRoot,
   deriveInSessionFingerprint,
@@ -31,6 +32,8 @@ import { featureRelativePath } from '../../scripts/utils/feature-identity';
 import { humanVisualAcceptancePaths } from '../../scripts/goal-runner';
 import { goalFeatureSelfReferencePrefix } from '../../scripts/utils/goal-preflight';
 import { dereferenceRequirementDocs } from '../../scripts/utils/fidelity-shared';
+import { writeLocalConfig } from '../../scripts/utils/framework-local-config';
+import { VISION_CANARY_PROBE_VERSION } from '../../scripts/utils/vision-canary';
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '..', '..', '..');
 
@@ -353,6 +356,95 @@ const cases: TestCase[] = [
           fs.rmSync(root, { recursive: true, force: true });
         }
       }
+    },
+  },
+  {
+    name: 'UI blind prepare blocks before run writes and explicit authorization can retry the same run id',
+    run: () => {
+      const env = mkProject();
+      const runId = 'blind-retry-1';
+      const runDir = path.join(env.root, 'doc', 'features', 'demo', 'goal-runs', runId);
+      try {
+        let message = '';
+        try {
+          prepareGoalModeRun({
+            projectRoot: env.root,
+            frameworkRoot: FRAMEWORK_ROOT,
+            feature: 'demo',
+            runId,
+            adapter: 'codex',
+            requirement: '实现新的 UI 页面与布局',
+            endPhase: 'spec',
+          });
+        } catch (error) {
+          message = String(error);
+        }
+        assert(message.includes('BLOCKER') && message.includes('interactive vision canary'), message);
+        assert(!fs.existsSync(runDir), '未授权 prepare 不得留下 manifest/run-control 或 run 目录');
+
+        const prepared = prepareGoalModeRun({
+          projectRoot: env.root,
+          frameworkRoot: FRAMEWORK_ROOT,
+          feature: 'demo',
+          runId,
+          adapter: 'codex',
+          requirement: '实现新的 UI 页面与布局',
+          endPhase: 'spec',
+          allowBlindVisual: true,
+        });
+        assert(prepared.manifest.allow_blind_visual === true, '显式授权须冻结进 manifest');
+        assert(fs.existsSync(prepared.manifestPath), '补授权后同 run id 应可成功 prepare');
+        assert(readRunControl(prepared.runDir, runId)?.owner === null, '恢复后的 run-control 必须未占用');
+      } finally {
+        fs.rmSync(env.root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'fresh interactive canary is consumed before attended prepare launch decision',
+    run: () => {
+      const env = mkProject();
+      try {
+        writeLocalConfig(env.root, {
+          schema_version: '1.0',
+          agent_adapter: 'codex',
+          vision: {
+            canary: {
+              adapter: 'codex',
+              verdict: 'tool_read',
+              probed_at: new Date().toISOString(),
+              probed_via: 'interactive',
+              probe_version: VISION_CANARY_PROBE_VERSION,
+            },
+          },
+        });
+        const prepared = prepareGoalModeRun({
+          projectRoot: env.root,
+          frameworkRoot: FRAMEWORK_ROOT,
+          feature: 'demo',
+          runId: 'interactive-canary-1',
+          adapter: 'codex',
+          requirement: '实现新的 UI 页面与布局',
+          endPhase: 'spec',
+        });
+        assert(prepared.manifest.allow_blind_visual === undefined, 'native 实测路径不得伪造盲跑授权');
+        assert(fs.existsSync(prepared.manifestPath), 'fresh interactive canary 应放行 attended prepare');
+      } finally {
+        fs.rmSync(env.root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'attach explicitly rejects prepare-only blind authorization input',
+    run: () => {
+      assertBlindVisualAuthorizationAtPrepare(true, true);
+      let message = '';
+      try {
+        assertBlindVisualAuthorizationAtPrepare(false, true);
+      } catch (error) {
+        message = String(error);
+      }
+      assert(message.includes('--prepare-run') && message.includes('attach 不会修改'), message);
     },
   },
   {

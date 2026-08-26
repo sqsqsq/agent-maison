@@ -35,7 +35,9 @@ Enforcement: `harness/scripts/utils/goal-preflight.ts`, `harness/scripts/utils/f
 
 - **WHEN** the primary is blind and a visual provider is configured for an adapter without a complete
   `visual_provider` declaration
-- **THEN** `vision_mode` SHALL be `blind` and the run SHALL proceed on the existing blind path
+- **THEN** `vision_mode` SHALL be `blind`; a non-UI or explicitly authorized run SHALL proceed on the
+  existing blind path, while a UI-related unauthorized run SHALL be refused by the pre-phase blind
+  launch prerequisite
 
 ### Requirement: Fidelity clamping reads a narrow optional review axis
 
@@ -193,7 +195,8 @@ Enforcement: `harness/scripts/check-testing.ts`, `profiles/hmos-app/harness/visu
 
 - **WHEN** every provider call in a run is `unavailable`
 - **THEN** the run's phase outcomes, halts, budgets and release projection SHALL match a `blind` run
-  of the same requirement, with no additional state and no additional stop
+  of the same requirement after launch was legally admitted with that provider, with no additional
+  state, reauthorization, or additional stop
 
 ### Requirement: Spec-phase visual observations are best-effort sidecars, never gates
 

@@ -403,3 +403,61 @@ export function resolveFinalVisualProviderPin(
   }
   return { ok: true, pin: cliRef };
 }
+
+// ----------------------------------------------------------------------------
+// plan ab072691 t7：run 级盲跑授权的 manifest 单点裁决
+// ----------------------------------------------------------------------------
+
+export interface ResolveFinalBlindVisualAuthorizationInput {
+  /** 本次 CLI 是否显式携带 --allow-blind-visual */
+  cliAllowed: boolean;
+  /** manifest 是否已冻结 allow_blind_visual:true */
+  manifestAllowed: boolean;
+  isResume: boolean;
+  hasManifestFlag: boolean;
+  /** successor 出生不继承授权；只有本次 CLI 能为新 run 授权 */
+  isSuccessor: boolean;
+  overrideManifest: boolean;
+}
+
+export type ResolveFinalBlindVisualAuthorizationResult =
+  | { ok: true; allowed: boolean }
+  | { ok: false; message: string };
+
+/**
+ * 授权字段只表达正向事实（键在场且恒为 true）：
+ *  - fresh 普通启动直接接受显式旗标；
+ *  - fresh+manifest / resume 沿用冻结值；给旧 manifest 新增授权须 --override-manifest；
+ *  - successor 是新 run，忽略继承值，仅本次显式旗标可授权。
+ */
+export function resolveFinalBlindVisualAuthorization(
+  input: ResolveFinalBlindVisualAuthorizationInput,
+): ResolveFinalBlindVisualAuthorizationResult {
+  const {
+    cliAllowed,
+    manifestAllowed,
+    isResume,
+    hasManifestFlag,
+    isSuccessor,
+    overrideManifest,
+  } = input;
+
+  if (isSuccessor && !isResume) {
+    return { ok: true, allowed: cliAllowed };
+  }
+  if (!isResume && !hasManifestFlag && !manifestAllowed) {
+    return { ok: true, allowed: cliAllowed };
+  }
+  if (!cliAllowed) return { ok: true, allowed: manifestAllowed };
+  if (manifestAllowed) return { ok: true, allowed: true };
+  if (!overrideManifest) {
+    return {
+      ok: false,
+      message:
+        '[goal-runner] BLOCKER: --allow-blind-visual 会给既有 manifest 新增 ' +
+        'allow_blind_visual 身份字段——须 --override-manifest；--force-resume 与 ' +
+        '--override-start/--override-end 均不授权该变更。',
+    };
+  }
+  return { ok: true, allowed: true };
+}

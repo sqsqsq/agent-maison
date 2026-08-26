@@ -48,6 +48,113 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-manif
 - **WHEN** a run with a frozen `visual_provider_pin` is resumed after the local configuration changed
 - **THEN** the run SHALL use the frozen pin, and changing it SHALL require the explicit override flag
 
+### Requirement: Blind visual launch requires one explicit authorization per run
+
+The goal runner SHALL accept an independent boolean flag `--allow-blind-visual`. This flag is the
+goal-run carrier for an explicit choice to proceed without either primary image input or a legal
+visual provider. `fidelity=reference_only` SHALL NOT count as that authorization, and the flag SHALL
+NOT be written to `framework.local.json` or any other personal persistent configuration.
+
+When the flag is explicitly present, the runner SHALL unconditionally freeze
+`allow_blind_visual: true` into the manifest **before** the existing manifest identity-drift check.
+The key SHALL enter the manifest identity hash conditionally on key presence. A fresh run MAY accept
+the key directly. A resume SHALL use the frozen value without requiring the flag again; adding the
+key to an older manifest that did not contain it SHALL require the existing `--override-manifest`
+path. A successor SHALL strip the key from the inherited manifest, so the new run requires a new
+explicit authorization. No post-canary manifest write, identity rebase, or second drift check SHALL
+be introduced. The key MAY be present for a native or delegated run, but it SHALL NOT affect routing
+outside the blind-without-provider branch.
+
+After the primary canary attempt has completed, and before any formal phase invocation, the runner
+SHALL evaluate one pure launch decision using only existing sources of truth:
+
+- UI relevance from `resolveUiRelevanceForRun`;
+- primary image input from the existing effective `resolveContextAdapterImageInput` chain, not from
+  the current probe result directly;
+- provider availability from the frozen `visual_provider_pin` plus adapter-catalog eligibility;
+- authorization from the manifest's `allow_blind_visual` key.
+
+The decision SHALL have exactly five branches: a non-UI requirement is allowed; a UI requirement
+whose primary has image input is allowed as native; a blind primary with a legal provider is allowed
+as delegated; a blind primary without a provider but with frozen authorization is allowed as blind;
+and a blind primary without either provider or authorization is a pre-phase BLOCKER. The BLOCKER
+message SHALL name both remedies: configure a visual provider through `record-visual-provider`, or
+rerun with `--allow-blind-visual` to authorize blind execution explicitly.
+
+The existing `canaryHardCliFailure` HALT branch SHALL run first and SHALL NOT be masked by the blind
+authorization decision. Under `--dry-run`, the blocking branch SHALL emit a WARN containing
+`would_block` and SHALL NOT stop, because no formal phase is launched. A configured provider whose
+personal setup state is `unavailable` SHALL count as no provider, never as authorization. Once a
+legal provider was selected and launch was admitted as delegated, a later provider invocation
+failure SHALL remain on the existing fail-open path and SHALL NOT re-run this launch authorization
+check.
+
+Ordinary interactive use, attended goal use, and unattended goal use SHALL be three carriers of this
+single policy, not separate policies: an interactive user's in-place "skip and run blind" choice
+authorizes only that operation; attended goal orchestration translates the same choice into the CLI
+flag; and unattended execution must either have a legal provider or pass the flag explicitly.
+
+Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/goal-mode-entry.ts`,
+`harness/scripts/utils/goal-manifest.ts`,
+`harness/scripts/utils/goal-manifest-cli.ts`, `harness/scripts/utils/goal-preflight.ts`,
+`harness/scripts/check-personal-setup.ts`
+
+#### Scenario: a non-UI requirement is not subjected to the visual launch prerequisite
+
+- **WHEN** the requirement is not UI-related, regardless of primary vision, provider, or authorization
+- **THEN** the launch SHALL proceed without consulting or requiring a visual provider
+
+#### Scenario: native vision ignores an otherwise present blind authorization
+
+- **WHEN** a UI-related run has effective primary image input and its manifest contains
+  `allow_blind_visual: true`
+- **THEN** the launch SHALL proceed as native and the authorization key SHALL NOT change the route
+
+#### Scenario: an eligible frozen provider admits delegated launch
+
+- **WHEN** a UI-related run has a blind primary and a frozen provider whose adapter is eligible in
+  the adapter catalog
+- **THEN** the launch SHALL proceed as delegated without requiring blind authorization
+
+#### Scenario: frozen authorization admits an otherwise blind launch
+
+- **WHEN** a UI-related run has a blind primary, no legal provider, and
+  `allow_blind_visual: true` in its manifest
+- **THEN** the launch SHALL proceed as blind through the existing visual-debt and release projection
+
+#### Scenario: an unauthorized blind UI launch is blocked before the phase
+
+- **WHEN** a UI-related run has a blind primary, no legal provider, and no frozen authorization
+- **THEN** the runner SHALL emit a pre-phase BLOCKER naming both configuration and explicit blind-run
+  remedies, and SHALL NOT invoke the phase
+
+#### Scenario: dry-run reports the same decision without blocking
+
+- **WHEN** the unauthorized blind UI condition is reached under `--dry-run`
+- **THEN** the runner SHALL emit a `would_block` WARN and SHALL NOT emit the formal-phase BLOCKER
+
+#### Scenario: canary hard failure keeps priority
+
+- **WHEN** the primary canary records a hard CLI failure and the blind authorization is also absent
+- **THEN** the existing hard-failure HALT SHALL be reported, not the blind-launch BLOCKER
+
+#### Scenario: resume and successor have different authorization lifetimes
+
+- **WHEN** an authorized manifest is resumed and later used to create a successor
+- **THEN** the resume SHALL use the frozen authorization without a new flag, while the successor
+  SHALL contain no `allow_blind_visual` key and SHALL require a new explicit authorization if blind
+
+#### Scenario: an unavailable configured provider is still no provider
+
+- **WHEN** personal setup reports `visualProvider.state = unavailable` for a UI-related blind run
+- **THEN** launch SHALL follow the no-provider branches and SHALL require explicit blind authorization
+
+#### Scenario: provider runtime degradation does not reopen launch authorization
+
+- **WHEN** a legally admitted delegated run later receives an `unavailable` or `invalid` provider result
+- **THEN** the existing fail-open review behavior SHALL continue the development loop without another
+  launch BLOCKER
+
 ### Requirement: An unsupported visual provider selection responds by input shape and never substitutes silently
 
 The response to a provider adapter that is absent from the catalog-derived support list SHALL depend
@@ -56,13 +163,16 @@ only on how the selection arrived:
 - **Ordinary interactive use** — on the first UI-related phase, when the local configuration is
   missing a provider **or** its adapter is unsupported, the framework MAY ask once for
   `adapter` + `model`, presenting the catalog-derived support list and allowing a reselection. If the
-  user skips, the round proceeds `blind` and SHALL NOT ask again in that round.
+  user skips, that explicit choice authorizes this operation to proceed `blind` and SHALL NOT be
+  persisted or asked again in that round.
 - **Attended goal creation** — the same condition and the same selection/reselection flow apply
   before the manifest is created. A valid selection is written to the local configuration and then
-  frozen into the manifest; skipping still starts a `blind` run.
+  frozen into the manifest; skipping SHALL be translated into `--allow-blind-visual` so the run-scoped
+  authorization is frozen before launch.
 - **Unattended** — the framework SHALL NOT ask. A stale local configuration naming an unsupported
-  adapter SHALL produce a warning, SHALL be ignored, and the run SHALL continue `blind`. A missing
-  configuration is likewise `blind`. Neither case may stop the run.
+  adapter SHALL produce a warning and SHALL be ignored. A non-UI run, or a run carrying frozen blind
+  authorization, MAY continue `blind`; a UI-related blind run without authorization SHALL stop at the
+  pre-phase launch BLOCKER. A missing configuration follows the same matrix.
 - **Explicit CLI** — `--visual-adapter` naming an unsupported adapter SHALL fail fast, and the error
   SHALL list the catalog-derived support list. Silently ignoring an explicit user input is forbidden.
 
@@ -78,10 +188,11 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/check-personal-s
 - **THEN** the user SHALL be prompted once with the support list and the option to skip, and a skip
   SHALL continue `blind` without a second prompt in that round
 
-#### Scenario: unattended never stops on a stale selection
+#### Scenario: unattended stale selection obeys the shared launch matrix
 
 - **WHEN** an unattended run reads a local configuration naming an unsupported provider adapter
-- **THEN** the run SHALL warn, ignore the configuration, continue `blind`, and SHALL NOT halt
+- **THEN** the run SHALL warn and ignore the configuration; it SHALL continue blind only for a non-UI
+  requirement or with frozen authorization, and SHALL block a UI-related unauthorized blind launch
 
 #### Scenario: no automatic substitution
 
