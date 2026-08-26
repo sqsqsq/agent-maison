@@ -89,6 +89,7 @@ import {
   deriveEffectiveAdapterImageInput,
   effectiveAssetAcquisitionMode,
 } from './scripts/utils/fidelity-shared';
+import { reviewVisionForMode } from './scripts/utils/visual-provider-identity';
 import {
   resolvePaths,
   featureFilePath,
@@ -760,6 +761,12 @@ async function main(): Promise<void> {
           hasVision: capSnap
             ? capSnap.vision.verdict
             : mmProbe.supported && resolveCurrentVisualForHarness(projectRoot, feature),
+          // plan ab072691 t2③：评审轴只从**冻结快照**取（vision_mode 由 spec 期 preflight
+          // 派生一次、run 内不可变）。旧快照/无快照无该键 → undefined → clamp 回落
+          // hasVision，行为与本改动前逐字一致。消费面绝不自行重探 provider。
+          ...(capSnap?.vision_mode
+            ? { reviewVision: reviewVisionForMode(capSnap.vision_mode) }
+            : {}),
           ocrAvailable: capSnap
             ? capSnap.ocr.verdict
             : resolveOcrAvailableForRun(projectRoot, resolvedProfile.profileDir, fwConfig.agent_adapter),

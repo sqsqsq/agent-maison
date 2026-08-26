@@ -54,7 +54,7 @@ import {
 import { writeLivenessBeacon } from './utils/liveness-beacon';
 import { loadResolvedProfile } from '../profile-loader';
 import { runCapabilityPreflight, emitHarnessPreflightGap } from './utils/capability-preflight';
-import type { HarnessResolvedProfile, ProviderRef } from './utils/types';
+import type { HarnessResolvedProfile, ProviderRef, VisionMode } from './utils/types';
 import { resolveWorkflowSpec } from '../workflow-loader';
 import { resolveContextAdapterImageInput, isFreshCanaryForExecution } from './utils/multimodal-probe';
 import { loadLocalConfig as loadFrameworkLocalConfig } from './utils/framework-local-config';
@@ -357,6 +357,8 @@ import {
 import {
   assertVisualProviderCliSupported,
   resolveUnattendedVisualProviderPin,
+  resolveVisionModeForRun,
+  reviewVisionForMode,
 } from './utils/visual-provider-identity';
 import {
   loadProgressContext,
@@ -1112,12 +1114,27 @@ function readHarnessFailureFromDetachLog(logPathAbs: string): string | undefined
 export interface CapabilityAdvisory {
   hasVision: boolean;
   ocrAvailable: boolean;
+  /**
+   * plan ab072691 t2①④：本 run 冻结的视觉路由三态。生产路径恒由
+   * resolvePhaseCapabilityAdvisory 填入；**可选**是为了与既有 CapabilitySnapshot /
+   * reviewVision 同一条兼容纪律——缺键=非委托，能力块行为逐字等于本改动前。
+   * 'delegated' 时能力块额外说明「你无视觉，但有一个只读评审器会看图并回给你缺陷」。
+   */
+  visionMode?: VisionMode;
+  /** delegated 时的 provider 身份（能力块如实点名，不含糊其辞） */
+  visualProvider?: { adapter: string; model: string };
   /** 用户需求选定的合同档位；fidelity_target 必须投影这个值。 */
   selectedFidelity?: FidelityTarget;
   effectiveFidelity: FidelityTarget;
   fidelityClamped: boolean;
   /** OCR 预扫描产出的 project-relative .ocr.json 路径（无参考图/OCR 不可用/有视觉时为空数组） */
   ocrJsonPaths: string[];
+  /**
+   * plan ab072691 t4⑤：spec 期视觉观察 sidecar 的 project-relative 路径。
+   * 与 ocrJsonPaths 同性质：**best-effort 上下文**，不是门禁产物、不产 check。
+   * spec 生产、plan/coding 只列（与 OCR 预扫描同一条 dispatch 纪律）。
+   */
+  visualObservationPaths?: string[];
   /** plan f6b2d9a4：三轴 SSOT 下发（SSOT 缺失=best_effort/undefined 回落） */
   acceptanceStrictness?: 'best_effort' | 'hard';
   assetAcquisitionMode?: 'approximate' | 'auto_crop' | 'user_dir';
@@ -1193,6 +1210,32 @@ export function buildCapabilityBlock(advisory: CapabilityAdvisory): string[] {
       '',
     );
   }
+  // plan ab072691 t2④：delegated 分支——在**盲档工作法之上**追加委托说明。
+  // 刻意不替换盲档段：你确实没有视觉，写法一个字都不变；只是多了一个只读评审器会在
+  // 截图之后把逐屏缺陷回给你修。写者仍然只有你一个。
+  if (advisory.visionMode === 'delegated' && advisory.visualProvider) {
+    lines.push(
+      `**Delegated visual review is active for this run** (provider: adapter=${advisory.visualProvider.adapter}, ` +
+      `model=${advisory.visualProvider.model}).`,
+      '- You still have NO vision. Everything in the blind working method below applies to you unchanged.',
+      '- After each device capture, a **read-only** reviewer with that identity looks at every target screen',
+      '  and returns structured per-screen defects + must_fix items for YOU to fix. It cannot write anything',
+      '  in this project — not source, not artifacts, not gate files, and never a human confirmation signature.',
+      ...(advisory.visualObservationPaths && advisory.visualObservationPaths.length > 0
+        ? [
+            '- Observation sidecars for the reference images (machine-produced context, NOT a verdict and NOT',
+            '  your own seeing — treat them exactly like OCR JSON):',
+            ...advisory.visualObservationPaths.map(p => `  - ${p}`),
+          ]
+        : [
+            '- No observation sidecar is available for this round. That is normal and not an error: keep working',
+            '  from the requirement text and any OCR JSON below.',
+          ]),
+      '- You remain the single writer of every project artifact. Do NOT wait for the reviewer, do NOT ask for it,',
+      '  and do NOT claim you saw anything yourself. If a round produces no review, keep working blind.',
+      '',
+    );
+  }
   if (!advisory.hasVision) {
     lines.push(
       '**You do NOT have vision.** Do NOT pretend to look at reference images or describe their visual',
@@ -1262,6 +1305,10 @@ function buildUnattendedExecutionBlock(
   // E0（cursor 采纳：同 prompt 自相矛盾预防）——原文硬编码「唯一出路是 pixel_1to1 P0 屏人工
   // 确认」；盲档下 effective fidelity 根本到不了 pixel_1to1，这句话与能力块（若同时注入）自相
   // 矛盾。按 capabilityAdvisory（与能力块同源取值）分支措辞；未传入（非 UI phase）时保留原文。
+  // plan ab072691 t2④：pixel 可达性判据即**评审轴的结论**——effectiveFidelity 已由
+  // clampFidelityByCapability 按 reviewVision 算出（native/delegated 不钳、blind 照旧钳）。
+  // 故此处公式一字不改即自动按 review 轴分支：delegated 下 pixel_1to1 可达，人签措辞
+  // 与真实档位一致（人签判据本身零改动，provider 永不构成人签）。
   const pixelReachable = !capabilityAdvisory || capabilityAdvisory.effectiveFidelity === 'pixel_1to1';
   const deterministicDetectorLines = pixelReachable
     ? [
@@ -2473,7 +2520,19 @@ export function resolvePhaseCapabilityAdvisory(
   const effectiveIntent = intentSsot;
   const hasVision = effectiveSnap ? effectiveSnap.vision.verdict : mmProbe.supported;
   const effectiveOcr = effectiveSnap ? effectiveSnap.ocr.verdict : ocrAvailable;
-  const clamp = clampFidelityByCapability(desired, { hasVision, ocrAvailable: effectiveOcr });
+  // plan ab072691 t2①：vision_mode 优先取**冻结快照**（preflight 派生一次、run 内不可变）；
+  // 无快照（legacy / 非 goal 现场）才按同一条纯规则现算。任何 provider 调用结果都不参与——
+  // 这里只看静态资格，没有 provider 金丝雀。
+  const visionMode: VisionMode = effectiveSnap?.vision_mode
+    ?? resolveVisionModeForRun(frameworkRoot, hasVision, manifest.visual_provider_pin);
+  const visualProvider = effectiveSnap?.visual_provider
+    ?? (visionMode === 'delegated' ? manifest.visual_provider_pin : undefined);
+  // t2③：钳制吃评审轴——delegated 与 native 同样不钳（pixel_1to1 放行），blind 逐字不变。
+  const clamp = clampFidelityByCapability(desired, {
+    hasVision,
+    ocrAvailable: effectiveOcr,
+    reviewVision: reviewVisionForMode(visionMode),
+  });
 
   // spec 是 OCR 预扫描的唯一生产者（有真实 OCR 耗时）；plan/coding 只列出盘上已有的产物
   // （宿主复验修复①——此前 plan/coding 恒为空数组，能力块对 agent 谎称"没找到参考图"）。

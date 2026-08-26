@@ -48,6 +48,7 @@ import {
 import { isSpecVisualHandoffSkipped, dispatchSpecVisualHandoff, isSpecUiSpecSkipped, dispatchSpecUiSpec, isSpecAssetAcquisitionSkipped, dispatchSpecAssetAcquisition } from '../capability-registry';
 import { relCatalog, relGlossary, relFeatureArtifact, relFeatureFile, loadFrameworkConfig, featureFilePath } from '../config';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
+import { reviewVisionForMode } from './utils/visual-provider-identity';
 import {
   clampFidelityByCapability,
   collectRequirementIntentText,
@@ -199,6 +200,10 @@ export function checkFidelityCapabilityPregate(ctx: CheckContext): CheckResult[]
     const reclamp = clampFidelityByCapability(ssot.selected_fidelity, {
       hasVision: snap.vision.verdict,
       ocrAvailable: snap.ocr.verdict,
+      // plan ab072691 t2③：复核用的评审轴同样只读**冻结快照**里的 vision_mode——
+      // pregate 的职责是「按写入时那次决策重算是否自洽」，不是重新探测能力。
+      // 旧快照无该键 → undefined → 回落 hasVision，复核口径逐字不变。
+      ...(snap.vision_mode ? { reviewVision: reviewVisionForMode(snap.vision_mode) } : {}),
     });
     if (reclamp.effective !== ssot.effective_fidelity) {
       issues.push(

@@ -25,7 +25,7 @@ import {
   listVisualProviderAdapterNames,
 } from './adapter-catalog';
 import { loadLocalConfig, type FrameworkLocalConfig } from './framework-local-config';
-import type { ProviderRef } from './types';
+import type { ProviderRef, VisionMode } from './types';
 
 export type VisualProviderLocalState =
   /** framework.local.json 没有 vision.visual_provider */
@@ -102,6 +102,51 @@ export function resolveUnattendedVisualProviderPin(
       `当前支持：${formatVisualProviderSupportList(frameworkRoot)}。` +
       '（无人值守不询问、不自动改选、不 fallback；要启用请显式配置一个受支持的 provider。）',
   };
+}
+
+// ---------------------------------------------------------------------------
+// plan ab072691 t2①：vision_mode 三态派生（**纯函数**——不读盘、不探测、不 spawn）
+// ---------------------------------------------------------------------------
+
+export interface VisionModeInput {
+  /** primary 执行身份是否能看图（既有三层解析链的结论，语义与 hasVision 逐字一致） */
+  primaryHasVision: boolean;
+  /** 本 run 冻结的 provider 身份（manifest pin / 交互态 local）；缺省=没配 */
+  providerPin?: ProviderRef;
+  /**
+   * provider **静态资格**：其 adapter 是否有完整 `visual_provider` 声明。
+   * 由调用方查 adapter catalog 后传入——本函数保持纯度，也避免在热路径反复扫盘。
+   * **不存在「provider 金丝雀」**：真实调用即探测，这里只做静态判定。
+   */
+  providerEligible: boolean;
+}
+
+export function resolveVisionMode(input: VisionModeInput): VisionMode {
+  // native 优先：primary 自己能看图时根本不需要委托，现状链零变化。
+  if (input.primaryHasVision) return 'native';
+  if (input.providerPin && input.providerEligible) return 'delegated';
+  return 'blind';
+}
+
+/** 便捷壳：从 frameworkRoot 现算静态资格后派生（调用方无需自己查 catalog）。 */
+export function resolveVisionModeForRun(
+  frameworkRoot: string,
+  primaryHasVision: boolean,
+  providerPin?: ProviderRef,
+): VisionMode {
+  return resolveVisionMode({
+    primaryHasVision,
+    providerPin,
+    providerEligible: Boolean(providerPin && isVisualProviderSupported(frameworkRoot, providerPin.adapter)),
+  });
+}
+
+/**
+ * 钳制用的**评审轴**取值：native/delegated 都有「能看图的检查者」，blind 没有。
+ * 唯一产生 `FidelityCapability.reviewVision` 的地方——不得在各消费点各判一遍。
+ */
+export function reviewVisionForMode(mode: VisionMode): boolean {
+  return mode !== 'blind';
 }
 
 /**

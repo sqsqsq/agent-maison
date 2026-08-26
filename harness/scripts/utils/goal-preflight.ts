@@ -3,7 +3,8 @@
  */
 
 import type { FrameworkPersonalSetupStatus } from '../../config';
-import type { HarnessResolvedProfile } from '../../scripts/utils/types';
+import type { HarnessResolvedProfile, ProviderRef } from '../../scripts/utils/types';
+import { resolveVisionModeForRun, reviewVisionForMode } from './visual-provider-identity';
 import type { GoalManifest, RunAdapterProvenance } from './goal-manifest';
 import {
   adapterEntryExists,
@@ -561,6 +562,13 @@ export interface FidelityRoutingInitInput {
   runIdForReceipt?: string;
   /** plan d7f3a9c4 t3：最终裁决后的 model pin value（goal 态由 manifest 派生；无 pin 不传） */
   modelPin?: string;
+  /**
+   * plan ab072691 t2①②：本 run 冻结的只读视觉 provider 身份（goal 态来自
+   * manifest.visual_provider_pin；阶段驱动来自个人级 local）。**不传=没配**。
+   * 传入不代表可用：静态资格（adapter 是否有完整 visual_provider 声明）在此处现算，
+   * 不合格即落 blind。真实调用的成败与本判定无关（无 provider 金丝雀）。
+   */
+  visualProviderPin?: ProviderRef;
   /** plan c8e5b3f1 t1：需求来源（必填——TS 必填参数防漏接，漏传即编译不过）：
    * goal_manifest=goal 模式（preflight / vision policy 收紧重建）；explicit_cli=手动显式非空
    * 需求；intent_fallback=仅靠 collectIntentTextWithPhaseFallback 兜底。不提供默认值、不看
@@ -620,12 +628,16 @@ export function initializeFidelityRouting(
     computeRequirementShaFromText(
       input.projectRoot, input.feature, input.requirement ?? deref.combined, input.featuresDirRel,
     ) ?? cryptoT6.createHash('sha256').update(deref.combined, 'utf-8').digest('hex');
+  // plan ab072691 t2①：vision_mode **在此派生一次**并随快照冻结——run 内不可变。
+  // 静态资格现算（catalog 完整声明），不做任何 provider 探测调用。
+  const visionMode = resolveVisionModeForRun(input.frameworkRoot, hasVision, input.visualProviderPin);
   const routing = resolveFidelityRoutingDecision({
     requirementText: deref.combined,
     manifestFidelity: input.manifestFidelity,
     manifestFidelitySource: input.fidelityFromCli ? 'explicit_cli' : 'manifest_declared',
     downgradeReceiptValid,
-    capability: { hasVision, ocrAvailable },
+    // t2③：钳制吃评审轴。delegated 与 native 同样不钳（pixel_1to1 放行）；blind 逐字不变。
+    capability: { hasVision, ocrAvailable, reviewVision: reviewVisionForMode(visionMode) },
     executionIdentity: input.executionIdentity,
     requirementSha,
   });
@@ -633,10 +645,17 @@ export function initializeFidelityRouting(
     execution_identity: input.executionIdentity,
     decision_id: routing.decision.decision_id,
     vision: {
+      // 语义不变：vision.verdict 恒指 **primary** 是否能看图（vision_mode 才是路由三态）。
       verdict: hasVision,
       source: `probe:${probe.imageInput ?? 'none'}`,
     },
     ocr: { verdict: ocrAvailable, source: input.profileDir ? 'profile_probe_or_canary' : 'canary_signal' },
+    vision_mode: visionMode,
+    // 只有真正委托出去时才记 provider 身份：配了但失格 ⇒ blind，快照不得留一个
+    // 「看起来已委托」的记录（诚实披露优先于信息完整）。
+    ...(visionMode === 'delegated' && input.visualProviderPin
+      ? { visual_provider: { ...input.visualProviderPin } }
+      : {}),
   });
   writeFidelityIntentSsot(input.projectRoot, input.feature, routing, {
     executionIdentity: input.executionIdentity,
@@ -691,6 +710,8 @@ export function evaluateFidelityTierPreflight(input: FidelityPreflightInput): Fi
       : {}),
     // plan d7f3a9c4 t3：preflight 能力探测带最终裁决 pin（manifest 派生）。
     ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
+    // plan ab072691 t2①：视觉委托身份同样只从 manifest 冻结值派生（不重读 local）。
+    ...(manifest.visual_provider_pin ? { visualProviderPin: manifest.visual_provider_pin } : {}),
     now: input.now,
   });
   if (routing.rejectedDowngrade) {
@@ -753,6 +774,12 @@ function evaluateDownstreamStartFidelity(input: FidelityPreflightInput): Fidelit
   };
   const probe = resolveContextAdapterImageInput(projectRoot, frameworkRoot, manifest.adapter, identity);
   const ocrAvailable = resolveOcrAvailableForRun(projectRoot, input.profileDir ?? '', manifest.adapter, identity);
+  // plan ab072691 t2①③：下游起点同样按 manifest 冻结的 provider 身份重算评审轴——
+  // 否则「spec 期委托到位、下游起点却按盲重判」会把 pixel∧hard 误判成真冲突而 DEFER。
+  // 与上游同一条派生规则（静态资格，无 provider 探测）。
+  const downstreamReviewVision = reviewVisionForMode(
+    resolveVisionModeForRun(frameworkRoot, probe.supported, manifest.visual_provider_pin),
+  );
   if (ssotState.state === 'missing') {
     // 无既有 SSOT（legacy 现场/非 UI 流程/交互态闭环）：**内存推导**路由做真冲突判定
     //（post-impl4 P0-1 语义不因零写盘削弱——盲 ∧ hard ∧ pixel 不许盲跑全链），
@@ -763,7 +790,7 @@ function evaluateDownstreamStartFidelity(input: FidelityPreflightInput): Fidelit
       manifestFidelity: manifest.fidelity,
       manifestFidelitySource: input.fidelityFromCli ? 'explicit_cli' : 'manifest_declared',
       downgradeReceiptValid: false,
-      capability: { hasVision: probe.supported, ocrAvailable },
+      capability: { hasVision: probe.supported, ocrAvailable, reviewVision: downstreamReviewVision },
       executionIdentity: manifest.run_id,
       requirementSha: currentSha,
     });
@@ -812,6 +839,7 @@ function evaluateDownstreamStartFidelity(input: FidelityPreflightInput): Fidelit
   const reclamp = clampFidelityByCapability(ssot.selected_fidelity, {
     hasVision: probe.supported,
     ocrAvailable,
+    reviewVision: downstreamReviewVision,
   });
   if (ssot.selected_fidelity === 'pixel_1to1' && ssot.acceptance_strictness === 'hard' && reclamp.clamped) {
     return {

@@ -6,7 +6,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createRequire } from 'module';
-import type { CheckContext } from './types';
+import type { CheckContext, VisionMode } from './types';
 import { parseVisualHandoffYamlRoot, parseUiChangeFromSpecMarkdown, UI_CHANGE_REQUIRES_UI_SPEC } from './ui-spec-shared';
 import { featureFilePath, relFeaturesDir } from '../../config';
 import { readCanaryOcrCapableSignal } from './multimodal-probe';
@@ -602,6 +602,20 @@ export interface FidelityCapability {
   hasVision: boolean;
   /** isOcrAvailable()（profile 相关，由调用方探测传入——core 不硬依赖具体 profile 的 OCR 实现） */
   ocrAvailable: boolean;
+  /**
+   * 视觉委托（plan ab072691 t2③）：**评审轴**——「本轮有没有一个能看图的检查者」。
+   *
+   * 为什么不给 hasVision 改名：hasVision 的语义是「**primary** 能不能看图」，被 prompt 组装、
+   * closure read requirement、tool-event provenance 分轴等多处消费，全局改名会把这些点一起
+   * 卷进来重判。这里只加一个**可选**字段，钳制判据取 `reviewVision ?? hasVision`：
+   * 不传的旧调用面**逐字不变**（零回归面），只有 delegated 判定点显式传 true。
+   *
+   * 语义依据：保真档位是**验收承诺**，取决于「检查者」能否看图，而不是「书写者」能否看图。
+   * delegated 下 primary 盲写、只读 provider 逐屏评审——pixel_1to1 因此可以放行。
+   * 放行不靠事前探测背书，靠三层既有兜底：同调用载荷校验 + 既有 VISUAL_PENDING 投影 +
+   * pixel_1to1 人签（三者均零改动）。
+   */
+  reviewVision?: boolean;
 }
 
 export type FidelityClampReason = 'no_vision_ocr_available' | 'no_vision_no_ocr';
@@ -624,7 +638,10 @@ export function clampFidelityByCapability(
   desired: FidelityTarget,
   capability: FidelityCapability,
 ): FidelityClampResult {
-  if (capability.hasVision) return { effective: desired, clamped: false };
+  // plan ab072691 t2③：钳制吃**评审轴**。缺省回落 hasVision ⇒ 旧调用面逐字不变；
+  // delegated（primary 盲 + 合格只读 provider）传 reviewVision=true ⇒ 与 native 同样不钳。
+  const review = capability.reviewVision ?? capability.hasVision;
+  if (review) return { effective: desired, clamped: false };
   if (desired === 'reference_only') return { effective: desired, clamped: false };
   if (capability.ocrAvailable) {
     if (desired === 'pixel_1to1') {
@@ -759,6 +776,10 @@ export function resolveFidelityRoutingDecision(input: FidelityRoutingInput): Fid
     r: input.downgradeReceiptValid === true,
     v: input.capability.hasVision,
     o: input.capability.ocrAvailable,
+    // plan ab072691 t2③：评审轴是 clamp 的真实输入之一，必须进 digest，否则「委托到位/
+    // 委托失格」两种截然不同的路由会共用同一个 decision_id。**条件入集**（键在场即入）：
+    // 不传 reviewVision 的旧调用面 digest 逐字节不变，既有 decision_id 不漂移。
+    ...(input.capability.reviewVision !== undefined ? { rv: input.capability.reviewVision } : {}),
   })).digest('hex');
   const decision_id = crypto.createHash('sha256')
     .update(`${input.executionIdentity}|${input.requirementSha}|${digest}`)
@@ -941,6 +962,14 @@ export interface CapabilitySnapshot {
   decision_id?: string;
   vision: { verdict: boolean; source: string };
   ocr: { verdict: boolean; source: string };
+  /**
+   * 视觉委托（plan ab072691 t2②）：本 run 冻结的视觉路由三态。
+   * **可选**——旧快照无此键即现状语义（native/blind 由 vision.verdict 决定），
+   * 消费方不得凭空补默认值。
+   */
+  vision_mode?: VisionMode;
+  /** delegated 时的 provider 身份（诚实披露；native/blind 无此键） */
+  visual_provider?: { adapter: string; model: string };
   created_at: string;
 }
 
@@ -980,6 +1009,17 @@ export function loadCapabilitySnapshot(projectRoot: string, feature: string): Ca
       typeof doc?.created_at !== 'string' || !doc.created_at.trim() ||
       !doc.vision.source.trim() || !doc.ocr.source.trim()
     ) return null;
+    // plan ab072691 t2②：可选键 shape 校验——**在场才校验**（旧快照无键=现状语义，
+    // 不得凭空补默认）。形状坏掉的委托记录不能被当成有效委托，整份快照拒收。
+    const mode = (doc as { vision_mode?: unknown }).vision_mode;
+    if (mode !== undefined && mode !== 'native' && mode !== 'delegated' && mode !== 'blind') return null;
+    const vp = (doc as { visual_provider?: unknown }).visual_provider;
+    if (vp !== undefined) {
+      if (!vp || typeof vp !== 'object' || Array.isArray(vp)) return null;
+      const row = vp as { adapter?: unknown; model?: unknown };
+      if (typeof row.adapter !== 'string' || !row.adapter.trim()) return null;
+      if (typeof row.model !== 'string' || !row.model.trim()) return null;
+    }
     return doc;
   } catch {
     return null;
