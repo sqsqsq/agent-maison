@@ -64,16 +64,33 @@ adapter.yaml.visual_provider          →  resolveVisualProviderInvokePlan()  �
 
 `timeoutMs` 走既有 `AgentInvokeOptions`；usage 只读 `AgentInvokeResult.usage`，不再单独派生。
 
-四 adapter 的接线要点（细节以锁定版本 help + 真实 smoke 为准）：
+接线要点（细节以锁定版本 help + 真实 smoke 为准；下表已按 tasks 7.7 宿主实测回填）：
 
 | adapter | 只读手段 | 图片入口 | 正文投影 |
 |---------|----------|----------|----------|
-| claude | `--safe-mode` 隔离工程定制（settings/hooks/CLAUDE.md/skills/plugins/MCP）+ 工具集合收敛到 Read + 显式拒 MCP 工具 | prompt 明列真实路径，由 Read 读 | 既有 stream-json 终态 result 投影 |
+| claude | 工具集合收敛到 Read（`--tools Read`，init 事件实证 `tools:["Read"]`）+ 显式拒 MCP 工具；`--safe-mode` 只压定制面 | prompt 明列真实路径，由 Read 读 | 既有 stream-json 终态 result 投影 |
 | codex | `--sandbox read-only`（顶层 approval never + `exec` 顺序沿用 e6 已验证形态） | 原生 `--image <path>` | `turn.completed` 且无 `turn.failed` 才投影 agent message |
-| cursor | `--mode ask`，禁 `--force` | prompt 明列真实路径，Ask 模式 Read 读 | JSON 的确定性 final result（不吃增量事件） |
-| opencode | `OPENCODE_PERMISSION` inline JSON 把非只读工具置 deny + `--pure` | 原生 `--file <path>` | raw JSON events 的 final result |
+| opencode | `OPENCODE_PERMISSION` inline JSON 把非只读工具置 deny + `--pure` | 原生 `--file <path>` | NDJSON：取 `type==='text'` 行末条 message 的 `part.text`，锚 `step_finish`，见 `type==='error'` 判无终稿 |
+| ~~cursor~~ | ~~`--mode ask`，禁 `--force`~~（第一期不入册：免费档不可指定模型，与 model 真实回放互斥；机制留词表待第二期） | ~~prompt 明列真实路径~~ | ~~JSON 的确定性 final result~~ |
 
 **若锁定版本实测不支持声明的隔离，该声明不得入册**——不允许「退回工程默认配置启动」。
+
+claude 一行的措辞经 tasks 7.7 订正，原写「`--safe-mode` 隔离 settings/hooks/…」**与锁定版实测不符**：
+其 `--help` 原文即 "Auth, model selection, built-in tools, and permissions work normally."。天然 A/B
+实证该档位**穿透** safe mode——同一份 argv，用户级 `~/.claude/settings.json` 的
+`permissions.defaultMode` 从 `bypassPermissions` 改为 `auto`，子进程 init 的 `permissionMode` 随之
+改变；safe mode 只压定制面（skills 23→17、slash 64→45）。
+
+**物理只读因此由 `--tools Read` 单独承担，且该单点已在最坏组合下实证成立**：负例对照用显式
+`--permission-mode bypassPermissions` + 中性措辞命令 provider 写文件，模型真实尝试后回报
+"I only have the `Read` tool available in this session—there's no Write, Edit, or shell tool
+provided"，目标文件未创建、`porcelain` 前后一致、事件流零写类工具调用。即**无写工具即无写路径，
+与权限档位无关**。
+
+**裁决（2026-08-26）：首期不补 `--permission-mode`。** 权限档位只决定「已有工具是否免确认」，
+无法凭空增加写工具；物理只读由工具可见性（`--tools Read`）保证，纵深防御不是当前正确性所需，
+按裁剪原则不加。**复检触发条件**：升级 claude CLI 锁定版本时重跑 tasks 7.7 smoke——若 `--tools`
+语义或 init 事件的 `tools` 回报发生变化，本裁决须重审（见 tasks 7.7a 记录）。
 
 ## 5. fail-closed 结果 × fail-open 循环的接线为什么必须写死
 
@@ -106,8 +123,11 @@ primary 修复；无效载荷 = 丢弃 + 记事件 + 本轮按 blind 语义继�
 
 ## 7. 受理与披露分立
 
-误伤风险：codex / cursor / opencode 做 provider 时没有结构化验读事件解析器，receipt 只能记
-`unverified`。若把 `unverified` 当「无效」，这三个 provider 的合法评审会被整体丢弃。
+误伤风险：codex / opencode 做 provider 时没有结构化验读事件解析器，receipt 只能记
+`unverified`。若把 `unverified` 当「无效」，这两个 provider 的合法评审会被整体丢弃。
+tasks 7.7 已实证这不是假想风险：codex 与 opencode 两次真实调用都 `input_provenance=unverified`，
+而它们的载荷同时通过了 schema + 身份回显 + 当前图片 hash 校验，且随机金丝雀四象限 4/4 命中——
+**披露等级低 ≠ 结果不可信**，这正是受理与披露必须分立的实测依据。
 
 分立规则：
 

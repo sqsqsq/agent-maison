@@ -145,11 +145,19 @@ const FULL_PERMISSION_FLAGS = [
 // t1 — 支持列表唯一真源
 // ---------------------------------------------------------------------------
 
-test('t1 支持列表唯一真源：首批四项由 adapter.yaml 完整声明派生', () => {
+test('t1 支持列表唯一真源：首批三项由 adapter.yaml 完整声明派生', () => {
   const names = listVisualProviderAdapterNames(FRAMEWORK_ROOT);
-  assert.deepStrictEqual([...names].sort(), ['claude', 'codex', 'cursor', 'opencode']);
+  assert.deepStrictEqual([...names].sort(), ['claude', 'codex', 'opencode']);
   // 人读文案与校验消费同一份结果（禁止第二处枚举）
   assert.strictEqual(formatVisualProviderSupportList(FRAMEWORK_ROOT), names.join('、'));
+});
+
+test('t1 撤声明即撤资格：cursor 第一期不入册（tasks 7.7 账号面受阻）', () => {
+  // 支持资格唯一来自 adapter.yaml 的完整声明——撤掉 visual_provider 块即失去资格，
+  // **无需**也**不得**在 TS 侧另留名单或家族推断。ask_mode / result_json 机制仍在词表内
+  // 并由下面的机制单测覆盖，第二期补回声明即恢复，不必重写运行时。
+  assert.strictEqual(isVisualProviderSupported(FRAMEWORK_ROOT, 'cursor'), false);
+  assert.ok(!loadVisualProviderDeclaration(FRAMEWORK_ROOT, 'cursor').ok);
 });
 
 test('t1 家族不放行：codeagent 与 claude 同内核仍无资格（无自有声明）', () => {
@@ -159,9 +167,9 @@ test('t1 家族不放行：codeagent 与 claude 同内核仍无资格（无自�
 });
 
 test('t1 goal_capability 不参与 provider 资格：完整声明自身即资格', () => {
-  // claude/codex 有 goal_capability，cursor/opencode 是 external_runner——四者一视同仁；
+  // claude/codex 有 goal_capability，opencode 是 external_runner——三者一视同仁；
   // 反向：codeagent 有完整 goal_capability 却无资格（见上一例）。
-  for (const a of ['claude', 'codex', 'cursor', 'opencode']) {
+  for (const a of ['claude', 'codex', 'opencode']) {
     const d = loadVisualProviderDeclaration(FRAMEWORK_ROOT, a);
     assert.ok(d.ok, `${a} 应有完整声明：${d.ok ? '' : d.reason}`);
   }
@@ -436,8 +444,21 @@ test('t3 codex 只读 plan：顶层 approval 在 exec 之前、read-only 沙箱�
   assert.ok(argv.includes('--json'));
 });
 
-test('t3 cursor 只读 plan：ask 模式且禁 force/trust', () => {
-  const { plan } = planFor('cursor');
+test('t3 ask_mode 机制只读 plan：ask 模式且禁 force/trust', () => {
+  // 机制单测，**不依赖任何 adapter 当前是否声明**：cursor 第一期已撤声明（tasks 7.7 账号面
+  // 受阻），但 ask_mode 机制留在词表内待第二期复用——机制正确性在这里独立把关。
+  const { plan } = resolveVisualProviderInvokePlan({
+    provider: { adapter: 'cursor', model: 'cursor-vision-model' },
+    declaration: {
+      readonly_invoke: 'ask_mode',
+      image_transport: 'prompt_path',
+      stdout_envelope: 'result_json',
+      model_replay: '--model',
+    },
+    imagePaths: [],
+    prompt: 'review these screens',
+    projectRoot: process.cwd(),
+  });
   assert.ok(plan.argv.includes('--mode'));
   assert.strictEqual(plan.argv[plan.argv.indexOf('--mode') + 1], 'ask');
   assert.ok(!plan.argv.includes('--force') && !plan.argv.includes('--trust'));
@@ -1701,7 +1722,7 @@ test('t1 attended 冻结：prepare 后改 local，gate 仍用 manifest 冻结的
     // prepare 之后有人改了个人级配置——**不得**因此换掉本 run 的视觉 endpoint
     fs.writeFileSync(path.join(root, 'framework.local.json'), JSON.stringify({
       schema_version: '1.0', agent_adapter: 'codex',
-      vision: { visual_provider: { adapter: 'cursor', model: 'sneaky-model' } },
+      vision: { visual_provider: { adapter: 'opencode', model: 'sneaky-model' } },
     }, null, 2));
 
     const env: NodeJS.ProcessEnv = {};

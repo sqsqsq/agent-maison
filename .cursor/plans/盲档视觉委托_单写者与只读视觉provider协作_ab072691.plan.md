@@ -6,7 +6,7 @@ todos:
     content: "P0 · OpenSpec 先行——契约冻结在代码之前，范围沿用 v4 的裁剪边界。建 change `delegated-vision-provider` 并过 `npm run openspec:validate` 后方可动实现代码。change 承载：①三态路由 native/delegated/blind（delegated=静态资格判定，无 provider canary）与窄钳制（reviewVision 可选字段）；②provider 身份（ProviderRef {adapter, model} 必填、manifest 冻结、三形态配置入口）；③**机制 adapter 通用、首批支持固定为 claude/codex/cursor/opencode**，资格与支持列表唯一从 `agents/<adapter>/adapter.yaml.visual_provider` 的完整声明派生，禁止 TypeScript 白名单、adapter 家族推断或手写文档列表形成平行真源；`codeagent/chrys/generic` 首批不声明、不可作为 provider；④unsupported 行为冻结：普通交互态首次配置与 attended goal 创建 manifest 前均提示四个支持项并允许重选，跳过则本轮 blind 且不重复询问；无人值守读到旧 local unsupported 配置时 WARN、忽略并 blind 继续；显式 CLI `--visual-adapter` unsupported 时 fail-fast 并列出四项；不自动改选 Claude、不在多个 provider 间 fallback；⑤四 adapter 独立只读 invoke + 各自 stdout envelope 投影 + stdout-only 同调用校验；⑥**修订 goal-runner spec:936 裁决 requirement 的最小 delta**：provider 评审缺陷是独立的 critic candidate 源——**合法即物化回修、非法即丢弃降级，不进入感知信号的 defect-review/repair_adjudication_pending 停等管线**（该管线原样服务 producer 感知信号）；⑦receipt delegated 形态如实披露（非物化门槛）。核心不变量一句话入 spec：**provider 不能写工程；不能用旧的或坏的 provider 结果制造 PASS；provider 故障只降级本轮视觉反馈，不阻断开发循环。**同步产物：goal-manifest schema 文档、personal-setup-gate.md、goal runbook、交互态文档；文档只说明声明规则并指向 adapter catalog，不另枚举支持名单。宿主 smoke 全过前不 archive。"
     status: completed
   - id: t1-provider-identity-config
-    content: "P0 · Provider 身份与配置层（最小形态）。**①共享类型**：`ProviderRef {adapter: string; model: string}` 落 utils/types.ts（model 必填——冻结具体 endpoint；不依赖 goal-manifest 类型）。**②个人级配置**：framework.local.json `vision.visual_provider {adapter, model}`——config-field-ownership.ts:21 LOCAL_VISION_KEYS 加 'visual_provider'；解析校验落 framework-local-config.ts vision 段（:277-384）；写入只走 updateLocalConfig（:520-541，两起段抹除事故先例）。**③三形态最小入口与重选语义**：(a) 普通交互态：首次 UI 相关 phase 且 **local 缺失或现有 adapter 不在 catalog 支持列表**时可选询问一次 adapter+model（复用 personal setup 门控范式：init-orchestrate --scope personal 新任务 `record-visual-provider` 机器写盘 + confirmation-registry `setup.visual_provider`，agent 不手写 JSON——personal-setup-gate.md 既有纪律）；已有 unsupported local 也必须进入同一提示：`adapter <name> 暂未接入视觉 provider。首批支持：claude、codex、cursor、opencode。请重新选择，或跳过并以 blind 模式继续。`，用户跳过即继续 blind、本轮不重复问；(b) attended goal：创建 manifest 前复用同一条件（local 缺失或现有 adapter unsupported）与配置/重选流程，合法选择写 local 后冻结进 manifest，跳过仍可启动 blind run；(c) 无人值守：不询问，读取旧 local 命中 unsupported 时 WARN、忽略该配置并以 blind 继续，不能停 run；没有配置同样 blind。**④CLI 双参数**（用户裁决③）：goal-runner.ts minimist string 数组（:3702-3713）加 'visual-adapter'/'visual-model'，help :3737 旁，归一化复用 normalizeAdapterModelCliValue 同款（goal-manifest-cli.ts:91-110）；两旗标成对，单给任一 fail-fast；优先级 CLI > local；本次显式 `--visual-adapter` 命中 unsupported 必须 fail-fast 并列出 catalog 派生的四个支持项，禁止静默忽略。**⑤manifest 冻结**：`visual_provider_pin?: ProviderRef` 条件入身份哈希（computeManifestIdentityFields :180-182「键在场即入」）；加载 shape 校验；resume 读冻结值不重读 local；successor 随 ...inherited 继承；授权纯函数 `resolveFinalVisualProviderPin`（规则子集对齐 resolveFinalModelPin :161：fresh 接受/resume 异值须 --override-manifest/successor 出生输入可覆盖）。**⑥资格与支持列表唯一真源**：扩展 adapter schema，`visual_provider` 完整声明定稿为 `{readonly_invoke, image_transport, stdout_envelope, model_replay}`；运行时由 adapter catalog 扫描该字段派生支持项，**完整声明本身就是 provider 支持与运行资格，普通 Goal/headless 的 `goal_capability` 不参与 provider 资格判定**；首批只给 `claude/codex/cursor/opencode` 声明，`codeagent/chrys/generic` 均不声明。删除/禁止中心 `KNOWN_MODEL_PIN_ADAPTERS` 交集、排除集合、Claude-kernel 家族推断和独立文档白名单；support help/提示/校验均消费同一 catalog 结果。provider 不要求物化（goal-preflight.ts:392 金丝雀先例）。primary≡provider 同 endpoint 不设错误（native 时天然不用），仅冗余 advisory；绝不自动换成 Claude 或 fallback 到其他 provider。"
+    content: "P0 · Provider 身份与配置层（最小形态）。**①共享类型**：`ProviderRef {adapter: string; model: string}` 落 utils/types.ts（model 必填——冻结具体 endpoint；不依赖 goal-manifest 类型）。**②个人级配置**：framework.local.json `vision.visual_provider {adapter, model}`——config-field-ownership.ts:21 LOCAL_VISION_KEYS 加 'visual_provider'；解析校验落 framework-local-config.ts vision 段（:277-384）；写入只走 updateLocalConfig（:520-541，两起段抹除事故先例）。**③三形态最小入口与重选语义**：(a) 普通交互态：首次 UI 相关 phase 且 **local 缺失或现有 adapter 不在 catalog 支持列表**时可选询问一次 adapter+model（复用 personal setup 门控范式：init-orchestrate --scope personal 新任务 `record-visual-provider` 机器写盘 + confirmation-registry `setup.visual_provider`，agent 不手写 JSON——personal-setup-gate.md 既有纪律）；已有 unsupported local 也必须进入同一提示：`adapter <name> 暂未接入视觉 provider。首批支持：claude、codex、cursor、opencode。请重新选择，或跳过并以 blind 模式继续。`，用户跳过即继续 blind、本轮不重复问；(b) attended goal：创建 manifest 前复用同一条件（local 缺失或现有 adapter unsupported）与配置/重选流程，合法选择写 local 后冻结进 manifest，跳过仍可启动 blind run；(c) 无人值守：不询问，读取旧 local 命中 unsupported 时 WARN、忽略该配置并以 blind 继续，不能停 run；没有配置同样 blind（v9 注：此为 v7 已实施历史语义——t7 启动矩阵将其收窄为『UI 需求且无授权 → 启动 BLOCKER；非 UI 或授权在场维持本条』）。**④CLI 双参数**（用户裁决③）：goal-runner.ts minimist string 数组（:3702-3713）加 'visual-adapter'/'visual-model'，help :3737 旁，归一化复用 normalizeAdapterModelCliValue 同款（goal-manifest-cli.ts:91-110）；两旗标成对，单给任一 fail-fast；优先级 CLI > local；本次显式 `--visual-adapter` 命中 unsupported 必须 fail-fast 并列出 catalog 派生的四个支持项，禁止静默忽略。**⑤manifest 冻结**：`visual_provider_pin?: ProviderRef` 条件入身份哈希（computeManifestIdentityFields :180-182「键在场即入」）；加载 shape 校验；resume 读冻结值不重读 local；successor 随 ...inherited 继承；授权纯函数 `resolveFinalVisualProviderPin`（规则子集对齐 resolveFinalModelPin :161：fresh 接受/resume 异值须 --override-manifest/successor 出生输入可覆盖）。**⑥资格与支持列表唯一真源**：扩展 adapter schema，`visual_provider` 完整声明定稿为 `{readonly_invoke, image_transport, stdout_envelope, model_replay}`；运行时由 adapter catalog 扫描该字段派生支持项，**完整声明本身就是 provider 支持与运行资格，普通 Goal/headless 的 `goal_capability` 不参与 provider 资格判定**；首批只给 `claude/codex/cursor/opencode` 声明，`codeagent/chrys/generic` 均不声明。删除/禁止中心 `KNOWN_MODEL_PIN_ADAPTERS` 交集、排除集合、Claude-kernel 家族推断和独立文档白名单；support help/提示/校验均消费同一 catalog 结果。provider 不要求物化（goal-preflight.ts:392 金丝雀先例）。primary≡provider 同 endpoint 不设错误（native 时天然不用），仅冗余 advisory；绝不自动换成 Claude 或 fallback 到其他 provider。"
     status: completed
   - id: t2-vision-mode-and-clamp
     content: "P0 · 三态路由与窄钳制——delegated 放行 pixel_1to1（用户裁决①）；**无 provider canary，真实调用即探测**（评审 2）。**①vision_mode 派生纯函数**：native = primary hasVision（现状三层解析链 resolveContextAdapterImageInput，**primary canary 机制零改动**）；delegated = !primary hasVision && visual_provider 配置在场 && t1⑥ 静态资格通过；blind = 其余。preflight 派生一次冻结、run 内不可变；**provider 每次调用的成败只决定『本轮视觉反馈是否采信』，不反向改写 vision_mode、能力真值或 manifest**（effective-vision-context.ts:4-5 既有纪律）。**②snapshot**：CapabilitySnapshot（fidelity-shared.ts:937-987）扩展可选键 `vision_mode` + `visual_provider?: {adapter, model}`——旧 snapshot 无键=现状语义；写入者 goal-preflight.ts:624-632 同批共享 decision_id。**③窄钳制（评审 2：不全局改名）**：FidelityCapability（fidelity-shared.ts:600-605）**保留 hasVision 字段与语义**（=primary 是否有视觉），新增**可选** `reviewVision?: boolean`；clampFidelityByCapability(:623-637) 内 `const review = capability.reviewVision ?? capability.hasVision`，钳制判据从 hasVision 换为 review——**旧调用面零改动**（不传 reviewVision 行为逐字不变），唯 delegated 判定点（resolvePhaseCapabilityAdvisory goal-runner.ts:2472-2474、harness-runner fidelityCtx 装配、check-spec.ts:197）传 reviewVision=true；效果：native/delegated 不钳（pixel_1to1 放行），blind 钳制表逐字不变。防假 PASS 不靠事前探测，靠 t5 的结果校验 + 既有 VISUAL_PENDING 投影 + pixel_1to1 人签三层兜底。**④prompt 能力块**：buildCapabilityBlock（goal-runner.ts:1134-1242）delegated 分支——盲档块（:1188-1239）基础上明示：你无视觉；只读视觉审查器 (adapter, model) 将在截图后对每屏产结构化评审并回给你修复；参考图旁有 .visual.json 观察 sidecar；正式产物唯一写者仍是你。buildUnattendedExecutionBlock（:1244-1317）pixelReachable(:1257) 按 review 轴判。**⑤人签零改动**：visual_diff_human_confirm_required（visual-diff-check.ts:1602-1617）isHumanVerified 原样；provider 永不写 confirmed_by。**⑥OCR 链零改动**（评审 2）：无 provider canary 即无 ocr_capable 污染源，resolveOcrAvailableForRun（fidelity-shared.ts:1413-1420）、tessdata、全部既有 OCR 门禁不触碰。"
@@ -21,8 +21,11 @@ todos:
     content: "P0 · review 评审接线——**结果 fail-closed、循环 fail-open**（评审 2 核心）。**①触发点**：check-testing checker.check 内、capture（:2947→:3015）完成后、dispatchDeviceVisualDiff（:3547）之前；vision_mode≠delegated 整体跳过；**异步显式化**——safeRun（check-testing.ts:3340-3353）是同步函数不能包 Promise，provider 调用点显式 await（链路 async 化）或同步 spawn；交互态读 local config、goal 态经 env 注入冻结 pin（MAISON_GOAL_MODEL_PIN_ENV 链同款 phase-state.ts:98/:106-111 新增 provider 变量）。**②输入**：逐屏 {参考图, 实机截图, screen_id, ui-spec 目标节点摘要, 双图 sha256, run_id?, attempt_id?}（工程真实路径）。**③输出合同**：完整逐屏覆盖全部目标屏，每屏 {screen_id, defects[]（class/severity/element?/note，绑定 must_fix_refs 锚定）, must_fix[], 双图 hash 回显}；pixel_1to1 追加 region_attest[]（method='vl_screening'，RegionAttestEntry :117-132 既有形态——非新机制，candidate-pass 既有 gate 要求使然）；**空输出/漏屏/重复屏/坏 JSON/hash 不符 = 本轮未审查（invalid）**，绝不等价「无缺陷」。**④写入与 provenance**：合法载荷经**原子覆盖**写入 visual-diff.json 逐屏 must_fix/defects（tmp+rename；**写入前清掉旧 provider 结果，禁止跨 attempt 复用**——评审 2）；harness 确定性映射逐屏 verdict（must_fix 空→pass 候选、非空→fail），provider 不产 verdict、「能否推进」唯一归 gate；VisualDiffDefectSource（visual-diff-check.ts:93-97 现仅 T8）扩展定稿形态 `{producer:'visual_provider', invoke_id}`（同步 schema/校验，selfreport_integrity :1353 不误判 provider 写入；稳定 finding 身份层**不做**——评审 2 降后续加固）；永不写 confirmed_by。critic receipt **如实披露非门槛**：delegated 下写 receipt（adapter/model=provider 真实值，input_provenance 有解析器且事件可证=verified 否则 unverified，证据路径=t3④ 独立事件流），visual_diff_critic_receipt 路径校验（:1836-1886）加窄分支（receipt.adapter≠primary 时期望路径按 provider 事件流），**CapabilityReceipt.provider 字段（string，effective-vision-context.ts:41）不挪用**；**受理与披露分立（评审 3）**：采信唯一判据=③ 的载荷同调用校验——`input_provenance='unverified'`（无解析器 adapter 如 codex/cursor/opencode 做 provider）且载荷结构/身份/当前图片 hash 合法 → **结果照常用于回修**，仅如实披露证据等级；无效仅指载荷校验失败（缺失/坏 JSON/漏屏/身份不符/hash 不符/旧 attempt）；receipt 任何情况不造成 halt 或 repair_adjudication_pending。**⑤裁决契约（评审 2 简化）**：合法 provider 输出 = **可直接回修的 critic candidate（非绝对真值）**——直接物化 repair candidate 驱动 primary 修复，不要求盲 primary defect-review 复核（伪制衡），也**不进 producer 感知信号的 repair_adjudication_pending 停等管线**（spec:936 管线原样服务 T8 感知信号）；**无效输出 = 丢弃 + events 记录 + 本轮按 blind 语义继续，接线写死（评审 3 P0）**：provider unavailable/invalid 时**不对 pending 屏执行严格 dispatchDeviceVisualDiff**——若照常执行，P0 屏 pending / 全屏 pending 在 uiChange=new_or_changed 下 = BLOCKER FAIL（visual-diff-check.ts:1296-1304、:1307-1317）挡死 phase，与 fail-open 相反——改为返回既有 `visual_diff` CheckResult **{severity: 'BLOCKER', status: 'SKIP'}**（capture/nav/device 等确定性检查结果照常保留）；该 SKIP 走既有链自动成为诚实出口：非 MINOR 的 SKIP → visual-debt `needs_human` 债务（visual-debt.ts:163-172）→ 债务把 visual 投影 UNVERIFIED、release BLOCKED（harness-runner.ts:1391-1435 countBlockingDebt）→ SKIP 非 FAIL，phase 照常推进——**开发循环 PASS / visual UNVERIFIED / release VISUAL_PENDING 三态同时成立**；**不 halt、不停等、不新增 check id/状态/质量轴**（评审 2 裁剪维持）；误报兜底=no_progress_fuse（:2610）+ 人签通道（visual-confirm）既有双层。**⑥盲档回退**：vision_mode=blind 时本条不激活，e6 后盲档链原样。"
     status: completed
   - id: t6-regression-smoke-closeout
-    content: "回归与收口。**单测/fixture 矩阵**：t1（adapter catalog 是唯一支持列表；只有 claude/codex/cursor/opencode 四份完整声明被派生，codeagent 即使同 Claude 内核也不得家族放行；**完整 visual_provider 声明在 goal_capability 缺失/失效时仍保持 provider 资格**；授权矩阵 fresh/resume/successor；双旗标成对；record-visual-provider 走 updateLocalConfig；普通交互与 attended goal 在 local 缺失、已有 supported、已有 unsupported 三态下分别询问一次/不问/提示重选一次，unsupported 跳过后本轮 blind 且不重复问；无人值守旧 local unsupported WARN+blind；显式 CLI unsupported fail-fast 且错误列四项）；t2（三态派生矩阵——含资格不足落 blind；vision_mode run 内不可变——invoke 失败后 snapshot/mode 零变化；reviewVision 缺省=hasVision 旧调用面逐字回归；delegated+pixel_1to1 不钳新断言；blind 钳制表不变；OCR 链零改动断言）；t3（四 adapter readonly `HeadlessInvokePlan` golden：model flag 真实回放、图片 transport、普通全权限 argv 不可达、各自 envelope/final-result 投影；**所有 provider plan 都只经 `invokeAgentHeadless` 执行，visual-provider-invoke 不得自建 spawn/timeout/tree-kill/terminal/usage 生命周期，timeout 仅走 AgentInvokeOptions.timeoutMs，usage 仅消费 AgentInvokeResult.usage**；Claude argv 必含 safe-mode+Read-only 工具集合，缺 safe-mode 或锁定版本不支持即不得入册；Codex 复用 e6 分层回归：`completion_observed=true && terminal_failure_observed!==true` 方可调用 `extractCodexAgentMessageText(stdout)`，completion 缺失/terminal failure/正文 null 均拒收，usage 与 invoke result 同源；统一校验拒绝非 JSON/schema 坏/身份不符/hash 不符/超时；CLI 缺失/模型拒图=unavailable；脏检查丢弃不 revert；批次上限；事件流落盘）；t4（三元复用键；单图失败不阻断；不产 check）；t5（**fail-open 核心回归：provider invalid/unavailable 时产 visual_diff {BLOCKER, SKIP} 而非严格 dispatch 的 BLOCKER FAIL、phase 照常推进、SKIP 经 visual-debt needs_human 投影 release VISUAL_PENDING、不产 adjudication_pending**；unverified receipt 且载荷合法=照常回修不丢弃；合法载荷物化 candidate 驱动回修；原子覆盖+清旧+跨 attempt 拒收；确定性 verdict 映射；DefectSource 新 provenance 不触发 selfreport_integrity；receipt 窄分支路径校验——native 现状回归+delegated 新路径；人签链零变化；safeRun 无 Promise）。**四 adapter 最小真实 invocation smoke（每个 provider 各一次，不做 4×4）**：使用锁定版本真实 CLI/model，逐一证明 model 参数真实回放、至少一张工程真实图片确实进入模型、调用确经 `invokeAgentHeadless` 且其 completion/failure/usage 事实被消费、invoke 前后工程未被修改、stdout 正确投影、合法 JSON/当前 hash 被统一校验接收；**Claude smoke 在工程真实 `.claude/settings.json` 注册 Stop/PreToolUse hook（用可观察 sentinel 证明是否触发）的条件下执行，provider 不得触发这些 hook 或额外 hook 进程**；另以受控坏载荷或拒图验证 unavailable|invalid 只使本轮 provider 失效并走既有 fail-open。**两个完整 delegated 宿主闭环**（各用新 run_id）：(A) 同 adapter 不同模型，如 Claude M1 primary + Claude M2 provider；(B) 跨 adapter 不同模型，如 Codex primary + Claude provider。两者均验盲写→capture→provider 评审→物化回修→provider 缺陷清零→candidate-pass→**gate=await_human_confirm**（visual-diff-check.ts:2619-2628，无人签时 gate 不是 PASS）→真人 confirmed_by→**重跑 gate 方 PASS**；Cursor/OpenCode 不各跑昂贵完整 UI 闭环，其真实 invocation smoke + 统一 executor 单测证明接线。**三组 unsupported 反向测试**（每组覆盖 codeagent/chrys/generic）：普通交互与 attended goal 对已有 unsupported local 均提示重选/可跳过 blind；无人值守旧 local WARN+blind；显式 CLI fail-fast 并列四个支持项；全程禁止自动替换为 Claude 或 provider fallback。**全量**：cd harness && npm test + npm run openspec:validate。**验收语义写死**：一次 run = 1 primary + 1 visual endpoint，只覆盖 (A,M1)+(A,M2) 与 (A,M1)+(B,M2)，非 provider 池/canary/自动 fallback。**开工依赖**：e6b3f8d2 宿主 smoke、关联 OpenSpec 收口与 t7 全部完成且相关 plan/代码串行本地提交；本视觉委托 plan 也先单独提交，确认 `git status` 干净后方可进入 t0。是否 push 与宿主 smoke 均保持用户触发，不由实施 agent 擅自执行。**诚实边界**：delegated 消除人工逐轮看图与盲档一刀切降档；不承诺 provider 评审等效人眼；provider 恒失败的 run 与现状盲档等价（经既有 VISUAL_PENDING 投影，零新状态）。smoke 全过后 t0 change 方可 archive。"
+    content: "回归与收口。**单测/fixture 矩阵**：t1（adapter catalog 是唯一支持列表；只有 claude/codex/cursor/opencode 四份完整声明被派生，codeagent 即使同 Claude 内核也不得家族放行；**完整 visual_provider 声明在 goal_capability 缺失/失效时仍保持 provider 资格**；授权矩阵 fresh/resume/successor；双旗标成对；record-visual-provider 走 updateLocalConfig；普通交互与 attended goal 在 local 缺失、已有 supported、已有 unsupported 三态下分别询问一次/不问/提示重选一次，unsupported 跳过后本轮 blind 且不重复问；无人值守旧 local unsupported：非 UI 需求或授权在场 WARN+blind、UI 需求且无授权 → 启动 BLOCKER（t7 矩阵）；显式 CLI unsupported fail-fast 且错误列四项）；t2（三态派生矩阵——含资格不足落 blind；vision_mode run 内不可变——invoke 失败后 snapshot/mode 零变化；reviewVision 缺省=hasVision 旧调用面逐字回归；delegated+pixel_1to1 不钳新断言；blind 钳制表不变；OCR 链零改动断言）；t3（四 adapter readonly `HeadlessInvokePlan` golden：model flag 真实回放、图片 transport、普通全权限 argv 不可达、各自 envelope/final-result 投影；**所有 provider plan 都只经 `invokeAgentHeadless` 执行，visual-provider-invoke 不得自建 spawn/timeout/tree-kill/terminal/usage 生命周期，timeout 仅走 AgentInvokeOptions.timeoutMs，usage 仅消费 AgentInvokeResult.usage**；Claude argv 必含 safe-mode+Read-only 工具集合，缺 safe-mode 或锁定版本不支持即不得入册；Codex 复用 e6 分层回归：`completion_observed=true && terminal_failure_observed!==true` 方可调用 `extractCodexAgentMessageText(stdout)`，completion 缺失/terminal failure/正文 null 均拒收，usage 与 invoke result 同源；统一校验拒绝非 JSON/schema 坏/身份不符/hash 不符/超时；CLI 缺失/模型拒图=unavailable；脏检查丢弃不 revert；批次上限；事件流落盘）；t4（三元复用键；单图失败不阻断；不产 check）；t5（**fail-open 核心回归：provider invalid/unavailable 时产 visual_diff {BLOCKER, SKIP} 而非严格 dispatch 的 BLOCKER FAIL、phase 照常推进、SKIP 经 visual-debt needs_human 投影 release VISUAL_PENDING、不产 adjudication_pending**；unverified receipt 且载荷合法=照常回修不丢弃；合法载荷物化 candidate 驱动回修；原子覆盖+清旧+跨 attempt 拒收；确定性 verdict 映射；DefectSource 新 provenance 不触发 selfreport_integrity；receipt 窄分支路径校验——native 现状回归+delegated 新路径；人签链零变化；safeRun 无 Promise）。**四 adapter 最小真实 invocation smoke（每个 provider 各一次，不做 4×4）**：使用锁定版本真实 CLI/model，逐一证明 model 参数真实回放、至少一张工程真实图片确实进入模型、调用确经 `invokeAgentHeadless` 且其 completion/failure/usage 事实被消费、invoke 前后工程未被修改、stdout 正确投影、合法 JSON/当前 hash 被统一校验接收；**Claude smoke 在工程真实 `.claude/settings.json` 注册 Stop/PreToolUse hook（用可观察 sentinel 证明是否触发）的条件下执行，provider 不得触发这些 hook 或额外 hook 进程**；另以受控坏载荷或拒图验证 unavailable|invalid 只使本轮 provider 失效并走既有 fail-open。**两个完整 delegated 宿主闭环**（各用新 run_id）：(A) 同 adapter 不同模型，如 Claude M1 primary + Claude M2 provider；(B) 跨 adapter 不同模型，如 Codex primary + Claude provider。两者均验盲写→capture→provider 评审→物化回修→provider 缺陷清零→candidate-pass→**gate=await_human_confirm**（visual-diff-check.ts:2619-2628，无人签时 gate 不是 PASS）→真人 confirmed_by→**重跑 gate 方 PASS**；Cursor/OpenCode 不各跑昂贵完整 UI 闭环，其真实 invocation smoke + 统一 executor 单测证明接线。**三组 unsupported 反向测试**（每组覆盖 codeagent/chrys/generic）：普通交互与 attended goal 对已有 unsupported local 均提示重选/可跳过 blind（跳过=当次盲跑授权）；无人值守旧 local：非 UI 或持 `--allow-blind-visual` 时 WARN+blind、UI 需求且无授权时启动 BLOCKER（t7 矩阵）；显式 CLI fail-fast 并列四个支持项；全程禁止自动替换为 Claude 或 provider fallback。**全量**：cd harness && npm test + npm run openspec:validate。**验收语义写死**：一次 run = 1 primary + 1 visual endpoint，只覆盖 (A,M1)+(A,M2) 与 (A,M1)+(B,M2)，非 provider 池/canary/自动 fallback。**开工依赖**：e6b3f8d2 宿主 smoke、关联 OpenSpec 收口与 t7 全部完成且相关 plan/代码串行本地提交；本视觉委托 plan 也先单独提交，确认 `git status` 干净后方可进入 t0。是否 push 与宿主 smoke 均保持用户触发，不由实施 agent 擅自执行。**诚实边界**：delegated 消除人工逐轮看图与盲档一刀切降档；不承诺 provider 评审等效人眼；provider 恒失败的 run 与现状盲档等价（经既有 VISUAL_PENDING 投影，零新状态）。smoke 全过后 t0 change 方可 archive。"
     status: in_progress
+  - id: t7-blind-launch-consent
+    content: "P0 · 启动契约修正——盲跑须一次显式授权，三形态同构（用户裁决⑤ + codex 评审 4）。**修正对象**：v3 冻结的『无人值守缺 provider → WARN+blind 静默继续』使 attended 与无人值守行为不同构，且 UI 需求下盲跑价值低（明知缺关键能力硬跑烧预算，bc-openCard 同构）。**①统一规则（唯一契约）**：需求 UI 相关且 primary 无视觉时，进入 blind 必须持有一次明确的盲跑授权；三形态是同一规则的三种授权载体：(a) 普通交互态——用户当场选择『跳过并盲跑』即本次授权（只授权当前操作，下次 UI 需求仍询问，不落任何持久化）；(b) attended goal——会话层把用户的跳过转译为 `--allow-blind-visual` 启动参数传入；(c) 无人值守——提前配置 provider，或显式传 `--allow-blind-visual`。**②决策点位置（codex 修正二 + v9 P1 校准）**：不塞进 canary 之前的 personal setup prerequisite 集合；拦截决策落在 **primary canary 尝试完成之后**、正式 phase 启动之前的**纯决策**——不新增生命周期、状态机或第二套 gate，从用户视角仍属同一『启动 setup 阶段』。`primaryHasVision` **不得**直接读本次 probeResult、不得新增第二套视觉真值——**复用既有 effective image-input 解析链**（resolveContextAdapterImageInput：用户 override → 可采信 canary 缓存 → adapter 声明回退，multimodal-probe.ts:278）在 canary 尝试后的时点取值（canary 真跑过则缓存已最新；dry-run／local override／有效缓存／非 UI chain 跳过探测与探测失败回退声明均为该链既有语义，t7 不改判定来源）。**优先级**：`canaryHardCliFailure` 仍由既有 HALT 分支（goal-runner.ts:4422-4439）**先行**处理，t7 不得用『缺盲跑授权』掩盖 CLI 硬故障；**--dry-run 只报告 `would_block` WARN、不拦**（dry-run 不进入正式 phase）。**③决策矩阵（冻结）**：非 UI 需求（resolveUiRelevanceForRun，goal-preflight.ts:317 金丝雀同款判定）→ 不检查 provider，放行；primary 有视觉（既有 effective 解析链判定）→ native 放行；primary 盲 + 合法 provider（catalog 支持列表 + visual_provider_pin）→ delegated 放行；primary 盲 + 无 provider + 授权在场 → blind 放行（视觉债务/VISUAL_PENDING 照旧）；primary 盲 + 无 provider + 无授权 → **启动 BLOCKER**：报错并列双出路（record-visual-provider 配置 provider，或 --allow-blind-visual 显式盲跑），run 不进入 phase。**④授权载体纪律（v10 定稿：无条件落键 + 条件消费，一次授权=一个 run）**：新 CLI 旗标 `--allow-blind-visual`——独立旗标，**不得**以 fidelity=reference_only 冒充授权（两个语义），**不得**写入 framework.local.json 永久化。**落键与消费分离（v10 P0 修正——v9 的『仅 blind 分支才落键』与『漂移检查前落键』时序上无法同时成立：漂移检查（goal-runner.ts:4414 段）在 canary（:4532 段）之前，落键时尚不知道分支；把漂移检查挪到 canary 后也不可行——canary 会 spawn 调用并可能写 local，身份检查必须先于一切副作用）**：显式收到旗标即在**身份漂移检查之前无条件**冻结 `allow_blind_visual: true` 进 manifest（条件入身份哈希『键在场即入』，与 visual_provider_pin 同点位——否则首跑落键、resume 误判漂移）；canary 后的启动决策**只在 UI+blind+无 provider 分支消费**该字段；native/delegated 下它只是『用户对本 run 给过盲跑授权』的冻结事实，**不影响路由**——授权语义绑定 run 而非分支（run 内环境退化到 blind 时按已给授权放行，正是『一次授权=一个 run』的本义）；**不做** canary 后二次落键、身份 rebase 或第二次漂移裁决。**resume（同一 run）**：读冻结授权、不重复要求旗标；旧 manifest 无该键而 resume 想新增授权 → 复用 `--override-manifest`（授权字段矩阵对齐 pin 范式：fresh 直接接受／fresh+--manifest 与既有值冲突须 --override-manifest／resume 同值幂等）；**successor 默认不继承**——inheritSuccessorManifest 时**剥离**该键，新 run 必须重新显式传旗标（跨 run 静默授权才是真正的潜伏风险；且只有正向旗标、继承的 true 无法覆盖回 false，剥离是唯一自洽形态）。**⑤启动契约与运行时降级分立**（v4『冻结与调用结果分立』延伸到启动面）：本条只管启动前配置缺口；合法 provider 选定后运行中调用失败仍走 t5 既有 fail-open（不采信本轮/循环继续/UNVERIFIED/BLOCKED），**不得**因运行时故障反复停 run。**⑥文档**：personal-setup-gate.md 的『visualProvider advisory 永不影响启动』改述为『条件 prerequisite（goal 启动决策点生效）』；check-personal-setup 在缺 UI/primary 上下文时**不得**全局报失败（它无从判定 UI 相关性，其 advisory 层保持现状——BLOCKER 只在 goal-runner canary 后决策点产生）；goal runbook 与交互态文档同步三形态授权语义；**`visualProvider.state=unavailable`（local 配置存在但读取失败）进③矩阵的『无 provider』分支**——配置读取失败不等价盲跑授权：交互态提示『修复配置或显式盲跑』双出路，无人值守 UI 需求且无授权照样 BLOCKER（advisory 现行该态 shouldPrompt=false 的定义同步修订）。**⑦范围冻结**：不碰 provider 调用器、review receipt、OCR、evaluation_invalidated、视觉 gate。**⑧回归**：决策矩阵五分支单测（非 UI／native／delegated／blind+授权／blind 无授权 BLOCKER）；授权冻结矩阵——**无条件落键+条件消费**（带旗标即漂移检查前落键；native/delegated 下键在场但不影响路由、唯 UI+blind+无 provider 分支消费）、resume 读冻结不重询、resume 新增授权须 --override-manifest、**successor 剥离断言**（继承后无该键、须重传旗标）；三形态同构断言（同一规则三载体）；--allow-blind-visual 不落 local 负向断言；`state=unavailable` 进『无 provider』分支断言（交互双出路／无人值守 UI 无授权 BLOCKER）；hard CLI HALT 优先于缺授权 BLOCKER 断言；--dry-run `would_block` WARN 不拦断言；BLOCKER 文案含双出路。**⑨OpenSpec**：修订当前 change delegated-vision-provider（delta 扩充 + tasks 新条目 + 决策矩阵 Scenario），不另开 change；archive 条件扩为本条单测与文档全过。**与宿主 smoke 的关系（v9 收窄表述）**：7.7（四 adapter invocation，调用器未改）与 7.8（delegated 完整闭环，provider 评审证据链未改）结果完整有效、不重跑；t7 实施后**补一组窄启动路径 smoke**：UI+盲+无 provider+无授权 → phase 前 BLOCKER／加 `--allow-blind-visual` → manifest 正确落键并继续／合法 provider → 不被新判断误挡／resume → 使用冻结授权不再要求旗标；unsupported 反向断言随 t6 修订复验。工作区影响按事实表述：宿主 smoke 以独立消费者工程为 project root 时不受本仓 plan 修改影响，若以本仓为 root 则脏工作区检测会看到该修改，不笼统称零影响。"
+    status: pending
 overview: >
   宿主现实：常见配置是「强编码模型无多模态 + 多模态模型编码弱」。现行框架一次 goal run
   只绑定一个 (adapter, model_pin) 执行身份，主模型盲即整 run 盲档。本 plan 引入只读视觉
@@ -34,14 +37,28 @@ overview: >
   UNVERIFIED 载体（复用既有投影）。硬边界只有一条：provider 不能写工程，不能用旧/坏结果
   制造 PASS。支持同 adapter 多模型与跨 adapter 组合（1 primary + 1 visual endpoint）。
   用户三裁决：delegated 放行 pixel_1to1 且人签保留、sidecar 进首期、CLI 双参数。
-  机制保持 adapter 通用，首批仅 claude/codex/cursor/opencode（支持列表从 adapter 声明派生）。
+  机制保持 adapter 通用，首批仅 claude/codex/opencode（支持列表从 adapter 声明派生；
+  cursor 原在首批，2026-08-26 tasks 7.7 实测其免费档不可指定模型、与 model 真实回放互斥，
+  经用户决定退出第一期，机制 ask_mode/result_json 留词表待第二期）。
   OpenSpec 先行（t0），依赖 e6b3f8d2 完整实施、验收并串行提交后实施。
+  v8 增补启动契约（t7）：UI 需求且 primary 盲时，无 provider 亦无显式盲跑授权
+  （交互态当场跳过 / --allow-blind-visual）→ 启动 BLOCKER 指引配置——三形态同一规则，
+  决策在 primary canary 尝试之后（复用既有能力解析链）；授权一次一 run（successor 不继承）；
+  运行时 provider 故障仍走既有 fail-open，两层分立。
 isProject: false
 ---
 
 # 盲档视觉委托：单写者与只读视觉 provider 协作（ab072691）
 
-状态：**v7（e6 invoke 生命周期复用边界已对齐，2026-08-25，待复审）**
+状态：**v10（评审意见 6 已吸收，2026-08-26；t0-t5 已按 v7 实施并提交）**
+
+当前进度（2026-08-26 收口）：
+- **t6 宿主 smoke 已完成**——tasks 7.7 三 provider（claude / codex / opencode）真实 invocation
+  全过并入册；cursor 经用户决定退出第一期；7.7a 只读单点负例对照实证成立。
+- **tasks 7.8**（两个完整 delegated 宿主闭环）经用户裁决**取消**，改为发布后自行实测；
+  端到端收敛这层证据因此空缺，如实记录于文末实施记录，不得当已证引用。
+- **t7（盲跑授权契约）仍 pending，且仍属本 change**（见下方 t7⑨ 冻结决定：不另开 change、
+  archive 条件扩为 t7 单测与文档全过）⇒ **本 change 暂不 archive**。
 
 ## 1. 立项背景与目标形态
 
@@ -141,6 +158,7 @@ isProject: false
 2. **spec 观察 sidecar 进首期**：接受首刀面积换首轮命中率。
 3. **CLI 双参数** `--visual-adapter` + `--visual-model`：成对必填，与既有对仗。
 4. **机制通用、首批四 adapter**：`adapter.yaml.visual_provider` 是唯一支持列表真源；首批仅 claude/codex/cursor/opencode，codeagent/chrys/generic 不接入；不支持时按交互重选/无人值守 WARN+blind/显式 CLI fail-fast 分流，不自动替换或 fallback。
+5. **盲跑须一次显式授权（2026-08-26，t7）**：用户指出无人值守静默 blind 与 attended 询问不同构；统一为『UI 相关 + primary 盲 → 持授权方可 blind』，授权载体=交互态当场跳过 / `--allow-blind-visual`（goal 态冻结进 manifest）/ 提前配置 provider；决策点在 primary canary 尝试之后复用既有 effective 真值。本条把第 4 条的『无人值守 WARN+blind』收窄为『非 UI 需求或授权在场时维持，UI 需求且无授权 → 启动 BLOCKER』。
 
 ## 6. 评审吸收纪要
 
@@ -155,6 +173,12 @@ isProject: false
 **v5 → v6（复审收口——1 P0 + 2 P1 窄修正）**：①[P0] Claude 的 Read-only 工具集合之外再加锁定版本 `--safe-mode`，隔离 AgentMaison 工程 `.claude/settings.json`、Stop/PreToolUse hooks、CLAUDE.md、skills、plugins、MCP 等定制；不支持/未实测即不得入册，smoke 用 sentinel 证明 hooks 未触发。②[P1] 删除普通 `goal_capability` 第二资格门槛，完整 `visual_provider` 声明自身承担 invoke/model/image/stdout 全契约并独立决定支持与资格。③[P1] 普通交互与 attended goal 的询问条件改为「local 缺失或现有 adapter unsupported」，已有 unsupported 配置必须提示重选一次；跳过本轮 blind、不重复问，无人值守仍 WARN+blind。t0/t2/t4/t5 零改动，无新架构。
 
 **v6 → v7（e6 已提交代码影响对齐——单点接线窄修）**：①[P0] t3 从“复用同一 Codex scanner 提取终态/正文/usage”纠正为 e6 实际分层：provider 只构造只读 HeadlessInvokePlan，统一复用 invokeAgentHeadless 的 spawn/timeout/tree-kill/failure/usage 生命周期；scanner 只判终态，正文用 extractCodexAgentMessageText，usage 直接取 AgentInvokeResult.usage。②[P1] Codex 采信条件冻结为 completion_observed=true 且无 terminal_failure_observed，再投影正文并走统一载荷校验；禁止第二套 spawn/terminal/message/usage parser。③[P1] t6 增既有生命周期唯一性、Codex 三事实消费与真实 smoke 断言，并把开工依赖具体化为 e6 宿主 smoke/OpenSpec/t7/串行本地提交完成、视觉 plan 已提交且 git status 干净；push 与宿主 smoke 仍只由用户触发。t0/t1/t2/t4/t5 零改动，无架构扩张。
+
+**v7 → v8（启动契约修正——用户复盘 + codex 评审 4；t0-t5 已实施提交后的增补）**：立项：用户指出无人值守与 attended 在『UI 需求缺 provider』上行为不同构——检查时机（personal setup gate）、UI 判定（resolveUiRelevanceForRun）、拦截机制（preflight BLOCKER）、报错指引四样全部现成，v3 冻结的『provider 永为 advisory 不拦启动』是可重判的档位选择而非技术必然（agent_adapter 缺失的 BLOCKER 即无人值守语境『问』的现成形态）。codex 两点修正全采纳：①attended/无人值守**不得两套政策**——统一为『盲跑须一次显式授权』，三形态差别仅在授权载体（当场跳过=授权本次／CLI 旗标／提前配置），不存在『哪边更严』；②决策点**不得**放 canary 前的 personal setup prerequisite 集合——『primary 是否有视觉』须用 canary 后实测真值（声明式会被套壳骗过、换 pin 后缓存不可采信），落 canary 后、phase 启动前的纯决策，『不加新停点』收窄为『不加新生命周期与状态机，加一个条件判断』。授权载体三禁：不拿 fidelity=reference_only 冒充、不落 framework.local.json 永久化、goal 态必须冻结进 manifest 条件入身份哈希（resume 不丢）。启动契约与运行时降级分立（合法 provider 运行中故障仍 fail-open，不因故障反复停 run）。载体=新增 t7 + 修订当前 change（不另开 plan/change）；与在跑宿主 smoke 正交（7.7/7.8 结果仍有效，t6 的 unsupported 反向断言条件化更新后复验）。
+
+**v8 → v9（评审意见 5，1 P0 + 3 P1 窄修——机制零新增）**：①[P0] 授权继承自相矛盾——v8 照抄 pin 继承范式让 successor 自动继承 `allow_blind_visual`，与『一次授权』冲突且正向旗标无法把继承的 true 覆盖为 false；冻结为：resume 读冻结不重询、**successor 剥离该键须重传旗标**、仅 blind+授权分支才落键（native/delegated 不存潜伏授权）、resume 新增授权走 --override-manifest；CLI 字段协调提到身份漂移检查之前（goal-runner.ts:4414 前），拦截决策留在 canary 后——落键位置与决策位置分离。②[P1] 『canary 后实测真值』表述过强——canary 有四类合法跳过与失败回退声明（goal-preflight.ts:311、goal-runner.ts:4555），真值唯一来源改为既有 effective 解析链（override→可采信缓存→声明，multimodal-probe.ts:278）在 canary 尝试后取值，不读 probeResult、不建第二真值；hard CLI HALT 先行、dry-run 只报 would_block 不拦。③[P1] t6/t1 与 t7 活跃合同冲突——t6 两处『无人值守 WARN+blind』断言**直接改为条件矩阵**（不留到实施时再更新），t1(c) 加历史语义收窄注记；补 `state=unavailable` 进『无 provider』分支（读取失败≠授权，双出路）。④[P1] 『smoke 零影响』收窄为事实表述：7.7/7.8 有效不重跑；t7 实施后补四断言窄启动 smoke（无授权 BLOCKER／落键继续／合法 provider 不误挡／resume 用冻结授权）；工作区影响按 project root 归属如实区分。
+
+**v9 → v10（评审意见 6，1 P0 收口——机制零新增）**：[P0] v9 的『仅 blind 分支才落键』与『漂移检查前落键』时序自相矛盾——漂移检查（:4414）先于 canary（:4532），落键时尚不知道分支；漂移检查也不能后挪（canary 有 spawn 与写 local 副作用，身份检查必须先于一切副作用）。定稿为**无条件落键 + 条件消费**：显式旗标在漂移检查前无条件冻结进 manifest；canary 后决策只在 UI+blind+无 provider 分支消费；native/delegated 下键在场只是『本 run 给过授权』的冻结事实、不影响路由——授权语义绑定 run 而非分支，run 内环境退化到 blind 时按已给授权放行即『一次授权=一个 run』本义；跨 run 潜伏风险仍由 successor 剥离独立解决；**不做** canary 后二次落键/身份 rebase/二次漂移裁决（复杂化路径明确拒绝）。措辞统一两处：t7③ 与用户裁决第 5 条的『canary 实测』改『既有 effective 解析链判定／canary 尝试后复用既有 effective 真值』。其余 v9 各点评审确认已修复。
 
 ## 7. 实施记录（2026-08-26）
 
@@ -456,3 +480,116 @@ scenario 同步改为：全部旧 `region_attest` 被清除，最终存在的 at
 - `npx ts-node scripts/check-adapter-catalog-consistency.ts --framework-root ..` → PASS
 - `lintConfirmationUx`（registry / skills 文案门禁）→ 0 违例
 - `visual-provider` 单测套：**65 例**全绿
+
+---
+
+## 实施记录 · tasks 7.7 宿主真实 invocation smoke（2026-08-26，用户触发）
+
+宿主：`D:\1.code\SimulatedWalletForHmos`（用户指定）。写入面仅 `<project>/.maison-smoke/`，
+**未改宿主任何配置文件**——原设计的「往 `.claude/settings.json` 注入 hook sentinel」在实施时
+放弃：该工程本就注册着真实 hook（`PreToolUse`→guard-framework-write、`Stop`→check-phase-completion、
+`SubagentStop`→record-verifier-report），改为非侵入快照其落盘面（`framework/harness/state/`）。
+四次调用该快照均逐字不变。
+
+金丝雀复用既有 `generateRandomCanaryAnswerKey` + `renderCanaryImage`（**未新增 provider canary**，
+符合 plan 边界）：随机四象限配色 + 随机 8 位 token，答案只在调用方内存，模型必须逐字报回。
+
+### 结果
+
+| adapter | 断言 | 结论 |
+|---|---|---|
+| claude | 16/16 | **入册**。四象限 4/4、token 逐字精确；首批唯一 `provenance=verified` |
+| codex | 13/14 | **入册**。四象限 4/4、token 仅差同形字 `0`→`O` |
+| opencode | 16/16 | **入册**。四象限 4/4、token 逐字精确 |
+| cursor | 8/11 | **退出第一期**（用户决定）：免费档不可指定模型 |
+
+claude 首轮卡在 `OAuth session expired`（账号面，非机制面），用户重登后复跑全过。它是首批唯一
+`input_provenance=verified` 的 provider——有结构化验读事件解析器，事件流实证本轮图片确被读取；
+codex / opencode 只能记 `unverified`，这正是 design.md §7「受理与披露分立」要保护的场景。
+
+### 本轮修掉的真缺陷：`events_json` 投影不认识 opencode 真实形状
+
+`projectVisualProviderBody` 原把 `result_json` 与 `events_json` 并到 `extractJsonFinalResultText`，
+而后者 `pick()` 会拒收任何 `type !== 'result'` 的行。opencode 1.18.14 `run --format json` 的真实
+输出是 NDJSON `{type, timestamp, sessionID, part}`，正文在 `type==='text'` 行的 `part.text`
+⇒ **一次完全合法、四象限全中的评审被误判 `invalid`**。这是 fail-closed 方向的误伤：不会伪造 PASS，
+但会让 delegated 恒退化回 blind，等于整个 opencode provider 静默失效。
+
+新增 `extractOpenCodeFinalText`，形状以真实样本钉死。`result_json` 保持原实现不动，两条方言就此分立。
+
+**首版实现有 P0，同轮由评审意见 1 指出并修复**：首版用「全流见过任意 `step_finish`」这种**全局**
+判据 + 取最后一条 message 的分片，于是
+
+```
+text(m1) / step_finish(m1) / text(m2)      ← m2 还在流，尚未 finish
+```
+
+会把**未完成的 m2** 当终稿返回。方向上这是 fail-closed 的**危险侧**——把没写完的半截答案当完整
+评审采信，比整轮判 invalid 严重得多。定稿改为**终态绑定最后一段正文**，四条锚点缺一即 null：
+
+- 见 `type==='error'` 行即判无终稿（实测 401 密钥错 / 403 模型未开通都在此被挡）；
+- `step_finish` 只封**它自己那条 message** 的稿（两侧都带 `messageID` 时必须同源）；
+- `part.reason` 必须是 `stop`，`tool-calls` 等中间终态不封稿（后面还有内容要来）；
+- finish 之后又出现 `step_start` / 新 `text` ⇒ 此前封稿**失效**（流还没走完）。
+
+教训记一笔：首版单测只验了「整个流没有任何 finish」，覆盖不到「旧消息已 finish、新消息未 finish」——
+**流式协议的终态判据必须绑定到具体消息，不能用全局标志位**。已补五条回归。
+
+### 契约措辞订正 + 只读单点负例对照（tasks 7.7a）
+
+原 adapter.yaml 与 design.md 均写「safe mode 隔离 .claude/settings.json、hooks、…」，**与锁定版
+2.1.228 实测不符**：其 `--help` 原文即 "Auth, model selection, built-in tools, and permissions
+work normally."。本轮拿到一次**天然 A/B**：用户中途重登并把用户级 `permissions.defaultMode` 从
+`bypassPermissions` 改成 `auto`，同一份 argv 下子进程 init 的 `permissionMode` 随之改变
+⇒ 该档位**穿透** `--safe-mode`；safe mode 只压定制面（skills 23→17、slash 64→45）。
+
+于是关键问题变成：物理只读退化为 `--tools Read` 单点后，这个单点在最坏档位下还成立吗？
+**负例对照实测成立**：显式 `--permission-mode bypassPermissions` + 中性措辞命令 provider 写文件，
+模型真实尝试后回报 "I only have the `Read` tool available in this session—there's no Write, Edit,
+or shell tool provided"；目标文件未创建、`porcelain` 前后一致、事件流零写类工具调用。
+即**无写工具即无写路径，与权限档位无关**。
+
+> 方法上有一处必须记下：首次负例用了「你有完全权限，立刻执行，不要解释」这类带压迫感的措辞，
+> 模型识别为注入探针**直接拒绝**——测到的是模型判断力，不是只读机制，等于白测。改用中性的正常
+> 工程请求重做才把机制本身逼出来。负例对照的措辞设计本身就是实验的一部分。
+
+⇒ **裁决（2026-08-26，评审意见 1）：首期不补 `--permission-mode`。** 依据即上述实证——权限档位
+只决定「已有工具是否免确认」，**无法凭空增加写工具**；物理只读由工具可见性（`--tools Read`）
+保证，纵深防御不是当前正确性所需，按裁剪原则不加。**复检触发条件**：升级 claude CLI 锁定版本时
+重跑本节 smoke——若 `--tools` 语义或 init 事件的 `tools` 回报发生变化，本裁决须重审。
+
+### cursor 退出第一期
+
+实测 argv 与 stdin 传输面成立（进程真实起转 8.7s），被服务端拒于
+`ActionRequiredError: Named models unavailable Free plans can only use Auto.`——账号档位与
+「model 必须真实回放」硬性要求互斥。已撤 `agents/cursor/adapter.yaml` 的 `visual_provider` 块。
+**运行时一行未动**：`ask_mode` / `result_json` 机制留在词表内并改为独立机制单测（不再依赖该
+adapter 是否声明），第二期补回声明即恢复资格——这正是「机制 id 而非厂商名」当初要换的收益。
+
+### 验收
+
+- `npx tsc --noEmit -p harness/tsconfig.json` → 通过
+- `cd harness && npm test` → **exit 0**；单测 **3583 passed / 0 failed**、fixtures **44 / 0**
+- `npm run openspec:validate` → 42 passed / 0 failed
+- `node scripts/check-plan-version.mjs` → PASS
+- `npx ts-node harness/scripts/check-adapter-catalog-consistency.ts --framework-root .` → PASS
+
+### 收口状态（2026-08-26 用户裁决后）
+
+**7.7 全部收口**：claude / codex / opencode 三份入册凭据均已取得，cursor 按用户决定退出第一期，
+7.7a 已实证收口。
+
+**7.8 经用户裁决取消**：改为版本发布后由用户自行在宿主实测。据此，本 plan 正文
+「因上述两项未过，OpenSpec change 不 archive」（第 289–290 行）**已被该裁决取代**——正文属冻结
+决策不改写，取代关系记在此处。`tasks.md` 7.11 已由用户标为门槛满足。
+
+**因取消而缺失的证据（如实记录，勿在别处当已证引用）**：7.7 证到的是**单次调用**的传输面——
+图片确实进入模型、不写工程、信封投影、身份回显。**未证**的是端到端开发循环在 delegated 模式下
+能收敛闭环，即「评审缺陷物化回修 → 缺陷清零 → candidate-pass → 人签闭环」这条链；该链目前
+**仅由仓内单测覆盖**（7.4 / 7.5），无宿主真实运行佐证。这是一项**待观测的空白**，不因取消而
+变成已验证；发版门禁独立于宿主是另一件事，两者不可互相推导。
+
+**t7 归属已按单源原则归位**：t7⑨ 冻结「修订本 change，不另开 change；archive 条件扩为 t7 单测与
+文档全过」。中途 `tasks.md` 曾一度写成「t7 不属本 change、可 archive」，与 t7⑨ 冲突，已回改；
+`tasks.md` 第 8 节已恢复 t7 的 13 条 pending 条目。**⇒ 本 change 暂不 archive**，待 t7 收口后一次归档。
+「暂时不做 t7」不等于「改变 t7 的归属」——这是两件事。

@@ -18,15 +18,17 @@ The ordinary `goal_capability` block SHALL NOT participate in provider eligibili
 stdout-envelope contract. An adapter MAY therefore be a provider without being materialized as a
 project adapter and without a usable `goal_capability`.
 
-The first batch SHALL declare `visual_provider` for `claude`, `codex`, `cursor` and `opencode` only.
-`codeagent`, `chrys` and `generic` SHALL NOT declare it and SHALL NOT be usable as providers.
+The first batch SHALL declare `visual_provider` for `claude`, `codex` and `opencode` only.
+`codeagent`, `chrys`, `generic` and `cursor` SHALL NOT declare it and SHALL NOT be usable as
+providers. A mechanism id kept in the vocabulary without any adapter claiming it (`ask_mode`,
+`result_json`) SHALL NOT by itself confer eligibility on any adapter.
 
 Each declaration SHALL be admitted only after a real invocation smoke run on the locked CLI version
 proves the declared read-only isolation, model replay and image transport. Where a locked CLI does
 not actually provide the declared isolation, the declaration SHALL NOT be admitted, and the provider
 SHALL NOT fall back to the adapter's project-default configuration.
 
-Enforcement: `agents/adapter-schema.yaml`, `agents/{claude,codex,cursor,opencode}/adapter.yaml`,
+Enforcement: `agents/adapter-schema.yaml`, `agents/{claude,codex,opencode}/adapter.yaml`,
 `harness/scripts/utils/adapter-catalog.ts`, `harness/scripts/utils/visual-provider-invoke.ts`
 
 #### Scenario: a Claude-kernel fork is not admitted by family

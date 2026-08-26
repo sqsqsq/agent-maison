@@ -31,7 +31,11 @@
   {readonly_invoke, image_transport, stdout_envelope, model_replay}`；**完整声明本身就是 provider
   支持与运行资格**，运行时由 adapter catalog 扫描派生。禁止 TypeScript 白名单、adapter 家族推断、
   文档手写支持列表等平行真源；普通 `goal_capability` **不参与** provider 资格判定。首批只有
-  `claude/codex/cursor/opencode` 声明；`codeagent/chrys/generic` 首批不声明、不可作 provider。
+  `claude/codex/opencode` 声明；`codeagent/chrys/generic` 首批不声明、不可作 provider。
+  `cursor` 第一期**不入册**（tasks 7.7 实测：argv 与 stdin 传输面成立，被服务端以
+  「免费档只能用 Auto、不可指定模型」拒于账号面，与 model 真实回放要求互斥）；其
+  `ask_mode` / `result_json` 机制留在词表内并有单测覆盖，第二期补回声明即恢复资格——
+  这正是「机制 id 而非厂商名」换来的收益：撤一个 adapter 不动运行时一行。
 - **unsupported 按输入形态分流**：普通交互态与 attended goal 在「local 缺失或现有 adapter 不在
   catalog 支持列表」时提示一次并允许重选，跳过即本轮 blind 且不重复询问；无人值守读到旧 local
   unsupported 时 WARN、忽略并 blind 继续；显式 CLI `--visual-adapter` unsupported 时 fail-fast 并

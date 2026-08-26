@@ -30,7 +30,12 @@ image_input: none
 # 只读手段=exec 的只读沙箱档位；**绝不复用** goal headless 的 danger-full-access argv。
 # stdout 信封复用 e6 已验证的 turn JSONL 终态契约（completion 成立且无 terminal failure
 # 才投影正文）。运行时 argv SSOT：harness/scripts/utils/visual-provider-invoke.ts。
-# 入册凭据：待宿主真实 invocation smoke 回填（plan ab072691 t6）。
+# 入册凭据（plan ab072691 tasks 7.7，宿主 codex-cli 0.149.0 真实 invocation 实证）：
+#   argv `--ask-for-approval never exec --model <m> --sandbox read-only --image <png> --json`；
+#   一次调用 14.9s outcome=success；随机金丝雀四象限颜色 4/4 命中、随机 token 逐字报回
+#   （唯一偏差是 `0`→`O` 同形字，非视觉盲区）；turn_jsonl 正文投影成立；
+#   invoke 前后 `git status --porcelain` 逐字节一致；usage 由既有 invokeAgentHeadless 回填
+#   （capture=stdout_json confidence=measured）。
 visual_provider:
   readonly_invoke: read_only_sandbox
   image_transport: native_image_flag
