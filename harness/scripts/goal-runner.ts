@@ -288,6 +288,7 @@ import {
 import {
   applyClosurePatchFromReceiptValidation,
   applyGoalModelPinEnv,
+  applyGoalVisualProviderEnv,
   isGoalHeadlessEnv,
   MAISON_GOAL_MODEL_PIN_ENV,
   MAISON_GOAL_RUNNER_ENV,
@@ -369,6 +370,14 @@ import {
   resolveVisionModeForRun,
   reviewVisionForMode,
 } from './utils/visual-provider-identity';
+import {
+  buildVisualProviderInvokeEvent,
+  type VisualProviderInvocation,
+} from './utils/visual-provider-invoke';
+import {
+  listVisualObservationOutputs,
+  produceVisualObservationSidecars,
+} from './utils/visual-observation-sidecar';
 import {
   loadProgressContext,
   projectGoalProgress,
@@ -990,6 +999,10 @@ async function runHarnessPhase(
   // plan d7f3a9c4 t3：model pin 注入链②（gate harness）——有 pin 才携带；无 pin 显式清理
   //（共享执行器：先清大小写变体再写唯一大写键，父环境残留不会漏入子进程）。
   applyGoalModelPinEnv(childEnv, manifest?.adapter_model_pin?.value);
+  // plan ab072691 t5①：provider 身份注入 gate harness——provider 评审发生在 gate 进程里
+  // （capture 之后、严格 dispatch 之前），而那个进程没有 manifest。同一条注入纪律：
+  // 成对写、成对清；无 pin 时只清不写（gate 侧取不到即按未配置处理，落 blind）。
+  applyGoalVisualProviderEnv(childEnv, manifest?.visual_provider_pin);
   for (const [k, v] of Object.entries(gateInjectedEnv)) {
     deleteEnvKeyCaseInsensitive(childEnv, k);
     childEnv[k] = v;
@@ -2147,6 +2160,15 @@ export function collectActionableDefects(
         if (structural.length > 0) {
           // 每信号一条候选；defect.must_fix_refs 反向解析到该屏 must_fix 原文作指令
           for (const { d, fp } of structural) {
+            // plan ab072691 t5⑤：**provider 评审缺陷是独立的 critic candidate 源**，
+            // 不是 producer 感知信号。它结构上恒「未经 primary defect-review 复核」——
+            // provider 后于 primary 运行，而且让**盲的** primary 去复核视觉缺陷是伪制衡。
+            // 若按 signal@1 走复核管线，每一个 delegated 轮次都会 halt
+            // repair_adjudication_pending（等于 delegated 白做）。故：合法即**直接物化**
+            // 驱动回修（legacy 语义：可回退、不入 signal@1 收敛、不需复核），
+            // 收敛兜底交既有 no_progress_fuse + 人签通道。T8 信号一字不改。
+            const fromVisualProvider =
+              (d as { source?: { producer?: unknown } }).source?.producer === 'visual_provider';
             const refs = Array.isArray((d as { must_fix_refs?: unknown }).must_fix_refs)
               ? ((d as { must_fix_refs?: number[] }).must_fix_refs ?? [])
                 .filter((i): i is number => Number.isInteger(i) && i >= 0 && i < mustFix.length)
@@ -2166,8 +2188,9 @@ export function collectActionableDefects(
               // ——不变拼接序、不排序聚合；identity=sha256 由 repair-candidates 层计算
               fingerprint: fp,
               evidence_path: `${diffRel}#${id}`,
-              // 结构化视觉信号：进入 signal@1 身份 + M2 物化前复核
-              signal_identity: true,
+              // 结构化视觉信号：进入 signal@1 身份 + M2 物化前复核。
+              // provider 源例外（见上）：直接物化回修，不进复核/停等管线。
+              signal_identity: !fromVisualProvider,
             });
           }
         } else {
@@ -2605,9 +2628,17 @@ export function resolvePhaseCapabilityAdvisory(
     { requirementSourceFiles: manifest.requirement_source_files },
   ).map(p => path.relative(projectRoot, p).replace(/\\/g, '/'));
 
+  // plan ab072691 t4④：本函数**只列不产**（它是同步的，provider 调用是异步的）。
+  // 生产由 phase 循环在 spec 且 delegated 时显式 await 后回列——与 OCR「spec 生产、
+  // plan/coding 只列」同一条纪律，只是生产点从同步函数内挪到了它的异步调用方。
+  const visualObservationPaths = listVisualObservationOutputs(projectRoot, frameworkRoot, manifest.feature);
+
   return {
     hasVision,
     ocrAvailable: effectiveOcr,
+    visionMode,
+    ...(visualProvider ? { visualProvider: { ...visualProvider } } : {}),
+    ...(visualObservationPaths.length > 0 ? { visualObservationPaths } : {}),
     selectedFidelity: desired,
     effectiveFidelity: clamp.effective,
     fidelityClamped: clamp.clamped,
@@ -5761,6 +5792,35 @@ Goal runner — tool-agnostic multi-phase orchestrator
           resolvedProfile,
           phase,
         );
+        // plan ab072691 t4④：spec 期视觉观察 sidecar 生产——**唯一生产点**，
+        // 与 OCR 预扫描同一条 dispatch（spec 产、plan/coding 只列）。
+        // best-effort：单图失败不阻断其余，整体失败也只是少几份 sidecar，绝不阻断 spec。
+        if (
+          !dryRun && phase === 'spec' &&
+          capabilityAdvisory?.visionMode === 'delegated' && capabilityAdvisory.visualProvider &&
+          capabilityAdvisory.referenceImagePaths.length > 0
+        ) {
+          try {
+            const produced = await produceVisualObservationSidecars({
+              projectRoot,
+              frameworkRoot,
+              feature: manifest.feature,
+              provider: capabilityAdvisory.visualProvider,
+              referenceImages: capabilityAdvisory.referenceImagePaths.map(
+                rel => path.resolve(projectRoot, rel),
+              ),
+              evidenceRoot: path.join(projectRoot, manifest.report_dir, 'visual-review'),
+              runId: manifest.run_id,
+              onInvocation: (inv: VisualProviderInvocation) =>
+                goalEvents.emit({ ...buildVisualProviderInvokeEvent(inv) }),
+            });
+            // 生产后回列：prompt 看到的就是盘上最终结果（含复用的既有 sidecar）。
+            capabilityAdvisory.visualObservationPaths = produced;
+          } catch (e) {
+            // 观察是 best-effort 上下文，不是门禁产物——异常只记一行，不改判、不阻断。
+            console.warn(`[visual-provider] spec 观察 sidecar 生产异常（不阻断）：${(e as Error).message}`);
+          }
+        }
         // post-impl3 P0-3：mid-chain 能力收紧命中真冲突（pixel∧hard∧clamped）——spawn 前
         // 消费裁决（否则收紧发生在 plan/coding 时后续不重跑 spec pregate，hard pixel 静默继续）。
         if (capabilityAdvisory?.deferTriggered) {

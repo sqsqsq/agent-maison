@@ -17,6 +17,7 @@ import {
   type UiSpecDoc,
 } from '../../../harness/scripts/utils/ui-spec-shared';
 import { extractCodeBlocks } from '../../../harness/scripts/utils/markdown-parser';
+import { resolveActiveVisualProvider } from '../../../harness/scripts/utils/visual-provider-identity';
 import { collectP0VisualTargetIds } from './visual-diff-targets';
 import { collectOutOfBoundsGlobalElements, collectGrossMissingAnchorText, collectTextPlacementSignals, collectVerdictAbandonment } from './visual-diff-ocr-gates';
 import type { OcrFn } from './visual-diff-ocr-gates';
@@ -89,11 +90,71 @@ function loadSpecMarkdown(ctx: CheckContext): string | null {
 export type VisualDiffDefectClass = 'clipping' | 'overlap' | 'shape_mismatch' | 'missing_render' | 'other';
 export type VisualDiffDefectSeverity = 'blocker' | 'major' | 'minor';
 
-/** t0（plan f7a3d9c2）：defect 的 T8 转录溯源锚点——transcription audit 主判据 */
-export interface VisualDiffDefectSource {
-  producer: 'T8';
-  finding_id: string;
-  signal: string;
+/**
+ * defect 的**产出者溯源**。
+ * - `T8`（plan f7a3d9c2 t0）：机械 producer 的转录锚点——transcription audit 主判据；
+ * - `visual_provider`（plan ab072691 t5④）：只读视觉 provider 的逐屏评审写入。
+ *
+ * 两者是**不同的源**，不是同一条管线的两种标签：T8 是感知信号（须经 defect-review 裁决），
+ * provider 是独立 critic candidate（合法即物化回修、非法即丢弃，不进停等管线）。
+ */
+export type VisualDiffDefectSource =
+  | { producer: 'T8'; finding_id: string; signal: string }
+  | { producer: 'visual_provider'; invoke_id: string };
+
+/** T8 转录对账用：只有 T8 源才有 finding_id（provider 源恒返回 undefined）。 */
+export function t8FindingIdOf(source: VisualDiffDefectSource | undefined): string | undefined {
+  return source?.producer === 'T8' ? source.finding_id : undefined;
+}
+
+/**
+ * plan ab072691 t5⑦：critic 回执证据路径的绑定判定（**纯路径判定，无 IO**）。
+ *
+ * 两条互斥期望路径：
+ *  · primary（现状，逐字不变）——`<featureDir>/goal-runs/<run>/phases/testing/agent-events.jsonl`；
+ *  · delegated provider —— `<featureDir>/device-testing/reports/visual-review/<invoke_id>/agent-events.jsonl`。
+ *
+ * 走哪一支由**本 run 声明的 provider 身份**决定（env 冻结值优先，其次个人级 local），
+ * **不看回执自报的 adapter 名**——否则伪造者可以自选更宽松的那一支。
+ * provider 支只放宽「目录锚」，不放宽任何其它判据：`critic_run_id` 仍须精确等于
+ * `<run>-<attempt>`，证据日志 hash 仍须重算相符，验读事件仍须逐图复核。
+ */
+export function criticEvidenceBranchOf(
+  ctx: CheckContext,
+  receiptAdapter: string,
+): 'primary_testing' | 'visual_provider' {
+  // frameworkRoot 由本文件位置派生：`<framework>/profiles/<profile>/harness` 向上三层。
+  // **不用 detectRepoLayout(__dirname)**——它从 harness/ 之外的目录会直接抛
+  // "Cannot locate harness root"，而这里是回执校验的热路径，抛异常等于把 native 路径也弄坏。
+  const frameworkRootForProvider = path.resolve(__dirname, '..', '..', '..');
+  const declaredProvider = resolveActiveVisualProvider(ctx.projectRoot, frameworkRootForProvider).pin;
+  return declaredProvider && receiptAdapter.trim() === declaredProvider.adapter
+    ? 'visual_provider'
+    : 'primary_testing';
+}
+
+export function isCriticEvidencePathBound(
+  ctx: CheckContext,
+  receiptAdapter: string,
+  evidenceLogPath: string,
+): boolean {
+  const runId = process.env.MAISON_GOAL_RUN_ID?.trim();
+  if (!runId) return false;
+  const abs = path.resolve(ctx.projectRoot, evidenceLogPath);
+  if (criticEvidenceBranchOf(ctx, receiptAdapter) === 'visual_provider') {
+    const providerRoot = path.resolve(
+      featureDir(ctx.projectRoot, ctx.feature),
+      'device-testing', 'reports', 'visual-review',
+    );
+    if (path.basename(abs) !== 'agent-events.jsonl') return false;
+    const invokeDir = path.dirname(abs);
+    // 恰好一层 invoke 目录（不接受任意深度嵌套——那等于放开目录锚）
+    return path.dirname(invokeDir) === providerRoot && path.basename(invokeDir).length > 0;
+  }
+  return abs === path.resolve(
+    featureDir(ctx.projectRoot, ctx.feature),
+    'goal-runs', runId, 'phases', 'testing', 'agent-events.jsonl',
+  );
 }
 
 /** 正向渲染缺陷（实现有但渲染错）。bbox 为归一化 [x,y,w,h] ∈ [0,1] */
@@ -509,13 +570,19 @@ export function validateVisualDiffJson(
             // t0（f7a3d9c2）：转录溯源与 must_fix 锚点——可选字段，形状校验（legacy 兼容）
             if (dd.source !== undefined && dd.source !== null) {
               const src = dd.source as Record<string, unknown>;
-              if (
-                typeof src !== 'object' ||
-                src.producer !== 'T8' ||
-                typeof src.finding_id !== 'string' || !src.finding_id.trim() ||
-                typeof src.signal !== 'string' || !src.signal.trim()
-              ) {
-                errors.push(`screens[${i}].defects[${j}].source 须为 {producer:'T8', finding_id, signal}`);
+              // plan ab072691 t5④：两种合法产出者——T8 转录 / 只读视觉 provider 评审。
+              const t8Ok =
+                src.producer === 'T8' &&
+                typeof src.finding_id === 'string' && src.finding_id.trim().length > 0 &&
+                typeof src.signal === 'string' && src.signal.trim().length > 0;
+              const providerOk =
+                src.producer === 'visual_provider' &&
+                typeof src.invoke_id === 'string' && src.invoke_id.trim().length > 0;
+              if (typeof src !== 'object' || (!t8Ok && !providerOk)) {
+                errors.push(
+                  `screens[${i}].defects[${j}].source 须为 {producer:'T8', finding_id, signal} ` +
+                  `或 {producer:'visual_provider', invoke_id}`,
+                );
               }
             }
             if (dd.must_fix_refs !== undefined && dd.must_fix_refs !== null) {
@@ -665,7 +732,11 @@ export function computeDefectFingerprint(screenId: string, d: VisualDiffDefect):
   const bucket = Array.isArray(d.bbox) && d.bbox.length === 4
     ? d.bbox.map(n => (Math.round(n * 10) / 10).toFixed(1)).join(',')
     : 'nobbox';
-  const src = d.source?.finding_id?.trim() ? `|${d.source.producer}#${d.source.finding_id.trim()}` : '';
+  // plan ab072691 t5④：**只有 T8 源**追加身份尾段。provider 源刻意走 legacy 四元组——
+  // invoke_id 每轮必变，若进指纹则 provider 缺陷永远"看起来是新的"，no_progress_fuse
+  // 对 provider 误报将结构性失效（而它正是 provider 误报的兜底之一）。
+  const t8Id = t8FindingIdOf(d.source)?.trim();
+  const src = t8Id ? `|T8#${t8Id}` : '';
   return `${screenId}|${d.class}|${d.element?.trim() || 'unknown'}|${bucket}${src}`;
 }
 
@@ -957,6 +1028,80 @@ function finalizeVisualDiffHits(
 let injectedVisualDiffOcrFn: OcrFn | null = null;
 export function __testing_setVisualDiffOcrFn(fn: OcrFn | null): void {
   injectedVisualDiffOcrFn = fn;
+}
+
+/**
+ * plan ab072691 t5⑤（返修）：**与 provider 判定无关的确定性红线**——供 fail-open 路径单独调用。
+ *
+ * 背景：provider 不可用时不跑严格视觉对照（pending 屏会把 phase 挡死），但那条路**不该顺带
+ * 关掉与 provider 毫无关系的确定性侦测**。这里只跑两项，都复用既有 check id、既有判据、
+ * 既有严重度，不新增 id / 状态 / 质量轴：
+ *   · `visual_diff_tamper_artifact` —— 改判脚本物证（框架红线，任何档位 BLOCKER FAIL）；
+ *   · `visual_diff_schema`          —— visual-diff.json 结构损坏。
+ * 无命中即返回空数组（不产 PASS 噪音——本轮的结论由 fail-open 的 `visual_diff` SKIP 承载）。
+ */
+export function checkVisualDiffDeterministicOnly(ctx: CheckContext): CheckResult[] {
+  const out: CheckResult[] = [];
+  const jsonPath = path.join(
+    featureDir(ctx.projectRoot, ctx.feature), 'device-testing', 'device-screenshots', 'visual-diff.json',
+  );
+  const reportRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'device-testing/visual-diff.md');
+
+  const tamperArtifacts = collectVisualDiffTamperArtifacts(
+    ctx.projectRoot,
+    ctx.feature,
+    featuresDirPath(ctx.projectRoot),
+  );
+  if (tamperArtifacts.length > 0) {
+    out.push({
+      id: 'visual_diff_tamper_artifact',
+      category: 'structure',
+      description: '视觉判定改判脚本物证扫描（确定性红线，与 provider 无关）',
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details:
+        `检出视觉判定改判脚本物证（程序化伪造/销毁 visual-diff.json 判定，属证据篡改）：` +
+        tamperArtifacts.map(a => `${a.file}［${a.signatures.join('、')}］`).join('; ') +
+        `——判定只能由 capture/真人逐屏产生；删除脚本并还原判定后重跑，行为已违反框架红线（须人工复核）。`,
+      affected_files: [reportRel],
+      suggestion: '删除改判脚本并还原真实判定后重跑；该行为须人工复核。',
+    });
+  }
+
+  if (fs.existsSync(jsonPath)) {
+    try {
+      const validated = validateVisualDiffJson(
+        JSON.parse(fs.readFileSync(jsonPath, 'utf-8')) as unknown,
+        ctx.projectRoot,
+      );
+      if (validated.errors.length > 0) {
+        out.push({
+          id: 'visual_diff_schema',
+          category: 'structure',
+          description: 'visual-diff.json 结构校验（确定性，与 provider 无关）',
+          severity: 'MAJOR',
+          status: 'FAIL',
+          details:
+            `visual-diff.json 结构问题：` +
+            `${validated.errors.slice(0, 6).join('；')}${validated.errors.length > 6 ? '…' : ''}`,
+          affected_files: [reportRel],
+          suggestion: '按报错逐项修正 visual-diff.json 结构后重跑。',
+        });
+      }
+    } catch (e) {
+      out.push({
+        id: 'visual_diff_schema',
+        category: 'structure',
+        description: 'visual-diff.json 结构校验（确定性，与 provider 无关）',
+        severity: 'MAJOR',
+        status: 'FAIL',
+        details: `visual-diff.json 解析失败：${(e as Error).message}`,
+        affected_files: [reportRel],
+        suggestion: '修复 visual-diff.json 的 JSON 语法后重跑。',
+      });
+    }
+  }
+  return out;
 }
 
 export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
@@ -1846,17 +1991,19 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
             // 其他路径片段含 run_id 即可通过）——收紧为**期望全路径精确等值**：回执只在
             // testing 阶段由 runner 签发（goal-runner t3b 分支 phase==='testing'），期望路径
             // 唯一可推导 = <featureDir>/goal-runs/<run_id>/phases/testing/agent-events.jsonl。
-            path.resolve(ctx.projectRoot, att.evidence_log_path) !==
-            path.resolve(
-              featureDir(ctx.projectRoot, ctx.feature),
-              'goal-runs',
-              process.env.MAISON_GOAL_RUN_ID.trim(),
-              'phases',
-              'testing',
-              'agent-events.jsonl',
-            )
+            //
+            // plan ab072691 t5⑦：delegated **窄分支**——回执由只读视觉 provider 产生时，
+            // 证据流不在 primary 的 testing 阶段目录，而在 provider 自己的调用证据目录。
+            // 分支判据取**本 run 声明的 provider 身份**（env 冻结值 / 个人级 local），
+            // 不取回执自报字段：否则伪造者可以自选更宽松的那一支。native 路径逐字不变。
+            !isCriticEvidencePathBound(ctx, receipt.adapter, att.evidence_log_path)
           ) {
-            attErr = `attestation 证据路径未绑定当前 run 的 testing 阶段目录（${att.evidence_log_path}）`;
+            // 措辞按分支给：primary 支逐字保持既有文案（下游断言与排障习惯都绑它），
+            // provider 支说自己的期望目录，不含糊成一句"某个目录"。
+            attErr =
+              criticEvidenceBranchOf(ctx, receipt.adapter) === 'visual_provider'
+                ? `attestation 证据路径未绑定本轮只读视觉 provider 的证据目录（${att.evidence_log_path}）`
+                : `attestation 证据路径未绑定当前 run 的 testing 阶段目录（${att.evidence_log_path}）`;
           } else {
             const evidenceAbs = path.resolve(ctx.projectRoot, att.evidence_log_path);
             if (!fs.existsSync(evidenceAbs)) {
@@ -2316,7 +2463,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       const entry = byScreenId.get(screen_id);
       const defects = entry?.defects ?? [];
       const matched =
-        defects.some(d => d.source?.finding_id === finding.finding_id) ||
+        defects.some(d => t8FindingIdOf(d.source) === finding.finding_id) ||
         (finding.elements.length > 0 &&
           defects.some(
             d =>

@@ -25,7 +25,14 @@ import {
   CheckContext,
   CheckResult,
 } from './utils/types';
-import { fidelityRatchetFailOrWarn, isHardPixelContract, isPixel1to1, loadSpecMarkdown } from './utils/fidelity-shared';
+import {
+  fidelityRatchetFailOrWarn,
+  isHardPixelContract,
+  isPixel1to1,
+  loadCapabilitySnapshot,
+  loadSpecMarkdown,
+} from './utils/fidelity-shared';
+import { detectRepoLayout } from '../repo-layout';
 import {
   resolveFeatureArtifact,
   relFeatureArtifact,
@@ -73,6 +80,8 @@ import { deviceTestEvidencePath } from './utils/device-test-evidence-shared';
 import {
   isDeviceVisualDiffSkipped,
   dispatchDeviceVisualDiff,
+  resolveVisualProviderReview,
+  dispatchVisualDiffDeterministicOnly,
   analyzeProjectDependencyIssueViaProfile,
 } from '../capability-registry';
 import type { DeviceTestBuildResult } from '../../profiles/hmos-app/harness/providers/device-test-build';
@@ -3337,6 +3346,51 @@ function checkUiEntryCoverage(ctx: CheckContext): CheckResult[] {
 // Main Checker
 // --------------------------------------------------------------------------
 
+/**
+ * plan ab072691 t5①：delegated 轮次的 provider 评审调度。
+ *
+ * 返回 null = **本机制整体不激活**（native/blind、profile 未提供实现、或无目标屏）——
+ * 调用方照常走既有严格 dispatch，行为逐字等于本改动前。
+ * 返回 `unusable` = provider 不可用/载荷无效 → 调用方走 fail-open SKIP 出口。
+ *
+ * vision_mode 只从**冻结快照**读：它由 preflight 派生一次、run 内不可变；gate 进程不得
+ * 自行重探、更不得因 provider 调用结果反向改写它。
+ */
+async function runDelegatedVisualProviderReview(
+  ctx: CheckContext,
+): Promise<{ kind: 'unusable'; outcome: string; reason: string } | { kind: 'other' } | null> {
+  try {
+    const snap = loadCapabilitySnapshot(ctx.projectRoot, ctx.feature);
+    if (snap?.vision_mode !== 'delegated') return null;
+    const fn = resolveVisualProviderReview(ctx);
+    if (!fn) {
+      // profile 没有实现只读评审：本轮等于没有可用 provider——走同一条 fail-open 出口，
+      // 而不是让 pending 屏去撞严格 dispatch 的 BLOCKER FAIL。
+      return {
+        kind: 'unusable',
+        outcome: 'unavailable',
+        reason: `project_profile=${ctx.resolvedProfile.name} 未提供只读视觉 provider 评审实现`,
+      };
+    }
+    const frameworkRoot = detectRepoLayout(__dirname).frameworkRoot;
+    const outcome = (await fn(ctx, { frameworkRoot })) as
+      | { kind: 'skipped'; reason: string }
+      | { kind: 'applied' }
+      | { kind: 'unusable'; outcome: 'unavailable' | 'invalid'; reason: string };
+    if (outcome?.kind === 'unusable') {
+      return { kind: 'unusable', outcome: outcome.outcome, reason: outcome.reason };
+    }
+    return { kind: 'other' };
+  } catch (e) {
+    // 评审接线自身出错也**不得**升级成阻断：按本轮无可用 provider 处理（fail-open）。
+    return {
+      kind: 'unusable',
+      outcome: 'unavailable',
+      reason: `provider 评审接线异常：${(e as Error).message}`,
+    };
+  }
+}
+
 function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
   try {
     return fn();
@@ -3544,7 +3598,50 @@ const checker: PhaseChecker = {
       if (!ctx.visualFuseEligibility) {
         ctx.visualFuseEligibility = CAPTURE_NOT_RUN_ELIGIBILITY;
       }
-      results.push(...safeRun(() => dispatchDeviceVisualDiff(ctx), 'visual_diff'));
+      // ------------------------------------------------------------------
+      // plan ab072691 t5①⑤：只读视觉 provider 评审 —— capture 之后、严格 dispatch 之前。
+      //
+      // 异步显式化：safeRun 是同步包装器（`fn: () => CheckResult[]`），塞不进 Promise，
+      // 所以这里**显式 await**（本 check 入口本就是 async），不把异步藏进同步壳。
+      //
+      // fail-open 接线**写死**：provider unavailable/invalid 时**不跑**严格 dispatch。
+      // 若照常跑，P0 屏 pending / 全屏 pending 在 uiChange=new_or_changed 下 = BLOCKER FAIL，
+      // 会把 phase 挡死——与 fail-open 恰好相反。改为返回既有 `visual_diff`
+      // {BLOCKER, SKIP}：非 MINOR 的 SKIP → visual-debt needs_human → visual 投影
+      // UNVERIFIED、release BLOCKED；SKIP 非 FAIL，phase 照常推进。三态同时成立：
+      // **开发循环 PASS / visual UNVERIFIED / release VISUAL_PENDING**。零新 check/状态/轴。
+      const providerReview = await runDelegatedVisualProviderReview(ctx);
+      if (providerReview?.kind === 'unusable') {
+        results.push({
+          id: 'visual_diff',
+          category: 'structure',
+          description: ruleDesc(ctx, 'structure_checks', 'visual_diff'),
+          severity: 'BLOCKER',
+          status: 'SKIP',
+          // 机器可读披露（随 script-report 落盘）：本轮 provider 为什么不可采信。
+          // 只是**披露**，不是新的裁决载体——处置全部由既有 SKIP→债务→release 链承担。
+          structured: {
+            kind: 'visual_provider_round',
+            outcome: providerReview.outcome,
+            reason: providerReview.reason,
+          },
+          details:
+            `【delegated 视觉委托】本轮 provider 评审不可采信（${providerReview.outcome}）：` +
+            `${providerReview.reason}\n` +
+            '本轮视觉反馈按盲档降级：不执行严格视觉对照（否则 pending 屏会把 phase 挡死），' +
+            '视觉保持 UNVERIFIED、release 保持 VISUAL_PENDING，phase 照常推进。' +
+            'provider 的写盘产物一律不采信；工作区未被自动回滚。',
+        });
+        // fail-open 只抑制**依赖 provider 判定**的 pending/candidate 分支；与 provider
+        // 无关的确定性红线（改判脚本物证 / json 结构损坏）照跑——复用既有 check id，
+        // 不新增 id/状态/质量轴。
+        results.push(...safeRun(
+          () => dispatchVisualDiffDeterministicOnly(ctx),
+          'visual_diff_deterministic',
+        ));
+      } else {
+        results.push(...safeRun(() => dispatchDeviceVisualDiff(ctx), 'visual_diff'));
+      }
     }
 
     // --- goal-fakepass-hardening t2：review 闭环源码快照对账（BLOCKER，无 grace window）---

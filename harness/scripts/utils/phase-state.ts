@@ -110,6 +110,39 @@ export function applyGoalModelPinEnv(env: NodeJS.ProcessEnv, modelPinValue: stri
   }
 }
 
+/**
+ * plan ab072691 t5①：本 run 冻结的**只读视觉 provider 身份**注入键（成对）。
+ *
+ * 为什么要 env：provider 评审发生在 **gate harness 进程**里（capture 之后、严格 dispatch
+ * 之前），那个进程没有 manifest。与 model pin 同一条注入纪律：注入前清大小写变体，
+ * 无 pin 时**只清不写**（子进程取不到即按未配置处理，不得臆造）。
+ * 交互态无此 env——由 gate 侧读个人级 framework.local.json。
+ */
+export const MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV = 'MAISON_GOAL_VISUAL_PROVIDER_ADAPTER';
+export const MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV = 'MAISON_GOAL_VISUAL_PROVIDER_MODEL';
+
+/** 成对注入的唯一执行器（成对写、成对清——半个身份既冻结不了也回放不了）。 */
+export function applyGoalVisualProviderEnv(
+  env: NodeJS.ProcessEnv,
+  pin: { adapter: string; model: string } | undefined,
+): void {
+  deleteEnvKeyCaseInsensitive(env, MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV);
+  deleteEnvKeyCaseInsensitive(env, MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV);
+  if (pin?.adapter && pin.model) {
+    env[MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV] = pin.adapter;
+    env[MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV] = pin.model;
+  }
+}
+
+/** 从当前进程 env 读回冻结 provider 身份（成对齐全才算数）。 */
+export function readGoalVisualProviderEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): { adapter: string; model: string } | undefined {
+  const adapter = env[MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV]?.trim();
+  const model = env[MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV]?.trim();
+  return adapter && model ? { adapter, model } : undefined;
+}
+
 export function isGoalOrchestrationEnv(): boolean {
   return (
     process.env[MAISON_GOAL_RUNNER_ENV] === '1' || process.env[MAISON_GOAL_HEADLESS_ENV] === '1'
