@@ -651,12 +651,17 @@ export function executeInitTask(
     }
     case 'record-visual-provider': {
       // plan ab072691 t1③：只读视觉 provider 的**机器写盘**入口（agent 不手写 JSON）。
-      // 跳过（未注入 visualProvider）是合法结果：本轮 blind，不写键、不报错。
+      // 跳过（未注入 visualProvider）是合法的**显式选择**：不写 local。普通交互态由该
+      // 选择授权当前操作；attended goal 的会话层须把它转成 --allow-blind-visual。
       const sel = ctx.visualProvider;
       const adapter = sel?.adapter?.trim();
       const model = sel?.model?.trim();
       if (!adapter && !model) {
-        return { message: '未提供 visualProvider，跳过——本轮以 blind 模式继续（不写入 local）' };
+        return {
+          message:
+            '未提供 visualProvider，已明确跳过（不写入 local）：普通交互仅授权当前操作；' +
+            'attended goal 请把本次选择转译为 --allow-blind-visual。',
+        };
       }
       if (!adapter || !model) {
         // 半个身份既冻结不了也回放不了：任务 failed，让 agent 重新收集，而不是写半条记录。

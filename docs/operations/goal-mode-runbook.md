@@ -179,13 +179,27 @@ gate、receipt/人签、设备与凭据规则不变；agent 自跑 harness 只�
 进身份哈希，resume 只认冻结值（不重读个人配置），successor 出生输入可覆盖。优先级 **CLI > manifest
 冻结值 > 个人级 `framework.local.json` 的 `vision.visual_provider`**。
 
+**UI blind 启动须一次明确授权（`--allow-blind-visual`）**：UI 相关需求在 primary canary 尝试后若
+effective image-input 仍为 blind，且没有 catalog 认可的冻结 provider，正式 phase 前会 BLOCKER。
+两条出路只有：配置 provider，或显式传该布尔旗标。本旗标与 `fidelity=reference_only` 含义不同，
+不写 `framework.local.json`；收到后在 manifest 身份漂移检查前冻结
+`allow_blind_visual: true` 并条件入身份哈希。resume 使用冻结值不重传；给旧 manifest 新增授权须
+`--override-manifest`；successor 会剥离该字段，新 run 重新授权。native/delegated run 即使带该键，
+路由也不受影响。
+
+无人值守 BLOCKER 后须按 run 身份恢复：**新 run** 可修改 `framework.local.json` 后重新启动，或在新启动
+命令中显式传 provider / `--allow-blind-visual`；**继续当前 run** 时，单独修改 local 不会更新已冻结
+manifest，必须在 resume 命令中显式传 `--visual-adapter` + `--visual-model`，或传
+`--allow-blind-visual`，并同时加 `--override-manifest`。
+
 - **支持哪些 adapter 由 adapter catalog 派生**——运行时扫 `agents/<adapter>/adapter.yaml` 的
   `visual_provider` 完整声明；本文**不另写一份名单**（要看当前支持项，跑一次带不支持 adapter 的
   `--visual-adapter`，错误会列出）。
 - 显式传了**不受支持**的 adapter → 启动处 BLOCKER fail-fast 并列出支持项；框架**不自动改选**、
   **不在多个 provider 之间 fallback**。
-- 无人值守读到已失效的旧 local 配置 → WARN + 忽略 + 以 blind 继续，**绝不停 run**。
-- 未配置 = 现状零变化（`native` 或 `blind`）。
+- 无人值守读到已失效/不可读的旧 local 配置 → WARN + 忽略，并按「无 provider」进入统一矩阵：
+  非 UI 放行；UI + primary blind 只有持 `--allow-blind-visual` 才以 blind 继续，否则启动 BLOCKER。
+- attended goal 当场选择「跳过并盲跑」时，会话层须把选择转译成该旗标；普通交互态只授权当前操作。
 - provider 调用失败/载荷不可信时：本轮视觉反馈降级为盲档，`visual_diff` 出 `{BLOCKER, SKIP}`，
   经既有债务链把 visual 投影 `UNVERIFIED`、release 保持 `VISUAL_PENDING`，**phase 照常推进**。
 - `pixel_1to1` 的最终**真人逐屏确认不因 provider 减免**。
@@ -195,6 +209,13 @@ gate、receipt/人签、设备与凭据规则不变；agent 自跑 harness 只�
 cd framework/harness && npx ts-node scripts/goal-runner.ts \
   --feature <feature-slug> --requirement "需求" --adapter codex --adapter-model <coding-model> \
   --visual-adapter claude --visual-model <vision-model> --detach
+```
+
+```bash
+# 明确授权当前 run 无 provider 盲跑（仅在你接受视觉债务时使用）
+cd framework/harness && npx ts-node scripts/goal-runner.ts \
+  --feature <feature-slug> --requirement "UI 需求" --adapter codex \
+  --allow-blind-visual --detach
 ```
 
 ```bash

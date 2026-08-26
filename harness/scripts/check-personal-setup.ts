@@ -57,19 +57,19 @@ function parseArgs(argv: string[]): PersonalSetupCliOptions {
 /**
  * plan ab072691 t1③（返修）：只读视觉 provider 的**机器可读入口**。
  *
- * 纯 advisory：**永不**影响 `ok` / `code`——provider 从来不是 personal setup 的前置条件，
- * 跳过只意味着本轮 blind。它存在的意义是让「supported 不问、缺失/unsupported 问一次」
- * 成为确定性判定，而不是只靠文档提醒 agent。
+ * 纯 advisory：**永不**影响 `ok` / `code`。它向交互入口提供 provider 选择/明确盲跑
+ * 所需事实；真正的条件 prerequisite 只在 goal-runner 的 UI+primary-blind 启动决策点生效。
  *
  * 字段：
  *  · `shouldPrompt` —— 是否该在本轮 UI 相关阶段问一次（local 缺失 或 现有 adapter 已失格）；
- *  · `state`        —— absent | ok | unsupported；
+ *  · `state`        —— absent | ok | unsupported | unavailable；
  *  · `supported[]`  —— catalog 现算的支持项（**唯一**支持列表来源，勿在别处枚举）；
  *  · `prompt`       —— shouldPrompt 时的现成提示语（含重选/跳过两条出路）。
  */
 export function buildVisualProviderAdvisory(projectRoot: string): Record<string, unknown> {
+  let frameworkRoot: string | null = null;
   try {
-    const frameworkRoot = detectRepoLayout(__dirname).frameworkRoot;
+    frameworkRoot = detectRepoLayout(__dirname).frameworkRoot;
     const state = resolveVisualProviderFromLocal(loadLocalConfig(projectRoot), frameworkRoot);
     const shouldPrompt = shouldPromptForVisualProvider(state);
     return {
@@ -82,8 +82,21 @@ export function buildVisualProviderAdvisory(projectRoot: string): Record<string,
       task: 'record-visual-provider',
     };
   } catch (e) {
-    // advisory 出错不得影响门控结论——如实记一行原因即可。
-    return { state: 'unavailable', shouldPrompt: false, reason: (e as Error).message };
+    // advisory 出错不得影响 personal setup 的 ok/code；但“读不到 provider”不是授权。
+    // 交互入口仍须给出「修复配置 / 明确盲跑」两条出路，不能以 shouldPrompt=false 静默略过。
+    const supported = frameworkRoot ? listVisualProviderAdapterNames(frameworkRoot) : [];
+    return {
+      state: 'unavailable',
+      shouldPrompt: true,
+      supported,
+      prompt:
+        `视觉 provider 配置读取失败：${(e as Error).message}。` +
+        '请修复 framework.local.json 的 provider 配置，或明确选择“跳过并盲跑”' +
+        '（attended goal 转译为 --allow-blind-visual；只授权当前 run）。',
+      reason: (e as Error).message,
+      decisionClass: 'setup.visual_provider',
+      task: 'record-visual-provider',
+    };
   }
 }
 

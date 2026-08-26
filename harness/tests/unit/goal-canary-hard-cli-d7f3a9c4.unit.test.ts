@@ -407,6 +407,10 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         // 结构化终态已落盘
         const halt = events.find(e => e.type === 'phase_halt' && e.halt_reason === 'canary_cli_hard_failure') as Record<string, unknown> | undefined;
         assert(halt, '须落 phase_halt(canary_cli_hard_failure)');
+        assert(
+          !events.some(e => e.type === 'phase_halt' && e.halt_reason === 'blind_visual_authorization_required'),
+          't7：缺盲跑授权不得掩盖 canary hard CLI failure',
+        );
         assert(typeof halt!.halt_guidance === 'string' && String(halt!.halt_guidance).includes('非需求代码'), 'halt_guidance 须有界且含定性');
         const end = [...events].reverse().find(e => e.type === 'run_end') as Record<string, unknown> | undefined;
         assert(end, '须落 run_end');
@@ -438,6 +442,208 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         else process.env.MAISON_GOAL_CHECKPOINT_DIR = prevTrustDir;
         try { process.chdir(prevCwd); } catch { /* ignore */ }
         try { fs.rmSync(root, { recursive: true, force: true }); } catch { /* ignore */ }
+      }
+    },
+  },
+  {
+    name: 't7 runner 启动 smoke：UI blind 未授权阻断；CLI 授权、合法 provider、resume 冻结授权均越过启动门',
+    run: async () => {
+      const roots: string[] = [];
+      const prevArgv = process.argv;
+      const prevCwd = process.cwd();
+      const prevTrustDir = process.env.MAISON_GOAL_CHECKPOINT_DIR;
+
+      const prepareUiBlindHost = (feature: string): string => {
+        const root = setupMinimalHost(feature);
+        roots.push(root);
+        const specAbs = path.join(root, 'doc', 'features', feature, 'spec', 'spec.md');
+        fs.writeFileSync(specAbs, '```yaml\nui_change: new_or_changed\n```\n', 'utf-8');
+        const { spawnSync } = require('child_process') as typeof import('child_process');
+        spawnSync('git', ['add', '-A'], { cwd: root, encoding: 'utf-8' });
+        spawnSync('git', ['commit', '-qm', 'ui'], { cwd: root, encoding: 'utf-8' });
+        writeLocalConfig(root, {
+          schema_version: '1.0',
+          agent_adapter: 'cursor',
+          vision: { image_input_override: 'none' },
+        });
+        return root;
+      };
+
+      const newestReportDir = (root: string, feature: string): string => {
+        const runsDir = path.join(root, 'doc', 'features', feature, 'goal-runs');
+        const runs = fs.readdirSync(runsDir).filter(n => !n.startsWith('.'));
+        assert(runs.length > 0, `${feature}: 须创建可监控 run`);
+        const newest = runs
+          .map(n => ({ n, t: fs.statSync(path.join(runsDir, n)).mtimeMs }))
+          .sort((a, b) => a.t - b.t)
+          .slice(-1)[0].n;
+        return path.join(runsDir, newest);
+      };
+
+      const installSeams = (root: string): void => {
+        __testing_setRepoLayout({
+          kind: 'standalone', projectRoot: root, frameworkRoot: REPO_ROOT, frameworkRel: '',
+        } as ReturnType<typeof inferRepoLayout>);
+        __testing_setInvokeAgent((async () => ({
+          exitCode: 2,
+          stdout: '',
+          stderr: '[maison-guardian] CreateProcess(CREATE_SUSPENDED) 失败: 5（t7 smoke）\n',
+          command: 'fake-guardian',
+          spawn_error: {
+            code: 'maison_guardian_containment_failed',
+            message: '[maison-guardian] CreateProcess(CREATE_SUSPENDED) 失败: 5',
+          },
+        })) as never);
+        __testing_setRunHarnessPhase((async () => {
+          throw new Error('t7 startup smoke 不得进入 harness');
+        }) as never);
+        __testing_setDeviceReadinessGate((() => ({
+          env: { HARNESS_HDC_TARGET: 'fake-device', MAISON_DEVICE_TARGET_KIND: 'physical' },
+          target: { serial: 'fake-device', targetKind: 'physical' as const },
+          notes: ['t7 smoke seam'],
+        })) as never);
+        __testing_setValidateReceipt((() => ({
+          status: 'passed' as const,
+          receipt_path: 'unused',
+          exit_code: 0,
+        })) as never);
+        process.chdir(root);
+        process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'trust-cp');
+        clearFrameworkConfigCache();
+      };
+
+      const freshArgs = (feature: string, extra: string[] = []): string[] => [
+        'node', 'goal-runner.ts',
+        '--feature', feature,
+        '--requirement', UI_REQ,
+        '--start', 'spec', '--end', 'spec',
+        '--adapter', 'cursor',
+        '--foreground-ok', '--force',
+        ...extra,
+      ];
+
+      try {
+        // ① UI + primary blind + 无 provider + 无授权：phase 前结构化 BLOCKER。
+        const deniedFeature = 't7-blind-denied';
+        const deniedRoot = prepareUiBlindHost(deniedFeature);
+        installSeams(deniedRoot);
+        process.argv = freshArgs(deniedFeature);
+        assert.strictEqual(await goalMain(), 1);
+        const deniedDir = newestReportDir(deniedRoot, deniedFeature);
+        const deniedEvents = readEvents(deniedDir);
+        assert(
+          deniedEvents.some(e => e.type === 'phase_halt' && e.halt_reason === 'blind_visual_authorization_required'),
+          '未授权 blind run 须落专用 phase_halt',
+        );
+        assert(deniedEvents.some(e => e.type === 'run_start'), '可恢复 BLOCKER 须保留既有 resume 所需的出生真源');
+        assert(!deniedEvents.some(e => e.type === 'phase_start'), '未授权 blind run 不得进入正式 phase');
+        let deniedManifest = JSON.parse(fs.readFileSync(path.join(deniedDir, 'manifest.json'), 'utf-8')) as Record<string, unknown>;
+        assert.strictEqual(deniedManifest.allow_blind_visual, undefined, '未授权 manifest 不得写授权键');
+
+        const deniedHalt = deniedEvents.find(
+          e => e.type === 'phase_halt' && e.halt_reason === 'blind_visual_authorization_required',
+        );
+        const deniedGuidance = String(deniedHalt?.halt_guidance ?? '');
+        assert.match(deniedGuidance, /新 run/);
+        assert.match(deniedGuidance, /继续当前 run/);
+        assert.match(deniedGuidance, /--override-manifest/);
+
+        // ② BLOCKER 后继续当前 run：授权是 manifest 身份变更，须显式旗标 + --override-manifest。
+        const deniedEventsPath = path.join(deniedDir, 'events.jsonl');
+        const agedDeniedEvents = fs.readFileSync(deniedEventsPath, 'utf-8').split('\n').map(line => {
+          if (!line.trim()) return line;
+          try {
+            const event = JSON.parse(line) as { type?: string; ts?: string };
+            if (event.type === 'run_end' && event.ts) {
+              event.ts = new Date(Date.parse(event.ts) - 10 * 60 * 1000).toISOString();
+              return JSON.stringify(event);
+            }
+          } catch { /* keep original line */ }
+          return line;
+        });
+        fs.writeFileSync(deniedEventsPath, agedDeniedEvents.join('\n'), 'utf-8');
+        const deniedRunId = path.basename(deniedDir);
+        installSeams(deniedRoot);
+        process.argv = [
+          'node', 'goal-runner.ts', '--resume', deniedRunId, '--feature', deniedFeature,
+          '--allow-blind-visual', '--override-manifest', '--foreground-ok', '--force-resume',
+        ];
+        assert.strictEqual(await goalMain(), 1);
+        const recoveredDeniedEvents = readEvents(deniedDir);
+        assert.strictEqual(
+          recoveredDeniedEvents.filter(e => e.type === 'agent_invoke_start').length,
+          1,
+          'BLOCKER 后补授权 + override 应越过启动门并恢复当前 run',
+        );
+        deniedManifest = JSON.parse(fs.readFileSync(path.join(deniedDir, 'manifest.json'), 'utf-8')) as Record<string, unknown>;
+        assert.strictEqual(deniedManifest.allow_blind_visual, true, '恢复当前 run 后授权须冻结进原 manifest');
+
+        // ③ fresh CLI 授权：写入 manifest 并越过启动门；随后仅由注入的正式 invoke 硬失败停机。
+        const allowedFeature = 't7-blind-allowed';
+        const allowedRoot = prepareUiBlindHost(allowedFeature);
+        installSeams(allowedRoot);
+        process.argv = freshArgs(allowedFeature, ['--allow-blind-visual']);
+        assert.strictEqual(await goalMain(), 1);
+        const allowedDir = newestReportDir(allowedRoot, allowedFeature);
+        let allowedEvents = readEvents(allowedDir);
+        assert(!allowedEvents.some(e => e.halt_reason === 'blind_visual_authorization_required'), 'CLI 授权后不得触发 blind BLOCKER');
+        assert.strictEqual(allowedEvents.filter(e => e.type === 'agent_invoke_start').length, 1, 'CLI 授权后须进入正式 phase invoke');
+        let allowedManifest = JSON.parse(fs.readFileSync(path.join(allowedDir, 'manifest.json'), 'utf-8')) as Record<string, unknown>;
+        assert.strictEqual(allowedManifest.allow_blind_visual, true, 'CLI 授权须冻结进 manifest');
+
+        // ④ resume 不再给 flag：沿用同 run 冻结授权，再次越过启动门。
+        // 生产 guard 在 HALTED 后有 5 分钟防抖且先于 --force-resume；smoke 回拨事件时间，
+        // 只消除时间等待，不改 run 状态或授权事实。
+        const allowedEventsPath = path.join(allowedDir, 'events.jsonl');
+        const agedEvents = fs.readFileSync(allowedEventsPath, 'utf-8').split('\n').map(line => {
+          if (!line.trim()) return line;
+          try {
+            const event = JSON.parse(line) as { type?: string; ts?: string };
+            if (event.type === 'run_end' && event.ts) {
+              event.ts = new Date(Date.parse(event.ts) - 10 * 60 * 1000).toISOString();
+              return JSON.stringify(event);
+            }
+          } catch { /* keep original line */ }
+          return line;
+        });
+        fs.writeFileSync(allowedEventsPath, agedEvents.join('\n'), 'utf-8');
+        const allowedRunId = path.basename(allowedDir);
+        installSeams(allowedRoot);
+        process.argv = [
+          'node', 'goal-runner.ts', '--resume', allowedRunId, '--feature', allowedFeature,
+          '--foreground-ok', '--force-resume',
+        ];
+        assert.strictEqual(await goalMain(), 1);
+        allowedEvents = readEvents(allowedDir);
+        assert.strictEqual(allowedEvents.filter(e => e.type === 'agent_invoke_start').length, 2, 'resume 须复用授权并再次进入正式 phase invoke');
+        assert(!allowedEvents.some(e => e.halt_reason === 'blind_visual_authorization_required'), 'resume 冻结授权不得重新阻断');
+        allowedManifest = JSON.parse(fs.readFileSync(path.join(allowedDir, 'manifest.json'), 'utf-8')) as Record<string, unknown>;
+        assert.strictEqual(allowedManifest.allow_blind_visual, true, 'resume 后授权仍冻结在同一 manifest');
+
+        // ⑤ 合法 provider：无需 blind 授权即可越过启动门；provider 本身不在本 smoke 调用。
+        const providerFeature = 't7-provider-allowed';
+        const providerRoot = prepareUiBlindHost(providerFeature);
+        installSeams(providerRoot);
+        process.argv = freshArgs(providerFeature, [
+          '--visual-adapter', 'claude', '--visual-model', 'smoke-vision-model',
+        ]);
+        assert.strictEqual(await goalMain(), 1);
+        const providerDir = newestReportDir(providerRoot, providerFeature);
+        const providerEvents = readEvents(providerDir);
+        assert(!providerEvents.some(e => e.halt_reason === 'blind_visual_authorization_required'), '合法 provider 不得误触 blind BLOCKER');
+        assert.strictEqual(providerEvents.filter(e => e.type === 'agent_invoke_start').length, 1, '合法 provider 后须进入正式 phase invoke');
+        const providerManifest = JSON.parse(fs.readFileSync(path.join(providerDir, 'manifest.json'), 'utf-8')) as Record<string, unknown>;
+        assert.strictEqual(providerManifest.allow_blind_visual, undefined, 'provider 路径不应伪造 blind 授权');
+        assert.deepStrictEqual(providerManifest.visual_provider_pin, { adapter: 'claude', model: 'smoke-vision-model' });
+      } finally {
+        __testing_resetGoalRunnerSeams();
+        process.argv = prevArgv;
+        if (prevTrustDir === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR;
+        else process.env.MAISON_GOAL_CHECKPOINT_DIR = prevTrustDir;
+        try { process.chdir(prevCwd); } catch { /* ignore */ }
+        for (const root of roots) {
+          try { fs.rmSync(root, { recursive: true, force: true }); } catch { /* ignore */ }
+        }
       }
     },
   },

@@ -74,6 +74,7 @@ import {
   parseFidelityTargetFromHandoffDoc,
   resolveOcrAvailableForRun,
   resolveRequirementReferenceImages,
+  resolveUiRelevanceForRun,
   type FidelityTarget,
 } from './utils/fidelity-shared';
 import {
@@ -353,10 +354,13 @@ import {
   resolveFinalModelPin,
   normalizeVisualProviderCliPair,
   resolveFinalVisualProviderPin,
+  resolveFinalBlindVisualAuthorization,
   type ManifestCliArgv,
 } from './utils/goal-manifest-cli';
 import {
   assertVisualProviderCliSupported,
+  formatBlindVisualLaunchBlocker,
+  resolveBlindVisualLaunchDecisionForRun,
   resolveUnattendedVisualProviderPin,
   resolveVisionModeForRun,
   reviewVisionForMode,
@@ -3843,6 +3847,8 @@ export async function main(): Promise<number> {
       'override-adapter',
       'detach', 'detached-child', 'force', 'foreground-ok',
       'refresh-vision-probe',
+      // plan ab072691 t7：仅授权当前 run 进入 blind；不写 local，不等同 fidelity 降档。
+      'allow-blind-visual',
     ],
     alias: { f: 'feature', h: 'help' },
   });
@@ -3867,6 +3873,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
                  Both flags are required together. Supported adapters are derived from the
                  adapter catalog (agents/<a>/adapter.yaml visual_provider); an unsupported
                  adapter fails fast and lists the supported ones. Omit for blind/native.
+    [--allow-blind-visual]
+                 explicitly authorize this run to start blind when the requirement is UI-related,
+                 the primary has no image input, and no legal visual provider is frozen.
+                 The authorization is manifest-bound, not written to framework.local.json.
     [--detach]   fork the run into the background, print {run_id,...} JSON, exit 0
                  (for hosts whose shell tool blocks / can't background a long task)
 `);
@@ -4251,10 +4261,19 @@ Goal runner — tool-agnostic multi-phase orchestrator
     }
     let pin = finalVisualPin.pin;
     // 无显式输入也无冻结值时，fresh run 才回落个人级配置。goal-runner 是**无人值守**入口：
-    // 不询问；旧 local 命中 unsupported 只 WARN + 忽略并按 blind 继续，绝不停 run，
-    // 也绝不自动改选其它 adapter 或在多个 provider 间 fallback。
+    // 不询问；旧 local 命中 unsupported 只 WARN + 忽略。是否能 blind 启动由 canary 后的
+    // t7 纯决策统一裁决（非 UI / 显式授权才放行），此处不建第二套政策。
     if (!pin && !argv.resume) {
-      const fromLocal = resolveUnattendedVisualProviderPin(loadFrameworkLocalConfig(projectRoot), frameworkRoot);
+      let local: ReturnType<typeof loadFrameworkLocalConfig> = null;
+      try {
+        local = loadFrameworkLocalConfig(projectRoot);
+      } catch (error) {
+        console.warn(
+          `[visual-provider] WARN: 读取个人级视觉 provider 配置失败，按无 provider 处理：` +
+            `${(error as Error).message}。UI 需求须修复配置，或显式传 --allow-blind-visual。`,
+        );
+      }
+      const fromLocal = resolveUnattendedVisualProviderPin(local, frameworkRoot);
       if (fromLocal.warning) console.warn(fromLocal.warning);
       pin = fromLocal.pin;
     }
@@ -4263,6 +4282,25 @@ Goal runner — tool-agnostic multi-phase orchestrator
     } else {
       delete manifest.visual_provider_pin;
     }
+  }
+
+  // plan ab072691 t7：run 级盲跑授权 final 值单点裁决。显式旗标在 manifest 身份漂移
+  // 检查之前**无条件落键**；消费发生在 canary 后，两者不得合并或颠倒。
+  {
+    const finalBlindAuthorization = resolveFinalBlindVisualAuthorization({
+      cliAllowed: Boolean(argv['allow-blind-visual']),
+      manifestAllowed: manifest.allow_blind_visual === true,
+      isResume: Boolean(argv.resume),
+      hasManifestFlag: Boolean(argv.manifest),
+      isSuccessor: Boolean(manifest.successor_of),
+      overrideManifest: Boolean(argv['override-manifest']),
+    });
+    if (!finalBlindAuthorization.ok) {
+      console.error(finalBlindAuthorization.message);
+      process.exit(1);
+    }
+    if (finalBlindAuthorization.allowed) manifest.allow_blind_visual = true;
+    else delete manifest.allow_blind_visual;
   }
 
   const dryRun = dryRunMode;
@@ -4613,6 +4651,67 @@ Goal runner — tool-agnostic multi-phase orchestrator
       runConcluded = true;
       console.error(`\n===== canary_cli_hard_failure =====\n${guidance}\n`);
       return 1;
+    }
+
+    // plan ab072691 t7：primary canary 尝试完成后、任何正式 phase 启动前的五分支纯决策。
+    // primary 视觉真值只读既有 effective image-input 链（override → 可采信缓存 → 声明），
+    // 不直接消费本次 probeResult；provider 资格只读 manifest pin + adapter catalog。
+    const launchPrimaryVision = resolveContextAdapterImageInput(
+      projectRoot,
+      frameworkRoot,
+      manifest.adapter,
+      {
+        runId: manifest.run_id,
+        ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
+      },
+    );
+    const blindVisualLaunch = resolveBlindVisualLaunchDecisionForRun({
+      frameworkRoot,
+      uiRelevant: resolveUiRelevanceForRun(
+        projectRoot,
+        manifest.feature,
+        manifest.requirement,
+      ),
+      primaryHasVision: launchPrimaryVision.supported,
+      providerPin: manifest.visual_provider_pin,
+      allowBlindVisual: manifest.allow_blind_visual === true,
+    });
+    if (blindVisualLaunch.kind === 'block') {
+      const guidance = formatBlindVisualLaunchBlocker(frameworkRoot);
+      if (dryRun) {
+        console.warn(`[goal-runner] WARN would_block=blind_visual_authorization_required: ${guidance}`);
+      } else {
+        // 当前 BLOCKER 已有 manifest，恢复必须复用既有 --resume + --override-manifest 链。
+        // fresh run 尚无出生事件时，先落与主路径同形的 run_start；否则严格 resume 校验会把
+        // 这份框架自己创建的可监控 run 判成“无真源”，使文案给出的恢复方式不可执行。
+        if (!startupEvents.some((event) => event.type === 'run_start')) {
+          const manifestFileAbs = path.join(projectRoot, manifest.report_dir, 'manifest.json');
+          goalEvents.emit({
+            type: 'run_start',
+            dry_run: false,
+            chain,
+            manifest_hash: sha256FileHex(manifestFileAbs),
+            manifest_identity_hash: manifestDrift.effectiveHash,
+            manifest_identity_fields: manifestDrift.currentFields,
+          });
+        }
+        goalEvents.emit({
+          type: 'phase_halt',
+          phase: chain[0],
+          halt_reason: 'blind_visual_authorization_required',
+          verdict: 'FAIL',
+          reason: 'UI 相关需求缺少可用视觉能力与明确盲跑授权',
+          halt_guidance: guidance,
+        });
+        goalEvents.emit({
+          type: 'run_end',
+          status: 'HALTED',
+          halt_reason: 'blind_visual_authorization_required',
+        });
+        runConcluded = true;
+        console.error(`\n===== blind_visual_authorization_required =====\n${guidance}\n`);
+        return 1;
+      }
     }
 
     const eventsPath = path.join(projectRoot, manifest.report_dir, 'events.jsonl');

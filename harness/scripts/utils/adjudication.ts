@@ -222,6 +222,12 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   declared_product_layer_missing: { class: 'operator' },
   unverifiable_must_fix: { class: 'operator' },
   headless_interaction_required: { class: 'operator' },
+  /**
+   * plan delegated-vision-provider t7：UI 相关 run 在 primary=blind 且没有合法 visual
+   * provider 时，必须由操作者在启动命令显式给出 --allow-blind-visual。该停机等待的
+   * 是启动授权选择，不是外部环境恢复，也不另建 confirmation receipt/grant 体系。
+   */
+  blind_visual_authorization_required: { class: 'operator' },
   operator_interrupt: { class: 'operator' },
   /** c7e4a2d9：**只读兼容**——历史 3.0.0 前 events.jsonl 可能含
    * `halt_reason=await_human_p0_skip`，本映射供状态读取/归档工具解释旧事件；

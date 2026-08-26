@@ -2,8 +2,9 @@
 
 ## 1. 一句话不变量
 
-**provider 不能写工程；不能用旧的或坏的 provider 结果制造 PASS；provider 故障只降级本轮视觉反馈，
-不阻断开发循环。**其余问题一律局部降级，不挡 primary 继续编码、构建、测试。
+**provider 不能写工程；不能用旧的或坏的 provider 结果制造 PASS；合法启动后的 provider 运行时故障
+只降级本轮视觉反馈，不阻断开发循环。**启动前缺 provider 与缺盲跑授权是独立的配置契约，按 §9 的
+五分支矩阵处理；其余问题一律局部降级，不挡 primary 继续编码、构建、测试。
 
 修复原则对齐既有「一个问题一个权威」：产物写者唯一归 primary；「能否推进」唯一归 gate；provider
 是**有证据要求的视觉检查工具**，不是第二个 goal agent——无 owner、无 phase 状态机、无 closure；
@@ -141,7 +142,8 @@ tasks 7.7 已实证这不是假想风险：codex 与 opencode 两次真实调用
 - 无图片暂存复制——物理只读靠 argv，直接读工程原图，receipt 图片路径天然一致。
 - 无稳定 finding 身份层、无输出载荷签名（降后续加固）。首期采信 = 同调用校验 + 原子覆盖 +
   调用前清旧 + 禁跨 attempt 复用。
-- 无新 UNVERIFIED check 载体 / 新质量轴 / 新状态机 / 新 check id / 新 halt 类。
+- 无新 UNVERIFIED check 载体 / 新质量轴 / 新状态机 / 新 check id；t7 仅在既有启动期
+  `phase_halt`/`run_end` 事件形态中登记专用 reason，不给 provider 运行时新增 halt。
 - 首期单 provider：一次 run = 1 primary + 1 visual endpoint。机制 adapter 通用，但支持列表只由
   `adapter.yaml.visual_provider` 完整声明派生；非 provider 池、非自动 fallback、不自动推荐或替换。
 - 不按 phase 切控制权；provider 无 owner / 状态机 / closure / 第二 gate。
@@ -151,20 +153,22 @@ tasks 7.7 已实证这不是假想风险：codex 与 opencode 两次真实调用
 
 ## 9. 兼容性
 
-未配置 provider 的工程行为**逐字不变**：
+provider 产物与运行时降级保持兼容；t7 只收紧 UI blind 的启动条件：
 
 | 载体 | 旧数据 | 语义 |
 |------|--------|------|
 | `CapabilitySnapshot` | 无 `vision_mode` / `visual_provider` 键 | 现状语义不变 |
-| `GoalManifest` | 无 `visual_provider_pin` 键 | 条件入身份哈希 ⇒ resume 不误判漂移 |
+| `GoalManifest` | 无 `visual_provider_pin` 键 | provider pin 条件入身份哈希 ⇒ resume 不误判漂移 |
+| `GoalManifest` | 无 `allow_blind_visual` 键 | 可加载；UI blind resume 若要新增授权须显式旗标 + `--override-manifest` |
 | `FidelityCapability` | 不传 `reviewVision` | 钳制结果逐字不变 |
 | `visual-diff.json` | `defect.source` 缺失或 `producer:'T8'` | 现状判定不变 |
-| `framework.local.json` | 无 `vision.visual_provider` | `blind` / `native`，不询问、不告警 |
+| `framework.local.json` | 无 `vision.visual_provider` | 非 UI/native 不变；UI + primary blind 须 run 级明确授权 |
 
-`MIGRATION.md` 无破坏性条目。
+授权不写 `framework.local.json`，successor 不继承。合法 provider 选定并通过启动矩阵后，后续
+provider 调用恒失败仍与既有盲档运行时降级等价，不重复要求授权。
 
 ## 10. 诚实边界
 
 delegated 消除的是「人工逐轮看图」与「盲档一刀切降档」；它**不承诺 provider 评审等效人眼**。
-provider 恒失败的 run 与现状盲档等价（经既有 `VISUAL_PENDING` 投影，零新状态）。`pixel_1to1` 的最终
-真人确认不因 provider 而减免。
+已合法启动后 provider 恒失败的 run 与现状盲档运行时等价（经既有 `VISUAL_PENDING` 投影，零新
+状态、零二次授权）。`pixel_1to1` 的最终真人确认不因 provider 而减免。

@@ -29,7 +29,13 @@ import {
   type RunAdapterProvenance,
 } from './utils/goal-manifest';
 import { loadLocalConfig } from './utils/framework-local-config';
-import { resolveUnattendedVisualProviderPin } from './utils/visual-provider-identity';
+import { resolveContextAdapterImageInput } from './utils/multimodal-probe';
+import { resolveUiRelevanceForRun } from './utils/fidelity-shared';
+import {
+  formatBlindVisualLaunchBlocker,
+  resolveBlindVisualLaunchDecisionForRun,
+  resolveUnattendedVisualProviderPin,
+} from './utils/visual-provider-identity';
 import { resolveWorkflowSpec } from '../workflow-loader';
 import { validateMinimumAssurance } from './utils/skill-contract';
 import type { ReconcileObservationV1 } from './utils/assess';
@@ -217,6 +223,8 @@ export interface PrepareGoalModeRunOptions {
   requirementSourceFiles?: string[];
   startPhase?: string;
   endPhase?: string;
+  /** attended 会话把用户当场“跳过并盲跑”转译成这一启动输入；不写 local。 */
+  allowBlindVisual?: boolean;
 }
 
 /** Create the persisted manifest/control skeleton for a fresh attended run. */
@@ -250,16 +258,23 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
       // plan ab072691 t1③(b)：attended goal 在**创建 manifest 前**冻结只读视觉 provider。
       // 询问/重选发生在宿主会话里（registry setup.visual_provider → init-orchestrate
       // record-visual-provider 机器写盘）；这里只读 local 的既成结果并冻结进 manifest。
-      // 用户跳过（local 缺失）或旧配置已失去资格 → 不写键，run 照常以 blind 启动：
-      // 缺 provider 从来不是启动条件。
+      // 用户跳过（local 缺失）或旧配置已失去资格时，不把授权偷写进 local；attended
+      // 会话必须把明确选择转译为 allowBlindVisual，随本 run manifest 冻结。
       ...(() => {
-        const resolved = resolveUnattendedVisualProviderPin(
-          loadLocalConfig(options.projectRoot),
-          options.frameworkRoot,
-        );
+        let local: ReturnType<typeof loadLocalConfig> = null;
+        try {
+          local = loadLocalConfig(options.projectRoot);
+        } catch (error) {
+          console.warn(
+            `[visual-provider] WARN: 读取个人级视觉 provider 配置失败，按无 provider 处理：` +
+              `${(error as Error).message}。请修复配置，或明确传 --allow-blind-visual。`,
+          );
+        }
+        const resolved = resolveUnattendedVisualProviderPin(local, options.frameworkRoot);
         if (resolved.warning) console.warn(resolved.warning);
         return resolved.pin ? { visual_provider_pin: resolved.pin } : {};
       })(),
+      ...(options.allowBlindVisual ? { allow_blind_visual: true } : {}),
     },
     { projectRoot: options.projectRoot },
   );
@@ -271,6 +286,30 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
   const manifestPath = path.resolve(options.projectRoot, manifest.report_dir, 'manifest.json');
   if (fs.existsSync(manifestPath)) {
     throw new Error(`[goal-mode-entry] run manifest already exists: ${manifestPath}`);
+  }
+  // t7：attended Skill 已在 prepare 前完成 interactive canary；这里消费同一条 effective
+  // image-input 链，在任何 manifest/run-control 写入前做首次裁决。host bridge 只保留防御性断言。
+  const primaryVision = resolveContextAdapterImageInput(
+    options.projectRoot,
+    options.frameworkRoot,
+    manifest.adapter,
+    { runId: manifest.run_id },
+  );
+  const visualLaunch = resolveBlindVisualLaunchDecisionForRun({
+    frameworkRoot: options.frameworkRoot,
+    uiRelevant: resolveUiRelevanceForRun(
+      options.projectRoot,
+      manifest.feature,
+      manifest.requirement,
+    ),
+    primaryHasVision: primaryVision.supported,
+    providerPin: manifest.visual_provider_pin,
+    allowBlindVisual: manifest.allow_blind_visual === true,
+  });
+  if (visualLaunch.kind === 'block') {
+    throw new Error(
+      `[goal-mode-entry] BLOCKER: ${formatBlindVisualLaunchBlocker(options.frameworkRoot, 'attended_prepare')}`,
+    );
   }
   writeGoalManifest(manifest, options.projectRoot);
   const runDir = path.resolve(options.projectRoot, ...manifest.report_dir.split('/'));
@@ -336,6 +375,33 @@ export async function runGoalModeHostBridge(
       `[goal-mode-entry] attach adapter mismatch: caller=${callerAdapter || '<empty>'}, manifest=${manifest.adapter}`,
     );
   }
+  // t7：防御性断言。首次裁决已在 prepare 的任何 run 写入前完成；attach 只防旧/异常 manifest
+  // 绕过出生契约，继续消费同一条 effective image-input 链，不承担首次裁决。
+  const primaryVision = resolveContextAdapterImageInput(
+    options.projectRoot,
+    options.frameworkRoot,
+    manifest.adapter,
+    {
+      runId: manifest.run_id,
+      ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
+    },
+  );
+  const visualLaunch = resolveBlindVisualLaunchDecisionForRun({
+    frameworkRoot: options.frameworkRoot,
+    uiRelevant: resolveUiRelevanceForRun(
+      options.projectRoot,
+      manifest.feature,
+      manifest.requirement,
+    ),
+    primaryHasVision: primaryVision.supported,
+    providerPin: manifest.visual_provider_pin,
+    allowBlindVisual: manifest.allow_blind_visual === true,
+  });
+  if (visualLaunch.kind === 'block') {
+    throw new Error(
+      `[goal-mode-entry] BLOCKER: ${formatBlindVisualLaunchBlocker(options.frameworkRoot, 'attended_attach')}`,
+    );
+  }
   const adapter = manifest.adapter;
   const workflow = resolveWorkflowSpec(options.projectRoot, {
     frameworkRoot: options.frameworkRoot,
@@ -399,6 +465,19 @@ export async function runGoalModeHostBridge(
   }
 }
 
+/** --allow-blind-visual 是 attended run 的出生输入；attach 不得静默吞掉或改写已冻结身份。 */
+export function assertBlindVisualAuthorizationAtPrepare(
+  prepareRun: boolean,
+  allowBlindVisual: boolean,
+): void {
+  if (!prepareRun && allowBlindVisual) {
+    throw new Error(
+      '--allow-blind-visual 只允许与 --prepare-run 同时使用；attach 不会修改已冻结 manifest。' +
+      '请在创建新 run 的 prepare 阶段显式授权。',
+    );
+  }
+}
+
 async function main(): Promise<void> {
   const argv = minimist(process.argv.slice(2), {
     string: [
@@ -407,13 +486,15 @@ async function main(): Promise<void> {
       // f9c2e6b4 t4：与 goal-runner 同名同义，共用同一读取函数（相对路径按 projectRoot 解析）
       'requirement-file',
     ],
-    boolean: ['force-takeover', 'prepare-run', 'help'],
+    boolean: ['force-takeover', 'prepare-run', 'allow-blind-visual', 'help'],
   });
   if (argv.help) {
     console.log(
       'Usage: goal-mode-entry.ts --feature <f> --run-id <id> --adapter <name> ' +
       '--run-mode attended [--project-root <root>] [--framework-root <framework>] [--force-takeover]\n' +
       'Fresh attended run: add --prepare-run --requirement "<text>" (optionally --run-id/--start/--end).\n' +
+      'Fresh prepare only: if the user explicitly skips provider setup for this UI run, also pass ' +
+      '--allow-blind-visual (attach rejects it).\n' +
       'Long / multi-line requirement: use --requirement-file <path> (mutually exclusive with --requirement).\n' +
       'Protocol: stdout emits one JSON phase_execute_request per round; stdin supplies ' +
       'one JSON {status:"passed|failed|waiting",phase,details?} response.',
@@ -425,6 +506,9 @@ async function main(): Promise<void> {
   const adapter = String(argv.adapter ?? '').trim();
   const runMode = String(argv['run-mode'] ?? '').trim();
   assertAttendedRunMode(runMode || undefined);
+  const prepareRun = Boolean(argv['prepare-run']);
+  const allowBlindVisual = Boolean(argv['allow-blind-visual']);
+  assertBlindVisualAuthorizationAtPrepare(prepareRun, allowBlindVisual);
   const adapterSourceRaw = String(argv['adapter-source'] ?? '').trim();
   const adapterSources = new Set<string>(RUN_ADAPTER_PROVENANCES);
   if (adapterSourceRaw && !adapterSources.has(adapterSourceRaw)) {
@@ -432,7 +516,7 @@ async function main(): Promise<void> {
   }
   const projectRoot = path.resolve(String(argv['project-root'] ?? process.cwd()));
   const frameworkRoot = path.resolve(String(argv['framework-root'] ?? path.resolve(__dirname, '..')));
-  if (Boolean(argv['prepare-run'])) {
+  if (prepareRun) {
     const prepared = prepareGoalModeRun({
       projectRoot,
       frameworkRoot,
@@ -458,6 +542,7 @@ async function main(): Promise<void> {
       })(),
       startPhase: String(argv.start ?? 'spec'),
       endPhase: String(argv.end ?? 'testing'),
+      allowBlindVisual,
     });
     console.log(JSON.stringify({
       type: 'goal_run_prepared',

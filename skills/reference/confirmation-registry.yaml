@@ -116,7 +116,7 @@ entries:
     class: enum
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "S4 只读视觉 provider（主模型无视觉且本轮涉 UI 时）"
-    portable_menu: "1=从支持列表选一个 provider 2=跳过（本轮 blind）"
+    portable_menu: "1=从支持列表选一个 provider 2=明确跳过并盲跑（仅当前操作）"
     notes: >-
       plan ab072691（delegated 视觉委托）。provider 是**只读**第二 endpoint：只看图产结构化
       评审，物理上不写工程；正式产物唯一写者仍是主模型。**支持列表现算自 adapter catalog**
@@ -127,15 +127,16 @@ entries:
       （与 `--adapter-model` 同性质的 endpoint id，框架不做模型名白名单，只校验
       非空/≤128/无控制字符）。选了不受支持的 adapter → 任务 failed 并列出支持项，
       请重选或跳过；框架**不自动改选**、**不在多个 provider 之间 fallback**。
-      跳过是完全合法的结果：本轮以 blind 模式继续，视觉保持 UNVERIFIED、release 保持
-      VISUAL_PENDING，不重复询问、不阻断任何阶段。
+      跳过必须是一次明确授权：普通交互态仅授权当前操作；attended goal 会话须把选择
+      转译为 --allow-blind-visual，写进当前 run manifest 而非 framework.local.json；
+      无人值守 UI run 无 provider 且无该旗标时在 phase 前 BLOCKER。授权不跨 successor。
     options:
       - value: from_supported
         label: "从支持列表选择 — 编号对应 adapter catalog 派生的 provider 支持项"
         portable: "1=从支持列表选"
       - value: skip
-        label: "跳过 — 本轮以 blind 模式继续，不记录视觉 provider"
-        portable: "2=跳过"
+        label: "明确跳过并盲跑 — 仅授权当前操作，不记录视觉 provider"
+        portable: "2=明确盲跑"
 
   - id: setup.device_policy
     skill: "_personal_setup"
