@@ -44,6 +44,7 @@ import {
   projectVisualProviderBody,
   extractJsonObjectFromText,
   extractJsonFinalResultText,
+  extractOpenCodeFinalText,
   validateProviderIdentityEcho,
   resolveSpecObservationBudget,
   VISUAL_PROVIDER_SPEC_OBSERVATION_MAX_PER_RUN,
@@ -491,7 +492,7 @@ test('t3 stream_json_result 投影只认终态 success result', () => {
   assert.strictEqual(projectVisualProviderBody('stream_json_result', mk('plain text')).body, null);
 });
 
-test('t3 result_json/events_json 投影：只取确定性 final result，不吃增量事件', () => {
+test('t3 result_json 投影：只取确定性 final result，不吃增量事件', () => {
   const stream = [
     JSON.stringify({ type: 'assistant', text: 'partial' }),
     JSON.stringify({ type: 'tool_use', name: 'Read' }),
@@ -501,6 +502,77 @@ test('t3 result_json/events_json 投影：只取确定性 final result，不吃�
   assert.strictEqual(extractJsonFinalResultText(JSON.stringify({ result: 'ONE' })), 'ONE');
   assert.strictEqual(extractJsonFinalResultText(JSON.stringify({ type: 'result', is_error: true, result: 'X' })), null);
   assert.strictEqual(extractJsonFinalResultText('not json'), null);
+});
+
+test('t3 events_json 投影：形状以宿主 opencode 1.18.14 真实样本钉死（tasks 7.7）', () => {
+  const text = (messageID: string, s: string) =>
+    JSON.stringify({ type: 'text', timestamp: 1, sessionID: 'ses', part: { type: 'text', messageID, text: s } });
+  // 真实样本的 step_finish 两者都带：part.messageID + part.reason
+  const finishOf = (messageID: string | null, reason = 'stop') => JSON.stringify({
+    type: 'step_finish', timestamp: 2, sessionID: 'ses',
+    part: messageID === null ? { reason } : { reason, messageID, type: 'step-finish' },
+  });
+  const finish = finishOf(null);
+  const start = JSON.stringify({ type: 'step_start', timestamp: 0, sessionID: 'ses', part: { type: 'step-start' } });
+
+  // 真实成功形状：step_start / text / step_finish 三行，正文在 part.text，终态同 messageID
+  assert.strictEqual(
+    extractOpenCodeFinalText([start, text('m1', 'FINAL'), finishOf('m1')].join('\n')), 'FINAL');
+
+  // 只取最后一条 message 的分片，按序拼接——多步会话不把中间步骤混进终稿
+  assert.strictEqual(
+    extractOpenCodeFinalText([text('m1', 'OLD'), text('m2', 'A'), text('m2', 'B'), finish].join('\n')),
+    'A\nB',
+  );
+
+  // 无 step_finish=没跑到终态，增量文本不得当终稿用
+  assert.strictEqual(extractOpenCodeFinalText([start, text('m1', 'partial')].join('\n')), null);
+
+  // ---- 终态必须绑定**最后一段正文**（评审意见 1 P0 回归）----
+  // 旧 message 已 finish、新 message 还在流 ⇒ 必须 null。
+  // 全局「见过任意 finish」的判据会在这里把**未完成的 m2** 当终稿返回——fail-closed 的危险侧。
+  assert.strictEqual(
+    extractOpenCodeFinalText([text('m1', 'DONE'), finishOf('m1'), text('m2', 'still-streaming')].join('\n')),
+    null,
+    '旧 finish 不得替新 message 背书',
+  );
+
+  // finish 之后又开新 step ⇒ 此前封稿失效（流还没走完）
+  assert.strictEqual(
+    extractOpenCodeFinalText([text('m1', 'DONE'), finishOf('m1'), start].join('\n')),
+    null,
+  );
+
+  // reason 必须是 stop：tool-calls 等中间终态不封稿
+  assert.strictEqual(
+    extractOpenCodeFinalText([text('m1', 'partial'), finishOf('m1', 'tool-calls')].join('\n')),
+    null,
+  );
+  // 中间 tool-calls 后同一 message 续写并最终 stop ⇒ 完整拼接
+  assert.strictEqual(
+    extractOpenCodeFinalText([
+      text('m1', 'A'), finishOf('m1', 'tool-calls'), text('m1', 'B'), finishOf('m1'),
+    ].join('\n')),
+    'A\nB',
+  );
+
+  // 两侧都带 messageID 时必须同源：finish 绑到别的 message 不算封稿
+  assert.strictEqual(
+    extractOpenCodeFinalText([text('m2', 'FINAL'), finishOf('m1')].join('\n')),
+    null,
+  );
+
+  // 见 error 行即判无终稿：宿主实测 401（密钥错）与 403（模型未开通）都走这里被挡为 invalid，
+  // **不会**把错误信息当正文投影出去伪造一次「成功评审」
+  const apiErr = JSON.stringify({ type: 'error', timestamp: 3, sessionID: 'ses', error: { name: 'APIError' } });
+  assert.strictEqual(extractOpenCodeFinalText([text('m1', 'FINAL'), apiErr, finish].join('\n')), null);
+
+  // 旧 result_json 方言不得被 events_json 误收（两条方言各自独立）
+  assert.strictEqual(extractOpenCodeFinalText(JSON.stringify({ type: 'result', result: 'FINAL' })), null);
+  assert.strictEqual(extractOpenCodeFinalText('not json'), null);
+  const res = (stdout: string): AgentInvokeResult => ({ exitCode: 0, stdout, stderr: '', command: 'x' });
+  assert.strictEqual(projectVisualProviderBody('events_json', res([start, text('m1', 'OK'), finish].join('\n'))).body, 'OK');
+  assert.strictEqual(projectVisualProviderBody('events_json', res('not json')).body, null);
 });
 
 test('t3 身份回显校验：run/attempt 逐字、image_hashes 集合齐等', () => {
