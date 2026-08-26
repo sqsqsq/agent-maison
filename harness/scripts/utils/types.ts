@@ -31,6 +31,19 @@ export interface ProviderRef {
   model: string;
 }
 
+/**
+ * 视觉委托（plan ab072691 t2①）：本 run 的**视觉路由三态**。
+ *
+ * - `native`    — primary 自己能看图。现状链零变化（含 primary 金丝雀机制）。
+ * - `delegated` — primary 盲 **且** 配了只读视觉 provider **且** 该 provider 静态资格通过。
+ * - `blind`     — 其余一切。现状盲档地板。
+ *
+ * 由 preflight **派生一次并在 run 内不可变**。provider 每次调用的成败只决定「本轮视觉反馈
+ * 是否采信」，**不**反向改写 vision_mode / 能力真值 / capability snapshot / manifest
+ * （能力真值反写禁令的既有纪律，见 effective-vision-context.ts 头注）。
+ */
+export type VisionMode = 'native' | 'delegated' | 'blind';
+
 /** 支持的开发阶段（运行时由 workflow YAML 定义；此处为通用字符串别名） */
 export type Phase = string;
 

@@ -50,6 +50,7 @@ import { relCatalog, relGlossary, relFeatureArtifact, relFeatureFile, loadFramew
 // M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT（素材路径 fallback 不得拼接逻辑 id）
 import { featureRelativePath } from './utils/feature-identity';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
+import { reviewVisionForMode } from './utils/visual-provider-identity';
 import {
   clampFidelityByCapability,
   collectRequirementIntentText,
@@ -201,6 +202,10 @@ export function checkFidelityCapabilityPregate(ctx: CheckContext): CheckResult[]
     const reclamp = clampFidelityByCapability(ssot.selected_fidelity, {
       hasVision: snap.vision.verdict,
       ocrAvailable: snap.ocr.verdict,
+      // plan ab072691 t2③：复核用的评审轴同样只读**冻结快照**里的 vision_mode——
+      // pregate 的职责是「按写入时那次决策重算是否自洽」，不是重新探测能力。
+      // 旧快照无该键 → undefined → 回落 hasVision，复核口径逐字不变。
+      ...(snap.vision_mode ? { reviewVision: reviewVisionForMode(snap.vision_mode) } : {}),
     });
     if (reclamp.effective !== ssot.effective_fidelity) {
       issues.push(

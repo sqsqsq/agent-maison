@@ -32,6 +32,8 @@ import { initializeFidelityRouting } from './utils/goal-preflight';
 import { resolveRequirementInput } from './utils/goal-manifest';
 import { computeRequirementShaFromText, loadFidelityIntentSsotState } from './utils/fidelity-shared';
 import { validateAttendedGoalContext } from './utils/attended-goal-context';
+import { loadLocalConfig } from './utils/framework-local-config';
+import { resolveUnattendedVisualProviderPin } from './utils/visual-provider-identity';
 import { collectIntentTextWithPhaseFallback } from './check-spec';
 
 /** post-impl2 P1-3：SSOT 生命周期四态判据（可测纯函数）——
@@ -189,6 +191,23 @@ function main(): number {
     ...(attendedManifest?.adapter_model_pin
       ? { modelPin: attendedManifest.adapter_model_pin.value }
       : {}),
+    // plan ab072691 t2①：视觉委托身份——attended goal 用 manifest 冻结值（不重读 local，
+    // 与 model pin 同纪律）；普通交互态（无 attended manifest）读个人级 local。
+    // 交互态读到已失效的旧配置只 WARN + 忽略并落 blind：档位初始化不是询问点，
+    // 询问/重选在 personal setup 门控里发生（registry setup.visual_provider）。
+    ...(() => {
+      if (attendedManifest) {
+        return attendedManifest.visual_provider_pin
+          ? { visualProviderPin: attendedManifest.visual_provider_pin }
+          : {};
+      }
+      const resolved = resolveUnattendedVisualProviderPin(
+        loadLocalConfig(projectRoot),
+        layout.frameworkRoot,
+      );
+      if (resolved.warning) console.warn(resolved.warning);
+      return resolved.pin ? { visualProviderPin: resolved.pin } : {};
+    })(),
     ...(attendedGoalRunId ? { runIdForReceipt: attendedGoalRunId } : {}),
     requirementProvenance,
     ...(requirementSourceFiles.length > 0
