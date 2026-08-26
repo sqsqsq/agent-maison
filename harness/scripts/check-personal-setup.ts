@@ -4,6 +4,14 @@
 
 import * as path from 'path';
 
+import { detectRepoLayout } from '../repo-layout';
+import { listVisualProviderAdapterNames } from './utils/adapter-catalog';
+import { loadLocalConfig } from './utils/framework-local-config';
+import {
+  formatVisualProviderPrompt,
+  resolveVisualProviderFromLocal,
+  shouldPromptForVisualProvider,
+} from './utils/visual-provider-identity';
 import {
   ensurePersonalSetup,
   evaluatePersonalSetupGate,
@@ -46,8 +54,44 @@ function parseArgs(argv: string[]): PersonalSetupCliOptions {
   return { projectRoot, json, ensure, phase, selectAdapter };
 }
 
-function emitJson(payload: PersonalSetupEnsureJson | ReturnType<typeof evaluatePersonalSetupGate>): void {
-  console.log(JSON.stringify(payload, null, 2));
+/**
+ * plan ab072691 t1③（返修）：只读视觉 provider 的**机器可读入口**。
+ *
+ * 纯 advisory：**永不**影响 `ok` / `code`——provider 从来不是 personal setup 的前置条件，
+ * 跳过只意味着本轮 blind。它存在的意义是让「supported 不问、缺失/unsupported 问一次」
+ * 成为确定性判定，而不是只靠文档提醒 agent。
+ *
+ * 字段：
+ *  · `shouldPrompt` —— 是否该在本轮 UI 相关阶段问一次（local 缺失 或 现有 adapter 已失格）；
+ *  · `state`        —— absent | ok | unsupported；
+ *  · `supported[]`  —— catalog 现算的支持项（**唯一**支持列表来源，勿在别处枚举）；
+ *  · `prompt`       —— shouldPrompt 时的现成提示语（含重选/跳过两条出路）。
+ */
+export function buildVisualProviderAdvisory(projectRoot: string): Record<string, unknown> {
+  try {
+    const frameworkRoot = detectRepoLayout(__dirname).frameworkRoot;
+    const state = resolveVisualProviderFromLocal(loadLocalConfig(projectRoot), frameworkRoot);
+    const shouldPrompt = shouldPromptForVisualProvider(state);
+    return {
+      state: state.kind,
+      shouldPrompt,
+      supported: listVisualProviderAdapterNames(frameworkRoot),
+      ...(state.kind !== 'absent' ? { configured: state.ref } : {}),
+      ...(shouldPrompt ? { prompt: formatVisualProviderPrompt(state, frameworkRoot) } : {}),
+      decisionClass: 'setup.visual_provider',
+      task: 'record-visual-provider',
+    };
+  } catch (e) {
+    // advisory 出错不得影响门控结论——如实记一行原因即可。
+    return { state: 'unavailable', shouldPrompt: false, reason: (e as Error).message };
+  }
+}
+
+function emitJson(
+  payload: PersonalSetupEnsureJson | ReturnType<typeof evaluatePersonalSetupGate>,
+  projectRoot: string,
+): void {
+  console.log(JSON.stringify({ ...payload, visualProvider: buildVisualProviderAdvisory(projectRoot) }, null, 2));
 }
 
 if (require.main === module) {
@@ -71,7 +115,7 @@ if (require.main === module) {
       }
     }
     if (opts.json) {
-      emitJson(payload);
+      emitJson(payload, opts.projectRoot);
     }
     if (!payload.ok) {
       if (!opts.json) {
@@ -104,7 +148,7 @@ if (require.main === module) {
         ensured: null,
         candidates: [],
         message: 'personal setup 已就绪',
-      });
+      }, opts.projectRoot);
     } else {
       emitJson({
         ok: false,
@@ -115,7 +159,7 @@ if (require.main === module) {
         ensured: null,
         candidates: [],
         message: result.message,
-      });
+      }, opts.projectRoot);
     }
   }
   if (!result.ok) {

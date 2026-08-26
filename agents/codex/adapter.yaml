@@ -26,6 +26,17 @@ user_confirmation:
 # codex exec 读图能力待实测；默认定档 none
 image_input: none
 
+# 视觉委托（plan ab072691）：本 adapter 可作**只读视觉 provider**。
+# 只读手段=exec 的只读沙箱档位；**绝不复用** goal headless 的 danger-full-access argv。
+# stdout 信封复用 e6 已验证的 turn JSONL 终态契约（completion 成立且无 terminal failure
+# 才投影正文）。运行时 argv SSOT：harness/scripts/utils/visual-provider-invoke.ts。
+# 入册凭据：待宿主真实 invocation smoke 回填（plan ab072691 t6）。
+visual_provider:
+  readonly_invoke: read_only_sandbox
+  image_transport: native_image_flag
+  stdout_envelope: turn_jsonl
+  model_replay: '--model'
+
 goal_capability:
   mode: native_goal
   # plan e6b3f8d2 t1：`codex exec --json` 打印 JSONL 事件流（0.149.0 本机实证）。

@@ -63,6 +63,17 @@ deprecated_artifacts:
     action: backup_delete
     reason: "v4.0 起选项文案合入 confirmation-registry.yaml"
 
+# 视觉委托（plan ab072691）：本 adapter 可作**只读视觉 provider**。
+# 只读手段=锁定版本的 safe mode（隔离 .claude/settings.json、hooks、CLAUDE.md、skills、
+# plugins、MCP 等工程定制）叠加只读工具集合；**绝不复用** goal headless 的全权限 argv。
+# 运行时 argv SSOT：harness/scripts/utils/visual-provider-invoke.ts（本字段是声明面与资格面）。
+# 入册凭据：待宿主真实 invocation smoke 回填（plan ab072691 t6；smoke 未过前 change 不 archive）。
+visual_provider:
+  readonly_invoke: safe_mode_read_only_tools
+  image_transport: prompt_path
+  stdout_envelope: stream_json_result
+  model_replay: '--model'
+
 goal_capability:
   mode: native_goal
   in_session_reconcile: true

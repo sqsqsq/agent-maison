@@ -10,6 +10,7 @@ import {
   LOCAL_LEGACY_TOP_KEY,
   LOCAL_VISION_KEYS,
   LOCAL_VISION_CANARY_KEYS,
+  LOCAL_VISION_VISUAL_PROVIDER_KEYS,
   LOCAL_DEVICE_KEYS,
   LOCAL_DEVICE_UNLOCK_KEYS,
 } from './config-field-ownership';
@@ -59,6 +60,18 @@ export interface FrameworkLocalConfigVisionCanary {
 export interface FrameworkLocalConfigVision {
   image_input_override?: 'none' | 'tool_read' | 'native_attach';
   canary?: FrameworkLocalConfigVisionCanary;
+  /**
+   * 视觉委托（plan ab072691 t1②）：个人级只读视觉 provider 身份。
+   *
+   * 形状 = ProviderRef（utils/types.ts），此处**不 import** 那个类型：本模块是纯 config 层，
+   * 与 image_input_override 同理不反向依赖上层，避免循环。
+   *
+   * **支持资格不在这里判**——资格唯一真源是 `agents/<adapter>/adapter.yaml.visual_provider`
+   * 完整声明（adapter-catalog listVisualProviderAdapters）。本层只保证形状合法，好让
+   * 「旧 local 记着一个已失去资格的 adapter」这件事**能被读出来**并按输入形态分流：
+   * 交互态提示重选、无人值守 WARN+忽略+blind、显式 CLI fail-fast。
+   */
+  visual_provider?: { adapter: string; model: string };
 }
 
 /** t6 toolchain-probe-truth（plan e6a3c9f4）：机器探测快照（写入权限固定，见 schema 注释） */
@@ -379,7 +392,31 @@ function validateLocalSchema(parsed: unknown): FrameworkLocalConfig {
       };
     }
 
-    if (outVision.image_input_override || outVision.canary) {
+    // plan ab072691 t1②：visual_provider {adapter, model}——两键均必填非空。
+    // model 必填的理由与 primary 的 adapter_model_pin 同源：没有冻结的 endpoint 就没有身份，
+    // 「声称已钉、实际未钉」是本框架反复付过代价的形态。
+    const visualProvider = visionObj.visual_provider;
+    if (visualProvider !== undefined) {
+      if (!visualProvider || typeof visualProvider !== 'object' || Array.isArray(visualProvider)) {
+        throw new Error('[framework-local-config] vision.visual_provider 必须是对象');
+      }
+      const vpObj = visualProvider as Record<string, unknown>;
+      rejectUnknownObjectKeys(vpObj, LOCAL_VISION_VISUAL_PROVIDER_KEYS, 'vision.visual_provider');
+      const vpAdapter = typeof vpObj.adapter === 'string' ? vpObj.adapter.trim() : '';
+      const vpModel = typeof vpObj.model === 'string' ? vpObj.model.trim() : '';
+      if (!vpAdapter) {
+        throw new Error('[framework-local-config] vision.visual_provider.adapter 必须是非空字符串');
+      }
+      if (!vpModel) {
+        throw new Error(
+          '[framework-local-config] vision.visual_provider.model 必须是非空字符串' +
+          '（provider 身份须冻结具体模型；不写 model 等于没有 provider）',
+        );
+      }
+      outVision.visual_provider = { adapter: vpAdapter, model: vpModel };
+    }
+
+    if (outVision.image_input_override || outVision.canary || outVision.visual_provider) {
       out.vision = outVision;
     }
   }

@@ -28,6 +28,8 @@ import {
   type GoalManifest,
   type RunAdapterProvenance,
 } from './utils/goal-manifest';
+import { loadLocalConfig } from './utils/framework-local-config';
+import { resolveUnattendedVisualProviderPin } from './utils/visual-provider-identity';
 import { resolveWorkflowSpec } from '../workflow-loader';
 import { validateMinimumAssurance } from './utils/skill-contract';
 import type { ReconcileObservationV1 } from './utils/assess';
@@ -245,6 +247,19 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
       // plan a8e5c3f9 t6：headless 即全权限——新 manifest 直接写 effective 值
       //（此前 workspace-write + on-request 让 claude 连 dontAsk 都拿不到，与无人值守自相矛盾）。
       unattended: { write_mode: 'full-access', approval_mode: 'never', max_turns: 30 },
+      // plan ab072691 t1③(b)：attended goal 在**创建 manifest 前**冻结只读视觉 provider。
+      // 询问/重选发生在宿主会话里（registry setup.visual_provider → init-orchestrate
+      // record-visual-provider 机器写盘）；这里只读 local 的既成结果并冻结进 manifest。
+      // 用户跳过（local 缺失）或旧配置已失去资格 → 不写键，run 照常以 blind 启动：
+      // 缺 provider 从来不是启动条件。
+      ...(() => {
+        const resolved = resolveUnattendedVisualProviderPin(
+          loadLocalConfig(options.projectRoot),
+          options.frameworkRoot,
+        );
+        if (resolved.warning) console.warn(resolved.warning);
+        return resolved.pin ? { visual_provider_pin: resolved.pin } : {};
+      })(),
     },
     { projectRoot: options.projectRoot },
   );

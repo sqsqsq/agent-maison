@@ -50,6 +50,16 @@ hooks_config:
   target_path: .cursor/hooks.json               # 相对于实例工程根（宿主共享文件，结构化合并）
   update_policy: auto_overwrite                 # 语义=每次 UPDATE 自动 reconcile 自有条目（非整文件覆盖）
 
+# 视觉委托（plan ab072691）：本 adapter 可作**只读视觉 provider**。
+# 只读手段=只问不改的 ask 模式；**绝不复用** goal headless 的 --force --trust argv。
+# 运行时 argv SSOT：harness/scripts/utils/visual-provider-invoke.ts。
+# 入册凭据：待宿主真实 invocation smoke 回填（plan ab072691 t6）。
+visual_provider:
+  readonly_invoke: ask_mode
+  image_transport: prompt_path
+  stdout_envelope: result_json
+  model_replay: '--model'
+
 goal_capability:
   mode: external_runner
   external_runner:

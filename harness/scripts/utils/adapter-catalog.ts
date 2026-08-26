@@ -406,3 +406,162 @@ export function checkAdapterCatalogConsistency(frameworkRoot: string): CheckResu
 
   return results;
 }
+
+// ---------------------------------------------------------------------------
+// 视觉委托 provider 支持列表（plan ab072691 t1⑥）
+// ---------------------------------------------------------------------------
+// **唯一真源**：`agents/<adapter>/adapter.yaml` 的 `visual_provider` 完整声明。
+// 这里只做「扫描 + 完整性校验」，不维护任何 adapter 名白名单、不做内核家族推断、
+// 不与 KNOWN_MODEL_PIN_ADAPTERS 之类的集合求交/求差——那些都会形成平行真源。
+// `goal_capability` 不参与 provider 资格判定（正交能力：能不能当 goal 主执行体
+// ≠ 能不能只读看图）。
+// ---------------------------------------------------------------------------
+
+/** 只读启动机制 id（机制名，非厂商名——多个 adapter 可共用同一机制）。 */
+export const VISUAL_PROVIDER_READONLY_INVOKE_MODES = [
+  'safe_mode_read_only_tools',
+  'read_only_sandbox',
+  'ask_mode',
+  'permission_deny_non_read',
+] as const;
+export type VisualProviderReadonlyInvoke = (typeof VISUAL_PROVIDER_READONLY_INVOKE_MODES)[number];
+
+/** 图片入模路径（两者都直接用工程内原路径，无暂存复制）。 */
+export const VISUAL_PROVIDER_IMAGE_TRANSPORTS = ['prompt_path', 'native_image_flag'] as const;
+export type VisualProviderImageTransport = (typeof VISUAL_PROVIDER_IMAGE_TRANSPORTS)[number];
+
+/** stdout 信封方言——决定复用哪个**既有**正文投影/terminal 解析能力，不新建 parser。 */
+export const VISUAL_PROVIDER_STDOUT_ENVELOPES = [
+  'stream_json_result',
+  'turn_jsonl',
+  'result_json',
+  'events_json',
+] as const;
+export type VisualProviderStdoutEnvelope = (typeof VISUAL_PROVIDER_STDOUT_ENVELOPES)[number];
+
+export interface VisualProviderDeclaration {
+  readonly_invoke: VisualProviderReadonlyInvoke;
+  image_transport: VisualProviderImageTransport;
+  stdout_envelope: VisualProviderStdoutEnvelope;
+  /** 模型回放旗标 token（如 `--model` / `-m`）——model 必须真实进入该旗标 */
+  model_replay: string;
+}
+
+export type VisualProviderDeclarationParse =
+  | { ok: true; declaration: VisualProviderDeclaration }
+  | { ok: false; reason: string };
+
+/** 声明允许的键集合——多余键即视为不完整声明（防写错字段名却「看起来齐了」）。 */
+const VISUAL_PROVIDER_KEYS = new Set([
+  'readonly_invoke',
+  'image_transport',
+  'stdout_envelope',
+  'model_replay',
+]);
+
+/**
+ * 纯函数：把 adapter.yaml 的 `visual_provider` 原始值解析为完整声明。
+ * **缺一即不完整**（不补默认值）——不完整=无资格，不是「降级可用」。
+ */
+export function parseVisualProviderDeclaration(raw: unknown): VisualProviderDeclarationParse {
+  if (raw === undefined || raw === null) return { ok: false, reason: 'visual_provider 未声明' };
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, reason: 'visual_provider 必须是对象' };
+  }
+  const obj = raw as Record<string, unknown>;
+  const unknown = Object.keys(obj).filter(k => !VISUAL_PROVIDER_KEYS.has(k));
+  if (unknown.length > 0) {
+    return { ok: false, reason: `visual_provider 含未知键: ${unknown.join(', ')}` };
+  }
+  const pickEnum = <T extends string>(
+    key: string,
+    allowed: readonly T[],
+  ): { ok: true; value: T } | { ok: false; reason: string } => {
+    const v = obj[key];
+    if (typeof v !== 'string' || !(allowed as readonly string[]).includes(v)) {
+      return {
+        ok: false,
+        reason: `visual_provider.${key} 必须是 ${allowed.join('|')}，收到 ${String(v)}`,
+      };
+    }
+    return { ok: true, value: v as T };
+  };
+  const readonlyInvoke = pickEnum('readonly_invoke', VISUAL_PROVIDER_READONLY_INVOKE_MODES);
+  if (!readonlyInvoke.ok) return readonlyInvoke;
+  const imageTransport = pickEnum('image_transport', VISUAL_PROVIDER_IMAGE_TRANSPORTS);
+  if (!imageTransport.ok) return imageTransport;
+  const stdoutEnvelope = pickEnum('stdout_envelope', VISUAL_PROVIDER_STDOUT_ENVELOPES);
+  if (!stdoutEnvelope.ok) return stdoutEnvelope;
+  const modelReplayRaw = obj.model_replay;
+  const modelReplay = typeof modelReplayRaw === 'string' ? modelReplayRaw.trim() : '';
+  if (!modelReplay.startsWith('-') || modelReplay.length < 2 || /\s/.test(modelReplay)) {
+    return {
+      ok: false,
+      reason: `visual_provider.model_replay 必须是单个模型回放旗标 token（如 --model），收到 ${String(modelReplayRaw)}`,
+    };
+  }
+  return {
+    ok: true,
+    declaration: {
+      readonly_invoke: readonlyInvoke.value,
+      image_transport: imageTransport.value,
+      stdout_envelope: stdoutEnvelope.value,
+      model_replay: modelReplay,
+    },
+  };
+}
+
+export interface VisualProviderCatalogEntry {
+  adapter: string;
+  declaration: VisualProviderDeclaration;
+}
+
+/** 读单个 adapter 的声明；文件缺失/解析失败/声明不完整一律返回 not ok（不 throw）。 */
+export function loadVisualProviderDeclaration(
+  frameworkRoot: string,
+  adapterName: string,
+): VisualProviderDeclarationParse {
+  const yamlPath = path.join(frameworkRoot, 'agents', adapterName, 'adapter.yaml');
+  if (!fs.existsSync(yamlPath)) {
+    return { ok: false, reason: `agents/${adapterName}/adapter.yaml 缺失` };
+  }
+  let cfg: unknown;
+  try {
+    cfg = YAML.parse(fs.readFileSync(yamlPath, 'utf-8'));
+  } catch (e) {
+    return { ok: false, reason: `agents/${adapterName}/adapter.yaml 解析失败: ${(e as Error).message}` };
+  }
+  if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) {
+    return { ok: false, reason: `agents/${adapterName}/adapter.yaml 顶层不是对象` };
+  }
+  return parseVisualProviderDeclaration((cfg as Record<string, unknown>).visual_provider);
+}
+
+/**
+ * 派生 provider 支持列表（**唯一**支持列表来源）。按 adapter 名确定性排序。
+ * 目录扫描复用 listAvailableAdapters（adapter_name 与目录名一致性已在那里把关）。
+ */
+export function listVisualProviderAdapters(frameworkRoot: string): VisualProviderCatalogEntry[] {
+  const { names } = listAvailableAdapters(frameworkRoot);
+  const out: VisualProviderCatalogEntry[] = [];
+  for (const adapter of [...names].sort()) {
+    const parsed = loadVisualProviderDeclaration(frameworkRoot, adapter);
+    if (parsed.ok) out.push({ adapter, declaration: parsed.declaration });
+  }
+  return out;
+}
+
+/** 支持项名单（提示/错误/校验共用同一结果，禁止第二处枚举）。 */
+export function listVisualProviderAdapterNames(frameworkRoot: string): string[] {
+  return listVisualProviderAdapters(frameworkRoot).map(e => e.adapter);
+}
+
+export function isVisualProviderSupported(frameworkRoot: string, adapterName: string): boolean {
+  return loadVisualProviderDeclaration(frameworkRoot, adapterName).ok;
+}
+
+/** 人读支持项文案（catalog 派生；不得在别处硬编码 adapter 名）。 */
+export function formatVisualProviderSupportList(frameworkRoot: string): string {
+  const names = listVisualProviderAdapterNames(frameworkRoot);
+  return names.length > 0 ? names.join('、') : '（当前无任何 adapter 声明 visual_provider）';
+}

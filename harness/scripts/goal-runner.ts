@@ -54,7 +54,7 @@ import {
 import { writeLivenessBeacon } from './utils/liveness-beacon';
 import { loadResolvedProfile } from '../profile-loader';
 import { runCapabilityPreflight, emitHarnessPreflightGap } from './utils/capability-preflight';
-import type { HarnessResolvedProfile } from './utils/types';
+import type { HarnessResolvedProfile, ProviderRef } from './utils/types';
 import { resolveWorkflowSpec } from '../workflow-loader';
 import { resolveContextAdapterImageInput, isFreshCanaryForExecution } from './utils/multimodal-probe';
 import { loadLocalConfig as loadFrameworkLocalConfig } from './utils/framework-local-config';
@@ -350,8 +350,14 @@ import {
   validateManifestCliOverrides,
   normalizeAdapterModelCliValue,
   resolveFinalModelPin,
+  normalizeVisualProviderCliPair,
+  resolveFinalVisualProviderPin,
   type ManifestCliArgv,
 } from './utils/goal-manifest-cli';
+import {
+  assertVisualProviderCliSupported,
+  resolveUnattendedVisualProviderPin,
+} from './utils/visual-provider-identity';
 import {
   loadProgressContext,
   projectGoalProgress,
@@ -3738,6 +3744,9 @@ export async function main(): Promise<number> {
       // plan d7f3a9c4 t1：显式模型钉（仅 headless runner 链路；in-session attended
       // 由宿主会话自跑不适用）。
       'adapter-model',
+      // plan ab072691 t1④：只读视觉 provider 的显式身份（**成对必填**）。
+      // 与 --adapter-model 对仗但独立：那是 primary 执行身份，这是第二个「只看图」endpoint。
+      'visual-adapter', 'visual-model',
     ],
     boolean: [
       'help', 'dry-run', 'force-resume', 'override-start', 'override-end', 'override-manifest',
@@ -3763,6 +3772,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
     [--start spec] [--end testing] [--dry-run] [--resume <run-id> --feature <f>] [--manifest <file>]
     [--force-resume] [--override-start] [--override-end] [--override-manifest]
     [--adapter-model <id>]   play the explicit model into headless argv (codex/claude/codeagent/cursor/opencode)
+    [--visual-adapter <a> --visual-model <id>]
+                 pin the read-only visual provider (second, look-only endpoint) for this run.
+                 Both flags are required together. Supported adapters are derived from the
+                 adapter catalog (agents/<a>/adapter.yaml visual_provider); an unsupported
+                 adapter fails fast and lists the supported ones. Omit for blind/native.
     [--detach]   fork the run into the background, print {run_id,...} JSON, exit 0
                  (for hosts whose shell tool blocks / can't background a long task)
 `);
@@ -3829,6 +3843,18 @@ Goal runner — tool-agnostic multi-phase orchestrator
   let cliAdapterModel: string | undefined;
   try {
     cliAdapterModel = normalizeAdapterModelCliValue(argv['adapter-model']);
+  } catch (err) {
+    console.error((err as Error).message);
+    process.exit(1);
+  }
+
+  // plan ab072691 t1④：--visual-adapter/--visual-model 成对归一 + 资格 fail-fast。
+  // 资格判据只查 adapter catalog 的 visual_provider 完整声明；显式输入不受支持时**必须**
+  // 停在这里并列出支持项——静默忽略用户明确给出的输入是最坏的形态。
+  let cliVisualProvider: ProviderRef | undefined;
+  try {
+    cliVisualProvider = normalizeVisualProviderCliPair(argv['visual-adapter'], argv['visual-model']);
+    if (cliVisualProvider) assertVisualProviderCliSupported(frameworkRoot, cliVisualProvider);
   } catch (err) {
     console.error((err as Error).message);
     process.exit(1);
@@ -4113,6 +4139,39 @@ Goal runner — tool-agnostic multi-phase orchestrator
     } else {
       // 无 pin：不落键（与旧 manifest 兼容 + 身份字段集条件纳入同源约束）。
       delete manifest.adapter_model_pin;
+    }
+  }
+
+  // plan ab072691 t1④⑤：visual provider final pin **单点裁决**，同一位置、同一纪律。
+  // 优先级：显式 CLI > manifest 冻结值 > 个人级 local（仅 fresh 兜底）。
+  // **resume 一律不重读 local**——冻结值就是冻结值，停机期间改个人配置不得悄悄换掉本 run
+  // 的视觉 endpoint（与 requirement/model pin 的既有纪律同源）。
+  {
+    const finalVisualPin = resolveFinalVisualProviderPin({
+      cliRef: cliVisualProvider,
+      manifestPin: manifest.visual_provider_pin,
+      isResume: Boolean(argv.resume),
+      hasManifestFlag: Boolean(argv.manifest),
+      isSuccessor: Boolean(manifest.successor_of),
+      overrideManifest: Boolean(argv['override-manifest']),
+    });
+    if (!finalVisualPin.ok) {
+      console.error(finalVisualPin.message);
+      process.exit(1);
+    }
+    let pin = finalVisualPin.pin;
+    // 无显式输入也无冻结值时，fresh run 才回落个人级配置。goal-runner 是**无人值守**入口：
+    // 不询问；旧 local 命中 unsupported 只 WARN + 忽略并按 blind 继续，绝不停 run，
+    // 也绝不自动改选其它 adapter 或在多个 provider 间 fallback。
+    if (!pin && !argv.resume) {
+      const fromLocal = resolveUnattendedVisualProviderPin(loadFrameworkLocalConfig(projectRoot), frameworkRoot);
+      if (fromLocal.warning) console.warn(fromLocal.warning);
+      pin = fromLocal.pin;
+    }
+    if (pin) {
+      manifest.visual_provider_pin = pin;
+    } else {
+      delete manifest.visual_provider_pin;
     }
   }
 

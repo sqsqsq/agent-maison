@@ -352,6 +352,61 @@ optional_fields:
               接受（历史 run 可 resume）但不再降低实际执行权限；allowed_tools 为审批清单
               遗留字段（deprecated/ignored）。
 
+  visual_provider:
+    type: object | null
+    description: |
+      可选（plan ab072691）。声明本 adapter 可作为**只读视觉 provider**（delegated 视觉委托的
+      第二 endpoint：primary 盲写工程，provider 只看图产结构化评审）。
+
+      **本字段的完整声明就是 provider 的支持资格**——运行时由 adapter catalog 扫描本字段派生
+      唯一支持列表（harness/scripts/utils/adapter-catalog.ts listVisualProviderAdapters）。
+      禁止在 TypeScript 里另建 adapter 白名单、禁止按 adapter 内核家族推断（Claude 内核 fork
+      不自带资格）、禁止在文档里另写一份支持名单——三者会与本字段形成平行真源。
+
+      `goal_capability` **不参与** provider 资格判定：那是「能不能当 goal 主执行体」的声明，
+      与「能不能只读看图」正交；本字段自身承载 invoke / model / image / stdout 全契约。
+
+      四个字段**缺一即不完整**，不完整=无资格（交互态提示重选、无人值守 WARN+blind、
+      显式 CLI fail-fast）。取值为**机制 id 而非厂商名**：机制 adapter 通用，多个 adapter 可
+      共用同一机制。声明与运行时的分工同 `external_runner.headless_invoke`——本字段是声明面
+      与资格面，argv 构造 SSOT 在 harness/scripts/utils/visual-provider-invoke.ts，两者须一致。
+
+      **入册纪律（BLOCKER）**：每份声明须经锁定版本 CLI 的真实 invocation smoke 证明「只读
+      隔离成立 + model 真实回放 + 图片真实进模型 + stdout 正确投影」后方可写入。锁定版本实测
+      不支持所声明的隔离时，**不得**写入声明、更不得退回该 adapter 的工程默认配置启动。
+    fields:
+      readonly_invoke:
+        type: string
+        enum: ["safe_mode_read_only_tools", "read_only_sandbox", "ask_mode", "permission_deny_non_read"]
+        description: |
+          只读启动机制 id。语义：
+          - safe_mode_read_only_tools：CLI 提供「隔离工程定制（settings/hooks/入口文件/skills/
+            plugins/MCP 等）」的安全模式，并可把模型可见工具集合收敛到只读读取工具；
+          - read_only_sandbox：CLI 提供进程级只读沙箱档位（文件系统写入在沙箱层被拒）；
+          - ask_mode：CLI 提供只问不改的会话模式（无写入/无 shell 权限）；
+          - permission_deny_non_read：CLI 提供结构化权限声明，可把 edit/bash 等非只读工具置 deny。
+          **禁止**声明任何依赖普通 headless 全权限旗标的机制——那条 argv 是无条件全权限契约。
+      image_transport:
+        type: string
+        enum: ["prompt_path", "native_image_flag"]
+        description: |
+          图片入模路径。prompt_path=prompt 内明列工程内真实图片路径、由只读读图工具读取；
+          native_image_flag=CLI 原生附图旗标。两者都**直接使用工程内原路径**，不做暂存复制
+          （物理只读由 readonly_invoke 承担，receipt 图片路径因此天然与工程一致）。
+      stdout_envelope:
+        type: string
+        enum: ["stream_json_result", "turn_jsonl", "result_json", "events_json"]
+        description: |
+          stdout 信封方言——决定「用哪个既有投影函数把 stdout 还原成模型正文」以及是否需要
+          既有 terminal 事件解析器。**只选择既有能力，不新建第二套 parser**：投影后统一走
+          同一份载荷校验。turn_jsonl 额外契约：只有 invoke 结果 completion 观测成立且无
+          terminal failure 时才投影正文，投影为 null 亦判 invalid。
+      model_replay:
+        type: string
+        description: |
+          模型回放旗标 token（如 `--model` / `-m`）——provider 的 model 必须真实进入该旗标。
+          无回放旗标的 adapter 不具 provider 资格（否则「声称已钉、实际未钉」）。
+
   user_confirmation:
     type: object | null
     description: |

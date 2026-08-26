@@ -4,6 +4,7 @@
 
 import type { GoalManifest, AdapterModelPin } from './goal-manifest';
 import type { FeaturePhase } from './phase-transition-policy';
+import type { ProviderRef } from './types';
 
 export interface ManifestCliArgv {
   manifest?: string;
@@ -290,4 +291,115 @@ export function resolveFinalModelPin(
     };
   }
   return { ok: true, pin: makePin(cliValue) };
+}
+
+// ----------------------------------------------------------------------------
+// plan ab072691 t1④/⑤：视觉 provider CLI 双参数校验 + final pin 单点裁决
+// ----------------------------------------------------------------------------
+
+/** 控制字符判据——与 normalizeAdapterModelCliValue 同款（不接受任何 C0/DEL）。 */
+const CONTROL_CHAR_RE = /[\u0000-\u001F\u007F]/;
+
+/**
+ * `--visual-adapter` / `--visual-model` 的**成对**归一与校验（fail-fast）。
+ *
+ * 成对必填：只给一个 = 半个身份，既冻结不了也回放不了——直接拒绝，不猜另一半。
+ * 单值校验与 normalizeAdapterModelCliValue 同款（trim / 非空 / ≤128 / 无控制字符），
+ * 同样**不做模型名白名单**（格式责任在用户，CLI fail-fast）。
+ *
+ * 本函数**不判支持资格**：资格唯一真源是 `agents/<adapter>/adapter.yaml.visual_provider`
+ * 完整声明，由调用方查 adapter catalog 后 fail-fast 并列出 catalog 派生的支持项。
+ */
+export function normalizeVisualProviderCliPair(
+  rawAdapter: unknown,
+  rawModel: unknown,
+): ProviderRef | undefined {
+  const hasAdapter = rawAdapter !== undefined;
+  const hasModel = rawModel !== undefined;
+  if (!hasAdapter && !hasModel) return undefined;
+  if (hasAdapter !== hasModel) {
+    throw new Error(
+      '[goal-runner] BLOCKER: --visual-adapter 与 --visual-model 必须成对提供' +
+      `（缺 ${hasAdapter ? '--visual-model' : '--visual-adapter'}）——` +
+      'provider 身份是 (adapter, model) 二元组，只给一半既冻结不了也回放不了。',
+    );
+  }
+  const norm = (label: string, raw: unknown): string => {
+    if (typeof raw !== 'string') {
+      throw new Error(`[goal-runner] BLOCKER: ${label} 须为字符串值参数`);
+    }
+    const v = raw.trim();
+    if (!v) throw new Error(`[goal-runner] BLOCKER: ${label} 值经 trim 后为空`);
+    if (v.length > 128) throw new Error(`[goal-runner] BLOCKER: ${label} 长度须 ≤128`);
+    if (CONTROL_CHAR_RE.test(v)) {
+      throw new Error(`[goal-runner] BLOCKER: ${label} 不得含控制字符`);
+    }
+    return v;
+  };
+  return {
+    adapter: norm('--visual-adapter', rawAdapter),
+    model: norm('--visual-model', rawModel),
+  };
+}
+
+export interface ResolveFinalVisualProviderPinInput {
+  /** 已归一/校验的 CLI 双参数值（未提供时 undefined） */
+  cliRef?: ProviderRef;
+  /** manifest 既有冻结 pin（来自 --manifest / --resume / successor 继承） */
+  manifestPin?: ProviderRef;
+  isResume: boolean;
+  hasManifestFlag: boolean;
+  /** successor（**仅出生特权**，后续 resume 不适用） */
+  isSuccessor: boolean;
+  overrideManifest: boolean;
+}
+
+export type ResolveFinalVisualProviderPinResult =
+  | { ok: true; pin?: ProviderRef }
+  | { ok: false; message: string };
+
+/**
+ * plan ab072691 t1⑤：visual provider final pin **单点裁决**（唯一产生 final provider pin
+ * 的纯函数）。规则是 resolveFinalModelPin 的**子集**，刻意更小：
+ *
+ *  - fresh 普通启动：直接接受 CLI 值；
+ *  - fresh + --manifest / resume / 已有冻结 pin：不传=用冻结值；同值幂等；
+ *    新增或不同值须 --override-manifest（--force-resume 本身不绕过）；
+ *  - successor **出生**（isSuccessor && !isResume）：默认继承源 pin；出生时显式双参数
+ *    可直接覆盖继承值且**不要求** --override-manifest（与 --adapter-model 出生特权同款）。
+ *
+ * **没有** primary 那一支「换 adapter 须 --override-adapter」：provider 的 adapter 与 run
+ * 的执行 adapter 正交（跨 adapter 组合正是本特性的目标形态），用 --override-adapter 去
+ * 授权一个与它无关的字段只会制造错误的因果链。
+ */
+export function resolveFinalVisualProviderPin(
+  input: ResolveFinalVisualProviderPinInput,
+): ResolveFinalVisualProviderPinResult {
+  const { cliRef, manifestPin, isResume, hasManifestFlag, isSuccessor, overrideManifest } = input;
+  const sameRef = (a?: ProviderRef, b?: ProviderRef): boolean =>
+    Boolean(a && b && a.adapter === b.adapter && a.model === b.model);
+
+  // successor 出生特权：显式双参数即新 run 出生输入，可覆盖继承值。
+  if (isSuccessor && !isResume) {
+    return { ok: true, pin: cliRef ?? manifestPin };
+  }
+
+  // fresh 普通启动（无 --manifest、无 --resume、无既有 pin）。
+  if (!isResume && !hasManifestFlag && !manifestPin) {
+    return { ok: true, pin: cliRef };
+  }
+
+  if (cliRef === undefined) return { ok: true, pin: manifestPin };
+  if (sameRef(cliRef, manifestPin)) return { ok: true, pin: cliRef };
+
+  if (!overrideManifest) {
+    return {
+      ok: false,
+      message:
+        '[goal-runner] BLOCKER: --visual-adapter/--visual-model 与冻结 manifest ' +
+        'visual_provider_pin 不一致或为新增（visual_provider_pin 非 start/end 字段，' +
+        '--override-start/--override-end 不授权它）——须 --override-manifest。',
+    };
+  }
+  return { ok: true, pin: cliRef };
 }

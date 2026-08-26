@@ -25,6 +25,17 @@ user_confirmation:
 # opencode run stdin headless 无确认读图能力（按实测定档 none）
 image_input: none
 
+# 视觉委托（plan ab072691）：本 adapter 可作**只读视觉 provider**。
+# 只读手段=结构化权限声明把 edit/bash 等非只读工具置 deny（配合全局 pure 档）；
+# **绝不复用** goal headless 的 --dangerously-skip-permissions argv。
+# 运行时 argv SSOT：harness/scripts/utils/visual-provider-invoke.ts。
+# 入册凭据：待宿主真实 invocation smoke 回填（plan ab072691 t6）。
+visual_provider:
+  readonly_invoke: permission_deny_non_read
+  image_transport: native_image_flag
+  stdout_envelope: events_json
+  model_replay: '-m'
+
 goal_capability:
   mode: external_runner
   external_runner:

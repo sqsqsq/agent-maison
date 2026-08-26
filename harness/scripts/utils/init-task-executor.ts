@@ -22,6 +22,10 @@ import {
 import { ensureCanonicalGitignore } from './canonical-gitignore';
 import { updateLocalConfig } from './framework-local-config';
 import type { FrameworkLocalConfig } from './framework-local-config';
+import {
+  formatVisualProviderSupportList,
+  isVisualProviderSupported,
+} from './adapter-catalog';
 import type { InitTask, InitTaskPlan } from './init-task-planner';
 import type { TaskDecision } from '../init-orchestrate';
 import { applyLegacySkillBridgeCleanup, type BackupSession } from './legacy-skill-bridge-cleanup';
@@ -66,6 +70,12 @@ export interface InitExecutionContext {
   /** personal setup */
   activeAdapter?: string;
   devecoInstallPath?: string;
+  /**
+   * plan ab072691 t1③：只读视觉 provider 的用户选择（registry `setup.visual_provider`
+   * 收集后由 Skill 注入）。**agent 不手写 framework.local.json**——写盘唯一走
+   * record-visual-provider 任务的 updateLocalConfig。缺省=用户跳过，本轮 blind。
+   */
+  visualProvider?: { adapter: string; model: string };
   confirmAnswers?: Record<string, boolean>;
   /** CREATE 模式 ensure-config：整文件 JSON（由 Skill 在 S2 收集后注入） */
   configWritePayload?: Record<string, unknown>;
@@ -638,6 +648,40 @@ export function executeInitTask(
       }
 
       return { message };
+    }
+    case 'record-visual-provider': {
+      // plan ab072691 t1③：只读视觉 provider 的**机器写盘**入口（agent 不手写 JSON）。
+      // 跳过（未注入 visualProvider）是合法结果：本轮 blind，不写键、不报错。
+      const sel = ctx.visualProvider;
+      const adapter = sel?.adapter?.trim();
+      const model = sel?.model?.trim();
+      if (!adapter && !model) {
+        return { message: '未提供 visualProvider，跳过——本轮以 blind 模式继续（不写入 local）' };
+      }
+      if (!adapter || !model) {
+        // 半个身份既冻结不了也回放不了：任务 failed，让 agent 重新收集，而不是写半条记录。
+        throw new Error(
+          'record-visual-provider 需要 visualProvider.{adapter,model} 成对提供' +
+          `（缺 ${adapter ? 'model' : 'adapter'}）`,
+        );
+      }
+      const fwRoot = frameworkRootFromCtx(ctx);
+      if (!isVisualProviderSupported(fwRoot, adapter)) {
+        // 资格判据唯一来自 adapter catalog 的 visual_provider 完整声明。
+        // 这里 failed 即「请重选或跳过」，框架**不**替用户改选、**不** fallback。
+        throw new Error(
+          `record-visual-provider: adapter ${adapter} 暂未接入视觉 provider。` +
+          `当前支持：${formatVisualProviderSupportList(fwRoot)}。` +
+          '请重新选择，或跳过并以 blind 模式继续。',
+        );
+      }
+      updateLocalConfig(ctx.projectRoot, (cur) => ({
+        ...cur,
+        vision: { ...cur.vision, visual_provider: { adapter, model } },
+      }));
+      return {
+        message: `已写入 framework.local.json vision.visual_provider=${adapter}:${model}`,
+      };
     }
     case 'detect-deveco': {
       const report = detectScan();

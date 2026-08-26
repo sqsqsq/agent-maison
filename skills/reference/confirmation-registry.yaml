@@ -111,6 +111,32 @@ entries:
         label: "跳过 — 本轮不写入 DevEco 安装路径"
         portable: "2=跳过"
 
+  - id: setup.visual_provider
+    skill: "_personal_setup"
+    class: enum
+    ssot_anchor: "user-confirmation-ux.md §3.2"
+    skill_step: "S4 只读视觉 provider（主模型无视觉且本轮涉 UI 时）"
+    portable_menu: "1=从支持列表选一个 provider 2=跳过（本轮 blind）"
+    notes: >-
+      plan ab072691（delegated 视觉委托）。provider 是**只读**第二 endpoint：只看图产结构化
+      评审，物理上不写工程；正式产物唯一写者仍是主模型。**支持列表现算自 adapter catalog**
+      （agents/<adapter>/adapter.yaml 的 visual_provider 完整声明）——本条目与任何文档都
+      不得另写一份名单。选定后由 init-orchestrate `record-visual-provider` 机器写入
+      framework.local.json（agent 不手写 JSON）。
+      选项 1 需要两个值：从支持列表里选中的 adapter，以及该 endpoint 的模型标识
+      （与 `--adapter-model` 同性质的 endpoint id，框架不做模型名白名单，只校验
+      非空/≤128/无控制字符）。选了不受支持的 adapter → 任务 failed 并列出支持项，
+      请重选或跳过；框架**不自动改选**、**不在多个 provider 之间 fallback**。
+      跳过是完全合法的结果：本轮以 blind 模式继续，视觉保持 UNVERIFIED、release 保持
+      VISUAL_PENDING，不重复询问、不阻断任何阶段。
+    options:
+      - value: from_supported
+        label: "从支持列表选择 — 编号对应 adapter catalog 派生的 provider 支持项"
+        portable: "1=从支持列表选"
+      - value: skip
+        label: "跳过 — 本轮以 blind 模式继续，不记录视觉 provider"
+        portable: "2=跳过"
+
   - id: setup.device_policy
     skill: "_personal_setup"
     class: enum

@@ -18,6 +18,19 @@ export function isClaudeKernelAdapter(name: string | null | undefined): boolean 
   return typeof name === 'string' && CLAUDE_KERNEL_ADAPTERS.has(name);
 }
 
+/**
+ * 视觉委托（plan ab072691 t1①）：**执行 endpoint 身份**——(adapter, model) 二元组。
+ *
+ * `model` **必填**：provider 的意义就是「换一个能看图的具体模型」，没有冻结的 model 就没有
+ * provider 身份（另见 goal-manifest.AdapterModelPin 对 primary 的同款约束）。本类型刻意
+ * 落在 types.ts 而非 goal-manifest.ts——个人级 config、CLI、manifest、invoke 执行器四面
+ * 共用，不让 config 层反向依赖 manifest 层。
+ */
+export interface ProviderRef {
+  adapter: string;
+  model: string;
+}
+
 /** 支持的开发阶段（运行时由 workflow YAML 定义；此处为通用字符串别名） */
 export type Phase = string;
 
