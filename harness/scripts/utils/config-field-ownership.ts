@@ -17,8 +17,13 @@ export const LOCAL_DEVICE_KEYS = new Set(['unlock', 'emulator_fallback', 'target
 /** device.unlock 允许键——**只放 opaque credential_ref，绝不放明文口令** */
 export const LOCAL_DEVICE_UNLOCK_KEYS = new Set(['mode', 'credential_ref']);
 
-/** E1（多模态降级阶梯 plan d4a8f3c6）：framework.local.json.vision 顶层允许键。 */
-export const LOCAL_VISION_KEYS = new Set(['image_input_override', 'canary']);
+/** E1（多模态降级阶梯 plan d4a8f3c6）：framework.local.json.vision 顶层允许键。
+ * visual_provider：视觉委托只读 provider 身份（plan ab072691 t1②）。 */
+export const LOCAL_VISION_KEYS = new Set(['image_input_override', 'canary', 'visual_provider']);
+/** framework.local.json.vision.visual_provider 允许键——**model 必填**，无 model 即无 provider 身份。
+ * 支持资格不在此校验（那是 adapter catalog 的 visual_provider 声明真源）：这里只保证形状合法，
+ * 让「旧 local 里 adapter 已失去资格」能被读到并按输入形态分流（交互重选 / 无人值守 WARN+blind）。 */
+export const LOCAL_VISION_VISUAL_PROVIDER_KEYS = new Set(['adapter', 'model']);
 /** framework.local.json.vision.canary 允许键（probed_via：I1 交互式金丝雀 plan b7e42d19；
  * probe_version：探测协议版本 plan c7d2e9a4——旧缓存缺字段自动 stale 重探）。 */
 export const LOCAL_VISION_CANARY_KEYS = new Set([

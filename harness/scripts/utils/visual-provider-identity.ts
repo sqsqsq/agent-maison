@@ -1,0 +1,124 @@
+// ============================================================================
+// visual-provider-identity.ts — 只读视觉 provider 的身份解析（plan ab072691 t1③）
+// ============================================================================
+// 三形态入口的**共享判定层**：普通交互态 / attended goal / 无人值守 三条路径读的是
+// 同一份状态与同一份支持列表，绝不各算一遍。
+//
+// 分工红线：
+//  · **支持资格**唯一来自 `agents/<adapter>/adapter.yaml.visual_provider` 完整声明
+//    （adapter-catalog 派生）。本模块不维护任何 adapter 名单。
+//  · **形状合法性**由 framework-local-config 在读盘时把关（adapter/model 非空）。
+//  · 本模块只回答「这份配置现在能不能用」以及「按输入形态该怎么处置」。
+//
+// 处置矩阵（plan ab072691 t1③ 冻结，不得扩面）：
+//   普通交互态 / attended goal ：local 缺失或 unsupported → 提示一次，可重选、可跳过；
+//                                跳过即本轮 blind，**不重复问**。
+//   无人值守                   ：不询问；旧 local 命中 unsupported → WARN + 忽略 + blind；
+//                                无配置同样 blind。**任何情况不停 run。**
+//   显式 CLI                   ：unsupported → fail-fast，并列出 catalog 派生的支持项。
+// 三条路径都**不自动改选**其它 adapter、**不在多个 provider 间 fallback**。
+// ============================================================================
+
+import {
+  formatVisualProviderSupportList,
+  isVisualProviderSupported,
+  listVisualProviderAdapterNames,
+} from './adapter-catalog';
+import { loadLocalConfig, type FrameworkLocalConfig } from './framework-local-config';
+import type { ProviderRef } from './types';
+
+export type VisualProviderLocalState =
+  /** framework.local.json 没有 vision.visual_provider */
+  | { kind: 'absent' }
+  /** 有配置，且其 adapter 在 catalog 派生支持列表内 */
+  | { kind: 'ok'; ref: ProviderRef }
+  /** 有配置，但其 adapter 无完整 visual_provider 声明（含声明残缺/字段非法） */
+  | { kind: 'unsupported'; ref: ProviderRef; reason: string };
+
+/**
+ * 读个人级配置里的 provider 身份并判资格。
+ *
+ * 入参是**已加载**的 local config（不是 projectRoot）——本模块不碰文件 IO，调用方本就
+ * 都已经持有 local config，重复读盘只会制造「读到两份不同快照」的缝。
+ */
+export function resolveVisualProviderFromLocal(
+  local: FrameworkLocalConfig | null | undefined,
+  frameworkRoot: string,
+): VisualProviderLocalState {
+  const raw = local?.vision?.visual_provider;
+  if (!raw) return { kind: 'absent' };
+  const ref: ProviderRef = { adapter: raw.adapter, model: raw.model };
+  if (isVisualProviderSupported(frameworkRoot, ref.adapter)) return { kind: 'ok', ref };
+  return {
+    kind: 'unsupported',
+    ref,
+    reason: `adapter ${ref.adapter} 无完整 visual_provider 声明`,
+  };
+}
+
+/** 交互两态（普通交互 / attended goal）是否该提示一次：local 缺失**或**现有 adapter 失去资格。 */
+export function shouldPromptForVisualProvider(state: VisualProviderLocalState): boolean {
+  return state.kind !== 'ok';
+}
+
+/**
+ * 交互提示文案（普通交互态与 attended goal **共用同一句**）。
+ * 支持项一律现算自 catalog——任何硬编码名单都会在第四个 adapter 接入时变成谎言。
+ */
+export function formatVisualProviderPrompt(
+  state: VisualProviderLocalState,
+  frameworkRoot: string,
+): string | null {
+  if (state.kind === 'ok') return null;
+  const supported = formatVisualProviderSupportList(frameworkRoot);
+  if (state.kind === 'absent') {
+    return (
+      '本轮主模型无视觉能力。可指定一个**只读**视觉 provider（第二 endpoint，只看图产评审，' +
+      `绝不写工程）。当前支持：${supported}。请选择 adapter 与该 endpoint 的模型标识，` +
+      '或跳过并以 blind 模式继续。'
+    );
+  }
+  return (
+    `adapter ${state.ref.adapter} 暂未接入视觉 provider。当前支持：${supported}。` +
+    '请重新选择，或跳过并以 blind 模式继续。'
+  );
+}
+
+/**
+ * 无人值守解析：**不询问、不停 run**。
+ * 旧 local 命中 unsupported → 返回 warning 供调用方 WARN 一次并忽略该配置（落 blind）。
+ */
+export function resolveUnattendedVisualProviderPin(
+  local: FrameworkLocalConfig | null | undefined,
+  frameworkRoot: string,
+): { pin?: ProviderRef; warning?: string } {
+  const state = resolveVisualProviderFromLocal(local, frameworkRoot);
+  if (state.kind === 'ok') return { pin: state.ref };
+  if (state.kind === 'absent') return {};
+  return {
+    warning:
+      `[visual-provider] WARN: framework.local.json 记录的视觉 provider adapter=${state.ref.adapter} ` +
+      `暂未接入（${state.reason}）——已忽略该配置，本 run 以 blind 模式继续。` +
+      `当前支持：${formatVisualProviderSupportList(frameworkRoot)}。` +
+      '（无人值守不询问、不自动改选、不 fallback；要启用请显式配置一个受支持的 provider。）',
+  };
+}
+
+/**
+ * 显式 CLI 输入的资格断言：**fail-fast**。
+ * 静默忽略一个用户明确给出的输入是最坏的形态——宁可停在启动处，也不要让 run 悄悄跑成 blind。
+ */
+export function assertVisualProviderCliSupported(
+  frameworkRoot: string,
+  ref: ProviderRef,
+): void {
+  if (isVisualProviderSupported(frameworkRoot, ref.adapter)) return;
+  const supported = listVisualProviderAdapterNames(frameworkRoot);
+  throw new Error(
+    `[goal-runner] BLOCKER: --visual-adapter ${ref.adapter} 暂未接入视觉 provider` +
+    `（无完整 agents/${ref.adapter}/adapter.yaml visual_provider 声明）。` +
+    `当前支持：${supported.length > 0 ? supported.join('、') : '（无）'}。` +
+    '请改用受支持的 adapter，或移除 --visual-adapter/--visual-model 以 blind 模式运行' +
+    '——框架不会替你改选，也不会在多个 provider 之间 fallback。',
+  );
+}

@@ -23,6 +23,7 @@ import {
 } from './materialized-adapters-resolve';
 import {
   buildAdapterCatalogOrThrow,
+  listVisualProviderAdapterNames,
   type AdapterCatalogEntry,
 } from './adapter-catalog';
 import { resolveProbeFrameworkRoot } from '../../repo-layout';
@@ -306,7 +307,10 @@ function buildProjectTasks(
   return tasks;
 }
 
-function buildPersonalTasks(materializedAdapters: string[]): InitTask[] {
+function buildPersonalTasks(
+  materializedAdapters: string[],
+  visualProviderCandidates: string[],
+): InitTask[] {
   return [
     {
       id: 'assert-active-adapter-materialized',
@@ -354,6 +358,24 @@ function buildPersonalTasks(materializedAdapters: string[]): InitTask[] {
       default_action: 'run',
       skippable: true,
       allowed_actions: ['run', 'skip'],
+    },
+    {
+      // plan ab072691 t1③：只读视觉 provider（delegated 视觉委托的第二 endpoint）。
+      // **可跳过**：没有 provider 只意味着本轮 blind，从来不是 setup 的前置条件——
+      // 因此它不在 personal prerequisite 集合里，跳过不影响 personal setup 就绪判定。
+      id: 'record-visual-provider',
+      title: '（可选）记录只读视觉 provider 到 framework.local.json',
+      category: 'personal',
+      scope: 'personal',
+      deps: ['record-adapter'],
+      status: 'needed',
+      default_action: 'prompt',
+      skippable: true,
+      allowed_actions: ['run', 'skip'],
+      decision_class: 'setup.visual_provider',
+      // 候选项**现算自 adapter catalog**（唯一支持列表来源）——与 record-adapter 的
+      // materialized_adapters 同款：决策面拿到的就是机器派生的清单，不靠文档记名单。
+      params: { visual_provider_candidates: visualProviderCandidates },
     },
   ];
 }
@@ -517,9 +539,10 @@ export function probeInitTaskPlan(options: PlanProbeOptions): InitTaskPlan {
         : [adapterHint]
       : resolveProjectMaterializedAdapters(cfgSources, adapterHint);
 
+  const probeFrameworkRoot = resolveProbeFrameworkRoot(projectRoot, path.join(__dirname, '..', '..'));
   let tasks =
     scope === 'personal'
-      ? buildPersonalTasks(materialized)
+      ? buildPersonalTasks(materialized, listVisualProviderAdapterNames(probeFrameworkRoot))
       : buildProjectTasks(inspections, mode, materialized);
 
   if (scope === 'project' && mode === 'update') {
@@ -546,8 +569,7 @@ export function probeInitTaskPlan(options: PlanProbeOptions): InitTaskPlan {
   };
 
   if (scope === 'project') {
-    const frameworkRoot = resolveProbeFrameworkRoot(projectRoot, path.join(__dirname, '..', '..'));
-    plan.adapter_catalog = buildAdapterCatalogOrThrow(frameworkRoot);
+    plan.adapter_catalog = buildAdapterCatalogOrThrow(probeFrameworkRoot);
     plan.product_selection = probeProductSelectionDiagnostic(projectRoot);
   }
 

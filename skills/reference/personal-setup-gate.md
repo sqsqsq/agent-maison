@@ -10,7 +10,20 @@ cd framework/harness && npx ts-node scripts/check-personal-setup.ts --json --ens
 
 goal-mode 的 local-first 解析与需要 `--select-adapter` 的条件见 [goal-mode-operations.md](goal-mode-operations.md#运行身份resolved_adapter解析阶梯)；已有合法 local 时不得再传请求身份触发重复选择。
 
-**仅解析 stdout JSON**（稳定字段：`ok`, `code`, `status`, `activeAdapter`, `materializedAdapters`, `ensured`, `candidates`, `message`）。勿依赖人读 stderr/stdout 散文。
+**仅解析 stdout JSON**（稳定字段：`ok`, `code`, `status`, `activeAdapter`, `materializedAdapters`, `ensured`, `candidates`, `message`, `visualProvider`）。勿依赖人读 stderr/stdout 散文。
+
+`visualProvider` 是**纯 advisory**：它**永不**影响 `ok` / `code`——provider 从来不是 personal setup 的
+前置条件，跳过只意味着本轮 blind。消费方式（UI 相关阶段 **且** 主模型无视觉时才看它）：
+
+| 字段 | 含义与用法 |
+|------|-----------|
+| `visualProvider.shouldPrompt` | `true` → 按 S2.1 **问一次**；`false` → **不问**（已配置且受支持，或读取不可用） |
+| `visualProvider.state` | `absent` / `ok` / `unsupported` / `unavailable`（读取出错，如实降级为不问） |
+| `visualProvider.supported[]` | catalog 现算的支持项——**唯一**支持列表来源，勿在别处枚举 |
+| `visualProvider.prompt` | `shouldPrompt` 时的现成提示语（含「重选」「跳过并 blind」两条出路） |
+| `visualProvider.decisionClass` | 询问用的 registry 条目 id（`setup.visual_provider`） |
+| `visualProvider.task` | 写盘用的 init 任务 id（`record-visual-provider`） |
+| `visualProvider.configured` | 已有配置时回显 `{adapter, model}`（`state != absent` 才有） |
 
 | `code` | 行为 |
 |--------|------|
@@ -55,7 +68,7 @@ BLOCKER 确认须 progressive enhancement：[user-confirmation-ux.md](./user-con
    cd framework/harness && npx ts-node scripts/init-orchestrate.ts --scope personal --project-root <repo-root>
    ```
 
-3. 解析 stdout 的 `InitTaskPlan` JSON；向用户渲染任务表（`assert-active-adapter-materialized` → `record-adapter` → `detect-deveco` → `record-deveco-path`）。
+3. 解析 stdout 的 `InitTaskPlan` JSON；向用户渲染任务表（`assert-active-adapter-materialized` → `record-adapter` → `detect-deveco` → `record-deveco-path` → `record-visual-provider`）。
 4. 读取 `materialized_adapters`（来自 `loadFrameworkConfigWithSources`）；**禁止**在本步写盘。
 
 #### S1.1 选择 active adapter（BLOCKER）
@@ -71,6 +84,30 @@ BLOCKER 确认须 progressive enhancement：[user-confirmation-ux.md](./user-con
 2. 将 S1–S2 选择序列化为 personal scope **decision JSON**（schema 同 `init-orchestrate.ts` 的 `InitRunDecision`）。
 3. 执行 `executeInitPlan`（`record-adapter` / `record-deveco-path` 任务负责写 local；**禁止** agent 手写 `framework.local.json` 全文）。
 4. **`assert-active-adapter-materialized` 只读通过**后，`record-adapter` 才写入 `framework.local.json`（DAG 顺序由 planner 保证）。
+
+---
+
+### S2.1 只读视觉 provider（可选，可跳过）
+
+**问不问不靠你判断，读机器字段**：本轮涉及 UI 且**主模型无视觉能力**时，读 S1 那份 stdout JSON 的
+`visualProvider.shouldPrompt`——`true` 才问、且只问一次；`false` 一律不问（已配置且受支持，
+或读取不可用）。该字段的判据就是「local 缺失 **或** 现有 adapter 已不在支持列表内」，
+由 harness 确定性算出，不要在对话里重新推断。非 UI 轮次不看它。
+
+- provider = **只读**第二 endpoint：只看图产结构化评审，物理上不写工程；正式产物唯一写者仍是主模型。
+- 用 registry **`setup.visual_provider`**（即 `visualProvider.decisionClass`；从支持列表选 / 跳过）。
+  选项与提示语直接取 `visualProvider.supported[]` 与 `visualProvider.prompt`——**支持列表现算自
+  adapter catalog**（扫 `agents/<adapter>/adapter.yaml` 的 `visual_provider` 完整声明），
+  本文与任何文档**都不写死名单**。
+- 选中的 adapter 不在支持列表 → 任务 failed 并回列支持项：**请重选或跳过**。框架**不自动改选**、
+  **不在多个 provider 之间 fallback**。
+- 写盘由 `record-visual-provider` 任务完成（即 `visualProvider.task`；
+  `executionContext.visualProvider = {adapter, model}`）；**禁止** agent 手写 `framework.local.json`。
+- **跳过是完全合法的结果**：本轮以 blind 模式继续，视觉保持 UNVERIFIED、release 保持
+  VISUAL_PENDING，不重复询问、不阻断任何阶段。provider **不是** personal setup 的前置条件，
+  跳过不影响 `--ensure` 的就绪判定。
+- 无人值守（goal headless）**不走本步**：读到已失效的旧配置只 WARN 并忽略，按 blind 继续；
+  显式 `--visual-adapter` 不受支持时在启动处 fail-fast 并列出支持项。
 
 ---
 
