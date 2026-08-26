@@ -372,6 +372,44 @@ export function dispatchDeviceVisualDiff(ctx: CheckContext): CheckResult[] {
   return [...fn(ctx)];
 }
 
+/**
+ * plan ab072691 t5①：只读视觉 provider 的逐屏评审（capture 之后、严格 dispatch 之前）。
+ *
+ * **可选能力**：profile 未导出该函数时返回 null，调用方按「本轮无 provider 评审」处理——
+ * 与 provider 不可用同一条 fail-open 出口，不抛错、不阻断。
+ */
+export function resolveVisualProviderReview(
+  ctx: CheckContext,
+): ((c: CheckContext, opts: { frameworkRoot: string }) => Promise<unknown>) | null {
+  try {
+    return requireProviderFunction<(c: CheckContext, o: { frameworkRoot: string }) => Promise<unknown>>(
+      ctx.resolvedProfile,
+      'device_test.visual_diff',
+      'runVisualProviderReview',
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * plan ab072691 t5⑤（返修）：与 provider 判定**无关**的确定性红线（改判脚本物证 / json
+ * 结构）。fail-open 路径跳过的只应是「依赖 provider 判定的 pending/candidate 分支」，
+ * 这些确定性侦测器必须照跑。profile 未提供实现时返回空数组（不因缺实现而阻断）。
+ */
+export function dispatchVisualDiffDeterministicOnly(ctx: CheckContext): CheckResult[] {
+  try {
+    const fn = requireProviderFunction<(c: CheckContext) => CheckResult[]>(
+      ctx.resolvedProfile,
+      'device_test.visual_diff',
+      'checkVisualDiffDeterministicOnly',
+    );
+    return [...fn(ctx)];
+  } catch {
+    return [];
+  }
+}
+
 /** @deprecated v2.3 起改用 `dispatchSpecVisualHandoff` */
 export const dispatchPrdVisualHandoff = dispatchSpecVisualHandoff;
 

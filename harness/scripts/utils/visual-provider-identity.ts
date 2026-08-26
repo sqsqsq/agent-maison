@@ -25,6 +25,7 @@ import {
   listVisualProviderAdapterNames,
 } from './adapter-catalog';
 import { loadLocalConfig, type FrameworkLocalConfig } from './framework-local-config';
+import { readGoalVisualProviderEnv } from './phase-state';
 import type { ProviderRef, VisionMode } from './types';
 
 export type VisualProviderLocalState =
@@ -147,6 +148,27 @@ export function resolveVisionModeForRun(
  */
 export function reviewVisionForMode(mode: VisionMode): boolean {
   return mode !== 'blind';
+}
+
+/**
+ * plan ab072691 t5①：**gate 进程**里解析本轮生效的 provider 身份。
+ *
+ * 优先级：goal 态 env 冻结值（manifest 单点裁决后由 runner 注入）> 个人级 local。
+ * 两条路都**不重新裁决、不询问、不 fallback**——gate 只消费已经定下来的身份。
+ */
+export function resolveActiveVisualProvider(
+  projectRoot: string,
+  frameworkRoot: string,
+): { pin?: ProviderRef; warning?: string } {
+  const fromEnv = readGoalVisualProviderEnv();
+  if (fromEnv) return { pin: fromEnv };
+  try {
+    return resolveUnattendedVisualProviderPin(loadLocalConfig(projectRoot), frameworkRoot);
+  } catch (e) {
+    // local 损坏由既有 config 加载链负责报错——本函数在 gate 热路径上，**不得**因它抛异常
+    // （那会把「没有 provider」升级成「门禁崩了」）。这里只诚实降级为「未配置」。
+    return { warning: `[visual-provider] 读取个人级配置失败，本轮按未配置处理：${(e as Error).message}` };
+  }
 }
 
 /**

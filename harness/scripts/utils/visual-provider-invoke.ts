@@ -47,6 +47,7 @@ import {
 } from './adapter-catalog';
 import { extractClaudeFinalResultText } from './claude-envelope';
 import { extractCodexAgentMessageText } from './codex-terminal-events';
+import { hasImageReadParser, parseImageReadEventsFor } from './critic-receipt-producer';
 import { resolveHeadlessBinary, shouldUseCrossSpawn } from './headless-binary-resolve';
 import type { AgentInvokeUsage } from './usage-capture';
 import type { ProviderRef } from './types';
@@ -354,6 +355,39 @@ export interface VisualProviderInvocation {
   usage?: AgentInvokeUsage;
   /** 结构化事件流落盘路径（receipt 证据披露用） */
   events_path?: string;
+  /**
+   * plan ab072691 t4⑥/t5④：验读证据等级——**如实披露，不构成任何门槛**。
+   * · 'verified'   —— 该 adapter 有结构化验读事件解析器，且事件流确实证明读了本轮图片；
+   * · 'unverified' —— 无解析器（如 codex/cursor/opencode 做 provider）、无事件流，
+   *                   或事件流未覆盖本轮图片。
+   * **受理与披露分立**：unverified 且载荷合法的结果**照常用于回修**；无效只指载荷校验失败。
+   */
+  input_provenance: 'verified' | 'unverified';
+}
+
+/**
+ * 验读证据等级判定（t4⑥/t5④）——**best-effort 披露，不是门槛**。
+ *
+ * 只有「该 adapter 有已入册的结构化验读事件解析器」且「事件流确实覆盖本轮**每一张**图片」
+ * 时才判 verified；其余一律如实 unverified（无解析器的 adapter 做 provider 是首批的常态，
+ * 把它当无效会整体误伤合法评审——受理与披露必须分立）。
+ */
+function resolveInputProvenance(
+  projectRoot: string,
+  adapter: string,
+  eventsPath: string | undefined,
+  imagePaths: string[],
+): 'verified' | 'unverified' {
+  if (!eventsPath || imagePaths.length === 0) return 'unverified';
+  if (!hasImageReadParser(adapter)) return 'unverified';
+  try {
+    const reads = parseImageReadEventsFor(adapter, fs.readFileSync(eventsPath, 'utf-8'));
+    if (!reads) return 'unverified';
+    const readSet = new Set(reads.map(r => path.resolve(projectRoot, r)));
+    return imagePaths.every(p => readSet.has(path.resolve(projectRoot, p))) ? 'verified' : 'unverified';
+  } catch {
+    return 'unverified';
+  }
 }
 
 /**
@@ -377,6 +411,8 @@ export async function invokeVisualProvider(
     purpose: input.purpose,
     image_hashes: imageHashes,
     workspace_dirtied: false,
+    // 默认 unverified：没有证据就是没有证据。有解析器且事件确实覆盖本轮图片时才升 verified。
+    input_provenance: 'unverified' as const,
   };
   const fail = (
     outcome: VisualProviderOutcome,
@@ -439,6 +475,8 @@ export async function invokeVisualProvider(
   const common = {
     ...(result.usage ? { usage: result.usage } : {}),
     ...(eventsPath ? { events_path: eventsPath } : {}),
+    // t4⑥/t5④：验读证据**如实**记录——它只影响披露等级，不影响本轮结果是否被采信。
+    input_provenance: resolveInputProvenance(input.projectRoot, input.provider.adapter, eventsPath, input.imagePaths),
   };
 
   if (result.spawn_error) {
@@ -576,6 +614,8 @@ export interface VisualProviderInvokeEvent {
   workspace_dirtied?: boolean;
   reason?: string;
   events_path?: string;
+  /** 验读证据等级（如实披露，非门槛） */
+  input_provenance: 'verified' | 'unverified';
 }
 
 /**
@@ -612,6 +652,7 @@ export function buildVisualProviderInvokeEvent(
     outcome: inv.outcome,
     duration_ms: inv.duration_ms,
     invoke_id: inv.invoke_id,
+    input_provenance: inv.input_provenance,
     ...(inv.workspace_dirtied ? { workspace_dirtied: true } : {}),
     ...(inv.reason ? { reason: inv.reason } : {}),
     ...(inv.events_path ? { events_path: inv.events_path } : {}),

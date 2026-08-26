@@ -133,6 +133,7 @@ import {
   isAgentSideGoalHarness,
   isGoalOrchestrationEnv,
   MAISON_GOAL_RUNNER_ENV,
+  applyGoalVisualProviderEnv,
   MAISON_GOAL_MODEL_PIN_ENV,
   mergeAndWritePhaseState,
   syncPhaseStateOnReceiptPassStrict,
@@ -261,6 +262,11 @@ export function bindAttendedGoalContext(input: {
   env.MAISON_GOAL_ATTEMPT = attemptId;
   env.MAISON_GOAL_ATTEMPT_PHASE = context.identity.phase;
   env.MAISON_GOAL_GATE_HARNESS = '1';
+  // plan ab072691 t5①（返修）：attended 也必须注入 **manifest 冻结的** provider 身份。
+  // 少了这一步，attended gate 会回落去读 framework.local.json——run 中途改个人配置就能
+  // 换掉本 run 的视觉 endpoint，manifest 冻结形同虚设。与 detached runner 共用同一执行器
+  // （成对写、成对清；无 pin 时只清不写）。
+  applyGoalVisualProviderEnv(env, context.manifest.visual_provider_pin);
   return { bound: true, runId, attemptId, ownerId, ownerEpoch };
 }
 
