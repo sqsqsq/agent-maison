@@ -252,6 +252,77 @@ export function extractJsonFinalResultText(raw: string): string | null {
 }
 
 /**
+ * `events_json` 方言（OpenCode `run --format json`）——形状以宿主锁定版 1.18.14 真实
+ * 样本钉死（plan ab072691 tasks 7.7 回填）：NDJSON，每行 `{type, timestamp, sessionID, part}`，
+ * 正文在 `type==='text'` 行的 `part.text`，终止锚点是 `type==='step_finish'`。
+ *
+ * 确定性锚点（缺一即 null，不做「尽力凑一段正文」）：
+ *  · 出现任何 `type==='error'` 行 → null（API 401/403 等在这里被挡住）；
+ *  · 终态必须**绑定最后一段正文**——`step_finish` 只封它自己那条 message 的稿；
+ *  · `part.reason` 必须是 `stop`；`tool-calls` 等中间终态不封稿（后面还有内容要来）；
+ *  · finish 之后又出现 `step_start` / 新 `text` ⇒ 此前的封稿**失效**（流还没走完）。
+ *
+ * 为什么不能用「全流见过任意 finish」这种全局判据（评审意见 1 P0，本轮修复）：
+ *   text(m1) / step_finish(m1) / text(m2)   ← m2 还在流，尚未 finish
+ * 全局判据会把**未完成的 m2** 当终稿返回。方向上这是 fail-closed 的**危险侧**——
+ * 把没写完的半截答案当完整评审采信，比整轮判 invalid 严重得多。
+ */
+export function extractOpenCodeFinalText(raw: string): string | null {
+  /** 当前正在累积的 message 及其正文分片；`finalized` 只在终态绑定成功时才落。 */
+  let currentId: string | null = null;
+  let currentTexts: string[] = [];
+  let finalized: string | null = null;
+
+  const messageIdOf = (part: Record<string, unknown> | null): string | null =>
+    part && typeof part.messageID === 'string' && part.messageID.trim() ? part.messageID : null;
+
+  for (const line of raw.split(/\r?\n/)) {
+    const s = line.trim();
+    if (!s.startsWith('{')) continue;
+    let doc: Record<string, unknown>;
+    try {
+      doc = JSON.parse(s) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (doc.type === 'error') return null;
+    const part = doc.part && typeof doc.part === 'object' && !Array.isArray(doc.part)
+      ? (doc.part as Record<string, unknown>)
+      : null;
+
+    if (doc.type === 'step_start') {
+      // 新步骤开始 ⇒ 之前封的稿不再是终稿（后面还有内容）
+      finalized = null;
+      continue;
+    }
+
+    if (doc.type === 'text' && part && typeof part.text === 'string' && part.text.length > 0) {
+      const id = messageIdOf(part);
+      if (id !== currentId) {
+        currentId = id;
+        currentTexts = [];
+      }
+      currentTexts.push(part.text);
+      // 又来新正文 ⇒ 此前封稿失效（旧 finish 不能替新 message 背书）
+      finalized = null;
+      continue;
+    }
+
+    if (doc.type === 'step_finish' && part) {
+      if (part.reason !== 'stop') continue;            // tool-calls 等中间终态不封稿
+      if (currentTexts.length === 0) continue;         // 没有正文可封
+      const id = messageIdOf(part);
+      // 真实事件两侧都带 messageID 时必须同源；缺失时退回「紧邻顺序」绑定
+      if (id !== null && currentId !== null && id !== currentId) continue;
+      finalized = currentTexts.join('\n');
+    }
+  }
+
+  const body = finalized === null ? null : finalized.trim();
+  return body !== null && body.length > 0 ? body : null;
+}
+
+/**
  * 按声明的信封方言投影正文。
  *
  * `turn_jsonl` 的额外契约（e6 分层复用）：只有 **completion 观测成立且无 terminal
@@ -277,10 +348,13 @@ export function projectVisualProviderBody(
       const body = extractCodexAgentMessageText(result.stdout);
       return body === null ? { body: null, reason: 'JSONL 无可投影的 agent message' } : { body };
     }
-    case 'result_json':
-    case 'events_json': {
+    case 'result_json': {
       const body = extractJsonFinalResultText(result.stdout);
       return body === null ? { body: null, reason: '无确定性 final result' } : { body };
+    }
+    case 'events_json': {
+      const body = extractOpenCodeFinalText(result.stdout);
+      return body === null ? { body: null, reason: '无确定性 final result（无 step_finish 终态或无终稿文本）' } : { body };
     }
     default: {
       const never: never = envelope;
