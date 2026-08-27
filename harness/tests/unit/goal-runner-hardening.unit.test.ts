@@ -356,7 +356,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       // 三处可见接线（b3f7d9a2 硬学习：同一文案契约枚举全部承载处）——
       // ① phase_halt 事件 halt_guidance；② outcome halt_guidance；
       // ③ console banner。detach 停机后宿主只读 events/goal-report，console 早滚走。
-      const src = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'goal-runner.ts'), 'utf-8');
+      const src = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'goal-phase-runtime-process.ts'), 'utf-8');
       const snippet = '...(backtrackHaltGuidance ? { halt_guidance: backtrackHaltGuidance } : {})';
       const emitIdx = src.indexOf(snippet);
       const outcomeIdx = src.indexOf(snippet, emitIdx + 1);
@@ -541,7 +541,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   {
     name: 'goal-runner: runHarnessPhase uses async spawn + activeHarnessKill',
     run: () => {
-      const src = fs.readFileSync(path.join(__dirname, '../../scripts/goal-runner.ts'), 'utf-8');
+      const src = fs.readFileSync(path.join(__dirname, '../../scripts/goal-phase-runtime-process.ts'), 'utf-8');
       assert(src.includes('activeHarnessKill'), 'activeHarnessKill variable');
       assert(src.includes('async function runHarnessPhase'), 'async runHarnessPhase');
       assert(src.includes('killProcessTree'), 'killProcessTree import');
@@ -557,7 +557,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     // 套件覆盖；此处钉死 harness 段的接线不回退（源结构断言，集成断言见 tasks 7.3b）。
     name: 'goal-runner: runHarnessPhase 超时路径 arm force-settle + detached（不挂死接线）',
     run: () => {
-      const src = fs.readFileSync(path.join(__dirname, '../../scripts/goal-runner.ts'), 'utf-8');
+      const src = fs.readFileSync(path.join(__dirname, '../../scripts/goal-phase-runtime-process.ts'), 'utf-8');
       const fn = /async function runHarnessPhase[\s\S]*?\n}/.exec(src)?.[0] ?? '';
       assert(fn.includes('settleWaiter.armForceSettleAfterKill()'), 'harness 超时须 arm force-settle（否则杀不掉时 promise 永久悬挂）');
       assert(

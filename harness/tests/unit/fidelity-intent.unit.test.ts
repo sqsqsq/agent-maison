@@ -91,6 +91,7 @@ const cases: Case[] = [
       const runDir = path.join(root, 'doc/features/f1/goal-runs/R1');
       fs.mkdirSync(runDir, { recursive: true });
       fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify({ requirement: MANIFEST_SUMMARY }), 'utf-8');
+      fs.writeFileSync(path.join(runDir, 'events.jsonl'), '{"type":"run_start"}\n', 'utf-8');
       const text = collectRequirementIntentText(root, 'f1');
       assert.ok(text.includes('完全参考'), 'manifest 摘要经解引用带出 SSOT 强信号');
       assert.strictEqual(detectFidelityIntent(text), 'strong_pixel');
@@ -105,6 +106,7 @@ const cases: Case[] = [
       fs.mkdirSync(runDir, { recursive: true });
       // 纯内联需求（不引用任何文件）
       fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify({ requirement: '实现银行卡开卡完整流程' }), 'utf-8');
+      fs.writeFileSync(path.join(runDir, 'events.jsonl'), '{"type":"run_start"}\n', 'utf-8');
       const paths = collectRequirementSsotPaths(root, 'f1');
       assert.ok(
         paths.some((p) => p.endsWith('goal-runs/R1/manifest.json')),

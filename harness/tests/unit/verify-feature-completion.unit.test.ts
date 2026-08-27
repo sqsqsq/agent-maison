@@ -89,7 +89,10 @@ function writeReceipt(root: string, phase: string): void {
 function writeRunEvents(root: string, runId: string, events: Array<Record<string, unknown>>): void {
   const p = featureFilePath(root, FEATURE, path.join('goal-runs', runId, 'events.jsonl'));
   fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, events.map((e) => JSON.stringify(e)).join('\n') + '\n', 'utf-8');
+  const normalized = events.some((event) => event.type === 'run_start')
+    ? events
+    : [{ ts: '2026-07-13T23:59:00.000Z', type: 'run_start', chain: CHAIN }, ...events];
+  fs.writeFileSync(p, normalized.map((e) => JSON.stringify(e)).join('\n') + '\n', 'utf-8');
   // plan e7c2a4d8 T1d：真实 runner 恒在启动即写 manifest——fixture 同步落一份，
   // 否则「有 events 无 manifest」会被残留二分正确判为 corrupt run（v22 P1 契约）。
   const manifestAbs = featureFilePath(root, FEATURE, path.join('goal-runs', runId, 'manifest.json'));

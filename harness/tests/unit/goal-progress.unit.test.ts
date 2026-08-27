@@ -475,6 +475,11 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       fs.mkdirSync(path.join(runs, '20260101T000000Z'), { recursive: true });
       fs.mkdirSync(path.join(runs, '20260201T000000Z'), { recursive: true });
       fs.writeFileSync(
+        path.join(runs, '20260201T000000Z', 'manifest.json'),
+        JSON.stringify({ run_id: '20260201T000000Z' }),
+        'utf-8',
+      );
+      fs.writeFileSync(
         path.join(runs, '20260201T000000Z', 'events.jsonl'),
         JSON.stringify({ ts: '2026-02-01T00:00:00.000Z', type: 'run_start' }) + '\n',
         'utf-8',

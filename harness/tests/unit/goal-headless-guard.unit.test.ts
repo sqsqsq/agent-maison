@@ -1902,7 +1902,7 @@ export function runAll(): UnitCaseResult[] {
     {
       name: 'closure-only 生产接线消费 verdict 派生；骨架在每次 invoke 前单点 force 写入且写失败即停',
       run: () => {
-        const runner = fs.readFileSync(path.resolve(__dirname, '../../scripts/goal-runner.ts'), 'utf8');
+        const runner = fs.readFileSync(path.resolve(__dirname, '../../scripts/goal-phase-runtime-process.ts'), 'utf8');
         assert(
           /const closureOnlyAttempt = isClosureOnlyRetryPending\(attemptHistory, String\(phase\)\)/.test(runner),
           'closure-only 不得再由 trustedSnapshot.kind 推断',

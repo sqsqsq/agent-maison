@@ -945,6 +945,12 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         run_id: srcRunId, report_dir: `doc/features/reqfile-succ-override/goal-runs/${srcRunId}`,
         created_at: '2026-08-24T00:00:00.000Z',
       }), 'utf-8');
+      fs.writeFileSync(
+        path.join(srcRunDir, 'events.jsonl'),
+        '{"ts":"2026-08-24T00:00:00.000Z","type":"run_start"}\n' +
+        '{"ts":"2026-08-24T00:01:00.000Z","type":"run_end","status":"HALTED"}\n',
+        'utf-8',
+      );
       // manifest 文件（自带旧来源 m.md —— 属于被覆盖的旧需求，须被 successor 重设忽略）
       const manifestPath = path.join(featDir, 'succ-manifest.json');
       const runId = 'succ-over-0001';
@@ -1124,6 +1130,12 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         report_dir: `doc/features/reqfile-succ/goal-runs/${srcRunId}`,
         created_at: '2026-08-24T00:00:00.000Z',
       }), 'utf-8');
+      fs.writeFileSync(
+        path.join(srcRunDir, 'events.jsonl'),
+        '{"ts":"2026-08-24T00:00:00.000Z","type":"run_start"}\n' +
+        '{"ts":"2026-08-24T00:01:00.000Z","type":"run_end","status":"HALTED"}\n',
+        'utf-8',
+      );
       spawnSync('git', ['add', '-A'], { cwd: root, encoding: 'utf-8' });
       spawnSync('git', ['commit', '-qm', 'req'], { cwd: root, encoding: 'utf-8' });
       const prevArgv = process.argv;

@@ -42,7 +42,7 @@ function absoluteOldPhraseMatches(text: string): string[] {
 /** 8 处生产出口：文件 + 新语义锚点（旧绝对句"框架不会尝试任何口令/框架不会替你解锁设备"须不在） */
 const EXITS: Array<{ rel: string; anchor: string; count?: number }> = [
   // ① goal-runner 笼统尾句：**删除**——旧句不在即达标（anchor 置空，仅做缺席校验）
-  { rel: 'harness/scripts/goal-runner.ts', anchor: '' },
+  { rel: 'harness/scripts/goal-phase-runtime-process.ts', anchor: '' },
   // ② upstream-verdict-gate：保留「请人解锁真机」短语、前提改为不排他
   { rel: 'harness/scripts/utils/upstream-verdict-gate.ts', anchor: '请人解锁真机并保持前台' },
   // ③ check-testing L1655

@@ -28,6 +28,7 @@ export interface RunCreatedEvent extends Record<string, unknown> {
   manifest_identity_fields: Record<string, string>;
   manifest_identity_hash: string;
   run_base_sha_digest: string | null;
+  dry_run?: boolean;
   rebaseline_from_run_id?: string;
 }
 
@@ -180,6 +181,7 @@ export function createGoalRun(options: {
     manifest_identity_fields: fields,
     manifest_identity_hash: computeManifestIdentityFieldsHash(fields),
     run_base_sha_digest: baseDigest,
+    ...(options.manifest.report_dir.split('/').includes('.dry') ? { dry_run: true } : {}),
     ...(options.rebaselineFromRunId
       ? { rebaseline_from_run_id: options.rebaselineFromRunId }
       : {}),
@@ -219,6 +221,7 @@ function validateRunCreatedEvent(event: GoalRunEvent, manifest: GoalManifest): s
     manifest_identity_fields: fields,
     manifest_identity_hash: raw.manifest_identity_hash,
     run_base_sha_digest: raw.run_base_sha_digest ?? null,
+    ...(raw.dry_run === true ? { dry_run: true } : {}),
     ...(raw.rebaseline_from_run_id
       ? { rebaseline_from_run_id: raw.rebaseline_from_run_id }
       : {}),

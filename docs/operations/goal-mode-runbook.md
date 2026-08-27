@@ -5,11 +5,15 @@
 
 ## 概述
 
-`goal-runner` 是 Maison 工具无关的确定性全链路编排器：按 phase DAG 逐阶段 headless 调 agent → 跑 harness → 裁决 → 续行/重试/停止。运行证据落在 `doc/features/<feature>/goal-runs/<run-id>/`。
+`GoalPhaseRuntime` 是 Maison 工具无关的唯一 phase 生命周期：按 workflow 派生 chain，统一负责 owner/epoch、assess、attempt、runtime facts、receipt/gate、verdict、回退与封口。`goal-runner` 只是 detached CLI/process shell；有人在场与无人值守仅在 executor transport（宿主回调 / adapter spawn）上不同。运行证据落在 `doc/features/<feature>/goal-runs/<run-id>/`。
 
 ## 3.0 调和模型：一个循环、两个运行方式
 
 interactive session 与 detached `goal-runner` 现在共用：
+
+- 冻结的 `PhaseExecutionContext`（run/workflow/track/chain/phase/attempt/owner fence/baseline）；
+- 同一个 `GoalPhaseRuntime` 生命周期与 owner 前后 fence；
+- 生产纯函数 `projectCanonicalLifecycle(events)` 的规范投影（executor/stdio/lease 遥测不入投影）。
 
 ```text
 assess@1 → driver authorize/guard → execute one phase → reassess

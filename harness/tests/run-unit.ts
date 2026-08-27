@@ -216,6 +216,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'goal-handoff', modulePath: './unit/goal-handoff.unit.test' },
   { id: 'goal-handoff-runner-wiring', modulePath: './unit/goal-handoff-runner-wiring.unit.test' },
   { id: 'goal-in-session-driver', modulePath: './unit/goal-in-session-driver.unit.test' },
+  { id: 'goal-phase-runtime', modulePath: './unit/goal-phase-runtime.unit.test' },
   { id: 'goal-run-birth-contract', modulePath: './unit/goal-run-birth-contract.unit.test' },
   { id: 'runtime-policy', modulePath: './unit/runtime-policy.unit.test' },
   { id: 'diff-scope', modulePath: './unit/diff-scope.unit.test' },

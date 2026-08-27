@@ -418,7 +418,7 @@ const cases: TestCase[] = [
   },  {
     name: 'runner source has one assess selection boundary and no legacy passthrough',
     run: () => {
-      const runner = fs.readFileSync(path.resolve(__dirname, '../../scripts/goal-runner.ts'), 'utf8');
+      const runner = fs.readFileSync(path.resolve(__dirname, '../../scripts/goal-phase-runtime-process.ts'), 'utf8');
       const errors = [
         ...checkAssessDrivenRunnerSource(runner),
         ...checkGoalReconcileBoundarySource(runner),

@@ -7,7 +7,7 @@ function assert(condition: unknown, message: string): void {
 
 export function runAll(): Array<{ name: string; ok: boolean; error?: string }> {
   try {
-    const source = fs.readFileSync(path.resolve(__dirname, '..', '..', 'scripts', 'goal-runner.ts'), 'utf8');
+    const source = fs.readFileSync(path.resolve(__dirname, '..', '..', 'scripts', 'goal-phase-runtime-process.ts'), 'utf8');
     const verdict = source.indexOf('goalEvents.decideAndEmit({');
     const poll = source.indexOf('consumeHandoffAtBoundary', verdict);
     const quiesce = source.lastIndexOf('quiesceRunOwner(runControl.dir');
