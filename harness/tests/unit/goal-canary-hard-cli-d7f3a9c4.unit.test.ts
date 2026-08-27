@@ -601,7 +601,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           { action: 'skip', reason: 'fresh_cache_present' },
         );
         // 接线辅助：runner 只在 probe 分支记录 hard_cli_failure，且经终态发射（非 process.exit）
-        const grSrc = fs.readFileSync(path.join(__dirname, '../../scripts/goal-runner.ts'), 'utf-8');
+        const grSrc = fs.readFileSync(path.join(__dirname, '../../scripts/goal-phase-runtime-process.ts'), 'utf-8');
         assert(/if \(visionProbeDecision\.action === 'probe'\) \{[\s\S]*runVisionCanaryProbe/.test(grSrc), '只在 probe 分支调用 runVisionCanaryProbe');
         assert(/if \(canaryHardCliFailure\) \{[\s\S]*halt_reason: 'canary_cli_hard_failure'[\s\S]*runConcluded = true[\s\S]*return 1/.test(grSrc), 'hard_cli_failure 须经启动期 HALT 终态（非裸 process.exit）');
         assert(!/probeResult\.outcome === 'hard_cli_failure'[\s\S]{0,40}process\.exit\(1\)/.test(grSrc), '不得在 probe 块内直接 process.exit');

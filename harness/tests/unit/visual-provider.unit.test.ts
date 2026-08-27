@@ -366,7 +366,7 @@ test('t3 legacy allow_blind_visual 输入可读但新 writer 不重发，且对�
 });
 
 test('t3 新 CLI/manifest writers 不再暴露盲跑质量 waiver', () => {
-  const runner = fs.readFileSync(path.join(FRAMEWORK_ROOT, 'harness', 'scripts', 'goal-runner.ts'), 'utf-8');
+  const runner = fs.readFileSync(path.join(FRAMEWORK_ROOT, 'harness', 'scripts', 'goal-phase-runtime-process.ts'), 'utf-8');
   const attended = fs.readFileSync(path.join(FRAMEWORK_ROOT, 'harness', 'scripts', 'goal-mode-entry.ts'), 'utf-8');
   const cli = fs.readFileSync(path.join(FRAMEWORK_ROOT, 'harness', 'scripts', 'utils', 'goal-manifest-cli.ts'), 'utf-8');
   for (const [name, source] of [['runner', runner], ['attended', attended], ['manifest-cli', cli]] as const) {
@@ -2171,7 +2171,7 @@ test('t5 接线纪律（源码锚定）：provider 评审显式 await、不塞�
     '不得把异步评审包进同步 safeRun',
   );
   const goalRunner = fs.readFileSync(
-    path.join(FRAMEWORK_ROOT, 'harness', 'scripts', 'goal-runner.ts'), 'utf-8',
+    path.join(FRAMEWORK_ROOT, 'harness', 'scripts', 'goal-phase-runtime-process.ts'), 'utf-8',
   );
   // provider 源的结构化视觉缺陷必须以 signal_identity:false 物化——进 signal@1 就会
   // 因"结构上恒未复核"把每个 delegated 轮次停成 repair_adjudication_pending。

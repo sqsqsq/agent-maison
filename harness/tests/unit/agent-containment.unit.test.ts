@@ -578,7 +578,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   {
     name: 't3: goal-runner 接线——resume 对账逐项处置（legacy force 路径/settled 条件/收口）',
     run: () => {
-      const src = fs.readFileSync(path.join(__dirname, '../../scripts/goal-runner.ts'), 'utf-8');
+      const src = fs.readFileSync(path.join(__dirname, '../../scripts/goal-phase-runtime-process.ts'), 'utf-8');
       assert(src.includes('reconcileGuardianOwnership(priorEvents, defaultProcessProbe())'), 'resume 对账未接线');
       assert(src.includes("type: 'orphan_reclaimed'"), 'orphan_reclaimed 事件缺失');
       assert(src.includes('terminateGuardianProcessOnly'), '匹配终止（单进程）未接线');

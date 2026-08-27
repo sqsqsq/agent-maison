@@ -636,7 +636,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     name: 't1/t2 接线：applyManifestCliOverrides 之前捕获原始 adapter；dry-run 回显 pin（源码接线断言）',
     run: () => {
       const src = require('fs').readFileSync(
-        require('path').join(__dirname, '../../scripts/goal-runner.ts'),
+        require('path').join(__dirname, '../../scripts/goal-phase-runtime-process.ts'),
         'utf-8',
       );
       // P1：manifestAdapterBeforeCliOverrides 须在 applyManifestCliOverrides 之前声明

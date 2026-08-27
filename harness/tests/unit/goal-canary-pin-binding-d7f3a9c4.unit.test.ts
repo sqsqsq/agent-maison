@@ -407,7 +407,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           '无 pin 时 LKG 沿现状（仅 fresh）',
         );
         // 接线（辅助证据）：goal-runner 的 LKG 判据确实走共享旁路函数
-        const src = fs.readFileSync(path.join(__dirname, '../../scripts/goal-runner.ts'), 'utf-8');
+        const src = fs.readFileSync(path.join(__dirname, '../../scripts/goal-phase-runtime-process.ts'), 'utf-8');
         assert(/isFreshCanaryForExecution\(canary, manifest\.adapter \?\? 'generic'/.test(src), 'goal-runner LKG 须走共享旁路判据');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
@@ -540,7 +540,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   {
     name: 't3 env 传播接线（辅助）：goal-runner 三条注入路径与 phase-state child env 均走共享执行器/透传 modelPin',
     run: () => {
-      const src = fs.readFileSync(path.join(__dirname, '../../scripts/goal-runner.ts'), 'utf-8');
+      const src = fs.readFileSync(path.join(__dirname, '../../scripts/goal-phase-runtime-process.ts'), 'utf-8');
       // ① agent extraEnv 携带 pin
       assert(/\[MAISON_GOAL_MODEL_PIN_ENV\]: manifest\.adapter_model_pin\.value/.test(src), 'extraEnv 须注入 model pin');
       // ② gate harness 走共享执行器
@@ -585,7 +585,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assert(!/模型核验/.test(noEvt), '无 mismatch 事件不得渲染注记');
       assert.strictEqual(JSON.stringify(report), snapshot, '报告生成不得改写 report 对象（manifest/verdict/routes 不变）');
       // 接线（辅助）：goal-runner 告警块无写盘/裁决副作用
-      const src = fs.readFileSync(path.join(__dirname, '../../scripts/goal-runner.ts'), 'utf-8');
+      const src = fs.readFileSync(path.join(__dirname, '../../scripts/goal-phase-runtime-process.ts'), 'utf-8');
       assert(/resolvePinVerifyMismatch\(\{[\s\S]*?pin: manifest\.adapter_model_pin\?\.value,[\s\S]*?observed: observedModel[\s\S]*?\}\)/.test(src), 'goal-runner 须走共享判定纯函数');
       const mismatchBlock = src.slice(src.indexOf("type: 'pin_verify_mismatch'"), src.indexOf("type: 'pin_verify_mismatch'") + 600);
       assert(!/writeGoalManifest|writeLocalConfig|writeCapabilitySnapshot|initializeFidelityRouting/.test(mismatchBlock), `告警块不得含任何写盘/裁决副作用：${mismatchBlock}`);

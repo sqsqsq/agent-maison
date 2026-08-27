@@ -387,6 +387,11 @@ const cases: Array<{ name: string; run: () => void }> = [
       const runs = path.join(root, 'doc/features/f1/goal-runs');
       fs.mkdirSync(path.join(runs, 'good'), { recursive: true });
       fs.writeFileSync(path.join(runs, 'good', 'manifest.json'), '{}', 'utf-8');
+      fs.writeFileSync(
+        path.join(runs, 'good', 'events.jsonl'),
+        `${JSON.stringify({ type: 'run_start' })}\n`,
+        'utf-8',
+      );
       fs.mkdirSync(path.join(runs, DRY_RUNS_SUBDIR, 'good'), { recursive: true });
       fs.writeFileSync(path.join(runs, DRY_RUNS_SUBDIR, 'good', 'manifest.json'), '{}', 'utf-8');
       fs.mkdirSync(path.join(runs, 'residue'), { recursive: true });
@@ -707,6 +712,11 @@ const cases: Array<{ name: string; run: () => void }> = [
       const runs = path.join(root, 'doc/features/f1/goal-runs');
       fs.mkdirSync(path.join(runs, 'good'), { recursive: true });
       fs.writeFileSync(path.join(runs, 'good', 'manifest.json'), '{}', 'utf-8');
+      fs.writeFileSync(
+        path.join(runs, 'good', 'events.jsonl'),
+        `${JSON.stringify({ type: 'run_start' })}\n`,
+        'utf-8',
+      );
       const clean = checkGoalRunIdentityIntact({ projectRoot: root, feature: 'f1' } as never);
       if (clean[0].status !== 'PASS') throw new Error(`clean=${clean[0].status}`);
       fs.mkdirSync(path.join(runs, 'broken'), { recursive: true });
@@ -901,7 +911,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       }
       // 接线断言：goal-runner resume 分支不得再读取 report 的 phases 做起点。
       const runnerSrc = fs.readFileSync(
-        path.join(__dirname, '../../scripts/goal-runner.ts'), 'utf-8',
+        path.join(__dirname, '../../scripts/goal-phase-runtime-process.ts'), 'utf-8',
       );
       if (/priorReport\?\.phases/.test(runnerSrc)) {
         throw new Error('goal-runner.ts 仍存在 report 优先的 resume 起点分支（priorReport?.phases）');
@@ -940,7 +950,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       if (blank.events.length !== 0) throw new Error('全空白应解析为 0 事件');
       // 接线断言：goal-runner resume 分支在恢复决策前必须消费严格视图。
       const runnerSrc = fs.readFileSync(
-        path.join(__dirname, '../../scripts/goal-runner.ts'), 'utf-8',
+        path.join(__dirname, '../../scripts/goal-phase-runtime-process.ts'), 'utf-8',
       );
       if (!runnerSrc.includes('loadEventsJsonlStrict(eventsPath)')) {
         throw new Error('goal-runner.ts resume 分支未接线 events 严格加载（fail-closed 缺失）');
@@ -978,7 +988,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       if (!forced.allowed) throw new Error('--force-resume 应放行（cooldown=0）');
       // 接线断言：resume guard 的 priorStatus 不再回退 report.status。
       const runnerSrc = fs.readFileSync(
-        path.join(__dirname, '../../scripts/goal-runner.ts'), 'utf-8',
+        path.join(__dirname, '../../scripts/goal-phase-runtime-process.ts'), 'utf-8',
       );
       if (/priorReport\?\.status/.test(runnerSrc)) {
         throw new Error('goal-runner.ts terminal guard 仍回退 report.status（plan t1 同病未除）');

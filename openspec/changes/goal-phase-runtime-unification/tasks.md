@@ -1,8 +1,8 @@
 ## 1. Runtime contracts and detached extraction
 
-- [ ] 1.1 Define immutable `PhaseExecutionContext`, normalized executor result and thin `GoalPhaseExecutor` interface without provider-private fields.
-- [ ] 1.2 Extract `DetachedGoalPhaseExecutor` around existing adapter spawn, containment, timeout and output capture with behavior-equivalent tests.
-- [ ] 1.3 Implement production `projectCanonicalLifecycle` with complete canonical event mapping, normalization and executor-telemetry exclusions.
+- [x] 1.1 Define immutable `PhaseExecutionContext`, normalized executor result and thin `GoalPhaseExecutor` interface without provider-private fields.
+- [x] 1.2 Extract `DetachedGoalPhaseExecutor` around existing adapter spawn, containment, timeout and output capture with behavior-equivalent tests.
+- [x] 1.3 Implement production `projectCanonicalLifecycle` with complete canonical event mapping, normalization and executor-telemetry exclusions.
 
 ## 2. Shared phase boundary
 

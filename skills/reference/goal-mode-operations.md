@@ -74,7 +74,7 @@ npx ts-node scripts/goal-mode-entry.ts --prepare-run --run-mode attended --featu
 
 `--allow-blind-visual` 已删除；旧 manifest 字段只读兼容但不参与身份或策略。成功时命令 stdout 返回 `goal_run_prepared` JSON；解析其中 `run_id`，随后执行下面的 host bridge。重复成功的 `--prepare-run` 不覆盖已有 manifest，恢复已有 run 不得再次 prepare。
 
-有人在场走可执行 host bridge；bridge 自行加载 manifest/workflow、取得 fenced session owner，并逐轮输出一行 `phase_execute_request` JSON，其中权威上下文固定为 `run_id/phase/attempt_id/owner_id/owner_epoch`。attach 的 `--adapter` 必须与 manifest adapter 一致。active adapter 必须为每个请求提供一个隔离 phase context，把这五个字段原样显式传给 initializer、harness 与 closure sync；不得由 Skill 自建循环、token，或依赖兄弟 shell 继承环境。只有 context-bound `harness-runner --sync-closure` exit 0 后，才可向 stdin 回 `{"status":"passed","phase":"..."}`；未闭环只能回 `failed|waiting`：
+有人在场走可执行 host bridge；bridge 自行加载 manifest/workflow、取得 fenced session owner，随后把推进权交给唯一 `GoalPhaseRuntime`，并逐轮输出一行 `phase_execute_request` JSON。权威上下文固定为 `run_id/phase/attempt_id/owner_id/owner_epoch`；runtime 在 executor 前后都复核 owner/epoch，陈旧回包不能写 gate、verdict 或 closure。attach 的 `--adapter` 必须与 manifest adapter 一致。active adapter 必须为每个请求提供一个隔离 phase context，把这五个字段原样显式传给 initializer、harness 与 closure sync；不得由 Skill/host 自建 assess/重试/推进循环、token，或依赖兄弟 shell 继承环境。只有 context-bound `harness-runner --sync-closure` exit 0 后，才可向 stdin 回 `{"status":"passed","phase":"..."}`；未闭环只能回 `failed|waiting`：
 
 ```bash
 npx ts-node scripts/goal-mode-entry.ts --run-mode attended --feature <feature> --run-id <run-id> --adapter <activeAdapter> --project-root <repo-root> --framework-root <repo-root>/framework

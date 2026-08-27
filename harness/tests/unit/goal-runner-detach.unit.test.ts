@@ -31,6 +31,11 @@ function writeRunEvents(dir: string, runId: string, events: Array<Record<string,
   const runDir = path.join(dir, runId);
   fs.mkdirSync(runDir, { recursive: true });
   fs.writeFileSync(
+    path.join(runDir, 'manifest.json'),
+    JSON.stringify({ run_id: runId, report_dir: runDir }),
+    'utf-8',
+  );
+  fs.writeFileSync(
     path.join(runDir, 'events.jsonl'),
     events.map((e) => JSON.stringify(e)).join('\n') + '\n',
     'utf-8',

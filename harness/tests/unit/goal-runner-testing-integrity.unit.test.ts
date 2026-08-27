@@ -44,7 +44,6 @@ import { writeReceiptManifestPointer } from '../../scripts/utils/phase-evidence-
 import { hashScreenshotFile } from '../../../profiles/hmos-app/harness/visual-diff-check';
 import {
   projectIdentityHash,
-  readCodingBase,
 } from '../../scripts/utils/pass-snapshot';
 import { buildSummaryRepairCandidates } from '../../scripts/utils/repair-candidates';
 import { buildSummaryBlockers } from '../../scripts/utils/summary-blockers';
@@ -1018,17 +1017,18 @@ test('legacy fidelity 回退 crash/resume：提前 completed 不能越过未提�
   assertRunReachedEnd(resumed, 'legacy fidelity closure crash/resume');
 });
 
-test('⑤ c4e8b1d3：首次 coding 前锚定 coding_base_sha（pass snapshot 已退役，plan PASS 不再建快照）', async () => {
+test('M1：run 出生即冻结 run_base_sha；coding 前不再生产场外 coding base', async () => {
   const { root } = setupHost();
   let codingRunId = '';
-  // trust 文件真值在 **coding 窗口内**采（b7e4d2a9 Todo2 起，成功封卷会即刻回收 per-run
-  // 场外状态——run 结束后再查文件查的是"回收后"，不是锚定语义本身）
-  let baseShaInWindow = '';
+  let manifestBaseInWindow = '';
   const probe = await runChain(root, {
     onCoding: ctx => {
       codingRunId = ctx.runId;
-      const base = readCodingBase(ctx.root, FEATURE, ctx.runId);
-      baseShaInWindow = base.body?.base_sha ?? '';
+      const manifest = JSON.parse(fs.readFileSync(
+        path.join(ctx.root, 'doc/features', FEATURE, 'goal-runs', ctx.runId, 'manifest.json'),
+        'utf-8',
+      )) as { run_base_sha?: string };
+      manifestBaseInWindow = manifest.run_base_sha ?? '';
     },
     onTesting: ({ root: r }) => writeCleanTesting(r),
   });
@@ -1036,13 +1036,19 @@ test('⑤ c4e8b1d3：首次 coding 前锚定 coding_base_sha（pass snapshot 已
   // 退役判别：plan 正常 PASS 不得再落 pass_snapshot_taken
   assert(!probe.events.some(e => e.type === 'pass_snapshot_taken'),
     'pass snapshot 已退役——不得再产生 pass_snapshot_taken 事件');
-  const baseEv = probe.events.find(e => e.type === 'coding_base_recorded') as
-    { base_sha?: string } | undefined;
-  assert(!!baseEv && /^[0-9a-f]{40}$/.test(String(baseEv.base_sha ?? '')),
-    `coding_base_recorded 须带 40-hex base_sha：${JSON.stringify(baseEv)}`);
-  // coding 窗口内的 trust 文件真值（不只信事件）
+  const birth = probe.events.find(e => e.type === 'run_created') as
+    { run_base_sha_digest?: string } | undefined;
+  assert(!!birth && /^[0-9a-f]{16}$/.test(String(birth.run_base_sha_digest ?? '')),
+    `run_created 须绑定字段摘要 run_base_sha_digest：${JSON.stringify(birth)}`);
+  assert(/^[0-9a-f]{40}$/.test(manifestBaseInWindow),
+    `manifest.run_base_sha 须为 exact 40-hex：${manifestBaseInWindow}`);
   assert(!!codingRunId, 'coding attempt 须带 MAISON_GOAL_RUN_ID');
-  assert(baseShaInWindow === String(baseEv!.base_sha), 'coding 窗口内 trust 文件 base_sha 须与事件一致');
+  const birthFields = (probe.events.find(e => e.type === 'run_created') as
+    { manifest_identity_fields?: Record<string, string> }).manifest_identity_fields ?? {};
+  assert(birthFields.run_base_sha === birth!.run_base_sha_digest,
+    'run_created baseline digest 与身份字段必须同源');
+  assert(!probe.events.some(e => e.type === 'coding_base_recorded'),
+    'M1 后不得再产生场外 coding_base_recorded');
 });
 
 test('干净 run → CHAIN_SLICE_COMPLETED 封卷 + per-run 场外状态回收 + sealed resume 绝对拒绝', async () => {
@@ -1068,8 +1074,8 @@ test('干净 run → CHAIN_SLICE_COMPLETED 封卷 + per-run 场外状态回收 +
   assert(before.equals(after), 'sealed 拒绝须零新增事件（events.jsonl 字节不变）');
 });
 
-test('b7e4d2a9 Todo2：--supersede 指向当前 run → BLOCKER（不删自身）；指向他 run → 审计事件先落、目标场外状态回收', async () => {
-  // run A：unverifiable halt（可恢复 HALTED 态，场外状态保留——封卷才回收）
+test('M1 supersede 单写者：自指拒绝；他指只在新 run 落审计且不回写旧 run', async () => {
+  // run A：unverifiable halt（可恢复 HALTED 占位者）
   const { root } = setupHost();
   const probeA = await runChain(root, {
     onTesting: ({ root: r }) =>
@@ -1077,11 +1083,6 @@ test('b7e4d2a9 Todo2：--supersede 指向当前 run → BLOCKER（不删自身�
   });
   assert(runEndStatus(probeA.events) === 'HALTED', `前置：run A 须 HALTED，实得 ${runEndStatus(probeA.events)}`);
   const runA = path.basename(probeA.reportDir);
-  const hash = projectIdentityHash(root);
-  const featTrust = path.join(root, 'trust-cp', hash, FEATURE);
-  const aStateExists = (): boolean =>
-    fs.existsSync(path.join(featTrust, runA)) || fs.existsSync(path.join(featTrust, `${runA}.json`));
-  assert(aStateExists(), '前置：HALTED run 的场外状态应保留（可恢复态）');
   // cooldown 硬防线（判定在 forceResume 之前）——与 R-8 同法回拨 run_end 10 分钟
   {
     const evPath = path.join(probeA.reportDir, 'events.jsonl');
@@ -1098,12 +1099,16 @@ test('b7e4d2a9 Todo2：--supersede 指向当前 run → BLOCKER（不删自身�
     });
     fs.writeFileSync(evPath, patched.join('\n'), 'utf-8');
   }
+  const sourceEventsPath = path.join(probeA.reportDir, 'events.jsonl');
+  const sourceBefore = fs.readFileSync(sourceEventsPath);
   // 自指：resume runA 并 --supersede runA → BLOCKER（不落 supersede 事件、自身状态不动）
-  const self = await runChain(root, { resume: runA, forceResume: true, supersede: [runA] });
+  const self = await runChain(root, {
+    resume: runA, forceResume: true, supersede: [runA], skipLegacySeal: true,
+  });
   assert(self.exitCode === 1, `supersede 自指须 BLOCKER，实得 ${self.exitCode}`);
   assert(!self.events.some(e => e.type === 'supersede'), '自指被拒不得落 supersede 审计事件');
-  assert(aStateExists(), '自指被拒后自身场外状态必须原样保留');
-  // 他指：新 run B --supersede runA → 审计事件先落、runA 场外状态被回收
+  assert(sourceBefore.equals(fs.readFileSync(sourceEventsPath)), '自指被拒不得改写源 run events');
+  // 他指：新 run B --supersede runA → 审计只写新 run；源 run 仍只读
   const probeB = await runChain(root, { supersede: [runA], onTesting: ({ root: r }) => writeCleanTesting(r) });
   const supEv = probeB.events.find(e => e.type === 'supersede') as { target_run_id?: string } | undefined;
   assert(
@@ -1111,7 +1116,7 @@ test('b7e4d2a9 Todo2：--supersede 指向当前 run → BLOCKER（不删自身�
     `run B 须落 supersede 审计事件：${JSON.stringify(supEv)}；` +
       `run B 事件序列=${JSON.stringify(probeB.events.map(e => e.type))}；exit=${probeB.exitCode}`,
   );
-  assert(!aStateExists(), 'supersede 后目标 run 场外状态须被回收');
+  assert(sourceBefore.equals(fs.readFileSync(sourceEventsPath)), 'supersede 不得回写旧 run events');
 });
 
 test('e9d4b7a3 t5: 预算撞墙 → 提额(--override-manifest) → resume：budget-only rebase 先确定性刷新上游证据，0 个 review invoke 被 stale 烧掉', async () => {
@@ -1197,7 +1202,7 @@ test('e9d4b7a3 t5: 预算撞墙 → 提额(--override-manifest) → resume：bud
   );
   // 二轮 review P1：刷新不得伪造同阶段新 attempt（refresh-*）——回执 identity 复验用
   // 原 attempt（跨阶段复验语义，不 re-sign）；源码级接线断言防回归。
-  const runnerSrc = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'goal-runner.ts'), 'utf-8');
+  const runnerSrc = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'goal-phase-runtime-process.ts'), 'utf-8');
   assert(!/attemptId: `refresh-\$\{phase\}`/.test(runnerSrc), '刷新不得再伪造 refresh-* attempt');
   assert(/originalAttempt/.test(runnerSrc), '刷新须从 events 恢复原 attempt id');
 });

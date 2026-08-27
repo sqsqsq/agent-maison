@@ -1,23 +1,23 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { createHash } from 'crypto';
 import * as readline from 'readline';
 import minimist from 'minimist';
 import type {
   InSessionPhaseRequestContext,
   InSessionRoundOptions,
   InSessionRoundResult,
-} from './utils/goal-in-session-driver';
-import { runInSessionRound } from './utils/goal-in-session-driver';
-import { deriveReconcileObservation } from './utils/goal-reconcile-observation';
-import { appendGoalEventFenced, readInSessionLoopState, writeInSessionLoopStateFenced } from './utils/goal-in-session-evidence';
+  GoalModeInSessionOptions,
+} from './utils/goal-phase-runtime';
 import {
-  assertFencedOwner,
+  deriveInSessionFingerprint,
+  releaseAttendedRuntimeOwnerBestEffort,
+  runAttendedGoalPhaseRuntime,
+} from './utils/goal-phase-runtime';
+import {
   casAcquireRunOwner,
   ensureRunControl,
   forceTakeoverRunOwner,
   markExpiredSessionOrphaned,
-  releaseRunOwner,
 } from './utils/goal-run-control';
 import {
   buildGoalManifestFromInput,
@@ -38,178 +38,14 @@ import { resolveAutoChain } from './utils/phase-transition-policy';
 import { loadFeatureTrackDecl } from './utils/feature-track';
 import { resolveFeatureTrack } from './utils/runtime-policy';
 import { validateMinimumAssurance } from './utils/skill-contract';
-import type { ReconcileObservationV1 } from './utils/assess';
+export type { GoalModeInSessionOptions } from './utils/goal-phase-runtime';
+export { deriveInSessionFingerprint } from './utils/goal-phase-runtime';
 
-export interface GoalModeInSessionOptions extends Omit<InSessionRoundOptions, 'round' | 'reconcile'> {
-  maxRounds?: number;
-  onRound?: (result: InSessionRoundResult) => void;
-}
-
-function releaseSessionBestEffort(options: GoalModeInSessionOptions): void {
-  try {
-    assertFencedOwner(options.runDir, options.token, 'session_entry_release');
-    releaseRunOwner(options.runDir, options.token);
-  } catch {
-    // A phase exception may already have released the owner, or a newer epoch won.
-  }
-}
-
-export function deriveInSessionFingerprint(result: InSessionRoundResult): string {
-  const content = {
-    assessment: result.assessment ? {
-      gaps: result.assessment.gaps,
-      recommendation: result.assessment.recommendation,
-      stop: result.assessment.stop,
-      run_status_candidate: result.assessment.run_status_candidate,
-    } : null,
-    outcome: result.outcome ? {
-      status: result.outcome.status,
-      phase: result.outcome.phase,
-      details: result.outcome.details ?? null,
-    } : null,
-  };
-  return createHash('sha256').update(JSON.stringify(content)).digest('hex');
-}
-
-function fusedResult(
-  options: GoalModeInSessionOptions,
-  last: InSessionRoundResult,
-  reason: string,
-): InSessionRoundResult {
-  try {
-    appendGoalEventFenced(options.projectRoot, options.manifest, options.runDir, options.token, {
-      type: 'phase_halt',
-      phase: last.outcome?.phase ?? last.assessment?.recommendation.phase ?? null,
-      halt_reason: 'in_session_reconcile_fused',
-      details: reason,
-      driver: 'session',
-    });
-  } finally {
-    releaseSessionBestEffort(options);
-  }
-  return {
-    ...last,
-    status: 'fused',
-    waiting_item: reason,
-    status_line: `${last.status_line} | 等待=${reason}`,
-  };
-}
-
-/**
- * Production entry used by the goal-mode skill/host bridge for attended runs.
- * It owns assess → authorize → execute one phase → reassess, supplies the same
- * retry/fingerprint fuse facts as the detached runner, and releases session
- * ownership on every terminal return.
- */
+/** Host bridge: lifecycle progression is owned by GoalPhaseRuntime. */
 export async function runGoalModeInSession(
   options: GoalModeInSessionOptions,
 ): Promise<InSessionRoundResult> {
-  const configuredRounds = Math.max(1, Math.trunc(options.maxRounds ?? 50));
-  const maxTurns = Math.max(1, Math.min(configuredRounds, options.manifest.budget.max_total_turns));
-  const persisted = readInSessionLoopState(options.runDir);
-  const state = persisted ?? {
-    schema_version: '1.0' as const,
-    started_at_ms: Date.now(),
-    total_rounds: 0,
-    retries_by_phase: {},
-    last_fingerprint: null,
-    repeated_count: 0,
-    last_phase: null,
-    last_status: null,
-    last_details: null,
-    fuse_reason: null,
-    reconcile: null,
-  };
-  // 会话内预算只累计当前宿主桥接调用中的活跃段；桥接返回后的离线等待不计时。
-  let activeElapsedMs = Math.max(0, state.active_elapsed_ms ?? 0);
-  let activeSegmentStartedAtMs = Date.now();
-  const wallClockMs = Math.max(1, options.manifest.budget.wall_clock_minutes) * 60_000;
-  const activeElapsedNow = (): number =>
-    activeElapsedMs + Math.max(0, Date.now() - activeSegmentStartedAtMs);
-  const settleActiveTime = (): void => {
-    const now = Date.now();
-    activeElapsedMs += Math.max(0, now - activeSegmentStartedAtMs);
-    activeSegmentStartedAtMs = now;
-    state.active_elapsed_ms = activeElapsedMs;
-  };
-  const retriesByPhase = new Map(Object.entries(state.retries_by_phase));
-  let lastFingerprint: string | null = state.last_fingerprint;
-  let repeatedCount = state.repeated_count;
-  let reconcile: ReconcileObservationV1 | undefined = state.reconcile as ReconcileObservationV1 | null ?? undefined;
-  let last: InSessionRoundResult | null = null;
-  if (state.fuse_reason || state.total_rounds >= maxTurns || activeElapsedNow() >= wallClockMs) {
-    const synthetic: InSessionRoundResult = {
-      status: 'executed', assessment: null,
-      outcome: state.last_phase ? {
-        status: state.last_status === 'passed' ? 'passed' : 'failed',
-        phase: state.last_phase, details: state.last_details ?? undefined,
-      } : undefined,
-      status_line: '会话账本已记录终止预算',
-    };
-    return fusedResult(options, synthetic,
-      state.fuse_reason ?? (activeElapsedNow() >= wallClockMs ? '会话内 wall-clock 预算已耗尽' : '达到会话内执行预算 ' + maxTurns + ' 轮；本 run 终止，可由 successor run 继续'));
-  }
-
-  for (let round = state.total_rounds + 1; round <= maxTurns; round += 1) {
-    if (activeElapsedNow() >= wallClockMs && last) {
-      state.fuse_reason = '会话内 wall-clock 预算已耗尽';
-      writeInSessionLoopStateFenced(options.runDir, options.token, state);
-      return fusedResult(options, last, state.fuse_reason);
-    }
-    const result = await runInSessionRound({ ...options, round, reconcile });
-    options.onRound?.(result);
-    last = result;
-    if (result.status !== 'executed') {
-      settleActiveTime();
-      writeInSessionLoopStateFenced(options.runDir, options.token, state);
-      releaseSessionBestEffort(options);
-      return result;
-    }
-
-    const phase = result.outcome?.phase ?? result.assessment?.recommendation.phase ?? '';
-    const fingerprint = deriveInSessionFingerprint(result);
-    repeatedCount = fingerprint && fingerprint === lastFingerprint ? repeatedCount + 1 : 0;
-    lastFingerprint = fingerprint || null;
-    const failed = result.outcome?.status === 'failed';
-    const retriesUsed = failed ? (retriesByPhase.get(phase) ?? 0) + 1 : 0;
-    if (failed) retriesByPhase.set(phase, retriesUsed);
-    else retriesByPhase.delete(phase);
-    const exhausted = failed && retriesUsed >= options.manifest.budget.max_retries_per_phase;
-    const noProgress = repeatedCount >= options.manifest.budget.max_retries_per_phase;
-    const reason = exhausted
-      ? `phase ${phase} retry budget exhausted`
-      : noProgress
-        ? `phase ${phase} repeated fingerprint without progress`
-        : undefined;
-    reconcile = deriveReconcileObservation({
-      phase,
-      verdict: result.outcome?.status === 'passed' ? 'PASS' : failed ? 'FAIL' : 'INCOMPLETE',
-      legacyAction: result.outcome?.status === 'passed' ? 'advance' : failed ? 'retry' : 'halt',
-      retriesUsed,
-      maxRetriesPerPhase: options.manifest.budget.max_retries_per_phase,
-      backtracksUsed: 0,
-      repeatedCount,
-      residualFingerprints: fingerprint ? [fingerprint] : [],
-      fused: exhausted || noProgress,
-      fuseReason: reason,
-    });
-    state.total_rounds = round;
-    state.retries_by_phase = Object.fromEntries(retriesByPhase);
-    state.last_fingerprint = lastFingerprint;
-    state.repeated_count = repeatedCount;
-    state.last_phase = phase || null;
-    state.last_status = result.outcome?.status ?? null;
-    state.last_details = result.outcome?.details ?? null;
-    state.reconcile = reconcile ?? null;
-    state.fuse_reason = reason ?? null;
-    writeInSessionLoopStateFenced(options.runDir, options.token, state);
-    if (reason) return fusedResult(options, result, reason);
-  }
-
-  if (!last) throw new Error('[goal-mode-entry] no reconciliation round executed');
-  state.fuse_reason = '达到会话内执行预算 ' + maxTurns + ' 轮；本 run 终止，可由 successor run 继续';
-  writeInSessionLoopStateFenced(options.runDir, options.token, state);
-  return fusedResult(options, last, state.fuse_reason);
+  return runAttendedGoalPhaseRuntime(options);
 }
 export interface PrepareGoalModeRunOptions {
   projectRoot: string;
@@ -409,7 +245,7 @@ export async function runGoalModeHostBridge(
       onRound: options.onRound,
     });
   } finally {
-    releaseSessionBestEffort({
+    releaseAttendedRuntimeOwnerBestEffort({
       projectRoot: options.projectRoot,
       frameworkRoot: options.frameworkRoot,
       runDir,

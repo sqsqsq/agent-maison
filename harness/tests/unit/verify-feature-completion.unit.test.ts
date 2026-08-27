@@ -67,7 +67,12 @@ function writeReceipt(root: string, phase: string): void {
 }
 
 function writeRunEvents(root: string, runId: string, events: Array<Record<string, unknown>>): void {
-  seedWriteRunEvents(root, FEATURE, runId, events);
+  // run 出生契约：夹具事件缺 run_start 时补首条（3.0.0 口径）；落盘走
+  // tests/utils/completion-chain-seed 唯一实现（同步落 manifest，见其注释）。
+  const normalized = events.some((event) => event.type === 'run_start')
+    ? events
+    : [{ ts: '2026-07-13T23:59:00.000Z', type: 'run_start', chain: CHAIN }, ...events];
+  seedWriteRunEvents(root, FEATURE, runId, normalized);
 }
 
 /** 全链干净现场——实现见 tests/utils/completion-chain-seed.ts（唯一实现，MG 跨层链共用）。 */
