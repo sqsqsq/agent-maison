@@ -253,7 +253,7 @@ export interface ToolchainConfig {
 
 /** device-testing 真机自动化（hmos-app profile · tools.hylyre） */
 export interface HylyreToolConfig {
-  /** 相对 projectRoot：vendor wheel + release.manifest.json */
+  /** 相对 projectRoot：vendor 发布件（maison 只携带源码树 src/；运行时代码兼容 legacy wheel 布局）+ release.manifest.json */
   vendor_dir: string;
   /** 相对 projectRoot：隔离 Python 环境目录 */
   venv_dir: string;

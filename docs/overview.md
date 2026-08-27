@@ -182,7 +182,7 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 | **reports 外置**            | feature 产物与 submodule 分离 | `paths.reports_dir_pattern` → 默认 `doc/features/<feature>/<phase>/reports/` |
 | **v2.9 Karpathy 四原则**    | Agent 行为 + 探索量化 | [`agent-behavioral-principles.md`](../skills/reference/agent-behavioral-principles.md)；`context-exploration.md` schema **1.1.0**；verifier `behavior_*` 维度 |
 | **v2.10 exploration_strategy** | 大仓深度探索      | plan/coding **default-on subagent**；spec/review/ut **复合评分**；`sequential` 等价路径 |
-| **Hylyre 真机闭环（2.0）**  | device-testing 端到端      | `device_test.build` / `install` / `run`；vendor wheel + venv；标准 feature + 即席 `_adhoc`（`npm run adhoc-device-test`） |
+| **Hylyre 真机闭环（2.0）**  | device-testing 端到端      | `device_test.build` / `install` / `run`；vendor 发布件（源码树/wheel）+ venv；标准 feature + 即席 `_adhoc`（`npm run adhoc-device-test`） |
 | **v3.1 merge-framework-config** | UPDATE 补缺       | `merge-framework-config.mjs` 字段级「只补缺不覆盖」；含 `tools.hylyre.*` |
 | **v3.2–v3.4 确认 UX**     | 全 Skill 统一确认   | [`user-confirmation-ux.md`](../skills/reference/user-confirmation-ux.md) + registry schema 2.0；adapter interaction-renderer；`check-skills-confirmation-ux.ts` |
 

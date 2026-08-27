@@ -28,7 +28,7 @@
 | kind / 关键词 | 含义 | agent 处理（不要求用户 pip） |
 |---------------|------|------------------------------|
 | `config` | 无法确定 Python 路径 | 确认本机已装 **Python 3.10+**；或 agent 设置可用的 `HYLYRE_PYTHON` 后重跑 |
-| `import` + `HYLYRE_PYTHON` | 指定解释器无 hylyre | **取消** `HYLYRE_PYTHON`（让默认 `.hylyre/venv` + vendor wheel 自动安装），或在该环境由 agent 对齐 vendor 版本 |
+| `import` + `HYLYRE_PYTHON` | 指定解释器无 hylyre | **取消** `HYLYRE_PYTHON`（让默认 `.hylyre/venv` + vendor 发布件自动安装），或在该环境由 agent 对齐 vendor 版本 |
 | `install` / `pip` | pip 安装失败或超时 | Read `hylyre-doctor.log`；检查网络 / `framework.config.json` → `tools.hylyre.pypi_extra_index_url`；必要时 agent 删除工程根 **`.hylyre/venv`** 后重跑 ensure |
 | `doctor` | `hylyre doctor` 失败 | 同上日志；多为 hypium/设备栈依赖未齐 |
 | `venv` | `python -m venv` 失败 | 检查 Python 安装与磁盘权限 |
@@ -48,7 +48,7 @@ Windows PowerShell 临时取消：`Remove-Item Env:HYLYRE_PYTHON -ErrorAction Si
 
 1. `cd framework/harness && npm install`（Tier_1，见 `framework/skills/reference/host-harness-readiness.md`）
 2. 多工程共用 `framework/` 子模块时，**对齐 git 提交**（避免一仓有类型修复、另一仓仍 `testing_checker_error`）
-3. `framework/profiles/hmos-app/vendor/hylyre/` 含 wheel + `release.manifest.json`
+3. `framework/profiles/hmos-app/vendor/hylyre/` 含发布件（Maison vendor 只携带源码树 `src/`；运行时代码兼容 schema 1 legacy wheel 布局）+ `release.manifest.json`
 
 ## 即席 vs 标准：勿用标准门禁测外部 App
 

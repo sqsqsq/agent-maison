@@ -20,7 +20,8 @@
     "**/tmp_hypium/**",
     "**/oh_modules/**",
     "framework.local.json",
-    "profiles/*/vendor/**/*.md"
+    "profiles/*/vendor/*/*.md",
+    "profiles/*/vendor/**/*.whl"
   ],
   "includeOverrides": [
     "profiles/hmos-app/vendor/hylyre/README.md",

@@ -1,15 +1,17 @@
 // ============================================================================
 // hylyre-keyset-consistency.unit.test.ts — 键集实体三方比对元门禁（t7c，plan e6a3c9f4）
 // ----------------------------------------------------------------------------
-// 动机（07-16 事故 B 断点 4）：hylyre 语法知识分布在三处——vendor wheel（真源）、
+// 动机（07-16 事故 B 断点 4）：hylyre 语法知识分布在三处——vendor 发布件（真源）、
 // harness 键表（lint SSOT 镜像）、教学文档（agent 消费）——此前只靠人工同步纪律，
-// 0.3.0→0.3.1 换 wheel 后文档/键表标签滞留 0.3.0。三处都写同一版本号也不代表字段
+// 0.3.0→0.3.1 换发布件后文档/键表标签滞留 0.3.0。三处都写同一版本号也不代表字段
 // 集合一致（codex round2），故本门禁做**键集实体比对**：
-//   1. wheel 内 hylyre/api/planned_step_keys.py 的 PLANNED_STEP_ROOT_KEYS（零依赖
-//      mini-zip 解包 + inflateRaw）≡ hylyre-planned-step-keys.ts 的同名导出；
+//   1. vendor 发布件内 hylyre/api/planned_step_keys.py 的 PLANNED_STEP_ROOT_KEYS
+//      （源码树 vendor 直读 src/…；legacy wheel 布局零依赖 mini-zip 解包 + inflateRaw）
+//      ≡ hylyre-planned-step-keys.ts 的同名导出；
 //   2. 教学文档「## 根键 SSOT」清单 ≡ 键表 −（显式豁免 'action' legacy envelope，
 //      文档刻意不教历史包络形态）；
-//   3. 版本标签辅助比对：release.manifest.json hylyre_version ↔ 键表头注 ↔ 文档版本节。
+//   3. 版本标签辅助比对：release.manifest.json hylyre_version ↔ 键表头注 ↔ 文档版本节
+//      （源码布局钉 src 路径引用；legacy 布局钉 whl 文件名——公司仓无 whl 形态可过）。
 // ============================================================================
 
 import * as fs from 'fs';
@@ -82,9 +84,10 @@ function readZipEntry(zipPath: string, wantSuffix: string): string | null {
 }
 
 function loadManifestVersion(): string {
-  const manifest = JSON.parse(
-    fs.readFileSync(path.join(VENDOR_DIR, 'release.manifest.json'), 'utf-8'),
-  ) as { hylyre_version?: string };
+  const raw = fs.readFileSync(path.join(VENDOR_DIR, 'release.manifest.json'), 'utf-8');
+  const manifest = JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw) as {
+    hylyre_version?: string;
+  };
   assert(
     typeof manifest.hylyre_version === 'string' && manifest.hylyre_version.length > 0,
     'release.manifest.json 缺 hylyre_version',
@@ -92,15 +95,30 @@ function loadManifestVersion(): string {
   return manifest.hylyre_version!;
 }
 
-function extractWheelKeys(version: string): string[] {
-  const wheelPath = path.join(VENDOR_DIR, `hylyre-${version}-py3-none-any.whl`);
-  assert(fs.existsSync(wheelPath), `vendor wheel 不存在：${wheelPath}（manifest 声明 ${version}）`);
-  const py = readZipEntry(wheelPath, 'hylyre/api/planned_step_keys.py');
-  assert(py, 'wheel 内未找到 hylyre/api/planned_step_keys.py');
+const VENDOR_SRC_KEYS_PY = path.join(VENDOR_DIR, 'src', 'hylyre', 'api', 'planned_step_keys.py');
+
+function vendorSourcePresent(): boolean {
+  return fs.existsSync(VENDOR_SRC_KEYS_PY);
+}
+
+/** 双模取真源：源码树 vendor 直读 src 文件；legacy 布局回落 whl zip 解包（公司仓无 whl 亦可过）。 */
+function extractVendorKeys(version: string): string[] {
+  let py: string | null;
+  if (vendorSourcePresent()) {
+    py = fs.readFileSync(VENDOR_SRC_KEYS_PY, 'utf-8');
+  } else {
+    const wheelPath = path.join(VENDOR_DIR, `hylyre-${version}-py3-none-any.whl`);
+    assert(
+      fs.existsSync(wheelPath),
+      `vendor 发布件不存在：既无 src/hylyre/api/planned_step_keys.py 也无 ${wheelPath}（manifest 声明 ${version}）`,
+    );
+    py = readZipEntry(wheelPath, 'hylyre/api/planned_step_keys.py');
+    assert(py, 'wheel 内未找到 hylyre/api/planned_step_keys.py');
+  }
   const block = py!.match(/PLANNED_STEP_ROOT_KEYS[^=]*=\s*\(([\s\S]*?)\)/);
   assert(block, 'planned_step_keys.py 内未匹配到 PLANNED_STEP_ROOT_KEYS 元组');
   const keys = [...block![1].matchAll(/"([^"]+)"/g)].map(mm => mm[1]);
-  assert(keys.length > 0, 'wheel 键集为空');
+  assert(keys.length > 0, 'vendor 键集为空');
   return keys;
 }
 
@@ -120,16 +138,16 @@ function setDiff(a: Iterable<string>, b: Set<string>): string[] {
 
 const cases: Array<{ name: string; run: () => void }> = [
   {
-    name: '实体比对①：wheel planned_step_keys.py ≡ hylyre-planned-step-keys.ts（集合相等）',
+    name: '实体比对①：vendor planned_step_keys.py ≡ hylyre-planned-step-keys.ts（集合相等）',
     run: () => {
       const version = loadManifestVersion();
-      const wheelKeys = new Set(extractWheelKeys(version));
+      const vendorKeys = new Set(extractVendorKeys(version));
       const tsKeys = new Set(PLANNED_STEP_ROOT_KEYS);
-      const onlyWheel = setDiff(wheelKeys, tsKeys);
-      const onlyTs = setDiff(tsKeys, wheelKeys);
+      const onlyVendor = setDiff(vendorKeys, tsKeys);
+      const onlyTs = setDiff(tsKeys, vendorKeys);
       assert(
-        onlyWheel.length === 0 && onlyTs.length === 0,
-        `键集漂移：wheel(${version}) 独有=[${onlyWheel.join(',')}]，keys.ts 独有=[${onlyTs.join(',')}]——` +
+        onlyVendor.length === 0 && onlyTs.length === 0,
+        `键集漂移：vendor(${version}) 独有=[${onlyVendor.join(',')}]，keys.ts 独有=[${onlyTs.join(',')}]——` +
           `请同步 hylyre-planned-step-keys.ts / 教学文档 / lint 规则（fields.md「版本」节的同步清单）`,
       );
     },
@@ -201,10 +219,18 @@ const cases: Array<{ name: string; run: () => void }> = [
         `hylyre-planned-step-keys.ts 头注版本 ≠ manifest ${version}`,
       );
       const md = fs.readFileSync(FIELDS_MD, 'utf-8');
-      assert(
-        md.includes(`hylyre-${version}-py3-none-any.whl`),
-        `fields.md wheel 链接版本 ≠ manifest ${version}`,
-      );
+      if (vendorSourcePresent()) {
+        // 源码树布局：文档必须指向 src 内真源文件（不再钉 whl 文件名——公司仓无 whl）
+        assert(
+          md.includes('src/hylyre/api/planned_step_keys.py'),
+          'fields.md 应引用 vendor 源码路径 src/hylyre/api/planned_step_keys.py',
+        );
+      } else {
+        assert(
+          md.includes(`hylyre-${version}-py3-none-any.whl`),
+          `fields.md wheel 链接版本 ≠ manifest ${version}`,
+        );
+      }
       assert(md.includes(`\`${version}\``), `fields.md「版本」节 ≠ manifest ${version}`);
     },
   },

@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hylyre.dev/contracts/trace-output.json",
+  "title": "HylyreTrace",
+  "description": "trace.json for Hylyre runs (P4+).",
+  "type": "object",
+  "required": ["schema_version", "feature", "phase", "outcome"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["0.1-p0", "0.2-p4"]
+    },
+    "feature": { "type": "string", "minLength": 1 },
+    "phase": { "type": "string", "enum": ["testing"] },
+    "outcome": {
+      "type": "string",
+      "enum": ["success", "partial", "failed", "aborted"]
+    },
+    "model_backend": { "type": "string" },
+    "tool_calls": {
+      "type": "array",
+      "items": { "type": "object", "additionalProperties": true }
+    },
+    "retries": { "type": "integer", "minimum": 0 },
+    "artifacts": { "type": "object", "additionalProperties": true },
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "status": { "type": "string" },
+          "priority": { "type": "string" },
+          "ac_ref": { "type": "string" },
+          "notes": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}
