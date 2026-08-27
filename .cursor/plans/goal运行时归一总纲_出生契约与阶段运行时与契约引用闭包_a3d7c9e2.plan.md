@@ -190,7 +190,7 @@ todos:
       机制）：删除 legacy coding-base reader、删除 run_start 出生基线回退分支、删除
       对应兼容测试并保留迁移负面测试——待办唯一真源是 plan frontmatter，不以 runbook
       句子承载。
-    status: pending
+    status: completed
   - id: m5-matrix-incident-closure
     content: >
       P0 · 跨层整机矩阵、宿主事故复现与总纲收口。①结构验收清单逐项过（§6 十三项零/
