@@ -142,7 +142,13 @@ export const PHASE_OPTIONAL_OUTPUT_RELPATHS_BY_PHASE: Partial<Record<Phase, stri
  * collectCleanPassIssues 消费 summary.json 的 verdict，summary/verifier/trace 必须
  * 在 manifest 保护面内，否则闭环后把 FAIL 改 PASS 不触发 staleness。
  */
-export const PHASE_REPORTS_OUTPUT_FILES = ['summary.json', 'script-report.json', 'verifier.report.md', 'trace.json'] as const;
+export const PHASE_REPORTS_OUTPUT_FILES = [
+  'summary.json',
+  'script-report.json',
+  'verifier.report.md',
+  'trace.json',
+  'device-test-evidence.json',
+] as const;
 
 export interface ResolveManifestOptions {
   projectRoot: string;
@@ -405,6 +411,26 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
     const rel = toPosixRel(projectRoot, abs);
     if (fs.existsSync(abs) || stagedHashes.has(rel)) addEntry(abs, 'output');
   }
+  // P0 runtime telemetry lives in the authoritative timestamped Hylyre trace.
+  // The canonical device-test evidence points to that trace; derive the second
+  // output from the existing artifact so the phase manifest binds both without
+  // introducing another path registry.
+  if (String(phase) === 'testing') {
+    const deviceEvidence = path.join(reportsDir, 'device-test-evidence.json');
+    try {
+      const doc = JSON.parse(fs.readFileSync(deviceEvidence, 'utf-8')) as { trace_path?: unknown };
+      if (typeof doc.trace_path === 'string' && path.isAbsolute(doc.trace_path)) {
+        const traceAbs = path.resolve(doc.trace_path);
+        const reportsRoot = path.resolve(reportsDir);
+        if (traceAbs.startsWith(reportsRoot + path.sep) && fs.existsSync(traceAbs)) {
+          addEntry(traceAbs, 'output');
+        }
+      }
+    } catch {
+      // The testing gate owns malformed/missing evidence. Manifest generation
+      // still records the canonical evidence file (when present) for freshness.
+    }
+  }
   for (const p of opts.extraOutputs ?? []) {
     addEntry(path.isAbsolute(p) ? p : path.join(projectRoot, p), 'output');
   }
@@ -566,6 +592,98 @@ export interface PhaseStalenessResult {
 }
 
 /**
+ * Verify an already-published manifest while one or more canonical outputs are
+ * still represented by staged bytes. This is the closure crash-recovery view:
+ * every ordinary input/output, environment fact and normalized receipt must be
+ * current, while the named canonical output is compared with the staged hash.
+ * A missing receipt pointer is allowed because publication may have crashed
+ * between manifest and pointer. The closure finalizer may additionally allow
+ * a prior pointer while it proves that the newly published manifest binds the
+ * staged summary; only that runner-owned transaction may advance the pointer.
+ */
+export function verifyPhaseEvidenceManifestWithStagedOutputs(input: {
+  projectRoot: string;
+  feature: string;
+  phase: string;
+  stagedOutputs: Array<{ canonicalPath: string; sha256: string }>;
+  frameworkRoot?: string;
+  currentRequirementSha?: string | null;
+  allowPriorReceiptPointer?: boolean;
+}): PhaseStalenessResult {
+  const loaded = loadPhaseEvidenceManifest(input.projectRoot, input.feature, input.phase);
+  if (!loaded) {
+    return { phase: input.phase, verdict: 'missing', changed_paths: [], receipt_changed: false };
+  }
+  if (!loaded.integrityOk) {
+    return {
+      phase: input.phase,
+      verdict: 'tampered',
+      changed_paths: [],
+      receipt_changed: false,
+      integrity_errors: loaded.integrityErrors,
+    };
+  }
+  const pointer = readReceiptManifestPointer(input.projectRoot, input.feature, input.phase);
+  if (
+    pointer !== null &&
+    pointer !== loaded.fileSha256 &&
+    input.allowPriorReceiptPointer !== true
+  ) {
+    return {
+      phase: input.phase,
+      verdict: 'tampered',
+      changed_paths: [],
+      receipt_changed: false,
+      integrity_errors: ['回执 evidence_manifest_sha256 与 partial publication manifest 不一致'],
+    };
+  }
+
+  const envNow = resolveEnvironment(input.projectRoot, input.phase, input.frameworkRoot);
+  const envRec = loaded.manifest.environment;
+  const envChanged: string[] = [];
+  if (envNow.framework_config_sha256 !== envRec.framework_config_sha256) envChanged.push('framework_config');
+  if (envNow.workflow_sha256 !== envRec.workflow_sha256) envChanged.push('workflow');
+  if (envNow.gate_fingerprint !== envRec.gate_fingerprint) envChanged.push('gate_fingerprint');
+  if (envNow.framework_version !== envRec.framework_version) envChanged.push('framework_version');
+  if (input.currentRequirementSha != null) {
+    if (envRec.requirement_sha256 == null) envChanged.push('requirement_unbound');
+    else if (input.currentRequirementSha !== envRec.requirement_sha256) envChanged.push('requirement');
+  }
+  if (envChanged.length > 0) {
+    return {
+      phase: input.phase,
+      verdict: 'stale',
+      changed_paths: envChanged.map((item) => `<environment:${item}>`),
+      receipt_changed: false,
+    };
+  }
+
+  const staged = new Map(input.stagedOutputs.map((item) => [
+    toPosixRel(input.projectRoot, path.resolve(item.canonicalPath)),
+    item.sha256,
+  ]));
+  const seenStaged = new Set<string>();
+  const changed = new Set<string>();
+  for (const entry of [...loaded.manifest.inputs, ...loaded.manifest.outputs]) {
+    const stagedSha = staged.get(entry.path);
+    if (stagedSha !== undefined) {
+      seenStaged.add(entry.path);
+      if (!entry.exists || entry.sha256 !== stagedSha) changed.add(entry.path);
+    } else if (!evidenceEntryMatchesCurrentFile(input.projectRoot, entry)) {
+      changed.add(entry.path);
+    }
+  }
+  for (const stagedPath of staged.keys()) {
+    if (!seenStaged.has(stagedPath)) changed.add(stagedPath);
+  }
+  const currentReceipt = computeCanonicalReceiptSha256(input.projectRoot, input.feature, input.phase);
+  const receiptChanged = currentReceipt !== loaded.manifest.receipt_sha256;
+  return changed.size > 0 || receiptChanged
+    ? { phase: input.phase, verdict: 'stale', changed_paths: [...changed], receipt_changed: receiptChanged }
+    : { phase: input.phase, verdict: 'fresh', changed_paths: [], receipt_changed: false };
+}
+
+/**
  * 两消费点共用的重算：逐阶段——
  *   ① manifest schema 完整性 + aggregate 重算（改条目留旧 aggregate → tampered，
  *      codex 五轮 P0）；
@@ -664,14 +782,14 @@ export function recomputePhaseEvidenceStaleness(
       continue;
     }
     const { manifest } = loaded;
-    const changed: string[] = [];
+    const changed = new Set<string>();
     for (const entry of [...manifest.inputs, ...manifest.outputs]) {
-      if (!evidenceEntryMatchesCurrentFile(projectRoot, entry)) changed.push(entry.path);
+      if (!evidenceEntryMatchesCurrentFile(projectRoot, entry)) changed.add(entry.path);
     }
     const currentReceipt = computeCanonicalReceiptSha256(projectRoot, feature, phase);
     const receiptChanged = currentReceipt !== manifest.receipt_sha256;
-    if (changed.length > 0 || receiptChanged) {
-      results.push({ phase, verdict: 'stale', changed_paths: changed, receipt_changed: receiptChanged });
+    if (changed.size > 0 || receiptChanged) {
+      results.push({ phase, verdict: 'stale', changed_paths: [...changed], receipt_changed: receiptChanged });
       upstreamBad = phase;
     } else {
       results.push({ phase, verdict: 'fresh', changed_paths: [], receipt_changed: false });

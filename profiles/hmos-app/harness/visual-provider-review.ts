@@ -3,14 +3,15 @@
 // ============================================================================
 // 两句话契约：
 //   · **对 provider 结果 fail-closed** —— 坏的、旧的、身份/hash 不符的载荷一律不采信；
-//   · **对开发循环 fail-open**       —— provider 不可用只降级本轮视觉反馈，按盲档继续，
-//                                        release 保持 VISUAL_PENDING，绝不 halt/停等。
+//   · **对循环按事实投影**           —— phase/release 均非必需时 unavailable 保持 advisory；
+//                                        strict 或 release-required unavailable capability-defer；
+//                                        invalid evidence 由 testing FAIL/retry。
 //
 // 边界（不得放宽）：
 //   · provider **不产 verdict**——它只交出逐屏 must_fix/defects；「能否推进」唯一归 gate；
-//   · provider **永不写 confirmed_by**——人签判据零改动；
+//   · provider **永不写 confirmed_by**——legacy 字段无质量权威；
 //   · 合法载荷 = 可直接回修的 critic candidate，**不进** producer 感知信号的
-//     defect-review / repair_adjudication_pending 停等管线（那条管线原样服务 T8）；
+//     defect-review；primary dispute 或缺复核没有否决权；
 //   · 写入前**只清掉旧 provider 结果**——T8 转录与其它来源的 defect/must_fix 原样保留，
 //     否则转录对账会被本机制误伤。
 // ============================================================================
@@ -22,7 +23,7 @@ import * as path from 'path';
 import type { CheckContext } from '../../../harness/scripts/utils/types';
 import { featureDir } from '../../../harness/config';
 import { loadUiSpecFile, uiSpecAbsPath } from '../../../harness/scripts/utils/ui-spec-shared';
-import { isHumanVerified, isPixel1to1, loadSpecMarkdown } from '../../../harness/scripts/utils/fidelity-shared';
+import { isPixel1to1, loadSpecMarkdown } from '../../../harness/scripts/utils/fidelity-shared';
 import { buildAuthoritativeRefImageIndex, resolveRefSourceImage } from './authoritative-ref-images';
 import { canonicalOverlayBase } from './visual-diff-nav';
 import { resolveActiveVisualProvider } from '../../../harness/scripts/utils/visual-provider-identity';
@@ -71,48 +72,6 @@ export function visualDiffJsonPathFor(projectRoot: string, feature: string): str
 }
 
 /**
- * plan ab072691 t5④（三轮返修 P0）：该屏是否**真人已签且签的就是盘上这张图**。
- *
- * 人签是本系统里的最高权威，provider 是下级审查者。命中本谓词的屏在 delegated 轮次里
- * 既**不进** provider 目标集、也**不被清场**——否则终审重跑会因为下级审查者恰好不可用而
- * 抹掉人签成果（verdict 复位 pending + 删被评 hash + 连 provider 写的 region_attest 一起清），
- * 使既有闭环「真人 confirmed_by → 重跑 gate 方 PASS」永远收不了口。
- *
- * 判据只有两条，都取既有事实、**不新建任何新鲜度状态**：
- *   ① `isHumanVerified(confirmed_by)`——自动化身份不算数（既有谓词，零改动）；
- *   ② 被评截图 hash 等于盘上当前截图 hash——签的就是这张图。
- * 构建指纹变化、pending/fail/skipped 等其余情形一律照常进评审。
- *
- * 安全性：命中**只是不再问 provider**，该屏随后仍完整进入既有严格 `checkVisualDiff`
- * （build 指纹、截图 hash、confirmed_by、receipt、defects 枚举全部照跑）——没有绕过任何
- * 门禁，只是不再销毁它已经合法取得的状态。
- */
-export function isHumanSignedAndFresh(projectRoot: string, s: VisualDiffScreenEntry): boolean {
-  // 显式标记「本屏评估已失效、待重评」的屏**不受本豁免保护**：豁免是本次新增的例外，
-  // 它绝不能反过来把一个已被点名要求重评的屏挡在评审之外。
-  if (s.evaluation_invalidated === true) return false;
-  return isHumanSignedForCurrentShot(projectRoot, s);
-}
-
-/**
- * 「真人已签 **且** 签的就是盘上这张图」——**不看** `evaluation_invalidated`。
- *
- * 与 `isHumanSignedAndFresh` 的分工：后者决定「要不要豁免评审」（带标记的屏必须重评，
- * 所以要看标记）；本谓词决定「清场时要不要保住人签成果」（带标记的屏照样重评，但
- * 不该因为一次 provider 断供就把真人的 pass 表态和被评 hash 一起销毁——阻断由未清的
- * 标记本身承担，那是个诚实且可被一次成功重评解除的阻断）。
- */
-export function isHumanSignedForCurrentShot(projectRoot: string, s: VisualDiffScreenEntry): boolean {
-  if (s.verdict !== 'pass') return false;
-  if (!isHumanVerified(s.confirmed_by)) return false;
-  const evaluated = typeof s.evaluated_screenshot_hash === 'string' ? s.evaluated_screenshot_hash.trim() : '';
-  if (!evaluated || !s.screenshot_path) return false;
-  const shotAbs = path.resolve(projectRoot, s.screenshot_path);
-  if (!fs.existsSync(shotAbs)) return false;
-  return evaluated === sha16(shotAbs);
-}
-
-/**
  * 从 visual-diff.json + ui-spec 装配目标屏集合。
  * 只收「参考图与实机截图**都在盘上**」的屏——缺图的屏本来就不是可评审对象
  * （缺屏是 capture 层的事实，由既有门禁承担，不该由 provider 代答）。
@@ -145,8 +104,6 @@ export function collectReviewTargets(
     if (s.verdict === 'skipped') continue;
     if (!s.screenshot_path) continue;
     const shotAbs = path.resolve(projectRoot, s.screenshot_path);
-    // 真人已签且签的就是盘上这张图 → 不再问 provider（判据与理由见 isHumanSignedAndFresh）。
-    if (isHumanSignedAndFresh(projectRoot, s)) continue;
     // ref_path 显式在场时优先（部分消费者/历史产物带它）；否则按 ref_id 走权威解析。
     const refAbs = s.ref_path
       ? path.resolve(projectRoot, s.ref_path)
@@ -158,9 +115,8 @@ export function collectReviewTargets(
     if (!shotHash || !refHash) continue;
     // plan ab072691 t5④（六轮返修 P0）：ui-spec 查找与严格 gate **同一口径**——先按 overlay
     // 归一化回基屏，再回落原 id。overlay 的 P0 与 `must_have_elements` 通常声明在基屏上；
-    // 若这里查不到 spec，`priority` 为空 → 采信前的区域覆盖预检被跳过 → 严格 gate 归一化后
-    // 才发现覆盖不全 → 该屏若带 confirmed_by，下一轮即命中人签豁免，provider 再无机会补齐
-    // ——正是五轮刚封掉的那条死锁，在 overlay 屏上原样复活。
+    // 若这里查不到 spec，`priority` 为空 → 采信前的区域覆盖预检被跳过，严格 gate 才发现
+    // 覆盖不全，造成一次无效评审。故在采信前使用与 gate 相同的 overlay 归一化口径。
     const spec = byId.get(canonicalOverlayBase(s.screen_id)) ?? byId.get(s.screen_id);
     out.push({
       screen_id: s.screen_id,
@@ -198,7 +154,7 @@ export function buildVisualProviderReviewPrompt(
     '- Cover EVERY screen exactly once. A missing or duplicated screen invalidates the whole payload.',
     '- An empty payload is NOT "no defects" — if you cannot review, say so by omitting the payload.',
     '- Do NOT produce a verdict, a score, or a pass/fail judgement. That is the gate\'s job, not yours.',
-    '- Do NOT write or claim any human confirmation. You are not a human signer.',
+    '- Do NOT write legacy `confirmed_by` or claim human authority; only report machine observations.',
     '- Anchor every defect to the fixes: `must_fix_refs` holds indices into that screen\'s `must_fix`.',
     '',
     'Screens:',
@@ -405,7 +361,7 @@ export function validateVisualProviderReviewPayload(
           return { ok: false, reason: `${screenId} region_attest.verdict 非法：${String(aa.verdict)}` };
         }
         // provider 只能以 vl_screening 举证——paired_crop_compare 需要 crop 产物（写工程），
-        // human 是真人通道，两者都不属于只读 provider。
+        // legacy human method 也不属于只读 provider 的机器证据。
         if (aa.method !== 'vl_screening') {
           return { ok: false, reason: `${screenId} region_attest.method 只接受 vl_screening` };
         }
@@ -417,10 +373,9 @@ export function validateVisualProviderReviewPayload(
     // plan ab072691 t5④（五轮返修 P0）：**pixel clean-pass 的举证要求在「采信前」就查**，
     // 与既有严格 gate 逐条同构。
     //
-    // 为什么不能留给严格 gate 事后查：本机制在采信后会清 `evaluation_invalidated` 并写下
-    // pass + 被评 hash；若该屏原本带 `confirmed_by`，**下一轮就命中人签豁免、provider 再也
-    // 不会被调用**——于是「举证不全」这个只有新一次重评才能修的 FAIL 变成永久死锁。
-    // 把判据前移到采信关口：不合格即 invalid → 标记保留 → 下一轮照常重评。
+    // 不能留给严格 gate 事后查：本机制在采信后会清 `evaluation_invalidated` 并写下 pass +
+    // 被评 hash；举证不全会平白制造一次无效轮次。把判据前移到采信关口：不合格即 invalid
+    // → 标记保留 → 下一轮照常重评。
     // ----------------------------------------------------------------------
     const isCleanPassCandidate = mustFix.length === 0 && defects.length === 0;
     if (expected.requireRegionAttest && mustFix.length === 0 && (regionAttest?.length ?? 0) === 0) {
@@ -524,22 +479,15 @@ export function clearProviderReviewFromScreen(entry: VisualDiffScreenEntry): voi
  *
  * 一并复位 `verdict` 与 `evaluated_screenshot_hash`：delegated 轮次里逐屏 verdict **就是**
  * harness 依据 provider 输出算出来的（盲 primary 不得自报视觉裁决）。本轮尚未有被采信的
- * 评审，诚实状态就是 `pending`。**confirmed_by 一个字不碰**——人签是独立权威，其新鲜度由
- * 既有 hash 绑定判据管。
+ * 评审，诚实状态就是 `pending`。legacy `confirmed_by` 字节保持不动但没有豁免权。
  */
 export function resetDelegatedRoundState(
   entry: VisualDiffScreenEntry,
-  opts: { preserveHumanVerdict?: boolean } = {},
 ): void {
   clearProviderReviewFromScreen(entry);
-  // 五轮订正：真人已签且签的就是盘上这张图时，**保住 verdict / confirmed_by /
-  // evaluated_screenshot_hash**。这类屏只会因为带 `evaluation_invalidated` 才成为目标，
-  // 而阻断由那个未清的标记承担（档位无关 FAIL，可被一次成功重评解除）——不需要、也不该
-  // 再把真人的 pass 表态和被评 hash 一起销毁：那等于一次 provider 断供就抹掉人签成果。
-  if (!opts.preserveHumanVerdict) {
-    entry.verdict = 'pending';
-    delete entry.evaluated_screenshot_hash;
-  }
+  // 每一轮都丢弃旧 provider-derived verdict/hash；legacy confirmed_by 字节可保留但无豁免权。
+  entry.verdict = 'pending';
+  delete entry.evaluated_screenshot_hash;
   // `evaluation_invalidated` 的语义就是「这屏的旧评估产物不可信，等一次 fresh 重评」。
   // 既然本轮要重评，就把它点名不可信的那些产物一并丢掉——**但标记本身保留**，只有
   // 真正采信了一次合法重评才由 harness 删（见 applyProviderReviewToScreen）。
@@ -551,15 +499,15 @@ export function resetDelegatedRoundState(
  * 旧评估产物。
  *
  * 只丢**评估产物**，不碰采集身份（screenshot/build/run 指纹由 capture 机器盖戳，
- * 与「评估可不可信」正交），也不碰 `confirmed_by`。
+ * 与「评估可不可信」正交），也不改 legacy `confirmed_by` 字节。
  *
- * **`region_attest` 全清，`method:'human'` 也不例外**（五轮订正——四轮曾错误保留）：
+ * **`region_attest` 全清，legacy `method:'human'` 也不例外**：
  *  · 既有规格说该标记的失效对象就包含**全部** region_attest；
  *  · `region_attest[].by` 是**可选自由字符串**，既不过 `isHumanVerified`、也不绑截图 hash，
- *    它不是经过验证的人签，不能当第二条平行的最高权威；
+ *    它不是当前机器证据，不能成为平行真源；
  *  · 保留旧条目会让「旧举证 + 新 provider 举证」拼接起来满足区域覆盖，直接削弱本机制
  *    要求的 fresh re-evaluation。
- * 真人权威由 `confirmed_by + evaluated_screenshot_hash` 唯一承载，本函数一个字不碰它们。
+ * `confirmed_by` 仅作为 legacy provenance 原样保留，不参与质量结论。
  */
 export function discardDistrustedEvaluationArtifacts(entry: VisualDiffScreenEntry): void {
   delete entry.fidelity_score;
@@ -605,13 +553,13 @@ export function applyProviderReviewToScreen(
   // **provider 不产 verdict**——它的载荷里根本没有 verdict 字段。这里是 **harness** 按
   // 一条写死的规则从事实推导：合并后 must_fix 为空 → `pass` **候选**；非空 → `fail`。
   // 「能否推进」仍然唯一归 gate：pass 候选还要过 defects 枚举、region_attest、critic
-  // 回执、pixel P0 人签等既有全要件，本函数一个门槛都没绕过。
+  // 回执与 pixel P0 机器证据等既有全要件，本函数一个门槛都没绕过。
   //
   // 同时盖上被评截图的 hash：既有可行动性判据要求
   // `evaluated_screenshot_hash` 等于盘上当前截图 hash，否则该屏的 must_fix 只会被记为
   // unverified 而不驱动回修。该值已在载荷校验里逐屏核对过，不是自报。
   //
-  // 红线：**confirmed_by 一个字都不碰**——人签判据零改动，provider 永远不是签署人。
+  // legacy `confirmed_by` 字节不改，但 gate 不消费；provider 永远不写该字段。
   if (ctx.evaluatedScreenshotHash) entry.evaluated_screenshot_hash = ctx.evaluatedScreenshotHash;
   entry.verdict = (entry.must_fix?.length ?? 0) > 0 ? 'fail' : 'pass';
   // ------------------------------------------------------------------------
@@ -629,8 +577,8 @@ export function applyProviderReviewToScreen(
   // 不决定是否采信**（受理与披露分立，零改动）；但**回执成功持久化是提交本轮评审结果的
   // 前置条件**——提交顺序见本函数调用方，写不出即整轮 `unusable`、标记保留。
   //
-  // 不接通这一步的后果是当前 delegated 闭环里的**永久阻断点**：人签豁免正确地拒绝保护
-  // 被标记屏 → provider 每轮成功重评 → 标记始终不清 →
+  // 不接通这一步会让 delegated 闭环永久阻断：被标记屏 → provider 每轮成功重评 →
+  // 标记始终不清 →
   // `visual_diff_evaluation_invalidated` 档位无关 FAIL 永远挂着。
   delete entry.evaluation_invalidated;
 }
@@ -723,7 +671,7 @@ export type VisualProviderReviewOutcome =
   | { kind: 'skipped'; reason: string }
   /** 合法载荷已写入 —— 调用方照常走既有严格 dispatch（此时屏已有 must_fix/defects） */
   | { kind: 'applied'; invocation: VisualProviderInvocation; screens: number }
-  /** provider 不可用 / 载荷无效 —— 调用方**不得**跑严格 dispatch，改出 fail-open SKIP */
+  /** provider 不可用 / 载荷无效 —— 调用方不跑 provider-dependent dispatch，并按三分支投影 */
   | { kind: 'unusable'; outcome: 'unavailable' | 'invalid'; reason: string; invocation?: VisualProviderInvocation };
 
 export interface RunVisualProviderReviewOptions {
@@ -757,17 +705,9 @@ export async function runVisualProviderReview(
   const screens = Array.isArray(doc.screens) ? doc.screens : [];
   const targets = collectReviewTargets(ctx, screens);
   if (targets.length === 0) {
-    // 两种成因都落这条**同一出口**：调用方照常走既有严格 dispatch，行为等于本机制不存在。
-    //  · 全部目标屏已真人签字且仍新鲜 —— 终审重跑不再依赖 provider（二轮返修 P0）；
-    //  · 参考图/截图缺失 —— 缺屏是 capture 层事实，由既有门禁裁决，不该由 provider 代答。
-    const allHumanSigned =
-      screens.length > 0 &&
-      screens.filter(s => s.verdict !== 'skipped').every(s => isHumanSignedAndFresh(ctx.projectRoot, s));
     return {
       kind: 'skipped',
-      reason: allHumanSigned
-        ? '全部目标屏已由真人签字确认且被评截图未变——本轮不再调用 provider，直接交既有严格视觉门禁裁决'
-        : '无可评审目标屏（参考图/截图缺失由既有门禁承担）',
+      reason: '无可评审目标屏（参考图/截图缺失由既有门禁承担）',
     };
   }
 
@@ -789,14 +729,8 @@ export async function runVisualProviderReview(
   // ------------------------------------------------------------------------
   const targetIds = new Set(targets.map(t => t.screen_id));
   for (const s of screens) {
-    // 真人已签且仍新鲜的屏**两边都不碰**：既不进目标集，也不清场。清场会连它的
-    // region_attest（provider 以 vl_screening 举证的那几条）一起抹掉，pixel P0 pass 屏
-    // 随即缺举证 → BLOCKER；那等于用下级审查者的一次不可用推翻上级权威的结论。
-    if (isHumanSignedAndFresh(ctx.projectRoot, s)) continue;
     if (targetIds.has(s.screen_id)) {
-      resetDelegatedRoundState(s, {
-        preserveHumanVerdict: isHumanSignedForCurrentShot(ctx.projectRoot, s),
-      });
+      resetDelegatedRoundState(s);
     }
     // 非目标屏也要清掉旧 provider 结果（它本轮同样没被评审），但不动其 verdict：
     // 那不是本机制写的（缺图/skipped 等由既有门禁裁决）。
@@ -860,9 +794,8 @@ export async function runVisualProviderReview(
   // plan ab072691 t5④（五轮返修 P0）：**回执先落盘成功，再提交 visual-diff.json**。
   //
   // 上面对 `doc` 的修改此刻只在内存里。既有严格 gate 在任何 region_attest 在场时都要求一份
-  // 结构合法回执；而本机制采信后会清 `evaluation_invalidated`，带 `confirmed_by` 的屏
-  // **下一轮就命中人签豁免、provider 不再被调用**——回执写失败若仍提交 json，就把一个
-  // 「只有新一次重评能修」的 FAIL 变成永久死锁。
+  // 结构合法回执；本机制采信后会清 `evaluation_invalidated`。回执写失败若仍提交 json，
+  // 会留下“评估看似有效、证据提交失败”的不一致状态。
   //
   // 故提交顺序反过来：回执写成功才落 json。写不出即本轮按 `unusable` 处理，盘上停在
   // 调用前的清场态（标记仍在），下一轮照常重评。这**不是**把 receipt 升级成物化门槛——

@@ -24,7 +24,6 @@ import {
 import { loadVisualParityMappings } from './visual-structure-parity';
 import { collectP0VisualTargetIds } from './visual-diff-targets';
 import { hexToLab, readImageDimensions } from './image-toolkit';
-import { isHumanVerified } from '../../../harness/scripts/utils/fidelity-shared';
 import { ocrImageWords, isOcrAvailable, fuzzyTextPresent } from './ocr-toolkit';
 
 export interface BackstopIssue {
@@ -799,8 +798,7 @@ export function collectBakedTextAssetIssues(
 
   for (const a of assets) {
     const key = a.key.trim();
-    // human_signed 显式放行（营销/装饰插画确需含字）。P0-6：验真语义，user_requirement 不算真人署名。
-    if (a.baked_text_defer === true && isHumanVerified(a.baked_text_defer_by)) continue;
+    // Legacy baked_text_defer/by 仅兼容读取；人工署名不能豁免声明文本被烤进位图。
     // 定位模块真图（缺图/退化占位由 B 门管，本门只核真图是否烤字）
     const r = moduleMediaRealnessForKey(ctx.projectRoot, contracts, key, a.resolved_path);
     if (!r.file || !r.real) continue;
@@ -821,7 +819,7 @@ export function collectBakedTextAssetIssues(
         detail:
           `素材 ${key} 图内烤入 ${hits.length} 个该屏声明文本（${hits.slice(0, 4).join('/')}${hits.length > 4 ? '…' : ''}）` +
           ` — 疑似整段界面当背景大图，会与真实组件双渲染/烤字冲突；须裁为原子插画（仅图形、无声明文本），` +
-          `标题/副标题/按钮/空态文案/底部 tab 等一律真实组件渲染。若确为营销插画需含字，设 baked_text_defer + 真人署名放行。`,
+          `标题/副标题/按钮/空态文案/底部 tab 等一律真实组件渲染；装饰文本不得同时登记为 UI text 节点。`,
       });
     }
   }
@@ -889,7 +887,7 @@ export function collectIconSubstitutionIssues(
         detail:
           `节点 ${n.id ?? n.type} 声明 required 品牌图标（icon.kind=${kind}, ref=${key}）却未 $r('app.media.${key.replace(/\./g, '_')}') 渲染，` +
           `且源码用 sys.symbol 系统单色图标替代 — 有品牌识别度的图标（app logo/银行 logo/营销插画）须裁原子素材并 $r 渲染，不可用系统符号冒充；` +
-          `若该元素实为标准语义图标（tab/铃铛/加号/卡种线性图标），按 P0-E 分型规则把 icon.kind 改为 system_symbol + color_ref 着色 + fidelity_note（见 reference/ui-spec.md「图标分型」），或显式 placeholder + 真人署名。`,
+          `若该元素实为标准语义图标（tab/铃铛/加号/卡种线性图标），按 P0-E 分型规则把 icon.kind 改为 system_symbol + color_ref 着色 + fidelity_note（见 reference/ui-spec.md「图标分型」）；仅允许的 placeholder 需保留 debt，release-required 项不得靠署名放行。`,
       });
     }
   }
@@ -1246,7 +1244,7 @@ export function collectInvisiblePresenceIssues(ctx: CheckContext): BackstopIssue
         detail:
           `${path.basename(file)}: ${m[1]}(${argExcerpt}) 链上 ${invisible} —— spec 语义（文本/资产/符号引用）` +
           `挂在硬不可见节点上＝假 presence 作弊（骗静态扫描、实际不渲染）；须真实可见渲染，` +
-          `或走显式 placeholder/defer + 人签，禁止透明占位冒充`,
+          `或按现有策略走显式 placeholder/debt，真实能力缺失时 capability defer；禁止透明占位冒充`,
       });
     }
   }

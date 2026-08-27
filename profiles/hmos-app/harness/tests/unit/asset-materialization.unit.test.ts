@@ -344,15 +344,15 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
-  run('P0-A collectBakedTextAssetIssues: baked_text_defer + 真人署名 → 放行', () => {
+  run('P0-A collectBakedTextAssetIssues: baked_text_defer/by 均为 legacy provenance，不能放行', () => {
     if (!isOcrAvailable()) return;
     const root = mkRoot();
     try {
       copyFixtureAsMedia(root, 'promo_defer');
       const doc = slabDoc('promo_defer', ['管理非本机卡片', '银行卡'], { deferBy: 'alice' });
       const res = collectBakedTextAssetIssues(placeholderCtx(root), doc, false);
-      if (res.issues.some(i => i.id === 'promo_defer')) throw new Error('human_signed defer 应放行');
-      // 自动化署名不算人签 → 仍拦
+      if (!res.issues.some(i => i.id === 'promo_defer')) throw new Error('真人署名不得放行 baked text');
+      // 自动化署名同样无效
       const doc2 = slabDoc('promo_defer', ['管理非本机卡片', '银行卡'], { deferBy: 'goal-mode-auto' });
       const res2 = collectBakedTextAssetIssues(placeholderCtx(root), doc2, false);
       if (!res2.issues.some(i => i.id === 'promo_defer')) throw new Error('自动化署名不应放行');

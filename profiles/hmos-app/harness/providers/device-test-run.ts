@@ -41,6 +41,7 @@ import {
   uiResetHintForOutcome,
 } from '../../../../harness/scripts/utils/adhoc-ui-reset-meta';
 import type { CapabilityProvider } from './types';
+import type { RuntimeStepTelemetry } from '../../../../harness/scripts/utils/runtime-step-evidence';
 
 export { buildHylyreAppPageSaveArgv, resolveHylyrePageSaveSlug, resolveHylyrePageSaveNames } from '../device-test-page-save';
 // d9e4b7c1 T2：evidence 合成入口（check-testing 协调层经 capability dispatch 调用）
@@ -49,8 +50,62 @@ export { composeDeviceTestEvidence } from '../device-test-evidence';
 export const provider: CapabilityProvider = {
   id: 'hylyre',
   capability: 'device_test.run',
-  exports: ['ensureHylyreReady', 'runHylyreDeviceTest', 'parseHylyreTrace', 'composeDeviceTestEvidence'],
+  exports: [
+    'ensureHylyreReady',
+    'preflightRuntimeStepTelemetry',
+    'probeRuntimeStepTelemetry',
+    'runHylyreDeviceTest',
+    'parseHylyreTrace',
+    'composeDeviceTestEvidence',
+  ],
 };
+
+export interface RuntimeStepTelemetryCapability {
+  supported: boolean;
+  providerId: 'hylyre';
+  providerVersion: string;
+  protocolVersion: '1.0';
+  collectorVersion: '1.0';
+  reason: string;
+}
+
+/**
+ * Provider/version handshake for Maison's in-process telemetry collector.
+ * The wrapper depends on Hylyre's 0.3.1 ScenarioRunner hook; unknown versions
+ * fail closed as capability-missing before a device content run is spawned.
+ */
+export function probeRuntimeStepTelemetry(opts: {
+  hylyreVersion: string;
+  manifestVersion: string;
+}): RuntimeStepTelemetryCapability {
+  const wrapper = path.resolve(__dirname, '..', 'hylyre-runtime-telemetry.py');
+  const version = opts.hylyreVersion.trim();
+  const supported =
+    version === '0.3.1' &&
+    opts.manifestVersion.trim() === version &&
+    fs.existsSync(wrapper) &&
+    fs.statSync(wrapper).isFile();
+  return {
+    supported,
+    providerId: 'hylyre',
+    providerVersion: version,
+    protocolVersion: '1.0',
+    collectorVersion: '1.0',
+    reason: supported
+      ? 'hylyre@0.3.1 + Maison runtime telemetry collector@1.0'
+      : `runtime step telemetry unsupported/unavailable（installed=${version || '<missing>'}, manifest=${opts.manifestVersion || '<missing>'}, wrapper=${fs.existsSync(wrapper) ? 'present' : 'missing'}）`,
+  };
+}
+
+/** Static provider/profile handshake used before the testing agent invocation. */
+export function preflightRuntimeStepTelemetry(opts: {
+  projectRoot: string;
+}): RuntimeStepTelemetryCapability {
+  const cfg = resolveHylyreToolConfig(opts.projectRoot);
+  const manifest = readVendorManifest(opts.projectRoot, cfg.vendor_dir);
+  const version = manifest?.hylyre_version ?? '';
+  return probeRuntimeStepTelemetry({ hylyreVersion: version, manifestVersion: version });
+}
 
 // -------- 公共类型 --------
 
@@ -87,6 +142,7 @@ export interface HylyreTrace {
    */
   run_failure_kind?: RunFailureKind | string;
   error_kind?: string;
+  runtime_step_telemetry?: RuntimeStepTelemetry;
 }
 
 export interface HylyreReadyOptions {
@@ -132,6 +188,8 @@ export interface HylyreRunOptions {
   coldRestart?: boolean;
   appSnapshotCacheAbs: string;
   timeoutMs?: number;
+  /** Enable Maison's same-process per-step Hypium observation wrapper. */
+  runtimeStepTelemetry?: boolean;
 }
 
 export interface HylyreRunResult {
@@ -1417,7 +1475,10 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
   const failureDir = path.join(path.dirname(path.resolve(opts.reportOutPath)), 'failures');
   hylyreArgv.push('--failure-dir', failureDir);
 
-  const command = `${opts.pythonPath} -m hylyre ${hylyreArgv.join(' ')}`;
+  const runtimeTelemetryWrapper = opts.runtimeStepTelemetry
+    ? path.resolve(__dirname, '..', 'hylyre-runtime-telemetry.py')
+    : undefined;
+  const command = `${opts.pythonPath} ${runtimeTelemetryWrapper ?? '-m hylyre'} ${hylyreArgv.join(' ')}`;
 
   const runStartedAt = new Date().toISOString();
   const runT0 = Date.now();
@@ -1425,6 +1486,7 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
     pythonPath: opts.pythonPath,
     hypiumWorkDir,
     hylyreArgv,
+    ...(runtimeTelemetryWrapper ? { pythonScriptPath: runtimeTelemetryWrapper } : {}),
     appSnapshotCacheAbs: opts.appSnapshotCacheAbs,
     logPath,
     maxBuffer: 64 * 1024 * 1024,
@@ -1624,5 +1686,9 @@ export function parseHylyreTrace(tracePath: string): HylyreTrace | null {
     artifacts: typeof raw.artifacts === 'object' && raw.artifacts !== null ? (raw.artifacts as Record<string, unknown>) : undefined,
     retries: typeof raw.retries === 'number' ? raw.retries : undefined,
     tool_calls: Array.isArray(raw.tool_calls) ? (raw.tool_calls as Array<Record<string, unknown>>) : undefined,
+    runtime_step_telemetry:
+      raw.runtime_step_telemetry && typeof raw.runtime_step_telemetry === 'object'
+        ? (raw.runtime_step_telemetry as RuntimeStepTelemetry)
+        : undefined,
   };
 }

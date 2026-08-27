@@ -211,12 +211,13 @@ export function collectRegionAttestElementIdsByScreen(
     );
     if (!fs.existsSync(jsonPath)) return out;
     const rep = JSON.parse(fs.readFileSync(jsonPath, 'utf-8')) as {
-      screens?: Array<{ screen_id?: unknown; region_attest?: Array<{ region?: unknown }> }>;
+      screens?: Array<{ screen_id?: unknown; region_attest?: Array<{ region?: unknown; method?: unknown }> }>;
     };
     for (const s of rep.screens ?? []) {
       if (typeof s.screen_id !== 'string' || !s.screen_id.trim()) continue;
       const regions = new Set<string>();
       for (const a of s.region_attest ?? []) {
+        if (a.method === 'human') continue;
         if (typeof a.region === 'string' && a.region.trim()) regions.add(a.region.trim());
       }
       if (regions.size > 0) out.set(s.screen_id.trim(), regions);
@@ -551,7 +552,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
         severity,
         status,
         details: [
-          '【P0-B 物化前置】crop 资产须先过 spec 阶段 asset_crop_validation（sanity+VL 辨认/真人确认）才可物化进模块 media：',
+          '【P0-B 物化前置】crop 资产须先过 spec 阶段 asset_crop_validation（source/hash/bbox/tool/output 绑定 + sanity/VL 机器复验）才可物化进模块 media：',
           ...unverified.map(l => `  ${l}`),
         ].join('\n'),
         suggestion:
@@ -637,7 +638,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
   }
 
   // blind-visual-hardening 四轮 P0-1：占位在场检测——maison 占位 SVG（provenance marker）
-  // 可见、sanity 会 PASS，但**占位≠素材已供给**：逐素材 WARN 入视觉债务（needs_human），
+  // 可见、sanity 会 PASS，但**占位≠素材已供给**：逐素材 WARN 入视觉债务（needs_fix），
   // brand-critical 占位 → release 经债务链保持 BLOCKED（直至真素材替换或人工验收 receipt）。
   // 五轮 P1-3：**全模块匹配**（first-match 会漏掉"A 模块真素材、B 模块占位"的实际引用模块）。
   {
@@ -678,11 +679,10 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
           details: [
             `【占位在场】${placeholderHits.length} 项素材当前为 maison 占位（可见但≠真素材）：`,
             ...placeholderHits.map(h => `  - ${h.key}（${h.kind}${h.critical ? '，brand-critical' : ''}）`),
-            '占位入视觉债务；brand-critical 占位 release 保持 BLOCKED，清偿=真素材替换（三态清偿）或人工验收 receipt 显式接受。',
+            '占位入视觉债务；brand-critical 占位 release 保持 BLOCKED，只有真素材替换并经责任阶段机器重验才可清偿。',
           ].join('\n'),
           suggestion:
-            '真素材到位后放置到对应 resolved_path/media 路径重跑（三态清偿自动闭账）；' +
-            '或走人工视觉验收 receipt 显式接受残余占位（accepted 留痕，不阻断 release 但审计分列）。',
+            '真素材到位后放置到对应 resolved_path/media 路径重跑，机器重验通过后自动闭账；人工验收不能清偿占位债务。',
           affected_files: [uiSpecRel],
           structured: { kind: 'asset_sanity', assets: placeholderHits.map(h => h.key) },
         });
@@ -757,7 +757,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
         ].join('\n'),
         suggestion:
           '删除透明占位节点：元素该渲染就真实可见渲染（真图标/真文本）；实现不了就走 ui-spec 显式' +
-          ' placeholder / fidelity_deferrals + 真人签字——透明冒充比缺失更恶劣（掩盖问题且污染结构/无障碍语义）。',
+          ' placeholder / best_effort 债务——strict pixel contract 不接受人签 defer；透明冒充比缺失更恶劣（掩盖问题且污染结构/无障碍语义）。',
         affected_files: [uiSpecRel],
       });
     }
@@ -780,7 +780,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
         ...bakedText.issues.map(i => i.detail),
       ].join('\n'),
       suggestion:
-        '把整段大图重裁为原子插画（仅图形、无声明文本）；文字/交互控件/底部 tab 用真实组件渲染。营销插画确需含字则设 baked_text_defer + 真人署名。',
+        '把整段大图重裁为原子插画（仅图形、无声明文本）；文字/交互控件/底部 tab 用真实组件渲染。装饰文本不得同时登记为 UI text 节点。',
       affected_files: [uiSpecRel],
     });
   }
@@ -798,7 +798,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
       details:
         '【P0-A OCR 不可用】烤字门禁的 OCR 承重探测不可用/失败（tesseract.js 未装或 chi_sim 未物化，或素材图 OCR 失败）——pixel_1to1 下无法核验素材是否烤字，不得放行。',
       suggestion:
-        '修复 OCR 环境：确认 harness 已装 tesseract.js 且 profiles/hmos-app/vendor/tessdata/chi_sim.traineddata 已物化；恢复后重跑（此 id 归 toolchain，signature 重复即 halt 求人）。',
+        '修复 OCR 环境：确认 harness 已装 tesseract.js 且 profiles/hmos-app/vendor/tessdata/chi_sim.traineddata 已物化；恢复后重跑（此 id 归 toolchain，signature 重复则按工具链阻塞终止本 run）。',
       affected_files: [uiSpecRel],
     });
   }
@@ -820,7 +820,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
         ...iconSubIssues.map(i => i.detail),
       ].join('\n'),
       suggestion:
-        '有品牌识别度的图标（app logo/银行 logo/营销图）裁原子素材并 $r(app.media.<key>) 渲染；标准语义图标（tab/铃铛/加号/卡种线性图标）按 P0-E 分型规则改声明 icon.kind=system_symbol + color_ref 着色 + fidelity_note；或显式 placeholder + 真人署名。',
+        '有品牌识别度的图标（app logo/银行 logo/营销图）使用机器可验证 source/hash 的原子素材并 $r(app.media.<key>) 渲染；标准语义图标按 P0-E 分型规则声明 system_symbol；仅允许的 placeholder 需保留 debt，release-required 项不得靠署名放行。',
       affected_files: [uiSpecRel],
     });
   }

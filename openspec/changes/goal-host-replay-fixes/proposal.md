@@ -1,5 +1,7 @@
 # goal-host-replay-fixes
 
+> Supersession note (2026-08-26): `autonomous-recovery-without-human-gates` retains dry-run, active-budget, event-truth, and mutation fingerprint facts while superseding human mutation adjudication with owner invalidation/backtrack. The three unrelated host replay tasks remain pending.
+
 ## Why
 
 2026-07-22 宿主实测回灌（SimulatedWalletForHmos，bc-openCard，adapter=cursor，plan 7c4f2e9b 任务 7.2）确认 spec 五连败根治生效，同时暴露四条新事故链：① 截断链 preflight 读盘鸡生蛋（run be1c48：requirement 血缘从 `goal-runs/<run_id>/manifest.json` 读盘，而 `writeGoalManifest` 在 preflight 之后——新起截断链必 fail-closed；宿主被迫 dry-run 同 run_id 预埋 manifest，导致 dry 与真跑混写同一 `events.jsonl`，dry 段渗入超时棘轮/turns/resume 重建等权威消费面）；② wall-clock 预算按日历跨度计（run 4035d4：活跃仅 ~74m，隔夜 resume 距首 run_start ~772m > 480m 上限，循环首步熔断且 outcome 无 halt_reason——resume 必死、死因不可见）；③ 授权出路全断（`pre_authorized_mutations` 被 `buildGoalManifestFromInput` 静默丢弃；classifier 冻结下 receipt 全合规仍 unauthorized；现行 banner「写 receipt 后 --resume」照做仍 HALT，属过度承诺）叠加双账本分裂（check-ut `ut_no_src_mutation` 采信 agent 自签 gap-notes → harness PASS，runner 三源链拒绝 → phase_halt，fresh-context agent 读到「已批准」复写 seam 死循环）；④ 阶段真值缺口（goal-progress/`rebuildOutcomesFromEvents` 只吃 `phase_verdict`，phase_halt 后面板撕裂、report 缺失时 resume 可把 HALT 重建成 PASS；unauthorized 分支不快照 harness 证据，UT 实测 PASS 呈现为「FAIL / Summary —」）。plan e7c2a4d8（codex×16 轮 + Claude 复审 ×2 轮收敛至 v23；v21 范围收口裁决：威胁模型冻结为「防正常框架流程误混写」，不建 identity ledger/OS 锁等安全数据库）。

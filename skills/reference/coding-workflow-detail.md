@@ -12,9 +12,9 @@
 
 4. **按 spec 声明渲染几何/填充**：声明 `width_ratio≤0.6`/`align: end` 的按钮不得 `.width('100%')`/`layoutWeight(1)`；`variant: tonal` 不得高饱和实心 `backgroundColor`；`subtitle_position: trailing` 的副标题须同行右置、`below` 才题下。门禁 `visual_parity_render` 为 pixel_1to1 BLOCKER——抓的是源码静态可判的确定性违规，不缓期"以 device 为准"。
 
-5. **严禁透明占位冒充**：**绝不允许**把 spec 文本/资产/符号引用挂在 `opacity(0)`/`visibility(Visibility.None|Hidden)`/零尺寸/`fontSize(0)` 节点上"骗"presence 扫描——引用在、渲染无＝作弊，比缺失更恶劣（掩盖问题+污染结构/无障碍语义）。元素该渲染就真实可见渲染；实现不了走 ui-spec 显式 placeholder / fidelity_deferrals + 真人签字。门禁 `visual_parity_invisible_presence` 拦截。
+5. **严禁透明占位冒充**：**绝不允许**把 spec 文本/资产/符号引用挂在 `opacity(0)`/`visibility(Visibility.None|Hidden)`/零尺寸/`fontSize(0)` 节点上"骗"presence 扫描——引用在、渲染无＝作弊，比缺失更恶劣（掩盖问题+污染结构/无障碍语义）。元素该渲染就真实可见渲染；实现不了时，optional 资产走 ui-spec 显式 placeholder/debt，required 资产保持 FAIL，真实能力缺失才走 capability defer。门禁 `visual_parity_invisible_presence` 拦截。
 
-6. **结构声明台账**：ui-spec 的**每条结构声明**（`subtitle_position`/`layout_group`/`bg_color`/`global_elements` 条目）必须在 `<features_dir>/<feature>/coding/structure-conformance.yaml` 逐条登记：`entries[]: node_id/declaration/implemented_by（真实 struct 名）/how（一句话实现说明）`。背景：结构声明曾被 coding 静默无视，没有任何产物记录处理方式，拖到真机才暴露——台账让每条声明必须表态。**登记≠实现完成**——`implemented_by` 糊名（struct 不存在）门禁直接拦；内容糊弄会被 review 逐条人审+device 文本信号双重打回。无 id 节点用门禁报错里的合成键（`screen:<sid>/<type>@<order>`）照抄。门禁 `structure_declaration_ledger` 拦截。
+6. **结构声明台账**：ui-spec 的**每条结构声明**（`subtitle_position`/`layout_group`/`bg_color`/`global_elements` 条目）必须在 `<features_dir>/<feature>/coding/structure-conformance.yaml` 逐条登记：`entries[]: node_id/declaration/implemented_by（真实 struct 名）/how（一句话实现说明）`。背景：结构声明曾被 coding 静默无视，没有任何产物记录处理方式，拖到真机才暴露——台账让每条声明必须表态。**登记≠实现完成**——`implemented_by` 糊名（struct 不存在）门禁直接拦；内容糊弄会被 review 逐条机器对账+device 文本信号双重打回。无 id 节点用门禁报错里的合成键（`screen:<sid>/<type>@<order>`）照抄。门禁 `structure_declaration_ledger` 拦截。
 
 7. **弱模型**：若无法看图，仍须完整读取 ui-spec 文本 SSOT。**模型档位**：Read 原图步骤推荐强 VL；纯编码步骤可用内网弱模型。
 

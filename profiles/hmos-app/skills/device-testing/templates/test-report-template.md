@@ -73,14 +73,12 @@
 
 ### 逐信号复核（defect-review，**存在 actionable 视觉信号时必填**）
 
-> **adjudicated-repair-loop（plan e2b7c4a9）**：producer 判定为 actionable 的结构化视觉信号
-> （visual-diff.json 的 defects）必须在本块**逐信号、一对一**复核——confirmed（同向）才会物化为
-> 可回退候选；disputed / 未复核 / producer 归为 uncertain 一律停等求人。
+> 本块只提供 agent 诊断说明，不具备否决机器证据的权力。producer 判定为 actionable 且证据合同
+> 有效的结构化视觉信号会直接物化 repair candidate；合法 provider defect 同样直接回修。
+> producer uncertain/provider invalid 表示证据不足，由 required/optional 质量轴投影 FAIL、defer 或 advisory。
 > **signal 必须精确填该 defect 的稳定指纹**（`screen|class|element|bbox_bucket[|producer#finding_id]`，
 > 可从 visual-diff.json 的 defects 条目复制的结构键），不填屏名/指令文本（防同屏多缺陷歧义）。
-> 人工恢复**不走本块**（本块是 agent 复核结论，无人工终裁效力）：判为误报或已解决时，
-> 由 runner 外签发并注入可信 `human_visual_acceptance` receipt 后再 resume；确认为真缺陷时，
-> 写 `verdict=fail` + `must_fix` 后再 resume。`confirmed_by` 在本恢复路径仅作展示，不构成授权。
+> 用户交付后的 UX 反馈应作为 correction/successor run 输入，不回写当前 run 的 verdict。
 > 格式（fenced 块，**逐信号一条**，禁止 inline 注释）：
 
 ```defect-review

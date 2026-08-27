@@ -21,14 +21,14 @@ export type FailureKind =
    * 只修 goal 级归因/提示，不驱动产品代码回退。 */
   | 'test_contract'
   /** P0-4(d)（plan 7c4f2e9b）：spec 捕获完整性缺口——独立命名防误标 code_regression；
-   * 主出口=actionability 聚合层（全 human_only 即时求人），不入 SIGNATURE_HALT_KINDS。 */
+   * 主出口=actionability 聚合层，不入 SIGNATURE_HALT_KINDS。 */
   | 'spec_capture_gap'
   | 'code_regression'
   | 'external_block'
   | 'agent_timeout'
   | 'transient_api_error'
   | 'agent_no_output'
-  /** P0-9b：唯一阻塞=T2 真人过目确认（设计内求人时刻，重试无意义，不入 no_progress 口径） */
+  /** legacy event vocabulary；当前 summary 中同类视觉缺口重投影为 visual_gap。 */
   | 'await_human_confirm'
   /**
    * t1（plan f7a3d9c2）：指纹级无进展熔断——check 层比对轮次账本（visual-rounds.ledger.jsonl）
@@ -44,11 +44,8 @@ export type FailureKind =
    * 归因话术不得武断写成「用户手动」——只描述控制台中断类退出本身。
    */
   | 'operator_interrupt'
-  /** C5-min 验证转嫁禁令：修正触及验证层而宿主无 device 能力（evidence 缺口，与 await_human 系同构，不入 no_progress 口径）。
-   * 【合并时留下的开放问题，未拍板】它和 await_human_confirm 结构同构——都设计成"首触即 halt"；
-   * 但 await_human_confirm 在 chrys 实证里被证明会被 agent_timeout 掩盖而未能首触即拦，因此才
-   * 被拉进 CUMULATIVE_HALT_FAMILY 累计兜底。verification_evidence_gap 目前**未**加入该家族——
-   * 是否也需要同样的累计兜底，取决于它在真实场景里是否会被类似掩盖，尚无实证，留待观察后决定。 */
+  /** C5-min 验证转嫁禁令：修正触及验证层而宿主无 device 能力。
+   * 当前由 capability/external 路由诚实 defer，不以人工签字替代 evidence。 */
   | 'verification_evidence_gap'
   /** P0-5（plan d9b4f7e2，07-13 chrys bc-openCard 拉锯实证）：framework 完整性门禁家族
    * （blocking_class='integrity'，6 subtype：framework_drift / framework_foreign_file /
@@ -82,8 +79,7 @@ export function isOperatorInterruptSignal(
  * agent-output.log 哨兵采集后传入，**优先于 summary blocker 归因**（blocker 只是症状：
  * 超时/断流 attempt 的 spec_file_exists 是"没跑完"的派生物，不是内容失败）。
  * 优先级：operator_interrupt（控制台中断类退出，压过一切）> agent_timeout（runner tree-kill
- * 确定性事实，但若 summary blockers 全为 await_human 家族则让位于 await_human_confirm——
- * E4：案B chrys 现场实证 agentTimedOut 会遮蔽"其实只差真人签字"的判定）>
+ * 确定性事实）>
  * transient_api_error（断流串可能是被杀连带产生，故 timed_out 时不判断流）>
  * agent_no_output > blocker 归因。
  */
@@ -178,8 +174,8 @@ export const SIGNATURE_HALT_KINDS: ReadonlySet<FailureKind> = new Set<FailureKin
 
 /**
  * E4（多模态降级阶梯 plan d4a8f3c6）：跨 attempt **累计**（非仅连续）重复同一 blocker_signature
- * 即 halt/降档 的家族——基建类（toolchain）与求人类（await_human_confirm）反复出现却被其他
- * 产物的变化"冲淡"掩盖（spec.md 内容每轮在变 ≠ 这个具体 blocker 真的在改善）。
+ * 即 halt/降档 的家族——基建类（toolchain）反复出现却被其他产物的变化"冲淡"掩盖
+ * （spec.md 内容每轮在变 ≠ 这个具体 blocker 真的在改善）。
  * 【扩展位已废弃，E3 后确认无需启用】此处原计划给盲档（effective_image_input=none）下的
  * capture_completeness_external 单开一个 'blind_review' FailureKind 归入本家族；E3 落地时
  * 该 check 改走另一条路径——直接把命中降为 WARN/MAJOR + 落 blind-review-pending.yaml
@@ -187,7 +183,6 @@ export const SIGNATURE_HALT_KINDS: ReadonlySet<FailureKind> = new Set<FailureKin
  */
 export const CUMULATIVE_HALT_FAMILY: ReadonlySet<FailureKind> = new Set<FailureKind>([
   'toolchain',
-  'await_human_confirm',
 ]);
 
 /**
@@ -292,18 +287,11 @@ export interface GoalSummaryBlocker {
 
 export type BlockerActionability = 'agent_fixable' | 'human_only' | 'toolchain_blocked';
 
-/** human_only 兼容映射：id 精确表（真人签字/确认是唯一合规出路的门禁） */
+/** human_only 兼容映射：仅剩已退役的历史门禁 id。当前 blocker 不得进入人签队列。 */
 const HUMAN_ONLY_BLOCKER_IDS: ReadonlySet<string> = new Set<string>([
   'fidelity_deferrals_human_sign',
-  'fidelity_capability_pregate',
-  // plan e7c2a4d8 T4d（codex 二轮 P0-c + 四轮 P1-⑥）：goal 环境专用改码门禁——显式
-  // human_only，绝不落 agent_fixable 缺省（否则 harness FAIL 转化为内容重试循环）。
-  // 通用 ut_no_src_mutation 维持缺省（还承载 legacy fallback/stale_diff_base 等
-  // 机器可修形态）。
-  'goal_post_review_source_mutation_unresolved',
 ]);
-/** human_only 兼容映射：classification/failure_kind 族（含视觉二期人类门禁——codex 六轮 P0#3；
- * c7e4a2d9 已移除 await_human_p0_skip——P0 未豁免 explicit skip 默认 agent_fixable 走 coding） */
+/** human_only 兼容映射：仅解释旧产物；当前 writer 不产生这些 classification。 */
 const HUMAN_ONLY_CLASSIFICATIONS: ReadonlySet<string> = new Set<string>([
   'await_human_confirm',
   'await_human_fidelity_tier',
@@ -360,10 +348,12 @@ export function aggregateBlockerActionability(
  */
 export function classifyTimedOutWithFreshBlockers(
   summary: GoalSummaryLike | null | undefined,
-): 'await_operator_toolchain' | 'await_human_gate_deferral' | null {
+): 'await_operator_toolchain' | null {
   const agg = aggregateBlockerActionability(summary);
   if (agg.hasToolchain) return 'await_operator_toolchain';
-  if (agg.allHumanOnly) return 'await_human_gate_deferral';
+  // Human-only quality parking is retired. Legacy classifications are
+  // revalidated by the owning quality/capability path and never create a new
+  // resume-by-signature halt.
   return null;
 }
 
@@ -513,14 +503,7 @@ export function classifyFailureKind(
     if (fresh && isAllFrameworkBugBlockers(summary)) {
       return 'framework_bug';
     }
-    // E4（cursor+codex 双 review 采纳）：agentTimedOut 最高优先没错，但若这轮 summary 的
-    // blockers 非空且**全部**已被 check 层判定为 await_human_confirm（真人签字家族），
-    // 说明超时只是"顺带杀死了一个本来就只差人签的 attempt"——归 agent_timeout 会让 runner
-    // 继续做免预算重试（P0-B.5 不吃 retries），而人签墙不会因重试消失，等同无限空转。
-    const blockers = summary?.blockers ?? [];
-    if (blockers.length > 0 && blockers.every((b) => b.classification === 'await_human_confirm')) {
-      return 'await_human_confirm';
-    }
+    // 旧 await_human_confirm 不再压过超时事实；恢复后由当前视觉 checker 重算机器证据。
     return 'agent_timeout';
   }
   if (signals?.agentApiError) return 'transient_api_error';
@@ -552,19 +535,19 @@ export function classifyFailureKind(
   if (ids.some((id) => DETERMINISTIC_GATE_BLOCKER_IDS.has(id))) {
     return 'deterministic_gate_or_artifact_missing';
   }
-  // P0-9b：visual-diff-check 收窄判定后置的 await_human_confirm classification——全 P0 屏 pass
-  // 候选且零 must_fix/stale，唯一 BLOCKER=真人确认。agent 不能替人签，重试无意义 → 独立 kind。
+  // legacy compatibility：旧 await_human_confirm 不是通行证，也不再进入等待用户的 kind；
+  // 回到视觉责任路径，以当前机器证据重验。
   if ((summary?.blockers ?? []).some((b) => b.classification === 'await_human_confirm')) {
-    return 'await_human_confirm';
+    return 'visual_gap';
   }
   // t1（f7a3d9c2）：指纹级无进展熔断——须在 isVisualGapBlockerId 前缀归类**之前**判
   // （fuse blocker id 以 visual_diff 开头，否则被吸成 visual_gap 走粗熔断路径）。
-  // 与 await_human_confirm 互斥由 check 侧保证（仅 awaitHumanOnly=false 才计算 fuse）。
+  // 当前 check 侧直接用机器证据计算 fuse。
   if ((summary?.blockers ?? []).some((b) => b.classification === 'no_progress_fuse')) {
     return 'no_progress_fuse';
   }
   // C5-min：验证转嫁禁令的 evidence 缺口（check 层 failure_kind: verification_evidence_gap）——
-  // 设计内求人时刻，重试无意义，首触即 halt；不入 SIGNATURE_HALT_KINDS（不吃 no_progress 口径）。
+  // 当前由 capability/external 责任路由处理，不以人工确认替代验证 evidence。
   if ((summary?.blockers ?? []).some((b) => b.classification === 'verification_evidence_gap')) {
     return 'verification_evidence_gap';
   }

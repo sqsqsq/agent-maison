@@ -241,7 +241,7 @@ export function verifyVlSigningChain(args: {
     expectedInvoke,
   });
   if (!runId || !expectedInvoke) {
-    return fail('无 goal run/attempt 身份（vl_multimodal 终签链仅 runner 编排链路可成立——交互态走 human_confirmed/盲档）');
+    return fail('无 goal run/attempt 身份（vl_multimodal 终签链仅 runner 编排链路可成立；其他场景保持 unverified，不得以人签替代）');
   }
 
   // manifest.adapter=运行身份（goal 语境不以 config 为准——一轮 review 硬学习）

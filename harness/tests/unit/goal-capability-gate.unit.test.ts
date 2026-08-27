@@ -15,11 +15,18 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { runInvokeCapabilityGate, resolveLastHaltReason } from '../../scripts/goal-runner';
+import {
+  runInvokeCapabilityGate,
+  runRuntimeTelemetryPreflightGate,
+  resolveLastHaltReason,
+  resolveGoalRunStatusFromOutcomes,
+} from '../../scripts/goal-runner';
 import { harnessPreflightPath } from '../../scripts/utils/capability-preflight';
 import { loadFrameworkConfig, clearFrameworkConfigCache } from '../../config';
 import { loadResolvedProfile } from '../../profile-loader';
 import type { GoalPhaseOutcome } from '../../scripts/utils/goal-report-generator';
+import { rebuildOutcomesFromEvents } from '../../scripts/utils/goal-runner-phase';
+import { resolveGoalRunStatus } from '../../scripts/utils/phase-transition-policy';
 import {
   recordHvigorBuildOutcome,
   resetCapabilityFailedByHumanReprobe,
@@ -93,6 +100,26 @@ function runGate(root: string, events: Array<Record<string, unknown>>): ReturnTy
   });
 }
 
+function writeP0Acceptance(root: string, feature: string): void {
+  const dir = path.join(root, 'doc', 'features', feature);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'acceptance.yaml'), `flows:
+  checkout:
+    screens: [home, success]
+criteria:
+  - id: AC-1
+    priority: P0
+    ut_layer: device
+    linked_flow: checkout
+    checkpoint:
+      pre_screen: home
+      action: { type: touch, target_element_id: pay_button }
+      post_screen: success
+      required_element_ids: [success_title]
+      forbidden_element_ids: [error_banner]
+`, 'utf-8');
+}
+
 const cases: Array<{ name: string; run: () => void }> = [
   {
     name: '全链场景：齐备放行→capability_failed halt（仅 phase_halt 无 invoke 事件）→resume 仍 halt→人工 reprobe 放行→verified 放行',
@@ -146,6 +173,62 @@ const cases: Array<{ name: string; run: () => void }> = [
         // ⑤ wrapper 真实编译成功 → verified → 持续放行
         recordHvigorBuildOutcome(root, { kind: 'verified', fingerprint: FP });
         assert(runGate(root, events) === null, 'verified 后须放行');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        clearFrameworkConfigCache();
+      }
+    },
+  },
+  {
+    name: 'P0 runtime telemetry：unsupported 在 agent invoke 前精确 defer；supported 放行；events-only 回放保留 capability_missing',
+    run: () => {
+      const root = mkHmosProject();
+      const feature = 'runtime-preflight';
+      writeP0Acceptance(root, feature);
+      const events: Array<Record<string, unknown>> = [];
+      try {
+        clearFrameworkConfigCache();
+        const cfg = loadFrameworkConfig(root);
+        const resolved = loadResolvedProfile(root, cfg);
+        const unsupported = runRuntimeTelemetryPreflightGate({
+          projectRoot: root,
+          feature,
+          phase: 'testing',
+          retries: 0,
+          resolvedProfile: resolved,
+          emitPhaseVerdict: event => events.push({ type: 'phase_verdict', ...event }),
+          probe: () => ({ supported: false, reason: 'hylyre@0.4.0 unsupported' }),
+        });
+        assert(unsupported !== null, 'unsupported provider 须 defer');
+        assert(unsupported!.outcome.deferred === true, 'outcome 须 deferred');
+        assert(unsupported!.outcome.halted !== true, 'capability defer 不得伪装 HALT');
+        assert(unsupported!.outcome.deferred_reason === 'capability_missing', '须保留精确 defer 原因');
+        assert(
+          resolveGoalRunStatusFromOutcomes([unsupported!.outcome], false) === 'DEFERRED_CAPABILITY_MISSING',
+          'live outcome → run_end 投影不得丢 deferred_reason',
+        );
+        assert(events.length === 1 && events[0].type === 'phase_verdict', '只应落标准 phase_verdict');
+        assert(events.every(event => event.type !== 'agent_invoke_start'), '不得启动 agent');
+
+        const rebuilt = rebuildOutcomesFromEvents(events as any, ['testing']);
+        assert(rebuilt[0]?.deferred_reason === 'capability_missing', 'events-only 回放不得降级为 external_blocked');
+        assert(
+          resolveGoalRunStatus(rebuilt, false) === 'DEFERRED_CAPABILITY_MISSING',
+          'crash/resume 状态须仍为 DEFERRED_CAPABILITY_MISSING',
+        );
+
+        const supportedEvents: Array<Record<string, unknown>> = [];
+        const supported = runRuntimeTelemetryPreflightGate({
+          projectRoot: root,
+          feature,
+          phase: 'testing',
+          retries: 0,
+          resolvedProfile: resolved,
+          emitPhaseVerdict: event => supportedEvents.push({ type: 'phase_verdict', ...event }),
+          probe: () => ({ supported: true, reason: 'supported' }),
+        });
+        assert(supported === null, 'supported provider 须放行到真实 testing');
+        assert(supportedEvents.length === 0, '放行不得写 defer 事件');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
         clearFrameworkConfigCache();

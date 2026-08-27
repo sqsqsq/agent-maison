@@ -17,7 +17,7 @@
 
 - 所有字段都必填（即便值为 `[]` 也要显式写出）。
 - 不要臆造 `NOT_responsible_for` / `easily_confused_with`；无依据则 `[]`。
-- `confirmed_by_user` 默认为 `false`；仅当用户审阅后手改为 `true` 才允许合并进 `doc/module-catalog.yaml`。
+- `selection_status` 默认为 `pending`；仅当普通输入选择为 `selected` 后才允许合并进 `doc/module-catalog.yaml`。
 - `signals_used` 须反映真实读过的输入（architecture / README / `module.json5` / `oh-package.json5` / 导出入口等）。
 
 ### skill-assets.yaml 键

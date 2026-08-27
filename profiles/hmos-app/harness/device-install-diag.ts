@@ -187,7 +187,7 @@ export function mapInstallBlockingToUtCheckFields(diag: InstallBlockingDiagnosis
             blocking_class: 'needsConfirmation',
             suggestion:
               '装机预检不确定（见 ut-install-diag.json，常见为 AppScope/app.json5 缺失、解析失败或 bundleName 无效）：' +
-              '核对并修复 AppScope/app.json5 元数据后重跑；如需修改工程配置，按源码变更授权流程处理（gap-notes approved_src_mutations）。无需卸载设备应用。',
+              '核对 AppScope/app.json5 元数据；如需修改工程配置，交回 coding owner 修改并重走 review→ut→testing。无需卸载设备应用。',
           };
     default:
       return {

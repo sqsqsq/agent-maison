@@ -198,6 +198,8 @@ export interface GoalRunEvent {
   status?: string;
   blocking_class?: string;
   failure_kind?: string;
+  /** defer verdict 的精确原因；缺省兼容旧事件为 external_blocked。 */
+  deferred_reason?: string;
   failure_kind_classified?: string;
   /** E4：跨 attempt 累计统计（events.jsonl 回放，非内存计数）用——phase_verdict 已带的字段。 */
   blocker_signature?: string;
@@ -485,7 +487,7 @@ export function countCumulativeAdvanceBlocked(
 
 /**
  * E4：同一 blocker_signature 在给定 failure_kind 家族内跨 attempt **累计**（非仅连续）出现
- * 次数——basis for CUMULATIVE_HALT_FAMILY（toolchain/await_human_confirm 等）反复出现却被
+ * 次数——basis for CUMULATIVE_HALT_FAMILY（当前为 toolchain）反复出现却被
  * 其他产物变化"冲淡"掩盖（spec.md 内容每轮在变 ≠ 这个具体 blocker 真的在改善）。
  */
 export function countRepeatedSignatureInFamily(
@@ -811,7 +813,12 @@ export function rebuildOutcomesFromEvents(
         phase,
         verdict,
         deferred: true,
-        deferred_reason: 'external_blocked',
+        deferred_reason:
+          typeof e.deferred_reason === 'string'
+            ? e.deferred_reason
+            : typeof e.failure_kind === 'string'
+              ? e.failure_kind
+              : 'external_blocked',
       });
       continue;
     }

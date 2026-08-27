@@ -54,7 +54,7 @@ import {
   VISUAL_GAP_RETRY_GUIDANCE_TESTING,
   type CapabilityAdvisory,
 } from '../../scripts/goal-runner';
-import { buildAwaitHumanConfirmGuidance, buildClosureWallGuidance } from '../../scripts/utils/await-confirm-guidance';
+import { buildClosureWallGuidance } from '../../scripts/utils/await-confirm-guidance';
 import { clearFrameworkConfigCache } from '../../config';
 import { loadResolvedProfile } from '../../profile-loader';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
@@ -815,18 +815,18 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
-      name: 'VISUAL_GAP_RETRY_GUIDANCE: forbids verdict abandonment',
+      name: 'VISUAL_GAP_RETRY_GUIDANCE: forbids verdict abandonment and human quality gates',
       run: () => {
         const text = VISUAL_GAP_RETRY_GUIDANCE.join('\n');
         assert(/verdict=fail/.test(text), 'missing verdict=fail instruction');
         assert(/must_fix/.test(text), 'missing must_fix conversion instruction');
         assert(/do NOT leave such screens pending/i.test(text), 'missing pending prohibition');
-        assert(/confirmed_by/.test(text), 'missing PASS-candidate human-confirm boundary');
+        assert(/valid current machine evidence/i.test(text), 'missing current machine-evidence boundary');
+        assert(!/confirmed_by|human.confirm/i.test(text), 'legacy human quality gate must stay retired');
       },
     },
     {
-      // P0-9b（plan e7a91b3c）：唯一阻塞=T2 真人确认 → 独立 kind（重试无意义，不入 no_progress 口径）
-      name: 'classifyFailureKind: await_human_confirm wins over visual_gap id bucket',
+      name: 'classifyFailureKind: legacy await_human_confirm reprojects to visual_gap',
       run: () => {
         const summary = {
           blockers: [
@@ -834,40 +834,10 @@ export function runAll(): UnitCaseResult[] {
             { id: 'testing_run_status' },
           ],
         } as never;
-        assert(classifyFailureKind(summary) === 'await_human_confirm', 'await classification must win');
+        assert(classifyFailureKind(summary) === 'visual_gap', 'legacy human gate must re-enter machine visual validation');
         // 无 await 标注的 visual_diff 仍归 visual_gap（回归保护）
         const plain = { blockers: [{ id: 'visual_diff' }] } as never;
         assert(classifyFailureKind(plain) === 'visual_gap', 'plain visual_diff stays visual_gap');
-      },
-    },
-    {
-      // P0-10a：引导话术机器生成——按 run 上下文注入、协议要素齐、零硬编码人名、含高保真 CLI
-      name: 'buildAwaitHumanConfirmGuidance: run-context injection + protocol + no hardcoded name',
-      run: () => {
-        const text = buildAwaitHumanConfirmGuidance({
-          feature: 'homepage',
-          runId: '20260703T181220Z',
-          phase: 'testing',
-          screenshotsDirRel: 'doc/features/homepage/device-testing/device-screenshots',
-          visualDiffJsonRel: 'doc/features/homepage/device-testing/device-screenshots/visual-diff.json',
-          harnessPrefixRel: 'framework/harness',
-        }).join('\n');
-        // run 上下文注入
-        assert(/homepage/.test(text), 'missing feature injection');
-        assert(/20260703T181220Z/.test(text), 'missing run_id injection');
-        // layout 完整命令 + resume 全参数（codex P2）
-        assert(/npm --prefix framework\/harness run visual-confirm -- --feature homepage/.test(text), 'missing prefixed CLI command');
-        assert(/--resume 20260703T181220Z --force-resume/.test(text), 'missing full resume command');
-        // 协议要素
-        assert(/confirmed_by/.test(text), 'missing confirmed_by instruction');
-        assert(/user_requirement/.test(text), 'missing user_requirement-invalid warning (P0-6)');
-        assert(/verdict.{0,4}fail|"fail"/.test(text), 'missing reject path');
-        assert(/evaluated_build_fingerprint/.test(text), 'missing bind-field protection');
-        // 信任层级（cursor 意见）
-        assert(/软契约/.test(text) && /高保真/.test(text), 'missing trust-tier note');
-        // 零硬编码人名（署名一律"当场提供"）
-        assert(/当场/.test(text), 'signature must be prompted, not templated');
-        assert(!/盛全|张三|alice|Alice/.test(text), 'must not embed a specific human name');
       },
     },
     {
@@ -1564,8 +1534,8 @@ export function runAll(): UnitCaseResult[] {
           [],
           pixelAdvisory,
         );
-        // 真视觉档下原文原样保留（回归保护）
-        assert(/only path through pixel_1to1 P0/i.test(pixelPrompt), 'pixel_1to1 档应保留原 HALT for human 措辞');
+        assert(/current native\/delegated machine visual evidence/i.test(pixelPrompt), 'pixel_1to1 档应要求当前机器视觉证据');
+        assert(!/HALT for human|human final confirmation/i.test(pixelPrompt), 'pixel_1to1 档不得恢复人签门禁');
       },
     },
     {
@@ -1573,7 +1543,7 @@ export function runAll(): UnitCaseResult[] {
       run: () => {
         const prompt = buildPhasePrompt(MINIMAL_MANIFEST, FRAMEWORK_ROOT, 'review', FRAMEWORK_ROOT, []);
         assert(!prompt.includes('Visual capability advisory'), '未传 advisory 不应出现能力块');
-        assert(/only path through pixel_1to1 P0/i.test(prompt), '未传 advisory 时应保留原文（向后兼容）');
+        assert(/current native\/delegated machine visual evidence/i.test(prompt), '未传 advisory 时也不得恢复人签门禁');
       },
     },
     {
@@ -1827,11 +1797,11 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     // ======================================================================
-    // E4（多模态降级阶梯 plan d4a8f3c6）：案B chrys 银行卡实证 —— agentTimedOut 遮蔽人签墙
-    // + operator_interrupt 误判 + 事件回放累计熔断
+    // E4（多模态降级阶梯 plan d4a8f3c6）：operator_interrupt 误判 + 事件回放累计熔断；
+    // legacy 人签分类必须由当前机器 checker 重算。
     // ======================================================================
     {
-      name: 'E4 classifyFailureKind: agentTimedOut + blockers 全为 await_human_confirm → await_human_confirm（不再 agent_timeout）',
+      name: 'E4 classifyFailureKind: agentTimedOut + legacy await_human_confirm remains agent_timeout',
       run: () => {
         const k = classifyFailureKind(
           {
@@ -1844,7 +1814,7 @@ export function runAll(): UnitCaseResult[] {
           undefined,
           { agentTimedOut: true },
         );
-        assert(k === 'await_human_confirm', `全 await_human 时应让位，实得 ${k}`);
+        assert(k === 'agent_timeout', `legacy 人签分类不得遮蔽本轮超时，实得 ${k}`);
       },
     },
     {
@@ -1972,7 +1942,7 @@ export function runAll(): UnitCaseResult[] {
         assert(ADVANCE_BLOCKED_HALT_THRESHOLD === 2, String(ADVANCE_BLOCKED_HALT_THRESHOLD));
         assert(CUMULATIVE_HALT_THRESHOLD === 3, String(CUMULATIVE_HALT_THRESHOLD));
         assert(CUMULATIVE_HALT_FAMILY.has('toolchain'), 'toolchain in family');
-        assert(CUMULATIVE_HALT_FAMILY.has('await_human_confirm'), 'await_human_confirm in family');
+        assert(!CUMULATIVE_HALT_FAMILY.has('await_human_confirm'), 'legacy human gate must not drive a current cumulative halt');
       },
     },
     {

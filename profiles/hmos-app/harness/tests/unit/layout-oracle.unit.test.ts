@@ -32,7 +32,6 @@ import { collectLocatorRequiredElements } from '../../coding-visual-parity-check
 import {
   collectSelfreportDegeneracy,
   validateVisualDiffJson,
-  isScreenAwaitConfirmEligible,
   computeDefectFingerprint,
   collectDefectFingerprints,
   fingerprintSetsEqual,
@@ -388,34 +387,6 @@ cases.push({
         tmp,
       );
       assert(r2.errors.some(e => e.includes('evaluation_invalidated')), 'evaluation_invalidated 类型拦截');
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  },
-});
-
-cases.push({
-  name: 't4③：evaluation_invalidated 屏排除出 await_human_confirm 资格',
-  fn: () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'layout-oracle-'));
-    try {
-      const shot = path.join(tmp, 'shot.png');
-      fs.writeFileSync(shot, 'png-bytes');
-      const { createHash } = require('crypto') as typeof import('crypto');
-      const hash = createHash('sha256').update(fs.readFileSync(shot)).digest('hex').slice(0, 16);
-      const base: VisualDiffScreenEntry = {
-        screen_id: 's',
-        verdict: 'pass',
-        screenshot_path: shot,
-        evaluated_screenshot_hash: hash,
-        evaluated_build_fingerprint: 'fp1234567890',
-        must_fix: [],
-      };
-      assert(isScreenAwaitConfirmEligible(base, tmp, 'fp1234567890'), '干净 pass 屏合格');
-      assert(
-        !isScreenAwaitConfirmEligible({ ...base, evaluation_invalidated: true }, tmp, 'fp1234567890'),
-        '评估失效屏不合格（须 critic 重评清标记后再签）',
-      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

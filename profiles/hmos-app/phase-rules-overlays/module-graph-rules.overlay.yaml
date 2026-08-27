@@ -13,5 +13,5 @@ traceability_checks:
     severity: BLOCKER
   noncore_body_drift:
     description: >
-      hmos-app：非 core 体变 [status=WARN]；可重跑 bootstrap:code-graph 刷新 derived 后人工复核 nodes。
+      hmos-app：非 core 体变 [status=WARN]；可重跑 bootstrap:code-graph 刷新 derived 后用当前源码/契约机器对账 nodes。
     severity: MINOR

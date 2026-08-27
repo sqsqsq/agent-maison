@@ -2,9 +2,9 @@
   "rules": [
     {
       "id": "ut_no_src_mutation",
-      "status": "PASS",
+      "status": "FAIL",
       "severity": "BLOCKER",
-      "details_includes": "均已在 approved_src_mutations"
+      "details_includes": "legacy approved_src_mutations/用户回复不参与质量放行"
     }
   ]
 }

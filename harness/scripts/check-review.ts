@@ -33,11 +33,6 @@ import {
 } from './utils/markdown-parser';
 import { relFeatureArtifact, relFeatureFile, featureFilePath } from '../config';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
-import * as crypto from 'crypto';
-import {
-  defaultTrustRegistryPath,
-  validateConfirmationReceiptFile,
-} from './utils/confirmation-receipt';
 import { checkFactsArtifact } from './utils/context-facts';
 import { checkUpstreamVerdictGate } from './utils/upstream-verdict-gate';
 import { checkChangeUnitFeatureProjection } from './utils/change-unit-feature-projection';
@@ -686,7 +681,7 @@ function checkReviewScopeToDesign(ctx: CheckContext, report: string): CheckResul
 // P1-B（plan f2d8c4a6）：视觉保真审查维度——review 报告须有该维度的执行证据。
 // round6 实证（RC6）：review 只查架构/契约/规范/逻辑/数据五维，废图+乱布局下"有条件通过"。
 // review 不重跑度量，**消费** spec/coding 落盘的确定性报告；本 check 确定性核"证据被引用过"，
-// 引用内容的真实性归 AI verifier（issue_accuracy 抽样）与人工复核——诚实边界：报告声称≠真看过。
+// 引用内容的真实性归当前 AI verifier 的 issue_accuracy 及 item-level 证据绑定——诚实边界：报告声称≠真看过。
 // --------------------------------------------------------------------------
 
 /** pixel_1to1 P0 全覆盖证据类别（codex 意见：不许抽查）；非 pixel 至少命中 1 类 */
@@ -724,7 +719,7 @@ export function checkVisualFidelityReview(ctx: CheckContext, report: string): Ch
   const missingEvidence = VISUAL_REVIEW_EVIDENCE.filter(e => !e.re.test(report));
   const evidenceHit = VISUAL_REVIEW_EVIDENCE.length - missingEvidence.length;
   const boundaryNote =
-    '【诚实边界】本 check 只确定性核"维度存在+证据被引用"；引用真实性由 AI verifier issue_accuracy 抽样与人工复核兜。';
+    '【诚实边界】本 check 只确定性核"维度存在+证据被引用"；引用真实性由当前 AI verifier 的 issue_accuracy 与 item-level 证据绑定复验。';
 
   const insufficient = !hasDimension || (pixel ? missingEvidence.length > 0 : evidenceHit === 0);
   if (insufficient) {
@@ -903,13 +898,12 @@ export function checkNegativeVerdictClosure(report: string): CheckResult[] {
 /**
  * 洞⑥（bc-openCard）：review 结论「有条件通过 + 2 MAJOR」在 conclusion_with_verdict
  * 下无 BLOCKER 即 PASS，goal 照常推进——"修复后重跑或授权 review.ok_to_ut"只是 prose。
- * 机器化：有条件通过 且 存在未关闭 MAJOR 且 无有效 conditional_review_authorization
- * receipt → BLOCKER FAIL；receipt 有效 → WARN（降级不洗白，run 封顶
- * AWAITING_HUMAN_REVIEW）。LLM verifier 的 PASS 只证"报告可信"，不再被消费为"产品 PASS"。
+ * 机器化：有条件通过且存在未关闭 MAJOR → BLOCKER FAIL。人工授权不得把已知缺陷
+ * 降级为可推进状态；LLM verifier 的 PASS 只证"报告可信"，不再被消费为"产品 PASS"。
  */
 function checkConditionalPassClosure(ctx: CheckContext, report: string): CheckResult[] {
   const id = 'conditional_pass_closure';
-  const description = '「有条件通过」闭环门禁（未闭环 MAJOR 不得推进；授权凭证仅降级）';
+  const description = '「有条件通过」闭环门禁（未闭环 MAJOR 不得推进）';
   const section = getSectionContent(report, '结论') ?? getSectionContent(report, '审查结论') ?? '';
   const { verdict } = extractDeclaredVerdict(section, ['有条件通过', '不通过', '通过']);
   if (verdict !== '有条件通过') {
@@ -934,29 +928,14 @@ function checkConditionalPassClosure(ctx: CheckContext, report: string): CheckRe
       details: '有条件通过但全部 MAJOR 已标记关闭（问题表状态列）。',
     }];
   }
-  const receiptPath = featureFilePath(ctx.projectRoot, ctx.feature, path.join('review', 'conditional-authorization.receipt.json'));
-  const reportSha = crypto.createHash('sha256').update(report, 'utf-8').digest('hex');
-  const v = validateConfirmationReceiptFile(
-    receiptPath,
-    defaultTrustRegistryPath(ctx.projectRoot),
-    { action: 'conditional_review_authorization', feature: ctx.feature, object_hash: reportSha },
-  );
-  if (v.valid) {
-    return [{
-      id, category: 'structure', description,
-      severity: 'MAJOR', status: 'WARN',
-      details: `有条件通过（未闭环 MAJOR ${openMajors} 项）已获真人授权凭证——降级不洗白：run 封顶 AWAITING_HUMAN_REVIEW。`,
-    }];
-  }
   return [{
     id, category: 'structure', description,
     severity: 'BLOCKER', status: 'FAIL',
     details:
-      `结论「有条件通过」且存在未闭环 MAJOR ${openMajors} 项，无有效授权凭证（${v.reasons.slice(0, 2).join('；')}）` +
-      '——review 不得闭环推进（bc-openCard 洞⑥：2 MAJOR 有条件通过照常进 ut/testing）。',
+      `结论「有条件通过」且存在未闭环 MAJOR ${openMajors} 项——review 不得闭环推进` +
+      '（bc-openCard 洞⑥：2 MAJOR 有条件通过照常进 ut/testing）。',
     suggestion:
-      '修复 MAJOR 后重跑 coding→review（问题表状态列标记 已关闭）；或真人经带外体系签发' +
-      ' conditional_review_authorization receipt（绑定本报告哈希）落 review/conditional-authorization.receipt.json。',
+      '修复 MAJOR 后重跑 coding→review（问题表状态列标记 已关闭）；人工接受风险不能改写质量结论。',
   }];
 }
 

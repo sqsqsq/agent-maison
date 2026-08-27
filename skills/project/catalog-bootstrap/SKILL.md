@@ -23,7 +23,7 @@
 ## 核心设计原则（弱模型友好）
 
 1. **一次一个模块**：绝不让模型一次啃 30 个模块，保证上下文 ≪ 200K。
-2. **staging 隔离 + 对话式确认**（默认流程）：AI 先把草稿写到 `doc/catalog-staging/<Module>.yaml` / `doc/glossary-staging/<term>.yaml`（审计留档），在对话里展示人友好汇总，用户回 `y/n/改 XXX` 短回复，AI 据此翻转 `confirmed_by_user` 并合并。用户无需手动改 flag。
+2. **staging 隔离 + 对话式选择**（默认流程）：AI 先把草稿写到 `doc/catalog-staging/<Module>.yaml` / `doc/glossary-staging/<term>.yaml`（审计留档），在对话里展示人友好汇总，用户回 `y/n/改 XXX` 短回复，AI 据此更新 `selection_status` 并合并。用户无需手动改 flag。
 3. **AI 绝不直接改** `doc/module-catalog.yaml` / `doc/glossary.yaml` 除非拿到用户 `y`。**唯一例外**：Step 0 骨架创建（文件完全不存在时，AI 可自主创建只含 `schema_version` + 空数组的骨架，禁止塞任何条目）。
 4. **代码信号 + 文档信号双输入**：有 `doc/architecture.md`/模块 README 优先读文档；无则按 profile addendum 声明的代码信号降级推导。
 5. **harness 守门**：最终产物必须通过 `--phase catalog` / `--phase glossary` 的结构与交叉引用校验。

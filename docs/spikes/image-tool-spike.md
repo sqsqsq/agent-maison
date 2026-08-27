@@ -40,5 +40,5 @@ cd harness && npm test
 
 ## bbox 兜底（review-r3#1）
 
-1. **裁图**：`padding=0.02` 宽松框；关键资产须 `human_crop_confirmed: true`
+1. **裁图**：`padding=0.02` 宽松框；关键资产须保留 source/hash/bbox/tool/output 绑定并通过当前机器复验
 2. **采色**：众数 + 过滤 RGB≥240 或 ≤20

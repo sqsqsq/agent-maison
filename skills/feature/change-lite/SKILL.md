@@ -15,6 +15,8 @@
 
 lite 轨（L1）：单模块小需求的轻量链——单文档 `change.md` 承载叙述，`change → coding → exit` 三段，验证收敛到 **exit 一次性出口门禁**（编译 + lint + `diff_within_scope` 红线 + 验收 checkbox 全勾 + 条件 UT）。跨模块 / 像素级 UI 保真 / goal 模式一律走 full 全链（spec→…→testing），不适用本 Skill。
 
+**Goal/headless 写边界（BLOCKER）**：每个 lite phase 只写其 contract `produces` 与动态解析出的 Scope/UT 路径；`change` 不写实现，`coding` 不改 `change.md`，`exit` 只验证/产出自身报告。越权字节保留为未受信输入、本轮证据作废并自动回唯一 owner 重验；无唯一 owner 时 fail-closed，不能靠人工确认放行。
+
 | 叙述产物 | 路径 | 寿命 |
 |----------|------|------|
 | change.md（单文档契约） | `<features_dir>/<f>/change.md` | 长期归档 |
@@ -31,7 +33,7 @@ lite 轨（L1）：单模块小需求的轻量链——单文档 `change.md` 承
 schema_version: "1.0"
 track: lite            # lite | full；缺失文件 = full（消费端 SSOT：harness resolveFeatureTrack）
 score_snapshot: { estimated_loc: 300, modules: 1, cross_layer: false, ui_fidelity: none, score: 22 }
-confirmed_by: user
+selection_source: user_input
 history: []            # 升档事件 append（见「中途升档」）
 ```
 
@@ -111,7 +113,7 @@ exit PASS 只证明 lite feature 闭环。**收尾 / 闭环停等（BLOCKER）**
 
 ## 修正路由（中途 NL 修正）
 
-对本 feature 的修正请求，先跑 `harness-runner.ts --correction-init`（内部按**修正三问**分层：需求变→意图/验收清单；契约变→关键契约/Scope；纯实现→coding；纯验证→UT/验收自证）。`.current-correction.json` 的 `auto_confirm_eligible: true` 时可直接按声明层实施；否则须经 `correction.layer` 1/2 用户确认后才动手。只改根因层，再重跑受影响门禁（**重验 ≠ 重做**）。分层表与禁令见工程入口 AGENTS 指令第四节。
+对本 feature 的修正请求，先跑 `harness-runner.ts --correction-init`（内部按**修正三问**分层：需求变→意图/验收清单；契约变→关键契约/Scope；纯实现→coding；纯验证→UT/验收自证）。分类后直接按声明层实施，不再停等人签；只改根因层，再重跑受影响门禁（**重验 ≠ 重做**）。用户反馈是 successor/correction 输入，不改写上一 run 的完成证据。分层表与禁令见工程入口 AGENTS 指令第四节。
 
 ## 收尾
 

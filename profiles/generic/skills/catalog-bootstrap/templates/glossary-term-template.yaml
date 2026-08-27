@@ -13,7 +13,7 @@
 #   - easily_confused_with 不能凭字面硬造；必须来自 catalog 中该模块的 easily_confused_with
 # ============================================================================
 
-confirmed_by_user: false
+selection_status: pending
 
 # 生成元数据
 generated_by: "<model-id>"

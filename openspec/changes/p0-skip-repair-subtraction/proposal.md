@@ -1,5 +1,7 @@
 # p0-skip-repair-subtraction
 
+> Supersession note (2026-08-26): `autonomous-recovery-without-human-gates` retains this change's P0 repair routing and supersedes its waiver/generic human-release clauses. The delta specs have been reconciled accordingly; the pending host replay remains pending.
+
 ## Why
 
 宿主实锤（SimulatedWalletForHmos / bc-openCard，run `20260818T035420Z-f555c2`）：testing 已完成真机执行并产出 FAIL，summary 同时存在 3 个可信 coding 类 `repair_candidates`，assess 也已推荐 `rerun_phase:coding` / `backtrack_to_phase`，但 goal-runner 先被专用 `await_human_p0_skip` 分支截获写死 halt，最终落 WAITING / human。根因不是缺少回退能力，而是把「agent 不能自行签发 P0 skip waiver」错误扩大成「agent 不能选择修复」，并让专用人工 halt 抢在既有 `repair_candidates → assess → backtrack_to_phase` 通路之前执行。同期还有一条 testing 自相矛盾：goal 路径恒带 `--skip-assert-expected`，`report_trace_reconciliation` 要求报告逐条复写 trace 的「通过」，`pass_rate_calculated` 却禁止报告出现任何「通过」——agent 无法写出同时满足两条 BLOCKER 的诚实报告。

@@ -74,7 +74,7 @@ function driftToCheckResults(
       affected_files: [relPath],
       suggestion:
         f.code === 'body_hash_changed'
-          ? '重跑 bootstrap:code-graph 刷新 derived，并人工复核 nodes 策展层。'
+          ? '重跑 bootstrap:code-graph 刷新 derived，并用当前源码/契约机器对账 nodes 策展层。'
           : '更新 code-graph.yaml 锚点或恢复源码；core 节点变化须同步 UT。',
     });
   }

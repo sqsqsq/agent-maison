@@ -303,9 +303,9 @@ test('p0bc_authorized_bad_crop_blocked_by_validation_not_acquisition', () => {
   assert.ok(lines.length > 0, 'coding 物化前置应拿到未验真清单');
 });
 
-test('p0b_sanity_pass_but_no_vl_pending_then_verified_paths', () => {
+test('p0b_machine_reproduction_and_vl_negative_paths', () => {
   if (!isJimpAvailable()) return;
-  // 好图 + 无 VL 记录 → pending（pixel_1to1 FAIL 不静默放行）；VL match → verified；真人 bbox_verified_by → verified
+  // framework 算法可重现同一 crop hash 即 machine verified；VL negative 仍能指出内容失配。
   const goodCropSrc = path.join(os.tmpdir(), `round6-good-${Date.now()}.png`);
   const crop = cropAssetFromBbox(ADD_CARD_JPG, [0.08, 0.28, 0.10, 0.08], goodCropSrc);
   assert.ok(crop.ok);
@@ -325,13 +325,12 @@ test('p0b_sanity_pass_but_no_vl_pending_then_verified_paths', () => {
       return { root, ctx };
     };
 
-    // ① 无 VL 记录 → pending FAIL（pixel_1to1 硬策略）
+    // ① 无 VL 记录，但 source/bbox/output 可确定性重现 → verified PASS
     {
       const { root, ctx } = mk();
       const r = checkAssetCropValidation(ctx);
-      const pending = r.find(x => x.id === 'asset_crop_validation_pending_confirm');
-      assert.ok(pending && pending.status === 'FAIL', `缺 VL 记录应 pending FAIL，实际：${JSON.stringify(r.map(v => ({ id: v.id, status: v.status })))}`);
-      assert.strictEqual(loadCropValidationVerdicts(root, 'homepage')!.entries['icon_category_bank']?.verdict, 'pending');
+      assert.ok(!r.find(x => x.status === 'FAIL'), `机器可重现 crop 不应 FAIL：${JSON.stringify(r.map(v => ({ id: v.id, status: v.status })))}`);
+      assert.strictEqual(loadCropValidationVerdicts(root, 'homepage')!.entries['icon_category_bank']?.verdict, 'verified');
     }
     // ② VL match=true → verified PASS
     {
@@ -341,21 +340,20 @@ test('p0b_sanity_pass_but_no_vl_pending_then_verified_paths', () => {
       assert.ok(!r.find(x => x.status === 'FAIL'), `VL match 后不应 FAIL：${JSON.stringify(r.map(v => ({ id: v.id, status: v.status })))}`);
       assert.strictEqual(loadCropValidationVerdicts(root, 'homepage')!.entries['icon_category_bank']?.verdict, 'verified');
     }
-    // ③ VL match=false → failed BLOCKER（辨认失配=裁错内容）
+    // ③ legacy VL match=false 也不覆盖确定性 source/bbox/output 重现结果。
     {
       const vl = YAML_LIB.stringify({ entries: [{ key: 'icon_category_bank', identified_as: '公交车图标', match: false, by: 'vl-isolated' }] });
       const { ctx } = mk(undefined, vl);
       const r = checkAssetCropValidation(ctx);
-      const fail = r.find(x => x.id === 'asset_crop_validation' && x.status === 'FAIL');
-      assert.ok(fail && /失配/.test(fail.details), 'VL 失配应 FAIL 且指认失配');
+      assert.ok(!r.find(x => x.status === 'FAIL'), 'legacy VL 自报不得覆盖确定性重现 PASS');
     }
-    // ④ 真人 bbox_verified_by → verified（VL 不可用时的逃生阀）；自动化身份不算
+    // ④ legacy bbox_verified_by 无论人名/自动身份均惰性；结果只由机器重现决定。
     {
       const { root, ctx } = mk(doc => {
         (doc.assets![0] as { bbox_verified_by?: string }).bbox_verified_by = '张工';
       });
       const r = checkAssetCropValidation(ctx);
-      assert.ok(!r.find(x => x.status === 'FAIL'), '真人验真署名应放行');
+      assert.ok(!r.find(x => x.status === 'FAIL'), '机器重现应放行，与人名无关');
       assert.strictEqual(loadCropValidationVerdicts(root, 'homepage')!.entries['icon_category_bank']?.verdict, 'verified');
     }
     {
@@ -363,8 +361,7 @@ test('p0b_sanity_pass_but_no_vl_pending_then_verified_paths', () => {
         (doc.assets![0] as { bbox_verified_by?: string }).bbox_verified_by = 'goal-mode-auto';
       });
       const r = checkAssetCropValidation(ctx);
-      const pending = r.find(x => x.id === 'asset_crop_validation_pending_confirm');
-      assert.ok(pending, '自动化身份签 bbox_verified_by 不算验真（堵自报）');
+      assert.ok(!r.find(x => x.status === 'FAIL'), '机器重现应放行，与自动化署名无关');
     }
   } finally {
     try { fs.unlinkSync(goodCropSrc); } catch { /* ignore */ }
@@ -379,9 +376,9 @@ test('p0b_sanity_pass_but_no_vl_pending_then_verified_paths', () => {
 // review 修复回归（codex P1/P2 + cursor FP 出口，2026-07-02）
 // ============================================================
 
-test('p0b_vl_selfsign_rejected', () => {
+test('p0b_vl_signer_is_inert_when_machine_reproduction_passes', () => {
   if (!isJimpAvailable()) return;
-  // codex P1：match:true 但署名为自动化自报/缺失 → pending，不得 verified
+  // legacy VL by 字段没有放行权；机器重现独立成立时照常 verified。
   const goodCropSrc = path.join(os.tmpdir(), `round6-selfsign-${Date.now()}.png`);
   assert.ok(cropAssetFromBbox(ADD_CARD_JPG, [0.08, 0.28, 0.10, 0.08], goodCropSrc).ok);
   try {
@@ -399,17 +396,16 @@ test('p0b_vl_selfsign_rejected', () => {
         'utf-8',
       );
       const r = checkAssetCropValidation(ctx);
-      const pending = r.find(x => x.id === 'asset_crop_validation_pending_confirm');
-      assert.ok(pending && pending.status === 'FAIL', `by=${by ?? '缺失'} 的 match:true 应 pending（自签不算），实际：${JSON.stringify(r.map(v => ({ id: v.id, status: v.status })))}`);
-      assert.strictEqual(loadCropValidationVerdicts(root, 'homepage')!.entries['icon_category_bank']?.verdict, 'pending');
+      assert.ok(!r.find(x => x.status === 'FAIL'), `机器重现不应受 legacy by=${by ?? '缺失'} 影响：${JSON.stringify(r)}`);
+      assert.strictEqual(loadCropValidationVerdicts(root, 'homepage')!.entries['icon_category_bank']?.verdict, 'verified');
     }
   } finally {
     try { fs.unlinkSync(goodCropSrc); } catch { /* ignore */ }
   }
 });
 
-test('p0b_human_overrule_sanity_fail', () => {
-  // cursor FP 出口：真人 bbox_verified_by 可翻案 sanity 启发阈值误伤（如合法超长横幅）；自动化署名不能翻
+test('p0b_human_cannot_overrule_sanity_fail', () => {
+  // legacy bbox_verified_by 不能翻案机器 sanity/reproduction FAIL。
   const mk = (signer: string) => {
     const doc = subsetAddCard(loadTransposedDoc(), ['icon_category_transit']);
     (doc.assets![0] as { bbox_verified_by?: string }).bbox_verified_by = signer;
@@ -422,10 +418,9 @@ test('p0b_human_overrule_sanity_fail', () => {
   {
     const { root, ctx } = mk('张工');
     const r = checkAssetCropValidation(ctx);
-    assert.ok(!r.find(x => x.status === 'FAIL'), `真人翻案后不应 FAIL：${JSON.stringify(r.map(v => ({ id: v.id, status: v.status })))}`);
+    assert.ok(r.find(x => x.status === 'FAIL'), `真人署名不能翻案：${JSON.stringify(r.map(v => ({ id: v.id, status: v.status })))}`);
     const entry = loadCropValidationVerdicts(root, 'homepage')!.entries['icon_category_transit'];
-    assert.strictEqual(entry?.verdict, 'verified');
-    assert.ok((entry?.reasons ?? []).some(x => /翻案/.test(x)), '翻案须留痕（reasons 记录 sanity 原判）');
+    assert.strictEqual(entry?.verdict, 'failed');
   }
   {
     const { ctx } = mk('goal-mode-auto');

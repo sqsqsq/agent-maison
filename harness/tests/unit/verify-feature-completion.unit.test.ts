@@ -24,11 +24,8 @@ import {
   generateFeatureCompletion,
   hasPendingHumanReview,
   resolvePhaseRunIds,
-  runtimeFidelityObjectHash,
-  runtimeFidelityReceiptPath,
   verifyFeatureCompletion,
 } from '../../scripts/utils/verify-feature-completion';
-import { canonicalReceiptPayload } from '../../scripts/utils/confirmation-receipt';
 import {
   seedCleanCompletionChain,
   writeFeatureArtifact,
@@ -36,7 +33,6 @@ import {
   writePhaseSummary,
   writeRunEvents as seedWriteRunEvents,
 } from '../utils/completion-chain-seed';
-import * as crypto from 'crypto';
 import type { Phase } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -101,7 +97,7 @@ interface Case { name: string; run: () => void }
 
 const cases: Case[] = [
   {
-    name: 'clean_pass 违例拒生成：verdict 非 PASS / waiver 存在 / 档位钳制；账本待复核不再阻断（只留报告展示）',
+    name: 'clean_pass：verdict/档位钳制拒生成；legacy waiver 与账本待复核均只留审计',
     run: () => {
       const root = mkProject();
       seedCleanChain(root);
@@ -112,10 +108,10 @@ const cases: Case[] = [
       const waiver = featureFilePath(root, FEATURE, 'testing/skip-waivers.yaml');
       fs.mkdirSync(path.dirname(waiver), { recursive: true });
       fs.writeFileSync(waiver, 'waivers:\n  - tc_id: TC-1\n', 'utf-8');
-      assert.throws(() => generate(root), /no_waivers/);
+      assert.doesNotThrow(() => generate(root));
       fs.rmSync(waiver);
 
-      // 真实门禁的 needs_human 封顶不受账本退役影响（档位钳制仍在）
+      // 档位钳制仍阻断，但投影为 needs_fix/capability 路径而非 needs_human。
       assert.strictEqual(
         collectCleanPassIssues({ projectRoot: root, feature: FEATURE, chain: CHAIN, fidelityCapped: true })
           .some((i) => i.condition === 'no_fidelity_cap'),
@@ -136,11 +132,11 @@ const cases: Case[] = [
     },
   },
   {
-    name: 'codex 方案二：flow_contract 缺 receipt 不进 clean_pass（签发端未建成）；runtime_fidelity 等其他 receipt 校验不动',
+    name: 'flow_contract 缺 receipt 不进 clean_pass；P0 runtime fidelity 改为机器证据硬门',
     run: () => {
       const root = mkProject();
       seedCleanChain(root);
-      // 带 P0 device flow 的 acceptance（flow_contract/runtime_fidelity 两门都 applicable；无任何 receipt）
+      // 带 P0 device flow 的 acceptance：flow_contract 人签已退役，runtime 机器证据仍为硬义务。
       writeArtifact(root, 'acceptance.yaml', [
         'flows:',
         '  main:',
@@ -160,7 +156,7 @@ const cases: Case[] = [
       assert.strictEqual(
         issues.some((i) => i.condition === 'runtime_step_evidence'),
         true,
-        '其他 receipt 校验（runtime fidelity attestation）保持不动（对照组）',
+        'P0 runtime fidelity 机器证据缺失必须阻断',
       );
     },
   },
@@ -226,7 +222,7 @@ const cases: Case[] = [
     },
   },
   {
-    name: 'P0 device flow 无运行时证据（codex 七轮 P0-3）：clean_pass 拒绝且 needs_human 封顶',
+    name: 'P0 device flow 无机器运行时证据：clean_pass needs_fix；legacy runtime receipt 无放行权',
     run: () => {
       const root = mkProject();
       writeArtifact(root, 'acceptance.yaml', [
@@ -242,45 +238,25 @@ const cases: Case[] = [
       const issues = collectCleanPassIssues({ projectRoot: root, feature: FEATURE, chain: CHAIN });
       const rt = issues.find((i) => i.condition === 'runtime_step_evidence');
       assert.ok(rt, '有 P0 device flow 必产 runtime_step_evidence 违例');
-      assert.strictEqual(rt!.kind, 'needs_human');
-      assert.strictEqual(classifyCleanPassIssues(issues).needsHuman, true);
-      // codex 八轮 P0-1：空文件不再解除——唯一通道=有效 runtime_fidelity_attestation receipt
+      assert.strictEqual(rt!.kind, 'needs_fix');
+      assert.strictEqual(classifyCleanPassIssues(issues).needsFix, true);
+      assert.strictEqual(classifyCleanPassIssues(issues).needsHuman, false);
+      // 任意空文件不得解除。
       const evPath = featureFilePath(root, FEATURE, path.join('testing', 'reports', '20260713', 'runtime-step-evidence.json'));
       fs.mkdirSync(path.dirname(evPath), { recursive: true });
       fs.writeFileSync(evPath, '{}', 'utf-8');
       assert.ok(
         collectCleanPassIssues({ projectRoot: root, feature: FEATURE, chain: CHAIN }).some((i) => i.condition === 'runtime_step_evidence'),
-        '空文件不得解除封顶（后门已封）',
+        '空文件不得解除质量义务',
       );
-      // 有效 receipt（ed25519 + registry 经 MAISON_TRUST_REGISTRY）→ 解除
-      const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
-      const regPath = path.join(root, '..', `reg-${path.basename(root)}.json`);
-      fs.writeFileSync(regPath, JSON.stringify({
-        schema_version: '1.0',
-        issuers: [{ issuer_id: 'ops', keys: [{ key_id: 'k1', alg: 'ed25519', public_key_pem: publicKey.export({ type: 'spki', format: 'pem' }).toString() }] }],
-      }), 'utf-8');
-      process.env.MAISON_TRUST_REGISTRY = regPath;
-      try {
-        const payload = {
-          action: 'runtime_fidelity_attestation' as const,
-          feature: FEATURE,
-          object_hash: runtimeFidelityObjectHash(root, FEATURE),
-          issued_at: '2026-07-13T11:00:00.000Z',
-          expiry: '2999-01-01T00:00:00.000Z',
-        };
-        const receipt = {
-          schema_version: '1.0', receipt_id: 'r', issuer_id: 'ops', key_id: 'k1', alg: 'ed25519',
-          payload_schema_version: '1.0', payload,
-          signature: crypto.sign(null, canonicalReceiptPayload(payload), privateKey).toString('base64'),
-        };
-        fs.writeFileSync(runtimeFidelityReceiptPath(root, FEATURE), JSON.stringify(receipt), 'utf-8');
-        assert.ok(
-          !collectCleanPassIssues({ projectRoot: root, feature: FEATURE, chain: CHAIN }).some((i) => i.condition === 'runtime_step_evidence'),
-          '有效 receipt 解除封顶',
-        );
-      } finally {
-        delete process.env.MAISON_TRUST_REGISTRY;
-      }
+      // 即便放入历史 runtime_fidelity_attestation receipt，它也只是 legacy 文件，不再改写机器结论。
+      const legacyRuntimeReceipt = featureFilePath(root, FEATURE, path.join('testing', 'runtime-fidelity.receipt.json'));
+      fs.mkdirSync(path.dirname(legacyRuntimeReceipt), { recursive: true });
+      fs.writeFileSync(legacyRuntimeReceipt, '{"legacy":true}\n', 'utf-8');
+      assert.ok(
+        collectCleanPassIssues({ projectRoot: root, feature: FEATURE, chain: CHAIN }).some((i) => i.condition === 'runtime_step_evidence'),
+        'legacy receipt 不得解除机器证据缺失',
+      );
     },
   },
   {

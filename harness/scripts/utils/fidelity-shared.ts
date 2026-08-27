@@ -121,52 +121,14 @@ export function isAutomationSigner(signedBy: string | undefined): boolean {
 }
 
 /**
- * G4b：用户在需求文本中的自然语言裁剪授权 sentinel（"资源可从原图/截图裁剪获取"）。
- * 属**合法的前置确认者**（用户即真人、需求文本即授权），**绝不可加入 AUTOMATION_SIGNER_IDS**。
- * headless 下 crop_confirmed_by=此值 视为有效前置确认，免 mid-run halt 直接裁。
- */
-export const USER_REQUIREMENT_CONFIRMER = 'user_requirement';
-
-/**
- * T2：pixel_1to1 P0 pass 屏的真人确认判据——`confirmed_by` 非空且非自动化身份。
- * 视觉裁判可信化主背靠：像素/文本-位置度量均被实测证伪（忠实屏误报），图标/颜色/样式类假 PASS
- * 不可约地需 VL/人判 → pixel_1to1 P0 屏判 pass 须真人过目确认，goal-mode-auto 等自签不算（headless 走 HALT）。
- */
-export function isHumanConfirmed(confirmedBy: string | undefined): boolean {
-  return typeof confirmedBy === 'string' && confirmedBy.trim().length > 0 && !isAutomationSigner(confirmedBy);
-}
-
-/**
- * P0-6（plan c9e2a7f4）：验真签名判据——**授权哨兵 ≠ 验真签名**。
- * user_requirement 是需求级授权（能不能做），不能替代对具体屏/资产的真人过目（有没有人看过）。
- * 2026-07-05 实锤：宿主 agent 以 confirmed_by='user_requirement' 伪签 T2，在其 shell 的 harness
- * 运行中实际通关（回执 blocker_count 0），仅因 goal-runner 干净环境重跑才被打回。
- * 凡"验真/过目"语义的 signer（T2 confirmed_by / bbox_verified_by / baked_text_defer_by /
- * deferral signed_by）一律用本判据；授权语义（crop_confirmed_by）保持既有判据不变。
- * 诚实边界：堵不住伪造人名字符串（headless 自写 signer 本质不可信）；彻底解=带外确认凭证（round7 P0-8）。
+ * 外部 framework 完整性审批的 legacy signer 判据。它只用于真正的发布件修改权限，
+ * 不得用于 feature visual/crop/fidelity 质量结论。
  */
 export function isHumanVerified(signer: string | undefined): boolean {
-  if (!isHumanConfirmed(signer)) return false;
-  return signer!.trim().toLowerCase() !== USER_REQUIREMENT_CONFIRMER;
-}
-
-/**
- * 真人签字判据：human_signed:true 且 signed_by 非自动化身份。
- * signed_by 缺省视为人工（不破坏交互态既有行为）；仅显式自动化身份被拒。
- */
-export function isHumanSignedDeferral(
-  d: FidelityDeferralEntry,
-  opts?: { requireExplicitSigner?: boolean },
-): boolean {
-  if (d.human_signed !== true) return false;
-  if (isAutomationSigner(d.signed_by)) return false;
-  // P0-6：user_requirement 属需求级授权哨兵，不算对具体豁免条目的真人签字。
-  if (typeof d.signed_by === 'string' && d.signed_by.trim().toLowerCase() === USER_REQUIREMENT_CONFIRMER) return false;
-  // headless：缺 signed_by 视为可疑自签（真人会留名）→ 不算人签；交互态缺省仍算人工。
-  if (opts?.requireExplicitSigner) {
-    return typeof d.signed_by === 'string' && d.signed_by.trim().length > 0;
-  }
-  return true;
+  return typeof signer === 'string'
+    && signer.trim().length > 0
+    && !isAutomationSigner(signer)
+    && signer.trim().toLowerCase() !== 'user_requirement';
 }
 
 /**
@@ -562,14 +524,13 @@ export function isValidFidelityTarget(v: unknown): v is FidelityTarget {
 }
 
 /**
- * `--fidelity`/manifest.fidelity 只升不降（codex 三轮 P0-2：headless agent 可代跑命令
- * 自带 flag，flag ≠ 用户授权）：requested < detected → 无效（降档唯一通道=t10 receipt，
- * 调用方在凭证校验通过后显式传 downgradeAuthorized）。
+ * `--fidelity`/manifest.fidelity 只升不降（headless agent 可代跑命令，flag ≠ 需求变更）：
+ * requested < detected 永远无效。第三参数仅兼容旧调用，已无授权语义。
  */
 export function resolveRequestedFidelity(
   detected: FidelityTarget,
   requested: FidelityTarget | undefined,
-  downgradeAuthorized = false,
+  _legacyDowngradeAuthorized = false,
 ): { effective: FidelityTarget; rejectedDowngrade: boolean } {
   if (!requested || !FIDELITY_TARGETS.has(requested)) {
     return { effective: detected, rejectedDowngrade: false };
@@ -577,9 +538,7 @@ export function resolveRequestedFidelity(
   if (FIDELITY_TIER_RANK[requested] >= FIDELITY_TIER_RANK[detected]) {
     return { effective: requested, rejectedDowngrade: false };
   }
-  return downgradeAuthorized
-    ? { effective: requested, rejectedDowngrade: false }
-    : { effective: detected, rejectedDowngrade: true };
+  return { effective: detected, rejectedDowngrade: true };
 }
 
 /** pixel_1to1 联动：默认抬升 user_dir */
@@ -696,9 +655,9 @@ export function resolveEffectiveFidelityContext(
 
 // ============================================================================
 // plan f6b2d9a4：两谓词拆分 + 三段式路由决策 + fidelity-intent SSOT / capability
-// snapshot IO。执行类逻辑读 isPixelExecutionTarget；严重度抬升/人确认/封顶读
-// isHardPixelContract（effective=pixel ∧ strictness=hard——不用 desired：有效降档
-// receipt 放行 semantic 后不得再激活 pixel 硬门禁）。确定性完整性错误不经这两谓词。
+// snapshot IO。执行类逻辑读 isPixelExecutionTarget；严重度抬升/封顶读
+// isHardPixelContract（effective=pixel ∧ strictness=hard）。selected hard-pixel 被能力钳制时
+// 由 preflight 诚实 defer；legacy receipt 不参与档位或严重度裁决。确定性完整性错误不经这两谓词。
 // ============================================================================
 
 /** 执行类谓词：是否按 pixel 目标运行高质量提取/diff/度量（=旧 isPixel1to1 语义）。 */
@@ -706,7 +665,7 @@ export function isPixelExecutionTarget(ctx: CheckContext): boolean {
   return ctx.fidelityTarget === 'pixel_1to1';
 }
 
-/** 裁决类谓词：质量缺口是否升级 BLOCKER/真人确认/completion 封顶。 */
+/** 裁决类谓词：质量缺口是否升级 BLOCKER/completion 封顶。 */
 export function isHardPixelContract(ctx: CheckContext): boolean {
   return ctx.fidelityTarget === 'pixel_1to1' && ctx.acceptanceStrictness === 'hard';
 }
@@ -718,7 +677,7 @@ export interface FidelityRoutingInput {
   manifestFidelity?: string;
   /** 该值来源（CLI 显式 / manifest 文件声明）——decision.source 用 */
   manifestFidelitySource?: 'explicit_cli' | 'manifest_declared';
-  /** fidelity_downgrade receipt 验真结果（调用方验；本函数不读盘） */
+  /** @deprecated legacy input, ignored; a receipt cannot lower requirement fidelity. */
   downgradeReceiptValid?: boolean;
   capability: FidelityCapability;
   /** goal run_id 或显式 phase execution identity（如 phase:<feature>:spec） */
@@ -731,8 +690,20 @@ export type FidelityDecisionSource =
   | 'auto_default'
   | 'explicit_cli'
   | 'manifest_declared'
+  // legacy reader values; new writers never produce these sources.
   | 'downgrade_receipt'
   | 'human_confirmed';
+
+const INERT_LEGACY_FIDELITY_DECISION_SOURCES = new Set<FidelityDecisionSource>([
+  'downgrade_receipt',
+  'human_confirmed',
+]);
+
+/** Legacy values remain parse-compatible but never retain authority through fidelity-intent.json. */
+export function isInertLegacyFidelityDecisionSource(source: unknown): boolean {
+  return typeof source === 'string' &&
+    INERT_LEGACY_FIDELITY_DECISION_SOURCES.has(source as FidelityDecisionSource);
+}
 
 export interface FidelityRoutingDecision {
   inferred: FidelityTarget;
@@ -749,35 +720,28 @@ export interface FidelityRoutingDecision {
 }
 
 /**
- * 三段式路由（v4 P0 冻结）：inferred（文本推导，ratchet 锚）→ selected（只升不降；
- * 有效降档 receipt 才许降）→ effective（能力 clamp）。纯函数，不读盘不探测——
- * capability/receipt 验真由调用方（goal-runner / initializer / check-spec 复核）供给。
+ * 三段式路由：inferred（文本推导，ratchet 锚）→ selected（只升不降）→ effective
+ *（能力 clamp）。纯函数，不读盘不探测；legacy receipt 参数不参与判定。
  */
 export function resolveFidelityRoutingDecision(input: FidelityRoutingInput): FidelityRoutingDecision {
   const det = detectDesiredFidelity(input.requirementText);
   const strictness = detectAcceptanceStrictness(input.requirementText);
   const assetIntent = detectAssetAcquisitionIntent(input.requirementText);
   const requested = isValidFidelityTarget(input.manifestFidelity) ? input.manifestFidelity : undefined;
-  const sel = resolveRequestedFidelity(det.desired, requested, input.downgradeReceiptValid === true);
+  const sel = resolveRequestedFidelity(det.desired, requested);
   const clamp = clampFidelityByCapability(sel.effective, input.capability);
   const defer = sel.effective === 'pixel_1to1' && strictness === 'hard' && clamp.clamped;
 
-  const receiptDowngraded =
-    input.downgradeReceiptValid === true && requested !== undefined &&
-    sel.effective === requested && FIDELITY_TIER_RANK[requested] < FIDELITY_TIER_RANK[det.desired];
   const requestedApplied =
     requested !== undefined && sel.effective === requested && requested !== det.desired;
-  const source: FidelityDecisionSource = receiptDowngraded
-    ? 'downgrade_receipt'
-    : requestedApplied
-      ? (input.manifestFidelitySource ?? 'manifest_declared')
-      : det.basis === 'default'
-        ? 'auto_default'
-        : 'requirement_self_declared';
+  const source: FidelityDecisionSource = requestedApplied
+    ? (input.manifestFidelitySource ?? 'manifest_declared')
+    : det.basis === 'default'
+      ? 'auto_default'
+      : 'requirement_self_declared';
   // routing_input_digest（v5 P2）：manifest/receipt/capability 任一变化 → 新 decision_id
   const digest = crypto.createHash('sha256').update(JSON.stringify({
     f: requested ?? null,
-    r: input.downgradeReceiptValid === true,
     v: input.capability.hasVision,
     o: input.capability.ocrAvailable,
     // plan ab072691 t2③：评审轴是 clamp 的真实输入之一，必须进 digest，否则「委托到位/
@@ -866,7 +830,34 @@ export function loadFidelityIntentSsot(projectRoot: string, feature: string): Fi
   return s.state === 'valid' ? s.doc : null;
 }
 
+/**
+ * Compatibility-only inspection for the recovery coordinator. Runtime consumers still see these
+ * documents as missing through loadFidelityIntentSsotState/loadFidelityIntentSsot; the raw bytes
+ * are exposed only so a downstream-start goal can route back to the spec owner instead of treating
+ * a receipt-derived decision as an ordinary absent/non-UI SSOT.
+ */
+export function loadInertLegacyFidelityIntentSsot(
+  projectRoot: string,
+  feature: string,
+): FidelityIntentSsot | null {
+  const state = readFidelityIntentSsotState(projectRoot, feature);
+  return state.state === 'valid' && isInertLegacyFidelityDecisionSource(state.doc.decision.source)
+    ? state.doc
+    : null;
+}
+
 function loadFidelityIntentSsotStateInner(projectRoot: string, feature: string): FidelityIntentSsotState {
+  const state = readFidelityIntentSsotState(projectRoot, feature);
+  if (state.state === 'valid' && isInertLegacyFidelityDecisionSource(state.doc.decision.source)) {
+    // Compatibility-read/new-authority-stop: these documents are structurally readable historical
+    // bytes, but exposing them as `valid` would let the receipt-derived selected/effective tiers flow
+    // through every SSOT consumer. Project them onto the existing missing/rebuild path instead.
+    return { state: 'missing' };
+  }
+  return state;
+}
+
+function readFidelityIntentSsotState(projectRoot: string, feature: string): FidelityIntentSsotState {
   const p = fidelityIntentSsotPath(projectRoot, feature);
   if (!fs.existsSync(p)) return { state: 'missing' };
   try {
@@ -1184,15 +1175,15 @@ export function resolveRefElementsDenominator(
   return { elements: doc.elements, source: 'disk' };
 }
 
-/** pixel_1to1：ref-elements disposition=defer 须对应 fidelity_deferrals 且 human_signed */
+/**
+ * Legacy API name retained for callers/tests. Under a strict pixel contract every
+ * ref-element defer is unresolved; human_signed/signed_by never authorize it.
+ */
 export function findUnsignedRefElementDefers(
   refDoc: RefElementsDoc,
   deferrals: FidelityDeferralEntry[],
-  opts?: { requireExplicitSigner?: boolean },
+  _opts?: { requireExplicitSigner?: boolean },
 ): string[] {
-  const signedIds = new Set(
-    deferrals.filter(d => isHumanSignedDeferral(d, opts)).map(d => d.element_id.toLowerCase()),
-  );
   const declaredIds = new Set(deferrals.map(d => d.element_id.toLowerCase()));
   const violations: string[] = [];
   for (const el of refDoc.elements) {
@@ -1200,14 +1191,14 @@ export function findUnsignedRefElementDefers(
     const lower = el.element_id.toLowerCase();
     if (!declaredIds.has(lower)) {
       violations.push(`${el.element_id}（ref-elements defer 未登记 fidelity_deferrals）`);
-    } else if (!signedIds.has(lower)) {
-      violations.push(`${el.element_id}（fidelity_deferrals 未 human_signed）`);
+    } else {
+      violations.push(`${el.element_id}（strict pixel contract 不允许 defer；legacy 人签无效）`);
     }
   }
   return violations;
 }
 
-/** P0 视觉元素 id 前缀/关键词（defer 须人类签字） */
+/** P0 视觉元素 id 前缀/关键词（strict contract 下 defer 必须保持未闭合） */
 export const P0_VISUAL_ELEMENT_HINTS = [
   'search_bar',
   'search',

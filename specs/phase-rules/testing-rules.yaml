@@ -60,19 +60,18 @@ structure_checks:
     description: >
       产品源码（非测试目录）测试性行为开关扫描：命名命中
       FAST_PATH/TEST_ONLY/FOR_TEST/DEVICE_TEST/E2E_ONLY/BYPASS/SKIP_(SMS|VERIFY|AUTH)
-      且初始化为 true → BLOCKER。waiver 须 behavior-switch-waivers.yaml 精确坐标
-      （file+symbol+content_sha256）+ t10 confirmation receipt，且仅降级 WARN、
-      run 封顶 AWAITING_HUMAN_REVIEW（不洗白）。defense-in-depth：主防线为
-      review_closure_attestation 与 P0 语义链。
+      且初始化为 true → BLOCKER，回 coding 修复或以新需求开启 successor run。
+      legacy behavior-switch-waivers.yaml/confirmation receipt 只读且不改变 verdict。
+      defense-in-depth：主防线为 review_closure_attestation 与 P0 语义链。
 
   p0_coverage_integrity:
     description: >
       P0 用例覆盖 fail-closed（goal-fakepass-hardening t5 → c7e4a2d9）：explicit_skip/
-      未执行的 P0 须逐条 p0_skip_waiver receipt，否则 BLOCKER；未豁免缺口全部属于既有
+      未执行的 P0 一律 BLOCKER；legacy p0_skip_waiver receipt 可读但不参与判定。缺口属于既有
       explicit_skip_tc_ids 登记时复用 failure_kind=code_regression + actionability=
       agent_fixable，默认回 coding 修复并重测（不降低验收标准，修复不是授权行为）；
       status 为空或未经登记的 trace skip 不产 coding 候选、留在 testing 恢复执行/派生
-      计划；外部条件走既有 DEFERRED；waived 仅降级 WARN 且 run 封顶 AWAITING_HUMAN_REVIEW。
+      计划；真实外部条件走既有 DEFERRED，不得由 waiver 降级 WARN 或制造人工等待态。
       不新增 skip 原因枚举、责任阶段字段或专用 halt（await_human_p0_skip 已退役）。
 
   p0_pass_rate_dual_metrics:
@@ -205,11 +204,11 @@ structure_checks:
       派生步骤根键。warmup/无设备 → SKIP。
       当 spec UI change=new_or_changed 且 P0 目标屏 visual verdict 全 pending 或未覆盖 → BLOCKER FAIL。
       score_floor 已降级 reference_only（P1-C·f2d8c4a6：像素直方图历史多次实测证伪，不参与任何判定）。
-      P0-9（e7a91b3c）判定持久化：已定判定（pass/warn/fail，含真人 confirmed_by）绑定
+      P0-9（e7a91b3c）判定持久化：机器判定（pass/warn/fail）绑定
       「被评截图文件 hash + build 指纹（实际 hap sha256 前 12 hex，现算）」——同 build 下 capture
       跳采、判定跨 harness 轮持久（像素恒等作新鲜度键已被真机时钟/轮播漂移证伪）；换 build/
-      文件被换/legacy 缺指纹 → stale 重置重判。唯一阻塞=T2 真人确认且指纹链完整时输出
-      failure_kind=await_human_confirm（goal halt 为 await_human_visual_confirm 并给逐屏签名指引）。
+      文件被换/legacy 缺指纹 → stale 重置重判。legacy confirmed_by 可读但无 gate 权重；
+      当前 deterministic/native/delegated 机器证据决定结论，required 能力缺失走 capability defer。
     severity: MAJOR
     rule:
       provider: device_test.visual_diff
@@ -222,17 +221,6 @@ structure_checks:
       纵向顺序 ≥2 对颠倒（布局乱序）；pixel_1to1 P0 屏 → BLOCKER。存在性缺失/单对逆序为 advisory
       观测素材（WARN 不阻断防设备 OCR 噪声 FP），VL 终判须折算进 screens[].must_fix。
       overlay 屏 id（__overlay__*）归一化回落基屏。OCR/参考原图不可用 → degraded WARN 不静默。
-    severity: BLOCKER
-    rule:
-      provider: device_test.visual_diff
-
-  visual_diff_human_confirm_required:
-    description: >
-      T2 主背靠（a3f1c920）＋P0-6 拆位（c9e2a7f4）：pixel_1to1 P0 屏判 pass 须真人过目确认——
-      confirmed_by 非空、非自动化身份（goal-mode-auto 等）、且非 user_requirement（授权哨兵
-      ≠验真签名：user_requirement 属需求级授权，不能替代对具体屏的真人过目；2026-07-05 实锤
-      agent 以它伪签 T2 并在自跑 harness 中通关过一次）。headless 走 HALT 求人。
-      诚实边界：不防伪造人名字符串（带外确认凭证=round7 P0-8）。
     severity: BLOCKER
     rule:
       provider: device_test.visual_diff
@@ -255,7 +243,7 @@ structure_checks:
       命中「引用 visual-diff.json」与改判特征（程序化填 confirmed_by/verdict=pass、批量重置
       pending、清空/删除 must_fix、写 evaluated_screenshot_hash）→ BLOCKER 物证上桌。
       2026-07-05 实锤：auto-fill（NODE_OPTIONS 预加载 hook）/fill-pass/reset 三脚本成套伪签
-      流水线。判定只能由 capture/真人逐屏产生；正常读取/统计脚本不误伤（须双条件同中）。
+      流水线。判定只能由当前 hash-bound 机器证据产生；正常读取/统计脚本不误伤（须双条件同中）。
     severity: BLOCKER
     rule:
       provider: device_test.visual_diff

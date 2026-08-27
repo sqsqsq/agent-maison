@@ -505,7 +505,8 @@ function resolveEdgeSentinel(
  * 硬前提（codex，缺一不可）：①当前构建指纹已成功现算（非 null）；②条目带
  * evaluated_build_fingerprint 且与当前指纹一致（缺失=legacy → 不跳，照常重采失效）；
  * ③evaluated_screenshot_hash 存在且与**盘上绑定截图文件**一致（文件未被替换/删除）。
- * 满足则该屏判定（含真人 confirmed_by）跨 harness 轮持久；build 一变（改码重装）自动失效。
+ * 满足则该屏的 hash-bound 机器判定可跨 harness 轮复用；build 一变（改码重装）自动失效。
+ * legacy confirmed_by 仅随条目保留，不参与该判据。
  * 背景：像素恒等作新鲜度键被真机证伪（状态栏时钟/轮播必漂移，2026-07-05 回修轮实锤）。
  */
 export function canSkipRecaptureForScreen(
@@ -1024,7 +1025,7 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
       ])
     : null;
 
-  // P0-9a：判定持久化——先读既有报告，build 指纹有效的已定屏跳过重采（判定含真人签持久）。
+  // P0-9a：判定持久化——先读既有报告，build 指纹有效的当前 hash-bound 机器判定可跳过重采。
   const existingReportEarly = loadExistingVisualDiffReport(jsonPath);
   const existingById = new Map<string, VisualDiffScreenEntry>(
     (existingReportEarly?.screens ?? [])
@@ -1082,7 +1083,8 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
   // 仅用于 merge 前剔除该屏的旧条目（见 mergeVisualDiffReports 的 invalidateScreenIds）。
   // 只加入 identity gate 的确定性 `mismatched`（页面组件前缀在场 + 目标锚缺失＝应用页面
   // 树在场但渲染错页）；`probe_failed`（锁屏/桌面/systemd 或 dump 能力缺失）绝不加入——
-  // 证据不足时旧条目（含 confirmed_by 真人裁决）必须原样保留，与 t4 资格矩阵同判据。
+  // 证据不足时旧条目原样保留（含 inert legacy 字段），与 t4 资格矩阵同判据；
+  // 是否可信仍由后续 freshness/evidence gate 重算。
   const identityMismatchIds: string[] = [];
   // t4：逐屏 identity gate 结论（唯一的内容正证据来源，不做任何反推）
   const screenEvidence = new Map<string, 'mismatched' | 'probe_failed'>();
@@ -1191,8 +1193,8 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
       // 已确证"应用页面树在场但渲染了非目标页"（页面组件前缀 + 锚缺失），该屏旧条目
       // （score/verdict，含 0.997 型错页高分）不得继续被消费；merge 时按
       // invalidateScreenIds 剔除。probe_failed（锁屏/桌面/系统态、dump 能力缺失、
-      // dump 失败/不可解析）**绝不删除**——证据不足时旧条目与 confirmed_by 真人裁决
-      // 原样保留，误删栏会再次要求人工签字（t1 要消灭的现象）。
+      // dump 失败/不可解析）**绝不删除**——证据不足时旧条目及 inert legacy 字段原样保留；
+      // 后续 freshness/evidence gate 仍会重算其可信度。
       if (idGate.status === 'mismatched') identityMismatchIds.push(screen.id);
       // 证据图（_mismatch/）照常归档，正式目录仍零写入——取证与拦截都不受影响。
       continue;

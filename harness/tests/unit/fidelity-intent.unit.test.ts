@@ -66,7 +66,7 @@ const cases: Case[] = [
     },
   },
   {
-    name: '--fidelity 只升不降：降档无 receipt 拒绝；持平/抬升放行；receipt 授权后降档生效',
+    name: '--fidelity 只升不降：持平/抬升放行；legacy receipt 参数不再授权降档',
     run: () => {
       let r = resolveRequestedFidelity('pixel_1to1', 'semantic_layout', false);
       assert.strictEqual(r.effective, 'pixel_1to1');
@@ -77,7 +77,8 @@ const cases: Case[] = [
       r = resolveRequestedFidelity('semantic_layout', 'semantic_layout', false);
       assert.strictEqual(r.effective, 'semantic_layout');
       r = resolveRequestedFidelity('pixel_1to1', 'semantic_layout', true);
-      assert.strictEqual(r.effective, 'semantic_layout', 'receipt 授权后降档生效');
+      assert.strictEqual(r.effective, 'pixel_1to1', 'legacy receipt 参数不得降低质量目标');
+      assert.strictEqual(r.rejectedDowngrade, true);
     },
   },
   {

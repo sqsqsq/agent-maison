@@ -123,21 +123,21 @@ const ironLawCases: TestCase[] = [
     },
   },
   {
-    name: '只有已验证 grant 放行：binding 为空的 grant 不采信',
+    name: 'legacy visual human grant 无论 binding 是否完整都不能放行质量结论',
     run: () => {
       const facts: IncidentFacts = { incident: 'await_human_visual_confirm' };
       const empty = decide(
         facts,
-        { grants: [{ action: 'human_visual_acceptance', source: 'verified_receipt', binding: '' }] },
+        { grants: [{ action: 'human_visual_acceptance', source: 'external_authorization', binding: '' }] },
         ctx(),
       );
-      assert(empty.kind === 'waiting', '空 binding 的 grant 不得放行');
+      assert(empty.kind === 'terminal', 'legacy visual human halt 不得靠空 binding 放行');
       const ok = decide(
         facts,
-        { grants: [{ action: 'human_visual_acceptance', source: 'verified_receipt', binding: 'sha256:abc' }] },
+        { grants: [{ action: 'human_visual_acceptance', source: 'external_authorization', binding: 'sha256:abc' }] },
         ctx(),
       );
-      assert(ok.kind === 'continue', `已验证 grant 应放行，实际 ${ok.kind}`);
+      assert(ok.kind === 'terminal', `human_visual_acceptance 已退役，不得放行，实际 ${ok.kind}`);
     },
   },
 ];
@@ -415,10 +415,10 @@ const metaGateCases: TestCase[] = [
         ['await_operator_toolchain', 'WAITING', 'external'],
         ['device_not_ready', 'WAITING', 'external'],
         // 需要人做决定
-        ['no_progress_cumulative_human', 'WAITING', 'human'],
-        ['no_progress_visual_gap', 'WAITING', 'human'],
+        ['no_progress_cumulative_human', 'TERMINAL', undefined],
+        ['no_progress_visual_gap', 'TERMINAL', undefined],
         ['no_progress_guard', 'WAITING', 'human'],
-        ['await_human_gate_deferral', 'WAITING', 'human'],
+        ['await_human_gate_deferral', 'RECOVERY_PENDING', undefined],
         // 多设备歧义：等人配 target_serial，**不是**等环境自愈
         ['device_target_ambiguous', 'WAITING', 'human'],
         // 结构上无法在本 run 继续
@@ -595,22 +595,14 @@ const incidentClosureCases: TestCase[] = [
     },
   },
   {
-    name: '保守恢复路**不产授权语义**：matched_receipts 只在 authorized_backtrack 分支出现',
+    name: '保守恢复路**不产授权语义**：matched_receipts/authorized_backtrack 已彻底删除',
     run: () => {
       // 只看代码：注释里提到 matched_receipts（如"不产 matched_receipts"）不算构造点。
       const src = stripComments(fs.readFileSync(path.join(SCRIPTS_DIR, 'goal-runner.ts'), 'utf8'));
       const idx: number[] = [];
       for (const m of src.matchAll(/matched_receipts/g)) idx.push(m.index ?? -1);
-      assert(idx.length === 1, `matched_receipts 应只在一处构造，实际 ${idx.length} 处`);
-      const window = src.slice(Math.max(0, idx[0] - 400), idx[0] + 200);
-      assert(
-        /driftDecision\.kind === 'authorized_backtrack'/.test(window),
-        'matched_receipts 未被 authorized_backtrack 判据包住——保守恢复路可能冒充授权',
-      );
-      assert(
-        /reason: UNTRUSTED_DRIFT_REASON[\s\S]{0,80}authorized: false/.test(window),
-        '保守恢复分支须显式 authorized:false + untrusted 原因',
-      );
+      assert(idx.length === 0, `matched_receipts 已退役，实际仍有 ${idx.length} 处`);
+      assert(!/authorized_backtrack/.test(src), 'goal-runner 不得保留授权回退分支');
     },
   },
 ];
@@ -1050,7 +1042,6 @@ const projectionCases: TestCase[] = [
       // 其余 status 都可 --resume。此前把它们统一映射成 TERMINAL，会让 supervisor 永不
       // 重启、报告也谎称「结构上无法继续」。
       for (const [status, kind] of [
-        ['AWAITING_HUMAN_REVIEW', 'human'],
         ['DEFERRED', 'external'],
         ['DEFERRED_CAPABILITY_MISSING', 'external'],
       ] as const) {
@@ -1058,10 +1049,48 @@ const projectionCases: TestCase[] = [
         assert(st.run_disposition === 'WAITING', `${status} 被判 ${st.run_disposition}，应为 WAITING`);
         assert(st.run_wait_kind === kind, `${status} 的 wait_kind 应为 ${kind}`);
       }
+      const legacyHuman = reduceRunState([
+        { type: 'run_start' },
+        { type: 'run_end', status: 'AWAITING_HUMAN_REVIEW' },
+      ]);
+      assert(legacyHuman.run_disposition === 'RECOVERY_PENDING',
+        `legacy AWAITING_HUMAN_REVIEW 应触发机器重验：${legacyHuman.run_disposition}`);
+      assert(legacyHuman.run_wait_kind === undefined, 'legacy 人签态不得继续投影 WAITING(human)');
+      const recovery = reduceRunState([
+        { type: 'run_start' },
+        {
+          type: 'phase_write_violation', phase: 'plan', fingerprint: 'fp-write',
+          violations: [{ path: 'doc/features/f/spec/acceptance.yaml', owner: 'spec', pre_sha256: 'a', post_sha256: 'b' }],
+        },
+        {
+          type: 'phase_backtrack_requested', phase: 'plan', to_phase: 'spec',
+          reason: 'phase_write_violation', files: ['doc/features/f/spec/acceptance.yaml'],
+          fingerprint: 'fp-write', backtracks_used: 1, backtracks_limit: 2,
+          run_disposition: 'RECOVERY_PENDING',
+        },
+      ]);
+      assert(recovery.recovery?.reason === 'phase_write_violation', JSON.stringify(recovery.recovery));
+      assert(recovery.recovery?.target_phase === 'spec', JSON.stringify(recovery.recovery));
+      assert(recovery.recovery?.changed_paths[0]?.pre_sha256 === 'a', 'backtrack 投影须保留安全 pre/post hash');
+      assert(recovery.recovery?.backtracks_used === 1 && recovery.recovery?.backtracks_limit === 2,
+        '恢复诊断须携预算事实');
       // 真终局仍是 TERMINAL
       for (const status of ['CHAIN_SLICE_COMPLETED', 'COMPLETED'] as const) {
-        const st = reduceRunState([{ type: 'run_start' }, { type: 'run_end', status }]);
+        const st = reduceRunState([
+          { type: 'run_start' },
+          {
+            type: 'phase_write_violation', phase: 'plan',
+            violations: [{ path: 'doc/features/f/spec/acceptance.yaml', owner: 'spec' }],
+          },
+          {
+            type: 'phase_backtrack_requested', phase: 'plan', to_phase: 'spec',
+            reason: 'phase_write_violation', files: ['doc/features/f/spec/acceptance.yaml'],
+            run_disposition: 'RECOVERY_PENDING',
+          },
+          { type: 'run_end', status },
+        ]);
         assert(st.run_disposition === 'TERMINAL', `${status} 应为 TERMINAL`);
+        assert(st.recovery === undefined, `${status} 成功封口后不应残留旧 recovery 诊断`);
       }
       // PARTIAL / HALTED：保留停机前的权威投影，不替生产端改判
       const partial = reduceRunState([

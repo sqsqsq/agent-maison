@@ -7,7 +7,7 @@
 //
 // 验收清单（plan d8c5f3a7 v23）：
 //   E2E-1 pre-existing dirty 合法（不误伤新 goal 的未提交需求/源码）
-//   E2E-2 testing 改产品源码或 SSOT → gate 不运行、halt、精确报文件
+//   E2E-2 testing 改产品源码或 SSOT → gate 不运行、失效信任并自动回 owner
 //   E2E-3 PASS + 新鲜 must_fix → 回 coding，**第二次 coding prompt 含原始 must_fix**，
 //         修复后 run 正常完成（outcomes 对齐）
 //   E2E-4 本 run 新增 crash 归档 → 回 coding + prompt 含 crash 指令与诊断路径；
@@ -15,14 +15,14 @@
 //   E2E-5 素材确定性事实 → coding 门禁档位无关 FAIL（直接函数断言）
 //   R-6a  identity 不匹配的 stale must_fix 不回退
 //   R-6b  上一 run 但 build+截图一致 → 仍回退（保护 visual-diff 跨轮持久化设计）
-//   R-7   testing_write_violation 后同 run --resume 被拒
+//   R-7   相同 phase_write_violation 重复出现 → 既有收敛熔断
 //   R-8   进程重启后同 roundFingerprint 仍熔断（从事件 round_fingerprint 恢复）
 // ============================================================================
 
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { createHash, generateKeyPairSync, sign } from 'crypto';
+import { createHash } from 'crypto';
 import { spawnSync } from 'child_process';
 import {
   __testing_resetGoalRunnerSeams,
@@ -50,15 +50,17 @@ import { buildSummaryRepairCandidates } from '../../scripts/utils/repair-candida
 import { buildSummaryBlockers } from '../../scripts/utils/summary-blockers';
 import { evaluateP0CoverageIntegrity } from '../../scripts/utils/p0-semantic-gates';
 import { checkPassRateCalculated } from '../../scripts/check-testing';
-import { writeRunSummaryBase } from '../../harness-runner';
-import type { CheckContext, CheckResult, Phase, ScriptReport } from '../../scripts/utils/types';
-import { computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
 import {
-  canonicalReceiptPayload,
-  CONFIRMATION_RECEIPT_SCHEMA_VERSION,
-  TRUST_REGISTRY_PATH_ENV,
-  type ConfirmationReceipt,
-} from '../../scripts/utils/confirmation-receipt';
+  resolveHarnessFidelityContextFields,
+  writeRunSummaryBase,
+  type HarnessFidelityContextFields,
+} from '../../harness-runner';
+import type { CheckContext, CheckResult, Phase, ScriptReport } from '../../scripts/utils/types';
+import {
+  computeRequirementShaFromText,
+  computeRunRequirementSha,
+  loadFidelityIntentSsot,
+} from '../../scripts/utils/fidelity-shared';
 import { mergeSuccessorRequirement } from '../../scripts/utils/goal-manifest';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -147,9 +149,18 @@ function setupHost(): { root: string } {
   writeFile(root, `doc/features/${FEATURE}/acceptance.yaml`, `feature: ${FEATURE}\ncriteria: []\n`);
   // c4e8b1d3 G1-1：plan 正常 PASS advance 前 runner 必建 pass snapshot——PASS 态要求
   // plan.md + contracts.yaml 在盘（缺任一 = 不变量违例 halt）。夹具按真实 plan PASS 形态造。
-  writeFile(root, `doc/features/${FEATURE}/plan/plan.md`, '# plan\n');
+  writeFile(root, `doc/features/${FEATURE}/plan/plan.md`, [
+    '# plan',
+    '## Scope 声明与继承',
+    '```yaml',
+    'in_scope_modules:',
+    '  - FinancialCard',
+    'out_of_scope_modules: []',
+    'rationale: integration fixture',
+    '```',
+  ].join('\n'));
   writeFile(root, `doc/features/${FEATURE}/contracts.yaml`,
-    `feature: ${FEATURE}\nfiles:\n  - ${PRODUCT_FILE}\n`);
+    `feature: ${FEATURE}\nmodules:\n  - name: FinancialCard\n    package_path: 02-Feature/FinancialCard\nfiles:\n  - ${PRODUCT_FILE}\n`);
   git(root, ['add', '-A']);
   git(root, ['commit', '-qm', 'init']);
   return { root };
@@ -235,76 +246,6 @@ function writeVisualDiff(
   );
 }
 
-/**
- * human_visual_acceptance 测试签发器。registry 与私钥都在宿主工程外；测试中的 agent
- * 回调只能把 payload/receipt 写进工程，镜像生产信任边界。
- */
-function visualAcceptanceFixture(root: string): {
-  registryDir: string;
-  registryPath: string;
-  write: (screenId: string, evaluatedHash: string, valid: boolean) => void;
-} {
-  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-visual-trust-'));
-  const registryPath = path.join(registryDir, 'confirmation-trust-registry.json');
-  const trusted = generateKeyPairSync('ed25519');
-  fs.writeFileSync(registryPath, JSON.stringify({
-    schema_version: '1.0',
-    issuers: [{
-      issuer_id: 'human-review-desk',
-      keys: [{
-        key_id: 'visual-key-1', alg: 'ed25519',
-        public_key_pem: trusted.publicKey.export({ type: 'spki', format: 'pem' }).toString(),
-      }],
-    }],
-  }, null, 2), 'utf-8');
-  return {
-    registryDir,
-    registryPath,
-    write: (screenId: string, evaluatedHash: string, valid: boolean): void => {
-      const payload = {
-        rubric_version: 'r1-frozen',
-        rubric: { container: 4, hierarchy: 4, density: 4, state_color: 4 },
-        screens: [{
-          screen_id: screenId,
-          variant: 'default',
-          reference_sha256: 'a'.repeat(64),
-          actual_sha256: evaluatedHash,
-        }],
-        accepted_debt_ids: [],
-        signed_by: '张三-20260821',
-      };
-      const payloadPath = path.join(
-        root, 'doc', 'features', FEATURE, 'device-testing', 'visual-acceptance.json',
-      );
-      writeFile(root, path.relative(root, payloadPath), `${JSON.stringify(payload, null, 2)}\n`);
-      const payloadHash = createHash('sha256').update(fs.readFileSync(payloadPath)).digest('hex');
-      const receiptPayload = {
-        action: 'human_visual_acceptance' as const,
-        feature: FEATURE,
-        object_hash: payloadHash,
-        issued_at: new Date(Date.now() - 60_000).toISOString(),
-        expiry: new Date(Date.now() + 60 * 60_000).toISOString(),
-      };
-      const signingKey = valid ? trusted.privateKey : generateKeyPairSync('ed25519').privateKey;
-      const receipt: ConfirmationReceipt = {
-        schema_version: CONFIRMATION_RECEIPT_SCHEMA_VERSION,
-        receipt_id: `visual-${valid ? 'valid' : 'forged'}`,
-        issuer_id: 'human-review-desk',
-        key_id: 'visual-key-1',
-        alg: 'ed25519',
-        payload_schema_version: '1.0',
-        payload: receiptPayload,
-        signature: sign(null, canonicalReceiptPayload(receiptPayload), signingKey).toString('base64'),
-      };
-      writeFile(
-        root,
-        `doc/features/${FEATURE}/device-testing/visual-acceptance.receipt.json`,
-        `${JSON.stringify(receipt, null, 2)}\n`,
-      );
-    },
-  };
-}
-
 interface AgentCtx {
   root: string;
   phase: string;
@@ -327,6 +268,8 @@ interface RunProbe {
   testingExtraEnvs: Array<Record<string, string>>;
   /** d9e4b7c1 T2（v13 缝扩展）：gate harness 各 phase 收到的注入 env */
   harnessDeviceEnvs: Array<{ phase: string; env: Record<string, string> | undefined }>;
+  /** 真实 harness 与 CheckContext 组装共用的 fidelity 字段解析结果。 */
+  harnessFidelityContexts: Array<{ phase: string; fields: HarnessFidelityContextFields }>;
   /** adjudicated-repair-loop：receipt validator 实际调用次数（uncertain 停等断言=0） */
   receiptValidationCalls: Array<{ phase: string }>;
   exitCode: number;
@@ -345,6 +288,7 @@ async function runChain(
     onTesting?: (ctx: AgentCtx) => void;
     onCoding?: (ctx: AgentCtx) => void;
     onSpec?: (ctx: AgentCtx) => void;
+    onPlan?: (ctx: AgentCtx) => void;
     resume?: string;
     forceResume?: boolean;
     /** plan c6a9e4d2：sealed 拒绝等「不达 resume 恢复流程」用例跳过 legacy bound 追补
@@ -365,6 +309,8 @@ async function runChain(
     freshRequirementFile?: string;
     /** e9d4b7a3 t1（入口测试）：--manifest 完整 YAML 内容（覆盖 budget-manifest 场景） */
     freshManifestContent?: string;
+    /** 复现下游截断起点；缺省仍从 spec 跑完整链。 */
+    freshStartPhase?: 'spec' | 'plan' | 'coding' | 'review' | 'ut' | 'testing';
     /** 为兼容共用测试驱动保留 HMAC 注入；视觉链已不再消费它。 */
     hmacKey?: string;
     /** device-readiness t3：覆盖设备就绪门（默认注入 READY(physical)；传入可验三态行为） */
@@ -392,6 +338,10 @@ async function runChain(
     /** adjudicated-repair-loop M2（plan e2b7c4a9 t2.6）：向 testing PASS summary 注入
      * 额外字段（如 visual_round 回执）——验证 uncertain 提前停等不丢既有事件投影。 */
     testingSummaryExtras?: Record<string, unknown>;
+    /** 在 fake harness 已落 open PASS summary/evidence、返回 goal-runner 前注入 crash。 */
+    afterHarnessPass?: (ctx: {
+      root: string; phase: string; runId: string; attemptId: string;
+    }) => void;
   } = {},
 ): Promise<RunProbe> {
   const invokedPhases: string[] = [];
@@ -403,6 +353,7 @@ async function runChain(
   const testingPrompts: string[] = [];
   const testingExtraEnvs: Array<Record<string, string>> = [];
   const harnessDeviceEnvs: Array<{ phase: string; env: Record<string, string> | undefined }> = [];
+  const harnessFidelityContexts: Array<{ phase: string; fields: HarnessFidelityContextFields }> = [];
   const receiptValidationCalls: Array<{ phase: string }> = [];
   const attempts = new Map<string, number>();
   const prevArgv = process.argv;
@@ -435,6 +386,7 @@ async function runChain(
       if (phase === 'testing') opts.onTesting?.(ctx);
       if (phase === 'coding') opts.onCoding?.(ctx);
       if (phase === 'spec') opts.onSpec?.(ctx);
+      if (phase === 'plan') opts.onPlan?.(ctx);
       return { exitCode: 0, stdout: 'done', stderr: '', command: 'fake-agent' };
     }) as never);
     __testing_setRepoLayout(layoutFieldsForTmpHost(root));
@@ -487,6 +439,17 @@ async function runChain(
     __testing_setRunHarnessPhase(async (pr, _fr, ph, feat, _dry, gm, roundIdentity, _timeout, deviceTargetEnv) => {
       harnessPhases.push(String(ph));
       harnessDeviceEnvs.push({ phase: String(ph), env: deviceTargetEnv });
+      harnessFidelityContexts.push({
+        phase: String(ph),
+        fields: resolveHarnessFidelityContextFields({
+          projectRoot: pr,
+          frameworkRoot: _fr,
+          feature: feat,
+          adapter: gm?.adapter ?? 'cursor',
+          profileDir: path.join(_fr, 'profiles', 'hmos-app'),
+          phaseIsGlobal: false,
+        }),
+      });
       // b3e8d4c7 t5：FAIL 覆写**先于**默认 PASS 产出——FAIL 轮不写回执（回执=闭环凭证，
       // FAIL 却有回执会让下游判据错乱），只落 FAIL summary 并以非零退出返回。
       const failOverride = opts.onHarnessSummary?.({
@@ -627,6 +590,12 @@ async function runChain(
         const rel = path.relative(pr, written.absPath).split(path.sep).join('/');
         writeReceiptManifestPointer(pr, feat, String(ph), rel, written.sha256);
       } catch { /* manifest 失败 → clean-pass 会如实判 needs_fix（非本套被测对象） */ }
+      opts.afterHarnessPass?.({
+        root: pr,
+        phase: String(ph),
+        runId: gm?.run_id ?? '',
+        attemptId: roundIdentity?.attemptId ?? '',
+      });
       return { exitCode: 0, timedOut: false };
     });
     const supersedeArgs = (opts.supersede ?? []).flatMap(id => ['--supersede', id]);
@@ -695,7 +664,7 @@ async function runChain(
             ? ['--requirement', opts.freshRequirement ?? '真机测试银行卡开卡流程']
             : []),
           ...(opts.freshRequirementFile ? ['--requirement-file', 'increment-req.txt'] : []),
-          '--start', 'spec', '--end', 'testing',
+          '--start', opts.freshStartPhase ?? 'spec', '--end', 'testing',
           '--adapter', 'cursor',
           '--foreground-ok', '--force',
           ...(!useManifestPath
@@ -727,6 +696,7 @@ async function runChain(
     return {
       invokedPhases, harnessPhases, deviceGatePhases, codingPrompts, planPrompts, testingPrompts, testingExtraEnvs,
       harnessDeviceEnvs,
+      harnessFidelityContexts,
       receiptValidationCalls,
       exitCode, root, reportDir,
       events: readEvents(reportDir),
@@ -838,9 +808,214 @@ test('E2E-1 pre-existing dirty 合法：invoke 前已有未提交 acceptance/源
   writeFile(root, `doc/features/${FEATURE}/acceptance.yaml`, `feature: ${FEATURE}\ncriteria:\n  - id: c1\n    desc: 用户刚写的验收\n`);
   writeFile(root, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("user-dirty") } }');
   const probe = await runChain(root, { onTesting: ({ root: r }) => writeCleanTesting(r) });
-  assert(!hasEvent(probe.events, 'testing_write_violation'),
-    `pre-existing dirty 不得判越权：${JSON.stringify(probe.events.filter(e => e.type === 'testing_write_violation'))}`);
+  assert(!hasEvent(probe.events, 'phase_write_violation'),
+    `pre-existing dirty 不得判越权：${JSON.stringify(probe.events.filter(e => e.type === 'phase_write_violation'))}`);
   assertRunReachedEnd(probe, 'E2E-1');
+});
+
+test('legacy fidelity SSOT + 下游起点：自动回 spec 重建，后续 CheckContext 实际消费 pixel+hard', async () => {
+  const requirement = '页面必须像素级还原参考截图，不接受降级，达不到不得继续交付。';
+  for (const startPhase of ['coding', 'review'] as const) {
+    const { root } = setupHost();
+    const runId = `20260827T12000${startPhase === 'coding' ? '1' : '2'}Z-legacy-${startPhase}`;
+    const requirementSha = computeRequirementShaFromText(
+      root,
+      FEATURE,
+      requirement,
+      'doc/features',
+    );
+    assert(!!requirementSha, `${startPhase}: 测试前提须可计算冻结需求 hash`);
+    writeFile(
+      root,
+      `doc/features/${FEATURE}/spec/reports/fidelity-intent.json`,
+      `${JSON.stringify({
+        schema_version: '2.0',
+        inferred_fidelity: 'pixel_1to1',
+        selected_fidelity: 'semantic_layout',
+        effective_fidelity: 'semantic_layout',
+        acceptance_strictness: 'hard',
+        asset_acquisition_mode: 'approximate',
+        clamped: false,
+        decision: {
+          source: 'downgrade_receipt',
+          rationale: 'legacy receipt downgraded the frozen pixel contract',
+          decision_id: '0123456789abcdef',
+        },
+        execution_identity: runId,
+        requirement_sha256: requirementSha,
+        requirement_provenance: 'goal_manifest',
+      }, null, 2)}\n`,
+    );
+
+    const probe = await runChain(root, {
+      freshStartPhase: startPhase,
+      freshRequirement: requirement,
+      freshManifestContent: [
+        `run_id: ${runId}`,
+        `feature: ${FEATURE}`,
+        `requirement: ${JSON.stringify(requirement)}`,
+        `start_phase: ${startPhase}`,
+        'end_phase: testing',
+        'adapter: cursor',
+        'unattended:',
+        '  write_mode: full-access',
+        '  approval_mode: never',
+        '  max_turns: 20',
+      ].join('\n'),
+      onTesting: ({ root: hostRoot }) => writeCleanTesting(hostRoot),
+    });
+
+    const request = probe.events.find(event =>
+      event.type === 'phase_backtrack_requested' &&
+      event.reason === 'legacy_fidelity_ssot' &&
+      event.to_phase === 'spec'
+    ) as { from_phase?: string; legacy_source?: string; invalidated_phases?: string[] } | undefined;
+    assert(!!request, `${startPhase}: legacy SSOT 必须走既有 phase_backtrack_requested 事务`);
+    assert(request!.from_phase === startPhase, `${startPhase}: 回退来源须保留原下游起点`);
+    assert(request!.legacy_source === 'downgrade_receipt', `${startPhase}: 事件须记录失效授权来源`);
+    assert(probe.invokedPhases[0] === 'spec',
+      `${startPhase}: 第一位实际执行阶段须为 spec，实得 ${probe.invokedPhases.join('→')}`);
+    assert(
+      probe.events.some(event => event.type === 'phase_backtrack_completed' && event.to_phase === 'spec'),
+      `${startPhase}: spec 真正执行后须闭合既有 backtrack 事务`,
+    );
+
+    const rebuilt = loadFidelityIntentSsot(root, FEATURE);
+    assert(!!rebuilt, `${startPhase}: spec owner 必须重建唯一 fidelity SSOT`);
+    assert(rebuilt!.selected_fidelity === 'pixel_1to1',
+      `${startPhase}: 冻结需求须重建 selected=pixel_1to1，实得 ${rebuilt!.selected_fidelity}`);
+    assert(rebuilt!.acceptance_strictness === 'hard',
+      `${startPhase}: 冻结需求须重建 strictness=hard，实得 ${rebuilt!.acceptance_strictness}`);
+    assert(rebuilt!.decision.source !== 'downgrade_receipt' && rebuilt!.decision.source !== 'human_confirmed',
+      `${startPhase}: 新 SSOT 不得延续 legacy authority source`);
+
+    const downstreamContext = probe.harnessFidelityContexts.find(item => item.phase === startPhase);
+    assert(!!downstreamContext, `${startPhase}: 下游 harness 必须实际组装 CheckContext`);
+    assert(downstreamContext!.fields.fidelityTarget === 'pixel_1to1',
+      `${startPhase}: CheckContext 必须消费重建后的 pixel，实得 ${downstreamContext!.fields.fidelityTarget}`);
+    assert(downstreamContext!.fields.acceptanceStrictness === 'hard',
+      `${startPhase}: CheckContext 必须消费重建后的 hard，实得 ${downstreamContext!.fields.acceptanceStrictness}`);
+    assertRunReachedEnd(probe, `legacy fidelity downstream recovery (${startPhase})`);
+  }
+});
+
+test('legacy fidelity 回退 crash/resume：提前 completed 不能越过未提交的 spec closure', async () => {
+  const { root } = setupHost();
+  const requirement = '页面必须像素级还原参考截图，不接受降级，达不到不得继续交付。';
+  const runId = '20260827T120003Z-legacy-closure-crash';
+  const requirementSha = computeRequirementShaFromText(root, FEATURE, requirement, 'doc/features');
+  assert(!!requirementSha, '测试前提须可计算冻结需求 hash');
+  writeFile(
+    root,
+    `doc/features/${FEATURE}/spec/reports/fidelity-intent.json`,
+    `${JSON.stringify({
+      schema_version: '2.0',
+      inferred_fidelity: 'pixel_1to1',
+      selected_fidelity: 'semantic_layout',
+      effective_fidelity: 'semantic_layout',
+      acceptance_strictness: 'hard',
+      asset_acquisition_mode: 'approximate',
+      clamped: false,
+      decision: {
+        source: 'downgrade_receipt',
+        rationale: 'legacy receipt downgraded the frozen pixel contract',
+        decision_id: 'fedcba9876543210',
+      },
+      execution_identity: runId,
+      requirement_sha256: requirementSha,
+      requirement_provenance: 'goal_manifest',
+    }, null, 2)}\n`,
+  );
+
+  let injected = false;
+  let crashObserved = false;
+  try {
+    await runChain(root, {
+      freshStartPhase: 'coding',
+      freshRequirement: requirement,
+      freshManifestContent: [
+        `run_id: ${runId}`,
+        `feature: ${FEATURE}`,
+        `requirement: ${JSON.stringify(requirement)}`,
+        'start_phase: coding',
+        'end_phase: testing',
+        'adapter: cursor',
+        'unattended:',
+        '  write_mode: full-access',
+        '  approval_mode: never',
+        '  max_turns: 20',
+      ].join('\n'),
+      afterHarnessPass: ({ root: hostRoot, phase }) => {
+        if (phase !== 'spec' || injected) return;
+        injected = true;
+        const eventsPath = path.join(
+          hostRoot, 'doc', 'features', FEATURE, 'goal-runs', runId, 'events.jsonl',
+        );
+        // 精确模拟旧版本的崩溃窗口：harness 已返回、completed 已写，但 finalizer 尚未运行。
+        fs.appendFileSync(eventsPath, `${JSON.stringify({
+          ts: new Date().toISOString(),
+          type: 'phase_backtrack_completed',
+          to_phase: 'spec',
+        })}\n`, 'utf-8');
+        throw new Error('injected crash after premature completed before finalizePhaseClosure');
+      },
+    });
+  } catch (error) {
+    crashObserved = String((error as Error).message).includes('injected crash after premature completed');
+  }
+  assert(crashObserved, 'fault injection 必须在 completed 后、closure finalizer 前终止进程');
+  const interruptedReportDir = path.join(
+    root, 'doc', 'features', FEATURE, 'goal-runs', runId,
+  );
+  const interruptedEvents = readEvents(interruptedReportDir);
+  assert(
+    interruptedEvents.some(event => event.type === 'phase_backtrack_completed' && event.to_phase === 'spec'),
+    'crash 现场必须已持久化旧版 premature completed',
+  );
+  const openSummaryPath = path.join(root, 'doc', 'features', FEATURE, 'spec', 'reports', 'summary.json');
+  const openSummary = JSON.parse(fs.readFileSync(openSummaryPath, 'utf-8')) as {
+    closure_status?: string; closure_commit?: unknown;
+  };
+  assert(openSummary.closure_status === 'open' && !openSummary.closure_commit,
+    'crash 现场必须是 completed 已写但 spec closure 尚未提交');
+
+  const resumed = await runChain(root, {
+    resume: runId,
+    forceResume: true,
+    onTesting: ({ root: hostRoot }) => writeCleanTesting(hostRoot),
+  });
+  const requests = resumed.events.filter(event =>
+    event.type === 'phase_backtrack_requested' &&
+    event.reason === 'legacy_fidelity_ssot' &&
+    event.to_phase === 'spec'
+  ) as Array<{ backtracks_used?: number }>;
+  assert(requests.length === 1, `resume 不得重复 request，实得 ${requests.length}`);
+  assert(requests[0].backtracks_used === 1,
+    `resume 不得重复扣预算，backtracks_used 应保持 1，实得 ${requests[0].backtracks_used}`);
+  assert(resumed.harnessPhases[0] === 'spec',
+    `resume 必须先从 spec 验证/闭环，实得 harness=${resumed.harnessPhases.join('→')}`);
+
+  const closedSummary = JSON.parse(fs.readFileSync(openSummaryPath, 'utf-8')) as {
+    closure_status?: string; closure_commit?: { committed_at?: string };
+  };
+  assert(closedSummary.closure_status === 'closed' && !!closedSummary.closure_commit?.committed_at,
+    'resume 必须先成功提交 spec closure');
+  const committedMs = Date.parse(closedSummary.closure_commit!.committed_at!);
+  const committedCompletion = resumed.events.find(event =>
+    event.type === 'phase_backtrack_completed' &&
+    event.to_phase === 'spec' &&
+    event.reason === 'legacy_fidelity_ssot' &&
+    Date.parse(String(event.ts ?? '')) >= committedMs
+  );
+  assert(!!committedCompletion, '可信 completed 必须晚于 spec closure commit');
+  const downstreamContext = resumed.harnessFidelityContexts.find(item => item.phase === 'coding');
+  assert(!!downstreamContext, 'spec closure 后必须继续进入原 coding 下游');
+  assert(
+    downstreamContext!.fields.fidelityTarget === 'pixel_1to1' &&
+    downstreamContext!.fields.acceptanceStrictness === 'hard',
+    '下游 CheckContext 必须消费 spec 重建后的 pixel_1to1 + hard',
+  );
+  assertRunReachedEnd(resumed, 'legacy fidelity closure crash/resume');
 });
 
 test('⑤ c4e8b1d3：首次 coding 前锚定 coding_base_sha（pass snapshot 已退役，plan PASS 不再建快照）', async () => {
@@ -1202,37 +1377,182 @@ test('e9d4b7a3 t1 入口④（三轮 review 阻断回归）：源=A、manifest �
   assert(!manifestB.requirement!.includes(nativeReq), 'manifest 自带文本 B 不得被合并进后继任务');
 });
 
-test('E2E-2a testing 改产品源码 → violation：gate 不运行、halt、精确报文件', async () => {
+test('E2E-2a testing 改产品源码 → 当前证据作废并自动回 coding 全量重验', async () => {
   const { root } = setupHost();
   const probe = await runChain(root, {
-    onTesting: ({ root: r }) => {
+    onTesting: ({ root: r, attempt }) => {
       writeCleanTesting(r);
-      writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("x").id("hacked") } }');
+      if (attempt === 1) {
+        writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("x").id("hacked") } }');
+      }
+    },
+    onCoding: ({ root: r, attempt }) => {
+      if (attempt > 1) writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("owner-revalidated") } }');
     },
   });
-  const v = probe.events.find(e => e.type === 'testing_write_violation') as
-    { changed?: string[] } | undefined;
-  assert(!!v, `须落 testing_write_violation：${probe.events.map(e => e.type).join(',')}`);
-  assert((v!.changed ?? []).some(c => c.includes('AllBanksPage.ets')),
-    `须精确点名被改文件：${JSON.stringify(v!.changed)}`);
-  assert(probe.harnessPhases.filter(p => p === 'testing').length === 0,
-    `violation 轮 testing 的 gate 必须零调用，实得 [${probe.harnessPhases.join(',')}]`);
-  assert(probe.exitCode !== 0 && runEndStatus(probe.events) === 'HALTED', 'run 须 halt（终止态）');
+  const v = probe.events.find(e => e.type === 'phase_write_violation') as
+    { violations?: Array<{ path?: string; owner?: string; pre_sha256?: string; post_sha256?: string }> } | undefined;
+  assert(!!v, `须落 phase_write_violation：${probe.events.map(e => e.type).join(',')}`);
+  const item = (v!.violations ?? []).find(c => c.path?.includes('AllBanksPage.ets'));
+  assert(item?.owner === 'coding', `须精确点名文件及 coding owner：${JSON.stringify(v)}`);
+  assert(/^[0-9a-f]{64}$/.test(item?.pre_sha256 ?? '') && /^[0-9a-f]{64}$/.test(item?.post_sha256 ?? ''),
+    '事件须携安全 pre/post hash');
+  const bt = probe.events.find(e => e.type === 'phase_backtrack_requested' && (e as { reason?: string }).reason === 'phase_write_violation') as
+    { to_phase?: string; invalidated_phases?: string[] } | undefined;
+  assert(bt?.to_phase === 'coding' && (bt.invalidated_phases ?? []).includes('testing'),
+    `须执行 coding backtrack 事务：${JSON.stringify(bt)}`);
+  assert(probe.harnessPhases.filter(p => p === 'testing').length === 1,
+    `污染的首轮 testing gate 必须跳过，仅重验轮运行一次，实得 [${probe.harnessPhases.join(',')}]`);
+  assertRunReachedEnd(probe, 'E2E-2a recovery');
 });
 
-test('E2E-2b testing 改需求 SSOT（acceptance.yaml）→ 同样 violation（fs 快照覆盖 doc 域）', async () => {
+test('E2E-2b testing 改 spec-owned acceptance → 自动回 spec，不落 display-only rerun 建议', async () => {
   const { root } = setupHost();
   const probe = await runChain(root, {
-    onTesting: ({ root: r }) => {
+    onTesting: ({ root: r, attempt }) => {
       writeCleanTesting(r);
-      writeFile(r, `doc/features/${FEATURE}/acceptance.yaml`, `feature: ${FEATURE}\ncriteria:\n  - relaxed\n`);
+      if (attempt === 1) {
+        writeFile(r, `doc/features/${FEATURE}/acceptance.yaml`, `feature: ${FEATURE}\ncriteria:\n  - relaxed\n`);
+      }
+    },
+    onSpec: ({ root: r, attempt }) => {
+      if (attempt > 1) writeFile(r, `doc/features/${FEATURE}/acceptance.yaml`, `feature: ${FEATURE}\ncriteria: []\n`);
     },
   });
-  const v = probe.events.find(e => e.type === 'testing_write_violation') as
-    { changed?: string[] } | undefined;
-  assert(!!v && (v.changed ?? []).some(c => c.includes('acceptance.yaml')),
-    `SSOT 改写须被点名（docs_committed:false 宿主旧 git 实现全盲）：${JSON.stringify(v?.changed)}`);
-  assert(probe.harnessPhases.filter(p => p === 'testing').length === 0, 'gate 不得运行');
+  const v = probe.events.find(e => e.type === 'phase_write_violation') as
+    { recovery_reason?: string; violations?: Array<{ path?: string; owner?: string; pre_sha256?: string; post_sha256?: string }> } | undefined;
+  assert((v?.violations ?? []).some(c => c.path?.includes('acceptance.yaml') && c.owner === 'spec'),
+    `SSOT 改写须被点名并归 spec：${JSON.stringify(v)}`);
+  const acceptanceChange = (v?.violations ?? []).find(c => c.path?.includes('acceptance.yaml'));
+  assert(v?.recovery_reason === 'phase_write_violation'
+    && /^[0-9a-f]{64}$/.test(acceptanceChange?.pre_sha256 ?? '')
+    && /^[0-9a-f]{64}$/.test(acceptanceChange?.post_sha256 ?? ''),
+  `bc-openCard 诊断须携稳定 reason 与安全 hashes：${JSON.stringify(v)}`);
+  const bt = probe.events.find(e => e.type === 'phase_backtrack_requested' && (e as { reason?: string }).reason === 'phase_write_violation') as
+    { to_phase?: string; backtracks_used?: number; backtracks_limit?: number; fingerprint?: string } | undefined;
+  assert(bt?.to_phase === 'spec' && bt.backtracks_used === 1 && bt.backtracks_limit === 2
+    && typeof bt.fingerprint === 'string' && bt.fingerprint.length > 0,
+  `须自动回 spec 并投影预算/指纹诊断：${JSON.stringify(bt)}`);
+  assert(!probe.events.some(e => String((e as { action?: string }).action ?? '').startsWith('rerun_phase:spec')),
+    '不得留下 display-only rerun_phase:spec');
+  assertRunReachedEnd(probe, 'E2E-2b recovery');
+});
+
+test('E2E-2b-plan-readonly plan 只读发现 scope 矛盾 → repair candidate 回 spec 并重走全链', async () => {
+  const { root } = setupHost();
+  const acceptancePath = path.join(root, 'doc', 'features', FEATURE, 'acceptance.yaml');
+  const acceptanceBefore = fs.readFileSync(acceptancePath);
+  const probe = await runChain(root, {
+    onPlan: ({ root: hostRoot }) => {
+      assert(
+        fs.readFileSync(path.join(hostRoot, 'doc', 'features', FEATURE, 'acceptance.yaml'))
+          .equals(acceptanceBefore),
+        'plan invocation 必须保持 acceptance 字节只读',
+      );
+    },
+    onHarnessSummary: ({ phase, attempt }) =>
+      phase === 'plan' && attempt === 1
+        ? {
+            checks: [{
+              id: 'scope_consistency_with_spec',
+              category: 'traceability',
+              description: 'plan scope must match spec',
+              severity: 'BLOCKER',
+              status: 'FAIL',
+              details: 'spec scope 缺少 plan 所需边界，交回 spec owner 修复',
+              affected_files: [`doc/features/${FEATURE}/spec/spec.md`],
+            }],
+          }
+        : null,
+    onSpec: ({ root: hostRoot, attempt }) => {
+      if (attempt > 1) {
+        writeFile(hostRoot, `doc/features/${FEATURE}/spec/spec.md`, '# spec\nscope: aligned-by-spec-owner\n');
+      }
+    },
+    onTesting: ({ root: hostRoot }) => writeCleanTesting(hostRoot),
+  });
+  assert(fs.readFileSync(acceptancePath).equals(acceptanceBefore),
+    'scope candidate 的回退过程中 plan/spec 都不应无故改 acceptance');
+  const bt = probe.events.find(e => e.type === 'phase_backtrack_requested' && e.reason === 'repair_candidates') as
+    { to_phase?: string; candidates?: Array<{ id?: string; category?: string }> } | undefined;
+  assert(bt?.to_phase === 'spec'
+    && (bt.candidates ?? []).some(c => c.id === 'scope_consistency_with_spec' && c.category === 'spec'),
+  `scope_consistency candidate 必须执行 spec backtrack：${JSON.stringify(bt)}`);
+  assert(
+    /spec.*plan.*spec.*plan.*coding.*review.*ut.*testing/.test(probe.invokedPhases.join('→')),
+    `须从 spec 重签并重走下游全链，实得 ${probe.invokedPhases.join('→')}`,
+  );
+  assertRunReachedEnd(probe, 'E2E-2b-plan-readonly');
+});
+
+test('E2E-2b-plan-violation plan 实际改 acceptance → 保留字节到 spec owner、失效后全链重验', async () => {
+  const { root } = setupHost();
+  const acceptanceRel = `doc/features/${FEATURE}/acceptance.yaml`;
+  const acceptancePath = path.join(root, acceptanceRel);
+  const acceptanceBefore = fs.readFileSync(acceptancePath);
+  const unauthorizedBytes = Buffer.from(`feature: ${FEATURE}\ncriteria:\n  - plan-wrote-this\n`, 'utf8');
+  let specSawUnauthorizedBytes = false;
+  const probe = await runChain(root, {
+    onPlan: ({ root: hostRoot, attempt }) => {
+      if (attempt === 1) fs.writeFileSync(path.join(hostRoot, acceptanceRel), unauthorizedBytes);
+    },
+    onSpec: ({ root: hostRoot, attempt }) => {
+      if (attempt > 1) {
+        specSawUnauthorizedBytes = fs.readFileSync(path.join(hostRoot, acceptanceRel)).equals(unauthorizedBytes);
+        fs.writeFileSync(path.join(hostRoot, acceptanceRel), acceptanceBefore);
+      }
+    },
+    onTesting: ({ root: hostRoot }) => writeCleanTesting(hostRoot),
+  });
+  assert(specSawUnauthorizedBytes,
+    'runner 不得回滚越权字节；必须保留到责任阶段读取并重新取得机器信任');
+  const violation = probe.events.find(e => e.type === 'phase_write_violation' && e.phase === 'plan') as
+    { violations?: Array<{ path?: string; owner?: string; pre_sha256?: string; post_sha256?: string }> } | undefined;
+  const acceptanceChange = (violation?.violations ?? []).find(v => v.path?.endsWith('acceptance.yaml'));
+  assert(acceptanceChange?.owner === 'spec'
+    && /^[0-9a-f]{64}$/.test(acceptanceChange.pre_sha256 ?? '')
+    && /^[0-9a-f]{64}$/.test(acceptanceChange.post_sha256 ?? ''),
+  `plan 越权事件须记录 owner 与 pre/post hash：${JSON.stringify(violation)}`);
+  const bt = probe.events.find(e => e.type === 'phase_backtrack_requested'
+    && e.reason === 'phase_write_violation' && e.phase === 'plan');
+  assert(bt?.to_phase === 'spec', `plan 越权必须自动回 spec：${JSON.stringify(bt)}`);
+  assert(probe.harnessPhases.filter(p => p === 'plan').length === 1,
+    `越权首轮 plan invocation evidence 必须作废且跳过 gate，实得 [${probe.harnessPhases.join(',')}]`);
+  assert(
+    /spec.*plan.*spec.*plan.*coding.*review.*ut.*testing/.test(probe.invokedPhases.join('→')),
+    `须从 spec 重签并重走下游全链，实得 ${probe.invokedPhases.join('→')}`,
+  );
+  assert(fs.readFileSync(acceptancePath).equals(acceptanceBefore), 'spec owner 重验后应恢复可信 acceptance');
+  assertRunReachedEnd(probe, 'E2E-2b-plan-violation');
+});
+
+test('E2E-2c plan gate 期间出现稳定的 earlier spec stale gap → 通用 disposition 自动回 spec', async () => {
+  const { root } = setupHost();
+  let injected = false;
+  const probe = await runChain(root, {
+    onHarnessSummary: ({ phase, attempt }) => {
+      if (phase === 'plan' && attempt === 1 && !injected) {
+        injected = true;
+        const acceptance = path.join(root, 'doc', 'features', FEATURE, 'acceptance.yaml');
+        fs.appendFileSync(acceptance, '# stable external input\n', 'utf8');
+      }
+      return null;
+    },
+    onTesting: ({ root: hostRoot }) => writeCleanTesting(hostRoot),
+  });
+  const backtrack = probe.events.find((event) =>
+    event.type === 'phase_backtrack_requested' && event.reason === 'upstream_gap');
+  assert(!!backtrack, `须执行 upstream gap 回退：${probe.events.map(e => e.type).join(',')}`);
+  assert(backtrack!.to_phase === 'spec' && backtrack!.gap_kind === 'stale', JSON.stringify(backtrack));
+  assert(
+    /spec.*plan.*spec.*plan/.test(probe.invokedPhases.join('→')),
+    `须 plan→spec→plan 重验，实得 ${probe.invokedPhases.join('→')}`,
+  );
+  assert(!probe.events.some((event) => event.type === 'phase_halt' && event.halt_reason === 'framework_bug'),
+    'known earlier gap 不得误报 framework_bug');
+  assert(!probe.events.some((event) => String(event.action ?? '').startsWith('rerun_phase:spec')),
+    '不得留下 display-only rerun_phase:spec 死路');
+  assertRunReachedEnd(probe, 'E2E-2c');
 });
 
 test('E2E-3 PASS+新鲜 must_fix → 回 coding（prompt 含原始 must_fix）→ 修复后 run 正常完成', async () => {
@@ -1452,26 +1772,23 @@ test('R-6b 上一 run 遗留但 build+截图一致的 must_fix → 仍回退（i
   assertRunReachedEnd(probe, 'R-6b');
 });
 
-test('R-7 violation 后同 run --resume 被拒绝（run 终止态；防遗留修改被当合法基线洗白）', async () => {
+test('R-7 相同 phase_write_violation 第二次出现 → fingerprint fuse，不能无限回退', async () => {
   const { root } = setupHost();
-  const first = await runChain(root, {
+  const probe = await runChain(root, {
     onTesting: ({ root: r }) => {
       writeCleanTesting(r);
       writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("hacked") } }');
     },
+    onCoding: ({ root: r, attempt }) => {
+      if (attempt > 1) writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("x") } }');
+    },
   });
-  assert(hasEvent(first.events, 'testing_write_violation'), '前置：首轮须 violation');
-  const runId = path.basename(first.reportDir);
-  // --force-resume 绕过 cooldown（review 第 10 轮：否则 5 分钟 cooldown 会先拦下 resume，
-  // 测试断言的其实是 cooldown 而不是 violation 终止态——假绿）
-  const second = await runChain(root, { resume: runId, forceResume: true, onTesting: ({ root: r }) => writeCleanTesting(r) });
-  assert(second.exitCode !== 0, 'resume 须被拒绝（非零退出）');
-  assert(second.invokedPhases.length === 0,
-    `resume 被拒后不得调用任何 agent，实得 [${second.invokedPhases.join(',')}]`);
-  // 拒绝理由必须是 violation 终止态（事件留痕，可测）
-  const rej = readEvents(first.reportDir).filter(e => e.type === 'resume_rejected');
-  assert(rej.length >= 1 && (rej[0] as { reason?: string }).reason === 'testing_write_violation_terminal',
-    `拒绝须落 resume_rejected(testing_write_violation_terminal)：${JSON.stringify(rej)}`);
+  assert(probe.events.filter(e => e.type === 'phase_write_violation').length === 2,
+    '须记录两次相同 violation');
+  const halt = probe.events.find(e => e.type === 'phase_halt' &&
+    (e as { halt_reason?: string }).halt_reason === 'phase_write_violation_repeat');
+  assert(!!halt, `第二次须命中 fingerprint fuse：${probe.events.map(e => e.type).join(',')}`);
+  assert(probe.exitCode !== 0 && runEndStatus(probe.events) === 'HALTED', '重复不稳定写才诚实终止');
 });
 
 test('R-8 进程重启后同 roundFingerprint 仍熔断；集合变化不熔断', async () => {
@@ -1552,22 +1869,19 @@ test('R-8 进程重启后同 roundFingerprint 仍熔断；集合变化不熔断'
   });
   assert(second.invokedPhases.includes('testing'),
     `resume 须真正重入 testing，实得 [${second.invokedPhases.join(',')}]`);
-  // adjudicated-repair-loop（review 修复）：「再修一次」的许可 = resume 动作本身（halt 后
-  // 人工 resume = 一次显式放行）。故 resume 后**放行一轮**：同集合再回退一次（attempted 清空），
-  // 随后 coding 零改动 → 再次 no-op → 再 halt。attempted 不变式保证每轮只多修一次，
-  // 不会自动继续（每次都需要新的人工 resume）。
+  // same-run resume 没有释放权：attempted/fingerprint 从 events 单调恢复，同 identity
+  // 仍不可再次回退。
   const bt2 = second.events.filter(e => e.type === 'phase_backtrack_requested');
-  assert(bt2.length === bt1.length + 1,
-    `resume 放行一轮（同集合再回退一次），实得 ${bt2.length} vs 首轮 ${bt1.length}`);
+  assert(bt2.length === bt1.length,
+    `resume 不得增加同 identity 回退，实得 ${bt2.length} vs 首轮 ${bt1.length}`);
   assert(
-    second.events.some(e => e.type === 'phase_backtrack_completed' && (e as { result?: string }).result === 'noop'),
-    `放行轮 coding 零改动 → 再 no-op：${JSON.stringify(second.events.filter(e => e.type === 'phase_backtrack_completed'))}`,
+    !second.events.some(e => e.type === 'resume_release_granted'),
+    '不得再产生 manual resume release 事件',
   );
   const convergenceHalts2 = second.events.filter(e => e.type === 'phase_halt' &&
     (e as { halt_reason?: string }).halt_reason === 'repair_not_converging').length;
   assert(convergenceHalts2 >= 1,
-    `resume 后须再落 repair_not_converging（no-op 停等）——` +
-      `每轮放行一次的直接证据：${JSON.stringify(second.events.filter(e => e.type === 'phase_halt'))}`);
+    `resume 后须保持 repair_not_converging terminal：${JSON.stringify(second.events.filter(e => e.type === 'phase_halt'))}`);
 });
 
 // ---------------------------------------------------------------------------
@@ -1746,8 +2060,8 @@ test('T1-1 hvigor 合法生成（testing invoke 内新增模块根 BuildProfile.
         writeCleanTesting(r);
       },
     });
-    assert(!hasEvent(probe.events, 'testing_write_violation'),
-      `合法生成物不得判越权：${JSON.stringify(probe.events.filter(e => e.type === 'testing_write_violation'))}`);
+    assert(!hasEvent(probe.events, 'phase_write_violation'),
+      `合法生成物不得判越权：${JSON.stringify(probe.events.filter(e => e.type === 'phase_write_violation'))}`);
     const gen = probe.events.find(e => e.type === 'testing_generated_file_change') as
       { files?: string[]; count?: number; build_mode?: string } | undefined;
     assert(!!gen, `须落 testing_generated_file_change：${probe.events.map(e => e.type).join(',')}`);
@@ -1764,33 +2078,34 @@ test('T1-1 hvigor 合法生成（testing invoke 内新增模块根 BuildProfile.
   });
 });
 
-test('T1-2 混合场景（生成物 + 真源码改动）→ violation 只列真违规、生成物单列 generated_changed、照常 halt', async () => {
+test('T1-2 混合场景（生成物 + 真源码改动）→ 生成物单列、真源码走 owner 回退', async () => {
   await withCleanDeviceTestEnv(async () => {
     const { root } = setupHost();
     const probe = await runChain(root, {
-      onTesting: ({ root: r }) => {
+      onTesting: ({ root: r, attempt }) => {
         writeFile(r, GEN_FILE_REL, GEN_BUILD_PROFILE);
-        writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("tampered") } }');
+        if (attempt === 1) writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("tampered") } }');
         writeCleanTesting(r);
       },
+      onCoding: ({ root: r, attempt }) => {
+        if (attempt > 1) writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("fixed") } }');
+      },
     });
-    const v = probe.events.find(e => e.type === 'testing_write_violation') as
-      { changed?: string[]; generated_changed?: string[] } | undefined;
+    const v = probe.events.find(e => e.type === 'phase_write_violation') as
+      { violations?: Array<{ path?: string }> } | undefined;
     assert(!!v, `混合场景须维持 violation：${probe.events.map(e => e.type).join(',')}`);
-    assert((v!.changed ?? []).some(c => c.includes(PRODUCT_FILE)),
-      `changed 须含真违规：${JSON.stringify(v!.changed)}`);
-    assert(!(v!.changed ?? []).some(c => c.includes('BuildProfile.ets')),
-      `changed 不得混入生成物：${JSON.stringify(v!.changed)}`);
-    assert((v!.generated_changed ?? []).includes(GEN_FILE_REL),
-      `generated_changed 须单列生成物：${JSON.stringify(v!.generated_changed)}`);
-    assert(!hasEvent(probe.events, 'testing_generated_file_change'),
-      '混合场景不得落降级事件（violation 为主）');
-    const halts = probe.events.filter(e => e.type === 'phase_halt').map(e => (e as { halt_reason?: string }).halt_reason);
-    assert(halts.includes('testing_write_violation'), `须照常 halt：${JSON.stringify(halts)}`);
+    assert((v!.violations ?? []).some(c => c.path?.includes(PRODUCT_FILE)),
+      `violations 须含真违规：${JSON.stringify(v)}`);
+    assert(!(v!.violations ?? []).some(c => c.path?.includes('BuildProfile.ets')),
+      `violations 不得混入生成物：${JSON.stringify(v)}`);
+    const generated = probe.events.find(e => e.type === 'testing_generated_file_change') as
+      { files?: string[] } | undefined;
+    assert((generated?.files ?? []).includes(GEN_FILE_REL), `生成物须单列：${JSON.stringify(generated)}`);
+    assertRunReachedEnd(probe, 'T1-2 recovery');
   });
 });
 
-test('T1-3 篡改的生成物（常量与冻结配置不符）→ 仍 violation', async () => {
+test('T1-3 篡改的生成物（常量与冻结配置不符）→ 仍 phase violation', async () => {
   await withCleanDeviceTestEnv(async () => {
     const { root } = setupHost();
     const probe = await runChain(root, {
@@ -1800,7 +2115,7 @@ test('T1-3 篡改的生成物（常量与冻结配置不符）→ 仍 violation'
         writeCleanTesting(r);
       },
     });
-    assert(hasEvent(probe.events, 'testing_write_violation'),
+    assert(hasEvent(probe.events, 'phase_write_violation'),
       `常量篡改须判 violation：${probe.events.map(e => e.type).join(',')}`);
     assert(!hasEvent(probe.events, 'testing_generated_file_change'), '篡改不得降级');
   });
@@ -2168,17 +2483,20 @@ test('t5④post-agent coding 本轮改了 plan 产物 + gate 本会 PASS → gat
     onCoding: ({ root: hostRoot, attempt }) => {
       if (attempt !== 1) return;
       writeFile(hostRoot, `doc/features/${FEATURE}/contracts.yaml`,
-        `feature: ${FEATURE}\nfiles:\n  - ${PRODUCT_FILE}\n  - 01-Product/WalletMain/src/main/ets/pages/HomeTabPage.ets\n`);
+        `feature: ${FEATURE}\nmodules:\n  - name: FinancialCard\n    package_path: 02-Feature/FinancialCard\nfiles:\n  - ${PRODUCT_FILE}\n  - 01-Product/WalletMain/src/main/ets/pages/HomeTabPage.ets\n`);
     },
     onTesting: ({ root: hostRoot }) => writeCleanTesting(hostRoot),
   });
   const bt = probe.events.find(e => e.type === 'phase_backtrack_requested'
-    && e.reason === 'plan_authority_unverifiable');
+    && e.reason === 'phase_write_violation');
   assert(!!bt, `须在 gate 之前拦下并回退 plan：${probe.events.map(e => e.type).join(',')}`);
-  // runner-owned-machine-facts 裁剪后文案：closure 冻结面偏离（live 漂移语义不变）且点名文件
+  assert(bt!.to_phase === 'plan', `contracts.yaml owner 应为 plan，实得 ${bt!.to_phase}`);
+  const violation = probe.events.find(e => e.type === 'phase_write_violation') as
+    | { violations?: Array<{ path?: string; owner?: string }> }
+    | undefined;
   assert(
-    String(bt!.detail ?? '').includes('偏离') && String(bt!.detail ?? '').includes('contracts.yaml'),
-    `须归因冻结面偏离并点名文件：${bt!.detail}`,
+    violation?.violations?.some(item => item.path === `doc/features/${FEATURE}/contracts.yaml` && item.owner === 'plan') === true,
+    `须记录 contracts.yaml 的 plan owner 归因：${JSON.stringify(violation)}`,
   );
   // **判别式断言**：plan gate 跑了两次 = 真的回去重跑了。
   // 只数 coding gate 次数不行——没有本修复时 coding gate 同样只跑一次（PASS 后直接 advance）。
@@ -2567,7 +2885,7 @@ test('c7e4a2d9-⑥ 同候选原样重现 → 既有整轮指纹熔断（backtrac
   assert(probe.codingPrompts.length >= 2, '回退后 coding 确实被重拉（否则断言无效）');
 });
 
-test('c7e4a2d9-⑤ 零候选且真正 human_only blocker → 仍走通用 await_human_gate_deferral 求人', async () => {
+test('零候选 legacy human_only blocker 不再生成 await_human_gate_deferral', async () => {
   const { root } = setupHost();
   const probe = await runChain(root, {
     onHarnessSummary: ({ phase, attempt }) =>
@@ -2577,13 +2895,14 @@ test('c7e4a2d9-⑤ 零候选且真正 human_only blocker → 仍走通用 await_
     onTesting: ({ root: r }) => writeCleanTesting(r),
   });
   const halts = haltReasons(probe.events);
-  assert(halts.includes('await_human_gate_deferral'),
-    `零候选 + 全 human_only 仍须求人：${halts.join(',')}`);
+  assert(!halts.includes('await_human_gate_deferral'),
+    `质量人签停车态已退役：${halts.join(',')}`);
   assert(
     !probe.events.some(e => e.type === 'phase_backtrack_requested' && e.reason === 'repair_candidates'),
     '零候选不得回退 coding',
   );
-  assert(runEndStatus(probe.events) === 'HALTED', `run 须 HALTED：${runEndStatus(probe.events)}`);
+  assert(runEndStatus(probe.events) === 'CHAIN_SLICE_COMPLETED',
+    `fresh machine retry 转绿后应正常闭环：${runEndStatus(probe.events)}`);
 });
 
 test('c7e4a2d9-④ 机器 envBlocked 在场 → 外部路径不误投 coding（即使真实 writer 已持久化 p0 候选）', async () => {
@@ -2629,7 +2948,7 @@ test('c7e4a2d9-④ 机器 envBlocked 在场 → 外部路径不误投 coding（�
 // adjudicated-repair-loop M2（plan e2b7c4a9 t2.6）：物化前裁决 + uncertain 判停时序
 // ---------------------------------------------------------------------------
 
-test('M2-1 唯一 uncertain 其余全 PASS → 停等 repair_adjudication_pending；不 finalize closure；visual_round 投影不丢', async () => {
+test('M2-1 legacy structured uncertain 无人签停等权；checker verdict 才是唯一门禁，visual_round 投影不丢', async () => {
   const { root } = setupHost();
   const uncertainSig = {
     item_fingerprint: 'c'.repeat(64),
@@ -2674,15 +2993,15 @@ test('M2-1 唯一 uncertain 其余全 PASS → 停等 repair_adjudication_pendin
       },
     },
   });
-  // 判停：halt repair_adjudication_pending，run 停在 WAITING(human)
+  // 旧 structured uncertain 诊断不能绕过 checker PASS，也不能创建 WAITING(human)。
   assert(
-    probe.events.some(e => e.type === 'phase_halt' &&
+    !probe.events.some(e => e.type === 'phase_halt' &&
       (e as { halt_reason?: string }).halt_reason === 'repair_adjudication_pending'),
-    `须 halt repair_adjudication_pending：${JSON.stringify(probe.events.filter(e => e.type === 'phase_halt'))}`,
+    `不得 halt repair_adjudication_pending：${JSON.stringify(probe.events.filter(e => e.type === 'phase_halt'))}`,
   );
   assert(
-    probe.events.some(e => e.run_disposition === 'WAITING' && e.run_wait_kind === 'human'),
-    '须落 WAITING(human)（operator 类）',
+    !probe.events.some(e => e.run_disposition === 'WAITING' && e.run_wait_kind === 'human'),
+    'uncertain 诊断不得落 WAITING(human)',
   );
   // 不得进入普通 verdict advance / candidate merge / 回退
   assert(
@@ -2693,23 +3012,11 @@ test('M2-1 唯一 uncertain 其余全 PASS → 停等 repair_adjudication_pendin
   const vr = probe.events.filter(e => e.type === 'visual_round');
   assert(vr.length >= 1, `visual_round 投影必须保留：${probe.events.map(e => e.type).join(',')}`);
   assert((vr[0] as { row_hash?: string }).row_hash === 'h1', '投影携带回执哈希');
-  // review 修复（P1）：**不得调用/完成 receipt validation / closure finalization**——
-  // uncertain pending 早于 PASS closure；closure 前必经 receipt validator（fake 计数=0）。
+  // checker 已给 PASS 时正常 closure；真实 checkVisualDiff 在 strict 下会把 uncertainty 写成 FAIL。
   const testingReceiptCalls = probe.receiptValidationCalls.filter(c => c.phase === 'testing');
-  assert(testingReceiptCalls.length === 0,
-    `uncertain 停等不得调用 receipt validator（closure 未执行）：${JSON.stringify(testingReceiptCalls)}`);
-  const pendingSummary = writtenSummary(root);
-  assert(pendingSummary.closure_status === 'open',
-    `uncertain 停等时盘上 summary 必须保持 open：${JSON.stringify(pendingSummary)}`);
-  assert(pendingSummary.closure_commit === undefined,
-    `uncertain 停等时不得存在 closure_commit：${JSON.stringify(pendingSummary)}`);
-  const pendingNextPath = path.join(root, 'doc', 'features', FEATURE, 'next.json');
-  assert(fs.existsSync(pendingNextPath), `uncertain 停等后须保留 next.json 投影：${pendingNextPath}`);
-  const pendingNext = JSON.parse(fs.readFileSync(pendingNextPath, 'utf-8')) as {
-    run_status_candidate?: string | null;
-  };
-  assert(pendingNext.run_status_candidate !== 'CHAIN_SLICE_COMPLETED',
-    `uncertain 停等后的 next.json 不得宣称链完成：${JSON.stringify(pendingNext)}`);
+  assert(testingReceiptCalls.length >= 1,
+    `PASS checker 须正常调用 receipt validator：${JSON.stringify(testingReceiptCalls)}`);
+  assertRunReachedEnd(probe, 'M2-1');
 });
 
 test('M2-2 明确未写 uncertain 的轮次不受影响（script-report 无载体 → 正常完成）', async () => {
@@ -2730,7 +3037,7 @@ test('M2-2 明确未写 uncertain 的轮次不受影响（script-report 无载�
     '无 pending 时外层 goal-runner 须执行 testing receipt validation');
 });
 
-test('M2-3 actionable + defect-review disputed（agent 反对）→ 停等、原样呈理由、不物化不回退', async () => {
+test('M2-3 actionable + defect-review disputed：primary 反对无否决权，机器缺陷仍物化回退', async () => {
   const { root } = setupHost();
   const FP = signalFp('add_card_home', 'shape_mismatch', 'hc_page_title', [0.1, 0.2, 0.3, 0.4]);
   const probe = await runChain(root, {
@@ -2747,106 +3054,86 @@ test('M2-3 actionable + defect-review disputed（agent 反对）→ 停等、原
         writeDefectReview(r, [
           `- signal: ${FP}`, '  verdict: disputed', '  rationale: OCR 混淆/口径错配，非真缺陷（两源冲突不证明实现错）',
         ]);
-      }
+      } else writeCleanTesting(r);
+    },
+    onCoding: ({ root: r, attempt }) => {
+      if (attempt > 1) writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("machine-fixed") } }');
     },
   });
-  const halts = probe.events.filter(e => e.type === 'phase_halt' &&
-    (e as { halt_reason?: string }).halt_reason === 'repair_adjudication_pending');
-  assert(halts.length >= 1, `agent 反对须停等：${JSON.stringify(probe.events.filter(e => e.type === 'phase_halt'))}`);
-  const dispute = (halts[0] as { dispute_rows?: string[] }).dispute_rows ?? [];
   assert(
-    dispute.some((r) => r.includes('OCR 混淆')),
-    `反对理由须原样呈现：${JSON.stringify(dispute)}`,
+    probe.events.some(e => e.type === 'phase_backtrack_requested' && e.reason === 'repair_candidates'),
+    `primary dispute 不得阻止机器候选回退：${probe.events.map(e => e.type).join(',')}`,
   );
-  assert(
-    !probe.events.some(e => e.type === 'phase_backtrack_requested'),
-    'disputed 不得驱动回退',
-  );
+  assertRunReachedEnd(probe, 'M2-3');
 });
 
-test('M2-3b runner 外注入有效 human_visual_acceptance receipt → 信号人工接受并正常完成', async () => {
+test('M2-3b legacy confirmed_by 无排除权：机器信号仍物化回退', async () => {
   const { root } = setupHost();
-  const acceptance = visualAcceptanceFixture(root);
-  const evaluatedHash = createHash('sha256').update('png-bytes-add_card_home').digest('hex').slice(0, 16);
-  // 必须发生在 runChain/agent callback 外，模拟 runner 外部的真人签发注入。
-  acceptance.write('add_card_home', evaluatedHash, true);
-  const previousRegistry = process.env[TRUST_REGISTRY_PATH_ENV];
-  process.env[TRUST_REGISTRY_PATH_ENV] = acceptance.registryPath;
-  let probe: RunProbe;
-  try {
-    probe = await runChain(root, {
-      onTesting: ({ root: r, attempt }) => {
-        if (attempt === 1) {
-          writeVisualDiff(r, [{
-            id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT],
-            confirmed_by: '仅展示-不参与授权',
-            defects: [{
-              class: 'shape_mismatch', element: 'hc_page_title', bbox: [0.1, 0.2, 0.3, 0.4],
-              severity: 'major', note: '标题错位', must_fix_refs: [0],
-            }],
-          }]);
-          writeDefectReview(r, [
-            `- signal: ${signalFp('add_card_home', 'shape_mismatch', 'hc_page_title', [0.1, 0.2, 0.3, 0.4])}`, '  verdict: disputed', '  rationale: OCR 混淆/口径错配，非真缺陷',
-          ]);
-        }
-      },
-    });
-  } finally {
-    if (previousRegistry === undefined) delete process.env[TRUST_REGISTRY_PATH_ENV];
-    else process.env[TRUST_REGISTRY_PATH_ENV] = previousRegistry;
-    fs.rmSync(acceptance.registryDir, { recursive: true, force: true });
-  }
+  const probe = await runChain(root, {
+    onTesting: ({ root: r, attempt }) => {
+      if (attempt === 1) {
+        writeVisualDiff(r, [{
+          id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT],
+          // 人工已过目认可该屏视觉（visual-confirm 人签通道：confirmed_by 真人人签，isHumanVerified）
+          confirmed_by: '张三-20260821',
+          defects: [{
+            class: 'shape_mismatch', element: 'hc_page_title', bbox: [0.1, 0.2, 0.3, 0.4],
+            severity: 'major', note: '标题错位', must_fix_refs: [0],
+          }],
+        }]);
+        // agent 反对（未终裁）；恢复=既有 visual-confirm 人签（已在上方 confirmed_by）
+        writeDefectReview(r, [
+          `- signal: ${signalFp('add_card_home', 'shape_mismatch', 'hc_page_title', [0.1, 0.2, 0.3, 0.4])}`, '  verdict: disputed', '  rationale: OCR 混淆/口径错配，非真缺陷',
+        ]);
+      } else writeCleanTesting(r);
+    },
+    onCoding: ({ root: r, attempt }) => {
+      if (attempt > 1) writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("signed-inert-fixed") } }');
+    },
+  });
   assert(
     !probe.events.some(e => e.type === 'phase_halt' &&
       (e as { halt_reason?: string }).halt_reason === 'repair_adjudication_pending'),
     `人签屏不得停等：${probe.events.filter(e => e.type === 'phase_halt').map(e => (e as { halt_reason?: string }).halt_reason).join(',')}`,
   );
   assert(
-    !probe.events.some(e => e.type === 'phase_backtrack_requested' && e.reason === 'repair_candidates'),
-    '人签接受屏信号不得回退',
+    probe.events.some(e => e.type === 'phase_backtrack_requested' && e.reason === 'repair_candidates'),
+    'legacy confirmed_by 不得排除机器候选',
   );
   assertRunReachedEnd(probe, 'M2-3b');
 });
 
-test('M2-3c agent 自填人名并伪造 receipt → 不构成人工授权，照常停等', async () => {
+test('M2-3c confirmed_by 值域不再分级：user_requirement 同样不影响机器回退', async () => {
   const { root } = setupHost();
-  const acceptance = visualAcceptanceFixture(root);
-  const previousRegistry = process.env[TRUST_REGISTRY_PATH_ENV];
-  process.env[TRUST_REGISTRY_PATH_ENV] = acceptance.registryPath;
-  let probe: RunProbe;
-  try {
-    probe = await runChain(root, {
-      onTesting: ({ root: r, attempt }) => {
-        if (attempt === 1) {
-          writeVisualDiff(r, [{
-            id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT],
-            confirmed_by: '张三-20260821',
-            defects: [{
-              class: 'shape_mismatch', element: 'hc_page_title', bbox: [0.1, 0.2, 0.3, 0.4],
-              severity: 'major', note: '标题错位', must_fix_refs: [0],
-            }],
-          }]);
-          const evaluatedHash = createHash('sha256').update('png-bytes-add_card_home').digest('hex').slice(0, 16);
-          // 模拟 agent 在自己的写权限域内补 payload + 自签伪 receipt。
-          acceptance.write('add_card_home', evaluatedHash, false);
-          writeDefectReview(r, [
-            `- signal: ${signalFp('add_card_home', 'shape_mismatch', 'hc_page_title', [0.1, 0.2, 0.3, 0.4])}`, '  verdict: disputed', '  rationale: OCR 混淆',
-          ]);
-        }
-      },
-    });
-  } finally {
-    if (previousRegistry === undefined) delete process.env[TRUST_REGISTRY_PATH_ENV];
-    else process.env[TRUST_REGISTRY_PATH_ENV] = previousRegistry;
-    fs.rmSync(acceptance.registryDir, { recursive: true, force: true });
-  }
-  const halts = probe.events.filter(e => e.type === 'phase_halt' &&
-    (e as { halt_reason?: string }).halt_reason === 'repair_adjudication_pending');
-  assert(halts.length >= 1,
-    `自填人名/伪 receipt 不得解除阻塞：${probe.events.filter(e => e.type === 'phase_halt').map(e => (e as { halt_reason?: string }).halt_reason).join(',')}`);
+  const probe = await runChain(root, {
+    onTesting: ({ root: r, attempt }) => {
+      if (attempt === 1) {
+        writeVisualDiff(r, [{
+          id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT],
+          // 自动化/授权哨兵身份（isHumanVerified 拒绝 user_requirement 等）不是人签
+          confirmed_by: 'user_requirement',
+          defects: [{
+            class: 'shape_mismatch', element: 'hc_page_title', bbox: [0.1, 0.2, 0.3, 0.4],
+            severity: 'major', note: '标题错位', must_fix_refs: [0],
+          }],
+        }]);
+        writeDefectReview(r, [
+          `- signal: ${signalFp('add_card_home', 'shape_mismatch', 'hc_page_title', [0.1, 0.2, 0.3, 0.4])}`, '  verdict: disputed', '  rationale: OCR 混淆',
+        ]);
+      } else writeCleanTesting(r);
+    },
+    onCoding: ({ root: r, attempt }) => {
+      if (attempt > 1) writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("sentinel-inert-fixed") } }');
+    },
+  });
+  assert(
+    probe.events.some(e => e.type === 'phase_backtrack_requested' && e.reason === 'repair_candidates'),
+    'confirmed_by=user_requirement 不得改变机器候选路由',
+  );
+  assertRunReachedEnd(probe, 'M2-3c');
 });
 
-test('M2-4 actionable 无复核块（unreviewed）→ 停等（fail-closed 无得利路径）', async () => {
+test('M2-4 actionable 无 primary 复核块：机器证据仍直接物化', async () => {
   const { root } = setupHost();
   const probe = await runChain(root, {
     onTesting: ({ root: r, attempt }) => {
@@ -2859,16 +3146,17 @@ test('M2-4 actionable 无复核块（unreviewed）→ 停等（fail-closed 无�
           }],
         }]);
         // 不写 test-report.md（无 defect-review 块）
-      }
+      } else writeCleanTesting(r);
+    },
+    onCoding: ({ root: r, attempt }) => {
+      if (attempt > 1) writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("unreviewed-fixed") } }');
     },
   });
-  const halts = probe.events.filter(e => e.type === 'phase_halt' &&
-    (e as { halt_reason?: string }).halt_reason === 'repair_adjudication_pending');
-  assert(halts.length >= 1, `未复核须停等（fail-closed）：${probe.events.map(e => e.type).join(',')}`);
   assert(
-    (((halts[0] as { dispute_rows?: string[] }).dispute_rows ?? []).some((r) => r.includes('unreviewed'))),
-    '未复核条目须点名 unreviewed',
+    probe.events.some(e => e.type === 'phase_backtrack_requested' && e.reason === 'repair_candidates'),
+    `缺 primary 复核不得阻止机器候选：${probe.events.map(e => e.type).join(',')}`,
   );
+  assertRunReachedEnd(probe, 'M2-4');
 });
 
 test('M2-5 actionable + defect-review confirmed（同向）→ 物化为常规候选、仍回退（v23 F1 修订版：PASS+harness-adjudicated-confirmed）', async () => {
@@ -2906,16 +3194,10 @@ test('M2-5 actionable + defect-review confirmed（同向）→ 物化为常规�
 });
 
 // ===========================================================================
-// plan b5f1d9c3 t2：1c95e3 事件序列聚焦回归（一条）——settled → harness_end →
-// phase_halt(WAITING) → resume → **无新 agent_invoke_start** → 复用原 invoke identity →
-// **恰好一次 gate harness** → PASS 收工（或原样快速再停等）。
-//
-// 非 win32 测试宿主不自动 emit settled——用与 legacy seal 追补相同的既有手法：resume 前
-// 在 events 中 manual 插入 agent_process_settled（invoke_id 取该 phase 真实 harness_end 的
-// invoke_id，严格同 invoke），模拟 3.0.0 win32 干净收尾形态（真实 run 每次 invoke 都落）。
+// legacy uncertain payload 只作诊断：不得创建人工停等或 resume-only 恢复事务。
 // ===========================================================================
 
-test('b5f1d9c3 t2：uncertain 停等 → settled 在案 → resume 无新 agent invoke、复用原身份、恰好一次 gate harness、无人签 PASS 收工', async () => {
+test('b5f1d9c3 legacy uncertain payload：不再创建人工停等或 resume-only 恢复事务', async () => {
   const { root } = setupHost();
   const uncertainSig = {
     screen_id: 'add_card_home',
@@ -2923,8 +3205,8 @@ test('b5f1d9c3 t2：uncertain 停等 → settled 在案 → resume 无新 agent 
     reason: 'OCR 识别文本「中国银行」与候选「中信银行」编辑距离 ≤1——两源冲突，不自动裁定谁对',
     evidence_ref: 'doc/features/bc-openCard/device-testing/visual-diff.md#add_card_home',
   };
-  // 首 run：与 M2-1 同构——testing agent 只采证（visual-diff.json 干净），harness 产
-  // uncertain 载体 → 停等 repair_adjudication_pending（WAITING/human）。
+  // testing agent 只采证（visual-diff.json 干净），harness 写入历史 uncertain 载体；
+  // checker verdict 仍是唯一门禁，runner 不从该诊断载体派生人工停等。
   const probe1 = await runChain(root, {
     onTesting: ({ root: r }) => {
       writeVisualDiff(r, [{ id: 'add_card_home', verdict: 'pass', mustFix: [] }]);
@@ -2951,132 +3233,12 @@ test('b5f1d9c3 t2：uncertain 停等 → settled 在案 → resume 无新 agent 
       }, null, 2), 'utf-8');
     },
   });
-  const runId1 = path.basename(probe1.reportDir);
   assert(
-    probe1.events.some(e => e.type === 'phase_halt' &&
+    !probe1.events.some(e => e.type === 'phase_halt' &&
       (e as { halt_reason?: string }).halt_reason === 'repair_adjudication_pending'),
-    `首 run 须 halt repair_adjudication_pending：${JSON.stringify(probe1.events.filter(e => e.type === 'phase_halt'))}`,
+    `legacy uncertain 不得创建人工停等：${JSON.stringify(probe1.events.filter(e => e.type === 'phase_halt'))}`,
   );
-  // 提取首 run 真实 harness_end（testing）的 invoke_id——settled 复用同一身份
-  const harnessEnds = probe1.events.filter(e => e.type === 'harness_end' && e.phase === 'testing');
-  assert(harnessEnds.length >= 1, '首 run 须有 testing harness_end');
-  const invokeId = String(harnessEnds[harnessEnds.length - 1].invoke_id ?? '');
-  assert(invokeId.length > 0, `harness_end 须带 invoke_id：${JSON.stringify(harnessEnds)}`);
-
-  // resume 前：events 中在 harness_end **之前**插入同 invoke 的 agent_process_settled（win32 语义）。
-  // **不写人签**——1c95e3 的真实事实正是无人签（三屏 confirmed_by 全 undefined）、
-  // 框架升级后 producer 不再产 uncertain；恢复由 resume 的验证优先（重跑 gate）完成。
-  const evPath = path.join(root, 'doc', 'features', FEATURE, 'goal-runs', runId1, 'events.jsonl');
-  const raw = fs.readFileSync(evPath, 'utf-8');
-  const lines = raw.split('\n').filter(Boolean);
-  const settledLine = JSON.stringify({
-    type: 'agent_process_settled', phase: 'testing', invoke_id: invokeId,
-    run_id: runId1, exit_code: 0, ts: new Date().toISOString(),
-  });
-  // 在最后一条 harness_end(testing) 行前插入 settled
-  let inserted = false;
-  const out: string[] = [];
-  for (const line of lines) {
-    const ev = JSON.parse(line) as Record<string, unknown>;
-    if (!inserted && ev.type === 'harness_end' && ev.phase === 'testing' && ev.invoke_id === invokeId) {
-      out.push(settledLine);
-      inserted = true;
-    }
-    out.push(line);
-  }
-  assert(inserted, 'settled 须插入到 harness_end 前');
-  fs.writeFileSync(evPath, out.join('\n') + '\n', 'utf-8');
-  const preResumeLineCount = out.length; // resume 追加部分切点（settled 已写入）
-
-  // resume：agent 不再被 invoke（验证优先），gate harness 恰好一次，PASS 收工
-  // 人工 resume 契约一字不动：WAITING 停等的 run_end 也是 HALTED 终态（RUN 级投影），
-  // resume 须满足 checkTerminalResumeGuard（cooldown 5m + --force-resume）——真实场景
-  // 人工停等后 resume 自然远超 cooldown；测试模拟时间流逝（run_end 回拨 10 分钟）+
-  // forceResume 显式确认（与 R-8 同手法）。
-  {
-    const lines = fs.readFileSync(evPath, 'utf-8').split('\n');
-    const patched = lines.map(l => {
-      if (!l.trim()) return l;
-      try {
-        const e = JSON.parse(l) as { type?: string; ts?: string };
-        if (e.type === 'run_end' && e.ts && !/CHAIN_SLICE_COMPLETED|COMPLETED/.test(String((e as { status?: string }).status ?? ''))) {
-          e.ts = new Date(Date.parse(e.ts) - 10 * 60 * 1000).toISOString();
-          return JSON.stringify(e);
-        }
-      } catch { /* keep */ }
-      return l;
-    });
-    fs.writeFileSync(evPath, patched.join('\n'), 'utf-8');
-  }
-  const probe2 = await runChain(root, {
-    resume: runId1,
-    forceResume: true,
-    onTesting: ({ root: r }) => {
-      // 若意外 invoke agent（不应发生），仍写干净产物（防干扰断言）
-      writeVisualDiff(r, [{ id: 'add_card_home', verdict: 'pass', mustFix: [] }]);
-    },
-    onTestingHarness: ({ root: r }) => {
-      // 宿主事故模拟：第二次 gate 时框架更新后 producer 不再产 uncertain → clean；
-      // 用「harness 调用次数」区分（runChain 两次调用的回调天然分离），不用 attempt。
-      const reportsDir = path.join(r, 'doc/features', FEATURE, 'testing', 'reports');
-      fs.mkdirSync(reportsDir, { recursive: true });
-      fs.writeFileSync(path.join(reportsDir, 'script-report.json'), JSON.stringify({
-        phase: 'testing', feature: FEATURE,
-        timestamp: new Date().toISOString(), project_root: r,
-        checks: [{
-          id: 'visual_diff', category: 'structure', description: '', severity: 'MAJOR', status: 'PASS',
-          details: '',
-          structured: {
-            kind: 'visual_diff', loop_id: 'L1', attempt_id: null, goal_run_id: null,
-            build_fingerprint: null, screens_hash: 's', defect_fingerprints: [], fingerprintable: true,
-            source_fail_hit_ids: [], source_warn_ids: [], await_human_only: false, actionable_residual: false,
-            t8_findings: [],
-          },
-        }],
-        summary: { total: 1, pass: 1, fail: 0, warn: 0, skip: 0, blockers: 0, verdict: 'PASS' },
-      }, null, 2), 'utf-8');
-    },
-  });
-  // 无人签断言（1c95e3 真实事实：confirmed_by 全 undefined）
-  {
-    const vdPath = path.join(root, 'doc', 'features', FEATURE, 'device-testing', 'device-screenshots', 'visual-diff.json');
-    const vd = JSON.parse(fs.readFileSync(vdPath, 'utf-8')) as { screens?: Array<{ confirmed_by?: string }> };
-    assert(
-      !(vd.screens ?? []).some(s => typeof s.confirmed_by === 'string' && s.confirmed_by.length > 0),
-      '须无人签（本次恢复不是靠 visual-confirm，而是 resume 验证优先）',
-    );
-  }
-  // 首 run 与 resume 写同一 run 目录、同一 events 文件（resume 进程同样发 run_start，
-  // 但都是追加到同一文件）——**resume 追加段 = settled 写入后的行数（preResumeLineCount）
-  // 之后的全部事件**（含 runChain 的 legacy seal 追补 2 行 + resume 进程追加）。
-  const allEvents = readEvents(probe2.reportDir);
-  assert(allEvents.length > preResumeLineCount,
-    `resume 后 events 须有追加：${allEvents.length} vs ${preResumeLineCount}`);
-  const resumedEvents = allEvents.slice(preResumeLineCount);
-  // 无新 agent invoke（testing）：resume 段不得有 testing agent_invoke_start
-  const newInvokeStarts = resumedEvents.filter(
-    e => e.type === 'agent_invoke_start' && e.phase === 'testing',
-  );
-  assert(newInvokeStarts.length === 0,
-    `resume 后不得有新的 testing agent_invoke_start：${JSON.stringify(newInvokeStarts)}`);
-  // gate harness 恰好一次：resume 段 testing harness_end 恰新增 1 条，且复用原 invoke_id
-  const resumedHarnessEnds = resumedEvents.filter(e => e.type === 'harness_end' && e.phase === 'testing');
-  assert(resumedHarnessEnds.length === 1,
-    `gate harness 应恰好一次（resume 段实得 ${resumedHarnessEnds.length}）`);
-  const lastHarnessEnd = resumedHarnessEnds[resumedHarnessEnds.length - 1];
-  assert(lastHarnessEnd.invoke_id === invokeId,
-    `gate harness 须复用原 invoke identity（${lastHarnessEnd.invoke_id} ≠ ${invokeId}）`);
-  // 收工：PASS（第二次 gate clean：框架升级后 producer 不再产 uncertain → 正常 closure）
-  const st = runEndStatus(resumedEvents);
-  const capped = hasEvent(resumedEvents, 'vision_trust_completion_cap');
-  assert(
-    st === 'CHAIN_SLICE_COMPLETED' || st === 'COMPLETED' || (st === 'PARTIAL' && capped),
-    `resume 后 run 须到达终点（status=${st}, visionCap=${capped}, exit=${probe2.exitCode}）`,
-  );
-  assert(
-    !resumedEvents.some(e => e.type === 'phase_halt'),
-    'resume 后不得再 halt（PASS 收工）',
-  );
+  assertRunReachedEnd(probe1, 'b5f1d9c3 legacy uncertain');
 });
 
 // ---------------------------------------------------------------------------

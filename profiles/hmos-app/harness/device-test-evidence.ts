@@ -17,6 +17,7 @@ import type {
   DeviceTestEvidenceCase,
   DeviceTestEvidenceDocDraft,
 } from '../../../harness/scripts/utils/device-test-evidence-shared';
+import { composeRuntimeFidelityEvidence } from '../../../harness/scripts/utils/runtime-step-evidence';
 import { computeHapSha256Full } from './build-fingerprint';
 
 const ENVIRONMENT_RUN_FAILURE_KINDS: ReadonlySet<string> = new Set([
@@ -581,6 +582,19 @@ export function composeDeviceTestEvidence(
     });
   }
 
+  const runtime = composeRuntimeFidelityEvidence({
+    projectRoot: opts.projectRoot,
+    feature: opts.feature,
+    tracePath: opts.tracePath,
+    hapSha256Full: opts.expectedHapSha256Full,
+    goalRunId: opts.goalRunId,
+    attemptId: opts.attemptId,
+    deviceTarget: opts.deviceTarget,
+  });
+  if (!runtime.ok) {
+    return { ok: false, reason: `P0 runtime fidelity evidence 无效：${runtime.reason}` };
+  }
+
   return {
     ok: true,
     doc: {
@@ -594,6 +608,7 @@ export function composeDeviceTestEvidence(
       trace_path: path.resolve(opts.tracePath),
       run_failure_kind: runFailureKind,
       cases,
+      ...(runtime.applicable ? { runtime_fidelity: runtime.evidence } : {}),
     },
   };
 }

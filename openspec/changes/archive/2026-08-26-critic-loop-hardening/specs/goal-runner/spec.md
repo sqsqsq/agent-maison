@@ -13,7 +13,7 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/{agent-inv
 
 ### Requirement: no_progress_fuse halts on first touch without burning retries
 
-`no_progress_fuse` SHALL be a first-class failure kind: classified from the blocker classification channel before the visual_diff id-prefix bucketing (the fuse blocker id starts with visual_diff and would otherwise be absorbed into visual_gap), mutually exclusive with await_human_confirm by check-side construction, halting on first touch with halt reason `no_progress_fuse` and never entering the signature-halt retry accounting. The pre-existing coarse visual_gap signature halt SHALL remain as a backstop with its distinct halt reason.
+`no_progress_fuse` SHALL be a first-class failure kind: classified from the blocker classification channel before the visual_diff id-prefix bucketing (the fuse blocker id starts with visual_diff and would otherwise be absorbed into visual_gap), halting on first touch with halt reason `no_progress_fuse` and never entering content retry accounting. The pre-existing coarse visual-gap signature halt SHALL remain as a backstop with its distinct halt reason; no human-confirmation path SHALL release either fuse in the same run.
 
 Enforcement: `harness/scripts/utils/goal-failure-classifier.ts`, `harness/scripts/goal-runner.ts`
 

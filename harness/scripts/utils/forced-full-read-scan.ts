@@ -84,13 +84,9 @@ export function scanForcedFullRead(layout: RepoLayout, rule: ForcedFullReadRule)
 }
 
 // --------------------------------------------------------------------------
-// correction.layer 无条件停等确认 句式黑名单（codex review 补强，plan d4a7c1e8）
+// correction.layer 人签闸引用黑名单（legacy function/type 名保持 API 兼容）
 // --------------------------------------------------------------------------
-// balanced 高置信免确认（C5-full）落地后，`.current-correction.json.auto_confirm_eligible`
-// 已是判断是否需要停等 `correction.layer` 用户确认的机读依据；skill 正文若仍写死
-// "经 `correction.layer` 确认" 这类无条件表述，会让弱模型无视该字段直接停等——
-// 与运行时机制脱节。同一份文件里只要同时提到 auto_confirm_eligible，就视为已正确
-// 描述条件分支（不要求逐行邻近，文件级共现即可）。
+// 自动恢复计划退役该 gate；任何 skills/templates 引用都会把 correction 重新变成人工等待。
 
 export interface CorrectionConfirmRule {
   allowlist?: ForcedFullReadAllowlistEntry[];
@@ -103,8 +99,7 @@ export interface CorrectionConfirmHit {
   allowlisted: boolean;
 }
 
-const UNCONDITIONAL_CORRECTION_CONFIRM_RE = /correction\.layer[^\n]{0,12}确认/;
-const AUTO_CONFIRM_ESCAPE_HATCH = 'auto_confirm_eligible';
+const UNCONDITIONAL_CORRECTION_CONFIRM_RE = /correction\.layer/;
 
 export function scanUnconditionalCorrectionConfirm(
   layout: RepoLayout,
@@ -120,7 +115,6 @@ export function scanUnconditionalCorrectionConfirm(
     for (const abs of collectMarkdownFiles(root)) {
       const rel = frameworkPhysicalRelPath(layout, path.relative(layout.frameworkRoot, abs));
       const text = fs.readFileSync(abs, 'utf-8');
-      if (text.includes(AUTO_CONFIRM_ESCAPE_HATCH)) continue; // 文件级已正确描述条件分支
       const lines = text.replace(/\r\n?/g, '\n').split('\n');
       for (let i = 0; i < lines.length; i += 1) {
         const m = UNCONDITIONAL_CORRECTION_CONFIRM_RE.exec(lines[i]);

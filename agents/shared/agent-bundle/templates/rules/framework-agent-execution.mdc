@@ -64,9 +64,10 @@ alwaysApply: true
 
 以下行为**一律禁止**，无论 headless 还是交互态、无论动机（"为了闭环"不是理由）：
 
-- **不得伪造确认签名**：`confirmed_by` / `bbox_verified_by` / `baked_text_defer_by` / `approved_by` 等
-  验真字段**只能由真人填写**；`user_requirement` 是需求级授权哨兵，仅限 `crop_confirmed_by` 授权语义，
-  冒充验真签名无效且属违规。
+- **不得写 legacy 质量签名**：`confirmed_by` / `human_confirmed` /
+  `human_crop_confirmed` / `crop_confirmed_by` 均已失去 gate 权重，新产物必须用当前
+  source/hash/tool/provider 机器证据。`approved_by` 仅用于 framework integrity 等真实外部权限，
+  不能改写质量结论。
 - **不得以进程注入篡改门禁产物**：包括 NODE_OPTIONS 预加载（`--require`/`-r`/`--import`/`--loader`/
   `--experimental-loader`）、`.node-options`/`.npmrc node-options` 旁路、猴补 `fs` 等——目标是
   visual-diff.json / summary.json / 回执等任何判定产物。
@@ -79,13 +80,9 @@ alwaysApply: true
 
 框架已有确定性检出（`node_options_injection` / `visual_diff_tamper_artifact` /
 `script_harness_command_injection` / framework_integrity 审批校验）：**伪造不会生效，只会留下物证**。
-headless 正确姿势＝确定性信号修到绿、pass 候选 halt 求真人过目。
-
-**边界消歧（P0-10，别把合法路径吓回去）**：**交互态**下 agent 逐屏展示截图、**转录真人当场对
-该具体屏的明确表态**（认可→写 `confirmed_by`＝真人给的署名 / 不认可→`verdict:fail`+原话进
-`must_fix`）是**合法确认路径**，不是伪造——伪造指的是"没有真人明确表态就自行填写/自拟署名/
-批量盲签"。协议见 device-testing SKILL「visual 真人确认协议」。**headless 无真人在场，不适用
-转录**——唯一正确动作是 HALT 等真人（run 外走 `visual-confirm` CLI 或对话式）。
+headless 正确姿势＝确定性信号修到绿，pass 候选由当前 hash-bound 的 native/delegated
+机器证据闭合。能力真实缺失走 capability defer；已声明支持但证据缺失/无效则
+FAIL 并重跑或熔断，不存在对话签名、`visual-confirm` 或普通 resume 放行路径。
 
 ## 5. 与「反假设条款」的关系
 

@@ -247,36 +247,41 @@ Feature-scope phase checks SHALL append a bounded next-step block outside the ex
 
 ### Requirement: The fidelity pregate re-verifies the routing SSOT instead of first-producing decisions
 
-`fidelity_capability_pregate` SHALL load `fidelity-intent.json` and re-verify: internal consistency (`effective == clamp(selected, capability-snapshot)`), spec.md Visual Handoff projection consistency (`fidelity_target`/`asset_acquisition_mode` mismatches are BLOCKER with an agent-auto-fix-the-projection suggestion — never escalated to a user question), goal-env requirement-sha staleness, and the single genuine conflict (selected=pixel ∧ hard ∧ clamped → DEFERRED semantics). For UI-relevant features a missing SSOT is BLOCKER pointing at the initializer command; non-UI features (no ui-spec, no handoff, no reference images) proceed without one. The pregate SHALL NOT produce the decision.
+`fidelity_capability_pregate` SHALL load `fidelity-intent.json` and re-verify internal routing consistency, selected-fidelity projection consistency, stable requirement-source identity, and the genuine hard-pixel/current-capability conflict. It MUST NOT recompute requirement identity from files generated during the phase, and it MUST NOT consume artifact attestation or policy downgrade state. For UI-relevant features a missing SSOT is BLOCKER pointing at the initializer; non-UI features proceed without one. The pregate SHALL NOT produce the decision.
 
 Enforcement: `harness/scripts/check-spec.ts`, `harness/scripts/utils/fidelity-shared.ts`
 
-#### Scenario: projection drift is agent-fixable, not a user question
+#### Scenario: Generated output does not invalidate the pregate
 
-- **WHEN** spec.md declares fidelity_target=semantic_layout while the SSOT selected pixel_1to1
-- **THEN** the gate FAILs naming the projection mismatch and instructs the agent to fix the projection from the SSOT
+- **WHEN** spec creates an output file named in the requirement after routing initialization
+- **THEN** pregate continues using the frozen source identity and does not report requirement SHA drift
 
 ### Requirement: Ruling-class escalation reads the hard-pixel contract; execution keeps the pixel target
 
-Severity ratcheting (WARN→BLOCKER), human-confirmation requirements and completion capping SHALL key on `isHardPixelContract` (effective=pixel_1to1 ∧ strictness=hard); high-fidelity execution machinery (extraction, diff/metrics, layout dumps) keeps keying on the pixel execution target. Under best_effort, quality gaps keep their default severities and are recorded as visual debt — never silently dropped. Deterministic integrity failures (corruption, path escape, forged evidence, ledger tampering) remain unconditional BLOCKERs regardless of strictness.
+Severity ratcheting and completion capping SHALL key on `isHardPixelContract`; high-fidelity execution machinery SHALL keep keying on the pixel execution target. Under best-effort, quality gaps keep their existing severities and optional debt policy. Deterministic content integrity failures remain unconditional BLOCKERs. Missing required visual capability SHALL defer; missing or invalid evidence after capability was declared SHALL fail the owning checker. Human-confirmation state and historical visual ledgers MUST NOT affect severity, capability, phase advance, or completion.
 
 Enforcement: `harness/scripts/utils/fidelity-shared.ts`, `harness/scripts/check-testing.ts`, `harness/scripts/check-spec.ts`, `harness/harness-runner.ts`
 
-#### Scenario: best_effort records debt without ratchet halt
+#### Scenario: Evidence gap does not become a future routing state
 
-- **WHEN** a pixel-target best_effort run has an unconfirmed visual gap
-- **THEN** the finding stays at its default severity with debt recorded, and no human final confirmation is demanded; the same scenario with strictness=hard escalates to BLOCKER
+- **WHEN** a best-effort visual check reports an evidence gap
+- **THEN** the current report records the gap at its default severity and later attempts are unaffected except through the current artifact contents
+
+#### Scenario: human confirmation does not change the ruling class
+
+- **WHEN** a hard-pixel deterministic visual defect is present together with legacy confirmation metadata
+- **THEN** the defect SHALL retain its existing BLOCKER/repair semantics
 
 ### Requirement: Blind-crop c3 waiver requires this-invocation machine verification with binding revalidation
 
-Under a blind adapter, a crop asset SHALL be admitted without per-item human pre-confirmation ONLY when the spec asset-acquisition provider confirmedly executed in the current invocation (skip/throw disqualifies disk reports), the entry is `verified` by the strict producer (sanity — including existing blank/uniform detection — plus independent VL recognition or human bbox overrule; producer semantics are not lowered), and the artifact's hash/resolved_path binding revalidates. Otherwise the asset falls back to visible placeholder + visual debt (proceeding) or the human-confirmation route; a pre-written verified-looking report grants no waiver.
+Under a blind adapter, a crop asset SHALL be admitted only when current machine evidence proves the source image/hash, normalized bbox, resolved output hash/path, file sanity, and the applicable independent recognition/content check. User-supplied files or bbox values MAY be retained as neutral frozen input provenance, but `confirmed_by`, `human_crop_confirmed`, a chat answer, or a pre-written verified-looking report MUST NOT waive verification. When machine verification is unavailable, the asset SHALL use an allowed visible placeholder with debt, fail for a required asset, or defer for a real missing capability.
 
 Enforcement: `harness/scripts/check-spec.ts`, `profiles/hmos-app/harness/asset-crop-validation.ts`
 
-#### Scenario: forged verified report with a skipped provider does not waive c3
+#### Scenario: legacy crop signature cannot admit an unverified crop
 
-- **WHEN** an agent pre-writes a complete verified entry and the provider did not run in this invocation
-- **THEN** the crop stays unadmitted and the run proceeds via placeholder+debt or human confirmation, not via the forged report
+- **WHEN** a blind crop carries `crop_confirmed_by` but its source/hash/bbox/output binding cannot be machine verified
+- **THEN** the crop SHALL not be admitted and SHALL follow placeholder, FAIL, or capability-defer policy
 
 ### Requirement: Capability-resolution freshness participates in evidence closure
 The closure finalizer SHALL add only project-local applicability-provider and every
@@ -516,7 +521,7 @@ hvigor build 链失败 MUST 按错误码结构化分类：00303217 MUST 归 sdk_
 
 ### Requirement: Summary blockers carry scalar actionability from a single registry
 
-`CheckResult`/summary blockers SHALL support a scalar `actionability` field limited to `agent_fixable | human_only | toolchain_blocked` (no mixed value — mixed gate output is expressed by the existing separate blocker ids along the gate lifecycle). Resolution SHALL follow a single shared registry pure function (colocated with the failure classifier, reusing the existing toolchain id/blocking-class predicates — no third taxonomy) with the priority chain: explicit `actionability` on the check result → failure-kind/blocking-class compatibility mapping → default `agent_fixable`. The initial migration table SHALL at least map: `capture_completeness_external` → agent_fixable; `fidelity_deferrals_human_sign` and the awaiting-human-confirmation family (including `fidelity_capability_pregate`, `capability_missing_strong_intent`, `await_human_fidelity_tier`) → human_only; `capture_completeness_external_ocr_unavailable` and `blocking_class=device_toolchain` → toolchain_blocked. Summary mapping, runner retry-prompt projection, and reports SHALL consume the same registry; a drift test SHALL bind registry ↔ classifier ↔ schema.
+`CheckResult`/summary blockers SHALL resolve actionability through the shared registry. Current quality blockers SHALL be `agent_fixable` or use trusted responsible-phase routing; genuine toolchain/external prerequisites SHALL remain `toolchain_blocked`. Legacy `human_only` values MAY be parsed for compatibility but MUST be reprojected from current evidence and MUST NOT create a signature wait or lower a gate. Summary mapping, runner retry-prompt projection, and reports SHALL consume the same registry; a drift test SHALL bind registry ↔ classifier ↔ schema.
 
 Enforcement: `harness/scripts/utils/goal-failure-classifier.ts`, `harness/scripts/utils/summary-blockers.ts`, `harness/scripts/utils/types.ts`, `harness/schemas/summary.schema.json`
 
@@ -825,7 +830,7 @@ Enforcement: `harness/scripts/utils/closure-attestation.ts`（新增）, `harnes
 
 ### Requirement: Product behavior switches default-on are blockers with coordinate-bound waivers
 
-A deterministic scan over in-scope non-test product sources SHALL FAIL (BLOCKER, coding and testing phases) on boolean constants matching the switch-name pattern (`FAST_?PATH|TEST_ONLY|FOR_TEST|DEVICE_TEST|E2E_ONLY|BYPASS|SKIP_(SMS|VERIF\w*|AUTH)`) initialized to true. A waiver SHALL bind exact {file, symbol, content_sha256, reason} plus a valid confirmation receipt, and even then SHALL only degrade the finding to WARN with the run capped at AWAITING_HUMAN_REVIEW — never a clean pass. Pattern-level waivers SHALL be rejected.
+A deterministic scan over in-scope non-test product sources SHALL FAIL on default-enabled test/bypass behavior switches. Current runs MUST NOT accept a behavior-switch waiver or confirmation receipt. The switch SHALL be removed/fixed, or a changed product requirement SHALL enter a correction/successor run and be represented in ordinary source/spec truth rather than a gate-lowering exception.
 
 Enforcement: `harness/scripts/utils/behavior-switch-scan.ts`（新增）, `harness/scripts/check-{coding,testing}.ts`
 
@@ -834,47 +839,67 @@ Enforcement: `harness/scripts/utils/behavior-switch-scan.ts`（新增）, `harne
 - **WHEN** the scan meets `static readonly DEVICE_TEST_FAST_PATH: boolean = true` in a product constants file
 - **THEN** it SHALL FAIL naming file and line
 
+#### Scenario: accepted risk does not close a default-on bypass
+
+- **WHEN** the scan finds `DEVICE_TEST_FAST_PATH = true` and a legacy signed waiver exists
+- **THEN** the gate SHALL remain FAIL until the product code or frozen requirement changes and is revalidated
+
 ### Requirement: P0 device acceptance criteria are proven as structured state transitions
 
-check-spec SHALL require, for every P0 device/both interactive AC: a structured checkpoint (`pre_checkpoint{screen_id} → action{type,target_element_id[,value_class]} → post_checkpoint{screen_id,required_element_ids,forbidden_element_ids}`) referencing the ui-spec screen registry — missing structure SHALL FAIL (non-P0: WARN). Flows integrity: every flow node/edge SHALL be owned by ≥1 P0 AC checkpoint; every P0 AC SHALL carry `requirement_ref{source_path,locator,snippet_sha256}` whose snippet verifiably exists in the source document; each flow SHALL equal the ordered composition of its owning checkpoints' edges (unsupported jump edges FAIL). check-testing (`p0_semantic_coverage_integrity`, BLOCKER) SHALL verify per mapped TC: pre-screen evidence, an action resolved to the target element (by_id directly, or coordinate touch resolved via pre-action layout dump hit-test — unresolvable or non-unique hits FAIL), post-screen evidence with required present and forbidden absent, and — across each linked_flow — the declared screen sequence appearing in order in the trace (missing intermediate screens FAIL). Normalized page signatures serve anti-replay only and never substitute for checkpoint assertions; P0 checkpoints SHALL persist screenshot/layout-dump evidence bound to trace steps. Pass-rate reporting SHALL recompute execution coverage (skips in the denominator) and pass rate separately; a report conclusion contradicting the recomputation SHALL FAIL.
+check-spec SHALL require every P0 device/both interactive AC to define ordered structured checkpoints bound to the ui-spec registry and verbatim requirement references. check-testing SHALL verify every mapped P0 case using runner/provider-owned runtime observations bound to the current flow, derived plan, HAP, source aggregate, trace, run, attempt, device, and provider identity. Verification SHALL recompute ordered pre/action/post transitions, declared-to-actual target hit, required presence, and forbidden absence. Agent prose, trace notes, self-reported PASS, human attestation, and legacy runtime-fidelity receipts MUST NOT satisfy runtime execution. Pass-rate reporting SHALL include skips in the denominator and reject contradictory conclusions.
 
-Enforcement: `harness/scripts/check-spec.ts`, `harness/scripts/check-testing.ts`, acceptance/ui-spec schema, layout-dump 链复用 layout-oracle-geometry-gates
+Enforcement: `harness/scripts/check-spec.ts`, `harness/scripts/check-testing.ts`, `harness/scripts/utils/p0-semantic-gates.ts`, acceptance/ui-spec schema, layout-dump 链复用 layout-oracle-geometry-gates
 
-#### Scenario: the incident fast-path trace fails on missing intermediate screens
+#### Scenario: an agent without shell access completes requirement_ref
 
-- **WHEN** the bc-openCard trace shows bank_list touch followed directly by add_success evidence for flow main_add_card
-- **THEN** p0_semantic_coverage_integrity SHALL FAIL naming the absent card_type_sheet/card_selection/sms_verification screens
+- **WHEN** a headless agent has no shell permission and fills `requirement_ref{source_path,snippet}` with a verbatim snippet
+- **THEN** the gate PASSes by verifying the snippet against the source document itself, without requiring any agent-computed hash
 
-#### Scenario: a PASS carries an explicit runtime-evidence boundary
+#### Scenario: a legacy snippet_sha256 field is inert
 
-- **WHEN** p0_semantic_coverage_integrity PASSes on plan-level step evidence + trace case status
-- **THEN** it SHALL also emit a `p0_runtime_step_evidence_boundary` WARN stating that runtime action-target / step-sequence / hit-test / forbidden-element evidence is not yet verified (Hylyre provider step-level capture is a declared deferred item), so the PASS is not read as full runtime fidelity proof
+- **WHEN** an existing acceptance.yaml carries `snippet_sha256` values that do not match their snippets
+- **THEN** the gate ignores the field entirely and judges only source-path existence and verbatim snippet presence
+
+#### Scenario: a fabricated snippet still fails
+
+- **WHEN** a P0 AC's `requirement_ref.snippet` does not exist verbatim in the referenced source document
+- **THEN** the gate SHALL FAIL naming the AC (引文伪造/漂移)
+
+#### Scenario: hash-bound runtime transitions prove a P0 case
+
+- **WHEN** all required checkpoint observations are current, ordered, correctly targeted, and bound to the current flow/plan/HAP/source/run/attempt/device
+- **THEN** the P0 runtime-fidelity obligation SHALL pass without a human receipt
+
+#### Scenario: plan text alone is insufficient
+
+- **WHEN** a derived plan describes the right taps but no runner/provider-owned step observations exist
+- **THEN** P0 runtime fidelity SHALL remain unproven
 
 ### Requirement: P0 skips and unreachable screens never launder into clean passes
 
-A skipped or unexecuted P0 TC, and a P0 visual target registered unreachable, SHALL FAIL unless (a) the cause is an enumerated external blockage bound to a real failure trace/error class — then the phase defers (DEFERRED path), or (b) a waiver with a valid confirmation receipt exists — then the finding degrades to WARN and the run caps at AWAITING_HUMAN_REVIEW with both coverage metrics still reported against the full denominator. Non-external causes (missing selectors, unfinished plans, product bugs) SHALL remain FAIL. Headless encounters of P0 skips SHALL halt as `await_human_p0_skip` with machine-generated guidance. All P0 visual targets unreachable SHALL FAIL outright.
+A skipped or unexecuted P0 TC and an unreachable required P0 visual target SHALL FAIL unless the cause is an enumerated external/capability blockage bound to real trace/error evidence, in which case the phase SHALL defer. No waiver or confirmation receipt SHALL degrade the finding. Explicit, non-external registered skips SHALL remain repairable machine failures and produce the existing responsible-phase candidate where ownership is provable; missing status or unregistered trace skips stay testing-owned FAIL. New runs MUST NOT emit `await_human_p0_skip` or generic human-gate deferral for P0 coverage.
 
 Enforcement: `harness/scripts/check-testing.ts`, `harness/scripts/utils/{goal-failure-classifier,await-confirm-guidance}.ts`
 
-#### Scenario: ten P0 skips without receipts
+#### Scenario: ten explicit P0 skips route to repair
 
-- **WHEN** a derived plan registers 10 of 17 P0 TCs as explicit_skip with no waiver receipts
-- **THEN** the gate SHALL FAIL and a headless run SHALL halt awaiting human disposition
+- **WHEN** a derived plan registers 10 of 17 P0 cases as explicit skips for non-external reasons
+- **THEN** coverage SHALL FAIL and trusted ownership SHALL route repair through `backtrack_to_phase`, without waiver or WAITING(human)
 
 ### Requirement: Declared fidelity is reconciled against detected intent
 
-check-spec (`fidelity_intent_reconciliation`, BLOCKER, both modes) SHALL FAIL when the dereferenced requirement text yields strong pixel intent while spec.md declares a lower fidelity tier, unless a human-signed fidelity deferral (existing mechanism, interactive-collected) covers it. This machine-enforces the previously prose-only "禁止的降级" rule.
+check-spec SHALL FAIL when frozen requirement intent demands a higher fidelity tier than the spec declares. A receipt, signer, or manual resume MUST NOT downgrade the frozen target. If the selected target requires a capability the current provider/profile cannot supply, the run SHALL defer as capability-missing; changing the target is a new correction/successor requirement input.
 
 Enforcement: `harness/scripts/check-spec.ts`, `harness/scripts/utils/fidelity-shared.ts`
 
-#### Scenario: 「完全参考」×7 versus semantic_layout declaration
+#### Scenario: strong pixel intent cannot be signed down
 
-- **WHEN** the requirement SSOT repeatedly demands 完全参考 and spec.md declares fidelity_target: semantic_layout without a human deferral
-- **THEN** the gate SHALL FAIL the spec phase
+- **WHEN** the frozen requirement demands pixel fidelity and spec declares semantic layout with a legacy downgrade receipt
+- **THEN** reconciliation SHALL FAIL or preflight SHALL defer for missing capability; the receipt SHALL be inert
 
 ### Requirement: Visual capture completeness is tier-independent and reference images cannot be silently descoped
 
-Missing/invalid visual-diff nav config with any declared P0 visual target SHALL be a completeness BLOCKER at every fidelity tier. Every ux-reference image SHALL map to a ui-spec screen_id or carry an explicit out-of-scope registration with crop provenance (parent image hash + bbox) or requirement citation; images directly cited by the requirement text SHALL NOT be agent-descoped; unprovable registrations require human confirmation (ledger must_review + status cap); a majority of images out-of-scope SHALL FAIL. Reachable screens SHALL still be captured and, at semantic_layout, checked via text-presence/structure comparison.
+Missing or invalid visual-diff navigation with declared P0 visual targets SHALL be a completeness BLOCKER at every fidelity tier. Every authoritative reference SHALL map to a ui-spec screen or carry machine-verifiable out-of-scope provenance bound to the parent hash, bbox/derivation, or frozen requirement citation; requirement-cited images MUST NOT be agent-descoped. Unprovable required registrations SHALL fail or defer for a real missing capability, not wait for human confirmation. Reachable screens SHALL still be captured and checked at the selected tier.
 
 Enforcement: `harness/scripts/check-{spec,testing}.ts`, `profiles/hmos-app/harness/visual-diff-*`
 
@@ -883,27 +908,21 @@ Enforcement: `harness/scripts/check-{spec,testing}.ts`, `profiles/hmos-app/harne
 - **WHEN** ui-spec declares P0 screens and visual-diff-nav.json is absent at semantic_layout
 - **THEN** the capture gate SHALL FAIL instead of warning
 
+#### Scenario: unprovable descoping stays unclosed
+
+- **WHEN** a requirement-cited image is marked out of scope without machine-verifiable provenance
+- **THEN** the applicable gate SHALL FAIL or capability-defer and SHALL NOT create a must-review signature item
+
 ### Requirement: Conditional review verdicts cannot close without resolution or authorization
 
-When the review report declares 「有条件通过」, closure SHALL require structured findings accounting with all MAJOR findings closed (re-run loop) or a conditional-review authorization receipt; otherwise the review summary verdict SHALL be INCOMPLETE and the goal SHALL NOT advance. The LLM verifier's PASS attests report credibility only and SHALL NOT be consumed as product PASS.
+When review declares a conditional or negative verdict, all open BLOCKER/MAJOR findings SHALL be machine-verified and routed as responsible-phase repair candidates until a fresh review closes them. Conditional-review authorization receipts and accepted-risk statements MUST NOT suppress candidates, advance review, or close the feature. The verifier's PASS attests report credibility only and MUST NOT be consumed as product PASS.
 
 Enforcement: `harness/scripts/check-review.ts`, `harness/scripts/check-receipt.ts`
 
-#### Scenario: the incident review report
+#### Scenario: open MAJOR findings cannot be accepted away
 
-- **WHEN** review concludes 有条件通过 with 2 open MAJOR findings and no authorization receipt
-- **THEN** the phase verdict SHALL be INCOMPLETE and ut SHALL NOT start
-
-### Requirement: Headless assumption ledgers are schema-validated and registry-complete
-
-For goal-mode phases, check-receipt SHALL FAIL when `headless-assumptions.jsonl` is missing, schema-invalid, or lacks an entry (decision or explicit n/a with reason) for any in-phase gate listed in confirmation-registry.yaml for that phase. Free-form decisions outside the registry are honestly out of this check's scope (covered by deterministic gates above).
-
-Enforcement: `harness/scripts/check-receipt.ts`, `skills/reference/confirmation-registry.yaml`
-
-#### Scenario: registry gate without a ledger line
-
-- **WHEN** the spec phase registry lists spec.freeze but the ledger has no corresponding entry
-- **THEN** check-receipt SHALL FAIL the phase closure
+- **WHEN** review has two current verified MAJOR findings and a legacy conditional authorization receipt
+- **THEN** the findings SHALL route to their owner and review SHALL not close until a fresh review verifies resolution
 
 ### Requirement: Attended phase entry validates explicit goal context
 
@@ -943,14 +962,14 @@ Enforcement: `skills/feature/spec/SKILL.md`, `harness/scripts/fidelity-intent-in
 
 ### Requirement: A blind model may consume trusted crops but never execute or self-certify cropping
 
-check-spec SHALL FAIL (BLOCKER, `blind_crop_prohibition`) any ui-spec asset with `acquisition: crop` when `effective_image_input=none`, unless ALL of: resolved_path exists; file sanity PASS; crop provenance verifiable — one of `external_tool` (tool name + source image hash + bbox record), `human_receipt` (confirmation receipt bound to artifact hash), `verified_artifact` (asset-crop-validation.json verified + hash match); and `human_crop_confirmed` carries a trusted identity/receipt. The bare `user_requirement` sentinel SHALL NOT count as per-item verification (existing P0-6 semantics). Assets failing the gate SHALL be redirected to `placeholder: true` + asset-manifest or the asset-request flow.
+check-spec SHALL admit a crop under a blind primary only when current machine evidence verifies its resolved path, file sanity, source image hash, bbox/derivation, output hash, and applicable independent content recognition. Legacy `human_receipt`, `human_crop_confirmed`, `crop_confirmed_by`, and `user_requirement` signer sentinels SHALL be ignored as quality authority. Failing assets SHALL use an allowed visible placeholder, remain FAIL when required, or defer when the missing fact is a real unavailable capability.
 
 Enforcement: `harness/scripts/check-spec.ts`, `profiles/hmos-app/harness/asset-crop-validation.ts`
 
-#### Scenario: the incident's 22 blind crop declarations
+#### Scenario: a signer field cannot self-certify cropping
 
-- **WHEN** a blind-tier spec declares 22 assets `acquisition: crop` with `human_crop_confirmed: false` and no validation artifacts
-- **THEN** `blind_crop_prohibition` SHALL FAIL listing every offending asset key
+- **WHEN** an agent-authored ui-spec sets human crop fields but no current source/bbox/output evidence exists
+- **THEN** the gate SHALL reject crop admission without asking for another signature
 
 ### Requirement: Asset role and criticality are machine-derived and cross-checked, never agent-trusted
 
@@ -976,7 +995,7 @@ Enforcement: `profiles/hmos-app/harness/{asset-materialization-sanity,placeholde
 
 ### Requirement: On-device rendered visibility is a debt-gated observation
 
-A device-side check SHALL compare uitree Image/self-drawn node bboxes against the device screenshot region for: indistinguishability from surrounding background, absent foreground contrast, absent edge/structure signal, and declared-vs-rendered bbox consistency. It SHALL keep versioned r1-debt-gated thresholds calibrated by frozen positive samples ≥6 from the incident screenshots and negative samples ≥10 including flat legitimate UI. A hit SHALL emit MAJOR/WARN structured findings into visual-debt; an open debt SHALL project visual UNVERIFIED and release BLOCKED. The check SHALL NOT add a duplicate phase BLOCKER/enforce path. Host runs record false positives only for fixture/threshold calibration; any new hard gate requires a separate evidence-backed change.
+A device-side check SHALL compare rendered regions against the screenshot using its calibrated deterministic observations and write machine-derived visual debt. An open required debt SHALL keep the visual axis unclosed and release blocked; it SHALL close only after source/binding/render evidence verifies the fix. New debt MUST NOT enter an accepted-by-human state, and no receipt SHALL clear it. Optional low-confidence observations remain advisory according to the existing calibrated policy.
 
 Enforcement: `profiles/hmos-app/harness/render-visibility.ts`, `harness/scripts/utils/visual-debt.ts`, `harness/harness-runner.ts`
 
@@ -985,13 +1004,197 @@ Enforcement: `profiles/hmos-app/harness/render-visibility.ts`, `harness/scripts/
 - **WHEN** the uitree lists five Image nodes whose screenshot regions are indistinguishable from the background
 - **THEN** the check SHALL flag all five as WARN with structured findings; the resulting open visual debt SHALL block release, breaking the "node exists = visible" equivalence without a duplicate phase BLOCKER
 
+#### Scenario: accepted metadata cannot clear an invisible asset
+
+- **WHEN** a current rendered-visibility finding remains open but legacy accepted-by metadata exists
+- **THEN** current projection SHALL keep the required visual axis unclosed
+
 ### Requirement: Fidelity intent tri-state detection covers phase-driven runs
 
-The goal-fakepass-hardening tri-state intent detection (strong pixel intent + missing visual capability → DEFERRED_CAPABILITY_MISSING before spec; ambiguous phrasing with reference images → await_human_fidelity_tier; none → semantic_layout; downgrade only via valid confirmation receipt; --fidelity never lowers) SHALL also run on the phase-driven path via a harness-runner spec-phase pre-hook reusing the same source functions (no fork). Results (`reference_intent{value,source}`, desired_fidelity, effective_fidelity incl. deferred, downgrade_receipt ref) SHALL be persisted. A blind tier SHALL only yield effective=deferred or receipt-authorized downgrade — never a silent semantic_layout continuation of a strong-intent requirement. Interactive sessions reuse the vision.blind_tier disclosure flow, whose copy SHALL state the expected per-requirement confirmation cost and the ≥4/5 rubric first-run expectation.
+The shared fidelity-intent detection SHALL run on goal and phase-driven spec paths. Strong pixel intent with missing required visual capability SHALL produce `DEFERRED_CAPABILITY_MISSING`; no strong intent follows the normal default policy. Ambiguous wording SHALL be resolved from frozen requirement inputs and deterministic policy, not `await_human_fidelity_tier`. `--fidelity` may hold or raise the target but MUST NOT lower frozen intent, and no downgrade receipt SHALL be consumed.
 
 Enforcement: `harness/scripts/harness-runner.ts`, `harness/scripts/utils/fidelity-shared.ts`, `harness/scripts/check-spec.ts`
 
-#### Scenario: the CodeAgentCLI path no longer skips intent detection
+#### Scenario: blind phase-driven strong intent defers
 
-- **WHEN** a phase-driven (non-goal) spec run starts for a requirement citing eight authoritative screenshots on a blind adapter
-- **THEN** the pre-hook SHALL run intent detection and either defer (strong intent) or require the human fidelity-tier confirmation (ambiguous), instead of defaulting to semantic_layout
+- **WHEN** a phase-driven spec run has strong pixel intent and no capable native/delegated visual provider
+- **THEN** it SHALL defer before producing a downgraded semantic target and SHALL NOT ask for a fidelity signature
+
+### Requirement: Agent-authored feature YAML cannot crash the harness
+
+The feature spec loader SHALL catch YAML syntax failures in `contracts.yaml`, `acceptance.yaml`, and `use-cases.yaml`, preserve the file name, parser code and available line/column in `shape_issues`, and continue the current harness run. The existing `feature_spec_shape` check SHALL emit a structured BLOCKER in the same run; a malformed file MUST NOT terminate the harness before summary generation.
+
+Enforcement: `harness/scripts/utils/spec-loader.ts`, `harness/harness-runner.ts`
+
+#### Scenario: Plain scalar containing colon-space is reported in the same run
+
+- **WHEN** an acceptance `device_focus` plain scalar contains an unquoted `subtitle_position: below` and YAML reports `BLOCK_AS_IMPLICIT_KEY`
+- **THEN** the current harness report contains an actionable `feature_spec_shape` failure naming `acceptance.yaml` and its line/column, while unrelated checks still execute
+
+### Requirement: Build phases MUST NOT guess the compile form; unresolved stops via existing channels
+
+coding、ut 与 device-testing 的构建入口 MUST 在参数装配前解析一次 product selection，
+且解析结果 MUST 作为构建参数显式传给 hvigor（不得在装配内再次名称猜测），
+同一 ProductSelection 对象 MUST 直接传给失败分类器与 details 生成器（内存传播，
+MUST NOT 依赖 metaExtras 或 result 对象字段做运行时传播）。
+
+source 优先级 MUST 为：`explicit_run`（本次调用显式参数）→ `confirmed_env`
+（`HARNESS_DEVICE_TEST_PRODUCT` 等既有 env 覆盖；goal 冻结的 testing product 走同一入口）
+→ `explicit_config`（config 值且 local 确认值逐字相等）→ `sole_candidate`
+（build-profile.json5 单候选）→ `unresolved`。
+
+名称启发式（`product`/`default`/首位）MUST NOT 产出选定值，仅供 `unresolved` 时的候选
+展示排序。
+
+`unresolved`（构建形态无法确定——**四种原因**：`multi_candidate_unconfirmed` 多候选且
+config 值未确认 / `no_build_profile` build-profile.json5 缺失 / `empty_products`
+存在但未声明 app.products / `unparseable_build_profile` 无法解析）MUST 停止并要求确认：
+交互式 harness 出口产出既有 BLOCKER FAIL（复用 `externalBlocked` 语义，不新增 failure
+kind、不新建停止机制），details MUST 如实说明原因并列出全部候选（后三种原因**没有真实
+候选**，MUST NOT 用虚构 `default` 冒充 `sole_candidate`）；MUST NOT 以未捕获异常打崩
+门禁脚本。goal 无人值守由 `goal-runner` 启动前置检查先行处理（见 goal-runner spec），
+MUST NOT 跑到 coding 阶段中途才停。
+
+失败归因在 source 非 `explicit_run`/`confirmed_env`/`explicit_config` 时，explanation
+MUST 以首句声明编译形态未经确认。
+
+#### Scenario: 多候选且未确认的宿主不再被猜测
+- **WHEN** build-profile.json5 声明多个 product，config 无 `preferredProduct` 或未在本机确认
+- **THEN** 构建入口 MUST 报告 `unresolved` 阻断（原因 + 候选 + 确认引导）
+- **AND** MUST NOT 选 `product`/`default`/首位继续构建
+
+#### Scenario: build-profile 缺失/为空/不可解析不得虚构 default
+- **WHEN** build-profile.json5 缺失（或存在但未声明 product / 无法解析）
+- **THEN** 构建入口 MUST 报告 `unresolved`（`no_build_profile` / `empty_products` /
+  `unparseable_build_profile`，候选为空），MUST NOT 以虚构 `default` 当作 `sole_candidate` 继续构建
+
+#### Scenario: 单候选与已确认工程行为不变
+- **WHEN** build-profile.json5 只有一个 product，或 config 值与 local 确认值相等
+- **THEN** 构建照常执行，且报告 MUST 包含 `编译形态：product=<X>（来源：<source>）；工程可选：<candidates>`
+
+#### Scenario: 构建期间外部配置改变
+- **WHEN** 构建执行过程中外部修改了 config/build-profile
+- **THEN** 该次构建的分类与报告 MUST 继续使用构建前解析的 selection（MUST NOT 二次解析）
+
+> **Enforced by:** `profiles/hmos-app/harness/product-selection.ts`,
+> `profiles/hmos-app/harness/coding-host-rules.ts`,
+> `profiles/hmos-app/harness/ut-host-impl.ts`,
+> `profiles/hmos-app/harness/providers/device-test-build.ts`,
+> `harness/scripts/check-testing.ts`,
+> `harness/tests/unit/*`（product-selection / hvigor-build-verdict / detect-product 语义）
+
+### Requirement: Normal-mode device phases resolve one target at entry and share it across the whole chain
+
+普通模式（`harness-runner --phase <p>`）在 `phaseRequiresDevice(p, profile)` 为真时，MUST 在
+**任何设备操作之前**（脚本 harness 执行前）完成设备前置：策略检查 → 目标解析 → 就绪。
+就绪 MUST 复用与 goal 侧**同一个共享核心** `ensureDeviceReady`；MUST NOT 使用只读探针
+（`probeDeviceReadiness`，不 wake/不解锁/不启动降级）替代，MUST NOT 直接调用运行期恢复
+（`ensureDeviceReadyAtRuntime`，它要求已有 serial、不负责选目标）。
+
+**目标 MUST 只解析一次**，并 MUST 注入 `HARNESS_HDC_TARGET`，使后续 wake、解锁、`bm dump`、
+install、`aa test` 全链共用同一 serial。解析优先级 MUST 为：显式 `HARNESS_HDC_TARGET` >
+`device.target_serial` > 唯一在线设备；多台在线且无 `target_serial` MUST 走既有 AMBIGUOUS
+停止求人。已显式设定的环境变量 MUST NOT 被覆盖。
+
+配置目标不在线时 MUST 阻断，或走**已授权的**模拟器降级（`existing|managed`）；
+**MUST NOT 跳过检查后让 hdc 隐式选择另一台在线设备**。
+
+策略 `code=device_policy_unset` 时 MUST 前脚本 fail-fast：原文透传 `guidance`、非零退出、
+MUST NOT 调用任何 checker/provider、MUST NOT 发出任何设备命令。四选一文案 MUST 保持单一
+真源在 `device-policy`，MUST NOT 在门内另抄一份。策略检查自身执行失败（凭据库不可读、配置
+损坏）MUST 与 `device_policy_unset` 分开报告，MUST NOT 引导用户重新登记凭据。
+
+MUST NOT 为此新增 diagnosis kind、平行的 provider 局部门或第二套目标解析。profile 侧的
+运行期恢复桥 MUST 只消费入口注入的目标，MUST NOT 读取 `framework.local.json` 自行解析目标。
+
+**编译跳过类环境开关 MUST NOT 用于免除本门**：它们只跳过编译，UT 的真机执行受独立开关
+控制、testing 更不认编译开关，据此让路等于门形同虚设。
+
+托管启动（`managed`）的模拟器 MUST 在本进程退出时按既有所有权四元组回收，且回收登记
+MUST 早于任何失败退出分支——「实例已启动但未就绪」（boot 超时/仍锁屏）是普通的可执行清理
+失败路径，晚登记即零凭证泄漏。就绪核心给出的孤儿实例身份 MUST 随失败结果一并交出。
+
+冻结上下文 MUST **整组原子**注入：应用后进程内的 `MAISON_DEVICE_*` MUST 恰好等于本次
+`deviceEnvFor` 的产出，未返回的键 MUST 被删除。MUST NOT 逐键「不存在才写」——继承而来的
+陈旧 `MAISON_DEVICE_CREDENTIAL_REF` 会被运行期优先取用，形成「`manual` 策略下仍自动输入
+PIN」的越权路径。
+
+`HARNESS_HDC_TARGET` **同样 MUST 以门的解析结果为准**，MUST NOT 保留注入前的旧值：显式目标
+的优先级在门的**输入阶段**已经兑现，未降级时写回的本就是同一值，而发生**已授权降级**时最终
+目标是模拟器 serial。保留旧值会产出 `HARNESS_HDC_TARGET`（离线真机）与
+`MAISON_DEVICE_TARGET_KIND=emulator` 并存的目标分裂——hdc 操作离线真机，而设备门与 testing
+封顶都以为目标是模拟器。
+
+#### Scenario: manual 策略下不得残留陈旧凭据引用
+- **WHEN** 进程继承了 `MAISON_DEVICE_CREDENTIAL_REF` 而本次策略为 `manual`（本次不产出 ref）
+- **THEN** 注入后该变量 MUST 不存在，运行期 MUST NOT 取到任何凭据引用
+
+#### Scenario: 托管实例启动后未就绪
+- **WHEN** 降级启动了托管模拟器但它未在预算内就绪，入口前置判定失败
+- **THEN** 该实例的所有权身份 MUST 随失败结果交出，且 MUST 在进程退出前登记回收
+
+#### Scenario: 显式目标离线后走已授权降级
+- **WHEN** 显式 `HARNESS_HDC_TARGET` 指向的真机不在线，入口前置按已授权 `existing`/`managed` 降级到模拟器
+- **THEN** 注入后的 `HARNESS_HDC_TARGET` MUST 等于该模拟器 serial，MUST NOT 保留离线真机
+- **AND** `MAISON_DEVICE_TARGET_KIND` 与 testing 封顶判据 MUST 与该同一目标同源
+
+#### Scenario: 需设备 phase 在策略不可用时零设备操作
+- **WHEN** `phaseRequiresDevice` 为真且 `device-policy --check` 返回 `device_policy_unset`
+- **THEN** harness-runner MUST 非零退出并透传四选一 guidance
+- **AND** MUST NOT 执行任何 checker/provider，MUST NOT 发出 `hdc install` 或 `aa test`
+
+#### Scenario: 配置目标离线且无授权降级
+- **WHEN** `device.target_serial` 指向的设备不在线，另有一台其它设备在线，且 `emulator_fallback=disabled`
+- **THEN** 入口前置 MUST 阻断，MUST NOT 把那台在线设备当作目标注入
+
+#### Scenario: 解析结果贯通全链
+- **WHEN** 入口前置取得 READY
+- **THEN** `HARNESS_HDC_TARGET` MUST 被注入为该目标，且解锁链与 hdc 命令 MUST 使用同一 serial
+
+> **Enforced by:** `harness/harness-runner.ts`,
+> `harness/scripts/utils/device-readiness-gate.ts`,
+> `profiles/hmos-app/harness/device-recovery-bridge.ts`,
+> `harness/tests/unit/device-readiness-gate.unit.test.ts`
+
+### Requirement: Frozen attempt context is identified by target and frozen marker together
+
+判定「本 attempt 已冻结」MUST 同时要求 `MAISON_DEVICE_ATTEMPT_FROZEN=1` **与**
+`HARNESS_HDC_TARGET` 非空——goal 的设备就绪门取得 READY 时经 `deviceEnvFor` **成组**注入
+`{HARNESS_HDC_TARGET, MAISON_DEVICE_SESSION_ID, MAISON_DEVICE_ATTEMPT_FROZEN}`，
+故单字段判据 MUST NOT 被当作冻结证据。
+
+`MAISON_DEVICE_ATTEMPT_FROZEN=1` 但 `HARNESS_HDC_TARGET` 缺失 MUST 判为冻结上下文损坏并
+**fail-closed**：MUST NOT 回落到「隐式选择唯一在线设备」，否则手工设置单个环境变量即可绕过
+设备门。
+
+冻结上下文命中时，普通模式入口前置 MUST 整体让路：MUST NOT 重新解析目标、MUST NOT 重新
+查询设备策略、MUST NOT 覆盖已注入的 env。
+
+#### Scenario: 只有冻结标记没有目标
+- **WHEN** 环境中 `MAISON_DEVICE_ATTEMPT_FROZEN=1` 而 `HARNESS_HDC_TARGET` 为空
+- **THEN** 入口前置 MUST 阻断并说明冻结上下文损坏
+- **AND** MUST NOT 解析任何目标、MUST NOT 查询设备策略
+
+#### Scenario: goal 注入的完整上下文不被二次处理
+- **WHEN** goal 就绪门已注入 target/session/frozen 后 agent 自跑 harness
+- **THEN** 入口前置 MUST 复用该目标且不重查策略
+
+> **Enforced by:** `harness/scripts/utils/device-readiness-gate.ts`,
+> `harness/tests/unit/device-readiness-gate.unit.test.ts`
+
+### Requirement: Human quality pass keys have zero production consumers
+
+Phase checks, quality-axis derivation, transition policy, closure, and completion SHALL consume no
+signer identity, human confirmation receipt, accepted-risk state, blind-run waiver, or manual-resume
+flag as a quality result. Legacy schema fields MAY be tolerated only by explicitly identified readers
+and negative/migration tests. Ordinary selection/input provenance and genuine external authority remain
+separate and MUST NOT lower quality.
+
+Enforcement: `harness/harness-runner.ts`, `harness/scripts/utils/quality-axes.ts`,
+`harness/scripts/utils/phase-transition-policy.ts`,
+`harness/scripts/utils/verify-feature-completion.ts`, `specs/phase-rules/*.yaml`
+
+#### Scenario: production zero-consumer scan
+
+- **WHEN** release checks scan production paths after migration
+- **THEN** every remaining human-quality term SHALL match only the explicit legacy-reader/external-authority allowlist and no writer or gate consumer

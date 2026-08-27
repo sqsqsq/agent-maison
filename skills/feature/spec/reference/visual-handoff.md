@@ -98,7 +98,7 @@
 |------|------|------|
 | `fidelity_target` | `semantic_layout`（默认） / `pixel_1to1` / `reference_only`（v2.5+） | 像素级意图；贯穿 spec/coding/testing 严重度 ratchet |
 | `asset_acquisition_mode` | `approximate`（默认） / `auto_crop` / `user_dir` | `pixel_1to1` 联动默认抬升为 `user_dir` |
-| `fidelity_deferrals` | 数组 | P0 视觉元素 defer 须**真人**签字：`human_signed: true` 且 `signed_by` 非自动化身份（`goal-mode-auto` 等自签不算；headless 缺 `signed_by` 亦不算） |
+| `fidelity_deferrals` | 数组 | legacy/披露字段；pixel_1to1 下 P0 视觉元素 defer 始终是未满足的 strict 义务，`human_signed`/`signed_by` 不放行 |
 
 `authoritative_refs` 新增 kind：**`asset_pack`**（用户素材目录，与 `repo_assets` 同样要求 `path`）。
 
@@ -114,7 +114,7 @@ OCR 时钳到 `reference_only` 地板。声明的 `fidelity_target` 本身**不�
 
 **A/B/C 预期边界**：A 结构样式可逼近 1:1；B 美术资产取决于素材供给；C 动态交互不在静态参考图承诺内。
 
-**供给路径定位（G5）**：**screenshot-only 为主路径**——保证 A 环（结构/颜色/布局关系/按钮变体）「一眼同页、非像素级」+ B 环缺口诚实拦截（asset-manifest / 占位不静默 / 禁通用图标冒充 logo / crop halt-confirm）。**在线高保真对照（`fetch_fidelity` + `fidelity.lock.yaml` + 结构化派生 ref-elements）为可选增强**——有 Figma/高保真源时把 B 环美术与精确像素也拉到 1:1，但 screenshot-only 路径**不依赖、不强制**它（详见 `docs/operations/fidelity-fetch-mcp-contract.md`）。
+**供给路径定位（G5）**：**screenshot-only 为主路径**——保证 A 环（结构/颜色/布局关系/按钮变体）「一眼同页、非像素级」+ B 环缺口诚实拦截（asset-manifest / 占位不静默 / 禁通用图标冒充 logo / crop 机器复验）。**在线高保真对照（`fetch_fidelity` + `fidelity.lock.yaml` + 结构化派生 ref-elements）为可选增强**——有 Figma/高保真源时把 B 环美术与精确像素也拉到 1:1，但 screenshot-only 路径**不依赖、不强制**它（详见 `docs/operations/fidelity-fetch-mcp-contract.md`）。
 
 ## CLI 逃生
 

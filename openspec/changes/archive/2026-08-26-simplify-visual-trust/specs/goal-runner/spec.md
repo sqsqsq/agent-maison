@@ -32,7 +32,7 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-runne
 - **WHEN** the runner restarts with --resume and the current phase has no historical agent_invoke_start
 - **THEN** continuation SHALL be null and the prompt SHALL contain no continuation blocks
 
-### Requirement: Fidelity intent is detected from a stable requirement input set
+### Requirement: Fidelity intent is detected from the dereferenced requirement SSOT with a capability pre-gate
 
 Before phase prompting, the runner SHALL detect intent from the inline manifest requirement plus bounded, explicitly referenced source documents that already exist at initialization. A path under the current feature output tree that is named as a file to be produced SHALL NOT be dereferenced into requirement identity, and generated `ux-reference` documents SHALL NOT enter the requirement hash. The resolved source set SHALL remain stable for the phase. Strong pixel intent combined with genuinely missing current visual capability SHALL yield DEFERRED_CAPABILITY_MISSING; `--fidelity`/manifest fidelity remains upgrade-only without a valid downgrade receipt.
 

@@ -33,7 +33,7 @@ import { parseScope, describeScopeError } from './utils/scope-parser';
 import { scanNamedBusinessHandler } from './utils/named-handler';
 import { diffChangedFiles, analyzeDiffStaleness } from './utils/git-diff';
 import { runUiDiffWithinDeclaredFiles } from './utils/ui-scope-gate';
-import { classifyChangedFiles, layerDirPrefixes } from './utils/diff-scope';
+import { classifyChangedFiles, layerDirPrefixes, resolveModulePathPrefixes } from './utils/diff-scope';
 import { relFeaturesDir } from '../config';
 import {
   loadFrameworkConfig,
@@ -344,20 +344,19 @@ function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
     }];
   }
 
-  const nameToPath = new Map<string, string>();
-  for (const mod of contracts.modules) {
-    if (mod.name && mod.package_path) {
-      nameToPath.set(mod.name, mod.package_path.replace(/\\/g, '/').replace(/\/+$/, '') + '/');
-    }
-  }
-
-  const missingPaths: string[] = [];
-  const allowedPrefixes: string[] = [];
-  for (const modName of scope.in_scope_modules) {
-    const p = nameToPath.get(modName);
-    if (p) allowedPrefixes.push(p);
-    else missingPaths.push(modName);
-  }
+  // Shared source-owner resolver: coding gate and invocation write attribution
+  // consume the same contracts/catalog path normalization.  Full track remains
+  // strict: every mapping must come from contracts.yaml (catalog fallback is only
+  // a diagnostic here; it cannot silently replace the plan contract).
+  const moduleResolution = resolveModulePathPrefixes(
+    ctx.projectRoot,
+    scope.in_scope_modules,
+    contracts.modules,
+  );
+  const missingPaths = scope.in_scope_modules.filter(
+    (name) => !moduleResolution.sources.get(name)?.startsWith('contracts.yaml '),
+  );
+  const allowedPrefixes = moduleResolution.allowedPrefixes;
 
   if (missingPaths.length > 0) {
     return [{

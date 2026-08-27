@@ -651,16 +651,15 @@ export function executeInitTask(
     }
     case 'record-visual-provider': {
       // plan ab072691 t1③：只读视觉 provider 的**机器写盘**入口（agent 不手写 JSON）。
-      // 跳过（未注入 visualProvider）是合法的**显式选择**：不写 local。普通交互态由该
-      // 选择授权当前操作；attended goal 的会话层须把它转成 --allow-blind-visual。
+      // 未注入 visualProvider 时保持未配置、不写 local；这不是质量授权，严格需求是否
+      // 可继续由 requirement/capability 门禁裁决。
       const sel = ctx.visualProvider;
       const adapter = sel?.adapter?.trim();
       const model = sel?.model?.trim();
       if (!adapter && !model) {
         return {
           message:
-            '未提供 visualProvider，已明确跳过（不写入 local）：普通交互仅授权当前操作；' +
-            'attended goal 请把本次选择转译为 --allow-blind-visual。',
+            '未提供 visualProvider，保持未配置（不写入 local）；严格视觉需求将由 capability 门禁诚实 defer。',
         };
       }
       if (!adapter || !model) {

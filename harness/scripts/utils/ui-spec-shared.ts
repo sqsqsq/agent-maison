@@ -111,26 +111,23 @@ export interface UiSpecAsset {
   placeholder?: boolean;
   rationale?: string;
   human_crop_confirmed?: boolean;
-  /** G4b：crop 确认来源；headless 下须为非自动化身份或 user_requirement（堵自报，对齐 deferral signed_by） */
+  /** legacy crop input provenance；当前 gate 忽略，不构成授权或验真。 */
   crop_confirmed_by?: string | null;
   /** 盲档无法取得/验真的原因；说明字段，不构成授权或视觉证明。 */
   blind_fallback_reason?: string;
-  /** round5 P0-A：显式放行"素材图内含 ui-spec 声明文本"（营销/装饰插画确需含字时）；须配 human_signed 署名 */
+  /** legacy baked-text defer；当前 gate 忽略，不能放行素材内烤字。 */
   baked_text_defer?: boolean;
-  /** round5 P0-A：baked_text_defer 的真人署名（非自动化身份，经 isHumanConfirmed 校验）；缺则 defer 无效 */
+  /** legacy provenance only；当前 gate 忽略。 */
   baked_text_defer_by?: string;
   /**
-   * P0-C（f2d8c4a6 授权/验真拆位）：crop 产物**验真**的真人确认署名（对照 contact-sheet 确认"裁对了"）。
-   * 与 crop_confirmed_by（裁剪**授权**）语义正交：授权解锁裁剪路径，验真确认产物正确；
-   * asset_crop_validation 的 VL 隔离辨认不可用/失配时，此署名是唯一逃生阀（自动化身份不算）。
+   * legacy crop verification signer；当前 gate 忽略，只接受 source/bbox/tool/hash 的机器验证。
    */
   bbox_verified_by?: string;
   /**
    * blind-visual-hardening d2（design §1.6）：crop 产物来源记录——盲档下 crop 禁令的
    * external_tool 放行通道（外部裁剪工具产物：工具名 + 源图 hash + bbox 记录）。
    * 诚实边界：记录结构存在性可确定性校验，工具真实性不做密码学验证（provenance 三来源的
-   * 另两路 verified_artifact / human_receipt 分别由 asset-crop-validation 与 confirmation
-   * receipt 承担强验证）。
+   * 另一路 verified_artifact 由 asset-crop-validation 的确定性重现与内容检查承担强验证）。
    */
   crop_provenance?: {
     kind?: string;

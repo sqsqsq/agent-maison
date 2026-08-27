@@ -13,11 +13,8 @@
 //     （不重复实现 device-external 判定），且 deriveSummaryVerdictLattice 输出
 //     projected_verdict 供写盘方与 legacy verdict 对账（不一致=独立派生缺陷，显式记录；
 //     pre===legacy 的 capability 合法投影除外——t2 因果归因，不报）。
-// 状态语义严格复用现行两类（verify-feature-completion.ts CleanPassIssueKind）：
-//   needs_fix（确定性故障→修复重跑，投 PARTIAL/FEATURE_INCOMPLETE）；
-//   needs_human（设计内求人→AWAITING_HUMAN_REVIEW 封顶）；
-//   external_dependency（外部阻塞→INCOMPLETE/DEFERRED 语义，对齐 device-external 先例）。
-// 人工确认永远不能解除确定性 FAIL（清偿边界在 confirmation-receipt 消费侧执行）。
+// 新 writer 只产生 needs_fix 或 external_dependency。needs_human/owner=human 仅为 legacy
+// summary schema 的兼容读取值，任何人签都不能解除确定性 FAIL/UNVERIFIED。
 // ============================================================================
 
 import type { CheckResult, Phase } from './types';
@@ -71,6 +68,16 @@ export interface DeriveAxesOptions {
   visualApplicable: boolean;
   /** ui-spec 声明了 assets → asset 轴 applicable（蕴含 visualApplicable） */
   assetApplicable: boolean;
+}
+
+/**
+ * Release requirement SSOT for quality axes. The current policy requires every
+ * applicable axis for release; callers that must decide before summary
+ * materialization reuse this projector instead of inferring optionality from
+ * fidelity/strictness.
+ */
+export function projectAxisRequiredForRelease(axis: AxisId, applicable: boolean): boolean {
+  return AXIS_IDS.includes(axis) && applicable;
 }
 
 // ---------------------------------------------------------------------------
@@ -141,9 +148,6 @@ const REPORT_VALIDITY_CHECK_IDS = new Set([
   'test_case_table_format',
 ]);
 
-/** 设计内求人家族（与 goal-failure-classifier / E4 家族口径一致的宽匹配） */
-const AWAIT_HUMAN_RE = /await_human|pending_confirm|defer_human|human_sign|fidelity_capture_governance/i;
-
 interface CheckLike {
   id: string;
   status: CheckResult['status'];
@@ -152,17 +156,13 @@ interface CheckLike {
   failure_kind?: string;
 }
 
-function isAwaitHumanCheck(c: CheckLike): boolean {
-  return AWAIT_HUMAN_RE.test(c.blocking_class ?? '') || AWAIT_HUMAN_RE.test(c.failure_kind ?? '');
-}
-
 // ---------------------------------------------------------------------------
 // 派生
 // ---------------------------------------------------------------------------
 
 /** phase-advance 时 UNVERIFIED 也阻断（INCOMPLETE）的轴集合——按 phase。
- * visual/asset 的 UNVERIFIED **不**阻断推进（headless 可继续），只阻断 release
- * （需人工验收清偿，needs_human → run 封顶 AWAITING_HUMAN_REVIEW）——双投影分立的核心。 */
+ * visual/asset 的 UNVERIFIED **不**阻断推进（由 phase matrix 决定），但继续阻断 release；
+ * 后续 testing/owner 必须补齐机器证据，不存在人签清偿。 */
 const ADVANCE_UNVERIFIED_BLOCKING: Record<AxisId, (phase: string) => boolean> = {
   functional: () => true,
   evidence: phase => phase === 'ut' || phase === 'testing',
@@ -242,10 +242,7 @@ export function deriveQualityAxes(
       verdict = 'NOT_APPLICABLE';
     } else if (b.hardFails.length > 0) {
       verdict = 'FAIL';
-      const allHuman = b.hardFails.every(isAwaitHumanCheck);
-      resolution = allHuman
-        ? { class: 'needs_human', owner: 'human', retry_phase: null }
-        : { class: 'needs_fix', owner: 'agent', retry_phase: phase };
+      resolution = { class: 'needs_fix', owner: 'agent', retry_phase: phase };
     } else if (b.externalFails.length > 0) {
       verdict = 'UNVERIFIED';
       resolution = { class: 'external_dependency', owner: 'external', retry_phase: phase };
@@ -253,17 +250,14 @@ export function deriveQualityAxes(
       // 轴 applicable 但本 phase 零执行（如 spec 期 functional 测试未运行、
       // 盲档下 visual 检查整体 SKIP）——如实 UNVERIFIED。
       verdict = 'UNVERIFIED';
-      resolution =
-        id === 'visual' || id === 'asset'
-          ? { class: 'needs_human', owner: 'human', retry_phase: null }
-          : { class: 'needs_fix', owner: 'agent', retry_phase: phase };
+      resolution = { class: 'needs_fix', owner: 'agent', retry_phase: phase };
     } else {
       verdict = 'PASS';
     }
 
     axes[id] = {
       applicable,
-      required_for_release: applicable,
+      required_for_release: projectAxisRequiredForRelease(id, applicable),
       verdict,
       blocking_class: resolution?.class ?? null,
       source_checks: [...new Set(b.sources)].sort(),
@@ -277,7 +271,7 @@ export function deriveQualityAxes(
 // S7（visual-capability-truth P2-J.2）：asset 轴带 provenance 继承——testing 期无本阶段
 // asset 检查时，继承的是**证据引用**而非裸 verdict 复制：五指纹（source summary hash /
 // source&build fingerprint / gate fingerprint / inventory hash / debt revision）由调用方
-// I/O 判定一致性；任一漂移 → STALE/UNVERIFIED（needs_human），不得复制上游 PASS。
+// I/O 判定一致性；任一漂移 → STALE/needs_fix，不得复制上游 PASS。
 // ---------------------------------------------------------------------------
 
 export interface AssetAxisInheritance {
@@ -307,8 +301,8 @@ export function applyAssetAxisInheritance(axes: QualityAxes, inh: AssetAxisInher
   axes.asset = {
     ...a,
     verdict: 'STALE',
-    blocking_class: 'needs_human',
-    resolution: { class: 'needs_human', owner: 'human', retry_phase: null },
+    blocking_class: 'needs_fix',
+    resolution: { class: 'needs_fix', owner: 'agent', retry_phase: inh.upstreamPhase },
     source_checks: [`stale_inheritance:${inh.upstreamPhase}:${inh.provenanceDetail}`],
   };
 }
@@ -356,7 +350,7 @@ export function projectReleaseReadiness(axes: QualityAxes): ReleaseReadiness {
   return 'READY';
 }
 
-/** completion 投影标签（仅标签——不构成状态机，映射走既有 needs_fix/needs_human 通道） */
+/** completion 投影标签（仅标签——不构成状态机；当前负面态走 needs_fix/external_dependency） */
 export function projectCompletionStatus(axes: QualityAxes): string {
   const anyFail = AXIS_IDS.some(id => axes[id].applicable && axes[id].verdict === 'FAIL');
   if (anyFail) return 'INCOMPLETE';

@@ -566,7 +566,7 @@ AI Harness 重点看脚本难以判断的内容：
 1. 是否缺少命名业务入口？回 coding 抽出命名方法。
 2. 是否 data boundary 不清楚？回 plan / `contracts.yaml` 补清楚。
 3. 是否其实是 UI 行为？移交 device-testing。
-4. 是否确实必须改业务源码？先向用户说明原因，得到明确同意，并登记到 `gap-notes.md > approved_src_mutations[]`。
+4. 是否确实必须改业务源码？停止 UT，产出 coding repair candidate；由 coding owner 修改并重走 review→ut，用户署名不能代替重验。
 
 ---
 

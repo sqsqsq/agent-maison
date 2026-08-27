@@ -35,7 +35,6 @@ import {
   classifyCorrection,
   resolveCorrectionCategory,
   resolveCorrectionTarget,
-  shouldAutoConfirmCorrectionLayer,
   touchedCategories,
   type CorrectionAnswers,
   type RevalidateEntry,
@@ -54,10 +53,8 @@ import { reconcileTouchedLayers } from './correction-layer-reconcile';
 import {
   resolveEnforcementTier,
   resolveFeatureTrack,
-  resolveProfileLabel,
   workflowFeaturePhases,
   type AdapterEnforcementManifest,
-  type RuntimeContext,
 } from './runtime-policy';
 import { isGoalOrchestrationEnv } from './phase-state';
 
@@ -168,7 +165,6 @@ export function runCorrectionInit(projectRoot: string, opts: CorrectionInitOpts)
   let rootLayer: string;
   let touched: string[];
   let revalidate: RevalidateEntry[];
-  let autoConfirmEligible = false;
 
   if (target.kind === 'feature') {
     feature = target.feature;
@@ -186,26 +182,8 @@ export function runCorrectionInit(projectRoot: string, opts: CorrectionInitOpts)
     touched = cls.touched_layers;
     revalidate = cls.revalidate;
 
-    // balanced 高置信免确认（C5-full，用户 2026-07-09 拍板窄范围）：仅 full×interactive×
-    // config.evidence_profile=balanced（resolveProfileLabel 单点判定）且纯验证修正未触及
-    // coding 才成立；phase 字段不影响该判定，仅为满足 RuntimeContext 形状占位。
-    const runtimeCtx: RuntimeContext = {
-      mode,
-      adapter: adapter || 'generic',
-      phase: 'correction',
-      workflow: fw.active_workflow ?? 'spec-driven',
-      can_prompt_user: mode === 'interactive',
-      can_collect_usage: mode !== 'interactive',
-    };
-    const profileLabel = resolveProfileLabel(track, runtimeCtx, { evidence_profile: fw.evidence_profile });
-    autoConfirmEligible = shouldAutoConfirmCorrectionLayer({
-      profileLabel,
-      category: resolveCorrectionCategory(opts.answers),
-      touchedLayers: touched,
-    });
   } else {
-    // no-feature：无 workflow 投影，层即类别；载体为 --adhoc-correction 单项清单，
-    // 无 track/evidence_profile 语境——一律停等确认，不适用 balanced 免确认。
+    // no-feature：无 workflow 投影，层即类别；载体为 --adhoc-correction 单项清单。
     rootLayer = resolveCorrectionCategory(opts.answers);
     touched = touchedCategories(opts.answers);
     revalidate = [{ phase: 'adhoc', status: 'pending' }];
@@ -222,7 +200,6 @@ export function runCorrectionInit(projectRoot: string, opts: CorrectionInitOpts)
     base_commit: baseCommit,
     request_text: opts.requestText,
     enforcement_tier: tier,
-    auto_confirm_eligible: autoConfirmEligible,
   });
   const abs = writeCorrectionState(projectRoot, state);
 
@@ -231,13 +208,7 @@ export function runCorrectionInit(projectRoot: string, opts: CorrectionInitOpts)
   console.log(`   归属: ${feature ?? '(no-feature → --adhoc-correction)'}`);
   console.log(`   root_layer: ${rootLayer} | touched: ${touched.join(', ')}`);
   console.log(`   revalidate: ${revalidate.map((r) => r.phase).join(' → ')}`);
-  if (autoConfirmEligible) {
-    console.log(
-      '   ✅ 高置信自动放行（balanced + 纯验证 + 未触及 coding）：可直接实施，无需停等 `correction.layer` 用户确认。',
-    );
-  } else {
-    console.log('   下一步: 经 `correction.layer` gate 用户确认后实施（只动声明层）；');
-  }
+  console.log('   ✅ 已按 correction request 自动路由责任阶段；无需人签，完成以级联机器重验为准。');
   console.log(
     feature
       ? '   实施后逐项重跑 revalidate phase 的 harness，再 --correction-check 收口。'
@@ -674,7 +645,7 @@ export async function runAdhocCorrection(
     }
   }
 
-  // 6) 验证转嫁禁令：touched 含验证层而宿主无 device 能力 → 显式 evidence 缺口 halt-confirm
+  // 6) 验证转嫁禁令：touched 含验证层而宿主无 device 能力 → 诚实 capability defer。
   const touchesVerification = state.touched_layers.some((l) => VERIFICATION_CATEGORIES.has(l));
   if (touchesVerification) {
     const deviceSkipped =
@@ -689,10 +660,11 @@ export async function runAdhocCorrection(
         severity: 'BLOCKER',
         status: 'FAIL',
         details:
-          '需要人工验证（evidence 缺口，halt-confirm）：\n' +
-          '  - 修正声明触及验证层，但当前宿主无 device_test.run 能力，agent 不得以"已自测"替代；\n' +
-          '  - 请真人执行验证并以 manual_confirm 记录（真人 + 时间），或在具备 device 能力的环境重跑。',
-        failure_kind: 'verification_evidence_gap',
+          '修正声明触及验证层，但当前宿主无 device_test.run 能力，agent 不得以"已自测"替代；' +
+          '请在具备 device 能力的 provider/profile 环境重跑。该缺口是 capability-missing，不接受人工签名替代。',
+        failure_kind: 'toolchain',
+        blocking_class: 'device_toolchain',
+        actionability: 'toolchain_blocked',
       });
     } else {
       results.push({

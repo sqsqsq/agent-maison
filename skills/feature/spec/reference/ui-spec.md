@@ -41,8 +41,8 @@ JSON Schema：`framework/harness/schemas/ui-spec.schema.json`。
 | 字段 | 必填 | 说明 |
 |------|------|------|
 | `schema_version` | ✅ | 固定 `"1.0"` |
-| `verified` | 推荐 | `verified` / `human_confirmed` / `unverified`（见 DSL gate） |
-| `verified_method` | 条件 | `vl_multimodal` / `human_gate` / `none` |
+| `verified` | 推荐 | 新产物只写 `verified` / `unverified`；`human_confirmed` 仅作 legacy 可读值，门禁按 `unverified` 处理（见 DSL gate） |
+| `verified_method` | 条件 | 新产物只写 `vl_multimodal` / `none`；`human_gate` 仅作 legacy 可读值，不构成质量证据 |
 | `screens[]` | ✅ | 每屏一条 |
 | `tokens` | ✅ | 全局 + 品牌变体 token 表 |
 | `assets[]` | ✅ | logo / 图标 / 插图清单 |
@@ -103,20 +103,18 @@ global_elements:
 - **浮动容器**：底部悬浮胶囊 tab 等 global_elements，其容器节点必须声明 `bg_color`（否则 coding 易搭成裸文字行）。
 - **完整性外部对照（`capture_completeness_external`）**：门禁会用参考原图 OCR 全文当**真分母**逐行比对——
   原图上任何 ≥2 字的文本（含金额如 ¥119.40）没进 ref-elements/ui-spec 就 BLOCKER；分区扫描时**逐字抄全**，
-  漏了要么补建模、要么 defer+真人签，删分母删不掉（分母是原图）。
+  漏了要么补建模、要么由可靠机器能力产出新证据；删分母删不掉（分母是原图）。
 
 **结构声明的验真分工（P1-4③·c9e2a7f4，诚实边界——写给所有下游阶段）**：结构声明落进 spec 后，
-"实现对不对"由四层分工兜、各有明确边界，**不存在全自动验真**：
+"实现对不对"由当前机器证据链分层验证：
 1. **coding 台账**（门禁 `structure_declaration_ledger`）：每条声明逐条登记实现归属——只消灭
    "被静默无视"，自报不验真；
 2. **device 确定性信号**（P1-C `visual_diff_text_placement`）：**仅文本类**结构可确定性验真
    （trailing 副标题被排成题下=参考图同行文本对实测分居两行，OCR 相对信号缩放不变）；
-3. **review 台账逐条人审**（P1-4②）：非文本类结构（tab 容器视觉/分组容器/独卡边距）的唯一
-   静态人审关口——ArkUI 结构静态判定不可行（Row/Column/Builder 组合爆炸必产 FP，round6 两轮
-   评审均判"不可判"）；
-4. **用户终审**（T2 逐屏 confirmed_by）：最终防线。
-   round7 候选（不在当前批冒进）：OmniParser 结构判定、容器 bbox 区域采色——绝对位置类度量
-   已被真机证伪，任何新确定性抓手须先过实测校准。
+3. **review 与 device 机器证据**：非文本类结构由当前 hash-bound native/delegated critic、布局树和
+   region attest 共同验证；无可靠能力时 required 轴 defer，optional 轴 advisory，不要求人签；
+4. **交付后 UX 反馈**：发现新问题时开启 correction/successor run，不能用 `confirmed_by` 改写上一轮结论。
+   任何新确定性抓手须先过版本化 fixture 与设备实测校准。
 
 **bbox 坐标语义（P0-A·round6 命门，门禁 `ui_spec_bbox_semantic` 系统性拦截）**：顺序**严格 [横向x, 纵向y, 宽w, 高h]**，绝非 [y,x,h,w]。具体数字 few-shot——竖屏左上角标题「钱包」≈ `[0.04, 0.02, 0.30, 0.05]`（x 小、y 小、**w 明显大于 h**）；页面中部横向 hero 插画 ≈ `[0.08, 0.15, 0.84, 0.20]`；底部 tab 行 ≈ `[0.10, 0.93, 0.80, 0.05]`。**自检口诀：横排多字文本恒 w>h**——若你写出的文本节点 w<h，就是把 y/x 或 h/w 写反了（round6 事故：全文档转置 → 素材全裁成竖切废条+文字排到页首）。`tokens[].source_bbox` / `assets[].source_bbox` 同一语义。
 
@@ -126,7 +124,7 @@ global_elements:
   - **首选 `kind: system_symbol` + `ref: sys.symbol.<name>` + `color_ref` 着色**：标准语义图标——铃铛/加号/返回/扫码/设置/箭头、底部 tab 首页·我的、银行卡/交通卡/门禁卡/车钥匙/证件等卡种线性图标。**即使参考图中它们有色**也优先系统符号：原图本就是单色调线性图标，着色矢量的近似度高于 JPG 裁图，且没有裁错风险。此为受控近似，须在节点记 `fidelity_note`（如"原图橙色线性银行卡图标，以 sys.symbol + brand.bank_orange 着色近似"）。
   - 常用语义映射建议（仅提示不 gate；选对语义靠 review 视觉维度 + device 回环兜——交通卡该 bus 不该 map）：银行卡→`creditcard`、交通卡→`bus`、门禁卡→`house`/`lock`、车钥匙→`car`/`key`、证件→`person_2/idcard 类`、首页→`house_fill`、我的→`person_fill`、消息→`bell`、添加→`plus`、扫码→`qrcode/scan 类`、返回→`chevron_left`。
   - **门禁 `visual_parity_icon_substitution` 保持原判**：声明 `brand_logo|illustration` 却用 sys.symbol 静默替代 → pixel_1to1 BLOCKER（round4"☎ 冒充"防线）；声明 `system_symbol` 的元素本就不触发。**底部 tab 等全局元素的图标同样须声明**。漏声明=漏报（可接受），不会误伤未声明的语义单色 glyph。
-- **素材原子化（P0-A·承重）**：`assets` 里 `acquisition: crop` 的素材图**只能是原子插画/单图标**（仅图形），**绝不能把"整段界面"裁成一张背景大图**——若素材图内烤入了本 ui-spec 声明的**文本节点**（≥2 个，如卡包区大图烤入"卡包/集中管理/添加管理卡片"、promo 大图烤入"数字金融生活新方式/首页/我的"、空态图烤入"暂无非本机卡片"），门禁 `visual_parity_asset_baked_text` 判 BLOCKER（pixel_1to1）。标题/副标题/按钮/空态文案/底部 tab 一律**真实组件**渲染，大图只做叶子插画。营销/装饰插画确需含字（如 promo 样机气泡"东方财富 Lite"）→ 该文本**不要**登记为 ui-spec text 节点；仍被判则给该 asset 设 `baked_text_defer: true` + `baked_text_defer_by: <真人标识>` 放行。
+- **素材原子化（P0-A·承重）**：`assets` 里 `acquisition: crop` 的素材图**只能是原子插画/单图标**（仅图形），**绝不能把"整段界面"裁成一张背景大图**——若素材图内烤入了本 ui-spec 声明的**文本节点**（≥2 个，如卡包区大图烤入"卡包/集中管理/添加管理卡片"、promo 大图烤入"数字金融生活新方式/首页/我的"、空态图烤入"暂无非本机卡片"），门禁 `visual_parity_asset_baked_text` 判 BLOCKER（pixel_1to1）。标题/副标题/按钮/空态文案/底部 tab 一律**真实组件**渲染，大图只做叶子插画。营销/装饰插画确需含字（如 promo 样机气泡"东方财富 Lite"）→ 该文本**不要**登记为 ui-spec text 节点；若仍与声明文本冲突就修正建模或素材，旧 `baked_text_defer_by` 人签不放行。
 
 **G3 捕获保真字段**（pixel_1to1 下务必逐项捕获，否则 coding 易默认错误样式/布局）：
 
@@ -150,10 +148,10 @@ elements:
     type: search_field
     disposition: implement   # implement | defer
   - element_id: nfc_entry
-    disposition: defer       # defer 须登记 spec.md fidelity_deferrals 且 human_signed
+    disposition: defer       # pixel_1to1/P0 下 defer 是 BLOCKER，legacy human_signed 不放行
 ```
 
-- `pixel_1to1` 下 `disposition: defer` **必须**在 spec Visual Handoff 块有 `fidelity_deferrals` + `human_signed: true`
+- `pixel_1to1` 下 `disposition: defer` 是未满足的 strict 质量义务；`fidelity_deferrals` 仅用于兼容披露，`human_signed`/`signed_by` 不改变结论
 - `disposition: implement` 须被 ui-spec 节点 id 或 `must_have_elements` 覆盖
 
 ## 素材清单：`asset-manifest.yaml`（v2.4+）
@@ -185,16 +183,17 @@ assets:
     source_ref: home
     source_bbox: [0.04, 0.08, 0.12, 0.10]
     resolved_path: doc/features/bank-card/spec/assets/bank_logo_cmb.png
-    human_crop_confirmed: true
-    crop_confirmed_by: user_requirement
+    crop_provenance:
+      method: framework_crop
+      source_sha256: <sha256>
 ```
 
 | acquisition | 含义 |
 |-------------|------|
-| `crop` | 按 `source_bbox` 从原图裁出（宽松框 + auto trim；关键资产须 `human_crop_confirmed`；**G4b headless** 下还须 `crop_confirmed_by` 为真人非自动化身份或 `user_requirement`——表示用户在需求中自然语言授权“可从原图/截图裁剪资源”，堵 agent 自报，对齐 deferral `signed_by`） |
+| `crop` | runner 按冻结的 `source_ref/source_bbox` 从原图确定性裁出，并记录源 hash、算法/工具、参数与输出 hash；`asset_crop_validation` 必须用当前源独立重裁复验。legacy `human_crop_confirmed`/`crop_confirmed_by` 只读且不 gate |
 | `svg_grab` | 抓取品牌矢量 |
 | `repo_ref` | 复用仓内已有资源 |
-| `placeholder` | **盲档可见语义占位声明**（blind-visual-hardening）：不产出真素材，由 coding 期 `asset:placeholders` CLI 按 role 生成可见语义占位（brand_logo→文字头像 / illustration→中性插画框，内嵌 provenance marker）；`asset_placeholder_present` 逐素材入视觉债务，brand-critical 占位 release 保持 BLOCKED，直到真素材落位或人工验收清偿。CLI **只**为此声明生成——真素材缺失绝不代生成 |
+| `placeholder` | **盲档可见语义占位声明**（blind-visual-hardening）：不产出真素材，由 coding 期 `asset:placeholders` CLI 按 role 生成可见语义占位（brand_logo→文字头像 / illustration→中性插画框，内嵌 provenance marker）；`asset_placeholder_present` 逐素材入视觉债务，brand-critical 占位 release 保持 BLOCKED，直到真素材落位并经机器重验关闭。CLI **只**为此声明生成——真素材缺失绝不代生成 |
 
 缺资产时 **必须** `acquisition: placeholder`（或旧式 `placeholder: true`）+ `rationale`，禁止静默替换。
 
@@ -202,17 +201,16 @@ assets:
 
 ui-spec 生成后、进 plan 前：
 
-1. **人工 gate**：逐屏 `[x]` 确认（类比术语映射表），设 `verified: human_confirmed` + `verified_method: human_gate`。
-2. **多模态 gate**（M3，条件具备）：VL 核对后设 `verified: verified` + `verified_method: vl_multimodal`。
-3. **无 VL + 无人工**：只能 `verified: unverified` → 连带降级 C/D/K（见下表）。
-4. **盲档 + OCR 辅助**（v2.5+，多模态降级阶梯）：无视觉能力时，`verified: unverified`（同 3，机读信号不变——OCR 辅助不等于视觉验真）；提取工作法见下方「盲档工作法」，**禁止假装完成了看图核对**。
-5. **有 VL 但无逐图 Read 审计链**（plan c4e8a1f7 T3，能力与可审计性分轴）：`tool_event_provenance=none` 的 adapter（如 codex）**能看图**但 runner 无法从事件审计「逐张读过」——`verified: verified + vl_multimodal` 的 refs receipt/终签链结构性不可达，只能 `verified: unverified`（best-effort/reachable 档 WARN 可继续、hard contract FAIL，门槛不降）；伪造 `verified: verified` 恒被拒。
+1. **多模态 gate**（M3，条件具备）：VL 核对且当前 hash-bound provenance/终签链完整后，设 `verified: verified` + `verified_method: vl_multimodal`。
+2. **无可靠 VL 能力**：只能 `verified: unverified` → 连带降级 C/D/K（见下表）；required 义务按 capability-missing/deferred 投影，不能由人签改为 PASS。
+3. **盲档 + OCR 辅助**（v2.5+，多模态降级阶梯）：无视觉能力时，`verified: unverified`（同 2，机读信号不变——OCR 辅助不等于视觉验真）；提取工作法见下方「盲档工作法」，**禁止假装完成了看图核对**。
+4. **有 VL 但无逐图 Read 审计链**（plan c4e8a1f7 T3，能力与可审计性分轴）：`tool_event_provenance=none` 的 adapter（如 codex）**能看图**但 runner 无法从事件审计「逐张读过」——`verified: verified + vl_multimodal` 的 refs receipt/终签链结构性不可达，只能 `verified: unverified`（best-effort/reachable 档 WARN 可继续、hard contract FAIL，门槛不降）；伪造 `verified: verified` 恒被拒。
+5. **legacy 人签字段**：`human_confirmed` / `human_gate` 仅为兼容读取；门禁统一按 `unverified` 处理，不能关闭视觉义务。用户交付后发现 UX 偏差时开启 correction/successor run。
 
 | 场景 | ui-spec 状态 | 视觉链行为 |
 |------|-------------|------------|
 | 有 VL | `verified` | 全链生效 |
-| 无 VL、有人工 | `human_confirmed` | A/C/D/K 生效；E/F 视设备/多模态 |
-| 无 VL、无人工（含盲档+OCR） | `unverified` | C 尽力而为；**D 只报结构不报保真**；K 标基线未校验 |
+| 无可靠 VL（含有人工、盲档+OCR） | `unverified` | C 尽力而为；**D 只报结构不报保真**；K 标基线未校验；required 义务 defer |
 
 ## 提取模型 vs 编码模型解耦（J）
 
@@ -224,9 +222,9 @@ ui-spec 生成后、进 plan 前：
 
 **能力来源**：goal 模式由 goal-runner 在 phase prompt 注入 `Visual capability advisory` 块；**交互式**（IDE，无 goal-runner 注入）由 [interactive-vision-canary](../../../reference/interactive-vision-canary.md) 自测卷判卷写入 `framework.local.json` 的 `vision.canary`，harness 据此钳制 `fidelity_target`。本 Step **必须**按探测/判卷出的能力工作，不得假装拥有未探测到的能力：
 
-**交互式盲档告知与确认（I1 plan b7e42d19；v3.0 文案对齐 blind-visual-hardening）**：交互式会话判卷为 `none`（无视觉）或 `ocr_capable`（仅 OCR）时，**一次性**告知用户——用一段话说明：①当前模型视觉判定结果；②本 feature 将生效的 effective fidelity 档位（`semantic_layout` / `reference_only` / 强意图下 `deferred`）；③OCR 辅助是否可用；④**成本与预期（必须如实说）**：带参考截图的需求每条都会走一次定档确认（设计内成本，无静默旁路）；人工视觉验收 rubric 冻结为每维 ≥4/5——盲宿主**首轮大概率走「显式接受残余债务」而非一次清完**，视觉债务清单（visual-debt.md）会随交付透出，这是诚实交付不是失败——再走 registry **`vision.blind_tier`** 确认一次（`1=接受降级继续`（默认）/ `2=拒绝`→指引设 `vision.image_input_override` 或换有视觉能力的模型后重测）。留痕沿 `user-confirmation-ux` 惯例。headless/goal 模式按 [user-confirmation-ux §9](../../../reference/user-confirmation-ux.md) 保守默认（不问人），本告知仅交互式生效。
+**盲档能力投影（I1 plan b7e42d19；v3.0 文案对齐 blind-visual-hardening）**：判卷为 `none`（无视觉）或 `ocr_capable`（仅 OCR）时，记录当前能力、effective fidelity 档位与 OCR 可用性；无需用户签字。可降级的 optional 义务按 `semantic_layout` / `reference_only` 继续并披露视觉债务；强 pixel required 义务诚实投影 capability-missing/deferred，待换有视觉能力的 provider 后自动恢复。任何人工观察都只能作为 correction/successor run 的输入，不能接受残余债务或改写上一轮质量结论。
 
-**品牌色事实源纪律（blind-visual-hardening P0-D④）**：品牌色 token 的可信来源优先级=用户提供素材/主题 > 项目既有 Design Token > 官方品牌资源（须人工确认引入）> 标注临时的中性占位。模型「世界知识」猜出的品牌色（如"招商银行是红色"）**只可用于占位中性调色参考，永不写成品牌真值 token**——模型可能记错、品牌可能改版、且涉及品牌资产误用。
+**品牌色事实源纪律（blind-visual-hardening P0-D④）**：品牌色 token 的可信来源优先级=用户提供素材/主题 > 项目既有 Design Token > 带来源/hash/使用权证明的官方品牌资源 > 标注临时的中性占位。无可验来源时使用中性占位并保留债务，不等待人签。模型「世界知识」猜出的品牌色（如"招商银行是红色"）**只可用于占位中性调色参考，永不写成品牌真值 token**。
 
 - **文案与文本位置**：若 prompt 附带 OCR JSON 路径（`spec/reports/ocr/<screen>.ocr.json`，逐词文本 + 置信度 + 归一化 bbox），**以其为准，不许自造**——文案照抄，位置按其 bbox 归一化坐标换算。
 - **结构与布局（用结构语义词建模 + OCR 填内容）**：不要从零推断结构——按**通用结构语义
@@ -248,11 +246,11 @@ ui-spec 生成后、进 plan 前：
   用户/外部工具已裁好的可信产物按 c1-c3 条件放行），占位由 coding 期按 role 生成可见语义占位
   （brand_logo→文字头像 / illustration→中性插画框 / system_symbol→SymbolGlyph，禁空白 PNG）。
   品牌/插画类素材缺供给时 spec harness 生成 `spec/asset-request.md` 问人清单——交互式走 registry
-  **`vision.asset_request`** 确认（1=提供素材（放置后重跑自动吸收）/ 2=接受可见占位交付
-  （brand-critical 占位时 release 保持 BLOCKED，收口走人工验收 receipt）/ 3=逐项 defer）；
+  **`vision.asset_request`** 普通输入菜单（1=提供素材（放置后重跑自动吸收）/ 2=使用可见占位
+  （brand-critical 占位时 release 保持 BLOCKED）/ 3=逐项 defer）；
   headless 不问人，按 role 占位物化并计入视觉债务。清偿走三态（source/binding/render 全 VERIFIED），
   "文件放了但 UI 仍引用旧占位"不会假清偿。
-- **无法判定的项**：不要逐条反复猜测或长时间空转——登记进结构化待复核清单（见 phase harness 提示的 blind-review-pending 产物），交由收口阶段真人一次性终审。
+- **无法判定的项**：不要逐条反复猜测或长时间空转——required 项按机器证据不足 FAIL/capability defer，optional 项登记为 UNVERIFIED/advisory；不得以收口阶段人签改成 PASS。
 - **没有 OCR JSON 可用**（无参考图 / OCR 环境不可用）：仅凭需求文字描述工作，`fidelity_target` 会被能力钳制到 `reference_only` 地板——这是预期行为，不是错误。
 
 ## 推荐模型档位（K2）
@@ -270,8 +268,8 @@ ui-spec 生成后、进 plan 前：
 
 ```yaml
 schema_version: "1.0"
-verified: human_confirmed
-verified_method: human_gate
+verified: verified
+verified_method: vl_multimodal
 screens:
   - id: home
     priority: P0
@@ -321,12 +319,10 @@ assets:
     acquisition: crop
     source_ref: home
     resolved_path: doc/features/bank-card/spec/assets/bank_logo_cmb.png
-    human_crop_confirmed: true
   - key: bank_logo_icbc
     acquisition: crop
     source_ref: home
     resolved_path: doc/features/bank-card/spec/assets/bank_logo_icbc.png
-    human_crop_confirmed: true
 ```
 
 ## 与 Visual Handoff 打通

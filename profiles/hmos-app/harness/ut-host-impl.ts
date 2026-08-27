@@ -578,7 +578,7 @@ export function classifyConfigSchemaError(
       `定位 ${where} 的非法字段并修正；若该字段是本轮/前一轮为排障新增、反而把原本合法的配置改坏的，` +
       '优先回退到 trace.json.start_commit 的版本，而不是继续叠加改动。' +
       '提示：build-profile.json5 的 target 仅允许 name/config/source/resource/runtimeOS/output 字段。' +
-      '该文件受源码改动门禁约束，确需保留改动须经用户授权并登记 gap-notes approved_src_mutations。',
+      '该文件受源码改动门禁约束，确需修改须交回 coding owner 并重走 review→ut→testing。',
   };
 }
 
@@ -626,7 +626,7 @@ function classifyUtHvigorBuildFailure(
       suggestion:
         `选项 A：在工程根 build-profile.json5 为模块 "${moduleName}" 的 targets 注册 ohosTest target（对照可正常 Run ohosTest 的模块写法），在 DevEco 实测通过后重跑；` +
         '选项 B：若该模块本不属于本需求被测范围（仅因存量测试文件被顺带触碰而进入编译集合），恢复对该文件的改动使其退出 scope，不要为过门禁修改无关模块配置。' +
-        '注意：build-profile.json5 受源码改动门禁约束，确需保留改动须登记 gap-notes approved_src_mutations。',
+        '注意：build-profile.json5 受源码改动门禁约束，确需修改须交回 coding owner 并重走 review→ut→testing。',
     };
   }
 
@@ -692,8 +692,8 @@ function classifyUtHvigorBuildFailure(
   if (touchesCurrentModuleMain) {
     return {
       kind: 'feature_code',
-      explanation: '编译错误指向当前模块 src/main；若确需改业务源码，必须先走 business-ut 源码修改授权流程。',
-      suggestion: '优先确认是否可通过 UT/Spy 调整规避；确需改 src/main 时先向用户申请并登记 gap-notes。',
+      explanation: '编译错误指向当前模块 src/main；该文件属于 coding owner，UT 不得修改或用用户回复放行。',
+      suggestion: '先确认是否可通过 UT/Spy 调整规避；确需改 src/main 时产出 coding repair candidate，由 coding 修改后重走 review→ut。',
     };
   }
 
@@ -874,7 +874,7 @@ function checkUtHvigorTest(
     perModule.length === mods.length &&
     perModule.every(x => x.result.executed && x.result.testResult);
 
-  // suite 失败棘轮：基线是授权工件（用户确认放置；信任模型与 gap-notes approved_src_mutations
+  // suite 失败棘轮：基线是 attended suite 输入工件（不授权源码改动或质量 PASS；
   // 同级——普通授权文件+review 纪律，不做密码学防伪，见顶层裁定），本轮执行不生成；
   // 无基线 → 不豁免任何失败（suite_health=UNKNOWN）。失败身份含 module（跨模块同名不互豁免）。
   const allFailures = perModule.flatMap(x =>

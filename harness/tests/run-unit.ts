@@ -127,7 +127,6 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'ui-spec',          modulePath: './unit/ui-spec.unit.test' },
   { id: 'visual-fidelity',  modulePath: './unit/visual-fidelity.unit.test' },
   { id: 'visual-rounds-ledger', modulePath: './unit/visual-rounds-ledger.unit.test' },
-  { id: 'review-feedback-ledger', modulePath: './unit/review-feedback-ledger.unit.test' },
   { id: 'critic-receipt-producer', modulePath: './unit/critic-receipt-producer.unit.test' },
   { id: 'visual-structure-disorder', modulePath: './unit/visual-structure-disorder.unit.test' },
   { id: 'visual-defect-enum', modulePath: './unit/visual-defect-enum.unit.test' },
@@ -139,6 +138,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'fidelity-snapshot', modulePath: './unit/fidelity-snapshot.unit.test' },
   { id: 'multimodal-probe', modulePath: './unit/multimodal-probe.unit.test' },
   { id: 'product-source-snapshot', modulePath: './unit/product-source-snapshot.unit.test' },
+  { id: 'phase-write-boundary', modulePath: './unit/phase-write-boundary.unit.test' },
   // plan c4e8b1d3 G1：UI 文件级 scope 门（冻结 contracts.files + coding_base_sha 基线）
   { id: 'ui-scope-gate', modulePath: './unit/ui-scope-gate.unit.test' },
   // plan c4e8b1d3 G3：bc-openCard consumer golden evaluator（结果聚合 + 绑定校验）
@@ -176,6 +176,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'device-concurrency', modulePath: './unit/device-concurrency.unit.test' },
   // d9e4b7c1 T2：真机缺陷回修接入（evidence 合成/绑定校验/根级联三分/physical-only）
   { id: 'device-test-backtrack', modulePath: './unit/device-test-backtrack.unit.test' },
+  { id: 'runtime-step-evidence', modulePath: './unit/runtime-step-evidence.unit.test' },
   { id: 'skills-device-policy-gate', modulePath: './unit/skills-device-policy-gate.unit.test' },
   // runner 级集成（进程内跑真实 phase 循环 + 注入缝；断言时序与副作用）
   { id: 'goal-runner-testing-integrity', modulePath: './unit/goal-runner-testing-integrity.unit.test' },
@@ -304,12 +305,10 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   // plan c4e8a1f7：宿主运行边界真值——CLI 选择/guardian 投影/硬失败共享分类/
   // canary 判卷 SSOT/requirement source provenance/共享参考图集合/refs receipt 分母
   { id: 'host-runtime-truth', modulePath: './unit/host-runtime-truth.unit.test' },
-  { id: 'visual-confirm', modulePath: './unit/visual-confirm.unit.test' },
   { id: 'phase-evidence-manifest', modulePath: './unit/phase-evidence-manifest.unit.test' },
   { id: 'closure-attestation', modulePath: './unit/closure-attestation.unit.test' },
   { id: 'headless-assumptions', modulePath: './unit/headless-assumptions.unit.test' },
   { id: 'verify-feature-completion', modulePath: './unit/verify-feature-completion.unit.test' },
-  { id: 'confirmation-receipt', modulePath: './unit/confirmation-receipt.unit.test' },
   { id: 'behavior-switch-scan', modulePath: './unit/behavior-switch-scan.unit.test' },
   { id: 'p0-semantic-gates', modulePath: './unit/p0-semantic-gates.unit.test' },
   // plan c7e4a2d9 t1：acceptance_to_test_case P0 优先级对齐锚（device/both P0 AC 须 P0 TC 覆盖）

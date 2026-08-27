@@ -81,11 +81,8 @@ structure_checks:
 
   correction_layer_unconditional_confirm:
     description: >
-      skill 正文若提及 "correction.layer ... 确认"，同一文件内必须同时提及
-      auto_confirm_eligible（balanced 高置信免确认分支，C5-full）——否则视为
-      把 correction.layer 用户确认写成无条件停等，与 --correction-init 落盘的
-      .current-correction.json.auto_confirm_eligible 机读依据脱节（codex review
-      发现：弱模型按 skill 正文执行时会无视该字段直接停等）。
+      correction.layer 人签闸已退役；skills/templates 不得再要求通过该 gate 确认修正层。
+      correction request 经结构化分类后直接进入责任阶段并级联机器重验。
       allowlist 内 file+reason 视为已知豁免，其余一律 FAIL。
     severity: BLOCKER
     rule:

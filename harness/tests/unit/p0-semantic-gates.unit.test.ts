@@ -4,21 +4,17 @@
 // bank_list→add_success 跳边、10 P0 skip + 结论「达标」、requirement_ref 引文伪造。
 
 import assert from 'assert';
-import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
 import { clearFrameworkConfigCache, resolveFeatureArtifact } from '../../config';
-import { canonicalReceiptPayload, defaultTrustRegistryPath } from '../../scripts/utils/confirmation-receipt';
 import {
   evaluateAcceptanceFlowStructure,
   evaluateFlowContract,
   evaluateP0CoverageIntegrity,
   evaluateP0SemanticCoverage,
-  p0SkipObjectHash,
   parsePlanTcEntries,
-  skipWaiversPath,
 } from '../../scripts/utils/p0-semantic-gates';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -295,7 +291,7 @@ const cases: Case[] = [
       const ok = evaluateP0SemanticCoverage(inputs(root, { 'TC-024': '通过', 'TC-006': '通过', 'TC-009': '通过' }, '达标', PLAN_MD_ACG));
       assert.strictEqual(ok[0].status, 'PASS', ok[0].details);
       const boundary = ok.find((r) => r.id === 'p0_runtime_step_evidence_boundary');
-      assert.ok(boundary && boundary.status === 'WARN', 'AC-G 场景同款运行时证据边界 WARN');
+      assert.ok(boundary && boundary.status === 'PASS', 'AC-G 场景应声明计划/运行时边界，真机证据由独立门禁裁决');
 
       writeDerivedAcG(root, 'fastpath');
       const bad = evaluateP0SemanticCoverage(inputs(root, { 'TC-024': '通过', 'TC-006': '通过', 'TC-009': '通过' }, '达标', PLAN_MD_ACG));
@@ -329,18 +325,14 @@ const cases: Case[] = [
     },
   },
   {
-    name: 't4b flow_contract：适用+无 receipt → 仅 advisory WARN（不再宣称封顶）；无 P0 flow → SKIP',
+    name: 'flow contract 由 spec-owned acceptance + phase evidence 机器闭合；无 P0 flow → SKIP',
     run: () => {
       const root = mkProject();
       seedReqDoc(root);
       writeAcceptance(root);
       const r = evaluateFlowContract(root, FEATURE, 'req text');
-      assert.strictEqual(r[0].status, 'WARN');
-      // codex 方案二文案返修：WARN 必须自述 advisory，不得再谎报封顶/不得完成
-      //（生产已取消 clean_pass 拒绝，文案与行为不得两张皮）
-      assert.ok(r[0].details.includes('advisory'), r[0].details);
-      assert.ok(!r[0].details.includes('AWAITING_HUMAN_REVIEW'), '不得再宣称 run 封顶');
-      assert.ok(!/不得 FEATURE_COMPLETED|clean_pass 拒绝/.test(r[0].details), '不得再宣称阻断完成');
+      assert.strictEqual(r[0].status, 'PASS');
+      assert.ok(r[0].details.includes('spec-owned'), r[0].details);
       const empty = mkProject();
       assert.strictEqual(evaluateFlowContract(empty, FEATURE, 'x')[0].status, 'SKIP');
     },
@@ -421,78 +413,46 @@ const cases: Case[] = [
       writeDerived(root, 'good');
       const ok = evaluateP0SemanticCoverage(inputs(root, { 'TC-006': '通过', 'TC-009': '通过' }, '达标'));
       assert.strictEqual(ok[0].status, 'PASS', ok[0].details);
-      // codex 六轮 P0-3：PASS 附带运行时证据边界 WARN——绿灯不得被读成完整运行时证明
+      // 计划级 PASS 只声明边界；独立 p0_runtime_step_evidence 负责真机观测。
       const boundary = ok.find((r) => r.id === 'p0_runtime_step_evidence_boundary');
-      assert.ok(boundary && boundary.status === 'WARN', '须附运行时证据边界 WARN');
-      assert.ok(boundary!.details.includes('运行时'));
+      assert.ok(boundary && boundary.status === 'PASS', '须附计划/运行时证据边界声明');
+      assert.ok(boundary!.details.includes('p0_runtime_step_evidence'));
       // 合规步序但 trace 非通过 → 仍 FAIL（证据须"已执行且通过"）
       const notPassed = evaluateP0SemanticCoverage(inputs(root, { 'TC-006': '失败', 'TC-009': '通过' }, '达标'));
       assert.strictEqual(notPassed[0].status, 'FAIL');
     },
   },
   {
-    name: 'c7e4a2d9：有效 p0_skip_waiver → WARN（不产 coding 归因、不洗白）；结论「达标」仍双口径 FAIL',
+    name: 'legacy p0_skip_waiver/receipt 即使形状完整也惰性，skip 仍 FAIL 并回 coding',
     run: () => {
       const root = mkProject();
       seedReqDoc(root);
       writeAcceptance(root);
       writePlan(root);
       writeDerived(root, 'good', ['TC-011']);
-      // 与 confirmation-receipt 套件同构：ed25519 签名 + trust registry 落盘（生产校验入口）
-      const kp = crypto.generateKeyPairSync('ed25519');
-      const payload = {
-        action: 'p0_skip_waiver' as const,
-        feature: FEATURE,
-        object_hash: p0SkipObjectHash(FEATURE, 'TC-011'),
-        issued_at: '2026-07-13T11:00:00.000Z',
-        expiry: '2026-07-20T00:00:00.000Z',
-      };
-      const receipt = {
-        schema_version: '1.0', receipt_id: 'r-p0-1', issuer_id: 'ops-team', key_id: 'k1',
-        alg: 'ed25519', payload_schema_version: '1.0', payload,
-        signature: crypto.sign(null, canonicalReceiptPayload(payload), kp.privateKey).toString('base64'),
-      };
-      const regPath = defaultTrustRegistryPath(root);
-      fs.mkdirSync(path.dirname(regPath), { recursive: true });
-      fs.writeFileSync(regPath, JSON.stringify({
-        schema_version: '1.0',
-        issuers: [{
-          issuer_id: 'ops-team',
-          keys: [{ key_id: 'k1', alg: 'ed25519', public_key_pem: kp.publicKey.export({ type: 'spki', format: 'pem' }).toString() }],
-        }],
-      }, null, 2), 'utf-8');
-      const wp = skipWaiversPath(root, FEATURE);
-      fs.mkdirSync(path.dirname(wp), { recursive: true });
-      fs.writeFileSync(wp, [
+      writeFile(root, 'doc/features/p0-fixture/testing/skip-waivers.yaml', [
         'waivers:',
         '  - tc_id: TC-011',
         '    receipt_path: doc/features/p0-fixture/testing/p0-waiver-TC-011.receipt.json',
-      ].join('\n'), 'utf-8');
-      fs.mkdirSync(path.join(root, 'doc/features/p0-fixture/testing'), { recursive: true });
-      fs.writeFileSync(
-        path.join(root, 'doc/features/p0-fixture/testing/p0-waiver-TC-011.receipt.json'),
-        JSON.stringify(receipt, null, 2), 'utf-8',
-      );
+      ].join('\n'));
+      writeFile(root, 'doc/features/p0-fixture/testing/p0-waiver-TC-011.receipt.json', JSON.stringify({ action: 'p0_skip_waiver' }));
       const r = evaluateP0CoverageIntegrity(inputs(root, { 'TC-006': '通过', 'TC-009': '通过' }, '达标'));
       const cov = r.find((x) => x.id === 'p0_coverage_integrity')!;
-      assert.strictEqual(cov.status, 'WARN', cov.details);
-      assert.ok(cov.failure_kind === undefined, `waived 不得产 coding 归因：${String(cov.failure_kind)}`);
-      assert.ok(cov.details.includes('AWAITING_HUMAN_REVIEW'), 'waiver 只降级不洗白（run 封顶人工复核）');
+      assert.strictEqual(cov.status, 'FAIL', cov.details);
+      assert.strictEqual(cov.failure_kind, 'code_regression');
       const dual = r.find((x) => x.id === 'p0_pass_rate_dual_metrics')!;
       assert.strictEqual(dual.status, 'FAIL', '存在 P0 skip 时结论不得无条件「达标」');
     },
   },
   {
-    name: 't5 waiver 路径：skip-waivers.yaml 无 receipt 不生效（仍 FAIL + explicit-only code_regression）',
+    name: 'legacy skip-waivers.yaml 无 receipt 同样惰性（仍 FAIL + explicit-only code_regression）',
     run: () => {
       const root = mkProject();
       seedReqDoc(root);
       writeAcceptance(root);
       writePlan(root);
       writeDerived(root, 'good', ['TC-011']);
-      const wp = skipWaiversPath(root, FEATURE);
-      fs.mkdirSync(path.dirname(wp), { recursive: true });
-      fs.writeFileSync(wp, 'waivers:\n  - tc_id: TC-011\n    reason: 人工回归\n', 'utf-8');
+      writeFile(root, 'doc/features/p0-fixture/testing/skip-waivers.yaml', 'waivers:\n  - tc_id: TC-011\n    reason: 人工回归\n');
       const r = evaluateP0CoverageIntegrity(inputs(root, { 'TC-006': '通过', 'TC-009': '通过' }, '有条件达标'));
       const cov = r.find((x) => x.id === 'p0_coverage_integrity')!;
       assert.strictEqual(cov.status, 'FAIL', '无 receipt 的 waiver 不生效');

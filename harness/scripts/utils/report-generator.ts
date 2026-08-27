@@ -694,6 +694,19 @@ function areBlockersOnlyCodingBuildExternal(checks: CheckResult[]): boolean {
   );
 }
 
+/**
+ * Provider/profile capability gaps are generic external blockers. They are
+ * distinct from a provider that declared support and then emitted invalid
+ * evidence, which deliberately has no externalBlocked classification.
+ */
+function areBlockersOnlyCapabilityMissing(checks: CheckResult[]): boolean {
+  const blockerFails = checks.filter(c => c.severity === 'BLOCKER' && c.status === 'FAIL');
+  if (blockerFails.length === 0) return false;
+  return blockerFails.every(
+    c => c.blocking_class === 'externalBlocked' && c.failure_kind === 'capability_missing',
+  );
+}
+
 /** 供 unit test 与 report 生成复用 */
 export function resolveVerdictFromChecks(checks: CheckResult[]): Verdict {
   let blockers = 0;
@@ -710,6 +723,9 @@ export function resolveVerdictFromChecks(checks: CheckResult[]): Verdict {
     return 'INCOMPLETE';
   }
   if (areBlockersOnlyCodingBuildExternal(checks)) {
+    return 'INCOMPLETE';
+  }
+  if (areBlockersOnlyCapabilityMissing(checks)) {
     return 'INCOMPLETE';
   }
   return 'FAIL';

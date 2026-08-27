@@ -35,10 +35,9 @@ structure_checks:
   conditional_pass_closure:
     description: >
       「有条件通过」闭环门禁（goal-fakepass-hardening 洞⑥）：结论=有条件通过 且 问题表
-      存在未标记 已关闭/已修复 的 MAJOR 且 无有效 conditional_review_authorization
-      receipt（绑定报告哈希）→ BLOCKER FAIL，review 不得闭环推进；receipt 有效 → WARN
-      （降级不洗白，run 封顶 AWAITING_HUMAN_REVIEW）。LLM verifier 的 PASS 只证报告可信，
-      不被消费为产品 PASS。
+      存在未标记 已关闭/已修复 的 MAJOR → BLOCKER FAIL，review 不得闭环推进并回责任阶段修复。
+      legacy conditional_review_authorization receipt 可读但不改变 verdict。LLM verifier 的 PASS
+      只证报告可信，不被消费为产品 PASS。
 
   required_chapters:
     description: >
@@ -148,7 +147,8 @@ structure_checks:
       must_have 覆盖。pixel_1to1 下四类证据**全覆盖**（不许抽查）→ 缺任一 FAIL BLOCKER；非 pixel_1to1
       至少一类。review 不重跑度量、消费 spec/coding 落盘报告。
       round6 实证（RC6）：review 五维 checklist 无一条看图，废图+乱布局"有条件通过"。
-      诚实边界：本 check 只核"证据被引用"，引用真实性归 AI verifier issue_accuracy 抽样与人工复核。
+      诚实边界：本 check 只核"证据被引用"，引用真实性归当前 AI verifier
+      的 issue_accuracy 与 item-level 证据绑定复验。
     severity: BLOCKER
     rule:
       expect: "visual_fidelity_dimension_with_evidence"

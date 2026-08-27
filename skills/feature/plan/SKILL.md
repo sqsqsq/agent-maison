@@ -21,6 +21,8 @@
 
 按当前 `project_profile` 自适配的实现规划师：把 spec 转化为可落地的实现计划。流水线**第二环**，上游 `spec.md`，输出流入 coding。
 
+**Goal/headless 写边界（BLOCKER）**：只写本阶段 contract `produces` 声明的 plan/contracts/use-cases 产物；尤其不得新建或修补 spec-owned 的 `acceptance.yaml`、`spec.md`、`ui-spec.yaml`，也不得修改实现源码、UT 或 testing 产物。发现上游缺口只记录事实，由 runner 自动回 spec；越权字节不获信任或人工豁免。
+
 | 叙述产物 | 路径 | 寿命 |
 |----------|------|------|
 | plan.md（契约草案/来源） | `<features_dir>/<f>/plan/plan.md` | ephemeral（全链路闭环后可归档降级） |
@@ -69,7 +71,7 @@ coding/review/UT/harness **一律优先读 `contracts.yaml`**，避免与 plan.m
 10. **构建 spec 功能映射表**：spec 功能编号→优先级→层→模块→内层级→关键文件→说明，须与 Step 5 一致，P0/P1 全覆盖。
 11. **质量门禁自检**（14 项，含 Scope 守门/架构合规/模块最小化/功能拆分准确性/文件路径/数据类型/接口签名/无 TBD/组件树/状态管理/路由设计/UseCase 规约达阈值时）：不通过则自动补充重新自检直到全部通过。
 12. **输出与归档**：写盘 `plan.md` → 摘要供人审阅 → **立即进 Step 13**，不得先做编码。
-13. **提取 contracts.yaml**（详见 reference 字段表）：modules/module_dependencies/data_models/interfaces/components/state_management/navigation/files/resource_keys/prd_to_code_traceability。补充 acceptance.yaml 边界用例（若 spec 未产出）。
+13. **提取 contracts.yaml**（详见 reference 字段表）：modules/module_dependencies/data_models/interfaces/components/state_management/navigation/files/resource_keys/prd_to_code_traceability。若发现 `acceptance.yaml` 缺失或边界场景与 spec 不一致，不得创建/修补该文件；如实让 `scope_consistency_with_spec` 失败并产出 spec-owned repair candidate，由 runner 回退 spec 重算。
 14. **架构影响判定**（详见 reference 五分支）：`none`/`dsl_change`/`module_set_change`/`responsibility_rewrite`，从严判 none；绝大多数 feature 应为 none 且不动 architecture.md。`dsl_change` 时须同步修改 [framework.config.json](../../../framework.config.json) 的 `architecture` 段。
 
 ## 门禁清单表

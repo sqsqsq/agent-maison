@@ -440,8 +440,11 @@ export function lintHylyrePlanMarkdown(
   return { ok: step.ok && nav.ok, violations: step.violations, nav };
 }
 
-/** 将「测试步骤」单元格拆成逐步 JSON 对象（`;` / `；` 分隔） */
-export function parsePlannedStepsFromCell(stepsRaw: string): { ok: true; steps: Record<string, unknown>[] } | { ok: false; error: string } {
+/** 将「测试步骤」单元格拆成逐步 JSON 对象（`;` / `；` 分隔）。
+ * `stepTexts` 保留 Hylyre 实际执行的规范化 JSON 文本，用于跨语言逐字节绑定。 */
+export function parsePlannedStepsFromCell(stepsRaw: string):
+  | { ok: true; steps: Record<string, unknown>[]; stepTexts: string[] }
+  | { ok: false; error: string } {
   const normalized = normalizePlannedStepsCell(stepsRaw);
   const parts = normalized
     .split(';')
@@ -459,7 +462,7 @@ export function parsePlannedStepsFromCell(stepsRaw: string): { ok: true; steps: 
       return { ok: false, error: `invalid JSON step: ${(e as Error).message}` };
     }
   }
-  return { ok: true, steps };
+  return { ok: true, steps, stepTexts: parts };
 }
 
 function swipePayloadFromStep(step: Record<string, unknown>): Record<string, unknown> | null {

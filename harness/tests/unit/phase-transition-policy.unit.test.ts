@@ -179,6 +179,12 @@ const cases: Array<{ name: string; run: () => void }> = [
     run: () => {
       assert(classifyPhaseVerdict({ verdict: 'PASS' }) === 'advance', 'advance');
       assert(resolveGoalRunStatus([{ phase: 'ut', deferred: true }], true) === 'DEFERRED', 'DEFERRED');
+      assert(
+        resolveGoalRunStatus([
+          { phase: 'testing', deferred: true, deferred_reason: 'capability_missing' },
+        ], false) === 'DEFERRED_CAPABILITY_MISSING',
+        'runtime provider unsupported must preserve capability-missing terminal status',
+      );
     },
   },
 ];

@@ -14,9 +14,8 @@ export interface ManifestCliArgv {
   requirement?: string;
   /** plan c4e8a1f7 T2：--requirement-file 的来源列表（由 goal-runner 解析后填入，非 CLI 直接旗标） */
   requirement_source_files?: string[];
-  /** t6：--fidelity（只升不降）与 --fidelity-receipt（降档凭证路径） */
+  /** --fidelity 只升不降；降档须作为新需求进入 correction/successor run。 */
   fidelity?: string;
-  'fidelity-receipt'?: string;
   'override-start'?: boolean;
   'override-end'?: boolean;
   'override-manifest'?: boolean;
@@ -74,13 +73,9 @@ export function applyManifestCliOverrides(manifest: GoalManifest, argv: Manifest
       delete manifest.requirement_source_files;
     }
   }
-  // t6：--fidelity 无需 override 开关（新字段无既有 manifest 冲突面）；只升不降与
-  // 降档凭证校验在 fidelity preflight 内执行（flag 本身不构成授权）。
+  // --fidelity 无需 override 开关；只升不降在 fidelity preflight 内执行。
   if (argv.fidelity) {
     manifest.fidelity = String(argv.fidelity) as GoalManifest['fidelity'];
-  }
-  if (argv['fidelity-receipt']) {
-    manifest.fidelity_receipt = String(argv['fidelity-receipt']);
   }
 }
 
@@ -402,62 +397,4 @@ export function resolveFinalVisualProviderPin(
     };
   }
   return { ok: true, pin: cliRef };
-}
-
-// ----------------------------------------------------------------------------
-// plan ab072691 t7：run 级盲跑授权的 manifest 单点裁决
-// ----------------------------------------------------------------------------
-
-export interface ResolveFinalBlindVisualAuthorizationInput {
-  /** 本次 CLI 是否显式携带 --allow-blind-visual */
-  cliAllowed: boolean;
-  /** manifest 是否已冻结 allow_blind_visual:true */
-  manifestAllowed: boolean;
-  isResume: boolean;
-  hasManifestFlag: boolean;
-  /** successor 出生不继承授权；只有本次 CLI 能为新 run 授权 */
-  isSuccessor: boolean;
-  overrideManifest: boolean;
-}
-
-export type ResolveFinalBlindVisualAuthorizationResult =
-  | { ok: true; allowed: boolean }
-  | { ok: false; message: string };
-
-/**
- * 授权字段只表达正向事实（键在场且恒为 true）：
- *  - fresh 普通启动直接接受显式旗标；
- *  - fresh+manifest / resume 沿用冻结值；给旧 manifest 新增授权须 --override-manifest；
- *  - successor 是新 run，忽略继承值，仅本次显式旗标可授权。
- */
-export function resolveFinalBlindVisualAuthorization(
-  input: ResolveFinalBlindVisualAuthorizationInput,
-): ResolveFinalBlindVisualAuthorizationResult {
-  const {
-    cliAllowed,
-    manifestAllowed,
-    isResume,
-    hasManifestFlag,
-    isSuccessor,
-    overrideManifest,
-  } = input;
-
-  if (isSuccessor && !isResume) {
-    return { ok: true, allowed: cliAllowed };
-  }
-  if (!isResume && !hasManifestFlag && !manifestAllowed) {
-    return { ok: true, allowed: cliAllowed };
-  }
-  if (!cliAllowed) return { ok: true, allowed: manifestAllowed };
-  if (manifestAllowed) return { ok: true, allowed: true };
-  if (!overrideManifest) {
-    return {
-      ok: false,
-      message:
-        '[goal-runner] BLOCKER: --allow-blind-visual 会给既有 manifest 新增 ' +
-        'allow_blind_visual 身份字段——须 --override-manifest；--force-resume 与 ' +
-        '--override-start/--override-end 均不授权该变更。',
-    };
-  }
-  return { ok: true, allowed: true };
 }

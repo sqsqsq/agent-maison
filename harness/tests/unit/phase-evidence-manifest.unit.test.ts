@@ -99,6 +99,20 @@ const cases: Case[] = [
     },
   },
   {
+    name: 'role=both stale 诊断按 normalized path 去重',
+    run: () => {
+      const root = mkProject();
+      seedSpecPhase(root);
+      writeManifestWithPointer(root, 'spec');
+      const specPath = resolveFeatureArtifact(root, FEATURE, 'spec.md').actualPath;
+      fs.appendFileSync(specPath, '# changed once\n', 'utf-8');
+      const result = recomputePhaseEvidenceStaleness(root, FEATURE, ['spec'])[0];
+      assert.strictEqual(result.verdict, 'stale');
+      const specChanges = result.changed_paths.filter((p) => p.endsWith('/spec.md'));
+      assert.strictEqual(specChanges.length, 1, `role=both 路径不得重复：${result.changed_paths.join(',')}`);
+    },
+  },
+  {
     name: '自引用环防线：回执/manifest 自身进集合即 throw',
     run: () => {
       const root = mkProject();

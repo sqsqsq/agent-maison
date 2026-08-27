@@ -84,7 +84,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     }),
   },
   {
-    name: '可信消费态放行：resolved_path + external_tool provenance（source_sha256 命中真实参考图）+ 真人确认 → PASS；自填假 sha → FAIL（cursor P2 收紧）',
+    name: 'external_tool provenance 与 legacy 人签不能代替本 invocation 机器验真 → FAIL',
     run: async () => withTmpProject(async root => {
       const rel = 'doc/features/demo/spec/assets/bank_logo_icbc.png';
       const abs = path.join(root, rel);
@@ -109,7 +109,8 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       ].join('\n');
       writeUiSpec(root, spec(refSha));
       const [ok] = checkBlindCropProhibition(ctx(root, 'none'));
-      assertEq(ok.status, 'PASS', `命中真实参考图应放行（${ok.details}）`);
+      assertEq(ok.status, 'FAIL', `只有 external_tool 与人签不得放行（${ok.details}）`);
+      assertTrue(ok.details.includes('c3'), '应指明缺当前 invocation 机器验真');
       writeUiSpec(root, spec('a'.repeat(64)));
       const [bad] = checkBlindCropProhibition(ctx(root, 'none'));
       assertEq(bad.status, 'FAIL', '自填假 sha 不得构成 provenance');
@@ -139,7 +140,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     }),
   },
   {
-    name: 'verified_artifact 通道：asset-crop-validation.json verdict=verified + 真人确认 + resolved_path → PASS',
+    name: 'verified_artifact 通道：当前 provider 执行 + hash/path 绑定 → PASS，legacy 人签字段无权威',
     run: async () => withTmpProject(async root => {
       const rel = 'doc/features/demo/spec/assets/k2.png';
       const abs = path.join(root, rel);
@@ -160,7 +161,9 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         '    human_crop_confirmed: true',
         '    crop_confirmed_by: 李工',
       ].join('\n'));
-      const [r] = checkBlindCropProhibition(ctx(root, 'none'));
+      const c = ctx(root, 'none');
+      (c as { assetAcquisitionProviderRan?: boolean }).assetAcquisitionProviderRan = true;
+      const [r] = checkBlindCropProhibition(c);
       assertEq(r.status, 'PASS', `status（${r.details}）`);
     }),
   },

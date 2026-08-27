@@ -206,7 +206,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'scanUnconditionalCorrectionConfirm: 同文件已提及 auto_confirm_eligible → 不误报',
+    name: 'scanUnconditionalCorrectionConfirm: auto_confirm_eligible 不再豁免退役 gate 引用',
     run: () => {
       const { tmp, fw } = mkConsumerProject('cc-safe-');
       writeText(
@@ -215,7 +215,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       );
       const layout = inferRepoLayout(tmp);
       const hits = scanUnconditionalCorrectionConfirm(layout, {});
-      assert(hits.length === 0, hits.map(h => h.match).join(';'));
+      assert(hits.length === 1, `hits=${hits.length}`);
       fs.rmSync(tmp, { recursive: true, force: true });
     },
   },

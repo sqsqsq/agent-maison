@@ -174,7 +174,7 @@ export interface TextPlacementResult {
 /**
  * adjudicated-repair-loop M2（plan e2b7c4a9 t2.1）：OCR 混淆判定——两串规整后
  * 编辑距离 ≤1（如「中信银行」vs「中国银行」）。**冲突只证明两源不一致，不证明哪一源错**
- * ——归 uncertain 交人裁，不自动判 refuted、不产 FAIL 级信号。
+ * ——归 uncertain 交由上层按义务强度投影：required 失败回修，optional 保留 advisory；不由人签改写。
  */
 export function levenshteinDistance(a: string, b: string): number {
   const sa = normPlacement(a);
@@ -412,7 +412,7 @@ export function collectTextPlacementSignals(
           confusedReasons.set(
             t,
             `OCR 识别文本「${shotText.slice(0, 16)}」与候选串「${t.slice(0, 16)}」编辑距离 ≤1` +
-              '（两源冲突，不自动裁定谁对——不产 FAIL 级信号，交人复核）',
+              '（两源冲突，不自动裁定谁对——由上层按义务强度触发机器重采/回修）',
           );
           break;
         }
@@ -430,7 +430,7 @@ export function collectTextPlacementSignals(
         confusedReasons.set(
           t,
           `候选「${t.slice(0, 16)}」与其近似「${neighborHit.slice(0, 16)}」（编辑距离 ≤1）同时在场，` +
-            `截图侧识别到「${neighborHit.slice(0, 16)}」——集合级混淆，不自动裁定存在性缺失（两源冲突，交人复核）`,
+            `截图侧识别到「${neighborHit.slice(0, 16)}」——集合级混淆，不自动裁定存在性缺失（两源冲突，需机器重采/回修）`,
         );
       }
     }
@@ -446,7 +446,7 @@ export function collectTextPlacementSignals(
         confusedReasons.set(
           t,
           `候选「${t.slice(0, 16)}」与截图侧识别到的近似候选「${t2.slice(0, 16)}」` +
-            '（编辑距离 ≤1）同组——命中归属存疑，不参与同行/纵序比较（交人复核）',
+            '（编辑距离 ≤1）同组——命中归属存疑，不参与同行/纵序比较（需机器重采/回修）',
         );
       }
     }
@@ -456,7 +456,7 @@ export function collectTextPlacementSignals(
       if (!ref) continue;
       if (confusedSet.has(t)) continue;
       if (shotClaims.has(t)) continue;
-      mustFix.push(`「${t.slice(0, 16)}」参考图可见、实测截图未识别到——检查是否缺渲染/被遮挡/文案改写（大字体行 OCR 漏识别亦可能，人核截图后再定）`);
+      mustFix.push(`「${t.slice(0, 16)}」参考图可见、实测截图未识别到——检查是否缺渲染/被遮挡/文案改写（大字体行 OCR 漏识别亦可能，修复后以新截图重验）`);
     }
     // 可靠匹配（filter 重建：非 confused 且命中的候选）→ 参与同行/纵序比较
     for (const t of texts) {
@@ -518,7 +518,7 @@ export function collectTextPlacementSignals(
     if (refIsFullPage && inversions.length > 0) {
       uncertain.push(
         `整页参考图（${refW}×${refH}）高于单视口截图（${shotW}×${shotH}，宽高比 ${(shotAspect * 100).toFixed(0)}% 于参考图）——` +
-          `纵向顺序比较口径缺口，以下 ${inversions.length} 对疑似乱序降级为 uncertain 交人复核：${inversions.slice(0, 3).join('；')}`,
+          `纵向顺序比较口径缺口，以下 ${inversions.length} 对疑似乱序降级为 uncertain，需机器重采/回修：${inversions.slice(0, 3).join('；')}`,
       );
       uncertainTargets.push('whole-page');
     } else if (inversions.length >= ORDER_INVERSION_FAIL_MIN) {
@@ -541,8 +541,8 @@ export function collectTextPlacementSignals(
     perScreen,
     ocrUnavailable: [...ocrUnavailable],
     refUnavailable: [...refUnavailable],
-    // uncertainSignals 的 target = 稳定候选锚（人工可在 defect-review 里精确引用它恢复）：
-    // 混淆场景=候选文本 t；整页缺口='whole-page'（屏级缺口，恢复=交换/复用该屏任意裁决）。
+    // uncertainSignals 的 target = 稳定候选锚（回修与机器重验可精确引用）：
+    // 混淆场景=候选文本 t；整页缺口='whole-page'（屏级缺口）。
     uncertainSignals: perScreen.flatMap((p) => {
       const targets = perScreenTargets.get(p.screen_id) ?? [];
       return (p.uncertain ?? []).map((reason, i) => ({

@@ -27,7 +27,7 @@
 
 import type { AssessRecommendation } from './assess';
 import { recomputePhaseEvidenceStaleness } from './phase-evidence-manifest';
-import { finalizePhaseClosure } from './phase-closure-finalizer';
+import { finalizePhaseClosure, hasStagedPhaseClosure } from './phase-closure-finalizer';
 import { tryValidateReceipt } from './phase-state';
 
 /** 关环尝试的结果。`blocked` 携带**已定好的事故 id**，调用方不得再重新贴标签。 */
@@ -36,6 +36,8 @@ export type UpstreamClosureOutcome =
   | { kind: 'skipped'; reason: string }
   /** 关环成功——调用方须**重新 assess** 后再决策 */
   | { kind: 'closed'; phase: string }
+  /** receipt/freshness/closure facts cannot support completion; invalidate and rerun the owner. */
+  | { kind: 'backtrack'; phase: string; detail: string }
   /** 诚实停止：incident 已按 validator 五态/新鲜度分派好 */
   | { kind: 'blocked'; phase: string; incident: string; detail: string };
 
@@ -113,10 +115,15 @@ export function tryCloseUpstreamPhase(input: UpstreamClosureInput): UpstreamClos
     },
   );
   if (validation.status !== 'passed') {
+    if (validation.status === 'failed' || validation.status === 'missing') {
+      return {
+        kind: 'backtrack',
+        phase: target,
+        detail: `上游 ${target} 回执不可证明（status=${validation.status}）：${validation.message ?? '(无消息)'}`,
+      };
+    }
     const incident =
-      validation.status === 'failed' || validation.status === 'missing'
-        ? 'upstream_closure_gap'
-        : // error（含 checker 缺失/spawn 失败/超时——ReceiptValidation 无法区分，不细分）
+      // error（含 checker 缺失/spawn 失败/超时——ReceiptValidation 无法区分，不细分）
           // 与 not_applicable（lite track，在 full-track 上游关环路径上理论不可达，
           // 到达即不变量被破坏）统一按框架缺陷处理。
           'framework_bug';
@@ -128,13 +135,44 @@ export function tryCloseUpstreamPhase(input: UpstreamClosureInput): UpstreamClos
     };
   }
 
+  // Partial publication must be recognized before the generic freshness check:
+  // its manifest intentionally binds staged final bytes while canonical summary
+  // is still open, so ordinary recompute would necessarily call it stale.
+  if (hasStagedPhaseClosure({
+    projectRoot: input.projectRoot,
+    frameworkRoot: input.frameworkRoot,
+    feature: input.feature,
+    phase: target,
+  })) {
+    input.fence?.();
+    try {
+      (input.finalize ?? finalizePhaseClosure)({
+        projectRoot: input.projectRoot,
+        frameworkRoot: input.frameworkRoot,
+        feature: input.feature,
+        phase: target,
+        goalRunId: input.goalRunId,
+        goalAttemptId: input.attemptId,
+        receipt: { ...validation, status: 'passed' },
+        blockerCount: 0,
+        persistPhaseState: () => { /* no-op: do not move current phase */ },
+      });
+      return { kind: 'closed', phase: target };
+    } catch (error) {
+      return {
+        kind: 'backtrack',
+        phase: target,
+        detail: `上游 ${target} partial closure 无法证明/补完：${(error as Error).message}`,
+      };
+    }
+  }
+
   // ③ passed 之后**重算** freshness——stale 绝不 rebound（顺序见文件头）
   const [staleness] = recomputePhaseEvidenceStaleness(input.projectRoot, input.feature, [target]);
   if (staleness && staleness.verdict !== 'fresh') {
     return {
-      kind: 'blocked',
+      kind: 'backtrack',
       phase: target,
-      incident: 'upstream_closure_gap',
       detail:
         `上游 ${target} 证据 ${staleness.verdict}（${(staleness.changed_paths ?? []).slice(0, 3).join(', ') || '无变更清单'}）` +
         '——不在 stale 证据上关环（那会把旧 PASS 重新绑定到新文件，制造假闭环）',
@@ -150,12 +188,20 @@ export function tryCloseUpstreamPhase(input: UpstreamClosureInput): UpstreamClos
       feature: input.feature,
       phase: target,
       goalRunId: input.goalRunId,
+      goalAttemptId: input.attemptId,
       receipt: { ...validation, status: 'passed' },
       blockerCount: 0,
       // 上游关环**不动当前 phase 指针**——本模块只补上游的 closure 凭证。
       persistPhaseState: () => { /* no-op：不改 .current-phase.json */ },
     });
   } catch (error) {
+    if (/不一致|无法证明|legacy_unverified|summary 不满足 closure|assurance/.test((error as Error).message)) {
+      return {
+        kind: 'backtrack',
+        phase: target,
+        detail: `上游 ${target} closure 事实不可信：${(error as Error).message}`,
+      };
+    }
     // finalizer 自身失败（磁盘/mutex/summary 不变量）复用既有 `closure_finalization_failed`，
     // **不**混标成 upstream_closure_gap（那是"上游内容缺口"，语义不同）。
     return {

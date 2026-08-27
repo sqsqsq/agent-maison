@@ -75,6 +75,11 @@ export type UtHostImpl = {
   collectHarnessPollutionExtras?(ctx: CheckContext): string[];
 };
 
+export type UtSourceRootResolver = (
+  projectRoot: string,
+  modules: ReadonlyArray<{ name: string; package_path: string }>,
+) => string[];
+
 /**
  * Best-effort 加载 `profiles/<profile>/harness/<baseName>`（无扩展名，与 Node 解析一致）。
  * 失败返回 null；最近一次 require 错误可通过 getLastProfileHarnessLoadError 读取，
@@ -169,4 +174,13 @@ export function tryLoadDiffExcludeTestPathRegexes(profileDir: string): RegExp[] 
   const rx = m?.diffExcludeTestPathRegexes;
   if (!Array.isArray(rx) || !rx.every(r => r instanceof RegExp)) return null;
   return rx;
+}
+
+/** Profile-owned UT path convention used by the phase write-owner resolver. */
+export function tryLoadUtSourceRootResolver(profileDir: string): UtSourceRootResolver | null {
+  const m = tryLoadProfileHarnessModule<{ resolveUtSourceRoots?: UtSourceRootResolver }>(
+    profileDir,
+    'profile-path-conventions',
+  );
+  return typeof m?.resolveUtSourceRoots === 'function' ? m.resolveUtSourceRoots : null;
 }

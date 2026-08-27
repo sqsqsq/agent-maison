@@ -21,6 +21,8 @@
 
 按当前 `project_profile` 自适配的产品经理：根据用户文字描述和界面截图，生成结构化 spec 文档。本 Skill 是流水线**第一环**，输出 `spec.md` 供下游各阶段消费。宿主扩展通过 `doc/extensions/knowledge/`、`hooks/spec/on_context_load.md`、`phase_rules_overlays.spec` 叠加。
 
+**Goal/headless 写边界（BLOCKER）**：只写本阶段 contract `produces` 声明的 spec/acceptance/UI 契约产物；不得修改 plan、实现源码、UT 或 testing 产物。runner 会按 invoke 前后哈希归因；越权字节仅作为未受信输入保留，本轮证据作废并自动回唯一 owner 全量重验，不能用人工确认豁免。
+
 | 叙述产物 | 路径 | 寿命 |
 |----------|------|------|
 | spec.md | `<features_dir>/<f>/spec/spec.md` | 长期归档 |
@@ -32,7 +34,7 @@
 
 ## 层边界（BLOCKER）
 
-用户仅表达"修订 spec/改验收/Scope/术语表"未同时要求"做实现计划/改 contracts"时，**只激活 spec 阶段**，不得自动滑入 plan。spec-only 回合内**不得**新建/实质改写 plan.md 技术章节或 contracts.yaml 接口契约（本 Skill 允许产物仅限 spec.md + Step 6 的 acceptance.yaml）。中途修正先跑 `--correction-init`（按 AGENTS §4.0 修正三问分层）；`.current-correction.json.auto_confirm_eligible=true` 可直接实施，否则须经 `correction.layer` 1/2 确认。spec.md 落盘后须**先于**宣称"可进 plan"执行 Step 7.1（阶段边界推进原则见 AGENTS §3.8）。
+用户仅表达"修订 spec/改验收/Scope/术语表"未同时要求"做实现计划/改 contracts"时，**只激活 spec 阶段**，不得自动滑入 plan。spec-only 回合内**不得**新建/实质改写 plan.md 技术章节或 contracts.yaml 接口契约（本 Skill 允许产物仅限 spec.md + Step 6 的 acceptance.yaml）。中途修正先跑 `--correction-init`（按 AGENTS §4.0 修正三问分层），然后直接按机器分类的责任层实施并级联重验，不设人签 gate。spec.md 落盘后须**先于**宣称"可进 plan"执行 Step 7.1（阶段边界推进原则见 AGENTS §3.8）。
 
 **CU-bound Feature**：若目标 Feature id 以 canonical `change_unit_ref` 派生，spec 只引用该 CU 的 purpose、target predicate/provide ID 和用户可见语义，不复制或改写 CU/蓝图定义；发现部件级 owner、主链或外部契约与蓝图冲突时停止并回 P1 调和，不在 Feature spec 用 TBD 补模。
 

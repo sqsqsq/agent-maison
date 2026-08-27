@@ -9,7 +9,7 @@
 // 声明被无视的显式证据 → BLOCKER；implemented_by 须真实存在于源码 struct 集（防糊名）。
 //
 // 诚实边界（P1-4③）：台账为 coding 自报——内容真实性由 review 逐条人审（P1-4②）＋
-// device 侧 P1-C 文本类确定性信号＋用户终审兜底；非文本类结构（tab 容器/分组视觉）当前
+// device 侧 P1-C 文本类确定性信号共同闭环；非文本类结构（tab 容器/分组视觉）当前
 // 无确定性静态验真（round7 候选：OmniParser/容器采色）。
 // ============================================================================
 
@@ -161,7 +161,7 @@ export function auditStructureLedger(
 
 const HONESTY_NOTE =
   '（诚实边界：台账为 coding 自报、本门禁只消灭"声明被静默无视"并校验 struct 存在性防糊名；' +
-  '内容真实性由 review 逐条人审 + device 文本类确定性信号 + 用户终审兜底，非文本类结构静态验真列 round7）';
+  '内容真实性由独立 review 逐条复核 + device 文本类确定性信号闭环，非文本类结构静态验真列 round7）';
 
 /**
  * P1-4① 门禁 `structure_declaration_ledger`：ui-spec 全部结构声明 ⊆ 台账，且

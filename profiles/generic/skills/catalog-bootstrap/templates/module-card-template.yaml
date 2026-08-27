@@ -1,8 +1,8 @@
 # 模块画像草稿 — staging：`doc/catalog-staging/<ModuleName>.yaml`
-# 合并前须 `confirmed_by_user: true`；字段语义与填写指引见同目录上级 `profile-addendum.md` →「module-card 草稿模板」。
+# 合并前须 `selection_status: selected`；字段语义与填写指引见同目录上级 `profile-addendum.md` →「module-card 草稿模板」。
 
 # 用户确认标志：AI 不得修改；用户审阅完成后手动改为 true
-confirmed_by_user: false
+selection_status: pending
 
 # 生成元数据（AI 填）
 generated_by: "<model-id,如 claude-sonnet-4 / minimax-2.5>"

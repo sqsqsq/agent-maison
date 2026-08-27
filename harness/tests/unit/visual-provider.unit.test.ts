@@ -24,13 +24,9 @@ import {
 } from '../../scripts/utils/adapter-catalog';
 import {
   normalizeVisualProviderCliPair,
-  resolveFinalBlindVisualAuthorization,
   resolveFinalVisualProviderPin,
 } from '../../scripts/utils/goal-manifest-cli';
 import {
-  formatBlindVisualLaunchBlocker,
-  resolveBlindVisualLaunchDecision,
-  resolveBlindVisualLaunchDecisionForRun,
   resolveVisionMode,
   reviewVisionForMode,
   resolveActiveVisualProvider,
@@ -72,7 +68,6 @@ import { hashImageFile, invokeVisualProvider } from '../../scripts/utils/visual-
 import {
   applyProviderReviewToScreen,
   clearProviderReviewFromScreen,
-  isHumanSignedAndFresh,
   collectReviewTargets,
   resetDelegatedRoundState,
   runVisualProviderReview,
@@ -93,7 +88,15 @@ import { buildVisualProviderAdvisory } from '../../scripts/check-personal-setup'
 import { executeInitTask } from '../../scripts/utils/init-task-executor';
 import { probeInitTaskPlan } from '../../scripts/utils/init-task-planner';
 import { clearFrameworkConfigCache } from '../../config';
+import { projectDelegatedVisualProviderFailure } from '../../scripts/check-testing';
+import {
+  deriveSummaryVerdictLattice,
+  resolveEffectiveVerdict,
+} from '../../scripts/utils/quality-axes';
+import { resolveVerdictFromChecks } from '../../scripts/utils/report-generator';
+import { classifyPhaseAssessment } from '../../scripts/utils/phase-transition-policy';
 import type { AgentInvokeResult } from '../../scripts/utils/agent-invoke';
+import type { CheckResult } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
 
 const CASES: Array<{ name: string; run: () => void | Promise<void> }> = [];
@@ -275,72 +278,43 @@ test('t1 三形态：local 缺失/已支持/已失格 三态判定与提示语',
   assert.strictEqual(shouldPromptForVisualProvider(bad), true, '已失格的配置必须提示重选一次');
   const prompt = formatVisualProviderPrompt(bad, FRAMEWORK_ROOT)!;
   assert.match(prompt, /codeagent 暂未接入视觉 provider/);
-  assert.match(prompt, /请重新选择，或明确选择“跳过并盲跑”/);
+  assert.match(prompt, /严格视觉需求会由 capability 门禁诚实 defer/);
 });
 
-test('t7 无人值守：旧 local 失格只负责 WARN + 忽略，是否 blind 由统一启动矩阵裁决', () => {
+test('t7 无人值守：旧 local 失格只负责 WARN + 忽略，不产生盲跑授权', () => {
   const r = resolveUnattendedVisualProviderPin(
     { schema_version: '1.0', vision: { visual_provider: { adapter: 'generic', model: 'm' } } } as never,
     FRAMEWORK_ROOT,
   );
   assert.strictEqual(r.pin, undefined);
   assert.match(r.warning ?? '', /已忽略该配置/);
-  assert.match(r.warning ?? '', /--allow-blind-visual/);
+  assert.doesNotMatch(r.warning ?? '', /allow-blind-visual/);
+  assert.match(r.warning ?? '', /capability 门禁诚实 defer/);
   assert.match(r.warning ?? '', /不自动改选、不 fallback/);
   // 无配置只表示无 pin，不在身份解析层偷做启动授权。
   const none = resolveUnattendedVisualProviderPin(null, FRAMEWORK_ROOT);
   assert.deepStrictEqual(none, {});
 });
 
-test('t7/t6 unsupported 反向矩阵：非 UI/有授权才 blind，UI 无授权 BLOCKER，且不自动替换', () => {
+test('t7/t6 unsupported 反向矩阵：失格 provider 落 blind 且不自动替换、不产生授权', () => {
   for (const adapter of ['codeagent', 'chrys', 'generic']) {
     const local = {
       schema_version: '1.0',
       vision: { visual_provider: { adapter, model: 'm' } },
     } as never;
 
-    // 形态①②：普通交互态 / attended goal —— 提示重选一次，明确跳过=当次授权
+    // 形态①②：普通交互态 / attended goal —— 提示重新配置，但不产生人工放行键
     const state = resolveVisualProviderFromLocal(local, FRAMEWORK_ROOT);
     assert.strictEqual(state.kind, 'unsupported', `${adapter} 应判 unsupported`);
     assert.strictEqual(shouldPromptForVisualProvider(state), true);
     const prompt = formatVisualProviderPrompt(state, FRAMEWORK_ROOT)!;
     assert.match(prompt, new RegExp(`${adapter} 暂未接入视觉 provider`));
-    assert.match(prompt, /请重新选择，或明确选择“跳过并盲跑”/);
+    assert.match(prompt, /严格视觉需求会由 capability 门禁诚实 defer/);
 
     // 形态③：无人值守 —— WARN + 忽略，且**不产生任何 pin**（不自动改选）
     const unattended = resolveUnattendedVisualProviderPin(local, FRAMEWORK_ROOT);
     assert.strictEqual(unattended.pin, undefined, `${adapter}：无人值守绝不自动改选`);
-    assert.match(unattended.warning ?? '', /--allow-blind-visual/);
-    assert.deepStrictEqual(
-      resolveBlindVisualLaunchDecisionForRun({
-        frameworkRoot: FRAMEWORK_ROOT,
-        uiRelevant: false,
-        primaryHasVision: false,
-        providerPin: { adapter, model: 'm' },
-        allowBlindVisual: false,
-      }),
-      { kind: 'allow', branch: 'non_ui' },
-    );
-    assert.deepStrictEqual(
-      resolveBlindVisualLaunchDecisionForRun({
-        frameworkRoot: FRAMEWORK_ROOT,
-        uiRelevant: true,
-        primaryHasVision: false,
-        providerPin: { adapter, model: 'm' },
-        allowBlindVisual: true,
-      }),
-      { kind: 'allow', branch: 'blind_authorized' },
-    );
-    assert.deepStrictEqual(
-      resolveBlindVisualLaunchDecisionForRun({
-        frameworkRoot: FRAMEWORK_ROOT,
-        uiRelevant: true,
-        primaryHasVision: false,
-        providerPin: { adapter, model: 'm' },
-        allowBlindVisual: false,
-      }),
-      { kind: 'block', branch: 'blind_unauthorized' },
-    );
+    assert.doesNotMatch(unattended.warning ?? '', /allow-blind-visual/);
 
     // 形态④：显式 CLI —— fail-fast 并列出 catalog 派生支持项
     assert.throws(
@@ -361,117 +335,7 @@ test('t7/t6 unsupported 反向矩阵：非 UI/有授权才 blind，UI 无授权 
   }
 });
 
-// ---------------------------------------------------------------------------
-// t7 — UI blind 启动须一次明确授权
-// ---------------------------------------------------------------------------
-
-test('t7 五分支启动矩阵：非 UI/native/delegated/blind+授权 放行，blind 无授权 BLOCKER', () => {
-  const base = {
-    uiRelevant: true,
-    primaryHasVision: false,
-    providerEligible: false,
-    allowBlindVisual: false,
-  };
-  assert.deepStrictEqual(
-    resolveBlindVisualLaunchDecision({ ...base, uiRelevant: false }),
-    { kind: 'allow', branch: 'non_ui' },
-  );
-  assert.deepStrictEqual(
-    resolveBlindVisualLaunchDecision({ ...base, primaryHasVision: true, allowBlindVisual: true }),
-    { kind: 'allow', branch: 'native' },
-    'native 下授权键可在场但不得改路由',
-  );
-  assert.deepStrictEqual(
-    resolveBlindVisualLaunchDecision({
-      ...base,
-      providerPin: { adapter: 'claude', model: 'm1' },
-      providerEligible: true,
-      allowBlindVisual: true,
-    }),
-    { kind: 'allow', branch: 'delegated' },
-    'delegated 下授权键可在场但不得改路由',
-  );
-  assert.deepStrictEqual(
-    resolveBlindVisualLaunchDecision({ ...base, allowBlindVisual: true }),
-    { kind: 'allow', branch: 'blind_authorized' },
-  );
-  assert.deepStrictEqual(
-    resolveBlindVisualLaunchDecision(base),
-    { kind: 'block', branch: 'blind_unauthorized' },
-  );
-});
-
-test('t7 合法 provider 不误挡；cursor/unsupported/unavailable 都按无 provider 处理', () => {
-  assert.deepStrictEqual(
-    resolveBlindVisualLaunchDecisionForRun({
-      frameworkRoot: FRAMEWORK_ROOT,
-      uiRelevant: true,
-      primaryHasVision: false,
-      providerPin: { adapter: 'claude', model: 'm1' },
-      allowBlindVisual: false,
-    }),
-    { kind: 'allow', branch: 'delegated' },
-  );
-  for (const adapter of ['cursor', 'codeagent']) {
-    assert.deepStrictEqual(
-      resolveBlindVisualLaunchDecisionForRun({
-        frameworkRoot: FRAMEWORK_ROOT,
-        uiRelevant: true,
-        primaryHasVision: false,
-        providerPin: { adapter, model: 'm' },
-        allowBlindVisual: false,
-      }),
-      { kind: 'block', branch: 'blind_unauthorized' },
-    );
-  }
-  // visualProvider.state=unavailable 的启动输入就是“无 pin”，绝不等价授权。
-  assert.deepStrictEqual(
-    resolveBlindVisualLaunchDecisionForRun({
-      frameworkRoot: FRAMEWORK_ROOT,
-      uiRelevant: true,
-      primaryHasVision: false,
-      allowBlindVisual: false,
-    }),
-    { kind: 'block', branch: 'blind_unauthorized' },
-  );
-});
-
-test('t7 授权裁决：fresh 接受、resume 冻结/新增须 override、successor 新 run 重授权', () => {
-  const call = (o: Partial<Parameters<typeof resolveFinalBlindVisualAuthorization>[0]>) =>
-    resolveFinalBlindVisualAuthorization({
-      cliAllowed: false,
-      manifestAllowed: false,
-      isResume: false,
-      hasManifestFlag: false,
-      isSuccessor: false,
-      overrideManifest: false,
-      ...o,
-    });
-  assert.deepStrictEqual(call({ cliAllowed: true }), { ok: true, allowed: true });
-  assert.deepStrictEqual(
-    call({ isResume: true, manifestAllowed: true }),
-    { ok: true, allowed: true },
-    'resume 不重传 flag，读取冻结授权',
-  );
-  const denied = call({ isResume: true, cliAllowed: true });
-  assert.strictEqual(denied.ok, false);
-  assert.match((denied as { message: string }).message, /--override-manifest/);
-  assert.deepStrictEqual(
-    call({ isResume: true, cliAllowed: true, overrideManifest: true }),
-    { ok: true, allowed: true },
-  );
-  assert.deepStrictEqual(
-    call({ isSuccessor: true, manifestAllowed: true }),
-    { ok: true, allowed: false },
-    'successor 不得偷继承 true',
-  );
-  assert.deepStrictEqual(
-    call({ isSuccessor: true, manifestAllowed: true, cliAllowed: true }),
-    { ok: true, allowed: true },
-  );
-});
-
-test('t7 manifest：授权键条件入身份、shape fail-closed、successor 剥离', () => {
+test('t3 legacy allow_blind_visual 输入可读但新 writer 不重发，且对身份/successor 无授权语义', () => {
   const mk = (over: Record<string, unknown> = {}) => buildGoalManifestFromInput({
     feature: 'demo', requirement: 'UI', adapter: 'claude',
     unattended: { write_mode: 'full-access', approval_mode: 'never' },
@@ -479,13 +343,15 @@ test('t7 manifest：授权键条件入身份、shape fail-closed、successor 剥
   }, { projectRoot: path.parse(process.cwd()).root });
   const legacy = mk();
   const authorized = mk({ allow_blind_visual: true });
+  assert.strictEqual(authorized.allow_blind_visual, undefined, 'normalized manifest must suppress the retired waiver');
   assert.strictEqual(
     Object.prototype.hasOwnProperty.call(computeManifestIdentityFields(legacy), 'allow_blind_visual'),
     false,
   );
   assert.strictEqual(
     Object.prototype.hasOwnProperty.call(computeManifestIdentityFields(authorized), 'allow_blind_visual'),
-    true,
+    false,
+    'legacy 字段不得进入当前身份或恢复裁决',
   );
   assert.throws(() => mk({ allow_blind_visual: false }), /键在场时必须为 true/);
 
@@ -499,50 +365,14 @@ test('t7 manifest：授权键条件入身份、shape fail-closed、successor 剥
   );
 });
 
-test('t7 授权只落 manifest、不写 local；BLOCKER 文案区分新 run 与当前 run 恢复', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vp-blind-auth-local-'));
-  try {
-    const localPath = path.join(tmp, 'framework.local.json');
-    const before = JSON.stringify({ schema_version: '1.0', agent_adapter: 'claude' }, null, 2) + '\n';
-    fs.writeFileSync(localPath, before);
-    const manifest = buildGoalManifestFromInput({
-      feature: 'demo', requirement: 'UI', adapter: 'claude', allow_blind_visual: true,
-      unattended: { write_mode: 'full-access', approval_mode: 'never' },
-    }, { projectRoot: tmp });
-    assert.strictEqual(manifest.allow_blind_visual, true);
-    assert.strictEqual(fs.readFileSync(localPath, 'utf-8'), before);
-    const message = formatBlindVisualLaunchBlocker(FRAMEWORK_ROOT);
-    assert.match(message, /record-visual-provider/);
-    assert.match(message, /--allow-blind-visual/);
-    assert.match(message, /新 run/);
-    assert.match(message, /继续当前 run/);
-    assert.match(message, /--visual-adapter <adapter> --visual-model <model>/);
-    assert.match(message, /--override-manifest/);
-    assert.match(message, /单独修改 framework\.local\.json 不会更新已冻结 manifest/);
-    const prepareMessage = formatBlindVisualLaunchBlocker(FRAMEWORK_ROOT, 'attended_prepare');
-    assert.match(prepareMessage, /尚未创建 manifest\/run-control/);
-    assert.match(prepareMessage, /interactive vision canary/);
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+test('t3 新 CLI/manifest writers 不再暴露盲跑质量 waiver', () => {
+  const runner = fs.readFileSync(path.join(FRAMEWORK_ROOT, 'harness', 'scripts', 'goal-runner.ts'), 'utf-8');
+  const attended = fs.readFileSync(path.join(FRAMEWORK_ROOT, 'harness', 'scripts', 'goal-mode-entry.ts'), 'utf-8');
+  const cli = fs.readFileSync(path.join(FRAMEWORK_ROOT, 'harness', 'scripts', 'utils', 'goal-manifest-cli.ts'), 'utf-8');
+  for (const [name, source] of [['runner', runner], ['attended', attended], ['manifest-cli', cli]] as const) {
+    assert.doesNotMatch(source, /allow-blind-visual|blind_visual_authorization_required|allowBlindVisual/,
+      `${name} 不得保留盲跑授权入口或消费者`);
   }
-});
-
-test('t7 启动接线源码锚定：hard CLI 先行、决策在 canary 后、dry-run 仅 would_block', () => {
-  const source = fs.readFileSync(
-    path.join(FRAMEWORK_ROOT, 'harness', 'scripts', 'goal-runner.ts'),
-    'utf-8',
-  );
-  const canaryAttempt = source.indexOf("if (visionProbeDecision.action === 'probe')");
-  const hardFailure = source.indexOf('if (canaryHardCliFailure)', canaryAttempt);
-  const launchDecision = source.indexOf('const blindVisualLaunch =', hardFailure);
-  const firstPhase = source.indexOf("type: 'phase_start'", launchDecision);
-  assert.ok(canaryAttempt >= 0 && hardFailure > canaryAttempt, 'hard failure 必须在 canary attempt 后');
-  assert.ok(launchDecision > hardFailure, 'blind 授权判断不得掩盖 canary hard failure');
-  assert.ok(firstPhase > launchDecision, 'blind 授权判断必须在正式 phase_start 前');
-  const decisionBlock = source.slice(launchDecision, firstPhase);
-  assert.ok(!decisionBlock.includes('probeResult'), '启动决策不得直接消费本次 probeResult');
-  assert.match(decisionBlock, /would_block=blind_visual_authorization_required/);
-  assert.match(decisionBlock, /if \(dryRun\)/);
 });
 
 // ---------------------------------------------------------------------------
@@ -971,7 +801,7 @@ test('t4 sidecar 目录不存在时列举为空数组（不抛、不建目录）
 });
 
 // ---------------------------------------------------------------------------
-// t5 — review 接线（结果 fail-closed × 循环 fail-open）
+// t5 — review 接线（invalid fail-closed × unavailable 按 release policy 投影）
 // ---------------------------------------------------------------------------
 
 function mkTarget(over: Partial<ReviewTargetScreen> = {}): ReviewTargetScreen {
@@ -1136,13 +966,13 @@ test('t5 schema 接受 provider provenance（与 T8 并存，非法 producer 仍
   assert.strictEqual(errsOf({ producer: 'somebody_else', x: 1 }).length, 1, '未知 producer 应拒');
 });
 
-test('t5 fail-open 投影链：visual_diff {BLOCKER,SKIP} → needs_human 债务 → release 阻断', () => {
+test('t5 BLOCKER SKIP 债务投影：visual_diff → needs_fix 债务 → release 阻断', () => {
   const doc = deriveVisualDebt('feat', [
     { id: 'visual_diff', severity: 'BLOCKER', status: 'SKIP', description: 'x', category: 'structure' } as never,
   ], null);
   const entry = doc.entries.find(e => e.source_check_id === 'visual_diff');
   assert.ok(entry, '非 MINOR 的 SKIP 必须落债务条目');
-  assert.strictEqual(entry!.resolution_class, 'needs_human', 'SKIP 非 FAIL → needs_human');
+  assert.strictEqual(entry!.resolution_class, 'needs_fix', 'SKIP 也必须由机器补证据/回修');
   assert.strictEqual(entry!.status, 'open');
   assert.strictEqual(countBlockingDebt(doc).open > 0, true, 'open 债务 → visual UNVERIFIED / release BLOCKED');
 });
@@ -1191,7 +1021,146 @@ test('t5 编排：provider 不可用 → unusable（不写盘、不抛错、不 
   }
 });
 
-test('t5 人签终审闭环：真人签字后重跑不再依赖 provider（不调用、不清场、既有严格门禁裁决）', async () => {
+test('delegated provider 贯通：非发布必需 SKIP；release-required unavailable defer；invalid FAIL/retry', () => {
+  const required = mkReviewProject();
+  const optional = mkReviewProject();
+  const functionalPass: CheckResult = {
+    id: 'testing_structure',
+    category: 'structure',
+    description: 'testing structure',
+    severity: 'BLOCKER',
+    status: 'PASS',
+    details: '',
+  };
+  try {
+    fs.writeFileSync(
+      path.join(optional.root, 'doc', 'features', optional.feature, 'spec', 'spec.md'),
+      ['```yaml', 'ui_change: none', '```'].join('\n'),
+    );
+
+    clearFrameworkConfigCache();
+    const optionalUnavailable = projectDelegatedVisualProviderFailure(
+      {
+        projectRoot: optional.root,
+        feature: optional.feature,
+        fidelityTarget: 'semantic_layout',
+        acceptanceStrictness: 'best_effort',
+      } as never,
+      'unavailable',
+      'provider offline',
+      'visual diff',
+    );
+    assert.strictEqual(optionalUnavailable.status, 'SKIP');
+    assert.strictEqual(optionalUnavailable.blocking_class, undefined);
+    const optionalLattice = deriveSummaryVerdictLattice(
+      [
+        functionalPass,
+        optionalUnavailable,
+      ],
+      { phase: 'testing', visualApplicable: false, assetApplicable: false },
+    );
+    assert.strictEqual(optionalLattice.quality_axes.visual.required_for_release, false);
+    assert.strictEqual(optionalLattice.release_readiness, 'READY');
+
+    clearFrameworkConfigCache();
+    const requiredUnavailable = projectDelegatedVisualProviderFailure(
+      {
+        projectRoot: required.root,
+        feature: required.feature,
+        fidelityTarget: 'semantic_layout',
+        acceptanceStrictness: 'best_effort',
+      } as never,
+      'unavailable',
+      'provider offline',
+      'visual diff',
+    );
+    assert.strictEqual(requiredUnavailable.status, 'FAIL');
+    assert.strictEqual(requiredUnavailable.blocking_class, 'externalBlocked');
+    assert.strictEqual(requiredUnavailable.failure_kind, 'capability_missing');
+    assert.match(requiredUnavailable.details, /DEFERRED_CAPABILITY_MISSING/);
+
+    const requiredChecks = [
+      functionalPass,
+      requiredUnavailable,
+    ];
+    const requiredLattice = deriveSummaryVerdictLattice(
+      [...requiredChecks],
+      { phase: 'testing', visualApplicable: true, assetApplicable: false },
+    );
+    assert.strictEqual(requiredLattice.quality_axes.visual.required_for_release, true);
+    assert.strictEqual(requiredLattice.quality_axes.visual.verdict, 'UNVERIFIED');
+    assert.strictEqual(requiredLattice.quality_axes.visual.resolution?.class, 'external_dependency');
+    assert.strictEqual(requiredLattice.release_readiness, 'BLOCKED');
+
+    const effectiveVerdict = resolveEffectiveVerdict({
+      pre: requiredLattice.pre_projection_verdict,
+      post: requiredLattice.projected_verdict,
+      legacy: resolveVerdictFromChecks([...requiredChecks]),
+    }).verdict;
+    assert.strictEqual(effectiveVerdict, 'INCOMPLETE');
+    const deferred = classifyPhaseAssessment({
+      verdict: effectiveVerdict,
+      blocking_class: requiredUnavailable.blocking_class,
+      failure_kind: requiredUnavailable.failure_kind,
+      dependency_policy: {
+        deferrable_blocking_classes: ['externalBlocked'],
+        deferrable_failure_kinds: ['capability_missing'],
+        propagate_to_downstream: false,
+      },
+    });
+    assert.strictEqual(deferred.action, 'resolve_deferred');
+    assert.strictEqual(deferred.runner_action, 'defer_external_and_halt');
+
+    clearFrameworkConfigCache();
+    const strictUnavailable = projectDelegatedVisualProviderFailure(
+      {
+        projectRoot: optional.root,
+        feature: optional.feature,
+        fidelityTarget: 'pixel_1to1',
+        acceptanceStrictness: 'hard',
+      } as never,
+      'unavailable',
+      'provider offline',
+      'visual diff',
+    );
+    assert.strictEqual(strictUnavailable.failure_kind, 'capability_missing');
+
+    const invalid = projectDelegatedVisualProviderFailure(
+      {
+        projectRoot: required.root,
+        feature: required.feature,
+        fidelityTarget: 'semantic_layout',
+        acceptanceStrictness: 'best_effort',
+      } as never,
+      'invalid',
+      'hash mismatch',
+      'visual diff',
+    );
+    assert.strictEqual(invalid.status, 'FAIL');
+    assert.strictEqual(invalid.blocking_class, undefined);
+    assert.strictEqual(invalid.failure_kind, 'visual_provider_invalid_evidence');
+    const invalidChecks = [functionalPass, invalid];
+    const invalidLattice = deriveSummaryVerdictLattice(
+      invalidChecks,
+      { phase: 'testing', visualApplicable: true, assetApplicable: false },
+    );
+    assert.strictEqual(invalidLattice.quality_axes.visual.verdict, 'FAIL');
+    assert.strictEqual(invalidLattice.quality_axes.visual.resolution?.class, 'needs_fix');
+    const invalidVerdict = resolveEffectiveVerdict({
+      pre: invalidLattice.pre_projection_verdict,
+      post: invalidLattice.projected_verdict,
+      legacy: resolveVerdictFromChecks(invalidChecks),
+    }).verdict;
+    assert.strictEqual(invalidVerdict, 'FAIL');
+    assert.strictEqual(classifyPhaseAssessment({ verdict: invalidVerdict }).runner_action, 'retry');
+  } finally {
+    clearFrameworkConfigCache();
+    fs.rmSync(required.root, { recursive: true, force: true });
+    fs.rmSync(optional.root, { recursive: true, force: true });
+  }
+});
+
+test('legacy confirmed_by 无 provider 豁免权：每轮仍重评并清旧 pass/hash', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vp-humansign-'));
   try {
     const feature = 'feat';
@@ -1202,8 +1171,7 @@ test('t5 人签终审闭环：真人签字后重跑不再依赖 provider（不�
     fs.writeFileSync(path.join(shotDir, 'ref.png'), 'ref');
     const shotHash = hashImageFile(shotAbs)!;
     const jsonPath = path.join(shotDir, 'visual-diff.json');
-    // 闭环终态：provider 上轮给出 clean pass（region_attest 由它以 vl_screening 举证），
-    // 真人随后签了 confirmed_by，被评 hash 就是盘上这张图。
+    // 历史产物带 confirmed_by；它只保留字节，不再改变 provider 路由。
     const signed = {
       schema_version: '1.1',
       screens: [{
@@ -1231,30 +1199,6 @@ test('t5 人签终审闭环：真人签字后重跑不再依赖 provider（不�
       runId: 'R', attemptId: 'A2',
       invoke: (async () => {
         invoked += 1;
-        throw new Error('人签终审重跑不得再次调用 provider');
-      }) as never,
-    });
-
-    assert.strictEqual(invoked, 0, 'provider 一次都不该被调用');
-    assert.strictEqual(out.kind, 'skipped');
-    assert.match((out as { reason: string }).reason, /真人签字确认/);
-    // 盘上状态**一字未动**：verdict/confirmed_by/被评 hash/provider 举证全部原样保留，
-    // 交由既有严格 checkVisualDiff 裁决（它照跑 build 指纹、hash、人签、receipt 全套）。
-    assert.strictEqual(
-      fs.readFileSync(jsonPath, 'utf-8'),
-      JSON.stringify(signed, null, 2),
-      '人签且新鲜的屏不得被清场',
-    );
-
-    // 反向：截图换了（人签的不是这张图）→ 照常进评审并清场
-    fs.writeFileSync(shotAbs, 'shot-v2');
-    let invoked2 = 0;
-    const out2 = await runVisualProviderReview(ctx, {
-      frameworkRoot: FRAMEWORK_ROOT,
-      provider: { adapter: 'claude', model: 'm' },
-      runId: 'R', attemptId: 'A3',
-      invoke: (async () => {
-        invoked2 += 1;
         return {
           invoke_id: 'i', provider: { adapter: 'claude', model: 'm' }, purpose: 'review',
           outcome: 'unavailable', reason: 'CLI 缺失', body: null, duration_ms: 1,
@@ -1262,10 +1206,12 @@ test('t5 人签终审闭环：真人签字后重跑不再依赖 provider（不�
         };
       }) as never,
     });
-    assert.strictEqual(invoked2, 1, '截图变了就必须重新评审');
-    assert.strictEqual(out2.kind, 'unusable');
+
+    assert.strictEqual(invoked, 1, 'confirmed_by 不得跳过 provider');
+    assert.strictEqual(out.kind, 'unusable');
     const after = JSON.parse(fs.readFileSync(jsonPath, 'utf-8')) as { screens: VisualDiffScreenEntry[] };
-    assert.strictEqual(after.screens[0].verdict, 'pending', '换图后旧 pass 不得存活');
+    assert.strictEqual(after.screens[0].verdict, 'pending', '旧 pass 不得跨 attempt 存活');
+    assert.strictEqual(after.screens[0].evaluated_screenshot_hash, undefined, '旧被评 hash 必须清除');
     assert.strictEqual(after.screens[0].confirmed_by, '真人张三', 'confirmed_by 仍不由本机制改动');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -1526,7 +1472,7 @@ test('t5 死锁闭环②：critic 回执写不出 → 不提交 visual-diff.json
   }
 });
 
-test('t5 人签屏带 invalidated：清场保住 verdict/confirmed_by/被评 hash，仅由未清标记阻断', async () => {
+test('人签字段无豁免权：provider 不可用时仍清旧 verdict/hash，legacy confirmed_by 仅保留字节', async () => {
   const { tmp, jsonPath } = invalidatedScreenProject();
   try {
     const ctx = { projectRoot: tmp, feature: 'feat', fidelityTarget: 'semantic_layout' } as never;
@@ -1542,48 +1488,10 @@ test('t5 人签屏带 invalidated：清场保住 verdict/confirmed_by/被评 has
     });
     assert.strictEqual(out.kind, 'unusable');
     const s = (JSON.parse(fs.readFileSync(jsonPath, 'utf-8')) as { screens: VisualDiffScreenEntry[] }).screens[0];
-    // 一次 provider 断供不得抹掉人签成果——阻断由未清的标记承担（可被一次成功重评解除）
-    assert.strictEqual(s.verdict, 'pass', '人签的 pass 表态保住');
+    assert.strictEqual(s.verdict, 'pending', '旧 pass 不得因人签字段跨 attempt 存活');
     assert.strictEqual(s.confirmed_by, '真人张三');
-    assert.ok(s.evaluated_screenshot_hash, '被评 hash 保住');
+    assert.strictEqual(s.evaluated_screenshot_hash, undefined, '旧被评 hash 必须清除');
     assert.strictEqual(s.evaluation_invalidated, true, '阻断由未清标记承担');
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
-  }
-});
-
-test('t5 人签豁免的边界：evaluation_invalidated 屏不受保护，仍须重评', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vp-invalidated-'));
-  try {
-    const shotDir = path.join(tmp, 'shots');
-    fs.mkdirSync(shotDir, { recursive: true });
-    const shotAbs = path.join(shotDir, 'shot.png');
-    fs.writeFileSync(shotAbs, 'shot');
-    const shotHash = hashImageFile(shotAbs)!;
-    const base: VisualDiffScreenEntry = {
-      screen_id: 's1',
-      verdict: 'pass',
-      confirmed_by: '真人张三',
-      screenshot_path: 'shots/shot.png',
-      evaluated_screenshot_hash: shotHash,
-    };
-    assert.strictEqual(isHumanSignedAndFresh(tmp, base), true, '人签且新鲜 → 受保护');
-    assert.strictEqual(
-      isHumanSignedAndFresh(tmp, { ...base, evaluation_invalidated: true }),
-      false,
-      '已被点名要求重评的屏绝不能被本豁免挡在评审之外',
-    );
-    assert.strictEqual(
-      isHumanSignedAndFresh(tmp, { ...base, confirmed_by: 'goal-mode-auto' }),
-      false,
-      '自动化身份不算人签',
-    );
-    assert.strictEqual(
-      isHumanSignedAndFresh(tmp, { ...base, evaluated_screenshot_hash: 'deadbeefdeadbeef' }),
-      false,
-      '签的不是这张图 → 不受保护',
-    );
-    assert.strictEqual(isHumanSignedAndFresh(tmp, { ...base, verdict: 'fail' }), false);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -1688,7 +1596,7 @@ test('t5 critic 回执路径窄分支：native 现状回归 + delegated 走 prov
   }
 });
 
-test('t2 裁剪守护（源码锚定）：OCR 链与人签链零改动、无 provider 金丝雀', () => {
+test('t2 裁剪守护（源码锚定）：OCR 链无 provider 污染、无 provider 金丝雀', () => {
   const read = (...rel: string[]) => fs.readFileSync(path.join(FRAMEWORK_ROOT, ...rel), 'utf-8');
   // ① OCR 可用性判定不得沾 provider——无 provider canary 即无 ocr_capable 污染源
   const fidelity = read('harness', 'scripts', 'utils', 'fidelity-shared.ts');
@@ -1697,12 +1605,7 @@ test('t2 裁剪守护（源码锚定）：OCR 链与人签链零改动、无 pro
   for (const forbidden of ['visual_provider', 'visualProvider', 'vision_mode', 'reviewVision']) {
     assert.ok(!ocrBody.includes(forbidden), `resolveOcrAvailableForRun 不得引用 ${forbidden}`);
   }
-  // ② 人签判据零改动：provider 永远不是签署人
-  const confirm = read('harness', 'scripts', 'visual-confirm.ts');
-  for (const forbidden of ['visual_provider', 'visualProvider']) {
-    assert.ok(!confirm.includes(forbidden), `visual-confirm.ts 不得引用 ${forbidden}`);
-  }
-  // ③ 无 provider 金丝雀：真实调用即探测
+  // ② 无 provider 金丝雀：真实调用即探测
   const canary = read('harness', 'scripts', 'utils', 'vision-canary.ts');
   assert.ok(!canary.includes('visual_provider'), 'vision-canary.ts 不得为 provider 增设金丝雀');
   const invoke = read('harness', 'scripts', 'utils', 'visual-provider-invoke.ts');
@@ -1898,7 +1801,7 @@ test('t5 交互态（无 run/attempt）也写出结构合法的 unverified 回�
   }
 });
 
-test('t5 fail-open 仍跑确定性红线：改判脚本物证照样 BLOCKER FAIL', () => {
+test('t5 unavailable 投影仍跑确定性红线：改判脚本物证照样 BLOCKER FAIL', () => {
   const tmp = mkReviewProject();
   try {
     const dtDir = path.join(tmp.root, 'doc', 'features', tmp.feature, 'device-testing');
@@ -1911,7 +1814,7 @@ test('t5 fail-open 仍跑确定性红线：改判脚本物证照样 BLOCKER FAIL
       { projectRoot: tmp.root, feature: tmp.feature } as never,
     );
     const tamper = results.find(r => r.id === 'visual_diff_tamper_artifact');
-    assert.ok(tamper, 'fail-open 路径必须仍能扫出改判脚本物证');
+    assert.ok(tamper, 'unavailable 路径必须仍能扫出改判脚本物证');
     assert.strictEqual(tamper!.severity, 'BLOCKER');
     assert.strictEqual(tamper!.status, 'FAIL');
   } finally {
@@ -2053,14 +1956,14 @@ test('t1 入口闭环：check-personal-setup advisory 让「问不问」成为�
     const bad = buildVisualProviderAdvisory(tmp);
     assert.strictEqual(bad.state, 'unsupported');
     assert.strictEqual(bad.shouldPrompt, true, '已失格 → 提示重选一次');
-    assert.match(String(bad.prompt), /请重新选择，或明确选择“跳过并盲跑”/);
+    assert.match(String(bad.prompt), /严格视觉需求会由 capability 门禁诚实 defer/);
 
     fs.writeFileSync(path.join(tmp, 'framework.local.json'), '{broken-json', 'utf-8');
     const unavailable = buildVisualProviderAdvisory(tmp);
     assert.strictEqual(unavailable.state, 'unavailable');
-    assert.strictEqual(unavailable.shouldPrompt, true, '读取不可用不是授权，仍须提示双出路');
+    assert.strictEqual(unavailable.shouldPrompt, true, '读取不可用仍须提示修复，但不得产生授权');
     assert.match(String(unavailable.prompt), /修复 framework\.local\.json/);
-    assert.match(String(unavailable.prompt), /--allow-blind-visual/);
+    assert.doesNotMatch(String(unavailable.prompt), /allow-blind-visual/);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

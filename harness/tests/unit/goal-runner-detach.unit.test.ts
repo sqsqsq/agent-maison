@@ -166,6 +166,27 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: 'resolveOrphanedIncompleteRun: legacy AWAITING_HUMAN_REVIEW 自动恢复重验',
+    run: () => {
+      const dir = mkFeatureRunsDir();
+      try {
+        const runId = '20260101T011111Z';
+        writeFeatureLock(dir, {
+          ownerId: 'legacy-human', pid: 999999, hostname: os.hostname(),
+          started_at: '2026-01-01T01:11:11.000Z', updated_at: '2026-01-01T01:11:11.000Z', run_id: runId,
+        });
+        writeRunEvents(dir, runId, [
+          { type: 'run_start' },
+          { type: 'run_end', status: 'AWAITING_HUMAN_REVIEW' },
+        ]);
+        const resolved = resolveOrphanedIncompleteRun(dir);
+        assert(resolved?.runId === runId, `legacy 人签态应被视为需恢复重验：${JSON.stringify(resolved)}`);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  },
+  {
     name: 'resolveOrphanedIncompleteRun: fresh/live lock → null (acquireGoalLocks handles)',
     run: () => {
       const dir = mkFeatureRunsDir();

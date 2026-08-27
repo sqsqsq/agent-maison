@@ -1,5 +1,5 @@
 // ============================================================================
-// fidelity-governance-check.ts — P0-1 反降级治理（fidelity_target + defer 人工签字）
+// fidelity-governance-check.ts — P0-1 反降级治理（fidelity_target + strict defer）
 // ============================================================================
 
 import * as fs from 'fs';
@@ -11,7 +11,6 @@ import {
   effectiveAssetAcquisitionMode,
   fidelityRatchetFailOrWarn,
   findUnsignedRefElementDefers,
-  isHumanSignedDeferral,
   isP0VisualElementId,
   isHardPixelContract,
   loadRefElementsFile,
@@ -181,43 +180,31 @@ export function checkFidelityGovernance(ctx: CheckContext, specMarkdown: string)
           details:
             `需求文本含 1:1 还原措辞（完全参考/像素级/严格按图 等）但 fidelity_target=${fidelityTarget}` +
             `${headless ? '；headless 下不得自动降级' : '；疑似档位降级'}${clampNote}。`,
-          suggestion: '置 fidelity_target: pixel_1to1（激活全链 ratchet）；headless 须按 §9 求人或判 BLOCKER。',
+          suggestion: '置 fidelity_target: pixel_1to1（激活全链 ratchet）；当前能力不足则按 capability-missing defer。',
           affected_files: [prdRel],
         });
       }
     }
   }
 
-  // post-impl3 P0-2：人签区=裁决类——只在 hard contract（pixel∧hard）进入；best_effort
-  // 的 defer 本身即声明债务，由债务/披露链承载，不再借 pixel 目标 HALT。
+  // strict pixel contract 不允许把 required visual element 降成 defer。best_effort 的 defer
+  // 仍可作为显式债务，由债务/披露链承载；任何 human_signed/signed_by 仅为 legacy provenance。
   if (!(fidelityTarget === 'pixel_1to1' && ctx.acceptanceStrictness === 'hard')) {
     return results;
   }
 
-  // G1：human_signed:true 但 signed_by 为自动化身份（如 goal-mode-auto）= 自签伪造，不算人签。
-  const unsignedDeferrals = deferrals.filter(d => !isHumanSignedDeferral(d, { requireExplicitSigner: headless }));
-  if (unsignedDeferrals.length > 0) {
-    const { severity, status } = fidelityRatchetFailOrWarn(ctx, true);
+  const strictDeferrals = deferrals;
+  if (strictDeferrals.length > 0) {
     results.push({
-      id: 'fidelity_deferrals_human_sign',
-      category: 'structure',
-      description: ruleDesc(ctx, 'fidelity_deferrals'),
-      severity,
-      status,
-      details:
-        `pixel_1to1 下 fidelity_deferrals 须真人签字（human_signed:true 且 signed_by 非自动化身份）；` +
-        `未签字/自动化身份冒签（goal-mode-auto 等不算人签）：${unsignedDeferrals.map(d => `${d.element_id}${d.signed_by ? `(signed_by=${d.signed_by})` : ''}`).join(', ')}`,
-      suggestion: 'goal-runner 须暂停求人工确认；headless 无真人批准即 BLOCKER（自签不算）。',
-      affected_files: [prdRel],
-    });
-  } else if (deferrals.length > 0) {
-    results.push({
-      id: 'fidelity_deferrals_human_sign',
+      id: 'fidelity_deferrals_strict_contract',
       category: 'structure',
       description: ruleDesc(ctx, 'fidelity_deferrals'),
       severity: 'BLOCKER',
-      status: 'PASS',
-      details: `${deferrals.length} 条 defer 均已 human_signed`,
+      status: 'FAIL',
+      details:
+        `pixel_1to1 + hard 下 required visual element 不得 defer：${strictDeferrals.map(d => d.element_id).join(', ')}；` +
+        'legacy human_signed/signed_by 不改变质量结论。',
+      suggestion: '实现并机器验证这些元素；若需求目标确需降低，作为 correction/successor 输入重新冻结需求。',
       affected_files: [prdRel],
     });
   }
@@ -230,12 +217,12 @@ export function checkFidelityGovernance(ctx: CheckContext, specMarkdown: string)
     if (deferViolations.length > 0) {
       const { severity, status } = fidelityRatchetFailOrWarn(ctx, false);
       results.push({
-        id: 'ref_elements_defer_human_sign',
+        id: 'ref_elements_strict_defer',
         category: 'structure',
         description: ruleDesc(ctx, 'fidelity_deferrals'),
         severity,
         status,
-        details: `ref-elements.yaml disposition=defer 须映射 fidelity_deferrals 且 human_signed：${deferViolations.join('；')}`,
+        details: `pixel_1to1 + hard 下 ref-elements.yaml disposition=defer 不可由人签放行：${deferViolations.join('；')}`,
         affected_files: [prdRel, refRel],
       });
     }
@@ -248,7 +235,7 @@ export function checkFidelityGovernance(ctx: CheckContext, specMarkdown: string)
     const hasDeferredElements = deferredInSpec.length > 0
       || deferrals.some(d => isP0VisualElementId(d.element_id));
 
-    if (verified === 'verified' && hasDeferredElements && unsignedDeferrals.length > 0) {
+    if (verified === 'verified' && hasDeferredElements && strictDeferrals.length > 0) {
       const { severity, status } = fidelityRatchetFailOrWarn(ctx, false);
       results.push({
         id: 'fidelity_no_self_defer_verified',
@@ -256,7 +243,7 @@ export function checkFidelityGovernance(ctx: CheckContext, specMarkdown: string)
         description: ruleDesc(ctx, 'fidelity_no_self_defer_verified'),
         severity,
         status,
-        details: 'pixel_1to1 禁止 spec 自我 defer 且 ui-spec verified=verified；须 human_confirmed 或 vl_multimodal + 无未签字 defer',
+        details: 'pixel_1to1 禁止 spec 自我 defer 且 ui-spec verified=verified；须当前 hash-bound vl_multimodal 机器证据且不存在 strict defer，legacy human_confirmed 无效',
         affected_files: [prdRel, uiSpecRel],
       });
     }

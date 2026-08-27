@@ -44,7 +44,7 @@ replay_run:
 
 | # | 判据 | 证据源 |
 |---|------|--------|
-| M1 | spec 期 `fidelity_capability_pregate` 触发（强意图→DEFERRED 或人工定档 receipt 留痕） | spec/reports/fidelity-intent.json + summary |
+| M1 | spec 期 `fidelity_capability_pregate` 触发（强意图且能力缺失→`DEFERRED_CAPABILITY_MISSING`；能力具备但证据无效→FAIL/回修） | spec/reports/fidelity-intent.json + summary |
 | M2 | 0 项 `acquisition: crop` 盲档违例（`blind_crop_prohibition` PASS 或素材走 asset-request） | spec summary + spec/asset-request.md |
 | M3 | 0 空白/未披露关键素材（`asset_materialization_sanity` 无 brand-critical FAIL；占位均为可见语义占位） | coding summary |
 | M4 | 产品组件所有权链齐全：8 屏的 P0 节点全部映射到宿主自己的产品组件（ui-spec P0 节点 → visual-parity `contract_component` → contracts.components → contracts.files），且**档位无关**（plan e6b3f8d2 t3 撤销强制 UI kit 后由本链承接盲档结构地板；运行时结构证据另由 `runtime_mount_conformance` 观察） | `visual_parity_coverage`（plan）+ `runtime_mount_conformance`（testing） |
@@ -55,28 +55,12 @@ replay_run:
 | M9 | 负面裁决传播：过程中任何 review「不通过」/testing「不达标」都阻断了推进（summary FAIL + 下游 upstream_verdict_gate） | 各 phase summary 时序 |
 | M10 | 产物 hash/gate_fingerprint 新鲜（无 stale 豁免）；render-visibility 观察项误报记录（用于阈值/夹具校准，不触发自动升级） | receipts + visual-feedback.identity |
 
-## 3. 人工验收（rubric receipt，阈值冻结不许事后调）
+## 3. UX 复验与回灌
 
-1. 对照 `D:\1.code\对比结果\1-bc-opencard` 逐屏打分四维（container/hierarchy/density/state_color，1-5）。
-2. 写 `doc/features/bc-openCard/device-testing/visual-acceptance.json`：
-
-```json
-{
-  "rubric_version": "r1-frozen",
-  "rubric": { "container": 0, "hierarchy": 0, "density": 0, "state_color": 0 },
-  "screens": [
-    { "screen_id": "add_card_home_collapsed", "variant": "default", "reference_sha256": "<ref>", "actual_sha256": "<shot>" }
-  ],
-  "accepted_debt_ids": [],
-  "signed_by": "<真名>"
-}
-```
-
-3. 经带外体系签发 `human_visual_acceptance` receipt（object_hash=该 json 文件字节 sha256）落
-   `visual-acceptance.receipt.json`，重跑 testing harness 消费。
-4. 冻结规则（r1-frozen）：每维 ≥4 通过；任一维=3 必须在 accepted_debt_ids 显式接受对应债务；
-   出现 1-2 分不得通过（修复重评）。**首轮预期**：盲宿主大概率走"显式接受残余债务"（brand
-   素材占位等），这是诚实交付；receipt 只能清主观项——空白素材/证据缺失类确定性 FAIL 会被拒清。
+用户可对照 `D:\1.code\对比结果\1-bc-opencard` 逐屏检查 UX；发现偏差时提交 correction/successor
+run，由责任阶段修复并重新生成 hash-bound 机器证据。人工观察是新一轮需求输入，不再签发
+`human_visual_acceptance`，也不能把上一轮的 FAIL/UNVERIFIED 改写为 PASS。provider 缺少可靠视觉能力时
+保持 capability-missing/deferred；provider 已声明支持但证据缺失、伪造、stale 或无效时必须 FAIL/重试。
 
 ## 4. 结果回灌（做完必填）
 

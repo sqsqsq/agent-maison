@@ -12,11 +12,11 @@
 
 **HARD STOP 规划确认门**（`ut.plan_confirm`）：Step 1 结束须先展示"UT 规划清单"，`1=确认` `2=调整`。清单须含：本轮覆盖 AC/BD/branch 与不覆盖项原因；每个 `it()` 名称/被测入口/Spy 边界/核心断言；将新增或修改的 DAG/测试源文件/套件注册入口路径；明确声明"本轮不改业务源码"。未确认前不得写文件。
 
-## Step 1.5 可测性预检（testability-audit.md）【HARD STOP】
+## Step 1.5 可测性预检（testability-audit.md）
 
 写入前自检：已读 `` `profile-skill-asset:business-ut/format_contract` ``；内容是 fenced yaml 块（非 Markdown 表格）；`acceptance_id` 严格来自 acceptance.yaml 已有 ID；写完跑 `npm run validate:ut-artifact -- --type testability-audit --file <path>`。
 
-对每条 `ut_layer∈{unit,both}` 的 AC/BD 给出：`testability_level`（L0-L3）、关键 `dependencies`（含 `global_singleton`/`inline_lambda` 等）、`verdict`（testable/downgrade_device/needs_seam）。**若 L3**：必须 STOP，展示 `recommendation.option_a`（降级 device-only，`acceptance.yaml` 填 `device_focus`）与 `option_b`（源码改造+gap-notes 授权），用户选择并填 `selected`。**L3 + option_b 接缝白名单**：仅允许构造注入、包装 wrapper、提取命名方法、setter 注入等显式接缝；禁止"换一种全局单例"式敷衍。全部 L3 项未做完 a/b 选择前禁止进 Step 1.6/2/3。
+对每条 `ut_layer∈{unit,both}` 的 AC/BD 给出：`testability_level`（L0-L3）、关键 `dependencies`（含 `global_singleton`/`inline_lambda` 等）、`verdict`（testable/downgrade_device/needs_seam）。**若 L3**：当前 requirement 仍要求 unit/both 时，物化 `recommendation.option_b` 为 coding repair candidate，由 coding owner 修改后重走 review→ut；UT invocation 不改业务源码。只有用户明确提出 requirement correction 时，才把 `option_a` 作为普通需求变更交回 spec owner，把该项改为 device-only 并补 `device_focus`。`selected` 仅记录既有需求/修正路由，不是质量授权。**L3 接缝白名单**：coding repair 仅允许构造注入、包装 wrapper、提取命名方法、setter 注入等显式接缝；禁止"换一种全局单例"式敷衍。L3 candidate 未闭环前禁止进 Step 1.6/2/3。
 
 ## Step 1.6 Test Double Plan（mock-plan.yaml）【HARD STOP】
 
@@ -112,16 +112,14 @@ sign-skip 分支只在 `failedAt=hap_not_found` 且 `unsignedPresent` / `signSki
 
 harness 全绿后评估改动是否触及模块 Code Graph 的 `core: true` 节点：读相关模块 Code Graph，对比 contracts.yaml/diff 触及文件与 core anchor。**触及 core**→启动可行性探测，更新图谱节点，同步 characterization 或 spec-driven UT，flow DAG 可归档至 `test/dag/`。**未触及**→flow DAG 保持 ephemeral，用完即弃。
 
-## 约束#12：HARD STOP 禁止擅自修改业务源码（不可绕过）
+## 约束#12：HARD STOP 禁止修改业务源码（不可绕过）
 
-对受保护业务源码前缀下、非 profile 测试/夹具源目录内任何文件的修改，必须满足全部条件：
+UT 只拥有 profile 测试/夹具源目录，不拥有受保护业务源码。发现只能通过源码可测性改造解决的缺口时：
 
-**headless/goal-mode**：无交互用户→保守默认=拒绝改源码，记录被推迟的 `ut.src_mutation` 请求到 `headless-assumptions.md`，不登记 `approved_src_mutations`。
+1. 不在 UT invocation 内修改 `src/main` 或等价业务实现根；用户回复、署名或 legacy `approved_src_mutations[]` 不构成例外。
+2. 记录具体文件、所需签名、UT 层无法规避的技术理由和影响面，形成 coding repair candidate。
+3. runner 回退 coding owner 完成改造，并完整重走 review→ut→testing；回到 UT 后重新生成 testability audit。
+4. `ut_no_src_mutation` 对 UT 窗口内任一业务源码变化保持 BLOCKER，不读取人工授权名单。
+5. 对“报错顺手抽函数/改 public/新增工具函数/改 barrel”等便利性修改同样适用。
 
-1. **动手前**显式向用户提出请求（`ut.src_mutation`，须先展示完整变更描述）：`1=授权改源码` `2=拒绝` `3=先看 diff`。请求须含拟变更文件路径、拟抽取/新增函数签名、为何不能只改 UT/DAG/use-cases.yaml 规避的技术理由、预估影响面。
-2. 用户**书面同意**后方可动手。
-3. 动手后必须把授权纪要写入 `ut/reports/<timestamp>/<model>-ut/gap-notes.md > approved_src_mutations[]`：时间戳、文件路径、变更摘要、用户确认原话。
-4. **未登记的 src/main 变更一律视为违规**，触发 harness `ut_no_src_mutation` BLOCKER。
-5. **特别禁止**以下"便利性"借口直接动手："报错→顺手抽函数/改命名字段"、"无法访问私有成员→改 public"、"UT 需要工具函数→顺手新增"、"导入不便→顺手改 barrel 导出"——都必须先问。
-
-违反会被 code-review 追溯标记为质量事件。推荐替代路径：优先在 UT/Spy 侧用原型替换、`as unknown as T` 注入绕过可测性障碍；确需源码变更优先选"抽出命名方法/导出函数/普通 class"而非新造 Port/UseCase 类。
+在不改业务源码的前提下，优先使用 UT/Spy、类型安全的替身或原型恢复；若方案本身需要新架构或需求变化，分别回 plan/spec owner，而不是在 UT 内越权补洞。

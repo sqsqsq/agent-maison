@@ -106,20 +106,17 @@ export interface IncidentFacts {
 }
 
 // ---------------------------------------------------------------------------
-// 授权（只装已验证 grant）
+// 外部权限事实（不参与质量降级）
 // ---------------------------------------------------------------------------
 
 /**
- * `live_operator`  当场真人应答（同步在场，调用方已取得明确表态）
- * `verified_receipt` 通过 confirmation-receipt 信任链验签的 receipt
- *
- * **没有 `manifest` / `cli_flag` / `natural_language` 源**——它们只是 authority
- * verifier 的输入，不得直接成为 grant（框架明文红线，见文件头）。
+ * 仅保留窄 external_authorization 类型给真正的外部秘密/不可逆操作/法律权限。
+ * 当前 feature quality incidents 不消费 grant；旧 confirmation receipt 永远不能推进。
  */
-export type AuthoritySource = 'live_operator' | 'verified_receipt';
+export type AuthoritySource = 'external_authorization';
 
 export interface VerifiedAuthorityGrant {
-  /** 被授权的动作 id（与 incident 的 requires_grant 对应）。 */
+  /** 外部权限动作 id；不得命名为 quality waiver。 */
   action: string;
   source: AuthoritySource;
   /** 该授权锚定的对象（如 receipt object_hash）——换皮到更宽授权即失配。 */
@@ -170,8 +167,6 @@ export interface IncidentSpec {
    * 能继续。判据不是「有没有人工动作」（设备/环境恢复未必是人工动作）。
    */
   structurally_terminal?: boolean;
-  /** operator 类专用：放行所需的 grant action id（缺 grant → waiting('human')）。 */
-  requires_grant?: string;
   /**
    * recoverable 类专用：可用的恢复动作。
    * 结构前提不满足（截断链 / 预算耗尽 / 指纹重现）→ terminal。
@@ -193,49 +188,39 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   unauthorized_source_mutation: { class: 'recoverable', recover_action: 'backtrack_to_coding' },
 
   // --- 结构上无法在本 run 继续 ---------------------------------------------
-  authorized_mutation_requires_full_chain: { class: 'operator', structurally_terminal: true },
+  authorized_mutation_requires_full_chain: { class: 'recoverable', structurally_terminal: true },
   backtrack_limit: { class: 'recoverable', structurally_terminal: true },
   backtrack_fingerprint_repeat: { class: 'recoverable', structurally_terminal: true },
   backtrack_target_absent: { class: 'recoverable', structurally_terminal: true },
-  testing_write_violation: { class: 'operator', structurally_terminal: true },
-  visual_ledger_integrity: { class: 'operator', structurally_terminal: true },
+  /** 写边界/owner 无法从既有 SSOT 唯一解析，框架无法安全归因或自动重验。 */
+  phase_write_boundary_unresolved: { class: 'framework_fault', structurally_terminal: true },
+  phase_write_owner_unresolved: { class: 'framework_fault', structurally_terminal: true },
+  /** 同一越权写入已在本 run 重现，现有收敛熔断不允许 resume 重置。 */
+  phase_write_violation_repeat: { class: 'recoverable', structurally_terminal: true },
+  /** invocation 后快照失败时无法证明写入归因，属于不可继续的框架事务失败。 */
+  post_invoke_snapshot_failed: { class: 'framework_fault', structurally_terminal: true },
+  testing_write_violation: { class: 'recoverable', structurally_terminal: true },
+  visual_ledger_integrity: { class: 'framework_fault', structurally_terminal: true },
 
   // --- 需要人的决定（可问则问，不可问则停放） -------------------------------
-  await_human_visual_confirm: { class: 'operator', requires_grant: 'human_visual_acceptance' },
-  /**
-   * adjudicated-repair-loop（plan e2b7c4a9）：信号级候选累计 one-shot 收敛——
-   * open 中全部 signal@1 身份均已 attempted（eligible 空），或回退目标 phase 零改动
-   * no-op（修复无效）——不再自动回退，停等人工裁决。恢复=既有人工通道
-   * （manual driver 确认流 / visual-confirm 人签路径），不新增 receipt 体系。
-   */
-  repair_not_converging: { class: 'operator' },
-  /**
-   * adjudicated-repair-loop（plan e2b7c4a9）：物化前两态裁决受阻——producer 判
-   * actionable 的信号被 agent 反对/未复核，或 producer 直接归 uncertain（OCR 混淆 /
-   * 口径缺口）。**不物化候选、不自动回退、无自动 refuted**——原样呈证据停等人工。
-   * 恢复=既有 manual driver / visual-confirm / confirmation-receipts 通道（后者仅
-   * 真正豁免硬门禁时），guidance 写明入口与 resume 命令（WAITING 可接受未来输入）。
-   */
-  repair_adjudication_pending: { class: 'operator' },
-  await_human_verification_evidence: { class: 'operator', requires_grant: 'runtime_fidelity_attestation' },
-  capability_tightened_hard_pixel: { class: 'operator', requires_grant: 'fidelity_downgrade' },
+  /** legacy 事件只读：不再接受人签释放；当前证据须在 correction/successor run 重算。 */
+  await_human_visual_confirm: { class: 'recoverable', structurally_terminal: true },
+  /** 累计 one-shot/no-op 收敛熔断；same-run resume 无释放权，只能 successor/new evidence。 */
+  repair_not_converging: { class: 'recoverable', structurally_terminal: true },
+  /** legacy-only：当前实现以 device/provider capability-missing 投影，不接受 runtime 人签。 */
+  await_human_verification_evidence: { class: 'external' },
+  capability_tightened_hard_pixel: { class: 'external' },
   declared_product_layer_missing: { class: 'operator' },
   unverifiable_must_fix: { class: 'operator' },
   headless_interaction_required: { class: 'operator' },
-  /**
-   * plan delegated-vision-provider t7：UI 相关 run 在 primary=blind 且没有合法 visual
-   * provider 时，必须由操作者在启动命令显式给出 --allow-blind-visual。该停机等待的
-   * 是启动授权选择，不是外部环境恢复，也不另建 confirmation receipt/grant 体系。
-   */
-  blind_visual_authorization_required: { class: 'operator' },
   operator_interrupt: { class: 'operator' },
   /** c7e4a2d9：**只读兼容**——历史 3.0.0 前 events.jsonl 可能含
    * `halt_reason=await_human_p0_skip`，本映射供状态读取/归档工具解释旧事件；
    * 新 run 不再写该 halt（P0 未豁免 explicit skip 默认回 coding，见 p0-semantic-gates/
    * repair-candidates），本条目**不是**新 run 的写入口，不参与 driver 决策。 */
-  await_human_p0_skip: { class: 'operator', requires_grant: 'p0_skip_waiver' },
-  /** 闭环墙：脚本门禁反复 PASS 但回执关不了环（多为只能真人签的确认项）。 */
-  closure_open: { class: 'operator' },
+  await_human_p0_skip: { class: 'recoverable', recover_action: 'backtrack_to_coding' },
+  /** 闭环墙：脚本门禁反复 PASS 但机器证据/closure 事务无法关环。 */
+  closure_open: { class: 'recoverable', recover_action: 'retry_transaction' },
   /**
    * assess 侧 halt 的**通用**兜底（运行时带 `assess_halt:<reason>` 后缀——normalizeIncidentId 归一）。
    * f9c2e6b4 t3 起，产生端对"重试耗尽"改发下面两个带责任类别的 id；本条只留给未分类的
@@ -322,8 +307,8 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   //     session driver / delegated producer 的 halt_reason 从未入册，「全覆盖」是虚的）。
   //     一律按**保持现行行为**的类登记（这些今天都是停下求人/等外部），
   //     绝不落 recoverable —— 映射完整 ≠ 行为改动。
-  /** 仅剩需真人签字/确认项，内容重试无意义（actionability 聚合层出口）。 */
-  await_human_gate_deferral: { class: 'operator' },
+  /** legacy-only：新运行不再生成；resume 只能触发机器重验，不能靠签名改写质量结论。 */
+  await_human_gate_deferral: { class: 'recoverable', recover_action: 'retry_transaction' },
   /** 存在 toolchain 阻塞项——环境修好后继续。 */
   await_operator_toolchain: { class: 'external' },
   /** in-session 调和熔断（goal-mode-entry）。codex 七轮 P1：`fuse_reason` **持久化在
@@ -338,16 +323,16 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
    *  external——判 operator 会错报成「等人决策」。 */
   no_progress_agent_timeout: { class: 'external' },
   /** 视觉门禁无改善熔断（与基建类分流，见 goal-runner driverGuard 分支注释）。 */
-  no_progress_visual_gap: { class: 'operator' },
+  no_progress_visual_gap: { class: 'recoverable', structurally_terminal: true },
   /** 基建类无进展：工具链 / 采集失败——环境修好后继续。 */
   no_progress_toolchain: { class: 'external' },
   no_progress_capture: { class: 'external' },
   /** CUMULATIVE 家族（原按 failureKind 模板生成 id，已收敛为稳定 literal）。
    *  codex 八轮 P1：**必须拆两个**——CUMULATIVE_HALT_FAMILY 同时含 `toolchain`（等环境）
-   *  与 `await_human_confirm`（等人；c7e4a2d9 已把 await_human_p0_skip 移出家族），
+   *  历史上也覆盖 `await_human_confirm`；当前质量缺口已重投影到 owner/capability 路径，
    *  压成一个会让 wait_kind 真值永久丢失，而下游被禁止读 failure_kind_classified 自行纠正。 */
   no_progress_cumulative_external: { class: 'external' },
-  no_progress_cumulative_human: { class: 'operator' },
+  no_progress_cumulative_human: { class: 'recoverable', structurally_terminal: true },
   /** 设备就绪门（delegated producer：device-readiness-gate）。 */
   device_not_ready: { class: 'external' },
   /** codex 七轮 P1：AMBIGUOUS 的原契约是「多设备无法唯一确定 → HALT 求人，须用户配置
@@ -361,8 +346,8 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   goal_post_review_source_mutation_unresolved: {
     class: 'recoverable', recover_action: 'backtrack_to_coding',
   },
-  await_human_fidelity_tier: { class: 'operator', requires_grant: 'fidelity_downgrade' },
-  needs_human: { class: 'operator' },
+  await_human_fidelity_tier: { class: 'external' },
+  needs_human: { class: 'recoverable', recover_action: 'retry_transaction' },
   /** codex 第九批 P1：--supersede 参数校验失败的启动期优雅收口（改参数重跑即可） */
   supersede_target_invalid: { class: 'operator' },
   device_toolchain: { class: 'external' },
@@ -528,10 +513,6 @@ export function dispositionOf(decision: Decision): Disposition {
 /** ut drift 走保守恢复时的决策原因——**不复用授权语义**（不产 matched_receipts）。 */
 export const UNTRUSTED_DRIFT_REASON = 'untrusted_source_drift_revalidation';
 
-function hasGrant(authority: AuthorityFacts, action: string): boolean {
-  return authority.grants.some((g) => g.action === action && Boolean(g.binding));
-}
-
 /** 回退的结构前提（任一不满足 → 结构上无法在本 run 恢复）。 */
 function backtrackBlocked(facts: IncidentFacts): string | null {
   if (facts.chain_has_coding_review === false) {
@@ -557,7 +538,7 @@ function backtrackBlocked(facts: IncidentFacts): string | null {
  */
 export function decide(
   facts: IncidentFacts,
-  authority: AuthorityFacts,
+  _authority: AuthorityFacts,
   context: ExecutionContext,
 ): Decision {
   const spec = lookupIncident(facts.incident);
@@ -595,15 +576,10 @@ export function decide(
       };
     }
     case 'operator': {
-      if (spec.requires_grant && hasGrant(authority, spec.requires_grant)) {
-        return { kind: 'continue', reason: `已验证授权（${spec.requires_grant}）放行` };
-      }
       return {
         kind: 'waiting',
         wait_kind: 'human',
-        reason: spec.requires_grant
-          ? `${facts.incident}：缺已验证授权（${spec.requires_grant}）——停放等人`
-          : `${facts.incident}：需要人的决定——停放等人`,
+        reason: `${facts.incident}：需要外部输入或决定——停放等待；人工决定不得改写机器质量结论`,
       };
     }
     case 'external':

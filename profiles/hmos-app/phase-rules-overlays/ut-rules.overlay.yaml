@@ -272,16 +272,15 @@ structure_checks:
 
   ut_no_src_mutation:
     description: >
-      v2.2 新增（business-ut 红线）：business-ut（UT）阶段**禁止擅自修改业务源码**。
+      business-ut（UT）阶段**禁止修改业务源码**。
       对 02-Feature/**/src/main/**、01-Business/**/src/main/**、00-Common/**/src/main/**
-      等非 ohosTest/test 目录下的任何变更，必须事先征得用户同意并登记到
-      gap-notes.md > approved_src_mutations[] 清单。
+      等非 ohosTest/test 目录下的任何变更，不接受用户署名、receipt 或 gap-notes 放行；
+      所需源码改造必须交回 coding owner，并完整重走 review→ut→testing。
       harness 做法：
         (1) 确定 baseRef：优先读 trace.json > start_commit；无则回退 HEAD~1；
         (2) git diff --name-only <base>..HEAD + 未提交变更 + untracked；
         (3) 按路径前缀筛出业务源码变更；
-        (4) 读 gap-notes.md 的 approved_src_mutations[]；
-        (5) 未登记的文件一律视为违规，FAIL BLOCKER。
+        (4) 任一命中均 FAIL BLOCKER 并路由 coding repair；legacy 授权字段只读且 inert。
     severity: BLOCKER
     rule:
       protected_prefixes:
@@ -292,8 +291,7 @@ structure_checks:
         - "**/src/ohosTest/**"
         - "**/test/**"
       base_ref: "trace.json > start_commit（否则回退 HEAD~1）"
-      authorized_list: "gap-notes.md > approved_src_mutations[].file"
-      fail_if: "any changed business file not in authorized list"
+      fail_if: "any changed business file"
 
   ut_hvigor_test:
     description: >
@@ -438,12 +436,12 @@ structure_checks:
     description: >
       testability-audit.md 中 testability_level=L3 的每条记录必须 selected ∈ {option_a, option_b}：
       option_a → acceptance.yaml 对应条目必须填写 device_focus；
-      option_b → reports/{feature}/**/gap-notes.md 的 approved_src_mutations[]
-      至少 1 条（与 ut_no_src_mutation 授权流一致）。
+      option_b → 当前 UT 阶段 FAIL，并生成 coding repair candidate；coding 完成源码可测性改造
+      且重走 review 后，审计应降为 L1/L2 再继续 UT。
     severity: BLOCKER
     rule:
       acceptance_device_focus: "<features_dir>/{feature}/acceptance.yaml > device_focus"
-      gap_notes_glob: "<features_dir>/{feature}/**/gap-notes.md"
+      option_b_disposition: "backtrack_to_phase:coding"
 
   ut_mock_plan_present:
     description: >
