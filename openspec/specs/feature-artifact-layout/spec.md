@@ -243,4 +243,3 @@ Enforcement: `harness/scripts/utils/contracts-loader.ts`, `harness/scripts/utils
 
 - **WHEN** the plan owner adds a missing path to `contracts.files` and reruns closure
 - **THEN** the resolver SHALL derive a new view solely from the updated YAML without reading a previous graph or sidecar
-

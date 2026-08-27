@@ -1220,4 +1220,3 @@ Enforcement: `harness/scripts/utils/goal-phase-runtime.ts`, `harness/harness-run
 
 - **WHEN** production structure is inspected
 - **THEN** no `GoalPhaseExecutor` implementation SHALL import or invoke a phase check/harness entry directly
-

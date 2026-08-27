@@ -66,4 +66,3 @@ Enforcement: `harness/scripts/utils/goal-phase-runtime.ts`, `harness/scripts/uti
 
 - **WHEN** acquisition fails or the mailbox epoch is stale after release
 - **THEN** the handoff outcome SHALL be recorded without either owner independently advancing a phase
-

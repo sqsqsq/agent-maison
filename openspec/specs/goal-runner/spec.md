@@ -1497,4 +1497,3 @@ Enforcement: `harness/tests/unit/goal-runtime-structure.unit.test.ts`, `harness/
 
 - **WHEN** the completed source tree is checked
 - **THEN** it SHALL find the shared runtime as the sole phase loop, zero private driver loops and zero executor-to-gate call edges
-
