@@ -105,6 +105,19 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
 `run_created.rebaseline_from_run_id` 与 `supersede` 的 target/superseding/base/event 引用；
 不回写旧 run。这个管理命令建立新的问责边界，不是质量豁免，也不构成密码学真人证明。
 
+### Runtime-owned blocker 与契约扩展
+
+`run_base_sha` 缺失、损坏或与出生摘要不一致属于 runtime-owned framework blocker：runtime
+必须在 executor 前停止，且 actionability 归 operator/toolchain，不得把“补锚”“改 manifest”或
+重试同一 prompt 回喂给 agent。现代 run 不允许用 `trace.start_commit`、当前裸 HEAD 或
+`coding-base.json` 临时补救；旧 reader 只服务没有 `run_created` 的迁移期 run。
+
+plan closure 会把 `resource_keys[*].path`、`media`、页面/路由注册点以及 HAR build/export
+路径统一解析，并要求每个文件引用都已列入 `contracts.files`。例如 contracts 引用了 20 枚
+logo、但顶层 `files` 未声明时，应回到 plan 扩充 `contracts.files` 并重新 closure；不得在
+coding 后绕过 UI scope、按字节一致自动授权或另建 asset 豁免表。`contracts.yaml` 始终是唯一
+持久输入，closure 只产生内存规范化视图。
+
 ## 状态语义（goal-fakepass-hardening 后）
 
 | 最终状态 | 含义 |
