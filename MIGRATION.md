@@ -46,7 +46,7 @@
 - 先前 closed 的 fallback phase 也必须重跑/重新闭环：evidence 绑定项目内 applicability 依赖和每一次实际 source attempt，缺失的高优先级 artifact 后来出现会使旧 closure stale。framework contract 仅以 `capability_resolution_contract_fingerprint` 留在 summary/closure provenance，升级 framework 不会使消费者历史 feature stale。带上游 producer 指针的裁剪只有在阻塞下游 `on_missing: fail` core capability 时才形成 producer 定向的 `pruned` assess gap。
 2. **Skill contract 成为运行时输入**：结构化 inputs、capabilities、produces 与 checks 由 `skills/feature/<skill>/contract.yaml` 声明；写边界与 closure 仍由既有 policy/evidence 机制负责。自定义 Skill/phase 需要在对应 Skill 目录补 contract，否则一致性门禁失败。
 3. **`next.json` 是投影**：`assess@1` 从 summary/closure/evidence/goal 指纹重算 gap 与一个 recommendation；不要写脚本直接编辑 `next.json`。
-4. **Goal 只有一个调和循环**：interactive 与 detached 都执行 `assess → authorize → one phase → reassess`。`goal-mode` Skill 不再维护下一阶段表。
+4. **Goal 只有一个调和循环**：interactive 与 detached 都进入同一个 `GoalPhaseRuntime`，仅 executor transport（宿主 callback / adapter spawn）不同。runtime 独占 `assess → authorize → one phase → gate/verdict → reassess`；`goal-mode` Skill、宿主与 executor 不再维护下一阶段表或私有 gate。
 5. **用户模式改为“有人在场 / 无人值守”**：明确意图不再二次确认，歧义使用 registry `goal.run_mode`；`--detach` 恒为无人值守。
 
 Adapter 作者须按需补 root `goal_capability`：

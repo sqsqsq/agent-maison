@@ -279,7 +279,7 @@ export function runAll(): UnitCaseResult[] {
   // 未完成骨架，baselineComplete 结构上恒 false，"证据齐全即跳过"不可达。
   run(results, 'skip 机制退役判别：生产代码不得残留 decideSkipAgentInvoke / skip 事件', () => {
     const runner = fs.readFileSync(
-      path.join(__dirname, '..', '..', 'scripts', 'goal-phase-runtime-process.ts'), 'utf-8');
+      path.join(__dirname, '..', '..', 'scripts', 'goal-phase-runtime.ts'), 'utf-8');
     assert(!runner.includes('decideSkipAgentInvoke'), 'goal-runner 不得再引用 skip 判定');
     assert(!runner.includes('completion_evidence_pre_existing'), '不得再发 skip 观测事件');
     assert(!runner.includes('skip_agent_invoke'), '不得再有 skip action');

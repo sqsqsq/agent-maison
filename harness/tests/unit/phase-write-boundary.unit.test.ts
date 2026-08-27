@@ -133,15 +133,16 @@ export function runAll(): UnitCaseResult[] {
       'both candidate owners must be retained');
   });
 
-  run(results, 'pre-existing dirty bytes are not attributed and runner report writes are excluded', () => {
+  run(results, 'pre-existing dirty bytes are not attributed and runner projections/reports are excluded', () => {
     const root = makeHost();
     const boundary = resolve(root);
     // acceptance is already dirty before the invocation; no byte change follows.
     const pre = capturePhaseInvocationSnapshot(boundary);
     write(root, `doc/features/${FEATURE}/plan/reports/summary.json`, '{"verdict":"PASS"}\n');
+    write(root, `doc/features/${FEATURE}/next.json`, '{"action":"run_phase"}\n');
     const post = capturePhaseInvocationSnapshot(boundary);
     const diff = diffPhaseInvocationSnapshots(pre, post);
-    assert(diff.kind === 'clean', `unchanged dirty input and runner report must be clean: ${JSON.stringify(diff)}`);
+    assert(diff.kind === 'clean', `unchanged dirty input and runner projections must be clean: ${JSON.stringify(diff)}`);
   });
 
   run(results, 'plan changing acceptance records per-file hashes and routes to spec owner', () => {

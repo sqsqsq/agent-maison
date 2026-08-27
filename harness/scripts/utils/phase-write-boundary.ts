@@ -335,7 +335,7 @@ function isRunnerOwnedOrSharedPath(rel: string): boolean {
   if (normalized.includes('/goal-runs/')) return true;
   if (normalized.includes('/reports/')) return true;
   if (normalized.includes('/context/')) return true;
-  return /(?:^|\/)(?:phase-completion-receipt\.md|phase-state\.json|\.current-phase\.json|feature-completion\.json)$/.test(rel);
+  return /(?:^|\/)(?:next\.json|phase-completion-receipt\.md|phase-state\.json|\.current-phase\.json|feature-completion\.json)$/.test(rel);
 }
 
 function snapshotFailure(reason: string): PhaseInvocationSnapshot {

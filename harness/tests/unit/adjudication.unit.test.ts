@@ -572,7 +572,7 @@ const incidentClosureCases: TestCase[] = [
   {
     name: '事故②跨 resume：drift 指纹须落 events 且从 priorEvents 回放（重启不得失忆白吃预算）',
     run: () => {
-      const src = stripComments(fs.readFileSync(path.join(SCRIPTS_DIR, 'goal-phase-runtime-process.ts'), 'utf8'));
+      const src = stripComments(fs.readFileSync(path.join(SCRIPTS_DIR, 'goal-phase-runtime.ts'), 'utf8'));
       // ① 保守恢复事件必须持久化 drift_fingerprint
       assert(
         /drift_fingerprint:\s*driftDecision\.driftFingerprint/.test(src),
@@ -598,7 +598,7 @@ const incidentClosureCases: TestCase[] = [
     name: '保守恢复路**不产授权语义**：matched_receipts/authorized_backtrack 已彻底删除',
     run: () => {
       // 只看代码：注释里提到 matched_receipts（如"不产 matched_receipts"）不算构造点。
-      const src = stripComments(fs.readFileSync(path.join(SCRIPTS_DIR, 'goal-phase-runtime-process.ts'), 'utf8'));
+      const src = stripComments(fs.readFileSync(path.join(SCRIPTS_DIR, 'goal-phase-runtime.ts'), 'utf8'));
       const idx: number[] = [];
       for (const m of src.matchAll(/matched_receipts/g)) idx.push(m.index ?? -1);
       assert(idx.length === 0, `matched_receipts 已退役，实际仍有 ${idx.length} 处`);
@@ -845,7 +845,7 @@ const projectionCases: TestCase[] = [
     name: 't5⓪ 元门禁：两条事件写入路径都必须过投影注入点（新增写入路径漏接即红）',
     run: () => {
       const paths = [
-        ['goal-phase-runtime-process.ts', 'createGoalReconcileBoundary'],
+        ['goal-phase-runtime.ts', 'createGoalReconcileBoundary'],
         [path.join('utils', 'goal-in-session-evidence.ts'), 'appendFileSync'],
       ] as const;
       for (const [rel, anchor] of paths) {
@@ -1348,7 +1348,7 @@ const projectionCases: TestCase[] = [
   {
     name: 't4 两个启动入口共用同一读取函数（不得各写一份）',
     run: () => {
-      const runner = stripComments(fs.readFileSync(path.join(SCRIPTS_DIR, 'goal-phase-runtime-process.ts'), 'utf8'));
+      const runner = stripComments(fs.readFileSync(path.join(SCRIPTS_DIR, 'goal-phase-runtime.ts'), 'utf8'));
       const entry = stripComments(fs.readFileSync(path.join(SCRIPTS_DIR, 'goal-mode-entry.ts'), 'utf8'));
       for (const [name, src] of [['goal-runner', runner], ['goal-mode-entry', entry]] as const) {
         assert(/resolveRequirementInput\(/.test(src), `${name} 未复用共享读取函数`);

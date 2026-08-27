@@ -8,16 +8,14 @@ import type {
   InSessionRoundResult,
   GoalModeInSessionOptions,
 } from './utils/goal-phase-runtime';
+import { deriveInSessionFingerprint } from './utils/goal-phase-runtime';
+import { GoalPhaseRuntime } from './goal-phase-runtime';
+import { AttendedGoalPhaseExecutor } from './utils/goal-phase-executor';
+import { loadEventsJsonl } from './utils/goal-runner-phase';
+import { projectCanonicalLifecycle } from './utils/goal-canonical-lifecycle';
 import {
-  deriveInSessionFingerprint,
-  releaseAttendedRuntimeOwnerBestEffort,
-  runAttendedGoalPhaseRuntime,
-} from './utils/goal-phase-runtime';
-import {
-  casAcquireRunOwner,
   ensureRunControl,
-  forceTakeoverRunOwner,
-  markExpiredSessionOrphaned,
+  releaseRunOwner,
 } from './utils/goal-run-control';
 import {
   buildGoalManifestFromInput,
@@ -44,7 +42,22 @@ export { deriveInSessionFingerprint } from './utils/goal-phase-runtime';
 export async function runGoalModeInSession(
   options: GoalModeInSessionOptions,
 ): Promise<InSessionRoundResult> {
-  return runAttendedGoalPhaseRuntime(options);
+  // Compatibility callers used to pre-acquire the session fence. Release it before entering
+  // the canonical runtime, which owns acquisition, progression and terminal release itself.
+  try { releaseRunOwner(options.runDir, options.token); } catch { /* already released */ }
+  return runGoalModeHostBridge({
+    projectRoot: options.projectRoot,
+    frameworkRoot: options.frameworkRoot,
+    feature: options.manifest.feature,
+    runId: options.manifest.run_id,
+    adapter: options.adapter,
+    runMode: 'attended',
+    executePhase: options.executePhase,
+    authorization: options.authorization,
+    leaseMs: options.leaseMs,
+    maxRounds: options.maxRounds,
+    onRound: options.onRound,
+  });
 }
 export interface PrepareGoalModeRunOptions {
   projectRoot: string;
@@ -194,66 +207,75 @@ export async function runGoalModeHostBridge(
     );
   }
   const adapter = manifest.adapter;
-  const workflow = resolveWorkflowSpec(options.projectRoot, {
-    frameworkRoot: options.frameworkRoot,
-  });
-  validateMinimumAssurance(
-    options.frameworkRoot,
-    manifest.minimum_assurance,
-    new Set(workflow.artifacts.filter((item) => item.scope === 'feature').map((item) => item.id)),
-  );
   const runDir = path.resolve(options.projectRoot, ...manifest.report_dir.split('/'));
-  let control = ensureRunControl(runDir, manifest.run_id);
-  control = markExpiredSessionOrphaned(runDir, manifest.run_id);
-  const owner = {
-    kind: 'session' as const,
-    owner_id: `host-session-${process.pid}-${Date.now()}`,
-    lease_ms: options.leaseMs ?? 60_000,
-  };
-  const acquired = options.forceTakeover && control.owner?.state === 'orphaned_session'
-    ? { ok: true as const, ...forceTakeoverRunOwner(
-        runDir, manifest.run_id, control.current_epoch, owner,
-      ) }
-    : casAcquireRunOwner(runDir, manifest.run_id, control.current_epoch, owner);
-  if (!acquired.ok) {
-    throw new Error(
-      `[goal-mode-entry] run-control owner busy/orphaned at epoch ${acquired.control.current_epoch}; ` +
-      'expired session takeover requires explicit forceTakeover',
+  const hasExecutionStart = loadEventsJsonl(path.join(runDir, 'events.jsonl'))
+    .some((event) => event.type === 'run_start');
+  const executor = new AttendedGoalPhaseExecutor(async (context) => {
+    const outcome = await options.executePhase(
+      context.phase,
+      { action: 'run_phase', phase: context.phase, instruction: context.instruction ?? '' },
+      {
+        runId: context.runId,
+        phase: context.phase,
+        attemptId: context.attemptId,
+        ownerId: context.owner.owner_id,
+        ownerEpoch: context.owner.epoch,
+      },
     );
-  }
-  try {
-    return await runGoalModeInSession({
-      projectRoot: options.projectRoot,
-      frameworkRoot: options.frameworkRoot,
-      runDir,
-      token: acquired.token,
-      manifest,
-      workflow,
-      adapter,
-      mode: 'attended',
-      authorization: options.authorization ?? { mode: 'goal_mode' },
-      executePhase: options.executePhase,
-      leaseMs: options.leaseMs,
-      maxRounds: options.maxRounds,
-      onRound: options.onRound,
-    });
-  } finally {
-    releaseAttendedRuntimeOwnerBestEffort({
-      projectRoot: options.projectRoot,
-      frameworkRoot: options.frameworkRoot,
-      runDir,
-      token: acquired.token,
-      manifest,
-      workflow,
-      adapter,
-      mode: 'attended',
-      authorization: options.authorization ?? { mode: 'goal_mode' },
-      executePhase: options.executePhase,
-      leaseMs: options.leaseMs,
-      maxRounds: options.maxRounds,
-      onRound: options.onRound,
-    });
-  }
+    return outcome;
+  });
+  const exitCode = await new GoalPhaseRuntime({
+    args: [
+      hasExecutionStart ? '--resume' : '--attach-created', manifest.run_id,
+      '--feature', manifest.feature,
+      '--adapter', adapter,
+      '--foreground-ok',
+      '--runtime-executor', 'attended',
+      '--runtime-owner', 'session',
+      '--project-root', options.projectRoot,
+      '--framework-root', options.frameworkRoot,
+      ...(options.forceTakeover ? ['--force-resume'] : []),
+    ],
+    ownerKind: 'session',
+    executor,
+  }).run();
+
+  const rawEvents = loadEventsJsonl(path.join(runDir, 'events.jsonl'));
+  const canonical = projectCanonicalLifecycle(rawEvents);
+  const lastVerdict = [...canonical].reverse().find((event) => event.type === 'phase_verdict');
+  const lastHalt = [...canonical].reverse().find((event) => event.type === 'phase_halt');
+  const lastEnd = [...canonical].reverse().find((event) => event.type === 'run_end');
+  const phase = lastVerdict?.type === 'phase_verdict'
+    ? lastVerdict.phase
+    : lastHalt?.type === 'phase_halt'
+      ? lastHalt.phase
+      : manifest.start_phase;
+  const outcome = lastVerdict?.type === 'phase_verdict'
+    ? {
+        status: lastVerdict.verdict === 'PASS' ? 'passed' as const : 'failed' as const,
+        phase,
+        details: lastVerdict.halt_reason,
+      }
+    : lastHalt?.type === 'phase_halt'
+      ? { status: 'waiting' as const, phase, details: lastHalt.halt_reason }
+      : undefined;
+  const result: InSessionRoundResult = {
+    status: lastEnd?.type === 'run_end' && lastEnd.status === 'CHAIN_SLICE_COMPLETED'
+      ? 'reconciled'
+      : lastHalt?.type === 'phase_halt' && lastHalt.halt_reason === 'executor_waiting'
+        ? 'waiting'
+        : exitCode === 0
+          ? 'executed'
+          : 'fused',
+    assessment: null,
+    outcome,
+    ...(exitCode !== 0 ? { waiting_item: lastHalt?.type === 'phase_halt'
+      ? lastHalt.halt_reason ?? 'runtime halted'
+      : 'runtime halted' } : {}),
+    status_line: `feature=${manifest.feature} | phase=${phase} | runtime=canonical | exit=${exitCode}`,
+  };
+  options.onRound?.(result);
+  return result;
 }
 
 async function main(): Promise<void> {

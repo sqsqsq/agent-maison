@@ -17,6 +17,8 @@ export interface PhaseExecutionContext {
   readonly reportDir: string;
   readonly adapter: string;
   readonly adapterModel?: string;
+  /** Runtime-built phase instruction. Executors transport it; they do not interpret policy. */
+  readonly instruction?: string;
   readonly runtimeFacts: Readonly<{
     runBaseSha?: string;
     receiptRequired: boolean;

@@ -3,21 +3,22 @@
 Goal 模式只有一个编排循环：
 
 ```text
-assess → driver authorize/guard → execute one phase → reassess
+assess → GoalPhaseRuntime authorize/guard → executor transport → gate/verdict → reassess
 ```
 
-interactive session 与 detached runner 共用 `assess@1`、manifest、events、progress、phase artifacts 和 `run_id`。它们是同一 run 的不同 driver，不是两套状态机。
+interactive session 与 detached runner 共用同一个 `GoalPhaseRuntime`、`assess@1`、manifest、events、progress、phase artifacts 和 `run_id`。两者只是 executor transport 与 fenced owner kind 不同，不是两套 driver 或状态机。
 
 ## 职责划分
 
 | 组件 | 负责 | 不负责 |
 |---|---|---|
 | `assess@1` | 从当前事实找 gap；推荐当前、后续或回退 phase；调和熔断 | 授权、进程管理、写入 |
-| driver | 授权、预算、timeout/backoff、设备门、write guard、trust、失效事务 | 自建 next-phase 决策表 |
+| `GoalPhaseRuntime` | owner fence、授权、预算、timeout/backoff、设备门、write guard、trust、失效事务、gate/verdict/closure | 把生命周期授权交给 executor |
+| phase executor | 传输一次 attended callback 或 detached adapter invocation，返回规范化结果 | assess、gate、verdict、backtrack、rebaseline、run close |
 | phase Skill / harness | 产生 phase artifact、summary 1.2、closure/evidence | 决定跨 phase 去向 |
 | monitor | 只读活性与通知预算 | 终止或续跑 run |
 
-headless runner 会把进程结果提取为 `ReconcileObservation@1`，其中包含 phase outcome、blocker actionability、可信确定性缺陷、已用预算、重复指纹、可失效 phase 以及 timeout/interrupt/API 信号。Assess 消费这份版本化观察；runner 再执行已有的授权与安全事务。
+detached executor 把进程结果交回 runtime；runtime 提取 `ReconcileObservation@1`，其中包含 phase outcome、blocker actionability、可信确定性缺陷、已用预算、重复指纹、可失效 phase 以及 timeout/interrupt/API 信号。Assess 消费这份版本化观察；runtime 再执行已有的授权与安全事务。
 
 ## 用户运行模式
 
@@ -28,7 +29,7 @@ headless runner 会把进程结果提取为 `ReconcileObservation@1`，其中包
 
 明确意图不重复询问；歧义使用 `confirmation-registry.yaml > goal.run_mode`。`--detach` 恒为无人值守。`in-session`、`headless` 和 capability tier 是内部路由词，不进入用户菜单。
 
-每个 in-session phase 必须在新鲜、phase-scoped 的隔离上下文中执行，只回传结构化 outcome/evidence。adapter 未声明隔离能力时，降级为手动 harness + assess。
+每个 in-session phase 必须在 runtime 冻结的新鲜、phase-scoped 隔离上下文中执行，只回传结构化 outcome/evidence。adapter 未声明隔离能力时，降级为手动 harness + assess。
 
 ## 单写者与 fencing
 
@@ -63,6 +64,6 @@ feature/run lock 是当前 owner 的投影，不拥有 epoch。
 
 ## 能力解析与调和
 
-每个 phase 的 checker 之前会生成一份不可变 `CapabilityResolutionReport`。`assess@1` 只读取 summary 1.2 已持久化的 `assurance`、`capability_resolutions` 与 closure/evidence 新鲜度，不会重新解析 artifact 或擅自选择 fallback。这样 session 与 detached driver 对同一磁盘事实得到相同 recommendation。
+每个 phase 的 checker 之前会生成一份不可变 `CapabilityResolutionReport`。`assess@1` 只读取 summary 1.2 已持久化的 `assurance`、`capability_resolutions` 与 closure/evidence 新鲜度，不会重新解析 artifact 或擅自选择 fallback。这样 session 与 detached executor 对同一磁盘事实得到相同 recommendation。
 
 `minimum_assurance` 是 goal 的可选稀疏约束，仅把低于 `degraded`/`full` 的实际保证等级转换为 `insufficient_assurance`。它不授予 runner 执行权限，也不能覆盖 quality axis、release 或 PASS closure。已授权的 `pruned` 会作为 assess 的 `observed.degradations` 透出；`blocked` 由既有非 PASS/closure 路径处理。仅当 artifact attempt 的上游 producer 同时报告 `pruned`，并使下游 core capability (`on_missing: fail`) 被阻塞时，调和器额外生成 `pruned` gap，建议先回补 producer。

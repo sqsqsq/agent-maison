@@ -162,7 +162,7 @@ todos:
       事件一个不能漏。验收：attended/detached 完整 canonical projection 逐项相等（含
       双向 handoff 格）；agent 执行前 runtime-owned 前置事实全就位；缺失 runtime-owned
       evidence 归 framework corruption 不回喂 agent；旧 loop 删除+结构零项过（§6）。
-    status: in_progress
+    status: completed
   - id: m3-plan-contract-reference-closure
     content: >
       P0 · OpenSpec change `plan-contract-reference-closure` 完整实施与验收。

@@ -60,8 +60,10 @@ import {
   computeRunRequirementSha,
   loadFidelityIntentSsot,
 } from '../../scripts/utils/fidelity-shared';
-import { mergeSuccessorRequirement } from '../../scripts/utils/goal-manifest';
+import { loadGoalManifestFromRun, mergeSuccessorRequirement } from '../../scripts/utils/goal-manifest';
 import type { UnitCaseResult } from '../run-unit';
+import { AttendedGoalPhaseExecutor } from '../../scripts/utils/goal-phase-executor';
+import { prepareGoalModeRun, runGoalModeHostBridge } from '../../scripts/goal-mode-entry';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 const PRODUCT_FILE = '02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets';
@@ -90,7 +92,7 @@ function writeFile(root: string, rel: string, content: string): void {
 }
 
 /** 最小可跑宿主（git 仅为 layout 惯例保留；v23 快照已不依赖 git） */
-function setupHost(): { root: string } {
+export function setupGoalRuntimeHost(adapter = 'cursor'): { root: string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gr-v23-'));
   git(root, ['init', '-q']);
   git(root, ['config', 'user.email', 't@t']);
@@ -107,7 +109,7 @@ function setupHost(): { root: string } {
       cross_module_exports_file: 'index.ets',
     },
     paths: { features_dir: 'doc/features', docs_committed: false, reports_dir_pattern: 'doc/features/<feature>/<phase>/reports' },
-    materialized_adapters: ['cursor'],
+    materialized_adapters: [adapter],
   }, null, 2));
   writeFile(root, 'AGENTS.md', '# AGENTS\n');
   const deveco = path.join(root, 'fake-deveco');
@@ -119,11 +121,11 @@ function setupHost(): { root: string } {
   fs.writeFileSync(hvigorBin, '');
   writeFile(root, 'framework.local.json', JSON.stringify({
     schema_version: '1.0',
-    agent_adapter: 'cursor',
+    agent_adapter: adapter,
     toolchain: { devEcoStudio: { installPath: deveco.split(path.sep).join('/') } },
     vision: {
       canary: {
-        adapter: 'cursor', verdict: 'tool_read', probed_at: new Date().toISOString(),
+        adapter, verdict: 'tool_read', probed_at: new Date().toISOString(),
         probed_via: 'interactive', probe_version: 2,
       },
     },
@@ -164,6 +166,7 @@ function setupHost(): { root: string } {
   git(root, ['commit', '-qm', 'init']);
   return { root };
 }
+const setupHost = setupGoalRuntimeHost;
 
 /**
  * b3e8d4c7 t5：在 runChain 之外读/写 trust-state 时必须用与 runChain 相同的
@@ -254,7 +257,7 @@ interface AgentCtx {
   runId: string;
 }
 
-interface RunProbe {
+export interface RunProbe {
   invokedPhases: string[];
   harnessPhases: string[];
   /** device-readiness t3：就绪门被调用的 phase 序列 */
@@ -281,7 +284,7 @@ interface RunProbe {
  * 跑一次 goal run（spec→testing 全链）。testing 轮行为由 onTesting 编程：
  * 按 attempt 决定写什么产物（模拟"发现缺陷→回退→修复后干净"的两轮形态）。
  */
-async function runChain(
+export async function runGoalRuntimeChain(
   root: string,
   opts: {
     onTesting?: (ctx: AgentCtx) => void;
@@ -341,6 +344,12 @@ async function runChain(
     afterHarnessPass?: (ctx: {
       root: string; phase: string; runId: string; attemptId: string;
     }) => void;
+    /** M2 parity seam: lifecycle remains production; only the agent transport changes. */
+    executorMode?: 'attended' | 'detached';
+    adapter?: string;
+    viaHostBridge?: boolean;
+    runId?: string;
+    failExecutorFor?: (phase: string, attempt: number) => boolean;
   } = {},
 ): Promise<RunProbe> {
   const invokedPhases: string[] = [];
@@ -386,7 +395,13 @@ async function runChain(
       if (phase === 'coding') opts.onCoding?.(ctx);
       if (phase === 'spec') opts.onSpec?.(ctx);
       if (phase === 'plan') opts.onPlan?.(ctx);
-      return { exitCode: 0, stdout: 'done', stderr: '', command: 'fake-agent' };
+      const failed = opts.failExecutorFor?.(phase, n) ?? false;
+      return {
+        exitCode: failed ? 1 : 0,
+        stdout: failed ? '' : 'done',
+        stderr: failed ? 'injected executor failure' : '',
+        command: 'fake-agent',
+      };
     }) as never);
     __testing_setRepoLayout(layoutFieldsForTmpHost(root));
     // openspec device-readiness-and-completion t3：临时宿主无真实设备，真实就绪门会
@@ -597,6 +612,45 @@ async function runChain(
       });
       return { exitCode: 0, timedOut: false };
     });
+    const recordAttendedPhase = async (
+      phase: string,
+      prompt: string,
+      runId: string,
+      childEnv: Readonly<Record<string, string>> = {},
+    ): Promise<{ status: 'passed' | 'failed'; phase: string }> => {
+      invokedPhases.push(phase);
+      const n = (attempts.get(phase) ?? 0) + 1;
+      attempts.set(phase, n);
+      if (phase === 'coding') codingPrompts.push(prompt);
+      if (phase === 'plan') planPrompts.push(prompt);
+      if (phase === 'testing') {
+        testingPrompts.push(prompt);
+        testingExtraEnvs.push({ ...childEnv });
+      }
+      const ctx: AgentCtx = {
+        root,
+        phase,
+        attempt: n,
+        prompt,
+        runId,
+      };
+      if (phase === 'testing') opts.onTesting?.(ctx);
+      if (phase === 'coding') opts.onCoding?.(ctx);
+      if (phase === 'spec') opts.onSpec?.(ctx);
+      if (phase === 'plan') opts.onPlan?.(ctx);
+      return {
+        status: opts.failExecutorFor?.(phase, n) ? 'failed' : 'passed',
+        phase,
+      };
+    };
+    const attendedExecutor = new AttendedGoalPhaseExecutor(async (context) => {
+      return recordAttendedPhase(
+        context.phase,
+        context.instruction ?? '',
+        context.runId,
+        context.childEnv,
+      );
+    });
     const supersedeArgs = (opts.supersede ?? []).flatMap(id => ['--supersede', id]);
     // e9d4b7a3 t5：fresh 预算注入——goal-runner 无 --budget 旗标，走 --manifest +
     // --override-manifest（requirement/adapter 亦经 override 应用，行为等价纯 CLI）
@@ -664,7 +718,8 @@ async function runChain(
             : []),
           ...(opts.freshRequirementFile ? ['--requirement-file', 'increment-req.txt'] : []),
           '--start', opts.freshStartPhase ?? 'spec', '--end', 'testing',
-          '--adapter', 'cursor',
+          '--adapter', opts.adapter ?? 'cursor',
+          ...(opts.runId ? ['--run-id', opts.runId] : []),
           '--foreground-ok', '--force',
           ...(!useManifestPath
             ? []
@@ -673,7 +728,51 @@ async function runChain(
         ];
     process.chdir(root);
     clearFrameworkConfigCache();
-    const exitCode = await goalMain();
+    let bridgeReportDir: string | null = null;
+    const exitCode = opts.viaHostBridge
+      ? await (async () => {
+          const bridgeManifest = opts.resume
+            ? loadGoalManifestFromRun(root, opts.resume, { feature: FEATURE })
+            : prepareGoalModeRun({
+                projectRoot: root,
+                frameworkRoot: REPO_ROOT,
+                feature: FEATURE,
+                runId: opts.runId,
+                adapter: opts.adapter ?? 'codex',
+                requirement: opts.freshRequirement ?? '真机测试银行卡开卡流程',
+                startPhase: opts.freshStartPhase ?? 'spec',
+                endPhase: 'testing',
+              }).manifest;
+          bridgeReportDir = path.resolve(root, bridgeManifest.report_dir);
+          const result = await runGoalModeHostBridge({
+            projectRoot: root,
+            frameworkRoot: REPO_ROOT,
+            feature: FEATURE,
+            runId: bridgeManifest.run_id,
+            adapter: opts.adapter ?? 'codex',
+            runMode: 'attended',
+            executePhase: async (phase, recommendation) => recordAttendedPhase(
+              phase,
+              typeof recommendation === 'object' && recommendation && 'instruction' in recommendation
+                ? String((recommendation as { instruction?: unknown }).instruction ?? '')
+                : '',
+              bridgeManifest.run_id,
+            ),
+            forceTakeover: opts.forceResume,
+          });
+          return result.status === 'reconciled' ? 0 : result.status === 'waiting' ? 2 : 1;
+        })()
+      : opts.executorMode === 'attended'
+      ? await goalMain({
+          args: [
+            ...process.argv.slice(2),
+            '--runtime-executor', 'attended',
+            '--runtime-owner', 'session',
+          ],
+          ownerKind: 'session',
+          executor: attendedExecutor,
+        })
+      : await goalMain();
     const runsDir = path.join(root, 'doc/features', FEATURE, 'goal-runs');
     const runs = fs.existsSync(runsDir)
       ? fs.readdirSync(runsDir).filter(n => !n.startsWith('.'))
@@ -682,7 +781,7 @@ async function runChain(
     // 同一秒内创建的两个 run 时间戳相同、只有随机后缀不同，字典序因此与创建序无关
     // （约 50% 概率取到前一个 run 的目录，读到它的 events → supersede 用例随机红）。
     // 改按目录 mtime 取最新。
-    const reportDir =
+    const reportDir = bridgeReportDir ?? (
       runs.length > 0
         ? path.join(
             runsDir,
@@ -691,7 +790,7 @@ async function runChain(
               .sort((a, b) => a.t - b.t)
               .slice(-1)[0].n,
           )
-        : '';
+        : '');
     return {
       invokedPhases, harnessPhases, deviceGatePhases, codingPrompts, planPrompts, testingPrompts, testingExtraEnvs,
       harnessDeviceEnvs,
@@ -710,6 +809,7 @@ async function runChain(
     try { process.chdir(prevCwd); } catch { /* ignore */ }
   }
 }
+const runChain = runGoalRuntimeChain;
 
 function readEvents(reportDir: string): Array<Record<string, unknown>> {
   const p = path.join(reportDir, 'events.jsonl');
@@ -929,7 +1029,7 @@ test('legacy fidelity 回退 crash/resume：提前 completed 不能越过未提�
   let injected = false;
   let crashObserved = false;
   try {
-    await runChain(root, {
+    const interrupted = await runChain(root, {
       freshStartPhase: 'coding',
       freshRequirement: requirement,
       freshManifestContent: [
@@ -959,10 +1059,11 @@ test('legacy fidelity 回退 crash/resume：提前 completed 不能越过未提�
         throw new Error('injected crash after premature completed before finalizePhaseClosure');
       },
     });
+    crashObserved = injected && interrupted.exitCode === 1;
   } catch (error) {
     crashObserved = String((error as Error).message).includes('injected crash after premature completed');
   }
-  assert(crashObserved, 'fault injection 必须在 completed 后、closure finalizer 前终止进程');
+  assert(crashObserved, 'fault injection 必须在 completed 后、closure finalizer 前由 runtime 收口为失败');
   const interruptedReportDir = path.join(
     root, 'doc', 'features', FEATURE, 'goal-runs', runId,
   );
@@ -1202,7 +1303,7 @@ test('e9d4b7a3 t5: 预算撞墙 → 提额(--override-manifest) → resume：bud
   );
   // 二轮 review P1：刷新不得伪造同阶段新 attempt（refresh-*）——回执 identity 复验用
   // 原 attempt（跨阶段复验语义，不 re-sign）；源码级接线断言防回归。
-  const runnerSrc = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'goal-phase-runtime-process.ts'), 'utf-8');
+  const runnerSrc = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'goal-phase-runtime.ts'), 'utf-8');
   assert(!/attemptId: `refresh-\$\{phase\}`/.test(runnerSrc), '刷新不得再伪造 refresh-* attempt');
   assert(/originalAttempt/.test(runnerSrc), '刷新须从 events 恢复原 attempt id');
 });

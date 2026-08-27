@@ -562,7 +562,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     name: '环C：closure 提交侧必须透传 goalIdentity（attempt 等值校验不得在提交环节静默跳过）',
     run: () => {
       const runner = fs.readFileSync(
-        path.resolve(__dirname, '../../scripts/goal-phase-runtime-process.ts'),
+        path.resolve(__dirname, '../../scripts/goal-phase-runtime.ts'),
         'utf8',
       );
       assert(

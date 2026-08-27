@@ -99,13 +99,14 @@ function git(root: string, args: string[]): void {
 }
 
 /** 铺一个完整 spec 工程（PASS 所需：spec.md + acceptance + facts + source + git）。 */
-function scaffoldFeature(root: string): void {
+function scaffoldFeature(root: string, adapter = 'generic'): void {
   fs.mkdirSync(path.join(root, 'doc', 'features', 'demo', 'spec'), { recursive: true });
   fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({
     schema_version: '1.0', project_name: 'e2e', project_profile: { name: 'generic' },
     paths: { features_dir: 'doc/features', module_catalog: 'doc/module-catalog.yaml', glossary: 'doc/glossary.yaml', glossary_seed: 'doc/glossary-seed.txt', architecture_md: 'doc/architecture.md', docs_committed: false },
+    materialized_adapters: [adapter],
   }), 'utf-8');
-  fs.writeFileSync(path.join(root, 'framework.local.json'), JSON.stringify({ schema_version: '1.0', agent_adapter: 'generic' }), 'utf-8');
+  fs.writeFileSync(path.join(root, 'framework.local.json'), JSON.stringify({ schema_version: '1.0', agent_adapter: adapter }), 'utf-8');
   fs.writeFileSync(path.join(root, 'AGENTS.md'), '# AGENTS\n', 'utf-8');
   fs.writeFileSync(path.join(root, 'doc', 'features', 'demo', 'spec', 'spec.md'), [
     '# spec', '',
@@ -140,6 +141,8 @@ function scaffoldFeature(root: string): void {
   fs.mkdirSync(path.join(root, '02-Feature', 'ModA'), { recursive: true });
   fs.writeFileSync(path.join(root, '02-Feature', 'ModA', 'index.ets'), 'export class AccountService { balance = 0; }', 'utf-8');
   fs.writeFileSync(path.join(root, '02-Feature', 'ModA', 'transfer.ets'), 'export class TransferService {}', 'utf-8');
+  fs.mkdirSync(path.join(root, 'app'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'app', 'index.ets'), 'export const e2eApp = true;\n', 'utf-8');
   fs.mkdirSync(path.join(root, 'doc', 'features', 'demo', 'context'), { recursive: true });
   fs.writeFileSync(path.join(root, 'doc', 'features', 'demo', 'context', 'facts.md'), [
     '---', 'schema_version: "1.0"', 'feature: demo', 'established_by: spec', 'ready_to_produce: true', 'has_blocker_coverage_risk: false',
@@ -193,7 +196,7 @@ const cases: Case[] = [
       const before = repoDocFeatures();
       const { root, harnessDir } = provisionFramework();
       try {
-        scaffoldFeature(root);
+        scaffoldFeature(root, 'codex');
         const runId = '20260825T000000Z-attended-e2e';
         const prepared = prepareGoalModeRun({
           projectRoot: root,

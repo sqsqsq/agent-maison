@@ -337,7 +337,7 @@ function testUtPromptContractLines(): void {
 }
 
 function testGoalRunnerInjectsUtOnly(): void {
-  const src = fs.readFileSync(path.join(REPO_ROOT, 'harness', 'scripts', 'goal-phase-runtime-process.ts'), 'utf-8');
+  const src = fs.readFileSync(path.join(REPO_ROOT, 'harness', 'scripts', 'goal-phase-runtime.ts'), 'utf-8');
   assert(
     /phase === 'ut' \? \['', \.\.\.renderUtFormatContractLines\(projectRoot\)\] : \[\]/.test(src),
     'goal-runner 须仅在 ut 阶段注入格式契约块（他 phase prompt 不变）',

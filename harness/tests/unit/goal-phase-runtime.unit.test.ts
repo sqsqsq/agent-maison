@@ -11,9 +11,22 @@ import {
 import { GoalPhaseRuntime } from '../../scripts/utils/goal-phase-runtime';
 import { projectCanonicalLifecycle } from '../../scripts/utils/goal-canonical-lifecycle';
 import type { HeadlessInvokePlan } from '../../scripts/utils/agent-invoke';
-import { casAcquireRunOwner, ensureRunControl, releaseRunOwner } from '../../scripts/utils/goal-run-control';
-import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
-import { createGoalRun } from '../../scripts/utils/goal-run-creation';
+import {
+  casAcquireRunOwner,
+  ensureRunControl,
+  quiesceRunOwner,
+  releaseRunOwner,
+} from '../../scripts/utils/goal-run-control';
+import {
+  runGoalRuntimeChain,
+  setupGoalRuntimeHost,
+  type RunProbe,
+} from './goal-runner-testing-integrity.unit.test';
+import { loadGoalManifestFromRun } from '../../scripts/utils/goal-manifest';
+import { handoffSessionToDetached } from '../../scripts/utils/goal-phase-runtime';
+import { consumeHandoffAtBoundary, writeHandoffRequest } from '../../scripts/utils/goal-handoff';
+import { appendGoalEventFenced } from '../../scripts/utils/goal-in-session-evidence';
+import { resolveWorkflowSpec } from '../../workflow-loader';
 
 export interface UnitCaseResult { name: string; ok: boolean; error?: string }
 interface Case { name: string; run: () => void | Promise<void> }
@@ -49,6 +62,17 @@ function context(overrides: Partial<PhaseExecutionContext> = {}): PhaseExecution
   });
 }
 
+function cloneHost(source: string, label: string): string {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), `goal-runtime-${label}-`));
+  fs.rmSync(target, { recursive: true, force: true });
+  fs.cpSync(source, target, { recursive: true });
+  return target;
+}
+
+function canonicalOf(probe: RunProbe): ReturnType<typeof projectCanonicalLifecycle> {
+  return projectCanonicalLifecycle(probe.events);
+}
+
 const cases: Case[] = [
   {
     name: 'M2 structural zero: thin shells and executors contain no private lifecycle or gate path',
@@ -58,7 +82,7 @@ const cases: Case[] = [
       const driverShell = fs.readFileSync(path.join(scripts, 'utils/goal-in-session-driver.ts'), 'utf-8');
       const hostEntry = fs.readFileSync(path.join(scripts, 'goal-mode-entry.ts'), 'utf-8');
       const executor = fs.readFileSync(path.join(scripts, 'utils/goal-phase-executor.ts'), 'utf-8');
-      const processRuntime = fs.readFileSync(path.join(scripts, 'goal-phase-runtime-process.ts'), 'utf-8');
+      const processRuntime = fs.readFileSync(path.join(scripts, 'goal-phase-runtime.ts'), 'utf-8');
       const supervisor = fs.readFileSync(path.join(scripts, 'goal-supervise.ts'), 'utf-8');
       assert(!/while\s*\(|for\s*\([^)]*phase/.test(runnerShell), 'goal-runner shell retained a phase loop');
       assert(!/assessFeature|runHarnessPhase|phase_verdict/.test(runnerShell), 'goal-runner shell retained lifecycle ownership');
@@ -77,104 +101,51 @@ const cases: Case[] = [
     },
   },
   {
-    name: 'M2 lifecycle matrix: attended/detached fresh/retry/resume/handoff/successor use production birth/runtime/projection APIs',
+    name: 'M2 production parity: attended/detached fresh and retry run the same birth/runtime/gate/projection chain',
     run: async () => {
-      type Lifecycle = 'fresh' | 'retry' | 'resume' | 'handoff' | 'successor';
-      const lifecycles: Lifecycle[] = ['fresh', 'retry', 'resume', 'handoff', 'successor'];
-      const projections = new Map<string, ReturnType<typeof projectCanonicalLifecycle>>();
-      for (const lifecycle of lifecycles) {
-        const root = fs.mkdtempSync(path.join(os.tmpdir(), `goal-runtime-${lifecycle}-`));
-        try {
-          const manifest = buildGoalManifestFromInput({
-            feature: 'demo',
-            run_id: `${lifecycle}-run`,
-            start_phase: 'coding',
-            end_phase: 'coding',
-            unattended: { write_mode: 'full-access', approval_mode: 'never' },
-          }, { projectRoot: root });
-          if (lifecycle === 'successor') {
-            manifest.successor_of = 'ancestor-run';
-            manifest.run_base_sha = 'a'.repeat(40);
-          }
-          const created = createGoalRun({
-            projectRoot: root,
-            manifest,
-            chain: ['coding'],
-            resolveHead: () => 'a'.repeat(40),
+      const base = setupGoalRuntimeHost('codex').root;
+      const roots: string[] = [base];
+      try {
+        for (const lifecycle of ['fresh', 'retry'] as const) {
+          const detachedRoot = cloneHost(base, `${lifecycle}-detached`);
+          const attendedRoot = cloneHost(base, `${lifecycle}-attended`);
+          roots.push(detachedRoot, attendedRoot);
+          const retrySummary = lifecycle === 'retry'
+            ? ({ phase, attempt }: { phase: string; attempt: number }) =>
+                phase === 'coding' && attempt === 1
+                  ? { blockers: [{
+                      id: 'file_completeness',
+                      severity: 'BLOCKER',
+                      status: 'FAIL',
+                      classification: 'code_regression',
+                      details_excerpt: '契约声明文件缺失',
+                      actionability: 'agent_fixable',
+                    }] }
+                  : null
+            : undefined;
+          const detached = await runGoalRuntimeChain(detachedRoot, {
+            adapter: 'codex', runId: `matrix-${lifecycle}`,
+            executorMode: 'detached', onHarnessSummary: retrySummary,
           });
-          for (const mode of ['attended', 'detached'] as const) {
-            const ctx = context({
-              runId: manifest.run_id,
-              owner: {
-                run_id: manifest.run_id,
-                owner_id: 'dry-run',
-                epoch: 0,
-                kind: mode === 'attended' ? 'session' : 'process',
-              },
-              projectRoot: root,
-              runDir: path.join(root, manifest.report_dir),
-              reportDir: manifest.report_dir,
-              runtimeFacts: {
-                runBaseSha: manifest.run_base_sha,
-                receiptRequired: true,
-                resume: lifecycle === 'resume',
-                successor: lifecycle === 'successor',
-              },
-            });
-            const runtime = new GoalPhaseRuntime();
-            if (mode === 'attended') {
-              await runtime.executeExecutor(ctx, new AttendedGoalPhaseExecutor(async (actual) => ({
-                status: 'passed', phase: actual.phase,
-              })));
-            } else {
-              const plan = { argv: ['adapter'], label: 'adapter', env: {}, adapterName: 'codex' } as HeadlessInvokePlan;
-              await runtime.executeExecutor(ctx, new DetachedGoalPhaseExecutor(
-                () => ({ plan, cwd: root }),
-                async () => ({ exitCode: 0, stdout: '', stderr: '', command: 'adapter' }),
-              ));
-            }
-            const events: Array<Record<string, unknown>> = [created.runCreated];
-            if (lifecycle === 'handoff') {
-              const target = mode === 'attended' ? 'process' : 'session';
-              events.push(
-                { type: 'handoff_requested', request_id: `${mode}-h`, target_owner_kind: target },
-                { type: 'handoff_accepted', request_id: `${mode}-h`, owner_kind: target },
-              );
-            }
-            events.push({ type: 'phase_start', phase: 'coding', owner_id: mode, attempt: 1 });
-            if (lifecycle === 'retry') {
-              events.push(
-                { type: 'phase_verdict', phase: 'coding', verdict: 'FAIL', action: 'retry' },
-                { type: 'phase_start', phase: 'coding', owner_id: mode, attempt: 2 },
-              );
-            }
-            events.push(
-              { type: mode === 'attended' ? 'stdio_response' : 'agent_invoke_end', exit_code: 0 },
-              { type: 'phase_verdict', phase: 'coding', verdict: 'PASS', action: 'advance' },
-              { type: 'run_end', status: 'CHAIN_SLICE_COMPLETED' },
-            );
-            const projection = projectCanonicalLifecycle(events);
-            projections.set(`${mode}:${lifecycle}`, projection);
-            assert(projection[0]?.type === 'run_created', `${mode}/${lifecycle} lost birth`);
-            assert(JSON.stringify(projection).includes('CHAIN_SLICE_COMPLETED'), `${mode}/${lifecycle} lost close`);
+          const attended = await runGoalRuntimeChain(attendedRoot, {
+            adapter: 'codex', runId: `matrix-${lifecycle}`,
+            executorMode: 'attended', onHarnessSummary: retrySummary,
+          });
+          assert(detached.exitCode === 0 && attended.exitCode === 0,
+            `${lifecycle} did not close: detached=${detached.exitCode} attended=${attended.exitCode}`);
+          assert(JSON.stringify(canonicalOf(detached)) === JSON.stringify(canonicalOf(attended)),
+            `${lifecycle} canonical projection drift`);
+          assert(JSON.stringify(detached.harnessPhases) === JSON.stringify(attended.harnessPhases),
+            `${lifecycle} gate sequence drift`);
+          if (lifecycle === 'retry') {
+            assert(detached.invokedPhases.filter(phase => phase === 'coding').length === 2,
+              `retry did not reinvoke coding: ${detached.invokedPhases.join('→')}`);
           }
-        } finally {
-          fs.rmSync(root, { recursive: true, force: true });
+          assert(canonicalOf(attended)[0]?.type === 'run_created', `${lifecycle} lost birth`);
         }
+      } finally {
+        for (const root of roots) fs.rmSync(root, { recursive: true, force: true });
       }
-      for (const lifecycle of ['fresh', 'retry', 'resume', 'successor'] as const) {
-        assert(
-          JSON.stringify(projections.get(`attended:${lifecycle}`)) ===
-            JSON.stringify(projections.get(`detached:${lifecycle}`)),
-          `${lifecycle} canonical parity drift`,
-        );
-      }
-      const sessionHandoff = projections.get('attended:handoff') ?? [];
-      const processHandoff = projections.get('detached:handoff') ?? [];
-      assert(JSON.stringify(sessionHandoff).includes('"from":"session","to":"process"'),
-        'session→process handoff missing');
-      assert(JSON.stringify(processHandoff).includes('"from":"process","to":"session"'),
-        'process→session handoff missing');
     },
   },
   {
@@ -196,6 +167,89 @@ const cases: Case[] = [
     },
   },
   {
+    name: 'M2 production parity: attended/detached resume and automatic successor preserve lifecycle and lineage baseline',
+    run: async () => {
+      const base = setupGoalRuntimeHost('codex').root;
+      const roots: string[] = [base];
+      const blocker = {
+        id: 'file_completeness',
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        classification: 'code_regression',
+        details_excerpt: '契约声明文件缺失',
+        actionability: 'agent_fixable',
+      };
+      try {
+        const halted = await runGoalRuntimeChain(base, {
+          adapter: 'codex', runId: 'matrix-resume', executorMode: 'detached',
+          onHarnessSummary: ({ phase }) => phase === 'coding' ? { blockers: [blocker] } : null,
+        });
+        assert(halted.exitCode === 1, `resume fixture did not halt: ${halted.exitCode}`);
+        const eventsPath = path.join(halted.reportDir, 'events.jsonl');
+        const aged = fs.readFileSync(eventsPath, 'utf8').split('\n').map((line) => {
+          if (!line.trim()) return line;
+          const event = JSON.parse(line) as { type?: string; ts?: string };
+          if (event.type === 'run_end' && event.ts) {
+            event.ts = new Date(Date.parse(event.ts) - 10 * 60_000).toISOString();
+          }
+          return JSON.stringify(event);
+        }).join('\n');
+        fs.writeFileSync(eventsPath, aged, 'utf8');
+        const sourceManifest = loadGoalManifestFromRun(base, 'matrix-resume', { feature: 'bc-openCard' });
+
+        const detachedResumeRoot = cloneHost(base, 'resume-detached');
+        const attendedResumeRoot = cloneHost(base, 'resume-attended');
+        roots.push(detachedResumeRoot, attendedResumeRoot);
+        const detachedResume = await runGoalRuntimeChain(detachedResumeRoot, {
+          resume: 'matrix-resume', forceResume: true, adapter: 'codex', executorMode: 'detached',
+        });
+        const attendedResume = await runGoalRuntimeChain(attendedResumeRoot, {
+          resume: 'matrix-resume', forceResume: true, adapter: 'codex', executorMode: 'attended',
+        });
+        assert(detachedResume.exitCode === 0 && attendedResume.exitCode === 0,
+          `resume did not close: detached=${detachedResume.exitCode} attended=${attendedResume.exitCode}`);
+        assert(JSON.stringify(canonicalOf(detachedResume)) === JSON.stringify(canonicalOf(attendedResume)),
+          'resume canonical projection drift');
+        assert(
+          loadGoalManifestFromRun(detachedResumeRoot, 'matrix-resume', { feature: 'bc-openCard' }).run_base_sha ===
+            sourceManifest.run_base_sha &&
+          loadGoalManifestFromRun(attendedResumeRoot, 'matrix-resume', { feature: 'bc-openCard' }).run_base_sha ===
+            sourceManifest.run_base_sha,
+          'resume changed immutable birth baseline',
+        );
+
+        const detachedSuccessorRoot = cloneHost(base, 'successor-detached');
+        const attendedSuccessorRoot = cloneHost(base, 'successor-attended');
+        roots.push(detachedSuccessorRoot, attendedSuccessorRoot);
+        const detachedSuccessor = await runGoalRuntimeChain(detachedSuccessorRoot, {
+          adapter: 'codex', runId: 'matrix-successor', executorMode: 'detached',
+          supersede: ['matrix-resume'],
+        });
+        const attendedSuccessor = await runGoalRuntimeChain(attendedSuccessorRoot, {
+          adapter: 'codex', runId: 'matrix-successor', executorMode: 'attended',
+          supersede: ['matrix-resume'],
+        });
+        assert(detachedSuccessor.exitCode === 0 && attendedSuccessor.exitCode === 0,
+          `successor did not close: detached=${detachedSuccessor.exitCode} attended=${attendedSuccessor.exitCode}`);
+        assert(JSON.stringify(canonicalOf(detachedSuccessor)) === JSON.stringify(canonicalOf(attendedSuccessor)),
+          'successor canonical projection drift');
+        const detachedSuccessorManifest = loadGoalManifestFromRun(
+          detachedSuccessorRoot, 'matrix-successor', { feature: 'bc-openCard' },
+        );
+        const attendedSuccessorManifest = loadGoalManifestFromRun(
+          attendedSuccessorRoot, 'matrix-successor', { feature: 'bc-openCard' },
+        );
+        assert(detachedSuccessorManifest.successor_of === 'matrix-resume' &&
+          attendedSuccessorManifest.successor_of === 'matrix-resume', 'successor lineage missing');
+        assert(detachedSuccessorManifest.run_base_sha === sourceManifest.run_base_sha &&
+          attendedSuccessorManifest.run_base_sha === sourceManifest.run_base_sha,
+        'successor washed out ancestor baseline');
+      } finally {
+        for (const root of roots) fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
     name: 'M2 runtime precondition: missing immutable baseline stops before executor without agent retry',
     run: async () => {
       let invoked = false;
@@ -214,6 +268,103 @@ const cases: Case[] = [
       }
       assert(error.includes('framework_corruption') && error.includes('run_base_sha'), error);
       assert(!invoked, 'runtime-owned fact failure must not be fed back to the agent');
+    },
+  },
+  {
+    name: 'M2 production handoff parity: session→process and process→session resume through the same fenced runtime',
+    run: async () => {
+      const base = setupGoalRuntimeHost('codex').root;
+      const roots: string[] = [base];
+      try {
+        const halted = await runGoalRuntimeChain(base, {
+          adapter: 'codex', runId: 'matrix-handoff', executorMode: 'detached',
+          onHarnessSummary: ({ phase }) => phase === 'coding' ? { blockers: [{
+            id: 'file_completeness', severity: 'BLOCKER', status: 'FAIL',
+            classification: 'code_regression', details_excerpt: '契约声明文件缺失',
+            actionability: 'agent_fixable',
+          }] } : null,
+        });
+        assert(halted.exitCode === 1, 'handoff fixture must halt before transfer');
+        const eventFile = path.join(halted.reportDir, 'events.jsonl');
+        fs.writeFileSync(eventFile, fs.readFileSync(eventFile, 'utf8').split('\n').map((line) => {
+          if (!line.trim()) return line;
+          const event = JSON.parse(line) as { type?: string; ts?: string };
+          if (event.type === 'run_end' && event.ts) {
+            event.ts = new Date(Date.parse(event.ts) - 10 * 60_000).toISOString();
+          }
+          return JSON.stringify(event);
+        }).join('\n'), 'utf8');
+
+        const sessionToProcessRoot = cloneHost(base, 'handoff-session-process');
+        const processToSessionRoot = cloneHost(base, 'handoff-process-session');
+        roots.push(sessionToProcessRoot, processToSessionRoot);
+        const prepareTransfer = (root: string, from: 'session' | 'process'): void => {
+          const manifest = loadGoalManifestFromRun(root, 'matrix-handoff', { feature: 'bc-openCard' });
+          const runDir = path.resolve(root, manifest.report_dir);
+          const control = ensureRunControl(runDir, manifest.run_id);
+          const acquired = casAcquireRunOwner(runDir, manifest.run_id, control.current_epoch, {
+            kind: from,
+            owner_id: `matrix-${from}`,
+            ...(from === 'process' ? { pid: process.pid } : { lease_ms: 60_000 }),
+          });
+          assert(acquired.ok, `${from} handoff source acquisition failed`);
+          const workflow = resolveWorkflowSpec(root, { frameworkRoot: path.resolve(__dirname, '../../..') });
+          if (from === 'session') {
+            handoffSessionToDetached({
+              projectRoot: root,
+              frameworkRoot: path.resolve(__dirname, '../../..'),
+              runDir,
+              token: acquired.token,
+              manifest,
+              workflow,
+              adapter: 'codex',
+              mode: 'attended',
+              authorization: { mode: 'goal_mode' },
+            });
+            return;
+          }
+          const request = writeHandoffRequest(runDir, {
+            run_id: manifest.run_id,
+            from_epoch: acquired.token.epoch,
+            target_owner_kind: 'session',
+          });
+          const consumed = consumeHandoffAtBoundary(runDir, acquired.token, Date.now());
+          assert(consumed.kind === 'consumed', 'process→session mailbox was not consumed');
+          appendGoalEventFenced(root, manifest, runDir, acquired.token, {
+            type: 'handoff_requested',
+            request_id: request.request_id,
+            target_owner_kind: 'session',
+            from_epoch: acquired.token.epoch,
+          });
+          quiesceRunOwner(runDir, acquired.token);
+          releaseRunOwner(runDir, acquired.token, { allowQuiescing: true });
+        };
+        prepareTransfer(sessionToProcessRoot, 'session');
+        prepareTransfer(processToSessionRoot, 'process');
+
+        const toProcess = await runGoalRuntimeChain(sessionToProcessRoot, {
+          resume: 'matrix-handoff', forceResume: true, adapter: 'codex', executorMode: 'detached',
+        });
+        const toSession = await runGoalRuntimeChain(processToSessionRoot, {
+          resume: 'matrix-handoff', forceResume: true, adapter: 'codex', executorMode: 'attended',
+        });
+        assert(toProcess.exitCode === 0 && toSession.exitCode === 0,
+          `handoff targets did not close: process=${toProcess.exitCode} session=${toSession.exitCode}`);
+        const processProjection = canonicalOf(toProcess);
+        const sessionProjection = canonicalOf(toSession);
+        assert(JSON.stringify(processProjection).includes('"from":"session","to":"process","outcome":"success"'),
+          'session→process canonical handoff missing');
+        assert(JSON.stringify(sessionProjection).includes('"from":"process","to":"session","outcome":"success"'),
+          'process→session canonical handoff missing');
+        assert(processProjection.filter(event => event.type === 'owner_handoff').length === 1 &&
+          sessionProjection.filter(event => event.type === 'owner_handoff').length === 1,
+        'handoff projected more than once');
+        assert(JSON.stringify(processProjection.filter(event => event.type !== 'owner_handoff')) ===
+          JSON.stringify(sessionProjection.filter(event => event.type !== 'owner_handoff')),
+        'handoff modes drifted outside the required direction field');
+      } finally {
+        for (const root of roots) fs.rmSync(root, { recursive: true, force: true });
+      }
     },
   },
   {
