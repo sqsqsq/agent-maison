@@ -3,7 +3,6 @@ import * as os from 'os';
 import * as path from 'path';
 import { featurePhaseReportsDir } from '../../config';
 import {
-  assertBlindVisualAuthorizationAtPrepare,
   buildPhaseExecuteRequest,
   deriveInSessionFingerprint,
   prepareGoalModeRun,
@@ -264,29 +263,11 @@ const cases: TestCase[] = [
     },
   },
   {
-    name: 'UI blind prepare blocks before run writes and explicit authorization can retry the same run id',
+    name: 'UI blind prepare writes no quality waiver; later capability gates own strictness policy',
     run: () => {
       const env = mkProject();
       const runId = 'blind-retry-1';
-      const runDir = path.join(env.root, 'doc', 'features', 'demo', 'goal-runs', runId);
       try {
-        let message = '';
-        try {
-          prepareGoalModeRun({
-            projectRoot: env.root,
-            frameworkRoot: FRAMEWORK_ROOT,
-            feature: 'demo',
-            runId,
-            adapter: 'codex',
-            requirement: '实现新的 UI 页面与布局',
-            endPhase: 'spec',
-          });
-        } catch (error) {
-          message = String(error);
-        }
-        assert(message.includes('BLOCKER') && message.includes('interactive vision canary'), message);
-        assert(!fs.existsSync(runDir), '未授权 prepare 不得留下 manifest/run-control 或 run 目录');
-
         const prepared = prepareGoalModeRun({
           projectRoot: env.root,
           frameworkRoot: FRAMEWORK_ROOT,
@@ -295,18 +276,17 @@ const cases: TestCase[] = [
           adapter: 'codex',
           requirement: '实现新的 UI 页面与布局',
           endPhase: 'spec',
-          allowBlindVisual: true,
         });
-        assert(prepared.manifest.allow_blind_visual === true, '显式授权须冻结进 manifest');
-        assert(fs.existsSync(prepared.manifestPath), '补授权后同 run id 应可成功 prepare');
-        assert(readRunControl(prepared.runDir, runId)?.owner === null, '恢复后的 run-control 必须未占用');
+        assert(prepared.manifest.allow_blind_visual === undefined, '新 manifest 不得写盲跑授权');
+        assert(fs.existsSync(prepared.manifestPath), 'blind capability 不应在 prepare 层引入人工授权门');
+        assert(readRunControl(prepared.runDir, runId)?.owner === null, 'run-control 必须未占用');
       } finally {
         fs.rmSync(env.root, { recursive: true, force: true });
       }
     },
   },
   {
-    name: 'fresh interactive canary is consumed before attended prepare launch decision',
+    name: 'fresh interactive canary path also writes no blind authorization field',
     run: () => {
       const env = mkProject();
       try {
@@ -337,19 +317,6 @@ const cases: TestCase[] = [
       } finally {
         fs.rmSync(env.root, { recursive: true, force: true });
       }
-    },
-  },
-  {
-    name: 'attach explicitly rejects prepare-only blind authorization input',
-    run: () => {
-      assertBlindVisualAuthorizationAtPrepare(true, true);
-      let message = '';
-      try {
-        assertBlindVisualAuthorizationAtPrepare(false, true);
-      } catch (error) {
-        message = String(error);
-      }
-      assert(message.includes('--prepare-run') && message.includes('attach 不会修改'), message);
     },
   },
   {

@@ -377,7 +377,7 @@ export function checkUiSpecBboxSemantic(ctx: CheckContext, specMarkdown: string)
         `（orientation 预检未见系统性反常，但那只是必要条件非充分验证）。`,
       suggestion:
         '修复 OCR 环境（harness 装 tesseract.js + profiles/hmos-app/vendor/tessdata/chi_sim.traineddata）' +
-        '或补齐 authoritative_ref 可达原图后重跑（此 id 归 toolchain，signature 重复即 halt 求人）。',
+        '或补齐 authoritative_ref 可达原图后重跑（此 id 归 toolchain，signature 重复则按工具链阻塞终止本 run）。',
       affected_files: [uiSpecRel],
     });
     return results;
@@ -396,7 +396,7 @@ export function checkUiSpecBboxSemantic(ctx: CheckContext, specMarkdown: string)
         'pixel_1to1 下不得静默 PASS。' + (ocrFailureNote ? `${ocrFailureNote}。` : ''),
       suggestion:
         '核对 authoritative_ref 原图是否与 ui-spec 屏一一对应、文本是否可辨（截图分辨率/语言包）；' +
-        '若参考图本身无文本（纯图形屏），在 spec 说明并走人工确认。',
+        '若参考图本身无文本（纯图形屏），在 spec 冻结该事实并由当前视觉 provider 生成 hash-bound 机器证据；能力缺失时走 capability defer。',
       affected_files: [uiSpecRel],
     });
     return results;

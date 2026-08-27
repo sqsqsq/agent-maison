@@ -30,6 +30,11 @@ export interface SpawnHylyreOptions {
   hypiumWorkDir: string;
   /** `hylyre` 之后的参数，如 `['doctor']` 或 `['run', '--plan', …]` */
   hylyreArgv: string[];
+  /**
+   * Optional Maison-owned Python wrapper. It receives the same Hylyre CLI argv
+   * and runs the installed provider in-process (used for runtime telemetry).
+   */
+  pythonScriptPath?: string;
   appSnapshotCacheAbs?: string;
   logPath?: string;
   timeout?: number;
@@ -59,7 +64,9 @@ export function buildHylyreSpawnInvocation(opts: SpawnHylyreOptions): {
   maxBuffer: number;
   timeout?: number;
 } {
-  const argv = ['-m', 'hylyre', ...opts.hylyreArgv];
+  const argv = opts.pythonScriptPath
+    ? [opts.pythonScriptPath, ...opts.hylyreArgv]
+    : ['-m', 'hylyre', ...opts.hylyreArgv];
   // codex 八轮 P0：设备链子进程同样不携带信任锚材料（纵深——hylyre 无消费需求，剥离无损）
   const env: NodeJS.ProcessEnv = { ...mergeEnvWithHdcOnPath(stripTrustAnchorEnv(process.env).env) };
   // visual-capability-truth S2（P0-B）：Windows 下 Python 无此二变量时 stdout/stderr 按

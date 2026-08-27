@@ -382,8 +382,9 @@ export function blindReviewPendingAbsPath(projectRoot: string, feature: string):
 
 /**
  * E3②（案B chrys 银行卡实证：OCR 噪声"人《AA招商银行"——logo 被 OCR 成乱码前缀，盲 agent
- * 无法辨认哪段是噪声哪段是真文本，逐条 implement/defer+人签 对它是无解题）。改为自动批量
- * 登记结构化待复核清单，check 本身降 MAJOR/WARN，收口交由人一次终审（非逐条求盲 agent judge）。
+ * 无法辨认哪段是噪声哪段是真文本，逐条猜测对它是无解题）。改为自动批量登记结构化
+ * 待复核清单：required 义务走 capability defer，optional 项保留 advisory，待具备视觉能力的
+ * provider 以当前机器证据重评。
  */
 export function writeBlindReviewPending(
   projectRoot: string,
@@ -398,8 +399,8 @@ export function writeBlindReviewPending(
     generated_at: new Date().toISOString(),
     note:
       '盲档（无视觉能力）下自动登记的原图 OCR 未覆盖文本清单——agent 无法辨认其中哪些是' +
-      '噪声（如 logo 被 OCR 误识别的乱码前缀）哪些是需要建模的真文案，须真人逐条终审后' +
-      '手动处置（implement 建模 或 defer 签字），而非要求盲 agent 逐条判断。',
+      '噪声（如 logo 被 OCR 误识别的乱码前缀）哪些是需要建模的真文案；required 项保持' +
+      'UNVERIFIED/capability defer，optional 项仅作 advisory，待有能力的 provider 用当前机器证据重评。',
     entries,
   };
   fs.writeFileSync(abs, YAML.stringify(doc), 'utf-8');
@@ -432,7 +433,7 @@ export function checkCaptureExternalAudit(ctx: CheckContext, specMarkdown: strin
       details:
         '【P0-D OCR 承重不可用】tesseract.js 未装或 chi_sim 未物化——外部完整性分母无法建立，' +
         'pixel_1to1 下不得以自我清单分母放行（RC4 自循环即由此而来）。',
-      suggestion: '修复 OCR 环境后重跑（此 id 归 toolchain，signature 重复即 halt 求人）。',
+      suggestion: '修复 OCR 环境后重跑（此 id 归 toolchain，signature 重复则按工具链阻塞终止本 run）。',
       affected_files: [uiSpecRel],
     }];
   }
@@ -602,7 +603,7 @@ export function checkCaptureExternalAudit(ctx: CheckContext, specMarkdown: strin
       ].filter(Boolean).join('\n'),
       suggestion:
         '逐条处置：确需实现→补 ref-elements（disposition: implement）并在 ui-spec 建模（text/subtitle）；' +
-        '确不实现→ref-elements 记 disposition: defer + fidelity_deferrals 真人签字。' +
+        'best_effort 下确不实现→ref-elements 记 disposition: defer + fidelity_deferrals 债务；strict pixel 必须实现并验证。' +
         '不得靠删分母放行——分母是原图 OCR，删不掉。',
       affected_files: [refRel, uiSpecRel],
     }];
@@ -627,7 +628,7 @@ export function checkCaptureExternalAudit(ctx: CheckContext, specMarkdown: strin
       ].filter(Boolean).join('\n'),
       suggestion:
         '确属 overlay 内元素 → 在该 overlay 屏组件树补建模（text/subtitle）；确属背景透出 → ' +
-        'ref-elements 以 screen_ref_id 归属基屏，或 defer+真人签（沿用既有出口，不另造白名单）。',
+        'ref-elements 以 screen_ref_id 归属基屏；必需证据不足时保持 FAIL，真实能力缺失才走 capability defer。',
       affected_files: [refRel, uiSpecRel],
     }];
   }

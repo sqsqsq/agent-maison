@@ -36,18 +36,17 @@
 
 ## 盲档结论后
 
-判卷 `none`/`ocr_capable`（无视觉/仅 OCR）时的用户告知与一次性确认，见 [ui-spec 盲档工作法](../feature/spec/reference/ui-spec.md) 的交互式入口（registry `vision.blind_tier`）。
+判卷 `none`/`ocr_capable`（无视觉/仅 OCR）时如实告知能力事实：strict 目标须配置可用视觉 provider 或投影 capability missing；optional 视觉证据可按既有 UNVERIFIED/advisory 语义继续。不得询问用户“接受降级”来改变冻结质量目标。
 
 **盲档不一定只能盲写**（plan ab072691）：判卷为无视觉时，还可以为本轮指定一个**只读视觉 provider**
 ——第二个 `(adapter, model)` endpoint，只看图产逐屏结构化评审、物理上不写工程；正式产物唯一写者仍是
 当前会话的你。询问/记录走 [personal-setup-gate.md](./personal-setup-gate.md) 的 **S2.1**
 （registry `setup.visual_provider` → `record-visual-provider` 机器写盘），**只在「local 缺失、现有
-adapter 已不在支持列表、或配置读取不可用」时问一次**。明确选择「跳过并盲跑」只授权当前操作；
-attended goal 会话须把该选择转译为 `--allow-blind-visual`，无人值守 UI run 也必须提前传该旗标，
-否则 phase 启动前 BLOCKER。授权不写个人配置、下个 run 不继承。支持项现算自 adapter catalog，
-本文不写死名单。
+adapter 已不在支持列表、或配置读取不可用」时提示一次**。也可保持未配置；这不构成质量授权。
+严格视觉需求在 requirement/capability preflight 诚实 defer，非 strict 需求按既有 advisory 策略继续。
+支持项现算自 adapter catalog，本文不写死名单。
 
 配好之后本轮视觉路由变为 `delegated`：你**依旧没有视觉**，盲档工作法一个字都不变；区别只是截图之后
 会有一份来自只读评审器的逐屏 `must_fix`/`defects` 回给你修，参考图旁可能多出 `.visual.json` 观察
 sidecar（与 OCR JSON 同性质的机器上下文，不是结论、不是你亲眼所见）。provider 不可用时本轮自动落回
-盲档：视觉保持 `UNVERIFIED`、release 保持 `VISUAL_PENDING`，阶段照常推进。
+盲档：required 视觉轴保持 FAIL/UNVERIFIED 并重试或 defer，optional 轴才可 advisory；不得伪造 PASS。

@@ -103,7 +103,8 @@ on disk, where the candidate collector would re-materialize them as if they were
 findings — exactly the cross-attempt reuse this change forbids. Clearing SHALL remove only
 provider-attributable state (its defects, the `must_fix` entries anchored solely to them, and its own
 `region_attest` entries), SHALL reset the screen's `verdict` to pending and drop its evaluated
-screenshot hash, and SHALL NOT touch `confirmed_by` or any other producer's entries.
+screenshot hash. Legacy `confirmed_by` bytes MAY be preserved for audit, but SHALL have no effect on
+review targeting, verdict, phase advance, or release.
 
 Because clearing identifies provider `must_fix` entries through their defects' anchors, every
 provider `must_fix` entry SHALL be referenced by at least one provider defect; an unanchored entry
@@ -114,10 +115,9 @@ A screen explicitly marked as having an invalidated evaluation SHALL keep that m
 pre-invocation clearing, and SHALL additionally have the evaluation products that marker distrusts
 discarded — its legacy and reported fidelity/geometry scores and **all** of its region attestations,
 including any labelled as human-authored. A region attestation's author field is optional free text
-that is neither checked by the human-verified predicate nor bound to a screenshot, so it is not a
-verified human signature; keeping such entries would also let stale attestations combine with fresh
-ones to satisfy region coverage, defeating the re-evaluation. Human authority is carried solely by
-`confirmed_by` together with the evaluated screenshot hash, and neither is touched.
+that is not machine evidence; keeping such entries would also let stale attestations combine with
+fresh ones to satisfy region coverage, defeating the re-evaluation. Legacy signer fields are
+provenance only and never protect an invalidated evaluation.
 The marker SHALL be removed **only** by the harness, and only after a payload has passed every
 validation above and been successfully applied to that screen; the provider SHALL NOT carry any field
 that requests or signals clearing. An unavailable, invalid, mis-identified, hash-mismatched, screen-
@@ -128,25 +128,16 @@ defects keeps blocking through its own `must_fix`/`defects`. The receipt's evide
 (`input_provenance`) SHALL NOT decide whether a payload is trusted; successful receipt persistence IS
 however a precondition for committing the round's review result, per the commit ordering below.
 
-Without this clearing the delegated loop has a permanent stall: the human-sign exemption correctly
-refuses to protect a marked screen, the provider re-reviews it every round, and the marker never
-clears, so the tier-independent invalidated-evaluation gate fails forever.
-
-A screen that carries a valid human confirmation for **the screenshot currently on disk** SHALL be
-neither reviewed nor cleared. That exemption SHALL NOT extend to a screen whose evaluation is
-explicitly marked invalidated: a screen named as needing re-evaluation must never be shielded from it.
-For that marked-but-signed case the pre-invocation clearing SHALL still preserve the screen's verdict,
-`confirmed_by` and evaluated screenshot hash — the un-cleared marker already blocks the round, and a
-single provider outage must not additionally destroy a human decision that is still about this exact
-screenshot.
+Without this clearing the delegated loop can inherit stale provider state or leave an invalidation
+marker that no current evidence can close. Every marked screen therefore re-enters machine review;
+no signer or manual resume exempts it.
 
 The obligations the strict gate will impose on an accepted clean pass SHALL be checked **before** the
 payload is accepted, not only afterwards: under the pixel contract a P0 clean-pass screen's
 attestations SHALL cover every screen-level required element, and a "difference logged" attestation
-SHALL have a defect or fix to anchor to. Checking these only downstream is unsafe precisely because
-acceptance clears the invalidation marker: a screen carrying `confirmed_by` would then hit the human
-sign exemption on the following round, the provider would never be consulted again, and a failure that
-only a fresh review could repair would become permanent.
+SHALL have a defect or fix to anchor to. Checking these only downstream is unsafe because acceptance
+clears the invalidation marker: incomplete evidence could otherwise survive as a clean state even
+though no current machine review established the required coverage.
 
 For the same reason the critic receipt SHALL be persisted **before** the reviewed `visual-diff.json`
 is committed. A receipt that cannot be written SHALL make the round `unusable`, leaving disk at the
@@ -154,15 +145,11 @@ pre-invocation cleared state with the marker intact. The receipt's evidence grad
 whether a payload is trusted — its content remains disclosure only — what this adds is commit ordering, so
 that an accepted round never leaves behind a state the strict gate rejects and no later round can fix.
 
-The human sign is the highest authority in this system and the provider
-is a subordinate reviewer; the frozen closure ends with a person signing and the gate being re-run.
-Resetting a signed screen to pending and dropping its evaluated hash and provider attestations before
-each review would make that final re-run depend on the provider being available a second time — a
-subordinate reviewer's availability would then veto a human decision, and the closure could never
-complete. The predicate SHALL use only existing facts: the existing human-verified predicate over
-`confirmed_by`, plus the screen's evaluated screenshot hash equalling the current file's hash. No new
-freshness state is introduced. Excluding such a screen suppresses only the provider call; the screen
-still passes through the strict visual-diff gate unchanged, so no existing check is bypassed.
+Current hash-bound deterministic/native/delegated machine evidence is the only quality authority.
+Legacy signer metadata and manual resume SHALL NOT suppress provider execution, retain a prior verdict,
+or close a strict visual axis. If required provider capability is unavailable, the run follows the
+capability-missing projection; if support was declared but evidence production fails, the checker
+fails and retries/fuses instead of borrowing a human decision.
 
 A validated payload SHALL then be written into `visual-diff.json` per-screen `must_fix`/`defects` by
 **atomic replace** (temp file plus rename). `VisualDiffDefectSource` SHALL be extended with
@@ -177,8 +164,7 @@ targets on every real round, silently disabling the provider.
 The harness SHALL map per-screen verdicts deterministically from the written payload (empty
 `must_fix` → pass candidate, non-empty → fail). **The provider SHALL NOT produce a verdict**, and the
 question of whether the phase may advance SHALL remain solely with the gate. The provider SHALL NEVER
-write `confirmed_by`; the existing human-confirmation predicate and the `pixel_1to1` final human sign
-are unchanged.
+write `confirmed_by`; the gate SHALL ignore any legacy human-confirmation field.
 
 Enforcement: `harness/scripts/check-testing.ts`, `profiles/hmos-app/harness/visual-diff-check.ts`,
 `harness/scripts/utils/visual-provider-invoke.ts`
@@ -218,12 +204,11 @@ Enforcement: `harness/scripts/check-testing.ts`, `profiles/hmos-app/harness/visu
 - **THEN** the round SHALL be `unusable`, the reviewed `visual-diff.json` SHALL NOT be committed, and
   the invalidation marker SHALL remain set so the next round re-reviews
 
-#### Scenario: a signed screen keeps its verdict through a failed re-review
+#### Scenario: a legacy signature cannot preserve an invalidated verdict
 
-- **WHEN** a screen that is human-confirmed for the current screenshot is marked invalidated and the
-  round's provider is unavailable
-- **THEN** its verdict, `confirmed_by` and evaluated screenshot hash SHALL survive, and the round SHALL
-  remain blocked solely by the still-set marker
+- **WHEN** a screen carrying `confirmed_by` is marked invalidated and the round's provider is unavailable
+- **THEN** its prior verdict/evaluated evidence SHALL remain untrusted and the signer value SHALL not
+  change the capability-missing or evidence-failure outcome
 
 #### Scenario: a failed round cannot clear an invalidated evaluation
 
@@ -232,17 +217,15 @@ Enforcement: `harness/scripts/check-testing.ts`, `profiles/hmos-app/harness/visu
 - **THEN** the marker SHALL still be set afterwards, no round result SHALL be written, and the round
   SHALL continue through the existing fail-open exit
 
-#### Scenario: a signed screen survives a later provider outage
+#### Scenario: a provider outage cannot borrow a legacy signature
 
-- **WHEN** a person has confirmed a screen for the screenshot currently on disk and the gate is re-run
-  while the provider is unavailable
-- **THEN** the provider SHALL NOT be invoked for that screen, its verdict, confirmed signature,
-  evaluated hash and attestations SHALL remain untouched, and the strict gate SHALL decide the round
+- **WHEN** a screen carries a legacy signature and the required provider is unavailable on the next run
+- **THEN** the screen SHALL not be treated as reviewed; strict/release-required evidence SHALL defer as
+  capability-missing and optional evidence MAY remain advisory
 
-#### Scenario: a changed screenshot re-enters review despite an old signature
+#### Scenario: a changed screenshot re-enters machine review
 
-- **WHEN** a screen carries a human confirmation but its screenshot file no longer matches the
-  evaluated hash
+- **WHEN** a screen's screenshot file no longer matches the evaluated hash, regardless of legacy signer metadata
 - **THEN** the screen SHALL be reviewed and cleared like any other pending screen, and the stale pass
   SHALL NOT survive
 
@@ -260,39 +243,34 @@ Enforcement: `harness/scripts/check-testing.ts`, `profiles/hmos-app/harness/visu
 
 ### Requirement: An unusable provider yields a skipped visual-diff, not a blocking failure
 
-When the provider round is `unavailable` or `invalid`, the harness SHALL NOT run the strict device
-visual-diff dispatch over the still-pending screens. Running it would make P0-screen-pending or
-all-screens-pending under `ui_change = new_or_changed` a BLOCKER **FAIL**, wedging the phase — the
-exact opposite of the fail-open loop contract.
-
-Instead the harness SHALL emit the existing `visual_diff` check result with
-`{severity: 'BLOCKER', status: 'SKIP'}`, while deterministic capture/navigation/device results for the
-round are preserved as-is.
-
-Only the branches that **depend on the provider's judgement** — the pending-screen and
-candidate-pass paths — are suppressed. Deterministic red lines that have nothing to do with the
-provider SHALL still run in this round, specifically the verdict-rewriting artifact scan and the
-`visual-diff.json` structural validation, reported under their existing check ids. A provider that
-happens to be unavailable is not a reason to stop looking for evidence tampering.
-
-That SKIP is the honest exit through machinery that already exists: a
-non-MINOR SKIP becomes a `needs_human` visual-debt entry, open blocking debt projects the visual
-quality axis to `UNVERIFIED` and blocks release, and a SKIP is not a FAIL so the phase still advances.
-The three states therefore hold simultaneously: **development loop PASS / visual UNVERIFIED / release
-VISUAL_PENDING**.
-
-No new check id, verdict state, quality axis, or halt class SHALL be introduced for this path, and the
-run SHALL NOT stop or wait.
+An unusable delegated provider SHALL preserve deterministic capture/navigation/tamper checks and
+classify provider-dependent visual evidence separately from product failure. If visual evidence is
+optional for both phase advance and release, the provider-dependent check MAY remain SKIP/UNVERIFIED
+advisory under the existing policy. If a strict or release-required visual axis cannot be evidenced
+because the provider/profile capability is unsupported or remains unavailable after bounded retry,
+the run SHALL project `DEFERRED_CAPABILITY_MISSING`; it MUST NOT advance to `FEATURE_COMPLETED`, fail as
+a product defect, or wait for a human signature. If the provider declared support but emitted
+invalid, missing, or stale evidence, the visual checker SHALL FAIL and retry/fuse as an evidence-
+production failure rather than capability-missing.
 
 Enforcement: `harness/scripts/check-testing.ts`, `profiles/hmos-app/harness/visual-diff-check.ts`,
-`harness/scripts/utils/visual-debt.ts`, `harness/harness-runner.ts`
+`harness/scripts/utils/visual-debt.ts`, `harness/scripts/utils/capability-resolution.ts`,
+`harness/harness-runner.ts`
 
-#### Scenario: a failed provider does not wedge the phase
+#### Scenario: optional visual evidence remains advisory
 
-- **WHEN** the provider is unavailable in a `delegated` round whose screens are still pending and
-  `ui_change = new_or_changed`
-- **THEN** `visual_diff` SHALL be `{BLOCKER, SKIP}`, the phase SHALL advance, and release SHALL be
-  blocked through the existing visual-debt projection rather than by a phase failure
+- **WHEN** a non-strict feature has no release-required visual axis and its provider is unavailable
+- **THEN** the provider-dependent check MAY be SKIP/UNVERIFIED advisory while deterministic checks still run
+
+#### Scenario: strict provider capability is missing
+
+- **WHEN** a pixel-1-to-1 release-required visual axis has no native or delegated provider capability after bounded retry
+- **THEN** the run SHALL defer as capability-missing and SHALL NOT request `confirmed_by`
+
+#### Scenario: capable provider emits invalid payload
+
+- **WHEN** the selected provider declared support but returns a hash-mismatched or incomplete payload
+- **THEN** the visual checker SHALL FAIL the round and retry/fuse without labeling it capability-missing
 
 #### Scenario: tampering is still caught in a failed provider round
 
@@ -345,3 +323,134 @@ Enforcement: `profiles/hmos-app/harness/visual-diff-check.ts`,
 - **WHEN** a run is `native` and the critic receipt names the primary adapter
 - **THEN** the receipt path validation SHALL behave exactly as before this change
 
+### Requirement: Visual signal adjudication has no human third authority
+
+A deterministic producer signal whose applicability and evidence contract pass SHALL be treated as
+machine evidence and materialized as an existing repair candidate when actionable. A valid current
+delegated-provider signal SHALL follow its provider candidate path. Producer uncertainty, unsupported
+comparison geometry, or invalid provider output SHALL mean evidence insufficiency: a required axis
+SHALL remain FAIL/UNVERIFIED or defer for a real capability gap, while an optional axis may remain
+advisory. The runner MUST NOT create `repair_adjudication_pending`, `await_human_confirm`, or a
+`confirmed_by` release path for those cases.
+
+Enforcement: `profiles/hmos-app/harness/visual-diff-check.ts`,
+`profiles/hmos-app/harness/visual-provider-review.ts`, `harness/scripts/goal-runner.ts`,
+`harness/scripts/utils/adjudication.ts`
+
+#### Scenario: deterministic signal disputed by the primary agent
+
+- **WHEN** a deterministic producer emits an applicable FAIL-grade signal and the primary agent disputes it without independent machine evidence
+- **THEN** the signal SHALL remain actionable and drive the responsible-phase repair path rather than waiting for human judgment
+
+#### Scenario: genuinely uncertain required signal
+
+- **WHEN** the producer cannot establish applicability or reliable evidence for a required visual obligation
+- **THEN** the axis SHALL remain unclosed through FAIL/UNVERIFIED or capability defer and SHALL NOT enter a human-sign queue
+
+### Requirement: Layout findings are structured with stable identity
+
+Every T8 layout finding SHALL carry a stable `finding_id` computed at emit time from `hash(screen_id|signal|sorted(elements)|bbox_bucket)` (elements finalized before emit — no backfill; bbox bucketed on a 0.1 grid so pixel jitter within a bucket keeps the id stable across rounds) and a structured `elements[]` list (declared element ids, replacing prose-embedded references). B-class findings SHALL carry a bbox where the involved nodes are locatable. Defects SHALL support optional `source: {producer: 'T8', finding_id, signal}` (transcription provenance) and `must_fix_refs: number[]` (indexes into the screen's must_fix array — per-item structured anchors). The check SHALL expose a structured in-process payload (fingerprints, T8 findings, base fail hit ids, round evaluation) to the runner; the payload SHALL NOT be injected into summary.json's blocker schema (additionalProperties: false) — persistence goes through the rounds ledger sidecar and the explicit `visual_round` summary field.
+
+Enforcement: `profiles/hmos-app/harness/{layout-oracle-check,visual-diff-check}.ts`
+
+#### Scenario: finding id stable across rounds
+
+- **WHEN** the same forbidden-overlap violation is found in two consecutive rounds with sub-bucket bbox jitter
+- **THEN** both rounds SHALL emit the same finding_id (element order and jitter immaterial)
+
+### Requirement: Findings and must_fix items must be transcribed with structured anchors
+
+Gate `visual_diff_finding_transcription`: a T8 hard finding with no matching defect — matched primarily by `defect.source.finding_id`, secondarily by elements intersection with signal-class consistency, and only as legacy fallback by bbox IoU ≥ 0.5 (plain intersection is too permissive — one big bbox must not clear every finding) — SHALL be a pixel_1to1 BLOCKER carrying a copy-paste defect template (including source). Unmatched warn-tier findings SHALL WARN (T8 warn hits already block candidate-pass; the WARN is a transcription reminder, not extra blocking). Under pixel_1to1, every must_fix item on a P0 finalized screen SHALL be referenced by at least one defect's `must_fix_refs`; unanchored items SHALL be a BLOCKER (closes the "equal counts but mismatched filler defects" gap left by the rev10 count gate, which stays as the fuse-eligibility necessary condition). Unstable-screen findings (capability degradation id) SHALL be exempt from transcription.
+
+Enforcement: `profiles/hmos-app/harness/visual-diff-check.ts`
+
+#### Scenario: filler defects do not satisfy anchoring
+
+- **WHEN** a P0 screen has two must_fix items and two defects none of which reference the items via must_fix_refs
+- **THEN** the gate SHALL FAIL listing the unanchored items
+
+#### Scenario: hard finding transcribed via finding_id passes
+
+- **WHEN** a defect carries source.finding_id equal to the T8 hard finding's id
+- **THEN** the transcription gate SHALL NOT fire for that finding
+
+### Requirement: Candidate-pass requires a receipt regardless of attestation presence
+
+When the candidate path is active under pixel_1to1 (all P0 screens finalized pass with zero must_fix), a structurally valid critic receipt SHALL be required even when no `region_attest` exists (closes the minor-defect dodge: planting a minor defect per screen to skip attestation and thereby the receipt). Receipt screenshot-coverage validation SHALL extend from attested screens to all candidate P0 finalized screens — the same minimum input set the goal-side producer certifies.
+
+Enforcement: `profiles/hmos-app/harness/visual-diff-check.ts`
+
+#### Scenario: minor-defect dodge is closed
+
+- **WHEN** all P0 screens are finalized pass with only minor defects, no region_attest, and no receipt exists
+- **THEN** the gate SHALL FAIL requiring a structurally valid receipt
+
+### Requirement: Visual rounds ledger with fingerprint-level no-progress fuse
+
+A telemetry sidecar `device-testing/reports/visual-rounds.ledger.jsonl` SHALL record evaluation rounds: the check reads and decides, the harness runner appends after checks. Round identity SHALL separate state from attempt with a stable base-state hash and `(loop_id, attempt_id, base_state_hash)` key. Replayed keys SHALL reuse their persisted decision. A new eligible round SHALL compare only with the last eligible fingerprintable round for the same loop. Equal non-empty actionable defect/finding fingerprints SHALL fuse; capability degradation, evidence-repair, aggregate hits, and non-actionable/uncertain observations SHALL not pollute the comparison. The decisive actionable residual and unresolved finding identities SHALL enter the state hash. Defect fingerprints SHALL retain producer/finding identity when present. Different build fingerprint attributes `ineffective_fix`; the same build attributes `no_fix_attempt`. Ledger corruption SHALL warn and skip per-line, never become empty history. Empty/ineligible rounds SHALL not compare. Same-run manual resume or signer state SHALL not reset or release a fused identity.
+
+Enforcement: `harness/scripts/utils/visual-rounds-ledger.ts`, `profiles/hmos-app/harness/visual-diff-check.ts`, `harness/harness-runner.ts`
+
+#### Scenario: duplicate replays a fused decision
+
+- **WHEN** the agent's in-session harness run detects the fuse and appends the row, and the outer gate then evaluates the identical round_key
+- **THEN** the evaluation SHALL be disposition=duplicate with decision.fused=true so the gate halts as no_progress_fuse
+
+#### Scenario: cross-attempt unchanged state fuses as no_fix_attempt
+
+- **WHEN** attempt N+1 re-runs with build, screens and fingerprints identical to attempt N's appended row
+- **THEN** a new row SHALL be appended and the fuse SHALL fire with attribution no_fix_attempt
+
+#### Scenario: capability degradation is not stolen by the fuse
+
+- **WHEN** all actionable defects are resolved and the only open item is a machine-proven missing visual capability
+- **THEN** the fuse SHALL NOT fire and the result SHALL use the existing capability-missing projection
+
+### Requirement: Verified receipts require a runner attestation
+
+`input_provenance: verified` SHALL be honored only when the receipt carries a valid `runner_attestation {goal_run_id, evidence_log_path, evidence_log_hash}` whose evidence log exists on disk and whose recomputed hash matches (integrity binding, not a cryptographic signature — both files live in the agent-writable workspace and the defense is runtime consistency). Additionally (review-fix, two rounds): the evidence file SHALL be named agent-events.jsonl and its resolved path SHALL be exactly equal to the canonical location `<featureDir>/goal-runs/<run_id>/phases/testing/agent-events.jsonl` (component-exact resolution, not substring containment — a run_id fragment in a parent directory or sibling name proves nothing; receipts are only produced in the testing phase so the expected path is uniquely derivable); verified SHALL only be honored in the goal gate context (both MAISON_GOAL_RUN_ID and MAISON_GOAL_ATTEMPT present — honoring a historical goal receipt interactively would produce candidate-pass(verified) outside this change's scope), with the attestation goal_run_id equal to the current run and critic_run_id exactly equal to `<run>-<attempt>`; and the checker SHALL **re-parse the evidence log with the adapter's registered structured parser and verify every image_inputs entry has a matching read event** — "some file's hash is unchanged" is not "this critic read these images". Adapters without a registered parser cannot be re-audited and SHALL NOT be honored as verified. Boundary: output_hash is producer-side evidence and is not recomputed by the checker outside the gate context. A verified claim without a valid attestation SHALL be downgraded to unverified with a WARN (hand-written verified is impersonation); the stricter verified-tier validations still run. The candidate-pass tier SHALL be `candidate-pass(verified)` only when the attestation validates.
+
+Enforcement: `profiles/hmos-app/harness/visual-diff-check.ts`
+
+#### Scenario: forged verified receipt downgraded
+
+- **WHEN** a receipt claims verified without runner_attestation, or its evidence log hash mismatches
+- **THEN** the gate SHALL treat it as unverified and WARN, never producing candidate-pass(verified)
+
+### Requirement: Quiescence sampling replaces single-shot capture under pixel_1to1
+
+A shared quiescence sampler SHALL implement `shot₁ → dump₁ → dump₂ → shot₂` with app-cropped image-hash and normalized-layout-signature stability. Unstable groups SHALL be retried within the existing bound and then recorded with `unstable_reason` and per-attempt hashes in `_quiescence/`. The official pixel execution chain SHALL use the sampler; lower tiers retain their existing capture policy. Sampler execution failure is a capture failure, while retry exhaustion records unstable evidence. T8 findings on unstable screens SHALL use the existing capability-degradation signal outside the candidate-blocking set and SHALL project advisory or capability-missing according to axis policy, without a human batch-confirmation path.
+
+Enforcement: `profiles/hmos-app/harness/{quiescence-sampling,visual-diff-capture,visual-diff-check}.ts`, `harness/scripts/check-testing.ts`
+
+#### Scenario: persistent instability is recorded not guessed
+
+- **WHEN** every sampling group differs in the app-cropped image hash (carousel screen)
+- **THEN** capture SHALL mark the screen unstable with image_drift, keep the final artifacts, and NOT count it as a capture failure
+
+#### Scenario: unstable screen downgrades hard findings
+
+- **WHEN** a screen marked unstable has a forbidden-overlap violation in its dump
+- **THEN** the gate SHALL emit visual_diff_layout_invariants_unstable as WARN instead of a hard BLOCKER and the transcription audit SHALL not require it
+
+### Requirement: Calibration feedback is machine evidence and never a visual verdict
+
+Calibration inputs SHALL be produced from versioned machine fixtures and device measurements bound to screenshot/build/oracle identities. They MAY inform a later evidence-backed gate-tier change but SHALL NOT mutate `visual-diff.json`, close a quality axis, or act as a per-run verdict. Human feedback belongs to a correction/successor run and MUST NOT be persisted through `visual-confirm` as gate state.
+
+Enforcement: `profiles/hmos-app/harness/layout-oracle-calibrate.ts`, `harness/scripts/layout-oracle-calibrate.ts`
+
+#### Scenario: calibration data cannot overrule a current finding
+
+- **WHEN** calibration records a historical false positive for a detector family
+- **THEN** the current deterministic finding SHALL remain governed by the frozen current policy until a separate policy change is validated
+
+### Requirement: Layout oracle calibration is a one-command dual-artifact report
+
+`layout-oracle-calibrate` SHALL be an explicitly-invoked CLI producing `calibration.json` plus a markdown projection from machine-measured overlay, locator, bounds, appRoot, crop-material, ambiguity, and device double-sample facts. Unmeasured items SHALL be labeled unavailable rather than `needs_human`. The CLI SHALL NOT change gate tiers or write phase judgment artifacts.
+
+Enforcement: `profiles/hmos-app/harness/layout-oracle-calibrate.ts`, `harness/scripts/layout-oracle-calibrate.ts`
+
+#### Scenario: offline mode is honest about unmeasured items
+
+- **WHEN** the CLI runs without --device
+- **THEN** the double-sample stability item SHALL be empty with a note that device measurement is required before enabling quiescence downgrade

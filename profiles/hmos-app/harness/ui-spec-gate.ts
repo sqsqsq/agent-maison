@@ -18,7 +18,7 @@ export function collectUiSpecGateConfirmedScreens(specMarkdown: string): Set<str
   return confirmed;
 }
 
-/** human_confirmed 须逐 P0 屏有 [x] 证据（非 lightweight） */
+/** Legacy parser helper only: human_confirmed no longer grants gate authority. */
 export function missingUiSpecGateScreens(doc: UiSpecDoc, specMarkdown: string): string[] {
   const confirmed = collectUiSpecGateConfirmedScreens(specMarkdown);
   const missing: string[] = [];

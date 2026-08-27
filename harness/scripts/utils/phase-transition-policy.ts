@@ -49,8 +49,7 @@ export type PhaseVerdictAction =
 /**
  * goal-fakepass-hardening t8（openspec goal-runner delta）：非最终成功状态不得含裸
  * COMPLETED 语义——run 级成功=CHAIN_SLICE_COMPLETED（只证明本 run 的链切片，feature 级
- * 完成只认 verify-feature-completion=VALID）；存在待人工事项（pending must-review/
- * waiver/档位钳制）→ AWAITING_HUMAN_REVIEW 封顶。'COMPLETED' 仅为 legacy 事件读取兼容
+ * 完成只认 verify-feature-completion=VALID）；AWAITING_HUMAN_REVIEW/COMPLETED 仅为 legacy 事件读取兼容，
  * （旧 run 的 events.jsonl），新代码不得写出。INTERRUPTED 由 goal-mode-unattended-survival
  * 管辖（异常退出终态，正交共存）。
  */
@@ -398,14 +397,14 @@ export function classifyPhaseAssessment(
 export const DEFAULT_MAX_BACKTRACKS = 2;
 
 /**
- * Compute final goal run status from per-phase outcomes.
- * 成功终态=CHAIN_SLICE_COMPLETED（仅链切片语义）；opts.pendingHumanReview（待复核决议/
- * waiver/档位钳制）把否则成功的 run 封顶为 AWAITING_HUMAN_REVIEW——不再产出裸 COMPLETED。
+ * Compute final goal run status from per-phase outcomes. Current writers never produce
+ * AWAITING_HUMAN_REVIEW; a legacy pending-human signal is reprojected to PARTIAL/revalidation.
  */
 export function resolveGoalRunStatus(
   phases: Array<{
     phase: FeaturePhase;
     deferred?: boolean;
+    deferred_reason?: string;
     halted?: boolean;
     agent_timed_out?: boolean;
     advance_blocked?: boolean;
@@ -418,12 +417,18 @@ export function resolveGoalRunStatus(
   const anyUnclosedTimeout = phases.some((p) => p.agent_timed_out && p.advance_blocked);
   if (anyUnclosedTimeout && reachedEnd) return 'PARTIAL';
   const anyDeferred = phases.some((p) => p.deferred);
-  if (anyDeferred) return reachedEnd ? 'DEFERRED' : 'PARTIAL';
+  if (anyDeferred) {
+    const capabilityMissing = phases.some(
+      p => p.deferred && p.deferred_reason === 'capability_missing',
+    );
+    if (capabilityMissing) return 'DEFERRED_CAPABILITY_MISSING';
+    return reachedEnd ? 'DEFERRED' : 'PARTIAL';
+  }
   if (!reachedEnd) return 'PARTIAL';
   // codex 八轮 P1-2：needs_fix（血缘 stale/tampered/verdict FAIL/attestation 失配）非人工
   // 确认事项，但同样不得 CHAIN_SLICE_COMPLETED（那声称链切片干净）——投 PARTIAL（修复重跑）。
   if (opts?.blockingFix) return 'PARTIAL';
-  return opts?.pendingHumanReview ? 'AWAITING_HUMAN_REVIEW' : 'CHAIN_SLICE_COMPLETED';
+  return opts?.pendingHumanReview ? 'PARTIAL' : 'CHAIN_SLICE_COMPLETED';
 }
 
 /**

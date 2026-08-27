@@ -7,7 +7,7 @@
 //     级别的规则杀不死它（codex 二轮 P0-1）；必须要求 checkpoint 级状态迁移证据与
 //     linked_flow 中间屏有序出现；
 //   - 18 用例 explicit_skip 11 条（含正好能抓 bug 的 TC-011/017），通过率按已执行子集
-//     100% 判「达标」——P0 skip 必须 fail-closed，waiver 只降级不洗白，双口径强制重算。
+//     100% 判「达标」——P0 skip 必须 fail-closed，双口径强制重算；人工 waiver 无效。
 //
 // 证据层次（诚实边界声明）：
 //   本门禁对账的是【派生 Hylyre 计划的 step 序列】（真机实际执行物，trace outcome 证实
@@ -19,16 +19,11 @@
 //   中间屏边无已执行 TC 支撑。
 // ============================================================================
 
-import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
 
-import { featureFilePath, receiptDirPath, resolveFeatureArtifact } from '../../config';
-import {
-  defaultTrustRegistryPath,
-  validateConfirmationReceiptFile,
-} from './confirmation-receipt';
+import { receiptDirPath, resolveFeatureArtifact } from '../../config';
 // e9d4b7a3 t2：AC/BD id 词法 SSOT 由 acceptance 侧承载，行内引用解析不再自写第二套正则
 import { extractAcceptanceIdRefs } from './check-acceptance';
 import {
@@ -38,7 +33,6 @@ import {
   selectBestNonPlaceholderDerivedPlan,
 } from './derived-hylyre-plan';
 import { extractTables, getSectionContent } from './markdown-parser';
-import { sha256File } from './phase-evidence-manifest';
 import type { CheckResult } from './types';
 
 // ----------------------------------------------------------------------------
@@ -215,60 +209,26 @@ export function evaluateAcceptanceFlowStructure(projectRoot: string, feature: st
   }];
 }
 
-/** flow_contract 绑定哈希口径（签发侧对齐；requirement 文本由调用方传入） */
-export function flowContractObjectHash(
-  projectRoot: string,
-  feature: string,
-  requirementText: string,
-): string {
-  const acc = resolveFeatureArtifact(projectRoot, feature, 'acceptance.yaml');
-  const uiSpec = featureFilePath(projectRoot, feature, path.join('spec', 'ui-spec.yaml'));
-  const parts = [
-    acc.exists ? sha256File(acc.actualPath) ?? '' : '',
-    fs.existsSync(uiSpec) ? sha256File(uiSpec) ?? '' : '',
-    crypto.createHash('sha256').update(requirementText, 'utf-8').digest('hex'),
-  ];
-  return crypto.createHash('sha256').update(parts.join('\n'), 'utf-8').digest('hex');
-}
-
-export function flowContractReceiptPath(projectRoot: string, feature: string): string {
-  return featureFilePath(projectRoot, feature, path.join('spec', 'flow-contract.receipt.json'));
-}
-
 /**
- * t4b flow_contract 确认点（codex 四轮 P0-3）：结构化流程模型的真人确认凭据；
- * AC/checkpoint/flow/ui-spec/需求任一改动 → 绑定哈希失配自动 stale。
- * 无有效 receipt：仅 advisory WARN（codex 方案二，用户裁定 08-15——签发端
- * confirmation-credential-issuance 未建成，谁都签不出，不再影响 clean_pass /
- * FEATURE_COMPLETED；签发落地后 receipt 机制原样可用）。
+ * 结构化流程模型来自 spec-owned acceptance.yaml，并由同阶段结构门禁与 phase evidence
+ * manifest 共同校验内容和 freshness；不再附加真人 flow_contract receipt。
  */
 export function evaluateFlowContract(
   projectRoot: string,
   feature: string,
-  requirementText: string,
+  _requirementText: string,
 ): CheckResult[] {
   const id = 'acceptance_flow_contract';
-  const description = '结构化流程模型真人确认（flow_contract receipt；改动即 stale）';
+  const description = '结构化流程模型机器契约（spec-owned + phase-evidence freshness）';
   const doc = loadAcceptanceFlowsDoc(projectRoot, feature);
   const applicable = doc && doc.criteria.some(isP0DeviceInteractive) && Object.keys(doc.flows).length > 0;
   if (!applicable) {
     return [{ id, category: 'structure', description, severity: 'MINOR', status: 'SKIP', details: '无 P0 device flow，flow_contract 不适用。' }];
   }
-  const v = validateConfirmationReceiptFile(
-    flowContractReceiptPath(projectRoot, feature),
-    defaultTrustRegistryPath(projectRoot),
-    { action: 'flow_contract', feature, object_hash: flowContractObjectHash(projectRoot, feature, requirementText) },
-  );
-  if (v.valid) {
-    return [{ id, category: 'structure', description, severity: 'MAJOR', status: 'PASS', details: 'flow_contract receipt 有效（绑定哈希当前）。' }];
-  }
   return [{
     id, category: 'structure', description,
-    severity: 'MAJOR', status: 'WARN',
-    details:
-      `flow_contract receipt 缺失/无效/已 stale：${v.reasons.join('；')}。` +
-      '结构化流程模型（AC 集是否完整转写需求）无法全机器证明——建议真人复核；' +
-      '本提示仅为 advisory，不影响 clean_pass 或 FEATURE_COMPLETED（签发体系落地前无人能产出合法 receipt）。',
+    severity: 'MAJOR', status: 'PASS',
+    details: 'P0 flow/checkpoint 来自 spec-owned acceptance.yaml；结构由 acceptance_flow_model 校验，freshness 由当前 phase evidence manifest 绑定。',
   }];
 }
 
@@ -316,31 +276,6 @@ function stepKind(step: ParsedStep): { kind: string; byId?: string; byText?: str
 
 const ACTION_KINDS = new Set(['touch', 'input', 'swipe', 'scroll']);
 
-export interface SkipWaiverEntry {
-  tc_id: string;
-  reason?: string;
-  receipt_path?: string;
-}
-
-export function skipWaiversPath(projectRoot: string, feature: string): string {
-  return featureFilePath(projectRoot, feature, path.join('testing', 'skip-waivers.yaml'));
-}
-
-export function p0SkipObjectHash(feature: string, tcId: string): string {
-  return crypto.createHash('sha256').update(`${feature}\n${tcId}`, 'utf-8').digest('hex');
-}
-
-function loadSkipWaivers(projectRoot: string, feature: string): SkipWaiverEntry[] {
-  const p = skipWaiversPath(projectRoot, feature);
-  if (!fs.existsSync(p)) return [];
-  try {
-    const doc = YAML.parse(fs.readFileSync(p, 'utf-8')) as { waivers?: SkipWaiverEntry[] };
-    return Array.isArray(doc?.waivers) ? doc.waivers : [];
-  } catch {
-    return [];
-  }
-}
-
 export interface P0GateInputs {
   projectRoot: string;
   feature: string;
@@ -354,17 +289,17 @@ export interface P0GateInputs {
 }
 
 /**
- * t5→c7e4a2d9：P0 覆盖 fail-closed。skip/未执行的 P0 须逐条 receipt waiver（p0_skip_waiver），
- * 否则 BLOCKER；未豁免缺口**全部属于既有 explicit_skip_tc_ids 登记**时才复用既有
+ * t5→c7e4a2d9：P0 覆盖 fail-closed。skip/未执行的 P0 一律 BLOCKER；缺口
+ * **全部属于既有 explicit_skip_tc_ids 登记**时才复用既有
  * failure_kind=code_regression + actionability=agent_fixable（默认回 coding 恢复可测性/
  * 修复产品缺陷——不降低验收标准，修复不是授权行为）；status 为空或未经登记的 trace skip
  * 不产 coding 候选（留在 testing 补执行/派生事实）；外部条件仍由既有 envBlocked/DEFERRED
- * 优先处置，不伪装 explicit skip；waived 仅降级 WARN；任何 P0 skip 存在时报告结论不得
+ * 优先处置，不伪装 explicit skip；任何 P0 skip 存在时报告结论不得
  * 无条件「达标」；双口径（全分母执行覆盖率+通过率）写入 details，与"已执行子集 100%"话术对账。
  */
 export function evaluateP0CoverageIntegrity(inp: P0GateInputs): CheckResult[] {
   const id = 'p0_coverage_integrity';
-  const description = 'P0 用例覆盖 fail-closed（skip 须凭证 waiver；双口径重算；达标结论对账）';
+  const description = 'P0 用例覆盖 fail-closed（skip 不可豁免；双口径重算；达标结论对账）';
   const entries = parsePlanTcEntries(inp.planMd);
   const p0 = entries.filter((e) => e.priority.toUpperCase() === 'P0');
   if (p0.length === 0) {
@@ -384,47 +319,29 @@ export function evaluateP0CoverageIntegrity(inp: P0GateInputs): CheckResult[] {
   const skipped = p0.filter((e) => explicitSkips.has(e.id) || status(e.id) === '跳过' || status(e.id) === '');
   const isExplicit = (tc: string): boolean => explicitSkips.has(tc);
 
-  const waivers = loadSkipWaivers(inp.projectRoot, inp.feature);
-  const registryPath = defaultTrustRegistryPath(inp.projectRoot);
-  const unwaivedExplicit: string[] = [];
-  const unwaivedTraceOrEmpty: string[] = [];
-  const waived: string[] = [];
+  const unexecutedExplicit: string[] = [];
+  const unexecutedTraceOrEmpty: string[] = [];
   for (const e of skipped) {
-    const w = waivers.find((x) => x.tc_id?.toUpperCase() === e.id);
-    if (w?.receipt_path) {
-      const v = validateConfirmationReceiptFile(
-        path.join(inp.projectRoot, w.receipt_path),
-        registryPath,
-        { action: 'p0_skip_waiver', feature: inp.feature, object_hash: p0SkipObjectHash(inp.feature, e.id), now: inp.now },
-      );
-      if (v.valid) {
-        waived.push(e.id);
-        continue;
-      }
-      (isExplicit(e.id) ? unwaivedExplicit : unwaivedTraceOrEmpty)
-        .push(`${e.id}（waiver receipt 无效：${v.reasons.slice(0, 2).join('；')}）`);
-      continue;
-    }
-    (isExplicit(e.id) ? unwaivedExplicit : unwaivedTraceOrEmpty).push(e.id);
+    (isExplicit(e.id) ? unexecutedExplicit : unexecutedTraceOrEmpty).push(e.id);
   }
 
   const coverage = `${executedPassed.length}/${p0.length}`;
-  const dual = `全分母口径：P0 执行通过 ${coverage}（覆盖率 ${Math.round((executedPassed.length / p0.length) * 100)}%），skip ${skipped.length}（waived ${waived.length}）`;
+  const dual = `全分母口径：P0 执行通过 ${coverage}（覆盖率 ${Math.round((executedPassed.length / p0.length) * 100)}%），skip ${skipped.length}`;
 
   const results: CheckResult[] = [];
-  if (unwaivedExplicit.length > 0 || unwaivedTraceOrEmpty.length > 0) {
-    const explicitOnly = unwaivedTraceOrEmpty.length === 0;
-    const items = [...unwaivedExplicit, ...unwaivedTraceOrEmpty];
+  if (unexecutedExplicit.length > 0 || unexecutedTraceOrEmpty.length > 0) {
+    const explicitOnly = unexecutedTraceOrEmpty.length === 0;
+    const items = [...unexecutedExplicit, ...unexecutedTraceOrEmpty];
     const fail: CheckResult = {
       id, category: 'structure', description,
       severity: 'BLOCKER', status: 'FAIL',
       details:
-        `P0 用例被跳过/未执行且无有效凭证 waiver（${items.length}）：${items.slice(0, 10).join('、')}${items.length > 10 ? '…' : ''}。\n${dual}。\n` +
+        `P0 用例被跳过/未执行（${items.length}）：${items.slice(0, 10).join('、')}${items.length > 10 ? '…' : ''}。\n${dual}。\n` +
         (explicitOnly
-          ? '全部未豁免缺口均属既有 explicit_skip_tc_ids 登记——仓内需恢复可执行性的缺陷（code_regression），' +
-            '默认回 coding 修复最小可测性/产品缺陷并重测；不降低 P0 标准，真人豁免仍须 skip-waivers.yaml 逐条 receipt（p0_skip_waiver）。'
+          ? '全部缺口均属既有 explicit_skip_tc_ids 登记——仓内需恢复可执行性的缺陷（code_regression），' +
+            '默认回 coding 修复最小可测性/产品缺陷并重测；人工 waiver 不能降低 P0 标准。'
           : '含 status 为空或未经 explicit_skip_tc_ids 登记的 trace skip——留在 testing 恢复执行/派生计划；' +
-            '外部环境阻塞走既有 DEFERRED；真人豁免须 skip-waivers.yaml 逐条 receipt（p0_skip_waiver）。'),
+            '外部环境阻塞走既有 DEFERRED；人工 waiver 不能改写执行事实。'),
       suggestion: explicitOnly
         ? '不降低验收标准的修复不是授权行为：回 coding 恢复可测性/修复缺陷后重跑；同指纹无进展由既有熔断收口。'
         : '在 testing 补 P0 执行或派生事实后重跑；外部阻塞按 DEFERRED 登记。',
@@ -436,12 +353,6 @@ export function evaluateP0CoverageIntegrity(inp: P0GateInputs): CheckResult[] {
       fail.actionability = 'agent_fixable';
     }
     results.push(fail);
-  } else if (skipped.length > 0) {
-    results.push({
-      id, category: 'structure', description,
-      severity: 'MAJOR', status: 'WARN',
-      details: `${dual}。全部 skip 已凭证豁免——降级不洗白：run 封顶 AWAITING_HUMAN_REVIEW，feature 不得 FEATURE_COMPLETED。`,
-    });
   } else {
     results.push({
       id, category: 'structure', description,
@@ -594,11 +505,9 @@ export function evaluateP0SemanticCoverage(inp: P0GateInputs): CheckResult[] {
         'flow 每条边须有已执行通过的 owning TC。运行时 hit-test/页面签名扩展见 change tasks deferred 项。',
     }];
   }
-  // 诚实边界（codex 六轮 P0-3）：本层证据=派生计划 step 文本 + trace case 状态，
-  // **不含**运行时逐步屏幕序列/实际 action target/layout hit-test/forbidden 缺席。
-  // "计划文本正确 + 运行时仍走 fast path + TC 自报通过"这一残余面须待 provider step 级
-  // 采集扩展封死——PASS 不得被读成"运行时忠实执行了声明流程"。附加显式 WARN 声明该边界，
-  // 避免绿灯被误读为完整运行时证明。
+  // This gate intentionally proves only the planned step contract. Runtime
+  // observations are now enforced independently by p0_runtime_step_evidence;
+  // keeping the boundaries separate avoids treating a plan match as a hit-test.
   return [
     {
       id, category: 'structure', description,
@@ -608,14 +517,11 @@ export function evaluateP0SemanticCoverage(inp: P0GateInputs): CheckResult[] {
     {
       id: 'p0_runtime_step_evidence_boundary',
       category: 'structure',
-      description: 'P0 运行时逐步证据边界声明（deferred：需 Hylyre provider step 级采集）',
-      severity: 'MAJOR', status: 'WARN',
+      description: 'P0 计划级与运行时证据边界',
+      severity: 'MINOR', status: 'PASS',
       details:
-        '本 PASS 基于派生计划 step 文本 + trace case 状态，**不构成运行时忠实性证明**：' +
-        '实际 action target / 逐步屏幕序列 / layout hit-test / forbidden 元素缺席尚未运行时校验' +
-        '（Hylyre trace 现无 step 级观测，provider 采集扩展为 change deferred 项）。' +
-        '风险残余面：计划文本正确但运行时走 fast path 且 TC 自报通过。视觉 diff（visual_diff_capture）' +
-        '与真机 trace outcome 为当前互补证据；完整封死待 provider 扩展。',
+        '本检查只证明派生计划步序与 trace case 结果一致；实际 hit target、bounds、pre/post 屏幕签名、' +
+        'required/forbidden 观测由独立 BLOCKER 检查 p0_runtime_step_evidence 负责。',
     },
   ];
 }

@@ -2,15 +2,15 @@
 // headless-assumptions.ts — goal 无头自动决议账本（goal-fakepass-hardening t1）
 // ============================================================================
 // 事故背景：goal-report 的 must-review 收集用行内 `must-review: 是` 正则，agent 实写
-// markdown 表格（testing 表甚至无该列）→ 0 匹配 → "待人工复核"整节静默不渲染，用户
+// markdown 表格（testing 表甚至无该列）→ 0 匹配 → 自动决议审计整节静默不渲染，用户
 // 只见干净 PASS（bc-openCard 洞⑤）。
 //
 // 本模块（openspec goal-runner/harness-gates delta）：
 //   - SSOT 改为 <phase>/headless-assumptions.jsonl（每行一条决议，schema 校验）；
 //     markdown 降级为人读投影；
 //   - legacy md 兼容读取（保守策略：无法辨识 must-review 语义的表格行**全量**计入
-//     待复核——宁可多报）；
-//   - 账本仅留痕：任何 hard-gate-lowering 授权走 confirmation receipt（t10），
+//     审计投影——宁可多报，但不参与门禁）；
+//   - 账本仅留痕：任何 hard-gate-lowering 授权都已退役，
 //     账本记录不构成授权——**也不构成否决**：registry 交叉核验/closure 门禁已退役
 //     （openspec runner-owned-machine-facts；账本是 feature 级跨 run 累积留痕，
 //     曾以 run 绑定+registry 覆盖否决 closure，把完整且身份等值的回执恒判 failed）。

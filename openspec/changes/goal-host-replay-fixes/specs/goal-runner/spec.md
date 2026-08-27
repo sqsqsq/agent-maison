@@ -87,31 +87,21 @@ Enforcement: `harness/scripts/utils/goal-runner-phase.ts`, `harness/scripts/goal
 - **WHEN** accumulated active time reaches the wall budget at resume
 - **THEN** the run SHALL halt with `budget_wall_clock` present on outcome/phase_halt/run_end and guidance offering a new-manifest run or `--override-manifest` resume
 
-### Requirement: Human adjudication with an exact drift fingerprint is the only automatic mutation exit while the classifier is pending
+### Requirement: Source drift is invalidated and revalidated by its responsible phase
 
-The mutation authorization scope hash SHALL be the versioned v2 canonical form (run_id, phase, `source_inventory_before`, sorted normalized `allowed_files`, `allowed_change_kind`, `max_files`, `adjudicated_drift_fingerprint ?? null`) with project-relative path normalization failing closed on absolute paths, `..` segments and duplicates; receipts signed against the v1 five-field scope SHALL validate as invalid (no v1 verifier is kept). `pre_authorized_mutations` manifest entries SHALL be copied and shape-validated at parse (silent dropping is a defect) but remain intent registration only — never an automatic pass. `classifySourceDrift` SHALL return `authorized_backtrack` only when valid human receipts carrying an `adjudicated_drift_fingerprint` exactly matching the current drift content fingerprint (op + canonical path + content sha256, stable order, domain-separated) **independently** cover the full drift within their own per-receipt quotas — coverage is never stitched together with preauth or fingerprint-less receipts (a human adjudication for file A plus a preauth entry covering file B releasing an A+B drift would make preauth participate in the release); the runner SHALL execute the backtrack only when the current chain contains both `coding` and `review` — on a truncated chain an effective adjudication SHALL halt as `authorized_mutation_requires_full_chain` guiding a fresh coding-rooted run. On an unauthorized halt the runner SHALL snapshot the harness evidence first (outcome keeps the harness verdict with `halted` as the transition axis), write `mutation-adjudication-request.json` (fingerprint, entries, receipt template) into the run directory, and emit guidance from one builder shared by banner/event/report that lists only currently walkable routes (the issuance route constant is false in this window; adjudication-available and truncated-chain cases route accordingly; gap-notes self-approval is explicitly named non-authorization). `halt_guidance` SHALL be attached to outcomes whenever present (no reason whitelist).
+The mutation scope and current drift fingerprint SHALL remain normalized machine facts, and `pre_authorized_mutations` or agent gap-notes MAY be retained as intent provenance only. No receipt, signer, or preauthorization SHALL classify drift as accepted. When a controlled invocation changes protected source outside its phase write boundary, the runner SHALL record the exact drift, invalidate the invocation plus owner/downstream closure trust, preserve the bytes as untrusted, and use the existing `backtrack_to_phase` transaction to the responsible owner when present in the resolved chain. A truncated chain without the owner SHALL use `backtrack_target_absent` and guide a full/successor run; it SHALL NOT create an adjudication request or human release route.
 
-Enforcement: `harness/scripts/utils/mutation-authorization.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-manifest.ts`, `harness/scripts/utils/await-confirm-guidance.ts`
+Enforcement: `harness/scripts/utils/mutation-authorization.ts`, `harness/scripts/utils/phase-write-boundary.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-assess-driver.ts`
 
-#### Scenario: preauth coverage alone does not pass
+#### Scenario: preauthorization does not pass drift
 
-- **WHEN** a frozen `pre_authorized_mutations` entry covers the drifted file but no fingerprint-matching human adjudication exists
-- **THEN** classification SHALL remain `unauthorized` and the violation SHALL state that preauth is intent registration only
+- **WHEN** a frozen `pre_authorized_mutations` entry covers a post-review drift
+- **THEN** the entry SHALL remain audit provenance while the drift invalidates trust and routes to its responsible phase
 
-#### Scenario: adjudication signed for other content does not release the current drift
+#### Scenario: a truncated chain cannot reach the owner
 
-- **WHEN** a valid human receipt carries a fingerprint that no longer matches the on-disk drift content
-- **THEN** classification SHALL remain `unauthorized` naming the fingerprint mismatch
-
-#### Scenario: adjudication coverage cannot be stitched with other receipts
-
-- **WHEN** a fingerprint-matching human receipt covers only file A while a separate fingerprint-less receipt covers file B, and the drift touches A and B
-- **THEN** classification SHALL remain `unauthorized` stating that adjudication receipts must independently cover the full drift
-
-#### Scenario: a truncated chain converts an effective adjudication into a fresh-run guide
-
-- **WHEN** the chain is `ut→testing` and a fingerprint-matching adjudication exists
-- **THEN** the runner SHALL halt as `authorized_mutation_requires_full_chain` and the guidance SHALL point to a fresh coding-rooted run with `--supersede` of the old run, not to an in-run backtrack
+- **WHEN** the chain is `ut→testing` and the current protected-source drift belongs to coding
+- **THEN** the runner SHALL report `backtrack_target_absent` with a coding-rooted successor/full-chain route and SHALL NOT request a human mutation receipt
 
 ### Requirement: phase_halt overrides provisional verdicts in projection and rebuild
 

@@ -54,7 +54,7 @@
 
 **一票升 full**（命中任一）：pixel_1to1 意图；明确跨模块信号；goal 模式运行。lite 实施中出现 scope 越界/跨模块信号→停下走升档确认（`feature.track`）。
 
-**修正三问**（中途 NL 修正必答 · `correction.layer`，先分层再动手）：
+**修正三问**（中途 NL 修正必答，先分层再动手）：
 
 | 问 | 是 → 落点层 |
 |---|---|
@@ -62,7 +62,9 @@
 | Q2 需求没变，接口/契约/设计要变？ | plan（plan.md/contracts.yaml；lite=change.md Scope/关键契约） |
 | Q3 上游都没错——要改产品代码？ | 是→coding；否（纯补验证）→ut/testing |
 
-只改根因层 SSOT 产物，再级联重跑落点层及下游已闭环 phase 的脚本门禁——重验 ≠ 重做。
+`--correction-init` 按上述事实自动路由责任阶段，不再要求人签。只改根因层 SSOT
+产物，再级联重跑落点层及下游已闭环 phase 的脚本门禁——重验 ≠ 重做；用户反馈是 successor/correction
+输入，不是对上一 run 的签名。
 
 ### 4.0.1 阶段 Skill 总表
 

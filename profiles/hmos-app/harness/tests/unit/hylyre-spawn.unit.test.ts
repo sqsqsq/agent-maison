@@ -55,6 +55,24 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: 'buildHylyreSpawnInvocation: runtime telemetry wrapper 替代 -m hylyre 且保留原 argv',
+    run: () => {
+      const wrapper = '/framework/profiles/hmos-app/harness/hylyre-runtime-telemetry.py';
+      const hylyreArgv = ['run', '--plan', '/abs/plan.md', '--out', '/abs/trace.json'];
+      const inv = buildHylyreSpawnInvocation({
+        pythonPath: '/venv/python',
+        pythonScriptPath: wrapper,
+        hypiumWorkDir: HYPIUM_CWD,
+        hylyreArgv,
+      });
+      assert(
+        JSON.stringify(inv.argv) === JSON.stringify([wrapper, ...hylyreArgv]),
+        `wrapper argv ${JSON.stringify(inv.argv)}`,
+      );
+      assert(!inv.argv.includes('-m'), 'wrapper 路径不得同时追加 -m hylyre');
+    },
+  },
+  {
     name: 'buildHylyreSpawnInvocation: 空白 store 不注入 env',
     run: () => {
       const inv = buildHylyreSpawnInvocation({

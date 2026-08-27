@@ -745,6 +745,8 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       const root = setupMinimalHost('hard-400');
       const specAbs = path.join(root, 'doc', 'features', 'hard-400', 'spec', 'spec.md');
       fs.writeFileSync(specAbs, '```yaml\nui_change: new_or_changed\n```\n', 'utf-8');
+      fs.mkdirSync(path.join(root, 'app'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'app', '.keep'), '', 'utf-8');
       const { spawnSync } = require('child_process') as typeof import('child_process');
       spawnSync('git', ['add', '-A'], { cwd: root, encoding: 'utf-8' });
       spawnSync('git', ['commit', '-qm', 'ui'], { cwd: root, encoding: 'utf-8' });
@@ -788,7 +790,6 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           '--requirement', '银行卡开卡需求，含7个页面，参考图还原布局。',
           '--start', 'spec', '--end', 'spec',
           '--adapter', 'cursor',
-          '--allow-blind-visual',
           '--foreground-ok', '--force',
         ];
         process.chdir(root);
@@ -834,6 +835,8 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       const root = setupMinimalHost('hard-guardian');
       const specAbs = path.join(root, 'doc', 'features', 'hard-guardian', 'spec', 'spec.md');
       fs.writeFileSync(specAbs, '```yaml\nui_change: new_or_changed\n```\n', 'utf-8');
+      fs.mkdirSync(path.join(root, 'app'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'app', '.keep'), '', 'utf-8');
       const { spawnSync } = require('child_process') as typeof import('child_process');
       spawnSync('git', ['add', '-A'], { cwd: root, encoding: 'utf-8' });
       spawnSync('git', ['commit', '-qm', 'ui'], { cwd: root, encoding: 'utf-8' });
@@ -878,7 +881,6 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           '--requirement', '银行卡开卡需求，含7个页面，参考图还原布局。',
           '--start', 'spec', '--end', 'spec',
           '--adapter', 'cursor',
-          '--allow-blind-visual',
           '--foreground-ok', '--force',
         ];
         process.chdir(root);

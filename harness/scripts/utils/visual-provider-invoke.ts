@@ -63,8 +63,8 @@ export const VISUAL_PROVIDER_DEFAULT_TIMEOUT_MS = 5 * 60_000;
 // 的结构保证（逐屏合并进一次 invoke），并由单测「N 屏只发一次 invoke」钉死。
 //
 // 这里**刻意不放**「每 attempt 至多 N 次调用」的计数常量：gate 在同一 attempt 内的合法重跑
-// 是既有契约的一部分（缺陷清零 → candidate-pass → await_human_confirm → 真人签 →
-// **重跑 gate 方 PASS**），硬计数会把那次重跑判成超预算并落 fail-open SKIP，永远签不出 PASS。
+// 是既有契约的一部分（缺陷清零 → 重采/重评 → 当前 hash-bound 机器证据 →
+// **重跑 gate 方 PASS**），硬计数会把必要重验判成超预算并落入错误降级。
 
 /** spec 观察：单 run 封顶（另受参考图数量约束，见 resolveSpecObservationBudget）。 */
 export const VISUAL_PROVIDER_SPEC_OBSERVATION_MAX_PER_RUN = 12;

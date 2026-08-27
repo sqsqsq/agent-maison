@@ -14,7 +14,7 @@
     "verified": {
       "type": "string",
       "enum": ["verified", "unverified", "human_confirmed"],
-      "description": "DSL↔原图校验 gate 状态；unverified 时下游 parity 只报结构不报保真。"
+      "description": "DSL↔原图校验 gate 状态；新产物只写 verified/unverified，legacy human_confirmed 仅兼容读取且按 unverified 投影。unverified 时下游 parity 只报结构不报保真。"
     },
     "verified_method": {
       "type": "string",
@@ -224,12 +224,12 @@
         "resolved_path": { "type": "string" },
         "placeholder": { "type": "boolean" },
         "rationale": { "type": "string" },
-        "human_crop_confirmed": { "type": "boolean" },
-        "crop_confirmed_by": { "type": ["string", "null"], "description": "G4b：crop 裁剪授权来源；null 明确表示尚未授权，不构成放行。headless 下有效值须为非自动化身份或 user_requirement。授权≠验真：产物验真见 asset_crop_validation 与 bbox_verified_by" },
+        "human_crop_confirmed": { "type": "boolean", "description": "legacy provenance only；兼容读取但不构成裁剪授权或质量证明，新 writer 不生成" },
+        "crop_confirmed_by": { "type": ["string", "null"], "description": "legacy provenance only；兼容读取但不 gate，新 writer 使用 source/hash/tool provenance" },
         "blind_fallback_reason": { "type": "string", "description": "盲档回退/占位原因说明；只记录未验证事实，不构成授权或视觉证明" },
-        "baked_text_defer": { "type": "boolean", "description": "round5 P0-A：显式放行素材图内含声明文本（营销/装饰插画确需含字）" },
-        "baked_text_defer_by": { "type": "string", "description": "round5 P0-A：baked_text_defer 真人署名（非自动化身份）；缺则 defer 无效" },
-        "bbox_verified_by": { "type": "string", "description": "P0-C：crop 产物验真的真人确认署名（对照 contact-sheet）；与授权正交，是 VL 辨认不可用/失配时的唯一逃生阀（自动化身份不算）" },
+        "baked_text_defer": { "type": "boolean", "description": "legacy disclosure only；不豁免素材烤入声明文本的机器门禁" },
+        "baked_text_defer_by": { "type": "string", "description": "legacy provenance only；兼容读取但不 gate" },
+        "bbox_verified_by": { "type": "string", "description": "legacy provenance only；裁剪验真改由 source/bbox/tool/hash 的确定性复算完成" },
         "crop_provenance": {
           "type": "object",
           "description": "blind-visual-hardening d2：crop 产物来源记录（external_tool 放行通道——source_sha256 须命中 feature 参考图集真实哈希）",

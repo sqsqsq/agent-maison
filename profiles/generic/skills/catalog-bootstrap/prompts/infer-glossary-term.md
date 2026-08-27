@@ -248,7 +248,7 @@ staging 全部落地后，**不要**一次把原始 YAML 倒给用户看，也**
 
 | 回应 | 动作 |
 |------|------|
-| `y` | ① staging 的 `confirmed_by_user: true`<br>② 只取 staging 的 `term:` 子树追加/替换到 `doc/glossary.yaml`<br>③ **删除** staging 文件（审计靠 git 历史，不用 `_merged/` 归档）<br>④ 进入下一条 |
+| `y` | ① staging 的 `selection_status: selected`<br>② 只取 staging 的 `term:` 子树追加/替换到 `doc/glossary.yaml`<br>③ **删除** staging 文件（审计靠 git 历史，不用 `_merged/` 归档）<br>④ 进入下一条 |
 | `e <指令>` | patch staging → 重新展示本条 → 再问 |
 | `s` | 保留 staging 不动，进入下一条 |
 | `q` | 删 staging，进入下一条 |

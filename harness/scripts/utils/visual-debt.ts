@@ -5,13 +5,8 @@
 // test-report「达标可发布」零 caveat。本模块：
 //   ① harness 从 check 结果**派生**债务清单（非 agent 自报）→ visual-debt.json（机器真值）
 //     + visual-debt.md（人类投影，对齐 headless-assumptions JSONL→md 惯例）；
-//   ② 状态三态 open|closed|accepted（design §1.4：closed=已修复；accepted=仍存在但用户经
-//     receipt 显式接受——审计语义分立，两者均不再阻断 release，报表分列）；
-//   ③ 人工视觉验收 receipt 消费边界（design §1.8 + codex 四轮④⑤）：
-//     - rubric 阈值**冻结**：每维 ≥4/5；任一维=3 须显式 accepted_debt_id；1-2 分不得通过；
-//     - screens 结构化映射绑定（hash 调序不能验签通过）——object_hash=矩阵规范化哈希；
-//     - **只清偿 needs_human（主观视觉）项；needs_fix（确定性 FAIL）拒绝清偿**（修复重跑唯一出路）；
-//   ④ 素材三态清偿字段（P1-F 消费）：source/binding/render 全 VERIFIED 才 closed。
+//   ② 新状态只写 open|closed；legacy accepted 可读但在 reducer 中自动重投影 open，绝不豁免 release；
+//   ③ 素材三态清偿字段（P1-F 消费）：source/binding/render 全 VERIFIED 才 closed。
 // ============================================================================
 
 import * as crypto from 'crypto';
@@ -21,12 +16,10 @@ import { featureDir } from '../../config';
 import type { CheckResult } from './types';
 
 export const VISUAL_DEBT_SCHEMA_VERSION = '1.0';
-export const RUBRIC_VERSION = 'r1-frozen';
-/** 冻结阈值（验收前定死，禁"看结果再调线"——codex 三轮⑤） */
-export const RUBRIC_MIN_PASS = 4;
-export const RUBRIC_CONDITIONAL = 3;
 
+/** `accepted` 仅为 legacy reader 兼容；新 writer 永不生成。 */
 export type DebtStatus = 'open' | 'closed' | 'accepted';
+/** `needs_human` 仅为 legacy reader 兼容；新 writer 永不生成。 */
 export type DebtResolutionClass = 'needs_fix' | 'needs_human';
 export type AssetVerifyState = 'VERIFIED' | 'UNVERIFIED';
 
@@ -53,7 +46,7 @@ export interface VisualDebtDoc {
   entries: VisualDebtEntry[];
 }
 
-/** 债务源 check（id → 归类）；FAIL→needs_fix，WARN/BLOCKER-SKIP→needs_human（待人工裁量/验收） */
+/** 债务源 check（id → 归类）；非 PASS 都保持机器可见 open debt。 */
 const DEBT_SOURCE_CHECKS: Record<string, { label: string }> = {
   visual_parity_unverified_crop: { label: '素材未验真（crop 未过 asset_crop_validation）' },
   asset_materialization_sanity: { label: '物化素材 sanity 违例（空白/纯色/损坏/role 失配）' },
@@ -62,7 +55,7 @@ const DEBT_SOURCE_CHECKS: Record<string, { label: string }> = {
   visual_parity: { label: '视觉结构 presence 违例' },
   render_visibility_calibrate: { label: '设备渲染可见性观察命中（节点在、像素不可见）' },
   visual_multimodal_parity: { label: '视觉多模态层降级（盲档 SKIP，保真未验）' },
-  capture_completeness_external: { label: '参考图覆盖缺口（盲档待人工复核清单）' },
+  capture_completeness_external: { label: '参考图覆盖缺口（盲档能力/证据清单）' },
   visual_diff: { label: '设备视觉对照未产出/未达' },
 };
 
@@ -117,8 +110,7 @@ interface CheckLike {
  *   - check 本轮**缺席**（该 phase 不跑此检查）→ 历史条目原样保留——债务跨阶段单调，
  *     coding 期的债不因 testing 期不跑 visual_parity 而蒸发；
  *   - 同 scope 本轮**明确 PASS** → 才允许 closed（审计行保留）；
- *   - needs_fix 只能由源 check 转绿关闭（人工 receipt 拒清，见 applyVisualAcceptance）；
- *   - accepted 且仍未绿 → 保持 accepted（用户已知情）。
+ *   - 只有源 check 转绿才能关闭；legacy accepted 在进入 reducer 时重开。
  * 粒度：check 级为主键基座；带结构化 findings 的源（render_visibility 逐屏、
  * asset_materialization_sanity 逐素材）展开为 `debt:<check>:<scope>` 子条目，逐项清偿可审计。
  */
@@ -127,7 +119,11 @@ export function deriveVisualDebt(
   checks: CheckLike[],
   prev: VisualDebtDoc | null,
 ): VisualDebtDoc {
-  const prevEntries = prev?.entries ?? [];
+  const prevEntries = (prev?.entries ?? []).map((entry): VisualDebtEntry => {
+    if (entry.status !== 'accepted') return entry;
+    const { accepted_by: _acceptedBy, acceptance_receipt: _receipt, ...rest } = entry;
+    return { ...rest, status: 'open', resolution_class: 'needs_fix' };
+  });
   const prevById = new Map(prevEntries.map(e => [e.id, e]));
   const entries: VisualDebtEntry[] = [];
   const emitted = new Set<string>();
@@ -169,13 +165,12 @@ export function deriveVisualDebt(
       }
       continue;
     }
-    const resolutionClass: DebtResolutionClass = worst.status === 'FAIL' ? 'needs_fix' : 'needs_human';
+    const resolutionClass: DebtResolutionClass = 'needs_fix';
     const currentScopes = scopesOf(checkId, worst);
     const currentIds = new Set(currentScopes.map(s => s.id));
     for (const scope of currentScopes) {
       const prevEntry = prevById.get(scope.id);
-      const status: DebtStatus =
-        prevEntry?.status === 'accepted' && resolutionClass === 'needs_human' ? 'accepted' : 'open';
+      const status: DebtStatus = 'open';
       emit({
         id: scope.id,
         source_check_id: checkId,
@@ -185,9 +180,6 @@ export function deriveVisualDebt(
         resolution_class: resolutionClass,
         ...(scope.screen_id ? { screen_id: scope.screen_id } : {}),
         ...(scope.asset_key ? { asset_key: scope.asset_key } : {}),
-        ...(prevEntry?.status === 'accepted' && status === 'accepted'
-          ? { accepted_by: prevEntry.accepted_by, acceptance_receipt: prevEntry.acceptance_receipt }
-          : {}),
         ...(prevEntry
           ? {
               asset_source_status: prevEntry.asset_source_status,
@@ -264,7 +256,8 @@ export function assetDomainDebtRevision(doc: VisualDebtDoc | null): string {
 export function countBlockingDebt(doc: VisualDebtDoc | null): { open: number; accepted: number } {
   const entries = doc?.entries ?? [];
   return {
-    open: entries.filter(e => e.status === 'open').length,
+    // Legacy accepted is inert and therefore still blocking until the source check turns green.
+    open: entries.filter(e => e.status !== 'closed').length,
     accepted: entries.filter(e => e.status === 'accepted').length,
   };
 }
@@ -274,8 +267,8 @@ export function renderVisualDebtMd(doc: VisualDebtDoc): string {
   const lines = [
     `# 视觉债务 — ${doc.feature}`,
     '',
-    '> 本文件为 visual-debt.json（机器真值）的人类投影，勿手改；清偿走修复重跑或人工验收 receipt。',
-    `> open=${open}（阻断 release）· accepted=${accepted}（用户显式接受，不再阻断，审计分列）`,
+    '> 本文件为 visual-debt.json（机器真值）的人类投影，勿手改；只有修复并经源 check 重验转绿才能清偿。',
+    `> blocking=${open}（阻断 release）· legacy accepted=${accepted}（兼容读取但无豁免权）`,
     '',
     '| 条目 | 来源 check | 严重度 | 状态 | 处置类 | 摘要 |',
     '|------|-----------|--------|------|--------|------|',
@@ -297,76 +290,4 @@ function atomicWrite(absPath: string, content: string): void {
 export function writeVisualDebt(projectRoot: string, doc: VisualDebtDoc): void {
   atomicWrite(visualDebtJsonPath(projectRoot, doc.feature), `${JSON.stringify(doc, null, 2)}\n`);
   atomicWrite(visualDebtMdPath(projectRoot, doc.feature), renderVisualDebtMd(doc));
-}
-
-// ---------------------------------------------------------------------------
-// 人工视觉验收 receipt（payload 策略校验——信任链校验由 confirmation-receipt 承担）
-// ---------------------------------------------------------------------------
-
-export interface VisualAcceptanceScreens {
-  screen_id: string;
-  variant: string;
-  reference_sha256: string;
-  actual_sha256: string;
-}
-
-export interface VisualAcceptancePayload {
-  rubric_version: string;
-  rubric: { container: number; hierarchy: number; density: number; state_color: number };
-  screens: VisualAcceptanceScreens[];
-  accepted_debt_ids: string[];
-  signed_by: string;
-}
-
-/** screens 矩阵规范化哈希（receipt object_hash 绑定源；逐屏配对绑定，调序/换对即变） */
-export function screensMatrixHash(screens: VisualAcceptanceScreens[]): string {
-  const canonical = [...screens]
-    .map(s => `${s.screen_id}\u0000${s.variant}\u0000${s.reference_sha256}\u0000${s.actual_sha256}`)
-    .sort()
-    .join('\n');
-  return crypto.createHash('sha256').update(canonical, 'utf-8').digest('hex');
-}
-
-/** 冻结 rubric 策略校验（design §1.8）：≥4 通过；=3 须显式 accepted_debt_id；≤2 拒绝 */
-export function validateRubricPolicy(payload: VisualAcceptancePayload): string[] {
-  const errors: string[] = [];
-  if (payload.rubric_version !== RUBRIC_VERSION) {
-    errors.push(`rubric_version=${payload.rubric_version} ≠ 冻结版本 ${RUBRIC_VERSION}`);
-  }
-  const dims = Object.entries(payload.rubric ?? {});
-  if (dims.length !== 4) errors.push('rubric 须为四维（container/hierarchy/density/state_color）');
-  for (const [k, v] of dims) {
-    if (typeof v !== 'number' || v < 1 || v > 5) errors.push(`${k}=${v} 非法（1-5）`);
-    else if (v <= 2) errors.push(`${k}=${v}：1-2 分不得通过（修复后重评）`);
-    else if (v === RUBRIC_CONDITIONAL && (payload.accepted_debt_ids ?? []).length === 0) {
-      errors.push(`${k}=3：须对应显式 accepted_debt_ids（接受残余债务留痕）`);
-    }
-  }
-  if (!Array.isArray(payload.screens) || payload.screens.length === 0) {
-    errors.push('screens 结构化映射缺失（不接受裸 hash 数组）');
-  }
-  return errors;
-}
-
-/**
- * 应用验收：仅 needs_human 条目可 accepted；needs_fix 一律拒绝（确定性 FAIL 只能修复重跑）。
- * 返回拒绝清单供上层如实报告。
- */
-export function applyVisualAcceptance(
-  doc: VisualDebtDoc,
-  payload: VisualAcceptancePayload,
-  receiptRelPath: string,
-): { doc: VisualDebtDoc; rejected: string[] } {
-  const rejected: string[] = [];
-  const ids = new Set(payload.accepted_debt_ids ?? []);
-  const entries = doc.entries.map(e => {
-    if (!ids.has(e.id)) return e;
-    if (e.resolution_class === 'needs_fix') {
-      rejected.push(`${e.id}（needs_fix：确定性 FAIL 不可人工清偿——修复后重跑）`);
-      return e;
-    }
-    if (e.status === 'closed') return e;
-    return { ...e, status: 'accepted' as DebtStatus, accepted_by: payload.signed_by, acceptance_receipt: receiptRelPath };
-  });
-  return { doc: { ...doc, entries }, rejected };
 }

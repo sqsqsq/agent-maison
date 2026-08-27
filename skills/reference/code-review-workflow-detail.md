@@ -8,7 +8,7 @@
 
 1. **素材验真核验**：打开 `spec/reports/asset-crop-validation.json` 确认全部 crop `verified`；对照 `spec/reports/asset-contact-sheet-*.png` 逐张人核裁图与红框对应（3 秒/张）；有 failed/pending/真人翻案留痕的逐条确认处置。
 2. **可见文案 diff 复核**：核对 coding 门禁 `visible_text_whitelist` 结果；若存在 `coding/visible-text-exemptions.yaml`，**逐条复核豁免 rationale 是否正当**（豁免是自报面，review 是唯一人审关口）。
-3. **结构声明台账逐条复核**：打开 `coding/structure-conformance.yaml`，对**每一条** entry（pixel_1to1 P0 全条目核对，**不许抽查**）：①打开 `implemented_by` 对应 struct 源码，验证 `how` 描述属实；②对照参考原图确认该结构声明本身与原图一致。台账是 coding 自报面，**本维度是它唯一的人审关口**——门禁 `structure_declaration_ledger` 只保"逐条表过态+struct 真实存在"，**登记内容对不对由你兜**（非文本类结构如 tab 容器/分组视觉，device OCR 也兜不住，你是用户终审前最后防线）。复核结论逐条写进 review-report.md 并引用台账路径。
+3. **结构声明台账逐条复核**：打开 `coding/structure-conformance.yaml`，对**每一条** entry（pixel_1to1 P0 全条目核对，**不许抽查**）：①打开 `implemented_by` 对应 struct 源码，验证 `how` 描述属实；②对照参考原图确认该结构声明本身与原图一致。台账是 coding 自报面，review 必须独立逐条复核；门禁 `structure_declaration_ledger` 只保"逐条表过态+struct 真实存在"，登记真实性还须由本阶段证据与后续 device 机器信号共同闭环。复核结论逐条写进 review-report.md 并引用台账路径。
 4. **must_have_elements 覆盖**：全部 must_have 与变更屏在源码有真实承载（消费 `visual_parity` 结果，不重扫）。
 
 把各项核对结论+引用的报告路径写进 review-report.md 的「视觉保真」维度章节；pixel_1to1 下缺任一类证据引用，`visual_fidelity_review` 判 FAIL。

@@ -67,8 +67,8 @@ function prdNewOrChanged(): string {
 function validUiSpec(): string {
   return [
     'schema_version: "1.0"',
-    'verified: human_confirmed',
-    'verified_method: human_gate',
+    'verified: verified',
+    'verified_method: vl_multimodal',
     'screens:',
     '  - id: home',
     '    priority: P0',

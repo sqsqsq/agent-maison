@@ -437,6 +437,32 @@ export function dispatchDeviceTestEnsureReady(
   return fn(options);
 }
 
+/** P0 runtime-step telemetry provider/version handshake (pre-spawn). */
+export function probeDeviceRuntimeStepTelemetry(
+  ctx: CheckContext,
+  options: Record<string, unknown>,
+): unknown {
+  const fn = requireProviderFunction(
+    ctx.resolvedProfile,
+    'device_test.run',
+    'probeRuntimeStepTelemetry',
+  );
+  return fn(options);
+}
+
+/** Static provider/profile runtime telemetry handshake before agent invocation. */
+export function preflightDeviceRuntimeStepTelemetry(
+  resolved: HarnessResolvedProfile,
+  projectRoot: string,
+): unknown {
+  const fn = requireProviderFunction(
+    resolved,
+    'device_test.run',
+    'preflightRuntimeStepTelemetry',
+  );
+  return fn({ projectRoot });
+}
+
 export function dispatchDeviceTestRun(
   ctx: CheckContext,
   options: Record<string, unknown>,

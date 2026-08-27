@@ -108,12 +108,12 @@ modules: []
 [ ] 5. responsibilities 每条都能在代码 / 架构文档里找到依据
 [ ] 6. NOT_responsible_for 至少 3 条（或显式写 "# 暂无已知误塞反例"）
 [ ] 7. easily_confused_with 的每个 module 都能在已有 catalog 或本次待建清单里找到
-[ ] 8. staging 文件头部必须有 confirmed_by_user: false 字段
+[ ] 8. staging 文件头部必须有 selection_status: pending 字段
 ```
 
 ### Step 5. 在对话里逐条问用户确认（**默认交互式**）
 
-staging 的 `confirmed_by_user` 字段是审计记录，**由 AI 根据用户口头回应来翻转**，用户不需要手动打开文件改 flag。
+staging 的 `selection_status` 字段是普通输入选择记录，**由 AI 根据用户口头回应更新**，用户不需要手动打开文件改 flag。
 
 #### 5.1 展示草稿摘要（人友好汇总表，不是原始 YAML 转储）
 
@@ -154,7 +154,7 @@ CREATE 下 `y`=追加到 catalog，`q`=删 staging 模块继续缺档；UPDATE �
 
 | 用户回复 | AI 动作 |
 |---------|---------|
-| `y`/确认 | ① staging `confirmed_by_user: true`（审计痕迹）② 立即 Step 6 合并 ③ 删除 staging ④ 报告并停止 |
+| `y`/确认 | ① staging `selection_status: selected`（选择 provenance）② 立即 Step 6 合并 ③ 删除 staging ④ 报告并停止 |
 | `e <指令>` | 按指令 patch staging（只动点名字段）→ 重新展示 5.1 → 再问 5.2 |
 | `s`/跳过 | 保留 staging 不动 |
 | `q`/作废 | 删除 staging，不合并 |
@@ -166,12 +166,12 @@ CREATE 下 `y`=追加到 catalog，`q`=删 staging 模块继续缺档；UPDATE �
 3. **禁止**一轮对话连续处理多个模块的确认；每次只处理 1 个。
 4. 用户想手工审阅整份 YAML 可主动请求，但这只是补充手段。
 
-> **异步批量 fallback**：用户明确要"自己慢慢看 N 个 staging 再统一合并"时，退回手动改 `confirmed_by_user: true` + `/catalog-merge` 批量合并的老路（非默认）。
+> **异步批量 fallback**：用户明确要"自己慢慢看 N 个 staging 再统一合并"时，退回手动改 `selection_status: selected` + `/catalog-merge` 批量合并的老路（非默认）。
 
 ### Step 6. 合并到主 catalog（由 Step 5.3 `y` 分支或用户显式"合并"触发）
 
-1. 范围：来自 Step 5.3 `y` = 当前模块；用户说"合并所有" = 扫描 `doc/catalog-staging/*.yaml` 筛 `confirmed_by_user: true` 的。
-2. 每个已确认 staging **只取 `module:` 子树**追加/替换到 `modules[]`；`confirmed_by_user`/`generated_by`/`generated_at`/`signals_used` 等元数据**不进**主 catalog。
+1. 范围：来自 Step 5.3 `y` = 当前模块；用户说"合并所有" = 扫描 `doc/catalog-staging/*.yaml` 筛 `selection_status: selected` 的。
+2. 每个已选择 staging **只取 `module:` 子树**追加/替换到 `modules[]`；`selection_status`/`generated_by`/`generated_at`/`signals_used` 等元数据**不进**主 catalog。
 3. **删除**已合并的 staging 文件；commit message 约定：`catalog: add <ModuleName> via catalog-bootstrap`（CREATE）/ `catalog: refresh <ModuleName> via catalog-bootstrap (<变更摘要>)`（UPDATE）。
 4. 跑 `harness-runner.ts --phase catalog` 校验并把结果贴给用户。
 
@@ -231,7 +231,7 @@ catalog 覆盖 ≥ 80% 模块时，提议跑第二轮：扫描字面相似的模
 
 | 回复 | AI 动作 |
 |------|---------|
-| `y`/确认 | staging `confirmed_by_user: true` → 立刻合并本条到 glossary.yaml（只取 `term:` 子树） → 删除 staging → 下一条 |
+| `y`/确认 | staging `selection_status: selected` → 立刻合并本条到 glossary.yaml（只取 `term:` 子树） → 删除 staging → 下一条 |
 | `e <指令>` | patch staging → 重新展示 → 再问 |
 | `s`/跳过 | 保留 staging，下一条 |
 | `q`/作废 | 删除 staging，下一条 |

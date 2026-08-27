@@ -545,7 +545,7 @@ export interface HarnessRunSummary {
   /**
    * S7 asset 继承指纹链 2（codex 实施 review 二轮 P1-6）：asset 域债务 revision——
    * 债务管线定稿后机器写入（域内投影哈希/'no-debt' 哨兵）；testing 期继承时重算比对，
-   * 缺失/失配＝债务链不可证 → 不继承（STALE needs_human）。
+   * 缺失/失配＝债务链不可证 → 不继承（STALE needs_fix）。
    */
   asset_debt_revision?: string;
   script_report: string;

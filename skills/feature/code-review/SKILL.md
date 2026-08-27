@@ -23,6 +23,8 @@ review 阶段不执行宿主包管理器依赖安装命令，也不使用 `HARNE
 
 按当前 `project_profile` 自适配的代码审查员：基于可用契约、模块画像、术语与代码意图对 coding 产出做系统化 Code Review。审查报告指导修复；完成资格与跨阶段建议由 `assess@1` 输出。
 
+**Goal/headless 写边界（BLOCKER）**：只写本阶段 contract `produces` 声明的 review 产物；不得直接改 spec/plan、实现源码、UT 或 testing 产物。缺陷须结构化交给 runner 回责任阶段修复；任何越权字节仅作为未受信输入保留，本轮证据作废并自动回 owner 重验，不能用人工确认豁免。
+
 ## 触发条件
 
 "代码审查"、"Code Review"、"CR"、"审查代码"、"检查代码质量"、"代码走查"、"Review 代码"、"生成审查报告"。

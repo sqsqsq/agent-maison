@@ -24,14 +24,14 @@ Enforcement: `profiles/hmos-app/harness/capture-completeness-check.ts`
 
 ### Requirement: Overlay screens run their own OCR completeness denominator
 
-Under pixel_1to1 with a resolvable overlay reference image, capture completeness SHALL compare the overlay screen's reference-image OCR texts against that screen's own declared elements (must_have_elements/node texts), so an element visible in the overlay reference (e.g. a bank row) cannot be silently satisfied by main-screen declarations. Decorative text false positives SHALL use the existing defer + human-signed escape of `capture_completeness_external`, not a new whitelist mechanism.
+Under pixel_1to1 with a resolvable overlay reference image, capture completeness SHALL compare the overlay screen's reference-image OCR texts against that screen's own declared elements, so an element visible in the overlay reference cannot be silently satisfied by main-screen declarations. A proven OCR/comparison capability gap SHALL use the existing capability defer; a supported checker that produces a false or missing match SHALL remain a machine finding and MUST NOT be released by a signer or whitelist.
 
 Enforcement: `profiles/hmos-app/harness/capture-completeness-check.ts`
 
 #### Scenario: bank row missing from overlay model is caught
 
 - **WHEN** the overlay reference image contains a ≥2-char text with no matching element declared on that overlay screen
-- **THEN** the check SHALL flag it (ratchet under pixel_1to1) unless deferred with human signature
+- **THEN** the check SHALL flag it under pixel_1to1, or capability-defer only when the comparison capability is genuinely unavailable
 
 ### Requirement: Unverified ui-spec escalates to BLOCKER when true vision is available
 

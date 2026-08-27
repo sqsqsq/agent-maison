@@ -33,7 +33,6 @@ import {
   diffChangedFiles,
   filterBusinessSourceChanges,
   listFilesAtRef,
-  readApprovedMutations,
   readTraceStartCommit,
   analyzeDiffStaleness,
 } from './utils/git-diff';
@@ -63,7 +62,7 @@ import {
   relFeatureFile,
 } from '../config';
 import { driftFactsFromClosureAttestation, partitionDriftByGitStatus } from './utils/source-drift-facts';
-import { classifySourceDrift, computeCurrentDriftFingerprint, loadMutationAuthorizations } from './utils/mutation-authorization';
+import { classifySourceDrift } from './utils/mutation-authorization';
 import { isGoalOrchestrationEnv } from './utils/phase-state';
 import {
   tryLoadUtHostImpl,
@@ -802,12 +801,12 @@ function checkUtAssertionExists(
 }
 
 /**
- * v2.2 business-ut 红线：检测未授权的业务源码变更。
+ * business-ut 红线：检测不属于 UT owner 的业务源码变更。
  * 流程：
  *   (1) `HARNESS_DIFF_BASE_REF` 显式值；否则读 trace.start_commit；（再否则由 git-diff 默认 working）
  *   (2) git diff + 未提交/untracked，按受保护前缀筛；
- *   (3) 与 reports/<feature>/ut/**\/gap-notes.md 的 approved_src_mutations[] 对账；
- *   (4) 未登记 → FAIL BLOCKER。
+ *   (3) 任一业务源码变更均 FAIL BLOCKER，并交回 coding owner 重验；
+ *   (4) legacy gap-notes/人工授权可读，但不参与 PASS。
  *
  * 受保护前缀由实例 `architecture.outer_layers[].id` 推导；与 SKILL.md 约束 #12 对齐。
  */
@@ -836,28 +835,6 @@ function computeReportsFeatureRoot(projectRoot: string, feature: string): string
     return path.join(featuresDirPath(projectRoot), feature);
   }
   return path.join(HARNESS_ROOT, 'reports', feature);
-}
-
-function findGapNotesFiles(projectRoot: string, feature: string): string[] {
-  const reportsRoot = computeReportsFeatureRoot(projectRoot, feature);
-  if (!fs.existsSync(reportsRoot)) return [];
-  const hits: string[] = [];
-  const walk = (dir: string, depth: number) => {
-    if (depth > 4) return;
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const e of entries) {
-      const abs = path.join(dir, e.name);
-      if (e.isDirectory()) walk(abs, depth + 1);
-      else if (e.isFile() && e.name === 'gap-notes.md') hits.push(abs);
-    }
-  };
-  walk(reportsRoot, 0);
-  return hits;
 }
 
 function findTraceJsonFiles(projectRoot: string, feature: string): string[] {
@@ -896,11 +873,8 @@ export function pickNonSrcConfigChanges(files: string[]): string[] {
  * 与 runner reconcileMutablePhaseSourceDrift **共享同一基线与判定**（review closure
  * attestation + classifySourceDrift），只裁决 review 后漂移：coding 阶段合法业务
  * 改动（trace.start_commit 起算全量 diff，宿主实测 ~36 文件）不在裁决域，照 v3 直接
- * 要求 runner 背书会把合法实现全打成 BLOCKER。自签 gap-notes 不再构成放行；仅
- * fingerprint 精确吻合的人工裁决在场（classify=authorized_backtrack）方 PASS。
- * 两个专用 blocker id 均注册 human_only（goal-failure-classifier），零内容重试。
- * 非 goal 交互模式走下方 legacy 路径（trace.start_commit + gap-notes 真人对话授权——
- * 诚实边界：该授权为自报性质，仅适用于有真人在场的交互会话）。
+ * 要求 runner 背书会把合法实现全打成 BLOCKER。任何 receipt、gap-notes 或用户身份
+ * 都不构成质量放行；goal 与 attended 模式都把 UT 期间的源码漂移交回 coding owner。
  */
 function checkUtNoSrcMutationGoalEnv(ctx: CheckContext): CheckResult[] {
   const desc = ruleDesc(ctx, 'structure_checks', 'ut_no_src_mutation');
@@ -941,36 +915,16 @@ function checkUtNoSrcMutationGoalEnv(ctx: CheckContext): CheckResult[] {
     modified: closure.facts.modified,
     deleted: closure.facts.deleted,
   };
-  const runId = (process.env.MAISON_GOAL_RUN_ID ?? '').trim();
-  const receipts = runId
-    ? loadMutationAuthorizations(
-        ctx.projectRoot,
-        path.relative(ctx.projectRoot, path.join(featureDir(ctx.projectRoot, ctx.feature), 'goal-runs', runId)).replace(/\\/g, '/'),
-      )
-    : [];
-  const fp = computeCurrentDriftFingerprint(ctx.projectRoot, drift);
-  const decision = classifySourceDrift(drift, receipts, {
-    runId,
+  const decision = classifySourceDrift(drift, [], {
+    runId: (process.env.MAISON_GOAL_RUN_ID ?? '').trim(),
     frozenManifestHash: null, // harness 侧无 run_start 冻结事件——preauth 本就不放行
     phase: ctx.phase ?? 'ut',
     expectedInventoryHash: closure.inventoryHash,
     projectRoot: ctx.projectRoot,
     feature: ctx.feature,
     manifestIdentityAuthenticated: Boolean(process.env.MAISON_HMAC_GOAL_CHECKPOINT),
-    currentDriftFingerprint: fp?.fingerprint ?? null,
+    currentDriftFingerprint: null,
   });
-  if (decision.kind === 'authorized_backtrack') {
-    return [{
-      id: 'ut_no_src_mutation',
-      category: 'structure',
-      description: desc,
-      severity: 'BLOCKER',
-      status: 'PASS',
-      details:
-        `review 后漂移 ${decision.files.length} 文件，但 fingerprint 精确吻合的人工裁决 receipt 在场——` +
-        'runner 将按授权回退（coding→review）重验该变更。',
-    }];
-  }
   const files = [...drift.added, ...drift.modified, ...drift.deleted];
   const violations = decision.kind === 'unauthorized' ? decision.violations : [];
   return [{
@@ -1076,30 +1030,7 @@ function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
     }];
   }
 
-  // 汇总所有 gap-notes.md 的授权清单
-  const gapFiles = findGapNotesFiles(ctx.projectRoot, ctx.feature);
-  const approved = new Set<string>();
-  for (const g of gapFiles) {
-    const set = readApprovedMutations(g);
-    set.forEach(f => approved.add(f));
-  }
-
-  const unauthorized = businessChanges.filter(f => !approved.has(f));
-
-  if (unauthorized.length === 0) {
-    return [{
-      id: 'ut_no_src_mutation',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'ut_no_src_mutation'),
-      severity: 'BLOCKER',
-      status: 'PASS',
-      details:
-        `baseRef=${diff.baseRef}${diff.baseIsFallback ? ' (fallback)' : ''}；` +
-        `mode=${diff.workingOnly ? 'working-only' : 'committed+working'}；base 来源：${baseHint}\n` +
-        `变更拆分：committed=${committedBusinessChanges.length}, working=${workingBusinessChanges.length}, staged=${stagedBusinessChanges.length}, untracked=${untrackedBusinessChanges.length}\n` +
-        `共检测到 ${businessChanges.length} 个业务源码变更，均已在 approved_src_mutations[] 中登记：\n${businessChanges.map(f => '  - ' + f).join('\n')}`,
-    }];
-  }
+  const unauthorized = businessChanges;
 
   const oldBaseHint = staleness.stale
     ? '\n\n诊断：stale_diff_base。你显式收窄/拉长了 diff 区间，committed 远大于当前 working 变更。若只想拦未提交的 UT 改动，请去掉 HARNESS_DIFF_BASE_REF 并确保无 trace.start_commit pinning；或调整后重跑。'
@@ -1112,7 +1043,7 @@ function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
     configChanges.length > 0
       ? ` 其中含 src/ 之外的改动（${configChanges.join(', ')}，通常是工程/构建配置文件）：这类文件同样受源码改动门禁约束——` +
         '若是为排障临时改动、反而把原本合法的配置改坏的，优先回退到 trace.json.start_commit 的版本，' +
-        '而不是继续叠加改动；确需保留则同样经用户授权后登记 approved_src_mutations。'
+        '而不是继续叠加改动；确需保留则交回 coding owner 纳入实现并重走 review→ut→testing。'
       : '';
 
   return [{
@@ -1125,18 +1056,15 @@ function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
       `baseRef=${diff.baseRef}${diff.baseIsFallback ? ' (fallback — trace.json.start_commit 未记录，可信度较低)' : ''}\n` +
       `mode=${diff.workingOnly ? 'working-only' : 'committed+working'}；base 来源：${baseHint}\n` +
       `变更拆分：committed=${committedBusinessChanges.length}, working=${workingBusinessChanges.length}, staged=${stagedBusinessChanges.length}, untracked=${untrackedBusinessChanges.length}\n` +
-      `检测到 ${unauthorized.length} 个**未授权**的业务源码变更：\n${unauthorized.map(f => '  - ' + f).join('\n')}\n\n` +
-      `gap-notes.md 已登记的授权清单（${approved.size} 条）：${Array.from(approved).slice(0, 20).join(', ') || '(空)'}\n` +
-      `扫描到的 gap-notes.md 文件：${gapFiles.length > 0 ? gapFiles.map(f => path.relative(ctx.projectRoot, f).replace(/\\\\/g, '/')).join(', ') : '(无)'}${oldBaseHint}`,
+      `检测到 ${unauthorized.length} 个不属于 UT owner 的业务源码变更：\n${unauthorized.map(f => '  - ' + f).join('\n')}\n` +
+      `legacy approved_src_mutations/用户回复不参与质量放行。${oldBaseHint}`,
     affected_files: unauthorized,
     failure_kind: staleness.stale ? 'stale_diff_base' : 'unauthorized_src_mutation',
     blocking_class: staleness.stale ? 'stale_diff_base' : 'ut_no_src_mutation',
     suggestion:
       staleness.stale
-        ? '可先去掉 HARNESS_DIFF_BASE_REF（默认 working）后重跑；或显式设 `HARNESS_DIFF_BASE_REF=working`。若仍有未授权的业务源码改动，再进入 HARD STOP 授权流程。'
-        : '按 business-ut SKILL.md > 约束 #12 HARD STOP 流程：先向用户征得同意，再把变更登记到 ' +
-          `${relFeatureFile(ctx.projectRoot, ctx.feature, 'ut/reports/<timestamp>/<model>-ut/gap-notes.md')}（或 legacy：framework/harness/reports/…）> approved_src_mutations[]（含 file / reason / approved_at 等字段）。` +
-          '禁止以"便利性"借口直接修改业务源码。' +
+        ? '可先去掉 HARNESS_DIFF_BASE_REF（默认 working）后重跑；或显式设 `HARNESS_DIFF_BASE_REF=working`。若源码漂移仍存在，交回 coding owner 重验。'
+        : '停止 UT 阶段改码；把所需可测性改造作为 coding repair candidate，回 coding 修改并完整重走 review→ut→testing。' +
           configHint,
   }];
 }
@@ -3367,12 +3295,6 @@ function checkUtUnsupportedTargetsHandled(
 
   const acceptance = ctx.featureSpec.acceptance;
 
-  const gapFiles = findGapNotesFiles(ctx.projectRoot, ctx.feature);
-  let approvedCount = 0;
-  for (const g of gapFiles) {
-    approvedCount += readApprovedMutations(g).size;
-  }
-
   const issues: string[] = [];
   for (const r of l3) {
     const sel = (r.selected ?? '').trim();
@@ -3389,11 +3311,10 @@ function checkUtUnsupportedTargetsHandled(
         );
       }
     } else {
-      if (approvedCount === 0) {
-        issues.push(
-          `${r.acceptance_id}: option_b 要求 gap-notes.md > approved_src_mutations[] 至少登记 1 条授权`,
-        );
-      }
+      issues.push(
+        `${r.acceptance_id}: option_b 表示仍需业务源码可测性改造，必须交回 coding owner；` +
+        'coding 重验后该记录应降为 L1/L2，再由 UT 继续',
+      );
     }
   }
 
@@ -3406,7 +3327,7 @@ function checkUtUnsupportedTargetsHandled(
       status: 'FAIL',
       details: `${issues.length} 条 L3 处置不合规：\n${truncateList(issues, 15)}`,
       suggestion:
-        'option_a → 在 acceptance.yaml 对应 AC/BD 填写 device_focus；option_b → 按 business-ut 约束 #12 登记 gap-notes approved_src_mutations 后再改 src/main。',
+        'option_a → 在 acceptance.yaml 对应 AC/BD 填写 device_focus；option_b → 产出 coding repair candidate，由 coding owner 修改源码并重走 review→ut。',
     }];
   }
 

@@ -21,6 +21,8 @@
 
 资深宿主应用开发工程师：按 plan.md 逐模块生成与 `contracts.yaml` 对齐、可通过 harness 出口检查的实现代码。流水线**第三环**，上游 `plan.md`，输出流入 code-review。
 
+**Goal/headless 写边界（BLOCKER）**：只写冻结 Scope/contracts 解析出的实现源码与本阶段 contract `produces`；不得改 spec/plan/acceptance、profile UT 根或 testing 产物。若契约范围不足，只报告发现并由 runner 自动回责任阶段；越权字节保留为未受信输入、本轮证据作废，不能用人工确认豁免。
+
 ## 触发条件
 
 "开始编码"、"实现功能"、"写代码"、"开发模块"、"生成代码"、"落地实现"，或明确指向 plan.md 要求实现。

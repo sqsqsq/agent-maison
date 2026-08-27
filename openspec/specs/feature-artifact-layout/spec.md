@@ -76,14 +76,14 @@ Skill-authored artifacts SHALL be referenced from contracts by their registered 
 
 ### Requirement: fidelity-intent.json is the single SSOT for the three routing axes
 
-`<feature>/spec/reports/fidelity-intent.json` (schema 2.0) SHALL be the sole first-production record of the routing decision: `inferred_fidelity`/`selected_fidelity`/`effective_fidelity`, `acceptance_strictness`, `asset_acquisition_mode`, clamp state, `decision{source, rationale, decision_id}`, `execution_identity` and `requirement_sha256`. `decision_id = hash(execution_identity + requirement_sha + routing_input_digest)` where the digest covers manifest fidelity/receipt validity and the capability snapshot — capability or manifest changes never reuse an id. `decision.source=human_confirmed` is reserved for trusted interactive confirmation or receipts; CLI/manifest inputs cap at explicit_cli/manifest_declared. `<feature>/spec/reports/capability-snapshot.json` SHALL record the probe verdicts/sources and execution identity produced by the same initializer; harness context, prompts, check-spec and reports consume these artifacts instead of re-assembling capability booleans or re-deriving axes. spec.md/ui-spec declarations of `fidelity_target`/`asset_acquisition_mode` are projections of this SSOT, produced after it, never the first decision source. Report/summary tier lines derive from the SSOT; the headless-assumptions ledger is not claimed as an anti-rewrite defense.
+`<feature>/spec/reports/fidelity-intent.json` SHALL record `inferred_fidelity`/`selected_fidelity`/`effective_fidelity`, `acceptance_strictness`, `asset_acquisition_mode`, clamp state, decision metadata, execution identity and a stable requirement hash. `<feature>/spec/reports/capability-snapshot.json` SHALL record only the current execution probe/canary verdict and source. spec.md/ui-spec `fidelity_target` SHALL project selected fidelity; effective fidelity is execution metadata and SHALL NOT overwrite that projection. Artifact attestation and historical policy state MUST NOT enter either record.
 
 Enforcement: `harness/scripts/utils/fidelity-shared.ts`, `harness/scripts/utils/goal-preflight.ts`, `harness/scripts/fidelity-intent-init.ts`, `harness/harness-runner.ts`
 
-#### Scenario: the first spec working context sees the asset axis before spec.md exists
+#### Scenario: Existing visual artifacts do not alter snapshot capability
 
-- **WHEN** the initializer runs for a feature whose requirement says assets come from screenshot cropping
-- **THEN** fidelity-intent.json exists with asset_acquisition_mode=auto_crop before any spec.md is generated, and the subsequent harness CheckContext loads assetAcquisitionMode=auto_crop from the same SSOT
+- **WHEN** initialization runs with an existing unverified ui-spec and the current model probe succeeds
+- **THEN** capability-snapshot records vision=true from the probe and fidelity routing uses that current capability
 
 ### Requirement: facts.md is the single exploration artifact per feature
 
@@ -153,9 +153,9 @@ Enforcement: `harness/scripts/utils/phase-evidence-manifest.ts`（新增）, `ha
 
 ### Requirement: New governance artifacts have fixed locations and ownership
 
-The feature tree SHALL host: `<phase>/headless-assumptions.jsonl` (agent-written, schema-checked) with optional markdown projection; `review/reports/review-closure-attestation.json` (harness-written at closure); `testing/skip-waivers.yaml` and `<phase>/behavior-switch-waivers.yaml` (coordinate-bound, receipt-backed); acceptance.yaml extended with `flows` and per-AC structured checkpoints plus `requirement_ref`. `feature-completion.json` originals live in the runner-owned run directory (atomic write); the feature directory holds only a projection/reference. All are consumed via recomputation-based verification, never via existence checks.
+The feature tree SHALL host: `<phase>/headless-assumptions.jsonl` (agent-written, schema-checked) with optional markdown projection; `review/reports/review-closure-attestation.json` (harness-written at closure); acceptance.yaml extended with `flows` and per-AC structured checkpoints plus `requirement_ref`; and current machine evidence under the existing phase/report carriers. Legacy skip/behavior waiver files MAY remain readable for migration but MUST NOT lower a gate. `feature-completion.json` originals live in the runner-owned run directory (atomic write); the feature directory holds only a projection/reference. All are consumed via recomputation-based verification, never via existence checks.
 
-Enforcement: `harness/scripts/utils/{closure-attestation,verify-feature-completion,confirmation-receipt}.ts`, acceptance schema, `specs/phase-rules/*.yaml`
+Enforcement: `harness/scripts/utils/{closure-attestation,verify-feature-completion}.ts`, acceptance schema, `specs/phase-rules/*.yaml`
 
 #### Scenario: completion projection without a verifiable original
 
@@ -195,3 +195,24 @@ Enforcement: `harness/scripts/check-spec.ts`, `skills/reference/confirmation-reg
 - **WHEN** files land at the requested paths and spec harness re-runs
 - **THEN** each passing role-aware sanity flips source=VERIFIED and the remaining binding/render states drive the entries toward closure without manual ledger edits
 
+### Requirement: Visual execution artifacts are current receipts only
+
+The feature vision directory SHALL use `capability-receipt.json` and `spec-refs-receipt.json` as short-lived current execution evidence. The framework SHALL NOT require or maintain feature-scoped artifact-attestation or policy-downgrade ledgers.
+
+Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/critic-receipt-producer.ts`, `harness/scripts/utils/effective-vision-context.ts`
+
+#### Scenario: Upgraded consumer keeps old ledgers without migration
+
+- **WHEN** a consumer upgrades while old visual JSONL ledgers remain on disk
+- **THEN** initialization proceeds without reading, migrating, anchoring, or deleting those files
+
+### Requirement: Blind-mode placeholder metadata is schema-valid but non-authoritative
+
+The ui-spec token schema SHALL allow `placeholder:boolean` and `value_source:string`; the asset schema SHALL allow `blind_fallback_reason:string` and legacy `crop_confirmed_by:string|null`. These fields SHALL only document fallback/provenance and MUST NOT count as visual verification, human authorization, or a reason to lower current execution capability. New writers SHALL use source/hash/tool provenance instead of signer fields.
+
+Enforcement: `harness/schemas/ui-spec.schema.json`, `profiles/hmos-app/harness/ui-spec-schema-validate.ts`, `harness/scripts/utils/ui-spec-shared.ts`
+
+#### Scenario: Honest blind placeholders do not create schema-noise storms
+
+- **WHEN** a blind-mode ui-spec marks neutral token values as placeholders and records asset fallback reasons with null crop confirmation
+- **THEN** those fields pass structural schema validation while genuine unknown fields and missing placeholder rationale remain actionable

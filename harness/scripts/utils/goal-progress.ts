@@ -40,7 +40,7 @@ import {
 import { normalizePhaseId } from './phase-alias';
 import { resolvePhaseTimeoutMs, resolveWallClockMs } from './goal-timeout';
 import type { WorkflowSpec } from '../../workflow-loader';
-import { reduceRunState } from './run-state-reducer';
+import { reduceRunState, type RecoveryDiagnostic } from './run-state-reducer';
 import { findUnclosedGuardianBounds } from './goal-containment-reconcile';
 import { defaultProcessProbe } from './device-session';
 import type { Disposition, WaitKind } from './adjudication';
@@ -112,6 +112,7 @@ export interface GoalProgressSnapshot {
    */
   run_disposition: Disposition;
   run_wait_kind?: WaitKind;
+  recovery?: RecoveryDiagnostic;
   generated_at: string;
   source: {
     events_path: string;
@@ -914,6 +915,7 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
       statusReason = 'soft_quiet_window';
     }
   }
+  if (!statusReason && runState.recovery) statusReason = runState.recovery.reason;
 
   const { percent, kind } = computeEstimatedPercent(spans, currentSpan);
 
@@ -966,6 +968,7 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     // 裁决轴（正交于上面的 liveness 轴）——supervisor 按 beacon × run_disposition 决策
     run_disposition: runState.run_disposition,
     ...(runState.run_wait_kind ? { run_wait_kind: runState.run_wait_kind } : {}),
+    ...(runState.recovery ? { recovery: runState.recovery } : {}),
     generated_at: new Date(nowMs).toISOString(),
     source: {
       events_path: eventsPath,
@@ -1252,6 +1255,27 @@ export function generateProgressMarkdown(snapshot: GoalProgressSnapshot): string
     lines.push(
       `| ${row.phase} | ${row.status} | ${row.attempts || '—'} | ${dur} | ${evidence} |`,
     );
+  }
+
+  if (snapshot.recovery) {
+    const r = snapshot.recovery;
+    lines.push(
+      '',
+      '## Recovery',
+      '',
+      `- Reason: ${r.reason}`,
+      `- Action: ${r.action}`,
+      `- Current / owner target: ${r.current_phase ?? '—'} / ${r.target_phase ?? r.owner_phase ?? '—'}`,
+      `- Gap: ${r.gap_kind ?? '—'}`,
+      `- Budget: ${r.backtracks_used ?? '—'} / ${r.backtracks_limit ?? '—'}`,
+      `- Fingerprint: ${r.fingerprint ?? '—'}`,
+    );
+    for (const item of r.changed_paths.slice(0, 20)) {
+      lines.push(
+        `- ${item.path}${item.owner ? ` owner=${item.owner}` : ''}` +
+        `${item.pre_sha256 || item.post_sha256 ? ` pre=${item.pre_sha256 ?? 'missing'} post=${item.post_sha256 ?? 'missing'}` : ''}`,
+      );
+    }
   }
 
   lines.push('', '## Recent Activity', '');

@@ -16,7 +16,6 @@ import {
   mapCategoryToPhase,
   resolveCorrectionCategory,
   resolveCorrectionTarget,
-  shouldAutoConfirmCorrectionLayer,
   touchedCategories,
 } from '../../scripts/utils/correction-routing';
 import {
@@ -318,55 +317,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'shouldAutoConfirmCorrectionLayer：balanced+纯验证+未触及 coding → true（窄范围免确认）',
-    run: () => {
-      eq(
-        shouldAutoConfirmCorrectionLayer({
-          profileLabel: 'balanced',
-          category: 'verification',
-          touchedLayers: ['ut'],
-        }),
-        true, 'balanced 纯验证不触 coding 应免确认',
-      );
-    },
-  },
-  {
-    name: 'shouldAutoConfirmCorrectionLayer：即便纯验证，touched 含 coding → false（组合修正仍须确认）',
-    run: () => {
-      eq(
-        shouldAutoConfirmCorrectionLayer({
-          profileLabel: 'balanced',
-          category: 'verification',
-          touchedLayers: ['ut', 'coding'],
-        }),
-        false, 'touched 含 coding 不得免确认',
-      );
-    },
-  },
-  {
-    name: 'shouldAutoConfirmCorrectionLayer：category 非 verification（改代码/改契约/改需求）→ false',
-    run: () => {
-      for (const category of ['coding', 'plan', 'spec'] as const) {
-        eq(
-          shouldAutoConfirmCorrectionLayer({ profileLabel: 'balanced', category, touchedLayers: [category] }),
-          false, `category=${category} 不得免确认`,
-        );
-      }
-    },
-  },
-  {
-    name: 'shouldAutoConfirmCorrectionLayer：profileLabel 非 balanced（strict/minimal）→ false，即便纯验证不触 coding',
-    run: () => {
-      for (const profileLabel of ['strict', 'minimal'] as const) {
-        eq(
-          shouldAutoConfirmCorrectionLayer({ profileLabel, category: 'verification', touchedLayers: ['ut'] }),
-          false, `profileLabel=${profileLabel} 不得免确认`,
-        );
-      }
-    },
-  },
-  {
-    name: 'runCorrectionInit 端到端：evidence_profile=balanced + 纯验证修正 → state.auto_confirm_eligible=true',
+    name: 'runCorrectionInit 端到端：纯验证修正不再生成确认字段',
     run: () => {
       const dir = mkGitFeatureProject('balanced');
       try {
@@ -378,14 +329,14 @@ const cases: Array<{ name: string; run: () => void }> = [
         });
         eq(code, 0, 'correction-init 应成功');
         const state = readCorrectionState(dir);
-        eq(state?.auto_confirm_eligible, true, 'balanced+纯验证+未触及 coding 应免确认');
+        eq(state?.auto_confirm_eligible, undefined, '新 writer 不再生成确认字段');
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
     },
   },
   {
-    name: 'runCorrectionInit 端到端：evidence_profile=balanced 但要改产品代码 → state.auto_confirm_eligible=false',
+    name: 'runCorrectionInit 端到端：要改产品代码自动路由 coding 且不生成人签字段',
     run: () => {
       const dir = mkGitFeatureProject('balanced');
       try {
@@ -396,14 +347,15 @@ const cases: Array<{ name: string; run: () => void }> = [
           frameworkRoot: FRAMEWORK_ROOT,
         });
         const state = readCorrectionState(dir);
-        eq(state?.auto_confirm_eligible, false, '改产品代码（root_layer=coding）不得免确认');
+        eq(state?.root_layer, 'coding', '改产品代码应自动路由 coding');
+        eq(state?.auto_confirm_eligible, undefined, '新 writer 不再生成确认字段');
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
     },
   },
   {
-    name: 'runCorrectionInit 端到端：未配置 evidence_profile（strict）+ 纯验证修正 → state.auto_confirm_eligible=false',
+    name: 'runCorrectionInit 端到端：strict 纯验证也不生成人签字段',
     run: () => {
       const dir = mkGitFeatureProject();
       try {
@@ -414,7 +366,7 @@ const cases: Array<{ name: string; run: () => void }> = [
           frameworkRoot: FRAMEWORK_ROOT,
         });
         const state = readCorrectionState(dir);
-        eq(state?.auto_confirm_eligible, false, 'strict 档纯验证仍须停等确认');
+        eq(state?.auto_confirm_eligible, undefined, 'strict 档由机器证据收口，不停等人签');
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }

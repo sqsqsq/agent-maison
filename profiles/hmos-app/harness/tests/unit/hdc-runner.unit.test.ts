@@ -541,7 +541,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       assertEq(metaFailure.blocking_class, 'needsConfirmation', 'meta blocking');
       // 非降级：修复元数据是正解，不得禁改配置造成无解重跑，也不得灌卸载话术
       assertIncludes(metaFailure.suggestion, 'AppScope/app.json5', '应指向元数据修复');
-      assertIncludes(metaFailure.suggestion, '授权流程', '改配置走既有授权流程');
+      assertIncludes(metaFailure.suggestion, 'coding owner', '工程配置修复须交回 coding owner');
       assertIncludes(metaFailure.suggestion, '无需卸载', '不得灌卸载话术');
       assert(!metaFailure.suggestion.includes('用户数据'), `非降级不引导丢数据决策：${metaFailure.suggestion}`);
     },

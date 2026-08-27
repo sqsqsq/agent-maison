@@ -154,9 +154,11 @@ After boundary extraction, `harness/scripts/goal-runner.ts` SHALL select cross-p
 - **THEN** the runner SHALL execute the existing authorized invalidation/backtrack transaction before invoking coding
 
 ### Requirement: Process-level safety guards remain enforced by the driver
-Timeout handling, budgets, backoff, child cleanup, trust ledgers, pass snapshots, device gates, source-write protection, monitor, usage capture, and detached survival SHALL remain enforced by existing goal-runner utilities and MUST NOT be weakened by assess rewiring.
+
+Timeout handling, budgets, backoff, child cleanup, trust ledgers, device gates, source-write protection, monitor, usage capture, and detached survival SHALL remain enforced by existing goal-runner utilities and MUST NOT be weakened by assess rewiring.
 
 #### Scenario: Phase process exceeds its timeout
+
 - **WHEN** the active child exceeds the effective timeout
 - **THEN** the runner SHALL apply the existing process timeout/cleanup policy and supply the resulting fact to reconciliation
 
@@ -260,35 +262,25 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-prefl
 
 ### Requirement: Fidelity routing is a three-stage formula with auto-tiering and a single genuine-conflict halt
 
-The runner SHALL derive fidelity routing as `inferred` (requirement-text detection: explicit enum literals — including `pixel_1to1` with underscore-safe matching — take precedence over reference-wording inference; negated mentions never match; no-visual-wording defaults to semantic_layout) → `selected = resolveRequestedFidelity(inferred, manifest.fidelity, downgrade_receipt_valid)` (upgrade-only without a valid receipt) → `effective = clampFidelityByCapability(selected, capability_snapshot)` (vision→as-selected / no-vision+OCR→semantic_layout / neither→reference_only). Acceptance strictness SHALL be a separate axis: `hard` only on explicit no-degradation wording within a bounded proximity of visual/fidelity terms; `best_effort` otherwise and by default. The former `await_human_fidelity_tier` blocking outlet SHALL NOT exist: the ONLY halt is `selected=pixel_1to1 ∧ strictness=hard ∧ clamp downgraded` → DEFERRED_CAPABILITY_MISSING (exits: vision-capable model / fidelity_downgrade receipt / relax the requirement). All other combinations proceed with the decision transparently recorded. The goal preflight SHALL run the shared initializer (capability snapshot + fidelity-intent SSOT write) before any agent invoke.
+The runner SHALL derive fidelity routing as `inferred` requirement intent → `selected = resolveRequestedFidelity(inferred, manifest.fidelity)` → `effective = clampFidelityByCapability(selected, capability_snapshot)`. Explicit fidelity may hold or raise but MUST NOT lower frozen inferred intent, and no downgrade receipt or signer state SHALL be consulted. The capability snapshot SHALL contain only current execution capability and MUST NOT include artifact/history policy state. Acceptance strictness remains separate. A required selected fidelity that current native/delegated capability cannot satisfy SHALL project `DEFERRED_CAPABILITY_MISSING` before a content invocation. Prompts SHALL keep selected target and effective execution ceiling distinct.
 
 Enforcement: `harness/scripts/utils/goal-preflight.ts`, `harness/scripts/utils/fidelity-shared.ts`, `harness/scripts/goal-runner.ts`
 
-#### Scenario: the bank-card wording auto-tiers with zero questions
+#### Scenario: a receipt cannot downgrade selected fidelity
 
-- **WHEN** the requirement says 「结构/颜色/布局尽量一致；无高保真素材时可从原始截图裁剪获取；（pixel_1to1 意图）尽量与参考图一致」 under a blind adapter
-- **THEN** routing resolves inferred=pixel_1to1, strictness=best_effort, asset=auto_crop, action=proceed — no human tier question, no HALT
-
-#### Scenario: hard pixel with insufficient capability is the only deferral
-
-- **WHEN** the requirement demands 「必须像素级还原，不接受降级」 and the adapter is blind
-- **THEN** the run defers as DEFERRED_CAPABILITY_MISSING; the same requirement with 「尽量」 instead proceeds clamped with debt recording
+- **WHEN** inferred intent is hard pixel, manifest requests semantic layout, and a legacy downgrade receipt exists
+- **THEN** selected SHALL remain pixel and the run SHALL use capable execution or defer; the receipt SHALL be ignored
 
 ### Requirement: Fidelity input reaches routing through all three entry paths
 
-`buildGoalManifestFromInput` SHALL preserve and validate `fidelity`/`fidelity_receipt` (illegal enum fails closed); the fresh CLI SHALL feed `--fidelity`/`--fidelity-receipt` into the parser; CLI override application and fidelity transition authorization SHALL execute on fresh, hand-written-manifest and resume paths alike (never gated on `argv.manifest`). A validated manifest fidelity enters the `selected` stage — a flag that was accepted SHALL never be dropped at the decision layer. A CLI upgrade becomes the real execution target; a receipt-authorized downgrade executes at the lower tier while `inferred` is preserved as the ratchet anchor and downstream pixel hard gates are not re-activated by the higher inferred value.
+`buildGoalManifestFromInput` SHALL preserve and validate the explicit `fidelity` upgrade input across fresh CLI, hand-written manifest, and resume paths. Legacy `fidelity_receipt` fields MAY parse for compatibility but MUST NOT enter identity decisions beyond byte/hash compatibility and MUST NOT authorize lowering. A successor SHALL derive its target from the new frozen requirement/input, not inherit a prior downgrade authorization.
 
 Enforcement: `harness/scripts/utils/goal-manifest.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-preflight.ts`
 
-#### Scenario: CLI upgrade is effective on the fresh path
+#### Scenario: fresh and resume paths agree without a receipt
 
-- **WHEN** a fresh run starts with `--fidelity pixel_1to1` on a requirement with no visual wording
-- **THEN** selected and effective are pixel_1to1 and the decision source is explicit_cli
-
-#### Scenario: receipt downgrade does not leave pixel gates armed
-
-- **WHEN** inferred is pixel_1to1+hard and a valid downgrade receipt selects semantic_layout
-- **THEN** the run proceeds, inferred stays pixel_1to1, and `isHardPixelContract` is false downstream
+- **WHEN** a fresh run explicitly raises fidelity and is later resumed
+- **THEN** both paths SHALL use the same frozen selected target without consulting a receipt
 
 ### Requirement: Build-generated source files are classified, not treated as violations
 
@@ -348,7 +340,7 @@ source（visual|device_test），retry/halt 指引 MUST 按 source 分支；事�
 
 ### Requirement: Integrity blockers classify as framework_integrity_block and halt on first touch
 
-When a fresh harness summary contains any blocker with `blocking_class === 'integrity'`, the goal-runner SHALL classify the failure as `framework_integrity_block`, collect `integrity_subtypes[]` from ALL such blockers' `classification` values (deduplicated; top-level `summary.failure_kind` fallback only when the list is empty AND `summary.blocking_class === 'integrity'`), and halt on first touch. Guidance SHALL be assembled per subtype (drift → human-named `drift_allowlist` / restore / upstream; foreign_file → cleanup or human allowlist; manifest_corrupt/empty → reinstall or restore from release; manifest_tampered → restore from release, manual recompute forbidden; manifest_sidecar_missing → framework-init UPDATE, agent hand-writing forbidden). The retry prompt SHALL NOT contain repair instructions for this kind: goal agents are forbidden from any automated write (including reverts) to framework release files.
+Framework release-tree integrity blockers (manifest corruption/tamper, foreign framework files, unreadable framework state) SHALL remain `framework_integrity_block` and halt on first touch without automated reverts. An invocation-scoped write to an owner-resolvable feature artifact or protected product/test source SHALL NOT be folded into that permanent framework-integrity halt: it SHALL emit `phase_write_violation`, invalidate invocation/owner/downstream trust, preserve bytes as untrusted, and automatically use `backtrack_to_phase` for full owner revalidation. Persistent concurrent mutation, unreadable/corrupt feature bytes, repeated identical violations, absent targets, and exhausted budgets SHALL terminate through existing integrity/fuse semantics.
 
 Enforcement: `harness/scripts/utils/goal-failure-classifier.ts`, `harness/scripts/goal-runner.ts`
 
@@ -361,6 +353,11 @@ Enforcement: `harness/scripts/utils/goal-failure-classifier.ts`, `harness/script
 
 - **WHEN** a summary contains `framework_manifest_sidecar_missing`, `framework_drift`, and `framework_foreign_file` blockers simultaneously
 - **THEN** `integrity_subtypes` SHALL contain all three values and the halt guidance SHALL list each remediation in repair order (manifest anchor first)
+
+#### Scenario: downstream feature write recovers
+
+- **WHEN** plan changes spec-owned acceptance bytes once and the bytes are stable/readable
+- **THEN** the runner SHALL invalidate trust and backtrack spec instead of first-touch permanent HALT
 
 ### Requirement: Timeout attribution follows the freshness decision table
 
@@ -375,14 +372,14 @@ Enforcement: `harness/scripts/utils/goal-failure-classifier.ts`
 
 ### Requirement: Retry prompts carry continuation context decoupled from the content-retry budget
 
-The runner SHALL derive `continuation: {cause, process_resumed} | null` from the current phase's most recent attempt window (no invoke_start → null; start without end → unknown; end with timed_out=true and no verdict → agent_timeout; end without verdict → unknown; verdict present → its classified cause), independent of the `retries` counter. Whenever `continuation !== null`, the prompt SHALL include prior-failure evidence and/or the timeout/API-drop resume block (partial artifacts, checkpoint skip-list, effective budget), with block wording matched to the cause. A PASS+timeout prior attempt SHALL still produce the resume block. `harness_start`/`harness_end`/`phase_verdict` events SHALL carry `invoke_id`; legacy logs without it SHALL be windowed by event order.
+The runner SHALL derive continuation from the current phase's most recent attempt window independently of the retries counter. Whenever continuation is non-null, the prompt SHALL include prior-failure evidence matched to the cause. If the harness did not produce a readable summary, the runner SHALL include a bounded excerpt of the current attempt's harness error output and SHALL classify a parser/schema/artifact load failure as an artifact/gate failure rather than defaulting to `code_regression`. `harness_start`/`harness_end`/`phase_verdict` events SHALL carry `invoke_id`; legacy logs without it SHALL be windowed by event order.
 
 Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-runner-phase.ts`
 
-#### Scenario: Timeout retry is no longer a cold start
+#### Scenario: YAML parse failure reaches the next attempt
 
-- **WHEN** an attempt times out and the runner retries in-process (retries counter unchanged per the free-retry policy)
-- **THEN** the new prompt SHALL contain the timeout resume block with partial artifacts and skip-lines
+- **WHEN** a spec harness exits before summary generation with `BLOCK_AS_IMPLICIT_KEY`
+- **THEN** the next prompt includes that error and affected artifact context instead of generic source-code rollback guidance
 
 #### Scenario: Resume into a fresh phase injects nothing
 
@@ -460,79 +457,6 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-progr
 - **WHEN** running on Windows where `SIGTERM` is not catchable
 - **THEN** the runner SHALL register `SIGBREAK` (Ctrl-Break / console close) so a graceful host signal still writes the terminal event
 
-### Requirement: A blocked PASS freezes phase deliverables under a runner-owned snapshot epoch
-
-When a phase verdict is `PASS` with `advance_blocked` (any closure reason), the runner SHALL classify phase artifacts through a single artifact-class resolver — `frozen_deliverable` (all three phase-output tables of the phase evidence manifest, including `spec/asset-manifest.yaml`), `mutable_closure` (`phase-completion-receipt.md`, `headless-assumptions.jsonl/.md`), `mutable_control_plane` (individually registered control-plane files such as `spec/fidelity-downgrade.receipt.json`, `spec/crop-provenance/*.receipt.json`, `vision/capability-receipt.json`, `vision/spec-refs-receipt.json`, and the vision append-only ledgers; wildcard `*.receipt.*` registration SHALL NOT be used), and `derived` (reports, caches) — and snapshot the frozen set into a runner-owned trust-state namespace `goal-checkpoints/<project>/<feature>/<run>/pass-snapshots/<phase>/<epoch>/`. The next attempt SHALL be closure-only: its prompt declares the frozen list read-only; after it ends the runner SHALL diff the watched namespace (baseline inventory minus mutable minus derived) across modified/added/deleted/link entry classes. Any frozen-class difference SHALL emit a `pass_snapshot_violation` event, restore per the trust tiers, and count toward the existing advance-blocked halt threshold; legitimate additions of `mutable_closure`/`mutable_control_plane` files SHALL NOT be flagged or reverted.
-
-Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/pass-snapshot.ts`（新增）, `harness/scripts/utils/phase-evidence-manifest.ts`
-
-#### Scenario: the incident's i3 rewrite is reverted and the i2 PASS advances
-
-- **WHEN** a spec attempt reaches PASS with `agent_timeout_unclosed`, the snapshot is taken, and the closure-only attempt rewrites `spec/ui-spec.yaml` with a broken key
-- **THEN** the runner SHALL record `pass_snapshot_violation`, restore the frozen file bytes, and after re-running harness and closing the receipt the phase SHALL advance with the PASS-epoch artifacts
-
-#### Scenario: a legitimate control-plane receipt written during closure is not treated as tampering
-
-- **WHEN** the closure-only attempt writes `vision/capability-receipt.json` while frozen deliverables stay untouched
-- **THEN** no violation SHALL be recorded and the file SHALL NOT be deleted by restore
-
-### Requirement: Snapshot trust is two-tier and restore is path- and TOCTOU-safe
-
-Within the same runner process the snapshot manifest/digest held in memory SHALL be the trust anchor: restore is permitted after per-file hash verification regardless of HMAC deployment. Across `--resume`/process restart, automatic restore SHALL require HMAC verification; without a deployed HMAC key the runner SHALL only detect violations and halt for a human (never overwrite user files from a weak-trust snapshot). Snapshot creation and restore SHALL lstat the target and every parent directory (any symlink/junction/reparse point is fail-closed), keep realpath inside the project/feature roots, and install bytes via read-once-buffer → verify hash on that buffer → write same-dir temp file → atomic rename (no separate hash-then-copy window, no link following).
-
-Enforcement: `harness/scripts/utils/pass-snapshot.ts`（新增）, `harness/scripts/goal-runner.ts`
-
-#### Scenario: default host without HMAC still recovers in-process
-
-- **WHEN** no HMAC key is deployed and the closure-only attempt corrupts a frozen file within the same runner process
-- **THEN** the runner SHALL restore from the snapshot after verifying bytes against the in-memory digest and continue the closure flow
-
-#### Scenario: resume without HMAC refuses automatic restore
-
-- **WHEN** the runner restarts with `--resume`, no HMAC key is deployed, and a frozen-file difference is detected
-- **THEN** the runner SHALL halt for human disposition without restoring
-
-### Requirement: Pass-snapshot protocol domains separate immutable manifest from mutable head
-
-The snapshot store SHALL use two kinds signed in distinct protocol domains reusing only the existing HMAC envelope/key model: `pass_snapshot_manifest` (immutable — kind, schema_version, canonical stable-stringified body, project identity hash, feature, run_id, phase, pass_epoch, file list with per-file hashes; historical manifests are never rewritten) and `pass_snapshot_head` (mutable, HMAC-protected — current manifest SHA, state limited to `active`/`superseded`, generation; the only place state changes). Cross-protocol substitution (vision checkpoint/head/HWM/reseal documents placed at snapshot paths or vice versa, including the invalidation journal kind) SHALL validate as invalid.
-
-Manifest validation SHALL enforce, beyond field shape (canonical unique rels, exact `watched_roots` set equality with the phase registry, unconditional non-negative-integer `bytes`), a completeness reconciliation against the registry-derived required frozen deliverables of the phase: every required output artifact (over its disk-independent canonical+legacy rel candidates) SHALL be present in `files`, at both snapshot creation (refuse to create an incomplete manifest) and trusted load (fail closed). Root-level contracts (`acceptance.yaml`, `contracts.yaml`) live outside the watched-roots directory domain, so their `files` entry is their only drift-detection channel; a weak-trust forgery that drops such an entry while keeping roots exact SHALL therefore fail closed instead of washing the diff.
-
-Completeness SHALL cover all three phase-output tables, not only the required one. At snapshot creation the provided file list SHALL additionally be reconciled against the resolver's full current set (required + optional files + optional relpaths) and refuse to create a manifest that omits any currently resolvable frozen deliverable (e.g. a root-level `use-cases.yaml` present at PASS). The drift (`added`) detection domain SHALL include the registry-derived root-level candidate rels outside the watched roots: a disk-present candidate absent from `files` SHALL surface as `added` (restored — i.e. removed — under authenticated trust; detect-and-halt under weak trust). On trusted load with an unauthenticated manifest (no valid MAC and no in-process anchor), a disk-present root-level candidate missing its `files` entry SHALL fail closed before any agent is spawned; under authenticated trust the same condition is post-PASS drift and SHALL be handled by the diff/restore path rather than a trust failure. Honest boundary: without HMAC, if an optional deliverable and its manifest entry are deleted together before resume, its historical existence cannot be proven — strong tamper resistance still requires the HMAC key.
-
-Enforcement: `harness/scripts/utils/pass-snapshot.ts`（新增）
-
-#### Scenario: a superseded epoch with a valid MAC cannot be replayed
-
-- **WHEN** an old snapshot manifest and its files are intact with valid MACs but the head marks the epoch superseded
-- **THEN** restore eligibility SHALL be denied
-
-#### Scenario: dropping a root-level required deliverable from a consistently forged manifest fails closed
-
-- **WHEN** an unauthenticated manifest+head pair is rewritten consistently with `watched_roots` kept exactly equal but the root-level `acceptance.yaml` entry removed from `files`
-- **THEN** trusted snapshot load SHALL fail closed on completeness reconciliation instead of returning an active context whose diff can no longer see that deliverable
-
-#### Scenario: dropping a root-level optional deliverable's entry cannot wash the diff either
-
-- **WHEN** a root-level optional deliverable (e.g. `use-cases.yaml`) existed at PASS and an unauthenticated manifest+head pair is consistently rewritten with only that `files` entry removed
-- **THEN** trusted load SHALL fail closed (disk-present root-level candidate without an entry), and independently the diff SHALL report the file as `added` rather than yielding zero drift
-
-### Requirement: Invalidation is a recoverable run-level journal transaction
-
-Snapshot invalidation (phase invalidation/backtrack) SHALL be driven by a run-level journal at the fixed path `pass-snapshots/invalidation.json` (own kind `pass_snapshot_invalidation`, HMAC same key distinct domain) with at least `tx_id`, `state: pending|committed`, `cause_phase`, `invalidated_phases`, `old_head_hashes`, `target_generations`. Transaction order SHALL be: write journal pending → update every affected phase head/tombstone → append idempotent `phase_invalidated` events carrying the same `invalidation_tx_id` (deduplicated by `(tx_id, phase)`) → commit the journal. On startup and resume the runner SHALL recover the journal before reading any phase head (a pending journal is completed first; no snapshot restore may happen under an uncommitted transaction). The fail-closed rule for an unverifiable journal (missing HMAC where the store is authenticated, bad MAC, unparseable) applies to the resume/restart path — the runner SHALL halt without mutating any head; in-process operation continues to rely on the in-memory digest tier.
-
-Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/pass-snapshot.ts`（新增）
-
-#### Scenario: crash between journal pending and events is recovered without restoring stale snapshots
-
-- **WHEN** the journal is pending, some heads are updated, and the process crashes before `phase_invalidated` events are appended
-- **THEN** on resume the runner SHALL complete head updates and events from the journal, commit it, and refuse to restore any snapshot of the invalidated phases
-
-#### Scenario: one backtrack invalidates multiple phases atomically
-
-- **WHEN** a backtrack invalidates several completed phases in one transaction
-- **THEN** all their heads SHALL be superseded under a single `tx_id` and events SHALL appear exactly once per `(tx_id, phase)` even across repeated recovery
-
 ### Requirement: Closure-only attempts are classified by a receipt-probe total function and budgeted by closure kind
 
 The closure path taken after a blocked PASS SHALL be chosen by a deterministic function over the full `ReceiptValidation` status set obtained from the read-only receipt probe (never mapped from `advance_block_reason`, which stays telemetry-only): `passed` → `deterministic_recheck` (runner performs receipt state sync/closure without invoking an agent); `missing`/`failed` → `receipt_repair_with_verifier` (agent attempt using the phase's full current effective timeout — no invented shorter verifier budget); `error` → immediate HALT classified `closure_probe_error`/framework-bug semantics without invoking an agent; `not_applicable` while still advance-blocked → immediate HALT `closure_state_invariant`. Fresh attempts SHALL reuse the receipt validation already obtained in the control flow; resume re-probes with the subprocess timeout bounded by remaining wall clock and the finalize reserve. Closure-only timeout SHALL surface as closure timeout for human disposition, never re-entering content retries.
@@ -557,7 +481,7 @@ Enforcement: `harness/scripts/utils/goal-timeout.ts`, `harness/scripts/goal-runn
 
 ### Requirement: Blocker actionability joins the decision ladder at a single position and splits timeouts in four steps
 
-Aggregated blocker actionability (from the shared registry) SHALL enter the attempt decision ladder at exactly one position: after safety terminal states (operator interrupt, interaction/no-output, integrity, framework-bug) and transient-API backoff, before content retry/no-progress and closure routing. At that position: any `toolchain_blocked` blocker → halt `await_operator_toolchain` (an environment task, never phrased as a signature request); otherwise blockers non-empty and all `human_only` → halt `await_human_gate_deferral` reusing the awaiting-human-review semantics with per-item signature guidance; otherwise retry with the failure feedback restricted to `agent_fixable` items, `human_only` items marked as parked, and `human_only` ids excluded from the no-progress signature. For timed-out attempts with fresh blockers the classification SHALL follow four steps: integrity/framework-bug → safety terminal; ∃ toolchain_blocked → `await_operator_toolchain`; blockers non-empty and all human_only → the headless-interaction family (human outlet); otherwise `agent_timeout`. Peripheral state machines (vision trust/reseal startup terminals and fidelity transition preflight before the attempt; unauthorized-source-mutation and backtrack-limit reconciliation after the verdict) SHALL keep their existing positions and semantics — the aggregation layer only consumes blockers not claimed by them. The agent-written headless ledger SHALL never trigger these outcomes by itself (record-not-authorization); it is surfaced as guidance only.
+Aggregated blocker actionability SHALL enter the decision ladder after safety terminals and transient API handling, before content retry/no-progress and closure routing. Toolchain or genuine external blockers SHALL use their existing operator/external defer path. Agent-fixable blockers SHALL retry or produce trusted responsible-phase repair candidates. Quality blockers MUST NOT be classified `human_only`, parked for a signature, or routed to `await_human_gate_deferral`; required evidence gaps SHALL remain FAIL/UNVERIFIED or capability-missing according to whether capability was available. Timed-out attempts SHALL preserve the same distinction. Agent-written assumptions remain report-only and never authorize a transition.
 
 Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-failure-classifier.ts`
 
@@ -566,10 +490,10 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-failu
 - **WHEN** an attempt times out and the fresh summary's only BLOCKER is the OCR-toolchain-unavailable gate
 - **THEN** the run SHALL halt `await_operator_toolchain` instead of classifying `agent_timeout` and burning another content retry
 
-#### Scenario: remaining human-only signature items stop consuming attempts
+#### Scenario: unsigned quality item no longer exists
 
-- **WHEN** all agent-fixable capture items are resolved and the only failing BLOCKER is the unsigned fidelity-deferrals gate in a headless run
-- **THEN** one failing attempt SHALL move the run to `await_human_gate_deferral` listing the items to sign, without further content retries
+- **WHEN** machine evidence for a required quality obligation is missing
+- **THEN** the outcome SHALL be repair/evidence FAIL or capability defer, never `await_human_gate_deferral`
 
 ### Requirement: Attempt reporting uses four orthogonal axes
 
@@ -709,7 +633,7 @@ Enforcement: `harness/scripts/utils/agent-invoke.ts`, `agents/cursor/adapter.yam
 
 ### Requirement: No non-final status carries bare COMPLETED semantics
 
-The run-level status enum SHALL distinguish `CHAIN_SLICE_COMPLETED` (this run's phase slice succeeded), `AWAITING_HUMAN_REVIEW` (pending must-review items, P0 waivers, fidelity caps, or missing receipts), `FEATURE_INCOMPLETE`, and `FEATURE_COMPLETED`. `FEATURE_COMPLETED` SHALL appear only when `verify-feature-completion` returns VALID. A truncated-chain run's report SHALL state the covered slice explicitly and point to the feature-level verdict. Enum naming SHALL be aligned with goal-mode-unattended-survival's terminal projection before implementation (shared types single point).
+The run-level status enum SHALL distinguish `CHAIN_SLICE_COMPLETED` (this run's phase slice succeeded), `FEATURE_INCOMPLETE`, and `FEATURE_COMPLETED`; legacy `AWAITING_HUMAN_REVIEW` values MAY be read for diagnostics but MUST NOT be newly produced from quality state. `FEATURE_COMPLETED` SHALL appear only when `verify-feature-completion` returns VALID. A truncated-chain run's report SHALL state the covered slice explicitly and point to the feature-level verdict.
 
 Enforcement: `harness/scripts/utils/goal-report-generator.ts`, `harness/scripts/goal-{runner,status}.ts`, goal-report schema
 
@@ -731,48 +655,43 @@ Enforcement: `harness/scripts/goal-runner.ts`（preflight）, `harness/scripts/u
 
 ### Requirement: Feature completion is generated only from clean lineage and verified only through one entry point
 
-`feature-completion.json` SHALL be generated by the goal runner only when every phase of the track-resolved chain is clean_pass (verdict PASS ∧ no pending must-review ∧ no P0 waiver ∧ no fidelity cap ∧ not DEFERRED/PARTIAL ∧ source lineage consistent ∧ applicable flow_contract receipt valid ∧ **when a P0 device flow exists: a valid `runtime_fidelity_attestation` receipt** — bound to feature + acceptance hash + testing source aggregate, so any code or flow change stales it; issued by the runner once Hylyre provider step-level capture lands, or by a human out-of-band before that; the mere existence of an evidence file SHALL NOT satisfy this condition), binding requirement_sha256 (inline manifest.requirement + dereferenced docs + ux-reference), spec/acceptance/contracts hashes, review attestation aggregate, testing source aggregate, per-phase {run_id, attempt, gate_fingerprint, receipt hash, evidence-manifest aggregate}, parent_run_id/supersedes, and the resolved workflow track. The per-phase `attempt` SHALL be the invocation ordinal derived from the run's `agent_invoke_start` events (the `i<N>` suffix of the last invoke for that phase — resume-monotonic; never the per-phase retry counter) and the verifier SHALL re-derive and reconcile it. Derivation SHALL be tri-state: no invocation events → absent (null attempt, legacy-compatible); well-formed events → the ordinal; an invocation event with a missing or malformed `invoke_id` SHALL fail derivation — generation SHALL refuse to produce the credential and verification SHALL return INVALID, never degrading malformed to a null attempt indistinguishable from absent. A closure whose environment records `requirement_sha256: null` SHALL be treated as unbound lineage: any consumer supplying a current requirement hash SHALL judge it stale (fail-closed), and a goal-environment closure SHALL refuse to produce an unbound record. The original SHALL be written atomically into the runner-owned run directory with only a projection in the feature directory. `verify-feature-completion` SHALL be the sole consumption entry: it recomputes artifact hashes, requirement_sha256/testing source/review attestation aggregates, per-phase evidence manifests, receipt/gate freshness, clean_pass, **run-event lineage (each referenced run SHALL have a `phase_start` for its phase AND a success-state `run_end` — a missing `run_end` is not-yet-terminal and INVALID)**, track chain, and absence of newer HALTED/PARTIAL runs, returning VALID | STALE | INVALID; consumers SHALL NOT judge completion from file existence or self-reported fields. The expected chain AND the expected workflow track are both mandatory verifier inputs independently resolved by the consumer (workflow SSOT + feature track declaration); a missing expectation SHALL yield INVALID rather than skipping the reconciliation (no optional fail-open parameters on the sole entry point).
+`feature-completion.json` SHALL be generated only when every phase in the resolved chain is closed and fresh, each phase-advance matrix permits progression, every applicable `required_for_release` quality axis is PASS through `projectReleaseReadiness`, no trusted open BLOCKER/MAJOR or unexecuted P0 remains, and all recovery/backtrack transactions are committed. For P0 device flows, current runtime step evidence bound to feature, acceptance flows, derived plan, HAP/source, trace, run, attempt, device, and provider identity is mandatory. Flow truth SHALL come from spec-owned hash-bound acceptance evidence. Human receipt files, P0/fidelity/behavior/review waivers, `confirmed_by`, accepted debt, assumptions-ledger `must_review`, manual resume, and legacy runtime attestation MUST NOT satisfy any condition.
 
-Receipt run binding: a `fidelity_downgrade` receipt is per-run (bound to the run whose capability context it authorizes — the runner passes the current `run_id`); `p0_skip_waiver`/`behavior_switch_waiver`/`conditional_review_authorization`/`flow_contract` receipts are feature-scoped and bound by `object_hash` (which includes feature and the decision object), so a human's authorization for an unchanged object persists across runs and cross-feature/cross-object replay fails. `run_id` on the latter is an optional audit field, not a per-run gate.
+The completion original remains runner-owned and atomic with a feature projection. `verify-feature-completion` remains the sole consumer and SHALL recompute artifact/requirement/source/review/runtime/evidence-manifest hashes, run-event lineage, current workflow track/chain, quality projections, and absence of newer incomplete/terminal runs. Missing or malformed run/attempt identity fails closed. Legacy completion lineage that relied on a human quality key SHALL be recomputed from current machine evidence and MUST NOT remain valid by receipt presence.
 
-#### Scenario: a crashed run cannot complete
+Enforcement: `harness/scripts/utils/verify-feature-completion.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/quality-axes.ts`, `harness/scripts/utils/device-test-evidence-shared.ts`
 
-- **WHEN** a completion references a run whose events contain `phase_start` for each phase but no `run_end` (crash/interrupt/truncation)
-- **THEN** verify-feature-completion SHALL return INVALID rather than treating the un-terminated run as clean lineage
+#### Scenario: P0 completion uses runtime observations
 
-#### Scenario: a UI feature cannot complete without a runtime fidelity attestation
+- **WHEN** every phase is fresh and all required axes pass but a P0 device flow lacks current step observations
+- **THEN** completion SHALL not be generated, regardless of a legacy runtime-fidelity receipt
 
-- **WHEN** a feature has a P0 device flow and no valid `runtime_fidelity_attestation` receipt exists (an empty or hand-written evidence file does not count — validity requires the pre-provisioned trust registry, binding hashes, and expiry)
-- **THEN** clean_pass SHALL fail with a needs_human `runtime_step_evidence` issue, capping the run at AWAITING_HUMAN_REVIEW and withholding FEATURE_COMPLETED; a valid receipt (runner-issued after provider step capture lands, or human out-of-band before that) SHALL lift the cap, and any change to acceptance or the product source tree SHALL stale it
+#### Scenario: all machine obligations close completion
 
-Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/verify-feature-completion.ts`, `harness/scripts/goal-status.ts`
-
-#### Scenario: hand-crafted completion file is rejected
-
-- **WHEN** a schema-valid feature-completion.json is placed manually without matching recomputed lineage
-- **THEN** verify-feature-completion SHALL return INVALID and no consumer SHALL project FEATURE_COMPLETED
+- **WHEN** the resolved chain, required axes, open-defect checks, and P0 runtime/visual evidence all verify under current identities
+- **THEN** completion SHALL be generated without any user signature
 
 ### Requirement: Fidelity intent is detected from the dereferenced requirement SSOT with a capability pre-gate
 
-Before phase prompting, the runner SHALL dereference existing file paths cited in `manifest.requirement` (features_dir/doc prefixes, bounded size) and run intent detection over the combined text. Intent SHALL be tri-state: strong pixel signals → pixel_1to1; ambiguous screenshot-consistency phrasing → confirmation flow (`await_human_fidelity_tier` preflight halt when ux-reference images exist and no valid pre-authorization); none → semantic_layout. Strong pixel intent combined with missing required visual capability SHALL yield `DEFERRED_CAPABILITY_MISSING` before spec (no blind full-chain run); continuation requires a valid downgrade confirmation receipt. `--fidelity`/manifest.fidelity SHALL only hold or raise the detected tier, never lower it. Capability clamping for non-strong intent remains unchanged (d4a8f3c6 refinement, not reversal).
+Before phase prompting, the runner SHALL detect intent from the inline manifest requirement plus bounded, frozen source documents that existed at initialization. Generated feature outputs SHALL not enter requirement identity. Strong required visual intent without capable current execution SHALL yield `DEFERRED_CAPABILITY_MISSING`. Manifest fidelity remains upgrade-only; no downgrade receipt is valid. Ambiguous wording SHALL follow deterministic policy/frozen input and MUST NOT create an `await_human_fidelity_tier` gate.
 
 Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/fidelity-shared.ts`, `harness/scripts/utils/goal-preflight.ts`
 
-#### Scenario: the bc-openCard requirement halts capability-blind downgrade
+#### Scenario: generated README cannot stale intent
 
-- **WHEN** the referenced 原始需求.md contains 「页面布局完全参考'X.jpg'」 while the manifest summary only says 「尽量与截图一致」 and the adapter lacks vision
-- **THEN** dereferenced detection SHALL yield strong pixel intent and the run SHALL stop at DEFERRED_CAPABILITY_MISSING instead of proceeding at semantic_layout
+- **WHEN** the requirement tells spec to create `doc/features/<feature>/ux-reference/README.md` and that file is created during spec
+- **THEN** the frozen requirement identity SHALL remain stable and no human fidelity decision SHALL be requested
 
 ### Requirement: Headless auto-decisions are recorded in a schema-validated JSONL ledger
 
-The unattended prompt block SHALL mandate `<phase>/headless-assumptions.jsonl` (one decision per line: decision_id, run_id, phase, gate_id, class, decision, must_review, source, ts) with the markdown file demoted to a human-readable projection. The goal report SHALL render an auto-decision summary from the JSONL (legacy markdown-only runs: conservative full inclusion), and any pending must-review item SHALL cap the run status at AWAITING_HUMAN_REVIEW. Ledger records SHALL NOT constitute authorization for hard-gate-lowering decisions.
+The unattended prompt MAY record deterministic/default decisions in `<phase>/headless-assumptions.jsonl` for audit, with markdown as a human projection. Ledger `must_review` and user-like source strings SHALL be legacy/report-only and MUST NOT cap run status, advance a phase, authorize a gate change, or block completion. A decision requiring genuine external authority SHALL be represented by the existing external prerequisite state, while a quality uncertainty SHALL remain repair, UNVERIFIED/FAIL, optional advisory, or capability defer.
 
 Enforcement: `harness/scripts/goal-runner.ts`（prompt 契约）, `harness/scripts/utils/goal-report-generator.ts`, `harness/scripts/check-receipt.ts`（schema/registry 校验，见 harness-gates）
 
-#### Scenario: pending must-review blocks clean completion
+#### Scenario: historical must-review does not pause a run
 
-- **WHEN** any phase ledger contains an entry with must_review=true not yet resolved by a human
-- **THEN** the run SHALL report AWAITING_HUMAN_REVIEW and clean_pass SHALL fail for that phase
+- **WHEN** a legacy assumptions ledger has unresolved `must_review=true` rows
+- **THEN** they SHALL appear in diagnostics only and current machine gates SHALL determine the run outcome
 
 ### Requirement: Trusted device evidence refines testing failure attribution
 
@@ -905,7 +824,7 @@ Enforcement: `harness/scripts/utils/device-unlock-helper.ts`, `harness/scripts/u
 
 Visual actionable defects SHALL be projected into repair candidates at **signal granularity** — one candidate per defect/finding — with identity `sha256(computeDefectFingerprint(screen, defect))`, reusing the existing stable per-defect fingerprint (`screen|class|element|bbox_bucket[|producer#finding_id]`) and the existing `defect.must_fix_refs` association to resolve text-only `must_fix` entries; no per-screen aggregate identity (it drifts whenever the defect set or the build changes, making recurrence undetectable) and no new parallel identity or association structure. "Identity" is a concept name only: the sole stored field remains `item_fingerprint`. Each signal-level candidate SHALL carry `identity_schema: 'signal@1'`; candidates without the marker are legacy check-domain candidates — usable for diagnostics and existing routing, but **excluded from the convergence accounting and the no-op rule below**, which apply to `signal@1` candidates only.
 
-Convergence SHALL follow the **cumulative one-shot rule**, derived entirely from existing authoritative events with no new ledger file. Candidate identities are read from `phase_backtrack_requested.candidates[]`, but a requested batch joins `attempted` **only once the target phase has actually executed in that backtrack window** — evidenced by a subsequent `agent_process_settled` or `phase_verdict` event for the target phase; a request with no such evidence (crash before the target phase ran) SHALL NOT count as attempted, preserving the existing crash/resume contract that request-only candidates are restored and executed. `eligible` = current open identities minus `attempted`. When `eligible` is non-empty the runner SHALL backtrack for the eligible identities only (prompt injection filtered to them); when `eligible` is empty the runner SHALL NOT backtrack and SHALL halt `repair_not_converging` (operator class, WAITING(human)) with guidance listing each still-open attempted identity's cross-round evidence and the existing human-recovery channel. Because `attempted` is cumulative, an identity whose executed repair failed SHALL NOT regain eligibility when a different identity triggers a later backtrack (no A/C alternation). The whole-round fingerprint-equality fuse remains only as a backstop, and the runner SHALL feed `repeated_round{fingerprint,count}` into the reconcile observation for assess to consume in its stop reasoning.
+Convergence SHALL follow the **cumulative one-shot rule**, derived entirely from existing authoritative events with no new ledger file. Candidate identities are read from `phase_backtrack_requested.candidates[]`, but a requested batch joins `attempted` **only once the target phase has actually executed in that backtrack window** — evidenced by a subsequent `agent_process_settled` or `phase_verdict` event for the target phase; a request with no such evidence (crash before the target phase ran) SHALL NOT count as attempted, preserving the existing crash/resume contract that request-only candidates are restored and executed. `eligible` = current open identities minus `attempted`. When `eligible` is non-empty the runner SHALL backtrack for the eligible identities only; when `eligible` is empty it SHALL retain `repair_not_converging` as a bounded terminal/fuse and list the machine evidence. Same-run manual resume MUST NOT clear attempted identities, reset the fingerprint, change the quality conclusion, or create eligibility. Only new machine evidence producing a new identity, or a successor run with new identity/budget, can continue. Because `attempted` is cumulative, an identity whose executed repair failed SHALL NOT regain eligibility when a different identity triggers a later backtrack.
 
 Backtrack events SHALL keep the existing vocabulary — `phase_backtrack_requested`, `phase_backtrack_started`, `phase_backtrack_completed` — with no new event types or transaction state machine: whether the target phase actually executed is read from the existing `agent_process_settled`/`phase_verdict` events; `phase_backtrack_completed` SHALL be emitted only after the backtrack actually completes (never before the target phase runs) and SHALL be emitted on all backtrack paths.
 
@@ -935,92 +854,30 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/repair-can
 
 ### Requirement: Visual signals are adjudicated before candidate materialization
 
-Perception-sourced signals SHALL be adjudicated **before** any repair candidate is materialized, preserving the existing contract that `summary.repair_candidates[]` carries only trusted, actionable defects. The pipeline runs at the goal-runner collection site as a single source of truth (the harness-runner's check-domain assembly SHALL NOT process visual signals): producer emits each signal classified **actionable** or **uncertain** → signal-level identity → parse of the testing agent's fenced `defect-review` block (per-signal confirmed/disputed with rationale) → materialization decision.
-
-Materialization has exactly two outcomes. An **actionable signal the agent's review confirms** is materialized as a regular repair candidate (`identity_schema: 'signal@1'`) and may drive a backtrack; a `PASS` verdict with such a candidate still backtracks (the existing guarantee preserved — "trusted" means this harness-synthesized concurrence, never agent self-report alone). **Every other perception signal — actionable but disputed by the agent, actionable but unreviewed, or producer-classified uncertain — SHALL stop the run before merge**: no candidate is written, and the runner halts `repair_adjudication_pending` (operator class, WAITING(human)) presenting the producer evidence and the agent's dispute rationale (when present) verbatim for human judgment. A WARN-level annotation is not a substitute for stopping — unresolved perception signals SHALL NOT be silently downgraded past the gate. There is **no automatic refuted verdict, no adjudication-layer verification algorithm, and no new summary schema for adjudication** (evidence lives in the producer output and the defect-review block; the only `summary.json` schema addition of this change is the optional `identity_schema` field, which is backward-compatible). Mechanical detection (OCR confusion, viewport/reference compatibility, geometry) lives only in the producer — a conflict between two sources proves disagreement, not which source is wrong, so it SHALL be classified uncertain at the producer or escalated to a human, never auto-resolved. Skipping the review block gives the agent no benefit (fail-closed to the stop path).
-
-The producer SHALL classify uncertainty at the source: an OCR reading within edit distance 1 of a known candidate string SHALL be emitted as uncertain rather than a FAIL-grade text-placement signal, and vertical-order comparisons between a full-page stitched reference and a single-viewport screenshot SHALL be downgraded to uncertain with the calibre gap noted. The uncertain production wiring and stop ordering are frozen to existing carriers and control flow: the producer SHALL emit uncertain signals in an **optional `uncertain_signals[]` list on the existing producer-owned `VisualDiffStructuredPayload`**, each entry carrying the signal's `item_fingerprint`, the uncertainty reason, and the evidence reference; the list persists through the existing `checks[].structured` field of `script-report.json` (no new file or IPC). The goal runner SHALL read it when it reads the fresh summary and the round's script-report, forming a pending flag **before any PASS-path closure work**: with a non-empty list the runner SHALL NOT run receipt validation or closure finalization for the phase, SHALL still complete the existing `visual_round` event projection and integrity handling, and SHALL then halt `repair_adjudication_pending` without entering normal verdict processing or candidate merge — stopping only before merge is insufficient, since a lone uncertain signal alongside all-PASS screens would otherwise finalize the phase closure and then stop, leaving a success state and a WAITING halt coexisting. The producer SHALL NOT write uncertainty back into `visual-diff.json`, and no new file, ledger, receipt, or state machine is introduced for this wiring.
-
-Human recovery SHALL reuse the existing visual-confirm human-sign channel — `visual-diff.json` screen `confirmed_by` with a human signer per the `isHumanVerified` predicate — as the single authoritative source: a human `--resume` after a convergence halt is itself one explicit release (the attempted invariant is re-established after execution, so each release requires a fresh human action). No manual-driver or confirmation-receipt path is introduced by this change as a recovery input, and no new receipt family or ledger is created. Halt guidance for `repair_not_converging` and `repair_adjudication_pending` SHALL name the concrete channel entry point and resume command — a WAITING state must accept future input. The review-phase FAIL retry prompt SHALL NOT contain fix-it-yourself inducements (e.g. "apply a minimal fix"); it SHALL instruct registering candidates with review evidence for adjudicated routing.
-
-**Provider-sourced visual defects are a separate source and SHALL NOT enter this pipeline.** This
-requirement governs **perception signals produced by the mechanical producer (T8)** and is unchanged
-for them. A read-only visual provider under `vision_mode: delegated` runs *after* the primary agent
-and is therefore structurally always "unreviewed" — routing it through the defect-review pipeline
-would halt every delegated round for a human, which is the opposite of the delegated contract. A
-provider payload that passes same-invocation validation SHALL therefore be materialized directly as a
-repair candidate (a trusted, actionable critic candidate — not absolute truth), without requiring a
-blind primary's `defect-review` concurrence, which would be a sham check. A provider payload that
-fails validation SHALL be discarded and the round SHALL continue with blind semantics. In neither
-case SHALL a provider result cause `repair_adjudication_pending`, and in neither case SHALL a provider
-write `confirmed_by` or otherwise substitute for the final human visual confirmation.
+Visual signals SHALL be classified and validated before candidate materialization. A deterministic producer signal whose applicability/evidence contract passes SHALL materialize directly as a trusted machine repair candidate even when the primary agent disputes or omits it. A current delegated-provider payload that passes identity/hash/schema validation SHALL materialize through its existing provider path. Producer uncertainty or invalid/unreliable provider evidence SHALL not create a candidate: required quality stays FAIL/UNVERIFIED or capability-deferred and optional quality may remain advisory. The runner MUST NOT write `repair_adjudication_pending`, await `visual-confirm`, consume `confirmed_by`, or use human judgment as a third authority. Visual-round integrity and convergence events SHALL still be recorded before disposition.
 
 Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/repair-candidates.ts`, `profiles/hmos-app/harness/visual-diff-check.ts`, `harness/scripts/utils/assess.ts`, `harness/scripts/utils/adjudication.ts`, `harness/scripts/utils/visual-provider-invoke.ts`
 
-#### Scenario: the OCR misread that burned run 60bcd1 is neutralized at the source
+#### Scenario: deterministic signal survives agent dispute
 
-- **WHEN** OCR reads 「中国银行」 where the known candidate list contains 「中信银行」 at edit distance 1
-- **THEN** the producer emits the signal as uncertain, no candidate is materialized, and the run stops `repair_adjudication_pending` for human judgment instead of backtracking
+- **WHEN** a current deterministic layout invariant produces an applicable FAIL and the agent disputes it without independent machine counterevidence
+- **THEN** the signal SHALL materialize a repair candidate and no human adjudication halt SHALL occur
 
-#### Scenario: a lone uncertain signal stops the run before closure, not after
+#### Scenario: uncertain required evidence remains unclosed
 
-- **WHEN** every screen passes except one signal the producer classified uncertain
-- **THEN** the run halts `repair_adjudication_pending` **without invoking or completing receipt validation / closure finalization for the phase** — the uncertain signal is neither silently reduced to a WARN annotation nor left coexisting with a finalized PASS closure
-
-#### Scenario: uncertain travels the real carrier from producer to runner
-
-- **WHEN** the visual-diff check emits an `uncertain_signals[]` entry on its structured payload during a gate-harness run
-- **THEN** the goal runner reads that entry from `checks[].structured` of the round's script-report and stops before verdict processing and candidate merge — with nothing written back into `visual-diff.json`
-
-#### Scenario: the early stop does not drop visual-round bookkeeping
-
-- **WHEN** the round carries a visual_round receipt and the runner stops early on uncertain signals
-- **THEN** the existing `visual_round` event projection and integrity handling still complete before the halt
-
-#### Scenario: an agent dispute stops the loop for human judgment instead of auto-refuting
-
-- **WHEN** a mechanically actionable signal is disputed by the testing agent's defect-review entry
-- **THEN** no candidate is materialized, the run halts `repair_adjudication_pending` with the dispute rationale presented verbatim, and no automatic backtrack or automatic refutation occurs
-
-#### Scenario: an unreviewed signal cannot slip into a backtrack
-
-- **WHEN** an actionable visual signal has no matching entry in the testing agent's defect-review block
-- **THEN** no candidate is materialized and the halt guidance names the existing human channel that resumes the run
-
-#### Scenario: a delegated provider defect drives repair without stopping the run
-
-- **WHEN** a `delegated` round's provider payload passes same-invocation validation and enumerates a defect
-- **THEN** the defect SHALL be materialized as a repair candidate that drives the primary's fix, and the
-  run SHALL NOT halt `repair_adjudication_pending` for lack of a primary `defect-review` entry
-
-#### Scenario: an invalid provider payload is dropped, not adjudicated
-
-- **WHEN** a `delegated` round's provider payload fails validation
-- **THEN** the payload SHALL be discarded with an event, the round SHALL continue with blind semantics,
-  and no adjudication-pending halt SHALL be raised
+- **WHEN** a producer cannot reliably compare a required signal
+- **THEN** the required axis SHALL remain unclosed or capability-deferred without finalizing PASS or entering WAITING(human)
 
 ### Requirement: WAITING-projected halts revalidate before re-invoking the agent
 
-On `--resume`, for a run whose latest `phase_halt` carries a `run_disposition` projection of `WAITING`, the runner SHALL derive a validation-only eligibility from the existing event stream — and when eligible, SHALL skip re-invoking the agent for that phase and proceed directly to the gate harness (performing the same verification that normally follows an agent attempt), reusing the phase's last settled invocation identity. The eligibility derivation SHALL consume only the existing `run_disposition` projection and event shapes, never re-classify by `halt_reason`, and SHALL NOT use `INCIDENT_REGISTRY.class` as a criterion (class expresses responsibility, not whether the agent completed; the operator class includes 8 structurally terminal incidents). Eligibility SHALL require all of: the latest `phase_halt` has `run_disposition === 'WAITING'`; the phase's latest execution event (`agent_invoke_start` / `agent_process_settled` / `phase_verdict`) is a valid `agent_process_settled` (non-empty `invoke_id`, not `timed_out`, not `kill_reason === 'agent_timeout'`); a `harness_end` for the same `invoke_id` exists after that settled and before the halt; and no newer `agent_invoke_start` / `agent_process_settled` / `phase_verdict` exists for that phase after the settled; and no newer `phase_backtrack_requested` or `phase_invalidated` exists after that halt (a newer backtrack/invalidation window takes priority — eligibility then belongs solely to the existing invalidation replay, so a stale halt must not override it). When any requirement fails — non-`WAITING` projection, missing projection, or incomplete event window — the runner SHALL NOT derive validation-only eligibility from that halt; subsequent behavior SHALL be left entirely to the existing resume/invalidation path (which may independently derive validation-only eligibility from a newer window's settled). This change SHALL NOT derive validation-only eligibility for non-`WAITING` projections, and SHALL NOT modify terminal semantics or the manual resume contract (`checkTerminalResumeGuard` cooldown and `--force-resume`); no new event types, state machines, ledgers, or receipts are introduced. Enforcement: `harness/scripts/goal-runner.ts`
+Legacy event streams whose latest halt projects `WAITING` MAY use the existing validation-only resume optimization only to re-run machine gates against unchanged settled invocation evidence. That optimization MUST NOT clear a repair fuse, accept a receipt/signature, or turn an unchanged quality result into PASS. New quality failures SHALL not emit WAITING projections; genuine external prerequisite states retain their existing resume eligibility. Any newer invalidation/backtrack window takes priority.
 
-#### Scenario: a waited halt whose agent already finished revalidates without re-invoking
+Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/adjudication.ts`
 
-- **WHEN** a run halted with `run_disposition: WAITING` (e.g. `repair_adjudication_pending`) after
-  its phase's agent process settled with a valid `invoke_id`, a `harness_end` for the same invoke
-  followed, and no newer execution event exists
-- **THEN** resuming skips the agent invoke for that phase, runs the gate harness exactly once with
-  the original invoke identity, and either PASSes through the existing closure owner or halts again
-  without burning agent time
+#### Scenario: legacy waiting visual halt revalidates but does not pass by resume
 
-#### Scenario: a FAIL verdict or newer invoke after settled denies eligibility
-
-- **WHEN** a `phase_verdict` with `FAIL`, a newer `agent_invoke_start`, a timed-out/killed settled,
-  a settled without `invoke_id`, a halt without a `WAITING` projection, a `TERMINAL` /
-  `RECOVERY_PENDING` projection appears in the window, or a newer `phase_backtrack_requested` /
-  `phase_invalidated` appears after the halt
-- **THEN** the runner does not derive validation-only eligibility from that halt; the outcome is
-  left entirely to the existing resume/invalidation path (which may still independently derive
-  validation-only eligibility from a newer window)
+- **WHEN** a legacy visual WAITING halt is resumed with no new machine evidence
+- **THEN** the gate MAY run without another agent invocation but SHALL reproduce the current FAIL/UNVERIFIED/defer result rather than release it
 
 ### Requirement: Supervisor respects run-control owner responsibility
 
@@ -1267,131 +1124,44 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-manif
 - **WHEN** a run with a frozen `visual_provider_pin` is resumed after the local configuration changed
 - **THEN** the run SHALL use the frozen pin, and changing it SHALL require the explicit override flag
 
-### Requirement: Blind visual launch requires one explicit authorization per run
+### Requirement: Legacy blind visual authorization is ignored
 
-The goal runner SHALL accept an independent boolean flag `--allow-blind-visual`. This flag is the
-goal-run carrier for an explicit choice to proceed without either primary image input or a legal
-visual provider. `fidelity=reference_only` SHALL NOT count as that authorization, and the flag SHALL
-NOT be written to `framework.local.json` or any other personal persistent configuration.
-
-When the flag is explicitly present, the runner SHALL unconditionally freeze
-`allow_blind_visual: true` into the manifest **before** the existing manifest identity-drift check.
-The key SHALL enter the manifest identity hash conditionally on key presence. A fresh run MAY accept
-the key directly. A resume SHALL use the frozen value without requiring the flag again; adding the
-key to an older manifest that did not contain it SHALL require the existing `--override-manifest`
-path. A successor SHALL strip the key from the inherited manifest, so the new run requires a new
-explicit authorization. No post-canary manifest write, identity rebase, or second drift check SHALL
-be introduced. The key MAY be present for a native or delegated run, but it SHALL NOT affect routing
-outside the blind-without-provider branch.
-
-After the primary canary attempt has completed, and before any formal phase invocation, the runner
-SHALL evaluate one pure launch decision using only existing sources of truth:
-
-- UI relevance from `resolveUiRelevanceForRun`;
-- primary image input from the existing effective `resolveContextAdapterImageInput` chain, not from
-  the current probe result directly;
-- provider availability from the frozen `visual_provider_pin` plus adapter-catalog eligibility;
-- authorization from the manifest's `allow_blind_visual` key.
-
-The decision SHALL have exactly five branches: a non-UI requirement is allowed; a UI requirement
-whose primary has image input is allowed as native; a blind primary with a legal provider is allowed
-as delegated; a blind primary without a provider but with frozen authorization is allowed as blind;
-and a blind primary without either provider or authorization is a pre-phase BLOCKER. The BLOCKER
-message SHALL name both remedies: configure a visual provider through `record-visual-provider`, or
-rerun with `--allow-blind-visual` to authorize blind execution explicitly.
-
-The existing `canaryHardCliFailure` HALT branch SHALL run first and SHALL NOT be masked by the blind
-authorization decision. Under `--dry-run`, the blocking branch SHALL emit a WARN containing
-`would_block` and SHALL NOT stop, because no formal phase is launched. A configured provider whose
-personal setup state is `unavailable` SHALL count as no provider, never as authorization. Once a
-legal provider was selected and launch was admitted as delegated, a later provider invocation
-failure SHALL remain on the existing fail-open path and SHALL NOT re-run this launch authorization
-check.
-
-Ordinary interactive use, attended goal use, and unattended goal use SHALL be three carriers of this
-single policy, not separate policies: an interactive user's in-place "skip and run blind" choice
-authorizes only that operation; attended goal orchestration translates the same choice into the CLI
-flag; and unattended execution must either have a legal provider or pass the flag explicitly.
+New CLI and manifest writers MUST NOT produce `--allow-blind-visual` or `allow_blind_visual`. A legacy
+manifest MAY retain the field for byte/hash compatibility, but the launch and quality gates SHALL
+ignore it. UI work that requires visual evidence SHALL use current native/delegated capability or
+project `DEFERRED_CAPABILITY_MISSING`; optional non-strict visual evidence follows the existing
+advisory policy. A user flag or manual resume cannot authorize an evidence gap.
 
 Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/goal-mode-entry.ts`,
-`harness/scripts/utils/goal-manifest.ts`,
-`harness/scripts/utils/goal-manifest-cli.ts`, `harness/scripts/utils/goal-preflight.ts`,
-`harness/scripts/check-personal-setup.ts`
+`harness/scripts/utils/goal-manifest.ts`, `harness/scripts/utils/goal-manifest-cli.ts`,
+`harness/scripts/utils/goal-preflight.ts`
 
-#### Scenario: a non-UI requirement is not subjected to the visual launch prerequisite
+#### Scenario: legacy authorization grants no quality effect
 
-- **WHEN** the requirement is not UI-related, regardless of primary vision, provider, or authorization
-- **THEN** the launch SHALL proceed without consulting or requiring a visual provider
-
-#### Scenario: native vision ignores an otherwise present blind authorization
-
-- **WHEN** a UI-related run has effective primary image input and its manifest contains
-  `allow_blind_visual: true`
-- **THEN** the launch SHALL proceed as native and the authorization key SHALL NOT change the route
-
-#### Scenario: an eligible frozen provider admits delegated launch
-
-- **WHEN** a UI-related run has a blind primary and a frozen provider whose adapter is eligible in
-  the adapter catalog
-- **THEN** the launch SHALL proceed as delegated without requiring blind authorization
-
-#### Scenario: frozen authorization admits an otherwise blind launch
-
-- **WHEN** a UI-related run has a blind primary, no legal provider, and
-  `allow_blind_visual: true` in its manifest
-- **THEN** the launch SHALL proceed as blind through the existing visual-debt and release projection
-
-#### Scenario: an unauthorized blind UI launch is blocked before the phase
-
-- **WHEN** a UI-related run has a blind primary, no legal provider, and no frozen authorization
-- **THEN** the runner SHALL emit a pre-phase BLOCKER naming both configuration and explicit blind-run
-  remedies, and SHALL NOT invoke the phase
-
-#### Scenario: dry-run reports the same decision without blocking
-
-- **WHEN** the unauthorized blind UI condition is reached under `--dry-run`
-- **THEN** the runner SHALL emit a `would_block` WARN and SHALL NOT emit the formal-phase BLOCKER
-
-#### Scenario: canary hard failure keeps priority
-
-- **WHEN** the primary canary records a hard CLI failure and the blind authorization is also absent
-- **THEN** the existing hard-failure HALT SHALL be reported, not the blind-launch BLOCKER
-
-#### Scenario: resume and successor have different authorization lifetimes
-
-- **WHEN** an authorized manifest is resumed and later used to create a successor
-- **THEN** the resume SHALL use the frozen authorization without a new flag, while the successor
-  SHALL contain no `allow_blind_visual` key and SHALL require a new explicit authorization if blind
-
-#### Scenario: an unavailable configured provider is still no provider
-
-- **WHEN** personal setup reports `visualProvider.state = unavailable` for a UI-related blind run
-- **THEN** launch SHALL follow the no-provider branches and SHALL require explicit blind authorization
-
-#### Scenario: provider runtime degradation does not reopen launch authorization
-
-- **WHEN** a legally admitted delegated run later receives an `unavailable` or `invalid` provider result
-- **THEN** the existing fail-open review behavior SHALL continue the development loop without another
-  launch BLOCKER
+- **WHEN** a UI-related legacy manifest carries `allow_blind_visual: true` but required visual capability is unavailable
+- **THEN** the run SHALL defer as capability-missing and SHALL NOT advance because of the legacy key
 
 ### Requirement: An unsupported visual provider selection responds by input shape and never substitutes silently
 
 The response to a provider adapter that is absent from the catalog-derived support list SHALL depend
-only on how the selection arrived:
+only on how the selection arrived and on whether visual evidence is required by the existing quality
+policy:
 
 - **Ordinary interactive use** — on the first UI-related phase, when the local configuration is
   missing a provider **or** its adapter is unsupported, the framework MAY ask once for
-  `adapter` + `model`, presenting the catalog-derived support list and allowing a reselection. If the
-  user skips, that explicit choice authorizes this operation to proceed `blind` and SHALL NOT be
-  persisted or asked again in that round.
+  `adapter` + `model`, presenting the catalog-derived support list and allowing a reselection. A skip
+  is ordinary input, not authorization to waive evidence: required visual evidence SHALL project
+  capability-missing, while truly optional visual evidence follows the existing advisory policy.
+  The framework SHALL NOT persist or re-ask the skipped selection in that round.
 - **Attended goal creation** — the same condition and the same selection/reselection flow apply
   before the manifest is created. A valid selection is written to the local configuration and then
-  frozen into the manifest; skipping SHALL be translated into `--allow-blind-visual` so the run-scoped
-  authorization is frozen before launch.
+  frozen into the manifest. Skipping SHALL NOT write `--allow-blind-visual`, `allow_blind_visual`, or
+  any equivalent quality authorization; required/optional evidence follows the same policy above.
 - **Unattended** — the framework SHALL NOT ask. A stale local configuration naming an unsupported
-  adapter SHALL produce a warning and SHALL be ignored. A non-UI run, or a run carrying frozen blind
-  authorization, MAY continue `blind`; a UI-related blind run without authorization SHALL stop at the
-  pre-phase launch BLOCKER. A missing configuration follows the same matrix.
+  adapter SHALL produce a warning and SHALL be ignored. A non-UI run MAY continue. For UI-related
+  work, unavailable required visual capability SHALL project capability-missing and optional visual
+  evidence follows advisory policy. Legacy frozen blind authorization is ignored. A missing
+  configuration follows the same matrix.
 - **Explicit CLI** — `--visual-adapter` naming an unsupported adapter SHALL fail fast, and the error
   SHALL list the catalog-derived support list. Silently ignoring an explicit user input is forbidden.
 
@@ -1401,17 +1171,18 @@ providers, or recommend one implicitly by selecting it.
 Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/check-personal-setup.ts`,
 `harness/scripts/init-orchestrate.ts`, `harness/scripts/utils/adapter-catalog.ts`
 
-#### Scenario: an existing unsupported selection is re-offered once, then dropped
+#### Scenario: an existing unsupported selection is re-offered once without creating a waiver
 
 - **WHEN** an interactive session finds a local configuration naming an unsupported provider adapter
 - **THEN** the user SHALL be prompted once with the support list and the option to skip, and a skip
-  SHALL continue `blind` without a second prompt in that round
+  SHALL NOT create a visual-quality waiver; required evidence projects capability-missing and truly
+  optional evidence remains advisory without a second prompt in that round
 
 #### Scenario: unattended stale selection obeys the shared launch matrix
 
 - **WHEN** an unattended run reads a local configuration naming an unsupported provider adapter
-- **THEN** the run SHALL warn and ignore the configuration; it SHALL continue blind only for a non-UI
-  requirement or with frozen authorization, and SHALL block a UI-related unauthorized blind launch
+- **THEN** the run SHALL warn and ignore the configuration; non-UI work continues, optional visual
+  evidence follows advisory policy, and required visual capability projects capability-missing
 
 #### Scenario: no automatic substitution
 
@@ -1419,3 +1190,305 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/check-personal-s
 - **THEN** the framework SHALL NOT select another adapter on the user's behalf and SHALL NOT retry the
   round against a different provider
 
+### Requirement: Trusted repair candidates are a single shared fact in the phase summary
+
+The harness SHALL project trusted actionable defects into `summary.repair_candidates[]` as the single machine-derived fact consumed by goal, batch, and manual drivers. Review candidates require structurally valid current reports and item-level verifier evidence; a conditional-review receipt or accepted-risk statement MUST NOT suppress them. Check-derived ownership SHALL prefer registered machine check/failure-kind mapping over affected-path fallback; underivable/mixed ownership produces no trusted candidate. Testing device/visual evidence SHALL be merged into the same field only after its existing identity/freshness verification. Failure to persist candidates remains fail-closed. Agent prose MUST NOT self-declare ownership or create a candidate.
+
+Enforcement: `harness/scripts/utils/repair-candidates.ts`, `harness/harness-runner.ts`, `harness/prompts/verify-review.md`, `harness/scripts/utils/quality-axes.ts`
+
+#### Scenario: three verified review MAJORs become coding-owned candidates
+
+- **WHEN** a review report concludes 有条件通过 with open MAJORs CR-001/002/003 over product source files, and the verifier's issue-verification block confirms each one
+- **THEN** the review summary carries three coding-owned repair candidates with distinct item fingerprints, and the round fingerprint differs from any prior round's set
+
+#### Scenario: a hallucinated finding cannot drive a code change
+
+- **WHEN** an open MAJOR is absent from the verifier's issue-verification block, marked refuted/unclear, or the report itself fails validity
+- **THEN** no candidate is produced for it and the phase falls back to the existing in-phase retry/halt behavior
+
+#### Scenario: signed conditional review still produces candidates
+
+- **WHEN** current item-level evidence verifies open MAJOR findings and a legacy conditional authorization exists
+- **THEN** the findings SHALL remain repair candidates and route to their responsible phase
+
+### Requirement: Assess routes repair candidates to the responsible phase via strict workflow mapping
+
+Assess SHALL map repair-candidate ownership through the current resolved workflow/track, returning no phantom phase and no chain-head fallback. Multiple owners target the most-upstream real phase while retaining the grouped facts. Goal and unattended batch execution SHALL automatically authorize any in-chain earlier target through the single `backtrack_to_phase` branch, existing invalidation transaction, budget, and fingerprint fuse. Manual UI MAY display the routing but MUST NOT require confirmation to preserve quality. A target absent from the actual chain remains `backtrack_target_absent`. Old phase-specific execution branches and dead recommendation actions MUST NOT coexist.
+
+Enforcement: `harness/scripts/utils/assess.ts`, `harness/scripts/utils/correction-routing.ts`, `harness/scripts/utils/goal-assess-driver.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-in-session-driver.ts`, `harness/scripts/utils/assess-renderer.ts`
+
+#### Scenario: review candidates backtrack to coding instead of retrying review
+
+- **WHEN** review fails with three coding-owned candidates and the goal chain includes coding
+- **THEN** assess recommends `rerun_phase:coding` with `backtrack_to_phase`, the driver authorizes it, and the runner backtracks with the candidate list injected into the next coding prompt — no `rerun_phase:review` retry burn
+
+#### Scenario: a lite-track spec candidate maps to change, not a phantom phase
+
+- **WHEN** a spec-owned candidate arises on a lite-track chain `change/coding/exit`
+- **THEN** assess targets `change`; on a custom chain lacking any mapped node the recommendation carries a null phase and the runner halts `backtrack_target_absent`
+
+#### Scenario: plan-owned defect from testing backtracks automatically
+
+- **WHEN** testing emits a trusted plan-owned candidate and plan is earlier in the actual chain
+- **THEN** assess/driver/runner SHALL execute one `backtrack_to_phase:plan` transaction without human authorization
+
+#### Scenario: a stale verifier artifact cannot qualify a reused issue id
+
+- **WHEN** the previous round's `verifier.report.md` confirms `CR-001`, but the current report's `CR-001` describes a different defect — whether an unrelated one, or one sharing a generic phrase with the old evidence (both mention 「状态机错误」)
+- **THEN** the evidence binding fails in both cases, no candidate is produced, and the phase stays in review for re-verification
+
+#### Scenario: a crash between backtrack and re-execution keeps the handoff
+
+- **WHEN** the runner emits `phase_backtrack_requested` with candidates and then crashes before the target phase runs
+- **THEN** resume replays the event and the target phase's prompt still carries its own candidates; a later non-repair backtrack clears them instead of leaking them forward
+
+### Requirement: Receipt identity fields are runner-owned
+
+The phase-completion receipt scaffold SHALL be generated with `feature`, `phase` and — under goal orchestration — `claimed_attempt_id` pre-filled from the runner/harness attempt identity (`i<totalTurns>`); agents MUST NOT be required to copy machine-known identity values from the environment or derive them from progress files. Under goal orchestration the runner SHALL be the **single scaffold writer**: before **every** real agent invocation (content and closure attempts alike; lite track and dry-run excluded) it SHALL force-regenerate the unfilled scaffold carrying the upcoming attempt identity, invalidating the previous attempt's receipt so a stale complete receipt cannot satisfy completion observation for the new attempt — and so the agent sees the scaffold from the content attempt onward, allowing closure to complete within the same attempt (testing no longer necessarily burns a second on-device gate pass). A scaffold write failure SHALL halt before starting the agent (`receipt_scaffold_unwritable`, external/probe semantics) with the real path and I/O error — it MUST NOT be swallowed, because a surviving stale-identity receipt deterministically reproduces the `receipt_attempt_identity` closure wall. The harness-side PASS-gated skeleton generation SHALL stand down under goal orchestration (goal attempt env present → no write) and remains only for non-goal manual flows. Closure-only state SHALL be derived from the latest authoritative phase verdict (`PASS` + `advance_blocked` + `action=retry`): phases such as coding/ut with no frozen deliverable surface still get the current invocation identity and closure-only prompt. A later halt/invalidation or non-closure verdict clears that state. The strict goal-mode equality between `claimed_attempt_id` and the runner attempt identity SHALL remain unchanged (no `"3"`/`"i3"` aliasing); non-goal manual flows keep the empty-field and timestamp-freshness behavior.
+
+Enforcement: `harness/scripts/utils/receipt-scaffold.ts`, `harness/harness-runner.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/check-receipt.ts`, `harness/scripts/utils/adjudication.ts`
+
+#### Scenario: a closure attempt no longer dies on a copied identity
+
+- **WHEN** closure-only attempt `i3` starts after attempt `i2` failed receipt validation
+- **THEN** the scaffold on disk already carries `claimed_attempt_id: "i3"` and the agent only fills self-attestation fields; the run reaches normal closure without `closure_wall_repeated`
+
+#### Scenario: a stale complete receipt does not complete a new attempt
+
+- **WHEN** a further closure attempt `i4` begins while a filled receipt claiming `i3` exists
+- **THEN** the runner regenerates the unfilled scaffold with `claimed_attempt_id: "i4"` and completion observation does not treat the `i3` receipt as current
+
+#### Scenario: a phase without a frozen surface still gets a closure identity
+
+- **WHEN** coding attempt `i4` reaches PASS but closure remains open
+- **THEN** attempt `i5` is still classified closure-only from the `i4` verdict, its prompt says to perform closure only, and the runner force-regenerates the scaffold with `claimed_attempt_id: "i5"`
+
+#### Scenario: an unwritable scaffold stops the attempt instead of reviving the identity wall
+
+- **WHEN** the runner cannot write the receipt scaffold before an invocation (read-only directory, missing template, or file lock)
+- **THEN** the run halts `receipt_scaffold_unwritable` reporting the real path and error, the agent is never started, and no attempt budget is burned
+
+### Requirement: Spec closure-only prompts mandate read-only visual re-evidencing
+
+For spec closure-only attempts the runner prompt SHALL state that FROZEN applies to artifacts, not to read-only evidencing, and SHALL list every authoritative reference image (derived from the spec visual handoff) with an instruction to read each one during the current invocation — because the `vl_multimodal` final sign-off is invocation-bound and MUST NOT be relaxed or satisfied by reusing a previous invocation's refs receipt. Modifying artifacts remains forbidden.
+
+Enforcement: `harness/scripts/goal-runner.ts`（`buildClosureVisualEvidenceBlock`）, `harness/scripts/check-spec.ts`（gate 判定不变）
+
+#### Scenario: a closure-only attempt can pass the invocation-bound visual sign-off
+
+- **WHEN** a spec closure-only attempt starts with 10 authoritative reference images and the agent follows the prompt's read-only evidencing list
+- **THEN** the refs receipt for this invocation is complete and `ui_spec_fidelity_gate` no longer fails structurally on the closure attempt
+
+### Requirement: Run end-state classification uses the executed slice; the assumptions ledger never gates it
+
+Run end-state classification SHALL evaluate the actually executed chain slice, while feature completion evaluates the full chain. Assumptions-ledger rows and human-signature artifacts SHALL never gate either result. Current quality issues SHALL project only as repair/incomplete, capability-missing/deferred, optional advisory, genuine external prerequisite, or precise terminal/fuse outcomes through existing projectors.
+
+Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/verify-feature-completion.ts`
+
+#### Scenario: spec-only clean run has no signature cap
+
+- **WHEN** a spec-only run closes its executed slice and only legacy human-signature items remain
+- **THEN** the run SHALL classify from current machine gates and SHALL not become `AWAITING_HUMAN_REVIEW`
+
+#### Scenario: historical must_review entries do not cap the end state
+
+- **WHEN** the cross-run ledger accumulates dozens of `must_review` entries from prior runs
+- **THEN** they appear in the goal report only; clean-pass classification emits no `no_pending_must_review` issue and completion generation is not blocked
+
+### Requirement: Downstream-start runs must not rewrite spec-owned frozen decision files
+
+A downstream-start run SHALL read and reuse upstream frozen decision files byte-for-byte. If requirement/fidelity identity differs, files are corrupt/missing where required, or upstream closure is stale, the runner SHALL produce the total earlier-gap disposition: return to the actual owner through `backtrack_to_phase` when the resolved chain/run can execute it, otherwise surface `backtrack_target_absent` with a successor/full-chain route. A hard capability conflict still defers using in-memory capability facts. The runner MUST NOT rewrite upstream files, emit a dead `rerun_phase:*` recommendation, or classify a known owner gap as `framework_bug`.
+
+Enforcement: `harness/scripts/utils/goal-preflight.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/assess.ts`
+
+#### Scenario: plan start observes stale spec
+
+- **WHEN** a run starts at plan and the spec closure is stale while the effective workflow permits a spec backtrack
+- **THEN** the runner SHALL invalidate downstream state and execute spec backtracking rather than halt with only `rerun_phase:spec` guidance
+
+### Requirement: Segmented-start eligibility is closure-only; pass snapshots never gate downstream phases
+
+For any `--start X`, start eligibility SHALL be judged solely by the freshness of all in-repo phase closures upstream of X (the truncated-chain preflight's evidence-staleness recomputation) — no cross-run snapshot search, no snapshot derivation for other runs, no per-phase snapshot or authorization layer for review/ut/testing. The coding plan-authority check SHALL judge the plan closure directly via the same evidence-staleness recomputation (manifest integrity + receipt pointer + frozen-surface file hashes + environment): fresh → authorized; stale → the existing live-drift replan path (changed paths named); missing/tampered → closure-untrusted replan. The coding UI-scope whitelist SHALL be read from the on-disk `contracts.yaml` only after its current hash matches the hash frozen in the plan phase-evidence-manifest (receipt-pointer-anchored); a mismatch is live drift handled by the existing stale/replan disposition — the snapshot-anchor env channel is retired. Deleting the goal-checkpoints temporary cache SHALL NOT affect legitimate segmented starts. When a run ends HALTED on a structurally-sensitive incident, the `run_end` event SHALL carry the disposition already computed at the `phase_halt` production site (replayed from events), never a second `decide()` nor a write-layer fabrication. The downstream-start fidelity-reuse note SHALL be printed to the run log.
+
+Enforcement: `harness/scripts/utils/scope-replan.ts`（`checkPlanAuthority`）, `harness/scripts/utils/ui-scope-gate.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/phase-evidence-manifest.ts`
+
+#### Scenario: a fresh coding-start run passes the plan authority gate without executing plan
+
+- **WHEN** run A closed plan cleanly and run B starts fresh with `--start coding --end testing`, with the goal-checkpoints cache absent
+- **THEN** `checkPlanAuthority` judges the plan closure fresh and returns ok, coding starts normally
+
+#### Scenario: genuine contracts drift is still caught
+
+- **WHEN** `contracts.yaml` on disk no longer matches the hash frozen in the plan evidence manifest
+- **THEN** the plan-authority check reports live drift naming the file (existing replan path) and the UI-scope gate refuses to read the drifted whitelist
+
+#### Scenario: a halted run's terminal event carries its disposition
+
+- **WHEN** a run halts on a structurally-sensitive incident (e.g. `receipt_scaffold_unwritable`)
+- **THEN** the `run_end` event carries the `run_disposition` computed at the halt production site, and the write-layer guard has nothing to refuse
+
+### Requirement: The pass-snapshot mechanism is retired; PASS artifacts are protected by full re-verification
+
+The per-run PASS frozen-snapshot mechanism (take/diff/restore/discard, trusted-context loading, epoch/head/journal, memory anchors, the `pass_snapshot_unavailable` / snapshot-flavored `pre_invoke_snapshot_failed` halt family, and the responsibility-rerun pending state) SHALL be removed and MUST NOT be reintroduced as workflow state, authorization, or start eligibility. PASS-artifact tamper protection SHALL rest on the facts that already exist: a closure attempt that breaks an artifact fails the next full harness re-verification; an edit that still passes re-earns every gate on the current bytes; and the phase closure manifest always binds the current bytes — the closure-only prompt keeps its "do not rewrite artifacts" instruction as guidance. Invalidation (backtrack/replan) SHALL be complete with the atomic `phase_backtrack_requested` event alone — no cache demotion side effects. The retained residents of the trust-state namespace are the coding base anchor (`coding-base.json`, the UI-scope diff baseRef — unrelated to snapshots) and per-run trust-state GC (`deleteRunTrustState`, which also sweeps legacy snapshot directories from older runs). Read-side incident mappings for historical ledgers MAY keep the retired incident ids. Independent mechanisms that share similar names SHALL NOT be removed: review closure source attestation, UT product-source immutability, testing invoke-boundary source write-protection (`product-source-snapshot`), and the device readiness gate.
+
+Enforcement: `harness/scripts/utils/pass-snapshot.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/scope-replan.ts`, `harness/scripts/utils/goal-runner-phase.ts`, `harness/scripts/utils/phase-completion-probe.ts`
+
+#### Scenario: a legitimate UT PASS with no optional artifacts no longer trips an invariant
+
+- **WHEN** a `repair_existing_ut` run reaches UT PASS with closure open and none of the optional UT artifacts on disk
+- **THEN** the closure retry proceeds normally — there is no frozen-surface resolution, no "non-empty registry but zero deliverables" invariant halt
+
+#### Scenario: a closure attempt that edits a PASS artifact is caught by re-verification, not by a snapshot
+
+- **WHEN** a closure-only attempt modifies a previously passing artifact in a way that breaks a gate
+- **THEN** the phase's next full harness run fails on the current bytes and the run takes the normal content-retry path — no snapshot diff, no restore, no cache-discard halt
+
+### Requirement: Goal startup MUST resolve product selection once and halt on unresolved
+
+goal run MUST 在**整个 run 的第一个 phase agent invocation 之前**（与
+`declared_product_layer_missing` 同一时点模式，`--resume` 同样经过）MUST 解析一次 product
+selection——当且仅当链路含需 product 的 phase（coding.compile / ut.* / device_test.*
+任一非 skip）。解析按 profile 能力入口（profile 侧 `resolveProductSelection`），profile
+不可用时跳过（generic 等无构建语义 profile 不受影响）。
+
+解析结果 `unresolved`（构建形态无法确定——**四种原因**：`multi_candidate_unconfirmed`
+多候选且 config 值未确认 / `no_build_profile` build-profile.json5 缺失 / `empty_products`
+存在但未声明 app.products / `unparseable_build_profile` 无法解析；后三者**无真实候选**，
+MUST NOT 以虚构 `default` 冒充 `sole_candidate`）
+MUST 转既有 `phase_halt` 通道（不新建停止机制）：
+`phase_halt{ phase: chain[0], halt_reason: 'product_selection_unresolved', verdict: 'FAIL' }`
++ `run_end{HALTED}` + 退出非零，halt_guidance MUST 含全部候选与统一确认引导
+（`init.product_selection` / `record-product-selection` CLI / `HARNESS_DEVICE_TEST_PRODUCT`
+env 三条路径）。
+
+该检查 MUST 先于任何 phase 预算消耗；确认（config+local 双写）或 env 覆盖后 `--resume`
+重检即放行。单候选与已确认工程 MUST 完全不受影响（零新增交互）。
+
+#### Scenario: 多候选未确认的 goal run 在启动阶段停止
+- **WHEN** 链路含 coding/ut/testing 且解析结果 `unresolved`
+- **THEN** run MUST 在首个 phase agent invocation 前 HALT（`product_selection_unresolved`）
+- **AND** MUST NOT 消耗任何 phase 尝试预算，MUST NOT 进入 coding 阶段中途才停
+
+#### Scenario: 未确认值经 idempotent 确认后放行
+- **WHEN** 用户经 `record-product-selection` 或 env 显式确认 product
+- **THEN** 下一次 `--resume` 的启动前置检查 MUST 放行（`explicit_config` / `confirmed_env`）
+
+> **Enforced by:** `harness/scripts/goal-runner.ts`
+> （`product_selection_unresolved` 启动前置检查块）,
+> `harness/tests/unit/goal-runner-*.unit.test.ts`
+
+### Requirement: Windows headless agent invokes run inside a kill-on-close Job under a single-owner guardian
+
+On Windows, a real (non-dry-run) headless agent invoke SHALL be launched by the PowerShell guardian
+(`agent-guardian.ps1`, P/Invoke; zero added binaries) in this order: create the Job object with
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` set, create the agent process suspended, assign it to the Job,
+and only then resume it — there SHALL be no window in which the agent can execute user code outside
+the Job. The guardian SHALL be the only long-lived holder of the Job handle (no handle copy to the
+runner or the agent), SHALL wait on both the runner (SYNCHRONIZE) and the agent: a vanished runner
+triggers `TerminateJobObject`, a killed guardian lets the OS close its handle (the last one → whole-
+tree kill), and a normal finish closes the Job after the agent exits (residual descendants killed).
+Agent stdout/stderr/stdin SHALL be inherited handle-wise so the runner's existing consumption pipes
+keep working; the guardian SHALL never write to the agent's stdout. On Windows unattended the
+failure to establish containment SHALL fail the invoke closed (no WARN-and-continue), and an
+invoke whose guardian identity cannot be fully verified (process identity, executable, argv token)
+SHALL also fail closed. Non-Windows / attended / dry-run behavior stays unchanged.
+
+Enforcement: `harness/scripts/utils/agent-guardian.ps1`, `harness/scripts/utils/agent-containment.ts`,
+`harness/scripts/utils/agent-invoke.ts`, `harness/scripts/goal-runner.ts`
+
+#### Scenario: a hard-killed runner cannot leave an uncontained agent tree
+
+- **WHEN** the runner process is hard-killed while the agent is running
+- **THEN** the agent tree SHALL be terminated (guardian closes the Job; OS kill-on-close covers a
+  killed guardian), leaving no surviving shell or CLI descendants
+
+#### Scenario: containment setup failure on Windows unattended stops the invoke
+
+- **WHEN** the guardian cannot create the Job, assign the suspended process, or resolve the agent
+  binary
+- **THEN** the invoke SHALL fail closed (non-zero exit, no agent resume, diagnostic on stderr), and
+  the runner SHALL NOT continue as if the agent was contained
+
+### Requirement: Controlled guardian takeover is identity-bound, event-sourced, and never guessed
+
+Each Windows invoke SHALL record `agent_process_bound` (the guardian's ManagedProcessIdentity tuple:
+pid, OS start time for strict equality, absolute executable path, and the explicit `run_id/invoke_id`
+token carried in the guardian argv) and a closing `agent_process_settled` event. Resuming a run SHALL
+reconcile unclosed bounds against a read-only process probe: a vanished guardian SHALL be treated as
+Job-already-closed (no reclamation needed); a strictly matching live guardian SHALL be reclaimed only
+after the old owner is confirmed dead and a new epoch is in effect, by terminating the guardian alone
+so the Job closes and kills all descendants (no per-process tree kill), emitting `orphan_reclaimed`;
+an identity mismatch or unverifiable command line SHALL be warned about without killing or blocking;
+a matching guardian that cannot be terminated SHALL block the resume. A run with invoke history but
+no `agent_process_bound` events at all (pre-3.0 legacy run) SHALL fail closed with a manual-cleanup
+prompt. `goal-status` SHALL remain read-only: it may report unclosed invokes and guardian liveness
+but SHALL never reclaim. `goal-supervise` SHALL keep backing off while the old owner (guardian) is
+alive, SHALL refuse to raise legacy runs, and SHALL append `--force-resume` only after confirming the
+old owner is dead (guardian gone), preserving the runner-side cooldown semantics.
+
+Enforcement: `harness/scripts/utils/goal-containment-reconcile.ts`, `harness/scripts/goal-runner.ts`,
+`harness/scripts/goal-supervise.ts`, `harness/scripts/utils/goal-progress.ts`
+
+#### Scenario: resume on a legacy run without any bind events refuses safely
+
+- **WHEN** a resume is attempted on a run whose events contain `agent_invoke_start` rows but no
+  `agent_process_bound`
+- **THEN** the runner SHALL refuse with a manual-cleanup BLOCKER (no guessing, no auto-reclaim) and
+  the supervisor SHALL NOT auto-raise it
+
+#### Scenario: a strictly matching leftover guardian is reclaimed as a unit
+
+- **WHEN** a resume finds an unclosed bound whose guardian probe matches pid/start-time/executable
+  and whose command line contains the recorded token, while the old owner is dead
+- **THEN** the runner SHALL terminate that guardian only, rely on the Job close to kill the whole
+  tree, confirm the guardian vanished, and record `orphan_reclaimed`
+
+#### Scenario: status stays read-only
+
+- **WHEN** a run has an unclosed bound and the operator runs `goal-status`
+- **THEN** the snapshot SHALL report the unclosed invoke and guardian liveness and SHALL perform no
+  reclamation side effect
+
+### Requirement: Visual round identity is injected and monotonic across resume
+
+The goal runner SHALL inject `MAISON_GOAL_RUN_ID` and `MAISON_GOAL_ATTEMPT` into both the agent invocation environment and the harness gate environment so the agent's in-session harness run and the outer gate share one round identity. The attempt id SHALL be the run-scoped invocation ordinal restored from events.jsonl (totalTurns mechanism) — never the per-phase retry counter (`retries + 1` resets on --resume, colliding with old round keys and replaying an unfused decision over what should be a no_fix_attempt second round). Hard constraints: same invocation → same id everywhere; any next invocation (retry, detach recovery, --resume) → different id; crash recovery never reuses an id (the ordinal counts already-persisted invoke-start events). The invoke_id SHALL derive from this ordinal, not from the wall clock alone.
+
+Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/{agent-invoke,goal-runner-phase}.ts`
+
+#### Scenario: resume produces a fresh attempt id
+
+- **WHEN** a run is interrupted after attempt i3 and resumed with unchanged evaluation state
+- **THEN** the next invocation SHALL carry an id greater than i3 and the unchanged state SHALL fuse as no_fix_attempt instead of being deduplicated
+
+### Requirement: no_progress_fuse halts on first touch without burning retries
+
+`no_progress_fuse` SHALL be a first-class failure kind: classified from the blocker classification channel before the visual_diff id-prefix bucketing (the fuse blocker id starts with visual_diff and would otherwise be absorbed into visual_gap), halting on first touch with halt reason `no_progress_fuse` and never entering content retry accounting. The pre-existing coarse visual-gap signature halt SHALL remain as a backstop with its distinct halt reason; no human-confirmation path SHALL release either fuse in the same run.
+
+Enforcement: `harness/scripts/utils/goal-failure-classifier.ts`, `harness/scripts/goal-runner.ts`
+
+#### Scenario: fuse classification wins over prefix bucketing
+
+- **WHEN** the testing summary carries a blocker with classification no_progress_fuse among other visual_diff blockers
+- **THEN** classifyFailureKind SHALL return no_progress_fuse and the runner SHALL halt immediately
+
+### Requirement: Ledger receipts round-trip through summary and events with integrity reconciliation
+
+The harness runner SHALL append the evaluated round to the ledger after checks and return a receipt through the explicitly declared `summary.visual_round {loop_id, attempt?, row_hash?, disposition, decision?}` schema field (summary.json is additionalProperties:false — no bare injection); duplicate dispositions SHALL still carry the replayed decision. The goal runner SHALL persist the receipt as a `visual_round` event and, at each testing gate and on resume, reconcile events-expected row hashes against the ledger **unconditionally** (an empty expected set is precisely the main-path failure shape and never skips the check). The expected set SHALL include row hashes from **duplicate** dispositions (the dominant path is agent-side append followed by a gate duplicate — the duplicate's row_hash is that ledger row). Missing rows, modified rows (decision edits included — row hash recomputation), stale orphan rows, corrupt lines inside the goal loop, and duplicated row hashes SHALL halt as `visual_ledger_integrity`; pending adoption is limited to the **single most recent testing-phase invocation** that has started but not yet committed a visual_round event (non-testing invocations never qualify — they would stay pending forever and lend their attempt ids to orphan rows), and every adopted row SHALL immediately be committed back as a recovery visual_round event so the attempt stops being pending and the row enters the next expected set. A ledger append failure SHALL surface as `disposition: append_failed` (no row_hash) and halt immediately — the runner SHALL NOT proceed on a receipt that claims persistence that did not happen. Ledger corruption or deletion SHALL NOT be read as empty history. This is runtime consistency protection over agent-writable files, not cryptographic tamper-proofing — stated as such.
+
+Enforcement: `harness/harness-runner.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/visual-rounds-ledger.ts`, `harness/schemas/summary.schema.json`
+
+#### Scenario: deleting a ledger row halts the run
+
+- **WHEN** events.jsonl expects a row hash that is absent from the ledger at the next gate
+- **THEN** the runner SHALL halt with visual_ledger_integrity instead of re-evaluating from an empty ledger
+
+### Requirement: Runner-attested receipts are produced only from declared structured events
+
+Adapters SHALL declare `tool_event_provenance: none | structured_events | session_transcript` (default none =永远 unverified). With structured_events the invocation layer SHALL split three files — `agent-events.jsonl` (stdout only, clean NDJSON), `agent-stderr.log`, and the unchanged mixed human-readable `agent-output.log` (existing sentinel/heartbeat/no-output consumers untouched). After the testing invocation the goal runner SHALL audit image-read tool events from the events file using a registered structured parser only (no text-regex guessing) and produce the critic receipt: verified iff every finalized screen's evaluated screenshot and every paired attest crop has a read record; otherwise unverified with unread lists; the receipt carries the runner attestation bound to agent-events.jsonl. Adapters without a registered parser SHALL degrade honestly (no production, unverified stands). Read-event evidence proves invocation and input injection, not model cognition.
+
+Enforcement: `harness/scripts/utils/{goal-adapter-capability,agent-invoke,critic-receipt-producer}.ts`, `harness/scripts/goal-runner.ts`, `docs/operations/adapter-tool-event-provenance.md`
+
+#### Scenario: stderr cannot corrupt the evidence stream
+
+- **WHEN** the CLI writes NDJSON events to stdout while stderr emits diagnostics mid-line
+- **THEN** agent-events.jsonl SHALL contain only the stdout stream and the attestation SHALL bind to it, not to the mixed log

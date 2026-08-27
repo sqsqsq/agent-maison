@@ -73,6 +73,57 @@ export interface DeviceTestEvidenceCase {
   error_excerpt?: string;
 }
 
+export interface RuntimeScreenObservation {
+  signature_sha256: string;
+  observed_element_ids: string[];
+}
+
+export interface RuntimeCheckpointEvidence {
+  acceptance_id: string;
+  flow_id: string;
+  case_id: string;
+  step_index: number;
+  action_kind: string;
+  declared_target_element_id: string;
+  actual_hit: {
+    stable_node_id: string;
+    bounds: [number, number, number, number];
+  };
+  pre_screen: RuntimeScreenObservation & { declared_screen_id: string };
+  post_screen: RuntimeScreenObservation & { declared_screen_id: string };
+  required_observations: Array<{ element_id: string; present: boolean }>;
+  forbidden_observations: Array<{ element_id: string; present: boolean }>;
+  outcome: 'passed';
+}
+
+/**
+ * P0 runtime fidelity is carried by the existing device-test evidence artifact.
+ * The testing phase evidence manifest binds this document and its authoritative
+ * Hylyre trace; no confirmation receipt or parallel ledger is involved.
+ */
+export interface RuntimeFidelityEvidence {
+  schema_version: '1.0';
+  provider: {
+    id: string;
+    version: string;
+    collector: string;
+    collector_version: string;
+  };
+  bindings: {
+    feature: string;
+    goal_run_id: string;
+    attempt_id: string;
+    device_session_id: string | null;
+    acceptance_sha256: string;
+    test_plan_sha256: string;
+    derived_plan_sha256: string;
+    hap_sha256_full: string;
+    testing_source_aggregate: string;
+    trace_sha256: string;
+  };
+  checkpoints: RuntimeCheckpointEvidence[];
+}
+
 export interface DeviceTestEvidenceDoc {
   schema_version: '1.1';
   goal_run_id: string;
@@ -93,6 +144,8 @@ export interface DeviceTestEvidenceDoc {
   /** collector 唯一时间裁决字段（写入时刻 ISO）；文件 mtime 仅诊断 */
   written_at: string;
   cases: DeviceTestEvidenceCase[];
+  /** 仅 P0 device flow 适用；非 P0 文档不写该字段。 */
+  runtime_fidelity?: RuntimeFidelityEvidence;
 }
 
 /** coordinator 写入前的草稿（written_at 由 check-testing 落盘时刻统一盖） */

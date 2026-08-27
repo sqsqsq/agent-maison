@@ -66,15 +66,12 @@ import {
   classifySourceDrift,
   computeDriftFingerprint,
   computeCurrentDriftFingerprint,
-  mutationAuthorizationScopeHash,
   relPathIssues,
-  type MutationAuthorizationReceipt,
 } from '../../scripts/utils/mutation-authorization';
 import { resolveBlockerActionability } from '../../scripts/utils/goal-failure-classifier';
 import {
   buildBudgetExhaustedGuidance,
   buildUnauthorizedMutationGuidance,
-  MUTATION_RECEIPT_ISSUANCE_ROUTE_AVAILABLE,
 } from '../../scripts/utils/await-confirm-guidance';
 
 export interface UnitCaseResult {
@@ -496,20 +493,6 @@ const cases: Array<{ name: string; run: () => void }> = [
   },
   // ------------------------------------------------------------ T3b
   {
-    name: 'T3b: scope hash v2——fingerprint/source_inventory 任一变化即失配（版本化单一定义）',
-    run: () => {
-      const base: MutationAuthorizationReceipt = {
-        schema_version: '1.0', run_id: 'r1', phase: 'ut',
-        allowed_files: ['a/b.ets'], allowed_change_kind: 'test_seam', max_files: 1,
-        approved_by: 'user', authority_kind: 'human',
-      };
-      const h1 = mutationAuthorizationScopeHash(base);
-      const h2 = mutationAuthorizationScopeHash({ ...base, adjudicated_drift_fingerprint: 'f'.repeat(64) });
-      const h3 = mutationAuthorizationScopeHash({ ...base, source_inventory_before: 'i'.repeat(64) });
-      if (h1 === h2 || h1 === h3 || h2 === h3) throw new Error('scope v2 字段未入签名范围');
-    },
-  },
-  {
     name: 'T3b: relPathIssues——绝对路径/../重复项 fail-closed',
     run: () => {
       if (relPathIssues(['a/b.ets']).length !== 0) throw new Error('合法路径被误拒');
@@ -541,7 +524,7 @@ const cases: Array<{ name: string; run: () => void }> = [
   {
     name: 'T3b: classify——仅 preauth 覆盖在场 → unauthorized（preauth 非放行路）',
     run: () => {
-      const receipt: MutationAuthorizationReceipt = {
+      const receipt = {
         schema_version: '1.0', run_id: 'r1', phase: 'ut',
         allowed_files: ['x/1.ets'], allowed_change_kind: 'test_seam', max_files: 1,
         approved_by: 'owner', authority_kind: 'pre_run_manifest',
@@ -553,17 +536,13 @@ const cases: Array<{ name: string; run: () => void }> = [
         { runId: 'r1', frozenManifestHash: 'h1', phase: 'ut', currentDriftFingerprint: 'f'.repeat(64) },
       );
       if (d.kind !== 'unauthorized') throw new Error(`kind=${d.kind}——preauth 被放行`);
-      if (!/意图预登记|不放行/.test(d.violations.join(''))) throw new Error('违规说明未点明 preauth 边界');
+      if (!/已退役|不能信任/.test(d.violations.join(''))) throw new Error('违规说明未点明授权退役边界');
     },
   },
   {
-    name: 'T3b: classify——human 裁决 fingerprint 吻合 → authorized_backtrack；失配 → unauthorized',
+    name: 'T3b: classify——legacy human 裁决不再产生 authorized_backtrack',
     run: () => {
       const root = tmpDir('adj');
-      // 构造可通过 human 信任链的 receipt 不可行（registry 不存在——设计行为）；
-      // 本例直接验证 fingerprint 判定层：用 pre_run_manifest 以外的路径不可达，
-      // 故通过「human receipt 全合规」的最小替身——绕 receiptValidityIssues 不在本例范围，
-      // 这里断言：即使 receipt 有效集非空（伪造 valid 集），无 fingerprint 吻合恒 unauthorized。
       const fp = computeCurrentDriftFingerprint(root, { added: [], modified: [], deleted: [] });
       if (fp === null) throw new Error('空 drift fingerprint 应可计算');
       // 空 drift → no_drift 快速路径
@@ -572,27 +551,19 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'T3c: guidance——签发不可用（常量 false）文案不承诺 receipt-resume；截断链裁决转新起链',
+    name: 'T3c: guidance——source mutation 人签已退役；截断链转新起 owner run',
     run: () => {
-      if (MUTATION_RECEIPT_ISSUANCE_ROUTE_AVAILABLE !== false) throw new Error('issuance 常量应为 false（本 plan 冻结）');
       const g1 = buildUnauthorizedMutationGuidance({
         feature: 'f1', runId: 'r1', phase: 'ut', violations: ['x'],
         chainHasCodingReview: true,
-        receiptVerificationConfigured: false,
-        issuanceRouteAvailable: MUTATION_RECEIPT_ISSUANCE_ROUTE_AVAILABLE,
-        adjudicationAlreadyAvailable: false,
-        adjudicationRequestRel: null, harnessPrefixRel: 'harness',
+        harnessPrefixRel: 'harness',
       }).join('\n');
-      if (!/签发不可用/.test(g1)) throw new Error('未明示签发不可用');
-      if (!/coding 起点/.test(g1)) throw new Error('缺 coding 起点出路');
-      if (!/gap-notes/.test(g1)) throw new Error('缺自签不构成授权声明');
+      if (!/人签字段|旧 receipt|签名/.test(g1)) throw new Error('未明示人签无权');
+      if (!/coding/.test(g1)) throw new Error('缺 coding owner 出路');
       const g2 = buildUnauthorizedMutationGuidance({
         feature: 'f1', runId: 'r1', phase: 'ut', violations: ['x'],
         chainHasCodingReview: false,
-        receiptVerificationConfigured: true,
-        issuanceRouteAvailable: false,
-        adjudicationAlreadyAvailable: true,
-        adjudicationRequestRel: null, harnessPrefixRel: 'harness',
+        harnessPrefixRel: 'harness',
       }).join('\n');
       if (!/截断链|新起 coding 起点/.test(g2)) throw new Error('截断链裁决未转新起链');
     },
@@ -620,10 +591,10 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'T4d/5b: 授权型 blocker 保持 human_only；证据基线缺失回到机器恢复',
+    name: 'T4d/5b: review 后源码漂移回到机器恢复；基线缺失同样不求人',
     run: () => {
       const a = resolveBlockerActionability({ id: 'goal_post_review_source_mutation_unresolved' } as never);
-      if (a !== 'human_only') throw new Error(`post_review=${a}`);
+      if (a !== 'agent_fixable') throw new Error(`post_review=${a}`);
       const b = resolveBlockerActionability({ id: 'goal_review_closure_baseline_unavailable' } as never);
       if (b !== 'agent_fixable') throw new Error(`baseline=${b}`);
       const c = resolveBlockerActionability({ id: 'ut_no_src_mutation' } as never);

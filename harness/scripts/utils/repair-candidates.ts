@@ -18,8 +18,7 @@
 //   round_fingerprint=排序后 item 集合 hash——整轮防震荡。不新增第三种指纹或账本。
 // · review 侧信任合取：报告结构可信 + verifier 对该条**逐条**验证 confirmed
 //   （issue_accuracy 抽样全局 PASS 不够——误报率≤10% 也 PASS，一个幻觉 CR 不得驱动
-//   coding 改正确代码）+ 无有效 conditional_review_authorization receipt
-//   （人已显式接受风险则抑制自动回退）。
+//   coding 改正确代码）；legacy conditional_review_authorization 不再抑制自动回退。
 // ============================================================================
 
 import * as fs from 'fs';
@@ -256,8 +255,8 @@ export interface ReviewCandidateInput {
   reportText: string;
   /** verifier.report.md 全文（缺失传 null——零 candidate） */
   verifierReportText: string | null;
-  /** 有效 conditional_review_authorization receipt 在场（人已显式接受风险）→ 抑制 */
-  conditionalReceiptValid: boolean;
+  /** @deprecated legacy receipt flag, ignored; human authorization cannot suppress a defect. */
+  conditionalReceiptValid?: boolean;
   /** 报告结构/引用/结论一致性等 report-validity 检查存在 BLOCKER FAIL → 抑制 */
   reportValidityBlocked: boolean;
 }
@@ -333,11 +332,10 @@ function isVerificationEvidenceCurrent(
  * · 结论 ∈ {有条件通过, 不通过}（负面裁决两分支都覆盖）；
  * · 该行 severity ∈ {BLOCKER, MAJOR} 且状态未关闭；
  * · verifier 逐条验证块存在且该条 verdict=confirmed（抽样全局 PASS 不算数）；
- * · 无有效 conditional receipt；无 report-validity BLOCKER；
+ * · 无 report-validity BLOCKER；人工授权不得抑制可信缺陷候选；
  * · 归属可推导（路径域一致；review 无机器 check id 归属，走兜底）。
  */
 export function collectReviewRepairCandidates(input: ReviewCandidateInput): RepairCandidate[] {
-  if (input.conditionalReceiptValid) return [];
   if (input.reportValidityBlocked) return [];
   const section = getSectionContent(input.reportText, '结论')
     ?? getSectionContent(input.reportText, '审查结论') ?? '';
@@ -445,8 +443,8 @@ export interface PhaseCandidateInput {
   /** summary.report_validity（harness 派生）——非 PASS 时**报告自由文本**派生候选抑制
    * （c7e4a2d9：机器 check / verifier 合取候选不受此闸，负面结论不得抹掉机器修复事实） */
   reportValidity: 'PASS' | 'FAIL' | 'UNVERIFIED';
-  /** 有效 conditional_review_authorization receipt 在场（review 阶段） */
-  conditionalReceiptValid: boolean;
+  /** @deprecated legacy receipt flag, ignored. */
+  conditionalReceiptValid?: boolean;
   /** 本轮 checks（机器 check id 归属的生产点消费） */
   checks: ReadonlyArray<{
     id: string;
@@ -476,7 +474,6 @@ export function collectPhaseRepairCandidates(input: PhaseCandidateInput): Repair
     out.push(...collectReviewRepairCandidates({
       reportText: input.reviewReportText,
       verifierReportText: input.verifierReportText,
-      conditionalReceiptValid: input.conditionalReceiptValid,
       // c7e4a2d9：review 候选依赖报告内容——report invalid 时继续抑制；机器候选不受此闸
       reportValidityBlocked: input.reportValidity !== 'PASS',
     }));
@@ -602,7 +599,8 @@ export interface SummaryRepairCandidatesInput {
   reportValidity: 'PASS' | 'FAIL' | 'UNVERIFIED';
   reviewReportText: string | null;
   verifierReportText: string | null;
-  conditionalReceiptValid: boolean;
+  /** @deprecated legacy receipt flag, ignored. */
+  conditionalReceiptValid?: boolean;
   /** details 文本兜底归因解析器（harness-runner 既有实现注入，测试同款） */
   parseClassificationFromDetails?: (details: string) => string | undefined;
 }
@@ -620,7 +618,6 @@ export function buildSummaryRepairCandidates(
     reviewReportText: input.reviewReportText,
     verifierReportText: input.verifierReportText,
     reportValidity: input.reportValidity,
-    conditionalReceiptValid: input.conditionalReceiptValid,
     checks: input.checks.map((c) => ({
       id: c.id,
       status: c.status,

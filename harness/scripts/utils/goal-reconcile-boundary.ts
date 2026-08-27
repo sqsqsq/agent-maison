@@ -9,6 +9,7 @@ export type GoalReconcileEvent = Record<string, unknown>;
 
 export interface GoalReconcileBoundary {
   emit(event: GoalReconcileEvent): void;
+  emitPhaseVerdict(event: GoalReconcileEvent): void;
   decideAndEmit(input: {
     assessment: AssessResult;
     observation: ReconcileObservationV1;
@@ -29,6 +30,9 @@ export function createGoalReconcileBoundary(
 ): GoalReconcileBoundary {
   return {
     emit: eventWriter,
+    emitPhaseVerdict(event): void {
+      eventWriter({ type: 'phase_verdict', ...event });
+    },
     decideAndEmit(input): PhaseVerdictAction {
       const action = selectRunnerActionFromAssess({
         assessment: input.assessment,

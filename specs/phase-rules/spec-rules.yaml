@@ -22,17 +22,17 @@ structure_checks:
     description: >
       fidelity 意图三态前置闸（blind-visual-hardening d4）：goal-fakepass t6 三态检测扩面到
       逐阶段驱动路径——强 pixel 意图+盲模型 → BLOCKER（DEFERRED_CAPABILITY_MISSING 语义，
-      禁静默降档）；含混意图+盲+有参考图 → BLOCKER（await_human_fidelity_tier）；
-      唯一放行=有效 fidelity_downgrade receipt（绑需求 SSOT 哈希，降 WARN 不洗白）。
+      禁静默降档）；含混意图不得由模型自行降档，须按冻结需求或确定性默认策略解析，
+      无可用视觉能力则同样投影 capability missing。旧 fidelity_downgrade receipt 只读且不 gate。
       reference_intent/desired/effective 落盘 spec/reports/fidelity-intent.json，desired 永不被改写。
 
   blind_crop_prohibition:
     description: >
       盲档 crop 左移禁令（blind-visual-hardening d2）：effective_image_input=none 时
-      acquisition:crop 资产须满足可信消费态（resolved_path 存在 + provenance 三来源之一
-      可验证 + human_crop_confirmed 可信真人身份），否则 BLOCKER——盲模型不能执行或
-      自证裁剪；正确出路=placeholder+asset-manifest 或 asset-request 问人。
-      裸 user_requirement 哨兵不作条目级验真（P0-6 语义）。
+      acquisition:crop 资产须满足可信消费态：source_ref/source_bbox、源 hash、确定性算法/工具
+      provenance、输出 hash 与当前独立复验完整绑定；否则 BLOCKER。盲模型不能凭文字自证裁剪，
+      但 runner 可按冻结 bbox 自动裁剪并机器复验；工具能力缺失走 capability defer，无法取得素材时
+      可用显式 placeholder/asset-request。legacy human_crop_confirmed/crop_confirmed_by 只读且不 gate。
 
   vision_output_counterevidence:
     description: >
@@ -52,10 +52,9 @@ structure_checks:
 
   acceptance_flow_contract:
     description: >
-      结构化流程模型真人确认点（t4b/codex 四轮 P0-3）：flow_contract receipt 绑定
-      requirement/acceptance/flows/ui-spec 哈希，任一改动即 stale；无有效 receipt →
-      仅 advisory WARN（codex 方案二，08-15：签发端未建成前不影响 clean_pass /
-      FEATURE_COMPLETED；结构化硬检查与 receipt 机制本体不变）。
+      结构化流程模型机器契约（t4b/codex 四轮 P0-3）：由 spec-owned acceptance/flows/ui-spec
+      及 requirement_ref hash 形成唯一真源，任一输入改动即 stale 并重跑 spec 门禁。
+      legacy flow_contract receipt 可读但不参与 verdict；不得以人签补足缺失或不一致的流程证据。
 
   ux_reference_mapping:
     description: >
@@ -69,8 +68,8 @@ structure_checks:
       保真档位声明 vs 需求 SSOT 强意图对账（goal-fakepass-hardening t6）：goal-run
       manifest requirement（含解引用文档）命中强 1:1 意图（完全参考/像素级/1比1 等）
       而 spec 声明更低档位 → BLOCKER FAIL（「禁止的降级」机器化；bc-openCard/homepage
-      双事故同模式）。豁免=fidelity_deferrals 真人签字降档条目，且仅降级 WARN、
-      run 封顶 AWAITING_HUMAN_REVIEW。
+      双事故同模式）。旧 fidelity_deferrals/human_signed 只保留兼容读取，不能把冻结需求
+      降级为 WARN；改变目标必须作为新 requirement/correction 输入开启 successor run。
 
   required_chapters:
     description: >
@@ -340,8 +339,9 @@ structure_checks:
 
   ui_spec_fidelity_gate:
     description: >
-      ui-spec verified 须为 verified 或 human_confirmed 方可作为保真基线进 plan；
-      unverified 时 WARN/FAIL（按 ui_spec_enforcement 档位）并触发 D/K 降级语义。
+      ui-spec 仅在 verified_method=vl_multimodal 且当前 hash-bound 机器证据链完整时，
+      方可作为保真基线进 plan；unverified 以及 legacy human_confirmed/human_gate 均按
+      未验真处理，WARN/FAIL（按 ui_spec_enforcement 档位）并触发 D/K 降级语义。
     severity: MAJOR
     rule:
       expect: "ui_spec_verified_or_gate"
@@ -349,8 +349,9 @@ structure_checks:
 
   asset_acquisition:
     description: >
-      crop 类 assets 须 human_crop_confirmed（裁剪**授权**，非产物验真——验真见 asset_crop_validation）
-      后脚本裁图；依赖 jimp（见 image-tool-spike.md）。jimp 未安装时 SKIP。
+      crop 类 assets 由 runner 按 spec 冻结的 source_ref/source_bbox 确定性裁图并记录源、算法/工具、
+      参数和输出 hash；产物还必须通过 asset_crop_validation 独立复验。旧 human_crop_confirmed /
+      crop_confirmed_by 不构成授权或质量证明。依赖工具不可用时不得静默 SKIP，应走 capability 语义。
     severity: MAJOR
     rule:
       provider: spec.asset_acquisition
@@ -373,7 +374,8 @@ structure_checks:
       P0-D（plan f2d8c4a6）：spec 完整性**外部对照**——真分母=参考原图 OCR 全文清单（状态栏 band 剔除、
       单字符/纯符号去噪、金额样式保留），替换"分母是 agent 自己抽的清单"的 RC4 自循环（round6 实证：
       右置副标题×5/优化横幅/¥119.40 连续两轮漏抽而 capture 100% PASS）。OCR 行未被 ui-spec/ref-elements
-      文本集覆盖 → 逐条 disposition（补 implement 建模 或 defer+真人签）才放行，pixel_1to1 BLOCKER。
+      文本集覆盖 → 逐条 disposition（补 implement 建模，或在真实能力缺失时 capability defer）才可收口，
+      pixel_1to1 BLOCKER；人签不得补足缺失机器证据。
       反向 diff（spec 有而原图无=疑似幻觉）仅低置信注记。OCR 不可用 → pixel_1to1 不得 PASS（toolchain）。
       诚实边界：只保证"文本进了分母"，不保证"建模位置/分组正确"。
     severity: BLOCKER
@@ -395,9 +397,9 @@ structure_checks:
     description: >
       P0-B（plan f2d8c4a6）：裁剪产物验真。对**全部** acquisition:crop 资产（新裁/历史已存在/已物化
       一律重验，堵 existsSync→continue 的坏图复通过洞）：确定性 sanity（条状塌缩/icon 长宽比与面积占比/
-      纯色/空白，可一票否决）→ VL 隔离辨认（spec/reports/asset-crop-vl.yaml，sanity 只能否决不能证明语义对）
-      或真人 bbox_verified_by → 贴回对照 contact-sheet 证据落盘。裁剪授权（human_crop_confirmed/
-      user_requirement）绝不豁免验真（P0-C 拆位）。VL 缺失/失配/不可用 → pixel_1to1 不得静默 PASS。
+      纯色/空白，可一票否决），并按当前 source_ref/source_bbox 与冻结算法确定性重裁后比较输出 hash；
+      可用 VL 仅作为额外机器语义证据。旧 bbox_verified_by/human_crop_confirmed/crop_confirmed_by
+      只读且不豁免验真。源、hash、工具 provenance 缺失或重裁不一致时 pixel_1to1 不得静默 PASS。
       机器裁决落 spec/reports/asset-crop-validation.json，coding 物化门禁消费（未 verified 不得进模块 media）。
     severity: BLOCKER
     rule:
@@ -413,16 +415,16 @@ structure_checks:
 
   fidelity_deferrals:
     description: >
-      pixel_1to1 下 P0 视觉元素 defer 须登记 fidelity_deferrals 且**真人**签字（human_signed: true
-      且 signed_by 非自动化身份，goal-mode-auto 等自签不算；headless 缺 signed_by 亦不算）；
-      判据为有无真人签字而非有无登记；headless 无真人批准即 BLOCKER。
+      pixel_1to1 下任何 P0 视觉元素 defer 都是未满足的 strict 质量义务并构成 BLOCKER；
+      legacy fidelity_deferrals/human_signed/signed_by 可读但没有放行权。非 strict、非 release-required
+      defer 可按既有 optional UNVERIFIED/advisory 语义披露，不得制造人工等待态。
     severity: BLOCKER
     rule:
-      expect: "fidelity_deferrals_human_signed"
+      expect: "fidelity_deferrals_strict_contract"
 
   fidelity_no_self_defer_verified:
     description: >
-      禁止 ui-spec verified=verified 与未签字 defer 并存（spec 自我 defer + 自我 verified）。
+      禁止 ui-spec verified=verified 与任何 strict defer 并存（spec 自我 defer + 自我 verified）。
     severity: BLOCKER
     rule:
       expect: "no_self_defer_verified"

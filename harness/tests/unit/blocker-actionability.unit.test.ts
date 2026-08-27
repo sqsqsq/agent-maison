@@ -81,10 +81,10 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: '4-step: timeout+仅 human blocker → await_human_gate_deferral（不落 agent_timeout）',
+    name: 'timeout+legacy human-only blocker → null（人签停车态已退役）',
     run: () => {
       const r = classifyTimedOutWithFreshBlockers(S([{ id: 'fidelity_deferrals_human_sign' }]));
-      if (r !== 'await_human_gate_deferral') throw new Error(String(r));
+      if (r !== null) throw new Error(String(r));
     },
   },
   {
@@ -143,7 +143,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         ],
       } as never);
       if (!text.includes('capture_completeness_external')) throw new Error('agent_fixable 丢失');
-      if (!/parked, human-only/.test(text)) throw new Error('human_only 未标注 parked');
+      if (!/legacy human-only classification; revalidate/.test(text)) throw new Error('legacy human_only 未标注重验');
       if (/fidelity_deferrals_human_sign \[/.test(text) || text.includes('须真人签字')) {
         throw new Error('human_only 详情不得进入回喂正文');
       }
@@ -184,7 +184,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'e2e 回放 B（合成夹具）: external 已清、仅剩 fidelity_deferrals_human_sign → 一次 FAIL 即求人',
+    name: 'e2e 回放 B（合成夹具）: legacy human-only 不再创建 resume-by-signature halt',
     run: () => {
       // 夹具态=「字段已正名、可建模 OCR 行已全部建模清零、agent 已写 defer 但无人签」
       const synthetic = S([{
@@ -194,8 +194,8 @@ const cases: Array<{ name: string; run: () => void }> = [
       } as never]);
       const agg = aggregateBlockerActionability(synthetic);
       if (!agg.allHumanOnly) throw new Error('夹具态应判全 human_only');
-      if (classifyTimedOutWithFreshBlockers(synthetic) !== 'await_human_gate_deferral') {
-        throw new Error('应一次 FAIL 即 await_human_gate_deferral（AWAITING_HUMAN_REVIEW 语义）');
+      if (classifyTimedOutWithFreshBlockers(synthetic) !== null) {
+        throw new Error('legacy human-only 必须回到当前质量/能力重验路径，不得创建人签停车态');
       }
     },
   },

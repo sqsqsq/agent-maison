@@ -1,26 +1,19 @@
 // ============================================================================
 // visual-debt.unit.test.ts — blind-visual-hardening d4/d5 / P0-D
 // ============================================================================
-// 锁定：①债务派生（源 check WARN/FAIL/BLOCKER-SKIP → open；转绿 → closed；accepted 保持）；
-// ②验收清偿边界（needs_fix 拒清 / rubric 冻结阈值：1-2 拒、3 须 accepted_debt_id、≥4 过 /
-//   screens 结构化绑定：配对哈希调序即变）；③accepted≠closed 审计分立；
-// ④fidelity 意图前置闸（强意图+盲→FAIL；receipt→WARN；非盲/none→PASS；intent 落盘）；
+// 锁定：①债务派生（源 check WARN/FAIL/BLOCKER-SKIP → open；转绿 → closed）；
+// ②legacy accepted 自动重开且继续阻断 release；
+// ④fidelity 意图前置闸（强意图+盲→DEFER；legacy receipt 惰性；非盲/none→PASS）；
 // ⑤披露门禁（有债务结论未提「视觉债务」→FAIL）。
 // ============================================================================
 
-import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
 import {
-  RUBRIC_VERSION,
-  applyVisualAcceptance,
   countBlockingDebt,
   deriveVisualDebt,
-  screensMatrixHash,
-  validateRubricPolicy,
-  type VisualAcceptancePayload,
   type VisualDebtDoc,
 } from '../../scripts/utils/visual-debt';
 import { checkFidelityCapabilityPregate } from '../../scripts/check-spec';
@@ -38,12 +31,12 @@ import {
 } from '../../scripts/utils/goal-preflight';
 import {
   loadFidelityIntentSsot,
+  loadFidelityIntentSsotState,
   resolveFidelityRoutingDecision,
   writeCapabilitySnapshot,
   writeFidelityIntentSsot,
 } from '../../scripts/utils/fidelity-shared';
 import { buildCapabilityBlock, resolvePhaseCapabilityAdvisory } from '../../scripts/goal-runner';
-import { canonicalReceiptPayload, type ConfirmationReceipt, type TrustRegistry } from '../../scripts/utils/confirmation-receipt';
 import { generateGoalReportJson, writeGoalReport } from '../../scripts/utils/goal-report-generator';
 import { phaseInitDecision } from '../../scripts/fidelity-intent-init';
 import { loadResolvedProfile } from '../../profile-loader';
@@ -87,20 +80,9 @@ function chk(id: string, status: CheckResult['status'], severity: CheckResult['s
   return { id, status, severity, details: '' };
 }
 
-function payload(overrides?: Partial<VisualAcceptancePayload>): VisualAcceptancePayload {
-  return {
-    rubric_version: RUBRIC_VERSION,
-    rubric: { container: 4, hierarchy: 5, density: 4, state_color: 4 },
-    screens: [{ screen_id: 's1', variant: 'default', reference_sha256: 'a'.repeat(64), actual_sha256: 'b'.repeat(64) }],
-    accepted_debt_ids: [],
-    signed_by: '张工',
-    ...overrides,
-  };
-}
-
 const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   {
-    name: '派生：WARN 源→open(needs_human)；FAIL 源→open(needs_fix)；PASS 源无债务',
+    name: '派生：WARN/FAIL 源均为 open(needs_fix)；PASS 源无债务',
     run: () => {
       const doc = deriveVisualDebt('demo', [
         chk('visual_parity_unverified_crop', 'WARN'),
@@ -109,14 +91,14 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       ], null);
       const crop = doc.entries.find(e => e.source_check_id === 'visual_parity_unverified_crop')!;
       assertEq(crop.status, 'open', 'crop open');
-      assertEq(crop.resolution_class, 'needs_human', 'crop needs_human');
+      assertEq(crop.resolution_class, 'needs_fix', 'crop needs_fix');
       const sanity = doc.entries.find(e => e.source_check_id === 'asset_materialization_sanity')!;
       assertEq(sanity.resolution_class, 'needs_fix', 'sanity needs_fix');
       assertTrue(!doc.entries.some(e => e.source_check_id === 'visual_diff'), 'PASS 源无债务');
     },
   },
   {
-    name: '派生迁移：源 check 转绿 → closed（审计保留）；accepted 且仍未绿 → 保持 accepted',
+    name: '派生迁移：源 check 转绿 → closed；legacy accepted 且仍未绿 → 自动重开',
     run: () => {
       const prev: VisualDebtDoc = {
         schema_version: '1.0', feature: 'demo',
@@ -129,61 +111,14 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         chk('visual_parity_unverified_crop', 'WARN'),
         chk('visual_diff', 'PASS'),
       ], prev);
-      assertEq(doc.entries.find(e => e.id === 'debt:visual_parity_unverified_crop')!.status, 'accepted', 'accepted 保持');
+      const reopened = doc.entries.find(e => e.id === 'debt:visual_parity_unverified_crop')!;
+      assertEq(reopened.status, 'open', 'legacy accepted 重开');
+      assertEq(reopened.resolution_class, 'needs_fix', 'legacy needs_human 重投影');
+      assertEq(reopened.accepted_by, undefined, 'legacy signer 不进入新 writer');
       assertEq(doc.entries.find(e => e.id === 'debt:visual_diff')!.status, 'closed', '转绿 closed');
       const { open, accepted } = countBlockingDebt(doc);
-      assertEq(open, 0, 'open 计数');
-      assertEq(accepted, 1, 'accepted 计数（≠closed 分列）');
-    },
-  },
-  {
-    name: '清偿边界：needs_fix 条目被验收 receipt 指名 → 拒绝清偿（确定性 FAIL 只能修复重跑）',
-    run: () => {
-      const doc = deriveVisualDebt('demo', [chk('asset_materialization_sanity', 'FAIL', 'BLOCKER')], null);
-      const applied = applyVisualAcceptance(doc, payload({ accepted_debt_ids: ['debt:asset_materialization_sanity'] }), 'r.json');
-      assertEq(applied.rejected.length, 1, '应拒绝');
-      assertEq(applied.doc.entries[0].status, 'open', '仍 open');
-    },
-  },
-  {
-    name: '清偿：needs_human 条目 → accepted（记 accepted_by + receipt 引用，非 closed）',
-    run: () => {
-      const doc = deriveVisualDebt('demo', [chk('visual_parity_unverified_crop', 'WARN')], null);
-      const applied = applyVisualAcceptance(doc, payload({ accepted_debt_ids: ['debt:visual_parity_unverified_crop'] }), 'r.json');
-      assertEq(applied.rejected.length, 0, '无拒绝');
-      const e = applied.doc.entries[0];
-      assertEq(e.status, 'accepted', 'accepted 非 closed');
-      assertEq(e.accepted_by, '张工', 'accepted_by');
-      assertEq(e.acceptance_receipt, 'r.json', 'receipt 引用');
-    },
-  },
-  {
-    name: 'rubric 冻结阈值：全 ≥4 过；任一 ≤2 拒；=3 无 accepted_debt_ids 拒、有则过；版本失配拒',
-    run: () => {
-      assertEq(validateRubricPolicy(payload()).length, 0, '全 ≥4');
-      assertTrue(validateRubricPolicy(payload({ rubric: { container: 2, hierarchy: 4, density: 4, state_color: 4 } }))
-        .some(e => e.includes('1-2 分不得通过')), '≤2 拒');
-      assertTrue(validateRubricPolicy(payload({ rubric: { container: 3, hierarchy: 4, density: 4, state_color: 4 } }))
-        .some(e => e.includes('accepted_debt_ids')), '=3 须留痕');
-      assertEq(validateRubricPolicy(payload({
-        rubric: { container: 3, hierarchy: 4, density: 4, state_color: 4 },
-        accepted_debt_ids: ['debt:x'],
-      })).length, 0, '=3+留痕 过');
-      assertTrue(validateRubricPolicy(payload({ rubric_version: 'r0' })).some(e => e.includes('冻结版本')), '版本失配拒');
-    },
-  },
-  {
-    name: 'screens 结构化绑定：逐屏配对哈希——reference/actual 跨屏调换 → 矩阵哈希改变（调序仍稳定）',
-    run: () => {
-      const s1 = { screen_id: 's1', variant: 'd', reference_sha256: 'a'.repeat(64), actual_sha256: 'b'.repeat(64) };
-      const s2 = { screen_id: 's2', variant: 'd', reference_sha256: 'c'.repeat(64), actual_sha256: 'd'.repeat(64) };
-      const h = screensMatrixHash([s1, s2]);
-      assertEq(screensMatrixHash([s2, s1]), h, '同配对不同排序 → 同哈希（canonical sort）');
-      const swapped = screensMatrixHash([
-        { ...s1, actual_sha256: s2.actual_sha256 },
-        { ...s2, actual_sha256: s1.actual_sha256 },
-      ]);
-      assertTrue(swapped !== h, '跨屏换对 → 哈希变（codex 四轮⑤：裸 hash 数组调序漏洞已堵）');
+      assertEq(open, 1, 'legacy accepted 仍计入 blocking');
+      assertEq(accepted, 0, '新 writer 不再生成 accepted');
     },
   },
   // ---- plan f6b2d9a4：前置闸从「三态首产+阻塞求人」改为「路由 SSOT 复核」----
@@ -332,84 +267,99 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     }),
   },
   {
-    name: 'T3 后继可复用 fidelity_downgrade receipt：只绑定 feature+需求 object_hash+expiry，不绑定物理 run_id',
+    name: 'legacy fidelity_downgrade receipt 对源 run 与 successor 均惰性，不能授权降档',
     run: async () => withTmpProject(async root => {
       const feature = 'demo';
-      const requirement = '同一语义任务的降档授权可由 successor run 复用。';
+      const requirement = '页面必须像素级还原参考截图，不接受降级。';
       const receiptRel = `doc/features/${feature}/fidelity-downgrade.json`;
       const receiptAbs = path.join(root, receiptRel);
       fs.mkdirSync(path.dirname(receiptAbs), { recursive: true });
-      const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
-      const objectHash = crypto.createHash('sha256').update(requirement, 'utf-8').digest('hex');
-      const now = () => new Date('2026-08-08T12:00:00.000Z');
-      const payload = {
-        action: 'fidelity_downgrade' as const,
-        feature,
-        object_hash: objectHash,
-        issued_at: '2026-08-08T11:00:00.000Z',
-        expiry: '2026-08-09T00:00:00.000Z',
-        run_id: 'source-run',
-      };
-      const receipt: ConfirmationReceipt = {
-        schema_version: '1.0',
-        receipt_id: 'fidelity-receipt-1',
-        issuer_id: 'ops-team',
-        key_id: 'k1',
-        alg: 'ed25519',
-        payload_schema_version: '1.0',
-        payload,
-        signature: crypto.sign(null, canonicalReceiptPayload(payload), privateKey).toString('base64'),
-      };
-      fs.writeFileSync(receiptAbs, JSON.stringify(receipt), 'utf-8');
-      const registry: TrustRegistry = {
-        schema_version: '1.0',
-        issuers: [{
-          issuer_id: 'ops-team',
-          keys: [{
-            key_id: 'k1',
-            alg: 'ed25519',
-            public_key_pem: publicKey.export({ type: 'spki', format: 'pem' }).toString(),
-          }],
-        }],
-      };
-      const registryPath = path.join(root, 'trusted-receipts.json');
-      fs.writeFileSync(registryPath, JSON.stringify(registry), 'utf-8');
-      const previousRegistry = process.env.MAISON_TRUST_REGISTRY;
-      process.env.MAISON_TRUST_REGISTRY = registryPath;
-      try {
-        const init = (runId: string) => initializeFidelityRouting({
-          projectRoot: root,
-          frameworkRoot: root,
-          feature,
-          requirement,
-          featuresDirRel: 'doc/features',
-          executionIdentity: runId,
-          fidelityReceiptRel: receiptRel,
-          runIdForReceipt: runId,
-          requirementProvenance: 'goal_manifest',
-          now,
-        });
-        assertEq(init('source-run').receiptNote, '', '源 run receipt 应有效');
-        assertEq(init('successor-run').receiptNote, '', '换物理 run 后 receipt 仍应有效');
-        const transition = evaluateFidelityTransitionAuthorization({
-          projectRoot: root,
-          featuresDirRel: 'doc/features',
-          manifest: {
-            feature,
-            requirement,
-            run_id: 'successor-run',
-            fidelity: 'reference_only',
-            fidelity_receipt: receiptRel,
-          } as unknown as GoalManifest,
-          applied: { fidelity: false, fidelityReceipt: true },
-          now,
-        });
-        assertEq(transition.blockers.length, 0, 'successor transition 不得因源 run_id 失配而阻断');
-        assertTrue(transition.authorizedFields.has('fidelity_receipt'), '有效 receipt 应授权写入 fidelity_receipt');
-      } finally {
-        if (previousRegistry === undefined) delete process.env.MAISON_TRUST_REGISTRY;
-        else process.env.MAISON_TRUST_REGISTRY = previousRegistry;
+      fs.writeFileSync(receiptAbs, JSON.stringify({ action: 'fidelity_downgrade' }), 'utf-8');
+      const init = (runId: string) => initializeFidelityRouting({
+        projectRoot: root, frameworkRoot: root, feature, requirement,
+        featuresDirRel: 'doc/features', executionIdentity: runId,
+        fidelityReceiptRel: receiptRel, runIdForReceipt: runId,
+        manifestFidelity: 'reference_only', requirementProvenance: 'goal_manifest',
+      });
+      for (const runId of ['source-run', 'successor-run']) {
+        const result = init(runId);
+        assertTrue(result.receiptNote.includes('已忽略'), result.receiptNote);
+        assertEq(result.routing.selected, 'pixel_1to1', 'legacy receipt 不得降低冻结需求档位');
       }
+      const transition = evaluateFidelityTransitionAuthorization({
+        projectRoot: root, featuresDirRel: 'doc/features',
+        manifest: { feature, requirement, run_id: 'successor-run', fidelity: 'reference_only' } as GoalManifest,
+        applied: { fidelity: true, fidelityReceipt: true },
+      });
+      assertTrue(transition.blockers.length > 0, 'legacy receipt/降档请求必须 fail-closed');
+      assertTrue(!transition.authorizedFields.has('fidelity_receipt'), '不得授权 legacy receipt 字段');
+    }),
+  },
+  {
+    name: 'legacy receipt 派生 SSOT 即使 identity/hash 匹配也不得复用，hard pixel 仍按冻结需求 defer',
+    run: async () => withTmpProject(async root => {
+      const feature = 'demo';
+      const runId = 'receipt-derived-run';
+      const requirement = '页面必须像素级还原参考截图，不接受降级，达不到不得继续交付。';
+      const initialized = initializeFidelityRouting({
+        projectRoot: root,
+        frameworkRoot: root,
+        feature,
+        requirement,
+        featuresDirRel: 'doc/features',
+        executionIdentity: runId,
+        requirementProvenance: 'goal_manifest',
+      });
+      const intentPath = featureFilePath(root, feature, path.join('spec', 'reports', 'fidelity-intent.json'));
+      const doc = JSON.parse(fs.readFileSync(intentPath, 'utf-8')) as {
+        inferred_fidelity: string;
+        selected_fidelity: string;
+        effective_fidelity: string;
+        acceptance_strictness: string;
+        clamped: boolean;
+        clamp_reason?: string;
+        decision: { source: string };
+        execution_identity: string;
+        requirement_sha256: string;
+      };
+      assertEq(doc.execution_identity, runId, '测试前提：identity 匹配');
+      assertEq(doc.requirement_sha256, initialized.requirementSha, '测试前提：requirement hash 匹配');
+      doc.inferred_fidelity = 'pixel_1to1';
+      doc.selected_fidelity = 'semantic_layout';
+      doc.effective_fidelity = 'semantic_layout';
+      doc.acceptance_strictness = 'hard';
+      doc.clamped = false;
+      delete doc.clamp_reason;
+
+      for (const source of ['downgrade_receipt', 'human_confirmed']) {
+        doc.decision.source = source;
+        fs.writeFileSync(intentPath, `${JSON.stringify(doc, null, 2)}\n`, 'utf-8');
+        assertEq(
+          phaseInitDecision(
+            { state: 'valid', doc },
+            doc.requirement_sha256,
+            { activeGoalRunId: runId },
+          ),
+          'init',
+          `${source} 不得在 identity/hash 匹配时复用`,
+        );
+        assertEq(loadFidelityIntentSsotState(root, feature).state, 'missing', `${source} 应进入既有重算路径`);
+        assertEq(loadFidelityIntentSsot(root, feature), null, `${source} 不得成为运行期 SSOT`);
+      }
+
+      doc.decision.source = 'downgrade_receipt';
+      fs.writeFileSync(intentPath, `${JSON.stringify(doc, null, 2)}\n`, 'utf-8');
+      const manifest = { feature, run_id: runId, requirement } as unknown as GoalManifest;
+      const action = evaluateFidelityTierPreflight({
+        projectRoot: root,
+        frameworkRoot: root,
+        manifest,
+        featuresDirRel: 'doc/features',
+        chainStartsAtSpec: false,
+      });
+      assertEq(action.action, 'defer_capability_missing', JSON.stringify(action));
+      assertEq(action.routing?.selected, 'pixel_1to1', '冻结需求必须重算为 pixel，不能沿用 semantic');
+      assertTrue(action.action !== 'proceed', '不得按 receipt 派生的 semantic tier 继续');
     }),
   },
   {

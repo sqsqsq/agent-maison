@@ -49,7 +49,7 @@ tsc / 正则推断定性（权威性排序：真实编译/执行 > 一切静态�
 - 若修复需要新增辅助用例，用 `[REG-<主题>]` 起始标签（回归网，不虚构 AC；仅本模式与
   cover_existing_code 放行）；
 - `suite-failure-baseline.json`（feature 的 ut reports 目录）承载棘轮基线：**用户授权工件**
-  （信任模型与 gap-notes approved_src_mutations 同级：普通授权文件 + review 纪律）——
+  （这是 attended suite 输入基线，不是源码改动或质量 PASS 授权）——
   由用户确认已知历史失败后放置（条目须含 module/suite/test，feature 字段须匹配）；
   **agent 不得自行创建**，本轮执行不得反推；无基线时不豁免任何失败；
   基线只收紧不增长（本轮不再失败的条目自动剔除）。

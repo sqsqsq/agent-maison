@@ -1,3 +1,5 @@
+> Supersession note (2026-08-26): `autonomous-recovery-without-human-gates` retains deterministic geometry and critic evidence while superseding T2 human final confirmation. Unrelated host device calibration remains pending.
+
 ## Why
 
 宿主 bc-openCard（pixel_1to1 最严档）device-testing 视觉回环 8 屏全 pass 收口后，人工逐页检视仍立刻发现三类几何/结构缺陷（半模态同卡结构错误、关闭钮与银行区域重叠、间距失衡）。根因（plan c6d8f2b4，五条盘上证据）：①管线无任何运行时几何确定性信号（T1/T5/P1-C 全是 OCR 文本信号）；②`geometric_iou`/`fidelity_score` 纯 VL 自报且无诚实性元门禁——实证 8 屏 iou 恒等 0.95、7/8 屏 fidelity 逐位抄 score_floor、灾难地板消费自报值等于假保障；③spec 几何合同对 overlay 屏失守（2 行 list 低于 lint 阈值、银行行整个未建模）；④Hylyre dump-ui 已采但 bounds 从未被消费；⑤SSOT 明文"MVP 单轮+人工决定迭代"，评审无成对图入模证据要求、评审者与实现者同上下文自审。

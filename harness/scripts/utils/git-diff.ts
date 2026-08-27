@@ -445,32 +445,3 @@ export function filterBusinessSourceChanges(
     return true;
   });
 }
-
-/**
- * 读取 gap-notes.md 里的 approved_src_mutations[] 清单。
- * 返回被授权的文件路径集合（相对项目根的正斜杠路径）。
- *
- * 兼容两种格式：
- *  (a) YAML code block：```yaml\napproved_src_mutations:\n  - file: "..."\n    ...\n```
- *  (b) bullet list：`- file: "..."` 形式
- */
-export function readApprovedMutations(gapNotesPath: string): Set<string> {
-  const approved = new Set<string>();
-  if (!fs.existsSync(gapNotesPath)) return approved;
-  const text = fs.readFileSync(gapNotesPath, 'utf-8');
-
-  // 抓 `file: "..."` 或 `file: '...'` 或 `file: path` 行
-  // 注意：只在 approved_src_mutations 段落内计入，避免误抓其它段落
-  const sectionMatch = text.match(/approved_src_mutations\s*:\s*([\s\S]*?)(?=\n##\s|\n---|\n$)/i);
-  if (!sectionMatch) return approved;
-  const section = sectionMatch[1];
-  const fileRe = /^\s*-?\s*file\s*:\s*["']?([^"'\n]+?)["']?\s*$/gm;
-  let m: RegExpExecArray | null;
-  while ((m = fileRe.exec(section)) !== null) {
-    const p = m[1].trim();
-    // 跳过模板里的注释示例（`# - file: "..."` 形式会被注释符过滤）
-    if (p.startsWith('#') || p === '') continue;
-    approved.add(p.replace(/\\/g, '/'));
-  }
-  return approved;
-}

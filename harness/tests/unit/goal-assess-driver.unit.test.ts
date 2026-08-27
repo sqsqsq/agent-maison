@@ -248,6 +248,7 @@ const cases: TestCase[] = [
       const reconcile = observation({
         phase_outcome: { phase: 'review', verdict: 'PASS', legacy_action: 'none' },
         budgets: { retries_used: 0, max_retries_per_phase: 2, backtracks_used: 0 },
+        invalidatable_phases: ['spec', 'plan', 'coding', 'review'],
       });
       const assessed = assessObservation({
         schema_version: '1.0', feature: 'demo', workflow: 'spec-driven', track: 'full',
@@ -270,11 +271,80 @@ const cases: TestCase[] = [
       }, { mode: 'goal_mode' });
       assert(assessed.recommendation.action === 'run_phase', JSON.stringify(assessed.recommendation));
       assert(assessed.recommendation.phase === 'spec', JSON.stringify(assessed.recommendation));
-      assert(assessed.recommendation.runner_action === undefined, JSON.stringify(assessed.recommendation));
+      assert(assessed.recommendation.runner_action === 'backtrack_to_phase', JSON.stringify(assessed.recommendation));
       assert(selectRunnerActionFromAssess({
         assessment: assessed, observation: reconcile, currentPhase: 'review', chain,
         driverGuardAction: 'none',
-      }) !== 'advance', 'PASS must not skip an earlier gap');
+      }) === 'backtrack_to_phase', 'PASS must execute the earlier gap recovery');
+    },
+  },
+  {
+    name: 'earlier-gap disposition is total across full/lite/custom owner-current pairs',
+    run: () => {
+      const chains = [
+        { phases: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'], track: 'full' as const },
+        { phases: ['change', 'coding', 'exit'], track: 'lite' as const },
+        { phases: ['discover', 'build', 'verify', 'ship'], track: 'full' as const },
+      ];
+      const recoverable = ['missing', 'failed', 'legacy_unverified', 'stale', 'insufficient_assurance', 'pruned'] as const;
+      for (const topology of chains) {
+        for (let currentIdx = 1; currentIdx < topology.phases.length; currentIdx += 1) {
+          for (let ownerIdx = 0; ownerIdx < currentIdx; ownerIdx += 1) {
+            for (const gapKind of recoverable) {
+              const currentPhase = topology.phases[currentIdx];
+              const ownerPhase = topology.phases[ownerIdx];
+              const phases: AssessObservation['phases'] = topology.phases.map((phaseName) => ({
+                phase: phaseName,
+                summary_state: phaseName === ownerPhase && gapKind === 'missing'
+                  ? 'missing'
+                  : phaseName === ownerPhase && gapKind === 'legacy_unverified' ? 'legacy' : 'current',
+                schema_version: phaseName === ownerPhase && gapKind === 'missing'
+                  ? null
+                  : phaseName === ownerPhase && gapKind === 'legacy_unverified' ? '1.1' : '1.2',
+                verdict: phaseName === ownerPhase && gapKind === 'missing'
+                  ? null
+                  : phaseName === ownerPhase && gapKind === 'failed' ? 'FAIL' : 'PASS',
+                closure: phaseName === ownerPhase && gapKind === 'stale' ? 'stale' : 'closed',
+                assurance: phaseName === ownerPhase && gapKind === 'insufficient_assurance' ? 'degraded' : 'full',
+                required_assurance: phaseName === ownerPhase && gapKind === 'insufficient_assurance' ? 'full' : null,
+                assurance_satisfied: phaseName === ownerPhase && gapKind === 'insufficient_assurance' ? false : null,
+                deferred: false,
+                summary_fingerprint: phaseName,
+                evidence_fingerprint: phaseName,
+              }));
+              const reconcile = observation({
+                phase_outcome: { phase: currentPhase, verdict: 'PASS', legacy_action: 'advance' },
+                invalidatable_phases: topology.phases.slice(0, currentIdx + 1),
+                budgets: { retries_used: 0, max_retries_per_phase: 2, backtracks_used: 0 },
+              });
+              const assessed = assessObservation({
+                schema_version: '1.0', feature: 'demo', workflow: 'custom', track: topology.track,
+                goal_end: topology.phases.at(-1)!, phases,
+                ...(gapKind === 'pruned' ? {
+                  pruned_propagations: [{
+                    producer_phase: ownerPhase, producer_capability: 'producer',
+                    downstream_phase: currentPhase, downstream_capability: 'consumer',
+                    input_id: 'input', source: 'fixture',
+                  }],
+                } : {}),
+                fingerprints: {
+                  workflow: 'w', track: 't', goal: 'g', run_attempt: 'r',
+                  summaries: 's', evidence: 'e', reconcile: 'c', observed: 'o',
+                },
+                reconcile,
+              }, { mode: 'goal_mode' });
+              assert(assessed.recommendation.phase === ownerPhase,
+                `${topology.phases.join('→')} ${ownerPhase}/${currentPhase}/${gapKind}: ${JSON.stringify(assessed.recommendation)}`);
+              assert(assessed.recommendation.runner_action === 'backtrack_to_phase',
+                `${ownerPhase}/${currentPhase}/${gapKind} missing executable backtrack`);
+              assert(selectRunnerActionFromAssess({
+                assessment: assessed, observation: reconcile, currentPhase,
+                chain: topology.phases, driverGuardAction: 'none',
+              }) === 'backtrack_to_phase', `${ownerPhase}/${currentPhase}/${gapKind} driver action`);
+            }
+          }
+        }
+      }
     },
   },
   {

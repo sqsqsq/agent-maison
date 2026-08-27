@@ -53,9 +53,10 @@ decision points SHALL pass `reviewVision: true`. The effect is that `native` and
 clamp (`pixel_1to1` is admissible under `delegated`), while the `blind` clamp table is unchanged
 verbatim.
 
-Admitting `pixel_1to1` under `delegated` SHALL NOT be defended by an up-front capability probe. It is
-defended by three existing layers: same-invocation payload validation, the existing `VISUAL_PENDING`
-projection, and the unchanged `pixel_1to1` human confirmation.
+Admitting `pixel_1to1` under `delegated` SHALL be defended by current provider/profile capability,
+same-invocation payload validation, and the existing visual-axis projection. Unsupported required
+capability SHALL defer; declared support with missing, invalid, or stale evidence SHALL fail the
+checker and retry/fuse. No human confirmation may substitute for either fact.
 
 Enforcement: `harness/scripts/utils/fidelity-shared.ts`, `harness/scripts/goal-runner.ts`,
 `harness/harness-runner.ts`, `harness/scripts/check-spec.ts`
@@ -68,8 +69,8 @@ Enforcement: `harness/scripts/utils/fidelity-shared.ts`, `harness/scripts/goal-r
 #### Scenario: delegated admits the pixel contract
 
 - **WHEN** the run is `delegated` with a `pixel_1to1` selected contract
-- **THEN** the effective fidelity SHALL remain `pixel_1to1` and the human confirmation requirement
-  SHALL remain in force
+- **THEN** the effective fidelity SHALL remain `pixel_1to1` and current hash-bound machine evidence
+  SHALL remain required for phase/release closure
 
 ### Requirement: The capability prompt block states the delegation honestly
 
@@ -183,23 +184,29 @@ Enforcement: `harness/scripts/utils/visual-provider-invoke.ts`, `harness/scripts
 
 ### Requirement: Provider failure degrades the round, never the development loop
 
-When a provider round is `unavailable` or `invalid`, the framework SHALL discard the result, record
-the event, and continue the round with blind semantics. It SHALL NOT halt, SHALL NOT wait for a
-human, SHALL NOT enter the perception-signal adjudication stop path, and SHALL NOT synthesize a PASS.
+Provider failure SHALL degrade or defer the affected machine-evidence obligation and SHALL never
+create a human quality-signature path.
 
-No new quality axis, no new verdict state machine, no new check id, and no new UNVERIFIED carrier
-SHALL be introduced: the honest exit is the existing degradation projection. False positives remain
-bounded by the existing no-progress fuse and the existing human-sign channel.
+When a provider/profile does not support required visual evidence, or bounded probing proves it
+unavailable before execution, the framework SHALL use the existing capability-missing defer without
+content retries. Optional evidence MAY use the existing advisory degradation policy. When a provider
+declared support but the current round is missing, invalid, stale, replayed, or identity/hash
+mismatched, the owning checker SHALL FAIL and retry/fuse as evidence production failure. Neither path
+waits for a human, enters an adjudication stop, or synthesizes PASS. False positives remain bounded by
+current machine evidence, the no-progress fuse, and correction/successor runs.
 
 Enforcement: `harness/scripts/check-testing.ts`, `profiles/hmos-app/harness/visual-diff-check.ts`,
 `harness/scripts/utils/visual-debt.ts`, `harness/harness-runner.ts`
 
-#### Scenario: a run whose provider always fails equals today's blind run
+#### Scenario: unsupported required provider defers
 
-- **WHEN** every provider call in a run is `unavailable`
-- **THEN** the run's phase outcomes, halts, budgets and release projection SHALL match a `blind` run
-  of the same requirement after launch was legally admitted with that provider, with no additional
-  state, reauthorization, or additional stop
+- **WHEN** required delegated visual capability is unsupported after bounded probe
+- **THEN** the run SHALL project capability-missing without invoking content repair
+
+#### Scenario: supported provider invalid output fails
+
+- **WHEN** the selected provider declared support but returns a stale or hash-mismatched payload
+- **THEN** the visual checker SHALL FAIL and retry/fuse rather than treating the output as unsupported
 
 ### Requirement: Spec-phase visual observations are best-effort sidecars, never gates
 

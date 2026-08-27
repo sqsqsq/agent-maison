@@ -406,7 +406,7 @@ function checkCorrectionLayerConditionalConfirm(ctx: CheckContext): CheckResult[
       description,
       severity: 'BLOCKER',
       status: 'PASS',
-      details: '未发现提及 correction.layer 确认却未同时说明 auto_confirm_eligible 免确认分支的 skill 正文。',
+      details: 'skills/templates 未发现已退役 correction.layer 人签闸引用。',
     }];
   }
   return hits.map(h => ({
@@ -415,9 +415,9 @@ function checkCorrectionLayerConditionalConfirm(ctx: CheckContext): CheckResult[
     description,
     severity: 'BLOCKER',
     status: 'FAIL' as const,
-    details: `${h.file}:${h.line} — 匹配「${h.match}」，但全文未提及 auto_confirm_eligible（balanced 高置信免确认分支）。`,
+    details: `${h.file}:${h.line} — 匹配已退役的人签闸「${h.match}」。`,
     affected_files: [h.file],
-    suggestion: '改为条件表述："先跑 --correction-init；若 .current-correction.json.auto_confirm_eligible=true 可直接实施，否则须经 correction.layer 1/2 确认"；确有必要保持无条件表述则在 docs-rules.yaml 的 correction_layer_unconditional_confirm.allowlist 显式声明并附理由。',
+    suggestion: '删除 correction.layer 人签要求；改为 --correction-init 自动分类责任阶段并级联机器重验。',
   }));
 }
 

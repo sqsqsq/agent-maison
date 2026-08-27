@@ -113,7 +113,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         true,
         { pendingHumanReview: true },
       );
-      assert(capped === 'AWAITING_HUMAN_REVIEW', capped);
+      assert(capped === 'PARTIAL', capped);
       const halted = resolveGoalRunStatus(
         [{ phase: 'spec', halted: true }],
         false,
@@ -242,6 +242,22 @@ const cases: Array<{ name: string; run: () => void }> = [
       const md = generateGoalReportMarkdown(report);
       assert(md.includes('DEFERRED'), md);
       assert(md.includes('未完成'), md);
+    },
+  },
+  {
+    name: 'goal-report: recovery 投影展示 owner/gap/hash/budget',
+    run: () => {
+      const report = generateGoalReportJson('run-r', 'demo', 'PARTIAL', []);
+      report.recovery = {
+        reason: 'phase_write_violation', current_phase: 'plan', owner_phase: 'spec', target_phase: 'spec',
+        gap_kind: 'stale', action: 'backtrack_to_phase', fingerprint: 'fp',
+        backtracks_used: 1, backtracks_limit: 2,
+        changed_paths: [{ path: 'doc/features/demo/spec/acceptance.yaml', owner: 'spec', pre_sha256: 'a', post_sha256: 'b' }],
+      };
+      const md = generateGoalReportMarkdown(report);
+      for (const expected of ['phase_write_violation', 'plan / spec', 'stale', '1 / 2', 'acceptance.yaml', 'pre=a post=b']) {
+        assert(md.includes(expected), `报告缺恢复诊断 ${expected}: ${md}`);
+      }
     },
   },
   {

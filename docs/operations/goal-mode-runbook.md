@@ -78,11 +78,11 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
 | 最终状态 | 含义 |
 |----------|------|
 | `CHAIN_SLICE_COMPLETED` | **本 run 的链切片**全 PASS——不等于需求完成；feature 级只认 `verify-feature-completion`（goal-status 尾行 `feature_status=`） |
-| `AWAITING_HUMAN_REVIEW` | 链切片 PASS 但存在待人工事项（waiver / 档位钳制 / P0 device flow 的 runtime_fidelity_attestation 缺 receipt）——封顶态，不得视为干净成功。（账本待复核与 flow_contract 缺 receipt 已退出封顶枚举：前者只留报告展示，后者签发端未建成前仅 advisory WARN——runner-owned-machine-facts，08-15） |
-| `DEFERRED_CAPABILITY_MISSING` | preflight 终态：需求强 1:1 意图但 adapter 无视觉能力，不盲跑全链；继续须带外签发 fidelity_downgrade receipt 后 `--fidelity` + `--fidelity-receipt` |
+| `AWAITING_HUMAN_REVIEW` | legacy 读取兼容；新 run 不再写出。旧质量人签等待在恢复时按当前机器事实重投影为 repair、capability defer、optional advisory 或诊断，不能靠签名 resume |
+| `DEFERRED_CAPABILITY_MISSING` | 当前 provider/profile 缺少冻结需求所需能力（含 strict 视觉或 P0 runtime step telemetry）；配置可用能力后重跑/恢复，不能用 fidelity receipt 降低目标 |
 | `DEFERRED` | 到达 end 但存在外部阻塞未闭环 |
 | `PARTIAL` | 中途停止或未到 end 且有 DEFERRED |
-| `HALTED` | FAIL 重试耗尽或 policy 拒绝续行；halt 类示例：`await_human_fidelity_tier`（需求意图 ambiguous+有参考图，`--fidelity` 预授权后重跑）。P0 未豁免 skip **不再首触求人**（c7e4a2d9）：explicit-only 缺口默认回 coding 修复并重测，status 为空/未登记 skip 留 testing 恢复执行，外部阻塞走 DEFERRED；只有确需降低标准才由真人签 waiver（WARN 封顶 AWAITING_HUMAN_REVIEW） |
+| `HALTED` | 预算/收敛熔断、完整性持续不稳定、真正外部权限边界或 framework defect 等诚实终止；可修质量 FAIL 走责任阶段重跑，P0 skip/档位/视觉证据不得靠 waiver 放行 |
 | `COMPLETED` | legacy（旧 run 事件读取兼容），新 run 不再写出 |
 
 **任何 run 级状态 ≠ 需求完成**：feature 完成唯一判据 = `verify-feature-completion`
@@ -179,43 +179,30 @@ gate、receipt/人签、设备与凭据规则不变；agent 自跑 harness 只�
 进身份哈希，resume 只认冻结值（不重读个人配置），successor 出生输入可覆盖。优先级 **CLI > manifest
 冻结值 > 个人级 `framework.local.json` 的 `vision.visual_provider`**。
 
-**UI blind 启动须一次明确授权（`--allow-blind-visual`）**：UI 相关需求在 primary canary 尝试后若
-effective image-input 仍为 blind，且没有 catalog 认可的冻结 provider，正式 phase 前会 BLOCKER。
-两条出路只有：配置 provider，或显式传该布尔旗标。本旗标与 `fidelity=reference_only` 含义不同，
-不写 `framework.local.json`；收到后在 manifest 身份漂移检查前冻结
-`allow_blind_visual: true` 并条件入身份哈希。resume 使用冻结值不重传；给旧 manifest 新增授权须
-`--override-manifest`；successor 会剥离该字段，新 run 重新授权。native/delegated run 即使带该键，
-路由也不受影响。
-
-无人值守 BLOCKER 后须按 run 身份恢复：**新 run** 可修改 `framework.local.json` 后重新启动，或在新启动
-命令中显式传 provider / `--allow-blind-visual`；**继续当前 run** 时，单独修改 local 不会更新已冻结
-manifest，必须在 resume 命令中显式传 `--visual-adapter` + `--visual-model`，或传
-`--allow-blind-visual`，并同时加 `--override-manifest`。
+**视觉能力不足不再使用人工盲跑 waiver**：`--allow-blind-visual` 已删除，新 manifest 不写
+`allow_blind_visual`；旧字段只读兼容但无运行语义。运行策略只由冻结 requirement 的目标/严格度和
+当前 capability facts 决定：`pixel_1to1 + hard` 等必需视觉能力不足时，在 content invoke 前投影
+`DEFERRED_CAPABILITY_MISSING`；非 strict、非发布必需的视觉证据按既有 advisory/UNVERIFIED 策略继续。
+配置合法 provider 后，新 run 可直接使用；当前 run 若要变更冻结 provider pin，仍按既有
+`--visual-adapter` + `--visual-model` 与 manifest override 规则处理。
 
 - **支持哪些 adapter 由 adapter catalog 派生**——运行时扫 `agents/<adapter>/adapter.yaml` 的
   `visual_provider` 完整声明；本文**不另写一份名单**（要看当前支持项，跑一次带不支持 adapter 的
   `--visual-adapter`，错误会列出）。
 - 显式传了**不受支持**的 adapter → 启动处 BLOCKER fail-fast 并列出支持项；框架**不自动改选**、
   **不在多个 provider 之间 fallback**。
-- 无人值守读到已失效/不可读的旧 local 配置 → WARN + 忽略，并按「无 provider」进入统一矩阵：
-  非 UI 放行；UI + primary blind 只有持 `--allow-blind-visual` 才以 blind 继续，否则启动 BLOCKER。
-- attended goal 当场选择「跳过并盲跑」时，会话层须把选择转译成该旗标；普通交互态只授权当前操作。
+- 无人值守读到已失效/不可读的旧 local 配置 → WARN + 忽略；后续 requirement/capability preflight
+  决定 defer 或按 advisory 继续，不询问、不自动改选。
 - provider 调用失败/载荷不可信时：本轮视觉反馈降级为盲档，`visual_diff` 出 `{BLOCKER, SKIP}`，
-  经既有债务链把 visual 投影 `UNVERIFIED`、release 保持 `VISUAL_PENDING`，**phase 照常推进**。
-- `pixel_1to1` 的最终**真人逐屏确认不因 provider 减免**。
+  required 轴保持 FAIL/UNVERIFIED 并重试或 defer，optional 轴才可 advisory；不得伪造 PASS。
+- 当前 attempt/hash/identity 绑定的 deterministic/native/delegated 机器证据直接决定视觉轴，
+  不再要求真人逐屏签名。
 
 ```bash
 # 只读视觉 provider 示例（主模型盲 + 第二个能看图的 endpoint）
 cd framework/harness && npx ts-node scripts/goal-runner.ts \
   --feature <feature-slug> --requirement "需求" --adapter codex --adapter-model <coding-model> \
   --visual-adapter claude --visual-model <vision-model> --detach
-```
-
-```bash
-# 明确授权当前 run 无 provider 盲跑（仅在你接受视觉债务时使用）
-cd framework/harness && npx ts-node scripts/goal-runner.ts \
-  --feature <feature-slug> --requirement "UI 需求" --adapter codex \
-  --allow-blind-visual --detach
 ```
 
 ```bash
@@ -304,7 +291,7 @@ cd framework/harness && npx ts-node scripts/goal-monitor.ts \
 goal-runner 向每个 phase agent 注入 **Unattended execution** 块（SSOT：[user-confirmation-ux.md §9](../../skills/reference/user-confirmation-ux.md)）：
 
 - 阶段内确认闸门（术语 `[x]`、ui-spec verified、enum/gate 等）**自动解析 + 留痕** `doc/features/<feature>/<phase>/headless-assumptions.md`。
-- glossary 命中 → high 自动确认；新术语 → medium/low + **must-review**（goal-report 顶部清单）。
+- glossary 命中 → high 自动解析；新术语 → medium/low + legacy `must_review` 审计标记（goal-report 顶部清单，不参与门禁）。
 - `freeform_approval`（scope 扩展、改源码）→ **保守默认**（不扩 / 不改），记录推迟请求。
 
 ### 防御纵深（盲目重试）
@@ -347,4 +334,4 @@ npx ts-node scripts/goal-runner.ts \
 npx ts-node scripts/goal-status.ts --feature <f> --run-id <run-id> --markdown
 ```
 
-失败时查 `goal-runs/<run-id>/goal-report.md` 的「需人工介入」段与 `events.jsonl` 的 `agent_interaction_required`。
+失败时查 `goal-runs/<run-id>/goal-report.md` 的「外部输入或权限」段与 `events.jsonl` 的 `agent_interaction_required`；仅真实外部前置条件允许停放，质量问题不得由人工确认放行。

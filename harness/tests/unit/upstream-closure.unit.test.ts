@@ -165,37 +165,69 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 't2 五态分派：failed|missing → upstream_closure_gap；error|not_applicable → framework_bug',
+    name: 't2 五态分派：failed|missing → owner backtrack；error|not_applicable → framework_bug',
     run: () => {
-      const expect: Array<[string, string]> = [
-        ['failed', 'upstream_closure_gap'],
-        ['missing', 'upstream_closure_gap'],
-        ['error', 'framework_bug'],
-        ['not_applicable', 'framework_bug'],
-      ];
-      for (const [status, incident] of expect) {
+      for (const status of ['failed', 'missing']) {
+        const out = tryCloseUpstreamPhase(base({ validate: stubValidator(status, []) }));
+        assert(out.kind === 'backtrack', `${status} 应回 owner，实得 ${out.kind}`);
+      }
+      for (const status of ['error', 'not_applicable']) {
         const out = tryCloseUpstreamPhase(base({ validate: stubValidator(status, []) }));
         assert(out.kind === 'blocked', `${status} 应 blocked，实得 ${out.kind}`);
         assert(
-          out.kind === 'blocked' && out.incident === incident,
-          `${status} 应归 ${incident}，实得 ${out.kind === 'blocked' ? out.incident : '-'}`,
+          out.kind === 'blocked' && out.incident === 'framework_bug',
+          `${status} 应归 framework_bug，实得 ${out.kind === 'blocked' ? out.incident : '-'}`,
         );
       }
     },
   },
   {
-    name: 't2 passed 但证据 stale → 诚实停止（绝不靠 finalizer 的 evidence rebound 洗白）',
+    name: 't2 passed 但证据 stale → 回 owner 重验（绝不靠 finalizer 的 evidence rebound 洗白）',
     run: () => {
       // projectRoot 不存在 → recomputePhaseEvidenceStaleness 判 missing（≠fresh）
       const out = tryCloseUpstreamPhase(base({ validate: stubValidator('passed', []) }));
-      assert(out.kind === 'blocked', `stale 应 blocked，实得 ${out.kind}`);
+      assert(out.kind === 'backtrack', `stale 应 backtrack，实得 ${out.kind}`);
       assert(
-        out.kind === 'blocked' && out.incident === 'upstream_closure_gap',
-        `stale 应归 upstream_closure_gap，实得 ${out.kind === 'blocked' ? out.incident : '-'}`,
+        out.kind === 'backtrack' && /证据/.test(out.detail),
+        `detail 应点名证据新鲜度：${out.kind === 'backtrack' ? out.detail : ''}`,
       );
+    },
+  },
+  {
+    name: 't2 partial publication 在 generic freshness 前识别并交给 finalizer 幂等补完',
+    run: () => {
+      const root = freshUpstreamProject();
+      const reports = path.join(root, 'doc', 'features', 'demo', 'plan', 'reports');
+      fs.writeFileSync(path.join(reports, 'summary.json.staged-1-1'), '{}', 'utf8');
+      let finalized = 0;
+      const out = tryCloseUpstreamPhase(base({
+        projectRoot: root,
+        frameworkRoot: root,
+        harnessRoot: root,
+        validate: stubValidator('passed', []),
+        finalize: (() => { finalized += 1; }) as never,
+      }));
+      assert(out.kind === 'closed', `partial 应补完，实得 ${out.kind}`);
+      assert(finalized === 1, `partial finalizer calls=${finalized}`);
+    },
+  },
+  {
+    name: 't2 无法证明的 partial publication 由既有路径回退 owner',
+    run: () => {
+      const root = freshUpstreamProject();
+      const reports = path.join(root, 'doc', 'features', 'demo', 'plan', 'reports');
+      fs.writeFileSync(path.join(reports, 'summary.json.staged-1-1'), '{}', 'utf8');
+      const out = tryCloseUpstreamPhase(base({
+        projectRoot: root,
+        frameworkRoot: root,
+        harnessRoot: root,
+        validate: stubValidator('passed', []),
+        finalize: (() => { throw new Error('closure partial publication 无法证明仍等价'); }) as never,
+      }));
+      assert(out.kind === 'backtrack', `不可证明 partial 应回 owner，实得 ${out.kind}`);
       assert(
-        out.kind === 'blocked' && /证据/.test(out.detail),
-        `detail 应点名证据新鲜度：${out.kind === 'blocked' ? out.detail : ''}`,
+        out.kind === 'backtrack' && /partial closure 无法证明/.test(out.detail),
+        `detail 应保留无法证明原因：${out.kind === 'backtrack' ? out.detail : ''}`,
       );
     },
   },
@@ -238,8 +270,8 @@ const cases: Array<{ name: string; run: () => void }> = [
       // stale 的 detail 会先出现。这里用 detail 内容反证顺序。
       const out = tryCloseUpstreamPhase(base({ validate: stubValidator('failed', []) }));
       assert(
-        out.kind === 'blocked' && /回执校验 status=failed/.test(out.detail),
-        `非 passed 必须直接按五态分派、不做 freshness 检查：${out.kind === 'blocked' ? out.detail : ''}`,
+        out.kind === 'backtrack' && /回执不可证明/.test(out.detail),
+        `非 passed 必须直接按五态分派、不做 freshness 检查：${out.kind === 'backtrack' ? out.detail : ''}`,
       );
     },
   },

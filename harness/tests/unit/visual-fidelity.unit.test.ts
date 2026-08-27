@@ -10,7 +10,13 @@ import { spawnSync } from 'child_process';
 import { clearFrameworkConfigCache } from '../../config';
 import { loadResolvedProfile } from '../../profile-loader';
 import { checkUiSpecFidelityGate } from '../../../profiles/hmos-app/harness/spec-ui-spec-check';
-import { checkVisualDiff, validateVisualDiffJson, hashScreenshotFile, type VisualDiffStructuredPayload } from '../../../profiles/hmos-app/harness/visual-diff-check';
+import {
+  __testing_setVisualDiffOcrFn,
+  checkVisualDiff,
+  validateVisualDiffJson,
+  hashScreenshotFile,
+  type VisualDiffStructuredPayload,
+} from '../../../profiles/hmos-app/harness/visual-diff-check';
 import { appendVisualRound, evaluateVisualRound, visualRoundsLedgerPath } from '../../scripts/utils/visual-rounds-ledger';
 import { buildVisualDiffMdBody, captureVisualDiff, collectDuplicateHashGroups, mergeCapturedScreenEntry, mergeVisualDiffReports, resolveShotPaths, sanitizeVisualDiffScreenSlug } from '../../../profiles/hmos-app/harness/visual-diff-capture';
 import { cropAssetFromBbox, computeHistogramSimilarity, isJimpAvailable, sampleColorFromBbox } from '../../../profiles/hmos-app/harness/image-toolkit';
@@ -42,8 +48,6 @@ import {
   deriveEffectiveAdapterImageInput,
   isHardPixelContract,
   fidelityRatchetSeverity,
-  isAutomationSigner,
-  USER_REQUIREMENT_CONFIRMER,
   clampFidelityByCapability,
   resolveEffectiveFidelityContext,
   isPixel1to1,
@@ -57,6 +61,7 @@ import {
 import { writeLocalConfig } from '../../scripts/utils/framework-local-config';
 import { VISION_CANARY_PROBE_VERSION } from '../../scripts/utils/vision-canary';
 import { validateUiSpecSchema, BUTTON_VARIANT_ENUM, ALIGN_ENUM } from '../../../profiles/hmos-app/harness/ui-spec-schema-validate';
+import type { OcrResult } from '../../../profiles/hmos-app/harness/ocr-toolkit';
 import type { CheckContext, PhaseRuleSpec } from '../../scripts/utils/types';
 import { DEFAULT_LAYOUT } from '../utils/layout-test-helper';
 
@@ -153,7 +158,7 @@ export function runAll(): UnitCaseResult[] {
     if (!s.has('home') || !s.has('bank-list')) throw new Error(String([...s]));
   });
 
-  run('gate_human_confirmed_without_x_fail', () => {
+  run('gate_legacy_human_confirmed_is_unverified_even_with_x', () => {
     const root = mkProject();
     try {
       fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
@@ -166,18 +171,18 @@ export function runAll(): UnitCaseResult[] {
         'tokens: {}',
         'assets: []',
       ].join('\n'));
-      const specMd = ['```yaml', 'ui_change: new_or_changed', '```'].join('\n');
+      const specMd = ['```yaml', 'ui_change: new_or_changed', '```', '', '- [x] home'].join('\n');
       const r = checkUiSpecFidelityGate(baseCtx(root), specMd);
       const hit = r.find((x: { id: string; status: string }) => x.id === 'ui_spec_fidelity_gate' && x.status === 'FAIL');
-      if (!hit) throw new Error(JSON.stringify(r));
+      if (!hit || !/legacy 人签无 gate 权重/.test(hit.details ?? '')) throw new Error(JSON.stringify(r));
     } finally {
       clearFrameworkConfigCache();
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
-  // G1：headless + pixel_1to1 下 verified: human_confirmed 系自报人工（即便 spec 有 [x]）→ BLOCKER
-  run('ui_spec_human_confirmed_headless_self_cert_blocker', () => {
+  // Legacy human-confirmation bytes are inert in every execution mode.
+  run('ui_spec_human_confirmed_never_closes_hard_gate', () => {
     const root = mkProject();
     const prevHeadless = process.env.MAISON_GOAL_HEADLESS;
     try {
@@ -194,12 +199,14 @@ export function runAll(): UnitCaseResult[] {
         'tokens: {}',
         'assets: []',
       ].join('\n'));
-      // spec.md 含逐屏 [x]（普通态会 PASS）；headless + pixel_1to1 下应判 BLOCKER
+      // Even a legacy [x] marker cannot replace current machine evidence.
       const specMd = ['```yaml', 'ui_change: new_or_changed', 'fidelity_target: pixel_1to1', '```', '', '- [x] home'].join('\n');
       const r = checkUiSpecFidelityGate(baseCtx(root, { fidelityTarget: 'pixel_1to1' }), specMd);
       const hit = r.find((x: { id: string; severity?: string; status: string }) =>
         x.id === 'ui_spec_fidelity_gate' && x.status === 'FAIL' && x.severity === 'BLOCKER');
-      if (!hit) throw new Error('headless 自报 human_confirmed 未判 BLOCKER：' + JSON.stringify(r));
+      if (!hit || !/legacy 人签无 gate 权重/.test(hit.details ?? '')) {
+        throw new Error('legacy human_confirmed 不得闭合 hard gate：' + JSON.stringify(r));
+      }
     } finally {
       if (prevHeadless === undefined) delete process.env.MAISON_GOAL_HEADLESS;
       else process.env.MAISON_GOAL_HEADLESS = prevHeadless;
@@ -796,8 +803,8 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
-  // T2（主背靠）：pixel_1to1 P0 pass 屏须真人确认（confirmed_by 非自动化）。
-  run('visual_diff_t2_human_confirm_required', () => {
+  // Legacy confirmed_by is readable provenance only and never changes the visual gate.
+  run('visual_diff_legacy_confirmed_by_is_inert', () => {
     if (!isJimpAvailable()) return;
     const writePassCase = (root: string, confirmedBy?: string): void => {
       const ddir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots');
@@ -831,41 +838,43 @@ export function runAll(): UnitCaseResult[] {
       const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
       return r.find((x: { id: string }) => x.id === 'visual_diff' || x.id === 'visual_diff_human_confirm_required') as { status: string; details?: string } | undefined;
     };
-    // (a) 缺 confirmed_by → BLOCKER（须真人确认）
+    // (a) 缺 confirmed_by：只看机器门禁，不产生人签 blocker。
     let root = mkProject();
     try {
       writePassCase(root);
       const hit = t2Hit(root);
-      if (!hit || hit.status !== 'FAIL' || !/真人确认|confirmed_by/.test(hit.details ?? '')) {
-        throw new Error(`缺 confirmed_by 应经 T2 FAIL：${JSON.stringify(hit)}`);
+      if (!hit || /真人确认|confirmed_by/.test(hit.details ?? '')) {
+        throw new Error(`缺 confirmed_by 不得产生人签门禁：${JSON.stringify(hit)}`);
       }
     } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
-    // (b) goal-mode-auto 自签 → 仍 BLOCKER
+    // (b) automation sentinel likewise has no gate effect.
     root = mkProject();
     try {
       writePassCase(root, 'goal-mode-auto');
       const hit = t2Hit(root);
-      if (!hit || hit.status !== 'FAIL' || !/自动化|confirmed_by/.test(hit.details ?? '')) {
-        throw new Error(`goal-mode-auto 自签应仍 FAIL：${JSON.stringify(hit)}`);
+      if (!hit || /真人确认|confirmed_by/.test(hit.details ?? '')) {
+        throw new Error(`goal-mode-auto 不得触发人签分支：${JSON.stringify(hit)}`);
       }
     } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
-    // (b2) P0-6 伪签复刻：confirmed_by=user_requirement（裁剪授权哨兵冒充过目）→ 仍 BLOCKER
-    //（2026-07-05 宿主实锤：agent 以此值伪签 T2 并在自跑 harness 中拿到 blocker_count 0）
+    // (b2) user_requirement sentinel is equally inert.
     root = mkProject();
     try {
       writePassCase(root, 'user_requirement');
       const hit = t2Hit(root);
-      if (!hit || hit.status !== 'FAIL' || !/授权|user_requirement|confirmed_by/.test(hit.details ?? '')) {
-        throw new Error(`user_requirement 伪签应经 T2 FAIL（授权≠过目）：${JSON.stringify(hit)}`);
+      if (!hit || /真人确认|confirmed_by/.test(hit.details ?? '')) {
+        throw new Error(`user_requirement 不得触发人签分支：${JSON.stringify(hit)}`);
       }
     } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
-    // (c) 真人署名 → 无 T2 门禁（pass 放行）
+    // (c) human-looking value also grants no exemption.
     root = mkProject();
     try {
       writePassCase(root, 'alice');
       const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
-      if (r.some((x: { id: string; details?: string }) => /真人确认/.test(x.details ?? ''))) {
-        throw new Error(`真人 confirmed_by 不应再触发 T2：${JSON.stringify(r.map(x => x.id))}`);
+      if (r.some((x: { id: string; failure_kind?: string; details?: string }) =>
+        x.id === 'visual_diff_human_confirm_required' ||
+        x.failure_kind === 'await_human_confirm' ||
+        /await_human_visual_confirm/.test(x.details ?? ''))) {
+        throw new Error(`legacy confirmed_by 不得改变机器门禁：${JSON.stringify(r.map(x => x.id))}`);
       }
     } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
     // (d) P0-7③ 接线：testing 目录出现改判脚本 → visual_diff_tamper_artifact BLOCKER（即使判定本身干净）
@@ -889,9 +898,7 @@ export function runAll(): UnitCaseResult[] {
     } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
   });
 
-  // P0-9b（plan e7a91b3c，codex 收窄）：唯一阻塞=T2 真人确认 → failure_kind=await_human_confirm
-  //（goal-runner 据此 halt 为 await_human_visual_confirm 而非 no_progress）；warn+must_fix 混杂≠待签。
-  run('p0_9b_await_human_confirm_narrow_classification', () => {
+  run('p0_visual_gate_never_projects_await_human_confirm', () => {
     if (!isJimpAvailable()) return;
     const { featurePhaseReportsDir } = require('../../config');
     const { computeHapBuildFingerprint } = require('../../../profiles/hmos-app/harness/build-fingerprint');
@@ -943,16 +950,15 @@ export function runAll(): UnitCaseResult[] {
         image_inputs: rows.map(r => ({ path: r.screenshot_path as string })),
       }));
     };
-    // (a) 纯 pass 候选缺签 + 指纹链齐全 → FAIL 且 failure_kind=await_human_confirm + 操作指引
+    // (a) 纯 machine pass 候选不需要 signer。
     let root = mkProject();
     try {
       const fp = writeBuildFingerprintChain(root);
       writeScreens(root, [{ screen_id: 'home', verdict: 'pass', must_fix: [], evaluated_build_fingerprint: fp }]);
       const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
       const hit = r[0] as { status: string; failure_kind?: string; details?: string };
-      if (hit.status !== 'FAIL') throw new Error(`缺签仍须 FAIL：${JSON.stringify(hit)}`);
-      if (hit.failure_kind !== 'await_human_confirm' || !/await_human_visual_confirm/.test(hit.details ?? '')) {
-        throw new Error(`纯 pass 候选缺签应归 await_human_confirm 并给指引：${JSON.stringify(hit)}`);
+      if (hit.failure_kind === 'await_human_confirm' || /await_human_visual_confirm/.test(hit.details ?? '')) {
+        throw new Error(`机器视觉结果不得投影 await_human_confirm：${JSON.stringify(hit)}`);
       }
     } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
     // (b) warn+must_fix（本轮宿主实态）→ 仍 visual_gap 口径，不得标 await_human（防教用户签过未裁决内容）
@@ -975,7 +981,6 @@ export function runAll(): UnitCaseResult[] {
       if (hit.failure_kind === 'await_human_confirm') {
         throw new Error('指纹不可算时不得归 await_human_confirm（真人签无法持久）');
       }
-      if (hit.status !== 'FAIL') throw new Error('缺签仍须 FAIL（T2 不放行）');
     } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
     // (d) rev8：未处置的阻断性 WARN（M1 压线）在手 → 取消 candidate 资格，不得发起 T2
     //（codex P1：candidate-pass 只排除额外 FAIL 会把 T8/M1 WARN 混进批量终审）
@@ -1039,6 +1044,111 @@ export function runAll(): UnitCaseResult[] {
         throw new Error(`声明 3 锚点全缺应经 T1 visual_diff_text_missing FAIL：${JSON.stringify(r.map((x: { id: string; status: string; details?: string }) => ({ id: x.id, status: x.status })))}`);
       }
     } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('visual_diff_producer_uncertainty_required_fails_optional_advises', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    try {
+      const featureRoot = path.join(root, 'doc', 'features', 'bank-card');
+      const shotDir = path.join(featureRoot, 'device-testing', 'device-screenshots');
+      const refDir = path.join(featureRoot, 'ux-reference');
+      fs.mkdirSync(shotDir, { recursive: true });
+      fs.mkdirSync(refDir, { recursive: true });
+      const shotAbs = path.join(shotDir, 'shot-home.png');
+      const refAbs = path.join(refDir, 'home.png');
+      writeMinimalRedPng(shotAbs, 12, 12);
+      writeMinimalRedPng(refAbs, 12, 12);
+      const shotHash = hashScreenshotFile(shotAbs);
+      if (!shotHash) throw new Error('screenshot hash required');
+
+      fs.writeFileSync(path.join(featureRoot, 'spec', 'spec.md'), [
+        '```yaml',
+        'ui_change: new_or_changed',
+        'fidelity_target: pixel_1to1',
+        'visual_handoff:',
+        '  kind: screenshot_pack',
+        '  authoritative_refs:',
+        '    - id: home',
+        '      path: doc/features/bank-card/ux-reference/home.png',
+        '```',
+      ].join('\n'));
+      fs.writeFileSync(path.join(featureRoot, 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"',
+        'screens:',
+        '  - id: home',
+        '    priority: P0',
+        '    ref_id: home',
+        '    root:',
+        '      type: navigation_frame',
+        '      order: 0',
+        '      children:',
+        '        - { type: content_display, order: 0, text: "中信银行" }',
+        '        - { type: action_button, order: 1, text: "添加卡片" }',
+        'tokens: {}',
+        'assets: []',
+      ].join('\n'));
+      fs.mkdirSync(path.join(featureRoot, 'device-testing'), { recursive: true });
+      fs.writeFileSync(path.join(featureRoot, 'device-testing', 'visual-diff.md'), '# diff\n');
+      fs.writeFileSync(path.join(shotDir, 'visual-diff.json'), JSON.stringify({
+        schema_version: '1.0',
+        screens: [{
+          screen_id: 'home',
+          verdict: 'warn',
+          screenshot_path: 'doc/features/bank-card/device-testing/device-screenshots/shot-home.png',
+          ref_id: 'home',
+          screenshot_hash: shotHash,
+          evaluated_screenshot_hash: shotHash,
+          reverse_missing: [],
+          defects: [{ severity: 'minor', description: 'OCR evidence needs another machine pass' }],
+          must_fix: ['重采文本区域'],
+        }],
+      }));
+
+      const ocr = (imagePath: string): OcrResult => ({
+        ok: true,
+        width: 1320,
+        height: 2120,
+        words: imagePath.includes(`${path.sep}ux-reference${path.sep}`)
+          ? [
+              { text: '中信银行', conf: 90, bbox: [0.1, 0.1, 0.4, 0.04] },
+              { text: '添加卡片', conf: 90, bbox: [0.1, 0.4, 0.4, 0.04] },
+            ]
+          : [
+              { text: '中国银行', conf: 90, bbox: [0.1, 0.1, 0.4, 0.04] },
+              { text: '添加卡片', conf: 90, bbox: [0.1, 0.4, 0.4, 0.04] },
+            ],
+      });
+      __testing_setVisualDiffOcrFn(ocr);
+
+      const required = checkVisualDiff(baseCtx(root, {
+        fidelityTarget: 'pixel_1to1',
+        acceptanceStrictness: 'hard',
+      }));
+      const requiredDetails = required.map((x) => x.details ?? '').join('\n');
+      if (!required.some((x) => x.status === 'FAIL' && x.severity === 'BLOCKER') ||
+          !requiredDetails.includes('visual_diff_uncertain_evidence') &&
+          !requiredDetails.includes('producer uncertainty')) {
+        throw new Error(`required producer uncertainty must fail closed: ${JSON.stringify(required)}`);
+      }
+
+      const optional = checkVisualDiff(baseCtx(root, {
+        fidelityTarget: 'pixel_1to1',
+        acceptanceStrictness: 'best_effort',
+      }));
+      const optionalDetails = optional.map((x) => x.details ?? '').join('\n');
+      if (!optionalDetails.includes('[evidence_insufficient]')) {
+        throw new Error(`optional producer uncertainty must remain visible as advisory: ${JSON.stringify(optional)}`);
+      }
+      if (optionalDetails.includes('visual_diff_uncertain_evidence') ||
+          optional.some((x) => x.status === 'FAIL' && /producer uncertainty/.test(x.details ?? ''))) {
+        throw new Error(`optional producer uncertainty must not create a human gate or required failure: ${JSON.stringify(optional)}`);
+      }
+    } finally {
+      __testing_setVisualDiffOcrFn(null);
       clearFrameworkConfigCache();
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -1228,6 +1338,27 @@ export function runAll(): UnitCaseResult[] {
       }
       if (hit.failure_kind === 'await_human_confirm') {
         throw new Error('缺回执时不得归类 await_human_confirm（candidate-pass 前禁 T2）');
+      }
+    } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  run('legacy_human_region_attest_is_readable_but_inert', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    try {
+      writeRev7Project(root, {
+        uiScreens: ['home'],
+        mustHave: { home: ['home_root'] },
+        writeReceipt: true,
+        screens: [{
+          screen_id: 'home', verdict: 'pass', ref_id: 'home',
+          region_attest: [{ region: 'home_root', verdict: 'no_diff', method: 'human', by: 'legacy-user' }],
+        }],
+      });
+      const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const hit = r[0] as { status: string; details?: string };
+      if (hit.status !== 'FAIL' || !/无 region_attest/.test(hit.details ?? '')) {
+        throw new Error(`legacy human attest 不得满足机器覆盖：${(hit.details ?? '').slice(0, 300)}`);
       }
     } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
   });
@@ -2008,7 +2139,7 @@ export function runAll(): UnitCaseResult[] {
         '```',
       ].join('\n');
       const r = checkFidelityGovernance(baseCtx(root, { fidelityTarget: 'pixel_1to1' }), specMd);
-      const hit = r.find(x => x.id === 'fidelity_deferrals_human_sign' && x.status === 'FAIL');
+      const hit = r.find(x => x.id === 'fidelity_deferrals_strict_contract' && x.status === 'FAIL');
       if (!hit || hit.severity !== 'BLOCKER') throw new Error(JSON.stringify(r));
     } finally {
       clearFrameworkConfigCache();
@@ -2032,7 +2163,7 @@ export function runAll(): UnitCaseResult[] {
         '```',
       ].join('\n');
       const r = checkFidelityGovernance(baseCtx(root, { fidelityTarget: 'pixel_1to1' }), specMd);
-      const hit = r.find(x => x.id === 'fidelity_deferrals_human_sign' && x.status === 'FAIL');
+      const hit = r.find(x => x.id === 'fidelity_deferrals_strict_contract' && x.status === 'FAIL');
       if (!hit || hit.severity !== 'BLOCKER') throw new Error('goal-mode-auto 自签被当成了人签：' + JSON.stringify(r));
     } finally {
       clearFrameworkConfigCache();
@@ -2040,8 +2171,8 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
-  // G1 防误拒：真人 signed_by 仍算人签 → 不 BLOCKER
-  run('fidelity_deferrals_real_human_sign_pass', () => {
+  // legacy 人名不能改变 strict contract。
+  run('fidelity_deferrals_real_human_sign_is_inert', () => {
     const root = mkProject();
     try {
       const specMd = [
@@ -2056,12 +2187,8 @@ export function runAll(): UnitCaseResult[] {
         '```',
       ].join('\n');
       const r = checkFidelityGovernance(baseCtx(root, { fidelityTarget: 'pixel_1to1' }), specMd);
-      if (r.find(x => x.id === 'fidelity_deferrals_human_sign' && x.status === 'FAIL')) {
-        throw new Error('真人签字被误拒：' + JSON.stringify(r));
-      }
-      if (!r.find(x => x.id === 'fidelity_deferrals_human_sign' && x.status === 'PASS')) {
-        throw new Error('真人签字未通过：' + JSON.stringify(r));
-      }
+      const hit = r.find(x => x.id === 'fidelity_deferrals_strict_contract' && x.status === 'FAIL');
+      if (!hit) throw new Error('legacy 真人签字不得放行 strict defer：' + JSON.stringify(r));
     } finally {
       clearFrameworkConfigCache();
       fs.rmSync(root, { recursive: true, force: true });
@@ -2388,7 +2515,7 @@ export function runAll(): UnitCaseResult[] {
         '```',
       ].join('\n');
       const r = checkFidelityGovernance(baseCtx(root, { fidelityTarget: 'pixel_1to1' }), specMd);
-      const hit = r.find(x => x.id === 'fidelity_deferrals_human_sign' && x.status === 'FAIL' && x.severity === 'BLOCKER');
+      const hit = r.find(x => x.id === 'fidelity_deferrals_strict_contract' && x.status === 'FAIL' && x.severity === 'BLOCKER');
       if (!hit) throw new Error('headless 缺 signed_by 被当人签：' + JSON.stringify(r));
     } finally {
       if (prevHeadless === undefined) delete process.env.MAISON_GOAL_HEADLESS;
@@ -2777,8 +2904,12 @@ export function runAll(): UnitCaseResult[] {
         '    source_bbox: [0, 0, 0.5, 0.5]',
       ].join('\n'));
       const r = checkAssetAcquisition(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
-      const hit = r.find(x => x.id === 'asset_crop_confirm_required' && x.status === 'FAIL' && x.severity === 'BLOCKER');
-      if (!hit) throw new Error('未确认 crop 在 pixel_1to1 未升 BLOCKER：' + JSON.stringify(r));
+      if (r.find(x => x.id === 'asset_crop_confirm_required')) {
+        throw new Error('crop 输入不应再等待人工授权：' + JSON.stringify(r));
+      }
+      if (!r.find(x => x.id === 'asset_acquisition' && x.status === 'PASS')) {
+        throw new Error('source_ref/source_bbox 完整时应进入确定性裁剪：' + JSON.stringify(r));
+      }
     } finally {
       clearFrameworkConfigCache();
       fs.rmSync(root, { recursive: true, force: true });
@@ -2813,8 +2944,8 @@ export function runAll(): UnitCaseResult[] {
         '    human_crop_confirmed: true',
       ].join('\n'));
       const r = checkAssetAcquisition(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
-      if (!r.find(x => x.id === 'asset_crop_confirm_required' && x.severity === 'BLOCKER')) {
-        throw new Error('headless 自报 human_crop_confirmed 未被门禁挡：' + JSON.stringify(r));
+      if (r.find(x => x.id === 'asset_crop_confirm_required')) {
+        throw new Error('legacy human_crop_confirmed 不应制造人工门禁：' + JSON.stringify(r));
       }
     } finally {
       if (prevHeadless === undefined) delete process.env.MAISON_GOAL_HEADLESS;
@@ -2864,34 +2995,14 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
-  // G4b 守卫：user_requirement 是合法前置授权 sentinel，绝不可入自动化名单（否则焊死截图裁素材工作流）
-  run('user_requirement_confirmer_is_valid_sentinel', () => {
-    if (USER_REQUIREMENT_CONFIRMER !== 'user_requirement') {
-      throw new Error('USER_REQUIREMENT_CONFIRMER 值变更，需同步 ui-spec.md/SKILL 约定');
-    }
-    if (isAutomationSigner(USER_REQUIREMENT_CONFIRMER)) {
-      throw new Error('user_requirement 误入自动化身份名单，会焊死 NL 授权裁素材路径');
-    }
-  });
-
-  // P0-6 守卫：授权哨兵 ≠ 验真签名——isHumanVerified 拒 user_requirement（含大小写/空白变体）与自动化身份，
-  // 收真人名；isHumanConfirmed 语义保持不变（授权路径依赖它收 user_requirement，见上一个用例）。
-  run('p0_6_is_human_verified_rejects_authorization_sentinel', () => {
-    const { isHumanConfirmed, isHumanVerified, isHumanSignedDeferral } = require('../../scripts/utils/fidelity-shared');
-    if (!isHumanConfirmed('user_requirement')) throw new Error('isHumanConfirmed 语义不得变——授权路径依赖它收 user_requirement');
+  // 外部 framework 审批 signer helper 不得被 feature 授权哨兵/自动身份冒充。
+  run('p0_6_external_signer_helper_rejects_feature_sentinels', () => {
+    const { isHumanVerified } = require('../../scripts/utils/fidelity-shared');
     for (const forged of ['user_requirement', ' User_Requirement ', 'goal-mode-auto', '', undefined]) {
       if (isHumanVerified(forged)) throw new Error(`isHumanVerified 应拒 ${JSON.stringify(forged)}`);
     }
     for (const human of ['alice', '张三', 'sheng qsq']) {
       if (!isHumanVerified(human)) throw new Error(`isHumanVerified 应收真人名 ${human}`);
-    }
-    // deferral 人签同穴：signed_by=user_requirement 不算真人签字（交互态/headless 两口径都拒）
-    const d = { element_id: 'x', human_signed: true, signed_by: 'user_requirement' };
-    if (isHumanSignedDeferral(d) || isHumanSignedDeferral(d, { requireExplicitSigner: true })) {
-      throw new Error('deferral signed_by=user_requirement 不得算真人签字');
-    }
-    if (!isHumanSignedDeferral({ element_id: 'x', human_signed: true, signed_by: 'alice' })) {
-      throw new Error('deferral 真人签不得误伤');
     }
   });
 
@@ -3045,7 +3156,7 @@ export function runAll(): UnitCaseResult[] {
         '```',
       ].join('\n');
       const r = checkFidelityGovernance(baseCtx(root, { fidelityTarget: 'pixel_1to1' }), specMd);
-      const hit = r.find(x => x.id === 'ref_elements_defer_human_sign' && x.status === 'FAIL');
+      const hit = r.find(x => x.id === 'ref_elements_strict_defer' && x.status === 'FAIL');
       if (!hit || hit.severity !== 'BLOCKER') throw new Error(JSON.stringify(r));
     } finally {
       clearFrameworkConfigCache();
@@ -3789,7 +3900,7 @@ export function runAll(): UnitCaseResult[] {
     eq(seeing.strictness, 'best_effort', 'strictness 轴与能力轴正交');
   });
 
-  run('f6b2d9a4 P0 路由②: pixel+hard + 有效 receipt 降 semantic → proceed；inferred 保留；下游 hard gate 不触发', () => {
+  run('f6b2d9a4 P0 路由②: legacy receipt 无降档权；pixel+hard 能力不足 → capability defer', () => {
     const d = resolveFidelityRoutingDecision({
       requirementText: '界面必须像素级还原，不接受降级，完全参考截图。',
       manifestFidelity: 'semantic_layout', downgradeReceiptValid: true,
@@ -3797,11 +3908,11 @@ export function runAll(): UnitCaseResult[] {
       executionIdentity: 'x', requirementSha: 'a'.repeat(64),
     });
     eq(d.inferred, 'pixel_1to1', 'inferred 保留（ratchet 锚不被洗）');
-    eq(d.selected, 'semantic_layout', 'receipt 降档真实生效');
-    eq(d.defer, false, '降档后无真冲突——proceed');
-    eq(d.decision.source, 'downgrade_receipt', 'source');
+    eq(d.selected, 'pixel_1to1', 'legacy receipt 不能降低冻结需求');
+    eq(d.defer, true, '能力不足应诚实 capability defer');
+    eq(d.decision.source, 'requirement_self_declared', 'source');
     const ctx = { fidelityTarget: d.effective, acceptanceStrictness: d.strictness } as CheckContext;
-    eq(isHardPixelContract(ctx), false, 'effective=semantic → pixel 硬门禁不被 desired 重新激活');
+    eq(isHardPixelContract(ctx), false, 'effective clamp 只描述当前能力；runner 由 defer 阻止进入质量闭合');
   });
 
   run('f6b2d9a4 T2: clamp 三档消费——无视觉+OCR→semantic；无视觉无OCR→reference_only；hard+降档=唯一 DEFER', () => {
@@ -3931,25 +4042,18 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
-  run('t1: await_human_only=false 时报告须显式否定人签并给下一步（经真实 checkVisualDiff）', () => {
+  run('visual report：机器缺陷只给机器证据/修复内容，不出现人签时点', () => {
     const root = mkProject();
     try {
-      // 事故形态：有 must_fix 的 FAIL 屏（机器还有活儿要干），await_human_only 必为 false。
-      // 此前框架此刻什么都不说，agent 于是自行推断"只剩视觉验真，需要你写 confirmed_by"。
+      // 事故形态：有 must_fix 的 FAIL 屏（机器还有活儿要干）。
       writeFuseFixture(root);
       const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
       const details = r.map((x: { details?: string }) => x.details ?? '').join('\n');
-      if (!/【当前不需要真人签字】/.test(details)) {
-        throw new Error(`须显式否定人签时点：${details.slice(0, 500)}`);
-      }
-      if (!/下一步=/.test(details)) throw new Error('须给出下一步（第一条 must_fix）');
-      // 下一步必须引用**夹具里真实的** must_fix 原文，不能是泛化话术
       if (!/修复 close 与卡面的重叠/.test(details)) {
-        throw new Error(`下一步须引用真实 must_fix 内容：${details.slice(0, 500)}`);
+        throw new Error(`报告须保留真实 must_fix 内容：${details.slice(0, 500)}`);
       }
-      // 反向：不得同时出现人签引导（两者互斥）
-      if (/await_human_visual_confirm/.test(details)) {
-        throw new Error('await_human_only=false 时不得输出人签引导');
+      if (/await_human_visual_confirm|confirmed_by|真人签字/.test(details)) {
+        throw new Error('机器质量报告不得输出人签引导');
       }
     } finally {
       clearFrameworkConfigCache();

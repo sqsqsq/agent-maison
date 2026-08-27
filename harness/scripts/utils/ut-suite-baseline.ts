@@ -67,7 +67,7 @@ export function suiteFailureKey(f: SuiteFailureRecord): string {
 
 /**
  * 读授权基线。信任模型（顶层裁定"Stability over total control"）：与 gap-notes
- * approved_src_mutations 同级——普通授权文件 + review 纪律，不做密码学防伪；
+ * 这是 attended suite 输入基线，不是源码改动或质量 PASS 授权；
  * 结构与 feature 绑定校验只防错拿/错配，不防蓄意伪造。
  * 当前唯一生产来源=用户确认已知历史失败后放置；`writeSuiteFailureBaselineOnce`
  * 供未来编排（agent 动手前真实采样）调用，本轮 checker 不写。

@@ -82,8 +82,8 @@ export function buildVisualProviderAdvisory(projectRoot: string): Record<string,
       task: 'record-visual-provider',
     };
   } catch (e) {
-    // advisory 出错不得影响 personal setup 的 ok/code；但“读不到 provider”不是授权。
-    // 交互入口仍须给出「修复配置 / 明确盲跑」两条出路，不能以 shouldPrompt=false 静默略过。
+    // advisory 出错不得影响 personal setup 的 ok/code；能力不足由后续 requirement/capability
+    // 门禁裁决，setup 层只提示修复配置，不产生质量授权。
     const supported = frameworkRoot ? listVisualProviderAdapterNames(frameworkRoot) : [];
     return {
       state: 'unavailable',
@@ -91,8 +91,7 @@ export function buildVisualProviderAdvisory(projectRoot: string): Record<string,
       supported,
       prompt:
         `视觉 provider 配置读取失败：${(e as Error).message}。` +
-        '请修复 framework.local.json 的 provider 配置，或明确选择“跳过并盲跑”' +
-        '（attended goal 转译为 --allow-blind-visual；只授权当前 run）。',
+        '请修复 framework.local.json 的 provider 配置；保持未配置时，严格视觉需求会诚实 defer。',
       reason: (e as Error).message,
       decisionClass: 'setup.visual_provider',
       task: 'record-visual-provider',

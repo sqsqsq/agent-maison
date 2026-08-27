@@ -76,15 +76,15 @@
 
 逐行：`1=确认该行` / `2=改映射`。
 
-### 3.5 Freeform + portable（registry: `plan.scope_expansion` / `ut.src_mutation`）
+### 3.5 Freeform + portable（registry: `plan.scope_expansion`）
 
-**不得省略**提议正文 / 变更描述 / gap-notes 用户原话字段。
+**不得省略**提议正文。该交互只表示需求 scope 输入，不降低任何阶段质量门禁。
 
 ```text
 （完整提议或变更描述已展示于上）
 
 请选择：
-1. 授权 / 同意（须能引用用户原话写入 trace 或 gap-notes）
+1. 同意 scope 扩展（写回 spec-owned scope 输入）
 2. 拒绝
 3. 先看 diff / 再讨论
 ```
@@ -172,7 +172,7 @@ S1 **`InitTaskPlan.adapter_catalog[]`** 为唯一程序化候选源；registry `
 |-------|---------------|------|
 | `gate` / `enum` / `matrix` | 取「确认 / 继续 / 全部维持」类默认选项 | `headless-assumptions.md` |
 | `artifact_checkbox` | 自动写回 artifact（如 spec `[x]`），继续产出正文 | 见 §9.2 |
-| `freeform_approval` | **保守默认**：`plan.scope_expansion` → 拒绝扩展；`ut.src_mutation` → 拒绝改源码 | 记录被推迟请求 |
+| `freeform_approval` | **保守默认**：`plan.scope_expansion` → 拒绝扩展 | 记录被推迟请求 |
 
 阶段**间**闸门（`*.ok_to_*` / `phase.next_step` / `spec.freeze`）由 `goal_mode` transition policy 裁决，本节不重复。
 
@@ -180,7 +180,7 @@ S1 **`InitTaskPlan.adapter_catalog[]`** 为唯一程序化候选源；registry `
 
 - **glossary 命中**（含 aliases）：**逐字采用** glossary 的 `canonical_module`，**不许自行改判** → 标 `high`、自动 `[x]`、**不入** must-review。
 - **新术语（非 glossary 命中）**：强制 `medium`/`low` → 自动 `[x]` 但 **必入 must-review**；标 `high` 须有 glossary 背书（`check-spec` 对假 high 出 WARN）。
-- **medium / low**：自动放行，标 `DEFERRED-review`；goal-report **顶部** must-review 清单逐条列出（术语、模块、置信度、易混项）。
+- **medium / low**：按确定性默认继续；兼容写入 legacy `must_review` 审计标记，goal-report **顶部**逐条列出（术语、模块、置信度、易混项），但不暂停 run、不阻止完成，也不改变机器门禁。
 
 ### 9.3 留痕契约（goal-fakepass-hardening：JSONL 为机器 SSOT）
 
@@ -196,11 +196,10 @@ S1 **`InitTaskPlan.adapter_catalog[]`** 为唯一程序化候选源；registry `
   fail-closed。
 - `headless-assumptions.md` 降级为**人读投影**（可选）；旧 md-only 现场兼容读取时表格行
   **保守全量**计入待复核（事故教训：行内正则 vs 表格错配曾让待审清单静默消失）。
-- **账本 ≠ 授权**：任何降低硬门禁的决定（降档 / P0 skip waiver / conditional-review 授权 /
-  行为开关豁免 / flow_contract）只认 confirmation receipt（信任锚见 openspec
-  confirmation-receipts spec）；无有效 receipt → run 封顶 `AWAITING_HUMAN_REVIEW`，
-  不得 `FEATURE_COMPLETED`。
-- goal-report 渲染"自动决议汇总"（JSONL 计数 + 待复核标记），Status 行携带待复核计数。
+- **账本 ≠ 授权**：自动决议账本只记录普通输入、假设与审计 provenance，不能降低任何硬门禁。
+  fidelity 降档、P0 skip、conditional-review、行为开关、flow contract、视觉验收等旧 quality receipt
+  均已退役且只读不 gate；required 证据不足必须 repair/FAIL/capability defer，不能等待人签改成 PASS。
+- goal-report 渲染“自动决议审计汇总”（JSONL 计数 + legacy `must_review` 标记），Status 行携带审计项计数；该投影不构成人工确认队列。
 
 ### 9.4 与交互态关系
 
@@ -210,7 +209,7 @@ S1 **`InitTaskPlan.adapter_catalog[]`** 为唯一程序化候选源；registry `
 
 ## 8. 阶段边界推进（BLOCKER）
 
-**阶段闭环（harness + verifier + receipt + trace 四件套 PASS）只证明当前 phase 完成，不授权下一 Skill。**
+**阶段闭环（harness + verifier + evidence + trace PASS）只证明当前 phase 完成，不授权下一 Skill。**
 
 「可进入 Skill N」= **资格**，≠ **授权**。Stop hook 只管「假完成」，不管「擅自开下一阶段」。
 
@@ -262,7 +261,7 @@ S1 **`InitTaskPlan.adapter_catalog[]`** 为唯一程序化候选源；registry `
 ### 8.3 `phase.next_step` portable 模板
 
 ```text
-{current_phase} 阶段已闭环（harness / verifier / receipt / trace 齐全）。
+{current_phase} 阶段已闭环（harness / verifier / evidence / trace 齐全）。
 
 请选择下一步（回复编号；支持 widget 时可直接选，同轮仍附下列编号）：
 1. 执行 assess 推荐动作 — {assess_recommendation}

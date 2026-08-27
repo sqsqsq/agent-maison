@@ -97,20 +97,18 @@ BLOCKER 确认须 progressive enhancement：[user-confirmation-ux.md](./user-con
 由 harness 确定性算出，不要在对话里重新推断。非 UI 轮次不看它。
 
 - provider = **只读**第二 endpoint：只看图产结构化评审，物理上不写工程；正式产物唯一写者仍是主模型。
-- 用 registry **`setup.visual_provider`**（即 `visualProvider.decisionClass`；从支持列表选 / 跳过）。
+- 用 registry **`setup.visual_provider`**（即 `visualProvider.decisionClass`；从支持列表选或保持未配置）。
   选项与提示语直接取 `visualProvider.supported[]` 与 `visualProvider.prompt`——**支持列表现算自
   adapter catalog**（扫 `agents/<adapter>/adapter.yaml` 的 `visual_provider` 完整声明），
   本文与任何文档**都不写死名单**。
-- 选中的 adapter 不在支持列表 → 任务 failed 并回列支持项：**请重选或跳过**。框架**不自动改选**、
+- 选中的 adapter 不在支持列表 → 任务 failed 并回列支持项：**请重选或保持未配置**。框架**不自动改选**、
   **不在多个 provider 之间 fallback**。
 - 写盘由 `record-visual-provider` 任务完成（即 `visualProvider.task`；
   `executionContext.visualProvider = {adapter, model}`）；**禁止** agent 手写 `framework.local.json`。
-- **跳过必须是一次明确选择**：普通交互态只授权当前操作盲跑；attended goal 会话层须把同一选择
-  转译成启动参数 `--allow-blind-visual`，由 manifest 冻结为当前 run 的授权。它不写入
-  `framework.local.json`，下一个 UI run 仍须重新选择。跳过不影响本 checker 的 `--ensure` 结果。
-- 无人值守（goal headless）**不走本步**：须提前配置合法 provider，或显式传
-  `--allow-blind-visual`。旧配置失效/读取不可用只 WARN 并按「无 provider」进入同一启动矩阵；
-  UI 需求且无授权时在 phase 前 BLOCKER，非 UI 需求不受此条件影响。
+- 保持未配置时不写 `framework.local.json`，也不产生质量授权。严格视觉需求在后续
+  requirement/capability preflight 诚实 defer；非 strict 可按既有 advisory 策略继续。
+- 无人值守（goal headless）**不走本步**：旧配置失效/读取不可用只 WARN 并按「无 provider」处理，
+  不询问、不自动 fallback；后续门禁依据冻结需求与能力事实决定结果。
 
 ---
 
@@ -134,4 +132,4 @@ BLOCKER 确认须 progressive enhancement：[user-confirmation-ux.md](./user-con
 
 - Tier_1 npm：[host-harness-readiness.md](./host-harness-readiness.md)
 - 项目 vs personal：[framework-init](../project/framework-init/SKILL.md)
-- 视觉能力实测（personal-setup 后置，UI 相关阶段·交互式）：[interactive-vision-canary](./interactive-vision-canary.md)——自测卷判卷无感写 `framework.local.json` 的 `vision.canary`，盲档确认走 registry `vision.blind_tier`
+- 视觉能力实测（personal-setup 后置，UI 相关阶段·交互式）：[interactive-vision-canary](./interactive-vision-canary.md)——自测卷判卷无感写 `framework.local.json` 的 `vision.canary`；缺能力按 strict/optional 质量契约自动投影，不设盲档人签通行证

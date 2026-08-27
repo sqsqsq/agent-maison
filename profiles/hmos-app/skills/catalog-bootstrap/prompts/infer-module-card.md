@@ -267,7 +267,7 @@ doc/catalog-staging/<ModuleName>.yaml
 严格遵守 `` `profile-skill-asset:catalog-bootstrap/module_card_template` `` 的结构（占位符解析见 `framework/skills/README.md` 的 “Profile skill asset protocol”；勿写死某 profile 的物理路径）。
 
 **必填写入：**
-- `confirmed_by_user: false`（不要擅自改 true）
+- `selection_status: pending`（不要擅自改 selected）
 - `generated_by`: 你的模型标识
 - `generated_at`: 当前时间（YYYY-MM-DD HH:mm:ss）
 - `signals_used`: **如实**填你实际读过的信号（用户会据此判断你的推断是否可信）
@@ -302,7 +302,7 @@ staging 写完后，**不要**吐原始 YAML，也**不要**停止等用户 offl
 
 | 回应 | 动作 |
 |------|------|
-| `y` / 确认 / OK | ① 改 staging 的 `confirmed_by_user: true`（git 能抓到这一瞬间）<br>② 只取 staging 的 `module:` 子树追加/替换到 `doc/module-catalog.yaml`（`generated_by` / `signals_used` 等元数据**不进**主 catalog）<br>③ **删除** staging 文件（审计靠 git 历史，不用 `_merged/` 归档）<br>④ 报告"已合并并删除 staging"后停止 |
+| `y` / 确认 / OK | ① 改 staging 的 `selection_status: selected`（git 能抓到这一瞬间）<br>② 只取 staging 的 `module:` 子树追加/替换到 `doc/module-catalog.yaml`（`generated_by` / `signals_used` 等元数据**不进**主 catalog）<br>③ **删除** staging 文件（审计靠 git 历史，不用 `_merged/` 归档）<br>④ 报告"已合并并删除 staging"后停止 |
 | `e <指令>` | patch staging 对应字段 → 回到第 1 步重新展示 |
 | `s` / 跳过 | staging 保留，告知"下次回来说'继续确认 <ModuleName>'即可" |
 | `q` / 作废 | 删 staging |

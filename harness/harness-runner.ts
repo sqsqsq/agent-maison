@@ -54,19 +54,12 @@ import { createHash } from 'crypto';
 import { receiptDirPath } from './config';
 import {
   annotateAssetTriState,
-  applyVisualAcceptance,
   assetDomainDebtRevision,
   countBlockingDebt,
   deriveVisualDebt,
   loadVisualDebtEx,
-  validateRubricPolicy,
   writeVisualDebt,
-  type VisualAcceptancePayload,
 } from './scripts/utils/visual-debt';
-import {
-  defaultTrustRegistryPath,
-  validateConfirmationReceiptFile,
-} from './scripts/utils/confirmation-receipt';
 import { computeGateFingerprint } from './scripts/utils/gate-fingerprint';
 import {
   commitVisualRound,
@@ -88,6 +81,7 @@ import {
   loadCapabilitySnapshot,
   deriveEffectiveAdapterImageInput,
   effectiveAssetAcquisitionMode,
+  resolveUiRelevanceForRun,
 } from './scripts/utils/fidelity-shared';
 import { reviewVisionForMode } from './scripts/utils/visual-provider-identity';
 import {
@@ -197,6 +191,100 @@ function resolveCurrentVisualForHarness(projectRoot: string, feature: string): b
   } catch {
     return false;
   }
+}
+
+export type HarnessFidelityContextFields = Pick<
+  CheckContext,
+  | 'fidelityTarget'
+  | 'declaredFidelityTarget'
+  | 'fidelityClamped'
+  | 'fidelityClampReason'
+  | 'acceptanceStrictness'
+  | 'assetAcquisitionMode'
+  | 'effectiveAssetAcquisitionMode'
+  | 'fidelityDeferrals'
+  | 'adapterMultimodal'
+  | 'adapterImageInput'
+>;
+
+/**
+ * Resolve the exact fidelity fields consumed by CheckContext. Keeping this as one exported helper
+ * lets chain-level tests prove that recovery rebuilt the on-disk SSOT actually read by the harness,
+ * rather than merely asserting the goal preflight's in-memory routing result.
+ */
+export function resolveHarnessFidelityContextFields(input: {
+  projectRoot: string;
+  frameworkRoot: string;
+  feature: string;
+  adapter: string;
+  profileDir: string;
+  phaseIsGlobal: boolean;
+}): HarnessFidelityContextFields {
+  const mmProbe = resolveContextAdapterImageInput(
+    input.projectRoot,
+    input.frameworkRoot,
+    input.adapter,
+  );
+  const intentSsot = input.phaseIsGlobal
+    ? null
+    : loadFidelityIntentSsot(input.projectRoot, input.feature);
+  const capSnap = input.phaseIsGlobal
+    ? null
+    : loadCapabilitySnapshot(input.projectRoot, input.feature);
+  const fidelityCtx = input.phaseIsGlobal
+    ? {
+        fidelityTarget: 'semantic_layout' as const,
+        declaredFidelityTarget: 'semantic_layout' as const,
+        fidelityClamped: false,
+        fidelityClampReason: undefined as 'no_vision_ocr_available' | 'no_vision_no_ocr' | undefined,
+        assetAcquisitionMode: 'approximate' as const,
+        effectiveAssetAcquisitionMode: 'approximate' as const,
+        fidelityDeferrals: [] as CheckContext['fidelityDeferrals'],
+      }
+    : (() => {
+        const projection = resolveFidelityContextFromFeature(input.projectRoot, input.feature);
+        const raw = intentSsot
+          ? {
+              ...projection,
+              fidelityTarget: intentSsot.selected_fidelity,
+              assetAcquisitionMode: intentSsot.asset_acquisition_mode,
+              effectiveAssetAcquisitionMode: effectiveAssetAcquisitionMode(
+                intentSsot.selected_fidelity,
+                intentSsot.asset_acquisition_mode,
+              ),
+            }
+          : projection;
+        return resolveEffectiveFidelityContext(raw, {
+          hasVision: capSnap
+            ? capSnap.vision.verdict
+            : mmProbe.supported && resolveCurrentVisualForHarness(input.projectRoot, input.feature),
+          ...(capSnap?.vision_mode
+            ? { reviewVision: reviewVisionForMode(capSnap.vision_mode) }
+            : {}),
+          ocrAvailable: capSnap
+            ? capSnap.ocr.verdict
+            : resolveOcrAvailableForRun(
+                input.projectRoot,
+                input.profileDir,
+                input.adapter,
+              ),
+        });
+      })();
+  return {
+    fidelityTarget: fidelityCtx.fidelityTarget,
+    declaredFidelityTarget: fidelityCtx.declaredFidelityTarget,
+    fidelityClamped: fidelityCtx.fidelityClamped,
+    fidelityClampReason: fidelityCtx.fidelityClampReason,
+    acceptanceStrictness: intentSsot?.acceptance_strictness ?? 'best_effort',
+    assetAcquisitionMode: fidelityCtx.assetAcquisitionMode,
+    effectiveAssetAcquisitionMode: fidelityCtx.effectiveAssetAcquisitionMode,
+    fidelityDeferrals: fidelityCtx.fidelityDeferrals,
+    adapterMultimodal: capSnap ? capSnap.vision.verdict : mmProbe.supported,
+    adapterImageInput: deriveEffectiveAdapterImageInput(
+      capSnap ? capSnap.vision.verdict : null,
+      mmProbe.imageInput,
+    ),
+  };
 }
 import { resolveAuthoritativePath } from './scripts/utils/visual-source-resolver';
 import { parseUiChangeFromSpecMarkdown, UI_CHANGE_REQUIRES_UI_SPEC, uiSpecRelPath, uiSpecAbsPath } from './scripts/utils/ui-spec-shared';
@@ -725,7 +813,6 @@ async function main(): Promise<void> {
     | undefined;
   const uiSpecMode = fwConfig.spec?.ui_spec_enforcement as typeof vhMode;
   const vpMode = fwConfig.coding?.visual_parity_enforcement as typeof vhMode;
-  const mmProbe = resolveContextAdapterImageInput(projectRoot, resolvedFrameworkRoot, fwConfig.agent_adapter);
   // E2：能力钳制——全局阶段（catalog/glossary/docs）不涉及 feature UI，固定 semantic_layout
   // 不钳制；feature 阶段按 mmProbe.supported（视觉能力）+ profile OCR 就绪度钳制 desired→effective，
   // 单点收口：全部 19 处 isPixel1to1/fidelityTarget 消费面只读 context.fidelityTarget（此处赋的
@@ -734,50 +821,14 @@ async function main(): Promise<void> {
   // 在场时 selected 档位/素材轴以 SSOT 为准（spec.md Visual Handoff 仅为投影，由
   // check-spec 复核一致性）；缺失（legacy/未初始化）回落投影解析。capability 输入
   // snapshot 优先（v3 P1-4 同源），live policy meet 仍参与（blind-safe 降级只收紧不放宽）。
-  const intentSsot = phaseIsGlobal ? null : loadFidelityIntentSsot(projectRoot, feature);
-  const capSnap = phaseIsGlobal ? null : loadCapabilitySnapshot(projectRoot, feature);
-  const fidelityCtx = phaseIsGlobal
-    ? {
-        fidelityTarget: 'semantic_layout' as const,
-        declaredFidelityTarget: 'semantic_layout' as const,
-        fidelityClamped: false,
-        fidelityClampReason: undefined as 'no_vision_ocr_available' | 'no_vision_no_ocr' | undefined,
-        assetAcquisitionMode: 'approximate' as const,
-        effectiveAssetAcquisitionMode: 'approximate' as const,
-        fidelityDeferrals: [] as CheckContext['fidelityDeferrals'],
-      }
-    : (() => {
-        const projection = resolveFidelityContextFromFeature(projectRoot, feature);
-        const raw = intentSsot
-          ? {
-              ...projection,
-              fidelityTarget: intentSsot.selected_fidelity,
-              assetAcquisitionMode: intentSsot.asset_acquisition_mode,
-              effectiveAssetAcquisitionMode: effectiveAssetAcquisitionMode(
-                intentSsot.selected_fidelity,
-                intentSsot.asset_acquisition_mode,
-              ),
-            }
-          : projection;
-        return resolveEffectiveFidelityContext(raw, {
-          // post-impl2 P0-1（消费面只认同一 run 快照）：snapshot 在场即为唯一能力真值
-          //（live policy 收紧由 runner 侧原子重建 snapshot+SSOT 后再被本处消费——消费面
-          // 不得自行叠加 meet，否则「快照 visual、live 盲」会让 hard pixel 静默降档绕过
-          // DEFER）。snapshot 缺失（legacy/交互式）回落本地探测+meet。
-          hasVision: capSnap
-            ? capSnap.vision.verdict
-            : mmProbe.supported && resolveCurrentVisualForHarness(projectRoot, feature),
-          // plan ab072691 t2③：评审轴只从**冻结快照**取（vision_mode 由 spec 期 preflight
-          // 派生一次、run 内不可变）。旧快照/无快照无该键 → undefined → clamp 回落
-          // hasVision，行为与本改动前逐字一致。消费面绝不自行重探 provider。
-          ...(capSnap?.vision_mode
-            ? { reviewVision: reviewVisionForMode(capSnap.vision_mode) }
-            : {}),
-          ocrAvailable: capSnap
-            ? capSnap.ocr.verdict
-            : resolveOcrAvailableForRun(projectRoot, resolvedProfile.profileDir, fwConfig.agent_adapter),
-        });
-      })();
+  const fidelityFields = resolveHarnessFidelityContextFields({
+    projectRoot,
+    frameworkRoot: resolvedFrameworkRoot,
+    feature,
+    adapter: fwConfig.agent_adapter,
+    profileDir: resolvedProfile.profileDir,
+    phaseIsGlobal,
+  });
   const context: CheckContext = {
     phase,
     feature,
@@ -793,18 +844,7 @@ async function main(): Promise<void> {
     skipVisualHandoff: Boolean(args['skip-visual-handoff']),
     skipUiSpec: Boolean(args['skip-ui-spec']),
     skipVisualParity: Boolean(args['skip-visual-parity']),
-    fidelityTarget: fidelityCtx.fidelityTarget,
-    declaredFidelityTarget: fidelityCtx.declaredFidelityTarget,
-    fidelityClamped: fidelityCtx.fidelityClamped,
-    fidelityClampReason: fidelityCtx.fidelityClampReason,
-    // plan f6b2d9a4：严格度轴（SSOT 缺失=best_effort 缺省）——裁决类谓词 isHardPixelContract 消费
-    acceptanceStrictness: intentSsot?.acceptance_strictness ?? 'best_effort',
-    assetAcquisitionMode: fidelityCtx.assetAcquisitionMode,
-    effectiveAssetAcquisitionMode: fidelityCtx.effectiveAssetAcquisitionMode,
-    fidelityDeferrals: fidelityCtx.fidelityDeferrals,
-    // post-impl3 P0-3：能力单源——快照判盲时 blind 门禁与 fidelity 同步转盲
-    adapterMultimodal: capSnap ? capSnap.vision.verdict : mmProbe.supported,
-    adapterImageInput: deriveEffectiveAdapterImageInput(capSnap ? capSnap.vision.verdict : null, mmProbe.imageInput),
+    ...fidelityFields,
     frameworkRoot: resolvedFrameworkRoot,
     frameworkRel,
     harnessRoot,
@@ -1261,11 +1301,7 @@ function resolveAxisApplicability(
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const shared = require('./scripts/utils/ui-spec-shared') as typeof import('./scripts/utils/ui-spec-shared');
-    const specPath = featureFilePath(projectRoot, feature, path.join('spec', 'spec.md'));
-    if (fs.existsSync(specPath)) {
-      const uiChange = shared.parseUiChangeFromSpecMarkdown(fs.readFileSync(specPath, 'utf-8'));
-      visualApplicable = Boolean(uiChange && shared.UI_CHANGE_REQUIRES_UI_SPEC.has(uiChange));
-    }
+    visualApplicable = resolveUiRelevanceForRun(projectRoot, feature, null);
     if (visualApplicable) {
       const uiDoc = shared.loadUiSpecFile(shared.uiSpecAbsPath(projectRoot, feature));
       const assets = (uiDoc as { assets?: unknown[] } | null)?.assets;
@@ -1377,7 +1413,7 @@ function resolveAssetAxisInheritance(
     }
     // 指纹链 3（build fingerprint，三轮 review P1-5 fail-closed）：7.2b 落地前 build 链
     // 不可证——**不允许部分 provenance 的 PASS 继承**（spec 要求五链全一致），恒并入缺证
-    // 原因 → 继承保持 STALE/needs_human；build 身份钩子（hylyre 实机采集）接入后解除。
+    // 原因 → 继承保持 STALE/needs_fix；build 身份钩子（hylyre 实机采集）接入后解除。
     issues.push('build fingerprint 链未接入（tasks 7.2b pending）——五链不齐，asset 轴不继承');
     return {
       upstreamPhase: 'coding',
@@ -1410,39 +1446,6 @@ function applyVisualDebtPipeline(
     let debtDoc = annotateAssetTriState(deriveVisualDebt(report.feature, report.checks, prev), report.checks);
     if (debtDoc.entries.length === 0 && !prev) return; // 无债务面（非 UI/全绿且无历史）不落空文件
 
-    // 人工验收消费：payload（visual-acceptance.json）+ 信任链 receipt（.receipt.json 绑 payload 字节哈希）
-    const accDir = path.join(featureDir(projectRoot, report.feature), 'device-testing');
-    const payloadPath = path.join(accDir, 'visual-acceptance.json');
-    const receiptPath = path.join(accDir, 'visual-acceptance.receipt.json');
-    if (fs.existsSync(payloadPath) && fs.existsSync(receiptPath)) {
-      try {
-        const payload = JSON.parse(fs.readFileSync(payloadPath, 'utf-8')) as VisualAcceptancePayload;
-        const objectHash = crypto.createHash('sha256').update(fs.readFileSync(payloadPath)).digest('hex');
-        const trust = validateConfirmationReceiptFile(receiptPath, defaultTrustRegistryPath(projectRoot), {
-          action: 'human_visual_acceptance',
-          feature: report.feature,
-          object_hash: objectHash,
-        });
-        const policyErrors = validateRubricPolicy(payload);
-        if (trust.valid && policyErrors.length === 0) {
-          const applied = applyVisualAcceptance(
-            debtDoc,
-            payload,
-            path.relative(projectRoot, receiptPath).replace(/\\/g, '/'),
-          );
-          debtDoc = applied.doc;
-          if (applied.rejected.length > 0) {
-            console.warn(`   ⚠ [visual-debt] 验收 receipt 试图清偿确定性 FAIL，已拒绝：\n${applied.rejected.map(r => `     - ${r}`).join('\n')}`);
-          }
-        } else {
-          console.warn(
-            `   ⚠ [visual-debt] 人工验收无效（不予清偿）：${[...trust.reasons ?? [], ...policyErrors].slice(0, 4).join('；')}`,
-          );
-        }
-      } catch (e) {
-        console.warn(`   ⚠ [visual-debt] 验收消费异常（不予清偿）：${(e as Error).message}`);
-      }
-    }
     writeVisualDebt(projectRoot, debtDoc);
 
     const { open } = countBlockingDebt(debtDoc);
@@ -1451,8 +1454,8 @@ function applyVisualDebtPipeline(
       lattice.quality_axes.visual = {
         ...visual,
         verdict: 'UNVERIFIED',
-        blocking_class: 'needs_human',
-        resolution: { class: 'needs_human', owner: 'human', retry_phase: null },
+        blocking_class: 'needs_fix',
+        resolution: { class: 'needs_fix', owner: 'agent', retry_phase: 'testing' },
       };
     }
     // 债务影响 release/completion 投影（advance 投影不含 visual UNVERIFIED，等价性不破）
@@ -1505,28 +1508,6 @@ function readFeatureDocOrNull(
 ): string | null {
   const resolved = resolveFeatureArtifact(projectRoot, feature, docName);
   return resolved.exists ? readTextOrNull(resolved.actualPath) : null;
-}
-
-/** 与 check-review conditional_pass_closure 同款校验：receipt 绑定当前报告 hash 才有效。 */
-function isConditionalReviewReceiptValid(
-  projectRoot: string,
-  feature: string,
-): boolean {
-  try {
-    const report = readFeatureDocOrNull(projectRoot, feature, 'review-report.md');
-    if (!report) return false;
-    const reportSha = crypto.createHash('sha256').update(report, 'utf-8').digest('hex');
-    const receiptPath = featureFilePath(
-      projectRoot, feature, path.join('review', 'conditional-authorization.receipt.json'),
-    );
-    return validateConfirmationReceiptFile(
-      receiptPath,
-      defaultTrustRegistryPath(projectRoot),
-      { action: 'conditional_review_authorization', feature, object_hash: reportSha },
-    ).valid;
-  } catch {
-    return false;
-  }
 }
 
 /** c7e4a2d9：测试入口导出（runner 集成测试经桩调用真实 writer 落盘，禁止手搓 summary）。 */
@@ -1592,7 +1573,7 @@ export function writeRunSummaryBase(
   const { has_blocked: hasBlocked, pre_projection_verdict: pre, projected_verdict: post } = lattice;
   // S7（visual-capability-truth P2-J.2）：testing 期 asset 轴带 provenance 继承——
   // 上游（coding）asset PASS 只有在源码/资产指纹链未漂移时才可继承为证据引用；
-  // 任一漂移 → STALE（needs_human），不复制裸 PASS。应用后重投影。
+  // 任一漂移 → STALE（needs_fix），不复制裸 PASS。应用后重投影。
   if (report.phase === 'testing') {
     const inh = resolveAssetAxisInheritance(projectRoot, report.feature);
     if (inh) {
@@ -1602,7 +1583,7 @@ export function writeRunSummaryBase(
     }
   }
   // blind-visual-hardening d5：视觉债务 SSOT 派生（harness 派生非 agent 自报）+ 人工验收
-  // receipt 消费（只清 needs_human；needs_fix 拒绝）+ 未清偿债务 → visual 轴 UNVERIFIED
+  // legacy receipt 不参与；未清偿债务 → visual 轴 UNVERIFIED/needs_fix
   //（advance 不受影响——visual 非推进阻断轴，等价性保持；release 由此 BLOCKED）。
   applyVisualDebtPipeline(projectRoot, report, lattice);
   // S7 二轮 P1-6：asset 域债务 revision 落盘（继承指纹链 2 的上游锚点——testing 期
@@ -1689,8 +1670,8 @@ export function writeRunSummaryBase(
   // 其指纹投影）。信任闸（c7e4a2d9 收窄）：report_validity 只抑制**依赖报告自由文本**
   // 的 review 候选；机器 check / verifier 合取候选（含 p0_coverage_integrity FAIL+
   // code_regression）不得因产品负面结论被整体清空（负面结论恰是回修候选最需要存活的
-  // 时刻）。review 侧另叠 verifier 逐条 confirmed + conditional receipt 抑制
-  // （组装函数内部把关）。agent 自跑轮 verifier.report.md 可能尚未存在 → 零 candidate
+  // 时刻）。review 侧另叠 verifier 逐条 confirmed；人工授权不再抑制 candidate。
+  // agent 自跑轮 verifier.report.md 可能尚未存在 → 零 candidate
   // （gate 轮自然出现）。
   try {
     // 生产接线走**共享实现** buildSummaryRepairCandidates（测试调同一函数——
@@ -1704,10 +1685,6 @@ export function writeRunSummaryBase(
           ? readFeatureDocOrNull(projectRoot, report.feature, 'review-report.md')
           : null,
       verifierReportText: readTextOrNull(path.join(dir, 'verifier.report.md')),
-      conditionalReceiptValid:
-        report.phase === 'review'
-          ? isConditionalReviewReceiptValid(projectRoot, report.feature)
-          : false,
       parseClassificationFromDetails: extractFailureClassification,
     });
     if (repairCandidates.length > 0) summary.repair_candidates = repairCandidates;

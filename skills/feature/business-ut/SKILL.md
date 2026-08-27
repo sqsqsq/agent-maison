@@ -1,6 +1,6 @@
 # 业务级 UT Skill (`business-ut` · v2.1)
 
-> **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `ut.plan_confirm` / `ut.mock_plan` / `ut.src_mutation` / `ut.dag_confirm` / `ut.ok_to_testing` / `phase.next_step`。
+> **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `ut.plan_confirm` / `ut.mock_plan` / `ut.dag_confirm` / `ut.ok_to_testing` / `phase.next_step`。这些交互用于普通输入/导航，不得降低质量门禁。
 
 ## 前置
 
@@ -22,6 +22,8 @@
 ## 概述
 
 资深宿主侧业务级 UT 工程师：作为**既有代码的消费者**，读懂业务编排源码（coding 自选形态）与 data 层源码，产出可通过 harness 出口检查的 UT + DAG。UT 运行框架/编译/执行链路以当前 `project_profile` addendum 与 `ut.compile`/`ut.run` capabilities 为准。流水线**第五环**，上游 plan（`use-cases.yaml`，条件式）/coding/code-review，输出流入 device-testing（消费 `acceptance.yaml > device_focus`）。
+
+**Goal/headless 写边界（BLOCKER）**：只写 profile resolver 给出的 UT 根与本阶段 contract `produces`；不得改需求契约、产品实现源码、review 或 testing 产物。发现可测性缺口须报告并由 runner 回责任阶段；越权字节不获信任，本轮证据作废并自动回 owner 重验，不能用人工确认豁免。
 
 ## 触发条件
 
@@ -105,7 +107,7 @@ cover_existing_code / repair 模式下须同时给显式基线锚 `HARNESS_DIFF_
 ## 流程骨架
 
 1. **Step 1 规划 DAG 与 UT**：先判 Lite Mode（≤7 条 unit/both AC/BD 且全 L0/L1 且无 use-cases.yaml，详见 reference）→ Step 1.0 Research Sub-Phase（Context Facts Gate·C4，rg 签名摘取 ≤300 行，追加 facts.md 的 `## phase_delta: ut` 节，详见 reference）→ 按路径 A（branches×ui_bindings）或路径 B（AC/BD 逐条）列「UT 规划清单」→ **HARD STOP `ut.plan_confirm`**：`1=确认` `2=调整`，未确认禁止写文件。
-2. **Step 1.5 可测性预检**（`ut/testability-audit.md`，详见 reference）：对每条 unit/both AC/BD 给 L0-L3 结论；**L3 必须 STOP** 展示 option_a(降级 device-only)/option_b(源码改造+gap-notes 授权) 由用户选择，全部选完才可继续。
+2. **Step 1.5 可测性预检**（`ut/testability-audit.md`，详见 reference）：对每条 unit/both AC/BD 给 L0-L3 结论；L3 在当前 unit/both 要求不变时产出 coding repair candidate，交由 coding owner 做最小可测性接缝并重走 review→ut。若用户明确改变为 device-only，那是普通 requirement correction，交回 spec owner；两者都不授权 UT 修改源码或降低质量门禁。
 3. **Step 1.6 Test Double Plan**（`ut/mock-plan.yaml`，详见 reference）：`target_class`/`methods` 须对齐 contracts.yaml；策略 spy/mockkit/fake 选型；**HARD STOP `ut.mock_plan`**：`1=确认` `2=调整`。
 4. **Step 2 生成 DAG**：默认 ephemeral 写入 `ut/reports/flow-dag/`（触及 Code Graph core 节点或用户要求才归档 `{module}/test/dag/`）；必填字段与节点类型详见 reference；展示 Mermaid **HARD STOP `ut.dag_confirm`**：`1=确认` `2=修改`。
 5. **Step 3.0 写入路径 Gate**：`<repo-root>` 非 `framework/harness`；上一条 shell 为 `cd framework/harness` 时 Write 前须先 `cd <repo-root>` 或用绝对路径；禁止 Write 到 `framework/harness/` 下宿主源码。
@@ -168,7 +170,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature {feat
 9. P0 优先，再扩展 P1/P2。
 10. DAG/UT description 用中文。
 11. Harness 验证闭环：agent 必须自跑 Step 8 + 主动触发 verifier；`ut_no_src_mutation` 报告历史变更多时优先怀疑 diff 基线过旧，设 `HARNESS_DIFF_BASE_REF=working`，禁止要求用户"批量授权历史变更"。
-12. **【HARD STOP 不可绕过】禁止擅自修改业务源码**：完整流程（动手前 `ut.src_mutation` 请求→用户书面同意→gap-notes.md 登记 `approved_src_mutations[]`→未登记视为违规触发 `ut_no_src_mutation`→禁止的"便利性"借口清单→headless/goal-mode 默认拒绝）见 [business-ut-workflow-detail.md](../../reference/business-ut-workflow-detail.md)。违反会被 code-review 追溯标记为质量事件。
+12. **【HARD STOP 不可绕过】禁止修改业务源码**：UT 发现可测性缺口时只产出 coding repair candidate，由 runner 回 coding 修改并重走 review→ut；用户回复、署名、receipt 或 legacy `approved_src_mutations[]` 均不能把 UT 期间源码变更改判为 PASS。详见 [business-ut-workflow-detail.md](../../reference/business-ut-workflow-detail.md)。
 
 ## 关联文件
 

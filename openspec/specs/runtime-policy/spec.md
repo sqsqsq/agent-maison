@@ -33,11 +33,10 @@ TBD - created by archiving change verification-matrix. Update Purpose after arch
 
 ### Requirement: Anti-cheat red lines are outside the matrix
 
-`framework_integrity`、视觉验真链（build 指纹绑定、asset_crop_validation、signed_by 自签拦截、进程注入自净）、`diff_within_scope`、goal halt-confirm 凭证链 MUST NOT 出现在矩阵求解输出中，MUST 恒开启，其恒开性 MUST 由单测断言。
+`framework_integrity`、视觉验真链（build 指纹绑定、asset_crop_validation、source/bbox/tool/hash 复算、进程注入自净）与 `diff_within_scope` MUST NOT 出现在矩阵求解输出中，MUST 恒开启，其恒开性 MUST 由单测断言。旧 signer/confirmation/halt-confirm 质量凭证链不再是运行时门禁；兼容字段不得降低这些红线。
 
 #### Scenario: balanced 不豁免 diff_within_scope
 - **WHEN** 任意 track × profile 组合运行 coding/exit
 - **THEN** diff_within_scope 照常执行
 
 > **Enforced by:** `harness/scripts/utils/runtime-policy.ts`, `harness/tests/`
-

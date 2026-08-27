@@ -15,13 +15,13 @@ TBD - created by archiving change correction-routing. Update Purpose after archi
 
 ### Requirement: Correction classifies to root layer with machine-computed revalidation
 
-修正 MUST 经 `classifyCorrection` 得 `{root_layer, touched_layers[], revalidate[]}`；revalidate MUST 为"落点层及下游已闭环 phase 的脚本门禁"清单（重验 ≠ 重做——不重新生产上游产物）；receipt 走既有 stale 指纹刷新。修正确认 gate MUST 报 root_layer + touched_layers + 重验集 + 理由（strict 必确认；headless 低置信 halt-confirm）。
+修正 MUST 经 `classifyCorrection` 得 `{root_layer, touched_layers[], revalidate[]}`；revalidate MUST 为"落点层及下游已闭环 phase 的脚本门禁"清单（重验 ≠ 重做——不重新生产上游产物）；旧 closure/evidence 必须按 stale 语义失效并由责任阶段重签。分类后 MUST 自动进入责任阶段，不得设置 `correction.layer` 人签或让用户签名改写质量结论。
 
 #### Scenario: 纯实现修正的重验集
 - **WHEN** 修正三问判定 root_layer=coding 且 feature 的 coding/ut 已闭环
 - **THEN** revalidate 为 coding 与 ut（及依赖它们的已闭环下游）的脚本门禁，spec/plan 不在重验集
 
-> **Enforced by:** `harness/scripts/utils/runtime-policy.ts`, `skills/reference/confirmation-registry.yaml`
+> **Enforced by:** `harness/scripts/utils/correction-routing.ts`, `harness/scripts/utils/correction-commands.ts`
 
 ### Requirement: Correction state persists for self-check
 
@@ -39,7 +39,7 @@ correction 会话 MUST 持久化 `harness/state/.current-correction.json`，字�
 
 ### Requirement: No-feature corrections run via adhoc entry
 
-无 feature 归属的修正 MUST 经 `--adhoc-correction` 专用入口执行验证，MUST NOT 为此创建临时 feature 目录。契约：输入 MUST 为含 `base_commit` 的 correction state（缺失/stale → exit 非零）；changed-files MUST 取 `git diff --name-only <base_commit>` ∪ 工作区未提交变更，触及模块经 catalog 反查记录回 state；必跑检查 MUST 含 profile `coding.compile`、`coding.lint`、架构规则（层依赖/跨模块出口）与受保护前缀（no-feature 下以此替代 `diff_within_scope`，越界防护不豁免）；报告 MUST 落 `framework/harness/reports/_adhoc/<timestamp>/` 并逐项列 revalidate 结果；revalidate 含 testing 时 evidence MUST 为 device 即席报告或 `manual_confirm` 记录，缺能力走验证转嫁禁令。
+无 feature 归属的修正 MUST 经 `--adhoc-correction` 专用入口执行验证，MUST NOT 为此创建临时 feature 目录。契约：输入 MUST 为含 `base_commit` 的 correction state（缺失/stale → exit 非零）；changed-files MUST 取 `git diff --name-only <base_commit>` ∪ 工作区未提交变更，触及模块经 catalog 反查记录回 state；必跑检查 MUST 含 profile `coding.compile`、`coding.lint`、架构规则（层依赖/跨模块出口）与受保护前缀（no-feature 下以此替代 `diff_within_scope`，越界防护不豁免）；报告 MUST 落 `framework/harness/reports/_adhoc/<timestamp>/` 并逐项列 revalidate 结果；revalidate 含 testing 时必须有可验证 device evidence，缺能力走 capability-missing/deferred，人工确认不能替代。
 
 #### Scenario: 散修不造假目录
 - **WHEN** no-feature correction 完成实施并自检
@@ -67,11 +67,11 @@ correction 会话 MUST 持久化 `harness/state/.current-correction.json`，字�
 
 ### Requirement: Verification hand-off is an evidence gap
 
-revalidate 指向 testing 而宿主缺真机/hylyre 能力、或 feature 无 device 层验收可派生时，agent MUST 显式声明 evidence 缺口并 halt-confirm（列出需要人工验证的具体清单）；"请在真机上试一下"类表述 MUST NOT 作为正常完成收尾。goal-runner MUST 为此记专用 halt 分类，不计入 no_progress。
+revalidate 指向 testing 而宿主缺真机/hylyre 能力、或 feature 无 device 层验收可派生时，agent MUST 显式声明 evidence 缺口并投影 capability-missing/deferred（列出缺失能力和待验证清单）；"请在真机上试一下"类表述或人工确认 MUST NOT 作为正常完成收尾。
 
 #### Scenario: 缺真机能力时的收尾
 - **WHEN** 修正的重验集含 testing 而宿主无设备能力
-- **THEN** 输出"需要人工验证：<清单>"并停在待确认态，而非宣布修复完成
+- **THEN** 输出 capability/evidence 缺口清单并进入 `DEFERRED_CAPABILITY_MISSING`，而非宣布修复完成或等待人签
 
 > **Enforced by:** `harness/scripts/goal-runner.ts`, `templates/AGENTS.md.template`
 
@@ -80,7 +80,7 @@ revalidate 指向 testing 而宿主缺真机/hylyre 能力、或 feature 无 dev
 （C5-full）回合收尾对账 MUST 只拦"未声明的 touched layer"：声明仅 spec/plan 却出现 code diff MUST 拦；声明含 coding 的组合修正 MUST 放行但 MUST 重验 coding 及下游。correction 状态 MUST 并入 evidence_policy_snapshot 机制。
 
 #### Scenario: 组合修正合法
-- **WHEN** 确认 gate 声明 touched_layers=[spec, coding] 且实施中同轮改了 spec 与代码
+- **WHEN** correction 分类声明 touched_layers=[spec, coding] 且实施中同轮改了 spec 与代码
 - **THEN** 对账放行，revalidate 含 coding 及下游门禁
 
 #### Scenario: 假申报被拦
@@ -88,4 +88,3 @@ revalidate 指向 testing 而宿主缺真机/hylyre 能力、或 feature 无 dev
 - **THEN** 对账 FAIL（按 enforcement 档拦截或报缺项）
 
 > **Enforced by:** `harness/harness-runner.ts`, `agents/claude/templates/hooks/check-phase-completion.mjs`（hard_hook 档）
-

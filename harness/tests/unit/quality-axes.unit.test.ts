@@ -123,7 +123,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
-    name: '盲档形状：visual applicable 但视觉检查全 SKIP → visual UNVERIFIED(needs_human)；advance PASS（不挡推进）；release BLOCKED；VISUAL_PENDING 标签',
+    name: '视觉检查全 SKIP → visual UNVERIFIED(needs_fix)；advance 仍由 phase matrix 投影；release BLOCKED',
     run: () => {
       const checks = [
         chk({ id: 'coding_compile' }),
@@ -132,7 +132,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       ];
       const l = deriveSummaryVerdictLattice(checks, { ...UI_OPTS, assetApplicable: false });
       assertEq(l.quality_axes.visual.verdict, 'UNVERIFIED', 'visual UNVERIFIED');
-      assertEq(l.quality_axes.visual.resolution?.class, 'needs_human', 'needs_human');
+      assertEq(l.quality_axes.visual.resolution?.class, 'needs_fix', 'needs_fix');
       assertEq(l.projected_verdict, 'PASS', 'advance 不受 visual UNVERIFIED 阻断');
       assertEq(l.release_readiness, 'BLOCKED', 'release BLOCKED');
       assertEq(l.completion_status, 'FUNCTIONALLY_COMPLETE_VISUAL_PENDING', '标签');
@@ -220,7 +220,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     }),
   },
   {
-    name: 'completion 消费面：1.2 + visual UNVERIFIED(needs_human) → quality_axis_verified(needs_human) 封顶求人',
+    name: 'completion 消费面：legacy visual UNVERIFIED(needs_human) 重投影 needs_fix，不求人签',
     run: async () => withTmpProject(async root => {
       const p = path.join(receiptDirPath(root, 'demo', 'testing'), 'reports', 'summary.json');
       fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -249,7 +249,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       const issues = collectCleanPassIssues({ projectRoot: root, feature: 'demo', chain: ['testing'] });
       const hit = issues.find(i => i.condition === 'quality_axis_verified');
       assertTrue(hit !== undefined, '应有 quality_axis_verified 违例');
-      assertEq(hit!.kind, 'needs_human', 'needs_human（封顶 AWAITING_HUMAN_REVIEW，非 FAIL）');
+      assertEq(hit!.kind, 'needs_fix', 'legacy needs_human 必须重投影为机器重验');
     }),
   },
   {
@@ -276,7 +276,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       const asset1 = (a1 as { asset: { verdict: string; source_checks: string[] } }).asset;
       assertEq(asset1.verdict, 'PASS', '一致继承 PASS');
       assertTrue(asset1.source_checks[0].startsWith('inherited:coding:'), '证据引用形态');
-      // 漂移 → STALE needs_human（不复制 PASS）
+      // 漂移 → STALE needs_fix（不复制 PASS）
       const a2 = mkAxes() as never;
       applyAssetAxisInheritance(a2, {
         upstreamPhase: 'coding', upstreamVerdict: 'PASS', provenanceIntact: false,
@@ -284,7 +284,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       });
       const asset2 = (a2 as { asset: { verdict: string; blocking_class: string | null } }).asset;
       assertEq(asset2.verdict, 'STALE', '漂移必须 STALE');
-      assertEq(asset2.blocking_class, 'needs_human', 'STALE needs_human');
+      assertEq(asset2.blocking_class, 'needs_fix', 'STALE needs_fix');
       // 本阶段已有 asset 检查（source_checks 非空）→ 不接管
       const a3 = mkAxes({ source_checks: ['asset_materialization_sanity'], verdict: 'FAIL', blocking_class: 'needs_fix', resolution: { class: 'needs_fix', owner: 'agent', retry_phase: 'testing' } }) as never;
       applyAssetAxisInheritance(a3, {

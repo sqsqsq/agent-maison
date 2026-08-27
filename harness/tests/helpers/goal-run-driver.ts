@@ -202,9 +202,19 @@ export function provisionHmosGoalFixture(root: string, feature: string): void {
   w(root, 'doc/glossary.yaml', 'schema_version: "1.0"\nterms: []\n');
   w(root, `doc/features/${feature}/spec/spec.md`, '# spec\n');
   w(root, `doc/features/${feature}/acceptance.yaml`, `feature: ${feature}\ncriteria: []\n`);
-  w(root, `doc/features/${feature}/plan/plan.md`, '# plan\n');
+  w(root, `doc/features/${feature}/plan/plan.md`, [
+    '# plan',
+    '## Scope 声明与继承',
+    '```yaml',
+    'in_scope_modules:',
+    '  - FinancialCard',
+    'out_of_scope_modules: []',
+    'rationale: goal driver fixture',
+    '```',
+    '',
+  ].join('\n'));
   w(root, `doc/features/${feature}/contracts.yaml`,
-    `feature: ${feature}\nfiles:\n  - ${productFile}\n`);
+    `feature: ${feature}\nmodules:\n  - name: FinancialCard\n    package_path: 02-Feature/FinancialCard\nfiles:\n  - ${productFile}\n`);
 }
 
 /**

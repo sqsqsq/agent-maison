@@ -43,8 +43,8 @@
 3. **组件 taxonomy**：7 类控件（input/action_button/overlay_panel/navigation_frame/content_display/list_selection/logic_condition）。
 4. **token 表**：品牌色/间距/字号；色值优先半确定性采样（`source_bbox` 须取目标元素精确区域，勿给整屏/大区）。
 5. **资产清单**：logo/图标 → `acquisition`+`resolved_path` 或显式 `placeholder`；`pixel_1to1` 时联动产出 `spec/asset-manifest.yaml`。
-6. **保真档位**：识别强 1:1 信号（"完全参考/严格按图/像素级/1比1/逐像素/100%还原/照着图做"）→ 置 `fidelity_target: pixel_1to1`；有截图+"完全参考"类措辞却用 `semantic_layout` = **禁止的降级**。`pixel_1to1` defer 须 `fidelity_deferrals` + **真人签字**（`signed_by: goal-mode-auto` 等自签不算）。
-7. **DSL↔原图 gate**：人工逐屏 `[x]` → `verified: human_confirmed`；无 VL → `verified: unverified`（下游降级）。headless/goal-mode 按 §9 自动标记留痕，未签字 defer → BLOCKER。
+6. **保真档位**：识别强 1:1 信号（"完全参考/严格按图/像素级/1比1/逐像素/100%还原/照着图做"）→ 置 `fidelity_target: pixel_1to1`；有截图+"完全参考"类措辞却用 `semantic_layout` = **禁止的降级**。`pixel_1to1` defer 是未满足的 strict 义务，任何 `human_signed`/`signed_by` legacy 字段都不能放行。
+7. **DSL↔原图 gate**：只有当前 hash-bound `vl_multimodal` 机器证据链可写 `verified: verified`；无可靠 VL → `verified: unverified`（下游降级或 required capability defer）。legacy `human_confirmed` / `human_gate` 仅兼容读取并按 `unverified` 投影，不能放行。
 
 **模型档位（K2，v2.5+ 按能力分档）**：goal-runner 会在 phase prompt 里注入「Visual capability
 advisory」块，声明本次 agent 是否具备视觉能力（`Vision: YES/NO`）。**有视觉能力（YES）**：本
@@ -63,17 +63,17 @@ OCR JSON 为文案/位置 ground truth，结构由需求文字推断，图标走
 
 ### Step 2.1 资产落地（裁剪验真，pixel_1to1 核心红线）
 
-对每个 `assets[]` 按 `acquisition` 产出 `resolved_path`：`crop` 从原图裁 logo（关键资产须 `human_crop_confirmed`）；缺则 `placeholder: true`+`rationale`。
+对每个 `assets[]` 按 `acquisition` 产出 `resolved_path`：`crop` 按冻结的 `source_ref/source_bbox` 从原图确定性裁切；缺则 `placeholder: true`+`rationale`。
 
-**自然语言授权识别**：用户说"资源可以从原始图片/截图/素材图中裁剪获取"等即视为授权 Maison 走截图裁剪路径；agent 须翻译为 `acquisition: crop`、精确 `source_ref/source_bbox`、确定性 `resolved_path`，记录 `human_crop_confirmed: true`+`crop_confirmed_by: user_requirement`。
+**裁剪输入冻结**：需求允许使用原始图片/截图/素材图时，agent 须翻译为 `acquisition: crop`、精确 `source_ref/source_bbox` 与确定性 `resolved_path`；runner 记录源 hash、算法/工具、参数和输出 hash。旧 `human_crop_confirmed`/`crop_confirmed_by` 仅兼容读取，不构成授权或质量证明。
 
-**授权 ≠ 逐框验真**（历史事故命门）：`user_requirement` 只是"允许走截图裁剪路径"的总体授权，**绝不等于**"这 N 个 bbox 都框对了"的逐框确认——把一句总体授权当逐框免检金牌曾导致废图全数放行。产物验真由独立门禁 `asset_crop_validation` 把关，授权恒不豁免验真。
+**输入声明 ≠ 逐框验真**（历史事故命门）：需求允许使用素材只说明来源可用，**绝不等于**“这 N 个 bbox 都框对了”。产物必须由独立门禁 `asset_crop_validation` 按当前源与冻结算法重裁并比较 hash；文字声明恒不豁免验真。
 
-**goal 模式裁剪**：缺用户授权或 bbox 不确定 → goal-runner 暂停求人确认/微调 bbox，确认后置 `human_crop_confirmed`（headless 须连同 `crop_confirmed_by` 真人来源）自动裁剪；headless 无真人确认即 BLOCKER（自报不算）。用户也可在需求入口前置给 bbox/素材目录免 mid-run halt。
+**goal 模式裁剪**：bbox 已冻结且源可读时由 runner 自动裁剪并机器复验；bbox 不确定是 spec 缺口，回 spec 修复，工具/素材不可用则投影 capability/external dependency。不得暂停等待人签来改变质量结论。用户可在需求入口提供 bbox/素材目录，作为普通输入进入下一轮重验。
 
 **下游物化契约**：`resolved_path` 是 coding 阶段把真裁图物化进模块 `resources/base/media/` 的唯一来源；coding 须从此路径复制真图，不得另造占位；门禁 `visual_parity_asset_materialized` 校验模块 media 为真图。
 
-**裁后验真（必做）**：裁剪完成后对每张 crop 产物做 VL 独立辨认——**新开隔离会话，只给 crop 图**（不给 ui-spec/上下文）问"这张图是什么元素"，辨认结果与用途比对，落 `spec/reports/asset-crop-vl.yaml`（`entries[].key/identified_as/match/by`）；**不许由裁图的同一上下文自己宣布"裁对了"**（自报无效）。门禁 `asset_crop_validation` 先跑确定性 sanity（条状/纯色/空白/长宽比一票否决），过了还须 VL match 或真人 `bbox_verified_by`（对照 `asset-contact-sheet-*.png`）才判 verified；未 verified 的 crop 在 coding 被 `visual_parity_unverified_crop` 拦下不得物化。VL 不可用/断流 ≠ 放行——headless 走 halt-confirm 求人。
+**裁后验真（必做）**：门禁 `asset_crop_validation` 对每张 crop 先跑确定性 sanity（条状/纯色/空白/长宽比一票否决），再按当前 `source_ref/source_bbox` 与 framework 裁剪算法重裁并比较输出 hash；可用 VL 仅作为额外机器语义证据。未 verified 的 crop 在 coding 被 `visual_parity_unverified_crop` 拦下不得物化。VL 不可用/断流、旧 `bbox_verified_by` 或人工文字均不放行；required 能力缺失按 capability 语义处理。
 
 ## Step 6：提取 acceptance.yaml 字段表
 

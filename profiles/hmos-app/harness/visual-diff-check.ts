@@ -35,7 +35,7 @@ import { checkRenderVisibilityCalibrate } from './render-visibility';
 import { checkRuntimeMountConformance } from './runtime-mount-conformance';
 import { checkVisualFeedback } from './visual-feedback';
 import { EDGE_TILE_ROWS, EDGE_TILE_COLS, EDGE_SENTINEL_MIN_UNCOVERED } from './image-toolkit';
-import { isHardPixelContract, fidelityRatchetFailOrWarn, isHumanVerified } from '../../../harness/scripts/utils/fidelity-shared';
+import { isHardPixelContract, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
 import { loadRefElementsFile, refElementsAbsPath } from '../../../harness/scripts/utils/fidelity-shared';
 import { collectLayoutOracleForScreen, loadLayoutDumpFile, LOCATOR_COVERAGE_THRESHOLD, type LayoutFinding } from './layout-oracle-check';
 import {
@@ -178,6 +178,7 @@ export interface VisualDiffDefect {
 export interface RegionAttestEntry {
   region: string;
   verdict: 'no_diff' | 'diff_logged';
+  /** `human` is accepted only to parse legacy reports and has zero gate weight. */
   method: 'paired_crop_compare' | 'vl_screening' | 'human';
   /** method=paired_crop_compare 时必填：_attest/ 并排 crop 相对路径（harness 验存在性） */
   evidence?: string;
@@ -190,6 +191,10 @@ export interface RegionAttestEntry {
   /** rev8（paired 必填）：crop 来源区域，归一化 [x,y,w,h]（绑定"这个区域"） */
   source_bbox?: number[];
   by?: string;
+}
+
+function machineRegionAttest(screen: VisualDiffScreenEntry): RegionAttestEntry[] {
+  return (screen.region_attest ?? []).filter((entry) => entry.method !== 'human');
 }
 
 /** t7：critic 调用回执（device-testing/reports/critic-receipt.json） */
@@ -239,7 +244,7 @@ export interface VisualDiffScreenEntry {
   reported_geometric_iou?: number;
   /**
    * t4③：评估新鲜度失效标记——与采集新鲜度解耦。true=该屏评估产物（reported 分数与
-   * region_attest）须独立重评；不触发设备重采、不重置真人 confirmed_by 的 verdict；未清 → BLOCKER。
+   * region_attest）须独立重评；不触发设备重采。legacy confirmed_by 不参与结论；未清 → BLOCKER。
    */
   evaluation_invalidated?: boolean;
   /** t5（1.1）：pixel_1to1 P0 pass 屏 defects=[] 时必填的逐区域举证 */
@@ -273,7 +278,7 @@ export interface VisualDiffScreenEntry {
    * run 一致（防第二个 run 复用第一个 run 的截图）。普通模式不参与跳采判定。
    */
   captured_in_run?: string;
-  /** T2：真人确认者署名（pixel_1to1 P0 pass 屏须真人过目确认；goal-mode-auto 等自签不算） */
+  /** Legacy-only signer provenance; parsed for compatibility but ignored by current gates. */
   confirmed_by?: string;
   /** 反向 diff：参考图有、实现无的元素 id 清单 */
   reverse_missing?: string[];
@@ -341,30 +346,6 @@ export function isStaleVisualDiffVerdict(
     if (!fp || fp !== currentFp) return true;
   }
   return false;
-}
-
-/**
- * P0-10c（plan b6d3e9a2）：逐屏"可交由真人确认"资格谓词——checkVisualDiff 的 await 收窄判定
- * 与 visual-confirm CLI 的"待确认屏"筛选**同源**（防 CLI 宽筛把 stale/带 must_fix/绑定不全的
- * 屏签掉）。资格 = pixel_1to1 语境下该屏 verdict=pass、零 must_fix、指纹与当前构建一致、
- * evaluated hash 齐、非 stale（绑定截图文件未变、指纹一致）。currentBuildFp 不可算 → 一律不合格
- * （下轮无法跳采，签了也会被重采清）。confirmed_by 是否已填不在此判据内（由调用侧按用途叠加）。
- */
-export function isScreenAwaitConfirmEligible(
-  screen: VisualDiffScreenEntry,
-  projectRoot: string,
-  currentBuildFingerprint: string | null | undefined,
-): boolean {
-  const fp = typeof currentBuildFingerprint === 'string' ? currentBuildFingerprint.trim() : '';
-  if (!fp) return false;
-  if (screen.verdict !== 'pass') return false;
-  if ((screen.must_fix?.length ?? 0) !== 0) return false;
-  // t4③：评估已失效的屏不是干净的待签候选——critic 重评清标记后才可交真人
-  if (screen.evaluation_invalidated === true) return false;
-  if (screen.evaluated_build_fingerprint?.trim() !== fp) return false;
-  if (isMissingEvaluatedScreenshotHash(screen)) return false;
-  if (isStaleVisualDiffVerdict(screen, projectRoot, { currentBuildFingerprint: fp })) return false;
-  return true;
 }
 
 function collectAuthoritativeRefIds(specMd: string, uiDoc: ReturnType<typeof loadUiSpecFile>): Set<string> {
@@ -800,11 +781,11 @@ export function defaultClassForSignal(signal: string): VisualDiffDefectClass {
 
 /**
  * t1（rev5）：loop-actionable 视觉残差 hit id 白名单（结构化谓词，非 visual_diff_ 前缀猜测）。
- * 排除（各归各的路径，不入 UI defect fuse）：human_confirm_required（T2 求人）、
+ * 排除（各归各的路径，不入 UI defect fuse）：legacy human_confirm_required、
  * layout_invariants_unstable（capability degradation，t4）、*_degraded/layout_dump_missing
  * （能力降级）、critic_receipt/attest_evidence/**region_attest**（evidence repair——
  * review-fix cursor I-2：纯举证缺口是评审义务不是 UI 缺陷，补 attest 不是 coding 回修，
- * 不得据此熔断）、schema（结构问题）、tamper_artifact（红线，另有人工复核路径）、
+ * 不得据此熔断）、schema（结构问题）、tamper_artifact（完整性红线，另走恢复路径）、
  * edge_sentinel/text_placement_must_fix（advisory）。
  */
 export const LOOP_ACTIONABLE_HIT_IDS: ReadonlySet<string> = new Set([
@@ -893,16 +874,9 @@ export interface VisualDiffStructuredPayload {
     elements: string[];
     bbox?: number[];
   }>;
-  /**
-   * adjudicated-repair-loop M2（plan e2b7c4a9 t2.1）：producer 归类的 uncertain 信号。
-   * 逐条携带信号身份（item_fingerprint，sha256 稳定）、原因与证据引用；经既有
-   * checks[].structured 随 script-report.json 落盘，goal-runner 读 fresh summary +
-   * script-report 时形成 pending 标志 → 停等 repair_adjudication_pending。
-   * **不回写 visual-diff.json**、不进 candidates（uncertain 不是 trusted actionable）。
-   */
+  /** Producer 归类的 uncertain 信号；仅作机器证据不足诊断，不创建人签恢复队列。 */
   uncertain_signals?: Array<{
     item_fingerprint: string;
-    /** 信号所在屏（人签通道恢复绑定键：visual-confirm confirmed_by 按屏签署） */
     screen_id: string;
     /** 稳定候选锚（OCR 混淆=候选文本；整页缺口='whole-page'） */
     target: string;
@@ -964,6 +938,7 @@ interface VisualDiffHit {
   severity: 'BLOCKER' | 'MAJOR';
   status: 'FAIL' | 'WARN';
   line: string;
+  suggestion?: string;
   rank: number;
 }
 
@@ -1019,6 +994,7 @@ function finalizeVisualDiffHits(
     status: top.status,
     details: `${baseDetails}\n${hits.map(h => h.line).join('\n')}`,
     affected_files: [reportRel],
+    ...(top.suggestion ? { suggestion: top.suggestion } : {}),
   };
 }
 
@@ -1062,9 +1038,9 @@ export function checkVisualDiffDeterministicOnly(ctx: CheckContext): CheckResult
       details:
         `检出视觉判定改判脚本物证（程序化伪造/销毁 visual-diff.json 判定，属证据篡改）：` +
         tamperArtifacts.map(a => `${a.file}［${a.signatures.join('、')}］`).join('; ') +
-        `——判定只能由 capture/真人逐屏产生；删除脚本并还原判定后重跑，行为已违反框架红线（须人工复核）。`,
+        `——判定只能由 capture/当前机器证据产生；删除脚本、作废旧信任并由 owner 阶段重跑全量验证。`,
       affected_files: [reportRel],
-      suggestion: '删除改判脚本并还原真实判定后重跑；该行为须人工复核。',
+      suggestion: '删除改判脚本，作废旧证据与 closure，回到 owner 阶段重跑全量机器验证。',
     });
   }
 
@@ -1423,7 +1399,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       line:
         `检出视觉判定改判脚本物证（程序化伪造/销毁 visual-diff.json 判定，属证据篡改）：` +
         tamperArtifacts.map(a => `${a.file}［${a.signatures.join('、')}］`).join('; ') +
-        `——判定只能由 capture/真人逐屏产生；删除脚本并还原判定后重跑，行为已违反框架红线（须人工复核）。`,
+        `——判定只能由 capture/当前机器证据产生；删除脚本、作废旧信任并由 owner 阶段重跑全量验证。`,
     });
   }
 
@@ -1493,7 +1469,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
               : '',
           ].filter(Boolean).join('；') +
           `——处置：命中屏写 evaluation_invalidated:true，由独立 critic 逐屏重评（重填 reported_*/region_attest）后清标记；` +
-          `真人 confirmed_by 的 pass 表态不作废、不触发设备重采（评估/采集双新鲜度解耦）`,
+          `设备截图无需因此重采（评估/采集双新鲜度解耦；legacy confirmed_by 无质量权威）`,
       });
     }
     if (grazing.length > 0) {
@@ -1508,7 +1484,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     }
   }
 
-  // t4③：evaluation_invalidated 未清 → 阻断（评估新鲜度失效；不触发重采、不作废真人签字）。
+  // t4③：evaluation_invalidated 未清 → 阻断（评估新鲜度失效；不触发重采）。
   // v23.5（review 第 14 轮）：**档位无关 FAIL**——OpenSpec visual-diff 规格明文
   // "While present, the gate SHALL FAIL until a fresh evaluation clears the flag"（无档位
   // 条件）；旧实现 best_effort 只 WARN，与 runner 侧 unverified 通路也不一致（runner 已
@@ -1523,8 +1499,8 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       status: invalidatedStatus,
       line:
         `评估已失效待重判（evaluation_invalidated=true）：${invalidatedScreens.map(s => s.screen_id).join(', ')}` +
-        `——独立 critic 重评（重填 reported_*/region_attest）后移除该标记；真人已签屏保留 verdict/confirmed_by，` +
-        `未签屏须整体重判；本标记不触发设备重采（P0-9a 采集持久化不受影响）`,
+        `——独立 critic 重评（重填 reported_*/region_attest）后移除该标记；所有屏均按当前机器证据重判，` +
+        `legacy confirmed_by 不提供豁免；本标记不触发设备重采（P0-9a 采集持久化不受影响）`,
     });
   }
 
@@ -1704,7 +1680,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
         status: ratchet.status,
         line:
           `【弃判】以下屏有确定性 FAIL 信号却 verdict=pending——headless 下必须判 fail 并把信号转 must_fix 后修码重测，` +
-          `不得以"无人值守不可闭环"弃判（真人确认只在 pass 候选时需要）：` +
+          `不得以"无人值守不可闭环"弃判；pass 候选同样只能由当前机器证据闭合：` +
           abandonment
             .map(a => `${a.screen_id}: ${a.lines.slice(0, 4).join('；')}${a.lines.length > 4 ? '…' : ''}`)
             .join(' | '),
@@ -1724,30 +1700,6 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     }
   }
 
-  // T2（主背靠）：pixel_1to1 P0 屏判 pass 须真人过目确认（confirmed_by 非空且非自动化身份）。
-  // 两次实测证伪了像素/文本-位置度量（忠实屏误报）——图标/颜色/样式类假 PASS 不可约地需 VL/人判，
-  // 故 pixel_1to1 最严档下 P0 pass 屏不得仅凭 VL 自报闭环。headless 缺确认 → BLOCKER（goal-runner 据此 HALT 求人）；
-  // 交互态 → BLOCKER（agent 当场 stop-and-ask 用户确认、置 confirmed_by 后重判）。goal-mode-auto 等自签不算。
-  // P0-6：user_requirement 亦不算——它是需求级授权哨兵，不能替代对具体屏的真人过目
-  // （2026-07-05 实锤：agent 以它伪签 T2 并在自跑 harness 中通关过一次）。
-  if (pixel1to1) {
-    const p0Set = new Set(p0Ids);
-    const unconfirmed = passScreens.filter(s => p0Set.has(s.screen_id) && !isHumanVerified(s.confirmed_by));
-    if (unconfirmed.length > 0) {
-      const ratchet = fidelityRatchetFailOrWarn(ctx, false);
-      pushVisualDiffHit(hits, {
-        id: 'visual_diff_human_confirm_required',
-        severity: ratchet.severity,
-        status: ratchet.status,
-        line:
-          `pixel_1to1 P0 屏判 pass 须真人确认（confirmed_by 非自动化身份且非 user_requirement——` +
-          `后者属需求级授权，不能替代对具体屏的真人过目）——客观度量无法判图标/颜色/样式，须人兜底：` +
-          unconfirmed.map(s => `${s.screen_id}${s.confirmed_by ? `(confirmed_by=${s.confirmed_by} 属自动化/授权哨兵，无效)` : '(缺 confirmed_by)'}`).join(', ') +
-          `；headless 走 HALT 求人，交互态当场确认后置 confirmed_by 重判。`,
-      });
-    }
-  }
-
   // t5：pixel_1to1 P0 pass 屏 defects=[] 须附 region_attest——pass 的举证责任=逐区域对照声明，
   // 不是"没看见问题"（与 D11 缺枚举同级）。rev7（codex/cursor 同点）：非空不够，须**逐区域覆盖**
   // ——一条任意 {region:"root"} 不能替代全部 must_have_elements；diff_logged 须能关联 defect/must_fix。
@@ -1757,7 +1709,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     const attestP0Pass = passScreens.filter(
       s => p0Set.has(canonicalOverlayBase(s.screen_id)) && Array.isArray(s.defects) && s.defects.length === 0,
     );
-    const bareEmptyDefects = attestP0Pass.filter(s => (s.region_attest?.length ?? 0) === 0);
+    const bareEmptyDefects = attestP0Pass.filter(s => machineRegionAttest(s).length === 0);
     if (bareEmptyDefects.length > 0) {
       const ratchet = fidelityRatchetFailOrWarn(ctx, false);
       pushVisualDiffHit(hits, {
@@ -1773,7 +1725,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     const coverageMisses: string[] = [];
     const orphanDiffLogged: string[] = [];
     for (const s of attestP0Pass) {
-      const attest = s.region_attest ?? [];
+      const attest = machineRegionAttest(s);
       if (attest.length === 0) continue;
       const regions = new Set(attest.map(a => a.region));
       const uiScreen = uiById.get(canonicalOverlayBase(s.screen_id)) ?? uiById.get(s.screen_id);
@@ -1815,16 +1767,16 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   }
 
   // t7：attest 证据物证 + critic 回执校验（可证边界=素材物化+调用记录，非模型认知）。
-  // rev7 收紧（codex P1×2）：①回执在**任何** region_attest 存在时必需（vl_screening-only 也是
+  // rev7 收紧（codex P1×2）：①回执在任何当前机器 region_attest 存在时必需（vl_screening-only 也是
   // critic 调用，无回执=无调用记录——OpenSpec 两档 candidate-pass 均要求结构合法回执）；
   // ②evidence 限定本 feature 的 _attest/ 目录且 mtime 不早于被评截图；③image_inputs[].hash
   // 提供即重算比对，provenance=verified 时 hash 必填（verified 主张更强证明，须配更强证据）。
   let receiptProvenance: 'verified' | 'unverified' | null = null;
   {
-    const attestScreens = rep.screens.filter(s => (s.region_attest?.length ?? 0) > 0);
+    const attestScreens = rep.screens.filter(s => machineRegionAttest(s).length > 0);
     const pairedEntries: Array<{ screen: VisualDiffScreenEntry; attest: RegionAttestEntry }> = [];
     for (const s of attestScreens) {
-      for (const a of s.region_attest ?? []) {
+      for (const a of machineRegionAttest(s)) {
         if (a.method === 'paired_crop_compare') pairedEntries.push({ screen: s, attest: a });
       }
     }
@@ -2220,7 +2172,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       });
       // t4b（f7a3d9c2）：unstable 屏（静稳采样重试耗尽，图/树可能非同状态）——T8 命中全体
       // 降档走独立 id（capability degradation：不进 candidate-blocking、免 t2 转录、T2 批量
-      // 消息明示真人复核）。A/B/C 不豁免 A 类——过渡态下 A 类同样瞬时误报（rev3 codex/claude）。
+      // 消息明示证据不足）。A/B/C 不豁免 A 类——过渡态下 A 类同样瞬时误报（rev3 codex/claude）。
       if (s.layout_dump_status === 'unstable') {
         for (const f of res.findings) {
           if (f.tier === 'advisory') continue;
@@ -2252,7 +2204,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
         status: 'WARN',
         line:
           `【T8 观测（unstable 屏降档——静稳采样重试耗尽，图/树可能非同状态；capability degradation，` +
-          `不阻断 candidate-pass、免转录，T2 批量终审时真人复核）】` +
+          `不阻断 optional candidate-pass、免转录；required 轴按能力事实保持 UNVERIFIED/DEFERRED）】` +
           unstableLines.slice(0, 6).join(' | ') + (unstableLines.length > 6 ? ` …共 ${unstableLines.length} 处` : ''),
       });
     }
@@ -2614,12 +2566,6 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     referenceNotes.push(`[fingerprints] ${roundFingerprints.join(' ')}`);
   }
 
-  // P0-9b（codex 收窄）：唯一阻塞=T2 真人确认 → 机器可读 await_human_confirm（goal-runner 据此
-  // halt 为 await_human_visual_confirm 而非 no_progress）。条件缺一不可：全部 FAIL hit 均为
-  // T2、P0 全覆盖、全屏 finalized pass 且零 must_fix、零 stale/缺 hash——warn+must_fix 混杂
-  // ≠待签（不得教用户签过未裁决内容）。
-  // t1（rev5）：awaitHumanOnly 在 fuse **之前**以 base hits 计算——candidate-pass/求人路径
-  // 优先于 no_progress_fuse；fuse 只在 awaitHumanOnly=false 时评估（防"只差人签"被抢走）。
   const failHitsOnly = hits.filter(h => h.status === 'FAIL');
   // rev8（codex P1）：candidate 资格不只排除额外 FAIL——**未处置的 T8/M1 WARN** 同样取消资格
   //（OpenSpec："no unresolved T8/M1 hit"；B 类结构背离/locator 覆盖不足/压线自报未处置就发起
@@ -2630,20 +2576,6 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     'visual_diff_layout_invariants',
     'visual_diff_selfreport_integrity',
   ]);
-  const hasBlockingWarn = hits.some(h => h.status === 'WARN' && CANDIDATE_BLOCKING_WARN_IDS.has(h.id));
-  // codex P2：须当前指纹可算且全屏指纹一致——否则（如 install meta 缺失）下一轮 capture 无法
-  // 跳采，真人签仍会被重采清掉，不得诱导用户此刻签名。
-  const awaitHumanOnly =
-    pixel1to1 &&
-    typeof currentBuildFp === 'string' &&
-    currentBuildFp.length > 0 &&
-    failHitsOnly.length > 0 &&
-    failHitsOnly.every(h => h.id === 'visual_diff_human_confirm_required') &&
-    !hasBlockingWarn &&
-    p0Uncovered.length === 0 &&
-    rep.screens.length > 0 &&
-    // 逐屏资格与 CLI 同源谓词（含 pass/零 must_fix/指纹一致/非 stale/hash 齐）
-    rep.screens.every(s => isScreenAwaitConfirmEligible(s, ctx.projectRoot, currentBuildFp));
 
   // t1（f7a3d9c2）：轮次账本评估 + 指纹级 no-progress fuse。
   // - source_fail_hit_ids=fuse 之前的 base FAIL hit 集（rev5：排除 fuse 自身防反馈环）；
@@ -2721,7 +2653,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
         sourceFailHitIds,
         sourceWarnIds,
         fingerprintable,
-        awaitHumanOnly,
+        awaitHumanOnly: false,
         actionableResidual,
       }, { extraRows });
       if (roundEvaluation.corrupt_lines > 0) {
@@ -2737,7 +2669,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     const d = roundEvaluation.decision;
     const guidance =
       d.attribution === 'ineffective_fix'
-        ? '重建后缺陷指纹原样复现（修了没用）——停止迭代、halt 求人，携残差清单'
+        ? '重建后缺陷指纹原样复现（修了没用）——停止本 run，携残差清单进入 successor run'
         : '未经重建/修码原样重跑（跑了没修）——先改码重建再测，重复空跑不消耗迭代';
     pushVisualDiffHit(hits, {
       id: 'visual_diff_no_progress_fuse',
@@ -2747,14 +2679,28 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
         `【t1 无进展熔断（${d.attribution}${roundEvaluation.disposition === 'duplicate' ? '，duplicate 重放' : ''}）】` +
         `连续两有效轮缺陷指纹集相等且仍有 loop-actionable 残差：${guidance}；残差指纹：` +
         `${(d.residual_fingerprints ?? []).slice(0, 6).join(' ')}${(d.residual_fingerprints?.length ?? 0) > 6 ? '…' : ''}`,
+      suggestion:
+        '保留残差清单并结束本 run；形成新的机器证据或编码变更后开启 successor run，' +
+        '人工 resume 或人签不得清除收敛熔断。',
     });
   }
 
-  // M2（plan e2b7c4a9 t2.1）：producer 归类的 uncertain 信号注记（报告可见；不替代停等——
-  // runner 依据 structured.uncertain_signals[] 判停，WARN 注记只是让 agent/人看见证据）。
+  // Producer uncertainty is evidence insufficiency, never a request for a human quality signature.
+  // Strict/release-relevant visual work fails and retries; lower tiers keep an advisory only.
   if (collectedUncertainSignals.length > 0) {
+    if (pixel1to1) {
+      pushVisualDiffHit(hits, {
+        id: 'visual_diff_uncertain_evidence',
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        line:
+          `严格视觉证据仍有 ${collectedUncertainSignals.length} 项 producer uncertainty，` +
+          '当前机器证据不足，不能形成 PASS；须重采/重评或由支持该证据的 provider 产出有效结果：' +
+          collectedUncertainSignals.map((u) => `${u.screen_id}: ${u.reason}`).slice(0, 8).join('；'),
+      });
+    }
     referenceNotes.push(
-      `[adjudication] ${collectedUncertainSignals.length} 项不确定信号（producer 未裁定，交人裁决；` +
+      `[evidence_insufficient] ${collectedUncertainSignals.length} 项不确定信号（不创建人工裁决/签字入口；` +
         `见 structured.uncertain_signals）：` +
         collectedUncertainSignals.map((u) => `${u.screen_id}: ${u.reason}`).slice(0, 8).join('；'),
     );
@@ -2763,41 +2709,9 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   const detailsWithNotes = referenceNotes.length > 0 ? `${details}\n${referenceNotes.join('\n')}` : details;
   const finalResult = finalizeVisualDiffHits(desc, reportRel, detailsWithNotes, hits);
 
-  if (awaitHumanOnly) {
-    finalResult.failure_kind = 'await_human_confirm';
-    // t3b：candidate-pass 两档位——verified 档由 runner attestation 校验解锁（手写 verified
-    // 已在回执校验处降级），其余如实 unverified、照常进 T2 批量终审。
-    const tier = receiptProvenance === 'verified' ? 'candidate-pass(verified)' : 'candidate-pass(unverified)';
-    finalResult.details +=
-      `\n【await_human_visual_confirm · ${tier}】唯一阻塞=真人过目确认（设计内求人时刻，非无进展）：` +
-      '逐屏审阅 device-screenshots/shot-*.png 对照参考原图，认可后在 visual-diff.json ' +
-      'screens[].confirmed_by 填真人署名（user_requirement/自动化身份无效）并重跑 harness；' +
-      '不认可的屏改 verdict=fail 并写 must_fix。';
-  } else {
-    if (roundEvaluation?.decision.fused && pixel1to1) {
-      // t1：goal-runner 据此 classification 首触即 halt（不烧重试预算）；duplicate 重放
-      // 同样置位——外层 gate 在 agent 自跑首检 fuse 后必须仍能看到（rev5）。
-      finalResult.failure_kind = 'no_progress_fuse';
-    }
-    // t1（plan f3a8c6d2）：**显式否定人签时点**。
-    // 事故：await_human_only=false（7 个 P0 只采到 3 个且全 pending、visual_diff
-    // needs_fix），框架此处却什么都不说，agent 于是自行推断"只剩视觉验真，需要你写
-    // confirmed_by"——用户被叫来签一份机器根本没准备好的东西。
-    // 物理门（P0-9b）本身是对的，缺的是**把这个否定说出来**：机器判据已经算好了，
-    // 只是没进面向 agent 的报告。此处零新字段、零新分类，只把既有布尔如实呈现。
-    const failBlockers = hits.filter(h => h.status === 'FAIL');
-    if (failBlockers.length > 0) {
-      const firstMustFix = rep.screens.find(s => (s.must_fix?.length ?? 0) > 0);
-      const nextAction = firstMustFix
-        ? `修 ${firstMustFix.screen_id} 的 must_fix「${firstMustFix.must_fix![0]}」`
-        : `修 ${failBlockers[0].id}`;
-      finalResult.details +=
-        '\n【当前不需要真人签字】await_human_only=false——本轮仍有机器可判的阻塞项，' +
-        '真人签字（confirmed_by）此刻既不适用也不会被受理：' +
-        `${failBlockers.slice(0, 5).map(h => h.id).join('、')}` +
-        `${failBlockers.length > 5 ? `…共 ${failBlockers.length} 项` : ''}。` +
-        `下一步=${nextAction}；全部机器阻塞清零后本行会自动变为人签引导，届时再叫人。`;
-    }
+  if (roundEvaluation?.decision.fused && pixel1to1) {
+    // 既有机器收敛熔断保留；不再存在 candidate-pass 人签分支。
+    finalResult.failure_kind = 'no_progress_fuse';
   }
 
   // t0③：进程内结构化 payload（runner 消费追加账本 + summary.visual_round；不进 summary
@@ -2813,7 +2727,8 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     fingerprintable,
     source_fail_hit_ids: sourceFailHitIds,
     source_warn_ids: sourceWarnIds,
-    await_human_only: awaitHumanOnly,
+    // Legacy ledger field stays false for schema compatibility; new rounds never enter a human gate.
+    await_human_only: false,
     actionable_residual: actionableResidual,
     ...(roundEvaluation ? { round: roundEvaluation } : {}),
     t8_unstable_findings: t8UnstableFindings.map(({ screen_id, finding }) => ({

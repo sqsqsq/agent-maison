@@ -1,3 +1,5 @@
+> Supersession note (2026-08-26): `autonomous-recovery-without-human-gates` retains structured findings, provider evidence, and convergence fuses while superseding `visual-confirm` and human feedback as gate/recovery authority. The obsolete TTY confirmation task is closed as superseded, not as executed verification.
+
 ## Why
 
 c6d8f2b4（layout-oracle）落地后，"防止相信假分数"已可靠，但"模型自动看图→发现→修→收敛"的闭环仍是 SSOT 承诺+agent 自觉，不是机器保证。codex 置信度评估（2026-07-11）+ 三方 review 六轮对账（plan f7a3d9c2 rev6）确认五缺口：G1 熔断粒度（goal 既有 shouldHaltNoProgress 是 blocker-id 粗粒度、交互态无机器熔断）；G2 verified 回执无生产者（agent-output.log 无工具事件且 stdout/stderr 混流）；G3 T8 发现→回修链路无对账（LayoutFinding 无 finding_id/elements、defect 无溯源、must_fix 无逐条锚点）；G4 采集非原子且整图 hash 恒等真机恒假；G5 校准与人工反馈无落账通道。

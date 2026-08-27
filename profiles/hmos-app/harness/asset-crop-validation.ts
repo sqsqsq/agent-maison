@@ -7,20 +7,19 @@
 // 三层证据：
 //   1) 确定性 sanity（先跑、可一票否决）：条状塌缩 / icon 长宽比与面积占比 / 纯色与空白（jimp stats）。
 //      本次三类废图（竖条、纯蓝、空白）全部命中。
-//   2) VL 独立辨认（契约文件 spec/reports/asset-crop-vl.yaml，由 spec agent 以**隔离会话**逐图辨认后落盘：
-//      新会话只给 crop 图问"这是什么"，答案与资产用途匹配才 match:true——防"裁的人自己说裁对了"自报）。
-//      sanity 只能否决坏图、不能证明语义对，故 sanity PASS 仍须 VL match 或真人确认（bbox_verified_by）。
-//      VL 记录缺失/失配/不可用 → pixel_1to1 不得静默 PASS（外部评审采纳：VL 断流≠放行），入待人工确认清单。
+//   2) 确定性来源复算：用权威 source_ref + source_bbox + framework crop 算法重产临时文件，
+//      与交付 crop 做字节 hash 对比；不匹配/无法复算不得由人签翻案。
 //   3) 贴回对照 contact-sheet（证据落盘 spec/reports/asset-contact-sheet-<ref>.png）：
 //      左=原图+bbox 红框、右=crop 缩略图，人 3 秒可判，headless 留审计证据。
 // 产物：spec/reports/asset-crop-validation.json 机器裁决（verified|failed|pending per key）——
 //   coding 阶段物化门禁（visual_parity_unverified_crop）消费之，未 verified 的 crop 不得进模块 media。
-// 与 P0-C 的分界：human_crop_confirmed/crop_confirmed_by=user_requirement 是**裁剪授权**（能不能裁），
-//   本 check 是**产物验真**（裁没裁对）——授权绝不豁免验真。
+// legacy human_crop_confirmed/crop_confirmed_by/bbox_verified_by 仅兼容读取且不 gate；
+// 本 check 只认可 source_ref/source_bbox + 当前源 hash + framework 算法重裁所得机器事实。
 // ============================================================================
 
 import * as crypto from 'crypto';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { createRequire } from 'module';
 import type { CheckContext, CheckResult } from '../../../harness/scripts/utils/types';
@@ -37,12 +36,11 @@ import { asArray } from '../../../harness/scripts/utils/shape-guards';
 import {
   isHardPixelContract,
   fidelityRatchetFailOrWarn,
-  isHumanVerified,
-  isAutomationSigner,
 } from '../../../harness/scripts/utils/fidelity-shared';
 import { findModuleMediaFile } from './visual-parity-backstop';
 import {
   computeImageStats,
+  cropAssetFromBbox,
   isJimpAvailable,
   readImageDimensions,
   renderContactSheet,
@@ -151,11 +149,6 @@ export interface CropVlEntry {
    * 造假路径堵死；粗暴废图另有确定性 sanity 硬兜底。
    */
   by?: string;
-}
-
-/** VL 辨认署名合法性：非空且非自动化自报身份 */
-export function isValidVlSigner(by: string | undefined): boolean {
-  return typeof by === 'string' && by.trim().length > 0 && !isAutomationSigner(by);
 }
 
 /** crop 产物内容指纹（验真裁决与文件内容绑定，防陈旧 verified 复用） */
@@ -315,15 +308,7 @@ function ruleDesc(ctx: CheckContext): string {
 }
 
 /**
- * 人工验真逃生阀：真人署名（非自动化身份）即 verified（halt-confirm 回执/交互确认落 ui-spec）。
- * P0-6：bbox_verified_by 是**验真**语义——user_requirement（裁剪授权哨兵）不算，授权≠过目。
- */
-function isHumanBboxVerified(a: UiSpecAsset & { bbox_verified_by?: string }): boolean {
-  return isHumanVerified(a.bbox_verified_by);
-}
-
-/**
- * P0-B 主检查（spec 阶段）。对全部 crop 资产：sanity → VL/人确认 → 汇总裁决 + contact-sheet + 落盘 json。
+ * P0-B 主检查（spec 阶段）。对全部 crop 资产：sanity → 来源/bbox/算法复算 → 汇总裁决 + contact-sheet + 落盘 json。
  */
 export function checkAssetCropValidation(ctx: CheckContext): CheckResult[] {
   const desc = ruleDesc(ctx);
@@ -353,13 +338,13 @@ export function checkAssetCropValidation(ctx: CheckContext): CheckResult[] {
       details:
         '【P0-B toolchain 不可用】jimp 未安装——纯色/空白 sanity 与 contact-sheet 无法执行，' +
         'pixel_1to1 下裁剪产物验真不完整，不得放行（确定性 sanity 是废图的唯一机器防线）。',
-      suggestion: '在 harness 安装 jimp 后重跑（此 id 归 toolchain，signature 重复即 halt 求人）。',
+      suggestion: '在 harness 安装 jimp 后重跑（此 id 归 toolchain，signature 重复则按工具链阻塞终止本 run）。',
       affected_files: [uiSpecRel],
     });
   }
 
   const refIndex = buildAuthoritativeRefImageIndex(ctx, specMd);
-  const vlEntries = loadCropVlEntries(ctx.projectRoot, ctx.feature);
+  const vlEntries = loadCropVlEntries(ctx.projectRoot, ctx.feature); // legacy diagnostics only; never grants PASS.
 
   const verdicts: CropValidationVerdicts = {
     schema_version: '1.0',
@@ -401,19 +386,6 @@ export function checkAssetCropValidation(ctx: CheckContext): CheckResult[] {
 
     const sanity = runCropSanity(abs, kind, sourceDims);
 
-    // 真人验真至高（cursor FP 出口采纳）：对照 contact-sheet 的真人确认可翻案 sanity 启发阈值的误伤
-    // （如合法的超长横幅营销图 long/short>4）——框架"pixel_1to1 人确认主背靠"原则；自动化署名不算。
-    if (isHumanBboxVerified(a as UiSpecAsset & { bbox_verified_by?: string })) {
-      verdicts.entries[key] = {
-        verdict: 'verified', kind, ...binding,
-        ...(sanity.status === 'fail'
-          ? { reasons: [`真人确认翻案 sanity（${sanity.reasons.join('；')}）——特殊形状经人核合法`] }
-          : {}),
-      };
-      okKeys.push(`${key}(人确认${sanity.status === 'fail' ? '·翻案sanity' : ''})`);
-      continue;
-    }
-
     if (sanity.status === 'fail') {
       verdicts.entries[key] = { verdict: 'failed', kind, reasons: sanity.reasons, ...binding };
       failedLines.push(`${key}（${kind}, ${sanity.width}×${sanity.height}）：${sanity.reasons.join('；')}`);
@@ -423,18 +395,30 @@ export function checkAssetCropValidation(ctx: CheckContext): CheckResult[] {
       unknownSanity.push(`${key}：${sanity.reasons.join('；')}`);
     }
 
-    // sanity 通过 ≠ 语义对：还须 VL 独立辨认 match（署名合法）或真人确认
+    // 来源/bbox/算法复算：机器重新生成同一 crop，字节一致才证明当前产物确由声明输入产生。
+    let reproductionMatch = false;
+    let reproductionReason = 'source_ref/source_bbox 不可复算';
+    if (srcPick.path && Array.isArray(a.source_bbox) && a.source_bbox.length === 4 && isJimpAvailable()) {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-crop-verify-'));
+      const tmpOut = path.join(tmpDir, `${key}${path.extname(abs) || '.png'}`);
+      try {
+        const reproduced = cropAssetFromBbox(srcPick.path, a.source_bbox, tmpOut);
+        if (reproduced.ok) {
+          reproductionMatch = sha256File(tmpOut) === binding.sha256;
+          reproductionReason = reproductionMatch
+            ? 'source_ref + source_bbox + framework crop 算法复算 hash 一致'
+            : '复算 crop 与当前产物 hash 不一致';
+        } else {
+          reproductionReason = `复算失败：${reproduced.error ?? 'unknown'}`;
+        }
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    }
     const vl = vlEntries.get(key);
-    if (vl && vl.match === true && isValidVlSigner(vl.by)) {
+    if (reproductionMatch) {
       verdicts.entries[key] = { verdict: 'verified', kind, ...binding };
       okKeys.push(key);
-    } else if (vl && vl.match === true) {
-      // codex P1 采纳：match:true 但署名缺失/自动化自报（goal-mode-auto 等）不算数——防懒惰自签
-      verdicts.entries[key] = {
-        verdict: 'pending', kind, ...binding,
-        reasons: [`VL 记录署名非法（by=${vl.by ?? '缺失'}，自动化自报不算）——须隔离会话署名或真人 bbox_verified_by`],
-      };
-      pendingLines.push(`${key}：VL match:true 但署名非法（by=${vl.by ?? '缺失'}）——自报不算，须隔离会话署名`);
     } else if (vl && vl.match === false) {
       verdicts.entries[key] = {
         verdict: 'failed', kind, ...binding,
@@ -444,9 +428,9 @@ export function checkAssetCropValidation(ctx: CheckContext): CheckResult[] {
     } else {
       verdicts.entries[key] = {
         verdict: 'pending', kind, ...binding,
-        reasons: ['sanity 通过但缺 VL 独立辨认记录/真人确认——sanity 只能否决坏图，不能证明语义正确'],
+        reasons: [`sanity 通过但机器来源复算未闭合：${reproductionReason}`],
       };
-      pendingLines.push(`${key}：缺 VL 辨认记录（asset-crop-vl.yaml）或 bbox_verified_by 真人确认`);
+      pendingLines.push(`${key}：${reproductionReason}；legacy bbox_verified_by/VL 自报不能放行`);
     }
   }
 
@@ -492,7 +476,7 @@ export function checkAssetCropValidation(ctx: CheckContext): CheckResult[] {
         failedLines.map(l => `  ${l}`).join('\n') + `\n${statsLine}`,
       suggestion:
         '废图=bbox 错位/转置的直接产物：先过 ui_spec_bbox_semantic 修坐标语义，再重裁并重跑本 check；' +
-        '对照 contact-sheet 人核。未 verified 的 crop 不得物化进模块 media（coding 门禁会拦）。',
+        '可用 contact-sheet 定位 bbox，但必须修正声明/产物并让机器复算通过；未 verified 的 crop 不得物化进模块 media。',
       affected_files: [uiSpecRel],
     });
   }
@@ -508,12 +492,11 @@ export function checkAssetCropValidation(ctx: CheckContext): CheckResult[] {
       severity,
       status,
       details:
-        `【P0-B 待验真】${pendingLines.length} 项 crop 资产 sanity 无异常但缺独立验真（VL 辨认/真人确认），` +
+        `【P0-B 待验真】${pendingLines.length} 项 crop 资产 sanity 无异常但机器来源复算未闭合，` +
         `pixel_1to1 下不得静默 PASS：\n` + pendingLines.map(l => `  ${l}`).join('\n'),
       suggestion:
-        'spec agent 以隔离会话逐图辨认（新会话只给 crop 图问"这是什么元素"），结果落 ' +
-        'spec/reports/asset-crop-vl.yaml（entries[].key/identified_as/match）；或真人对照 contact-sheet 确认后在 ' +
-        'ui-spec 对应 asset 记 bbox_verified_by（真人署名，自动化身份不算）。goal headless 走 halt-confirm 求人。',
+        '修正 source_ref/source_bbox 或重新用 framework crop 算法生成产物后重跑；legacy bbox_verified_by、' +
+        '人工确认和未绑定的 VL 自报均不能改写该结论。',
       affected_files: [uiSpecRel],
     });
   }

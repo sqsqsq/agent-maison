@@ -197,6 +197,34 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
+    name: 'projectGoalProgress: phase write violation 显示自动 owner backtrack',
+    run: () => {
+      const manifest = mkManifest();
+      const events = [
+        { ts: '2026-06-10T12:00:00.000Z', type: 'run_start', chain: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] },
+        {
+          ts: '2026-06-10T12:00:01.000Z', type: 'phase_write_violation', phase: 'plan', fingerprint: 'fp',
+          violations: [{ path: 'doc/features/demo/spec/acceptance.yaml', owner: 'spec', pre_sha256: 'a', post_sha256: 'b' }],
+        },
+        {
+          ts: '2026-06-10T12:00:02.000Z', type: 'phase_backtrack_requested', phase: 'plan',
+          to_phase: 'spec', reason: 'phase_write_violation', files: ['doc/features/demo/spec/acceptance.yaml'],
+          fingerprint: 'fp', backtracks_used: 1, backtracks_limit: 2, run_disposition: 'RECOVERY_PENDING',
+        },
+      ] as GoalRunEvent[];
+      const snap = projectGoalProgress({
+        projectRoot: '/tmp', manifest, events, workflow,
+        nowMs: new Date('2026-06-10T12:00:03.000Z').getTime(),
+      });
+      assert(snap.run_disposition === 'RECOVERY_PENDING', snap.run_disposition);
+      assert(snap.status_reason === 'phase_write_violation', String(snap.status_reason));
+      assert(snap.recovery?.target_phase === 'spec', JSON.stringify(snap.recovery));
+      assert(snap.next_action === 'wait_for_framework_recovery', snap.next_action);
+      const md = generateProgressMarkdown(snap);
+      assert(md.includes('phase_write_violation') && md.includes('owner=spec') && md.includes('pre=a post=b'), md);
+    },
+  },
+  {
     name: 'e9d4b7a3 t4: progress.json 与 runner 同源——supersede lineage 折叠（25 祖先 + 5 当前 = 30/30），非当前 run 假象',
     run: () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'goal-progress-lineage-'));

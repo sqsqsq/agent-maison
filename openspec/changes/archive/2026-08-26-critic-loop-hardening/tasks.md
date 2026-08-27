@@ -36,7 +36,7 @@
 - [x] 6.1 layout-oracle-calibrate CLI（offline 九项 + --device 双拍实测/redump）+ calibration.json SSOT + md 投影
 - [x] 6.2 review-feedback-ledger（journal 事务/feedback_id 幂等/reconciliation/FP-FN 聚合）
 - [x] 6.3 visual-confirm 事务化 y/f + --overrule + snapshot 一致性 + human_issue_kind
-- [ ] 6.4 宿主复验：校准已执行（2026-07-11 offline+device 双模式，calibration.json 在案）；故意打回/overrule 落账演示待真人 TTY（t9 合并）
+- [x] 6.4 **SUPERSEDED（未执行宿主 TTY）**：`autonomous-recovery-without-human-gates` 删除 `visual-confirm`/overrule 作为质量与恢复通道；不再要求该人工落账演示，机器校准验证转入后继 change 的自动矩阵。
 
 ## 7. 守恒与文档（t6b/t7）
 

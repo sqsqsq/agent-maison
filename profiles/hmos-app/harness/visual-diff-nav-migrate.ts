@@ -6,8 +6,8 @@
 // - 缺 identity 的屏生成候选：候选文本取自 ui-spec 该屏组件树文本，按「独特」机器判据
 //   过滤（目标屏 corpus 存在 且 其他全部 P0 屏 corpus document_frequency=0），跨屏判别
 //   度排序（df=0 长文本优先）；取前 2 条组成 all_of；
-// - 候选恒 `proposed: true`——**不自动当已验证 identity**（pixel_1to1 P0 屏在人工确认
-//   前按缺 identity FAIL，宁停不猜）；确认=人工把 proposed 改 false（或删除该字段）。
+// - 候选恒 `proposed: true`——**不自动当已验证 identity**（pixel_1to_1 P0 屏在
+//   owner 阶段用当前 ui-spec/dump 机器证据冻结前按缺 identity FAIL，宁停不猜）。
 // 用法（harness 目录）：
 //   npm run visual-diff-nav:migrate -- --project-root <宿主根> --feature <feature> [--apply]
 // ============================================================================
@@ -98,13 +98,13 @@ export function navMigrateCliMain(argv: string[], cwd: string): NavMigrateResult
     if (!target) continue;
     const members = generateIdentityCandidates(doc, target, p0Targets);
     if (members.length === 0) {
-      console.log(`  no-candidate      ${key}（无跨屏独特文本——须人工写 id/route 锚点或文本组联合）`);
+      console.log(`  no-candidate      ${key}（无跨屏独特文本——由 owner 阶段补 id/route 锚点或文本组并重跑机器验证）`);
       continue;
     }
     out.screens[key] = { ...entry, identity: { all_of: members, proposed: true } };
     candidatesFor.push(key);
     console.log(
-      `  candidate         ${key} ← ${members.map(m => `「${m.text}」`).join(' + ')}（proposed，须人工确认后参与 gate）`,
+      `  candidate         ${key} ← ${members.map(m => `「${m.text}」`).join(' + ')}（proposed，须经当前 ui-spec/dump 机器验证冻结后参与 gate）`,
     );
   }
   if (apply) {
@@ -115,7 +115,7 @@ export function navMigrateCliMain(argv: string[], cwd: string): NavMigrateResult
   }
   console.log(
     `[nav-migrate] 屏 ${Object.keys(out.screens).length} 个；新生成候选 ${candidatesFor.length} 个（proposed）；` +
-    '确认方式=人工核对候选文本确为该屏独有后将 proposed 置 false。',
+    '收口方式=owner 阶段用当前 ui-spec/dump 证据验证唯一性，成立后冻结为 proposed=false；不成立则补锨点。',
   );
   return { exitCode: 0, migrated: apply, candidatesFor };
 }

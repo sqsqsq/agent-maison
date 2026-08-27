@@ -123,7 +123,7 @@ const ASSET_ALLOWED_KEYS = new Set([
   'resolved_path', 'placeholder', 'rationale', 'human_crop_confirmed', 'crop_confirmed_by',
   // round5 P0-A 烤字 defer（TS 类型已有，validator 此前漏登记）
   'baked_text_defer', 'baked_text_defer_by',
-  // P0-C（f2d8c4a6）：产物验真真人署名（与 crop_confirmed_by 授权语义正交）
+  // legacy-only 人名字段：只做 schema 兼容读取，不参与裁剪授权或验真
   'bbox_verified_by',
   // blind-visual-hardening：crop 产物来源记录 / role 声明（机器派生为准，声明供交叉对账）/ 占位形态
   'crop_provenance', 'role', 'placeholder_kind',

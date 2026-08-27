@@ -763,7 +763,26 @@ function recommendationForGap(
       };
     }
   }
-  return recommendationFor(gap, fused);
+  const fallback = recommendationFor(gap, fused);
+  if (fused || !gap) return fallback;
+
+  const currentPhase = observation.reconcile?.phase_outcome?.phase;
+  if (!currentPhase) return fallback;
+  const chain = observation.phases.map((phase) => phase.phase);
+  const currentIdx = chain.indexOf(currentPhase);
+  const targetIdx = chain.indexOf(gap.phase);
+  if (currentIdx < 0 || targetIdx < 0 || targetIdx >= currentIdx) return fallback;
+
+  // 上游 gap 的 executable 语义只有三种：
+  //   · unclosed 先尝试同一 closure transaction 的幂等补完；
+  //   · genuine deferred 保持 capability/external defer；
+  //   · 其余可信 gap 全部回 owner 重验重签。
+  // action 字段保留旧显示词汇，兼容 next.json 读者；runner_action 才是唯一执行语义。
+  if (gap.kind === 'unclosed') return fallback;
+  if (gap.kind === 'deferred') {
+    return { ...fallback, runner_action: 'defer_external_and_halt' };
+  }
+  return { ...fallback, runner_action: 'backtrack_to_phase' };
 }
 
 function recommendationForObservation(

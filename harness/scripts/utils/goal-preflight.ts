@@ -522,10 +522,6 @@ import {
   type RequirementProvenance,
 } from './fidelity-shared';
 import { resolveContextAdapterImageInput } from './multimodal-probe';
-import {
-  defaultTrustRegistryPath,
-  validateConfirmationReceiptFile,
-} from './confirmation-receipt';
 import { featureFilePath } from '../../config';
 
 export type FidelityPreflightAction =
@@ -558,6 +554,7 @@ export interface FidelityRoutingInitInput {
   profileDir?: string;
   manifestFidelity?: string;
   fidelityFromCli?: boolean;
+  /** @deprecated legacy manifest field; ignored and never grants a downgrade. */
   fidelityReceiptRel?: string;
   runIdForReceipt?: string;
   /** plan d7f3a9c4 t3：最终裁决后的 model pin value（goal 态由 manifest 派生；无 pin 不传） */
@@ -584,7 +581,7 @@ export interface FidelityRoutingInitInput {
  * plan f6b2d9a4 T2：路由初始化唯一执行实现（runner-owned）——goal 模式由 goal-runner
  * 在 agent invoke 前调用；phase-driven 由 skills/feature/spec Step 1 经
  * fidelity-intent-init CLI 调用（薄入口只透传，agent-adapters 约束）。职责：
- * 解引用需求 → 降档 receipt 验真 → 当前执行 capability 探测（vision probe、
+ * 解引用需求 → 当前执行 capability 探测（vision probe、
  * OCR）→ 三段式路由 → 落 capability-snapshot.json + fidelity-intent.json（唯一 SSOT）。
  * harness-runner/check-spec 只加载复核，不首产。
  */
@@ -595,25 +592,9 @@ export function initializeFidelityRouting(
     featuresDirRel: input.featuresDirRel,
     excludePrefixes: [`${input.featuresDirRel.replace(/\\/g, '/')}/${input.feature}/`],
   });
-  // 降档 receipt 验真（唯一降档通道；绑定 feature + 合并需求 object_hash + expiry，
-  // 不绑定物理 run_id，故同一语义任务的 successor 可复用）。
-  let downgradeReceiptValid = false;
-  let receiptNote = '';
-  if (input.fidelityReceiptRel) {
-    const objectHash = cryptoT6.createHash('sha256').update(deref.combined, 'utf-8').digest('hex');
-    const v = validateConfirmationReceiptFile(
-      path.join(input.projectRoot, input.fidelityReceiptRel),
-      defaultTrustRegistryPath(input.projectRoot),
-      {
-        action: 'fidelity_downgrade',
-        feature: input.feature,
-        object_hash: objectHash,
-        now: input.now,
-      },
-    );
-    downgradeReceiptValid = v.valid;
-    if (!v.valid) receiptNote = `降档 receipt 无效：${v.reasons.join('；')}`;
-  }
+  const receiptNote = input.fidelityReceiptRel
+    ? 'legacy fidelity_receipt 已忽略：质量档位只能由冻结需求或新的 correction/successor 输入改变。'
+    : '';
   // capability snapshot：只记录当前执行的真实输入能力。产物验证结果不得反向改写模型能力。
   const probe = resolveContextAdapterImageInput(input.projectRoot, input.frameworkRoot, input.adapter, {
     runId: input.runIdForReceipt,
@@ -635,7 +616,6 @@ export function initializeFidelityRouting(
     requirementText: deref.combined,
     manifestFidelity: input.manifestFidelity,
     manifestFidelitySource: input.fidelityFromCli ? 'explicit_cli' : 'manifest_declared',
-    downgradeReceiptValid,
     // t2③：钳制吃评审轴。delegated 与 native 同样不钳（pixel_1to1 放行）；blind 逐字不变。
     capability: { hasVision, ocrAvailable, reviewVision: reviewVisionForMode(visionMode) },
     executionIdentity: input.executionIdentity,
@@ -672,9 +652,9 @@ export function initializeFidelityRouting(
 
 /**
  * 规则（plan f6b2d9a4：「非关键冲突不阻塞」）：
- * - 三段式路由：inferred（文本推导）→ selected（只升不降；receipt 降档）→ effective（clamp）；
+ * - 三段式路由：inferred（文本推导）→ selected（只升不降）→ effective（clamp）；
  * - **唯一阻塞形态**=selected=pixel_1to1 ∧ strictness=hard ∧ clamp 降档 →
- *   DEFERRED_CAPABILITY_MISSING（出路=换视觉模型 / fidelity_downgrade receipt / 改需求）；
+ *   DEFERRED_CAPABILITY_MISSING（出路=换视觉模型，或以 correction/successor 明确修改需求）；
  * - 其余一律 proceed（含混/自声明自动定档到能力内最优档，透明记录进 fidelity-intent SSOT）；
  *   await_human_fidelity_tier 分支已删除（v2 定稿）。
  */
@@ -700,7 +680,6 @@ export function evaluateFidelityTierPreflight(input: FidelityPreflightInput): Fi
     profileDir: input.profileDir,
     manifestFidelity: manifest.fidelity,
     fidelityFromCli: input.fidelityFromCli,
-    fidelityReceiptRel: manifest.fidelity_receipt,
     runIdForReceipt: manifest.run_id,
     // plan c8e5b3f1 t1：goal preflight 需求来源=goal manifest。
     requirementProvenance: 'goal_manifest',
@@ -716,7 +695,7 @@ export function evaluateFidelityTierPreflight(input: FidelityPreflightInput): Fi
   });
   if (routing.rejectedDowngrade) {
     console.warn(
-      `[goal-runner] --fidelity=${manifest.fidelity} 是降档请求，无有效 receipt 不生效（只升不降）。${receiptNote}`,
+      `[goal-runner] --fidelity=${manifest.fidelity} 是降档请求，不生效（只升不降；请以 correction/successor 修改需求）。${receiptNote}`,
     );
   }
   // post-impl4 P0-1：唯一真冲突（selected=pixel∧hard∧clamp）**不受链起点限制**——
@@ -727,9 +706,8 @@ export function evaluateFidelityTierPreflight(input: FidelityPreflightInput): Fi
       routing,
       detail:
         `需求为 pixel_1to1 目标且严格度=hard（不接受降级），而当前能力不足` +
-        `（${routing.clampReason ?? 'capability_clamped'}）。不盲跑全链；出路三选一：` +
-        '①换有视觉能力的模型/配置后重跑；②真人签发 fidelity_downgrade receipt 后以 ' +
-        '`--fidelity <tier> --fidelity-receipt <path>` 重跑；③修改需求措辞放宽严格度。' +
+        `（${routing.clampReason ?? 'capability_clamped'}）。不盲跑全链；出路：` +
+        '换有视觉能力的模型/配置后重跑，或以 correction/successor 明确修改需求并从 spec 重验。' +
         (receiptNote ? ` ${receiptNote}` : ''),
     };
   }
@@ -783,13 +761,12 @@ function evaluateDownstreamStartFidelity(input: FidelityPreflightInput): Fidelit
   if (ssotState.state === 'missing') {
     // 无既有 SSOT（legacy 现场/非 UI 流程/交互态闭环）：**内存推导**路由做真冲突判定
     //（post-impl4 P0-1 语义不因零写盘削弱——盲 ∧ hard ∧ pixel 不许盲跑全链），
-    // resolveFidelityRoutingDecision 是纯函数，不落任何文件。降档 receipt 在下游起点
-    // 不验真（downgradeReceiptValid=false，只升不降保守生效）——降档裁决归 spec。
+    // resolveFidelityRoutingDecision 是纯函数，不落任何文件。legacy 降档 receipt 不参与；
+    // 档位只能由冻结需求或新的 correction/successor 输入改变。
     const routing = resolveFidelityRoutingDecision({
       requirementText: deref.combined,
       manifestFidelity: manifest.fidelity,
       manifestFidelitySource: input.fidelityFromCli ? 'explicit_cli' : 'manifest_declared',
-      downgradeReceiptValid: false,
       capability: { hasVision: probe.supported, ocrAvailable, reviewVision: downstreamReviewVision },
       executionIdentity: manifest.run_id,
       requirementSha: currentSha,
@@ -800,9 +777,8 @@ function evaluateDownstreamStartFidelity(input: FidelityPreflightInput): Fidelit
         routing,
         detail:
           `需求为 pixel_1to1 目标且严格度=hard（不接受降级），而当前能力不足` +
-          `（${routing.clampReason ?? 'capability_clamped'}）。不盲跑全链；出路三选一：` +
-          '①换有视觉能力的模型/配置后重跑；②真人签发 fidelity_downgrade receipt 后以 ' +
-          '`--fidelity <tier> --fidelity-receipt <path>` 重跑；③修改需求措辞放宽严格度。',
+          `（${routing.clampReason ?? 'capability_clamped'}）。不盲跑全链；出路：` +
+          '换有视觉能力的模型/配置后重跑，或以 correction/successor 明确修改需求并从 spec 重验。',
       };
     }
     return {
@@ -846,8 +822,7 @@ function evaluateDownstreamStartFidelity(input: FidelityPreflightInput): Fidelit
       action: 'defer_capability_missing',
       detail:
         `需求为 pixel_1to1 目标且严格度=hard（不接受降级），而当前能力不足（${reclamp.reason ?? 'capability_clamped'}）。` +
-        '不盲跑全链；出路三选一：①换有视觉能力的模型/配置后重跑；②真人签发 fidelity_downgrade receipt 后以 ' +
-        '`--fidelity <tier> --fidelity-receipt <path>` 重跑；③修改需求措辞放宽严格度。',
+        '不盲跑全链；出路：换有视觉能力的模型/配置后重跑，或以 correction/successor 明确修改需求并从 spec 重验。',
     };
   }
   return {
@@ -864,9 +839,8 @@ function evaluateDownstreamStartFidelity(input: FidelityPreflightInput): Fidelit
 // 事故面：evaluateFidelityTierPreflight 全跳 resume，而 --resume --manifest --fidelity
 // 照样 applyManifestCliOverrides 入 manifest → 我方 drift 字段级授权直接放行未经验证的
 // 降档/垃圾凭证/垃圾枚举，写进 authenticated checkpoint 成为新 SSOT。
-// 契约：只有枚举合法 + （降档 ⟹ fidelity_downgrade receipt 验真通过）才返回精确授权
-// 字段集——--fidelity 只授权 fidelity、--fidelity-receipt 验真过才授权 fidelity_receipt，
-// 不再互相搭车；违规=blockers（调用方 fresh/resume 一律 BLOCKER 退出，不静默）。
+// 契约：显式档位枚举必须合法且只能升档；legacy --fidelity-receipt 已退役并拒绝写入。
+// 降档属于需求变更，须开启 correction/successor 从 spec 重验。
 // ----------------------------------------------------------------------------
 
 export interface FidelityTransitionInput {
@@ -880,9 +854,9 @@ export interface FidelityTransitionInput {
 }
 
 export interface FidelityTransitionVerdict {
-  /** 本次 CLI transition 授权覆盖的 manifest 身份字段（⊆ {fidelity, fidelity_receipt}） */
+  /** 本次 CLI transition 授权覆盖的 manifest 身份字段（仅可能包含 fidelity） */
   authorizedFields: Set<string>;
-  /** 非空=CLI 用法本身违规（枚举非法/降档无有效凭证/凭证无效）——一律 BLOCKER */
+  /** 非空=CLI 用法本身违规（枚举非法、降档或使用已退役 receipt）——一律 BLOCKER */
   blockers: string[];
 }
 
@@ -904,45 +878,22 @@ export function evaluateFidelityTransitionAuthorization(
     featuresDirRel: input.featuresDirRel,
     excludePrefixes: [`${input.featuresDirRel.replace(/\\/g, '/')}/${manifest.feature}/`],
   });
-  // ② 降档凭证验真（唯一降档通道；绑定语义，与 initializeFidelityRouting 同源：
-  //    object_hash=解引用合并需求文本 sha256 + feature + expiry，跨 successor run 复用）
-  let receiptValid = false;
-  let receiptReasons: string[] = [];
-  if (manifest.fidelity_receipt) {
-    const objectHash = cryptoT6.createHash('sha256').update(deref.combined, 'utf-8').digest('hex');
-    const v = validateConfirmationReceiptFile(
-      path.join(input.projectRoot, manifest.fidelity_receipt),
-      defaultTrustRegistryPath(input.projectRoot),
-      {
-        action: 'fidelity_downgrade',
-        feature: manifest.feature,
-        object_hash: objectHash,
-        now: input.now,
-      },
-    );
-    receiptValid = v.valid;
-    receiptReasons = v.reasons;
+  if (input.applied.fidelityReceipt) {
+    blockers.push('--fidelity-receipt 已退役：人工 receipt 不能降低质量档位；请修改需求并开启 correction/successor run。');
   }
-  if (input.applied.fidelityReceipt && !receiptValid) {
-    blockers.push(
-      `--fidelity-receipt 校验失败（${receiptReasons.slice(0, 3).join('；') || '文件缺失/不可读'}）——` +
-      '无效凭证不入 manifest（fail-closed）',
-    );
-  }
-  // ③ 只升不降（相对 inferred desired，与 routing 三段式同源——plan f6b2d9a4：
+  // ② 只升不降（相对 inferred desired，与 routing 三段式同源——plan f6b2d9a4：
   //    ambiguous 态删除，detectDesiredFidelity 缺省 semantic_layout）
   if (input.applied.fidelity && manifest.fidelity) {
     const detected: FidelityTarget = detectDesiredFidelity(deref.combined).desired;
-    const resolved = resolveRequestedFidelity(detected, manifest.fidelity, receiptValid);
+    const resolved = resolveRequestedFidelity(detected, manifest.fidelity);
     if (resolved.rejectedDowngrade) {
       blockers.push(
-        `--fidelity=${manifest.fidelity} 相对需求意图（${detected}）是降档且无有效 ` +
-        'fidelity_downgrade receipt——只升不降（fail-closed）',
+        `--fidelity=${manifest.fidelity} 相对需求意图（${detected}）是降档——只升不降；` +
+        '请修改需求并开启 correction/successor run（fail-closed）',
       );
     }
   }
   if (blockers.length > 0) return { authorizedFields, blockers };
   if (input.applied.fidelity) authorizedFields.add('fidelity');
-  if (input.applied.fidelityReceipt) authorizedFields.add('fidelity_receipt');
   return { authorizedFields, blockers };
 }

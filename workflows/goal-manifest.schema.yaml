@@ -42,10 +42,10 @@ fields:
   allow_blind_visual:
     type: boolean
     enum: [true]
+    deprecated: true
     description: >
-      plan ab072691 t7：用户对当前 run 给出的一次明确盲跑授权。仅允许键缺失或值为 true；
-      条件纳入 manifest 身份哈希，不写 framework.local.json。resume 复用冻结值，successor
-      剥离并要求新 run 重新授权。native/delegated 路径可保留该事实，但不改变视觉路由。
+      Deprecated legacy field. Readers tolerate historical true values, but runtime
+      policy and manifest identity ignore it. New CLI/manifest writers never emit this field.
   chain_override:
     type: array
     items: string

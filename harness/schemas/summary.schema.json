@@ -323,7 +323,7 @@
         "actionability": {
           "type": "string",
           "enum": ["agent_fixable", "human_only", "toolchain_blocked"],
-          "description": "P0-4（plan 7c4f2e9b）：注册表解析后的可修性——runner 决策梯③层聚合（∃toolchain→await_operator_toolchain；非空且全 human_only→await_human_gate_deferral）、回喂过滤与 no-progress 签名剔除共同消费"
+          "description": "注册表解析后的可修性：toolchain_blocked 投影 await_operator_toolchain；legacy human_only 不再产生人签放行或 await_human_gate_deferral。回喂过滤与 no-progress 签名剔除共同消费。"
         },
         "operator_note": {
           "type": "string",
