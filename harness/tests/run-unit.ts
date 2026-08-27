@@ -229,6 +229,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'goal-in-session-driver', modulePath: './unit/goal-in-session-driver.unit.test' },
   { id: 'goal-phase-runtime', modulePath: './unit/goal-phase-runtime.unit.test' },
   { id: 'goal-run-birth-contract', modulePath: './unit/goal-run-birth-contract.unit.test' },
+  { id: 'goal-runtime-structural-acceptance', modulePath: './unit/goal-runtime-structural-acceptance.unit.test' },
   { id: 'runtime-policy', modulePath: './unit/runtime-policy.unit.test' },
   { id: 'diff-scope', modulePath: './unit/diff-scope.unit.test' },
   { id: 'correction-routing', modulePath: './unit/correction-routing.unit.test' },

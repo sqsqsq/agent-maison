@@ -1,5 +1,5 @@
 // ============================================================================
-// pass-snapshot.ts — goal trust-state 命名空间：per-run 场外状态回收 + coding 基线锚
+// pass-snapshot.ts — goal trust-state 命名空间：per-run 场外状态回收 + legacy 只读兼容
 // ----------------------------------------------------------------------------
 // 【pass snapshot 机制已整体退役 · openspec runner-owned-machine-facts（codex 审计定案）】
 // 旧机制（PASS 产物冻结快照：artifact-class resolver / take/diff/restore/discard /
@@ -10,17 +10,18 @@
 //     （改坏=FAIL；改了仍合法=重新过全部门禁；快照在此之外只徒增故障面：
 //     pass_snapshot_unavailable / pre_invoke_snapshot_failed / head+epoch+锚 /
 //     可选产物空集误判 / 责任阶段重跑待办态）。
-// 本文件保留两块**职责真实**的存留：
-//   1) per-run 场外 trust 状态回收（deleteRunTrustState——场外数据 = 活跃/可恢复 run 的
-//      临时恢复区，成功封卷或明确 supersede 即删；含历史 run 遗留的 pass-snapshots 目录）；
-//   2) coding 基线锚（coding-base.json——ui_diff_within_declared_files 的 diff baseRef，
-//      与快照机制无关，只是碰巧同住 trust 命名空间）。
+// trust 命名空间的现役住户只有 per-run GC 与既有 vision trust 入口；本文件的现役职责
+// 只有 per-run 场外 trust 状态回收（deleteRunTrustState——场外数据 = 活跃/可恢复 run 的
+// 临时恢复区，成功封卷或明确 supersede 即删；含历史 run 遗留的 pass-snapshots 目录）。
+// coding-base.json reader/writer 仅为「run_created 不在场」的旧时代迁移兼容：生产
+// producer 已归零，现代 run 结构上不可达；物理删除由 3.1.0 deferred plan 承接，不能
+// 再把它描述为活跃基线机制或 trust 命名空间住户。
 //
 // 【场外状态红线（plan b7e4d2a9）】场外数据 = 活跃/可恢复 run 的临时恢复区，**不是
 // 历史档案库**：per-run 状态只在 run 活跃或可恢复期间存在，成功封卷或明确 supersede
 // 即删（deleteRunTrustState）；普通完整性靠仓内签名/hash 做"检测并停止"。**新增任何
 // 场外状态类型，必须先证明「in-repo 产物 + 签名/哈希绑定」做不到；默认答案是不允许。**
-// （另一路径入口：goal-runner.ts visionTrustDir()——两处红线同文，勿分叉。）
+// （vision trust 与 goalTrustRootDir 共享场外命名空间入口；两处红线同文，勿分叉。）
 // ============================================================================
 
 import * as fs from 'fs';
@@ -30,7 +31,7 @@ import { createHash } from 'crypto';
 import { spawnSync } from 'child_process';
 
 // ---------------------------------------------------------------------------
-// trust-state 根（与 goal-runner.visionTrustDir 同一约定——泛化为共享导出；
+// trust-state 根（per-run GC 与 vision trust 入口的共享约定；
 // MAISON_GOAL_CHECKPOINT_DIR 覆盖、该 env 已由 agent-invoke 从 agent 子进程剥离）
 // ---------------------------------------------------------------------------
 
