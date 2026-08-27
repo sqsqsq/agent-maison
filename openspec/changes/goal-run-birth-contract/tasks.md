@@ -24,4 +24,4 @@
 
 - [x] 4.1 Update goal-mode runbook/skill, manifest schema documentation and `MIGRATION.md` for birth baseline, successor, rebaseline, legacy and incomplete-creation behavior.
 - [x] 4.2 Run TypeScript typecheck plus targeted birth/identity/baseline/successor/attended-detached tests and fix regressions.
-- [ ] 4.3 Run `cd harness && npm test`, strict OpenSpec validation and `npm run release:verify -- --skip-typecheck`; record any externally blocked host-only evidence without marking it complete.
+- [x] 4.3 Run `cd harness && npm test`, strict OpenSpec validation and `npm run release:verify -- --skip-typecheck`; record any externally blocked host-only evidence without marking it complete.
