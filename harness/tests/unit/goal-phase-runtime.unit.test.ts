@@ -22,7 +22,13 @@ import {
   setupGoalRuntimeHost,
   type RunProbe,
 } from './goal-runner-testing-integrity.unit.test';
-import { loadGoalManifestFromRun } from '../../scripts/utils/goal-manifest';
+import {
+  buildGoalManifestFromInput,
+  loadGoalManifestFromRun,
+  writeGoalManifest,
+} from '../../scripts/utils/goal-manifest';
+import { resolveGoalRunBaseline } from '../../scripts/utils/goal-run-baseline';
+import { resolveGoalRunHeadSha } from '../../scripts/utils/goal-run-creation';
 import { handoffSessionToDetached } from '../../scripts/utils/goal-phase-runtime';
 import { consumeHandoffAtBoundary, writeHandoffRequest } from '../../scripts/utils/goal-handoff';
 import { appendGoalEventFenced } from '../../scripts/utils/goal-in-session-evidence';
@@ -210,6 +216,8 @@ const cases: Case[] = [
           `resume did not close: detached=${detachedResume.exitCode} attended=${attendedResume.exitCode}`);
         assert(JSON.stringify(canonicalOf(detachedResume)) === JSON.stringify(canonicalOf(attendedResume)),
           'resume canonical projection drift');
+        assert(JSON.stringify(detachedResume.harnessPhases) === JSON.stringify(attendedResume.harnessPhases),
+          'resume gate sequence drift');
         assert(
           loadGoalManifestFromRun(detachedResumeRoot, 'matrix-resume', { feature: 'bc-openCard' }).run_base_sha ===
             sourceManifest.run_base_sha &&
@@ -233,6 +241,8 @@ const cases: Case[] = [
           `successor did not close: detached=${detachedSuccessor.exitCode} attended=${attendedSuccessor.exitCode}`);
         assert(JSON.stringify(canonicalOf(detachedSuccessor)) === JSON.stringify(canonicalOf(attendedSuccessor)),
           'successor canonical projection drift');
+        assert(JSON.stringify(detachedSuccessor.harnessPhases) === JSON.stringify(attendedSuccessor.harnessPhases),
+          'successor gate sequence drift');
         const detachedSuccessorManifest = loadGoalManifestFromRun(
           detachedSuccessorRoot, 'matrix-successor', { feature: 'bc-openCard' },
         );
@@ -362,6 +372,92 @@ const cases: Case[] = [
         assert(JSON.stringify(processProjection.filter(event => event.type !== 'owner_handoff')) ===
           JSON.stringify(sessionProjection.filter(event => event.type !== 'owner_handoff')),
         'handoff modes drifted outside the required direction field');
+        assert(JSON.stringify(toProcess.harnessPhases) === JSON.stringify(toSession.harnessPhases),
+          'handoff gate sequence drift');
+      } finally {
+        for (const root of roots) fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'M5 incident closure: legacy HALTED acafa0 can start an audited rebaseline successor in both modes',
+    run: async () => {
+      const base = setupGoalRuntimeHost('codex').root;
+      const roots: string[] = [base];
+      try {
+        const legacy = buildGoalManifestFromInput({
+          feature: 'bc-openCard',
+          run_id: 'acafa0',
+          requirement: '历史 attended 事故占位者',
+          start_phase: 'spec',
+          end_phase: 'testing',
+          adapter: 'codex',
+          unattended: { write_mode: 'full-access', approval_mode: 'never' },
+        }, { projectRoot: base });
+        const legacyManifestPath = writeGoalManifest(legacy, base);
+        const legacyEventsPath = path.join(path.dirname(legacyManifestPath), 'events.jsonl');
+        fs.writeFileSync(legacyEventsPath, [
+          JSON.stringify({
+            type: 'run_start',
+            ts: '2026-08-27T00:00:00.000Z',
+            manifest_identity_fields: { feature: 'bc-openCard' },
+          }),
+          JSON.stringify({
+            type: 'run_end',
+            ts: '2026-08-27T00:01:00.000Z',
+            status: 'HALTED',
+            halt_reason: 'ui_scope_base_missing',
+          }),
+        ].join('\n') + '\n', 'utf8');
+        const unresolved = resolveGoalRunBaseline(base, 'bc-openCard', 'acafa0');
+        assert(!unresolved.available, 'incident source unexpectedly has a trusted legacy baseline');
+        const head = resolveGoalRunHeadSha(base);
+
+        const detachedRoot = cloneHost(base, 'incident-rebaseline-detached');
+        const attendedRoot = cloneHost(base, 'incident-rebaseline-attended');
+        roots.push(detachedRoot, attendedRoot);
+        const detachedSourceBytes = fs.readFileSync(
+          path.join(detachedRoot, legacy.report_dir, 'events.jsonl'), 'utf8');
+        const attendedSourceBytes = fs.readFileSync(
+          path.join(attendedRoot, legacy.report_dir, 'events.jsonl'), 'utf8');
+
+        const detached = await runGoalRuntimeChain(detachedRoot, {
+          adapter: 'codex',
+          executorMode: 'detached',
+          runId: 'incident-rebaseline',
+          supersede: ['acafa0'],
+          rebaselineTo: head,
+          freshRequirement: '按当前 HEAD 重建问责边界并继续',
+        });
+        const attended = await runGoalRuntimeChain(attendedRoot, {
+          adapter: 'codex',
+          executorMode: 'attended',
+          runId: 'incident-rebaseline',
+          supersede: ['acafa0'],
+          rebaselineTo: head,
+          freshRequirement: '按当前 HEAD 重建问责边界并继续',
+        });
+
+        assert(detached.exitCode === 0 && attended.exitCode === 0,
+          `rebaseline successor did not start/close: detached=${detached.exitCode} attended=${attended.exitCode}`);
+        assert(JSON.stringify(canonicalOf(detached)) === JSON.stringify(canonicalOf(attended)),
+          'incident canonical projection drift');
+        assert(JSON.stringify(detached.harnessPhases) === JSON.stringify(attended.harnessPhases),
+          'incident gate sequence drift');
+        for (const [root, probe] of [[detachedRoot, detached], [attendedRoot, attended]] as const) {
+          const manifest = loadGoalManifestFromRun(root, 'incident-rebaseline', { feature: 'bc-openCard' });
+          assert(manifest.successor_of === 'acafa0', 'incident successor lineage missing');
+          assert(manifest.run_base_sha === head, 'operator-supplied exact HEAD was not frozen');
+          const created = probe.events.find(event => event.type === 'run_created');
+          const supersede = probe.events.find(event => event.type === 'supersede');
+          assert(created?.rebaseline_from_run_id === 'acafa0', 'run_created lacks rebaseline source audit');
+          assert(supersede?.target_run_id === 'acafa0' && supersede?.rebaseline_to === head,
+            `supersede audit incomplete: ${JSON.stringify(supersede)}`);
+        }
+        assert(fs.readFileSync(path.join(detachedRoot, legacy.report_dir, 'events.jsonl'), 'utf8') === detachedSourceBytes,
+          'detached management command rewrote the source run');
+        assert(fs.readFileSync(path.join(attendedRoot, legacy.report_dir, 'events.jsonl'), 'utf8') === attendedSourceBytes,
+          'attended management command rewrote the source run');
       } finally {
         for (const root of roots) fs.rmSync(root, { recursive: true, force: true });
       }

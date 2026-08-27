@@ -298,6 +298,8 @@ export async function runGoalRuntimeChain(
     skipLegacySeal?: boolean;
     /** b7e4d2a9 Todo2：--supersede 目标（可多个） */
     supersede?: string[];
+    /** M5 incident fixture: operator-only audited baseline reset for a fresh successor. */
+    rebaselineTo?: string;
     /** e9d4b7a3 t5：fresh 启动走 --manifest 注入预算（goal-runner 无 --budget CLI 旗标）——
      * 用于重放「预算撞墙 → 提额 → resume」的确定性首 run */
     freshBudget?: { max_total_turns: number };
@@ -652,6 +654,7 @@ export async function runGoalRuntimeChain(
       );
     });
     const supersedeArgs = (opts.supersede ?? []).flatMap(id => ['--supersede', id]);
+    const rebaselineArgs = opts.rebaselineTo ? ['--rebaseline-to', opts.rebaselineTo] : [];
     // e9d4b7a3 t5：fresh 预算注入——goal-runner 无 --budget 旗标，走 --manifest +
     // --override-manifest（requirement/adapter 亦经 override 应用，行为等价纯 CLI）
     if (!opts.resume && (opts.freshBudget || opts.freshManifestContent)) {
@@ -708,6 +711,7 @@ export async function runGoalRuntimeChain(
           // 无 HMAC 测试宿主的 resume 须弱 ack vision 账本（生产合法路径；终态封顶人工复核）
           ...(opts.forceResume ? ['--force-resume', '--ack-unverified-ledgers'] : []),
           ...supersedeArgs,
+          ...rebaselineArgs,
           ...(opts.resumeExtraArgs ?? []),
         ]
       : [
@@ -725,6 +729,7 @@ export async function runGoalRuntimeChain(
             ? []
             : ['--manifest', 'budget-manifest.yaml', '--override-manifest', '--override-start', '--override-end']),
           ...supersedeArgs,
+          ...rebaselineArgs,
         ];
     process.chdir(root);
     clearFrameworkConfigCache();
