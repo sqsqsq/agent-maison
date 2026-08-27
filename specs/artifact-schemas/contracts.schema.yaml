@@ -4,5 +4,37 @@ title: Feature implementation contracts
 x-artifact-id: contracts@1
 x-version: 1
 x-authority: "Compatibility identity; field-level checks remain in spec-loader and phase checkers."
+x-file-authorization: >
+  contracts.files is the sole authorization set. Every file-bearing field below is resolved in
+  memory at plan closure and MUST be a member of normalized contracts.files.
+x-file-reference-fields:
+  - modules[].har_index
+  - modules[].builder
+  - modules[].export_file
+  - modules[].export_files[]
+  - data_models[].file
+  - interfaces[].file
+  - components[].file
+  - resource_keys.<module>.<category>[].path
+  - resource_keys.<module>.<category>[].media
+  - navigation.main_pages_file
+  - navigation.route_map_file
+  - navigation.page_registration_file
+  - navigation.route_registration_file
+  - navigation.page_files[]
+  - navigation.route_files[]
+  - navigation.pages[].file
+  - navigation.pages[].page_file
+  - navigation.pages[].route_file
+  - navigation.pages[].registration_file
+  - navigation.routes[].file
+  - navigation.routes[].page_file
+  - navigation.routes[].route_file
+  - navigation.routes[].registration_file
+  - prd_to_code_traceability[].key_files[]
 type: object
 additionalProperties: true
+properties:
+  files:
+    type: array
+    items: { type: string, minLength: 1 }

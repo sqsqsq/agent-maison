@@ -26,6 +26,10 @@ import {
 } from './utils/types';
 import { SpecLoader } from './utils/spec-loader';
 import {
+  findUnauthorizedContractFileReferences,
+  resolveContractFileReferences,
+} from './utils/contract-reference-closure';
+import {
   architectureMdPath,
   featureFilePath,
   relArchitectureMd,
@@ -973,6 +977,80 @@ function checkSpecConstraintTraceability(ctx: CheckContext, plan: string): Check
   }];
 }
 
+const CONTRACT_REFERENCE_DIAGNOSTIC_LIMIT = 25;
+
+export function checkContractFileReferenceClosure(ctx: CheckContext): CheckResult[] {
+  const contractsRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'contracts.yaml');
+  const contracts = ctx.featureSpec.contracts;
+  if (!contracts) {
+    return [{
+      id: 'contract_file_reference_closure',
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'contract_file_reference_closure'),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: `${contractsRel} 不存在或无法解析，引用闭包无法建立。`,
+      affected_files: [contractsRel],
+    }];
+  }
+
+  const closure = ctx.featureSpec.referenceClosure
+    ?? resolveContractFileReferences(ctx.projectRoot, contracts);
+  if (closure.invalid_paths.length > 0) {
+    const shown = closure.invalid_paths.slice(0, CONTRACT_REFERENCE_DIAGNOSTIC_LIMIT);
+    const omitted = closure.invalid_paths.length - shown.length;
+    return [{
+      id: 'contract_file_reference_closure',
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'contract_file_reference_closure'),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: [
+        `${contractsRel} 含 ${closure.invalid_paths.length} 个非法文件引用：`,
+        ...shown.map(issue => `- ${issue.source}: ${issue.message}`),
+        ...(omitted > 0 ? [`- …另有 ${omitted} 项未展示`] : []),
+      ].join('\n'),
+      affected_files: [contractsRel],
+      suggestion: '回到 plan 修正 contracts.yaml 中的文件路径，再重跑 plan closure。',
+    }];
+  }
+
+  const violations = findUnauthorizedContractFileReferences(closure);
+  if (violations.length === 0) {
+    return [{
+      id: 'contract_file_reference_closure',
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'contract_file_reference_closure'),
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details: `contracts.yaml 的 ${closure.references.length} 个文件引用均已由 contracts.files 授权。`,
+    }];
+  }
+
+  const shown = violations.slice(0, CONTRACT_REFERENCE_DIAGNOSTIC_LIMIT);
+  const omitted = violations.length - shown.length;
+  return [{
+    id: 'contract_file_reference_closure',
+    category: 'traceability',
+    description: ruleDesc(ctx, 'traceability_checks', 'contract_file_reference_closure'),
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    details: [
+      `${violations.length} 个文件引用未列入 contracts.files（唯一授权集合）：`,
+      ...shown.map(violation => {
+        const sources = violation.sources
+          .slice(0, 3)
+          .map(source => `${source.source} [${source.kind}]`)
+          .join('；');
+        return `- ${violation.path} ← ${sources}`;
+      }),
+      ...(omitted > 0 ? [`- …另有 ${omitted} 个路径未展示`] : []),
+    ].join('\n'),
+    affected_files: [contractsRel],
+    suggestion: '回到 plan，将确需交付的路径加入 contracts.files，重新生成/关闭 contracts，再重跑 plan closure；现有文件、字节相同或其他字段均不构成授权。',
+  }];
+}
+
 const checker: PhaseChecker = {
   phase: 'plan',
 
@@ -994,6 +1072,7 @@ const checker: PhaseChecker = {
       ...featureArtifactLayoutWarnings(ctx.projectRoot, ctx.feature, ['spec.md', 'plan.md']),
     ];
 
+    results.push(...safeRun(() => checkContractFileReferenceClosure(ctx), 'contract_file_reference_closure'));
     results.push(...safeRun(() => checkRequiredChapters(ctx, design), 'required_chapters'));
     results.push(...safeRun(() => checkScopeDeclaration(ctx, design), 'scope_declaration'));
     results.push(...safeRun(() => checkScopeConsistencyWithPrd(ctx, design, prd), 'scope_consistency_with_spec'));

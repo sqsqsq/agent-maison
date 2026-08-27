@@ -63,9 +63,11 @@ expansions_with_user_approval:
 | `components` | 页面组件树+状态管理方案 | `name`/`module`/`file`/`kind`（page/component/utility）/`state`/`props`/`events`/`children` |
 | `state_management` | 状态管理方案 | — |
 | `navigation` | 路由/导航设计 | — |
-| `files` | 目录/文件结构规划 | 完整文件清单 |
-| `resource_keys` | 宿主资源引用 | **媒体资源 `path` 必须指向模块实际资源目录**（如 `<module>/src/main/resources/base/media/<key>.<ext>`），不得写工程根相对路径——visual-parity 素材门禁以模块资源目录真实文件判定，曾发生 1×1 占位借工程根路径假 PASS |
-| `prd_to_code_traceability` | spec 功能映射表 | — |
+| `files` | 目录/文件结构规划 | **唯一文件授权集合**；下列一切文件引用都必须以规范化路径列入此处 |
+| `resource_keys` | 宿主资源引用 | **媒体资源 `path` / `media` 必须指向模块实际资源目录**（如 `<module>/src/main/resources/base/media/<key>.<ext>`），且逐项列入 `files`；不得写工程根相对路径——visual-parity 素材门禁以模块资源目录真实文件判定，曾发生 1×1 占位借工程根路径假 PASS |
+| `prd_to_code_traceability` | spec 功能映射表 | `key_files[]` 逐项列入 `files` |
+
+**文件引用闭包（BLOCKER）**：模板见 [contracts-template.yaml](../feature/plan/contracts-template.yaml)。`data_models[].file`、`interfaces[].file`、`components[].file`、`prd_to_code_traceability[].key_files[]`、`resource_keys.*.*[].path/media`、`navigation` 的页面/路由注册文件，以及 module 的 `har_index`/`builder`/export 文件，全部必须满足 `引用 ⊆ contracts.files`。现有物理文件、与 spec asset 字节相同或出现在其他字段都不能自动授权。门禁失败时只回 plan：把确需交付的路径加入 `contracts.files`，重新生成/关闭 contracts，再重跑 plan harness。
 
 **边界用例只读复核**：plan 可检查 `acceptance.yaml` 与 spec/plan 的边界场景是否一致，但不得创建或补写 spec-owned 文件。发现缺失、漏场景或矛盾时，让 `scope_consistency_with_spec` 以机器事实失败并生成 spec repair candidate；runner 回退 spec 修改后，再重走 plan 及下游。
 

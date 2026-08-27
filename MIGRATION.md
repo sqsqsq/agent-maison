@@ -7,6 +7,12 @@
 
 3.0.0 把 phase 合格性与 goal 跨阶段推进收敛为机器契约：
 
+### contracts.yaml 文件引用闭包（Breaking）
+
+- plan closure 现在把 contracts 中 schema 声明的文件字段解析为内存视图，并要求它们全部属于规范化后的顶层 `contracts.files`。覆盖 data model/interface/component 文件、`resource_keys` 的 `path`/`media`、页面与路由注册文件、HAR build/export 文件和 `prd_to_code_traceability[].key_files`。
+- `contracts.files` 是唯一授权集合。文件已存在、与 spec asset 字节相同、由生成器产出或在其他字段出现，都不会自动获得 coding/UI scope 授权；框架也不会写 reference graph/manifest sidecar。
+- 升级已有 feature 时，若 `contract_file_reference_closure` 失败，请回到 plan，把诊断中的确需交付路径逐项加入 `contracts.files`，重新生成/关闭 contracts 并重跑 plan harness。不要在 coding 阶段扩写 contracts。
+
 ### 无人值守恢复与人签质量通行证退役（Breaking）
 
 - `confirmed_by`、`human_confirmed`、`human_signed`、`visual-confirm` 以及 fidelity/P0 skip/

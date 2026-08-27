@@ -1,0 +1,58 @@
+schema_version: "1.0"
+feature: bc-openCard
+modules:
+  - name: CardFeature
+    layer: 02-Feature
+    format: HAR
+    change_type: modify
+    package_path: 02-Feature/CardFeature
+components:
+  - name: CardPage
+    module: CardFeature
+    file: 02-Feature/CardFeature/src/main/ets/pages/CardPage.ets
+    kind: page
+resource_keys:
+  CardFeature:
+    media:
+      - { key: bank_logo_01, value: app.media.bank_logo_01, path: 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_01.png }
+      - { key: bank_logo_02, value: app.media.bank_logo_02, path: 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_02.png }
+      - { key: bank_logo_03, value: app.media.bank_logo_03, path: 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_03.png }
+      - { key: bank_logo_04, value: app.media.bank_logo_04, path: 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_04.png }
+      - { key: bank_logo_05, value: app.media.bank_logo_05, path: 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_05.png }
+      - { key: bank_logo_06, value: app.media.bank_logo_06, path: 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_06.png }
+      - { key: bank_logo_07, value: app.media.bank_logo_07, path: 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_07.png }
+      - { key: bank_logo_08, value: app.media.bank_logo_08, path: 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_08.png }
+      - { key: bank_logo_09, value: app.media.bank_logo_09, path: 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_09.png }
+      - { key: bank_logo_10, value: app.media.bank_logo_10, path: 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_10.png }
+      - { key: bank_logo_11, value: app.media.bank_logo_11, path: 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_11.png }
+      - { key: bank_logo_12, value: app.media.bank_logo_12, path: 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_12.png }
+      - { key: bank_logo_13, value: app.media.bank_logo_13, path: 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_13.png }
+      - { key: bank_logo_14, value: app.media.bank_logo_14, path: 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_14.png }
+      - { key: bank_logo_15, value: app.media.bank_logo_15, path: 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_15.png }
+      - { key: bank_logo_16, value: app.media.bank_logo_16, path: 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_16.png }
+      - { key: bank_logo_17, value: app.media.bank_logo_17, path: 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_17.png }
+      - { key: bank_logo_18, value: app.media.bank_logo_18, path: 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_18.png }
+      - { key: bank_logo_19, value: app.media.bank_logo_19, path: 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_19.png }
+      - { key: bank_logo_20, value: app.media.bank_logo_20, path: 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_20.png }
+files:
+  - 02-Feature/CardFeature/src/main/ets/pages/CardPage.ets
+  - 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_01.png
+  - 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_02.png
+  - 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_03.png
+  - 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_04.png
+  - 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_05.png
+  - 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_06.png
+  - 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_07.png
+  - 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_08.png
+  - 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_09.png
+  - 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_10.png
+  - 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_11.png
+  - 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_12.png
+  - 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_13.png
+  - 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_14.png
+  - 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_15.png
+  - 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_16.png
+  - 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_17.png
+  - 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_18.png
+  - 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_19.png
+  - 02-Feature/CardFeature/src/main/resources/base/media/bank_logo_20.png
