@@ -213,6 +213,8 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   declared_product_layer_missing: { class: 'operator' },
   unverifiable_must_fix: { class: 'operator' },
   headless_interaction_required: { class: 'operator' },
+  /** Attended executor cannot finish the current request without new host/user input. */
+  executor_waiting: { class: 'operator' },
   operator_interrupt: { class: 'operator' },
   /** c7e4a2d9：**只读兼容**——历史 3.0.0 前 events.jsonl 可能含
    * `halt_reason=await_human_p0_skip`，本映射供状态读取/归档工具解释旧事件；

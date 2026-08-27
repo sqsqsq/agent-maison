@@ -16,10 +16,10 @@ interactive session 与 detached `goal-runner` 现在共用：
 - 生产纯函数 `projectCanonicalLifecycle(events)` 的规范投影（executor/stdio/lease 遥测不入投影）。
 
 ```text
-assess@1 → driver authorize/guard → execute one phase → reassess
+assess@1 → GoalPhaseRuntime authorize/guard → executor transport → gate/verdict → reassess
 ```
 
-`assess@1` 是唯一跨 phase 推荐源；runner 保留 timeout、预算/backoff、cleanup、pass-snapshot、device、source-write、trust、monitor、usage 与 detach 存活等 process guard。详见 [reconcile-loop.md](../concepts/reconcile-loop.md)。
+`assess@1` 是唯一跨 phase 推荐源；`GoalPhaseRuntime` 保留 timeout、预算/backoff、cleanup、pass-snapshot、device、source-write、trust、monitor、usage 与 detach 存活等 guard。executor 只传输 phase 调用。详见 [reconcile-loop.md](../concepts/reconcile-loop.md)。
 
 用户只选择：
 

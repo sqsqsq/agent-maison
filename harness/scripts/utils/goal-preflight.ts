@@ -22,6 +22,7 @@ import {
 import type { FeaturePhase } from './phase-transition-policy';
 import {
   loadGoalCapability,
+  routeGoalCapability,
   validateGoalCapabilityForRunner,
 } from './goal-adapter-capability';
 import { isVisionCanaryFresh, canaryAdmissibleForExecution } from './multimodal-probe';
@@ -156,6 +157,7 @@ export interface GoalPreflightInput {
   dryRun: boolean;
   chain: FeaturePhase[];
   resolvedProfile: HarnessResolvedProfile;
+  executorMode?: 'attended' | 'detached';
 }
 
 /**
@@ -166,6 +168,7 @@ export interface GoalPreflightInput {
 export function runGoalPreflight(input: GoalPreflightInput): SessionBinaryResolution | null {
   const { projectRoot, frameworkRoot, manifest, provenance, dryRun, chain, resolvedProfile } =
     input;
+  const executorMode = input.executorMode ?? 'detached';
   const adapter = manifest.adapter?.trim();
   if (!adapter) {
     throw new Error('[goal-runner] preflight BLOCKER: manifest.adapter 缺失');
@@ -197,14 +200,23 @@ export function runGoalPreflight(input: GoalPreflightInput): SessionBinaryResolu
   }
 
   const cap = loadGoalCapability(frameworkRoot, adapter);
-  const v = validateGoalCapabilityForRunner(frameworkRoot, adapter, manifest.unattended);
-  if (!v.ok) {
-    throw new Error(`[goal-runner] preflight BLOCKER:\n${v.issues.map((i) => `  - ${i}`).join('\n')}`);
+  if (executorMode === 'attended') {
+    const route = routeGoalCapability(cap, 'attended');
+    if (route.kind !== 'in_session') {
+      throw new Error(`[goal-runner] preflight BLOCKER: ${route.reason}`);
+    }
+  } else {
+    const v = validateGoalCapabilityForRunner(frameworkRoot, adapter, manifest.unattended);
+    if (!v.ok) {
+      throw new Error(`[goal-runner] preflight BLOCKER:\n${v.issues.map((i) => `  - ${i}`).join('\n')}`);
+    }
   }
 
   // plan a8e5c3f9 t5：headless 全权限支持性——不支持的内建 adapter 明确失败，不静默降级
   //（dry-run 与 binary 检查同待遇：降为 WARN，便于无宿主环境演练脚本）。
-  const fullPerm = assertAdapterHeadlessFullPermission(adapter);
+  const fullPerm = executorMode === 'detached'
+    ? assertAdapterHeadlessFullPermission(adapter)
+    : { ok: true as const };
   if (!fullPerm.ok) {
     if (dryRun) {
       console.warn(`[goal-runner] preflight WARN: ${fullPerm.reason}`);
@@ -232,6 +244,11 @@ export function runGoalPreflight(input: GoalPreflightInput): SessionBinaryResolu
   if (!gate.ok) {
     throw new Error(`[goal-runner] preflight BLOCKER: ${gate.message}`);
   }
+
+  // Attended transport is supplied by the host stdio callback. The common runtime still
+  // performs all project/capability/personal prerequisite checks above, but it must not
+  // require or resolve a detached headless binary.
+  if (executorMode === 'attended') return null;
 
   // argv_adapter 不豁免 deveco readiness（已在 evaluatePersonalSetupGate 校验）
 

@@ -112,7 +112,9 @@ export function projectCanonicalLifecycle(
         });
         break;
       case 'phase_start':
-        if (phase) out.push({ type: 'phase_start', phase });
+        // attended 运行时按 attempt 签发的 driver=session phase_start 是 driver 级签发记录
+        //（harness 侧 attended-goal-context 的正证据），不是生命周期语义，不进投影。
+        if (phase && stringValue(event.driver) !== 'session') out.push({ type: 'phase_start', phase });
         break;
       case 'phase_verdict':
         if (phase) {

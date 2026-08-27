@@ -1,6 +1,6 @@
 #!/usr/bin/env ts-node
 // ============================================================================
-// Goal phase runtime (process owner) — deterministic multi-phase orchestrator
+// Goal phase runtime (fenced session/process owner) — deterministic multi-phase orchestrator
 // ============================================================================
 // Usage (from repo root or instance root):
 //   cd framework/harness && npx ts-node scripts/goal-runner.ts \
@@ -10,6 +10,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as readline from 'readline';
 import { spawn, spawnSync } from 'child_process';
 import minimist from 'minimist';
 import {
@@ -192,13 +193,18 @@ import {
   killProcessTree,
   probeAdapterVersion,
   resolveHeadlessInvokePlan,
+  type HeadlessInvokePlan,
   type InvokeTemplateVars,
 } from './utils/agent-invoke';
 import {
+  AttendedGoalPhaseExecutor,
   createPhaseExecutionContext,
   DetachedGoalPhaseExecutor,
+  validatePhaseExecutionContext,
+  type GoalPhaseExecutor,
+  type GoalPhaseExecutorResult,
+  type PhaseExecutionContext,
 } from './utils/goal-phase-executor';
-import { GoalPhaseRuntime } from './utils/goal-phase-runtime';
 import { parseClaudeInitModel, resolvePinVerifyMismatch } from './utils/claude-envelope';
 import {
   deleteRunTrustState,
@@ -359,6 +365,7 @@ import {
   readRunControl,
   releaseRunOwner,
   type RunFenceToken,
+  type RunOwnerKind,
 } from './utils/goal-run-control';
 import { snapshotPhaseHarness } from './utils/goal-phase-snapshot';
 import {
@@ -3724,6 +3731,7 @@ function acquireGoalLocks(
     reportDir: string;
     runMode: 'authoritative' | 'dry';
     explicitTakeover?: boolean;
+    ownerKind?: RunOwnerKind;
   },
 ): void {
   const { runId, reportDir, runMode } = run;
@@ -3745,7 +3753,7 @@ function acquireGoalLocks(
   const runDir = path.dirname(runLockPath);
   let existingControl = ensureRunControl(runDir, runId);
   existingControl = markExpiredSessionOrphaned(runDir, runId);
-  const ownerInput = { kind: 'process' as const, owner_id: fRecord.ownerId };
+  const ownerInput = { kind: run.ownerKind ?? 'process', owner_id: fRecord.ownerId };
   const acquiredControl =
     run.explicitTakeover && existingControl.owner?.state === 'orphaned_session'
       ? { ok: true as const, ...forceTakeoverRunOwner(
@@ -4007,18 +4015,67 @@ export function resolveDetachedPreloadPath(): string {
   return require.resolve('ts-node/register/transpile-only');
 }
 
+export interface GoalPhaseRuntimeLaunchOptions {
+  /** Explicit argv for embedded callers; CLI callers omit it. */
+  args?: readonly string[];
+  /** Explicit layout keeps host bridges and fixture runs independent from process.cwd(). */
+  layout?: RepoLayout;
+  /** Owner identity changes fencing/handoff posture only; lifecycle policy remains shared. */
+  ownerKind?: RunOwnerKind;
+  /** Optional transport injection. The runtime remains the sole lifecycle owner. */
+  executor?: GoalPhaseExecutor;
+}
+
+/**
+ * The single production phase lifecycle. Both attended and detached callers enter main();
+ * only the supplied executor transport and fenced owner kind differ.
+ */
+export class GoalPhaseRuntime {
+  constructor(private readonly options: GoalPhaseRuntimeLaunchOptions = {}) {}
+
+  run(): Promise<number> {
+    return main(this.options);
+  }
+
+  async executeExecutor(
+    context: PhaseExecutionContext,
+    executor: GoalPhaseExecutor,
+  ): Promise<GoalPhaseExecutorResult> {
+    validatePhaseExecutionContext(context);
+    if (context.owner.owner_id !== 'dry-run') {
+      assertFencedOwner(context.runDir, context.owner, 'runtime_pre_executor');
+    }
+    const result = await executor.execute(context);
+    if (context.owner.owner_id !== 'dry-run') {
+      assertFencedOwner(context.runDir, context.owner, 'runtime_post_executor');
+    }
+    return result;
+  }
+}
+
 /**
  * 主入口。**导出供 runner 级集成测试直接调用**（配合 __testing_set* 注入缝）——
  * 生产路径仍由文件尾的 require.main 分支驱动，行为不变。
  */
-export async function main(): Promise<number> {
+export async function main(options: GoalPhaseRuntimeLaunchOptions = {}): Promise<number> {
+  // Programmatic host bridges may run more than one lifecycle in the same Node process.
+  // Reset only ephemeral process-local projection; persisted truth remains manifest/events/control.
+  terminalEventCtx = null;
+  runConcluded = false;
+  appendEventBaseFields = {};
+  progressSubstep = null;
+  progressPhase = null;
+  progressHeartbeatHook = null;
   guardNestedGoalRunner();
   setupSignalHandlers();
 
-  const argv = minimist(process.argv.slice(2), {
+  const argv = minimist([...(options.args ?? process.argv.slice(2))], {
     string: [
       'feature', 'requirement', 'adapter', 'adapter-source', 'start', 'end', 'resume', 'manifest',
-      'run-id', 'supersede', 'rebaseline-to',
+      'run-id', 'supersede', 'rebaseline-to', 'attach-created',
+      // Internal host-bridge inputs. They select transport/owner and explicit repo layout;
+      // none of them grant policy authority or alter lifecycle adjudication.
+      'runtime-executor', 'runtime-owner', 'project-root', 'framework-root',
       // plan f9c2e6b4 t4：多行/长需求的推荐入口（与 --requirement 互斥）。
       // fresh 读取内容并冻结进 manifest；resume 只认已冻结值，不重读源文件。
       'requirement-file',
@@ -4039,6 +4096,71 @@ export async function main(): Promise<number> {
     ],
     alias: { f: 'feature', h: 'help' },
   });
+
+  const executorMode = String(argv['runtime-executor'] ?? (options.executor ? 'attended' : 'detached'));
+  if (executorMode !== 'attended' && executorMode !== 'detached') {
+    console.error(`[goal-phase-runtime] BLOCKER: runtime executor 非法：${executorMode}`);
+    return 1;
+  }
+  const runtimeOwnerKindRaw = String(argv['runtime-owner'] ?? options.ownerKind ??
+    (executorMode === 'attended' ? 'session' : 'process'));
+  if (runtimeOwnerKindRaw !== 'session' && runtimeOwnerKindRaw !== 'process') {
+    console.error(`[goal-phase-runtime] BLOCKER: runtime owner 非法：${runtimeOwnerKindRaw}`);
+    return 1;
+  }
+  const runtimeOwnerKind = runtimeOwnerKindRaw as RunOwnerKind;
+  if (runtimeOwnerKind === 'session' && executorMode !== 'attended') {
+    console.error('[goal-phase-runtime] BLOCKER: session owner 只能使用 attended executor');
+    return 1;
+  }
+  const attachCreatedRunId = typeof argv['attach-created'] === 'string'
+    ? argv['attach-created'].trim()
+    : '';
+  if (attachCreatedRunId && (executorMode !== 'attended' || runtimeOwnerKind !== 'session')) {
+    console.error('[goal-phase-runtime] BLOCKER: --attach-created 仅供 attended session 首次接管');
+    return 1;
+  }
+  if (attachCreatedRunId && argv.resume) {
+    console.error('[goal-phase-runtime] BLOCKER: --attach-created 与 --resume 互斥');
+    return 1;
+  }
+  let attendedInput: readline.Interface | null = null;
+  let attendedLines: AsyncIterator<string> | null = null;
+  const attendedExecutor = executorMode === 'attended'
+    ? options.executor ?? new AttendedGoalPhaseExecutor(async (context) => {
+        if (!attendedInput) {
+          attendedInput = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+          attendedLines = attendedInput[Symbol.asyncIterator]();
+        }
+        process.stdout.write(JSON.stringify({
+          type: 'phase_execute_request',
+          run_id: context.runId,
+          phase: context.phase,
+          attempt_id: context.attemptId,
+          owner_id: context.owner.owner_id,
+          owner_epoch: context.owner.epoch,
+          recommendation: {
+            phase: context.phase,
+            instruction: context.instruction ?? '',
+          },
+        }) + '\n');
+        const next = await attendedLines!.next();
+        if (next.done) throw new Error('phase executor protocol EOF');
+        const response = JSON.parse(next.value) as {
+          status?: string;
+          phase?: string;
+          details?: string;
+        };
+        if (!['passed', 'failed', 'waiting'].includes(response.status ?? '')) {
+          throw new Error('phase executor response.status 非法');
+        }
+        return {
+          status: response.status as 'passed' | 'failed' | 'waiting',
+          phase: response.phase ?? context.phase,
+          details: response.details,
+        };
+      })
+    : null;
 
   // `--detach`: fork the real run into the background and return immediately so a
   // blocking host shell (e.g. chrys TUI shell tool) is not held for the whole run.
@@ -4069,9 +4191,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
   }
 
   const manifestArgv = toManifestCliArgv(argv);
-  const layout = injectedLayout ?? detectRepoLayout(__dirname);
-  const projectRoot = layout.projectRoot;
-  const frameworkRoot = layout.frameworkRoot;
+  const detectedLayout = options.layout ?? injectedLayout ?? detectRepoLayout(__dirname);
+  const projectRoot = argv['project-root']
+    ? path.resolve(String(argv['project-root']))
+    : detectedLayout.projectRoot;
+  const frameworkRoot = argv['framework-root']
+    ? path.resolve(String(argv['framework-root']))
+    : detectedLayout.frameworkRoot;
+  const layout: RepoLayout = { ...detectedLayout, projectRoot, frameworkRoot };
 
   // f9c2e6b4 t4：**fresh 才读源文件**——resume 一律只认 manifest 里已冻结的 requirement，
   // 这样"权威需求文件可长期复用"与"旧内容绝不悄悄进新 run"同时成立。
@@ -4181,7 +4308,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
   const dryRunMode = rawRunInput.dryRun;
 
   let manifest: GoalManifest;
-  if (argv.resume) {
+  if (attachCreatedRunId) {
+    manifest = loadGoalManifestFromRun(projectRoot, attachCreatedRunId, {
+      feature: String(argv.feature),
+      featuresDir,
+    });
+  } else if (argv.resume) {
     if (!argv.manifest && !argv.feature) {
       console.error('[goal-runner] BLOCKER: --resume 须配 --feature 或 --manifest');
       process.exit(1);
@@ -4522,7 +4654,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     );
   }
 
-  if (argv.resume) {
+  if (argv.resume || attachCreatedRunId) {
     try {
       assertGoalRunAttachable(projectRoot, manifest);
     } catch (error) {
@@ -4560,7 +4692,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
   // Fresh start (not --resume): if an orphaned-but-incomplete run exists for this
   // feature, refuse a brand-new run_id and guide --resume (--force overrides).
   // dry-run 隔离命名空间不受真实 run 孤儿阻挡（T1b）。
-  if (!argv.resume && !dryRun) {
+  if (!argv.resume && !attachCreatedRunId && !dryRun) {
     guardOrphanedFeatureRun(projectRoot, featuresDir, manifest.feature, Boolean(argv.force));
   }
 
@@ -4568,7 +4700,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
     runId: manifest.run_id,
     reportDir: manifest.report_dir,
     runMode: dryRun ? 'dry' : 'authoritative',
-    explicitTakeover: Boolean(argv.resume) && forceResume,
+    explicitTakeover: Boolean(argv.resume || attachCreatedRunId) && forceResume,
+    ownerKind: runtimeOwnerKind,
   });
   // d6 t5⓪：**投影注入点之一**——带 halt_reason 的事件在写盘那一层自动补
   // run_disposition/run_wait_kind（device-readiness-gate 的 emitEvent 也接在这里，
@@ -4586,7 +4719,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
   // return/throw 会漏锁（finally 的 releaseAllLocks 只盖 try 内；process.on('exit')
   // 仅为后备）。不加新锁机制。
   try {
-  if (!argv.resume) {
+  if (!argv.resume && !attachCreatedRunId) {
     freshCreation = createGoalRun({
       projectRoot,
       manifest,
@@ -4606,25 +4739,26 @@ Goal runner — tool-agnostic multi-phase orchestrator
     const handoffRequestBeforeAccept = readHandoffRequest(runControl.dir, {
       on_quarantined: recordHandoffMailboxQuarantine,
     });
-    const acceptedHandoff = acceptConsumedHandoff(runControl.dir, runControl.token, 'process');
+    const acceptedHandoff = acceptConsumedHandoff(runControl.dir, runControl.token, runtimeOwnerKind);
     if (acceptedHandoff) {
       goalEvents.emit({
         type: 'handoff_accepted',
         request_id: acceptedHandoff.request_id,
         from_epoch: acceptedHandoff.from_epoch,
         epoch: runControl.token.epoch,
-        owner_kind: 'process',
+        owner_kind: runtimeOwnerKind,
       });
     }
     if (handoffRequestBeforeAccept?.status === 'consumed') {
-      const acceptanceValid = acceptedHandoff?.target_owner_kind === 'process' &&
+      const acceptanceValid = acceptedHandoff?.target_owner_kind === runtimeOwnerKind &&
         acceptedHandoff.accepted_epoch === runControl.token.epoch &&
         acceptedHandoff.from_epoch + 1 === runControl.token.epoch;
       if (!acceptanceValid) {
         quiesceRunOwner(runControl.dir, runControl.token);
         runConcluded = true;
         console.error(
-          '[goal-runner] handoff mailbox 已消费但当前 process owner 未完成目标/epoch/accepted 校验；保持静默等待',
+          `[goal-runner] handoff mailbox 已消费但当前 ${runtimeOwnerKind} owner ` +
+            '未完成目标/epoch/accepted 校验；保持静默等待',
         );
         return 0;
       }
@@ -4804,6 +4938,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       dryRun,
       chain,
       resolvedProfile,
+      executorMode,
     });
 
     // goal-fakepass-hardening t8：截断链 preflight——start_phase 非链首时机器核验上游
@@ -4874,7 +5009,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       projectRoot,
       manifest,
       chain,
-      dryRun,
+      dryRun: dryRun || executorMode === 'attended',
       forceRefresh: Boolean(argv['refresh-vision-probe']),
     });
     // plan d7f3a9c4 t4：金丝雀 CLI 硬失败（spawn race / CLI·config 参数不兼容）**只有**在
@@ -5524,7 +5659,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // 一并落 adapter_probe 事件，排障者一眼可见"什么版本、什么输出交付方式"。
     // plan c4e8a1f7 T1a：探测吃 session 解析出的**绝对路径**（.cmd 走 cross-spawn）——
     // telemetry 与正式 invoke 结构性同一（不再用裸 token 探、另解析跑）。
-    if (!dryRun) {
+    if (!dryRun && executorMode === 'detached') {
       const headlessCmd = cap.capability?.external_runner?.headless_invoke ?? '';
       const adapterBinary =
         (sessionBinary?.binary?.path ?? headlessCmd.trim().split(/\s+/)[0]) || manifest.adapter!;
@@ -5766,7 +5901,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           { incident: 'upstream_closure_gap', phase: String(haltPhase), detail: guidance },
           NO_AUTHORITY,
           {
-            orchestration: 'goal', owner_kind: 'process', can_prompt_now: false,
+            orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session',
             invocation: 'resume',
           },
         );
@@ -6305,7 +6440,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             { incident: haltReason, phase: String(phase) },
             NO_AUTHORITY,
             {
-              orchestration: 'goal', owner_kind: 'process', can_prompt_now: false,
+              orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session',
               invocation: argv.resume ? 'resume' : 'fresh',
             },
           );
@@ -6493,16 +6628,18 @@ Goal runner — tool-agnostic multi-phase orchestrator
           FEATURE: manifest.feature,
           PHASE: phase,
         };
-        const invokePlan = resolveHeadlessInvokePlan(
-          manifest.adapter!,
-          cap.capability!,
-          manifest.unattended,
-          prompt,
-          vars,
-          manifest.adapter_model_pin?.value,
-          // plan c4e8a1f7 T1a：正式 phase invoke 复用 session binary（probe/invoke 同一身份）
-          sessionBinary?.binary ?? null,
-        );
+        const invokePlan: HeadlessInvokePlan = executorMode === 'detached'
+          ? resolveHeadlessInvokePlan(
+              manifest.adapter!,
+              cap.capability!,
+              manifest.unattended,
+              prompt,
+              vars,
+              manifest.adapter_model_pin?.value,
+              // plan c4e8a1f7 T1a：正式 phase invoke 复用 session binary（probe/invoke 同一身份）
+              sessionBinary?.binary ?? null,
+            )
+          : { argv: [], label: 'phase_execute_request', adapterName: manifest.adapter! };
         // plan d7f3a9c4 t1：dry-run 在 plan 输出回显 pin（用户权威输入可见）。
         if (dryRun) {
           console.log(
@@ -6741,7 +6878,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             ...runDispositionFields(decide(
               { incident: 'pre_invoke_snapshot_failed', phase: String(phase), detail: preInvokeWriteSnap.failureReason ?? undefined },
               NO_AUTHORITY,
-              { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+              { orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session', invocation: argv.resume ? 'resume' : 'fresh' },
             )),
           });
           console.error(
@@ -6782,7 +6919,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               ...runDispositionFields(decide(
                 { incident: 'receipt_scaffold_unwritable', phase: String(phase), detail: scaffoldFailure },
                 NO_AUTHORITY,
-                { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+                { orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session', invocation: argv.resume ? 'resume' : 'fresh' },
               )),
             });
             console.error(
@@ -6869,14 +7006,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
           phase: String(phase),
           attemptId: visualAttemptId,
           owner: runControl
-            ? { ...runControl.token, kind: 'process' }
-            : { run_id: manifest.run_id, owner_id: 'dry-run', epoch: 0, kind: 'process' },
+            ? { ...runControl.token, kind: runtimeOwnerKind }
+            : { run_id: manifest.run_id, owner_id: 'dry-run', epoch: 0, kind: runtimeOwnerKind },
           projectRoot,
           frameworkRoot,
           runDir: path.resolve(projectRoot, manifest.report_dir),
           reportDir: manifest.report_dir,
           adapter: manifest.adapter ?? 'generic',
           adapterModel: manifest.adapter_model_pin?.value,
+          instruction: prompt,
           runtimeFacts: {
             runBaseSha: manifest.run_base_sha,
             receiptRequired: goalTrack !== 'lite',
@@ -6893,6 +7031,22 @@ Goal runner — tool-agnostic multi-phase orchestrator
             ...deviceEnv,
           },
         });
+        // 主干 attended runtime truth（b05d3dc7）：attended 每次 attempt 由运行时按当前 owner
+        // fence 签发 phase_start（driver=session, attempt_id/owner_id/owner_epoch），harness 侧
+        // attended-goal-context 以其为正证据精确核对 phase/attempt——invented phase/attempt
+        // 不能借用活 fence。它是 driver 级签发记录，不进 canonical lifecycle 投影
+        //（goal-canonical-lifecycle 按 driver=session 跳过），detached 零变化。
+        if (attendedExecutor && runControl && !resumePostAgent) {
+          goalEvents.emit({
+            type: 'phase_start',
+            phase: String(phase),
+            attempt_id: visualAttemptId,
+            owner_id: runControl.token.owner_id,
+            owner_epoch: runControl.token.epoch,
+            driver: 'session',
+            attempt: retries + 1,
+          });
+        }
         let invoke = resumePostAgent
           ? ({
               exitCode: 0,
@@ -6910,7 +7064,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             } as unknown as Awaited<ReturnType<InvokeAgentFn>>)
           : await new GoalPhaseRuntime().executeExecutor(
               phaseExecutionContext,
-              new DetachedGoalPhaseExecutor(
+              attendedExecutor ?? new DetachedGoalPhaseExecutor(
             () => ({ plan: invokePlan, cwd: projectRoot, options: {
           dryRun,
           timeoutMs: effectiveAgentTimeoutMs,
@@ -6987,6 +7141,27 @@ Goal runner — tool-agnostic multi-phase orchestrator
               ),
             );
 
+        if (!resumePostAgent && 'status' in invoke && invoke.status === 'waiting') {
+          const waitingDetail = invoke.details ?? 'attended executor is waiting for external input';
+          goalEvents.emit({
+            type: 'phase_halt',
+            phase,
+            halt_reason: 'executor_waiting',
+            detail: waitingDetail.slice(0, 1000),
+            owner_kind: runtimeOwnerKind,
+          });
+          outcomes.push({
+            phase,
+            verdict: 'INCOMPLETE',
+            halted: true,
+            retries,
+            halt_reason: 'executor_waiting',
+          });
+          halted = true;
+          phaseDone = true;
+          continue;
+        }
+
         // t2 fail-closed：containment 绑定失败的 invoke 结果不得按正常结果续跑——
         // 覆盖为失败（exit 1 + 诊断附 stderr；timed_out/completion 等成功性标记清除）。
         if (guardianBoundError) {
@@ -7016,7 +7191,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             ...runDispositionFields(decide(
               { incident: 'agent_containment_unresolved', phase: String(phase), detail: detailMsg },
               NO_AUTHORITY,
-              { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+              { orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session', invocation: argv.resume ? 'resume' : 'fresh' },
             )),
           });
           console.error(`\n===== agent_containment_unresolved =====\n${detailMsg}\n`);
@@ -7119,7 +7294,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               ...runDispositionFields(decide(
                 { incident: 'adapter_cli_hard_failure', phase: String(phase), detail: hardCli },
                 NO_AUTHORITY,
-                { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+                { orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session', invocation: argv.resume ? 'resume' : 'fresh' },
               )),
             });
             console.error(`\n===== adapter_cli_hard_failure =====\n${guidance}\n`);
@@ -7791,7 +7966,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 ...runDispositionFields(decide(
                   { incident: 'repair_not_converging', phase: String(phase) },
                   NO_AUTHORITY,
-                  { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+                  { orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session', invocation: argv.resume ? 'resume' : 'fresh' },
                 )),
               });
               console.error(`\n===== repair_not_converging =====\n${noopGuidance}\n`);
@@ -8123,7 +8298,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             ...runDispositionFields(decide(
               { incident: 'repair_candidates_unwritable', phase: String(phase), detail: repairCandidatesUnwritable },
               NO_AUTHORITY,
-              { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+              { orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session', invocation: argv.resume ? 'resume' : 'fresh' },
             )),
           });
           console.error(
@@ -8153,7 +8328,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             ...runDispositionFields(decide(
               { incident: 'repair_not_converging', phase: String(phase) },
               NO_AUTHORITY,
-              { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+              { orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session', invocation: argv.resume ? 'resume' : 'fresh' },
             )),
           });
           console.error(`\n===== repair_not_converging =====\n${convergenceGuidance}\n`);
@@ -8260,7 +8435,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             ...runDispositionFields(decide(
               { incident: 'closure_finalization_failed', phase: String(phase), detail: closureFinalizationError },
               NO_AUTHORITY,
-              { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+              { orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session', invocation: argv.resume ? 'resume' : 'fresh' },
             )),
           });
         } else if (invoke.timed_out !== true && interactionSentinel && verdict !== 'PASS') {
@@ -8296,7 +8471,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             ...runDispositionFields(decide(
               { incident: 'closure_finalization_failed', phase: String(phase) },
               NO_AUTHORITY,
-              { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+              { orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session', invocation: argv.resume ? 'resume' : 'fresh' },
             )),
           });
           console.log('\n===== closure_finalization_failed =====\n自动重试当前责任阶段 closure 事务。\n');
@@ -8579,7 +8754,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   ...runDispositionFields(decide(
                     { incident: 'closure_finalization_failed', phase: String(phase), detail: syncResult.finalizationError },
                     NO_AUTHORITY,
-                    { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+                    { orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session', invocation: argv.resume ? 'resume' : 'fresh' },
                   )),
                 });
               }
@@ -8942,7 +9117,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               },
               NO_AUTHORITY,
               {
-                orchestration: 'goal', owner_kind: 'process', can_prompt_now: false,
+                orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session',
                 invocation: argv.resume ? 'resume' : 'fresh',
               },
             );
@@ -8999,7 +9174,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             },
             NO_AUTHORITY,
             {
-              orchestration: 'goal', owner_kind: 'process', can_prompt_now: false,
+              orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session',
               invocation: argv.resume ? 'resume' : 'fresh',
             },
           ) : null;
@@ -9017,9 +9192,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
               NO_AUTHORITY,
               {
                 orchestration: 'goal',
-                owner_kind: 'process',
+                owner_kind: runtimeOwnerKind,
                 // 铁律 (c)：can_prompt_now 不改变裁决，只供 L3 话术选择措辞。
-                can_prompt_now: false,
+                can_prompt_now: runtimeOwnerKind === 'session',
                 invocation: argv.resume ? 'resume' : 'fresh',
               },
             );
@@ -9037,7 +9212,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 { incident: 'backtrack_limit', phase: String(phase) },
                 NO_AUTHORITY,
                 {
-                  orchestration: 'goal', owner_kind: 'process', can_prompt_now: false,
+                  orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session',
                   invocation: argv.resume ? 'resume' : 'fresh',
                 },
               );
@@ -9276,7 +9451,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   { incident: 'backtrack_limit', phase: String(phase) },
                   NO_AUTHORITY,
                   {
-                    orchestration: 'goal', owner_kind: 'process', can_prompt_now: false,
+                    orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session',
                     invocation: argv.resume ? 'resume' : 'fresh',
                   },
                 )
@@ -9726,6 +9901,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         /* best-effort — sync exit may not await */
       });
     }
+    (attendedInput as readline.Interface | null)?.close();
     releaseAllLocks();
   }
 }

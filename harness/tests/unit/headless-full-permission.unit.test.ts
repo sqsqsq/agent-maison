@@ -137,7 +137,7 @@ function testManifestDefaultsSourcePins(): void {
     /unattended: \{ write_mode: 'full-access', approval_mode: 'never', max_turns: 30 \}/.test(entry),
     'goal-mode-entry 新 manifest 默认须为 full-access + never',
   );
-  const runner = fs.readFileSync(path.join(REPO_ROOT, 'harness', 'scripts', 'goal-phase-runtime-process.ts'), 'utf-8');
+  const runner = fs.readFileSync(path.join(REPO_ROOT, 'harness', 'scripts', 'goal-phase-runtime.ts'), 'utf-8');
   assert(
     /write_mode: 'full-access',\s*\n\s*approval_mode: 'never',\s*\n\s*max_turns: 20,/.test(runner),
     'goal-runner fresh CLI 入口新 manifest 默认须为 full-access + never',
