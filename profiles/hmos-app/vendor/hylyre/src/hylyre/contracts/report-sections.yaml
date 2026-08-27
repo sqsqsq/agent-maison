@@ -1,0 +1,28 @@
+# Hylyre test-report.md contract (L4/L5 SSOT)
+# L5 harness enforces headings, execution status, pass-rate tiers, verdict, plan↔report, trace.
+
+report_required_sections:
+  - "测试概览"
+  - "测试执行结果"
+  - "缺陷清单"
+  - "通过率统计"
+  - "结论"
+
+execution_status_values:
+  - "通过"
+  - "失败"
+  - "阻塞"
+  - "跳过"
+
+verdict_values:
+  - "达标"
+  - "有条件达标"
+  - "不达标"
+
+# 通过率统计小节必须出现的分级（与 §7.5 一致）；非 P0/P1/P2 的优先级在 emit 中并入 P2 统计
+pass_rate_required_tiers:
+  - "P0"
+  - "P1"
+  - "P2"
+
+pass_rate_overall_label: "总体"

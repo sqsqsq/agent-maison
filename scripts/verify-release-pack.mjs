@@ -113,6 +113,9 @@ function assertZipContents(frameworkRoot) {
       f.startsWith('profiles/hmos-app/vendor/hylyre/')
       && f.endsWith('.md')
       && f !== 'profiles/hmos-app/vendor/hylyre/README.md'
+      // src/** 源码树整树放行（plan a7c3e9d1 t3）：contracts/README.md 等是 manifest
+      // 声明的 package-data，缺失会让下游 tree_sha256 校验失败；泄漏管控只限 vendor 根。
+      && !f.startsWith('profiles/hmos-app/vendor/hylyre/src/')
     ) {
       fail(`vendor handover md leaked: ${f}`);
     }
@@ -126,6 +129,54 @@ function assertZipContents(frameworkRoot) {
     const vendorManifest = JSON.parse(fs.readFileSync(vendorManifestPath, 'utf8'));
     if (vendorManifest.integration_docs) {
       fail('staging vendor manifest must not contain integration_docs');
+    }
+    if (vendorManifest.schema === 2) {
+      // 源码树发布深校验（评审 5 P1）：逐声明文件 sha256+size、文件计数、tree hash
+      // 复算、src 下无未声明文件、vendor 下无任何 whl——发布件『只携带源码且完整』由
+      // 本门禁锁死，而非依赖工作树恰好干净。
+      const vendorRel = 'profiles/hmos-app/vendor/hylyre';
+      const srcRoot = `${vendorRel}/src`;
+      if (!exists(frameworkRoot, `${srcRoot}/pyproject.toml`)) {
+        fail(`schema 2 vendor manifest but ${srcRoot}/pyproject.toml missing from zip`);
+      }
+      const declared = vendorManifest.source?.files ?? [];
+      const declaredSet = new Set(declared.map(e => e.path));
+      if (declared.length !== (vendorManifest.source?.file_count ?? -1)) {
+        fail(`vendor manifest file_count ${vendorManifest.source?.file_count} != files[].length ${declared.length}`);
+      }
+      const treeParts = [];
+      for (const entry of [...declared].sort((a, b) =>
+        Buffer.compare(Buffer.from(a.path, 'utf-8'), Buffer.from(b.path, 'utf-8')),
+      )) {
+        const abs = path.join(frameworkRoot, srcRoot, ...entry.path.split('/'));
+        if (!fs.existsSync(abs)) {
+          fail(`vendor source file declared in manifest missing from zip: ${srcRoot}/${entry.path}`);
+        }
+        const buf = fs.readFileSync(abs);
+        const sha = crypto.createHash('sha256').update(buf).digest('hex');
+        if (sha !== String(entry.sha256).toLowerCase()) {
+          fail(`vendor source file sha mismatch in staged pack: ${entry.path} (staged=${sha} manifest=${entry.sha256})`);
+        }
+        if (buf.length !== entry.size_bytes) {
+          fail(`vendor source file size mismatch in staged pack: ${entry.path} (staged=${buf.length} manifest=${entry.size_bytes})`);
+        }
+        treeParts.push(`${entry.path}\n${sha}\n`);
+      }
+      const stagedTreeSha = crypto
+        .createHash('sha256')
+        .update(Buffer.from(treeParts.join(''), 'utf-8'))
+        .digest('hex');
+      if (stagedTreeSha !== String(vendorManifest.source?.tree_sha256).toLowerCase()) {
+        fail(`vendor source tree_sha256 mismatch in staged pack (staged=${stagedTreeSha} manifest=${vendorManifest.source?.tree_sha256})`);
+      }
+      for (const f of allFiles) {
+        if (f.startsWith(`${srcRoot}/`) && !declaredSet.has(f.slice(srcRoot.length + 1))) {
+          fail(`undeclared file under vendor src in staged pack: ${f}`);
+        }
+        if (f.startsWith(`${vendorRel}/`) && f.endsWith('.whl')) {
+          fail(`wheel must not ship in release pack (source-only vendor): ${f}`);
+        }
+      }
     }
   }
 

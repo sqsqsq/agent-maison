@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hylyre"
+version = "0.3.2"
+description = "Hypium + Lyrebird unified device testing harness (HarmonyOS)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Hylyre contributors" }]
+keywords = ["harmonyos", "hypium", "lyrebird", "testing", "mock"]
+dependencies = [
+    "typer>=0.9,<0.20",
+    "pydantic>=2.0,<3",
+    "httpx>=0.26,<0.29",
+    "rich>=13.0,<14",
+    "jsonschema>=4.20,<5",
+    "pyyaml>=6.0,<7",
+]
+
+[project.optional-dependencies]
+device = ["hypium"]
+mock = ["lyrebird"]
+mcp = ["fastmcp>=2.0"]
+dev = [
+    "pytest>=7.4,<9",
+    "pytest-asyncio>=0.24,<0.26",
+    "pytest-cov>=4.1,<6",
+    "respx>=0.21,<0.23",
+    "fastmcp>=2.0,<4",
+]
+
+[project.scripts]
+hylyre = "hylyre.cli.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["hylyre*"]
+
+[tool.setuptools.package-data]
+"hylyre.contracts" = ["*.json", "*.yaml", "*.yml", "*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-v -m \"not slow\""
+markers = [
+    "slow: pip wheel integration; run in build-wheel CI job",
+]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

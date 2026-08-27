@@ -10,8 +10,8 @@
 //
 // 本模块 = 标准路径三入口（CLI / device_test_run 缺计划 hint / coverage·stale·lint
 // 失败 hint）的**唯一共享知识源**：知识由机器携带，不赌 agent 读没读文档。
-// 键集与 STEP lint 同源（hylyre-planned-step-keys.ts），与 vendor wheel 的一致性由
-// hylyre-keyset-consistency 元门禁锁死。
+// 键集与 STEP lint 同源（hylyre-planned-step-keys.ts），与 vendor 发布件（源码树/wheel）
+// 的一致性由 hylyre-keyset-consistency 元门禁锁死。
 // ============================================================================
 
 import {

@@ -2,7 +2,7 @@
  * device_test.run → provider `hylyre`
  *
  * 负责：
- *   1) ensureHylyreReady：探测 / 离线安装到 profile 配置 venv（vendor wheel + PyPI 拉传递依赖）
+ *   1) ensureHylyreReady：探测 / 离线安装到 profile 配置 venv（vendor 源码树发布件 + PyPI 拉传递依赖；运行时兼容 schema 1 legacy wheel 布局）
  *   2) runHylyreDeviceTest：venv python 调 `python -m hylyre run --plan ...`（不附加 --store-dir）
  *   3) 日志与 meta：reports/<feature>/testing/hylyre-doctor.log、hylyre-ready.meta.json、device-test-run.meta.json
  *   4) parseHylyreTrace：解析 hylyre trace.json cases[]
@@ -15,10 +15,17 @@ import { stripTrustAnchorEnv } from '../../../../harness/scripts/utils/process-i
 import {
   evaluateVendorSyncNeed,
   fingerprintFromManifest,
-  pickVendorWheelPath,
+  isValidVendorSourceDecl,
+  manifestDeclaredArtifactSha,
+  pickVendorInstallable,
   readInstallFingerprint,
   sha256FileHex,
+  sha256TreeFromManifest,
+  stageVendorSourceForInstall,
+  stripBom,
   writeInstallFingerprint,
+  type HylyreVendorManifestShape,
+  type VendorInstallable,
 } from '../hylyre-vendor-sync';
 import {
   hdcTargetPrefix,
@@ -71,9 +78,14 @@ export interface RuntimeStepTelemetryCapability {
 
 /**
  * Provider/version handshake for Maison's in-process telemetry collector.
- * The wrapper depends on Hylyre's 0.3.1 ScenarioRunner hook; unknown versions
+ * The wrapper depends on Hylyre's 0.3.x ScenarioRunner hook; unknown versions
  * fail closed as capability-missing before a device content run is spawned.
+ * 0.3.2 与 0.3.1 的差异仅为 __version__ 字符串修正（scenario/harness 模块 LF 归一化后
+ * 内容一致——旧 wheel 内为 CRLF、源码树为 LF，源码树 vendor 切换时实测），
+ * wrapper 兼容集合据此扩展。
  */
+const RUNTIME_TELEMETRY_SUPPORTED_HYLYRE = new Set(['0.3.1', '0.3.2']);
+
 export function probeRuntimeStepTelemetry(opts: {
   hylyreVersion: string;
   manifestVersion: string;
@@ -81,7 +93,7 @@ export function probeRuntimeStepTelemetry(opts: {
   const wrapper = path.resolve(__dirname, '..', 'hylyre-runtime-telemetry.py');
   const version = opts.hylyreVersion.trim();
   const supported =
-    version === '0.3.1' &&
+    RUNTIME_TELEMETRY_SUPPORTED_HYLYRE.has(version) &&
     opts.manifestVersion.trim() === version &&
     fs.existsSync(wrapper) &&
     fs.statSync(wrapper).isFile();
@@ -92,7 +104,7 @@ export function probeRuntimeStepTelemetry(opts: {
     protocolVersion: '1.0',
     collectorVersion: '1.0',
     reason: supported
-      ? 'hylyre@0.3.1 + Maison runtime telemetry collector@1.0'
+      ? `hylyre@${version} + Maison runtime telemetry collector@1.0`
       : `runtime step telemetry unsupported/unavailable（installed=${version || '<missing>'}, manifest=${opts.manifestVersion || '<missing>'}, wrapper=${fs.existsSync(wrapper) ? 'present' : 'missing'}）`,
   };
 }
@@ -109,10 +121,8 @@ export function preflightRuntimeStepTelemetry(opts: {
 
 // -------- 公共类型 --------
 
-export interface HylyreReleaseManifest {
-  schema: 1;
-  hylyre_version: string;
-  wheel: { filename: string; sha256: string; size_bytes: number };
+/** schema 1=wheel 发布；schema 2=明文源码树发布（source 必填、wheel 可选） */
+export interface HylyreReleaseManifest extends HylyreVendorManifestShape {
   generated_at: string;
   generator: { python: string; pip: string; platform: string };
   note?: string;
@@ -265,7 +275,7 @@ export function classifyRunFailure(runOut: string, exitCode: number | null): Run
 
 function readJsonSafe<T>(file: string): T | null {
   try {
-    return JSON.parse(fs.readFileSync(file, 'utf-8')) as T;
+    return JSON.parse(stripBom(fs.readFileSync(file, 'utf-8'))) as T;
   } catch {
     return null;
   }
@@ -359,17 +369,88 @@ function pipShowVersion(pythonPath: string): string {
 function readVendorManifest(projectRoot: string, vendorRel: string): HylyreReleaseManifest | null {
   const abs = path.join(projectRoot, vendorRel, 'release.manifest.json');
   const j = readJsonSafe<HylyreReleaseManifest>(abs);
-  if (!j || j.schema !== 1 || typeof j.hylyre_version !== 'string') return null;
-  return j;
+  if (!j || typeof j.hylyre_version !== 'string') return null;
+  if (j.schema === 1) return j;
+  if (j.schema === 2) {
+    // schema 2 必须携带完整且**安全**的 source 声明（评审 5 P1：root/path 拒绝穿越、
+    // 条目唯一、sha/size 形状合规）——不合格与坏 JSON 同语义（corrupt → null）
+    if (isValidVendorSourceDecl(j.source)) {
+      return j;
+    }
+    return null;
+  }
+  return null;
 }
 
-function findVendorWheel(
+function findVendorInstallable(
   projectRoot: string,
   vendorRel: string,
   manifest: HylyreReleaseManifest | null,
-): string | null {
+): VendorInstallable | null {
   const abs = path.join(projectRoot, vendorRel);
-  return pickVendorWheelPath(abs, manifest);
+  return pickVendorInstallable(abs, manifest);
+}
+
+/**
+ * 实测工件指纹：wheel=文件 sha256；source=按 manifest 声明清单复算 tree hash
+ * （null=声明文件缺失/不可读——半同步或损坏）。
+ */
+function resolveVendorArtifactSha(
+  installable: VendorInstallable,
+  manifest: HylyreReleaseManifest | null,
+): string | null {
+  if (installable.kind === 'wheel') return sha256FileHex(installable.path);
+  if (!manifest?.source) return null;
+  return sha256TreeFromManifest(installable.path, manifest.source.files);
+}
+
+const VENDOR_MISSING_HINT =
+  '未找到 src/ 源码树或可验真 wheel（schema 2 的 wheel 回落要求 manifest.wheel 字段在场）';
+
+/** source 安装副本装完即清（best-effort；失败留给下次安装前的预清空自愈）。 */
+function cleanupSourceInstallTarget(kind: VendorInstallable['kind'], target: string): void {
+  if (kind !== 'source') return;
+  try {
+    fs.rmSync(target, { recursive: true, force: true });
+  } catch {
+    /* best-effort */
+  }
+}
+
+/**
+ * 解析 pip 安装目标：wheel 直接用；source 先按声明清单拷贝到 .hylyre/build-src 临时副本
+ * （pip ≥21.3 对目录是 in-tree build，直接对 vendor src 安装会在其中产 build//egg-info
+ * 污染仓库）。失败返回 null 并追加日志。
+ */
+function prepareVendorInstallTarget(args: {
+  installable: VendorInstallable;
+  manifest: HylyreReleaseManifest;
+  projectRoot: string;
+  venvDirRel: string;
+  artifactSha256: string;
+  logPath: string;
+}): string | null {
+  if (args.installable.kind === 'wheel') return args.installable.path;
+  const source = args.manifest.source;
+  if (!source) return null;
+  const buildBaseAbs = path.join(
+    path.dirname(path.resolve(args.projectRoot, args.venvDirRel)),
+    'build-src',
+  );
+  try {
+    const staged = stageVendorSourceForInstall({
+      srcRootAbs: args.installable.path,
+      buildBaseAbs,
+      version: args.manifest.hylyre_version,
+      treeSha256: args.artifactSha256,
+      files: source.files,
+    });
+    appendLogSync(args.logPath, `vendor 源码树已按声明清单暂存至 ${staged}（防 pip in-tree build 污染 vendor）\n`);
+    return staged;
+  } catch (e) {
+    appendLogSync(args.logPath, `vendor 源码树暂存失败：${(e as Error).message}\n`);
+    return null;
+  }
 }
 
 /**
@@ -378,7 +459,11 @@ function findVendorWheel(
  */
 function syncVendorHylyreInVenv(args: {
   pythonPath: string;
-  wheel: string;
+  /** pip 安装目标：wheel 文件或源码树临时副本 */
+  installTarget: string;
+  artifactKind: VendorInstallable['kind'];
+  /** 实测工件指纹（wheel 文件 sha256 / 源码 tree hash），成功后写入 install fingerprint */
+  artifactSha256: string;
   projectRoot: string;
   logPath: string;
   pypiExtraIndexUrl: string;
@@ -388,12 +473,12 @@ function syncVendorHylyreInVenv(args: {
   const errors: string[] = [];
   appendLogSync(
     args.logPath,
-    `vendor 发布件与 venv 不一致，自动 pip 对齐 manifest=${args.manifest.hylyre_version} wheel=${path.basename(args.wheel)}\n`,
+    `vendor 发布件与 venv 不一致，自动 pip 对齐 manifest=${args.manifest.hylyre_version} artifact=${args.artifactKind}:${path.basename(args.installTarget)}\n`,
   );
 
   const pipUpgrade = runHylyrePipInstall({
     pythonPath: args.pythonPath,
-    wheel: args.wheel,
+    target: args.installTarget,
     projectRoot: args.projectRoot,
     logPath: args.logPath,
     pypiExtraIndexUrl: args.pypiExtraIndexUrl,
@@ -411,7 +496,7 @@ function syncVendorHylyreInVenv(args: {
     );
     const pipForce = runHylyrePipInstall({
       pythonPath: args.pythonPath,
-      wheel: args.wheel,
+      target: args.installTarget,
       projectRoot: args.projectRoot,
       logPath: args.logPath,
       pypiExtraIndexUrl: args.pypiExtraIndexUrl,
@@ -428,17 +513,21 @@ function syncVendorHylyreInVenv(args: {
   }
 
   if (errors.length === 0 && manifestVer && hylyreVersion.trim() === manifestVer) {
-    const wheelSha = sha256FileHex(args.wheel);
-    writeInstallFingerprint(args.venvRoot, fingerprintFromManifest(args.manifest, wheelSha));
+    writeInstallFingerprint(
+      args.venvRoot,
+      fingerprintFromManifest(args.manifest, args.artifactSha256, args.artifactKind),
+    );
     console.log(`hylyre 已自动对齐 vendor ${manifestVer}`);
   }
+  cleanupSourceInstallTarget(args.artifactKind, args.installTarget);
 
   return { ok: errors.length === 0, upgraded, hylyreVersion, errors };
 }
 
 function runHylyrePipInstall(args: {
   pythonPath: string;
-  wheel: string;
+  /** wheel 文件路径，或源码树临时副本目录（两者 pip 语义一致） */
+  target: string;
   projectRoot: string;
   logPath: string;
   pypiExtraIndexUrl: string;
@@ -450,7 +539,7 @@ function runHylyrePipInstall(args: {
   } else {
     pipArgs.push('--upgrade');
   }
-  pipArgs.push(args.wheel, 'hylyre[device,mcp]');
+  pipArgs.push(args.target, 'hylyre[device,mcp]');
   if (args.pypiExtraIndexUrl.trim()) {
     pipArgs.push('--extra-index-url', args.pypiExtraIndexUrl.trim());
   }
@@ -630,6 +719,56 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
     };
   }
 
+  // -- 供给链完整性 fail-fast（评审 5 P0）--------------------------------------
+  // 实测工件指纹（wheel 文件 sha256 / 源码树按声明清单复算 tree hash）必须在
+  // **任何 pip / venv 创建 / import 之前**与 manifest 声明比对：被篡改的源码树进入
+  // PEP 517 即任意代码执行，事后报错为时已晚。此处一次判定，后续三条流程复用结果。
+  // env_override 不消费 vendor 发布件，跳过（其版本一致性由后段既有检查负责）。
+  let vendorInstallable: VendorInstallable | null = null;
+  let vendorArtifactSha: string | null = null;
+  if (source !== 'env_override' && manifest) {
+    vendorInstallable = findVendorInstallable(opts.projectRoot, cfg.vendor_dir, manifest);
+    if (vendorInstallable) {
+      vendorArtifactSha = resolveVendorArtifactSha(vendorInstallable, manifest);
+      const declaredSha = manifestDeclaredArtifactSha(manifest, vendorInstallable.kind);
+      const integrityError = !vendorArtifactSha
+        ? `vendor 源码树与 release.manifest.json 声明不一致（声明文件缺失或清单畸形），请从 Hylyre dist/release-src 重新同步 vendor 发布件`
+        : declaredSha && vendorArtifactSha !== declaredSha
+          ? `vendor 发布件与 release.manifest.json 声明不一致（${path.basename(vendorInstallable.path)}），请重新同步 vendor 发布件`
+          : null;
+      if (integrityError) {
+        appendLogSync(logPath, `${integrityError}\n`);
+        errors.push({ message: integrityError, kind: 'vendor' });
+        fs.writeFileSync(
+          metaPath,
+          JSON.stringify(
+            {
+              ok: false,
+              pythonPath,
+              errors,
+              manifestVersion,
+              vendor_artifact_kind: vendorInstallable.kind,
+            },
+            null,
+            2,
+          ),
+          'utf-8',
+        );
+        return {
+          ok: false,
+          pythonPath,
+          hylyreVersion: '',
+          manifestVersion,
+          versionConsistent: false,
+          source,
+          doctorOk: false,
+          errors,
+          logPath,
+        };
+      }
+    }
+  }
+
   let hylyreVersion = '';
 
   if (canImportHylyre(pythonPath, logPath)) {
@@ -724,10 +863,44 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
       pythonPath = venvPython(venvRoot);
     }
 
-    const wheel = findVendorWheel(opts.projectRoot, cfg.vendor_dir, manifest);
-    if (!wheel) {
+    // 复用启动早段的完整性门禁结果（评审 5 P0）：至此工件已验真，直接进入安装
+    const installable = vendorInstallable;
+    if (!installable) {
       errors.push({
-        message: `vendor wheel 缺失：在 ${cfg.vendor_dir} 下未找到 hylyre-*.whl`,
+        message: `vendor 发布件缺失：在 ${cfg.vendor_dir} 下${VENDOR_MISSING_HINT}`,
+        kind: 'vendor',
+      });
+      fs.writeFileSync(metaPath, JSON.stringify({ ok: false, errors }, null, 2), 'utf-8');
+      return {
+        ok: false,
+        pythonPath,
+        hylyreVersion: '',
+        manifestVersion,
+        versionConsistent: false,
+        source: 'venv_installed',
+        doctorOk: false,
+        errors,
+        logPath,
+      };
+    }
+    const installArtifactSha = vendorArtifactSha;
+    const installTarget =
+      installArtifactSha && manifest
+        ? prepareVendorInstallTarget({
+            installable,
+            manifest,
+            projectRoot: opts.projectRoot,
+            venvDirRel: cfg.venv_dir,
+            artifactSha256: installArtifactSha,
+            logPath,
+          })
+        : installable.kind === 'wheel'
+          ? installable.path
+          : null;
+    if (!installTarget) {
+      errors.push({
+        message:
+          `vendor 发布件不可安装：${cfg.vendor_dir} 下源码树与 release.manifest.json 声明不一致（声明文件缺失或暂存失败），请从 Hylyre dist/release-src 重新同步`,
         kind: 'vendor',
       });
       fs.writeFileSync(metaPath, JSON.stringify({ ok: false, errors }, null, 2), 'utf-8');
@@ -755,7 +928,7 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
 
     const pipFirst = runHylyrePipInstall({
       pythonPath,
-      wheel,
+      target: installTarget,
       projectRoot: opts.projectRoot,
       logPath,
       pypiExtraIndexUrl: cfg.pypi_extra_index_url,
@@ -764,6 +937,7 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
 
     bootstrapElapsedMs = Date.now() - bootstrapT0;
     console.log(`[bootstrap] pip install done in ${(bootstrapElapsedMs / 1000).toFixed(1)}s`);
+    cleanupSourceInstallTarget(installable.kind, installTarget);
 
     if (!pipFirst.ok) {
       errors.push({
@@ -788,8 +962,11 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
     console.log('hylyre 与传递依赖安装完成');
     source = 'venv_installed';
     installedNow = true;
-    if (manifest) {
-      writeInstallFingerprint(venvRoot, fingerprintFromManifest(manifest, sha256FileHex(wheel)));
+    if (manifest && installArtifactSha) {
+      writeInstallFingerprint(
+        venvRoot,
+        fingerprintFromManifest(manifest, installArtifactSha, installable.kind),
+      );
     }
   }
 
@@ -797,12 +974,12 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
   if (canImportHylyre(pythonPath, logPath) && !hylyrePackageContractsPresent(pythonPath, logPath)) {
     appendLogSync(
       logPath,
-      '已安装 hylyre 可 import 但缺少 hylyre/contracts/report-sections.yaml 或 output-schema.json（常为旧 wheel）；尝试从 vendor 强制重装。\n',
+      '已安装 hylyre 可 import 但缺少 hylyre/contracts/report-sections.yaml 或 output-schema.json（常为旧发布件）；尝试从 vendor 强制重装。\n',
     );
     if (source === 'env_override') {
       errors.push({
         message:
-          'HYLYRE_PYTHON 对应环境中的 hylyre 缺少打包契约文件。请在该环境安装含 contracts 的 Hylyre wheel，或取消 HYLYRE_PYTHON 改用工程默认 venv（vendor wheel + auto_install）。',
+          'HYLYRE_PYTHON 对应环境中的 hylyre 缺少打包契约文件。请在该环境安装含 contracts 的 Hylyre 发布件，或取消 HYLYRE_PYTHON 改用工程默认 venv（vendor 发布件 + auto_install）。',
         kind: 'contracts',
       });
       fs.writeFileSync(
@@ -825,7 +1002,7 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
     if (!cfg.auto_install) {
       errors.push({
         message:
-          'hylyre 安装不完整（缺 contracts）。请删除工程根目录 .hylyre/venv 后重试，或启用 tools.hylyre.auto_install，并确保 vendor 为含 package data 的新 wheel。',
+          'hylyre 安装不完整（缺 contracts）。请删除工程根目录 .hylyre/venv 后重试，或启用 tools.hylyre.auto_install，并确保 vendor 为含 package data 的新发布件（源码树 src/ 或 legacy wheel）。',
         kind: 'contracts',
       });
       fs.writeFileSync(metaPath, JSON.stringify({ ok: false, pythonPath, errors, manifestVersion }, null, 2), 'utf-8');
@@ -863,10 +1040,25 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
         logPath,
       };
     }
-    const repairWheel = findVendorWheel(opts.projectRoot, cfg.vendor_dir, manifest);
-    if (!repairWheel) {
+    // 复用启动早段的完整性门禁结果（评审 5 P0）
+    const repairInstallable = vendorInstallable;
+    const repairArtifactSha = vendorArtifactSha;
+    const repairTarget =
+      repairInstallable && repairArtifactSha && manifest
+        ? prepareVendorInstallTarget({
+            installable: repairInstallable,
+            manifest,
+            projectRoot: opts.projectRoot,
+            venvDirRel: cfg.venv_dir,
+            artifactSha256: repairArtifactSha,
+            logPath,
+          })
+        : repairInstallable?.kind === 'wheel'
+          ? repairInstallable.path
+          : null;
+    if (!repairInstallable || !repairTarget) {
       errors.push({
-        message: `无法补齐 contracts：在 ${cfg.vendor_dir} 下未找到 hylyre-*.whl`,
+        message: `无法补齐 contracts：在 ${cfg.vendor_dir} 下${VENDOR_MISSING_HINT}，或源码树与 manifest 声明不一致`,
         kind: 'vendor',
       });
       fs.writeFileSync(metaPath, JSON.stringify({ ok: false, pythonPath, errors, manifestVersion }, null, 2), 'utf-8');
@@ -884,12 +1076,13 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
     }
     const pipRepair = runHylyrePipInstall({
       pythonPath,
-      wheel: repairWheel,
+      target: repairTarget,
       projectRoot: opts.projectRoot,
       logPath,
       pypiExtraIndexUrl: cfg.pypi_extra_index_url,
       mode: 'force-reinstall',
     });
+    cleanupSourceInstallTarget(repairInstallable.kind, repairTarget);
     if (!pipRepair.ok) {
       errors.push({
         message: `pip 强制重装 hylyre 失败（exit=${pipRepair.exitCode}），无法补齐 contracts`,
@@ -911,7 +1104,7 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
     if (!canImportHylyre(pythonPath, logPath) || !hylyrePackageContractsPresent(pythonPath, logPath)) {
       errors.push({
         message:
-          '强制重装后仍缺少 hylyre contracts。请从 Hylyre dist/release 覆盖拷贝 vendor 下 wheel 与 release.manifest.json（见 vendor/hylyre/README.md），必要时删除 .hylyre/venv 后再跑。',
+          '强制重装后仍缺少 hylyre contracts。请从 Hylyre dist/release-src（或 dist/release）覆盖同步 vendor 下发布件与 release.manifest.json（见 vendor/hylyre/README.md），必要时删除 .hylyre/venv 后再跑。',
         kind: 'contracts',
       });
       fs.writeFileSync(metaPath, JSON.stringify({ ok: false, pythonPath, errors, manifestVersion }, null, 2), 'utf-8');
@@ -930,16 +1123,21 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
     console.log('hylyre 已强制重装以补齐 contracts');
     source = 'venv_installed';
     installedNow = true;
-    if (manifest) {
-      writeInstallFingerprint(venvRoot, fingerprintFromManifest(manifest, sha256FileHex(repairWheel)));
+    if (manifest && repairArtifactSha) {
+      writeInstallFingerprint(
+        venvRoot,
+        fingerprintFromManifest(manifest, repairArtifactSha, repairInstallable.kind),
+      );
     }
   }
 
   hylyreVersion = pipShowVersion(pythonPath);
 
-  // vendor 对齐：venv 已可 import 且 contracts 完整时，按 manifest 版本 + wheel sha256 自动 pip 升级/重装。
+  // vendor 对齐：venv 已可 import 且 contracts 完整时，按 manifest 版本 + 工件指纹
+  // （wheel sha256 / 源码 tree hash）自动 pip 升级/重装。
   let upgradedNow = false;
   let vendorSyncReason: string | undefined;
+  let vendorArtifactKind: VendorInstallable['kind'] | undefined;
 
   if (
     source !== 'env_override' &&
@@ -951,53 +1149,77 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
     if (!venvRoot) {
       venvRoot = path.resolve(opts.projectRoot, cfg.venv_dir);
     }
-    const vendorWheel = findVendorWheel(opts.projectRoot, cfg.vendor_dir, manifest);
-    if (!vendorWheel) {
+    // 复用启动早段的完整性门禁结果（评审 5 P0）：mismatch 已在门禁 fail-fast，
+    // 此处 vendorArtifactSha 非 null 即已验真；本分支只处理『需要对齐』的安装动作。
+    vendorArtifactKind = vendorInstallable?.kind;
+    if (!vendorInstallable) {
       errors.push({
-        message: `vendor wheel 缺失：在 ${cfg.vendor_dir} 下未找到 hylyre-*.whl`,
+        message: `vendor 发布件缺失：在 ${cfg.vendor_dir} 下${VENDOR_MISSING_HINT}`,
+        kind: 'vendor',
+      });
+    } else if (!vendorArtifactSha) {
+      errors.push({
+        message: `vendor 源码树与 release.manifest.json 声明不一致（声明文件缺失），请从 Hylyre dist/release-src 重新同步 vendor 发布件`,
         kind: 'vendor',
       });
     } else {
-      const wheelSha = sha256FileHex(vendorWheel);
       const cachedFp = readInstallFingerprint(venvRoot);
       const syncEval = evaluateVendorSyncNeed({
         manifest,
         pipVersion: hylyreVersion,
-        wheelSha256: wheelSha,
+        artifactKind: vendorInstallable.kind,
+        artifactSha256: vendorArtifactSha,
         cachedFingerprint: cachedFp,
       });
       vendorSyncReason = syncEval.reason;
 
-      if (syncEval.manifestWheelMismatch) {
+      if (syncEval.manifestArtifactMismatch) {
         errors.push({
-          message: `vendor wheel 文件 sha256 与 release.manifest.json 声明不一致（${path.basename(vendorWheel)}），请重新同步 vendor 发布件`,
+          message: `vendor 发布件与 release.manifest.json 声明不一致（${path.basename(vendorInstallable.path)}），请重新同步 vendor 发布件`,
           kind: 'vendor',
         });
       } else if (syncEval.needsSync) {
-        const sync = syncVendorHylyreInVenv({
-          pythonPath,
-          wheel: vendorWheel,
-          projectRoot: opts.projectRoot,
-          logPath,
-          pypiExtraIndexUrl: cfg.pypi_extra_index_url,
+        const syncTarget = prepareVendorInstallTarget({
+          installable: vendorInstallable,
           manifest,
-          venvRoot,
+          projectRoot: opts.projectRoot,
+          venvDirRel: cfg.venv_dir,
+          artifactSha256: vendorArtifactSha,
+          logPath,
         });
-        if (!sync.ok) {
-          for (const msg of sync.errors) {
-            errors.push({ message: msg, kind: 'pip' });
-          }
-          if (manifestVersion && sync.hylyreVersion.trim() !== manifestVersion.trim()) {
-            errors.push({
-              message: `hylyre 自动升级后版本仍不一致：pip=${sync.hylyreVersion} manifest=${manifestVersion}`,
-              kind: 'version_drift',
-            });
-          }
+        if (!syncTarget) {
+          errors.push({
+            message: 'vendor 源码树暂存失败，无法自动对齐（详见 hylyre-doctor.log）',
+            kind: 'vendor',
+          });
         } else {
-          hylyreVersion = sync.hylyreVersion;
-          upgradedNow = sync.upgraded;
-          if (sync.upgraded) {
-            source = 'venv_installed';
+          const sync = syncVendorHylyreInVenv({
+            pythonPath,
+            installTarget: syncTarget,
+            artifactKind: vendorInstallable.kind,
+            artifactSha256: vendorArtifactSha,
+            projectRoot: opts.projectRoot,
+            logPath,
+            pypiExtraIndexUrl: cfg.pypi_extra_index_url,
+            manifest,
+            venvRoot,
+          });
+          if (!sync.ok) {
+            for (const msg of sync.errors) {
+              errors.push({ message: msg, kind: 'pip' });
+            }
+            if (manifestVersion && sync.hylyreVersion.trim() !== manifestVersion.trim()) {
+              errors.push({
+                message: `hylyre 自动升级后版本仍不一致：pip=${sync.hylyreVersion} manifest=${manifestVersion}`,
+                kind: 'version_drift',
+              });
+            }
+          } else {
+            hylyreVersion = sync.hylyreVersion;
+            upgradedNow = sync.upgraded;
+            if (sync.upgraded) {
+              source = 'venv_installed';
+            }
           }
         }
       }
@@ -1108,6 +1330,7 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
         source,
         doctorOk,
         vendorSyncReason,
+        vendor_artifact_kind: vendorArtifactKind ?? null,
         installFingerprint,
         bootstrap_elapsed_ms: bootstrapElapsedMs ?? null,
         bootstrap_was_resumed: bootstrapWasResumed ?? null,
@@ -1563,7 +1786,7 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
     if (pythonInfraTraceback) {
       errors.push({
         message:
-          'hylyre 子进程因 Python 异常退出（常见为旧 wheel 未携带 hylyre/contracts）。请重新执行 testing 阶段 ensure（将尝试强制重装 vendor wheel）或删除 .hylyre/venv 后重试，并确认 vendor 为含 contracts 的发布件。',
+          'hylyre 子进程因 Python 异常退出（常见为旧发布件未携带 hylyre/contracts）。请重新执行 testing 阶段 ensure（将尝试从 vendor 发布件强制重装）或删除 .hylyre/venv 后重试，并确认 vendor 为含 contracts 的发布件。',
       });
     } else {
       errors.push({

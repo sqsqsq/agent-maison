@@ -166,11 +166,18 @@ export function sanitizeHarnessPackageJson(pkg) {
 export function sanitizeVendorManifest(manifest) {
   const out = JSON.parse(JSON.stringify(manifest));
   delete out.integration_docs;
+  // 移交文档不随 maison 发布包分发，note 内的引用改写为本目录 README。文案按发布
+  // 形态分支——Hylyre 0.3.2 真件的 schema 2 note 实测含移交文档引用（评审 4），
+  // 不分支会把源码模式 note 改写成 wheel 话术。
   if (typeof out.note === 'string' && out.note.includes('downstream-harness-requests.md')) {
     out.note =
-      'Pure-Python wheel (py3-none-any). Install with: pip install <wheel-path>; ' +
-      'pip will fetch transitive deps (hypium/fastmcp/etc.) from PyPI. ' +
-      'Framework harness integration: see README.md in this directory.';
+      out.schema === 2
+        ? 'Plain-source release. Install with: pip install <src-dir> "hylyre[device,mcp]"; ' +
+          'pip will fetch transitive deps (hypium/fastmcp/etc.) from PyPI. ' +
+          'Framework harness integration: see README.md in this directory.'
+        : 'Pure-Python wheel (py3-none-any). Install with: pip install <wheel-path>; ' +
+          'pip will fetch transitive deps (hypium/fastmcp/etc.) from PyPI. ' +
+          'Framework harness integration: see README.md in this directory.';
   }
   return out;
 }
@@ -354,6 +361,9 @@ export function runSyntheticRuleTests(repoRoot, rules) {
     errors.push('isReleaseBinaryRelPath must not treat README.md as binary');
   }
 
+  // vendor md 语义（plan a7c3e9d1 t3）：泄漏管控只作用于 vendor 包根一层（移交 md
+  // 不入发布包），src/** 源码树整树放行——contracts/README.md 是 Hylyre package-data，
+  // 被排除会让下游 tree_sha256 对不上（评审 4 真件实证的静默丢包炸点）。
   const vendorHandoverMd = 'profiles/hmos-app/vendor/hylyre/downstream-harness-requests.md';
   const vendorReadme = 'profiles/hmos-app/vendor/hylyre/README.md';
   const { include: handoverIncluded } = classifyPath(vendorHandoverMd, rules);
@@ -363,6 +373,26 @@ export function runSyntheticRuleTests(repoRoot, rules) {
   const { include: readmeIncluded } = classifyPath(vendorReadme, rules);
   if (!readmeIncluded) {
     errors.push('vendor hylyre README must be included via includeOverride');
+  }
+  for (const srcMd of [
+    'profiles/hmos-app/vendor/hylyre/src/hylyre/contracts/README.md',
+    'profiles/hmos-app/vendor/hylyre/src/README.md',
+  ]) {
+    const { include } = classifyPath(srcMd, rules);
+    if (!include) {
+      errors.push(`vendor src tree md must be included (package-data / declared source): ${srcMd}`);
+    }
+  }
+  // 评审 5 P1：maison 发布件只携带源码——vendor 下任何 whl（含遗留/未跟踪的）不得入包；
+  // 运行时代码的 legacy wheel 兼容能力与此无关。
+  for (const strayWheel of [
+    'profiles/hmos-app/vendor/hylyre/hylyre-0.3.1-py3-none-any.whl',
+    'profiles/hmos-app/vendor/hylyre/src/hylyre-9.9.9-py3-none-any.whl',
+  ]) {
+    const { include } = classifyPath(strayWheel, rules);
+    if (include) {
+      errors.push(`vendor wheel must be excluded from release pack: ${strayWheel}`);
+    }
   }
 
   const sampleManifest = {
@@ -377,6 +407,27 @@ export function runSyntheticRuleTests(repoRoot, rules) {
   }
   if (sanitizedManifest.note.includes('downstream-harness-requests')) {
     errors.push('sanitizeVendorManifest must rewrite note to README.md');
+  }
+  if (!sanitizedManifest.note.includes('pip install <wheel-path>')) {
+    errors.push('sanitizeVendorManifest schema 1 note must keep wheel wording');
+  }
+
+  const sampleSourceManifest = {
+    schema: 2,
+    hylyre_version: '0.3.2',
+    source: { root: 'src', file_count: 1, total_bytes: 1, tree_sha256: 'x', files: [] },
+    integration_docs: [{ filename: 'downstream-harness-requests.md' }],
+    note: 'Plain-source release. Framework harness integration: see downstream-harness-requests.md in this directory.',
+  };
+  const sanitizedSourceManifest = sanitizeVendorManifest(sampleSourceManifest);
+  if (sanitizedSourceManifest.integration_docs) {
+    errors.push('sanitizeVendorManifest(schema2) must remove integration_docs');
+  }
+  if (sanitizedSourceManifest.note.includes('downstream-harness-requests')) {
+    errors.push('sanitizeVendorManifest(schema2) must rewrite note to README.md');
+  }
+  if (!sanitizedSourceManifest.note.includes('pip install <src-dir>')) {
+    errors.push('sanitizeVendorManifest(schema2) note must keep plain-source wording (not wheel)');
   }
 
   return errors;

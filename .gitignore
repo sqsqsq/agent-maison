@@ -24,6 +24,8 @@ framework/harness/
 # device-testing / Hylyre 本地产物
 **/.hylyre/
 **/tmp_hypium/
+# Python bytecode（telemetry wrapper 被 import 时的兜底；正常路径已以 -B 抑制）
+**/__pycache__/
 
 # 本地 IDE 密钥（.cursor/plans 等开发计划可入库）
 .cursor/mcp.json

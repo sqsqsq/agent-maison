@@ -42,21 +42,35 @@ function write(root: string, rel: string, content: string): string {
 function pythonStepHash(stepText: string): string {
   const repoRoot = path.resolve(__dirname, '../../..');
   const wrapper = path.join(repoRoot, 'profiles', 'hmos-app', 'harness', 'hylyre-runtime-telemetry.py');
-  const wheel = path.join(repoRoot, 'profiles', 'hmos-app', 'vendor', 'hylyre', 'hylyre-0.3.1-py3-none-any.whl');
+  const vendorDir = path.join(repoRoot, 'profiles', 'hmos-app', 'vendor', 'hylyre');
+  // 双模：源码树 vendor 直接把 src 目录入 sys.path；legacy 布局回落 whl zipimport
+  const srcRoot = path.join(vendorDir, 'src');
+  const importRoot = fs.existsSync(path.join(srcRoot, 'hylyre', '__init__.py'))
+    ? srcRoot
+    : path.join(vendorDir, 'hylyre-0.3.1-py3-none-any.whl');
   const script = [
     'import importlib.util, sys',
-    'wheel, module_path, step = sys.argv[1:4]',
-    'sys.path.insert(0, wheel)',
+    'import_root, module_path, step = sys.argv[1:4]',
+    'sys.path.insert(0, import_root)',
     'spec = importlib.util.spec_from_file_location("maison_runtime_telemetry", module_path)',
     'module = importlib.util.module_from_spec(spec)',
     'spec.loader.exec_module(module)',
     'print(module._step_sha256(step))',
   ].join('; ');
-  // -B：禁写 __pycache__ 字节码——必跑测试不得把发布目录弄脏
-  const result = spawnSync(process.env.MAISON_PYTHON || 'python', ['-B', '-c', script, wheel, wrapper, stepText], {
-    encoding: 'utf-8',
-  });
+  // -B（评审 3 P0）：whl zipimport 不写 bytecode 缓存，但源码目录 import 默认会向
+  // vendor src 写 __pycache__ —— 弄脏工作树并制造 manifest 清单外杂物，必须抑制。
+  const result = spawnSync(
+    process.env.MAISON_PYTHON || 'python',
+    ['-B', '-c', script, importRoot, wrapper, stepText],
+    { encoding: 'utf-8' },
+  );
   assert(result.status === 0, `Python parity helper failed: ${result.stderr || result.stdout}`);
+  if (importRoot === srcRoot) {
+    assert(
+      !fs.existsSync(path.join(srcRoot, 'hylyre', '__pycache__')),
+      'vendor src 内不得出现 __pycache__（-B 失效或被旁路）',
+    );
+  }
   return result.stdout.trim();
 }
 
@@ -243,6 +257,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     name: 'provider handshake：受支持版本 PASS，版本漂移/collector 缺失为 unsupported',
     run: () => {
       assert(probeRuntimeStepTelemetry({ hylyreVersion: '0.3.1', manifestVersion: '0.3.1' }).supported, '0.3.1 should be supported');
+      assert(probeRuntimeStepTelemetry({ hylyreVersion: '0.3.2', manifestVersion: '0.3.2' }).supported, '0.3.2 should be supported (source vendor; runtime modules byte-identical to 0.3.1)');
       assert(!probeRuntimeStepTelemetry({ hylyreVersion: '0.4.0', manifestVersion: '0.4.0' }).supported, 'unknown provider version must defer');
       assert(!probeRuntimeStepTelemetry({ hylyreVersion: '0.3.1', manifestVersion: '0.3.0' }).supported, 'manifest mismatch must defer');
     },
