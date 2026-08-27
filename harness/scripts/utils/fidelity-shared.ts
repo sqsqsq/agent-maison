@@ -12,6 +12,7 @@ import { featureFilePath, relFeaturesDir } from '../../config';
 // M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT（fidelity 血缘/ux-reference 路径全链消费）
 import { featureRelativePath } from './feature-identity';
 import { readCanaryOcrCapableSignal } from './multimodal-probe';
+import { inspectGoalRunCreationFiles } from './goal-run-creation';
 
 const requireHarness = createRequire(path.resolve(__dirname, '../../harness-runner.ts'));
 const YAML = requireHarness('yaml') as { parse: (s: string) => unknown };
@@ -365,8 +366,20 @@ export function classifyGoalRunsDir(runsDir: string): AuthoritativeGoalRuns {
     // 结构名（.dry 等点前缀目录）不入权威也不入 corrupt——目录名即隔离边界。
     if (ent.name.startsWith('.')) continue;
     const dir = path.join(runsDir, ent.name);
-    if (fs.existsSync(path.join(dir, 'manifest.json'))) {
-      out.runs.push(ent.name);
+    const manifestPath = path.join(dir, 'manifest.json');
+    if (fs.existsSync(manifestPath)) {
+      const creation = inspectGoalRunCreationFiles(
+        manifestPath,
+        path.join(dir, 'events.jsonl'),
+      );
+      if (creation.state === 'complete' || creation.state === 'legacy') {
+        out.runs.push(ent.name);
+      } else {
+        out.corruptRuns.push({
+          runId: ent.name,
+          reason: `CREATION_INCOMPLETE：${creation.state === 'creation_incomplete' ? creation.reason : '出生记录缺失'}`,
+        });
+      }
       continue;
     }
     const started =

@@ -609,6 +609,10 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       const featDir = path.join(tmp, 'doc/features/f1');
       const runDir = path.join(featDir, 'goal-runs/20260101T000000Z');
       fs.mkdirSync(runDir, { recursive: true });
+      fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify({
+        run_id: '20260101T000000Z',
+        report_dir: 'doc/features/f1/goal-runs/20260101T000000Z',
+      }), 'utf-8');
       const writeEvents = (rows: Array<Record<string, unknown>>): void => {
         fs.writeFileSync(
           path.join(runDir, 'events.jsonl'),
@@ -715,6 +719,10 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       const runDir = path.join(tmp, 'doc/features/f1/goal-runs', runId);
       const eventsPath = path.join(runDir, 'events.jsonl');
       fs.mkdirSync(runDir, { recursive: true });
+      fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify({
+        run_id: runId,
+        report_dir: `doc/features/f1/goal-runs/${runId}`,
+      }), 'utf-8');
       const supervise = require('../../scripts/goal-supervise') as typeof import('../../scripts/goal-supervise');
       const writeControl = (kind: 'process' | 'session', state: string): void => {
         fs.writeFileSync(path.join(runDir, 'run-control.json'), JSON.stringify({

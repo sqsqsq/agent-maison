@@ -24,16 +24,19 @@ import {
   loadGoalManifestFromRun,
   resolveRequirementInput,
   RUN_ADAPTER_PROVENANCES,
-  writeGoalManifest,
   type GoalManifest,
   type RunAdapterProvenance,
 } from './utils/goal-manifest';
+import { assertGoalRunAttachable, createGoalRun } from './utils/goal-run-creation';
 import { loadLocalConfig } from './utils/framework-local-config';
 import {
   resolveUnattendedVisualProviderPin,
 } from './utils/visual-provider-identity';
 import { resolveWorkflowSpec } from '../workflow-loader';
 import { relFeaturesDir } from '../config';
+import { resolveAutoChain } from './utils/phase-transition-policy';
+import { loadFeatureTrackDecl } from './utils/feature-track';
+import { resolveFeatureTrack } from './utils/runtime-policy';
 import { validateMinimumAssurance } from './utils/skill-contract';
 import type { ReconcileObservationV1 } from './utils/assess';
 
@@ -286,7 +289,15 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
   if (fs.existsSync(manifestPath)) {
     throw new Error(`[goal-mode-entry] run manifest already exists: ${manifestPath}`);
   }
-  writeGoalManifest(manifest, options.projectRoot);
+  const track = resolveFeatureTrack(loadFeatureTrackDecl(options.projectRoot, feature));
+  const chain = resolveAutoChain(
+    workflow,
+    manifest.start_phase,
+    manifest.end_phase,
+    manifest.chain_override,
+    track,
+  );
+  createGoalRun({ projectRoot: options.projectRoot, manifest, chain });
   const runDir = path.resolve(options.projectRoot, ...manifest.report_dir.split('/'));
   ensureRunControl(runDir, manifest.run_id);
   return { manifest, manifestPath, runDir };
@@ -345,6 +356,8 @@ export async function runGoalModeHostBridge(
     feature: options.feature,
     featuresDir: relFeaturesDir(options.projectRoot),
   });
+  // 出生契约必须在 owner CAS 前成立；attach 永不补造 run_created。
+  assertGoalRunAttachable(options.projectRoot, manifest);
   const callerAdapter = options.adapter.trim();
   if (!callerAdapter || callerAdapter !== manifest.adapter) {
     throw new Error(

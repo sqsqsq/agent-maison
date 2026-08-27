@@ -16,7 +16,11 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
-import { recordCodingBase } from '../../scripts/utils/pass-snapshot';
+import {
+  buildGoalManifestFromInput,
+  loadGoalManifestFromRun,
+} from '../../scripts/utils/goal-manifest';
+import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 import {
   hasUiContentMarkers,
   isUiSensitivePath,
@@ -129,13 +133,26 @@ function closePlan(root: string): void {
   writeReceiptManifestPointer(root, FEATURE, 'plan', rel, written.sha256);
 }
 
-/** plan closure + coding 基线锚（= runner pre-coding 锚定完成后的形态） */
+/** plan closure + run 出生基线（现代 createGoalRun 形态） */
 function anchor(root: string, opts: { closure?: boolean; base?: boolean } = {}): void {
   if (opts.closure !== false) closePlan(root);
   if (opts.base !== false) {
-    const head = git(root, ['rev-parse', 'HEAD']);
-    const rec = recordCodingBase({ projectRoot: root, feature: FEATURE, runId: RUN_ID, baseSha: head });
-    assert(rec.kind === 'recorded' || rec.kind === 'reused', `coding base 记录失败：${rec.kind}`);
+    const manifestPath = path.join(root, `doc/features/${FEATURE}/goal-runs/${RUN_ID}/manifest.json`);
+    if (!fs.existsSync(manifestPath)) {
+      const manifest = buildGoalManifestFromInput({
+        feature: FEATURE,
+        run_id: RUN_ID,
+        start_phase: 'plan',
+        end_phase: 'coding',
+        unattended: { write_mode: 'full-access', approval_mode: 'never' },
+      }, { projectRoot: root });
+      createGoalRun({
+        projectRoot: root,
+        manifest,
+        chain: ['plan', 'coding'],
+        resolveHead: () => git(root, ['rev-parse', 'HEAD']),
+      });
+    }
   }
 }
 
@@ -323,7 +340,7 @@ export function runAll(): UnitCaseResult[] {
     });
   });
 
-  run(results, 'coding base write-once：resume 复用原 SHA，不重取 HEAD', () => {
+  run(results, 'run_base_sha write-once：resume 复用原 SHA，不重取 HEAD', () => {
     const { root } = setupHost();
     withTrust(root, () => {
       anchor(root);
@@ -331,11 +348,8 @@ export function runAll(): UnitCaseResult[] {
       w(root, DECLARED, 'struct CardPackPage { build() { Text("v2") } }');
       git(root, ['add', '-A']);
       git(root, ['commit', '-qm', 'later']);
-      const rec = recordCodingBase({
-        projectRoot: root, feature: FEATURE, runId: RUN_ID, baseSha: git(root, ['rev-parse', 'HEAD']),
-      });
-      assert(rec.kind === 'reused', `第二次记录须 reused，got ${rec.kind}`);
-      assert(rec.kind === 'reused' && rec.body.base_sha === first, 'resume 须复用最初 SHA');
+      const loaded = loadGoalManifestFromRun(root, RUN_ID, { feature: FEATURE });
+      assert(loaded.run_base_sha === first, 'resume 只装载 manifest，须复用最初 SHA');
     });
   });
 

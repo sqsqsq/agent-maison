@@ -129,6 +129,17 @@ import {
   type GoalManifest,
 } from './utils/goal-manifest';
 import {
+  assertGoalRunAttachable,
+  buildSupersedeAuditEvent,
+  createGoalRun,
+  inspectGoalRunCreation,
+  inspectGoalRunCreationFiles,
+  resolveGoalRunHeadSha,
+  validateRebaselineRequest,
+  type GoalRunCreationResult,
+} from './utils/goal-run-creation';
+import { resolveGoalRunBaseline } from './utils/goal-run-baseline';
+import {
   canAffordBackoff,
   collectPhaseTimeoutWarnings,
   extractTimeoutRatchetFromEvents,
@@ -185,8 +196,6 @@ import {
 } from './utils/agent-invoke';
 import { parseClaudeInitModel, resolvePinVerifyMismatch } from './utils/claude-envelope';
 import {
-  recordCodingBase,
-  resolveGitHeadSha,
   deleteRunTrustState,
   isValidRunIdBasename,
 } from './utils/pass-snapshot';
@@ -281,6 +290,7 @@ import {
   applyClosurePatchFromReceiptValidation,
   applyGoalModelPinEnv,
   applyGoalVisualProviderEnv,
+  hasGoalExecutionSignal,
   isGoalHeadlessEnv,
   MAISON_GOAL_MODEL_PIN_ENV,
   MAISON_GOAL_RUNNER_ENV,
@@ -1148,6 +1158,7 @@ async function runHarnessPhase(
   // （capture 之后、严格 dispatch 之前），而那个进程没有 manifest。同一条注入纪律：
   // 成对写、成对清；无 pin 时只清不写（gate 侧取不到即按未配置处理，落 blind）。
   applyGoalVisualProviderEnv(childEnv, manifest?.visual_provider_pin);
+  deleteEnvKeyCaseInsensitive(childEnv, 'HARNESS_DIFF_BASE_REF');
   for (const [k, v] of Object.entries(gateInjectedEnv)) {
     deleteEnvKeyCaseInsensitive(childEnv, k);
     childEnv[k] = v;
@@ -2954,14 +2965,29 @@ export function deriveHaltValidationOnlyEligibility(
 export function resolveManifestIdentityBaseline(
   priorEvents: ReadonlyArray<{ type?: string; manifest_identity_fields?: unknown; to_fields?: unknown }>,
 ): Record<string, string> | null {
+  const created = priorEvents.filter((event) => event.type === 'run_created');
+  if (created.length > 1) {
+    throw new Error('run_created 出生事件重复，无法确定唯一出生基线（creation_incomplete）。');
+  }
   let baseline: Record<string, string> | null = null;
+  const modernBirth = created[0];
+  if (modernBirth) {
+    if (!modernBirth.manifest_identity_fields || typeof modernBirth.manifest_identity_fields !== 'object') {
+      throw new Error('run_created 缺少 manifest_identity_fields，无法恢复出生基线（creation_incomplete）。');
+    }
+    baseline = modernBirth.manifest_identity_fields as Record<string, string>;
+  }
   for (const e of priorEvents) {
-    if (e.type === 'run_start' && baseline === null
+    if (!modernBirth && e.type === 'run_start' && baseline === null
         && e.manifest_identity_fields && typeof e.manifest_identity_fields === 'object') {
       baseline = e.manifest_identity_fields as Record<string, string>;
     } else if (e.type === 'manifest_identity_rebase'
         && e.to_fields && typeof e.to_fields === 'object') {
-      baseline = e.to_fields as Record<string, string>;
+      const rebased = e.to_fields as Record<string, string>;
+      if (modernBirth && baseline?.run_base_sha !== rebased.run_base_sha) {
+        throw new Error('manifest_identity_rebase 试图改写 run_base_sha（baseline_corruption_or_tampering）。');
+      }
+      baseline = rebased;
     }
   }
   return baseline;
@@ -2992,7 +3018,12 @@ export function resolveManifestDriftDecision(args: {
    * 授权 rebase 的分支此前把 diffManifestIdentityFields 结果丢弃，emit 只写 to_fields
    * （完整哈希表非 diff）——budget-only 刷新判定无从谈起。 */
   changedFields: string[];
-  halt: { message: string; changedFields: string[]; authorized: string[] | 'all' } | null;
+  halt: {
+    message: string;
+    changedFields: string[];
+    authorized: string[] | 'all';
+    classification?: 'baseline_corruption_or_tampering';
+  } | null;
 } {
   const base = {
     currentFields: args.currentFields,
@@ -3000,11 +3031,30 @@ export function resolveManifestDriftDecision(args: {
     rebaseApplied: false,
     rebaseAuthorizedBy: null as string | null,
     changedFields: [] as string[],
-    halt: null as { message: string; changedFields: string[]; authorized: string[] | 'all' } | null,
+    halt: null as {
+      message: string;
+      changedFields: string[];
+      authorized: string[] | 'all';
+      classification?: 'baseline_corruption_or_tampering';
+    } | null,
   };
   if (args.birthFields === null) return base;
   const changed = diffManifestIdentityFields(args.birthFields, args.currentFields);
   if (changed.length === 0) return base;
+  if (changed.includes('run_base_sha')) {
+    return {
+      ...base,
+      changedFields: changed,
+      halt: {
+        message:
+          'manifest.run_base_sha 与 run_created 出生基线不一致——该字段不可由 override/rebase 改写，' +
+          '按 baseline_corruption_or_tampering 拒绝继续。',
+        changedFields: changed,
+        authorized: [],
+        classification: 'baseline_corruption_or_tampering',
+      },
+    };
+  }
   const auth = overrideAuthorizedIdentityFields({
     'override-manifest': args.overrides['override-manifest'],
     'override-start': args.overrides['override-start'],
@@ -3598,8 +3648,16 @@ export function resolveOrphanedIncompleteRun(
     existing.report_dir && projectRootAbs
       ? path.join(projectRootAbs, ...existing.report_dir.split('/'), 'events.jsonl')
       : path.join(featureRunsDirAbs, runId, 'events.jsonl');
+  const creation = inspectGoalRunCreationFiles(
+    path.join(path.dirname(eventsAbs), 'manifest.json'),
+    eventsAbs,
+  );
+  if (creation.state === 'creation_incomplete' || creation.state === 'absent') {
+    // 创建残留不是已启动占位者：不引导 resume，也不阻止同 feature 重新创建。
+    return null;
+  }
   const events = loadEventsJsonl(eventsAbs); // T1c：orphan 分类须读 raw（自行判别 dry 会话）
-  if (existing.run_mode === undefined) {
+  if (existing.run_mode === undefined && creation.state !== 'complete') {
     // legacy 三态判别（v23 P1-①）：run_start 会话形态。
     const starts = events.filter((e) => e.type === 'run_start');
     if (starts.length === 0) {
@@ -3955,7 +4013,7 @@ export async function main(): Promise<number> {
   const argv = minimist(process.argv.slice(2), {
     string: [
       'feature', 'requirement', 'adapter', 'adapter-source', 'start', 'end', 'resume', 'manifest',
-      'run-id', 'supersede',
+      'run-id', 'supersede', 'rebaseline-to',
       // plan f9c2e6b4 t4：多行/长需求的推荐入口（与 --requirement 互斥）。
       // fresh 读取内容并冻结进 manifest；resume 只认已冻结值，不重读源文件。
       'requirement-file',
@@ -3996,7 +4054,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
                  pin the read-only visual provider (second, look-only endpoint) for this run.
                  Both flags are required together. Supported adapters are derived from the
                  adapter catalog (agents/<a>/adapter.yaml visual_provider); an unsupported
-                 adapter fails fast and lists the supported ones. Omit for blind/native.
+                  adapter fails fast and lists the supported ones. Omit for blind/native.
+    [--supersede <old-run-id> --rebaseline-to <exact-40hex-sha>]
+                 outside goal runtime only: create an audited successor at the exact current HEAD.
     [--detach]   fork the run into the background, print {run_id,...} JSON, exit 0
                  (for hosts whose shell tool blocks / can't background a long task)
 `);
@@ -4186,13 +4246,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
   let supersedeSourceRequirement: string | undefined;
   // plan c4e8a1f7 T2（评审 P1 三轮修复）：源 run 的需求来源列表（successor 来源重设用）
   let supersedeSourceSourceFiles: string[] | undefined;
+  const requestedSupersedeTargets =
+    Array.isArray(argv.supersede)
+      ? argv.supersede.filter((value): value is string => typeof value === 'string')
+      : typeof argv.supersede === 'string'
+        ? [argv.supersede]
+        : [];
   if (!argv.resume && !dryRunMode) {
-    const requestedSupersedeTargets =
-      Array.isArray(argv.supersede)
-        ? argv.supersede.filter((value): value is string => typeof value === 'string')
-        : typeof argv.supersede === 'string'
-          ? [argv.supersede]
-          : [];
     const sourceRunId = requestedSupersedeTargets[0];
     if (sourceRunId && isValidRunIdBasename(sourceRunId)) {
       try {
@@ -4200,6 +4260,16 @@ Goal runner — tool-agnostic multi-phase orchestrator
           feature: manifest.feature,
           featuresDir,
         });
+        const sourceCreation = inspectGoalRunCreation(projectRoot, source);
+        if (sourceCreation.state !== 'complete' && sourceCreation.state !== 'legacy') {
+          throw new Error(
+            `源 run 为 CREATION_INCOMPLETE（${sourceCreation.state === 'creation_incomplete' ? sourceCreation.reason : '出生记录缺失'}），` +
+              '不构成可 supersede 的 HALTED/PARTIAL 占位者',
+          );
+        }
+        const sourceBaseline = resolveGoalRunBaseline(projectRoot, manifest.feature, sourceRunId);
+        if (sourceBaseline.available) source.run_base_sha = sourceBaseline.baseSha;
+        else delete source.run_base_sha;
         // e9d4b7a3 t1（二轮 review P1）：捕获源 requirement 供合并单点使用
         //（merge 在 applyManifestCliOverrides 之后统一执行，见下方合并块）。
         supersedeSourceRequirement = source.requirement;
@@ -4233,6 +4303,25 @@ Goal runner — tool-agnostic multi-phase orchestrator
             `${(error as Error).message}`,
         );
       }
+    }
+  }
+  let rebaselineRequest: { sourceRunId: string; baseSha: string } | null = null;
+  if (Object.prototype.hasOwnProperty.call(argv, 'rebaseline-to')) {
+    try {
+      rebaselineRequest = validateRebaselineRequest({
+        supersedeTargets: requestedSupersedeTargets,
+        rebaselineTo: argv['rebaseline-to'],
+        resume: Boolean(argv.resume),
+        dryRun: dryRunMode,
+        hasGoalExecutionSignal: hasGoalExecutionSignal(),
+        currentHead: resolveGoalRunHeadSha(projectRoot),
+      });
+      if (!rebaselineRequest || manifest.successor_of !== rebaselineRequest.sourceRunId) {
+        throw new Error('--rebaseline-to 的 --supersede 源 run 无法解析为当前 successor');
+      }
+      manifest.run_base_sha = rebaselineRequest.baseSha;
+    } catch (error) {
+      throw new Error(`[goal-runner] BLOCKER: rebaseline 请求非法：${(error as Error).message}`);
     }
   }
 
@@ -4401,6 +4490,31 @@ Goal runner — tool-agnostic multi-phase orchestrator
   const dryRun = dryRunMode;
   if (dryRun) setAppendEventBaseFields({ dry_run: true }); // T1b：dry 事件全量打标
   const forceResume = Boolean(argv['force-resume']);
+  const goalTrack = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, manifest.feature));
+  const requestedChain = resolveAutoChain(
+    workflow,
+    manifest.start_phase,
+    manifest.end_phase,
+    manifest.chain_override,
+    goalTrack,
+  );
+  const fullWorkflowChain = featurePhasesFromWorkflow(workflow, goalTrack);
+  let freshCreation: GoalRunCreationResult | null = null;
+  if (Object.keys(process.env).some(key => key.toUpperCase() === 'HARNESS_DIFF_BASE_REF')) {
+    console.warn(
+      '[goal-runner] 已忽略并从 goal 子进程环境剥离 HARNESS_DIFF_BASE_REF；' +
+        'goal run 只认 manifest.run_base_sha。',
+    );
+  }
+
+  if (argv.resume) {
+    try {
+      assertGoalRunAttachable(projectRoot, manifest);
+    } catch (error) {
+      console.error(`[goal-runner] BLOCKER: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  }
 
   // Survival guard (code-level enforcement of the launch contract): block a real unattended
   // run started in the foreground without --detach — it would be reaped when the host
@@ -4457,6 +4571,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
   // return/throw 会漏锁（finally 的 releaseAllLocks 只盖 try 内；process.on('exit')
   // 仅为后备）。不加新锁机制。
   try {
+  if (!argv.resume) {
+    freshCreation = createGoalRun({
+      projectRoot,
+      manifest,
+      chain: requestedChain,
+      ...(rebaselineRequest ? { rebaselineFromRunId: rebaselineRequest.sourceRunId } : {}),
+    });
+  }
   if (runControl) {
     const recordHandoffMailboxQuarantine = (notice: HandoffMailboxQuarantine): void => {
       goalEvents.emit({
@@ -4560,6 +4682,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
       type: 'manifest_identity_drift',
       changed_fields: manifestDrift.halt.changedFields,
       authorized: manifestDrift.halt.authorized,
+      ...(manifestDrift.halt.classification
+        ? { classification: manifestDrift.halt.classification }
+        : {}),
     });
     throw new Error(manifestDrift.halt.message);
   }
@@ -4577,15 +4702,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
       adapterStatus,
     );
     // C1：按 feature 声明 track 解析链（lite 走 auto_chain_by_track.lite；缺省 full 零变化）
-    const goalTrack = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, manifest.feature));
-    const requestedChain = resolveAutoChain(
-      workflow,
-      manifest.start_phase,
-      manifest.end_phase,
-      manifest.chain_override,
-      goalTrack,
-    );
-    const fullWorkflowChain = featurePhasesFromWorkflow(workflow, goalTrack);
     // Legacy receipt-derived fidelity bytes remain compatibility-readable but have no authority.
     // A downstream start cannot safely treat them as an ordinary missing/non-UI SSOT: doing so
     // would let the preflight recompute only in memory while the harness falls back to spec.md.
@@ -4794,7 +4910,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           '已回写 framework.local.json（个人级、gitignored）。',
       );
     }
-    writeGoalManifest(manifest, projectRoot);
+    if (argv.resume) writeGoalManifest(manifest, projectRoot);
 
     // plan d7f3a9c4 t4：金丝雀 CLI 硬失败 BLOCKER——复用既有启动期 HALT 模式（与下方
     // declared_product_layer_missing 同款），**不在 probe 块内 process.exit**：
@@ -5186,7 +5302,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // 此处仅落 run_start 事件（携带逐字段身份 + rebase 记录）。
     const manifestFileAbs = path.join(projectRoot, manifest.report_dir, 'manifest.json');
     const frozenManifestHash = resolveFrozenManifestHash(priorEvents, sha256FileHex(manifestFileAbs));
-    const effectiveFrozenManifestIdentityHash = manifestDrift.effectiveHash;
     if (manifestDrift.rebaseApplied) {
       // 基线承载事件（收口刀）：resolveManifestIdentityBaseline 消费本事件把出生基线
       // 前进到 to_fields——授权 rebase 过一次后，后续 resume 不再复报同一漂移
@@ -5206,8 +5321,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
       dry_run: dryRun,
       chain,
       manifest_hash: frozenManifestHash,
-      manifest_identity_hash: effectiveFrozenManifestIdentityHash,
-      manifest_identity_fields: manifestDrift.currentFields,
     });
     flushProgress(true);
 
@@ -5261,7 +5374,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
       } catch { targetIdentityOk = false; }
       // 审计事件**成功追加之后**才 best-effort 删除目标场外状态；appendEvent 抛错则
       // 循环中断、绝不删除（不建新事务/删除账本）。
-      goalEvents.emit({ type: 'supersede', target_run_id: target });
+      goalEvents.emit(buildSupersedeAuditEvent({
+        targetRunId: target,
+        supersedingRunId: manifest.run_id,
+        ...(rebaselineRequest?.sourceRunId === target
+          ? { rebaselineTo: rebaselineRequest.baseSha, creation: freshCreation }
+          : {}),
+      }));
       emitMilestone(`GOAL_RUN event=supersede target=${target} run_id=${manifest.run_id}`);
       if (!dryRun) {
         if (!targetIdentityOk) {
@@ -6584,42 +6703,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
               HARNESS_DEVICE_TEST_PRODUCT: frozenDeviceTest.product,
               HARNESS_DEVICE_TEST_BUILD_MODE: frozenDeviceTest.buildMode,
             };
-          }
-        }
-
-        // c4e8b1d3 G1-1（pre-coding 锚定）：**首次 coding agent invoke 前**记录当时 git
-        // HEAD 为 coding_base_sha（write-once trust 文件；resume/backtrack 复用原 SHA，
-        // 不得重新取 HEAD——那会把 agent 已 commit 的越界文件洗出 diff 基线）。
-        // 记录失败不在此 halt：ui_diff_within_declared_files 在 check 侧对缺锚 fail-closed，
-        // 此处只保证"能记则记 + 事件可审计"。
-        if (!dryRun && phase === ('coding' as FeaturePhase)) {
-          try {
-            const headSha = resolveGitHeadSha(projectRoot);
-            if (headSha) {
-              const rec = recordCodingBase({
-                projectRoot, feature: manifest.feature, runId: manifest.run_id, baseSha: headSha,
-              });
-              if (rec.kind === 'recorded') {
-                goalEvents.emit({
-                  type: 'coding_base_recorded', phase, invoke_id: invokeId, base_sha: rec.body.base_sha,
-                });
-              } else if (rec.kind === 'invalid_existing') {
-                goalEvents.emit({
-                  type: 'coding_base_invalid', phase, invoke_id: invokeId,
-                  detail: '既有 coding-base 记录损坏/验签失败——不重签洗白，门禁侧将 fail-closed',
-                });
-              }
-            } else {
-              goalEvents.emit({
-                type: 'coding_base_unavailable', phase, invoke_id: invokeId,
-                detail: 'git HEAD 不可得（非 git 仓库或 git 不可用）',
-              });
-            }
-          } catch (e) {
-            goalEvents.emit({
-              type: 'coding_base_unavailable', phase, invoke_id: invokeId,
-              detail: `coding_base 记录异常：${(e as Error).message.slice(0, 200)}`,
-            });
           }
         }
 

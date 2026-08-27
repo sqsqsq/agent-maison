@@ -133,7 +133,7 @@ todos:
       拒绝（含 gate 标记在场仍拒）；successor 继承断言；legacy 时代判据正反例；
       CREATION_INCOMPLETE 不占位（重建不被挡）断言；goal run 设 env 无效且被 scrub+
       告警；actionability 断言。
-    status: pending
+    status: completed
   - id: m2-goal-phase-runtime-unification
     content: >
       P0 · OpenSpec change `goal-phase-runtime-unification` 完整实施与验收（总类根治
@@ -174,7 +174,7 @@ todos:
       plan 修 contracts.files 重闭环。回归夹具：宿主实况建模（resource_keys.media 20
       logo path 不在 files → plan closure FAIL、补 files 后 PASS）。同步 plan skill/
       模板指引与 contracts schema 文档。验收：夹具红绿对；既有合法 feature 夹具不误伤。
-    status: pending
+    status: in_progress
   - id: m4-legacy-surface-removal
     content: >
       P1 · 旧路径删除与 legacy 隔离核销（本总纲交付「隔离+结构断言」，不含物理删除

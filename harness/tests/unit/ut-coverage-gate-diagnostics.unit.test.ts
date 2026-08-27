@@ -14,7 +14,8 @@ import {
 } from '../../scripts/check-ut';
 import type { CheckContext } from '../../scripts/utils/types';
 import type { UnitCaseResult } from './ut-artifact-validate.unit.test';
-import { codingBasePath, recordCodingBase } from '../../scripts/utils/pass-snapshot';
+import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
+import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 import { resolveUtTargets } from '../../scripts/utils/ut-target-resolver';
 import {
   evaluateSuiteRatchet,
@@ -396,29 +397,25 @@ function testSuiteRatchetLifecycle(): void {
   }
 }
 
-// 成功路径：goal run 下 runner 锚定的 coding_base_sha 被自动识别，正确分离新旧 UT。
-// 夹具用真实 writer（recordCodingBase）造，不手搓信任文件。
-function testBaselineUsesRecordedCodingBase(): void {
+// 成功路径：goal run 出生时的 manifest.run_base_sha 被自动识别，正确分离新旧 UT。
+function testBaselineUsesGoalRunBase(): void {
   withTmpGitRepo(repo => {
     const runId = `run-ut-baseline-${Date.now()}`;
     const headBefore = spawnSync('git', ['rev-parse', 'HEAD~1'], {
       cwd: repo, encoding: 'utf-8', shell: false,
     }).stdout.trim();
-    const rec = recordCodingBase({ projectRoot: repo, feature: 'demo', runId, baseSha: headBefore });
-    assert(rec.kind === 'recorded', `recordCodingBase 应成功：${rec.kind}`);
-    try {
-      withEnv({ HARNESS_DIFF_BASE_REF: undefined, MAISON_GOAL_RUN_ID: runId }, () => {
-        const b = computeUtFileBaseline(baselineCtx(repo));
-        assert(b.available, b.note);
-        assert(b.note.includes('coding_base_sha'), `锚来源应为 coding_base_sha：${b.note}`);
-        assert(b.existing.has('mod/src/ohosTest/ets/test/Main.test.ets'), 'legacy 应在基线');
-        assert(!b.existing.has('mod/src/ohosTest/ets/test/NotLogin.test.ets'), '新 UT 不得在基线');
-      });
-    } finally {
-      try {
-        fs.rmSync(path.dirname(codingBasePath(repo, 'demo', runId)), { recursive: true, force: true });
-      } catch { /* ignore */ }
-    }
+    const manifest = buildGoalManifestFromInput({
+      feature: 'demo', run_id: runId, start_phase: 'ut', end_phase: 'ut',
+      unattended: { write_mode: 'full-access', approval_mode: 'never' },
+    }, { projectRoot: repo });
+    createGoalRun({ projectRoot: repo, manifest, chain: ['ut'], resolveHead: () => headBefore });
+    withEnv({ HARNESS_DIFF_BASE_REF: 'HEAD', MAISON_GOAL_RUN_ID: runId }, () => {
+      const b = computeUtFileBaseline(baselineCtx(repo));
+      assert(b.available, b.note);
+      assert(b.note.includes('run_base_sha'), `锚来源应为 run_base_sha：${b.note}`);
+      assert(b.existing.has('mod/src/ohosTest/ets/test/Main.test.ets'), 'legacy 应在基线');
+      assert(!b.existing.has('mod/src/ohosTest/ets/test/NotLogin.test.ets'), '新 UT 不得在基线');
+    });
   });
 }
 
@@ -578,7 +575,7 @@ export function runAll(): UnitCaseResult[] {
     { name: 'suite ratchet: no-baseline no-exempt / authorized baseline / tighten (P1-2)', fn: testSuiteRatchetLifecycle },
     { name: 'baseline: explicit env anchor separates legacy from new UT (423e5d0f P0)', fn: testBaselineExplicitEnvAnchor },
     { name: 'baseline: fail-closed without trusted pre-agent anchor (no trace/HEAD fallback)', fn: testBaselineFailClosedWithoutTrustedAnchor },
-    { name: 'baseline: recorded coding_base_sha is auto-detected (goal run success path)', fn: testBaselineUsesRecordedCodingBase },
+    { name: 'baseline: manifest.run_base_sha is auto-detected and env is ignored in goal run', fn: testBaselineUsesGoalRunBase },
     { name: 'baseline: fail-closed when goal coding_base record is absent', fn: testBaselineFailClosedWhenCodingBaseAbsent },
     { name: 'mockkit policy still fails for feature-owned files', fn: testMockkitPolicyStillFailsForFeatureFiles },
   ];

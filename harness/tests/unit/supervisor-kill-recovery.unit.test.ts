@@ -74,6 +74,10 @@ function tmpRun(): { root: string; reportDir: string; cleanup: () => void } {
   const reportDir = 'doc/features/bc-openCard/goal-runs/' + RUN_ID;
   const runDir = path.join(root, reportDir);
   fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify({
+    run_id: RUN_ID,
+    report_dir: reportDir,
+  }), 'utf-8');
   fs.writeFileSync(path.join(runDir, 'run-control.json'), JSON.stringify({
     schema: 'run-control@1',
     run_id: RUN_ID,

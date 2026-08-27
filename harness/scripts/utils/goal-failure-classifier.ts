@@ -297,12 +297,24 @@ const HUMAN_ONLY_CLASSIFICATIONS: ReadonlySet<string> = new Set<string>([
   'await_human_fidelity_tier',
   'capability_missing_strong_intent',
 ]);
+const RUNTIME_OWNED_BASELINE_BLOCKERS: ReadonlySet<string> = new Set<string>([
+  'ui_scope_base_missing',
+  'ui_scope_diff_unavailable',
+  'run_base_sha_missing',
+  'run_base_sha_invalid',
+  'run_created_missing',
+  'creation_incomplete',
+]);
 
 export function resolveBlockerActionability(b: GoalSummaryBlocker): BlockerActionability {
   if (b.actionability) return b.actionability;
   const id = b.id ?? '';
   if (HUMAN_ONLY_BLOCKER_IDS.has(id)) return 'human_only';
   if (b.classification && HUMAN_ONLY_CLASSIFICATIONS.has(b.classification)) return 'human_only';
+  if (
+    RUNTIME_OWNED_BASELINE_BLOCKERS.has(id) ||
+    (b.classification && RUNTIME_OWNED_BASELINE_BLOCKERS.has(b.classification))
+  ) return 'toolchain_blocked';
   if (isToolchainBlockerId(id)) return 'toolchain_blocked';
   if (b.blocking_class && TOOLCHAIN_BLOCKING_CLASSES.has(b.blocking_class)) return 'toolchain_blocked';
   return 'agent_fixable';

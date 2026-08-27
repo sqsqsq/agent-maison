@@ -21,7 +21,7 @@
 
 import type { CheckContext } from './types';
 import { listFilesAtRef, readFileAtRef } from './git-diff';
-import { readCodingBase } from './pass-snapshot';
+import { resolveGoalRunBaseline } from './goal-run-baseline';
 import { extractUtItBlocks } from './ut-it-blocks';
 
 export interface UtFileEntryLike {
@@ -107,34 +107,32 @@ export interface UtTargetResolution {
  * 无可信前置锚 → available=false，按 scoped 全量问责（fail-closed）。
  */
 export function computeUtFileBaseline(ctx: CheckContext): UtFileBaseline {
-  const envBaseRef = (process.env.HARNESS_DIFF_BASE_REF ?? '').trim();
+  const runId = (process.env.MAISON_GOAL_RUN_ID ?? '').trim();
+  const envBaseRef = runId ? '' : (process.env.HARNESS_DIFF_BASE_REF ?? '').trim();
   let baseRef: string | undefined;
   let anchorSource = '';
-  if (envBaseRef && envBaseRef !== 'working') {
+  if (runId) {
+    const baseline = resolveGoalRunBaseline(ctx.projectRoot, ctx.feature, runId);
+    if (baseline.available) {
+      baseRef = baseline.baseSha;
+      anchorSource = baseline.source;
+    } else {
+      return {
+        available: false,
+        existing: new Set(),
+        note: `${baseline.reason}——goal run 不读取 HARNESS_DIFF_BASE_REF，按 scoped 全量问责。`,
+      };
+    }
+  } else if (envBaseRef && envBaseRef !== 'working') {
     baseRef = envBaseRef;
     anchorSource = 'HARNESS_DIFF_BASE_REF';
-  } else {
-    const runId = (process.env.MAISON_GOAL_RUN_ID ?? '').trim();
-    if (runId) {
-      const base = readCodingBase(ctx.projectRoot, ctx.feature, runId);
-      if (base.status === 'ok' && base.body) {
-        baseRef = base.body.base_sha;
-        anchorSource = 'coding_base_sha';
-      } else if (base.status === 'invalid') {
-        return {
-          available: false,
-          existing: new Set(),
-          note: 'coding_base 记录损坏/上下文不匹配——基线不可信，按 scoped 全量问责（不回退 trace.start_commit：其记录时点在 agent 之后）。',
-        };
-      }
-    }
   }
   if (!baseRef) {
     return {
       available: false,
       existing: new Set(),
       note:
-        '无可信前置基线锚：按 scoped 全量问责。goal run 由 runner 自动锚定 coding_base_sha；' +
+        '无可信前置基线锚：按 scoped 全量问责。goal run 在出生时冻结 manifest.run_base_sha；' +
         '手动重跑请设 HARNESS_DIFF_BASE_REF=<feature 开始前的 commit> 以启用存量豁免' +
         '（不消费 trace.start_commit——其记录时点在 agent 之后，会把已提交的本轮新 UT 洗成存量）。',
     };
