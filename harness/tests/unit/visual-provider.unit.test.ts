@@ -48,6 +48,7 @@ import {
   writeGoalManifest,
 } from '../../scripts/utils/goal-manifest';
 import { casAcquireRunOwner, ensureRunControl, releaseRunOwner } from '../../scripts/utils/goal-run-control';
+import { appendGoalEventFenced } from '../../scripts/utils/goal-in-session-evidence';
 import {
   resolveVisualProviderInvokePlan,
   projectVisualProviderBody,
@@ -1942,6 +1943,12 @@ test('t1 attended 冻结：prepare 后改 local，gate 仍用 manifest 冻结的
     });
     assert.ok(acquired.ok);
     if (!acquired.ok) return;
+    // 主干 attended runtime truth 加固：bind 前须有当前 owner fence 签发的 phase_start
+    appendGoalEventFenced(root, manifest, runDir, acquired.token, {
+      type: 'phase_start', phase: 'spec', attempt_id: 'session-e1-round-1',
+      owner_id: acquired.token.owner_id, owner_epoch: acquired.token.epoch,
+      driver: 'session', round: 1,
+    });
 
     // prepare 之后有人改了个人级配置——**不得**因此换掉本 run 的视觉 endpoint
     fs.writeFileSync(path.join(root, 'framework.local.json'), JSON.stringify({
