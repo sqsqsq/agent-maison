@@ -222,10 +222,33 @@ export interface PhaseRuleSpec {
   exploration_strategy?: ExplorationStrategy;
 }
 
-interface ResourceEntry {
+export interface ResourceEntry {
   key: string;
   value: string;
   description?: string;
+  /** Materialized repository file authorized separately by contracts.files. */
+  path?: string;
+  /** Optional additional materialized media file(s), also authorized by contracts.files. */
+  media?: string | string[];
+}
+
+export interface ContractNavigationEntry {
+  name?: string;
+  file?: string;
+  page_file?: string;
+  route_file?: string;
+  registration_file?: string;
+}
+
+export interface ContractNavigationSpec {
+  main_pages_file?: string;
+  route_map_file?: string;
+  page_registration_file?: string;
+  route_registration_file?: string;
+  page_files?: string[];
+  route_files?: string[];
+  pages?: ContractNavigationEntry[];
+  routes?: ContractNavigationEntry[];
 }
 
 /** 功能级规约 — 接口契约 (features/{name}/contracts.yaml) */
@@ -239,6 +262,11 @@ export interface ContractsSpec {
     format: string;
     change_type: string;
     package_path: string;
+    /** HAR/HSP materialized entry/build/export files; every path must also be in files. */
+    har_index?: string;
+    builder?: string;
+    export_file?: string;
+    export_files?: string[];
   }>;
   module_dependencies: Record<string, string[]>;
   data_models: Array<{
@@ -348,7 +376,53 @@ export interface ContractsSpec {
     }>;
     consumers?: Array<{ consumer_id: string; initial_load_ref?: string; update_ref?: string }>;
   }>;
-  navigation?: Record<string, unknown>;
+  navigation?: ContractNavigationSpec;
+}
+
+export type ContractFileReferenceKind =
+  | 'modules.har_index'
+  | 'modules.builder'
+  | 'modules.export_file'
+  | 'modules.export_files'
+  | 'data_models.file'
+  | 'interfaces.file'
+  | 'components.file'
+  | 'resource_keys.path'
+  | 'resource_keys.media'
+  | 'navigation.main_pages_file'
+  | 'navigation.route_map_file'
+  | 'navigation.page_registration_file'
+  | 'navigation.route_registration_file'
+  | 'navigation.page_files'
+  | 'navigation.route_files'
+  | 'navigation.pages.file'
+  | 'navigation.pages.page_file'
+  | 'navigation.pages.route_file'
+  | 'navigation.pages.registration_file'
+  | 'navigation.routes.file'
+  | 'navigation.routes.page_file'
+  | 'navigation.routes.route_file'
+  | 'navigation.routes.registration_file'
+  | 'prd_to_code_traceability.key_files';
+
+export interface ContractFileReference {
+  path: string;
+  kind: ContractFileReferenceKind;
+  source: string;
+}
+
+export interface ContractFileReferenceIssue {
+  kind: ContractFileReferenceKind | 'contracts.files';
+  source: string;
+  raw: unknown;
+  message: string;
+}
+
+/** Ephemeral parser projection. It is never serialized beside contracts.yaml. */
+export interface ContractReferenceClosure {
+  authorized_files: string[];
+  references: ContractFileReference[];
+  invalid_paths: ContractFileReferenceIssue[];
 }
 
 /** UT 分层（AC / BD 级别）：
@@ -477,6 +551,8 @@ export interface FeatureSpec {
   acceptance?: AcceptanceSpec;
   /** v2 新增：use-cases.yaml（若存在），供 UT 端到端分支覆盖使用 */
   useCases?: UseCasesSpec;
+  /** In-memory contracts.files authorization projection; never persisted as a graph/sidecar. */
+  referenceClosure?: ContractReferenceClosure;
   /**
    * P0-2（plan d9b4f7e2 复审）：spec-loader 加载期发现并归一化的形状偏差留痕
    * （根节点非 map / 集合字段非数组）。harness-runner 据此产出结构化 FAIL

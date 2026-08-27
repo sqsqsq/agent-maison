@@ -21,6 +21,11 @@ traceability_checks:
   change_unit_feature_projection:
     description: CU-bound Feature 必须以 canonical change_unit_ref 和完整 ID-only mappings 施工，且机械派生 use-case/DAG 义务
     severity: BLOCKER
+  contract_file_reference_closure:
+    description: >
+      contracts.yaml 中所有 schema 声明的文件引用必须属于规范化 contracts.files；
+      files 是唯一授权集合，现有文件或内容相同不能豁免
+    severity: BLOCKER
   spec_constraint_traceability:
     description: >
       acceptance.yaml 中结构化 NFR/安全/性能/DFX 约束须在 plan.md 或 contracts.yaml 有实现引用

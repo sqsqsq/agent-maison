@@ -79,6 +79,8 @@ graph TD
 | `{module}/index.ets` | 模块导出 | 修改 |
 
 > 完整签名与类型细节落盘后以 `contracts.yaml` 为准；本节仅作人读草案。
+>
+> `contracts.files` 是唯一文件授权集合：data/interface/component、`resource_keys` 媒体、页面/路由注册、HAR build/export 与 traceability 文件引用都须逐项列入；闭包失败时回 plan 补 `files` 后重跑。
 
 ---
 

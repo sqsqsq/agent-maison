@@ -91,6 +91,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'doc-freshness',    modulePath: './unit/doc-freshness.unit.test' },
   { id: 'diff-staleness',   modulePath: './unit/diff-staleness.unit.test' },
   { id: 'feature-artifacts', modulePath: './unit/feature-artifacts.unit.test' },
+  { id: 'contract-reference-closure', modulePath: './unit/contract-reference-closure.unit.test' },
   { id: 'init-eol',         modulePath: './unit/init-eol.unit.test' },
   { id: 'canonical-gitignore', modulePath: './unit/canonical-gitignore.unit.test' },
   { id: 'init-update-policy', modulePath: './unit/init-update-policy.unit.test' },

@@ -1,0 +1,35 @@
+# contracts.yaml — plan phase machine contract
+schema_version: "1.0"
+feature: "{feature}"
+
+modules:
+  - name: "{ModuleA}"
+    layer: "{outer-layer-id}"
+    format: "{host-module-format}"
+    change_type: "modify"
+    package_path: "path/to/module"
+    # File-valued optional fields below must also appear in top-level files.
+    # har_index: "path/to/module/Index.ext"
+    # builder: "path/to/module/build-script.ext"
+    # export_file: "path/to/module/Index.ext"
+    # export_files: []
+
+module_dependencies: {}
+data_models: []
+interfaces: []
+components: []
+state_management: []
+
+navigation:
+  # Every populated file field must also appear in top-level files.
+  page_files: []
+  route_files: []
+  pages: []
+  routes: []
+
+resource_keys: {}
+prd_to_code_traceability: []
+
+# Sole file-authorization set for coding/review/UT and every reference above.
+files:
+  - "path/to/module/changed-file.ext"
