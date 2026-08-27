@@ -28,4 +28,4 @@
 - [x] 5.1 Add structural zero assertions for one loop, zero executor gate calls, zero private driver advancement and no Hylyre/vendor fields in runtime context.
 - [x] 5.2 Add attended/detached fresh/retry/resume/bidirectional-handoff/successor lifecycle parity tests consuming only production birth/runtime/projection APIs.
 - [x] 5.3 Update goal-mode operations/skill documentation; confirm no additional consumer migration beyond the M1 `MIGRATION.md` entry.
-- [ ] 5.4 At each migration rung run typecheck, targeted runtime tests and parity tests; after deletion run `cd harness && npm test`, strict OpenSpec validation and `npm run release:verify -- --skip-typecheck`.
+- [x] 5.4 At each migration rung run typecheck, targeted runtime tests and parity tests; after deletion run `cd harness && npm test`, strict OpenSpec validation and `npm run release:verify -- --skip-typecheck`.

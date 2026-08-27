@@ -174,7 +174,7 @@ todos:
       plan 修 contracts.files 重闭环。回归夹具：宿主实况建模（resource_keys.media 20
       logo path 不在 files → plan closure FAIL、补 files 后 PASS）。同步 plan skill/
       模板指引与 contracts schema 文档。验收：夹具红绿对；既有合法 feature 夹具不误伤。
-    status: in_progress
+    status: completed
   - id: m4-legacy-surface-removal
     content: >
       P1 · 旧路径删除与 legacy 隔离核销（本总纲交付「隔离+结构断言」，不含物理删除
@@ -210,7 +210,7 @@ todos:
       命令须在 goal runtime 外执行的要求与诚实边界）；⑤三 change 全部 validate+
       archive、全量单测+harness 自检；不 commit（review-before-commit），交付=分支
       工作区+总纲状态回填后按分支集成策略统一 cp 主干。
-    status: pending
+    status: in_progress
 isProject: false
 ---
 

@@ -15,4 +15,4 @@
 - [x] 3.1 Add the minimal bc-openCard twenty-logo fixture through the production YAML parser/resolver/closure API; assert undeclared media FAIL.
 - [x] 3.2 Add the corresponding all-media-declared PASS and existing legal-feature regression; assert no graph/manifest/test-only facts artifact is written.
 - [x] 3.3 Run TypeScript typecheck, targeted contracts/check-plan unit tests and plan fixtures.
-- [ ] 3.4 Run `cd harness && npm test`, strict OpenSpec validation and `npm run release:verify -- --skip-typecheck` after the publishable change set is stable.
+- [x] 3.4 Run `cd harness && npm test`, strict OpenSpec validation and `npm run release:verify -- --skip-typecheck` after the publishable change set is stable.
