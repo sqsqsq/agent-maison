@@ -27,7 +27,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
-import { readCodingBase } from './pass-snapshot';
+import { resolveGoalRunBaseline } from './goal-run-baseline';
 import {
   loadPhaseEvidenceManifest,
   readReceiptManifestPointer,
@@ -132,25 +132,22 @@ export function runUiDiffWithinDeclaredFiles(input: UiScopeGateInput): UiScopeGa
   // 注意顺序（round 19 P1）：**不做任何 live 文件前置探测**（曾按 live ui-spec 存在性
   // 决定适用面——agent 删掉 ui-spec 即可让门禁 SKIP，绕过成本为零）。适用面只由
   // 「diff 里有没有 UI 文件变更」决定：没有 → PASS；有 → 必须过冻结白名单。
-  const base = readCodingBase(projectRoot, feature, runId);
-  if (!base.body || base.status === 'invalid') {
+  const base = resolveGoalRunBaseline(projectRoot, feature, runId);
+  if (!base.available) {
     return {
       status: 'FAIL',
       failureKind: 'ui_scope_base_missing',
-      details:
-        base.status === 'invalid'
-          ? 'coding_base 记录损坏/上下文不匹配——diff 基线不可信。'
-          : `本 run（${runId}）无 coding_base_sha——应由 runner 在首次 coding agent invoke 前锚定。`,
-      suggestion: '请通过 goal-runner 从 plan 起跑（runner 会在 coding agent 起跑前锚定基线）；不使用 trace.start_commit 回退（其记录时点在 agent 之后）。',
+      details: `本 run（${runId}）无可信 run_base_sha：${base.reason}。`,
+      suggestion: '请从 goal-runner 创建带出生基线的新 run；现代 run 不回退 env、trace 或 legacy coding-base。',
     };
   }
 
-  const diff = diffChangedFilesWithStatus({ projectRoot, baseRef: base.body.base_sha });
+  const diff = diffChangedFilesWithStatus({ projectRoot, baseRef: base.baseSha });
   if (!diff.executed) {
     return {
       status: 'FAIL',
       failureKind: 'ui_scope_diff_unavailable',
-      details: `基线 diff 不可用：${diff.error}（base=${base.body.base_sha.slice(0, 12)}）`,
+      details: `基线 diff 不可用：${diff.error}（base=${base.baseSha.slice(0, 12)}）`,
       suggestion: '核查项目 git 状态（基线 commit 是否被 rebase/gc 掉）；必要时从 plan 重新起跑。',
     };
   }
@@ -172,7 +169,7 @@ export function runUiDiffWithinDeclaredFiles(input: UiScopeGateInput): UiScopeGa
             content = null;
           }
         } else {
-          const buf = readFileAtRef(projectRoot, base.body.base_sha, rel);
+          const buf = readFileAtRef(projectRoot, base.baseSha, rel);
           content = buf ? buf.toString('utf-8') : null;
         }
       }
@@ -180,7 +177,7 @@ export function runUiDiffWithinDeclaredFiles(input: UiScopeGateInput): UiScopeGa
     }
   }
 
-  const baseShort = base.body.base_sha.slice(0, 12);
+  const baseShort = base.baseSha.slice(0, 12);
 
   // ③ 无 UI 文件变更 → PASS（本门只管 UI 面；白名单无需咨询，也就不因缺快照误伤非 UI 改动）
   if (uiChanged.size === 0) {

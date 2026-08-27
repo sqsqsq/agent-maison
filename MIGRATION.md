@@ -226,6 +226,21 @@ coding 只读 contracts —— 不 scaffold 就判「未物化」、scaffold 就
 
 ---
 
+## Goal run 出生与基线统一（3.0.0）
+
+- 新 run 必须同时具有 `manifest.json` 与唯一 `run_created`；manifest-only/重复或损坏出生事件
+  现在判 `CREATION_INCOMPLETE`，不可 resume/attach/supervisor 接管，但不占用同 feature 的
+  HALTED/PARTIAL successor 位置。
+- 含 `coding`/`ut` 的 chain 在出生时冻结 `manifest.run_base_sha`。goal UI/UT 门禁不再读取
+  `HARNESS_DIFF_BASE_REF`；旧 `coding-base.json` 只给没有 `run_created` 的合法 legacy run 读取。
+- `run_base_sha` 同 run 不可 override/rebase。自动 successor 继承 lineage baseline；祖先无可信
+  基线时须由操作者在 goal runtime 外显式执行
+  `--supersede <old-run-id> --rebaseline-to <当前 exact HEAD>` 创建新问责边界。
+- 旧 run 无需回填 `run_created` 或 `run_base_sha`，resume 也不会自动补造。若 legacy anchor 已损坏，
+  请保留证据并走显式 rebaseline successor，不要编辑旧 manifest/events 洗白。
+
+---
+
 ## 视觉闭环二期（visual-capability-truth）——Breaking（随切片滚动登记）
 
 > 立项动因：20260718 宿主 goal run 首次实测——治理层全生效但能力误判/真机基建/回退编排

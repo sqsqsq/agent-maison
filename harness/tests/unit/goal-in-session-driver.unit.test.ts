@@ -12,6 +12,7 @@ import {
 import type { InSessionRoundResult } from '../../scripts/utils/goal-in-session-driver';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
+import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 import {
   formatGoalRoundStatus,
   handoffSessionToDetached,
@@ -78,6 +79,10 @@ function mkProject(): { root: string; manifest: GoalManifest; runDir: string } {
     created_at: new Date().toISOString(),
   };
   return { root, manifest, runDir: path.join(root, reportDir) };
+}
+
+function persistModernRun(env: ReturnType<typeof mkProject>): void {
+  createGoalRun({ projectRoot: env.root, manifest: env.manifest, chain: ['spec'] });
 }
 
 async function withSession<T>(
@@ -380,8 +385,7 @@ const cases: TestCase[] = [
     run: async () => {
       const env = mkProject();
       try {
-        fs.mkdirSync(env.runDir, { recursive: true });
-        fs.writeFileSync(path.join(env.runDir, 'manifest.json'), `${JSON.stringify(env.manifest, null, 2)}\n`, 'utf8');
+        persistModernRun(env);
         ensureRunControl(env.runDir, 'r1');
         let rejected = false;
         try {
@@ -400,7 +404,9 @@ const cases: TestCase[] = [
         assert(rejected, 'wrong adapter must fail before ownership');
         const control = readRunControl(env.runDir, 'r1');
         assert(control?.current_epoch === 0 && control.owner === null, 'adapter mismatch mutated owner');
-        assert(!fs.existsSync(path.join(env.runDir, 'events.jsonl')), 'adapter mismatch wrote event');
+        const birthEvents = fs.readFileSync(path.join(env.runDir, 'events.jsonl'), 'utf8').trim().split(/\r?\n/);
+        assert(birthEvents.length === 1 && JSON.parse(birthEvents[0]).type === 'run_created',
+          'adapter mismatch must not append after birth event');
       } finally {
         fs.rmSync(env.root, { recursive: true, force: true });
       }
@@ -411,8 +417,7 @@ const cases: TestCase[] = [
     run: async () => {
       const env = mkProject();
       try {
-        fs.mkdirSync(env.runDir, { recursive: true });
-        fs.writeFileSync(path.join(env.runDir, 'manifest.json'), `${JSON.stringify(env.manifest, null, 2)}\n`, 'utf8');
+        persistModernRun(env);
         let invoked = 0;
         const result = await runGoalModeHostBridge({
           projectRoot: env.root,
@@ -440,8 +445,7 @@ const cases: TestCase[] = [
     run: async () => {
       const env = mkProject();
       try {
-        fs.mkdirSync(env.runDir, { recursive: true });
-        fs.writeFileSync(path.join(env.runDir, 'manifest.json'), `${JSON.stringify(env.manifest, null, 2)}\n`, 'utf8');
+        persistModernRun(env);
         const mailbox = path.join(env.runDir, 'handoff-request.json');
         fs.writeFileSync(mailbox, '{"schema":"broken"}', 'utf8');
         const result = await runGoalModeHostBridge({
@@ -470,9 +474,7 @@ const cases: TestCase[] = [
     run: async () => {
       const env = mkProject();
       try {
-        fs.mkdirSync(env.runDir, { recursive: true });
-        fs.writeFileSync(path.join(env.runDir, 'manifest.json'), `${JSON.stringify(env.manifest, null, 2)}
-`, 'utf8');
+        persistModernRun(env);
         ensureRunControl(env.runDir, 'r1');
         const acquired = casAcquireRunOwner(env.runDir, 'r1', 0, { kind: 'session', owner_id: 'crashed', lease_ms: 1 });
         if (!acquired.ok) throw new Error('expired owner acquire failed');
@@ -512,8 +514,7 @@ const cases: TestCase[] = [
       const env = mkProject();
       try {
         env.manifest.minimum_assurance = { 'device-testing': 'full' };
-        fs.mkdirSync(env.runDir, { recursive: true });
-        fs.writeFileSync(path.join(env.runDir, 'manifest.json'), `${JSON.stringify(env.manifest, null, 2)}\n`, 'utf8');
+        persistModernRun(env);
         let rejected = false;
         try {
           await runGoalModeHostBridge({

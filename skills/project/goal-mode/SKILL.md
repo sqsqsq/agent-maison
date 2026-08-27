@@ -38,7 +38,7 @@
 1. [host-harness-readiness.md](../../reference/host-harness-readiness.md) 与 [harness-cli-cwd.md](../../reference/harness-cli-cwd.md)。
 2. [personal-setup-gate.md](../../reference/personal-setup-gate.md)，以返回的 `activeAdapter` 为准；保留其 `visualProvider` advisory，但有人在场时须等第 4 步 canary 得出 primary effective image-input 后，才决定是否执行 S2.1 询问。
 3. 链路含设备阶段时执行 [device-policy-gate.md](../../reference/device-policy-gate.md)。`device_policy_unset` 必须先确认（**只看 `code`，不看 `configured`**——坏凭据/只有 `disabled` 时 `configured=true` 而 `code=unset`；退出码非零或 stdout 非 JSON = 执行失败须停止，含凭据库不可读，不得当成"未配置"引导重新登记）；PIN 只能由用户在真实 TTY 登记，**绝不要让用户把 PIN 发到对话里**，也不得代输。
-4. 有人在场且需求 UI 相关的新 run，先按 [interactive-vision-canary.md](../../reference/interactive-vision-canary.md) 完成 interactive canary（新鲜缓存会自动 `SKIP`），再消费同一条 effective image-input 结论：primary blind 时可按 personal setup S2.1 配置合法 provider，也可保持未配置；这不产生盲跑 waiver。随后用 operations 文档的 `goal-mode-entry.ts --prepare-run --run-mode attended --feature ... --requirement ... --adapter ...` 创建 manifest/run-control，严格视觉需求是否可继续由 requirement/capability 门禁裁决。已有 run 只按同一 `run_id` 恢复。attach 必须显式传 `--run-mode attended`，且 `--adapter` 必须等于 manifest adapter。无人值守只走 `goal-runner --detach`。
+4. 有人在场且需求 UI 相关的新 run，先按 [interactive-vision-canary.md](../../reference/interactive-vision-canary.md) 完成 interactive canary（新鲜缓存会自动 `SKIP`），再消费同一条 effective image-input 结论：primary blind 时可按 personal setup S2.1 配置合法 provider，也可保持未配置；这不产生盲跑 waiver。随后用 operations 文档的 `goal-mode-entry.ts --prepare-run --run-mode attended --feature ... --requirement ... --adapter ...` 创建 `manifest + run_created + run-control`；chain 含 coding/ut 时创建会冻结 `manifest.run_base_sha`，HEAD 不可得即停止且不派发 agent。严格视觉需求是否可继续由 requirement/capability 门禁裁决。已有 run 只按同一 `run_id` 恢复，attach/resume 不得补造 `run_created`。attach 必须显式传 `--run-mode attended`，且 `--adapter` 必须等于 manifest adapter。无人值守只走 `goal-runner --detach`。
 
 有人在场由当前会话逐轮驱动，生产入口固定为可执行 `harness/scripts/goal-mode-entry.ts` host bridge（内部调用 `runGoalModeHostBridge()`→`runGoalModeInSession()`→`runInSessionRound()`）；完整命令和 JSONL phase callback 协议见 operations 文档。Skill/宿主不得另拼循环或自行构造 owner token。active adapter 必须为每个 bridge 请求提供隔离 phase context，能力缺失即按上节回退。无人值守必须使用真正的 detached runner；`--detach` 本身即选择无人值守。**非 orphan 状态下**，session 与 detached process 互转只能走 mailbox handoff：当前 owner 写 `handoff_requested`、静默并释放，新 owner 以 `epoch+1` CAS 接管并写 `handoff_accepted`。仅 `orphaned_session` 可在用户显式授权后通过既有 `--force-resume` / `forceTakeoverRunOwner` 执行 epoch takeover；supervisor 永不得触发该例外。禁止复制或转换 ledger。
 
@@ -54,7 +54,7 @@
 - 等待项（没有则省略）
 - `run_id` 与进度文件
 
-无人值守（`--detach`）启动后：先执行**有界启动握手**（≤30s，只查 manifest 落盘 / `detach.log` 增长 / liveness；按结果分类汇报——有可信终态/等待态证据就报真实状态，非终态且进程健康报「已启动」，超窗但进程仍活报「尚未就绪，进程仍存活」，仅进程确实死亡且无结束证据才报「未存活」），汇报 `run_id` 与续查入口后**立即结束当前轮次**；不进入 monitor，除非用户明确要求盯守。查进度唯一入口是 `goal-status`。
+无人值守（`--detach`）启动后：先执行**有界启动握手**（≤30s，确认 manifest 与唯一 `run_created` 双落，再查 `detach.log` 增长 / liveness；manifest-only 须报 `CREATION_INCOMPLETE`，不得 resume；其余按结果分类汇报——有可信终态/等待态证据就报真实状态，非终态且进程健康报「已启动」，超窗但进程仍活报「尚未就绪，进程仍存活」，仅进程确实死亡且无结束证据才报「未存活」），汇报 `run_id` 与续查入口后**立即结束当前轮次**；不进入 monitor，除非用户明确要求盯守。查进度唯一入口是 `goal-status`。
 
 遇到 human-only recommendation 时不得启动 phase：有人在场立即询问；无人值守写入等待项并安全停放。`DEFERRED` / `PARTIAL` 不得宣称完成。
 
@@ -64,4 +64,5 @@
 - preflight、device、timeout、cleanup、pass-snapshot、evidence freshness、write guard 与 fencing 仍是硬门禁。
 - 非 owner 或旧 epoch 不得写 events / progress / manifest，也不得启动 phase。
 - 主 agent 必须自己运行 harness/runner；不得把命令作为唯一出路推给用户。
+- goal agent、attended/detached executor 与 supervisor 永不得构造 `--rebaseline-to`；该参数只属于 goal runtime 外的操作者管理命令，详见运行手册。
 - 不得把 INCOMPLETE 软化为 PASS，不得在 Skill 内新增阶段顺序或 verdict→next-phase 表。

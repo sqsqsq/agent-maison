@@ -1026,6 +1026,8 @@ export function buildAgentSpawnEnv(
   // 清理父环境残留（含大小写变体），不得让陈旧 pin 漏入 agent 子进程冒充"已钉"。走共享
   // 执行器 applyGoalModelPinEnv（与 gateInjectedEnv / goalIdentity child env 同源）。
   applyGoalModelPinEnv(merged, extraEnv?.[MAISON_GOAL_MODEL_PIN_ENV]);
+  // Goal agents never receive a caller-provided diff baseline; manifest.run_base_sha is the SSOT.
+  deleteEnvKeyCaseInsensitive(merged, 'HARNESS_DIFF_BASE_REF');
   // 角色位定档前先清大小写变体（extraEnv 注入 `maison_goal_headless=''` 会与大写键并存，
   // Windows 子进程读取哪个是未定义行为）——保证子进程 env 恰有一个大写 HEADLESS='1'。
   deleteEnvKeyCaseInsensitive(merged, MAISON_GOAL_HEADLESS_ENV);

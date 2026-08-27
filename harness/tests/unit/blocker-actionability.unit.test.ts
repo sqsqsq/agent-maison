@@ -34,6 +34,8 @@ const cases: Array<{ name: string; run: () => void }> = [
       if (resolveBlockerActionability({ id: 'x', classification: 'await_human_fidelity_tier' }) !== 'human_only') throw new Error('视觉二期门禁族映射失败');
       if (resolveBlockerActionability({ id: 'x', classification: 'capability_missing_strong_intent' }) !== 'human_only') throw new Error('capability 门禁族映射失败');
       if (resolveBlockerActionability({ id: 'capture_completeness_external_ocr_unavailable' }) !== 'toolchain_blocked') throw new Error('ocr_unavailable 应 toolchain');
+      if (resolveBlockerActionability({ id: 'ui_scope_base_missing' }) !== 'toolchain_blocked') throw new Error('runtime-owned baseline 缺失不得回喂 agent');
+      if (resolveBlockerActionability({ id: 'x', classification: 'run_created_missing' }) !== 'toolchain_blocked') throw new Error('run_created 缺失不得回喂 agent');
       if (resolveBlockerActionability({ id: 'x', blocking_class: 'device_toolchain' }) !== 'toolchain_blocked') throw new Error('device_toolchain 类映射失败');
       if (resolveBlockerActionability({ id: 'capture_completeness_external' }) !== 'agent_fixable') throw new Error('external 应 agent_fixable（生命周期起点）');
       if (resolveBlockerActionability({ id: 'totally_unknown_gate' }) !== 'agent_fixable') throw new Error('未登记缺省应 agent_fixable（行为不变）');

@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { isDryReportDir, type GoalManifest } from './goal-manifest';
+import { inspectGoalRunCreationFiles } from './goal-run-creation';
 import {
   LEGACY_FEATURE_PHASE_ORDER,
   resolveFeatureTrack,
@@ -1431,11 +1432,13 @@ export function resolveLatestRunId(
     if (ent.name.startsWith('.')) continue;
     const manifestPath = path.join(runsDir, ent.name, 'manifest.json');
     const eventsPath = path.join(runsDir, ent.name, 'events.jsonl');
+    const creation = inspectGoalRunCreationFiles(manifestPath, eventsPath);
+    if (creation.state !== 'complete' && creation.state !== 'legacy') continue;
     let ts = 0;
     if (fs.existsSync(eventsPath)) {
       const events = loadEventsJsonl(eventsPath);
       for (const e of events) {
-        if (e.type === 'run_start' && e.ts) {
+        if ((e.type === 'run_created' || e.type === 'run_start') && e.ts) {
           const t = new Date(e.ts).getTime();
           if (!Number.isNaN(t)) ts = Math.max(ts, t);
         }

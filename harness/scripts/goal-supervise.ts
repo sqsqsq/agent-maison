@@ -40,6 +40,7 @@ import type { ReadinessProbeName } from './utils/device-readiness-gate';
 import { featureDir } from '../config';
 import { readRunControl, type RunControlV1 } from './utils/goal-run-control';
 import { HANDOFF_REQUEST_NAME, isValidHandoffRequest } from './utils/goal-handoff';
+import { inspectGoalRunCreationFiles } from './utils/goal-run-creation';
 
 interface ResolvedRun {
   runId: string;
@@ -49,7 +50,11 @@ interface ResolvedRun {
 }
 
 /** 解析 run：显式 id 或 latest（按目录名字典序——run_id 前缀是 ISO 时间戳，字典序即时间序）。 */
-function resolveRun(projectRoot: string, feature: string, wanted: string): ResolvedRun | null {
+function resolveRun(
+  projectRoot: string,
+  feature: string,
+  wanted: string,
+): ResolvedRun | { runId: string; creationIncomplete: string } | null {
   const runsRoot = path.join(featureDir(projectRoot, feature), 'goal-runs');
   if (!fs.existsSync(runsRoot)) return null;
   const ids = fs
@@ -63,6 +68,17 @@ function resolveRun(projectRoot: string, feature: string, wanted: string): Resol
     .relative(projectRoot, path.join(runsRoot, runId))
     .replace(/\\/g, '/');
   const runDir = path.join(projectRoot, reportDir);
+  const creation = inspectGoalRunCreationFiles(
+    path.join(runDir, 'manifest.json'),
+    path.join(runDir, 'events.jsonl'),
+  );
+  if (creation.state !== 'complete' && creation.state !== 'legacy') {
+    return {
+      runId,
+      creationIncomplete:
+        creation.state === 'creation_incomplete' ? creation.reason : 'manifest/run_created 出生记录缺失',
+    };
+  }
   return { runId, reportDir, runDir, eventsPath: path.join(runDir, 'events.jsonl') };
 }
 
@@ -286,6 +302,13 @@ async function main(): Promise<number> {
   if (!run) {
     console.error(`[goal-supervise] 找不到 feature=${feature} 的 goal run`);
     return 1;
+  }
+  if ('creationIncomplete' in run) {
+    console.log(
+      `[goal-supervise] run=${run.runId} → no_op：CREATION_INCOMPLETE（${run.creationIncomplete}）；` +
+        '仅供诊断，不自动 resume/接管',
+    );
+    return 0;
   }
   const ownerGate = gateSupervisorOwner(run.runDir, run.runId);
   if (ownerGate.action === 'no_op') {
