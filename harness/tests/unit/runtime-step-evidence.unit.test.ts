@@ -52,7 +52,8 @@ function pythonStepHash(stepText: string): string {
     'spec.loader.exec_module(module)',
     'print(module._step_sha256(step))',
   ].join('; ');
-  const result = spawnSync(process.env.MAISON_PYTHON || 'python', ['-c', script, wheel, wrapper, stepText], {
+  // -B：禁写 __pycache__ 字节码——必跑测试不得把发布目录弄脏
+  const result = spawnSync(process.env.MAISON_PYTHON || 'python', ['-B', '-c', script, wheel, wrapper, stepText], {
     encoding: 'utf-8',
   });
   assert(result.status === 0, `Python parity helper failed: ${result.stderr || result.stdout}`);
