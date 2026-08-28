@@ -81,6 +81,10 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'diff-staleness',   modulePath: './unit/diff-staleness.unit.test' },
   { id: 'feature-artifacts', modulePath: './unit/feature-artifacts.unit.test' },
   { id: 'contract-reference-closure', modulePath: './unit/contract-reference-closure.unit.test' },
+  // plan c7e2a9d4 T3：contracts 统一解析边界的裸读禁令（边界外禁读 navigation 原始字段 + 自测）
+  { id: 'contracts-parse-boundary-guard', modulePath: './unit/contracts-parse-boundary-guard.unit.test' },
+  // plan c7e2a9d4 T4：跨消费者集成（同一 FeatureSpec 同时驱动 plan 闭环与 profile page_registration）
+  { id: 'contracts-cross-consumer-closure', modulePath: './unit/contracts-cross-consumer-closure.unit.test' },
   { id: 'init-eol',         modulePath: './unit/init-eol.unit.test' },
   { id: 'canonical-gitignore', modulePath: './unit/canonical-gitignore.unit.test' },
   { id: 'init-update-policy', modulePath: './unit/init-update-policy.unit.test' },

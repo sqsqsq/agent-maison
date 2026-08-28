@@ -17,20 +17,7 @@ x-file-reference-fields:
   - components[].file
   - resource_keys.<module>.<category>[].path
   - resource_keys.<module>.<category>[].media
-  - navigation.main_pages_file
-  - navigation.route_map_file
-  - navigation.page_registration_file
-  - navigation.route_registration_file
-  - navigation.page_files[]
-  - navigation.route_files[]
-  - navigation.pages[].file
-  - navigation.pages[].page_file
-  - navigation.pages[].route_file
-  - navigation.pages[].registration_file
-  - navigation.routes[].file
-  - navigation.routes[].page_file
-  - navigation.routes[].route_file
-  - navigation.routes[].registration_file
+  - navigation.config_files[]
   - prd_to_code_traceability[].key_files[]
 type: object
 additionalProperties: true

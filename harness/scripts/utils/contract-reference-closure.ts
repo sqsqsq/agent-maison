@@ -26,20 +26,7 @@ export const CONTRACT_FILE_REFERENCE_FIELDS: ReadonlyArray<{
   { kind: 'components.file', schemaField: 'components[].file' },
   { kind: 'resource_keys.path', schemaField: 'resource_keys.<module>.<category>[].path' },
   { kind: 'resource_keys.media', schemaField: 'resource_keys.<module>.<category>[].media' },
-  { kind: 'navigation.main_pages_file', schemaField: 'navigation.main_pages_file' },
-  { kind: 'navigation.route_map_file', schemaField: 'navigation.route_map_file' },
-  { kind: 'navigation.page_registration_file', schemaField: 'navigation.page_registration_file' },
-  { kind: 'navigation.route_registration_file', schemaField: 'navigation.route_registration_file' },
-  { kind: 'navigation.page_files', schemaField: 'navigation.page_files[]' },
-  { kind: 'navigation.route_files', schemaField: 'navigation.route_files[]' },
-  { kind: 'navigation.pages.file', schemaField: 'navigation.pages[].file' },
-  { kind: 'navigation.pages.page_file', schemaField: 'navigation.pages[].page_file' },
-  { kind: 'navigation.pages.route_file', schemaField: 'navigation.pages[].route_file' },
-  { kind: 'navigation.pages.registration_file', schemaField: 'navigation.pages[].registration_file' },
-  { kind: 'navigation.routes.file', schemaField: 'navigation.routes[].file' },
-  { kind: 'navigation.routes.page_file', schemaField: 'navigation.routes[].page_file' },
-  { kind: 'navigation.routes.route_file', schemaField: 'navigation.routes[].route_file' },
-  { kind: 'navigation.routes.registration_file', schemaField: 'navigation.routes[].registration_file' },
+  { kind: 'navigation.config_files', schemaField: 'navigation.config_files[]' },
   { kind: 'prd_to_code_traceability.key_files', schemaField: 'prd_to_code_traceability[].key_files[]' },
 ] as const;
 
@@ -62,10 +49,35 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const FILE_LIKE_FIELD_NAME = /(?:^|_)(?:file|files|path|paths|media|builder|index|map|registration|export|exports)(?:$|_)/i;
 const FILE_LIKE_VALUE = /(?:[\\/]|\.[a-z0-9]{1,12}$)/i;
 
+/**
+ * 值侧的 file-like 判定（review 二轮 P1：与外层扫描同款迭代 + 防环）。
+ *
+ * 外层拒绝扫描改成工作栈后，这里仍是无环检测的递归——YAML 锚点做出的自引用
+ * （`registration_points: &p [ {self: *p}, {file: …} ]`）会在此爆 RangeError；而闭环在
+ * SpecLoader 装载期直接执行，异常会打断整个装载，连结构化的 `unconsumed_file_field`
+ * 都产不出来。终止必须靠已访问集合收敛，且要覆盖拒绝路径上的**每一段**遍历。
+ */
 function containsFileLikeValue(value: unknown): boolean {
-  if (typeof value === 'string') return FILE_LIKE_VALUE.test(value.trim());
-  if (Array.isArray(value)) return value.some(containsFileLikeValue);
-  if (isRecord(value)) return Object.values(value).some(containsFileLikeValue);
+  const seen = new Set<object>();
+  const stack: unknown[] = [value];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (typeof current === 'string') {
+      if (FILE_LIKE_VALUE.test(current.trim())) return true;
+      continue;
+    }
+    if (Array.isArray(current)) {
+      if (seen.has(current)) continue;
+      seen.add(current);
+      for (const item of current) stack.push(item);
+      continue;
+    }
+    if (isRecord(current)) {
+      if (seen.has(current)) continue;
+      seen.add(current);
+      for (const item of Object.values(current)) stack.push(item);
+    }
+  }
   return false;
 }
 
@@ -76,23 +88,65 @@ export function resolveContractFileReferences(
   const references: ContractFileReference[] = [];
   const invalidPaths: ContractFileReferenceIssue[] = [];
 
+  const pushUnconsumed = (source: string, raw: unknown): void => {
+    invalidPaths.push({
+      kind: 'unconsumed_file_field',
+      source,
+      raw,
+      message:
+        `${source} 看起来承载仓库文件路径，但不在 contracts 文件引用清单中；` +
+        '请改用受支持字段并在 contracts.files 授权，或先扩展 schema/resolver。',
+    });
+  };
+
+  /**
+   * 未知**嵌套**子项的拒绝扫描（plan c7e2a9d4 T1）。
+   *
+   * 现拒绝条件要求「字段名本身」命中 file-like 正则；裁撤 navigation.pages[]/routes[] 的
+   * 专用遍历后，`navigation.routes[].file` 会因外层 key `routes` 不命中而静默 fail-open。
+   * 因此：外层字段名未命中 file-like 且值为 object/array 时，向下递归**只做拒绝检测**——
+   * 命中 file-like 子键 + file-like 值即报 `unconsumed_file_field`（source 带完整路径）。
+   * 刻意不做正向引用解析：遍历不产生 references，不授权任何路径。
+   *
+   * **无深度截断**（review P1）：任意深度截断本身就是 fail-open——把 file 埋得够深即可
+   * 静默过关。改用显式工作栈迭代（不吃调用栈）+ 已访问集合防环，遍历到自然收敛为止。
+   */
+  const scanNestedUnknownFileFields = (rootValue: unknown, rootSource: string): void => {
+    const seen = new Set<object>();
+    const stack: Array<{ value: unknown; source: string }> = [{ value: rootValue, source: rootSource }];
+    while (stack.length > 0) {
+      const { value, source } = stack.pop()!;
+      if (Array.isArray(value)) {
+        if (seen.has(value)) continue;
+        seen.add(value);
+        value.forEach((item, index) => stack.push({ value: item, source: `${source}[${index}]` }));
+        continue;
+      }
+      if (!isRecord(value) || seen.has(value)) continue;
+      seen.add(value);
+      for (const [field, raw] of Object.entries(value)) {
+        if (FILE_LIKE_FIELD_NAME.test(field)) {
+          if (containsFileLikeValue(raw)) pushUnconsumed(`${source}.${field}`, raw);
+          continue;
+        }
+        stack.push({ value: raw, source: `${source}.${field}` });
+      }
+    }
+  };
+
   const rejectUnconsumedFileFields = (
     record: Record<string, unknown>,
     allowedFields: ReadonlySet<string>,
     source: string,
   ): void => {
     for (const [field, raw] of Object.entries(record)) {
-      if (allowedFields.has(field) || !FILE_LIKE_FIELD_NAME.test(field) || !containsFileLikeValue(raw)) {
+      if (allowedFields.has(field)) continue;
+      if (FILE_LIKE_FIELD_NAME.test(field)) {
+        if (containsFileLikeValue(raw)) pushUnconsumed(`${source}.${field}`, raw);
         continue;
       }
-      invalidPaths.push({
-        kind: 'unconsumed_file_field',
-        source: `${source}.${field}`,
-        raw,
-        message:
-          `${source}.${field} 看起来承载仓库文件路径，但不在 contracts 文件引用清单中；` +
-          '请改用受支持字段并在 contracts.files 授权，或先扩展 schema/resolver。',
-      });
+      // 字段名未命中 file-like：结构化值仍可能藏着 file-like 子项（嵌套逃逸），向下扫。
+      scanNestedUnknownFileFields(raw, `${source}.${field}`);
     }
   };
 
@@ -230,41 +284,13 @@ export function resolveContractFileReferences(
     }
   }
 
+  // 3.0 canonical navigation：唯一字段 config_files（由真实消费者 page_registration 塑形）。
+  // 旧的推测性同义字段（*_file / page_files / route_files / pages[] / routes[]）零消费者，
+  // 已裁撤——它们连同其嵌套形态一律按未知 file-like 字段 fail-closed。
   const navigation = contracts.navigation as unknown;
   if (isRecord(navigation)) {
-    rejectUnconsumedFileFields(
-      navigation,
-      new Set([
-        'main_pages_file', 'route_map_file', 'page_registration_file',
-        'route_registration_file', 'page_files', 'route_files', 'pages', 'routes',
-      ]),
-      'navigation',
-    );
-    add('navigation.main_pages_file', 'navigation.main_pages_file', navigation.main_pages_file);
-    add('navigation.route_map_file', 'navigation.route_map_file', navigation.route_map_file);
-    add('navigation.page_registration_file', 'navigation.page_registration_file', navigation.page_registration_file);
-    add('navigation.route_registration_file', 'navigation.route_registration_file', navigation.route_registration_file);
-    addList('navigation.page_files', 'navigation.page_files', navigation.page_files);
-    addList('navigation.route_files', 'navigation.route_files', navigation.route_files);
-    for (const collection of ['pages', 'routes'] as const) {
-      const entries = navigation[collection];
-      if (!Array.isArray(entries)) continue;
-      entries.forEach((entry, index) => {
-        if (!isRecord(entry)) return;
-        rejectUnconsumedFileFields(
-          entry,
-          new Set(['name', 'file', 'page_file', 'route_file', 'registration_file']),
-          `navigation.${collection}[${index}]`,
-        );
-        for (const field of ['file', 'page_file', 'route_file', 'registration_file'] as const) {
-          add(
-            `navigation.${collection}.${field}`,
-            `navigation.${collection}[${index}].${field}`,
-            entry[field],
-          );
-        }
-      });
-    }
+    rejectUnconsumedFileFields(navigation, new Set(['config_files']), 'navigation');
+    addList('navigation.config_files', 'navigation.config_files', navigation.config_files);
   }
 
   (contracts.prd_to_code_traceability ?? []).forEach((trace, index) => {
@@ -310,6 +336,28 @@ export function resolveContractFileReferences(
       a.path.localeCompare(b.path) || a.source.localeCompare(b.source) || a.kind.localeCompare(b.kind)),
     invalid_paths: invalidPaths.sort((a, b) => a.source.localeCompare(b.source)),
   };
+}
+
+/**
+ * 纯 selector（plan c7e2a9d4 T2）：从既有 `references[]` 即时筛选指定 kind 的规范化路径。
+ *
+ * 下游消费者（如 profiles/hmos-app 的 `page_registration`）**只能**经此消费统一解析产出，
+ * 不得裸读 `contracts.navigation` 原始字段。函数无状态、不做 I/O，也不在
+ * `ContractReferenceClosure` 内额外存第二份路径投影。
+ */
+export function selectContractReferencePaths(
+  closure: ContractReferenceClosure | undefined,
+  kind: ContractFileReferenceKind,
+): string[] {
+  if (!closure) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const reference of closure.references) {
+    if (reference.kind !== kind || seen.has(reference.path)) continue;
+    seen.add(reference.path);
+    out.push(reference.path);
+  }
+  return out;
 }
 
 export interface ContractReferenceClosureViolation {
