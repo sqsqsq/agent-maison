@@ -350,6 +350,12 @@ export async function runGoalRuntimeChain(
     executorMode?: 'attended' | 'detached';
     adapter?: string;
     viaHostBridge?: boolean;
+    hostAuthorization?: {
+      mode: 'manual' | 'batch_authorized' | 'goal_mode';
+      through_phase?: string;
+    };
+    hostLeaseMs?: number;
+    hostMaxRounds?: number;
     runId?: string;
     failExecutorFor?: (phase: string, attempt: number) => boolean;
   } = {},
@@ -756,6 +762,9 @@ export async function runGoalRuntimeChain(
             runId: bridgeManifest.run_id,
             adapter: opts.adapter ?? 'codex',
             runMode: 'attended',
+            ...(opts.hostAuthorization ? { authorization: opts.hostAuthorization } : {}),
+            ...(opts.hostLeaseMs !== undefined ? { leaseMs: opts.hostLeaseMs } : {}),
+            ...(opts.hostMaxRounds !== undefined ? { maxRounds: opts.hostMaxRounds } : {}),
             executePhase: async (phase, recommendation) => recordAttendedPhase(
               phase,
               typeof recommendation === 'object' && recommendation && 'instruction' in recommendation
@@ -765,7 +774,12 @@ export async function runGoalRuntimeChain(
             ),
             forceTakeover: opts.forceResume,
           });
-          return result.status === 'reconciled' ? 0 : result.status === 'waiting' ? 2 : 1;
+          return result.status === 'reconciled' || result.status === 'executed' ||
+            result.status === 'manual_fallback'
+            ? 0
+            : result.status === 'waiting'
+              ? 2
+              : 1;
         })()
       : opts.executorMode === 'attended'
       ? await goalMain({

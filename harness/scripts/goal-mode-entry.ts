@@ -245,6 +245,9 @@ export async function runGoalModeHostBridge(
     ],
     ownerKind: 'session',
     executor,
+    authorization: options.authorization ?? { mode: 'goal_mode' },
+    ...(options.leaseMs !== undefined ? { leaseMs: options.leaseMs } : {}),
+    ...(options.maxRounds !== undefined ? { maxRounds: options.maxRounds } : {}),
   }).run();
 
   const rawEvents = loadEventsJsonl(path.join(runDir, 'events.jsonl'));
@@ -267,7 +270,9 @@ export async function runGoalModeHostBridge(
       ? { status: 'waiting' as const, phase, details: lastHalt.halt_reason }
       : undefined;
   const result: InSessionRoundResult = {
-    status: lastEnd?.type === 'run_end' && lastEnd.status === 'CHAIN_SLICE_COMPLETED'
+    status: exitCode === 0 && options.authorization?.mode === 'manual'
+      ? 'manual_fallback'
+      : lastEnd?.type === 'run_end' && lastEnd.status === 'CHAIN_SLICE_COMPLETED'
       ? 'reconciled'
       : lastHalt?.type === 'phase_halt' && lastHalt.halt_reason === 'executor_waiting'
         ? 'waiting'

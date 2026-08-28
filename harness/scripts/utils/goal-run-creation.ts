@@ -13,6 +13,7 @@ import {
   computeManifestIdentityFields,
   computeManifestIdentityFieldsHash,
   manifestIdentityFieldDigest,
+  normalizeGoalPhaseChain,
   writeGoalManifest,
   type GoalManifest,
 } from './goal-manifest';
@@ -28,6 +29,7 @@ export interface RunCreatedEvent extends Record<string, unknown> {
   manifest_identity_fields: Record<string, string>;
   manifest_identity_hash: string;
   run_base_sha_digest: string | null;
+  phase_chain: string[];
   dry_run?: boolean;
   rebaseline_from_run_id?: string;
 }
@@ -150,7 +152,10 @@ export function createGoalRun(options: {
     throw new Error(`[goal-run-creation] fresh run events 已存在：${eventsPath}`);
   }
 
-  if (chainRequiresRunBase(options.chain)) {
+  const phaseChain = normalizeGoalPhaseChain(options.chain, 'resolved phase chain');
+  options.manifest.phase_chain = phaseChain;
+
+  if (chainRequiresRunBase(phaseChain)) {
     if (options.manifest.successor_of) {
       if (!options.manifest.run_base_sha) {
         throw new Error(
@@ -181,6 +186,7 @@ export function createGoalRun(options: {
     manifest_identity_fields: fields,
     manifest_identity_hash: computeManifestIdentityFieldsHash(fields),
     run_base_sha_digest: baseDigest,
+    phase_chain: phaseChain,
     ...(options.manifest.report_dir.split('/').includes('.dry') ? { dry_run: true } : {}),
     ...(options.rebaselineFromRunId
       ? { rebaseline_from_run_id: options.rebaselineFromRunId }
@@ -213,6 +219,20 @@ function validateRunCreatedEvent(event: GoalRunEvent, manifest: GoalManifest): s
   if (raw.run_base_sha_digest !== expectedBaseDigest) {
     return 'run_created.run_base_sha_digest 不匹配';
   }
+  let eventPhaseChain: string[];
+  let manifestPhaseChain: string[];
+  try {
+    eventPhaseChain = normalizeGoalPhaseChain(raw.phase_chain, 'run_created.phase_chain');
+    manifestPhaseChain = normalizeGoalPhaseChain(manifest.phase_chain, 'manifest.phase_chain');
+  } catch (error) {
+    return (error as Error).message;
+  }
+  if (JSON.stringify(eventPhaseChain) !== JSON.stringify(manifestPhaseChain)) {
+    return 'manifest.phase_chain 与 run_created.phase_chain 不匹配';
+  }
+  if (fields.phase_chain !== manifestIdentityFieldDigest(manifestPhaseChain)) {
+    return 'run_created.manifest_identity_fields.phase_chain 不匹配';
+  }
   const withoutHash = {
     type: 'run_created' as const,
     schema_version: '1.0' as const,
@@ -221,6 +241,7 @@ function validateRunCreatedEvent(event: GoalRunEvent, manifest: GoalManifest): s
     manifest_identity_fields: fields,
     manifest_identity_hash: raw.manifest_identity_hash,
     run_base_sha_digest: raw.run_base_sha_digest ?? null,
+    phase_chain: eventPhaseChain,
     ...(raw.dry_run === true ? { dry_run: true } : {}),
     ...(raw.rebaseline_from_run_id
       ? { rebaseline_from_run_id: raw.rebaseline_from_run_id }
@@ -229,7 +250,12 @@ function validateRunCreatedEvent(event: GoalRunEvent, manifest: GoalManifest): s
   if (raw.event_hash !== runCreatedHash(withoutHash)) {
     return 'run_created.event_hash 不匹配';
   }
-  if (fields.run_base_sha && fields.run_base_sha !== manifestIdentityFieldDigest(manifest.run_base_sha)) {
+  const birthHasBase = Object.prototype.hasOwnProperty.call(fields, 'run_base_sha');
+  const manifestHasBase = Object.prototype.hasOwnProperty.call(manifest, 'run_base_sha');
+  if (birthHasBase !== manifestHasBase) {
+    return 'manifest.run_base_sha 与出生摘要存在性不匹配';
+  }
+  if (birthHasBase && fields.run_base_sha !== manifestIdentityFieldDigest(manifest.run_base_sha)) {
     // Current manifest may legitimately rebase other identity fields, but run_base_sha is write-once.
     return 'manifest.run_base_sha 与出生摘要不匹配';
   }
@@ -278,9 +304,16 @@ export function inspectGoalRunCreationFiles(
   return { state: 'creation_incomplete', reason: 'manifest 已存在但缺少 run_created/run_start 出生事件' };
 }
 
-export function assertGoalRunAttachable(projectRoot: string, manifest: GoalManifest): void {
+export function assertGoalRunAttachable(
+  projectRoot: string,
+  manifest: GoalManifest,
+): Extract<GoalRunCreationInspection, { state: 'complete' | 'legacy' }> {
   const inspection = inspectGoalRunCreation(projectRoot, manifest);
   if (inspection.state === 'creation_incomplete') {
     throw new Error(`[goal-run-creation] CREATION_INCOMPLETE: ${inspection.reason}`);
   }
+  if (inspection.state === 'absent') {
+    throw new Error('[goal-run-creation] CREATION_INCOMPLETE: manifest 不在 canonical run 路径');
+  }
+  return inspection;
 }

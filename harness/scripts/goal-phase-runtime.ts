@@ -89,6 +89,7 @@ import {
   DEFAULT_MAX_BACKTRACKS,
   featurePhasesFromWorkflow,
   formatDeferredUpstreamNotice,
+  recommendationAuthorized,
   resolveAutoChain,
   resolveGoalRunStatus,
   type FeaturePhase,
@@ -322,7 +323,11 @@ import { mapCategoryToChainPhase } from './utils/correction-routing';
 import { loadGoalCapability } from './utils/goal-adapter-capability';
 import { deriveReconcileObservation } from './utils/goal-reconcile-observation';
 import { validateMinimumAssurance } from './utils/skill-contract';
-import { assessFeature } from './utils/assess';
+import {
+  assessFeature,
+  type AssessAuthorizationContext,
+  type AssessRecommendation,
+} from './utils/assess';
 import type { DriverGuardAction } from './utils/goal-assess-driver';
 import { createGoalReconcileBoundary } from './utils/goal-reconcile-boundary';
 import {
@@ -364,6 +369,7 @@ import {
   markExpiredSessionOrphaned,
   readRunControl,
   releaseRunOwner,
+  renewSessionLease,
   type RunFenceToken,
   type RunOwnerKind,
 } from './utils/goal-run-control';
@@ -3732,6 +3738,7 @@ function acquireGoalLocks(
     runMode: 'authoritative' | 'dry';
     explicitTakeover?: boolean;
     ownerKind?: RunOwnerKind;
+    leaseMs?: number;
   },
 ): void {
   const { runId, reportDir, runMode } = run;
@@ -3753,7 +3760,13 @@ function acquireGoalLocks(
   const runDir = path.dirname(runLockPath);
   let existingControl = ensureRunControl(runDir, runId);
   existingControl = markExpiredSessionOrphaned(runDir, runId);
-  const ownerInput = { kind: run.ownerKind ?? 'process', owner_id: fRecord.ownerId };
+  const ownerKind = run.ownerKind ?? 'process';
+  const leaseMs = Math.max(1, Math.trunc(run.leaseMs ?? 60_000));
+  const ownerInput = {
+    kind: ownerKind,
+    owner_id: fRecord.ownerId,
+    ...(ownerKind === 'session' ? { lease_ms: leaseMs } : {}),
+  };
   const acquiredControl =
     run.explicitTakeover && existingControl.owner?.state === 'orphaned_session'
       ? { ok: true as const, ...forceTakeoverRunOwner(
@@ -3779,19 +3792,25 @@ function acquireGoalLocks(
   }
 
   runControl = { dir: runDir, token: acquiredControl.token };
+  const heartbeatMs = ownerKind === 'session'
+    ? Math.max(250, Math.min(LOCK_HEARTBEAT_MS, Math.trunc(leaseMs / 3)))
+    : LOCK_HEARTBEAT_MS;
   featureLock = {
     path: featureLockPath,
     ownerId: fRecord.ownerId,
     interval: setInterval(() => {
       touchLock(featureLockPath, fRecord.ownerId);
       try {
+        if (ownerKind === 'session' && runControl) {
+          renewSessionLease(runControl.dir, runControl.token, leaseMs);
+        }
         progressHeartbeatHook?.();
       } catch (err) {
         console.warn(
-          `[goal-runner] progress heartbeat failed (non-fatal): ${(err as Error).message}`,
+          `[goal-runner] owner/progress heartbeat failed (non-fatal): ${(err as Error).message}`,
         );
       }
-    }, LOCK_HEARTBEAT_MS),
+    }, heartbeatMs),
   };
   runLock = { path: runLockPath, ownerId: rRecord.ownerId };
   // plan a4f7e2b1 t1（codex 订正）：**取锁后立即写一次 beacon**，不等 60s 首次心跳。
@@ -4024,6 +4043,12 @@ export interface GoalPhaseRuntimeLaunchOptions {
   ownerKind?: RunOwnerKind;
   /** Optional transport injection. The runtime remains the sole lifecycle owner. */
   executor?: GoalPhaseExecutor;
+  /** Existing attended authorization contract, enforced by the runtime at phase boundaries. */
+  authorization?: AssessAuthorizationContext;
+  /** Session owner lease duration; ignored for process owners. */
+  leaseMs?: number;
+  /** Maximum number of phase boundaries this invocation may start. */
+  maxRounds?: number;
 }
 
 /**
@@ -4638,15 +4663,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
   if (dryRun) setAppendEventBaseFields({ dry_run: true }); // T1b：dry 事件全量打标
   const forceResume = Boolean(argv['force-resume']);
   const goalTrack = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, manifest.feature));
-  const requestedChain = resolveAutoChain(
-    workflow,
-    manifest.start_phase,
-    manifest.end_phase,
-    manifest.chain_override,
-    goalTrack,
-  );
-  const fullWorkflowChain = featurePhasesFromWorkflow(workflow, goalTrack);
-  let freshCreation: GoalRunCreationResult | null = null;
   if (Object.keys(process.env).some(key => key.toUpperCase() === 'HARNESS_DIFF_BASE_REF')) {
     console.warn(
       '[goal-runner] 已忽略并从 goal 子进程环境剥离 HARNESS_DIFF_BASE_REF；' +
@@ -4654,14 +4670,26 @@ Goal runner — tool-agnostic multi-phase orchestrator
     );
   }
 
+  let attachedCreation: ReturnType<typeof assertGoalRunAttachable> | null = null;
   if (argv.resume || attachCreatedRunId) {
     try {
-      assertGoalRunAttachable(projectRoot, manifest);
+      attachedCreation = assertGoalRunAttachable(projectRoot, manifest);
     } catch (error) {
       console.error(`[goal-runner] BLOCKER: ${(error as Error).message}`);
       process.exit(1);
     }
   }
+  const requestedChain = attachedCreation?.state === 'complete'
+    ? [...attachedCreation.event.phase_chain]
+    : resolveAutoChain(
+        workflow,
+        manifest.start_phase,
+        manifest.end_phase,
+        manifest.chain_override,
+        goalTrack,
+      );
+  const fullWorkflowChain = featurePhasesFromWorkflow(workflow, goalTrack);
+  let freshCreation: GoalRunCreationResult | null = null;
 
   // Survival guard (code-level enforcement of the launch contract): block a real unattended
   // run started in the foreground without --detach — it would be reaped when the host
@@ -4702,6 +4730,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
     runMode: dryRun ? 'dry' : 'authoritative',
     explicitTakeover: Boolean(argv.resume || attachCreatedRunId) && forceResume,
     ownerKind: runtimeOwnerKind,
+    ...(runtimeOwnerKind === 'session' && options.leaseMs !== undefined
+      ? { leaseMs: options.leaseMs }
+      : {}),
   });
   // d6 t5⓪：**投影注入点之一**——带 halt_reason 的事件在写盘那一层自动补
   // run_disposition/run_wait_kind（device-readiness-gate 的 emitEvent 也接在这里，
@@ -4927,6 +4958,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           ...fullWorkflowChain.slice(specIdx, requestedStartIdx),
           ...requestedChain,
         ]
+      : manifest.phase_chain
+      ? [...manifest.phase_chain]
       : requestedChain;
     // plan c4e8a1f7 T1a：preflight 返回 session 级 resolved binary——probe/canary/
     // 正式 phase invoke 三个消费点复用同一绝对路径，从结构上保证 probe/invoke 同身份。
@@ -5964,8 +5997,33 @@ Goal runner — tool-agnostic multi-phase orchestrator
       ? { toPhase: 'spec', signalDriven: false, preSnapshot: null, requiresCommittedClosure: true }
       : null;
 
+    const runtimeAuthorization = options.authorization ?? { mode: 'goal_mode' as const };
+    const runtimeMaxRounds = options.maxRounds === undefined
+      ? Number.POSITIVE_INFINITY
+      : Math.max(1, Math.trunc(options.maxRounds));
+    let runtimeRoundsStarted = 0;
+    let runtimeBoundaryYielded = false;
     for (let phaseIdx = chainStartIndex; phaseIdx < chain.length && !halted; phaseIdx++) {
       const phase = chain[phaseIdx];
+      const boundaryRecommendation: AssessRecommendation = {
+        action: 'run_phase',
+        phase: String(phase),
+        reason: 'shared runtime phase boundary',
+        requires_driver_authorization: true,
+      };
+      if (
+        runtimeRoundsStarted >= runtimeMaxRounds ||
+        !recommendationAuthorized(
+          boundaryRecommendation,
+          runtimeAuthorization,
+          chain.map(String),
+          { startPhase: String(manifest.start_phase) },
+        )
+      ) {
+        runtimeBoundaryYielded = true;
+        break;
+      }
+      runtimeRoundsStarted += 1;
       let retries = 0;
       let phaseDone = false;
       let priorBlockerSignature: string | null = null;
@@ -9051,6 +9109,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             goalEvents.emit({
               type: 'handoff_rejected',
               request_id: handoff.request.request_id,
+              target_owner_kind: handoff.request.target_owner_kind,
               reason: handoff.reason,
               epoch: runControl.token.epoch,
             });
@@ -9646,6 +9705,17 @@ Goal runner — tool-agnostic multi-phase orchestrator
         phaseIdx = backtrackToIdx - 1;
         backtrackToIdx = null;
       }
+    }
+
+    if (runtimeBoundaryYielded) {
+      // An attended authorization/round limit is a cooperative yield, not a terminal outcome.
+      // The same run remains attachable; suppress the CLI process-exit interruption backstop.
+      runConcluded = true;
+      progressSubstep = null;
+      progressPhase = null;
+      progressHeartbeatHook = null;
+      flushProgress(true, true);
+      return 0;
     }
 
     const reachedEnd =

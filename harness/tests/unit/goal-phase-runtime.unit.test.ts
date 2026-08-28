@@ -15,6 +15,7 @@ import {
   casAcquireRunOwner,
   ensureRunControl,
   quiesceRunOwner,
+  readRunControl,
   releaseRunOwner,
 } from '../../scripts/utils/goal-run-control';
 import {
@@ -170,6 +171,66 @@ const cases: Case[] = [
       const scrubbed = context({ childEnv: { HARNESS_DIFF_BASE_REF: 'attacker', KEEP: 'yes' } });
       assert(!('HARNESS_DIFF_BASE_REF' in scrubbed.childEnv), 'goal baseline env override was not scrubbed');
       assert(scrubbed.childEnv.KEEP === 'yes', 'unrelated child env changed');
+    },
+  },
+  {
+    name: 'M1 production resume keeps the birth phase chain after workflow auto_chain changes',
+    run: async () => {
+      const root = setupGoalRuntimeHost('codex').root;
+      try {
+        const workflowPath = path.join(root, 'framework', 'workflows', 'spec-driven.workflow.yaml');
+        fs.copyFileSync(
+          path.resolve(__dirname, '../../../workflows/spec-driven.workflow.yaml'),
+          workflowPath,
+        );
+        const blocker = {
+          id: 'file_completeness',
+          severity: 'BLOCKER',
+          status: 'FAIL',
+          classification: 'code_regression',
+          details_excerpt: 'freeze chain fixture',
+          actionability: 'agent_fixable',
+        };
+        const halted = await runGoalRuntimeChain(root, {
+          adapter: 'codex',
+          runId: 'frozen-chain-resume',
+          onHarnessSummary: ({ phase }) => phase === 'plan' ? { blockers: [blocker] } : null,
+        });
+        assert(halted.exitCode === 1, `fixture did not halt: ${halted.exitCode}`);
+        const manifestBefore = loadGoalManifestFromRun(root, 'frozen-chain-resume', { feature: 'bc-openCard' });
+        assert(manifestBefore.phase_chain?.join(',') === 'spec,plan,coding,review,ut,testing',
+          `birth chain=${manifestBefore.phase_chain?.join(',')}`);
+
+        const eventsPath = path.join(halted.reportDir, 'events.jsonl');
+        fs.writeFileSync(eventsPath, fs.readFileSync(eventsPath, 'utf8').split('\n').map((line) => {
+          if (!line.trim()) return line;
+          const event = JSON.parse(line) as { type?: string; ts?: string };
+          if (event.type === 'run_end' && event.ts) {
+            event.ts = new Date(Date.parse(event.ts) - 10 * 60_000).toISOString();
+          }
+          return JSON.stringify(event);
+        }).join('\n'), 'utf8');
+        fs.writeFileSync(
+          workflowPath,
+          fs.readFileSync(workflowPath, 'utf8').replace(
+            'auto_chain: [spec, plan, coding, review, ut, testing]',
+            'auto_chain: [spec, plan, coding, ut, testing]',
+          ),
+          'utf8',
+        );
+
+        const resumed = await runGoalRuntimeChain(root, {
+          resume: 'frozen-chain-resume', forceResume: true, adapter: 'codex',
+        });
+        assert(resumed.exitCode === 0, `resume exit=${resumed.exitCode}`);
+        assert(resumed.invokedPhases.includes('review'),
+          `workflow drift replaced birth chain: ${resumed.invokedPhases.join('→')}`);
+        const manifestAfter = loadGoalManifestFromRun(root, 'frozen-chain-resume', { feature: 'bc-openCard' });
+        assert(JSON.stringify(manifestAfter.phase_chain) === JSON.stringify(manifestBefore.phase_chain),
+          'resume rewrote frozen phase chain');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
     },
   },
   {
@@ -572,14 +633,47 @@ const cases: Case[] = [
         { type: 'handoff_accepted', request_id: 'a', owner_kind: 'process', epoch: 2 },
         { type: 'handoff_requested', request_id: 'b', target_owner_kind: 'session', from_epoch: 2 },
         { type: 'handoff_accepted', request_id: 'b', owner_kind: 'session', epoch: 3 },
-        { type: 'handoff_requested', request_id: 'c', target_owner_kind: 'process', from_epoch: 3 },
-        { type: 'handoff_rejected', request_id: 'c', target_owner_kind: 'process', reason: 'stale_epoch' },
       ]);
       assert(JSON.stringify(projected) === JSON.stringify([
         { type: 'owner_handoff', from: 'session', to: 'process', outcome: 'success' },
         { type: 'owner_handoff', from: 'process', to: 'session', outcome: 'success' },
-        { type: 'owner_handoff', from: 'session', to: 'process', outcome: 'failed' },
       ]), JSON.stringify(projected));
+    },
+  },
+  {
+    name: 'M2 production rejected handoff retains target direction in canonical lifecycle',
+    run: async () => {
+      const root = setupGoalRuntimeHost('codex').root;
+      try {
+        let requestId = '';
+        const probe = await runGoalRuntimeChain(root, {
+          adapter: 'codex',
+          runId: 'production-handoff-rejected',
+          onSpec: ({ runId }) => {
+            const manifest = loadGoalManifestFromRun(root, runId, { feature: 'bc-openCard' });
+            const runDir = path.resolve(root, manifest.report_dir);
+            const control = readRunControl(runDir, runId);
+            assert(control?.owner?.kind === 'process', 'production process owner missing');
+            const request = writeHandoffRequest(runDir, {
+              run_id: runId,
+              from_epoch: control.current_epoch + 1,
+              target_owner_kind: 'session',
+            });
+            requestId = request.request_id;
+          },
+        });
+        assert(probe.exitCode === 0, `rejected handoff run exit=${probe.exitCode}`);
+        const rejected = probe.events.find(event =>
+          event.type === 'handoff_rejected' && event.request_id === requestId);
+        assert(rejected?.target_owner_kind === 'session',
+          `production rejection lost target: ${JSON.stringify(rejected)}`);
+        const handoffs = canonicalOf(probe).filter(event => event.type === 'owner_handoff');
+        assert(JSON.stringify(handoffs) === JSON.stringify([
+          { type: 'owner_handoff', from: 'process', to: 'session', outcome: 'failed' },
+        ]), `canonical rejection=${JSON.stringify(handoffs)}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
     },
   },
   {

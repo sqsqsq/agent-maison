@@ -50,6 +50,12 @@ fields:
     type: array
     items: string
     description: Optional ordered phase list overriding workflow auto_chain
+  phase_chain:
+    type: array
+    items: string
+    description: >
+      Fresh birth 已解析完成并规范化的实际执行链。由 createGoalRun 单点写入并由
+      run_created 同值绑定；modern resume/attach 只读该字段，不重新解析 workflow。
   minimum_assurance:
     type: object
     additionalProperties:
