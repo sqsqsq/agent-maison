@@ -232,23 +232,16 @@ export interface ResourceEntry {
   media?: string | string[];
 }
 
-export interface ContractNavigationEntry {
-  name?: string;
-  file?: string;
-  page_file?: string;
-  route_file?: string;
-  registration_file?: string;
-}
-
+/**
+ * 3.0 canonical navigation：唯一字段 `config_files`——导航注册/配置文件清单
+ * （如 main_pages.json / route_map.json）。语义由真实消费者塑形
+ * （profiles/hmos-app `page_registration`）；每条路径同样受 `contracts.files` 授权。
+ * 历史推测性同义字段（main_pages_file/route_map_file/page_registration_file/
+ * route_registration_file/page_files/route_files/pages[]/routes[]）零消费者，已裁撤，
+ * 按未知 file-like 字段 fail-closed。
+ */
 export interface ContractNavigationSpec {
-  main_pages_file?: string;
-  route_map_file?: string;
-  page_registration_file?: string;
-  route_registration_file?: string;
-  page_files?: string[];
-  route_files?: string[];
-  pages?: ContractNavigationEntry[];
-  routes?: ContractNavigationEntry[];
+  config_files?: string[];
 }
 
 /** 功能级规约 — 接口契约 (features/{name}/contracts.yaml) */
@@ -389,20 +382,7 @@ export type ContractFileReferenceKind =
   | 'components.file'
   | 'resource_keys.path'
   | 'resource_keys.media'
-  | 'navigation.main_pages_file'
-  | 'navigation.route_map_file'
-  | 'navigation.page_registration_file'
-  | 'navigation.route_registration_file'
-  | 'navigation.page_files'
-  | 'navigation.route_files'
-  | 'navigation.pages.file'
-  | 'navigation.pages.page_file'
-  | 'navigation.pages.route_file'
-  | 'navigation.pages.registration_file'
-  | 'navigation.routes.file'
-  | 'navigation.routes.page_file'
-  | 'navigation.routes.route_file'
-  | 'navigation.routes.registration_file'
+  | 'navigation.config_files'
   | 'prd_to_code_traceability.key_files';
 
 export interface ContractFileReference {

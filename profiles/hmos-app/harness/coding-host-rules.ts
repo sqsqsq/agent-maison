@@ -34,6 +34,10 @@ import {
 
 import { runArkuiStaticRules } from './arkui-static-rules';
 import { blockerFail } from '../../../harness/scripts/utils/check-result-factory';
+import {
+  resolveContractFileReferences,
+  selectContractReferencePaths,
+} from '../../../harness/scripts/utils/contract-reference-closure';
 
 export { isCrossModuleExportFileStem } from './har-export-resolve';
 
@@ -467,10 +471,36 @@ export function isDependencyDeclared(
   return false;
 }
 
+/**
+ * 导航注册配置文件（plan c7e2a9d4 T2）：经统一解析边界的纯 selector 消费，**不裸读**
+ * `contracts.navigation` 原始字段。装载期 SpecLoader 已算好 `referenceClosure`；缺失时
+ * 按 check-plan.ts 同款 `??` 兜底现算，双相共享同一份解析结论、不重复计算。
+ */
+function resolveNavigationConfigFiles(ctx: CheckContext): string[] {
+  const contracts = ctx.featureSpec.contracts;
+  if (!contracts) return [];
+  const closure = ctx.featureSpec.referenceClosure
+    ?? resolveContractFileReferences(ctx.projectRoot, contracts);
+  return selectContractReferencePaths(closure, 'navigation.config_files');
+}
+
+/**
+ * 已声明的注册配置文件读取（review P1）：`existsSync` 对"路径其实是目录"返回 true，随后
+ * `readFileSync` 抛 EISDIR——异常逃到 check-coding 的 safeRun 会被降级成 MINOR SKIP，
+ * `coding_run_status` 不计入阻断，于是"不可读"反而能宣称完成。故本地判普通文件并吞掉
+ * 读取异常，一律归入 unreadable → BLOCKER FAIL（fail-closed，不新增机制）。
+ */
+function readRegularFileOrNull(absolutePath: string): string | null {
+  try {
+    if (!fs.statSync(absolutePath).isFile()) return null;
+    return fs.readFileSync(absolutePath, 'utf-8');
+  } catch {
+    return null;
+  }
+}
+
 function checkPageRegistration(ctx: CheckContext): CheckResult[] {
   const contracts = ctx.featureSpec.contracts;
-  const nav = contracts?.navigation as Record<string, unknown> | undefined;
-  const configFiles = (nav?.config_files ?? []) as string[];
   const components = contracts?.components ?? [];
 
   const navPages = components
@@ -494,21 +524,49 @@ function checkPageRegistration(ctx: CheckContext): CheckResult[] {
     ];
   }
 
-  let configContent = '';
-  for (const cf of configFiles) {
-    const c = readFileIfExists(path.join(ctx.projectRoot, cf));
-    if (c) configContent += c;
-  }
-
-  if (!configContent) {
+  // 状态表（plan c7e2a9d4 T2）：走到这里必然「已有 NavDestination 页面」——
+  // 没有注册配置声明、或声明的文件读不到，都是真实缺口，一律 FAIL，不得以 SKIP 冒充成功。
+  const configFiles = resolveNavigationConfigFiles(ctx);
+  if (configFiles.length === 0) {
     return [
       {
         id: 'page_registration',
         category: 'structure',
         description: ruleDesc(ctx, 'structure_checks', 'page_registration'),
         severity: 'BLOCKER',
-        status: 'SKIP',
-        details: '导航配置文件 (main_pages.json / route_map.json) 不存在。',
+        status: 'FAIL',
+        details:
+          `${navPages.length} 个 NavDestination 页面待注册，但 contracts.yaml 的 ` +
+          '`navigation.config_files` 未声明任何导航注册配置文件。',
+        suggestion:
+          '回到 plan 在 contracts.yaml 的 `navigation.config_files` 声明 main_pages.json / ' +
+          'route_map.json 等注册配置文件，并同步列入 `contracts.files`。',
+      },
+    ];
+  }
+
+  let configContent = '';
+  const unreadable: string[] = [];
+  for (const cf of configFiles) {
+    const c = readRegularFileOrNull(path.join(ctx.projectRoot, cf));
+    if (c === null) unreadable.push(cf);
+    else configContent += c;
+  }
+
+  if (unreadable.length > 0) {
+    return [
+      {
+        id: 'page_registration',
+        category: 'structure',
+        description: ruleDesc(ctx, 'structure_checks', 'page_registration'),
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details: [
+          `${unreadable.length} 个已声明的导航注册配置文件不存在或不可读：`,
+          ...unreadable.map(f => `  - ${f}`),
+        ].join('\n'),
+        affected_files: unreadable,
+        suggestion: '在 coding 阶段实际创建这些注册配置文件（文件存在性的正式裁决在 coding file_completeness）。',
       },
     ];
   }
