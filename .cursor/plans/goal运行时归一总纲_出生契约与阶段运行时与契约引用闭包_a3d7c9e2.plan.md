@@ -462,3 +462,31 @@ attended 行为一致；③20 logo 在 plan closure 被拦而非 coding 后暴�
 
 1. m5 宿主事故 fixture 的建模边界（复刻 manifest/contracts/events 形状 vs 复刻完整
    run 目录树）——默认前者（最小充分）。
+
+## 实施记录（2026-08-28 · review 返修）
+
+- 新增并实施 OpenSpec 修正 change `goal-runtime-enforcement-fixes-2`；未改写已归档历史，未新增
+  manifest、ledger、状态机、授权层或平行真源。
+- M1 返修：fresh run 在出生前解析 legacy fidelity 恢复所需的实际 phase chain，并将规范化
+  chain 同时冻结进 manifest 与 `run_created`；modern resume/attach 只加载出生事实。出生摘要
+  对 `run_base_sha` 执行存在性与值的双向一致性校验，禁止无→有、有→无和改值。
+- M2 返修：attended host bridge 将 authorization、through-phase、lease 和 round 上限真实接入
+  唯一 `GoalPhaseRuntime`；manual 零 invoke、batch 不越界、single-round 最多一 phase。handoff
+  兼容 API 收窄为 request-only，runtime 成为唯一 transition writer；生产 `handoff_rejected`
+  保留目标方向并进入 canonical lifecycle。attended runtime 不再保留第二套 stdio endpoint。
+- 同轮闭环：所有 goal execution signal 下的 coding/UT/exit diff base 只信 manifest；plan contract
+  closure 拒绝未消费的 file-like 字段；结构门禁改为 lifecycle/call-edge 断言；OpenSpec
+  `Enforcement:` 精确路径与 glob 由 `check-openspec-enforcement-paths.mjs` 自动校验。
+- 验收结果：TypeScript typecheck PASS；`npm test` 为 3614/3614 unit、44/44 fixtures；
+  `npm run openspec:validate` 为 40/40 且 Enforcement 路径校验 PASS；开发期
+  `node scripts/check-plan-version.mjs` PASS；`git diff --check` PASS。全量首轮曾由新增写点使用
+  未注册 incident id 触发 1 条元门禁，已复用既有 `framework_integrity_block` 收敛并在第二轮
+  全量中关闭。
+- `npm run release:verify -- --skip-typecheck` 已执行并按设计停在 release-mode plan gate：当前
+  3.0.0 窗口共有 4 个 plan 仍含未完成 todo。不得为放行而伪改状态。
+- 消费者迁移：无。此次为既有出生事实、运行时边界、门禁与事件形状的缺陷修复，没有新增
+  消费者配置或持久状态；对出生时缺失必要恢复 chain 的损坏 modern run，既有处置是废弃并
+  新建 successor，而不是追溯迁移。
+- 里程碑事实：M1、M2、M3、m4 保持 `completed`；m0 与 m5 继续 `in_progress`。唯一与本总纲
+  归档拓扑直接相关的外部未完成项仍是 `ut-legacy-coexistence` 7.2 宿主真机证据，因此
+  `goal-run-birth-contract` 与本总纲不得提前归档/关闭。
