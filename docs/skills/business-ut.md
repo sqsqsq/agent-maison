@@ -522,7 +522,7 @@ agent / CI 优先读取 `summary.json` 里的 `verdict`、`blockers`、`next_act
 | `ut_tsc_compiles` | BLOCKER | 测试源文件（**hmos-app**：`*.test.ets`）语法/类型未被 tsc 接受 |
 | `ut_hvigor_build` | BLOCKER | tsc 漏掉的跨文件、跨模块 **ArkTS**（宿主）编译错误 |
 | `ut_hvigor_test` | BLOCKER | 测试未在设备 / 模拟器上实际运行 |
-| `ut_no_src_mutation` | BLOCKER | 为了让 UT 通过而擅自改业务源码 |
+| `ut_no_src_mutation` | BLOCKER | review 闭环后产品源码发生漂移（典型是"为了让 UT 通过而擅自改业务源码"）。基线=review closure attestation 的逐文件内容哈希，**与是否 git 提交无关**；review 未闭环时回退 git diff |
 
 `ut_hvigor_test`（hmos-app）需要 DevEco Studio 工具链与在线设备 / 模拟器。工具链缺失、无设备、显式跳过都不是 PASS，也不是正常 SKIP。
 

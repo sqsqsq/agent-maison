@@ -46,7 +46,9 @@
 `cover_existing_code`，缺省 cover_feature_change）声明工作模式；`MAISON_UT_TARGETS`（分号/逗号
 分隔的相对路径）点名目标文件（可指向未被触碰的存量文件）。`[REG-*]` 标签仅前两种模式合法。
 cover_existing_code / repair 模式下须同时给显式基线锚 `HARNESS_DIFF_BASE_REF`（本地已有的
-非需求源码改动以显式锚区分，direct 场景框架不自动推断入口状态）。
+非需求源码改动以显式锚区分，direct 场景框架不自动推断入口状态）。该锚只作用于 **git diff
+生效域**；`ut_no_src_mutation` 在 review 已正式闭环时用 review closure attestation 的内容哈希
+基线，设它不影响该门禁结论。
 
 ### cover_feature_change 内部路由（同触发词「生成 UT」）
 
@@ -117,7 +119,7 @@ cover_existing_code / repair 模式下须同时给显式基线锚 `HARNESS_DIFF_
 9. **Step 6 机器回执**：harness PASS 后写 `ut/reports/ac-coverage.json`（unit 层覆盖摘要，非 SSOT）；device/both 缺 `device_focus` 回 spec 补全，不新建平行 todo。
 10. **Step 7 输出交付摘要**：UseCase/DAG/UT 文件清单 + 覆盖率统计，供 Step 8 Harness 验证消费。
 11. **Step 7.5/7.6 编译与装机运行闭环**（必要出口，详见 reference）：`ut.compile`/`ut.run` 是必要出口非可选；自闭环修复策略按错误类型分类；**触及业务源码进约束#12 HARD STOP**；设备失败按 selfHealable/needsConfirmation/externalBlocked/clear 四类分流；绝不允许把"无设备"标 SKIP/PASS。
-12. **Step 8 Harness 验证门禁**：见下方门禁清单表；`stale_diff_base` 自动 `HARNESS_DIFF_BASE_REF=working` 重跑；`summary.verdict=INCOMPLETE`（device 阻塞）不满足闭环；状态面板须完整贴给用户。
+12. **Step 8 Harness 验证门禁**：见下方门禁清单表；`stale_diff_base` 自动 `HARNESS_DIFF_BASE_REF=working` 重跑（**仅 review 未闭环的 git fallback 域**会出现该 failure_kind）；`summary.verdict=INCOMPLETE`（device 阻塞）不满足闭环；状态面板须完整贴给用户。
 13. **Step 8.0 Core 节点闭环闸门**：改动触及 Code Graph `core: true` 节点时启动可行性探测+更新图谱+同步 characterization/spec-driven UT（详见 reference）。
 14. **Step 8.2 AI Harness**：主动通过 Task 工具触发 `subagent_type: verifier`，prompt 模板 `framework/harness/prompts/verify-ut.md`（state_model_completeness / ui_bindings_completeness / end_to_end_driving(BLOCKER) / branch_coverage_semantic / device_ac_delegation / stub_reasonableness / test_isolation）。
 
@@ -169,7 +171,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature {feat
 8. ut_import_whitelist 强约束。
 9. P0 优先，再扩展 P1/P2。
 10. DAG/UT description 用中文。
-11. Harness 验证闭环：agent 必须自跑 Step 8 + 主动触发 verifier；`ut_no_src_mutation` 报告历史变更多时优先怀疑 diff 基线过旧，设 `HARNESS_DIFF_BASE_REF=working`，禁止要求用户"批量授权历史变更"。
+11. Harness 验证闭环：agent 必须自跑 Step 8 + 主动触发 verifier；`ut_no_src_mutation` 在 review 已正式闭环时基线=review closure attestation（逐文件内容哈希，**与 git 提交状态无关**）——报告大量非 UT 文件漂移时先核对 review 闭环是否最新（漂移属合法改动就回 coding 纳入并重走 review 闭环刷新基线；误改则从编辑器本地历史/备份取回 review 时的内容，再用 attestation 里该文件的 sha256 **核对**——attestation 只存 `{path, sha256}` 不存内容，能验证不能还原，取不回就回 coding 重建），**禁止要求用户提交 coding 产物来过门禁**，也禁止要求用户"批量授权历史变更"。`stale_diff_base` / `HARNESS_DIFF_BASE_REF=working` 这剂药只对 **盘上观察不到 review 闭环痕迹的 git fallback 域**有效，attestation 基线下不存在"历史变更多"这种形态；**更不得靠删除 review 闭环产物来"换个基线重跑"**——闭环证据残缺（attestation 还在、summary 没了/未闭环）一律 fail-closed；即便把闭环产物删光能落回 fallback 域，那也是把裁决降级、不是出路。
 12. **【HARD STOP 不可绕过】禁止修改业务源码**：UT 发现可测性缺口时只产出 coding repair candidate，由 runner 回 coding 修改并重走 review→ut；用户回复、署名、receipt 或 legacy `approved_src_mutations[]` 均不能把 UT 期间源码变更改判为 PASS。详见 [business-ut-workflow-detail.md](../../reference/business-ut-workflow-detail.md)。
 
 ## 关联文件
