@@ -456,7 +456,7 @@ hmos-app profile MUST 提供生成物分类器：路径判据 MUST 限定到根 
 
 When a phase checker throws a programmer error (TypeError/RangeError/SyntaxError), the `safeRun` wrapper SHALL keep the fail-closed BLOCKER FAIL and additionally set `failure_kind: 'framework_bug'` and `blocking_class: 'framework_internal'` on the result (reusing existing CheckResult/summary-blocker fields — no schema change). Downstream goal-runner classification SHALL treat a fresh, non-empty, all-framework_bug blocker set as `framework_bug` and halt on first touch with guidance to upstream the defect (agent must not modify framework release files nor keep mutating its own artifacts to work around the gate).
 
-Enforcement: `harness/scripts/check-spec.ts`, `check-plan.ts`, `check-coding.ts`, `check-review.ts`, `check-ut.ts` (safeRun), `harness/scripts/utils/goal-failure-classifier.ts`
+Enforcement: `harness/scripts/check-spec.ts`, `harness/scripts/check-plan.ts`, `harness/scripts/check-coding.ts`, `harness/scripts/check-review.ts`, `harness/scripts/check-ut.ts` (safeRun), `harness/scripts/utils/goal-failure-classifier.ts`
 
 #### Scenario: Gate crash stops feeding the agent retry loop
 
@@ -966,7 +966,7 @@ Enforcement: `harness/scripts/utils/ui-spec-shared.ts`, `profiles/hmos-app/harne
 
 Every image materialized into module media SHALL pass role-tiered jimp sanity (fully transparent / near-solid / abnormally low content ratio / undecodable-dimensions); thresholds SHALL be calibrated per role, not lifted from the crop-scenario constants. A brand-critical asset failing sanity SHALL be BLOCKER at every fidelity tier (existence, not fidelity). Placeholders SHALL be visible and role-appropriate: brand_logo → deterministic text-avatar (initial glyph + neutral palette rounded block); system_symbol → HarmonyOS sys symbol; illustration → explicitly labeled neutral placeholder frame; decoration → neutral block or omission. Blank/transparent PNG placeholders SHALL FAIL.
 
-Enforcement: `profiles/hmos-app/harness/{asset-materialization-sanity,placeholder-generator}.ts`（新增）, `harness/scripts/check-coding.ts`
+Enforcement: `profiles/hmos-app/harness/{asset-integrity,coding-visual-parity-check,asset-placeholder-cli}.ts`, `harness/scripts/check-coding.ts`
 
 #### Scenario: the incident's 23 invisible placeholder PNGs
 
@@ -1172,7 +1172,7 @@ Enforcement: `harness/harness-runner.ts`, `harness/scripts/utils/quality-axes.ts
 
 Before plan closure can pass, the harness SHALL parse `contracts.yaml` through the production contracts loader, resolve every schema-defined file reference into a normalized in-memory view, and require `references ⊆ contracts.files`. File references SHALL include at least `resource_keys[*].path`, media paths, page/route registration files, HAR index/builder/export files and every other contracts-schema field that identifies a materialized file. A missing membership MUST produce a plan-phase BLOCKER naming the path and source field.
 
-Enforcement: `harness/scripts/check-plan.ts`, `harness/scripts/utils/contracts-loader.ts`, `harness/scripts/utils/contract-reference-closure.ts`, `specs/phase-rules/plan-rules.yaml`
+Enforcement: `harness/scripts/check-plan.ts`, `harness/scripts/utils/spec-loader.ts`, `harness/scripts/utils/contract-reference-closure.ts`, `specs/phase-rules/plan-rules.yaml`
 
 #### Scenario: Undeclared resource media blocks closure
 
@@ -1209,7 +1209,7 @@ Enforcement: `harness/scripts/utils/contract-reference-closure.ts`, `harness/scr
 
 Every goal phase gate SHALL be invoked by `GoalPhaseRuntime` only after the applicable `PhaseExecutionContext` has been prepared and frozen. Attended and detached execution SHALL provide the same gate inputs for equivalent run/phase/attempt facts. A gate or executor MUST NOT discover the active run by scanning, reconstruct missing runtime facts from current HEAD/env/provider state, or write a competing phase decision.
 
-Enforcement: `harness/scripts/utils/goal-phase-runtime.ts`, `harness/harness-runner.ts`, `harness/scripts/goal-in-session-driver.ts`, `harness/scripts/goal-runner.ts`
+Enforcement: `harness/scripts/goal-phase-runtime.ts`, `harness/harness-runner.ts`, `harness/scripts/utils/goal-in-session-driver.ts`, `harness/scripts/goal-runner.ts`
 
 #### Scenario: Equivalent executor results enter identical gates
 

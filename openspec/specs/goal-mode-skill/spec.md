@@ -69,7 +69,7 @@ An autonomous in-session goal SHALL execute each phase in a fresh phase-scoped c
 
 The in-session driver SHALL use the same manifest, events, progress, phase outcome, receipt, and run ID schemas as `harness/scripts/goal-runner.ts`, fenced by `run-control@1`. Before owner CAS, attach SHALL reject a caller adapter that differs from `manifest.adapter`, and all downstream routing SHALL use the manifest value. Every emitted `phase_execute_request` SHALL include the authoritative `{run_id, phase, attempt_id, owner_id, owner_epoch}` captured from the current fence. The host SHALL pass that context unchanged to the spec initializer, phase harness, and `harness-runner --sync-closure`; the session driver SHALL create the attempt-bound receipt skeleton before yielding the request. Normal non-orphan session/process conversion SHALL use mailbox handoff; an orphaned session MAY be taken over only through explicit user-authorized `--force-resume` epoch takeover.
 
-Enforcement: `harness/scripts/goal-mode-entry.ts`, `harness/scripts/goal-in-session-driver.ts`, `skills/project/goal-mode/SKILL.md`, `skills/reference/goal-mode-operations.md`
+Enforcement: `harness/scripts/goal-mode-entry.ts`, `harness/scripts/utils/goal-in-session-driver.ts`, `skills/project/goal-mode/SKILL.md`, `skills/reference/goal-mode-operations.md`
 
 #### Scenario: In-session run hands off to detached runner
 
@@ -197,7 +197,7 @@ Enforcement: `skills/project/goal-mode/SKILL.md`, `docs/operations/goal-mode-run
 
 Attended goal mode SHALL use `GoalPhaseRuntime` for all lifecycle decisions and SHALL implement only the existing host `phase_execute_request`/response transport as an `AttendedGoalPhaseExecutor`. The request SHALL carry the immutable fenced `PhaseExecutionContext`; the host callback MUST return only invocation output and MUST NOT assess, invoke harness gates, advance phases, close receipts or emit canonical verdict/backtrack events independently.
 
-Enforcement: `harness/scripts/goal-in-session-driver.ts`, `harness/scripts/utils/goal-phase-executor.ts`, `skills/project/goal-mode/SKILL.md`, `skills/reference/goal-mode-operations.md`
+Enforcement: `harness/scripts/utils/goal-in-session-driver.ts`, `harness/scripts/utils/goal-phase-executor.ts`, `skills/project/goal-mode/SKILL.md`, `skills/reference/goal-mode-operations.md`
 
 #### Scenario: Attended retry is runtime-owned
 
@@ -213,7 +213,7 @@ Enforcement: `harness/scripts/goal-in-session-driver.ts`, `harness/scripts/utils
 
 `GoalPhaseRuntime` SHALL enforce the attended entry's existing `authorization`, `through_phase`, `leaseMs` and `maxRounds` inputs at safe phase boundaries before invoking an executor. Manual authorization MUST perform no agent invocation; batch authorization MUST stop before a phase beyond the authorized through-phase; and a single-round call MUST start at most one phase. These decisions MUST remain runtime-owned and MUST NOT be delegated to `AttendedGoalPhaseExecutor`.
 
-Enforcement: `harness/scripts/goal-mode-entry.ts`, `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/goal-in-session-driver.ts`, `harness/scripts/utils/goal-phase-executor.ts`
+Enforcement: `harness/scripts/goal-mode-entry.ts`, `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/goal-in-session-driver.ts`, `harness/scripts/utils/goal-phase-executor.ts`
 
 #### Scenario: Manual attended entry does not invoke an agent
 
@@ -229,4 +229,3 @@ Enforcement: `harness/scripts/goal-mode-entry.ts`, `harness/scripts/goal-phase-r
 
 - **WHEN** `runInSessionRound` invokes the runtime with `maxRounds=1`
 - **THEN** the runtime starts at most the current phase and returns before starting the next phase
-

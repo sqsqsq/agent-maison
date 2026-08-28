@@ -232,7 +232,7 @@ Enforcement: `harness/scripts/utils/device-test-evidence-shared.ts`, `profiles/h
 
 Within `contracts.yaml`, the top-level `files` collection SHALL be the only persistent authorization set for files that plan permits coding or later phases to materialize or modify. All other file-bearing contract fields are references and MUST be members of that set; they MUST NOT act as independent authorization channels. Reference closure SHALL be a deterministic in-memory projection of the current YAML and SHALL not create another feature artifact.
 
-Enforcement: `harness/scripts/utils/contracts-loader.ts`, `harness/scripts/utils/contract-reference-closure.ts`, `harness/schemas/contracts.schema.json`, `harness/templates/contracts.yaml`
+Enforcement: `harness/scripts/utils/spec-loader.ts`, `harness/scripts/utils/contract-reference-closure.ts`, `specs/artifact-schemas/contracts.schema.yaml`
 
 #### Scenario: Resource key is a reference, not an allowlist
 

@@ -370,7 +370,7 @@ Enforcement: `agents/adapter-schema.yaml`, `agents/{claude,codex,opencode}/adapt
 
 A `GoalPhaseExecutor` SHALL accept an immutable `PhaseExecutionContext` and return a normalized agent invocation result. The detached executor MAY implement adapter spawn, containment, timeout, stdout/stderr, structured events and usage capture; the attended executor MAY implement the existing host callback transport. Neither executor MUST own assessment, runtime fact preparation, harness gate calls, verdict, backtrack, close, handoff policy or event-ledger advancement.
 
-Enforcement: `harness/scripts/utils/goal-phase-executor.ts`, `harness/scripts/utils/goal-adapter-spawn.ts`, `harness/scripts/goal-in-session-driver.ts`, `agents/*/adapter.yaml`
+Enforcement: `harness/scripts/utils/goal-phase-executor.ts`, `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/goal-in-session-driver.ts`, `agents/*/adapter.yaml`
 
 #### Scenario: Adapter output is returned to the runtime
 
@@ -387,4 +387,3 @@ Enforcement: `harness/scripts/utils/goal-phase-executor.ts`, `harness/scripts/ut
 
 - **WHEN** a testing phase uses the Hylyre device provider
 - **THEN** the runtime SHALL invoke the existing harness/provider boundary and the executor context MUST NOT contain provider-private installation or vendor fields
-

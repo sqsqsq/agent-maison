@@ -55,7 +55,7 @@ Enforcement: `harness/scripts/utils/framework-integrity.ts` `scanForeignFiles`
 
 The consumer per-file hash SHALL replicate pack-side classification and normalization exactly: known-binary extensions first（raw bytes even without NUL）, then NUL heuristic, then `/\r\n?/g` EOL normalization for text. CRLF or lone-CR rewrites of unchanged content SHALL NOT report drift; real content changes SHALL. A source-repo parity test SHALL compare the TS implementation against `scripts/release-pack-rules.mjs` over a fixture matrix.
 
-Enforcement: `framework-integrity.ts` `sha256FileEolNormalized`, parity unit test
+Enforcement: `harness/scripts/utils/framework-integrity.ts` `sha256FileEolNormalized`, parity unit test
 
 #### Scenario: CRLF rewrite no longer forges drift
 
@@ -66,7 +66,7 @@ Enforcement: `framework-integrity.ts` `sha256FileEolNormalized`, parity unit tes
 
 The packer SHALL write `framework/RELEASE-MANIFEST.sha256`（single 64-hex lowercase line + trailing LF = sha256 of the manifest's raw bytes）into the package, excluded from `manifest.files`（circular dependency）. `release:verify` coverage SHALL exclude exactly {RELEASE-MANIFEST.json, RELEASE-MANIFEST.sha256} and SHALL assert sidecar format and content. The consumer preflight SHALL run an independent `framework_manifest_selfcheck` using the **same strict format**（64-hex + mandatory trailing LF）: match → PASS and continue; mismatch → BLOCKER FAIL and stop per-file/foreign checks（manifest untrusted）; **missing → BLOCKER FAIL and continue**——the selfcheck code ships with ≥3.0.0 packages（code and package share one tree in consumer layout）, so a missing sidecar can only mean deletion or a non-release deployment, never a "legacy package"（true pre-3.0.0 hosts run pre-3.0.0 code without this check at all）. This closes the delete-sidecar-then-recompute-manifest bypass. `workspace_tmp_hygiene` SHALL run regardless.
 
-Enforcement: `pack-release.mjs`, `verify-release-pack.mjs`, `framework-integrity.ts` `runManifestSelfcheck`
+Enforcement: `scripts/pack-release.mjs`, `scripts/verify-release-pack.mjs`, `harness/scripts/utils/framework-integrity.ts` `runManifestSelfcheck`
 
 #### Scenario: Recomputing the manifest to mask drift is caught
 
@@ -82,7 +82,7 @@ Enforcement: `pack-release.mjs`, `verify-release-pack.mjs`, `framework-integrity
 
 The adapter schema SHALL provide `hooks_config`（template_path/target_path/update_policy; materialization kind `structured_upsert`）for host-shared hook registries such as `.cursor/hooks.json`. Materialization SHALL create `{version:1, hooks:{…}}` when absent; when present and valid it SHALL upsert only framework-owned entries（ownership key = the entry's `command` path; matcher/timeout are framework-managed mutable fields updated in place; duplicate owned entries deduplicate to one; future command changes migrate via `LEGACY_OWNED_COMMANDS`）, preserving all third-party entries, top-level and unknown fields. **Every write path SHALL honor structured upsert**: mechanism sync（`applyInitMechanismSync`）and adapter materialization（`materialize-adapter:` / `materialize-adapter-file:` via `syncTemplateTarget`）alike——no path may treat a `structured_upsert` target as verbatim bytes. **Schema-incompatible targets SHALL block, never be rewritten**: a `hooks` value that is not a plain object, or a managed event whose value is not an array, is host-owned semantics（`invalid_schema`, no output text generated）; invalid JSON likewise blocks. Blocked states SHALL propagate as an init BLOCKER（check id `hooks_config_target_compatible`）and a `blocked` sync effect——never silently recorded as unchanged; the S3 preflight（`preflightValidateHooksConfigTargets`）SHALL detect incompatible targets read-only BEFORE any task writes, so preceding tasks leave zero disk writes. **Validation SHALL cover all materialized adapters**（union of context adapters and `framework.config.json` `materialized_adapters`, not just the primary）at all three surfaces: preflight, executor, and check-init inspection. Removal semantics（delete owned/legacy entries only, preserve third-party entries, clean emptied containers）SHALL be provided by `computeHooksConfigRemoval`; wiring it into an uninstall/adapter-switch flow is deferred until such a flow exists（no parallel flow invented for it）. `hooks_config` SHALL NOT participate in `resolveEnforcementTier` hard_hook detection（cursor stays `soft_rule_only`, pinned by regression test）.
 
-Enforcement: `harness/scripts/utils/hooks-config-upsert.ts`, `harness/scripts/utils/init-task-executor.ts`, `check-init.ts`, `agents/adapter-schema.yaml`
+Enforcement: `harness/scripts/utils/hooks-config-upsert.ts`, `harness/scripts/utils/init-task-executor.ts`, `harness/scripts/check-init.ts`, `agents/adapter-schema.yaml`
 
 #### Scenario: Schema-incompatible host config blocks init visibly
 
@@ -108,7 +108,7 @@ Enforcement: `harness/scripts/utils/hooks-config-upsert.ts`, `harness/scripts/ut
 
 The preflight SHALL shallow-scan the repo root and `scripts/`（depth ≤2）for `tmp-*.{js,mjs,cjs,ts}` files（git-ignored hits filtered when git is available）and report them as an independent `workspace_tmp_hygiene` MAJOR WARN pointing to the scratch/ convention. This is a naming heuristic—no intent judgement, never a BLOCKER（the host root is host property）—and SHALL coexist with all other integrity results.
 
-Enforcement: `framework-integrity.ts` `runWorkspaceTmpHygieneScan`
+Enforcement: `harness/scripts/utils/framework-integrity.ts` `runWorkspaceTmpHygieneScan`
 
 #### Scenario: The incident's root-scripts leg becomes visible
 
@@ -153,4 +153,3 @@ Enforcement: `harness/scripts/utils/framework-integrity.ts`, `harness/harness-ru
 - **THEN** detected drift SHALL be reported as a non-blocking WARN rather than a BLOCKER
 - **WHEN** a drifted path is listed in `integrity.drift_allowlist`
 - **THEN** that path SHALL be excluded from drift detection
-
