@@ -1,10 +1,15 @@
 // ============================================================================
 // source-drift-facts.ts — 源码漂移事实的两个 provider（plan a5f9c3e2 t1③）
 // ----------------------------------------------------------------------------
-// 普通模式与 goal 模式**允许不同采集器**（前者 trace.start_commit 的 git diff，后者
-// review closure attestation 对账），但必须归一成同一 `SourceDriftFacts`：
+// 普通模式与 goal 模式**允许不同采集器**，但必须归一成同一 `SourceDriftFacts`：
 // canonical 三元组（added/modified/deleted）逐字段相等，`provenance` / `baseline_kind`
 // 是来源标注、不入等值断言。
+//
+// 采集器归属（plan f3a9d2c7 T2 更新）：goal 模式=review closure attestation 对账；
+// 普通（direct）模式**attestation-first**——review 已正式闭环时同样走 attestation 对账，
+// trace.start_commit 的 git diff 只是 **盘上观察不到任何 review 闭环痕迹时的 fallback**（不再是
+// 普通模式的默认基线；闭环证据半有半无一律 fail-closed，不降级到 git。措辞取"观察不到"而非
+// "从未闭环"——后者是盘上证据支持不了的断言）。分派条件是**基线可用性**，不是编排身份。
 //
 // 正确的复用是「两个 provider 产出同一种事实」，**不是强删其中一个数据源**。
 // 本模块只做 I/O + 归一，不产动作、不产话术——裁决在 adjudication.decide()。

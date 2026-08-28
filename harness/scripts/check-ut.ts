@@ -60,11 +60,14 @@ import {
 
   featureArtifactPath,
   featureDir,
+  featurePhaseReportsDir,
   relFeatureFile,
 } from '../config';
 // M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT
 import { featureRelativePath } from './utils/feature-identity';
+import { isPhaseDisabledByProfile } from '../profile-loader';
 import { driftFactsFromClosureAttestation, partitionDriftByGitStatus } from './utils/source-drift-facts';
+import { reviewClosureAttestationPath } from './utils/closure-attestation';
 import { classifySourceDrift } from './utils/mutation-authorization';
 import { hasGoalExecutionSignal, resolveHarnessDiffBaseRef } from './utils/phase-state';
 import {
@@ -953,11 +956,345 @@ function checkUtNoSrcMutationGoalEnv(ctx: CheckContext): CheckResult[] {
   }];
 }
 
-function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
+/**
+ * plan f3a9d2c7 T1：direct 模式的 review「正式闭环」探测结果。
+ *
+ * - `closed`       —— review summary 满足三字段判据，attestation 基线**允许**被采信；
+ * - `open`         —— **盘上未观察到可用的闭环证据**（无 attestation，且 summary 缺失 /
+ *                     open / legacy；或 profile 禁用 review）→ git fallback。注意措辞：
+ *                     把闭环产物全部删光同样映射到这里，所以它只能断言"现在看不到"，
+ *                     断言不了"从未闭过环"；
+ * - `unverifiable` —— 闭环状态读不出来（I/O 异常 / JSON 不可解析），**或闭环证据半有半无**
+ *                     （attestation 在盘而 summary 缺失/未闭环）→ fail-closed。
+ *
+ * `reason` 只做诊断展示（写进 details），不参与任何判定。
+ */
+interface ReviewClosureProbe {
+  state: 'closed' | 'open' | 'unverifiable';
+  reason: string;
+}
+
+/**
+ * plan f3a9d2c7 T1（review 返修 P1-2）：**三态**文件探针。
+ *
+ * 为什么不用 `fs.existsSync()`：它对 `EACCES` / `ENOTDIR` 等文件系统错误**同样返回
+ * false**，把「探不动」和「不存在」压成同一个答案，外层的 try/catch 一辈子也抓不到。
+ * 那就留下一条逃逸：闭环后改码并 commit，再让 `review/reports` 路径不可访问或结构损坏，
+ * 两次探测都得 false → 被判「真·未闭环」→ 落回 commit-blind 的 working diff → PASS。
+ *
+ * 为什么还不能只看 errno：**Windows 把「路径中段是个文件」也报成 `ENOENT`**（POSIX 报
+ * `ENOTDIR`），单点 stat 在 Windows 上根本区分不出「目录不存在」和「目录被替换成文件」。
+ * 所以从**文件系统根**（盘符根 / UNC share 根）自上而下逐段解析——不分工程内外：
+ * `receipt_dir_pattern` / `reports_dir_pattern` 经 `path.resolve` 完全可以落到 projectRoot
+ * 之外，若对工程外路径退化成单点 stat，刚修掉的 Windows 歧义会原样复现。
+ *
+ * 每段先 `lstatSync`（**不跟随**链接）再决定：
+ *   · lstat ENOENT        → 其下必然什么都没有 → `absent`（真·观察不到痕迹，可降级）；
+ *   · 是 symlink/junction → 再 `statSync` 跟随；目标失效/不可访问 → `unverifiable`
+ *                           （悬空 junction 的 stat 也报 ENOENT，只有 lstat 能证明它还在——
+ *                            那是**可观察的损坏痕迹**，不是"不存在"）；
+ *   · 中段存在但非目录     → `unverifiable`（结构损坏，fail-closed）；
+ *   · 末段是普通文件       → `present`；是目录/其它 → `unverifiable`；
+ *   · 任何非 ENOENT 异常（EACCES/EPERM/…）→ `unverifiable`。
+ * 代价是每次探测多几个 lstat，可忽略。
+ */
+type FilePresence =
+  | { state: 'present' }
+  | { state: 'absent' }
+  | { state: 'unverifiable'; error: string };
+
+export function probeFilePresence(absPath: string): FilePresence {
+  const resolved = path.resolve(absPath);
+  const root = path.parse(resolved).root;
+  const parts = resolved.slice(root.length).split(path.sep).filter(Boolean);
+  if (parts.length === 0) {
+    return { state: 'unverifiable', error: `目标路径解析为文件系统根：${resolved}` };
+  }
+  let cur = root;
+  for (let i = 0; i < parts.length; i++) {
+    cur = path.join(cur, parts[i]);
+    let st: fs.Stats;
+    try {
+      st = fs.lstatSync(cur);
+    } catch (e) {
+      const err = e as NodeJS.ErrnoException;
+      if (err.code === 'ENOENT') return { state: 'absent' };
+      return { state: 'unverifiable', error: `${err.code ?? 'unknown'} @ ${cur}：${err.message}` };
+    }
+    if (st.isSymbolicLink()) {
+      // 链接本身在盘上 —— 从这里起 ENOENT 只可能是"目标失效"，不是"什么都没有"。
+      try {
+        st = fs.statSync(cur);
+      } catch (e) {
+        const err = e as NodeJS.ErrnoException;
+        return {
+          state: 'unverifiable',
+          error: `符号链接/junction ${cur} 的目标不可解析（${err.code ?? 'unknown'}）`,
+        };
+      }
+    }
+    if (i === parts.length - 1) {
+      return st.isFile()
+        ? { state: 'present' }
+        : { state: 'unverifiable', error: `${cur} 存在但不是普通文件` };
+    }
+    if (!st.isDirectory()) {
+      return { state: 'unverifiable', error: `路径中段 ${cur} 存在但不是目录（闭环产物目录被替换/损坏）` };
+    }
+  }
+  return { state: 'absent' };
+}
+
+/**
+ * plan f3a9d2c7 T1（review 返修 P1）：attestation **只探在不在，绝不读内容**。
+ *
+ * 孤儿 attestation 一律不采信（红线不变），但「它在盘上」这个事实本身是有信息量的：
+ * 它证明这个 feature 的 review **已经跑过闭环机制**。据此，「summary 没了/退回未闭环」
+ * 就不能再被解释成「这个工程从来没闭过环」——那是**证据残缺**，须 fail-closed。
+ *
+ * 为什么必须这样：不这么判就留下一条 commit-wash 逃逸——review 闭环后改产品源码并
+ * `git commit`，再删掉 `review/reports/summary.json`，门禁即降级到默认 working diff
+ * （看不见已提交改动）而 PASS；上游 verdict 门禁对「summary 不存在」也是直接跳过
+ * （upstream-verdict-gate.ts `if (!v.summaryExists) continue`），全链无人拦截。
+ */
+function probeReviewClosureAttestationPresence(projectRoot: string, feature: string): FilePresence {
+  return probeFilePresence(reviewClosureAttestationPath(projectRoot, feature));
+}
+
+/**
+ * plan f3a9d2c7 T1：review 是否**正式闭环**（判据与 assess.ts observeFeatureState 同口径）：
+ *   `summary.schema_version === '1.2'` ∧ `closure_status === 'closed'`
+ *   ∧ `closure_commit.schema_version === '1.0'`。
+ *
+ * **为什么必须先判它、再看 attestation**：attestation 的写点在最终 summary rename
+ * **之前**（phase-closure-finalizer 的提交序），闭环中途崩溃会留下**孤儿 attestation**
+ * ——文件存在不代表 closure 已提交。故「文件在不在」不是基线可用性的判据，「closure
+ * 提交没提交」才是；顺序倒过来即等于采信一份没人背书的快照。
+ *
+ * legacy summary（无 schema 1.2 / 无 closure_status）按**未闭环**处理走 fallback，
+ * 不破存量（与 ut-legacy-coexistence 的共存精神一致）。
+ */
+function probeReviewClosureState(ctx: CheckContext): ReviewClosureProbe {
+  if (isPhaseDisabledByProfile('review', ctx.resolvedProfile)) {
+    return {
+      state: 'open',
+      reason: `project_profile=${ctx.resolvedProfile.name} 已禁用 review 阶段，无 closure attestation 基线`,
+    };
+  }
+  const summaryPath = path.join(
+    featurePhaseReportsDir(ctx.projectRoot, ctx.feature, 'review', ctx.frameworkRoot),
+    'summary.json',
+  );
+
+  // 未闭环的处置分两种，取决于**这个 feature 有没有闭过环的痕迹**：
+  //   痕迹为零 → `open`（当前盘上观察不到任何闭环痕迹，保留既有 git fallback，不破存量）；
+  //   有痕迹但 summary 说没闭 → `unverifiable`（证据残缺 → fail-closed，见上方函数注释）。
+  // 「痕迹探不动」（EACCES/ENOTDIR/非文件）既不是"有"也不是"没有"，直接 fail-closed。
+  const att = probeReviewClosureAttestationPresence(ctx.projectRoot, ctx.feature);
+  if (att.state === 'unverifiable') {
+    return {
+      state: 'unverifiable',
+      reason: `review-closure-attestation.json 是否在盘不可核实（${att.error}）`,
+    };
+  }
+  const attested = att.state === 'present';
+  const notClosed = (why: string): ReviewClosureProbe => (attested
+    ? {
+      state: 'unverifiable',
+      reason:
+        `闭环证据残缺：review-closure-attestation.json 在盘（证明本 feature 已跑过 review 闭环），` +
+        `但 ${why}——不接受「证据被删/被退回」作为降级到 git 基线的许可证`,
+    }
+    : { state: 'open', reason: why });
+
+  // summary 走同一个三态探针（reports_dir_pattern 与 receipt_dir_pattern 可被宿主配成
+  //   不同目录，故两条路径各探各的），只有明确 `absent` 才算"缺失"。
+  const sum = probeFilePresence(summaryPath);
+  if (sum.state === 'unverifiable') {
+    return { state: 'unverifiable', reason: `review summary.json 是否在盘不可核实（${sum.error}）` };
+  }
+  if (sum.state === 'absent') {
+    return notClosed('review 阶段 summary.json 未在盘');
+  }
+  let raw: string;
+  try {
+    raw = fs.readFileSync(summaryPath, 'utf-8');
+  } catch (e) {
+    // 已探到 present 却读不出来（权限/占用/竞态）——不当"缺失"处理。
+    const err = e as NodeJS.ErrnoException;
+    return {
+      state: 'unverifiable',
+      reason: `review summary.json 读取失败（${err.code ?? 'unknown'}）：${err.message}`,
+    };
+  }
+  let doc: {
+    schema_version?: unknown;
+    closure_status?: unknown;
+    closure_commit?: { schema_version?: unknown } | null;
+  };
+  try {
+    doc = JSON.parse(raw);
+  } catch (e) {
+    return {
+      state: 'unverifiable',
+      reason: `review summary.json 不可解析：${(e as Error).message}`,
+    };
+  }
+  if (!doc || typeof doc !== 'object') {
+    return { state: 'unverifiable', reason: 'review summary.json 顶层不是对象' };
+  }
+  if (doc.schema_version !== '1.2') {
+    return notClosed(
+      `review summary schema_version=${String(doc.schema_version ?? '缺失')}（非 1.2 的 legacy 形态，按未闭环处理）`,
+    );
+  }
+  if (doc.closure_status !== 'closed') {
+    return notClosed(`review summary closure_status=${String(doc.closure_status ?? '缺失')}（未闭环）`);
+  }
+  if (doc.closure_commit?.schema_version !== '1.0') {
+    return notClosed(
+      `review summary 缺合法 closure_commit（schema_version=${String(doc.closure_commit?.schema_version ?? '缺失')}）`,
+    );
+  }
+  return { state: 'closed', reason: 'review 已正式闭环（summary 1.2 + closure_commit 1.0）' };
+}
+
+/**
+ * plan f3a9d2c7 T1：direct 模式的 **attested 分支** —— 基线=review closure attestation
+ * 的逐文件内容哈希，**与 git 提交状态无关**。
+ *
+ * 为什么 direct 也走它：门禁要回答的是相位归属问题（「review 之后这棵树还动没动」），
+ * git diff 只能回答「相对某 commit 差了什么」。框架在 coding→review→ut 边界从不留
+ * commit（用户政策也不允许），于是 coding 阶段的合法未提交产物被结构性地冒充成 UT 的
+ * 改动——宿主 bc-openCard-1 实锤 47 个无辜产物被判 BLOCKER。内容哈希基线对此免疫，
+ * 且对「UT 改完码 git commit 一下从 working diff 里隐身」同样免疫。
+ *
+ * 裁决面**零放宽**：testing 阶段的 review_closure_attestation 门禁全模式早已在消费
+ * 同一份文件、同一套对账，UT 采用只是把同一漂移提前一个阶段暴露。
+ *
+ * 不接 classifySourceDrift / 任何授权链：direct 无 runner 三源授权，人签通行证已整套
+ * 剪除；gap-notes / 用户回复照旧不参与质量放行。
+ */
+function checkUtNoSrcMutationDirectAttested(ctx: CheckContext, probeReason: string): CheckResult[] {
+  const desc = ruleDesc(ctx, 'structure_checks', 'ut_no_src_mutation');
+  const closure = driftFactsFromClosureAttestation(ctx.projectRoot, ctx.feature);
+  if (!closure) {
+    // fail-closed：review 已正式闭环却拿不到它的源码基线（被删/损坏/schema 不符）——
+    // 既判不了「review 后漂移」，也**不得**静默回退到 run-start/working diff 冒充基线。
+    return [{
+      id: 'ut_no_src_mutation',
+      category: 'structure',
+      description: desc,
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details:
+        'review 已正式闭环，但 review-closure-attestation.json 缺失/不可读——源码基线不可用。\n' +
+        `闭环探测：${probeReason}\n` +
+        '不回退 run-start/working git diff 冒充基线（那正是把 coding 合法产物误判成 UT 改码的老路），' +
+        '也不读 gap-notes/用户回复放行。',
+      failure_kind: 'review_closure_baseline_unavailable',
+      blocking_class: 'ut_no_src_mutation',
+      suggestion:
+        '补跑一次 review 闭环（harness + verifier + receipt + check-receipt）重建 ' +
+        'review-closure-attestation.json 后重跑 UT 门禁；无需提交任何产物。',
+    }];
+  }
+  if (closure.clean) {
+    return [{
+      id: 'ut_no_src_mutation',
+      category: 'structure',
+      description: desc,
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details:
+        '基线=review closure attestation：review 后源码零漂移' +
+        '（coding 阶段合法实现不在裁决域；不依赖 git 提交状态）。',
+    }];
+  }
+  const files = [
+    ...closure.facts.added,
+    ...closure.facts.modified,
+    ...closure.facts.deleted,
+  ];
+  return [{
+    id: 'ut_no_src_mutation',
+    category: 'structure',
+    description: desc,
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    details:
+      `基线=review closure attestation：检测到 review 后源码漂移（${files.length} 文件）：\n` +
+      files.slice(0, 10).map(f => `  - ${f}`).join('\n') +
+      (files.length > 10 ? `\n  …（其余 ${files.length - 10} 个略）` : '') +
+      '\n\n门禁只判「review 审过的树变了」，不推断作者（可能是 UT 期改码，也可能是 review ' +
+      '后的人工/重 coding 改动）；gap-notes/用户回复不参与质量放行。',
+    affected_files: files,
+    failure_kind: 'post_review_source_drift',
+    blocking_class: 'ut_no_src_mutation',
+    suggestion:
+      '两条出路，二选一：①漂移是合法改动（可测性接缝/缺陷修复）→ 回 coding 纳入实现并重走 ' +
+      'review 闭环（重闭环即刷新 attestation 基线）后再闭环 UT；②漂移是误改/排障残留 → 从编辑器' +
+      '本地历史/备份取回 review 时的文件内容，再用 attestation 里该文件的 sha256 **核对**恢复结果' +
+      '（attestation 只存哈希不存内容，它能验证、不能还原；coding 产物也可能从未提交，别指望 git ' +
+      '里有旧版本）；取不回就走出路①回 coding 重建并重新闭环 review。无需提交任何产物。',
+  }];
+}
+
+/**
+ * 导出仅为单测直接驱动分派全路（attested / fail-closed / 孤儿 attestation / git fallback）；
+ * 生产调用点仍是本文件内的 checker.check。
+ */
+export function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
   // plan e7c2a4d8 T4d：goal 编排环境走 review-closure 基线共享判定（见上）。
   if (hasGoalExecutionSignal()) {
     return checkUtNoSrcMutationGoalEnv(ctx);
   }
+  // plan f3a9d2c7 T1：direct 模式 attestation-first —— 分派条件是**基线可用性**而非
+  // 编排身份。顺序不可倒：先判 review 正式 closed，再看 attestation（孤儿 attestation
+  // 一律不读不采信）。
+  const probe = probeReviewClosureState(ctx);
+  if (probe.state === 'closed') {
+    return checkUtNoSrcMutationDirectAttested(ctx, probe.reason);
+  }
+  if (probe.state === 'unverifiable') {
+    return [{
+      id: 'ut_no_src_mutation',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'ut_no_src_mutation'),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details:
+        `review 闭环状态不可核实：${probe.reason}\n` +
+        '既不进 attestation 基线（闭环没被证实，可能是孤儿快照），也不回退 git diff' +
+        '（回退等于用一个已知会误伤 coding 产物、且看不见已提交改动的基线做裁决）——fail-closed。',
+      failure_kind: 'review_closure_baseline_unavailable',
+      blocking_class: 'ut_no_src_mutation',
+      suggestion:
+        '补跑一次 review 闭环（harness + verifier + receipt + check-receipt）重建 summary 与 attestation，' +
+        '确认 closure 状态可读后重跑 UT 门禁；无需提交任何产物。',
+    }];
+  }
+  return checkUtNoSrcMutationDirectGitFallback(ctx, probe.reason);
+}
+
+/**
+ * plan f3a9d2c7 T1：direct 模式的 **git fallback** —— 生效域已收窄为「**盘上观察不到任何
+ * review 闭环痕迹**」：无 closure attestation 且 summary 缺失/legacy，或 profile 明确禁用
+ * review。行为与改造前逐字等值，只在 FAIL details 里多一行「基线降级原因」说明为什么走的
+ * 是 git。措辞是"观察不到"而不是"从未闭环"——盘上的证据只支持前者。
+ *
+ * **有痕迹却说没闭环**（attestation 在盘）不进本分支——那是证据残缺，由 probe 判 fail-closed；
+ * 否则「删掉 summary」就成了绕过内容哈希基线、退回 commit-blind working diff 的许可证。
+ * 把闭环产物**全部**删光仍会落到这里：那是可观察性的边界（默认工作流还允许 review/UT 并行，
+ * 「没有 summary」本身不能当错误），要封须改 DAG 或引入工作区外的可信锚，不在本 change。
+ *
+ * 生效域内保留既有兼容行为**及其已知 commit-blind 风险**（working 基线看不见已提交的
+ * 改动）；本 plan 只保证「已有正式 review closure」的 direct 场景。git fallback 完全
+ * 退役属后续 change。
+ *
+ * 孤儿 attestation 的**内容**在全流程一律不读不采信（只用它在不在做残缺判定）。
+ */
+function checkUtNoSrcMutationDirectGitFallback(ctx: CheckContext, degradeReason: string): CheckResult[] {
   // 解析 baseRef：聚合所有找到的 trace.json（按修改时间选最新，降低多次跑带来的歧义）
   const envBaseRef = resolveHarnessDiffBaseRef() ?? '';
   const traceFiles = findTraceJsonFiles(ctx.projectRoot, ctx.feature).sort((a, b) => {
@@ -1056,6 +1393,7 @@ function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
     severity: 'BLOCKER',
     status: 'FAIL',
     details:
+      `基线降级原因（未走 review closure attestation）：${degradeReason}\n` +
       `baseRef=${diff.baseRef}${diff.baseIsFallback ? ' (fallback — trace.json.start_commit 未记录，可信度较低)' : ''}\n` +
       `mode=${diff.workingOnly ? 'working-only' : 'committed+working'}；base 来源：${baseHint}\n` +
       `变更拆分：committed=${committedBusinessChanges.length}, working=${workingBusinessChanges.length}, staged=${stagedBusinessChanges.length}, untracked=${untrackedBusinessChanges.length}\n` +

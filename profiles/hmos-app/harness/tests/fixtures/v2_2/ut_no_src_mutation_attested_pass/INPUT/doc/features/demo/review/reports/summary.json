@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.2",
+  "feature": "demo",
+  "phase": "review",
+  "verdict": "PASS",
+  "blocker_count": 0,
+  "assurance": "full",
+  "receipt_status": "passed",
+  "closure_status": "closed",
+  "next_action": "phase_closed_wait_user",
+  "closure_commit": {
+    "schema_version": "1.0",
+    "committed_at": "2026-08-28T00:00:00.000Z",
+    "receipt_path": "doc/features/demo/review/phase-completion-receipt.md",
+    "evidence_manifest_path": "doc/features/demo/review/reports/phase-evidence-manifest.json"
+  }
+}

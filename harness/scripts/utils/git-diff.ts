@@ -5,6 +5,17 @@
 //   - check-ut.ts  ut_no_src_mutation BLOCKER（检测 business-ut 阶段未授权的业务
 //                  源码改动）。
 //
+// 生效域收窄（plan f3a9d2c7 T2）：在 `ut_no_src_mutation` 里本模块已**降为 fallback
+// 采集器**——direct 模式的首选基线是 review closure attestation 的逐文件内容哈希，
+// 只有**盘上观察不到任何 review 闭环痕迹**（无 closure attestation 且 summary 缺失/legacy），
+// 或 profile 禁用 review 时才回退到这里。注意措辞：这只证明"现在看不到"，不证明"从未闭环"
+// ——「闭环证据残缺」（有 attestation 却没 closed summary）一律 fail-closed，不进本模块；
+// 但把全部闭环产物删光确实会落到这里，那是可观察性的边界，不是本模块的保证。原因是 git
+// diff 只能回答「相对某 commit 差了什么」，回答不了「UT 这一相位改了什么」：框架在
+// coding→review→ut 边界从不留 commit，工作区里的 coding 合法产物会被结构性地冒充成
+// UT 的改动（宿主 bc-openCard-1 实锤）。fallback 域内**保留**既有兼容行为及其已知
+// commit-blind 风险（working 基线看不见已提交的改动）。
+//
 // 设计要点：
 //   - 使用 spawnSync 避免 PowerShell 拼接问题；
 //   - baseRef 未传时默认 **working**（只统计相对 HEAD 的工作区/暂存/未跟踪，与日常感知一致）；

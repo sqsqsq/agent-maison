@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "feature": "demo",
+  "generated_at": "2026-08-28T00:00:00.000Z",
+  "contracts_sha256": "8a2c68d1833cd0fce97a42bada5e623880058df8794f8963f580d684409de5a1",
+  "contracts_files": [],
+  "inventory": {
+    "roots": [
+      "02-Feature/Demo"
+    ],
+    "files": [
+      {
+        "path": "02-Feature/Demo/src/main/ets/domain/flow/DemoFlow.ets",
+        "sha256": "f0bde50f5e606d18189680ab8e9ac7cb611b93553b89abcd708b8d1653029fc5"
+      }
+    ],
+    "file_count": 1,
+    "aggregate_sha256": "b83b89399490760e6f9fdf66dcb634f48eabb08fcb73d4c9f811b2677dc1455a"
+  },
+  "review_report_sha256": "1a2b02815069955cee12efe5cd064f90452af016e47a81df3b139c856b5d757a",
+  "verifier_report_sha256": "bc17db32e0c54088cd776b1904da30244c5bc82b43a6a23ad36104d84aebd453",
+  "gate_fingerprint": null,
+  "run_identity": null
+}
