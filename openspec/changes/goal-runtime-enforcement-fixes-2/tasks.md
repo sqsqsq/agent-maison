@@ -17,7 +17,9 @@
 - [x] 3.1 Make coding and exit gates ignore `HARNESS_DIFF_BASE_REF` for every `hasGoalExecutionSignal` context while preserving non-goal behavior
 - [x] 3.2 Add agent-side, formal-gate and non-goal diff-base tests plus a production-tree structural scan
 - [x] 3.3 Detect unconsumed file-like contract fields and block plan closure without granting an alternate authorization source
+  - Consumer-surface gap (found 2026-08-28 by the SimulatedWalletForHmos `bc-openCard-1` replay): the detection landed over a hand-written field inventory whose consumer surface was never swept, so it blocked `navigation.config_files` — the one navigation field a production consumer actually reads. It also only inspected the outermost key, letting file paths nested under non-file-like containers pass silently. Both are corrected by `contract-unified-parse-boundary`; the fail-closed semantics established here stay unchanged.
 - [x] 3.4 Add misspelled navigation/export negative fixtures and compatibility metadata positive coverage
+  - Same gap: the fixtures exercised the parser against itself. The cross-consumer collision surface (one contracts document driving both the plan closure and the real profile consumer) is added by `contract-unified-parse-boundary`.
 
 ## 4. Structural and canonical reference closure
 
@@ -32,4 +34,5 @@
 - [x] 5.2 Run `cd harness && npm test`, `npm run openspec:validate`, plan/version validation and `git diff --check`
 - [ ] 5.3 Run mandatory `npm run release:verify`
   - Executed on 2026-08-28 with `--skip-typecheck`; the command reached and was correctly blocked by the release-mode plan gate because four current-window plans still contain unfinished work. Keep this task open until those independent release blockers close.
-- [x] 5.4 Confirm no consumer migration is required, update master-plan milestone states/implementation record, and perform final diff review
+- [ ] 5.4 Confirm no consumer migration is required, update master-plan milestone states/implementation record, and perform final diff review
+  - Reopened 2026-08-28: the "no consumer migration is required" half was falsified by the SimulatedWalletForHmos `bc-openCard-1` replay — `navigation.config_files` (a field a production consumer reads) and `registration_points` (a zero-consumer field) both blocked plan closure, so consumer documents do need migration. The canonical navigation shape and the migration note are delivered by `contract-unified-parse-boundary`; keep this task open until that change lands and the host document is rewritten. The master-plan/implementation-record half of the task remains done.
