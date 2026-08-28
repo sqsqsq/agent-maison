@@ -23,6 +23,7 @@ import {
   readRunControl,
 } from '../../scripts/utils/goal-run-control';
 import { projectCanonicalLifecycle } from '../../scripts/utils/goal-canonical-lifecycle';
+import { readHandoffRequest } from '../../scripts/utils/goal-handoff';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import {
   runGoalRuntimeChain,
@@ -182,6 +183,78 @@ const cases: TestCase[] = [
     },
   },
   {
+    name: 'attended adapter without phase isolation falls back to manual before owner or invoke',
+    run: async () => {
+      const root = setupGoalRuntimeHost('generic').root;
+      try {
+        const prepared = prepareGoalModeRun({
+          projectRoot: root, frameworkRoot: FRAMEWORK_ROOT,
+          feature: 'bc-openCard', runId: 'host-capability-manual', adapter: 'generic',
+          requirement: 'manual capability fallback', endPhase: 'spec',
+        });
+        const before = fs.readFileSync(path.join(prepared.runDir, 'events.jsonl'));
+        let invoked = 0;
+        const result = await runGoalModeHostBridge({
+          projectRoot: root, frameworkRoot: FRAMEWORK_ROOT,
+          feature: 'bc-openCard', runId: prepared.manifest.run_id,
+          adapter: 'generic', runMode: 'attended',
+          executePhase: async phase => {
+            invoked += 1;
+            return { status: 'passed', phase };
+          },
+        });
+        assert(result.status === 'manual_fallback', JSON.stringify(result));
+        assert(invoked === 0, `manual capability fallback invoked=${invoked}`);
+        assert(before.equals(fs.readFileSync(path.join(prepared.runDir, 'events.jsonl'))),
+          'manual capability fallback appended lifecycle events');
+        assert(readRunControl(prepared.runDir, prepared.manifest.run_id)?.owner === null,
+          'manual capability fallback acquired an owner');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'modern attach refuses late legacy recovery when birth chain lacks the required prefix',
+    run: async () => {
+      const root = setupGoalRuntimeHost('codex').root;
+      try {
+        const prepared = prepareGoalModeRun({
+          projectRoot: root, frameworkRoot: FRAMEWORK_ROOT,
+          feature: 'bc-openCard', runId: 'late-recovery-corrupt', adapter: 'codex',
+          requirement: 'late recovery must not alter birth', startPhase: 'coding', endPhase: 'testing',
+        });
+        fs.appendFileSync(path.join(prepared.runDir, 'events.jsonl'), `${JSON.stringify({
+          type: 'phase_backtrack_requested',
+          reason: 'legacy_fidelity_ssot',
+          from_phase: 'coding',
+          to_phase: 'spec',
+          legacy_source: 'legacy_receipt',
+          ts: new Date().toISOString(),
+        })}\n`, 'utf8');
+        let invoked = 0;
+        const result = await runGoalModeHostBridge({
+          projectRoot: root, frameworkRoot: FRAMEWORK_ROOT,
+          feature: 'bc-openCard', runId: prepared.manifest.run_id,
+          adapter: 'codex', runMode: 'attended',
+          executePhase: async phase => {
+            invoked += 1;
+            return { status: 'passed', phase };
+          },
+        });
+        assert(result.status === 'fused', JSON.stringify(result));
+        assert(invoked === 0, `corrupt birth invoked=${invoked}`);
+        const events = fs.readFileSync(path.join(prepared.runDir, 'events.jsonl'), 'utf8')
+          .split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>);
+        assert(events.some(event =>
+          event.type === 'phase_halt' && event.reason === 'phase_chain_birth_mismatch'),
+        `missing birth mismatch halt: ${JSON.stringify(events)}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
     name: 'production host bridge batch authorization never crosses through_phase',
     run: async () => {
       const root = setupGoalRuntimeHost('codex').root;
@@ -273,7 +346,7 @@ const cases: TestCase[] = [
     },
   },
   {
-    name: 'session handoff uses production mailbox/fence and leaves the run ready for process owner',
+    name: 'session handoff compatibility API publishes request without consuming or releasing owner',
     run: () => {
       const root = setupGoalRuntimeHost('codex').root;
       try {
@@ -287,6 +360,7 @@ const cases: TestCase[] = [
           kind: 'session', owner_id: 'session-owner', lease_ms: 60_000,
         });
         assert(acquired.ok, 'session owner acquisition failed');
+        const eventsBefore = fs.readFileSync(path.join(prepared.runDir, 'events.jsonl'), 'utf8');
         const requestId = handoffSessionToDetached({
           projectRoot: root, frameworkRoot: FRAMEWORK_ROOT,
           runDir: prepared.runDir, token: acquired.token, manifest: prepared.manifest,
@@ -294,8 +368,13 @@ const cases: TestCase[] = [
           adapter: 'codex', mode: 'attended', authorization: { mode: 'goal_mode' },
         });
         assert(requestId.length > 0, 'handoff request identity missing');
-        assert(readRunControl(prepared.runDir, prepared.manifest.run_id)?.owner?.state === 'released',
-          'handoff source owner was not released');
+        const request = readHandoffRequest(prepared.runDir);
+        assert(request?.status === 'pending' && request.request_id === requestId,
+          `handoff request was consumed outside runtime: ${JSON.stringify(request)}`);
+        assert(readRunControl(prepared.runDir, prepared.manifest.run_id)?.owner?.state === 'active',
+          'request-only compatibility API changed owner lifecycle');
+        assert(fs.readFileSync(path.join(prepared.runDir, 'events.jsonl'), 'utf8') === eventsBefore,
+          'request-only compatibility API appended a lifecycle or telemetry event');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

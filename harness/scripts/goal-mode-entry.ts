@@ -25,17 +25,23 @@ import {
   type GoalManifest,
   type RunAdapterProvenance,
 } from './utils/goal-manifest';
-import { assertGoalRunAttachable, createGoalRun } from './utils/goal-run-creation';
+import {
+  assertGoalRunAttachable,
+  createGoalRun,
+  resolveActualGoalPhaseChainAtBirth,
+} from './utils/goal-run-creation';
 import { loadLocalConfig } from './utils/framework-local-config';
 import {
   resolveUnattendedVisualProviderPin,
 } from './utils/visual-provider-identity';
 import { resolveWorkflowSpec } from '../workflow-loader';
 import { relFeaturesDir } from '../config';
-import { resolveAutoChain } from './utils/phase-transition-policy';
+import { featurePhasesFromWorkflow, resolveAutoChain } from './utils/phase-transition-policy';
 import { loadFeatureTrackDecl } from './utils/feature-track';
 import { resolveFeatureTrack } from './utils/runtime-policy';
 import { validateMinimumAssurance } from './utils/skill-contract';
+import { loadGoalCapability, routeGoalCapability } from './utils/goal-adapter-capability';
+import { loadInertLegacyFidelityIntentSsot } from './utils/fidelity-shared';
 export type { GoalModeInSessionOptions } from './utils/goal-phase-runtime';
 export { deriveInSessionFingerprint } from './utils/goal-phase-runtime';
 
@@ -106,7 +112,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
       end_phase: options.endPhase ?? 'testing',
       // plan a8e5c3f9 t6：headless 即全权限——新 manifest 直接写 effective 值
       //（此前 workspace-write + on-request 让 claude 连 dontAsk 都拿不到，与无人值守自相矛盾）。
-      unattended: { write_mode: 'full-access', approval_mode: 'never', max_turns: 30 },
+      unattended: { write_mode: 'full-access', approval_mode: 'never', max_turns: 20 },
       // plan ab072691 t1③(b)：attended goal 在**创建 manifest 前**冻结只读视觉 provider。
       // 询问/重选发生在宿主会话里（registry setup.visual_provider → init-orchestrate
       // record-visual-provider 机器写盘）；这里只读 local 的既成结果并冻结进 manifest。
@@ -146,7 +152,13 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
     manifest.chain_override,
     track,
   );
-  createGoalRun({ projectRoot: options.projectRoot, manifest, chain });
+  const actualChain = resolveActualGoalPhaseChainAtBirth({
+    requestedChain: chain,
+    fullWorkflowChain: featurePhasesFromWorkflow(workflow, track),
+    requiresLegacyFidelityRecovery:
+      loadInertLegacyFidelityIntentSsot(options.projectRoot, feature) !== null,
+  });
+  createGoalRun({ projectRoot: options.projectRoot, manifest, chain: actualChain });
   const runDir = path.resolve(options.projectRoot, ...manifest.report_dir.split('/'));
   ensureRunControl(runDir, manifest.run_id);
   return { manifest, manifestPath, runDir };
@@ -214,6 +226,25 @@ export async function runGoalModeHostBridge(
     );
   }
   const adapter = manifest.adapter;
+  const attendedRoute = routeGoalCapability(
+    loadGoalCapability(options.frameworkRoot, adapter),
+    'attended',
+  );
+  if (attendedRoute.kind === 'manual') {
+    const result: InSessionRoundResult = {
+      status: 'manual_fallback',
+      assessment: null,
+      waiting_item: attendedRoute.reason,
+      status_line:
+        `feature=${manifest.feature} | phase=${manifest.start_phase} | ` +
+        `运行方式=有人在场 | 等待=${attendedRoute.reason}`,
+    };
+    options.onRound?.(result);
+    return result;
+  }
+  if (attendedRoute.kind !== 'in_session') {
+    throw new Error(`[goal-mode-entry] attended capability route 非法：${attendedRoute.reason}`);
+  }
   const runDir = path.resolve(options.projectRoot, ...manifest.report_dir.split('/'));
   const hasExecutionStart = loadEventsJsonl(path.join(runDir, 'events.jsonl'))
     .some((event) => event.type === 'run_start');

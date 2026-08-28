@@ -14,7 +14,6 @@ import type { HeadlessInvokePlan } from '../../scripts/utils/agent-invoke';
 import {
   casAcquireRunOwner,
   ensureRunControl,
-  quiesceRunOwner,
   readRunControl,
   releaseRunOwner,
 } from '../../scripts/utils/goal-run-control';
@@ -30,10 +29,7 @@ import {
 } from '../../scripts/utils/goal-manifest';
 import { resolveGoalRunBaseline } from '../../scripts/utils/goal-run-baseline';
 import { resolveGoalRunHeadSha } from '../../scripts/utils/goal-run-creation';
-import { handoffSessionToDetached } from '../../scripts/utils/goal-phase-runtime';
-import { consumeHandoffAtBoundary, writeHandoffRequest } from '../../scripts/utils/goal-handoff';
-import { appendGoalEventFenced } from '../../scripts/utils/goal-in-session-evidence';
-import { resolveWorkflowSpec } from '../../workflow-loader';
+import { writeHandoffRequest } from '../../scripts/utils/goal-handoff';
 
 export interface UnitCaseResult { name: string; ok: boolean; error?: string }
 interface Case { name: string; run: () => void | Promise<void> }
@@ -178,11 +174,6 @@ const cases: Case[] = [
     run: async () => {
       const root = setupGoalRuntimeHost('codex').root;
       try {
-        const workflowPath = path.join(root, 'framework', 'workflows', 'spec-driven.workflow.yaml');
-        fs.copyFileSync(
-          path.resolve(__dirname, '../../../workflows/spec-driven.workflow.yaml'),
-          workflowPath,
-        );
         const blocker = {
           id: 'file_completeness',
           severity: 'BLOCKER',
@@ -210,21 +201,17 @@ const cases: Case[] = [
           }
           return JSON.stringify(event);
         }).join('\n'), 'utf8');
-        fs.writeFileSync(
-          workflowPath,
-          fs.readFileSync(workflowPath, 'utf8').replace(
-            'auto_chain: [spec, plan, coding, review, ut, testing]',
-            'auto_chain: [spec, plan, coding, ut, testing]',
-          ),
-          'utf8',
-        );
-
         const resumed = await runGoalRuntimeChain(root, {
           resume: 'frozen-chain-resume', forceResume: true, adapter: 'codex',
+          workflowTransform: workflow => ({
+            ...workflow,
+            auto_chain: ['spec', 'plan', 'coding', 'ut', 'review', 'testing'],
+          }),
         });
         assert(resumed.exitCode === 0, `resume exit=${resumed.exitCode}`);
-        assert(resumed.invokedPhases.includes('review'),
-          `workflow drift replaced birth chain: ${resumed.invokedPhases.join('→')}`);
+        assert(resumed.invokedPhases.indexOf('review') >= 0 &&
+          resumed.invokedPhases.indexOf('review') < resumed.invokedPhases.indexOf('ut'),
+        `workflow drift replaced/reordered birth chain: ${resumed.invokedPhases.join('→')}`);
         const manifestAfter = loadGoalManifestFromRun(root, 'frozen-chain-resume', { feature: 'bc-openCard' });
         assert(JSON.stringify(manifestAfter.phase_chain) === JSON.stringify(manifestBefore.phase_chain),
           'resume rewrote frozen phase chain');
@@ -342,83 +329,73 @@ const cases: Case[] = [
     },
   },
   {
+    name: 'M2 attended protocol has one host entry and runtime rejects missing injected executor',
+    run: async () => {
+      const code = await new GoalPhaseRuntime({
+        args: [
+          '--runtime-executor', 'attended',
+          '--runtime-owner', 'session',
+        ],
+        ownerKind: 'session',
+      }).run();
+      assert(code === 1, `runtime accepted implicit attended stdio executor: ${code}`);
+    },
+  },
+  {
     name: 'M2 production handoff parity: session→process and process→session resume through the same fenced runtime',
     run: async () => {
       const base = setupGoalRuntimeHost('codex').root;
-      const roots: string[] = [base];
+      const sessionToProcessRoot = cloneHost(base, 'handoff-session-process');
+      const processToSessionRoot = cloneHost(base, 'handoff-process-session');
+      const roots = [base, sessionToProcessRoot, processToSessionRoot];
       try {
-        const halted = await runGoalRuntimeChain(base, {
-          adapter: 'codex', runId: 'matrix-handoff', executorMode: 'detached',
-          onHarnessSummary: ({ phase }) => phase === 'coding' ? { blockers: [{
-            id: 'file_completeness', severity: 'BLOCKER', status: 'FAIL',
-            classification: 'code_regression', details_excerpt: '契约声明文件缺失',
-            actionability: 'agent_fixable',
-          }] } : null,
-        });
-        assert(halted.exitCode === 1, 'handoff fixture must halt before transfer');
-        const eventFile = path.join(halted.reportDir, 'events.jsonl');
-        fs.writeFileSync(eventFile, fs.readFileSync(eventFile, 'utf8').split('\n').map((line) => {
-          if (!line.trim()) return line;
-          const event = JSON.parse(line) as { type?: string; ts?: string };
-          if (event.type === 'run_end' && event.ts) {
-            event.ts = new Date(Date.parse(event.ts) - 10 * 60_000).toISOString();
-          }
-          return JSON.stringify(event);
-        }).join('\n'), 'utf8');
-
-        const sessionToProcessRoot = cloneHost(base, 'handoff-session-process');
-        const processToSessionRoot = cloneHost(base, 'handoff-process-session');
-        roots.push(sessionToProcessRoot, processToSessionRoot);
-        const prepareTransfer = (root: string, from: 'session' | 'process'): void => {
-          const manifest = loadGoalManifestFromRun(root, 'matrix-handoff', { feature: 'bc-openCard' });
-          const runDir = path.resolve(root, manifest.report_dir);
-          const control = ensureRunControl(runDir, manifest.run_id);
-          const acquired = casAcquireRunOwner(runDir, manifest.run_id, control.current_epoch, {
-            kind: from,
-            owner_id: `matrix-${from}`,
-            ...(from === 'process' ? { pid: process.pid } : { lease_ms: 60_000 }),
+        const executeTransfer = async (
+          root: string,
+          runId: string,
+          from: 'session' | 'process',
+          to: 'session' | 'process',
+        ): Promise<{ first: RunProbe; resumed: RunProbe }> => {
+          let requestId = '';
+          const first = await runGoalRuntimeChain(root, {
+            adapter: 'codex',
+            runId,
+            executorMode: from === 'session' ? 'attended' : 'detached',
+            viaHostBridge: from === 'session',
+            afterHarnessPass: ({ phase, runId: activeRunId }) => {
+              if (phase !== 'spec' || requestId) return;
+              const manifest = loadGoalManifestFromRun(root, activeRunId, { feature: 'bc-openCard' });
+              const runDir = path.resolve(root, manifest.report_dir);
+              const control = readRunControl(runDir, activeRunId);
+              assert(control?.owner?.kind === from && control.owner.state === 'active',
+                `production ${from} owner missing at boundary`);
+              requestId = writeHandoffRequest(runDir, {
+                run_id: activeRunId,
+                from_epoch: control.current_epoch,
+                target_owner_kind: to,
+              }).request_id;
+            },
           });
-          assert(acquired.ok, `${from} handoff source acquisition failed`);
-          const workflow = resolveWorkflowSpec(root, { frameworkRoot: path.resolve(__dirname, '../../..') });
-          if (from === 'session') {
-            handoffSessionToDetached({
-              projectRoot: root,
-              frameworkRoot: path.resolve(__dirname, '../../..'),
-              runDir,
-              token: acquired.token,
-              manifest,
-              workflow,
-              adapter: 'codex',
-              mode: 'attended',
-              authorization: { mode: 'goal_mode' },
-            });
-            return;
-          }
-          const request = writeHandoffRequest(runDir, {
-            run_id: manifest.run_id,
-            from_epoch: acquired.token.epoch,
-            target_owner_kind: 'session',
+          assert(first.exitCode === 0 && requestId, `${from} source did not publish/consume handoff`);
+          assert(first.events.some(event =>
+            event.type === 'handoff_requested' && event.request_id === requestId),
+          `${from} source runtime did not emit handoff_requested`);
+          const resumed = await runGoalRuntimeChain(root, {
+            resume: runId,
+            adapter: 'codex',
+            executorMode: to === 'session' ? 'attended' : 'detached',
+            viaHostBridge: to === 'session',
           });
-          const consumed = consumeHandoffAtBoundary(runDir, acquired.token, Date.now());
-          assert(consumed.kind === 'consumed', 'process→session mailbox was not consumed');
-          appendGoalEventFenced(root, manifest, runDir, acquired.token, {
-            type: 'handoff_requested',
-            request_id: request.request_id,
-            target_owner_kind: 'session',
-            from_epoch: acquired.token.epoch,
-          });
-          quiesceRunOwner(runDir, acquired.token);
-          releaseRunOwner(runDir, acquired.token, { allowQuiescing: true });
+          return { first, resumed };
         };
-        prepareTransfer(sessionToProcessRoot, 'session');
-        prepareTransfer(processToSessionRoot, 'process');
 
-        const toProcess = await runGoalRuntimeChain(sessionToProcessRoot, {
-          resume: 'matrix-handoff', forceResume: true, adapter: 'codex', executorMode: 'detached',
-        });
-        const toSession = await runGoalRuntimeChain(processToSessionRoot, {
-          resume: 'matrix-handoff', forceResume: true, adapter: 'codex', executorMode: 'attended',
-        });
+        const sessionToProcess = await executeTransfer(
+          sessionToProcessRoot, 'matrix-handoff', 'session', 'process',
+        );
+        const processToSession = await executeTransfer(
+          processToSessionRoot, 'matrix-handoff', 'process', 'session',
+        );
+        const toProcess = sessionToProcess.resumed;
+        const toSession = processToSession.resumed;
         assert(toProcess.exitCode === 0 && toSession.exitCode === 0,
           `handoff targets did not close: process=${toProcess.exitCode} session=${toSession.exitCode}`);
         const processProjection = canonicalOf(toProcess);
@@ -432,8 +409,11 @@ const cases: Case[] = [
         'handoff projected more than once');
         assert(JSON.stringify(processProjection.filter(event => event.type !== 'owner_handoff')) ===
           JSON.stringify(sessionProjection.filter(event => event.type !== 'owner_handoff')),
-        'handoff modes drifted outside the required direction field');
-        assert(JSON.stringify(toProcess.harnessPhases) === JSON.stringify(toSession.harnessPhases),
+        `handoff modes drifted outside direction\nprocess=${JSON.stringify(processProjection)}\n` +
+          `session=${JSON.stringify(sessionProjection)}`);
+        const processGates = [...sessionToProcess.first.harnessPhases, ...toProcess.harnessPhases];
+        const sessionGates = [...processToSession.first.harnessPhases, ...toSession.harnessPhases];
+        assert(JSON.stringify(processGates) === JSON.stringify(sessionGates),
           'handoff gate sequence drift');
       } finally {
         for (const root of roots) fs.rmSync(root, { recursive: true, force: true });

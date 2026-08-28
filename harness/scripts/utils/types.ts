@@ -412,7 +412,7 @@ export interface ContractFileReference {
 }
 
 export interface ContractFileReferenceIssue {
-  kind: ContractFileReferenceKind | 'contracts.files';
+  kind: ContractFileReferenceKind | 'contracts.files' | 'unconsumed_file_field';
   source: string;
   raw: unknown;
   message: string;

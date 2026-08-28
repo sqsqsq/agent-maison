@@ -23,6 +23,7 @@ import type { CheckContext } from './types';
 import { listFilesAtRef, readFileAtRef } from './git-diff';
 import { resolveGoalRunBaseline } from './goal-run-baseline';
 import { extractUtItBlocks } from './ut-it-blocks';
+import { hasGoalExecutionSignal, resolveHarnessDiffBaseRef } from './phase-state';
 
 export interface UtFileEntryLike {
   path: string;
@@ -108,10 +109,18 @@ export interface UtTargetResolution {
  */
 export function computeUtFileBaseline(ctx: CheckContext): UtFileBaseline {
   const runId = (process.env.MAISON_GOAL_RUN_ID ?? '').trim();
-  const envBaseRef = runId ? '' : (process.env.HARNESS_DIFF_BASE_REF ?? '').trim();
+  const goalSignal = hasGoalExecutionSignal();
+  const envBaseRef = resolveHarnessDiffBaseRef() ?? '';
   let baseRef: string | undefined;
   let anchorSource = '';
-  if (runId) {
+  if (goalSignal && !runId) {
+    return {
+      available: false,
+      existing: new Set(),
+      note: 'goal execution signal 在场但 MAISON_GOAL_RUN_ID 缺失——禁止读取 HARNESS_DIFF_BASE_REF，按 scoped 全量问责。',
+    };
+  }
+  if (goalSignal) {
     const baseline = resolveGoalRunBaseline(ctx.projectRoot, ctx.feature, runId);
     if (baseline.available) {
       baseRef = baseline.baseSha;

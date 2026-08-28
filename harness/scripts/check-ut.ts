@@ -66,7 +66,7 @@ import {
 import { featureRelativePath } from './utils/feature-identity';
 import { driftFactsFromClosureAttestation, partitionDriftByGitStatus } from './utils/source-drift-facts';
 import { classifySourceDrift } from './utils/mutation-authorization';
-import { isGoalOrchestrationEnv } from './utils/phase-state';
+import { hasGoalExecutionSignal, resolveHarnessDiffBaseRef } from './utils/phase-state';
 import {
   tryLoadUtHostImpl,
   getLastProfileHarnessLoadError,
@@ -955,11 +955,11 @@ function checkUtNoSrcMutationGoalEnv(ctx: CheckContext): CheckResult[] {
 
 function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
   // plan e7c2a4d8 T4d：goal 编排环境走 review-closure 基线共享判定（见上）。
-  if (isGoalOrchestrationEnv()) {
+  if (hasGoalExecutionSignal()) {
     return checkUtNoSrcMutationGoalEnv(ctx);
   }
   // 解析 baseRef：聚合所有找到的 trace.json（按修改时间选最新，降低多次跑带来的歧义）
-  const envBaseRef = (process.env.HARNESS_DIFF_BASE_REF ?? '').trim();
+  const envBaseRef = resolveHarnessDiffBaseRef() ?? '';
   const traceFiles = findTraceJsonFiles(ctx.projectRoot, ctx.feature).sort((a, b) => {
     const sa = fs.statSync(a).mtimeMs;
     const sb = fs.statSync(b).mtimeMs;

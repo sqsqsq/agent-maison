@@ -29,6 +29,7 @@ import {
 } from './utils/diff-scope';
 import { relFeaturesDir } from '../config';
 import { checkFactsArtifact } from './utils/context-facts';
+import { resolveHarnessDiffBaseRef } from './utils/phase-state';
 
 // --------------------------------------------------------------------------
 // [unit] 条目约定
@@ -79,8 +80,8 @@ function checkExitDiffWithinScope(ctx: CheckContext, doc: ParsedChangeDoc): Chec
     ctx.featureSpec.contracts?.modules,
   );
 
-  const envRef = (process.env.HARNESS_DIFF_BASE_REF ?? '').trim();
-  const diff = diffChangedFiles({ projectRoot: ctx.projectRoot, baseRef: envRef || undefined });
+  const envRef = resolveHarnessDiffBaseRef();
+  const diff = diffChangedFiles({ projectRoot: ctx.projectRoot, baseRef: envRef });
   if (!diff.executed) {
     return {
       ...base,

@@ -59,12 +59,42 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+const FILE_LIKE_FIELD_NAME = /(?:^|_)(?:file|files|path|paths|media|builder|index|map|registration|export|exports)(?:$|_)/i;
+const FILE_LIKE_VALUE = /(?:[\\/]|\.[a-z0-9]{1,12}$)/i;
+
+function containsFileLikeValue(value: unknown): boolean {
+  if (typeof value === 'string') return FILE_LIKE_VALUE.test(value.trim());
+  if (Array.isArray(value)) return value.some(containsFileLikeValue);
+  if (isRecord(value)) return Object.values(value).some(containsFileLikeValue);
+  return false;
+}
+
 export function resolveContractFileReferences(
   projectRoot: string,
   contracts: ContractsSpec,
 ): ContractReferenceClosure {
   const references: ContractFileReference[] = [];
   const invalidPaths: ContractFileReferenceIssue[] = [];
+
+  const rejectUnconsumedFileFields = (
+    record: Record<string, unknown>,
+    allowedFields: ReadonlySet<string>,
+    source: string,
+  ): void => {
+    for (const [field, raw] of Object.entries(record)) {
+      if (allowedFields.has(field) || !FILE_LIKE_FIELD_NAME.test(field) || !containsFileLikeValue(raw)) {
+        continue;
+      }
+      invalidPaths.push({
+        kind: 'unconsumed_file_field',
+        source: `${source}.${field}`,
+        raw,
+        message:
+          `${source}.${field} 看起来承载仓库文件路径，但不在 contracts 文件引用清单中；` +
+          '请改用受支持字段并在 contracts.files 授权，或先扩展 schema/resolver。',
+      });
+    }
+  };
 
   const add = (kind: ContractFileReferenceKind, source: string, raw: unknown): void => {
     if (raw === undefined || raw === null) return;
@@ -133,6 +163,14 @@ export function resolveContractFileReferences(
 
   (contracts.modules ?? []).forEach((module, index) => {
     const raw = module as unknown as Record<string, unknown>;
+    rejectUnconsumedFileFields(
+      raw,
+      new Set([
+        'name', 'layer', 'format', 'change_type', 'package_path',
+        'har_index', 'builder', 'export_file', 'export_files',
+      ]),
+      `modules[${index}]`,
+    );
     add('modules.har_index', `modules[${index}].har_index`, raw.har_index);
     add('modules.builder', `modules[${index}].builder`, raw.builder);
     add('modules.export_file', `modules[${index}].export_file`, raw.export_file);
@@ -140,12 +178,30 @@ export function resolveContractFileReferences(
   });
 
   (contracts.data_models ?? []).forEach((model, index) => {
+    rejectUnconsumedFileFields(
+      model as unknown as Record<string, unknown>,
+      new Set(['name', 'module', 'file', 'kind', 'fields', 'computed_properties', 'values']),
+      `data_models[${index}]`,
+    );
     add('data_models.file', `data_models[${index}].file`, model.file);
   });
   (contracts.interfaces ?? []).forEach((item, index) => {
+    rejectUnconsumedFileFields(
+      item as unknown as Record<string, unknown>,
+      new Set(['module', 'layer', 'file', 'class', 'methods']),
+      `interfaces[${index}]`,
+    );
     add('interfaces.file', `interfaces[${index}].file`, item.file);
   });
   (contracts.components ?? []).forEach((component, index) => {
+    rejectUnconsumedFileFields(
+      component as unknown as Record<string, unknown>,
+      new Set([
+        'name', 'module', 'file', 'kind', 'decorator', 'linked_functions', 'state', 'props',
+        'events', 'children', 'nav_destinations', 'nav_destination', 'description',
+      ]),
+      `components[${index}]`,
+    );
     add('components.file', `components[${index}].file`, component.file);
   });
 
@@ -158,6 +214,11 @@ export function resolveContractFileReferences(
         entries.forEach((entry, index) => {
           if (!isRecord(entry)) return;
           const base = `resource_keys.${moduleName}.${categoryName}[${index}]`;
+          rejectUnconsumedFileFields(
+            entry,
+            new Set(['key', 'value', 'description', 'path', 'media']),
+            base,
+          );
           add('resource_keys.path', `${base}.path`, entry.path);
           if (Array.isArray(entry.media)) {
             addList('resource_keys.media', `${base}.media`, entry.media);
@@ -171,6 +232,14 @@ export function resolveContractFileReferences(
 
   const navigation = contracts.navigation as unknown;
   if (isRecord(navigation)) {
+    rejectUnconsumedFileFields(
+      navigation,
+      new Set([
+        'main_pages_file', 'route_map_file', 'page_registration_file',
+        'route_registration_file', 'page_files', 'route_files', 'pages', 'routes',
+      ]),
+      'navigation',
+    );
     add('navigation.main_pages_file', 'navigation.main_pages_file', navigation.main_pages_file);
     add('navigation.route_map_file', 'navigation.route_map_file', navigation.route_map_file);
     add('navigation.page_registration_file', 'navigation.page_registration_file', navigation.page_registration_file);
@@ -182,6 +251,11 @@ export function resolveContractFileReferences(
       if (!Array.isArray(entries)) continue;
       entries.forEach((entry, index) => {
         if (!isRecord(entry)) return;
+        rejectUnconsumedFileFields(
+          entry,
+          new Set(['name', 'file', 'page_file', 'route_file', 'registration_file']),
+          `navigation.${collection}[${index}]`,
+        );
         for (const field of ['file', 'page_file', 'route_file', 'registration_file'] as const) {
           add(
             `navigation.${collection}.${field}`,
@@ -194,12 +268,41 @@ export function resolveContractFileReferences(
   }
 
   (contracts.prd_to_code_traceability ?? []).forEach((trace, index) => {
+    rejectUnconsumedFileFields(
+      trace as unknown as Record<string, unknown>,
+      new Set(['prd_id', 'priority', 'key_files']),
+      `prd_to_code_traceability[${index}]`,
+    );
     addList(
       'prd_to_code_traceability.key_files',
       `prd_to_code_traceability[${index}].key_files`,
       trace.key_files,
     );
   });
+
+  (contracts.integration_points ?? []).forEach((point, index) => {
+    rejectUnconsumedFileFields(
+      point as unknown as Record<string, unknown>,
+      new Set(['consumer_module', 'provider_module', 'requires_modification', 'entry_symbol']),
+      `integration_points[${index}]`,
+    );
+  });
+  (contracts.state_management ?? []).forEach((state, index) => {
+    rejectUnconsumedFileFields(
+      state as unknown as Record<string, unknown>,
+      new Set(['data', 'scope', 'decorator', 'holder', 'module']),
+      `state_management[${index}]`,
+    );
+  });
+  rejectUnconsumedFileFields(
+    contracts as unknown as Record<string, unknown>,
+    new Set([
+      'schema_version', 'feature', 'source', 'version', 'modules', 'module_dependencies',
+      'data_models', 'interfaces', 'components', 'files', 'resource_keys', 'integration_points',
+      'prd_to_code_traceability', 'state_management', 'navigation',
+    ]),
+    'contracts',
+  );
 
   return {
     authorized_files: [...new Set(authorizedFiles)].sort(),

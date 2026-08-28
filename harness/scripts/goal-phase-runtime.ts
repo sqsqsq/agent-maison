@@ -10,7 +10,6 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import * as readline from 'readline';
 import { spawn, spawnSync } from 'child_process';
 import minimist from 'minimist';
 import {
@@ -136,6 +135,7 @@ import {
   createGoalRun,
   inspectGoalRunCreation,
   inspectGoalRunCreationFiles,
+  resolveActualGoalPhaseChainAtBirth,
   resolveGoalRunHeadSha,
   validateRebaselineRequest,
   type GoalRunCreationResult,
@@ -198,7 +198,6 @@ import {
   type InvokeTemplateVars,
 } from './utils/agent-invoke';
 import {
-  AttendedGoalPhaseExecutor,
   createPhaseExecutionContext,
   DetachedGoalPhaseExecutor,
   validatePhaseExecutionContext,
@@ -1068,6 +1067,12 @@ export function __testing_setRepoLayout(l: RepoLayout | null): void {
   injectedLayout = l;
 }
 
+type ResolveWorkflowFn = typeof resolveWorkflowSpec;
+let injectedWorkflowResolver: ResolveWorkflowFn | null = null;
+export function __testing_setWorkflowResolver(fn: ResolveWorkflowFn | null): void {
+  injectedWorkflowResolver = fn;
+}
+
 /**
  * 闭环探针注入（测试用）。`tryValidateReceipt` 会 spawn 真 check-receipt 子进程——
  * 在 tmp host 里必然 error（无 node_modules/无完整工程），使链在 spec 就 halt
@@ -1112,6 +1117,7 @@ export function __testing_resetGoalRunnerSeams(): void {
   injectedInvokeAgent = null;
   injectedRunHarness = null;
   injectedLayout = null;
+  injectedWorkflowResolver = null;
   injectedDeviceGate = null;
   injectedCapabilityGate = null;
   injectedCanaryProbeInvoke = null;
@@ -4149,43 +4155,14 @@ export async function main(options: GoalPhaseRuntimeLaunchOptions = {}): Promise
     console.error('[goal-phase-runtime] BLOCKER: --attach-created 与 --resume 互斥');
     return 1;
   }
-  let attendedInput: readline.Interface | null = null;
-  let attendedLines: AsyncIterator<string> | null = null;
-  const attendedExecutor = executorMode === 'attended'
-    ? options.executor ?? new AttendedGoalPhaseExecutor(async (context) => {
-        if (!attendedInput) {
-          attendedInput = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
-          attendedLines = attendedInput[Symbol.asyncIterator]();
-        }
-        process.stdout.write(JSON.stringify({
-          type: 'phase_execute_request',
-          run_id: context.runId,
-          phase: context.phase,
-          attempt_id: context.attemptId,
-          owner_id: context.owner.owner_id,
-          owner_epoch: context.owner.epoch,
-          recommendation: {
-            phase: context.phase,
-            instruction: context.instruction ?? '',
-          },
-        }) + '\n');
-        const next = await attendedLines!.next();
-        if (next.done) throw new Error('phase executor protocol EOF');
-        const response = JSON.parse(next.value) as {
-          status?: string;
-          phase?: string;
-          details?: string;
-        };
-        if (!['passed', 'failed', 'waiting'].includes(response.status ?? '')) {
-          throw new Error('phase executor response.status 非法');
-        }
-        return {
-          status: response.status as 'passed' | 'failed' | 'waiting',
-          phase: response.phase ?? context.phase,
-          details: response.details,
-        };
-      })
-    : null;
+  if (executorMode === 'attended' && !options.executor) {
+    console.error(
+      '[goal-phase-runtime] BLOCKER: attended runtime 必须由 host bridge 注入 executor；' +
+        '协议读写只允许由 goal-mode-entry 承担。',
+    );
+    return 1;
+  }
+  const attendedExecutor = executorMode === 'attended' ? options.executor! : null;
 
   // `--detach`: fork the real run into the background and return immediately so a
   // blocking host shell (e.g. chrys TUI shell tool) is not held for the whole run.
@@ -4298,7 +4275,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
   }
 
   const cfg = loadFrameworkConfig(projectRoot);
-  const workflow = resolveWorkflowSpec(projectRoot, { config: cfg, frameworkRoot });
+  const workflow = (injectedWorkflowResolver ?? resolveWorkflowSpec)(
+    projectRoot,
+    { config: cfg, frameworkRoot },
+  );
 
   const featuresDir = cfg.paths.features_dir ?? 'doc/features';
 
@@ -4689,6 +4669,17 @@ Goal runner — tool-agnostic multi-phase orchestrator
         goalTrack,
       );
   const fullWorkflowChain = featurePhasesFromWorkflow(workflow, goalTrack);
+  // Receipt-derived legacy fidelity recovery changes which phases must actually execute. Resolve
+  // that fact before a fresh modern run is born, then freeze the expanded chain in manifest and
+  // run_created. Later resume/attach paths may validate this birth fact, but never recompute it.
+  const freshLegacyFidelity = !argv.resume && !attachCreatedRunId
+    ? loadInertLegacyFidelityIntentSsot(projectRoot, manifest.feature)
+    : null;
+  const actualBirthChain = resolveActualGoalPhaseChainAtBirth({
+    requestedChain,
+    fullWorkflowChain,
+    requiresLegacyFidelityRecovery: freshLegacyFidelity !== null,
+  });
   let freshCreation: GoalRunCreationResult | null = null;
 
   // Survival guard (code-level enforcement of the launch contract): block a real unattended
@@ -4754,7 +4745,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     freshCreation = createGoalRun({
       projectRoot,
       manifest,
-      chain: requestedChain,
+      chain: actualBirthChain,
       ...(rebaselineRequest ? { rebaselineFromRunId: rebaselineRequest.sourceRunId } : {}),
     });
   }
@@ -4936,16 +4927,21 @@ Goal runner — tool-agnostic multi-phase orchestrator
     ) {
       pendingLegacyFidelityBacktrack = null;
     }
-    const inertLegacyFidelity = loadInertLegacyFidelityIntentSsot(projectRoot, manifest.feature);
-    const requestedStartIdx = fullWorkflowChain.indexOf(requestedChain[0]);
+    // A fresh run must use the exact legacy-fidelity observation that participated in birth.
+    // Re-reading after run_created would allow an external mutation to alter the live phase set.
+    const inertLegacyFidelity = freshCreation
+      ? freshLegacyFidelity
+      : loadInertLegacyFidelityIntentSsot(projectRoot, manifest.feature);
+    const recoveryRequestedStart = manifest.start_phase as FeaturePhase;
+    const requestedStartIdx = fullWorkflowChain.indexOf(recoveryRequestedStart);
     const specIdx = fullWorkflowChain.indexOf('spec' as FeaturePhase);
     const legacyFidelityRecovery =
-      requestedChain[0] !== ('spec' as FeaturePhase) &&
+      recoveryRequestedStart !== ('spec' as FeaturePhase) &&
       specIdx >= 0 &&
       requestedStartIdx > specIdx &&
       (inertLegacyFidelity !== null || pendingLegacyFidelityBacktrack !== null)
         ? {
-            requestedStart: String(requestedChain[0]),
+            requestedStart: String(recoveryRequestedStart),
             legacySource:
               inertLegacyFidelity?.decision.source ??
               pendingLegacyFidelityBacktrack?.legacy_source ??
@@ -4953,14 +4949,42 @@ Goal runner — tool-agnostic multi-phase orchestrator
             requestAlreadyRecorded: pendingLegacyFidelityBacktrack !== null,
           }
         : null;
-    const chain = legacyFidelityRecovery
-      ? [
-          ...fullWorkflowChain.slice(specIdx, requestedStartIdx),
-          ...requestedChain,
-        ]
-      : manifest.phase_chain
-      ? [...manifest.phase_chain]
-      : requestedChain;
+    const frozenChain = manifest.phase_chain ? [...manifest.phase_chain] : [...requestedChain];
+    const modernBirth = freshCreation !== null || attachedCreation?.state === 'complete';
+    if (legacyFidelityRecovery && modernBirth) {
+      const requiredPrefix = fullWorkflowChain.slice(specIdx, requestedStartIdx);
+      const frozenRecoveryPrefix = [
+        ...requiredPrefix,
+        recoveryRequestedStart,
+      ];
+      const prefixMatches = frozenRecoveryPrefix.every(
+        (phase, index) => frozenChain[index] === phase,
+      );
+      if (!prefixMatches) {
+        const detail =
+          `modern run ${manifest.run_id} 的冻结 phase_chain 未包含出生时应有的 legacy fidelity ` +
+          `恢复前缀（expected=${frozenRecoveryPrefix.join('→')}，` +
+          `frozen=${frozenChain.join('→')}）。禁止在 resume/attach 时扩展出生事实；` +
+          '请废弃该损坏 run，并从相同起点创建 successor run。';
+        goalEvents.emit({
+          type: 'phase_halt',
+          phase: legacyFidelityRecovery.requestedStart,
+          halt_reason: 'framework_integrity_block',
+          reason: 'phase_chain_birth_mismatch',
+          halt_guidance: detail,
+        });
+        console.error(`[goal-runner] BLOCKER: ${detail}`);
+        return 1;
+      }
+    }
+    const chain = modernBirth
+      ? frozenChain
+      : legacyFidelityRecovery
+        ? [
+            ...fullWorkflowChain.slice(specIdx, requestedStartIdx),
+            ...frozenChain,
+          ]
+        : frozenChain;
     // plan c4e8a1f7 T1a：preflight 返回 session 级 resolved binary——probe/canary/
     // 正式 phase invoke 三个消费点复用同一绝对路径，从结构上保证 probe/invoke 同身份。
     const sessionBinary = runGoalPreflight({
@@ -9971,7 +9995,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
         /* best-effort — sync exit may not await */
       });
     }
-    (attendedInput as readline.Interface | null)?.close();
     releaseAllLocks();
   }
 }
