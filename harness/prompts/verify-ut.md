@@ -34,7 +34,7 @@
 1. **禁止修改业务源码**：business-ut 阶段**禁止**对**业务实现源码树**（如设计/contracts 列出的 `src/main` 或等价非测试根目录；路径前缀以本实例为准）下任何文件做**任何修改**（包括"顺手抽个函数方便 UT 调用"、"把 private 改成 public"、"新增一个工具函数"、"修改 barrel 导出路径"等）。
 2. **可测性缺口交回 coding**：如确实无法通过 UT/Spy/Stub/原型替换绕过，记录文件、变更签名、技术理由和影响面，产出 coding repair candidate；由 coding owner 修改后重走 review→ut。
 3. **人工授权不放行**：用户回复、署名、receipt 或 legacy `gap-notes.md > approved_src_mutations[]` 只可作为历史/普通输入，不得把源码漂移改判为 PASS。
-4. **任一源码改动均违规**：脚本 Harness 的 `ut_no_src_mutation` BLOCKER 会检测 `src/main` 的 git diff；UT invocation 内任何业务源码改动都会 FAIL 并回 coding。
+4. **任一源码改动均违规**：脚本 Harness 的 `ut_no_src_mutation` BLOCKER 在 review 正式闭环后按 review closure attestation 的逐文件内容哈希对账产品源码树（review 未闭环时才回退 `src/main` 的 git diff）；UT invocation 内任何业务源码改动都会 FAIL 并回 coding，**提交与否不影响结论**。
 5. **作为审查员的你**：在语义检查时，若发现 UT 目录外（即 `src/main` 侧）的业务代码与 plan.md / contracts.yaml 声明不一致，或出现"为了 UT 便利而新增的辅助函数"嫌疑（无对应 spec/plan 依据的工具函数、Getter/Setter 等），请在 `end_to_end_driving` 或新增的 `src_mutation_discipline` 项中标 BLOCKER。
 6. **必须确认真实执行状态**：若脚本报告中的 `ut_run_status` 显示 `当前是否可以宣称 UT 完成：否`，或 **`ut.run`** 为 FAIL（报告可能仍显示 legacy 名 `ut_hvigor_test`）/ 被 **`ut.compile`**（legacy `ut_hvigor_build`）短路，则最终 `summary.verdict` 必须为 `FAIL`。不要把 `ut_tsc_compiles PASS` 误判为 UT 已真实运行通过。
 

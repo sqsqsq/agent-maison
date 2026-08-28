@@ -39,7 +39,7 @@ tsc / 正则推断定性（权威性排序：真实编译/执行 > 一切静态�
 ## Harness 口径
 
 - 跑 harness 时设 `MAISON_UT_MODE=repair_existing_ut` + `MAISON_UT_TARGETS=<目标文件相对路径>`
-  （分号/逗号分隔；显式目标可点名未被触碰的存量文件）+ `HARNESS_DIFF_BASE_REF=<动手前 commit>`；
+  （分号/逗号分隔；显式目标可点名未被触碰的存量文件）+ `HARNESS_DIFF_BASE_REF=<动手前 commit>`（只作用于 git diff 生效域；review 已正式闭环时 `ut_no_src_mutation` 走 attestation 内容哈希基线，不受该锚影响）；
   **fail-closed**：三者缺一（无锚 / 无目标 / 目标路径未命中）→ `ut_target_resolution` 直接 FAIL，
   不会静默继续（防止目标为空时真正要修的失败被历史基线豁免）；
 - 本模式下需求工件门禁（use-cases/audit/mock-plan/DAG/acceptance 覆盖族）按模式 SKIP——

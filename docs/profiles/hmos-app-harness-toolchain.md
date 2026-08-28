@@ -16,7 +16,7 @@
 | ut      | `ut_tsc_compiles`     | TypeScript Compiler API 对 `*.test.ets` 做 `noEmit` 扫描                              |
 | ut      | `ut_hvigor_build`     | `buildUtHvigorArgs` → 与 DevEco「Run ohosTest」对齐：`node hvigorw.js --mode module`、`-p isOhosTest=true`、`-p buildMode=test`、`genOnDeviceTestHap` + task 后 `analyze=normal`（及 parallel/incremental/daemon）；详见 profile 内 `hvigor-runner.ts` |
 | ut      | `ut_hvigor_test`      | 同上出包 → `hdc install` → `hdc shell aa test`；解析 hypium 报告；HAP 在 `build/<product>/outputs/ohosTest/`           |
-| ut      | `ut_no_src_mutation`  | git diff 检测业务源码改动；任一命中均 FAIL 并交回 coding owner，legacy 授权字段不放行 |
+| ut      | `ut_no_src_mutation`  | attestation-first：review 正式闭环后按 review closure attestation 的逐文件内容哈希对账 review 后漂移（不看 git 提交状态；基线缺失/不可核实即 fail-closed），review 未闭环才回退 git diff；任一漂移均 FAIL 并交回 coding owner，legacy 授权字段不放行 |
 | testing | `device_test.build` / `install` / `run` | 经 **`capability-registry.ts`** 调度 profile provider；Hylyre vendor 发布件（源码树 `src/`；代码层兼容 legacy wheel 布局）+ venv；报告默认 `doc/features/<feature>/testing/reports/<ts>/hylyre/` |
 
 根 `check-coding` / `check-ut` / `check-testing` 只做编排；宿主实现见 `profiles/hmos-app/harness/providers/`。

@@ -170,7 +170,7 @@ doc/features/<feature>/
 | `summary.json`          | agent / CI / 调试          | 稳定读取 verdict、blockers、run_statuses、next_action，替代 grep 控制台 |
 | `merged-report.md`      | 人类                      | 排查"为什么 FAIL"                                       |
 | `ai-prompt.md`          | verifier 子 agent / 你    | 把它发给 AI 模型做语义级复核                            |
-| `trace.json`            | harness 内部 / 调试       | 记录本次进入 phase 时的 git HEAD（供 ut_no_src_mutation 用） |
+| `trace.json`            | harness 内部 / 调试       | 记录本次进入 phase 时的 git HEAD（供 `ut_no_src_mutation` 的 **git fallback 域**用；review 已正式闭环时该门禁基线=review closure attestation，不看 trace/HEAD） |
 
 > v2.8 起控制台默认只展开 `FAIL` / `WARN` / `BLOCKER-SKIP`。脚本 PASS 只表示结构级 harness 没有 BLOCKER 失败，阶段闭环仍需要 verifier 子 agent PASS 与 completion receipt。
 
@@ -228,7 +228,7 @@ doc/features/<feature>/
 | Phase   | 规则（hmos-app 示例） | 摘要 |
 | ------- | --------------------- | ---- |
 | coding  | `coding_hvigor_build` | 宿主编译（hvigor / DevEco 对齐） |
-| ut      | `ut_tsc_compiles` / `ut_hvigor_build` / `ut_hvigor_test` / `ut_no_src_mutation` | 测试源静态检查、ohosTest 构建与真机 hypium、harness 允许的源码变更登记 |
+| ut      | `ut_tsc_compiles` / `ut_hvigor_build` / `ut_hvigor_test` / `ut_no_src_mutation` | 测试源静态检查、ohosTest 构建与真机 hypium、review 闭环后的产品源码零漂移（内容哈希基线，无授权登记通道） |
 | testing | `device_test.build` / `install` / `run` | Hylyre 真机链；`acceptance.yaml` > `device_focus` 派生 test-plan |
 
 **Context Exploration Gate（v2.9）**：spec / plan / coding / review / ut 写主产物前须 `context-exploration.md`（schema **1.1.0**）；量化阈值见 phase-rules + `exploration-strategy.ts`；存量 feature 可用 `compat.yaml` 或 `npm run backfill:context`。

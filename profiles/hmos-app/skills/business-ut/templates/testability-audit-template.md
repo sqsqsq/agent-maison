@@ -73,7 +73,7 @@ records:
 | **L0** | 纯函数 / 无外部 IO | 仅入参→出参，无单例/系统 API | 直接单测 |
 | **L1** | 可注入 / 可替换边界 | 构造参数、工厂、可被 Spy 的类 | Spy / 子类化 |
 | **L2** | 可子类化或 seams | 非 final 类、`protected` 可覆盖、可命名方法抽出 | 子类 Spy / 包装类 |
-| **L3** | 不可测或成本过高 | 全局单例、inline lambda 内嵌、无接缝 | **必须 STOP**：`option_a` 降级 device-only **或** `option_b` 源码改造（走 `ut_no_src_mutation` + gap-notes） |
+| **L3** | 不可测或成本过高 | 全局单例、inline lambda 内嵌、无接缝 | **必须 STOP**：`option_a` 降级 device-only **或** `option_b` 源码改造（回 coding owner 改造并重走 review→ut；gap-notes 只是记录，不放行 `ut_no_src_mutation`） |
 
 ## 依赖 `kind` 与可选 `seam`
 
