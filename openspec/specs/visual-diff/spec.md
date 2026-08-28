@@ -50,7 +50,7 @@ Enforcement: `profiles/hmos-app/harness/{visual-diff-capture,image-toolkit,image
 
 After device capture, the harness SHALL emit `device-testing/visual-feedback.json` (SSOT) plus `visual-feedback.md` (projection). The JSON SHALL bind: reference/actual file hashes; identity `{framework_version, framework_package_digest, gate_fingerprint, framework_commit_sha: null|string}` (package digest sourced from the release manifest; at least one of digest/commit non-null); build/device/viewport; per screen_id+variant: OCR text diffs, region-anchored bbox/spacing/color diffs (OCR-anchored dominant-color comparison, line-rhythm sequence comparison), confidence, delta vs previous round, and convergence state. Findings are single decidable facts plus structured findings: hard invariants (required node missing, wrong copy, blank asset, inverted state) MAY block directly as visual FAIL (needs_fix); continuous metrics (color distance, spacing, bbox offset) default to advisory and only escalate on sustained high-confidence regression beyond frozen thresholds; a single global similarity score SHALL NOT judge overall quality.
 
-Enforcement: `profiles/hmos-app/harness/visual-feedback.ts`（新增）, `harness/scripts/check-testing.ts`, `harness/schemas/visual-feedback.schema.json`（新增）
+Enforcement: `profiles/hmos-app/harness/visual-feedback.ts`, `harness/scripts/check-testing.ts`, `harness/scripts/utils/visual-rounds-ledger.ts`
 
 #### Scenario: a color delta creeping from 8 to 9 does not fail the axis
 

@@ -50,7 +50,7 @@ The current owner SHALL append `handoff_requested`, quiesce after active phase w
 
 Every session→process or process→session handoff SHALL occur through the existing run-bound mailbox and owner/epoch CAS at a safe `GoalPhaseRuntime` boundary. The releasing owner SHALL stop lifecycle mutation before release; the acquiring owner SHALL replay the same run through the shared runtime before continuing. The runtime SHALL project exactly one `owner_handoff {from,to,outcome}` semantic record for the transfer without creating a second owner, ledger or run state.
 
-Enforcement: `harness/scripts/utils/goal-phase-runtime.ts`, `harness/scripts/utils/goal-driver-handoff.ts`, `harness/scripts/utils/goal-run-control.ts`
+Enforcement: `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/goal-handoff.ts`, `harness/scripts/utils/goal-run-control.ts`
 
 #### Scenario: Session hands off to process
 

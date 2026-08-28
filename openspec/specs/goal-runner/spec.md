@@ -1448,7 +1448,7 @@ Enforcement: `harness/scripts/utils/goal-progress.ts`, `harness/scripts/utils/go
 
 All attended and detached goal phase execution SHALL advance through one `GoalPhaseRuntime`. The runtime SHALL own owner/epoch validation, assessment, attempt and `phase_start`, runtime-owned fact preparation, receipt scaffold, agent invocation boundary, harness gates, verdict, retry/backtrack, resume replay, close/closure, handoff and `run_end`. No runner, driver, supervisor or executor MAY maintain an independent phase loop, call a phase gate directly or publish a competing lifecycle state.
 
-Enforcement: `harness/scripts/utils/goal-phase-runtime.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/goal-in-session-driver.ts`, `harness/scripts/goal-supervisor.ts`
+Enforcement: `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/goal-phase-runtime.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-in-session-driver.ts`, `harness/scripts/goal-supervise.ts`, `harness/scripts/utils/goal-supervisor.ts`
 
 #### Scenario: Coding uses the same lifecycle in both modes
 
@@ -1491,7 +1491,7 @@ Enforcement: `harness/scripts/utils/goal-phase-runtime.ts`, `harness/scripts/uti
 
 After runtime migration, production SHALL contain exactly one phase advancement implementation. The previous `goal-runner` detached loop and attended driver's assess/advance/gate loop MUST be physically removed; compatibility wrappers MAY only delegate to `GoalPhaseRuntime`. A release or archive MUST fail structural verification while a second loop or executor-direct gate call remains.
 
-Enforcement: `harness/tests/unit/goal-runtime-structure.unit.test.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/goal-in-session-driver.ts`
+Enforcement: `harness/tests/unit/goal-runtime-structural-acceptance.unit.test.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-in-session-driver.ts`
 
 #### Scenario: Structure scan finds one loop
 
