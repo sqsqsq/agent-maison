@@ -69,7 +69,7 @@ coding/review/UT/harness **一律优先读 `contracts.yaml`**，避免与 plan.m
 10. **构建 spec 功能映射表**：spec 功能编号→优先级→层→模块→内层级→关键文件→说明，须与 Step 5 一致，P0/P1 全覆盖。
 11. **质量门禁自检**（14 项，含 Scope 守门/架构合规/模块最小化/功能拆分准确性/文件路径/数据类型/接口签名/无 TBD/组件树/状态管理/路由设计/UseCase 规约达阈值时）：不通过则自动补充重新自检直到全部通过。
 12. **输出与归档**：写盘 `plan.md` → 摘要供人审阅 → **立即进 Step 13**，不得先做编码。
-13. **提取 contracts.yaml**（详见 reference 字段表与 [contracts-template.yaml](contracts-template.yaml)）：modules/module_dependencies/data_models/interfaces/components/state_management/navigation/files/resource_keys/prd_to_code_traceability。`contracts.files` 是唯一文件授权集合；所有 data/interface/component/traceability/resource/navigation/HAR build/export 文件引用必须逐项列入，闭包失败只可回 plan 补 `files` 后重闭环，不得凭文件已存在或内容相同放行。若发现 `acceptance.yaml` 缺失或边界场景与 spec 不一致，不得创建/修补该文件；如实让 `scope_consistency_with_spec` 失败并产出 spec-owned repair candidate，由 runner 回退 spec 重算。
+13. **提取 contracts.yaml**（详见 reference 字段表与 [contracts-template.yaml](contracts-template.yaml)）：modules/module_dependencies/data_models/interfaces/components/state_management/navigation/files/resource_keys/prd_to_code_traceability。`contracts.files` 是唯一文件授权集合；所有 data/interface/component/traceability/resource/HAR build/export 文件引用以及 `navigation.config_files[]`（3.0 canonical 的唯一 navigation 文件字段，其它承载路径的 navigation 键一律判 `unconsumed_file_field` BLOCKER）必须逐项列入，闭包失败只可回 plan 补 `files` 后重闭环，不得凭文件已存在或内容相同放行。若发现 `acceptance.yaml` 缺失或边界场景与 spec 不一致，不得创建/修补该文件；如实让 `scope_consistency_with_spec` 失败并产出 spec-owned repair candidate，由 runner 回退 spec 重算。
 14. **架构影响判定**（详见 reference 五分支）：`none`/`dsl_change`/`module_set_change`/`responsibility_rewrite`，从严判 none；绝大多数 feature 应为 none 且不动 architecture.md。`dsl_change` 时须同步修改 [framework.config.json](../../../framework.config.json) 的 `architecture` 段。
 
 ## 门禁清单表

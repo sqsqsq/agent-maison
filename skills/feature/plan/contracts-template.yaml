@@ -21,11 +21,10 @@ components: []
 state_management: []
 
 navigation:
-  # Every populated file field must also appear in top-level files.
-  page_files: []
-  route_files: []
-  pages: []
-  routes: []
+  # 3.0 canonical: config_files is the only navigation file field (registration/config
+  # files such as main_pages.json / route_map.json). Every entry must also appear in
+  # top-level files; any other file-bearing navigation key fails plan closure.
+  config_files: []
 
 resource_keys: {}
 prd_to_code_traceability: []
