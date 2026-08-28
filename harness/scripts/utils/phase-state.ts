@@ -174,6 +174,13 @@ export function hasGoalExecutionSignal(): boolean {
   );
 }
 
+/** Direct harness runs may opt into a committed diff base; every goal context ignores it. */
+export function resolveHarnessDiffBaseRef(): string | undefined {
+  if (hasGoalExecutionSignal()) return undefined;
+  const value = (process.env.HARNESS_DIFF_BASE_REF ?? '').trim();
+  return value || undefined;
+}
+
 export function isAgentSideGoalHarness(): boolean {
   return hasGoalExecutionSignal() && process.env.MAISON_GOAL_GATE_HARNESS !== '1';
 }

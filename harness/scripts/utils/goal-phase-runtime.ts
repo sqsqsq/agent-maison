@@ -9,16 +9,10 @@ import type {
 import type { GoalRunMode } from './goal-adapter-capability';
 import {
   assertFencedOwner,
-  quiesceRunOwner,
   releaseRunOwner,
   type RunFenceToken,
 } from './goal-run-control';
-import { appendGoalEventFenced, writeInSessionProgressFenced } from './goal-in-session-evidence';
-import {
-  consumeHandoffAtBoundary,
-  type HandoffMailboxQuarantine,
-  writeHandoffRequest,
-} from './goal-handoff';
+import { writeHandoffRequest } from './goal-handoff';
 import { recommendationAuthorized } from './phase-transition-policy';
 
 export { recommendationAuthorized } from './phase-transition-policy';
@@ -138,18 +132,6 @@ export function runInSessionRound(options: InSessionRoundOptions): Promise<InSes
   return runAttendedGoalPhaseRuntime({ ...options, maxRounds: 1 });
 }
 
-function appendHandoffMailboxQuarantined(
-  options: Pick<InSessionRoundOptions, 'projectRoot' | 'manifest' | 'runDir' | 'token'>,
-  notice: HandoffMailboxQuarantine,
-): void {
-  appendGoalEventFenced(options.projectRoot, options.manifest, options.runDir, options.token, {
-    type: 'handoff_mailbox_quarantined',
-    original_file: notice.original_file,
-    quarantined_file: notice.quarantined_file,
-    reason: notice.reason,
-  });
-}
-
 export function handoffSessionToDetached(
   options: Omit<InSessionRoundOptions, 'executePhase' | 'round'>,
 ): string {
@@ -158,22 +140,8 @@ export function handoffSessionToDetached(
     run_id: options.token.run_id,
     from_epoch: options.token.epoch,
     target_owner_kind: 'process',
-    on_quarantined: (notice) => appendHandoffMailboxQuarantined(options, notice),
   });
-  const consumed = consumeHandoffAtBoundary(options.runDir, options.token, Date.now(), {
-    on_quarantined: (notice) => appendHandoffMailboxQuarantined(options, notice),
-  });
-  if (consumed.kind !== 'consumed') throw new Error('[goal-phase-runtime] handoff consume failed');
-  appendGoalEventFenced(options.projectRoot, options.manifest, options.runDir, options.token, {
-    type: 'handoff_requested',
-    request_id: request.request_id,
-    target_owner_kind: 'process',
-    from_epoch: options.token.epoch,
-  });
-  writeInSessionProgressFenced(
-    options.projectRoot, options.manifest, options.workflow, options.runDir, options.token,
-  );
-  quiesceRunOwner(options.runDir, options.token);
-  releaseRunOwner(options.runDir, options.token, { allowQuiescing: true });
+  // Compatibility callers may publish intent, but only GoalPhaseRuntime consumes the mailbox,
+  // emits lifecycle handoff events, quiesces the old epoch, and releases ownership.
   return request.request_id;
 }

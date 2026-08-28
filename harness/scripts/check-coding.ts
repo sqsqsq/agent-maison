@@ -47,6 +47,7 @@ import { buildBehaviorSwitchCheckResult } from './utils/behavior-switch-scan';
 import { validateProjectRelativePath } from './utils/project-relative-path';
 import { findBasenameCandidates, formatPrefixMismatchHint } from './utils/path-candidates';
 import { tryLoadProfileCodingHost } from '../profile-host-loader';
+import { resolveHarnessDiffBaseRef } from './utils/phase-state';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -368,10 +369,10 @@ function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
     }];
   }
 
-  const envRef = (process.env.HARNESS_DIFF_BASE_REF ?? '').trim();
+  const envRef = resolveHarnessDiffBaseRef();
   const diff = diffChangedFiles({
     projectRoot: ctx.projectRoot,
-    baseRef: envRef || undefined,
+    baseRef: envRef,
   });
   if (!diff.executed) {
     return [{

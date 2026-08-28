@@ -31,6 +31,7 @@ import {
   __testing_setRepoLayout,
   __testing_setRunHarnessPhase,
   __testing_setValidateReceipt,
+  __testing_setWorkflowResolver,
   main as goalMain,
 } from '../../scripts/goal-runner';
 import { inferRepoLayout } from '../../repo-layout';
@@ -64,6 +65,7 @@ import { loadGoalManifestFromRun, mergeSuccessorRequirement } from '../../script
 import type { UnitCaseResult } from '../run-unit';
 import { AttendedGoalPhaseExecutor } from '../../scripts/utils/goal-phase-executor';
 import { prepareGoalModeRun, runGoalModeHostBridge } from '../../scripts/goal-mode-entry';
+import { resolveWorkflowSpec, type WorkflowSpec } from '../../workflow-loader';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 const PRODUCT_FILE = '02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets';
@@ -358,6 +360,8 @@ export async function runGoalRuntimeChain(
     hostMaxRounds?: number;
     runId?: string;
     failExecutorFor?: (phase: string, attempt: number) => boolean;
+    /** Production runtime workflow resolution seam used to simulate config drift on resume. */
+    workflowTransform?: (workflow: WorkflowSpec) => WorkflowSpec;
   } = {},
 ): Promise<RunProbe> {
   const invokedPhases: string[] = [];
@@ -412,6 +416,10 @@ export async function runGoalRuntimeChain(
       };
     }) as never);
     __testing_setRepoLayout(layoutFieldsForTmpHost(root));
+    if (opts.workflowTransform) {
+      __testing_setWorkflowResolver((projectRoot, workflowOptions) =>
+        opts.workflowTransform!(resolveWorkflowSpec(projectRoot, workflowOptions)));
+    }
     // openspec device-readiness-and-completion t3：临时宿主无真实设备，真实就绪门会
     // 判 BLOCKED 并把所有 ut/testing 链路降级。默认注入 READY(physical) 保持既有用例
     // 语义不变；需要验证门本身行为的用例可在 opts 里覆盖（见 deviceGate 参数）。
@@ -750,6 +758,7 @@ export async function runGoalRuntimeChain(
                 feature: FEATURE,
                 runId: opts.runId,
                 adapter: opts.adapter ?? 'codex',
+                adapterSource: 'user_explicit',
                 requirement: opts.freshRequirement ?? '真机测试银行卡开卡流程',
                 startPhase: opts.freshStartPhase ?? 'spec',
                 endPhase: 'testing',
@@ -991,6 +1000,14 @@ test('legacy fidelity SSOT + 下游起点：自动回 spec 重建，后续 Check
     assert(!!request, `${startPhase}: legacy SSOT 必须走既有 phase_backtrack_requested 事务`);
     assert(request!.from_phase === startPhase, `${startPhase}: 回退来源须保留原下游起点`);
     assert(request!.legacy_source === 'downgrade_receipt', `${startPhase}: 事件须记录失效授权来源`);
+    const birth = probe.events.find(event => event.type === 'run_created') as {
+      phase_chain?: string[];
+    } | undefined;
+    const persistedManifest = loadGoalManifestFromRun(root, runId, { feature: FEATURE });
+    assert(JSON.stringify(birth?.phase_chain) === JSON.stringify(probe.invokedPhases),
+      `${startPhase}: run_created 未冻结实际执行 chain：${JSON.stringify(birth?.phase_chain)}`);
+    assert(JSON.stringify(persistedManifest.phase_chain) === JSON.stringify(birth?.phase_chain),
+      `${startPhase}: manifest 与 run_created chain 漂移`);
     assert(probe.invokedPhases[0] === 'spec',
       `${startPhase}: 第一位实际执行阶段须为 spec，实得 ${probe.invokedPhases.join('→')}`);
     assert(

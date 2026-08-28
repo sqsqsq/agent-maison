@@ -110,14 +110,37 @@ const cases: Case[] = [
     },
   },
   {
-    name: 'structural 03/13: canonical production phase loop count is one',
+    name: 'structural 03/13: canonical lifecycle authority and gate call edges have one owner',
     run: () => {
-      const matches = productionTypeScriptFiles().flatMap(file => {
-        const count = occurrences(fs.readFileSync(file, 'utf8'), /while\s*\(!phaseDone\)/g);
+      const files = productionTypeScriptFiles();
+      const runtimeDefinitions = files.flatMap(file => {
+        const source = fs.readFileSync(file, 'utf8');
+        const count = occurrences(source, /export class GoalPhaseRuntime\b/g);
         return Array.from({ length: count }, () => path.relative(REPO_ROOT, file).replace(/\\/g, '/'));
       });
-      assert(matches.length === 1, `phase loop matches=${JSON.stringify(matches)}`);
-      assert(matches[0] === 'harness/scripts/goal-phase-runtime.ts', `wrong phase loop owner: ${matches[0]}`);
+      assert(JSON.stringify(runtimeDefinitions) === JSON.stringify(['harness/scripts/goal-phase-runtime.ts']),
+        `GoalPhaseRuntime definitions=${JSON.stringify(runtimeDefinitions)}`);
+
+      const harnessGateCallers = files.flatMap(file => {
+        const source = fs.readFileSync(file, 'utf8');
+        const calls = occurrences(source, /\brunHarnessPhase\s*\(/g) -
+          occurrences(source, /(?:async\s+)?function\s+runHarnessPhase\s*\(/g);
+        return Array.from({ length: Math.max(0, calls) }, () =>
+          path.relative(REPO_ROOT, file).replace(/\\/g, '/'));
+      });
+      assert(harnessGateCallers.length > 0 &&
+        harnessGateCallers.every(file => file === 'harness/scripts/goal-phase-runtime.ts'),
+      `runHarnessPhase callers=${JSON.stringify(harnessGateCallers)}`);
+
+      const handoffTransitionCallers = files.flatMap(file => {
+        const source = fs.readFileSync(file, 'utf8');
+        const calls = occurrences(source, /\bconsumeHandoffAtBoundary\s*\(/g) -
+          occurrences(source, /export function consumeHandoffAtBoundary\s*\(/g);
+        return Array.from({ length: Math.max(0, calls) }, () =>
+          path.relative(REPO_ROOT, file).replace(/\\/g, '/'));
+      });
+      assert(JSON.stringify(handoffTransitionCallers) === JSON.stringify(['harness/scripts/goal-phase-runtime.ts']),
+        `handoff transition callers=${JSON.stringify(handoffTransitionCallers)}`);
     },
   },
   {
@@ -189,6 +212,9 @@ const cases: Case[] = [
         'attended compatibility driver regained independent progression');
       assert(!/for\s*\(let round|runInSessionRound|assessFeature/.test(host),
         'attended host entry regained independent progression');
+      const compatibility = readScript('utils/goal-phase-runtime.ts');
+      assert(!/consumeHandoffAtBoundary|quiesceRunOwner|appendGoalEventFenced/.test(compatibility),
+        'handoff compatibility API regained lifecycle transition authority');
     },
   },
   {
@@ -202,6 +228,24 @@ const cases: Case[] = [
       ), 'goal runtime reads the live diff-base env value');
       assert(executor.includes('HARNESS_DIFF_BASE_REF') && runtime.includes("deleteEnvKeyCaseInsensitive(childEnv, 'HARNESS_DIFF_BASE_REF')"),
         'goal env scrub boundary disappeared');
+      const liveReaders = productionTypeScriptFiles().flatMap(file => {
+        const source = fs.readFileSync(file, 'utf8');
+        if (!/process\.env\s*\.\s*HARNESS_DIFF_BASE_REF|process\.env\s*\[\s*['"]HARNESS_DIFF_BASE_REF/.test(source)) {
+          return [];
+        }
+        return [{ file: path.relative(REPO_ROOT, file).replace(/\\/g, '/'), source }];
+      });
+      assert(JSON.stringify(liveReaders.map(item => item.file)) === JSON.stringify([
+        'harness/scripts/utils/phase-state.ts',
+      ]), `unexpected live diff-base readers=${JSON.stringify(liveReaders.map(item => item.file))}`);
+      for (const reader of liveReaders) {
+        assert(/if \(hasGoalExecutionSignal\(\)\) return undefined;[\s\S]*process\.env\.HARNESS_DIFF_BASE_REF/.test(reader.source),
+          `${reader.file} does not ignore HARNESS_DIFF_BASE_REF for every goal execution signal`);
+      }
+      for (const gate of ['check-coding.ts', 'check-exit.ts']) {
+        assert(readScript(gate).includes('resolveHarnessDiffBaseRef()'),
+          `${gate} bypasses the shared diff-base resolver`);
+      }
     },
   },
   {

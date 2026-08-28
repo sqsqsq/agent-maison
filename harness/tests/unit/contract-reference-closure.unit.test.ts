@@ -223,6 +223,35 @@ const cases: Case[] = [
       assert(result.status === 'FAIL' && /非法文件引用/.test(result.details ?? ''), JSON.stringify(result));
     }),
   },
+  {
+    name: 'M3 unknown file-like fields cannot bypass the explicit reference inventory',
+    run: () => withProject([
+      'schema_version: "1.0"',
+      'feature: bc-openCard',
+      'modules:',
+      '  - name: CardFeature',
+      '    layer: 02-Feature',
+      '    format: HAR',
+      '    change_type: modify',
+      '    package_path: 02-Feature/CardFeature',
+      '    exports: 02-Feature/CardFeature/Index.ets',
+      'navigation:',
+      '  route_map: 02-Feature/CardFeature/src/routes.json',
+      '  analytics_label: routes-v2',
+      'files:',
+      '  - 02-Feature/CardFeature/Index.ets',
+      '  - 02-Feature/CardFeature/src/routes.json',
+    ].join('\n'), (root, spec) => {
+      const issues = spec.referenceClosure?.invalid_paths ?? [];
+      assert(issues.filter(issue => issue.kind === 'unconsumed_file_field').length === 2,
+        JSON.stringify(issues));
+      assert(issues.some(issue => issue.source === 'modules[0].exports'), JSON.stringify(issues));
+      assert(issues.some(issue => issue.source === 'navigation.route_map'), JSON.stringify(issues));
+      assert(!issues.some(issue => issue.source === 'navigation.analytics_label'), JSON.stringify(issues));
+      const result = closureCheck(root, spec);
+      assert(result.status === 'FAIL' && /非法文件引用/.test(result.details ?? ''), JSON.stringify(result));
+    }),
+  },
 ];
 
 export function runAll(): UnitCaseResult[] {

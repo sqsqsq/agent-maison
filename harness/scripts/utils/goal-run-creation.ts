@@ -203,6 +203,22 @@ export function createGoalRun(options: {
   return { manifestPath, eventsPath, runCreated: event };
 }
 
+export function resolveActualGoalPhaseChainAtBirth(input: {
+  requestedChain: readonly string[];
+  fullWorkflowChain: readonly string[];
+  requiresLegacyFidelityRecovery: boolean;
+}): string[] {
+  const requested = normalizeGoalPhaseChain(input.requestedChain, 'requested phase chain');
+  if (!input.requiresLegacyFidelityRecovery || requested[0] === 'spec') return requested;
+  const specIndex = input.fullWorkflowChain.indexOf('spec');
+  const requestedStartIndex = input.fullWorkflowChain.indexOf(requested[0]);
+  if (specIndex < 0 || requestedStartIndex <= specIndex) return requested;
+  return normalizeGoalPhaseChain(
+    [...input.fullWorkflowChain.slice(specIndex, requestedStartIndex), ...requested],
+    'actual phase chain',
+  );
+}
+
 function validateRunCreatedEvent(event: GoalRunEvent, manifest: GoalManifest): string | null {
   const raw = event as unknown as Partial<RunCreatedEvent>;
   if (raw.schema_version !== '1.0' || raw.run_id !== manifest.run_id || raw.event_index !== 0) {

@@ -23,7 +23,11 @@ import { buildAgentSpawnEnv } from '../../scripts/utils/agent-invoke';
 import { resolveGoalRunBaseline } from '../../scripts/utils/goal-run-baseline';
 import { classifyGoalRunsDir } from '../../scripts/utils/fidelity-shared';
 import { resolveLatestRunId } from '../../scripts/utils/goal-progress';
-import { hasGoalExecutionSignal, isAgentSideGoalHarness } from '../../scripts/utils/phase-state';
+import {
+  hasGoalExecutionSignal,
+  isAgentSideGoalHarness,
+  resolveHarnessDiffBaseRef,
+} from '../../scripts/utils/phase-state';
 
 const SHA = 'a'.repeat(40);
 const unattended = { write_mode: 'full-access' as const, approval_mode: 'never' as const };
@@ -270,6 +274,34 @@ const cases: Array<{ name: string; run: () => void }> = [
       const env = buildAgentSpawnEnv({ Harness_Diff_Base_Ref: 'evil', SAFE: '1' }, {});
       assert(!Object.keys(env).some(key => key.toUpperCase() === 'HARNESS_DIFF_BASE_REF'));
       assert.strictEqual(env.SAFE, '1');
+    },
+  },
+  {
+    name: 'every goal execution signal ignores HARNESS_DIFF_BASE_REF while direct harness keeps it',
+    run: () => {
+      const keys = [
+        'MAISON_GOAL_RUN_ID', 'MAISON_GOAL_ATTEMPT', 'MAISON_GOAL_ATTEMPT_PHASE',
+        'MAISON_GOAL_RUNNER', 'MAISON_GOAL_HEADLESS', 'HARNESS_DIFF_BASE_REF',
+      ] as const;
+      const saved = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+      try {
+        for (const key of keys) delete process.env[key];
+        process.env.HARNESS_DIFF_BASE_REF = 'main';
+        assert.strictEqual(resolveHarnessDiffBaseRef(), 'main');
+        for (const signal of keys.slice(0, 5)) {
+          for (const key of keys.slice(0, 5)) delete process.env[key];
+          process.env[signal] = signal === 'MAISON_GOAL_RUNNER' || signal === 'MAISON_GOAL_HEADLESS'
+            ? '1'
+            : 'present';
+          assert.strictEqual(resolveHarnessDiffBaseRef(), undefined, signal);
+        }
+      } finally {
+        for (const key of keys) {
+          const value = saved[key];
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+      }
     },
   },
   {
