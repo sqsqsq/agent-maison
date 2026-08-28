@@ -90,9 +90,24 @@ hash、authority、失败语义、两条最小接入流程、Story 类扩展职�
 
 ### contracts.yaml 文件引用闭包（Breaking）
 
-- plan closure 现在把 contracts 中 schema 声明的文件字段解析为内存视图，并要求它们全部属于规范化后的顶层 `contracts.files`。覆盖 data model/interface/component 文件、`resource_keys` 的 `path`/`media`、页面与路由注册文件、HAR build/export 文件和 `prd_to_code_traceability[].key_files`。
+- plan closure 现在把 contracts 中 schema 声明的文件字段解析为内存视图，并要求它们全部属于规范化后的顶层 `contracts.files`。覆盖 data model/interface/component 文件、`resource_keys` 的 `path`/`media`、`navigation.config_files`、HAR build/export 文件和 `prd_to_code_traceability[].key_files`。
 - `contracts.files` 是唯一授权集合。文件已存在、与 spec asset 字节相同、由生成器产出或在其他字段出现，都不会自动获得 coding/UI scope 授权；框架也不会写 reference graph/manifest sidecar。
 - 升级已有 feature 时，若 `contract_file_reference_closure` 失败，请回到 plan，把诊断中的确需交付路径逐项加入 `contracts.files`，重新生成/关闭 contracts 并重跑 plan harness。不要在 coding 阶段扩写 contracts。
+
+#### navigation 段的 canonical 形态与 `registration_points`（Breaking，消费者需动手两处）
+
+- **navigation 只保留 `config_files`**：3.0 canonical 的 navigation 文件字段唯一——
+
+  ```yaml
+  navigation:
+    config_files:
+      - 02-Feature/CardFeature/src/main/resources/base/profile/main_pages.json
+      - 02-Feature/CardFeature/src/main/resources/base/profile/route_map.json
+  ```
+
+  语义是"导航注册/配置文件清单"，由真实消费者（hmos-app `page_registration`）塑形；每条路径同样必须列入 `contracts.files`。其它承载文件路径的 navigation 键——含嵌套在 `pages[]`/`routes[]` 之类容器里的形态——一律判 `unconsumed_file_field` BLOCKER。
+- **删除 `registration_points`**：该字段全仓无任何消费者，不是旧形态、不做别名归一。请从 contracts.yaml 删除；若确需声明注册文件，改写为 `navigation.config_files`。
+- 阶段归属：plan 闭包只裁决路径安全/规范化与 `contracts.files` 授权，**允许**声明 coding 将新建的文件；物理存在性由 coding `file_completeness` 裁决（已授权但未建 → plan PASS、coding FAIL）。同一轮里 hmos-app `page_registration` 也会如实 FAIL（不再以 SKIP 冒充成功）。
 
 ### 无人值守恢复与人签质量通行证退役（Breaking）
 
