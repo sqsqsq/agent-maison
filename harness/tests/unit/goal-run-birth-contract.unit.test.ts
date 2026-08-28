@@ -20,6 +20,7 @@ import {
   resolveManifestIdentityBaseline,
 } from '../../scripts/goal-runner';
 import { buildAgentSpawnEnv } from '../../scripts/utils/agent-invoke';
+import { resolveGoalRunBaseline } from '../../scripts/utils/goal-run-baseline';
 import { classifyGoalRunsDir } from '../../scripts/utils/fidelity-shared';
 import { resolveLatestRunId } from '../../scripts/utils/goal-progress';
 import { hasGoalExecutionSignal, isAgentSideGoalHarness } from '../../scripts/utils/phase-state';
@@ -36,6 +37,22 @@ function fixture(end = 'testing'): { root: string; manifest: ReturnType<typeof b
   return { root, manifest };
 }
 
+function writeFrameworkConfig(root: string): void {
+  fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({
+    schema_version: '1.1',
+    project_name: 'BirthContractFixture',
+    project_profile: { name: 'hmos-app', sub_variant: 'app' },
+    architecture: {
+      outer_layers: [{ id: '02-Feature', can_depend_on: [], intra_layer_deps: 'dag' }],
+      module_inner_layers: ['shared'],
+      inner_dependency_direction: 'upward',
+      cross_module_exports_file: 'index.ets',
+    },
+    paths: { features_dir: 'doc/features', docs_committed: false },
+    materialized_adapters: ['codex'],
+  }, null, 2), 'utf8');
+}
+
 const cases: Array<{ name: string; run: () => void }> = [
   {
     name: 'coding/UT chain freezes exact HEAD, writes manifest before one run_created and round-trips identity',
@@ -48,10 +65,53 @@ const cases: Array<{ name: string; run: () => void }> = [
         const lines = fs.readFileSync(created.eventsPath, 'utf8').trim().split(/\r?\n/);
         assert.strictEqual(lines.length, 1);
         assert.strictEqual(JSON.parse(lines[0]).type, 'run_created');
+        assert.deepStrictEqual(created.runCreated.phase_chain, ['spec', 'plan', 'coding', 'ut']);
+        assert.deepStrictEqual(manifest.phase_chain, created.runCreated.phase_chain);
         assert.strictEqual(inspectGoalRunCreation(root, manifest).state, 'complete');
         assert.strictEqual(loadGoalManifestFromRun(root, manifest.run_id, { feature: 'demo' }).run_base_sha, SHA);
         assert('run_base_sha' in computeManifestIdentityFields(manifest));
       } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: 'shared baseline resolver rejects run_base_sha presence and value drift from birth',
+    run: () => {
+      const injected = fixture('plan');
+      const deleted = fixture('coding');
+      const changed = fixture('coding');
+      try {
+        for (const item of [injected, deleted, changed]) writeFrameworkConfig(item.root);
+        createGoalRun({ projectRoot: injected.root, manifest: injected.manifest, chain: ['spec', 'plan'] });
+        const injectedPath = path.join(injected.root, injected.manifest.report_dir, 'manifest.json');
+        fs.writeFileSync(injectedPath, JSON.stringify({ ...injected.manifest, run_base_sha: 'b'.repeat(40) }), 'utf8');
+        const injectedBaseline = resolveGoalRunBaseline(injected.root, 'demo', injected.manifest.run_id);
+        assert.strictEqual(injectedBaseline.available, false);
+        assert.match(injectedBaseline.available ? '' : injectedBaseline.reason, /存在性不匹配/);
+
+        createGoalRun({
+          projectRoot: deleted.root, manifest: deleted.manifest, chain: ['coding'], resolveHead: () => SHA,
+        });
+        const deletedPath = path.join(deleted.root, deleted.manifest.report_dir, 'manifest.json');
+        const deletedManifest = { ...deleted.manifest } as Record<string, unknown>;
+        delete deletedManifest.run_base_sha;
+        fs.writeFileSync(deletedPath, JSON.stringify(deletedManifest), 'utf8');
+        const deletedBaseline = resolveGoalRunBaseline(deleted.root, 'demo', deleted.manifest.run_id);
+        assert.strictEqual(deletedBaseline.available, false);
+        assert.match(deletedBaseline.available ? '' : deletedBaseline.reason, /存在性不匹配/);
+
+        createGoalRun({
+          projectRoot: changed.root, manifest: changed.manifest, chain: ['coding'], resolveHead: () => SHA,
+        });
+        const changedPath = path.join(changed.root, changed.manifest.report_dir, 'manifest.json');
+        fs.writeFileSync(changedPath, JSON.stringify({ ...changed.manifest, run_base_sha: 'c'.repeat(40) }), 'utf8');
+        const changedBaseline = resolveGoalRunBaseline(changed.root, 'demo', changed.manifest.run_id);
+        assert.strictEqual(changedBaseline.available, false);
+        assert.match(changedBaseline.available ? '' : changedBaseline.reason, /出生摘要不匹配/);
+      } finally {
+        fs.rmSync(injected.root, { recursive: true, force: true });
+        fs.rmSync(deleted.root, { recursive: true, force: true });
+        fs.rmSync(changed.root, { recursive: true, force: true });
+      }
     },
   },
   {

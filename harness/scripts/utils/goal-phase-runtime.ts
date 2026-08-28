@@ -19,7 +19,9 @@ import {
   type HandoffMailboxQuarantine,
   writeHandoffRequest,
 } from './goal-handoff';
-import { isPhaseWithinBatchRange } from './phase-transition-policy';
+import { recommendationAuthorized } from './phase-transition-policy';
+
+export { recommendationAuthorized } from './phase-transition-policy';
 
 export { GoalPhaseRuntime } from '../goal-phase-runtime';
 
@@ -95,29 +97,6 @@ export function formatGoalRoundStatus(input: {
     `运行方式=${userFacingRunMode(input.mode)}`,
     `等待=${input.waiting || '无'}`,
   ].join(' | ');
-}
-
-export function recommendationAuthorized(
-  recommendation: AssessRecommendation,
-  authorization: AssessAuthorizationContext,
-  chain: string[],
-  opts?: { startPhase?: string },
-): boolean {
-  if (recommendation.action === 'stop') return false;
-  if (authorization.mode === 'goal_mode') return true;
-  if (authorization.mode === 'manual') return false;
-  if (!recommendation.phase || !authorization.through_phase) return false;
-  const targetIndex = chain.indexOf(recommendation.phase);
-  const throughIndex = chain.indexOf(authorization.through_phase);
-  if (targetIndex < 0 || throughIndex < 0 || targetIndex > throughIndex) return false;
-  if (recommendation.runner_action === 'backtrack_to_phase') {
-    if (!opts?.startPhase) return false;
-    const startIndex = chain.indexOf(opts.startPhase);
-    return startIndex >= 0 && targetIndex >= startIndex;
-  }
-  const fromPhase = targetIndex > 0 ? chain[targetIndex - 1] : chain[targetIndex];
-  return recommendation.phase === fromPhase ||
-    isPhaseWithinBatchRange(fromPhase, recommendation.phase, authorization.through_phase);
 }
 
 export function deriveInSessionFingerprint(result: InSessionRoundResult): string {

@@ -4,6 +4,7 @@
  */
 
 import type { WorkflowSpec } from '../../workflow-loader';
+import type { AssessAuthorizationContext, AssessRecommendation } from './assess';
 import {
   LEGACY_FEATURE_PHASE_ORDER,
   effectiveRequires,
@@ -495,6 +496,30 @@ export function isPhaseWithinBatchRange(
   const throughIdx = FEATURE_PHASE_ORDER.indexOf(throughPhase);
   if (fromIdx < 0 || toIdx < 0 || throughIdx < 0) return false;
   return toIdx === fromIdx + 1 && toIdx <= throughIdx;
+}
+
+/** Existing attended authorization policy, shared by compatibility callers and GoalPhaseRuntime. */
+export function recommendationAuthorized(
+  recommendation: AssessRecommendation,
+  authorization: AssessAuthorizationContext,
+  chain: string[],
+  opts?: { startPhase?: string },
+): boolean {
+  if (recommendation.action === 'stop') return false;
+  if (authorization.mode === 'goal_mode') return true;
+  if (authorization.mode === 'manual') return false;
+  if (!recommendation.phase || !authorization.through_phase) return false;
+  const targetIndex = chain.indexOf(recommendation.phase);
+  const throughIndex = chain.indexOf(authorization.through_phase);
+  if (targetIndex < 0 || throughIndex < 0 || targetIndex > throughIndex) return false;
+  if (recommendation.runner_action === 'backtrack_to_phase') {
+    if (!opts?.startPhase) return false;
+    const startIndex = chain.indexOf(opts.startPhase);
+    return startIndex >= 0 && targetIndex >= startIndex;
+  }
+  const fromPhase = targetIndex > 0 ? chain[targetIndex - 1] : chain[targetIndex];
+  return recommendation.phase === fromPhase ||
+    isPhaseWithinBatchRange(fromPhase, recommendation.phase, authorization.through_phase);
 }
 
 /**

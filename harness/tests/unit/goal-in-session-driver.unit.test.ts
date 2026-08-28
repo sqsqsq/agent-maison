@@ -147,6 +147,68 @@ const cases: TestCase[] = [
     },
   },
   {
+    name: 'production host bridge manual authorization performs zero agent or gate invokes',
+    run: async () => {
+      const root = setupGoalRuntimeHost('codex').root;
+      try {
+        const probe = await runGoalRuntimeChain(root, {
+          viaHostBridge: true,
+          adapter: 'codex',
+          runId: 'host-manual-zero',
+          hostAuthorization: { mode: 'manual' },
+        });
+        assert(probe.exitCode === 0, `manual boundary exit=${probe.exitCode}`);
+        assert(probe.invokedPhases.length === 0, `manual invoked=${probe.invokedPhases.join(',')}`);
+        assert(probe.harnessPhases.length === 0, `manual gates=${probe.harnessPhases.join(',')}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'production host bridge batch authorization never crosses through_phase',
+    run: async () => {
+      const root = setupGoalRuntimeHost('codex').root;
+      try {
+        const probe = await runGoalRuntimeChain(root, {
+          viaHostBridge: true,
+          adapter: 'codex',
+          runId: 'host-batch-coding',
+          hostAuthorization: { mode: 'batch_authorized', through_phase: 'coding' },
+        });
+        assert(probe.exitCode === 0, `batch boundary exit=${probe.exitCode}`);
+        assert(probe.invokedPhases.join(',') === 'spec,plan,coding',
+          `batch escaped authorization=${probe.invokedPhases.join(',')}`);
+        assert(probe.harnessPhases.join(',') === 'spec,plan,coding',
+          `batch gate sequence=${probe.harnessPhases.join(',')}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'production host bridge single-round boundary starts at most one phase',
+    run: async () => {
+      const root = setupGoalRuntimeHost('codex').root;
+      try {
+        const probe = await runGoalRuntimeChain(root, {
+          viaHostBridge: true,
+          adapter: 'codex',
+          runId: 'host-single-round',
+          hostAuthorization: { mode: 'goal_mode' },
+          hostMaxRounds: 1,
+        });
+        assert(probe.exitCode === 0, `single-round exit=${probe.exitCode}`);
+        assert(probe.invokedPhases.join(',') === 'spec',
+          `single-round crossed phase boundary=${probe.invokedPhases.join(',')}`);
+        assert(probe.harnessPhases.join(',') === 'spec',
+          `single-round gate sequence=${probe.harnessPhases.join(',')}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
     name: 'host bridge rejects run-mode and adapter drift before owner CAS or event append',
     run: async () => {
       const root = setupGoalRuntimeHost('codex').root;

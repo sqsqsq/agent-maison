@@ -89,6 +89,11 @@ export interface GoalManifest {
    * 条件入身份哈希；同一 run write-once。纯 spec/plan 链可无此键。
    */
   run_base_sha?: string;
+  /**
+   * goal-runtime-contract-enforcement-fixes：fresh birth 已解析完成的实际执行链。
+   * run_created 同值绑定；modern resume/attach 只读此链，不重新解析 workflow/track。
+   */
+  phase_chain?: FeaturePhase[];
   adapter?: string;
   /** 运行身份来源（诚实化回溯）：user_explicit|entry_declared|local_config|registry|override */
   adapter_provenance?: string;
@@ -218,6 +223,9 @@ export function computeManifestIdentityFields(manifest: GoalManifest): Record<st
   if (Object.prototype.hasOwnProperty.call(manifest, 'run_base_sha')) {
     fields.run_base_sha = manifest.run_base_sha ?? null;
   }
+  if (Object.prototype.hasOwnProperty.call(manifest, 'phase_chain')) {
+    fields.phase_chain = manifest.phase_chain ?? null;
+  }
   if (Object.prototype.hasOwnProperty.call(manifest, 'successor_of')) {
     fields.successor_of = manifest.successor_of ?? null;
     fields.inherited_round_fingerprints = manifest.inherited_round_fingerprints ?? null;
@@ -305,6 +313,25 @@ export function newRunId(): string {
 function normalizePhase(v: unknown, fallback: FeaturePhase): FeaturePhase {
   if (typeof v !== 'string' || !v.trim()) return fallback;
   return v.trim() as FeaturePhase;
+}
+
+export function normalizeGoalPhaseChain(
+  value: unknown,
+  label = 'phase_chain',
+): FeaturePhase[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`[goal-manifest] ${label} 必须为非空 phase 数组`);
+  }
+  const normalized = value.map((item) => {
+    if (typeof item !== 'string' || !item.trim()) {
+      throw new Error(`[goal-manifest] ${label} 只能包含非空 phase 字符串`);
+    }
+    return item.trim() as FeaturePhase;
+  });
+  if (new Set(normalized).size !== normalized.length) {
+    throw new Error(`[goal-manifest] ${label} 不得包含重复 phase`);
+  }
+  return normalized;
 }
 
 function mergeDependencyPolicy(raw?: Partial<DependencyPolicy>): Required<DependencyPolicy> {
@@ -668,6 +695,10 @@ export function buildGoalManifestFromInput(
     runBaseSha = raw;
   }
 
+  const phaseChain = Object.prototype.hasOwnProperty.call(input, 'phase_chain')
+    ? normalizeGoalPhaseChain(input.phase_chain)
+    : undefined;
+
   return {
     ...(rawFidelity ? { fidelity: rawFidelity as GoalManifest['fidelity'] } : {}),
     ...(rawFidelityReceipt ? { fidelity_receipt: rawFidelityReceipt } : {}),
@@ -675,6 +706,7 @@ export function buildGoalManifestFromInput(
     ...(visualProviderPin ? { visual_provider_pin: visualProviderPin } : {}),
     ...(requirementSourceFiles ? { requirement_source_files: requirementSourceFiles } : {}),
     ...(runBaseSha ? { run_base_sha: runBaseSha } : {}),
+    ...(phaseChain ? { phase_chain: phaseChain } : {}),
     schema_version: '1.0',
     start_phase: normalizePhase(input.start_phase, 'spec'),
     end_phase: normalizePhase(input.end_phase, 'testing'),
@@ -1036,6 +1068,9 @@ export function validateLoadedGoalManifest(
   }
   if (manifest.run_base_sha !== undefined && !/^[0-9a-f]{40}$/.test(manifest.run_base_sha)) {
     throw new Error('[goal-manifest] run_base_sha 必须为 exact 40-hex Git SHA');
+  }
+  if (manifest.phase_chain !== undefined) {
+    manifest.phase_chain = normalizeGoalPhaseChain(manifest.phase_chain);
   }
   if (manifest.allow_blind_visual !== undefined && manifest.allow_blind_visual !== true) {
     throw new Error('[goal-manifest] allow_blind_visual 键在场时必须为 true');
