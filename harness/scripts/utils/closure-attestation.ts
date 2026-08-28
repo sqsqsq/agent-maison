@@ -307,17 +307,45 @@ export function writeReviewClosureAttestation(opts: WriteAttestationOptions): {
   return { absPath, attestation };
 }
 
+/**
+ * 最小结构校验（plan f3a9d2c7 review 返修 P2）：只查**对账真正要用的那几个字段**。
+ *
+ * 为什么不能只查 schema_version：一份「合法 JSON、结构错误」的 attestation（例如
+ * `inventory.files` 被写成对象或元素缺 sha256）会一路放行到
+ * `reconcileSourceTreeAgainstAttestation`，在那里抛 TypeError——生产上被 safeRun 兜成
+ * `framework_bug` BLOCKER，而不是规格承诺的 `review_closure_baseline_unavailable`，
+ * 恢复指引也跟着指错方向。基线读不成型就该在 loader 处判"基线不可用"（返回 null =
+ * 全部消费方既有的 fail-closed 通道），不新建 resolver、不改任何判定语义。
+ *
+ * 只校验 roots/files 形态；`file_count` / `aggregate_sha256` 属可选标注（goal 侧本就
+ * `?? null` 容忍），不入必填。
+ */
+function isWellFormedAttestation(parsed: unknown): parsed is ReviewClosureAttestation {
+  if (!parsed || typeof parsed !== 'object') return false;
+  const doc = parsed as { schema_version?: unknown; inventory?: unknown };
+  if (doc.schema_version !== CLOSURE_ATTESTATION_SCHEMA_VERSION) return false;
+  if (!doc.inventory || typeof doc.inventory !== 'object') return false;
+  const inv = doc.inventory as { roots?: unknown; files?: unknown };
+  if (!Array.isArray(inv.roots) || !inv.roots.every((r) => typeof r === 'string')) return false;
+  if (!Array.isArray(inv.files)) return false;
+  return inv.files.every((f) => {
+    if (!f || typeof f !== 'object') return false;
+    const entry = f as { path?: unknown; sha256?: unknown };
+    return typeof entry.path === 'string' && entry.path.length > 0
+      && typeof entry.sha256 === 'string' && entry.sha256.length > 0;
+  });
+}
+
 export function loadReviewClosureAttestation(
   projectRoot: string,
   feature: string,
 ): ReviewClosureAttestation | null {
   const absPath = reviewClosureAttestationPath(projectRoot, feature);
-  if (!fs.existsSync(absPath)) return null;
   try {
-    const parsed = JSON.parse(fs.readFileSync(absPath, 'utf-8')) as ReviewClosureAttestation;
-    if (parsed.schema_version !== CLOSURE_ATTESTATION_SCHEMA_VERSION) return null;
-    return parsed;
+    const parsed: unknown = JSON.parse(fs.readFileSync(absPath, 'utf-8'));
+    return isWellFormedAttestation(parsed) ? parsed : null;
   } catch {
+    // 不存在 / 读不动 / 不可解析——对调用方一律是"基线不可用"，走各自的 fail-closed。
     return null;
   }
 }

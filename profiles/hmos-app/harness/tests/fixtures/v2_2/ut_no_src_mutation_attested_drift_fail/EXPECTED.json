@@ -1,0 +1,14 @@
+{
+  "rules": [
+    {
+      "id": "ut_no_src_mutation",
+      "status": "FAIL",
+      "severity": "BLOCKER",
+      "details_includes": "review 后源码漂移"
+    },
+    {
+      "id": "ut_no_src_mutation",
+      "details_includes": "DemoFlow.ets"
+    }
+  ]
+}

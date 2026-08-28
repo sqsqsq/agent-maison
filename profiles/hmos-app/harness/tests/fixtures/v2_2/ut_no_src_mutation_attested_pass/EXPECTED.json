@@ -1,0 +1,14 @@
+{
+  "rules": [
+    {
+      "id": "ut_no_src_mutation",
+      "status": "PASS",
+      "severity": "BLOCKER",
+      "details_includes": "基线=review closure attestation"
+    },
+    {
+      "id": "ut_no_src_mutation",
+      "details_includes": "不依赖 git 提交状态"
+    }
+  ]
+}

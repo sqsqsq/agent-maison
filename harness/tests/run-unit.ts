@@ -115,6 +115,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'ut-file-scope', modulePath: './unit/ut-file-scope.unit.test' },
   { id: 'ut-module-selection', modulePath: './unit/ut-module-selection.unit.test' },
   { id: 'ut-build-config-files', modulePath: './unit/ut-build-config-files.unit.test' },
+  // plan f3a9d2c7 T3：direct 模式 ut_no_src_mutation 的 attestation-first 分派全路
+  { id: 'ut-direct-attestation-baseline', modulePath: './unit/ut-direct-attestation-baseline.unit.test' },
   { id: 'visual-handoff',   modulePath: './unit/visual-handoff.unit.test' },
   { id: 'ui-spec',          modulePath: './unit/ui-spec.unit.test' },
   { id: 'visual-fidelity',  modulePath: './unit/visual-fidelity.unit.test' },
