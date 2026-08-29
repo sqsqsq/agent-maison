@@ -94,6 +94,8 @@ cd framework/harness && npx ts-node harness-runner.ts --phase plan --feature {mo
 
 **AI Harness**：主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-plan.md`（9 项语义检查：外层依赖/模块内分层/模块最小性/拆分合理性/数据类型/P0P1 未决/架构一致/导航一致/验收追溯）。
 
+**Task prompt = `<features_dir>/<feature>/plan/reports/ai-prompt.md` 全文原样投递**（plan e5b8c3f7）：harness 已把 verifier 证据身份机器块写进该文件，它是 SubagentStop hook 绑定报告归属的唯一调用侧凭证。手抄模板、摘录片段或改写机器块 → 绑定失败 → 报告落 bedside、阶段不闭环。
+
 ## 阶段闭环判定（全局入口 §5.1，四条件缺一不可）
 
 1. `<features_dir>/<feature>/plan/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS；4. 完成回执经 `check-receipt.ts` 校验通过。四项全满足后设计阶段完成，**具备**进 coding 的资格；**不授权**自动开 coding。

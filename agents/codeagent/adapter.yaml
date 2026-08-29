@@ -90,3 +90,15 @@ notes: |
     探针法重采（hooks env 链两个变量名都覆盖）。
   - hard_hook 档位的对外声明以 plan c7a9e2f4 T6 宿主验收（PreToolUse exit2 真拒写/
     Stop 真拦收尾/SubagentStop 真落报告）完成为准。
+  - **verifier 闭环绑定：已实抓确认**（宿主采集 2026-08-29；实况见 plan e5b8c3f7 附录 A
+    与 openspec/changes/verifier-evidence-identity/tasks.md 附录 B）。
+    SubagentStop hook 以 payload 的子 agent 身份（agent_id / agent_transcript_path /
+    last_assistant_message）做三重等值绑定后才发布 verifier.report.json；实抓证实 codeagent
+    四个消费字段全在场且语义与 claude 同构（transcript_path=主会话、agent_transcript_path=
+    子代理且指向真实文件，其首条 user prompt 复现原样投递的 Task prompt）→ **共享 hook 直接
+    成立，无需 adapter-specific 分支**。payload 另有 is_kia_repo / process_id 两个本 hook 不
+    消费的字段（未知字段一律忽略），少一个 claude 侧本就可选的 prompt_id。
+  - **已实证差异：SubagentStop 的 matcher 不按 agent type 过滤**——注册项一律触发（实抓中
+    matcher="verifier" 对一个 agent_type="" 的子 agent 同样触发）。settings.json 里的
+    matcher 因此只是提示、不是过滤器；绑定完全不依赖它：非 verifier 子 agent 的转录里没有
+    verifier 证据身份机器块，一律 invocation_subject_absent → bedside，永远发布不了 canonical。

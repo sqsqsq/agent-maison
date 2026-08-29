@@ -87,6 +87,8 @@ cd framework/harness && npx ts-node harness-runner.ts --phase testing --feature 
 
 **AI Harness**：主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-testing.md`（测试用例完整性/步骤可重复性/预期结果具体性/NFR 覆盖/缺陷严重程度一致性/通过标准与结论一致性）。
 
+**Task prompt = `<features_dir>/<feature>/testing/reports/ai-prompt.md` 全文原样投递**（plan e5b8c3f7）：harness 已把 verifier 证据身份机器块写进该文件，它是 SubagentStop hook 绑定报告归属的唯一调用侧凭证。手抄模板、摘录片段或改写机器块 → 绑定失败 → 报告落 bedside、阶段不闭环。
+
 ## 阶段闭环判定（全局入口 §5.1，四条件缺一不可）
 
 > **标准 feature 模式**适用下文四条件。**即席（`_adhoc`）模式**不宣称「某需求 testing 阶段闭环」：不写 receipt、不强求 `harness-runner testing --feature _adhoc` PASS、不要求 verifier；以交付 trace.json 摘要为主。
