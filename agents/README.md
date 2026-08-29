@@ -213,20 +213,34 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 - `settings_file` 注册 `Stop` / `SubagentStop` hook；
 - `hooks/check-phase-completion.mjs` 在主 agent 即将结束消息时按 CLAUDE.md §5.1 四条件物理拦截"假完成"；
 - `hooks/record-verifier-report.mjs` 在 verifier 子 agent 结束时**做身份绑定后**发布
-  `verifier.report.json`（唯一机器真源），供 `check-receipt.ts` 与其余机器消费者经
-  `loadVerifierEvidence()` 读取；`verifier.report.md` 只是它生成的人读投影。
+  `verifier.report.<subject>.json`（唯一机器真源），供 `check-receipt.ts` 与其余机器消费者经
+  `loadVerifierEvidence()` 读取；同名 `.md` 只是它生成的人读投影。
 
-### SubagentStop payload 消费契约（plan e5b8c3f7）
+### verifier 能力声明（plan a9d4e7c2）
+
+verifier 不是每阶段必跑的仪式，而是按 workflow 声明 + evidence policy + **adapter 能力**动态
+启用的能力。adapter 侧的声明面是 `adapter.yaml` 的 `verifier_capability`
+（`transport` / `publisher` / `modes`），运行时由 `resolveVerifierPlan` 解析为
+`disabled | enabled | blocked` 三态，runner / check-receipt / Skill 指引共享同一结果。
+
+**只登记真实实测过的 mode**：claude / codeagent 的 `interactive` 已由 SubagentStop 实抓验收；
+headless / goal 目前仍走 bedside 旁路，未验收前不得预填——虚标会让 runner 生成一份永远
+没人发布的 request。未声明该字段的 adapter = 无能力：`required` × `interactive` 下解析为
+`blocked`（脚本诊断照常完整执行，脚本 PASS 后才报 `INCOMPLETE / verifier_provider_unavailable`）。
+
+### SubagentStop payload 消费契约（plan e5b8c3f7 / a9d4e7c2）
 
 hook 消费的字段：`agent_id`（子 agent 身份）、`agent_transcript_path`（**子代理**转录，取首条
-user prompt 里的调用侧机器块）、`last_assistant_message`（子代理终答，取唯一版本化终态块）、
-`agent_type`（来源标注）。`transcript_path` 指**主会话**，身份与结论都不从它取。
+user prompt —— 它必须恰好是那份 request JSON）、`last_assistant_message`（子代理终答，取唯一
+版本化终态块）、`agent_type`（来源标注）。`transcript_path` 指**主会话**，身份与结论都不从它取。
 `agent_type` 可能是空串（发射点为 `a ?? ""`），故只如实记录、不据此 fail-closed。
 
-绑定=三重等值：调用侧 subject == 终态块 subject == `summary.verifier_subject_id`。任一字段缺失、
-转录不可读、机器块缺失/重复、subject 不等或已换代 → 落 `framework/harness/state/last-verifier-report.json`
-的 **bedside** 非权威记录（带机器可读 `reason`），canonical 证据一字不动，`.current-phase.json`
-一字不写。
+绑定=四方对账：request 自述 subject == 按 request 字段**重算**的 subject ==
+`summary.verifier_subject_id` == 终态块回显；且 `prompt_path` 等于由 config 推导的 canonical
+路径、`prompt_sha256` 等于该文件的磁盘实测哈希。任一字段缺失、转录不可读、request 不可解析
+（手抄/夹带/改字段）、subject 不等或已换代、prompt 已被新一轮 harness 换代 → 落
+`framework/harness/state/last-verifier-report.json` 的 **bedside** 非权威记录（带机器可读
+`reason`），canonical 证据一字不动，`.current-phase.json` 一字不写。
 
 **降级矩阵**：
 
@@ -234,13 +248,13 @@ user prompt 里的调用侧机器块）、`last_assistant_message`（子代理�
 | --- | --- | --- |
 | claude | 已实证（Claude Code 2.1.246 发行二进制内 zod schema + 发射点） | 支持 verifier 闭环 |
 | codeagent | 已实证（宿主采集 2026-08-29） | 支持 verifier 闭环，共享同一份 hook、无 adapter-specific 分支 |
-| cursor / codex / generic / … | 无 SubagentStop 物理层 | 不适用（闭环靠 Layer 1+2） |
+| cursor / codex / generic / … | 无 SubagentStop 物理层 | 未声明 `verifier_capability` = 无能力；`required` × interactive 下解析为 `blocked`（脚本诊断不受影响） |
 
 codeagent 侧的两点实抓事实：payload 多出 `is_kia_repo` / `process_id`（本 hook 不消费，未知字段
 一律忽略），少一个 claude 侧本就可选的 `prompt_id`；**SubagentStop 的 matcher 不按 agent type
 过滤**，注册项一律触发。后者不改变任何结论——非 verifier 子 agent 的转录里没有机器块，一律
-`invocation_subject_absent` → bedside——但意味着 **settings.json 的 matcher 只是提示、不是过滤器**，
-任何 adapter 都不得把它当身份闸门。
+`invocation_request_unparseable` → bedside——但意味着 **settings.json 的 matcher 只是提示、不是过滤器**，
+任何 adapter 都不得把它当身份闸门。（非 verifier 子 agent 的转录首条 prompt 不是一份合法 request JSON，一律 `invocation_request_unparseable` → bedside。）
 
 > codeagent 的 hard_hook 档位对外声明以 plan c7a9e2f4 T6 宿主验收（PreToolUse exit2 真拒写 /
 > Stop 真拦收尾 / SubagentStop 真落报告）完成为准；其中 SubagentStop 一项已由 2026-08-29 的

@@ -92,10 +92,12 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'guard-framework-write', modulePath: './unit/guard-framework-write.unit.test' },
   { id: 'hooks-config-upsert', modulePath: './unit/hooks-config-upsert.unit.test' },
   { id: 'record-verifier-report-hook', modulePath: './unit/record-verifier-report-hook.unit.test' },
-  // plan e5b8c3f7 T5：verifier 证据身份绑定十三件回归（subject 指纹 + JSON 真源收编）
+  // plan a9d4e7c2 T1：verifier 能力解析矩阵（disabled/enabled/blocked 三态穷举）
+  { id: 'verifier-plan', modulePath: './unit/verifier-plan.unit.test' },
+  // plan a9d4e7c2 复评：verifier 生产端接线（模板解析/严格 request/三态分流/hook 动作/候选锚定）
+  { id: 'verifier-production-routing', modulePath: './unit/verifier-production-routing.unit.test' },
+  // plan a9d4e7c2 T2/T6：短 request 协议 + 证据身份绑定全套回归
   { id: 'verifier-evidence-identity', modulePath: './unit/verifier-evidence-identity.unit.test' },
-  // review P1-2：subject 输入面的物质性契约（telemetry 不换代 / 真实变化必换代）
-  { id: 'verifier-subject-material', modulePath: './unit/verifier-subject-material.unit.test' },
   { id: 'profile-routing',  modulePath: './unit/profile-routing.unit.test' },
   { id: 'profile-personal-prerequisites', modulePath: './unit/profile-personal-prerequisites.unit.test' },
   { id: 'framework-config-schema', modulePath: './unit/framework-config-schema.unit.test' },

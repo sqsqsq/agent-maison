@@ -14,7 +14,6 @@ import { formatReadImageEvidenceInstructions } from './read-image-evidence';
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { sha256 } from './verifier-subject';
 import { featurePhaseReportsDir, relFeaturesDir } from '../../config';
 import {
   Phase,
@@ -232,24 +231,36 @@ export function assembleAIPrompt(
   options?: {
     imageInput?: ImageInputMode;
     /**
-     * plan e5b8c3f7 review P1-2：把「真正交给 verifier 的语义内容」的规范化摘要交回
-     * 调用方，供 subject 派生。它与写盘文本**同源同一次装配**，只把两处 runner
-     * telemetry 换成占位符：`{timestamp}`（墙钟）与 `{script_report}`（另经
-     * `canonicalScriptReportDigest` 结构化投影单独入 subject）。
+     * plan a9d4e7c2 P1-1：**workflow 声明的模板路径**（`verifier_prompt`，相对 harness 根），
+     * 由 `resolveVerifierPlan` 带出。调用方必须传——装配用哪个模板是 workflow 的声明说了算。
      *
-     * 用回调而不是改返回类型：现有两处单测把返回值当 prompt 正文直接用。
+     * 曾经这里硬编码 `prompts/verify-<phase>.md` 并在文件缺失时**偷偷造一个 fallback**：
+     * custom workflow 声明模板 B，runner 却按 A（或 fallback）装配，hook 仍会把这份
+     * 「审错了东西」的 prompt 哈希绑成有效证据——静默审错，正是本 plan 要根治的形态。
+     * 缺省仅为**兼容既有非 verifier 调用点**（如 init 的 prompt 组装）；一旦传入，
+     * 声明路径不可读即抛错，绝不回退。
      */
-    onCanonicalPromptDigest?: (digest: string) => void;
+    verifierPromptRel?: string;
   },
 ): string {
-  const templatePath = path.join(harnessRoot, 'prompts', `verify-${phase}.md`);
-  let template: string;
-
-  if (fs.existsSync(templatePath)) {
-    template = fs.readFileSync(templatePath, 'utf-8');
-  } else {
-    template = buildFallbackTemplate(phase);
+  const declaredRel = options?.verifierPromptRel?.trim();
+  const templatePath = declaredRel
+    ? path.resolve(harnessRoot, declaredRel)
+    : path.join(harnessRoot, 'prompts', `verify-${phase}.md`);
+  if (!fs.existsSync(templatePath)) {
+    // fail-closed：声明了却读不到 = 声明与磁盘不一致，必须明确失败。
+    // 绝不 fallback——"造一个通用模板顶上"会让 verifier 审了一份谁也没声明过的东西，
+    // 而绑定链照样把它当有效证据。
+    throw new Error(
+      `[report-generator] verifier prompt 模板不存在：${templatePath}` +
+        (declaredRel
+          ? `（workflow 为 phase "${phase}" 声明的是 verifier_prompt: ${declaredRel}）`
+          : `（phase "${phase}" 的默认模板）`) +
+        '。请修正 workflow 的 verifier_prompt 声明或补齐该模板；框架不会自动生成替代品。',
+    );
   }
+  const template0 = fs.readFileSync(templatePath, 'utf-8');
+  let template: string = template0;
 
   if (resolvedProfile) {
     const overlayPath = path.join(
@@ -333,12 +344,10 @@ export function assembleAIPrompt(
     return out + tail;
   };
 
+  // plan a9d4e7c2 T4：这里曾经额外产出一份「规范化摘要」（把 {timestamp} 与
+  // {script_report} 换成占位符）供 subject 派生，好让零改动重跑不换代。整套 canonical
+  // 投影已随「稳定 subject」承诺一并裁撤——subject 现在直接哈希写盘的 ai-prompt.md 字节。
   const assembled = fill(scriptReportJson, new Date().toISOString());
-  if (options?.onCanonicalPromptDigest) {
-    options.onCanonicalPromptDigest(
-      sha256(fill('<script-report:projected-separately>', '<timestamp:volatile>')),
-    );
-  }
 
   const promptPath = path.join(dir, 'ai-prompt.md');
   fs.writeFileSync(promptPath, assembled, 'utf-8');
@@ -346,61 +355,6 @@ export function assembleAIPrompt(
   return assembled;
 }
 
-/** 当 prompt 模板不存在时，生成一个通用回退模板 */
-function buildFallbackTemplate(phase: Phase): string {
-  return `# ${phase} 阶段语义验证
-
-## 你的角色
-你是一个独立的审查员。你的职责是根据 Spec 约束客观评估 ${phase} 阶段的产出是否满足要求。
-
-## 阶段
-${phase}
-
-## 功能模块
-{feature_name}
-
-## Spec 规约内容
-
-\`\`\`yaml
-{spec_content}
-\`\`\`
-
-## 脚本 Harness 已通过的检查
-
-\`\`\`json
-{script_report}
-\`\`\`
-
-## 上下文文件
-
-{context_files}
-
-## 验证任务
-请针对 Spec 中所有 semantic_checks 项逐一评估，对每项给出 PASS / FAIL / WARN 判定。
-
-## 输出格式（必须严格遵循）
-
-\`\`\`yaml
-verification_result:
-  phase: "${phase}"
-  feature: "{feature_name}"
-  timestamp: "{timestamp}"
-  checks:
-    - id: <check_id>
-      status: PASS | FAIL | WARN
-      severity: BLOCKER | MAJOR | MINOR
-      details: "具体发现..."
-      affected_files: ["path/to/file"]
-      suggestion: "修正建议..."
-  summary:
-    total: N
-    pass: N
-    fail: N
-    warn: N
-    verdict: PASS | FAIL
-\`\`\`
-`;
-}
 
 // --------------------------------------------------------------------------
 // 合并报告

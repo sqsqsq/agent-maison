@@ -7,8 +7,8 @@
 //   · 旧 testB 断言「interactive 按 .current-phase.json 写目录」——那正是 2026-04-27
 //     引入的根缺陷（触发时读共享状态文件推断归属），被单测固化成了"预期行为"。
 //     宿主 bc-openCard-1 的 UT verifier 覆写 coding 报告即由此而来。现在改为：
-//     归属只由**调用侧机器块**（ai-prompt.md 的 verifier_subject 块）决定，
-//     state 指向哪个阶段完全不影响落盘目标。
+//     归属只由**调用侧 request JSON**（verifier.request.<subject>.json 的 feature/phase）
+//     决定，state 指向哪个阶段完全不影响落盘目标。
 //   · 旧 :255 起断言「回写 last_verifier_report / 刷新 last_seen_*」——该写面已
 //     整体删除且**不得恢复**（终审确认：Stop 新鲜度实际只读 session_id + updated_at，
 //     见 check-phase-completion.mjs）。现在改为断言 state 文件字节零变化。
@@ -68,7 +68,7 @@ function testA_goalHeadlessBypass(): void {
       root,
       feature: 'X',
       phase: 'coding',
-      promptPath: coding.promptPath,
+      requestPath: coding.requestPath,
       subjectId: coding.subjectId,
       env: { MAISON_GOAL_HEADLESS: '1' },
     });
@@ -110,7 +110,7 @@ function testB_routingComesFromInvocationNotState(): void {
       root,
       feature: 'X',
       phase: 'ut',
-      promptPath: ut.promptPath,
+      requestPath: ut.requestPath,
       subjectId: ut.subjectId,
       agentId: 'agent-ut-1',
     });
@@ -148,7 +148,7 @@ function testC_hookNeverWritesPhaseState(): void {
       root,
       feature: 'X',
       phase: 'coding',
-      promptPath: coding.promptPath,
+      requestPath: coding.requestPath,
       subjectId: coding.subjectId,
       payloadOverride: { session_id: 'sid-new' },
     });
@@ -175,7 +175,7 @@ function testD_stopHookActiveShortCircuits(): void {
   const { root } = makeVerifierProject();
   try {
     const coding = seedPhase(root, 'X', 'coding');
-    const transcript = writeAgentTranscript(root, 'loop', buildInvocationPrompt(coding.promptPath));
+    const transcript = writeAgentTranscript(root, 'loop', buildInvocationPrompt(coding.requestPath));
     const out = runVerifierHook(root, {
       stop_hook_active: true,
       agent_id: 'agent-loop',

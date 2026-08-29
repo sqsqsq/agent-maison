@@ -90,6 +90,55 @@ goal_capability:
 相关说明：[Skill 契约](docs/concepts/skill-contracts.md)、[调和循环](docs/concepts/reconcile-loop.md)、[Goal 运行手册](docs/operations/goal-mode-runbook.md)。
 ---
 
+### verifier 能力化、短 request 投递与 summary 1.3（Breaking，plan a9d4e7c2）
+
+**verifier 不再是每阶段必跑的仪式，而是按能力启用。** 一次解析 workflow 的 `verifier_prompt`
+声明、feature track、evidence policy 与 adapter 的 `verifier_capability`，得到三态之一：
+
+- `disabled`：**缺席即为零**——不生成 `ai-prompt.md`、不生成 request、summary 不写
+  `verifier_subject_id` / `verifier_request` / `ai_prompt`，闭环也不要求 verifier 证据。
+  lite track 的 change/coding/exit、balanced 档的非保留 phase、profile 禁用的 phase、以及
+  workflow 未声明 `verifier_prompt` 的 phase 都在此列。**磁盘上残留的旧 prompt/request/report
+  永远不会重新激活已关闭的能力，也不需要你去清理。**
+- `enabled`：生成 `verifier.request.<subject>.json`，正常执行 verifier。
+- `blocked`：policy 声明 `required` 但当前 adapter 没有登记该模式的 verifier 能力。
+  **脚本门禁照常完整执行**——脚本 FAIL 如实报真实失败；脚本 PASS 才报
+  `INCOMPLETE / verifier_provider_unavailable`。
+
+**adapter 侧需要动手的一处**：`agents/<adapter>/adapter.yaml` 新增 `verifier_capability`
+（`transport` / `publisher` / `modes`）。claude 与 codeagent 已随发布件登记 `interactive`。
+自建 adapter 若确实具备 SubagentStop 发布链路且已实测，可照此登记；**未登记 = 无能力**，
+`full × interactive` 下会被判 `blocked`（这是如实结论，不是回归）。
+
+**投递协议改为短 request JSON（Breaking）。** 旧规则「把 `ai-prompt.md` 全文原样投递给 Task」
+已删除：真实样张可达 177KB，往返有损且机器块之外零校验。新规则——
+
+1. 跑 `harness-runner`；启用时它会打印并记录 `summary.verifier_request`；
+2. 把那份 `verifier.request.<subject>.json` 的**完整 JSON 正文**作为 Task prompt 投给
+   `subagent_type=verifier`（不要投 `ai-prompt.md` 全文、不要手抄或改写字段、不要前后夹带说明）；
+3. verifier 按其中的 `prompt_path` 自行 Read 原件，结束时回显 `subject_id`；
+4. 跑 `check-receipt.ts`；
+5. 关环用 `harness-runner.ts --sync-closure --phase <phase> --feature <feature>`。
+
+**第 5 步的口径变了**：`subject` 现在**按实际审查材料寻址**（`prompt_sha256` 直接哈希磁盘
+`ai-prompt.md` 字节，没有任何 canonical 投影）。因为组装出的 prompt 内嵌时间戳与整份 script
+report，**再跑一次完整 harness 会换代 subject**，刚发布的 verifier 证据随之失效。`--sync-closure`
+不重跑脚本 harness、也不重发 request，正是为关环这一步存在的入口。
+
+**summary 升级到 1.3。** `ai_prompt` / `verifier_subject_id` / `verifier_request` 成为**条件字段**
+（仅 `enabled` 时在场）；`1.2` 仍可读，作为上一代闭环域。
+
+**存量产物怎么办：**
+
+- 已 closed 且 evidence manifest 仍 fresh 的阶段（含 1.2 代）走 grandfather，**零动作**；
+- 3.0.0 生成但**未闭环**的 subject/ai-prompt 不再继续发布：只需**重跑当前 phase 的 harness**
+  （分钟级）拿到新 request，再按上面五步走完即可。**不回退业务代码、不重写上游产物、
+  不从 spec 重走、也不要求提交。**
+- 下游发现缺陷时的正常回退不变：回责任上游改 → 重跑上游 harness/verifier/receipt →
+  下游因 freshness 变 stale → 从下游继续。不清空 feature。
+
+---
+
 ## 首选路径：初始化 Skill 的 UPDATE 模式（编排化 · S1–S4）
 
 当实例根已存在 `framework.config.json` 时，再次执行 [`framework-init`](skills/project/framework-init/SKILL.md)（`/framework-init`）进入 **UPDATE** 模式，流程为：

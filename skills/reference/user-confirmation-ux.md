@@ -156,7 +156,7 @@ S1 **`InitTaskPlan.adapter_catalog[]`** 为唯一程序化候选源；registry `
 - ❌ 聊天 OK 但未写回 artifact（spec `[x]`、gap-notes）
 - ❌ freeform 提议未展示正文只要用户回 `1`
 - ❌ 多题并存时接受裸 `y` / `好`（init/setup 编排须 registry 编号；见 §3 gate/enum）
-- ❌ 阶段四件套 PASS 后在**同一 agent 执行流**自动 Read 下一 Skill 并开干（见 §8）
+- ❌ 阶段闭环（closed）后在**同一 agent 执行流**自动 Read 下一 Skill 并开干（见 §8）
 - ❌ 把 `phase-completion-receipt.md` / trace / 「可进入 Skill N」当作下一阶段授权
 - ❌ **headless / goal-mode** 下仍 stop 问用户（触发 `headless_interaction_required` 或等价行为）——见 §9
 

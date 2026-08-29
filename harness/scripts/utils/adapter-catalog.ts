@@ -6,7 +6,16 @@ import * as fs from 'fs';
 import * as path from 'path';
 import YAML from 'yaml';
 
+import type { RuntimeMode } from './runtime-policy';
 import type { CheckResult } from './types';
+import {
+  VERIFIER_CAPABILITY_MODES,
+  VERIFIER_CAPABILITY_PUBLISHERS,
+  VERIFIER_CAPABILITY_TRANSPORTS,
+  type VerifierCapabilityDeclaration,
+  type VerifierCapabilityPublisher,
+  type VerifierCapabilityTransport,
+} from './verifier-plan';
 
 export interface AdapterCatalogEntry {
   value: string;
@@ -564,4 +573,105 @@ export function isVisualProviderSupported(frameworkRoot: string, adapterName: st
 export function formatVisualProviderSupportList(frameworkRoot: string): string {
   const names = listVisualProviderAdapterNames(frameworkRoot);
   return names.length > 0 ? names.join('、') : '（当前无任何 adapter 声明 visual_provider）';
+}
+
+// ---------------------------------------------------------------------------
+// verifier 能力声明（plan a9d4e7c2 T1/T5）
+// ---------------------------------------------------------------------------
+// **唯一真源**：`agents/<adapter>/adapter.yaml` 的 `verifier_capability` 完整声明。
+// 与 visual_provider 同纪律：这里只做「扫描 + 完整性校验」，不维护 adapter 名白名单、
+// 不按内核家族推断、不以「有 hooks 目录」推断——那些都会形成平行真源。
+//
+// **入册纪律**：`modes` 只登记**真实实测过**的运行模式。claude / codeagent 的
+// interactive 已由 SubagentStop 实抓验收；headless / goal 未验收就不得预填——
+// 虚标会让 runner 生成一份永远没人发布的 request。
+// ---------------------------------------------------------------------------
+
+export type VerifierCapabilityParse =
+  | { ok: true; declaration: VerifierCapabilityDeclaration }
+  | { ok: false; reason: string };
+
+const VERIFIER_CAPABILITY_KEYS = new Set(['transport', 'publisher', 'modes']);
+
+/**
+ * 纯函数：把 adapter.yaml 的 `verifier_capability` 原始值解析为完整声明。
+ * **缺一即不完整**（不补默认值）——不完整 = 无能力，不是「降级可用」。
+ */
+export function parseVerifierCapabilityDeclaration(raw: unknown): VerifierCapabilityParse {
+  if (raw === undefined || raw === null) return { ok: false, reason: 'verifier_capability 未声明' };
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, reason: 'verifier_capability 必须是对象' };
+  }
+  const obj = raw as Record<string, unknown>;
+  const unknown = Object.keys(obj).filter(k => !VERIFIER_CAPABILITY_KEYS.has(k));
+  if (unknown.length > 0) {
+    return { ok: false, reason: `verifier_capability 含未知键: ${unknown.join(', ')}` };
+  }
+  const transport = obj.transport;
+  if (typeof transport !== 'string' || !(VERIFIER_CAPABILITY_TRANSPORTS as readonly string[]).includes(transport)) {
+    return {
+      ok: false,
+      reason: `verifier_capability.transport 必须是 ${VERIFIER_CAPABILITY_TRANSPORTS.join('|')}，收到 ${String(transport)}`,
+    };
+  }
+  const publisher = obj.publisher;
+  if (typeof publisher !== 'string' || !(VERIFIER_CAPABILITY_PUBLISHERS as readonly string[]).includes(publisher)) {
+    return {
+      ok: false,
+      reason: `verifier_capability.publisher 必须是 ${VERIFIER_CAPABILITY_PUBLISHERS.join('|')}，收到 ${String(publisher)}`,
+    };
+  }
+  const modesRaw = obj.modes;
+  if (!Array.isArray(modesRaw) || modesRaw.length === 0) {
+    return { ok: false, reason: 'verifier_capability.modes 必须是非空数组（只登记实测过的模式）' };
+  }
+  const modes: RuntimeMode[] = [];
+  for (const m of modesRaw) {
+    if (typeof m !== 'string' || !(VERIFIER_CAPABILITY_MODES as readonly string[]).includes(m)) {
+      return {
+        ok: false,
+        reason: `verifier_capability.modes 项必须是 ${VERIFIER_CAPABILITY_MODES.join('|')}，收到 ${String(m)}`,
+      };
+    }
+    if (!modes.includes(m as RuntimeMode)) modes.push(m as RuntimeMode);
+  }
+  return {
+    ok: true,
+    declaration: {
+      transport: transport as VerifierCapabilityTransport,
+      publisher: publisher as VerifierCapabilityPublisher,
+      modes,
+    },
+  };
+}
+
+/** 读单个 adapter 的声明；文件缺失/解析失败/声明不完整一律返回 not ok（不 throw）。 */
+export function loadVerifierCapabilityDeclaration(
+  frameworkRoot: string,
+  adapterName: string,
+): VerifierCapabilityParse {
+  const yamlPath = path.join(frameworkRoot, 'agents', adapterName, 'adapter.yaml');
+  if (!fs.existsSync(yamlPath)) {
+    return { ok: false, reason: `agents/${adapterName}/adapter.yaml 缺失` };
+  }
+  let cfg: unknown;
+  try {
+    cfg = YAML.parse(fs.readFileSync(yamlPath, 'utf-8'));
+  } catch (e) {
+    return { ok: false, reason: `agents/${adapterName}/adapter.yaml 解析失败: ${(e as Error).message}` };
+  }
+  if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) {
+    return { ok: false, reason: `agents/${adapterName}/adapter.yaml 顶层不是对象` };
+  }
+  return parseVerifierCapabilityDeclaration((cfg as Record<string, unknown>).verifier_capability);
+}
+
+/** 解析结果直接给 resolveVerifierPlan 用（无能力 = null，不是抛错）。 */
+export function resolveVerifierCapability(
+  frameworkRoot: string,
+  adapterName: string | null | undefined,
+): VerifierCapabilityDeclaration | null {
+  if (!adapterName || !adapterName.trim()) return null;
+  const parsed = loadVerifierCapabilityDeclaration(frameworkRoot, adapterName.trim());
+  return parsed.ok ? parsed.declaration : null;
 }

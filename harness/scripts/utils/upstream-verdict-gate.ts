@@ -17,7 +17,7 @@ import * as path from 'path';
 import { receiptDirPath } from '../../config';
 import type { CheckResult } from './types';
 import { recomputePhaseEvidenceStaleness } from './phase-evidence-manifest';
-import { validateSummaryV11 } from './quality-axes';
+import { SUMMARY_ASSURANCE_SCHEMA_VERSIONS, validateSummaryV11 } from './quality-axes';
 
 /** 回退链序（workflow SSOT 不可解析时的保守缺省——与 spec-driven full 轨一致） */
 export const FEATURE_PHASE_ORDER = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] as const;
@@ -170,7 +170,8 @@ export function readUpstreamPhaseView(projectRoot: string, feature: string, phas
     }
     // codex 实施 review P0-3 + 三轮 P1-4：声明 1.1 → 完整契约唯一权威校验（四字段+轴不变量）；
     // 违反 → 机器裁决不可信（手搓裸/半 summary 拒收）
-    if (['1.1', '1.2'].includes(String((parsed as { schema_version?: unknown }).schema_version))) {
+    const parsedSchemaVersion = String((parsed as { schema_version?: unknown }).schema_version);
+    if (parsedSchemaVersion === '1.1' || SUMMARY_ASSURANCE_SCHEMA_VERSIONS.has(parsedSchemaVersion)) {
       const v11Errors = validateSummaryV11(parsed);
       if (v11Errors.length > 0) {
         return {

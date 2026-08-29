@@ -407,6 +407,56 @@ optional_fields:
           模型回放旗标 token（如 `--model` / `-m`）——provider 的 model 必须真实进入该旗标。
           无回放旗标的 adapter 不具 provider 资格（否则「声称已钉、实际未钉」）。
 
+  verifier_capability:
+    type: object | null
+    description: |
+      可选（plan a9d4e7c2）。声明本 adapter **能不能执行 verifier 闭环**。
+
+      背景：verifier 曾被做成「每阶段必跑的仪式」——policy 说 off、runner 仍无条件装配
+      产物、文档仍无条件要求四件套，适用性只在最末端的 check-receipt 才判。收口后
+      verifier 降为按 workflow/track/policy/adapter 能力**动态启用的能力**，本字段回答
+      其中第三问「当前 adapter 能不能执行」。
+
+      **本字段的完整声明就是能力资格**——运行时由 `resolveVerifierPlan`
+      （harness/scripts/utils/verifier-plan.ts）消费，经
+      `resolveVerifierCapability`（adapter-catalog.ts）扫描本字段派生。禁止在
+      TypeScript 里另建 adapter 白名单、禁止按内核家族推断、禁止以「有 hooks 目录」
+      推断——三者都会与本字段形成平行真源。
+
+      未声明 / 声明不完整 = 无能力（不是「降级可用」）。此时：
+        · policy 判 verifier=required 且 mode=interactive → `blocked`：**脚本检查照常
+          完整执行**，脚本 FAIL 如实报真因；脚本 PASS 才报
+          `INCOMPLETE / verifier_provider_unavailable`（provider 缺失不禁基本诊断）；
+        · policy 判 off / not_applicable → 与本字段无关，恒 disabled、零产物。
+
+      **入册纪律（BLOCKER）**：`modes` 只登记**真实实测过**的运行模式。claude / codeagent
+      的 interactive 已由宿主 SubagentStop 实抓验收；headless / goal 目前仍走 bedside
+      旁路，未验收前不得预填——虚标会让 runner 生成一份永远没人发布的 request。
+    fields:
+      transport:
+        type: string
+        enum: ["repo_file_request"]
+        description: |
+          调用凭证的投递机制 id（机制名非厂商名）。
+          repo_file_request：runner 在阶段 reports 目录写
+          `verifier.request.<64位subject>.json`，调用方把**该 JSON 整段**作为 Task prompt
+          投给 verifier；verifier 按其中的 `prompt_path` 自行 Read 磁盘 ai-prompt.md。
+          大文件不过传输面，抄错任何字段 → subject 重算失配 → 明确失败。
+      publisher:
+        type: string
+        enum: ["subagent_stop"]
+        description: |
+          结论的发布机制 id。subagent_stop：由 SubagentStop hook
+          （agents/claude/templates/hooks/record-verifier-report.mjs，claude-kernel 家族共享）
+          做四方对账（request 自述 subject == 重算 subject == summary 现值 == 终态块回显，
+          且 prompt_path/prompt_sha256 与磁盘相符）后发布
+          `verifier.report.<subject>.json`。
+      modes:
+        type: list
+        description: |
+          已实测支持的运行模式，非空；取值 interactive | headless | goal。
+          未列入的模式 = 该模式下无能力。
+
   user_confirmation:
     type: object | null
     description: |

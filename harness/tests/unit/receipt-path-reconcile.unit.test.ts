@@ -7,6 +7,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
+import { SUMMARY_SCHEMA_VERSION_CURRENT } from '../../scripts/utils/quality-axes';
 import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
 
 import {
@@ -46,7 +47,10 @@ function mkProject(): string {
         schema_version: '1.1',
         project_name: 'receipt-reconcile-test',
         project_profile: { name: 'generic' },
-        agent_adapter: 'generic',
+        // plan a9d4e7c2：full×interactive 的 verifier=required 需要一个**已登记
+        // verifier 能力**的 adapter（generic 没有 SubagentStop 发布链路，恒 blocked）。
+        // 本套用例测的是回执/slim 机制，不是 provider 可用性——用 claude 保持变量单一。
+        agent_adapter: 'claude',
         architecture: {
           outer_layers: [{ id: 'app', can_depend_on: [], intra_layer_deps: 'forbid' }],
           module_inner_layers: ['content'],
@@ -98,7 +102,9 @@ function writeModernArtifacts(root: string): { traceRel: string; verifierRel: st
     path.join(modernReportsDir, 'summary.json'),
     JSON.stringify(
       {
-        schema_version: '1.2',
+        // plan a9d4e7c2 T3: dispatch is keyed on schema_version now, so the fixture
+        // must carry the current generation or it is (correctly) treated as legacy.
+        schema_version: SUMMARY_SCHEMA_VERSION_CURRENT,
         phase: 'review',
         feature: 'demo',
         verdict: 'PASS',

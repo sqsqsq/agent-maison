@@ -169,12 +169,13 @@ doc/features/<feature>/
 | `script-report.json`    | CI / 程序                 | 自动化脚本判 PASS/FAIL                                  |
 | `summary.json`          | agent / CI / 调试          | 稳定读取 verdict、blockers、run_statuses、next_action，替代 grep 控制台 |
 | `merged-report.md`      | 人类                      | 排查"为什么 FAIL"                                       |
-| `ai-prompt.md`          | verifier 子 agent / 你    | **全文原样**作为 Task prompt 投递给 `subagent_type=verifier`；尾部的 `maison-verifier-subject` 机器块是报告归属的唯一调用侧凭证，手抄/摘录/改写即绑定失败 |
-| `verifier.report.<subject>.json` | check-receipt / 全部机器消费者 | verifier 的**唯一机器真源**（schema 2.0，SubagentStop hook 三重身份等值绑定后发布）。文件**按 subject 分区**：`summary.verifier_subject_id` 单独决定当前证据是哪一份，旧 subject 的遗留文件不在任何读取面内、也不清理。一切验真只比仓内三值，不重开任何 transcript |
+| `ai-prompt.md`          | verifier 子 agent（自读） | 本轮要审的材料全文。**不作为 Task prompt 投递**——verifier 按 request 里的 `prompt_path` 自己 Read（可达上百 KB，刻意不走传输面）。仅在该 phase 的 verifier 能力 enabled 时生成 |
+| `verifier.request.<subject>.json` | 主 agent / SubagentStop hook | **唯一调用侧凭证**（几十行）：整段作为 Task prompt 投给 `subagent_type=verifier`。`subject_id` 由其余字段重算，手抄/改写/前后夹带即失配；hook 发布前四方对账（重算 subject == summary 现值 == 终态块回显，且 `prompt_path`/`prompt_sha256` 与磁盘相符）|
+| `verifier.report.<subject>.json` | check-receipt / 全部机器消费者 | verifier 的**唯一机器真源**（schema 2.0，SubagentStop hook 四方对账后发布）。文件**按 subject 分区**：`summary.verifier_subject_id` 单独决定当前证据是哪一份，旧 subject 的遗留文件不在任何读取面内、也不清理。一切验真只比仓内三值，不重开任何 transcript |
 | `verifier.report.<subject>.md` | 人类               | 从上面那份 JSON 生成的人读投影。**新闭环域内机器不解析它**，编辑零机器影响；旧 manifest 登记过固定名 `verifier.report.md` 的历史闭环仍按字节对账，改了即 stale |
 | `trace.json`            | harness 内部 / 调试       | 记录本次进入 phase 时的 git HEAD（供 `ut_no_src_mutation` 的 **git fallback 域**用；review 已正式闭环时该门禁基线=review closure attestation，不看 trace/HEAD） |
 
-> v2.8 起控制台默认只展开 `FAIL` / `WARN` / `BLOCKER-SKIP`。脚本 PASS 只表示结构级 harness 没有 BLOCKER 失败，阶段闭环仍需要 verifier 子 agent PASS 与 completion receipt。
+> v2.8 起控制台默认只展开 `FAIL` / `WARN` / `BLOCKER-SKIP`。脚本 PASS 只表示结构级 harness 没有 BLOCKER 失败；阶段闭环 = 脚本 verdict PASS ∧ 全部 policy=required 的证据齐。verifier 是否 required 由 harness 的 verifier plan 决定（workflow 声明 + evidence policy + adapter 能力）——判 disabled 时不生成任何 verifier 产物、闭环也不要求；判 blocked（required 但 adapter 未登记）时脚本诊断照常完整，脚本 PASS 后按 `INCOMPLETE / verifier_provider_unavailable` 处理。
 
 `summary.json` 的稳定契约见 `framework/harness/schemas/summary.schema.json`。关键字段：
 
@@ -411,7 +412,7 @@ v2.8 起 hook 引入"会话边界判定"避免上一会话遗留拦下一会话�
 
 > **本节针对 feature 维度阶段**（spec / plan / coding / review / UT / testing）。
 > 所有在 **当前 [`active_workflow`](../../workflows/spec-driven.workflow.yaml)** 中声明为 **`scope: global`** 的阶段（默认含 `extensions` / `init` / `catalog` / `glossary` / `docs`）：**不写** `.current-phase.json`（runner v2.8.1+），也没有 feature 维度完成回执模板。
-> 实例 **Stop hook** 对残留的「全局 phase」state 兜底放行——与 `agents/claude/templates/hooks/check-phase-completion.mjs` 内 **`GLOBAL_PHASES`** 常量一致（若你本地 hook 落后于 framework 模板请重新下发）。因此跑 `--phase init` / `extensions` 等不会套用 §5.1「四件套闭环」判定。
+> 实例 **Stop hook** 对残留的「全局 phase」state 兜底放行——与 `agents/claude/templates/hooks/check-phase-completion.mjs` 内 **`GLOBAL_PHASES`** 常量一致（若你本地 hook 落后于 framework 模板请重新下发）。因此跑 `--phase init` / `extensions` 等不会套用 §5.1 的 feature 阶段闭环判定。
 
 ### 10.2 配置：`framework.config.json > state_machine`
 
@@ -441,7 +442,8 @@ v2.8 起 hook 引入"会话边界判定"避免上一会话遗留拦下一会话�
 #### A. 我想继续上次的阶段
 
 不需要任何额外动作——只要本次仍是同一 cli 会话（同一 session_id），Stop hook 会照常按 §5.1
-四条件判定。只要把缺的 trace / harness / verifier / receipt 补齐再 stop 即可。
+判定。把 harness 求解出的 required 证据（trace / 脚本 verdict / verifier — 仅当其 plan 为
+enabled / receipt）补齐再 stop 即可。
 
 跨 cli 会话怎么办？参考 §10.4。
 

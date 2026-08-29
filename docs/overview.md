@@ -306,7 +306,7 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 | **Research First** | 主产物前 `context-exploration.md`；`source_code_paths` 须真实存在；代码与文档冲突以代码为准 |
 | **Minimum Viable** | 不超出 spec/plan/contracts 范围；禁止投机性抽象 |
 | **Surgical** | coding/review diff 落在 scope 与 contracts 内 |
-| **Verify Before Proceed** | harness + verifier + receipt + trace 四件套；Coding 逐文件 lint |
+| **Verify Before Proceed** | harness verdict PASS ∧ 全部 policy=required 的证据齐（verifier / receipt / trace / exploration 逐项由 policy 求解，非固定套餐）；Coding 逐文件 lint |
 
 **exploration_strategy**（phase-rules + `exploration-strategy.ts`）：plan/coding 默认 **subagent** 探索（L1 trivial 可豁免）；spec/review/ut 按 **复合评分**（模块 LOC、跨层、fan-out 等）决定是否必须 subagent；无 subagent 时走 **sequential** 等价路径（量化阈值 × multiplier）。
 

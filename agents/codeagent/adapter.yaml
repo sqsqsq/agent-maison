@@ -42,6 +42,14 @@ hooks:
   template_dir: ../claude/templates/hooks
   update_policy: auto_overwrite
 
+# verifier 能力声明（plan a9d4e7c2）：与 claude 共享同一份 hook 模板与同一套 request 协议。
+# modes 只登记实测过的模式——codeagent 的 interactive SubagentStop payload 已于 2026-08-29
+# 宿主实抓（消费的四个字段全在场且语义同构，见下方 notes）；headless / goal 未验收，不预填。
+verifier_capability:
+  transport: repo_file_request
+  publisher: subagent_stop
+  modes: ["interactive"]
+
 instance_skill_bridge:
   commands_target_dir: .cac/commands
 

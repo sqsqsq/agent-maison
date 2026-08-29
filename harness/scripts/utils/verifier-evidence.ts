@@ -132,6 +132,27 @@ export function readSummaryVerifierSubjectId(
   return SUBJECT_ID_PATTERN.test(v) ? v : null;
 }
 
+/**
+ * summary.schema_version（plan a9d4e7c2 T3 的**分派重键**）。
+ *
+ * 旧口径用「subject 在场与否」二分新旧闭环域——那让 subject 同时承担协议代际、适用性、
+ * 证据身份三种职责：verifier 一旦被 policy/workflow 关掉，subject 天然缺席，消费端却
+ * 会把它读成"旧件"。三职分离后：**代际=schema_version、适用性=resolveVerifierPlan、
+ * 身份=subject**，本函数只回答第一个问题。
+ */
+export function readSummarySchemaVersion(
+  projectRoot: string,
+  feature: string,
+  phase: string,
+  frameworkRoot?: string,
+): string | null {
+  const dir = resolveReportsDir(projectRoot, feature, phase, frameworkRoot);
+  const parsed = readJsonOrNull(path.join(dir, 'summary.json'));
+  if (!parsed || typeof parsed !== 'object') return null;
+  const raw = (parsed as { schema_version?: unknown }).schema_version;
+  return nonEmptyString(raw) ? raw.trim() : null;
+}
+
 /** summary.closure_status（grandfather 分派用；读不到按未闭环处理）。 */
 export function readSummaryClosureStatus(
   projectRoot: string,
@@ -158,8 +179,6 @@ export function loadVerifierEvidence(
   phase: string,
   opts?: LoadVerifierEvidenceOptions,
 ): LoadVerifierEvidenceResult {
-  const dir = resolveReportsDir(projectRoot, feature, phase, opts?.frameworkRoot);
-
   // 顺序不可倒：**先**取 summary 的当前 subject，**再**由它推导该 subject 的证据文件。
   // 这样"当前机器证据是哪一份"只有一个决定者，旧 subject 的遗留文件天然不在读取面内。
   const currentSubject = readSummaryVerifierSubjectId(projectRoot, feature, phase, opts?.frameworkRoot);
@@ -168,10 +187,30 @@ export function loadVerifierEvidence(
       ok: false,
       code: 'subject_absent',
       message:
-        `summary.json 缺 verifier_subject_id（${feature}/${phase}）——该阶段产物由旧版 runner 生成，` +
-        '无法做证据身份绑定；请重跑 harness 生成 subject 化产物后再跑 verifier。',
+        `summary.json 缺 verifier_subject_id（${feature}/${phase}）——本轮没有生成 verifier 调用凭证` +
+        '（能力未启用，或启用了但 request 生成失败）。请重跑该 phase 的 harness：' +
+        '启用时它会写出 verifier.request.<subject>.json，把那份 JSON 整段投给 verifier 即可。',
     };
   }
+  return loadVerifierEvidenceForSubject(projectRoot, feature, phase, currentSubject, opts);
+}
+
+/**
+ * 按**显式给定的 subject** 验真证据（plan a9d4e7c2 P1-3/P1-5）。
+ *
+ * `loadVerifierEvidence` 以「磁盘 summary 现值」为锚——那在 **base summary 尚未落盘**的
+ * 时刻是**上一轮**的值。writer 内部若用它取证据，就会把旧 subject 的结论算到新 run 头上
+ * （评审实测：新 request B 生成后、summary B 落盘前，读到的是 A）。所以凡是"我已经知道
+ * 自己要验哪个 subject"的调用点，一律走本函数；校验逻辑与上面完全同源，只是锚不同。
+ */
+export function loadVerifierEvidenceForSubject(
+  projectRoot: string,
+  feature: string,
+  phase: string,
+  currentSubject: string,
+  opts?: LoadVerifierEvidenceOptions,
+): LoadVerifierEvidenceResult {
+  const dir = resolveReportsDir(projectRoot, feature, phase, opts?.frameworkRoot);
   const jsonAbs = verifierReportJsonPath(dir, currentSubject);
   const jsonRel = path.relative(projectRoot, jsonAbs).replace(/\\/g, '/');
 
@@ -182,7 +221,9 @@ export function loadVerifierEvidence(
       code: 'report_missing',
       message:
         `${jsonRel} 不存在——verifier 未运行，或运行了但身份绑定失败（报告落 ` +
-        'framework/harness/state/last-verifier-report.json，见其 reason 字段）。请原样投递 ai-prompt.md 重跑 verifier。',
+        'framework/harness/state/last-verifier-report.json，见其 reason 字段）。' +
+        '恢复：把 summary.verifier_request 指向的那份 request JSON **整段**作为 Task prompt 重跑 verifier' +
+        '（verifier 自行 Read 其中的 prompt_path，不要投递 ai-prompt.md 全文）。',
     };
   }
   if (parsed === undefined || typeof parsed !== 'object') {
@@ -213,8 +254,9 @@ export function loadVerifierEvidence(
       message:
         `${jsonRel} state=conflict：同一 subject 收到互不相同的 verifier 结论（${summary || '两侧详见 conflict.sides'}）。` +
         '不选边、不吞后到的 FAIL。恢复：' +
-        '①停止或等待同 subject 的**全部** verifier 结束；②删除这份 conflict 件（它已不是任何一方的结论）；③只启动**一个** verifier，把现有 ai-prompt.md 全文原样投递。' +
-        '（**不要**指望"重跑 harness 换代 subject"——无物质变化时 subject 恒定，重跑会回到同一个 conflict）。',
+        '①停止或等待同 subject 的**全部** verifier 结束；②删除这份 conflict 件（它已不是任何一方的结论）；' +
+        '③只启动**一个** verifier，把 summary.verifier_request 指向的 request JSON 整段投递。' +
+        '（重跑 harness 只有在审查材料真的变了时才会换代 subject；材料没变时会回到同一个 conflict。）',
     };
   }
   if (doc.state !== 'published') {
@@ -244,7 +286,7 @@ export function loadVerifierEvidence(
       message:
         `${jsonRel} 身份不匹配：subject_id=${docSubject.slice(0, 12)}… / invocation=${invocationSubject.slice(0, 12)}… / ` +
         `result=${resultSubject.slice(0, 12)}… / summary 现值=${currentSubject.slice(0, 12)}…。` +
-        '该报告不属于当前 run（迟到、错位，或字段被手改），请重跑 verifier。',
+        '该报告不属于当前审查材料（迟到、错位，或字段被手改），请按当前 request JSON 重跑 verifier。',
     };
   }
 
@@ -329,8 +371,20 @@ export function loadVerifierReportTextOrNull(
   projectRoot: string,
   feature: string,
   phase: string,
-  opts?: LoadVerifierEvidenceOptions,
+  opts?: LoadVerifierEvidenceOptions & {
+    /**
+     * 显式锚定 subject（plan a9d4e7c2 P1-5）。**在 base summary 落盘前调用时必须传**——
+     * 否则读到的是上一轮 summary 的 subject，会把旧 verifier 正文算进本轮的
+     * repair_candidates。传 `null` 表示"本轮没有可用 subject"，直接返回 null。
+     */
+    subjectId?: string | null;
+  },
 ): string | null {
+  if (opts && 'subjectId' in opts) {
+    if (!opts.subjectId) return null;
+    const pinned = loadVerifierEvidenceForSubject(projectRoot, feature, phase, opts.subjectId, opts);
+    return pinned.ok ? pinned.evidence.report_text : null;
+  }
   const res = loadVerifierEvidence(projectRoot, feature, phase, opts);
   return res.ok ? res.evidence.report_text : null;
 }

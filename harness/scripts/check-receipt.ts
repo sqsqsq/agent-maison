@@ -74,9 +74,17 @@ import {
   loadVerifierEvidence,
   loadVerifierReportTextOrNull,
   readSummaryClosureStatus,
+  readSummarySchemaVersion,
   readSummaryVerifierSubjectId,
   type VerifierEvidence,
 } from './utils/verifier-evidence';
+import {
+  resolveVerifierPlan,
+  workflowVerifierPrompt,
+  type VerifierPlan,
+} from './utils/verifier-plan';
+import { resolveVerifierCapability } from './utils/adapter-catalog';
+import { SUMMARY_SCHEMA_VERSION_CURRENT } from './utils/quality-axes';
 import { recomputePhaseEvidenceStaleness } from './utils/phase-evidence-manifest';
 import { resolveContextAdapterImageInput } from './utils/multimodal-probe';
 import type { HarnessRunSummary, SoftAdvisory } from './utils/types';
@@ -235,6 +243,13 @@ function main(): void {
     console.error(`错误：${(err as Error).message}`);
     process.exit(2);
   }
+  const workflowSpecForPlan = (() => {
+    try {
+      return resolveWorkflowSpec(projectRoot, { config: fw });
+    } catch {
+      return null;
+    }
+  })();
   const resolvedProfile = loadResolvedProfile(projectRoot, fw);
   if (isPhaseDisabledByProfile(phase, resolvedProfile)) {
     console.log(
@@ -260,6 +275,19 @@ function main(): void {
   const evidenceConfig = { evidence_profile: fw.evidence_profile };
   const policy = resolveEvidencePolicy(track, runtimeCtx, evidenceConfig);
   const profileResolved = resolveProfileLabel(track, runtimeCtx, evidenceConfig);
+  // plan a9d4e7c2 T1/T3：verifier 适用性与生产端**同一个解析器**——闭环侧不再自行
+  // 用 `policy.verifier === 'off'` 二分（那会把"workflow 未声明"和"adapter 无能力"
+  // 一起误判成"该有却缺失"）。结果不落盘，随时可重算。
+  const verifierPlan: VerifierPlan = resolveVerifierPlan({
+    phase,
+    track,
+    runtimeMode: runtimeCtx.mode,
+    policy,
+    workflowVerifierPrompt: workflowVerifierPrompt(workflowSpecForPlan, phase),
+    phaseDisabledByProfile: false, // profile 禁用的 phase 已在上方 exit 0
+    adapterCapability: resolveVerifierCapability(frameworkRoot, fw.agent_adapter),
+    adapterName: fw.agent_adapter,
+  });
 
   // lite track：receipt 机制架构性不适用（正常调用路径下 tryValidateReceipt 已在
   // phase-state.ts 短路、不会走到本进程；本分支是直接 CLI 调用的防御性兜底）——
@@ -288,7 +316,7 @@ function main(): void {
   if (!fs.existsSync(receiptPath)) {
     console.error('❌ FATAL: 回执文件不存在。');
     console.error('');
-    console.error('阶段闭环判定（全局入口 §5.1）四条件之一未满足：');
+    console.error('阶段闭环判定（全局入口 §5.1）required 闭环条件之一未满足：');
     console.error(`  → ${receiptRel} 不存在`);
     console.error('');
     console.error('修复指引：');
@@ -620,22 +648,42 @@ function main(): void {
   const warnings: CheckIssue[] = [];
   const observed: Partial<Record<keyof EvidencePolicy, EvidenceValidationStatus>> = {};
 
-  // 3. verifier（plan e5b8c3f7 T3：真验真——不再信回执手填 verdict + 文件存在）
+  // 3. verifier（真验真——不再信回执手填 verdict + 文件存在）
   //
-  // **唯一分派锚 = summary.verifier_subject_id 在场与否**（新版 runner 必写、旧件必缺）：
-  //   · policy.verifier=off                → loader 不调用，JSON/MD 均不要求（现状语义保留）
-  //   · subject 在场                       → 只认新 schema JSON（三重比对 + 五项校验）
-  //   · subject 缺席 ∧ closed ∧ 旧 manifest fresh → grandfather（只走既有 freshness 链复核）
-  //   · subject 缺席 ∧ 其余                → 指引先重跑 harness 生成 subject 化产物
+  // **分派两问，各有各的锚**（plan a9d4e7c2 T3 重键；subject 在场与否**不再**是分派锚——
+  // 它曾同时背着协议代际、适用性、证据身份三种职责，于是"被合法关掉"读成了"旧件"）：
+  //   ① 适不适用？→ resolveVerifierPlan：disabled 零要求 / blocked 直接 BLOCKER / enabled 继续；
+  //   ② 是哪一代？→ summary.schema_version：当代要求 request 化证据；上一代 closed ∧ 旧
+  //      manifest fresh 走 grandfather，否则指引重跑该 phase 的 harness。
   // 回执手填 invoked_via/report_path/verdict/ran_at 已**退出裁决权威**，只留兼容投影
   //（与机器事实不符时降为 WARN，不再据以判 PASS/FAIL）。
   const vs = frontmatter.verifier_subagent ?? {};
   let verifierEvidence: VerifierEvidence | null = null;
-  if (policy.verifier === 'off') {
-    observed.verifier = 'skipped_by_policy';
+  if (verifierPlan.mode === 'disabled') {
+    // **缺席即为零**：不调用 loader，JSON/MD/request 均不要求。磁盘上残留的旧
+    // prompt/request/report 不得把这条轴重新激活（plan a9d4e7c2 否决闸）。
+    observed.verifier =
+      verifierPlan.reason === 'policy_not_applicable' || verifierPlan.reason === 'phase_disabled_by_profile'
+        ? 'not_applicable'
+        : 'skipped_by_policy';
+    console.log(`   ℹ verifier: ${verifierPlan.message}`);
+  } else if (verifierPlan.mode === 'blocked') {
+    // 到这里说明脚本门禁已经跑完（harness 侧的阶梯已把真实失败如实报过），
+    // 闭环入口只负责不放行——不重复诊断、也不假装通过。
+    observed.verifier = 'missing';
+    issues.push({
+      id: 'verifier_provider_unavailable',
+      severity: 'BLOCKER',
+      message: `【verifier 能力不可用】${verifierPlan.message}`,
+    });
   } else {
+    const summarySchemaVersion = readSummarySchemaVersion(projectRoot, feature, phase, frameworkRoot);
     const verifierSubjectId = readSummaryVerifierSubjectId(projectRoot, feature, phase, frameworkRoot);
-    if (verifierSubjectId) {
+    // **分派重键**（plan a9d4e7c2 T3）：代际靠 schema_version，不再靠"subject 在不在"。
+    //   · 当代 summary → 必须有 request 化 subject 与验真通过的 JSON；
+    //   · 上一代 summary → grandfather：closed ∧ 旧 manifest fresh 即按旧登记面复核。
+    const currentGeneration = summarySchemaVersion === SUMMARY_SCHEMA_VERSION_CURRENT;
+    if (currentGeneration && verifierSubjectId) {
       const loaded = loadVerifierEvidence(projectRoot, feature, phase, { frameworkRoot });
       if (!loaded.ok) {
         observed.verifier = 'missing';
@@ -668,6 +716,18 @@ function main(): void {
           });
         }
       }
+    } else if (currentGeneration) {
+      // 当代 summary 却没有 subject：能力已启用但本轮没写出 request
+      //（Step 4 崩栈、prompt 不可读、凭证落盘失败）。重跑 harness 即可，别改文书。
+      observed.verifier = 'missing';
+      issues.push({
+        id: 'verifier_request_absent',
+        severity: 'BLOCKER',
+        message:
+          `summary.json 缺 verifier_subject_id / verifier_request（${canonicalReportsRel}/summary.json），` +
+          `但本 phase 的 verifier 能力已启用（${verifierPlan.reason}）——本轮没有生成调用凭证。` +
+          '正确路径：重跑该 phase 的 harness（分钟级）→ 把新生成的 verifier.request.<subject>.json 整段投给 verifier → 重跑本检查。',
+      });
     } else {
       observed.verifier = 'missing';
       const closed = readSummaryClosureStatus(projectRoot, feature, phase, frameworkRoot) === 'closed';
@@ -675,22 +735,23 @@ function main(): void {
         closed &&
         recomputePhaseEvidenceStaleness(projectRoot, feature, [phase], { frameworkRoot })[0]?.verdict === 'fresh';
       if (manifestFresh) {
-        // grandfather（plan v3 P1-①）：旧闭环沿其**当时的登记面**复核，不解析 MD、
-        // 不要求 JSON。主动重跑 check-receipt = 复核旧 closure，**不构成重新裁决**——
-        // 重新裁决只随新 harness run（summary 重生成、subject 换代）进入。
+        // grandfather：上一代闭环沿其**当时的登记面**复核，不解析 MD、不要求当代 request。
+        // 主动重跑 check-receipt = 复核旧 closure，**不构成重新裁决**——重新裁决只随新
+        // harness run（summary 重生成为当代、subject 按新材料寻址）进入。
         observed.verifier = 'provided';
         console.log(
-          `   ℹ verifier: grandfather（summary 无 verifier_subject_id 的旧闭环；` +
-            `按旧 evidence manifest 登记面复核，当前仍 fresh）`,
+          `   ℹ verifier: grandfather（summary schema=${summarySchemaVersion ?? '缺失'} 的上一代闭环；` +
+            '按旧 evidence manifest 登记面复核，当前仍 fresh）',
         );
       } else {
         issues.push({
-          id: 'verifier_subject_absent',
+          id: 'verifier_summary_generation_stale',
           severity: 'BLOCKER',
           message:
-            `summary.json 缺 verifier_subject_id（${canonicalReportsRel}/summary.json）——` +
-            '该阶段产物由旧版 runner 生成，无法做 verifier 证据身份绑定。' +
-            '正确路径：重跑 harness（生成 subject 化 summary/ai-prompt，分钟级）→ 原样投递 ai-prompt.md 重跑 verifier → 重跑本检查。' +
+            `summary schema_version=${summarySchemaVersion ?? '缺失'}（${canonicalReportsRel}/summary.json），` +
+            `非当代 ${SUMMARY_SCHEMA_VERSION_CURRENT}——上一代产物只有"已 closed ∧ 旧 evidence manifest 仍 fresh"时才 grandfather。` +
+            '正确路径：重跑该 phase 的 harness（生成当代 summary + verifier.request.<subject>.json，分钟级）→ ' +
+            '把该 request JSON 整段投给 verifier → 重跑本检查。不回退业务代码、不重写上游产物。' +
             (closed ? '（本阶段虽已 closed，但旧 evidence manifest 已非 fresh，不适用 grandfather。）' : ''),
         });
       }
@@ -1122,11 +1183,11 @@ function main(): void {
     );
     console.log(
       `   - verifier_subagent: ${
-        policy.verifier === 'off'
-          ? 'skipped_by_policy（balanced 档非保留 phase）'
+        verifierPlan.mode === 'disabled'
+          ? `${observed.verifier}（${verifierPlan.reason}）`
           : verifierEvidence
             ? `verdict=${verifierEvidence.verdict}（机器真源 ${verifierEvidence.json_path_rel}，subject=${verifierEvidence.subject_id.slice(0, 12)}…，agent=${verifierEvidence.agent_id}）`
-            : 'grandfather（旧闭环，按旧 evidence manifest 登记面复核）'
+            : 'grandfather（上一代闭环，按旧 evidence manifest 登记面复核）'
       }`,
     );
     console.log(`   - trace_json: ${traceDisplay}`);
@@ -1138,7 +1199,10 @@ function main(): void {
       for (const w of warnings) console.log(`  [${w.severity}] ${w.id}: ${w.message}`);
     }
     console.log('');
-    console.log(`阶段闭环判定（全局入口 §5.1）四条件已满足，可放行（evidence_profile=${profileResolved}）。\n`);
+    console.log(
+      '阶段闭环判定（全局入口 §5.1）：脚本 verdict PASS ∧ 全部 required 证据已提供，可放行' +
+        `（evidence_profile=${profileResolved}）。\n`,
+    );
 
     const evidencePolicySnapshot = buildEvidencePolicySnapshot(policy, profileResolved, observed);
     console.log(

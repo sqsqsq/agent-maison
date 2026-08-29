@@ -27,7 +27,7 @@ import {
   reconcileSourceTreeAgainstAttestation,
 } from './closure-attestation';
 import { classifyGoalRunsDir, collectRequirementSsotPaths, computeRunRequirementSha } from './fidelity-shared';
-import { validateSummaryV11 } from './quality-axes';
+import { SUMMARY_ASSURANCE_SCHEMA_VERSIONS, validateSummaryV11 } from './quality-axes';
 import { buildSourceInventory } from './closure-attestation';
 import {
   deviceTestEvidencePath,
@@ -208,7 +208,9 @@ export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[]
   for (const phase of chain) {
     const s = readSummaryLattice(projectRoot, feature, phase);
     if (!s.exists) continue; // 缺 summary 由 ① 报"缺失"
-    if (s.schemaVersion !== '1.2') {
+    // plan a9d4e7c2 T3：当代 = 1.2 ∪ 1.3（1.3 只把 verifier 字段条件化，assurance
+    // 与 closure_commit 契约不变）——把 1.3 判成 legacy 会让刚闭环的 feature 判不完成。
+    if (!SUMMARY_ASSURANCE_SCHEMA_VERSIONS.has(String(s.schemaVersion))) {
       issues.push({
         phase,
         condition: 'summary_schema_current',
@@ -234,7 +236,7 @@ export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[]
       issues.push({
         phase,
         condition: 'closure_commit_present',
-        detail: 'summary 1.2 缺少 closure_commit@1.0；该 PASS 尚未完成 receipt/manifest/state 的原子闭环提交',
+        detail: `summary ${s.schemaVersion} 缺少 closure_commit@1.0；该 PASS 尚未完成 receipt/manifest/state 的原子闭环提交`,
         kind: 'needs_fix',
       });
       continue;

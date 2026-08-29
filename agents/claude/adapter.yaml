@@ -44,6 +44,19 @@ hooks:
   template_dir: templates/hooks                 # 相对于 adapter 目录
   update_policy: auto_overwrite                 # Stop hook 等与 harness 契约绑定
 
+# verifier 能力声明（plan a9d4e7c2）：verifier 是**按能力启用**的，不是每阶段仪式。
+# transport=repo_file_request：runner 写 verifier.request.<subject>.json，主 agent 把该
+# JSON 整段作为 Task prompt 投递，verifier 自行 Read 其中的 prompt_path。
+# publisher=subagent_stop：结论由 SubagentStop hook（templates/hooks/record-verifier-report.mjs）
+# 四方对账后发布为 verifier.report.<subject>.json。
+# modes 只登记**真实实测过**的运行模式：interactive 已由宿主实抓验收（plan e5b8c3f7 附录 A）；
+# headless / goal 目前仍走 bedside 旁路，未验收前不得预填——虚标只会让 runner 生成一份
+# 永远没人发布的 request。
+verifier_capability:
+  transport: repo_file_request
+  publisher: subagent_stop
+  modes: ["interactive"]
+
 instance_skill_bridge:
   commands_target_dir: .claude/commands
 

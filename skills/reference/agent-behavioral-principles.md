@@ -83,7 +83,7 @@
 
 1. **Research Sub-Phase 完成后自检**：`source_code_paths` 存在？Code Facts ≥ 阈值？`decisions_unlocked` 非空？
 2. **逐文件闭环**（Coding）：写一个 `.ets` → `ReadLints` 零 error → 再写下一个。
-3. **阶段闭环四件套**：harness PASS → verifier PASS → completion receipt → trace.json；禁止口头「完成」。
+3. **阶段闭环**：脚本 harness verdict=PASS ∧ 全部 policy=required 的证据已提供（要哪几项由 harness 求解输出；verifier 是否 required 由其 verifier plan 决定）；禁止口头「完成」。
 4. **每 Step 产出前**：对照上游 SSOT（spec ↔ plan ↔ contracts）确认无断链。
 
 ### 各阶段反例 / 正例

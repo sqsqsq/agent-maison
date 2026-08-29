@@ -48,6 +48,8 @@ import {
   projectCompletionStatus,
   projectReleaseReadiness,
   resolveEffectiveVerdict,
+  SUMMARY_ASSURANCE_SCHEMA_VERSIONS,
+  SUMMARY_SCHEMA_VERSION_CURRENT,
   validateSummaryV11,
 } from './scripts/utils/quality-axes';
 import { createHash } from 'crypto';
@@ -124,12 +126,21 @@ import {
 } from './scripts/utils/device-session';
 import { computeProductWorktreeDigest } from './scripts/utils/worktree-digest';
 import {
-  canonicalScriptReportDigest,
-  computeVerifierSubjectId,
-  verifierReportJsonFilename,
-  withSubjectBlock,
-} from './scripts/utils/verifier-subject';
-import { loadVerifierReportTextOrNull } from './scripts/utils/verifier-evidence';
+  loadVerifierEvidenceForSubject,
+  loadVerifierReportTextOrNull,
+} from './scripts/utils/verifier-evidence';
+import {
+  buildVerifierRequest,
+  computePromptSha256,
+  renderVerifierRequest,
+  verifierRequestFilename,
+} from './scripts/utils/verifier-request';
+import {
+  resolveVerifierPlan,
+  workflowVerifierPrompt,
+  type VerifierPlan,
+} from './scripts/utils/verifier-plan';
+import { resolveVerifierCapability } from './scripts/utils/adapter-catalog';
 import {
   isAgentSideGoalHarness,
   isGoalOrchestrationEnv,
@@ -160,7 +171,14 @@ import {
   listWorkflowPhases,
   type WorkflowSpec,
 } from './workflow-loader';
-import { resolveFeatureTrack, resolvePhaseChain, resolvePhaseClosureSource } from './scripts/utils/runtime-policy';
+import {
+  DEFAULT_BALANCED_VERIFIER_RETAINED_PHASES,
+  resolveEvidencePolicy,
+  resolveFeatureTrack,
+  resolvePhaseChain,
+  resolvePhaseClosureSource,
+  type RuntimeContext,
+} from './scripts/utils/runtime-policy';
 import { loadFeatureTrackDecl } from './scripts/utils/feature-track';
 import { resolveCapabilityResolutionEntryInput } from './scripts/utils/capability-resolution-entry-input';
 import { finalizePhaseClosure } from './scripts/utils/phase-closure-finalizer';
@@ -674,6 +692,37 @@ async function main(): Promise<void> {
 
   const resolvedProfile = loadResolvedProfile(projectRoot, fwConfigEarly);
 
+  // ---------------------------------------------------------------------------
+  // verifier 能力解析（plan a9d4e7c2 T1）——**一次解析，全员消费**
+  // ---------------------------------------------------------------------------
+  // 生产端不再无条件装配：Step 4（ai-prompt）与 request 生成都由 plan.mode 门控。
+  // 解析对 interactive 与 goal **都生效**（否则 lite×goal 关不掉无条件装配）；
+  // adapter capability 的 blocked 判定本轮仅 interactive（goal 的发布权责另立）。
+  // 结果**不落 summary 快照**：适用性是随时可重算的判断，不是会漂移的状态。
+  const verifierRuntimeCtx: RuntimeContext = {
+    mode: isGoalOrchestrationEnv() || isAgentSideGoalHarness() ? 'goal' : 'interactive',
+    adapter: fwConfigEarly.agent_adapter ?? 'generic',
+    phase,
+    workflow: fwConfigEarly.active_workflow ?? 'spec-driven',
+    can_prompt_user: false,
+    can_collect_usage: false,
+  };
+  const verifierTrack = resolveFeatureTrack(
+    phaseIsGlobal ? null : loadFeatureTrackDecl(projectRoot, feature),
+  );
+  const verifierPlan: VerifierPlan = resolveVerifierPlan({
+    phase,
+    track: verifierTrack,
+    runtimeMode: verifierRuntimeCtx.mode,
+    policy: resolveEvidencePolicy(verifierTrack, verifierRuntimeCtx, {
+      evidence_profile: fwConfigEarly.evidence_profile,
+    }),
+    workflowVerifierPrompt: workflowVerifierPrompt(workflowSpec, phase),
+    phaseDisabledByProfile: isPhaseDisabledByProfile(phase, resolvedProfile),
+    adapterCapability: resolveVerifierCapability(resolvedFrameworkRoot, fwConfigEarly.agent_adapter),
+    adapterName: fwConfigEarly.agent_adapter,
+  });
+
   // Step 1: 加载 Spec
   console.log('📋 Step 1: 加载 Spec 规约...');
   let phaseRule;
@@ -976,6 +1025,31 @@ async function main(): Promise<void> {
 
   checks.push(...(await emitLifecycle('post_check', { checkScript: `check-${phase}.ts` })));
 
+  // blocked 阶梯（plan a9d4e7c2 T1）：**provider 缺失不禁基本诊断、不覆盖真实失败**。
+  // 这里不新建状态机——直接复用既有 externalBlocked/capability_missing 归因：
+  //   · 脚本另有 BLOCKER FAIL → areBlockersOnlyCapabilityMissing 为假 → 顶层仍 FAIL，
+  //     真实脚本失败原样保留在报告里（provider 缺失只是多一条并列事实）；
+  //   · 脚本 PASS（本条是唯一 BLOCKER）→ 顶层 INCOMPLETE / verifier_provider_unavailable，
+  //     不拖到 check-receipt 才死。
+  if (verifierPlan.mode === 'blocked') {
+    checks.push({
+      id: 'verifier_provider_unavailable',
+      category: 'structure',
+      description: 'verifier 能力可执行（policy=required 时当前 adapter 须登记该模式）',
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: verifierPlan.message,
+      failure_kind: 'capability_missing',
+      blocking_class: 'externalBlocked',
+      actionability: 'human_only',
+      suggestion:
+        '二选一：①换用已登记 verifier 能力的 adapter（agents/<adapter>/adapter.yaml 的 verifier_capability.modes）；' +
+        '②在 framework.config.json 设 evidence_profile=balanced —— 但注意它**只关闭保留集之外**的 phase，' +
+        `${DEFAULT_BALANCED_VERIFIER_RETAINED_PHASES.join(' / ')} 的 verifier 仍是 required，不会因 balanced 而放行。` +
+        '在此之前脚本门禁结论仍然有效，可照常修复脚本 BLOCKER。',
+    });
+  }
+
   // 设备目标分类导致的 testing 结论封顶：与 checker 事实同账，参与 violations/报告/退出码。
   // 由入口设备门产出（只有它知道 target_kind），不依赖 agent 自报。
   if (deviceConclusionCap) checks.push(deviceConclusionCap);
@@ -1017,48 +1091,60 @@ async function main(): Promise<void> {
   // script-report.json 为 FAIL（并清理 ai-prompt.md / merged-report.md 残留）。
   const reportDirRel = relFeaturePhaseReportsDir(projectRoot, feature, phase, paths.frameworkRoot);
   let finalReport = scriptReport;
-  /** 装配侧回填的 prompt 语义内容摘要（Step 4 崩栈时保持 null → subject 记 `<absent>`）。 */
-  let canonicalPromptDigest: string | null = null;
 
-  try {
-    // Step 4: 组装 AI prompt
-    console.log('🤖 Step 4: 组装 AI Harness prompt...');
-    // Test hook：用于验证 Step 4 崩栈回写链路，仅自动化验证场景使用
-    if (process.env.HARNESS_FORCE_STEP4_FAIL) {
-      throw new TypeError('relativePath.endsWith is not a function (simulated by HARNESS_FORCE_STEP4_FAIL)');
-    }
-    const contextFiles = collectContextFiles(specLoader, layout, phase, feature, featureSpec, {
-      adapterMultimodal: context.adapterMultimodal,
-      adapterImageInput: context.adapterImageInput,
-      specVisualSources: context.specVisualSources,
-    });
-    const specContent = YAML.stringify(phaseRule);
+  // Step 4 门控（plan a9d4e7c2 T1 阶梯）：**只有 `enabled` ∧ 脚本 verdict=PASS 才装配**。
+  //   · disabled → 缺席即为零：不装配、不生成 request/subject。磁盘上可能还留着上一代
+  //     enabled 时的产物——不清理、也不因它们复活能力（当前是否启用只由本次解析决定）；
+  //   · blocked  → 没有 provider 能消费这份 prompt，装配只会平添一个 Step 4 崩栈面；
+  //   · 脚本非 PASS → verifier 子 agent 的契约本就禁止在脚本 FAIL 时被调用，
+  //     留一份"看起来可以调用"的 prompt/request 只会诱导违规调用。
+  const verifierProductionAllowed =
+    verifierPlan.mode === 'enabled' && scriptReport.summary.verdict === 'PASS';
+  if (!verifierProductionAllowed) {
+    const why =
+      verifierPlan.mode === 'enabled'
+        ? `脚本 verdict=${scriptReport.summary.verdict}（非 PASS 时不产出 verifier 调用面）`
+        : verifierPlan.message;
+    console.log(`🤖 Step 4: 跳过 AI Harness prompt 装配 —— ${why}`);
+  } else {
+    try {
+      // Step 4: 组装 AI prompt
+      console.log('🤖 Step 4: 组装 AI Harness prompt...');
+      // Test hook：用于验证 Step 4 崩栈回写链路，仅自动化验证场景使用
+      if (process.env.HARNESS_FORCE_STEP4_FAIL) {
+        throw new TypeError('relativePath.endsWith is not a function (simulated by HARNESS_FORCE_STEP4_FAIL)');
+      }
+      const contextFiles = collectContextFiles(specLoader, layout, phase, feature, featureSpec, {
+        adapterMultimodal: context.adapterMultimodal,
+        adapterImageInput: context.adapterImageInput,
+        specVisualSources: context.specVisualSources,
+      });
+      const specContent = YAML.stringify(phaseRule);
 
-    assembleAIPrompt(
-      harnessRoot,
-      projectRoot,
-      phase,
-      feature,
-      contextFiles,
-      JSON.stringify(scriptReport, null, 2),
-      specContent,
-      resolvedProfile,
-      lifecycleFragments,
-      resolvedFrameworkRoot,
-      {
-        imageInput: context.adapterImageInput,
-        // plan e5b8c3f7：subject 的 prompt 输入面取装配侧同源的规范化摘要，
-        // 不再事后读文件叠正则（review P1-2）。
-        onCanonicalPromptDigest: (digest) => {
-          canonicalPromptDigest = digest;
+      assembleAIPrompt(
+        harnessRoot,
+        projectRoot,
+        phase,
+        feature,
+        contextFiles,
+        JSON.stringify(scriptReport, null, 2),
+        specContent,
+        resolvedProfile,
+        lifecycleFragments,
+        resolvedFrameworkRoot,
+        {
+          imageInput: context.adapterImageInput,
+          // 装配用哪个模板由 workflow 声明说了算（plan a9d4e7c2 P1-1）——
+          // enabled 时 resolveVerifierPlan 必带出该路径。
+          verifierPromptRel: verifierPlan.verifier_prompt ?? undefined,
         },
-      },
-    );
-    console.log(`   ✓ AI prompt 已写入 ${reportDirRel}/ai-prompt.md`);
-  } catch (err) {
-    const e = err as Error;
-    console.error(`   ✗ Step 4 组装 AI Harness prompt 失败: ${e.message}`);
-    finalReport = failScriptReportWithFatalError(scriptReport, 'assemble_ai_prompt', e, resolvedFrameworkRoot);
+      );
+      console.log(`   ✓ AI prompt 已写入 ${reportDirRel}/ai-prompt.md`);
+    } catch (err) {
+      const e = err as Error;
+      console.error(`   ✗ Step 4 组装 AI Harness prompt 失败: ${e.message}`);
+      finalReport = failScriptReportWithFatalError(scriptReport, 'assemble_ai_prompt', e, resolvedFrameworkRoot);
+    }
   }
 
   if (finalReport === scriptReport) {
@@ -1092,7 +1178,7 @@ async function main(): Promise<void> {
   // 拆环：旧序 receiptValidation 先于 summary 落盘，check-receipt 直读 summary 时会读到
   // 上次 run 的旧件；现在 base summary（无 receipt 依赖、原子写）先落盘。
   let baseSummary = writeRunSummaryBase(projectRoot, finalReport, resolvedFrameworkRoot, {
-    canonicalPromptDigest,
+    verifierPlan,
   });
   if (!phaseIsGlobal) {
     writeReceiptSkeletonIfMissing(projectRoot, feature, phase, finalReport.summary.verdict);
@@ -1152,7 +1238,7 @@ async function main(): Promise<void> {
         resolvedFrameworkRoot,
       );
       baseSummary = writeRunSummaryBase(projectRoot, finalReport, resolvedFrameworkRoot, {
-        canonicalPromptDigest,
+        verifierPlan,
       });
     }
   }
@@ -1204,10 +1290,17 @@ async function main(): Promise<void> {
   console.log('\n' + '='.repeat(60));
   if (finalReport.summary.verdict === 'PASS') {
     console.log('  ✅ 脚本 Harness 检查通过');
-    console.log('  📤 请将 ai-prompt.md 发送给 AI 模型执行语义验证');
+    for (const line of buildPassGuidanceLines(runSummary, verifierPlan, phase, String(feature))) {
+      console.log(line);
+    }
   } else if (finalReport.summary.verdict === 'INCOMPLETE') {
+    // plan a9d4e7c2 P1-3：INCOMPLETE 不止"设备不可用"一种成因（verifier provider 缺失
+    // 同样落这里）。统一渲染机器投影 next_action，不再把所有 INCOMPLETE 硬解释成设备问题。
     console.log('  ⚠️  脚本 Harness 部分就绪（INCOMPLETE）');
-    console.log('  📱 编译已通过但真机/模拟器不可用；修复设备环境后重跑 UT');
+    if (verifierPlan.mode === 'blocked') {
+      console.log(`  🔌 ${verifierPlan.message}`);
+    }
+    console.log(`  ➡️  next_action = ${runSummary.next_action}`);
   } else {
     const runnerFailed = finalReport.checks.some(c => c.id.startsWith('runner_') && c.status === 'FAIL');
     if (runnerFailed) {
@@ -1361,8 +1454,11 @@ function resolveAssetAxisInheritance(
       quality_axes?: { asset?: { applicable?: boolean; verdict?: string } };
       asset_debt_revision?: string;
     };
+    // plan a9d4e7c2 T3：兼容读取面同步纳入当代 1.3（版本集合唯一出处 quality-axes）——
+    // 漏掉即等于「升级后 asset 轴继承整体失效」的静默回退。
     if (
-      (parsed.schema_version !== '1.1' && parsed.schema_version !== '1.2') ||
+      (parsed.schema_version !== '1.1' &&
+        !SUMMARY_ASSURANCE_SCHEMA_VERSIONS.has(String(parsed.schema_version))) ||
       !parsed.quality_axes?.asset
     ) return null;
     const upstreamVerdict = String(parsed.quality_axes.asset.verdict ?? 'UNVERIFIED');
@@ -1536,8 +1632,11 @@ export function writeRunSummaryBase(
   report: ScriptReport,
   frameworkRoot: string,
   opts?: {
-    /** 由 assembleAIPrompt 同源回填的 prompt 语义内容摘要；缺省=本轮没装配出 prompt。 */
-    canonicalPromptDigest?: string | null;
+    /**
+     * 本次 run 的 verifier 能力解析结果（plan a9d4e7c2）。缺省 = 调用方未解析
+     * （测试桩入口）→ 按 disabled 处理：不写 verifier 字段、不生成 request。
+     */
+    verifierPlan?: VerifierPlan | null;
   },
 ): HarnessRunSummary {
   const dir = featurePhaseReportsDir(projectRoot, report.feature, report.phase, frameworkRoot);
@@ -1628,23 +1727,28 @@ export function writeRunSummaryBase(
   // 不该埋在 runner 内联，且 FAIL 降级保护须有守门测试）。它保证投影取更严侧、不把既有 FAIL 降级，
   // mismatch 只在 pre!==legacy 时报（pre===legacy 的 capability 合法投影不报）。
   const { verdict: effectiveVerdict, mismatch } = resolveEffectiveVerdict({ pre, post, legacy });
-  // plan e5b8c3f7 T1：verifier 证据身份的**单点**生成。放在这里而不是 Step 4，是因为
+  // plan a9d4e7c2 T2：verifier **调用凭证**的单点生成。放在这里而不是 Step 4，是因为
   // 这里同时握有 gate 指纹与 worktree/source identity，且 ai-prompt.md 已在 Step 4 落盘——
   // 一个函数内取齐全部输入，不给第二个生产者留位置。
+  // `enabled` 之外一律零产物：disabled 缺席即为零；blocked 无 provider，写 request 无意义。
   const sourceCommitSha = resolveGitHeadSha(projectRoot);
   const worktreeDigest = computeProductWorktreeDigest(
     projectRoot,
     (loadFrameworkConfig(projectRoot).architecture?.outer_layers ?? []).map(l => l.id),
   );
-  const verifierSubjectId = issueVerifierSubject({
-    dir,
-    report,
-    projectRoot,
-    gateFingerprint: gateFingerprint ?? null,
-    sourceCommitSha,
-    worktreeDigest,
-    canonicalPromptDigest: opts?.canonicalPromptDigest ?? null,
-  });
+  // 与 Step 4 同一判据：`enabled` ∧ 脚本 PASS。writer 侧独立复核 verdict，
+  // 保证即使调用方漏传门控也不会凭空产出一份没有 prompt 的凭证。
+  const verifierIssued =
+    opts?.verifierPlan?.mode === 'enabled' && report.summary.verdict === 'PASS'
+      ? issueVerifierRequest({
+          dir,
+          report,
+          projectRoot,
+          gateFingerprint: gateFingerprint ?? null,
+          sourceCommitSha,
+          worktreeDigest,
+        })
+      : null;
   if (mismatch) {
     // 文案按 pre 说话（review：mismatch=pre!==legacy，post 可能 ===legacy，写「投影≠legacy」是假话）。
     console.warn(
@@ -1657,7 +1761,7 @@ export function writeRunSummaryBase(
     });
   }
   const summary: HarnessRunSummary = {
-    schema_version: '1.2',
+    schema_version: SUMMARY_SCHEMA_VERSION_CURRENT,
     phase: report.phase,
     feature: report.feature,
     verdict: effectiveVerdict,
@@ -1672,7 +1776,9 @@ export function writeRunSummaryBase(
     ...(assetDebtRevision ? { asset_debt_revision: assetDebtRevision } : {}),
     script_report: rel('script-report.json'),
     merged_report: rel('merged-report.md'),
-    ai_prompt: rel('ai-prompt.md'),
+    // plan a9d4e7c2 T3：ai_prompt 改**条件字段**——verifier disabled 的 phase 根本
+    // 不装配 prompt，写一个指向不存在文件的路径只会诱导消费方去读。
+    ...(verifierIssued ? { ai_prompt: rel('ai-prompt.md') } : {}),
     summary_json: rel('summary.json'),
     run_statuses: runStatuses,
     ut_run_status: utStatus,
@@ -1684,6 +1790,14 @@ export function writeRunSummaryBase(
     next_action: decideNextAction(report, blockers, runStatuses, blockingSkips, readinessSignals, {
       effectiveVerdict,
       capabilityBlocked: hasBlocked,
+      verifierMode: opts?.verifierPlan?.mode,
+      verifierEvidence: resolveVerifierEvidenceState(
+        projectRoot,
+        report,
+        frameworkRoot,
+        opts?.verifierPlan?.mode,
+        verifierIssued?.subjectId ?? null,
+      ),
     }),
     closure_status: 'open',
     assurance: report.assurance,
@@ -1696,10 +1810,17 @@ export function writeRunSummaryBase(
     // t2 v3（codex 阻断3）：dirty worktree 绑定——层目录 tracked diff+untracked 摘要，
     // HEAD 不动但源码已改时旧 PASS 件同样失效。
     worktree_digest: worktreeDigest,
-    // plan e5b8c3f7 T1：本轮 run 的 verifier 证据身份。**分派锚**——check-receipt 按
-    // 「在场与否」二分新闭环域 / grandfather 旧闭环域；新版 runner 必写、旧件必缺。
-    // finalizer 的 closure patch 走 {...base} 展开，open→closed 原样保留（T5 回归 7 守护）。
-    verifier_subject_id: verifierSubjectId,
+    // plan a9d4e7c2 T3：verifier 字段**条件化**——身份=subject、适用性=policy（由
+    // resolveVerifierPlan 随时重算，不落快照）、代际=schema_version，三职分离。
+    // enabled 时才在场；disabled/blocked 时缺席，且缺席**不再**表示"旧件"
+    //（旧件由 schema_version 判定，见 check-receipt 的 grandfather 分派）。
+    // finalizer 的 closure patch 走 {...base} 展开，open→closed 原样保留。
+    ...(verifierIssued
+      ? {
+          verifier_subject_id: verifierIssued.subjectId,
+          verifier_request: verifierIssued.requestRel,
+        }
+      : {}),
     ...(process.env.MAISON_GOAL_RUN_ID?.trim() ? { run_id: process.env.MAISON_GOAL_RUN_ID.trim() } : {}),
     ...(visualRound ? { visual_round: visualRound } : {}),
   };
@@ -1727,8 +1848,13 @@ export function writeRunSummaryBase(
         report.phase === 'review'
           ? readFeatureDocOrNull(projectRoot, report.feature, 'review-report.md')
           : null,
+      // plan a9d4e7c2 P1-5：**锚到本轮刚签发的 subject**。不传 subjectId 的话 loader 会读
+      // 磁盘 summary 现值——而此刻它还是**上一轮**的（本 base summary 尚未落盘），于是
+      // 上一个 subject 的 verifier 正文会被算进这一轮的 repair_candidates。
+      // 本轮没签发凭证（disabled/blocked/脚本非 PASS/签发失败）→ 传 null = 零候选。
       verifierReportText: loadVerifierReportTextOrNull(projectRoot, report.feature, report.phase, {
         frameworkRoot,
+        subjectId: verifierIssued?.subjectId ?? null,
       }),
       parseClassificationFromDetails: extractFailureClassification,
     });
@@ -1737,10 +1863,12 @@ export function writeRunSummaryBase(
     // best-effort 事实层：组装失败不阻断 summary（无 candidate=落回既有 retry/halt 行为）
     console.warn(`   ⚠ [repair-candidates] 组装失败（零候选继续）：${(e as Error).message}`);
   }
-  // Writer fail-fast：1.2 extends the quality lattice with assurance provenance and closure state.
+  // Writer fail-fast：1.2/1.3 extend the quality lattice with assurance provenance and closure state.
   const v11Errors = validateSummaryV11(summary);
   if (v11Errors.length > 0) {
-    throw new Error(`[quality-axes] summary 1.2 契约违反（框架缺陷，拒绝落盘）：${v11Errors.join('；')}`);
+    throw new Error(
+      `[quality-axes] summary ${SUMMARY_SCHEMA_VERSION_CURRENT} 契约违反（框架缺陷，拒绝落盘）：${v11Errors.join('；')}`,
+    );
   }
   atomicWriteJson(path.join(dir, 'summary.json'), summary);
   return summary;
@@ -1780,60 +1908,82 @@ function writeReceiptSkeletonIfMissing(
 }
 
 /**
- * plan e5b8c3f7 T1：生成本轮 run 的 verifier_subject_id，并把机器块注入 ai-prompt.md。
+ * 本轮 verifier 证据现状（plan a9d4e7c2 P1-3）——只看**本轮刚签发的 subject**。
+ *
+ * 绝不去读磁盘 summary 现值：写这份 base summary 时它还是**上一轮**的，按它取证据等于
+ * 把旧 subject 的结论算到新 run 头上。签发失败（无 subject）就诚实返回 absent。
+ */
+function resolveVerifierEvidenceState(
+  projectRoot: string,
+  report: ScriptReport,
+  frameworkRoot: string,
+  mode: 'disabled' | 'enabled' | 'blocked' | undefined,
+  issuedSubjectId: string | null,
+): 'not_applicable' | 'absent' | 'pass' | 'fail' | 'invalid' {
+  if (mode !== 'enabled') return 'not_applicable';
+  if (!issuedSubjectId) return 'absent';
+  const loaded = loadVerifierEvidenceForSubject(
+    projectRoot,
+    report.feature,
+    report.phase,
+    issuedSubjectId,
+    { frameworkRoot },
+  );
+  if (loaded.ok) return loaded.evidence.verdict === 'PASS' ? 'pass' : 'fail';
+  return loaded.code === 'report_missing' ? 'absent' : 'invalid';
+}
+
+/**
+ * plan a9d4e7c2 T2：生成本轮 run 的 verifier **调用凭证**（短 request JSON）。
+ *
+ * 只在 `resolveVerifierPlan` 判 enabled 时调用。产物两样：
+ *   · `verifier.request.<subject>.json`——主 agent 把它**整段**当 Task prompt 投给
+ *     verifier；verifier 按 `prompt_path` 自己 Read 磁盘 ai-prompt.md（大文件不过传输面）；
+ *   · `summary.verifier_subject_id` / `summary.verifier_request`——闭环侧的身份锚。
+ *
+ * subject 按**实际审查材料**寻址：`prompt_sha256` 直接哈希磁盘 ai-prompt.md 原文，
+ * 没有 canonical 投影、没有 telemetry 归一。相同材料复用同一 subject（既有验真 JSON
+ * 照用，直接进 receipt）；材料变化必换 subject（check-receipt 指引重跑 verifier）。
+ * 时间戳导致换 subject 是合法结果——**不得**为提高复用率去改造 prompt producer。
  *
  * 输入面刻意**不含整份 summary SHA**：base summary 以 closure_status=open 落盘、
- * finalizer 闭环时改写为 closed——整份 SHA 入 subject 会让正常闭环自锁（刚发布的
- * verifier 证据在闭环瞬间 stale）。取的全是 open→closed 期间不变的量。
+ * finalizer 闭环时改写为 closed——整份 SHA 入 subject 会让正常闭环自锁。
  *
- * ai-prompt.md 是 subject 的**唯一机器生产入口**：注入前先剥旧块再哈希，重跑幂等；
- * prompt 缺席（Step 4 崩栈已清理残留）时以 `<absent>` 参与派生——此路 verdict 必非 PASS、
- * 不会触发 verifier，subject 只作分派锚存在，不影响判定。
+ * prompt 缺席（Step 4 崩栈已清理残留）或写盘失败 → 返回 null：summary 不写 verifier
+ * 字段，闭环侧按"能力启用但凭证缺失"指引重跑 harness，绝不产生半截凭证。
  */
-function issueVerifierSubject(input: {
+function issueVerifierRequest(input: {
   dir: string;
   report: ScriptReport;
   projectRoot: string;
   gateFingerprint: string | null;
   sourceCommitSha: string | null;
   worktreeDigest: string | null;
-  canonicalPromptDigest: string | null;
-}): string {
-  const promptPath = path.join(input.dir, 'ai-prompt.md');
-  const promptRaw = fs.existsSync(promptPath) ? readTextOrNull(promptPath) : null;
-  const subjectId = computeVerifierSubjectId({
+}): { subjectId: string; requestRel: string } | null {
+  const promptAbs = path.join(input.dir, 'ai-prompt.md');
+  const promptRaw = fs.existsSync(promptAbs) ? readTextOrNull(promptAbs) : null;
+  if (promptRaw === null) {
+    console.warn('   ⚠ [verifier-request] ai-prompt.md 不可读，本轮不生成 verifier 调用凭证。');
+    return null;
+  }
+  const rel = (abs: string): string => path.relative(input.projectRoot, abs).replace(/\\/g, '/');
+  const request = buildVerifierRequest({
     feature: input.report.feature,
     phase: input.report.phase,
-    script_report_material: canonicalScriptReportDigest(input.report),
-    ai_prompt_material: input.canonicalPromptDigest,
+    prompt_path: rel(promptAbs),
+    prompt_sha256: computePromptSha256(promptRaw),
     gate_fingerprint: input.gateFingerprint,
     source_commit_sha: input.sourceCommitSha,
     worktree_digest: input.worktreeDigest,
   });
-  if (promptRaw !== null) {
-    // 机器块声明的是**本 subject 自己的**分区文件（review 四轮 P0）——固定文件名会让
-    // 不同 subject 竞争同一个文件，而竞态无法靠"更晚的授权复查"消除。
-    const reportPathRel = path
-      .relative(input.projectRoot, path.join(input.dir, verifierReportJsonFilename(subjectId)))
-      .replace(/\\/g, '/');
-    try {
-      fs.writeFileSync(
-        promptPath,
-        withSubjectBlock(promptRaw, {
-          subject_id: subjectId,
-          feature: input.report.feature,
-          phase: input.report.phase,
-          report_path: reportPathRel,
-        }),
-        'utf-8',
-      );
-    } catch (e) {
-      // 注入失败不阻断 summary 落盘：subject 仍写入 summary，但 prompt 无机器块 →
-      // hook 取不到 invocation subject → fail-closed 落 bedside（不会产生假闭环）。
-      console.warn(`   ⚠ [verifier-subject] ai-prompt.md 机器块注入失败：${(e as Error).message}`);
-    }
+  const requestAbs = path.join(input.dir, verifierRequestFilename(request.subject_id));
+  try {
+    fs.writeFileSync(requestAbs, renderVerifierRequest(request), 'utf-8');
+  } catch (e) {
+    console.warn(`   ⚠ [verifier-request] 凭证落盘失败：${(e as Error).message}`);
+    return null;
   }
-  return subjectId;
+  return { subjectId: request.subject_id, requestRel: rel(requestAbs) };
 }
 
 /** 当前 git HEAD（best-effort；非 git 环境返回 null）——run identity 锚。 */
@@ -1925,14 +2075,73 @@ function printStableSummary(summary: HarnessRunSummary): void {
   console.log('END_HARNESS_SUMMARY');
 }
 
+/**
+ * 脚本 PASS 后的控制台指引（plan a9d4e7c2 复评 P2）——**按机器投影 `next_action` 渲染**。
+ *
+ * 旧写法是"只要 summary 里有 verifier_request 就叫人去投给 verifier"，那与材料寻址契约
+ * 直接冲突：当前 subject 已有验真 PASS 证据时，正确动作是填回执 + `--sync-closure`，
+ * 而对同一 subject 再跑一次 verifier 只会撞出 conflict。
+ *
+ * 抽成纯函数是为了让"控制台说了什么"可被断言——只断 summary 字段挡不住渲染层自说自话。
+ */
+export function buildPassGuidanceLines(
+  summary: Pick<HarnessRunSummary, 'next_action' | 'verifier_request' | 'verifier_subject_id'>,
+  plan: Pick<VerifierPlan, 'message'>,
+  phase: string,
+  feature: string,
+): string[] {
+  const syncHint = `  📝 下一步：填写完成回执 → npx ts-node harness-runner.ts --sync-closure --phase ${phase} --feature ${feature}`;
+  switch (summary.next_action) {
+    case 'run_verifier_then_receipt':
+    case 'rerun_verifier_with_current_request':
+      return [
+        '  📤 verifier 已启用：把下面这份 request JSON **整段**作为 Task prompt 投给 subagent_type=verifier',
+        `     ${summary.verifier_request ?? '(本轮未生成 request，请检查 Step 4 是否失败)'}`,
+        '     （verifier 自行 Read 其中的 prompt_path；不要投递 ai-prompt.md 全文，也不要改写任何字段）',
+      ];
+    case 'fill_receipt_then_sync_closure':
+      return [
+        summary.verifier_subject_id
+          ? '  ♻️ 当前审查材料的 verifier 证据已验真可复用，**无需重跑 verifier**'
+          : `  ℹ verifier: ${plan.message}`,
+        syncHint,
+      ];
+    case 'fix_verifier_findings_then_rerun_harness':
+      return [
+        '  🔧 当前 subject 的 verifier 结论为 FAIL：先按其发现修改材料，再重跑本阶段 harness',
+        '     （**不要**对同一 subject 重跑 verifier——那只会撞出 conflict）',
+      ];
+    case 'resolve_verifier_provider_then_rerun':
+      return [`  🔌 ${plan.message}`];
+    default:
+      return [`  ➡️  next_action = ${summary.next_action}`];
+  }
+}
+
+/** 本轮 verifier 证据现状（仅在 plan=enabled 时有意义）。 */
+type VerifierEvidenceState = 'not_applicable' | 'absent' | 'pass' | 'fail' | 'invalid';
+
 function decideNextAction(
   report: ScriptReport,
   blockers: HarnessRunSummary['blockers'],
   runStatuses: HarnessRunSummary['run_statuses'],
   blockingSkips: HarnessRunSummary['blocking_skips'],
   readinessSignals: HarnessRunSummary['readiness_signals'],
-  opts?: { effectiveVerdict?: string; capabilityBlocked?: boolean },
+  opts?: {
+    effectiveVerdict?: string;
+    capabilityBlocked?: boolean;
+    /** plan a9d4e7c2 P1-3：verifier 三态 —— 缺省按 enabled 处理（旧调用点兼容）。 */
+    verifierMode?: 'disabled' | 'enabled' | 'blocked';
+    /** 当前 subject 的证据现状；enabled 时由 writer 探测后传入。 */
+    verifierEvidence?: VerifierEvidenceState;
+  },
 ): string {
+  // plan a9d4e7c2 P1-3：provider 不可用会把顶层钳成 INCOMPLETE，但它**不是设备问题**——
+  // 必须先于下面的 device-external 分支返回自己的动作，否则 spec 阶段会得到
+  // `device_ready_then_rerun_ut` 这种驴唇不对马嘴的指引（评审实测形态）。
+  if (opts?.verifierMode === 'blocked') {
+    return 'resolve_verifier_provider_then_rerun';
+  }
   // plan c8e5b3f1 t2：effective verdict = 顶层钳制后的最终值（capability blocked 时 ≠ legacy PASS）。
   // 开头的 legacy INCOMPLETE/device-external 分支保持原语义（legacy 变 INCOMPLETE 的唯一路径就是
   // device-external 例外），不得换成 effective。
@@ -1985,7 +2194,24 @@ function decideNextAction(
   if (effectiveVerdict === 'PASS' && blockingSkips.length > 0) {
     return 'review_blocking_skips_then_verifier';
   }
-  if (effectiveVerdict === 'PASS') return 'run_verifier_then_receipt';
+  if (effectiveVerdict === 'PASS') {
+    // plan a9d4e7c2 P1-3：脚本 PASS 之后到底该干什么，取决于 verifier 能力与证据现状——
+    // 旧实现恒返回 `run_verifier_then_receipt`，于是 disabled 的阶段被指去跑一个不存在的
+    // verifier，已有 PASS 证据的阶段被指去重跑（同 subject 重跑只会造 conflict）。
+    const mode = opts?.verifierMode ?? 'enabled';
+    if (mode === 'disabled') return 'fill_receipt_then_sync_closure';
+    switch (opts?.verifierEvidence) {
+      case 'pass':
+        return 'fill_receipt_then_sync_closure';
+      case 'fail':
+        // 同 subject 重跑 verifier 只会撞出 conflict：必须先改材料，让 subject 换代。
+        return 'fix_verifier_findings_then_rerun_harness';
+      case 'invalid':
+        return 'rerun_verifier_with_current_request';
+      default:
+        return 'run_verifier_then_receipt';
+    }
+  }
   if (blockers.some(b => b.id === 'ut_no_src_mutation' && /baseRef 可能过旧|HARNESS_DIFF_BASE_REF=working/.test(b.details_excerpt))) {
     return 'rerun_with_HARNESS_DIFF_BASE_REF_working';
   }

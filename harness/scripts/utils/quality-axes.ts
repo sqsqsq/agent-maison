@@ -448,6 +448,15 @@ export function deriveSummaryVerdictLattice(
 const NEGATIVE_VERDICTS = new Set<AxisVerdict>(['FAIL', 'UNVERIFIED', 'STALE', 'MISSING']);
 
 /**
+ * summary 代际常量（plan a9d4e7c2 T3）——**唯一出处**，消费方一律引用，不各写 `'1.2'`。
+ *   · CURRENT：writer 恒写的当代版本；
+ *   · ASSURANCE：带 assurance + capability resolution + closure_commit 的闭环域
+ *     （1.2 与 1.3 同属；1.3 只是把 verifier 字段条件化，assurance 契约不变）。
+ */
+export const SUMMARY_SCHEMA_VERSION_CURRENT = '1.3';
+export const SUMMARY_ASSURANCE_SCHEMA_VERSIONS: ReadonlySet<string> = new Set(['1.2', '1.3']);
+
+/**
  * summary 1.1 完整契约校验——**唯一权威**（codex 三轮 P1-4：lite schema 无条件 required，
  * 各消费方只验局部会碎片化）。writer 落盘前 fail-fast 调用；verify-feature-completion 与
  * upstream-verdict-gate 消费 1.1 时统一调用。校验面：四字段 presence + 枚举 + 轴不变量。
@@ -458,8 +467,8 @@ export function validateSummaryV11(summary: unknown): string[] {
   // 责任阶段统一路由（plan b6e4c9f2）：repair_candidates 可选字段——存在即须形状合法
   const rcErrors = validateRepairCandidatesShape(s.repair_candidates);
   if (rcErrors.length > 0) return rcErrors;
-  if (s.schema_version !== '1.1' && s.schema_version !== '1.2') {
-    return [`schema_version=${String(s.schema_version)} 非 1.1/1.2`];
+  if (!SUMMARY_ASSURANCE_SCHEMA_VERSIONS.has(String(s.schema_version)) && s.schema_version !== '1.1') {
+    return [`schema_version=${String(s.schema_version)} 非 1.1/1.2/1.3`];
   }
   const errors: string[] = [];
   if (s.report_validity !== 'PASS' && s.report_validity !== 'FAIL' && s.report_validity !== 'UNVERIFIED') {
@@ -473,7 +482,7 @@ export function validateSummaryV11(summary: unknown): string[] {
   }
   if (s.quality_axes == null) errors.push('quality_axes 缺失');
   else errors.push(...validateQualityAxes(s.quality_axes));
-  if (s.schema_version === '1.2') {
+  if (SUMMARY_ASSURANCE_SCHEMA_VERSIONS.has(String(s.schema_version))) {
     if (typeof s.assurance !== 'string' || !['blocked', 'degraded', 'full', 'not_applicable'].includes(s.assurance)) {
       errors.push('assurance 缺失/非法');
     }

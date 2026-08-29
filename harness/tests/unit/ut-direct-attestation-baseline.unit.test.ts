@@ -32,6 +32,7 @@ import {
 } from '../../scripts/utils/closure-attestation';
 import { clearFrameworkConfigCache, featurePhaseReportsDir, loadFrameworkConfig } from '../../config';
 import { loadResolvedProfile } from '../../profile-loader';
+import { SUMMARY_SCHEMA_VERSION_CURRENT } from '../../scripts/utils/quality-axes';
 import type { CheckContext, CheckResult } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -76,12 +77,18 @@ function makeProject(opts?: { git?: boolean }): string {
   return root;
 }
 
-/** 写 review 闭环 summary（字段形态取自 phase-closure-finalizer 的最终提交产物）。 */
-function writeReviewSummary(root: string, closed: boolean): void {
+/**
+ * 写 review 闭环 summary（字段形态取自 phase-closure-finalizer 的最终提交产物）。
+ *
+ * 代际参数化（plan a9d4e7c2）：attestation-first 基线判据认的是**闭环域版本集**
+ * （1.2 ∪ 1.3），不是某个字面量。默认写当代 1.3，显式传 '1.2' 覆盖旧代兼容用例——
+ * 写死字面量会让"当代 review closed 能不能作基线"根本没有测试钉住。
+ */
+function writeReviewSummary(root: string, closed: boolean, schemaVersion: string = SUMMARY_SCHEMA_VERSION_CURRENT): void {
   const dir = featurePhaseReportsDir(root, FEATURE, 'review', FRAMEWORK_ROOT);
   fs.mkdirSync(dir, { recursive: true });
   const summary: Record<string, unknown> = {
-    schema_version: '1.2',
+    schema_version: schemaVersion,
     feature: FEATURE,
     phase: 'review',
     verdict: 'PASS',
@@ -189,6 +196,32 @@ const cases: Array<{ name: string; run: () => void }> = [
         );
       } finally {
         cleanup(root);
+      }
+    },
+  },
+  {
+    name: '①b 代际双向：当代 review closed 与上一代 1.2 closed 都是合法 attestation-first 基线',
+    run: () => {
+      // 验收 17 第三款。判据是**闭环域版本集**（1.2 ∪ 1.3），不是某个字面量——
+      // 写死字面量时，升级到当代会让整条 attestation-first 路径静默退回 git 分支。
+      for (const schemaVersion of [SUMMARY_SCHEMA_VERSION_CURRENT, '1.2']) {
+        const root = makeProject();
+        try {
+          writeFile(root, SRC_REL, 'export class DemoFlow { run(): number { return 2; } }\n');
+          writeFile(root, CODING_ARTIFACT_REL, 'export class DemoRepo { load(): void {} }\n');
+          writeAttestation(root);
+          writeReviewSummary(root, true, schemaVersion);
+          writeFile(root, UT_REL, 'describe("demo", () => {});\n');
+
+          const r = one(root);
+          assert(r.status === 'PASS', `schema=${schemaVersion} 期望 PASS，实际 ${r.status}：${r.details}`);
+          assert(
+            (r.details ?? '').includes('基线=review closure attestation'),
+            `schema=${schemaVersion} 应走 attestation 基线而非 git：${r.details}`,
+          );
+        } finally {
+          cleanup(root);
+        }
       }
     },
   },
