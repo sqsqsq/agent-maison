@@ -9393,6 +9393,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               summary_path: snap.snapshot_files['summary.json'] ?? summaryPath ?? undefined,
               report_dir: snap.snapshotDirRel,
               snapshot_files: snap.snapshot_files,
+              verifier_evidence: snap.verifier_evidence,
             });
             halted = true;
             phaseDone = true;
@@ -9427,6 +9428,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             agent_silent_killed: invoke.silent_killed,
             agent_warn: agentWarn,
             snapshot_files: snap.snapshot_files,
+              verifier_evidence: snap.verifier_evidence,
             advance_blocked: resolved.advance_blocked,
           });
           phaseDone = true;
@@ -9460,6 +9462,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             agent_silent_killed: invoke.silent_killed,
             agent_warn: agentWarn,
             snapshot_files: snap.snapshot_files,
+              verifier_evidence: snap.verifier_evidence,
           });
           phaseDone = true;
           if (action === 'defer_external_and_halt') {

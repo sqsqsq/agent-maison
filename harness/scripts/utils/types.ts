@@ -529,6 +529,13 @@ export interface CheckResult {
   severity: Severity;
   status: CheckStatus;
   details: string;
+  /**
+   * plan e5b8c3f7 review 三轮 P1-2：`details` 的**语义投影**——同一模板、易变遥测
+   * （耗时/墙钟/临时路径）替换为固定占位符，供 verifier subject 派生使用；人读仍走
+   * `details`。缺省=直接用 `details`（即该 check 的 details 里没有易变量）。
+   * 生产端一律经 `renderDetailsWithTelemetry()` 产出这对文本，勿手写两份。
+   */
+  details_material?: string;
   affected_files?: string[];
   suggestion?: string;
   /** 机器可读失败归因；优先供 summary.json / next_action 消费，details 只做人读。 */
@@ -604,6 +611,13 @@ export interface HarnessRunSummary {
    * 缺失/失配＝债务链不可证 → 不继承（STALE needs_fix）。
    */
   asset_debt_revision?: string;
+  /**
+   * plan e5b8c3f7：本轮 run 的 verifier 证据身份（runner 单点生成，agent 零参与）。
+   * 跨 open→closed 稳定；**check-receipt 的唯一分派锚**——在场=新 subject/JSON 闭环域
+   * （只认 verifier.report.json），缺席=旧件（closed 走 grandfather / 未 closed 指引重跑
+   * harness）。派生输入见 verifier-subject.ts（明确排除整份 summary SHA，防闭环自锁）。
+   */
+  verifier_subject_id?: string;
   script_report: string;
   merged_report: string;
   ai_prompt: string;

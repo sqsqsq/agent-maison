@@ -34,6 +34,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import {
+  featurePhaseReportsDir,
   loadFrameworkConfig,
   receiptDirPath,
   resolveFeatureArtifact,
@@ -42,6 +43,8 @@ import {
 } from '../../config';
 import { inferRepoLayout } from '../../repo-layout';
 import { computeGateFingerprint } from './gate-fingerprint';
+import { readSummaryVerifierSubjectId } from './verifier-evidence';
+import { verifierReportJsonFilename } from './verifier-subject';
 import {
   goalManifestHashMatchesModuloAdapterProvenance,
   type GoalManifest,
@@ -144,10 +147,14 @@ export const PHASE_OPTIONAL_OUTPUT_RELPATHS_BY_PHASE: Partial<Record<Phase, stri
  */
 export const PHASE_REPORTS_OUTPUT_FILES = [
   'summary.json',
-  'verifier.report.md',
   'trace.json',
   'device-test-evidence.json',
 ] as const;
+// verifier 机器证据**不在**本表内（review 四轮 P0）：它按 subject 分区
+// （`verifier.report.<64位subject>.json`），文件名要到 summary 才知道，因此由
+// resolvePhaseEvidenceManifest 按**当前 subject** 动态登记。人读投影（.md）一直不进
+// 保护面。grandfather：旧 manifest 里登记过的固定名条目字节对账照旧生效——校验侧遍历的
+// 是 manifest 里已记录的条目，不是本表。
 
 export interface ResolveManifestOptions {
   projectRoot: string;
@@ -403,10 +410,26 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
     const abs = featureFilePath(projectRoot, feature, rel, opts.featurePathOpts);
     if (fs.existsSync(abs)) addEntry(abs, 'output');
   }
-  // reports 产出（summary/verifier/trace 必须在保护面内，存在才纳入）
-  const reportsDir = path.join(receiptDirPath(projectRoot, feature, String(phase)), 'reports');
+  // reports 产出（summary/verifier/trace 必须在保护面内，存在才纳入）。
+  // 路径必须走 featurePhaseReportsDir（尊重 paths.reports_dir_pattern）——手拼
+  // `receiptDir/reports` 在自定义 reports_dir_pattern 下会指向空目录，于是 summary/
+  // verifier 整组悄悄落到保护面之外（review P1-4 实测：outputs 里这几项为空集）。
+  const reportsDir = featurePhaseReportsDir(projectRoot, feature, String(phase), opts.frameworkRoot);
   for (const name of PHASE_REPORTS_OUTPUT_FILES) {
     const abs = path.join(reportsDir, name);
+    const rel = toPosixRel(projectRoot, abs);
+    if (fs.existsSync(abs) || stagedHashes.has(rel)) addEntry(abs, 'output');
+  }
+  // verifier 机器证据按 subject 分区，文件名由当前 summary 决定（review 四轮 P0）。
+  // subject 缺席=旧件，走 grandfather：它那份固定名条目已登记在**旧** manifest 里。
+  const verifierSubject = readSummaryVerifierSubjectId(
+    projectRoot,
+    feature,
+    String(phase),
+    opts.frameworkRoot,
+  );
+  if (verifierSubject) {
+    const abs = path.join(reportsDir, verifierReportJsonFilename(verifierSubject));
     const rel = toPosixRel(projectRoot, abs);
     if (fs.existsSync(abs) || stagedHashes.has(rel)) addEntry(abs, 'output');
   }

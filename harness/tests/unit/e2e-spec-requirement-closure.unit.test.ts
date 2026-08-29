@@ -17,6 +17,7 @@ import type { UnitCaseResult } from '../run-unit';
 import { prepareGoalModeRun, runGoalModeHostBridge } from '../../scripts/goal-mode-entry';
 import type { InSessionPhaseRequestContext } from '../../scripts/utils/goal-in-session-driver';
 import { casAcquireRunOwner, readRunControl } from '../../scripts/utils/goal-run-control';
+import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '..', '..', '..');
 
@@ -168,7 +169,17 @@ function readJson(root: string, rel: string): Record<string, unknown> {
 
 function writeValidSpecReceipt(root: string, summary: Record<string, unknown>, attemptId = ''): void {
   const reportsDir = path.join(root, 'doc/features/demo/spec/reports');
-  fs.writeFileSync(path.join(reportsDir, 'verifier.report.md'), '# spec verifier\nverdict: PASS\n', 'utf-8');
+  // plan e5b8c3f7：verifier 证据 = 与 hook 同形的 canonical JSON，subject 取自
+  // 本次真实 harness run 写入 summary 的 verifier_subject_id（不重写 summary 字节）。
+  publishFixtureVerifierEvidence({
+    projectRoot: root,
+    reportsDir,
+    feature: 'demo',
+    phase: 'spec',
+    subjectId: String(summary.verifier_subject_id ?? ''),
+    reportText: '# spec verifier\n\nverdict: PASS\n',
+    skipSummaryPatch: true,
+  });
   fs.writeFileSync(path.join(reportsDir, 'trace.json'), '{"trace": []}', 'utf-8');
   fs.writeFileSync(path.join(root, 'doc/features/demo/spec/phase-completion-receipt.md'), [
     '---', 'receipt_schema: "2.0"', 'feature: "demo"', 'phase: "spec"', 'agent_model: "e2e"', 'agent_runtime: "e2e"',
@@ -176,7 +187,7 @@ function writeValidSpecReceipt(root: string, summary: Record<string, unknown>, a
     `claimed_completion_commit_sha: "${String(summary.source_commit_sha)}"`, `claimed_attempt_id: "${attemptId}"`,
     'verifier_subagent:', '  invoked_via: "Task(subagent_type=verifier)"',
     '  prompt_template: "framework/harness/prompts/verify-spec.md"',
-    '  report_path: "doc/features/demo/spec/reports/verifier.report.md"', '  verdict: "PASS"',
+    '  report_path: "doc/features/demo/spec/reports/verifier.report.json"', '  verdict: "PASS"',
     '  ran_at: "2026-08-11T10:00:00+08:00"', '---', '',
     '## 反假设条款回顾', '', '- [x] 我没有引用不存在规则', '- [x] 若曾认为受限已逐字 quote', '- [x] 没有把假设当借口', '',
   ].join('\n'), 'utf-8');

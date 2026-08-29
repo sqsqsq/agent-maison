@@ -6,6 +6,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
+import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
+import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
 
 import {
   applyReceiptPathReconcileCandidate,
@@ -89,6 +91,33 @@ function writeModernArtifacts(root: string): { traceRel: string; verifierRel: st
     JSON.stringify({ feature: 'demo', phase: 'review', verdict: 'PASS' }, null, 2),
   );
   writeFile(path.join(root, verifierRel), 'verdict: PASS\n');
+  // plan e5b8c3f7：check-receipt 的 verifier 面已改判身份验真——modern 侧必须有
+  // summary.verifier_subject_id + 同形的 verifier.report.json，否则命中"旧件"分派。
+  const modernReportsDir = path.join(root, 'doc/features/demo/review/reports');
+  writeFile(
+    path.join(modernReportsDir, 'summary.json'),
+    JSON.stringify(
+      {
+        schema_version: '1.2',
+        phase: 'review',
+        feature: 'demo',
+        verdict: 'PASS',
+        blocker_count: 0,
+        // reconcile 会把 script_harness.report_dir 一并改指到 modern reports 目录，
+        // 于是本 summary 也要带当前门禁集指纹，否则命中既有的 gate_fingerprint_stale。
+        gate_fingerprint: computeGateFingerprint(path.resolve(__dirname, '..', '..', '..'), 'review'),
+        closure_status: 'open',
+      },
+      null,
+      2,
+    ),
+  );
+  publishFixtureVerifierEvidence({
+    projectRoot: root,
+    reportsDir: modernReportsDir,
+    feature: 'demo',
+    phase: 'review',
+  });
   writeFile(
     path.join(root, 'doc/features/demo/review/context-exploration.md'),
     'ready_to_produce: true\n',

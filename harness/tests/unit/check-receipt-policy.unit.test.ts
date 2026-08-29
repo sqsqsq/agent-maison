@@ -15,6 +15,7 @@ import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { runSyncClosureDetailed, tryValidateReceipt } from '../../scripts/utils/phase-state';
 import { statefilePath } from '../../config';
+import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 
 export interface UnitCaseResult {
   name: string;
@@ -104,8 +105,32 @@ function buildProject(phase: string, opts: ReceiptOpts): { root: string; sha: st
   fs.writeFileSync(tracePath, JSON.stringify({ schema_version: '1.0.0', feature: 'demo', phase }), 'utf-8');
   const ceAbs = path.join(featureDir, 'context-exploration.md');
   fs.writeFileSync(ceAbs, '# context exploration\n', 'utf-8');
-  const verifierReportAbs = path.join(reportsDir, 'verifier.report.md');
-  fs.writeFileSync(verifierReportAbs, 'verdict: PASS\n', 'utf-8');
+  // plan e5b8c3f7：verifier 证据 = summary.verifier_subject_id + 身份验真过的
+  // verifier.report.json（与 SubagentStop hook 同形，经共享 fixture 工具发布）。
+  // omitVerifier 时**两者都不写**——这正是"verifier 缺失"的新形态（旧形态是不写 MD）。
+  if (!opts.omitVerifier) {
+    fs.writeFileSync(
+      path.join(reportsDir, 'summary.json'),
+      JSON.stringify(
+        {
+          schema_version: '1.2',
+          phase,
+          feature: 'demo',
+          verdict: 'PASS',
+          blocker_count: 0,
+          fail_count: 0,
+          warn_count: 0,
+          // assurance 刻意缺席：本夹具用于身份/证据面断言，闭环提交阶段必然失败
+          // （见「环C：重签后放行」用例——它靠 finalizer 抛错区分"身份放行"与"身份拦截"）。
+          closure_status: 'open',
+        },
+        null,
+        2,
+      ),
+      'utf-8',
+    );
+    publishFixtureVerifierEvidence({ projectRoot: root, reportsDir, feature: 'demo', phase });
+  }
 
   const sha = initGit(root);
 
@@ -114,7 +139,7 @@ function buildProject(phase: string, opts: ReceiptOpts): { root: string; sha: st
     : [
         'verifier_subagent:',
         '  invoked_via: "Task(subagent_type=verifier)"',
-        '  report_path: "doc/features/demo/' + phase + '/reports/verifier.report.md"',
+        '  report_path: "doc/features/demo/' + phase + '/reports/verifier.report.json"',
         '  verdict: "PASS"',
         '',
       ].join('\n');
@@ -366,7 +391,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         );
         // 关键：必须经过**本次真正被改的函数** runSyncClosureDetailed（codex 抓出的缺口
         // ——只验 tryValidateReceipt 的话，即使它对匹配的 i8 也一律拒绝，正负两例仍会全绿）。
-        // 夹具刻意不含 reports/summary.json，于是身份放行后必然**推进到 finalizer** 才失败：
+        // 夹具的 summary.json 刻意缺 assurance（plan e5b8c3f7 后 verifier 证据面需 summary 承载 subject），于是身份放行后必然**推进到 finalizer** 才失败：
         //   · finalizationError 有值 = 身份校验放行、已进入闭环提交（本例期望）
         //   · finalizationError === undefined = 在校验阶段就被拒（负向用例期望）
         // 两者构成阶段对照，无需补完整 summary 夹具即可证明"拒绝仅来自身份失配"。
@@ -375,7 +400,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         });
         assert(
           res.finalizationError !== undefined,
-          '身份一致时须放行至 finalizer（本夹具因刻意缺 summary.json 才在提交阶段失败）；' +
+          '身份一致时须放行至 finalizer（本夹具因 summary 刻意缺 assurance 才在提交阶段失败）；' +
             `实得 finalizationError=undefined、exitCode=${res.exitCode}——说明仍被身份校验拦下`,
         );
       } finally {

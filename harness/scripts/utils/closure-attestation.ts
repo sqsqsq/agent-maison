@@ -28,9 +28,26 @@ import * as path from 'path';
 import { loadFrameworkConfig, receiptDirPath, resolveFeatureArtifact } from '../../config';
 import { loadCatalog, allModuleNames, findModule } from './catalog-parser';
 import { sha256File, stableStringify } from './phase-evidence-manifest';
+import { loadVerifierEvidence } from './verifier-evidence';
 
 export const REVIEW_CLOSURE_ATTESTATION_FILENAME = 'review-closure-attestation.json';
-export const CLOSURE_ATTESTATION_SCHEMA_VERSION = '1.0';
+/**
+ * 1.1（plan e5b8c3f7 T4）：`verifier_report_sha256` 从 `sha256File(verifier.report.md)`
+ * 改绑**身份验真后**的 `verifier.report.json`，并新增 `verifier_subject_id` /
+ * `verifier_result_sha256` 两个可读锚。writer 恒写 1.1。
+ */
+export const CLOSURE_ATTESTATION_SCHEMA_VERSION = '1.1';
+
+/**
+ * 可读版本集（**存量兼容**，plan e5b8c3f7 T4 "消费端兼容处理"）：本文件的全部对账口径
+ * ——`reconcileSourceTreeAgainstAttestation`、testing 的 review_closure_attestation gate、
+ * check-ut 的 goal 分支——消费的都是 `inventory`（源码树基线），**没有任何消费者读
+ * `verifier_report_sha256`**（全仓 grep 实证）。因此 verifier 绑定面的演进不构成对账
+ * 语义变化：旧 1.0 attestation 继续可读、继续按其当时的源码基线对账（与 evidence
+ * manifest 的 grandfather 同一哲学），只是它的 verifier 绑定仍是旧 MD 口径；
+ * 新闭环一律写 1.1。结构不成型仍在 loader 处判"基线不可用"（返回 null）。
+ */
+export const CLOSURE_ATTESTATION_READABLE_SCHEMA_VERSIONS = new Set(['1.0', '1.1']);
 
 /** 目录级排除（discovery 扫描与 inventory 走树共用；命中即整棵剪枝） */
 const EXCLUDED_DIR_NAMES = new Set([
@@ -235,7 +252,16 @@ export interface ReviewClosureAttestation {
   contracts_files: string[];
   inventory: SourceInventory;
   review_report_sha256: string | null;
+  /**
+   * plan e5b8c3f7 T4：绑定的是 review 阶段 canonical `verifier.report.json` 的文件哈希，
+   * **且仅在身份验真通过时才有值**——验真不通过为 null（基线诚实记录"无可绑定 verifier
+   * 证据"，不拿一份未验真的 Markdown 冒充）。
+   */
   verifier_report_sha256: string | null;
+  /** 该 verifier 证据所属的 run 身份（summary.verifier_subject_id 现值）；无证据为 null。 */
+  verifier_subject_id: string | null;
+  /** verifier 结论指纹（verdict + blocker_count + 正文）；无证据为 null。 */
+  verifier_result_sha256: string | null;
   gate_fingerprint: string | null;
   run_identity: { run_id?: string; attempt?: string } | null;
 }
@@ -284,7 +310,13 @@ export function writeReviewClosureAttestation(opts: WriteAttestationOptions): {
     ? parseContractsFiles(fs.readFileSync(contractsRes.actualPath, 'utf-8'))
     : [];
   const reviewReport = resolveFeatureArtifact(projectRoot, feature, 'review-report.md');
-  const verifierReport = path.join(receiptDirPath(projectRoot, feature, 'review'), 'reports', 'verifier.report.md');
+  // plan e5b8c3f7 T4：绑 JSON 机器真源，且只绑**验真通过**的那一份。
+  // sha256File(md) 的旧口径有两个洞：MD 可被手编（编辑即改 attestation 基线），
+  // 且它不携带任何身份——错位报告与本轮报告在哈希层无从区分。
+  // 绑定路径**只**取 loader 给出的绝对路径：手拼 `receiptDir/reports` 在自定义
+  // reports_dir_pattern 下会指向另一个目录——loader 明明验真通过，attestation 却因为
+  // 重建了错误路径而把 verifier_report_sha256 记成 null（review P1-4 实测）。
+  const verifierEvidence = loadVerifierEvidence(projectRoot, feature, 'review');
 
   const attestation: ReviewClosureAttestation = {
     schema_version: CLOSURE_ATTESTATION_SCHEMA_VERSION,
@@ -294,7 +326,9 @@ export function writeReviewClosureAttestation(opts: WriteAttestationOptions): {
     contracts_files: contractsFiles,
     inventory: buildSourceInventory(projectRoot, { expectProductSources: opts.expectProductSources }),
     review_report_sha256: reviewReport.exists ? sha256File(reviewReport.actualPath) : null,
-    verifier_report_sha256: sha256File(verifierReport),
+    verifier_report_sha256: verifierEvidence.ok ? sha256File(verifierEvidence.evidence.json_path_abs) : null,
+    verifier_subject_id: verifierEvidence.ok ? verifierEvidence.evidence.subject_id : null,
+    verifier_result_sha256: verifierEvidence.ok ? verifierEvidence.evidence.result_sha256 : null,
     gate_fingerprint: opts.gateFingerprint ?? null,
     run_identity: opts.runIdentity ?? null,
   };
@@ -323,7 +357,8 @@ export function writeReviewClosureAttestation(opts: WriteAttestationOptions): {
 function isWellFormedAttestation(parsed: unknown): parsed is ReviewClosureAttestation {
   if (!parsed || typeof parsed !== 'object') return false;
   const doc = parsed as { schema_version?: unknown; inventory?: unknown };
-  if (doc.schema_version !== CLOSURE_ATTESTATION_SCHEMA_VERSION) return false;
+  if (typeof doc.schema_version !== 'string') return false;
+  if (!CLOSURE_ATTESTATION_READABLE_SCHEMA_VERSIONS.has(doc.schema_version)) return false;
   if (!doc.inventory || typeof doc.inventory !== 'object') return false;
   const inv = doc.inventory as { roots?: unknown; files?: unknown };
   if (!Array.isArray(inv.roots) || !inv.roots.every((r) => typeof r === 'string')) return false;

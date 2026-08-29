@@ -2000,9 +2000,14 @@ export function featurePhaseReportsDir(
   frameworkRoot?: string,
   opts?: ResolveFrameworkRootOptions,
 ): string {
-  const fRoot = resolveFrameworkRootArg(projectRoot, frameworkRoot, opts);
+  // frameworkRoot **惰性求值**：它只在 `_global` 与"配置真的没有 pattern"两条回退分支里
+  // 用得上，而 loadFrameworkConfig 会把 DEFAULT_PATHS 合并进 cfg.paths，于是 pattern 分支
+  // 几乎恒被命中。急切求值会让"没有 framework 树"的裁剪环境（单测夹具、只需要路径的消费方）
+  // 白白抛 `No framework tree`——那正是消费方各自另拼一份路径、把真源分叉成三份的动因
+  // （plan e5b8c3f7 review P1-4）。惰性化对今天能成功的调用零行为变化。
+  const frameworkRootLazy = (): string => resolveFrameworkRootArg(projectRoot, frameworkRoot, opts);
   if (feature === GLOBAL_FEATURE_REPORTS_SENTINEL) {
-    return path.join(fRoot, 'harness', 'reports', '_global', phase);
+    return path.join(frameworkRootLazy(), 'harness', 'reports', '_global', phase);
   }
   const cfg = loadFrameworkConfig(projectRoot);
   const pattern = cfg.paths.reports_dir_pattern;
@@ -2010,7 +2015,7 @@ export function featurePhaseReportsDir(
     const rel = pattern.replace(/<feature>/g, feature).replace(/<phase>/g, phase);
     return path.resolve(projectRoot, rel);
   }
-  return path.join(fRoot, 'harness', 'reports', feature, phase);
+  return path.join(frameworkRootLazy(), 'harness', 'reports', feature, phase);
 }
 
 /** `featurePhaseReportsDir` 相对 `projectRoot` 的 POSIX 风格路径（用于日志 / summary）。 */

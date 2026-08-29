@@ -13,6 +13,8 @@ import type { ImageInputMode } from './multimodal-probe';
 import { formatReadImageEvidenceInstructions } from './read-image-evidence';
 import * as fs from 'fs';
 import * as path from 'path';
+
+import { sha256 } from './verifier-subject';
 import { featurePhaseReportsDir, relFeaturesDir } from '../../config';
 import {
   Phase,
@@ -227,7 +229,18 @@ export function assembleAIPrompt(
   resolvedProfile?: HarnessResolvedProfile,
   lifecycleHookFragments?: string[],
   frameworkRoot?: string,
-  options?: { imageInput?: ImageInputMode },
+  options?: {
+    imageInput?: ImageInputMode;
+    /**
+     * plan e5b8c3f7 review P1-2：把「真正交给 verifier 的语义内容」的规范化摘要交回
+     * 调用方，供 subject 派生。它与写盘文本**同源同一次装配**，只把两处 runner
+     * telemetry 换成占位符：`{timestamp}`（墙钟）与 `{script_report}`（另经
+     * `canonicalScriptReportDigest` 结构化投影单独入 subject）。
+     *
+     * 用回调而不是改返回类型：现有两处单测把返回值当 prompt 正文直接用。
+     */
+    onCanonicalPromptDigest?: (digest: string) => void;
+  },
 ): string {
   const templatePath = path.join(harnessRoot, 'prompts', `verify-${phase}.md`);
   let template: string;
@@ -252,16 +265,6 @@ export function assembleAIPrompt(
       }
     }
   }
-
-  let assembled = template;
-  assembled = assembled.replace(/\{spec_content\}/g, specContent);
-  assembled = assembled.replace(/\{script_report\}/g, scriptReportJson);
-  assembled = assembled.replace(/\{feature_name\}/g, feature);
-  assembled = assembled.replace(/\{phase\}/g, phase);
-  assembled = assembled.replace(/\{timestamp\}/g, new Date().toISOString());
-  // round7 skills/文案批（plan a9c4e7f1）：verify 模板路径占位符——解析实例配置的
-  // paths.features_dir，custom 宿主下 verifier 读/引用真实路径，不再硬编码 doc/features。
-  assembled = assembled.replace(/\{features_dir\}/g, relFeaturesDir(projectRoot));
 
   const dir = ensureReportDir(projectRoot, feature, phase, frameworkRoot);
   const contextImageDir = path.join(dir, 'context-images');
@@ -293,8 +296,6 @@ export function assembleAIPrompt(
       return `### ${cf.label}\n\n\`\`\`\n${cf.content}\n\`\`\``;
     })
     .join('\n\n');
-  assembled = assembled.replace(/\{context_files\}/g, contextSection);
-
   const sidecarNames: string[] = [];
   if (fs.existsSync(contextImageDir)) {
     for (const f of fs.readdirSync(contextImageDir).sort()) {
@@ -302,17 +303,41 @@ export function assembleAIPrompt(
     }
   }
 
+  let tail = '';
   if (phase === 'coding' && options?.imageInput === 'tool_read') {
-    assembled +=
+    tail +=
       '\n\n---\n\n## 多模态读图取证（tool_read · M3）\n\n' +
       formatReadImageEvidenceInstructions(sidecarNames) +
       '\n';
   }
-
   if (lifecycleHookFragments && lifecycleHookFragments.length > 0) {
-    assembled +=
+    tail +=
       '\n\n---\n\n## Lifecycle hooks（实例 / profile / framework）\n\n' +
       lifecycleHookFragments.map((f, i) => `### Hook fragment ${i + 1}\n\n${f}`).join('\n\n');
+  }
+
+  // 占位符填充抽成纯函数：写盘文本与规范化摘要**同一次装配、同一套输入**产出，
+  // 只有两处 runner telemetry 取不同值。这样"规范化"不再是事后对自由文本猜正则，
+  // 而是在格式化之前就精确知道哪两段是易变量。
+  // round7 skills/文案批（plan a9c4e7f1）：{features_dir} 解析实例配置的 paths.features_dir，
+  // custom 宿主下 verifier 读/引用真实路径，不再硬编码 doc/features。
+  const fill = (scriptReportValue: string, timestampValue: string): string => {
+    let out = template;
+    out = out.replace(/\{spec_content\}/g, specContent);
+    out = out.replace(/\{script_report\}/g, scriptReportValue);
+    out = out.replace(/\{feature_name\}/g, feature);
+    out = out.replace(/\{phase\}/g, phase);
+    out = out.replace(/\{timestamp\}/g, timestampValue);
+    out = out.replace(/\{features_dir\}/g, relFeaturesDir(projectRoot));
+    out = out.replace(/\{context_files\}/g, contextSection);
+    return out + tail;
+  };
+
+  const assembled = fill(scriptReportJson, new Date().toISOString());
+  if (options?.onCanonicalPromptDigest) {
+    options.onCanonicalPromptDigest(
+      sha256(fill('<script-report:projected-separately>', '<timestamp:volatile>')),
+    );
   }
 
   const promptPath = path.join(dir, 'ai-prompt.md');

@@ -6,7 +6,7 @@ import { loadFidelityIntentSsot } from './fidelity-shared';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { FeaturePhase, GoalRunStatus } from './phase-transition-policy';
-import type { PhaseSnapshotFiles } from './goal-phase-snapshot';
+import type { PhaseSnapshotFiles, PhaseSnapshotVerifierEvidence } from './goal-phase-snapshot';
 import { relFeatureFile } from '../../config';
 import { collectAutoDecisions } from './headless-assumptions';
 import type { Disposition, WaitKind } from './adjudication';
@@ -128,6 +128,9 @@ export interface GoalPhaseOutcome {
   /** Set when closure gate blocked advance (open receipt / timeout). */
   advance_blocked?: boolean;
   snapshot_files?: PhaseSnapshotFiles;
+  /** plan e5b8c3f7 T3：快照时点的 verifier 机器事实（身份验真后的 JSON 真源）；
+   *  验真不通过=null。**不得**回头解析快照里的 verifier.report.md（那只是人读存档）。 */
+  verifier_evidence?: PhaseSnapshotVerifierEvidence | null;
   // P0-B/P0-D（codex P3）诊断保真：只读 goal-report 的下游也能看到真因原文。
   failure_kind_classified?: string;
   /** API 断流哨兵命中的 CLI 错误信封行（transient_api_error 时）。 */

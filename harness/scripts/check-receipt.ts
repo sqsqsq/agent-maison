@@ -68,9 +68,16 @@ import {
 import { canPromptNow } from './utils/adjudication';
 import {
   evaluateMultimodalEvidenceGate,
-  readVerifierReportFile,
   type MultimodalEvidenceGateResult,
 } from './utils/multimodal-evidence-gate';
+import {
+  loadVerifierEvidence,
+  loadVerifierReportTextOrNull,
+  readSummaryClosureStatus,
+  readSummaryVerifierSubjectId,
+  type VerifierEvidence,
+} from './utils/verifier-evidence';
+import { recomputePhaseEvidenceStaleness } from './utils/phase-evidence-manifest';
 import { resolveContextAdapterImageInput } from './utils/multimodal-probe';
 import type { HarnessRunSummary, SoftAdvisory } from './utils/types';
 
@@ -613,41 +620,80 @@ function main(): void {
   const warnings: CheckIssue[] = [];
   const observed: Partial<Record<keyof EvidencePolicy, EvidenceValidationStatus>> = {};
 
-  // 3. verifier（policy.verifier === 'off' 时整块不检——balanced 档非保留 phase / lite 已短路）
+  // 3. verifier（plan e5b8c3f7 T3：真验真——不再信回执手填 verdict + 文件存在）
+  //
+  // **唯一分派锚 = summary.verifier_subject_id 在场与否**（新版 runner 必写、旧件必缺）：
+  //   · policy.verifier=off                → loader 不调用，JSON/MD 均不要求（现状语义保留）
+  //   · subject 在场                       → 只认新 schema JSON（三重比对 + 五项校验）
+  //   · subject 缺席 ∧ closed ∧ 旧 manifest fresh → grandfather（只走既有 freshness 链复核）
+  //   · subject 缺席 ∧ 其余                → 指引先重跑 harness 生成 subject 化产物
+  // 回执手填 invoked_via/report_path/verdict/ran_at 已**退出裁决权威**，只留兼容投影
+  //（与机器事实不符时降为 WARN，不再据以判 PASS/FAIL）。
   const vs = frontmatter.verifier_subagent ?? {};
+  let verifierEvidence: VerifierEvidence | null = null;
   if (policy.verifier === 'off') {
     observed.verifier = 'skipped_by_policy';
   } else {
-    observed.verifier = vs.verdict ? 'provided' : 'missing';
-    if ((vs.verdict ?? '').toUpperCase() !== 'PASS') {
-      issues.push({
-        id: 'verifier_not_pass',
-        severity: 'BLOCKER',
-        message: `verifier_subagent.verdict="${vs.verdict ?? '<missing>'}", 必须为 PASS。`,
-      });
-    }
-    if (!vs.invoked_via || !/Task|subagent/i.test(vs.invoked_via)) {
-      issues.push({
-        id: 'verifier_invocation_unspecified',
-        severity: 'BLOCKER',
-        message: `verifier_subagent.invoked_via="${vs.invoked_via ?? ''}"；必须明示通过 Task 工具触发 (subagent_type=verifier)，不允许"提示用户去跑"。`,
-      });
-    }
-    if (vs.report_path) {
-      const verifierReportAbs = path.resolve(projectRoot, vs.report_path);
-      if (!fs.existsSync(verifierReportAbs)) {
+    const verifierSubjectId = readSummaryVerifierSubjectId(projectRoot, feature, phase, frameworkRoot);
+    if (verifierSubjectId) {
+      const loaded = loadVerifierEvidence(projectRoot, feature, phase, { frameworkRoot });
+      if (!loaded.ok) {
+        observed.verifier = 'missing';
         issues.push({
-          id: 'verifier_report_missing',
+          id: `verifier_evidence_${loaded.code}`,
           severity: 'BLOCKER',
-          message: `verifier_subagent.report_path="${vs.report_path}" 在文件系统中不存在。`,
+          message: `【verifier 证据验真失败】${loaded.message}`,
         });
+      } else {
+        verifierEvidence = loaded.evidence;
+        observed.verifier = 'provided';
+        if (verifierEvidence.verdict !== 'PASS') {
+          issues.push({
+            id: 'verifier_not_pass',
+            severity: 'BLOCKER',
+            message:
+              `verifier 机器结论 verdict=${verifierEvidence.verdict}（blocker_count=${verifierEvidence.blocker_count}，` +
+              `来源 ${verifierEvidence.json_path_rel}），必须为 PASS。修复缺陷后重跑 verifier——改回执不构成通过。`,
+          });
+        }
+        // 兼容投影核对（非裁决面）：手填字段与机器事实不符只提示，不影响 pass/fail。
+        const declaredVerdict = (vs.verdict ?? '').trim().toUpperCase();
+        if (declaredVerdict && declaredVerdict !== verifierEvidence.verdict) {
+          warnings.push({
+            id: 'verifier_receipt_projection_drift',
+            severity: 'MAJOR',
+            message:
+              `回执 verifier_subagent.verdict="${vs.verdict}" 与机器真源 ${verifierEvidence.json_path_rel} ` +
+              `的 verdict=${verifierEvidence.verdict} 不一致；手填字段已退出裁决权威（兼容投影），请照机器事实回填。`,
+          });
+        }
       }
     } else {
-      issues.push({
-        id: 'verifier_report_path_missing',
-        severity: 'BLOCKER',
-        message: 'verifier_subagent.report_path 未填写。',
-      });
+      observed.verifier = 'missing';
+      const closed = readSummaryClosureStatus(projectRoot, feature, phase, frameworkRoot) === 'closed';
+      const manifestFresh =
+        closed &&
+        recomputePhaseEvidenceStaleness(projectRoot, feature, [phase], { frameworkRoot })[0]?.verdict === 'fresh';
+      if (manifestFresh) {
+        // grandfather（plan v3 P1-①）：旧闭环沿其**当时的登记面**复核，不解析 MD、
+        // 不要求 JSON。主动重跑 check-receipt = 复核旧 closure，**不构成重新裁决**——
+        // 重新裁决只随新 harness run（summary 重生成、subject 换代）进入。
+        observed.verifier = 'provided';
+        console.log(
+          `   ℹ verifier: grandfather（summary 无 verifier_subject_id 的旧闭环；` +
+            `按旧 evidence manifest 登记面复核，当前仍 fresh）`,
+        );
+      } else {
+        issues.push({
+          id: 'verifier_subject_absent',
+          severity: 'BLOCKER',
+          message:
+            `summary.json 缺 verifier_subject_id（${canonicalReportsRel}/summary.json）——` +
+            '该阶段产物由旧版 runner 生成，无法做 verifier 证据身份绑定。' +
+            '正确路径：重跑 harness（生成 subject 化 summary/ai-prompt，分钟级）→ 原样投递 ai-prompt.md 重跑 verifier → 重跑本检查。' +
+            (closed ? '（本阶段虽已 closed，但旧 evidence manifest 已非 fresh，不适用 grandfather。）' : ''),
+        });
+      }
     }
   }
 
@@ -1054,7 +1100,7 @@ function main(): void {
       projectRoot,
       frameworkRoot,
       phase,
-      frontmatter,
+      feature,
       fw,
     );
     if (mmAdvisory) {
@@ -1075,7 +1121,13 @@ function main(): void {
         : '   - script_harness: exit_code=0, blocker_count=0',
     );
     console.log(
-      `   - verifier_subagent: ${policy.verifier === 'off' ? 'skipped_by_policy（balanced 档非保留 phase）' : `verdict=${vs.verdict}`}`,
+      `   - verifier_subagent: ${
+        policy.verifier === 'off'
+          ? 'skipped_by_policy（balanced 档非保留 phase）'
+          : verifierEvidence
+            ? `verdict=${verifierEvidence.verdict}（机器真源 ${verifierEvidence.json_path_rel}，subject=${verifierEvidence.subject_id.slice(0, 12)}…，agent=${verifierEvidence.agent_id}）`
+            : 'grandfather（旧闭环，按旧 evidence manifest 登记面复核）'
+      }`,
     );
     console.log(`   - trace_json: ${traceDisplay}`);
     console.log(`   - commit_sha: ${sha}`);
@@ -1199,18 +1251,17 @@ function collectMultimodalEvidenceAdvisory(
   projectRoot: string,
   frameworkRoot: string,
   phase: Phase,
-  frontmatter: ReceiptFrontmatter,
+  feature: string,
   fw: ReturnType<typeof loadFrameworkConfig>,
 ): (MultimodalEvidenceGateResult & { effective_image_input?: string }) | null {
   if (phase !== 'coding') return null;
   const adapter = (fw.agent_adapter ?? 'generic').trim() || 'generic';
   const probe = resolveContextAdapterImageInput(projectRoot, frameworkRoot, adapter);
-  const vs = frontmatter.verifier_subagent ?? {};
-  let reportText: string | undefined;
-  if (vs.report_path) {
-    const abs = path.resolve(projectRoot, vs.report_path);
-    reportText = readVerifierReportFile(abs) ?? undefined;
-  }
+  // plan e5b8c3f7 T3：读图证据取自**身份验真后的 canonical JSON**，不再按回执手填
+  // report_path 裸读 Markdown——否则编辑 MD 即可伪造读图证据块（假闭环通道）。
+  // 验真不通过 → undefined = 既有的"未取得读图证据"降级通道，语义不变。
+  const reportText =
+    loadVerifierReportTextOrNull(projectRoot, feature, phase, { frameworkRoot }) ?? undefined;
   const gate = evaluateMultimodalEvidenceGate({
     adapter,
     imageInput: probe.imageInput,
