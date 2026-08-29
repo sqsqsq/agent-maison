@@ -64,3 +64,12 @@
 - [x] 8.3 Switch `check-component-closure` CLI (`--write` included), `skills/project/component-closure/SKILL.md`, closure write/read helpers, Markdown `derived_from` and all internal signatures to `--blueprint <blueprint_id>` addressing; `component_id` is verification output only.
 - [x] 8.4 Migrate closure fixtures to the workspace layout (CU directories phase-scoped, new identity encoding); add positive/negative cases: path/YAML/ref `blueprint_id` disagreement fails with all three values reported, content/ref (and owner-blueprint) `component_id` disagreement fails without any path lookup, two closures of the same `component_id` coexist independently, cross-workspace CU/evidence is rejected with the foreign workspace located, retired root closure path is ignored and recomputed, custom `paths.features_dir` end-to-end, `input_fingerprint` still goes stale on any blueprint/CU/Feature/evidence change (regression).
 - [x] 8.5 Run `cd harness && npm test`, `npm run openspec:validate`, `node scripts/check-plan-version.mjs` (default mode) and record results; this section does not touch 7.5, `tests/fixtures/component-blueprint/release-semantics.json` or any release gate — those remain with total-plan m5 after M0 + M6 + MG regression are all complete.
+
+## 9. M7 单 CU 退化 closure 与演进影响接线（2026-08-29 追加，plan f9e2c7b4）
+
+> 本节不触碰 7.5、`tests/fixtures/component-blueprint/release-semantics.json` 或任何 release 门禁。
+
+- [x] 9.1 单 CU closure 正向：跨单元组装边为空集是合法结论，closure 退化为"需求 → 蓝图稳定地址 → CU `design_refs` → completion 证据"的追溯核对；复用同一算法、同一投影、同一 mapping schema，不产生第二次验收。
+- [x] 9.2 多 CU 既有正反回归全量保持——单 CU 退化不得通过放宽多 CU 义务实现。
+- [x] 9.3 `evolution_impact` 接线：`component-closure-obligations.ts` 对全部 applicable 视图产生视图事实义务（不再按字面 `applicability` 跳过），只有 `changed` 视图的节点可能派生施工义务；runtime 流义务与 `component-closure-runtime.ts` 的传播核对仅对 `runtime` = `changed` 派生。节点变化判据复用 P1 的共享 `nodeDeclaresChange`，不写第二份。
+- [x] 9.4 正反 fixture：单 CU closure 通过、`verified_unchanged` 视图节点不派生施工义务、多 CU 组装义务回归保持。

@@ -7,6 +7,7 @@ import {
   nonEmptyString,
 } from './component-blueprint-model';
 import { blueprintRefAddress } from './change-unit-model';
+import { isApplicableView, isChangedView, nodeDeclaresChange } from './blueprint-views';
 import { ResolvedComponentClosureInputs } from './component-closure-inputs';
 import { ClosureEvidenceLevel, compareCodePoint, stableSortStrings } from './component-closure-model';
 import { SpecLoader } from './spec-loader';
@@ -43,11 +44,9 @@ function obligation(
   };
 }
 
-function changedNode(node: BlueprintRecord): boolean {
-  const delta = String(node.delta ?? '').trim().toLowerCase();
-  if (delta && !['none', 'no_change', 'unchanged'].includes(delta)) return true;
-  return JSON.stringify(node.current_state) !== JSON.stringify(node.target_state);
-}
+// M7：节点变化判据与 P1 的 verified_unchanged 掩盖检测共用同一实现（blueprint-views），
+// 不在 P3 另写一份会漂移的副本。
+const changedNode = nodeDeclaresChange;
 
 function ownersForAddress(inputs: ResolvedComponentClosureInputs, address: string): string[] {
   return stableSortStrings(inputs.currentUnits
@@ -60,9 +59,15 @@ function addBlueprintObligations(
   out: ComponentClosureObligation[],
 ): void {
   const blueprint = inputs.blueprint.blueprint;
+  // M7：evolution_impact 显式接线。**每个 applicable 视图**都产生 blueprint_view 事实义务
+  // （旧行为按字面 applicability 跳过，正交化后 verified_unchanged 不得被静默跳过）；
+  // 但只有 changed 视图的节点才可能派生施工义务——verified_unchanged 视图的节点一律是
+  // 当前事实（"Current-only node does not create fake work"先例），P1 已保证这些节点不
+  // 声明 delta（blueprint_view_unchanged_masks_change）。
   for (const view of asRecords(blueprint.design_views)) {
     const viewId = String(view.view_id ?? '');
-    if (view.applicability !== 'applicable') continue;
+    if (!isApplicableView(view)) continue;
+    const viewChanged = isChangedView(view);
     const viewAddress = `view:${viewId}`;
     out.push(obligation(`blueprint-view:${viewId}`, 'blueprint_view', {
       source_refs: [`component-blueprint:${inputs.blueprint.artifactSha256}#view:${viewId}`],
@@ -76,7 +81,7 @@ function addBlueprintObligations(
       if (!nodeId) continue;
       const address = `view:${viewId}/node:${nodeId}`;
       const owners = ownersForAddress(inputs, address);
-      const construction = changedNode(node) || owners.length > 0;
+      const construction = viewChanged && (changedNode(node) || owners.length > 0);
       out.push(obligation(`blueprint-node:${viewId}:${nodeId}`, construction ? 'blueprint_target_node' : 'blueprint_current_fact', {
         source_refs: nonEmptyString(asRecord(node.provenance)?.source_ref) ? [String(asRecord(node.provenance)?.source_ref)] : [],
         blueprint_refs: [address],
@@ -100,7 +105,9 @@ function addBlueprintObligations(
     }));
   }
   for (const view of asRecords(blueprint.design_views)) {
-    if (view.view_id !== 'runtime' || view.applicability !== 'applicable') continue;
+    // runtime 流义务只对 runtime=changed 派生：verified_unchanged 的 runtime 视图本次不评估
+    // 六类触发条件，也不产生施工/组合义务。
+    if (view.view_id !== 'runtime' || !isChangedView(view)) continue;
     for (const flow of asRecords(view.runtime_data_flows)) {
       const flowId = getId(flow, 'flow_id');
       if (!flowId) continue;

@@ -54,6 +54,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'component-blueprint', modulePath: './unit/component-blueprint.unit.test' },
   { id: 'change-unit-progression', modulePath: './unit/change-unit-progression.unit.test' },
   { id: 'component-closure', modulePath: './unit/component-closure.unit.test' },
+  { id: 'component-design-host-seams', modulePath: './unit/component-design-host-seams.unit.test' },
+  { id: 'component-design-handoff', modulePath: './unit/component-design-handoff.unit.test' },
   { id: 'mechanical-loop-closure', modulePath: './unit/mechanical-loop-closure.unit.test' },
   // M5A（plan e2a7c4b9）t2 返修验收：新布局生产入口最小合成用例（resolveChangeUnitRef
   // → enumerateFeatures → closure inputs 零 BLOCKER），t4 证明 11/12 的底座

@@ -55,6 +55,47 @@ export function resolveCurrentScopeSource(projectRoot: string, sourceRef: string
   return { bytes, fragment, source_sha256: sha256Bytes(bytes) };
 }
 
+/**
+ * current-scope item 的**字段语义权威**校验：id/hash/provenance 一致性与项目内来源解析。
+ *
+ * `app-component-blueprint.schema.json#/$defs/currentScopeItem` 是该形状的权威定义；
+ * M7 的 requirement-source-materialization 接缝复用**本函数**而不是复制一套 source_ref /
+ * hash / provenance 语义（否则两处会漂移）。`idPrefix` 只用来给诊断 id 加前缀，让两侧的
+ * 失败可区分而判据保持同一份。
+ */
+export function validateCurrentScopeItemShape(
+  item: CurrentScopeItem,
+  base: string,
+  idPrefix: string,
+  projectRoot?: string,
+): BlueprintIssue[] {
+  const out: BlueprintIssue[] = [];
+  if (!nonEmptyString(item.source_sha256)) {
+    out.push(issue(`${idPrefix}_source_hash_missing`, `${base}.source_sha256`, '项目内 current-scope item 必须绑定实际原始字节的 source_sha256；source_revision 不能替代内容 hash。'));
+  }
+  out.push(...validateProvenanceRecord(item.provenance, `${base}.provenance`));
+  if (asRecord(item.provenance)?.source_ref !== item.source_ref) {
+    out.push(issue(`${idPrefix}_provenance_mismatch`, `${base}.provenance.source_ref`, 'provenance.source_ref 必须与 item.source_ref 一致。'));
+  }
+  if (nonEmptyString(item.source_revision)
+    && asRecord(item.provenance)?.source_revision !== item.source_revision) {
+    out.push(issue(`${idPrefix}_provenance_mismatch`, `${base}.provenance.source_revision`, `provenance.source_revision 必须与 item.source_revision 一致（item=${String(item.source_revision)}，provenance=${String(asRecord(item.provenance)?.source_revision)}）。`));
+  }
+  if (!projectRoot) {
+    out.push(issue(`${idPrefix}_source_context_missing`, `${base}.source_ref`, '校验 current-scope 来源需要 projectRoot。'));
+    return out;
+  }
+  try {
+    const source = resolveCurrentScopeSource(projectRoot, item.source_ref);
+    if (nonEmptyString(item.source_sha256) && item.source_sha256 !== source.source_sha256) {
+      out.push(issue(`${idPrefix}_source_hash_mismatch`, `${base}.source_sha256`, `声明 ${item.source_sha256} 与 ${item.source_ref} 实际原始字节 ${source.source_sha256} 不一致；两值同时报告，不得按任一侧取胜。`));
+    }
+  } catch (error) {
+    out.push(issue(`${idPrefix}_source_unresolvable`, `${base}.source_ref`, (error as Error).message));
+  }
+  return out;
+}
+
 export function validateRequirementTraceability(
   blueprint: BlueprintRecord,
   projectRoot?: string,
@@ -71,29 +112,7 @@ export function validateRequirementTraceability(
     if (!nonEmptyString(item.item_id)) return;
     if (itemIds.has(item.item_id)) out.push(issue('blueprint_current_scope_item_duplicate', `${base}.item_id`, `item_id=${item.item_id} 重复。`));
     itemIds.add(item.item_id);
-    if (!nonEmptyString(item.source_sha256)) {
-      out.push(issue('blueprint_current_scope_source_hash_missing', `${base}.source_sha256`, '项目内 current-scope item 必须绑定实际原始字节的 source_sha256；source_revision 不能替代内容 hash。'));
-    }
-    out.push(...validateProvenanceRecord(item.provenance, `${base}.provenance`));
-    if (asRecord(item.provenance)?.source_ref !== item.source_ref) {
-      out.push(issue('blueprint_current_scope_provenance_mismatch', `${base}.provenance.source_ref`, 'provenance.source_ref 必须与 item.source_ref 一致。'));
-    }
-    if (nonEmptyString(item.source_revision)
-      && asRecord(item.provenance)?.source_revision !== item.source_revision) {
-      out.push(issue('blueprint_current_scope_provenance_mismatch', `${base}.provenance.source_revision`, 'provenance.source_revision 必须与 item.source_revision 一致。'));
-    }
-    if (!projectRoot) {
-      out.push(issue('blueprint_current_scope_source_context_missing', `${base}.source_ref`, '校验 current-scope 来源需要 projectRoot。'));
-      return;
-    }
-    try {
-      const source = resolveCurrentScopeSource(projectRoot, item.source_ref);
-      if (nonEmptyString(item.source_sha256) && item.source_sha256 !== source.source_sha256) {
-        out.push(issue('blueprint_current_scope_source_hash_mismatch', `${base}.source_sha256`, `source_sha256 与 ${item.source_ref} 原始字节不一致。`));
-      }
-    } catch (error) {
-      out.push(issue('blueprint_current_scope_source_unresolvable', `${base}.source_ref`, (error as Error).message));
-    }
+    out.push(...validateCurrentScopeItemShape(item, base, 'blueprint_current_scope', projectRoot));
   });
 
   mappings.forEach((mapping, index) => {

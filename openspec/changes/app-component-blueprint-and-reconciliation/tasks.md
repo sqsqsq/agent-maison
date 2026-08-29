@@ -71,3 +71,22 @@
 - [x] 7.3 `check-component-blueprint` CLI、`skills/project/app-component-blueprint/SKILL.md`、Provider candidate 写入与内部调用签名改为 `--blueprint <blueprint_id>` 寻址，`component_id` 只作核验输出；评审投影 `component-blueprint.review.md` 与 closure 投影同处工作区 `blueprint/` 目录，`derived_from` 同步。
 - [x] 7.4 fixture 树从 `blueprint/component/<component-id>/` 迁移到 `<features_dir>/<blueprint_id>/blueprint/`，测试路径常量与 CLI 参数同步；新增正反用例：同一 `component_id` 双 `blueprint_id` 工作区共存互不覆盖、`blueprint_id` 含 `:`/分隔符被拒、旧根路径存在而工作区缺失时报 missing 不回退、自定义 `paths.features_dir` 下完整解析。
 - [x] 7.5 运行 `cd harness && npm test`、`npm run openspec:validate`、`node scripts/check-plan-version.mjs`（default 档）并记录；本节不触碰 6.6，不改 `tests/fixtures/component-blueprint/release-semantics.json`，release 门仍由总计划 m5 在 M0+M6+MG 回归齐备后收口。
+
+## 8. M7 正式需求统一入口纠偏（2026-08-29 追加，plan f9e2c7b4）
+
+> 蓝图从"复杂多 CU 才启用的可选路线"重定位为"正式需求必经的部件内设计阶段"。3.1.0 未发布，
+> `@1` 原位纠正，不建兼容层、不设档位、不加升级状态机。本节不触碰 6.6，不改
+> `tests/fixtures/component-blueprint/release-semantics.json`。
+
+- [x] 8.1 `applicability` 保持二值；新增正交字段 `evolution_impact: changed|verified_unchanged`（仅 applicable 视图携带）与 `unchanged_evidence`（`evidence_refs` + `current_state_ref`），落 `harness/schemas/app-component-blueprint.schema.json`。
+- [x] 8.2 `blueprint-views.ts` 显式接线：applicable 视图必须裁决 `evolution_impact`；not_applicable 视图不得携带；`changed` 保持全量义务；`verified_unchanged` 免除 target/delta 与节点义务但必须带事实依据，且视图内节点声明 delta 即 `blueprint_view_unchanged_masks_change`；完整性不变量"至少一个 applicable+changed 视图"fail-closed。节点变化判据提取为共享 `nodeDeclaresChange`，P1/P3 共用。
+- [x] 8.3 `blueprint-questioning.ts` 显式接线：全部 applicable 视图进入必答 scope（不再按字面 `applicability` 跳过），`changed` 视图另含其 runtime flow；`verified_unchanged` 视图的质询义务=核实不变声明与依据，只接受 `answered_with_evidence`。
+- [x] 8.4 `runtime-data-flow-check.ts` 显式接线：六类 flow 触发条件仅对 `runtime` = `changed` 评估。
+- [x] 8.5 `component-closure-obligations.ts` 与 `component-closure-runtime.ts` 显式接线：applicable 视图全部产生视图事实义务；只有 `changed` 视图的节点可能派生施工义务；runtime 流义务与传播核对仅对 `runtime` = `changed` 派生。
+- [x] 8.6 `blueprint-review-projection.ts` 输出 `Evolution impact` 与 `Unchanged evidence`，使 publication 投影可区分"本次改了"与"本次核实未变"。
+- [x] 8.7 分层定义：合法 `component-blueprint@1` 不含 CU 数量（`admitted blueprint + 0 CU` 合法）；"完整 `/component-design` 交付"=admitted + 1..N canonical CU + `design_refs` + readiness，由编排层验收。
+- [x] 8.8 三张 Story 类宿主接缝 Seam Card（`requirement-source-materialization` / `blueprint-review-publication` / `blueprint-review-feedback`）落本 capability spec；方向与 owner 独立，publication 与 feedback 不合卡。
+- [x] 8.9 发布态机器契约 SSOT 与验证入口：新增 `harness/schemas/requirement-source-materialization.schema.json` 与 `harness/schemas/blueprint-review-feedback.schema.json`；publication **复用**既有 blueprint schema + `blueprint-review-projection.ts` renderer，不新建平行 schema；三者校验经 `harness/scripts/utils/blueprint-host-seams.ts` 挂到既有 `check:component-blueprint` CLI 的 `--materialization` / `--projection` / `--feedback` 模式，不新增顶层 CLI；来源解析复用既有 `resolveCurrentScopeSource`，不造 resolver 副本。
+- [x] 8.10 App-only 诚实声明：缺 design lens 的 component type 返回 unsupported/missing design lens 明确失败，不强套 App 4+1；不借本 change 建设其它 profile 的 lens。
+- [x] 8.11 正反 fixture：`evolution_impact` 缺失/越界、零 changed 视图、`verified_unchanged` 缺证据、不变声明掩盖变化、不变声明未被质询核实；`verified_unchanged` 合法正例 + runtime `verified_unchanged` 跳过触发裁决（含 `changed` 对照，防恒真断言）。
+- [x] 8.12 三条接缝的随包有效/无效样例落发布件包含路径 `docs/operations/`（不放被排除的 `harness/tests/**`），并由仓内单测经**同一正式 checker** 验证正例通过、反例失败。

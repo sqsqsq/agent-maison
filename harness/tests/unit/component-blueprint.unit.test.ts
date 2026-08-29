@@ -20,7 +20,9 @@ import { generateMermaidViewGraph } from '../../scripts/utils/blueprint-graph-ge
 import { buildDiscoveryBundle } from '../../scripts/utils/blueprint-discovery';
 import { reconcileP1DerivedResults } from '../../scripts/utils/blueprint-reconciliation';
 import { downstreamRefNeedsRecompute } from '../../scripts/utils/derived-conclusion-freshness';
-import { requiredQuestioningScopes } from '../../scripts/utils/blueprint-questioning';
+import { requiredQuestioningScopes, unchangedViewQuestioningScopes } from '../../scripts/utils/blueprint-questioning';
+import { isApplicableView, isChangedView } from '../../scripts/utils/blueprint-views';
+import { validateRuntimeDataFlows } from '../../scripts/utils/runtime-data-flow-check';
 import { checkCanonicalComponentBlueprint, resolveCliRefTarget } from '../../scripts/check-component-blueprint';
 import { clearSkillsIndexCache, resolveSkillPath } from '../../scripts/utils/resolve-skill-path';
 
@@ -64,6 +66,37 @@ function runtimeFlow(blueprint: BlueprintRecord): BlueprintRecord {
   const flow = asRecords(findView(blueprint, 'runtime').runtime_data_flows)[0];
   if (!flow) throw new Error('test fixture 缺 runtime flow');
   return flow;
+}
+
+/**
+ * 让某个 applicable 视图成为**合法**的 verified_unchanged：清除视图级与节点级的本次 delta、
+ * 交出不变依据，并把该 scope 的质询项对齐为核实该依据。
+ *
+ * 返修后 view-level 与 node-level 各判一次，正向用例必须两级都真正清干净——只抹节点的旧写法
+ * 现在会（正确地）失败。
+ */
+function makeViewVerifiedUnchanged(blueprint: BlueprintRecord, viewId: string, evidenceRefs = ['src/ledger']): void {
+  const view = findView(blueprint, viewId);
+  view.evolution_impact = 'verified_unchanged';
+  view.unchanged_evidence = { evidence_refs: [...evidenceRefs], current_state_ref: evidenceRefs[0]! };
+  // view-level：本次无 delta
+  view.target_state = view.current_state;
+  view.delta = 'none';
+  // node-level：本次无 delta
+  for (const node of asRecords(view.nodes)) {
+    node.target_state = node.current_state;
+    node.delta = 'none';
+  }
+  alignUnchangedQuestioning(blueprint, `view:${viewId}`, evidenceRefs);
+}
+
+/** 把某 scope 的质询项对齐为"以该视图交出的不变依据核实"。 */
+function alignUnchangedQuestioning(blueprint: BlueprintRecord, scopeRef: string, evidenceRefs: string[]): void {
+  const questioning = asRecord(asRecord(blueprint.review_summary)?.questioning);
+  const item = asRecords(questioning?.items).find(entry => entry.scope_ref === scopeRef);
+  if (!item) return;
+  item.disposition = 'answered_with_evidence';
+  item.evidence_refs = [...evidenceRefs];
 }
 
 function mutate(blueprint: BlueprintRecord, mutator: string): void {
@@ -250,6 +283,61 @@ function mutate(blueprint: BlueprintRecord, mutator: string): void {
     case 'stale-derived-without-superseding': derivedResult.status = 'stale'; delete derivedResult.superseded_by_revision; break;
     case 'remove-derived-result-id': delete derivedResult.result_id; break;
     case 'add-p2-ready-set': blueprint.p2_ready_set = { status: 'ready' }; break;
+    // ---- M7：applicability × evolution_impact 正交 ----
+    case 'remove-evolution-impact-field':
+      delete findView(blueprint, 'logical').evolution_impact;
+      break;
+    case 'evolution-impact-on-not-applicable-view':
+      findView(blueprint, 'deployment').evolution_impact = 'changed';
+      break;
+    case 'all-views-verified-unchanged': {
+      for (const view of asRecords(blueprint.design_views).filter(item => item.applicability === 'applicable')) {
+        makeViewVerifiedUnchanged(blueprint, String(view.view_id), ['src/ledger/LedgerRepository.ts']);
+      }
+      break;
+    }
+    case 'verified-unchanged-without-evidence': {
+      const view = findView(blueprint, 'development');
+      makeViewVerifiedUnchanged(blueprint, 'development');
+      delete view.unchanged_evidence;
+      break;
+    }
+    case 'verified-unchanged-masks-change': {
+      const view = findView(blueprint, 'development');
+      view.evolution_impact = 'verified_unchanged';
+      view.unchanged_evidence = {
+        evidence_refs: ['src/ledger'],
+        current_state_ref: 'src/ledger',
+      };
+      // 视图与节点都仍声明 current≠target 的本次 delta：不变声明掩盖真实变化
+      break;
+    }
+    case 'verified-unchanged-masks-view-level-change': {
+      // P0-1 返修反例：把**节点**全部抹平，但**视图自身**仍宣告 current≠target 与实质 delta。
+      // 只有节点级检查时这条会假绿（且 runtime 还会因此跳过六类 flow 触发条件）。
+      const view = findView(blueprint, 'development');
+      view.evolution_impact = 'verified_unchanged';
+      view.unchanged_evidence = { evidence_refs: ['src/ledger'], current_state_ref: 'src/ledger' };
+      for (const node of asRecords(view.nodes)) {
+        node.target_state = node.current_state;
+        node.delta = 'none';
+      }
+      alignUnchangedQuestioning(blueprint, 'view:development', ['src/ledger']);
+      break;
+    }
+    case 'verified-unchanged-questioning-not-verified': {
+      makeViewVerifiedUnchanged(blueprint, 'development');
+      const item = asRecords(questioning!.items).find(entry => entry.scope_ref === 'view:development')!;
+      item.disposition = 'not_applicable';
+      break;
+    }
+    case 'verified-unchanged-questioning-unrelated-evidence': {
+      // P0-1 返修反例：以 answered_with_evidence 作答，但引用的证据与该视图交出的不变依据无交集。
+      makeViewVerifiedUnchanged(blueprint, 'development');
+      const item = asRecords(questioning!.items).find(entry => entry.scope_ref === 'view:development')!;
+      item.evidence_refs = ['test/ledger/totally-unrelated.test.ts'];
+      break;
+    }
     default: throw new Error(`未知 mutator：${mutator}`);
   }
 }
@@ -485,6 +573,54 @@ export function runAll(): UnitCaseResult[] {
     const scopes = requiredQuestioningScopes(validBlueprint());
     assert(scopes.has('view:logical') && scopes.has('view:runtime') && scopes.has('view:development') && scopes.has('view:scenarios'), '适用视图必须进入质询范围');
     assert(!scopes.has('view:deployment'), 'not_applicable deployment 不应成为强制质询 scope');
+  }));
+
+  // M7 正向：一个带事实依据的 verified_unchanged 视图合法通过，且**仍进入质询 scope**
+  // （旧行为按字面 applicability 判断也会通过；这里用 unchangedViewQuestioningScopes 与
+  // 质询义务收紧证明消费面确实被接线，不是只改了 schema）。
+  results.push(test('M7: an evidence-backed verified_unchanged view passes and is still questioned', () => {
+    const blueprint = validBlueprint();
+    // 合法 verified_unchanged：**视图级与节点级都**真正无本次 delta，并交出不变依据，
+    // 质询项以该依据核实（返修后两级各判一次，只抹节点不再算合法）。
+    makeViewVerifiedUnchanged(blueprint, 'development', ['src/ledger/LedgerRepository.ts']);
+    const development = findView(blueprint, 'development');
+    const issues = validateFixture(blueprint);
+    const blockers = issues.filter(item => item.severity === 'BLOCKER').map(item => item.id);
+    assert(blockers.length === 0, `合法 verified_unchanged 视图被误拒：${blockers.join(', ')}`);
+
+    // 消费面①质询：verified_unchanged 视图仍在必答 scope 内，且被单列为"核实不变声明"义务
+    const scopes = requiredQuestioningScopes(blueprint);
+    assert(scopes.get('view:development') === 'view', 'verified_unchanged 视图被质询 scope 静默跳过');
+    const unchangedScopes = unchangedViewQuestioningScopes(blueprint);
+    assert(unchangedScopes.has('view:development'), 'verified_unchanged 视图未进入不变声明核实义务集');
+    assert(
+      (unchangedScopes.get('view:development') ?? []).includes('src/ledger/LedgerRepository.ts'),
+      '核实义务未携带该视图声明的不变依据，无法校验"核实的是这份依据"',
+    );
+
+    // 消费面②runtime：runtime 仍是 changed，六类触发条件继续评估
+    assert(isChangedView(findView(blueprint, 'runtime')), 'runtime 视图应仍为 changed');
+    assert(!isChangedView(development), 'development 视图应为 verified_unchanged');
+    assert(isApplicableView(development), 'verified_unchanged 仍然是 applicable —— 两维度正交');
+  }));
+
+  // M7 正向：runtime=verified_unchanged 时，六类 flow 触发条件本次不评估
+  results.push(test('M7: runtime verified_unchanged skips the six trigger-condition obligations', () => {
+    const blueprint = validBlueprint();
+    makeViewVerifiedUnchanged(blueprint, 'runtime', ['src/ledger/LedgerStore.ts']);
+    const runtime = findView(blueprint, 'runtime');
+    // 故意删掉一条触发条件裁决：runtime=changed 时这必然 BLOCKER
+    delete asRecord(asRecord(blueprint.app_lens)?.runtime_flow_trigger_assessment)!.persistent_or_remote_ui;
+    const ids = validateRuntimeDataFlows(blueprint).map(item => item.id);
+    assert(!ids.includes('runtime_flow_trigger_assessment_missing'), `runtime=verified_unchanged 不应再要求逐条触发裁决：${ids.join(', ')}`);
+
+    // 对照：同一删除在 runtime=changed 下必须 BLOCKER（证明这条断言不是恒真）
+    const changed = validBlueprint();
+    delete asRecord(asRecord(changed.app_lens)?.runtime_flow_trigger_assessment)!.persistent_or_remote_ui;
+    assert(
+      validateRuntimeDataFlows(changed).some(item => item.id === 'runtime_flow_trigger_assessment_missing'),
+      'runtime=changed 下删除触发裁决必须仍然 BLOCKER',
+    );
   }));
 
   results.push(test('current-scope source validation without projectRoot context fails closed', () => {

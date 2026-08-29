@@ -50,29 +50,120 @@ export function dropUnacceptedChangeUnitCandidates(_candidates: readonly ChangeU
   return [];
 }
 
-export function acceptChangeUnitCandidate(projectRoot: string, candidate: ChangeUnitCandidate) {
-  const provenance = candidate.artifact.provenance;
-  if (!provenance.extraction_method.includes(candidate.providerId)) {
-    throw new Error('change_unit_candidate_provider_provenance_missing');
+export class ChangeUnitCandidateRejected extends Error {
+  constructor(public readonly code: string, message: string) {
+    super(message);
+    this.name = 'ChangeUnitCandidateRejected';
   }
-  const target = changeUnitPath(projectRoot, candidate.artifact.blueprint_id, candidate.artifact.change_unit_id);
-  assertValidChangeUnit(candidate.artifact as unknown as Record<string, unknown>, {
-    projectRoot,
-    canonicalPath: target,
-  });
-  const design = validateChangeUnitDesign(projectRoot, candidate.artifact as unknown as Record<string, unknown>);
+}
+
+/**
+ * 唯一 consumer 校验原语：provider provenance → 目标路径 → 重复接受 → canonical schema/identity
+ * → 设计闭包门。**只做校验、不落盘**，返回已校验的目标路径。
+ *
+ * 单候选与批量接受都必须经过它，避免两份会漂移的 provenance/schema/design 逻辑。
+ */
+function validateCandidateForAcceptance(projectRoot: string, candidate: ChangeUnitCandidate): string {
+  const artifact = candidate.artifact;
+  if (!artifact.provenance.extraction_method.includes(candidate.providerId)) {
+    throw new ChangeUnitCandidateRejected(
+      'change_unit_candidate_provider_provenance_missing',
+      `候选 ${artifact.change_unit_id} 的 provenance.extraction_method 未记录 provider ${candidate.providerId}。`,
+    );
+  }
+  const target = changeUnitPath(projectRoot, artifact.blueprint_id, artifact.change_unit_id);
+  if (fs.existsSync(target)) {
+    throw new ChangeUnitCandidateRejected(
+      'change_unit_candidate_already_exists',
+      `canonical CU 已存在，重复接受 fail-closed：${target}。修正已接受单元请新建修订/superseding CU。`,
+    );
+  }
+  try {
+    assertValidChangeUnit(artifact as unknown as Record<string, unknown>, { projectRoot, canonicalPath: target });
+  } catch (error) {
+    throw new ChangeUnitCandidateRejected(
+      'change_unit_candidate_schema_rejected',
+      `候选 ${artifact.change_unit_id} 未通过 canonical 校验：${(error as Error).message}`,
+    );
+  }
+  const design = validateChangeUnitDesign(projectRoot, artifact as unknown as Record<string, unknown>);
   if (design.verdict !== 'constructable') {
-    throw new Error(`change_unit_candidate_design_rejected:${design.issues.map(item => item.id).join(',')}`);
+    throw new ChangeUnitCandidateRejected(
+      'change_unit_candidate_design_rejected',
+      `候选 ${artifact.change_unit_id} 未通过设计闭包门（${design.verdict}）：${design.issues.map(item => item.id).join(',')}`,
+    );
   }
-  if (fs.existsSync(target)) throw new Error(`change_unit_candidate_already_exists:${target}`);
+  return target;
+}
+
+/** 唯一写入原语：temp(wx) → rename。返回目标路径，供批量接受回滚。 */
+function writeCanonicalChangeUnit(target: string, artifact: ChangeUnitArtifact, suffix: string): void {
   fs.mkdirSync(path.dirname(target), { recursive: true });
-  const temporary = `${target}.candidate-${process.pid}`;
-  fs.writeFileSync(temporary, YAML.stringify(candidate.artifact), { encoding: 'utf8', flag: 'wx' });
+  const temporary = `${target}.candidate-${suffix}`;
+  fs.writeFileSync(temporary, YAML.stringify(artifact), { encoding: 'utf8', flag: 'wx' });
   try {
     fs.renameSync(temporary, target);
   } catch (error) {
     if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
     throw error;
   }
-  return loadCanonicalChangeUnit(projectRoot, candidate.artifact.blueprint_id, candidate.artifact.change_unit_id);
+}
+
+/**
+ * consumer validator：接受**一批** decomposition 候选并原子写出 1..N canonical CU。
+ *
+ * 原子语义：整批先全量校验（含批内重复），任一条不通过即整批拒绝、一个字节都不落盘；
+ * 写入中途失败时回滚本批已落盘目标与临时文件。
+ *
+ * 这是**唯一** canonical CU 写入真源；`acceptChangeUnitCandidate` 是它的单候选包装。
+ */
+export function acceptChangeUnitCandidates(
+  projectRoot: string,
+  candidates: readonly ChangeUnitCandidate[],
+) {
+  if (candidates.length === 0) {
+    throw new ChangeUnitCandidateRejected(
+      'change_unit_decomposition_empty',
+      '设计准备子流程必须写出 1..N 个 canonical CU；零候选不构成一次接受。',
+    );
+  }
+  const seen = new Set<string>();
+  const targets: string[] = [];
+  for (const candidate of candidates) {
+    const id = candidate.artifact.change_unit_id;
+    if (seen.has(id)) {
+      throw new ChangeUnitCandidateRejected(
+        'change_unit_candidate_duplicate_in_batch',
+        `同一批候选内 change_unit_id=${id} 重复。`,
+      );
+    }
+    seen.add(id);
+    targets.push(validateCandidateForAcceptance(projectRoot, candidate));
+  }
+
+  const written: string[] = [];
+  try {
+    candidates.forEach((candidate, index) => {
+      writeCanonicalChangeUnit(targets[index]!, candidate.artifact, `${process.pid}-${index}`);
+      written.push(targets[index]!);
+    });
+  } catch (error) {
+    for (const target of written) {
+      if (fs.existsSync(target)) fs.unlinkSync(target);
+    }
+    throw new ChangeUnitCandidateRejected(
+      'change_unit_decomposition_write_failed',
+      `原子写出失败并已回滚本批：${(error as Error).message}`,
+    );
+  }
+  return candidates.map(candidate => loadCanonicalChangeUnit(
+    projectRoot,
+    candidate.artifact.blueprint_id,
+    candidate.artifact.change_unit_id,
+  ));
+}
+
+/** 单候选接受 = 批量接受的 1 元包装。不保留第二份校验/落盘实现。 */
+export function acceptChangeUnitCandidate(projectRoot: string, candidate: ChangeUnitCandidate) {
+  return acceptChangeUnitCandidates(projectRoot, [candidate])[0]!;
 }

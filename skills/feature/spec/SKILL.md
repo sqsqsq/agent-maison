@@ -38,6 +38,16 @@
 
 **CU-bound Feature**：若目标 Feature id 以 canonical `change_unit_ref` 派生，spec 只引用该 CU 的 purpose、target predicate/provide ID 和用户可见语义，不复制或改写 CU/蓝图定义；发现部件级 owner、主链或外部契约与蓝图冲突时停止并回 P1 调和，不在 Feature spec 用 TBD 补模。
 
+**正式性兜底复核（M7，非阻断）**：spec 是 full 轨第一次冻结施工意图的地方，也是正式需求的兜底复核点——**正式需求的 spec 一律位于蓝图与 Change Unit 之后，spec 不再是任何正式需求的第一个设计产物**。开始 Step 1 前先按判据自查一次：
+
+> **正式需求**＝有明确交付或验收责任，且拟改变**部件行为、外部契约、数据/NFR、运行语义或架构责任**的事项；不改变这些语义的纯文档和机械维护除外。
+
+- 事项**符合**该判据却**没有**经过部件内设计阶段（当前 Feature 不由某个 canonical `change_unit_ref` 派生）→ 说明"这应先经 [`/component-design`](../../project/component-design/SKILL.md) 建立部件演进蓝图"，给出回退入口，由用户裁决是回退还是按当前理解继续；命中即停的成本只是一份 spec 草稿；
+- **上游显式**把它标为正式需求时，该分类具有权威性，不得用本地判断降级；
+- 信息不足以判断时**问人**，不猜测；
+- 需要用户裁决时用共享确认点 `design.formality_routing`（与 `/component-design`、`/change-lite` 同一条目，见 [user-confirmation-ux.md](../../reference/user-confirmation-ux.md)），不另建状态；
+- 这是**指引不是门禁**：不加机器 BLOCKER、不改 `track_scoring`、不新增档位。
+
 ## 流程骨架
 
 1. **收集输入**：功能文字描述 / 界面截图 / 功能模块名（必需）；竞品截图（可选）。**保真路由初始化（BLOCKER 前置，plan f6b2d9a4 + c8e5b3f1）**：在生成任何 spec 产物**之前**、于 `framework/harness` 目录执行 initializer。若本轮来自 attended `phase_execute_request`，必须把请求的完整上下文原样传为 `node -r ts-node/register/transpile-only scripts/fidelity-intent-init.ts --feature <feature> --goal-run-id <run_id> --goal-phase <phase> --goal-attempt-id <attempt_id> --goal-owner-id <owner_id> --goal-owner-epoch <owner_epoch>`；阶段驱动路径执行 `node -r ts-node/register/transpile-only scripts/fidelity-intent-init.ts --feature <feature> --requirement "<用户需求原文（含引用文档路径）>"`（超长需求可用 `--requirement-file <path>`，两者互斥）。initializer 落 `spec/reports/fidelity-intent.json`（质量目标/严格度/素材策略三轴唯一 SSOT）与 capability-snapshot；attended 分支只读精确 manifest，并在写盘前校验 run / feature / session owner / epoch / lease，同 run 有效 SSOT 只读复用。后续 ui-spec 的 `fidelity_target`/`asset_acquisition_mode` 是该 SSOT 的**投影**（照抄，不自行判断；`fidelity_capability_pregate` 会复核一致性）。**因果提示（勿让 agent 猜）**：阶段驱动路径的 `derive.requirement` 只认 SSOT 里 provenance=`explicit_cli`（=本次显式给了非空 `--requirement`/`--requirement-file`）且身份匹配的需求——**若不给需求文本**（CLI 只会落 `intent_fallback`），spec 的 requirement capability 保持 blocked → 阶段 INCOMPLETE → check-receipt 拒绝闭环，重跑多少次都一样。显式传空 `--requirement`（`""` / 空格）会 fail-fast，不会静默降级读 README/笔记/spec.md 解锁。

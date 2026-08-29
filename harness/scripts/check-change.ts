@@ -11,6 +11,7 @@ import * as YAML from 'yaml';
 import type { PhaseChecker, CheckContext, CheckResult } from './utils/types';
 import { featureArtifactPath, loadFrameworkConfig } from '../config';
 import { checkFactsArtifact } from './utils/context-facts';
+import { checkChangeUnitFeatureProjection } from './utils/change-unit-feature-projection';
 
 export interface ChangeScope {
   in_scope_modules: string[];
@@ -216,6 +217,12 @@ export const checker: PhaseChecker = {
         frameworkRoot: ctx.frameworkRoot,
       }),
     );
+
+    // M7：CU-bound lite Feature 的机器映射真源是既有 `contracts.yaml.change_unit` sidecar
+    // （D2）。lite 轻在施工阶段与文档规模，不免除 CU 闭环所需机器契约——`change` 是 lite
+    // 轨冻结施工契约的阶段，在这里就要校验绑定，而不是等到 coding。无 sidecar 的普通
+    // lite Feature 不适用（projection 返回 applicable=false，零结果）。
+    results.push(...checkChangeUnitFeatureProjection(ctx, 'change'));
 
     return results;
   },

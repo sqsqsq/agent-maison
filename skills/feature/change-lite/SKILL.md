@@ -67,6 +67,34 @@ out_of_scope_modules: []
 
 **Context Facts Gate（BLOCKER，C4）**：change 是 lite track 的**建立阶段**（与 full 轨 spec 同源角色）——在 `<features_dir>/<feature>/context/facts.md` 建立全量事实（frontmatter `established_by: change` + `## Code Facts` 表，`ready_to_produce: true`）；比 spec 阈值略轻（单模块假设），不强制 subagent。后续 coding/exit 只追加 `## phase_delta: <phase>` 增量节。
 
+### Step 2b. 正式性兜底复核（M7，非阻断）
+
+change 是 lite 轨**第一次冻结施工意图**的地方，也是 lite 轨唯一的正式性兜底点（lite 没有 spec 阶段）。写 change.md 前先按判据自查一次：
+
+> **正式需求**＝有明确交付或验收责任，且拟改变**部件行为、外部契约、数据/NFR、运行语义或架构责任**的事项；不改变这些语义的纯文档和机械维护除外。
+
+- 符合判据却未经部件内设计阶段 → 说明"应先经 [`/component-design`](../../project/component-design/SKILL.md)"并给回退入口；**上游显式**标为正式需求时该分类具权威性，不得用本地判断降级；信息不足时**问人**、不猜测；
+- 需用户裁决时用共享确认点 `design.formality_routing`（与 `/component-design`、`/spec` 同一条目，见 [user-confirmation-ux.md](../../reference/user-confirmation-ux.md)），不另建状态；
+- **指引不是门禁**：不加机器 BLOCKER、不改 `track_scoring`、不新增档位。回退只丢一份 change.md 草稿。
+
+### Step 2c. CU-bound lite（属于某个部件演进蓝图时）
+
+本 Feature 由 `/component-design` 从蓝图分解而来（物理目录 `<features_dir>/<blueprint_id>/<change_unit_id>/`）时，**机器映射真源是 `contracts.yaml` 的 `change_unit` sidecar**，与 full 轨完全同一份，不在 change.md 承载：
+
+```yaml
+# <features_dir>/<blueprint_id>/<change_unit_id>/contracts.yaml
+change_unit:
+  change_unit_ref: { artifact: change-unit@1, blueprint_id: …, component_id: …, change_unit_id: …, revision: 1, artifact_sha256: sha256:… }
+  # 三组映射逐条覆盖 canonical CU 的集合，不能照抄空数组
+  predicate_mappings: [{ predicate_id: <每个 target_predicate>, implementation_refs: [src/…], test_refs: [test/…] }]
+  provide_mappings:   [{ provide_id: <每个 provide>, implementation_refs: [src/…], test_refs: [test/…] }]
+  design_ref_mappings: [{ design_ref: <每个 design_ref，逐字照搬>, implementation_refs: [src/…], verification_refs: [test/…] }]
+```
+
+**覆盖要求**：canonical CU 的每个 `target_predicate` / `provide` / `design_ref` 都必须有对应 mapping；**只有 canonical 集合本身为空时数组才能为空**，缺项在 `change` 阶段即报 `change_unit_predicate_mapping_missing` 等诊断。
+
+lite **只**表示施工阶段更少、叙述文档更小，**不表示可省略 CU 闭环所需的机器契约**：sidecar 在 `change` 阶段就被校验（不等到 coding）；**CU-bound Feature 缺 sidecar 直接 BLOCKER**（`change_unit_contracts_sidecar_missing`），不会静默放行；CU 的 `design_refs` 指向 runtime flow 时既有运行时施工投影义务照常生效。不属于任何蓝图的普通 lite Feature 没有 `contracts.yaml`，本节不适用、行为不变。
+
 门禁（写完即跑）：
 
 ```bash

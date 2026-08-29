@@ -40,7 +40,10 @@ framework/docs/
 │
 ├── operations/                ← 工程化运行手册
 │   ├── README.md
-│   └── harness-runbook.md       ← Harness 全链路验证操作手册（怎么跑、报告路径、排错）
+│   ├── harness-runbook.md       ← Harness 全链路验证操作手册（怎么跑、报告路径、排错）
+│   ├── component-design-host-adaptation.md  ← 部件内设计阶段（Story Design）的宿主适配唯一人读入口：
+│   │                               责任边界、三条接缝、两条最小接入流程、Story 扩展职责映射、验证命令
+│   └── samples/                 ← 三条接缝的随包有效/无效契约样例（由仓内单测经同一正式 checker 锁定）
 │
 └── evolution/                 ← 大版本演进记录（与 MIGRATION 互补）
     ├── README.md

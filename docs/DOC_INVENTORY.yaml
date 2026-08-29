@@ -218,6 +218,30 @@ docs:
       - 新增 BLOCKER 级别 phase（特别是会改变流程图的）
       - hvigor / hdc 调用参数改变（影响 runbook 对专文的交叉引用；细则在 hmos-app-harness-toolchain.md）
 
+  - path: framework/docs/operations/component-design-host-adaptation.md
+    role: 部件内设计阶段（Story Design）的宿主适配唯一人读入口——责任边界、三条接缝的方向/时点/字段/失败语义、单 CU 与多 CU 两条最小接入流程、Story 类扩展职责映射、随包样例与验证命令
+    audience: 把自己的需求管理 / 评审 / 归档系统接到 AgentMaison 的宿主工程开发者
+    sources:
+      - framework/harness/schemas/requirement-source-materialization.schema.json
+      - framework/harness/schemas/blueprint-review-feedback.schema.json
+      - framework/harness/schemas/app-component-blueprint.schema.json
+      - framework/harness/scripts/utils/blueprint-host-seams.ts
+      - framework/harness/scripts/utils/blueprint-review-projection.ts
+      - framework/harness/scripts/check-component-blueprint.ts
+      - framework/skills/project/component-design/SKILL.md
+      - framework/docs/operations/samples/requirement-source-materialization.valid.json
+      - framework/docs/operations/samples/requirement-source-materialization.invalid-hash.json
+      - framework/docs/operations/samples/blueprint-review-projection.valid.md
+      - framework/docs/operations/samples/blueprint-review-projection.invalid-added-fact.md
+      - framework/docs/operations/samples/blueprint-review-feedback.valid.json
+      - framework/docs/operations/samples/blueprint-review-feedback.invalid-authority.json
+    update_triggers:
+      - 三条接缝任一的 schema 字段、artifact 标识或必填面变更
+      - check:component-blueprint 的 --materialization / --projection / --feedback 模式语义或诊断 id 变更
+      - 评审投影 renderer 输出结构变更（valid 样例须同批重算）
+      - 反馈四类分类、authority 门槛或 revision 递进语义变更
+      - /component-design 编排流程的阶段或终点边界变更
+
   # --------------------------------------------------------------------------
   # 演进验收（实例扩展 / adapter 桥接）
   # --------------------------------------------------------------------------

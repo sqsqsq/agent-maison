@@ -23,6 +23,7 @@ import {
   asChangeUnitArtifact,
   deriveChangeUnitFeatureId,
   loadCanonicalChangeUnit,
+  parseChangeUnitFeatureId,
   resolveChangeUnitRef,
 } from './change-unit-path';
 import { AcceptanceSpec, CheckContext, CheckResult, ContractsSpec } from './types';
@@ -30,7 +31,15 @@ import { validateChangeUnitEvolutionSeam } from './change-unit-evolution-seam';
 import { validateChangeUnitDesign } from './change-unit-design-gate';
 import { validateProjectRelativePath } from './project-relative-path';
 
-type ProjectionPhase = 'plan' | 'coding' | 'review' | 'ut';
+/**
+ * M7：`change` 是 lite 轨的首个 phase，扮演 full 轨 `plan` 在"冻结施工契约"上的角色。
+ * CU-bound lite Feature 复用同一 `contracts.yaml.change_unit` sidecar，不在 change.md
+ * 另造降维映射协议（拒绝 Markdown / contracts 两套真源）。
+ */
+type ProjectionPhase = 'change' | 'plan' | 'coding' | 'review' | 'ut';
+
+/** 施工契约冻结阶段：此时 implementation ref 允许 `planned:` 前缀（尚未落地）。 */
+const CONTRACT_FREEZE_PHASES: ReadonlySet<ProjectionPhase> = new Set<ProjectionPhase>(['plan', 'change']);
 
 export interface ChangeUnitProjectionIssue {
   id: string;
@@ -87,7 +96,7 @@ function checkConstructionRefs(
   owner: string,
 ): ChangeUnitProjectionIssue[] {
   const out: ChangeUnitProjectionIssue[] = [];
-  const plannedAllowed = role === 'implementation' ? phase === 'plan' : phase !== 'ut';
+  const plannedAllowed = role === 'implementation' ? CONTRACT_FREEZE_PHASES.has(phase) : phase !== 'ut';
   for (const rawRef of refs) {
     const planned = rawRef.startsWith('planned:');
     const ref = planned ? rawRef.slice('planned:'.length) : rawRef;
@@ -419,6 +428,48 @@ function checkVerticalSlice(
   return issues;
 }
 
+/**
+ * M7：Feature 没有 `contracts.yaml.change_unit` sidecar 时的裁决。
+ *
+ * - 普通 Feature（identity 不以 `cu-` 派生）→ 不适用，零结果，既有行为不变；
+ * - 合法 `cu-*` identity 且 canonical CU 存在 → **BLOCKER**：CU-bound Feature 必须有
+ *   sidecar 承载机器映射（lite 与 full 同一份真源）；
+ * - 合法 `cu-*` identity 但 canonical CU 不存在 → BLOCKER，回 P1/P2 调和（不静默放行）；
+ * - 非法 `cu-*` payload → 按既有 identity 规则 fail-closed（`parseChangeUnitFeatureId` 抛错）。
+ */
+function requireSidecarForChangeUnitFeature(
+  projectRoot: string,
+  feature: string,
+): { applicable: boolean; issues: ChangeUnitProjectionIssue[] } {
+  if (!feature.startsWith('cu-')) return { applicable: false, issues: [] };
+  let parsed: { blueprintId: string; changeUnitId: string };
+  try {
+    parsed = parseChangeUnitFeatureId(feature);
+  } catch (error) {
+    return {
+      applicable: true,
+      issues: [issue('change_unit_feature_identity_invalid', (error as Error).message, 'repair_feature_mapping')],
+    };
+  }
+  try {
+    loadCanonicalChangeUnit(projectRoot, parsed.blueprintId, parsed.changeUnitId);
+  } catch (error) {
+    const code = error instanceof ChangeUnitResolutionError ? error.code : 'change_unit_ref_unresolvable';
+    return {
+      applicable: true,
+      issues: [issue(code, (error as Error).message, 'reconcile_blueprint')],
+    };
+  }
+  return {
+    applicable: true,
+    issues: [issue(
+      'change_unit_contracts_sidecar_missing',
+      `Feature ${feature} 由 canonical CU ${parsed.blueprintId}/${parsed.changeUnitId} 派生，必须在 contracts.yaml 提供 change_unit sidecar（change_unit_ref + predicate/provide/design_ref mappings）；lite 轨同样不免除该机器契约。`,
+      'repair_feature_mapping',
+    )],
+  };
+}
+
 export function validateChangeUnitFeatureProjection(
   projectRoot: string,
   feature: string,
@@ -430,7 +481,12 @@ export function validateChangeUnitFeatureProjection(
   options: { changeUnitOverride?: ChangeUnitArtifact } = {},
 ): ChangeUnitProjectionResult {
   const section = asRecord(contracts?.change_unit);
-  if (!section) return { applicable: false, issues: [], useCasesRequired: false, dagRequired: false };
+  if (!section) {
+    // M7：缺 sidecar 时"不适用"只对**普通 Feature**成立。Feature identity 以 `cu-` 派生
+    // 时它归属某份蓝图，缺 `contracts.yaml.change_unit` 就是缺机器映射真源——lite 轨没有
+    // 强制 contracts.yaml 的阶段前置，若在这里静默放行，CU-bound lite 会一路假绿到闭环。
+    return { ...requireSidecarForChangeUnitFeature(projectRoot, feature), useCasesRequired: false, dagRequired: false };
+  }
   const issues: ChangeUnitProjectionIssue[] = [];
   for (const key of Object.keys(section)) {
     if (!CHANGE_UNIT_ALLOWED_KEYS.has(key)) issues.push(issue('change_unit_projection_unknown_field', `contracts.change_unit.${key} 不属于 ID-only 投影。`));

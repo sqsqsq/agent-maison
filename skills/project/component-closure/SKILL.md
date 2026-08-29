@@ -7,6 +7,10 @@ description: Reconstruct and validate component-level assembly and coverage clos
 
 Use this Skill only after P1 admission and P2 Change Unit execution facts exist for the target component.
 
+> **单 CU 退化（M7）**：一份蓝图只分解出一个 Change Unit 时，closure **复用同一算法、同一投影、同一 mapping schema** 退化执行——跨单元组装边为空集是**合法结论**，closure 退化为"需求 → 蓝图稳定地址 → CU `design_refs` → completion 证据"的追溯核对，不产生第二次验收、不引入单 CU 专用协议。多 CU 的既有组装与组合证据义务全量保持不变。
+>
+> **演进影响接线（M7）**：applicable 视图全部产生视图事实义务（不按字面 `applicability` 跳过）；只有 `applicable` + `changed` 视图的节点可能派生施工义务，`verified_unchanged` 视图的节点一律按当前事实处理；runtime 流义务与传播核对仅对 `runtime` = `changed` 派生。
+
 > 真实宿主场景：闭环前的宿主证据口径（批次与八条运行时场景）与 provider 自然事件落点见
 > [真实宿主准入与回灌契约](../../reference/real-host-admission-and-feedback.md)。
 

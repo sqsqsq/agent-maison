@@ -44,6 +44,10 @@ export function renderBlueprintReviewMarkdown(blueprint: BlueprintRecord, artifa
       `### ${String(view.view_id)}`,
       '',
       `- Applicability: ${display(view.applicability)}`,
+      // M7：evolution_impact 是与 applicability 正交的独立维度，必须出现在 publication 投影里，
+      // 否则宿主装配的 Story Document 无从区分"本次改了"与"本次核实未变"。
+      `- Evolution impact: ${display(view.evolution_impact)}`,
+      `- Unchanged evidence: ${refs(asRecord(view.unchanged_evidence)?.evidence_refs)}`,
       `- Purpose: ${display(view.purpose)}`,
       `- Stakeholders: ${refs(view.stakeholders)}`,
       `- Current: ${display(view.current_state)}`,

@@ -12,10 +12,15 @@
 
 ## 1. 适用范围与边界
 
-**什么时候必须走本契约**：宿主需求按本节"进入判据与时机"选择部件演进路线，或已明确归属于
-某个既有 `blueprint_id`（既有演进工作区 `<features_dir>/<blueprint_id>/`，由
+**什么时候必须走本契约**：宿主需求按本节"进入判据与时机"被判定为**正式需求**（因而必经部件内
+设计阶段，入口 [component-design Skill](../project/component-design/SKILL.md)），或已明确归属于
+某个既有 `blueprint_id`（既有演进工作区 `<features_dir>/<blueprint_id>/`，蓝图本身由
 [app-component-blueprint Skill](../project/app-component-blueprint/SKILL.md) 建立）时，必须走本
 契约。随后每个施工单元（Change Unit，下称 CU）的进入、推进、闭环与回流均按本文执行。
+
+宿主侧适配（三条接缝的方向、artifact、字段、hash、authority、失败行为与接入流程）的唯一人读
+入口是发布件内的
+[`docs/operations/component-design-host-adaptation.md`](../../docs/operations/component-design-host-adaptation.md)。
 
 **作用域包含 pre-CU 蓝图准入**：在部件蓝图尚未建立、需求准备进入蓝图时，同样先按 §2 准入清单
 逐项核对。缺失项**只有在输入足以形成合法蓝图时**才在首次蓝图创建时写入 `decisions_and_gaps`；
@@ -28,31 +33,49 @@ Skill 的入口链接（[app-component-blueprint](../project/app-component-bluep
 
 **进入判据与时机**：
 
-**判据——三条同时成立（AND）才进蓝图：**
+**判据——正式性判定（不是三条 AND 入口门）：**
 
-1. 能识别出 **≥2 个各有独立施工/验收意义的 CU**——按能力与契约边界切，不是按模块、阶段或
-   文档章节人为拆分；
-2. 这些 CU **共享部件级设计决策**：数据真源、状态 owner、外部契约或迁移顺序；
-3. **各 CU 单独绿了仍不能证明整体完成**，必须经 Component closure 聚合验证。
+> **正式需求**＝有明确交付或验收责任，且拟改变**部件行为、外部契约、数据/NFR、运行语义或
+> 架构责任**的事项；不改变这些语义的**纯文档和机械维护**除外。
 
-三条不同时成立 → 走普通 Feature，再按既有 L0/L1/L2 分档施工。
+**每一项正式需求都必经部件内设计阶段**（入口 `/component-design`，组织侧称 Story Design）。
+判定遵守三条纪律：
+
+1. **上游权威**：上游（产品 / SE / 组织流程）显式把事项标为正式需求时，该分类具有权威性，
+   不得用本地启发式降级为非正式维护动作；
+2. **信息不足由人确认**：判据信息不足时问人并等待确认，**不猜测**；
+3. **不加机器门**：不新增 `track_scoring` 条目、不新增档位、不加机器 BLOCKER。
+
+判定为**非正式维护动作** → 不建蓝图，走既有 L0/L1 施工分档。
+
+**内容深度由条件式设计义务派生，不由入口门决定。** 只有一种蓝图协议——不设 compact/full
+档位、升级信号或升级状态机；小正式需求得到薄蓝图并拆出一个 CU。以下事实**被发现时**才触发
+对应义务（未触发即表达为空集/不适用的合法结论，不用空章节凑齐形式）：
+
+| 发现 | 触发的设计义务 |
+|------|----------------|
+| 多个 CU | 完成 CU 边界与关系分析（真实依赖、共享资源、可并行性、独立性）；**只有事实要求时**才生成 `requires` 与顺序约束，不得为记录先后伪造依赖边 |
+| 共享部件级设计决策（数据真源、状态 owner、外部契约、迁移顺序） | 只在蓝图裁决一次，各 CU 经 `design_refs` 消费；不在多个 Feature plan 各裁一次 |
+| “各 CU 单独绿了仍不能证明整体完成” | Component closure 追加真实组装与组合证据义务 |
+| （单 / 多 CU 通用） | 每个 CU 的 `safe_intermediate_state`——**不挂在 ≥2 CU 条件下** |
+
+**运行时数据闭环的六类条件**（持久化/远端数据上 UI、同一数据多页面消费、后台/系统/定时写入、
+冷启动/恢复/切账号加载、一处改动刷新他处、缓存/云同步/进程重建）是**蓝图内部 runtime view
+要不要建 `runtime_data_flow` 的判据**（P1 spec「Runtime data flows are closed in both
+directions」），仍然**不是**要不要建蓝图的入口条件——正式性判定已经回答了后者。它只对
+`runtime` 视图 `evolution_impact = changed` 时评估。
 
 **决策时机：**
 
-- **建 Feature 目录之前**是主判点——已明确属于某个既有 `blueprint_id` 的直接继续该演进工作区；
-- **spec 阶段是第一道兜底**：普通路线里第一次拿着事实（Context Facts Gate + Scope 守门的
-  in_scope_modules）复核判据；命中即停、转蓝图，只丢一份 spec 草稿；
-- **plan 装不下是最后报警**（TBD 堆积 / 反复 Scope 扩展提议）；coding 之前是转路线的最后合理时机。
+- **建 Feature 目录之前**是主判点——判正式性；已明确属于某个既有 `blueprint_id` 的直接继续
+  该演进工作区；
+- **`/spec` 与 `/change-lite` 首次冻结施工意图处各是一道兜底**（lite 轨没有 spec，兜底不能只
+  放 spec 阶段）：拿着事实（Context Facts Gate + Scope 守门的 in_scope_modules）复核正式性；
+  命中即停、指回 `/component-design`，只丢一份草稿；
+- **plan 装不下是最后报警**（TBD 堆积 / 反复 Scope 扩展提议）；coding 之前是回退的最后合理时机。
 
-**只是升级信号、不能单独投票：** 一份 spec/plan 装不下；命中运行时数据闭环的六类条件（持久化/
-远端数据上 UI、同一数据多页面消费、后台/系统/定时写入、冷启动/恢复/切账号加载、一处改动刷新
-他处、缓存/云同步/进程重建）。**后者是蓝图内部 runtime view 要不要建 `runtime_data_flow` 的判据**
-（P1 spec「Runtime data flows are closed in both directions」），**不是要不要建蓝图的入口条件**；
-把它当入口 OR 条件会吞掉 `complex-capability-meta-model` 明文保留的"无蓝图引用、只走单元闭环"
-轻量路径，也越过本节"没有 `change_unit_ref` 的普通 Feature 不经过本契约"的边界。
-
-**升级不是迁移：** 普通 Feature 已有产物只作为当前事实来源被蓝图消费，不自动转成 CU、不自动
-credit CU completion；不建任何迁移器。
+**回退不是迁移：** 存量普通 Feature 已有产物只作为当前事实来源被蓝图消费，不自动转成 CU、
+不自动 credit CU completion；不建任何迁移器。
 
 **与 H1 的边界**：本文是真实宿主验证的**入口契约**，本身不执行验证、不产出任何宿主语义 PASS。
 AI 记账等真实宿主验证（H1 批次 1）以本文为入口开展；宿主是否真的"能进、能回流"，只能由真实

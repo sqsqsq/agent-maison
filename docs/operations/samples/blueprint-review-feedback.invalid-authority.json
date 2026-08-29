@@ -1,0 +1,20 @@
+{
+  "_comment": "无效样例（M7 接缝 3）：声称 authoritative_ruling 却缺 authority 与 decision 的必要语义。期望 review_feedback_authority_insufficient——authority 不足的反馈不得被洗白成 decided_with_authority，只能记为意见/建议。",
+  "artifact": "blueprint-review-feedback@1",
+  "blueprint_id": "ledger-app-blueprint",
+  "component_id": "ledger",
+  "source_revision": 2,
+  "provider": {
+    "provider_id": "host-review-adapter",
+    "collected_at": "2026-08-29T14:00:00+08:00"
+  },
+  "items": [
+    {
+      "feedback_id": "fb-ruling-without-authority",
+      "kind": "authoritative_ruling",
+      "source_revision": 2,
+      "target_ref": "decision:seam-shape",
+      "body": "评审会上大家都同意保持直接实现。"
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "_comment": "有效样例（M7 接缝 1）。宿主把需求材料脱敏后落到项目内，再用本清单指向它们。校验：npm run check:component-blueprint -- --project-root <root> --blueprint ledger-app-blueprint --materialization <本文件> --json。source_sha256 必须等于 source_ref 指向文件的原始字节 sha256。",
+  "artifact": "requirement-source-materialization@1",
+  "blueprint_id": "ledger-app-blueprint",
+  "component_id": "ledger",
+  "producer": {
+    "provider_id": "host-story-extension",
+    "materialized_at": "2026-08-29T10:00:00+08:00"
+  },
+  "items": [
+    {
+      "item_id": "req-ledger-refresh",
+      "kind": "requirement",
+      "source_ref": "requirements/ledger.md#REQ-LEDGER-REFRESH",
+      "source_revision": "fixture-r1",
+      "source_sha256": "sha256:1cb261b1d7fa9e60c5a113c6f1a8029a9101809ee206836d6ca8a885123cc988",
+      "provenance": {
+        "source_kind": "product_requirement",
+        "source_ref": "requirements/ledger.md#REQ-LEDGER-REFRESH",
+        "source_revision": "fixture-r1",
+        "observed_at": "2026-08-20T10:00:00+08:00",
+        "evidence_strength": "authoritative",
+        "extraction_method": "authorized-current-scope-input"
+      },
+      "authority": {
+        "owner": "product-owner",
+        "formality": "formal_requirement"
+      }
+    }
+  ]
+}

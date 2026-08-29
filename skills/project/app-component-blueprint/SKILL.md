@@ -7,8 +7,20 @@
 - “发现 App 部件 / 建部件蓝图 / 适配 4+1 / 调和蓝图”
 - `/app-component-blueprint <blueprint-id>`
 
-> 真实宿主的部件复杂需求在进入蓝图前，材料准入与缺失路由见
-> [真实宿主准入与回灌契约](../../reference/real-host-admission-and-feedback.md)（适用范围内）。
+> **入口关系（M7）**：**正式需求的常规入口是 [`/component-design`](../component-design/SKILL.md)**
+> ——它编排"需求源物化 → 正式性判定 → 本 Skill 建蓝图至 admitted → 分解 1..N 个 canonical
+> CU → readiness"。本 Skill 保留为**直接入口**：已明确要建 / 调和某份蓝图时可以直接进入。
+> 蓝图是每项正式需求在当前部件内的设计权威，不是"复杂多 CU 才启用的可选路线"；只有一种
+> 协议，内容深度由本次演进的真实影响面派生（**没有 compact/full 档位或升级状态机**）。
+>
+> **支持范围**：当前只有 `hmos-app` / App component profile 具备 design lens。请求为其它
+> component type 建蓝图时，返回明确的 unsupported / missing design lens 失败，不得把它们
+> 强行送入 App 4+1 视图后宣称已支持。
+
+> 真实宿主的正式需求在进入蓝图前，材料准入与缺失路由见
+> [真实宿主准入与回灌契约](../../reference/real-host-admission-and-feedback.md)（适用范围内）；
+> 宿主侧三条接缝的适配细则见
+> [宿主适配指南](../../../docs/operations/component-design-host-adaptation.md)。
 
 ## 正式产物
 
@@ -45,6 +57,13 @@ canonical YAML 根对象含 `component_id`、`blueprint_id`、`revision`、`sour
 `evolution_candidate` 的 `human_decision` 只能是 `establish_seam|keep_direct`。前者必须以四个互不复用、同时进入 decision tests 的精确 `closure_proofs` 绑定契约兼容、Provider 替换、缺失/失败与 Consumer no-bypass 证明；后者只保留普通施工语义并记录再提取条件。
 
 4+1 使用固定 view id：`logical`、`runtime`、`development`、`deployment`、`scenarios`。前四项中除 deployment 外，对可执行 App 均为 applicable；deployment 即使不适用也保留证据化裁决。
+
+**两个正交维度（M7）**：`applicability`（部件类型固有适用性，二值 `applicable|not_applicable`，`not_applicable` 仍仅限 deployment）与 `evolution_impact`（本次演进影响，`changed|verified_unchanged`，**只由 applicable 视图携带**）互相独立，不得合并成三态枚举。
+
+- `applicable` + `changed`：全量义务（非 unknown 的 current/target/delta、≥1 可寻址节点、verification_refs）；
+- `applicable` + `verified_unchanged`：必须带 `unchanged_evidence`（`evidence_refs` 非空 + `current_state_ref`）与非 unknown 当前态，据此**免除** target/delta 与节点义务；该视图内任一节点声明本次 delta 即失败（不变声明不得掩盖真实变化）；其质询义务是**核实不变声明与依据**，只接受 `answered_with_evidence`；
+- **至少一个 `applicable` + `changed` 视图**；全部 `verified_unchanged` = 本次不构成演进，fail-closed；
+- 六类 runtime flow 触发条件**只对 `runtime` = `changed` 评估**。
 
 ### 3. 运行时流与跨视图检查
 

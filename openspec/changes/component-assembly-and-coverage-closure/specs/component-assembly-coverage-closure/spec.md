@@ -111,6 +111,34 @@ A blueprint node that is purely current-state, has no target/delta change and is
 
 > **Enforced by (P3 implementation):** `harness/scripts/utils/component-closure-obligations.ts`, `harness/scripts/utils/component-closure-coverage.ts`, `harness/scripts/check-component-closure.ts`
 
+### Requirement: Single-CU closure degenerates without a second protocol
+
+一份蓝图只分解出**一个** Change Unit 时，closure MUST 复用同一套算法与 mapping schema 退化执行，MUST NOT 引入单 CU 专用协议、专用状态或第二次验收：
+
+- **跨单元组装边为空集 MUST 是合法结论**，MUST NOT 因"没有 cross-CU assembly edges"判失败或降级；
+- closure MUST 退化为"需求 → 蓝图稳定地址 → CU `design_refs` → completion 证据"的追溯核对（与既有 `Current-only node does not create fake work` 同一语义方向：不存在的组装关系不制造虚构工作）；
+- 单 CU 与多 CU MUST 共用同一 `component-closure` 投影、同一覆盖行推导与同一裁决聚合；MUST NOT 出现第二套 mapping schema；
+- 多 CU 的既有正反回归 MUST 全量保持——单 CU 退化 MUST NOT 通过放宽多 CU 义务实现。
+
+**演进影响维度对 closure 的接线**：applicable 视图 MUST 全部产生视图事实义务（不得按字面 `applicability` 静默跳过）；只有 `applicable` + `changed` 视图的节点 MAY 派生施工义务，`verified_unchanged` 视图的节点 MUST 一律按当前事实处理；runtime 流义务与传播核对 MUST 仅对 `runtime` = `changed` 派生。
+
+#### Scenario: One CU closes through traceability only
+
+- **WHEN** 蓝图只有一个 canonical CU，其 completion VALID，且不存在跨单元组装边
+- **THEN** closure 以空组装边集合通过追溯核对，不因缺少 cross-CU 证据失败，也不产生第二次验收
+
+#### Scenario: Single CU does not relax multi-CU obligations
+
+- **WHEN** 同一实现同时处理多 CU 蓝图
+- **THEN** 跨单元组装、组合证据与冲突检测的既有义务全量保持不变
+
+#### Scenario: Verified-unchanged view nodes create no construction work
+
+- **WHEN** 某 applicable 视图标 `verified_unchanged`
+- **THEN** 该视图仍产生视图事实义务，其节点一律按当前事实处理，不派生施工义务、不要求 CU owner；该视图的 runtime 流也不进入传播核对
+
+> **Enforced by (P3 implementation):** `harness/scripts/utils/component-closure-obligations.ts`, `harness/scripts/utils/component-closure-assembly.ts`, `harness/scripts/utils/component-closure-runtime.ts`, `harness/scripts/check-component-closure.ts`
+
 ### Requirement: Coverage resolves through existing Feature and evidence gates
 
 For every construction obligation, P3 MUST resolve the owner CU's deterministic Feature identity and canonical `predicate_mappings`, `provide_mappings` or `design_ref_mappings`. Implementation, symbol, test and verification refs MUST pass existing project-relative path and current consumer gates; arbitrary file existence, prose, Markdown checkboxes or provider booleans MUST NOT count as evidence.

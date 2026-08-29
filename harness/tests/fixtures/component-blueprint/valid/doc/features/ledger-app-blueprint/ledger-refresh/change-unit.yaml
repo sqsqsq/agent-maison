@@ -9,7 +9,7 @@ component_blueprint_ref:
   blueprint_id: ledger-app-blueprint
   revision: 2
   source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
-  artifact_sha256: sha256:0088e288a249023036c869d08d8af7e8b36f63070abe793f1f680ca4c324f163
+  artifact_sha256: sha256:918a544f8230869ece7b3e4005e0aa42f610389a3b25e7c1c6ef3ed50c1384bb
   target:
     kind: blueprint
     id: ledger-app-blueprint
@@ -34,7 +34,7 @@ design_refs:
     blueprint_id: ledger-app-blueprint
     revision: 2
     source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
-    artifact_sha256: sha256:0088e288a249023036c869d08d8af7e8b36f63070abe793f1f680ca4c324f163
+    artifact_sha256: sha256:918a544f8230869ece7b3e4005e0aa42f610389a3b25e7c1c6ef3ed50c1384bb
     target:
       kind: node
       view_id: logical
@@ -44,7 +44,7 @@ design_refs:
     blueprint_id: ledger-app-blueprint
     revision: 2
     source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
-    artifact_sha256: sha256:0088e288a249023036c869d08d8af7e8b36f63070abe793f1f680ca4c324f163
+    artifact_sha256: sha256:918a544f8230869ece7b3e4005e0aa42f610389a3b25e7c1c6ef3ed50c1384bb
     target:
       kind: node
       view_id: runtime
@@ -54,7 +54,7 @@ design_refs:
     blueprint_id: ledger-app-blueprint
     revision: 2
     source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
-    artifact_sha256: sha256:0088e288a249023036c869d08d8af7e8b36f63070abe793f1f680ca4c324f163
+    artifact_sha256: sha256:918a544f8230869ece7b3e4005e0aa42f610389a3b25e7c1c6ef3ed50c1384bb
     target:
       kind: node
       view_id: runtime
@@ -64,7 +64,7 @@ design_refs:
     blueprint_id: ledger-app-blueprint
     revision: 2
     source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
-    artifact_sha256: sha256:0088e288a249023036c869d08d8af7e8b36f63070abe793f1f680ca4c324f163
+    artifact_sha256: sha256:918a544f8230869ece7b3e4005e0aa42f610389a3b25e7c1c6ef3ed50c1384bb
     target:
       kind: flow
       view_id: runtime
@@ -75,7 +75,7 @@ design_refs:
     blueprint_id: ledger-app-blueprint
     revision: 2
     source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
-    artifact_sha256: sha256:0088e288a249023036c869d08d8af7e8b36f63070abe793f1f680ca4c324f163
+    artifact_sha256: sha256:918a544f8230869ece7b3e4005e0aa42f610389a3b25e7c1c6ef3ed50c1384bb
     target:
       kind: node
       view_id: development
@@ -85,7 +85,7 @@ design_refs:
     blueprint_id: ledger-app-blueprint
     revision: 2
     source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
-    artifact_sha256: sha256:0088e288a249023036c869d08d8af7e8b36f63070abe793f1f680ca4c324f163
+    artifact_sha256: sha256:918a544f8230869ece7b3e4005e0aa42f610389a3b25e7c1c6ef3ed50c1384bb
     target:
       kind: node
       view_id: scenarios
@@ -95,7 +95,7 @@ design_refs:
     blueprint_id: ledger-app-blueprint
     revision: 2
     source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
-    artifact_sha256: sha256:0088e288a249023036c869d08d8af7e8b36f63070abe793f1f680ca4c324f163
+    artifact_sha256: sha256:918a544f8230869ece7b3e4005e0aa42f610389a3b25e7c1c6ef3ed50c1384bb
     target:
       kind: relation
       id: repository-publishes-store
@@ -104,7 +104,7 @@ design_refs:
     blueprint_id: ledger-app-blueprint
     revision: 2
     source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
-    artifact_sha256: sha256:0088e288a249023036c869d08d8af7e8b36f63070abe793f1f680ca4c324f163
+    artifact_sha256: sha256:918a544f8230869ece7b3e4005e0aa42f610389a3b25e7c1c6ef3ed50c1384bb
     target:
       kind: relation
       id: domain-owned-by-module
@@ -113,7 +113,7 @@ design_refs:
     blueprint_id: ledger-app-blueprint
     revision: 2
     source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
-    artifact_sha256: sha256:0088e288a249023036c869d08d8af7e8b36f63070abe793f1f680ca4c324f163
+    artifact_sha256: sha256:918a544f8230869ece7b3e4005e0aa42f610389a3b25e7c1c6ef3ed50c1384bb
     target:
       kind: contract
       id: create-entry-v1
@@ -122,7 +122,7 @@ design_refs:
     blueprint_id: ledger-app-blueprint
     revision: 2
     source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
-    artifact_sha256: sha256:0088e288a249023036c869d08d8af7e8b36f63070abe793f1f680ca4c324f163
+    artifact_sha256: sha256:918a544f8230869ece7b3e4005e0aa42f610389a3b25e7c1c6ef3ed50c1384bb
     target:
       kind: decision
       id: seam-shape

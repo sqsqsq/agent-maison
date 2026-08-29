@@ -17,7 +17,17 @@ import {
 import { selectNextChangeUnit } from './change-unit-selection';
 import { validateChangeUnitProviderBoundary } from './change-unit-provider-boundary';
 
-export type ChangeUnitProgressionAction = 'resume_active' | 'select_one' | 'blocked' | 'ready_for_component_closure';
+export type ChangeUnitProgressionAction =
+  | 'resume_active'
+  | 'select_one'
+  | 'blocked'
+  | 'ready_for_component_closure'
+  /**
+   * M7：admitted blueprint 但工作区内还没有 canonical CU。这不是故障，而是 P2 设计准备
+   * 子流程的合法入口（`change-unit-design-preparation.ts`）。selector 与施工段仍要求
+   * ≥1 canonical CU，本 action 不选择任何 CU、不启动 Goal Mode。
+   */
+  | 'design_preparation_required';
 
 export interface ActiveChangeUnitRun {
   featureId: string;
@@ -109,6 +119,14 @@ export function deriveChangeUnitProgressionDecision(
   }
   if (readySet.allCompleted) {
     return { action: 'ready_for_component_closure', reasons: ['所有 CU completion VALID 且历史 targets 当前仍获准；仅交给 P3 评估。'], readySet };
+  }
+  // M7：0 canonical CU 是设计准备段的合法入口，不是 blocked 故障；selector 仍不选任何 CU。
+  if (readySet.units.length === 0) {
+    return {
+      action: 'design_preparation_required',
+      reasons: ['工作区内还没有 canonical change-unit@1：这是 P2 设计准备子流程的合法入口（admitted blueprint + 0 CU），不是推进故障；施工段仍要求至少一个 canonical CU。'],
+      readySet,
+    };
   }
   const selected = selectNextChangeUnit(readySet.ready);
   if (selected) return { action: 'select_one', selected, reasons: [`priority=${selected.priority}, stable_id=${selected.change_unit_id}`], readySet };

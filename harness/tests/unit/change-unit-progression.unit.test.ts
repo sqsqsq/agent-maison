@@ -40,10 +40,18 @@ import {
   runChangeUnitProgression,
 } from '../../scripts/utils/change-unit-progress-loop';
 import {
+  ChangeUnitCandidateRejected,
   acceptChangeUnitCandidate,
   dropUnacceptedChangeUnitCandidates,
   validateChangeUnitProviderBoundary,
 } from '../../scripts/utils/change-unit-provider-boundary';
+import {
+  ChangeUnitDecompositionRejected,
+  acceptChangeUnitDecomposition,
+  deriveDesignPreparationReadiness,
+  evaluateConstructionEntry,
+  evaluateDesignPreparationEntry,
+} from '../../scripts/utils/change-unit-design-preparation';
 import { validateChangeUnitEvolutionSeam } from '../../scripts/utils/change-unit-evolution-seam';
 import { clearSkillsIndexCache, resolveSkillPath } from '../../scripts/utils/resolve-skill-path';
 
@@ -978,6 +986,254 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       const accepted = acceptChangeUnitCandidate(projectRoot, { providerId: 'builtin-vertical-slice-decomposition', artifact: candidate });
       assert(accepted.changeUnit.change_unit_id === 'accepted-candidate' && fs.existsSync(accepted.canonicalPath), 'consumer 未写 canonical CU');
       assert(candidate.provenance.source_ref.includes('component-blueprint.yaml'), 'provider 冒充了权威来源');
+    });
+  }));
+
+  // ---------------------------------------------------------------------------
+  // M7：P2 设计准备子流程（admitted blueprint + 0 CU 合法入口 → 原子写 1..N canonical CU）
+  // ---------------------------------------------------------------------------
+
+  /** 清空工作区内全部 canonical CU 与其 Feature 施工产物，制造"admitted blueprint + 0 CU"。 */
+  function emptyWorkspace(projectRoot: string): void {
+    const dir = path.join(projectRoot, 'doc', 'features', 'ledger-app-blueprint');
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory() && entry.name !== 'blueprint') {
+        fs.rmSync(path.join(dir, entry.name), { recursive: true, force: true });
+      }
+    }
+  }
+
+  function candidateOf(id: string): { providerId: string; artifact: ReturnType<typeof asChangeUnitArtifact> } {
+    const artifact = asChangeUnitArtifact(validChangeUnit());
+    artifact.change_unit_id = id;
+    artifact.provenance.extraction_method = 'builtin-vertical-slice-decomposition + consumer-validation';
+    return { providerId: 'builtin-vertical-slice-decomposition', artifact };
+  }
+
+  results.push(test('M7: admitted blueprint with zero CUs is a legal design-preparation entry', () => {
+    withTempProject(projectRoot => {
+      emptyWorkspace(projectRoot);
+      const entry = evaluateDesignPreparationEntry(projectRoot, 'ledger-app-blueprint');
+      assert(entry.blueprintAdmitted, `蓝图未被判为 admitted：${entry.reasons.join(', ')}`);
+      assert(entry.canEnter, '0 CU 必须是设计准备段的合法入口');
+      assert(entry.existingChangeUnitIds.length === 0, '前提：工作区应为 0 CU');
+      // 施工段前提**不**随之放宽
+      const construction = evaluateConstructionEntry(projectRoot, 'ledger-app-blueprint');
+      assert(!construction.canEnter, '0 CU 时施工段入口必须仍然拒绝');
+      assert(
+        construction.reasons.includes('construction_requires_at_least_one_canonical_change_unit'),
+        `施工段拒绝理由不精确：${construction.reasons.join(', ')}`,
+      );
+      // 推进决策把 0-CU 与"有 CU 但无 ready"区分开
+      const readySet = deriveChangeUnitReadySet(projectRoot, 'ledger-app-blueprint');
+      const decision = deriveChangeUnitProgressionDecision(readySet, { active: [], corrupt: [] });
+      assert(decision.action === 'design_preparation_required', `0-CU 决策应为 design_preparation_required，实际 ${decision.action}`);
+      assert(decision.selected === undefined, '设计准备段不得选择 CU');
+    });
+  }));
+
+  results.push(test('M7: a rejected candidate makes the whole batch write nothing', () => {
+    withTempProject(projectRoot => {
+      emptyWorkspace(projectRoot);
+      const good = candidateOf('prep-good');
+      const bad = candidateOf('prep-bad');
+      // 设计闭包破坏：design_ref 指向不存在的地址
+      (bad.artifact.design_refs as unknown as ComponentBlueprintRef[])[0].target.id = 'not-real';
+      let code = '';
+      try {
+        acceptChangeUnitDecomposition(projectRoot, 'ledger-app-blueprint', [good, bad]);
+      } catch (error) {
+        code = (error as ChangeUnitDecompositionRejected).code;
+      }
+      assert(code === 'change_unit_candidate_design_rejected', `非法候选未被设计门拒绝：${code}`);
+      // 原子性：合法候选也一个字节都不落盘
+      assert(enumerateCanonicalChangeUnits(projectRoot, 'ledger-app-blueprint').length === 0, '整批拒绝后不得有任何 canonical CU 落盘');
+    });
+  }));
+
+  results.push(test('M7: a valid batch writes 1..N canonical CUs atomically and derives readiness', () => {
+    withTempProject(projectRoot => {
+      emptyWorkspace(projectRoot);
+      // 单 CU 正向：1 个候选是合法交付
+      const single = acceptChangeUnitDecomposition(projectRoot, 'ledger-app-blueprint', [candidateOf('prep-single')]);
+      assert(single.changeUnitIds.join(',') === 'prep-single', `单 CU 写出失败：${single.changeUnitIds.join(',')}`);
+      let readiness = deriveDesignPreparationReadiness(projectRoot, 'ledger-app-blueprint');
+      assert(readiness.ready, `单 CU readiness 未就绪：${JSON.stringify(readiness.perUnit)}`);
+      assert(readiness.entersConstruction === false, '设计准备段不得进入施工');
+      assert(readiness.nextEntry === 'change-unit-progression', `下一步入口应指回施工入口，实际 ${readiness.nextEntry}`);
+      // 施工段前提此时成立
+      assert(evaluateConstructionEntry(projectRoot, 'ledger-app-blueprint').canEnter, '≥1 CU 后施工段应可进入');
+
+      // 多 CU 正向：追加两个是正常调和追加，不是升级
+      const more = acceptChangeUnitDecomposition(projectRoot, 'ledger-app-blueprint', [candidateOf('prep-a'), candidateOf('prep-b')]);
+      assert(more.changeUnitIds.join(',') === 'prep-a,prep-b', `多 CU 写出失败：${more.changeUnitIds.join(',')}`);
+      readiness = deriveDesignPreparationReadiness(projectRoot, 'ledger-app-blueprint');
+      assert(readiness.changeUnitIds.join(',') === 'prep-a,prep-b,prep-single', `枚举不完整：${readiness.changeUnitIds.join(',')}`);
+    });
+  }));
+
+  results.push(test('M7: accepting the same candidate twice fails closed without overwriting', () => {
+    withTempProject(projectRoot => {
+      emptyWorkspace(projectRoot);
+      const accepted = acceptChangeUnitDecomposition(projectRoot, 'ledger-app-blueprint', [candidateOf('prep-once')]);
+      const canonicalPath = accepted.accepted[0]!.canonicalPath;
+      const bytesBefore = fs.readFileSync(canonicalPath);
+      let code = '';
+      try {
+        acceptChangeUnitDecomposition(projectRoot, 'ledger-app-blueprint', [candidateOf('prep-once')]);
+      } catch (error) {
+        code = (error as ChangeUnitDecompositionRejected).code;
+      }
+      assert(code === 'change_unit_candidate_already_exists', `重复接受未 fail-closed：${code}`);
+      assert(fs.readFileSync(canonicalPath).equals(bytesBefore), '重复接受改写了已接受 canonical CU 的字节');
+    });
+  }));
+
+  results.push(test('M7: batch-internal duplicates and cross-workspace candidates fail closed', () => {
+    withTempProject(projectRoot => {
+      emptyWorkspace(projectRoot);
+      let code = '';
+      try {
+        acceptChangeUnitDecomposition(projectRoot, 'ledger-app-blueprint', [candidateOf('prep-dup'), candidateOf('prep-dup')]);
+      } catch (error) {
+        code = (error as ChangeUnitDecompositionRejected).code;
+      }
+      assert(code === 'change_unit_candidate_duplicate_in_batch', `批内重复未拒绝：${code}`);
+      assert(enumerateCanonicalChangeUnits(projectRoot, 'ledger-app-blueprint').length === 0, '批内重复后不得有落盘');
+
+      const foreign = candidateOf('prep-foreign');
+      foreign.artifact.blueprint_id = 'other-blueprint';
+      code = '';
+      try {
+        acceptChangeUnitDecomposition(projectRoot, 'ledger-app-blueprint', [foreign]);
+      } catch (error) {
+        code = (error as ChangeUnitDecompositionRejected).code;
+      }
+      assert(code === 'change_unit_candidate_blueprint_mismatch', `跨工作区候选未拒绝：${code}`);
+    });
+  }));
+
+  results.push(test('M7: a provider that does not record itself in provenance cannot have its candidate accepted', () => {
+    withTempProject(projectRoot => {
+      emptyWorkspace(projectRoot);
+      const candidate = candidateOf('prep-no-provenance');
+      candidate.artifact.provenance.extraction_method = 'hand-written';
+      let code = '';
+      try {
+        acceptChangeUnitDecomposition(projectRoot, 'ledger-app-blueprint', [candidate]);
+      } catch (error) {
+        code = (error as ChangeUnitDecompositionRejected).code;
+      }
+      assert(code === 'change_unit_candidate_provider_provenance_missing', `provider provenance 缺失未拒绝：${code}`);
+      assert(enumerateCanonicalChangeUnits(projectRoot, 'ledger-app-blueprint').length === 0, '被拒候选不得落盘');
+    });
+  }));
+
+  results.push(test('M7: a single-CU workspace progresses forward and hands off to P3', () => {
+    withTempProject(projectRoot => {
+      emptyWorkspace(projectRoot);
+      acceptChangeUnitDecomposition(projectRoot, 'ledger-app-blueprint', [candidateOf('solo-cu')]);
+      const readySet = deriveChangeUnitReadySet(projectRoot, 'ledger-app-blueprint');
+      assert(readySet.units.length === 1, `单 CU 枚举失败：${readySet.units.length}`);
+      const decision = deriveChangeUnitProgressionDecision(readySet, { active: [], corrupt: [] });
+      // 单 CU 未完成时正常走 select_one / blocked（取决于 blocker），但绝不是 design_preparation_required
+      assert(decision.action !== 'design_preparation_required', '有 CU 时不得再落回设计准备入口');
+      assert(!readySet.allCompleted, '新写出的 CU 尚无 completion，不应判为全部完成');
+    });
+  }));
+
+  // M7：CU-bound lite 复用同一 contracts.yaml.change_unit sidecar，并在 `change` 阶段就被校验
+  results.push(test('M7: CU-bound lite reuses the same contracts sidecar and is checked at the change phase', () => {
+    withTempProject(projectRoot => {
+      const fixture = projectionContracts(projectRoot);
+      bindFeatureContracts(projectRoot, fixture.feature, fixture.contracts);
+      // lite 的首个 phase 与 full 的 plan 同属"冻结施工契约"阶段：同一 sidecar、同一校验通过
+      const atChange = validateChangeUnitFeatureProjection(
+        projectRoot, fixture.feature, fixture.contracts, fixture.acceptance, true, 'change', fixture.dags,
+      );
+      assert(atChange.applicable, 'CU sidecar 存在时 change 阶段必须适用');
+      assert(atChange.issues.length === 0, `lite sidecar 在 change 阶段被误拒：${atChange.issues.map(i => i.id).join(', ')}`);
+
+      // 无 sidecar 的普通 lite Feature 不适用、零结果、行为不变
+      const plain = validateChangeUnitFeatureProjection(
+        projectRoot, 'plain-lite', { feature: 'plain-lite' } as unknown as ContractsSpec, undefined, false, 'change',
+      );
+      assert(!plain.applicable && plain.issues.length === 0, '普通 lite Feature 不应被 CU 投影影响');
+
+      // 返修 P0-3：**CU-bound** Feature 缺 sidecar 必须 BLOCKER，不得静默判"不适用"
+      const missing = validateChangeUnitFeatureProjection(
+        projectRoot, fixture.feature, { feature: fixture.feature } as unknown as ContractsSpec, undefined, false, 'change',
+      );
+      assert(missing.applicable, 'CU-bound Feature 缺 sidecar 被误判为不适用（假绿）');
+      assert(
+        missing.issues.some(item => item.id === 'change_unit_contracts_sidecar_missing'),
+        `CU-bound Feature 缺 sidecar 未 BLOCKER：${missing.issues.map(i => i.id).join(', ') || '(none)'}`,
+      );
+
+      // 反例：sidecar 绑错 CU 身份在 change 阶段就被抓住（不推迟到 coding）
+      const wrong = projectionContracts(projectRoot);
+      (wrong.contracts.change_unit!.change_unit_ref as unknown as ChangeUnitRecord).change_unit_id = 'ledger-consumer';
+      const mismatched = validateChangeUnitFeatureProjection(
+        projectRoot, wrong.feature, wrong.contracts, wrong.acceptance, true, 'change', wrong.dags,
+      );
+      assert(mismatched.issues.length > 0, 'change 阶段未抓住错绑的 CU sidecar');
+    });
+  }));
+
+  // 返修 P0-3 补充：Feature identity 分流的另外两条出口
+  results.push(test('M7 fix: cu-bound Feature whose canonical CU is missing, and invalid cu- payload, both fail closed', () => {
+    withTempProject(projectRoot => {
+      // 合法 cu- identity，但 canonical CU 不存在 → BLOCKER 并路由回调和
+      const orphan = deriveChangeUnitFeatureId('ledger-app-blueprint', 'never-created-cu');
+      const orphanResult = validateChangeUnitFeatureProjection(
+        projectRoot, orphan, { feature: orphan } as unknown as ContractsSpec, undefined, false, 'change',
+      );
+      assert(orphanResult.applicable, 'canonical CU 缺失的 cu- Feature 被误判为不适用');
+      assert(orphanResult.issues.length > 0, 'canonical CU 缺失未 BLOCKER');
+
+      // 非法 cu- payload → fail-closed，不回退成平铺 Feature
+      const bogus = validateChangeUnitFeatureProjection(
+        projectRoot, 'cu-not-base64url!!', { feature: 'cu-x' } as unknown as ContractsSpec, undefined, false, 'change',
+      );
+      assert(bogus.applicable, '非法 cu- identity 被误判为不适用');
+      assert(
+        bogus.issues.some(item => item.id === 'change_unit_feature_identity_invalid'),
+        `非法 cu- payload 未 fail-closed：${bogus.issues.map(i => i.id).join(', ') || '(none)'}`,
+      );
+    });
+  }));
+
+  // 返修 P1-1：单候选与批量接受共用同一 consumer writer
+  results.push(test('M7 fix: single and batch acceptance share one consumer writer', () => {
+    withTempProject(projectRoot => {
+      const single = asChangeUnitArtifact(validChangeUnit());
+      single.change_unit_id = 'single-writer-cu';
+      single.provenance.extraction_method = 'builtin-vertical-slice-decomposition + consumer-validation';
+      const accepted = acceptChangeUnitCandidate(projectRoot, {
+        providerId: 'builtin-vertical-slice-decomposition', artifact: single,
+      });
+      assert(accepted.changeUnit.change_unit_id === 'single-writer-cu', '单候选接受失败');
+
+      // 单候选入口现在抛与批量同一种错误类型/错误码（证明走的是同一实现）
+      const dup = asChangeUnitArtifact(validChangeUnit());
+      dup.change_unit_id = 'single-writer-cu';
+      dup.provenance.extraction_method = 'builtin-vertical-slice-decomposition + consumer-validation';
+      let code = '';
+      let isSharedError = false;
+      try {
+        acceptChangeUnitCandidate(projectRoot, { providerId: 'builtin-vertical-slice-decomposition', artifact: dup });
+      } catch (error) {
+        code = (error as ChangeUnitCandidateRejected).code;
+        isSharedError = error instanceof ChangeUnitCandidateRejected;
+      }
+      assert(code === 'change_unit_candidate_already_exists', `单候选重复接受未 fail-closed：${code}`);
+      assert(isSharedError, '单候选入口未复用同一 consumer 错误类型（说明还有第二份实现）');
+
+      // 设计准备段的错误类型是同一个类（别名），不是第二种
+      assert(
+        (ChangeUnitDecompositionRejected as unknown) === (ChangeUnitCandidateRejected as unknown),
+        '设计准备段仍持有独立的错误类型 —— 说明存在第二份 consumer 实现',
+      );
     });
   }));
 

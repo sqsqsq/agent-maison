@@ -347,6 +347,100 @@ required provider 缺失 MUST 形成结构化 blocker；optional provider 缺失
 
 > **Enforced by (P2 implementation):** 本 capability spec 的 Seam Card、`harness/scripts/utils/change-unit-provider-boundary.ts`, `skills/project/change-unit-progression/SKILL.md`
 
+### Requirement: Design preparation accepts an admitted blueprint with zero change units
+
+P2 MUST 暴露一个**设计准备子流程**，关闭"首个 canonical CU 由谁创建"的责任空档。它 MUST 完全复用上表 `CU decomposition` Seam Card 的既有机制（provider 只产临时候选 → consumer validator 校验后写 canonical），MUST NOT 新增第二套 CU 写入机制、第二个状态机或新 CLI。
+
+- **入口**：admitted blueprint。**初始 canonical CU 数量为 0 MUST 是合法入口**，MUST NOT 判为推进故障；推进决策 MUST 把该情形与"有 CU 但无 ready"区分开。
+- **候选**：decomposition provider 或人工/Agent 设计者 MUST 只产出内存/临时报告中的候选，MUST NOT 直接写 canonical CU 或完成事实；候选 provenance MUST 只记入 extraction method，MUST NOT 自称权威。
+- **接受**：只有 consumer validator MAY 接受候选，且**全仓 MUST 只有一个 canonical CU 写入实现**——单候选接受 MUST 是批量接受的 1 元包装，MUST NOT 保留第二份 provenance/schema/design-gate/落盘逻辑；设计准备段只做入口/readiness 编排并委托该唯一 consumer。它 MUST 校验 schema、canonical identity、设计闭包（设计可施工门）、provenance 与来源权威，全部通过后 MUST **原子**写出 1..N canonical `change-unit@1`：任一候选不通过即整批拒绝且一个字节都不落盘；写入中途失败 MUST 回滚本批已落盘目标。
+- **重复接受 fail-closed**：目标 canonical 文件已存在时 MUST 拒绝，MUST NOT 覆盖。修正已接受单元 MUST 走新的修订/superseding CU。
+- **终点**：派生 design gate / readiness 并返回后续施工入口。子流程 MUST **停在 selector 与 Goal Mode 执行之前**，MUST NOT 选择 CU、启动 run 或触碰 P3 closure。
+- **施工段前提不放宽**：selector 与 Goal Mode 施工段 MUST 仍要求至少一个 canonical CU；设计准备段的入口放宽 MUST NOT 传导到施工段。
+
+#### Scenario: Admitted blueprint with zero CUs enters design preparation
+
+- **WHEN** 工作区有 admitted blueprint 但还没有任何 `change-unit.yaml`
+- **THEN** 推进决策返回"需要设计准备"而不是 blocked 故障，且不选择任何 CU、不启动 Goal Mode
+
+#### Scenario: A rejected candidate writes nothing
+
+- **WHEN** 一批候选中任意一个未通过 schema、identity、设计闭包或 provenance 校验
+- **THEN** 整批被拒绝，工作区内一个 canonical CU 文件都不产生
+
+#### Scenario: A valid batch is written atomically
+
+- **WHEN** 一批 N 个候选全部通过 consumer validator
+- **THEN** N 个 canonical `change-unit@1` 一次性写出，随后可被既有枚举与 design gate 读取
+
+#### Scenario: Single and batch acceptance share one writer
+
+- **WHEN** 分别经单候选入口与批量入口接受候选
+- **THEN** 两者 MUST 走同一 consumer 校验与落盘原语；provenance、canonical schema/identity、设计闭包门与原子写出 MUST NOT 存在第二份实现
+
+#### Scenario: Accepting the same candidate twice fails closed
+
+- **WHEN** 某候选的目标 canonical 路径已存在已接受的 CU
+- **THEN** 接受必须失败并定位该路径，已有 canonical CU 与其 provenance 保持不变
+
+#### Scenario: Construction still requires at least one CU
+
+- **WHEN** 设计准备段尚未写出任何 canonical CU，调用方试图进入 selector 或 Goal Mode
+- **THEN** 施工段入口必须拒绝并说明至少需要一个 canonical CU
+
+> **Enforced by (P2 implementation):** `harness/scripts/utils/change-unit-design-preparation.ts`, `harness/scripts/utils/change-unit-provider-boundary.ts`, `harness/scripts/utils/change-unit-progress-loop.ts`, `skills/project/change-unit-progression/SKILL.md`, `skills/project/component-design/SKILL.md`
+
+### Requirement: CU-bound lite Features reuse the contracts change_unit sidecar
+
+CU-bound lite Feature MUST 使用与 full 轨**同一个** `contracts.yaml.change_unit` sidecar 承载机器映射：`change_unit_ref` 与 `predicate_mappings` / `provide_mappings` / `design_ref_mappings` 三组映射。MUST NOT 在 `change.md` 发明降维映射协议——Markdown 与 `contracts.yaml` 两套真源被明确拒绝。
+
+- lite **只**表示施工阶段更少、叙述文档规模更小，MUST NOT 表示可省略 CU 闭环所需的机器契约；
+- sidecar 的**最小必填面** = `change_unit` 段（`change_unit_ref` 必填，三组 mappings 字段必须存在，可为空数组）。full 轨专用段（`state_management` 等运行时施工权威）按 lite 语义裁决：lite 轨不触发 runtime flow 施工投影时 MAY 为空；一旦 CU 的 `design_refs` 指向 runtime flow 节点，既有运行时投影义务 MUST 照常生效，不因 lite 而豁免；
+- 绑定状态判定（`available` / `in_progress` / `matched` / `conflict`）MUST 识别 lite Feature：只有 `change.md`/`feature.yaml` 等施工标志而无 `contracts.yaml` → `in_progress`；有 sidecar → 按 `change_unit_ref` 身份判 `matched` 或 `conflict`；
+- **缺 sidecar 时的裁决 MUST 按 Feature identity 分流**：identity 非 `cu-` 派生的普通 Feature → 投影不适用、零结果、既有行为不变；**合法 `cu-` identity 且 canonical CU 存在 → MUST BLOCKER**（CU-bound Feature 必须有 sidecar 承载机器映射）；合法 `cu-` identity 但 canonical CU 不存在 → MUST BLOCKER 并路由回调和；非法 `cu-` payload → 按既有 identity 规则 fail-closed。lite 轨没有强制 `contracts.yaml` 的阶段前置，若在缺 sidecar 时一律判"不适用"，CU-bound lite MUST 会一路假绿到闭环；
+- sidecar 的三组映射 MUST 逐条覆盖 canonical CU 的 `target_predicates` / `provides` / `design_refs` 集合；**只有 canonical 集合本身为空时对应数组才能为空**，MUST NOT 以空数组冒充已映射；
+- CU sidecar 校验 MUST 在 lite 轨**冻结施工契约的阶段**（`change`）就生效，MUST NOT 推迟到 `coding`；P3 对 lite CU 的 closure 消费 MUST 与 full 同构，MUST NOT 引入第二套 mapping schema。
+
+#### Scenario: A CU-bound lite Feature is validated at its first phase
+
+- **WHEN** 一个 lite Feature 携带 `contracts.yaml.change_unit` sidecar 并运行 `change` 阶段门禁
+- **THEN** CU→Feature ID-only 投影校验在该阶段执行；映射错误在 coding 之前就被抓住
+
+#### Scenario: A CU-bound Feature without a sidecar fails closed
+
+- **WHEN** 一个由 canonical CU 派生（identity 以 `cu-` 编码）的 Feature 没有 `contracts.yaml.change_unit` sidecar
+- **THEN** 投影校验 MUST 判为适用并 BLOCKER 失败，MUST NOT 返回"不适用"静默放行；诊断 MUST 指出缺的是 CU-bound Feature 的机器映射真源
+
+#### Scenario: A plain lite Feature is unaffected
+
+- **WHEN** 一个不属于任何蓝图的普通 lite Feature 没有 `contracts.yaml`
+- **THEN** CU 投影不适用、不产生任何结果，既有 lite 行为不变
+
+#### Scenario: Lite does not get a reduced mapping protocol
+
+- **WHEN** 某实现试图用 `change.md` frontmatter 或正文承载 `change_unit_ref` 与映射
+- **THEN** 违反本契约——lite 与 full 共用同一 sidecar 真源
+
+> **Enforced by (P2 implementation):** `harness/scripts/utils/change-unit-feature-projection.ts`, `harness/scripts/check-change.ts`, `harness/scripts/utils/change-unit-path.ts`, `skills/feature/change-lite/SKILL.md`
+
+### Requirement: A single-CU blueprint is a normal forward path
+
+蓝图只分解出**一个** Change Unit MUST 是正常正向路径，MUST NOT 被判为退化、异常或"应当合并成普通 Feature"：枚举 1 个 CU、ready set 单候选、单并发推进、完成后交给 P3 评估，全部沿用既有算法。
+
+推进过程中发现第二个 Change Unit MUST 按**正常蓝图调和追加单元**处理——它 MUST NOT 被建模为档位升级、协议迁移或蓝图类型变更；已完成单元的事实 MUST 保留，MUST NOT 因追加单元被抹去或重算为 pending。
+
+#### Scenario: One CU progresses and hands off
+
+- **WHEN** 工作区只有一个 canonical CU 且其 completion 为 VALID
+- **THEN** 推进循环返回 `ready_for_component_closure`，不因"只有一个单元"拒绝或额外要求
+
+#### Scenario: A second CU appears mid-progression
+
+- **WHEN** 单 CU 推进过程中蓝图调和追加了第二个 CU
+- **THEN** 新单元经同一 consumer validator 写入并进入同一 ready 派生；不产生升级动作、迁移器或第二套协议，已完成单元保持完成
+
+> **Enforced by (P2 implementation):** `harness/scripts/utils/change-unit-ready-set.ts`, `harness/scripts/utils/change-unit-progress-loop.ts`, `harness/scripts/utils/change-unit-design-preparation.ts`
+
 ### Requirement: Compatibility and P2/P3 boundaries remain explicit
 
 无 `change_unit_ref` 的既有独立 Feature MUST 保持现有 spec/plan/Goal Mode 行为，不因 P2 缺蓝图而失败；它在显式归属前 MUST NOT 参与 Component closure。P2 SHALL 输出 `ready_for_component_closure` 作为“没有未完成 CU 且当前事实可交给 P3 评估”的派生动作，但 MUST NOT 宣称 closure pass、创建 closure artifact 或聚合跨单元覆盖。

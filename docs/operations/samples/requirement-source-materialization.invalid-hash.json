@@ -1,0 +1,31 @@
+{
+  "_comment": "无效样例（M7 接缝 1）：声明的 source_sha256 与项目内文件实际原始字节不一致。期望 materialization_source_hash_mismatch，且诊断同时报告声明值与实际值——不得按任一侧静默取胜。",
+  "artifact": "requirement-source-materialization@1",
+  "blueprint_id": "ledger-app-blueprint",
+  "component_id": "ledger",
+  "producer": {
+    "provider_id": "host-story-extension",
+    "materialized_at": "2026-08-29T10:00:00+08:00"
+  },
+  "items": [
+    {
+      "item_id": "req-ledger-refresh",
+      "kind": "requirement",
+      "source_ref": "requirements/ledger.md#REQ-LEDGER-REFRESH",
+      "source_revision": "fixture-r1",
+      "source_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "provenance": {
+        "source_kind": "product_requirement",
+        "source_ref": "requirements/ledger.md#REQ-LEDGER-REFRESH",
+        "source_revision": "fixture-r1",
+        "observed_at": "2026-08-20T10:00:00+08:00",
+        "evidence_strength": "authoritative",
+        "extraction_method": "authorized-current-scope-input"
+      },
+      "authority": {
+        "owner": "product-owner",
+        "formality": "formal_requirement"
+      }
+    }
+  ]
+}

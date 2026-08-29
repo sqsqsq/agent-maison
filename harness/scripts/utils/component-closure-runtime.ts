@@ -3,6 +3,7 @@ import { BlueprintRecord, asRecord, asRecords } from './component-blueprint-mode
 import { blueprintRefAddress } from './change-unit-model';
 import { ResolvedComponentClosureInputs } from './component-closure-inputs';
 import { ComponentClosureCoverageRow, ComponentClosureIssue, closureIssue } from './component-closure-model';
+import { isChangedView } from './blueprint-views';
 
 interface RuntimeAddress {
   flowAddress: string;
@@ -21,8 +22,10 @@ function parseRuntimeAddress(row: ComponentClosureCoverageRow): RuntimeAddress |
 }
 
 function runtimeFlow(inputs: ResolvedComponentClosureInputs, flowId: string): BlueprintRecord | undefined {
+  // M7：runtime 流的 closure 传播义务只对 runtime=changed 派生，与
+  // component-closure-obligations 的 runtime 义务派生条件保持同一判据。
   const runtime = asRecords(inputs.blueprint.blueprint.design_views)
-    .find(view => view.view_id === 'runtime' && view.applicability === 'applicable');
+    .find(view => view.view_id === 'runtime' && isChangedView(view));
   return asRecords(runtime?.runtime_data_flows).find(flow => flow.flow_id === flowId);
 }
 

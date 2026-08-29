@@ -1,0 +1,20 @@
+---
+description: 正式需求的部件内设计阶段入口（component-design / Story Design）
+argument-hint: <blueprint-id>
+---
+
+# /component-design — 正式需求的部件内设计阶段
+
+**用户输入**：$ARGUMENTS
+
+> 运行身份：codeagent（薄入口，逻辑以 framework SKILL 为准；勿被同名 `.claude/commands/component-design.md` 误导）
+
+> **BLOCKER — 用户交互**：任何用户选择必须先调 **AskUserQuestion**（选项文案从
+> `framework/skills/reference/confirmation-registry.yaml` 的 `options` 逐字引用）。
+> 完整协议：[interaction-renderer](../rules/interaction-renderer.md)。
+
+> **BLOCKER — Personal setup**：跑 harness 前先 `cd framework/harness && npx ts-node scripts/check-personal-setup.ts --json --ensure --project-root <repo-root>`；仅解析 JSON（见 [personal-setup-gate](../../framework/skills/reference/personal-setup-gate.md)）。
+
+# 跳板文件
+
+完整 Skill 定义请阅读：**[framework/skills/project/component-design/SKILL.md](../../framework/skills/project/component-design/SKILL.md)**

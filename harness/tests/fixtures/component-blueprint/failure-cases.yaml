@@ -74,3 +74,29 @@ cases:
   - id: traceability-ref-dangling
     mutator: traceability-dangling-ref
     expected_issue: blueprint_requirement_traceability_dangling
+  # ---- M7：applicability × evolution_impact 正交（P0 反例）----
+  - id: evolution-impact-missing-on-applicable-view
+    mutator: remove-evolution-impact-field
+    expected_issue: blueprint_view_evolution_impact_invalid
+  - id: evolution-impact-on-not-applicable-view
+    mutator: evolution-impact-on-not-applicable-view
+    expected_issue: blueprint_view_evolution_impact_not_applicable
+  - id: zero-changed-view-is-not-an-evolution
+    mutator: all-views-verified-unchanged
+    expected_issue: blueprint_evolution_impact_no_changed_view
+  - id: verified-unchanged-without-evidence
+    mutator: verified-unchanged-without-evidence
+    expected_issue: blueprint_view_unchanged_evidence_missing
+  - id: verified-unchanged-masks-real-change
+    mutator: verified-unchanged-masks-change
+    expected_issue: blueprint_view_unchanged_masks_change
+  - id: verified-unchanged-claim-must-be-questioned-with-evidence
+    mutator: verified-unchanged-questioning-not-verified
+    expected_issue: blueprint_questioning_unchanged_not_verified
+  # ---- M7 返修（P0-1）：view-level 洗白与无关证据核实 ----
+  - id: verified-unchanged-masks-view-level-change
+    mutator: verified-unchanged-masks-view-level-change
+    expected_issue: blueprint_view_unchanged_masks_change
+  - id: verified-unchanged-verified-with-unrelated-evidence
+    mutator: verified-unchanged-questioning-unrelated-evidence
+    expected_issue: blueprint_questioning_unchanged_evidence_unrelated

@@ -13,7 +13,7 @@ change_unit:
     component_id: ledger
     change_unit_id: ledger-refresh
     revision: 1
-    artifact_sha256: sha256:29ce648e5b099f637f55580840764e1874363778a48ceb82905c9c8d11207a0a
+    artifact_sha256: sha256:ce5e8203d4f49f2306fca72ef81efcef4a81ab6bf0694c7a5fb91479696ecd42
     blueprint_id: ledger-app-blueprint
   predicate_mappings: []
   provide_mappings: []

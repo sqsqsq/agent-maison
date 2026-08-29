@@ -53,31 +53,39 @@ skills:
           command_id: code-graph
           param_hint: "<ModuleName>"
 
+  - id: component-design
+    scope: project
+    source_rel: project/component-design
+    order: 3
+    description: >
+      正式需求的部件内设计阶段入口（Story Design）：需求源物化 → 正式性确认 → 蓝图 admitted
+      → 1..N canonical CU → 施工 readiness；终点是设计交接
+
   - id: app-component-blueprint
     scope: project
     source_rel: project/app-component-blueprint
-    order: 3
+    order: 4
     description: >
       App 部件发现、4+1 蓝图、运行时数据流、独立质询与调和
 
   - id: change-unit-progression
     scope: project
     source_rel: project/change-unit-progression
-    order: 4
+    order: 5
     description: >
       Change Unit 设计消费、ready/blocker 派生与单并发 Goal Mode 连续推进
 
   - id: component-closure
     scope: project
     source_rel: project/component-closure
-    order: 5
+    order: 6
     description: >
       从蓝图、Change Unit、Feature completion 与现有证据机械派生 Component closure
 
   - id: goal-mode
     scope: project
     source_rel: project/goal-mode
-    order: 6
+    order: 7
     description: >
       目标模式生产入口（有人在场先 prepare-run 再走 goal-mode-entry host bridge，无人值守走 detached runner）
     init_next_steps:

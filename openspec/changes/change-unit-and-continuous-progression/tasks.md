@@ -76,3 +76,17 @@
 > 边界按“磁盘上是否有显式 pattern”判定（缺失则 normalize 与 BACKFILL 均派生；显式 pattern 原样保留）。
 > 自定义 features_dir 且磁盘上无显式 pattern 的宿主，receipt/report 落点随之迁移。显式配置的 pattern 原样保留、
 > 默认 features_dir 宿主行为不变。已更新 `MIGRATION.md` §3.1.0。
+
+## 9. M7 设计准备子流程、lite CU 绑定与单 CU 正向路径（2026-08-29 追加，plan f9e2c7b4）
+
+> 本节不触碰 7.5、`tests/fixtures/component-blueprint/release-semantics.json` 或任何 release 门禁。
+
+- [x] 9.1 暴露 P2「设计准备子流程」`harness/scripts/utils/change-unit-design-preparation.ts`：入口 = admitted blueprint（**0 CU 合法**）；complete 复用既有 CU decomposition Seam Card 的 provider 候选 → consumer validator 机制，不新造写入机制、状态或 CLI。
+- [x] 9.2 consumer validator 批量接受：整批先全量校验（schema/identity/设计闭包/provenance/来源权威/批内重复/已存在），任一不过即整批拒绝且零字节落盘；通过后**原子**写出 1..N canonical `change-unit@1`，写入中途失败回滚本批。
+- [x] 9.3 重复接受 fail-closed：目标 canonical 文件已存在即拒绝，不覆盖；修正已接受单元走新的修订/superseding CU。
+- [x] 9.4 终点=design gate / readiness（`deriveDesignPreparationReadiness`），`entersConstruction` 恒 false——**停在 selector 与 Goal Mode 执行之前**，不触碰 P3 closure。
+- [x] 9.5 推进决策新增 `design_preparation_required` action：admitted blueprint + 0 CU 与"有 CU 但无 ready"区分开，不再落进通用 blocked；`evaluateConstructionEntry` 与设计准备入口并列声明，施工段前提**不放宽**（仍要求 ≥1 canonical CU）。
+- [x] 9.6 `skills/project/change-unit-progression/SKILL.md` 入口前提放宽到"admitted blueprint + 0 CU 可进入设计准备段"，同时写明 selector 与施工段仍要求 ≥1 canonical CU。
+- [x] 9.7 CU-bound lite 复用既有 `contracts.yaml.change_unit` sidecar（D2）：`ProjectionPhase` 增加 `change`（lite 轨冻结施工契约的阶段，与 `plan` 同属 `CONTRACT_FREEZE_PHASES`），`check-change.ts` 接入 `checkChangeUnitFeatureProjection(ctx, 'change')`；不在 `change.md` 造降维映射协议。
+- [x] 9.8 单 CU 正向路径：枚举 1 个 CU、单候选 ready set、正常推进、完成后交 P3；推进中发现第二个 CU 走正常蓝图调和追加单元，无升级动作、无迁移器、无第二套协议。
+- [x] 9.9 正反 fixture：0-CU 入口、候选被 validator 拒绝（零落盘）、原子写出 1..N、重复接受 fail-closed、施工段仍要求 ≥1 CU、CU-bound lite sidecar 在 `change` 阶段被校验、普通 lite Feature 不受影响。

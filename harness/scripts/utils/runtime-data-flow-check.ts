@@ -12,6 +12,7 @@ import {
 } from './component-blueprint-model';
 import { validateLiteSchema } from './lite-json-schema';
 import { validateProvenanceRecord } from './blueprint-provenance';
+import { isChangedView } from './blueprint-views';
 
 const TRIGGER_CONDITIONS = [
   'persistent_or_remote_ui',
@@ -78,22 +79,28 @@ export function validateRuntimeDataFlows(blueprint: BlueprintRecord): BlueprintI
   const runtime = asRecords(blueprint.design_views).find(view => view.view_id === 'runtime');
   const flows = asRecords(runtime?.runtime_data_flows);
   const assessment = asRecord(asRecord(blueprint.app_lens)?.runtime_flow_trigger_assessment);
-  let triggered = false;
-  for (const condition of TRIGGER_CONDITIONS) {
-    const entry = asRecord(assessment?.[condition]);
-    if (!entry || typeof entry.applies !== 'boolean' || asStrings(entry.evidence_refs).length === 0) {
-      out.push(issue('runtime_flow_trigger_assessment_missing', `$.app_lens.runtime_flow_trigger_assessment.${condition}`, `六项触发条件必须逐条裁决并提供 evidence_refs：${condition}。`));
-    } else if (entry.applies) {
-      triggered = true;
+  // M7：六类 flow 触发条件只对 runtime=changed 评估。runtime 视图 verified_unchanged 时
+  // 本次演进不触碰运行时数据闭环——其"不变"由 blueprint-views 的 unchanged_evidence 与
+  // 掩盖变化检测负责，不在此重复要求逐条触发裁决或 not_applicable disposition。
+  const runtimeChanged = runtime ? isChangedView(runtime) : false;
+  if (runtimeChanged) {
+    let triggered = false;
+    for (const condition of TRIGGER_CONDITIONS) {
+      const entry = asRecord(assessment?.[condition]);
+      if (!entry || typeof entry.applies !== 'boolean' || asStrings(entry.evidence_refs).length === 0) {
+        out.push(issue('runtime_flow_trigger_assessment_missing', `$.app_lens.runtime_flow_trigger_assessment.${condition}`, `六项触发条件必须逐条裁决并提供 evidence_refs：${condition}。`));
+      } else if (entry.applies) {
+        triggered = true;
+      }
     }
-  }
-  if (triggered && flows.length === 0) {
-    out.push(issue('runtime_flow_required', '$.design_views[runtime].runtime_data_flows', '至少一项触发条件成立，必须生成 runtime_data_flow。'));
-  }
-  if (!triggered && flows.length === 0) {
-    const disposition = asRecord(runtime?.runtime_data_flow_disposition);
-    if (disposition?.status !== 'not_applicable' || asStrings(disposition.evidence_refs).length === 0 || !nonEmptyString(disposition.retrigger_condition)) {
-      out.push(issue('runtime_flow_na_evidence_missing', '$.design_views[runtime].runtime_data_flow_disposition', '六项均不触发时必须以证据和重新触发条件声明 not_applicable。'));
+    if (triggered && flows.length === 0) {
+      out.push(issue('runtime_flow_required', '$.design_views[runtime].runtime_data_flows', '至少一项触发条件成立，必须生成 runtime_data_flow。'));
+    }
+    if (!triggered && flows.length === 0) {
+      const disposition = asRecord(runtime?.runtime_data_flow_disposition);
+      if (disposition?.status !== 'not_applicable' || asStrings(disposition.evidence_refs).length === 0 || !nonEmptyString(disposition.retrigger_condition)) {
+        out.push(issue('runtime_flow_na_evidence_missing', '$.design_views[runtime].runtime_data_flow_disposition', '六项均不触发时必须以证据和重新触发条件声明 not_applicable。'));
+      }
     }
   }
 

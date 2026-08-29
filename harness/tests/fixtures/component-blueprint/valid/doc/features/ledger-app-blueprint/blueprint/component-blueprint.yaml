@@ -66,6 +66,7 @@ design_views:
   - view_id: logical
     viewpoint_contract: app-logical@1
     applicability: applicable
+    evolution_impact: changed
     stakeholders: [product, development, test]
     purpose: Define ledger concepts and external operations.
     current_state: Existing repository and create operation.
@@ -84,6 +85,7 @@ design_views:
   - view_id: runtime
     viewpoint_contract: app-runtime@1
     applicability: applicable
+    evolution_impact: changed
     stakeholders: [development, test, operations]
     purpose: Close loading, mutation, publication, subscription, and recovery.
     current_state: Repository loads and UI subscribes.
@@ -187,6 +189,7 @@ design_views:
   - view_id: development
     viewpoint_contract: app-development@1
     applicability: applicable
+    evolution_impact: changed
     stakeholders: [development, test]
     purpose: Assign implementation ownership and module seams.
     current_state: Ledger files are grouped by technical type.
@@ -221,6 +224,7 @@ design_views:
   - view_id: scenarios
     viewpoint_contract: app-scenarios@1
     applicability: applicable
+    evolution_impact: changed
     stakeholders: [product, development, test]
     purpose: Tie user-visible scenarios to design and implementation owners.
     current_state: Add-entry flow exists.

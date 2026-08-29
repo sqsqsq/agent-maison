@@ -8,13 +8,23 @@ import {
   nonEmptyString,
 } from './component-blueprint-model';
 import { validateProvenanceRecord } from './blueprint-provenance';
-import { APP_LENS_QUESTIONS } from './blueprint-views';
+import { APP_LENS_QUESTIONS, isApplicableView, isChangedView } from './blueprint-views';
 
+/**
+ * M7：evolution_impact 显式接线。**每个 applicable 视图**（含 verified_unchanged）都进入
+ * 质询 scope——按字面 `applicability !== 'applicable'` 跳过是旧行为，正交化后不得让
+ * verified_unchanged 视图无人质询。两类视图的**质询义务不同**：
+ *
+ * - `changed`：全量根问题（视图本身 + 其 runtime flow）；
+ * - `verified_unchanged`：义务 = 核实不变声明与其事实依据；其 runtime flow 触发条件本次
+ *   不评估，故不进入 flow scope。
+ */
 export function requiredQuestioningScopes(blueprint: BlueprintRecord): Map<string, string> {
   const scopes = new Map<string, string>();
   for (const view of asRecords(blueprint.design_views)) {
-    if (view.applicability !== 'applicable') continue;
+    if (!isApplicableView(view)) continue;
     if (nonEmptyString(view.view_id)) scopes.set(`view:${view.view_id}`, 'view');
+    if (!isChangedView(view)) continue;
     for (const flow of asRecords(view.runtime_data_flows)) {
       if (nonEmptyString(flow.flow_id)) scopes.set(`flow:${flow.flow_id}`, 'flow');
     }
@@ -24,6 +34,21 @@ export function requiredQuestioningScopes(blueprint: BlueprintRecord): Map<strin
   }
   for (const question of APP_LENS_QUESTIONS) scopes.set(`app_lens:${question}`, 'app_lens');
   return scopes;
+}
+
+/**
+ * verified_unchanged 视图的质询 scope → 该视图声明的不变依据（`unchanged_evidence.evidence_refs`）。
+ * 质询项必须**核实这份依据**，因此其 evidence_refs 至少要与之有交集——否则"核实"可以拿任意
+ * 无关证据搪塞，等同于自证。
+ */
+export function unchangedViewQuestioningScopes(blueprint: BlueprintRecord): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const view of asRecords(blueprint.design_views)) {
+    if (isApplicableView(view) && !isChangedView(view) && nonEmptyString(view.view_id)) {
+      out.set(`view:${view.view_id}`, asStrings(asRecord(view.unchanged_evidence)?.evidence_refs));
+    }
+  }
+  return out;
 }
 
 export function createIndependentQuestioningResult(input: {
@@ -63,6 +88,7 @@ export function validateBlueprintQuestioning(blueprint: BlueprintRecord): Bluepr
     out.push(issue('blueprint_questioning_items_missing', '$.review_summary.questioning.items', '质询必须逐项记录问题与处置。'));
   }
   const requiredScopes = requiredQuestioningScopes(blueprint);
+  const unchangedScopes = unchangedViewQuestioningScopes(blueprint);
   const covered = new Set<string>();
   items.forEach((item, index) => {
     const base = `$.review_summary.questioning.items[${index}]`;
@@ -84,6 +110,28 @@ export function validateBlueprintQuestioning(blueprint: BlueprintRecord): Bluepr
     }
     if (disposition === 'answered_with_evidence' && (asStrings(item.evidence_refs).length === 0 || !nonEmptyString(item.answer))) {
       out.push(issue('blueprint_questioning_evidence_missing', base, 'answered_with_evidence 必须有证据回答与 evidence_refs。'));
+    }
+    // M7：verified_unchanged 视图的质询义务是"核实不变声明与其依据"，只能以证据作答；
+    // 用 not_applicable/open_decision 打发等于把不变声明变成无人核实的自证。
+    if (unchangedScopes.has(scopeRef)) {
+      if (disposition !== 'answered_with_evidence') {
+        out.push(issue(
+          'blueprint_questioning_unchanged_not_verified',
+          `${base}.disposition`,
+          `verified_unchanged 视图 ${scopeRef} 的质询义务是核实不变声明与依据，必须 answered_with_evidence（实际 ${disposition}）。`,
+        ));
+      } else {
+        // 且必须核实的是**这份**不变依据，不能拿任意无关证据充数。
+        const declared = unchangedScopes.get(scopeRef)!;
+        const answered = asStrings(item.evidence_refs);
+        if (declared.length > 0 && !answered.some(ref => declared.includes(ref))) {
+          out.push(issue(
+            'blueprint_questioning_unchanged_evidence_unrelated',
+            `${base}.evidence_refs`,
+            `verified_unchanged 视图 ${scopeRef} 的质询证据与其声明的不变依据无交集（声明=${declared.join(', ')}；质询=${answered.join(', ') || '(空)'}）；核实必须针对该视图交出的依据。`,
+          ));
+        }
+      }
     }
     if (asStrings(item.verification_refs).length === 0) {
       out.push(issue('blueprint_questioning_verification_missing', `${base}.verification_refs`, '质询项必须有 verification_refs。'));

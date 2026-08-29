@@ -126,7 +126,7 @@ goal_capability:
 post_install_hooks: []
 
 notes: |
-  - 提供 15 份 slash 路由模板：catalog-bootstrap / glossary-bootstrap、goal-mode、code-graph、
+  - 提供 16 份 slash 路由模板：catalog-bootstrap / glossary-bootstrap、goal-mode、code-graph、
     app-component-blueprint / change-unit-progression / component-closure 部件演进三件套、
     change-lite、spec/plan/coding/code-review/business-ut/device-testing 六篇 feature skill、
     framework-init（framework-init.md）。个人 setup 无 slash，由阶段入口 `--ensure` 内联完成。

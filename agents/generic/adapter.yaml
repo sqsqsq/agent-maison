@@ -44,5 +44,5 @@ notes: |
   - `paths.agent_bundle_root`（默认 `.agents`）由 init 用 template/默认值写入 framework.config.json；
     仅非标 bundle 根须手动编辑 config 后重跑（禁止对话收路径字符串）。
   - **恒 bridge**：`agent_bundle_skill_mode` 经 normalize 一律归一为 bridge（inline 已废弃）。
-  - bridge：拷贝 shared/skills-bridge（14 份；个人 setup 由阶段 `--ensure` 内联）。
+  - bridge：拷贝 shared/skills-bridge（15 份；个人 setup 由阶段 `--ensure` 内联）。
   - 模板 SSOT：framework/agents/shared/agent-bundle/templates/

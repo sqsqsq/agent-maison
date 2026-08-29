@@ -3,6 +3,53 @@
 本文描述**实例工程**在 framework 子模块或配置演进时的预期做法。详细操作以 Skill 正文为准。
 
 
+## 3.1.0：正式需求统一经部件内设计阶段（路由变化）
+
+3.1.0 起，**部件演进蓝图从"复杂多变更单元需求才启用的可选路线"重定位为"正式需求必经的
+部件内设计阶段"**（组织侧常称 Story Design）。
+
+**什么是正式需求**：有明确交付或验收责任，且拟改变**部件行为、外部契约、数据/NFR、运行语义
+或架构责任**的事项；不改变这些语义的纯文档和机械维护除外。
+
+**变化**：
+
+- 新增入口 Skill **`/component-design`**（`framework/skills/project/component-design/SKILL.md`）：
+  需求源物化 → 正式性确认 → 蓝图 admitted → 分解 1..N 个 canonical Change Unit → 施工
+  readiness。它的终点是**设计交接**，不进入选择器、不启动 Goal Mode、不做部件闭环；
+- 原"三条 AND 入口门"（≥2 个 CU、共享部件级决策、单独绿≠整体完成）**不再是进不进蓝图的
+  判据**，改为**条件式设计义务**——只在对应事实被发现时触发；
+- 蓝图**只有一种协议**：没有 compact/full 档位、没有升级信号、没有升级状态机。内容深度由本次
+  演进的真实影响面派生，小正式需求得到薄蓝图并拆出一个 Change Unit；
+- 视图新增与 `applicability` **正交**的 `evolution_impact`（`changed` / `verified_unchanged`）：
+  前者保持全量义务，后者须带 `unchanged_evidence` 并据此免除 target/delta 与节点义务；蓝图至少
+  要有一个 `applicable` + `changed` 视图；
+- `/spec` 与 `/change-lite` 在首次冻结施工意图处各加一道**非阻断**的正式性兜底复核，指回
+  `/component-design`；**不新增机器 BLOCKER、不改 `track_scoring`**。
+
+**不触发条件（原样保留）**：非正式维护动作继续走既有 L0 / L1 lite；**存量平铺 Feature 原样
+有效**——不迁移、不自动转成 Change Unit、不自动 credit completion，也不会被拉进任何部件闭环
+聚合。CU-bound 的 lite Feature 复用与 full 完全同一份 `contracts.yaml.change_unit` sidecar，
+不需要新格式。
+
+**宿主适配**：Maison 与宿主之间新增三条方向独立的静态接缝——
+`requirement-source-materialization`（宿主 → Maison）、`blueprint-review-publication`
+（Maison → 宿主）、`blueprint-review-feedback`（宿主 → Maison）。它们的方向、时点、字段、
+hash、authority、失败语义、两条最小接入流程、Story 类扩展职责映射、随包样例与验证命令，见
+发布件内唯一人读入口
+**[`framework/docs/operations/component-design-host-adaptation.md`](docs/operations/component-design-host-adaptation.md)**。
+三条接缝的校验都挂在既有 `check:component-blueprint` 上（`--materialization` /
+`--projection` / `--feedback`），**没有新增顶层 CLI**。
+
+**处置**：
+
+1. 升级 framework 后跑一次 **`/framework-init` UPDATE**——`/component-design` 的 slash command
+   与 skill 跳板是新增产物，只有重新物化 agent 产物后才会出现在实例根（`.claude/commands/`、
+   `.cursor/commands/`、`.cac/commands/`、各 bundle 的 skills-bridge）。未物化时仍可直接让
+   agent 读 `framework/skills/project/component-design/SKILL.md` 正文进入。
+2. 进行中的普通 Feature 无需任何操作。下一项正式需求开始前，先走 `/component-design`；已归属
+   某个 `blueprint_id` 的继续原演进工作区。
+
+
 ## 3.1.0：默认 receipt/reports 目录模式跟随 `paths.features_dir`（行为变化）
 
 3.1.0 起，未显式配置 `receipt_dir_pattern` / `reports_dir_pattern` 时，默认模式从

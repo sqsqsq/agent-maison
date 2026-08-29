@@ -308,6 +308,92 @@ export function runAll(): UnitCaseResult[] {
     });
   }));
 
+  // ---------------------------------------------------------------------------
+  // M7：单 CU 退化 closure —— 同一算法、同一 mapping schema，跨单元组装边为空集合法
+  // ---------------------------------------------------------------------------
+  results.push(test('M7: a single-CU workspace closes with an empty cross-CU assembly edge set', () => {
+    withProject(projectRoot => {
+      const multi = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
+      assert(multi.closure.inputs.change_units.length === 4, '前提：基线是多 CU');
+
+      // 只保留 current slice 的那个 CU：模拟"一项正式需求只分解出一个 Change Unit"
+      const unitsDir = path.join(featuresDirPath(projectRoot), 'ledger-app-blueprint');
+      for (const entry of fs.readdirSync(unitsDir, { withFileTypes: true })) {
+        if (entry.isDirectory() && entry.name !== 'blueprint' && entry.name !== 'ledger-refresh') {
+          fs.rmSync(path.join(unitsDir, entry.name), { recursive: true, force: true });
+        }
+      }
+
+      const single = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
+      assert(single.closure.inputs.change_units.length === 1, `单 CU 枚举失败：${single.closure.inputs.change_units.length}`);
+      // 跨单元组装边为空集是合法结论，不得因此失败
+      assert(
+        !single.issues.some(issue => issue.id === 'component_closure_dependency_assembly_unverified'),
+        '空跨单元组装边被误判为缺组合证据',
+      );
+      assert(
+        !single.issues.some(issue => issue.id === 'component_closure_dependency_cycle'),
+        '单 CU 不应产生依赖环',
+      );
+      // 退化后仍走同一 mapping/coverage 推导：追溯链（需求 → 蓝图地址 → design_refs → 证据）照常成行
+      assert(
+        single.closure.coverage_rows.some(row => row.kind.startsWith('source_')),
+        `单 CU closure 丢失了需求→蓝图地址的追溯行：kinds=${[...new Set(single.closure.coverage_rows.map(row => row.kind))].join(',')}`,
+      );
+      assert(
+        single.closure.coverage_rows.every(row => row.owner_change_unit_ids.every(id => id === 'ledger-refresh')),
+        '单 CU closure 出现了不属于本工作区唯一 CU 的 owner',
+      );
+      // 同一投影、同一 schema：写出后仍由同一 validator 复验
+      writeClosure(projectRoot, single.closure);
+      const loaded = loadCanonicalComponentClosure(projectRoot, 'ledger-app-blueprint');
+      const validated = validateComponentClosure(loaded.closure, projectRoot, 'ledger-app-blueprint', evaluationOptions());
+      assert(
+        !validated.issues.some(issue => issue.id === 'component_closure_schema_invalid'),
+        '单 CU closure 未通过同一 canonical schema',
+      );
+    });
+  }));
+
+  // M7：verified_unchanged 视图的节点一律按当前事实处理，不派生施工义务
+  results.push(test('M7: verified_unchanged view nodes create no construction obligations', () => {
+    const seen: { changedOwners: number; unchangedOwners: number } = { changedOwners: -1, unchangedOwners: -1 };
+    withProject(projectRoot => {
+      const changed = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
+      seen.changedOwners = changed.closure.coverage_rows
+        .filter(row => row.kind === 'blueprint_target_node' && row.blueprint_refs.some(ref => ref.startsWith('view:development/')))
+        .length;
+    });
+    withProject(projectRoot => {
+      const unchanged = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
+      seen.unchangedOwners = unchanged.closure.coverage_rows
+        .filter(row => row.kind === 'blueprint_target_node' && row.blueprint_refs.some(ref => ref.startsWith('view:development/')))
+        .length;
+      assert(
+        unchanged.closure.coverage_rows.some(row => row.kind === 'blueprint_current_fact'
+          && row.blueprint_refs.some(ref => ref.startsWith('view:development/'))),
+        'verified_unchanged 视图的节点未按当前事实成行',
+      );
+      assert(seen.unchangedOwners === 0, `verified_unchanged 视图仍派生了 ${seen.unchangedOwners} 条施工义务`);
+      // 视图本身仍产生事实义务——不得被静默跳过
+      assert(
+        unchanged.closure.coverage_rows.some(row => row.kind === 'blueprint_view'
+          && row.blueprint_refs.includes('view:development')),
+        'verified_unchanged 视图被 closure 静默跳过',
+      );
+    }, blueprint => {
+      const development = asRecords(blueprint.design_views).find(view => view.view_id === 'development')!;
+      development.evolution_impact = 'verified_unchanged';
+      development.unchanged_evidence = { evidence_refs: ['src/ledger'], current_state_ref: 'src/ledger' };
+      for (const node of asRecords(development.nodes)) {
+        node.target_state = node.current_state;
+        node.delta = 'none';
+      }
+    });
+    // 对照：changed 时该视图确实有施工义务（防恒真断言）
+    assert(seen.changedOwners > 0, `对照失败：changed 时 development 视图应有施工义务行，实际 ${seen.changedOwners}`);
+  }));
+
   results.push(test('production --write entry atomically materializes YAML, hashes it, derives full review Markdown, then revalidates', () => {
     withProject(projectRoot => {
       const result = writeCanonicalComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());

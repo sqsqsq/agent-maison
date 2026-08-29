@@ -792,3 +792,22 @@ entries:
       - value: edit_plan
         label: "修改计划 — 我要调整测试计划后再跑"
         portable: "2=修改计划"
+
+  # --- component design (formal-requirement entry) ---
+  - id: design.formality_routing
+    skill: "component-design"
+    class: enum
+    ssot_anchor: "user-confirmation-ux.md §3.2"
+    skill_step: "正式性判定（component-design 第 0 步；spec / change-lite 首次冻结施工意图时的兜底复核共用同一确认点）"
+    portable_menu: "1=正式需求 2=非正式维护 3=信息不足"
+    notes: "仅在判据信息不足、或兜底复核发现事项符合正式需求判据却未经蓝图时询问。上游已显式标为正式需求时该分类具权威性、不再询问。这是路由确认点，不是质量门禁：不新增 track_scoring 条目、不新增档位、不加机器 BLOCKER；三处入口共用本条目，不各建状态。"
+    options:
+      - value: formal_requirement
+        label: "正式需求 — 回 /component-design 建立部件演进蓝图后再施工"
+        portable: "1=正式需求"
+      - value: non_formal_maintenance
+        label: "非正式维护 — 不改变行为/契约/数据/NFR/运行语义/架构责任，继续 L0/L1 施工分档"
+        portable: "2=非正式维护"
+      - value: needs_clarification
+        label: "信息不足 — 继续澄清后再判，不猜测、不默认按任一侧处理"
+        portable: "3=信息不足"

@@ -1,0 +1,51 @@
+{
+  "_comment": "有效样例（M7 接缝 3）。四类反馈显式区分；只有 authoritative_ruling 且同时具备 authority(owner+role) 与 decision(verdict+rationale) 才能进入 decided_with_authority，并经既有 reconciliation 生成新 revision（不回写旧 revision）。校验：npm run check:component-blueprint -- --project-root <root> --blueprint ledger-app-blueprint --feedback <本文件> --json。",
+  "artifact": "blueprint-review-feedback@1",
+  "blueprint_id": "ledger-app-blueprint",
+  "component_id": "ledger",
+  "source_revision": 2,
+  "provider": {
+    "provider_id": "host-review-adapter",
+    "collected_at": "2026-08-29T14:00:00+08:00"
+  },
+  "items": [
+    {
+      "feedback_id": "fb-opinion-naming",
+      "kind": "opinion",
+      "source_revision": 2,
+      "target_ref": "view:logical",
+      "body": "逻辑视图的命名读起来有点抽象，建议评审时口头对齐一下。"
+    },
+    {
+      "feedback_id": "fb-fact-existing-retry",
+      "kind": "fact_supplement",
+      "source_revision": 2,
+      "target_ref": "relation:repository-publishes-store",
+      "body": "补充事实：仓储发布路径上已有一层既有重试，评审时应纳入考虑。",
+      "evidence_refs": ["src/ledger/LedgerRepository.ts"]
+    },
+    {
+      "feedback_id": "fb-suggestion-split",
+      "kind": "suggestion",
+      "source_revision": 2,
+      "target_ref": "view:runtime",
+      "body": "建议把恢复路径单独拆一个变更单元，便于并行。"
+    },
+    {
+      "feedback_id": "fb-ruling-seam-shape",
+      "kind": "authoritative_ruling",
+      "source_revision": 2,
+      "target_ref": "decision:seam-shape",
+      "body": "架构评审裁决：本次保持直接实现，接缝提取推迟到出现第二个真实数据源时。",
+      "authority": {
+        "owner": "architecture-owner",
+        "role": "component-architect",
+        "granted_by": "architecture-review-board"
+      },
+      "decision": {
+        "verdict": "accept",
+        "rationale": "当前只有一个真实数据源，提取接缝没有可验证的变体证据；再提取条件已在决策卡内记录。"
+      }
+    }
+  ]
+}

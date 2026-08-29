@@ -33,6 +33,8 @@ export const BUILTIN_SKILL_BRIDGE_DESCRIPTIONS: Record<string, string> = {
     '模块画像 catalog 与业务术语表 glossary 自举（完整流程见 framework/skills/project/catalog-bootstrap/SKILL.md）',
   'code-graph':
     '模块级 Code Graph 建图与漂移门禁（完整流程见 framework/skills/project/code-graph/SKILL.md）',
+  'component-design':
+    '正式需求的部件内设计阶段入口（Story Design）：需求源物化 → 正式性确认 → 蓝图 admitted → 1..N canonical CU → 施工 readiness（完整流程见 framework/skills/project/component-design/SKILL.md）',
   'app-component-blueprint':
     'App 部件发现、4+1 蓝图与调和（完整流程见 framework/skills/project/app-component-blueprint/SKILL.md）',
   'change-unit-progression':

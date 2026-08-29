@@ -127,6 +127,8 @@
         "view_id": { "enum": ["logical", "runtime", "development", "deployment", "scenarios"] },
         "viewpoint_contract": { "type": "string", "minLength": 1 },
         "applicability": { "enum": ["applicable", "not_applicable"] },
+        "evolution_impact": { "enum": ["changed", "verified_unchanged"] },
+        "unchanged_evidence": { "$ref": "#/$defs/unchangedEvidence" },
         "stakeholders": { "type": "array", "items": { "type": "string", "minLength": 1 } },
         "purpose": { "type": "string", "minLength": 1 },
         "current_state": {},
@@ -136,6 +138,15 @@
         "verification_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } },
         "nodes": { "type": "array", "items": { "$ref": "#/$defs/node" } },
         "runtime_data_flows": { "type": "array" }
+      }
+    },
+    "unchangedEvidence": {
+      "type": "object",
+      "required": ["evidence_refs", "current_state_ref"],
+      "properties": {
+        "evidence_refs": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "current_state_ref": { "type": "string", "minLength": 1 },
+        "rechecked_at": { "type": "string", "minLength": 1 }
       }
     },
     "node": {
