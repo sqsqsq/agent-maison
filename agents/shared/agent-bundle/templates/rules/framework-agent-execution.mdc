@@ -32,7 +32,7 @@ alwaysApply: true
 
 1. 读 `framework/skills/feature/device-testing/SKILL.md`（及 profile addendum）
 2. **主 agent 自己**跑结构级 harness、修 BLOCKER、更新产物
-3. **Task 触发 verifier**（`subagent_type: verifier`）
+3. **Task 触发 verifier**（`subagent_type: verifier`；prompt = 该阶段 `reports/ai-prompt.md` **全文原样投递**，机器块不得手抄或改写——plan e5b8c3f7）
 4. 填写并通过 `check-receipt.ts`
 
 **不要**要求用户学会 harness CLI；**不要**用「你本地执行以下命令」代替 agent 执行。
@@ -44,7 +44,7 @@ alwaysApply: true
 | 情况 | 错误 | 正确 |
 |------|------|------|
 | harness FAIL | 「请运行 `npx ts-node harness-runner.ts …`」 | agent 修因后**自己重跑**；仅当缺物理前置时说明「请连接设备」，并在用户确认后继续**由 agent 重跑** |
-| 缺 verifier | 「请启动 verifier」 | agent 用 Task 工具触发 `subagent_type: verifier` |
+| 缺 verifier | 「请启动 verifier」 | agent 用 Task 工具触发 `subagent_type: verifier`，prompt 原样投递 `ai-prompt.md` 全文 |
 | vendor/venv 未对齐 | 「请 pip install / 删 venv」 | agent 自跑 testing harness（ensure 对齐）或按 device-testing 协议自处理；不向用户抛 install 命令 |
 | 即席 / 外部 bundle | 「Hylyre 未安装，选手动或你去 pip」 | agent 自跑 `npm run adhoc-device-test`；失败则 Read `hylyre-doctor.log` / `hylyre-ready.meta.json` 后在本对话修宿主因素并重跑 |
 | 阶段未完成 | 「跑一下 harness 再告诉我结果」 | agent 跑完并把 verdict / 报告路径写入对话 |

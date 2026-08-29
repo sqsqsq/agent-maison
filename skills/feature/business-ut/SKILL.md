@@ -123,6 +123,8 @@ cover_existing_code / repair 模式下须同时给显式基线锚 `HARNESS_DIFF_
 13. **Step 8.0 Core 节点闭环闸门**：改动触及 Code Graph `core: true` 节点时启动可行性探测+更新图谱+同步 characterization/spec-driven UT（详见 reference）。
 14. **Step 8.2 AI Harness**：主动通过 Task 工具触发 `subagent_type: verifier`，prompt 模板 `framework/harness/prompts/verify-ut.md`（state_model_completeness / ui_bindings_completeness / end_to_end_driving(BLOCKER) / branch_coverage_semantic / device_ac_delegation / stub_reasonableness / test_isolation）。
 
+**Task prompt = `<features_dir>/<feature>/ut/reports/ai-prompt.md` 全文原样投递**（plan e5b8c3f7）：harness 已把 verifier 证据身份机器块写进该文件，它是 SubagentStop hook 绑定报告归属的唯一调用侧凭证。手抄模板、摘录片段或改写机器块 → 绑定失败 → 报告落 bedside、阶段不闭环。
+
 ## 门禁清单表（v2.1 检查覆盖项）
 
 | 检查类型 | 检查内容 | 严重级别 |

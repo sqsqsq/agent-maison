@@ -158,7 +158,7 @@ doc/features/<feature>/
 └── testing/reports/
 ```
 
-每个 `reports/` 下典型包含：`script-report.json`、`summary.json`、`merged-report.md`、`ai-prompt.md`、`trace.json`、`verifier.report.md`，以及宿主 profile 落地的构建/装机日志等。
+每个 `reports/` 下典型包含：`script-report.json`、`summary.json`、`merged-report.md`、`ai-prompt.md`、`trace.json`、`verifier.report.<subject>.json`（verifier 机器真源，按 subject 分区）与同名 `.md`（它的人读投影），以及宿主 profile 落地的构建/装机日志等。
 
 若 **未配置** `reports_dir_pattern`，harness **回退**到历史布局：`framework/harness/reports/<feature>/<phase>/`（与 `_global/` 并列）。
 
@@ -169,7 +169,9 @@ doc/features/<feature>/
 | `script-report.json`    | CI / 程序                 | 自动化脚本判 PASS/FAIL                                  |
 | `summary.json`          | agent / CI / 调试          | 稳定读取 verdict、blockers、run_statuses、next_action，替代 grep 控制台 |
 | `merged-report.md`      | 人类                      | 排查"为什么 FAIL"                                       |
-| `ai-prompt.md`          | verifier 子 agent / 你    | 把它发给 AI 模型做语义级复核                            |
+| `ai-prompt.md`          | verifier 子 agent / 你    | **全文原样**作为 Task prompt 投递给 `subagent_type=verifier`；尾部的 `maison-verifier-subject` 机器块是报告归属的唯一调用侧凭证，手抄/摘录/改写即绑定失败 |
+| `verifier.report.<subject>.json` | check-receipt / 全部机器消费者 | verifier 的**唯一机器真源**（schema 2.0，SubagentStop hook 三重身份等值绑定后发布）。文件**按 subject 分区**：`summary.verifier_subject_id` 单独决定当前证据是哪一份，旧 subject 的遗留文件不在任何读取面内、也不清理。一切验真只比仓内三值，不重开任何 transcript |
+| `verifier.report.<subject>.md` | 人类               | 从上面那份 JSON 生成的人读投影。**新闭环域内机器不解析它**，编辑零机器影响；旧 manifest 登记过固定名 `verifier.report.md` 的历史闭环仍按字节对账，改了即 stale |
 | `trace.json`            | harness 内部 / 调试       | 记录本次进入 phase 时的 git HEAD（供 `ut_no_src_mutation` 的 **git fallback 域**用；review 已正式闭环时该门禁基线=review closure attestation，不看 trace/HEAD） |
 
 > v2.8 起控制台默认只展开 `FAIL` / `WARN` / `BLOCKER-SKIP`。脚本 PASS 只表示结构级 harness 没有 BLOCKER 失败，阶段闭环仍需要 verifier 子 agent PASS 与 completion receipt。

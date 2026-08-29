@@ -84,6 +84,8 @@ cd framework/harness && npx ts-node harness-runner.ts --phase review --feature {
 
 **AI Harness**：主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-review.md`（审查维度覆盖度/问题准确性 BLOCKER/修复建议可操作性/误报率/BLOCKER 与结论一致性 BLOCKER/编码规则追溯）。
 
+**Task prompt = `<features_dir>/<feature>/review/reports/ai-prompt.md` 全文原样投递**（plan e5b8c3f7）：harness 已把 verifier 证据身份机器块写进该文件，它是 SubagentStop hook 绑定报告归属的唯一调用侧凭证。手抄模板、摘录片段或改写机器块 → 绑定失败 → 报告落 bedside、阶段不闭环。
+
 ## 阶段闭环判定（全局入口 §5.1，四条件缺一不可）
 
 1. `<features_dir>/<feature>/review/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS；4. 完成回执经 `check-receipt.ts` 校验通过。四项全满足后 Review 阶段完成，**具备**进 business-ut 的资格；**不授权**自动开 business-ut。若审查结论为"不通过"或"有条件通过"，开发者需修复代码后重新执行 coding → code-review。
