@@ -124,6 +124,13 @@ import {
 } from './scripts/utils/device-session';
 import { computeProductWorktreeDigest } from './scripts/utils/worktree-digest';
 import {
+  canonicalScriptReportDigest,
+  computeVerifierSubjectId,
+  verifierReportJsonFilename,
+  withSubjectBlock,
+} from './scripts/utils/verifier-subject';
+import { loadVerifierReportTextOrNull } from './scripts/utils/verifier-evidence';
+import {
   isAgentSideGoalHarness,
   isGoalOrchestrationEnv,
   MAISON_GOAL_RUNNER_ENV,
@@ -1010,6 +1017,8 @@ async function main(): Promise<void> {
   // script-report.json 为 FAIL（并清理 ai-prompt.md / merged-report.md 残留）。
   const reportDirRel = relFeaturePhaseReportsDir(projectRoot, feature, phase, paths.frameworkRoot);
   let finalReport = scriptReport;
+  /** 装配侧回填的 prompt 语义内容摘要（Step 4 崩栈时保持 null → subject 记 `<absent>`）。 */
+  let canonicalPromptDigest: string | null = null;
 
   try {
     // Step 4: 组装 AI prompt
@@ -1036,7 +1045,14 @@ async function main(): Promise<void> {
       resolvedProfile,
       lifecycleFragments,
       resolvedFrameworkRoot,
-      { imageInput: context.adapterImageInput },
+      {
+        imageInput: context.adapterImageInput,
+        // plan e5b8c3f7：subject 的 prompt 输入面取装配侧同源的规范化摘要，
+        // 不再事后读文件叠正则（review P1-2）。
+        onCanonicalPromptDigest: (digest) => {
+          canonicalPromptDigest = digest;
+        },
+      },
     );
     console.log(`   ✓ AI prompt 已写入 ${reportDirRel}/ai-prompt.md`);
   } catch (err) {
@@ -1075,7 +1091,9 @@ async function main(): Promise<void> {
   // t2 receipt-slim（openspec receipt-slim）：base→骨架→check（读本次 base）→closure patch。
   // 拆环：旧序 receiptValidation 先于 summary 落盘，check-receipt 直读 summary 时会读到
   // 上次 run 的旧件；现在 base summary（无 receipt 依赖、原子写）先落盘。
-  let baseSummary = writeRunSummaryBase(projectRoot, finalReport, resolvedFrameworkRoot);
+  let baseSummary = writeRunSummaryBase(projectRoot, finalReport, resolvedFrameworkRoot, {
+    canonicalPromptDigest,
+  });
   if (!phaseIsGlobal) {
     writeReceiptSkeletonIfMissing(projectRoot, feature, phase, finalReport.summary.verdict);
   }
@@ -1133,7 +1151,9 @@ async function main(): Promise<void> {
         e,
         resolvedFrameworkRoot,
       );
-      baseSummary = writeRunSummaryBase(projectRoot, finalReport, resolvedFrameworkRoot);
+      baseSummary = writeRunSummaryBase(projectRoot, finalReport, resolvedFrameworkRoot, {
+        canonicalPromptDigest,
+      });
     }
   }
   if (!closureFinalized) {
@@ -1515,6 +1535,10 @@ export function writeRunSummaryBase(
   projectRoot: string,
   report: ScriptReport,
   frameworkRoot: string,
+  opts?: {
+    /** 由 assembleAIPrompt 同源回填的 prompt 语义内容摘要；缺省=本轮没装配出 prompt。 */
+    canonicalPromptDigest?: string | null;
+  },
 ): HarnessRunSummary {
   const dir = featurePhaseReportsDir(projectRoot, report.feature, report.phase, frameworkRoot);
   const rel = (name: string): string => path.relative(projectRoot, path.join(dir, name)).replace(/\\/g, '/');
@@ -1604,6 +1628,23 @@ export function writeRunSummaryBase(
   // 不该埋在 runner 内联，且 FAIL 降级保护须有守门测试）。它保证投影取更严侧、不把既有 FAIL 降级，
   // mismatch 只在 pre!==legacy 时报（pre===legacy 的 capability 合法投影不报）。
   const { verdict: effectiveVerdict, mismatch } = resolveEffectiveVerdict({ pre, post, legacy });
+  // plan e5b8c3f7 T1：verifier 证据身份的**单点**生成。放在这里而不是 Step 4，是因为
+  // 这里同时握有 gate 指纹与 worktree/source identity，且 ai-prompt.md 已在 Step 4 落盘——
+  // 一个函数内取齐全部输入，不给第二个生产者留位置。
+  const sourceCommitSha = resolveGitHeadSha(projectRoot);
+  const worktreeDigest = computeProductWorktreeDigest(
+    projectRoot,
+    (loadFrameworkConfig(projectRoot).architecture?.outer_layers ?? []).map(l => l.id),
+  );
+  const verifierSubjectId = issueVerifierSubject({
+    dir,
+    report,
+    projectRoot,
+    gateFingerprint: gateFingerprint ?? null,
+    sourceCommitSha,
+    worktreeDigest,
+    canonicalPromptDigest: opts?.canonicalPromptDigest ?? null,
+  });
   if (mismatch) {
     // 文案按 pre 说话（review：mismatch=pre!==legacy，post 可能 ===legacy，写「投影≠legacy」是假话）。
     console.warn(
@@ -1651,13 +1692,14 @@ export function writeRunSummaryBase(
     // t2 v2（codex BLOCKER3）：run identity——slim 回执三方绑定的机器锚（同版本 framework 下
     // 旧 PASS 件复用被 sha 失配拒绝）。
     generated_at: new Date().toISOString(),
-    ...(resolveGitHeadSha(projectRoot) ? { source_commit_sha: resolveGitHeadSha(projectRoot)! } : {}),
+    ...(sourceCommitSha ? { source_commit_sha: sourceCommitSha } : {}),
     // t2 v3（codex 阻断3）：dirty worktree 绑定——层目录 tracked diff+untracked 摘要，
     // HEAD 不动但源码已改时旧 PASS 件同样失效。
-    worktree_digest: computeProductWorktreeDigest(
-      projectRoot,
-      (loadFrameworkConfig(projectRoot).architecture?.outer_layers ?? []).map(l => l.id),
-    ),
+    worktree_digest: worktreeDigest,
+    // plan e5b8c3f7 T1：本轮 run 的 verifier 证据身份。**分派锚**——check-receipt 按
+    // 「在场与否」二分新闭环域 / grandfather 旧闭环域；新版 runner 必写、旧件必缺。
+    // finalizer 的 closure patch 走 {...base} 展开，open→closed 原样保留（T5 回归 7 守护）。
+    verifier_subject_id: verifierSubjectId,
     ...(process.env.MAISON_GOAL_RUN_ID?.trim() ? { run_id: process.env.MAISON_GOAL_RUN_ID.trim() } : {}),
     ...(visualRound ? { visual_round: visualRound } : {}),
   };
@@ -1671,8 +1713,9 @@ export function writeRunSummaryBase(
   // 的 review 候选；机器 check / verifier 合取候选（含 p0_coverage_integrity FAIL+
   // code_regression）不得因产品负面结论被整体清空（负面结论恰是回修候选最需要存活的
   // 时刻）。review 侧另叠 verifier 逐条 confirmed；人工授权不再抑制 candidate。
-  // agent 自跑轮 verifier.report.md 可能尚未存在 → 零 candidate
-  // （gate 轮自然出现）。
+  // agent 自跑轮 verifier 证据可能尚未发布 → 零 candidate（gate 轮自然出现）。
+  // plan e5b8c3f7 T3：正文取自**身份验真后**的 verifier.report.json，不再裸读 MD——
+  // 否则编辑 MD 就能凭空造出/抹掉回修候选（review 侧 verifier 逐条 confirmed 的输入面）。
   try {
     // 生产接线走**共享实现** buildSummaryRepairCandidates（测试调同一函数——
     // 源码正则冒充接线验证已被 codex 二轮冻结项③点名禁止）
@@ -1684,7 +1727,9 @@ export function writeRunSummaryBase(
         report.phase === 'review'
           ? readFeatureDocOrNull(projectRoot, report.feature, 'review-report.md')
           : null,
-      verifierReportText: readTextOrNull(path.join(dir, 'verifier.report.md')),
+      verifierReportText: loadVerifierReportTextOrNull(projectRoot, report.feature, report.phase, {
+        frameworkRoot,
+      }),
       parseClassificationFromDetails: extractFailureClassification,
     });
     if (repairCandidates.length > 0) summary.repair_candidates = repairCandidates;
@@ -1732,6 +1777,63 @@ function writeReceiptSkeletonIfMissing(
   } catch {
     /* best-effort：骨架失败不阻断，agent 仍可全手填 */
   }
+}
+
+/**
+ * plan e5b8c3f7 T1：生成本轮 run 的 verifier_subject_id，并把机器块注入 ai-prompt.md。
+ *
+ * 输入面刻意**不含整份 summary SHA**：base summary 以 closure_status=open 落盘、
+ * finalizer 闭环时改写为 closed——整份 SHA 入 subject 会让正常闭环自锁（刚发布的
+ * verifier 证据在闭环瞬间 stale）。取的全是 open→closed 期间不变的量。
+ *
+ * ai-prompt.md 是 subject 的**唯一机器生产入口**：注入前先剥旧块再哈希，重跑幂等；
+ * prompt 缺席（Step 4 崩栈已清理残留）时以 `<absent>` 参与派生——此路 verdict 必非 PASS、
+ * 不会触发 verifier，subject 只作分派锚存在，不影响判定。
+ */
+function issueVerifierSubject(input: {
+  dir: string;
+  report: ScriptReport;
+  projectRoot: string;
+  gateFingerprint: string | null;
+  sourceCommitSha: string | null;
+  worktreeDigest: string | null;
+  canonicalPromptDigest: string | null;
+}): string {
+  const promptPath = path.join(input.dir, 'ai-prompt.md');
+  const promptRaw = fs.existsSync(promptPath) ? readTextOrNull(promptPath) : null;
+  const subjectId = computeVerifierSubjectId({
+    feature: input.report.feature,
+    phase: input.report.phase,
+    script_report_material: canonicalScriptReportDigest(input.report),
+    ai_prompt_material: input.canonicalPromptDigest,
+    gate_fingerprint: input.gateFingerprint,
+    source_commit_sha: input.sourceCommitSha,
+    worktree_digest: input.worktreeDigest,
+  });
+  if (promptRaw !== null) {
+    // 机器块声明的是**本 subject 自己的**分区文件（review 四轮 P0）——固定文件名会让
+    // 不同 subject 竞争同一个文件，而竞态无法靠"更晚的授权复查"消除。
+    const reportPathRel = path
+      .relative(input.projectRoot, path.join(input.dir, verifierReportJsonFilename(subjectId)))
+      .replace(/\\/g, '/');
+    try {
+      fs.writeFileSync(
+        promptPath,
+        withSubjectBlock(promptRaw, {
+          subject_id: subjectId,
+          feature: input.report.feature,
+          phase: input.report.phase,
+          report_path: reportPathRel,
+        }),
+        'utf-8',
+      );
+    } catch (e) {
+      // 注入失败不阻断 summary 落盘：subject 仍写入 summary，但 prompt 无机器块 →
+      // hook 取不到 invocation subject → fail-closed 落 bedside（不会产生假闭环）。
+      console.warn(`   ⚠ [verifier-subject] ai-prompt.md 机器块注入失败：${(e as Error).message}`);
+    }
+  }
+  return subjectId;
 }
 
 /** 当前 git HEAD（best-effort；非 git 环境返回 null）——run identity 锚。 */

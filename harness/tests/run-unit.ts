@@ -103,6 +103,10 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'guard-framework-write', modulePath: './unit/guard-framework-write.unit.test' },
   { id: 'hooks-config-upsert', modulePath: './unit/hooks-config-upsert.unit.test' },
   { id: 'record-verifier-report-hook', modulePath: './unit/record-verifier-report-hook.unit.test' },
+  // plan e5b8c3f7 T5：verifier 证据身份绑定十三件回归（subject 指纹 + JSON 真源收编）
+  { id: 'verifier-evidence-identity', modulePath: './unit/verifier-evidence-identity.unit.test' },
+  // review P1-2：subject 输入面的物质性契约（telemetry 不换代 / 真实变化必换代）
+  { id: 'verifier-subject-material', modulePath: './unit/verifier-subject-material.unit.test' },
   { id: 'profile-routing',  modulePath: './unit/profile-routing.unit.test' },
   { id: 'profile-personal-prerequisites', modulePath: './unit/profile-personal-prerequisites.unit.test' },
   { id: 'framework-config-schema', modulePath: './unit/framework-config-schema.unit.test' },

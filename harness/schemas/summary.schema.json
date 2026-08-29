@@ -50,6 +50,11 @@
       "pattern": "^([0-9a-f]{16}|no-debt)$",
       "description": "asset 域债务 revision（域内条目投影 sha256 前16 或 no-debt 哨兵）；harness 机器写入，testing 期 asset 轴继承时重算比对——缺失/失配不继承"
     },
+    "verifier_subject_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "verifier 证据身份（plan e5b8c3f7）：runner 单点派生、跨 open→closed 稳定；check-receipt 的唯一分派锚——在场=只认 verifier.report.json 新闭环域，缺席=旧件 grandfather/指引重跑 harness"
+    },
     "gate_fingerprint": {
       "type": "string",
       "pattern": "^.+:[0-9a-f]{12}$",

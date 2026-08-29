@@ -1,6 +1,7 @@
 // hmos-app / ArkTS 宿主：coding 阶段结构/追溯中与工具链绑定的规则（根 check-coding 仅编排）。
 
 import * as fs from 'fs';
+import { renderDetailsWithTelemetry } from '../../../harness/scripts/utils/check-telemetry';
 import * as path from 'path';
 import type { CheckContext, CheckResult, ContractsSpec } from '../../../harness/scripts/utils/types';
 import { AstAnalyzer, type FileAnalysis } from '../../../harness/scripts/utils/ast-analyzer';
@@ -1193,12 +1194,14 @@ export function resolveCompileBlockingClass(kind: CodingCompileFailureKind): str
 function buildCompilePassDetails(
   res: CompileRunResult,
   modulesCount: number,
+  /** 耗时文本——由 renderDetailsWithTelemetry 注入（人读=真实值，material=占位符） */
+  durationText: string,
   extraNote?: string,
   selection?: ProductSelection,
 ): string {
   return [
     extraNote ? `${extraNote}\n` : '',
-    `编译通过（涉及 ${modulesCount} 个 contract 模块，耗时 ${res.durationMs} ms）。`,
+    `编译通过（涉及 ${modulesCount} 个 contract 模块，耗时 ${durationText}）。`,
     `命令：${res.command ?? '(unknown)'}`,
     ...(selection ? [describeProductSelection(selection)] : []),
     `元数据：${res.metaPath ?? '(无)'}`,
@@ -1212,6 +1215,8 @@ function buildCompilePassDetails(
 function buildCompileFailDetails(
   res: CompileRunResult,
   failure: CodingCompileFailureClassification,
+  /** 耗时文本——同上，由 renderDetailsWithTelemetry 注入 */
+  durationText: string,
   extraLines: string[] = [],
   selection?: ProductSelection,
 ): string {
@@ -1227,7 +1232,7 @@ function buildCompileFailDetails(
     detailsLines.push('修复指引：去掉该环境变量并重跑。显式跳过真实编译不被允许作为出口。');
   } else {
     detailsLines.push(
-      `exit_code=${res.exitCode}, durationMs=${res.durationMs}, timedOut=${Boolean(res.timedOut)}, successMarkerFound=${res.successMarkerFound ?? 'n/a'}`,
+      `exit_code=${res.exitCode}, durationMs=${durationText}, timedOut=${Boolean(res.timedOut)}, successMarkerFound=${res.successMarkerFound ?? 'n/a'}`,
     );
     if (selection) detailsLines.push(describeProductSelection(selection));
     detailsLines.push(`失败归因：${failure.kind}`);
@@ -1418,7 +1423,10 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
       description: desc,
       severity: 'BLOCKER',
       status: 'PASS',
-      details: buildCompilePassDetails(res, modules.length, depsAutoFixNote, compileSelection),
+      ...renderDetailsWithTelemetry(
+        (t) => buildCompilePassDetails(res, modules.length, t, depsAutoFixNote, compileSelection),
+        `${res.durationMs} ms`,
+      ),
     });
   }
 
@@ -1434,7 +1442,10 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
     description: desc,
     severity: 'BLOCKER',
     status: 'FAIL',
-    details: buildCompileFailDetails(res, failure, [...buildTxnRetryLines, ...installExtraLines], compileSelection),
+    ...renderDetailsWithTelemetry(
+      (t) => buildCompileFailDetails(res, failure, t, [...buildTxnRetryLines, ...installExtraLines], compileSelection),
+      String(res.durationMs),
+    ),
     affected_files: modules.map(m => `${m.name} (module)`),
     failure_kind: failure.kind,
     blocking_class: resolveCompileBlockingClass(failure.kind),

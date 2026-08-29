@@ -27,13 +27,24 @@ claimed_completion_commit_sha: "<git rev-parse HEAD 真实值>"
 claimed_attempt_id: ""
 
 # ----------------------------------------------------------------------
-# 1. Verifier 子 agent（语义级凭证；机器无法替代的调用自证）
+# 1. Verifier 子 agent（**兼容投影 · 已退出裁决权威**）
 # ----------------------------------------------------------------------
+# plan e5b8c3f7：verifier 的机器真源是
+#   doc/features/<feature>/<phase>/reports/verifier.report.<subject>.json
+# （按 subject 分区；当前是哪一份由 summary.verifier_subject_id 决定）
+# 由 SubagentStop hook 在三重身份等值绑定后发布（invocation subject == 终态块回显
+# == summary.verifier_subject_id）。check-receipt 真验真：feature/phase 匹配、agent
+# 身份在场、subject 现值、结构合法、verdict 与 BLOCKER 计数一致——**本块手填什么都
+# 不改变判定**。填错只会得到一条 MAJOR 提示，填对也不能让不合格的报告通过。
+#
+# 本块保留至少一个 minor 窗口，供存量回执解析不断裂；新回执照填即可（如实抄机器事实）。
+# 让 verifier 报告出现的正确路径：主 agent 用 Task 触发 subagent_type=verifier，
+# prompt = 该阶段 reports/ai-prompt.md **全文原样投递**（含 verifier 证据身份机器块）。
 verifier_subagent:
-  invoked_via: "Task(subagent_type=verifier)"   # 不允许 "told user to run"
+  invoked_via: "Task(subagent_type=verifier)"   # 兼容投影；不允许 "told user to run"
   prompt_template: "framework/harness/prompts/verify-<phase>.md"
-  report_path: "doc/features/<feature>/<phase>/reports/verifier.report.md"
-  verdict: "PASS"        # PASS | FAIL；FAIL 即未闭环（从 verifier 报告摘录原文）
+  report_path: "doc/features/<feature>/<phase>/reports/verifier.report.<subject>.json"
+  verdict: "PASS"        # 兼容投影：如实抄 verifier.report.json 的 verdict
   ran_at: "<ISO 8601>"
 
 # ----------------------------------------------------------------------

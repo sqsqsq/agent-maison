@@ -186,13 +186,20 @@ const cases: Array<{ name: string; run: () => void }> = [
       );
       const classifyPasses = src.match(/classifyCodingCompileFailure\(\{ \.\.\.res, errors: res\.errors \?\? \[\] \}, ctx, compileSelection\)/g) ?? [];
       assert.strictEqual(classifyPasses.length, 3, '首判/事务重跑/终判三处 classify 均须传同一 selection');
+      // 两个 details builder 自 plan e5b8c3f7 review 三轮 P1-2 起多收一个耗时文本参数：
+      // 耗时是 runner 遥测，须由 renderDetailsWithTelemetry 以同一模板渲染两遍
+      //（人读留真实值 / subject 派生拿占位符）。本断言的意图不变——同一 selection 贯穿。
       assert(
-        src.includes('buildCompilePassDetails(res, modules.length, depsAutoFixNote, compileSelection)'),
+        src.includes('buildCompilePassDetails(res, modules.length, t, depsAutoFixNote, compileSelection)'),
         'PASS details 须传同一 selection',
       );
       assert(
-        src.includes('buildCompileFailDetails(res, failure, [...buildTxnRetryLines, ...installExtraLines], compileSelection)'),
+        src.includes('buildCompileFailDetails(res, failure, t, [...buildTxnRetryLines, ...installExtraLines], compileSelection)'),
         'FAIL details 须传同一 selection',
+      );
+      assert(
+        src.includes('renderDetailsWithTelemetry('),
+        '耗时须经 renderDetailsWithTelemetry 分域，不得直接内嵌进 details',
       );
       assert(src.includes("source === 'unresolved'"), 'unresolved 分支在场');
     },

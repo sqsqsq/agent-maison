@@ -19,6 +19,7 @@ import { tryValidateReceipt } from '../../scripts/utils/phase-state';
 import { writeReceiptScaffold } from '../../scripts/utils/receipt-scaffold';
 import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
 import { computeProductWorktreeDigest } from '../../scripts/utils/worktree-digest';
+import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 
 export interface UnitCaseResult {
   name: string;
@@ -120,7 +121,6 @@ function buildSlimProject(opts: SlimOpts): { root: string } {
     JSON.stringify({ schema_version: '1.0.0', feature: 'demo', phase: PHASE }),
     'utf-8',
   );
-  fs.writeFileSync(path.join(reportsDir, 'verifier.report.md'), 'verdict: PASS\n', 'utf-8');
   if (opts.staleLedgerFromPriorRun) {
     fs.writeFileSync(
       path.join(featureDir, 'headless-assumptions.jsonl'),
@@ -187,6 +187,9 @@ function buildSlimProject(opts: SlimOpts): { root: string } {
     };
     if (opts.dropRequiredKey) delete summary[opts.dropRequiredKey];
     fs.writeFileSync(path.join(reportsDir, 'summary.json'), JSON.stringify(summary, null, 2), 'utf-8');
+    // plan e5b8c3f7：summary 落盘后立刻发布与 hook 同形的 verifier 机器证据
+    // （subject 写进本次 summary），slim 回执的 verifier 面自此走真验真。
+    publishFixtureVerifierEvidence({ projectRoot: root, reportsDir, feature: 'demo', phase: PHASE });
   }
   const box = opts.uncheckedBoxes ? '[ ]' : '[x]';
   const receipt = [
@@ -201,7 +204,7 @@ function buildSlimProject(opts: SlimOpts): { root: string } {
     ...(opts.claimedAttemptId ? [`claimed_attempt_id: "${opts.claimedAttemptId}"`] : []),
     'verifier_subagent:',
     '  invoked_via: "Task(subagent_type=verifier)"',
-    `  report_path: "doc/features/demo/${PHASE}/reports/verifier.report.md"`,
+    `  report_path: "doc/features/demo/${PHASE}/reports/verifier.report.json"`,
     '  verdict: "PASS"',
     '---',
     '',
