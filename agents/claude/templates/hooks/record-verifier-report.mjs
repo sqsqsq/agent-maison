@@ -13,27 +13,33 @@
 //     verdict 与文件存在性）。
 // 收口靠身份，不靠互斥：并发 verifier 是被支持的正常形态。
 //
-// ─── 发布契约（三重等值绑定，transcript 只读一次）──────────────────────────────
-//   invocation_subject（agent_transcript_path 首条 user prompt 的机器块）
-//     == result_subject（last_assistant_message 终态块）
-//     == summary.verifier_subject_id（runner 单点生成的现值）
-// 三者相等才发布 verifier.report.json（唯一机器真源）；任一缺失/不等 → bedside
-// fail-closed。两个 subject **分别**存入 JSON——此后一切验真只比仓内三值，
-// **绝不重开 transcript**（会话清理/换机/归档后仓内证据必须自足）；
-// agent_transcript_path 只作审计元数据。
+// ─── 发布契约（四方对账，transcript 只读一次；plan a9d4e7c2 T2）──────────────
+// 调用凭证不再是「ai-prompt.md 全文原样投递」（宿主实锤：177KB 有损往返、块外零校验
+// 静默），而是 runner 写在 reports 目录里的**短 request JSON**。主 agent 把那份 JSON
+// 整段作为 Task prompt 投给 verifier；verifier 按 `prompt_path` 自己 Read 磁盘原件。
+//
+// 发布前四方必须全等/相符：
+//   ① request 自述 subject == 按 request 字段**重算**的 subject（抄错任何字段即失配）；
+//   ② == summary.verifier_subject_id（runner 现值——迟到/换代报告在此被拦）；
+//   ③ == 终态块回显的 subject（last_assistant_message）；
+//   ④ request.prompt_path == 由 config + request 的 feature/phase **自行推导**的
+//      canonical 路径，且 request.prompt_sha256 == 该文件的磁盘实测哈希。
+// 任一不成立 → bedside fail-closed，各按具名 reason 落盘。两个 subject **分别**存入
+// JSON——此后一切验真只比仓内三值，**绝不重开 transcript**（会话清理/换机/归档后仓内
+// 证据必须自足）；agent_transcript_path 只作审计元数据。
 //
 // ─── 硬性边界 ────────────────────────────────────────────────────────────────
 //   · 完全不写 .current-phase.json（last_verifier_report / last_seen_* 写回已整体删除，
 //     且不得恢复——Stop 新鲜度实际只读 session_id + updated_at，见
 //     check-phase-completion.mjs）。
-//   · 写入路径由 framework config + 机器块的 feature/phase **自行推导**；机器块里的
-//     claimed report_path 仅作等值核对，越界（../ / 绝对路径 / 跨 feature）一律拒绝。
+//   · 写入路径由 framework config + request 的 feature/phase **自行推导**；request 里的
+//     claimed prompt_path 仅作等值核对，越界（../ / 绝对路径 / 跨 feature）一律拒绝。
 //   · 证据文件**按 subject 分区**：`verifier.report.<64位subject>.json`（+ 同名 .md）。
 //     不同 subject 天然写不同文件，谁也没有能力移动/删除/覆盖另一个 subject 的文件。
 //     这才是竞态的根治：授权复查（"我还有权限吗"）与"改共享文件"永远是两步，两步之间就能
-//     换代——把复查放得再晚也只是挪动窗口（review 四轮 P0）。分区之后窗口不存在，于是
-//     跨 subject 的让位/替换、superseded 文件、循环内反复授权判断全部删除；
-//     旧 subject 的遗留文件留在原地不清理（自动清理会重新引入并发删除）。
+//     换代——把复查放得再晚也只是挪动窗口。分区之后窗口不存在，于是跨 subject 的让位/
+//     替换、superseded 文件、循环内反复授权判断全部删除；旧 subject 的遗留文件留在原地
+//     不清理（自动清理会重新引入并发删除）。
 //     `summary.verifier_subject_id` 单独决定"当前机器证据是哪一个文件"。
 //   · verifier.report.md 只是从 JSON 生成的人读投影，机器侧不解析。
 //
@@ -50,13 +56,14 @@
 //   少一个 claude 侧本就可选的 `prompt_id`。→ 共享绑定成立，无需 adapter-specific 分支。
 //   **一处已实证的差异**：codeagent **不按 agent type 过滤 SubagentStop 的 matcher**
 //   （注册项一律触发——实抓里 matcher="verifier" 对一个 agent_type="" 的子 agent 同样
-//   触发）。这不构成风险：非 verifier 子 agent 的转录首条 prompt 里没有 subject 机器块，
-//   一律走下方 invocation_subject_absent → bedside，永远发布不了 canonical。
+//   触发）。这不构成风险：非 verifier 子 agent 的转录首条 prompt 不是一份合法 request
+//   JSON，一律走下方 invocation_request_unparseable → bedside，永远发布不了 canonical。
 // 任何 adapter 字段不齐时按下方统一 fail-closed 落 bedside，绝不猜测归属。
 //
 // 跨平台：纯 Node.js + path/url，不依赖 shell。
-// 块格式 SSOT：framework/harness/scripts/utils/verifier-subject.ts
-//（本文件是它在 .mjs 侧的复刻；改格式必须两边同步，单测 verifier-evidence-identity 守护）。
+// 格式 SSOT：framework/harness/scripts/utils/verifier-request.ts（request 与 subject 派生）
+// 与 verifier-subject.ts（终态块与结论指纹）——本文件是它们在 .mjs 侧的复刻；
+// 改格式必须两边同步，单测 verifier-evidence-identity 守护。
 // ============================================================================
 
 import crypto from 'node:crypto';
@@ -76,11 +83,14 @@ const requireNodeModule = (() => {
 })();
 
 const VERIFIER_REPORT_SCHEMA_VERSION = '2.0';
-const SUBJECT_BLOCK_OPEN = '<!-- maison-verifier-subject:v1 -->';
-const SUBJECT_BLOCK_CLOSE = '<!-- /maison-verifier-subject:v1 -->';
 const RESULT_BLOCK_OPEN = '<!-- maison-verifier-result:v1 -->';
 const RESULT_BLOCK_CLOSE = '<!-- /maison-verifier-result:v1 -->';
 const SUBJECT_ID_PATTERN = /^[0-9a-f]{64}$/;
+// request 契约（SSOT: harness/scripts/utils/verifier-request.ts）——逐字符复刻。
+const VERIFIER_REQUEST_SCHEMA_VERSION = '1.0';
+const VERIFIER_REQUEST_KIND = 'maison_verifier_request';
+const VERIFIER_REQUEST_SUBJECT_SCHEMA = 'maison-verifier-request@1';
+const AI_PROMPT_FILENAME = 'ai-prompt.md';
 
 // --------------------------------------------------------------------------
 // 1. stdin
@@ -248,7 +258,7 @@ function resolveFeaturePhaseReportDir(projectRoot, feature, phase) {
 }
 
 // --------------------------------------------------------------------------
-// 3. 机器块解析（verifier-subject.ts 的 .mjs 复刻）
+// 3. request 与终态块解析（verifier-request.ts / verifier-subject.ts 的 .mjs 复刻）
 // --------------------------------------------------------------------------
 
 function normalizeEol(text) {
@@ -276,18 +286,95 @@ function readBlockField(body, key) {
   return m ? m[1].trim() : null;
 }
 
-/** 恰好一个块才算数：零个=未经机器投递（手抄/旧件），多个=prompt 被拼接污染。 */
-function parseSubjectBlock(text) {
-  const bodies = collectBlockBodies(text, SUBJECT_BLOCK_OPEN, SUBJECT_BLOCK_CLOSE);
-  if (bodies.length !== 1) return null;
-  const body = bodies[0];
-  const subjectId = readBlockField(body, 'verifier_subject_id');
-  const feature = readBlockField(body, 'verifier_subject_feature');
-  const phase = readBlockField(body, 'verifier_subject_phase');
-  const reportPath = readBlockField(body, 'verifier_subject_report_path');
-  if (!subjectId || !SUBJECT_ID_PATTERN.test(subjectId)) return null;
-  if (!feature || !phase || !reportPath) return null;
-  return { subject_id: subjectId, feature, phase, report_path: reportPath };
+/** subject 的规范化输入串——与 verifier-request.ts canonicalRequestInput 逐字符一致。 */
+function canonicalRequestInput(f) {
+  return [
+    VERIFIER_REQUEST_SUBJECT_SCHEMA,
+    `feature=${f.feature}`,
+    `phase=${f.phase}`,
+    `prompt_path=${f.prompt_path}`,
+    `prompt_sha256=${f.prompt_sha256}`,
+    `gate_fingerprint=${f.gate_fingerprint ?? '<absent>'}`,
+    `source_commit_sha=${f.source_commit_sha ?? '<absent>'}`,
+    `worktree_digest=${f.worktree_digest ?? '<absent>'}`,
+  ].join('\n');
+}
+
+function computeRequestSubjectId(fields) {
+  return sha256(canonicalRequestInput(fields));
+}
+
+/** request 的精确键集——多一个键即拒绝（与 verifier-request.ts 逐字符一致）。 */
+const VERIFIER_REQUEST_KEYS = new Set([
+  'schema_version',
+  'kind',
+  'subject_id',
+  'feature',
+  'phase',
+  'prompt_path',
+  'prompt_sha256',
+  'gate_fingerprint',
+  'source_commit_sha',
+  'worktree_digest',
+]);
+
+const nonEmpty = (v) => typeof v === 'string' && v.trim().length > 0;
+
+/** 字段值原样取用；trim 只用来判空白串——字段值里的空白是**内容**，不是排版。 */
+function readRequiredStr(v) {
+  return typeof v === 'string' && v.trim().length > 0 ? v : null;
+}
+
+/** 可空字段严格读取：只接受 null 或非空字符串（**保留原值**）；其余（0/""/{}/false）一律拒绝。 */
+function readNullableStr(v) {
+  if (v === null) return { ok: true, value: null };
+  if (typeof v !== 'string' || v.trim().length === 0) return { ok: false };
+  return { ok: true, value: v };
+}
+
+/**
+ * 解析投递面的 request。**只接受一段纯 JSON**（容忍前后空白，不容额外指令/代码围栏）：
+ * `JSON.parse` 对"JSON 后追加一句话"天然失败——这就是"抄错即明确失败"的实现，
+ * 不需要再加正则去猜哪一段是 JSON（猜就等于给夹带留缝）。
+ * 自述 subject 必须等于按字段重算的 subject，抄错/篡改任何字段都在这里落地。
+ */
+function parseVerifierRequest(text) {
+  if (!nonEmpty(text)) return null;
+  let doc;
+  try {
+    doc = JSON.parse(normalizeEol(text).trim());
+  } catch {
+    return null;
+  }
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return null;
+  // 未知键 = 夹带（哪怕它自称注释/元数据）：整份拒绝。subject 重算只覆盖已知字段，
+  // 挡不住 `{"instruction": "..."}` 这类随 Task prompt 一起进 verifier 上下文的私货。
+  for (const key of Object.keys(doc)) {
+    if (!VERIFIER_REQUEST_KEYS.has(key)) return null;
+  }
+  if (doc.schema_version !== VERIFIER_REQUEST_SCHEMA_VERSION) return null;
+  if (doc.kind !== VERIFIER_REQUEST_KIND) return null;
+  if (typeof doc.subject_id !== 'string' || !SUBJECT_ID_PATTERN.test(doc.subject_id)) return null;
+  if (typeof doc.prompt_sha256 !== 'string' || !SUBJECT_ID_PATTERN.test(doc.prompt_sha256)) return null;
+  const feature = readRequiredStr(doc.feature);
+  const phase = readRequiredStr(doc.phase);
+  const promptPath = readRequiredStr(doc.prompt_path);
+  if (feature === null || phase === null || promptPath === null) return null;
+  const gateFingerprint = readNullableStr(doc.gate_fingerprint);
+  const sourceCommitSha = readNullableStr(doc.source_commit_sha);
+  const worktreeDigest = readNullableStr(doc.worktree_digest);
+  if (!gateFingerprint.ok || !sourceCommitSha.ok || !worktreeDigest.ok) return null;
+  const fields = {
+    feature,
+    phase,
+    prompt_path: promptPath,
+    prompt_sha256: doc.prompt_sha256,
+    gate_fingerprint: gateFingerprint.value,
+    source_commit_sha: sourceCommitSha.value,
+    worktree_digest: worktreeDigest.value,
+  };
+  if (computeRequestSubjectId(fields) !== doc.subject_id) return null;
+  return { subject_id: doc.subject_id, ...fields };
 }
 
 function parseResultBlock(text) {
@@ -371,6 +458,7 @@ function toPosixRel(projectRoot, abs) {
  * claimed path 只做等值核对，**绝不**作写入目标。先拒绝形态越界（绝对路径 / .. /
  * 盘符 / 反斜杠混写），再要求与自行推导的 canonical 路径逐字符相等——
  * 跨 feature 与目录穿越都在这一步落地。
+ * （现在核对的是 request.prompt_path：verifier 读哪份原件必须由 config 说了算。）
  */
 function claimedPathMatches(claimed, canonicalRel) {
   if (typeof claimed !== 'string' || !claimed.trim()) return false;
@@ -457,11 +545,11 @@ function buildMarkdownProjection(doc) {
       '同 subject 下出现不同 agent_id 或不同 result hash。两侧都记录在 JSON 的 `conflict.sides`；',
       'check-receipt 对本态**必 FAIL**（绝不保留先到的 PASS 静默吞掉后到的 FAIL）。',
       '',
-      '**恢复步骤**（不要"重跑 harness 换代 subject"——本设计下无物质变化时 subject 恒定，',
-      '重跑只会回到同一个 conflict）：',
+      '**恢复步骤**（重跑 harness 只有在审查材料真的变了时才换代 subject；',
+      '材料没变时会回到同一个 conflict）：',
       '  1. 停止或等待同 subject 的**全部** verifier 结束；',
       '  2. 删除这份 conflict 件——它已不是任何一方的结论，留着只会持续 FAIL；',
-      '  3. 只启动**一个** verifier，把现有 ai-prompt.md 全文原样投递（subject 不变，正常发布）。',
+      '  3. 只启动**一个** verifier，把 summary.verifier_request 指向的 request JSON 整段投递。',
     );
   }
   return [
@@ -505,7 +593,8 @@ function writeBedside(projectRoot, reason, detail) {
         `- agent_id: ${detail?.agent_id ?? '(n/a)'}`,
         '',
         '本报告**未通过身份绑定**，不构成任何阶段的闭环凭证，机器消费者不会读取它。',
-        '常见原因：调用方未原样投递 ai-prompt.md（缺机器块）、verifier 未输出唯一终态块、',
+        '常见原因：调用方投的不是那份 request JSON（手抄/夹带/投了 ai-prompt 全文）、',
+        'verifier 未输出唯一终态块、ai-prompt.md 已被新一轮 harness 换代（prompt_hash_mismatch）、',
         'subject 已换代（迟到报告）、adapter payload 缺子代理身份字段、goal headless 旁路。',
         '',
         '## 结论正文（截取）',
@@ -601,7 +690,7 @@ async function main() {
     return;
   }
 
-  // ② invocation subject（子代理转录首条 user prompt）——transcript 只在这里读这一次。
+  // ② invocation request（子代理转录首条 user prompt）——transcript 只在这里读这一次。
   const firstPrompt = readFirstUserPrompt(agentTranscriptPath);
   if (!firstPrompt.text) {
     writeBedside(projectRoot, 'invocation_prompt_unreadable', {
@@ -611,10 +700,15 @@ async function main() {
     process.exit(0);
     return;
   }
-  const invocation = parseSubjectBlock(firstPrompt.text);
+  // 首条 user prompt 必须**恰好**是那份 request JSON：投旧式 subject 块、投 ai-prompt
+  // 全文、或在 JSON 后追加指令，都在这里 JSON.parse 失败 → fail-closed。
+  const invocation = parseVerifierRequest(firstPrompt.text);
   if (!invocation) {
-    writeBedside(projectRoot, 'invocation_subject_absent', {
+    writeBedside(projectRoot, 'invocation_request_unparseable', {
       agent_id: agentId, agent_type: agentType, subject_id: resultBlock.subject_id,
+      detail:
+        'Task prompt 必须是 summary.verifier_request 指向的那份 verifier.request.<subject>.json ' +
+        '的**完整 JSON 正文**（可含前后空白，不得有任何附加文字、代码围栏或字段改写）。',
       report_text: lastAssistantMessage, audit,
     });
     process.exit(0);
@@ -630,7 +724,7 @@ async function main() {
     return;
   }
 
-  // ③ 写入路径**自行推导**（config + 机器块 feature/phase），claimed path 仅等值核对。
+  // ③ 写入路径**自行推导**（config + request 的 feature/phase），claimed path 仅等值核对。
   const reportDir = resolveFeaturePhaseReportDir(projectRoot, invocation.feature, invocation.phase);
   if (!reportDir) {
     writeBedside(projectRoot, 'report_dir_unresolvable', {
@@ -642,10 +736,11 @@ async function main() {
   }
   const jsonPath = path.join(reportDir, verifierReportJsonFilename(invocation.subject_id));
   const mdPath = path.join(reportDir, verifierReportMdFilename(invocation.subject_id));
-  const canonicalRel = toPosixRel(projectRoot, jsonPath);
-  if (!claimedPathMatches(invocation.report_path, canonicalRel)) {
+  const promptPath = path.join(reportDir, AI_PROMPT_FILENAME);
+  const canonicalPromptRel = toPosixRel(projectRoot, promptPath);
+  if (!claimedPathMatches(invocation.prompt_path, canonicalPromptRel)) {
     writeBedside(projectRoot, 'claimed_path_rejected', {
-      claimed_report_path: invocation.report_path, derived_report_path: canonicalRel,
+      claimed_prompt_path: invocation.prompt_path, derived_prompt_path: canonicalPromptRel,
       feature: invocation.feature, phase: invocation.phase, subject_id: invocation.subject_id,
       agent_id: agentId, agent_type: agentType, report_text: lastAssistantMessage, audit,
     });
@@ -674,7 +769,39 @@ async function main() {
     return;
   }
 
-  // ⑤ 发布：CAS 循环（幂等 / conflict 单调升级 / 独占创建）。
+  // ⑤ 磁盘原件对账：verifier 审的到底是不是 request 所指的那份字节。
+  // 这是**误配检测**（harness 重跑过、文件已换代），不是防篡改——威胁模型内不设防恶意。
+  let promptOnDisk = null;
+  try {
+    if (fs.existsSync(promptPath)) promptOnDisk = fs.readFileSync(promptPath, 'utf-8');
+  } catch {
+    promptOnDisk = null;
+  }
+  if (promptOnDisk === null) {
+    writeBedside(projectRoot, 'prompt_missing', {
+      feature: invocation.feature, phase: invocation.phase, subject_id: invocation.subject_id,
+      prompt_path: canonicalPromptRel,
+      agent_id: agentId, agent_type: agentType, report_text: lastAssistantMessage, audit,
+    });
+    process.exit(0);
+    return;
+  }
+  const promptSha = sha256(normalizeEol(promptOnDisk));
+  if (promptSha !== invocation.prompt_sha256) {
+    writeBedside(projectRoot, 'prompt_hash_mismatch', {
+      feature: invocation.feature, phase: invocation.phase, subject_id: invocation.subject_id,
+      prompt_path: canonicalPromptRel,
+      declared_prompt_sha256: invocation.prompt_sha256, observed_prompt_sha256: promptSha,
+      detail:
+        'request 所声明的 ai-prompt.md 与磁盘现文件不符——多半是这期间又跑了一次 harness。' +
+        '请用当前 summary.verifier_request 指向的新 request JSON 重跑 verifier。',
+      agent_id: agentId, agent_type: agentType, report_text: lastAssistantMessage, audit,
+    });
+    process.exit(0);
+    return;
+  }
+
+  // ⑥ 发布：CAS 循环（幂等 / conflict 单调升级 / 独占创建）。
   //
   // 本段只处理**同一 subject 内**的并发；跨 subject 已由文件分区在结构上隔离。
   // 即便同一 subject，"读旧件→裁决→写"也必须做成 compare-and-set，否则两个 verifier

@@ -29,7 +29,7 @@ review 阶段不执行宿主包管理器依赖安装命令，也不使用 `HARNE
 
 "代码审查"、"Code Review"、"CR"、"审查代码"、"检查代码质量"、"代码走查"、"Review 代码"、"生成审查报告"。
 
-**上游 coding 闭环 alone 不触发（BLOCKER）**：仅因 coding 四件套 PASS、读完回执/trace、或 coding 正文"可进入 code-review"**不得**激活本 Skill。须用户 review 触发意图、batch 授权（§8.2）、或 `coding.ok_to_review`/`phase.next_step` 确认后再进入。
+**上游 coding 闭环 alone 不触发（BLOCKER）**：仅因 coding 阶段已闭环、读完回执/trace、或 coding 正文"可进入 code-review"**不得**激活本 Skill。须用户 review 触发意图、batch 授权（§8.2）、或 `coding.ok_to_review`/`phase.next_step` 确认后再进入。
 
 ## 审查与改动权的硬边界（BLOCKER）
 
@@ -84,13 +84,17 @@ review 阶段不执行宿主包管理器依赖安装命令，也不使用 `HARNE
 cd framework/harness && npx ts-node harness-runner.ts --phase review --feature {module-name}
 ```
 
-**AI Harness**：主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-review.md`（审查维度覆盖度/问题准确性 BLOCKER/修复建议可操作性/误报率/BLOCKER 与结论一致性 BLOCKER/编码规则追溯）。
+**AI Harness**：harness 输出 verifier request 时，主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-review.md`（审查维度覆盖度/问题准确性 BLOCKER/修复建议可操作性/误报率/BLOCKER 与结论一致性 BLOCKER/编码规则追溯）。
 
-**Task prompt = `<features_dir>/<feature>/review/reports/ai-prompt.md` 全文原样投递**（plan e5b8c3f7）：harness 已把 verifier 证据身份机器块写进该文件，它是 SubagentStop hook 绑定报告归属的唯一调用侧凭证。手抄模板、摘录片段或改写机器块 → 绑定失败 → 报告落 bedside、阶段不闭环。
+**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 Task prompt 投给 verifier——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 报告落 bedside、阶段不闭环。
 
-## 阶段闭环判定（全局入口 §5.1，四条件缺一不可）
+**harness 没有输出 request 时先看 `summary.next_action`，别急着下结论**：①能力未启用（policy/workflow/profile 判定）→ 本阶段就没有 verifier 这一环，不要去找、不要补造，闭环也不要求它；②`resolve_verifier_provider_then_rerun` → 能力声明为 required 但当前 adapter 没有登记，脚本结论仍然有效，但本阶段不得闭环；③脚本尚未 PASS → 本轮刻意不产出 verifier 调用面，先修 BLOCKER 再说。
 
-1. `<features_dir>/<feature>/review/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS；4. 完成回执经 `check-receipt.ts` 校验通过。四项全满足后 Review 阶段完成，**具备**进 business-ut 的资格；**不授权**自动开 business-ut。若审查结论为"不通过"或"有条件通过"，开发者需修复代码后重新执行 coding → code-review。
+## 阶段闭环判定（全局入口 §5.1）
+
+**closed = 脚本 harness verdict=PASS ∧ 全部 policy=required 的证据已提供**。要求哪几项由 harness 求解后输出（`HARNESS_EVIDENCE_POLICY` 行与 `check-receipt` 的逐项状态），不是写死的固定四件套——verifier 是否 required 由 harness 的 verifier plan 决定，判 disabled 时这一项不存在也不缺失。本阶段的常规形态：
+
+1. `<features_dir>/<feature>/review/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS（**仅当 harness 为本阶段输出了 verifier request**）；4. 完成回执经 `check-receipt.ts` 校验通过。required 证据齐备后 Review 阶段完成，**具备**进 business-ut 的资格；**不授权**自动开 business-ut。若审查结论为"不通过"或"有条件通过"，开发者需修复代码后重新执行 coding → code-review。
 
 **收尾 / 闭环停等（BLOCKER）**：只呈现 harness 的 `NEXT_STEP` 段落；recommendation 由 `assess@1` 生成，执行授权仍由 driver 按 `phase.next_step` / `transition_policy` 裁决。
 

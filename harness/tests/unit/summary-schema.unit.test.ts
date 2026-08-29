@@ -125,10 +125,26 @@ function assertSummaryShape(summary: Record<string, unknown>): void {
 function testSchemaRequiredFields(): void {
   const schema = loadSchema();
   const required = schema.required as string[];
+  // 条件字段不进 required：closure 三态字段随闭环出现；`ai_prompt` 自 1.3 起随
+  // verifier 能力（resolveVerifierPlan）出现——disabled 的 phase 根本不装配 prompt，
+  // 把它写进 required 等于要求每个阶段都产一份 verifier 产物（plan a9d4e7c2）。
+  const CONDITIONAL = new Set([
+    'receipt_status',
+    'closure_status',
+    'compile_first_error',
+    'soft_advisories',
+    'ai_prompt',
+  ]);
   for (const key of Object.keys(validSample())) {
-    if (key === 'receipt_status' || key === 'closure_status' || key === 'compile_first_error' || key === 'soft_advisories') continue;
+    if (CONDITIONAL.has(key)) continue;
     assert(required.includes(key), `schema.required 未声明 ${key}`);
   }
+  assert(!required.includes('ai_prompt'), 'ai_prompt 必须是条件字段（verifier disabled 时不生成）');
+  const props = schema.properties as Record<string, Record<string, unknown>>;
+  assert(
+    Object.prototype.hasOwnProperty.call(props, 'verifier_request'),
+    'properties 须含 verifier_request（短 request 协议的投递体路径）',
+  );
 }
 
 function testSchemaAllowsSoftAdvisories(): void {
@@ -186,7 +202,8 @@ function testInvalidSampleRejectedByUnitGuard(): void {
 function testSchemaV12ClosureFields(): void {
   const schema = loadSchema();
   const props = schema.properties as Record<string, Record<string, unknown>>;
-  assert((props.schema_version.enum as string[]).includes('1.2'), 'schema_version 须支持 1.2');
+  assert((props.schema_version.enum as string[]).includes('1.2'), 'schema_version 须兼容读取 1.2');
+  assert((props.schema_version.enum as string[]).includes('1.3'), 'schema_version 须支持当代 1.3');
   assert(Object.prototype.hasOwnProperty.call(props, 'assurance'), 'properties 须含 assurance');
   assert(Object.prototype.hasOwnProperty.call(props, 'capability_resolutions'), 'properties 须含 capability_resolutions');
   assert(Object.prototype.hasOwnProperty.call(props, 'capability_resolution_contract_fingerprint'), 'properties 须含 capability resolution fingerprint');
@@ -199,9 +216,10 @@ function testSchemaV12ClosureFields(): void {
   const allOf = schema.allOf as Array<Record<string, unknown>>;
   assert(Array.isArray(allOf) && allOf.length > 0, '1.2 条件必填约束缺失');
   const serialized = JSON.stringify(allOf);
-  assert(serialized.includes('assurance'), '1.2 必须条件要求 assurance');
-  assert(serialized.includes('closure_status'), '1.2 必须条件要求 closure_status');
-  assert(!serialized.includes('closure_commit'), 'open 1.2 summary 不应强制 closure_commit');
+  assert(serialized.includes('assurance'), '1.2/1.3 必须条件要求 assurance');
+  assert(serialized.includes('closure_status'), '1.2/1.3 必须条件要求 closure_status');
+  assert(serialized.includes('"1.3"'), 'assurance 条件必须覆盖当代 1.3（否则 1.3 可裸写）');
+  assert(!serialized.includes('closure_commit'), 'open summary 不应强制 closure_commit');
 }
 
 function runCase(name: string, fn: () => void): UnitCaseResult {

@@ -30,6 +30,10 @@ import {
 } from './phase-transition-policy';
 import { mapCategoryToChainPhase } from './correction-routing';
 import {
+  SUMMARY_ASSURANCE_SCHEMA_VERSIONS,
+  SUMMARY_SCHEMA_VERSION_CURRENT,
+} from './quality-axes';
+import {
   assuranceSatisfies,
   type Assurance,
   type MinimumAssurance,
@@ -492,7 +496,9 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
       };
     }
     const schemaVersion = typeof summary.schema_version === 'string' ? summary.schema_version : null;
-    const legacy = schemaVersion !== '1.2';
+    // plan a9d4e7c2 T3：assurance 闭环域 = 1.2 ∪ 1.3；把当代 1.3 判成 legacy 会让
+    // 刚闭环的阶段整链退回 legacy_unverified。
+    const legacy = !SUMMARY_ASSURANCE_SCHEMA_VERSIONS.has(String(schemaVersion));
     const verdict = typeof summary.verdict === 'string' ? summary.verdict : null;
     const assurance = !legacy && typeof summary.assurance === 'string' && ['blocked', 'degraded', 'full'].includes(summary.assurance)
       ? summary.assurance
@@ -656,7 +662,7 @@ function gapsFromObservation(observation: AssessObservation): AssessGap[] {
       gaps.push({
         phase: phase.phase,
         kind: 'legacy_unverified',
-        detail: `summary schema=${phase.schema_version ?? 'unknown'}；须重跑 harness 生成 1.2`,
+        detail: `summary schema=${phase.schema_version ?? 'unknown'}；须重跑 harness 生成 ${SUMMARY_SCHEMA_VERSION_CURRENT}`,
       });
       continue;
     }

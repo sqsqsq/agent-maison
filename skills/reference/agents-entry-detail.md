@@ -70,14 +70,14 @@
 
 ## 阶段边界推进（BLOCKER）
 
-阶段四件套 PASS ≠ 授权下一 Skill。默认 `transition_policy=manual`：闭环后须 `phase.next_step` 或用户/batch 明示授权，禁止同一执行流自动开下一阶段。细则与 batch 白名单见 `framework/skills/reference/user-confirmation-ux.md §8`。
+阶段闭环（closed）≠ 授权下一 Skill。默认 `transition_policy=manual`：闭环后须 `phase.next_step` 或用户/batch 明示授权，禁止同一执行流自动开下一阶段。细则与 batch 白名单见 `framework/skills/reference/user-confirmation-ux.md §8`。
 
 ## §4.1 主 agent 与 verifier 子 agent 的职责切分（明示授权，反误读全文）
 
 > 弱模型经常把"verifier 子 agent 执行 verify-*.md"误读为"任何 harness 类的事都不该主 agent 干"。本节是反误读的明示授权，BLOCKER 级，必须遵守：
 
 1. **结构级 harness**（`framework/harness/harness-runner.ts`）：必须由主 agent 自己执行。它会自动调用 `hvigor` 编译、各阶段 `check-*.ts` 等，不得借口"等 verifier"或"等用户"跳过。主 agent 在阶段产物完成后，第一时间通过 Shell 工具运行该命令，读取退出码与报告文件。
-2. **语义级 verify**（`framework/harness/prompts/verify-*.md`）：在结构级 harness PASS 之后，由独立 verifier 子 agent 执行；主 agent 必须主动通过 Task 工具触发 verifier（`subagent_type: verifier`），不得仅"提示用户去跑"或"等用户启动"。**Task prompt = 该阶段 `reports/ai-prompt.md` 全文原样投递**（plan e5b8c3f7）——harness 在其尾部写入 `<!-- maison-verifier-subject:v1 -->` 机器块，是 SubagentStop hook 绑定报告归属的唯一调用侧凭证；手抄模板、摘录片段或改写机器块 → 三重等值绑定失败 → 报告落 bedside、阶段不闭环。
+2. **语义级 verify**（`framework/harness/prompts/verify-*.md`）：在结构级 harness PASS 之后，由独立 verifier 子 agent 执行；主 agent 必须主动通过 Task 工具触发 verifier（`subagent_type: verifier`），不得仅"提示用户去跑"或"等用户启动"。**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）——`summary.verifier_request` 指向的 `verifier.request.<subject>.json` 就是唯一调用侧凭证，verifier 按其中的 `prompt_path` 自行 Read 磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）；手抄、改写字段或在 JSON 前后附加说明 → subject 重算失配 → 报告落 bedside、阶段不闭环。**verifier 是按能力启用的**：harness 没有为该阶段输出 request 就是不适用（policy/workflow/profile 判定），既不要去找也不要补造，闭环不要求它。
 3. AGENTS.md 全文未禁止主 agent 调用 shell/执行命令；空白处一律按"允许"理解。若你以为某条规则限制了你执行命令，请先核对反假设条款。
 4. **生产型（会写/改文件的）子 agent 派发纪律**：framework 不禁止派发写码子 agent，但**不信任其报告**。派发 prompt 最低纪律——前置「先 Read 目标文件验证改造对象存在；不存在立即 STOP 报告，禁止善意改造」；后置「完成后运行自验命令」；报告要求「实际修改文件清单 + 自验命令输出，禁用"应该/可能"模糊词」。**子 agent 报告不构成任何闭环凭证**：主 agent 必须以 `git diff` 对账实际改动后才可声明完成；门禁/凭证责任不可下放（verifier 除外，见上文 2）。
 5. **环境能力判定纪律**：凡断言"环境缺少某工具链"（hvigor/SDK/设备等），必须先运行 framework 探测命令（`detect-deveco.ts --json` / `check-personal-setup.ts --ensure`）并在结论中引用其输出；禁止凭 `command -v`/PATH 检查自报「沙箱无 X」——**未探测 = 未知，不是没有**。遇 `HARNESS_PREFLIGHT` 能力缺口时按其双出口处置：修环境（默认）或经用户确认后诚实停止——停止不放行不绕过，环境修好后用原命令 resume 即可继续（goal 模式 `--resume` 会重检放行）。

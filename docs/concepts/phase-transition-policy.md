@@ -5,7 +5,7 @@
 > **调和 SSOT**：[skill-contracts.md](./skill-contracts.md) + [reconcile-loop.md](./reconcile-loop.md)
 > **运行手册**：[goal-mode-runbook.md](../operations/goal-mode-runbook.md)
 
-Harness **不是**开发流水线；阶段四件套 PASS 只证明**当前 phase 完成**，不授权下一 Skill（`manual` 默认）。
+Harness **不是**开发流水线；阶段闭环（closed）只证明**当前 phase 完成**，不授权下一 Skill（`manual` 默认）。
 
 ## 策略枚举
 

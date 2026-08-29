@@ -100,7 +100,13 @@ function git(root: string, args: string[]): void {
 }
 
 /** 铺一个完整 spec 工程（PASS 所需：spec.md + acceptance + facts + source + git）。 */
-function scaffoldFeature(root: string, adapter = 'generic'): void {
+// plan a9d4e7c2: interactive full-track spec requires an adapter that actually
+// registers a verifier capability; `generic` has no SubagentStop publisher, so it
+// now resolves to `blocked` (INCOMPLETE / verifier_provider_unavailable) by design.
+// `codeagent` registers one and shares AGENTS.md as its entry file, so the
+// personal-setup gate stays satisfied by this scaffold.
+// The goal-mode case below passes its own adapter and is unaffected.
+function scaffoldFeature(root: string, adapter = 'codeagent'): void {
   fs.mkdirSync(path.join(root, 'doc', 'features', 'demo', 'spec'), { recursive: true });
   fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({
     schema_version: '1.0', project_name: 'e2e', project_profile: { name: 'generic' },
@@ -355,14 +361,22 @@ const cases: Case[] = [
         assert(gatedNext.run_status_candidate !== 'CHAIN_SLICE_COMPLETED',
           `open gate 不得投影完成态：${JSON.stringify(gatedNext)}`);
 
-        // 非 goal 的 standalone 行为保持原样：同一有效回执由真实 harness-runner 正常校验并关环。
+        // 非 goal 的 standalone 行为保持原样：同一有效回执由真实入口正常校验并关环。
+        //
+        // plan a9d4e7c2：subject 按**实际审查材料**寻址，而 ai-prompt.md 内嵌 `{timestamp}`
+        // 与整份 script-report——每跑一次 harness 材料就变一次，subject 随之换代（这是
+        // 定稿接受的合法结果，不再有 canonical 投影去把 telemetry 归一掉）。因此闭环纪律
+        // 固定为 harness → verifier → receipt → `--sync-closure`：`--sync-closure` 不重跑
+        // 脚本 harness、不重发 request，正是为这一步存在的入口。这里先按上一轮 gated
+        // summary 补齐 verifier 证据（等价于"跑完 harness 再跑 verifier"），再走该入口。
+        writeValidSpecReceipt(root, gatedSummary);
         const standalone = runHarness(
           harnessDir,
-          ['--phase', 'spec', '--feature', 'demo', '--summary'],
+          ['--sync-closure', '--phase', 'spec', '--feature', 'demo'],
           root,
           { MAISON_GOAL_GATE_HARNESS: undefined },
         );
-        assert(standalone.status === 0, `standalone harness 失败：${standalone.stdout}`);
+        assert(standalone.status === 0, `standalone 闭环失败：${standalone.stdout}\n${standalone.stderr}`);
         const closedSummary = readJson(root, 'doc/features/demo/spec/reports/summary.json');
         assert(closedSummary.receipt_status === 'passed', `standalone 须校验 receipt：${JSON.stringify(closedSummary)}`);
         assert(closedSummary.closure_status === 'closed', `standalone 须正常关环：${JSON.stringify(closedSummary)}`);

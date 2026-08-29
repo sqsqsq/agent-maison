@@ -32,14 +32,16 @@ claimed_attempt_id: ""
 # plan e5b8c3f7：verifier 的机器真源是
 #   doc/features/<feature>/<phase>/reports/verifier.report.<subject>.json
 # （按 subject 分区；当前是哪一份由 summary.verifier_subject_id 决定）
-# 由 SubagentStop hook 在三重身份等值绑定后发布（invocation subject == 终态块回显
-# == summary.verifier_subject_id）。check-receipt 真验真：feature/phase 匹配、agent
+# 由 SubagentStop hook 在四方对账后发布（request 重算 subject == summary.verifier_subject_id
+# == 终态块回显，且 request 的 prompt_path/prompt_sha256 与磁盘原件相符）。check-receipt 真验真：feature/phase 匹配、agent
 # 身份在场、subject 现值、结构合法、verdict 与 BLOCKER 计数一致——**本块手填什么都
 # 不改变判定**。填错只会得到一条 MAJOR 提示，填对也不能让不合格的报告通过。
 #
 # 本块保留至少一个 minor 窗口，供存量回执解析不断裂；新回执照填即可（如实抄机器事实）。
 # 让 verifier 报告出现的正确路径：主 agent 用 Task 触发 subagent_type=verifier，
-# prompt = 该阶段 reports/ai-prompt.md **全文原样投递**（含 verifier 证据身份机器块）。
+# prompt = summary.verifier_request 指向的 verifier.request.<subject>.json **整段 JSON**
+# （verifier 自读其中的 prompt_path）。harness 未输出 request = 本阶段不适用 verifier，
+# 本块留空即可，闭环不要求它。
 verifier_subagent:
   invoked_via: "Task(subagent_type=verifier)"   # 兼容投影；不允许 "told user to run"
   prompt_template: "framework/harness/prompts/verify-<phase>.md"

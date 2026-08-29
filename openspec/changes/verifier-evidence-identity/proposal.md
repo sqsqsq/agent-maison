@@ -13,6 +13,21 @@ SubagentStop hook 自 2026-04-27（`3eee7598`）起，用**触发时刻**的共�
 
 字段面已实抓钉死（Claude Code 2.1.246 发行二进制内的 zod schema 与发射点，见 tasks 附录）：`SubagentStop` 携带 `agent_id` / `agent_transcript_path` / `agent_type` / `last_assistant_message?`，`transcript_path` 指主会话、`agent_transcript_path` 指子代理。身份信息一直都在，只是没被用。
 
+### 修订（plan a9d4e7c2，2026-08-29）：投递协议不可执行，且 verifier 被做成了每阶段仪式
+
+宿主回灌时暴露第二层问题：本 change 定稿的「把 `ai-prompt.md` 全文原样投递给 Task」在
+177KB 样张上既不可执行（有损往返）也不可验证（机器块之外零校验、静默审错）。深挖后定性升级
+——投递只是症状，病根是 **verifier 全链紧耦合**：`policy` 明确说 lite 的 verifier=off，runner
+仍无条件跑 Step 4 装配 prompt 并生成 subject，六份 Skill 仍无条件要求 Task 触发 verifier，
+适用性直到 `check-receipt` 最后一步才被发现。于是「不适用」与「该有却缺失」被混成同一种 missing。
+
+同时，「subject 跨闭环稳定」这条承诺本身是复杂度泉眼：为了让零改动重跑不换代，它催生了
+canonical script-report 投影、prompt 规范化摘要、`CheckResult.details_material`、
+`check-telemetry.ts` 双文本渲染这一整套持续增生的子系统，已消耗一次用户裁决与多轮评审。
+
+本次修订按用户定稿收口，**不另立新 change**：verifier 降为按能力启用；投递改短 request JSON；
+稳定 subject 子系统连根裁撤。
+
 ## What Changes
 
 - **subject 由 runner 单点生成且跨闭环稳定**：`harness-runner` 在写 base summary 时派生 `verifier_subject_id = sha256(feature | phase | script-report 物质哈希 | 去 subject 块后的 ai-prompt 物质哈希 | gate fingerprint | source_commit | worktree_digest)`，写入 summary 并嵌入 `ai-prompt.md` 的版本化机器块。**明确排除整份 summary SHA**——base summary 以 `closure_status=open` 落盘、finalizer 改写为 closed，用整份 SHA 会让正常闭环即自锁。两个输入都**不按格式化文本哈希**：script-report 走结构化投影（剔除 `timestamp` / `project_root` / 逐项自由文本里的耗时），prompt 走装配侧同源的规范化摘要（只把 `{timestamp}` 与 `{script_report}` 换成占位符）。对最终自由文本叠 ISO 正则两头都不准——抓不到 `耗时 … ms` 这类非 ISO telemetry（零改动重跑也换代 → 自锁，而"跑完 verifier 再跑一次 harness 关环"是一等闭环路径），却会抹掉业务正文里真实的 ISO 截止时间（需求真变了却不换代）。
@@ -31,6 +46,49 @@ SubagentStop hook 自 2026-04-27（`3eee7598`）起，用**触发时刻**的共�
 - **manifest / attestation 改绑 JSON**：`PHASE_REPORTS_OUTPUT_FILES` 由 `verifier.report.md` 切到 `verifier.report.json`；review closure attestation 的 `verifier_report_sha256` 从 `sha256File(md)` 改绑**身份验真通过**的 JSON 文件哈希，并新增 `verifier_subject_id` / `verifier_result_sha256` 两个可读锚，schema 演进到 1.1。
 - **codeagent 已实抓并确认共享绑定成立（2026-08-29 宿主采集）**：消费的四个字段全在场且语义同构，子代理转录首条 user prompt 复现了原样投递的 Task prompt，无需 adapter-specific 分支。它多出 `is_kia_repo` / `process_id` 两个本 hook 不消费的字段（未知字段一律忽略），少一个 claude 侧本就可选的 `prompt_id`。**一处已实证差异**：codeagent 不按 agent type 过滤 SubagentStop 的 matcher，注册项一律触发（`matcher: "verifier"` 对 `agent_type: ""` 的子 agent 同样触发）。这不改变任何结论——非 verifier 子 agent 的转录里没有机器块，一律 `invocation_subject_absent` → bedside——但它推翻了"触发即证明类型"这条理由，故 `agent_type` 不 fail-closed 的依据改为"它根本不参与绑定"，并补了一条过度触发的回归。
 - **不做**：数据库、签名体系、常驻服务、全局锁、额外账本；不禁并发 verifier（并发是被支持的正常形态，收口靠身份而非互斥）。goal headless 保留现有非权威 bedside 旁路（携 subject），不扩入 goal closure，`goal-runner` spec 不动。
+
+### 修订项（plan a9d4e7c2，覆盖上面若干条）
+
+- **verifier 是能力，不是仪式**：新增共享纯函数 `resolveVerifierPlan`（`harness/scripts/utils/verifier-plan.ts`），
+  一次解析 workflow 声明 / feature track / evidence policy / adapter 能力，输出
+  `disabled | enabled | blocked`；runner 生产端、check-receipt、Skill 指引、hook 恢复话术全员消费同一结果。
+  解析对 interactive 与 goal 生产侧**都生效**（否则 lite×goal 关不掉无条件装配）；adapter 能力的
+  `blocked` 判定本轮**仅 interactive**（goal 的发布权责与 bedside 特例不变）。**不落 summary 快照**。
+- **`disabled` 缺席即为零**：不生成 `ai-prompt.md` / request / subject，不调用、不校验。workflow 未声明
+  `verifier_prompt` = 该 phase 不具备该能力（**不得** fallback 模板擅自造一个）；磁盘上残留的旧
+  prompt/request/report **永远**不能激活被判 disabled 的能力，`enabled→disabled` 也无需清理旧文件。
+- **`blocked` 不禁基本诊断**：脚本门禁照常完整执行；脚本 FAIL 如实报真因，脚本 PASS 才报
+  `INCOMPLETE / verifier_provider_unavailable`。实现复用既有 `externalBlocked` / `capability_missing`
+  归因，不新建状态机。
+- **投递协议改短 request JSON**（取代「全文原样投递」与 ai-prompt 机器块）：runner 在 `enabled` 时写
+  `verifier.request.<subject>.json` 并记入 `summary.verifier_request`；Task prompt = 该 JSON 整段；
+  verifier 按其中的 `prompt_path` 自读磁盘原件。hook 发布前四方对账：request 自述 subject == 按字段
+  重算的 subject == `summary.verifier_subject_id` == 终态块回显，且 `prompt_path` 等于 config 推导的
+  canonical 路径、`prompt_sha256` 等于磁盘实测。首条 user prompt 必须**恰好**解析为一份 request
+  （手抄、改字段、前后夹带一律 fail-closed）。
+- **删除「稳定 subject」承诺，subject 改为按审查材料寻址**：`subject_id = sha256(request 其余字段)`，
+  `prompt_sha256` 直接哈希磁盘 `ai-prompt.md` 字节——**没有 canonical 投影**。相同材料复用同一 subject
+  （既有验真 JSON 照用、直接进 receipt），材料变化必换 subject；不加 nonce/UUID/run sequence，
+  也不承诺跨 harness run 稳定。时间戳导致换代属**合法结果**；为提高复用率改造 prompt producer
+  被明确禁止（投影机制换名回潮）。闭环纪律固定为 `harness → verifier → receipt → --sync-closure`
+  （`--sync-closure` 不重跑脚本 harness、不重发 request，因而不会把刚发布的证据换代掉）。
+- **净删清单**：`canonicalScriptReportDigest`、`assembleAIPrompt` 的 `onCanonicalPromptDigest` 回调、
+  `CheckResult.details_material`、`harness/scripts/utils/check-telemetry.ts` 与其五处生产端双文本渲染、
+  ai-prompt 的 subject 机器块（`renderSubjectBlock` / `withSubjectBlock` / `stripSubjectBlock` /
+  `parseSubjectBlock`）、旧 `computeVerifierSubjectId` 输入面、以及「subject 在场与否 = 协议代际 ∧ 适用性」
+  的分派。**保留**：证据按 subject 分区、同 subject 的 CAS/conflict、JSON 唯一机器真源。
+- **分派重键**：check-receipt 的代际判据从「subject 在不在」改为 `summary.schema_version`；
+  适用性来自 `resolveVerifierPlan`；身份仍是 subject。三职分离。
+- **summary 升级到 1.3**：`ai_prompt` / `verifier_subject_id` / `verifier_request` 条件化（仅 enabled 在场）。
+  消费面整体迁移到「版本集合」而非等值字面量：schema/types、runner writer 与兼容读取、finalizer 的
+  final writer 与 partial recovery、quality-axes、assess、upstream-verdict-gate、
+  verify-feature-completion、check-ut 的 attestation-first 探测。1.2 仍作为可读的上一代闭环域。
+- **adapter 能力声明**：`adapter.yaml` 新增 `verifier_capability`（`transport` / `publisher` / `modes`），
+  只登记**实测过**的 mode——claude / codeagent 登记 `interactive`；headless/goal 未验收不预填。
+  未声明 = 无能力（不是降级可用）。
+- **闭环文字去「固定四件套」**：**仅** full/receipt 闭环域改为「script PASS ∧ required 证据齐即 closed」；
+  lite 的 change/coding/exit 与 receipt `not_applicable` 机制**原样不动**，不改写 lite closure、
+  phase-state 或 goal 状态机。
 
 ## Capabilities
 
@@ -54,3 +112,16 @@ None.
 - Phases affected: 全部跑 verifier 的 feature 阶段；goal closure 与 `goal-runner` spec 不变。
 - 与 active changes 的关系：`ut-direct-attestation-baseline` 与 `contract-unified-parse-boundary`（均 2026-08-28）都未触碰本链路（git 核实），delta 无重叠。本 change 保持 `ut-direct-attestation-baseline` 定稿的 attestation loader 语义不变，只演进 attestation 的 verifier 绑定字段。
 - `MIGRATION.md`: 存量已 closed 且 manifest 仍 fresh 的阶段走 grandfather，零动作；未闭环的存量阶段需**重跑 harness**（生成 subject 化 summary/ai-prompt，分钟级）→ 原样投递 ai-prompt.md 重跑 verifier → 重跑 check-receipt。不改业务代码、不从 spec 重走。
+
+### 修订影响（plan a9d4e7c2）
+
+- 新增 `harness/scripts/utils/verifier-plan.ts`（能力解析 SSOT）与 `harness/scripts/utils/verifier-request.ts`
+  （request 与 subject 派生 SSOT）；删除 `harness/scripts/utils/check-telemetry.ts`。
+- `harness/scripts/utils/verifier-subject.ts` 收窄为 subject 形态 / 分区文件名 / 终态块 / 结论指纹。
+- `agents/adapter-schema.yaml` 新增 `verifier_capability` 字段说明；`agents/claude/adapter.yaml` 与
+  `agents/codeagent/adapter.yaml` 各登记一条 `modes: ["interactive"]`。
+- `profiles/hmos-app/harness/ut-host-impl.ts`（×3）与 `coding-host-rules.ts`（×2）的双文本渲染回落为
+  单一 `details`。
+- `MIGRATION.md` 口径更新：已 closed 且 manifest 仍 fresh 的阶段（含 1.2 代）走 grandfather，零动作；
+  3.0.0 生成而**未闭环**的 subject/ai-prompt 不继续发布——升级后只重跑当前 phase 的 harness 生成新
+  request → 投 request JSON 跑 verifier → check-receipt。不回退业务代码、不重写上游产物、不要求提交。

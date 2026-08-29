@@ -1,0 +1,268 @@
+// ============================================================================
+// verifier-plan.unit.test.ts — verifier 能力解析矩阵（plan a9d4e7c2 T1）
+// ============================================================================
+// 冻结的是**行为矩阵**，不是实现：verifier 从「每阶段必跑的仪式」改为按
+// workflow / track / policy / adapter 能力动态启用的能力，三态 disabled|enabled|blocked
+// 由 resolveVerifierPlan 一次解析、全员消费。
+//
+// 这一套穷举四个输入维度的组合，并把三条最容易回潮的边界钉死：
+//   · lite（含 lite×goal）恒 disabled——policy 说 not_applicable 就是"这条轴不存在"；
+//   · workflow 未声明 verifier_prompt = 不适用，**不得** fallback 模板擅自造一个；
+//   · adapter 无能力只在 interactive 判 blocked，goal 不因此被一刀切成 INCOMPLETE。
+// ============================================================================
+
+import * as path from 'path';
+
+import { resolveVerifierPlan, workflowVerifierPrompt } from '../../scripts/utils/verifier-plan';
+import type { VerifierCapabilityDeclaration } from '../../scripts/utils/verifier-plan';
+import {
+  loadVerifierCapabilityDeclaration,
+  parseVerifierCapabilityDeclaration,
+  resolveVerifierCapability,
+} from '../../scripts/utils/adapter-catalog';
+import { resolveEvidencePolicy, type RuntimeContext, type RuntimeMode } from '../../scripts/utils/runtime-policy';
+import { loadWorkflowSpec } from '../../workflow-loader';
+
+export interface UnitCaseResult {
+  name: string;
+  ok: boolean;
+  error?: string;
+}
+
+const FRAMEWORK_SOURCE_ROOT = path.resolve(__dirname, '..', '..', '..');
+const WORKFLOW_NAME = 'spec-driven';
+
+function assert(cond: boolean, msg: string): void {
+  if (!cond) throw new Error(msg);
+}
+
+const CAPABLE: VerifierCapabilityDeclaration = {
+  transport: 'repo_file_request',
+  publisher: 'subagent_stop',
+  modes: ['interactive'],
+};
+
+function ctx(mode: RuntimeMode, phase: string): RuntimeContext {
+  return {
+    mode,
+    adapter: 'claude',
+    phase,
+    workflow: 'spec-driven',
+    can_prompt_user: mode === 'interactive',
+    can_collect_usage: false,
+  };
+}
+
+/** 与生产同源：policy 一律经 resolveEvidencePolicy 求解，测试里不手搓 policy。 */
+function planFor(opts: {
+  phase: string;
+  track: 'full' | 'lite';
+  mode: RuntimeMode;
+  balanced?: boolean;
+  capability?: VerifierCapabilityDeclaration | null;
+  workflowPrompt?: string | null;
+  phaseDisabledByProfile?: boolean;
+}) {
+  const spec = loadWorkflowSpec(FRAMEWORK_SOURCE_ROOT, WORKFLOW_NAME);
+  const policy = resolveEvidencePolicy(
+    opts.track,
+    ctx(opts.mode, opts.phase),
+    opts.balanced ? { evidence_profile: 'balanced' } : null,
+  );
+  return resolveVerifierPlan({
+    phase: opts.phase,
+    track: opts.track,
+    runtimeMode: opts.mode,
+    policy,
+    workflowVerifierPrompt:
+      opts.workflowPrompt === undefined ? workflowVerifierPrompt(spec, opts.phase) : opts.workflowPrompt,
+    phaseDisabledByProfile: opts.phaseDisabledByProfile ?? false,
+    adapterCapability: opts.capability === undefined ? CAPABLE : opts.capability,
+    adapterName: 'claude',
+  });
+}
+
+// --------------------------------------------------------------------------
+// 1. lite 全链零 verifier —— 含 lite×goal（生产路由矛盾的收口点）
+// --------------------------------------------------------------------------
+function case1_liteIsAlwaysDisabled(): void {
+  for (const mode of ['interactive', 'goal', 'headless'] as RuntimeMode[]) {
+    for (const phase of ['change', 'coding', 'exit']) {
+      const plan = planFor({ phase, track: 'lite', mode });
+      assert(
+        plan.mode === 'disabled',
+        `lite × ${mode} × ${phase} 必须 disabled，实得 ${plan.mode}/${plan.reason}`,
+      );
+    }
+  }
+  // lite×coding 尤其关键：workflow **声明了** verifier_prompt（full 轨要用），
+  // 但 lite 的 evidence policy 判 verifier=off —— 声明在场不等于本轮启用。
+  // 这一条也是 lite×goal 的收口点：goal 模式不得把它重新升级成"必跑"。
+  const liteCoding = planFor({ phase: 'coding', track: 'lite', mode: 'goal' });
+  assert(
+    liteCoding.verifier_prompt === 'prompts/verify-coding.md',
+    '构造性前提：coding 确实声明了 verifier_prompt（否则本例退化为"未声明"）',
+  );
+  assert(
+    liteCoding.reason === 'policy_off',
+    `lite×goal×coding 应由 policy 关掉（LITE_EVIDENCE.verifier='off'），实得 ${liteCoding.reason}`,
+  );
+}
+
+// --------------------------------------------------------------------------
+// 2. workflow 未声明 = 不适用（缺席即为零，不得 fallback 造模板）
+// --------------------------------------------------------------------------
+function case2_workflowSilenceMeansNotApplicable(): void {
+  const spec = loadWorkflowSpec(FRAMEWORK_SOURCE_ROOT, WORKFLOW_NAME);
+  // 真实数据：change / exit / 全部 global phase 都没有 verifier_prompt。
+  for (const phase of ['change', 'exit', 'catalog', 'glossary', 'docs', 'init']) {
+    assert(
+      workflowVerifierPrompt(spec, phase) === null,
+      `构造性前提：${phase} 在 workflow 里不应声明 verifier_prompt`,
+    );
+  }
+  const plan = planFor({ phase: 'catalog', track: 'full', mode: 'interactive' });
+  assert(plan.mode === 'disabled', `未声明的 phase 必须 disabled，实得 ${plan.mode}`);
+  assert(plan.reason === 'workflow_capability_absent', `实得 reason=${plan.reason}`);
+  assert(plan.verifier_prompt === null, '未声明时不得凭空给出一个模板路径');
+
+  // 未知 phase / 空 spec 同样是"不适用"，不是崩栈也不是默认启用。
+  assert(workflowVerifierPrompt(spec, 'no-such-phase') === null, '未知 phase 应为 null');
+  assert(workflowVerifierPrompt(null, 'spec') === null, 'spec 不可用时应为 null');
+}
+
+// --------------------------------------------------------------------------
+// 3. full + 已登记 adapter = enabled；balanced 档按保留集分流
+// --------------------------------------------------------------------------
+function case3_fullEnabledAndBalancedSplit(): void {
+  for (const phase of ['spec', 'plan', 'coding', 'review', 'ut', 'testing']) {
+    const plan = planFor({ phase, track: 'full', mode: 'interactive' });
+    assert(plan.mode === 'enabled', `full×${phase} 应 enabled，实得 ${plan.mode}/${plan.reason}`);
+    assert(plan.reason === 'policy_required', `实得 reason=${plan.reason}`);
+    assert(Boolean(plan.verifier_prompt), 'enabled 必须带出 workflow 声明的模板路径');
+  }
+  // balanced：保留集内仍 required，集外 off（零产物，但不是"缺失"）。
+  assert(planFor({ phase: 'spec', track: 'full', mode: 'interactive', balanced: true }).mode === 'enabled', 'balanced 保留 spec');
+  assert(planFor({ phase: 'coding', track: 'full', mode: 'interactive', balanced: true }).mode === 'enabled', 'balanced 保留 coding');
+  const off = planFor({ phase: 'review', track: 'full', mode: 'interactive', balanced: true });
+  assert(off.mode === 'disabled' && off.reason === 'policy_off', `balanced×review 应 policy_off，实得 ${off.mode}/${off.reason}`);
+}
+
+// --------------------------------------------------------------------------
+// 4. adapter 无能力 → blocked（仅 interactive）；goal 不因此被一刀切
+// --------------------------------------------------------------------------
+function case4_providerUnavailableOnlyBlocksInteractive(): void {
+  const blocked = planFor({ phase: 'spec', track: 'full', mode: 'interactive', capability: null });
+  assert(blocked.mode === 'blocked', `无能力 adapter 应 blocked，实得 ${blocked.mode}`);
+  assert(blocked.reason === 'verifier_provider_unavailable', `实得 reason=${blocked.reason}`);
+
+  // goal / headless：本轮**不**按 adapter 能力判 blocked（发布权责另立，bedside 照旧）。
+  for (const mode of ['goal', 'headless'] as RuntimeMode[]) {
+    const plan = planFor({ phase: 'spec', track: 'full', mode, capability: null });
+    assert(
+      plan.mode === 'enabled',
+      `full×${mode} 的生产协议照常迁移，不得因 adapter 未登记该模式而 blocked，实得 ${plan.mode}/${plan.reason}`,
+    );
+  }
+
+  // 声明了但没登记 interactive（只登记 goal）→ interactive 仍无能力。
+  const goalOnly: VerifierCapabilityDeclaration = { ...CAPABLE, modes: ['goal'] };
+  assert(
+    planFor({ phase: 'spec', track: 'full', mode: 'interactive', capability: goalOnly }).mode === 'blocked',
+    'modes 未含 interactive 时 interactive 无能力',
+  );
+
+  // policy=off 优先于 adapter 能力：关掉的能力不需要 provider。
+  const offNoProvider = planFor({
+    phase: 'review',
+    track: 'full',
+    mode: 'interactive',
+    balanced: true,
+    capability: null,
+  });
+  assert(offNoProvider.mode === 'disabled', `policy=off 时不得报 blocked，实得 ${offNoProvider.mode}`);
+}
+
+// --------------------------------------------------------------------------
+// 5. profile 禁用 phase 优先于一切
+// --------------------------------------------------------------------------
+function case5_profileDisabledWins(): void {
+  const plan = planFor({
+    phase: 'coding',
+    track: 'full',
+    mode: 'interactive',
+    phaseDisabledByProfile: true,
+    capability: null, // 即使 adapter 也没能力，也不得报 blocked
+  });
+  assert(plan.mode === 'disabled', `profile 禁用时必须 disabled，实得 ${plan.mode}`);
+  assert(plan.reason === 'phase_disabled_by_profile', `实得 reason=${plan.reason}`);
+}
+
+// --------------------------------------------------------------------------
+// 6. adapter 声明解析：缺一即不完整；磁盘真源与运行时一致
+// --------------------------------------------------------------------------
+function case6_capabilityDeclarationParsing(): void {
+  assert(!parseVerifierCapabilityDeclaration(undefined).ok, '未声明 = 无能力');
+  assert(!parseVerifierCapabilityDeclaration(null).ok, 'null = 无能力');
+  assert(!parseVerifierCapabilityDeclaration({ transport: 'repo_file_request' }).ok, '缺 publisher/modes = 不完整');
+  assert(
+    !parseVerifierCapabilityDeclaration({ transport: 'repo_file_request', publisher: 'subagent_stop', modes: [] }).ok,
+    'modes 空数组 = 无能力（不许"声明了但一个都没实测"）',
+  );
+  assert(
+    !parseVerifierCapabilityDeclaration({
+      transport: 'repo_file_request',
+      publisher: 'subagent_stop',
+      modes: ['interactive'],
+      extra: 1,
+    }).ok,
+    '未知键 = 不完整（防写错字段名却"看起来齐了"）',
+  );
+  const ok = parseVerifierCapabilityDeclaration({
+    transport: 'repo_file_request',
+    publisher: 'subagent_stop',
+    modes: ['interactive', 'interactive'],
+  });
+  assert(ok.ok && ok.declaration.modes.length === 1, '重复 mode 应去重');
+
+  // 磁盘真源：claude / codeagent 已实测 interactive；未声明的 adapter 一律无能力。
+  for (const adapter of ['claude', 'codeagent']) {
+    const parsed = loadVerifierCapabilityDeclaration(FRAMEWORK_SOURCE_ROOT, adapter);
+    assert(parsed.ok, `${adapter} 应声明 verifier_capability：${parsed.ok ? '' : parsed.reason}`);
+    if (parsed.ok) {
+      assert(parsed.declaration.modes.includes('interactive'), `${adapter} 应登记 interactive`);
+      assert(
+        !parsed.declaration.modes.includes('headless') && !parsed.declaration.modes.includes('goal'),
+        `${adapter} 的 headless/goal 尚未验收，不得预填（入册纪律）`,
+      );
+    }
+  }
+  assert(
+    resolveVerifierCapability(FRAMEWORK_SOURCE_ROOT, 'generic') === null,
+    'generic 未声明 verifier_capability → 无能力（不得按"有没有 hooks 目录"推断）',
+  );
+  assert(resolveVerifierCapability(FRAMEWORK_SOURCE_ROOT, '') === null, '空 adapter 名 → 无能力');
+  assert(resolveVerifierCapability(FRAMEWORK_SOURCE_ROOT, 'no-such-adapter') === null, '不存在的 adapter → 无能力');
+}
+
+const CASES: Array<{ name: string; fn: () => void }> = [
+  { name: '① lite（interactive/goal/headless × change/coding/exit）恒 disabled，零 verifier 产物', fn: case1_liteIsAlwaysDisabled },
+  { name: '② workflow 未声明 verifier_prompt = 不适用，不得 fallback 造模板', fn: case2_workflowSilenceMeansNotApplicable },
+  { name: '③ full + 已登记 adapter = enabled；balanced 按保留集分流 off', fn: case3_fullEnabledAndBalancedSplit },
+  { name: '④ adapter 无能力 → 仅 interactive 判 blocked；goal 生产协议照常迁移', fn: case4_providerUnavailableOnlyBlocksInteractive },
+  { name: '⑤ profile 禁用 phase 优先于 policy 与 adapter 能力', fn: case5_profileDisabledWins },
+  { name: '⑥ verifier_capability 声明解析：缺一即不完整；磁盘真源只登记实测 mode', fn: case6_capabilityDeclarationParsing },
+];
+
+export async function runAll(): Promise<UnitCaseResult[]> {
+  const results: UnitCaseResult[] = [];
+  for (const c of CASES) {
+    try {
+      c.fn();
+      results.push({ name: c.name, ok: true });
+    } catch (err) {
+      results.push({ name: c.name, ok: false, error: (err as Error).message });
+    }
+  }
+  return results;
+}

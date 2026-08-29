@@ -1,12 +1,13 @@
 // ============================================================================
 // verifier-identity-fixture.ts — verifier 证据身份绑定回归的共享夹具
 // ============================================================================
-// plan e5b8c3f7 T5。提供三样东西，全部对齐**生产真源**，不手抄格式：
+// plan a9d4e7c2 T6（承接 e5b8c3f7 T5）。提供三样东西，全部对齐**生产真源**，不手抄格式：
 //   · makeVerifierProject / seedPhase：可跑 check-receipt 的最小 full-track 工程；
 //   · runVerifierHook：真 spawn SubagentStop hook（agents/claude/templates/hooks/…），
 //     payload 形态照 Claude Code 2.1.246 发行二进制内的 zod schema 与发射点构造；
-//   · buildInvocationPrompt / buildResultMessage：调用侧与结论侧的机器块，直接调
-//     scripts/utils/verifier-subject.ts 渲染，避免"测的是幻想中的格式"。
+//   · buildInvocationPrompt / buildResultMessage：调用侧短 request JSON 与结论侧终态块，
+//     直接调 scripts/utils/verifier-request.ts / verifier-subject.ts 产出，
+//     避免"测的是幻想中的格式"。
 // ============================================================================
 
 import * as fs from 'fs';
@@ -17,12 +18,16 @@ import { spawn, spawnSync, type SpawnSyncReturns } from 'child_process';
 import { featurePhaseReportsDir } from '../../config';
 import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
 import {
-  computeVerifierSubjectId,
-  renderSubjectBlock,
   RESULT_BLOCK_CLOSE,
   RESULT_BLOCK_OPEN,
-  verifierReportJsonFilename,
 } from '../../scripts/utils/verifier-subject';
+import {
+  buildVerifierRequest,
+  computePromptSha256,
+  renderVerifierRequest,
+  verifierRequestFilename,
+} from '../../scripts/utils/verifier-request';
+import { SUMMARY_SCHEMA_VERSION_CURRENT } from '../../scripts/utils/quality-axes';
 
 /** framework 源仓根（harness 的上一层）——gate 指纹与 hook 模板都锚在这里。 */
 export const FRAMEWORK_SOURCE_ROOT = path.resolve(__dirname, '..', '..', '..');
@@ -127,43 +132,57 @@ export function reportsDirOf(root: string, feature: string, phase: string): stri
 }
 
 export interface SeedPhaseOptions {
-  /** 省略=按生产口径派生一个稳定 subject；null=**不写** subject（旧件形态） */
+  /** 省略=按生产口径（request 字段）派生 subject；null=**不写** request/subject（能力未启用/旧件形态） */
   subjectId?: string | null;
   closureStatus?: 'open' | 'closed';
   verdict?: 'PASS' | 'FAIL' | 'INCOMPLETE';
-  /** 参与 subject 派生的"prompt 物质内容"，用来构造换代（改内容=换 subject） */
+  /** ai-prompt.md 正文——subject 直接哈希这份磁盘字节，改内容即换代 */
   promptBody?: string;
+  /** 写入 summary 的代际（迁移矩阵回归用；缺省=当代） */
+  schemaVersion?: string;
 }
 
 /**
- * 写入一个阶段的 harness 产物（summary/trace/context-exploration + ai-prompt 机器块）。
- * subject 用生产函数派生，保证与 runner 同源。
+ * 写入一个阶段的 harness 产物（summary/trace/context-exploration + ai-prompt + request）。
+ * subject 与 request 都由生产函数产出，保证与 runner 同源。
  */
 export function seedPhase(
   root: string,
   feature: string,
   phase: string,
   opts: SeedPhaseOptions = {},
-): { reportsDir: string; subjectId: string; promptPath: string } {
+): { reportsDir: string; subjectId: string; promptPath: string; requestPath: string } {
   const reportsDir = reportsDirOf(root, feature, phase);
   fs.mkdirSync(reportsDir, { recursive: true });
   const gateFingerprint = computeGateFingerprint(FRAMEWORK_SOURCE_ROOT, phase);
   const promptBody = opts.promptBody ?? `# verify-${phase}\n\n审查 ${feature}/${phase} 的阶段产物。\n`;
-  const subjectId =
-    opts.subjectId === undefined
-      ? computeVerifierSubjectId({
+  const promptPath = path.join(reportsDir, 'ai-prompt.md');
+  const promptRel = path.relative(root, promptPath).replace(/\\/g, '/');
+  // 先落 prompt：subject 按**磁盘实际字节**寻址，没有 canonical 投影。
+  writeFile(promptPath, promptBody);
+
+  const request =
+    opts.subjectId === null
+      ? null
+      : buildVerifierRequest({
           feature,
           phase,
-          script_report_material: `script-${feature}-${phase}`,
-          ai_prompt_material: `prompt-${feature}-${phase}-${promptBody.length}`,
+          prompt_path: promptRel,
+          prompt_sha256: computePromptSha256(promptBody),
           gate_fingerprint: gateFingerprint,
           source_commit_sha: null,
           worktree_digest: null,
-        })
-      : opts.subjectId;
+        });
+  // 显式 subjectId 覆盖：构造「summary 现值 ≠ request 声明」这类负例。
+  const subjectId = opts.subjectId === undefined ? (request?.subject_id ?? '') : (opts.subjectId ?? '');
+  let requestPath = '';
+  if (request) {
+    requestPath = path.join(reportsDir, verifierRequestFilename(request.subject_id));
+    writeFile(requestPath, renderVerifierRequest(request));
+  }
 
   const summary: Record<string, unknown> = {
-    schema_version: '1.2',
+    schema_version: opts.schemaVersion ?? SUMMARY_SCHEMA_VERSION_CURRENT,
     phase,
     feature,
     verdict: opts.verdict ?? 'PASS',
@@ -173,7 +192,11 @@ export function seedPhase(
     ...(gateFingerprint ? { gate_fingerprint: gateFingerprint } : {}),
     closure_status: opts.closureStatus ?? 'open',
   };
-  if (subjectId) summary.verifier_subject_id = subjectId;
+  if (subjectId) {
+    summary.verifier_subject_id = subjectId;
+    summary.ai_prompt = promptRel;
+    if (requestPath) summary.verifier_request = path.relative(root, requestPath).replace(/\\/g, '/');
+  }
   writeFile(path.join(reportsDir, 'summary.json'), JSON.stringify(summary, null, 2));
   writeFile(
     path.join(reportsDir, 'trace.json'),
@@ -181,26 +204,15 @@ export function seedPhase(
   );
   writeFile(path.join(root, 'doc', 'features', feature, phase, 'context-exploration.md'), '# context exploration\n');
 
-  const promptPath = path.join(reportsDir, 'ai-prompt.md');
-  writeFile(
-    promptPath,
-    subjectId
-      ? `${promptBody.trimEnd()}\n${renderSubjectBlock({
-          subject_id: subjectId,
-          feature,
-          phase,
-          report_path: path
-            .relative(root, path.join(reportsDir, verifierReportJsonFilename(subjectId)))
-            .replace(/\\/g, '/'),
-        })}`
-      : promptBody,
-  );
-  return { reportsDir, subjectId: subjectId ?? '', promptPath };
+  return { reportsDir, subjectId, promptPath, requestPath };
 }
 
-/** 调用侧 prompt = ai-prompt.md 全文原样投递（生产纪律）。 */
-export function buildInvocationPrompt(promptPath: string): string {
-  return fs.readFileSync(promptPath, 'utf-8');
+/**
+ * 调用侧 Task prompt = 那份 request JSON **整段**（生产纪律）。
+ * 大文件（真实 ai-prompt.md 可达上百 KB）不过传输面——verifier 自读 prompt_path。
+ */
+export function buildInvocationPrompt(requestPath: string): string {
+  return fs.readFileSync(requestPath, 'utf-8');
 }
 
 /** verifier 终态块（唯一版本化结论出口）。 */
@@ -291,7 +303,7 @@ export function runVerifierRound(args: {
   root: string;
   feature: string;
   phase: string;
-  promptPath: string;
+  requestPath: string;
   subjectId: string;
   verdict?: 'PASS' | 'FAIL';
   blockerCount?: number;
@@ -305,7 +317,7 @@ export function runVerifierRound(args: {
   const transcript = writeAgentTranscript(
     args.root,
     args.transcriptName ?? `${args.feature}-${args.phase}`,
-    buildInvocationPrompt(args.promptPath),
+    buildInvocationPrompt(args.requestPath),
   );
   return runVerifierHook(
     args.root,
@@ -457,7 +469,7 @@ export function spawnVerifierRound(args: {
   root: string;
   feature: string;
   phase: string;
-  promptPath: string;
+  requestPath: string;
   subjectId: string;
   verdict?: 'PASS' | 'FAIL';
   agentId: string;
@@ -469,7 +481,7 @@ export function spawnVerifierRound(args: {
   delete env.MAISON_GOAL_RUNNER;
   if (args.casDelayMs) env.MAISON_VERIFIER_HOOK_TEST_CAS_DELAY_MS = String(args.casDelayMs);
 
-  const transcript = writeAgentTranscript(args.root, args.transcriptName, buildInvocationPrompt(args.promptPath));
+  const transcript = writeAgentTranscript(args.root, args.transcriptName, buildInvocationPrompt(args.requestPath));
   const verdict = args.verdict ?? 'PASS';
   const payload = {
     session_id: 'sid-main',
@@ -502,11 +514,11 @@ export function runVerifierRoundsConcurrently(
   root: string,
   feature: string,
   phase: string,
-  promptPath: string,
+  requestPath: string,
   subjectId: string,
   rounds: Array<{ agentId: string; verdict: 'PASS' | 'FAIL'; blockerCount?: number }>,
 ): Promise<HookOutcome[]> {
-  const prompt = buildInvocationPrompt(promptPath);
+  const prompt = buildInvocationPrompt(requestPath);
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     CLAUDE_PROJECT_DIR: root,

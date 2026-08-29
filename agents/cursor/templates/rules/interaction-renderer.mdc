@@ -53,5 +53,5 @@ alwaysApply: true
 - widget 可用却仅给 Markdown 表 + 文本编号，未调 AskQuestion
 - option label 自造路径
 - freeform 提议未展示正文只要用户回 1
-- 阶段四件套 PASS 后自动开下一阶段
+- 阶段闭环（closed）后自动开下一阶段
 - framework-init S4 `buildRunSummary` 后再附 init registry portable 脚注

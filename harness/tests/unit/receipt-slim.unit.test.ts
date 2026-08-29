@@ -20,6 +20,7 @@ import { writeReceiptScaffold } from '../../scripts/utils/receipt-scaffold';
 import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
 import { computeProductWorktreeDigest } from '../../scripts/utils/worktree-digest';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
+import { SUMMARY_SCHEMA_VERSION_CURRENT } from '../../scripts/utils/quality-axes';
 
 export interface UnitCaseResult {
   name: string;
@@ -93,7 +94,10 @@ function buildSlimProject(opts: SlimOpts): { root: string } {
         schema_version: '1.1',
         project_name: 'receipt-slim-test',
         project_profile: { name: 'generic' },
-        agent_adapter: 'generic',
+        // plan a9d4e7c2：full×interactive 的 verifier=required 需要一个**已登记
+        // verifier 能力**的 adapter（generic 没有 SubagentStop 发布链路，恒 blocked）。
+        // 本套用例测的是回执/slim 机制，不是 provider 可用性——用 claude 保持变量单一。
+        agent_adapter: 'claude',
         architecture: {
           outer_layers: [{ id: 'app', can_depend_on: [], intra_layer_deps: 'forbid' }],
           module_inner_layers: ['content'],
@@ -157,7 +161,9 @@ function buildSlimProject(opts: SlimOpts): { root: string } {
     const rel = (name: string): string => `doc/features/demo/${PHASE}/reports/${name}`;
     // t2 v2：完整 schema 必填集（codex BLOCKER3a——测试不得把 schema-invalid 片段固化成绿灯）
     const summary: Record<string, unknown> = {
-      schema_version: '1.0',
+      // plan a9d4e7c2 T3：分派锚从"subject 在不在"重键为 schema_version——夹具必须
+      // 写**当代**版本，否则会被 check-receipt 正确地判成上一代产物走 grandfather 分支。
+      schema_version: SUMMARY_SCHEMA_VERSION_CURRENT,
       phase: PHASE,
       feature: opts.summaryFeature ?? 'demo',
       verdict: opts.summaryVerdict ?? 'PASS',

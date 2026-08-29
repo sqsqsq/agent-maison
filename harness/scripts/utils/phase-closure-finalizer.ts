@@ -1,5 +1,5 @@
 // ============================================================================
-// phase-closure-finalizer.ts — crash-consistent summary 1.2 closure commit
+// phase-closure-finalizer.ts — crash-consistent summary closure commit（1.2/1.3 闭环域）
 // ============================================================================
 
 import * as crypto from 'crypto';
@@ -8,6 +8,7 @@ import * as path from 'path';
 import {
   featurePhaseReportsDir,
   loadFrameworkConfig,
+  resolveFeatureArtifact,
 } from '../../config';
 import { writeReviewClosureAttestation } from './closure-attestation';
 import {
@@ -27,6 +28,15 @@ import {
 } from './phase-evidence-manifest';
 import { isPidAlive } from './goal-run-lock';
 import { validateProjectRelativePath } from './project-relative-path';
+import {
+  buildSummaryRepairCandidates,
+  type RepairCandidateCheckInput,
+} from './repair-candidates';
+import { loadVerifierReportTextOrNull } from './verifier-evidence';
+import {
+  SUMMARY_ASSURANCE_SCHEMA_VERSIONS,
+  SUMMARY_SCHEMA_VERSION_CURRENT,
+} from './quality-axes';
 import type { EvidencePolicySnapshot } from './runtime-policy';
 import type { HarnessRunSummary, Phase } from './types';
 
@@ -392,7 +402,8 @@ function recoverPartialPublication(
       const attemptMatches = !opts.goalAttemptId || !parsed.visual_round?.attempt ||
         parsed.visual_round.attempt === opts.goalAttemptId;
       if (
-        parsed.schema_version !== '1.2' || parsed.feature !== opts.feature || parsed.phase !== opts.phase ||
+        !SUMMARY_ASSURANCE_SCHEMA_VERSIONS.has(String(parsed.schema_version)) ||
+        parsed.feature !== opts.feature || parsed.phase !== opts.phase ||
         parsed.verdict !== 'PASS' || parsed.blocker_count !== 0 || parsed.closure_status !== 'closed' ||
         parsed.closure_commit?.schema_version !== '1.0' ||
         parsed.closure_commit.receipt_path !== opts.receipt.receipt_path ||
@@ -495,9 +506,10 @@ function finalizePhaseClosureUnlocked(
   );
   const summaryPath = path.join(reportsDir, 'summary.json');
   const current = readSummary(summaryPath);
-  if (current.parsed.schema_version !== '1.2') {
+  if (!SUMMARY_ASSURANCE_SCHEMA_VERSIONS.has(String(current.parsed.schema_version))) {
     throw new Error(
-      `legacy summary ${current.parsed.schema_version} 只能标为 legacy_unverified；请重跑 harness 生成 1.2 assurance 后再闭环`,
+      `legacy summary ${current.parsed.schema_version} 只能标为 legacy_unverified；` +
+        `请重跑 harness 生成 ${SUMMARY_SCHEMA_VERSION_CURRENT} assurance 后再闭环`,
     );
   }
   if (current.parsed.verdict !== 'PASS' || current.parsed.blocker_count !== 0) {
@@ -534,6 +546,72 @@ function finalizePhaseClosureUnlocked(
   const recovered = recoverPartialPublication(opts, reportsDir, summaryPath);
   if (recovered) return recovered;
 
+/**
+ * 闭环冻结前重算 verifier 依赖的 repair_candidates（plan a9d4e7c2 P1-5）。
+ *
+ * 为什么必须在这里、而不是首次 writer：首次 writer 跑在 verifier **之前**，那时当前
+ * subject 还没有任何证据；而闭环现在走 `--sync-closure`（它刻意不重跑脚本 harness，
+ * 也就不会再进 writer）。不补这一次，review/UT 的 verifier 逐条 confirmed 候选就永远
+ * 落不进 closed summary——goal 侧的回退候选输入面恒空。
+ *
+ * 纪律：
+ *   · 复用**同一个**共享实现 `buildSummaryRepairCandidates`，不新写一份组装逻辑；
+ *   · verifier 正文取自 `loadVerifierReportTextOrNull`，此刻 summary 已是本轮定稿值，
+ *     loader 按 summary 现值锚定，读到的必然是刚验真通过的那一份；
+ *   · 读不到 script-report / 组装抛错 → 保留 base 已有候选，绝不清空（best-effort 事实层）。
+ */
+function recomputeClosureRepairCandidates(
+  opts: FinalizePhaseClosureOptions,
+  reportsDir: string,
+  base: HarnessRunSummary,
+): HarnessRunSummary['repair_candidates'] | undefined {
+  try {
+    const scriptReportPath = path.join(reportsDir, 'script-report.json');
+    if (!fs.existsSync(scriptReportPath)) return base.repair_candidates;
+    const scriptReport = JSON.parse(fs.readFileSync(scriptReportPath, 'utf8')) as {
+      checks?: Array<Record<string, unknown>>;
+    };
+    const checks = Array.isArray(scriptReport.checks) ? scriptReport.checks : [];
+    const verifierReportText = loadVerifierReportTextOrNull(
+      opts.projectRoot,
+      opts.feature,
+      String(opts.phase),
+      { frameworkRoot: opts.frameworkRoot },
+    );
+    // verifier 无证据（能力 disabled，或该阶段本就不产 verifier 候选）→ 维持 base。
+    if (!verifierReportText) return base.repair_candidates;
+    const reviewDoc =
+      String(opts.phase) === 'review'
+        ? resolveFeatureArtifact(opts.projectRoot, opts.feature, 'review-report.md')
+        : null;
+    const reviewReportText =
+      reviewDoc && reviewDoc.exists ? fs.readFileSync(reviewDoc.actualPath, 'utf8') : null;
+    // 字段名必须是 `failure_kind`——`buildSummaryRepairCandidates` 的输入契约收的是它，
+    // 内部才投影成 `classification`。这里若直接写 `classification`，机器归因会被**静默丢弃**
+    // （`ut_hvigor_test` 的 code_regression、`p0_coverage_integrity` 的同类合取都会失效），
+    // 而 `as never` 恰好把这个结构错误从类型检查里藏了起来。用真实结构子类型接住。
+    const candidateChecks: RepairCandidateCheckInput[] = checks.map((c) => ({
+      id: String(c.id ?? ''),
+      status: String(c.status ?? ''),
+      severity: String(c.severity ?? ''),
+      details: typeof c.details === 'string' ? c.details : '',
+      ...(typeof c.failure_kind === 'string' ? { failure_kind: c.failure_kind } : {}),
+      ...(Array.isArray(c.affected_files) ? { affected_files: c.affected_files as string[] } : {}),
+    }));
+    const candidates = buildSummaryRepairCandidates({
+      phase: String(opts.phase),
+      checks: candidateChecks,
+      reportValidity: (base.report_validity ?? 'PASS') as 'PASS' | 'FAIL' | 'UNVERIFIED',
+      reviewReportText,
+      verifierReportText,
+    });
+    return candidates.length > 0 ? candidates : base.repair_candidates;
+  } catch {
+    // best-effort：重算失败不阻断闭环提交，保留 base 已有候选。
+    return base.repair_candidates;
+  }
+}
+
   const committedAt = (opts.now ? opts.now() : new Date()).toISOString();
   const manifestAbs = phaseEvidenceManifestPath(
     opts.projectRoot,
@@ -547,9 +625,16 @@ function finalizePhaseClosureUnlocked(
     receipt_path: opts.receipt.receipt_path,
     evidence_manifest_path: manifestRel,
   };
+  // plan a9d4e7c2 P1-5：verifier 依赖的候选只有到这一步才有可验真的证据可依。
+  const closureRepairCandidates = recomputeClosureRepairCandidates(opts, reportsDir, current.parsed);
   const finalSummary: HarnessRunSummary = {
+    // plan a9d4e7c2 T3：**保真闭环**——`{...current.parsed}` 原样带走 base 的代际与
+    // verifier 字段；这里绝不把 1.3 回写成 1.2（旧写法会让 open→closed 悄悄降代，
+    // 下游 upstream gate / attestation 立刻把刚闭环的阶段判成上一代）。
     ...current.parsed,
-    schema_version: '1.2',
+    ...(closureRepairCandidates && closureRepairCandidates.length > 0
+      ? { repair_candidates: closureRepairCandidates }
+      : {}),
     receipt_status: 'passed',
     closure_status: 'closed',
     next_action: 'phase_closed_wait_user',

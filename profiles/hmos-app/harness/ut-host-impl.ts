@@ -7,7 +7,6 @@ import * as path from 'path';
 import type { UtHostImpl } from '../../../harness/profile-host-loader';
 import type { CheckContext, CheckResult } from '../../../harness/scripts/utils/types';
 import { compileTestFiles } from '../../../harness/scripts/utils/ts-compile';
-import { renderDetailsWithTelemetry } from '../../../harness/scripts/utils/check-telemetry';
 import { findFilesRecursive } from '../../../harness/scripts/utils/find-files-recursive';
 import {
   isCapabilitySkipped,
@@ -239,11 +238,7 @@ function checkUtTscCompiles(
         description: ruleDesc(ctx, 'structure_checks', 'ut_tsc_compiles'),
         severity: 'BLOCKER',
         status: 'PASS',
-        // 耗时是 runner 遥测：人读留着，subject 派生看 details_material（review 三轮 P1-2）
-        ...renderDetailsWithTelemetry(
-          (t) => `${utFiles.length} 个 UT 文件 tsc --noEmit 通过（耗时 ${t}）。`,
-          `${report.durationMs} ms`,
-        ),
+        details: `${utFiles.length} 个 UT 文件 tsc --noEmit 通过（耗时 ${report.durationMs} ms）。`,
       },
     ];
   }
@@ -273,17 +268,14 @@ function checkUtTscCompiles(
       severity: 'BLOCKER',
       description: ruleDesc(ctx, 'structure_checks', 'ut_tsc_compiles'),
       status: realCompileSkipped ? 'FAIL' : 'WARN',
-      ...renderDetailsWithTelemetry(
-        (t) =>
-          `${groupedByFile.size} 个 UT 文件共 ${report.diagnostics.length} 条 TypeScript Error（耗时 ${t}）。\n` +
-          `按文件：\n${summaryByFile.join('\n')}\n\n` +
-          `前 ${preview.length} 条诊断：\n${preview.join('\n')}\n\n` +
-          (realCompileSkipped
-            ? '注意：ut.compile 已被 profile 声明 SKIP，模拟 tsc 是仅存的编译门禁——本结果保持 FAIL，不降级。'
-            : '口径：模拟 tsc 仅作快速诊断（WARN），编译通过与否以 ut_hvigor_build 真实编译为准；' +
-              '报错落在存量文件且真实编译 PASS 时属模拟器假错，不要为此修改存量代码。'),
-        `${report.durationMs} ms`,
-      ),
+      details:
+        `${groupedByFile.size} 个 UT 文件共 ${report.diagnostics.length} 条 TypeScript Error（耗时 ${report.durationMs} ms）。\n` +
+        `按文件：\n${summaryByFile.join('\n')}\n\n` +
+        `前 ${preview.length} 条诊断：\n${preview.join('\n')}\n\n` +
+        (realCompileSkipped
+          ? '注意：ut.compile 已被 profile 声明 SKIP，模拟 tsc 是仅存的编译门禁——本结果保持 FAIL，不降级。'
+          : '口径：模拟 tsc 仅作快速诊断（WARN），编译通过与否以 ut_hvigor_build 真实编译为准；' +
+            '报错落在存量文件且真实编译 PASS 时属模拟器假错，不要为此修改存量代码。'),
       affected_files: Array.from(groupedByFile.keys()),
       suggestion: realCompileSkipped
         ? 'ut.compile 为 SKIP：请按上方 TS 错误码修正 UT 代码后重跑；常见原因：(1) 符号未 import；(2) 调用签名不符；(3) 类型字面量错误。'
@@ -479,12 +471,10 @@ function checkUtHvigorBuild(
         description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_build'),
         severity: 'BLOCKER',
         status: 'PASS',
-        ...renderDetailsWithTelemetry(
-          (t) =>
-            `全部 ${perModule.length} 个 ohosTest 模块 hvigor 编译通过（累计耗时 ${t}）。${signSkipNote}\n` +
-            perModuleStatusLines.join('\n'),
-          `${perModule.reduce((s, x) => s + x.result.durationMs, 0)} ms`,
-        ),
+        details:
+          `全部 ${perModule.length} 个 ohosTest 模块 hvigor 编译通过（累计耗时 ` +
+          `${perModule.reduce((s, x) => s + x.result.durationMs, 0)} ms）。${signSkipNote}\n` +
+          perModuleStatusLines.join('\n'),
       },
     ];
   }

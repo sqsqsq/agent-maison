@@ -605,7 +605,7 @@ entries:
     skill: "_cross_phase"
     class: enum
     ssot_anchor: "user-confirmation-ux.md §8.3"
-    skill_step: "任一 feature phase 四件套 PASS 后"
+    skill_step: "任一 feature phase 闭环（closed）后"
     portable_menu: "1=执行 assess 推荐动作 2=暂停 3=其它"
     options:
       - value: enter_next

@@ -1,7 +1,6 @@
 // hmos-app / ArkTS 宿主：coding 阶段结构/追溯中与工具链绑定的规则（根 check-coding 仅编排）。
 
 import * as fs from 'fs';
-import { renderDetailsWithTelemetry } from '../../../harness/scripts/utils/check-telemetry';
 import * as path from 'path';
 import type { CheckContext, CheckResult, ContractsSpec } from '../../../harness/scripts/utils/types';
 import { AstAnalyzer, type FileAnalysis } from '../../../harness/scripts/utils/ast-analyzer';
@@ -1194,7 +1193,7 @@ export function resolveCompileBlockingClass(kind: CodingCompileFailureKind): str
 function buildCompilePassDetails(
   res: CompileRunResult,
   modulesCount: number,
-  /** 耗时文本——由 renderDetailsWithTelemetry 注入（人读=真实值，material=占位符） */
+  /** 耗时文本（runner 遥测，直接进 details——subject 不承诺稳定，无需分域投影） */
   durationText: string,
   extraNote?: string,
   selection?: ProductSelection,
@@ -1215,7 +1214,7 @@ function buildCompilePassDetails(
 function buildCompileFailDetails(
   res: CompileRunResult,
   failure: CodingCompileFailureClassification,
-  /** 耗时文本——同上，由 renderDetailsWithTelemetry 注入 */
+  /** 耗时文本（同上） */
   durationText: string,
   extraLines: string[] = [],
   selection?: ProductSelection,
@@ -1423,10 +1422,7 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
       description: desc,
       severity: 'BLOCKER',
       status: 'PASS',
-      ...renderDetailsWithTelemetry(
-        (t) => buildCompilePassDetails(res, modules.length, t, depsAutoFixNote, compileSelection),
-        `${res.durationMs} ms`,
-      ),
+      details: buildCompilePassDetails(res, modules.length, `${res.durationMs} ms`, depsAutoFixNote, compileSelection),
     });
   }
 
@@ -1442,9 +1438,12 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
     description: desc,
     severity: 'BLOCKER',
     status: 'FAIL',
-    ...renderDetailsWithTelemetry(
-      (t) => buildCompileFailDetails(res, failure, t, [...buildTxnRetryLines, ...installExtraLines], compileSelection),
+    details: buildCompileFailDetails(
+      res,
+      failure,
       String(res.durationMs),
+      [...buildTxnRetryLines, ...installExtraLines],
+      compileSelection,
     ),
     affected_files: modules.map(m => `${m.name} (module)`),
     failure_kind: failure.kind,

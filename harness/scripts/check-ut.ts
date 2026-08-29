@@ -123,6 +123,7 @@ import {
   collectContractPackagePathPollution,
   mergePollutionViolations,
 } from './utils/harness-path-guard';
+import { SUMMARY_ASSURANCE_SCHEMA_VERSIONS } from './utils/quality-axes';
 import { extractUtItBlocks } from './utils/ut-it-blocks';
 import { hasExactUtBranchTag, hasExactUtScopeTag } from './utils/ut-tag-match';
 
@@ -1063,7 +1064,7 @@ function probeReviewClosureAttestationPresence(projectRoot: string, feature: str
 
 /**
  * plan f3a9d2c7 T1：review 是否**正式闭环**（判据与 assess.ts observeFeatureState 同口径）：
- *   `summary.schema_version === '1.2'` ∧ `closure_status === 'closed'`
+ *   `summary.schema_version ∈ {1.2, 1.3}` ∧ `closure_status === 'closed'`
  *   ∧ `closure_commit.schema_version === '1.0'`。
  *
  * **为什么必须先判它、再看 attestation**：attestation 的写点在最终 summary rename
@@ -1071,7 +1072,7 @@ function probeReviewClosureAttestationPresence(projectRoot: string, feature: str
  * ——文件存在不代表 closure 已提交。故「文件在不在」不是基线可用性的判据，「closure
  * 提交没提交」才是；顺序倒过来即等于采信一份没人背书的快照。
  *
- * legacy summary（无 schema 1.2 / 无 closure_status）按**未闭环**处理走 fallback，
+ * legacy summary（schema 早于 1.2 / 无 closure_status）按**未闭环**处理走 fallback，
  * 不破存量（与 ut-legacy-coexistence 的共存精神一致）。
  */
 function probeReviewClosureState(ctx: CheckContext): ReviewClosureProbe {
@@ -1143,9 +1144,11 @@ function probeReviewClosureState(ctx: CheckContext): ReviewClosureProbe {
   if (!doc || typeof doc !== 'object') {
     return { state: 'unverifiable', reason: 'review summary.json 顶层不是对象' };
   }
-  if (doc.schema_version !== '1.2') {
+  // plan a9d4e7c2 T3：闭环域 = 1.2 ∪ 1.3（版本集合唯一出处 quality-axes）——
+  // 写死 '1.2' 会让 1.3 的 review closed 突然不能作 attestation-first 基线。
+  if (!SUMMARY_ASSURANCE_SCHEMA_VERSIONS.has(String(doc.schema_version))) {
     return notClosed(
-      `review summary schema_version=${String(doc.schema_version ?? '缺失')}（非 1.2 的 legacy 形态，按未闭环处理）`,
+      `review summary schema_version=${String(doc.schema_version ?? '缺失')}（非 1.2/1.3 的 legacy 形态，按未闭环处理）`,
     );
   }
   if (doc.closure_status !== 'closed') {
@@ -1156,7 +1159,10 @@ function probeReviewClosureState(ctx: CheckContext): ReviewClosureProbe {
       `review summary 缺合法 closure_commit（schema_version=${String(doc.closure_commit?.schema_version ?? '缺失')}）`,
     );
   }
-  return { state: 'closed', reason: 'review 已正式闭环（summary 1.2 + closure_commit 1.0）' };
+  return {
+    state: 'closed',
+    reason: `review 已正式闭环（summary ${String(doc.schema_version)} + closure_commit 1.0）`,
+  };
 }
 
 /**
