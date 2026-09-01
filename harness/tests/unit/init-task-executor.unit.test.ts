@@ -501,7 +501,9 @@ const cases: Array<{ name: string; run: () => void }> = [
       const result = executeInitTask(task, 'run', ctx);
       const skillPath = path.join(root, '.agents', 'skills', 'framework-init', 'SKILL.md');
       assert(fs.existsSync(skillPath), `${result.message}; expected ${skillPath}`);
-      assert(fs.readFileSync(skillPath, 'utf-8').includes('完整流程见 framework/skills/project/framework-init/SKILL.md'));
+      const bridge = fs.readFileSync(skillPath, 'utf-8');
+      assert(bridge.includes('完整 Skill 定义请阅读'));
+      assert(bridge.includes('framework/skills/project/framework-init/SKILL.md'));
       fs.rmSync(root, { recursive: true, force: true });
       clearFrameworkConfigCache();
     },

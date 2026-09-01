@@ -1,6 +1,6 @@
 ---
 name: business-ut
-description: 业务级 UT / DAG（完整流程见 framework/skills/feature/business-ut/SKILL.md）
+description: 业务级 UT / DAG
 ---
 
 > **BLOCKER — Personal setup**：`check-personal-setup.ts --json --ensure`（见 [personal-setup-gate](../../../framework/skills/reference/personal-setup-gate.md)）。

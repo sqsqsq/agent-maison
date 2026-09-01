@@ -57,11 +57,13 @@
 
 | 档 | 触发 | 管线 | 门禁 |
 |---|---|---|---|
-| L0 direct | 小修小改/文案/单文件 bug（非正式维护动作） | 不进管线，直接改 | 无框架门禁，仍须原生 test/lint/build + 第三节红线 |
+| L0 direct | 小修小改/文案/单文件 bug（非正式维护动作）；Git status/diff/add/stage/commit/push、整理暂存区或版本控制归档 | 不进 Skill 管线，直接完成主动作 | 无框架门禁，仍须原生 test/lint/build + 第三节红线 |
 | L1 lite | 单模块 feature、无像素级 UI 保真 | change → coding → exit（[change-lite](framework/skills/feature/change-lite/SKILL.md)） | 编译+lint+`diff_within_scope`+验收 checkbox+条件 UT |
 | L2 full | 跨模块/pixel_1to1/goal 模式 | spec→plan→coding→review→ut→testing 全链 | 每阶段四重闭环 |
 
 **一票升 full**（命中任一）：pixel_1to1 意图；明确跨模块信号；goal 模式运行。lite 实施中出现 scope 越界/跨模块信号→停下走升档确认（`feature.track`）。CU-bound 的 lite Feature 与 full 共用同一 `contracts.yaml.change_unit` sidecar 承载机器映射——lite 轻在施工阶段与文档规模，不免除 CU 闭环所需机器契约。
+
+**主动作优先**：仅出现 framework、Framework 产物或衍生物名词不构成 framework-init 意图；Git/SCM 主动作保持 L0。明确“commit 后执行 `/framework-init`”按顺序拆分，Git-only/停止 init 不得自行续跑。
 
 **修正三问**（中途 NL 修正必答，先分层再动手）：
 

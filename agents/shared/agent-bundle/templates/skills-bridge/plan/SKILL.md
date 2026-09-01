@@ -1,6 +1,6 @@
 ---
 name: plan
-description: spec → plan（plan.md）（完整流程见 framework/skills/feature/plan/SKILL.md）
+description: spec → plan（plan.md）
 ---
 
 > **BLOCKER — Personal setup**：`check-personal-setup.ts --json --ensure`（见 [personal-setup-gate](../../../framework/skills/reference/personal-setup-gate.md)）。

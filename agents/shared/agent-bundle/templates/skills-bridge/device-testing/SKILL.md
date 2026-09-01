@@ -1,6 +1,6 @@
 ---
 name: device-testing
-description: 真机测试计划与报告（完整流程见 framework/skills/feature/device-testing/SKILL.md）
+description: 真机测试计划与报告
 ---
 
 > **BLOCKER — Personal setup**：`check-personal-setup.ts --json --ensure`（见 [personal-setup-gate](../../../framework/skills/reference/personal-setup-gate.md)）。

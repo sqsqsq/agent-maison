@@ -25,36 +25,6 @@ export interface ResolvedAgentBundlePaths {
   skillMode: AgentBundleSkillMode;
 }
 
-/** 内置 Skill 跳板 description（与 shared/skills-bridge 对齐；key = flat skill id） */
-export const BUILTIN_SKILL_BRIDGE_DESCRIPTIONS: Record<string, string> = {
-  'framework-init':
-    '接入或升级 Framework 配置与 agent 产物（完整流程见 framework/skills/project/framework-init/SKILL.md）',
-  'catalog-bootstrap':
-    '模块画像 catalog 与业务术语表 glossary 自举（完整流程见 framework/skills/project/catalog-bootstrap/SKILL.md）',
-  'code-graph':
-    '模块级 Code Graph 建图与漂移门禁（完整流程见 framework/skills/project/code-graph/SKILL.md）',
-  'component-design':
-    '正式需求的部件内设计阶段入口（Story Design）：需求源物化 → 正式性确认 → 蓝图 admitted → 1..N canonical CU → 施工 readiness（完整流程见 framework/skills/project/component-design/SKILL.md）',
-  'app-component-blueprint':
-    'App 部件发现、4+1 蓝图与调和（完整流程见 framework/skills/project/app-component-blueprint/SKILL.md）',
-  'change-unit-progression':
-    '从部件蓝图派生 Change Unit、选择单个就绪单元并连续推进（完整流程见 framework/skills/project/change-unit-progression/SKILL.md）',
-  'component-closure':
-    '从蓝图、Change Unit、Feature completion 与既有证据派生部件闭环（完整流程见 framework/skills/project/component-closure/SKILL.md）',
-  'goal-mode':
-    '目标模式 goal-runner 薄入口（完整流程见 framework/skills/project/goal-mode/SKILL.md）',
-  'change-lite':
-    'lite 轨单文档链 change → coding → exit（完整流程见 framework/skills/feature/change-lite/SKILL.md）',
-  'spec': 'spec 撰写（完整流程见 framework/skills/feature/spec/SKILL.md）',
-  'plan':
-    'spec → plan（plan.md）（完整流程见 framework/skills/feature/plan/SKILL.md）',
-  'coding':
-    '按 plan / contracts 落地实现代码（宿主语言由 project_profile 决定；完整流程见 framework/skills/feature/coding/SKILL.md）',
-  'code-review': '代码审查报告（完整流程见 framework/skills/feature/code-review/SKILL.md）',
-  'business-ut': '业务级 UT / DAG（完整流程见 framework/skills/feature/business-ut/SKILL.md）',
-  'device-testing': '真机测试计划与报告（完整流程见 framework/skills/feature/device-testing/SKILL.md）',
-};
-
 const RESERVED_ROOT_PREFIXES = ['framework', 'doc/features'];
 
 /**

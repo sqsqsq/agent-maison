@@ -128,6 +128,8 @@ const cases: Array<{ name: string; run: () => void }> = [
         const opencode = renderFor('opencode');
         assert.strictEqual(cursor, opencode, '共享 AGENTS.md 不得因 active adapter 不同而变化');
         assert(!cursor.includes('激活的 agent adapter'), '共享 AGENTS.md 不应声明个人 active adapter');
+        assert(cursor.includes('Git status/diff/add/stage/commit/push'), '共享 AGENTS.md 须把 Git/SCM 固定为 L0');
+        assert(cursor.includes('仅出现 framework、Framework 产物或衍生物名词不构成 framework-init 意图'));
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

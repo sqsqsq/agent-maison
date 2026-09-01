@@ -68,6 +68,19 @@ export function listBuiltinSkillIds(frameworkDir: string): string[] {
   return [...index.skills].sort((a, b) => a.order - b.order).map(s => s.id);
 }
 
+/** skills.index.yaml 是内置 Skill description 的机器 SSOT。 */
+export function resolveSkillDescription(frameworkDir: string, skillId: string): string {
+  const entry = loadSkillsIndex(frameworkDir).skills.find(s => s.id === skillId);
+  if (!entry) {
+    throw new Error(`[resolve-skill-path] 未知 skill id: ${skillId}`);
+  }
+  const description = entry.description?.trim();
+  if (!description) {
+    throw new Error(`[resolve-skill-path] skill ${skillId} 缺少 description`);
+  }
+  return description;
+}
+
 export function resolveSkillPath(frameworkDir: string, skillId: string): ResolvedSkillPath {
   const index = loadSkillsIndex(frameworkDir);
   const entry = index.skills.find(s => s.id === skillId);

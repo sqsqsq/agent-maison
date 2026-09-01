@@ -5,10 +5,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { BUILTIN_SKILL_BRIDGE_DESCRIPTIONS } from '../../scripts/utils/agent-bundle-paths';
 import {
   listBuiltinSkillIds,
   loadSkillsIndex,
+  resolveSkillDescription,
   resolveSkillPath,
   skillMdAbs,
 } from '../../scripts/utils/resolve-skill-path';
@@ -31,6 +31,18 @@ function readWorkflowSkillDocs(): string[] {
   return [...text.matchAll(/skill_doc:\s+(\S+)/g)].map(m => m[1]!.replace(/^\.\.\//, ''));
 }
 
+function readBridgeDescription(skillId: string): string {
+  const file = path.join(
+    FRAMEWORK_DIR,
+    'agents/shared/agent-bundle/templates/skills-bridge',
+    skillId,
+    'SKILL.md',
+  );
+  const match = fs.readFileSync(file, 'utf8').match(/^---\r?\n[\s\S]*?^description:\s*(.+)\r?$/m);
+  if (!match) throw new Error(`bridge ${skillId} 缺 description`);
+  return match[1]!.trim();
+}
+
 const cases: Array<{ name: string; run: () => void }> = [
   {
     name: 'loadSkillsIndex: 15 个 builtin skill 且路径可解析',
@@ -47,7 +59,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'index ↔ workflow skill_doc ↔ BUILTIN descriptions 一致',
+    name: 'index ↔ workflow skill_doc ↔ checked-in bridge descriptions 一致',
     run: () => {
       const ids = new Set(listBuiltinSkillIds(FRAMEWORK_DIR));
       for (const doc of readWorkflowSkillDocs()) {
@@ -58,13 +70,10 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert(Boolean(entry), `workflow skill_doc ${doc} 无 index 条目`);
         assert(ids.has(entry!.id), entry!.id);
       }
-      for (const id of Object.keys(BUILTIN_SKILL_BRIDGE_DESCRIPTIONS)) {
-        assert(ids.has(id), `BUILTIN 描述键 ${id} 不在 index`);
-      }
       for (const id of ids) {
         assert(
-          id in BUILTIN_SKILL_BRIDGE_DESCRIPTIONS,
-          `index skill ${id} 缺少 BUILTIN_SKILL_BRIDGE_DESCRIPTIONS`,
+          readBridgeDescription(id) === resolveSkillDescription(FRAMEWORK_DIR, id),
+          `index skill ${id} description 与 checked-in bridge 不一致`,
         );
       }
     },

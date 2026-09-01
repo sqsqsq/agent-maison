@@ -1,23 +1,30 @@
 # Framework 工程初始化 Skill (`framework-init`)
 
+## 适用性与最新意图门（先于任何 init 指令）
+**先裁决最新消息主动作**：取消/纠正 > Git/SCM L0 > 明确 init > 本轮 S1 的合法 S2 continuation；仅出现 framework/衍生物、`$framework-init`、链接或历史上下文不构成 init。`git status/diff/add/stage/commit/push`、整理暂存区/提交/归档均立即返回 L0，**不得运行 readiness、S1、planner 或 harness**；混合“commit 后执行 `/framework-init`”按显式顺序分成两个任务，Git-only/停止 init 不得自行续跑。
+合法 S2 continuation 须在当前对话已实际展示本项目、本发布件、本轮 `InitTaskPlan` 和 adapter 选项，且最新消息未取消/切换；否则裸 `计划=...；adapter=...` 不触发 init。
+<!-- framework-init-routing-contract:start -->
+- `framework_init` | “首次接入 Maison 发布件并生成 framework.config”
+- `framework_init` | “集成新发布件后刷新全部 adapter”
+- `framework_init` | “执行 /framework-init”
+- `continue_current_init_s2` | 本轮真实 S1 后“计划=智能；adapter=codex,cursor”
+- `git_l0` | “整理下 framework 及其衍生物并提交，不相关的别动”
+- `git_l0` | “查看 framework 更新产生的 diff”
+- `git_l0` | “只提交当前已暂存的 Framework，业务代码别动”
+- `git_l0` | “git status 后提交，不要 push”
+- `exit_init_to_git_l0` | “停止 init，只提交代码”
+- `exit_init` | “不要继续刚才的 framework-init”
+<!-- framework-init-routing-contract:end -->
+
 ## 前置声明
 
 - **项目级 init**：在实例工程根生成/升级 `framework.config.json`、`materialized_adapters[]` 物化产物、架构与 catalog/glossary 骨架；**不写** personal `framework.local.json`。
 - **个人 active adapter** 由各阶段入口 `check-personal-setup.ts --json --ensure` 内联完成（过程见 [personal-setup-gate](../../reference/personal-setup-gate.md)）。
-- 执行前 **`<repo-root>/framework/harness/harness-runner.ts` 必须存在**；否则 S1 只读探测后停下，提示先集成 Maison 已验证发布件。
-- 架构 DSL 契约见 [framework/harness/config.ts](../../../harness/config.ts)（`validateArchitectureDsl`）。
+- 执行前 **`<repo-root>/framework/harness/harness-runner.ts` 必须存在**；否则 S1 只读探测后停下，提示先集成 Maison 已验证发布件；架构 DSL 契约见 [framework/harness/config.ts](../../../harness/config.ts)（`validateArchitectureDsl`）。
 
 ## 概述
 
-在**已有真实代码树**的工程里实例化 `framework/` 资产：**只读探测 → 计划批准 → 确定性执行 → 结构化摘要**。交互须 registry enum/checkbox（[confirmation-registry.yaml](../../reference/confirmation-registry.yaml) · [user-confirmation-ux.md](../../reference/user-confirmation-ux.md)），**禁止** Q1=y / 自由路径字符串。
-
-**产物写在实例工程根**；adapter 模板来自 `framework/agents/<name>/`，不写回 framework 本体。
-
-## 触发条件
-
-- Slash：`/framework-init`
-- 自然语言：「接入 framework / 生成 framework.config.json / 升级 framework」
-- CREATE（无 config）或 UPDATE（已有 config）
+在**已有真实代码树**的工程里实例化 `framework/` 资产：**只读探测 → 计划批准 → 确定性执行 → 结构化摘要**。交互须 registry enum/checkbox（[confirmation-registry.yaml](../../reference/confirmation-registry.yaml) · [user-confirmation-ux.md](../../reference/user-confirmation-ux.md)），**禁止** Q1=y / 自由路径字符串。**产物写在实例工程根**；adapter 模板来自 `framework/agents/<name>/`，不写回 framework 本体。
 
 ---
 

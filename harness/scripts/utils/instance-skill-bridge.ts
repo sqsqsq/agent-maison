@@ -305,14 +305,12 @@ export function renderExtensionSkillStubMarkdown(
       });
     }
   }
-  return renderBridgeSkillStubMarkdown(bridgeId, stubTargetRelPosix, skillMdRepoRelPosix);
-}
-
-export function renderCursorSkillStubMarkdown(bridgeId: string, skillMdRepoRelPosix: string): string {
   return renderBridgeSkillStubMarkdown(
     bridgeId,
-    `.cursor/skills/${bridgeId}/SKILL.md`,
+    stubTargetRelPosix,
     skillMdRepoRelPosix,
+    options.frameworkDir,
+    `实例扩展 Skill：${bridgeId}`,
   );
 }
 

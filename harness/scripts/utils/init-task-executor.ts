@@ -348,6 +348,7 @@ function syncTemplateTarget(
         'goal-mode',
         norm,
         resolved.skillMdRepoRel,
+        fwRoot,
       ),
       'utf-8',
     );
