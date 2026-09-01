@@ -141,8 +141,8 @@ function minimalPlan(): InitTaskPlan {
         allowed_actions: ['run'],
       },
       {
-        id: 'ensure-gitignore',
-        title: 'gitignore',
+        id: 'cleanup-deprecated',
+        title: 'deprecated adapter artifacts backup_delete',
         category: 'mechanism',
         scope: 'project',
         deps: [],
@@ -608,7 +608,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'preflightExecute illegal architecture blocks ensure-config and zero gitignore write',
+    name: 'preflightExecute illegal architecture blocks ensure-config and zero project write',
     run: () => {
       const root = mkTmp();
       const plan = minimalPlan();
@@ -631,8 +631,8 @@ const cases: Array<{ name: string; run: () => void }> = [
         const cfg = r.blocked.entries.find(e => e.task_id === 'ensure-config');
         assert.strictEqual(cfg?.status, 'failed');
         assert(cfg?.message.includes('config 校验失败'));
-        const gitignore = r.blocked.entries.find(e => e.task_id === 'ensure-gitignore');
-        assert.strictEqual(gitignore?.status, 'skipped');
+        const mech = r.blocked.entries.find(e => e.task_id === 'cleanup-deprecated');
+        assert.strictEqual(mech?.status, 'skipped');
       }
       assert(!fs.existsSync(path.join(root, '.gitignore')));
       assert(!fs.existsSync(path.join(root, 'framework.config.json')));
@@ -942,8 +942,8 @@ const cases: Array<{ name: string; run: () => void }> = [
         generated_at: new Date().toISOString(),
         tasks: [
           {
-            id: 'ensure-gitignore',
-            title: '.gitignore canonical patterns',
+            id: 'cleanup-deprecated',
+            title: 'deprecated adapter artifacts backup_delete',
             category: 'mechanism',
             scope: 'project',
             deps: [],
@@ -954,16 +954,16 @@ const cases: Array<{ name: string; run: () => void }> = [
           },
         ],
       };
-      const decision = projectDecision(plan, [{ task_id: 'ensure-gitignore', action: 'run' }]);
+      const decision = projectDecision(plan, [{ task_id: 'cleanup-deprecated', action: 'run' }]);
       const log = executeInitPlan({
         projectRoot: root,
         harnessRoot: HARNESS_ROOT,
         plan,
         decision,
       });
-      const entry = log.entries.find(e => e.task_id === 'ensure-gitignore');
+      const entry = log.entries.find(e => e.task_id === 'cleanup-deprecated');
       assert.strictEqual(entry?.category, 'mechanism');
-      assert.strictEqual(entry?.title, '.gitignore canonical patterns');
+      assert.strictEqual(entry?.title, 'deprecated adapter artifacts backup_delete');
       fs.rmSync(root, { recursive: true, force: true });
     },
   },
@@ -1967,11 +1967,30 @@ const cases: Array<{ name: string; run: () => void }> = [
           JSON.stringify({
             projectRoot: path.join(root, 'WRONG'),
             materializedAdapters: ['generic'],
+            // 白名单 payload（不含 builder 自动注入字段，如 schema_version）
+            configWritePayload: {
+              project_name: 'context-root-guard',
+              materialized_adapters: ['generic'],
+              architecture: {
+                outer_layers: [{ id: 'L1', can_depend_on: [], intra_layer_deps: 'forbid' }],
+                module_inner_layers: ['shared'],
+                inner_dependency_direction: 'upward',
+                cross_module_exports_file: 'index.ets',
+              },
+              paths: { features_dir: 'doc/features', agent_bundle_root: '.agents' },
+            },
           }),
         ),
       });
-      assert(log.entries.some(e => e.task_id === 'ensure-gitignore' && e.status === 'executed'));
-      assert(fs.existsSync(path.join(root, '.gitignore')));
+      assert(
+        log.entries.some(e => e.task_id === 'ensure-config' && e.status === 'executed'),
+        JSON.stringify(log.entries.map(e => ({ i: e.task_id, s: e.status, m: e.message }))),
+      );
+      // 写盘落在 CLI root，而不是 context 里伪造的 WRONG 根
+      assert(fs.existsSync(path.join(root, 'framework.config.json')));
+      assert(!fs.existsSync(path.join(root, 'WRONG')));
+      // plan 33714d0c：init 任何路径都不得创建宿主 .gitignore
+      assert(!fs.existsSync(path.join(root, '.gitignore')));
       fs.rmSync(root, { recursive: true, force: true });
     },
   },

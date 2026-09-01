@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema#comment-only",
   "schema_version": "1.1",
-  "_comment": "consumer framework/ 运行时产物策略 SSOT（plan e8f5a2c7 G1/G2 第六轮 P1）。三方共读：canonical-gitignore.ts 派生 gitignore framework 段、framework-integrity.ts extra-file 扫描白名单、agents/shared/guard-framework-write-core.mjs 写时守卫放行。路径一律相对 framework 根、POSIX 斜杠；尾 '/' 表示目录及其下所有内容；'**' 匹配任意层段；'*' 段内通配。禁止任何一方另行维护第二份列表（三方一致性单测钉死）。",
+  "_comment": "consumer framework/ 运行时产物策略 SSOT（plan e8f5a2c7 G1/G2 第六轮 P1；plan 33714d0c 收敛消费者）。只描述 Maison 自己在 framework/ 内的输出与守卫边界，**不派生、不描述、不补偿宿主 SCM 配置**。两方共读：harness/scripts/utils/runtime-artifact-policy.ts（Git 中性 TS reader，服务 release pack/verify 的发布件文件集合保护）与 agents/shared/guard-framework-write-core.mjs（写时守卫放行）。路径一律相对 framework 根、POSIX 斜杠；尾 '/' 表示目录及其下所有内容；'**' 匹配任意层段；'*' 段内通配。禁止任何一方另行维护第二份列表（跨实现一致性单测钉死）。",
   "ignored_runtime_patterns": [
     "harness/node_modules/",
     "harness/dist/",
@@ -16,7 +16,7 @@
     "harness/init-decision.json",
     "harness/init-context.json"
   ],
-  "_comment_shipped": "e5d8a2c4 T4#1：**落在 ignored 目录内、但属于发布件**的精确文件（framework 根相对，POSIX；**禁 glob**）。它们既要被 gitignore 的目录规则排除内容、又必须被宿主 git 跟踪，故 gitignore 派生对这些目录产出「!<dir>/ + <dir>/* + 逐文件 !」形状（首行反忽略父目录才压得过 framework-init 历史写入的宽规则——git 硬规则：父目录被排除时 ! 无法纳入其中文件）。写时守卫亦据此拒绝 agent 覆写（它们是发布件不是运行时产物）。旧 policy 缺本字段时 loader 回退 []。",
+  "_comment_shipped": "e5d8a2c4 T4#1：**落在运行时目录内、但属于发布件**的精确文件（framework 根相对，POSIX；**禁 glob**）。它们随 pack 产出并由 RELEASE-MANIFEST 逐字节校验，故 release verify 必须确认这些路径仍在发布件文件集合内；写时守卫亦据此拒绝 agent 覆写（它们是发布件不是运行时产物）。宿主如何在自己的 SCM 中处理所在目录，由宿主自行决定，与本策略无关。旧 policy 缺本字段时 loader 回退 []。",
   "shipped_files_in_runtime_dirs": [
     "harness/reports/.gitkeep",
     "harness/state/.gitkeep",
@@ -25,7 +25,7 @@
   ],
   "_comment_generated": "运行时按需生成的合法文件（按文件名模式收窄——不放行整个目录，防藏任意脚本）。b7e4d2a9 Todo4：vision-canary 固定资产两条已删——preflight 随机卷写 goal-runs run 目录、答案只在内存，framework/ 恢复只读发布件属性；此表当前为空但保留结构（新增须过'in-repo+签名做不到'红线）",
   "generated_file_patterns": [],
-  "_comment_reserved": "framework 根部保留元数据（G3b sidecar：不入 RELEASE-MANIFEST.json files[]（循环依赖），extra-file 扫描亦不得判 foreign）",
+  "_comment_reserved": "framework 根部保留元数据（G3b sidecar：不入 RELEASE-MANIFEST.json files[]（循环依赖）；写时守卫按发布件语义拒写）",
   "reserved_metadata_files": [
     "RELEASE-MANIFEST.sha256"
   ]

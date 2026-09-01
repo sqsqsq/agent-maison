@@ -31,11 +31,12 @@ interface SmokeCase {
   name: string;
   status: string;
   coveredBy?: string;
+  retiredReason?: string;
 }
 interface SmokeModule {
   CASE_REGISTRY: SmokeCase[];
   STAGES: Array<{ id: string }>;
-  HISTORICAL_GITIGNORE: string;
+  TEST_ONLY_GITIGNORE: string;
   assertCaseRegistryComplete(registry?: SmokeCase[], stages?: Array<{ id: string }>): SmokeCase[];
 }
 
@@ -113,7 +114,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     let threw = false;
     try {
       m.assertCaseRegistryComplete(
-        m.CASE_REGISTRY.map(c => (c.id === 1 ? { ...c, coveredBy: undefined } : c)),
+        m.CASE_REGISTRY.map(c => (c.id === 9 ? { ...c, coveredBy: undefined } : c)),
       );
     } catch { threw = true; }
     assert(threw, 'covered 而不指明 stage 必须抛');
@@ -153,14 +154,46 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     }
   });
 
-  await run(results, 'T4 历史宽规则夹具必须含 2026-04-25 的目录式规则（事故①的真实起点）', async () => {
+  await run(results, 'plan 33714d0c：用例 #1（宿主 Git 收编）已退役，夹具只保留 test-only 忽略规则', async () => {
     const m = await load();
-    // 少了它，commit stage 就退化成"在一个干净仓里 add 一遍"——事故①根本不会重现
-    for (const rule of ['framework/harness/trace/', 'framework/harness/reports/', 'framework/harness/state/']) {
-      assert(
-        m.HISTORICAL_GITIGNORE.includes(`\n${rule}\n`),
-        `夹具须含历史目录式宽规则 ${rule}（canonical-gitignore.ts:100 记录的宿主实况）`,
+    const one = m.CASE_REGISTRY.find(c => c.id === 1);
+    assert(one !== undefined, '编号必须保留，避免注册表出现空洞');
+    assertEq(one!.status, 'retired', '#1 已随宿主 SCM 权责一并退役');
+    assert(
+      typeof one!.retiredReason === 'string' && one!.retiredReason!.includes('33714d0c'),
+      '#1 必须写明退役理由并指向 plan 33714d0c',
+    );
+    assert(one!.coveredBy === undefined, 'retired 用例不得再声称由某个 stage 覆盖');
+
+    // retired 但不写理由 → 守门函数须拒（防"悄悄退役"变成假绿）
+    let noReason = false;
+    try {
+      m.assertCaseRegistryComplete(
+        m.CASE_REGISTRY.map(c => (c.id === 1 ? { ...c, retiredReason: undefined } : c)),
       );
+    } catch { noReason = true; }
+    assert(noReason, 'retired 而不写 retiredReason 必须抛');
+
+    // 夹具只允许 test-only 基础设施规则；不得恢复 Maison canonical host patterns
+    const fixture = m.TEST_ONLY_GITIGNORE;
+    assert(fixture.includes('framework/harness/node_modules/'), '夹具须忽略自身安装的 node_modules');
+    for (const forbidden of [
+      'framework/harness/reports/',
+      'framework/harness/state/',
+      'framework/harness/trace/',
+      'framework.local.json',
+      'doc/catalog-staging/',
+    ]) {
+      assert(!fixture.includes(forbidden), `夹具不得恢复 Maison canonical pattern ${forbidden}`);
+    }
+    const source = fs.readFileSync(SMOKE_MODULE, 'utf-8');
+    for (const forbidden of [
+      'ensureCanonicalGitignore',
+      'applyCanonicalGitignore',
+      'canonical-gitignore',
+      'HISTORICAL_GITIGNORE',
+    ]) {
+      assert(!source.includes(forbidden), `smoke 不得残留 ${forbidden}`);
     }
   });
 

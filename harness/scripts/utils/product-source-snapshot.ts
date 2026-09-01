@@ -2,7 +2,7 @@
 // product-source-snapshot.ts — invocation 前后精确快照（plan d8c5f3a7 v23 F2）
 // ----------------------------------------------------------------------------
 // 【v23 重写：纯文件系统递归哈希，不再依赖 git】旧实现走 `git ls-files`/`git status`，
-// 在真实宿主上是半盲的：`goal-runs/`、`reports/*` 本就在 canonical .gitignore；
+// 在真实宿主上是半盲的：`goal-runs/`、`reports/*` 是 Maison 自有运行时输出；
 // `docs_committed:false` 的宿主 doc 域整体不进 git——需求 SSOT 恰好全在盲区。
 // （旧文件还混入过真实 NUL 字节。）
 //

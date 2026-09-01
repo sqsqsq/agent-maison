@@ -165,7 +165,7 @@ manifest 除 `adapter_provenance` 外逐字一致时视为 fresh，requirement�
 ## 视觉金丝雀缓存（`framework.local.json vision.canary`）与升级模型
 
 UI 相关 goal 首跑会真实探测一次 adapter 的读图能力（几何/颜色四题），结果缓存进
-`vision.canary`（个人级、gitignored）。**升级 framework 时不要删 `framework.local.json`**
+`vision.canary`（个人级本地配置）。**升级 framework 时不要删 `framework.local.json`**
 ——删除会连 `agent_adapter`/DevEco 路径一并丢掉；缓存有完整的自动生命周期
 （plan c7d2e9a4）：
 

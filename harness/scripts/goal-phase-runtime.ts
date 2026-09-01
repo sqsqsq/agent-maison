@@ -5129,7 +5129,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       recordAdapterToLocal(projectRoot, pendingAdapterWriteback);
       console.error(
         `[goal-runner] 按 --override-adapter 切到 adapter=${pendingAdapterWriteback}，` +
-          '已回写 framework.local.json（个人级、gitignored）。',
+          '已回写 framework.local.json（个人级本地配置）。',
       );
     }
     if (argv.resume) writeGoalManifest(manifest, projectRoot);

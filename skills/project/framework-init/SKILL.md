@@ -1,20 +1,20 @@
 # Framework 工程初始化 Skill (`framework-init`)
 
-## 适用性与最新意图门（先于任何 init 指令）
-**先裁决最新消息主动作**：取消/纠正 > 明确有序多动作 > Git-only > 无竞争的显式 init > 本轮 S1 的合法 S2 continuation > 被动提及/其它主动作。显式选择/调用 framework-init 且最新消息无否定或竞争主动作时直接进入 Tier_1→S1，不再询问是否执行 init；S3 仍须 S2 批准。取消只退出 init 子流程：另有任何明确主动作时必须继续并完成，纯“不要继续 init”才退出等待。明确“commit 后执行 `/framework-init`”须先完成获授权的 Git L0 再进入 init；Git-only（即使附带无顺序的 Skill 名称/链接）须退出 init 后立即完成最新 Git L0，遵守用户文件范围与 push 授权，**不得输出 init 规则解释、不得询问是否执行 init、不得运行 readiness、S1、planner 或 harness**；退出 init 不等于结束本轮用户任务。引用、解释、否定或记录 Skill 名称/链接属于被动提及；被动提及不单独触发 init，必须继续并完成当前其它主动作。
-合法 S2 continuation 须在当前对话已实际展示本项目、本发布件、本轮 `InitTaskPlan` 和 adapter 选项，且最新消息未取消/切换；否则裸 `计划=...；adapter=...` 不触发 init。
-<!-- framework-init-routing-contract:start -->
-- `exit_init_continue_git_l0` | “停止 init，只提交代码”
-- `exit_init` | “不要继续刚才的 framework-init”
-- `git_l0_then_framework_init` | “commit 后执行 /framework-init”
-- `exit_init_continue_git_l0` | “整理下 framework 及其衍生物并提交，不相关的别动”
-- `exit_init_continue_git_l0` | “$framework-init；现在整理下 framework 及其衍生物并提交，不相关的别动”
-- `exit_init_continue_git_l0` | “只提交当前已暂存的 Framework，业务代码别动”
-- `framework_init` | $framework-init
-- `framework_init` | “执行 /framework-init”
-- `framework_init` | “集成新发布件后刷新全部 adapter”
-- `continue_current_init_s2` | 本轮真实 S1 后“计划=智能；adapter=codex,cursor”
-<!-- framework-init-routing-contract:end -->
+## 适用性（先于任何 init 指令）
+
+**进入条件**——只在下列事实之一成立时开始或继续 init：
+
+1. 用户明确选择或调用 framework-init；
+2. 用户明确要求首次接入 Maison 发布件；
+3. 用户明确要求创建、补齐或迁移 `framework.config.json`；
+4. 用户明确要求集成新发布件后刷新 config、adapters 或 materialized artifacts；
+5. 当前对话已展示本项目、本发布件、本轮 `InitTaskPlan` 与 adapter 选项，且用户就该**尚未完成**的 S1 给出合法 plan/adapters 批准（裸 `计划=…；adapter=…` 不触发）。
+
+命中 1–4 时直接进入 Tier_1 readiness→S1，**不再询问是否执行 init**；S3 仍须 S2 批准。用户明确取消时只终止当前尚未完成的 init，不产生 S3/报告；同一消息里的其它任务始终由主 Agent 负责。
+
+**本 Skill 不是全局请求路由、preflight 或 public gate。** 不满足上述进入条件的请求由主 Agent 按正常路径处理，不选择、不读取、不经过本 Skill；本 Skill 也不解释、分类、命名或交还这些任务。「先完成 X，再执行 framework-init」由主 Agent 理解顺序——先完成 X，到明确 init 动作时才调用本 Skill。若本 Skill 已被客户端或模型加载而最新消息不满足上述任一进入条件：**立即停止本 Skill，零 init 副作用**——不运行 readiness、S1、planner、harness 或任何 init 工具；不生成、复述或链接 init 结果；不追问是否执行 init，也不要求换一种话术重新调用。
+
+**结果只属于当前 turn（BLOCKER）**：S4 只证明其 `run_log` 中 `started_at`/`finished_at`/`project_root` 对应的那次 S3 run。用户发出下一条消息后，旧 `InitTaskPlan`、run-log、summary 与 S4 只是历史上下文；本 turn 未新建 S3 run/报告时，**禁止**宣称「本轮 init 已完成」、复述旧的 executed/skipped/failed 计数或把旧报告列为本轮产物。task title、历史 Skill 选择与 prior S4 都不自动续入 init。
 
 ## 前置声明
 
@@ -60,7 +60,7 @@ cd framework/harness && node scripts/init-readiness.mjs
 
 - 无 `framework/` → **STOP**，提示从 Maison 发布渠道取得并解压已验证发布件到工程根。
 - 读 [prompts/scan-project.md](prompts/scan-project.md) 扫描工程（模块清单、目录层命名、已有 doc 资产）；输出**一屏人话摘要**。
-- 若 config 磁盘 MISSING 且为 git 仓：可选跑 `show-last-committed-framework-config.mjs` 得 `recovered_framework_config` 快照（仅预填，不写盘）。
+- config 输入只有当前磁盘 `framework.config.json`、模板/backfill/migration 默认值与 S2 批准 payload；磁盘缺失按 CREATE/迁移契约处理，**不从任何 SCM 历史、index、stash 或 ref 恢复**。
 
 ### S1.2 Planner（零写盘）
 
@@ -69,7 +69,7 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
   --scope project --project-root <repo-root>
 ```
 
-解析 stdout **`InitTaskPlan` JSON**（含 `mode: create|update`、`tasks[]`）。**禁止**在 S1 调用 `ensure-gitignore`、adapter 拷贝、config 写入或 `check-init` 非 skip 副作用。
+解析 stdout **`InitTaskPlan` JSON**（含 `mode: create|update`、`tasks[]`）。**禁止**在 S1 做 adapter 拷贝、config 写入或 `check-init` 非 skip 副作用。
 
 ### S1.3 渲染任务表
 
@@ -174,7 +174,7 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 
 > 通用方式中的 `<abs-temp-dir>` = S2 写入的 OS 临时目录绝对路径（见 S2.2 第 4 步）。须用绝对路径，因 shell cwd 在 `framework/harness`。
 
-- S3 执行器：`executeInitPlan` → `init-task-executor.ts`（gitignore、config merge、adapter 物化、deprecated cleanup、npm install、全局 phase 等）。
+- S3 执行器：`executeInitPlan` → `init-task-executor.ts`（config merge、adapter 物化、deprecated cleanup、npm install、全局 phase 等）。
 - S3 **preflight**：`init-orchestrate.ts` 在写盘前校验 decision 结构与 config/doc payload；违规时**除 harness 审计 run-log 外零项目写盘**，写 blocked run-log 后 `exit 1`。
 - **`configWritePayload` / `docWritePayload`**：CREATE 须在 S2 写入 `context.json`；**UPDATE** 可依赖 emit 预填或 S2 显式 payload（= 磁盘完整 baseline 深拷贝），execute 阶段 harness 亦会从磁盘派生同一 baseline（S2 显式优先）。写类 doc 任务（`run`）缺 payload → preflight 原子阻断。
 - preflight 与 executor **共用**同一归一化 `finalContext`（先 cross-check raw adapter，再 sync decision SSOT）。
@@ -214,7 +214,7 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 1. **探测 → 批准 → 执行 → 摘要**；Side effects 仅在 S3 批准后。
 2. **双 adapter 概念**：`materialized_adapters[]`（项目，提交） vs personal `agent_adapter`（local，setup）。
 3. **提交产物隔离**：物化每个 adapter 时 render-env 用**该 adapter**，不用 local active adapter。
-4. **`.gitignore`**：由 executor `ensure-gitignore` 维护 canonical patterns（含 `framework.local.json`）。
+4. **宿主 SCM 无关**：init 不读取、诊断、创建或修改宿主 `.gitignore` 等 SCM 配置；运行时产物边界由 `framework/specs/runtime-artifact-policy.json` 与各 writer 的路径契约保证。
 5. **`profile-skill-asset:`** 占位符按 [Profile skill asset protocol](../../README.md#profile-skill-asset-protocol) 解析。
 
 ## UPDATE 模式要点

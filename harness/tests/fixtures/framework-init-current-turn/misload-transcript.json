@@ -1,0 +1,19 @@
+{
+  "_comment": "test-only fixture（plan 33714d0c T6）。模拟客户端/模型已经把 framework-init 错误装入上下文，但最新消息不含正向 init 意图。它**只**断言零 init 副作用退出——不断言普通任务的类别，也不断言该任务后续如何执行（那属于主 Agent）。它不是 route/outcome 定义，也不是本 Skill 的正常输入路径。",
+  "schema_version": "1.0",
+  "task_id": "fixture-misloaded-skill-zero-side-effect",
+  "skill_loaded_by_client": true,
+  "user_message": "帮我看下这个函数为什么返回 undefined",
+  "positive_init_intent": false,
+  "expected": {
+    "readiness_probe_run": false,
+    "s1_probe_run": false,
+    "planner_run": false,
+    "harness_command_run": false,
+    "init_report_created": false,
+    "init_result_restated": false,
+    "asked_whether_to_run_init": false,
+    "asked_user_to_rephrase_invocation": false,
+    "skill_stopped_before_any_init_command": true
+  }
+}

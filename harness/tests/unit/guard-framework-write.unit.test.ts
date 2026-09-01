@@ -6,7 +6,7 @@
 //   B. 共享核心判定（动态 import .mjs——放行通道退场、白名单放行、布局判定）
 //   C. 跨实现/双消费者一致性：
 //      C1 放行语义彻底移除：core 不得换名保留 allowlist/审批 API
-//      C2 policy：runtime-artifact-policy.json ↔ canonical-gitignore 派生 ↔ guard 写匹配
+//      C2 policy：runtime-artifact-policy.json ↔ Git 中性 TS reader ↔ guard 写匹配
 
 import * as fs from 'fs';
 import * as os from 'os';
@@ -16,10 +16,7 @@ import { pathToFileURL } from 'url';
 
 import { detectRepoLayout, frameworkAbs } from '../../repo-layout';
 import { AUTOMATION_SIGNER_IDS } from '../../scripts/utils/fidelity-shared';
-import {
-  loadRuntimeArtifactPolicy,
-  frameworkRuntimeIgnorePatterns,
-} from '../../scripts/utils/canonical-gitignore';
+import { loadRuntimeArtifactPolicy } from '../../scripts/utils/runtime-artifact-policy';
 import type { UnitCaseResult } from '../run-unit';
 
 const LAYOUT = detectRepoLayout(__dirname);
@@ -346,7 +343,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
-    name: 'C2 policy 双消费者一致：SSOT ↔ canonical-gitignore 派生 ↔ guard 写匹配',
+    name: 'C2 policy 双消费者一致：SSOT ↔ Git 中性 TS reader ↔ guard 写匹配',
     run: async () => {
       const core = await loadCore();
       const policy = loadRuntimeArtifactPolicy();
@@ -357,12 +354,17 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         JSON.stringify(corePolicy) === JSON.stringify(policy),
         'core 与 TS 读出的 policy 不一致',
       );
-      // (b) gitignore 派生：每个 SSOT 目录/文件条目都有对应 framework/ 前缀 pattern
-      const derived = frameworkRuntimeIgnorePatterns();
-      for (const p of policy.ignored_runtime_patterns) {
-        const base = `framework/${p.replace(/\/$/, '')}`;
-        const covered = derived.some((g) => g === `framework/${p}` || g.startsWith(base));
-        assert(covered, `SSOT 条目 ${p} 未派生进 gitignore framework 段`);
+      // (b) 两个消费者不得另建第二份清单：TS reader 只做 JSON 直读（无本地兜底列表）
+      const readerSrc = fs.readFileSync(
+        frameworkAbs(LAYOUT, 'harness/scripts/utils/runtime-artifact-policy.ts'),
+        'utf-8',
+      );
+      assert(
+        readerSrc.includes("'runtime-artifact-policy.json'"),
+        'TS reader 必须直读 SSOT JSON',
+      );
+      for (const forbidden of ['gitignore', 'ensureCanonical', 'ignoreEquiv']) {
+        assert(!readerSrc.includes(forbidden), `Git 中性 helper 不得含 ${forbidden}`);
       }
       // (c) core 写匹配行为抽查：每个 ignored 目录条目下的深层文件应放行；
       //     控制面/sidecar/旧 canary 路径拒写。没有 presence-scan/foreign-file 谓词。

@@ -255,18 +255,6 @@ function buildProjectTasks(
   }
 
   add({
-    id: 'ensure-gitignore',
-    title: '.gitignore canonical patterns',
-    category: 'mechanism',
-    scope: 'project',
-    deps: [],
-    status: 'needed',
-    default_action: 'run',
-    skippable: false,
-    allowed_actions: ['run'],
-  });
-
-  add({
     id: 'cleanup-deprecated',
     title: 'deprecated adapter artifacts backup_delete',
     category: 'mechanism',
@@ -515,7 +503,7 @@ export function prepareInitExecutionPlan(
   return prepareInitExecutionPlanWithStaleIds(options, executionContext).plan;
 }
 
-/** 纯只读探测：不调用 ensureCanonicalGitignore / mechanism sync / deprecated cleanup */
+/** 纯只读探测：不调用 mechanism sync / deprecated cleanup；不读写宿主 SCM 配置 */
 export function probeInitTaskPlan(options: PlanProbeOptions): InitTaskPlan {
   const { projectRoot, scope } = options;
   const cfgSources = loadFrameworkConfigWithSources(projectRoot);

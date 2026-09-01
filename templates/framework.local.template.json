@@ -1,6 +1,6 @@
 {
   "$schema_docs": {
-    "description": "Personal framework settings (gitignored). Written by framework-setup Skill.",
+    "description": "Personal per-developer framework settings, written by the framework-setup Skill. Whether the host tracks this file in its SCM is the host's decision; Maison does not manage it.",
     "fields": {
       "agent_adapter": "This developer's active tool: claude | cursor | generic",
       "toolchain.devEcoStudio.installPath": "DevEco Studio install root on this machine"

@@ -1,4 +1,13 @@
-## MODIFIED Requirements
+## REMOVED Requirements
+
+### Requirement: Integrity blockers classify as framework_integrity_block and halt on first touch
+
+**Reason**: 该 requirement 把「manifest corruption/tamper、foreign framework files、unreadable framework state」列为普通运行期的 framework integrity blocker 来源。这三类 consumer 期 release-tree 检测已随 runtime hash/Git 家族整体退役——包完整性只留在 pack/release verify 与用户明确触发的集成边界。标题与来源清单同时变更，故以 REMOVED + ADDED（`Current integrity blockers halt without reviving framework Git adjudication`）成对替换，而非 MODIFIED。
+
+**Migration**: `framework_integrity_block` 的 halt 语义、`phase_write_violation` 的 owner 失效/backtrack 语义、以及并发改写/不可读字节/重复违规/预算耗尽的既有 integrity/fuse 收口全部保留，改由 ADDED requirement 承载；差别只在**来源**收窄为当前真实 producer（`node_options_injection` / `process_injection`），历史 subtype 仅作只读 provenance。
+
+## ADDED Requirements
+
 
 ### Requirement: Current integrity blockers halt without reviving framework Git adjudication
 

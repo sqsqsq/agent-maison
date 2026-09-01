@@ -1,10 +1,10 @@
 // ============================================================================
 // Init 阶段脚本 Harness — check-init.ts
 // ============================================================================
-// 作用对象: framework-init S1 探测体检（check-init 11 项）产物。
+// 作用对象: framework-init S1 探测体检（check-init 10 项）产物。
 //
 // 设计要点（v2.6 弱模型工作流强制门 · L2+）:
-//   - 11 项 MISSING / EMPTY / POPULATED 判定全部由本脚本基于模板感知比对
+//   - 10 项 MISSING / EMPTY / POPULATED 判定全部由本脚本基于模板感知比对
 //     与 fs.existsSync 计算，**AI 无任何自由度**；
 //   - 文本模板项使用 EOL-aware 比对：仅 CRLF/LF 不同不算用户漂移；
 //   - 双输出：
@@ -14,8 +14,9 @@
 //                     AI 仅原样搬运）
 //   - 由 PhaseChecker 接口对齐 harness-runner.ts 调度（与 catalog/glossary/
 //     docs 三个全局阶段同型），不单独跑 main()。
-//   - **只读 probe**：本脚本体检阶段零项目根写盘；gitignore / mechanism sync /
-//     deprecated cleanup 等副作用仅由 init-orchestrate S3 任务执行。
+//   - **只读 probe**：本脚本体检阶段零项目根写盘；mechanism sync / deprecated
+//     cleanup 等副作用仅由 init-orchestrate S3 任务执行。宿主 SCM 配置
+//     （`.gitignore` 等）既不读也不写——它不属于 Maison 契约（plan 33714d0c）。
 //
 // 元阶段三件套**刻意不对称**：
 //   - 不接 verify-init.md（init 阶段 AI 语义审无可审）
@@ -54,7 +55,6 @@ import {
   type FrameworkPackageIdentity,
   readFrameworkPackageIdentity,
 } from './utils/framework-integrity';
-import { loadFrameworkConfig, relFeaturesDir } from '../config';
 import {
   readAgentBundlePathsFromConfig,
   type ResolvedAgentBundlePaths,
@@ -66,16 +66,6 @@ import {
   materializeInlineSkillMarkdown,
 } from './utils/materialize-agent-bundle-skills';
 import { resolveSkillPath } from './utils/resolve-skill-path';
-import {
-  CANONICAL_IGNORE_PATTERNS,
-  IGNORE_EQUIV_PATTERNS,
-  canonicalIgnorePatterns,
-  collectGitignoreAdvisories,
-  ensureCanonicalGitignore,
-  listMissingCanonicalPatterns,
-  parseGitignoreLines,
-  patternIsCovered,
-} from './utils/canonical-gitignore';
 
 // --------------------------------------------------------------------------
 // 公共类型
@@ -86,7 +76,7 @@ export type InitMode = 'create' | 'update';
 export type AdapterUpdatePolicy = 'auto_overwrite' | 'prompt_if_changed';
 
 export interface Inspection {
-  index: number;                       // 1..11
+  index: number;                       // 1..10
   target_path: string;                 // 体检对象（相对实例工程根，POSIX 正斜杠）
   template_source: string | null;      // 第 2/3/4/7 项有值；其余为 null
   status: InspectionStatus;
@@ -142,8 +132,6 @@ export interface CheckInitReport {
     reason: string;
     backup_path: string | null;
   }>;
-  /** 体检前 ensureCanonicalGitignore 的追加摘要（无写入时为 null） */
-  gitignore_sync?: { created: boolean; added: string[] } | null;
 }
 
 // --------------------------------------------------------------------------
@@ -962,7 +950,7 @@ function renderTemplate(text: string, env: RenderEnv): string {
 }
 
 // --------------------------------------------------------------------------
-// 11 项 inspector — 每项一个独立函数（便于单测）
+// 10 项 inspector — 每项一个独立函数（便于单测）
 // --------------------------------------------------------------------------
 
 interface InspectorEnv {
@@ -1025,11 +1013,6 @@ function strategyText(line: number, status: InspectionStatus): string {
       EMPTY: '等同 MISSING',
       POPULATED: 'framework.local.json 已配置，跳过',
     },
-    11: {
-      MISSING: 'init-orchestrate S3：ensure-gitignore 任务',
-      EMPTY: '等同 MISSING',
-      POPULATED: 'canonical 已齐备',
-    },
   };
   return m[line][status];
 }
@@ -1049,7 +1032,7 @@ function validateInspectionShape(inspections: Inspection[]): boolean {
   for (const ins of inspections) {
     countByIndex.set(ins.index, (countByIndex.get(ins.index) ?? 0) + 1);
   }
-  const singleRequired = [1, 2, 4, 5, 6, 7, 8, 9, 10, 11];
+  const singleRequired = [1, 2, 4, 5, 6, 7, 8, 9, 10];
   for (const idx of singleRequired) {
     if (countByIndex.get(idx) !== 1) return false;
   }
@@ -1801,7 +1784,7 @@ function inspect08(env: InspectorEnv): Inspection {
 }
 
 // ---- 第 9 项: framework/harness/node_modules/ts-node/package.json ----------
-// 严格用 fs.existsSync——避免 .gitignore 假阴（修了上次 81d454c 的事故）。
+// 严格用 fs.existsSync——避免被宿主忽略规则误判为缺失（修了上次 81d454c 的事故）。
 function inspect09(_env: InspectorEnv): Inspection {
   const targetRel = frameworkLogicalRelPath('harness', 'node_modules', 'ts-node', 'package.json');
   const targetAbs = path.join(HARNESS_ROOT, 'node_modules', 'ts-node', 'package.json');
@@ -1873,63 +1856,6 @@ function inspect10(env: InspectorEnv): Inspection {
     diff_summary: null,
     planned_strategy: strategyText(10, 'POPULATED'),
     diagnosis: `installPath="${installPath}" 路径存在`,
-  };
-}
-
-// ---- 第 11 项: 实例工程根 .gitignore（init 约定忽略项：harness 产物 + catalog-bootstrap staging）----
-function inspect11(env: InspectorEnv): Inspection {
-  const targetRel = '.gitignore';
-  const targetAbs = path.join(env.projectRoot, targetRel);
-  const txt = safeReadText(targetAbs);
-  if (txt === null) {
-    return {
-      index: 11,
-      target_path: targetRel + ' (init canonical ignores)',
-      template_source: null,
-      status: 'MISSING',
-      hash_template: null,
-      hash_target: null,
-      diff_summary: null,
-      planned_strategy: strategyText(11, 'MISSING'),
-      diagnosis: '.gitignore 不存在',
-    };
-  }
-  const lines = parseGitignoreLines(txt);
-  // features_dir 派生 pattern 随实例配置（plan a9c4e7f1）：体检与 ensure 写入侧同口径
-  const featuresRel = relFeaturesDir(env.projectRoot);
-  const missingPatterns = listMissingCanonicalPatterns(lines, featuresRel);
-  const advisories = collectGitignoreAdvisories(txt);
-  const advisoryNote =
-    advisories.length > 0
-      ? `\n[advisory] ${advisories.join('; ')}`
-      : '';
-  if (missingPatterns.length === 0) {
-    return {
-      index: 11,
-      target_path: targetRel + ' (init canonical ignores)',
-      template_source: null,
-      status: 'POPULATED',
-      hash_template: null,
-      hash_target: sha256(txt),
-      diff_summary: null,
-      planned_strategy: strategyText(11, 'POPULATED'),
-      diagnosis:
-        `canonical-gitignore：${canonicalIgnorePatterns(featuresRel).length} 条 patterns 已全部等价覆盖` +
-        advisoryNote,
-    };
-  }
-  return {
-    index: 11,
-    target_path: targetRel + ' (init canonical ignores)',
-    template_source: null,
-    status: 'MISSING',
-    hash_template: null,
-    hash_target: sha256(txt),
-    diff_summary: `缺少 patterns:\n${missingPatterns.map(p => `  - ${p}`).join('\n')}`,
-    planned_strategy: strategyText(11, 'MISSING'),
-    diagnosis:
-      `缺 ${missingPatterns.length} 条 canonical patterns（S3 ensure-gitignore 任务补齐）` +
-      advisoryNote,
   };
 }
 
@@ -2097,7 +2023,7 @@ function prepareAdapterForProbe(
   return adapter;
 }
 
-/** 纯只读 init 探测：11 项 inspection，零项目根写盘（副作用仅 init-orchestrate S3 任务） */
+/** 纯只读 init 探测：10 项 inspection，零项目根写盘（副作用仅 init-orchestrate S3 任务） */
 export function runInitProbe(options: InitProbeOptions): InitProbeResult {
   const cfg = loadRawFrameworkConfig(options.projectRoot);
   const mode: InitMode = cfg.exists && cfg.parseable ? 'update' : 'create';
@@ -2121,7 +2047,6 @@ export function runInitProbe(options: InitProbeOptions): InitProbeResult {
     inspect08(inspectorEnv),
     inspect09(inspectorEnv),
     inspect10(inspectorEnv),
-    inspect11(inspectorEnv),
   ];
   // 框架发布包身份——check-init 与 visual-feedback 共用同一个非阻断 package identity loader
   const framework_identity = readFrameworkPackageIdentity(FRAMEWORK_ROOT);
@@ -2387,7 +2312,7 @@ const checker: PhaseChecker = {
       }
     }
 
-    // 3. 11 项体检（只读 probe，副作用见 init-orchestrate S3 任务）
+    // 3. 10 项体检（只读 probe，副作用见 init-orchestrate S3 任务）
     const incomplete = inspections.filter(i =>
       !['MISSING', 'EMPTY', 'POPULATED'].includes(i.status));
     const shapeOk = validateInspectionShape(inspections);
@@ -2399,7 +2324,7 @@ const checker: PhaseChecker = {
           description: '基线体检项（含第 3 项可展开）全部能给出 MISSING/EMPTY/POPULATED 判定且行数合法',
           severity: 'BLOCKER',
           status: 'PASS',
-          details: `判定齐全：共 ${inspections.length} 行（索引 1–2、4–11 各恰好 1 行；索引 3≥1 行）`,
+          details: `判定齐全：共 ${inspections.length} 行（索引 1–2、4–10 各恰好 1 行；索引 3≥1 行）`,
         }
         : (() => {
           const parts: string[] = [];
@@ -2409,8 +2334,8 @@ const checker: PhaseChecker = {
               incomplete.map(i => `  - #${i.index} ${i.target_path}`).join('\n'));
           }
           if (!shapeOk) {
-            blockers.push('inspection_table_complete: 体检行数/shape 不符合基线（应为 #1 #2 各 1 行、#3≥1 行、#4–#11 各 1 行）');
-            parts.push('索引 1–2、4–11 须各出现恰好 1 行；索引 3 须至少 1 行（可展开多行）');
+            blockers.push('inspection_table_complete: 体检行数/shape 不符合基线（应为 #1 #2 各 1 行、#3≥1 行、#4–#10 各 1 行）');
+            parts.push('索引 1–2、4–10 须各出现恰好 1 行；索引 3 须至少 1 行（可展开多行）');
           }
           return {
             id: 'inspection_table_complete',
@@ -2469,7 +2394,6 @@ const checker: PhaseChecker = {
       generated_at: new Date().toISOString(),
       // t7（f3a8c6d2）：framework 包身份随 check-init.json 落盘（S1 probe 同源）
       framework_identity: probe.framework_identity,
-      gitignore_sync: null,
     };
 
     let writtenPath: string | null = null;
@@ -2599,19 +2523,11 @@ export const __testing = {
   inspect08,
   inspect09,
   inspect10,
-  inspect11,
   buildStdoutTable,
   unifiedDiffSummary,
   normalizeEol,
   resolveArchitectureSkeletonSource,
   compareTextArtifact,
-  CANONICAL_IGNORE_PATTERNS,
-  IGNORE_EQUIV_PATTERNS,
-  parseGitignoreLines,
-  patternIsCovered,
-  listMissingCanonicalPatterns,
-  collectGitignoreAdvisories,
-  ensureCanonicalGitignore,
   parseUpdatePolicy,
   inspectionsForInit034Prompt,
   applyDeprecatedArtifactsCleanup,

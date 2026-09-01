@@ -163,7 +163,11 @@ Enforcement: `harness/scripts/utils/phase-transition-policy.ts`
 
 The system SHALL include `doc/features/*/goal-runs/` in canonical init `.gitignore` patterns via `ensure-gitignore`, without ignoring the entire `doc/features/` tree.
 
-Enforcement: `harness/scripts/utils/canonical-gitignore.ts`, `harness/scripts/utils/init-task-executor.ts`
+> **Former enforcement（已无现行实现）**：本 requirement 已由 active change
+> `framework-identity-boundary` 的 REMOVED delta 退役——`canonical-gitignore.ts` 与
+> executor 的 `ensure-gitignore` writer 均已删除，当前代码库**没有任何文件实现它**。
+> 这里刻意不写 `Enforcement:`：不得用现存但无关的文件冒充实现。requirement 本体
+> 保留至 archive，由该 REMOVED delta 承接删除。
 
 #### Scenario: Fresh init adds goal-runs ignore
 

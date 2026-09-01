@@ -22,13 +22,13 @@
 | `needs_adapter_choice` | 无 local 且多候选 → registry **`setup.adapter`** 交互选择 → `init-orchestrate --scope personal` 的 **`record-adapter`** 写盘；然后用返回的 `activeAdapter`，`adapterSource=registry`；或 **STOP**→`/framework-init` |
 | `no_materialized_adapter` / `not_in_materialized` / `entry_not_materialized` | 先复核 `--project-root`（须指向含 `framework/` 与 `framework.config.json` 的工程根）→ **STOP**，引导 `/framework-init` |
 
-3. 若自动写入了 local.json，须在汇报中说明个人级 `framework.local.json` 已记录 `<X>`（gitignored）；要换别的 adapter 请讲。
+3. 若自动写入了 local.json，须在汇报中说明个人级 `framework.local.json` 已记录 `<X>`；要换别的 adapter 请讲。
 
 同一 run resume 时，若 effective adapter 与 manifest 冻结值相同，`--override-adapter` 只负责
 对账并回写个人级 local，**不得**把 manifest 出生时的 `adapter_provenance` 改成 `override`。
 phase evidence 对历史 3.0.0 事故 manifest 仅容忍该审计字段差异；其它任意字节漂移仍判 stale。
 
-**边界**：写 `framework.local.json`（个人、gitignored）由 `--select-adapter --ensure` 或 `record-adapter` 完成，**允许**；「不写项目产物」指 `.cursor/**`、`framework.config.json`、物化清单——二者不混为一谈。
+**边界**：写 `framework.local.json`（个人级本地配置）由 `--select-adapter --ensure` 或 `record-adapter` 完成，**允许**；「不写项目产物」指 `.cursor/**`、`framework.config.json`、物化清单——二者不混为一谈。
 
 ## 可执行命令（从实例工程的 `framework/harness/` 目录运行）
 

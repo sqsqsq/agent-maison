@@ -69,7 +69,7 @@ schema、组合约束与 fallback 以 [`adapter-schema.yaml`](./adapter-schema.y
 2. **adapter 不修改 framework 自身**——它只产出**实例工程根**的文件。
 3. **双 adapter 模型（编排化重构）**：
    - **`materialized_adapters: string[]`**（项目级，写入 `framework.config.json`）：本仓库要生成/维护哪些 adapter 产物。
-   - **`agent_adapter`**（个人级，`framework.local.json`，gitignored）：开发者当前使用的 adapter；由阶段入口 **`check-personal-setup.ts --json --ensure`** 内联写入，**不在项目 init 中选择**。
+   - **`agent_adapter`**（个人级，`framework.local.json`）：开发者当前使用的 adapter；由阶段入口 **`check-personal-setup.ts --json --ensure`** 内联写入，**不在项目 init 中选择**。
    - 物化时 render-env 用**正在物化的 adapter**，不把 personal active adapter 写进提交产物。
 4. **模板共享优先**：各 adapter 的 `agent_entry_file` 共用 `framework/templates/AGENTS.md.template`。
 

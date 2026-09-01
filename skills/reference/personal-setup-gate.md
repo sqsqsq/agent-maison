@@ -44,7 +44,7 @@ prerequisite 输入**：`goal-runner` 在 primary canary 尝试后、正式 phas
 
 ### 前置声明
 
-- **本过程是个人级、一次性（可重复校准）配置**：写入 `<repo-root>/framework.local.json`（gitignored），**不修改** `framework.config.json`、`.claude/`、`.cursor/` 或任何项目级 adapter 产物。
+- **本过程是个人级、一次性（可重复校准）配置**：写入 `<repo-root>/framework.local.json`（个人级本地配置；是否纳入宿主 SCM 由宿主自行决定），**不修改** `framework.config.json`、`.claude/`、`.cursor/` 或任何项目级 adapter 产物。
 - **前置**：工程根已有 `framework/`；项目级 init 已物化至少一个 adapter（见 `framework.config.json` → `materialized_adapters`）。
 - 若用户想要的 adapter **不在** `materialized_adapters` 或磁盘产物缺失 → **停下**，引导执行 `/framework-init` 更新物化清单并物化，**不得**在本过程内写项目文件。
 - **单一物化 adapter**：由 `check-personal-setup.ts --ensure` 确定性自写 local，**无需**进入下列交互。

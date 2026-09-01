@@ -74,7 +74,10 @@ const ensureConfigTask = {
 
 const cases: Array<{ name: string; run: () => void }> = [
   {
-    name: 'executeInitTask ensure-gitignore creates .gitignore',
+    // plan 33714d0c：宿主 .gitignore 不再属于 Maison 契约——writer 已整体删除。
+    // 这条是**退役回归**：即使旧 decision/run-log 仍带该 task_id（历史 staging 复用），
+    // executor 也不得写盘、不得恢复兼容 writer。
+    name: '退役回归：ensure-gitignore 已无 executor 实现，零 .gitignore 写盘',
     run: () => {
       const root = mkTmp();
       const layout = detectRepoLayout(path.join(__dirname, '../..'));
@@ -96,7 +99,11 @@ const cases: Array<{ name: string; run: () => void }> = [
         allowed_actions: ['run' as const],
       };
       const result = executeInitTask(task, 'run', ctx);
-      assert(fs.existsSync(path.join(root, '.gitignore')), result.message);
+      assert(!fs.existsSync(path.join(root, '.gitignore')), `不得写宿主 .gitignore：${result.message}`);
+      assert(
+        result.message.includes('无 executor 实现'),
+        `不得保留兼容 writer 或空壳分支：${result.message}`,
+      );
       fs.rmSync(root, { recursive: true, force: true });
     },
   },
