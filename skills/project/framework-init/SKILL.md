@@ -1,19 +1,19 @@
 # Framework 工程初始化 Skill (`framework-init`)
 
 ## 适用性与最新意图门（先于任何 init 指令）
-**先裁决最新消息主动作**：取消/纠正 > Git/SCM L0 > 明确 init > 本轮 S1 的合法 S2 continuation；仅出现 framework/衍生物、`$framework-init`、链接或历史上下文不构成 init。`git status/diff/add/stage/commit/push`、整理暂存区/提交/归档均立即返回 L0，**不得运行 readiness、S1、planner 或 harness**；混合“commit 后执行 `/framework-init`”按显式顺序分成两个任务，Git-only/停止 init 不得自行续跑。
+**先裁决最新消息主动作**：取消/纠正 > 明确有序多动作 > Git-only > 无竞争的显式 init > 本轮 S1 的合法 S2 continuation > 被动提及/其它主动作。显式选择/调用 framework-init 且最新消息无否定或竞争主动作时直接进入 Tier_1→S1，不再询问是否执行 init；S3 仍须 S2 批准。取消只退出 init 子流程：另有任何明确主动作时必须继续并完成，纯“不要继续 init”才退出等待。明确“commit 后执行 `/framework-init`”须先完成获授权的 Git L0 再进入 init；Git-only（即使附带无顺序的 Skill 名称/链接）须退出 init 后立即完成最新 Git L0，遵守用户文件范围与 push 授权，**不得输出 init 规则解释、不得询问是否执行 init、不得运行 readiness、S1、planner 或 harness**；退出 init 不等于结束本轮用户任务。引用、解释、否定或记录 Skill 名称/链接属于被动提及；被动提及不单独触发 init，必须继续并完成当前其它主动作。
 合法 S2 continuation 须在当前对话已实际展示本项目、本发布件、本轮 `InitTaskPlan` 和 adapter 选项，且最新消息未取消/切换；否则裸 `计划=...；adapter=...` 不触发 init。
 <!-- framework-init-routing-contract:start -->
-- `framework_init` | “首次接入 Maison 发布件并生成 framework.config”
-- `framework_init` | “集成新发布件后刷新全部 adapter”
-- `framework_init` | “执行 /framework-init”
-- `continue_current_init_s2` | 本轮真实 S1 后“计划=智能；adapter=codex,cursor”
-- `git_l0` | “整理下 framework 及其衍生物并提交，不相关的别动”
-- `git_l0` | “查看 framework 更新产生的 diff”
-- `git_l0` | “只提交当前已暂存的 Framework，业务代码别动”
-- `git_l0` | “git status 后提交，不要 push”
-- `exit_init_to_git_l0` | “停止 init，只提交代码”
+- `exit_init_continue_git_l0` | “停止 init，只提交代码”
 - `exit_init` | “不要继续刚才的 framework-init”
+- `git_l0_then_framework_init` | “commit 后执行 /framework-init”
+- `exit_init_continue_git_l0` | “整理下 framework 及其衍生物并提交，不相关的别动”
+- `exit_init_continue_git_l0` | “$framework-init；现在整理下 framework 及其衍生物并提交，不相关的别动”
+- `exit_init_continue_git_l0` | “只提交当前已暂存的 Framework，业务代码别动”
+- `framework_init` | $framework-init
+- `framework_init` | “执行 /framework-init”
+- `framework_init` | “集成新发布件后刷新全部 adapter”
+- `continue_current_init_s2` | 本轮真实 S1 后“计划=智能；adapter=codex,cursor”
 <!-- framework-init-routing-contract:end -->
 
 ## 前置声明
