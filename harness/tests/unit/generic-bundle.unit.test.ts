@@ -234,6 +234,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         'catalog-bootstrap',
         '.agents/skills/catalog-bootstrap/SKILL.md',
         'framework/skills/project/catalog-bootstrap/SKILL.md',
+        FRAMEWORK_DIR,
       );
       assert(md.includes('name: catalog-bootstrap'));
     },
@@ -245,6 +246,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         'goal-mode',
         '.cursor/skills/goal-mode/SKILL.md',
         'framework/skills/project/goal-mode/SKILL.md',
+        FRAMEWORK_DIR,
       );
       assert(!md.includes('RESOLVED_ADAPTER'));
       assert(!md.includes('AskUserQuestion'));
@@ -257,8 +259,35 @@ const cases: Array<{ name: string; run: () => void }> = [
         'coding',
         '.cursor/skills/coding/SKILL.md',
         'framework/skills/feature/coding/SKILL.md',
+        FRAMEWORK_DIR,
       );
       assert(!md.includes('RESOLVED_ADAPTER'));
+    },
+  },
+  {
+    name: 'renderBridgeSkillStubMarkdown：description 严格来自显式 framework root',
+    run: () => {
+      const roots = ['A', 'B'].map(label => fs.mkdtempSync(path.join(os.tmpdir(), `bridge-root-${label}-`)));
+      try {
+        roots.forEach((root, i) => {
+          fs.mkdirSync(path.join(root, 'skills'), { recursive: true });
+          fs.writeFileSync(
+            path.join(root, 'skills', 'skills.index.yaml'),
+            `schema_version: "1.0"\nskills:\n  - id: goal-mode\n    scope: project\n    source_rel: project/goal-mode\n    order: 0\n    description: root-${i === 0 ? 'A' : 'B'}\n`,
+            'utf8',
+          );
+        });
+        const render = (root: string) => renderBridgeSkillStubMarkdown(
+          'goal-mode',
+          '.agents/skills/goal-mode/SKILL.md',
+          'framework/skills/project/goal-mode/SKILL.md',
+          root,
+        );
+        assert(render(roots[0]!).includes('description: root-A'));
+        assert(render(roots[1]!).includes('description: root-B'));
+      } finally {
+        for (const root of roots) fs.rmSync(root, { recursive: true, force: true });
+      }
     },
   },
   {

@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: 代码审查报告（完整流程见 framework/skills/feature/code-review/SKILL.md）
+description: 代码审查报告
 ---
 
 > **BLOCKER — Personal setup**：`check-personal-setup.ts --json --ensure`（见 [personal-setup-gate](../../../framework/skills/reference/personal-setup-gate.md)）。

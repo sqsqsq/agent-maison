@@ -1,6 +1,6 @@
 ---
 name: spec
-description: spec 撰写（完整流程见仓库 framework/skills/feature/spec/SKILL.md）
+description: spec 撰写
 ---
 
 > **BLOCKER — Personal setup**：`check-personal-setup.ts --json --ensure`（见 [personal-setup-gate](../../../framework/skills/reference/personal-setup-gate.md)）。

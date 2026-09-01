@@ -211,6 +211,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'workflow-loader', modulePath: './unit/workflow-loader.unit.test' },
   { id: 'workflow-tracks', modulePath: './unit/workflow-tracks.unit.test' },
   { id: 'skill-contract', modulePath: './unit/skill-contract.unit.test' },
+  { id: 'framework-init-routing-contract', modulePath: './unit/framework-init-routing-contract.unit.test' },
   { id: 'assess', modulePath: './unit/assess.unit.test' },
   { id: 'device-test-case-kernel', modulePath: './unit/device-test-case-kernel.unit.test' },
   { id: 'quality-tiers', modulePath: './unit/quality-tiers.unit.test' },

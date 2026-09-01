@@ -4,29 +4,21 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import {
-  BUILTIN_SKILL_BRIDGE_DESCRIPTIONS,
-  type AgentBundleSkillMode,
-  type ResolvedAgentBundlePaths,
-} from './agent-bundle-paths';
+import type { AgentBundleSkillMode, ResolvedAgentBundlePaths } from './agent-bundle-paths';
 import {
   listBuiltinSkillIds,
+  resolveSkillDescription,
   resolveSkillPath,
   skillMdAbs,
 } from './resolve-skill-path';
-
-export { BUILTIN_SKILL_BRIDGE_DESCRIPTIONS };
 
 /** @deprecated use listBuiltinSkillIds */
 export function listFrameworkBuiltinSkillDirs(frameworkDir: string): string[] {
   return listBuiltinSkillIds(frameworkDir);
 }
 
-export function skillDescriptionForDir(skillId: string): string {
-  return (
-    BUILTIN_SKILL_BRIDGE_DESCRIPTIONS[skillId] ??
-    `Framework Skill（完整流程见 framework/skills/…/${skillId}/SKILL.md）`
-  );
+export function skillDescriptionForDir(frameworkDir: string, skillId: string): string {
+  return resolveSkillDescription(frameworkDir, skillId);
 }
 
 /** 从实例根下 stub 文件相对路径计算到正文 SKILL 的 `../` 前缀 */
@@ -43,9 +35,11 @@ export function renderBridgeSkillStubMarkdown(
   skillId: string,
   stubTargetRelPosix: string,
   skillMdRepoRelPosix: string,
+  frameworkDir: string,
+  descriptionOverride?: string,
 ): string {
   const relFromStub = posixRelativeFromSkillStubTo(stubTargetRelPosix, skillMdRepoRelPosix);
-  const description = skillDescriptionForDir(skillId);
+  const description = descriptionOverride ?? skillDescriptionForDir(frameworkDir, skillId);
   const lines = [
     '---',
     `name: ${skillId}`,
@@ -160,7 +154,7 @@ export function materializeInlineSkillMarkdown(
   if (ctx) {
     body = rewriteRelativeLinksForInlineMaterialize(body, src, frameworkDir, ctx);
   }
-  const description = skillDescriptionForDir(skillId);
+  const description = skillDescriptionForDir(frameworkDir, skillId);
   return ['---', `name: ${skillId}`, `description: ${description}`, '---', '', body].join('\n');
 }
 
@@ -208,7 +202,7 @@ export function materializeAgentBundleSkills(
     } else {
       mkdirWrite(
         targetRel,
-        renderBridgeSkillStubMarkdown(id, targetRel, skillMdRepoRel),
+        renderBridgeSkillStubMarkdown(id, targetRel, skillMdRepoRel, frameworkDir),
       );
     }
   }
