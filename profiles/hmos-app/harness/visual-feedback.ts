@@ -11,8 +11,8 @@
 // 收敛：与上一轮 feedback JSON 的指纹集对比（converging|stalled|regressing|converged）；
 // stalled 与既有 visual-rounds-ledger no-progress fuse 同源事实（defect 指纹由 visual_diff
 // 结构化轮次承载——本模块不并行造熔断状态机，见 openspec visual-diff spec）。
-// 身份：framework_version + package digest（RELEASE-MANIFEST.sha256，发布包环境）+
-// gate_fingerprint + commit（可空）——至少 digest/commit 其一非空。
+// 身份：framework_version/source_commit/manifest SHA 均来自同一发布件 identity loader，
+// 另带 gate_fingerprint；宿主 Git HEAD/dirty/staged/commit 状态不参与。
 // deterministic_feedback 派生：effective_image_input=none ∧ ui_change 需 ui-spec——
 // harness 机器派生，非 agent 可关配置。
 // ============================================================================
@@ -20,10 +20,10 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawnSync } from 'child_process';
 import type { CheckContext, CheckResult } from '../../../harness/scripts/utils/types';
 import { featureDir } from '../../../harness/config';
 import { computeGateFingerprint } from '../../../harness/scripts/utils/gate-fingerprint';
+import { readFrameworkPackageIdentity } from '../../../harness/scripts/utils/framework-integrity';
 import {
   UI_CHANGE_REQUIRES_UI_SPEC,
   loadUiSpecFile,
@@ -86,22 +86,18 @@ export interface VisualFeedbackDoc {
 // ---------------------------------------------------------------------------
 
 export function resolveFeedbackIdentity(
-  projectRoot: string,
+  _projectRoot: string,
   frameworkRoot: string,
   phase: string,
 ): VisualFeedbackIdentity {
   const gate = computeGateFingerprint(frameworkRoot, phase) ?? null;
-  const framework_version = gate ? gate.split(':')[0] : null;
-  let framework_package_digest: string | null = null;
-  const manifestPath = path.join(frameworkRoot, 'RELEASE-MANIFEST.sha256');
-  if (fs.existsSync(manifestPath)) {
-    framework_package_digest = crypto.createHash('sha256').update(fs.readFileSync(manifestPath)).digest('hex');
-  }
-  let framework_commit_sha: string | null = null;
-  try {
-    const r = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: frameworkRoot, encoding: 'utf-8', shell: false });
-    framework_commit_sha = r.status === 0 ? r.stdout.trim() : null;
-  } catch { /* 发布包环境无 git——digest 承担身份 */ }
+  const identity = readFrameworkPackageIdentity(frameworkRoot);
+  const framework_version = identity.version === 'unknown' ? null : identity.version;
+  const framework_package_digest =
+    identity.manifest_sha256 === 'unknown' ? null : identity.manifest_sha256;
+  // 字段名为历史 schema 兼容保留；唯一来源是发布件 manifest.source_commit，不是宿主 HEAD。
+  const framework_commit_sha =
+    identity.source_commit === 'unknown' ? null : identity.source_commit;
   return { framework_version, framework_package_digest, gate_fingerprint: gate, framework_commit_sha };
 }
 

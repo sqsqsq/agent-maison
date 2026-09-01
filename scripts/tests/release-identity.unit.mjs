@@ -5,8 +5,8 @@
 //   ② release verify：validateReleaseIdentityFields（verify-release-pack.mjs）逐字段
 //      校验；二者同仓同字段，生成→校验直接互通；
 //   ③ 消费者呈现侧（readFrameworkPackageIdentity / buildFrameworkIdentityResult）在
-//      harness/tests/unit/framework-integrity.unit.test.ts 覆盖（消费者读同一份
-//      RELEASE-MANIFEST.json 的同一字段名，legacy 缺字段只显示 unknown、不阻断）。
+//      harness/tests/unit/framework-integrity.unit.test.ts 覆盖：manifest 三字段 + sidecar
+//      声明的 manifest SHA 原样读取，legacy 缺字段只显示 unknown、不阻断。
 //
 // 跑法：npm run release:check-plans-test（= node --test scripts/tests/*.unit.mjs）
 import { test, afterEach } from 'node:test';

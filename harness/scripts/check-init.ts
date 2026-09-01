@@ -2123,7 +2123,7 @@ export function runInitProbe(options: InitProbeOptions): InitProbeResult {
     inspect10(inspectorEnv),
     inspect11(inspectorEnv),
   ];
-  // t7（f3a8c6d2）：框架发布包身份——与防漂移 preflight 共用同一 manifest loader
+  // 框架发布包身份——check-init 与 visual-feedback 共用同一个非阻断 package identity loader
   const framework_identity = readFrameworkPackageIdentity(FRAMEWORK_ROOT);
   return { mode, adapterPick, adapter, cfg, renderEnv, inspections, framework_identity };
 }

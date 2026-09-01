@@ -311,7 +311,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     run: () => {
       const harnessRoot = path.resolve(__dirname, '..', '..');
       const redLineFiles = [
-        'scripts/utils/framework-integrity.ts',
+        '../agents/shared/guard-framework-write-core.mjs',
         'scripts/utils/process-integrity.ts',
         'scripts/utils/fidelity-shared.ts',
         'scripts/utils/diff-scope.ts',

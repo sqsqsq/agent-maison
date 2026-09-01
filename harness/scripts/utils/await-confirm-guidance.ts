@@ -172,85 +172,39 @@ export interface FrameworkIntegrityGuidanceOpts {
   feature: string;
   runId: string;
   phase: string;
-  /** extractIntegritySubtypes 收集的多值 subtype（可空——blocker 无 classification 时）。 */
+  /**
+   * 历史 summary 里的 integrity classification（可空）。六 subtype 矩阵已退役：
+   * 这里只作 provenance 原样带出，不再驱动任何处置分支。
+   */
   subtypes: string[];
   /** consumer='framework/harness'、standalone='harness' */
   harnessPrefixRel: string;
 }
 
-/**
- * P0-5（plan d9b4f7e2，07-13 chrys bc-openCard 拉锯实证）：framework 完整性家族首触 halt
- * 的引导话术。铁律：**不给 agent 任何"修复"指引**——本 halt 的全部出路都在真人侧；
- * goal agent 对 framework 发布件的自动写操作（含"回滚可疑漂移"）一律禁止（案发现场
- * goal agent 依 code_regression 通用话术回滚了宿主经用户批准的真修复）。
- * 多 subtype 共存时按修复顺序列出（manifest 锚点层先于 per-file 层——manifest 不可信时
- * per-file 比对无意义）。
- */
-const INTEGRITY_SUBTYPE_REMEDIATION: ReadonlyArray<{ subtype: string; lines: string[] }> = [
-  {
-    subtype: 'framework_manifest_tampered',
-    lines: [
-      'manifest/sidecar 被本地改动或顶替——从发布包恢复 framework/RELEASE-MANIFEST.json 与 sidecar，',
-      '或经 framework-init UPDATE 重铺发布件。**禁止手工重算 manifest**（manifest 失锚时 drift allowlist 不适用）。',
-    ],
-  },
-  {
-    subtype: 'framework_manifest_sidecar_missing',
-    lines: [
-      'sidecar 缺失——经 framework-init UPDATE 重铺发布件恢复。**请勿手工补写**（手写完整性锚点无效且被写守卫拦截）。',
-    ],
-  },
-  {
-    subtype: 'framework_manifest_corrupt',
-    lines: ['manifest 损坏——重装或从发布包恢复 framework/RELEASE-MANIFEST.json（allowlist 对 manifest 层无效）。'],
-  },
-  {
-    subtype: 'framework_manifest_empty',
-    lines: ['manifest 为空——重装或从发布包恢复 framework/RELEASE-MANIFEST.json（allowlist 对 manifest 层无效）。'],
-  },
-  {
-    subtype: 'framework_drift',
-    lines: [
-      '发布源码漂移——三选一：①确属有意本地 fork：由**真人**在 framework.config.json',
-      '  integrity.drift_allowlist 添加 {path, rationale, approved_by} 具名审批（agent 自加无效）；',
-      '  ②还原漂移文件到发布件原状后重跑；③上游缺陷修复：回灌 agent-maison 源仓重新发布。',
-      '  注意：漂移可能是宿主/真人**有意热修**（本机制的立项事故正是 goal agent 回滚了真修复）——',
-      '  不确定来源时先问改动者，不要默认还原。goal run 进行中要热修 framework 的，请先停 run。',
-    ],
-  },
-  {
-    subtype: 'framework_foreign_file',
-    lines: ['framework/ 树上有外来文件——清理（临时脚本/宿主产物移出），或确属有意 → 真人 allowlist 具名审批。'],
-  },
-];
-
+/** 当前机器 integrity halt 的 source-sensitive 引导；退役 framework subtype 仅作历史 provenance。 */
 export function buildFrameworkIntegrityGuidance(opts: FrameworkIntegrityGuidanceOpts): string[] {
   const { feature, runId, phase, subtypes, harnessPrefixRel } = opts;
   const resumeCmd = `npm --prefix ${harnessPrefixRel} run goal -- --feature ${feature} --resume ${runId} --force-resume`;
-  const known = INTEGRITY_SUBTYPE_REMEDIATION.filter((r) => subtypes.includes(r.subtype));
-  const unknown = subtypes.filter((s) => !INTEGRITY_SUBTYPE_REMEDIATION.some((r) => r.subtype === s));
-  const out: string[] = [
-    `【${feature} · run ${runId} · ${phase}】framework 完整性门禁拦截` +
-      (subtypes.length ? `（${subtypes.join(' + ')}）` : '') +
-      '——此类问题 agent 修不了也不许修（包括"回滚可疑改动"），须真人处置后续跑。',
+  if (subtypes.includes('process_injection')) {
+    return [
+      `【${feature} · run ${runId} · ${phase}】检测到进程预加载注入（process_injection）——当前门禁进程不可信，已停止。`,
+      '',
+      '处置：清除 NODE_OPTIONS / execArgv 预加载参数，删除无合法用途的 .node-options，移除 .npmrc node-options 旁路；',
+      '然后从未注入的干净进程重新运行。不得用注入修改 summary、回执或任何门禁产物。',
+      '',
+      `处置完后续跑：${resumeCmd}`,
+    ];
+  }
+  const legacy = subtypes.length > 0 ? subtypes.join(' + ') : 'unknown';
+  return [
+    `【${feature} · run ${runId} · ${phase}】读取到 integrity 分类：${legacy}。`,
     '',
-    '按顺序处置（涉及文件清单见 harness 报告的 framework_integrity/framework_foreign_file blocker details）：',
+    '若这些值来自旧 framework_integrity / manifest / foreign / drift summary，它们已退役，仅作历史 provenance；',
+    '当前版本不会根据宿主 Git dirty/HEAD 生产替代结果，也不要求提交、回滚或填写 allowlist。',
+    '请用当前发布件与当前环境重跑本 phase；若仍有当前机器 integrity blocker，按新报告的真实来源处置。',
+    '',
+    `重跑：${resumeCmd}`,
   ];
-  let n = 0;
-  for (const r of known) {
-    n += 1;
-    out.push(`  ${n}. [${r.subtype}]`);
-    for (const l of r.lines) out.push(`     ${l}`);
-  }
-  for (const s of unknown) {
-    n += 1;
-    out.push(`  ${n}. [${s}] 未内置处置建议——人工对照 framework/RELEASE-MANIFEST.json 核查 framework/ 完整性。`);
-  }
-  if (n === 0) {
-    out.push('  1. blocker 未携带 subtype——人工对照 framework/RELEASE-MANIFEST.json 核查 framework/ 完整性。');
-  }
-  out.push('', `处置完后续跑：${resumeCmd}`);
-  return out;
 }
 
 export interface AgentTimeoutRepeatedGuidanceOpts {
@@ -314,8 +268,8 @@ export function buildFrameworkBugGuidance(opts: FrameworkBugGuidanceOpts): strin
     '',
     '处置：',
     '  1. 把该缺陷回灌 agent-maison 源仓修复并重新发布（附 harness 报告里的完整栈）；',
-    '  2. 等不及发布需本地热修的：由**真人**修改并在 framework.config.json integrity.drift_allowlist',
-    '     添加 {path, rationale, approved_by} 具名审批（否则下一轮被 framework_integrity 拦截）；',
+    '  2. 等不及发布需本地热修的：这是**真人/updater 的操作**。先停 run，由用户/CI 明确集成',
+    '     已修复的发布件或在有权限的维护环境处理；宿主 Git add/stage/commit 不是 Maison 放行条件；',
     '  3. **不要**让 agent 继续修改自己的产物来绕过——崩溃发生在 checker 内部，产物怎么改都可能复现；',
     '     agent 也不得修改 framework 发布件。',
     '',

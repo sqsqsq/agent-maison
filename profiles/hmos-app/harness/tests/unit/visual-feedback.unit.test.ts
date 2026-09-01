@@ -4,7 +4,7 @@
 // 锁定：①两类信号分立（声明文案缺失=hard；多余文本/色差/行距=advisory；
 //   色差 8→9 类连续变化不产 hard——由阈值判定锁定）；②子串容错（OCR 拼行噪声不误报）；
 // ③收敛分类（first_round/converged/converging/stalled/regressing）；④行距节奏带；
-// ⑤身份字段（package digest 与 commit 至少其一非空；gate_fingerprint 结构）；
+// ⑤身份字段只来自发布件 manifest/sidecar，五种宿主 Git 环境逐字段相同；
 // ⑥deterministic_feedback 机器派生（盲档∧UI 需求；非盲/非 UI 不派生）。
 // ============================================================================
 
@@ -12,6 +12,7 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
 
 import {
   COLOR_DELTA_E_REPORT_THRESHOLD,
@@ -92,12 +93,78 @@ test('收敛分类：first_round / converging / stalled / regressing / converged
 
 // ---------------- ⑤ 身份 ----------------
 
-test('身份：gate_fingerprint 结构 + digest/commit 至少其一非空（源仓=commit；发布包=digest）', () => {
-  const frameworkRoot = path.resolve(__dirname, '..', '..', '..', '..', '..');
-  const id = resolveFeedbackIdentity(process.cwd(), frameworkRoot, 'testing');
-  assert.ok(id.gate_fingerprint && /:[0-9a-f]{12}$/.test(id.gate_fingerprint), `gate=${id.gate_fingerprint}`);
-  assert.ok(id.framework_version, 'version 从 fingerprint 前缀取');
-  assert.ok(id.framework_package_digest !== null || id.framework_commit_sha !== null, '身份至少其一');
+type GitShape = 'tracked_dirty' | 'staged' | 'committed' | 'untracked' | 'non_git';
+
+function git(cwd: string, args: string[]): void {
+  const r = spawnSync('git', args, { cwd, encoding: 'utf-8', shell: false });
+  if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr || r.stdout}`);
+}
+
+function setupIdentityShape(shape: GitShape): { projectRoot: string; frameworkRoot: string } {
+  const projectRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `vf-id-${shape}-`)));
+  const frameworkRoot = path.join(projectRoot, 'framework');
+  fs.mkdirSync(path.join(frameworkRoot, 'specs', 'phase-rules'), { recursive: true });
+  fs.writeFileSync(path.join(frameworkRoot, 'package.json'), JSON.stringify({ version: '3.0.0' }), 'utf-8');
+  fs.writeFileSync(path.join(frameworkRoot, 'specs', 'phase-rules', 'testing-rules.yaml'), 'phase: testing\n', 'utf-8');
+  fs.writeFileSync(path.join(frameworkRoot, 'README.md'), shape === 'tracked_dirty' || shape === 'staged' ? 'old\n' : 'new\n', 'utf-8');
+  fs.writeFileSync(
+    path.join(frameworkRoot, 'RELEASE-MANIFEST.json'),
+    JSON.stringify({
+      schema_version: '1.0',
+      version: '3.0.0',
+      source_commit: '1234567890abcdef1234567890abcdef12345678',
+      built_at: '2026-09-01T00:00:00Z',
+      files: [],
+    }),
+    'utf-8',
+  );
+  fs.writeFileSync(path.join(frameworkRoot, 'RELEASE-MANIFEST.sha256'), `${'b'.repeat(64)}\n`, 'utf-8');
+
+  if (shape !== 'non_git') {
+    git(projectRoot, ['init', '-q']);
+    git(projectRoot, ['config', 'user.email', 'unit@test.local']);
+    git(projectRoot, ['config', 'user.name', 'unit-test']);
+    if (shape === 'untracked') {
+      fs.writeFileSync(path.join(projectRoot, 'host.txt'), 'host\n', 'utf-8');
+      git(projectRoot, ['add', 'host.txt']);
+      git(projectRoot, ['commit', '-q', '-m', 'host only']);
+    } else {
+      git(projectRoot, ['add', '-A']);
+      git(projectRoot, ['commit', '-q', '-m', 'framework baseline']);
+      if (shape === 'tracked_dirty' || shape === 'staged') {
+        fs.writeFileSync(path.join(frameworkRoot, 'README.md'), 'new\n', 'utf-8');
+        if (shape === 'staged') git(projectRoot, ['add', 'framework/README.md']);
+      }
+    }
+  }
+  return { projectRoot, frameworkRoot };
+}
+
+test('身份：同一发布件在 dirty/staged/committed/untracked/non-Git 五态逐字段相同', () => {
+  const roots: string[] = [];
+  try {
+    const identities = (['tracked_dirty', 'staged', 'committed', 'untracked', 'non_git'] as GitShape[])
+      .map((shape) => {
+        const fixture = setupIdentityShape(shape);
+        roots.push(fixture.projectRoot);
+        return resolveFeedbackIdentity(fixture.projectRoot, fixture.frameworkRoot, 'testing');
+      });
+    for (const id of identities) assert.deepStrictEqual(id, identities[0]);
+    const id = identities[0];
+    assert.strictEqual(id.framework_version, '3.0.0');
+    assert.strictEqual(id.framework_package_digest, 'b'.repeat(64), '须为 sidecar 声明值，不得二次哈希');
+    assert.strictEqual(id.framework_commit_sha, '1234567890abcdef1234567890abcdef12345678', '须为 manifest source_commit');
+    assert.ok(id.gate_fingerprint && /^3\.0\.0:[0-9a-f]{12}$/.test(id.gate_fingerprint), `gate=${id.gate_fingerprint}`);
+  } finally {
+    for (const root of roots) fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('生产 visual-feedback 不读取宿主 Git 或哈希 sidecar 文本', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../../visual-feedback.ts'), 'utf-8');
+  assert.ok(!source.includes("from 'child_process'"));
+  assert.ok(!source.includes("spawnSync('git'"));
+  assert.ok(!source.includes("path.join(frameworkRoot, 'RELEASE-MANIFEST.sha256')"));
 });
 
 // ---------------- ⑥ deterministic_feedback 派生 ----------------

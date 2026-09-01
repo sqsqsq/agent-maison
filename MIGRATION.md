@@ -241,14 +241,25 @@ report，**再跑一次完整 harness 会换代 subject**，刚发布的 verifie
 
 ---
 
-## 防漂移完整性门禁（framework_integrity）
+## framework 控制面写边界（3.0.0 Breaking：runtime Git/hash 家族退场）
 
-发布件随包下发 `framework/RELEASE-MANIFEST.json`（每文件 sha256）。harness 启动时（普通模式与 goal 模式一致）跑全局 `framework_integrity` preflight：以 manifest 为准逐文件比对 `framework/`，**发现源码漂移默认判 BLOCKER**。
+原先的做法是：发布件随包下发 `framework/RELEASE-MANIFEST.json`，harness 启动时逐文件 sha256 比对，漂移判 BLOCKER；随后为保护这个事后检查本身，又依次长出 manifest sidecar 自校验、外来文件扫描、真人具名 drift allowlist 与六 subtype 的 halt/恢复矩阵。
 
-- **目的**：杜绝在消费者侧（尤其 goal-mode 无人值守代理）静默改 framework 源码——发现即拦，逼其走上游回灌而非本地漂移。
-- **升级即生效**：解压新发布件覆盖 `framework/` 后首次跑 harness 即启用。**若你此前对 `framework/` 有本地改动，会立即判 BLOCKER**。
-- **两条出路**：(1) 把本地修复回灌 agent-maison 上游、重新发布（推荐）；(2) 确需本地 fork：由**真人**在 `framework.config.json` 具名审批放行（P1-5 起 legacy 布尔/字符串形态一律无效照报）——按路径精确放行 `"integrity": { "drift_allowlist": [{ "path": "harness/scripts/check-testing.ts", "rationale": "本地 fork：<原因>", "approved_by": "<真人名>" }] }`，或整体降 WARN `"integrity": { "allow_local_drift": { "enabled": true, "rationale": "<原因>", "approved_by": "<真人名>" } }`。`approved_by` 须真人（自动化身份 / `user_requirement` 无效）；**agent 不得自改 framework 后自批放行**（自加条目无效，发现框架问题应 halt 上报）。
-- **dev/source layout**（framework 自身仓，无包内 manifest）自动 no-op，不影响其 `npm test`。
+它不是安全边界：manifest、sidecar 与被校验文件同处一个可写目录，同一主体能一并修改。范围也被推到最大——2026-08-31 的直接反例：一份**不参与运行**的 vendor 移交文档只少了一个文末空行，hash 事实无误，却让 catalog、testing 与设备执行全部 BLOCKER。
+
+**3.0.0 起改为把写权限从宿主身份拿走，并彻底删除普通运行的 Git 身份裁决**：
+
+- **谁能写由执行环境授予**：host consumer task 对 framework 控制面**物理只读**（task sandbox / 只读挂载 / 受限 OS token + ACL），只有用户或 CI 显式启动的 updater 在升级窗口内临时可写，完成后恢复只读。env、`framework.config.json`、agent 自报身份、当前目录都可伪造，一律不构成身份。
+- **无法强隔离时只保留合作式编辑工具守卫**：覆盖 Write/Edit/MultiEdit/NotebookEdit，判定异常 fail-open；shell、脚本、`node -e` 与场外进程不在射程。没有 Git/hash/manifest 查时 detector 兜底。
+- **宿主 Git 完全无关**：是否为 Git 仓、tracked/staged/committed/clean、HEAD 是否仍是旧发布件均不影响 Maison init/phase verdict 或 Framework identity。
+
+### 消费者需要动手的地方
+
+- **新运行不再有 framework integrity 结果**：不生产 `framework_integrity`、`framework_control_plane_dirty`，也不保留永久 SKIP/PASS 空壳。旧 summary 的 `framework_drift` / foreign / manifest subtype 仍可只读展示，不批量重写。
+- **`framework.config.json` 的放行字段失效**：`integrity.drift_allowlist` 与 `integrity.allow_local_drift` 可为存量配置无损读取保留，但读取即忽略、不能解锁守卫、不能影响 verdict，也不再产生运行时迁移 advisory。请在后续配置维护中删除。
+- **包 hash 仍在可信边界**：Maison `release:pack`/`release:verify` 与明确 updater/集成操作保留校验；普通 phase 不读取或重算 per-file manifest。包身份（version / source_commit / built_at / sidecar 声明的 manifest SHA）继续可读，只作展示。
+- **`docs/vendor/**` 不再进发布件**：它是与外部 vendor 的交接材料，不参与运行。升级后该目录不会出现在 `framework/` 下。
+- **dev/source layout**（framework 自身仓，无包内 manifest）只会显示 identity unknown/SKIP，不影响其 `npm test`；不存在 runtime integrity gate。
 
 ---
 
@@ -457,39 +468,11 @@ coding 只读 contracts —— 不 scaffold 就判「未物化」、scaffold 就
 
 ---
 
-## 把 framework 部署到目标工程：两种模式
+## 把 framework 发布件集成到目标工程
 
-### 模式 A：Vendor（直接拷源码，无独立 git 仓库）
+Maison 只交付已经过 pack/release verify 的 `framework-<semver>.zip`。在目标工程根解压，得到 `<repo-root>/framework/`；升级时用新发布件镜像覆盖旧目录。不要从源仓直接挑文件复制，也不要采用第二种 Git 布局。
 
-适用场景：framework 不作为独立 git 仓库管理，作为**目标工程仓库的一部分**跟随提交；典型如「壳子工程训练 framework，定期同步到一个或多个真实业务工程」。
-
-> **设计原则**：用户/AI 唯一的**手工**动作 = "把 `framework/` 整目录搬到目标工程根"。同步完成后跑 `/framework-init`，**剩下所有事**（npm install、S3 `run-global-phases`、配 `framework.config.json`、harness 验收）**全部由 framework-init S3 内部完成**；DevEco 路径由 personal setup（阶段 `--ensure`）写入 `framework.local.json`。绝不要让用户在 vendor 之后再手工跑额外命令。
-
-#### 首次部署 / 升级（同一组命令）
-
-在**当前 framework 源仓库**（即维护 framework 的工程）根目录执行：
-
-```bash
-# Linux / macOS / WSL
-rsync -a --delete \
-  --exclude 'node_modules' \
-  --exclude 'dist' \
-  --exclude 'reports/*' \
-  --exclude 'trace' \
-  framework/ <target-repo>/framework/
-```
-
-```powershell
-# Windows PowerShell
-robocopy .\framework <target-repo>\framework /MIR /XD node_modules dist reports trace
-```
-
-排除项说明（这些都是运行产物，已被 `.gitignore`，不是 framework 本体）：
-- `node_modules` / `dist` — npm 安装结果与 ts 编译产物，目标工程会自己重建
-- `reports/*` — harness 跑出的报告（保留 `reports/.gitkeep`）
-- `trace` — 调试 trace 目录
-
-同步到目标工程后，在工程根跑 **`/framework-init`**（S1–S4 编排）。`ensure-gitignore` 等 mechanism 任务在 **S3 批准后** 由 executor 执行（不再在探测阶段写盘）。
+集成完成后，在工程根跑 **`/framework-init`**（S1–S4 编排）。`ensure-gitignore` 等 mechanism 任务在 **S3 批准后**由 executor 执行。宿主是否 add/stage/commit 不参与 init/catalog/其它 phase 裁决。
 
 | 阶段 | 做的事 |
 |------|--------|
@@ -503,45 +486,13 @@ robocopy .\framework <target-repo>\framework /MIR /XD node_modules dist reports 
 - 在 S1 探测阶段写 `.gitignore` / adapter 产物 / config（副作用仅在 S3）。
 - 在项目 init 里配置 personal `agent_adapter` 或 DevEco 路径（走 setup → `framework.local.json`）。
 - 用 legacy **Q1=y / Step 0.3.4** 文本协议代替 registry widget（已废弃）。
-- 把 S3 `run-global-phases` 失败解释为「环境问题」跳过——全局 phase 不依赖外部工具链，失败说明 vendor 漏文件、init 未完成或 framework bug。
-
-### 模式 B：Submodule（framework 独立 git 仓库）
-
-适用场景：framework 已抽取为独立 repo，被 3+ 个工程通过 `git submodule` 共用；维护者希望"一处发布、多处升级"。
-
-#### 首次部署
-
-```bash
-# 在目标工程根执行
-git submodule add <framework-repo-url> framework
-git submodule update --init --recursive
-# 之后跑 /framework-init，与 Vendor 模式同步完成后的流程一致
-```
-
-#### 升级
-
-```bash
-git submodule update --remote framework
-# 或进入 framework 目录按你们托管方式 pull / checkout 指定 tag
-```
-
-子模块更新后，若 `framework.config.json` 的 `schema_version` 或 harness 契约有破坏性变更，维护者应在 **framework 的 CHANGELOG / 发布说明**中注明；实例侧仍建议走一次 **`/framework-init` UPDATE**，让 Skill 根据新模板与校验规则对齐入口文件与路径说明，并触发 S3 `run-global-phases` 确认 submodule 拉得完整。
-
----
-
-## 模式选择建议
-
-| 场景 | 推荐模式 |
-|---|---|
-| 单壳子工程训练 framework + 1~2 个真实业务工程 | **Vendor**（投入小，演化期适用） |
-| framework 稳定，3+ 真实工程共用 | **Submodule**（一处升级，多处生效） |
-| framework 还在剧烈演化（如 v2.x 这个阶段） | **Vendor**（每次同步前能 diff，便于回滚单次同步） |
+- 把 S3 `run-global-phases` 失败解释为「环境问题」跳过——全局 phase 不依赖外部工具链，失败说明发布件集成不完整、init 未完成或 framework bug。
 
 ---
 
 ## 本文件与「实例侧迁移说明」的关系
 
-**本 `MIGRATION.md` 留在 `framework/` 内**，供所有引入子模块的仓库只读参考。
+**本 `MIGRATION.md` 留在发布件 `framework/` 内**，供所有接入工程只读参考。
 
 若初始化 Skill 在实例根生成「迁移备忘」或「与当前 config 对齐的检查清单」，那是**针对该工程当前状态**的一次性产物，**不替代**本文的通用约定；二者冲突时以 **Skill 流程 + `framework.config.json` + harness 实际校验** 为准。
 
@@ -594,7 +545,7 @@ git submodule update --remote framework
 
 **实例升级 checklist**：
 
-1. Vendor / submodule 更新 framework 到含本重构的版本。
+1. 集成含本重构的 Maison 已验证发布件。
 2. 工程根跑 **`/framework-init` UPDATE**（S1→S4），物化**新扁平跳板名**与 inline 链接。
 3. **UPDATE init 自动清理**残留旧跳板（实例根仍使用编号形态或语义旧名 prd-design、requirement-design 等的遗留目录/文件；**不删**现行扁平跳板 spec / plan / coding 等）；删除前备份至 `.framework-backup/<timestamp>/`，可按需回滚。CREATE 模式不删除。
 4. profile `skill-assets.yaml` 与扩展 skill 引用改为扁平 slug。
@@ -618,7 +569,7 @@ git submodule update --remote framework
 
 **实例升级 checklist**：
 
-1. **Vendor / submodule 更新** framework 到含编排器的版本。
+1. 集成含编排器的 Maison 已验证发布件。
 2. 工程根跑 **`/framework-init` UPDATE**（S1→S4）；S2 确认 `materialized_adapters` 覆盖团队使用的 IDE。
 3. S3 应执行 **`migrate-config`**（若 planner 挂载）：自动把 legacy `agent_adapter` / DevEco 路径外迁，并在 project config 写入 `materialized_adapters`。
 4. **每位开发者**跑一次 **`check-personal-setup --json --ensure（阶段前置门控）`**，确认 personal `agent_adapter`（仅能从已物化列表选）。
@@ -797,7 +748,7 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 
 - 若实例工程的 `doc/` 下仍存有 v2.3 之前从 framework 同步过来的总览类文档（典型文件名：`HarmonyOS-AI研发框架全景介绍.md` / `业务级UT策划.md` / `Harness全链路验证说明.md` / `自然语言到技术模块-演进路线图.md`），**应在升级到 v2.4 后删除**——它们已被 `framework/docs/` 内的对应版本取代。
 - 实例工程**自有的**文档（如功能 spec、plan、test-plan、PPT 复盘材料等）**不受影响**，照常留在 `doc/` 下。
-- vendor 模式同步 framework 时，确保 `framework/docs/`（包括 `DOC_INVENTORY.yaml`）一并随 framework 目录拷贝过去。
+- 集成发布件时，确认 `framework/docs/`（包括 `DOC_INVENTORY.yaml`）完整在场。
 - 接入 v2.4 后跑一次 `npx ts-node harness-runner.ts --phase docs` 自检；若有 MAJOR，按 [`docs/operations/harness-runbook.md`](docs/operations/harness-runbook.md) §6.4 的对照表处理。
 
 **回归方法**：
@@ -837,7 +788,7 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 
 ### v2.5：workflow、extensions 元阶段、lifecycle hooks、instance_skill_bridge（当前）
 
-适用：已包含 `framework/workflows/`、`extension-loader`、`hooks-dispatcher`、`check-extensions` 与 adapter `instance_skill_bridge` 的 framework vendor。
+适用：已集成包含 `framework/workflows/`、`extension-loader`、`hooks-dispatcher`、`check-extensions` 与 adapter `instance_skill_bridge` 的 Maison 发布件。
 
 **建议在实例 `framework.config.json`（UPDATE diff 确认）补齐：**
 
@@ -920,7 +871,7 @@ legacy 顶层 `project_type` 由 **MIGRATION_RULES**（Pass 2）在 migrate-conf
 
 **`reports_dir_pattern` 默认值 SSOT**：`config.ts` → `DEFAULT_PATHS.reports_dir_pattern`（`normalizeConfig` 与 BACKFILL 自动注入；极旧磁盘 config 未配置时 `featurePhaseReportsDir` 仍回退 legacy `framework/harness/reports/`）。
 
-1. 升级 `framework/` submodule 后跑 `/framework-init` UPDATE（S1→S4）。
+1. 镜像覆盖新的 Maison 已验证发布件后跑 `/framework-init` UPDATE（S1→S4）。
 2. S1 planner / check-init 查看 `missing_keys` / `migration_keys` / `confirm_keys`。
 3. S2 批准 `backfill-config` / `migrate-config` / `confirm-fields` 决策。
 4. S3 executor 写回 config（**非手改 JSON**）。
@@ -944,7 +895,7 @@ legacy 顶层 `project_type` 由 **MIGRATION_RULES**（Pass 2）在 migrate-conf
 
 ### adapter `update_policy` + `.framework-backup/`（实例侧 hooks/settings 等与 framework 对齐）
 
-适用：已从本仓库 vendor / submodule **更新 framework** 后，老实例的 Claude Code **`hooks`、`settings.json`、verifier 子 agent** 等仍停在旧版本，导致 `npm test`（hook 行为）或其它 harness 契约回归。
+适用：已集成新的 Maison 发布件后，老实例的 Claude Code **`hooks`、`settings.json`、verifier 子 agent** 等仍停在旧版本，导致 `npm test`（hook 行为）或其它 harness 契约回归。
 
 **行为摘要**：
 
@@ -1018,11 +969,11 @@ cd framework/harness && npm run backfill:context -- --feature <name> --phases sp
 - 回填成功仅生成**待补全骨架**；须 agent 完成真实探索、填 Code Facts / source_code_paths 后手动设 `ready_to_produce: true`，再跑 harness。
 - 脚本对骨架预期未过门禁时 **warn 而非 exit 2**（便于批量生成占位文件）；真正 BLOCKER 在用户/agent 跑 `--phase <phase> --feature <name>` 时触发。
 
-**实例维护者动作**（vendor / submodule 更新 framework 后）：
+**实例维护者动作**（集成新的 Maison 发布件后）：
 
 1. 阅读 [agent-behavioral-principles.md](skills/reference/agent-behavioral-principles.md)（agent 会话级约束已写入 `AGENTS.md` §3.7）。
 2. 可选：对 in-flight feature 的 `context-exploration.md` 升级到 1.1.0 并补全 Code Facts（或依赖 v2.6 compat 临时降级至过期日）。
-3. hmos-app 实例：确认 `framework/profiles/hmos-app/harness/exploration-snippets.yaml` 已 vendor；无需改 `framework.config.json`。
+3. hmos-app 实例：确认发布件包含 `framework/profiles/hmos-app/harness/exploration-snippets.yaml`；无需改 `framework.config.json`。
 4. 重跑 `cd framework/harness && npm test`；对受影响 feature 重跑对应 `--phase` harness + verifier。
 
 **零回归保证**：
@@ -1055,7 +1006,7 @@ cd framework/harness && npm run backfill:context -- --feature <name> --phases sp
 
 **实例维护者**：
 
-1. vendor framework 后确认 5 个 `phase-rules/*.yaml` 含 `exploration_strategy`
+1. 集成发布件后确认 5 个 `phase-rules/*.yaml` 含 `exploration_strategy`
 2. 新 feature 的 `context-exploration.md` 填写变更信号 frontmatter
 3. plan/coding 默认 `exploration_mode: subagent`；Chrys/generic 用 sequential + 更高量化阈值
 
@@ -1126,7 +1077,7 @@ check-personal-setup --json --ensure（阶段前置门控）  # 每位开发者�
 3. 8 个 Skill slash（`spec` … `glossary-bootstrap`）注入 Widget BLOCKER 段；**不改** `framework-init.md`。
 4. [harness/scripts/check-skills-confirmation-ux.ts](harness/scripts/check-skills-confirmation-ux.ts) — 增量 lint Claude templates。
 
-**实例维护者**（vendor framework 后 **自行** UPDATE init；agent 不代写 `.claude/`）：
+**实例维护者**（集成新发布件后 **自行** UPDATE init；agent 不代写 `.claude/`）：
 
 ```text
 /framework-init   # UPDATE；S2 init.task_decision 覆盖 rules/commands 漂移项 → S3 物化

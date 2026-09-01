@@ -5,15 +5,17 @@
 // 运行时约束：独立 node ESM，不依赖 ts-node / 任何 npm 包——hook 进程由宿主 IDE
 // 直接以 `node xxx.mjs` 拉起，必须零依赖可跑。
 //
-// 策略 SSOT：specs/runtime-artifact-policy.json（与 framework-integrity.ts /
-// canonical-gitignore.ts 三方共读；三方一致性单测钉死，勿在本文件另立清单）。
+// 策略 SSOT：specs/runtime-artifact-policy.json（与 canonical-gitignore.ts 共读；
+// 勿在本文件另立运行时写放行清单）。
 //
-// 人签 allowlist 语义：复刻 framework-integrity.ts 的 approvalInvalidReason /
-// fidelity-shared.ts 的 isHumanVerified（legacy 字符串、自动化身份、user_requirement
-// 哨兵、缺 rationale/签名均无效）——两实现有跨实现一致性单测对齐，改任一侧须同步。
+// 放行通道（plan a6c4e9f2 D5）：**没有**。`integrity.drift_allowlist` /
+// `allow_local_drift` 的解锁语义已随 runtime hash 家族一并退役——同一可写主体既能改
+// framework 也能改审批文件，"具名审批"在这种环境里不是边界。存量字段读取即忽略。
 //
 // 诚实边界（plan 钉死）：只拦编辑类工具的路径；Bash 重定向/node -e 写文件不在射程；
-// 判定异常一律 fail-open（G2 查时扫描恒为兜底）。
+// 判定异常一律 fail-open。它是**合作型**防误操作，不是安全边界——真正的隔离由
+// task sandbox / 只读挂载 / 受限 OS token 在执行环境侧提供。无法强隔离时，shell 重定向、
+// 脚本、node -e 与场外进程是明确盲区；没有 Git/hash 查时 detector 兜底。
 
 import * as fs from 'fs';
 import * as path from 'path';
@@ -49,8 +51,7 @@ export function loadRuntimeArtifactPolicy(frameworkRoot) {
 }
 
 // --------------------------------------------------------------------------
-// glob-lite 匹配（语义与 policy JSON 头部注释一致；TS 侧 framework-integrity 有
-// 等价实现，跨实现一致性单测对齐）
+// glob-lite 匹配（语义与 policy JSON 头部注释、canonical-gitignore 一致）
 // --------------------------------------------------------------------------
 
 /**
@@ -97,20 +98,6 @@ export function matchesPolicyPattern(rel, pattern) {
 }
 
 /**
- * rel 是否属于**扫描合法存在**的运行时产物（三段任一命中）——供 G2 extra-file 扫描：
- * sidecar（reserved_metadata_files）在磁盘上合法存在，不算 foreign。
- * @param {string} rel @param {RuntimeArtifactPolicy} policy @returns {boolean}
- */
-export function isPolicyAllowedPath(rel, policy) {
-  const all = [
-    ...policy.ignored_runtime_patterns,
-    ...policy.generated_file_patterns,
-    ...policy.reserved_metadata_files,
-  ];
-  return all.some((p) => matchesPolicyPattern(rel, p));
-}
-
-/**
  * rel 是否属于**写时放行**的运行时产物（第七轮 codex P1-1：与扫描谓词拆开）——
  * reserved_metadata_files（RELEASE-MANIFEST.sha256 等完整性锚点）由 pack 产出、agent
  * 绝不该手写，写时必须 deny；只有 harness 运行时目录与按需生成文件（金丝雀）可写。
@@ -127,62 +114,12 @@ export function isWriteAllowedPath(rel, policy) {
 }
 
 // --------------------------------------------------------------------------
-// 人签 allowlist（语义复刻 framework-integrity.ts / fidelity-shared.ts）
+// 放行通道已退场（plan a6c4e9f2 D5 / T6）
 // --------------------------------------------------------------------------
-
-/** 与 fidelity-shared.ts AUTOMATION_SIGNER_IDS 同步（跨实现一致性单测钉死）。 */
-export const AUTOMATION_SIGNER_IDS_MJS = new Set([
-  'goal-mode-auto',
-  'goal-mode',
-  'goal-runner',
-  'headless',
-  'headless-auto',
-  'auto',
-  'system',
-]);
-
-const USER_REQUIREMENT_CONFIRMER = 'user_requirement';
-
-/**
- * 复刻 framework-integrity.ts approvalInvalidReason：null=有效，否则无效原因。
- * @param {unknown} rationale @param {unknown} approvedBy @returns {string | null}
- */
-export function approvalInvalidReasonMjs(rationale, approvedBy) {
-  if (typeof approvedBy !== 'string' || !approvedBy.trim()) return '缺 approved_by 真人签名';
-  const norm = approvedBy.trim().toLowerCase();
-  if (AUTOMATION_SIGNER_IDS_MJS.has(norm) || norm === USER_REQUIREMENT_CONFIRMER) {
-    return `approved_by="${approvedBy.trim()}" 属自动化身份/授权哨兵（user_requirement），不算真人签名`;
-  }
-  if (typeof rationale !== 'string' || !rationale.trim()) return '缺 rationale';
-  return null;
-}
-
-/**
- * 读 framework.config.json 的 integrity.drift_allowlist（仅结构化真人具名审批生效——
- * legacy 字符串/自动化身份/user_requirement/缺 rationale 一律无效，与查时语义一致，
- * 防"先写无效 allowlist 骗过写守卫、拖到 G2 才暴露"）。
- * @param {string} projectRoot @returns {Set<string>}
- */
-export function loadValidDriftAllowlist(projectRoot) {
-  const out = new Set();
-  try {
-    const cfgPath = path.join(projectRoot, 'framework.config.json');
-    if (!fs.existsSync(cfgPath)) return out;
-    const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
-    const entries = cfg?.integrity?.drift_allowlist;
-    if (!Array.isArray(entries)) return out;
-    for (const entry of entries) {
-      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue; // legacy 字符串等无效
-      const p = typeof entry.path === 'string' ? entry.path.trim() : '';
-      if (!p) continue;
-      if (approvalInvalidReasonMjs(entry.rationale, entry.approved_by) !== null) continue;
-      out.add(p.replace(/\\/g, '/'));
-    }
-  } catch {
-    /* fail-open：allowlist 读不出来就当没有（拦得更严，且不崩 hook） */
-  }
-  return out;
-}
+// `integrity.drift_allowlist` 与 `integrity.allow_local_drift` 的解锁语义已删除：
+// 写权限来自**执行环境授予的安全主体**，不来自被检查方自己可编辑的一个文件。
+// 同一可写主体既能改 framework、也能改 allowlist——"具名审批"在这种环境里不构成边界，
+// 只会让越权写看起来被批准过。存量字段读取即忽略，deny 文案里点名它已失效。
 
 // --------------------------------------------------------------------------
 // 主判定
@@ -198,8 +135,7 @@ export function loadValidDriftAllowlist(projectRoot) {
  *     （agent-maison 源仓开发不受影响）；
  *   - 目标不在 framework/ 下 → allow；
  *   - 命中 runtime-artifact-policy 三段 → allow；
- *   - 命中合法人签 drift_allowlist（framework 根相对路径）→ allow；
- *   - 其余 → deny + 教育文案。
+ *   - 其余 → deny + 教育文案（**没有** allowlist 解锁通道）。
  * @param {{projectRoot: string, filePath: string}} input
  * @returns {GuardDecision}
  */
@@ -224,12 +160,9 @@ export function evaluateFrameworkWrite(input) {
     const policy = loadRuntimeArtifactPolicy(frameworkRoot);
     if (policy && isWriteAllowedPath(rel, policy)) return { decision: 'allow' };
 
-    const allowlist = loadValidDriftAllowlist(projectRoot);
-    if (allowlist.has(rel)) return { decision: 'allow' };
-
     return { decision: 'deny', reason: denyText(`framework/${rel}`) };
   } catch {
-    return { decision: 'allow' }; // 任何判定异常 fail-open——G2 查时扫描兜底
+    return { decision: 'allow' }; // 任何判定异常 fail-open；无查时扫描兜底
   }
 }
 
@@ -237,11 +170,14 @@ export function evaluateFrameworkWrite(input) {
 function denyText(target) {
   return [
     `[framework 写保护] 已阻止写入 ${target}。`,
-    'framework/ 是只读 vendored 发布件（consumer-framework-boundary.md）：',
+    'framework/ 是 Maison 发布件控制面（consumer-framework-boundary.md）：',
     '  - 临时诊断脚本请放 <repo-root>/scratch/（gitignored）或系统临时目录，不要写进 framework/；',
-    '  - 升级/修改 framework 的唯一途径是 framework-init UPDATE（重新解包发布件）；',
-    '  - 确需本地 fork 某文件：由真人在 framework.config.json integrity.drift_allowlist',
-    '    添加 {path, rationale, approved_by} 具名审批（自动化身份/user_requirement 无效）。',
-    '发现框架自身问题请 halt 上报，不要就地修改后自批放行。',
+    '  - 升级分两步：①用户/CI 的 updater 或集成操作镜像覆盖已验证发布件；',
+    '    ②随后运行 /framework-init UPDATE，刷新宿主 config/adapter 物化产物并执行全局 phase；',
+    '  - 没有放行通道：integrity.drift_allowlist / allow_local_drift 已退役，写入这里不再有"具名审批"可用',
+    '    （同一主体既能改 framework 也能改审批文件，那不是边界）。真正的隔离来自 task sandbox /',
+    '    只读挂载 / 受限 OS token——请在执行环境侧配置，而不是在被检查方的配置里开口子。',
+    '  - 当前守卫不覆盖 shell 重定向、脚本、node -e 或场外进程，也没有事后 Git/hash detector 兜底。',
+    '发现框架自身问题请 halt 上报，回灌 agent-maison 源仓修复后重新发布，不要就地修改。',
   ].join('\n');
 }

@@ -30,7 +30,7 @@ alwaysApply: true
 ## Framework 优先修改原则
 
 - **agent-maison 维护仓**：优先改 `framework/` 源头资产，而非只在实例 bundle 手补。
-- **消费者实例工程**（submodule/vendor）：**禁止**为过关 UT/harness 修改 `framework/` 已跟踪文件；见 `framework/skills/reference/consumer-framework-boundary.md`。须改 framework 行为时，在 **framework 源仓库** 实现后发版升级。
+- **消费者实例工程**：`framework/` 是 Maison 发布件控制面；**禁止**为过关 UT/harness 就地修改。见 `framework/skills/reference/consumer-framework-boundary.md`。须改 framework 行为时，在 **framework 源仓库** 实现后重新发布并由用户/CI 明确集成。
 - 维护跳板模板：`framework/agents/shared/agent-bundle/templates/`；经 framework-init / render 下发到实例。
 
 ## 冲突处理

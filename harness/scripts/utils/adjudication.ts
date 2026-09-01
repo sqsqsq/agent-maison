@@ -295,7 +295,7 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   no_progress_fuse: { class: 'operator', structurally_terminal: true },
   closure_wall_repeated: { class: 'operator', structurally_terminal: true },
 
-  // --- 框架自身缺陷 ---------------------------------------------------------
+  // --- 框架自身缺陷 / 当前机器 integrity（如 process injection） ------------
   framework_bug: { class: 'framework_fault' },
   framework_integrity_block: { class: 'framework_fault' },
   framework_internal: { class: 'framework_fault' },

@@ -412,6 +412,7 @@ import {
   resolveBlockerActionability,
   extractDeterministicAffectedFiles,
   extractIntegritySubtypes,
+  stripRetiredFrameworkIntegrityForCurrentRun,
   isOperatorInterruptSignal,
   shouldHaltNoProgress,
   snapshotArtifacts,
@@ -500,6 +501,7 @@ export interface SummaryJson {
     affected_files?: string[];
     suggestion?: string;
   }>;
+  repair_candidates?: RepairCandidate[];
 }
 
 /** Active agent tree-kill registered for SIGINT/SIGTERM orphan cleanup. */
@@ -812,6 +814,33 @@ function extractBlockingMeta(summary: SummaryJson | null): {
   const b = summary.blockers?.[0];
   if (!b) return {};
   return { blocking_class: b.blocking_class, failure_kind: b.classification };
+}
+
+/**
+ * Current-attempt event/signature projection. A legacy-only summary becomes a null
+ * decisionSummary before this boundary; without an independent runtime failure fact it
+ * therefore contributes no meta, synthetic timeout signature, or new event kind.
+ */
+export function buildCurrentAttemptFailureProjection(input: {
+  decisionSummary: SummaryJson | null;
+  failureKind: FailureKind;
+  phase: string;
+  hasRuntimeFailureEvidence: boolean;
+}): {
+  hasEvidence: boolean;
+  blockingMeta: { blocking_class?: string; failure_kind?: string };
+  blockerSignature: string;
+  failureKindForEvent?: FailureKind;
+} {
+  const hasEvidence = input.decisionSummary !== null || input.hasRuntimeFailureEvidence;
+  return {
+    hasEvidence,
+    blockingMeta: extractBlockingMeta(input.decisionSummary),
+    blockerSignature: hasEvidence
+      ? buildEffectiveBlockerSignature(input.decisionSummary, input.failureKind, input.phase)
+      : '',
+    ...(hasEvidence ? { failureKindForEvent: input.failureKind } : {}),
+  };
 }
 
 function truncateOneLine(s: string, max: number): string {
@@ -1566,8 +1595,8 @@ function buildUnattendedExecutionBlock(
     '- NEVER tamper with gate artifacts (visual-diff.json / summary.json / receipts) via process injection',
     '  (NODE_OPTIONS --require/-r/--import/--loader, .node-options, .npmrc node-options, fs monkey-patching)',
     '  or verdict-filling/resetting scripts; never instruct the operator to set up such bypasses.',
-    '- NEVER self-approve framework drift: integrity.drift_allowlist / allow_local_drift take effect only with',
-    '  human-named {rationale, approved_by}; agent-added entries are void. Found a framework bug? HALT and report.',
+    '- NEVER modify the framework control plane. There is no approval field that unlocks it: integrity.drift_allowlist',
+    '  and allow_local_drift are retired and ignored on read. Found a framework bug? HALT and report it upstream.',
     ...deterministicDetectorLines,
   ];
 }
@@ -3591,13 +3620,13 @@ export function buildPhasePrompt(
             ]),
       );
     } else if (priorFailureKind === 'framework_integrity_block') {
-      // P0-5：本 kind 正常路径是 halt（不重试）——能走到这里只可能是人工处置后 --resume。
-      // 铁律：不给任何"修复/回滚"指引，framework 发布件对 agent 只读。
+      // 当前机器 integrity（如 process injection）正常路径是 halt；历史 framework subtype
+      // 只作 provenance。普通运行不再根据 framework Git dirty/HEAD 产生本 kind。
       parts.push(
         '',
-        '**The prior halt was a FRAMEWORK INTEGRITY block — human-only territory, NOT your artifacts.**',
-        'Framework release files are READ-ONLY for you: do NOT modify, restore, or revert anything under framework/.',
-        'A human should already have resolved it (drift_allowlist approval / restore / re-deploy). Just re-run this phase harness to confirm, then continue the phase work. If the integrity blocker persists, HALT — do not attempt workarounds.',
+        '**The prior halt was an INTEGRITY block — re-run the phase from a clean current environment.**',
+        'Do not modify framework or gate artifacts. If the current report identifies process injection, remove NODE_OPTIONS/.node-options/.npmrc preload injection before retrying.',
+        'Retired framework Git/hash classifications are historical provenance only: do not commit, restore, or rewrite files to satisfy them.',
       );
     } else if (priorFailureKind === 'framework_bug') {
       // P0-3：门禁自身缺陷——agent 改产物绕不过去，也不得改 framework 发布件。
@@ -4281,25 +4310,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
   );
 
   const featuresDir = cfg.paths.features_dir ?? 'doc/features';
-
-  // P1-10（plan 7c4f2e9b）：foreign-file 防线可观测性——consumer 形态（framework/ 嵌套）
-  // 却无 RELEASE-MANIFEST.json 时，framework_foreign_file BLOCKER 整线按 spec 设计 no-op
-  // （source layout Scenario）。07-17 事故 agent 向 framework/harness/ 写 debug 脚本未被拦，
-  // 每-harness 复扫机制在位（harness-runner 全模式入口直调），最可能根因即此部署形态。
-  // 只告警不改门（改判会破 source-repo 开发契约）；宿主据此改用发布包部署。
-  // codex 第九批收尾 P2：旧警告陈述"完成态封顶人工复核"已随垂直闭环删除——不再
-  // 诱导用户配置不需要的密钥。降级为一次性纯诊断（认证状态只影响记录，不影响执行
-  // 与完成态；HMAC 签验面整体删除属 T2 5a，届时本提示一并退役）。
-  // 5a 完成刀：HMAC 提示整体删除（vision 面签名维度已退役；pass-snapshot 的 HMAC
-  // 面属 5b 手术范围——5a 明确限定为 vision，见 plan 第十二批）。
-
-  if (layout.frameworkRel && !fs.existsSync(path.join(frameworkRoot, 'RELEASE-MANIFEST.json'))) {
-    console.warn(
-      '[goal-runner] ⚠ consumer 形态（framework/ 嵌套）但缺 RELEASE-MANIFEST.json——' +
-      'framework 写保护/foreign-file BLOCKER 整线处于 no-op（source layout 语义）。' +
-      '请改用发布包部署 framework（含 manifest 与 sidecar），否则 agent 写入 framework/** 不会被拦截。',
-    );
-  }
 
   // plan e7c2a4d8 T1b：dry/resume 互斥与 CLI↔manifest 一致性单点校验（与 detach parent
   // 同源 resolveRawRunInput——feature 仅在 manifest 合法、冲突 fail-closed）。
@@ -6233,11 +6243,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
         if (isPhaseContinuation && priorSummaryRead.summary) {
           const v = priorSummaryRead.summary.verdict;
           if (v === 'FAIL' || v === 'INCOMPLETE') {
-            priorFailure = extractPriorFailureContext(priorSummaryRead.summary);
-            priorFailureKind = classifyFailureKind(
-              priorSummaryRead.summary,
-              manifest.dependency_policy,
-            );
+            // 旧 framework_integrity/manifest/foreign/dirty 只供历史 renderer，不能重新
+            // 进入当前 continuation prompt、halt 或 retry。若剥离后无当前 blocker，本 phase
+            // 直接按当前发布件重验，不注入 code_regression/repair 指导。
+            const currentSummary = stripRetiredFrameworkIntegrityForCurrentRun(priorSummaryRead.summary);
+            if (currentSummary) {
+              priorFailure = extractPriorFailureContext(currentSummary);
+              priorFailureKind = classifyFailureKind(currentSummary, manifest.dependency_policy);
+            }
           }
         }
         if (isPhaseContinuation && !priorFailure) {
@@ -8245,7 +8258,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
           );
         }
         const verdict = resolved.verdict;
-        const meta = extractBlockingMeta(summary);
+        // framework-identity-boundary 2.4：当前 attempt 的所有裁决面只消费这一份投影。
+        // 原始 summary 仍可供 verdict/closure/visual receipt 与历史报告展示，但旧
+        // framework integrity blocker 不得再进入 meta/signature/repair/reconcile/event。
+        const decisionSummary = stripRetiredFrameworkIntegrityForCurrentRun(summary);
         // P0-D：API 断流哨兵（adapter 感知信封锚定）。B/D 并存取 agent_timeout 优先
         // （runner tree-kill 是确定性事实，断流串可能是被杀连带产生）→ timed_out 时不扫。
         const apiErrorSentinel =
@@ -8267,7 +8283,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // 控制台中断类退出（Ctrl+C/关窗/conhost 终止，可能来自操作者或宿主环境清理），
         // 不是任何一种"失败"信号，最高优先单独识别。
         const operatorInterrupt = isOperatorInterruptSignal(invoke.exitCode, invoke.signal);
-        const baseFailureKind = classifyFailureKind(summary, manifest.dependency_policy, {
+        const baseFailureKind = classifyFailureKind(decisionSummary, manifest.dependency_policy, {
           agentTimedOut: invoke.timed_out === true,
           agentApiError: apiErrorSentinel !== null,
           agentNoOutput,
@@ -8275,12 +8291,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // P0-5/P0-3 freshness（决策表 SSOT）：fresh 超时轮的 integrity/framework_bug
           // 确定性证据优先于 agent_timeout（harness 在 tree-kill 之后新鲜跑出，可信）。
           staleSummary: resolved.stale_summary,
-        });
+        }) ?? 'agent_timeout';
         // P0-5：integrity subtype 多值收集（blocking_class 过滤 + classification 通道），
         // 透传 phase_verdict / halt guidance / outcome。
         const integritySubtypes =
-          baseFailureKind === 'framework_integrity_block' ? extractIntegritySubtypes(summary) : [];
-        const affectedFiles = extractDeterministicAffectedFiles(summary);
+          baseFailureKind === 'framework_integrity_block' ? extractIntegritySubtypes(decisionSummary) : [];
+        const affectedFiles = extractDeterministicAffectedFiles(decisionSummary);
         // P0-B：agent_timeout 无 deterministic affected_files 时监控 phase 主产物
         // （spec.md 等 + context-exploration.md）——产物内容变化=有进展，guard 放行续作。
         const watchedFiles =
@@ -8299,13 +8315,28 @@ Goal runner — tool-agnostic multi-phase orchestrator
           baseFailureKind,
           actionableResult.trustedDeviceRootClassifications,
         );
-        // P0-B §七.3：签名必须使用 evidence 精修后的最终 kind。否则 phase_verdict 虽然
-        // 是 test_contract，blocker_signature / 熔断仍会残留 code_regression。
-        const currentBlockerSignature = buildEffectiveBlockerSignature(
-          summary,
+        // 历史-only summary 本身不是本 attempt 的失败事实。没有当前 summary 或当前进程/
+        // harness/closure 事实时，不得合成 agent_timeout 签名或把 fallback kind 写进新事件。
+        const currentFailureProjection = buildCurrentAttemptFailureProjection({
+          decisionSummary,
           failureKind,
           phase,
-        );
+          hasRuntimeFailureEvidence:
+            operatorInterrupt ||
+            invoke.timed_out === true ||
+            apiErrorSentinel !== null ||
+            agentNoOutput ||
+            resolved.agent_failed ||
+            harnessExit !== 0 ||
+            closureFinalizationError !== null ||
+            interactionSentinel !== null ||
+            actionableResult.defects.length > 0 ||
+            actionableResult.unverified.length > 0,
+        });
+        const meta = currentFailureProjection.blockingMeta;
+        // P0-B §七.3：签名必须使用 evidence 精修后的最终 kind。否则 phase_verdict 虽然
+        // 是 test_contract，blocker_signature / 熔断仍会残留 code_regression。
+        const currentBlockerSignature = currentFailureProjection.blockerSignature;
         const envBlocked = meta.failure_kind === 'toolchain' || meta.failure_kind === 'capture' ||
           meta.blocking_class === 'externalBlocked';
         // External/toolchain evidence is reportable but never a content backtrack input.
@@ -8317,7 +8348,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // （codex review 冻结项⑦：不与 generic route 并存）。环境类失败不作回退输入。
         let summaryRepairCandidates: RepairCandidate[] = envBlocked
           ? []
-          : ((summary as { repair_candidates?: RepairCandidate[] } | null)?.repair_candidates ?? []);
+          : (decisionSummary?.repair_candidates ?? []);
         let repairCandidatesUnwritable: string | null = null;
         if (!dryRun && !envBlocked && driverActionableDefects.length > 0) {
           // fail-closed：候选写不回 summary（唯一真源）＝assess 看不见缺陷＝回退链断
@@ -8529,9 +8560,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           driverGuardAction = 'halt';
           haltReason = 'agent_no_output';
         } else if (failureKind === 'framework_integrity_block' && verdict !== 'PASS') {
-          // P0-5（plan d9b4f7e2）：framework 完整性家族一律首触 halt——agent 修不了也不许修
-          // （含"回滚可疑漂移"：07-13 chrys 案 goal agent 依 code_regression 通用话术回滚了
-          // 宿主经用户批准的真修复）。guidance 按 subtype 分补救、多值按修复顺序逐条。
+          // 当前机器 integrity（如 process injection）首触 halt；历史 framework subtype
+          // 只作 provenance，guidance 按真实来源解释，不再给 Git dirty/提交/回滚处置。
           driverGuardAction = 'halt';
           haltReason = 'framework_integrity_block';
           awaitConfirmGuidance = buildFrameworkIntegrityGuidance({
@@ -8562,7 +8592,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // agent 改产物绕不过去（案发现场 spec 前 5 轮空转实证），首触即 halt。
           driverGuardAction = 'halt';
           haltReason = 'framework_bug';
-          const bugBlockers = (summary?.blockers ?? []).filter(
+          const bugBlockers = (decisionSummary?.blockers ?? []).filter(
             (b) => b.classification === 'framework_bug',
           );
           const bugStackHead = bugBlockers
@@ -8601,10 +8631,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // fresh 判据=summary 非 stale（stale summary 是上一 attempt 的症状，不据此分流）。
           verdict !== 'PASS' &&
           !resolved.stale_summary &&
-          classifyTimedOutWithFreshBlockers(summary) !== null
+          classifyTimedOutWithFreshBlockers(decisionSummary) !== null
         ) {
-          const actionabilityRoute = classifyTimedOutWithFreshBlockers(summary)!;
-          const agg = aggregateBlockerActionability(summary);
+          const actionabilityRoute = classifyTimedOutWithFreshBlockers(decisionSummary)!;
+          const agg = aggregateBlockerActionability(decisionSummary);
           driverGuardAction = 'halt';
           haltReason = actionabilityRoute;
           // This resolver now returns only the toolchain route. Human quality
@@ -8891,11 +8921,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
           phase,
           verdict,
           legacyAction: driverGuardAction,
-          failureKind: meta.failure_kind ?? failureKind,
+          failureKind: meta.failure_kind ?? currentFailureProjection.failureKindForEvent,
           blockingClass: meta.blocking_class,
           propagateToDownstream: manifest.dependency_policy.propagate_to_downstream,
           dependencyPolicy: manifest.dependency_policy,
-          blockers: (summary?.blockers ?? []).map((blocker) => ({
+          blockers: (decisionSummary?.blockers ?? []).map((blocker) => ({
             id: String((blocker as { id?: string }).id ?? 'unknown'),
             blocking_class: (blocker as { blocking_class?: string }).blocking_class,
           })),
@@ -9040,7 +9070,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           failure_kind: meta.failure_kind,
           // P1-8（plan d9b4f7e2）：PASS+advance 不输出 failure_kind_classified——07-13 案
           // 全部 advance 事件带着 code_regression 字样，事后排障已实际造成误导。
-          failure_kind_classified: failureKind,
+          failure_kind_classified: currentFailureProjection.failureKindForEvent,
           blocker_signature: currentBlockerSignature || undefined,
           // P0-5：integrity subtype 多值透传（事后排障/报告消费；空列表不写）。
           integrity_subtypes: integritySubtypes.length > 0 ? integritySubtypes : undefined,
@@ -9166,7 +9196,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // 重试——reconciliation 门放宽为「action!=='retry' ∨ 存在该 blocker」，同一事故
         // 一个出口（unauthorized halt），不转化为 harness FAIL 后的内容重试循环。
         const hasPostReviewReconciliationBlocker =
-          (summary?.blockers ?? []).some(
+          (decisionSummary?.blockers ?? []).some(
             (b) => {
               const id = (b as { id?: string }).id;
               return id === 'goal_post_review_source_mutation_unresolved' ||
@@ -9714,7 +9744,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
           ...(integritySubtypes.length > 0 ? { integrity_subtypes: integritySubtypes } : {}),
           interaction_question: interactionSentinel?.error,
           // codex P3：诊断保真进最终报告——只读 goal-report 的下游也能看到真因原文。
-          failure_kind_classified: failureKind,
+          ...(currentFailureProjection.failureKindForEvent
+            ? { failure_kind_classified: currentFailureProjection.failureKindForEvent }
+            : {}),
           api_error_excerpt: apiErrorSentinel?.matchedLine,
           agent_duration_ms: invoke.duration_ms,
           agent_stderr_excerpt:

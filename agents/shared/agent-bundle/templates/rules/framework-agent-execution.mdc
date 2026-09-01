@@ -74,12 +74,13 @@ alwaysApply: true
 - **不得编写或留存改判脚本**（程序化填 verdict/confirmed_by、批量重置、清空 must_fix、伪造
   evaluated_screenshot_hash）。
 - **不得指引操作者执行绕过门禁的操作**（如"启动 goal 前设置 NODE_OPTIONS"写进 assumptions/文档）。
-- **不得自改 framework 后自批放行**：`integrity.drift_allowlist` 与 `allow_local_drift` 须真人
-  `{rationale, approved_by}` 具名审批才生效——agent 自加的条目无效；发现框架 bug 应 **halt 上报**，
-  热修须人批。
+- **不得自改 framework**：没有配置层放行通道——`integrity.drift_allowlist` 与 `allow_local_drift`
+  已退役、读取即忽略（同一可写主体既能改 framework 也能改审批文件，那不构成边界）。发现框架 bug
+  应 **halt 上报**回灌源仓；热修是真人/updater 的操作，不是 agent 的。
 
 框架已有确定性检出（`node_options_injection` / `visual_diff_tamper_artifact` /
-`script_harness_command_injection` / framework_integrity 审批校验）：**伪造不会生效，只会留下物证**。
+`script_harness_command_injection`）；发布件写保护另由执行环境只读边界或合作式编辑守卫承担。
+后者不覆盖 shell、脚本或场外进程，也没有 Git/hash 查时 detector；不得声称这些盲区已被补齐。
 headless 正确姿势＝确定性信号修到绿，pass 候选由当前 hash-bound 的 native/delegated
 机器证据闭合。能力真实缺失走 capability defer；已声明支持但证据缺失/无效则
 FAIL 并重跑或熔断，不存在对话签名、`visual-confirm` 或普通 resume 放行路径。

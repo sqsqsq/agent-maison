@@ -33,7 +33,7 @@ cd framework/harness && node scripts/init-readiness.mjs
 - 若 `ok=true` → Tier_1 已满足（除非后续报错表明损坏，见故障分流）。
 - 若 `ok=false`：`missing[]` 里 `tesseract.js` 缺失仍走 `recommended_command`（`npm install`）；
   **`chi_sim.traineddata` 缺失不是 npm 依赖问题**——tessdata 随 framework 发布件分发，
-  缺失代表 framework 拉取/更新不完整，需重新拉取/更新 `framework/` 子模块而非 `npm install`
+  缺失代表发布件集成不完整，需重新取得并解压同一已验证发布件而非 `npm install`
   （对应 `missing[]` 条目自带此区分说明）。其余情形（ts-node/@types/node/package.json 缺失）
   必须在 `<repo-root>/framework/harness/` 执行 `recommended_command`（`npm install`）后再跑 harness CLI。
 
@@ -89,5 +89,5 @@ cd framework/harness && npm install
 
 - Harness 命令范式：[`framework/README.md`](../../README.md) · Harness 常用命令  
 - **Shell cwd 契约**：[harness-cli-cwd.md](./harness-cli-cwd.md)  
-- **消费者 submodule 边界**：[consumer-framework-boundary.md](./consumer-framework-boundary.md)  
+- **消费者发布件边界**：[consumer-framework-boundary.md](./consumer-framework-boundary.md)
 - Runbook：[`framework/docs/operations/harness-runbook.md`](../../docs/operations/harness-runbook.md)

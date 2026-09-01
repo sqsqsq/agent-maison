@@ -47,14 +47,8 @@ export type FailureKind =
   /** C5-min 验证转嫁禁令：修正触及验证层而宿主无 device 能力。
    * 当前由 capability/external 路由诚实 defer，不以人工签字替代 evidence。 */
   | 'verification_evidence_gap'
-  /** P0-5（plan d9b4f7e2，07-13 chrys bc-openCard 拉锯实证）：framework 完整性门禁家族
-   * （blocking_class='integrity'，6 subtype：framework_drift / framework_foreign_file /
-   * framework_manifest_corrupt / framework_manifest_empty / framework_manifest_tampered /
-   * framework_manifest_sidecar_missing，可共存）。agent 修不了也**不许修**（含"回滚"——
-   * 案发现场 goal agent 依 code_regression 话术回滚了宿主经用户批准的真修复）→ 一律
-   * 首触即 halt 求人（allowlist 具名审批 / 人工还原 / 回灌源仓，manifest 层按 subtype
-   * 分补救）。命名映射：check 层 blocker.classification（failure_kind 落 summary 后的
-   * 字段名）∈ 上述 6 值 → runner 侧统一本 kind，subtype 经 extractIntegritySubtypes 透传。 */
+  /** 当前机器产生的 integrity blocker（如 process_injection）首触 halt；历史 framework
+   * Git/hash subtype 只读兼容。普通运行不再生产 framework Git dirty 结果。 */
   | 'framework_integrity_block'
   /** P0-3（plan d9b4f7e2）：门禁脚本自身程序员错误（safeRun 捕获的 TypeError/RangeError/
    * SyntaxError，[Harness 内部错误]）——agent 的产物修不好框架代码，重试只会空转（案发
@@ -387,6 +381,70 @@ export interface GoalSummaryLike {
   blockers?: GoalSummaryBlocker[];
 }
 
+const CURRENT_INTEGRITY_ID = 'node_options_injection';
+const CURRENT_INTEGRITY_CLASSIFICATION = 'process_injection';
+
+function isCurrentIntegrityBlocker(blocker: GoalSummaryBlocker): boolean {
+  return (
+    blocker.id === CURRENT_INTEGRITY_ID &&
+    blocker.blocking_class === 'integrity' &&
+    blocker.classification === CURRENT_INTEGRITY_CLASSIFICATION
+  );
+}
+
+/**
+ * 生成当前裁决视图：只保留现行 node_options_injection/process_injection。
+ * 其它 integrity 行（含旧 framework_integrity/manifest/foreign/dirty）仅供历史 renderer，
+ * 不得进入 current classification/halt/retry/continuation prompt。
+ */
+export function stripRetiredFrameworkIntegrityForCurrentRun<T extends GoalSummaryLike>(
+  summary: T | null | undefined,
+): T | null {
+  if (!summary) return null;
+  const retiredIntegrityIds = new Set(
+    (summary.blockers ?? [])
+      .filter((blocker) => blocker.blocking_class === 'integrity' && !isCurrentIntegrityBlocker(blocker))
+      .flatMap((blocker) => [blocker.id, blocker.classification])
+      .filter((id): id is string => typeof id === 'string' && id.length > 0),
+  );
+  if (
+    summary.blocking_class === 'integrity' &&
+    summary.failure_kind &&
+    summary.failure_kind !== CURRENT_INTEGRITY_CLASSIFICATION
+  ) {
+    retiredIntegrityIds.add(summary.failure_kind);
+  }
+  const hadIntegrity =
+    summary.blocking_class === 'integrity' ||
+    (summary.blockers ?? []).some((blocker) => blocker.blocking_class === 'integrity');
+  const blockers = (summary.blockers ?? []).filter(
+    (blocker) => blocker.blocking_class !== 'integrity' || isCurrentIntegrityBlocker(blocker),
+  );
+  const topIsCurrent =
+    summary.blocking_class === 'integrity' &&
+    summary.failure_kind === CURRENT_INTEGRITY_CLASSIFICATION;
+  const next = { ...summary, blockers } as T & {
+    repair_candidates?: Array<{ id?: string }>;
+  };
+  if (Array.isArray(next.repair_candidates) && retiredIntegrityIds.size > 0) {
+    next.repair_candidates = next.repair_candidates.filter(
+      (candidate) => !candidate.id || !retiredIntegrityIds.has(candidate.id),
+    );
+  }
+  if (summary.blocking_class === 'integrity' && !topIsCurrent) {
+    delete next.blocking_class;
+    delete next.failure_kind;
+  }
+  if (
+    hadIntegrity &&
+    blockers.length === 0 &&
+    !next.blocking_class &&
+    !next.failure_kind &&
+    (next.repair_candidates?.length ?? 0) === 0
+  ) return null;
+  return next;
+}
+
 export interface ArtifactSnapshotEntry {
   exists: boolean;
   contentHash: string;
@@ -423,15 +481,20 @@ export function extractBlockerSignature(summary: GoalSummaryLike | null | undefi
   return ids.length > 0 ? ids.join('|') : '';
 }
 
-/** P0-5：summary 是否含任意 integrity 家族 blocker（blocking_class 判定，subtype 可缺）。 */
+/** 只识别现行 node_options_injection/process_injection；历史 framework integrity 不参与。 */
 export function hasIntegrityBlocker(summary: GoalSummaryLike | null | undefined): boolean {
-  if (!summary) return false;
-  if ((summary.blockers ?? []).some((b) => b.blocking_class === 'integrity')) return true;
-  return summary.blocking_class === 'integrity';
+  const current = stripRetiredFrameworkIntegrityForCurrentRun(summary);
+  if (!current) return false;
+  if ((current.blockers ?? []).some(isCurrentIntegrityBlocker)) return true;
+  return (
+    current.blocking_class === 'integrity' &&
+    current.failure_kind === CURRENT_INTEGRITY_CLASSIFICATION
+  );
 }
 
 /**
- * P0-5（rev5/rev6 收集式定稿）：从**所有** integrity blocker 收集 subtype（多值去重）。
+ * 从所有 integrity blocker 收集 classification（多值去重）。当前值用于 source-sensitive
+ * guidance（如 process_injection）；退役 framework subtype 仅作历史 provenance。
  * 字段名对码：check 层 CheckResult.failure_kind 经 buildSummaryBlockers 落到 summary
  * blocker 的 **classification**（blocker 无 failure_kind 字段）；必须按
  * blocking_class==='integrity' 过滤，否则内容 blocker 的 classification 混入。
@@ -496,6 +559,7 @@ export function classifyFailureKind(
   dependencyPolicy: DependencyPolicy = DEFAULT_DEPENDENCY_POLICY,
   signals?: AgentInvokeSignals,
 ): FailureKind {
+  const currentSummary = stripRetiredFrameworkIntegrityForCurrentRun(summary);
   // agent 级基建失败优先（优先级见 AgentInvokeSignals 注释）。operator_interrupt 压过一切——
   // 控制台中断类退出（Ctrl+C/关窗/conhost 终止，可能来自操作者或宿主环境清理）无论是否也
   // 恰好超时/断流/空产出，都不按内容失败重试。
@@ -503,16 +567,16 @@ export function classifyFailureKind(
   if (signals?.agentTimedOut) {
     // P0-5/P0-3 freshness 决策表（plan d9b4f7e2 rev5 写死，P0-5.4 为 SSOT）：
     //   stale                          → agent_timeout（旧 summary 证据不可信）
-    //   fresh + 含任意 integrity       → framework_integrity_block（integrity 优先于混装回落）
+    //   fresh + 含当前机器 integrity   → framework_integrity_block（如 process_injection）
     //   fresh + 非空全 framework_bug   → framework_bug（length>0 防真空真值）
     //   fresh + 混装/纯 content        → agent_timeout（framework_bug 混装依赖 P0-2 收敛，
     //                                    见开放问题 3；integrity 不适用回落）
     // staleSummary 未传视同 stale（fail-safe）。
     const fresh = signals.staleSummary === false;
-    if (fresh && hasIntegrityBlocker(summary)) {
+    if (fresh && hasIntegrityBlocker(currentSummary)) {
       return 'framework_integrity_block';
     }
-    if (fresh && isAllFrameworkBugBlockers(summary)) {
+    if (fresh && isAllFrameworkBugBlockers(currentSummary)) {
       return 'framework_bug';
     }
     // 旧 await_human_confirm 不再压过超时事实；恢复后由当前视觉 checker 重算机器证据。
@@ -520,19 +584,19 @@ export function classifyFailureKind(
   }
   if (signals?.agentApiError) return 'transient_api_error';
   if (signals?.agentNoOutput) return 'agent_no_output';
+  // 历史 framework-only summary 没有当前失败事实。返回中性 continuation kind，且
+  // goal-phase-runtime 会在调用 classifier 前直接剥离，不把该值写入 prompt/halt/retry。
+  if (!currentSummary) return 'agent_timeout';
 
   // Closure finalization is a distinct machine-visible halt class; do not downgrade it to content regression.
-  if ((summary?.blockers ?? []).some((b) => b.classification === 'closure_finalization_failed')) {
+  if ((currentSummary.blockers ?? []).some((b) => b.classification === 'closure_finalization_failed')) {
     return 'closure_finalization_failed';
   }
-  // P0-5：非超时轮 integrity 在场即归 framework_integrity_block（一律首触 halt——07-13
-  // chrys 案 i8/i9 就是这里落 code_regression 后被"revert first"话术导向回滚宿主真修复）。
-  // 复审修复（cursor）：integrity 须在 external_block 之前判——framework 完整性失守时
-  // 其余一切归因（含"可 defer 的外部阻塞"）都不可信，先 halt 求人再谈 defer。
-  if (hasIntegrityBlocker(summary)) {
+  // 当前机器 integrity（如进程预加载注入）优先于外部阻塞；历史 summary 仍可读。
+  if (hasIntegrityBlocker(currentSummary)) {
     return 'framework_integrity_block';
   }
-  const meta = topBlockingMeta(summary);
+  const meta = topBlockingMeta(currentSummary);
   if (
     isDeferrableExternalBlock(meta.blocking_class, meta.failure_kind, dependencyPolicy)
   ) {
@@ -540,32 +604,32 @@ export function classifyFailureKind(
   }
   // P0-3：非超时轮全 framework_bug（门禁自身崩溃）→ 首触 halt 指向回灌源仓；混装（框架
   // bug + 内容 blocker）走既有归因——内容 blocker 仍可修，不因框架 bug 把整轮判死。
-  if (isAllFrameworkBugBlockers(summary)) {
+  if (isAllFrameworkBugBlockers(currentSummary)) {
     return 'framework_bug';
   }
-  const ids = blockerIds(summary);
+  const ids = blockerIds(currentSummary);
   if (ids.some((id) => DETERMINISTIC_GATE_BLOCKER_IDS.has(id))) {
     return 'deterministic_gate_or_artifact_missing';
   }
   // legacy compatibility：旧 await_human_confirm 不是通行证，也不再进入等待用户的 kind；
   // 回到视觉责任路径，以当前机器证据重验。
-  if ((summary?.blockers ?? []).some((b) => b.classification === 'await_human_confirm')) {
+  if ((currentSummary.blockers ?? []).some((b) => b.classification === 'await_human_confirm')) {
     return 'visual_gap';
   }
   // t1（f7a3d9c2）：指纹级无进展熔断——须在 isVisualGapBlockerId 前缀归类**之前**判
   // （fuse blocker id 以 visual_diff 开头，否则被吸成 visual_gap 走粗熔断路径）。
   // 当前 check 侧直接用机器证据计算 fuse。
-  if ((summary?.blockers ?? []).some((b) => b.classification === 'no_progress_fuse')) {
+  if ((currentSummary.blockers ?? []).some((b) => b.classification === 'no_progress_fuse')) {
     return 'no_progress_fuse';
   }
   // C5-min：验证转嫁禁令的 evidence 缺口（check 层 failure_kind: verification_evidence_gap）——
   // 当前由 capability/external 责任路由处理，不以人工确认替代验证 evidence。
-  if ((summary?.blockers ?? []).some((b) => b.classification === 'verification_evidence_gap')) {
+  if ((currentSummary.blockers ?? []).some((b) => b.classification === 'verification_evidence_gap')) {
     return 'verification_evidence_gap';
   }
   // T6：基建/视觉分流。toolchain（build/install/hylyre 或 check 层标注的 device_test_run 崩溃）优先于 capture，再于 visual_gap。
   // device_test_run 的"用例失败"不带 device_toolchain 标 → 落到 code_regression（须改码、可重试），不误导成"先查环境"。
-  if (ids.some(isToolchainBlockerId) || hasToolchainBlockingClass(summary)) return 'toolchain';
+  if (ids.some(isToolchainBlockerId) || hasToolchainBlockingClass(currentSummary)) return 'toolchain';
   if (ids.some(isCaptureBlockerId)) return 'capture';
   if (ids.some(isVisualGapBlockerId)) return 'visual_gap';
   // P0-4(d)（plan 7c4f2e9b，cursor 二轮 must-fix#6）：spec 捕获完整性缺口独立命名——

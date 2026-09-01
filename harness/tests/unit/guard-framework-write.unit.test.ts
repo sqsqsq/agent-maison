@@ -3,10 +3,10 @@
 // ============================================================================
 // 三层覆盖：
 //   A. claude 壳端到端（spawnSync 真实 hook 进程 + stdin payload，沿 hook-stale-state 模式）
-//   B. 共享核心判定（动态 import .mjs——五负例 allowlist、白名单放行、布局判定）
-//   C. 跨实现/三方一致性（第六轮 P1 钉死）：
-//      C1 allowlist 语义：TS approvalInvalidReason ↔ .mjs approvalInvalidReasonMjs 矩阵等价
-//      C2 policy 三方：runtime-artifact-policy.json ↔ canonical-gitignore 派生 ↔ core 匹配
+//   B. 共享核心判定（动态 import .mjs——放行通道退场、白名单放行、布局判定）
+//   C. 跨实现/双消费者一致性：
+//      C1 放行语义彻底移除：core 不得换名保留 allowlist/审批 API
+//      C2 policy：runtime-artifact-policy.json ↔ canonical-gitignore 派生 ↔ guard 写匹配
 
 import * as fs from 'fs';
 import * as os from 'os';
@@ -15,7 +15,6 @@ import { spawnSync } from 'child_process';
 import { pathToFileURL } from 'url';
 
 import { detectRepoLayout, frameworkAbs } from '../../repo-layout';
-import { approvalInvalidReason } from '../../scripts/utils/framework-integrity';
 import { AUTOMATION_SIGNER_IDS } from '../../scripts/utils/fidelity-shared';
 import {
   loadRuntimeArtifactPolicy,
@@ -82,14 +81,14 @@ function runHook(projectRoot: string, toolInput: Record<string, unknown>): HookR
 
 interface CoreModule {
   evaluateFrameworkWrite(input: { projectRoot: string; filePath: string }): { decision: 'allow' | 'deny'; reason?: string };
-  approvalInvalidReasonMjs(rationale: unknown, approvedBy: unknown): string | null;
   loadRuntimeArtifactPolicy(frameworkRoot: string): {
     ignored_runtime_patterns: string[];
+    shipped_files_in_runtime_dirs: string[];
     generated_file_patterns: string[];
     reserved_metadata_files: string[];
   } | null;
-  isPolicyAllowedPath(rel: string, policy: unknown): boolean;
-  AUTOMATION_SIGNER_IDS_MJS: Set<string>;
+  isWriteAllowedPath(rel: string, policy: unknown): boolean;
+  matchesPolicyPattern(rel: string, pattern: string): boolean;
 }
 
 // ts-node CJS transpile 会把静态可见的 import() 降级成 require()（吃不了 ESM .mjs）；
@@ -110,7 +109,9 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         assert(r.exit === 2, `应 exit 2 拦截，实际 ${r.exit}；stderr=${r.stderr}`);
         assert(r.stderr.includes('framework 写保护'), r.stderr);
         assert(r.stderr.includes('scratch/'), '教育文案应指向 scratch 约定');
-        assert(r.stderr.includes('framework-init UPDATE'), '教育文案应指向升级途径');
+        assert(r.stderr.includes('updater 或集成操作镜像覆盖已验证发布件'), '第一步须指向真实发布件集成');
+        assert(r.stderr.includes('/framework-init UPDATE'), '第二步须指向宿主物化与全局 phase 刷新');
+        assert(!/framework-init[^\n]*(下载|解包|覆盖|重铺)/i.test(r.stderr), '不得声称 framework-init 会获取或覆盖发布件字节');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
@@ -260,15 +261,14 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
-    name: 'A7 写时/扫描谓词拆分（第七轮 P1-1）：isWriteAllowedPath 拒 sidecar、isPolicyAllowedPath 认 sidecar 合法存在',
+    name: 'A7 写时谓词：sidecar/发布件拒写，运行时目录放行',
     run: async () => {
       const core = await loadCore();
       const policy = core.loadRuntimeArtifactPolicy(frameworkAbs(LAYOUT, '.'))!;
-      assert(core.isPolicyAllowedPath('RELEASE-MANIFEST.sha256', policy), '扫描谓词：sidecar 合法存在');
-      assert(!(core as unknown as { isWriteAllowedPath(rel: string, p: unknown): boolean }).isWriteAllowedPath('RELEASE-MANIFEST.sha256', policy), '写时谓词：sidecar 不可写');
-      assert((core as unknown as { isWriteAllowedPath(rel: string, p: unknown): boolean }).isWriteAllowedPath('harness/reports/x.json', policy), '写时谓词：运行时目录可写');
+      assert(!core.isWriteAllowedPath('RELEASE-MANIFEST.sha256', policy), 'sidecar 不可写');
+      assert(core.isWriteAllowedPath('harness/reports/x.json', policy), '运行时目录可写');
       // b7e4d2a9 Todo4：金丝雀固定资产白名单已删——写时谓词同拒（随机卷写 goal-runs，不再进 framework/）
-      assert(!(core as unknown as { isWriteAllowedPath(rel: string, p: unknown): boolean }).isWriteAllowedPath('harness/assets/vision-canary-a.png', policy), '写时谓词：金丝雀旧路径不可写');
+      assert(!core.isWriteAllowedPath('harness/assets/vision-canary-a.png', policy), '金丝雀旧路径不可写');
     },
   },
   {
@@ -276,9 +276,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     run: async () => {
       const core = await loadCore();
       const policy = core.loadRuntimeArtifactPolicy(frameworkAbs(LAYOUT, '.'))!;
-      const canWrite = (rel: string): boolean =>
-        (core as unknown as { isWriteAllowedPath(r: string, p: unknown): boolean })
-          .isWriteAllowedPath(rel, policy);
+      const canWrite = (rel: string): boolean => core.isWriteAllowedPath(rel, policy);
       // 发布件：随 pack 产出、由 RELEASE-MANIFEST 逐字节校验——agent 绝不该覆写
       assert(!canWrite('harness/trace/trace.schema.json'), '发布件 trace.schema.json 不可写');
       assert(!canWrite('harness/trace/gap-notes.template.md'), '发布件 gap-notes.template.md 不可写');
@@ -286,12 +284,10 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       // 同目录的运行时产物照常可写（降权只针对发布件，不误伤运行时面）
       assert(canWrite('harness/trace/run-2026.jsonl'), '同目录运行时产物仍可写');
       assert(canWrite('harness/reports/x.json'), 'reports 运行时产物仍可写');
-      // 扫描谓词不变：发布件在磁盘上合法存在，不算 foreign
-      assert(core.isPolicyAllowedPath('harness/trace/trace.schema.json', policy), '扫描谓词：发布件合法存在');
     },
   },
   {
-    name: 'B1 core allowlist：合法结构化真人审批 → 放行；五负例全 deny（第六轮 P1）',
+    name: 'B1 放行通道已退场：任何 drift_allowlist 形态都不再解锁写守卫（plan a6c4e9f2 D5）',
     run: async () => {
       const core = await loadCore();
       const root = mkConsumerProject();
@@ -305,67 +301,52 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
             'utf-8',
           );
         };
-        // 正例：结构化真人审批
-        writeCfg([{ path: rel, rationale: '本地 fork 修 bug', approved_by: '张三' }]);
+        // 曾经的"正例"（结构化真人审批）现在同样 deny——写权限来自执行环境授予的安全主体，
+        // 不来自被检查方自己可编辑的一个文件。
+        const forms: unknown[][] = [
+          [{ path: rel, rationale: '本地 fork 修 bug', approved_by: '张三' }],
+          [rel],
+          [{ path: rel, rationale: 'x', approved_by: 'goal-mode-auto' }],
+          [{ path: rel, rationale: 'x', approved_by: 'user_requirement' }],
+          [{ path: rel, approved_by: '张三' }],
+          [{ path: rel, rationale: 'x' }],
+        ];
+        for (const allowlist of forms) {
+          writeCfg(allowlist);
+          const decision = core.evaluateFrameworkWrite({ projectRoot: root, filePath: target });
+          assert(
+            decision.decision === 'deny',
+            `allowlist 形态不得解锁写守卫：${JSON.stringify(allowlist)}`,
+          );
+          assert(
+            /已退役/.test(decision.reason ?? ''),
+            'deny 文案须点名 allowlist 已退役，不得继续教人写审批',
+          );
+        }
+        // runtime 白名单路径仍照常放行（唯一的合法放行来源）。
         assert(
-          core.evaluateFrameworkWrite({ projectRoot: root, filePath: target }).decision === 'allow',
-          '合法真人审批应放行',
+          core.evaluateFrameworkWrite({ projectRoot: root, filePath: 'framework/harness/reports/x.json' }).decision === 'allow',
+          'runtime 产物路径仍应放行',
         );
-        // 负1：legacy 字符串条目
-        writeCfg([rel]);
-        assert(core.evaluateFrameworkWrite({ projectRoot: root, filePath: target }).decision === 'deny', 'legacy 字符串应 deny');
-        // 负2：approved_by 自动化身份
-        writeCfg([{ path: rel, rationale: 'x', approved_by: 'goal-mode-auto' }]);
-        assert(core.evaluateFrameworkWrite({ projectRoot: root, filePath: target }).decision === 'deny', 'goal-mode-auto 应 deny');
-        // 负3：approved_by=user_requirement 哨兵
-        writeCfg([{ path: rel, rationale: 'x', approved_by: 'user_requirement' }]);
-        assert(core.evaluateFrameworkWrite({ projectRoot: root, filePath: target }).decision === 'deny', 'user_requirement 应 deny');
-        // 负4：缺 rationale
-        writeCfg([{ path: rel, approved_by: '张三' }]);
-        assert(core.evaluateFrameworkWrite({ projectRoot: root, filePath: target }).decision === 'deny', '缺 rationale 应 deny');
-        // 负5：缺签名
-        writeCfg([{ path: rel, rationale: 'x' }]);
-        assert(core.evaluateFrameworkWrite({ projectRoot: root, filePath: target }).decision === 'deny', '缺 approved_by 应 deny');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
     },
   },
   {
-    name: 'C1 跨实现一致性：TS approvalInvalidReason ↔ .mjs 复刻在同一夹具矩阵下判定逐一等价',
+    name: 'C1 放行语义彻底移除：core 不再导出 allowlist/审批 API（防换名复活）',
     run: async () => {
       const core = await loadCore();
-      const matrix: Array<[unknown, unknown]> = [
-        ['修 bug', '张三'],
-        ['修 bug', 'goal-mode-auto'],
-        ['修 bug', 'user_requirement'],
-        ['修 bug', 'USER_REQUIREMENT'],
-        ['修 bug', 'system'],
-        ['修 bug', 'headless-auto'],
-        ['', '张三'],
-        [undefined, '张三'],
-        ['修 bug', ''],
-        ['修 bug', undefined],
-        ['修 bug', '  '],
-        [42, '张三'],
-        ['修 bug', 'Auto'],
-      ];
-      for (const [rationale, approvedBy] of matrix) {
-        const ts = approvalInvalidReason(rationale, approvedBy) === null;
-        const mjs = core.approvalInvalidReasonMjs(rationale, approvedBy) === null;
+      for (const removed of ['approvalInvalidReasonMjs', 'loadValidDriftAllowlist', 'AUTOMATION_SIGNER_IDS_MJS']) {
         assert(
-          ts === mjs,
-          `判定分裂：rationale=${JSON.stringify(rationale)} approved_by=${JSON.stringify(approvedBy)} → TS=${ts} mjs=${mjs}`,
+          (core as unknown as Record<string, unknown>)[removed] === undefined,
+          `${removed} 应随放行通道一并删除，不得换名保留`,
         );
       }
-      // 自动化身份清单本身同步（防单边加条目）
-      const mjsIds = [...core.AUTOMATION_SIGNER_IDS_MJS].sort();
-      const tsIds = [...AUTOMATION_SIGNER_IDS].sort();
-      assert(JSON.stringify(mjsIds) === JSON.stringify(tsIds), `AUTOMATION_SIGNER_IDS 漂移：TS=${tsIds} mjs=${mjsIds}`);
     },
   },
   {
-    name: 'C2 policy 三方一致：SSOT ↔ canonical-gitignore 派生 ↔ core 匹配行为',
+    name: 'C2 policy 双消费者一致：SSOT ↔ canonical-gitignore 派生 ↔ guard 写匹配',
     run: async () => {
       const core = await loadCore();
       const policy = loadRuntimeArtifactPolicy();
@@ -383,21 +364,19 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         const covered = derived.some((g) => g === `framework/${p}` || g.startsWith(base));
         assert(covered, `SSOT 条目 ${p} 未派生进 gitignore framework 段`);
       }
-      // (c) core 匹配行为抽查：每个 ignored 目录条目下的深层文件应命中；generated 模式命中；
-      //     非白名单路径不命中
+      // (c) core 写匹配行为抽查：每个 ignored 目录条目下的深层文件应放行；
+      //     控制面/sidecar/旧 canary 路径拒写。没有 presence-scan/foreign-file 谓词。
       for (const p of policy.ignored_runtime_patterns.filter((x) => x.endsWith('/'))) {
         const probe = `${p}deep/nested/file.bin`.replace('**/', 'a/b/');
-        assert(core.isPolicyAllowedPath(probe, policy), `目录条目 ${p} 应覆盖 ${probe}`);
+        assert(core.isWriteAllowedPath(probe, policy), `目录条目 ${p} 应放行 ${probe}`);
       }
-      // b7e4d2a9 Todo4 反向保护：canary 固定资产白名单已删——旧路径回到 foreign/拒写域，
-      // framework/ 是"真正恢复只读"而不只是"不再主动生成"。
-      assert(!core.isPolicyAllowedPath('harness/assets/vision-canary-x.png', policy),
-        'canary PNG 旧路径不得再被放行（写守卫拒、integrity 判 foreign）');
-      assert(!core.isPolicyAllowedPath('harness/assets/vision-canary-x.answer-key.json', policy),
-        'canary answer-key 旧路径不得再被放行');
-      assert(core.isPolicyAllowedPath('RELEASE-MANIFEST.sha256', policy), 'sidecar 应命中');
-      assert(!core.isPolicyAllowedPath('harness/scripts/tmp-evil.mjs', policy), 'scripts 下任意文件不得命中');
-      assert(!core.isPolicyAllowedPath('skills/feature/spec/SKILL.md', policy), 'skills 不得命中');
+      assert(!core.isWriteAllowedPath('harness/assets/vision-canary-x.png', policy), 'canary PNG 旧路径不得放行');
+      assert(!core.isWriteAllowedPath('harness/assets/vision-canary-x.answer-key.json', policy), 'canary answer-key 旧路径不得放行');
+      assert(!core.isWriteAllowedPath('RELEASE-MANIFEST.sha256', policy), 'sidecar 不可写');
+      assert(!core.isWriteAllowedPath('harness/scripts/tmp-evil.mjs', policy), 'scripts 下控制面不可写');
+      assert(!core.isWriteAllowedPath('skills/feature/spec/SKILL.md', policy), 'skills 控制面不可写');
+      assert((core as unknown as Record<string, unknown>).isPolicyAllowedPath === undefined,
+        '退役 presence-scan API 不得保留');
     },
   },
 ];

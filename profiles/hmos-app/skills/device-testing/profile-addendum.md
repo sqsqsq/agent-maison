@@ -194,6 +194,6 @@
 
 ### 应用工程同步 framework（WalletForHarmonyOS 等）
 
-- **SSOT**：`SimulatedWalletForHmos/framework/`（或 git submodule）为 harness / device-testing 源码；应用工程须 **同步 ≥ 当前 framework HEAD**（含 `lint-adhoc-steps`、默认冷重启、`mergeEnvWithHdcOnPath`、flat cache 扫描、`STEP-TOUCH` 等）。
+- **SSOT**：应用工程集成的 Maison 发布件为 harness / device-testing 源码；须使用包含所需能力的已验证发布版本（含 `lint-adhoc-steps`、默认冷重启、`mergeEnvWithHdcOnPath`、flat cache 扫描、`STEP-TOUCH` 等），不以宿主 HEAD/commit 判断版本。
 - **同步后**：在应用工程根执行 framework-init render（或手动复制 `.cursor/rules/framework-agent-execution.mdc`、device-testing 跳板）；重跑 `npm run adhoc-device-test -- --bundle <id> --steps "…"` 刷新 `derive-adhoc-last.json`（schema 4 + `cache_layout_*`）。
 - **Cache**：若 stderr `ADHOC_CACHE_LAYOUT_MISMATCH=1`，将根目录 page JSON 迁入 `pages/` 或修 page save；**勿** agent Write 根目录替代。

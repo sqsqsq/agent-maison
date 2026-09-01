@@ -6,8 +6,8 @@
 //   1. 解析 claude hook stdin payload，取目标文件路径；
 //   2. 动态 import 发布件内共享判定核心（framework/agents/shared/），deny → exit 2
 //      （PreToolUse 协议：exit 2 阻断工具调用、stderr 反馈给 agent）。
-// 一切异常 fail-open（exit 0）——G2 查时扫描恒为兜底；诚实边界：只拦编辑类工具，
-// Bash 重定向/node -e 写文件不在射程。
+// 一切异常 fail-open（exit 0）。诚实边界：只拦编辑类工具；Bash 重定向、脚本、
+// node -e 与场外进程不在射程，也没有事后 Git/hash detector 兜底。
 
 import * as fs from 'fs';
 import * as path from 'path';

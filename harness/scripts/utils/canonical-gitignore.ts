@@ -15,7 +15,7 @@ function normFeaturesDir(featuresDir: string): string {
 // --------------------------------------------------------------------------
 // framework runtime 段派生自 specs/runtime-artifact-policy.json（plan e8f5a2c7
 // 第六轮 P1 三方 SSOT——本文件不得另行维护 framework 运行时清单；G1 hook core 与
-// framework-integrity 读同一份，三方一致性单测钉死）。
+// Write/Edit guard 读同一份，写放行与 gitignore 派生共用 SSOT）。
 // --------------------------------------------------------------------------
 
 export interface RuntimeArtifactPolicy {
@@ -78,15 +78,6 @@ export function matchesPolicyPattern(rel: string, pattern: string): boolean {
 }
 
 /** rel 是否属于策略放行的运行时产物（三段任一命中）。 */
-export function isPolicyAllowedPath(rel: string, policy: RuntimeArtifactPolicy): boolean {
-  const all = [
-    ...policy.ignored_runtime_patterns,
-    ...policy.generated_file_patterns,
-    ...policy.reserved_metadata_files,
-  ];
-  return all.some(p => matchesPolicyPattern(rel, p));
-}
-
 /**
  * SSOT ignored_runtime_patterns → gitignore framework 段（实例根相对，framework/ 前缀）。
  *

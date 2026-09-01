@@ -5,7 +5,7 @@
 ## 1. Framework 资产是否存在
 
 - 路径：`<repo-root>/framework/harness/harness-runner.ts`
-- 若缺失：停止初始化，提示 `git submodule` 或拷贝 framework。
+- 若缺失：停止初始化，提示先取得并解压 Maison 已验证发布件。
 
 ## 2. 项目身份
 
@@ -22,10 +22,10 @@
 | 扁平特性 | `entry`、`features`、`common` 等 | 可能适合 preset_minimal_3；否则 manual_edit_stop |
 | 已接 framework | 已有 `framework.config.json` | UPDATE 模式 |
 
-## 4. Submodule
+## 4. 发布件身份
 
-- 若存在 `.gitmodules` 且含 `framework` 路径 → 注明「framework 可能为 submodule」。
-- 若 `framework/.git` 为文件（gitlink）→ 同上。
+- `framework/` 只按 Maison 发布件落盘目录处理，不探测 `.gitmodules`、gitlink、tracked 或 HEAD。
+- 若 manifest 在场，记录 version / source_commit / built_at / manifest SHA 作为非阻断 package identity。
 
 ## 5. 已有文档
 

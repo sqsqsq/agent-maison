@@ -204,7 +204,7 @@ export interface GoalRunEvent {
   /** E4：跨 attempt 累计统计（events.jsonl 回放，非内存计数）用——phase_verdict 已带的字段。 */
   blocker_signature?: string;
   halt_reason?: string;
-  /** P0-5（plan d9b4f7e2）：framework_integrity_block 的多值 subtype（全 blocker 收集去重）。 */
+  /** 当前 integrity classification 或历史 subtype provenance（全 blocker 收集去重）。 */
   integrity_subtypes?: string[];
   advance_blocked?: boolean;
   advance_block_reason?: string;
