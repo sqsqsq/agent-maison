@@ -15,7 +15,7 @@
 
 ## 硬性前置
 
-**[`framework-init`](project/framework-init/SKILL.md)** 是其它 Maison Skill 的项目就绪前置：实例根须先有有效的 `framework.config.json` 以及初始化约定的目录与入口文件（路径以配置中 `paths` 为准）。无竞争主动作的显式选择/调用 framework-init，或明确接入发布件、创建/迁移 config、刷新 adapters 才进入该 Skill；Skill 名称/链接被动出现不单独触发。普通 Git/SCM L0 请求命中时只退出 init 子流程，不结束本轮，须继续完成最新获授权主动作。
+**[`framework-init`](project/framework-init/SKILL.md)** 是其它 Maison Skill 的项目就绪前置：实例根须先有有效的 `framework.config.json` 以及初始化约定的目录与入口文件（路径以配置中 `paths` 为准）。只有显式选择/调用 framework-init，或明确接入发布件、创建/补齐/迁移 config、集成新发布件后刷新 adapters 才进入该 Skill；Skill 名称/链接被动出现不触发。普通请求由主 Agent 按正常路径处理，不选择、不读取、不经过 framework-init。
 
 **个人 setup**：无独立 skill 目录；各 feature phase 入口 `--ensure` 内联，SSOT 见 [`reference/personal-setup-gate.md`](reference/personal-setup-gate.md)。
 
@@ -75,7 +75,7 @@ profile-skill-asset:<skill-id>/<asset_key>
 
 | Skill id | 路径 | 摘要 |
 |----------|------|------|
-| framework-init | [project/framework-init/SKILL.md](project/framework-init/SKILL.md) | 显式选择/调用或明确接入/刷新；Git/SCM 退出 init 后继续 L0 主动作 |
+| framework-init | [project/framework-init/SKILL.md](project/framework-init/SKILL.md) | 显式选择/调用，或明确接入发布件 / 创建/迁移 config / 刷新 adapters |
 | catalog-bootstrap | [project/catalog-bootstrap/SKILL.md](project/catalog-bootstrap/SKILL.md) | `module-catalog.yaml` / `glossary.yaml` |
 | code-graph | [project/code-graph/SKILL.md](project/code-graph/SKILL.md) | 模块 `code-graph.yaml` 建图、core 策展与 module-graph 漂移门禁 |
 | goal-mode | [project/goal-mode/SKILL.md](project/goal-mode/SKILL.md) | goal-runner 薄入口 |

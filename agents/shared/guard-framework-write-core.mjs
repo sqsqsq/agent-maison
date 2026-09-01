@@ -5,8 +5,8 @@
 // 运行时约束：独立 node ESM，不依赖 ts-node / 任何 npm 包——hook 进程由宿主 IDE
 // 直接以 `node xxx.mjs` 拉起，必须零依赖可跑。
 //
-// 策略 SSOT：specs/runtime-artifact-policy.json（与 canonical-gitignore.ts 共读；
-// 勿在本文件另立运行时写放行清单）。
+// 策略 SSOT：specs/runtime-artifact-policy.json（与 harness/scripts/utils/
+// runtime-artifact-policy.ts 共读；勿在本文件另立运行时写放行清单）。
 //
 // 放行通道（plan a6c4e9f2 D5）：**没有**。`integrity.drift_allowlist` /
 // `allow_local_drift` 的解锁语义已随 runtime hash 家族一并退役——同一可写主体既能改
@@ -51,7 +51,7 @@ export function loadRuntimeArtifactPolicy(frameworkRoot) {
 }
 
 // --------------------------------------------------------------------------
-// glob-lite 匹配（语义与 policy JSON 头部注释、canonical-gitignore 一致）
+// glob-lite 匹配（语义与 policy JSON 头部注释、runtime-artifact-policy.ts 一致）
 // --------------------------------------------------------------------------
 
 /**
@@ -171,7 +171,7 @@ function denyText(target) {
   return [
     `[framework 写保护] 已阻止写入 ${target}。`,
     'framework/ 是 Maison 发布件控制面（consumer-framework-boundary.md）：',
-    '  - 临时诊断脚本请放 <repo-root>/scratch/（gitignored）或系统临时目录，不要写进 framework/；',
+    '  - 临时诊断脚本请放 <repo-root>/scratch/ 或系统临时目录，不要写进 framework/；',
     '  - 升级分两步：①用户/CI 的 updater 或集成操作镜像覆盖已验证发布件；',
     '    ②随后运行 /framework-init UPDATE，刷新宿主 config/adapter 物化产物并执行全局 phase；',
     '  - 没有放行通道：integrity.drift_allowlist / allow_local_drift 已退役，写入这里不再有"具名审批"可用',

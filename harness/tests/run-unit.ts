@@ -86,7 +86,6 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   // plan c7e2a9d4 T4：跨消费者集成（同一 FeatureSpec 同时驱动 plan 闭环与 profile page_registration）
   { id: 'contracts-cross-consumer-closure', modulePath: './unit/contracts-cross-consumer-closure.unit.test' },
   { id: 'init-eol',         modulePath: './unit/init-eol.unit.test' },
-  { id: 'canonical-gitignore', modulePath: './unit/canonical-gitignore.unit.test' },
   { id: 'init-update-policy', modulePath: './unit/init-update-policy.unit.test' },
   { id: 'hook-stale-state', modulePath: './unit/hook-stale-state.unit.test' },
   { id: 'guard-framework-write', modulePath: './unit/guard-framework-write.unit.test' },
@@ -211,7 +210,10 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'workflow-loader', modulePath: './unit/workflow-loader.unit.test' },
   { id: 'workflow-tracks', modulePath: './unit/workflow-tracks.unit.test' },
   { id: 'skill-contract', modulePath: './unit/skill-contract.unit.test' },
-  { id: 'framework-init-routing-contract', modulePath: './unit/framework-init-routing-contract.unit.test' },
+  // plan 33714d0c：framework-init 纯正向入口的已发布文本契约（原 routing-contract 重写收窄）
+  { id: 'framework-init-entry-contract', modulePath: './unit/framework-init-entry-contract.unit.test' },
+  // plan 33714d0c T6：S4 的 turn/run 作用域 + 同一 task 两轮 test-only fixture
+  { id: 'framework-init-current-turn', modulePath: './unit/framework-init-current-turn.unit.test' },
   { id: 'assess', modulePath: './unit/assess.unit.test' },
   { id: 'device-test-case-kernel', modulePath: './unit/device-test-case-kernel.unit.test' },
   { id: 'quality-tiers', modulePath: './unit/quality-tiers.unit.test' },

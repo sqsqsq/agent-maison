@@ -83,7 +83,7 @@ AgentMaison 自身发 zip 发布件（`framework-<semver>.zip`）前的 BLOCKER 
    cd framework/harness && npx ts-node scripts/init-orchestrate.ts --scope project --project-root <实例根>
    ```
 
-   确认 stdout 为合法 `InitTaskPlan` JSON（S1 零写盘：重复执行前后 `.gitignore` / config mtime 不变，除非用户已批准 S3）。
+   确认 stdout 为合法 `InitTaskPlan` JSON（S1 零写盘：重复执行前后 config mtime 不变，除非用户已批准 S3；宿主 `.gitignore` 任何阶段都不被读写）。
 
 2. **个人 setup**（每位开发者一次）
 
@@ -92,7 +92,7 @@ AgentMaison 自身发 zip 发布件（`framework-<semver>.zip`）前的 BLOCKER 
    # 多 adapter 或 DevEco：再按 personal-setup-gate 走 personal orchestrate
    ```
 
-   确认生成 `framework.local.json`（gitignored）且 **未** 修改 `materialized_adapters` 以外的项目提交文件。
+   确认生成 `framework.local.json`（个人级本地配置）且 **未** 修改 `materialized_adapters` 以外的项目文件。
 
 3. **feature phase 门控**
 

@@ -128,8 +128,17 @@ const cases: Array<{ name: string; run: () => void }> = [
         const opencode = renderFor('opencode');
         assert.strictEqual(cursor, opencode, '共享 AGENTS.md 不得因 active adapter 不同而变化');
         assert(!cursor.includes('激活的 agent adapter'), '共享 AGENTS.md 不应声明个人 active adapter');
-        assert(cursor.includes('Git status/diff/add/stage/commit/push'), '共享 AGENTS.md 须把 Git/SCM 固定为 L0');
-        assert(cursor.includes('仅出现 framework、Framework 产物或衍生物名词不构成 framework-init 意图'));
+        // plan 33714d0c：L0 行恢复通用 direct 描述；Git/SCM 专用枚举与 framework-init
+        // 的普通任务 handoff 一并删除，普通请求由主 Agent 按正常路径处理。
+        assert(
+          cursor.includes('**普通请求由主 Agent 负责**'),
+          '共享 AGENTS.md 须声明普通请求由主 Agent 负责',
+        );
+        assert(
+          !cursor.includes('Git status/diff/add/stage/commit/push') && !cursor.includes('Git-only'),
+          '共享 AGENTS.md 不得恢复 Git 专用枚举/优先级',
+        );
+        assert(cursor.includes('仅出现 framework、Framework 产物或衍生物名词不构成 init 意图'));
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

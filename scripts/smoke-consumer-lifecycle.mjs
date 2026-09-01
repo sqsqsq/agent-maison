@@ -47,14 +47,20 @@ const REPO_ROOT = path.resolve(__dirname, '..');
  * `status`：
  *   · `covered`   —— 由下面某个生命周期 stage 真跑覆盖（stage 红即本用例红）
  *   · `pending`   —— 尚未实现（骨架期）。**不是通过**，会计入 skip 并打印。
+ *   · `retired`   —— 该事故类别已不属于 Maison 职责，不再由本链验证；必须写明
+ *                    `retiredReason`。编号保留，避免注册表出现空洞。
  */
 const CASE_REGISTRY = [
   {
     id: 1,
-    name: '发布文件被宿主 .gitignore 吞掉',
-    status: 'covered',
-    coveredBy: 'commit',
-    note: '历史宽规则预置在 stage install，commit 后核对发布件是否真的进了索引',
+    name: '发布文件被宿主 .gitignore 吞掉（已退役：宿主 SCM 配置不属于 Maison 职责）',
+    status: 'retired',
+    retiredReason:
+      'plan 33714d0c：framework-init 不再读取、诊断、创建或修改宿主的忽略配置，' +
+      '相关 S3 任务、writer 与 canonical host 规则整体退场。宿主是否忽略 framework ' +
+      '运行时目录由宿主自行决定。Maison 侧仍然成立的是发布件文件集合本身——' +
+      '由 release verify 与 stage clone 的存在性断言保护。',
+    note: '编号保留以免注册表空洞；本链不再合成宿主历史宽规则，也不再运行任何宿主忽略配置 writer',
   },
   {
     id: 2,
@@ -135,6 +141,9 @@ export function assertCaseRegistryComplete(registry = CASE_REGISTRY, stages = ST
   }
   const stageIds = new Set(stages.map((s) => s.id));
   for (const c of registry) {
+    if (c.status === 'retired' && !c.retiredReason) {
+      throw new Error(`[smoke] 用例 #${c.id} 标为 retired 却未写明 retiredReason`);
+    }
     if (c.status === 'covered' && !c.coveredBy) {
       throw new Error(`[smoke] 用例 #${c.id} 声称 covered 却未指明由哪个 stage 覆盖`);
     }
@@ -153,18 +162,19 @@ export function assertCaseRegistryComplete(registry = CASE_REGISTRY, stages = ST
 // ---------------------------------------------------------------------------
 
 /**
- * 2026-04-25 由 framework-init 写入宿主的**历史宽规则**（事故① 的真实起点）。
+ * **测试基础设施**用的最小 .gitignore（plan 33714d0c）。
  *
- * 这不是编出来的：`canonical-gitignore.ts:100` 的注释就在说它——updater 只追加
- * 不删除，所以这条目录式规则会一直在宿主的 .gitignore 里。派生形状必须**压得过它**，
- * 而 git 的硬规则是：父目录被排除时，子文件的 `!` 再写也没用。
+ * 它只排除 fixture 自己 `npm install` 出来的 `node_modules` 与 lockfile——否则 commit
+ * stage 要把上万个依赖文件塞进临时仓，慢且与被测行为无关。
+ *
+ * 明确**不来自** Maison、也不来自 framework-init：init 已不再读取、诊断、创建或修改
+ * 宿主忽略配置。这里不得恢复 canonical host writer，也不得重新合成"历史宽规则"
+ * 夹具——那条事故类别（用例 #1）已随宿主 SCM 权责一并退役。
  */
-const HISTORICAL_GITIGNORE = [
-  '# --- 宿主既有内容（2026-04-25 framework-init 写入，updater 只追加不删）---',
-  'node_modules/',
-  'framework/harness/reports/',
-  'framework/harness/state/',
-  'framework/harness/trace/',
+const TEST_ONLY_GITIGNORE = [
+  '# --- 仅为 smoke fixture 服务；不是 Maison / framework-init 产物 ---',
+  'framework/harness/node_modules/',
+  'framework/harness/package-lock.json',
   '',
 ].join('\n');
 
@@ -233,7 +243,7 @@ function git(cwd, ...args) {
 // ---------------------------------------------------------------------------
 
 /**
- * S1 install —— 把**发布件**装进一个带历史 .gitignore 的临时宿主。
+ * S1 install —— 把**发布件**装进一个临时宿主工程。
  *
  * `zipPath` 在场时用它（candidate 的同一字节）；否则本地重 pack（快速模式）。
  * 前者才是"验的是要发的字节"，后者只适合改代码时的快速回归。
@@ -247,8 +257,8 @@ async function stageInstall(ctx) {
   fs.writeFileSync(path.join(consumerRoot, 'doc', 'architecture.md'), '# Architecture\n', 'utf8');
   fs.mkdirSync(path.join(consumerRoot, 'doc', 'features'), { recursive: true });
   fs.writeFileSync(path.join(consumerRoot, 'framework.config.json'), FRAMEWORK_CONFIG_JSON, 'utf8');
-  // **先**写历史 .gitignore：宿主的真实时间线就是"先有旧规则，后装新框架"
-  fs.writeFileSync(path.join(consumerRoot, '.gitignore'), HISTORICAL_GITIGNORE, 'utf8');
+  // 仅为 fixture 自身服务的最小忽略规则（不是 Maison / init 产物，见常量注释）
+  fs.writeFileSync(path.join(consumerRoot, '.gitignore'), TEST_ONLY_GITIGNORE, 'utf8');
 
   const frameworkDest = path.join(consumerRoot, 'framework');
   if (zipPath) {
@@ -281,9 +291,9 @@ async function stageInstall(ctx) {
 /**
  * S2 depsHost —— 在**宿主副本**上装依赖。
  *
- * 为什么 clone 之前就要装：commit 阶段要跑**发布件内的** `ensureCanonicalGitignore`，
+ * 为什么 clone 之前就要装：clone 阶段要在**发布件内**读 runtime-artifact policy，
  * 而 `evalInShipped` 需要发布件自带的 ts-node。顺带也证明了发布件的 harness/package.json
- * 真的装得起来。clone 之后会**再装一次**（node_modules 被 .gitignore，克隆不带），
+ * 真的装得起来。clone 之后会**再装一次**（node_modules 被 fixture 忽略，克隆不带），
  * 那一次才是"换机后的消费者"，见 stageDepsClone。
  */
 function stageDepsHost(ctx) {
@@ -309,11 +319,11 @@ function stageDepsClone(ctx) {
 }
 
 /**
- * S3 commit —— git init + canonical gitignore + commit，然后**核对发布件真的进了索引**。
+ * S3 commit —— git init + commit，为后续 clone（换机形态）准备真实历史。
  *
- * 事故① 的整机断言就在这里：历史宽规则把 `framework/harness/trace/` 整目录排除，
- * 而发布件里有 `trace.schema.json` / `gap-notes.template.md`。派生形状若压不过
- * 那条历史规则，这些文件根本不会进 commit——宿主换机 clone 后就少文件。
+ * plan 33714d0c：本段不再运行任何 Maison gitignore writer，也不再断言"宿主 Git 收编"
+ * ——宿主 SCM 配置不属于 Maison 契约。发布件文件集合本身仍由 release verify 与
+ * stage clone 的存在性断言保护。
  */
 function stageCommit(ctx) {
   const { consumerRoot } = ctx;
@@ -321,9 +331,6 @@ function stageCommit(ctx) {
   git(consumerRoot, 'config', 'user.email', 'smoke@example.invalid');
   git(consumerRoot, 'config', 'user.name', 'smoke');
   git(consumerRoot, 'config', 'commit.gpgsign', 'false');
-
-  // framework-init 的 gitignore 收编（发布件内的实现，不是源码仓的）
-  ctx.applyCanonicalGitignore(consumerRoot);
 
   git(consumerRoot, 'add', '-A');
   git(consumerRoot, 'commit', '-q', '-m', 'smoke: consumer initial commit');
@@ -333,26 +340,7 @@ function stageCommit(ctx) {
   );
   ctx.trackedFiles = tracked;
 
-  const shipped = ctx.shippedFilesInRuntimeDirs();
-  // **非空转断言**：`shipped` 为空时 `filter` 恒得空集，这一格就什么都没验——
-  // 拿 3.0.0 之前的 dist zip 实跑时正是如此（旧包的 policy 还是 schema 1.0、
-  // 无 `shipped_files_in_runtime_dirs`），"0 个全部收编"看着还挺像通过的。
-  // 空集只可能是两种情况，都必须停下来说清楚，不能静默放行。
-  if (shipped.length === 0) {
-    throw new Error(
-      '被测发布件的 runtime-artifact-policy 未声明 shipped_files_in_runtime_dirs——' +
-      '用例 #1 在这个包上**无可验对象**。要么它早于 schema 1.1（拿了旧包来测），' +
-      '要么发布件确实不再有落在 ignored 目录内的文件（那需要回头修订用例 #1 本身）。',
-    );
-  }
-  const swallowed = shipped.filter(rel => !tracked.has(`framework/${rel}`));
-  if (swallowed.length > 0) {
-    throw new Error(
-      `事故①回归：历史 .gitignore 吞掉了发布件 —— ${swallowed.join(', ')}\n` +
-      '（派生形状必须压得过 2026-04-25 的目录式宽规则：`!<dir>/` 前置 + `<dir>/*` + 逐文件 `!`）',
-    );
-  }
-  ctx.log(`commit：${tracked.size} 个文件进索引，${shipped.length} 个 ignored 目录内发布件全部收编`);
+  ctx.log(`commit：${tracked.size} 个文件进索引`);
 }
 
 /**
@@ -369,8 +357,15 @@ function stageClone(ctx) {
   ctx.cloneRoot = cloneRoot;
   ctx.clonedFrameworkRoot = path.join(cloneRoot, 'framework');
 
-  // 换机后发布件仍须齐全（事故① 的另一半：commit 进去了、clone 出来也要在）
+  // 换机后发布件仍须齐全：runtime 目录内的发布件属于 release 文件集合，与宿主是否
+  // 忽略这些目录无关（plan 33714d0c）。
   const shipped = ctx.shippedFilesInRuntimeDirs();
+  if (shipped.length === 0) {
+    throw new Error(
+      '被测发布件的 runtime-artifact-policy 未声明 shipped_files_in_runtime_dirs——' +
+      '本断言在这个包上**无可验对象**（多半是拿了 schema 1.0 的旧包来测）。',
+    );
+  }
   const missing = shipped.filter(rel => !fs.existsSync(path.join(ctx.clonedFrameworkRoot, rel)));
   if (missing.length > 0) {
     throw new Error(`事故①回归：clone 后发布件缺失 —— ${missing.join(', ')}`);
@@ -798,8 +793,8 @@ function stageGoal(ctx) {
 }
 
 /**
- * 顺序即宿主的真实时间线。**装依赖分两次**：clone 前那次是为了跑发布件内的
- * gitignore 收编（也证明包能装），clone 后那次才是"换机后的消费者"，
+ * 顺序即宿主的真实时间线。**装依赖分两次**：clone 前那次是为了在发布件内读
+ * runtime-artifact policy（也证明包能装），clone 后那次才是"换机后的消费者"，
  * 且执行根随之切到 clone——否则后面验的还是旧副本（codex 第七批 P1）。
  */
 const STAGES = [
@@ -852,11 +847,8 @@ function buildContext(opts) {
     log: msg => { lines.push(msg); console.log(`[smoke/lifecycle] ${msg}`); },
     lines,
   };
-  ctx.applyCanonicalGitignore = projectRoot => evalInShipped(ctx,
-    `const m = require('./scripts/utils/canonical-gitignore');
-     return m.ensureCanonicalGitignore(${JSON.stringify(projectRoot)});`);
   ctx.shippedFilesInRuntimeDirs = () => evalInShipped(ctx,
-    `const m = require('./scripts/utils/canonical-gitignore');
+    `const m = require('./scripts/utils/runtime-artifact-policy');
      return m.loadRuntimeArtifactPolicy().shipped_files_in_runtime_dirs ?? [];`);
   return ctx;
 }
@@ -940,4 +932,4 @@ if (isMain) {
     });
 }
 
-export { CASE_REGISTRY, STAGES, HISTORICAL_GITIGNORE, REPO_ROOT };
+export { CASE_REGISTRY, STAGES, TEST_ONLY_GITIGNORE, REPO_ROOT };

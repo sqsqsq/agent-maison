@@ -231,14 +231,17 @@ export function runAll(): UnitCaseResult[] {
     });
   });
 
-  t('init addendum 契约：宿主 .gitignore 指引（**/BuildProfile.ets）在场且注明与分类器不互替', () => {
-    // 运行时行为由本套件其余用例背书；此处钉文档承载处（多承载漂移是既有硬学习）。
+  t('退役回归：init addendum 不得再承载宿主 .gitignore 指引（plan 33714d0c）', () => {
+    // 原用例强制该 addendum 保留一段宿主 `.gitignore` 追加/建议指引。宿主 SCM 配置
+    // 不属于 Maison 契约，该段已整体删除；这里翻成反向断言，防止换名重生。
+    // 生成物误伤的真实防线是本套件其余用例背书的分类器本身，与忽略规则无关。
     const addendum = fs.readFileSync(
       path.join(__dirname, '..', '..', '..', 'skills', 'framework-init', 'profile-addendum.md'),
       'utf-8',
     );
-    if (!addendum.includes('**/BuildProfile.ets')) throw new Error('init addendum 须含 **/BuildProfile.ets 指引');
-    if (!addendum.includes('不能互相替代')) throw new Error('须注明 .gitignore 与分类器职责不互替');
+    if (/gitignore/i.test(addendum)) {
+      throw new Error('init addendum 不得再出现宿主 gitignore 指引（含改名后的"可选建议"形态）');
+    }
   });
 
   t('parseBuildProfileTemplate：双类块 / 类体成员错位 → null', () => {

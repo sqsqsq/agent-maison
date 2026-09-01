@@ -19,7 +19,6 @@ import {
   buildLocalFromProjectLegacy,
   resolveProfileNameFromRaw,
 } from './config-field-merger';
-import { ensureCanonicalGitignore } from './canonical-gitignore';
 import { updateLocalConfig } from './framework-local-config';
 import type { FrameworkLocalConfig } from './framework-local-config';
 import {
@@ -460,16 +459,6 @@ export function executeInitTask(
   const adapterName = resolvePrimaryAdapter(ctx);
 
   switch (task.id) {
-    case 'ensure-gitignore': {
-      const r = ensureCanonicalGitignore(ctx.projectRoot);
-      return {
-        message: r.created
-          ? `创建 .gitignore，追加 ${r.added.length} 条`
-          : r.added.length
-            ? `追加 ${r.added.length} 条 patterns`
-            : 'canonical 已齐备',
-      };
-    }
     case 'ensure-config': {
       if (!ctx.configWritePayload) {
         throw new Error(

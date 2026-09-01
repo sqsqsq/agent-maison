@@ -9,7 +9,7 @@ import * as path from 'path';
 /** 与 hypium `get_tmp_dir()` 相对 cwd 的子目录名一致；实际落盘为 `<workDir>/tmp_hypium/` */
 export const HYPIUM_TMP_DIR_NAME = 'tmp_hypium';
 
-/** 置于 `doc/features/<feature>/testing/reports/.hypium-workdir`（reports 已在 .gitignore） */
+/** 置于 `doc/features/<feature>/testing/reports/.hypium-workdir`（feature 报告目录内，不落工程根） */
 export const HYPIUM_WORKDIR_BASENAME = '.hypium-workdir';
 
 export function resolveHypiumWorkDir(reportsBase: string): string {

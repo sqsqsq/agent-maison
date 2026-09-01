@@ -1,6 +1,6 @@
 ---
 name: framework-init
-description: 首次接入 Maison 发布件、创建或迁移 framework.config、集成新发布件后刷新 adapters，或显式选择/调用 framework-init；Git/SCM status、diff、add、stage、commit、push 保持 L0 direct
+description: 显式选择或调用 framework-init、首次接入 Maison 发布件、创建/补齐/迁移 framework.config，或集成新发布件后刷新 config、adapters 与 materialized artifacts
 ---
 
 # 跳板文件

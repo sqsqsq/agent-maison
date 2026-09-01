@@ -1,0 +1,49 @@
+{
+  "_comment": "test-only fixture（plan 33714d0c T6）。它记录的是**主 Agent 层**在同一 task 两轮里的选择与结果事实，用于回归 current-turn 结果隔离契约。它不是 Maison 运行时产物，不被任何生产代码读取，也不冒充真实客户端的 Skill 选择行为——真实 Codex/Claude/Cursor/OpenCode 是否会误选 Skill 不在本 fixture 的证明范围内。",
+  "schema_version": "1.0",
+  "task_id": "fixture-two-turn-current-turn-isolation",
+  "task_title": "Run framework initialization",
+  "turns": [
+    {
+      "id": "A",
+      "user_message": "执行 /framework-init",
+      "intent": "explicit_init",
+      "framework_init": { "selected": true, "read": true, "invoked": true },
+      "tool_calls": [
+        "node scripts/init-readiness.mjs",
+        "npx ts-node scripts/init-orchestrate.ts --scope project --project-root <root>",
+        "npx ts-node scripts/init-orchestrate.ts --scope project --project-root <root> --execute --smart-auto"
+      ],
+      "new_init_run": {
+        "run_id": "20990101T000000Z",
+        "run_log_rel": "harness/reports/_global/init-orchestrate/20990101T000000Z/run-log.json",
+        "summary_rel": "harness/reports/_global/init-orchestrate/20990101T000000Z/summary.md",
+        "started_at": "2099-01-01T00:00:00.000Z",
+        "finished_at": "2099-01-01T00:00:12.000Z",
+        "executed": 3,
+        "skipped": 1,
+        "failed": 0
+      },
+      "reports_after_turn": ["20990101T000000Z"],
+      "may_report_s4": true
+    },
+    {
+      "id": "B",
+      "user_message": "把 README 里的安装章节改成三步，其它别动",
+      "intent": "ordinary_request",
+      "framework_init": { "selected": false, "read": false, "invoked": false },
+      "tool_calls": [],
+      "new_init_run": null,
+      "reports_after_turn": ["20990101T000000Z"],
+      "may_report_s4": false,
+      "forbidden_in_final": [
+        "executed=3",
+        "skipped=1",
+        "failed=0",
+        "harness/reports/_global/init-orchestrate/20990101T000000Z",
+        "本轮 init 已完成"
+      ],
+      "handled_by": "main_agent"
+    }
+  ]
+}

@@ -59,6 +59,24 @@ Enforcement: `harness/harness-runner.ts`, `harness/scripts/utils/framework-integ
 - **WHEN** identical valid release bytes are evaluated as tracked dirty, staged, committed, entirely untracked, and non-Git
 - **THEN** Maison phase verdict/check classifications and Framework package identity SHALL be equal across all five environments
 
+### Requirement: Write-time guard blocks editing-tool writes into the framework release
+
+In consumer release layout (`framework/RELEASE-MANIFEST.json` present), adapter hooks SHALL deny covered editing-tool writes targeting `framework/**` unless the target matches the existing runtime write-allow predicate (`ignored_runtime_patterns` plus `generated_file_patterns`; shipped files and reserved metadata remain write-denied). Repo identity SHALL derive from the hook script's physical layout; payload cwd is only the base for relative targets, and file URLs SHALL use standard conversion. Claude, Cursor, and other materialized adapters SHALL use the shared core.
+
+There SHALL be no allowlist unlock. The guard SHALL be described as cooperative and incomplete when strong isolation is absent; no Git dirty, manifest scan, foreign-file check, or any other check-time backstop SHALL be cited as fallback coverage.
+
+Enforcement: `agents/shared/guard-framework-write-core.mjs`, adapter hooks/settings, agent rule templates
+
+#### Scenario: A named approval cannot unlock the guard
+
+- **WHEN** a legacy config names an approver for a framework path
+- **THEN** the editing-tool guard SHALL still deny the control-plane write and no runtime advisory/check SHALL be generated
+
+#### Scenario: Fail-open is not backstopped by a later scan
+
+- **WHEN** the guard fails open on an evaluation error
+- **THEN** no check-time integrity scan SHALL be introduced or cited as compensating coverage
+
 ### Requirement: Package identity is non-blocking and has one loader
 
 One package identity loader SHALL read version, `source_commit`, and `built_at` from `RELEASE-MANIFEST.json`, and SHALL directly parse the existing `RELEASE-MANIFEST.sha256` 64-hex text as `manifest_sha256`. It SHALL NOT hash the sidecar text, traverse manifest `files[]`, recompute installed files, or read host Git.
@@ -79,18 +97,23 @@ Enforcement: `harness/scripts/utils/framework-integrity.ts`, `harness/scripts/ch
 
 ## MODIFIED Requirements
 
-### Requirement: Write-time guard blocks editing-tool writes into the framework release
+### Requirement: Runtime artifact policy is a single cross-runtime SSOT
 
-In consumer release layout (`framework/RELEASE-MANIFEST.json` present), adapter hooks SHALL deny covered editing-tool writes targeting `framework/**` unless the target matches the existing runtime write-allow predicate (`ignored_runtime_patterns` plus `generated_file_patterns`; shipped files and reserved metadata remain write-denied). Repo identity SHALL derive from the hook script's physical layout; payload cwd is only the base for relative targets, and file URLs SHALL use standard conversion. Claude, Cursor, and other materialized adapters SHALL use the shared core.
+`specs/runtime-artifact-policy.json` SHALL remain the only source of truth for framework runtime-artifact whitelisting (`ignored_runtime_patterns` / `shipped_files_in_runtime_dirs` / `generated_file_patterns` / `reserved_metadata_files`). It SHALL describe only Maison's own output and guard paths inside `framework/`; it SHALL NOT derive, describe, or compensate for any host source-control configuration.
 
-There SHALL be no allowlist unlock. The guard SHALL be described as cooperative and incomplete when strong isolation is absent; no Git dirty, manifest scan, or foreign-file check SHALL be cited as fallback coverage.
+Its consumers SHALL be exactly two, reading the same file with equivalent glob-lite semantics: the Git-neutral TypeScript helper `harness/scripts/utils/runtime-artifact-policy.ts` (release/package boundary checks) and `agents/shared/guard-framework-write-core.mjs` (write-time editing-tool guard). `canonical-gitignore.ts` SHALL NOT be a consumer — the file is deleted along with the host `.gitignore` derivation, equivalence map, advisories, and writer. No consumer may maintain a second list, and the policy SHALL NOT gain a second copy, cache, or derived state file.
 
-Enforcement: `agents/shared/guard-framework-write-core.mjs`, adapter hooks/settings, agent rule templates
+Enforcement: `specs/runtime-artifact-policy.json`, `harness/scripts/utils/runtime-artifact-policy.ts`, `agents/shared/guard-framework-write-core.mjs`, policy↔consumer consistency unit tests
 
-#### Scenario: A named approval cannot unlock the guard
+#### Scenario: Both consumers agree on the same SSOT
 
-- **WHEN** a legacy config names an approver for a framework path
-- **THEN** the editing-tool guard SHALL still deny the control-plane write and no runtime advisory/check SHALL be generated
+- **WHEN** the policy JSON, the Git-neutral TS helper, and the hook-core matcher are compared over a fixture path matrix
+- **THEN** classification SHALL agree pairwise; a drifted local list in either consumer SHALL fail the consistency tests
+
+#### Scenario: Policy has no host SCM derivation
+
+- **WHEN** the policy file and its consumers are inspected
+- **THEN** they SHALL contain no host `.gitignore` derivation, ignore-equivalence map, ignore advisory, or `!`-rule generation, and the policy comments SHALL describe only the guard, release file set, and Maison output boundary
 
 ### Requirement: Release artifacts ship a per-file integrity manifest
 
@@ -106,6 +129,12 @@ Enforcement: `scripts/pack-release.mjs`, `scripts/verify-release-pack.mjs`, expl
 - **THEN** it MAY display package identity but SHALL NOT traverse per-file manifest entries or compare them to installed bytes
 
 ## REMOVED Requirements
+
+### Requirement: Write-time guard blocks editing-tool writes into vendored framework/
+
+**Reason**: 该 requirement 的三处结论已被本 change 推翻：(1) `integrity.drift_allowlist` 的结构化人工审批解锁通道随 runtime hash 家族一并退役——同一可写主体既能改 framework 也能改审批文件；(2) "check-time scanning remains the backstop" 依赖的 consumer 期完整性扫描已删除，fail-open 不再有事后兜底；(3) "vendored framework/" 属操作性 submodule/vendor 叙事，与发布件唯一拓扑冲突。标题与正文同时变更，故以 REMOVED + ADDED（`Write-time guard blocks editing-tool writes into the framework release`）成对替换，而非 MODIFIED。
+
+**Migration**: 守卫本体、hook 注册与 shared core 全部保留，语义改由 ADDED requirement 承载：无解锁通道、无 check-time 兜底、诚实声明 shell/脚本/场外进程盲区。`integrity.drift_allowlist` / `allow_local_drift` 仅保留存量配置解析兼容，读取即忽略。
 
 ### Requirement: Consumer harness enforces framework source integrity
 

@@ -4,6 +4,7 @@ import assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import YAML from 'yaml';
 
 import { clearFrameworkConfigCache } from '../../config';
 import { detectRepoLayout, harnessRootFromLayout } from '../../repo-layout';
@@ -73,7 +74,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'probeInitTaskPlan project scope 不修改 .gitignore / 不创建 local',
+    name: 'probeInitTaskPlan project scope 不读写宿主 .gitignore / 不创建 local',
     run: () => {
       const root = mkTmp();
       const gitignore = path.join(root, '.gitignore');
@@ -197,12 +198,17 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'InitTaskPlan 含 materialize-adapter 与 ensure-gitignore 任务',
+    name: 'InitTaskPlan 含 materialize-adapter，且不含任何宿主 .gitignore 机制任务',
     run: () => {
       const root = mkTmp();
       const plan = probeInitTaskPlan({ projectRoot: root, scope: 'project', adapter: 'claude' });
-      assert(plan.tasks.some(t => t.id === 'ensure-gitignore'));
       assert(plan.tasks.some(t => t.id.startsWith('materialize-adapter:')));
+      // plan 33714d0c：ensure-gitignore 已整体退场，且不得留下改名/永久 SKIP 空壳
+      assert(!plan.tasks.some(t => t.id === 'ensure-gitignore'), 'ensure-gitignore 不得回归');
+      assert(
+        !plan.tasks.some(t => /gitignore/i.test(t.id) || /gitignore/i.test(t.title)),
+        '任务表不得出现任何宿主忽略配置机制任务（含改名继任者）',
+      );
       assert.strictEqual(plan.scope, 'project');
       assert(['create', 'update'].includes(plan.mode));
       fs.rmSync(root, { recursive: true, force: true });
@@ -282,13 +288,65 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'runInitProbe 无 .gitignore 时 inspection #11 为 MISSING',
+    // plan 33714d0c 复审 P1-4：实现改 10 项后，**机器规则 SSOT** 必须同步——
+    // 否则 check-init 产 10 行、init-rules.yaml 仍要求 11 个逻辑索引，规则与实现矛盾，
+    // 而只验"probe 没有 #11"的用例照样全绿（正是本条要堵的漏）。
+    name: 'init-rules.yaml 机器规则与实现同为 10 项（读真实 SSOT，不硬编码期望）',
+    run: () => {
+      const rulesPath = path.resolve(__dirname, '../../../specs/phase-rules/init-rules.yaml');
+      const rules = YAML.parse(fs.readFileSync(rulesPath, 'utf8')) as {
+        applies_to?: string;
+        structure_checks?: {
+          inspection_table_complete?: {
+            description?: string;
+            rule?: { required_logical_items?: number; inspection_shape?: { singleton_indices?: number[] } };
+          };
+        };
+      };
+      const rule = rules.structure_checks?.inspection_table_complete?.rule;
+      assert.strictEqual(rule?.required_logical_items, 10, 'required_logical_items 必须与实现同为 10');
+      assert.deepStrictEqual(
+        rule?.inspection_shape?.singleton_indices,
+        [1, 2, 4, 5, 6, 7, 8, 9, 10],
+        'singleton_indices 必须为 1,2,4–10（第 11 项已删除，且不得留改名继任者）',
+      );
+      assert(
+        !/11/.test(String(rules.applies_to ?? '')),
+        `applies_to 不得再声称 11 项：${rules.applies_to}`,
+      );
+      assert(
+        !/#11/.test(String(rules.structure_checks?.inspection_table_complete?.description ?? '')),
+        'inspection_table_complete 描述不得再点名 #11',
+      );
+
+      // 规则 SSOT ↔ 真实 probe 行数：逻辑索引集合必须逐一对上
+      const root = mkTmp();
+      const probe = runInitProbe({ projectRoot: root, adapterHint: 'claude' });
+      const logical = [...new Set(probe.inspections.map(i => i.index))].sort((a, b) => a - b);
+      assert.deepStrictEqual(
+        logical,
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+        `probe 逻辑索引集合须为 1–10，实得 ${logical.join(',')}`,
+      );
+      assert.strictEqual(logical.length, rule!.required_logical_items, '规则数量与 probe 实际逻辑索引数须一致');
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'runInitProbe 体检表不含宿主 .gitignore 项（inspection #11 已删除，无空壳继任者）',
     run: () => {
       const root = mkTmp();
       const probe = runInitProbe({ projectRoot: root, adapterHint: 'claude' });
-      const ins11 = probe.inspections.find(i => i.index === 11);
-      assert(ins11);
-      assert.strictEqual(ins11!.status, 'MISSING');
+      assert(
+        !probe.inspections.some(i => i.index === 11),
+        '第 11 项（宿主 .gitignore）必须整体删除，不得保留永久 SKIP/PASS 空壳',
+      );
+      assert(
+        !probe.inspections.some(i => /gitignore/i.test(i.target_path)),
+        '体检表不得再以任何索引承载宿主忽略配置',
+      );
+      // 探测本身也不得创建它
+      assert(!fs.existsSync(path.join(root, '.gitignore')), 'probe 不得创建宿主 .gitignore');
       fs.rmSync(root, { recursive: true, force: true });
     },
   },

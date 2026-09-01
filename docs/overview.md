@@ -169,7 +169,7 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 | **v2.3 工具链识别（hmos-app）**       | DevEco 适配         | DevEco Studio 路径配置化、`detect-deveco.ts` 自动检测；`ut_hvigor_test` 改用 `genOnDeviceTestHap` + `hdc install` + `hdc shell aa test`                |
 | **v2.4 文档体系**         | 对外材料长期化      | `framework/docs/` 文档树 + `DOC_INVENTORY.yaml` + `--phase docs` 自动检查文档新鲜度（即本目录）                                                       |
 | **弱模型三层闭环**        | 步骤跳过 / 规则幻觉 | Layer 1（实例根全局入口 §4.1 / §5.1 / §6）+ Layer 2（`phase-completion-receipt.md` + `check-receipt.ts`）+ Layer 3（Stop hook，Claude adapter 下发）；[`agents/README.md`](../agents/README.md) |
-| **init 体检脚本化**       | 反 LLM 幻觉         | 11 项 `check-init.ts` 全脚本化；`--phase init --adapter <name>`；init-diff Hallucination Ban |
+| **init 体检脚本化**       | 反 LLM 幻觉         | 10 项 `check-init.ts` 全脚本化；`--phase init --adapter <name>`；init-diff Hallucination Ban |
 | **v2.5 可扩展**           | workflow + 实例扩展 | `workflows/spec-driven.workflow.yaml`；全局 `--phase extensions`；`doc/extensions/` manifest + lifecycle hooks；`render-agents-md` 桥接扩展 Skill |
 | **Profile 宿主解耦（2.0）** | 根目录中性化        | `profiles/hmos-app` / `generic`；`capability-registry` 按 profile 调度 `coding.compile` / `device_test.*`；宿主模板迁入 profile addendum |
 | **v2.6 compat**           | 升级撞墙过渡        | `doc/features/<feature>/compat.yaml` 可过期降级；`npm run backfill:context`；见 [`evolution/compat-protocol-v1.md`](evolution/compat-protocol-v1.md) |
@@ -230,7 +230,7 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 
 | 阶段 | Skill                                                                  | 职责                              | 关键产物                                              | 主要门禁（BLOCKER）                                                                                                            |
 | ---- | ---------------------------------------------------------------------- | --------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| ★    | [`framework-init`](../skills/project/framework-init/SKILL.md)             | 接入 / 升级 framework             | `framework.config.json` + agent 入口 + `doc/` 骨架    | adapter 显式选定；存在性体检；宿主 `.gitignore` 补齐（含 harness 根误落 `decision.json`/`context.json` 等 init staging 残留）；S2 staging 仅 OS 临时目录绝对路径（CLI 拒绝相对路径与 `framework/harness` 内路径）；DevEco 工具链路径配置；S3 `run-global-phases` 验收（catalog/glossary/docs）；**UPDATE** 时 `cleanup-deprecated` 备份删除遗留 skill 跳板（含语义旧名 `prd-design` / `requirement-design` 等，保留 `spec` / `plan` / `coding`）；init 后可 `npm test`（= `check:global`） |
+| ★    | [`framework-init`](../skills/project/framework-init/SKILL.md)             | 接入 / 升级 framework             | `framework.config.json` + agent 入口 + `doc/` 骨架    | adapter 显式选定；存在性体检；S2 staging 仅 OS 临时目录绝对路径（CLI 拒绝相对路径与 `framework/harness` 内路径）；DevEco 工具链路径配置；S3 `run-global-phases` 验收（catalog/glossary/docs）；**UPDATE** 时 `cleanup-deprecated` 备份删除遗留 skill 跳板（含语义旧名 `prd-design` / `requirement-design` 等，保留 `spec` / `plan` / `coding`）；init 后可 `npm test`（= `check:global`） |
 | 0    | [`catalog-bootstrap`](../skills/project/catalog-bootstrap/SKILL.md)         | 模块画像 + 术语表自举             | `module-catalog.yaml` / `glossary.yaml`               | `easily_confused_with` 对称、`key_exports_fresh_vs_index`、种子技术词拦截                                                       |
 | 1    | [`spec`](../skills/feature/spec/SKILL.md)                       | spec 撰写                          | `spec.md` + `acceptance.yaml`                          | **术语映射表**（人工逐条确认）+ **Scope 声明** + 术语模块 ⊆ Scope                                                               |
 | 2    | [`plan`](../skills/feature/plan/SKILL.md)       | 技术设计                          | `plan.md` + `contracts.yaml` + `use-cases.yaml`*    | Scope 继承一致性、`architecture_impact` 声明、`use-cases.yaml` schema                                                          |
@@ -388,7 +388,7 @@ Test Plan（由 acceptance `device_focus` 派生）
 
 ### 2.6 使用方式（发布件唯一集成）
 
-Maison 在源仓完成 pack/release verify，交付 `framework-<semver>.zip`。接入方在目标工程根解压，得到 `framework/`，然后执行 `/framework-init` 完成宿主 `.gitignore` 补齐、`npm install`、S3 `run-global-phases` 与 harness 验证；DevEco 路径由 personal setup 写入 `framework.local.json`。详见 [`../MIGRATION.md`](../MIGRATION.md)。
+Maison 在源仓完成 pack/release verify，交付 `framework-<semver>.zip`。接入方在目标工程根解压，得到 `framework/`，然后执行 `/framework-init` 完成 `npm install`、S3 `run-global-phases` 与 harness 验证；DevEco 路径由 personal setup 写入 `framework.local.json`。详见 [`../MIGRATION.md`](../MIGRATION.md)。
 
 升级时用新的已验证发布件镜像覆盖 `framework/`，再运行 `/framework-init UPDATE`。宿主是否使用 Git、是否 add/stage/commit、HEAD 是否仍是旧版本均不是 Maison 前置；package version/source_commit/manifest SHA 用于非阻断身份呈现。framework 不是 Git submodule，也不支持第二种 Git 布局。
 
@@ -495,7 +495,7 @@ Maison 在源仓完成 pack/release verify，交付 `framework-<semver>.zip`。�
 
 **解法（部分已落地，持续推进）**：
 
-1. **Data-driven over LLM-driven**：adapter 拷贝、`render-agents-md.mjs` 占位符渲染、`merge-framework-config.mjs` 等已脚本化；`check-init.ts` 11 项体检 + init-diff Hallucination Ban 已 BLOCKER
+1. **Data-driven over LLM-driven**：adapter 拷贝、`render-agents-md.mjs` 占位符渲染、`merge-framework-config.mjs` 等已脚本化；`check-init.ts` 10 项体检 + init-diff Hallucination Ban 已 BLOCKER
 2. **三分区纪律**：受管文档划分 `<!-- framework:skeleton/data/narrative -->` 三区（skeleton/data 区 sha256 / 重渲染比对 —— 推进中）
 3. **正向 over 负向**：能用白名单 / "仅 X" 表达的不用"不要 X"
 4. **negation-diff verifier**：独立 verifier 子 agent 逐句比对极性词翻转（规划中）

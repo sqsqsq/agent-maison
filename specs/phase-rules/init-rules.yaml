@@ -1,20 +1,22 @@
 # ============================================================================
 # Init 阶段规约 (Phase Rules) — framework-init S1 探测体检
 # ============================================================================
-# 校验对象: framework-init S1 探测体检（check-init 11 项）产物（agent 入口文件 +
-# adapter templates + 架构/数据/工具链/.gitignore 等）。
+# 校验对象: framework-init S1 探测体检（check-init 10 项）产物（agent 入口文件 +
+# adapter templates + 架构/数据/工具链等）。
 #
 # 与 docs 类似，init 是"全局阶段"：不归属任何 feature。校验形态：
 #   1) 选定 adapter 的 adapter.yaml 必须可解析；
 #   2) adapter.yaml 声明的所有 template 文件 / 目录必须真实存在；
-#   3) 11 项体检表必须每行都能给出 MISSING / EMPTY / POPULATED 三态之一；
+#   3) 10 项体检表必须每行都能给出 MISSING / EMPTY / POPULATED 三态之一；
 #   4) 每个 POPULATED 项必须附带 hash 对比 + diff 摘要（避免弱模型在
 #      UPDATE 模式 diff 步骤上口头描述 "已与模板一致" 的事故）。
 #
 # 消费者:
 #   - framework/harness/scripts/check-init.ts  (脚本 Harness)
-#   - init canonical .gitignore SSOT: framework/harness/scripts/utils/canonical-gitignore.ts
-#     （check-init 体检 #11 前 ensureCanonicalGitignore；agent 禁止手抄）
+#
+# 宿主 SCM 配置（`.gitignore` 等）不属于 Maison 契约：init 不读取、不诊断、
+# 不创建、也不修改它（plan 33714d0c）。运行时产物边界见
+# framework/specs/runtime-artifact-policy.json。
 #
 # 注：init 阶段不接 verify-init.md（元阶段无可审），不接 Stop hook
 # （避免 hook 拦自己），不写 phase-completion-receipt（init 无 feature
@@ -23,7 +25,7 @@
 
 phase: init
 version: "1.0"
-applies_to: "framework-init S1 探测体检（check-init）：11 个逻辑索引（#3 可按文件展开多行）的产物"
+applies_to: "framework-init S1 探测体检（check-init）：10 个逻辑索引（#3 可按文件展开多行）的产物"
 
 # --------------------------------------------------------------------------
 # 结构约束
@@ -68,14 +70,16 @@ structure_checks:
   inspection_table_complete:
     description: >
       基线体检项必须每行给出 MISSING / EMPTY / POPULATED 三态。
-      #1/#2/#4/#5/#6/#7/#8/#9/#10/#11 各占「恰好一行」；
+      #1/#2/#4/#5/#6/#7/#8/#9/#10 各占「恰好一行」；
       #3 可能因为 adapter 模板逐文件展开而≥1 行。
       任一行无法判定或索引出现次数不符合上述 shape → BLOCKER。
     severity: BLOCKER
     rule:
-      required_logical_items: 11
+      # plan 33714d0c：原第 11 项（宿主 .gitignore）已整体删除——宿主 SCM 配置
+      # 不属于 Maison 契约，且不得保留改名/永久 SKIP 空壳继任者。
+      required_logical_items: 10
       inspection_shape:
-        singleton_indices: [1, 2, 4, 5, 6, 7, 8, 9, 10, 11]
+        singleton_indices: [1, 2, 4, 5, 6, 7, 8, 9, 10]
         expandable_indices:
           - index: 3
             min_rows: 1

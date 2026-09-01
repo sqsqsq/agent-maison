@@ -5,7 +5,7 @@
 // 机器判定不在这里：runner 通过通用 phase write boundary 做 agent invoke 前后哈希快照；
 // 违规会作废本 invocation 证据、保留字节为未受信输入，并自动回退唯一 owner 重验重签。
 // 旧的六分区 classifyWritePath 机器分类器已删：它建在 git status 上，而 goal-runs/、
-// reports/* 本就在 canonical gitignore、docs_committed:false 宿主 doc 域整体不进 git——
+// reports/* 是 Maison 自有运行时输出、docs_committed:false 宿主 doc 域整体不进 git——
 // 在真实宿主上半盲（v22 推倒根因之一）。
 // ============================================================================
 

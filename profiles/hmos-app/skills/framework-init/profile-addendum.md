@@ -68,7 +68,7 @@ cd <repo-root> && npx ts-node framework/harness/scripts/detect-deveco.ts --json
 
 ### 用户确认（**BLOCKER** · 个人 setup · registry `setup.deveco_path` · [user-confirmation-ux.md](../../../../skills/reference/user-confirmation-ux.md)）
 
-> **职责变更（编排化重构）**：宿主 IDE 安装路径**不再**写入 `framework.config.json`；改由 **阶段 `--ensure` 内联（framework-initb 过程）** 写入 gitignored 的 `framework.local.json` → `toolchain.devEcoStudio.installPath`。
+> **职责变更（编排化重构）**：宿主 IDE 安装路径**不再**写入 `framework.config.json`；改由 **阶段 `--ensure` 内联（framework-initb 过程）** 写入个人级 `framework.local.json` → `toolchain.devEcoStudio.installPath`。
 
 按 `detect-deveco.ts` 探测结果，在 **personal setup 内联 S2** 使用 registry **`setup.deveco_path`**（**仅**「采用探测路径 / 跳过」枚举；**禁止**对话收自由路径字符串）：
 
@@ -125,17 +125,3 @@ toolchain.devEcoStudio.installPath（用户跳过，未配置）
 ### 宿主包管理备注（ohpm）
 
 实例工程侧 `oh_modules/` 由 coding harness 在编译失败且判定为「声明齐全、仅未安装」时，经 profile `coding.deps_install`（ohpm provider）**自动**执行 `ohpm install` 并重编译；**不在 framework-init 代管**，也**不应**交给用户手工安装（除非 ohpm 安装本身因 registry/鉴权/网络失败）。
-
----
-
-## 实例 `.gitignore` 可选追加（非 framework canonical）
-
-全局 canonical 由 `check-init` → `ensureCanonicalGitignore` 自动维护（S3 `ensure-gitignore` 任务）。**hmos-app** 工程在真机自动化 / 本机差异较大时，可在用户确认后**额外**追加（脚本不会自动写入、也不会删除）：
-
-| pattern | 说明 |
-| --- | --- |
-| `/reports/` | Hylyre/Hypium 曾以**工程根**为 cwd 时落盘的 task 日志；现代 harness 已将 hypium cwd 定向到 `<features_dir>/<feature>/testing/reports/.hypium-workdir/`（已落在 `<features_dir>/*/*/reports/*` 内），根目录 `/reports/` 多为历史遗留 |
-| `/build-profile.json5` | 本机 product/SDK 与 CI 不一致时的个人 build-profile；需单独提交时再移出 ignore |
-| `**/BuildProfile.ets` | **强烈建议**：hvigor `CreateHarBuildProfile` 任务在每个模块根生成的编译中间件（HAR_VERSION/BUILD_MODE_NAME/DEBUG/TARGET_NAME 常量），随构建参数变化——入库只会制造无意义 diff。注意：这只解决 **Git 污染**；goal testing 的快照写保护是纯 fs 的（故意 git 盲），对生成物的误伤由 runner 的生成物分类器解决（plan d9e4b7c1），**两者不能互相替代** |
-
-**勿**用 `/harness/reports/*` 代替 `framework/harness/reports/*`（路径错误，无法忽略 harness 全局报告）。

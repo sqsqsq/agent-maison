@@ -23,7 +23,6 @@
     { "task_id": "ensure-config", "action": "keep" },
     { "task_id": "backfill-config", "action": "run" },
     { "task_id": "materialize-adapter:claude", "action": "run" },
-    { "task_id": "ensure-gitignore", "action": "run" },
     { "task_id": "harness-install", "action": "run" },
     { "task_id": "run-global-phases", "action": "run" },
     { "task_id": "write-architecture", "action": "skip" }

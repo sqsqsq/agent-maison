@@ -1,5 +1,5 @@
 // ============================================================================
-// framework-local-config.ts — personal gitignored settings (framework.local.json)
+// framework-local-config.ts — personal per-developer settings (framework.local.json)
 // ============================================================================
 
 import * as fs from 'fs';
@@ -111,7 +111,7 @@ export interface FrameworkLocalToolchainProductSelection {
 }
 
 /**
- * 设备策略（openspec device-readiness-and-completion t3/t6）——**个人级、gitignored**。
+ * 设备策略（openspec device-readiness-and-completion t3/t6）——**个人级**（宿主 SCM 处理由宿主自定）。
  *
  * 为何不是单个布尔：`auto_unlock=false` 区分不了「人工解锁」与「允许模拟器降级」这两个
  * 独立意图，用户拒绝自动解锁不等于拒绝模拟器。

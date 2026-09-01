@@ -153,7 +153,7 @@ report，**再跑一次完整 harness 会换代 subject**，刚发布的 verifie
 要点：
 
 1. **项目 config 变更**（架构 DSL、`materialized_adapters`、paths 等）在 S2 收集进 `configWritePayload`，S3 由 executor 写入。
-2. **个人 `agent_adapter` 与宿主 IDE 路径**不在项目 init 配置——首次跑 catalog/spec 等阶段时 `check-personal-setup.ts --json --ensure` 内联写入 gitignored 的 `framework.local.json`（多 adapter 见 [`personal-setup-gate`](skills/reference/personal-setup-gate.mdSKILL.md)）。
+2. **个人 `agent_adapter` 与宿主 IDE 路径**不在项目 init 配置——首次跑 catalog/spec 等阶段时 `check-personal-setup.ts --json --ensure` 内联写入个人级 `framework.local.json`（多 adapter 见 [`personal-setup-gate`](skills/reference/personal-setup-gate.mdSKILL.md)）。
 3. **增删物化 adapter** 时更新 `materialized_adapters[]` 并重跑 S3；旧 adapter 目录可能残留，列给用户手工处理，**不自动强删**。
 
 日常 framework 版本跟进应走上述 UPDATE 编排，而不是手工散落改多份文件。
@@ -391,18 +391,18 @@ coding 只读 contracts —— 不 scaffold 就判「未物化」、scaffold 就
 
 Maison 只交付已经过 pack/release verify 的 `framework-<semver>.zip`。在目标工程根解压，得到 `<repo-root>/framework/`；升级时用新发布件镜像覆盖旧目录。不要从源仓直接挑文件复制，也不要采用第二种 Git 布局。
 
-集成完成后，在工程根跑 **`/framework-init`**（S1–S4 编排）。`ensure-gitignore` 等 mechanism 任务在 **S3 批准后**由 executor 执行。宿主是否 add/stage/commit 不参与 init/catalog/其它 phase 裁决。
+集成完成后，在工程根跑 **`/framework-init`**（S1–S4 编排）。mechanism 任务在 **S3 批准后**由 executor 执行。宿主的 SCM 状态与配置都不参与 init/catalog/其它 phase 裁决：init **不读取、不诊断、不创建、也不修改**宿主 `.gitignore`，也不从 SCM 历史恢复 `framework.config.json`。
 
 | 阶段 | 做的事 |
 |------|--------|
 | **S1** | 只读 `InitTaskPlan`（`init-orchestrate.ts --scope project`） |
 | **S2** | 确认元数据 / 架构 DSL / **`materialized_adapters` 多选**；生成 decision + context JSON |
-| **S3** | executor：config merge/写入、adapter 物化、gitignore、harness-install、全局 phase 等 |
+| **S3** | executor：config merge/写入、adapter 物化、harness-install、全局 phase 等 |
 | **S4** | 结构化摘要 + 提醒团队成员跑 **`check-personal-setup --json --ensure（阶段前置门控）`** |
 
 **严禁**：
 
-- 在 S1 探测阶段写 `.gitignore` / adapter 产物 / config（副作用仅在 S3）。
+- 在 S1 探测阶段写 adapter 产物 / config（副作用仅在 S3）。
 - 在项目 init 里配置 personal `agent_adapter` 或 DevEco 路径（走 setup → `framework.local.json`）。
 - 用 legacy **Q1=y / Step 0.3.4** 文本协议代替 registry widget（已废弃）。
 - 把 S3 `run-global-phases` 失败解释为「环境问题」跳过——全局 phase 不依赖外部工具链，失败说明发布件集成不完整、init 未完成或 framework bug。
@@ -481,10 +481,10 @@ Maison 只交付已经过 pack/release verify 的 `framework-<semver>.zip`。在
 | 旧 | 新 |
 |----|-----|
 | 项目 init 选单个 `agent_adapter` | 项目 init 选 **`materialized_adapters[]`**（可多选 claude/cursor/generic） |
-| `framework.config.json` 含 `agent_adapter` | 外迁到 **`framework.local.json`**（gitignored） |
+| `framework.config.json` 含 `agent_adapter` | 外迁到 **`framework.local.json`**（个人级本地配置） |
 | project config 写 `toolchain.devEcoStudio.installPath` | 外迁到 **local**；hmos-app 走 **`check-personal-setup --json --ensure（阶段前置门控）`** + `setup.deveco_path` |
 | Step 0.3.4 **Q1=y** 文本 | **`init.task_plan` + `init.task_decision`** widget |
-| `check-init` 探测时写 gitignore | S1 **只读**；S3 任务 `ensure-gitignore` 写盘 |
+| `check-init` 探测时写 gitignore | 已整体退场：init 不再读写宿主 `.gitignore`（3.0.0） |
 
 **实例升级 checklist**：
 
@@ -492,7 +492,7 @@ Maison 只交付已经过 pack/release verify 的 `framework-<semver>.zip`。在
 2. 工程根跑 **`/framework-init` UPDATE**（S1→S4）；S2 确认 `materialized_adapters` 覆盖团队使用的 IDE。
 3. S3 应执行 **`migrate-config`**（若 planner 挂载）：自动把 legacy `agent_adapter` / DevEco 路径外迁，并在 project config 写入 `materialized_adapters`。
 4. **每位开发者**跑一次 **`check-personal-setup --json --ensure（阶段前置门控）`**，确认 personal `agent_adapter`（仅能从已物化列表选）。
-5. 确认 `.gitignore` 含 **`framework.local.json`**（canonical 第 19 条；S3 `ensure-gitignore` 可补齐）。
+5. `framework.local.json` 是个人级本地配置；是否忽略它由宿主自行在 `.gitignore` 决定（Maison 不代写）。
 6. 跑 feature phase 前：`getFrameworkPersonalSetupStatus().source !== 'fallback'`（harness-runner 否则 exit 1）。
 
 **CLI 速查（工程根）**：
@@ -526,7 +526,7 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts --scope personal
 **实例 checklist**：
 
 1. 跑 `/framework-init` UPDATE；planner 若挂 **`confirm-fields` / `migrate-config`**，在 S2 用 registry 确认；S3 执行 `merge-framework-config` 写入 `paths.reports_dir_pattern`（**非手改 JSON**）。
-2. 宿主 `.gitignore` 增加 **`doc/features/*/*/reports/*`**（或等价宽泛规则）；保留 `framework/harness/reports/*` 以对齐全局阶段与遗留布局。
+2. 如需忽略新报告路径，宿主可自行在 `.gitignore` 增加 **`doc/features/*/*/reports/*`**（或等价宽泛规则），并保留 `framework/harness/reports/*` 以对齐全局阶段与遗留布局；这一步由宿主自行决定，init 不代写。
 3. 如有历史产物在 `framework/harness/reports/<feature>/`，可选执行下文「Legacy 报告手动迁移」专节（init **不自动搬文件**）。
 
 #### Legacy 报告手动迁移（opt-in · init S3 之后）
@@ -682,7 +682,7 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 **升级要点（实例侧需要做的事）**：
 
 1. **DevEco 路径改走 personal setup（编排化重构后）**
-   - 形态见 [framework/harness/config.ts](harness/config.ts) `ToolchainConfig`；写入 **`framework.local.json`**（gitignored），**不在** project `framework.config.json`。
+   - 形态见 [framework/harness/config.ts](harness/config.ts) `ToolchainConfig`；写入 **`framework.local.json`**（个人级本地配置），**不在** project `framework.config.json`。
    - 推荐：团队成员跑 **`check-personal-setup --json --ensure（阶段前置门控）`**（framework-initb）；hmos-app 用 registry **`setup.deveco_path`** 确认探测候选。
    - 也可手工编辑 `framework.local.json` 后跑 `cd <repo-root> && npx ts-node framework/harness/scripts/detect-deveco.ts --path "<your-path>" --json` 验证（cwd 见 [skills/reference/harness-cli-cwd.md](skills/reference/harness-cli-cwd.md)）。
 
@@ -821,7 +821,7 @@ legacy 顶层 `project_type` 由 **MIGRATION_RULES**（Pass 2）在 migrate-conf
 - [adapter-schema.yaml](agents/adapter-schema.yaml) 各段可选 `update_policy`：`prompt_if_changed`（**缺省**）或 `auto_overwrite`。Claude adapter 已对 `hooks` / `settings_file` / `commands.subagents` 声明 **`auto_overwrite`**。
 - [check-init.ts](harness/scripts/check-init.ts)：体检 **#3 逐文件展开**， stdout / `check-init.json` 中带 `update_policy` 列；`auto_overwrite` 且 POPULATED **不进入** S2 `init.task_decision`（由 S3 `sync-auto-overwrite:*` 自动对齐）。
 - **编排化重构后**：机制对齐**不在** check-init PASS 时写盘；须在 S2 批准 S3 任务 `sync-auto-overwrite:*` / `materialize-adapter:<name>`，executor 备份至 `.framework-backup/<UTC>/` 后覆盖。
-- `.framework-backup/` 已计入体检 **#11** canonical `.gitignore`；缺则 S3 `ensure-gitignore` 补齐。
+- `.framework-backup/` 是 init 的本地备份目录；宿主如需忽略它，自行在 `.gitignore` 登记（Maison 不代写）。
 
 **实例 checklist**：
 

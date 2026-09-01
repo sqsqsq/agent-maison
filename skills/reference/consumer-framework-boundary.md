@@ -30,7 +30,7 @@ framework 控制面写权限来自模型外执行环境，不来自 env、`frame
 
 ## 临时诊断脚本去处
 
-- 放 `<repo-root>/scratch/`（canonical gitignore 已覆盖）或系统临时目录；
+- 放 `<repo-root>/scratch/`（宿主自行决定是否忽略）或系统临时目录；
 - 不放 `framework/`；
 - 需要调用 framework 内部函数时，从 scratch 以相对/绝对路径 import；
 - 用完即删，正式脚本回宿主合法目录并按项目规则管理。
