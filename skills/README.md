@@ -30,7 +30,7 @@
 | [reference/user-confirmation-ux.md](reference/user-confirmation-ux.md) | gate / enum / artifact 渐进增强 SSOT |
 | [reference/confirmation-registry.yaml](reference/confirmation-registry.yaml) | 全库确认点登记 |
 | [reference/host-harness-readiness.md](reference/host-harness-readiness.md) | harness npm 前置 |
-| [reference/consumer-framework-boundary.md](reference/consumer-framework-boundary.md) | 消费者实例禁止改 `framework/` submodule |
+| [reference/consumer-framework-boundary.md](reference/consumer-framework-boundary.md) | 消费者实例的 Maison 发布件边界与写保护 |
 
 **贡献门禁**：修改 Skill 中任何用户确认步骤时，须先更新 `confirmation-registry.yaml`，Skill 正文只链 SSOT（≤10 行），并跑 `cd framework/harness && npm test`（含 `check-skills-confirmation-ux`；**源仓回归**；消费者侧 `npm test` = `check:global`）。
 
@@ -75,7 +75,7 @@ profile-skill-asset:<skill-id>/<asset_key>
 
 | Skill id | 路径 | 摘要 |
 |----------|------|------|
-| framework-init | [project/framework-init/SKILL.md](project/framework-init/SKILL.md) | 接入 submodule、生成/更新 config、agent 产物与 `doc/` 骨架 |
+| framework-init | [project/framework-init/SKILL.md](project/framework-init/SKILL.md) | 验收已集成发布件、生成/更新 config、agent 产物与 `doc/` 骨架 |
 | catalog-bootstrap | [project/catalog-bootstrap/SKILL.md](project/catalog-bootstrap/SKILL.md) | `module-catalog.yaml` / `glossary.yaml` |
 | code-graph | [project/code-graph/SKILL.md](project/code-graph/SKILL.md) | 模块 `code-graph.yaml` 建图、core 策展与 module-graph 漂移门禁 |
 | goal-mode | [project/goal-mode/SKILL.md](project/goal-mode/SKILL.md) | goal-runner 薄入口 |

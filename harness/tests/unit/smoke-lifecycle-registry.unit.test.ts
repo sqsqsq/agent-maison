@@ -5,13 +5,14 @@
 // 为什么这几条要放在 CI 单测里，而不是只靠整机 smoke 自己：
 // 整机 smoke 跑一次要 pack + npm install，分钟级，不适合每次改动都跑；但**注册表
 // 缩水**是最廉价也最致命的假绿形态——悄悄把一个 pending 用例删掉，smoke 立刻
-// "全覆盖 PASS"。所以把「注册表必须恰好是 plan 的七条」「covered 必须指到真实
+// "全覆盖 PASS"。所以把「注册表必须覆盖 plan 已知连续编号」「covered 必须指到真实
 // stage」这类结构约束下放到秒级单测，整机链本身只管跑。
 //
 // 对照既有硬学习：CORE_SUITES 显式注册表——新套件不注册 = 假绿。这里是它的镜像：
 // **少注册也是假绿**。
 // ============================================================================
 
+import * as fs from 'fs';
 import * as path from 'path';
 import { deriveRepoLayout } from '../helpers/goal-run-driver';
 import type { UnitCaseResult } from '../run-unit';
@@ -35,7 +36,7 @@ interface SmokeModule {
   CASE_REGISTRY: SmokeCase[];
   STAGES: Array<{ id: string }>;
   HISTORICAL_GITIGNORE: string;
-  assertCaseRegistryComplete(registry?: SmokeCase[]): SmokeCase[];
+  assertCaseRegistryComplete(registry?: SmokeCase[], stages?: Array<{ id: string }>): SmokeCase[];
 }
 
 // ts-node(commonjs) 会把 `import()` 降级成 require()，加载不了 .mjs——用 Function 包一层
@@ -60,7 +61,7 @@ async function run(results: UnitCaseResult[], name: string, fn: () => Promise<vo
 export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
 
-  await run(results, 'T4 注册表连续无空洞，且覆盖 plan 已定义的全部用例（含 #8）', async () => {
+  await run(results, '注册表连续无空洞，且覆盖 plan 已定义的全部用例（含升级事故 #9）', async () => {
     const m = await load();
     const ids = m.CASE_REGISTRY.map(c => c.id);
     assert(ids.every((id, i) => id === i + 1), `编号须从 1 起连续无空洞，实得 [${ids.join(',')}]`);
@@ -73,6 +74,11 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     // 本断言从"须如实 pending"翻为"须 covered 且指向 goal"（登记态回退=行为丢失预警）。
     assertEq(eight!.status, 'covered', '#8 已实现（5a-1），登记态不得回退 pending');
     assertEq(eight!.coveredBy, 'goal', '#8 整机面由 goal stage 覆盖');
+    const nine = m.CASE_REGISTRY.find(c => c.id === 9);
+    assert(nine !== undefined, '2026-09-01 发布件升级事故 #9 必须在册');
+    assertEq(nine!.status, 'covered', '#9 必须由真实 stage 覆盖');
+    assertEq(nine!.coveredBy, 'upgradeOverlay', '#9 必须指向 upgradeOverlay stage');
+    assert(m.STAGES.some(s => s.id === 'upgradeOverlay'), 'upgradeOverlay stage 必须真实存在');
 
     const four = m.CASE_REGISTRY.find(c => c.id === 4);
     assert(four !== undefined, 'T2 5b 的 #4 必须在注册表');
@@ -88,8 +94,8 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     try { m.assertCaseRegistryComplete(m.CASE_REGISTRY.filter(c => c.id !== 4)); } catch { gap = true; }
     assert(gap, '中间缺一条（出现空洞）时守门函数必须抛');
     let short = false;
-    try { m.assertCaseRegistryComplete(m.CASE_REGISTRY.filter(c => c.id <= 7)); } catch { short = true; }
-    assert(short, '末尾少登记（漏掉 plan 新增用例）时守门函数必须抛——这正是 #8 当时的形态');
+    try { m.assertCaseRegistryComplete(m.CASE_REGISTRY.filter(c => c.id <= 8)); } catch { short = true; }
+    assert(short, '末尾少登记升级事故 #9 时守门函数必须抛');
   });
 
   await run(results, 'T4 covered 必须指向**真实存在**的 stage（不得指空）', async () => {
@@ -111,6 +117,18 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       );
     } catch { threw = true; }
     assert(threw, 'covered 而不指明 stage 必须抛');
+    let missingStage = false;
+    try {
+      m.assertCaseRegistryComplete(m.CASE_REGISTRY, m.STAGES.filter(s => s.id !== 'upgradeOverlay'));
+    } catch { missingStage = true; }
+    assert(missingStage, '删除 upgradeOverlay stage 时 registry 本体必须失败');
+  });
+
+  await run(results, 'runtime integrity stage/export/reference 已清零', async () => {
+    const source = fs.readFileSync(SMOKE_MODULE, 'utf-8');
+    for (const forbidden of ['stageIntegrity', 'runIntegrityPreflight', "id: 'integrity'", 'framework_control_plane_dirty']) {
+      assert(!source.includes(forbidden), `smoke 不得残留 ${forbidden}`);
+    }
   });
 
   await run(results, 'T4 生命周期各段齐全且有序；**clone 之后**才装依赖并切执行根', async () => {
@@ -118,7 +136,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     const order = m.STAGES.map(s => s.id);
     assertEq(
       order.join('→'),
-      'install→depsHost→commit→clone→depsClone→integrity→checkGlobal→goal',
+      'install→depsHost→commit→clone→depsClone→upgradeOverlay→checkGlobal→goal',
       'stage 顺序即宿主真实时间线，乱序＝测了个别的东西',
     );
     // 初版把执行根绑死在 clone **之前**的副本上，clone 后只把路径当参数传进去检查，
@@ -127,7 +145,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       order.indexOf('depsClone') > order.indexOf('clone'),
       'depsClone 必须在 clone 之后——它负责把执行根切到换机副本',
     );
-    for (const after of ['integrity', 'checkGlobal', 'goal']) {
+    for (const after of ['upgradeOverlay', 'checkGlobal', 'goal']) {
       assert(
         order.indexOf(after) > order.indexOf('depsClone'),
         `${after} 必须在 depsClone 之后，否则跑的仍是 clone 前的旧副本`,

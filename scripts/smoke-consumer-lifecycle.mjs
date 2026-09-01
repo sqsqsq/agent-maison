@@ -8,7 +8,7 @@
 //   · 断言挂在生产**到不了**的分支上——单测照绿；
 //   · 判据拿原值比**指纹**，生产上恒 false，而夹具手写原值——3041 个绿穿过四轮 review。
 // 这两类都有一个共同特征：**验收对着夹具，不对着生产接线**。整机链没有夹具可骗——
-// 真实 zip、真实 git、真实 checkout、真实 integrity。
+// 真实 zip、真实 git、真实 checkout、真实旧 HEAD→新发布件覆盖与 catalog。
 //
 // 本文件是**骨架**：生命周期各段真跑；事故回放用例**显式注册但暂 skip**。
 // skip 不是静默的——注册表缺项会直接失败（见 assertCaseRegistryComplete），
@@ -58,10 +58,10 @@ const CASE_REGISTRY = [
   },
   {
     id: 2,
-    name: 'sidecar CRLF 假失败',
+    name: 'CRLF checkout 不触发普通 phase 发布件复核',
     status: 'covered',
-    coveredBy: 'integrity',
-    note: 'autocrlf=true clone 后跑 framework_integrity，CRLF 通道是真的走过的',
+    coveredBy: 'checkGlobal',
+    note: 'autocrlf=true clone 通道确实生效，随后普通 global phases 不运行发布件 hash/Git integrity',
   },
   {
     id: 3,
@@ -97,6 +97,13 @@ const CASE_REGISTRY = [
     // 无 uncaught_exception）；行为面=goal-lineage-first-death 目标断言。
     note: 'goal stage 第四段：失配自动重建续跑（宿主 run1"第一死"的整机级根治）',
   },
+  {
+    id: 9,
+    name: '旧发布件 HEAD → 完整新发布件 M/D/?? 覆盖，不提交仍可通过 framework-init UPDATE',
+    status: 'covered',
+    coveredBy: 'upgradeOverlay',
+    note: '临时 consumer 合成旧 HEAD，镜像恢复当前完整发布件，断言 M/D/?? 后执行真实 init-orchestrate UPDATE，并保留五态 catalog 矩阵',
+  },
 ];
 
 /**
@@ -105,7 +112,7 @@ const CASE_REGISTRY = [
  * 硬学习原文：显式注册表 + 新套件不注册 = 假绿。这里反过来用：**少注册也是假绿**
  * （悄悄删掉一个用例，整机 smoke 照样 PASS）。
  */
-export function assertCaseRegistryComplete(registry = CASE_REGISTRY) {
+export function assertCaseRegistryComplete(registry = CASE_REGISTRY, stages = STAGES) {
   const ids = registry.map(c => c.id).sort((a, b) => a - b);
   // **报告分母不再硬编码**（codex 第七批 P1）：初版写死"恰好 1..7"，于是 plan 后补的
   // #8 不在册也照绿——门禁把自己的漏洞钉死了。现在形状约束＝"连续、无重复、无空洞"，
@@ -118,17 +125,24 @@ export function assertCaseRegistryComplete(registry = CASE_REGISTRY) {
       `[smoke] 用例编号必须从 1 起连续无空洞、无重复，实得 [${ids.join(',')}]`,
     );
   }
-  // 已知下限：plan 明确定义到 #8（七个回放用例 + A【P0】增补的 #8）。
+  // 已知下限：当前 plan 明确定义到 #9（#9 为 2026-09-01 发布件升级事故）。
   // 少于它一定是漏登记——**这是"少注册也是假绿"的那道门**，plan 再增用例时须同步上调。
-  const MIN_KNOWN_CASES = 8;
+  const MIN_KNOWN_CASES = 9;
   if (ids.length < MIN_KNOWN_CASES) {
     throw new Error(
       `[smoke] plan 已定义到 #${MIN_KNOWN_CASES}，注册表只有 ${ids.length} 条——有用例未登记`,
     );
   }
+  const stageIds = new Set(stages.map((s) => s.id));
   for (const c of registry) {
     if (c.status === 'covered' && !c.coveredBy) {
       throw new Error(`[smoke] 用例 #${c.id} 声称 covered 却未指明由哪个 stage 覆盖`);
+    }
+    if (c.status === 'covered' && !stageIds.has(c.coveredBy)) {
+      throw new Error(
+        `[smoke] 用例 #${c.id} 声称由 stage:${c.coveredBy} 覆盖，但该 stage 不存在` +
+        `（stages=${[...stageIds].join(',')}）`,
+      );
     }
   }
   return registry;
@@ -158,8 +172,28 @@ const MODULE_CATALOG_YAML = 'schema_version: "1.0"\nmodules: []\n';
 const GLOSSARY_YAML = 'schema_version: "1.0"\nterms: []\n';
 const FRAMEWORK_CONFIG_JSON = `{
   "schema_version": "1.1",
+  "project_name": "smoke-consumer",
+  "active_workflow": "spec-driven",
   "project_profile": {
     "name": "generic"
+  },
+  "materialized_adapters": ["generic"],
+  "architecture": {
+    "outer_layers": [{ "id": "app", "can_depend_on": [], "intra_layer_deps": "forbid" }],
+    "module_inner_layers": ["shared"],
+    "inner_dependency_direction": "upward",
+    "cross_module_exports_file": "index.ets"
+  },
+  "paths": {
+    "features_dir": "doc/features",
+    "module_catalog": "doc/module-catalog.yaml",
+    "glossary": "doc/glossary.yaml",
+    "glossary_seed": "doc/glossary-seed.txt",
+    "architecture_md": "doc/architecture.md",
+    "extension_dir": "doc/extensions",
+    "state_file": "framework/harness/state/.current-phase.json",
+    "receipt_dir_pattern": "doc/features/<feature>/<phase>",
+    "reports_dir_pattern": "doc/features/<feature>/<phase>/reports"
   }
 }
 `;
@@ -209,6 +243,9 @@ async function stageInstall(ctx) {
   fs.mkdirSync(path.join(consumerRoot, 'doc'), { recursive: true });
   fs.writeFileSync(path.join(consumerRoot, 'doc', 'module-catalog.yaml'), MODULE_CATALOG_YAML, 'utf8');
   fs.writeFileSync(path.join(consumerRoot, 'doc', 'glossary.yaml'), GLOSSARY_YAML, 'utf8');
+  fs.writeFileSync(path.join(consumerRoot, 'doc', 'glossary-seed.txt'), '账户\n', 'utf8');
+  fs.writeFileSync(path.join(consumerRoot, 'doc', 'architecture.md'), '# Architecture\n', 'utf8');
+  fs.mkdirSync(path.join(consumerRoot, 'doc', 'features'), { recursive: true });
   fs.writeFileSync(path.join(consumerRoot, 'framework.config.json'), FRAMEWORK_CONFIG_JSON, 'utf8');
   // **先**写历史 .gitignore：宿主的真实时间线就是"先有旧规则，后装新框架"
   fs.writeFileSync(path.join(consumerRoot, '.gitignore'), HISTORICAL_GITIGNORE, 'utf8');
@@ -339,14 +376,8 @@ function stageClone(ctx) {
     throw new Error(`事故①回归：clone 后发布件缺失 —— ${missing.join(', ')}`);
   }
 
-  // CRLF 通道确实生效了吗？——**必须断言，不能只打印**（codex 第七批 P1）。
-  // 初版只把结果记进 ctx 就放行：万一 checkout 通道没生效（.gitattributes 锁 LF、
-  // git 配置被覆盖…），后面的 integrity 会在**纯 LF 文件**上轻松通过，而用例 #2
-  // 仍被静态标成 covered——一条什么都没验的绿。
-  // 探针选 `RELEASE-MANIFEST.json`：它是**用例 #2 真正关心的那个文件**（sidecar
-  // 自检比的就是它的字节），且任何发布件里都必然存在。初版拿 trace.schema.json 当探针，
-  // 那文件恰好是"可能被 gitignore 吞掉"的那批之一——上一格若空转放行，这里就以
-  // ENOENT 崩掉而不是给出可读结论。
+  // CRLF 通道必须真实生效：#2 要证明 CRLF checkout 后普通 global phases 仍不启动
+  // 发布件 Git/hash 复核，而不是在纯 LF 夹具上轻松通过。
   const probe = path.join(ctx.clonedFrameworkRoot, 'RELEASE-MANIFEST.json');
   if (!fs.existsSync(probe)) throw new Error(`clone 后缺 RELEASE-MANIFEST.json：${probe}`);
   const raw = fs.readFileSync(probe);
@@ -354,7 +385,7 @@ function stageClone(ctx) {
   if (!ctx.autocrlfObserved) {
     throw new Error(
       `autocrlf 通道未生效：${path.basename(probe)} 在 clone 后仍是纯 LF。` +
-      '此时 integrity 是在 LF 文件上通过的，用例 #2（CRLF 假失败）等于没验——' +
+      '用例 #2 的 CRLF→ordinary phase 路径等于没验——' +
       '不得放行。（检查 clone 是否真的带了 -c core.autocrlf=true、发布件是否有 .gitattributes 锁 LF）',
     );
   }
@@ -362,23 +393,147 @@ function stageClone(ctx) {
 }
 
 /**
- * S5 integrity —— 在**CRLF 化的工作区**上跑 framework_integrity。
- *
- * 事故② 就是在这一幕出现的：per-file 早已 EOL 归一，唯独 sidecar 仍按原始字节比对，
- * 于是 autocrlf 一开就报 tampered。这里跑的是**发布件里的**实现，不是源码仓的。
+ * S6 upgradeOverlay —— 合成旧发布件 HEAD，再镜像覆盖当前完整发布件。
+ * 覆盖后必须同时有 M/D/??，不 add/stage/commit，直接运行 catalog。
  */
-function stageIntegrity(ctx) {
-  const r = ctx.runIntegrityPreflight(ctx.clonedFrameworkRoot, ctx.cloneRoot);
-  const blocking = r.filter(x => x.severity === 'BLOCKER' && x.status === 'FAIL');
-  if (blocking.length > 0) {
-    throw new Error(
-      `事故②回归：CRLF 工作区上 framework_integrity 报 BLOCKER —— ` +
-      // 字段名是 `details`（发布件 CheckResult）——初版写 `detail ?? message`，
-      // 两个都不存在，失败文案退化成 JSON 兜底（fable 第七批 P3）
-      blocking.map(b => b.details ?? JSON.stringify(b)).join(' | '),
-    );
+function stageUpgradeOverlay(ctx) {
+  const repo = ctx.cloneRoot;
+  const targetFramework = ctx.clonedFrameworkRoot;
+  const currentFramework = ctx.frameworkRoot;
+  const modifiedRel = 'README.md';
+  const addedRel = 'MIGRATION.md';
+  const legacyRel = 'legacy-only-from-old-release.txt';
+  for (const rel of [modifiedRel, addedRel]) {
+    if (!fs.existsSync(path.join(targetFramework, rel))) {
+      throw new Error(`upgradeOverlay 缺发布件探针：${rel}`);
+    }
   }
-  ctx.log(`integrity：${r.length} 项检查，无 BLOCKER FAIL（CRLF 通道未产生假失败）`);
+
+  // 当前 clone 先改造成“旧发布件”并提交为 HEAD。
+  fs.writeFileSync(path.join(targetFramework, modifiedRel), 'synthetic old release\n', 'utf8');
+  fs.rmSync(path.join(targetFramework, addedRel));
+  fs.writeFileSync(path.join(targetFramework, legacyRel), 'legacy only\n', 'utf8');
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'smoke: synthetic old framework release');
+
+  // 镜像恢复当前发布件声明的全部文件；runtime node_modules 不参与。
+  const manifest = JSON.parse(fs.readFileSync(path.join(currentFramework, 'RELEASE-MANIFEST.json'), 'utf8'));
+  const files = Array.isArray(manifest.files) ? manifest.files : [];
+  if (files.length === 0) throw new Error('upgradeOverlay 当前发布件 manifest.files 为空');
+  for (const entry of files) {
+    const rel = String(entry.path ?? '');
+    if (!rel) continue;
+    const src = path.join(currentFramework, rel);
+    const dst = path.join(targetFramework, rel);
+    if (!fs.existsSync(src)) throw new Error(`upgradeOverlay 当前发布件缺 manifest 文件：${rel}`);
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.copyFileSync(src, dst);
+  }
+  for (const rel of ['RELEASE-MANIFEST.json', 'RELEASE-MANIFEST.sha256']) {
+    fs.copyFileSync(path.join(currentFramework, rel), path.join(targetFramework, rel));
+  }
+  fs.rmSync(path.join(targetFramework, legacyRel));
+
+  const status = git(repo, 'status', '--porcelain=v1', '--untracked-files=all', '--', 'framework').stdout
+    .split(/\r?\n/)
+    .filter(Boolean);
+  const xy = status.map((line) => line.slice(0, 2));
+  if (!xy.some((s) => s.includes('M')) || !xy.some((s) => s.includes('D')) || !xy.includes('??')) {
+    throw new Error(`upgradeOverlay 未真实形成 M/D/??：${status.slice(0, 20).join(' | ')}`);
+  }
+
+  // 真实事故出口：framework-init UPDATE → task executor → run-global-phases → catalog。
+  const initRunsRoot = path.join(targetFramework, 'harness', 'reports', '_global', 'init-orchestrate');
+  const beforeRuns = new Set(fs.existsSync(initRunsRoot) ? fs.readdirSync(initRunsRoot) : []);
+  mustRun(
+    'upgradeOverlay framework-init UPDATE',
+    'npx',
+    [
+      'ts-node', 'scripts/init-orchestrate.ts', '--execute', '--smart-auto',
+      '--scope', 'project', '--project-root', repo, '--materialized-adapters', 'generic',
+    ],
+    { cwd: path.join(targetFramework, 'harness') },
+  );
+  const afterRuns = fs.readdirSync(initRunsRoot);
+  const createdRuns = afterRuns.filter((name) => !beforeRuns.has(name));
+  const runDirName = (createdRuns.length > 0 ? createdRuns : afterRuns)
+    .sort((a, b) => fs.statSync(path.join(initRunsRoot, b)).mtimeMs - fs.statSync(path.join(initRunsRoot, a)).mtimeMs)[0];
+  if (!runDirName) throw new Error('framework-init UPDATE 未产生 init-orchestrate run 目录');
+  const initRunDir = path.join(initRunsRoot, runDirName);
+  const initLog = JSON.parse(fs.readFileSync(path.join(initRunDir, 'run-log.json'), 'utf8'));
+  const globalEntry = (initLog.entries ?? []).find((entry) => entry.task_id === 'run-global-phases');
+  if (!globalEntry || globalEntry.status !== 'executed') {
+    throw new Error(`framework-init run-global-phases 未成功：${JSON.stringify(globalEntry ?? null)}`);
+  }
+  const initSummary = fs.readFileSync(path.join(initRunDir, 'summary.md'), 'utf8');
+  if (/run-global-phases[^\n]*failed/i.test(initSummary)) {
+    throw new Error(`framework-init summary 错误记录 run-global-phases failed：${initSummary.slice(-1200)}`);
+  }
+  const catalogAfterInit = JSON.parse(fs.readFileSync(
+    path.join(targetFramework, 'harness', 'reports', '_global', 'catalog', 'script-report.json'),
+    'utf8',
+  ));
+  const retiredIds = [
+    ['framework', 'integrity'].join('_'),
+    ['framework', 'control', 'plane', 'dirty'].join('_'),
+  ];
+  const retiredHit = (catalogAfterInit.checks ?? []).find(
+    (check) => retiredIds.includes(check.id) || retiredIds.includes(check.failure_kind),
+  );
+  if (retiredHit) throw new Error(`framework-init catalog 仍含退役 Framework Git result：${JSON.stringify(retiredHit)}`);
+
+  const reportPath = path.join(targetFramework, 'harness', 'reports', '_global', 'catalog', 'script-report.json');
+  const runCatalogSnapshot = (label) => {
+    mustRun(`upgradeOverlay catalog (${label})`, 'npm', ['run', 'check:catalog'], {
+      cwd: path.join(targetFramework, 'harness'),
+      env: { ...process.env, HARNESS_INIT_INTERNAL_GLOBAL_RUN: '1' },
+    });
+    const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+    return JSON.stringify({
+      verdict: report.summary?.verdict,
+      checks: (report.checks ?? [])
+        .map((c) => ({
+          id: c.id,
+          status: c.status,
+          severity: c.severity,
+          failure_kind: c.failure_kind ?? null,
+          blocking_class: c.blocking_class ?? null,
+        }))
+        .sort((a, b) => String(a.id).localeCompare(String(b.id))),
+    });
+  };
+
+  const snapshots = [];
+  snapshots.push(['tracked_dirty', runCatalogSnapshot('tracked_dirty')]);
+  git(repo, 'add', '-A', '--', 'framework');
+  snapshots.push(['staged', runCatalogSnapshot('staged')]);
+  git(repo, 'commit', '-q', '-m', 'smoke: integrated current framework release');
+  snapshots.push(['committed', runCatalogSnapshot('committed')]);
+
+  git(repo, 'rm', '-q', '-r', '--cached', 'framework');
+  git(repo, 'commit', '-q', '-m', 'smoke: host does not track framework');
+  snapshots.push(['untracked', runCatalogSnapshot('untracked')]);
+
+  const gitDir = path.join(repo, '.git');
+  const hiddenGitDir = path.join(repo, '.git-smoke-hidden');
+  fs.renameSync(gitDir, hiddenGitDir);
+  try {
+    snapshots.push(['non_git', runCatalogSnapshot('non_git')]);
+  } finally {
+    fs.renameSync(hiddenGitDir, gitDir);
+  }
+
+  const baseline = snapshots[0][1];
+  const unequal = snapshots.filter(([, snapshot]) => snapshot !== baseline).map(([label]) => label);
+  if (unequal.length > 0) {
+    throw new Error(`upgradeOverlay 五种 Git 环境的 catalog 裁决不一致：${unequal.join(', ')}`);
+  }
+
+  // 后续 goal smoke 需要稳定 Git 基线；恢复跟踪不属于 #9 的被测运行。
+  git(repo, 'add', '-A', '--', 'framework');
+  git(repo, 'commit', '-q', '-m', 'smoke: restore framework tracking for later goal cases');
+  ctx.upgradeOverlayStatus = status;
+  ctx.log(`upgradeOverlay/#9：M/D/?? 下真实 framework-init UPDATE/run-global-phases PASS；五态 catalog 裁决逐字段相同`);
 }
 
 /**
@@ -653,7 +808,7 @@ const STAGES = [
   { id: 'commit', run: stageCommit },
   { id: 'clone', run: stageClone },
   { id: 'depsClone', run: stageDepsClone },
-  { id: 'integrity', run: stageIntegrity },
+  { id: 'upgradeOverlay', run: stageUpgradeOverlay },
   { id: 'checkGlobal', run: stageCheckGlobal },
   { id: 'goal', run: stageGoal },
 ];
@@ -703,12 +858,6 @@ function buildContext(opts) {
   ctx.shippedFilesInRuntimeDirs = () => evalInShipped(ctx,
     `const m = require('./scripts/utils/canonical-gitignore');
      return m.loadRuntimeArtifactPolicy().shipped_files_in_runtime_dirs ?? [];`);
-  ctx.runIntegrityPreflight = (frameworkRoot, projectRoot) => evalInShipped(ctx,
-    `const m = require('./scripts/utils/framework-integrity');
-     return m.runFrameworkIntegrityPreflight({
-       frameworkRoot: ${JSON.stringify(frameworkRoot)},
-       projectRoot: ${JSON.stringify(projectRoot)},
-     }).map(r => ({ id: r.id, severity: r.severity, status: r.status, details: r.details }));`);
   return ctx;
 }
 
@@ -726,6 +875,7 @@ export async function smokeConsumerLifecycle(opts = {}) {
         skipped: Boolean(out && out.skipped),
         ms: Date.now() - t0,
       });
+      if (opts.throughStage === stage.id) break;
     }
   } finally {
     if (!opts.keepWorkdir) fs.rmSync(ctx.workRoot, { recursive: true, force: true });
@@ -744,9 +894,14 @@ export async function smokeConsumerLifecycle(opts = {}) {
   if (skippedStages.length > 0) console.log(`  未实现的 stage：${skippedStages.join(', ')}`);
   console.log('─'.repeat(72));
 
-  const complete = pending.length === 0 && skippedStages.length === 0;
+  const focusedComplete = opts.throughStage
+    ? stageResults.some((stage) => stage.id === opts.throughStage) && skippedStages.length === 0
+    : null;
+  const complete = focusedComplete ?? (pending.length === 0 && skippedStages.length === 0);
   console.log(
-    complete
+    opts.throughStage && complete
+      ? `[smoke/lifecycle] PASS（focused：已真实执行到 stage:${opts.throughStage}）`
+      : complete
       ? `[smoke/lifecycle] PASS（完整：${CASE_REGISTRY.length} 条用例全部由真跑 stage 覆盖）`
       // 分母**由注册表派生**——散落硬编码是 #8 漏登记后仍能"7/7 看着挺满"的帮凶。
       // （注：MIN_KNOWN_CASES 仍是硬编码**下限**，plan 增用例时须手工上调——
@@ -758,13 +913,17 @@ export async function smokeConsumerLifecycle(opts = {}) {
 }
 
 function parseArgs(argv) {
-  const opts = { zipPath: null, keepWorkdir: false };
+  const opts = { zipPath: null, keepWorkdir: false, throughStage: null };
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--zip') opts.zipPath = path.resolve(argv[i + 1] ?? '');
     else if (argv[i] === '--keep-workdir') opts.keepWorkdir = true;
+    else if (argv[i] === '--through') opts.throughStage = argv[i + 1] ?? null;
   }
   if (opts.zipPath && !fs.existsSync(opts.zipPath)) {
     throw new Error(`--zip 指向的文件不存在：${opts.zipPath}`);
+  }
+  if (opts.throughStage && !STAGES.some((stage) => stage.id === opts.throughStage)) {
+    throw new Error(`--through 指向未知 stage：${opts.throughStage}`);
   }
   return opts;
 }

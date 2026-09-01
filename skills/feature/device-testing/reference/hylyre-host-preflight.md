@@ -47,7 +47,7 @@ Windows PowerShell 临时取消：`Remove-Item Env:HYLYRE_PYTHON -ErrorAction Si
 ## Framework / harness 前置
 
 1. `cd framework/harness && npm install`（Tier_1，见 `framework/skills/reference/host-harness-readiness.md`）
-2. 多工程共用 `framework/` 子模块时，**对齐 git 提交**（避免一仓有类型修复、另一仓仍 `testing_checker_error`）
+2. 多工程需集成包含相同能力的 Maison 已验证发布件；以 package version/source_commit/manifest SHA 对齐，不以宿主 Git 提交判断
 3. `framework/profiles/hmos-app/vendor/hylyre/` 含发布件（Maison vendor 只携带源码树 `src/`；运行时代码兼容 schema 1 legacy wheel 布局）+ `release.manifest.json`
 
 ## 即席 vs 标准：勿用标准门禁测外部 App

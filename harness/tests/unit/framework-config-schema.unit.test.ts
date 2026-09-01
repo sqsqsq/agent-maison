@@ -39,12 +39,12 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'normalizeConfig 保留 integrity opt-out（init UPDATE 重写不丢字段）',
+    name: 'normalizeConfig 仅为无损 UPDATE 保留退役 integrity 字段（运行时不生效）',
     run: () => {
       const out = normalizeConfig({
         integrity: { allow_local_drift: true, drift_allowlist: ['harness/scripts/check-testing.ts'] },
       });
-      // P1-5：legacy 形态透传保留（有效性由 framework-integrity 门禁裁决，normalize 不静默丢配置）
+      // legacy 形态透传保留；没有 runtime checker/advisory 消费它。
       assert.strictEqual(out.integrity?.allow_local_drift, true);
       assert.deepStrictEqual(out.integrity?.drift_allowlist, ['harness/scripts/check-testing.ts']);
       // 未声明时不凭空产生
@@ -52,7 +52,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'normalizeConfig 保留 P1-5 结构化真人审批形态（不劣化回 legacy）',
+    name: 'normalizeConfig 无损保留 legacy 结构化字段形状（不赋予审批语义）',
     run: () => {
       const structured = {
         allow_local_drift: { enabled: true, rationale: '本地 fork 调试', approved_by: 'shengqsq' },

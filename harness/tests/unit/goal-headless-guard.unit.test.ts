@@ -14,6 +14,7 @@ import {
   isAllFrameworkBugBlockers,
   shouldHaltNoProgress,
   snapshotArtifacts,
+  stripRetiredFrameworkIntegrityForCurrentRun,
   SIGNATURE_HALT_KINDS,
   isOperatorInterruptSignal,
   WINDOWS_CTRL_C_EXIT_CODE,
@@ -45,6 +46,7 @@ import {
 } from '../../scripts/utils/goal-runner-phase';
 import {
   buildPhasePrompt,
+  buildCurrentAttemptFailureProjection,
   extractPriorFailureContext,
   buildCapabilityBlock,
   formatHarnessFailureTail,
@@ -54,7 +56,11 @@ import {
   VISUAL_GAP_RETRY_GUIDANCE_TESTING,
   type CapabilityAdvisory,
 } from '../../scripts/goal-runner';
-import { buildClosureWallGuidance } from '../../scripts/utils/await-confirm-guidance';
+import {
+  buildClosureWallGuidance,
+  buildFrameworkBugGuidance,
+  buildFrameworkIntegrityGuidance,
+} from '../../scripts/utils/await-confirm-guidance';
 import { clearFrameworkConfigCache } from '../../config';
 import { loadResolvedProfile } from '../../profile-loader';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
@@ -191,7 +197,7 @@ export function runAll(): UnitCaseResult[] {
         const k = classifyFailureKind(
           {
             verdict: 'FAIL',
-            blockers: [{ id: 'framework_integrity', blocking_class: 'integrity', classification: 'framework_drift' }],
+            blockers: [{ id: 'node_options_injection', blocking_class: 'integrity', classification: 'process_injection' }],
           },
           undefined,
           { agentTimedOut: true, staleSummary: true },
@@ -205,7 +211,7 @@ export function runAll(): UnitCaseResult[] {
         const k = classifyFailureKind(
           {
             verdict: 'FAIL',
-            blockers: [{ id: 'framework_integrity', blocking_class: 'integrity', classification: 'framework_drift' }],
+            blockers: [{ id: 'node_options_injection', blocking_class: 'integrity', classification: 'process_injection' }],
           },
           undefined,
           { agentTimedOut: true },
@@ -214,13 +220,13 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
-      name: 'P0-5 决策表: timedOut+fresh+含 integrity（混内容 blocker）→ framework_integrity_block（integrity 不回落混装）',
+      name: '决策表: timedOut+fresh+当前 process integrity（混内容 blocker）→ framework_integrity_block',
       run: () => {
         const k = classifyFailureKind(
           {
             verdict: 'FAIL',
             blockers: [
-              { id: 'framework_integrity', blocking_class: 'integrity', classification: 'framework_drift' },
+              { id: 'node_options_injection', blocking_class: 'integrity', classification: 'process_injection' },
               { id: 'required_chapters' },
             ],
           },
@@ -288,14 +294,14 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
-      name: 'P0-5 非超时轮: integrity 在场 → framework_integrity_block（i8/i9 形态不再落 code_regression）',
+      name: '非超时轮: 当前 process integrity 在场 → framework_integrity_block',
       run: () => {
         const k = classifyFailureKind({
           verdict: 'FAIL',
           blocking_class: 'integrity',
-          failure_kind: 'framework_drift',
+          failure_kind: 'process_injection',
           blockers: [
-            { id: 'framework_integrity', blocking_class: 'integrity', classification: 'framework_drift' },
+            { id: 'node_options_injection', blocking_class: 'integrity', classification: 'process_injection' },
             { id: 'visual_parity_coverage' },
           ],
         });
@@ -311,7 +317,7 @@ export function runAll(): UnitCaseResult[] {
           failure_kind: 'device_blocked',
           blockers: [
             { id: 'device_test_run', blocking_class: 'externalBlocked', classification: 'device_blocked' },
-            { id: 'framework_integrity', blocking_class: 'integrity', classification: 'framework_drift' },
+            { id: 'node_options_injection', blocking_class: 'integrity', classification: 'process_injection' },
           ],
         });
         assert(k === 'framework_integrity_block', `expect integrity halt got ${k}`);
@@ -372,7 +378,196 @@ export function runAll(): UnitCaseResult[] {
           blockers: [],
         });
         assert(rejected.length === 0, `content-class top-level must not be pushed: ${rejected.join(',')}`);
-        assert(hasIntegrityBlocker({ verdict: 'FAIL', blocking_class: 'integrity' }), 'top-level integrity counts as present');
+        assert(!hasIntegrityBlocker({ verdict: 'FAIL', blocking_class: 'integrity' }), '无现行来源的顶层 integrity 视为历史/未知，不参与当前 halt');
+        assert(
+          hasIntegrityBlocker({ verdict: 'FAIL', blocking_class: 'integrity', failure_kind: 'process_injection' }),
+          '现行 top-level process_injection 应计入当前 integrity',
+        );
+      },
+    },
+    {
+      name: '历史 framework integrity 仅供 renderer：fresh/stale 均不进入当前 halt/retry',
+      run: () => {
+        const legacy = {
+          verdict: 'FAIL' as const,
+          blocking_class: 'integrity',
+          failure_kind: 'framework_drift',
+          blockers: [
+            { id: 'framework_integrity', blocking_class: 'integrity', classification: 'framework_drift' },
+          ],
+          repair_candidates: [
+            {
+              id: 'framework_drift',
+              category: 'coding' as const,
+              files: [],
+              summary: 'legacy framework drift',
+              item_fingerprint: 'a'.repeat(64),
+              source_phase: 'testing',
+            },
+          ],
+        };
+        assert(!hasIntegrityBlocker(legacy), '历史 blocker 不得视为当前 integrity');
+        assert(stripRetiredFrameworkIntegrityForCurrentRun(legacy) === null, '历史-only summary 当前视图应为空');
+        assert(classifyFailureKind(legacy) === 'agent_timeout', '历史-only summary 只回落中性重验语义');
+        assert(
+          classifyFailureKind(legacy, undefined, { staleSummary: false }) === 'agent_timeout',
+          '仅标 fresh 的历史 summary 也不得进入 framework halt',
+        );
+        assert(
+          classifyFailureKind(legacy, undefined, { staleSummary: true }) === 'agent_timeout',
+          '仅标 stale 的历史 summary 也不得进入 framework halt',
+        );
+        assert(
+          classifyFailureKind(legacy, undefined, { agentTimedOut: true, staleSummary: false }) === 'agent_timeout',
+          'fresh 历史 summary 不得压过当前 timeout 事实',
+        );
+        assert(
+          classifyFailureKind(legacy, undefined, { agentTimedOut: true, staleSummary: true }) === 'agent_timeout',
+          'stale 历史 summary 不得产生 framework halt',
+        );
+        const mixed = {
+          ...legacy,
+          blockers: [
+            ...legacy.blockers,
+            { id: 'content_gate', blocking_class: 'product_verdict', classification: 'code_regression' },
+          ],
+          repair_candidates: [
+            ...legacy.repair_candidates,
+            {
+              id: 'content_gate',
+              category: 'coding' as const,
+              files: ['src/content.ts'],
+              summary: 'current content failure',
+              item_fingerprint: 'b'.repeat(64),
+              source_phase: 'testing',
+            },
+          ],
+        };
+        const current = stripRetiredFrameworkIntegrityForCurrentRun(mixed);
+        assert(current?.blockers?.length === 1 && current.blockers[0].id === 'content_gate', '混装只保留当前内容 blocker');
+        assert(
+          current?.repair_candidates?.length === 1 && current.repair_candidates[0].id === 'content_gate',
+          '混装 repair 输入也只能保留当前 content candidate',
+        );
+        assert(extractBlockerSignature(current) === 'content_gate', '当前 signature 只能来自 content blocker');
+        assert(classifyFailureKind(mixed) === 'code_regression', '内容 blocker 按自身语义分类，历史 integrity 不参与');
+        const legacyOnlyProjection = buildCurrentAttemptFailureProjection({
+          decisionSummary: null,
+          failureKind: 'agent_timeout',
+          phase: 'testing',
+          hasRuntimeFailureEvidence: false,
+        });
+        assert(legacyOnlyProjection.blockerSignature === '', 'legacy-only 不得合成当前 blocker signature');
+        assert(legacyOnlyProjection.failureKindForEvent === undefined, 'legacy-only 不得写新 failure kind 事件字段');
+        assert(
+          legacyOnlyProjection.blockingMeta.blocking_class === undefined &&
+            legacyOnlyProjection.blockingMeta.failure_kind === undefined,
+          'legacy-only 不得写新 blocking meta 事件字段',
+        );
+        const mixedProjection = buildCurrentAttemptFailureProjection({
+          decisionSummary: current,
+          failureKind: 'code_regression',
+          phase: 'testing',
+          hasRuntimeFailureEvidence: false,
+        });
+        assert(mixedProjection.blockerSignature === 'content_gate', '混装 projection 只保留 content signature');
+        assert(mixedProjection.failureKindForEvent === 'code_regression', '混装 projection 保留 content kind');
+        assert(mixedProjection.blockingMeta.blocking_class === 'product_verdict', '混装 projection 只保留 content meta');
+        assert(
+          !shouldHaltNoProgress({
+            failureKind: 'agent_timeout',
+            priorBlockerSignature: 'framework_integrity',
+            currentBlockerSignature: '',
+            priorArtifactSnapshot: {},
+            currentArtifactSnapshot: {},
+          }),
+          'legacy-only 当前签名为空时不得进入 no-progress halt',
+        );
+
+        const currentIntegrity = stripRetiredFrameworkIntegrityForCurrentRun({
+          verdict: 'FAIL' as const,
+          blocking_class: 'integrity',
+          failure_kind: 'process_injection',
+          blockers: [
+            { id: 'node_options_injection', blocking_class: 'integrity', classification: 'process_injection' },
+          ],
+        });
+        assert(currentIntegrity !== null, '当前 process injection 不得被历史过滤器删除');
+        assert(classifyFailureKind(currentIntegrity) === 'framework_integrity_block', 'process injection 仍须当前 halt');
+        assert(
+          buildEffectiveBlockerSignature(currentIntegrity, 'framework_integrity_block', 'testing') === 'node_options_injection',
+          'process injection 仍须保留当前 blocker signature',
+        );
+        const processProjection = buildCurrentAttemptFailureProjection({
+          decisionSummary: currentIntegrity,
+          failureKind: 'framework_integrity_block',
+          phase: 'testing',
+          hasRuntimeFailureEvidence: false,
+        });
+        assert(processProjection.blockerSignature === 'node_options_injection', 'process projection 保留当前 signature');
+        assert(processProjection.blockingMeta.blocking_class === 'integrity', 'process projection 保留当前 meta');
+        assert(processProjection.failureKindForEvent === 'framework_integrity_block', 'process projection 保留当前事件 kind');
+      },
+    },
+    {
+      name: 'current attempt 接线：decisionSummary 是 meta/signature/repair/reconcile/event 的唯一 summary 输入',
+      run: () => {
+        const source = fs.readFileSync(path.resolve(__dirname, '../../scripts/goal-phase-runtime.ts'), 'utf-8');
+        const decisionDeclaration = 'const decisionSummary = stripRetiredFrameworkIntegrityForCurrentRun(summary)';
+        const decisionAt = source.indexOf(decisionDeclaration);
+        assert(decisionAt >= 0, 'current attempt 必须只生成一次 decisionSummary');
+        assert(
+          (source.match(/const decisionSummary = stripRetiredFrameworkIntegrityForCurrentRun\(summary\)/g) ?? []).length === 1,
+          'current attempt 不得重复生成分叉 decisionSummary',
+        );
+        for (const required of [
+          'classifyFailureKind(decisionSummary',
+          'extractIntegritySubtypes(decisionSummary)',
+          'extractDeterministicAffectedFiles(decisionSummary)',
+          'buildCurrentAttemptFailureProjection({',
+          'const meta = currentFailureProjection.blockingMeta',
+          'decisionSummary?.repair_candidates ?? []',
+          'classifyTimedOutWithFreshBlockers(decisionSummary)',
+          'aggregateBlockerActionability(decisionSummary)',
+          'failureKind: meta.failure_kind ?? currentFailureProjection.failureKindForEvent',
+          'blockers: (decisionSummary?.blockers ?? []).map',
+          'failure_kind_classified: currentFailureProjection.failureKindForEvent',
+          'blocker_signature: currentBlockerSignature || undefined',
+        ]) {
+          assert(source.includes(required), `current attempt 缺少 decisionSummary 接线：${required}`);
+        }
+        for (const forbidden of [
+          'extractBlockingMeta(summary)',
+          'classifyTimedOutWithFreshBlockers(summary)',
+          'aggregateBlockerActionability(summary)',
+          'blockers: (summary?.blockers ?? []).map',
+        ]) {
+          assert(!source.slice(decisionAt).includes(forbidden), `current attempt 仍消费 raw summary：${forbidden}`);
+        }
+      },
+    },
+    {
+      name: 'resume 接线：continuation 在 priorFailure/classifier 前剥离历史 framework integrity',
+      run: () => {
+        const source = fs.readFileSync(path.resolve(__dirname, '../../scripts/goal-phase-runtime.ts'), 'utf-8');
+        const stripAt = source.indexOf('stripRetiredFrameworkIntegrityForCurrentRun(priorSummaryRead.summary)');
+        const extractAt = source.indexOf('extractPriorFailureContext(currentSummary)', stripAt);
+        const classifyAt = source.indexOf('classifyFailureKind(currentSummary', stripAt);
+        assert(stripAt >= 0 && extractAt > stripAt && classifyAt > stripAt, 'continuation 必须先剥离再生成 prompt/classify');
+      },
+    },
+    {
+      name: 'integrity guidance：process injection 按当前来源处置；历史 subtype 不要求 Git 提交/回滚',
+      run: () => {
+        const base = { feature: 'demo', runId: 'r1', phase: 'testing', harnessPrefixRel: 'framework/harness' };
+        const current = buildFrameworkIntegrityGuidance({ ...base, subtypes: ['process_injection'] }).join('\n');
+        assert(current.includes('NODE_OPTIONS'), current);
+        assert(!/提交|git status|framework_integrity blocker details/.test(current), current);
+        const legacy = buildFrameworkIntegrityGuidance({ ...base, subtypes: ['framework_drift'] }).join('\n');
+        assert(legacy.includes('历史 provenance'), legacy);
+        assert(legacy.includes('不要求提交、回滚'), legacy);
+        const bug = buildFrameworkBugGuidance({ ...base, checkerIds: ['check-testing'] }).join('\n');
+        assert(!/提交.*控制面|dirty 拦/.test(bug), bug);
       },
     },
     {

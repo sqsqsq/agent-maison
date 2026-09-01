@@ -8,7 +8,7 @@
 //   · scripts/release-excludes.json          → 这两个文件**要发**（includeOverrides）
 //   · specs/runtime-artifact-policy.json     → `harness/trace/` **整目录忽略**
 // 于是 framework-init 给宿主写下目录式 gitignore，`git add` 静默吞掉发布件，
-// 换机 clone 后 RELEASE-MANIFEST 仍要求它们存在 → framework_integrity 必 BLOCKER。
+// 换机 clone 后发布件字节缺失 → release/明确集成边界的文件集合契约失配。
 //
 // 三方一致性单测当时**全绿**——它保证的是"三方读同一份 SSOT"，而本次是三方
 // **一致地错**。一致性 ≠ 正确性；防内容矛盾要靠跨清单对账。

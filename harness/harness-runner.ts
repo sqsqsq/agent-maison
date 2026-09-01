@@ -72,7 +72,6 @@ import {
   appendJournalProposal,
   intermediateRoundsJournalPath,
 } from './scripts/utils/intermediate-rounds-journal';
-import { runFrameworkIntegrityPreflight } from './scripts/utils/framework-integrity';
 import { deleteEnvKeyCaseInsensitive, runProcessIntegrityPreflight } from './scripts/utils/process-integrity';
 import { validateAttendedGoalContext } from './scripts/utils/attended-goal-context';
 import {
@@ -986,8 +985,6 @@ async function main(): Promise<void> {
       });
     }
   }
-  // 防漂移 preflight（c2）：全局框架自检，全模式入口直调，不经 capability-registry / profile。
-  checks.push(...runFrameworkIntegrityPreflight({ frameworkRoot: resolvedFrameworkRoot, projectRoot }));
   // P0-7②：进程预加载注入自检（file-drift 对进程注入无感，须独立防线）。
   checks.push(...runProcessIntegrityPreflight({ projectRoot, harnessDir: harnessRoot }));
   checks.push(...(await emitLifecycle('pre_phase')));

@@ -21,7 +21,8 @@
     "**/oh_modules/**",
     "framework.local.json",
     "profiles/*/vendor/*/*.md",
-    "profiles/*/vendor/**/*.whl"
+    "profiles/*/vendor/**/*.whl",
+    "docs/vendor/**"
   ],
   "includeOverrides": [
     "profiles/hmos-app/vendor/hylyre/README.md",

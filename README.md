@@ -1,6 +1,6 @@
 # Framework（多 profile Skill + Harness）
 
-本目录是**与具体业务解耦**的通用资产：阶段规则（`specs/phase-rules`）、全生命周期 Skill（`skills/`）、门禁脚本与 runner（`harness/`）、agent 适配插件（`agents/`）、以及初始化用的模板（`templates/`）。业务工程通过 **git submodule** 引入本目录后，用 **Framework 初始化 Skill** 在**实例工程根**生成 `framework.config.json`、`doc/` 骨架与 agent 路由文件。
+本目录是**与具体业务解耦**的通用资产：阶段规则（`specs/phase-rules`）、全生命周期 Skill（`skills/`）、门禁脚本与 runner（`harness/`）、agent 适配插件（`agents/`）、以及初始化用的模板（`templates/`）。Maison 构建并校验 zip 发布件，业务工程将发布件解压到工程根的 `framework/` 后，用 **Framework 初始化 Skill** 在**实例工程根**生成 `framework.config.json`、`doc/` 骨架与 agent 路由文件。
 
 ---
 
@@ -48,14 +48,9 @@
 
 本 framework 通过 **`project_profile`** 区分宿主能力（默认多为 `hmos-app`）；具体 profile 含义见 [文档：profiles](profiles/README.md)。
 
-在目标仓库根执行（远程 URL 换成你的 framework 托管地址）：
+从 Maison 发布渠道取得已校验的 `framework-<semver>.zip`，在目标工程根解压，得到 `<repo-root>/framework/`。不要从目录名或宿主 Git 状态推断其它部署形态。
 
-```bash
-git submodule add <your-framework-repo-url> framework
-git submodule update --init --recursive
-```
-
-然后在当前工程所使用的 **AI coding agent** 里触发 **Framework 初始化**（见下一节）。初始化会在**实例根**写出配置与文档骨架，而不会修改 `framework/` 子模块内容。
+然后在当前工程所使用的 **AI coding agent** 里触发 **Framework 初始化**（见下一节）。初始化会在**实例根**写出配置与文档骨架，不会把宿主 add/stage/commit 作为 Maison 前置条件。
 
 ---
 
@@ -105,21 +100,14 @@ git submodule update --init --recursive
 
 ### 场景三：连 `framework/` 子目录都没有
 
-按 framework-init S1.1 的规定，先在工程根执行：
-
-```bash
-git submodule add <your-framework-repo-url> framework
-git submodule update --init --recursive
-```
-
-然后回到**场景二**的引导语。framework-init 里专门拦截过这一步："若 `framework/harness/harness-runner.ts` 不存在 → 停下，提示用户先 submodule，不要凭空造一个假 framework 目录"——即便你忘了，合规的 agent 也会自己停住。
+按 framework-init S1.1 的规定，先从 Maison 发布渠道取得已验证发布件并解压到工程根，确认 `framework/harness/harness-runner.ts` 存在。然后回到**场景二**的引导语。若发布件缺失，framework-init 会停下提示先完成发布件集成，不会凭空创建 framework 树。
 
 ### 万能引导语（三种场景通用）
 
 未来移植到其它工程时，下面这段话可以**直接贴给 AI**，不论当前工程有没有 framework、有没有全局入口文件都适用：
 
 ```text
-这个工程已经把 framework/ 作为 git submodule 引入（如果没有，请先 git submodule add <framework-repo-url> framework 再继续）。
+这个工程应已把 Maison 验证过的发布件解压到 framework/（如果没有，请先完成发布件集成再继续）。
 请完整阅读 framework/skills/project/framework-init/SKILL.md，按里面的 S1 → S4 严格执行，
 完成 framework 在本工程的初始化或升级。涉及架构 DSL、adapter 选择、产物路径等关键决策，
 必须停下来让我确认，不要静默写入。

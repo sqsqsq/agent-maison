@@ -16,4 +16,4 @@
 - `scope-guarding.md`：三阶段 Scope 守门（spec 声明 → plan 继承 → coding diff 比对）
 - `dual-harness.md`：脚本 Harness vs AI Harness 的分工 + 模型无关性的实现
 - `weak-model-defense.md`：弱模型吞字反转语义的防护策略（三分区纪律 / negation-diff verifier）
-- `vendoring-vs-submodule.md`：framework 在目标工程中的两种部署模式对比
+- framework 只通过 Maison 已验证发布件集成到目标工程；部署与升级见根 `README.md` / `MIGRATION.md`

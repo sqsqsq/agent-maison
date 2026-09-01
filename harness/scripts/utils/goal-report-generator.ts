@@ -122,7 +122,7 @@ export interface GoalPhaseOutcome {
   run_wait_kind?: WaitKind;
   /** legacy/terminal halt 的迁移说明；不得包含人签放行步骤。 */
   halt_guidance?: string;
-  /** P0-5（plan d9b4f7e2）：framework_integrity_block 的多值 subtype（全 blocker 收集去重）。 */
+  /** 当前 integrity classification 或历史 subtype provenance（全 blocker 收集去重）。 */
   integrity_subtypes?: string[];
   interaction_question?: string;
   /** Set when closure gate blocked advance (open receipt / timeout). */
@@ -310,7 +310,7 @@ const HALT_DIAGNOSTIC_PROSE: Readonly<Record<string, string>> = {
   await_human_visual_confirm:
     '历史视觉人签停机事件（机制已退役）——不得签名后 resume；请以当前机器证据开启 correction/successor run 重验',
   framework_integrity_block:
-    'framework 完整性拦截——须真人处置（allowlist 具名审批/还原/重铺/回灌，见下方引导），agent 不得改动 framework 发布件',
+    '门禁 integrity 拦截——按当前 blocker 来源处置；历史 framework Git/hash 分类仅作 provenance，不要求提交或回滚发布件',
   framework_bug:
     '门禁脚本自身异常（framework 缺陷，非产物问题）——须回灌源仓修复，见下方引导',
   agent_timeout_repeated:
@@ -535,7 +535,7 @@ export function generateGoalReportMarkdown(
   }
 
   // P0-10a 补强②（rev：cursor 复审采纳改为 reason 无关）：凡带 halt_guidance 的 halt
-  // 一律渲染进 md——detach 用户只看 md，framework_integrity_block/framework_bug/
+  // 一律渲染进 md——detach 用户只看 md，integrity/framework_bug/
   // agent_timeout_repeated 的补救文案不渲染等于没写。
   const guidedHalts = report.phases.filter((p) => p.halt_guidance);
   if (guidedHalts.length > 0) {

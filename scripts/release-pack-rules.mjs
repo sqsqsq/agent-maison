@@ -374,6 +374,23 @@ export function runSyntheticRuleTests(repoRoot, rules) {
   if (!readmeIncluded) {
     errors.push('vendor hylyre README must be included via includeOverride');
   }
+  // plan a6c4e9f2 T6：docs/vendor/** 是开发交接材料（对外部 vendor 提的需求文档），
+  // 不参与运行、不进 consumer 包。它必须由 excludeGlobs 显式排除，而不是靠运行时
+  // ignore 绕过——2026-08-31 反例：该目录一个文末空行差异让 catalog/testing/设备执行全部 BLOCKER。
+  for (const vendorDoc of [
+    'docs/vendor/hylyre-0.5.0-requirements.md',
+    'docs/vendor/nested/anything.md',
+  ]) {
+    const { include } = classifyPath(vendorDoc, rules);
+    if (include) {
+      errors.push(`docs/vendor handover material must be excluded from the consumer release: ${vendorDoc}`);
+    }
+  }
+  // 对照：docs/ 下其余消费者文档照常入包。
+  const { include: opsDocIncluded } = classifyPath('docs/operations/release-checklist.md', rules);
+  if (!opsDocIncluded) {
+    errors.push('consumer-facing docs outside docs/vendor must stay in the release');
+  }
   for (const srcMd of [
     'profiles/hmos-app/vendor/hylyre/src/hylyre/contracts/README.md',
     'profiles/hmos-app/vendor/hylyre/src/README.md',

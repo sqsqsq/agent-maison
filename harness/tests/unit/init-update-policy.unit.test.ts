@@ -265,23 +265,23 @@ const cases: Case[] = [
       const validTable = __testing.buildStdoutTable(mkReport({
         state: 'valid', version: '3.0.0',
         source_commit: '5de7e35329ed0ba2ad7c1e34e6e1193442520316',
-        built_at: '2026-08-13T07:00:00.000Z', error: null,
+        built_at: '2026-08-13T07:00:00.000Z', manifest_sha256: 'a'.repeat(64), error: null,
       }));
-      assert(validTable.includes('framework 包身份: version=3.0.0 source_commit=5de7e35329ed0ba2ad7c1e34e6e1193442520316 built_at=2026-08-13T07:00:00.000Z'), 'header 须呈现三字段');
+      assert(validTable.includes(`framework 包身份: version=3.0.0 source_commit=5de7e35329ed0ba2ad7c1e34e6e1193442520316 built_at=2026-08-13T07:00:00.000Z manifest_sha256=${'a'.repeat(64)}`), 'header 须呈现四字段');
       // legacy：字段 unknown
       const legacyTable = __testing.buildStdoutTable(mkReport({
-        state: 'valid', version: '2.4.0', source_commit: 'unknown', built_at: 'unknown', error: null,
+        state: 'valid', version: '2.4.0', source_commit: 'unknown', built_at: 'unknown', manifest_sha256: 'unknown', error: null,
       }));
       assert(legacyTable.includes('framework 包身份: version=2.4.0 source_commit=unknown built_at=unknown'), '旧包如实显示 unknown');
       // corrupt：不得误报 source/dev layout，须带错误说明
       const corruptTable = __testing.buildStdoutTable(mkReport({
-        state: 'corrupt', version: 'unknown', source_commit: 'unknown', built_at: 'unknown', error: 'Unexpected token',
+        state: 'corrupt', version: 'unknown', source_commit: 'unknown', built_at: 'unknown', manifest_sha256: 'unknown', error: 'Unexpected token',
       }));
       assert(corruptTable.includes('解析失败'), corruptTable);
       assert(!corruptTable.includes('source/dev layout'), 'corrupt 不得误报 source/dev layout');
       // absent
       const absentTable = __testing.buildStdoutTable(mkReport({
-        state: 'absent', version: 'unknown', source_commit: 'unknown', built_at: 'unknown', error: null,
+        state: 'absent', version: 'unknown', source_commit: 'unknown', built_at: 'unknown', manifest_sha256: 'unknown', error: null,
       }));
       assert(absentTable.includes('source/dev layout'), 'absent 才允许 source/dev layout 文案');
     },

@@ -50,7 +50,7 @@ docs:
       - framework/harness/config.ts
       # adapter 协议（见 overview + agents/README）
       - framework/agents/adapter-schema.yaml
-      # 升级与迁移（overview 引用了 vendor / submodule 模式）
+      # 升级与迁移（overview 引用发布件唯一集成模式）
       - framework/MIGRATION.md
       # 入口 README（overview 与之分工：README 偏使用入门，overview 偏对外讲解）
       - framework/README.md

@@ -13,7 +13,7 @@
 // payload 字段诚实边界：官方未明文 Write 的 tool_input 路径字段名——本壳按候选字段
 // 宽容解析（file_path/path/target_file/filePath/uri），**以宿主实测为准**（plan 钉死
 // 落地第一步在真实宿主实测 payload；matcher/字段不符时据实测调整，均为受管可变字段）。
-// 解析不到路径 / 任何异常 → fail-open（G2 查时扫描恒为兜底）。
+// 解析不到路径 / 任何异常 → fail-open；没有事后 Git/hash detector 兜底。
 
 import * as fs from 'fs';
 import * as path from 'path';
@@ -92,7 +92,7 @@ try {
   main();
   process.exit(0);
 } catch {
-  // 无法完成判定/输出——fail-open（G2 兜底）；此处若已确定 deny 却无法产 JSON 才轮到 exit 2，
+  // 无法完成判定/输出——fail-open；此处若已确定 deny 却无法产 JSON 才轮到 exit 2，
   // 但 main 内 deny 路径自身不抛（emit 是最后一步），实际到不了那个分支。
   try {
     emit({ permission: 'allow' });

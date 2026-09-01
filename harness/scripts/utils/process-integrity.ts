@@ -166,7 +166,7 @@ export function scanCommandForPreloadInjection(command: string | undefined): str
 
 /**
  * ②harness 启动自检：本进程环境/参数/旁路文件检出预加载注入 → BLOCKER。
- * 与 runFrameworkIntegrityPreflight 并列，全模式入口直调、不经 profile。
+ * 全模式入口直调、不经 profile；与已退役的 framework Git/hash preflight 无关。
  */
 export function runProcessIntegrityPreflight(opts: {
   projectRoot: string;

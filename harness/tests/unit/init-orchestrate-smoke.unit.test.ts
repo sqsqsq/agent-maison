@@ -48,7 +48,7 @@ function harnessCtx(projectRoot: string): InitExecutionContext {
 
 const cases: Array<{ name: string; run: () => void }> = [
   {
-    name: 't7 S1 探测：probeInitTaskPlan 输出携带 framework_identity（runInitProbe 同源），三字段形状合法',
+    name: 't7 S1 探测：probeInitTaskPlan 输出携带 framework_identity（runInitProbe 同源），四字段形状合法',
     run: () => {
       const root = mkTmp();
       try {
@@ -58,6 +58,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert(['valid', 'corrupt', 'absent'].includes(id.state), `state 须在枚举内，实际=${id.state}`);
         assert(typeof id.version === 'string' && id.version.length > 0);
         assert(typeof id.source_commit === 'string' && id.source_commit.length > 0);
+        assert(typeof id.manifest_sha256 === 'string' && id.manifest_sha256.length > 0);
         assert(typeof id.built_at === 'string' && id.built_at.length > 0);
         assert(typeof id.error === 'string' || id.error === null, 'error 须为 string|null');
         if (id.state === 'absent') {

@@ -4,7 +4,7 @@
 
 - **项目级 init**：在实例工程根生成/升级 `framework.config.json`、`materialized_adapters[]` 物化产物、架构与 catalog/glossary 骨架；**不写** personal `framework.local.json`。
 - **个人 active adapter** 由各阶段入口 `check-personal-setup.ts --json --ensure` 内联完成（过程见 [personal-setup-gate](../../reference/personal-setup-gate.md)）。
-- 执行前 **`<repo-root>/framework/harness/harness-runner.ts` 必须存在**；否则 S1 只读探测后停下，提示 submodule / 拷贝。
+- 执行前 **`<repo-root>/framework/harness/harness-runner.ts` 必须存在**；否则 S1 只读探测后停下，提示先集成 Maison 已验证发布件。
 - 架构 DSL 契约见 [framework/harness/config.ts](../../../harness/config.ts)（`validateArchitectureDsl`）。
 
 ## 概述
@@ -51,7 +51,7 @@ cd framework/harness && node scripts/init-readiness.mjs
 
 ### S1.1 环境
 
-- 无 `framework/` → **STOP**，提示 `git submodule add … framework`。
+- 无 `framework/` → **STOP**，提示从 Maison 发布渠道取得并解压已验证发布件到工程根。
 - 读 [prompts/scan-project.md](prompts/scan-project.md) 扫描工程（模块清单、目录层命名、已有 doc 资产）；输出**一屏人话摘要**。
 - 若 config 磁盘 MISSING 且为 git 仓：可选跑 `show-last-committed-framework-config.mjs` 得 `recovered_framework_config` 快照（仅预填，不写盘）。
 

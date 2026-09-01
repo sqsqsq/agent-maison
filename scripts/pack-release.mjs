@@ -136,12 +136,11 @@ const RELEASE_MANIFEST_SIDECAR_NAME = 'RELEASE-MANIFEST.sha256';
 
 /**
  * C-review P1a/P1b：写「包内 per-file 哈希 manifest」（**不含 zip sha**，避免 zip 自指循环）。
- * hash 基于 staging 后字节（sanitize + LF 归一），供 consumer 防漂移门禁逐文件校验。
+ * hash 基于 staging 后字节（sanitize + LF 归一），供 release verify 与明确集成边界校验。
  * 须在 writeStaging 之后、zipDirectory 之前调用，使本文件随包进 zip。
  * G3b（plan e8f5a2c7）：同时写包内 sidecar RELEASE-MANIFEST.sha256（一行 64 位小写 hex +
  * 末尾 LF = manifest 原始字节 sha256；**不入 manifest.files[]**——manifest hash ↔ sidecar
- * hash 循环依赖）。consumer preflight 的 framework_manifest_selfcheck 据此发现"manifest
- * 被本地重算迁就漂移"（2026-07-09 宿主事故实锤路径）。
+ * hash 循环依赖）。普通 consumer phase 不做 selfcheck；sidecar 也提供非阻断 package identity。
  * t7（f3a8c6d2）：包身份两字段只增不减——source_commit（打包源仓 HEAD）+ built_at
  * （打包 UTC 时间）；不加 worktree digest，files[] 哈希与 sidecar 链语义不变
  * （与 c2e9f4d7 的截图级 build 指纹链划界）。
