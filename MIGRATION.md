@@ -180,6 +180,22 @@ report，**再跑一次完整 harness 会换代 subject**，刚发布的 verifie
 - **`docs/vendor/**` 不再进发布件**：它是与外部 vendor 的交接材料，不参与运行。升级后该目录不会出现在 `framework/` 下。
 - **dev/source layout**（framework 自身仓，无包内 manifest）只会显示 identity unknown/SKIP，不影响其 `npm test`；不存在 runtime integrity gate。
 
+## 顶层测试计划新增 `execution_channel`（3.0.0 Breaking）
+
+`test-plan.md`「测试用例清单」表每条 TC 必须声明唯一**执行通道**，值域冻结为 `hylyre` | `visual` | `manual` | `provider:<capability-id>`。缺列、缺值或非法值都会让 testing FAIL，并要求一次性迁移——harness **不会**按用例名、优先级或步骤散文替你猜通道。
+
+- **为什么**：此前派生器可以自行写 `explicit_skip_tc_ids`。静态门拒绝入口 selector 后，它没有回报"无法编译"，而是把入口 TC 挪进 skip 仍宣称覆盖完整；剩余用例的前置状态随之全部失真，设备停在首页，一整轮执行级联失败。执行责任必须由测试计划作者声明，不能由编译器自行处置。
+- **派生器不再有 skip 决策权**：正式派生只编译 `channel=hylyre` 的**全集**，不得新增/删除/改写通道，也不再产出 `explicit_skip_tc_ids`（历史产物仍可读）。任一 `hylyre` case 编译失败——含"首个断言之前没有同 case 的 setup/navigation 动作"——则整份 Hylyre 计划不启动，并回报该 TC 的根因与下一责任阶段。
+- **`manual` 不能关质量门**：它表示"该测试义务当前没有机器证据载体"，会持续留在分母 FAIL/UNVERIFIED，**任一 manual TC 都会让本 feature 的 testing 无法 PASS**。这是冻结设计，不是执行器缺陷；框架不提供人工确认、`confirmed_by`、质量 receipt 或 manual resume 来关闭本轮质量门。
+- **对账按通道精确**：derived/trace/timing 的精确集合只与 `channel=hylyre` 闭合，visual/manual/provider 的 TC 不再被误报成"缺 trace"；报告总分母仍覆盖全部顶层 TC。
+- **迁移动作**：在顶层 `test-plan.md` 用例表末尾加一列「执行通道」，逐条填写并进入 plan review。改动任一 TC 的通道都会改变计划 identity，不得在派生或回灌时静默重写。
+
+## selector 静态门恢复开放世界语义（3.0.0）
+
+feature ui-spec 只建模本 feature 新增的页面，首页/卡包/添加卡片等既有入口天然缺席。因此 selector **不在 ui-spec 只给 provenance WARN 并放行**，最终合法性由本轮真机 StepResult 的 selector evidence 裁决。
+
+静态 BLOCKER 收窄为可确定错误：非法 selector/match、正式 `by_text` 缺显式 `match: exact|contains`、ui-spec 已证明的同屏多映射无消歧、`contains` 只命中带 children 的聚合 Text/Row，以及同一 acceptance checkpoint 结构化绑定的 `target_element_id` 与计划 `by_id` 明确不等。框架**不会**把 ui-spec、acceptance 与 contracts 合成第二套 canonical selector registry，也不从散文抽取目标 ID。
+
 ---
 
 ## goal 无头假 PASS 事故链根治（goal-fakepass-hardening）——四项 Breaking
@@ -204,10 +220,14 @@ report，**再跑一次完整 harness 会换代 subject**，刚发布的 verifie
    须声明 `flows`（有序屏链）与逐 AC `checkpoint`/`requirement_ref`（源片段 sha256 验存）
    ——存量 feature 重跑 spec 时须补齐（check-spec `acceptance_flow_structure` BLOCKER）。
    P0 用例 skip 继续 fail-closed：旧 `p0_skip_waiver` confirmation receipt 只读且不 gate。
-   缺口属于既有 `explicit_skip_tc_ids` 登记时，
-   testing 保持 FAIL，但会产出 coding repair candidate，由 goal 回退 coding 修复并重测；
-   status 为空或未经登记的 trace skip 留在 testing 恢复执行；只有带机器
-   `failure_kind`/`blocking_class` 信号的外部阻塞才走既有 DEFERRED。
+   （下面这段 explicit-skip 口径已被 3.0.0 的「顶层测试计划新增 `execution_channel`」一节取代，
+   仅保留为历史记录：）~~缺口属于既有 `explicit_skip_tc_ids` 登记时，
+   testing 保持 FAIL，但会产出 coding repair candidate，由 goal 回退 coding 修复并重测。~~
+   **3.0.0 现行口径**：新计划与派生器禁止写 `explicit_skip_tc_ids`（登记即 BLOCKER），历史登记
+   仅只读诊断——保持 testing FAIL 且**零自动 coding candidate**。
+   status 为空或未经登记的 trace skip 留在 testing 恢复执行；只有带机器 blocked/failed
+   `capability`/`infrastructure` 事实（`outcome.cause` 或 `outcome.failure`）或
+   `blocking_class` 信号的外部阻塞才走既有 DEFERRED。
    `await_human_p0_skip` 主动首触 halt 已退役，仅保留历史事件读取兼容。
    此外，每条 `ut_layer=device|both` 的 P0 AC 必须由至少一条 P0 TC 覆盖；把相关 TC
    降为 P1/P2 会由既有 `acceptance_to_test_case` 原地 BLOCKER，不得借降档退出 P0 分母。

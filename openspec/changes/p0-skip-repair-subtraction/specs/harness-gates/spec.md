@@ -4,32 +4,32 @@
 
 ### Requirement: P0 skips and unreachable screens never launder into clean passes
 
-A skipped or unexecuted P0 TC, and a P0 visual target registered unreachable, SHALL FAIL unless the cause is an enumerated external blockage bound to a real failure trace/error class, in which case the phase defers. Non-external causes (missing selectors, unfinished plans, product bugs) SHALL remain FAIL and no waiver or confirmation receipt SHALL lower them. The dedicated headless halt `await_human_p0_skip` SHALL be retired: when every gap of the round belongs to the existing `explicit_skip_tc_ids` registration, the gate SHALL reuse the existing `failure_kind=code_regression` with `actionability=agent_fixable`; when any gap has empty status or an unregistered trace skip, the gate SHALL remain FAIL without coding attribution so testing restores execution/derived facts. External conditions SHALL keep the existing DEFERRED route and SHALL NOT be disguised as explicit skips. All P0 visual targets unreachable SHALL FAIL outright.
+**Superseded by `testing-stepresult-evidence-consumption` T8a.** A skipped or unexecuted P0 TC, and a P0 visual target registered unreachable, SHALL FAIL unless the cause is an enumerated external/capability blockage bound to real machine evidence, in which case the phase defers. An explicit skip or unexecuted case whose derive manifest has no StepResult SHALL remain testing-owned FAIL with zero automatic coding candidates; Maison MUST NOT infer a cause from TC names or report prose. Only the existing capability-resolution path may prove a missing provider and use the external/capability defer route. The dedicated headless halt `await_human_p0_skip` remains retired, and all P0 visual targets unreachable SHALL FAIL outright.
 
 Enforcement: `harness/scripts/check-testing.ts`, `harness/scripts/utils/{p0-semantic-gates,goal-failure-classifier,adjudication}.ts`
 
-#### Scenario: unwaived explicit-only P0 gaps default to coding repair
+#### Scenario: unexecuted explicit skips remain testing-owned
 
-- **WHEN** a derived plan registers TC-018 as an explicit skip with no waiver, no external DEFERRED, and it is the only unwaived gap (e.g. 3 verified coding-oriented candidates coexist in the same summary)
-- **THEN** `p0_coverage_integrity` SHALL FAIL with `failure_kind=code_regression` + `actionability=agent_fixable`, the summary writer SHALL produce a coding-owned repair candidate for it, and assess SHALL route `backtrack_to_phase` to coding — no `phase_halt(await_human_p0_skip)`, no WAITING/human
+- **WHEN** a derived plan registers TC-018 as an explicit skip with no StepResult, no waiver, and no machine-proven provider absence
+- **THEN** `p0_coverage_integrity` SHALL FAIL as testing-owned with zero automatic coding candidates and SHALL not emit `phase_halt(await_human_p0_skip)` or a guessed coding route
 
-#### Scenario: ten P0 skips without receipts split by registration
+#### Scenario: explicit skips without machine cause do not gain a coding route
 
-- **WHEN** a derived plan registers 10 of 17 P0 TCs as explicit_skip with no waiver receipts
-- **THEN** the gate SHALL FAIL; if all ten are registered explicit skips the finding SHALL carry `code_regression` and a coding candidate, while any TC with empty status or an unregistered trace skip SHALL keep the finding without the coding attribution (testing owns it)
+- **WHEN** a derived plan registers 10 of 17 P0 TCs as explicit_skip with no waiver receipts and no StepResults
+- **THEN** the gate SHALL FAIL and all ten SHALL remain testing-owned; no TC name, AC association, or report prose SHALL create `code_regression` or a coding candidate
 
 ## ADDED Requirements
 
-### Requirement: Unwaived P0 explicit skips are machine-fixable facts consumed by the candidate route
+### Requirement: Executed StepResult assertion mismatches are machine-fixable facts consumed by the candidate route
 
-The testing summary writer SHALL project `p0_coverage_integrity` FAIL findings only when the machine conjunction `id === 'p0_coverage_integrity' && status === 'FAIL' && failure_kind === 'code_regression'` holds, into ordinary `RepairCandidate(category=coding)` entries (existing check id, TC list/gate details, stable item fingerprint, `source_phase` — no `skip_reason_class` / `responsible_phase` agent-reported fields, no registration of the whole check into the check-id owner registry). Candidates SHALL NOT be cleared by a negative product conclusion: `report_validity` SHALL constrain only report free-text-derived (review) candidates; machine check / verifier-conjunction candidates SHALL survive `report_validity=FAIL`. External/toolchain machine signals SHALL keep suppressing candidates (existing DEFERRED path); prose claiming "external" without a machine signal SHALL NOT suppress an explicit-only coding candidate.
+The testing summary writer SHALL project a `p0_coverage_integrity` FAIL finding into an ordinary `RepairCandidate(category=coding)` only when an executed case has an authoritative Hylyre `StepResult` with `failure_kind=assertion` and `failure_code=assertion_mismatch`, and the existing machine conjunction for that finding holds. The projection SHALL retain the existing check id, TC list/gate details, stable item fingerprint, and `source_phase` — no `skip_reason_class` / `responsible_phase` agent-reported fields and no registration of the whole check into the check-id owner registry. Explicit-only or otherwise unexecuted findings with no `StepResult` SHALL remain testing-owned with zero coding candidates. Candidates SHALL NOT be cleared by a negative product conclusion: `report_validity` SHALL constrain only report free-text-derived (review) candidates; machine check / verifier-conjunction candidates SHALL survive `report_validity=FAIL`. External/toolchain machine signals SHALL keep suppressing candidates through the existing DEFERRED path; prose claiming "external" without a machine signal SHALL not create or suppress a coding route.
 
 Enforcement: `harness/scripts/utils/repair-candidates.ts`, `harness/harness-runner.ts`
 
-#### Scenario: a FAIL summary keeps its machine candidates
+#### Scenario: a FAIL summary keeps an executed assertion-mismatch candidate
 
-- **WHEN** `report_validity=FAIL` while `p0_coverage_integrity` is FAIL with `code_regression` and three visual candidates exist in the same summary
-- **THEN** the p0 candidate and the visual candidates SHALL still be produced and assess SHALL backtrack to coding; only review free-text candidates SHALL be suppressed
+- **WHEN** `report_validity=FAIL` while an executed case's `p0_coverage_integrity` finding has the `StepResult`-backed `assertion + assertion_mismatch` route and three visual candidates exist in the same summary
+- **THEN** the assertion-mismatch candidate and the visual candidates SHALL still be produced and assess SHALL backtrack to coding; only review free-text candidates SHALL be suppressed
 
 ### Requirement: Device-scope P0 acceptance criteria require a P0-priority test case anchor
 

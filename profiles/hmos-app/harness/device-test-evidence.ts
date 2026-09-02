@@ -1,6 +1,6 @@
 // ============================================================================
-// device-test-evidence.ts — 真机缺陷结构化合成与机器归因
-// （d9e4b7c1 T2 + e3c7d95f predicate/state/anchor attribution）
+// device-test-evidence.ts — legacy 真机缺陷结构化兼容与机器归因
+// （native 0.4 CaseResult/StepResult 不经本模块合成；本模块只保留历史 bounded evidence）
 // ============================================================================
 
 import * as fs from 'fs';
@@ -200,6 +200,7 @@ interface TraceCaseLike {
 }
 
 interface TraceLike {
+  schema_version?: string;
   outcome?: string;
   run_failure_kind?: string;
   cases?: TraceCaseLike[];
@@ -378,6 +379,24 @@ export function composeDeviceTestEvidence(
     trace = JSON.parse(fs.readFileSync(opts.tracePath, 'utf-8')) as TraceLike;
   } catch (error) {
     return { ok: false, reason: `trace 不可读：${(error as Error).message}` };
+  }
+  // inventory §一 G11：native evidence 合成的判据随协议提升到 v1。
+  if (trace.schema_version === '0.4-p0') {
+    return {
+      ok: true,
+      doc: {
+        schema_version: '1.1',
+        goal_run_id: opts.goalRunId,
+        attempt_id: opts.attemptId,
+        device_target: opts.deviceTarget,
+        hap_sha256_full: opts.expectedHapSha256Full,
+        install_executed: opts.installExecuted,
+        install_ok: opts.installOk,
+        trace_path: path.resolve(opts.tracePath),
+        run_failure_kind: typeof trace.run_failure_kind === 'string' ? trace.run_failure_kind : null,
+        cases: [],
+      },
+    };
   }
   const runFailureKind = typeof trace.run_failure_kind === 'string' ? trace.run_failure_kind : null;
   const uiDoc = loadUiSpecFile(uiSpecAbsPath(opts.projectRoot, opts.feature));

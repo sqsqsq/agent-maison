@@ -64,7 +64,7 @@ flowchart LR
 
 以下能力**已落地**，本分层方案**叠加**而非替代：
 
-- 顶层 `test-plan.md` ↔ 派生 `test-plan.hylyre.md` 覆盖（含 `explicit_skip_tc_ids`）
+- 顶层 `test-plan.md` ↔ 派生 `test-plan.hylyre.md` 覆盖（按每条 TC 的 `execution_channel`：派生表须与 `channel=hylyre` 集合完全相等；`explicit_skip_tc_ids` 已退役为历史只读，不再是覆盖机制）
 - 派生 plan **stale**（`test-plan.md` mtime > hylyre 派生）
 - NAV-001/002/003 静态 lint
 

@@ -53,7 +53,7 @@ import { writeLivenessBeacon } from './utils/liveness-beacon';
 import { loadResolvedProfile } from '../profile-loader';
 import { tryLoadUtSourceRootResolver } from '../profile-host-loader';
 import { runCapabilityPreflight, emitHarnessPreflightGap } from './utils/capability-preflight';
-import { preflightDeviceRuntimeStepTelemetry } from '../capability-registry';
+import { preflightDeviceTestEvidenceCapability } from '../capability-registry';
 import type { HarnessResolvedProfile, ProviderRef, VisionMode } from './utils/types';
 import { resolveWorkflowSpec } from '../workflow-loader';
 import { resolveContextAdapterImageInput, isFreshCanaryForExecution } from './utils/multimodal-probe';
@@ -889,17 +889,21 @@ export function runInvokeCapabilityGate(opts: {
   };
 }
 
-interface RuntimeTelemetryPreflightCapability {
-  supported: boolean;
+interface RuntimeEvidencePreflightCapability {
+  mode?: 'native' | 'legacy' | 'unsupported';
+  native?: boolean;
+  legacy?: boolean;
+  /** Backward-compatible test seam; production uses mode/native above. */
+  supported?: boolean;
   reason?: string;
 }
 
 /**
- * P0 runtime telemetry 静态预检。
+ * P0 native evidence 静态预检。
  *
  * 与通用 capability gate 的区别是：这里的能力缺失不是产品缺陷，也不需要人工签字；
- * 它在 agent 启动前直接投影到既有 external/capability-missing defer。provider 一旦声明
- * 支持，后续 evidence 缺失/无效则由 testing 硬门判 FAIL，不能回到本分支伪装成能力缺失。
+ * 它在 agent 启动前直接投影到既有 external/capability-missing defer。native provider 一旦
+ * 声明支持，后续 trace 缺失/无效则由 testing 硬门判 FAIL，不能回到本分支伪装成能力缺失。
  */
 export function runRuntimeTelemetryPreflightGate(opts: {
   projectRoot: string;
@@ -914,25 +918,27 @@ export function runRuntimeTelemetryPreflightGate(opts: {
   const acceptance = loadAcceptanceFlowsDoc(opts.projectRoot, opts.feature);
   if (!acceptance?.criteria.some(isP0DeviceInteractive)) return null;
 
-  let capability: RuntimeTelemetryPreflightCapability;
+  let capability: RuntimeEvidencePreflightCapability;
   try {
-    capability = (opts.probe ?? preflightDeviceRuntimeStepTelemetry)(
+    capability = (opts.probe ?? preflightDeviceTestEvidenceCapability)(
       opts.resolvedProfile,
       opts.projectRoot,
-    ) as RuntimeTelemetryPreflightCapability;
+    ) as RuntimeEvidencePreflightCapability;
   } catch (error) {
     capability = {
-      supported: false,
-      reason: `runtime telemetry preflight 失败：${(error as Error).message}`,
+      mode: 'unsupported',
+      native: false,
+      legacy: false,
+      reason: `native evidence preflight 失败：${(error as Error).message}`,
     };
   }
-  if (capability?.supported === true) return null;
+  if (capability?.native === true || capability?.mode === 'native' || capability?.supported === true) return null;
 
-  const reason = capability?.reason?.trim() || 'runtime step telemetry unsupported/unavailable';
+  const reason = capability?.reason?.trim() || 'native CaseResult.steps[] unsupported/unavailable';
   const guidance =
-    '当前 device_test.run provider/profile 不支持 P0 runtime_step_telemetry；' +
+    '当前 device_test.run provider/profile 未准备好 P0 native CaseResult.steps[]；' +
     `未启动 testing agent 或真机内容执行。${reason} ` +
-    '换用支持 runtime step telemetry 的 provider/version 后 --resume。';
+    '请先由 ensureHylyreReady 对齐 Hylyre 0.4.0 后 --resume。';
   opts.emitPhaseVerdict({
     phase: opts.phase,
     verdict: 'INCOMPLETE',
@@ -940,7 +946,7 @@ export function runRuntimeTelemetryPreflightGate(opts: {
     blocking_class: 'externalBlocked',
     failure_kind: 'capability_missing',
     deferred_reason: 'capability_missing',
-    probe: 'runtime_step_telemetry_preflight',
+    probe: 'native_step_evidence_preflight',
     detail: reason,
   });
   console.error(`\n===== DEFERRED_CAPABILITY_MISSING =====\n${guidance}\n`);
@@ -6764,10 +6770,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
           : `i${totalTurns}`;
         const invokeId = `${phase}-${visualAttemptId}`;
 
-        // autonomous-recovery-without-human-gates t4：P0 runtime telemetry 能力在
-        // testing agent 启动前静态预检。已知不支持时不烧 agent/content attempt，直接走
-        // capability-missing defer；静态预检通过后仍由 check-testing 按实际安装版本二次
-        // handshake，声明支持后的 evidence 缺失/无效只能 FAIL/retry testing。
+        // testing-stepresult-evidence：P0 native CaseResult.steps[] 能力在 testing agent
+        // 启动前静态预检。未准备好时不烧 agent/content attempt，直接走 capability defer；
+        // 静态预检通过后仍由 check-testing 按 ready/trace 三重判据二次核验，native evidence
+        // 缺失/无效只能 FAIL/retry testing。
         if (!dryRun) {
           const runtimeTelemetryDefer = runRuntimeTelemetryPreflightGate({
             projectRoot,
@@ -8064,8 +8070,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
         }
 
-        // 当前 attempt 的可信机器缺陷在 closure 前收集；有效 deterministic/provider
-        // 证据直接物化，producer uncertainty 由 visual checker 表达为 required FAIL 或 optional advisory。
+        // 当前 attempt 的视觉/历史 bounded device 缺陷在 closure 前收集；native
+        // CaseResult failure routing 已由 testing summary writer 直接物化到同一
+        // repair_candidates，identity receipt 不复制 native case/step 状态。
         const actionableResult: ActionableCollectResult =
           !dryRun && phase === 'testing'
             ? collectActionableDefects(projectRoot, manifest.feature, manifest.run_id, {
@@ -8324,9 +8331,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const driverActionableDefects = envBlocked ? [] : actionableDefects;
         const hasActionable = driverActionableDefects.length > 0;
         // 责任阶段统一路由（plan b6e4c9f2）：可信可修缺陷的**唯一真源=summary
-        // .repair_candidates**（信任合取在 writer 侧把关）。testing 证据链验真器
-        // （collectActionableDefects）的产物在此合并回同一字段——路由统一、验真器保留
-        // （codex review 冻结项⑦：不与 generic route 并存）。环境类失败不作回退输入。
+        // .repair_candidates**（信任合取在 writer 侧把关）。testing 旧 bounded 验真器
+        // （collectActionableDefects）的产物在此合并回同一字段；native failure pair
+        // 已在 summary writer 生成，二者不复制 CaseResult/StepResult 状态。环境类失败不作回退输入。
         let summaryRepairCandidates: RepairCandidate[] = envBlocked
           ? []
           : (decisionSummary?.repair_candidates ?? []);

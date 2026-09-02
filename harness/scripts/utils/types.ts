@@ -533,6 +533,11 @@ export interface CheckResult {
   suggestion?: string;
   /** 机器可读失败归因；优先供 summary.json / next_action 消费，details 只做人读。 */
   failure_kind?: string;
+  /** Hylyre native failure taxonomy second-level code; consumed only with failure_kind. */
+  failure_code?: string;
+  /** Existing repair-route projection; not a failure taxonomy or case state. */
+  repair_owner?: 'coding' | 'spec' | 'plan' | 'testing' | 'capability' | 'external';
+  coding_candidate?: boolean;
   /** 机器可读阻塞类别；用于区分外部阻塞、契约缺失、工具链等。 */
   blocking_class?: string;
   /** P0-4（plan 7c4f2e9b）：显式 actionability（agent_fixable/human_only/toolchain_blocked）——
@@ -892,6 +897,8 @@ export interface CheckContext {
   docsCommitted?: boolean;
   /** CLI `--skip-visual-handoff`：跳过 Visual Handoff 相关脚本检查 */
   skipVisualHandoff?: boolean;
+  /** testing CLI `--report-reconcile-only`：只读既有执行产物并重算报告/门禁 */
+  reportReconcileOnly?: boolean;
   /** spec：ui-spec 脚本守门档位（framework.config.json → spec.ui_spec_enforcement，opt-in） */
   uiSpecEnforcement?: 'strict' | 'warn' | 'reachable' | 'off';
   /** CLI `--skip-ui-spec`：跳过 ui-spec 相关脚本检查 */

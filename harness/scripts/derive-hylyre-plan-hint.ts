@@ -21,6 +21,7 @@ import { resolveFeatureArtifact, relFeatureArtifact } from '../config';
 import { buildStandardHylyreDerivePayloadBase } from './utils/hylyre-standard-derive-knowledge';
 import { loadUiSpecFile, uiSpecAbsPath } from './utils/ui-spec-shared';
 import { buildSelectorContractQuery } from '../../profiles/hmos-app/harness/selector-contract';
+import { EXECUTION_CHANNEL_DOMAIN } from './utils/execution-channel';
 
 const argv = minimist(process.argv.slice(2), {
   string: ['feature', 'f', 'project-root', 'p', 'out', 'o'],
@@ -75,11 +76,30 @@ const payload = {
   available_pages,
   selector_contract: {
     rule_id: 'SELECTOR-SPEC-001',
-    policy: 'snapshot-cache/device dump only discover candidates; by_id MUST resolve to ui-spec node and by_text MUST equal ui-spec text',
+    policy:
+      'snapshot-cache/device dump only discover candidates; the feature ui-spec is an OPEN WORLD static hint (pre-existing entry screens are legitimately absent) and a miss is a provenance WARN, not proof of an illegal selector — the run\'s own native StepResult selector evidence is the final truth; formal by_text MUST explicitly declare match exact|contains chosen by acceptance intent; runtime MUST NOT fallback',
+    static_blockers:
+      'only determinable errors block: illegal selector/match, missing explicit by_text match, a ui-spec-proven same-screen multi-mapping without index/scope/within/all, a contains hit that only matches an aggregate Text/Row with children, and a structured acceptance conflict (same checkpoint action target_element_id != the plan action by_id)',
+    match_modes: ['exact', 'contains'],
+    match_selection:
+      'Maison/agent chooses exact or contains from acceptance intent; never infer contains from digits/date or other text shape',
+    disambiguation_fields: ['index', 'scope', 'within', 'all'],
     entries: selector_contract,
   },
   navigation_discipline:
     'Nav 子页回 Tab 须用 {"back":{}}；禁止无 area/at 的 swipe RIGHT/LEFT 代替返回。',
+  execution_channel_policy: {
+    domain: EXECUTION_CHANNEL_DOMAIN,
+    source: 'top-level test-plan.md 「执行通道」column (compile-time dispatch, part of plan identity)',
+    derive_authority:
+      'compile EXACTLY the channel=hylyre set; never add, remove, or rewrite a channel; never emit explicit_skip_tc_ids',
+    all_or_nothing:
+      'if any channel=hylyre case cannot be compiled (step lint, selector BLOCKER, unparseable steps, or no same-case setup/navigation action before its first assertion), do NOT produce a runnable plan — report that case root cause and the next responsible phase instead',
+    setup_before_assertion:
+      'every channel=hylyre case MUST contain at least one action step before its first assertion step in the same case (STEP-SETUP); do not rely on screen state left by another case',
+    manual_note:
+      'a manual TC has no machine quality-PASS carrier: it stays FAIL/UNVERIFIED in the denominator and keeps the feature testing from passing — this is frozen design, not an executor defect',
+  },
   test_cases,
 };
 

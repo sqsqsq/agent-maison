@@ -544,14 +544,23 @@ function recomputeClosureRepairCandidates(
     // 内部才投影成 `classification`。这里若直接写 `classification`，机器归因会被**静默丢弃**
     // （`ut_hvigor_test` 的 code_regression、`p0_coverage_integrity` 的同类合取都会失效），
     // 而 `as never` 恰好把这个结构错误从类型检查里藏了起来。用真实结构子类型接住。
-    const candidateChecks: RepairCandidateCheckInput[] = checks.map((c) => ({
-      id: String(c.id ?? ''),
-      status: String(c.status ?? ''),
-      severity: String(c.severity ?? ''),
-      details: typeof c.details === 'string' ? c.details : '',
-      ...(typeof c.failure_kind === 'string' ? { failure_kind: c.failure_kind } : {}),
-      ...(Array.isArray(c.affected_files) ? { affected_files: c.affected_files as string[] } : {}),
-    }));
+    const candidateChecks: RepairCandidateCheckInput[] = checks.map((c) => {
+      const repairOwner = c.repair_owner === 'coding' || c.repair_owner === 'spec' ||
+        c.repair_owner === 'plan' || c.repair_owner === 'testing' ||
+        c.repair_owner === 'capability' || c.repair_owner === 'external'
+        ? c.repair_owner
+        : undefined;
+      return {
+        id: String(c.id ?? ''),
+        status: String(c.status ?? ''),
+        severity: String(c.severity ?? ''),
+        details: typeof c.details === 'string' ? c.details : '',
+        ...(typeof c.failure_kind === 'string' ? { failure_kind: c.failure_kind } : {}),
+        ...(repairOwner ? { repair_owner: repairOwner } : {}),
+        ...(typeof c.coding_candidate === 'boolean' ? { coding_candidate: c.coding_candidate } : {}),
+        ...(Array.isArray(c.affected_files) ? { affected_files: c.affected_files as string[] } : {}),
+      };
+    });
     const candidates = buildSummaryRepairCandidates({
       phase: String(opts.phase),
       checks: candidateChecks,

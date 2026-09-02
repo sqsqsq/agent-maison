@@ -281,22 +281,16 @@ const cases: Case[] = [
     },
   },
   {
-    name: 'e9d4b7a3 t2：AC-G1 语义覆盖闭环——合规步序 PASS（此前零覆盖恒 FAIL）；fastpath 仍 FAIL',
+    name: 'T1：P0 acceptance 不再接受仅计划步序/旧 status，必须有 native StepResult',
     run: () => {
       const root = mkProject();
       seedReqDoc(root);
       writeAcceptanceWithAcG(root);
       writePlanAcG(root);
       writeDerivedAcG(root, 'good');
-      const ok = evaluateP0SemanticCoverage(inputs(root, { 'TC-024': '通过', 'TC-006': '通过', 'TC-009': '通过' }, '达标', PLAN_MD_ACG));
-      assert.strictEqual(ok[0].status, 'PASS', ok[0].details);
-      const boundary = ok.find((r) => r.id === 'p0_runtime_step_evidence_boundary');
-      assert.ok(boundary && boundary.status === 'PASS', 'AC-G 场景应声明计划/运行时边界，真机证据由独立门禁裁决');
-
-      writeDerivedAcG(root, 'fastpath');
-      const bad = evaluateP0SemanticCoverage(inputs(root, { 'TC-024': '通过', 'TC-006': '通过', 'TC-009': '通过' }, '达标', PLAN_MD_ACG));
-      assert.strictEqual(bad[0].status, 'FAIL', bad[0].details);
-      assert.ok(bad[0].details.includes('纯 wait'), bad[0].details);
+      const result = evaluateP0SemanticCoverage(inputs(root, { 'TC-024': '通过', 'TC-006': '通过', 'TC-009': '通过' }, '达标', PLAN_MD_ACG));
+      assert.strictEqual(result[0].status, 'FAIL', result[0].details);
+      assert.ok(result[0].details.includes('native evidence'), result[0].details);
     },
   },
   {
@@ -338,7 +332,7 @@ const cases: Case[] = [
     },
   },
   {
-    name: 't5→c7e4a2d9：P0 explicit skip 无 waiver → FAIL(code_regression/agent_fixable)；结论「达标」→ 双口径 FAIL（事故 10-skip 形态）',
+    name: 'T3：P0 explicit skip 无 StepResult → testing-owned FAIL/零 coding；结论「达标」→ 双口径 FAIL',
     run: () => {
       const root = mkProject();
       seedReqDoc(root);
@@ -348,20 +342,19 @@ const cases: Case[] = [
       const r = evaluateP0CoverageIntegrity(inputs(root, { 'TC-006': '通过', 'TC-009': '通过' }, '达标'));
       const cov = r.find((x) => x.id === 'p0_coverage_integrity')!;
       assert.strictEqual(cov.status, 'FAIL');
-      // c7e4a2d9：全部未豁免缺口 ∈ explicit_skip_tc_ids → 复用 code_regression + agent_fixable
-      assert.strictEqual(cov.failure_kind, 'code_regression');
-      assert.strictEqual(cov.actionability, 'agent_fixable');
-      assert.ok(cov.details.includes('TC-011'));
+      assert.strictEqual(cov.failure_kind, undefined);
+      assert.strictEqual(cov.actionability, undefined);
+      assert.ok(cov.details.includes('native evidence'));
       const dual = r.find((x) => x.id === 'p0_pass_rate_dual_metrics')!;
       assert.strictEqual(dual.status, 'FAIL', '已执行子集冒充全量达标');
-      // 全量执行通过 → 双 PASS
+      // 只有 status 全通过但没有 native trace 时仍不能放行
       writeDerived(root, 'good');
       const ok = evaluateP0CoverageIntegrity(inputs(root, { 'TC-006': '通过', 'TC-009': '通过', 'TC-011': '通过' }, '达标'));
-      assert.ok(ok.every((x) => x.status === 'PASS'), JSON.stringify(ok.map((x) => [x.id, x.status])));
+      assert.ok(ok.every((x) => x.status === 'FAIL'), JSON.stringify(ok.map((x) => [x.id, x.status])));
     },
   },
   {
-    name: 'c7e4a2d9：缺口含 status 为空/未经登记的 trace skip → FAIL 且**不**写 code_regression（留 testing），explicit-only 才产 coding 归因',
+    name: 'T3：缺口含 status 为空/未经登记的 trace skip 与 explicit skip 均留 testing，零 coding 归因',
     run: () => {
       const root = mkProject();
       seedReqDoc(root);
@@ -380,13 +373,13 @@ const cases: Case[] = [
       assert.strictEqual(mixedCov.status, 'FAIL');
       assert.ok(mixedCov.failure_kind === undefined, `未经登记的 trace skip 不得冒充 coding 缺陷：${String(mixedCov.failure_kind)}`);
       assert.ok(mixedCov.actionability === undefined, '不得自报 agent_fixable');
-      assert.ok(mixedCov.details.includes('TC-014'), mixedCov.details);
-      // 仅 explicit 缺口（TC-011）且 TC-014 已执行通过 → code_regression（对照臂）
+      assert.ok(mixedCov.details.includes('native evidence'), mixedCov.details);
+      // 仅 explicit 缺口（TC-011）且 TC-014 已执行通过 → 仍 testing-owned
       const explicitOnly = evaluateP0CoverageIntegrity(inputs(root, {
         'TC-006': '通过', 'TC-009': '通过', 'TC-014': '通过',
       }, '不达标', planWith014));
       const expCov = explicitOnly.find((x) => x.id === 'p0_coverage_integrity')!;
-      assert.strictEqual(expCov.failure_kind, 'code_regression', 'explicit-only 合取必须产 coding 归因');
+      assert.strictEqual(expCov.failure_kind, undefined, 'explicit-only 无 StepResult 不得产 coding 归因');
       // 反例：完全不登记（无 explicit_skip）、不执行（status 为空）的 P0 → 无 coding 归因
       writeDerived(root, 'good', []);
       const unregistered = evaluateP0CoverageIntegrity(inputs(root, {
@@ -397,33 +390,20 @@ const cases: Case[] = [
     },
   },
   {
-    name: 't4b 语义（事故死刑条款）：fast path 派生步序 → 动作不指向目标/纯 wait/缺中间屏边全部 FAIL；合规步序 PASS',
+    name: 'T1：计划形态不再构成 P0 执行证据，缺 native gate 始终 FAIL',
     run: () => {
       const root = mkProject();
       seedReqDoc(root);
       writeAcceptance(root);
       writePlan(root);
       writeDerived(root, 'fastpath');
-      const r = evaluateP0SemanticCoverage(inputs(root, { 'TC-006': '通过', 'TC-009': '通过' }, '达标'));
-      assert.strictEqual(r[0].status, 'FAIL');
-      assert.ok(r[0].details.includes('未指向 checkpoint 目标元素'), r[0].details);
-      assert.ok(r[0].details.includes('纯 wait'), r[0].details);
-      assert.ok(r[0].details.includes('bank_list→card_type_sheet') || r[0].details.includes('card_type_sheet'), '中间屏边无证据');
-
-      writeDerived(root, 'good');
-      const ok = evaluateP0SemanticCoverage(inputs(root, { 'TC-006': '通过', 'TC-009': '通过' }, '达标'));
-      assert.strictEqual(ok[0].status, 'PASS', ok[0].details);
-      // 计划级 PASS 只声明边界；独立 p0_runtime_step_evidence 负责真机观测。
-      const boundary = ok.find((r) => r.id === 'p0_runtime_step_evidence_boundary');
-      assert.ok(boundary && boundary.status === 'PASS', '须附计划/运行时证据边界声明');
-      assert.ok(boundary!.details.includes('p0_runtime_step_evidence'));
-      // 合规步序但 trace 非通过 → 仍 FAIL（证据须"已执行且通过"）
-      const notPassed = evaluateP0SemanticCoverage(inputs(root, { 'TC-006': '失败', 'TC-009': '通过' }, '达标'));
-      assert.strictEqual(notPassed[0].status, 'FAIL');
+      const result = evaluateP0SemanticCoverage(inputs(root, { 'TC-006': '通过', 'TC-009': '通过' }, '达标'));
+      assert.strictEqual(result[0].status, 'FAIL', result[0].details);
+      assert.ok(result[0].details.includes('native evidence'), result[0].details);
     },
   },
   {
-    name: 'legacy p0_skip_waiver/receipt 即使形状完整也惰性，skip 仍 FAIL 并回 coding',
+    name: 'legacy p0_skip_waiver/receipt 不改变 testing-owned FAIL，skip 不回 coding',
     run: () => {
       const root = mkProject();
       seedReqDoc(root);
@@ -439,13 +419,13 @@ const cases: Case[] = [
       const r = evaluateP0CoverageIntegrity(inputs(root, { 'TC-006': '通过', 'TC-009': '通过' }, '达标'));
       const cov = r.find((x) => x.id === 'p0_coverage_integrity')!;
       assert.strictEqual(cov.status, 'FAIL', cov.details);
-      assert.strictEqual(cov.failure_kind, 'code_regression');
+      assert.strictEqual(cov.failure_kind, undefined);
       const dual = r.find((x) => x.id === 'p0_pass_rate_dual_metrics')!;
       assert.strictEqual(dual.status, 'FAIL', '存在 P0 skip 时结论不得无条件「达标」');
     },
   },
   {
-    name: 'legacy skip-waivers.yaml 无 receipt 同样惰性（仍 FAIL + explicit-only code_regression）',
+    name: 'legacy skip-waivers.yaml 无 receipt 同样 testing-owned FAIL（无 coding 归因）',
     run: () => {
       const root = mkProject();
       seedReqDoc(root);
@@ -456,7 +436,7 @@ const cases: Case[] = [
       const r = evaluateP0CoverageIntegrity(inputs(root, { 'TC-006': '通过', 'TC-009': '通过' }, '有条件达标'));
       const cov = r.find((x) => x.id === 'p0_coverage_integrity')!;
       assert.strictEqual(cov.status, 'FAIL', '无 receipt 的 waiver 不生效');
-      assert.strictEqual(cov.failure_kind, 'code_regression', '无效 waiver = 未豁免 explicit skip → 默认修复');
+      assert.strictEqual(cov.failure_kind, undefined, '无效 waiver 仍无 StepResult，不得自动回 coding');
     },
   },
 ];

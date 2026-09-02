@@ -8,10 +8,15 @@ The goal runner SHALL NOT halt on P0 skips with a dedicated `await_human_p0_skip
 
 Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-failure-classifier.ts`, `harness/scripts/utils/adjudication.ts`
 
-#### Scenario: an unwaived P0 explicit skip backtracks to coding instead of halting for a human
+#### Scenario: an unexecuted P0 explicit skip remains testing-owned
 
-- **WHEN** testing fails with `p0_coverage_integrity` FAIL + `code_regression` (and possibly visual candidates) in the summary and no integrity/budget condition is present
-- **THEN** the runner SHALL emit `phase_backtrack_requested(reason=repair_candidates, target=coding)` and SHALL NOT emit `phase_halt(halt_reason=await_human_p0_skip)` nor a WAITING/human disposition
+- **WHEN** testing fails with `p0_coverage_integrity` for an explicit skip that has no `StepResult`, no machine-proven capability absence, and no integrity/budget condition
+- **THEN** the runner SHALL keep the finding testing-owned with zero automatic coding candidates; it SHALL NOT emit `phase_backtrack_requested(target=coding)`, `phase_halt(halt_reason=await_human_p0_skip)`, or a guessed WAITING/human quality disposition
+
+#### Scenario: an executed assertion mismatch may backtrack to coding
+
+- **WHEN** an executed testing case has an authoritative `StepResult` with `failure_kind=assertion` and `failure_code=assertion_mismatch` (and possibly visual candidates) in the summary, with no integrity/budget condition
+- **THEN** the runner SHALL emit `phase_backtrack_requested(reason=repair_candidates, target=coding)` and SHALL NOT attribute that route to an explicit-only skip
 
 #### Scenario: capability blockers defer without a quality signature
 

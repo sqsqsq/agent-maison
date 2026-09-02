@@ -62,7 +62,7 @@
   6. 检查「结论」**verdict** 在 **3 枚举**内：达标 / 有条件达标 / 不达标
   7. **必读 Hylyre trace 并全量对账**：定位 `testing/reports/<ts>/hylyre/trace.json`（与脚本 `report_trace_reconciliation` 同源，**禁止**使用顶层 `testing/reports/trace.json` 回填件）。**逐条**核对 `trace.cases[].id/status` 与顶层 `test-report.md`「测试执行结果」表一致；报告写「通过」但 trace 为「失败/阻塞」→ FAIL
   8. **trace.outcome 硬规则**：若 `trace.outcome !== success`（含 partial/failed/aborted），verifier **不得**给出 summary.verdict=PASS；报告结论=「达标」但 trace 非 success → FAIL
-  9. **TC 编号一致性（双向 SSOT）**：顶层 `test-plan.md` 的 TC 集合 ⊇ 派生计划的 TC（禁止凭空 TC）；且派生表 ∪ `explicit_skip_tc_ids`（frontmatter 或 `derive-manifest.json`）须覆盖顶层全部 TC——缺漏则脚本级 BLOCKER，`derive-hint-from-plan.json` 会带 `missing_tc_ids`
+  9. **TC 编号一致性（execution_channel SSOT）**：顶层 `test-plan.md` 每条 TC 声明唯一 **`execution_channel`**（`hylyre|visual|manual|provider:<capability-id>`）；派生计划的 TC 集合须与顶层 `channel=hylyre` 的集合**完全相等**——多出即 extra、缺失即 missing，都是脚本级 BLOCKER，`derive-hint-from-plan.json` 会带 `missing_tc_ids`。**不要用 `explicit_skip_tc_ids` 与派生表做并集**：正式派生计划登记 `explicit_skip_tc_ids` 本身就是 BLOCKER；历史产物里的该字段只作只读诊断，不贡献覆盖、不贡献 PASS。非 `hylyre` 通道的 TC 由各自通道的证据义务门裁决，不进派生表
   10. 核对完成回执 `testing_run_artifacts` 中 **`hylyre_report_path` / `hylyre_trace_path`** 与磁盘一致（若 profile 要求）
   11. **导航步骤静态门禁（NAV-001/002/003）**：脚本 `check-testing` 在真机 run 前校验派生表 JSON——禁止无 `area`/`at` 的横向 `swipe` 充当 Nav 返回；前序 TC 进入子页后、后续 TC 要求首页 Tab 时首步须 `back` 等。失败则 `coverage_reason=invalid_derived_steps`，须按 `derive-hint-from-plan.json` 的 `lint_violations` 与 `navigation_hint` **重新派生**（勿手改旧 timestamp 目录）
   12. **多 UI 入口覆盖（语义）**：若 `use-cases.yaml` 中同一 `user_actions.calls` 有多个 `ui_bindings.ui` 入口，派生 Hylyre 计划须各入口至少一条带 `entry_ui` 的用例；P0 缺覆盖 → 与脚本 `ui_entry_coverage` 一致判 FAIL

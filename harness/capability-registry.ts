@@ -437,28 +437,28 @@ export function dispatchDeviceTestEnsureReady(
   return fn(options);
 }
 
-/** P0 runtime-step telemetry provider/version handshake (pre-spawn). */
-export function probeDeviceRuntimeStepTelemetry(
+/** Resolve native CaseResult.steps[] versus the bounded legacy bridge before execution. */
+export function probeDeviceTestEvidenceCapability(
   ctx: CheckContext,
   options: Record<string, unknown>,
 ): unknown {
   const fn = requireProviderFunction(
     ctx.resolvedProfile,
     'device_test.run',
-    'probeRuntimeStepTelemetry',
+    'probeHylyreEvidenceCapability',
   );
   return fn(options);
 }
 
-/** Static provider/profile runtime telemetry handshake before agent invocation. */
-export function preflightDeviceRuntimeStepTelemetry(
+/** Read-only goal preflight for native/legacy evidence capability. */
+export function preflightDeviceTestEvidenceCapability(
   resolved: HarnessResolvedProfile,
   projectRoot: string,
 ): unknown {
   const fn = requireProviderFunction(
     resolved,
     'device_test.run',
-    'preflightRuntimeStepTelemetry',
+    'preflightHylyreEvidenceCapability',
   );
   return fn({ projectRoot });
 }

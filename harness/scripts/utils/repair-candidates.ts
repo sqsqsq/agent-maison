@@ -452,6 +452,10 @@ export interface PhaseCandidateInput {
     severity?: string;
     details?: string;
     classification?: string;
+    failure_kind?: string;
+    failure_code?: string;
+    repair_owner?: 'coding' | 'spec' | 'plan' | 'testing' | 'capability' | 'external';
+    coding_candidate?: boolean;
     affected_files?: readonly string[];
   }>;
 }
@@ -462,8 +466,8 @@ export interface PhaseCandidateInput {
  * · plan：scope_consistency_with_spec FAIL → spec（机器归属）；
  * · ut：verifier device_ac_delegation FAIL → spec（机器归属）；
  *   （ut→coding 的 assertion 合取与 testing 缺陷并入在 t4 端到端接线时接入）
- * · testing：p0_coverage_integrity FAIL + code_regression 机器合取 → coding（c7e4a2d9——
- *   不注册整个 check，只消费 gate 已写出的既有 failure kind；report_validity 不抑制机器事实）；
+ * · testing：已执行 native StepResult assertion + assertion_mismatch 机器合取 → coding
+ *  （不注册整个 check，只消费 gate 已写出的 failure pair；report_validity 不抑制机器事实）；
  * · coding：ui_diff_within_declared_files 的 ui_scope_violation 分类 → plan（机器归属）。
  * report_validity 只约束**依赖报告自由文本**的 review 候选（c7e4a2d9 §2.3）：机器 check /
  * verifier 合取候选不得因产品负面结论而被整体清空——负面结论恰恰是回修候选最需要存活的时刻。
@@ -536,26 +540,31 @@ export function collectPhaseRepairCandidates(input: PhaseCandidateInput): Repair
     }
   }
   if (input.phase === 'testing') {
-    // c7e4a2d9 t1：P0 未豁免缺口全部为 explicit skip 的机器合取（id + FAIL + code_regression
-    // 同时在场）→ 普通 RepairCandidate(category=coding)。不注册整个 check 到
-    // CHECK_ID_OWNER_REGISTRY：status 为空/未经登记的 trace skip（无 code_regression）必须
-    // 留在 testing 修复，不能靠 check id 一刀切误投 coding；外部条件由 envBlocked/DEFERRED
-    // 优先处置。候选只携带既有 check id、TC 清单/门禁 details、稳定指纹与 source_phase，
-    // 不新增 skip_reason_class / responsible_phase 等 agent 自报字段。
-    const p0Integrity = input.checks.find(
-      c => c.id === 'p0_coverage_integrity' && c.status === 'FAIL' && c.classification === 'code_regression',
-    );
-    if (p0Integrity) {
-      const files = normalizeFiles(p0Integrity.affected_files ?? []);
+    // T3：coding candidate 只允许由已执行 StepResult 的冻结 pair 产生。
+    // explicit skip/unexecuted 没有 failure_kind/code，不能通过 check id 或 status 猜测 coding。
+    for (const failure of input.checks.filter(
+      c => c.status === 'FAIL' && (
+        (c.failure_kind === 'assertion' &&
+          c.failure_code === 'assertion_mismatch' &&
+          c.coding_candidate === true) ||
+        (c.coding_candidate === true && c.repair_owner === 'coding') ||
+        c.repair_owner === 'spec' ||
+        c.repair_owner === 'plan'
+      ),
+    )) {
+      const files = normalizeFiles(failure.affected_files ?? []);
       const summary = normalizeSummary(
-        p0Integrity.details ?? 'P0 未豁免缺口全部为既有 explicit skip——默认回 coding 恢复可测性/修复产品缺陷',
+        failure.details ?? '已执行 StepResult assertion_mismatch——默认回 coding/product 修复',
       );
+      const category = failure.repair_owner === 'spec' || failure.repair_owner === 'plan'
+        ? failure.repair_owner
+        : 'coding';
       out.push({
-        id: 'p0_coverage_integrity',
-        category: 'coding',
+        id: failure.id,
+        category,
         files,
         summary,
-        item_fingerprint: itemFingerprintOf('p0_coverage_integrity', files, summary),
+        item_fingerprint: itemFingerprintOf(failure.id, files, summary),
         source_phase: 'testing',
       });
     }
@@ -590,6 +599,9 @@ export interface RepairCandidateCheckInput {
   details?: string;
   /** 机器归因（check 侧真实字段；ui-scope-gate 等只写它，details 未必含归因文本） */
   failure_kind?: string;
+  failure_code?: string;
+  repair_owner?: 'coding' | 'spec' | 'plan' | 'testing' | 'capability' | 'external';
+  coding_candidate?: boolean;
   affected_files?: string[];
 }
 
@@ -626,6 +638,10 @@ export function buildSummaryRepairCandidates(
       // codex 冻结项⑤：check 侧真实机器归因优先，details 文本仅兜底
       classification: c.failure_kind
         ?? (c.details ? input.parseClassificationFromDetails?.(c.details) : undefined),
+      failure_kind: c.failure_kind,
+      failure_code: c.failure_code,
+      repair_owner: c.repair_owner,
+      coding_candidate: c.coding_candidate,
       affected_files: c.affected_files,
     })),
   });

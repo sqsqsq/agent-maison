@@ -14,6 +14,7 @@ import {
   lintDerivedHylyrePlanSteps,
   lintHylyrePlanStepRules,
   lintHylyrePlanMarkdown,
+  validateFormalByTextSelectors,
   normalizePlannedStepsCell,
   isFullscreenHorizontalSwipeStep,
   hylyreRunTimestamp,
@@ -58,10 +59,66 @@ interface Case {
 
 const cases: Case[] = [
   {
+    name: 'validateFormalByTextSelectors: match 必须显式且仅 exact/contains',
+    run: () => {
+      assertEq(
+        validateFormalByTextSelectors({ touch: { by_text: '确认' } }).length,
+        1,
+        'missing match',
+      );
+      assertEq(
+        validateFormalByTextSelectors({ touch: { by_text: '确认', match: 'starts_with' } }).length,
+        1,
+        'illegal match',
+      );
+      assertEq(
+        validateFormalByTextSelectors({
+          touch: {
+            by_text: '确认',
+            match: 'exact',
+            within: { by_text: '协议', match: 'contains' },
+          },
+        }).length,
+        0,
+        'nested explicit matches',
+      );
+      const md = [
+        '## 测试用例清单',
+        '',
+        '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC |',
+        '| --- | --- | --- | --- | --- | --- | --- |',
+        '| TC-001 | x | y | {"touch":{"by_text":"确认","match":"starts_with"}} | z | P0 | AC-1 |',
+      ].join('\n');
+      const lint = lintHylyrePlanStepRules(md);
+      assertTrue(lint.violations.some(v => v.rule_id === 'STEP-007'), 'formal lint must reject illegal match');
+    },
+  },
+  {
     name: 'isPlaceholderDerivedPlan: 烟测占位 → true',
     run: () => {
       const md = `## x\n> 烟测占位：x\n${minimalTable('| TC-001 | a |')}`;
       assertTrue(isPlaceholderDerivedPlan(md), 'expected placeholder');
+    },
+  },
+  {
+    name: 'lintHylyrePlanStepRules: 正式 suggested_fix 不再生成裸 by_text',
+    run: () => {
+      const md = [
+        '## 测试用例清单', '',
+        '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC |',
+        '|----------|---------|---------|---------|---------|--------|---------|',
+        '| TC-001 | invalid | - | {"tap":{"by_text":"确认"}} | x | P0 | AC-1 |',
+        '| TC-002 | wait | - | {"wait_for":{}} | x | P0 | AC-2 |',
+      ].join('\n');
+      const r = lintHylyrePlanStepRules(md);
+      assertTrue(r.violations.length > 0, 'expected formal violations');
+      for (const violation of r.violations) {
+        if (!violation.suggested_fix.includes('by_text')) continue;
+        assertTrue(
+          /"match"\s*:\s*"(?:exact|contains)"/.test(violation.suggested_fix),
+          `suggested fix must carry explicit match: ${violation.suggested_fix}`,
+        );
+      }
     },
   },
   {
@@ -203,7 +260,7 @@ const cases: Case[] = [
         '',
         '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC |',
         '|----------|---------|---------|---------|---------|--------|---------|',
-        '| TC-001 | 触控 | 已在「首页」Tab | {"touch":{"by_text":"添加"}} ; {"wait":{"seconds":1}} ; {"wait_for":{"by_text":"完成"}} | x | P0 | AC-1 |',
+        '| TC-001 | 触控 | 已在「首页」Tab | {"touch":{"by_text":"添加","match":"exact"}} ; {"wait":{"seconds":1}} ; {"wait_for":{"by_text":"完成","match":"exact"}} | x | P0 | AC-1 |',
       ].join('\n');
       const r = lintHylyrePlanStepRules(md);
       assertTrue(r.ok, `legal plan must pass: ${JSON.stringify(r.violations)}`);

@@ -124,7 +124,7 @@ coding 后绕过 UI scope、按字节一致自动授权或另建 asset 豁免表
 |----------|------|
 | `CHAIN_SLICE_COMPLETED` | **本 run 的链切片**全 PASS——不等于需求完成；feature 级只认 `verify-feature-completion`（goal-status 尾行 `feature_status=`） |
 | `AWAITING_HUMAN_REVIEW` | legacy 读取兼容；新 run 不再写出。旧质量人签等待在恢复时按当前机器事实重投影为 repair、capability defer、optional advisory 或诊断，不能靠签名 resume |
-| `DEFERRED_CAPABILITY_MISSING` | 当前 provider/profile 缺少冻结需求所需能力（含 strict 视觉或 P0 runtime step telemetry）；配置可用能力后重跑/恢复，不能用 fidelity receipt 降低目标 |
+| `DEFERRED_CAPABILITY_MISSING` | 当前 provider/profile 缺少冻结需求所需能力（含 strict 视觉或 P0 native CaseResult.steps[]）；配置可用能力后重跑/恢复，不能用 fidelity receipt 降低目标 |
 | `DEFERRED` | 到达 end 但存在外部阻塞未闭环 |
 | `PARTIAL` | 中途停止或未到 end 且有 DEFERRED |
 | `HALTED` | 预算/收敛熔断、完整性持续不稳定、真正外部权限边界或 framework defect 等诚实终止；可修质量 FAIL 走责任阶段重跑，P0 skip/档位/视觉证据不得靠 waiver 放行 |
@@ -138,6 +138,15 @@ closure（phase-evidence-manifest staleness + review attestation），manifest �
 只有需要切断旧 diff lineage 时才同时使用上节的 `--rebaseline-to`。
 
 **DEFERRED ≠ 完成**：不得宣称 UT/真机已闭环。
+
+## Testing evidence 与报告重算（testing-stepresult-evidence-consumption）
+
+- testing 不得把旧 case 状态当作 `verification=passed`；无 `CaseResult.steps[]` 的未执行 case 保持 testing FAIL，不按 TC 名称或报告散文自动投 coding。只有既有 capability resolution 给出 provider 缺失的机器事实时，才走 capability defer。历史产物里的 `explicit_skip_tc_ids` 只作只读诊断，与「未执行」同等对待——不贡献 PASS、不产 coding candidate，新计划与派生器禁止写入。
+- testing 只消费 authoritative trace 的 `CaseResult.steps[]`；Maison 根据 acceptance/checkpoint 自算 coverage。最低契约为 Hylyre `0.5.0`、trace `schema_version=0.4-p0`、`result_protocol=hylyre.step-outcome/1`（Step Outcome v1），并需通过 release manifest → ready meta → trace environment 版本链与必需字段门禁。native trace 同时绑定实际 derived plan、top plan、trace 路径/SHA，并核对 StepResult count/index/kind；`execution`、`verification`、`evidence`、`expected_check_mode` 与 StepResult 的 `outcome` 是机器消费字段：状态读 `outcome.status`，失败事实读 `outcome.failure.domain/code/facts`，blocked 原因读 `outcome.cause`，skipped 原因读 `outcome.reason`，selector 读 `selector.request`/`selector.resolution`；flat `status`/`failure_kind`/`failure_code` 已退役，也不从 `diagnostic` 文本重建。
+- 顶层 `test-plan.md` 每条 TC 声明唯一 `execution_channel`（`hylyre|visual|manual|provider:<capability-id>`）；派生器只编译 `channel=hylyre` 的精确集合，不得新增/删除/改写通道。责任路由只消费实际执行且 `outcome.status=failed` 的步骤；`blocked/capability` 与 `blocked/infrastructure` 各投影 1 次 disposition 而非伪造 failure route，`blocked/prior_step` 与 `skipped/policy` 零 route 零 defer。
+- native StepResult 在场时不再调用旧 runtime telemetry monkey-patch；历史 telemetry 仅作具体 checkpoint 的有限兼容或一致性 WARN，不得合成第二套 CaseResult/StepResult 状态。goal 仍保留 run/attempt/HAP/device identity binding。
+- run 已产 trace 且 agent 已基于最终 trace/timing 写好顶层 `test-report.md` 后，可执行 `--report-reconcile-only --phase testing --feature <feature>`。该模式只读最终 trace、test-plan、`device-test-timing.json` 与 build/install/run meta，完整重算既有 report/static checks、summary、quality axes 与 repair candidates；不调用 hvigor、hdc、Hylyre、设备或视觉采集，也不修改 trace 字节。
+- 报告必须保留 skip 并计入正确分母（P1/P2 的未执行 case 也不能绕过 testing FAIL），使用最终 build/install reused 状态、最终 timing，并回填每个 case duration；native timing 直接汇总 StepResult duration，legacy 才回退日志算法；不得把首轮真编或旧轮数据写成最终执行轮数据。
 
 ## Adapter 选择与 personal setup（goal 入口）
 

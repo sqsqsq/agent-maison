@@ -73,6 +73,16 @@ export interface DeviceTestEvidenceCase {
   error_excerpt?: string;
 }
 
+/** Same-run artifact identity retained by the existing run/evidence receipts. */
+export interface DeviceTestArtifactBinding {
+  test_plan_path: string;
+  test_plan_sha256: string;
+  derived_plan_path: string;
+  derived_plan_sha256: string;
+  trace_path: string;
+  trace_sha256: string;
+}
+
 export interface RuntimeScreenObservation {
   signature_sha256: string;
   observed_element_ids: string[];
@@ -97,9 +107,9 @@ export interface RuntimeCheckpointEvidence {
 }
 
 /**
- * P0 runtime fidelity is carried by the existing device-test evidence artifact.
- * The testing phase evidence manifest binds this document and its authoritative
- * Hylyre trace; no confirmation receipt or parallel ledger is involved.
+ * The existing artifact retains goal identity/HAP binding. Native P0 runtime
+ * fidelity remains in the authoritative Hylyre trace; the optional field is
+ * read-only legacy compatibility and is not a parallel case/step ledger.
  */
 export interface RuntimeFidelityEvidence {
   schema_version: '1.0';
@@ -146,6 +156,8 @@ export interface DeviceTestEvidenceDoc {
   cases: DeviceTestEvidenceCase[];
   /** 仅 P0 device flow 适用；非 P0 文档不写该字段。 */
   runtime_fidelity?: RuntimeFidelityEvidence;
+  /** Native trace/run identity; this is binding metadata, not a second evidence ledger. */
+  artifact_binding?: DeviceTestArtifactBinding;
 }
 
 /** coordinator 写入前的草稿（written_at 由 check-testing 落盘时刻统一盖） */
