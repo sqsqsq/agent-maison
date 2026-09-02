@@ -25,6 +25,7 @@ import { featureDir } from '../../../harness/config';
 import { loadUiSpecFile, uiSpecAbsPath } from '../../../harness/scripts/utils/ui-spec-shared';
 import { isPixel1to1, loadSpecMarkdown } from '../../../harness/scripts/utils/fidelity-shared';
 import { buildAuthoritativeRefImageIndex, resolveRefSourceImage } from './authoritative-ref-images';
+import { readImageDimensions, referenceViewportIncompatible } from './image-toolkit';
 import { canonicalOverlayBase } from './visual-diff-nav';
 import { resolveActiveVisualProvider } from '../../../harness/scripts/utils/visual-provider-identity';
 import {
@@ -79,6 +80,8 @@ export function visualDiffJsonPathFor(projectRoot: string, feature: string): str
 export function collectReviewTargets(
   ctx: Pick<CheckContext, 'projectRoot' | 'feature' | 'specVisualSources'>,
   screens: VisualDiffScreenEntry[],
+  /** plan b3d7e5a1 T5（codex P1）：回传因参考图/视口尺寸不兼容被排除的屏——调用方须复位其旧 provider 状态 */
+  viewportOut?: { viewportIncompatibleIds: string[] },
 ): ReviewTargetScreen[] {
   const { projectRoot, feature } = ctx;
   const uiDoc = loadUiSpecFile(uiSpecAbsPath(projectRoot, feature));
@@ -110,6 +113,12 @@ export function collectReviewTargets(
       : (refIndex ? resolveRefSourceImage(refIndex, refIdFor(s)).path : null);
     if (!refAbs) continue;
     if (!fs.existsSync(shotAbs) || !fs.existsSync(refAbs)) continue;
+    // plan b3d7e5a1 T5（codex P1）：整页参考图不交给 delegated provider——与 check 侧前置门同一判据，
+    // 该屏由 visual_reference_viewport 独立裁决，不在长图上产出 provider verdict/must_fix。
+    if (referenceViewportIncompatible(readImageDimensions(refAbs), readImageDimensions(shotAbs))) {
+      viewportOut?.viewportIncompatibleIds.push(s.screen_id);
+      continue;
+    }
     const shotHash = sha16(shotAbs);
     const refHash = sha16(refAbs);
     if (!shotHash || !refHash) continue;
@@ -703,11 +712,21 @@ export async function runVisualProviderReview(
     return { kind: 'skipped', reason: `visual-diff.json 解析失败：${(e as Error).message}` };
   }
   const screens = Array.isArray(doc.screens) ? doc.screens : [];
-  const targets = collectReviewTargets(ctx, screens);
+  const viewportOut = { viewportIncompatibleIds: [] as string[] };
+  const targets = collectReviewTargets(ctx, screens, viewportOut);
+  const viewportIncompatibleSet = new Set(viewportOut.viewportIncompatibleIds);
   if (targets.length === 0) {
+    // plan b3d7e5a1 T5（codex P1）：全部屏都因长图被排除时也不能让旧 provider PASS/attest/defect 跨轮存活——
+    // 早退前先把不兼容屏复位为 fresh pending 并落盘（与下面调用前清场同一语义）。
+    if (viewportIncompatibleSet.size > 0) {
+      for (const s of screens) if (viewportIncompatibleSet.has(s.screen_id)) resetDelegatedRoundState(s);
+      writeVisualDiffJsonAtomic(jsonPath, doc);
+    }
     return {
       kind: 'skipped',
-      reason: '无可评审目标屏（参考图/截图缺失由既有门禁承担）',
+      reason: viewportIncompatibleSet.size > 0
+        ? `无可评审目标屏：${[...viewportIncompatibleSet].join(', ')} 参考图与视口尺寸不兼容（由 visual_reference_viewport 独立裁决，旧 provider 状态已复位）`
+        : '无可评审目标屏（参考图/截图缺失由既有门禁承担）',
     };
   }
 
@@ -729,7 +748,8 @@ export async function runVisualProviderReview(
   // ------------------------------------------------------------------------
   const targetIds = new Set(targets.map(t => t.screen_id));
   for (const s of screens) {
-    if (targetIds.has(s.screen_id)) {
+    if (targetIds.has(s.screen_id) || viewportIncompatibleSet.has(s.screen_id)) {
+      // 目标屏与长图屏都复位：长图屏不评审，但旧 provider verdict/attest/defect 同样不得跨轮存活。
       resetDelegatedRoundState(s);
     }
     // 非目标屏也要清掉旧 provider 结果（它本轮同样没被评审），但不动其 verdict：

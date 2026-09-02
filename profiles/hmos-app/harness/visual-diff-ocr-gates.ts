@@ -8,6 +8,7 @@
 import type { UiSpecGlobalElement } from '../../../harness/scripts/utils/ui-spec-shared';
 import type { VisualDiffScreenEntry } from './visual-diff-check';
 import { canonicalOverlayBase } from './visual-diff-nav';
+import { referenceViewportIncompatible } from './image-toolkit';
 import {
   clusterOcrLines,
   fuzzyMatchRatio,
@@ -379,7 +380,8 @@ export function collectTextPlacementSignals(
     const shotH = typeof shotRes.height === 'number' ? shotRes.height : 0;
     const refAspect = refW > 0 && refH > 0 ? refH / refW : 0;
     const shotAspect = shotW > 0 && shotH > 0 ? shotH / shotW : 0;
-    const refIsFullPage = refAspect > 0 && shotAspect > 0 && refAspect > shotAspect * 1.15;
+    // plan b3d7e5a1 T5：阈值迁为共享常量（前置门已在内容比对前把不兼容屏剔除；此分支保留为防御性诊断）。
+    const refIsFullPage = referenceViewportIncompatible({ w: refW, h: refH }, { w: shotW, h: shotH });
 
     // 集合级混淆（review 修复：60bcd1 真实机理——候选集合**同时含**近似对，如
     // 「中信银行」与「中国银行」）：候选串集合内存在编辑距离 ≤1 的近似对，且 OCR 行命中

@@ -8,7 +8,7 @@
 
 - 新增参考图/viewport 尺寸兼容性前置门：复用 `readImageDimensions` 与 `resolveRefSourceImage`，在 spec（`checkFidelitySnapshotPromise` 旁，viewport 取 fidelity-lock `viewport`）与 testing（`checkVisualDiffCore` 内容比对之前，viewport 取实测截图尺寸）比较高宽比，沿用 ocr-gates 的 ×1.15 阈值迁为共享常量。
 - 明显不兼容时：`pixel_1to1` → `visual_reference_viewport` FAIL（责任 spec 参考资产）且该屏从本轮 pixel/OCR 内容比对输入集合中剔除；低档位按既有 `fidelityRatchetFailOrWarn` WARN/SKIP，不静默升级为像素 PASS；lock 无 viewport 时 spec WARN 推迟到 testing。
-- 修复路径是作者侧的：用既有裁图能力生成 viewport-sized 参考图并更新该 screen 的 `ref_id`；兼容后现有 pipeline 原样运行。
+- 出路由作者建模而非机器推导：长页按锚点拆成多个 screen，每段一个 viewport 尺寸的 `ref_id` 裁图，`visual-diff-nav.json` 中该段 nav 末步 `scroll_to` 锚点元素；像素路径前提=每段 nav 从已知状态出发且落点已证明可重复（宿主两个冷启动轮次 checkpoint 一致），否则继续 FAIL；不属像素范围的段落排除在 `pixel_1to1` 屏之外、由功能/结构 AC 覆盖（无屏级/段级档位）；每屏参考图兼容后现有 pipeline 原样运行。
 - 不新增 `screens[].reference_region`、自动 crop resolver、派生 crop 文件、crop hash 语义、分段、滚动拼接、多套参考真源或下游批量改造；ocr-gates 既有整页 uncertain 分支保留为防御性诊断，不删。
 
 非 BREAKING：参考图尺寸兼容的 feature 行为逐字不变；只有本来就在用整页图冒充单视口参考的 feature 会在 `pixel_1to1` 下被点名。

@@ -34,7 +34,15 @@ import {
 import { checkRenderVisibilityCalibrate } from './render-visibility';
 import { checkRuntimeMountConformance } from './runtime-mount-conformance';
 import { checkVisualFeedback } from './visual-feedback';
-import { EDGE_TILE_ROWS, EDGE_TILE_COLS, EDGE_SENTINEL_MIN_UNCOVERED } from './image-toolkit';
+import {
+  EDGE_TILE_ROWS,
+  EDGE_TILE_COLS,
+  EDGE_SENTINEL_MIN_UNCOVERED,
+  REFERENCE_VIEWPORT_ASPECT_TOLERANCE,
+  readImageDimensions,
+  referenceViewportIncompatible,
+} from './image-toolkit';
+const REFERENCE_VIEWPORT_ASPECT_TOLERANCE_TEXT = String(REFERENCE_VIEWPORT_ASPECT_TOLERANCE);
 import { isHardPixelContract, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
 import { loadRefElementsFile, refElementsAbsPath } from '../../../harness/scripts/utils/fidelity-shared';
 import { collectLayoutOracleForScreen, loadLayoutDumpFile, LOCATOR_COVERAGE_THRESHOLD, type LayoutFinding } from './layout-oracle-check';
@@ -1311,6 +1319,54 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     return undefined;
   };
 
+  // plan b3d7e5a1 T5（codex P1 返修）：参考图/视口尺寸兼容性在**任何** pixel/OCR 内容消费之前判定——
+  // 下游 edge sentinel、全局元素越界 OCR、锚点缺失 OCR、文本块 OCR、弃判判定一律只消费 comparableScreens；
+  // capture 侧的 score_floor/edge 与 delegated provider 的 target 装配也用同一判据（见 visual-diff-capture /
+  // visual-provider-review），所以长图在任何入口都产不出内容结论。兼容时零结果、零注记（check 集合逐字不变）。
+  const viewportIncompatible = new Map<string, string>();
+  let referenceViewportResult: CheckResult | null = null;
+  if (specMd) {
+    const refIndexForViewport = buildAuthoritativeRefImageIndex(ctx, specMd);
+    const screenRefIdsForViewport = new Map<string, string>();
+    for (const sc of uiDoc?.screens ?? []) screenRefIdsForViewport.set(sc.id, sc.ref_id ?? sc.id);
+    for (const s of rep.screens) {
+      const refId =
+        screenRefIdsForViewport.get(s.screen_id) ??
+        screenRefIdsForViewport.get(canonicalOverlayBase(s.screen_id)) ??
+        s.ref_id ??
+        canonicalOverlayBase(s.screen_id);
+      const refAbs = resolveRefSourceImage(refIndexForViewport, refId).path;
+      if (!refAbs || !s.screenshot_path) continue;
+      const refDims = readImageDimensions(refAbs);
+      const shotDims = readImageDimensions(resolveShotPath(ctx.projectRoot, s.screenshot_path));
+      if (referenceViewportIncompatible(refDims, shotDims)) {
+        viewportIncompatible.set(
+          s.screen_id,
+          `${s.screen_id}: 参考图 ${refDims!.w}×${refDims!.h} vs 视口 ${shotDims!.w}×${shotDims!.h}`,
+        );
+      }
+    }
+    if (viewportIncompatible.size > 0) {
+      const ratchet = fidelityRatchetFailOrWarn(ctx, true);
+      const excluded = [...viewportIncompatible.values()];
+      referenceViewportResult = {
+        id: 'visual_reference_viewport',
+        category: 'structure',
+        description: '参考图与设备视口尺寸兼容性前置门（plan b3d7e5a1 T5）',
+        severity: ratchet.severity,
+        status: ratchet.status,
+        details:
+          `以下 ${excluded.length} 屏的参考图高宽比超出实测视口 ×${REFERENCE_VIEWPORT_ASPECT_TOLERANCE_TEXT}（整页拼接图 vs 单视口），` +
+          `不构成合法像素参考，已从本轮全部 pixel/OCR 内容比对剔除：${excluded.join('；')}`,
+        suggestion:
+          '责任在 spec 参考资产。出路由作者建模而非机器推导：长页按锚点拆成多个 screen，每段一个 viewport 尺寸的 ref_id 裁图，visual-diff-nav.json 中该段 nav 末步 scroll_to 锚点元素（选对齐确定的元素，如列表项）。像素路径的前提：每段 nav 从已知状态出发，且滚动落点已证明可重复（宿主至少两个冷启动轮次的中/尾 checkpoint 落点一致）；无法证明的段落不放 pixel_1to1 屏，继续 FAIL 而不宣称支持。不属于像素验收范围的段落须明确排除在 pixel_1to1 屏之外，由需求/spec 的功能或结构 AC 覆盖——当前没有屏级/段级 fidelity 档位。' +
+          '每屏参考图兼容后现有 visual pipeline 原样运行；不做自动 crop/分段/拼接，也不按参考图改写 viewport。',
+        affected_files: [reportRel],
+      };
+    }
+  }
+  const comparableScreens = rep.screens.filter(s => !viewportIncompatible.has(s.screen_id));
+
   // --- P0 覆盖：ui-spec 的 P0 屏必须出现且 verdict 非 skipped/pending ---
   const p0Ids = collectP0VisualTargetIds(uiDoc);
   const p0Uncovered = p0Ids.filter(id => {
@@ -1364,7 +1420,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
 
   // 采集层边缘哨兵：超阈 tile 未被任何 defect.bbox 覆盖、且数量达地板 → 疑似漏登记（v2；
   // reverse_missing 无 bbox 不参与几何覆盖，须用 class=missing_render 的 defect.bbox 定位）
-  const edgeUncoveredScreens = collectEdgeSentinelUncovered(rep.screens);
+  const edgeUncoveredScreens = collectEdgeSentinelUncovered(comparableScreens);
 
   const details = [
     `screens=${rep.screens.length}`,
@@ -1380,6 +1436,9 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   ].filter(Boolean).join('；');
   /** P1-C：不参与判定的参考注记（score_floor reference_only 等），只随 details 展示 */
   const referenceNotes: string[] = [];
+  if (viewportIncompatible.size > 0) {
+    referenceNotes.push(`[reference_viewport] 参考图与视口尺寸不兼容、已从全部内容比对剔除：${[...viewportIncompatible.values()].join('；')}`);
+  }
 
   const hits: VisualDiffHit[] = [];
 
@@ -1526,7 +1585,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   // 不靠 root 类型猜（实测子页 root 也是 navigation_frame@0）。仅 global_elements 声明 + OCR 可用时实际跑 OCR。
   const oob = collectOutOfBoundsGlobalElements(
     uiDoc?.global_elements,
-    rep.screens,
+    comparableScreens,
     rel => resolveShotPath(ctx.projectRoot, rel),
   );
   if (oob.violations.length > 0) {
@@ -1573,7 +1632,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     }
     const missingRes = collectGrossMissingAnchorText(
       screenAnchors,
-      rep.screens.filter(s => s.verdict === 'pass'),
+      comparableScreens.filter(s => s.verdict === 'pass'),
       rel => resolveShotPath(ctx.projectRoot, rel),
     );
     if (missingRes.violations.length > 0) {
@@ -1623,7 +1682,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       canonicalOverlayBase(s.screen_id);
     const placement = collectTextPlacementSignals(
       screenTextsMap,
-      rep.screens,
+      comparableScreens,
       rel => resolveShotPath(ctx.projectRoot, rel),
       s => resolveRefSourceImage(refIndex, refIdFor(s)).path,
       // adjudicated-repair-loop：OCR 注入缝（测试用；缺省走真实 ocrImageWords）
@@ -1669,7 +1728,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     }
     // P0-2 弃判硬 backstop：fail_signals 在手的屏不许 pending——确定性 FAIL 可判即须判
     // （verdict=fail + 信号转 must_fix + 重试轮内修码重测），弃判=浪费重试预算且 loop 饿死。
-    const abandonment = collectVerdictAbandonment(placement.perScreen, rep.screens);
+    const abandonment = collectVerdictAbandonment(placement.perScreen, comparableScreens);
     if (abandonment.length > 0) {
       const ratchet = pixel1to1
         ? fidelityRatchetFailOrWarn(ctx, false)
@@ -2767,5 +2826,5 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       : {}),
   };
   finalResult.structured = structuredPayload;
-  return [finalResult];
+  return referenceViewportResult ? [finalResult, referenceViewportResult] : [finalResult];
 }

@@ -373,6 +373,25 @@ export interface ImageDims {
 }
 
 /**
+ * plan b3d7e5a1 T5：参考图 / viewport 高宽比容差——ocr-gates 的整页启发式与尺寸兼容性前置门共用的
+ * **唯一**常量（宿主实证 expanded 2.05×、all_banks 3.9×，远超此值）。
+ */
+export const REFERENCE_VIEWPORT_ASPECT_TOLERANCE = 1.15;
+
+/**
+ * 参考图与 viewport 尺寸是否**不兼容**：参考图高宽比 > viewport 高宽比 × 容差（整页拼接图 vs 单视口）。
+ * 任一尺寸未知或非正 → false（不猜；尺寸不可读由各自既有检查处理）。
+ */
+export function referenceViewportIncompatible(
+  ref: { w: number | null; h: number | null } | null,
+  viewport: { w: number | null; h: number | null } | null,
+): boolean {
+  const rw = ref?.w ?? 0; const rh = ref?.h ?? 0; const vw = viewport?.w ?? 0; const vh = viewport?.h ?? 0;
+  if (rw <= 0 || rh <= 0 || vw <= 0 || vh <= 0) return false;
+  return rh / rw > (vh / vw) * REFERENCE_VIEWPORT_ASPECT_TOLERANCE;
+}
+
+/**
  * 读图尺寸/字节——**不依赖 jimp**，纯解析 PNG/JPEG 文件头。
  * 供 B 占位退化判定：pixel_1to1 下即便 jimp 不可用，也能判 1×1 / 过小 / 非法 PNG（Q4 决策：不 SKIP）。
  * PNG：8B 签名 + IHDR，W/H 为 offset 16/20 的 big-endian uint32。

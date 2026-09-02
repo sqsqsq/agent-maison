@@ -114,6 +114,8 @@ OCR 时钳到 `reference_only` 地板。声明的 `fidelity_target` 本身**不�
 
 **A/B/C 预期边界**：A 结构样式可逼近 1:1；B 美术资产取决于素材供给；C 动态交互不在静态参考图承诺内。
 
+**参考图尺寸必须与设备视口同口径**：每屏 `ref_id` 指向的参考图高宽比不得超出视口高宽比 ×1.15（整页拼接长图不是单视口参考）。spec 阶段在 `fidelity.lock.yaml` 声明 `viewport` 时即前置比对（`visual_reference_viewport`：`pixel_1to1` FAIL / 低档 WARN；lock 无 viewport 则推迟到 testing 用实测截图判），testing 阶段再按实测截图判一次。长页的出路是**建模**而不是换一张图：按锚点拆成多个 screen，每段一个 viewport 尺寸的 `ref_id` 裁图，`visual-diff-nav.json` 中该段 nav 末步 `scroll_to` 锚点元素（nav 校验复用 planned-step 全键表，`scroll_to` 本就合法；锚点选对齐确定的元素，如列表项）；像素路径的前提：每段 nav 从已知状态出发，且滚动落点已证明可重复（至少两个冷启动轮次的中/尾 checkpoint 落点一致；`scroll_to` 目标可见即返回，不对齐坐标）；无法证明的段落不放 `pixel_1to1` 屏，继续 FAIL 而不宣称支持。不属于像素验收范围的段落须排除在 `pixel_1to1` 屏之外、由功能/结构 AC 覆盖——`fidelity_target` 是 run 级，没有屏级/段级档位。不会有自动裁图、分段或拼接替你做。
+
 **供给路径定位（G5）**：**screenshot-only 为主路径**——保证 A 环（结构/颜色/布局关系/按钮变体）「一眼同页、非像素级」+ B 环缺口诚实拦截（asset-manifest / 占位不静默 / 禁通用图标冒充 logo / crop 机器复验）。**在线高保真对照（`fetch_fidelity` + `fidelity.lock.yaml` + 结构化派生 ref-elements）为可选增强**——有 Figma/高保真源时把 B 环美术与精确像素也拉到 1:1，但 screenshot-only 路径**不依赖、不强制**它（详见 `docs/operations/fidelity-fetch-mcp-contract.md`）。
 
 ## CLI 逃生
