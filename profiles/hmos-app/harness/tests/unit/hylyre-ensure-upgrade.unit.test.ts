@@ -93,6 +93,49 @@ function makeSourceVendorFixture(
   return { manifest, srcRoot, files };
 }
 
+/** ensureHylyreReady 生产接线夹具：hmos-app 工程 + LF 落盘的 source vendor（manifest 按 LF 字节声明）。 */
+function setupEnsureGateProject(root: string): { srcRoot: string } {
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify({
+          schema_version: '1.1',
+          project_name: 'ensure-gate-fixture',
+          project_profile: { name: 'hmos-app', sub_variant: 'app' },
+          architecture: {
+            outer_layers: [{ id: '02-Feature', can_depend_on: [], intra_layer_deps: 'dag' }],
+            module_inner_layers: ['shared'],
+            inner_dependency_direction: 'upward',
+            cross_module_exports_file: 'index.ets',
+          },
+          paths: {
+            features_dir: 'doc/features',
+            docs_committed: false,
+            reports_dir_pattern: 'doc/features/<feature>/<phase>/reports',
+          },
+          materialized_adapters: ['cursor'],
+          tools: {
+            hylyre: { vendor_dir: 'vendor-hylyre', venv_dir: '.hylyre/venv', auto_install: true },
+          },
+        }),
+        'utf-8',
+      );
+      // framework 树标记（featurePhaseReportsDir 的 frameworkRoot 解析要求）
+      fs.mkdirSync(path.join(root, 'skills'), { recursive: true });
+      const vendorDir = path.join(root, 'vendor-hylyre');
+      fs.mkdirSync(vendorDir, { recursive: true });
+      const { srcRoot } = makeSourceVendorFixture(vendorDir);
+  return { srcRoot };
+}
+
+/** 模拟宿主 Git core.autocrlf=true 的 checkout：把 vendor 源码树全部文本 LF → CRLF。 */
+function rewriteTreeToCrlf(dir: string): void {
+  for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+    const abs = path.join(dir, ent.name);
+    if (ent.isDirectory()) rewriteTreeToCrlf(abs);
+    else fs.writeFileSync(abs, fs.readFileSync(abs, 'utf-8').replace(/\r?\n/g, '\r\n'), 'utf-8');
+  }
+}
+
 function withTmpDir<T>(prefix: string, fn: (dir: string) => T): T {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   try {
@@ -568,35 +611,7 @@ const cases: Case[] = [
         delete process.env.HYLYRE_PYTHON;
         delete process.env.HYLYRE_HOME;
         try {
-          fs.writeFileSync(
-            path.join(root, 'framework.config.json'),
-            JSON.stringify({
-              schema_version: '1.1',
-              project_name: 'ensure-gate-fixture',
-              project_profile: { name: 'hmos-app', sub_variant: 'app' },
-              architecture: {
-                outer_layers: [{ id: '02-Feature', can_depend_on: [], intra_layer_deps: 'dag' }],
-                module_inner_layers: ['shared'],
-                inner_dependency_direction: 'upward',
-                cross_module_exports_file: 'index.ets',
-              },
-              paths: {
-                features_dir: 'doc/features',
-                docs_committed: false,
-                reports_dir_pattern: 'doc/features/<feature>/<phase>/reports',
-              },
-              materialized_adapters: ['cursor'],
-              tools: {
-                hylyre: { vendor_dir: 'vendor-hylyre', venv_dir: '.hylyre/venv', auto_install: true },
-              },
-            }),
-            'utf-8',
-          );
-          // framework 树标记（featurePhaseReportsDir 的 frameworkRoot 解析要求）
-          fs.mkdirSync(path.join(root, 'skills'), { recursive: true });
-          const vendorDir = path.join(root, 'vendor-hylyre');
-          fs.mkdirSync(vendorDir, { recursive: true });
-          const { srcRoot } = makeSourceVendorFixture(vendorDir);
+          const { srcRoot } = setupEnsureGateProject(root);
           // 篡改一个声明文件（内容变、路径仍在）——被污染源码严禁进入 PEP 517
           fs.appendFileSync(path.join(srcRoot, 'hylyre', '__init__.py'), '\nimport os  # tampered\n');
 
@@ -612,6 +627,7 @@ const cases: Case[] = [
             result.errors.some(e => e.kind === 'vendor' && e.message.includes('不一致')),
             `错误须为 vendor 完整性：${JSON.stringify(result.errors)}`,
           );
+          assertTrue(!result.errors.some(e => /CRLF/.test(e.message)), '真篡改须走普通损坏诊断，不得被报成行尾改写');
           assertTrue(!fs.existsSync(path.join(root, '.hylyre', 'venv')), '不得创建 venv');
           assertTrue(!fs.existsSync(path.join(root, '.hylyre', 'build-src')), '不得暂存安装副本');
           const log = result.logPath ? fs.readFileSync(result.logPath, 'utf-8') : '';
@@ -622,6 +638,52 @@ const cases: Case[] = [
           if (savedHome !== undefined) process.env.HYLYRE_HOME = savedHome;
         }
       }),
+  },
+  {
+    name: 'codex P1（生产接线）：vendor 文本被宿主 Git 改成 CRLF → 仍 FAIL 且点名行尾改写与宿主修法；叠加真篡改仍判损坏；零 venv/build-src/pip',
+    run: () => {
+      const savedPy = process.env.HYLYRE_PYTHON;
+      const savedHome = process.env.HYLYRE_HOME;
+      delete process.env.HYLYRE_PYTHON;
+      delete process.env.HYLYRE_HOME;
+      const ensure = (root: string) =>
+        ensureHylyreReady({
+          projectRoot: root,
+          harnessRoot: path.join(root, 'harness'),
+          feature: 'gate-fixture',
+          phase: 'testing',
+        });
+      try {
+        withTmpDir('hylyre-gate-crlf-', root => {
+          const { srcRoot } = setupEnsureGateProject(root);
+          rewriteTreeToCrlf(srcRoot);
+          const result = ensure(root);
+          assertTrue(!result.ok, 'CRLF 改写后 ensure 必须仍失败（不按归一化放行）');
+          const err = result.errors.find(e => e.kind === 'vendor');
+          assertTrue(
+            !!err && /CRLF/.test(err.message) && /\.gitattributes/.test(err.message) && /framework\/\*\* -text/.test(err.message),
+            `须点名行尾改写与宿主修法：${JSON.stringify(result.errors)}`,
+          );
+          assertTrue(!fs.existsSync(path.join(root, '.hylyre', 'venv')), '不得创建 venv');
+          assertTrue(!fs.existsSync(path.join(root, '.hylyre', 'build-src')), '不得暂存安装副本');
+          const log = result.logPath ? fs.readFileSync(result.logPath, 'utf-8') : '';
+          assertTrue(!log.includes('pip install') && !log.includes('创建 venv'), 'CRLF mismatch 时零 pip、零 venv');
+        });
+        withTmpDir('hylyre-gate-crlf-tamper-', root => {
+          const { srcRoot } = setupEnsureGateProject(root);
+          rewriteTreeToCrlf(srcRoot);
+          fs.appendFileSync(path.join(srcRoot, 'hylyre', '__init__.py'), 'import os  # tampered\r\n');
+          const result = ensure(root);
+          assertTrue(!result.ok, 'ensure 必须失败');
+          const err = result.errors.find(e => e.kind === 'vendor');
+          assertTrue(!!err && /请重新同步 vendor 发布件/.test(err.message) && !/CRLF/.test(err.message), `CRLF 叠加真篡改须仍走普通损坏诊断，不得被行尾诊断掩盖：${JSON.stringify(result.errors)}`);
+          assertTrue(!fs.existsSync(path.join(root, '.hylyre', 'venv')), '不得创建 venv');
+        });
+      } finally {
+        if (savedPy !== undefined) process.env.HYLYRE_PYTHON = savedPy;
+        if (savedHome !== undefined) process.env.HYLYRE_HOME = savedHome;
+      }
+    },
   },
 ];
 

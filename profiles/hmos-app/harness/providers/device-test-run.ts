@@ -13,6 +13,7 @@ import { spawnSync, type SpawnSyncReturns } from 'child_process';
 import { featurePhaseReportsDir, resolveHylyreToolConfig } from '../../../../harness/config';
 import { stripTrustAnchorEnv } from '../../../../harness/scripts/utils/process-integrity';
 import {
+  diagnoseVendorTreeMismatch,
   evaluateVendorSyncNeed,
   fingerprintFromManifest,
   isValidVendorSourceDecl,
@@ -884,11 +885,24 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
     if (vendorInstallable) {
       vendorArtifactSha = resolveVendorArtifactSha(vendorInstallable, manifest);
       const declaredSha = manifestDeclaredArtifactSha(manifest, vendorInstallable.kind);
-      const integrityError = !vendorArtifactSha
-        ? `vendor 源码树与 release.manifest.json 声明不一致（声明文件缺失或清单畸形），请从 Hylyre dist/release-src 重新同步 vendor 发布件`
+      // 不一致时只做定性诊断，不按归一化放行：安装暂存复制的是落盘原始字节（codex review P1）。
+      const vendorIntegrity: 'missing' | 'eol_rewritten' | 'corrupted' | null = !vendorArtifactSha
+        ? 'missing'
         : declaredSha && vendorArtifactSha !== declaredSha
-          ? `vendor 发布件与 release.manifest.json 声明不一致（${path.basename(vendorInstallable.path)}），请重新同步 vendor 发布件`
+          ? vendorInstallable.kind === 'source' && manifest.source
+            ? diagnoseVendorTreeMismatch(vendorInstallable.path, manifest.source.files)
+            : 'corrupted'
           : null;
+      const integrityError =
+        vendorIntegrity === 'missing'
+          ? `vendor 源码树与 release.manifest.json 声明不一致（声明文件缺失或清单畸形），请从 Hylyre dist/release-src 重新同步 vendor 发布件`
+          : vendorIntegrity === 'eol_rewritten'
+            ? `vendor 源码树文本已被宿主 Git 改成 CRLF（core.autocrlf 在 checkout 时转换），与 release.manifest.json 的 LF 字节声明不一致；` +
+              `"重新同步 vendor"只会在下次 checkout 再次翻转。请在宿主 .gitattributes 钉 framework/** -text，再从已验证发布件恢复 framework/ 原始字节后重试` +
+              `（见 skills/reference/consumer-framework-boundary.md「package identity 与完整性」）`
+            : vendorIntegrity === 'corrupted'
+              ? `vendor 发布件与 release.manifest.json 声明不一致（${path.basename(vendorInstallable.path)}），请重新同步 vendor 发布件`
+              : null;
       if (integrityError) {
         appendLogSync(logPath, `${integrityError}\n`);
         errors.push({ message: integrityError, kind: 'vendor' });
