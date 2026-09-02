@@ -1,0 +1,56 @@
+{
+  "index": 3,
+  "kind": "touch",
+  "role": "action",
+  "duration_ms": 1200.0,
+  "device_session": true,
+  "outcome": {
+    "status": "failed",
+    "failure": {
+      "domain": "selector",
+      "code": "selector.inline_unresolvable"
+    },
+    "observation": {
+      "kind": "action",
+      "operation": "touch",
+      "performed": false,
+      "facts": {}
+    }
+  },
+  "selector": {
+    "request": {
+      "kind": "composite",
+      "value": null,
+      "match": "contains",
+      "constraints": {
+        "within": {
+          "by_type": "Scroll"
+        }
+      }
+    },
+    "resolution": {
+      "state": "unresolvable",
+      "candidate_count": null,
+      "selected": null,
+      "candidates": [],
+      "reason_code": "selector.inline_fragment_unresolvable",
+      "facts": {
+        "dump_status": "available",
+        "request_complete": true,
+        "resolver_entered": true,
+        "candidate_countable": false,
+        "fragment_anchor": "[REDACTED]",
+        "fragment_bounds": "[120,640][960,712]"
+      }
+    }
+  },
+  "artifacts": [
+    {
+      "kind": "visible_elements",
+      "path": "failures/TC-003-step-3.json",
+      "sha256": "cf8c9702a86fe7f0bc4542cb15485bc87f6993d9fbe953c7b244e7bc6791570f"
+    }
+  ],
+  "diagnostic": null,
+  "extensions": {}
+}

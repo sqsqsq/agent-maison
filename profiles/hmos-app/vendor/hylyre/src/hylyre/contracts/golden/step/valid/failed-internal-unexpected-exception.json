@@ -1,0 +1,21 @@
+{
+  "index": 1,
+  "kind": "scroll",
+  "role": "action",
+  "duration_ms": 45.0,
+  "device_session": true,
+  "outcome": {
+    "status": "failed",
+    "failure": {
+      "domain": "internal",
+      "code": "internal.unexpected_exception",
+      "facts": {
+        "exception_type": "KeyError"
+      }
+    }
+  },
+  "selector": null,
+  "artifacts": [],
+  "diagnostic": "unexpected driver exception",
+  "extensions": {}
+}

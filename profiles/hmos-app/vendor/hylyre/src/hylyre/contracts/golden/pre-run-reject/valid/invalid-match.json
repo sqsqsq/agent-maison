@@ -1,0 +1,13 @@
+{
+  "result_protocol": "hylyre.step-outcome/1",
+  "command_status": "rejected",
+  "phase": "pre_run_validation",
+  "rejection": {
+    "domain": "contract",
+    "code": "contract.invalid_match",
+    "case_id": "TC-003",
+    "step_index": 0,
+    "path": "cases[TC-003].steps[0].touch.match",
+    "summary": "unsupported match 'regex'; supported values are exact and contains"
+  }
+}

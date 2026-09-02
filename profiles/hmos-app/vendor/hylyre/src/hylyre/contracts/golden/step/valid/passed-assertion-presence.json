@@ -1,0 +1,45 @@
+{
+  "index": 2,
+  "kind": "wait_for",
+  "role": "assertion",
+  "duration_ms": 310.0,
+  "device_session": true,
+  "outcome": {
+    "status": "passed",
+    "observation": {
+      "kind": "assertion",
+      "assertion_type": "presence",
+      "matched": true,
+      "facts": {
+        "expected_present": true,
+        "observed_present": true,
+        "candidate_count": 1
+      }
+    }
+  },
+  "selector": {
+    "request": {
+      "kind": "by_text",
+      "value": "[REDACTED]",
+      "match": "contains",
+      "constraints": {}
+    },
+    "resolution": {
+      "state": "unique",
+      "candidate_count": 1,
+      "selected": {
+        "id": "wallet_title",
+        "bounds": "[0,120][1080,220]"
+      },
+      "candidates": [
+        {
+          "id": "wallet_title",
+          "bounds": "[0,120][1080,220]"
+        }
+      ]
+    }
+  },
+  "artifacts": [],
+  "diagnostic": null,
+  "extensions": {}
+}

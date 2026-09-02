@@ -1,0 +1,9 @@
+{
+  "type": "capability",
+  "code": "infrastructure.device_unavailable",
+  "capability_id": "toast_listener",
+  "facts": {
+    "probe_status": "unsupported",
+    "probe_source": "runtime_preflight"
+  }
+}

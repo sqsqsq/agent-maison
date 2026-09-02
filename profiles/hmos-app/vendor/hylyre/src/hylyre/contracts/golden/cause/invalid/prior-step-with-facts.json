@@ -1,0 +1,8 @@
+{
+  "type": "prior_step",
+  "step_index": 0,
+  "facts": {
+    "probe_status": "unavailable",
+    "probe_source": "x"
+  }
+}

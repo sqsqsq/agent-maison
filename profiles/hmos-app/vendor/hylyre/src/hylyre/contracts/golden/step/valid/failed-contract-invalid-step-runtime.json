@@ -1,0 +1,22 @@
+{
+  "index": 2,
+  "kind": "scroll",
+  "role": "action",
+  "duration_ms": 3.0,
+  "device_session": true,
+  "outcome": {
+    "status": "failed",
+    "failure": {
+      "domain": "contract",
+      "code": "contract.invalid_step",
+      "facts": {
+        "detected_in": "adapter",
+        "field": "scroll.steps"
+      }
+    }
+  },
+  "selector": null,
+  "artifacts": [],
+  "diagnostic": null,
+  "extensions": {}
+}

@@ -1,0 +1,124 @@
+{
+  "schema_version": "0.4-p0",
+  "result_protocol": "hylyre.step-outcome/1",
+  "feature": "capture-unavailable",
+  "phase": "testing",
+  "outcome": "failed",
+  "model_backend": "none",
+  "tool_calls": [
+    {
+      "case": "TC-CAP-EV-1",
+      "index": 0,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "failed",
+        "failure": {
+          "domain": "selector",
+          "code": "selector.not_found"
+        }
+      }
+    },
+    {
+      "case": "TC-CAP-EV-1",
+      "index": 1,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 0
+        }
+      }
+    }
+  ],
+  "retries": 0,
+  "artifacts": {
+    "plan": "docs/test-plan.md",
+    "use_fakes": false
+  },
+  "environment": {
+    "hylyre_version": "0.5.0",
+    "hypium_version": "5.0.7.200",
+    "trace_schema_version": "0.4-p0",
+    "result_protocol": "hylyre.step-outcome/1",
+    "selector_engine": "mixed"
+  },
+  "cases": [
+    {
+      "id": "TC-CAP-EV-1",
+      "name": "根失败时截图采集不可用",
+      "status": "失败",
+      "priority": "P0",
+      "ac_ref": "AC-CAP-EV-01",
+      "notes": "failure boundary 采集不可用；不伪造 artifact，evidence 必须 incomplete",
+      "execution": "aborted",
+      "verification": "failed",
+      "evidence": "incomplete",
+      "expected_check_mode": "empty",
+      "steps": [
+        {
+          "index": 0,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 9000.0,
+          "device_session": true,
+          "outcome": {
+            "status": "failed",
+            "failure": {
+              "domain": "selector",
+              "code": "selector.not_found"
+            },
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": false,
+              "facts": {}
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "pay_button",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "not_found",
+              "candidate_count": 0,
+              "selected": null,
+              "candidates": []
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {
+            "hylyre.capture": {
+              "screen": "unavailable",
+              "reason_code": "infrastructure.device_unavailable"
+            }
+          }
+        },
+        {
+          "index": 1,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": true,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 0
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        }
+      ]
+    }
+  ]
+}

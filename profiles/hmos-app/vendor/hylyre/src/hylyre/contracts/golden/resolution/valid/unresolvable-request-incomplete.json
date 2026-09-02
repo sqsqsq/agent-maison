@@ -1,0 +1,13 @@
+{
+  "state": "unresolvable",
+  "candidate_count": null,
+  "selected": null,
+  "candidates": [],
+  "reason_code": "selector.request_incomplete",
+  "facts": {
+    "dump_status": "available",
+    "request_complete": false,
+    "resolver_entered": false,
+    "candidate_countable": false
+  }
+}

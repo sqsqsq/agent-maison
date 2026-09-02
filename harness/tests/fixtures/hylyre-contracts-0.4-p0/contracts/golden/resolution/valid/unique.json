@@ -1,0 +1,14 @@
+{
+  "state": "unique",
+  "candidate_count": 1,
+  "selected": {
+    "id": "bank_row_bocom",
+    "bounds": "[480,1140][600,1220]"
+  },
+  "candidates": [
+    {
+      "id": "bank_row_bocom",
+      "bounds": "[480,1140][600,1220]"
+    }
+  ]
+}

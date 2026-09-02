@@ -1,0 +1,9 @@
+{
+  "type": "infrastructure",
+  "code": "infrastructure.device_unavailable",
+  "facts": {
+    "probe_status": "unavailable",
+    "probe_source": "device_preflight",
+    "resource_kind": "device"
+  }
+}

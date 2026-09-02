@@ -1,0 +1,18 @@
+{
+  "index": 0,
+  "kind": "touch",
+  "role": "action",
+  "duration_ms": 0.0,
+  "device_session": true,
+  "outcome": {
+    "status": "failed",
+    "failure": {
+      "domain": "contract",
+      "code": "contract.empty_case"
+    }
+  },
+  "selector": null,
+  "artifacts": [],
+  "diagnostic": null,
+  "extensions": {}
+}

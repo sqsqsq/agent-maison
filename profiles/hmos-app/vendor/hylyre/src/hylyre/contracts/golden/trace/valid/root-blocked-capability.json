@@ -1,0 +1,137 @@
+{
+  "schema_version": "0.4-p0",
+  "result_protocol": "hylyre.step-outcome/1",
+  "feature": "toast-cap",
+  "phase": "testing",
+  "outcome": "failed",
+  "model_backend": "none",
+  "tool_calls": [
+    {
+      "case": "TC-CAP-1",
+      "index": 0,
+      "kind": "assert_toast",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "capability",
+          "code": "capability.unsupported"
+        }
+      }
+    },
+    {
+      "case": "TC-CAP-1",
+      "index": 1,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 0
+        }
+      }
+    },
+    {
+      "case": "TC-CAP-1",
+      "index": 2,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 0
+        }
+      }
+    }
+  ],
+  "retries": 0,
+  "artifacts": {
+    "plan": "docs/test-plan.md",
+    "use_fakes": false
+  },
+  "environment": {
+    "hylyre_version": "0.5.0",
+    "hypium_version": "5.0.7.200",
+    "trace_schema_version": "0.4-p0",
+    "result_protocol": "hylyre.step-outcome/1",
+    "selector_engine": "mixed"
+  },
+  "cases": [
+    {
+      "id": "TC-CAP-1",
+      "name": "Toast 能力缺失",
+      "status": "阻塞",
+      "priority": "P1",
+      "ac_ref": "AC-CAP-01",
+      "notes": "root blocked/capability；后续 2 步直接指向该 root",
+      "execution": "aborted",
+      "verification": "failed",
+      "evidence": "complete",
+      "expected_check_mode": "empty",
+      "steps": [
+        {
+          "index": 0,
+          "kind": "assert_toast",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": true,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "capability",
+              "code": "capability.unsupported",
+              "capability_id": "toast_listener",
+              "provider_id": "hypium",
+              "facts": {
+                "probe_status": "unsupported",
+                "probe_source": "runtime_preflight"
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 1,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": true,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 0
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 2,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": true,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 0
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        }
+      ]
+    }
+  ]
+}

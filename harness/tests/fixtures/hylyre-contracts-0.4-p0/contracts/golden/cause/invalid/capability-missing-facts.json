@@ -1,0 +1,5 @@
+{
+  "type": "capability",
+  "code": "capability.unsupported",
+  "capability_id": "toast_listener"
+}

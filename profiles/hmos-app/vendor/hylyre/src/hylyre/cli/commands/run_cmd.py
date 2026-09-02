@@ -10,13 +10,49 @@ from typing import Any
 
 import typer
 
-from hylyre.harness.runner import verify_report
+from hylyre.harness.runner import verify_report, verify_report_details
 from hylyre.report.emit import write_run_artifacts
+from hylyre.scenario.plan_contract import (
+    ContractRejection,
+    validate_plan_contract,
+    validate_steps_contract,
+)
 from hylyre.scenario.plan_parse import ParsedPlan, TestCase
 from hylyre.scenario.runner import CaseResult, ScenarioRunResult, ScenarioRunner
 from hylyre.scenario.steps_report import steps_batch_to_scenario_result
 
 TRACE_DRAFT_SCHEMA = "0.1-p0"
+
+
+def emit_pre_run_reject(rejection: ContractRejection) -> None:
+    """Write the only stdout JSON object for a plan reject and exit with code 2.
+
+    Nothing else may reach stdout, no device is contacted, and neither
+    ``--trace-out`` nor ``--report-out`` is created or rewritten.
+    """
+
+    typer.echo(rejection.to_json())
+    raise typer.Exit(code=2)
+
+
+def reject_plan_before_run(plan: Path) -> None:
+    """Emit ``pre_run_reject`` when a plan violates the step contract."""
+
+    try:
+        rejection = validate_plan_contract(plan)
+    except ValueError:
+        # Plan parsing errors keep their existing non-protocol handling.
+        return
+    if rejection is not None:
+        emit_pre_run_reject(rejection)
+
+
+def reject_steps_before_run(steps: list[Any]) -> None:
+    """Emit ``pre_run_reject`` when a steps payload violates the step contract."""
+
+    rejection = validate_steps_contract(steps)
+    if rejection is not None:
+        emit_pre_run_reject(rejection)
 
 
 def infer_model_backend_from_env() -> str:
@@ -63,7 +99,11 @@ def execute_scenario(
     mb = resolve_model_backend(model_backend, use_fakes=use_fakes)
     if use_fakes:
         runner = ScenarioRunner(use_fakes=True)
-        result = runner.run_plan_file(plan, feature=feature)
+        result = runner.run_plan_file(
+            plan,
+            feature=feature,
+            check_expected=not skip_assert_expected,
+        )
         write_run_artifacts(
             result, report_path=report_out, trace_path=trace_out, model_backend=mb
         )
@@ -82,6 +122,7 @@ def execute_scenario(
                 mock_group=mock_group,
                 skip_assert_expected=skip_assert_expected,
                 failure_dir=failure_dir,
+                artifact_base=Path(trace_out).parent,
             )
         )
         write_run_artifacts(
@@ -112,6 +153,7 @@ def execute_steps_scenario(
     on_fail: str = "abort",
     model_backend: str | None = None,
     failure_dir: Path | str | None = None,
+    use_fakes: bool = False,
 ) -> tuple[str, ScenarioRunResult]:
     """Run steps-file batch, emit plan-compatible report + trace, L5 verify."""
     from hylyre.cli.commands import steps_cmd
@@ -128,6 +170,8 @@ def execute_steps_scenario(
         wait_time=wait_time,
         params=params,
         failure_dir=failure_dir,
+        artifact_base=Path(trace_out).parent,
+        use_fakes=use_fakes,
     )
     result = steps_batch_to_scenario_result(
         feature=feature,
@@ -135,8 +179,9 @@ def execute_steps_scenario(
         batch=batch,
         bundle=bundle,
         page_name=page_name,
+        use_fakes=use_fakes,
     )
-    mb = resolve_model_backend(model_backend, use_fakes=False)
+    mb = resolve_model_backend(model_backend, use_fakes=use_fakes)
     write_run_artifacts(
         result,
         report_path=report_out,
@@ -169,7 +214,6 @@ def execute_report_begin(
         "phase": "testing",
         "outcome": "success",
         "model_backend": model_backend,
-        "tool_calls": [],
         "retries": 0,
         "artifacts": {
             "adhoc": True,
@@ -259,6 +303,19 @@ def execute_report_finalize(
                 case=tc,
                 status=str(c["status"]),
                 notes=str(c.get("notes", "")),
+                execution=(
+                    "completed"
+                    if str(c["status"]) in ("通过", "失败", "跳过")
+                    else "infrastructure_failed"
+                ),
+                verification=(
+                    "passed"
+                    if str(c["status"]) == "通过"
+                    else "failed"
+                    if str(c["status"]) in ("失败", "阻塞")
+                    else "inconclusive"
+                ),
+                evidence="complete" if str(c["status"]) == "通过" else "incomplete",
             )
         )
     plan_marker = plan_path if plan_path is not None else Path("(ad-hoc)")
@@ -279,6 +336,7 @@ def execute_report_finalize(
         report_path=report_out,
         trace_path=trace_out,
         model_backend=mb,
+        schema_version="0.2-p4",
     )
     verify_plan = plan_path if plan_path is not None else None
     verify_report(report_out, trace_out, verify_plan)
@@ -343,6 +401,7 @@ async def _run_on_device(
     mock_group: str | None,
     skip_assert_expected: bool,
     failure_dir: Path | str | None = None,
+    artifact_base: Path | str | None = None,
 ) -> tuple[ScenarioRunResult, str]:
     from hylyre.wiring import create_hypium_agent_with_env_vlm
 
@@ -364,6 +423,7 @@ async def _run_on_device(
             mock_group=mock_group or None,
             check_expected=not skip_assert_expected,
             failure_dir=failure_dir,
+            artifact_base=artifact_base,
         )
         return result, infer_model_backend_from_env()
     finally:
@@ -375,9 +435,9 @@ def execute_report_verify(
     report: Path,
     trace: Path,
     plan: Path | None = None,
-) -> None:
+) -> dict[str, Any]:
     """Raises ValueError when contracts fail."""
-    verify_report(report, trace, plan)
+    return verify_report_details(report, trace, plan)
 
 
 def run_report_verify(
@@ -387,11 +447,11 @@ def run_report_verify(
     plan: Path | None = None,
 ) -> None:
     try:
-        execute_report_verify(report=report, trace=trace, plan=plan)
+        details = execute_report_verify(report=report, trace=trace, plan=plan)
     except ValueError as exc:
         typer.secho(f"verify_report failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
-    typer.echo("Contracts OK")
+    typer.echo(f"Contracts OK ({details['label']})")
 
 
 def run_report_begin(

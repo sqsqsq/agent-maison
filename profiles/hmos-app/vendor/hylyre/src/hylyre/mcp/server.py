@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from hylyre.scenario.step_builder import step_response
+
 import base64
 import json
 import os
@@ -92,6 +94,14 @@ def build_mcp():  # type: ignore[no-untyped-def]
         if sess is None:
             raise ValueError(f"unknown session_id {session_id!r}")
         return sess.agent
+
+    async def _atomic_step_result(agent: Any, payload: dict[str, Any]) -> str:
+        from hylyre.scenario.ledger import execute_ledger_step
+
+        result = await execute_ledger_step(
+            agent, payload, index=0, case_id="mcp-atomic-step"
+        )
+        return json.dumps(step_response(result), ensure_ascii=False)
 
     async def _live_ui_payload_full(
         *,
@@ -189,12 +199,12 @@ def build_mcp():  # type: ignore[no-untyped-def]
     ) -> str:
         def _run() -> str:
             plan_arg = Path(plan_path) if plan_path else None
-            run_cmd.execute_report_verify(
+            details = run_cmd.execute_report_verify(
                 report=Path(report_path),
                 trace=Path(trace_path),
                 plan=plan_arg,
             )
-            return "Contracts OK"
+            return f"Contracts OK ({details['label']})"
 
         return _call_logged("hylyre_report_verify", _run)
 
@@ -390,11 +400,10 @@ def build_mcp():  # type: ignore[no-untyped-def]
         async def _run() -> str:
             if session_id:
                 agent = _session_agent(session_id)
-                await agent.run_planned_action(payload)
-                return "ok"
+                return await _atomic_step_result(agent, payload)
             import anyio
 
-            await anyio.to_thread.run_sync(
+            result = await anyio.to_thread.run_sync(
                 lambda: loop_cmd.execute_run_action(
                     payload=payload,
                     device_sn=device_sn,
@@ -402,7 +411,7 @@ def build_mcp():  # type: ignore[no-untyped-def]
                     lyrebird_url=lyrebird_url,
                 )
             )
-            return "ok"
+            return json.dumps(result, ensure_ascii=False)
 
         return await _call_logged_async("hylyre_run_action", _run)
 
@@ -420,11 +429,10 @@ def build_mcp():  # type: ignore[no-untyped-def]
         async def _run() -> str:
             if session_id:
                 agent = _session_agent(session_id)
-                await agent.run_planned_tap(payload)
-                return "ok"
+                return await _atomic_step_result(agent, payload)
             import anyio
 
-            await anyio.to_thread.run_sync(
+            result = await anyio.to_thread.run_sync(
                 lambda: loop_cmd.execute_run_tap(
                     payload=payload,
                     device_sn=device_sn,
@@ -432,7 +440,7 @@ def build_mcp():  # type: ignore[no-untyped-def]
                     lyrebird_url=lyrebird_url,
                 )
             )
-            return "ok"
+            return json.dumps(result, ensure_ascii=False)
 
         return await _call_logged_async("hylyre_run_tap", _run)
 
@@ -450,11 +458,10 @@ def build_mcp():  # type: ignore[no-untyped-def]
         async def _run() -> str:
             if session_id:
                 agent = _session_agent(session_id)
-                await agent.run_planned_input(payload)
-                return "ok"
+                return await _atomic_step_result(agent, payload)
             import anyio
 
-            await anyio.to_thread.run_sync(
+            result = await anyio.to_thread.run_sync(
                 lambda: loop_cmd.execute_run_input(
                     payload=payload,
                     device_sn=device_sn,
@@ -462,7 +469,7 @@ def build_mcp():  # type: ignore[no-untyped-def]
                     lyrebird_url=lyrebird_url,
                 )
             )
-            return "ok"
+            return json.dumps(result, ensure_ascii=False)
 
         return await _call_logged_async("hylyre_run_input", _run)
 
@@ -483,11 +490,10 @@ def build_mcp():  # type: ignore[no-untyped-def]
         async def _run() -> str:
             if session_id:
                 agent = _session_agent(session_id)
-                await agent.run_planned_swipe(payload)
-                return "ok"
+                return await _atomic_step_result(agent, payload)
             import anyio
 
-            await anyio.to_thread.run_sync(
+            result = await anyio.to_thread.run_sync(
                 lambda: loop_cmd.execute_run_swipe(
                     payload=payload,
                     device_sn=device_sn,
@@ -495,7 +501,7 @@ def build_mcp():  # type: ignore[no-untyped-def]
                     lyrebird_url=lyrebird_url,
                 )
             )
-            return "ok"
+            return json.dumps(result, ensure_ascii=False)
 
         return await _call_logged_async("hylyre_run_swipe", _run)
 
@@ -516,11 +522,10 @@ def build_mcp():  # type: ignore[no-untyped-def]
         async def _run() -> str:
             if session_id:
                 agent = _session_agent(session_id)
-                await agent.run_planned_scroll(payload)
-                return "ok"
+                return await _atomic_step_result(agent, payload)
             import anyio
 
-            await anyio.to_thread.run_sync(
+            result = await anyio.to_thread.run_sync(
                 lambda: loop_cmd.execute_run_scroll(
                     payload=payload,
                     device_sn=device_sn,
@@ -528,7 +533,7 @@ def build_mcp():  # type: ignore[no-untyped-def]
                     lyrebird_url=lyrebird_url,
                 )
             )
-            return "ok"
+            return json.dumps(result, ensure_ascii=False)
 
         return await _call_logged_async("hylyre_run_scroll", _run)
 

@@ -1,0 +1,33 @@
+{
+  "index": 3,
+  "kind": "wait_for",
+  "role": "assertion",
+  "duration_ms": 0.0,
+  "device_session": true,
+  "outcome": {
+    "status": "failed",
+    "failure": {
+      "domain": "selector",
+      "code": "selector.not_found"
+    },
+    "observation": {
+      "kind": "assertion",
+      "assertion_type": "presence",
+      "matched": false,
+      "facts": {
+        "expected_present": true,
+        "observed_present": false
+      }
+    }
+  },
+  "selector": null,
+  "artifacts": [
+    {
+      "kind": "screenshot",
+      "path": "failures/x.png",
+      "sha256": "acd5fd466d4f706926a5bdd342b528079cbe13a461a1ae4511d9cd79c5230716"
+    }
+  ],
+  "diagnostic": null,
+  "extensions": {}
+}

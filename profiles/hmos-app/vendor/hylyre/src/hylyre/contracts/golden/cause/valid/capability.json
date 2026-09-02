@@ -1,0 +1,10 @@
+{
+  "type": "capability",
+  "code": "capability.unsupported",
+  "capability_id": "toast_listener",
+  "provider_id": "hypium",
+  "facts": {
+    "probe_status": "unsupported",
+    "probe_source": "runtime_preflight"
+  }
+}

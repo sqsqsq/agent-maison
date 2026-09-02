@@ -1,0 +1,8 @@
+{
+  "type": "capability",
+  "code": "capability.unsupported",
+  "capability_id": "toast_listener",
+  "facts": {
+    "probe_status": "unsupported"
+  }
+}

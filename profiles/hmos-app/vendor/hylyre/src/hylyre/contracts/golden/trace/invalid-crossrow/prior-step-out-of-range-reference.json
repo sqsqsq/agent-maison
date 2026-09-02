@@ -1,0 +1,241 @@
+{
+  "schema_version": "0.4-p0",
+  "result_protocol": "hylyre.step-outcome/1",
+  "feature": "device-death",
+  "phase": "testing",
+  "outcome": "failed",
+  "model_backend": "none",
+  "tool_calls": [
+    {
+      "case": "TC-DEV-1",
+      "index": 0,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-DEV-1",
+      "index": 1,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "failed",
+        "failure": {
+          "domain": "infrastructure",
+          "code": "infrastructure.device_unavailable"
+        }
+      }
+    },
+    {
+      "case": "TC-DEV-1",
+      "index": 2,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 1
+        }
+      }
+    },
+    {
+      "case": "TC-DEV-2",
+      "index": 0,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "infrastructure",
+          "code": "infrastructure.device_unavailable"
+        }
+      }
+    },
+    {
+      "case": "TC-DEV-2",
+      "index": 1,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 5
+        }
+      }
+    }
+  ],
+  "retries": 0,
+  "artifacts": {
+    "plan": "docs/test-plan.md",
+    "use_fakes": false
+  },
+  "environment": {
+    "hylyre_version": "0.5.0",
+    "hypium_version": "5.0.7.200",
+    "trace_schema_version": "0.4-p0",
+    "result_protocol": "hylyre.step-outcome/1",
+    "selector_engine": "mixed"
+  },
+  "cases": [
+    {
+      "id": "TC-DEV-1",
+      "name": "设备中途死亡",
+      "status": "阻塞",
+      "priority": "P0",
+      "ac_ref": "AC-DEV-01",
+      "notes": "step 1 attempted 时设备断开；后缀 prior_step",
+      "execution": "infrastructure_failed",
+      "verification": "failed",
+      "evidence": "complete",
+      "expected_check_mode": "empty",
+      "steps": [
+        {
+          "index": 0,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {}
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "tab_wallet",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "tab_wallet",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "tab_wallet",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 1,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 7100.0,
+          "device_session": true,
+          "outcome": {
+            "status": "failed",
+            "failure": {
+              "domain": "infrastructure",
+              "code": "infrastructure.device_unavailable",
+              "facts": {
+                "resource_kind": "device",
+                "attempted": true
+              }
+            },
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": false,
+              "facts": {}
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": "device disconnected while dispatching touch",
+          "extensions": {}
+        },
+        {
+          "index": 2,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": true,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 1
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        }
+      ]
+    },
+    {
+      "id": "TC-DEV-2",
+      "name": "后续用例重新 probe",
+      "status": "阻塞",
+      "priority": "P0",
+      "ac_ref": "AC-DEV-02",
+      "notes": "新的 device probe 形成本 case 自己的 root blocked",
+      "execution": "infrastructure_failed",
+      "verification": "failed",
+      "evidence": "complete",
+      "expected_check_mode": "empty",
+      "steps": [
+        {
+          "index": 0,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": true,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "infrastructure",
+              "code": "infrastructure.device_unavailable",
+              "facts": {
+                "probe_status": "offline",
+                "probe_source": "device_preflight",
+                "resource_kind": "device"
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 1,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": true,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 5
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "status": "failed",
+  "failure": {
+    "domain": "flakiness",
+    "code": "flakiness.retry_exhausted"
+  }
+}

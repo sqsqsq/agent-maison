@@ -1,0 +1,20 @@
+{
+  "index": 0,
+  "kind": "touch",
+  "role": "action",
+  "duration_ms": 0.0,
+  "device_session": true,
+  "outcome": {
+    "status": "deferred",
+    "observation": {
+      "kind": "action",
+      "operation": "t",
+      "performed": true,
+      "facts": {}
+    }
+  },
+  "selector": null,
+  "artifacts": [],
+  "diagnostic": null,
+  "extensions": {}
+}

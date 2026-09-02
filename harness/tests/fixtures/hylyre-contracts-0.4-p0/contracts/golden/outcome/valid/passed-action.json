@@ -1,0 +1,9 @@
+{
+  "status": "passed",
+  "observation": {
+    "kind": "action",
+    "operation": "back",
+    "performed": true,
+    "facts": {}
+  }
+}

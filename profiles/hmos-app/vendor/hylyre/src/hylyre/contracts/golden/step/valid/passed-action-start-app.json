@@ -1,0 +1,22 @@
+{
+  "index": 0,
+  "kind": "start_app",
+  "role": "action",
+  "duration_ms": 1804.0,
+  "device_session": true,
+  "outcome": {
+    "status": "passed",
+    "observation": {
+      "kind": "action",
+      "operation": "start_app",
+      "performed": true,
+      "facts": {
+        "bundle_started": true
+      }
+    }
+  },
+  "selector": null,
+  "artifacts": [],
+  "diagnostic": null,
+  "extensions": {}
+}

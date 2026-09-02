@@ -1,0 +1,22 @@
+{
+  "index": 1,
+  "kind": "wait",
+  "role": "action",
+  "duration_ms": 1503.2,
+  "device_session": true,
+  "outcome": {
+    "status": "passed",
+    "observation": {
+      "kind": "action",
+      "operation": "wait",
+      "performed": true,
+      "facts": {
+        "seconds": 1.5
+      }
+    }
+  },
+  "selector": null,
+  "artifacts": [],
+  "diagnostic": null,
+  "extensions": {}
+}

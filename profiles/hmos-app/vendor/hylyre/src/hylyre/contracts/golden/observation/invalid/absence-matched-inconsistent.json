@@ -1,0 +1,9 @@
+{
+  "kind": "assertion",
+  "assertion_type": "absence",
+  "matched": true,
+  "facts": {
+    "expected_present": false,
+    "observed_present": true
+  }
+}

@@ -1,0 +1,125 @@
+{
+  "schema_version": "0.4-p0",
+  "result_protocol": "hylyre.step-outcome/1",
+  "feature": "optional-toast",
+  "phase": "testing",
+  "outcome": "partial",
+  "model_backend": "none",
+  "tool_calls": [
+    {
+      "case": "TC-TOAST-1",
+      "index": 0,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-TOAST-1",
+      "index": 1,
+      "kind": "assert_toast",
+      "role": "assertion",
+      "outcome": {
+        "status": "skipped",
+        "reason": {
+          "type": "policy",
+          "code": "optional_check.on_unsupported_skip"
+        }
+      }
+    }
+  ],
+  "retries": 0,
+  "artifacts": {
+    "plan": "docs/test-plan.md",
+    "use_fakes": false
+  },
+  "environment": {
+    "hylyre_version": "0.5.0",
+    "hypium_version": "5.0.7.200",
+    "trace_schema_version": "0.4-p0",
+    "result_protocol": "hylyre.step-outcome/1",
+    "selector_engine": "mixed"
+  },
+  "cases": [
+    {
+      "id": "TC-TOAST-1",
+      "name": "optional Toast 能力缺失按策略跳过",
+      "status": "跳过",
+      "priority": "P2",
+      "ac_ref": "AC-TOAST-01",
+      "notes": "",
+      "execution": "completed",
+      "verification": "inconclusive",
+      "evidence": "complete",
+      "expected_check_mode": "empty",
+      "steps": [
+        {
+          "index": 0,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {}
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "submit",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "submit",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "submit",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 1,
+          "kind": "assert_toast",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": true,
+          "outcome": {
+            "status": "skipped",
+            "reason": {
+              "type": "policy",
+              "code": "optional_check.on_unsupported_skip",
+              "facts": {
+                "probe_status": "unsupported",
+                "probe_source": "runtime_preflight",
+                "capability_id": "toast_listener",
+                "provider_id": "hypium"
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        }
+      ]
+    }
+  ]
+}

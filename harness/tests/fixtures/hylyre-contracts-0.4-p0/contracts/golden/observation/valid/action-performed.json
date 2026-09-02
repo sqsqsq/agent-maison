@@ -1,0 +1,11 @@
+{
+  "kind": "action",
+  "operation": "touch",
+  "performed": true,
+  "facts": {
+    "center": [
+      1,
+      2
+    ]
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "index": 0,
+  "kind": "touch",
+  "role": "action",
+  "duration_ms": 0.0,
+  "device_session": true,
+  "outcome": {
+    "status": "blocked",
+    "cause": {
+      "type": "infrastructure",
+      "code": "infrastructure.device_unavailable",
+      "facts": {
+        "probe_status": "unavailable",
+        "probe_source": "device_preflight",
+        "resource_kind": "device"
+      }
+    }
+  },
+  "selector": null,
+  "artifacts": [],
+  "diagnostic": null,
+  "extensions": {}
+}

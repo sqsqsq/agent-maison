@@ -1,0 +1,24 @@
+{
+  "index": 0,
+  "kind": "touch",
+  "role": "action",
+  "duration_ms": 0.0,
+  "device_session": true,
+  "outcome": {
+    "status": "blocked",
+    "cause": {
+      "type": "prior_step",
+      "step_index": 0
+    },
+    "observation": {
+      "kind": "action",
+      "operation": "touch",
+      "performed": false,
+      "facts": {}
+    }
+  },
+  "selector": null,
+  "artifacts": [],
+  "diagnostic": null,
+  "extensions": {}
+}

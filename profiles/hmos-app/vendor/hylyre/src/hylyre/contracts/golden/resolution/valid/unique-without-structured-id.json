@@ -1,0 +1,14 @@
+{
+  "state": "unique",
+  "candidate_count": 1,
+  "selected": {
+    "id": null,
+    "bounds": "[120,640][960,712]"
+  },
+  "candidates": [
+    {
+      "id": null,
+      "bounds": "[120,640][960,712]"
+    }
+  ]
+}

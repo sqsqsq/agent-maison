@@ -1,0 +1,13 @@
+{
+  "case": "TC-002",
+  "index": 0,
+  "kind": "assert_toast",
+  "role": "assertion",
+  "outcome": {
+    "status": "blocked",
+    "cause": {
+      "type": "capability",
+      "code": "capability.unsupported"
+    }
+  }
+}

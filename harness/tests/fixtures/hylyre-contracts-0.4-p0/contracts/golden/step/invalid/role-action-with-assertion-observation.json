@@ -1,0 +1,23 @@
+{
+  "index": 0,
+  "kind": "touch",
+  "role": "action",
+  "duration_ms": 0.0,
+  "device_session": true,
+  "outcome": {
+    "status": "passed",
+    "observation": {
+      "kind": "assertion",
+      "assertion_type": "presence",
+      "matched": true,
+      "facts": {
+        "expected_present": true,
+        "observed_present": true
+      }
+    }
+  },
+  "selector": null,
+  "artifacts": [],
+  "diagnostic": null,
+  "extensions": {}
+}

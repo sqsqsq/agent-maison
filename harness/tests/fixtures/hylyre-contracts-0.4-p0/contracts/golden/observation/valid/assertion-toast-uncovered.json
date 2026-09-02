@@ -1,0 +1,10 @@
+{
+  "kind": "assertion",
+  "assertion_type": "toast",
+  "matched": true,
+  "facts": {
+    "channel": "hypium",
+    "observed": true,
+    "trigger_window_covered": false
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "result_protocol": "hylyre.step-outcome/1",
+  "command_status": "rejected",
+  "phase": "pre_run_validation",
+  "rejection": {
+    "domain": "contract",
+    "code": "contract.invalid_step",
+    "case_id": "TC-002",
+    "step_index": 1,
+    "path": "cases[TC-002].steps[1]",
+    "summary": "planned JSON step must contain exactly one root key"
+  }
+}

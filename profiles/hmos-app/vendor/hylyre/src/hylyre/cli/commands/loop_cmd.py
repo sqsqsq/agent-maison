@@ -54,6 +54,52 @@ async def _with_hypium_agent(
         await agent.aclose()
 
 
+async def _run_atomic_ledger_step(
+    agent: HylyreAgent,
+    payload: dict[str, Any],
+    *,
+    case_id: str = "atomic-step",
+    failure_dir: Any = None,
+) -> dict[str, Any]:
+    """Execute an atomic planned step through the shared ledger."""
+
+    from dataclasses import replace
+
+    from hylyre.api.failure_diag import capture_failure_boundary
+    from hylyre.scenario.ledger import execute_ledger_step
+    from hylyre.scenario.step_builder import step_response
+
+    # Same builder as the plan runner, same protocol declaration as the trace:
+    # an atomic step is not a separate result shape, and passing a failure_dir
+    # must not turn it into a batch response.
+    step = await execute_ledger_step(agent, payload, index=0, case_id=case_id)
+
+    failure = step.failure or {}
+    if (
+        step.status == "failed"
+        and failure.get("domain") in ("selector", "assertion")
+        and step.device_session
+    ):
+        artifacts, capture_error = await capture_failure_boundary(
+            agent, failure_dir=failure_dir, label=f"{case_id}-0"
+        )
+        if artifacts:
+            step = replace(step, artifacts=tuple(a.to_dict() for a in artifacts))
+        else:
+            step = replace(
+                step,
+                extensions={
+                    **step.extensions,
+                    "hylyre.capture": {
+                        "screen": "unavailable",
+                        "reason_code": "infrastructure.transport_failure",
+                        "detail": (capture_error or "capture unavailable")[:500],
+                    },
+                },
+            )
+    return step_response(step)
+
+
 def execute_screenshot_bytes(
     *,
     device_sn: str | None = None,
@@ -181,15 +227,18 @@ def execute_run_action(
     mock_port: int | None = None,
     lyrebird_url: str | None = None,
     session_file: Path | None = None,
-) -> str:
+    failure_dir: Any = None,
+) -> dict[str, Any]:
     if session_file is not None:
-        _session_ipc(session_file, "run_action", {"payload": payload})
-        return "ok"
+        result = _session_ipc(session_file, "run_action", {"payload": payload})
+        if not isinstance(result, dict):
+            raise RuntimeError("session run_action did not return a StepResult")
+        return result
 
-    async def _go(agent: HylyreAgent) -> None:
-        await agent.run_planned_action(payload)
+    async def _go(agent: HylyreAgent) -> dict[str, Any]:
+        return await _run_atomic_ledger_step(agent, payload, failure_dir=failure_dir)
 
-    asyncio.run(
+    return asyncio.run(
         _with_hypium_agent(
             device_sn=device_sn,
             mock_port=mock_port,
@@ -197,7 +246,6 @@ def execute_run_action(
             fn=_go,
         )
     )
-    return "ok"
 
 
 def execute_run_tap(
@@ -207,15 +255,18 @@ def execute_run_tap(
     mock_port: int | None = None,
     lyrebird_url: str | None = None,
     session_file: Path | None = None,
-) -> str:
+    failure_dir: Any = None,
+) -> dict[str, Any]:
     if session_file is not None:
-        _session_ipc(session_file, "run_tap", {"payload": payload})
-        return "ok"
+        result = _session_ipc(session_file, "run_tap", {"payload": payload})
+        if not isinstance(result, dict):
+            raise RuntimeError("session run_tap did not return a StepResult")
+        return result
 
-    async def _go(agent: HylyreAgent) -> None:
-        await agent.run_planned_tap(payload)
+    async def _go(agent: HylyreAgent) -> dict[str, Any]:
+        return await _run_atomic_ledger_step(agent, payload, failure_dir=failure_dir)
 
-    asyncio.run(
+    return asyncio.run(
         _with_hypium_agent(
             device_sn=device_sn,
             mock_port=mock_port,
@@ -223,7 +274,6 @@ def execute_run_tap(
             fn=_go,
         )
     )
-    return "ok"
 
 
 def execute_run_input(
@@ -233,15 +283,18 @@ def execute_run_input(
     mock_port: int | None = None,
     lyrebird_url: str | None = None,
     session_file: Path | None = None,
-) -> str:
+    failure_dir: Any = None,
+) -> dict[str, Any]:
     if session_file is not None:
-        _session_ipc(session_file, "run_input", {"payload": payload})
-        return "ok"
+        result = _session_ipc(session_file, "run_input", {"payload": payload})
+        if not isinstance(result, dict):
+            raise RuntimeError("session run_input did not return a StepResult")
+        return result
 
-    async def _go(agent: HylyreAgent) -> None:
-        await agent.run_planned_input(payload)
+    async def _go(agent: HylyreAgent) -> dict[str, Any]:
+        return await _run_atomic_ledger_step(agent, payload, failure_dir=failure_dir)
 
-    asyncio.run(
+    return asyncio.run(
         _with_hypium_agent(
             device_sn=device_sn,
             mock_port=mock_port,
@@ -249,7 +302,6 @@ def execute_run_input(
             fn=_go,
         )
     )
-    return "ok"
 
 
 def execute_run_swipe(
@@ -259,15 +311,18 @@ def execute_run_swipe(
     mock_port: int | None = None,
     lyrebird_url: str | None = None,
     session_file: Path | None = None,
-) -> str:
+    failure_dir: Any = None,
+) -> dict[str, Any]:
     if session_file is not None:
-        _session_ipc(session_file, "run_swipe", {"payload": payload})
-        return "ok"
+        result = _session_ipc(session_file, "run_swipe", {"payload": payload})
+        if not isinstance(result, dict):
+            raise RuntimeError("session run_swipe did not return a StepResult")
+        return result
 
-    async def _go(agent: HylyreAgent) -> None:
-        await agent.run_planned_swipe(payload)
+    async def _go(agent: HylyreAgent) -> dict[str, Any]:
+        return await _run_atomic_ledger_step(agent, payload, failure_dir=failure_dir)
 
-    asyncio.run(
+    return asyncio.run(
         _with_hypium_agent(
             device_sn=device_sn,
             mock_port=mock_port,
@@ -275,7 +330,6 @@ def execute_run_swipe(
             fn=_go,
         )
     )
-    return "ok"
 
 
 def apply_cli_swipe_area_overrides(
@@ -349,15 +403,18 @@ def execute_run_scroll(
     mock_port: int | None = None,
     lyrebird_url: str | None = None,
     session_file: Path | None = None,
-) -> str:
+    failure_dir: Any = None,
+) -> dict[str, Any]:
     if session_file is not None:
-        _session_ipc(session_file, "run_scroll", {"payload": payload})
-        return "ok"
+        result = _session_ipc(session_file, "run_scroll", {"payload": payload})
+        if not isinstance(result, dict):
+            raise RuntimeError("session run_scroll did not return a StepResult")
+        return result
 
-    async def _go(agent: HylyreAgent) -> None:
-        await agent.run_planned_scroll(payload)
+    async def _go(agent: HylyreAgent) -> dict[str, Any]:
+        return await _run_atomic_ledger_step(agent, payload, failure_dir=failure_dir)
 
-    asyncio.run(
+    return asyncio.run(
         _with_hypium_agent(
             device_sn=device_sn,
             mock_port=mock_port,
@@ -365,7 +422,6 @@ def execute_run_scroll(
             fn=_go,
         )
     )
-    return "ok"
 
 
 def execute_dispatch_planned_step(
@@ -375,18 +431,19 @@ def execute_dispatch_planned_step(
     mock_port: int | None = None,
     lyrebird_url: str | None = None,
     session_file: Path | None = None,
-) -> str:
+    failure_dir: Any = None,
+) -> dict[str, Any]:
     """Run any planned JSON step via ``dispatch_planned_step``."""
     if session_file is not None:
-        _session_ipc(session_file, "run_step", {"payload": payload})
-        return "ok"
+        result = _session_ipc(session_file, "run_step", {"payload": payload})
+        if not isinstance(result, dict):
+            raise RuntimeError("session run_step did not return a StepResult")
+        return result
 
-    async def _go(agent: HylyreAgent) -> None:
-        from hylyre.api.step_dispatch import dispatch_planned_step
+    async def _go(agent: HylyreAgent) -> dict[str, Any]:
+        return await _run_atomic_ledger_step(agent, payload, failure_dir=failure_dir)
 
-        await dispatch_planned_step(agent, payload)
-
-    asyncio.run(
+    return asyncio.run(
         _with_hypium_agent(
             device_sn=device_sn,
             mock_port=mock_port,
@@ -394,7 +451,6 @@ def execute_dispatch_planned_step(
             fn=_go,
         )
     )
-    return "ok"
 
 
 def run_planned_step_json(
@@ -411,7 +467,7 @@ def run_planned_step_json(
         payload = json.loads(payload_json)
         if not isinstance(payload, dict):
             raise ValueError("JSON root must be an object")
-        execute_dispatch_planned_step(
+        step_result = execute_dispatch_planned_step(
             payload=payload,
             device_sn=device_sn,
             mock_port=mock_port,
@@ -427,7 +483,25 @@ def run_planned_step_json(
     except Exception as e:
         typer.secho(str(e), err=True)
         raise typer.Exit(code=1) from e
-    typer.echo("ok")
+    typer.echo(json.dumps(step_result, ensure_ascii=False))
+    if _atomic_status(step_result) in {"failed", "blocked"}:
+        raise typer.Exit(code=1)
+
+
+def _atomic_status(response: dict[str, Any]) -> str:
+    """Read the status from the declared envelope, not from a flat alias."""
+
+    step = response.get("step_result", response)
+    outcome = step.get("outcome") if isinstance(step, dict) else None
+    return str(outcome.get("status", "")) if isinstance(outcome, dict) else ""
+
+
+def _emit_atomic_step_result(step_result: dict[str, Any]) -> None:
+    import typer
+
+    typer.echo(json.dumps(step_result, ensure_ascii=False))
+    if _atomic_status(step_result) in {"failed", "blocked"}:
+        raise typer.Exit(code=1)
 
 
 def run_screenshot_out(
@@ -523,7 +597,7 @@ def run_action_json(
         payload = json.loads(payload_json)
         if not isinstance(payload, dict):
             raise ValueError("JSON root must be an object")
-        execute_run_action(
+        step_result = execute_run_action(
             payload=payload,
             device_sn=device_sn,
             mock_port=mock_port,
@@ -539,7 +613,7 @@ def run_action_json(
     except Exception as e:
         typer.secho(str(e), err=True)
         raise typer.Exit(code=1) from e
-    typer.echo("ok")
+    _emit_atomic_step_result(step_result)
 
 
 def run_tap_json(
@@ -556,7 +630,7 @@ def run_tap_json(
         payload = json.loads(payload_json)
         if not isinstance(payload, dict):
             raise ValueError("JSON root must be an object")
-        execute_run_tap(
+        step_result = execute_run_tap(
             payload=payload,
             device_sn=device_sn,
             mock_port=mock_port,
@@ -572,7 +646,7 @@ def run_tap_json(
     except Exception as e:
         typer.secho(str(e), err=True)
         raise typer.Exit(code=1) from e
-    typer.echo("ok")
+    _emit_atomic_step_result(step_result)
 
 
 def run_swipe_json(
@@ -600,7 +674,7 @@ def run_swipe_json(
             area_by_id=area_by_id,
             area_by_key=area_by_key,
         )
-        execute_run_swipe(
+        step_result = execute_run_swipe(
             payload=payload,
             device_sn=device_sn,
             mock_port=mock_port,
@@ -616,7 +690,7 @@ def run_swipe_json(
     except Exception as e:
         typer.secho(str(e), err=True)
         raise typer.Exit(code=1) from e
-    typer.echo("ok")
+    _emit_atomic_step_result(step_result)
 
 
 def run_scroll_json(
@@ -644,7 +718,7 @@ def run_scroll_json(
             at_by_id=at_by_id,
             at_by_key=at_by_key,
         )
-        execute_run_scroll(
+        step_result = execute_run_scroll(
             payload=payload,
             device_sn=device_sn,
             mock_port=mock_port,
@@ -660,7 +734,7 @@ def run_scroll_json(
     except Exception as e:
         typer.secho(str(e), err=True)
         raise typer.Exit(code=1) from e
-    typer.echo("ok")
+    _emit_atomic_step_result(step_result)
 
 
 def run_input_json(
@@ -677,7 +751,7 @@ def run_input_json(
         payload = json.loads(payload_json)
         if not isinstance(payload, dict):
             raise ValueError("JSON root must be an object")
-        execute_run_input(
+        step_result = execute_run_input(
             payload=payload,
             device_sn=device_sn,
             mock_port=mock_port,
@@ -693,4 +767,4 @@ def run_input_json(
     except Exception as e:
         typer.secho(str(e), err=True)
         raise typer.Exit(code=1) from e
-    typer.echo("ok")
+    _emit_atomic_step_result(step_result)

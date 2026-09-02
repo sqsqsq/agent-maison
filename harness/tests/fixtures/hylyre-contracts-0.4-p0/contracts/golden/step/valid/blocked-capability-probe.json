@@ -1,0 +1,24 @@
+{
+  "index": 3,
+  "kind": "assert_toast",
+  "role": "assertion",
+  "duration_ms": 0.0,
+  "device_session": true,
+  "outcome": {
+    "status": "blocked",
+    "cause": {
+      "type": "capability",
+      "code": "capability.unsupported",
+      "capability_id": "toast_listener",
+      "provider_id": "hypium",
+      "facts": {
+        "probe_status": "unsupported",
+        "probe_source": "runtime_preflight"
+      }
+    }
+  },
+  "selector": null,
+  "artifacts": [],
+  "diagnostic": null,
+  "extensions": {}
+}

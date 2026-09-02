@@ -1,0 +1,42 @@
+{
+  "index": 1,
+  "kind": "touch",
+  "role": "action",
+  "duration_ms": 9000.0,
+  "device_session": true,
+  "outcome": {
+    "status": "failed",
+    "failure": {
+      "domain": "selector",
+      "code": "selector.not_found"
+    },
+    "observation": {
+      "kind": "action",
+      "operation": "touch",
+      "performed": false,
+      "facts": {}
+    }
+  },
+  "selector": {
+    "request": {
+      "kind": "by_id",
+      "value": "pay_button",
+      "match": null,
+      "constraints": {}
+    },
+    "resolution": {
+      "state": "not_found",
+      "candidate_count": 0,
+      "selected": null,
+      "candidates": []
+    }
+  },
+  "artifacts": [],
+  "diagnostic": null,
+  "extensions": {
+    "hylyre.capture": {
+      "screen": "unavailable",
+      "reason_code": "infrastructure.device_unavailable"
+    }
+  }
+}

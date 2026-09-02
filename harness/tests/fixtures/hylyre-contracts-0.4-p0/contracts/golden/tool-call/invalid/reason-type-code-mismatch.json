@@ -1,0 +1,13 @@
+{
+  "case": "TC-001",
+  "index": 2,
+  "kind": "expected_check",
+  "role": "assertion",
+  "outcome": {
+    "status": "skipped",
+    "reason": {
+      "type": "not_applicable",
+      "code": "expected_check.disabled_by_flag"
+    }
+  }
+}

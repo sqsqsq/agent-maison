@@ -1,0 +1,9 @@
+{
+  "case": "TC-001",
+  "index": 1,
+  "kind": "touch",
+  "role": "action",
+  "status": "failed",
+  "failure_kind": "selector",
+  "failure_code": "selector_not_found"
+}

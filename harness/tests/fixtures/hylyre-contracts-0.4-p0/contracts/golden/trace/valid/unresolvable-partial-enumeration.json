@@ -1,0 +1,149 @@
+{
+  "schema_version": "0.4-p0",
+  "result_protocol": "hylyre.step-outcome/1",
+  "feature": "partial-enumeration",
+  "phase": "testing",
+  "outcome": "failed",
+  "model_backend": "none",
+  "tool_calls": [
+    {
+      "case": "TC-PARTIAL-1",
+      "index": 0,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "failed",
+        "failure": {
+          "domain": "selector",
+          "code": "selector.inline_unresolvable"
+        }
+      }
+    },
+    {
+      "case": "TC-PARTIAL-1",
+      "index": 1,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 0
+        }
+      }
+    }
+  ],
+  "retries": 0,
+  "artifacts": {
+    "plan": "docs/test-plan.md",
+    "use_fakes": false
+  },
+  "environment": {
+    "hylyre_version": "0.5.0",
+    "hypium_version": "5.0.7.200",
+    "trace_schema_version": "0.4-p0",
+    "result_protocol": "hylyre.step-outcome/1",
+    "selector_engine": "mixed"
+  },
+  "cases": [
+    {
+      "id": "TC-PARTIAL-1",
+      "name": "虚拟列表：可列出部分候选但总数不可得",
+      "status": "失败",
+      "priority": "P1",
+      "ac_ref": "AC-PARTIAL-01",
+      "notes": "candidate_countable=false 时 candidate_count 保持 null，部分候选证据不丢弃",
+      "execution": "aborted",
+      "verification": "failed",
+      "evidence": "complete",
+      "expected_check_mode": "empty",
+      "steps": [
+        {
+          "index": 0,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 4200.0,
+          "device_session": true,
+          "outcome": {
+            "status": "failed",
+            "failure": {
+              "domain": "selector",
+              "code": "selector.inline_unresolvable"
+            },
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": false,
+              "facts": {}
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_text",
+              "value": "[REDACTED]",
+              "match": "contains",
+              "constraints": {
+                "within": {
+                  "by_type": "List"
+                }
+              }
+            },
+            "resolution": {
+              "state": "unresolvable",
+              "candidate_count": null,
+              "selected": null,
+              "candidates": [
+                {
+                  "id": "bank_row_1",
+                  "bounds": "[0,300][1080,400]"
+                },
+                {
+                  "id": "bank_row_2",
+                  "bounds": "[0,400][1080,500]"
+                }
+              ],
+              "reason_code": "selector.resolver_unsupported_form",
+              "facts": {
+                "dump_status": "available",
+                "request_complete": true,
+                "resolver_entered": true,
+                "candidate_countable": false,
+                "provider_probe": {
+                  "probe_status": "unsupported",
+                  "probe_source": "resolver.virtual_list_total"
+                }
+              }
+            }
+          },
+          "artifacts": [
+            {
+              "kind": "ui_dump",
+              "path": "failures/TC-PARTIAL-1-step-0.json",
+              "sha256": "9f60a0c99974585a1ef76e84b9870c3c2d0bc85323bdd02125a8c1de7b6f2170"
+            }
+          ],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 1,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": true,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 0
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        }
+      ]
+    }
+  ]
+}

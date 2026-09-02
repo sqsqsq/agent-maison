@@ -1,0 +1,9 @@
+{
+  "type": "capability",
+  "code": "capability.not_configured",
+  "capability_id": "vlm_expected_check",
+  "facts": {
+    "probe_status": "not_configured",
+    "probe_source": "vlm_preflight"
+  }
+}

@@ -326,8 +326,10 @@ def run_plan_batch(
             feature is not None or report_out is not None or trace_out is not None
         )
         fd = failure_dir
-        if fd is None and report_out is not None:
-            fd = Path(report_out).parent / "failures"
+        if fd is None and trace_out is not None:
+            # Beside the trace, so every recorded artifact path resolves from
+            # dirname(trace_path) alone — no working-directory dependency.
+            fd = Path(trace_out).parent / "failures"
         if wants_report:
             need = []
             if feature is None:
@@ -347,6 +349,9 @@ def run_plan_batch(
                 if steps_file is not None
                 else Path("<inline-steps>")
             )
+            # P0-7B: reject a contract-invalid batch before any device call and
+            # before --report-out/--trace-out are created.
+            run_cmd.reject_steps_before_run(step_list)
             try:
                 msg, synth = run_cmd.execute_steps_scenario(
                     steps_path=steps_path,
@@ -364,6 +369,7 @@ def run_plan_batch(
                     on_fail=on_fail,
                     model_backend=model_backend,
                     failure_dir=fd,
+                    use_fakes=use_fakes,
                 )
             except ValueError as exc:
                 typer.secho(f"verify_report failed: {exc}", err=True)
@@ -387,6 +393,7 @@ def run_plan_batch(
                 page_name=page_name,
                 wait_time=start_wait_time,
                 failure_dir=fd,
+                use_fakes=use_fakes,
             )
         except Exception as e:
             typer.secho(str(e), err=True)
@@ -421,8 +428,11 @@ def run_plan_batch(
         typer.secho(f"Batch mode also requires: {', '.join(need)}", err=True)
         raise typer.Exit(2)
     fd_plan = failure_dir
-    if fd_plan is None and report_out is not None:
-        fd_plan = Path(report_out).parent / "failures"
+    if fd_plan is None and trace_out is not None:
+        fd_plan = Path(trace_out).parent / "failures"
+    # P0-7B: reject a contract-invalid plan before any device call and before
+    # --report-out/--trace-out are created.
+    run_cmd.reject_plan_before_run(Path(plan))
     run_cmd.run_scenario(
         plan=plan,
         feature=feature,

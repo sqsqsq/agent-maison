@@ -1,0 +1,37 @@
+{
+  "index": 3,
+  "kind": "wait_gone",
+  "role": "assertion",
+  "duration_ms": 402.0,
+  "device_session": true,
+  "outcome": {
+    "status": "passed",
+    "observation": {
+      "kind": "assertion",
+      "assertion_type": "absence",
+      "matched": true,
+      "facts": {
+        "expected_present": false,
+        "observed_present": false,
+        "candidate_count": 0
+      }
+    }
+  },
+  "selector": {
+    "request": {
+      "kind": "by_id",
+      "value": "loading_mask",
+      "match": null,
+      "constraints": {}
+    },
+    "resolution": {
+      "state": "not_found",
+      "candidate_count": 0,
+      "selected": null,
+      "candidates": []
+    }
+  },
+  "artifacts": [],
+  "diagnostic": null,
+  "extensions": {}
+}

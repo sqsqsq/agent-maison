@@ -1,0 +1,51 @@
+{
+  "index": 0,
+  "kind": "wait_for",
+  "role": "assertion",
+  "duration_ms": 10000.0,
+  "device_session": true,
+  "outcome": {
+    "status": "failed",
+    "failure": {
+      "domain": "infrastructure",
+      "code": "infrastructure.transport_failure",
+      "facts": {
+        "resource_kind": "hdc",
+        "attempted": true
+      }
+    }
+  },
+  "selector": {
+    "request": {
+      "kind": "by_id",
+      "value": "wallet_root",
+      "match": null,
+      "constraints": {}
+    },
+    "resolution": {
+      "state": "unresolvable",
+      "candidate_count": null,
+      "selected": null,
+      "candidates": [],
+      "reason_code": "selector.dump_unavailable",
+      "facts": {
+        "dump_status": "unavailable",
+        "request_complete": true,
+        "resolver_entered": false,
+        "candidate_countable": false,
+        "provider_probe": {
+          "probe_status": "unavailable",
+          "probe_source": "hypium.dump_ui"
+        }
+      }
+    }
+  },
+  "artifacts": [],
+  "diagnostic": null,
+  "extensions": {
+    "hylyre.capture": {
+      "screen": "unavailable",
+      "reason_code": "infrastructure.transport_failure"
+    }
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "index": 2,
+  "kind": "touch",
+  "role": "action",
+  "duration_ms": 0.0,
+  "device_session": true,
+  "outcome": {
+    "status": "blocked",
+    "cause": {
+      "type": "prior_step",
+      "step_index": 1
+    }
+  },
+  "selector": {
+    "request": {
+      "kind": "by_id",
+      "value": "pay_button",
+      "match": null,
+      "constraints": {}
+    },
+    "resolution": {
+      "state": "not_attempted",
+      "candidate_count": null,
+      "selected": null,
+      "candidates": []
+    }
+  },
+  "artifacts": [],
+  "diagnostic": null,
+  "extensions": {}
+}

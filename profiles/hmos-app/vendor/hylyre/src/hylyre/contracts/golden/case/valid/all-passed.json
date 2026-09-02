@@ -1,0 +1,78 @@
+{
+  "id": "TC-OK-1",
+  "name": "余额展示",
+  "status": "通过",
+  "priority": "P0",
+  "ac_ref": "AC-OK-01",
+  "notes": "",
+  "execution": "completed",
+  "verification": "passed",
+  "evidence": "complete",
+  "expected_check_mode": "empty",
+  "steps": [
+    {
+      "index": 0,
+      "kind": "touch",
+      "role": "action",
+      "duration_ms": 0.0,
+      "device_session": true,
+      "outcome": {
+        "status": "passed",
+        "observation": {
+          "kind": "action",
+          "operation": "touch",
+          "performed": true,
+          "facts": {}
+        }
+      },
+      "selector": {
+        "request": {
+          "kind": "by_id",
+          "value": "tab_wallet",
+          "match": null,
+          "constraints": {}
+        },
+        "resolution": {
+          "state": "unique",
+          "candidate_count": 1,
+          "selected": {
+            "id": "tab_wallet",
+            "bounds": null
+          },
+          "candidates": [
+            {
+              "id": "tab_wallet",
+              "bounds": null
+            }
+          ]
+        }
+      },
+      "artifacts": [],
+      "diagnostic": null,
+      "extensions": {}
+    },
+    {
+      "index": 1,
+      "kind": "wait_for",
+      "role": "assertion",
+      "duration_ms": 0.0,
+      "device_session": true,
+      "outcome": {
+        "status": "passed",
+        "observation": {
+          "kind": "assertion",
+          "assertion_type": "presence",
+          "matched": true,
+          "facts": {
+            "expected_present": true,
+            "observed_present": true
+          }
+        }
+      },
+      "selector": null,
+      "artifacts": [],
+      "diagnostic": null,
+      "extensions": {}
+    }
+  ]
+}

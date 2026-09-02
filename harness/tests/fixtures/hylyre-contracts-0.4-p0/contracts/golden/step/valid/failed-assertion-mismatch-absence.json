@@ -1,0 +1,54 @@
+{
+  "index": 5,
+  "kind": "wait_gone",
+  "role": "assertion",
+  "duration_ms": 10002.0,
+  "device_session": true,
+  "outcome": {
+    "status": "failed",
+    "failure": {
+      "domain": "assertion",
+      "code": "assertion.mismatch"
+    },
+    "observation": {
+      "kind": "assertion",
+      "assertion_type": "absence",
+      "matched": false,
+      "facts": {
+        "expected_present": false,
+        "observed_present": true
+      }
+    }
+  },
+  "selector": {
+    "request": {
+      "kind": "by_id",
+      "value": "loading_mask",
+      "match": null,
+      "constraints": {}
+    },
+    "resolution": {
+      "state": "unique",
+      "candidate_count": 1,
+      "selected": {
+        "id": "loading_mask",
+        "bounds": null
+      },
+      "candidates": [
+        {
+          "id": "loading_mask",
+          "bounds": null
+        }
+      ]
+    }
+  },
+  "artifacts": [
+    {
+      "kind": "screenshot",
+      "path": "failures/TC-005-step-5.png",
+      "sha256": "df7829130fd894717cf0595b2f8d282725018c5c432b7ce89518a0267d50e535"
+    }
+  ],
+  "diagnostic": null,
+  "extensions": {}
+}

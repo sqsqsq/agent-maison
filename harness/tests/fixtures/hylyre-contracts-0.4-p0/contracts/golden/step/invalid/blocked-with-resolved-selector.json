@@ -1,0 +1,39 @@
+{
+  "index": 2,
+  "kind": "touch",
+  "role": "action",
+  "duration_ms": 0.0,
+  "device_session": true,
+  "outcome": {
+    "status": "blocked",
+    "cause": {
+      "type": "prior_step",
+      "step_index": 1
+    }
+  },
+  "selector": {
+    "request": {
+      "kind": "by_id",
+      "value": "pay_button",
+      "match": null,
+      "constraints": {}
+    },
+    "resolution": {
+      "state": "unique",
+      "candidate_count": 1,
+      "selected": {
+        "id": "pay_button",
+        "bounds": null
+      },
+      "candidates": [
+        {
+          "id": "pay_button",
+          "bounds": null
+        }
+      ]
+    }
+  },
+  "artifacts": [],
+  "diagnostic": null,
+  "extensions": {}
+}

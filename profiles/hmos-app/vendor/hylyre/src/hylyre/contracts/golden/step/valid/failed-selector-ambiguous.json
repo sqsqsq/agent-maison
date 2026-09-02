@@ -1,0 +1,58 @@
+{
+  "index": 2,
+  "kind": "touch",
+  "role": "action",
+  "duration_ms": 880.0,
+  "device_session": true,
+  "outcome": {
+    "status": "failed",
+    "failure": {
+      "domain": "selector",
+      "code": "selector.ambiguous"
+    },
+    "observation": {
+      "kind": "action",
+      "operation": "touch",
+      "performed": false,
+      "facts": {
+        "reason": "ambiguous target"
+      }
+    }
+  },
+  "selector": {
+    "request": {
+      "kind": "by_text",
+      "value": "[REDACTED]",
+      "match": "contains",
+      "constraints": {}
+    },
+    "resolution": {
+      "state": "ambiguous",
+      "candidate_count": 3,
+      "selected": null,
+      "candidates": [
+        {
+          "id": "bank_row_1",
+          "bounds": null
+        },
+        {
+          "id": "bank_row_2",
+          "bounds": null
+        },
+        {
+          "id": "bank_row_3",
+          "bounds": null
+        }
+      ]
+    }
+  },
+  "artifacts": [
+    {
+      "kind": "ui_dump",
+      "path": "failures/TC-002-step-2.json",
+      "sha256": "6303cdd2e374d4362949e9d4c11f23db1ba562054d8b5b7956080987b25caf01"
+    }
+  ],
+  "diagnostic": null,
+  "extensions": {}
+}

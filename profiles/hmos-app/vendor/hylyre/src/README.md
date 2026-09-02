@@ -5,7 +5,8 @@
 - **规划（SSOT）**：[docs/plan.md](docs/plan.md)
 - **Agent 默认如何用 Hylyre（不必每轮交代）**：[AGENTS.md](AGENTS.md) + [`.cursor/rules/hylyre.mdc`](.cursor/rules/hylyre.mdc)；MCP 一次性配置：[docs/cursor-mcp-setup.md](docs/cursor-mcp-setup.md)
 - **进度**：[docs/progress.md](docs/progress.md)
-- **输出契约（SSOT）**：`hylyre/contracts/`（`trace.json` / 测试报告章节与枚举）
+- **输出契约（SSOT）**：`hylyre/contracts/`（`trace.json` / 测试报告章节与枚举）；确定性执行、selector 与证据说明见 [docs/deterministic-verification.md](docs/deterministic-verification.md)
+- **当前推荐版本**：Hylyre **0.4.1**；结构化 selector identity（`by_id` / `by_key` / `id` / `key` / `selected_id`）在最终序列化中逐字保留，不再按文本规则脱敏；用户文本和值仍继续脱敏。
 
 与业务仓 [SimulatedWalletForHmos](https://github.com/sqsqsq/SimulatedWalletForHmos) 的 **framework** 为**单向输出**关系：本仓不引用其代码；兼容性别名通过 GitHub Actions `compat-framework.yml` **软提醒**（不阻塞主 CI）。
 
@@ -60,12 +61,12 @@ openspec list
 5. **Docker（可选）**：可用镜像 `overbridge/lyrebird` 跑 Lyrebird，把管理 API 暴露到本机端口后，设置环境变量 **`HYLYRE_LYREBIRD_URL`**（例如 `http://127.0.0.1:9090`），即可在不使用 `hylyre mock start` 子进程的情况下对接
 6. **VLM（P3，`hylyre ai action|query|assert`）**：需配置 **`HYLYRE_VLM_ENDPOINT`**（OpenAI 兼容 `…/v1/chat/completions`；DeepSeek 官方示例为 `https://api.deepseek.com/chat/completions`）、可选 **`HYLYRE_VLM_API_KEY`**、**`HYLYRE_VLM_MODEL`**；未配置时自然语言子命令会报错退出
 7. **外部规划器（无 VLM）**：可不设 `HYLYRE_VLM_*`，由 Agent 用 **`hylyre dump-ui` / `hylyre screenshot`** 读取界面 facts，再输出 **`HylyreAgent.run_planned_*`** 同形 JSON（CLI：`hylyre run action|tap|input`）；增量报告 **`hylyre report begin|record|finalize`**。全流程约定见 **[docs/agent-loop.md](docs/agent-loop.md)**。也可用 **`interpret_query_payload`**、**`interpret_assert_payload`** 解析 VLM 形响应。
-8. **场景跑批（P4）**：`hylyre run --plan … --feature … --report-out … --trace-out …`。加 **`--use-fakes`** 为离线桩结果；**omit** 时在已连接真机上跑：`pip install 'hylyre[device]'`，可选 **`--device-sn`**、**`--bundle`**（`start_app`）、**`--mock-port` / `--lyrebird-url`** + **`--mock-group`**。测试步骤支持**单行 JSON**（`action`/`touch`/`input`，无需 VLM）或**自然语言**（需 **`HYLYRE_VLM_*`**）。**`--skip-assert-expected`** 可跳过对「预期结果」列的 `ai_assert`
+8. **场景跑批（P4）**：`hylyre run --plan … --feature … --report-out … --trace-out …`。加 **`--use-fakes`** 为离线桩结果；**omit** 时在已连接真机上跑：`pip install 'hylyre[device]'`，可选 **`--device-sn`**、**`--bundle`**（`start_app`）、**`--mock-port` / `--lyrebird-url`** + **`--mock-group`**。测试步骤支持**单行 JSON**（`action`/`touch`/`input`，无需 VLM）或**自然语言**（需 **`HYLYRE_VLM_*`**）。**`--skip-assert-expected`** 可跳过对「预期结果」列的 `ai_assert`；0.4.0 会把检查模式写入 `expected_check_mode`，并只以 `CaseResult.steps[]` 生成证据。
 9. **做法 A（Cursor / NL → test-plan JSON）**：由 Agent 将意图写成 `test-plan.md`「测试步骤」列的**单行 JSON**，真机执行步骤时**不必**配置 VLM。约定与示例见 [`docs/agent-plan-a.md`](docs/agent-plan-a.md)、`tests/e2e/fixtures/json-steps-test-plan.md`。**AI 默认如何用 Hylyre**（无需每轮复述）：根目录 [`AGENTS.md`](AGENTS.md) + [`.cursor/rules/hylyre.mdc`](.cursor/rules/hylyre.mdc)；一次性 MCP 配置见 [`docs/cursor-mcp-setup.md`](docs/cursor-mcp-setup.md)
 
 ## 当前阶段
 
-**P0 已完成**（2026-05-11）：可编辑安装、`doctor`、`pytest` 冒烟、OpenSpec `add-mvp-skeleton` 有效。**P1**：`UiDriverBase` + Hypium 驱动与 fake 测试（见 `docs/plan.md`）。
+**0.5.0 引入 Step Outcome Protocol v1（破坏性）**：trace schema 升至 `0.4-p0`，所有结果 envelope 声明 `result_protocol: "hylyre.step-outcome/1"`。`StepResult.outcome` 是判别联合——`passed` 带 observation、`failed` 带 failure、`blocked` 带 cause、`skipped` 带 reason，互不兼容；status 只由「是否实际尝试」决定；selector 拆成 `request`/`resolution`；`blocked` 后缀指向根步骤而不再复制其失败分类。机器契约（Schema、规范、判定表、参考 reducer、218 个 golden fixtures）随包发布在 [`hylyre/contracts/`](hylyre/contracts/)，可离线读取与校验；消费方迁移见 [docs/migration-0.5.md](docs/migration-0.5.md)。真机复验仍为 pending。
 
 ## License
 
