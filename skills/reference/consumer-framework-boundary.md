@@ -41,6 +41,7 @@ framework 控制面写权限来自模型外执行环境，不来自 env、`frame
 - 普通 init/phase 不遍历 manifest `files[]`、不比较宿主 Git/HEAD；
 - version、manifest `source_commit`/`built_at` 与 sidecar 声明的 manifest SHA 可作非阻断 package identity；缺失/异常最多显示 unknown/WARN；
 - 新运行不产生 `framework_integrity`、`framework_control_plane_dirty` 或永久 SKIP/PASS 空壳结果；旧报告值只作历史 provenance。
+- 宿主 Git checkout 若会对 `framework/` 路径做行尾转换（Windows 默认 `core.autocrlf=true`），须在宿主 `.gitattributes` 钉 `framework/** -text`。含义是禁止 Git 对这些路径做任何行尾转换、保留首次提交的原始字节，不是"强制 LF"。顺序：先配置该规则，再从已验证发布件恢复 `framework/` 原始字节，然后提交；否则会把已经变成 CRLF 的字节永久钉住。Hylyre vendor 安装前门按落盘原始字节复算 tree hash，被改成 CRLF 的源码树会被拦下并点名"行尾改写"（不按归一化放行），此时"重新同步 vendor"只会在下次 checkout 再次翻转，唯一修法就是上面这条属性。发布件本身不带 `.gitattributes`，宿主 SCM 配置不属于 Maison 职责。
 
 ## framework 资产树不承载宿主产物
 

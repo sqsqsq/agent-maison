@@ -158,6 +158,45 @@ export function sha256TreeFromManifest(
     .toLowerCase();
 }
 
+function sha256BufferHex(buf: Buffer): string {
+  return crypto.createHash('sha256').update(buf).digest('hex').toLowerCase();
+}
+
+/** 树 hash 不一致的定性（只诊断，不放行；门禁仍按落盘原始字节判 mismatch）。 */
+export type VendorTreeMismatchKind = 'eol_rewritten' | 'corrupted';
+
+/**
+ * 树 hash 不一致时逐文件定性：原始字节等于声明 → 无差异；原始不等、不含 NUL、且
+ * CRLF→LF 归一化后等于声明 → 行尾改写；其余任何不等（缺失 / 内容篡改 / 二进制）→ 损坏。
+ * 全部差异都是行尾改写才返回 'eol_rewritten'——真篡改叠加 CRLF 仍是 'corrupted'。
+ * 唯一已知成因：宿主 Git checkout 对 framework/ 路径做了行尾转换（Windows 默认 `core.autocrlf=true`）
+ * 把 LF 改写成 CRLF。此时"重新同步 vendor"只会在下次 checkout 再次翻转，须改宿主 `.gitattributes`
+ * （`framework/** -text`）。归一化结果**不**用于放行：安装暂存复制的是落盘原始字节，
+ * 按归一化放行等于把未经验真的字节送进 PEP 517（codex review P1）。
+ */
+export function diagnoseVendorTreeMismatch(
+  rootAbs: string,
+  files: HylyreVendorSourceFileEntry[],
+): VendorTreeMismatchKind {
+  let eolRewritten = 0;
+  for (const f of files) {
+    if (!isSafeVendorRelPath(f.path)) return 'corrupted';
+    let raw: Buffer;
+    try {
+      raw = fs.readFileSync(path.join(rootAbs, ...f.path.split('/')));
+    } catch {
+      return 'corrupted';
+    }
+    const declared = (f.sha256 ?? '').toLowerCase();
+    if (sha256BufferHex(raw) === declared) continue;
+    if (raw.includes(0) || !raw.includes('\r\n')) return 'corrupted';
+    const normalized = Buffer.from(raw.toString('latin1').replace(/\r\n/g, '\n'), 'latin1');
+    if (sha256BufferHex(normalized) !== declared) return 'corrupted';
+    eolRewritten += 1;
+  }
+  return eolRewritten > 0 ? 'eol_rewritten' : 'corrupted';
+}
+
 function compareSemverLike(a: string, b: string): number {
   const pa = a.split(/[.-]/).map(x => (/^\d+$/.test(x) ? parseInt(x, 10) : x));
   const pb = b.split(/[.-]/).map(x => (/^\d+$/.test(x) ? parseInt(x, 10) : x));
