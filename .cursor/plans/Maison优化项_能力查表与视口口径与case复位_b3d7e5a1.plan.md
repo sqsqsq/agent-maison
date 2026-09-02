@@ -47,7 +47,7 @@ version: 3.0.0
 todos:
   - id: t1-archive-then-openspec
     content: T1 当前 change（testing-stepresult-evidence-consumption）经宿主 report-only → T8/5.2/6.8 → archive 之后，再创建两个后续 OpenSpec change 并 strict 通过：`testing-runtime-preflight-cleanups`（harness-gates ADDED：provider 通道 id 计划期 registry 存在性；Hylyre case 首部受限 `stop_app→start_app` 复位；D 作实施任务登记；E 已完成不含）与 `visual-reference-viewport-precheck`（visual-diff ADDED：参考图与 viewport 尺寸兼容性前置门，不含 reference_region/crop 系统）。不混进 framework-identity-boundary，不再拆更多 change。strict 通过前不动生产代码。
-    status: pending
+    status: completed
   - id: t2-provider-registry-lookup
     content: T2（A）`evaluateExecutionChannelDeclaration(planMd, opts?)` 增 `registeredCapabilityIds` 可选集合与 `unknown_provider[]` 结果字段，未知 id 并入 `ok=false`，detail 话术"该能力不存在（capability registry 未登记），此 TC 不可能通过"并列出当前 profile 已登记的 capability 键清单（normalize 后、字典序；空清单明示）；匹配 = 双方经 normalizeCapabilityKey 后精确相等，不做分隔符/大小写/相似度归一；`check-testing.ts:3703 loadExecutionChannelDeclaration` 唯一注入点传入 `ctx.resolvedProfile.capabilities` 键集（经 normalizeCapabilityKey），从而 `testing_execution_channel` BLOCKER（failure_kind=plan_contract）且 `shouldRunDevicePipeline` 零设备动作；report-only 仍完整只读重算。`parseExecutionChannel` 保持纯词法；severity=SKIP 的已登记能力视为"存在"（可用性归 capability-resolution）。回归：unknown/registered/alias/无 opts 四态 + 分隔符不同即 unknown（`provider:device_test.visual-diff` 对已登记 `device_test.visual_diff` → unknown，证明不做模糊匹配）+ detail 含已登记键清单（含空清单文案）+ 一条 check-testing 接线 + report-only 不被截断。
     status: pending
@@ -78,7 +78,7 @@ overview: >
 
 # Maison 优化项：provider 计划期查表、参考图视口尺寸前置门、受限 case 首部复位、versionCode=0 归一（b3d7e5a1）
 
-状态：**review 修订版（2026-09-02）——两处阻断意见（C 删 clear_app、B 收窄为尺寸前置门）已吸收，待确认；后续 OpenSpec change 待当前 change 归档后创建；除 E 已在当前 change 顺手完成外，未动生产代码。**
+状态：**已过 review（2026-09-02）；T1 完成——两个后续 OpenSpec change 已 strict 通过并过 codex review；T2–T5 生产实现进行中（按各 change tasks）。**
 
 关联资产：
 
