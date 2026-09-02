@@ -18,6 +18,7 @@ import {
   evaluateExecutionChannelDeclaration,
   extractExecutionChannels,
   parseExecutionChannel,
+  registeredCapabilityIdsFromProfile,
 } from '../../scripts/utils/execution-channel';
 import {
   evaluateChannelDerivedCoverage,
@@ -58,6 +59,7 @@ test('legacy 计划（无「执行通道」列）→ 一次性迁移 FAIL，且�
   const plan = topPlan(['| TC-001 | 打开卡包 | P0 | AC-1 |'], false);
   const table = extractExecutionChannels(plan);
   assert.strictEqual(table.column_declared, false);
+  assert.strictEqual(evaluateExecutionChannelDeclaration(plan).channels_resolved, false, '缺列时通道集合不可用');
   const decl = evaluateExecutionChannelDeclaration(plan);
   assert.strictEqual(decl.ok, false);
   assert.strictEqual(decl.hylyre_tc_ids.length, 0, '缺列时不得推断出任何 hylyre TC');
@@ -92,6 +94,97 @@ test('四通道分流正确，且 manual 在场时话术明说 feature testing �
   assert.deepStrictEqual(decl.manual_tc_ids, ['TC-004']);
   assert.ok(/无法 PASS/.test(decl.detail), 'manual 的分母义务必须显式说清楚');
   assert.ok(/冻结设计/.test(decl.detail), '须说明这是冻结设计而非执行器缺陷');
+});
+
+
+// ---------------------------------------------------------------------------
+// plan b3d7e5a1 T2：provider id 的计划期 registry 存在性
+// ---------------------------------------------------------------------------
+// 事故形态：宿主自拟 provider:device-test.perf-probe，声明门只验字面格式 → PASS，7 条 P0 跑完真机
+// 才被证据义务门判"永远不可能通过"。这里钉：未登记即计划期 BLOCKER、detail 给出已登记键清单、
+// 匹配是 normalize 后精确相等（不做分隔符/大小写/相似度归一）、无 opts 时纯词法逐字不变。
+test('plan b3d7e5a1 T2：未登记 provider id → ok=false + 已登记键清单；精确匹配；无 opts 行为不变', () => {
+  const registry = registeredCapabilityIdsFromProfile({
+    'device_test.visual_diff': { severity: 'SKIP' },
+    'prd.visual_handoff': { severity: 'BLOCKER' },
+  });
+  assert.ok(registry.has('device_test.visual_diff'), 'severity=SKIP 的能力也"存在"（可用性归 capability-resolution）');
+  assert.ok(registry.has('spec.visual_handoff') && !registry.has('prd.visual_handoff'), 'registry 键经 alias 归一为 canonical');
+
+  const plan = topPlan([
+    '| TC-001 | a | P0 | AC-1 | hylyre |',
+    '| TC-002 | b | P1 | AC-2 | provider:device-test.perf-probe |',
+  ]);
+  const unknown = evaluateExecutionChannelDeclaration(plan, { registeredCapabilityIds: registry });
+  assert.strictEqual(unknown.ok, false, '未登记 id 必须让声明不闭合');
+  // codex P1：通道集合仍已解析——report-only 必须继续按 hylyre 集合精确对账，不得退回 legacy 全 TC 口径
+  assert.strictEqual(unknown.channels_resolved, true, 'registry 未登记不影响通道集合的可用性');
+  assert.deepStrictEqual(unknown.hylyre_tc_ids, ['TC-001']);
+  assert.deepStrictEqual(unknown.unknown_provider, [{ tc_id: 'TC-002', provider_id: 'device-test.perf-probe' }]);
+  assert.deepStrictEqual(unknown.provider_tc_ids, [{ tc_id: 'TC-002', provider_id: 'device-test.perf-probe' }], '仍留在 provider 集合（report-only 义务门需要）');
+  assert.ok(/TC-002 的 execution_channel=provider:device-test\.perf-probe：该能力不存在（capability registry 未登记），此 TC 不可能通过/.test(unknown.detail), unknown.detail);
+  assert.ok(/不按名字猜能力/.test(unknown.detail));
+  assert.ok(/已登记的 capability 键（normalize 后、字典序）：device_test\.visual_diff, spec\.visual_handoff/.test(unknown.detail), unknown.detail);
+
+  // 无 opts = 纯词法：与查表前逐字一致
+  const lexical = evaluateExecutionChannelDeclaration(plan);
+  assert.strictEqual(lexical.ok, true);
+  assert.deepStrictEqual(lexical.unknown_provider, []);
+  assert.ok(!/未登记/.test(lexical.detail));
+
+  // 已登记（含 SKIP）、canonical 与 legacy alias 两种写法都算存在
+  for (const id of ['device_test.visual_diff', 'spec.visual_handoff', 'prd.visual_handoff']) {
+    const ok = evaluateExecutionChannelDeclaration(topPlan([`| TC-002 | b | P1 | AC-2 | provider:${id} |`]), { registeredCapabilityIds: registry });
+    assert.strictEqual(ok.ok, true, `${id} 应视为已登记`);
+    assert.deepStrictEqual(ok.unknown_provider, []);
+  }
+  // 分隔符变体不做模糊匹配 → unknown；大小写变体连字面格式都不合法 → illegal；两者都 FAIL
+  for (const id of ['device_test.visual-diff', 'device-test.visual_diff', 'device_test_visual_diff']) {
+    const variant = evaluateExecutionChannelDeclaration(topPlan([`| TC-002 | b | P1 | AC-2 | provider:${id} |`]), { registeredCapabilityIds: registry });
+    assert.strictEqual(variant.ok, false, `${id} 不得被模糊匹配成已登记`);
+    assert.deepStrictEqual(variant.unknown_provider, [{ tc_id: 'TC-002', provider_id: id }]);
+  }
+  const upper = evaluateExecutionChannelDeclaration(topPlan(['| TC-002 | b | P1 | AC-2 | provider:Device_Test.visual_diff |']), { registeredCapabilityIds: registry });
+  assert.strictEqual(upper.ok, false);
+  assert.strictEqual(upper.illegal.length, 1, '大小写变体在词法层就不合法');
+
+  // 空 registry 明示
+  const empty = evaluateExecutionChannelDeclaration(plan, { registeredCapabilityIds: new Set() });
+  assert.strictEqual(empty.ok, false);
+  assert.ok(/当前 profile 未登记任何 capability/.test(empty.detail), empty.detail);
+  // 无 provider TC 的计划：查表不产生任何影响
+  const noProvider = evaluateExecutionChannelDeclaration(topPlan(['| TC-001 | a | P0 | AC-1 | hylyre |']), { registeredCapabilityIds: new Set() });
+  assert.strictEqual(noProvider.ok, true);
+  assert.deepStrictEqual(noProvider.unknown_provider, []);
+});
+
+test('plan b3d7e5a1 T2：check-testing 接线——未登记 id 产出 plan_contract BLOCKER 且零设备；report-only 不被截断；已登记放行', () => {
+  const ctxWith = (capabilities: Record<string, unknown>) =>
+    ({ projectRoot: process.cwd(), feature: 'demo', phase: 'testing', resolvedProfile: { capabilities } }) as unknown as
+      Parameters<typeof __testing_checkExecutionChannelDeclaration>[0];
+  const registered = { 'device_test.visual_diff': { provider: 'script', severity: 'BLOCKER' } };
+  const unknownPlan = topPlan([
+    '| TC-001 | a | P0 | AC-1 | hylyre |',
+    '| TC-002 | b | P1 | AC-2 | provider:device-test.gesture-trace |',
+  ]);
+  const [blocked] = __testing_checkExecutionChannelDeclaration(ctxWith(registered), unknownPlan);
+  assert.strictEqual(blocked.status, 'FAIL');
+  assert.strictEqual(blocked.severity, 'BLOCKER');
+  assert.strictEqual(blocked.failure_kind, 'plan_contract');
+  assert.ok(/device-test\.gesture-trace/.test(blocked.details ?? '') && /device_test\.visual_diff/.test(blocked.details ?? ''), blocked.details);
+  // 声明不闭合 → 设备流水线不启动；report-only 仍完整只读重算
+  assert.deepStrictEqual(shouldRunDevicePipeline({ ok: false }, false), { device: false, reportOnly: false });
+  assert.deepStrictEqual(shouldRunDevicePipeline({ ok: false }, true), { device: false, reportOnly: true });
+
+  const okPlan = topPlan([
+    '| TC-001 | a | P0 | AC-1 | hylyre |',
+    '| TC-002 | b | P1 | AC-2 | provider:device_test.visual_diff |',
+  ]);
+  const [passed] = __testing_checkExecutionChannelDeclaration(ctxWith(registered), okPlan);
+  assert.strictEqual(passed.status, 'PASS', passed.details);
+  // 缺 capabilities 的上下文按空 registry 处理（fail-closed），不静默放行
+  const [noRegistry] = __testing_checkExecutionChannelDeclaration(ctxWith(undefined as unknown as Record<string, unknown>), okPlan);
+  assert.strictEqual(noRegistry.status, 'FAIL');
 });
 
 // review P1：契约是「每 TC **唯一** channel」。重复行即使取值相同也无法证明唯一；

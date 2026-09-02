@@ -917,10 +917,15 @@ export function uninstallBundleViaBm(bundleName: string, opts?: { keepUserData?:
 export interface InstalledBundleVersionParse {
   /** true：解析认为 bundle 已安装（含 dump 成功但版本码未解析出） */
   installed: boolean;
-  /** 已从输出中提取的版本码；无法解析时为 null */
+  /** 已从输出中提取的版本码；无法解析时为 null（含 bm dump 报 0 的情形，见 versionCodeUnknownReason） */
   versionCode: number | null;
   /** 无法从文本判定是否安装时供上层记录 */
   ambiguous?: boolean;
+  /**
+   * plan b3d7e5a1 T3：部分 HarmonyOS 的 bm dump 会把 versionCode 误报为 0。0 不是确定值——在解析边界
+   * 归为 null 并注明原因，调用方不再各自特判 0；installed 仍按原始文本判定（0 不能把已安装变成未安装）。
+   */
+  versionCodeUnknownReason?: 'parsed_zero';
 }
 
 /**
@@ -968,10 +973,12 @@ export function parseInstalledBundleVersionFromDump(output: string): InstalledBu
 
   const ambiguous = !notInstalledHints && !installed && text.length > 0;
 
+  const parsedZero = versionCode === 0;
   return {
     installed,
-    versionCode,
+    versionCode: parsedZero ? null : versionCode,
     ambiguous: ambiguous || undefined,
+    ...(parsedZero ? { versionCodeUnknownReason: 'parsed_zero' as const } : {}),
   };
 }
 

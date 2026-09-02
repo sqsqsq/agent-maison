@@ -35,7 +35,6 @@ export function detectInstallDowngrade(
     candidateVersionCode !== null &&
     installed.installed &&
     installed.versionCode !== null &&
-    installed.versionCode > 0 &&
     installed.versionCode > candidateVersionCode
   );
 }
@@ -79,6 +78,10 @@ export function diagnoseInstallBlocking(projectRoot: string): InstallBlockingDia
   const installedParse = parseInstalledBundleVersionFromDump(bmDump.output);
   const devVc = installedParse.versionCode;
   const candVc = candidate.versionCode;
+  // plan b3d7e5a1 T3：bm dump 报 0 已在解析边界归 null，这里只负责把"unknown"说出来，不当确定值输出。
+  const devVcNote = installedParse.versionCodeUnknownReason === 'parsed_zero'
+    ? '设备 versionCode 未解析（bm dump 报 0，按 unknown 处理，不参与降级比较）。'
+    : '';
 
   const downgradeDetected = detectInstallDowngrade(candVc, installedParse);
 
@@ -108,7 +111,7 @@ export function diagnoseInstallBlocking(projectRoot: string): InstallBlockingDia
 
   return {
     kind: 'clear',
-    details: '设备与版本预检通过（或无阻塞性版本冲突）。',
+    details: `设备与版本预检通过（或无阻塞性版本冲突）。${devVcNote}`,
     bundleName: candidate.bundleName,
     candidateVersionCode: candVc,
     deviceVersionCode: devVc,

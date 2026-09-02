@@ -30,7 +30,7 @@ Enforcement: `harness/scripts/utils/execution-channel.ts`, `harness/scripts/chec
 
 ### Requirement: A Hylyre case may reset the app only with a leading stop_app→start_app preamble
 
-Formal derived Hylyre plans compile in one shared device session and do not clear the navigation stack between cases. A case that needs a known starting state MAY begin with exactly one **reset preamble**: `{"stop_app":{"bundle":B}}` immediately followed by `{"start_app":{"bundle":B,"page_name":P}}`, placed at the head of the case. `B` and `P` SHALL equal the identity the harness itself uses for its pre-launch (the install candidate bundle name and the resolved Hypium page name) and SHALL be injected into the linter and the derive knowledge by the harness; the derive writer SHALL NOT invent them. The step linter SHALL reject a `start_app` without a directly preceding `stop_app`, a `stop_app` that is not closed by an immediately following `start_app`, any `start_app` or `stop_app` outside the case head, a second lifecycle group in the same case, a preamble whose bundle or page name differs from the harness identity, and a preamble whose identity cannot be resolved. The decision rule is deliberately simple: only step index 0 may be `stop_app` and only step index 1 may be `start_app`, and any `start_app`/`stop_app` root key at any other index is a STEP-003 BLOCKER — this is what makes the preamble exactly one and always paired. `clear_app` is not part of this preamble and SHALL NOT be added by the derive writer; the `action`-wrapped `start_app` form remains rejected. The adhoc steps path keeps its full `start_app` prohibition because the harness cold-restarts there. Runner-level pre-launch and cold restart behavior SHALL NOT change, and no screen state machine, reachability graph, or Hylyre teardown state machine SHALL be introduced.
+Formal derived Hylyre plans compile in one shared device session and do not clear the navigation stack between cases. A case that needs a known starting state MAY begin with exactly one **reset preamble**: `{"stop_app":{"bundle":B}}` immediately followed by `{"start_app":{"bundle":B,"page_name":P}}`, placed at the head of the case. `B` and `P` SHALL equal the identity the harness itself uses for its pre-launch (the install candidate bundle name and the resolved Hypium page name) and SHALL be injected into the linter and the derive knowledge by the harness; the derive writer SHALL NOT invent them. The step linter SHALL reject a `start_app` without a directly preceding `stop_app`, a `stop_app` that is not immediately followed by `start_app`, any `start_app` or `stop_app` outside the case head, a second lifecycle group in the same case, a preamble whose bundle or page name differs from the harness identity, and a preamble whose identity cannot be resolved. The decision rule is deliberately simple: only step index 0 may be `stop_app` and only step index 1 may be `start_app`, and any `start_app`/`stop_app` root key at any other index is a STEP-003 BLOCKER — this is what makes the preamble exactly one and always paired. `clear_app` is not part of this preamble and SHALL NOT be added by the derive writer; the `action`-wrapped `start_app` form remains rejected. The adhoc steps path keeps its full `start_app` prohibition because the harness cold-restarts there. Runner-level pre-launch and cold restart behavior SHALL NOT change, and no screen state machine, reachability graph, or Hylyre teardown state machine SHALL be introduced.
 
 Enforcement: `harness/scripts/utils/derived-hylyre-plan.ts`, `harness/scripts/utils/hylyre-standard-derive-knowledge.ts`, `harness/scripts/utils/hylyre-planned-step-lint.ts`, `harness/scripts/check-testing.ts`
 
@@ -44,7 +44,7 @@ Enforcement: `harness/scripts/utils/derived-hylyre-plan.ts`, `harness/scripts/ut
 - **WHEN** a case begins with `start_app` and no directly preceding `stop_app`
 - **THEN** compilation SHALL FAIL for that case with a STEP-003 BLOCKER
 
-#### Scenario: stop_app without a closing start_app is rejected
+#### Scenario: stop_app without start_app is rejected
 
 - **WHEN** a case begins with `stop_app` and the next step is a business step or the case ends
 - **THEN** compilation SHALL FAIL for that case with a STEP-003 BLOCKER
@@ -68,3 +68,30 @@ Enforcement: `harness/scripts/utils/derived-hylyre-plan.ts`, `harness/scripts/ut
 
 - **WHEN** an adhoc steps file contains `start_app` in any position
 - **THEN** the adhoc linter SHALL reject it as before
+
+## MODIFIED Requirements
+
+### Requirement: The manual channel keeps an open obligation and cannot close a quality gate
+
+`manual` SHALL mean the test obligation currently has no machine evidence carrier. Maison SHALL NOT provide a manual pass writer, `confirmed_by`, human quality receipt, or manual resume that closes testing for the run. Any case declared `manual` SHALL remain in the denominator as FAIL/UNVERIFIED, and the feature's testing verdict SHALL NOT reach PASS while such a case exists. This is frozen design rather than an executor defect, and the guidance SHALL state it plainly. A human observation MAY become correction input for a later phase, but never evidence that closes this run.
+
+`visual` is intended to route into the existing visual capture/diff evidence path and `provider:<capability-id>` into the existing capability registry; neither may pass without its own machine evidence. A registered capability whose provider is missing or cannot be resolved SHALL surface as an explicit capability gap and SHALL NOT be converted into a skip; an id absent from the capability registry is a `plan_contract` BLOCKER at declaration time and never reaches capability resolution.
+
+Because non-Hylyre cases are deliberately excluded from the derived/trace/timing exact sets, they SHALL still be adjudicated by an explicit obligation carrier rather than by a self-reported report row. Until a per-case evidence binding exists for a channel — a machine mapping from the case to its visual target or to its capability evidence — every case on that channel SHALL remain in the denominator as FAIL/UNVERIFIED. Fail-closed is required here: a channel with no binding MUST NOT be treated as passed, and the gap SHALL be reported as a missing binding rather than as an executor defect.
+
+Enforcement: `harness/scripts/check-testing.ts`, `harness/scripts/utils/quality-axes.ts`, `harness/capability-registry.ts`
+
+#### Scenario: A manual case keeps the feature out of PASS
+
+- **WHEN** every other case passes and one case is declared `manual`
+- **THEN** testing SHALL remain FAIL/UNVERIFIED for the feature and no writer SHALL accept a human confirmation as this run's evidence
+
+#### Scenario: A channel without a per-case evidence binding cannot pass
+
+- **WHEN** a case is declared `visual` or `provider:<capability-id>` and no machine binding proves that case's own evidence
+- **THEN** it SHALL stay in the denominator as FAIL/UNVERIFIED and SHALL NOT be closed by a report row that claims it passed
+
+#### Scenario: A missing provider is a capability gap, not a skip
+
+- **WHEN** a case declares `provider:<capability-id>` for a registered capability whose provider cannot be resolved
+- **THEN** the run SHALL report an explicit capability gap and SHALL NOT rewrite the case as skipped

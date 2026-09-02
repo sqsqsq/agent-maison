@@ -37,7 +37,8 @@ import {
   parseInstalledBundleVersionFromDump,
   diagnoseHdcInstallFailure,
 } from '../../hdc-runner';
-import { mapInstallBlockingToUtCheckFields } from '../../device-install-diag';
+import { detectInstallDowngrade, mapInstallBlockingToUtCheckFields } from '../../device-install-diag';
+import { describeDeviceVersionCode, describeInstallReuse, installVersionAllowsReuse } from '../../providers/device-test-install';
 import {
   mergeEnvWithHdcOnPath,
   resetHdcExecutableCache,
@@ -724,6 +725,50 @@ const cases: Array<{ name: string; run: () => void }> = [
         else process.env.CI = prevCi;
         resetHdcUsed();
       }
+    },
+  },
+  {
+    name: 'parseInstalledBundleVersionFromDump: versionCode=0 归 unknown（null + parsed_zero），installed 仍为 true（plan b3d7e5a1 T3）',
+    run: () => {
+      const zero = parseInstalledBundleVersionFromDump('{"bundleName":"com.demo.app","versionCode":0,"hapModuleInfos":[]}');
+      assertEq(zero.installed, true, 'bm dump 报 0 不能把已安装变成未安装');
+      assertEq(zero.versionCode, null, '0 不是确定值：归 null');
+      assertEq(zero.versionCodeUnknownReason, 'parsed_zero', '注明原因 parsed_zero');
+      const plain = parseInstalledBundleVersionFromDump('versionCode: 0\nbundleName: com.demo.app');
+      assertEq(plain.versionCode, null, '纯文本形态同样归 null');
+      assertEq(plain.versionCodeUnknownReason, 'parsed_zero', '纯文本形态同样注明原因');
+      const normal = parseInstalledBundleVersionFromDump('{"bundleName":"com.demo.app","versionCode":1000010,"hapModuleInfos":[]}');
+      assertEq(normal.versionCode, 1000010, '正整数行为不变');
+      assertEq(normal.versionCodeUnknownReason, undefined, '正整数无 reason');
+      const missing = parseInstalledBundleVersionFromDump('error: bundle name does not exist');
+      assertEq(missing.installed, false, '未安装路径不变');
+      assertEq(missing.versionCode, null, '未安装 versionCode=null');
+      assertEq(missing.versionCodeUnknownReason, undefined, '未安装无 reason');
+    },
+  },
+  {
+    name: 'install reuse（codex P1）：parsed-zero 走复用分支时日志明示 unknown、不断言"同 versionCode"',
+    run: () => {
+      const zero = parseInstalledBundleVersionFromDump('{"bundleName":"com.demo.app","versionCode":0,"hapModuleInfos":[]}');
+      assertEq(installVersionAllowsReuse(zero.versionCode, 1000010), true, '未知版本按 HAP 指纹 + bundle 允许复用');
+      assertEq(installVersionAllowsReuse(1000009, 1000010), false, '确定值不等才拒绝复用');
+      assertEq(describeDeviceVersionCode(zero), '(未解析：bm dump 报 0，按 unknown)', '展示口径 unknown');
+      assertEq(describeDeviceVersionCode({ versionCode: 7 }), '7', '正整数原样');
+      const line = describeInstallReuse(zero, 1000010);
+      assertEq(/unknown/.test(line) && /不断言版本相同/.test(line), true, `reuse 日志须明示 unknown：${line}`);
+      assertEq(!/同 bundle\/versionCode/.test(line) && !/versionCode=0\b/.test(line), true, `不得写成确定相同或确定 0：${line}`);
+      const same = describeInstallReuse({ versionCode: 1000010 }, 1000010);
+      assertEq(/与候选一致/.test(same), true, `确定相同时才说一致：${same}`);
+    },
+  },
+  {
+    name: 'detectInstallDowngrade: 解析边界已把 0 归 null → 不判降级；只有正整数更高才判降级（plan b3d7e5a1 T3）',
+    run: () => {
+      assertEq(detectInstallDowngrade(5, parseInstalledBundleVersionFromDump('"versionCode": 0')), false, 'bm dump 报 0 不是降级');
+      assertEq(detectInstallDowngrade(5, { installed: true, versionCode: 6 }), true, '设备 6 > 候选 5 = 降级');
+      assertEq(detectInstallDowngrade(5, { installed: true, versionCode: 5 }), false, '相等不是降级');
+      assertEq(detectInstallDowngrade(5, { installed: false, versionCode: 6 }), false, '未安装不是降级');
+      assertEq(detectInstallDowngrade(null, { installed: true, versionCode: 6 }), false, '候选未声明不判');
     },
   },
 ];

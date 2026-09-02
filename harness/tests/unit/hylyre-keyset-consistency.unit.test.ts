@@ -22,7 +22,12 @@ import {
   buildStandardHylyreDeriveKnowledge,
   buildStandardHylyreDerivePayloadBase,
   STANDARD_DERIVE_HINT_SCHEMA,
+  resolveHylyreResetIdentity,
 } from '../../scripts/utils/hylyre-standard-derive-knowledge';
+import { lintHylyrePlanStepRules, parsePlannedStepsFromCell } from '../../scripts/utils/derived-hylyre-plan';
+import { loadAppInstallCandidateMeta } from '../../../profiles/hmos-app/harness/hdc-runner';
+import { resolveMainAbilityForBundle } from '../../../profiles/hmos-app/harness/resolve-main-ability';
+import * as os from 'os';
 
 interface UnitCaseResult {
   name: string;
@@ -167,7 +172,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 't7a 知识块：schema=4、allowed 与键表同源（剔 action/start_app）、catalog 非空',
+    name: 't7a 知识块：schema=4、allowed 与键表同源（剔 action；start_app/stop_app 仅作首部复位前奏）、catalog 非空、reset_preamble',
     run: () => {
       assert(STANDARD_DERIVE_HINT_SCHEMA === 4, '标准派生提示 schema 应为 4');
       const k = buildStandardHylyreDeriveKnowledge();
@@ -177,12 +182,96 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert(tsKeys.has(key), `allowed_step_roots 含键表外的键：${key}`);
       }
       assert(
-        !k.allowed_step_roots.includes('action') && !k.allowed_step_roots.includes('start_app'),
-        '知识块 allowed 应剔除 legacy action 与 start_app（派生计划禁用，与 STEP lint 同源）',
+        !k.allowed_step_roots.includes('action') && k.allowed_step_roots.includes('start_app') && k.allowed_step_roots.includes('stop_app'),
+        '知识块 allowed 剔除 legacy action，保留 start_app/stop_app（仅限 case 首部复位前奏，plan b3d7e5a1 T4，与 STEP-003 同源）',
       );
-      assert(k.forbidden_in_steps.includes('start_app') && k.forbidden_in_steps.includes('dump_ui'), 'forbidden 应含 start_app 与 dump_ui');
+      assert(!k.forbidden_in_steps.includes('start_app') && k.forbidden_in_steps.includes('dump_ui'), 'forbidden 只剩 CLI 名（含 dump_ui），不再含 start_app');
+      assert(k.reset_preamble.available === false && /未注入|未解析/.test(k.reset_preamble.reason), '未注入身份时 reset_preamble 明示不可用');
+      assert(/不得使用 clear_app/.test(k.canonical_format) && /reset_preamble/.test(k.canonical_format), 'canonical_format 须指向 reset_preamble 并排除 clear_app');
+      const withId = buildStandardHylyreDeriveKnowledge({ identity: { bundle: 'com.demo', page_name: 'EntryAbility' } });
+      assert(
+        withId.reset_preamble.available === true &&
+          withId.reset_preamble.bundle === 'com.demo' &&
+          withId.reset_preamble.example.includes('"page_name":"EntryAbility"') &&
+          /clear_app/.test(withId.reset_preamble.rule),
+        '注入身份后 reset_preamble 给出同源 bundle/page_name、example 与禁 clear_app 规则',
+      );
       assert(Array.isArray(k.step_shape_catalog) && k.step_shape_catalog.length > 0, 'step_shape_catalog 不得为空');
       assert(k.hylyre_planned_step_fields_ref.endsWith('hylyre-planned-step-fields.md'), 'fields 文档引用缺失');
+    },
+  },
+  {
+    name: 'b3d7e5a1 T4（codex P1）：reset_preamble.example 能被生产 cell 解析器解析并过正式 lint',
+    run: () => {
+      const k = buildStandardHylyreDeriveKnowledge({ identity: { bundle: 'com.demo', page_name: 'EntryAbility' } });
+      assert(k.reset_preamble.available === true, 'fixture');
+      const parsed = parsePlannedStepsFromCell(k.reset_preamble.example);
+      assert(parsed.ok === true, `example 必须能被 parsePlannedStepsFromCell 解析：${JSON.stringify(parsed)}`);
+      assert(parsed.ok && parsed.steps.length === 2 && 'stop_app' in parsed.steps[0]! && 'start_app' in parsed.steps[1]!, '恰好 stop_app; start_app 两步');
+      const md = [
+        '## 测试用例清单', '',
+        '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC |',
+        '|---|---|---|---|---|---|---|',
+        `| TC-001 | x | - | ${k.reset_preamble.example} ; {"touch":{"by_text":"卡包","match":"exact"}} | x | P0 | AC-1 |`,
+      ].join('\n');
+      const lint = lintHylyrePlanStepRules(md, { resetIdentity: { bundle: 'com.demo', page_name: 'EntryAbility' } });
+      assert(lint.ok, `照抄 example 的计划必须过正式 lint：${JSON.stringify(lint.violations)}`);
+      assert(/不是.*JSON 数组/.test(k.canonical_format), 'canonical_format 须纠正为 `;` 分隔对象序列而非 JSON 数组');
+    },
+  },
+  {
+    name: 'b3d7e5a1 T4（codex P1）：reset identity = 冻结两静态来源（安装候选 bundle + hypium_page_name||entry 扫描），零缓存读写；run 侧同源',
+    run: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reset-identity-'));
+      try {
+        fs.mkdirSync(path.join(root, 'AppScope'), { recursive: true });
+        fs.writeFileSync(path.join(root, 'AppScope', 'app.json5'), [
+          '{',
+          '  // "bundleName": "com.old.bundle"  ← 历史注释',
+          '  "app": {',
+          '    "bundleName": "com.demo.wallet", // trailing comment',
+          '    "versionCode": 1000010,',
+          '  },',
+          '}',
+        ].join('\n'));
+        fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({
+          schema_version: '1.0', project_name: 'demo', project_type: 'app',
+          project_profile: { name: 'hmos-app' }, agent_adapter: 'cursor',
+          architecture: { outer_layers: [{ id: '01-Product', can_depend_on: [], intra_layer_deps: 'forbid' }], module_inner_layers: ['shared'], inner_dependency_direction: 'upward', cross_module_exports_file: 'index.ets' },
+          paths: { features_dir: 'doc/features' },
+          tools: { hylyre: { hypium_page_name: 'EntryAbility', bundle_abilities: { 'com.demo.wallet': 'MappedAbility' } } },
+        }, null, 2));
+        const cacheDir = path.join(root, 'doc', 'app-snapshot-cache', 'com.demo.wallet');
+        fs.mkdirSync(cacheDir, { recursive: true });
+        const metaPath = path.join(cacheDir, 'app-meta.json');
+        const stalePath = path.join(cacheDir, 'app-meta.stale');
+        fs.writeFileSync(metaPath, JSON.stringify({ bundleName: 'com.demo.wallet', mainAbility: 'CachedAbility' }));
+        fs.writeFileSync(stalePath, 'stale\n');
+        const metaBefore = fs.readFileSync(metaPath);
+        const staleBefore = fs.readFileSync(stalePath);
+
+        const identity = resolveHylyreResetIdentity(root);
+        assert(identity.identity !== null, `身份应可解析：${identity.reason}`);
+        assert(identity.identity!.bundle === loadAppInstallCandidateMeta(root).bundleName && identity.identity!.bundle === 'com.demo.wallet', 'bundle 须等于安装候选解析（非注释里的旧值）');
+        assert(identity.identity!.page_name === 'EntryAbility', `page_name 须取冻结来源 hypium_page_name，不被 bundle_abilities/app-meta cache 覆盖：${identity.identity!.page_name}`);
+        assert(fs.existsSync(metaPath) && fs.existsSync(stalePath), '静态解析不得删除缓存文件');
+        assert(fs.readFileSync(metaPath).equals(metaBefore) && fs.readFileSync(stalePath).equals(staleBefore), '静态解析不得改写缓存文件');
+        const k = buildStandardHylyreDeriveKnowledge(identity);
+        assert(k.reset_preamble.available && k.reset_preamble.bundle === 'com.demo.wallet' && k.reset_preamble.page_name === 'EntryAbility', 'hint 与 lint 身份一致');
+        const dispatch = resolveMainAbilityForBundle({ projectRoot: root, bundleName: 'com.demo.wallet', override: identity.identity!.page_name, writeCache: false });
+        assert(dispatch.mainAbility === 'EntryAbility' && dispatch.source === 'override', `run 以同一 page 作 override：${JSON.stringify(dispatch)}`);
+        assert(fs.readFileSync(metaPath).equals(metaBefore) && fs.existsSync(stalePath), 'override 路径同样不碰缓存');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+      const src = fs.readFileSync(path.join(FRAMEWORK_ROOT, 'harness/scripts/check-testing.ts'), 'utf-8');
+      assert(!src.includes('readBundleNameFromAppScope'), 'check-testing 不得再用独立正则读 bundleName');
+      assert(/hypiumPageName:\s*resetIdentity\.identity\?\.page_name/.test(src), 'run 须把同一 resolved page 作为 hypiumPageName 传下去');
+      assert(/resetIdentity\.identity\?\.bundle \?\? loadAppInstallCandidateMeta\(ctx\.projectRoot\)\.bundleName/.test(src), 'run 的 bundleName 须来自安装候选');
+      const knowledge = fs.readFileSync(path.join(FRAMEWORK_ROOT, 'harness/scripts/utils/hylyre-standard-derive-knowledge.ts'), 'utf-8');
+      assert(!knowledge.includes('resolveMainAbilityForBundle('), '静态身份不得借道完整 resolver（含 cache 读删）');
+      const resolver = fs.readFileSync(path.join(FRAMEWORK_ROOT, 'profiles/hmos-app/harness/resolve-main-ability.ts'), 'utf-8');
+      assert(!resolver.includes('deviceProbe'), 'deviceProbe 分支已撤回');
     },
   },
   {
@@ -205,7 +294,9 @@ const cases: Array<{ name: string; run: () => void }> = [
       const path2 = require('path') as typeof import('path');
       for (const rel of ['harness/scripts/check-testing.ts', 'harness/scripts/derive-hylyre-plan-hint.ts']) {
         const src = fs2.readFileSync(path2.join(FRAMEWORK_ROOT, rel), 'utf-8');
-        assert(src.includes('buildStandardHylyreDerivePayloadBase()'), `${rel} 应消费统一基座`);
+        assert(src.includes('buildStandardHylyreDerivePayloadBase('), `${rel} 应消费统一基座`);
+        // plan b3d7e5a1 T4：两入口的复位身份同源——都经 resolveHylyreResetIdentity 注入，不各自拼 bundle/page_name。
+        assert(src.includes('resolveHylyreResetIdentity('), `${rel} 应经 resolveHylyreResetIdentity 注入 reset_preamble 身份`);
       }
     },
   },

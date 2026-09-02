@@ -388,8 +388,92 @@ export type LintHylyrePlanResult = {
   nav: LintDerivedHylyrePlanResult;
 };
 
+/** plan b3d7e5a1 T4：harness 预启同源身份（安装候选 bundleName + hypium_page_name/entry mainElement）。 */
+export interface HylyreResetIdentity {
+  bundle: string;
+  page_name: string;
+}
+
+const LIFECYCLE_STEP_ROOTS = new Set(['start_app', 'stop_app']);
+
+function singleRootOf(step: Record<string, unknown> | undefined): string {
+  if (!step) return '';
+  const roots = stepRootKeys(step);
+  return roots.length === 1 ? roots[0]! : '';
+}
+
+/**
+ * plan b3d7e5a1 T4（STEP-003）：case 首部受限复位前奏。
+ * 判据只有一条：index 0 才可为 stop_app、index 1 才可为 start_app（且 index 0 必须是 stop_app），
+ * 其它任何位置出现 start_app/stop_app 根键即 BLOCKER——由此保证前奏成对、至多一组、只在首部。
+ * 前奏在场时 bundle/page_name 必须逐字等于 harness 预启身份；身份不可解析 → BLOCKER 而不是放行。
+ * `forbidStartApp:true` 是即席语义：harness 冷重启负责复位，steps 内 start_app 一律禁止。
+ */
+function lintResetPreamble(
+  steps: Record<string, unknown>[],
+  tcId: string,
+  opts: { forbidStartApp: boolean; resetIdentity?: HylyreResetIdentity | null },
+): StepLintViolation[] {
+  const out: StepLintViolation[] = [];
+  const push = (message: string, suggested_fix: string): void => {
+    out.push({ rule_id: 'STEP-003', severity: 'BLOCKER', tc_id: tcId, message, suggested_fix });
+  };
+  if (opts.forbidStartApp) {
+    steps.forEach((step, index) => {
+      if (singleRootOf(step) === 'start_app') {
+        push(`step #${index}：即席 steps 禁止 start_app（harness 冷重启负责复位）。`, '（删除 start_app 步骤）');
+      }
+    });
+    return out;
+  }
+  const PREAMBLE_FIX =
+    '复位只允许 case 首部恰好一组：{"stop_app":{"bundle":B}}; {"start_app":{"bundle":B,"page_name":P}}' +
+    '（B/P 见 derive hint 的 reset_preamble），其它位置删除该步骤';
+  const hasPreamble = singleRootOf(steps[0]) === 'stop_app';
+  steps.forEach((step, index) => {
+    const root = singleRootOf(step);
+    if (!LIFECYCLE_STEP_ROOTS.has(root)) return;
+    if (index === 0 && root === 'stop_app') return;
+    if (index === 1 && root === 'start_app' && hasPreamble) return;
+    push(
+      `step #${index} 的 ${root} 不在合法复位前奏位置：只允许 index 0 为 stop_app、index 1 为 start_app（恰好一组、只在 case 首部）；` +
+        (root === 'start_app' && index === 0 ? 'start_app 前必须紧跟 stop_app。' : '其它位置一律禁止。'),
+      PREAMBLE_FIX,
+    );
+  });
+  if (!hasPreamble) return out;
+  if (singleRootOf(steps[1]) !== 'start_app') {
+    push('stop_app 必须被紧邻的 start_app 闭合（stop_app→start_app 成对），不能单独出现。', PREAMBLE_FIX);
+    return out;
+  }
+  const identity = opts.resetIdentity;
+  if (!identity) {
+    push(
+      '无法解析 harness 预启身份（安装候选 bundleName / tools.hylyre.hypium_page_name 或 entry mainElement），复位前奏不可验证：修复身份来源或删除前奏。',
+      PREAMBLE_FIX,
+    );
+    return out;
+  }
+  const stop = steps[0]!.stop_app as Record<string, unknown> | undefined;
+  const start = steps[1]!.start_app as Record<string, unknown> | undefined;
+  const problems: string[] = [];
+  if (stop?.bundle !== identity.bundle) problems.push(`stop_app.bundle=${JSON.stringify(stop?.bundle ?? null)} ≠ ${identity.bundle}`);
+  if (start?.bundle !== identity.bundle) problems.push(`start_app.bundle=${JSON.stringify(start?.bundle ?? null)} ≠ ${identity.bundle}`);
+  if (start?.page_name !== identity.page_name) problems.push(`start_app.page_name=${JSON.stringify(start?.page_name ?? null)} ≠ ${identity.page_name}`);
+  if (problems.length > 0) {
+    push(
+      `复位前奏身份与 harness 预启不一致：${problems.join('；')}（来源：安装候选 bundleName + tools.hylyre.hypium_page_name/entry mainElement；派生不得自拟）。`,
+      PREAMBLE_FIX,
+    );
+  }
+  return out;
+}
+
 export type LintHylyrePlanOptions = {
+  /** true = 即席语义：steps 内 start_app 一律禁止；默认 false = 正式路径的受限复位前奏（plan b3d7e5a1 T4） */
   forbidStartApp?: boolean;
+  /** 正式路径：harness 预启同源身份；前奏在场而身份为 null → BLOCKER */
+  resetIdentity?: HylyreResetIdentity | null;
   canonicalTouch?: boolean;
   /** When false, STEP-005 backtick is WARN only (post-normalize retry path). */
   backtickBlocker?: boolean;
@@ -401,7 +485,7 @@ export function lintHylyrePlanStepRules(
   opts?: LintHylyrePlanOptions,
 ): { ok: boolean; violations: StepLintViolation[] } {
   const violations: StepLintViolation[] = [];
-  const forbidStartApp = opts?.forbidStartApp !== false;
+  const forbidStartApp = opts?.forbidStartApp === true;
   const canonicalTouch = opts?.canonicalTouch !== false;
   const backtickBlocker = opts?.backtickBlocker !== false;
 
@@ -454,6 +538,8 @@ export function lintHylyrePlanStepRules(
       }
     }
 
+    violations.push(...lintResetPreamble(parsed.steps, row.tc_id, { forbidStartApp, resetIdentity: opts?.resetIdentity }));
+
     for (let stepIndex = 0; stepIndex < parsed.steps.length; stepIndex++) {
       const step = parsed.steps[stepIndex];
       const roots = stepRootKeys(step);
@@ -483,16 +569,6 @@ export function lintHylyrePlanStepRules(
           tc_id: row.tc_id,
           message: `未知步骤根键 "${root}"；允许：${[...PLANNED_STEP_ROOT_KEY_SET].join(', ')}`,
           suggested_fix: '{"touch":{"by_text":"…","match":"exact"}}',
-        });
-      }
-
-      if (forbidStartApp && root === 'start_app') {
-        violations.push({
-          rule_id: 'STEP-003',
-          severity: 'BLOCKER',
-          tc_id: row.tc_id,
-          message: 'harness 已 aa start 预启；步骤列勿重复 start_app，前置条件写「已启动 app」。',
-          suggested_fix: '（删除 start_app 步骤）',
         });
       }
 

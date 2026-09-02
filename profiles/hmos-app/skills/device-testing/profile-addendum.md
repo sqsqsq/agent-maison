@@ -111,7 +111,7 @@
 
 ### 单会话导航纪律（`hylyre run --plan`）
 
-- **执行模型**：整条派生计划共享一次设备会话；仅在计划开头 `start_app` 一次；**用例之间不会自动清栈**。
+- **执行模型**：整条派生计划共享一次设备会话；harness 在计划开头预启一次；**用例之间不会自动清栈**。需要已知起始态的 case 在**首部**写恰好一组 `{"stop_app":{"bundle":B}}; {"start_app":{"bundle":B,"page_name":P}}`（B/P 逐字取 derive hint 的 `reset_preamble`，与 harness 预启同源，不得自拟；不得用 `clear_app`；其它位置一律 STEP-003 BLOCKER，整份计划不启动）。
 - **Nav 子页回 Tab**：必须用 `{"back":{}}` 或 `{"back":{"mode":"swipe","side":"RIGHT"}}`（Hypium `press_back` / `swipe_to_back`）。**禁止**用无 `area` / `at` / `scroll_target` 的 `swipe RIGHT`/`LEFT` 代替系统/Nav 返回（那是内容区滑动，无法 pop `NavPathStack`）。
 - **进入子页的 TC**：预期含「进入××页」时，若后续仍有要求「已在首页 Tab」的用例，本 TC 末步建议 `{"back":{}}` teardown，或让后续 TC 首步为 `back`。
 - **派生前必读**：`derive-hint-from-plan.json` 中每条 `test_cases[].navigation_hint`（`suggested_preamble_steps` / `forbidden_patterns`）。
@@ -162,6 +162,10 @@
 | 重跑找不到首页控件 | 默认已冷重启；若 `--continue-session` 见 `ADHOC_UI_RESET_RECOMMENDED=1` → 去掉 continue-session |
 
 模板：**[test-plan-hylyre-template.md](templates/test-plan-hylyre-template.md)**（步骤列为裸 JSON）
+
+### 参考图与视口尺寸（`visual_reference_viewport` 前置门）
+
+- `device_test.visual_diff` 在任何 pixel/OCR 内容比对**之前**比对每屏参考图与实测截图的高宽比（阈值 ×1.15）。整页拼接参考图（如 4350/8312 高对 2120 视口）不构成单视口的合法像素参考：`pixel_1to1` 下独立 **BLOCKER FAIL**，低档位 WARN，且该屏被剔出本轮内容比对。出路由 spec 作者建模：长页按锚点拆成多个 screen，每段一个 viewport 尺寸的 `ref_id` 裁图，`visual-diff-nav.json` 中该段 nav 末步 `scroll_to` 锚点元素（选对齐确定的元素，如列表项）；像素路径的前提：每段 nav 从已知状态出发，且滚动落点已证明可重复（至少两个冷启动轮次的中/尾 checkpoint 落点一致；`scroll_to` 目标可见即返回，不对齐坐标）；无法证明的段落不放 `pixel_1to1` 屏，继续 FAIL。不属于像素验收范围的段落须排除在 `pixel_1to1` 屏之外、由功能/结构 AC 覆盖——没有屏级/段级 fidelity 档位。harness 不做自动 crop / 分段 / 拼接，也不按参考图改写 viewport。
 
 ### 报告合成与 native evidence（Step 5）
 

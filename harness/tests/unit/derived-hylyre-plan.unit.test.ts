@@ -253,6 +253,60 @@ const cases: Case[] = [
     },
   },
   {
+    name: 'plan b3d7e5a1 T4 STEP-003：case 首部 stop_app→start_app 复位前奏（身份同源）合法；NAV 视其为复位步、STEP-SETUP 视其为 setup',
+    run: () => {
+      const ID = { bundle: 'com.demo.wallet', page_name: 'EntryAbility' };
+      const pre = '{"stop_app":{"bundle":"com.demo.wallet"}} ; {"start_app":{"bundle":"com.demo.wallet","page_name":"EntryAbility"}}';
+      const md = [
+        '## 测试用例清单',
+        '',
+        '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC |',
+        '|----------|---------|---------|---------|---------|--------|---------|',
+        `| TC-001 | 复位后断言入口屏 | 需先返回首页 | ${pre} ; {"wait_for":{"by_text":"卡包","match":"exact","timeout":10}} | 进入卡包页 | P0 | AC-1 |`,
+      ].join('\n');
+      const r = lintHylyrePlanStepRules(md, { resetIdentity: ID });
+      assertTrue(r.ok, `合法前奏须零 BLOCKER：${JSON.stringify(r.violations)}`);
+      assertTrue(!r.violations.some(v => v.rule_id === 'STEP-003' || v.rule_id === 'STEP-SETUP'), '前奏本身是 setup action，STEP-SETUP 不应再要求额外动作');
+      const nav = lintDerivedHylyrePlanSteps(md);
+      assertTrue(nav.ok, `NAV 应把首步 stop_app 视为复位步：${JSON.stringify(nav.violations)}`);
+    },
+  },
+  {
+    name: 'plan b3d7e5a1 T4 STEP-003：无 stop 直接 start / stop 未闭合 / 两组 / 中段 / 身份不一致 / 身份未解析 → BLOCKER；即席全禁；不含 reset 行为不变',
+    run: () => {
+      const ID = { bundle: 'com.demo.wallet', page_name: 'EntryAbility' };
+      const biz = '{"touch":{"by_text":"卡包","match":"exact"}}';
+      const stop = '{"stop_app":{"bundle":"com.demo.wallet"}}';
+      const start = '{"start_app":{"bundle":"com.demo.wallet","page_name":"EntryAbility"}}';
+      const blockers = (steps: string, opts: Parameters<typeof lintHylyrePlanStepRules>[1] = { resetIdentity: ID }) =>
+        lintHylyrePlanStepRules(
+          [
+            '## 测试用例清单',
+            '',
+            '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC |',
+            '|----------|---------|---------|---------|---------|--------|---------|',
+            `| TC-001 | x | - | ${steps} | x | P0 | AC-1 |`,
+          ].join('\n'),
+          opts,
+        ).violations.filter(v => v.rule_id === 'STEP-003' && v.severity === 'BLOCKER');
+      assertTrue(blockers(`${start} ; ${biz}`).some(v => /紧跟 stop_app/.test(v.message)), '无 stop 直接 start 须 BLOCKER');
+      assertTrue(blockers(`${stop} ; ${biz}`).some(v => /闭合/.test(v.message)), '首步只有 stop_app 随后业务步骤须 BLOCKER');
+      assertTrue(blockers(`${stop}`).some(v => /闭合/.test(v.message)), '首步只有 stop_app 且 case 结束须 BLOCKER');
+      assertTrue(blockers(`${stop} ; ${start} ; ${stop} ; ${start} ; ${biz}`).length >= 2, '首部两组 stop→start 须 BLOCKER（第二组两步各一条）');
+      assertTrue(blockers(`${biz} ; ${stop} ; ${start}`).length >= 2, '中段 lifecycle 须 BLOCKER');
+      assertTrue(blockers(`${stop} ; ${start} ; ${biz} ; ${start}`).length === 1, '尾部多余 start_app 须 BLOCKER（合法前奏不受牵连）');
+      assertTrue(
+        blockers(`${stop} ; ${start.replace('com.demo.wallet', 'com.other.app')} ; ${biz}`).some(v => /不一致/.test(v.message) && /com\.other\.app/.test(v.message)),
+        'bundle 与预启不一致须 BLOCKER 并点名',
+      );
+      assertTrue(blockers(`${stop} ; {"start_app":{"bundle":"com.demo.wallet"}} ; ${biz}`).some(v => /page_name/.test(v.message)), '缺 page_name 须 BLOCKER');
+      assertTrue(blockers(`${stop} ; ${start} ; ${biz}`, { resetIdentity: null }).some(v => /无法解析/.test(v.message)), '身份未解析时前奏须 BLOCKER 而非放行');
+      assertTrue(blockers(`${stop} ; ${start} ; ${biz}`, { forbidStartApp: true, resetIdentity: ID }).some(v => /即席/.test(v.message)), '即席语义仍全禁 start_app');
+      assertTrue(blockers(`{"start_app":{}}`, { forbidStartApp: true }).length === 1 && blockers(`{"start_app":{}}`).length === 1, '裸 start_app 在两种语义下都 BLOCKER');
+      assertEq(blockers(`${biz} ; {"wait_for":{"by_text":"卡包","match":"exact","timeout":10}}`).length, 0, '不含 reset 的计划零 STEP-003');
+    },
+  },
+  {
     name: 'lintHylyrePlanStepRules: 合法计划零违规（t7b 好态）',
     run: () => {
       const md = [

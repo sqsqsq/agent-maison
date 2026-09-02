@@ -153,6 +153,28 @@ function writeInstallArtifacts(
   }
 }
 
+/** plan b3d7e5a1 T3（codex P1）：设备 versionCode 的唯一展示口径——null 永远写成未解析，不写成确定值。 */
+export function describeDeviceVersionCode(parse: { versionCode: number | null; versionCodeUnknownReason?: 'parsed_zero' }): string {
+  if (parse.versionCode !== null) return String(parse.versionCode);
+  return parse.versionCodeUnknownReason === 'parsed_zero' ? '(未解析：bm dump 报 0，按 unknown)' : '(未解析)';
+}
+
+/** 复用装机的版本判据：设备/候选任一未知即不比较，只有确定值不等才拒绝复用。 */
+export function installVersionAllowsReuse(deviceVersionCode: number | null, candidateVersionCode: number | null): boolean {
+  return deviceVersionCode === null || candidateVersionCode === null || deviceVersionCode === candidateVersionCode;
+}
+
+/** 复用装机的日志行：版本未知时明说 unknown，绝不写"同 versionCode"。 */
+export function describeInstallReuse(parse: { versionCode: number | null; versionCodeUnknownReason?: 'parsed_zero' }, candidateVersionCode: number | null): string {
+  const device = describeDeviceVersionCode(parse);
+  const versionClause = parse.versionCode === null
+    ? `设备 versionCode ${device}，按 HAP 指纹 + bundle 复用，不断言版本相同`
+    : candidateVersionCode === null
+      ? `设备 versionCode=${device}，候选未声明 versionCode，按 HAP 指纹 + bundle 复用`
+      : `设备 versionCode=${device} 与候选一致`;
+  return `[reuse] 跳过 hdc install：HAP 未变且设备已装同 bundle；${versionClause}`;
+}
+
 export function installDeviceTestApp(opts: DeviceTestInstallOptions): DeviceTestInstallResult {
   const skipEnv = opts.skipEnvVar ?? 'HARNESS_SKIP_DEVICE_TEST_INSTALL';
   const errors: Array<{ message: string }> = [];
@@ -240,14 +262,10 @@ export function installDeviceTestApp(opts: DeviceTestInstallOptions): DeviceTest
   const devVc = installedParse.versionCode;
   const candVc = candidate.versionCode;
 
-  /** bm dump 在部分 HarmonyOS 版本上会把 versionCode 误解析为 0；仅在可确信更高版本已装时判降级。 */
+  /** bm dump 报 0 已在解析边界归 null（plan b3d7e5a1 T3），仅在可确信更高版本已装时判降级。 */
   const downgradeDetected = detectInstallDowngrade(candVc, installedParse);
 
-  const versionAllowsReuse =
-    devVc === null ||
-    candVc === null ||
-    devVc === candVc ||
-    (devVc === 0 && candVc !== null && candVc > 0);
+  const versionAllowsReuse = installVersionAllowsReuse(devVc, candVc);
 
   const canReuseInstall =
     !envForceInstall() &&
@@ -267,7 +285,7 @@ export function installDeviceTestApp(opts: DeviceTestInstallOptions): DeviceTest
   if (canReuseInstall) {
     const logLines = [
       `[hap] ${opts.hapPath}`,
-      `[reuse] 跳过 hdc install：HAP 未变且设备已装同 bundle/versionCode`,
+      describeInstallReuse(installedParse, candVc),
       `[hap_fp] mtimeMs=${hapFp!.mtimeMs} size=${hapFp!.size}`,
     ];
     const logPath = writeInstallArtifacts(opts, {
@@ -305,7 +323,7 @@ export function installDeviceTestApp(opts: DeviceTestInstallOptions): DeviceTest
     `[candidate] bundle=${candidate.bundleName} versionCode=${candVc === null ? '(未声明)' : String(candVc)} versionName=${candidate.versionName ?? '(无)'}`,
   );
   logLines.push(
-    `[bm_dump] exit=${bmDump.exitCode} installed=${installedParse.installed} deviceVersionCode=${devVc === null ? '(未解析)' : String(devVc)} ambiguous=${Boolean(installedParse.ambiguous)}`,
+    `[bm_dump] exit=${bmDump.exitCode} installed=${installedParse.installed} deviceVersionCode=${describeDeviceVersionCode(installedParse)} ambiguous=${Boolean(installedParse.ambiguous)}`,
   );
   logLines.push('[bm_dump_raw]', bmDump.output.slice(0, 50_000));
 
