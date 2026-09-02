@@ -39,25 +39,60 @@ async def _dispatch(agent: HylyreAgent, method: str, params: dict[str, Any]) -> 
         )
         return "ok"
     if method == "run_action":
-        await agent.run_planned_action(dict(params["payload"]))
-        return "ok"
-    if method == "run_tap":
-        await agent.run_planned_tap(dict(params["payload"]))
-        return "ok"
-    if method == "run_input":
-        await agent.run_planned_input(dict(params["payload"]))
-        return "ok"
-    if method == "run_swipe":
-        await agent.run_planned_swipe(dict(params["payload"]))
-        return "ok"
-    if method == "run_scroll":
-        await agent.run_planned_scroll(dict(params["payload"]))
-        return "ok"
-    if method == "run_step":
-        from hylyre.api.step_dispatch import dispatch_planned_step
+        from hylyre.scenario.ledger import execute_ledger_step
+        from hylyre.scenario.step_builder import step_response
 
-        await dispatch_planned_step(agent, dict(params["payload"]))
-        return "ok"
+        return step_response(
+            await execute_ledger_step(
+                agent, dict(params["payload"]), index=0, case_id="atomic-step"
+            )
+        )
+    if method == "run_tap":
+        from hylyre.scenario.ledger import execute_ledger_step
+        from hylyre.scenario.step_builder import step_response
+
+        return step_response(
+            await execute_ledger_step(
+                agent, dict(params["payload"]), index=0, case_id="atomic-step"
+            )
+        )
+    if method == "run_input":
+        from hylyre.scenario.ledger import execute_ledger_step
+        from hylyre.scenario.step_builder import step_response
+
+        return step_response(
+            await execute_ledger_step(
+                agent, dict(params["payload"]), index=0, case_id="atomic-step"
+            )
+        )
+    if method == "run_swipe":
+        from hylyre.scenario.ledger import execute_ledger_step
+        from hylyre.scenario.step_builder import step_response
+
+        return step_response(
+            await execute_ledger_step(
+                agent, dict(params["payload"]), index=0, case_id="atomic-step"
+            )
+        )
+    if method == "run_scroll":
+        from hylyre.scenario.ledger import execute_ledger_step
+        from hylyre.scenario.step_builder import step_response
+
+        return step_response(
+            await execute_ledger_step(
+                agent, dict(params["payload"]), index=0, case_id="atomic-step"
+            )
+        )
+    if method == "run_step":
+        from hylyre.scenario.ledger import execute_ledger_step
+
+        from hylyre.scenario.step_builder import step_response
+
+        return step_response(
+            await execute_ledger_step(
+                agent, dict(params["payload"]), index=0, case_id="atomic-step"
+            )
+        )
     if method == "run_steps":
         from hylyre.cli.commands import steps_cmd as _steps_cmd
 

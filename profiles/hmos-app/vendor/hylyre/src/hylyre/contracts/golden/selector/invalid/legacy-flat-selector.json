@@ -1,0 +1,8 @@
+{
+  "engine": "resolver",
+  "requested_match": null,
+  "effective_match": "contains",
+  "candidate_count": 0,
+  "selected_id": "bank_row_bocom",
+  "bounds": null
+}

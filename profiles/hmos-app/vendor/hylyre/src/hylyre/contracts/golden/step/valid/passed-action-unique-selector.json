@@ -1,0 +1,46 @@
+{
+  "index": 0,
+  "kind": "touch",
+  "role": "action",
+  "duration_ms": 214.5,
+  "device_session": true,
+  "outcome": {
+    "status": "passed",
+    "observation": {
+      "kind": "action",
+      "operation": "touch",
+      "performed": true,
+      "facts": {
+        "center": [
+          540,
+          1180
+        ]
+      }
+    }
+  },
+  "selector": {
+    "request": {
+      "kind": "by_id",
+      "value": "bank_row_bocom",
+      "match": null,
+      "constraints": {}
+    },
+    "resolution": {
+      "state": "unique",
+      "candidate_count": 1,
+      "selected": {
+        "id": "bank_row_bocom",
+        "bounds": "[480,1140][600,1220]"
+      },
+      "candidates": [
+        {
+          "id": "bank_row_bocom",
+          "bounds": "[480,1140][600,1220]"
+        }
+      ]
+    }
+  },
+  "artifacts": [],
+  "diagnostic": null,
+  "extensions": {}
+}

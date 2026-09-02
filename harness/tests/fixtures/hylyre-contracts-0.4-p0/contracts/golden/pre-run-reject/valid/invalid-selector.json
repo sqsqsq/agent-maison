@@ -1,0 +1,13 @@
+{
+  "result_protocol": "hylyre.step-outcome/1",
+  "command_status": "rejected",
+  "phase": "pre_run_validation",
+  "rejection": {
+    "domain": "contract",
+    "code": "contract.invalid_selector",
+    "case_id": "TC-004",
+    "step_index": 2,
+    "path": "cases[TC-004].steps[2].touch",
+    "summary": "touch requires exactly one target predicate"
+  }
+}

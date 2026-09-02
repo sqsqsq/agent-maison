@@ -1,0 +1,45 @@
+{
+  "index": 1,
+  "kind": "touch",
+  "role": "action",
+  "duration_ms": 10240.0,
+  "device_session": true,
+  "outcome": {
+    "status": "failed",
+    "failure": {
+      "domain": "selector",
+      "code": "selector.not_found"
+    },
+    "observation": {
+      "kind": "action",
+      "operation": "touch",
+      "performed": false,
+      "facts": {
+        "reason": "no candidate resolved"
+      }
+    }
+  },
+  "selector": {
+    "request": {
+      "kind": "by_id",
+      "value": "bank_row_bocom",
+      "match": null,
+      "constraints": {}
+    },
+    "resolution": {
+      "state": "not_found",
+      "candidate_count": 0,
+      "selected": null,
+      "candidates": []
+    }
+  },
+  "artifacts": [
+    {
+      "kind": "screenshot",
+      "path": "failures/TC-001-step-1.png",
+      "sha256": "fc70ecde58a917d9ecde9e0366e5fa113fcf16fffef0ee1b7683f8e93a693412"
+    }
+  ],
+  "diagnostic": "touch target not resolved",
+  "extensions": {}
+}

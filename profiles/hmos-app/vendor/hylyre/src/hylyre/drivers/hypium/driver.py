@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import math
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +13,13 @@ from types import ModuleType
 from typing import Any, Callable, TypeVar
 
 from hylyre.diagnostic_log import diagnostic_log
+from hylyre.api.exceptions import (
+    AssertionMismatch,
+    CapabilityUnsupported,
+    SelectorResolutionError,
+    StepSkipped,
+)
+from hylyre.api.selector_contract import normalize_match, selector_evidence
 from hylyre.drivers.base.ui_driver import UiDriverBase
 
 _T = TypeVar("_T")
@@ -153,12 +161,30 @@ def _hypium_component_center(comp: Any) -> tuple[int, int] | None:
     return None
 
 
+def _hypium_match_pattern(shim: _HypiumShim, requested: Any = None) -> tuple[Any, str | None, str]:
+    """Validate Hylyre's two modes and map them to Hypium's enum."""
+
+    requested_match, effective_match = normalize_match(requested)
+    pattern_type = getattr(shim.hypium_mod, "MatchPattern", None)
+    if pattern_type is None or not hasattr(pattern_type, "EQUALS"):
+        try:
+            pattern_type = importlib.import_module(
+                "hypium.model.basic_data_type"
+            ).MatchPattern
+        except (ImportError, AttributeError) as e:  # pragma: no cover - broken SDK
+            raise RuntimeError("Hypium MatchPattern is unavailable") from e
+    attr = "EQUALS" if effective_match == "exact" else "CONTAINS"
+    return getattr(pattern_type, attr), requested_match, effective_match
+
+
 def _hypium_single_selector(shim: _HypiumShim, **kw: Any) -> Any:
     """At most one of by_text / by_id / by_type / by_key, optionally chained with scrollable."""
     by_text = kw.get("by_text")
     by_id = kw.get("by_id")
     by_type = kw.get("by_type")
     by_key = kw.get("by_key")
+    match = kw.get("match")
+    normalize_match(match)
     scrollable = kw.get("scrollable")
     opts = [
         ("by_text", by_text),
@@ -175,7 +201,10 @@ def _hypium_single_selector(shim: _HypiumShim, **kw: Any) -> Any:
         return None
     name, val = present[0]
     if name == "by_text":
-        sel = shim.BY.text(val)
+        pattern, _requested_match, _effective_match = _hypium_match_pattern(
+            shim, match
+        )
+        sel = shim.BY.text(val, pattern)
     elif name == "by_id":
         sel = shim.BY.id(val)
     elif name == "by_type":
@@ -185,6 +214,93 @@ def _hypium_single_selector(shim: _HypiumShim, **kw: Any) -> Any:
     if scrollable is True:
         sel = sel.scrollable(True)
     return sel
+
+
+def _is_unsupported_toast_error(exc: BaseException) -> bool:
+    name = type(exc).__name__.lower()
+    message = str(exc).lower()
+    return any(
+        token in name or token in message
+        for token in (
+            "unsupported",
+            "not supported",
+            "not support",
+            "unimplemented",
+            "not implemented",
+            "notavailable",
+            "not available",
+            "capability",
+        )
+    )
+
+
+async def _find_unique_native_component(
+    raw: Any,
+    target: Any,
+    *,
+    selector: dict[str, Any],
+) -> Any | None:
+    """Use Hypium's all-components API to prevent native first-hit actions."""
+
+    find_all = getattr(raw, "find_all_components", None)
+    if not callable(find_all):
+        return None
+    components = await _to_thread(lambda: find_all(target))
+    if components is None:
+        selector_info = {**selector, "candidate_count": 0}
+        raise SelectorResolutionError(
+            f"no native component for selector {selector!r}",
+            selector=selector_info,
+            failure_code="selector_not_found",
+            evidence={"engine": "native", "candidate_count": 0},
+        )
+    if isinstance(components, (list, tuple)):
+        if not components:
+            selector_info = {**selector, "candidate_count": 0}
+            raise SelectorResolutionError(
+                f"no native component for selector {selector!r}",
+                selector=selector_info,
+                failure_code="selector_not_found",
+                evidence={"engine": "native", "candidate_count": 0},
+            )
+        if len(components) > 1:
+            summaries = [_native_component_summary(item) for item in components]
+            selector_info = {**selector, "candidate_count": len(components)}
+            raise SelectorResolutionError(
+                f"ambiguous native selector {selector!r}: {len(components)} candidates",
+                selector=selector_info,
+                candidates_summary=summaries,
+                failure_code="selector_ambiguous",
+                evidence={
+                    "engine": "native",
+                    "candidate_count": len(components),
+                    "candidates": summaries,
+                },
+            )
+        return components[0]
+    # Some Hypium versions return one component instead of a one-item list.
+    return components
+
+
+def _native_component_summary(component: Any) -> dict[str, Any]:
+    bounds: Any = getattr(component, "bounds", None)
+    for name in ("getBounds", "get_bounds"):
+        fn = getattr(component, name, None)
+        if callable(fn):
+            try:
+                bounds = fn()
+            except Exception:
+                pass
+            break
+    return {
+        "type": type(component).__name__,
+        "id": str(
+            getattr(component, "id", None)
+            or getattr(component, "component_id", None)
+            or ""
+        ),
+        "bounds": str(bounds) if bounds is not None else None,
+    }
 
 
 class HypiumDriver(UiDriverBase):
@@ -199,6 +315,8 @@ class HypiumDriver(UiDriverBase):
         self._log_level = log_level
         self._extra_connect = connect_kwargs or {}
         self._raw: Any | None = None
+        self._hypium_version = "unavailable"
+        self._toast_listening = False
 
     @property
     def raw(self) -> Any | None:
@@ -211,6 +329,9 @@ class HypiumDriver(UiDriverBase):
 
         def _load_and_connect() -> Any:
             shim = load_hypium_shim()
+            self._hypium_version = str(
+                getattr(shim.hypium_mod, "__version__", "unavailable")
+            )
             kwargs: dict[str, Any] = {
                 "log_level": self._log_level,
                 **self._extra_connect,
@@ -221,11 +342,16 @@ class HypiumDriver(UiDriverBase):
 
         self._raw = await _to_thread(_load_and_connect)
 
+    @property
+    def hypium_version(self) -> str:
+        return self._hypium_version
+
     async def close(self) -> None:
         if self._raw is None:
             return
         raw = self._raw
         self._raw = None
+        self._toast_listening = False
         await _to_thread(raw.close)
 
     async def start_app(
@@ -251,8 +377,10 @@ class HypiumDriver(UiDriverBase):
         y: int | None = None,
         by_text: str | None = None,
         by_id: str | None = None,
+        match: str | None = None,
         wait_time: float = 0.1,
     ) -> None:
+        normalize_match(match)
         self._validate_touch_kwargs(
             x=x, y=y, by_text=by_text, by_id=by_id
         )
@@ -262,9 +390,26 @@ class HypiumDriver(UiDriverBase):
         if x is not None and y is not None:
             target = (int(x), int(y))
         elif by_text is not None:
-            target = shim.BY.text(by_text)
+            pattern, _requested_match, _effective_match = _hypium_match_pattern(
+                shim, match
+            )
+            target = shim.BY.text(by_text, pattern)
         else:
+            normalize_match(match)
             target = shim.BY.id(by_id)
+        if by_text is not None or by_id is not None:
+            await _find_unique_native_component(
+                raw,
+                target,
+                selector={
+                    "engine": "native",
+                    "requested_match": match,
+                    "effective_match": normalize_match(match)[1],
+                    "candidate_count": None,
+                    "selected_id": str(by_id) if by_id is not None else None,
+                    "bounds": None,
+                },
+            )
         wt = float(wait_time)
         await _to_thread(
             lambda: raw.touch(
@@ -275,15 +420,29 @@ class HypiumDriver(UiDriverBase):
                 offset=None,
             )
         )
+        return {
+            "selector": selector_evidence(
+                {"by_text": by_text, "by_id": by_id, "match": match},
+                engine="native",
+                candidate_count=1,
+                selected_id=str(by_id) if by_id is not None else None,
+            ),
+            "evidence": {"operation": "touch", "result": True},
+        }
 
-    async def locate_by_text(self, *, by_text: str) -> tuple[int, int] | None:
+    async def locate_by_text(
+        self, *, by_text: str, match: str | None = None
+    ) -> tuple[int, int] | None:
         await self._require_raw()
         shim = load_hypium_shim()
         raw = self._raw
         text = str(by_text)
+        pattern, _requested_match, _effective_match = _hypium_match_pattern(
+            shim, match
+        )
 
         def _locate() -> tuple[int, int] | None:
-            comp = raw.find_component(shim.BY.text(text))
+            comp = raw.find_component(shim.BY.text(text, pattern))
             return _hypium_component_center(comp)
 
         try:
@@ -298,23 +457,52 @@ class HypiumDriver(UiDriverBase):
         *,
         by_text: str | None = None,
         by_id: str | None = None,
+        match: str | None = None,
         mode: Any | None = None,
     ) -> None:
         await self._require_raw()
         raw = self._raw
         if by_text is None and by_id is None:
+            normalize_match(match)
             await _to_thread(lambda: raw.input_text_on_current_cursor(text))
-            return
+            return {"evidence": {"operation": "input", "result": True}}
         shim = load_hypium_shim()
         if by_text is not None and by_id is not None:
             raise ValueError("pass at most one of by_text or by_id")
-        selector = shim.BY.text(by_text) if by_text is not None else shim.BY.id(by_id)
-        component = await _to_thread(
-            lambda: raw.find_component(selector)
+        if by_text is not None:
+            pattern, _requested_match, _effective_match = _hypium_match_pattern(
+                shim, match
+            )
+            selector = shim.BY.text(by_text, pattern)
+        else:
+            normalize_match(match)
+            selector = shim.BY.id(by_id)
+        component = await _find_unique_native_component(
+            raw,
+            selector,
+            selector={
+                "engine": "native",
+                "requested_match": match,
+                "effective_match": normalize_match(match)[1],
+                "candidate_count": None,
+                "selected_id": str(by_id) if by_id is not None else None,
+                "bounds": None,
+            },
         )
+        if component is None:
+            component = await _to_thread(lambda: raw.find_component(selector))
         await _to_thread(
             lambda: raw.input_text(component, text, mode)
         )
+        return {
+            "selector": selector_evidence(
+                {"by_text": by_text, "by_id": by_id, "match": match},
+                engine="native",
+                candidate_count=1,
+                selected_id=str(by_id) if by_id is not None else None,
+            ),
+            "evidence": {"operation": "input", "result": True},
+        }
 
     async def screenshot(self) -> bytes:
         await self._require_raw()
@@ -363,6 +551,7 @@ class HypiumDriver(UiDriverBase):
         area_by_id: str | None = None,
         area_by_type: str | None = None,
         area_by_key: str | None = None,
+        area_match: str | None = None,
         area_scrollable: bool | None = None,
         side: str | None = None,
         start_point: tuple[float | int, float | int] | None = None,
@@ -380,6 +569,7 @@ class HypiumDriver(UiDriverBase):
             by_id=area_by_id,
             by_type=area_by_type,
             by_key=area_by_key,
+            match=area_match,
             scrollable=area_scrollable,
         )
         side_arg = _normalize_hypium_swipe_side(side)
@@ -393,6 +583,26 @@ class HypiumDriver(UiDriverBase):
             raw.swipe(dir_s, dist, area, side_arg, sp, wt, spd)
 
         await _to_thread(_go)
+        area_pred = {
+            "by_text": area_by_text,
+            "by_id": area_by_id,
+            "by_type": area_by_type,
+            "by_key": area_by_key,
+            "match": area_match,
+        }
+        return {
+            "selector": (
+                selector_evidence(
+                    area_pred,
+                    engine="native",
+                    candidate_count=1,
+                    selected_id=str(area_by_id) if area_by_id is not None else None,
+                )
+                if any(v is not None for v in area_pred.values())
+                else None
+            ),
+            "evidence": {"operation": "swipe", "result": True},
+        }
 
     async def mouse_scroll(
         self,
@@ -405,6 +615,7 @@ class HypiumDriver(UiDriverBase):
         at_by_id: str | None = None,
         at_by_type: str | None = None,
         at_by_key: str | None = None,
+        at_match: str | None = None,
         at_scrollable: bool | None = None,
         key1: int | None = None,
         key2: int | None = None,
@@ -434,6 +645,7 @@ class HypiumDriver(UiDriverBase):
             by_id=at_by_id,
             by_type=at_by_type,
             by_key=at_by_key,
+            match=at_match,
             scrollable=at_scrollable,
         )
         if selector is not None:
@@ -453,6 +665,26 @@ class HypiumDriver(UiDriverBase):
             raw.mouse_scroll(pos, scroll_dir, st, key1, key2)
 
         await _to_thread(_go)
+        at_pred = {
+            "by_text": at_by_text,
+            "by_id": at_by_id,
+            "by_type": at_by_type,
+            "by_key": at_by_key,
+            "match": at_match,
+        }
+        return {
+            "selector": (
+                selector_evidence(
+                    at_pred,
+                    engine="native",
+                    candidate_count=1,
+                    selected_id=str(at_by_id) if at_by_id is not None else None,
+                )
+                if any(v is not None for v in at_pred.values())
+                else None
+            ),
+            "evidence": {"operation": "scroll", "result": True},
+        }
 
     async def press_back(
         self,
@@ -529,8 +761,9 @@ class HypiumDriver(UiDriverBase):
         by_id: str | None = None,
         by_type: str | None = None,
         by_key: str | None = None,
+        match: str | None = None,
         timeout: float = 10.0,
-    ) -> None:
+    ) -> dict[str, Any]:
         await self._require_raw()
         shim = load_hypium_shim()
         raw = self._raw
@@ -540,13 +773,35 @@ class HypiumDriver(UiDriverBase):
             by_id=by_id,
             by_type=by_type,
             by_key=by_key,
+            match=match,
         )
         if sel is None:
             raise ValueError(
                 "wait_for_selector requires one of by_text, by_id, by_type, by_key"
             )
         to = float(timeout)
-        await _to_thread(lambda: raw.wait_for_component(sel, to))
+        result = await _to_thread(lambda: raw.wait_for_component(sel, to))
+        selector = {
+            "engine": "native",
+            "requested_match": match,
+            "effective_match": normalize_match(match)[1],
+            "candidate_count": 1 if result is not None else 0,
+            "selected_id": str(by_id) if by_id is not None else None,
+            "bounds": None,
+        }
+        # A timeout is an observation, not an exception: the assertion ran and
+        # saw the target absent. Raising a selector error here is what put a
+        # `selector` failure on an assertion row — the exact contradiction the
+        # protocol removes. Classification belongs to the agent.
+        return {
+            "selector": selector,
+            "evidence": {
+                "assertion": "presence",
+                "observed_present": result is not None,
+                "candidate_count": 1 if result is not None else 0,
+                "raw_return_present": result is not None,
+            },
+        }
 
     async def wait_for_selector_gone(
         self,
@@ -555,8 +810,9 @@ class HypiumDriver(UiDriverBase):
         by_id: str | None = None,
         by_type: str | None = None,
         by_key: str | None = None,
+        match: str | None = None,
         timeout: float = 10.0,
-    ) -> None:
+    ) -> dict[str, Any]:
         await self._require_raw()
         shim = load_hypium_shim()
         raw = self._raw
@@ -566,6 +822,7 @@ class HypiumDriver(UiDriverBase):
             by_id=by_id,
             by_type=by_type,
             by_key=by_key,
+            match=match,
         )
         if sel is None:
             raise ValueError(
@@ -573,7 +830,29 @@ class HypiumDriver(UiDriverBase):
                 "by_text, by_id, by_type, by_key"
             )
         to = float(timeout)
-        await _to_thread(lambda: raw.wait_for_component_disappear(sel, to))
+        result = await _to_thread(
+            lambda: raw.wait_for_component_disappear(sel, to)
+        )
+        selector = {
+            "engine": "native",
+            "requested_match": match,
+            "effective_match": normalize_match(match)[1],
+            "candidate_count": 0 if result is None else 1,
+            "selected_id": str(by_id) if by_id is not None else None,
+            "bounds": None,
+        }
+        # Same here: "target remains" is an absence observation the agent turns
+        # into assertion.mismatch, not a negative result smuggled as an
+        # exception past the outcome boundary.
+        return {
+            "selector": selector,
+            "evidence": {
+                "assertion": "absence",
+                "observed_present": result is not None,
+                "candidate_count": 1 if result is not None else 0,
+                "raw_return_present": result is not None,
+            },
+        }
 
     async def wait_for_idle(
         self,
@@ -587,6 +866,31 @@ class HypiumDriver(UiDriverBase):
         to = float(timeout)
         await _to_thread(lambda: raw.wait_for_idle(idle, to))
 
+    async def start_toast_listening(self) -> dict[str, Any]:
+        """Start Hypium Toast observation before the trigger action."""
+
+        await self._require_raw()
+        raw = self._raw
+        fn = getattr(raw, "start_listen_toast", None)
+        if not callable(fn):
+            raise CapabilityUnsupported(
+                "Hypium driver does not support Toast listening"
+            )
+        try:
+            await _to_thread(fn)
+        except Exception as e:
+            if _is_unsupported_toast_error(e):
+                raise CapabilityUnsupported(
+                    "Hypium Toast listening is unsupported",
+                    evidence={"channel": "hypium.start_listen_toast", "error": str(e)},
+                ) from e
+            raise
+        self._toast_listening = True
+        return {
+            "channel": "hypium.start_listen_toast",
+            "listener_started": True,
+        }
+
     async def assert_toast(
         self,
         text: str,
@@ -595,45 +899,104 @@ class HypiumDriver(UiDriverBase):
         fuzzy: str = "equal",
         poll_interval: float = 0.3,
         on_unsupported: str = "error",
-    ) -> None:
+    ) -> dict[str, Any]:
         await self._require_raw()
         raw = self._raw
         expect = str(text)
-        deadline = time.monotonic() + float(timeout)
+        mode = str(on_unsupported).strip().lower()
+        if mode not in {"error", "skip"}:
+            raise ValueError("on_unsupported must be error or skip")
+        total_timeout = max(0.0, float(timeout))
         interval = max(0.05, float(poll_interval))
         fz = str(fuzzy)
-        mode = str(on_unsupported).strip().lower()
-
-        def _try_once() -> bool:
-            try:
-                raw.check_toast(expect, fz, int(max(1, timeout)))
-                return True
-            except Exception:
-                return False
-
-        last_err: Exception | None = None
-        while time.monotonic() < deadline:
-            try:
-                ok = await _to_thread(_try_once)
-                if ok:
-                    return
-            except Exception as e:
-                last_err = e
-            await asyncio.sleep(interval)
-
-        if mode == "skip":
-            from hylyre.api.exceptions import StepSkipped
-
-            raise StepSkipped(
-                f"toast assertion unsupported or timed out for {expect!r} "
-                f"(on_unsupported=skip)"
+        check = getattr(raw, "check_toast", None)
+        if not callable(check):
+            return await self._toast_unsupported(
+                expect, mode, "Hypium driver has no check_toast"
             )
-        msg = (
-            last_err.args[0]
-            if last_err and last_err.args
-            else f"toast not found: {expect!r} within {timeout}s"
+        if not self._toast_listening:
+            try:
+                await self.start_toast_listening()
+            except CapabilityUnsupported as e:
+                return await self._toast_unsupported(expect, mode, str(e))
+        deadline = time.monotonic() + total_timeout
+        last_result: bool | None = None
+        probes = 0
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining < 0 and probes:
+                break
+            probes += 1
+            probe_timeout = max(1, int(math.ceil(min(max(remaining, 0.05), 1.0))))
+            try:
+                raw_result = await _to_thread(
+                    lambda: check(
+                        expect,
+                        fz,
+                        probe_timeout,
+                        EXCEPTION=False,
+                        SCREENSHOT=False,
+                    )
+                )
+            except Exception as e:
+                self._toast_listening = False
+                if _is_unsupported_toast_error(e):
+                    return await self._toast_unsupported(expect, mode, str(e))
+                # The caller must see the original framework error; it is not a
+                # false assertion success and is not converted into a skip.
+                raise
+            self._toast_listening = False
+            if raw_result is True:
+                return {
+                    "channel": "hypium.check_toast",
+                    "listener_started": True,
+                    "expected_text": expect,
+                    "fuzzy": fz,
+                    "result": True,
+                    "probes": probes,
+                }
+            if raw_result is False:
+                last_result = False
+            else:
+                # Hypium's documented contract is bool; an unknown return is
+                # treated as a negative result rather than truthy success.
+                last_result = False
+            if time.monotonic() >= deadline:
+                break
+            try:
+                await self.start_toast_listening()
+            except CapabilityUnsupported as e:
+                return await self._toast_unsupported(expect, mode, str(e))
+            await asyncio.sleep(min(interval, max(0.0, deadline - time.monotonic())))
+
+        raise AssertionMismatch(
+            f"toast not found: {expect!r} within {timeout}s",
+            evidence={
+                "channel": "hypium.check_toast",
+                "expected_text": expect,
+                "fuzzy": fz,
+                "result": bool(last_result),
+                "probes": probes,
+            },
         )
-        raise RuntimeError(msg)
+
+    async def _toast_unsupported(
+        self, expect: str, mode: str, reason: str
+    ) -> dict[str, Any]:
+        evidence = {
+            "channel": "hypium.check_toast",
+            "expected_text": expect,
+            "result": "unsupported",
+            "reason": reason[:1000],
+        }
+        if mode == "skip":
+            raise StepSkipped(
+                f"Toast capability unsupported for {expect!r}",
+                evidence=evidence,
+            )
+        raise CapabilityUnsupported(
+            f"Toast capability unsupported for {expect!r}", evidence=evidence
+        )
 
     async def install_app(self, hap_path: str | Path, **kwargs: Any) -> None:
         """Install a .hap from the host via Hypium (uses hdc under the hood)."""

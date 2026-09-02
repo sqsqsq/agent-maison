@@ -1,0 +1,8 @@
+{
+  "type": "policy",
+  "code": "optional_check.on_unsupported_skip",
+  "facts": {
+    "probe_status": "unsupported",
+    "probe_source": "runtime_preflight"
+  }
+}

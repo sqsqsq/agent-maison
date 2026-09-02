@@ -1,0 +1,13 @@
+{
+  "case": "TC-001",
+  "index": 2,
+  "kind": "wait_for",
+  "role": "assertion",
+  "outcome": {
+    "status": "blocked",
+    "cause": {
+      "type": "prior_step",
+      "step_index": 1
+    }
+  }
+}

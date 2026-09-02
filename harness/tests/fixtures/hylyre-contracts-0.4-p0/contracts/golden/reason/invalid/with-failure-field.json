@@ -1,0 +1,8 @@
+{
+  "type": "policy",
+  "code": "expected_check.disabled_by_flag",
+  "failure": {
+    "domain": "capability",
+    "code": "capability.unsupported"
+  }
+}

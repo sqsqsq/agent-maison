@@ -166,6 +166,13 @@ export function sanitizeHarnessPackageJson(pkg) {
 export function sanitizeVendorManifest(manifest) {
   const out = JSON.parse(JSON.stringify(manifest));
   delete out.integration_docs;
+  // Maison 的 consumer 发布包对 schema 2 固定为 plain-source：release-excludes.json
+  // 会排除 vendor 下全部 .whl。联合 manifest 中的 wheel 字段只服务开发仓双存/legacy
+  // 回退；若把它原样带入源码-only 包，会形成“声明了一个包内不存在的必需工件”的
+  // 歧义。消费包只保留实际随包交付、可验真的 source 身份。
+  if (out.schema === 2 && out.source) {
+    delete out.wheel;
+  }
   // 移交文档不随 maison 发布包分发，note 内的引用改写为本目录 README。文案按发布
   // 形态分支——Hylyre 0.3.2 真件的 schema 2 note 实测含移交文档引用（评审 4），
   // 不分支会把源码模式 note 改写成 wheel 话术。
@@ -433,12 +440,16 @@ export function runSyntheticRuleTests(repoRoot, rules) {
     schema: 2,
     hylyre_version: '0.3.2',
     source: { root: 'src', file_count: 1, total_bytes: 1, tree_sha256: 'x', files: [] },
+    wheel: { filename: 'hylyre-0.3.2-py3-none-any.whl', sha256: 'wheel-sha', size_bytes: 1 },
     integration_docs: [{ filename: 'downstream-harness-requests.md' }],
     note: 'Plain-source release. Framework harness integration: see downstream-harness-requests.md in this directory.',
   };
   const sanitizedSourceManifest = sanitizeVendorManifest(sampleSourceManifest);
   if (sanitizedSourceManifest.integration_docs) {
     errors.push('sanitizeVendorManifest(schema2) must remove integration_docs');
+  }
+  if (sanitizedSourceManifest.wheel) {
+    errors.push('sanitizeVendorManifest(schema2) must remove dangling wheel declaration from source-only consumer pack');
   }
   if (sanitizedSourceManifest.note.includes('downstream-harness-requests')) {
     errors.push('sanitizeVendorManifest(schema2) must rewrite note to README.md');

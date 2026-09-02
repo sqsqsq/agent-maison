@@ -1,0 +1,8 @@
+{
+  "kind": "assertion",
+  "assertion_type": "custom",
+  "matched": true,
+  "facts": {
+    "x_maison.rule": "balance_non_negative"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "type": "capability",
+  "code": "capability.unsupported",
+  "facts": {
+    "probe_status": "unsupported",
+    "probe_source": "runtime_preflight"
+  }
+}

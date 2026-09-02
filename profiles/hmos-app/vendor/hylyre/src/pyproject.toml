@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hylyre"
-version = "0.3.2"
+version = "0.5.0"
 description = "Hypium + Lyrebird unified device testing harness (HarmonyOS)"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -40,7 +40,7 @@ where = ["."]
 include = ["hylyre*"]
 
 [tool.setuptools.package-data]
-"hylyre.contracts" = ["*.json", "*.yaml", "*.yml", "*.md"]
+"hylyre.contracts" = ["*.json", "*.yaml", "*.yml", "*.md", "golden/**/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

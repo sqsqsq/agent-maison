@@ -6,15 +6,16 @@ import asyncio
 import time
 from typing import Any
 
-from hylyre.api.exceptions import SelectorResolutionError
+from hylyre.api.exceptions import AssertionMismatch, SelectorResolutionError
+from hylyre.api.selector_contract import selector_evidence
 from hylyre.api.selector_resolve import (
     ResolvedHit,
     candidates_summary,
     finalize_tap_hit,
     has_rich_selector_fields,
-    pick_best_tap_hit,
+    node_for_hit,
+    resolve_action_one,
     resolve_first_hit_match_center_in_container,
-    resolve_one,
     resolve_targets,
 )
 from hylyre.diagnostic_log import diagnostic_log
@@ -85,6 +86,8 @@ def pred_from_input_block(block: dict[str, Any]) -> dict[str, Any]:
 def uses_resolver_for_input(block: dict[str, Any]) -> bool:
     if block.get("prefer_native_text") is True:
         return False
+    if block.get("by_text") is not None:
+        return True
     if isinstance(block.get("into"), dict):
         return True
     if block.get("by_key") is not None:
@@ -113,7 +116,7 @@ async def resolve_input_hit(agent: Any, block: dict[str, Any]) -> ResolvedHit:
     tree = tree_from_dump(payload)
     pred = pred_from_input_block(block)
     try:
-        hit = resolve_one(tree, pred)
+        hit = resolve_action_one(tree, pred)
     except SelectorResolutionError as e:
         summary = e.candidates_summary or candidates_summary(
             resolve_targets(tree, pred)
@@ -122,11 +125,6 @@ async def resolve_input_hit(agent: Any, block: dict[str, Any]) -> ResolvedHit:
             f"input selector_resolve miss pred={pred!r} candidates={summary!r}"
         )
         raise
-    if len(resolve_targets(tree, pred)) > 1:
-        diagnostic_log(
-            f"input selector_resolve multi-hit using first of "
-            f"{candidates_summary(resolve_targets(tree, pred))!r}"
-        )
     return hit
 
 
@@ -153,54 +151,68 @@ def _scroll_hit(tree: dict[str, Any], pred: dict[str, Any], hit: ResolvedHit) ->
     return finalize_tap_hit(tree, pred, hit)
 
 
-async def _try_native_by_text_hit(agent: Any, text: str) -> ResolvedHit | None:
-    """Last resort: Hypium ``BY.text`` locate (aligns with touch native fallback)."""
-    ui = getattr(agent, "_ui", None)
-    if ui is None:
+def _require_unique_scroll_hit(
+    hits: list[ResolvedHit], pred: dict[str, Any]
+) -> ResolvedHit | None:
+    if not hits:
         return None
-    locate = getattr(ui, "locate_by_text", None)
-    if not callable(locate):
-        return None
-    try:
-        center = await locate(by_text=text)
-    except Exception as e:
-        diagnostic_log(f"native locate_by_text failed text={text!r} err={e!r}")
-        return None
-    if center is None:
-        return None
-    x, y = int(center[0]), int(center[1])
-    if x == 0 and y == 0:
-        return None
-    bounds_s = f"[{x},{y}][{x + 1},{y + 1}]"
-    return ResolvedHit(
-        center=(x, y),
-        tap_bounds=bounds_s,
-        attrs={"text": text, "type": "NativeByText"},
-        overlay_rank=0,
-        depth=0,
-        tree_index=0,
-        text=text,
-    )
+    if len(hits) > 1:
+        raise SelectorResolutionError(
+            f"ambiguous scroll target for predicate {pred!r}: {len(hits)} candidates",
+            candidates_summary=candidates_summary(hits),
+            failure_code="selector_ambiguous",
+            selector=selector_evidence(
+                pred, engine="resolver", candidate_count=len(hits)
+            ),
+            evidence={"candidate_count": len(hits)},
+        )
+    return hits[0]
+
+
+def _require_unique_container_hit(
+    tree: dict[str, Any], pred: dict[str, Any]
+) -> ResolvedHit:
+    hits = resolve_targets(tree, pred)
+    if not hits:
+        raise SelectorResolutionError(
+            f"scroll container not found for predicate {pred!r}",
+            failure_code="selector_not_found",
+            selector=selector_evidence(pred, engine="resolver", candidate_count=0),
+            evidence={"candidate_count": 0, "container": "not_found"},
+        )
+    if len(hits) > 1:
+        raise SelectorResolutionError(
+            f"ambiguous scroll container for predicate {pred!r}: {len(hits)} candidates",
+            candidates_summary=candidates_summary(hits),
+            failure_code="selector_ambiguous",
+            selector=selector_evidence(
+                pred, engine="resolver", candidate_count=len(hits)
+            ),
+            evidence={"candidate_count": len(hits), "container": "ambiguous"},
+        )
+    return hits[0]
 
 
 async def _try_pure_by_text_resolve_fallback(
     agent: Any, target_pred: dict[str, Any]
 ) -> ResolvedHit:
-    """After scroll loop (no container): re-dump resolve, then native BY.text locate."""
+    """After scroll loop (no container), re-dump and apply the same resolver."""
     text = str(target_pred["by_text"])
     payload = await agent.dump_ui()
     tree = tree_from_dump(payload)
     bare = {"by_text": text}
+    if target_pred.get("match") is not None:
+        bare["match"] = target_pred["match"]
     for pred in ({"by_text": text, "visible": True}, bare):
-        best = pick_best_tap_hit(resolve_targets(tree, pred))
-        if best is not None:
-            return _scroll_hit(tree, bare, best)
-    native = await _try_native_by_text_hit(agent, text)
-    if native is not None:
-        return native
+        hits = resolve_targets(tree, pred)
+        if len(hits) == 1:
+            return _scroll_hit(tree, bare, resolve_action_one(tree, pred))
+        if len(hits) > 1:
+            return resolve_action_one(tree, pred)
     raise SelectorResolutionError(
         f"scroll_until_visible: target not found for by_text {text!r}",
         candidates_summary=candidates_summary(resolve_targets(tree, bare)),
+        selector=bare,
     )
 
 
@@ -211,7 +223,7 @@ async def resolve_touch_hit(agent: Any, touch: dict[str, Any]) -> ResolvedHit:
     if touch.get("by_text") is not None and not has_rich_selector_fields(touch):
         pred.setdefault("visible", True)
     try:
-        hit = resolve_one(tree, pred)
+        hit = resolve_action_one(tree, pred)
     except SelectorResolutionError as e:
         summary = e.candidates_summary or candidates_summary(
             resolve_targets(tree, pred)
@@ -220,11 +232,6 @@ async def resolve_touch_hit(agent: Any, touch: dict[str, Any]) -> ResolvedHit:
             f"selector_resolve miss pred={pred!r} candidates={summary!r}"
         )
         raise
-    if len(resolve_targets(tree, pred)) > 1:
-        diagnostic_log(
-            f"selector_resolve multi-hit using first of "
-            f"{candidates_summary(resolve_targets(tree, pred))!r}"
-        )
     return hit
 
 
@@ -235,29 +242,103 @@ async def wait_rich_selector(
     timeout: float,
     want_gone: bool,
     poll_interval: float = 0.4,
-) -> None:
+):
+    """Rich-selector presence/absence assertion as a typed outcome.
+
+    A timeout is not a selector failure: the resolver ran to completion and
+    observed the target absent (or still present). That is an assertion that
+    executed and did not match, so it reports ``assertion.mismatch`` with the
+    observation attached — reporting ``selector.not_found`` here is the
+    ``role=assertion + observed_present=false + failure_kind=selector``
+    contradiction the protocol exists to remove.
+    """
+
+    from hylyre.api.outcome import (
+        Failure,
+        OperationFailed,
+        OperationPassed,
+        SelectorEvidence,
+        SelectorResolution,
+        absence_observed,
+        presence_observed,
+    )
+    from hylyre.api.selector_contract import selector_request
+
     pred = {
         k: v
         for k, v in block.items()
         if k not in ("timeout",) and v is not None
     }
+    request = selector_request(pred)
     deadline = time.monotonic() + float(timeout)
-    last_err: Exception | None = None
-    while time.monotonic() < deadline:
+    hits: list[Any] = []
+    while True:
         payload = await agent.dump_ui()
         tree = tree_from_dump(payload)
         hits = resolve_targets(tree, pred)
         present = len(hits) > 0
         if want_gone and not present:
-            return
+            return OperationPassed(
+                observation=absence_observed(False, candidate_count=0),
+                selector=SelectorEvidence(request, SelectorResolution.not_found()),
+            )
         if not want_gone and present:
-            return
-        last_err = SelectorResolutionError(
-            f"wait {'gone' if want_gone else 'for'}: target not in desired state"
-        )
+            first = hits[0]
+            return OperationPassed(
+                observation=presence_observed(True, candidate_count=len(hits)),
+                selector=SelectorEvidence(
+                    request,
+                    SelectorResolution(
+                        "unique" if len(hits) == 1 else "ambiguous",
+                        len(hits),
+                        (
+                            {"id": first.id or None, "bounds": first.tap_bounds}
+                            if len(hits) == 1
+                            else None
+                        ),
+                        [
+                            {"id": h.id or None, "bounds": h.tap_bounds}
+                            for h in hits[: max(len(hits), 1) if len(hits) > 1 else 1]
+                        ],
+                    ),
+                ),
+            )
+        if time.monotonic() >= deadline:
+            break
         await asyncio.sleep(poll_interval)
-    msg = str(last_err) if last_err else f"timeout after {timeout}s"
-    raise TimeoutError(msg)
+
+    observed_present = len(hits) > 0
+    observation = (
+        absence_observed(observed_present, candidate_count=len(hits))
+        if want_gone
+        else presence_observed(observed_present, candidate_count=len(hits))
+    )
+    resolution = (
+        SelectorResolution.not_found()
+        if not hits
+        else SelectorResolution(
+            "unique" if len(hits) == 1 else "ambiguous",
+            len(hits),
+            (
+                {"id": hits[0].id or None, "bounds": hits[0].tap_bounds}
+                if len(hits) == 1
+                else None
+            ),
+            [{"id": h.id or None, "bounds": h.tap_bounds} for h in hits],
+        )
+    )
+    return OperationFailed(
+        failure=Failure(
+            "assertion",
+            "assertion.mismatch",
+            {"assertion": "absence" if want_gone else "presence", "timeout_s": float(timeout)},
+        ),
+        observation=observation,
+        selector=SelectorEvidence(request, resolution),
+        diagnostic=(
+            f"wait_{'gone' if want_gone else 'for'} timed out after {timeout}s"
+        ),
+    )
 
 
 async def scroll_until_visible(
@@ -271,7 +352,6 @@ async def scroll_until_visible(
     from hylyre.cli.commands.collect_cmd import (
         _build_swipe_payload,
         _visible_rows_fingerprint,
-        find_container_root,
         find_scroll_root,
     )
 
@@ -284,15 +364,21 @@ async def scroll_until_visible(
         tree = tree_from_dump(payload)
 
         # (1) Already-visible short-circuit — independent of scrollable
+        selected_container: dict[str, Any] | None = None
         if container_selector is not None:
-            croot = find_container_root(tree, container_selector)
-            if croot is not None:
-                hits = resolve_targets(croot, target_pred)
-                best = pick_best_tap_hit(hits)
+            container_hit = _require_unique_container_hit(tree, container_selector)
+            selected_container = node_for_hit(tree, container_hit)
+            if selected_container is not None:
+                hits = resolve_targets(selected_container, target_pred)
+                best = _require_unique_scroll_hit(hits, target_pred)
                 if best is not None:
-                    return _scroll_hit(tree, target_pred, best)
+                    return _scroll_hit(
+                        tree,
+                        target_pred,
+                        resolve_action_one(selected_container, target_pred),
+                    )
                 if i == 0:
-                    bounds = _node_bounds(croot)
+                    bounds = _node_bounds(selected_container)
                     if bounds:
                         bounded = resolve_first_hit_match_center_in_container(
                             tree, target_pred, bounds
@@ -301,15 +387,45 @@ async def scroll_until_visible(
                             return bounded
         else:
             hits = resolve_targets(tree, target_pred)
-            best = pick_best_tap_hit(hits)
+            best = _require_unique_scroll_hit(hits, target_pred)
             if best is not None:
-                return _scroll_hit(tree, target_pred, best)
+                return _scroll_hit(
+                    tree, target_pred, resolve_action_one(tree, target_pred)
+                )
 
         # (2) Scroll decision — still requires scrollable root
-        scroll_root = find_scroll_root(tree, swipe_area)
-        if scroll_root is None and i == 0 and container_selector is None:
-            swipe_area = {"scrollable": True}
-            scroll_root = find_scroll_root(tree, {"by_type": "Scroll"})
+        scroll_probe = dict(swipe_area)
+        scroll_probe.setdefault("scrollable", True)
+        try:
+            _require_unique_container_hit(tree, scroll_probe)
+            scroll_root = find_scroll_root(
+                selected_container if selected_container is not None else tree,
+                swipe_area,
+            )
+        except SelectorResolutionError as exc:
+            if (
+                container_selector is not None
+                or i != 0
+                or exc.failure_code != "selector_not_found"
+            ):
+                raise
+            # The implicit List probe is only a compatibility hint.  If no
+            # List exists, require a unique scrollable Scroll before falling
+            # back; never take the first DFS hit.
+            swipe_area = {"by_type": "Scroll"}
+            try:
+                _require_unique_container_hit(
+                    tree, {"by_type": "Scroll", "scrollable": True}
+                )
+            except SelectorResolutionError as fallback_exc:
+                if fallback_exc.failure_code != "selector_not_found":
+                    raise
+                # No scroll container is a valid state for the legacy
+                # by_text fallback; it must still resolve the target strictly
+                # rather than inventing a scroll action.
+                scroll_root = None
+            else:
+                scroll_root = find_scroll_root(tree, {"by_type": "Scroll"})
         if scroll_root is None:
             break
         swipe_payload = _build_swipe_payload(

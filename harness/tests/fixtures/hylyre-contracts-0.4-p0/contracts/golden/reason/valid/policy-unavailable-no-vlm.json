@@ -1,0 +1,8 @@
+{
+  "type": "policy",
+  "code": "expected_check.unavailable_no_vlm",
+  "facts": {
+    "probe_status": "not_configured",
+    "probe_source": "vlm_preflight"
+  }
+}

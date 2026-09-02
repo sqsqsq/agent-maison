@@ -1,0 +1,7 @@
+{
+  "status": "skipped",
+  "reason": {
+    "type": "policy",
+    "code": "expected_check.disabled_by_flag"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "index": 0,
+  "kind": "touch",
+  "role": "action",
+  "duration_ms": 0.0,
+  "device_session": true,
+  "outcome": {
+    "status": "skipped",
+    "reason": {
+      "type": "policy",
+      "code": "expected_check.disabled_by_flag"
+    },
+    "failure": {
+      "domain": "capability",
+      "code": "capability.unsupported"
+    }
+  },
+  "selector": null,
+  "artifacts": [],
+  "diagnostic": null,
+  "extensions": {}
+}

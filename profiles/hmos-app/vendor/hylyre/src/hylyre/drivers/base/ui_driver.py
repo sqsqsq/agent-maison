@@ -54,13 +54,16 @@ class UiDriverBase(ABC):
         y: int | None = None,
         by_text: str | None = None,
         by_id: str | None = None,
+        match: str | None = None,
         wait_time: float = 0.1,
     ) -> None:
         raise NotImplementedError
 
-    async def locate_by_text(self, *, by_text: str) -> tuple[int, int] | None:
+    async def locate_by_text(
+        self, *, by_text: str, match: str | None = None
+    ) -> tuple[int, int] | None:
         """Hypium-native locate (``BY.text`` + ``find_component``). Optional; default unsupported."""
-        _ = by_text
+        _ = (by_text, match)
         return None
 
     @abstractmethod
@@ -70,6 +73,7 @@ class UiDriverBase(ABC):
         *,
         by_text: str | None = None,
         by_id: str | None = None,
+        match: str | None = None,
         mode: Any | None = None,
     ) -> None:
         """If both selectors are omitted, implementations may use current cursor / focused field."""
@@ -98,6 +102,7 @@ class UiDriverBase(ABC):
         area_by_id: str | None = None,
         area_by_type: str | None = None,
         area_by_key: str | None = None,
+        area_match: str | None = None,
         area_scrollable: bool | None = None,
         side: str | None = None,
         start_point: tuple[float | int, float | int] | None = None,
@@ -121,6 +126,7 @@ class UiDriverBase(ABC):
         at_by_id: str | None = None,
         at_by_type: str | None = None,
         at_by_key: str | None = None,
+        at_match: str | None = None,
         at_scrollable: bool | None = None,
         key1: int | None = None,
         key2: int | None = None,
@@ -166,8 +172,9 @@ class UiDriverBase(ABC):
         by_id: str | None = None,
         by_type: str | None = None,
         by_key: str | None = None,
+        match: str | None = None,
         timeout: float = 10.0,
-    ) -> None:
+    ) -> Any:
         raise NotImplementedError(
             "wait_for_selector is not implemented for this UiDriver"
         )
@@ -179,8 +186,9 @@ class UiDriverBase(ABC):
         by_id: str | None = None,
         by_type: str | None = None,
         by_key: str | None = None,
+        match: str | None = None,
         timeout: float = 10.0,
-    ) -> None:
+    ) -> Any:
         raise NotImplementedError(
             "wait_for_selector_gone is not implemented for this UiDriver"
         )
@@ -203,8 +211,14 @@ class UiDriverBase(ABC):
         fuzzy: str = "equal",
         poll_interval: float = 0.3,
         on_unsupported: str = "error",
-    ) -> None:
+    ) -> Any:
         raise NotImplementedError("assert_toast is not implemented for this UiDriver")
+
+    async def start_toast_listening(self) -> dict[str, Any]:
+        """Start Toast observation before a trigger action when supported."""
+        raise NotImplementedError(
+            "Toast listening is not implemented for this UiDriver"
+        )
 
     def _validate_touch_kwargs(
         self,

@@ -1,0 +1,17 @@
+{
+  "state": "unresolvable",
+  "candidate_count": 0,
+  "selected": null,
+  "candidates": [],
+  "reason_code": "selector.resolver_unsupported_form",
+  "facts": {
+    "dump_status": "available",
+    "request_complete": true,
+    "resolver_entered": true,
+    "candidate_countable": true,
+    "provider_probe": {
+      "probe_status": "unsupported",
+      "probe_source": "resolver.capabilities"
+    }
+  }
+}

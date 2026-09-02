@@ -1,0 +1,11 @@
+{
+  "state": "ambiguous",
+  "candidate_count": 1,
+  "selected": null,
+  "candidates": [
+    {
+      "id": "row_a",
+      "bounds": null
+    }
+  ]
+}

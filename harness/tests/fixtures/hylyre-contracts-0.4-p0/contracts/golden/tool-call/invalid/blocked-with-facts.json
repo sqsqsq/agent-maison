@@ -1,0 +1,18 @@
+{
+  "case": "TC-001",
+  "index": 1,
+  "kind": "touch",
+  "role": "action",
+  "outcome": {
+    "status": "blocked",
+    "cause": {
+      "type": "capability",
+      "code": "capability.unsupported",
+      "capability_id": "toast_listener",
+      "facts": {
+        "probe_status": "unsupported",
+        "probe_source": "x"
+      }
+    }
+  }
+}

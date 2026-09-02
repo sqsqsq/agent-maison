@@ -1,0 +1,347 @@
+{
+  "schema_version": "0.4-p0",
+  "result_protocol": "hylyre.step-outcome/1",
+  "feature": "bc-openCard",
+  "phase": "testing",
+  "outcome": "failed",
+  "model_backend": "none",
+  "tool_calls": [
+    {
+      "case": "bc-openCard-1",
+      "index": 0,
+      "kind": "start_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "bc-openCard-1",
+      "index": 1,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "bc-openCard-1",
+      "index": 2,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "failed",
+        "failure": {
+          "domain": "selector",
+          "code": "selector.not_found"
+        }
+      }
+    },
+    {
+      "case": "bc-openCard-1",
+      "index": 3,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "bc-openCard-1",
+      "index": 4,
+      "kind": "input",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "bc-openCard-1",
+      "index": 5,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "bc-openCard-1",
+      "index": 6,
+      "kind": "assert_toast",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "bc-openCard-1",
+      "index": 7,
+      "kind": "expected_check",
+      "role": "assertion",
+      "outcome": {
+        "status": "skipped",
+        "reason": {
+          "type": "policy",
+          "code": "expected_check.unavailable_no_vlm"
+        }
+      }
+    }
+  ],
+  "retries": 0,
+  "artifacts": {
+    "plan": "docs/test-plan.md",
+    "use_fakes": false
+  },
+  "environment": {
+    "hylyre_version": "0.5.0",
+    "hypium_version": "5.0.7.200",
+    "trace_schema_version": "0.4-p0",
+    "result_protocol": "hylyre.step-outcome/1",
+    "selector_engine": "mixed"
+  },
+  "cases": [
+    {
+      "id": "bc-openCard-1",
+      "name": "开卡主流程",
+      "status": "失败",
+      "priority": "P0",
+      "ac_ref": "AC-BC-01",
+      "notes": "step 2 selector.not_found 为根失败；后续 4 步未执行；expected 检查因无 VLM 按策略跳过",
+      "execution": "aborted",
+      "verification": "failed",
+      "evidence": "complete",
+      "expected_check_mode": "unavailable_no_vlm",
+      "steps": [
+        {
+          "index": 0,
+          "kind": "start_app",
+          "role": "action",
+          "duration_ms": 1810.4,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "start_app",
+              "performed": true,
+              "facts": {
+                "bundle_started": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 1,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 232.1,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "center": [
+                  540,
+                  980
+                ]
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "wallet_open_card_entry",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "wallet_open_card_entry",
+                "bounds": "[60,940][1020,1020]"
+              },
+              "candidates": [
+                {
+                  "id": "wallet_open_card_entry",
+                  "bounds": "[60,940][1020,1020]"
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 2,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 10241.7,
+          "device_session": true,
+          "outcome": {
+            "status": "failed",
+            "failure": {
+              "domain": "selector",
+              "code": "selector.not_found"
+            },
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": false,
+              "facts": {
+                "reason": "no candidate resolved"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "bank_row_bocom",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "not_found",
+              "candidate_count": 0,
+              "selected": null,
+              "candidates": []
+            }
+          },
+          "artifacts": [
+            {
+              "kind": "screenshot",
+              "path": "failures/bc-openCard-1-step-2.png",
+              "sha256": "5aeecbc44d44113083ee9f69330b0c135d112ff52fd6efaf864199a964c47f2d"
+            },
+            {
+              "kind": "ui_dump",
+              "path": "failures/bc-openCard-1-step-2.json",
+              "sha256": "ab5a6408e48e38cd9409e5c87ed753220111b3f36cc9eb9768b4ad9ae2010613"
+            }
+          ],
+          "diagnostic": "open-card bank row not resolved within 10s",
+          "extensions": {}
+        },
+        {
+          "index": 3,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": true,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 4,
+          "kind": "input",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": true,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 5,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": true,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 6,
+          "kind": "assert_toast",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": true,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 7,
+          "kind": "expected_check",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": true,
+          "outcome": {
+            "status": "skipped",
+            "reason": {
+              "type": "policy",
+              "code": "expected_check.unavailable_no_vlm",
+              "facts": {
+                "probe_status": "not_configured",
+                "probe_source": "vlm_preflight"
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        }
+      ]
+    }
+  ],
+  "hylyre_version": "0.5.0"
+}

@@ -1,0 +1,119 @@
+{
+  "schema_version": "0.4-p0",
+  "result_protocol": "hylyre.step-outcome/1",
+  "feature": "expected-disabled",
+  "phase": "testing",
+  "outcome": "partial",
+  "model_backend": "none",
+  "tool_calls": [
+    {
+      "case": "TC-SKIP-1",
+      "index": 0,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-SKIP-1",
+      "index": 1,
+      "kind": "expected_check",
+      "role": "assertion",
+      "outcome": {
+        "status": "skipped",
+        "reason": {
+          "type": "policy",
+          "code": "expected_check.disabled_by_flag"
+        }
+      }
+    }
+  ],
+  "retries": 0,
+  "artifacts": {
+    "plan": "docs/test-plan.md",
+    "use_fakes": false
+  },
+  "environment": {
+    "hylyre_version": "0.5.0",
+    "hypium_version": "5.0.7.200",
+    "trace_schema_version": "0.4-p0",
+    "result_protocol": "hylyre.step-outcome/1",
+    "selector_engine": "mixed"
+  },
+  "cases": [
+    {
+      "id": "TC-SKIP-1",
+      "name": "expected 被 flag 关闭",
+      "status": "跳过",
+      "priority": "P2",
+      "ac_ref": "AC-SKIP-01",
+      "notes": "",
+      "execution": "completed",
+      "verification": "inconclusive",
+      "evidence": "complete",
+      "expected_check_mode": "disabled_by_flag",
+      "steps": [
+        {
+          "index": 0,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {}
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "tab_wallet",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "tab_wallet",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "tab_wallet",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 1,
+          "kind": "expected_check",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": true,
+          "outcome": {
+            "status": "skipped",
+            "reason": {
+              "type": "policy",
+              "code": "expected_check.disabled_by_flag"
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        }
+      ]
+    }
+  ]
+}

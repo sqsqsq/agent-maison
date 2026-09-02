@@ -1,0 +1,14 @@
+{
+  "index": 0,
+  "kind": "touch",
+  "role": "action",
+  "status": "failed",
+  "failure_kind": "selector",
+  "failure_code": "selector_not_found",
+  "duration_ms": 1.0,
+  "selector": null,
+  "evidence": {
+    "executed": false
+  },
+  "error": "planned step blocked"
+}

@@ -1,0 +1,23 @@
+{
+  "index": 0,
+  "kind": "wait_for",
+  "role": "assertion",
+  "duration_ms": 0.0,
+  "device_session": true,
+  "outcome": {
+    "status": "passed",
+    "observation": {
+      "kind": "assertion",
+      "assertion_type": "presence",
+      "matched": false,
+      "facts": {
+        "expected_present": true,
+        "observed_present": false
+      }
+    }
+  },
+  "selector": null,
+  "artifacts": [],
+  "diagnostic": null,
+  "extensions": {}
+}

@@ -1,0 +1,46 @@
+{
+  "index": 4,
+  "kind": "wait_for",
+  "role": "assertion",
+  "duration_ms": 10001.0,
+  "device_session": true,
+  "outcome": {
+    "status": "failed",
+    "failure": {
+      "domain": "assertion",
+      "code": "assertion.mismatch"
+    },
+    "observation": {
+      "kind": "assertion",
+      "assertion_type": "presence",
+      "matched": false,
+      "facts": {
+        "expected_present": true,
+        "observed_present": false
+      }
+    }
+  },
+  "selector": {
+    "request": {
+      "kind": "by_id",
+      "value": "card_detail_title",
+      "match": null,
+      "constraints": {}
+    },
+    "resolution": {
+      "state": "not_found",
+      "candidate_count": 0,
+      "selected": null,
+      "candidates": []
+    }
+  },
+  "artifacts": [
+    {
+      "kind": "ui_dump",
+      "path": "failures/TC-004-step-4.json",
+      "sha256": "cafbfd00ffd844505bcaa11b39918af88fffb0735f24a3db7471ad7be0b937f2"
+    }
+  ],
+  "diagnostic": null,
+  "extensions": {}
+}

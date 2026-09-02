@@ -1,0 +1,7 @@
+{
+  "status": "blocked",
+  "cause": {
+    "type": "prior_step",
+    "step_index": 0
+  }
+}

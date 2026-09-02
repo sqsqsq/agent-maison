@@ -1,0 +1,23 @@
+{
+  "index": 2,
+  "kind": "assert_toast",
+  "role": "assertion",
+  "duration_ms": 120.0,
+  "device_session": true,
+  "outcome": {
+    "status": "failed",
+    "failure": {
+      "domain": "capability",
+      "code": "capability.unsupported",
+      "facts": {
+        "capability_id": "toast_listener",
+        "provider_id": "hypium",
+        "dispatched": true
+      }
+    }
+  },
+  "selector": null,
+  "artifacts": [],
+  "diagnostic": null,
+  "extensions": {}
+}

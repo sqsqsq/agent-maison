@@ -1,0 +1,14 @@
+{
+  "request": {
+    "kind": "by_xpath",
+    "value": "//a",
+    "match": null,
+    "constraints": {}
+  },
+  "resolution": {
+    "state": "not_found",
+    "candidate_count": 0,
+    "selected": null,
+    "candidates": []
+  }
+}

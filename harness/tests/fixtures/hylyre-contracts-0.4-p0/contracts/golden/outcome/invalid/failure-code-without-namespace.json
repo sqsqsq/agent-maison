@@ -1,0 +1,7 @@
+{
+  "status": "failed",
+  "failure": {
+    "domain": "selector",
+    "code": "not_found"
+  }
+}

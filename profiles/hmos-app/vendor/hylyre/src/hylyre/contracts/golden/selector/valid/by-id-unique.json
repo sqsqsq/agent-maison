@@ -1,0 +1,22 @@
+{
+  "request": {
+    "kind": "by_id",
+    "value": "bank_row_bocom",
+    "match": null,
+    "constraints": {}
+  },
+  "resolution": {
+    "state": "unique",
+    "candidate_count": 1,
+    "selected": {
+      "id": "bank_row_bocom",
+      "bounds": "[0,0][10,10]"
+    },
+    "candidates": [
+      {
+        "id": "bank_row_bocom",
+        "bounds": "[0,0][10,10]"
+      }
+    ]
+  }
+}

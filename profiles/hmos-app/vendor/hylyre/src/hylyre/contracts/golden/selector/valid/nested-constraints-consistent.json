@@ -1,0 +1,30 @@
+{
+  "request": {
+    "kind": "composite",
+    "value": null,
+    "match": "exact",
+    "constraints": {
+      "all": true,
+      "scope": "top_overlay",
+      "within": {
+        "by_type": "Scroll"
+      },
+      "index": 2
+    }
+  },
+  "resolution": {
+    "state": "ambiguous",
+    "candidate_count": 2,
+    "selected": null,
+    "candidates": [
+      {
+        "id": "row_a",
+        "bounds": null
+      },
+      {
+        "id": "row_b",
+        "bounds": null
+      }
+    ]
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "index": 6,
+  "kind": "assert_toast",
+  "role": "assertion",
+  "duration_ms": 3000.0,
+  "device_session": true,
+  "outcome": {
+    "status": "failed",
+    "failure": {
+      "domain": "assertion",
+      "code": "assertion.mismatch"
+    },
+    "observation": {
+      "kind": "assertion",
+      "assertion_type": "toast",
+      "matched": false,
+      "facts": {
+        "channel": "hypium",
+        "observed": false,
+        "trigger_window_covered": true
+      }
+    }
+  },
+  "selector": null,
+  "artifacts": [
+    {
+      "kind": "screenshot",
+      "path": "failures/TC-006-step-6.png",
+      "sha256": "a29853c2c3c5a78cf6d4d1cbb5e2364c45579cb77dc4c1787a1cc81ddef810bc"
+    }
+  ],
+  "diagnostic": null,
+  "extensions": {}
+}

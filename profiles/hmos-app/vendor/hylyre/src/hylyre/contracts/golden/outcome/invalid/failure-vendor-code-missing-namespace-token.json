@@ -1,0 +1,7 @@
+{
+  "status": "failed",
+  "failure": {
+    "domain": "capability",
+    "code": "capability.hce_probe_missing"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "id": "TC-EMPTY",
+  "name": "空用例",
+  "status": "跳过",
+  "priority": "P2",
+  "ac_ref": "AC-E-01",
+  "notes": "",
+  "execution": "completed",
+  "verification": "inconclusive",
+  "evidence": "incomplete",
+  "expected_check_mode": "empty",
+  "steps": []
+}

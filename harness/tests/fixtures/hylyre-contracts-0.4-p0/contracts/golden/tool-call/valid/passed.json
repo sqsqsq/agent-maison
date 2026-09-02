@@ -1,0 +1,9 @@
+{
+  "case": "TC-001",
+  "index": 0,
+  "kind": "touch",
+  "role": "action",
+  "outcome": {
+    "status": "passed"
+  }
+}

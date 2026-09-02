@@ -1,0 +1,133 @@
+{
+  "schema_version": "0.4-p0",
+  "result_protocol": "hylyre.step-outcome/1",
+  "feature": "bc-openCard",
+  "phase": "testing",
+  "outcome": "failed",
+  "model_backend": "none",
+  "tool_calls": [
+    {
+      "case": "bc-openCard-1",
+      "index": 0,
+      "kind": "start_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "bc-openCard-1",
+      "index": 1,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "bc-openCard-1",
+      "index": 2,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "failed",
+        "failure": {
+          "domain": "selector",
+          "code": "selector.not_found"
+        }
+      }
+    },
+    {
+      "case": "bc-openCard-1",
+      "index": 3,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "bc-openCard-1",
+      "index": 4,
+      "kind": "input",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "bc-openCard-1",
+      "index": 5,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "bc-openCard-1",
+      "index": 6,
+      "kind": "assert_toast",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "bc-openCard-1",
+      "index": 7,
+      "kind": "expected_check",
+      "role": "assertion",
+      "outcome": {
+        "status": "skipped",
+        "reason": {
+          "type": "policy",
+          "code": "expected_check.unavailable_no_vlm"
+        }
+      }
+    }
+  ],
+  "retries": 0,
+  "artifacts": {
+    "plan": "docs/test-plan.md",
+    "use_fakes": false
+  },
+  "environment": {
+    "hylyre_version": "0.5.0",
+    "hypium_version": "5.0.7.200",
+    "trace_schema_version": "0.4-p0",
+    "result_protocol": "hylyre.step-outcome/1",
+    "selector_engine": "mixed"
+  },
+  "cases": [
+    {
+      "id": "bc-openCard-1",
+      "name": "开卡主流程",
+      "status": "失败",
+      "priority": "P0",
+      "ac_ref": "AC-BC-01",
+      "notes": "step 2 selector.not_found 为根失败；后续 4 步未执行；expected 检查因无 VLM 按策略跳过",
+      "execution": "aborted",
+      "verification": "failed",
+      "evidence": "complete",
+      "expected_check_mode": "unavailable_no_vlm",
+      "steps": []
+    }
+  ]
+}

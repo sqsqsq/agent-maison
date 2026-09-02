@@ -1,0 +1,34 @@
+{
+  "id": "TC-X",
+  "name": "x",
+  "status": "PASS",
+  "priority": "P2",
+  "ac_ref": "AC-X",
+  "notes": "",
+  "execution": "completed",
+  "verification": "passed",
+  "evidence": "complete",
+  "expected_check_mode": "empty",
+  "steps": [
+    {
+      "index": 0,
+      "kind": "touch",
+      "role": "action",
+      "duration_ms": 0.0,
+      "device_session": true,
+      "outcome": {
+        "status": "passed",
+        "observation": {
+          "kind": "action",
+          "operation": "touch",
+          "performed": true,
+          "facts": {}
+        }
+      },
+      "selector": null,
+      "artifacts": [],
+      "diagnostic": null,
+      "extensions": {}
+    }
+  ]
+}

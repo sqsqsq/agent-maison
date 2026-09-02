@@ -1,0 +1,9 @@
+{
+  "kind": "assertion",
+  "assertion_type": "expected",
+  "matched": true,
+  "facts": {
+    "channel": "vlm",
+    "matched": true
+  }
+}

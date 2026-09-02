@@ -1,0 +1,28 @@
+{
+  "index": 4,
+  "kind": "touch",
+  "role": "action",
+  "duration_ms": 8000.0,
+  "device_session": true,
+  "outcome": {
+    "status": "failed",
+    "failure": {
+      "domain": "infrastructure",
+      "code": "infrastructure.device_unavailable",
+      "facts": {
+        "resource_kind": "device",
+        "attempted": true
+      }
+    },
+    "observation": {
+      "kind": "action",
+      "operation": "touch",
+      "performed": false,
+      "facts": {}
+    }
+  },
+  "selector": null,
+  "artifacts": [],
+  "diagnostic": "device连接在本步骤执行中断开",
+  "extensions": {}
+}

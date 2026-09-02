@@ -1,0 +1,175 @@
+{
+  "schema_version": "0.4-p0",
+  "result_protocol": "hylyre.step-outcome/1",
+  "feature": "checked-vlm",
+  "phase": "testing",
+  "outcome": "failed",
+  "model_backend": "none",
+  "tool_calls": [
+    {
+      "case": "TC-VLM-1",
+      "index": 0,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-VLM-1",
+      "index": 1,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "failed",
+        "failure": {
+          "domain": "selector",
+          "code": "selector.not_found"
+        }
+      }
+    },
+    {
+      "case": "TC-VLM-1",
+      "index": 2,
+      "kind": "expected_check",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 1
+        }
+      }
+    }
+  ],
+  "retries": 0,
+  "artifacts": {
+    "plan": "docs/test-plan.md",
+    "use_fakes": false
+  },
+  "environment": {
+    "hylyre_version": "0.5.0",
+    "hypium_version": "5.0.7.200",
+    "trace_schema_version": "0.4-p0",
+    "result_protocol": "hylyre.step-outcome/1",
+    "selector_engine": "mixed"
+  },
+  "cases": [
+    {
+      "id": "TC-VLM-1",
+      "name": "expected 本应 checked_vlm 但前序 action 失败",
+      "status": "失败",
+      "priority": "P0",
+      "ac_ref": "AC-VLM-01",
+      "notes": "step 1 根失败；expected_check 是 blocked/prior_step，不得写成 unavailable_no_vlm",
+      "execution": "aborted",
+      "verification": "failed",
+      "evidence": "complete",
+      "expected_check_mode": "checked_vlm",
+      "steps": [
+        {
+          "index": 0,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {}
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "tab_wallet",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "tab_wallet",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "tab_wallet",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 1,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 10000.0,
+          "device_session": true,
+          "outcome": {
+            "status": "failed",
+            "failure": {
+              "domain": "selector",
+              "code": "selector.not_found"
+            },
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": false,
+              "facts": {}
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "pay_button",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "not_found",
+              "candidate_count": 0,
+              "selected": null,
+              "candidates": []
+            }
+          },
+          "artifacts": [
+            {
+              "kind": "screenshot",
+              "path": "failures/TC-VLM-1-step-1.png",
+              "sha256": "569bd464a524dd7264e6e4fcbf1471dd654739517f172837335f0813b80b1c2f"
+            }
+          ],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 2,
+          "kind": "expected_check",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": true,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 1
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        }
+      ]
+    }
+  ]
+}

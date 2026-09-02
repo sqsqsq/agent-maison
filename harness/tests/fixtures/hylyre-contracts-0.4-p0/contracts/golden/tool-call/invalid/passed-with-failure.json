@@ -1,0 +1,13 @@
+{
+  "case": "TC-001",
+  "index": 1,
+  "kind": "touch",
+  "role": "action",
+  "outcome": {
+    "status": "passed",
+    "failure": {
+      "domain": "selector",
+      "code": "selector.not_found"
+    }
+  }
+}

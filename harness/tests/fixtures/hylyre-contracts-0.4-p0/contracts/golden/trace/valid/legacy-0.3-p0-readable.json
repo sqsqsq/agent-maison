@@ -1,0 +1,46 @@
+{
+  "schema_version": "0.3-p0",
+  "feature": "legacy",
+  "phase": "testing",
+  "outcome": "failed",
+  "model_backend": "none",
+  "tool_calls": [],
+  "retries": 0,
+  "artifacts": {},
+  "environment": {
+    "hylyre_version": "0.4.1",
+    "hypium_version": "unavailable",
+    "trace_schema_version": "0.3-p0",
+    "selector_engine": "fake"
+  },
+  "cases": [
+    {
+      "id": "TC-L-1",
+      "name": "legacy",
+      "status": "失败",
+      "priority": "P0",
+      "ac_ref": "AC-L-01",
+      "notes": "",
+      "execution": "aborted",
+      "verification": "failed",
+      "evidence": "incomplete",
+      "expected_check_mode": "empty",
+      "steps": [
+        {
+          "index": 0,
+          "kind": "touch",
+          "role": "action",
+          "status": "failed",
+          "failure_kind": "selector",
+          "failure_code": "selector_not_found",
+          "duration_ms": 1.0,
+          "selector": null,
+          "evidence": {
+            "operation": "touch"
+          },
+          "error": "not found"
+        }
+      ]
+    }
+  ]
+}

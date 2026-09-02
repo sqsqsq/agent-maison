@@ -1,0 +1,13 @@
+{
+  "result_protocol": "hylyre.step-outcome/1",
+  "command_status": "rejected",
+  "phase": "pre_run_validation",
+  "rejection": {
+    "domain": "selector",
+    "code": "selector.not_found",
+    "case_id": "TC-001",
+    "step_index": null,
+    "path": "cases[TC-001].steps",
+    "summary": "x"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "index": 4,
+  "kind": "expected_check",
+  "role": "assertion",
+  "duration_ms": 0.0,
+  "device_session": true,
+  "outcome": {
+    "status": "blocked",
+    "cause": {
+      "type": "capability",
+      "code": "capability.not_configured",
+      "capability_id": "vlm_expected_check",
+      "provider_id": "http_vlm",
+      "facts": {
+        "probe_status": "not_configured",
+        "probe_source": "vlm_preflight"
+      }
+    }
+  },
+  "selector": null,
+  "artifacts": [],
+  "diagnostic": null,
+  "extensions": {}
+}

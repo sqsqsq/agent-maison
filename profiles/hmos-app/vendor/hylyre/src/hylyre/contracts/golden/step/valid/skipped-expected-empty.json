@@ -1,0 +1,18 @@
+{
+  "index": 1,
+  "kind": "expected_check",
+  "role": "assertion",
+  "duration_ms": 0.0,
+  "device_session": true,
+  "outcome": {
+    "status": "skipped",
+    "reason": {
+      "type": "not_applicable",
+      "code": "expected_check.empty"
+    }
+  },
+  "selector": null,
+  "artifacts": [],
+  "diagnostic": null,
+  "extensions": {}
+}

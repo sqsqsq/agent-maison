@@ -1,0 +1,24 @@
+{
+  "index": 4,
+  "kind": "assert_toast",
+  "role": "assertion",
+  "duration_ms": 900.0,
+  "device_session": true,
+  "outcome": {
+    "status": "passed",
+    "observation": {
+      "kind": "assertion",
+      "assertion_type": "toast",
+      "matched": true,
+      "facts": {
+        "channel": "hypium",
+        "observed": true,
+        "trigger_window_covered": true
+      }
+    }
+  },
+  "selector": null,
+  "artifacts": [],
+  "diagnostic": null,
+  "extensions": {}
+}
