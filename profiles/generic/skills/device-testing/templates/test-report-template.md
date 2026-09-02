@@ -32,7 +32,7 @@
 | TC-004 | {用例名称} | P1 | 阻塞 | — | 依赖 TC-002 修复 |
 | ... | ... | ... | ... | ... | ... |
 
-> 耗时列使用最终 run 的精确整数毫秒 `Nms`；已进入 trace/timing 的跳过或阻塞 case 填 `0ms`，`—` 仅用于未进入 trace/timing 的 explicit skip。
+> 耗时列使用最终 run 的精确整数毫秒 `Nms`；已进入 trace/timing 的跳过或阻塞 case 填 `0ms`，`—` 用于未进入 trace/timing 的非 Hylyre 通道用例或历史 legacy explicit skip。
 
 ---
 

@@ -1133,6 +1133,142 @@ test('vendor fake runner 真实产出 v1（0.4-p0 + hylyre.step-outcome/1）且�
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+// ----------------------------------------------------------------------------
+// plan a6c4e9f2 T4 返修（2026-09-02，绑定层闭世界残留）
+// ----------------------------------------------------------------------------
+// 宿主 T8 把 AC-1/10/14 判成"计划中无 canonical action"，根因不在宿主 spec：
+// findActionStepIndex / findPlannedStepIndex 只经 ui-spec canonical index 绑定计划步骤，
+// 既有入口的 by_id 不在 feature ui-spec 就永远绑不上；forbidden 又被限定到 post_screen，
+// 而"应消失的元素"本来就不会登记在 post_screen 的 ui-spec 里。
+//
+// 夹具纪律：**contract-composed fixture**（不手写任何字段）——信封与 case 逐字取 vendored
+// golden `all-passed.json`，步骤逐字取冻结包 golden step/selector fixture（只重编 index、
+// 组合 selector、重投 tool_calls）；组装体必须先过生产 `requireV1ForGate`（冻结 schema +
+// 跨行 verifier）与 native evidence gate 才有资格当夹具。上游没有单份 by_id presence 通过态
+// golden，fake runner 离线断言只出 blocked/capability，故取此路径（review 2026-09-02 认可）。
+const VENDORED_CONTRACTS_GOLDEN = path.resolve(VENDORED_TRACE_GOLDEN, '../..');
+
+function loadVendoredContractGolden(rel: string): Record<string, any> {
+  return JSON.parse(fs.readFileSync(path.join(VENDORED_CONTRACTS_GOLDEN, rel), 'utf-8')) as Record<string, any>;
+}
+
+/**
+ * steps[0] = all-passed 自己的 touch（by_id tab_wallet → unique/1/selected.id=tab_wallet）
+ * steps[1] = golden 通过态 presence 断言 + golden by_id selector（bank_row_bocom，unique/1）
+ * steps[2] = golden 通过态 absence 断言（by_id loading_mask → not_found/0/null）
+ */
+function openWorldBindingTrace(): Record<string, any> {
+  const trace = loadVendoredTraceGolden('all-passed.json');
+  const traceCase = trace.cases[0] as Record<string, any>;
+  traceCase.id = 'TC-001';
+  const presence = loadVendoredContractGolden('step/valid/passed-assertion-presence.json');
+  presence.selector = loadVendoredContractGolden('selector/valid/by-id-unique.json');
+  const absence = loadVendoredContractGolden('step/valid/passed-assertion-absence.json');
+  traceCase.steps = [traceCase.steps[0], presence, absence].map((step, index) => ({ ...step, index }));
+  trace.tool_calls = projectToolCalls(trace.cases);
+  return trace;
+}
+
+/**
+ * feature ui-spec 只建模本 feature 触碰的部分：入口 `tab_wallet` 是既有 Tab，**不登记**；
+ * `loading_mask` 只登记在 pre_screen=home；post_screen=bank_list 只有 `bank_row_bocom`。
+ */
+function openWorldProject(derivedSteps: string): string {
+  const root = projectRoot();
+  write(root, `doc/features/${FEATURE}/acceptance.yaml`, `flows:
+  open_card:
+    screens: [home, bank_list]
+criteria:
+  - id: AC-1
+    priority: P0
+    ut_layer: device
+    linked_flow: open_card
+    checkpoint:
+      pre_screen: home
+      action: { type: touch, target_element_id: tab_wallet }
+      post_screen: bank_list
+      required_element_ids: [bank_row_bocom]
+      forbidden_element_ids: [loading_mask]
+`);
+  write(root, `doc/features/${FEATURE}/spec/ui-spec.yaml`, `schema_version: '1.0'
+verified: unverified
+screens:
+  - id: home
+    priority: P0
+    must_have_elements: [loading_mask]
+    root:
+      type: page
+      order: 0
+      children:
+        - { id: loading_mask, type: content_display, order: 0, text: Loading }
+  - id: bank_list
+    priority: P0
+    must_have_elements: [bank_row_bocom]
+    root:
+      type: page
+      order: 0
+      children:
+        - { id: bank_row_bocom, type: interactive, order: 0, text: 交通银行 }
+tokens: {}
+assets: []
+`);
+  write(root, `doc/features/${FEATURE}/testing/test-plan.md`, `# 测试计划
+
+## 测试用例
+
+| 用例编号 | 用例名称 | 优先级 | 关联 AC | 执行通道 |
+| --- | --- | --- | --- | --- |
+| TC-001 | 开卡入口 | P0 | AC-1 | hylyre |
+`);
+  write(root, `doc/features/${FEATURE}/testing/reports/20260830T000000Z/hylyre/test-plan.hylyre.md`, `# 派生 Hylyre 计划
+
+| 用例编号 | 测试步骤 | 优先级 | 关联 AC |
+| --- | --- | --- | --- |
+| TC-001 | ${derivedSteps} | P0 | AC-1 |
+`);
+  return root;
+}
+
+const OPEN_WORLD_BY_ID_STEPS =
+  '{"touch":{"by_id":"tab_wallet"}}; {"wait_for":{"by_id":"bank_row_bocom","timeout":10}}; {"wait_gone":{"by_id":"loading_mask","timeout":10}}';
+
+test('T4 返修：入口 by_id 不在 feature ui-spec + native unique/1/selected.id → AC 闭合（by_id 字面绑定）', () => {
+  const root = openWorldProject(OPEN_WORLD_BY_ID_STEPS);
+  try {
+    const trace = openWorldBindingTrace();
+    const verdict = requireV1ForGate(trace);
+    assert.strictEqual(verdict.ok, true, `golden 拼接体未过生产门：${verdict.detail}`);
+    const input = nativeInput(root, trace);
+    assert.strictEqual(input.evidenceGate.native, true, input.evidenceGate.reasons.join('；'));
+    const semantic = evaluateP0SemanticCoverage(input)[0];
+    assert.strictEqual(semantic.status, 'PASS', semantic.details);
+    assert.strictEqual(evaluateP0CoverageIntegrity(input)[0].status, 'PASS', evaluateP0CoverageIntegrity(input)[0].details);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('T4 返修：forbidden id 仅属 pre_screen、post_screen 无此节点 + native not_found/0/null → 闭合（不按 post_screen 限定）', () => {
+  // 与上一条共用同一夹具：loading_mask 只登记在 home（pre_screen），bank_list 没有它。
+  // 单独成条是为了让"forbidden 限屏"回归时错在自己的名字下，而不是混进入口绑定失败里。
+  const root = openWorldProject(OPEN_WORLD_BY_ID_STEPS);
+  try {
+    const input = nativeInput(root, openWorldBindingTrace());
+    const semantic = evaluateP0SemanticCoverage(input)[0];
+    assert.strictEqual(semantic.status, 'PASS', semantic.details);
+    assert.doesNotMatch(semantic.details ?? '', /forbidden=loading_mask/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('T4 返修控制：by_text 入口没有字面身份，不在 ui-spec 就绑不上，AC 仍 FAIL', () => {
+  const root = openWorldProject(
+    '{"touch":{"by_text":"钱包","match":"exact"}}; {"wait_for":{"by_id":"bank_row_bocom","timeout":10}}; {"wait_gone":{"by_id":"loading_mask","timeout":10}}',
+  );
+  try {
+    const semantic = evaluateP0SemanticCoverage(nativeInput(root, openWorldBindingTrace()))[0];
+    assert.strictEqual(semantic.status, 'FAIL');
+    assert.match(semantic.details ?? '', /AC-1 计划中无.*action/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 export function runAll(): UnitCaseResult[] {
   return CASES.map(testCase => {
     try {

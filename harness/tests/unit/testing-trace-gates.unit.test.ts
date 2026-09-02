@@ -320,6 +320,37 @@ test('trace pass+skip: timing keeps skip as 0/0 and report reconciliation passes
   assert.deepStrictEqual(recon, { ok: true, mismatches: [] });
 });
 
+// plan b3d7e5a1 E（当前 change tasks 6.7c）：writer 恒写 total_harness_ms=null，模板已明示
+// "合计填 —，不得自行加总"。钉住：把各阶段加总填成 Nms 必须被判"应为无数据占位"。
+test('pipeline 合计：timing total_harness_ms=null 时报告合计加总成 Nms 被拒，— 占位通过', () => {
+  const timing: import('../../../profiles/hmos-app/harness/device-test-timings').DeviceTestTimingDocument = {
+    schema_version: '1.0', feature: 'demo', generated_at: '2026-08-30T01:00:04.000Z',
+    pipeline: {
+      build_ms: 100, build_reused: false, install_ms: 50, install_reused: false,
+      hylyre_run_ms: 1234, page_save_ms: 0, total_harness_ms: null, hap_built_at: null,
+    },
+    cases: [{ id: 'TC-001', duration_ms: 1234, step_count: 1 }],
+  };
+  const report = (total: string): string => [
+    '## 一、测试概览', '', '### 真机流水线耗时', '',
+    '| 阶段 | 耗时 | 说明 |', '| --- | --- | --- |',
+    '| 打包 (hvigor) | 100ms | reused=false |',
+    '| 装机 (hdc) | 50ms | reused=false |',
+    '| Hylyre 自动化 | 1234ms | |',
+    '| 快照写入 (page save) | 0ms | |',
+    `| **合计（脚本统计）** | **${total}** | harness 各阶段之和 |`, '',
+    '| 元数据 | 值 |', '| --- | --- |', '| HAP 落盘时间 (hapBuiltAt) | — |', '',
+    '## 二、测试执行结果', '',
+    '| 用例编号 | 执行状态 | 耗时 |', '| --- | --- | --- |',
+    '| TC-001 | 通过 | 1234ms |',
+  ].join('\n');
+  const summed = reconcileReportWithDeviceTestTiming(report('1384ms'), { timing });
+  assert.ok(!summed.ok, '加总的合计不得通过');
+  assert.ok(summed.mismatches.some(m => m.includes('合计') && m.includes('应为无数据占位')), summed.mismatches.join('；'));
+  const placeholder = reconcileReportWithDeviceTestTiming(report('—'), { timing });
+  assert.deepStrictEqual(placeholder, { ok: true, mismatches: [] });
+});
+
 test('generic test-report template: every execution row has the six header columns', () => {
   const fs = require('fs') as typeof import('fs');
   const path = require('path') as typeof import('path');
