@@ -121,6 +121,6 @@
 
 ## 版本
 
-- Hylyre vendor 发布件：`0.5.0`（`framework/profiles/hmos-app/vendor/hylyre/`，Maison 只交付源码树 `src/`；**不交付 wheel**——Maison 走 plain-source vendor，运行时代码仅兼容外部 legacy wheel 布局）
+- Hylyre vendor 发布件：`0.5.1`（`framework/profiles/hmos-app/vendor/hylyre/`，Maison 只交付源码树 `src/`；**不交付 wheel**——Maison 走 plain-source vendor，运行时代码仅兼容外部 legacy wheel 布局）
 - 结果协议：`hylyre.step-outcome/1`；trace schema：`0.4-p0`。发布件内 `hylyre/contracts/` 与冻结契约包逐字一致（`contracts_tree_sha256 = cc738c272324…1bae`）
 - 字段变更时：同步更新 vendor 发布件、`hylyre-planned-step-keys.ts`、本文件、`hylyre-planned-step-lint.ts`

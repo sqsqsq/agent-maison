@@ -358,6 +358,8 @@ function nativeInput(root: string, trace: Record<string, any>, conclusion = '不
   };
 }
 
+const VENDORED_HYLYRE_VERSION = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../profiles/hmos-app/vendor/hylyre/release.manifest.json'), 'utf-8').replace(/^﻿/, '')).hylyre_version as string;
+
 const CASES: Array<{ name: string; run: () => void }> = [];
 
 function test(name: string, run: () => void): void {
@@ -1106,8 +1108,9 @@ test('vendor fake runner 真实产出 v1（0.4-p0 + hylyre.step-outcome/1）且�
     assert.strictEqual(gateVerdict.ok, true, `真实产出未过 requireV1ForGate：${gateVerdict.detail}`);
     const nativeGate = evaluateHylyreNativeEvidenceGate({
       trace: parseHylyreTrace(trace),
-      readyMeta: readyMeta(),
-      manifestVersion: '0.5.0',
+      // vendor bump 不改夹具：真实 fake 产出的 trace 版本 == 当前 vendored manifest 版本
+      readyMeta: readyMeta(VENDORED_HYLYRE_VERSION, VENDORED_HYLYRE_VERSION),
+      manifestVersion: VENDORED_HYLYRE_VERSION,
     });
     assert.strictEqual(
       nativeGate.native,

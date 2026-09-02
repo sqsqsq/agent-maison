@@ -50,6 +50,8 @@ function runHylyre(cwd: string, argv: string[]): SpawnSyncReturns<string> {
   });
 }
 
+const VENDORED_HYLYRE_VERSION = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../profiles/hmos-app/vendor/hylyre/release.manifest.json'), 'utf-8').replace(/^﻿/, '')).hylyre_version as string;
+
 const CASES: Array<{ name: string; run: () => void }> = [];
 function test(name: string, run: () => void): void {
   CASES.push({ name, run });
@@ -151,14 +153,15 @@ test('steps-file + --use-fakes：零设备真实 CLI 输出通过 v1 两道生�
     assert.strictEqual(required.ok, true, `steps-file 真实输出未过 requireV1ForGate：${required.detail}`);
     const native = evaluateHylyreNativeEvidenceGate({
       trace: parseHylyreTrace(trace),
+      // vendor bump 不改夹具：版本链三方一律读当前 vendored manifest（真实产出的 trace.environment.hylyre_version 与之同源）
       readyMeta: {
         ok: true,
         doctorOk: true,
-        installed_version: '0.5.0',
-        manifest_version: '0.5.0',
+        installed_version: VENDORED_HYLYRE_VERSION,
+        manifest_version: VENDORED_HYLYRE_VERSION,
         version_consistent: true,
       },
-      manifestVersion: '0.5.0',
+      manifestVersion: VENDORED_HYLYRE_VERSION,
     });
     assert.strictEqual(native.native, true, `steps-file 真实输出未过 native gate：${native.reasons.join('；')}`);
 
@@ -259,6 +262,91 @@ test('pre-run reject 载荷与冻结 golden 同形（不是本仓自拟的形状
     const rejection = doc.rejection as Record<string, unknown>;
     assert.strictEqual(rejection.domain, 'contract', name);
     assert.ok(String(rejection.code).startsWith('contract.'), name);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Hylyre 0.5.1 接入钉子（docs/vendor/hylyre-0.5.1-CLI选项穿透与静默忽略根治需求.md §八 1/3/4）
+// ---------------------------------------------------------------------------
+// 0.5.1 只改了 CLI 选项所有权（契约包指纹不变），Maison 生产逻辑零改动；这里钉住消费边界：
+// 版本链三方一致、plan 路径非默认 --on-fail 必须响亮拒绝、默认等价值与不传逐字节一致。
+const DEVICE_MARKERS = ['hdc shell', 'hdc -t', 'Connected to device', 'aa start', 'using first device sn', 'EnvPool'];
+
+function writeFakePlan(root: string): string {
+  const plan = path.join(root, 'test-plan.md');
+  fs.writeFileSync(plan, [
+    '# fake', '', '## 测试用例清单', '',
+    '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC |',
+    '| --- | --- | --- | --- | --- | --- | --- |',
+    '| TC-001 | fake | app | {"touch":{"by_id":"x"}}; {"wait_for":{"by_id":"y"}} | done | P0 | AC-1 |',
+    '',
+  ].join('\n'), 'utf-8');
+  return plan;
+}
+
+test('0.5.1 §八-1：__version__ / pyproject / release.manifest 三方版本一致，且运行时 import 同值', () => {
+  const init = fs.readFileSync(path.join(SRC_ROOT, 'hylyre', '__init__.py'), 'utf-8');
+  const pyproject = fs.readFileSync(path.join(SRC_ROOT, 'pyproject.toml'), 'utf-8');
+  const initVersion = /__version__\s*=\s*"([^"]+)"/.exec(init)?.[1];
+  const pyprojectVersion = /^version\s*=\s*"([^"]+)"/m.exec(pyproject)?.[1];
+  assert.strictEqual(initVersion, VENDORED_HYLYRE_VERSION, `hylyre.__version__=${initVersion} 不等于 manifest ${VENDORED_HYLYRE_VERSION}`);
+  assert.strictEqual(pyprojectVersion, VENDORED_HYLYRE_VERSION, `pyproject version=${pyprojectVersion} 不等于 manifest ${VENDORED_HYLYRE_VERSION}`);
+  const imported = spawnSync(process.env.MAISON_PYTHON || 'python', ['-B', '-c', 'import hylyre;print(hylyre.__version__)'], {
+    env: { ...process.env, PYTHONPATH: SRC_ROOT, PYTHONDONTWRITEBYTECODE: '1' }, encoding: 'utf-8', windowsHide: true, timeout: 60000,
+  });
+  assert.strictEqual(imported.status, 0, imported.stderr);
+  assert.strictEqual(imported.stdout.trim(), VENDORED_HYLYRE_VERSION, '运行时 import 的版本须等于 manifest');
+});
+
+test('0.5.1 §八-3：plan 路径 --on-fail skip|bogus → exit 2、stdout 空、stderr 单行点名冲突、零 report/trace/设备', () => {
+  for (const value of ['skip', 'bogus']) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), `hylyre-onfail-${value}-`));
+    try {
+      const plan = writeFakePlan(root);
+      const report = path.join(root, 'test-report.md');
+      const trace = path.join(root, 'trace.json');
+      const run = runHylyre(root, [
+        'run', '--plan', plan, '--feature', 'fake', '--report-out', report, '--trace-out', trace,
+        '--use-fakes', '--skip-assert-expected', '--on-fail', value,
+      ]);
+      assert.strictEqual(run.status, 2, `--on-fail ${value} 须 usage error exit=2：${run.stdout}\n${run.stderr}`);
+      assert.strictEqual(run.stdout.trim(), '', `--on-fail ${value} 时 stdout 须为空：${run.stdout}`);
+      const stderrLines = run.stderr.split(/\r?\n/).filter(l => l.trim());
+      assert.strictEqual(stderrLines.length, 1, `stderr 须单行：${run.stderr}`);
+      assert.ok(/--on-fail/.test(stderrLines[0]!) && /--plan/.test(stderrLines[0]!), `stderr 须点名 --on-fail 与 --plan 冲突：${stderrLines[0]}`);
+      assert.ok(!fs.existsSync(report) && !fs.existsSync(trace), `--on-fail ${value} 不得产出 report/trace`);
+      for (const marker of DEVICE_MARKERS) {
+        assert.ok(!(run.stdout + run.stderr).includes(marker), `usage error 不得触碰设备：${marker}`);
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('0.5.1 §八-4：plan + --use-fakes 不传 --on-fail 与显式 --on-fail abort 的 report/trace 逐字节一致', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hylyre-onfail-abort-'));
+  try {
+    const plan = writeFakePlan(root);
+    const outputs: Array<{ report: Buffer; trace: Buffer }> = [];
+    for (const extra of [[], ['--on-fail', 'abort']]) {
+      const dir = fs.mkdtempSync(path.join(root, 'run-'));
+      const report = path.join(dir, 'test-report.md');
+      const trace = path.join(dir, 'trace.json');
+      const run = runHylyre(dir, [
+        'run', '--plan', plan, '--feature', 'fake', '--report-out', report, '--trace-out', trace,
+        '--use-fakes', '--skip-assert-expected', ...extra,
+      ]);
+      assert.strictEqual(run.status, 0, `${extra.join(' ') || '(默认)'}：${run.stdout}\n${run.stderr}`);
+      assert.ok(fs.existsSync(report) && fs.existsSync(trace), '默认等价值必须照常产出 report/trace');
+      outputs.push({ report: fs.readFileSync(report), trace: fs.readFileSync(trace) });
+    }
+    assert.ok(outputs[0]!.trace.equals(outputs[1]!.trace), 'trace 须逐字节一致（默认等价值放行，不改行为）');
+    assert.ok(outputs[0]!.report.equals(outputs[1]!.report), 'report 须逐字节一致');
+    const parsed = JSON.parse(outputs[0]!.trace.toString('utf-8')) as { environment?: { hylyre_version?: string } };
+    assert.strictEqual(parsed.environment?.hylyre_version, VENDORED_HYLYRE_VERSION, 'fake 产出的 trace 版本须等于 vendored manifest 版本');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
 

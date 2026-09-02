@@ -1,20 +1,20 @@
 {
   "schema": 2,
-  "hylyre_version": "0.5.0",
+  "hylyre_version": "0.5.1",
   "source": {
     "root": "src",
     "file_count": 309,
-    "total_bytes": 982266,
-    "tree_sha256": "8f00a37f2fc08237e21d5523ddd77d084eac90597cd9e9a3770dc76f9924d38d",
+    "total_bytes": 987738,
+    "tree_sha256": "7cb9c540e655706acfd24604ac7e696dc71fcda0f823d232bcbe242be34dad21",
     "files": [
       {
         "path": "README.md",
-        "sha256": "445397e115e01928154294d8285227fbc91c7dc5792558d902ea71960cde1469",
-        "size_bytes": 6896
+        "sha256": "ad9f127853430df29b666f3b158526b911c867f7e67eee83d71fbdcbf1f82a65",
+        "size_bytes": 8451
       },
       {
         "path": "hylyre/__init__.py",
-        "sha256": "4bf3b141be75c6b245d1da4a45d3f9ea9c9bfa2c33333cd77498ca2e36f960e8",
+        "sha256": "7056bdfd0be1f817b6422cd9a6d88052c3f7d212e32ae6eb2b0fd1c18a1b6143",
         "size_bytes": 167
       },
       {
@@ -114,8 +114,8 @@
       },
       {
         "path": "hylyre/cli/__main__.py",
-        "sha256": "2c3a793c2162b9c12eb0f86f6372d2d554198025ff91a5cd0397179207d6fe18",
-        "size_bytes": 42918
+        "sha256": "1c27bd893331e6fbf60ef30a2286dfbfcf5be4b9002288bdf5d93c0be89726b2",
+        "size_bytes": 46835
       },
       {
         "path": "hylyre/cli/commands/__init__.py",
@@ -1549,13 +1549,13 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "95dfaec7871a2da8c3cc4c62cf875b18a4edba94b88ca4ce19d277263d4b47ef",
+        "sha256": "4e7dec9b7143015ec202008c40442934ad5e7a2484d44a073b1514c2af561fd3",
         "size_bytes": 1281
       }
     ]
   },
   "contracts_tree_sha256": "cc738c272324022d7ed559340e9c710f9b7f5f94aac62c5dd70042e827a21bae",
-  "generated_at": "2026-09-01T00:45:59Z",
+  "generated_at": "2026-09-02T04:56:53Z",
   "generator": {
     "python": "3.14.5",
     "pip": "pip 26.1.1 from D:\\Program Files\\Python314\\Lib\\site-packages\\pip (python 3.14)",

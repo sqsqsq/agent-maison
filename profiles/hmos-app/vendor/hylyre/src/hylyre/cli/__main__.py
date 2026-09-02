@@ -176,6 +176,81 @@ def session_status(
     session_cmd.run_session_status(session_file=session_file)
 
 
+# Which ``run`` execution path may consume each option declared on the shared
+# callback below. The four paths are ``plan``, ``steps_report``
+# (``--steps/--steps-file`` + ``--feature/--report-out/--trace-out``),
+# ``steps_raw`` and ``subcommand`` (any ``run <cmd>``). On a path outside its
+# set an option is accepted only at its Click default; any other value is a
+# usage error. The table validates option ownership; dispatch remains explicit,
+# and conformance boundary spies ensure supported values reach their owner. An
+# option missing from the table is treated as consumed nowhere (fails closed).
+_BATCH_PATHS = frozenset({"plan", "steps_report", "steps_raw"})
+_STEPS_PATHS = frozenset({"steps_report", "steps_raw"})
+_REPORT_PATHS = frozenset({"plan", "steps_report"})
+RUN_OPTION_PATHS: dict[str, frozenset[str]] = {
+    "plan": frozenset({"plan"}),
+    "steps": _STEPS_PATHS,
+    "steps_file": _STEPS_PATHS,
+    "on_fail": _STEPS_PATHS,
+    "steps_out": frozenset({"steps_raw"}),
+    "session": _STEPS_PATHS,
+    "page_name": _BATCH_PATHS,
+    "start_wait_time": _BATCH_PATHS,
+    "feature": _REPORT_PATHS,
+    "report_out": _REPORT_PATHS,
+    "trace_out": _REPORT_PATHS,
+    "use_fakes": _BATCH_PATHS,
+    "device_sn": _BATCH_PATHS,
+    "bundle": _BATCH_PATHS,
+    "mock_port": _BATCH_PATHS,
+    "lyrebird_url": _BATCH_PATHS,
+    "mock_group": frozenset({"plan"}),
+    "skip_assert_expected": frozenset({"plan"}),
+    "model_backend": _REPORT_PATHS,
+    "failure_dir": _BATCH_PATHS,
+}
+_RUN_PATH_LABELS = {
+    "plan": "--plan",
+    "steps_report": "--steps/--steps-file report mode (--feature/--report-out/--trace-out)",
+    "steps_raw": "--steps/--steps-file",
+}
+
+
+def _effective_run_option(name: str, value: object) -> object:
+    # Same normalization the steps path applies, so ``ABORT`` is the default.
+    if name == "on_fail" and isinstance(value, str):
+        return value.strip().lower()
+    return value
+
+
+def reject_unsupported_run_options(ctx: typer.Context, path: str) -> None:
+    """Usage error for every callback option ``path`` cannot consume.
+
+    Parsed values and declared defaults both come from the Click context, so
+    the table above only has to say *where* an option is consumed. Runs before
+    any device call, plan contract check or report/trace creation.
+    """
+    offending = [
+        param.opts[0]
+        for param in ctx.command.params
+        if path not in RUN_OPTION_PATHS.get(param.name or "", frozenset())
+        and _effective_run_option(param.name or "", ctx.params.get(param.name or ""))
+        != _effective_run_option(param.name or "", param.default)
+    ]
+    if not offending:
+        return
+    if path == "subcommand":
+        label = f"`run {ctx.invoked_subcommand}` when placed before the subcommand"
+    else:
+        label = _RUN_PATH_LABELS[path]
+    typer.secho(
+        f"{', '.join(offending)} not supported with {label}; "
+        "only the default value is accepted here.",
+        err=True,
+    )
+    raise typer.Exit(2)
+
+
 @run_app.callback(invoke_without_command=True)
 def run_plan_batch(
     ctx: typer.Context,
@@ -206,7 +281,11 @@ def run_plan_batch(
     on_fail: str = typer.Option(
         "abort",
         "--on-fail",
-        help="abort: stop on first error; skip: record error and continue.",
+        help=(
+            "abort|skip for --steps/--steps-file only (abort: stop on first "
+            "error; skip: record error and continue). --plan accepts only the "
+            "default abort; any other value is a usage error."
+        ),
     ),
     steps_out: Optional[Path] = typer.Option(
         None,
@@ -294,6 +373,9 @@ def run_plan_batch(
     """Batch: ``hylyre run --plan …`` or ``hylyre run --steps-file …``.
     Subcommands: action / tap / input / swipe / scroll / start-app."""
     if ctx.invoked_subcommand is not None:
+        # Before the early return: a non-default callback option written in
+        # front of a subcommand used to be accepted and dropped here.
+        reject_unsupported_run_options(ctx, "subcommand")
         return
     has_plan = plan is not None
     has_steps = steps is not None or steps_file is not None
@@ -312,6 +394,20 @@ def run_plan_batch(
                 err=True,
             )
             raise typer.Exit(2)
+        wants_report = (
+            feature is not None or report_out is not None or trace_out is not None
+        )
+        reject_unsupported_run_options(
+            ctx, "steps_report" if wants_report else "steps_raw"
+        )
+        # Same usage-error shape as the guard above, and before any device or
+        # start_app call: the normaliser used to run only inside the batch,
+        # after the agent had already been built.
+        try:
+            on_fail = steps_cmd._normalize_on_fail(on_fail)
+        except ValueError as e:
+            typer.secho(str(e), err=True)
+            raise typer.Exit(2)
         try:
             if steps_file is not None:
                 step_list = steps_cmd.load_steps_json_array(Path(steps_file))
@@ -322,9 +418,6 @@ def run_plan_batch(
         except Exception as e:
             typer.secho(f"Invalid steps JSON: {e}", err=True)
             raise typer.Exit(2)
-        wants_report = (
-            feature is not None or report_out is not None or trace_out is not None
-        )
         fd = failure_dir
         if fd is None and trace_out is not None:
             # Beside the trace, so every recorded artifact path resolves from
@@ -417,6 +510,7 @@ def run_plan_batch(
             err=True,
         )
         raise typer.Exit(2)
+    reject_unsupported_run_options(ctx, "plan")
     need = []
     if feature is None:
         need.append("--feature")

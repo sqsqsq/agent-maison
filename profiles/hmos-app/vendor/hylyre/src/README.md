@@ -6,7 +6,7 @@
 - **Agent 默认如何用 Hylyre（不必每轮交代）**：[AGENTS.md](AGENTS.md) + [`.cursor/rules/hylyre.mdc`](.cursor/rules/hylyre.mdc)；MCP 一次性配置：[docs/cursor-mcp-setup.md](docs/cursor-mcp-setup.md)
 - **进度**：[docs/progress.md](docs/progress.md)
 - **输出契约（SSOT）**：`hylyre/contracts/`（`trace.json` / 测试报告章节与枚举）；确定性执行、selector 与证据说明见 [docs/deterministic-verification.md](docs/deterministic-verification.md)
-- **当前推荐版本**：Hylyre **0.4.1**；结构化 selector identity（`by_id` / `by_key` / `id` / `key` / `selected_id`）在最终序列化中逐字保留，不再按文本规则脱敏；用户文本和值仍继续脱敏。
+- **当前推荐版本**：Hylyre **0.5.1**；Step Outcome Protocol v1（`hylyre.step-outcome/1`，trace schema `0.4-p0`，契约包 `cc738c27…` 不变）之上根治 `hylyre run` 共享选项的静默忽略：非默认值落到不支持的路径（含写在子命令前面）一律 usage error（exit 2、零设备）；`--on-fail abort|skip` 只对 `--steps/--steps-file` 生效，`--plan` 仅接受默认 `abort`。结构化 selector identity（`by_id` / `by_key` / `id` / `key` / `selected_id`）在最终序列化中逐字保留，不再按文本规则脱敏；用户文本和值仍继续脱敏。
 
 与业务仓 [SimulatedWalletForHmos](https://github.com/sqsqsq/SimulatedWalletForHmos) 的 **framework** 为**单向输出**关系：本仓不引用其代码；兼容性别名通过 GitHub Actions `compat-framework.yml` **软提醒**（不阻塞主 CI）。
 
@@ -65,6 +65,8 @@ openspec list
 9. **做法 A（Cursor / NL → test-plan JSON）**：由 Agent 将意图写成 `test-plan.md`「测试步骤」列的**单行 JSON**，真机执行步骤时**不必**配置 VLM。约定与示例见 [`docs/agent-plan-a.md`](docs/agent-plan-a.md)、`tests/e2e/fixtures/json-steps-test-plan.md`。**AI 默认如何用 Hylyre**（无需每轮复述）：根目录 [`AGENTS.md`](AGENTS.md) + [`.cursor/rules/hylyre.mdc`](.cursor/rules/hylyre.mdc)；一次性 MCP 配置见 [`docs/cursor-mcp-setup.md`](docs/cursor-mcp-setup.md)
 
 ## 当前阶段
+
+**0.5.1 根治 `hylyre run` CLI 选项穿透与静默忽略**：`run` 共享 callback 上的 20 个选项现在各自登记「默认值 + 支持路径（plan / steps report / steps raw / 子命令）」，callback 在任何设备调用、plan 契约校验与 report/trace 创建之前做一次中央校验——非默认值落到不支持的路径即 usage error（stderr 单行、exit 2、stdout 空、零设备）；等于默认值的显式写法（如 `--on-fail ABORT`、`--wait-time 1.0`）照常放行。写在子命令前面的父级选项（如 `run --on-fail skip tap …`）不再被提前 return 吞掉。`--on-fail` help 语义修正为：`abort|skip` 仅适用于 `--steps/--steps-file`，`--plan` 仅接受默认 `abort`，其它值为 usage error；plan 内不实现 `skip` 执行语义，`blocked/prior_step` 账本语义不变。plan / steps 之外未消费的组合（plan × `--session`/`--out`，steps report × `--out`/`--mock-group`/`--skip-assert-expected`，steps raw × `--mock-group`/`--skip-assert-expected`/`--model-backend`）一律裁定为「不支持并拒绝」，不新增能力。契约包、Step Outcome Protocol、trace schema 均未变化。
 
 **0.5.0 引入 Step Outcome Protocol v1（破坏性）**：trace schema 升至 `0.4-p0`，所有结果 envelope 声明 `result_protocol: "hylyre.step-outcome/1"`。`StepResult.outcome` 是判别联合——`passed` 带 observation、`failed` 带 failure、`blocked` 带 cause、`skipped` 带 reason，互不兼容；status 只由「是否实际尝试」决定；selector 拆成 `request`/`resolution`；`blocked` 后缀指向根步骤而不再复制其失败分类。机器契约（Schema、规范、判定表、参考 reducer、218 个 golden fixtures）随包发布在 [`hylyre/contracts/`](hylyre/contracts/)，可离线读取与校验；消费方迁移见 [docs/migration-0.5.md](docs/migration-0.5.md)。真机复验仍为 pending。
 
