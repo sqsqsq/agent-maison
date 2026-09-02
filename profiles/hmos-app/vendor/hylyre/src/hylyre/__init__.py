@@ -1,6 +1,6 @@
 """Hylyre: Hypium + Lyrebird unified device testing framework."""
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 
 from hylyre.api import HylyreAgent
 

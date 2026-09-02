@@ -1,5 +1,5 @@
 /**
- * Synced from Hylyre vendor source `src/hylyre/api/planned_step_keys.py` (vendor 0.5.0).
+ * Synced from Hylyre vendor source `src/hylyre/api/planned_step_keys.py` (vendor 0.5.1).
  * SSOT for STEP-001 lint; update when the vendor release bumps.
  */
 export const PLANNED_STEP_ROOT_KEYS: readonly string[] = [

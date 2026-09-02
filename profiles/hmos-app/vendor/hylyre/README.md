@@ -23,7 +23,7 @@ vendor/hylyre/
 ```
 
 - `source.files[]` 逐文件声明 sha256；`tree_sha256` = 对「POSIX 路径升序的 `<path>\n<sha256>\n` 拼接串」整体 sha256。
-- 当前 vendored source：Hylyre `0.5.0`，309 文件，`source.tree_sha256 = 8f00a37f2fc08237e21d5523ddd77d084eac90597cd9e9a3770dc76f9924d38d`；冻结契约仍为 `contracts_tree_sha256 = cc738c272324022d7ed559340e9c710f9b7f5f94aac62c5dd70042e827a21bae`。
+- 当前 vendored source：Hylyre `0.5.1`（2026-09-02 集成；上一版 0.5.0 修复件 tree `8f00a37f…`），309 文件，`source.tree_sha256 = 7cb9c540e655706acfd24604ac7e696dc71fcda0f823d232bcbe242be34dad21`；冻结契约仍为 `contracts_tree_sha256 = cc738c272324022d7ed559340e9c710f9b7f5f94aac62c5dd70042e827a21bae`（0.5.1 契约包零变化，`hylyre/contracts/` 226 文件与冻结包逐字节相同）。
 - schema 2 manifest 不声明 `wheel`；宿主完整性门只按 `source.files[]`、文件大小与 `source.tree_sha256` 验证实际源码树。
 - 源文件统一 **LF** 落盘并按 LF 字节计算 hash；本仓 `.gitattributes` 全局 `eol=lf`，checkout 字节与声明恒等。
 - harness 对齐判定**按 manifest 声明清单**复算 tree hash——vendor 内意外杂物（如 `__pycache__`）不会假触发"发布件损坏"；「src 内未声明文件」的检测由 Hylyre `--verify` 负责。
@@ -57,7 +57,7 @@ python D:\1.code\Hylyre\scripts\build_wheel.py --verify $dst
 
 同步后 Hylyre 发布包内如仍带 `integration_docs` 等移交文件，**不要**提交进 Maison；`.whl` 同样不得进入本目录。把 harness 侧变更摘要补进下文「Framework 集成要点」。
 
-## Framework 集成要点（vendor 0.5.0）
+## Framework 集成要点（vendor 0.5.x）
 
 以下由 harness 已落地，消费者读 profile 文档即可，无需另附移交清单。
 
@@ -84,6 +84,13 @@ python D:\1.code\Hylyre\scripts\build_wheel.py --verify $dst
 
 - 阶段入口（coding / ut / testing）内联 **`ensurePersonalSetup`**：半就绪 `framework.local.json`（如只记 `agent_adapter`、缺 DevEco）会在放行前自动确定性 repair（单 adapter / DevEco 探测）。
 - `init-orchestrate record-adapter` 写 local 后 **best-effort** 补 DevEco；探测不到时不失败任务，阶段入口仍会校验 DevEco。
+
+### Hylyre 0.5.1 CLI 选项所有权（需求文 docs/vendor/hylyre-0.5.1-CLI选项穿透与静默忽略根治需求.md）
+
+- `hylyre run` 共享 callback 的 20 个选项建立所有权表：不支持路径上的**非默认值**一律 usage error——`exit=2`、stderr 单行、零设备、不产 report/trace；默认等价值放行。plan 路径 `--on-fail` 只接受默认 `abort`（`skip`/非法值 exit 2），`run --help` 已注明 `abort|skip` 仅限 `--steps/--steps-file`；写在 17 个 `run` 子命令前面的父级非默认选项不再被吞掉。
+- Maison 传参核对（集成时逐项对照所有权表）：plan 路径 `--plan/--feature/--report-out/--trace-out/--bundle/--skip-assert-expected/--device-sn/--failure-dir`，steps-file 路径 `--steps-file/--bundle/--page-name/--device-sn/--failure-dir(+report 三件套)`，均在各自支持集内；Maison 从不向 plan 传 `--on-fail`。本地 fake 复核：`--on-fail skip|bogus` 四要素成立，`--on-fail abort` 与不传的 trace/report 逐字节一致。
+- 相对需求文的唯一偏离：steps 路径非法 `--on-fail` 由 exit 1 改为 exit 2 且提前到设备连接之前，report 模式不再带 `verify_report failed:` 前缀。Maison 无脚本依赖旧退出码（已 grep），无需适配。
+- 需求 v2 的 P2（by_id presence 通过态 golden 与 fake runner 可配置 presence）顺延 0.5.2，Maison 侧的 contract-composed 夹具与 pin 维持不变。
 
 ### Hylyre 0.5.0 CLI / 步骤与证据能力
 
