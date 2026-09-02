@@ -39,5 +39,5 @@
 - [x] 5.3 Run `node scripts/check-plan-version.mjs`
 - [ ] 5.4 Run mandatory `npm run release:verify`
   - Deferred: the release gate is a branch-integration step for `Br_release_3.0.0`, and this change is delivered to the working tree for human review before any commit.
-- [ ] 5.5 Host replay on SimulatedWalletForHmos (`bc-openCard-1`)
-  - Deferred: driven by the user separately; the host project is out of scope for this change.
+- [x] 5.5 Host replay on SimulatedWalletForHmos (`bc-openCard-1`)
+  - Completed 2026-08-28 (user-driven, framework `e21547c8`): UT summary PASS / 0 BLOCKER / closure_status=closed; `ut_no_src_mutation` PASS on the attestation baseline with the exact attested-clean wording (no git baseRef, no `post_review_source_drift`, no `review_closure_baseline_unavailable`); review-closure-attestation rebuilt at review closure (2026-08-28T13:55:37Z, 114 files / 6 roots, `contracts_sha256` byte-matches current contracts.yaml); zero commits required — host worktree kept 49 uncommitted changes throughout. Verified read-only against host reports on 2026-08-28.
