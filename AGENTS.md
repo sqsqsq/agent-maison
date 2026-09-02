@@ -1,6 +1,12 @@
 # AGENTS.md — AgentMaison 开发指令
 
-> 品牌：**AgentMaison**；消费者 submodule / zip 解压路径仍为 **framework/**。
+> 品牌：**AgentMaison**；消费者将 Maison **发布件**集成到宿主的 **framework/** 目录。
+
+## 消费者交付拓扑（BLOCKER）
+
+- AgentMaison 只通过 Maison 构建并校验的**发布件**交给宿主集成；宿主中的 `framework/` 是发布件落盘目录，**不是 Git submodule**。
+- 不得从目录名 `framework/`、Git 工作树形态或历史文档推断 submodule 支持；历史 README、MIGRATION、plan、spec、测试或注释中的 submodule 说法均视为过期残留，不能作为当前设计、实现、验收或 review 依据。
+- 除非用户今后明确重新开放该拓扑，任何新方案不得声称或实现 “submodule/vendor 双布局”；消费者边界、写保护、dirty check、updater 与发布验证一律按**发布件集成**模型设计。
 
 ## 目录分层（BLOCKER）
 
