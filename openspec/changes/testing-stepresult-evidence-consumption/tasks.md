@@ -26,7 +26,11 @@
 ## 5. Staged contract and verification
 
 - [x] 5.1 This-stage verification: update the OpenSpec contract, device-testing Skill, hmos-app profile addendum, and testing/runbook documentation; record the external Hylyre three-part gate status and keep Hylyre-dependent tasks pending when any fact is absent; run the focused checks for the completed stage work.
-- [ ] 5.2 T8b final closeout after tasks 4.1–4.5 are implemented: update all task statuses, rerun strict OpenSpec validation, focused/full tests, plan/version and diff checks, and verify the native/legacy transition end to end. No release/version bump or host device reflash is part of this task.
+- [x] 5.2 T8b final closeout after tasks 4.1–4.5 are implemented: update all task statuses, rerun strict OpenSpec validation, focused/full tests, plan/version and diff checks, and verify the native/legacy transition end to end. No release/version bump or host device reflash is part of this task.
+      2026-09-02 收口留证：本 change 全部 task 已按事实置 [x]；`npm --prefix harness test` = typecheck PASS + unit 3773/3773 + fixtures 46/46；
+      `npm run openspec:validate` = strict 45/45 + enforcement 路径 PASS；`node scripts/check-plan-version.mjs` PASS；`git diff --check` 干净；
+      改动文件 LF/无 BOM。native/legacy 过渡端到端：legacy 0.3-p0 golden 在 required gate 响亮 FAIL（不 no-op），合法 v1 golden 与
+      宿主 run 20260901T173347Z-253 report-only 均通过（见 6.8）。无版本号变更、无宿主刷机。
 
 ## 6. 首次宿主回灌纠偏（plan a6c4e9f2）
 
@@ -146,4 +150,8 @@ failure_kind / failure_code`，与 0.5.0 / 0.4-p0 / Step Outcome v1 并存两套
       要求「合计」行为 `—` 占位，但 `test-report-template.md` 未说明，报告作者会把各阶段相加。模板补一句
       "null 时填 `—`，不得自行加总"；不改 writer、不算新总时长、不增字段；trace-gates 单测钉"加总值被判
       应为无数据占位、`—` 通过"。
-- [ ] 6.8 T7b/T8：真实 0.5.0 source 接入与宿主回灌收口（用户单独触发，不由本 change 的实施代理发起）。
+- [x] 6.8 T7b/T8：真实 0.5.0 source 接入与宿主回灌收口（用户单独触发，不由本 change 的实施代理发起）。
+      2026-09-02 宿主复验事实（用户触发，本仓只引用不读取宿主路径）：宿主 run `20260901T173347Z-253` 以修复后候选包
+      （3.0.0 / fa2c1226 / release manifest 68302edd…）执行 `--report-reconcile-only`，零设备、authoritative trace
+      SHA `8b881025…` 字节不变；AC-1/10/14 与 AC-3 闭合，TC-002 by_text 反证不被洗绿；P0 acceptance 覆盖 0→8/26；
+      剩余 9 项 blocker 均在允许清单（非 Hylyre 通道义务与产品侧缺口，按宿主报告五栏分列）。

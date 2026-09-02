@@ -80,7 +80,7 @@ todos:
     status: completed
   - id: t8-host-replay-and-closeout
     content: T8 宿主回灌与收口（用户触发的宿主动作，不由 Maison 实施 agent 擅改宿主）：顶层测试计划先明确并 review execution_channel，指引明示任一 manual TC 都使本 feature testing 无法 PASS；Hylyre 完整编译并执行入口链，验 selector resolution、required/forbidden、TC-015、failure-boundary screen artifact、failed route、blocked capability/external disposition 与 report-only。报告按 selector/channel/Step Outcome/Hylyre/identity-package 分栏独立裁决；按事实完成原 plan 状态并跑定向/全量/strict/plan/diff/LF，历史 p0-skip t7 不夹带。
-    status: pending
+    status: completed
 overview: >
   Hylyre 0.4.1 已证明“失败能诚实落盘”，但首次宿主回灌又暴露 Maison 在失败之前和失败之后
   各有一个越权：静态 lint 把不完整的 feature ui-spec 当封闭白名单，派生 AI 又能把不会做的
@@ -95,7 +95,7 @@ overview: >
 
 # testing 回灌纠偏：selector 运行时裁决、执行通道、Step Outcome 与身份隔离（a6c4e9f2）
 
-状态：**宿主实证已冻结，待 OpenSpec delta 先行后实施。**
+状态：**已收口（2026-09-02）——T1–T8 全部 completed；T8 宿主复验证据见文末「七、T8 收口证据」。**
 
 关联资产：
 
@@ -655,3 +655,19 @@ T1 testing change + 独立 framework identity/boundary change，各自 strict
 ```
 
 验证遵守比例原则：纯文档/状态修订不重复全测；testing 与 framework 两条生产逻辑分别跑其定向/typecheck，合并候选后只跑一次最终全量；宿主只在 T7b 的真实 Step Outcome + selector resolution 硬依赖全部通过并集成新候选字节后跑一次完整 device testing，不用每个小改重复真机。强隔离证据只在环境具备时采，当前同用户 Windows 不因此阻塞降级栏收口。
+
+---
+
+## 七、T8 收口证据（2026-09-02，宿主动作由用户触发；本仓只引用宿主路径、不读取）
+
+按 §三 T8 约定的五栏各列一行，各栏独立成立；剩余业务 FAIL 不抹掉已交付机制证据。
+
+| 栏 | 证据 | 结论 |
+|---|---|---|
+| selector / runtime identity | 宿主 run `20260901T173347Z-253`，`--report-reconcile-only` 零设备复验；T4 返修（fa2c1226：by_id 字面绑定 + forbidden 不限 post_screen）后 AC-1/10/14 与 AC-3 四目标闭合，TC-002 的 by_text 断言按身份护栏**不**闭合（反证：by_text 不能洗成 id 身份） | PASS |
+| execution_channel / coverage | P0 acceptance 覆盖 0 → 8/26；剩余 9 项 blocker 均在允许清单（非 Hylyre 通道义务与产品侧缺口，宿主报告分栏所列），无一项来自门禁自身的闭世界残留 | PASS（业务侧按事实 FAIL） |
+| Step Outcome / failure routing | 同 run 的 route/disposition 基数与 T5 冻结语义一致；report-only 重算后 authoritative trace SHA `8b881025…` 字节不变 | PASS |
+| Hylyre 0.5.0 | 宿主以 vendored 0.5.0 source（tree `8f00a37f…`，contracts `cc738c27…`）跑通 trace 0.4-p0 + `hylyre.step-outcome/1`；0.5.1 CLI 选项穿透需求文已另立（docs/vendor） | PASS |
+| framework identity / release boundary | 复验所用发布件 identity：3.0.0 / source commit `fa2c1226` / release manifest sha256 `68302edddd62da488a7fc0b5022247d7da24e56070917f0dcf9e48c0b92dcaa9`（dist/framework-3.0.0.manifest.json → inZipManifest.sha256，createdAt 2026-09-02T03:08:59Z）；runtime hash 家族已退场，普通 run 不产 framework_integrity | PASS |
+
+后续：T8 暴露但不属于本 plan 的四项 Maison 缺口（provider id 计划期查表、参考图视口尺寸前置门、受限 case 首部复位、versionCode=0 归一）已立 plan b3d7e5a1；provider per-TC 绑定归 e7cecd22。本 plan 不再跟踪。
