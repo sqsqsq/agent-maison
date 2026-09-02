@@ -10,6 +10,7 @@ export const provider: CapabilityProvider = {
     'checkVisualHandoff',
     'checkFidelityGovernance',
     'checkFidelitySnapshotPromise',
+    'checkReferenceViewportSpec',
     'checkStructuredRefElements',
     'checkAuthoritativeRefLockConflicts',
   ],
@@ -17,6 +18,6 @@ export const provider: CapabilityProvider = {
 
 export { checkVisualHandoff } from '../spec-visual-handoff-check';
 export { checkFidelityGovernance } from '../fidelity-governance-check';
-export { checkFidelitySnapshotPromise } from '../fidelity-snapshot-check';
+export { checkFidelitySnapshotPromise, checkReferenceViewportSpec } from '../fidelity-snapshot-check';
 export { checkStructuredRefElements } from '../structured-ref-elements';
 export { checkAuthoritativeRefLockConflicts } from '../authoritative-ref-images';

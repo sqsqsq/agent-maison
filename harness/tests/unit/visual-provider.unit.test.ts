@@ -2185,6 +2185,71 @@ test('t5 接线纪律（源码锚定）：provider 评审显式 await、不塞�
   );
 });
 
+
+// plan b3d7e5a1 T5（codex P1）：全部屏都因整页参考图被排除时，provider 早退**之前**必须复位旧 provider 状态并落盘，
+// 否则旧 PASS/attest 会以"本轮没评"为名跨轮存活；同时不得调用 provider。
+test('b3d7e5a1 T5：长图屏使评审目标为空 → skipped 前复位旧 provider 状态并落盘，不调用 provider', async () => {
+  const headerOnlyPng = (w: number, h: number): Buffer => {
+    const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const ihdr = Buffer.alloc(25);
+    ihdr.writeUInt32BE(13, 0); ihdr.write('IHDR', 4, 'ascii');
+    ihdr.writeUInt32BE(w, 8); ihdr.writeUInt32BE(h, 12); ihdr[16] = 8; ihdr[17] = 6;
+    const iend = Buffer.from([0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82]);
+    return Buffer.concat([sig, ihdr, iend]);
+  };
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vp-viewport-'));
+  try {
+    const feature = 'feat';
+    const specDir = path.join(tmp, 'doc', 'features', feature, 'spec');
+    const shotDir = path.join(tmp, 'doc', 'features', feature, 'device-testing', 'device-screenshots');
+    fs.mkdirSync(path.join(specDir, 'assets'), { recursive: true });
+    fs.mkdirSync(shotDir, { recursive: true });
+    const refRel = `doc/features/${feature}/spec/assets/ref-home.png`;
+    const shotRel = `doc/features/${feature}/device-testing/device-screenshots/shot-home.png`;
+    fs.writeFileSync(path.join(tmp, refRel), headerOnlyPng(1320, 4350));
+    fs.writeFileSync(path.join(tmp, shotRel), headerOnlyPng(1320, 2120));
+    fs.writeFileSync(path.join(specDir, 'spec.md'), [
+      '```yaml', 'ui_change: new_or_changed', 'visual_handoff:',
+      '  kind: authoritative_refs', '  authoritative_refs:', '    - id: home', `      path: ${refRel}`, '```', '',
+    ].join('\n'));
+    fs.writeFileSync(path.join(specDir, 'ui-spec.yaml'), [
+      'schema_version: "1.0"', 'verified: unverified', 'screens:',
+      '  - id: home', '    priority: P0', '    ref_id: home',
+      'tokens: {}', 'assets: []',
+    ].join('\n'));
+    const { hashScreenshotFile } = require('../../../profiles/hmos-app/harness/visual-diff-check') as { hashScreenshotFile: (p: string) => string | null };
+    const shotHash = hashScreenshotFile(path.join(tmp, shotRel))!;
+    const jsonPath = path.join(shotDir, 'visual-diff.json');
+    fs.writeFileSync(jsonPath, JSON.stringify({
+      schema_version: '1.1',
+      screens: [{
+        screen_id: 'home', ref_id: 'home', verdict: 'pass',
+        screenshot_path: shotRel, screenshot_hash: shotHash, evaluated_screenshot_hash: shotHash,
+        must_fix: [], defects: [],
+        region_attest: [{ region: 'header', method: 'vl_screening', by: 'visual_provider:claude', note: 'old' }],
+      }],
+    }, null, 2));
+    let invoked = 0;
+    const ctx = { projectRoot: tmp, feature, fidelityTarget: 'semantic_layout', specVisualSources: { external_roots: [], allow_absolute_paths: false, allow_network_paths: false } } as never;
+    const out = await runVisualProviderReview(ctx, {
+      frameworkRoot: FRAMEWORK_ROOT,
+      provider: { adapter: 'claude', model: 'm' },
+      runId: 'R', attemptId: 'A',
+      invoke: (async () => { invoked += 1; throw new Error('must not invoke'); }) as never,
+    });
+    assert.strictEqual(out.kind, 'skipped', JSON.stringify(out));
+    assert.match((out as { reason?: string }).reason ?? '', /尺寸不兼容/);
+    assert.strictEqual(invoked, 0, '长图屏不得触发 provider 调用');
+    const after = JSON.parse(fs.readFileSync(jsonPath, 'utf-8')) as { screens: Array<Record<string, unknown>> };
+    const row = after.screens[0]!;
+    assert.strictEqual(row.verdict, 'pending', '早退前须复位为 pending');
+    assert.strictEqual(row.evaluated_screenshot_hash, undefined, '旧 provider hash 不得存活');
+    assert.strictEqual(row.region_attest, undefined, '旧 provider attest 不得存活');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 export async function runAll(): Promise<UnitCaseResult[]> {
   const out: UnitCaseResult[] = [];
   for (const c of CASES) {

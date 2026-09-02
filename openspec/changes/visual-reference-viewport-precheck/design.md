@@ -10,7 +10,7 @@ viewport 在两个阶段的来源不同：spec 阶段只有 fidelity-lock 的 `v
 
 - 整页参考图在 `pixel_1to1` 下被明确 FAIL 并点名屏与尺寸，且该屏不再用原始长图产出 pixel/OCR 内容结论。
 - 低档位按既有 ratchet WARN/SKIP，不静默升级为像素 PASS。
-- 尺寸兼容的 feature 行为逐字不变；作者换图并更新 `ref_id` 后 pipeline 原样运行。
+- 尺寸兼容的 feature 行为逐字不变；作者把长页按锚点拆成多个 viewport 尺寸的 screen（各自 `ref_id` 裁图 + nav 末步 `scroll_to` 锚点）后 pipeline 原样运行。
 
 **Non-Goals**
 
@@ -23,7 +23,7 @@ viewport 在两个阶段的来源不同：spec 阶段只有 fidelity-lock 的 `v
 ## Decisions
 
 1. **只做尺寸兼容性检查。** 判据 = `refH/refW > (viewportH/viewportW) × 1.15`，阈值从 ocr-gates 迁为共享常量，两处同源。不引入像素级对齐或区域映射。
-2. **责任归 spec 参考资产。** 不兼容不是产品缺陷、不是能力缺失：不路由 coding、不 defer、不落 uncertain。修复路径是作者用既有裁图能力产出 viewport-sized 参考图并更新 `ref_id`——没有第二套参考真源。
+2. **责任归 spec 参考资产。** 不兼容不是产品缺陷、不是能力缺失：不路由 coding、不 defer、不落 uncertain。出路由作者建模而非机器推导：长页按锚点拆成多个 screen，每段一个 viewport 尺寸的 `ref_id` 裁图，`visual-diff-nav.json` 中该段 nav 末步 `scroll_to` 锚点元素（nav 校验复用 planned-step 全键表，`scroll_to` 本就合法）；锚点选对齐确定的元素（如列表项）。像素路径前提：每段 nav 从已知状态出发且滚动落点已证明可重复（宿主至少两个冷启动轮次的中/尾 checkpoint 落点一致）；无法证明的段落不放 `pixel_1to1` 屏，继续 FAIL 而不宣称支持。不属像素范围的段落排除在 `pixel_1to1` 屏之外、由功能/结构 AC 覆盖——没有屏级/段级 fidelity 档位，也没有第二套参考真源。
 3. **不兼容屏从内容比对输入集合剔除。** 在 `checkVisualDiffCore` 内容比对之前算出不兼容屏集合，后续 pixel/OCR 内容门只消费兼容屏，并在 details 点名被剔除的屏；不是在结果上打标签。
 4. **spec 阶段无 viewport 时 WARN 明示推迟。** 不 PASS-by-silence；testing 用实测截图尺寸再判一次。
 5. **低档位走既有 `fidelityRatchetFailOrWarn`。** 不新增档位语义。
@@ -36,4 +36,4 @@ viewport 在两个阶段的来源不同：spec 阶段只有 fidelity-lock 的 `v
 
 ## Migration
 
-无消费者迁移。已在用整页参考图的 feature 会在 `pixel_1to1` 下收到 `visual_reference_viewport` FAIL 与换图指引。
+无消费者迁移。已在用整页参考图的 feature 会在 `pixel_1to1` 下收到 `visual_reference_viewport` FAIL 与"拆多屏 + scroll_to 锚点"的建模指引。

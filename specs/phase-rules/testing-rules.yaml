@@ -242,6 +242,16 @@ structure_checks:
     rule:
       provider: device_test.visual_diff
 
+  visual_reference_viewport:
+    description: >
+      plan b3d7e5a1 T5：参考图与实测截图（设备视口）尺寸兼容性前置门——在任何 pixel/OCR 内容比对之前判定。
+      整页拼接参考图（宿主 expanded 4350 / all_banks 8312 对 2120 视口）不构成单视口合法像素参考：
+      pixel_1to1 → BLOCKER FAIL，低档 → ratchet WARN；该屏从内容比对输入集合剔除，不得用原始长图产出内容结论；
+      全部兼容 → 零结果（check 集合逐字不变）。出路=作者建模：长页按锚点拆成多个 viewport 尺寸 screen（各自 ref_id + nav 末步 scroll_to）。
+    severity: BLOCKER
+    rule:
+      provider: device_test.visual_diff
+
   visual_diff_verdict_abandonment:
     description: >
       P0-2（9d4b7e21，声明补录——实现已随收尾批落地，本条补齐指纹纪律）：确定性 FAIL 弃判硬

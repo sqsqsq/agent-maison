@@ -23,7 +23,7 @@ import {
   checkAuthoritativeRefLockConflicts,
   resolveRefSourceImage,
 } from '../../../profiles/hmos-app/harness/authoritative-ref-images';
-import { checkFidelitySnapshotPromise } from '../../../profiles/hmos-app/harness/fidelity-snapshot-check';
+import { checkFidelitySnapshotPromise, checkReferenceViewportSpec } from '../../../profiles/hmos-app/harness/fidelity-snapshot-check';
 import { checkCaptureCompleteness } from '../../../profiles/hmos-app/harness/capture-completeness-check';
 import {
   checkStructuredRefElements,
@@ -431,6 +431,73 @@ export function runAll(): UnitCaseResult[] {
       if (errors.length || !loaded?.viewport?.dpr) throw new Error(JSON.stringify({ loaded, errors }));
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // plan b3d7e5a1 T5：spec 阶段的参考图 / lock.viewport 尺寸兼容性前置门
+  // -------------------------------------------------------------------------
+  const headerOnlyPng = (w: number, h: number): Buffer => {
+    const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const ihdr = Buffer.alloc(25);
+    ihdr.writeUInt32BE(13, 0); ihdr.write('IHDR', 4, 'ascii');
+    ihdr.writeUInt32BE(w, 8); ihdr.writeUInt32BE(h, 12);
+    ihdr[16] = 8; ihdr[17] = 6;
+    const iend = Buffer.from([0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82]);
+    return Buffer.concat([sig, ihdr, iend]);
+  };
+  const writeUiSpecHome = (root: string): void => {
+    const specDir = path.join(root, 'doc', 'features', 'bank-card', 'spec');
+    fs.mkdirSync(specDir, { recursive: true });
+    fs.writeFileSync(path.join(specDir, 'ui-spec.yaml'), [
+      'schema_version: "1.0"', 'verified: unverified', 'screens:',
+      '  - id: home', '    priority: P0', '    ref_id: home',
+      'tokens: {}', 'assets: []',
+    ].join('\n'));
+  };
+
+  run('b3d7e5a1 T5 spec：lock.viewport=1320×2120 而参考 PNG 1320×4350 → pixel_1to1 FAIL；1320×2120 → 零结果；低档 WARN', () => {
+    const root = mkProject();
+    try {
+      writeUiSpecHome(root);
+      const dir = writeLockAndPng(root, 'bank-card', [{ id: 'home', png: 'home.png' }], { viewport: { w: 1320, h: 2120 } });
+      fs.writeFileSync(path.join(dir, 'home.png'), headerOnlyPng(1320, 4350));
+      const hard = checkReferenceViewportSpec(baseCtx(root, 'bank-card', { fidelityTarget: 'pixel_1to1', acceptanceStrictness: 'hard' }), fidelitySpecMd());
+      if (hard.length !== 1 || hard[0].id !== 'visual_reference_viewport' || hard[0].status !== 'FAIL' || hard[0].severity !== 'BLOCKER') {
+        throw new Error(`pixel_1to1 下须 BLOCKER FAIL：${JSON.stringify(hard)}`);
+      }
+      if (!/home[^\n]*1320×4350[^\n]*1320×2120/.test(hard[0].details ?? '')) throw new Error(`须点名屏与尺寸：${hard[0].details}`);
+      if (!/ref_id/.test(hard[0].suggestion ?? '')) throw new Error(`修复指引须指向换图更新 ref_id：${hard[0].suggestion}`);
+      const soft = checkReferenceViewportSpec(baseCtx(root, 'bank-card'), fidelitySpecMd());
+      if (soft.length !== 1 || soft[0].status !== 'WARN') throw new Error(`低档位须 WARN：${JSON.stringify(soft)}`);
+      fs.writeFileSync(path.join(dir, 'home.png'), headerOnlyPng(1320, 2120));
+      const compatible = checkReferenceViewportSpec(baseCtx(root, 'bank-card', { fidelityTarget: 'pixel_1to1', acceptanceStrictness: 'hard' }), fidelitySpecMd());
+      if (compatible.length !== 0) throw new Error(`兼容时须零结果（不新增 PASS）：${JSON.stringify(compatible)}`);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('b3d7e5a1 T5 spec：lock 未声明 viewport → WARN 明示推迟到 testing；无在线 handoff → 零结果', () => {
+    const root = mkProject();
+    try {
+      writeUiSpecHome(root);
+      const dir = cacheDir(root, 'bank-card');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'home.png'), headerOnlyPng(1320, 4350));
+      writeFidelityLock(path.join(dir, 'fidelity.lock.yaml'), {
+        schema_version: FIDELITY_LOCK_SCHEMA_VERSION,
+        source_link: 'https://stub.example/design',
+        screens: [{ id: 'home', png: 'home.png' }],
+      });
+      const deferred = checkReferenceViewportSpec(baseCtx(root, 'bank-card', { fidelityTarget: 'pixel_1to1', acceptanceStrictness: 'hard' }), fidelitySpecMd());
+      if (deferred.length !== 1 || deferred[0].status !== 'WARN' || !/推迟|testing/.test(deferred[0].details ?? '')) {
+        throw new Error(`lock 无 viewport 须 WARN 明示推迟：${JSON.stringify(deferred)}`);
+      }
+      const offline = checkReferenceViewportSpec(baseCtx(root, 'bank-card', { fidelityTarget: 'pixel_1to1', acceptanceStrictness: 'hard' }), '```yaml\nui_change: new_or_changed\n```\n');
+      if (offline.length !== 0) throw new Error(`无在线 handoff 时零结果：${JSON.stringify(offline)}`);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 

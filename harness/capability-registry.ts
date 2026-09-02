@@ -248,6 +248,12 @@ export function dispatchSpecVisualHandoff(ctx: CheckContext, specMarkdown: strin
     'spec.visual_handoff',
     'checkFidelitySnapshotPromise',
   );
+  // plan b3d7e5a1 T5：参考图/viewport 尺寸兼容性前置门（兼容时零结果，不改 check 集合）。
+  const viewportFn = requireProviderFunction<(c: CheckContext, p: string) => CheckResult[]>(
+    ctx.resolvedProfile,
+    'spec.visual_handoff',
+    'checkReferenceViewportSpec',
+  );
   const structFn = requireProviderFunction<(c: CheckContext, p: string) => CheckResult[]>(
     ctx.resolvedProfile,
     'spec.visual_handoff',
@@ -264,6 +270,7 @@ export function dispatchSpecVisualHandoff(ctx: CheckContext, specMarkdown: strin
     ...fn(ctx, specMarkdown),
     ...govFn(ctx, specMarkdown),
     ...snapFn(ctx, specMarkdown),
+    ...viewportFn(ctx, specMarkdown),
     ...structFn(ctx, specMarkdown),
     ...lockConflictFn(ctx, specMarkdown),
   ];

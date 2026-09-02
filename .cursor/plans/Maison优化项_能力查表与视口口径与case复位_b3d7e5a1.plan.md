@@ -10,7 +10,7 @@ version: 3.0.0
 # 2026-09-02 review 修订（两处阻断意见已吸收）：
 #   C 删除 clear_app——它清产品数据/权限/状态，不是导航复位；将来确有需求须由顶层测试计划显式授权。
 #   B 砍掉 reference_region、自动 crop resolver、crop hash 语义与下游改造，收窄为"参考图与 viewport
-#   尺寸不兼容的前置门"；不兼容时由 spec 作者用既有裁图能力提供 viewport-sized 参考图并更新 ref_id。
+#   尺寸不兼容的前置门"；出路是作者建模：长页按锚点拆成多个 viewport 尺寸的 screen（各自 ref_id 裁图 + nav 末步 scroll_to 锚点；像素路径前提=每段 nav 从已知状态出发且落点已证明可重复，不属像素范围的段落排除在 pixel_1to1 屏外、由功能/结构 AC 覆盖，无屏级/段级档位）（2026-09-02 三轮修订，机制不动只改出路描述）。
 #   E 改为必做，已在 testing-stepresult-evidence-consumption tasks 6.7c 完成，后续 change 不再包含。
 #
 # 2026-09-02 实证（宿主 SimulatedWalletForHmos / feature=bc-openCard-1）：
@@ -40,7 +40,7 @@ version: 3.0.0
 #
 # 简单原则冻结：A 只加一次 registry 存在性 lookup，不新增 provider 机制、不扩 registry 为执行账本；
 # B 只做参考图/viewport 尺寸兼容性前置检查，不新增 reference_region、自动 crop、crop hash、多套参考真源、
-# 分段或滚动拼接，不静默把 pixel_1to1 降成结构口径；C 只允许 case 首部 `stop_app → start_app`，
+# 自动分段或滚动拼接，不静默把 pixel_1to1 降成结构口径；C 只允许 case 首部 `stop_app → start_app`，
 # 不含 clear_app、不做"堆 back 猜深度"、不向 Hylyre 要 teardown 状态机（备选）；D 只在解析边界把 0
 # 归 unknown；E 只加一句占位规则。不恢复任何已否决方案（ui-spec/acceptance/contracts 白名单并集、
 # 屏幕状态机/可达性图、runtime hash 家族、人签/receipt 载体）。
@@ -50,22 +50,22 @@ todos:
     status: completed
   - id: t2-provider-registry-lookup
     content: T2（A）`evaluateExecutionChannelDeclaration(planMd, opts?)` 增 `registeredCapabilityIds` 可选集合与 `unknown_provider[]` 结果字段，未知 id 并入 `ok=false`，detail 话术"该能力不存在（capability registry 未登记），此 TC 不可能通过"并列出当前 profile 已登记的 capability 键清单（normalize 后、字典序；空清单明示）；匹配 = 双方经 normalizeCapabilityKey 后精确相等，不做分隔符/大小写/相似度归一；`check-testing.ts:3703 loadExecutionChannelDeclaration` 唯一注入点传入 `ctx.resolvedProfile.capabilities` 键集（经 normalizeCapabilityKey），从而 `testing_execution_channel` BLOCKER（failure_kind=plan_contract）且 `shouldRunDevicePipeline` 零设备动作；report-only 仍完整只读重算。`parseExecutionChannel` 保持纯词法；severity=SKIP 的已登记能力视为"存在"（可用性归 capability-resolution）。回归：unknown/registered/alias/无 opts 四态 + 分隔符不同即 unknown（`provider:device_test.visual-diff` 对已登记 `device_test.visual_diff` → unknown，证明不做模糊匹配）+ detail 含已登记键清单（含空清单文案）+ 一条 check-testing 接线 + report-only 不被截断。
-    status: pending
+    status: completed
   - id: t3-versioncode-zero-unknown
     content: T3（D）在 `hdc-runner.ts parseInstalledBundleVersionFromDump` 解析边界把 versionCode=0 归为 `versionCode:null` 并带 `versionCodeUnknownReason:'parsed_zero'`，`installed` 仍按原始文本判定（0 不能把已安装变成未安装）；随后删除 `detectInstallDowngrade` 的 `> 0` 子句与 `versionAllowsReuse` 的 0 特判（已成死分支）；diag JSON/日志对该情形输出 `(未解析：bm dump 报 0，按 unknown)`，不再展示成确定版本。回归：解析器 0→null+reason 且 installed=true、diag kind=clear 且 deviceVersionCode=null 且 downgradeDetected=false、正常正整数行为不变。
-    status: pending
+    status: completed
   - id: t4-case-leading-reset
     content: T4（C）STEP-003 由"全禁 start_app"收窄为"仅禁 case 中段"：合法前奏只有 case 首部连续的 `stop_app(bundle) → start_app(bundle, page_name)`，`start_app` 必须紧跟 `stop_app`，`bundle`/`page_name` 必须等于 harness 预启同源身份（`loadAppInstallCandidateMeta().bundleName`、`resolveHylyreToolConfig().hypium_page_name || discoverEntryMainElement()`），由 check-testing 经 `LintHylyrePlanOptions.resetIdentity` 注入，身份不可解析时前奏步骤 BLOCKER；中段出现 lifecycle 步骤、无 stop 直接 start、身份缺失/不一致均 BLOCKER；`clear_app` 不在本 plan 内（仍按现状 STEP 规则处理，派生 AI 不得自行加入）；`forbidStartApp:true` 保留为即席全禁；runner 级预启与 cold restart 不变。派生知识 `buildStandardHylyreDeriveKnowledge(reset?)` 新增 `reset_preamble` 块并把 stop_app/start_app 移回 allowed；STEP-004（action 包装 start_app）维持 BLOCKER。同步 SKILL.md:63、workflow-detail 4.5.3 与 :45、hylyre-planned-step-fields.md:10、profile-addendum.md:114 措辞。回归：首部合法前奏 0 违规、无 stop 直接 start BLOCKER、中段 BLOCKER、bundle/page_name 不一致 BLOCKER、即席全禁、不含 reset 的计划行为不变、NAV-002/003 与 STEP-SETUP 对前奏的既有语义不变、keyset-consistency 知识块断言更新。
-    status: pending
+    status: completed
   - id: t5-reference-viewport-precheck
-    content: T5（B）只做尺寸兼容性前置门：复用 `readImageDimensions` 与 `resolveRefSourceImage`，在现有 visual 检查入口（spec：`checkFidelitySnapshotPromise` 旁、viewport 取 fidelity-lock `viewport`；testing：`visual-diff-check.ts checkVisualDiffCore` 内容比对之前、viewport 取实测截图尺寸）比较参考图与 viewport 高宽比，沿用 ocr-gates 的 ×1.15 阈值迁为共享常量；明显不兼容时 pixel_1to1 → `visual_reference_viewport` FAIL（责任 spec 参考资产），低档位按既有 `fidelityRatchetFailOrWarn` WARN/SKIP，且该屏不得再用原始长图产出 pixel/OCR 内容结论（从内容比对输入集合剔除并点名）；指引 spec 作者用既有裁图能力生成 viewport-sized 参考图并更新该 screen 的 `ref_id`，兼容后现有 pipeline 原样运行。不新增 reference_region、自动 crop resolver、派生 crop 文件、crop hash 语义、分段、滚动拼接、多套参考真源或下游批量改造；ocr-gates 既有整页 uncertain 分支保留为防御性诊断，不删。回归：1320×4350 与 1320×8312 对 1320×2120 在 pixel_1to1 明确 FAIL、1320×2120 对 1320×2120 行为不变、替换 viewport-sized ref 后正常进入原 visual diff、低档位按既有 ratchet 不静默升级为像素 PASS、lock 无 viewport 时 spec WARN 推迟到 testing。
-    status: pending
+    content: T5（B）只做尺寸兼容性前置门：复用 `readImageDimensions` 与 `resolveRefSourceImage`，在现有 visual 检查入口（spec：`checkFidelitySnapshotPromise` 旁、viewport 取 fidelity-lock `viewport`；testing：`visual-diff-check.ts checkVisualDiffCore` 内容比对之前、viewport 取实测截图尺寸）比较参考图与 viewport 高宽比，沿用 ocr-gates 的 ×1.15 阈值迁为共享常量；明显不兼容时 pixel_1to1 → `visual_reference_viewport` FAIL（责任 spec 参考资产），低档位按既有 `fidelityRatchetFailOrWarn` WARN/SKIP，且该屏不得再用原始长图产出 pixel/OCR 内容结论（从内容比对输入集合剔除并点名）；指引作者建模出路——长页按锚点拆成多个 viewport 尺寸的 screen（各自 ref_id 裁图 + nav 末步 scroll_to 锚点；像素路径前提=每段 nav 从已知状态出发且落点已证明可重复，不属像素范围的段落排除在 pixel_1to1 屏外、由功能/结构 AC 覆盖，无屏级/段级档位），每屏参考图兼容后现有 pipeline 原样运行。不新增 reference_region、自动 crop resolver、派生 crop 文件、crop hash 语义、分段、滚动拼接、多套参考真源或下游批量改造；ocr-gates 既有整页 uncertain 分支保留为防御性诊断，不删。回归：1320×4350 与 1320×8312 对 1320×2120 在 pixel_1to1 明确 FAIL、1320×2120 对 1320×2120 行为不变、长页拆成多个 viewport 尺寸 screen（各自 ref_id + scroll_to 锚点）后正常进入原 visual diff、低档位按既有 ratchet 不静默升级为像素 PASS、lock 无 viewport 时 spec WARN 推迟到 testing。
+    status: completed
   - id: t6-report-total-placeholder
     content: T6（E，必做）模板一句"`pipeline.total_harness_ms` 为 null 时合计填 `—`，不得自行加总各阶段"+ trace-gates 钉子（加总值被判「应为无数据占位」、`—` 通过）。已于 2026-09-02 按 review 建议在当前 change 顺手完成（tasks 6.7c），不改 writer、不算新总时长、不增字段；后续 change 不再包含。
     status: completed
   - id: t7-regression-and-closeout
-    content: T7 每项定向回归 + 一次最终 harness 全量单测 + typecheck + `openspec:validate` strict + `release:check-plans` + LF/`git diff --check`；B/C 的宿主验证列为条件项（用户触发，不由实施代理发起）：B 期望宿主 expanded/all_banks 在 pixel_1to1 下被点名 FAIL，换 viewport-sized 参考图后进入原比对；C 期望重新派生的计划以 stop_app→start_app 开头的 case 在真机冷启后前置成立。没有环境时如实记录"条件未验"，不阻塞 Maison 本地逻辑验收；全部完成并过独立 review 后置 completed。
-    status: pending
+    content: T7 每项定向回归 + 一次最终 harness 全量单测 + typecheck + `openspec:validate` strict + `release:check-plans` + LF/`git diff --check`；B/C 的宿主验证列为条件项（用户触发，不由实施代理发起）：B 期望宿主 expanded/all_banks 在 pixel_1to1 下被点名 FAIL，按锚点拆成多个 viewport 尺寸 screen 后进入原比对（须至少两个冷启动轮次的中/尾 checkpoint 落点一致，否则如实记为当前限制）；C 期望重新派生的计划以 stop_app→start_app 开头的 case 在真机冷启后前置成立。没有环境时如实记录"条件未验"，不阻塞 Maison 本地逻辑验收；全部完成并过独立 review 后置 completed。
+    status: completed
 overview: >
   a6c4e9f2 宿主回灌把 selector/通道/Step Outcome 主链跑通后，剩下四处不属于该 plan 任一 todo 的
   Maison 缺口：provider 通道 id 只验格式不查 registry，让不存在的能力跑完真机才被判死；整页参考图
@@ -78,7 +78,7 @@ overview: >
 
 # Maison 优化项：provider 计划期查表、参考图视口尺寸前置门、受限 case 首部复位、versionCode=0 归一（b3d7e5a1）
 
-状态：**已过 review（2026-09-02）；T1 完成——两个后续 OpenSpec change 已 strict 通过并过 codex review；T2–T5 生产实现进行中（按各 change tasks）。**
+状态：**已收口（2026-09-02）——T1–T7 completed；codex 七轮 review 无残留；两个 OpenSpec change 已归档；宿主条件项（B 长图点名 + 两冷启动落点一致、C 真机复位）如实记"条件未验"，由用户触发时按 tasks 5.3/3.3 核对。**
 
 关联资产：
 
@@ -106,7 +106,7 @@ overview: >
 - 真实需求只有一句：**不允许把 4350/8312 高的长参考图，作为 2120 高单视口截图的直接像素参考。**
 - 初版设计的 `reference_region` + 自动 crop resolver + crop hash 语义 + 两处下游改造，是为一个"提供正确尺寸的参考图"这种作者侧动作造了一套机器体系；review 否决，砍掉。
 - 决策：在现有 visual 检查入口比较参考图与 viewport 的高宽比（沿用 ocr-gates 的 ×1.15 阈值，迁为共享常量）。明显不兼容时：pixel_1to1 → FAIL，责任归 spec 参考资产；低档位按既有 `fidelityRatchetFailOrWarn` WARN/SKIP，不静默升级为像素 PASS。不兼容后该屏不得继续用原始长图产出 pixel/OCR 内容结论。
-- 修复路径是作者侧的：spec 作者用既有裁图能力（asset-acquisition 的 source_ref + bbox 裁图等）生成一张普通的 viewport-sized 参考图，直接更新该 screen 的 `ref_id`；尺寸兼容后现有 pipeline 原样运行，没有第二套参考真源。
+- 出路由作者建模而非机器推导（三轮修订：原"换一张 viewport-sized 图"的表述会让长页作者以为不支持）：长页按锚点拆成多个 screen，每段一个 viewport 尺寸的 `ref_id` 裁图，`visual-diff-nav.json` 中该段 nav 末步 `scroll_to` 锚点元素（nav 校验复用 planned-step 全键表，`scroll_to` 本就合法）；锚点选对齐确定的元素（如列表项）。像素路径的前提：每段 nav 从已知状态出发，且滚动落点已证明可重复（宿主至少两个冷启动轮次的中/尾 checkpoint 落点一致；`scroll_to` 目标已可见即返回、否则固定向上滚，本身不对齐坐标）；无法证明的段落不放 pixel_1to1 屏，继续 FAIL 而不宣称支持。不属于像素验收范围的段落须明确排除在 pixel_1to1 屏之外、由需求/spec 的功能或结构 AC 覆盖——`UiSpecScreen` 没有屏级 fidelity，所有门读 run 级 `ctx.fidelityTarget`，不存在"段落降档"。每屏参考图兼容后现有 pipeline 原样运行，没有第二套参考真源。
 - viewport 来源：spec 阶段用 fidelity-lock `viewport{w,h,dpr}`（`fidelity-lock-shared.ts:43`），未声明则 WARN 明示推迟到 testing；testing 阶段用实测截图尺寸（`readImageDimensions`）。两阶段共用同一判据函数。
 - 既有整页 uncertain 分支（ocr-gates.ts:517-523）保留为防御性诊断：严格路径由前置门先拦，不为缩小一段旧代码扩大 diff。
 - 否决：`screens[].reference_region`、`reference-viewport.ts` 自动 crop resolver、派生 crop 文件与新 hash 语义、自动分段、滚动拼接、多套 reference 真源、下游消费者批量改造、按参考图尺寸自动改写 viewport。
@@ -172,7 +172,7 @@ spec（checkFidelitySnapshotPromise 旁，check id visual_reference_viewport）�
 testing（visual-diff-check.ts checkVisualDiffCore，在任何内容比对之前）：
   incompatible 屏 → visual_reference_viewport FAIL（pixel_1to1）/ ratchet（低档），点名屏与尺寸
   该屏从后续 pixel/OCR 内容比对的输入集合剔除（不得用原始长图产出内容结论）
-修复路径：spec 作者用既有裁图能力产出 viewport-sized 参考图 → 更新该 screen 的 ref_id → pipeline 原样运行
+出路（作者建模）：长页按锚点拆成多个 screen → 每段 viewport 尺寸的 ref_id 裁图 + visual-diff-nav.json 该段 nav 末步 scroll_to 锚点 → 不属像素范围的段落排除在 pixel_1to1 屏外（功能/结构 AC 覆盖）；落点未证可重复的段落继续 FAIL → 每屏兼容后 pipeline 原样运行
 ```
 
 - 不新增 ui-spec 字段、不新增 resolver、不产派生文件、不改任何 hash 语义、不改 visual-diff-capture 的参考图解析。
@@ -251,12 +251,12 @@ diag JSON deviceVersionCode=null；details/日志：`(未解析：bm dump 报 0�
 2. **A 已登记 id 放行**：`provider:device_test.visual_diff`（含 severity=SKIP 情形）→ 存在性通过，后续由 capability-resolution/evidence obligation 裁决，行为逐字不变。
 3. **A 纯函数向后兼容**：`evaluateExecutionChannelDeclaration(planMd)` 无 opts 时结果与改动前逐字相同；alias `prd.visual_handoff` 经 normalize 视为已登记；分隔符/大小写变体（如 `device_test.visual-diff`、`Device_Test.visual_diff`）不视为已登记；无 provider TC 的计划行为不变。
 4. **B 长图明确 FAIL**：参考图 1320×4350 对 viewport 1320×2120，pixel_1to1 → `visual_reference_viewport` FAIL 点名屏与尺寸；1320×8312 同样 FAIL；该屏不再产出 pixel/OCR 内容 hit。
-5. **B 尺寸兼容行为不变**：1320×2120 对 1320×2120 → 现有 pipeline 逐字不变；替换成 viewport-sized ref 并更新 `ref_id` 后正常进入原 visual diff。
+5. **B 尺寸兼容行为不变**：1320×2120 对 1320×2120 → 现有 pipeline 逐字不变；长页拆成多个 viewport 尺寸的 screen（各自 `ref_id` + nav 末步 `scroll_to` 锚点）后正常进入原 visual diff。
 6. **B 低档与未知 viewport**：低档位按既有 ratchet WARN/SKIP，不静默升级为像素 PASS；lock 无 viewport → spec WARN 明示推迟，testing 用实测尺寸再判。
 7. **C 首部前奏合法**：`stop_app(B) → start_app(B,P) → touch → wait_for` 0 违规；NAV-002/003 视其为复位步；STEP-SETUP 满足。
 8. **C 越界即拒**：无 `stop_app` 直接 `start_app`、中段 `start_app`/`stop_app`、bundle≠预启、缺 page_name、resetIdentity 不可解析、即席 `forbidStartApp:true` → 均 BLOCKER；STEP-004 action 包装仍 BLOCKER；不含 reset 的计划行为不变。
 9. **C 宿主条件项（用户触发）**：重新派生后以前奏开头的 case 在真机冷启后前置成立，无"停在上一 case 子页"的级联失败。
-10. **B 宿主条件项（用户触发）**：宿主 expanded/all_banks 在 pixel_1to1 下被点名 FAIL；换 viewport-sized 参考图后进入原比对。
+10. **B 宿主条件项（用户触发）**：宿主 expanded/all_banks 在 pixel_1to1 下被点名 FAIL；按锚点拆成多个 viewport 尺寸 screen 后进入原比对（须至少两个冷启动轮次的中/尾 checkpoint 落点一致，否则如实记为当前限制）。
 11. **D 0 归 unknown**：bm dump `"versionCode": 0` → versionCode=null + reason、installed=true；diag kind=clear、deviceVersionCode=null、downgradeDetected=false；install 日志打印 unknown 说明；候选 versionCode 正常时无降级误报；正整数行为不变。
 12. **E 占位钉子（已完成）**：timing `total_harness_ms=null` 而报告合计 `123ms` → 对账报"应为无数据占位"；合计 `—` → 通过。
 13. **零影响**：无 provider 通道、参考图尺寸兼容、不含复位前奏、versionCode 正常的 feature，在 checks/summary/quality axes/report-only 上行为逐字不变。
@@ -266,6 +266,7 @@ diag JSON deviceVersionCode=null；details/日志：`(未解析：bm dump 报 0�
 - provider per-TC 结果绑定、provider 结果 schema、registry 扩为执行账本 —— 归 e7cecd22。
 - perf/FPS/内存等新能力的设计与登记 —— 另行拍板，本 plan 只保证"未登记就计划期报死"。
 - B 不新增：`screens[].reference_region`、自动 crop resolver、派生 crop 文件与新 hash 语义、自动分段、滚动拼接、多套 reference 真源、下游消费者批量改造、按参考图改 viewport、pixel_1to1 静默降级。
+- 备选（路线图，本 plan 不做）：应用内快照钩子——`componentSnapshot` + `Scroller` 在应用内产整页图，作为带 per-TC 证据的 provider 能力；这是长页问题的长期正确工具，需宿主代码配合，超出黑盒范围。
 - C 不含 `clear_app`（将来需顶层测试计划显式授权）；不做 case 开头堆 `back`、屏幕状态机/可达性图、Hylyre case-level teardown 状态机（备选，不在本轮）；不扩 failure routing。
 - 即席（adhoc）steps 内 start_app 禁令、harness 预启/冷重启链路 —— 不变。
 - 不恢复：ui-spec/acceptance/contracts 白名单并集、runtime hash/sidecar 家族、人签/receipt/confirmed_by 载体。

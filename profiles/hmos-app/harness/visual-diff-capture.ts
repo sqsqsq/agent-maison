@@ -24,6 +24,8 @@ import {
   computeTileMinSimilarity,
   computeEdgeDensityTileDivergence,
   isJimpAvailable,
+  readImageDimensions,
+  referenceViewportIncompatible,
 } from './image-toolkit';
 import type { VisualDiffReport, VisualDiffScreenEntry } from './visual-diff-check';
 import { hashScreenshotFile, isCaptureMutableVerdict } from './visual-diff-check';
@@ -1038,6 +1040,24 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
       : null;
   const preservedBuildValidIds: string[] = [];
 
+  // plan b3d7e5a1 T5（codex P1 返修）：整页参考图屏的**旧裁决本轮必须失效**。按既有条目的旧截图尺寸 vs
+  // 当前参考图尺寸判定；命中的屏：①不得跳采（旧 pass/score/edge/provider 产物不能靠"同 build 同 hash"存活）；
+  // ②merge 前整条剔除——复用 identity mismatch 的 invalidateScreenIds 通道（瞬时、不落盘、不新增持久字段）；
+  // ③零成功采集的早退路径同样剪除。重采后的新条目再由 refForPixel 判定不产 score/edge，check 侧独立 FAIL/WARN。
+  const viewportIncompatibleIds: string[] = [];
+  if (refIndex) {
+    for (const [sid, prev] of existingById) {
+      const shot = prev.screenshot_path;
+      if (typeof shot !== 'string' || !shot.trim()) continue;
+      const shotAbs = path.isAbsolute(shot) ? shot : path.resolve(opts.projectRoot, shot);
+      const refAbs = resolveRefSourceImage(refIndex, (prev.ref_id ?? sid).trim()).path;
+      if (!refAbs) continue;
+      if (referenceViewportIncompatible(readImageDimensions(refAbs), readImageDimensions(shotAbs))) {
+        viewportIncompatibleIds.push(sid);
+      }
+    }
+  }
+
   const capturedScreens: Array<{ entry: VisualDiffScreenEntry; hash: string }> = [];
   const p0CaptureFailures: string[] = [];
   // t2b（plan c6d8f2b4）：**归一 slug 冲突 fail-closed**——不同 screen_id 归一到同一个
@@ -1132,6 +1152,7 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
     // root 即 overlay 的 base 屏（manage_non_local）由下方 overlay 循环采集，主循环跳过（避免重复/误判缺 nav）。
     if (isOverlayRootScreen(screen)) continue;
     if (
+      !viewportIncompatibleIds.includes(screen.id) &&
       canSkipRecaptureForScreen(existingById.get(screen.id), opts.projectRoot, currentFp) &&
       skipAllowedByIdentity(existingById.get(screen.id), opts.screenIdentity?.get(screen.id)) &&
       goldenSkipAllowed(existingById.get(screen.id))
@@ -1211,8 +1232,11 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
     if (refIndex) {
       refAbs = resolveRefSourceImage(refIndex, refId).path;
     }
-    const floor = resolveScoreFloor(paths.abs, refAbs, Boolean(opts.computeScoreFloor));
-    const edge = resolveEdgeSentinel(paths.abs, refAbs, Boolean(opts.computeScoreFloor));
+    // plan b3d7e5a1 T5（codex P1）：整页参考图不进任何像素度量——尺寸不兼容按"无参考图"处理，score_floor/edge 不产出；
+    // 判定与 visual-diff-check 的前置门同一函数，check 侧会独立 FAIL/WARN 并点名。
+    const refForPixel = refAbs && referenceViewportIncompatible(readImageDimensions(refAbs), readImageDimensions(paths.abs)) ? null : refAbs;
+    const floor = resolveScoreFloor(paths.abs, refForPixel, Boolean(opts.computeScoreFloor));
+    const edge = resolveEdgeSentinel(paths.abs, refForPixel, Boolean(opts.computeScoreFloor));
     const screenshotHash = hashScreenshotFile(paths.abs);
     if (!screenshotHash) {
       errors.push(`${screen.id}: 截图 hash 计算失败`);
@@ -1248,6 +1272,7 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
     if (slugConflictIds.has(ov.id)) continue;
     if (capturedScreens.some(c => c.entry.screen_id === ov.id)) continue;
     if (
+      !viewportIncompatibleIds.includes(ov.id) &&
       canSkipRecaptureForScreen(existingById.get(ov.id), opts.projectRoot, currentFp) &&
       skipAllowedByIdentity(existingById.get(ov.id), opts.screenIdentity?.get(ov.id)) &&
       goldenSkipAllowed(existingById.get(ov.id))
@@ -1299,8 +1324,9 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
       // overlay 的参考图取其基屏（parentScreenId）——与 visual-diff.json ref_id=基屏 一致。
       const refId = ov.parentScreenId;
       const refAbs = refIndex ? resolveRefSourceImage(refIndex, refId).path : null;
-      const floor = resolveScoreFloor(paths.abs, refAbs, Boolean(opts.computeScoreFloor));
-      const edge = resolveEdgeSentinel(paths.abs, refAbs, Boolean(opts.computeScoreFloor));
+      const refForPixel = refAbs && referenceViewportIncompatible(readImageDimensions(refAbs), readImageDimensions(paths.abs)) ? null : refAbs;
+      const floor = resolveScoreFloor(paths.abs, refForPixel, Boolean(opts.computeScoreFloor));
+      const edge = resolveEdgeSentinel(paths.abs, refForPixel, Boolean(opts.computeScoreFloor));
       const screenshotHash = hashScreenshotFile(paths.abs);
       if (!screenshotHash) {
         errors.push(`${ov.id}: overlay 截图 hash 计算失败`);
@@ -1397,15 +1423,18 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
     }, null, 2)}\n`, 'utf-8');
   }
 
+  // 本轮须整条丢弃的旧条目：身份失配屏 ∪ 参考图尺寸不兼容屏（同一通道，同一语义：旧裁决不可信）。
+  const staleDropIds = [...new Set([...identityMismatchIds, ...viewportIncompatibleIds])];
+
   if (capturedScreens.length === 0) {
     // t3（plan f3a8c6d2）：**零成功采集也必须清掉身份失配屏的旧裁决**。
     // 本早退路径原样保留盘上 json（"无成功截图不写盘"），于是全屏失败那轮里，
     // 已被证伪的错页条目（如 add_card_home_collapsed=全部银行页 0.997）会继续存活并
     // 喂出误导性反馈——与 merge 路径的处置自相矛盾。此处只做**删除**（不新增条目、
     // 不改其他屏），失配屏随后表现为"缺屏"，与 identity gate 的结论一致。
-    if (identityMismatchIds.length > 0 && existingReportEarly) {
+    if (staleDropIds.length > 0 && existingReportEarly) {
       const kept = existingReportEarly.screens.filter(
-        s => !identityMismatchIds.includes(s.screen_id),
+        s => !staleDropIds.includes(s.screen_id),
       );
       if (kept.length !== existingReportEarly.screens.length) {
         const pruned: VisualDiffReport = { ...existingReportEarly, schema_version: '1.1', screens: kept };
@@ -1458,7 +1487,7 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
     existingReportEarly,
     capturedScreens,
     currentFp,
-    identityMismatchIds,
+    staleDropIds,
   );
   fs.writeFileSync(jsonPath, `${JSON.stringify(report, null, 2)}\n`, 'utf-8');
 

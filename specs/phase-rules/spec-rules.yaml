@@ -461,6 +461,16 @@ structure_checks:
     rule:
       expect: "fidelity_snapshot_offline_promise"
 
+  visual_reference_viewport:
+    description: >
+      plan b3d7e5a1 T5：参考图与设备视口尺寸兼容性前置门。lock.viewport 在场时逐屏比对 ref_id 参考图
+      高宽比（阈值 ×1.15，与 ocr-gates 整页启发式同一常量）；不兼容 → pixel_1to1 BLOCKER FAIL / 低档 ratchet WARN，
+      出路=作者建模：长页按锚点拆成多个 viewport 尺寸 screen（各自 ref_id + nav 末步 scroll_to）；lock 无 viewport → WARN 推迟到 testing；全部兼容 → 零结果。
+      不做 reference_region / 自动 crop / 分段 / 拼接。
+    severity: BLOCKER
+    rule:
+      expect: "visual_reference_viewport_precheck"
+
   structured_ref_elements:
     description: >
       第二刀（可选）：lock.structured_bundle 存在时程序化推导 ref-elements 分母并注入 CheckContext 内存 manifest
