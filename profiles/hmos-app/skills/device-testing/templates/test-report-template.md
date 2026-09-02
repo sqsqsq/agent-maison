@@ -23,7 +23,8 @@
 ### 真机流水线耗时
 
 > 数据来源：`<features_dir>/{module-name}/testing/reports/device-test-timing.json`（harness 在 `device_test.run` 成功后写入）。
-> 耗时统一填写精确整数毫秒 `Nms`（如 `1234ms`）；已进入 trace/timing 的跳过或阻塞 case 填 `0ms`，`—` 仅用于未进入 trace/timing 的 explicit skip。
+> 耗时统一填写精确整数毫秒 `Nms`（如 `1234ms`）；已进入 trace/timing 的跳过或阻塞 case 填 `0ms`，`—` 用于未进入 trace/timing 的非 Hylyre 通道用例或历史 legacy explicit skip（合计行占位见下一条）。
+> 「合计（脚本统计）」行按 `pipeline.total_harness_ms` 填写；该值为 `null`（当前 writer 恒为 null）时填 `—`，不得自行把各阶段相加——对账把加总值判为「应为无数据占位」。
 
 | 阶段 | 耗时 | 说明 |
 |------|------|------|

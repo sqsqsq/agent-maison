@@ -412,11 +412,36 @@ function isAssertionPlanKind(kind: string): boolean {
   return kind === 'wait_for' || kind === 'wait_gone' || kind === 'assert_toast';
 }
 
+/**
+ * plan a6c4e9f2 D1（T4 返修 2026-09-02）：计划步骤 → checkpoint 元素的**绑定**是开放世界的。
+ *
+ * `by_id` 是字面身份——计划写的就是这个 id，feature ui-spec 有没有登记它与"绑得上绑不上"
+ * 无关：feature ui-spec 只建模本 feature 触碰的页面，既有入口天然缺席。此前这里只经
+ * `canonicalIdsForPlannedStep` 绑定，等于把 ui-spec 当封闭白名单——宿主 T8 的 AC-1/10/14
+ * 正是这样被判成"计划中无 canonical action"，还被归咎为宿主 spec 没建模 ui-spec。
+ *
+ * 只有 `by_text` 没有字面身份，才需要借 ui-spec 的 canonical 文本映射（保留 screen 限定
+ * 与 ui-spec 已证明的歧义）。这里只回答"计划里哪一步在说这个 id"；身份是否成立另由
+ * selectorEvidenceMatches 用 native resolution 证明，两层不要互相搬。
+ */
+function plannedStepBindsTarget(
+  info: ReturnType<typeof normalizePlannedStep>,
+  targetId: string,
+  canonical: CanonicalSelectorIndex,
+  screenId?: string,
+): boolean {
+  const selector = info.selector;
+  if (!selector) return false;
+  if (selector.kind === 'by_id') return selector.value === targetId;
+  if (selector.kind === 'by_text') return canonicalIdsForPlannedStep(info, canonical, screenId).includes(targetId);
+  return false;
+}
+
 function findPlannedStepIndex(
   steps: ParsedStep[],
   targetId: string,
   canonical: CanonicalSelectorIndex,
-  screenId: string,
+  screenId: string | undefined,
   afterIndex: number,
   absence: boolean,
 ): number | null {
@@ -424,7 +449,7 @@ function findPlannedStepIndex(
     const info = normalizePlannedStep(steps[i], i);
     if (!isAssertionPlanKind(info.kind)) continue;
     if (absence !== (info.kind === 'wait_gone')) continue;
-    if (canonicalIdsForPlannedStep(info, canonical, screenId).includes(targetId)) return i;
+    if (plannedStepBindsTarget(info, targetId, canonical, screenId)) return i;
   }
   return null;
 }
@@ -438,7 +463,7 @@ function findActionStepIndex(
   for (let i = 0; i < steps.length; i += 1) {
     const info = normalizePlannedStep(steps[i], i);
     if (!ACTION_KINDS.has(info.kind)) continue;
-    if (canonicalIdsForPlannedStep(info, canonical, screenId).includes(targetId)) return i;
+    if (plannedStepBindsTarget(info, targetId, canonical, screenId)) return i;
   }
   return null;
 }
@@ -475,7 +500,7 @@ function evaluateNativeCase(
     }
     const actionIndex = findActionStepIndex(derivedSteps, cp!.action!.target_element_id!, canonical, cp!.pre_screen!);
     if (actionIndex === null) {
-      reasons.push(`${ac.id} 计划中无 canonical action target=${cp!.action!.target_element_id}`);
+      reasons.push(`${ac.id} 计划中无绑定 target=${cp!.action!.target_element_id} 的 action（by_id 须字面相等；by_text 须 ui-spec 文本映射）`);
       continue;
     }
     const action = nativeSteps[actionIndex];
@@ -508,11 +533,14 @@ function evaluateNativeCase(
         reasons.push(`${ac.id} required=${elementId} 缺 role=assertion,status=passed 的 presence StepResult`);
       }
     }
+    // forbidden 不按 post_screen 限定：要求"应消失的元素"登记在 post_screen 的 ui-spec 里
+    // 才能证明它不在场，自相矛盾（宿主 AC-3 的 forbidden 只属 pre_screen）。by_id 字面绑定后
+    // 限屏本就无意义；by_text 用不限屏的 canonical 映射。
     for (const elementId of cp!.forbidden_element_ids ?? []) {
-      const plannedIndex = findPlannedStepIndex(derivedSteps, elementId, canonical, cp!.post_screen!, actionIndex, true);
+      const plannedIndex = findPlannedStepIndex(derivedSteps, elementId, canonical, undefined, actionIndex, true);
       const step = plannedIndex === null ? null : nativeSteps[plannedIndex];
       const planned = plannedIndex === null ? null : normalizePlannedStep(derivedSteps[plannedIndex], plannedIndex);
-      const canonicalIds = plannedIndex === null ? [] : canonicalIdsForStep(derivedSteps[plannedIndex], canonical, cp!.post_screen!);
+      const canonicalIds = plannedIndex === null ? [] : canonicalIdsForStep(derivedSteps[plannedIndex], canonical);
       if (
         plannedIndex === null ||
         !step ||

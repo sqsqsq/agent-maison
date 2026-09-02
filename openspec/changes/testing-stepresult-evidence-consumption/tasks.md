@@ -74,6 +74,17 @@ failure_kind / failure_code`，与 0.5.0 / 0.4-p0 / Step Outcome v1 并存两套
       `return []` 改为显式 BLOCKER；`evaluateHylyreRunOutcome` 切断 legacy 中文 status 回落；
       Q5 artifact（含 realpath containment）接入 required gate，Q8 随跨行 verifier 进入生产；
       测试口径改为消费冻结包 golden 全集，新增 `hylyre-frozen-conformance` 套件。
+- [x] 6.2e T4 返修（2026-09-02，宿主 T8 复核后）：`p0-semantic-gates.ts` 绑定层闭世界残留——
+      `findActionStepIndex`/`findPlannedStepIndex` 只经 ui-spec canonical index 绑定计划步骤，
+      既有入口的 `by_id` 不在 feature ui-spec 就永远绑不上（宿主 AC-1/10/14 被判"计划中无 canonical
+      action"，且被误归为宿主 spec 未建模 ui-spec）；forbidden 又被限定到 post_screen（宿主 AC-3）。
+      改为：计划 selector 为 `by_id` 且 value 等于目标 → 字面绑定；`by_text` 才走 canonical 映射
+      （保留 screen 限定与歧义证明）；forbidden 查找不限屏。身份层 `selectorEvidenceMatches` 不动。
+      契约同步：本 delta 首条需求删 "bound to the ui-spec registry"，补两条 scenario。回归两条 +
+      by_text 控制一条，trace 由 vendored golden `all-passed.json` 信封 + 冻结包 golden step/selector
+      片段逐字拼接（fake runner 离线断言只出 blocked/capability，不能产 unique/not_found），拼接体先过
+      `requireV1ForGate` 才作夹具。宿主 `--report-reconcile-only` 复验（AC-1/10/14/3 闭合、分子上调、
+      trace 字节不变）属 6.8，由用户触发。
 - [x] 6.5b-1 T3 visual per-TC 证据绑定（`execution-channel-evidence.ts`）：
       TC 的结构化「关联 AC」→ acceptance checkpoint 的 pre/post_screen →
       **feature 目录**下 authoritative `visual-diff.json` 的同名 screen，
@@ -130,4 +141,9 @@ failure_kind / failure_code`，与 0.5.0 / 0.4-p0 / Step Outcome v1 并存两套
       - atomic / MCP / session：复用与 clean commit `0220b5d…` 和 source tree `8f00a37f…d38d`
         绑定的上游 Phase 1 conformance，分别以 FakeUiDriver、注入 agent、真实 FastMCP client
         端到端执行，3/0；不是 import smoke，也未移入 T8。
+- [x] 6.7c 报告模板「合计」占位规则（2026-09-02 review 建议归档前顺手完成，原列新 plan b3d7e5a1 E 项）：
+      `device-test-timings.ts` 写 `total_harness_ms` 恒为 null，`reconcileReportWithDeviceTestTiming` 对 null
+      要求「合计」行为 `—` 占位，但 `test-report-template.md` 未说明，报告作者会把各阶段相加。模板补一句
+      "null 时填 `—`，不得自行加总"；不改 writer、不算新总时长、不增字段；trace-gates 单测钉"加总值被判
+      应为无数据占位、`—` 通过"。
 - [ ] 6.8 T7b/T8：真实 0.5.0 source 接入与宿主回灌收口（用户单独触发，不由本 change 的实施代理发起）。
