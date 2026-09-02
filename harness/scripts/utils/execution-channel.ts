@@ -15,6 +15,7 @@
 // ============================================================================
 
 import { getSectionContent, extractTables, type MdTable } from './markdown-parser';
+import { normalizeCapabilityKey } from './capability-alias';
 
 export type ExecutionChannelKind = 'hylyre' | 'visual' | 'manual' | 'provider';
 
@@ -114,6 +115,18 @@ export interface ExecutionChannelDeclarationResult {
   visual_tc_ids: string[];
   /** channel=provider:<id> 的 TC 及其 capability id */
   provider_tc_ids: Array<{ tc_id: string; provider_id: string }>;
+  /**
+   * plan b3d7e5a1 T2：capability registry 未登记的 provider id（传入 registeredCapabilityIds 时才判）。
+   * 匹配 = 双方经 normalizeCapabilityKey 后精确相等；不做分隔符/大小写/相似度归一——harness 不按名字猜能力。
+   */
+  unknown_provider: Array<{ tc_id: string; provider_id: string }>;
+  /**
+   * plan b3d7e5a1 T2（codex P1）：通道集合是否可用——列已声明且无缺值/非法/重复。与 `ok` 的差别只有
+   * registry 未登记的 provider id：那是声明 BLOCKER，但 hylyre/visual/manual/provider 四个集合本身已解析，
+   * 派生/trace/timing 的精确对账必须继续按 `hylyre_tc_ids`，不得退回 legacy 全 TC 口径（否则 report-only
+   * 会对历史 run 虚报"派生计划缺少顶层 TC"）。
+   */
+  channels_resolved: boolean;
   /** 人读迁移/修复指引（ok 时为空串） */
   detail: string;
 }
@@ -122,7 +135,23 @@ export interface ExecutionChannelDeclarationResult {
  * 评估一份顶层计划的通道声明。**正式计划**缺列或缺值都是一次性迁移要求（FAIL），
  * 不按测试文字启发式猜执行器；legacy（无列）计划由调用方决定是否只读兼容。
  */
-export function evaluateExecutionChannelDeclaration(planMd: string): ExecutionChannelDeclarationResult {
+export interface EvaluateExecutionChannelOptions {
+  /**
+   * 当前 profile 已登记的 capability 键集（已 normalize）。省略 = 不查表（纯词法，行为逐字不变）。
+   * 生产唯一注入点是 check-testing 的 loadExecutionChannelDeclaration；parseExecutionChannel 永不读 profile。
+   */
+  registeredCapabilityIds?: ReadonlySet<string>;
+}
+
+/** 从 profile 的 capabilities map 取键集并 normalize（severity=SKIP 也算"存在"——可用性归 capability-resolution）。 */
+export function registeredCapabilityIdsFromProfile(capabilities: Record<string, unknown> | undefined): Set<string> {
+  return new Set(Object.keys(capabilities ?? {}).map(key => normalizeCapabilityKey(key)));
+}
+
+export function evaluateExecutionChannelDeclaration(
+  planMd: string,
+  opts?: EvaluateExecutionChannelOptions,
+): ExecutionChannelDeclarationResult {
   const table = extractExecutionChannels(planMd);
   const missing: string[] = [];
   const illegal: Array<{ tc_id: string; raw: string }> = [];
@@ -158,6 +187,11 @@ export function evaluateExecutionChannelDeclaration(planMd: string): ExecutionCh
     else if (row.channel.kind === 'visual') visual.push(row.tc_id);
     else provider.push({ tc_id: row.tc_id, provider_id: row.channel.provider_id! });
   }
+  // plan b3d7e5a1 T2：计划期 registry 存在性——自拟的 provider id 不该跑完真机才被判"永远不可能通过"。
+  const registry = opts?.registeredCapabilityIds;
+  const unknownProvider = registry
+    ? provider.filter(item => !registry.has(normalizeCapabilityKey(item.provider_id)))
+    : [];
   const lines: string[] = [];
   if (!table.column_declared) {
     lines.push(
@@ -178,6 +212,20 @@ export function evaluateExecutionChannelDeclaration(planMd: string): ExecutionCh
       '每条 TC 只能声明唯一执行通道，重复行一律拒绝——即使取值相同也无法证明唯一。请合并为一行。',
     );
   }
+  if (unknownProvider.length > 0) {
+    const registered = [...registry!].sort();
+    for (const item of unknownProvider) {
+      lines.push(
+        `${item.tc_id} 的 execution_channel=provider:${item.provider_id}：该能力不存在（capability registry 未登记），此 TC 不可能通过。` +
+        '请改通道（hylyre/visual/manual）或先在 profile capabilities 登记该能力并提供 provider；harness 不按名字猜能力。',
+      );
+    }
+    lines.push(
+      registered.length > 0
+        ? `当前 profile 已登记的 capability 键（normalize 后、字典序）：${registered.join(', ')}`
+        : '当前 profile 未登记任何 capability。',
+    );
+  }
   if (manual.length > 0) {
     lines.push(
       `注意：${manual.join(', ')} 声明为 manual——manual 当前没有机器质量 PASS 载体，` +
@@ -185,7 +233,8 @@ export function evaluateExecutionChannelDeclaration(planMd: string): ExecutionCh
     );
   }
   return {
-    ok: table.column_declared && missing.length === 0 && illegal.length === 0 && duplicates.length === 0,
+    ok: table.column_declared && missing.length === 0 && illegal.length === 0 && duplicates.length === 0 && unknownProvider.length === 0,
+    channels_resolved: table.column_declared && missing.length === 0 && illegal.length === 0 && duplicates.length === 0,
     column_declared: table.column_declared,
     missing,
     illegal,
@@ -194,6 +243,7 @@ export function evaluateExecutionChannelDeclaration(planMd: string): ExecutionCh
     manual_tc_ids: [...new Set(manual)].sort(),
     visual_tc_ids: [...new Set(visual)].sort(),
     provider_tc_ids: provider,
+    unknown_provider: unknownProvider,
     detail: lines.join('\n'),
   };
 }

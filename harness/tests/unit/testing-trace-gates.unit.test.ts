@@ -619,6 +619,32 @@ test('report-reconcile-only: 拒绝跨轮时间/复用/feature/case/duration 错
   }
 });
 
+// plan b3d7e5a1 T2（codex P1）：registry 未登记的 provider id 只是声明 BLOCKER；report-only 的派生/trace/timing
+// 精确对账必须继续按 hylyre 集合，不得退回 legacy 全 TC 口径而对历史 run 虚报"派生计划缺少顶层 TC"。
+test('report-reconcile-only: hylyre + 未登记 provider 通道 → 仍按 hylyre 集合对账，不虚报派生缺失', () => {
+  const fs = require('fs') as typeof import('fs');
+  const path = require('path') as typeof import('path');
+  const fixture = makeReportOnlyFixture();
+  try {
+    const featureDir = path.join(fixture.root, 'doc', 'features', 'demo', 'testing');
+    fs.writeFileSync(path.join(featureDir, 'test-plan.md'), [
+      '## 测试用例', '',
+      '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC | 执行通道 |',
+      '| --- | --- | --- | --- | --- | --- | --- | --- |',
+      '| TC-001 | demo | app | tap | pass | P0 | AC-001 | hylyre |',
+      '| TC-002 | perf | app | probe | pass | P1 | AC-002 | provider:device-test.perf-probe |',
+    ].join('\n'));
+    const ctx = reportOnlyContext(fixture.root); // resolvedProfile.capabilities = {} → perf-probe 未登记
+    const results = __testing_checkReportReconcileOnlyPipeline(ctx);
+    const details = results.map(r => `${r.id}:${r.status}\n${r.details ?? ''}`).join('\n');
+    assert.ok(!/派生计划缺少顶层 TC/.test(details), `不得退回 legacy 全 TC 口径虚报缺失：\n${details}`);
+    assert.ok(!/派生计划缺少 channel=hylyre/.test(details), `hylyre 集合（TC-001）本就完整：\n${details}`);
+    assert.ok(!/派生计划包含/.test(details), `TC-001 属 hylyre 集合，不是多余 TC：\n${details}`);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test('report-reconcile-only: 缺最终 timing 时 fail-closed，不降级为局部重算', () => {
   const fs = require('fs') as typeof import('fs');
   const os = require('os') as typeof import('os');

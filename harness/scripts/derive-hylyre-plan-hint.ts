@@ -18,7 +18,7 @@ import {
   resolveDefaultSnapshotBundle,
 } from './utils/app-snapshot-cache-hint';
 import { resolveFeatureArtifact, relFeatureArtifact } from '../config';
-import { buildStandardHylyreDerivePayloadBase } from './utils/hylyre-standard-derive-knowledge';
+import { buildStandardHylyreDerivePayloadBase, resolveHylyreResetIdentity } from './utils/hylyre-standard-derive-knowledge';
 import { loadUiSpecFile, uiSpecAbsPath } from './utils/ui-spec-shared';
 import { buildSelectorContractQuery } from '../../profiles/hmos-app/harness/selector-contract';
 import { EXECUTION_CHANNEL_DOMAIN } from './utils/execution-channel';
@@ -68,7 +68,7 @@ const uiSpec = loadUiSpecFile(uiSpecAbsPath(projectRoot, feature));
 const selector_contract = uiSpec ? buildSelectorContractQuery(uiSpec, feature) : [];
 const payload = {
   // t7a（plan e6a3c9f4）：统一基座（与 check-testing 自动 hint 同源，schema/知识块永不分叉）
-  ...buildStandardHylyreDerivePayloadBase(),
+  ...buildStandardHylyreDerivePayloadBase(resolveHylyreResetIdentity(projectRoot)),
   feature,
   source: relFeatureArtifact(projectRoot, feature, 'test-plan.md'),
   snapshot_bundle: snapshotBundle || null,

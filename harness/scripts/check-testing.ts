@@ -59,6 +59,7 @@ import {
 import {
   buildStandardHylyreDerivePayloadBase,
   HYLYRE_PLANNED_STEP_FIELDS_REF,
+  resolveHylyreResetIdentity,
 } from './utils/hylyre-standard-derive-knowledge';
 import {
   extractHeadings,
@@ -165,9 +166,11 @@ import {
   lintDerivedPlanSelectorContract,
   type AcceptanceActionBinding,
 } from '../../profiles/hmos-app/harness/selector-contract';
+import { loadAppInstallCandidateMeta } from '../../profiles/hmos-app/harness/hdc-runner';
 import {
   EXECUTION_CHANNEL_DOMAIN,
   evaluateExecutionChannelDeclaration,
+  registeredCapabilityIdsFromProfile,
   type ExecutionChannelDeclarationResult,
 } from './utils/execution-channel';
 import { requireV1ForGate } from './utils/hylyre-result-protocol';
@@ -2035,7 +2038,9 @@ function collectReportOnlyDerivedPlanStaticIssues(
   const derivedIds = extractTcIdsFromPlanTable(pick.selected.content);
   const explicitSkips = loadExplicitSkipTcIds(derivedPath, pick.selected.content);
   const channelDecl = loadExecutionChannelDeclaration(ctx, topRaw);
-  if (channelDecl.ok) {
+  // plan b3d7e5a1（codex P1）：按 channels_resolved 而非 ok 选口径——registry 未登记的 provider id 是声明
+  // BLOCKER，但通道集合已解析，report-only 仍须按 hylyre 集合精确对账，不得退回 legacy 全 TC 虚报缺失。
+  if (channelDecl.channels_resolved) {
     // 通道精确对账：派生集合必须**恰好等于** channel=hylyre 集合，explicit skip 不减除。
     const coverage = evaluateChannelDerivedCoverage({
       hylyreTcIds: channelDecl.hylyre_tc_ids,
@@ -3603,16 +3608,6 @@ function checkP0RuntimeStepEvidenceGate(
   }];
 }
 
-function readBundleNameFromAppScope(projectRoot: string): string {
-  const p = path.join(projectRoot, 'AppScope', 'app.json5');
-  const raw = fs.readFileSync(p, 'utf-8');
-  const m = raw.match(/"bundleName"\s*:\s*"([^"]+)"/);
-  if (!m) {
-    throw new Error('无法在 AppScope/app.json5 解析 bundleName');
-  }
-  return m[1];
-}
-
 type DeriveHintAugment = {
   coverage_reason?:
     | 'no_derived'
@@ -3664,7 +3659,7 @@ function writeDeriveHintFromPlanJson(ctx: CheckContext, aug?: DeriveHintAugment)
     const payload = {
       // t7a（plan e6a3c9f4）：统一基座（schema 4 = 3 + 机器步骤知识块，只增字段向后兼容）——
       // agent 翻译 hylyre 时手边永远有机读目录，不依赖语法文档已读/上下文未压缩。
-      ...buildStandardHylyreDerivePayloadBase(),
+      ...buildStandardHylyreDerivePayloadBase(resolveHylyreResetIdentity(ctx.projectRoot)),
       feature: ctx.feature,
       phase: ctx.phase,
       source_relative,
@@ -3704,10 +3699,16 @@ function loadExecutionChannelDeclaration(
   ctx: CheckContext,
   planRaw?: string | null,
 ): ExecutionChannelDeclarationResult {
-  if (typeof planRaw === 'string') return evaluateExecutionChannelDeclaration(planRaw);
+  // plan b3d7e5a1 T2：唯一注入点——provider id 的 registry 存在性查表（capabilities 缺席视为空 registry，fail-closed）。
+  const opts = {
+    registeredCapabilityIds: registeredCapabilityIdsFromProfile(
+      (ctx.resolvedProfile as { capabilities?: Record<string, unknown> } | undefined)?.capabilities,
+    ),
+  };
+  if (typeof planRaw === 'string') return evaluateExecutionChannelDeclaration(planRaw, opts);
   const resolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-plan.md');
   const raw = fs.existsSync(resolved.actualPath) ? fs.readFileSync(resolved.actualPath, 'utf-8') : '';
-  return evaluateExecutionChannelDeclaration(raw);
+  return evaluateExecutionChannelDeclaration(raw, opts);
 }
 
 /**
@@ -3735,7 +3736,10 @@ function collectDeviceTestStaticPlanGates(
   selectorWarnings: ReturnType<typeof lintDerivedPlanSelectorContract>;
   navLint: ReturnType<typeof lintDerivedHylyrePlanSteps>;
 } {
-  const stepLint = lintHylyrePlanStepRules(derivedContent);
+  // plan b3d7e5a1 T4：正式路径的复位前奏身份与 derive hint 同源注入（零设备解析）。
+  const stepLint = lintHylyrePlanStepRules(derivedContent, {
+    resetIdentity: resolveHylyreResetIdentity(ctx.projectRoot).identity,
+  });
   const selectorUiSpec = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
   const selectorWarnings = selectorUiSpec
     ? lintDerivedPlanSelectorContract(derivedContent, selectorUiSpec, ctx.feature, {
@@ -3822,7 +3826,7 @@ function checkDeviceTestRunGate(
     const runChannelDecl = loadExecutionChannelDeclaration(ctx, topRaw);
     // 只有声明**整体闭合**才按通道口径对账；部分缺值/非法/重复时上游已 SKIP 掉整段设备
     // 流水线，这里保持 legacy 口径仅为不产生第二套矛盾判定。
-    const cov = runChannelDecl.ok
+    const cov = runChannelDecl.channels_resolved
       ? evaluateChannelDerivedCoverage({
           hylyreTcIds: runChannelDecl.hylyre_tc_ids,
           derivedTcIds: derivedIds,
@@ -3833,7 +3837,7 @@ function checkDeviceTestRunGate(
           derivedTcIds: derivedIds,
           explicitSkipTcIds: explicitSkips,
         });
-    if (runChannelDecl.ok && explicitSkips.length > 0) {
+    if (runChannelDecl.channels_resolved && explicitSkips.length > 0) {
       return [
         {
           id,
@@ -4094,7 +4098,10 @@ function checkDeviceTestRunGate(
       }
     }
 
-    const bundleName = readBundleNameFromAppScope(ctx.projectRoot);
+    // plan b3d7e5a1 T4（codex P1）：bundle/page 与 lint、derive hint **同一来源**——安装候选 bundleName +
+    // resolveMainAbilityForBundle 的静态层；不再用独立正则读 app.json5（JSON5 注释/尾逗号会分叉）。
+    const resetIdentity = resolveHylyreResetIdentity(ctx.projectRoot);
+    const bundleName = resetIdentity.identity?.bundle ?? loadAppInstallCandidateMeta(ctx.projectRoot).bundleName;
     // run-directory-freshness（plan 420a5005）：每次执行新建 `<timestamp>/hylyre/` 目录并
     // 原样复制选中的派生计划（含 derive-manifest.json）；本轮 report/trace/failures 全写
     // 新目录。原派生目录保持字节不变（只读输入）；目录冲突 fail-closed，不覆盖不复用。
@@ -4139,6 +4146,8 @@ function checkDeviceTestRunGate(
       reportOutPath: path.resolve(path.join(hylyreOutDir, 'test-report.md')),
       traceOutPath: path.resolve(path.join(hylyreOutDir, 'trace.json')),
       bundleName,
+      // 同一 resolved page 传给 run：lint 放行的前奏身份 == 预启实际使用的 ability（未解析时交给 run 自己的 bm dump 层）
+      hypiumPageName: resetIdentity.identity?.page_name ?? null,
       deviceSn: process.env.HARNESS_HDC_TARGET,
       skipAssertExpected: true,
       coldRestart,

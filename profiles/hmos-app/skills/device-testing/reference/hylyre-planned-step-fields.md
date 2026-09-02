@@ -7,7 +7,7 @@
 
 与 [`hylyre-planned-step-keys.ts`](../../../../../harness/scripts/utils/hylyre-planned-step-keys.ts) 同步：
 
-`touch` · `input` · `swipe` · `scroll` · **`scroll_to`** · `back` · `home` · `stop_app` · `clear_app` · `wait` · `wait_for` · `wait_gone` · `wait_idle` · `assert_toast` · `start_app`（即席 harness **禁止** steps 内 `start_app`）
+`touch` · `input` · `swipe` · `scroll` · **`scroll_to`** · `back` · `home` · `stop_app` · `clear_app` · `wait` · `wait_for` · `wait_gone` · `wait_idle` · `assert_toast` · `start_app`（正式派生：`stop_app`/`start_app` 仅允许作为 case 首部恰好一组复位前奏 `stop_app→start_app`，bundle/page_name 逐字取 derive hint 的 reset_preamble 字段；即席 harness **禁止** steps 内 `start_app`）
 
 **禁止作为步骤根键的 CLI 名**：`dump_ui` / `dump-ui` / `page_save` / `screenshot` 等（见 `FORBIDDEN_STEP_ROOT_KEYS`）。
 
