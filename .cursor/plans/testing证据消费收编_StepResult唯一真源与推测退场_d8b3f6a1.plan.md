@@ -98,16 +98,16 @@ todos:
     status: in_progress
   - id: t4-version-gate-and-legacy
     content: T4 三重判据门禁（版本+trace schema+StepResult 必需字段，挂 hylyre-ready.meta 链）；不满足时**任何 legacy case 状态都不得单独贡献 verification=passed**（不止 wait/toast 型）——默认 completion 要求升级后重跑，有限兼容仅限既有 telemetry 完整证明的 checkpoint，其余 inconclusive；不删历史。【与 T1 同开关落地】
-    status: in_progress
+    status: completed
   - id: t5-selector-contract-and-richtext
     content: T5 selector 契约门两层分型：静态门=ui-spec canonical 集内 substring 映射唯一或显式 index/scope/within/all（dump 仅建议/WARN，不参与授权——守 selector-contract SSOT 边界）；运行时门=StepResult.candidate_count==1 或显式消歧生效；富文本片段须声明独立 target，inline_target_unresolvable 走既有责任路由，禁点父中心。【依赖 hylyre 交付】
     status: in_progress
   - id: t6-telemetry-retirement
     content: T6 telemetry monkey-patch 退场：原生 StepResult 在场只认原生；过渡期旧 schema 用现有 telemetry；双在场一致性检查；最终删除。【依赖 hylyre 交付】
-    status: in_progress
+    status: completed
   - id: t7-report-reconcile-only-mode
     content: T7 新增 testing 专属 --report-reconcile-only 模式（可先行；既有入口经核实均不满足——sync-closure 不重算 report checks、完整 check-testing 必跑设备）：只读既有 trace/plan/timing/meta，零 hvigor/hdc/Hylyre/视觉调用，重跑全部 report/static checks 产出完整重算 summary（非局部 patch），trace 字节不变，不新建 phase/sidecar。
-    status: in_progress
+    status: completed
   - id: t8-openspec-and-contract-sync
     content: T8 契约同步（两段式）：T8a **第一刀代码前**新建 openspec change + delta + 修订 p0-skip-repair-subtraction 完成结论 + strict validate；T8b 实现后 tasks/SKILL/addendum/runbook 收口 + 再次 strict validate。执行顺序钉死：T8a → T2/T7 先行 → Hylyre 交付 → T1/T3/T4/T5/T6 → T8b。
     status: in_progress
