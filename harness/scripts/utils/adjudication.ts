@@ -218,8 +218,9 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   operator_interrupt: { class: 'operator' },
   /** c7e4a2d9：**只读兼容**——历史 3.0.0 前 events.jsonl 可能含
    * `halt_reason=await_human_p0_skip`，本映射供状态读取/归档工具解释旧事件；
-   * 新 run 不再写该 halt（P0 未豁免 explicit skip 默认回 coding，见 p0-semantic-gates/
-   * repair-candidates），本条目**不是**新 run 的写入口，不参与 driver 决策。 */
+   * 新 run 不再写该 halt（无 StepResult 的 explicit skip 保持 testing FAIL；只有已执行
+   * assertion mismatch 才能进入 coding candidate 路由），本条目**不是**新 run 的写入口，
+   * 不参与 driver 决策。 */
   await_human_p0_skip: { class: 'recoverable', recover_action: 'backtrack_to_coding' },
   /** 闭环墙：脚本门禁反复 PASS 但机器证据/closure 事务无法关环。 */
   closure_open: { class: 'recoverable', recover_action: 'retry_transaction' },

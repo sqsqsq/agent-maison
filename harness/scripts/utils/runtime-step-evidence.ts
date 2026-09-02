@@ -1,9 +1,9 @@
 // ============================================================================
 // runtime-step-evidence.ts — P0 device flow runtime fidelity evidence
 // ============================================================================
-// The provider writes step observations into the authoritative Hylyre trace.
-// This module deterministically validates those observations and materializes
-// their P0 checkpoint projection inside device-test-evidence.json.
+// Historical compatibility reader for the pre-0.4 runtime telemetry shape.
+// Native 0.4 CaseResult.steps[] is consumed directly by p0-semantic-gates;
+// this module never writes or synthesizes a CaseResult/StepResult ledger.
 // ============================================================================
 
 import * as fs from 'fs';
@@ -70,6 +70,7 @@ export interface RuntimeStepTelemetry {
 }
 
 interface RuntimeTrace {
+  schema_version?: string;
   feature?: string;
   cases?: Array<{ id?: string; status?: string }>;
   runtime_step_telemetry?: RuntimeStepTelemetry;
@@ -209,6 +210,11 @@ export function composeRuntimeFidelityEvidence(
   const trace = readJson<RuntimeTrace>(opts.tracePath);
   if (!trace || trace.feature !== opts.feature) {
     return { ok: false, reason: 'trace 不可解析或 feature 身份不匹配' };
+  }
+  // inventory §一 G7：legacy telemetry 桥只对**非 native** trace 适用。native 判据随协议
+  // 提升到 v1——0.3-p0 自本版起并入 legacy，故这里认的是 v1 的 trace schema。
+  if (trace.schema_version === '0.4-p0') {
+    return { ok: true, applicable: false };
   }
   const envelopeIssue = validateTelemetryEnvelope(trace.runtime_step_telemetry, opts);
   if (envelopeIssue) return { ok: false, reason: envelopeIssue };

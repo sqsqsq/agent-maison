@@ -307,42 +307,48 @@ export function runAll(): UnitCaseResult[] {
     assert(coding.length === 1 && coding[0].category === 'plan', `coding 生产点：${JSON.stringify(coding)}`);
   });
 
-  run(results, 'c7e4a2d9 testing 生产点：p0_coverage_integrity FAIL+code_regression 合取 → coding 候选（report_validity=FAIL 仍存活）；仅 FAIL 不产；envBlocked 不误投', () => {
-    // 事故组合（bc-openCard TC-018）：经生产 writer 共享实现 buildSummaryRepairCandidates
-    // （与 harness-runner summary writer 同一函数），report_validity=FAIL 输入=真实事故条件
+  run(results, 'T3 testing 生产点：仅 executed assertion_mismatch → coding 候选；explicit skip/capability 不误投', () => {
+    // 机器事实经生产 writer 共享实现 buildSummaryRepairCandidates（与 harness-runner
+    // summary writer 同一函数）；report_validity=FAIL 不抑制 executed assertion mismatch。
     const produced = buildSummaryRepairCandidates({
       phase: 'testing',
       reportValidity: 'FAIL',
       reviewReportText: null, verifierReportText: null,
       conditionalReceiptValid: false,
       checks: [{
-        id: 'p0_coverage_integrity', status: 'FAIL', severity: 'BLOCKER',
-        details: 'P0 用例被跳过且无有效凭证 waiver（1）：TC-018。\n全分母口径：P0 执行通过 15/16',
-        failure_kind: 'code_regression',
+        id: 'testing_failure_routing_1', status: 'FAIL', severity: 'BLOCKER',
+        details: 'TC-018 step 2：已执行 assertion mismatch',
+        failure_kind: 'assertion',
+        failure_code: 'assertion_mismatch',
+        repair_owner: 'coding',
+        coding_candidate: true,
       }],
     });
-    assert(produced.length === 1, `P0 机器合取应产 1 条候选：${JSON.stringify(produced)}`);
-    assert(produced[0].id === 'p0_coverage_integrity' && produced[0].category === 'coding', 'id/类别');
+    assert(produced.length === 1, `assertion mismatch 应产 1 条候选：${JSON.stringify(produced)}`);
+    assert(produced[0].id === 'testing_failure_routing_1' && produced[0].category === 'coding', 'id/类别');
     assert(produced[0].source_phase === 'testing', 'source_phase');
     assert(/^[0-9a-f]{64}$/.test(produced[0].item_fingerprint), '指纹形状');
-    // 同 check 仅 FAIL、无 code_regression → 不产 coding 候选（status 为空/未登记 skip 留 testing）
+    // explicit skip 只有 testing FAIL，没有 StepResult pair → 不产 coding 候选。
     const noKind = buildSummaryRepairCandidates({
       phase: 'testing', reportValidity: 'PASS', reviewReportText: null, verifierReportText: null,
       conditionalReceiptValid: false,
       checks: [{ id: 'p0_coverage_integrity', status: 'FAIL', severity: 'BLOCKER', details: 'TC-014 status 为空' }],
     });
-    assert(noKind.length === 0, '无 code_regression 合取不得产 coding 候选');
-    // 报告散文自称 external、无机器 envBlocked 信号 → 不抑制 explicit-only 机器候选
+    assert(noKind.length === 0, '无 StepResult pair 不得产 coding 候选');
+    // error/报告散文自称 external 也不能改写已执行 assertion mismatch 的机器路由。
     const proseExternal = buildSummaryRepairCandidates({
       phase: 'testing', reportValidity: 'PASS', reviewReportText: null, verifierReportText: null,
       conditionalReceiptValid: false,
       checks: [{
-        id: 'p0_coverage_integrity', status: 'FAIL', severity: 'BLOCKER',
-        details: 'TC-018 explicit skip；报告自称外部环境阻塞',
-        failure_kind: 'code_regression',
+        id: 'testing_failure_routing_1', status: 'FAIL', severity: 'BLOCKER',
+        details: 'error prose: external environment; actual executed assertion mismatch',
+        failure_kind: 'assertion',
+        failure_code: 'assertion_mismatch',
+        repair_owner: 'coding',
+        coding_candidate: true,
       }],
     });
-    assert(proseExternal.length === 1, '无机器 envBlocked 信号时报告散文不得抑制机器候选');
+    assert(proseExternal.length === 1, '报告散文不得抑制机器 assertion mismatch 候选');
     // 机器 envBlocked 归因（toolchain 等）→ 不产 coding 候选（runner 侧 envBlocked 前置 + 既有 DEFERRED）
     const envBlocked = collectPhaseRepairCandidates({
       phase: 'testing', reviewReportText: null, verifierReportText: null,

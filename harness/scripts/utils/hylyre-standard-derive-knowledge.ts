@@ -64,8 +64,12 @@ export function buildStandardHylyreDeriveKnowledge(): StandardHylyreDeriveKnowle
     canonical_format:
       '派生表「测试步骤」列 = 裸单行 JSON 数组，每步恰好一个根键（禁 Markdown 反引号包裹）；' +
       '固定等待用 {"wait":{"seconds":N}}（禁 timeout/duration）；' +
-      'touch 禁嵌套 selector（用 {"touch":{"by_text":"…"}} / by_id / 富选择器字段）；' +
-      'wait_for 必须带 selector/by_text/by_id/by_key/by_type/富选择器之一；' +
+      '正式 by_text selector 必须显式写 match: exact 或 contains（由 acceptance 意图决定，禁止字符启发式与运行时 fallback）；' +
+      'touch 禁嵌套 selector（用 {"touch":{"by_text":"…","match":"exact"}} / by_id / 富选择器字段）；' +
+      'wait_for 必须带 selector/by_text/by_id/by_key/by_type/富选择器之一，by_text 同样显式 match；' +
+      'action 默认 require unique 由 Hylyre 契约提供，消歧复用 index/scope/within/all，不新增 candidate_policy；' +
+      'feature ui-spec 是开放世界静态提示（既有入口/前置页面通常不重复建模）：selector 不在其中只给 WARN、不阻断，' +
+      '最终真值是本轮 native StepResult 的 selector evidence；不要为了消 WARN 改写目标或伪造 ui-spec 节点；' +
       '禁止 start_app 与 dump_ui 等 CLI 子命令作根键（冷启与观察由 harness 负责）。',
   };
 }

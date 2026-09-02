@@ -31,8 +31,8 @@ export interface SpawnHylyreOptions {
   /** `hylyre` 之后的参数，如 `['doctor']` 或 `['run', '--plan', …]` */
   hylyreArgv: string[];
   /**
-   * Optional Maison-owned Python wrapper. It receives the same Hylyre CLI argv
-   * and runs the installed provider in-process (used for runtime telemetry).
+   * Optional caller-owned Python wrapper. It receives the same Hylyre CLI argv
+   * and runs the installed provider in-process when an explicit extension needs it.
    */
   pythonScriptPath?: string;
   appSnapshotCacheAbs?: string;

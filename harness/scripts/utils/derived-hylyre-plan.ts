@@ -13,6 +13,7 @@ import {
   PLANNED_STEP_ROOT_KEY_SET,
 } from './hylyre-planned-step-keys';
 import { validatePlannedStepObject } from './hylyre-planned-step-lint';
+import { normalizePlannedSteps } from './planned-step-normalizer';
 
 const PLACEHOLDER_BODY_PATTERNS: RegExp[] = [
   /烟测占位/,
@@ -166,6 +167,46 @@ export type EvaluateCoverageResult = {
   extra: string[];
 };
 
+export type EvaluateChannelCoverageInput = {
+  /** 顶层声明 execution_channel=hylyre 的 TC 集合 */
+  hylyreTcIds: string[];
+  derivedTcIds: string[];
+  /** 历史产物里的 explicit skip（只用于**解释**缺口，绝不参与减除） */
+  legacyExplicitSkipTcIds?: string[];
+};
+
+export type EvaluateChannelCoverageResult = {
+  ok: boolean;
+  /** hylyre − derived：派生器必须全有或全无，缺任何一条都不得启动整份计划 */
+  missing: string[];
+  /** derived − hylyre：派生器无权把其它通道的 TC 拉进 Hylyre 执行集合 */
+  extra: string[];
+  /** missing ∩ legacy explicit skip：显式点名"被 skip 洗掉"的缺口，仍计入 missing */
+  laundered_skips: string[];
+};
+
+/**
+ * plan a6c4e9f2 T3：通道精确覆盖。与 legacy `evaluateDerivedCoverage` 的关键差别是
+ * **explicit skip 不再减除缺口**——派生器没有 skip 决策权，Hylyre 集合由顶层通道声明，
+ * 少一条就是编译失败而不是"已覆盖"。
+ */
+export function evaluateChannelDerivedCoverage(
+  inp: EvaluateChannelCoverageInput,
+): EvaluateChannelCoverageResult {
+  const hylyre = [...new Set(inp.hylyreTcIds.map(x => x.toUpperCase()))];
+  const derived = new Set(inp.derivedTcIds.map(x => x.toUpperCase()));
+  const hylyreSet = new Set(hylyre);
+  const skips = new Set((inp.legacyExplicitSkipTcIds ?? []).map(x => x.toUpperCase()));
+  const missing = hylyre.filter(id => !derived.has(id)).sort();
+  const extra = [...derived].filter(id => !hylyreSet.has(id)).sort();
+  return {
+    ok: missing.length === 0 && extra.length === 0,
+    missing,
+    extra,
+    laundered_skips: missing.filter(id => skips.has(id)),
+  };
+}
+
 /** missing = top − derived − skip；extra = derived − top */
 export function evaluateDerivedCoverage(inp: EvaluateCoverageInput): EvaluateCoverageResult {
   const top = new Set(inp.topTcIds.map(x => x.toUpperCase()));
@@ -277,6 +318,46 @@ function hasMarkdownBacktickInCell(stepsRaw: string): boolean {
   return /`/.test(stepsRaw);
 }
 
+export const FORMAL_BY_TEXT_MATCHES = ['exact', 'contains'] as const;
+export type FormalByTextMatch = (typeof FORMAL_BY_TEXT_MATCHES)[number];
+
+/**
+ * T2：正式 feature 派生计划中的 by_text 必须显式选择 Hylyre 的匹配语义。
+ * 这里只校验结构和值域，不替作者决定 exact/contains；该选择来自 acceptance 意图。
+ * 递归检查 within/all/in 等既有富选择器，避免嵌套 by_text 依赖未声明的默认值。
+ */
+export function validateFormalByTextSelectors(step: unknown): Array<{
+  path: string;
+  message: string;
+}> {
+  const violations: Array<{ path: string; message: string }> = [];
+  const visit = (value: unknown, valuePath: string): void => {
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => visit(item, `${valuePath}[${index}]`));
+      return;
+    }
+    if (!value || typeof value !== 'object') return;
+    const record = value as Record<string, unknown>;
+    if (typeof record.by_text === 'string' && record.by_text.trim().length > 0) {
+      const match = record.match;
+      if (typeof match !== 'string' || !FORMAL_BY_TEXT_MATCHES.includes(match as FormalByTextMatch)) {
+        violations.push({
+          path: valuePath,
+          message:
+            typeof match === 'string'
+              ? `by_text 的 match=${JSON.stringify(match)} 非法；正式派生计划只允许 exact/contains，禁止运行时静默放宽`
+              : '正式 by_text selector 必须显式声明 match: exact|contains；请按 acceptance 意图选择，不能依赖执行器默认值',
+        });
+      }
+    }
+    for (const [key, nested] of Object.entries(record)) {
+      visit(nested, `${valuePath}.${key}`);
+    }
+  };
+  visit(step, '$');
+  return violations;
+}
+
 export type StepLintViolation = {
   rule_id:
     | 'STEP-001'
@@ -285,6 +366,8 @@ export type StepLintViolation = {
     | 'STEP-004'
     | 'STEP-005'
     | 'STEP-006'
+    | 'STEP-007'
+    | 'STEP-SETUP'
     | 'STEP-WAIT'
     | 'STEP-WAIT-SECONDS';
   severity: 'BLOCKER' | 'WARN';
@@ -295,8 +378,8 @@ export type StepLintViolation = {
 
 function suggestedFixForSharedStepLint(ruleId: string): string {
   if (ruleId === 'STEP-WAIT-SECONDS') return '{"wait":{"seconds":2}}';
-  if (ruleId === 'STEP-WAIT') return '{"wait_for":{"by_text":"…","timeout":10}}';
-  return '{"touch":{"by_text":"…"}}';
+  if (ruleId === 'STEP-WAIT') return '{"wait_for":{"by_text":"…","match":"exact","timeout":10}}';
+  return '{"touch":{"by_text":"…","match":"exact"}}';
 }
 
 export type LintHylyrePlanResult = {
@@ -312,7 +395,7 @@ export type LintHylyrePlanOptions = {
   backtickBlocker?: boolean;
 };
 
-/** STEP-001~006 static lint on derived plan markdown. */
+/** STEP-001~007 static lint on derived plan markdown. */
 export function lintHylyrePlanStepRules(
   derivedMd: string,
   opts?: LintHylyrePlanOptions,
@@ -329,7 +412,7 @@ export function lintHylyrePlanStepRules(
         severity: backtickBlocker ? 'BLOCKER' : 'WARN',
         tc_id: row.tc_id,
         message: '测试步骤列含 Markdown 反引号；Hylyre _JSONISH 无法识别，请使用裸 JSON。',
-        suggested_fix: normalizePlannedStepsCell(row.steps_raw),
+        suggested_fix: '去除 Markdown 反引号，并为每个 by_text 按 acceptance 意图显式补 match: exact|contains。',
       });
     }
 
@@ -341,9 +424,34 @@ export function lintHylyrePlanStepRules(
         severity: 'BLOCKER',
         tc_id: row.tc_id,
         message: `测试步骤 JSON 无法解析：${parsed.error}`,
-        suggested_fix: '{"touch":{"by_text":"…"}}',
+        suggested_fix: '{"touch":{"by_text":"…","match":"exact"}}',
       });
       continue;
+    }
+
+    // plan a6c4e9f2 D4/T3（wrong-screen 最低防线）：每个 Hylyre case 的首个 assertion
+    // 之前必须在同 case 至少有一个 setup/navigation action。这是结构最小规则，不解析
+    // precondition 散文、不推导跨 case screen state、不建可达性状态机。
+    // 事故形态：入口 case 被跳过后，TC-015 的首断言直接在首页求值——设备从未进入目标页，
+    // 失败却被当成产品缺陷。
+    const normalizedForSetup = normalizePlannedSteps(parsed.steps);
+    const firstAssertionIndex = normalizedForSetup.findIndex(step => step.role === 'assertion');
+    if (firstAssertionIndex >= 0) {
+      const hasPrecedingAction = normalizedForSetup
+        .slice(0, firstAssertionIndex)
+        .some(step => step.role === 'action');
+      if (!hasPrecedingAction) {
+        violations.push({
+          rule_id: 'STEP-SETUP',
+          severity: 'BLOCKER',
+          tc_id: row.tc_id,
+          message:
+            `首个 assertion（step #${firstAssertionIndex}）之前没有同 case 的 setup/navigation action：` +
+            '该断言会在未进入目标页时求值，失败会被误归产品缺陷。请在本 case 内补入口动作，' +
+            '不要依赖其它 case 遗留的屏幕状态。',
+          suggested_fix: '在首个断言前补同 case 入口动作，例如 {"touch":{"by_id":"…"}} 或 {"back":{}}',
+        });
+      }
     }
 
     for (let stepIndex = 0; stepIndex < parsed.steps.length; stepIndex++) {
@@ -355,7 +463,7 @@ export function lintHylyrePlanStepRules(
           severity: 'BLOCKER',
           tc_id: row.tc_id,
           message: `每步须恰好一个 JSON 根键，实际：${roots.join(', ') || '(empty)'}`,
-          suggested_fix: '{"touch":{"by_text":"…"}}',
+          suggested_fix: '{"touch":{"by_text":"…","match":"exact"}}',
         });
         continue;
       }
@@ -366,7 +474,7 @@ export function lintHylyrePlanStepRules(
           severity: 'BLOCKER',
           tc_id: row.tc_id,
           message: `禁止将 CLI 命令名 "${root}" 作为步骤根键（如 dump-ui 应走探索，不是 plan 步骤）。`,
-          suggested_fix: '{"touch":{"by_text":"…"}}',
+          suggested_fix: '{"touch":{"by_text":"…","match":"exact"}}',
         });
       } else if (!PLANNED_STEP_ROOT_KEY_SET.has(root)) {
         violations.push({
@@ -374,7 +482,7 @@ export function lintHylyrePlanStepRules(
           severity: 'BLOCKER',
           tc_id: row.tc_id,
           message: `未知步骤根键 "${root}"；允许：${[...PLANNED_STEP_ROOT_KEY_SET].join(', ')}`,
-          suggested_fix: '{"touch":{"by_text":"…"}}',
+          suggested_fix: '{"touch":{"by_text":"…","match":"exact"}}',
         });
       }
 
@@ -407,8 +515,18 @@ export function lintHylyrePlanStepRules(
           rule_id: 'STEP-006',
           severity: 'WARN',
           tc_id: row.tc_id,
-          message: '推荐使用 direct 根键（如 {"touch":{"by_text":"…"}}），action 包装为兼容形态。',
+          message: '推荐使用 direct 根键（如 {"touch":{"by_text":"…","match":"exact"}}），action 包装为兼容形态。',
           suggested_fix: '改用 direct touch/input/swipe/scroll 根键',
+        });
+      }
+
+      for (const v of validateFormalByTextSelectors(step)) {
+        violations.push({
+          rule_id: 'STEP-007',
+          severity: 'BLOCKER',
+          tc_id: row.tc_id,
+          message: `${v.path}：${v.message}`,
+          suggested_fix: '根据 acceptance 意图显式填写 "match":"exact" 或 "match":"contains"；不要按数字/日期等字符启发式选择',
         });
       }
 

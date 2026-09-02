@@ -181,6 +181,13 @@ function buildSlimProject(opts: SlimOpts): { root: string } {
       blocking_skips: [],
       blockers: [],
       next_action: 'fill_receipt_then_check',
+      // schema 的 allOf/if-then 规定：schema_version ∈ {1.2,1.3} 必带这四项。
+      // 上面那句"完整 schema 必填集"此前并未做到——`lite-json-schema` 对
+      // allOf/if-then **整条忽略**（fail-open），于是缺三项的夹具照样过 schema 门。
+      // 校验器补齐组合关键字后这里立刻暴露，按 schema 补全而不是放松校验。
+      assurance: 'not_applicable',
+      capability_resolutions: [],
+      capability_resolution_contract_fingerprint: null,
       closure_status: 'open',
       generated_at: new Date().toISOString(),
       source_commit_sha: opts.mismatchedSourceSha ? '0'.repeat(40) : sha,

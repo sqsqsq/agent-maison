@@ -39,11 +39,36 @@ function readJsonSafe<T>(p: string): T | null {
   }
 }
 
-/** 按 trace tool_calls 的 case 顺序，将 log 中 cost 行累加到各 TC。 */
+/**
+ * 以 trace cases[] 为全量 case 集合，tool_calls 只负责把 log cost 分配到对应 TC。
+ * Hylyre 的 StepSkipped case 不会产生成功后的 tool_call，因此必须保留为 0/0，
+ * 不能因 tool_calls 非空而从 timing 中消失。
+ */
 export function parseCaseDurationsFromLogAndTrace(
   logContent: string,
   traceRaw: Record<string, unknown> | null,
 ): DeviceTestTimingCase[] {
+  // inventory §一 G12：native 口径改判 v1；legacy 才回落日志 cost 分配。
+  if (traceRaw?.schema_version === '0.4-p0' && Array.isArray(traceRaw.cases)) {
+    // Native StepResult.duration_ms is the execution-time SSOT. tool_calls and
+    // log cost lines are compatibility projections and may include blocked,
+    // skipped, or expected_check rows without a corresponding cost line.
+    return (traceRaw.cases as Array<{ id?: unknown; steps?: unknown }>).map((traceCase) => {
+      const steps = Array.isArray(traceCase.steps) ? traceCase.steps : [];
+      const durationMs = steps.reduce((sum, step) => {
+        const value = step && typeof step === 'object' && !Array.isArray(step)
+          ? (step as Record<string, unknown>).duration_ms
+          : null;
+        return sum + (typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0);
+      }, 0);
+      return {
+        id: typeof traceCase.id === 'string' ? traceCase.id.trim() : '',
+        duration_ms: Math.round(durationMs),
+        step_count: steps.length,
+      };
+    });
+  }
+
   const costs: number[] = [];
   let m: RegExpExecArray | null;
   const re = new RegExp(COST_RE.source, COST_RE.flags);
@@ -63,11 +88,23 @@ export function parseCaseDurationsFromLogAndTrace(
     }
   }
 
-  const casesFromTrace = Array.isArray(traceRaw?.cases)
+  const hasTraceCases = Array.isArray(traceRaw?.cases);
+  const casesFromTrace = hasTraceCases
     ? (traceRaw!.cases as Array<{ id?: string }>)
     : [];
-  const allCaseIds =
-    caseOrder.length > 0 ? caseOrder : casesFromTrace.map(c => c.id).filter(Boolean) as string[];
+  const traceCaseIds: string[] = [];
+  const traceCaseIdSet = new Set<string>();
+  for (const c of casesFromTrace) {
+    const id = typeof c?.id === 'string' ? c.id.trim() : '';
+    const normalizedId = id.toUpperCase();
+    if (id && !traceCaseIdSet.has(normalizedId)) {
+      traceCaseIds.push(id);
+      traceCaseIdSet.add(normalizedId);
+    }
+  }
+  // 没有 cases[] 的旧/损坏输入才回退到 tool_calls；只要 cases[] 在场，哪怕为空，
+  // 也必须尊重 trace 的权威集合，不能让日志反向扩充 timing case。
+  const allCaseIds = hasTraceCases ? traceCaseIds : caseOrder;
 
   if (allCaseIds.length === 0) {
     return [];
@@ -81,8 +118,16 @@ export function parseCaseDurationsFromLogAndTrace(
   for (const tc of toolCalls) {
     const id = typeof tc?.case === 'string' ? tc.case.trim() : '';
     if (id) {
-      const idx = allCaseIds.indexOf(id);
-      if (idx >= 0) caseIdx = idx;
+      const idx = hasTraceCases
+        ? allCaseIds.findIndex(caseId => caseId.toUpperCase() === id.toUpperCase())
+        : allCaseIds.indexOf(id);
+      if (idx < 0) {
+        // tool_calls 不是 case SSOT；未知 case 的 cost 无法安全归属，丢弃这条
+        // 分配而不污染前一个 trace case 的 duration。
+        if (costIdx < costs.length) costIdx += 1;
+        continue;
+      }
+      caseIdx = idx;
     }
     if (costIdx < costs.length) {
       perCaseMs[caseIdx] += costs[costIdx]!;

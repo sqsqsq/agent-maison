@@ -49,6 +49,12 @@ import {
 } from '../../../../harness/scripts/utils/adhoc-ui-reset-meta';
 import type { CapabilityProvider } from './types';
 import type { RuntimeStepTelemetry } from '../../../../harness/scripts/utils/runtime-step-evidence';
+import { requireV1ForGate } from '../../../../harness/scripts/utils/hylyre-result-protocol';
+import type {
+  CaseResultV1,
+  SelectorV1,
+  StepResultV1,
+} from '../../../../harness/scripts/utils/hylyre-result-protocol';
 
 export { buildHylyreAppPageSaveArgv, resolveHylyrePageSaveSlug, resolveHylyrePageSaveNames } from '../device-test-page-save';
 // d9e4b7c1 T2：evidence 合成入口（check-testing 协调层经 capability dispatch 调用）
@@ -59,64 +65,163 @@ export const provider: CapabilityProvider = {
   capability: 'device_test.run',
   exports: [
     'ensureHylyreReady',
-    'preflightRuntimeStepTelemetry',
-    'probeRuntimeStepTelemetry',
+    'probeHylyreEvidenceCapability',
+    'preflightHylyreEvidenceCapability',
     'runHylyreDeviceTest',
     'parseHylyreTrace',
+    'evaluateHylyreNativeEvidenceGate',
     'composeDeviceTestEvidence',
   ],
 };
 
-export interface RuntimeStepTelemetryCapability {
-  supported: boolean;
+// plan a6c4e9f2 T7a/T7b（inventory §一 G10）：最低版本/trace 门随 Step Outcome v1 一并提升。
+// 这两条常量与 `hylyre-result-protocol.ts` 的 dispatch 判别键必须同步——M1 的 typed consumer
+// 只消费 v1，若这道三重判据仍钉在 0.3-p0，合法 v1 trace 会被判非 native，两者互斥。
+// 代价如实：宿主装上 0.5.0 之前，testing 的 native 证据链无法闭合（plan 既定终局）。
+export const MIN_NATIVE_HYLYRE_VERSION = '0.5.0';
+export const NATIVE_TRACE_SCHEMA_VERSION = '0.4-p0';
+export const NATIVE_RESULT_PROTOCOL = 'hylyre.step-outcome/1';
+/** 只读诊断可用、绝不闭合 evidence 的历史 schema（0.3-p0 自本版起并入 legacy）。 */
+export const LEGACY_TRACE_SCHEMA_VERSIONS = new Set(['0.1-p0', '0.2-p4', '0.3-p0']);
+
+export type HylyreCaseExecution = 'completed' | 'aborted' | 'infrastructure_failed';
+export type HylyreCaseVerification = 'passed' | 'failed' | 'inconclusive';
+export type HylyreCaseEvidence = 'complete' | 'incomplete';
+export type HylyreExpectedCheckMode =
+  | 'checked_vlm'
+  | 'disabled_by_flag'
+  | 'unavailable_no_vlm'
+  | 'empty';
+
+// plan a6c4e9f2 T4 返修：这里原来是 0.3 flat 形状
+// （顶层 status/failure_kind/failure_code/evidence/error + 旧 selector
+//  requested_match/effective_match/selected_id）。实测把冻结包**合法** golden
+// `golden/trace/valid/bc-opencard-1.json` 喂给本文件的 native gate，得
+// `native=false / mode=unsupported / 54 条 reasons`，首条 `steps[0].status 值域非法：undefined`
+// ——信封已经升到 0.4-p0，内核还钉在 0.3，于是真实 v1 一律闭合不了证据，
+// 反倒是"0.3 flat 套 0.4-p0 信封"的混装产物更容易被当成 native。
+// 现在直接复用 `hylyre-result-protocol` 的 typed view，不再维护第二套形状定义。
+export type HylyreSelectorEvidence = SelectorV1;
+export type HylyreStepResult = StepResultV1;
+
+export interface HylyreTraceEnvironment {
+  hylyre_version: string;
+  hypium_version: string;
+  trace_schema_version: string;
+  /** v1 下 environment 侧同样声明协议，且必须与 trace root 一致。 */
+  result_protocol?: string;
+  selector_engine: string;
+  [key: string]: unknown;
+}
+
+export interface HylyreEvidenceCapability {
+  mode: HylyreEvidenceMode;
+  native: boolean;
+  legacy: boolean;
   providerId: 'hylyre';
   providerVersion: string;
-  protocolVersion: '1.0';
-  collectorVersion: '1.0';
   reason: string;
 }
 
-/**
- * Provider/version handshake for Maison's in-process telemetry collector.
- * The wrapper depends on Hylyre's 0.3.x ScenarioRunner hook; unknown versions
- * fail closed as capability-missing before a device content run is spawned.
- * 0.3.2 与 0.3.1 的差异仅为 __version__ 字符串修正（scenario/harness 模块 LF 归一化后
- * 内容一致——旧 wheel 内为 CRLF、源码树为 LF，源码树 vendor 切换时实测），
- * wrapper 兼容集合据此扩展。
- */
-const RUNTIME_TELEMETRY_SUPPORTED_HYLYRE = new Set(['0.3.1', '0.3.2']);
+function compareVersionParts(a: string, b: string): number {
+  const left = a.trim().replace(/^v/i, '').split(/[.-]/);
+  const right = b.trim().replace(/^v/i, '').split(/[.-]/);
+  const length = Math.max(left.length, right.length);
+  for (let i = 0; i < length; i += 1) {
+    const l = left[i] ?? '0';
+    const r = right[i] ?? '0';
+    const ln = /^\d+$/.test(l) ? Number(l) : null;
+    const rn = /^\d+$/.test(r) ? Number(r) : null;
+    if (ln !== null && rn !== null) {
+      if (ln !== rn) return ln < rn ? -1 : 1;
+      continue;
+    }
+    if (ln !== null) return 1;
+    if (rn !== null) return -1;
+    const cmp = l.localeCompare(r);
+    if (cmp !== 0) return cmp;
+  }
+  return 0;
+}
 
-export function probeRuntimeStepTelemetry(opts: {
+/**
+ * Resolve the provider capability before content execution. Native 0.4.1+
+ * evidence is independent of the legacy runtime telemetry bridge. The old
+ * bridge is historical read-only compatibility, not a capability for new runs.
+ */
+export function probeHylyreEvidenceCapability(opts: {
   hylyreVersion: string;
   manifestVersion: string;
-}): RuntimeStepTelemetryCapability {
-  const wrapper = path.resolve(__dirname, '..', 'hylyre-runtime-telemetry.py');
+}): HylyreEvidenceCapability {
   const version = opts.hylyreVersion.trim();
-  const supported =
-    RUNTIME_TELEMETRY_SUPPORTED_HYLYRE.has(version) &&
-    opts.manifestVersion.trim() === version &&
-    fs.existsSync(wrapper) &&
-    fs.statSync(wrapper).isFile();
+  const manifestVersion = opts.manifestVersion.trim();
+  const versionAligned = Boolean(version && manifestVersion && version === manifestVersion);
+  const native = versionAligned && compareVersionParts(version, MIN_NATIVE_HYLYRE_VERSION) >= 0;
+  // The old collector is read-only compatibility for historical traces. New
+  // runs must not invoke its private Hylyre monkey-patch.
+  const legacyCapability = false;
+  const mode: HylyreEvidenceMode = native
+    ? 'native'
+    : legacyCapability
+      ? 'legacy'
+      : 'unsupported';
+  const reason = native
+    ? `hylyre@${version} + native CaseResult.steps[] schema gate`
+    : legacyCapability
+      ? `hylyre@${version} + legacy runtime telemetry transition bridge`
+      : `native/legacy evidence unsupported（installed=${version || '<missing>'}, manifest=${manifestVersion || '<missing>'}）`;
   return {
-    supported,
+    mode,
+    native,
+    legacy: legacyCapability,
     providerId: 'hylyre',
     providerVersion: version,
-    protocolVersion: '1.0',
-    collectorVersion: '1.0',
-    reason: supported
-      ? `hylyre@${version} + Maison runtime telemetry collector@1.0`
-      : `runtime step telemetry unsupported/unavailable（installed=${version || '<missing>'}, manifest=${opts.manifestVersion || '<missing>'}, wrapper=${fs.existsSync(wrapper) ? 'present' : 'missing'}）`,
+    reason,
   };
 }
 
-/** Static provider/profile handshake used before the testing agent invocation. */
-export function preflightRuntimeStepTelemetry(opts: {
+/**
+ * Read-only pre-run probe used by goal orchestration. It never installs or
+ * invokes Hylyre; the definitive ready meta is still produced by
+ * ensureHylyreReady inside the testing gate.
+ */
+export function preflightHylyreEvidenceCapability(opts: {
   projectRoot: string;
-}): RuntimeStepTelemetryCapability {
+}): HylyreEvidenceCapability {
   const cfg = resolveHylyreToolConfig(opts.projectRoot);
   const manifest = readVendorManifest(opts.projectRoot, cfg.vendor_dir);
-  const version = manifest?.hylyre_version ?? '';
-  return probeRuntimeStepTelemetry({ hylyreVersion: version, manifestVersion: version });
+  const manifestVersion = manifest?.hylyre_version ?? '';
+  const envPy = (process.env.HYLYRE_PYTHON ?? '').trim();
+  const envHome = (process.env.HYLYRE_HOME ?? '').trim();
+  // The default/explicit HOME venv is an installation target owned by
+  // ensureHylyreReady. Do not turn its missing or stale installed version into
+  // a permanent goal defer while the vendor manifest can still be installed.
+  // HYLYRE_PYTHON is different: it is an explicit external interpreter and
+  // ensureHylyreReady must never upgrade it implicitly.
+  if (
+    !envPy &&
+    cfg.auto_install &&
+    manifestVersion &&
+    compareVersionParts(manifestVersion, MIN_NATIVE_HYLYRE_VERSION) >= 0
+  ) {
+    return {
+      mode: 'native',
+      native: true,
+      legacy: false,
+      providerId: 'hylyre',
+      providerVersion: manifestVersion,
+      reason: `vendor manifest Hylyre@${manifestVersion} 可由 ensureHylyreReady 自动安装/升级；最终 ready/doctor/trace gate 留给 testing。`,
+    };
+  }
+  const venvRoot = envHome
+    ? path.resolve(opts.projectRoot, envHome)
+    : path.resolve(opts.projectRoot, cfg.venv_dir);
+  const pythonPath = envPy || venvPython(venvRoot);
+  const installedVersion = fs.existsSync(pythonPath) ? pipShowVersion(pythonPath) : '';
+  return probeHylyreEvidenceCapability({
+    hylyreVersion: installedVersion,
+    manifestVersion,
+  });
 }
 
 // -------- 公共类型 --------
@@ -128,21 +233,46 @@ export interface HylyreReleaseManifest extends HylyreVendorManifestShape {
   note?: string;
 }
 
-/** hylyre trace.json `cases[]` 子项 */
+/**
+ * hylyre trace.json `cases[]` 子项。
+ *
+ * 字段保持可选是**有意**的：本类型也用来承载 legacy/畸形 trace 的只读诊断，
+ * 那些文档确实缺三轴。合法性判定不在类型层，而在 `requireV1ForGate`
+ * （冻结 schema + 跨行不变量）——类型宽、门禁严，比反过来安全。
+ * 判为 v1 之后应改用 `CaseResultV1` 消费。
+ */
 export interface HylyreTraceCase {
   id: string;
   status: '通过' | '失败' | '阻塞' | '跳过';
   priority?: 'P0' | 'P1' | 'P2' | string;
   ac_ref?: string;
   notes?: string;
+  name?: string;
+  execution?: HylyreCaseExecution;
+  verification?: HylyreCaseVerification;
+  evidence?: HylyreCaseEvidence;
+  expected_check_mode?: HylyreExpectedCheckMode;
+  steps?: HylyreStepResult[];
+  [key: string]: unknown;
 }
 
+/** 已判定为 v1 后的 case 视图——消费侧应尽量用这个而不是上面的宽类型。 */
+export type HylyreNativeCase = CaseResultV1;
+
 export interface HylyreTrace {
-  schema_version: '0.1-p0' | '0.2-p4' | string;
+  schema_version: string;
+  /**
+   * v1 结果协议声明。与 `schema_version` 共同构成**唯一** dispatch 判别键
+   * （见 `harness/scripts/utils/hylyre-result-protocol.ts`）。
+   * `0.4-p0` 下必需且为 `hylyre.step-outcome/1`；`0.3-p0`/`0.2-p4`/`0.1-p0` 下**禁止**出现。
+   * 解析层必须原样保留它——丢掉这个字段会让下游把合法 v1 误判成"缺协议"。
+   */
+  result_protocol?: string;
   feature: string;
-  phase: 'testing';
-  outcome: 'success' | 'partial' | 'failed' | 'aborted';
+  phase: string;
+  outcome: string;
   cases?: HylyreTraceCase[];
+  environment?: HylyreTraceEnvironment;
   artifacts?: Record<string, unknown>;
   retries?: number;
   tool_calls?: Array<Record<string, unknown>>;
@@ -153,6 +283,21 @@ export interface HylyreTrace {
   run_failure_kind?: RunFailureKind | string;
   error_kind?: string;
   runtime_step_telemetry?: RuntimeStepTelemetry;
+  [key: string]: unknown;
+}
+
+export type HylyreEvidenceMode = 'native' | 'legacy' | 'unsupported';
+
+export interface HylyreEvidenceGateResult {
+  mode: HylyreEvidenceMode;
+  native: boolean;
+  legacy: boolean;
+  minimumVersion: string;
+  installedVersion: string | null;
+  manifestVersion: string | null;
+  traceVersion: string | null;
+  traceSchemaVersion: string | null;
+  reasons: string[];
 }
 
 export interface HylyreReadyOptions {
@@ -183,6 +328,8 @@ export interface HylyreRunOptions {
   phase: 'testing';
   pythonPath: string;
   derivedPlanPath: string;
+  /** Top-level plan path captured for same-run identity binding. */
+  topPlanPath?: string | null;
   /** When set, use `hylyre run --steps-file` instead of --plan (adhoc fallback). */
   stepsFilePath?: string | null;
   reportOutPath: string;
@@ -198,8 +345,6 @@ export interface HylyreRunOptions {
   coldRestart?: boolean;
   appSnapshotCacheAbs: string;
   timeoutMs?: number;
-  /** Enable Maison's same-process per-step Hypium observation wrapper. */
-  runtimeStepTelemetry?: boolean;
 }
 
 export interface HylyreRunResult {
@@ -329,6 +474,14 @@ function canImportHylyre(pythonPath: string, logPath?: string): boolean {
     appendLogSync(logPath, (r.stdout || '') + (r.stderr || ''));
   }
   return r.status === 0;
+}
+
+function safeFileSha256(filePath: string): string | null {
+  try {
+    return sha256FileHex(filePath);
+  } catch {
+    return null;
+  }
 }
 
 /** 已安装的 hylyre 包内是否包含 verify_report 所需契约（wheel 须打 package-data）。 */
@@ -1326,6 +1479,11 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
         pythonPath,
         hylyreVersion,
         manifestVersion,
+        // Native evidence gate consumes this explicit version chain; retain
+        // camelCase fields above for existing reports and diagnostics.
+        installed_version: hylyreVersion,
+        manifest_version: manifestVersion,
+        version_consistent: versionConsistent,
         versionConsistent,
         source,
         doctorOk,
@@ -1519,6 +1677,10 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
   const pollutionBefore = beginHylyrePhasePollutionGuard(opts.projectRoot);
   const logPath = path.join(reportsBase, 'device-test-run.log');
   const metaPath = path.join(reportsBase, 'device-test-run.meta.json');
+  const runDerivedPlanPath = path.resolve(opts.derivedPlanPath);
+  const runTopPlanPath = opts.topPlanPath ? path.resolve(opts.topPlanPath) : null;
+  const runDerivedPlanSha256 = safeFileSha256(runDerivedPlanPath);
+  const runTopPlanSha256 = runTopPlanPath ? safeFileSha256(runTopPlanPath) : null;
 
   ensureDirForFile(opts.reportOutPath);
   ensureDirForFile(opts.traceOutPath);
@@ -1698,10 +1860,7 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
   const failureDir = path.join(path.dirname(path.resolve(opts.reportOutPath)), 'failures');
   hylyreArgv.push('--failure-dir', failureDir);
 
-  const runtimeTelemetryWrapper = opts.runtimeStepTelemetry
-    ? path.resolve(__dirname, '..', 'hylyre-runtime-telemetry.py')
-    : undefined;
-  const command = `${opts.pythonPath} ${runtimeTelemetryWrapper ?? '-m hylyre'} ${hylyreArgv.join(' ')}`;
+  const command = `${opts.pythonPath} -m hylyre ${hylyreArgv.join(' ')}`;
 
   const runStartedAt = new Date().toISOString();
   const runT0 = Date.now();
@@ -1709,7 +1868,6 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
     pythonPath: opts.pythonPath,
     hypiumWorkDir,
     hylyreArgv,
-    ...(runtimeTelemetryWrapper ? { pythonScriptPath: runtimeTelemetryWrapper } : {}),
     appSnapshotCacheAbs: opts.appSnapshotCacheAbs,
     logPath,
     maxBuffer: 64 * 1024 * 1024,
@@ -1852,6 +2010,14 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
         run_ended_at: runEndedAt,
         run_duration_ms: runDurationMs,
         ran_at: runEndedAt,
+        artifact_binding: {
+          test_plan_path: runTopPlanPath,
+          test_plan_sha256: runTopPlanSha256,
+          derived_plan_path: runDerivedPlanPath,
+          derived_plan_sha256: runDerivedPlanSha256,
+          trace_path: tracePathResolved,
+          trace_sha256: safeFileSha256(tracePathResolved),
+        },
         failure_dir: failureDir,
         hylyre_page_save: {
           attempted: pageSave.attempted,
@@ -1901,11 +2067,20 @@ export function parseHylyreTrace(tracePath: string): HylyreTrace | null {
   if (typeof raw.feature !== 'string' || typeof raw.outcome !== 'string') return null;
   const cases = Array.isArray(raw.cases) ? (raw.cases as HylyreTraceCase[]) : undefined;
   return {
-    schema_version: typeof raw.schema_version === 'string' ? raw.schema_version : '0.1-p0',
+    // 先摊开原始文档：本函数返回的是**投影**，而冻结 schema 校验的是完整文档。
+    // 只保留下面这些具名字段会丢掉 `model_backend` 等契约必填项，
+    // 于是合法 trace 会被 schema 判成"缺必填字段"——投影不得成为校验对象的裁剪器。
+    ...raw,
+    schema_version: typeof raw.schema_version === 'string' ? raw.schema_version : '',
+    ...(typeof raw.result_protocol === 'string' ? { result_protocol: raw.result_protocol } : {}),
     feature: raw.feature,
-    phase: 'testing',
-    outcome: raw.outcome as HylyreTrace['outcome'],
+    phase: typeof raw.phase === 'string' ? raw.phase : '',
+    outcome: raw.outcome,
     cases,
+    environment:
+      raw.environment && typeof raw.environment === 'object' && !Array.isArray(raw.environment)
+        ? (raw.environment as HylyreTraceEnvironment)
+        : undefined,
     artifacts: typeof raw.artifacts === 'object' && raw.artifacts !== null ? (raw.artifacts as Record<string, unknown>) : undefined,
     retries: typeof raw.retries === 'number' ? raw.retries : undefined,
     tool_calls: Array.isArray(raw.tool_calls) ? (raw.tool_calls as Array<Record<string, unknown>>) : undefined,
@@ -1913,5 +2088,164 @@ export function parseHylyreTrace(tracePath: string): HylyreTrace | null {
       raw.runtime_step_telemetry && typeof raw.runtime_step_telemetry === 'object'
         ? (raw.runtime_step_telemetry as RuntimeStepTelemetry)
         : undefined,
+  };
+}
+
+const CASE_STATUSES = new Set(['通过', '失败', '阻塞', '跳过']);
+const CASE_EXECUTIONS = new Set(['completed', 'aborted', 'infrastructure_failed']);
+const CASE_VERIFICATIONS = new Set(['passed', 'failed', 'inconclusive']);
+const CASE_EVIDENCE = new Set(['complete', 'incomplete']);
+const EXPECTED_CHECK_MODES = new Set([
+  'checked_vlm',
+  'disabled_by_flag',
+  'unavailable_no_vlm',
+  'empty',
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function requiredString(record: Record<string, unknown>, key: string, label: string, errors: string[]): void {
+  if (typeof record[key] !== 'string' || record[key].trim().length === 0) {
+    errors.push(`${label}.${key} 缺失或非法`);
+  }
+}
+
+function requiredEnum(
+  record: Record<string, unknown>,
+  key: string,
+  values: ReadonlySet<string>,
+  label: string,
+  errors: string[],
+): void {
+  if (typeof record[key] !== 'string' || !values.has(record[key])) {
+    errors.push(`${label}.${key} 值域非法：${String(record[key])}`);
+  }
+}
+
+/**
+ * trace 内容合法性判定。
+ *
+ * plan a6c4e9f2 T4 返修：这里原来是一套**手写的 0.3 形状校验**
+ * （逐字段查 status/failure_kind/failure_code/evidence/error 与旧 selector 三件套）。
+ * 它有两个致命后果——合法 v1 因为没有那些 flat 字段而被判非法；而 0.3 内核套上
+ * 0.4-p0 信封时，这套校验反而"看得懂"。第二套形状定义本身就是错误来源。
+ *
+ * 现在委派给唯一裁决入口 `requireV1ForGate`：dispatch 键 → 冻结
+ * `output-schema.json` 运行期校验 → 跨行不变量（判据移植自冻结包 reference_reducer）。
+ * 本函数只保留 schema 管不到、且属于 **Maison 侧期望**的检查：
+ *   - `phase === 'testing'`：契约不关心 phase 取值，是本仓要求 trace 来自 testing 阶段。
+ * 版本链一致性（manifest/installed/trace）仍由 `evaluateHylyreNativeEvidenceGate` 自己判——
+ * 那是部署问题，不是 Hylyre 契约问题。
+ */
+function validateNativeTraceShape(trace: HylyreTrace | null, frameworkRoot?: string | null): string[] {
+  if (!trace) return ['trace 不可解析'];
+  const verdict = requireV1ForGate(trace, { frameworkRoot });
+  if (!verdict.ok) {
+    return [verdict.detail, verdict.suggestion].filter(Boolean);
+  }
+  const errors: string[] = [];
+  if (trace.phase !== 'testing') errors.push(`trace.phase=${String(trace.phase)} 非 testing`);
+  return errors;
+}
+
+function readyMetaString(
+  ready: Record<string, unknown> | null,
+  keys: string[],
+): string | null {
+  if (!ready) return null;
+  for (const key of keys) {
+    if (typeof ready[key] === 'string' && ready[key].trim()) return ready[key].trim();
+  }
+  return null;
+}
+
+/**
+ * Atomic native/legacy switch. The native path is enabled only when the
+ * installed/manifest/trace environment version chain, schema, and every
+ * required CaseResult/StepResult field are valid. Legacy status is never
+ * promoted to native verification by this function.
+ */
+export function evaluateHylyreNativeEvidenceGate(opts: {
+  trace: HylyreTrace | null;
+  readyMeta?: unknown;
+  installedVersion?: string | null;
+  readyManifestVersion?: string | null;
+  manifestVersion?: string | null;
+  /** 定位随发布件下发的 vendored 冻结 schema；省略时从模块位置向上推断。 */
+  frameworkRoot?: string | null;
+}): HylyreEvidenceGateResult {
+  const ready = isRecord(opts.readyMeta) ? opts.readyMeta : null;
+  const installedVersion = (
+    readyMetaString(ready, ['installed_version', 'installed', 'hylyreVersion', 'hylyre_version']) ??
+    opts.installedVersion?.trim() ??
+    null
+  );
+  const readyManifestVersion = (
+    readyMetaString(ready, ['manifest_version', 'manifest', 'manifestVersion']) ??
+    opts.readyManifestVersion?.trim() ??
+    null
+  );
+  const manifestVersion = opts.manifestVersion?.trim() || null;
+  const traceVersion = opts.trace?.environment?.hylyre_version?.trim() || null;
+  const traceSchemaVersion = opts.trace?.environment?.trace_schema_version?.trim() || null;
+  const reasons: string[] = [];
+
+  if (ready && ready.ok !== true) reasons.push('hylyre-ready.meta.json ok 不是 true');
+  if (ready && ready.doctorOk !== true) reasons.push('hylyre-ready.meta.json doctorOk 不是 true');
+  if (ready && ready.version_consistent !== true && ready.versionConsistent !== true) {
+    reasons.push('hylyre-ready.meta.json versionConsistent 不是 true');
+  }
+  if (!manifestVersion) reasons.push('release.manifest.json 缺少 hylyre_version');
+  if (!installedVersion) reasons.push('hylyre-ready.meta.json 缺少 installed version');
+  if (!readyManifestVersion) reasons.push('hylyre-ready.meta.json 缺少 manifest version');
+  if (!traceVersion) reasons.push('trace.environment.hylyre_version 缺失');
+  if (manifestVersion && installedVersion && manifestVersion !== installedVersion) {
+    reasons.push(`manifest=${manifestVersion} 与 installed=${installedVersion} 不一致`);
+  }
+  if (manifestVersion && readyManifestVersion && manifestVersion !== readyManifestVersion) {
+    reasons.push(`release manifest=${manifestVersion} 与 ready manifest=${readyManifestVersion} 不一致`);
+  }
+  if (manifestVersion && traceVersion && manifestVersion !== traceVersion) {
+    reasons.push(`manifest=${manifestVersion} 与 trace.environment=${traceVersion} 不一致`);
+  }
+  if (installedVersion && traceVersion && installedVersion !== traceVersion) {
+    reasons.push(`installed=${installedVersion} 与 trace.environment=${traceVersion} 不一致`);
+  }
+  if (installedVersion && compareVersionParts(installedVersion, MIN_NATIVE_HYLYRE_VERSION) < 0) {
+    reasons.push(`installed=${installedVersion} 低于 native 最低版本 ${MIN_NATIVE_HYLYRE_VERSION}`);
+  }
+  if (opts.trace?.schema_version !== NATIVE_TRACE_SCHEMA_VERSION || traceSchemaVersion !== NATIVE_TRACE_SCHEMA_VERSION) {
+    reasons.push(`trace schema 链不满足 ${NATIVE_TRACE_SCHEMA_VERSION}`);
+  }
+  // 协议声明与 schema 同为判别键：root 与 environment 都必须声明且一致，
+  // 否则就是产出方自己不自洽——比未知 schema 更危险，不得当 native 消费。
+  if (opts.trace?.result_protocol !== NATIVE_RESULT_PROTOCOL) {
+    reasons.push(`trace.result_protocol=${String(opts.trace?.result_protocol)}，期望 ${NATIVE_RESULT_PROTOCOL}`);
+  }
+  if (opts.trace?.environment && opts.trace.environment.result_protocol !== NATIVE_RESULT_PROTOCOL) {
+    reasons.push(
+      `trace.environment.result_protocol=${String(opts.trace.environment.result_protocol)}，期望 ${NATIVE_RESULT_PROTOCOL}`,
+    );
+  }
+  reasons.push(...validateNativeTraceShape(opts.trace, opts.frameworkRoot));
+
+  const native = reasons.length === 0;
+  const legacy = Boolean(
+    opts.trace &&
+    LEGACY_TRACE_SCHEMA_VERSIONS.has(opts.trace.schema_version) &&
+    opts.trace.runtime_step_telemetry,
+  );
+  return {
+    mode: native ? 'native' : legacy ? 'legacy' : 'unsupported',
+    native,
+    legacy,
+    minimumVersion: MIN_NATIVE_HYLYRE_VERSION,
+    installedVersion,
+    manifestVersion,
+    traceVersion,
+    traceSchemaVersion,
+    reasons: [...new Set(reasons)],
   };
 }

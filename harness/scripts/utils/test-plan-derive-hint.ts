@@ -12,6 +12,11 @@ export interface DeriveHintTestCaseRow {
   expected: string;
   priority: string;
   ac_ref: string;
+  /**
+   * plan a6c4e9f2 T3：顶层声明的编译期执行通道原始字面量（`hylyre|visual|manual|provider:<id>`）。
+   * legacy 计划无该列时为空串——派生器**不得**据此猜通道，只能报一次性迁移要求。
+   */
+  execution_channel: string;
 }
 
 function pickColumnIndex(table: MdTable, keywords: string[]): number {
@@ -39,6 +44,7 @@ export function extractTopPlanTestCasesForDeriveHint(planMd: string): DeriveHint
   const iExp = pickColumnIndex(t, ['预期结果']);
   const iPri = pickColumnIndex(t, ['优先级']);
   const iAc = pickColumnIndex(t, ['关联 AC', '关联']);
+  const iChannel = pickColumnIndex(t, ['执行通道', 'execution_channel']);
 
   const out: DeriveHintTestCaseRow[] = [];
   for (const row of t.rows) {
@@ -54,6 +60,7 @@ export function extractTopPlanTestCasesForDeriveHint(planMd: string): DeriveHint
       expected: (iExp >= 0 ? row[iExp] : '').trim(),
       priority: (iPri >= 0 ? row[iPri] : '').trim(),
       ac_ref: (iAc >= 0 ? row[iAc] : '').trim(),
+      execution_channel: (iChannel >= 0 ? (row[iChannel] ?? '') : '').trim(),
     });
   }
   return out;

@@ -2784,7 +2784,8 @@ function TEST_EXCERPT(text: string, max: number): string {
   return compact.length <= max ? compact : `${compact.slice(0, max)}...`;
 }
 
-/** P0 事故夹具（TC-018 explicit skip、无 waiver、非 external DEFERRED）：真实 gate 输入 */
+/** P0 事故夹具（TC-018 explicit skip、无 waiver）；另注入一个已执行 assertion mismatch
+ * 作为本套回退链的机器候选，explicit-only 零 coding 由 testing-stepresult-evidence 直接回归。 */
 const P0_PLAN_MD = [
   '# 测试计划', '',
   '## 测试用例', '',
@@ -2868,13 +2869,24 @@ function accidentChecks(root: string, conclusion: '达标' | '不达标'): Check
     feature: FEATURE,
     planMd: P0_PLAN_MD,
     reportMd: reportMd,
-    traceCaseStatus: new Map([['TC-001', '通过']]),
     reportConclusion: conclusion,
   });
   const cov = p0.find(x => x.id === 'p0_coverage_integrity')!;
-  assert(cov.status === 'FAIL' && cov.failure_kind === 'code_regression',
-    `前置：真实 gate 须产出 code_regression 合取：${JSON.stringify(cov)}`);
-  return [...p0, passRate];
+  assert(cov.status === 'FAIL' && cov.failure_kind === undefined,
+    `前置：explicit-only 缺 StepResult 须保持 testing-owned FAIL：${JSON.stringify(cov)}`);
+  const assertionMismatch: CheckResult = {
+    id: 'testing_failure_routing_1',
+    category: 'structure',
+    description: 'executed StepResult assertion mismatch',
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    failure_kind: 'assertion',
+    failure_code: 'assertion_mismatch',
+    repair_owner: 'coding',
+    coding_candidate: true,
+    details: 'TC-001 step 1：已执行 assertion mismatch（测试夹具）',
+  };
+  return [...p0, assertionMismatch, passRate];
 }
 
 /** 读回 writer 落盘的 summary（证明候选与 closure 状态被真实 writer 持久化） */
@@ -2903,14 +2915,14 @@ function haltReasons(events: Array<Record<string, unknown>>): string[] {
     .map(e => String(e.halt_reason));
 }
 
-test('c7e4a2d9-① 事故组合：report_validity=FAIL + P0 explicit-only 缺口 + 三条视觉候选 → 单次 repair 回退 coding（无 await_human_p0_skip / WAITING）', async () => {
+test('T3-① report_validity=FAIL + explicit skip + executed assertion mismatch + 三条视觉候选 → 单次 repair 回退 coding', async () => {
   const { root } = setupHost();
   writeP0Artifacts(root);
   // writer 持久化证明：attempt-2（回退重走 testing）agent 调用时盘上仍是 attempt-1 的
   // FAIL summary（PASS 覆写发生在其后 harness）——report_validity=FAIL（事故条件）仍含 p0 候选
   const probe = await runChain(root, {
-    // testing 首轮：真实 gate 输出（evaluateP0CoverageIntegrity → code_regression 合取 +
-    // pass_rate_calculated 结论「达标」→ FAIL）→ **真实 summary writer**（writeRunSummaryBase）
+    // testing 首轮：真实 gate 输出（explicit skip 仍 testing FAIL；executed assertion mismatch
+    // 由 frozen pair 路由）→ **真实 summary writer**（writeRunSummaryBase）
     // 派生 report_validity=FAIL 与候选并落盘；视觉候选由 writeVisualDiff(warn+must_fix, fresh)
     // 经既有 actionable 验真器并入 summary。
     onHarnessSummary: ({ phase, attempt }) =>
@@ -2929,8 +2941,8 @@ test('c7e4a2d9-① 事故组合：report_validity=FAIL + P0 explicit-only 缺口
         assert(written.report_validity === 'FAIL',
           `writer 须派生 report_validity=FAIL（事故条件）：${JSON.stringify(written)}`);
         assert(
-          (written.repair_candidates ?? []).some(c => c.id === 'p0_coverage_integrity'),
-          `report_validity=FAIL 时机器候选必须被 writer 持久化：${JSON.stringify(written.repair_candidates)}`,
+          (written.repair_candidates ?? []).some(c => c.id === 'testing_failure_routing_1'),
+          `report_validity=FAIL 时 assertion mismatch 候选必须被 writer 持久化：${JSON.stringify(written.repair_candidates)}`,
         );
         writeCleanTesting(r);
       }
@@ -2947,11 +2959,11 @@ test('c7e4a2d9-① 事故组合：report_validity=FAIL + P0 explicit-only 缺口
   assert(bt[0].to_phase === 'coding', `回退目标须 coding，实得 ${bt[0].to_phase}`);
   const cands = (bt[0].candidates ?? []) as Array<{ id?: string; category?: string }>;
   assert(
-    cands.some(c => c.id === 'p0_coverage_integrity' && c.category === 'coding'),
-    `p0 机器候选须进入回退交接：${JSON.stringify(cands)}`,
+    cands.some(c => c.id === 'testing_failure_routing_1' && c.category === 'coding'),
+    `executed assertion mismatch 候选须进入回退交接：${JSON.stringify(cands)}`,
   );
   assert(
-    cands.filter(c => c.id !== 'p0_coverage_integrity' && c.category === 'coding').length === 3,
+    cands.filter(c => c.id !== 'testing_failure_routing_1' && c.category === 'coding').length === 3,
     `三条视觉候选须随整组交接：${JSON.stringify(cands)}`,
   );
   const halts = haltReasons(probe.events);
@@ -2962,12 +2974,12 @@ test('c7e4a2d9-① 事故组合：report_validity=FAIL + P0 explicit-only 缺口
     'P0 修复回退不得落 WAITING/human',
   );
   assert(probe.codingPrompts.length >= 2, `coding 须被重新调用（回修轮）：${probe.codingPrompts.length}`);
-  assert(probe.codingPrompts[1].includes('p0_coverage_integrity'),
-    '回修 coding prompt 须含 p0 机器候选（check id + 门禁 details 原样交接）');
+  assert(probe.codingPrompts[1].includes('testing_failure_routing_1'),
+    '回修 coding prompt 须含 assertion mismatch 机器候选（check id + 门禁 details 原样交接）');
   assertRunReachedEnd(probe, 'c7e4a2d9-①');
 });
 
-test('c7e4a2d9-② P0 candidate 单独存在（无视觉候选；披露+结论不达标 → report_validity=PASS）→ 仍回 coding', async () => {
+test('T3-② executed assertion mismatch candidate 单独存在（无视觉候选；report_validity=PASS）→ 回 coding', async () => {
   const { root } = setupHost();
   writeP0Artifacts(root);
   const probe = await runChain(root, {
@@ -2980,8 +2992,8 @@ test('c7e4a2d9-② P0 candidate 单独存在（无视觉候选；披露+结论�
         assert(written.report_validity === 'PASS',
           `披露+不达标时 report_validity 须 PASS（writer 真实派生）：${JSON.stringify(written)}`);
         assert(
-          (written.repair_candidates ?? []).some(c => c.id === 'p0_coverage_integrity'),
-          'report_validity=PASS 时 p0 候选同样须被 writer 持久化',
+          (written.repair_candidates ?? []).some(c => c.id === 'testing_failure_routing_1'),
+          'report_validity=PASS 时 assertion mismatch 候选同样须被 writer 持久化',
         );
       }
       writeCleanTesting(r);
@@ -2993,12 +3005,12 @@ test('c7e4a2d9-② P0 candidate 单独存在（无视觉候选；披露+结论�
   assert(bt.length === 1, `P0 单独须回退一次，实得 ${bt.length}`);
   assert(bt[0].to_phase === 'coding', `目标须 coding，实得 ${bt[0].to_phase}`);
   const cands = (bt[0].candidates ?? []) as Array<{ id?: string }>;
-  assert(cands.length === 1 && cands[0].id === 'p0_coverage_integrity', `仅 p0 候选：${JSON.stringify(cands)}`);
+  assert(cands.length === 1 && cands[0].id === 'testing_failure_routing_1', `仅 assertion mismatch 候选：${JSON.stringify(cands)}`);
   assert(!haltReasons(probe.events).includes('await_human_p0_skip'), '不得 halt 求人');
   assertRunReachedEnd(probe, 'c7e4a2d9-②');
 });
 
-test('c7e4a2d9-⑥ 同候选原样重现 → 既有整轮指纹熔断（backtrack_fingerprint_repeat），不无限回退', async () => {
+test('T3-⑥ 同 assertion mismatch 候选原样重现 → 既有整轮指纹熔断，不无限回退', async () => {
   const { root } = setupHost();
   writeP0Artifacts(root);
   const probe = await runChain(root, {
@@ -3014,8 +3026,8 @@ test('c7e4a2d9-⑥ 同候选原样重现 → 既有整轮指纹熔断（backtrac
   assert(written.report_validity === 'FAIL',
     `重复轮 writer 仍须派生 report_validity=FAIL：${JSON.stringify(written)}`);
   assert(
-    (written.repair_candidates ?? []).some(c => c.id === 'p0_coverage_integrity'),
-    '重复轮 p0 候选仍被 writer 持久化（fingerprint 熔断依赖它）',
+    (written.repair_candidates ?? []).some(c => c.id === 'testing_failure_routing_1'),
+    '重复轮 assertion mismatch 候选仍被 writer 持久化（fingerprint 熔断依赖它）',
   );
   const bts = probe.events.filter(
     e => e.type === 'phase_backtrack_requested' && e.reason === 'repair_candidates',
@@ -3047,7 +3059,7 @@ test('零候选 legacy human_only blocker 不再生成 await_human_gate_deferral
     `fresh machine retry 转绿后应正常闭环：${runEndStatus(probe.events)}`);
 });
 
-test('c7e4a2d9-④ 机器 envBlocked 在场 → 外部路径不误投 coding（即使真实 writer 已持久化 p0 候选）', async () => {
+test('T3-④ 机器 envBlocked 在场 → 外部路径不误投 coding（即使 writer 已持久化 assertion candidate）', async () => {
   const { root } = setupHost();
   writeP0Artifacts(root);
   const toolchainCheck: CheckResult = {
@@ -3068,8 +3080,8 @@ test('c7e4a2d9-④ 机器 envBlocked 在场 → 外部路径不误投 coding（�
   const written = writtenSummary(root);
   assert(written.report_validity === 'FAIL', `writer 须派生 report_validity=FAIL：${JSON.stringify(written)}`);
   assert(
-    (written.repair_candidates ?? []).some(c => c.id === 'p0_coverage_integrity'),
-    'envBlocked 轮 writer 仍须持久化 p0 候选（runner 侧 envBlocked 前置才清空）',
+    (written.repair_candidates ?? []).some(c => c.id === 'testing_failure_routing_1'),
+    'envBlocked 轮 writer 仍须持久化机器 candidate（runner 侧 envBlocked 前置才清空）',
   );
   assert(
     !probe.events.some(e => e.type === 'phase_backtrack_requested' && e.reason === 'repair_candidates'),

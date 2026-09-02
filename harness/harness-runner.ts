@@ -323,7 +323,7 @@ const args = minimist(process.argv.slice(2), {
     'q-requirement', 'q-contract', 'q-code', 'goal-run-id', 'goal-attempt-id',
     'goal-owner-id', 'goal-owner-epoch',
   ],
-  boolean: ['list', 'help', 'verbose', 'clear-state', 'sync-closure', 'summary', 'failures-only', 'skip-visual-handoff', 'skip-ui-spec', 'skip-visual-parity', 'correction-init', 'correction-check', 'adhoc-correction'],
+  boolean: ['list', 'help', 'verbose', 'clear-state', 'sync-closure', 'report-reconcile-only', 'summary', 'failures-only', 'skip-visual-handoff', 'skip-ui-spec', 'skip-visual-parity', 'correction-init', 'correction-check', 'adhoc-correction'],
   alias: {
     p: 'phase',
     f: 'feature',
@@ -408,6 +408,7 @@ Harness — Spec/Harness 验证工具
   --adhoc-cases <text>      normalized fallback cases when testing has no acceptance.yaml
   --clear-state             丢弃当前阶段状态文件（用于明确放弃某个未闭环阶段）；一并清理未收口的 .current-correction.json（C5-full）
   --sync-closure            不跑脚本 harness；仅 check-receipt + 同步 .current-phase.json / summary.json
+  --report-reconcile-only   testing 专属：只读既有 trace/plan/timing/meta，完整重算报告门禁，不调用设备/provider/视觉/lifecycle hook
   --summary                 输出稳定短摘要，并写入实例解析的报告目录（同 phase）summary.json
   --failures-only           控制台只打印 FAIL/WARN/BLOCKER-SKIP 项（默认已启用；保留给脚本显式表达）
   --skip-visual-handoff     spec 阶段跳过 Visual Handoff 脚本检查（应急）；建议设置环境变量 HARNESS_SKIP_VISUAL_HANDOFF_REASON 留审计说明
@@ -535,6 +536,10 @@ async function main(): Promise<void> {
   }
 
   if (args['sync-closure']) {
+    if (args['report-reconcile-only']) {
+      console.error('错误: --report-reconcile-only 不能与 --sync-closure 同时使用');
+      process.exit(1);
+    }
     const syncPhase = args.phase as Phase | undefined;
     const syncFeature = args.feature as string | undefined;
     if (!syncPhase || !syncFeature) {
@@ -595,6 +600,7 @@ async function main(): Promise<void> {
     isLegacyPhaseId(rawPhase) || rawPhase === 'prd' || rawPhase === 'design'
       ? normalizePhaseId(rawPhase)
       : rawPhase;
+  const reportReconcileOnly = Boolean(args['report-reconcile-only']);
 
   const fwConfigEarly = loadFrameworkConfig(projectRoot);
   let workflowSpec: WorkflowSpec;
@@ -630,6 +636,11 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  if (reportReconcileOnly && (phase !== 'testing' || feature === GLOBAL_FEATURE_SENTINEL)) {
+    console.error('错误: --report-reconcile-only 仅适用于带 feature 的 testing 阶段');
+    process.exit(1);
+  }
+
   // C1 feature-track：按 feature 声明的 track 过滤合法 phase（缺省 full = 现状零变化；
   // lite feature 误跑 full-only phase 明确报错而非静默跑——OpenSpec feature-track）
   if (!phaseIsGlobal && feature && feature !== GLOBAL_FEATURE_SENTINEL) {
@@ -650,7 +661,7 @@ async function main(): Promise<void> {
   const initInternalGlobalRun = process.env.HARNESS_INIT_INTERNAL_GLOBAL_RUN === '1';
   const skipPersonalGateForInitInternal =
     initInternalGlobalRun && (phase === 'catalog' || phase === 'glossary');
-  if (!personalSetupExemptPhases.has(phase) && !skipPersonalGateForInitInternal) {
+  if (!reportReconcileOnly && !personalSetupExemptPhases.has(phase) && !skipPersonalGateForInitInternal) {
     const resolvedForGate = loadResolvedProfile(projectRoot, fwConfigEarly);
     const placement = evaluateConfigPlacementGate(projectRoot);
     if (!placement.ok) {
@@ -787,7 +798,7 @@ async function main(): Promise<void> {
    * 在门这里生成、稍后 push——目标分类只有门知道，而 checks 数组要到 Step 2 才存在。
    */
   let deviceConclusionCap: CheckResult | undefined;
-  if (phaseRequiresDevice(phase, resolvedProfile)) {
+  if (phaseRequiresDevice(phase, resolvedProfile) && !reportReconcileOnly) {
     {
       let gate;
       try {
@@ -897,6 +908,7 @@ async function main(): Promise<void> {
     specVisualSources: fwConfig.spec?.visual_sources,
     docsCommitted: fwConfig.paths.docs_committed ?? false,
     skipVisualHandoff: Boolean(args['skip-visual-handoff']),
+    reportReconcileOnly,
     skipUiSpec: Boolean(args['skip-ui-spec']),
     skipVisualParity: Boolean(args['skip-visual-parity']),
     ...fidelityFields,
@@ -932,6 +944,11 @@ async function main(): Promise<void> {
     event: HookEventName,
     extra?: Partial<Pick<HookDispatchPayload, 'checkScript' | 'violation'>>,
   ): Promise<CheckResult[]> {
+    if (reportReconcileOnly) {
+      // T7：report-only 的输入闭包只允许既有 testing artifacts；即使工程声明了
+      // lifecycle hook，也不能让任意 .mjs 在 no-device 重算中启动子进程或改写状态。
+      return [];
+    }
     const { promptFragments, hookCheckResults } = await dispatchLifecycleHooks(
       harnessRoot,
       event,
@@ -2423,13 +2440,15 @@ async function runScriptHarness(harnessRoot: string, context: CheckContext): Pro
   }
 
   try {
-    try {
-      const hdc = require('./scripts/utils/hdc-runner') as {
-        resetHdcUsed?: () => void;
-      };
-      hdc.resetHdcUsed?.();
-    } catch {
-      /* non-hmos profile — no hdc shim */
+    if (!context.reportReconcileOnly) {
+      try {
+        const hdc = require('./scripts/utils/hdc-runner') as {
+          resetHdcUsed?: () => void;
+        };
+        hdc.resetHdcUsed?.();
+      } catch {
+        /* non-hmos profile — no hdc shim */
+      }
     }
 
     const checkerModule = require(checkerPath);
@@ -2460,20 +2479,10 @@ async function runScriptHarness(harnessRoot: string, context: CheckContext): Pro
       details: (err as Error).message,
     }];
   } finally {
-    try {
-      const hdc = require('./scripts/utils/hdc-runner') as {
-        killHdcServerIfUsed?: (projectRoot?: string) => {
-          used: boolean;
-          attempted: boolean;
-          ok: boolean;
-          exitCode: number | null;
-          error: string | null;
-          policy: { source: string; shouldKill: boolean };
-          skipped_reason?: string;
-        };
-        writeHdcCleanupArtifact?: (
-          reportsDir: string,
-          cleanup: {
+    if (!context.reportReconcileOnly) {
+      try {
+        const hdc = require('./scripts/utils/hdc-runner') as {
+          killHdcServerIfUsed?: (projectRoot?: string) => {
             used: boolean;
             attempted: boolean;
             ok: boolean;
@@ -2481,28 +2490,40 @@ async function runScriptHarness(harnessRoot: string, context: CheckContext): Pro
             error: string | null;
             policy: { source: string; shouldKill: boolean };
             skipped_reason?: string;
-          },
-        ) => string | null;
-      };
-      const cleanup = hdc.killHdcServerIfUsed?.(context.projectRoot);
-      if (cleanup && (cleanup.used || cleanup.attempted)) {
-        const reportsDir = featurePhaseReportsDir(
-          context.projectRoot,
-          context.feature,
-          context.phase,
-          context.frameworkRoot,
-        );
-        const artifact = hdc.writeHdcCleanupArtifact?.(reportsDir, cleanup);
-        const skip = cleanup.skipped_reason ? ` skipped=${cleanup.skipped_reason}` : '';
-        const artifactRel = artifact
-          ? path.relative(context.projectRoot, artifact).replace(/\\/g, '/')
-          : 'write_failed';
-        console.log(
-          `   hdc daemon cleanup: kill_attempted=${cleanup.attempted} ok=${cleanup.ok} policy_source=${cleanup.policy.source}${skip} artifact=${artifactRel}`,
-        );
+          };
+          writeHdcCleanupArtifact?: (
+            reportsDir: string,
+            cleanup: {
+              used: boolean;
+              attempted: boolean;
+              ok: boolean;
+              exitCode: number | null;
+              error: string | null;
+              policy: { source: string; shouldKill: boolean };
+              skipped_reason?: string;
+            },
+          ) => string | null;
+        };
+        const cleanup = hdc.killHdcServerIfUsed?.(context.projectRoot);
+        if (cleanup && (cleanup.used || cleanup.attempted)) {
+          const reportsDir = featurePhaseReportsDir(
+            context.projectRoot,
+            context.feature,
+            context.phase,
+            context.frameworkRoot,
+          );
+          const artifact = hdc.writeHdcCleanupArtifact?.(reportsDir, cleanup);
+          const skip = cleanup.skipped_reason ? ` skipped=${cleanup.skipped_reason}` : '';
+          const artifactRel = artifact
+            ? path.relative(context.projectRoot, artifact).replace(/\\/g, '/')
+            : 'write_failed';
+          console.log(
+            `   hdc daemon cleanup: kill_attempted=${cleanup.attempted} ok=${cleanup.ok} policy_source=${cleanup.policy.source}${skip} artifact=${artifactRel}`,
+          );
+        }
+      } catch {
+        /* non-hmos profile */
       }
-    } catch {
-      /* non-hmos profile */
     }
   }
 }

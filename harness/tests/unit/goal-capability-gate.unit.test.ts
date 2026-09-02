@@ -31,6 +31,7 @@ import {
   recordHvigorBuildOutcome,
   resetCapabilityFailedByHumanReprobe,
 } from '../../../profiles/hmos-app/harness/toolchain-probe';
+import { preflightHylyreEvidenceCapability } from '../../../profiles/hmos-app/harness/providers/device-test-run';
 
 interface UnitCaseResult {
   name: string;
@@ -230,6 +231,63 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert(supported === null, 'supported provider 须放行到真实 testing');
         assert(supportedEvents.length === 0, '放行不得写 defer 事件');
       } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        clearFrameworkConfigCache();
+      }
+    },
+  },
+  {
+    name: 'P0 native preflight：manifest=0.5.0 且默认 venv 缺失时放行到 ensure；显式 Python/auto_install=false 才提前 defer',
+    run: () => {
+      const root = mkHmosProject();
+      const feature = 'runtime-preflight-native-source';
+      writeP0Acceptance(root, feature);
+      const manifestDir = path.join(root, 'framework', 'profiles', 'hmos-app', 'vendor', 'hylyre');
+      fs.mkdirSync(manifestDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(manifestDir, 'release.manifest.json'),
+        JSON.stringify({ schema: 1, hylyre_version: '0.5.0' }),
+      );
+      const saved = {
+        HYLYRE_PYTHON: process.env.HYLYRE_PYTHON,
+        HYLYRE_HOME: process.env.HYLYRE_HOME,
+      };
+      try {
+        delete process.env.HYLYRE_PYTHON;
+        delete process.env.HYLYRE_HOME;
+        clearFrameworkConfigCache();
+        const cfg = loadFrameworkConfig(root);
+        const resolved = loadResolvedProfile(root, cfg);
+        const sourceReady = preflightHylyreEvidenceCapability({ projectRoot: root });
+        assert(sourceReady.native && sourceReady.mode === 'native', `vendor source 可自动安装时应声明 native：${JSON.stringify(sourceReady)}`);
+        const events: Array<Record<string, unknown>> = [];
+        const gate = runRuntimeTelemetryPreflightGate({
+          projectRoot: root,
+          feature,
+          phase: 'testing',
+          retries: 0,
+          resolvedProfile: resolved,
+          emitPhaseVerdict: event => events.push(event),
+        });
+        assert(gate === null && events.length === 0, `生产 preflight 不得在 ensure 前 defer：${JSON.stringify({ gate, events })}`);
+
+        process.env.HYLYRE_PYTHON = process.execPath;
+        const explicit = preflightHylyreEvidenceCapability({ projectRoot: root });
+        assert(!explicit.native && explicit.mode === 'unsupported', `显式 HYLYRE_PYTHON 不得被 vendor 自动升级：${JSON.stringify(explicit)}`);
+        delete process.env.HYLYRE_PYTHON;
+
+        const configPath = path.join(root, 'framework.config.json');
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+        config.tools = { hylyre: { auto_install: false } };
+        fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+        clearFrameworkConfigCache();
+        const disabled = preflightHylyreEvidenceCapability({ projectRoot: root });
+        assert(!disabled.native && disabled.mode === 'unsupported', `auto_install=false 应保守 defer：${JSON.stringify(disabled)}`);
+      } finally {
+        if (saved.HYLYRE_PYTHON === undefined) delete process.env.HYLYRE_PYTHON;
+        else process.env.HYLYRE_PYTHON = saved.HYLYRE_PYTHON;
+        if (saved.HYLYRE_HOME === undefined) delete process.env.HYLYRE_HOME;
+        else process.env.HYLYRE_HOME = saved.HYLYRE_HOME;
         fs.rmSync(root, { recursive: true, force: true });
         clearFrameworkConfigCache();
       }

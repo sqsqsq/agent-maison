@@ -66,13 +66,14 @@ structure_checks:
 
   p0_coverage_integrity:
     description: >
-      P0 用例覆盖 fail-closed（goal-fakepass-hardening t5 → c7e4a2d9）：explicit_skip/
-      未执行的 P0 一律 BLOCKER；legacy p0_skip_waiver receipt 可读但不参与判定。缺口属于既有
-      explicit_skip_tc_ids 登记时复用 failure_kind=code_regression + actionability=
-      agent_fixable，默认回 coding 修复并重测（不降低验收标准，修复不是授权行为）；
-      status 为空或未经登记的 trace skip 不产 coding 候选、留在 testing 恢复执行/派生
-      计划；真实外部条件走既有 DEFERRED，不得由 waiver 降级 WARN 或制造人工等待态。
-      不新增 skip 原因枚举、责任阶段字段或专用 halt（await_human_p0_skip 已退役）。
+      P0 用例覆盖 fail-closed（goal-fakepass-hardening t5 → c7e4a2d9）：未执行的 P0
+      一律 BLOCKER；legacy p0_skip_waiver receipt 与历史产物中的 legacy
+      explicit_skip_tc_ids 均只读、不参与判定，也不贡献 PASS。derive
+      manifest 只有 TC id 而无 StepResult 时，未执行缺口保持 testing FAIL，
+      不得按 TC 名称、AC 关联或报告散文推测 coding；只有既有 capability resolution 给出
+      provider 缺失机器事实时才走 DEFERRED。真实外部条件走既有 DEFERRED，不得由 waiver
+      降级 WARN 或制造人工等待态。不新增 skip 原因枚举、责任阶段字段或专用 halt
+      （await_human_p0_skip 已退役）。
 
   p0_pass_rate_dual_metrics:
     description: >
@@ -81,10 +82,12 @@ structure_checks:
 
   p0_semantic_coverage_integrity:
     description: >
-      P0 结构化状态迁移证据（t4b）：对账派生 Hylyre 计划 step 序列——映射完整/禁纯 wait
-      冒充/动作须指向 checkpoint.target_element_id/其后须 wait_for required_element_ids/
-      flow 每条中间屏边须有已执行且通过的 owning TC（「点银行直达成功页」确定性死刑）。
-      运行时 hit-test/页面签名为 provider 采集扩展 deferred 项（change tasks 显式登记）。
+      P0 结构化状态迁移证据改由 Hylyre authoritative trace 的 CaseResult.steps[] 提供：
+      case.execution=completed、verification=passed、evidence=complete，且 checkpoint 的
+      required_element_ids 均映射到 role=assertion 且 outcome.status=passed 的 StepResult
+      （状态读 outcome.status，不读已退役的 flat status），forbidden_element_ids 均
+      映射到通过的 absence assertion；禁纯动作/纯 wait/旧 case 状态冒充。普通 interactive
+      与 goal 同源消费 StepResult，goal 额外保留 run/attempt/HAP/device 身份绑定。
 
   # ---- 测试计划 ----
 
@@ -174,9 +177,11 @@ structure_checks:
     description: >
       当 project_profile 将 device_test.run 声明为 BLOCKER 且未 SKIP 时，
       harness 必须按 profile 指定的真机自动化能力消费派生测试用例并产出 report + trace；
-      脚本以 doc/features/<feature>/testing/test-plan.md「测试用例」表为 SSOT：派生 hylyre
-      表须覆盖全部 TC，或由派生文件 YAML frontmatter / 同目录 derive-manifest.json 登记
-      explicit_skip_tc_ids；烟测占位类派生无效；在多条派生产物间按 test-plan.hylyre.md 的 mtime
+      脚本以 doc/features/<feature>/testing/test-plan.md「测试用例」表为 SSOT：每条 TC 声明唯一
+      execution_channel（hylyre | visual | manual | provider:<capability-id>），派生 hylyre 表须与
+      channel=hylyre 的集合完全相等（missing/extra 均 BLOCKER）。正式派生计划禁止写
+      explicit_skip_tc_ids（登记即 BLOCKER），历史产物中的该字段仅只读诊断、不减除缺口、不贡献 PASS；
+      烟测占位类派生无效；在多条派生产物间按 test-plan.hylyre.md 的 mtime
       选取最新有效计划。
       **门禁语义**：run.ok 仅表示 runner 未崩溃；本检查还须 trace.outcome=success 且无失败/阻塞 case，
       否则 BLOCKER FAIL（partial/failed/aborted 不得 PASS）。
@@ -188,6 +193,18 @@ structure_checks:
       顶层 test-report.md「测试执行结果」须与 device_test_run 本轮选中的
       testing/reports/<ts>/hylyre/trace.json 全量对账（禁止以顶层 reports/trace.json 回填件为 SSOT）。
       报告写通过但 trace 失败/阻塞、结论达标但 trace.outcome≠success → BLOCKER FAIL。
+    severity: BLOCKER
+
+  report_reconcile_only:
+    description: >
+      testing 专属 --report-reconcile-only 只读本轮 authoritative trace、test-plan、最终
+      device-test-timing、build/install/run meta 与当前报告输入，完整重跑 report/static checks
+      并由既有 writer 重算 script-report、summary、quality axes、repair candidates。该模式
+      不调用 hvigor、hdc、Hylyre、设备、视觉采集或可执行 lifecycle hook，不新增 phase/sidecar，
+      且 authoritative trace 字节必须保持不变。门禁必须闭合同一最终 run 的 HAP 路径/内容指纹、
+      build→install→run→timing 时间顺序、run 的 trace/report/log 路径、trace feature、timing
+      pipeline 全字段与 reused 值、trace/timing 精确 case 集合，以及报告中的最终流水线/逐 case
+      duration 值；报告使用正确 skip 分母、最终 build/install reused 状态和最终 timing。
     severity: BLOCKER
 
   ui_entry_coverage:
@@ -267,7 +284,9 @@ structure_checks:
   execution_result_table:
     description: >
       「测试执行结果」必须包含每条用例的执行状态表，
-      状态值限于：通过 / 失败 / 阻塞 / 跳过
+      状态值限于：通过 / 失败 / 阻塞 / 跳过，并包含最终 run 的耗时列；耗时使用精确整数
+      毫秒 `Nms`（读取侧可兼容合法千分位）；已进入 trace/timing 的 skip/block case 使用 `0ms`，
+      未进入 trace/timing 的用例（非 hylyre 通道或历史 legacy skip）使用 `—`。
     severity: BLOCKER
     rule:
       file: "test-report.md"
@@ -276,6 +295,7 @@ structure_checks:
       required_columns:
         - "用例编号"
         - '"执行状态" or "结果"'
+        - '"耗时" or "duration"'
       allowed_status: ["通过", "失败", "阻塞", "跳过"]
 
   pass_rate_calculated:

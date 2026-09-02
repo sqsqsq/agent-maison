@@ -57,6 +57,8 @@ export function buildAdhocDerivePayload(
     expected: normalizedCase?.expected ?? '',
     priority: normalizedCase?.priority ?? 'P0',
     ac_ref: normalizedCase?.source_ref ?? 'ad-hoc',
+    // adhoc 链不经顶层 test-plan 的通道声明；它本来就只走 Hylyre 执行入口。
+    execution_channel: 'hylyre',
   };
 
   return {

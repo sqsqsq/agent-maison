@@ -191,6 +191,22 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   // d9e4b7c1 T2：真机缺陷回修接入（evidence 合成/绑定校验/根级联三分/physical-only）
   { id: 'device-test-backtrack', modulePath: './unit/device-test-backtrack.unit.test' },
   { id: 'runtime-step-evidence', modulePath: './unit/runtime-step-evidence.unit.test' },
+  { id: 'testing-stepresult-evidence', modulePath: './unit/testing-stepresult-evidence.unit.test' },
+  // plan a6c4e9f2 T3：顶层 execution_channel 编译期分派 + 派生器 skip 权退场 + STEP-SETUP
+  { id: 'execution-channel', modulePath: './unit/execution-channel.unit.test' },
+  // plan a6c4e9f2 T7a：Hylyre Phase 0 契约冻结包的落位自证（换包/改包即红）
+  { id: 'hylyre-contracts-freeze', modulePath: './unit/hylyre-contracts-freeze.unit.test' },
+  // plan a6c4e9f2 T7a：统一 v1 dispatch/typed boundary 与 D1 selector 身份判据
+  { id: 'hylyre-result-protocol', modulePath: './unit/hylyre-result-protocol.unit.test' },
+  { id: 'hylyre-frozen-conformance', modulePath: './unit/hylyre-frozen-conformance.unit.test' },
+  { id: 'execution-channel-evidence', modulePath: './unit/execution-channel-evidence.unit.test' },
+  { id: 'hylyre-entry-conformance', modulePath: './unit/hylyre-entry-conformance.unit.test' },
+  // plan a6c4e9f2 T4：v1 责任路由基数不变式与 Q8 多根语义
+  { id: 'hylyre-failure-routing-v1', modulePath: './unit/hylyre-failure-routing-v1.unit.test' },
+  // plan a6c4e9f2 T7a（Q5 冻结）：artifact 按 trace 目录解析 + 逃逸检查 + sha256
+  { id: 'hylyre-artifact-resolution', modulePath: './unit/hylyre-artifact-resolution.unit.test' },
+  // plan a6c4e9f2 D1/T2：v1 selector runtime gate（不裁决成败、不做封闭世界）
+  { id: 'hylyre-selector-gates-v1', modulePath: './unit/hylyre-selector-gates-v1.unit.test' },
   { id: 'skills-device-policy-gate', modulePath: './unit/skills-device-policy-gate.unit.test' },
   // runner 级集成（进程内跑真实 phase 循环 + 注入缝；断言时序与副作用）
   { id: 'goal-runner-testing-integrity', modulePath: './unit/goal-runner-testing-integrity.unit.test' },

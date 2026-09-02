@@ -55,9 +55,9 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'buildHylyreSpawnInvocation: runtime telemetry wrapper 替代 -m hylyre 且保留原 argv',
+    name: 'buildHylyreSpawnInvocation: custom Python wrapper 可替代 -m hylyre 且保留原 argv',
     run: () => {
-      const wrapper = '/framework/profiles/hmos-app/harness/hylyre-runtime-telemetry.py';
+      const wrapper = '/framework/profiles/hmos-app/harness/custom-python-wrapper.py';
       const hylyreArgv = ['run', '--plan', '/abs/plan.md', '--out', '/abs/trace.json'];
       const inv = buildHylyreSpawnInvocation({
         pythonPath: '/venv/python',

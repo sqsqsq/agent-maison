@@ -19,7 +19,7 @@ import {
   resolvePhaseEvidenceManifest,
   writePhaseEvidenceManifest,
 } from '../../scripts/utils/phase-evidence-manifest';
-import { probeRuntimeStepTelemetry } from '../../../profiles/hmos-app/harness/providers/device-test-run';
+import { probeHylyreEvidenceCapability } from '../../../profiles/hmos-app/harness/providers/device-test-run';
 import type { UnitCaseResult } from '../run-unit';
 
 const FEATURE = 'runtime-demo';
@@ -41,7 +41,6 @@ function write(root: string, rel: string, content: string): string {
 
 function pythonStepHash(stepText: string): string {
   const repoRoot = path.resolve(__dirname, '../../..');
-  const wrapper = path.join(repoRoot, 'profiles', 'hmos-app', 'harness', 'hylyre-runtime-telemetry.py');
   const vendorDir = path.join(repoRoot, 'profiles', 'hmos-app', 'vendor', 'hylyre');
   // 双模：源码树 vendor 直接把 src 目录入 sys.path；legacy 布局回落 whl zipimport
   const srcRoot = path.join(vendorDir, 'src');
@@ -49,19 +48,17 @@ function pythonStepHash(stepText: string): string {
     ? srcRoot
     : path.join(vendorDir, 'hylyre-0.3.1-py3-none-any.whl');
   const script = [
-    'import importlib.util, sys',
-    'import_root, module_path, step = sys.argv[1:4]',
+    'import hashlib, sys',
+    'import_root, step = sys.argv[1:3]',
     'sys.path.insert(0, import_root)',
-    'spec = importlib.util.spec_from_file_location("maison_runtime_telemetry", module_path)',
-    'module = importlib.util.module_from_spec(spec)',
-    'spec.loader.exec_module(module)',
-    'print(module._step_sha256(step))',
+    'from hylyre.scenario.step_text import normalize_planned_step_text',
+    'print(hashlib.sha256(normalize_planned_step_text(step).encode("utf-8")).hexdigest())',
   ].join('; ');
   // -B（评审 3 P0）：whl zipimport 不写 bytecode 缓存，但源码目录 import 默认会向
   // vendor src 写 __pycache__ —— 弄脏工作树并制造 manifest 清单外杂物，必须抑制。
   const result = spawnSync(
     process.env.MAISON_PYTHON || 'python',
-    ['-B', '-c', script, importRoot, wrapper, stepText],
+    ['-B', '-c', script, importRoot, stepText],
     { encoding: 'utf-8' },
   );
   assert(result.status === 0, `Python parity helper failed: ${result.stderr || result.stdout}`);
@@ -254,12 +251,14 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'provider handshake：受支持版本 PASS，版本漂移/collector 缺失为 unsupported',
+    name: 'provider handshake：0.5.0 native PASS；旧 collector 不再作为新 run 能力',
     run: () => {
-      assert(probeRuntimeStepTelemetry({ hylyreVersion: '0.3.1', manifestVersion: '0.3.1' }).supported, '0.3.1 should be supported');
-      assert(probeRuntimeStepTelemetry({ hylyreVersion: '0.3.2', manifestVersion: '0.3.2' }).supported, '0.3.2 should be supported (source vendor; runtime modules byte-identical to 0.3.1)');
-      assert(!probeRuntimeStepTelemetry({ hylyreVersion: '0.4.0', manifestVersion: '0.4.0' }).supported, 'unknown provider version must defer');
-      assert(!probeRuntimeStepTelemetry({ hylyreVersion: '0.3.1', manifestVersion: '0.3.0' }).supported, 'manifest mismatch must defer');
+      const native = probeHylyreEvidenceCapability({ hylyreVersion: '0.5.0', manifestVersion: '0.5.0' });
+      assert(native.mode === 'native' && native.native, JSON.stringify(native));
+      const legacy = probeHylyreEvidenceCapability({ hylyreVersion: '0.3.1', manifestVersion: '0.3.1' });
+      assert(legacy.mode === 'unsupported' && !legacy.legacy, JSON.stringify(legacy));
+      const drift = probeHylyreEvidenceCapability({ hylyreVersion: '0.3.1', manifestVersion: '0.3.0' });
+      assert(drift.mode === 'unsupported', JSON.stringify(drift));
     },
   },
   {

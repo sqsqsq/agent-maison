@@ -47,6 +47,7 @@ import { attachNavigationHints, extractTopPlanTestCasesForDeriveHint } from './u
 import {
   extractTcIdsFromPlanTable,
   selectBestNonPlaceholderDerivedPlan,
+  evaluateChannelDerivedCoverage,
   evaluateDerivedCoverage,
   loadExplicitSkipTcIds,
   lintDerivedHylyrePlanSteps,
@@ -74,14 +75,18 @@ import {
   dispatchDeviceTestBuild,
   dispatchDeviceTestInstall,
   dispatchDeviceTestEnsureReady,
-  probeDeviceRuntimeStepTelemetry,
+  probeDeviceTestEvidenceCapability,
   dispatchDeviceTestRun,
   dispatchDeviceTestEvidenceCompose,
 } from '../capability-registry';
 // d9e4b7c1 T2：evidence 落盘路径（与 goal-runner pre-delete/collector 共用同一 basename）
 import { deviceTestEvidencePath } from './utils/device-test-evidence-shared';
-import type { DeviceTestEvidenceDoc } from './utils/device-test-evidence-shared';
+import type {
+  DeviceTestArtifactBinding,
+  DeviceTestEvidenceDoc,
+} from './utils/device-test-evidence-shared';
 import { validateRuntimeFidelityEvidenceDocument } from './utils/runtime-step-evidence';
+import { sha256File } from './utils/phase-evidence-manifest';
 import {
   isDeviceVisualDiffSkipped,
   dispatchDeviceVisualDiff,
@@ -103,10 +108,15 @@ export function deviceTestGateCompileOk(reused: boolean, hv: HvigorRunResult): b
 }
 import type { DeviceTestInstallResult } from '../../profiles/hmos-app/harness/providers/device-test-install';
 import type { HylyreReadyResult, HylyreRunResult } from '../../profiles/hmos-app/harness/providers/device-test-run';
-import type { RuntimeStepTelemetryCapability } from '../../profiles/hmos-app/harness/providers/device-test-run';
+import type {
+  HylyreEvidenceCapability,
+  HylyreEvidenceGateResult,
+  HylyreTrace,
+} from '../../profiles/hmos-app/harness/providers/device-test-run';
 import {
   collectDeviceTestTimings,
   writeDeviceTestTimingJson,
+  type DeviceTestTimingDocument,
 } from '../../profiles/hmos-app/harness/device-test-timings';
 import {
   acceptanceYamlPath,
@@ -136,7 +146,7 @@ import {
   type VisualDiffNavExecutorFn,
   type VisualDiffLayoutDumpFn,
 } from '../../profiles/hmos-app/harness/visual-diff-capture';
-import { computeHapBuildFingerprint } from '../../profiles/hmos-app/harness/build-fingerprint';
+import { computeHapBuildFingerprint, computeHapSha256Full } from '../../profiles/hmos-app/harness/build-fingerprint';
 import { buildHylyreVisualDiffScreenshotFn, buildHylyreNavExecutorFn, buildHylyreLayoutDumpFn, readDeviceTestRunHylyreNavOpts } from '../../profiles/hmos-app/harness/visual-diff-hylyre-screenshot';
 import { parseTestCaseFlowBlock, triageCascade, validateTestCaseFlow } from './utils/test-case-flow';
 import { normalizeDeviceTestCases } from './utils/device-test-case-kernel';
@@ -151,12 +161,22 @@ import {
 import { collectGoldenPositiveTargetIds, collectP0VisualTargetIds, resolveGoldenCaptureTargets } from '../../profiles/hmos-app/harness/visual-diff-targets';
 import { resolveHylyreRuntimeWorkDir } from '../../profiles/hmos-app/harness/hylyre-spawn';
 import { parseUiChangeFromSpecMarkdown, loadUiSpecFile, uiSpecAbsPath } from './utils/ui-spec-shared';
-import { lintDerivedPlanSelectorContract } from '../../profiles/hmos-app/harness/selector-contract';
+import {
+  lintDerivedPlanSelectorContract,
+  type AcceptanceActionBinding,
+} from '../../profiles/hmos-app/harness/selector-contract';
+import {
+  EXECUTION_CHANNEL_DOMAIN,
+  evaluateExecutionChannelDeclaration,
+  type ExecutionChannelDeclarationResult,
+} from './utils/execution-channel';
+import { requireV1ForGate } from './utils/hylyre-result-protocol';
 import { checkFactsArtifact } from './utils/context-facts';
 import {
   evaluateHylyreRunOutcome,
   parseReportConclusionVerdict,
   parseReportExecutionResults,
+  reconcileReportWithDeviceTestTiming,
   reconcileReportWithHylyreTrace,
   resolveAuthoritativeHylyreTracePath,
   evaluateUiEntryCoverage,
@@ -169,7 +189,24 @@ import {
   loadAcceptanceFlowsDoc,
   parsePlanTcEntries,
 } from './utils/p0-semantic-gates';
-import { parseHylyreTrace } from '../../profiles/hmos-app/harness/providers/device-test-run';
+
+import { evaluateSelectorRuntimeV1 } from './utils/hylyre-selector-gates-v1';
+import { collectFailureRoutesV1 } from './utils/hylyre-failure-routing-v1';
+import {
+  bindChannelEvidence,
+  loadVisualScreenVerdicts,
+  PROVIDER_EVIDENCE_CONTRACT,
+} from './utils/execution-channel-evidence';
+import { evaluateFailureBoundary, resolveArtifact } from './utils/hylyre-artifact-resolution';
+import {
+  parseRecordedNativeBinding,
+  validateNativeTraceArtifactBinding,
+} from './utils/native-trace-binding';
+import {
+  evaluateHylyreNativeEvidenceGate,
+  parseHylyreTrace,
+  probeHylyreEvidenceCapability,
+} from '../../profiles/hmos-app/harness/providers/device-test-run';
 import type { UseCasesSpec } from './utils/types';
 import {
   diagnoseInstallBlocking,
@@ -726,7 +763,11 @@ function checkExecutionResultTable(ctx: CheckContext, report: string | null): Ch
   }
 
   const table = tables[0];
-  const requiredCols = ['用例编号" or "编号', '执行状态" or "结果" or "状态'];
+  const requiredCols = [
+    '用例编号" or "编号',
+    '执行状态" or "结果" or "状态',
+    '耗时" or "duration',
+  ];
   const { hasAll, missing } = tableHasColumns(table, requiredCols);
 
   if (!hasAll) {
@@ -737,7 +778,25 @@ function checkExecutionResultTable(ctx: CheckContext, report: string | null): Ch
       severity: 'BLOCKER',
       status: 'FAIL',
       details: `执行结果表格缺少列：${missing.join(', ')}`,
-      suggestion: '表头至少需包含：用例编号、执行状态。',
+      suggestion: '表头至少需包含：用例编号、执行状态、耗时；耗时须回填最终 run 的 case duration。',
+    }];
+  }
+
+  const malformedRows = table.rows
+    .map((row, index) => ({ row, line: table.lineNumber + index + 2 }))
+    .filter(item => item.row.length !== table.headers.length);
+  if (malformedRows.length > 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: malformedRows
+        .slice(0, 10)
+        .map(item => `执行结果表格第 ${item.line} 行列数=${item.row.length}，表头列数=${table.headers.length}`)
+        .join('\n'),
+      suggestion: '每条 TC 行必须与表头保持相同列数；缺失内容请填空单元格或 `—`，不要省略列。',
     }];
   }
 
@@ -1856,6 +1915,765 @@ interface DeviceTestPipelineHolder {
   installOk: boolean;
   /** 装机前计算的完整 64 hex HAP 摘要（provider 回传） */
   hapSha256Full: string | null;
+  /** Native/legacy evidence decision for the same run; in-memory only. */
+  hylyreEvidenceGate?: HylyreEvidenceGateResult;
+  /** Existing run/evidence identity for native trace/plan binding. */
+  nativeArtifactBinding?: DeviceTestArtifactBinding;
+  /** Pre-run provider capability; distinguishes post-run bad trace from provider absence. */
+  hylyreEvidenceCapability?: HylyreEvidenceCapability;
+}
+
+type ReadJsonRecordResult = {
+  exists: boolean;
+  value: Record<string, unknown> | null;
+  error?: string;
+};
+
+function readJsonRecord(absPath: string): ReadJsonRecordResult {
+  if (!fs.existsSync(absPath)) return { exists: false, value: null };
+  try {
+    const value = JSON.parse(fs.readFileSync(absPath, 'utf-8')) as unknown;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return { exists: true, value: null, error: 'JSON 根节点不是对象' };
+    }
+    return { exists: true, value: value as Record<string, unknown> };
+  } catch (error) {
+    return { exists: true, value: null, error: (error as Error).message };
+  }
+}
+
+function recordedPathForProject(projectRoot: string, raw: unknown): string | null {
+  if (typeof raw !== 'string' || !raw.trim()) return null;
+  return path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(projectRoot, raw);
+}
+
+function gateWithNativeBindingFailure(
+  gate: HylyreEvidenceGateResult,
+  binding: { ok: boolean; reasons: string[] },
+): HylyreEvidenceGateResult {
+  if (binding.ok) return gate;
+  return {
+    ...gate,
+    mode: 'unsupported',
+    native: false,
+    legacy: false,
+    reasons: [...new Set([...gate.reasons, ...binding.reasons])],
+  };
+}
+
+function nativeCapabilityFromReadyMeta(
+  ready: Record<string, unknown> | null,
+  manifestVersion: string | null,
+): HylyreEvidenceCapability {
+  const installed = ready && [
+    'installed_version', 'installed', 'hylyreVersion', 'hylyre_version',
+  ].map(key => ready[key]).find(value => typeof value === 'string' && value.trim());
+  const installedVersion = typeof installed === 'string' ? installed : '';
+  const manifest = ready && [
+    'manifest_version', 'manifest', 'manifestVersion',
+  ].map(key => ready[key]).find(value => typeof value === 'string' && value.trim());
+  const readyManifestVersion = typeof manifest === 'string' ? manifest : '';
+  const version = manifestVersion?.trim() || readyManifestVersion;
+  const readyOk = ready?.ok === true && ready?.doctorOk === true &&
+    (ready?.version_consistent === true || ready?.versionConsistent === true);
+  // The complete trace gate remains authoritative. This value only says that
+  // the ready metadata advertised a native-capable provider, so a malformed
+  // post-run trace is a testing failure rather than a capability defer.
+  const advertised = readyOk && probeHylyreEvidenceCapability({
+    hylyreVersion: installedVersion,
+    manifestVersion: version,
+  }).native;
+  return {
+    mode: advertised ? 'native' : 'unsupported',
+    native: advertised,
+    legacy: false,
+    providerId: 'hylyre',
+    providerVersion: installedVersion || version,
+    reason: advertised
+      ? `ready metadata advertises native Hylyre@${version}`
+      : 'ready metadata 未证明 native provider capability',
+  };
+}
+
+function evidenceGateFailureProjection(
+  gate: HylyreEvidenceGateResult,
+  holder: DeviceTestPipelineHolder,
+): { failure_kind?: string; blocking_class?: string } {
+  // Once preflight has proved that the selected provider is native-capable,
+  // malformed post-run trace data is a testing evidence failure, not a new
+  // capability gap. The preflight fact is only a classifier; the native gate
+  // still decides whether the trace can be consumed.
+  if (holder.hylyreEvidenceCapability?.native) return {};
+  if (gate.mode === 'legacy') return { failure_kind: 'legacy_assertion_evidence_untrusted' };
+  return { failure_kind: 'capability_missing', blocking_class: 'externalBlocked' };
+}
+
+/**
+ * T7：report-only 只读既有 device-test 产物，构造与正常流水线同形的 pipeline facts。
+ * 这里禁止调用 provider；下游 report/trace/P0/static checks 仍沿既有入口完整执行。
+ */
+function collectReportOnlyDerivedPlanStaticIssues(
+  ctx: CheckContext,
+  plan: string | null,
+): { issues: string[]; selectorWarnings: ReturnType<typeof lintDerivedPlanSelectorContract> } {
+  const issues: string[] = [];
+  const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
+  const topResolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-plan.md');
+  const topPath = topResolved.actualPath;
+  const topRaw = plan ?? (fs.existsSync(topPath) ? fs.readFileSync(topPath, 'utf-8') : '');
+  const topIds = extractTcIdsFromPlanTable(topRaw);
+  const topStat = fs.existsSync(topPath) ? fs.statSync(topPath) : null;
+  const pick = selectBestNonPlaceholderDerivedPlan(reportsDir);
+
+  if (!plan) issues.push('test-plan.md 不存在');
+  if (!pick.selected) {
+    issues.push('未找到有效的 authoritative 派生 Hylyre 计划');
+    return { issues, selectorWarnings: [] };
+  }
+
+  const derivedPath = pick.selected.hylyrePath;
+  const derivedIds = extractTcIdsFromPlanTable(pick.selected.content);
+  const explicitSkips = loadExplicitSkipTcIds(derivedPath, pick.selected.content);
+  const channelDecl = loadExecutionChannelDeclaration(ctx, topRaw);
+  if (channelDecl.ok) {
+    // 通道精确对账：派生集合必须**恰好等于** channel=hylyre 集合，explicit skip 不减除。
+    const coverage = evaluateChannelDerivedCoverage({
+      hylyreTcIds: channelDecl.hylyre_tc_ids,
+      derivedTcIds: derivedIds,
+      legacyExplicitSkipTcIds: explicitSkips,
+    });
+    if (coverage.extra.length > 0) {
+      issues.push(`派生计划包含非 channel=hylyre 的 TC：${coverage.extra.join(', ')}（派生器无权改写通道）`);
+    }
+    if (coverage.missing.length > 0) {
+      issues.push(
+        `派生计划缺少 channel=hylyre 的 TC：${coverage.missing.join(', ')}` +
+        (coverage.laundered_skips.length > 0
+          ? `（其中 ${coverage.laundered_skips.join(', ')} 被 explicit skip 洗掉——skip 不能减除缺口）`
+          : ''),
+      );
+    }
+    if (explicitSkips.length > 0) {
+      issues.push(`正式派生计划不得再产出 explicit_skip_tc_ids：${explicitSkips.join(', ')}`);
+    }
+  } else {
+    const coverage = evaluateDerivedCoverage({
+      topTcIds: topIds,
+      derivedTcIds: derivedIds,
+      explicitSkipTcIds: explicitSkips,
+    });
+    if (coverage.extra.length > 0) {
+      issues.push(`派生计划包含顶层未声明的 TC：${coverage.extra.join(', ')}`);
+    }
+    if (coverage.missing.length > 0) {
+      issues.push(`派生计划缺少顶层 TC：${coverage.missing.join(', ')}`);
+    }
+  }
+  const derivedStat = fs.statSync(derivedPath);
+  if (topStat && derivedStat.mtimeMs < topStat.mtimeMs) {
+    issues.push('派生计划早于顶层 test-plan.md（stale）');
+  }
+
+  const staticPlanGates = collectDeviceTestStaticPlanGates(ctx, pick.selected.content, topRaw);
+  const stepBlockers = staticPlanGates.stepLint.violations.filter(v => v.severity === 'BLOCKER');
+  if (stepBlockers.length > 0) {
+    issues.push(...stepBlockers.map(v => `[${v.rule_id}] ${v.tc_id}: ${v.message}`));
+  }
+  const selectorBlockers = staticPlanGates.selectorWarnings.filter(v => v.severity === 'BLOCKER');
+  if (selectorBlockers.length > 0) {
+    issues.push(...selectorBlockers.map(v => `[${v.rule_id}] ${v.tc_id}: ${v.message}`));
+  }
+  if (!staticPlanGates.navLint.ok) {
+    issues.push(...staticPlanGates.navLint.violations.map(v => `[${v.rule_id}] ${v.tc_id}: ${v.message}`));
+  }
+  return { issues, selectorWarnings: staticPlanGates.selectorWarnings };
+}
+
+function finiteNonNegative(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function hasOwn(record: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
+}
+
+function readTimestamp(
+  record: Record<string, unknown> | null,
+  key: string,
+  label: string,
+  issues: string[],
+): { raw: string | null; ms: number | null } {
+  const raw = record && typeof record[key] === 'string' ? record[key]!.trim() : '';
+  if (!raw) {
+    issues.push(`${label} 缺少 ${key}`);
+    return { raw: null, ms: null };
+  }
+  const ms = Date.parse(raw);
+  if (!Number.isFinite(ms)) {
+    issues.push(`${label}.${key} 不是有效时间戳：${raw}`);
+    return { raw, ms: null };
+  }
+  return { raw, ms };
+}
+
+function compareRecordedNumber(
+  issues: string[],
+  label: string,
+  actual: unknown,
+  expected: number | null,
+): void {
+  const n = finiteNonNegative(actual);
+  if (n === null || expected === null || Math.abs(n - expected) > 1) {
+    issues.push(`${label}=${String(actual)}，最终来源=${expected === null ? '(missing)' : `${expected}ms`}`);
+  }
+}
+
+function compareTimingPipelineNumber(
+  issues: string[],
+  pipeline: Record<string, unknown>,
+  key: string,
+  expected: number | null,
+): void {
+  if (!hasOwn(pipeline, key)) {
+    issues.push(`device-test-timing.json.pipeline 缺少字段：${key}`);
+    return;
+  }
+  const actual = pipeline[key];
+  if (expected === null) {
+    if (actual !== null) issues.push(`device-test-timing.json.pipeline.${key} 应为 null，实际=${String(actual)}`);
+    return;
+  }
+  compareRecordedNumber(issues, `device-test-timing.json.pipeline.${key}`, actual, expected);
+}
+
+function compareTimingPipelineOptionalNumber(
+  issues: string[],
+  pipeline: Record<string, unknown>,
+  key: string,
+): void {
+  if (!hasOwn(pipeline, key)) {
+    issues.push(`device-test-timing.json.pipeline 缺少字段：${key}`);
+    return;
+  }
+  const actual = pipeline[key];
+  if (actual !== null && finiteNonNegative(actual) === null) {
+    issues.push(`device-test-timing.json.pipeline.${key} 不是非负数或 null：${String(actual)}`);
+  }
+}
+
+function comparePathPair(
+  issues: string[],
+  projectRoot: string,
+  label: string,
+  left: unknown,
+  right: unknown,
+): { left: string | null; right: string | null } {
+  const leftPath = recordedPathForProject(projectRoot, left);
+  const rightPath = recordedPathForProject(projectRoot, right);
+  if (!leftPath || !rightPath) {
+    issues.push(`${label} 缺少有效路径`);
+  } else if (leftPath !== rightPath) {
+    issues.push(`${label} 不一致：${leftPath} != ${rightPath}`);
+  }
+  return { left: leftPath, right: rightPath };
+}
+
+function checkReportReconcileOnlyPipeline(
+  ctx: CheckContext,
+  holder: DeviceTestPipelineHolder,
+  plan: string | null,
+  report: string | null,
+): CheckResult[] {
+  const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
+  const buildPath = path.join(reportsDir, 'device-test-build.result.json');
+  const buildToolPath = path.join(reportsDir, 'hvigor-app-build.meta.json');
+  const installPath = path.join(reportsDir, 'device-test-install.meta.json');
+  const runPath = path.join(reportsDir, 'device-test-run.meta.json');
+  const timingPath = path.join(reportsDir, 'device-test-timing.json');
+  const build = readJsonRecord(buildPath);
+  const buildTool = readJsonRecord(buildToolPath);
+  const install = readJsonRecord(installPath);
+  const run = readJsonRecord(runPath);
+  const timing = readJsonRecord(timingPath);
+  const tracePath = resolveAuthoritativeHylyreTracePath(reportsDir);
+  const trace = tracePath ? parseHylyreTrace(tracePath) : null;
+  const issues: string[] = [];
+
+  const readyRecord = readJsonRecord(path.join(reportsDir, 'hylyre-ready.meta.json'));
+  const hylyreCfg = resolveHylyreToolConfig(ctx.projectRoot);
+  const manifestRecord = readJsonRecord(
+    path.join(ctx.projectRoot, hylyreCfg.vendor_dir, 'release.manifest.json'),
+  );
+  const releaseManifestVersion =
+    manifestRecord.value && typeof manifestRecord.value.hylyre_version === 'string'
+      ? manifestRecord.value.hylyre_version
+      : null;
+  const acceptance = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature);
+  const nativeEvidenceApplicable = Boolean(acceptance?.criteria.some(isP0DeviceInteractive));
+  const evidenceGate = nativeEvidenceApplicable
+    ? evaluateHylyreNativeEvidenceGate({
+        trace,
+        readyMeta: readyRecord.value,
+        manifestVersion: releaseManifestVersion,
+      })
+    : null;
+  let reconciledEvidenceGate = evidenceGate;
+  if (nativeEvidenceApplicable) {
+    holder.hylyreEvidenceCapability = nativeCapabilityFromReadyMeta(
+      readyRecord.value,
+      releaseManifestVersion,
+    );
+    const recordedBinding = parseRecordedNativeBinding(run.value?.artifact_binding);
+    const bindingMissing = [
+      'test_plan_path', 'test_plan_sha256', 'derived_plan_path',
+      'derived_plan_sha256', 'trace_path', 'trace_sha256',
+    ].filter(key => !recordedBinding?.[key as keyof DeviceTestArtifactBinding]);
+    const topPlanPath = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-plan.md').actualPath;
+    const derivedPlanPath = recordedBinding?.derived_plan_path
+      ?? path.join(path.dirname(tracePath ?? reportsDir), 'test-plan.hylyre.md');
+    const binding = validateNativeTraceArtifactBinding({
+      trace,
+      expectedFeature: ctx.feature,
+      tracePath: tracePath ?? path.join(reportsDir, 'trace.json'),
+      testPlanPath: topPlanPath,
+      derivedPlanPath,
+      expectedTestPlanPath: recordedBinding?.test_plan_path,
+      expectedDerivedPlanPath: recordedBinding?.derived_plan_path,
+      expectedTracePath: recordedBinding?.trace_path,
+      expectedTestPlanSha256: recordedBinding?.test_plan_sha256,
+      expectedDerivedPlanSha256: recordedBinding?.derived_plan_sha256,
+      expectedTraceSha256: recordedBinding?.trace_sha256,
+    });
+    if (bindingMissing.length > 0) {
+      binding.reasons.push(`device-test-run.meta.json 缺 native artifact_binding 字段：${bindingMissing.join(', ')}`);
+      binding.ok = false;
+    }
+    if (binding.ok && binding.binding) holder.nativeArtifactBinding = binding.binding;
+    if (!binding.ok) {
+      issues.push(...binding.reasons.map(reason => `native artifact binding：${reason}`));
+    }
+    if (reconciledEvidenceGate && !binding.ok) {
+      reconciledEvidenceGate = gateWithNativeBindingFailure(reconciledEvidenceGate, binding);
+    }
+  }
+  if (reconciledEvidenceGate) holder.hylyreEvidenceGate = reconciledEvidenceGate;
+  if (reconciledEvidenceGate && !reconciledEvidenceGate.native) {
+    issues.push(...reconciledEvidenceGate.reasons.map(reason => `native evidence gate：${reason}`));
+  }
+  // inventory §一 G1：旧实现按 `schema === '0.3-p0'` 才跑 completeness，schema 一变这道
+  // required gate 就静默消失。现在无条件调用——不是合法 v1 由 completeness 自己产 BLOCKER。
+  if (trace) {
+    const completeness = checkHylyreCaseExecutionCompleteness(
+      ctx,
+      trace,
+      reconciledEvidenceGate,
+      holder.nativeArtifactBinding?.derived_plan_path ?? null,
+    );
+    for (const result of completeness.filter(item => item.status === 'FAIL')) {
+      issues.push(...(result.details ?? '').split('\n'));
+    }
+  }
+
+  const buildSkipped = isCapabilitySkipped(ctx.resolvedProfile, 'device_test.build');
+  const installSkipped = isCapabilitySkipped(ctx.resolvedProfile, 'device_test.install');
+  const runSkipped = isCapabilitySkipped(ctx.resolvedProfile, 'device_test.run');
+  const staticPlan = runSkipped
+    ? { issues: [], selectorWarnings: [] as ReturnType<typeof lintDerivedPlanSelectorContract> }
+    : collectReportOnlyDerivedPlanStaticIssues(ctx, plan);
+  issues.push(...staticPlan.issues);
+
+  const buildRecord = build.value;
+  const installRecord = install.value;
+  const runRecord = run.value;
+  const buildHapPath = recordedPathForProject(ctx.projectRoot, buildRecord?.hapPath);
+  const installHapPath = recordedPathForProject(ctx.projectRoot, installRecord?.hapPath);
+  const buildValid = buildSkipped || Boolean(
+    buildRecord &&
+    typeof buildRecord.hapPath === 'string' &&
+    buildRecord.hapPath.trim() &&
+    typeof buildRecord.reused === 'boolean' &&
+    buildRecord.hvigorExitCode === 0,
+  );
+  if (!buildValid) {
+    issues.push(`缺失或无效的 ${path.basename(buildPath)}${build.error ? `（${build.error}）` : ''}`);
+  }
+
+  const installValid = installSkipped || Boolean(
+    installRecord &&
+    installRecord.ok === true &&
+    typeof installRecord.hapPath === 'string' &&
+    installRecord.hapPath.trim() &&
+    typeof installRecord.reused === 'boolean',
+  );
+  if (!installValid) {
+    issues.push(`缺失或无效的 ${path.basename(installPath)}${install.error ? `（${install.error}）` : ''}`);
+  }
+
+  const runMetaValid = runSkipped || Boolean(runRecord && runRecord.ok === true);
+  if (!runMetaValid) {
+    issues.push(`缺失或无效的 ${path.basename(runPath)}${run.error ? `（${run.error}）` : ''}`);
+  }
+
+  if (!plan) issues.push('test-plan.md 不存在');
+  if (!report) issues.push('test-report.md 不存在');
+  const traceValid = runSkipped || Boolean(tracePath && trace);
+  if (!traceValid) issues.push('无法解析 authoritative hylyre/trace.json');
+
+  let buildAt: { raw: string | null; ms: number | null } = { raw: null, ms: null };
+  let installAt: { raw: string | null; ms: number | null } = { raw: null, ms: null };
+  let runStartedAt: { raw: string | null; ms: number | null } = { raw: null, ms: null };
+  let runEndedAt: { raw: string | null; ms: number | null } = { raw: null, ms: null };
+  let ranAt: { raw: string | null; ms: number | null } = { raw: null, ms: null };
+  let timingGeneratedAt: { raw: string | null; ms: number | null } = { raw: null, ms: null };
+
+  if (!buildSkipped) buildAt = readTimestamp(buildRecord, 'timestamp', 'device-test-build.result.json', issues);
+  if (!installSkipped) installAt = readTimestamp(installRecord, 'timestamp', 'device-test-install.meta.json', issues);
+  if (!runSkipped) {
+    runStartedAt = readTimestamp(runRecord, 'run_started_at', 'device-test-run.meta.json', issues);
+    runEndedAt = readTimestamp(runRecord, 'run_ended_at', 'device-test-run.meta.json', issues);
+    ranAt = readTimestamp(runRecord, 'ran_at', 'device-test-run.meta.json', issues);
+  }
+
+  if (!runSkipped && timing.value) {
+    timingGeneratedAt = readTimestamp(timing.value, 'generated_at', 'device-test-timing.json', issues);
+  }
+
+  if (!buildSkipped && !installSkipped) {
+    const paths = comparePathPair(issues, ctx.projectRoot, 'build/install hapPath', buildRecord?.hapPath, installRecord?.hapPath);
+    if (paths.left && paths.right) {
+      const buildFingerprint = computeHapBuildFingerprint(paths.left);
+      const installFingerprint = computeHapBuildFingerprint(paths.right);
+      if (!buildFingerprint || !installFingerprint) {
+        issues.push('build/install hapPath 指向的 HAP 不存在或无法读取，无法形成内容指纹');
+      } else if (buildFingerprint !== installFingerprint) {
+        issues.push(`build/install HAP 内容指纹不一致：${buildFingerprint} != ${installFingerprint}`);
+      }
+      const installFingerprintRecorded = installRecord?.hapSha256;
+      if (typeof installFingerprintRecorded !== 'string' || !installFingerprintRecorded.trim()) {
+        issues.push('device-test-install.meta.json 缺少 hapSha256 指纹');
+      } else if (installFingerprintRecorded.trim().toLowerCase() !== buildFingerprint?.toLowerCase()) {
+        issues.push(`device-test-install.meta.json.hapSha256=${installFingerprintRecorded} 与 HAP 当前指纹不一致`);
+      }
+      const stat = (() => {
+        try { return fs.statSync(paths.left!); } catch { return null; }
+      })();
+      if (!stat) {
+        issues.push('build/install HAP 文件 stat 失败');
+      } else {
+        for (const [label, value] of [
+          ['build.hapMtimeMs', buildRecord?.hapMtimeMs],
+          ['install.hapMtimeMs', installRecord?.hapMtimeMs],
+        ] as Array<[string, unknown]>) {
+          if (typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value - stat.mtimeMs) > 1) {
+            issues.push(`${label} 与 HAP 当前 mtime 不一致：${String(value)} != ${stat.mtimeMs}`);
+          }
+        }
+        if (typeof installRecord?.hapSizeBytes !== 'number' || installRecord.hapSizeBytes !== stat.size) {
+          issues.push(`install.hapSizeBytes 与 HAP 当前 size 不一致：${String(installRecord?.hapSizeBytes)} != ${stat.size}`);
+        }
+      }
+    }
+  }
+
+  if (!buildSkipped && !installSkipped && buildAt.ms !== null && installAt.ms !== null && buildAt.ms > installAt.ms) {
+    issues.push(`pipeline 时间顺序错误：build.timestamp=${buildAt.raw} 晚于 install.timestamp=${installAt.raw}`);
+  }
+  if (!runSkipped) {
+    if (runStartedAt.ms !== null && runEndedAt.ms !== null && runStartedAt.ms > runEndedAt.ms) {
+      issues.push(`run 时间顺序错误：run_started_at=${runStartedAt.raw} 晚于 run_ended_at=${runEndedAt.raw}`);
+    }
+    if (runEndedAt.ms !== null && ranAt.ms !== null && runEndedAt.ms !== ranAt.ms) {
+      issues.push(`run 终点不一致：run_ended_at=${runEndedAt.raw}，ran_at=${ranAt.raw}`);
+    }
+  }
+  if (!runSkipped && runEndedAt.ms !== null && timingGeneratedAt.ms !== null && runEndedAt.ms > timingGeneratedAt.ms) {
+    issues.push(`timing.generated_at=${timingGeneratedAt.raw} 早于 run_ended_at=${runEndedAt.raw}`);
+  }
+  if (!buildSkipped && !installSkipped && !runSkipped &&
+      buildAt.ms !== null && installAt.ms !== null && runStartedAt.ms !== null &&
+      (buildAt.ms > installAt.ms || installAt.ms > runStartedAt.ms)) {
+    issues.push('build → install → run_started_at 时间链不闭合');
+  }
+
+  if (!runSkipped && runRecord) {
+    const recordedTrace = recordedPathForProject(ctx.projectRoot, runRecord.trace_path);
+    if (!recordedTrace || !tracePath || recordedTrace !== path.resolve(tracePath)) {
+      issues.push('device-test-run.meta.json 的 trace_path 未指向当前 authoritative trace');
+    }
+    const recordedReport = recordedPathForProject(ctx.projectRoot, runRecord.report_path);
+    const expectedReport = tracePath ? path.resolve(path.dirname(tracePath), 'test-report.md') : null;
+    if (!recordedReport || !fs.existsSync(recordedReport) || (expectedReport && recordedReport !== expectedReport)) {
+      issues.push('device-test-run.meta.json 的 report_path 未指向同一 Hylyre run 报告');
+    }
+    const recordedLog = recordedPathForProject(ctx.projectRoot, runRecord.log_path);
+    if (!recordedLog || !fs.existsSync(recordedLog)) {
+      issues.push('device-test-run.meta.json 的 log_path 不存在');
+    }
+  }
+
+  let timingDoc: DeviceTestTimingDocument | null = null;
+  const timingPipeline = timing.value?.pipeline;
+  const timingCases = timing.value?.cases;
+  const requiredPipelineKeys = [
+    'build_ms', 'build_reused', 'install_ms', 'install_reused',
+    'hylyre_run_ms', 'page_save_ms', 'total_harness_ms', 'hap_built_at',
+  ];
+  let timingShapeValid = false;
+  if (!runSkipped) {
+    timingShapeValid = Boolean(
+      timing.value &&
+      timing.value.schema_version === '1.0' &&
+      timing.value.feature === ctx.feature &&
+      timingPipeline && typeof timingPipeline === 'object' && !Array.isArray(timingPipeline) &&
+      Array.isArray(timingCases) &&
+      requiredPipelineKeys.every(key => hasOwn(timingPipeline as Record<string, unknown>, key)) &&
+      typeof (timingPipeline as Record<string, unknown>).build_reused === 'boolean' &&
+      typeof (timingPipeline as Record<string, unknown>).install_reused === 'boolean' &&
+      (typeof (timingPipeline as Record<string, unknown>).hap_built_at === 'string' ||
+        (timingPipeline as Record<string, unknown>).hap_built_at === null)
+    );
+    if (!timingShapeValid) {
+      issues.push(`缺失或无效的最终 ${path.basename(timingPath)}${timing.error ? `（${timing.error}）` : ''}`);
+    }
+  }
+
+  if (timingShapeValid && timing.value && timingPipeline && Array.isArray(timingCases)) {
+    const pipeline = timingPipeline as Record<string, unknown>;
+    for (const key of ['build_ms', 'install_ms', 'hylyre_run_ms', 'page_save_ms']) {
+      if (!hasOwn(pipeline, key)) issues.push(`device-test-timing.json.pipeline 缺少字段：${key}`);
+      else if (pipeline[key] !== null && finiteNonNegative(pipeline[key]) === null) {
+        issues.push(`device-test-timing.json.pipeline.${key} 不是非负数或 null：${String(pipeline[key])}`);
+      }
+    }
+    compareTimingPipelineOptionalNumber(issues, pipeline, 'total_harness_ms');
+
+    if (typeof buildRecord?.reused !== 'boolean' || typeof installRecord?.reused !== 'boolean') {
+      issues.push('build/install meta 缺少 boolean reused，无法闭合 timing 复用状态');
+    } else {
+      if (pipeline.build_reused !== buildRecord.reused) {
+        issues.push(`timing.pipeline.build_reused=${String(pipeline.build_reused)} 与 build.reused=${String(buildRecord.reused)} 不一致`);
+      }
+      if (pipeline.install_reused !== installRecord.reused) {
+        issues.push(`timing.pipeline.install_reused=${String(pipeline.install_reused)} 与 install.reused=${String(installRecord.reused)} 不一致`);
+      }
+    }
+
+    const buildResultDuration = finiteNonNegative(buildRecord?.hvigorDurationMs);
+    const buildToolDuration = finiteNonNegative(buildTool.value?.durationMs);
+    if (buildRecord?.reused !== true && buildResultDuration !== null && buildToolDuration !== null &&
+        Math.abs(buildResultDuration - buildToolDuration) > 1) {
+      issues.push(`build duration sources 不一致：device-test-build=${buildResultDuration}ms，hvigor meta=${buildToolDuration}ms`);
+    }
+    const buildDurationSource = buildRecord?.reused === true
+      ? 0
+      : buildToolDuration ?? buildResultDuration;
+    const installDurationSource = installRecord?.reused === true ? 0 : finiteNonNegative(installRecord?.durationMs);
+    const runDurationSource = finiteNonNegative(runRecord?.run_duration_ms);
+    const pageSave = runRecord?.hylyre_page_save;
+    const pageSaveDurationSource = pageSave && typeof pageSave === 'object'
+      ? finiteNonNegative((pageSave as Record<string, unknown>).duration_ms)
+      : null;
+    if (buildDurationSource === null && buildRecord?.reused !== true) {
+      issues.push('build meta 缺少有效 hvigorDurationMs/durationMs，无法确认最终 build 耗时');
+    }
+    if (installDurationSource === null && installRecord?.reused !== true) {
+      issues.push('device-test-install.meta.json 缺少有效 durationMs，无法确认最终 install 耗时');
+    }
+    if (runDurationSource === null) {
+      issues.push('device-test-run.meta.json 缺少有效 run_duration_ms，无法确认最终 Hylyre 耗时');
+    }
+    if (pageSave === null || typeof pageSave !== 'object' || pageSaveDurationSource === null) {
+      issues.push('device-test-run.meta.json 缺少有效 hylyre_page_save.duration_ms，无法确认最终 page save 耗时');
+    }
+    compareTimingPipelineNumber(issues, pipeline, 'build_ms', buildDurationSource);
+    compareTimingPipelineNumber(issues, pipeline, 'install_ms', installDurationSource);
+    compareTimingPipelineNumber(issues, pipeline, 'hylyre_run_ms', runDurationSource);
+    compareTimingPipelineNumber(issues, pipeline, 'page_save_ms', pageSaveDurationSource);
+
+    const buildHapBuiltAt = buildRecord?.hapBuiltAt;
+    if (typeof buildHapBuiltAt !== 'string' || !buildHapBuiltAt.trim() || !Number.isFinite(Date.parse(buildHapBuiltAt))) {
+      issues.push(`device-test-build.result.json.hapBuiltAt 缺失或非法：${String(buildHapBuiltAt)}`);
+    } else if (pipeline.hap_built_at !== buildHapBuiltAt) {
+      issues.push(`timing.pipeline.hap_built_at=${String(pipeline.hap_built_at)} 与 build.hapBuiltAt=${buildHapBuiltAt} 不一致`);
+    }
+
+    const timingById = new Map<string, number>();
+    for (const row of timingCases as Array<Record<string, unknown>>) {
+      const id = typeof row?.id === 'string' ? row.id.trim().toUpperCase() : '';
+      const duration = finiteNonNegative(row?.duration_ms);
+      const stepCount = row?.step_count;
+      if (!id || duration === null || typeof stepCount !== 'number' || !Number.isInteger(stepCount) || stepCount < 0 || timingById.has(id)) {
+        issues.push('device-test-timing.json 的 case duration/step_count 行无效或重复');
+        continue;
+      }
+      timingById.set(id, duration);
+    }
+    const traceIds = new Set<string>();
+    if (!trace || !Array.isArray(trace.cases)) {
+      issues.push('authoritative trace 缺少 cases[]，无法与最终 timing 精确对账');
+    } else {
+      for (const c of trace.cases) {
+        const id = typeof c?.id === 'string' ? c.id.trim().toUpperCase() : '';
+        if (!id || traceIds.has(id)) issues.push('authoritative trace 的 cases[] id 无效或重复');
+        else traceIds.add(id);
+      }
+      const timingIds = new Set(timingById.keys());
+      for (const id of traceIds) if (!timingIds.has(id)) issues.push(`最终 timing 缺少 case duration：${id}`);
+      for (const id of timingIds) if (!traceIds.has(id)) issues.push(`最终 timing 含 trace 不存在的旧 case：${id}`);
+    }
+    if (trace && trace.feature !== ctx.feature) {
+      issues.push(`authoritative trace.feature=${trace.feature} 与当前 feature=${ctx.feature} 不一致`);
+    }
+
+    timingDoc = timing.value as unknown as DeviceTestTimingDocument;
+  }
+
+  if (report && timingDoc) {
+    const channelDecl = loadExecutionChannelDeclaration(ctx, plan);
+    const reportTiming = reconcileReportWithDeviceTestTiming(report, {
+      timing: timingDoc,
+      ...(buildAt.raw ? { buildTimestamp: buildAt.raw } : {}),
+      ...(channelDecl.column_declared ? { hylyreTcIds: channelDecl.hylyre_tc_ids } : {}),
+    });
+    issues.push(...reportTiming.mismatches);
+  }
+
+  holder.buildReused = Boolean(buildRecord?.reused);
+  holder.hapPath = buildHapPath;
+  holder.installPassed = installValid;
+  holder.installExecuted = false;
+  holder.installOk = false;
+  holder.hapSha256Full = null;
+  holder.hylyreTracePath = tracePath;
+  holder.deviceTestRunExecuted = Boolean(tracePath && trace);
+
+  const runOutcome = evaluateHylyreRunOutcome(trace);
+  const runValid =
+    runMetaValid &&
+    traceValid &&
+    staticPlan.issues.length === 0 &&
+    (runSkipped || runOutcome.verdict === 'pass');
+  if (trace && !runSkipped && runOutcome.verdict !== 'pass') {
+    issues.push(...runOutcome.reasonLines.map(line => `authoritative trace：${line}`));
+  }
+  if (!runValid && runSkipped) {
+    issues.push('device_test.run 当前 profile 为 SKIP，无法对账既有执行 trace');
+  }
+
+  const buildResult: CheckResult = {
+    id: 'device_test_build',
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', 'device_test_build'),
+    severity: 'BLOCKER',
+    status: buildSkipped ? 'SKIP' : buildValid ? 'PASS' : 'FAIL',
+    details: buildSkipped
+      ? 'report-only：当前 profile 将 device_test.build 声明为 SKIP，未调用构建工具。'
+      : buildValid
+        ? `report-only：读取既有 ${path.basename(buildPath)}（reused=${String(buildRecord?.reused === true)}），未调用 hvigor。`
+        : `report-only：${path.basename(buildPath)} 不可用。`,
+  };
+  const installResult: CheckResult = {
+    id: 'device_test_install',
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', 'device_test_install'),
+    severity: 'BLOCKER',
+    status: installSkipped ? 'SKIP' : installValid ? 'PASS' : 'FAIL',
+    details: installSkipped
+      ? 'report-only：当前 profile 将 device_test.install 声明为 SKIP，未调用 hdc。'
+      : installValid
+        ? `report-only：读取既有 ${path.basename(installPath)}（reused=${String(installRecord?.reused === true)}），未调用 hdc。`
+        : `report-only：${path.basename(installPath)} 不可用。`,
+  };
+  const runResult: CheckResult = {
+    id: 'device_test_run',
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', 'device_test_run'),
+    severity: 'BLOCKER',
+    status: runSkipped ? 'SKIP' : runValid ? 'PASS' : 'FAIL',
+    details: runSkipped
+      ? 'report-only：当前 profile 将 device_test.run 声明为 SKIP，未调用 Hylyre。'
+      : runValid
+        ? `report-only：读取既有 ${path.basename(runPath)} 与 trace（outcome=${trace?.outcome ?? 'unknown'}），未调用 Hylyre。`
+        : `report-only：${path.basename(runPath)} 或 authoritative trace 不可用。`,
+  };
+
+  const id = 'report_reconcile_only';
+  const desc = ruleDesc(ctx, 'structure_checks', id);
+  const detailLines = issues.length === 0
+    ? [`已读取 authoritative trace=${tracePath}，cases=${trace?.cases?.length ?? 0}；路径/指纹/时间戳/复用状态/精确 case 集合/报告耗时均与同一最终 run 闭合。`]
+    : issues.map(issue => `  - ${issue}`);
+  const reconcileResult: CheckResult = {
+    id,
+    category: 'structure',
+    description: desc,
+    severity: 'BLOCKER',
+    status: issues.length === 0 ? 'PASS' : 'FAIL',
+    details: [
+      'report-only reconciliation 只读既有 test-plan/report/trace/timing/build-install-run meta；未调用设备、hvigor、hdc、Hylyre 或视觉采集。',
+      ...detailLines,
+    ].join('\n'),
+    suggestion: issues.length === 0
+      ? '继续由既有 report/trace/static checks 与 summary writer 完整重算派生结果。'
+      : '补齐同一最终 run 的 authoritative trace、test-plan、test-report、device-test-timing 与 build/install/run meta 后重新执行 report-only。',
+  };
+  const selectorBlockers = staticPlan.selectorWarnings.filter(v => v.severity === 'BLOCKER');
+  const selectorResult: CheckResult[] = staticPlan.selectorWarnings.length > 0
+    ? [{
+        id: 'derived_selector_contract',
+        category: 'structure',
+        description: '派生 Hylyre selector 必须可追溯到 ui-spec',
+        severity: selectorBlockers.length > 0 ? 'BLOCKER' : 'MINOR',
+        status: selectorBlockers.length > 0 ? 'FAIL' : 'WARN',
+        details: [
+          `[SELECTOR-SPEC-001] 共 ${staticPlan.selectorWarnings.length} 个 canonical selector 问题：`,
+          ...staticPlan.selectorWarnings.slice(0, 12).map(v =>
+            `  - ${v.tc_id} step ${v.step_index} ${v.selector_kind}=${v.selector}: ${v.message}`),
+        ].join('\n'),
+        suggestion: '按 canonical ui-spec 修正 selector；dump/cache 仅用于发现候选。',
+        source: 'derived_selector_contract',
+      }]
+    : [];
+  const evidenceResult: CheckResult[] = reconciledEvidenceGate
+    ? [{
+        id: 'hylyre_evidence_gate',
+        category: 'structure',
+        description: 'Hylyre native CaseResult/StepResult 三重判据与 legacy 划界',
+        severity: 'BLOCKER',
+        status: reconciledEvidenceGate.native ? 'PASS' : 'FAIL',
+        ...evidenceGateFailureProjection(reconciledEvidenceGate, holder),
+        structured: reconciledEvidenceGate,
+        details: reconciledEvidenceGate.native
+          ? `native evidence gate PASS：version=${reconciledEvidenceGate.traceVersion}, schema=${reconciledEvidenceGate.traceSchemaVersion}。`
+          : [
+              `native evidence gate FAIL（mode=${reconciledEvidenceGate.mode}）：legacy status 不得贡献 verification=passed。`,
+              ...reconciledEvidenceGate.reasons.map(reason => `  - ${reason}`),
+            ].join('\n'),
+        suggestion: reconciledEvidenceGate.native
+          ? 'P0/acceptance 仅消费当前 trace 的 CaseResult.steps[]。'
+          : '升级/核验 Hylyre 0.5.0、trace schema 0.4-p0 + hylyre.step-outcome/1 与 ready version chain 后重跑。',
+      }]
+    : [];
+  return [reconcileResult, buildResult, installResult, runResult, ...evidenceResult, ...selectorResult];
+}
+
+/** Test seam: report-only pipeline reconciliation must remain filesystem-read-only. */
+export function __testing_checkReportReconcileOnlyPipeline(ctx: CheckContext): CheckResult[] {
+  const holder: DeviceTestPipelineHolder = {
+    hapPath: null,
+    installPassed: false,
+    installExternallyBlocked: false,
+    buildReused: false,
+    hylyreTracePath: null,
+    deviceTestRunExecuted: false,
+    installExecuted: false,
+    installOk: false,
+    hapSha256Full: null,
+  };
+  const planPath = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-plan.md').actualPath;
+  const reportPath = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-report.md').actualPath;
+  const plan = fs.existsSync(planPath) ? fs.readFileSync(planPath, 'utf-8') : null;
+  const report = fs.existsSync(reportPath) ? fs.readFileSync(reportPath, 'utf-8') : null;
+  return checkReportReconcileOnlyPipeline(ctx, holder, plan, report);
 }
 
 function buildDeviceInstallFailResults(
@@ -2284,6 +3102,58 @@ export function writeDeviceTestEvidenceIfEligible(
   if (!holder.hapSha256Full || !holder.hapPath) {
     return fail('装机前 HAP 完整摘要缺失（install provider 未回传 hapSha256Full）');
   }
+
+  if (holder.hylyreEvidenceCapability?.native && !holder.hylyreEvidenceGate?.native) {
+    return fail('provider 已在 preflight 声明 native，但 post-run trace/identity gate 未通过；不得回退到 legacy composer');
+  }
+
+  // Native StepResult is already authoritative in trace.json. Keep the
+  // existing goal evidence file only as an identity binding receipt; never
+  // copy native cases or synthesize a second case/step ledger here.
+  if (holder.hylyreEvidenceGate?.native) {
+    if (!holder.nativeArtifactBinding) {
+      return fail('native trace/derived-plan artifact binding 缺失');
+    }
+    const trace = parseHylyreTrace(holder.hylyreTracePath);
+    const currentHapSha = computeHapSha256Full(holder.hapPath);
+    if (!trace || !currentHapSha || currentHapSha !== holder.hapSha256Full) {
+      return fail('native trace/HAP identity binding 无法复核（trace 缺失或 HAP 摘要已漂移）');
+    }
+    const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
+    const identityDoc: DeviceTestEvidenceDoc = {
+      schema_version: '1.1',
+      goal_run_id: goalRunId,
+      attempt_id: attemptId,
+      device_target: {
+        serial: process.env.HARNESS_HDC_TARGET?.trim() || null,
+        target_kind: process.env.MAISON_DEVICE_TARGET_KIND?.trim() || null,
+        session_id: process.env.MAISON_DEVICE_SESSION_ID?.trim() || null,
+      },
+      hap_sha256_full: holder.hapSha256Full,
+      install_executed: holder.installExecuted,
+      install_ok: holder.installOk,
+      trace_path: path.resolve(holder.hylyreTracePath),
+      run_failure_kind: typeof trace.run_failure_kind === 'string' ? trace.run_failure_kind : null,
+      written_at: new Date().toISOString(),
+      cases: [],
+      artifact_binding: holder.nativeArtifactBinding,
+    };
+    try {
+      fs.mkdirSync(reportsDir, { recursive: true });
+      fs.writeFileSync(
+        deviceTestEvidencePath(reportsDir),
+        `${JSON.stringify({ ...identityDoc, written_at: new Date().toISOString() }, null, 2)}\n`,
+        'utf-8',
+      );
+    } catch (error) {
+      return fail(`native identity binding 写盘异常：${(error as Error).message}`);
+    }
+    return [{
+      id, category: 'structure', description: desc, severity: 'BLOCKER', status: 'PASS',
+      details: 'native CaseResult.steps[] 保持唯一证据源；device-test-evidence.json 仅写入既有 goal identity/HAP/trace binding。',
+    }];
+  }
+
   let composed: { ok: boolean; reason?: string; doc?: Record<string, unknown> };
   try {
     composed = (composeFn ?? (options => dispatchDeviceTestEvidenceCompose(ctx, options)))({
@@ -2325,69 +3195,412 @@ export function writeDeviceTestEvidenceIfEligible(
   }];
 }
 
+/**
+ * Q5 artifact 完整性 + §8.1 failure-boundary 义务（plan a6c4e9f2 T4 返修接入生产）。
+ *
+ * 在此之前 `resolveArtifact` / `evaluateFailureBoundary` **只被单测调用**：artifact 文件
+ * 不存在、sha256 对不上、路径经 junction 逃出 trace 目录树、根失败没留失败边界截图——
+ * 生产链上一个 BLOCKER 都不会产生。写了校验器却不接门禁，等于没写。
+ *
+ * 基准是 authoritative trace **文件所在目录**（冻结 §8.1），因此本门必须拿到 tracePath 而不只是
+ * 解析后的对象；这也是 Hylyre 那个 producer bug 的回归面，不得改成 fallback 搜索。
+ */
+/**
+ * 缺陷身份 slug（tasks 6.6b）。
+ *
+ * 这两道门原来用**位置序号**做 check id（`testing_failure_routing_${index+1}`）。
+ * 问题不在可读性，在下游：`repair-candidates` 的 `item_fingerprint` 由
+ * `(id, files, summary)` 派生，而该指纹正是 goal 模式**防震荡 attempted 集合**的键
+ * （`!attempted.has(c.item_fingerprint)`）与 `roundFingerprintOfCandidates` 的输入。
+ *
+ * 位置序号会随"同一轮里更靠前的缺陷被修掉"而整体前移：同一个缺陷（同 case、同 step、
+ * 同 code）在下一轮换了 id、换了指纹，于是被当成**全新候选**重新投递——
+ * 防震荡与"已尝试过"记账同时失效，正好是本 plan 要消灭的那种放大效应的账本版本。
+ *
+ * 改成按缺陷身份取 id：case + step 唯一确定一条 route/disposition
+ * （跨行 verifier 已保证同 case 内 step index 不重复），因此 id 稳定且不冲突。
+ */
+function defectSlug(caseId: string, stepIndex: number): string {
+  const normalized = String(caseId).toUpperCase().replace(/[^A-Z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+  return `${normalized.slice(0, 48) || 'UNKNOWN-CASE'}_s${stepIndex}`;
+}
+
+function checkHylyreArtifactIntegrity(
+  ctx: CheckContext,
+  tracePath: string | null,
+  trace: HylyreTrace | null,
+  evidenceGate: HylyreEvidenceGateResult | null | undefined,
+): CheckResult[] {
+  const id = 'testing_artifact_integrity';
+  const description = 'Hylyre artifact 定位/哈希与 failure-boundary 义务';
+  if (!trace) {
+    return [{
+      id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
+      details: 'authoritative trace 缺失，无法核对 artifact 与失败边界义务。',
+      suggestion: '用同一 native run 重新产出 trace 后重跑。',
+    }];
+  }
+  // evidenceGate=null 只表示"本 feature 没有 P0 device AC，三重身份门不适用"，
+  // 不代表 v1 协议非法——它是在 runtimeEvidenceRequired 为真时才生成的。
+  // 把 null 当失败会让合法 v1 run 平白吃 BLOCKER；口径与 completeness 门对齐。
+  if (evidenceGate && !evidenceGate.native) {
+    return [{
+      id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
+      failure_kind: 'unsupported_result_protocol',
+      details:
+        `native evidence gate 未闭合（mode=${String(evidenceGate.mode)}）：` +
+        `${evidenceGate.reasons.slice(0, 4).join('；') || '无原因记录'}`,
+      suggestion: '先让 native evidence gate 通过，再核对 artifact。',
+    }];
+  }
+  if (!tracePath) {
+    return [{
+      id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
+      details: 'artifact 的解析基准是 authoritative trace 文件所在目录，但 trace 文件路径不可知。',
+      suggestion: '让 device-test 绑定同一 timestamp 目录的 trace.json 后重跑；不得改用 reports 根等第二基准。',
+    }];
+  }
+  const verdict = requireV1ForGate(trace, { frameworkRoot: ctx.frameworkRoot });
+  if (!verdict.ok || !verdict.trace) {
+    return [{
+      id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
+      failure_kind: 'unsupported_result_protocol',
+      details: verdict.detail, suggestion: verdict.suggestion,
+    }];
+  }
+
+  const problems: string[] = [];
+  for (const traceCase of verdict.trace.cases ?? []) {
+    for (const step of traceCase.steps ?? []) {
+      for (const artifact of step.artifacts ?? []) {
+        const resolved = resolveArtifact(tracePath, artifact);
+        if (!resolved.ok) {
+          problems.push(`${traceCase.id} step ${step.index} artifact[${artifact.kind}]：${resolved.detail}`);
+        }
+      }
+      const boundary = evaluateFailureBoundary({
+        deviceSession: step.device_session === true,
+        status: step.outcome.status,
+        failureDomain: step.outcome.status === 'failed' ? step.outcome.failure.domain : undefined,
+        artifacts: step.artifacts ?? [],
+        extensions: step.extensions,
+        caseEvidence: String(traceCase.evidence),
+      });
+      if (boundary.kind === 'violated') {
+        problems.push(`${traceCase.id} step ${step.index}：${boundary.detail}`);
+      }
+    }
+  }
+
+  if (problems.length === 0) {
+    return [{
+      id, category: 'structure', description, severity: 'BLOCKER', status: 'PASS',
+      details: 'artifact 全部可定位、哈希相符、停留在 trace 目录树内；根失败的失败边界义务已满足。',
+    }];
+  }
+  return [{
+    id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
+    failure_kind: 'artifact',
+    details: [
+      `artifact/失败边界核对 FAIL（${problems.length} 项）：`,
+      ...problems.slice(0, 12).map(p => `  - ${p}`),
+    ].join('\n'),
+    suggestion:
+      'artifact.path 相对 trace 文件所在目录、必须留在该目录树内（符号链接/junction 也不行）、sha256 必须相符；' +
+      'device-session 内的 selector/assertion 根失败必须留 screenshot/ui_dump/visible_elements 之一，' +
+      '或如实记录 capture unavailable 并把该 case 的 evidence 降为 incomplete。不得补造证据文件。',
+  }];
+}
+
+function checkHylyreFailureRouting(
+  ctx: CheckContext,
+  trace: HylyreTrace | null,
+  evidenceGate: HylyreEvidenceGateResult | null | undefined,
+  derivedPlanPath?: string | null,
+): CheckResult[] {
+  // plan a6c4e9f2 T4 返修：原为 `if (!trace || !evidenceGate?.native) return []`。
+  // required gate 不存在"静默不适用"形态——缺 trace / evidence gate 未闭合都必须显式 BLOCKER，
+  // 否则一次 native 判定失误就会把整条责任路由链一起抹掉。
+  if (!trace) {
+    return [{
+      id: 'testing_failure_routing_protocol',
+      category: 'structure', description: 'Hylyre 责任路由的结果协议判别',
+      severity: 'BLOCKER', status: 'FAIL',
+      failure_kind: 'unsupported_result_protocol',
+      details: 'authoritative trace 缺失，无法做 Step Outcome v1 责任路由。',
+      suggestion: '用同一 native run 重新产出 trace；不得从 diagnostic/日志/报告散文推断责任。',
+    }];
+  }
+  // evidenceGate=null 只表示"本 feature 没有 P0 device AC，三重身份门不适用"，
+  // 不代表 v1 协议非法——它是在 runtimeEvidenceRequired 为真时才生成的。
+  // 把 null 当失败会让合法 v1 run 平白吃 BLOCKER；口径与 completeness 门对齐。
+  if (evidenceGate && !evidenceGate.native) {
+    return [{
+      id: 'testing_failure_routing_protocol',
+      category: 'structure', description: 'Hylyre 责任路由的结果协议判别',
+      severity: 'BLOCKER', status: 'FAIL',
+      failure_kind: 'unsupported_result_protocol',
+      details:
+        `native evidence gate 未闭合（mode=${String(evidenceGate.mode)}）：` +
+        `${evidenceGate.reasons.slice(0, 4).join('；') || '无原因记录'}`,
+      suggestion: '先让 native evidence gate 通过（版本链/协议/契约三者一致），再谈责任路由。',
+    }];
+  }
+  const verdict = requireV1ForGate(trace, { frameworkRoot: ctx.frameworkRoot });
+  if (!verdict.ok || !verdict.trace) {
+    return [{
+      id: 'testing_failure_routing_protocol',
+      category: 'structure', description: 'Hylyre 责任路由的结果协议判别',
+      severity: 'BLOCKER', status: 'FAIL',
+      failure_kind: 'unsupported_result_protocol',
+      details: verdict.detail, suggestion: verdict.suggestion,
+    }];
+  }
+  // plan a6c4e9f2 T4：只消费实际尝试且实际失败的 step；未执行的 blocked/skipped 零 route。
+  // 旧实现按"非 passed 即路由"，一次 run 把 1 根失败放大成 70 个 BLOCKER。
+  const { routes, dispositions } = collectFailureRoutesV1(verdict.trace);
+  const routeResults: CheckResult[] = routes.map(route => ({
+    id: `testing_failure_routing_${defectSlug(route.caseId, route.stepIndex)}`,
+    category: 'structure' as const,
+    description: 'Step Outcome v1 责任路由（outcome.failure.domain）',
+    severity: 'BLOCKER' as const,
+    status: 'FAIL' as const,
+    failure_kind: route.domain,
+    failure_code: route.code,
+    coding_candidate: route.codingCandidate,
+    ...(route.repairCategory
+      ? { repair_owner: route.repairCategory }
+      : route.owner === 'capability' || route.owner === 'external' || route.owner === 'testing'
+        ? { repair_owner: route.owner }
+        : {}),
+    ...(route.owner === 'capability' || route.owner === 'external'
+      ? { blocking_class: route.owner === 'capability' ? 'externalBlocked' : 'device_toolchain' }
+      : {}),
+    details: `${route.caseId} step ${route.stepIndex}：${route.reason}`,
+    suggestion: route.codingCandidate
+      ? '由既有 summary repair-candidates 链投递 coding/product。'
+      : '按 outcome.failure.domain 修复/重派生/能力 defer；不得从 diagnostic、TC 名称或报告散文推断责任。',
+  }));
+  // 机器证明的 blocked capability/infrastructure 根：零 failure route，各投影一次既有 disposition。
+  const dispositionResults: CheckResult[] = dispositions.map(item => ({
+    id: `testing_cause_disposition_${defectSlug(item.caseId, item.stepIndex)}`,
+    category: 'structure' as const,
+    description: '未执行 blocked 根因的 capability/external disposition',
+    severity: 'BLOCKER' as const,
+    status: 'FAIL' as const,
+    failure_kind: item.causeType,
+    failure_code: item.code,
+    coding_candidate: false,
+    repair_owner: item.causeType === 'capability' ? 'capability' : 'external',
+    blocking_class: item.causeType === 'capability' ? 'externalBlocked' : 'device_toolchain',
+    details: `${item.caseId} step ${item.stepIndex}：${item.reason}`,
+    suggestion: '这是未尝试的机器阻塞，不产生 failure route 也不投 coding；按能力/工具链处置。',
+  }));
+  return [...routeResults, ...dispositionResults];
+}
+
+function checkHylyreRuntimeSelectorGate(
+  ctx: CheckContext,
+  trace: HylyreTrace | null,
+  evidenceGate: HylyreEvidenceGateResult | null | undefined,
+  derivedPlanPath?: string | null,
+): CheckResult[] {
+  const id = 'hylyre_selector_runtime_gate';
+  const description = 'Hylyre StepResult selector evidence 运行时门';
+  // plan a6c4e9f2 T4 返修：原为 `if (!evidenceGate?.native) return []`，与责任路由门同病。
+  if (!trace) {
+    return [{
+      id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
+      failure_kind: 'unsupported_result_protocol',
+      details: 'authoritative trace 缺失，selector 运行时门无判据。',
+      suggestion: '用同一 native run 重新产出 trace 后重跑。',
+    }];
+  }
+  // evidenceGate=null 只表示"本 feature 没有 P0 device AC，三重身份门不适用"，
+  // 不代表 v1 协议非法——它是在 runtimeEvidenceRequired 为真时才生成的。
+  // 把 null 当失败会让合法 v1 run 平白吃 BLOCKER；口径与 completeness 门对齐。
+  if (evidenceGate && !evidenceGate.native) {
+    return [{
+      id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
+      failure_kind: 'unsupported_result_protocol',
+      details:
+        `native evidence gate 未闭合（mode=${String(evidenceGate.mode)}）：` +
+        `${evidenceGate.reasons.slice(0, 4).join('；') || '无原因记录'}`,
+      suggestion: '先让 native evidence gate 通过，再消费 selector 身份事实。',
+    }];
+  }
+  const reportsBase = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
+  let selected: { content: string } | null = null;
+  if (derivedPlanPath && fs.existsSync(derivedPlanPath)) {
+    try { selected = { content: fs.readFileSync(derivedPlanPath, 'utf-8') }; } catch { selected = null; }
+  } else {
+    const pick = selectBestNonPlaceholderDerivedPlan(reportsBase);
+    selected = pick.selected ? { content: pick.selected.content } : null;
+  }
+  if (!selected) {
+    return [{
+      id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
+      details: 'native selector runtime gate 缺 authoritative 派生计划。',
+      suggestion: '使用同一 timestamp 目录的 authoritative test-plan.hylyre.md 重跑。',
+    }];
+  }
+  const uiSpec = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
+  const v1 = requireV1ForGate(trace, { frameworkRoot: ctx.frameworkRoot });
+  if (!v1.ok || !v1.trace) {
+    return [{
+      id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
+      failure_kind: 'unsupported_result_protocol',
+      details: v1.detail, suggestion: v1.suggestion,
+    }];
+  }
+  // plan a6c4e9f2 D1：本门只消费 selector 的**身份事实**与状态机不变量，
+  // 不裁决步骤成败（成败读 outcome），也不做 canonical ui-spec 封闭世界判定。
+  const violations = evaluateSelectorRuntimeV1(v1.trace).violations;
+  if (violations.length > 0) {
+    return [{
+      id,
+      category: 'structure',
+      description,
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      failure_kind: 'selector',
+      failure_code: violations[0]!.code,
+      details: [
+        `native StepResult selector runtime gate FAIL（${violations.length} 项）：`,
+        ...violations.slice(0, 12).map(v => `  - ${v.caseId} step ${v.stepIndex}: ${v.message}`),
+        'runtime exact/contains 不自动放宽；candidate_count>1 无真实消歧必须拒绝。',
+      ].join('\n'),
+      suggestion: '按 StepResult 的机器字段处理 selector_not_found/selector_ambiguous/inline_target_unresolvable；不要解析 error 文本。',
+    }];
+  }
+  return [{
+    id, category: 'structure', description, severity: 'BLOCKER', status: 'PASS',
+    details: 'native StepResult selector evidence 已通过 candidate_count/消歧/absence assertion 运行时门。',
+  }];
+}
+
 function checkP0RuntimeStepEvidenceGate(
   ctx: CheckContext,
   priorResults: CheckResult[],
+  holder: DeviceTestPipelineHolder,
 ): CheckResult[] {
   const id = 'p0_runtime_step_evidence';
-  const description = 'P0 device flow 运行时逐步忠实性证据';
+  const description = 'P0 device flow 原生 CaseResult.steps[] 证据';
   const acceptance = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature);
   if (!acceptance?.criteria.some(isP0DeviceInteractive)) {
-    return [{ id, category: 'structure', description, severity: 'MINOR', status: 'SKIP', details: '无 P0 device flow，runtime step evidence 不适用。' }];
+    return [{ id, category: 'structure', description, severity: 'MINOR', status: 'SKIP', details: '无 P0 device flow，native StepResult evidence 不适用。' }];
   }
-  const runGate = priorResults.find(result => result.id === 'device_test_run');
-  if (runGate?.failure_kind === 'capability_missing') {
+  const gate = holder.hylyreEvidenceGate ?? priorResults
+    .map(result => result.structured as HylyreEvidenceGateResult | undefined)
+    .find(value => value && typeof value === 'object' && 'native' in value);
+  if (!gate?.native) {
+    if (gate?.mode === 'legacy') {
+      const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
+      const evidencePath = deviceTestEvidencePath(reportsDir);
+      try {
+        const legacyDoc = JSON.parse(fs.readFileSync(evidencePath, 'utf-8')) as DeviceTestEvidenceDoc;
+        const legacyIssue = validateRuntimeFidelityEvidenceDocument({
+          projectRoot: ctx.projectRoot,
+          feature: ctx.feature,
+          doc: legacyDoc,
+          expectedGoalRunId: process.env.MAISON_GOAL_RUN_ID?.trim() || null,
+          expectedAttemptId: process.env.MAISON_GOAL_ATTEMPT?.trim() || null,
+          requirePhaseManifestBinding: false,
+        });
+        if (!legacyIssue) {
+          return [{
+            id,
+            category: 'structure',
+            description,
+            severity: 'MAJOR',
+            status: 'WARN',
+            failure_kind: 'legacy_assertion_evidence_untrusted',
+            details: `legacy telemetry 仅证明 device-test-evidence.json 中已命名的 ${legacyDoc.runtime_fidelity?.checkpoints.length ?? 0} 个 checkpoint；不把旧 case status 提升为 verification=passed，也不生成 CaseResult.steps[]。`,
+            suggestion: '默认升级 Hylyre 至 0.4.0 并重跑 testing；legacy checkpoint 仅作有限兼容诊断。',
+          }];
+        }
+      } catch {
+        /* fall through to the fail-closed gate result below */
+      }
+    }
     return [{
       id,
       category: 'structure',
       description,
-      severity: 'MINOR',
-      status: 'SKIP',
-      blocking_class: 'externalBlocked',
-      failure_kind: 'capability_missing',
-      details: 'provider runtime_step_telemetry capability 不可用；由 device_test_run 投影 DEFERRED_CAPABILITY_MISSING，未启动内容重试。',
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      ...(gate ? evidenceGateFailureProjection(gate, holder) : { failure_kind: 'capability_missing', blocking_class: 'externalBlocked' }),
+      details: `未启用 native CaseResult.steps[]：${gate?.reasons.join('；') || '缺少三重判据结果'}。旧 case status 不得贡献 verification=passed。`,
+      suggestion: '升级 Hylyre 并由 ensureHylyreReady 生成一致的 installed/manifest/trace environment 后重跑 testing。',
     }];
   }
-  if (process.env.MAISON_GOAL_GATE_HARNESS !== '1') {
-    return [{
-      id,
-      category: 'structure',
-      description,
-      severity: 'MINOR',
-      status: 'SKIP',
-      details: '非 goal 正式 gate：逐步 trace 可采集，但不生成可用于 feature completion 的 run/attempt 绑定证据。',
-    }];
-  }
-  const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
-  const evidencePath = deviceTestEvidencePath(reportsDir);
-  let doc: DeviceTestEvidenceDoc;
-  try {
-    doc = JSON.parse(fs.readFileSync(evidencePath, 'utf-8')) as DeviceTestEvidenceDoc;
-  } catch (error) {
+
+  const tracePath = holder.hylyreTracePath ?? resolveAuthoritativeHylyreTracePath(
+    featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot),
+  );
+  const trace = tracePath ? parseHylyreTrace(tracePath) : null;
+  // inventory §一 G2：本就是唯一 fail-closed 的正例，判据换成统一 dispatch。
+  if (!tracePath || !trace || !requireV1ForGate(trace, { frameworkRoot: ctx.frameworkRoot }).ok) {
     return [{
       id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
-      details: `provider 已声明支持 runtime telemetry，但 device-test-evidence 缺失/不可解析：${(error as Error).message}`,
-      suggestion: '修复 telemetry/evidence 产出后重跑 testing；不得改投 capability-missing。',
+      details: 'native evidence gate 已声明，但 authoritative trace 不可用，或其结果协议不是可消费的 v1。',
+      suggestion: '使用同一 native Hylyre run 重新产生 trace；不得从 telemetry/log 合成 StepResult。',
     }];
   }
-  const issue = validateRuntimeFidelityEvidenceDocument({
-    projectRoot: ctx.projectRoot,
-    feature: ctx.feature,
-    doc,
-    expectedGoalRunId: process.env.MAISON_GOAL_RUN_ID?.trim() || null,
-    expectedAttemptId: process.env.MAISON_GOAL_ATTEMPT?.trim() || null,
-    requirePhaseManifestBinding: false,
-  });
-  return issue
-    ? [{
+
+  if (process.env.MAISON_GOAL_GATE_HARNESS === '1') {
+    const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
+    const evidencePath = deviceTestEvidencePath(reportsDir);
+    let doc: DeviceTestEvidenceDoc;
+    try {
+      doc = JSON.parse(fs.readFileSync(evidencePath, 'utf-8')) as DeviceTestEvidenceDoc;
+    } catch (error) {
+      return [{
         id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
-        details: `provider 已声明支持，但 runtime evidence 无效：${issue}`,
-        suggestion: '重跑 testing 并修复缺事件、乱序、错 target、伪造或 stale 证据；该类问题是 testing FAIL。',
-      }]
-    : [{
-        id, category: 'structure', description, severity: 'BLOCKER', status: 'PASS',
-        details: `P0 runtime fidelity 已通过逐步重算验证（provider=${doc.runtime_fidelity?.provider.id}@${doc.runtime_fidelity?.provider.version}，checkpoints=${doc.runtime_fidelity?.checkpoints.length ?? 0}）。`,
+        details: `goal identity binding 缺失/不可解析：${(error as Error).message}`,
+        suggestion: '保留现有 goal run/attempt/HAP/device identity binding，并重跑 testing gate。',
       }];
+    }
+    const expectedRunId = process.env.MAISON_GOAL_RUN_ID?.trim() || '';
+    const expectedAttemptId = process.env.MAISON_GOAL_ATTEMPT?.trim() || '';
+    const expectedTrace = path.resolve(tracePath);
+    const expectedTarget = {
+      serial: process.env.HARNESS_HDC_TARGET?.trim() || null,
+      target_kind: process.env.MAISON_DEVICE_TARGET_KIND?.trim() || null,
+      session_id: process.env.MAISON_DEVICE_SESSION_ID?.trim() || null,
+    };
+    const receiptBinding = doc.artifact_binding;
+    const artifactBindingMismatch = !holder.nativeArtifactBinding ||
+      !receiptBinding ||
+      (Object.keys(holder.nativeArtifactBinding ?? {}) as Array<keyof DeviceTestArtifactBinding>)
+        .some(key => receiptBinding[key] !== holder.nativeArtifactBinding?.[key]);
+    const bindingIssues = [
+      doc.goal_run_id !== expectedRunId ? `goal_run_id=${doc.goal_run_id}≠${expectedRunId}` : '',
+      doc.attempt_id !== expectedAttemptId ? `attempt_id=${doc.attempt_id}≠${expectedAttemptId}` : '',
+      path.resolve(doc.trace_path) !== expectedTrace ? `trace_path=${doc.trace_path}≠${expectedTrace}` : '',
+      doc.hap_sha256_full !== holder.hapSha256Full ? 'hap_sha256_full 与装机前 HAP 不一致' : '',
+      JSON.stringify(doc.device_target ?? null) !== JSON.stringify(expectedTarget)
+        ? 'device_target 与当前 goal attempt 不一致' : '',
+      doc.install_executed !== true || doc.install_ok !== true ? 'install identity fact 未证明真实安装成功' : '',
+      artifactBindingMismatch ? 'artifact_binding 与本轮 trace/derived-plan identity 不一致' : '',
+    ].filter(Boolean);
+    if (bindingIssues.length > 0) {
+      return [{
+        id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
+        details: `goal identity binding 不一致：${bindingIssues.join('；')}`,
+        suggestion: '修复本轮 goal run/attempt/trace/HAP/device 绑定后重跑；native StepResult 仍是唯一 verdict source。',
+      }];
+    }
+  }
+
+  return [{
+    id,
+    category: 'structure',
+    description,
+    severity: 'BLOCKER',
+    status: 'PASS',
+    details: `native CaseResult.steps[] 已在场并通过三重判据（version=${gate.traceVersion}, schema=${gate.traceSchemaVersion}）；${process.env.MAISON_GOAL_GATE_HARNESS === '1' ? 'goal identity binding 保留。' : 'ordinary interactive 不因 legacy telemetry 缺席而 SKIP。'}`,
+  }];
 }
 
 function readBundleNameFromAppScope(projectRoot: string): string {
@@ -2483,6 +3696,36 @@ function writeDeriveHintFromPlanJson(ctx: CheckContext, aug?: DeriveHintAugment)
  * excludes build/install/run, trace, and holder mutation: those remain runtime
  * pipeline facts inside checkDeviceTestRunGate.
  */
+/**
+ * plan a6c4e9f2 T3：顶层 test-plan.md 的执行通道声明（编译期分派唯一真源）。
+ * 读取一次即可——通道是计划 identity 的一部分，不在 derive/回灌时重算或改写。
+ */
+function loadExecutionChannelDeclaration(
+  ctx: CheckContext,
+  planRaw?: string | null,
+): ExecutionChannelDeclarationResult {
+  if (typeof planRaw === 'string') return evaluateExecutionChannelDeclaration(planRaw);
+  const resolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-plan.md');
+  const raw = fs.existsSync(resolved.actualPath) ? fs.readFileSync(resolved.actualPath, 'utf-8') : '';
+  return evaluateExecutionChannelDeclaration(raw);
+}
+
+/**
+ * plan a6c4e9f2 T2：把 acceptance.yaml 的**结构化** checkpoint action 目标交给 selector
+ * 静态门，作为唯一一条散文外的冲突判据。只读 `criteria[].checkpoint.action.target_element_id`，
+ * 不解析 description/precondition/expected，也不把它当第二套 canonical selector 真源。
+ */
+function collectAcceptanceActionBindings(ctx: CheckContext): AcceptanceActionBinding[] {
+  const doc = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature);
+  if (!doc) return [];
+  return doc.criteria.flatMap(ac => {
+    const target = ac.checkpoint?.action?.target_element_id;
+    return typeof ac.id === 'string' && ac.id.trim() && typeof target === 'string' && target.trim()
+      ? [{ ac_id: ac.id.trim(), target_element_id: target.trim() }]
+      : [];
+  });
+}
+
 function collectDeviceTestStaticPlanGates(
   ctx: CheckContext,
   derivedContent: string,
@@ -2495,7 +3738,9 @@ function collectDeviceTestStaticPlanGates(
   const stepLint = lintHylyrePlanStepRules(derivedContent);
   const selectorUiSpec = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
   const selectorWarnings = selectorUiSpec
-    ? lintDerivedPlanSelectorContract(derivedContent, selectorUiSpec, ctx.feature)
+    ? lintDerivedPlanSelectorContract(derivedContent, selectorUiSpec, ctx.feature, {
+        acceptanceActionBindings: collectAcceptanceActionBindings(ctx),
+      })
     : [];
   const topCases = extractTopPlanTestCasesForDeriveHint(topPlanRaw);
   const navLint = lintDerivedHylyrePlanSteps(derivedContent, topCases);
@@ -2542,6 +3787,7 @@ function checkDeviceTestRunGate(
     const topRaw = fs.existsSync(topPath) ? fs.readFileSync(topPath, 'utf-8') : '';
     const topIds = extractTcIdsFromPlanTable(topRaw);
     const topStat = fs.existsSync(topPath) ? fs.statSync(topPath) : null;
+    const topPlanSha256AtStart = fs.existsSync(topPath) ? sha256File(topPath) : null;
 
     const pick = selectBestNonPlaceholderDerivedPlan(reportsBase);
     const rejectedRel = pick.rejectedPlaceholders.map(p => absToProjectRel(ctx.projectRoot, p));
@@ -2571,11 +3817,40 @@ function checkDeviceTestRunGate(
     const derivedContent = pick.selected.content;
     const explicitSkips = loadExplicitSkipTcIds(derivedPath, derivedContent);
     const derivedIds = extractTcIdsFromPlanTable(derivedContent);
-    const cov = evaluateDerivedCoverage({
-      topTcIds: topIds,
-      derivedTcIds: derivedIds,
-      explicitSkipTcIds: explicitSkips,
-    });
+    // plan a6c4e9f2 T3：顶层已声明通道时，派生集合必须**恰好等于** channel=hylyre 集合；
+    // explicit skip 不再减除缺口（派生器没有 skip 决策权），且新正式派生不得再产出 skip。
+    const runChannelDecl = loadExecutionChannelDeclaration(ctx, topRaw);
+    // 只有声明**整体闭合**才按通道口径对账；部分缺值/非法/重复时上游已 SKIP 掉整段设备
+    // 流水线，这里保持 legacy 口径仅为不产生第二套矛盾判定。
+    const cov = runChannelDecl.ok
+      ? evaluateChannelDerivedCoverage({
+          hylyreTcIds: runChannelDecl.hylyre_tc_ids,
+          derivedTcIds: derivedIds,
+          legacyExplicitSkipTcIds: explicitSkips,
+        })
+      : evaluateDerivedCoverage({
+          topTcIds: topIds,
+          derivedTcIds: derivedIds,
+          explicitSkipTcIds: explicitSkips,
+        });
+    if (runChannelDecl.ok && explicitSkips.length > 0) {
+      return [
+        {
+          id,
+          category: 'structure',
+          description: desc,
+          severity: 'BLOCKER',
+          status: 'FAIL',
+          details:
+            `正式派生计划仍登记 explicit_skip_tc_ids：${explicitSkips.join(', ')}。` +
+            '执行通道由顶层 test-plan.md 声明，派生器不再拥有 skip 决策权；' +
+            '任一 channel=hylyre case 无法编译时应报根因并让整份 Hylyre 计划不启动，而不是改成 skip。',
+          suggestion:
+            '删除派生 frontmatter / derive-manifest.json 的 explicit_skip_tc_ids，重新按 channel=hylyre 全集编译；' +
+            '编译不了的 case 交回顶层计划作者改通道或补入口定义。',
+        },
+      ];
+    }
 
     const derivedStat = fs.statSync(derivedPath);
     const derivedMtimeIso = new Date(derivedStat.mtimeMs).toISOString();
@@ -2624,7 +3899,7 @@ function checkDeviceTestRunGate(
           description: desc,
           severity: 'BLOCKER',
           status: 'FAIL',
-          details: `派生 Hylyre 计划未覆盖顶层 test-plan.md 中的用例：${cov.missing.join(', ')}。请在派生表补全或在 YAML frontmatter / derive-manifest.json 登记 explicit_skip_tc_ids。\n${hintLine}`,
+          details: `派生 Hylyre 计划未覆盖顶层 test-plan.md 中的用例：${cov.missing.join(', ')}。请在派生表补全。执行责任由顶层 test-plan.md 的 execution_channel 声明，派生器没有 skip 决策权——不要登记 explicit_skip_tc_ids，改为按一次性迁移补齐「执行通道」列。\n${hintLine}`,
         },
       ];
     }
@@ -2671,7 +3946,7 @@ function checkDeviceTestRunGate(
           severity: 'BLOCKER',
           status: 'FAIL',
           details: [
-            `派生 Hylyre 计划未通过步骤级静态门禁（${stepBlockers.length} 处，当前 lint 支持的规则集 STEP-001~006）：`,
+            `派生 Hylyre 计划未通过步骤级静态门禁（${stepBlockers.length} 处，当前 lint 支持的规则集 STEP-001~007）：`,
             ...lines,
             stepBlockers.length > 12 ? `  …等共 ${stepBlockers.length} 处` : '',
             hintLine,
@@ -2684,6 +3959,25 @@ function checkDeviceTestRunGate(
           source: 'derived_hylyre_step_lint',
         },
       ];
+    }
+
+    const selectorBlockers = staticPlanGates.selectorWarnings.filter(v => v.severity === 'BLOCKER');
+    if (selectorBlockers.length > 0) {
+      return [{
+        id,
+        category: 'structure',
+        description: desc,
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details: [
+          `派生 Hylyre 计划未通过 canonical selector 静态门禁（${selectorBlockers.length} 处）：`,
+          ...selectorBlockers.slice(0, 12).map(v =>
+            `  - [${v.rule_id}] ${v.tc_id} step ${v.step_index} ${v.selector_kind}=${v.selector}: ${v.message}`),
+          'runtime dump/snapshot cache 不参与静态授权；请回 ui-spec/contracts 或按 acceptance 意图重新派生。',
+        ].join('\n'),
+        suggestion: '修正 canonical ui-spec 与正式派生计划的 selector；match 只允许显式 exact/contains，放宽须新 timestamp 重新派生。',
+        source: 'derived_selector_contract',
+      }];
     }
 
     if (!navLint.ok) {
@@ -2758,33 +4052,32 @@ function checkDeviceTestRunGate(
       ];
     }
 
-    // autonomous-recovery-without-human-gates t4: runtime telemetry is a
-    // provider/profile fact checked before the real content run is spawned.
-    // Unsupported/unavailable providers defer through the existing external
-    // capability path; a provider that declares support is held to the hard
-    // post-run evidence contract below (missing/invalid evidence is not defer).
+    // T6 pre-run evidence capability: native CaseResult.steps[] is independent
+    // of the legacy runtime telemetry bridge. Only an old provider may enter
+    // the bounded bridge path; native 0.4.0 must never be monkey-patched.
     const acceptanceFlows = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature);
-    const runtimeTelemetryRequired = Boolean(
+    const runtimeEvidenceRequired = Boolean(
       acceptanceFlows?.criteria.some(isP0DeviceInteractive),
     );
-    if (runtimeTelemetryRequired) {
-      let runtimeCapability: RuntimeStepTelemetryCapability;
+    if (runtimeEvidenceRequired) {
+      let resolvedCapability: HylyreEvidenceCapability;
       try {
-        runtimeCapability = probeDeviceRuntimeStepTelemetry(ctx, {
+        resolvedCapability = probeDeviceTestEvidenceCapability(ctx, {
           hylyreVersion: ready.hylyreVersion,
           manifestVersion: ready.manifestVersion,
-        }) as RuntimeStepTelemetryCapability;
+        }) as HylyreEvidenceCapability;
       } catch (error) {
-        runtimeCapability = {
-          supported: false,
+        resolvedCapability = {
+          mode: 'unsupported',
+          native: false,
+          legacy: false,
           providerId: 'hylyre',
           providerVersion: ready.hylyreVersion,
-          protocolVersion: '1.0',
-          collectorVersion: '1.0',
-          reason: `runtime telemetry handshake 失败：${(error as Error).message}`,
+          reason: `native/legacy evidence handshake 失败：${(error as Error).message}`,
         };
       }
-      if (!runtimeCapability.supported) {
+      hapHolder.hylyreEvidenceCapability = resolvedCapability;
+      if (resolvedCapability.mode === 'unsupported') {
         return [{
           id,
           category: 'structure',
@@ -2794,9 +4087,9 @@ function checkDeviceTestRunGate(
           blocking_class: 'externalBlocked',
           failure_kind: 'capability_missing',
           details:
-            '【DEFERRED_CAPABILITY_MISSING】当前 device_test.run provider/profile 不支持 P0 runtime_step_telemetry；' +
-            `未启动真机内容执行。${runtimeCapability.reason}`,
-          suggestion: '换用支持 runtime step telemetry 的 provider/version 后重跑 testing。',
+            '【DEFERRED_CAPABILITY_MISSING】当前 device_test.run provider/profile 不支持 native CaseResult.steps[] 或受支持的 legacy bridge；' +
+            `未启动真机内容执行。${resolvedCapability.reason}`,
+          suggestion: '升级 Hylyre 至 native 最低版本并确认 ready meta 版本链一致后重跑 testing。',
         }];
       }
     }
@@ -2825,6 +4118,7 @@ function checkDeviceTestRunGate(
     }
     const hylyreOutDir = freshRun.runDir;
     const runPlanPath = freshRun.hylyrePlanAbsPath;
+    const derivedPlanSha256AtStart = sha256File(runPlanPath);
     const hylyreCfg = resolveHylyreToolConfig(ctx.projectRoot);
     const appSnapshotCacheAbs = path.resolve(ctx.projectRoot, hylyreCfg.app_snapshot_cache_dir);
     fs.mkdirSync(appSnapshotCacheAbs, { recursive: true });
@@ -2841,6 +4135,7 @@ function checkDeviceTestRunGate(
       phase: ctx.phase,
       pythonPath: ready.pythonPath,
       derivedPlanPath: runPlanPath,
+      topPlanPath: topPath,
       reportOutPath: path.resolve(path.join(hylyreOutDir, 'test-report.md')),
       traceOutPath: path.resolve(path.join(hylyreOutDir, 'trace.json')),
       bundleName,
@@ -2848,7 +4143,6 @@ function checkDeviceTestRunGate(
       skipAssertExpected: true,
       coldRestart,
       appSnapshotCacheAbs,
-      runtimeStepTelemetry: runtimeTelemetryRequired,
     }) as HylyreRunResult;
 
     if (!run.ok) {
@@ -2901,7 +4195,43 @@ function checkDeviceTestRunGate(
     hapHolder.deviceTestRunExecuted = true;
 
     const outcomeEval = evaluateHylyreRunOutcome(run.trace);
-    const runGatePass = outcomeEval.verdict === 'pass';
+    let evidenceGate: HylyreEvidenceGateResult | null = null;
+    if (runtimeEvidenceRequired) {
+      const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
+      const readyRecord = readJsonRecord(path.join(reportsDir, 'hylyre-ready.meta.json'));
+      const hylyreCfg = resolveHylyreToolConfig(ctx.projectRoot);
+      const manifestRecord = readJsonRecord(
+        path.join(ctx.projectRoot, hylyreCfg.vendor_dir, 'release.manifest.json'),
+      );
+      const releaseManifestVersion =
+        manifestRecord.value && typeof manifestRecord.value.hylyre_version === 'string'
+          ? manifestRecord.value.hylyre_version
+          : null;
+      evidenceGate = evaluateHylyreNativeEvidenceGate({
+        trace: run.trace,
+        readyMeta: readyRecord.value,
+        manifestVersion: releaseManifestVersion,
+      });
+      const binding = validateNativeTraceArtifactBinding({
+        trace: run.trace,
+        expectedFeature: ctx.feature,
+        tracePath: run.tracePath ?? path.resolve(path.join(hylyreOutDir, 'trace.json')),
+        testPlanPath: topPath,
+        derivedPlanPath: runPlanPath,
+        expectedTestPlanSha256: topPlanSha256AtStart,
+        expectedDerivedPlanSha256: derivedPlanSha256AtStart,
+      });
+      if (binding.ok && binding.binding) hapHolder.nativeArtifactBinding = binding.binding;
+      if (!binding.ok) evidenceGate = gateWithNativeBindingFailure(evidenceGate, binding);
+      hapHolder.hylyreEvidenceGate = evidenceGate;
+    }
+    // inventory §一 G3：同 G1，schema 不匹配不再让门消失。
+    const executionCompleteness = run.trace
+      ? checkHylyreCaseExecutionCompleteness(ctx, run.trace, evidenceGate, runPlanPath)
+      : [];
+    const runGatePass = outcomeEval.verdict === 'pass' &&
+      (evidenceGate === null || evidenceGate.native) &&
+      executionCompleteness.every(result => result.status === 'PASS' || result.status === 'SKIP');
 
     // S6（visual-capability-truth P1-I）：级联归类三分——**不改变通过率/verdict**（BLOCKED_BY
     // 非 PASS：仍进分母、仍 FAIL），只把"1 根故障 + N 级联"如实呈现（20260718：7 FAIL 实为
@@ -2934,15 +4264,36 @@ function checkDeviceTestRunGate(
             id: 'derived_selector_contract',
             category: 'structure' as const,
             description: '派生 Hylyre selector 必须可追溯到 ui-spec',
-            severity: 'MINOR' as const,
-            status: 'WARN' as const,
+            severity: selectorWarnings.some(v => v.severity === 'BLOCKER') ? 'BLOCKER' as const : 'MINOR' as const,
+            status: selectorWarnings.some(v => v.severity === 'BLOCKER') ? 'FAIL' as const : 'WARN' as const,
             details: [
-              `[SELECTOR-SPEC-001] 共 ${selectorWarnings.length} 个 selector 无 ui-spec 契约依据（首版观察期 WARN）：`,
+              `[SELECTOR-SPEC-001] 共 ${selectorWarnings.length} 个 canonical selector 问题：`,
               ...selectorWarnings.slice(0, 12).map(v =>
                 `  - ${v.tc_id} step ${v.step_index} ${v.selector_kind}=${v.selector}: ${v.message}`),
             ].join('\n'),
             suggestion: '用 derive-hylyre-plan-hint 的 selector_contract 只读查询修正；dump/cache 发现的候选须先回写 ui-spec/锚点注入。',
             source: 'derived_selector_contract',
+          }]
+        : []),
+      ...(evidenceGate
+        ? [{
+            id: 'hylyre_evidence_gate',
+            category: 'structure' as const,
+            description: 'Hylyre native CaseResult/StepResult 三重判据与 legacy 划界',
+            severity: 'BLOCKER' as const,
+            status: evidenceGate.native ? 'PASS' as const : 'FAIL' as const,
+            ...evidenceGateFailureProjection(evidenceGate, hapHolder),
+            structured: evidenceGate,
+            details: evidenceGate.native
+              ? `native evidence gate PASS：version=${evidenceGate.traceVersion}, schema=${evidenceGate.traceSchemaVersion}，CaseResult/StepResult 必需字段完整。`
+              : [
+                  `native evidence gate FAIL（mode=${evidenceGate.mode}）：旧 case status 不得贡献 verification=passed。`,
+                  ...evidenceGate.reasons.map(reason => `  - ${reason}`),
+                  '默认处置：升级 Hylyre 并重新执行 testing；历史 trace/evidence 保留不删。',
+                ].join('\n'),
+            suggestion: evidenceGate.native
+              ? 'P0/acceptance 仅消费当前 trace 的 CaseResult.steps[]。'
+              : '确认 installed/manifest/trace version 链、schema=0.4-p0 + hylyre.step-outcome/1 与所有 CaseResult/StepResult 字段后重跑 testing。',
           }]
         : []),
       {
@@ -2960,6 +4311,9 @@ function checkDeviceTestRunGate(
             : [
                 '自动化产物未达标（run.ok 仅表示 runner 未崩溃）：',
                 ...outcomeEval.reasonLines.map(l => `  - ${l}`),
+                ...executionCompleteness
+                  .filter(result => result.status === 'FAIL')
+                  .flatMap(result => (result.details ?? '').split('\n').map(line => `  - ${line}`)),
                 ...cascadeLines.map(l => `  - ${l}`),
               ]),
         ].join('\n'),
@@ -3325,7 +4679,12 @@ function checkReportTraceReconciliation(
     /* explicit: never use top-level backfill as SSOT */
   }
 
-  const recon = reconcileReportWithHylyreTrace(report, tracePath);
+  const reconChannelDecl = loadExecutionChannelDeclaration(ctx);
+  const recon = reconcileReportWithHylyreTrace(
+    report,
+    tracePath,
+    reconChannelDecl.column_declared ? { hylyreTcIds: reconChannelDecl.hylyre_tc_ids } : undefined,
+  );
 
   if (!recon.ok) {
     return [{
@@ -3358,6 +4717,196 @@ function checkReportTraceReconciliation(
   }];
 }
 
+function checkHylyreCaseExecutionCompleteness(
+  ctx: CheckContext,
+  trace: HylyreTrace | null,
+  evidenceGate: HylyreEvidenceGateResult | null | undefined,
+  derivedPlanPath?: string | null,
+): CheckResult[] {
+  const id = 'testing_case_execution_completeness';
+  const description = '顶层测试用例执行完整性';
+  // plan a6c4e9f2 T7a：这是 inventory §一 G4 点名的 fail-open 反例——旧实现在
+  // schema 不匹配或 gate 非 native 时 `return []`，等于让这道 required gate 静默消失。
+  // 现在统一走 dispatch：不是合法 v1 一律显式 BLOCKER。
+  if (!trace) {
+    return [{
+      id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
+      details: 'authoritative trace 缺失，无法证明顶层 TC 已执行。',
+      suggestion: '用同一 native run 重新产出 trace；不得从 telemetry/log 合成执行事实。',
+    }];
+  }
+  const gateVerdict = requireV1ForGate(trace, { frameworkRoot: ctx.frameworkRoot });
+  if (!gateVerdict.ok) {
+    return [{
+      id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
+      failure_kind: 'unsupported_result_protocol',
+      details: gateVerdict.detail,
+      suggestion: gateVerdict.suggestion,
+    }];
+  }
+  if (evidenceGate && !evidenceGate.native) {
+    return [{
+      id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
+      details: `native evidence gate 未通过，执行完整性无法闭合：${evidenceGate.reasons.join('；')}`,
+      suggestion: '先修复 version/schema/字段三重判据再重跑；此门不因 gate 未通过而消失。',
+    }];
+  }
+  const topPlanPath = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-plan.md').actualPath;
+  const topIds = fs.existsSync(topPlanPath)
+    ? extractTcIdsFromPlanTable(fs.readFileSync(topPlanPath, 'utf-8')).map(value => value.toUpperCase())
+    : [];
+  const reportsBase = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
+  const selected = derivedPlanPath && fs.existsSync(derivedPlanPath)
+    ? { path: derivedPlanPath, content: fs.readFileSync(derivedPlanPath, 'utf-8') }
+    : (() => {
+        const pick = selectBestNonPlaceholderDerivedPlan(reportsBase);
+        return pick.selected ? { path: pick.selected.hylyrePath, content: pick.selected.content } : null;
+      })();
+  const derivedIds = selected
+    ? extractTcIdsFromPlanTable(selected.content).map(value => value.toUpperCase())
+    : [];
+  const explicitSkipIds = selected
+    ? loadExplicitSkipTcIds(selected.path, selected.content).map(value => value.toUpperCase())
+    : [];
+  const traceIds = (trace?.cases ?? [])
+    .map(value => typeof value.id === 'string' ? value.id.trim().toUpperCase() : '')
+    .filter(Boolean);
+  // plan a6c4e9f2 T3：derived/trace 的**精确集合**只与 channel=hylyre 子集闭合。
+  // 非 Hylyre 通道的 TC 仍留在报告总分母，但它们的裁决在
+  // `testing_channel_evidence_obligation`——per-TC 证据绑定建立前一律 FAIL/UNVERIFIED，
+  // 这里不得暗示它们"已由各自证据链裁决"（同一份报告内不能自相矛盾）。
+  const channelDecl = loadExecutionChannelDeclaration(ctx);
+  const channelScoped = channelDecl.column_declared;
+  const expectedIds = channelScoped ? channelDecl.hylyre_tc_ids : topIds;
+  const topSet = new Set(topIds);
+  const derivedSet = new Set(derivedIds);
+  const traceSet = new Set(traceIds);
+  const missingFromTrace = expectedIds.filter(value => !traceSet.has(value));
+  const extraInTrace = traceIds.filter(value => !topSet.has(value));
+  const offChannelInTrace = channelScoped
+    ? traceIds.filter(value => topSet.has(value) && !expectedIds.includes(value))
+    : [];
+  const missingFromDerived = channelScoped
+    ? expectedIds.filter(value => !derivedSet.has(value))
+    : topIds.filter(value => !derivedSet.has(value) && !explicitSkipIds.includes(value));
+  const details: string[] = [];
+  if (!trace) details.push('authoritative trace 缺失，无法证明顶层 TC 已执行');
+  if (!selected) details.push('缺 authoritative derived plan，无法核对执行集合');
+  if (missingFromDerived.length > 0) {
+    const laundered = missingFromDerived.filter(value => explicitSkipIds.includes(value));
+    details.push(
+      channelScoped
+        ? `derived plan 缺少 channel=hylyre 的 TC：${missingFromDerived.join(', ')}` +
+          (laundered.length > 0 ? `（其中 ${laundered.join(', ')} 被 explicit skip 洗掉——skip 不减除缺口）` : '')
+        : `derived plan 缺少未登记 skip 的顶层 TC：${missingFromDerived.join(', ')}`,
+    );
+  }
+  if (missingFromTrace.length > 0) {
+    const explicitMissing = missingFromTrace.filter(value => explicitSkipIds.includes(value));
+    const otherMissing = missingFromTrace.filter(value => !explicitSkipIds.includes(value));
+    if (explicitMissing.length > 0) details.push(`explicit skip/未执行且无 StepResult：${explicitMissing.join(', ')}`);
+    if (otherMissing.length > 0) {
+      details.push(
+        channelScoped
+          ? `channel=hylyre 的 TC 未进入 authoritative trace：${otherMissing.join(', ')}`
+          : `顶层 TC 未进入 authoritative trace：${otherMissing.join(', ')}`,
+      );
+    }
+  }
+  if (extraInTrace.length > 0) details.push(`trace 含顶层计划外 TC：${extraInTrace.join(', ')}`);
+  if (offChannelInTrace.length > 0) {
+    details.push(`trace 含非 channel=hylyre 的 TC：${offChannelInTrace.join(', ')}（通道由顶层声明，执行侧不得改写）`);
+  }
+  if (channelScoped && channelDecl.manual_tc_ids.length > 0) {
+    details.push(
+      `manual 通道 TC 无机器证据载体，持续留在分母 FAIL/UNVERIFIED：${channelDecl.manual_tc_ids.join(', ')}`,
+    );
+  }
+  const ok = details.length === 0;
+  const nonHylyreNote = channelScoped
+    ? `；非 Hylyre 通道 ${topIds.length - expectedIds.length} 个仍在报告总分母，由 testing_channel_evidence_obligation 裁决（per-TC 证据绑定建立前保持 FAIL/UNVERIFIED）`
+    : '';
+  return [{
+    id,
+    category: 'structure',
+    description,
+    severity: 'BLOCKER',
+    status: ok ? 'PASS' : 'FAIL',
+    details: ok
+      ? `derived/trace 与 ${channelScoped ? 'channel=hylyre' : '顶层'} TC 集合已精确闭合（${expectedIds.length} 个）；` +
+        `explicit skip 为 0，未执行 case 为 0${nonHylyreNote}。`
+      : [
+          '任何应执行的 TC（含 P1/P2）缺失 trace CaseResult 都保持 testing FAIL；不从名称/AC/散文推断原因。',
+          ...details.map(value => `  - ${value}`),
+        ].join('\n'),
+    suggestion: ok
+      ? '继续消费同一 trace 的 CaseResult.steps[]。'
+      : '补齐同一最终 run 的 CaseResult；explicit skip 不能绕过 testing FAIL，只有 trace 内机器 capability failure 才走 capability defer。',
+  }];
+}
+
+/**
+ * tasks 6.5b 返修：证据义务门已从声明门里独立出来，且**必须在 visual 之后**执行。
+ * 测试入口跟着分开——把它仍挂在声明门上，等于把"时序"这条判据本身测没了。
+ */
+export function __testing_checkChannelEvidenceObligation(
+  ctx: CheckContext,
+  plan: string | null,
+  priorResults: readonly CheckResult[] = [],
+  hapPath?: string | null,
+): CheckResult[] {
+  return checkChannelEvidenceObligation(ctx, plan, priorResults, hapPath);
+}
+
+export function __testing_checkExecutionChannelDeclaration(
+  ctx: CheckContext,
+  plan: string | null,
+): CheckResult[] {
+  return checkExecutionChannelDeclaration(ctx, plan);
+}
+
+export function __testing_checkHylyreCaseExecutionCompleteness(
+  ctx: CheckContext,
+  trace: HylyreTrace | null,
+  evidenceGate: HylyreEvidenceGateResult | null | undefined,
+  derivedPlanPath?: string | null,
+): CheckResult[] {
+  return checkHylyreCaseExecutionCompleteness(ctx, trace, evidenceGate, derivedPlanPath);
+}
+
+/**
+ * 三道随 v1 一起收紧的 required gate 的测试入口。
+ *
+ * 它们各自的 `evidenceGate` 参数有一个容易踩的语义：`null/undefined` 表示
+ * **本 feature 没有 P0 device AC，三重身份门不适用**（gate 只在
+ * `runtimeEvidenceRequired` 为真时生成），而不是"协议非法"。
+ * 曾经把 null 当失败处理，结果是"没有 P0 AC 但确实跑了合法 v1"的 feature 平白吃三条
+ * BLOCKER——因此这三个入口一起导出，回归必须把这条口径钉住。
+ */
+export function __testing_checkHylyreV1RequiredGates(
+  ctx: CheckContext,
+  tracePath: string | null,
+  trace: HylyreTrace | null,
+  evidenceGate: HylyreEvidenceGateResult | null | undefined,
+  derivedPlanPath?: string | null,
+): CheckResult[] {
+  return [
+    ...checkHylyreArtifactIntegrity(ctx, tracePath, trace, evidenceGate),
+    ...checkHylyreFailureRouting(ctx, trace, evidenceGate, derivedPlanPath),
+    ...checkHylyreRuntimeSelectorGate(ctx, trace, evidenceGate, derivedPlanPath),
+  ];
+}
+
+/** tasks 6.6b 回归入口：直接取责任路由/disposition 的 CheckResult 形状。 */
+export function __testing_checkHylyreFailureRouting(
+  ctx: CheckContext,
+  trace: HylyreTrace | null,
+  evidenceGate: HylyreEvidenceGateResult | null | undefined,
+  derivedPlanPath?: string | null,
+): CheckResult[] {
+  return checkHylyreFailureRouting(ctx, trace, evidenceGate, derivedPlanPath);
+}
+
 function loadUseCaseSpec(ctx: CheckContext): UseCasesSpec | null {
   const resolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'use-cases.yaml');
   if (!fs.existsSync(resolved.actualPath)) return null;
@@ -3368,6 +4917,130 @@ function loadUseCaseSpec(ctx: CheckContext): UseCasesSpec | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * plan a6c4e9f2 T3：顶层执行通道声明门。
+ * - 缺列/缺值/非法值 → BLOCKER（一次性迁移；harness 不猜通道）。
+ * - manual 在场 → 显式记为未自动取证义务：manual 没有机器质量 PASS 载体，
+ *   这些 TC 持续留在分母 FAIL/UNVERIFIED，本 feature testing 因此无法 PASS。
+ *   这里就是它的"载体"，且刻意不提供任何人工提交入口/receipt/resume。
+ */
+/**
+ * plan a6c4e9f2 T3（review P1）：设备流水线准入的**唯一**判据。
+ * - report-only 按契约零设备/零 provider 调用，无论声明是否闭合都完整只读重算
+ *   （通道迁移 BLOCKER 已独立记账，phase 仍 FAIL；历史 run 必须保持可诊断）；
+ * - 其余情况必须先看 `decl.ok`：缺列/缺值/非法值/同 TC 重复一律不进 build/install/
+ *   Hylyre/device，也**不跑"合法子集"**（那会产出半份 trace）。
+ */
+export function shouldRunDevicePipeline(
+  declaration: { ok: boolean },
+  reportReconcileOnly: boolean,
+): { device: boolean; reportOnly: boolean } {
+  if (reportReconcileOnly) return { device: false, reportOnly: true };
+  return { device: declaration.ok, reportOnly: false };
+}
+
+function checkExecutionChannelDeclaration(ctx: CheckContext, plan: string | null): CheckResult[] {
+  const id = 'testing_execution_channel';
+  const description = '顶层 test-plan 每 TC 唯一编译期 execution_channel';
+  const decl = loadExecutionChannelDeclaration(ctx, plan);
+  const results: CheckResult[] = [];
+  results.push({
+    id,
+    category: 'structure',
+    description,
+    severity: 'BLOCKER',
+    status: decl.ok ? 'PASS' : 'FAIL',
+    ...(decl.ok ? {} : { failure_kind: 'plan_contract' as const }),
+    details: decl.ok
+      ? `通道声明完整：hylyre=${decl.hylyre_tc_ids.length}、visual=${decl.visual_tc_ids.length}、` +
+        `provider=${decl.provider_tc_ids.length}、manual=${decl.manual_tc_ids.length}。` +
+        `派生器只编译 hylyre 集合，不得新增/删除/改写通道。`
+      : decl.detail,
+    suggestion: decl.ok
+      ? '通道属计划 identity：修改必须经 test-plan review，不在 derive/回灌时静默重写。'
+      : `在顶层 test-plan.md「测试用例」表补「执行通道」列，每条 TC 取值 ${EXECUTION_CHANNEL_DOMAIN}；由测试计划作者决定并进入 review。`,
+  });
+  // plan a6c4e9f2 §2.2「未取证不通过」（review P0）：非 Hylyre 通道的 TC 已被移出
+  // derived/trace/timing 的精确对账，如果这里不给它们一个**裁决**载体，它们就只剩报告
+  // 里一行自填状态——那正是把"通道分派"变成新逃生口。因此 fail-closed：
+  //   - manual：设计上就没有机器质量 PASS 载体；
+  //   - visual / provider：Maison 当前没有 per-TC 的证据绑定（既没有 TC→visual target，
+  //     也没有 TC→capability evidence 的机器映射），无法证明某条 TC 已取证。
+  // 三者一律留在分母 FAIL/UNVERIFIED。要让它们能通过，得先建立 per-TC 证据绑定
+  // （T3 未完成项），而不是靠报告行自称通过。
+  // 证据义务**不在这里**：它必须晚于 visual 产出与 visual 门本身
+  // （详见 checkChannelEvidenceObligation 的注释）。本函数只管"通道声明是否合法"。
+  return results;
+}
+
+/**
+ * 非 Hylyre 通道 TC 的机器证据义务（tasks 6.5b；返修：外部 review 查出三处错）。
+ *
+ * **执行时点是判据的一部分**：第一版把它塞在 `checkExecutionChannelDeclaration` 里，
+ * 而那道门跑在 build / device / visual capture **之前**——真正的 visual diff 要晚得多。
+ * 结果是它只可能消费上一轮的旧文件，根本证明不了本轮结果。现在独立成门，
+ * 由主链在 visual 检查之后调用，并把**本轮 `visual_diff` 的实际结论**传进去；
+ * 该结论不是 PASS 就没有本轮视觉证据可消费。
+ *
+ * 另外两处返修见 `execution-channel-evidence.ts` 头注：读错路径、自造弱解析器。
+ */
+function checkChannelEvidenceObligation(
+  ctx: CheckContext,
+  plan: string | null,
+  priorResults: readonly CheckResult[],
+  hapPath?: string | null,
+): CheckResult[] {
+  const decl = loadExecutionChannelDeclaration(ctx, plan);
+  const nonHylyreCount =
+    decl.manual_tc_ids.length + decl.visual_tc_ids.length + decl.provider_tc_ids.length;
+  if (nonHylyreCount === 0) return [];
+
+  const visualGate = [...priorResults].reverse().find(r => r.id === 'visual_diff');
+  const bindings = bindChannelEvidence({
+    planMd: plan,
+    acceptance: loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature),
+    visual: loadVisualScreenVerdicts({
+      projectRoot: ctx.projectRoot,
+      feature: ctx.feature,
+      currentBuildFingerprint: hapPath ? computeHapBuildFingerprint(hapPath) : null,
+      visualGateStatus: visualGate?.status ?? null,
+    }),
+    visualTcIds: decl.visual_tc_ids,
+    providerTcIds: decl.provider_tc_ids,
+    manualTcIds: decl.manual_tc_ids,
+  });
+  const blocking = bindings.filter(b => b.verdict.kind !== 'covered');
+  const covered = bindings.filter(b => b.verdict.kind === 'covered');
+  return [{
+    id: 'testing_channel_evidence_obligation',
+    category: 'structure',
+    description: '非 Hylyre 通道 TC 的机器证据义务',
+    severity: 'BLOCKER',
+    status: blocking.length === 0 ? 'PASS' : 'FAIL',
+    ...(blocking.length === 0 ? {} : { failure_kind: 'testing_channel_unverified' as const }),
+    details: blocking.length === 0
+      ? [
+          `非 hylyre 通道 ${covered.length} 条 TC 全部由机器证据闭合：`,
+          ...covered.map(b => `  - [${b.channel}] ${b.verdict.detail}`),
+        ].join('\n')
+      : [
+          '以下 TC 声明为非 hylyre 通道，但未由机器证据闭合，',
+          '因此留在分母 FAIL/UNVERIFIED，本 feature 的 testing 无法 PASS：',
+          ...blocking.map(b => `  - [${b.channel}/${b.verdict.kind}] ${b.tc_id}：${b.verdict.detail}`),
+          ...(covered.length > 0
+            ? ['', `已闭合 ${covered.length} 条：${covered.map(b => b.tc_id).join(', ')}`]
+            : []),
+        ].join('\n'),
+    suggestion: blocking.length === 0
+      ? 'visual 通道的结论来自本轮 visual-diff.json 的逐屏 verdict + 截图 hash/build 指纹复核；'
+        + '改结论必须重跑视觉采集，不得改报告行或手改 JSON。'
+      : '短期：把确实要在本轮验证的 TC 改回 execution_channel=hylyre 并补齐可执行步骤，'
+        + '或补齐 visual 通道所缺的「关联 AC」/checkpoint 屏声明/本轮视觉产物。'
+        + `provider 通道：${PROVIDER_EVIDENCE_CONTRACT}`
+        + '任何情况下都不接受人工确认、confirmed_by、质量 receipt 或 manual resume 作为本轮通过证据。',
+  }];
 }
 
 function checkUiEntryCoverage(ctx: CheckContext): CheckResult[] {
@@ -3692,16 +5365,42 @@ const checker: PhaseChecker = {
       installOk: false,
       hapSha256Full: null,
     };
-    results.push(...checkDeviceTestBuildGate(ctx, deviceTestHapHolder));
-    results.push(...checkDeviceTestInstallGate(ctx, deviceTestHapHolder));
-    results.push(...checkDeviceTestRunGate(ctx, deviceTestHapHolder));
-    // d9e4b7c1 T2：goal 正式 gate 的 evidence 统一写入（build→install→run 全部完成后，
-    // 协调层单点写）。review P1：结果必须进 results——真实安装+run 已成功而 evidence
-    // 写不出时是 BLOCKER（否则 collector 把缺文件当无信号，旧包结果可能假放行）。
-    results.push(...safeRun(
-      () => writeDeviceTestEvidenceIfEligible(ctx, deviceTestHapHolder),
-      'device_test_evidence_write',
-    ));
+    // plan a6c4e9f2 T3（review P1）：通道声明是**编译期分派**，必须在任何 build/install/
+    // Hylyre/device 动作之前解析一次。否则"缺列 / 缺值 / 非法值 / 同 TC 重复"这类计划
+    // 契约错误会在烧掉一次真机 run 之后才被报出来，且期间只跑了合法子集，产出半份 trace。
+    // decl.ok=false 时零设备动作，只产结构化 BLOCKER。
+    results.push(...safeRun(() => checkExecutionChannelDeclaration(ctx, plan), 'testing_execution_channel'));
+    const channelDeclaration = loadExecutionChannelDeclaration(ctx, plan);
+    // 声明未闭合时，被拦的是**设备动作**，不是全部分析。report-only 按契约零设备/零 provider
+    // 调用，因此照常完整重算——通道迁移的 BLOCKER 已由上面那条 check 独立记账，phase 仍然 FAIL，
+    // 不需要顺手把只读重算也关掉（那会让历史 run 连诊断都跑不了）。
+    const pipelinePlan = shouldRunDevicePipeline(channelDeclaration, Boolean(ctx.reportReconcileOnly));
+    if (pipelinePlan.reportOnly) {
+      results.push(...checkReportReconcileOnlyPipeline(ctx, deviceTestHapHolder, plan, report));
+    } else if (!pipelinePlan.device) {
+      results.push({
+        id: 'device_test_run',
+        category: 'structure',
+        description: ruleDesc(ctx, 'structure_checks', 'device_test_run'),
+        severity: 'BLOCKER',
+        status: 'SKIP',
+        details:
+          '顶层 execution_channel 声明未闭合，已在任何 build/install/device 动作之前停下（零设备调用）。\n' +
+          channelDeclaration.detail,
+        suggestion: `先修好顶层 test-plan.md 的执行通道声明（${EXECUTION_CHANNEL_DOMAIN}）再跑 testing；harness 不按用例文字猜通道，也不会只跑"合法子集"。`,
+      });
+    } else {
+      results.push(...checkDeviceTestBuildGate(ctx, deviceTestHapHolder));
+      results.push(...checkDeviceTestInstallGate(ctx, deviceTestHapHolder));
+      results.push(...checkDeviceTestRunGate(ctx, deviceTestHapHolder));
+      // d9e4b7c1 T2：goal 正式 gate 的 evidence 统一写入（build→install→run 全部完成后，
+      // 协调层单点写）。review P1：结果必须进 results——真实安装+run 已成功而 evidence
+      // 写不出时是 BLOCKER（否则 collector 把缺文件当无信号，旧包结果可能假放行）。
+      results.push(...safeRun(
+        () => writeDeviceTestEvidenceIfEligible(ctx, deviceTestHapHolder),
+        'device_test_evidence_write',
+      ));
+    }
     results.push(
       ...safeRun(
         () => checkReportTraceReconciliation(ctx, report, deviceTestHapHolder),
@@ -3763,6 +5462,19 @@ const checker: PhaseChecker = {
         status: 'SKIP',
         details: `project_profile=${ctx.resolvedProfile.name} 未启用 device_test.visual_diff`,
       });
+    } else if (ctx.reportReconcileOnly) {
+      results.push({
+        id: 'visual_diff',
+        category: 'structure',
+        description: ruleDesc(ctx, 'structure_checks', 'visual_diff'),
+        severity: 'MAJOR',
+        status: 'SKIP',
+        details: 'report-only reconciliation 不触发视觉采集；仅保留既有视觉产物的确定性静态检查。',
+      });
+      results.push(...safeRun(
+        () => dispatchVisualDiffDeterministicOnly(ctx),
+        'visual_diff_deterministic',
+      ));
     } else {
       // t4（plan f3a8c6d2）：capture 未运行的路径（build/install/run 失败、静态门禁提前
       // 返回等）在此补裁决。**结构上不可能漏**：ctx 上没有值就等于 captureVisualDiff
@@ -3811,28 +5523,59 @@ const checker: PhaseChecker = {
       ),
     );
 
-    // --- goal-fakepass-hardening t4/t5：P0 状态迁移证据 + skip 治理 + 双口径 ---
+    // --- testing-stepresult-evidence：P0 acceptance StepResult 对账 + skip denominator ---
     results.push(
       ...safeRun(() => {
         const reportsBaseP0 = path.join(receiptDirPath(ctx.projectRoot, ctx.feature, 'testing'), 'reports');
         const tracePath = resolveAuthoritativeHylyreTracePath(reportsBaseP0);
         const trace = tracePath ? parseHylyreTrace(tracePath) : null;
-        const statusMap = trace
-          ? new Map((trace.cases ?? []).map((c) => [c.id.toUpperCase(), c.status] as const))
-          : null;
         const inputs = {
           projectRoot: ctx.projectRoot,
           feature: ctx.feature,
           planMd: plan ?? '',
           reportMd: report ?? '',
-          traceCaseStatus: statusMap as Map<string, string> | null,
+          trace,
+          evidenceGate: deviceTestHapHolder.hylyreEvidenceGate ?? null,
+          derivedPlanPath: deviceTestHapHolder.nativeArtifactBinding?.derived_plan_path ?? null,
           reportConclusion: report ? parseReportConclusionVerdict(report) : null,
         };
         return [...evaluateP0CoverageIntegrity(inputs), ...evaluateP0SemanticCoverage(inputs)];
       }, 'p0_semantic_gates'),
     );
 
-    results.push(...checkP0RuntimeStepEvidenceGate(ctx, results));
+    const failureTracePath = deviceTestHapHolder.hylyreTracePath ?? resolveAuthoritativeHylyreTracePath(
+      path.join(receiptDirPath(ctx.projectRoot, ctx.feature, 'testing'), 'reports'),
+    );
+    results.push(...checkHylyreCaseExecutionCompleteness(
+      ctx,
+      failureTracePath ? parseHylyreTrace(failureTracePath) : null,
+      deviceTestHapHolder.hylyreEvidenceGate,
+      deviceTestHapHolder.nativeArtifactBinding?.derived_plan_path ?? null,
+    ));
+    results.push(...checkHylyreArtifactIntegrity(
+      ctx,
+      failureTracePath,
+      failureTracePath ? parseHylyreTrace(failureTracePath) : null,
+      deviceTestHapHolder.hylyreEvidenceGate,
+    ));
+    results.push(...checkHylyreFailureRouting(
+      ctx,
+      failureTracePath ? parseHylyreTrace(failureTracePath) : null,
+      deviceTestHapHolder.hylyreEvidenceGate,
+      deviceTestHapHolder.nativeArtifactBinding?.derived_plan_path ?? null,
+    ));
+    results.push(...checkHylyreRuntimeSelectorGate(
+      ctx,
+      failureTracePath ? parseHylyreTrace(failureTracePath) : null,
+      deviceTestHapHolder.hylyreEvidenceGate,
+      deviceTestHapHolder.nativeArtifactBinding?.derived_plan_path ?? null,
+    ));
+    // 6.5b：证据义务必须晚于 visual 产出与 visual 门本身。
+    results.push(...safeRun(
+      () => checkChannelEvidenceObligation(ctx, plan, results, deviceTestHapHolder.hapPath ?? null),
+      'testing_channel_evidence_obligation',
+    ));
+    results.push(...checkP0RuntimeStepEvidenceGate(ctx, results, deviceTestHapHolder));
 
     results.push(buildTestingRunStatusResult(plan, report, results));
 
