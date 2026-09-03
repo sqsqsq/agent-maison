@@ -185,6 +185,8 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 | **Hylyre 真机闭环（2.0）**  | device-testing 端到端      | `device_test.build` / `install` / `run`；Maison vendor 源码树 + venv（运行时代码兼容外部 legacy wheel）；标准 feature + 即席 `_adhoc`（`npm run adhoc-device-test`） |
 | **v3.1 merge-framework-config** | UPDATE 补缺       | `merge-framework-config.mjs` 字段级「只补缺不覆盖」；含 `tools.hylyre.*` |
 | **v3.2–v3.4 确认 UX**     | 全 Skill 统一确认   | [`user-confirmation-ux.md`](../skills/reference/user-confirmation-ux.md) + registry schema 2.0；adapter interaction-renderer；`check-skills-confirmation-ux.ts` |
+| **发布 2.4.0 · 视觉保真飞轮** | 让自动化可信        | `chi_sim` OCR 文本信号承重；烤字 / 原子图标 / 双渲染 / 素材物化 / 结构声明台账确定性门禁；pixel_1to1 档位；判定绑定截图 hash + 安装包指纹；防伪收权（验真签名拆位、进程注入自净） |
+| **发布 3.0.0 · 机器事实唯一** | 删掉「签字放行」本身 | **人签质量通行证整体退役**（`confirmed_by` 家族不再影响任何裁决，停等点按机器事实重投影为责任阶段回修）；**Goal 运行时归一**（单一 `GoalPhaseRuntime` + run 出生契约 + `run_base_sha` write-once + run-control fencing）；**Skill 契约化 + assess 调和循环**（`contract.yaml`、`next.json` 为投影、`assurance` 取代 depth、verifier 能力化三态 + 短 request）；**反假 PASS 证据链**（负面裁决阻断、上游裁决门、closure attestation、证据身份绑定）；**testing 证据收编**（Hylyre StepResult v1 三轴 + `execution_channel`）；**一次减法**（强制 UI kit 撤销，产品组件归属唯一归宿主）；**运行时与宿主 Git/hash 解耦** |
 
 更多「**形态 / 宿主**默认假设」的剥离方向见 [`modality-framework-roadmap.md`](modality-framework-roadmap.md)。
 
@@ -539,14 +541,20 @@ Maison 在源仓完成 pack/release verify，交付 `framework-<semver>.zip`。�
 | **diff 基线**               | 未设 `HARNESS_DIFF_BASE_REF` 时默认为 **working**（工作区 vs `HEAD`）；该 env 只在 **git diff 生效域**有意义（coding/exit 门禁，以及 `ut_no_src_mutation` 在 review 未闭环时的 fallback），goal 信号下一律忽略 | CI 若要扫「区间内已提交」需显式传 `HARNESS_DIFF_BASE_REF`（如 merge-base）；UT 门禁在 review 已闭环时改用内容哈希基线，设它无效 | 见 `coding-rules.yaml` / `git-diff.ts` / `closure-attestation.ts`                                  |
 | **acceptance→test-plan 分层** | SSOT 为 `acceptance.yaml` 的 `ut_layer` + `device_focus`；`device-testing-todo.md` 已废弃 | 存量 feature 若仍引用旧 todo 易误读 | 见 [acceptance-layering.md](concepts/acceptance-layering.md)；`device_ac_delegation` BLOCKER（`device_focus`） |
 | **架构漂移检测**            | 大仓长期 drift 缺 `check-architecture` 类门             | 架构违规靠 code review 兜底       | 纳入后续议题                                                     |
+| **测试执行通道**（3.0.0）   | `manual` 通道**永久 fail-closed**（无机器证据载体的测试义务不会因「人看过」而通过）；`provider:<capability-id>` 通道目前无 per-TC 证据绑定，一律 unbound | 任一 `manual` TC 让该 feature testing 无法 PASS；provider TC 保持 FAIL/UNVERIFIED | 冻结设计，非缺陷；provider per-TC 绑定待真实 producer 出现后再做（顺延 3.2.0） |
+| **写保护射程**（3.0.0）     | 无强隔离环境下只有**合作式编辑工具守卫**（Write/Edit/MultiEdit/NotebookEdit），shell、脚本与 `node -e` 不在射程 | 场外进程仍能改 framework 控制面 | 真正的写保护靠执行环境：task sandbox / 只读挂载 / 受限 token + ACL |
 
 ### 4.2 短期（1–2 个月）
 
+3.0.0 窗口已把「人签放行」与「运行时分叉」两条主线收口，下一窗口的在途项：
+
+- **provider 通道 per-TC 机器证据绑定**（顺延 3.2.0）：等出现 hylyre 之外的真实 provider producer 再启动，先冻结契约再实现
+- **Android 工程适配**（3.1.0）：`android-app` profile（Gradle/AGP/JUnit）+ 与 profile 正交的 workspace 维度
+- **goal 旧基线读取器清理**（3.1.0）：删除已由 `run_created` 时代边界隔离的 legacy 基线读取面，纯减法
+- **完整性与授权加固**（3.1.0）：反回滚独立锚、变更判真分类器、foreign-file 复扫
 - **完成弱模型吞字防护剩余项**：三分区哨兵 sha256 门禁 + negation-diff verifier
 - **验收分层存量迁移**：各存量 feature 补全 `device_focus`、清理遗留 `device-testing-todo.md`、按 acceptance 重派生 test-plan
-- **第一次真实复杂 feature 实战**：在多步业务流程的真实场景做 v2.1 实战验证，按结果反哺 `use-cases.yaml` Schema
 - **首次外部工程接入**：用完全不同架构的 HarmonyOS 工程验证架构 DSL 化是否真的解耦
-- **trace.json + gap-notes 回传闭环打通**
 
 ### 4.3 中期（3–6 个月）
 
@@ -573,7 +581,7 @@ Maison 在源仓完成 pack/release verify，交付 `framework-<semver>.zip`。�
 - [`../README.md`](../README.md) · framework 静态使用说明
 - [`../skills/README.md`](../skills/README.md) · Skill 索引
 - [`../MIGRATION.md`](../MIGRATION.md) · 升级与迁移说明
-- [`../RELEASE-NOTES-v2.0.md`](../RELEASE-NOTES-v2.0.md) · 2.0 发布说明（[`v1.0`](../RELEASE-NOTES-v1.0.md)）
+- [`../RELEASE-NOTES-v3.0.0.md`](../RELEASE-NOTES-v3.0.0.md) · **当前版本发布说明**（往期：[`v2.4.0`](../RELEASE-NOTES-v2.4.0.md) · [`v2.3.0`](../RELEASE-NOTES-v2.3.0.md) · [`v2.0`](../RELEASE-NOTES-v2.0.md) · [`v1.0`](../RELEASE-NOTES-v1.0.md)）
 
 ### 核心 SSOT（实例工程侧）
 
@@ -614,7 +622,19 @@ Maison 在源仓完成 pack/release verify，交付 `framework-<semver>.zip`。�
 
 ---
 
-## 维护同步（2026-05-22 · 对齐 2.0）
+## 维护同步（2026-09-03 · 对齐 3.0.0）
+
+**3.0.0 新增/变更（升级后先看这几条）**：
+
+- **人签放行通道全部关闭**：`confirmed_by` / `human_confirmed` / `visual-confirm` 等 confirmation receipt 只读可审计，不再影响 verdict、phase 推进或完成判定；停等 run 恢复时按当前机器事实重投影为责任阶段 repair / capability defer / 明确诊断——补签与 resume 都不能把 FAIL 改成 PASS。
+- **Goal 单一运行时**：attended 与 detached 共用 `GoalPhaseRuntime`；新 run 须同时具备 `manifest.json` 与唯一 `run_created`，含 coding/ut 的链出生冻结 `manifest.run_base_sha`（write-once）；`run-control.json` 持有 epoch 与 owner，**不要删除或重置它来「解锁」**。
+- **Skill 契约与保证等级**：`skills/feature/<skill>/contract.yaml` 声明 inputs/capabilities/produces/checks；`next.json` 是 `assess@1` 的投影不可手改；`depth` 家族删除，改用 `assurance` + `capability_resolutions`（summary 1.3）；verifier 按能力三态启用，投递改短 request JSON。
+- **testing 执行通道**：顶层 `test-plan.md` 每条 TC 必须声明 `execution_channel`（`hylyre` | `visual` | `manual` | `provider:<id>`）；派生器无 skip 决策权；证据消费改 Hylyre StepResult v1 三轴（execution / verification / evidence）。
+- **强制 UI kit 已撤销**：`profiles/hmos-app/ui-kit/**`、kit 目标目录配置、ui-spec `block` 字段与全部 `ui_kit_*` check 删除；selector 回归裸 ui-spec 节点 id；盲档结构地板改由「ui-spec P0 节点 → visual-parity → contracts.components → contracts.files」组件所有权链承接。
+- **运行时与宿主 Git/hash 解耦**：不再生产 `framework_integrity` / 逐文件漂移结论，`integrity.drift_allowlist` 读取即忽略；宿主是不是 Git 仓、是否 clean 均不影响任何裁决；包 hash 仍由 `release:pack` / `release:verify` 与显式 updater 守住。
+- **`docs/vendor/**` 不再进发布件**（vendor 交接材料，不参与运行）。
+
+**沿用**：
 
 - **Profile 解耦**：`project_profile` 下宿主实现包括 `harness/ut-host-impl.ts`、`harness/coding-host-rules.ts`、`hvigor-runner.ts`、`hdc-runner.ts` 等；根 `check-ut` / `check-coding` / `check-testing` 经 **`capability-registry.ts`** 调度，generic profile 可 SKIP。
 - **Hylyre 真机**：device-testing `device_test.build` / `install` / `run`；标准 feature + 即席 `_adhoc`（`npm run adhoc-device-test`）；报告默认 `doc/features/<feature>/testing/reports/<ts>/hylyre/`。
@@ -635,6 +655,6 @@ Maison 在源仓完成 pack/release verify，交付 `framework-<semver>.zip`。�
 > 核心不变：任何时候模型的决策路径都必须是人类可审的显式对抗，而不是黑盒相似度。**
 
 <!--
-  last-synced: 2026-06-12 (2.3.0: spec/plan phase id、workflow DAG、skill-assets、MIGRATION §v2.3)
+  last-synced: 2026-09-03 (3.0.0: 人签通行证退役、Goal 运行时归一、Skill 契约化 + assurance、execution_channel + StepResult v1、UI kit 撤销、运行时 Git/hash 解耦)
   Skill 与中台文档路径变更后同步维护同步段落（doc_freshness）。
 -->

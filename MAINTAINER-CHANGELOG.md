@@ -2,59 +2,168 @@
 
 > 由 `npm run release:changelog` 从 `.cursor/plans/*.plan.md` 自动生成。消费者向变更见 `RELEASE-NOTES-v*.md` 与 `MIGRATION.md`。
 
-Generated: 2026-07-29 · current window: `3.0.0`
+Generated: 2026-09-03 · current window: `3.0.0`
+
+## 3.2.0
+
+- **provider 通道 per-TC 机器证据绑定 — 当前 run 身份与证据闭环** — > [0/6 completed]
+  - `provider通道per-TC机器证据绑定_当前run身份与证据闭环_e7cecd22.plan.md`
 
 ## 3.1.0
 
 - **android 工程适配** — 在 maison 3.1.0 窗口落地 Android 工程支持：新增 android-app profile（Gradle/AGP/JUnit 工具链）与一个全新的、与 profile 正交的「workspace 拓扑」维度（single_tree / binary_deps / source_overlay），与真实工程"自下而上 AAR 分层集成"的生产构建同构，不造平行构建体系。交付物 = 1 份 master .plan.md + 4 个 OpenSpec change。 [0/6 completed]
   - `android_工程适配_5e3400c3.plan.md`
+- **goal 旧基线读取器清理** — 在 3.1.0 窗口删除已由 run_created 时代边界隔离的 goal legacy 基线读取面；仅做兼容代码与对应测试清理，不引入新机制。 [0/4 completed]
+  - `goal旧基线读取器清理_legacy_coding_base与run_start回退_7b2e4c1a.plan.md`
+- **完整性与授权加固 — 反回滚独立锚 / 变更判真分类器** — > [0/3 completed]
+  - `完整性与授权加固_反回滚锚与变更判真与foreign-file复扫_b8d3c6a5.plan.md`
 
 ## 3.0.0
 
-- **cc-spec 卡死根治 — canary 归一、PASS 态冻结、门禁可修复性与无头求人闭环** — > [0/11 completed]
+- **3.0 小修合集 — 失败归因一致性 / patch 脚本幂等 / 锁屏自动解锁正确性** — > [3/3 completed]
+  - `3.0小修合集_归因一致性与写保护时点与脚本幂等与工作区根_f4b2c8e6.plan.md`
+- **Maison 优化项 — provider 计划期查表、参考图视口尺寸前置门、受限 case 首部复位、versionCode=0 归一** — > [7/7 completed]
+  - `Maison优化项_能力查表与视口口径与case复位_b3d7e5a1.plan.md`
+- **P0 跳过自愈减法 — 豁免收窄、可修缺陷优先回退与 testing 口径收口** — > [4/4 completed]
+  - `P0跳过自愈减法_豁免收窄与可修缺陷优先回退_c7e4a2d9.plan.md`
+- **bc-openCard 3.0.0 实测复盘根治 — 人签时点投影 / closure 死锁 / 视觉身份与熔断 / 降级回升** — > [7/7 completed]
+  - `bc-openCard复盘根治_人签时点投影与closure死锁与视觉身份熔断_f3a8c6d2.plan.md`
+- **cc-spec 卡死根治 — canary 归一、PASS 态冻结、门禁可修复性与无头求人闭环** — > [11/11 completed]
   - `cc-spec卡死根治_PASS态冻结与门禁可修复性与无头求人闭环_7c4f2e9b.plan.md`
-- **宿主 framework 写保护与完整性加固** — > [6/7 completed]
+- **codeagent adapter 接入——.cac 物化与 claude 差异最小化** — 新增 codeagent（Claude Code CLI 内核衍生，物化目录 .cac，headless CLI=codeagentcli）adapter。T0 六项宿主探针已全部回灌（2026-07-29），三处待定分支全部收敛到最优形态：settings.json 用 ${CODEAGENT3_PROJECT_DIR}（实证可展开）、AskUserQuestion 同名同签名（rules 共享成立）、Read 事件同构（视觉链入册）。收敛原则：只共享经实证且不含 adapter 身份/工具能力/目标目录差异的模板——共享=verifier/goal-condition/hooks/rules/AGENTS.md，分叉=settings.json+12 份 commands（身份行仿 cursor 先例）。hooks 项目根解析升级 import.meta.url 自锚+CODEAGENT3 env（cd 漂移已实证）；goal 接线 13 点闭合清单（含 keyed registry/substring dispatch 盲区与哨兵两处实采漏判修复）。 [6/7 completed]
+  - `codeagent_adapter接入_cac物化与claude差异最小化_c7a9e2f4.plan.md`
+- **宿主 framework 写保护与完整性加固** — > [7/7 completed]
   - `consumer-guard_宿主framework写保护与完整性加固_e8f5a2c7.plan.md`
+- **contracts 统一解析边界 — 引用闭环真源收编与裸读禁令** — > [5/5 completed]
+  - `contracts统一解析边界_引用闭环真源收编与裸读禁令_c7e2a9d4.plan.md`
 - **critic 闭环基础设施加固 — 结构化发现 + 熔断账本 + 回执生产 + 静稳采样 + 校准回灌** — > [11/12 completed]
   - `critic-loop-hardening_自动闭环机器化与校准回灌_f7a3d9c2.plan.md`
-- **framework 轻量化重构 — 分档工作流与验证收敛** — > [9/10 completed]
+- **framework-init 正向意图收口 — 删除 Git 专用路由与 init 宿主 SCM 耦合** — > [7/7 completed]
+  - `framework-init正向意图收口_删除Git专用路由与runtime完整性残留_33714d0c.plan.md`
+- **framework-init 误触发纠偏（方案已撤回）** — > [0/1 completed]
+  - `framework-init误触发纠偏_Git-SCM-L0路由与Skill意图早退_d3a7f1c8.plan.md`
+- **framework 轻量化重构 — 分档工作流与验证收敛** — > [10/10 completed]
   - `framework_轻量化重构_分档工作流与验证收敛_d4a7c1e8.plan.md`
+- **framework 运行时 Git 解耦 — 发布件更新不依赖宿主提交** — > [9/9 completed]
+  - `framework运行时Git解耦_发布件更新不依赖宿主提交_c3d8e1f6.plan.md`
 - **goal 无头假 PASS 事故链根治 — 决议账本 + closure attestation + P0 状态迁移证明 + 完成血缘 + 档位对账** — (no overview) [0/0 completed]
   - `goal-fakepass-hardening_无头假PASS事故链根治_e3a9c5d1.plan.md`
+- **goal 报告与监控真值 — 失败归因一致性 / monitor stale 误报 / 硬预算与证据卫生集成断言** — > [3/5 completed]
+  - `goal报告与监控真值_失败归因一致性与硬预算集成断言_d6b1a8e3.plan.md`
+- **goal 无人值守宿主敌意韧性 — Job 团灭、孤儿治理与 resume 真源** — > [5/5 completed]
+  - `goal无人值守宿主敌意韧性_Job团灭孤儿治理与resume真源_c6a9e4d2.plan.md`
+- **goal 时长复盘三根因收口 — 修复目标交接与预算真源** — > [5/5 completed]
+  - `goal时长复盘三根因收口_修复目标交接与预算真源_e9d4b7a3.plan.md`
+- **goal 模型钉（显式 --adapter-model）+ 金丝雀 CLI 硬失败前置** — > [5/5 completed]
+  - `goal模型钉与preflight硬失败前置_显式adapter-model与金丝雀分类_d7f3a9c4.plan.md`
+- **goal 监控默认反转 — 无人值守交还轮次与查时再报** — > [4/4 completed]
+  - `goal监控默认反转_无人值守交还轮次与查时再报_f8c3d6a2.plan.md`
+- **goal 自愈缺口收口 — 完成证据新鲜度 / 构建事务分流 / 责任类别不被洗白 / 启动入口** — > [4/4 completed]
+  - `goal自愈缺口收口_归因漏类与空转重试与输出零捕获_f9c2e6b4.plan.md`
 - **goal 超时重试冷启动回喂失效 + 门禁 ?? [] 崩溃类 + framework_integrity 拉锯 全盘根治** — > [9/11 completed]
   - `goal超时重试冷启动与门禁崩溃类与integrity拉锯根治_d9b4f7e2.plan.md`
+- **goal 跨阶段闭环收口 — 回执 attempt 门禁 phase 作用域 / 上游确定性关环路由 / halt 标签真值 / 证据冻结一致性** — > [5/5 completed]
+  - `goal跨阶段闭环收口_回执phase作用域与上游关环路由与冻结一致性_b3e8d4c7.plan.md`
+- **goal 运行时归一总纲 — run 出生契约 · 阶段运行时统一 · 契约引用闭包（master plan）** — > [6/6 completed]
+  - `goal运行时归一总纲_出生契约与阶段运行时与契约引用闭包_a3d7c9e2.plan.md`
+- **Goal 运行模式真值 — 监督边界、attended goal context 与跳板身份中性化** — > [4/4 completed]
+  - `goal运行模式真值_attended门禁与同名跳板与supervisor越界_b7d2f4a1.plan.md`
+- **统一 headless adapter 全权限执行契约 — 旗标映射与 manifest 归一化（headless-full-permission-contract）** — > [8/8 completed]
+  - `headless全权限执行契约_adapter旗标统一与manifest归一化_a8e5c3f9.plan.md`
 - **宿主反馈回灌(2.3.0) — 报错自解释 / 能力缺口诚实化 / receipt 瘦身** — > [8/9 completed]
   - `host-feedback-dx-hardening_报错自解释与能力缺口三态与凭证机器预填_e6a3c9f4.plan.md`
+- **hylyre 源码树 vendor — whl 退役与 schema 2 双兼容** — > [6/6 completed]
+  - `hylyre源码树vendor_whl退役与schema2双兼容_a7c3e9d1.plan.md`
 - **交互式视觉能力实测与 framework.local.json 无感收口** — > [5/5 completed]
   - `interactive-vision-canary_交互式视觉能力实测与local无感收口_b7e42d19.plan.md`
-- **运行时布局树几何 oracle + 自报度量诚实性治理 + VL critic 闭环 — 视觉回环几何盲区根治** — > [11/12 completed]
+- **运行时布局树几何 oracle + 自报度量诚实性治理 + VL critic 闭环 — 视觉回环几何盲区根治** — > [12/13 completed]
   - `layout-oracle_视觉几何盲区根治_c6d8f2b4.plan.md`
-- **signed-hap 产物发现去硬编码 + 未签名精确诊断 — 宿主 ut/testing "签名失败" 误报根治** — > [4/5 completed]
+- **plan 待办 SSOT — frontmatter todos 唯一真源，正文未勾项拦截** — > [3/3 completed]
+  - `plan待办SSOT_frontmatter唯一真源与正文未勾项拦截_a3e7d1c9.plan.md`
+- **resume 验证优先 — 停等后先重验、不再无条件重调 agent** — > [3/3 completed]
+  - `resume验证优先_停等复跑消除_b5f1d9c3.plan.md`
+- **signed-hap 产物发现去硬编码 + 未签名精确诊断 — 宿主 ut/testing "签名失败" 误报根治** — > [5/5 completed]
   - `signed-hap-discovery_ut真机签名误报根治_d7e4b2a9.plan.md`
-- **testing 写保护误伤与真机缺陷回修缺口 — 生成物分类降级 / 正式 gate 强制安装 + device_test 回修接入** — > [0/3 completed]
+- **Skill6 派生计划 SSOT** — 根因是 harness 把 `testing/reports/` 下「任意已存在的 hylyre 派生文件」当作真源，且只做「派生 ⊆ 顶层」校验，从不根据 `test-plan.md` 判断覆盖是否过期/不完整；烟测占位因此长期劫持执行。按你选择的策略，在 `check-testing.ts` 增加以顶层计划为 SSOT 的覆盖/新鲜度门禁（BLOCKER），并修正「选最新派生目录」的启发式。 [7/7 completed]
+  - `skill6_派生计划_ssot_420a5005.plan.md`
+- **Skill 契约化与调和循环** — 把 feature skill 从「流水线站点」重构为「数据契约 + 降级阶梯」的独立个体（可分可合），新增确定性 assess 引擎挂在 harness 出口自动给出下一步推荐；非 goal 模式 = 人按继续键的调和循环，goal 模式 = agent 按继续键的同一循环。goal-runner 收敛为薄 driver，裁决/推荐单一大脑。横向契约层全宽度先行，纵向降级阶梯按需求清单（ut → testing → review）风险前置推进。 [16/18 completed]
+  - `skill契约化与调和循环_7c4e9a2b.plan.md`
+- **真机归因精度 — 谓词保真 / 元素状态判据 / 锚点↔spec node 规范化 / 视觉回归解锁** — > [6/7 completed]
+  - `spec锚点契约_uispec到uikit锚点派生与归因三态化_e3c7d95f.plan.md`
+- **spec 阶段闭环阻断根治（需求 provenance + blocked 可诊断投影）** — > [3/3 completed]
+  - `spec阶段闭环阻断根治_需求来源阶段驱动回退与blocked可诊断化_c8e5b3f1.plan.md`
+- **testing 回灌纠偏 — selector 运行时裁决、执行通道、首失败与身份隔离** — > [9/9 completed]
+  - `testing回灌纠偏_入口可达性与首失败归因收口_a6c4e9f2.plan.md`
+- **testing 证据消费收编 — StepResult 唯一真源与推测退场** — > [8/8 completed]
+  - `testing证据消费收编_StepResult唯一真源与推测退场_d8b3f6a1.plan.md`
+- **testing 写保护误伤与真机缺陷回修缺口 — 生成物分类降级 / 正式 gate 强制安装 + device_test 回修接入** — > [3/3 completed]
   - `testing误伤与回修缺口_生成物分类与真机缺陷回退_d9e4b7c1.plan.md`
-- **ut 签名/环境缺口失败分类修正 + 分层诊断头部化 + 装机失败话术硬约束** — > [4/5 completed]
+- **ut 签名/环境缺口失败分类修正 + 分层诊断头部化 + 装机失败话术硬约束** — > [5/5 completed]
   - `ut-sign-gap-toolchain-classify_签名环境缺口误归code-regression与诊断头部化_b4e7a2c9.plan.md`
 - **UT 诊断真实性 — feature scope 归属与覆盖证据收口** — business-UT gate correctness 收口：① AC 与 BD 的同数字后缀不再互相冒充覆盖；② coverage-evidence 的 dag_archived/dag_ephemeral 声明必须匹配真实 DAG 来源；③ 存在但损坏的 DAG、coverage-evidence、testability-audit、mock-plan 从静默跳过或按缺失处理改为路径明确的 BLOCKER；④ it() 名称门直接接受 [BD-<id>] 起始。canonical 路径与 schema 未变，无需迁移。 [1/1 completed]
   - `ut_diagnostic_truth_scope_and_evidence_d3f8a1c6.plan.md`
+- **UT 契约冲突收口 — boundary 口径 / audit 类名 / 锁屏重采样 / 诊断供给（ut-contract-conflict-closure）** — > [6/6 completed]
+  - `ut契约冲突收口_boundary口径与audit类名与解锁重采样_f4c8d2b7.plan.md`
+- **UT 存量共存 — 门禁身份模型与 hypium 真实语法对齐** — > [3/4 completed]
+  - `ut存量共存_门禁身份模型与hypium真实语法对齐_423e5d0f.plan.md`
+- **UT 改码门禁 direct 基线归一 — attestation-first 免提交** — > [5/5 completed]
+  - `ut改码门禁direct基线归一_attestation-first免提交_f3a9d2c7.plan.md`
+- **verifier 能力化 — policy 驱动短 request 与稳定 subject 裁撤** — > [6/6 completed]
+  - `verifier能力化_policy驱动短request与稳定subject裁撤_a9d4e7c2.plan.md`
+- **verifier 证据身份绑定 — subject 指纹与 JSON 真源收编** — > [6/6 completed]
+  - `verifier证据身份绑定_subject指纹与JSON真源收编_e5b8c3f7.plan.md`
 - **vision-canary 缓存生命周期与探测有效性加固 — probe_version 迁移 + 严格判卷 + TTL** — (no overview) [0/0 completed]
   - `vision-canary-probe-validity_探测失败不落盲档缓存_c7d2e9a4.plan.md`
+- **事故修复四件套 — local config 无损写回 / codex 审批旗标位置 / 解锁话术 / 显式凭据 rebind** — > [4/4 completed]
+  - `事故修复四件套_config无损写回与codex审批位置与解锁话术与凭据rebind_c9f4e7a2.plan.md`
+- **修复环裁决化 — 候选真伪裁决、收敛不变式与增量修复环** — > [3/3 completed]
+  - `修复环裁决化_候选真伪裁决与收敛不变式与增量修复环_e2b7c4a9.plan.md`
 - **场外信任状态最小化 — 测试隔离 / 生命周期回收 / 单写者修复 / 金丝雀临时化** — > [4/4 completed]
   - `场外信任状态最小化_测试泄漏根治与终局回收_b7e4d2a9.plan.md`
-- **宿主回灌三修 — 截断链预检鸡生蛋、wall-clock 活跃预算、halt 出路真实化** — > [0/5 completed]
+- **宿主运行边界真值 — 实际 CLI、需求源图片与视觉证据可达性** — > [4/4 completed]
+  - `宿主启动输入真值_实际CLI选择与需求源图片发现_c4e8a1f7.plan.md`
+- **宿主回灌三修 — 截断链预检鸡生蛋、wall-clock 活跃预算、halt 出路真实化** — > [5/5 completed]
   - `宿主回灌三修_截断链预检与活跃预算与halt出路_e7c2a4d8.plan.md`
+- **收官真值与强制 kit 撤销 — 完成≠通过、错误约束删除与活性真值** — > [5/5 completed]
+  - `收官真值与强制kit撤销_FAIL收口单源与错误约束删除_e6b3f8d2.plan.md`
+- **文本读入口 EOL 归一 — 手写解析的 CRLF 脆弱面收口** — (no overview) [3/3 completed]
+  - `文本读入口EOL归一_手写解析CRLF脆弱面普查与收口_b6d3f7a1.plan.md`
+- **无人值守生存能力 — liveness beacon / supervisor auto-resume / 声明式 launch-liveness-wakeup** — > [2/3 completed]
+  - `无人值守生存能力_liveness与supervisor与声明式唤醒_a4f7e2b1.plan.md`
+- **无人值守闭环根治 — 全阶段恢复与人签通行证退役（autonomous recovery without human pass keys）** — > [9/9 completed]
+  - `无人值守闭环根治_全阶段恢复与人签通行证退役_c5a7e2f9.plan.md`
+- **框架可靠性总纲 — 双平面一内核：证据降权 / 单一下一步裁决 / 可唤醒停放 / 真实发布件整机闭环** — > [4/4 completed]
+  - `框架可靠性总纲_整机组装验证与停放恢复闭环与诊断优先_e5d8a2c4.plan.md`
 - **盲档意图自动定档 — 三正交轴（质量目标/严格度/素材策略）与「非关键冲突不阻塞」** — (no overview) [0/0 completed]
   - `盲档意图自动定档_自声明识别与非关键冲突不阻塞_f6b2d9a4.plan.md`
-- **盲档视觉根治 — 负面裁决传播、盲档地板抬升（可执行组件+确定性度量）与多轴完成语义** — > [6/8 completed]
+- **盲档视觉委托 — 单写者与只读视觉 provider 协作（delegated vision）** — > [8/8 completed]
+  - `盲档视觉委托_单写者与只读视觉provider协作_ab072691.plan.md`
+- **盲档视觉根治 — 负面裁决传播、盲档地板抬升（可执行组件+确定性度量）与多轴完成语义** — > [7/8 completed]
   - `盲档视觉根治_盲档地板重构与视觉债务收口_a9d4c7e2.plan.md`
 - **结果级范围门禁 — UI 文件级 scope 门 / 消费者结果 golden** — > [4/5 completed]
   - `结果级范围门禁_scope契约SSOT与消费者结果golden_c4e8b1d3.plan.md`
-- **视觉负向优化根治 — 能力真值跨 run 收口/盲档非破坏化/testing→coding 回修环/journal 确定性/两层 golden** — > [0/0 completed]
+- **统一裁决与保守恢复 — recover 动作 / 动态执行上下文 / 两事故闭环** — > [4/4 completed]
+  - `统一裁决与保守恢复_recover动作与执行上下文_a5f9c3e2.plan.md`
+- **编译失败诊断保真 — 00308018 误导收敛 / 失败任务可见 / analyze 默认对齐 DevEco** — > [2/2 completed]
+  - `编译失败诊断保真_00308018归因分层与主错定位与analyze默认对齐_c9e3f7d1.plan.md`
+- **宿主编译真值治理 — 终态判据 / 配置来源 / 编译形态** — > [7/7 completed]
+  - `编译形态解析与配置来源治理_推断值不得冒充用户意图_a7c3f9e2.plan.md`
+- **视觉机制减法 — 剪除证明账本/策略降级/自锁判死（vision-mechanism-subtraction）** — > [7/7 completed]
+  - `视觉机制减法_剪除证明账本策略降级与自锁判死_a1f4d8e6.plan.md`
+- **视觉负向优化根治 — 能力真值跨 run 收口/盲档非破坏化/testing→coding 回修环/journal 确定性/两层 golden** — > [13/16 completed]
   - `视觉负向优化根治_能力真值跨run与盲档非破坏与回修环_d8c5f3a7.plan.md`
-- **视觉闭环二期 — 视觉能力真值路由、真机执行基建（UTF-8/页面身份）与阶段回退编排根治** — (no overview) [0/0 completed]
+- **视觉闭环二期 — 视觉能力真值路由、真机执行基建（UTF-8/页面身份）与阶段回退编排根治** — (no overview) [11/16 completed]
   - `视觉闭环二期_能力真值路由与真机基建与阶段回退根治_e9c4a7f3.plan.md`
 - **设备就绪与阶段完成判定 — 分类复用 / 就绪门 / 模拟器托管 / 完成观测 / 声明前移** — > [6/6 completed]
   - `设备就绪与阶段完成判定_解锁授权与模拟器托管_a7f2e5d1.plan.md`
+- **设备策略真值与解锁接线 — --check 真值 / 普通模式入口级设备前置与全链 target 接线** — > [3/3 completed]
+  - `设备策略真值与解锁接线_check假阳性与serial回退与普通模式硬门与弹窗登记_b3f7d9a2.plan.md`
+- **责任阶段统一路由 — review 缺陷回退与 assess 事实供给拉通（responsible-phase-unified-routing）** — > [4/4 completed]
+  - `责任阶段统一路由_review缺陷回退与assess事实供给拉通_b6e4c9f2.plan.md`
+- **通用降级模型 — 能力裁剪与统一保证等级** — > [13/13 completed]
+  - `通用降级模型_能力裁剪与统一保证等级_d4f8b2a6.plan.md`
+- **锁屏 reveal 执行真值 — velocity/timeout 相容 / 执行事实不丢 / reveal_failed 归因（lockscreen-reveal-execution-truth）** — > [9/9 completed]
+  - `锁屏reveal执行真值_velocity与超时相容与reveal_failed归因_a4e7c2f9.plan.md`
 
 ## 2.4.0
 
@@ -241,7 +350,6 @@ Generated: 2026-07-29 · current window: `3.0.0`
 - **skill6 hylyre integration** — 在 hmos-app profile 范围内，将 Hylyre 真机自动化测试能力（CLI 优先）集成进 framework Skill 6。Hylyre 侧 add-vendor-bundle change 已完成（产出 hylyre-0.1.0-py3-none-any.whl + release.manifest.json），framework 这边消费这份 wheel + 调用 `hylyre run --plan` CLI。顶层 test-plan.md 保持自然语言供人审，agent 自动派生符合 hylyre 7 列 JSON 步骤硬约束的可执行 plan 跑真机；hylyre 产出的 test-report.md / trace.json 由 agent 合成回顶层报告（直接复用 hylyre 4 状态枚举：通过 / 失败 / 阻塞 / 跳过，与 framework 现有模板天然对齐）。其他 profile 完全不受影响。
 - **Skill6 Hylyre 安装与失败链** — 截图里的「请选手动/自装 Hylyre」并非 Framework 设计，而是 agent 走错入口且 harness 在到达 ensure 之前失败后的即兴话术。单机杂乱错误多为「入口混用 + 宿主环境变量/venv + framework 版本/类型缺陷」叠加，不应默认改 framework。
 - **Skill6 即席真机优化** — 针对即席（ad-hoc）真机测试的三大痛点——重复探索 main ability、错误 Hylyre 步骤、app-snapshot-cache 不积累——在 framework 层新增「App 元数据 + 计划校验 + 即席编排 CLI」，并同步 Skill 6 协议，使 agent 有稳定一键路径，同时保留分步兜底。
-- **Skill6 派生计划 SSOT** — 根因是 harness 把 `testing/reports/` 下「任意已存在的 hylyre 派生文件」当作真源，且只做「派生 ⊆ 顶层」校验，从不根据 `test-plan.md` 判断覆盖是否过期/不完整；烟测占位因此长期劫持执行。按你选择的策略，在 `check-testing.ts` 增加以顶层计划为 SSOT 的覆盖/新鲜度门禁（BLOCKER），并修正「选最新派生目录」的启发式。
 - **Skill6 端到端自动派生** — 让 Skill 6 同时支持两种入口——feature 需求驱动 + 即席自然语言用例；并集成 app-snapshot-cache 自动维护。
 - **Skill6 跨工程退化诊断** — 即席真机在新工程退化的核心不是 Hylyre 本身，也不是 framework 版本漂移（已同步），而是 warmup 失败 → 硬 exit、不写 trace.json、agent 无 SSOT 路径，导致 agent 读旧目录捏造结论。补齐 warmup 韧性、anti-fabrication 契约、设备/App 状态可观测、bootstrap 提示与 agent 规则。
 - **Spec-Harness验证体系** — 在现有 6 阶段 Skill 流水线之上，引入独立的 Spec（规约）+ Harness（验证器）层，为每个阶段的产出建立机器可验证的契约和自动化验证机制。Spec/Harness 独立于 Cursor，可在任意大模型 + 任意 IDE 上运行。
