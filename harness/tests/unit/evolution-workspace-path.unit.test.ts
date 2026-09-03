@@ -51,13 +51,9 @@ import {
   resolveRunnerLockPath,
 } from '../../scripts/utils/goal-progress';
 import { resolveFactsAbsPath } from '../../scripts/utils/context-facts';
-import {
-  casAcquireRunOwner,
-  releaseRunOwner,
-  readRunControl,
-} from '../../scripts/utils/goal-run-control';
+import { casAcquireRunOwner, releaseRunOwner } from '../../scripts/utils/goal-run-control';
 import { appendGoalEventFenced } from '../../scripts/utils/goal-in-session-evidence';
-import { prepareGoalModeRun, runGoalModeHostBridge } from '../../scripts/goal-mode-entry';
+import { prepareGoalModeRun } from '../../scripts/goal-mode-entry';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import { loadEventsJsonl } from '../../scripts/utils/goal-runner-phase';
 import checker from '../../scripts/check-catalog';
@@ -824,7 +820,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
 
   // proof 13：Goal Mode 真实启动/暂停/恢复（生产入口 prepareGoalModeRun + 事件写入 +
   // 锁获取/释放/重获 + manifest 读回），receipt/report/manifest/lock/context 全部落 CU 物理目录
-  results.push(await asyncTest('proof 13：真实 Goal Mode 启动/暂停/恢复全链落 CU 物理目录（host bridge 暂停/恢复两轮 + proof 14 无影子目录）', async () => {
+  results.push(await asyncTest('proof 13：真实 Goal Mode 启动/暂停/恢复全链落 CU 物理目录（prepare + owner 重获 + 生产 receipt writer + proof 14 无影子目录）', async () => {
     const temp2 = buildWorkspaceProject();
     try {
       // 显式配置 receipt/reports pattern（P2 spec：默认形态 = <features_dir>/<feature>/<phase>/…）；
@@ -836,6 +832,8 @@ export async function runAll(): Promise<UnitCaseResult[]> {
           project_name: 'proof13',
           project_type: 'app',
           agent_adapter: 'claude',
+          // 3.0.0 统一运行时：attach 前 reconcileRunAdapter 要求 run 的 adapter 已物化（候选 + 入口文件）
+          materialized_adapters: ['claude', 'codex'],
           paths: {
             features_dir: 'doc/features',
             receipt_dir_pattern: 'doc/features/<feature>/<phase>',
@@ -844,6 +842,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
         }, null, 2),
         'utf8',
       );
+      fs.writeFileSync(path.join(temp2, 'AGENTS.md'), '# AGENTS\n', 'utf8');
       const unitId = UNIT_IDS[0];
       const featureId = deriveChangeUnitFeatureId(BLUEPRINT_ID, unitId);
       const rel = featureRelativePath(featureId);
@@ -878,7 +877,12 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       });
       const eventsAbs = path.join(temp2, prepared.manifest.report_dir, 'events.jsonl');
       assert(fs.existsSync(eventsAbs), 'events.jsonl 未落盘');
-      assert(loadEventsJsonl(eventsAbs).length === 1, 'events.jsonl 应恰有一行');
+      // run 出生契约（3.0.0）：prepare 即落 run_created 一行；上面的 fenced 事件是第二行
+      const eventRows = loadEventsJsonl(eventsAbs);
+      assert(
+        eventRows.length === 2 && eventRows[0]?.type === 'run_created' && eventRows[1]?.type === 'phase_started',
+        `events.jsonl 应为 run_created + 本次 fenced 事件两行：${JSON.stringify(eventRows.map(e => e.type))}`,
+      );
       assert(!eventsAbs.replace(/\\/g, '/').includes(encodeCuFeatureId(BLUEPRINT_ID, unitId)), 'events 路径不得含编码 id');
 
       // 暂停：释放 owner
@@ -910,78 +914,11 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       const rep = featurePhaseReportsDir(temp2, featureId, 'coding').replace(/\\/g, '/');
       assert(rep.endsWith(`doc/features/${BLUEPRINT_ID}/${unitId}/coding/reports`), `report 未落 CU 物理目录：${rep}`);
 
-      // ── 真实 Goal Mode 启停恢复（host bridge 两轮，正式 waiting 语义）──────────
-      // 暂停：在 CU 物理报告目录写 summary.json（verdict=INCOMPLETE + externalBlocked blocker）
-      // → assess 推荐 waiting（不执行 phase、不伪造推进）→ host bridge 释放 owner = 可恢复停点。
-      // 该 summary 位置正是 featurePhaseReportsDir（CU 物理目录）——顺带验证 report 落点。
-      const specReports = featurePhaseReportsDir(temp2, featureId, 'spec', FRAMEWORK_ROOT_REPO);
-      fs.mkdirSync(specReports, { recursive: true });
-      fs.writeFileSync(path.join(specReports, 'summary.json'), JSON.stringify({
-        schema_version: '1.2',
-        verdict: 'INCOMPLETE',
-        closure_status: 'open',
-        assurance: 'full',
-        blockers: [{ id: 'device_missing', blocking_class: 'externalBlocked' }],
-      }), 'utf8');
-      let executedFirst = false;
-      const bridgeFirst = await runGoalModeHostBridge({
-        projectRoot: temp2,
-        frameworkRoot: FRAMEWORK_ROOT_REPO,
-        feature: featureId,
-        runId,
-        adapter: 'codex',
-        runMode: 'attended',
-        maxRounds: 1,
-        executePhase: async phase => {
-          executedFirst = true;
-          return { status: 'passed', phase };
-        },
-      });
-      assert(bridgeFirst.status === 'waiting' && !!bridgeFirst.waiting_item,
-        `第一轮应 waiting（blocker 暂停点，不执行 phase）：${bridgeFirst.status} ${bridgeFirst.waiting_item ?? ''}`);
-      assert(!executedFirst, '暂停点不得执行 phase（waiting 语义）');
-      // 暂停点后 events 计数（恢复轮必须在基准之上严格增长，防“事件没写、用例恒绿”）
-      const eventsAfterPause = loadEventsJsonl(eventsAbs).length;
-      assert(typeof bridgeFirst.waiting_item === 'string' && bridgeFirst.waiting_item.length > 0,
-        '暂停理由应非空（blocker 暂停点）；实际=' + String(bridgeFirst.waiting_item));
-      // 暂停后 owner 已被 host bridge 释放（best-effort release）——必须在状态上闭合
-      //（review 三轮：不仅 run-control 存在，且 owner.state === released）
-      const controlAfterPause = readRunControl(path.dirname(prepared.manifestPath), runId);
-      assert(controlAfterPause !== null, '暂停后 run-control 仍存在');
-      assert(controlAfterPause!.owner?.state === 'released',
-        `暂停后 owner 应为 released（可恢复停点）：${controlAfterPause!.owner?.state}`);
-
-      // 恢复：移除 blocker（外部条件解除的真实姿势：bloacker 从 summary 消失）→ 第二轮
-      // host bridge 重新加载已落盘 manifest + 重获 owner → assess 推荐 phase → execute 成功
-      fs.writeFileSync(path.join(specReports, 'summary.json'), JSON.stringify({
-        schema_version: '1.2',
-        verdict: 'OPEN',
-        closure_status: 'open',
-        assurance: 'full',
-        blockers: [],
-      }), 'utf8');
-      let executedSecond = false;
-      const bridgeSecond = await runGoalModeHostBridge({
-        projectRoot: temp2,
-        frameworkRoot: FRAMEWORK_ROOT_REPO,
-        feature: featureId,
-        runId,
-        adapter: 'codex',
-        runMode: 'attended',
-        maxRounds: 1,
-        executePhase: async phase => {
-          executedSecond = true;
-          return { status: 'passed', phase };
-        },
-      });
-      assert(bridgeSecond.status === 'executed' || bridgeSecond.status === 'fused',
-        `第二轮应恢复执行（executed/fused）：${bridgeSecond.status}`);
-      assert(executedSecond, '恢复后必须真正执行 phase');
-      // 恢复后 events 追加（真实事件写入在 runInSessionRound 内完成）；严格大于暂停点计数
-      const eventsAfterResume = loadEventsJsonl(eventsAbs);
-      assert(eventsAfterResume.length > eventsAfterPause,
-        `恢复轮应追加事件：暂停后 ${eventsAfterPause} 条，恢复后 ${eventsAfterResume.length} 条`);
-
+      // ── Goal Mode attach ──────────────────────────────────────────────
+      // 3.0.0 起 GoalPhaseRuntime 是唯一生命周期 owner，旧 in-session driver 的「blocker →
+      // waiting → 恢复」两轮编排已退役：park/resume 语义由 goal-park-resume 覆盖；CU Feature +
+      // 自定义 features_dir 经生产 host bridge 真实 attach（prepare → runGoalModeHostBridge →
+      // 执行 phase）由 goal-in-session-driver「goal path matrix」用例覆盖。本证明保留路径真值。
       // ── 真实产物落盘（review 三轮收尾）────────────────────────────
       // receipt：用生产 writer writeReceiptScaffold 落盘（不走手工 writeFileSync）；
       // 工厂入口解析 receipt 路径（resolveReceiptFilePath 内部经 SSOT）——真实 writer 若
