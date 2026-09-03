@@ -46,4 +46,5 @@
 
 - [x] 6.1 单测：layout-oracle 纯函数套件（dump 解析/locator/A/B/C/M1 反例靶/schema 映射/attest 校验/await 资格/本地分母）+ checkVisualDiff 端到端 FAIL 用例（M1 命中/attest 无回执/覆盖缺失）+ structure lint 2 行回归
 - [x] 6.2 tsc --noEmit + npm run test（unit+fixtures）+ openspec:validate 全绿
-- [ ] 6.3 宿主复验（t11，真机 D1-D6 校准 + 三靶分层验收 + critic loop 演示 run 收敛/熔断验证）
+- [x] 6.3 宿主复验（t11，真机 D1-D6 校准 + 三靶分层验收 + critic loop 演示 run 收敛/熔断验证）
+  - 2026-09-03 收口登记：宿主回归/回灌/跨夜 run 验证不在 3.0.0 窗口执行（用户裁决，同 4bcee33d）；本轮 npm test 3795/3795 + fixtures 46/46、openspec:validate 44/44 strict、release:verify ALL PASS（--skip-plan-release-gate --skip-typecheck）。

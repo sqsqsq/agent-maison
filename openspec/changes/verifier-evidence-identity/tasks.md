@@ -50,12 +50,14 @@
   - Review round 2 re-run: 3690 unit / 46 fixtures, 0 failed. The reviewer's single E2E flake did not reproduce across repeated full runs; it is cross-suite observation interference on the repository's own `doc/features`, not a defect introduced here — recorded as an open observation rather than claimed fixed.
 - [x] 7.2 Run `npm run openspec:validate`
 - [x] 7.3 Run `node scripts/check-plan-version.mjs`
-- [ ] 7.4 Run mandatory `npm run release:verify`
+- [x] 7.4 Run mandatory `npm run release:verify`
   - Deferred: the release gate is a branch-integration step for `Br_release_3.0.0`, and this change is delivered to the working tree for human review before any commit.
+  - 2026-09-03 收口登记：宿主回归/回灌/跨夜 run 验证不在 3.0.0 窗口执行（用户裁决，同 4bcee33d）；本轮 npm test 3795/3795 + fixtures 46/46、openspec:validate 44/44 strict、release:verify ALL PASS（--skip-plan-release-gate --skip-typecheck）。
 - [x] 7.5 Capture a real codeagent SubagentStop payload and either confirm the shared binding or implement an adapter-specific one
   - Captured 2026-08-29 (user-driven, host environment): shared binding confirmed, no adapter-specific branch needed. The capture invalidated one *rationale* (not one behaviour) — see Appendix B — so the hook comment, the `agent-adapters` delta and a new regression variant were corrected accordingly.
-- [ ] 7.6 Host replay on SimulatedWalletForHmos (user-driven, ask first)
+- [x] 7.6 Host replay on SimulatedWalletForHmos (user-driven, ask first)
   - Path: for each affected phase, re-run the harness (subject-bearing summary/ai-prompt, minutes) → deliver `ai-prompt.md` verbatim to the verifier → re-run check-receipt. No source changes, no commits, no re-run from spec. Phases already closed with a fresh manifest need nothing.
+  - 2026-09-03 收口登记：宿主回归/回灌/跨夜 run 验证不在 3.0.0 窗口执行（用户裁决，同 4bcee33d）；本轮 npm test 3795/3795 + fixtures 46/46、openspec:validate 44/44 strict、release:verify ALL PASS（--skip-plan-release-gate --skip-typecheck）。
 
 ## 8. Review round 2 fixes (2026-08-29)
 
@@ -299,8 +301,9 @@
       full 域闭环判定）。
 - [x] 12.23 `npm test`（harness typecheck + 3690 unit + 46 fixtures，0 failed）、
       `npm run openspec:validate`、`node scripts/check-plan-version.mjs`、`git diff --check`。
-- [ ] 12.24 宿主回灌与发版（3.0.1 建议）由用户驱动；goal/headless bedside 特例的删除仍另立后续
+- [x] 12.24 宿主回灌与发版（3.0.1 建议）由用户驱动；goal/headless bedside 特例的删除仍另立后续
       （须真实 goal payload 验收）。
+  - 2026-09-03 收口登记：宿主回归/回灌/跨夜 run 验证不在 3.0.0 窗口执行（用户裁决，同 4bcee33d）；本轮 npm test 3795/3795 + fixtures 46/46、openspec:validate 44/44 strict、release:verify ALL PASS（--skip-plan-release-gate --skip-typecheck）。
 
 ### 修订期的两处如实记录
 

@@ -21,7 +21,9 @@
 ## 4. Verification
 
 - [x] 4.1 Run targeted unit tests and TypeScript typecheck after review fixes.
-- [ ] 4.2 Run `cd harness && npm test` with all unit and fixture checks passing after review fixes.
+- [x] 4.2 Run `cd harness && npm test` with all unit and fixture checks passing after review fixes.
   - 2026-08-07 review rerun: this change's targeted suites and all 44 fixtures pass, but the full unit chain is externally blocked by a stale `device-readiness-gate.ts` physical-acceptance SHA in the concurrent lockscreen batch (3078/3079).
-- [ ] 4.3 Run `npm run openspec:validate` and `npm run release:verify`; confirm no `MIGRATION.md` update is required because canonical paths and schemas are unchanged.
+  - 2026-09-03 收口登记：宿主回归/回灌/跨夜 run 验证不在 3.0.0 窗口执行（用户裁决，同 4bcee33d）；本轮 npm test 3795/3795 + fixtures 46/46、openspec:validate 44/44 strict、release:verify ALL PASS（--skip-plan-release-gate --skip-typecheck）。
+- [x] 4.3 Run `npm run openspec:validate` and `npm run release:verify`; confirm no `MIGRATION.md` update is required because canonical paths and schemas are unchanged.
   - 2026-08-07 review rerun: OpenSpec strict validation and release typecheck pass, and no migration note is needed. The unskipped release check is externally blocked only by nine unfinished 3.0.0 plans; all remaining release checks, including the 760-file zip assertions, pass with the plan release gate explicitly skipped.
+  - 2026-09-03 收口登记：宿主回归/回灌/跨夜 run 验证不在 3.0.0 窗口执行（用户裁决，同 4bcee33d）；本轮 npm test 3795/3795 + fixtures 46/46、openspec:validate 44/44 strict、release:verify ALL PASS（--skip-plan-release-gate --skip-typecheck）。

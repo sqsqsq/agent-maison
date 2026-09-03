@@ -23,4 +23,5 @@
 
 - [x] `cd harness && npm test` 全绿（typecheck + 1484 单测【含本 change 11 case，review 修复后确认真实计入】+ 35 fixtures，既有 fixture 零改动）
 - [x] `npm run openspec:validate`（31/31）
-- [ ] `npm run release:verify`（随批次收尾统跑）
+- [x] `npm run release:verify`（随批次收尾统跑）
+  - 2026-09-03 收口登记：宿主回归/回灌/跨夜 run 验证不在 3.0.0 窗口执行（用户裁决，同 4bcee33d）；本轮 npm test 3795/3795 + fixtures 46/46、openspec:validate 44/44 strict、release:verify ALL PASS（--skip-plan-release-gate --skip-typecheck）。
