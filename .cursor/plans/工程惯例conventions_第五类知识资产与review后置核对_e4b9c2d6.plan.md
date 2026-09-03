@@ -14,19 +14,23 @@ goal_provides:
   - project-conventions-knowledge
   - review-conventions-coverage
 real_host_validation: >
-  钱包工程只读挖掘是设计输入；本 plan 交付知识资产与 review 消费能力，真实语义效果由后续
-  钱包 dogfood 验证，不能用 framework fixtures 代替，也不单独宣称部件演进蓝图完成。
+  钱包工程只读挖掘是设计输入；本 plan 交付知识资产、蓝图消费（/component-design·P1 当前
+  事实与设计约束）与 review 后置核对能力，真实语义效果由后续钱包 dogfood 验证，不能用
+  framework fixtures 代替，也不单独宣称部件演进蓝图完成。
 parallel_authority_added: false
 # 版本说明：3.0.0 发布门 = d4f8b2a6 + 7c4e9a2b 两 plan（既定，不追加）；用户已定夺
-# （2026-08-03）：本 plan 归 3.1.0 窗口开发。deferred_to 满足 check-plan-version 门禁
-# （codex P1-6 实锤复现后修复，O3 关闭）。
+# （2026-08-03）：本 plan 归 3.1.0 窗口开发（3.0.0 窗口期曾以 deferred_to: 3.1.0 顺延，
+# 3.1.0 开窗后该字段到站移除，当前 frontmatter 无 deferred_to）。
+# 2026-09-03 用户裁决：本 plan 随 3.1.0 必交付，不得 deferred_to 顺延（总计划 §6.7）；
+# 消费点由 spec/plan 前移到 /component-design·P1 蓝图（M7 之后的口径），见 §7。
 overview: >
   新增消费者工程的第五类知识资产「工程惯例（conventions）」：承载 RDB 使用方式、公共能力
   使用姿势、接口策略等横切工程实践——这类知识 architecture DSL（层与边）、module-catalog
   （单模块画像）、code-graph（符号索引）、extensions/knowledge（无锚定自由散文）四类载体
   均装不下。设计已经三方（用户/claude/codex）多轮收敛 + 钱包工程（SimulatedWalletForHmos）
   只读挖掘实证：极简后置核对路线——`paths.conventions`（默认 doc/conventions.md）弱结构
-  Markdown 单文件；plan 阶段非阻塞声明；review 阶段作为独立必读输入做目标代码驱动的核对
+  Markdown 单文件；正式需求先在 /component-design·P1 蓝图内作为当前事实与设计约束消费
+  （2026-09-03 前移，§7）；CU plan 阶段非阻塞声明；review 阶段作为独立必读输入做目标代码驱动的核对
   （非 diff 驱动）；靠 conventions-bootstrap skill 以「挖坑优先 + 符合率实测 + 人逐条 y 确认」
   策展入库。明确不做：resolver/index/结构化 applicability、content_hash/drift、ADR 目录、
   waiver 状态机、standalone review targets（独立后续 change）、新 harness phase。
@@ -38,8 +42,17 @@ todos:
       conventions 条目格式（机器可读最小集与 D2 一致：`##` 标题=id + gate 卡
       `enforcement: gate` / `gate_ref: <phase>/<rule_id>` 两行及其双端校验）/
       paths.conventions 配置链 /
-      plan 声明与 contracts.conventions_applied 语义 / review 消费与覆盖台账语义（含 t4
-      确定性检查清单）/ opt-in 零负担行为（D9）/ 明确排除范围（§4 全量入 out-of-scope）。
+      **蓝图消费语义（§7）**：/component-design·app-component-blueprint 在惯例文件存在时
+      必读；适用惯例以既有 `discovery.facts` 条目（`provenance.source_kind: convention`、
+      `source_ref` 指向惯例 id）与既有 decision/node provenance 引用表达，不新增蓝图字段；
+      `conventions-knowledge` 作为静态 optional provider seam 登记进既有 `providers[]` 协议
+      （**实现工作**：blueprint-provider-boundary.ts 现只认四个 required id，须在同一 validator/
+      rules 表增加该 optional Seam Card 的冻结规则、在场要求与缺失语义——非既有能力）/ 可用性
+      语义（明确未启用 `not_applicable`；显式配置却不可读 `unknown|degraded`；不声称蓝图字节级
+      不变）/ 评审投影同一 renderer 增量输出「本蓝图实际采用的 convention id / source_ref」/
+      plan 声明与 contracts.conventions_applied 语义（含与所引蓝图适用惯例的一致性判据）/
+      review 消费与覆盖台账语义（含 t4 确定性检查清单）/ opt-in 零负担行为（D9）/ 明确
+      排除范围（§4 全量入 out-of-scope）。
       `npm run openspec:validate`（脚本本身已含 --all --strict）通过后才允许开工 t1–t4。
     status: pending
   - id: t1-concept-and-paths
@@ -90,13 +103,37 @@ todos:
       全量接线（对照 catalog-bootstrap/code-graph 现有接线清单逐目录核对，防 c7a9e2f4
       接线检索四盲区复发）。
     status: pending
-  - id: t3-spec-plan-consumption
+  - id: t3-blueprint-plan-consumption
     content: >
-      spec/plan 消费接线（非阻塞；惯例文件路径一律经 t1 helper / `paths.conventions`
-      解析，禁止字面量路径——下同，codex P1-4）：① spec/SKILL.md Research Sub-Phase
-      必读清单加一行惯例文件（若存在；无输出物、无门禁——满足「spec 阶段能获取到」且防 conventions
-      内容漏进 spec 正文造成分叉副本）；② plan/SKILL.md 增加条件式输出节「遵循的既有惯例」
-      （读全文≈≤5K token，挑适用项列 id+范例路径；不做检索/匹配/BLOCKER）；③
+      蓝图→CU plan 消费接线（2026-09-03 前移：正式需求的首个消费点是 /component-design·P1
+      蓝图，spec/plan 退为 CU 施工切片的复述与兜底；惯例文件路径一律经 t1 helper /
+      `paths.conventions` 解析，禁止字面量路径——下同，codex P1-4）：⓪ **蓝图消费（§7）**：
+      `skills/project/component-design/SKILL.md` 与 `app-component-blueprint/SKILL.md` 的
+      `current-facts-discovery` 步骤在惯例文件存在时必读全文（≈≤5K token）；只把本次需求
+      真正适用的条目写成 `discovery.facts`（`provenance.source_kind: convention`、
+      `source_ref: <paths.conventions>#<惯例 id>`、`evidence_strength: authoritative`——权威
+      等级复用 blueprint-discovery.ts 既有 `convention` 档，低于代码事实、不覆盖本次事实），
+      设计视图节点与 decision 引用惯例时只在其既有 `provenance`/`verification_refs` 写同一
+      `source_ref`；`conventions-knowledge` 以静态 **optional** provider seam 登记进蓝图既有
+      `providers[]`——**实现项**：blueprint-provider-boundary.ts 的 STATIC 表现只有四个 required
+      id、循环也只校验这四个，须把 `conventions-knowledge` 加进**同一** validator/rules 表作为
+      静态 optional Seam Card（冻结 authority/source rule、要求卡片在场、缺失时
+      `missing_disposition ∈ unknown|degraded|not_applicable`），fixture 蓝图与 M7 样例同批补卡；
+      **可用性语义**：默认路径无文件且未显式配置 = 明确未启用 → `not_applicable`；
+      `paths.conventions` 显式配置但文件缺失/不可读 → `unknown|degraded`；不得呈现"惯例已消费"，
+      也不得声称蓝图字节级"行为完全不变"（多出这张诚实 Seam Card 就是唯一可见差异）；不新增
+      registry、状态或第二套协议。⓪′ **评审投影**：blueprint-review-projection.ts 现对 decision
+      只输出 id/status/owner/verification、对 discovery 零输出，宿主 Story 会看不到惯例约束——在
+      **同一** renderer 增量输出「本蓝图实际采用的 convention id / source_ref」一节，仍由同一
+      `--projection` 校验，同批重生成 fixture 与 docs/operations/samples 的 review 投影（M7 单测
+      锁着样例），不新增 publication schema 或第二份文档。独立质询把"适用惯例是否被视图/decision
+      引用"列为核对项（复用既有 frontier 机制，不加根问题枚举）。**不给蓝图新增 conventions
+      专用字段、不建第二套引用协议、不改 app-component-blueprint.schema.json**；① spec/SKILL.md
+      Research Sub-Phase 必读清单加一行惯例文件（若存在；无输出物、无门禁——CU spec 位于
+      蓝图之后，此处只是兜底复核，且防 conventions 内容漏进 spec 正文造成分叉副本）；②
+      plan/SKILL.md 增加条件式输出节「遵循的既有惯例」（挑适用项列 id+范例路径；**CU 有
+      所引蓝图时必须与蓝图适用惯例集合一致**——蓝图列了、CU touches 命中其适用范围却未
+      声明 → 由 t4④ 确定性检查以既有 MAJOR 档报出，不新增 BLOCKER 级门；不做检索/匹配）；③
       plan-workflow-detail.md contracts 字段表 + `specs/artifact-schemas/contracts.schema.yaml`
       增加可选字段 `conventions_applied[]`（仅 id + planned_locations 两字段，为 review
       提供「声明 vs 实现」核对对子）。**可执行语义（三轮 P2-5 定案）**：schema 给真类型
@@ -121,6 +158,9 @@ todos:
       声明）；核对协议写成**「目标文件集合」参数化的自足过程**（feature 模式下集合 =
       contracts.yaml>files；为后续 standalone change 铺底，本次不建 module|paths 入口）：
       适用性判断 → 符合性核对 → plan 声明一致性（conventions_applied「声明了但没做到」）
+      → **蓝图一致性**（CU 有所引蓝图时：蓝图 `source_kind: convention` 适用惯例中未出现在
+      本 CU `conventions_applied`、台账又未判 NOT_APPLICABLE 的条目 → MAJOR，"蓝图设计依据的
+      惯例在施工中被丢弃"可机器判；无蓝图的存量平铺 Feature 不启用此项）
       → 范例存在性检查（适用条目必须打开 Golden Example，文件或符号文本不存在→WARN，
       不做 hash）。「仅新代码」按 D5 管辖权语义（存量违反=legacy advisory 不阻断）。
       ② 报告输出=**全量覆盖台账**（替代「共 N 条适用 M 条」单行标记——单行可伪造、
@@ -148,6 +188,7 @@ todos:
       同 id 多行 / conventions_applied 重复 id 均显式 FAIL，id 是三方共同主键）/ 台账 id
       集合与惯例文件 `##` id 集合**精确集合相等**（不许子集）/ 判定值域（5 枚举）/
       VIOLATION 在问题清单有含 id 的对应条目 / conventions_applied ⊆ 惯例 id 集合 /
+      有所引蓝图时：蓝图适用惯例 ⊆ conventions_applied ∪ 台账 NOT_APPLICABLE（§7 贯穿链）/
       每个 planned_location 按路径段边界前缀匹配命中目标文件集合 ≥1 文件 /
       **gate_ref 存在性**（五轮 P1-2 防静默失效：解析 gate 卡 `gate_ref{phase, rule_id}`，
       对 resolved phase rules 验证规则真实存在——**只验存在**，不读结果、不做跨报告
@@ -160,8 +201,10 @@ todos:
       收口：① OpenSpec change 终验——实现与 t0 锁定语义逐条对账（偏差当场同步，
       Surface-plan-deviations 纪律），`npm run openspec:validate` 复跑过；
       ② goal/normal 双模式 parity 核验（消费全走 skill
-      正文与 phase 检查，goal 复用同一 SKILL/harness，预期零额外机制——须实际核对 goal
-      上下文装配不需单列 conventions，并在 change 里写 parity 声明）；③ 全量 unit +
+      正文与 phase 检查，goal 复用同一 SKILL/harness；蓝图侧消费同样只走 component-design /
+      app-component-blueprint SKILL 正文与 check-component-blueprint 既有 provider/provenance
+      校验——预期零额外机制，须实际核对 goal 上下文装配不需单列 conventions，并在 change 里
+      写 parity 声明）；③ 全量 unit +
       docs 一致性（DOC_INVENTORY / skills 索引 / adapter 接线清单交叉核对）；④ 维护者
       changelog 补一行。
     status: pending
@@ -212,18 +255,20 @@ isProject: false
 | D1 | 位置=`paths.conventions`，默认 `doc/conventions.md` | codex 主张放 `<extension_dir>/knowledge/`（防新增硬编码路径）。裁决：DEFAULT_PATHS 已有 architecture_md/module_catalog/glossary 同族先例——加 paths 条目即同时满足「可配置」与「一级项目事实」；extensions 是 manifest 注册的机制目录，消费模式不同型 |
 | D2 | 格式=弱结构 Markdown 单文件，**机器可读约定最小集 = `##` 标题即 id + gate 卡的 `enforcement: gate` 与 `gate_ref: <phase>/<rule_id>` 两行**（五轮 P1-2：gate_ref 须机器可验证，原「仅 `##` 是机器约定」与之矛盾故扩集；review 卡无机器字段；仍无 YAML schema）；字段：规则(MUST/SHOULD)/适用/范例(file+symbol 指针)/反例(只写伪代码形状，禁指生产文件)/仅新代码(默认是)/生效于(bootstrap 入库自动记日期)/探针(可选；存检索意图+期望结果，不存具体命令——O2 决议)/supersedes(可选) | codex 曾提七层 YAML schema+index.yaml。裁决：≤30 条上限×每条~150 字≈5K token 全量读得起，检索基础设施整套不需要；反例不指生产路径是 codex 的正确意见（修复后即 stale、AI 可能模仿反例），采纳 |
 | D3 | 一致性机制=消费时范例存在性检查（文件+符号文本级，WARN），**不做** content_hash/drift | 曾拟复用 code-graph drift。核实实现后放弃：①提取器只认函数正则，class/interface/字段算不出 hash 且静默 continue（fail-open）；②review 每次全量人工复核在场，「只能触发复核」的机制边际价值为零；③文档宣称的三级分级（签名/体/消失）实现里不存在——按真实 writer 行为设计，不按文档 |
-| D4 | 消费模型：review=主消费点（独立必读、目标代码驱动**非 diff 驱动**）；plan=非阻塞声明节+contracts 引用；coding=零新步骤（顺 plan 范例指针）；spec=研究清单一行 | 用户明确否决 diff 作为范围真源（review 须能独立审存量代码）；本仓 review 本就按 contracts>files 读全量源码，不用 diff——设计与现状同向 |
+| D4 | 消费模型（2026-09-03 修订）：**蓝图=正式需求的首个消费点**（/component-design·P1 当前事实与设计约束，§7）；review=主核对点（独立必读、目标代码驱动**非 diff 驱动**）；CU plan=非阻塞声明节+contracts 引用，须与所引蓝图适用惯例一致；coding=零新步骤（顺 plan 范例指针）；spec=研究清单一行兜底 | 用户明确否决 diff 作为范围真源（review 须能独立审存量代码）；本仓 review 本就按 contracts>files 读全量源码，不用 diff——设计与现状同向 |
 | D5 | 「仅新代码」=管辖权语义：基线=条目「生效于」日期（bootstrap 入库自动记）；**存量违反统一降级 legacy advisory 不阻断**，新增代码违反正常判级。**断代算法（可重复执行，三轮 P2-6 定案）**：未提交/未跟踪的行=新；`git blame` 行日期 ≥ 生效于=新；< 生效于=legacy；blame 不可用或无历史=NOT_ASSESSED→advisory 且**不得升级阻断**——不同 review 对同段代码结论一致靠此算法+「存量一律不阻断」双兜底 | 原「diff 天然只看新增行」的premise 被 D4 证伪后的重定义；同时解决老工程接入不爆炸与新老接替 supersedes 两个场景 |
 | D6 | 来源策略=挖坑优先（review 重复意见/事故复盘），代码归纳只用于给条目找范例锚点，收编模式只入摘要+链接 | 「归纳代码」无法区分惯例与历史债（70% 这么写≠正确）；「从坑挖」自带规则+理由+反例三件套，且天然稀疏=没痛过的地方不立规矩 |
 | D7 | 增长纪律：≤30 条软上限；判定规则已有 checker/lint 承载的**不得复制判定文本入库**，只能以 D8 gate 索引卡形态收录（卡片答「为什么有这个门禁」，checker 仍是唯一判定真源）；与既有门禁去重是 bootstrap 显式步骤 | 防止与 DSL/coding-rules/ut-rules 双源分叉；原「能 gate 的不入库」与 D8 自相矛盾（codex P1-5），按其第二案了断 |
 | D8 | enforcement 两档：review（默认）/gate（卡片=三行：一句解释 + `gate_ref{phase, rule_id}` + 范例；规则判定权在 checker，卡片不复写规则文本；台账固定 GATE_DELEGATED） | codex「gate 必须指真实 rule_id」采纳并两轮推进：rule_id 跨 phase 不唯一 → 引用升级 (phase, rule_id) 二元组；结果不照抄——防伪造 GATE_PASS 与时序循环（review 报告先于本轮 check-review 生成） |
-| D9 | **opt-in 零负担**：一切消费行为以惯例文件存在为开关——不存在时**运行时行为零变化**（spec/plan/review 与现状一致、check-review 按 t4④ 真值表处置）；framework-init **不**自动创建；UPDATE **不回填** `paths.conventions`（存量工程配置文件零 diff，运行时默认值兜底）；无文件工程的全部 footprint = 各 skill 文档几行条件文本 + AGENTS SSOT 表一行「可选」+ 新建工程 template 中一个 inactive 默认路径字段（四轮 P2-4 措辞修正：零负担=零行为变化，不虚称零配置存在） | 用户红线（2026-08-03 review 第 4 问定案）：conventions 非必选项，不得给原有流程增加负担 |
+| D9 | **opt-in 零负担**：一切消费行为以惯例文件存在为开关——不存在时 spec/plan/review **运行时行为零变化**；蓝图侧唯一可见差异 = 一张诚实可用性 Seam Card（`conventions-knowledge` available=false：明确未启用记 `not_applicable`，显式配置却不可读记 `unknown|degraded`），check-review 按 t4④ 真值表处置；framework-init **不**自动创建；UPDATE **不回填** `paths.conventions`（存量工程配置文件零 diff，运行时默认值兜底）；无文件工程的全部 footprint = 各 skill 文档几行条件文本 + AGENTS SSOT 表一行「可选」+ 新建工程 template 中一个 inactive 默认路径字段（四轮 P2-4 措辞修正：零负担=零行为变化，不虚称零配置存在） | 用户红线（2026-08-03 review 第 4 问定案）：conventions 非必选项，不得给原有流程增加负担 |
 
 ## 4. 明确不做（本 plan 的边界，写死防膨胀）
 
 - resolver / index.yaml / 结构化 applicability（capabilities/layers/globs 匹配）——全量读
   即选择器；出现「读不完/常漏选」的真实信号再立项
 - content_hash / drift 检查 / AST anchor provider
+- 蓝图侧 conventions 专用字段、第二套引用协议、独立"惯例视图"或 app-component-blueprint.schema.json
+  改动——惯例只以既有 `discovery.facts` / `provenance` / decision 表达（§7）
 - ADR 独立目录、owner 字段、四态生命周期、waiver/exception schema——方向变更用条目内
   `supersedes` + 正文一段「为什么改」承载
 - **standalone review targets**（`review_target: module|paths` 解析入口、输入降条件、
@@ -248,18 +293,28 @@ isProject: false
 - **O2（已决，2026-08-04）**：`探针` 字段存**检索意图+期望结果**，不存具体命令
   （grep/rg 跨平台差异、Windows 宿主 coreutils 缺失风险）；执行者（bootstrap 实测/
   日后复检）自选工具。
-- **O3（已决，2026-08-03）**：3.1.0 窗口，`deferred_to: 3.1.0` 已落 frontmatter，
-  `check-plan-version` 复验通过。
+- **O3（已决 2026-08-03；2026-09-03 更新）**：3.1.0 窗口。当年以 `deferred_to: 3.1.0` 顺延，
+  3.1.0 开窗后该字段到站移除，**当前 frontmatter 无 deferred_to**；O6 定为必交付、不再顺延。
 - **O4**：命名——skill `conventions-bootstrap`、命令 `/conventions-bootstrap`、中文
   统一「惯例」；是否有更好的名字。
 - **O5**：plan-template 新增「遵循的既有惯例」为**条件节**，须核对 plan-rules/check-plan
   的章节完整性检查如何对待条件节（不得把无 conventions 工程的 plan 判缺章；也不得让该节
   形同虚设）——实现时先读 plan-rules.yaml 再定接法。
+- **O6（已决 2026-09-03，用户裁决）**：随 3.1.0 必交付、不顺延；消费点前移到蓝图（§7）；
+  施工顺序 d8 → e4 → b9（总计划 §6.7）。
 
 ## 6. 验收方向
 
-- 机制侧：conventions 文件不存在时，spec/plan/review 行为与现状完全一致（零惊扰）；
-  存在时 plan 产出声明节、review 报告产出全量覆盖台账、范例失效出 WARN。
+- 机制侧：conventions 未启用时 spec/plan/review 行为与现状完全一致（零惊扰）；蓝图输出的唯一
+  差异是 `conventions-knowledge` Seam Card 的诚实可用性结论（明确未启用 `not_applicable`；显式
+  配置却不可读 `unknown|degraded`），不声称蓝图字节级不变；存在时蓝图 `discovery.facts` 出现
+  适用惯例条目、评审投影出现「采用的惯例」节并通过 `--projection`、plan 产出声明节、review
+  报告产出全量覆盖台账、范例失效出 WARN。
+- **贯穿链（§7 核心验收）**：fixture 用同一惯例 id 证明「蓝图 fact / decision provenance →
+  CU `contracts.conventions_applied` → review 台账」三处一致；反例三发——蓝图列了适用惯例
+  而 CU 未声明且台账未判 NOT_APPLICABLE（MAJOR）/ CU 声明了惯例文件不存在的 id（FAIL）/
+  惯例未启用时蓝图缺该 Seam Card 或声称 `available: true`（provider 校验 FAIL）/ 显式配置却
+  不可读仍记 `not_applicable`（FAIL）；只证明「文件可读取」不算通过。
 - 门禁侧：台账确定性检查 fixtures 命中全部目标分支——台账缺一条 id FAIL / 判定值域外
   （5 枚举）FAIL / **重复 id 三侧各一负例 FAIL**（惯例标题重复/台账同 id 多行/声明重复，
   四轮 P2-3）/ conventions_applied 引用不存在的 id FAIL / VIOLATION 但问题清单无对应
@@ -275,5 +330,53 @@ isProject: false
   清单核对，出核对记录）。
 - 治理侧：openspec validate --strict 过；goal/normal parity 声明落 change 文档。
 - dogfood 出口（本 plan 之外的后续动作）：钱包工程用 `/conventions-bootstrap` 走一遍
-  首批入库 + 下一个真实 feature 的 review 报告出现惯例核对段——那一步才回答「内容是否
-  真的改变 AI 行为」。
+  首批入库 + 下一个真实正式需求的蓝图 `discovery.facts` 出现适用惯例、其 CU review 报告出现
+  惯例核对段——那一步才回答「内容是否真的改变 AI 行为」。
+
+## 7. 与 M7 蓝图入口的接线（2026-09-03 修订）
+
+> 用户裁决（2026-09-03）：本 plan 随 3.1.0 必交付、不顺延；消费点由 spec/plan 前移到
+> /component-design·P1 蓝图。**运行时输入 optional ≠ 版本交付 optional**——某个工程没有
+> conventions 文件是合法的"未启用"，不是本 plan 可以不交付的理由。
+
+**为什么前移**：M7 之后蓝图是每项正式需求的部件内设计权威。惯例若只在 spec/plan 才进入，
+蓝图就只按通用规则设计，等到施工才发现违反本仓 RDB/账号态/分层惯例，返工点落在设计之后。
+惯例必须成为蓝图的**当前事实与设计约束**，再经 CU 施工契约传到 review。
+
+**链路**：
+
+```text
+conventions.md（paths.conventions）
+  → /component-design → app-component-blueprint · current-facts-discovery 必读（文件存在时）
+  → 蓝图当前事实与设计约束：discovery.facts（source_kind: convention, source_ref=<file>#<id>）
+     + 视图节点 / decision 的既有 provenance、verification_refs 引用同一 source_ref
+  → CU 施工计划：contracts.conventions_applied（t3 交付）须与所引蓝图适用惯例一致
+  → code review 后置核对：全量覆盖台账（t4）+ 蓝图一致性判据
+```
+
+**接线原则**（每条都是复用既有表达，不是新机制）：
+
+- 只把本次需求真正适用的惯例作为蓝图来源、约束或决策依据；不适用的不写、不凑章节；
+- 复用蓝图已有 `discovery.facts` / `provenance` / `verification_refs` / `decisions_and_gaps` 表达：
+  `provenance.source_kind: convention` 已在 blueprint-discovery.ts 的权威等级表内（与
+  architecture/catalog 同为 2 档、低于代码事实）——惯例是稳定知识输入，不覆盖本次代码事实；
+- `conventions-knowledge` 作为静态 **optional** provider seam 登记进既有 `providers[]` 协议
+  （P1 spec「Static providers consume one provider-neutral protocol」已为 e4 预留"有则消费、无则
+  诚实降级"的语义位）。**这是实现工作**：blueprint-provider-boundary.ts 现只有四个 required
+  provider id，循环也只校验这四个；须在**同一** validator/rules 表增加该 optional Seam Card
+  （冻结 authority/source rule、卡片必须在场、缺失须 `missing_disposition ∈ unknown|degraded|
+  not_applicable`），不新增 registry、状态或第二套协议；
+- **不给蓝图新增 conventions 专用字段、不建第二套引用协议、不改 app-component-blueprint.schema.json**；
+- CU/Feature 继续复用 `contracts.conventions_applied`（本 plan t3 新增的字段，仓内此前不存在）；
+  review 继续完成"声明 vs 实现"核对，并新增一条"蓝图适用惯例未被 CU 声明"的一致性判据；
+- conventions 未启用时 spec/plan/review 行为保持零变化（D9）；蓝图侧输出诚实可用性结论——明确
+  未启用 → `not_applicable`；`paths.conventions` 显式配置却缺失/不可读 → `unknown|degraded`；不声称
+  蓝图字节级"完全不变"，也不把未启用写成能力缺失；
+- Story publication 不得丢掉惯例：同一 renderer 增量输出本蓝图实际采用的 convention id/source_ref，
+  同一 `--projection` 校验，不新增 publication schema 或第二份文档。
+
+**验收**：必须证明**同一惯例 id 从蓝图设计一路传到 CU/plan/review**（§6「贯穿链」），而不是
+只证明文件可读取。
+
+**新增 schema / 状态 / phase / registry / 平行真源**：没有（provider-boundary 规则表加一行 optional Seam
+Card、同一 renderer 增量输出两处，均为既有表/既有 renderer 的扩展）。

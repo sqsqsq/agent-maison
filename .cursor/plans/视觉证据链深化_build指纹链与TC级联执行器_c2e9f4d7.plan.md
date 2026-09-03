@@ -1,6 +1,7 @@
 ---
 name: 视觉证据链深化 — build fingerprint 链接入 / TC 执行器级联控制
-version: 3.1.0
+version: 3.2.0
+deferred_to: 3.2.0
 parent_goal: complex-capability-construction-75411223
 advances:
   - g7-component-assembly-and-coverage-closure
@@ -18,6 +19,8 @@ real_host_validation: >
   reset 与环境阻断分类真实生效；外部钩子未具备时保持诚实降级，不以 fixture 宣称完成。
 parallel_authority_added: false
 # 版本说明：3.0.0 盘点（2026-07-30）顺延而来；两项均依赖 profile/hylyre 侧外部能力钩子。
+# 2026-09-03 用户裁决：再顺延 3.2.0（version/deferred_to 同置 3.2.0）——外部 build identity 钩子与
+# Hylyre 逐例驱动仍未具备，不阻 3.1.0 发布；3.2.0 开窗后再评估。
 overview: >
   承载两项未实施能力（原属 openspec change `visual-capability-truth`——2026-08-14 已归档
   superseded、由 `simplify-visual-trust` 取代；取代范围仅三轴/账本/锚类任务，本 plan 两项

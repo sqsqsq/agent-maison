@@ -1,6 +1,7 @@
 ---
 name: 完整性与授权加固 — 反回滚独立锚 / 变更判真分类器
-version: 3.1.0
+version: 3.2.0
+deferred_to: 3.2.0
 parent_goal: complex-capability-construction-75411223
 advances:
   - g6-change-unit-feature-pipeline-integration
@@ -17,6 +18,8 @@ real_host_validation: >
   不单独宣称 Change Unit 或部件闭环完成。
 parallel_authority_added: false
 # 版本说明：3.0.0 盘点（2026-07-30）顺延而来；保留两项"信任锚与授权判真"能力。
+# 2026-09-03 用户裁决：再顺延 3.2.0（version/deferred_to 同置 3.2.0）——本版没有值得引入 broker、
+# 远端锚或 TPM 的真实风险证据，不阻 3.1.0 发布；3.2.0 开窗后按真实证据再评估。
 overview: >
   承载两项 3.0.0 未实施的完整性/授权缺口：① visual-capability-truth 3.9j 反回滚独立锚
   （当前 HWM 仅同权限域完整性检测，尾部截断有残余边界）；② 同 change 4.2b diff 内容级

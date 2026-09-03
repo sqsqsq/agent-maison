@@ -1,8 +1,12 @@
 ---
 name: goal 旧基线读取器清理
-version: 3.1.0
-deferred_to: 3.1.0
-overview: 在 3.1.0 窗口删除已由 run_created 时代边界隔离的 goal legacy 基线读取面；仅做兼容代码与对应测试清理，不引入新机制。
+version: 3.2.0
+deferred_to: 3.2.0
+overview: >
+  删除已由 run_created 时代边界隔离的 goal legacy 基线读取面；仅做兼容代码与对应测试清理，不引入
+  新机制。2026-09-03 用户裁决：由 3.1.0 顺延 3.2.0——3.0.0 刚发布、旧 run 兼容窗口尚无结束证据，
+  立即删除会让只有 run_start + coding-base.json 的旧 run 无法恢复；3.2.0 是"重新确认兼容窗口是否
+  结束"的最早评估点，不预先保证届时一定删除，没有旧 run 已退出的证据就继续保留。
 todos:
   - id: remove-legacy-coding-base-reader
     content: 删除 legacy coding-base.json reader、writer、路径与仅为其存在的类型和帮助函数
@@ -19,12 +23,14 @@ todos:
 isProject: false
 ---
 
-# goal 旧基线读取器清理（3.1.0）
+# goal 旧基线读取器清理（顺延 3.2.0 评估点）
 
 ## 目标
 
 3.0.0 已停止生产 `coding-base.json`，并用 `run_created` 把现代 run 与 legacy reader
-结构隔离。3.1.0 在兼容窗口结束后物理删除该只读面，使出生与基线契约只剩现代路径。
+结构隔离。兼容窗口结束后物理删除该只读面，使出生与基线契约只剩现代路径。**窗口是否结束在
+3.2.0 开窗时重新确认**（2026-09-03 顺延裁决）：有旧 run 已全部退出的证据才执行删除，否则继续
+保留，本 plan 不预先承诺删除时点。
 
 ## 范围
 
