@@ -2,7 +2,7 @@
 // path-candidates.ts — 缺失文件的 basename 候选检索（t1c，plan e6a3c9f4）
 // ----------------------------------------------------------------------------
 // 场景：contracts.yaml files 路径前缀与物理路径不一致（2.3.0 宿主反馈：计划路径缺
-// `02-Feature/FinancialCard/` 前缀）时，file_completeness 只报"缺失"无法定位真因。
+// `02-Feature/<模块>/` 前缀）时，file_completeness 只报"缺失"无法定位真因。
 // 本模块在 architecture 声明的层目录内做**一次共享遍历**，按 basename 收集候选真实
 // 位置，供报错附「疑似前缀不一致，实际存在于 X」诊断。只提示不改判定。
 //

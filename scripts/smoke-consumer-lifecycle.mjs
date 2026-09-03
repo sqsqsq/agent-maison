@@ -694,11 +694,22 @@ function stageGoal(ctx) {
   // 第六段（T4#5）：UT agent 窗口真实改产品源码。runner 必须把 review closure
   // 后的漂移作为未受信事实，原子失效 coding/review/ut 并自动回 coding；不得把它
   // 变成 testing_write_violation 或人工签字循环。
+  //
+  // 2026-09-03 路由校准（**只改期望的 reason 字面量，实质保证一个不减**）：
+  // 未受信源码漂移有两条都活着的生产路径——
+  //   · `phase_write_violation`：改写落在 agent invoke 窗口内，由 pre/post hash 直接
+  //     归属到该次 invocation（goal-phase-runtime.ts:7504）。这是本场景（UT agent
+  //     在自己窗口里改产品源码）的确定性路由，也是 MIGRATION「视觉闭环二期 S4」
+  //     写明的 3.0.0 语义：作废本 invocation 与旧 closure，自动 backtrack 回 coding 全量重验。
+  //   · `untrusted_source_drift_revalidation`：ut/testing **harness 之后**由
+  //     `reconcileMutablePhaseSourceDrift` 比对 review closure 基线发现（同文件 :9340），
+  //     覆盖「不在任何 invoke 窗口内的漂移」。该路由由 adjudication.unit.test.ts 保持覆盖。
+  // 本用例钉前者（写窗口内），不写成 OR：路由静默改道应当让这条门红，而不是被兜住。
   const utMutationFeature = 'ut-source-mutation';
   runDriver('provision', null, utMutationFeature);
   const utMutation = runDriver('ut_source_mutation', null, utMutationFeature);
   const mutationRecord = utMutation.invalidationRecords.find(r =>
-    r.reason === 'untrusted_source_drift_revalidation'
+    r.reason === 'phase_write_violation'
       && r.to_phase === 'coding'
       && r.invalidated_phases?.includes('coding')
       && r.invalidated_phases?.includes('review'));
@@ -875,13 +886,25 @@ export async function smokeConsumerLifecycle(opts = {}) {
   }
 
   // ---- 收口报告：skip **必须刺眼**，否则骨架期的绿会被当成闭环 ----
-  const pending = CASE_REGISTRY.filter(c => c.status !== 'covered');
+  //
+  // 三态分账（2026-09-03 修）：`retired` 是**一等状态**，不是"待实现"。
+  // `assertCaseRegistryComplete` 早已把它当一等公民（强制 `retiredReason`），但此处
+  // 统计写的是 `status !== 'covered'`，于是 plan 33714d0c 退役 #1（宿主 SCM 权责不属
+  // Maison）之后，`complete` **永久为 false**，`release:all` 的 promote 门再也过不去
+  // ——因为 plan 发布门禁在第 1 步就把整条链拦住了，这个死结一直没被走到。
+  //
+  // 这不是放宽：用例仍**不可能被悄悄抹掉**——编号须连续无空洞、总数须 ≥ MIN_KNOWN_CASES、
+  // 退役必须写明 `retiredReason`、covered 必须指向真实存在的 stage，四条约束原样保留，
+  // 且退役项照常逐条打印（带理由），不进静默。
   const covered = CASE_REGISTRY.filter(c => c.status === 'covered');
+  const retired = CASE_REGISTRY.filter(c => c.status === 'retired');
+  const pending = CASE_REGISTRY.filter(c => c.status !== 'covered' && c.status !== 'retired');
   const skippedStages = stageResults.filter(s => s.skipped).map(s => s.id);
 
   console.log('');
   console.log('─'.repeat(72));
   for (const c of covered) console.log(`  [covered] #${c.id} ${c.name}  ←  stage:${c.coveredBy}`);
+  for (const c of retired) console.log(`  [retired] #${c.id} ${c.name}  ←  ${c.retiredReason}`);
   for (const c of pending) console.log(`  [PENDING] #${c.id} ${c.name}`);
   if (skippedStages.length > 0) console.log(`  未实现的 stage：${skippedStages.join(', ')}`);
   console.log('─'.repeat(72));
@@ -894,7 +917,8 @@ export async function smokeConsumerLifecycle(opts = {}) {
     opts.throughStage && complete
       ? `[smoke/lifecycle] PASS（focused：已真实执行到 stage:${opts.throughStage}）`
       : complete
-      ? `[smoke/lifecycle] PASS（完整：${CASE_REGISTRY.length} 条用例全部由真跑 stage 覆盖）`
+      ? `[smoke/lifecycle] PASS（完整：${CASE_REGISTRY.length} 条用例中 ${covered.length} 条由真跑 stage 覆盖` +
+        `${retired.length > 0 ? `，${retired.length} 条已登记退役` : ''}，零待实现）`
       // 分母**由注册表派生**——散落硬编码是 #8 漏登记后仍能"7/7 看着挺满"的帮凶。
       // （注：MIN_KNOWN_CASES 仍是硬编码**下限**，plan 增用例时须手工上调——
       //   那是有意保留的"少登记即抛"闸，不是遗漏的硬编码总数。）

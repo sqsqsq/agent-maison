@@ -152,6 +152,38 @@ function git(root: string, args: string[]): void {
   spawnSync('git', args, { cwd: root, encoding: 'utf-8' });
 }
 
+// 夹具用的中性宿主命名。**不要换回具体业务名**（早期用过银行卡样例的模块/页面名）：
+// 这里造的是临时目录里的假宿主，与任何真实工程无关，业务名只会让读者误以为
+// Maison 依赖某个特定宿主模块。
+const FIXTURE_MODULE = 'SampleFeature';
+const FIXTURE_MODULE_PKG = `02-Feature/${FIXTURE_MODULE}`;
+const FIXTURE_PRODUCT_STRUCT = 'SamplePage';
+const FIXTURE_PRODUCT_FILE = `${FIXTURE_MODULE_PKG}/src/main/ets/${FIXTURE_PRODUCT_STRUCT}.ets`;
+const FIXTURE_OUT_OF_SCOPE_FILE = '01-Product/ProductShell/src/main/ets/pages/OutOfScopePage.ets';
+
+/**
+ * 写夹具的 contracts.yaml——**唯一入口**。
+ *
+ * 必须始终带 `modules:`：`in_scope_modules` 的路径前缀解析链是
+ * contracts.modules → module-catalog entry_file → catalog layer 猜测
+ * （`utils/diff-scope.ts` resolveModulePathPrefixes），而本夹具的 catalog 是空的，
+ * 于是 contracts 是**唯一**映射来源。少写 `modules:` 会让模块落入 unmapped，
+ * coding 期直接 halt 在 `phase_write_boundary_unresolved`（framework_fault +
+ * structurally_terminal），场景根本走不到它要断言的状态——2026-09-03 consumer smoke
+ * goal/T3① 的失败就是四处场景各自手写 contracts、集体漏掉 `modules:` 造成的。
+ */
+function writeFixtureContracts(root: string, feature: string, files: string[]): void {
+  w(root, `doc/features/${feature}/contracts.yaml`, [
+    `feature: ${feature}`,
+    'modules:',
+    `  - name: ${FIXTURE_MODULE}`,
+    `    package_path: ${FIXTURE_MODULE_PKG}`,
+    'files:',
+    ...files.map((f) => `  - ${f}`),
+    '',
+  ].join('\n'));
+}
+
 /**
  * hmos-app goal 场景的宿主夹具（设备停放/恢复场景专用；smoke 对 cloneRoot 也铺同一套）。
  *
@@ -190,14 +222,14 @@ export function provisionHmosGoalFixture(root: string, feature: string): void {
     w(root, `${layer}/.gitkeep`, '');
   }
   fs.mkdirSync(path.join(root, 'framework', 'workflows'), { recursive: true });
-  const productFile = '02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets';
-  w(root, productFile, 'struct AllBanksPage { build() { Text("x") } }');
+  const productFile = FIXTURE_PRODUCT_FILE;
+  w(root, productFile, `struct ${FIXTURE_PRODUCT_STRUCT} { build() { Text("x") } }`);
   w(root, 'build-profile.json5', JSON.stringify({
     app: { products: [{ name: 'default' }] },
-    modules: [{ name: 'FinancialCard', srcPath: './02-Feature/FinancialCard' }],
+    modules: [{ name: FIXTURE_MODULE, srcPath: `./${FIXTURE_MODULE_PKG}` }],
   }, null, 2));
-  w(root, '02-Feature/FinancialCard/oh-package.json5',
-    '{ "name": "financialcard", "version": "1.0.0" }');
+  w(root, `${FIXTURE_MODULE_PKG}/oh-package.json5`,
+    `{ "name": "${FIXTURE_MODULE.toLowerCase()}", "version": "1.0.0" }`);
   w(root, 'doc/module-catalog.yaml', 'schema_version: "1.0"\nmodules: []\n');
   w(root, 'doc/glossary.yaml', 'schema_version: "1.0"\nterms: []\n');
   w(root, `doc/features/${feature}/spec/spec.md`, '# spec\n');
@@ -207,14 +239,13 @@ export function provisionHmosGoalFixture(root: string, feature: string): void {
     '## Scope 声明与继承',
     '```yaml',
     'in_scope_modules:',
-    '  - FinancialCard',
+    `  - ${FIXTURE_MODULE}`,
     'out_of_scope_modules: []',
     'rationale: goal driver fixture',
     '```',
     '',
   ].join('\n'));
-  w(root, `doc/features/${feature}/contracts.yaml`,
-    `feature: ${feature}\nmodules:\n  - name: FinancialCard\n    package_path: 02-Feature/FinancialCard\nfiles:\n  - ${productFile}\n`);
+  writeFixtureContracts(root, feature, [productFile]);
 }
 
 /**
@@ -372,15 +403,10 @@ async function runScenario(args: {
   ) => {
     agentCalls += 1;
     const phase = /[\\/]phases[\\/]([a-z-]+)[\\/]/.exec(invokeOpts.outputLogPath ?? '')?.[1] ?? '';
-    if ((scenario === 'crash_scope_in_run' || scenario === 'successor_source_crash')
-      && phase === 'coding' && !crashMutationInjected) {
-      crashMutationInjected = true;
-      w(root, `doc/features/${feature}/contracts.yaml`, `feature: ${feature}\nfiles:\n  - 02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets\n  - 01-Product/WalletMain/src/main/ets/pages/HomeTabPage.ets\n`);
-    }
     if (scenario === 'ut_source_mutation' && phase === 'ut' && !utSourceMutationInjected) {
       utSourceMutationInjected = true;
-      w(root, '02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets',
-        'struct AllBanksPage { build() { Text("mutated-during-ut") } }');
+      w(root, FIXTURE_PRODUCT_FILE,
+        `struct ${FIXTURE_PRODUCT_STRUCT} { build() { Text("mutated-during-ut") } }`);
     }
     return { exitCode: 0, timedOut: false, stdout: '', stderr: '', command: 'noop' };
   });
@@ -390,7 +416,8 @@ async function runScenario(args: {
     || scenario === 'resume_with_device_ready'
     || scenario === 'crash_scope_in_run' || scenario === 'successor_source_crash'
     || scenario === 'successor_manifest_probe'
-    || scenario === 'ut_source_mutation' || scenario === 'ut_build_failure'
+    || scenario === 'ut_source_mutation' || scenario === 'ut_source_drift_post_harness'
+    || scenario === 'ut_build_failure'
     || scenario === 'crash_scope_seed' || scenario === 'crash_after_scope_event'
     || scenario === 'resume_after_crash_scope';
   const isSeedRunScenario = scenario === 'crash_scope_seed';
@@ -413,13 +440,26 @@ async function runScenario(args: {
       const phaseDir = path.join(pr, 'doc', 'features', feat, String(ph));
       const dir = path.join(phaseDir, 'reports');
       fs.mkdirSync(dir, { recursive: true });
-    const failureBlockers =
-        scenario === 'ut_source_mutation' && String(ph) === 'ut'
+      // `ut_source_drift_post_harness`：漂移发生在 **UT harness 桩内**——invoke 写窗口
+      // 已关闭，因此不会被归属为 agent 越界写，走不到 `phase_write_violation`。
+      // 它模拟的是「不在任何 invoke 窗口内的 review-closure 后源码漂移」，由
+      // `reconcileMutablePhaseSourceDrift`（goal-phase-runtime.ts:9198）比对 review closure
+      // 基线发现，最终经 :9340 落 `untrusted_source_drift_revalidation`。
+      // 与 `ut_source_mutation`（写窗口内 → write violation）成对，两条生产路由各有回归。
+      if (scenario === 'ut_source_drift_post_harness' && String(ph) === 'ut'
+        && !utSourceMutationInjected) {
+        utSourceMutationInjected = true;
+        w(root, FIXTURE_PRODUCT_FILE,
+          `struct ${FIXTURE_PRODUCT_STRUCT} { build() { Text("drifted-after-harness") } }`);
+      }
+      const failureBlockers =
+        (scenario === 'ut_source_mutation' || scenario === 'ut_source_drift_post_harness')
+          && String(ph) === 'ut'
           && utSourceMutationInjected && !utSourceMutationBlockerEmitted
           ? [{
               id: 'goal_post_review_source_mutation_unresolved',
               classification: 'goal_post_review_source_mutation_unresolved',
-              affected_files: ['02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets'],
+              affected_files: [FIXTURE_PRODUCT_FILE],
               details_excerpt: 'UT agent 在 review closure 后改写产品源码。',
             }]
           : scenario === 'ut_build_failure' && String(ph) === 'ut'
@@ -435,11 +475,36 @@ async function runScenario(args: {
                   details_excerpt: 'ut_hvigor_build 已 FAIL，test 阶段自动短路。',
                 },
               ]
-            : null;
+            : (scenario === 'crash_scope_in_run' || scenario === 'successor_source_crash')
+              && String(ph) === 'coding' && !crashMutationInjected
+              ? [{
+                  id: 'coding_scope_declared',
+                  classification: 'code_regression',
+                  details_excerpt: '注入：coding 首轮判 FAIL，触发同阶段重跑。',
+                }]
+              : null;
+      // 崩溃窗注入点：coding **首轮 harness 桩内**——此刻 agent invoke 的写窗口已关闭
+      // （pre/post 快照比对已完成）、post_agent 授权门也已走过，因此这次写入不会被
+      // 归属给 agent。它与同轮的 FAIL blocker 一起落盘，runner 据此重跑 coding，
+      // **下一轮 pre_spawn** 的 `checkPlanAuthority` 才会看到「plan 冻结面被场外改动」。
+      //
+      // 不能放在 agent invoke 桩里（旧写法在那儿）：那是 agent 的写窗口，3.0.0 的 phase
+      // 写边界会正确把 contracts.yaml 判成 plan 所有物的越界写，走 `phase_write_violation`
+      // 自有回退路由，不经过 `tryScopeReplan`，崩溃缝（scope-replan.ts:156）永不触发，
+      // 场景退化成「run 正常跑完」——2026-09-03 consumer smoke goal/T3① 的第二层根因。
+      // 也不能放在 plan 阶段：runner 在 harness 返回后才定稿 plan closure，
+      // 那时写的漂移会被一起收进冻结面，同样测不出漂移。
+      if ((scenario === 'crash_scope_in_run' || scenario === 'successor_source_crash')
+        && String(ph) === 'coding' && !crashMutationInjected) {
+        crashMutationInjected = true;
+        writeFixtureContracts(root, feat, [FIXTURE_PRODUCT_FILE, FIXTURE_OUT_OF_SCOPE_FILE]);
+      }
       if (failureBlockers) {
         // 失败轮不写 receipt/closure；只留下与正式 summary 同形的 blocker，
         // 让 runner 真实走 source-drift / build-attribution 分支。
-        if (scenario === 'ut_source_mutation') utSourceMutationBlockerEmitted = true;
+        if (scenario === 'ut_source_mutation' || scenario === 'ut_source_drift_post_harness') {
+          utSourceMutationBlockerEmitted = true;
+        }
         fs.writeFileSync(path.join(dir, 'summary.json'), JSON.stringify({
           schema_version: '1.2', assurance: 'full',
           capability_resolutions: [], capability_resolution_contract_fingerprint: null,
@@ -514,7 +579,8 @@ async function runScenario(args: {
       || scenario === 'crash_scope_in_run' || scenario === 'successor_source_crash'
       || scenario === 'successor_manifest_probe' || scenario === 'crash_after_scope_event'
       || scenario === 'resume_after_crash_scope'
-      || scenario === 'ut_source_mutation' || scenario === 'ut_build_failure';
+      || scenario === 'ut_source_mutation' || scenario === 'ut_source_drift_post_harness'
+      || scenario === 'ut_build_failure';
     (goal.__testing_setDeviceReadinessGate as (f: unknown) => void)(
       async (opts: { phase: string; retries: number; emitEvent: (e: unknown) => void }) => {
         if (deviceReady) {
@@ -541,7 +607,7 @@ async function runScenario(args: {
 
   if (scenario === 'crash_after_scope_event') {
     if (!extra) throw new Error('crash_after_scope_event 需要 extra=runId');
-    w(root, `doc/features/${feature}/contracts.yaml`, `feature: ${feature}\nfiles:\n  - 02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets\n  - 01-Product/WalletMain/src/main/ets/pages/HomeTabPage.ets\n`);
+    writeFixtureContracts(root, feature, [FIXTURE_PRODUCT_FILE, FIXTURE_OUT_OF_SCOPE_FILE]);
     scope.__testing_setAfterInvalidationRequested?.(() => {
       throw new Error('injected crash after phase_backtrack_requested');
     });
@@ -556,7 +622,7 @@ async function runScenario(args: {
   if (scenario === 'resume_after_crash_scope') {
     if (!extra) throw new Error('resume_after_crash_scope 需要 extra=runId');
     // 修复 live 漂移；恢复只消费已落盘的失效 record，不再重复制造新交接。
-    w(root, `doc/features/${feature}/contracts.yaml`, `feature: ${feature}\nfiles:\n  - 02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets\n`);
+    writeFixtureContracts(root, feature, [FIXTURE_PRODUCT_FILE]);
   }
 
   if (scenario === 'successor_manifest_probe') {
@@ -564,14 +630,14 @@ async function runScenario(args: {
     // 源 crash 场景故意在 coding agent 窗口制造 live contracts 漂移；
     // successor 的责任阶段就是 coding，先按既有 resume 夹具恢复上游 SSOT，
     // 让真实启动继续走到后继 manifest 与 coding，而不是把夹具缺口误报成产品门禁缺陷。
-    w(root, `doc/features/${feature}/contracts.yaml`, `feature: ${feature}\nfiles:\n  - 02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets\n`);
+    writeFixtureContracts(root, feature, [FIXTURE_PRODUCT_FILE]);
   }
 
   let supervisorMain: (() => Promise<number>) | null = null;
   let supervisorReset: (() => void) | null = null;
   let supervisorSpawnRecord: string | null = null;
   if (isSupervisorScenario) {
-    if (!extra) throw new Error('supervisor_probe_wake 闇€瑕 extra=parked runId');
+    if (!extra) throw new Error('supervisor_probe_wake 需要 extra=parked runId');
     const supervisor = require(path.join(frameworkRoot, 'harness/scripts/goal-supervise')) as {
       __testing_main: () => Promise<number>;
       __testing_setRunnerScript: (scriptPath: string | null) => void;
@@ -676,7 +742,8 @@ async function runScenario(args: {
     ];
   } else if (scenario === 'crash_scope_in_run'
     || scenario === 'successor_source_crash'
-    || scenario === 'ut_source_mutation' || scenario === 'ut_build_failure' || isSeedRunScenario
+    || scenario === 'ut_source_mutation' || scenario === 'ut_source_drift_post_harness'
+    || scenario === 'ut_build_failure' || isSeedRunScenario
     || scenario === 'product_selection_halt') {
     process.argv = [
       ...argvBase,
