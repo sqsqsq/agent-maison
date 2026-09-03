@@ -185,7 +185,7 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 | **Hylyre 真机闭环（2.0）**  | device-testing 端到端      | `device_test.build` / `install` / `run`；Maison vendor 源码树 + venv（运行时代码兼容外部 legacy wheel）；标准 feature + 即席 `_adhoc`（`npm run adhoc-device-test`） |
 | **v3.1 merge-framework-config** | UPDATE 补缺       | `merge-framework-config.mjs` 字段级「只补缺不覆盖」；含 `tools.hylyre.*` |
 | **v3.2–v3.4 确认 UX**     | 全 Skill 统一确认   | [`user-confirmation-ux.md`](../skills/reference/user-confirmation-ux.md) + registry schema 2.0；adapter interaction-renderer；`check-skills-confirmation-ux.ts` |
-| **发布 2.4.0 · 视觉保真飞轮** | 让自动化可信        | `chi_sim` OCR 文本信号承重；烤字 / 原子图标 / 双渲染 / 素材物化 / 结构声明台账确定性门禁；pixel_1to1 档位；判定绑定截图 hash + 安装包指纹；防伪收权（验真签名拆位、进程注入自净） |
+| **2.4.0 窗口（未发布）· 视觉保真飞轮** | 让自动化可信        | `chi_sim` OCR 文本信号承重；烤字 / 原子图标 / 双渲染 / 素材物化 / 结构声明台账确定性门禁；判定绑定截图 hash + 安装包指纹；进程注入自净。**该版本从未发布，成果并入 3.0.0**；其中 pixel_1to1 关键屏真人确认、验真签名拆位、drift 放行收权三项已在 3.0.0 窗口随人签通行证一并删除 |
 | **发布 3.0.0 · 机器事实唯一** | 删掉「签字放行」本身 | **人签质量通行证整体退役**（`confirmed_by` 家族不再影响任何裁决，停等点按机器事实重投影为责任阶段回修）；**Goal 运行时归一**（单一 `GoalPhaseRuntime` + run 出生契约 + `run_base_sha` write-once + run-control fencing）；**Skill 契约化 + assess 调和循环**（`contract.yaml`、`next.json` 为投影、`assurance` 取代 depth、verifier 能力化三态 + 短 request）；**反假 PASS 证据链**（负面裁决阻断、上游裁决门、closure attestation、证据身份绑定）；**testing 证据收编**（Hylyre StepResult v1 三轴 + `execution_channel`）；**一次减法**（强制 UI kit 撤销，产品组件归属唯一归宿主）；**运行时与宿主 Git/hash 解耦** |
 
 更多「**形态 / 宿主**默认假设」的剥离方向见 [`modality-framework-roadmap.md`](modality-framework-roadmap.md)。
@@ -581,7 +581,7 @@ Maison 在源仓完成 pack/release verify，交付 `framework-<semver>.zip`。�
 - [`../README.md`](../README.md) · framework 静态使用说明
 - [`../skills/README.md`](../skills/README.md) · Skill 索引
 - [`../MIGRATION.md`](../MIGRATION.md) · 升级与迁移说明
-- [`../RELEASE-NOTES-v3.0.0.md`](../RELEASE-NOTES-v3.0.0.md) · **当前版本发布说明**（往期：[`v2.4.0`](../RELEASE-NOTES-v2.4.0.md) · [`v2.3.0`](../RELEASE-NOTES-v2.3.0.md) · [`v2.0`](../RELEASE-NOTES-v2.0.md) · [`v1.0`](../RELEASE-NOTES-v1.0.md)）
+- [`../RELEASE-NOTES-v3.0.0.md`](../RELEASE-NOTES-v3.0.0.md) · **当前版本发布说明**（往期：[`v2.3.0`](../RELEASE-NOTES-v2.3.0.md) · [`v2.0`](../RELEASE-NOTES-v2.0.md) · [`v1.0`](../RELEASE-NOTES-v1.0.md)）
 
 ### 核心 SSOT（实例工程侧）
 
