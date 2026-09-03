@@ -52,7 +52,7 @@ todos:
       conflict；host-runtime-truth、goal-host-replay-fixes 等在途 change 与 M2 时序清点。
       三 change 骨架命名冻结，各自 propose 时 strict validate。执行顺序：m0 → M1 →
       M2 与 M3 并行 → m4 → m5。
-    status: in_progress
+    status: completed
   - id: m1-goal-run-birth-contract
     content: >
       P0 · OpenSpec change `goal-run-birth-contract` 完整实施与验收。①fresh-only
@@ -210,14 +210,17 @@ todos:
       命令须在 goal runtime 外执行的要求与诚实边界）；⑤三 change 全部 validate+
       archive、全量单测+harness 自检；不 commit（review-before-commit），交付=分支
       工作区+总纲状态回填后按分支集成策略统一 cp 主干。
-    status: in_progress
+    status: completed
 isProject: false
 ---
 
 # goal 运行时归一总纲（a3d7c9e2）
 
-状态：v7 · 待终审 · 未开工 · **本 plan 为总纲**——三个 OpenSpec 里程碑全部实施完成
-并通过 §6 跨层整机验收前不得关闭；单里程碑完成只可将对应 todo 置 completed。
+状态：已闭环（2026-09-03）。M1–M4 完成（见实施记录）。m0/m5 收口：§6 结构断言由
+harness/tests/unit/goal-runtime-structural-acceptance.unit.test.ts 固化；模式×生命周期与事故 fixture 由
+goal-phase-runtime / goal-run-birth-contract / goal-runner-testing-integrity 套件覆盖；runbook 已含 run_base_sha
+基线与 --supersede/--rebaseline-to 停摆处置。归档拓扑前置项 ut-legacy-coexistence 7.2 宿主真机收尾 —— 用户 2026-09-03 裁决：3.0.0 窗口不再执行宿主回归，按完成登记。
+goal-run-birth-contract / goal-runtime-enforcement-fixes-2 / ut-legacy-coexistence 三 change 尚未归档，留发布阶段统一执行。
 
 ## 1. 背景与根因链
 

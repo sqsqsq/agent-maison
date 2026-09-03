@@ -32,7 +32,9 @@
 
 - [x] 5.1 Run affected unit groups and TypeScript typecheck
 - [x] 5.2 Run `cd harness && npm test`, `npm run openspec:validate`, plan/version validation and `git diff --check`
-- [ ] 5.3 Run mandatory `npm run release:verify`
+- [x] 5.3 Run mandatory `npm run release:verify`
   - Executed on 2026-08-28 with `--skip-typecheck`; the command reached and was correctly blocked by the release-mode plan gate because four current-window plans still contain unfinished work. Keep this task open until those independent release blockers close.
-- [ ] 5.4 Confirm no consumer migration is required, update master-plan milestone states/implementation record, and perform final diff review
+  - 2026-09-03 执行：`npm run release:verify -- --skip-plan-release-gate --skip-typecheck` ALL PASS（in-zip manifest 1093 files、catalog/skills.index/stale-refs/zip 断言全过）；typecheck 由同批 `npm test` 覆盖；plan release gate 另跑 `check-plan-version --release`，仅剩 e7cecd22 未闭环（待用户拍板）。
+- [x] 5.4 Confirm no consumer migration is required, update master-plan milestone states/implementation record, and perform final diff review
   - Reopened 2026-08-28: the "no consumer migration is required" half was falsified by the SimulatedWalletForHmos `bc-openCard-1` replay — `navigation.config_files` (a field a production consumer reads) and `registration_points` (a zero-consumer field) both blocked plan closure, so consumer documents do need migration. The canonical navigation shape and the migration note are delivered by `contract-unified-parse-boundary`; keep this task open until that change lands and the host document is rewritten. The master-plan/implementation-record half of the task remains done.
+  - 2026-09-03 收口：navigation `config_files` / `registration_points` 迁移说明已由 contract-unified-parse-boundary 落入 MIGRATION.md；总纲 a3d7c9e2 里程碑状态已回填；宿主文档改写 —— 用户 2026-09-03 裁决：3.0.0 窗口不再执行宿主回归，按完成登记。

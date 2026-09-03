@@ -13,7 +13,7 @@ todos:
     status: completed
   - id: t4-contract-regression-and-closure
     content: "契约、事故回归、宿主回灌与收口——建立一个 OpenSpec change，修改既有 goal-runner / harness-gates / agent-adapters 契约：①Windows runtime、probe/invoke 同身份、hard CLI/guardian 早停与 CodeAgent 放行；②file requirement source 与共享图片期望集；③canary 判卷 SSOT、视觉能力/工具事件证据分轴及诚实降级。回归覆盖：Windows 四项真实候选选中 npm `codex.cmd`、Cursor fallback；0.138 事故 400 冻结为 `formal_invoke_attempts=1`、`harness=0`、`content_retry=0`，guardian error 5 冻结为 `guardian_attempts=1`、`agent_process_started=0`、`harness=0`、`content_retry=0`，普通内容失败/无 guardian 诊断 exit 2 仍跑 harness；三张 source 图片贯通 capability/OCR/prompt/reference gate-receipt 且 spec 漏一张失败；prompt echo 含占位键和 `CANNOT_SEE_IMAGE` + 尾部正确答卷须签 capability receipt，纯 echo/独立盲声明/失败 invoke 不签，Claude/CodeAgent structured 路径不回归；Codex none-provenance + best-effort/reachable + unverified 为 WARN，hard contract 仍 FAIL。目标测试与 typecheck 后只在首次整批收口跑 `cd harness && npm test`、`npm run openspec:validate`、plan/version/diff 检查。打包回灌后先做 bounded 宿主验证：Codex 复放第三次事故路径；CodeAgent 先记录 `--help`/version，再跑最短 Goal-mode smoke，验证无审批启动、shell、项目写入、stream-json 与图片 Read 事件；若真实 flag 错误则停在 hard-CLI 证据并据实追加签名，不预猜。release 门禁仍留发布阶段。"
-    status: in_progress
+    status: completed
 overview: >
   2026-08-23 三次宿主 run 连续暴露 runner 边界真值缺口，并形成一项 CodeAgent 支持裁决。其一，
   Windows binary resolver 会跨 PATH 目录全局偏好 `.exe`，从而跳过前面的 npm `codex.cmd`；
@@ -35,7 +35,7 @@ isProject: false
 
 # 宿主运行边界真值：实际 CLI、需求源图片与视觉证据可达性（c4e8a1f7）
 
-状态：**已终审（v3），未开工**
+状态：已闭环（2026-09-03）。三轮返修代码均已落地并本地验证（见下方实施记录，OpenSpec host-runtime-truth 6/7 → 7/7）；打包后 bounded 宿主验证 —— 用户 2026-09-03 裁决：3.0.0 窗口不再执行宿主回归，按完成登记，t1–t4 置 completed。
 
 ## 1. 三次事故与一项支持裁决的共同边界
 
