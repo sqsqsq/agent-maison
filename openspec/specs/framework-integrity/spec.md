@@ -5,78 +5,21 @@ TBD - created by archiving change consumer-write-guard. Update Purpose after arc
 ## Requirements
 ### Requirement: Runtime artifact policy is a single cross-runtime SSOT
 
-`specs/runtime-artifact-policy.json` SHALL be the only source of truth for framework runtime-artifact whitelisting（`ignored_runtime_patterns` / `generated_file_patterns` / `reserved_metadata_files`）. `canonical-gitignore.ts` SHALL derive its framework-runtime gitignore section from it; `framework-integrity.ts`（CJS TS）and `agents/shared/guard-framework-write-core.mjs`（node ESM）SHALL read the same file. No consumer of the policy may maintain a second list.
+`specs/runtime-artifact-policy.json` SHALL remain the only source of truth for framework runtime-artifact whitelisting (`ignored_runtime_patterns` / `shipped_files_in_runtime_dirs` / `generated_file_patterns` / `reserved_metadata_files`). It SHALL describe only Maison's own output and guard paths inside `framework/`; it SHALL NOT derive, describe, or compensate for any host source-control configuration.
 
-Enforcement: `specs/runtime-artifact-policy.json`, three-way consistency unit tests
+Its consumers SHALL be exactly two, reading the same file with equivalent glob-lite semantics: the Git-neutral TypeScript helper `harness/scripts/utils/runtime-artifact-policy.ts` (release/package boundary checks) and `agents/shared/guard-framework-write-core.mjs` (write-time editing-tool guard). `canonical-gitignore.ts` SHALL NOT be a consumer — the file is deleted along with the host `.gitignore` derivation, equivalence map, advisories, and writer. No consumer may maintain a second list, and the policy SHALL NOT gain a second copy, cache, or derived state file.
 
-#### Scenario: Three consumers agree
+Enforcement: `specs/runtime-artifact-policy.json`, `harness/scripts/utils/runtime-artifact-policy.ts`, `agents/shared/guard-framework-write-core.mjs`, policy↔consumer consistency unit tests
 
-- **WHEN** the policy JSON, the gitignore derivation, and the hook-core matcher are compared over a fixture path matrix
-- **THEN** classification SHALL agree pairwise; a drifted local list in any consumer SHALL fail the consistency tests
+#### Scenario: Both consumers agree on the same SSOT
 
-### Requirement: Write-time guard blocks editing-tool writes into vendored framework/
+- **WHEN** the policy JSON, the Git-neutral TS helper, and the hook-core matcher are compared over a fixture path matrix
+- **THEN** classification SHALL agree pairwise; a drifted local list in either consumer SHALL fail the consistency tests
 
-In consumer layout（`framework/RELEASE-MANIFEST.json` present）, adapter hooks SHALL deny editing-tool writes targeting `framework/**` unless the path matches the **write-allow** predicate（`ignored_runtime_patterns` + `generated_file_patterns` only——`reserved_metadata_files` such as the manifest sidecar are integrity anchors produced by the packer and SHALL be write-denied even though the scan predicate accepts their presence）or a structurally human-approved `integrity.drift_allowlist` entry. Repo identity SHALL derive from the hook script's physical layout（never from payload `cwd`, which may be a subdirectory）; `cwd` is only the resolution base for relative target paths, and `file://` URIs SHALL be converted via `fileURLToPath`. The claude adapter SHALL register a PreToolUse hook（matcher `Write|Edit|MultiEdit|NotebookEdit`）; the cursor adapter SHALL register a preToolUse entry in `.cursor/hooks.json` invoking the in-package shell. Both shells SHALL share `agents/shared/guard-framework-write-core.mjs`. The guard SHALL fail open on any evaluation error（check-time scanning remains the backstop）, and SHALL NOT be claimed as full write coverage（shell redirection is out of scope）.
+#### Scenario: Policy has no host SCM derivation
 
-Enforcement: `agents/shared/guard-framework-write-core.mjs`, `agents/claude/templates/hooks/guard-framework-write.mjs`, `agents/cursor/hooks/guard-framework-write.mjs`
-
-#### Scenario: Temp script into framework/harness/scripts is denied with educational guidance
-
-- **WHEN** an agent attempts to Write `framework/harness/scripts/tmp-*.mjs` in a consumer project
-- **THEN** the hook SHALL deny（claude: exit 2 + stderr; cursor: `{permission:"deny", user_message, agent_message}` + exit 0）and the message SHALL point to the scratch/ convention and framework-init UPDATE
-
-#### Scenario: Invalid allowlist entries cannot unlock the guard
-
-- **WHEN** `integrity.drift_allowlist` contains a legacy string entry, an automation signer, a `user_requirement` sentinel, or lacks rationale/approved_by
-- **THEN** the write guard SHALL still deny（same approval semantics as the check-time gate, verified by a cross-implementation parity test）
-
-#### Scenario: Source layout is unaffected
-
-- **WHEN** no `framework/RELEASE-MANIFEST.json` exists（agent-maison source repo）
-- **THEN** the guard SHALL allow all writes
-
-### Requirement: Foreign files inside framework/ are detected at check time
-
-The integrity preflight SHALL walk the consumer `framework/` tree and report files present on disk but absent from `manifest.files` as a BLOCKER（independent check id `framework_foreign_file`）, whitelisting only runtime-artifact-policy matches and human-approved allowlist entries. Symlinks/junctions SHALL be evaluated **before any exemption** and treated as foreign unconditionally—manifest membership, runtime-artifact policy, and drift allowlist SHALL NOT exempt a link（a whitelisted directory junctioned out of tree, or the reserved sidecar replaced by a file symlink, must be reported; the manifest self-check SHALL additionally hard-fail when the sidecar itself is a link）. The walk SHALL NOT follow links. Vision canary artifacts SHALL be whitelisted by exact filename patterns（never the whole assets/ directory）. Honest cost: layouts that junction runtime directories（e.g. pnpm-style node_modules links）will be flagged; use real directories or the human-approved global downgrade.
-
-Enforcement: `harness/scripts/utils/framework-integrity.ts` `scanForeignFiles`
-
-#### Scenario: The incident's tmp script is caught
-
-- **WHEN** `framework/harness/scripts/tmp-ocr-audit.mjs` exists and is not in the manifest
-- **THEN** `framework_foreign_file` SHALL FAIL as BLOCKER while `framework_integrity`（per-file drift）reports independently（no swallowing）
-
-#### Scenario: Junction cannot escape the scan root
-
-- **WHEN** a directory junction inside framework/ points outside the tree
-- **THEN** the scan SHALL NOT traverse it and SHALL flag the link itself as foreign
-
-### Requirement: Consumer hashing matches pack semantics（EOL-normalized）
-
-The consumer per-file hash SHALL replicate pack-side classification and normalization exactly: known-binary extensions first（raw bytes even without NUL）, then NUL heuristic, then `/\r\n?/g` EOL normalization for text. CRLF or lone-CR rewrites of unchanged content SHALL NOT report drift; real content changes SHALL. A source-repo parity test SHALL compare the TS implementation against `scripts/release-pack-rules.mjs` over a fixture matrix.
-
-Enforcement: `harness/scripts/utils/framework-integrity.ts` `sha256FileEolNormalized`, parity unit test
-
-#### Scenario: CRLF rewrite no longer forges drift
-
-- **WHEN** a tool rewrites a framework text file with CRLF（bytes differ, content identical）
-- **THEN** the per-file comparison SHALL PASS（the incident's false-drift → manifest-recompute chain is cut at its root）
-
-### Requirement: Manifest self-check via in-package sidecar
-
-The packer SHALL write `framework/RELEASE-MANIFEST.sha256`（single 64-hex lowercase line + trailing LF = sha256 of the manifest's raw bytes）into the package, excluded from `manifest.files`（circular dependency）. `release:verify` coverage SHALL exclude exactly {RELEASE-MANIFEST.json, RELEASE-MANIFEST.sha256} and SHALL assert sidecar format and content. The consumer preflight SHALL run an independent `framework_manifest_selfcheck` using the **same strict format**（64-hex + mandatory trailing LF）: match → PASS and continue; mismatch → BLOCKER FAIL and stop per-file/foreign checks（manifest untrusted）; **missing → BLOCKER FAIL and continue**——the selfcheck code ships with ≥3.0.0 packages（code and package share one tree in consumer layout）, so a missing sidecar can only mean deletion or a non-release deployment, never a "legacy package"（true pre-3.0.0 hosts run pre-3.0.0 code without this check at all）. This closes the delete-sidecar-then-recompute-manifest bypass. `workspace_tmp_hygiene` SHALL run regardless.
-
-Enforcement: `scripts/pack-release.mjs`, `scripts/verify-release-pack.mjs`, `harness/scripts/utils/framework-integrity.ts` `runManifestSelfcheck`
-
-#### Scenario: Recomputing the manifest to mask drift is caught
-
-- **WHEN** an agent recomputes manifest hashes to match locally drifted files（sidecar no longer matches manifest bytes）
-- **THEN** `framework_manifest_selfcheck` SHALL FAIL as BLOCKER with guidance to never hand-recompute, and subsequent per-file checks SHALL stop
-
-#### Scenario: Deleting the sidecar cannot disarm the chain
-
-- **WHEN** an agent modifies a file, recomputes the manifest, and deletes the sidecar
-- **THEN** `framework_manifest_selfcheck` SHALL FAIL as BLOCKER（`framework_manifest_sidecar_missing`）while per-file/foreign checks continue for diagnostics
+- **WHEN** the policy file and its consumers are inspected
+- **THEN** they SHALL contain no host `.gitignore` derivation, ignore-equivalence map, ignore advisory, or `!`-rule generation, and the policy comments SHALL describe only the guard, release file set, and Maison output boundary
 
 ### Requirement: hooks_config adapter field materializes via structured upsert
 
@@ -104,52 +47,124 @@ Enforcement: `harness/scripts/utils/hooks-config-upsert.ts`, `harness/scripts/ut
 - **WHEN** `materialized_adapters` is `["claude","cursor"]`（cursor not primary）and init materializes the cursor adapter
 - **THEN** `.cursor/hooks.json` SHALL be structurally merged（third-party entries and top-level fields preserved, framework entry upserted）; an incompatible target SHALL be caught by the preflight across ALL materialized adapters（zero disk writes for preceding tasks）, by the executor（task failed, host file byte-identical）, and by check-init BLOCKER `hooks_config_target_compatible`
 
-### Requirement: Workspace tmp-script hygiene advisory
-
-The preflight SHALL shallow-scan the repo root and `scripts/`（depth ≤2）for `tmp-*.{js,mjs,cjs,ts}` files（git-ignored hits filtered when git is available）and report them as an independent `workspace_tmp_hygiene` MAJOR WARN pointing to the scratch/ convention. This is a naming heuristic—no intent judgement, never a BLOCKER（the host root is host property）—and SHALL coexist with all other integrity results.
-
-Enforcement: `harness/scripts/utils/framework-integrity.ts` `runWorkspaceTmpHygieneScan`
-
-#### Scenario: The incident's root-scripts leg becomes visible
-
-- **WHEN** `scripts/tmp-add-ocr.js` exists untracked in the host root
-- **THEN** `workspace_tmp_hygiene` SHALL WARN alongside any `framework_foreign_file` result（neither swallows the other）
-
 ### Requirement: Release artifacts ship a per-file integrity manifest
 
-The release packer SHALL compute a sha256 over the **staged** bytes (post-sanitize, LF-normalized) of every shipped file and write an in-zip manifest `framework/RELEASE-MANIFEST.json` containing `{schema_version, version, files:[{path, sha256}]}`. The in-zip manifest SHALL NOT contain the zip sha (only known after zipping). The dist sidecar manifest SHALL retain the zip sha and reference the in-zip manifest's own hash.
+The release packer SHALL compute sha256 over staged, sanitized, LF-normalized shipped bytes and write `RELEASE-MANIFEST.json` plus the existing manifest-SHA sidecar. Pack/release verify and the explicit updater/integration boundary SHALL retain their package validation. Ordinary consumer phases SHALL NOT recompute or compare installed files.
 
-Enforcement: `scripts/pack-release.mjs`, `scripts/verify-release-pack.mjs`
+The manifest fields and sidecar MAY be read as non-blocking package identity without becoming a runtime integrity verdict.
 
-#### Scenario: Per-file hash basis is the staged byte stream
+Enforcement: `scripts/pack-release.mjs`, `scripts/verify-release-pack.mjs`, explicit integration/candidate binding
 
-- **WHEN** the packer sanitizes `package.json` / `harness/package.json` / vendor manifest and normalizes EOL to LF during staging
-- **THEN** the manifest per-file sha256 SHALL be computed over the staged file bytes, so a consumer that extracts the zip recomputes identical hashes (no false drift from source-vs-staged differences)
+#### Scenario: Ordinary phases only read identity
 
-#### Scenario: In-zip manifest excludes the zip sha
+- **WHEN** an ordinary phase runs from a consumer release
+- **THEN** it MAY display package identity but SHALL NOT traverse per-file manifest entries or compare them to installed bytes
 
-- **WHEN** the in-zip `RELEASE-MANIFEST.json` is written into staging before zipping
-- **THEN** it SHALL contain only schema_version/version/files, while the dist sidecar SHALL carry the zip sha plus the in-zip manifest hash for chained verification
+### Requirement: Canonical enforcement paths are mechanically closed
 
-### Requirement: Consumer harness enforces framework source integrity
+Repository validation SHALL parse canonical `openspec/specs/*/spec.md` `Enforcement:` lines and require every exact repository-relative file path to exist. Missing exact paths MUST fail strict OpenSpec or release validation; functions, prose labels and supported glob expressions SHALL be classified separately rather than mistaken for exact files.
 
-The harness SHALL run a global `framework_integrity` preflight at the harness-runner entry for **all modes (normal and goal)**, independent of project profile (NOT dispatched via the capability registry, so a profile SKIP or missing provider cannot disable it). It SHALL compare each manifest file's sha256 against the consumer's `framework/<path>`.
+Enforcement: `scripts/check-openspec-enforcement-paths.mjs`, `package.json`
 
-Enforcement: `harness/scripts/utils/framework-integrity.ts`, `harness/harness-runner.ts`
+#### Scenario: Canonical requirement names a removed runtime file
+- **WHEN** an `Enforcement:` line contains an exact path to a file that does not exist
+- **THEN** repository validation fails and reports the spec line and missing path
 
-#### Scenario: Source/dev layout without manifest is a no-op
+#### Scenario: Enforcement names a function beside a valid file
+- **WHEN** an `Enforcement:` line names a valid file plus a non-path function symbol
+- **THEN** the file is validated and the symbol is not treated as a missing filesystem path
 
-- **WHEN** no in-zip `RELEASE-MANIFEST.json` is present (the framework's own source repo, or a non-released integration)
-- **THEN** the preflight SHALL return SKIP and never block, so the framework's own `npm test` is unaffected
+### Requirement: Framework write authority comes from an out-of-model security principal
 
-#### Scenario: Drift in a consumer layout is BLOCKER by default
+Framework control-plane write authority SHALL be granted by the execution environment, never declared inside Maison. A Maison maintainer task may write the source repository and release artifacts; an ordinary host consumer task SHALL see framework control-plane paths as read-only while host product/feature/runtime paths remain writable; a user- or CI-triggered updater may hold temporary framework write access only for an explicit integration operation and SHALL return the control plane to read-only when it completes.
 
-- **WHEN** the in-zip manifest is present and any listed file is missing or its bytes differ
-- **THEN** the preflight SHALL emit a BLOCKER FAIL (`failure_kind=framework_drift`) listing the drifted files, with a suggestion to upstream the fix or opt out
+Task sandbox permissions, read-only mounts, restricted OS tokens, and ACLs MAY provide this boundary. Environment variables, config fields, agent names, the current directory, Git repository membership, Git HEAD, and working-tree state SHALL NOT constitute identity. Where maintainer and host agent run as the same OS user without a restricted token, Maison SHALL NOT claim isolation and SHALL NOT substitute a hash or Git detector for it.
 
-#### Scenario: Explicit opt-out downgrades or allowlists drift
+Enforcement: `skills/reference/consumer-framework-boundary.md`, `templates/AGENTS.md.template`, execution-environment policy
 
-- **WHEN** `framework.config.json` sets `integrity.allow_local_drift=true`
-- **THEN** detected drift SHALL be reported as a non-blocking WARN rather than a BLOCKER
-- **WHEN** a drifted path is listed in `integrity.drift_allowlist`
-- **THEN** that path SHALL be excluded from drift detection
+#### Scenario: Strong isolation denies a host write
+
+- **WHEN** a host consumer task attempts to write a framework control-plane source file under a restricted token, ACL, or read-only mount
+- **THEN** the OS or sandbox SHALL deny it without any runtime hash or Git comparison
+
+#### Scenario: Identity is never self-declared
+
+- **WHEN** an agent changes an environment variable, config field, name, cwd, Git branch, commit, or staging state
+- **THEN** no framework write authority SHALL follow
+
+### Requirement: Without strong isolation the boundary is one cooperative editing-tool guard
+
+Where strong isolation is unavailable, Maison SHALL retain the existing Write/Edit/MultiEdit/NotebookEdit guard as a cooperative mistake-prevention measure. It SHALL deny editing-tool writes to framework control-plane paths except existing runtime write-allow paths. It SHALL fail open on evaluation errors and SHALL be documented as unable to cover shell redirection, scripts, `node -e`, arbitrary subprocesses, or out-of-process writers. Maison SHALL NOT add an after-the-fact detector to pretend these blind spots are covered.
+
+Legacy `integrity.allow_local_drift` and `integrity.drift_allowlist` fields MAY remain parseable for lossless config migration, but SHALL be ignored, SHALL NOT unlock the guard, and SHALL NOT produce a runtime advisory or check result. Their migration notice SHALL live in schema/template/MIGRATION documentation.
+
+Enforcement: `agents/shared/guard-framework-write-core.mjs`, adapter hook shells, `harness/config.ts`, `specs/framework.config.schema.json`
+
+#### Scenario: Editing-tool write is denied
+
+- **WHEN** an ordinary host agent uses a covered editing tool to write a framework control-plane file
+- **THEN** the guard SHALL deny the operation and point to scratch or an explicit updater/upstream release path
+
+#### Scenario: Shell coverage is not invented
+
+- **WHEN** the environment cannot prevent a shell, script, or external process from writing framework
+- **THEN** Maison SHALL document the blind spot and SHALL NOT claim a later Git/hash scan will detect it
+
+#### Scenario: Retired config fields have zero runtime effect
+
+- **WHEN** a legacy config contains `integrity.allow_local_drift` or `integrity.drift_allowlist`
+- **THEN** config parsing SHALL succeed, guard/verdict SHALL be unchanged, and no runtime migration advisory or `framework_integrity` result SHALL be emitted
+
+### Requirement: Ordinary runtime is invariant to host Git state
+
+Ordinary init, global phases, feature phases, report-only runs, and goal gate invocations SHALL NOT inspect host Git state to decide framework identity, integrity, applicability, or verdict. Maison SHALL NOT produce `framework_integrity`, `framework_control_plane_dirty`, or a framework-Git-derived `framework_integrity_block`. It SHALL NOT retain an always-SKIP or always-PASS compatibility result.
+
+The same installed release bytes SHALL yield the same Maison phase adjudication and Framework package identity whether framework is tracked dirty, staged, committed, entirely untracked, or outside a Git repository. Host product dirtiness SHALL likewise have no effect. Production code SHALL NOT start a Git subprocess with `frameworkRoot` as cwd to identify the framework.
+
+Enforcement: `harness/harness-runner.ts`, `harness/scripts/utils/framework-integrity.ts`, `profiles/hmos-app/harness/visual-feedback.ts`
+
+#### Scenario: A complete update overlays an old host HEAD
+
+- **WHEN** a complete valid new release is mirrored over an older release recorded in host HEAD, producing modified, deleted, and untracked entries without add/stage/commit
+- **THEN** the actual framework-init UPDATE orchestration SHALL finish with `run-global-phases` successful, catalog SHALL contain no framework Git result, and the init run-log/summary SHALL not report that task failed
+
+#### Scenario: Five Git environments are equivalent
+
+- **WHEN** identical valid release bytes are evaluated as tracked dirty, staged, committed, entirely untracked, and non-Git
+- **THEN** Maison phase verdict/check classifications and Framework package identity SHALL be equal across all five environments
+
+### Requirement: Write-time guard blocks editing-tool writes into the framework release
+
+In consumer release layout (`framework/RELEASE-MANIFEST.json` present), adapter hooks SHALL deny covered editing-tool writes targeting `framework/**` unless the target matches the existing runtime write-allow predicate (`ignored_runtime_patterns` plus `generated_file_patterns`; shipped files and reserved metadata remain write-denied). Repo identity SHALL derive from the hook script's physical layout; payload cwd is only the base for relative targets, and file URLs SHALL use standard conversion. Claude, Cursor, and other materialized adapters SHALL use the shared core.
+
+There SHALL be no allowlist unlock. The guard SHALL be described as cooperative and incomplete when strong isolation is absent; no Git dirty, manifest scan, foreign-file check, or any other check-time backstop SHALL be cited as fallback coverage.
+
+Enforcement: `agents/shared/guard-framework-write-core.mjs`, adapter hooks/settings, agent rule templates
+
+#### Scenario: A named approval cannot unlock the guard
+
+- **WHEN** a legacy config names an approver for a framework path
+- **THEN** the editing-tool guard SHALL still deny the control-plane write and no runtime advisory/check SHALL be generated
+
+#### Scenario: Fail-open is not backstopped by a later scan
+
+- **WHEN** the guard fails open on an evaluation error
+- **THEN** no check-time integrity scan SHALL be introduced or cited as compensating coverage
+
+### Requirement: Package identity is non-blocking and has one loader
+
+One package identity loader SHALL read version, `source_commit`, and `built_at` from `RELEASE-MANIFEST.json`, and SHALL directly parse the existing `RELEASE-MANIFEST.sha256` 64-hex text as `manifest_sha256`. It SHALL NOT hash the sidecar text, traverse manifest `files[]`, recompute installed files, or read host Git.
+
+check-init and visual-feedback SHALL reuse this loader. For visual-feedback schema compatibility, `framework_commit_sha` SHALL contain manifest `source_commit`, and `framework_package_digest` SHALL contain `manifest_sha256`. Missing/corrupt identity SHALL be rendered as null/unknown or a non-blocking warning and SHALL NOT affect an ordinary phase verdict.
+
+Enforcement: `harness/scripts/utils/framework-integrity.ts`, `harness/scripts/check-init.ts`, `profiles/hmos-app/harness/visual-feedback.ts`
+
+#### Scenario: Sidecar value is not double-hashed
+
+- **WHEN** `RELEASE-MANIFEST.sha256` contains a valid manifest SHA
+- **THEN** package identity and visual-feedback SHALL expose that exact value rather than sha256(sidecar file bytes)
+
+#### Scenario: Host commit cannot change package identity
+
+- **WHEN** the same release bytes move from dirty/staged to committed host state
+- **THEN** `framework_commit_sha` SHALL remain the manifest `source_commit` and every Framework identity field SHALL remain unchanged

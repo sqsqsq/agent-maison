@@ -338,22 +338,6 @@ source（visual|device_test），retry/halt 指引 MUST 按 source 分支；事�
   或 target_kind 非 physical
 - **THEN** 相关 case 进入 unverified 通路（retry 引导重采，耗尽 halt），不回退 coding
 
-### Requirement: Integrity blockers classify as framework_integrity_block and halt on first touch
-
-Framework release-tree integrity blockers (manifest corruption/tamper, foreign framework files, unreadable framework state) SHALL remain `framework_integrity_block` and halt on first touch without automated reverts. An invocation-scoped write to an owner-resolvable feature artifact or protected product/test source SHALL NOT be folded into that permanent framework-integrity halt: it SHALL emit `phase_write_violation`, invalidate invocation/owner/downstream trust, preserve bytes as untrusted, and automatically use `backtrack_to_phase` for full owner revalidation. Persistent concurrent mutation, unreadable/corrupt feature bytes, repeated identical violations, absent targets, and exhausted budgets SHALL terminate through existing integrity/fuse semantics.
-
-Enforcement: `harness/scripts/utils/goal-failure-classifier.ts`, `harness/scripts/utils/phase-write-boundary.ts`, `harness/scripts/goal-runner.ts`
-
-#### Scenario: framework package tamper still halts
-
-- **WHEN** a phase detects a changed release-manifest-bound framework file
-- **THEN** the run SHALL halt `framework_integrity_block` without asking the agent to restore it
-
-#### Scenario: downstream feature write recovers
-
-- **WHEN** plan changes spec-owned acceptance bytes once and the bytes are stable/readable
-- **THEN** the runner SHALL invalidate trust and backtrack spec instead of first-touch permanent HALT
-
 ### Requirement: Timeout attribution follows the freshness decision table
 
 For a timed-out attempt the classifier SHALL apply, in order: stale summary → `agent_timeout`; fresh summary containing any integrity blocker → `framework_integrity_block`; fresh summary with a non-empty blocker set consisting entirely of `framework_bug` → `framework_bug`; otherwise (mixed or content-only) → `agent_timeout`. The all-framework_bug branch SHALL require `blockers.length > 0`.
@@ -639,14 +623,19 @@ Enforcement: `harness/scripts/utils/goal-report-generator.ts`, `harness/scripts/
 
 ### Requirement: Truncated-chain runs machine-verify upstream closures before starting
 
-A run whose start_phase is not the first phase of the resolved workflow chain SHALL verify, for every upstream phase, the existence and freshness of its closure (receipt closure state, gate fingerprint, phase_closure_fingerprint staleness recomputation, and — for review — the closure attestation). Textual assertions in `manifest.requirement` SHALL NOT substitute for verification. Verification failure SHALL refuse the run and name the missing/stale phase. HALTED/PARTIAL prior runs SHALL be resumed or explicitly superseded via `--supersede <run_id>` (audited event); they SHALL NOT be silently displaced.
+A run whose start_phase is not the first phase of the resolved workflow chain SHALL verify, for every upstream phase, the existence and freshness of its closure (receipt closure state, gate fingerprint, phase_closure_fingerprint staleness recomputation, and — for review — the closure attestation). Textual assertions in `manifest.requirement` SHALL NOT substitute for verification. Verification failure SHALL refuse the run and name the missing/stale phase. HALTED/PARTIAL prior runs SHALL be resumed or explicitly superseded via `--supersede <run_id>` (audited event); they SHALL NOT be silently displaced. A `CREATION_INCOMPLETE` residue is not a HALTED/PARTIAL occupant and SHALL NOT block a replacement creation. When supersede also changes the accountability baseline, it MUST use the paired runtime-external `--rebaseline-to <exact-40hex-sha>` management command; a supervisor MUST never infer or initiate rebaseline.
 
-Enforcement: `harness/scripts/goal-runner.ts`（preflight）, `harness/scripts/utils/phase-evidence-manifest.ts`
+Enforcement: `harness/scripts/goal-runner.ts`（preflight）, `harness/scripts/utils/phase-evidence-manifest.ts`, `harness/scripts/utils/goal-run-creation.ts`
 
 #### Scenario: requirement text asserting upstream PASS is ignored
 
 - **WHEN** a new run declares start_phase=ut and its manifest text claims "上游已 PASS" but spec closure inputs have since changed
 - **THEN** preflight SHALL recompute staleness, judge the spec closure STALE, and refuse to start
+
+#### Scenario: incomplete residue does not require supersede
+
+- **WHEN** the only previous directory for the feature is a manifest-only `CREATION_INCOMPLETE` residue
+- **THEN** a valid fresh run SHALL be allowed without silently classifying or superseding that residue as HALTED/PARTIAL
 
 ### Requirement: Feature completion is generated only from clean lineage and verified only through one entry point
 
@@ -1247,7 +1236,7 @@ Enforcement: `harness/scripts/utils/scope-replan.ts`（`checkPlanAuthority`）, 
 
 ### Requirement: The pass-snapshot mechanism is retired; PASS artifacts are protected by full re-verification
 
-The per-run PASS frozen-snapshot mechanism (take/diff/restore/discard, trusted-context loading, epoch/head/journal, memory anchors, the `pass_snapshot_unavailable` / snapshot-flavored `pre_invoke_snapshot_failed` halt family, and the responsibility-rerun pending state) SHALL be removed and MUST NOT be reintroduced as workflow state, authorization, or start eligibility. PASS-artifact tamper protection SHALL rest on the facts that already exist: a closure attempt that breaks an artifact fails the next full harness re-verification; an edit that still passes re-earns every gate on the current bytes; and the phase closure manifest always binds the current bytes — the closure-only prompt keeps its "do not rewrite artifacts" instruction as guidance. Invalidation (backtrack/replan) SHALL be complete with the atomic `phase_backtrack_requested` event alone — no cache demotion side effects. The retained residents of the trust-state namespace are the coding base anchor (`coding-base.json`, the UI-scope diff baseRef — unrelated to snapshots) and per-run trust-state GC (`deleteRunTrustState`, which also sweeps legacy snapshot directories from older runs). Read-side incident mappings for historical ledgers MAY keep the retired incident ids. Independent mechanisms that share similar names SHALL NOT be removed: review closure source attestation, UT product-source immutability, testing invoke-boundary source write-protection (`product-source-snapshot`), and the device readiness gate.
+The per-run PASS frozen-snapshot mechanism (take/diff/restore/discard, trusted-context loading, epoch/head/journal, memory anchors, the `pass_snapshot_unavailable` / snapshot-flavored `pre_invoke_snapshot_failed` halt family, and the responsibility-rerun pending state) SHALL be removed and MUST NOT be reintroduced as workflow state, authorization, or start eligibility. PASS-artifact tamper protection SHALL rest on the facts that already exist: a closure attempt that breaks an artifact fails the next full harness re-verification; an edit that still passes re-earns every gate on the current bytes; and the phase closure manifest always binds the current bytes — the closure-only prompt keeps its "do not rewrite artifacts" instruction as guidance. Invalidation (backtrack/replan) SHALL be complete with the atomic `phase_backtrack_requested` event alone — no cache demotion side effects. The retained resident of the trust-state namespace is per-run trust-state GC (`deleteRunTrustState`, which also sweeps legacy snapshot and coding-base directories from older runs); new goal runs store their baseline only in `manifest.run_base_sha` and MUST NOT produce `coding-base.json`. Read-side incident mappings and strictly era-isolated legacy coding-base readers MAY remain for historical runs. Independent mechanisms that share similar names SHALL NOT be removed: review closure source attestation, UT product-source immutability, testing invoke-boundary source write-protection (`product-source-snapshot`), and the device readiness gate.
 
 Enforcement: `harness/scripts/utils/pass-snapshot.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/scope-replan.ts`, `harness/scripts/utils/goal-runner-phase.ts`, `harness/scripts/utils/phase-completion-probe.ts`
 
@@ -1260,6 +1249,11 @@ Enforcement: `harness/scripts/utils/pass-snapshot.ts`, `harness/scripts/goal-run
 
 - **WHEN** a closure-only attempt modifies a previously passing artifact in a way that breaks a gate
 - **THEN** the phase's next full harness run fails on the current bytes and the run takes the normal content-retry path — no snapshot diff, no restore, no cache-discard halt
+
+#### Scenario: a new run never produces an off-repository coding base
+
+- **WHEN** a new-schema goal run reaches coding
+- **THEN** no `coding-base.json` or coding-base event SHALL be written because the immutable manifest birth baseline already exists
 
 ### Requirement: Goal startup MUST resolve product selection once and halt on unresolved
 
@@ -1529,3 +1523,420 @@ Enforcement: `harness/scripts/utils/goal-run-creation.ts`, `harness/scripts/util
 
 - **WHEN** a modern run's birth fact contains a baseline and the manifest deletes it or changes its value
 - **THEN** the shared creation/baseline validation rejects the run for birth-contract inconsistency
+
+### Requirement: Truncated-chain preflight derives requirement lineage from the in-memory manifest
+
+When a run starts at a non-head phase (truncated chain), the runner SHALL compute the current requirement lineage hash from the in-memory `manifest.requirement` through the same content-assembly function used by the on-disk recompute path (byte-identical output for identical inputs), instead of reading the run's own `goal-runs/<run_id>/manifest.json` from disk (which is written only after preflight). A missing or blank `manifest.requirement` SHALL remain a fail-closed BLOCKER. If the authoritative enumeration reports any corrupt run (started-but-manifest-less), the preflight SHALL fail closed and name the corrupt directories.
+
+Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/fidelity-shared.ts`
+
+#### Scenario: a fresh truncated chain starts without a pre-seeded manifest
+
+- **WHEN** a new `ut→testing` run starts and no `manifest.json` exists on disk for its run_id (the be1c48 incident shape)
+- **THEN** the preflight SHALL compute the requirement lineage from the in-memory manifest and proceed to upstream-closure verification without the "manifest 缺失/不可读" rejection
+
+#### Scenario: dry-run pre-seeding is no longer required and no longer co-writes
+
+- **WHEN** the host starts the truncated chain directly (no prior dry-run with the same run_id)
+- **THEN** the real run directory SHALL contain no dry-run events and agent turn numbering SHALL start at 1
+
+### Requirement: Dry-run executes under the reserved .dry subtree with zero external trust mutation
+
+A dry-run SHALL use `goal-runs/.dry/<run_id>/` as its report_dir (same run_id, no derived identity, no ledger), keeping manifest/events/progress/phases/per-run lock fully separate from real runs (run-level files zero co-write; the feature serialization lock remains shared). All dry-run events SHALL carry `dry_run:true`. A dry-run SHALL perform zero external trust mutation: vision checkpoint drift comparison, reseal recovery, feature head/run checkpoint/HWM writes, legacy ledger migration, and the per-invoke/post-harness vision-ledger snapshots with their anchor events are all skipped (the dry invoke window neither reads the vision ledgers nor emits `vision_ledger_anchor` rows); `framework.local.json` adapter write-back and canary cache writes are forbidden (capability/config reads remain allowed). `--resume` SHALL never resolve into the `.dry` subtree, and run_id values starting with `.` or containing path separators SHALL be rejected. The detach parent and the main entry SHALL share one raw-input resolver (feature/run_id/manifest consistency: feature only in the manifest file is accepted; CLI-vs-manifest conflicts fail closed; parent and child derive the same `.dry` path).
+
+Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-manifest.ts`
+
+#### Scenario: dry-run leaves the trust surface byte-identical
+
+- **WHEN** a dry-run executes for a feature with existing vision trust anchors and `--override-adapter` is passed
+- **THEN** the goal-checkpoints namespace, feature vision trust files and `framework.local.json` SHALL be byte-identical before and after the dry-run
+
+#### Scenario: a dry-run and a real run share a run_id without co-writing
+
+- **WHEN** a dry-run with run_id R completes and a real run with run_id R starts
+- **THEN** the real run's `events.jsonl` SHALL contain no dry-run rows and its budget turn count SHALL not include dry invokes
+
+### Requirement: Authoritative state derives from non-dry sessions and classified run directories
+
+Every consumer deriving authoritative state from run events (budget/turn counting, timeout ratchet, transient-retry and advance-blocked counters, continuation cause, backtrack counts, resume rebuild, ledger reconciliation expectation sets, and the progress projection/status panel including its recent-events tail) SHALL read through the authoritative view that drops dry-run sessions (session partition by `run_start`; legacy mixed files filtered). The progress projection for a `.dry` report_dir keeps its own raw dry events (the dry run's panel stays observable); for a normal report_dir its budget axis SHALL report authoritative turns and active-time elapsed (Σ historical session durations + live-session `now − sessionStart`), never the calendar span since the first raw `run_start`. Goal-run directory enumeration for requirement lineage, completion freshness and latest-phase-evidence selection SHALL use one shared enumerator that structurally skips the `.dry` subtree, silently excludes bootstrap-only residue (directories with only detach/lock bootstrap files — handled by the existing orphan flow, never an error), and surfaces started-but-manifest-less directories as `corruptRuns` without throwing; requirement-hash, closure, completion and phase-lineage gates — including the check-spec requirement-intent surface and the check-receipt closure-lineage generation — SHALL fail closed while any corrupt run is present, naming the damaged directories.
+
+Enforcement: `harness/scripts/utils/goal-runner-phase.ts`, `harness/scripts/utils/fidelity-shared.ts`, `harness/scripts/utils/verify-feature-completion.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-progress.ts`, `harness/scripts/check-spec.ts`, `harness/scripts/check-receipt.ts`
+
+#### Scenario: a later dry-run cannot become authoritative phase evidence
+
+- **WHEN** a dry-run newer than the last real run exists under `.dry/`
+- **THEN** requirement intent hash, phase lineage, completion freshness and per-phase latest-run selection SHALL be unchanged
+
+#### Scenario: a legacy mixed events file does not surface dry verdicts on the panel
+
+- **WHEN** a real run's `events.jsonl` contains an older dry session with `ut`/`testing` PASS and a terminal `run_end`, followed by a live real session that just started `ut`
+- **THEN** the progress snapshot SHALL report current phase `ut` (not PASSED/COMPLETED), turn count 1, and an active-time `wall_elapsed_ms` measured from the real session start
+
+#### Scenario: a damaged started run blocks instead of silently re-selecting authority
+
+- **WHEN** a run directory contains `events.jsonl` but its `manifest.json` was deleted
+- **THEN** completion verification SHALL be INVALID, the truncated-chain preflight SHALL refuse to start, the check-spec gate SHALL FAIL with `goal_run_identity_intact` and the check-receipt closure generation SHALL exit BLOCKER — all naming the damaged run
+
+### Requirement: Same-host lock owners that are alive are never preempted on heartbeat timeout
+
+A same-host lock whose recorded pid is still alive SHALL never be classified stale regardless of heartbeat age; acquisition SHALL return busy with an operator hint. Only a vanished pid (or the existing cross-host TTL semantics) allows takeover. Lock records SHALL carry `run_mode` (`authoritative`/`dry`) and the canonical `report_dir`; orphan recovery SHALL locate events via them — a stale dry owner SHALL never produce a `--resume` suggestion (the real run takes over through the normal stale-lock flow), and a legacy record (no `run_mode`) SHALL be classified by its events sessions: only-dry → treated as a stale dry orphan; any authoritative session → the existing resume guidance; indeterminate → manual disposition without guessing.
+
+Enforcement: `harness/scripts/utils/goal-run-lock.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-progress.ts`
+
+#### Scenario: a paused-but-alive runner is not stolen
+
+- **WHEN** a same-host feature lock's owner pid is alive but its heartbeat is hours old
+- **THEN** a new run SHALL be refused with a busy message naming the live owner, and no takeover occurs
+
+#### Scenario: a crashed dry-run does not poison the next real run
+
+- **WHEN** a dry-run child hard-crashes leaving a stale feature lock with `run_mode: dry`
+- **THEN** a new real run SHALL start by taking over the stale lock without any `--resume` suggestion
+
+### Requirement: Wall-clock budget accumulates active runtime across resume sessions
+
+The run budget SHALL measure active execution time, not calendar span: prior activity is the sum of per-session durations partitioned by `run_start` events, where a session without `run_end` (crash/hard-kill) is conservatively credited up to one heartbeat cadence beyond its last event (capped by the next session start or the current process start — cumulative undercount SHALL be zero and per-session overcount SHALL not exceed one cadence), and dry sessions are excluded. The hard-deadline semantics (agent/harness/backoff pre-checks minus the finalize reserve) are unchanged; only the baseline becomes `sessionStart + max(0, wall − priorActive)`. Artifact-since consumers (partial-resume feed) SHALL keep the true first authoritative session start, never a synthetic time. Budget halts SHALL carry `halt_reason` and `halt_guidance` on the outcome, the `phase_halt` event and the console banner (and thus `run_end`), and the guidance SHALL name only real routes: a new run with an updated-budget manifest, or `--override-manifest`-authorized resume — never a bare restart.
+
+Enforcement: `harness/scripts/utils/goal-runner-phase.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/await-confirm-guidance.ts`
+
+#### Scenario: an overnight resume of a 74-minute run does not instantly halt
+
+- **WHEN** a run consumed ~74 minutes of active time, halted, and is resumed 13 hours later with a 480-minute wall budget
+- **THEN** the budget check SHALL pass and the run SHALL continue with the remaining active budget
+
+#### Scenario: genuine exhaustion halts with visible reason and real routes
+
+- **WHEN** accumulated active time reaches the wall budget at resume
+- **THEN** the run SHALL halt with `budget_wall_clock` present on outcome/phase_halt/run_end and guidance offering a new-manifest run or `--override-manifest` resume
+
+### Requirement: Source drift is invalidated and revalidated by its responsible phase
+
+The mutation scope and current drift fingerprint SHALL remain normalized machine facts, and `pre_authorized_mutations` or agent gap-notes MAY be retained as intent provenance only. No receipt, signer, or preauthorization SHALL classify drift as accepted. When a controlled invocation changes protected source outside its phase write boundary, the runner SHALL record the exact drift, invalidate the invocation plus owner/downstream closure trust, preserve the bytes as untrusted, and use the existing `backtrack_to_phase` transaction to the responsible owner when present in the resolved chain. A truncated chain without the owner SHALL use `backtrack_target_absent` and guide a full/successor run; it SHALL NOT create an adjudication request or human release route.
+
+Enforcement: `harness/scripts/utils/mutation-authorization.ts`, `harness/scripts/utils/phase-write-boundary.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-assess-driver.ts`
+
+#### Scenario: preauthorization does not pass drift
+
+- **WHEN** a frozen `pre_authorized_mutations` entry covers a post-review drift
+- **THEN** the entry SHALL remain audit provenance while the drift invalidates trust and routes to its responsible phase
+
+#### Scenario: a truncated chain cannot reach the owner
+
+- **WHEN** the chain is `ut→testing` and the current protected-source drift belongs to coding
+- **THEN** the runner SHALL report `backtrack_target_absent` with a coding-rooted successor/full-chain route and SHALL NOT request a human mutation receipt
+
+### Requirement: phase_halt overrides provisional verdicts in projection and rebuild
+
+The progress projection SHALL consume `phase_halt` events: the halted phase becomes the current phase with status HALTED, overriding a same-phase provisional PASS (no "ut PASSED · current testing · run HALTED" split). Events-only outcome rebuilding SHALL let the latest `phase_halt` of a phase override its earlier terminal `phase_verdict` (carrying `halt_reason`/`halt_guidance`), so a halted phase is re-entered on resume even when `goal-report.json` is absent; a later terminal verdict (post-backtrack re-run) clears the stale halt.
+
+Enforcement: `harness/scripts/utils/goal-progress.ts`, `harness/scripts/utils/goal-runner-phase.ts`
+
+#### Scenario: a harness-PASS phase halted by the mutation gate is not rebuilt as advanced
+
+- **WHEN** `phase_verdict{ut, advance, PASS}` is followed by `phase_halt{ut, unauthorized_source_mutation}` and `goal-report.json` is missing
+- **THEN** the rebuilt outcome for ut SHALL be halted (guidance preserved) and resume SHALL re-enter ut
+
+### Requirement: The runner has no dedicated P0-skip halt; P0 repair facts route through the candidate ladder
+
+The goal runner SHALL NOT halt on P0 skips with a dedicated `await_human_p0_skip` branch, guidance, or failure kind, and the classifier SHALL NOT classify P0-skip blockers into a human-only family or the cumulative-halt family. The decision ladder SHALL be: safety/terminal conditions first (framework integrity, external prerequisites, operator interrupt, hard budgets); then trusted `repair_candidates` routed by assess to the responsible phase via the single `backtrack_to_phase` branch (reusing the existing backtrack budget, round fingerprint fuse, invalidation transaction, and `backtrack_target_absent`); then capability-missing defer where supported by real external evidence; otherwise ordinary content/evidence retry and fuse semantics. Quality blockers SHALL NOT fall through to `await_human_gate_deferral`. Historical events carrying `halt_reason=await_human_p0_skip` remain interpretable for diagnostics only and SHALL never influence driver decisions. No new resume/supersede/supervisor behavior and no second driver; the c6 process-control contracts remain untouched.
+
+Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-failure-classifier.ts`, `harness/scripts/utils/adjudication.ts`
+
+#### Scenario: an unexecuted P0 explicit skip remains testing-owned
+
+- **WHEN** testing fails with `p0_coverage_integrity` for an explicit skip that has no `StepResult`, no machine-proven capability absence, and no integrity/budget condition
+- **THEN** the runner SHALL keep the finding testing-owned with zero automatic coding candidates; it SHALL NOT emit `phase_backtrack_requested(target=coding)`, `phase_halt(halt_reason=await_human_p0_skip)`, or a guessed WAITING/human quality disposition
+
+#### Scenario: an executed assertion mismatch may backtrack to coding
+
+- **WHEN** an executed testing case has an authoritative `StepResult` with `failure_kind=assertion` and `failure_code=assertion_mismatch` (and possibly visual candidates) in the summary, with no integrity/budget condition
+- **THEN** the runner SHALL emit `phase_backtrack_requested(reason=repair_candidates, target=coding)` and SHALL NOT attribute that route to an explicit-only skip
+
+#### Scenario: capability blockers defer without a quality signature
+
+- **WHEN** a round has zero repair candidates and the remaining blocker is a machine-proven unavailable external capability
+- **THEN** the runner SHALL use the existing capability/external defer path rather than a human quality gate
+
+### Requirement: Fresh goal runs have one immutable birth contract
+
+Every attended or detached fresh goal run SHALL be created by the same fresh-only `createGoalRun` operation after workflow, track and actual phase chain resolution. A chain containing coding or UT MUST resolve a 40-hex Git HEAD before publishing the run and store it as `manifest.run_base_sha`; a chain containing only spec/plan MAY omit it. Creation SHALL write `manifest.json` before appending exactly one `run_created` event binding `manifest_identity_fields`, `manifest_identity_hash`, the run-base digest and any rebaseline source. Resume and attach SHALL only load these facts and MUST NOT re-resolve workflow, chain or HEAD or synthesize a missing event.
+
+Enforcement: `harness/scripts/utils/goal-run-creation.ts`, `harness/scripts/utils/goal-manifest.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/goal-mode-entry.ts`
+
+#### Scenario: Both fresh entries freeze the same HEAD
+
+- **WHEN** attended and detached coding runs are created at the same repository HEAD from the same resolved input
+- **THEN** both SHALL use `createGoalRun`, persist that exact `run_base_sha`, and emit one equivalent `run_created` birth record before any agent invocation
+
+#### Scenario: A non-Git execution chain fails before dispatch
+
+- **WHEN** a resolved fresh chain contains coding or UT and Git HEAD cannot be resolved
+- **THEN** creation MUST fail closed without publishing an attachable run or dispatching an agent
+
+#### Scenario: A documentation-only chain needs no Git baseline
+
+- **WHEN** the resolved chain contains only spec and/or plan
+- **THEN** creation MAY omit `run_base_sha` while still writing its one `run_created` identity record
+
+### Requirement: Incomplete creation is isolated from runnable lifecycle state
+
+A run directory whose manifest is present but whose valid one-time `run_created` event is absent, duplicated or inconsistent SHALL be classified `CREATION_INCOMPLETE`. It MUST NOT be attached, resumed or taken over by the supervisor; MUST NOT count as a HALTED/PARTIAL occupant or prevent a replacement fresh run; and MUST NOT enter normal progress projection. Diagnostics and cleanup SHALL reuse existing attach/resume errors and per-run trust GC rather than create a transaction state file.
+
+Enforcement: `harness/scripts/utils/goal-run-creation.ts`, `harness/scripts/utils/goal-runner-phase.ts`, `harness/scripts/utils/goal-supervisor.ts`, `harness/scripts/utils/goal-progress.ts`
+
+#### Scenario: Manifest-only residue does not occupy the feature
+
+- **WHEN** creation crashes after writing `manifest.json` and before `run_created`
+- **THEN** resume and supervisor attach SHALL reject that run as `CREATION_INCOMPLETE`, while a new fresh run for the feature remains eligible
+
+### Requirement: Goal run base identity is write-once
+
+`run_base_sha` SHALL participate in manifest identity when present and SHALL be write-once for the life of a run. `diffManifestIdentityFields` MUST report its addition, deletion or modification normally. Before any `authAll`, `--override-manifest` or field-level authorization is evaluated, `resolveManifestDriftDecision` MUST fail a change containing `run_base_sha` as `run_base_sha_write_once_violation`. While replaying `manifest_identity_rebase`, `resolveManifestIdentityBaseline` MUST prove every `to_fields` preserves the `run_created` birth digest; disappearance or mismatch is event-stream corruption and MUST stop replay without advancing the baseline.
+
+Enforcement: `harness/scripts/utils/goal-manifest.ts`, `harness/scripts/goal-runner.ts`
+
+#### Scenario: Override cannot change or remove the base
+
+- **WHEN** a stopped run changes base A to B or removes `run_base_sha` and resumes with `--override-manifest`
+- **THEN** drift SHALL remain visible and the run MUST fail `run_base_sha_write_once_violation`
+
+#### Scenario: Historical rebase corruption is rejected
+
+- **WHEN** a replayed `manifest_identity_rebase.to_fields` changes or removes the birth base digest
+- **THEN** replay MUST fail as corrupt state and MUST NOT use any later rebase as a trustworthy baseline
+
+#### Scenario: Other identity fields retain normal authorization
+
+- **WHEN** an authorized non-base identity field changes while `run_base_sha` is preserved
+- **THEN** the existing field/manifest override behavior SHALL remain available
+
+### Requirement: Successors preserve lineage and rebaseline only at the management boundary
+
+An automatic successor SHALL inherit the earliest trustworthy `run_base_sha` reachable through its audited lineage and MUST NOT re-read current HEAD. If no ancestor has a trustworthy baseline, automatic successor creation MUST fail closed. A deliberate baseline cut SHALL require paired `--supersede <old-run-id> --rebaseline-to <exact-40hex-sha>` outside goal execution, current HEAD equality, and absence of every `hasGoalExecutionSignal()` input even when the formal gate marker is set. Supervisor and executors MUST NOT construct `--rebaseline-to`. Audit SHALL write only the new run events: `run_created.rebaseline_from_run_id` and one `supersede` event binding target, superseding run, exact SHA and the run-created index/hash; old run events MUST remain unchanged.
+
+Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-manifest.ts`, `harness/scripts/utils/phase-state.ts`, `harness/scripts/utils/goal-supervisor.ts`, `harness/scripts/utils/agent-invoke.ts`
+
+#### Scenario: Automatic successor does not launder ancestor commits
+
+- **WHEN** repository HEAD advances after the original run and an automatic successor is created
+- **THEN** the successor SHALL retain the earliest trustworthy lineage baseline rather than the new HEAD
+
+#### Scenario: Formal gate marker does not authorize rebaseline
+
+- **WHEN** a goal execution signal and `MAISON_GOAL_GATE_HARNESS=1` are both present with the paired management flags
+- **THEN** creation MUST reject rebaseline because `hasGoalExecutionSignal()` remains true
+
+#### Scenario: Manual rebaseline is single-writer audited
+
+- **WHEN** the paired management command is run outside goal execution and HEAD equals the exact supplied SHA
+- **THEN** the new run SHALL be created and contain both forward audit bindings while the target run's `events.jsonl` remains byte-for-byte unchanged
+
+### Requirement: Compatibility recovery is part of the frozen actual chain
+
+Any compatibility condition that requires an earlier owner phase SHALL be resolved before modern fresh creation and included in the ordered chain passed to `createGoalRun`. After `run_created`, the runtime MUST execute only its recorded `phase_chain`; a recovery target absent from that chain MUST halt as framework corruption and MUST NOT be inserted locally.
+
+Enforcement: `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/goal-run-creation.ts`
+
+#### Scenario: Legacy fidelity state exists before a downstream fresh start
+- **WHEN** a fresh modern run requests coding or review as its start while an inert legacy fidelity decision requires spec recovery
+- **THEN** spec is included in both manifest and `run_created.phase_chain` before any phase executes
+
+#### Scenario: Resume discovers an unrecorded recovery target
+- **WHEN** a modern run resumes with a pending recovery target that is absent from its frozen birth chain
+- **THEN** the runtime halts without executing, inserting or reordering that phase
+
+### Requirement: Structural phase-runtime verification follows lifecycle authority
+
+Release structural verification SHALL identify lifecycle advancement definitions, lifecycle-event writers, handoff transition writers and executor-to-gate call edges across production TypeScript. It MUST fail when a second production owner exists regardless of loop syntax.
+
+Enforcement: `harness/tests/unit/goal-runtime-structural-acceptance.unit.test.ts`
+
+#### Scenario: A second loop uses different syntax
+- **WHEN** a compatibility driver regains phase advancement through recursion, array iteration or a differently named loop
+- **THEN** structural verification fails from the competing authority/call edge rather than relying on a `while (!phaseDone)` literal
+
+### Requirement: Goal scope gates ignore live diff-base overrides
+
+Coding and exit scope gates SHALL ignore `HARNESS_DIFF_BASE_REF` whenever `hasGoalExecutionSignal` is true. The live variable MAY retain its legacy non-goal diagnostic behavior, but it MUST NOT select the baseline of either an agent-side or formal goal gate.
+
+Enforcement: `harness/scripts/check-coding.ts`, `harness/scripts/check-exit.ts`, `harness/scripts/utils/phase-state.ts`
+
+#### Scenario: Goal agent resets the scrubbed variable
+- **WHEN** a goal agent sets `HARNESS_DIFF_BASE_REF` before self-invoking the harness
+- **THEN** the scope gate ignores the value and uses the frozen goal baseline path
+
+#### Scenario: Non-goal diagnostic run supplies a base
+- **WHEN** a direct non-goal harness invocation supplies `HARNESS_DIFF_BASE_REF`
+- **THEN** the existing explicit-base diagnostic behavior remains available
+
+### Requirement: Current integrity blockers halt without reviving framework Git adjudication
+
+Current, machine-produced integrity blockers such as process preload injection SHALL continue to classify through the existing `framework_integrity_block` / framework-fault safety path and halt without asking an agent to tamper with framework or gate artifacts. `phase_write_violation` owner invalidation/backtrack semantics SHALL remain unchanged.
+
+Framework Git state SHALL NOT produce an integrity blocker in a new run. New runs SHALL NOT produce `framework_integrity`, `framework_control_plane_dirty`, or any retired manifest/hash subtype. Historical summaries containing old `framework_integrity`, `framework_drift`, `framework_foreign_file`, manifest subtypes, or `integrity_subtypes` SHALL remain readable provenance and SHALL NOT be rewritten or used as current classification, halt, retry, continuation-prompt, or recovery input.
+
+Current integrity classification SHALL recognize only the current producer `node_options_injection` with `process_injection` (including its top-level summary projection). Before a continuation reads a stored summary, retired framework integrity blockers SHALL be removed from the current-decision view. If nothing current remains, no prior failure context SHALL be injected; the phase SHALL revalidate with the current release. A stale/fresh historical framework summary SHALL never classify as `framework_integrity_block` and SHALL not fall through to code-regression guidance.
+
+For every current attempt, the runner SHALL derive exactly one filtered `decisionSummary` from the raw summary. Classification, blocking meta, affected files, effective blocker signature, no-progress/actionability, repair candidates, reconcile observation, and newly emitted phase event fields SHALL consume `decisionSummary` only. The raw summary MAY be retained for verdict/closure/visual receipt and historical rendering, but retired framework integrity rows SHALL NOT appear in a current signature, meta, repair/reconcile input, event field, or no-progress halt. Mixed historical+content summaries SHALL retain only the content decision inputs.
+
+Guidance and goal reports SHALL be source-sensitive: current process integrity guidance SHALL describe the current blocker; historical subtype text MAY be shown as legacy provenance. Generic guidance SHALL NOT claim that a framework file list exists, require a host commit, or advertise allowlist/restore/redeploy as a universal resolution.
+
+Enforcement: `harness/scripts/utils/goal-failure-classifier.ts`, `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/await-confirm-guidance.ts`, `harness/scripts/utils/goal-report-generator.ts`, `harness/scripts/utils/adjudication.ts`
+
+#### Scenario: Process injection still halts
+
+- **WHEN** a new summary contains `node_options_injection` with `blocking_class=integrity` and `classification=process_injection`
+- **THEN** goal-runner SHALL preserve the existing integrity halt semantics
+
+#### Scenario: Framework Git state creates no blocker
+
+- **WHEN** the installed release is dirty, staged, committed, untracked, or non-Git
+- **THEN** goal-runner SHALL receive no framework-Git integrity result and SHALL NOT halt for that state
+
+#### Scenario: Historical framework integrity is readable
+
+- **WHEN** a stored historical summary contains retired framework integrity classifications
+- **THEN** parser/renderer MAY display them as legacy provenance, but classifier/continuation SHALL ignore them and revalidate the phase without halt or code-regression guidance
+
+#### Scenario: Historical framework integrity cannot leak downstream
+
+- **WHEN** a current attempt reads a legacy-only or legacy-plus-content summary
+- **THEN** legacy integrity SHALL contribute no blocker signature, blocking meta, affected file, repair/reconcile input, phase event field, or no-progress halt; a mixed summary SHALL retain only the content contribution
+
+#### Scenario: Downstream feature write recovers
+
+- **WHEN** a phase changes an owner-resolvable feature artifact once and bytes are stable/readable
+- **THEN** the runner SHALL invalidate trust and backtrack to the owner rather than treating it as a permanent framework-integrity halt
+
+### Requirement: Windows headless binary resolution honors PATH/Spawnability truth per candidate name
+
+On Windows, headless binary resolution SHALL iterate adapter candidate names in their existing
+declared order, and within each name SHALL select the first candidate in `where.exe` output order
+(or PATH-directory order as fallback) that is an explicitly supported and spawnable Windows
+executable form — never preferring `.exe` across directories over an earlier `.cmd/.bat`, and never
+accepting an extensionless POSIX (`#!/bin/sh`) or ELF shim merely because the file exists. Supported
+forms SHALL be `.exe`, `.cmd/.bat` (spawned through the existing cross-spawn/containment path), and
+extensionless files whose header is a native PE image (`MZ`). The resolution result SHALL carry
+diagnostic shadowed-candidate info (found-but-skipped or lower-priority entries, bounded) for the
+`adapter_probe` event; no CLI registry, lockfile, or version pin table SHALL be introduced.
+
+Enforcement: `harness/scripts/utils/headless-binary-resolve.ts`, `harness/scripts/utils/agent-invoke.ts`
+
+#### Scenario: npm codex.cmd precedes WindowsApps codex.exe in PATH order
+
+- **WHEN** `where.exe codex` returns the npm shim (`codex.cmd`) before the WindowsApps `codex.exe`
+  and the npm shim is a supported `.cmd` form
+- **THEN** the resolver SHALL select the npm `codex.cmd` and SHALL NOT skip it to pick the later
+  `.exe`
+
+#### Scenario: extensionless POSIX/ELF shims are not spawnable Windows runtimes
+
+- **WHEN** a `where.exe` hit has no extension and its file header is `#!/bin/sh` or ELF magic
+- **THEN** the resolver SHALL skip it (recording it as shadowed) and continue to the next candidate
+  in order; an extensionless hit with native PE header remains selectable as `bare`
+
+### Requirement: Probe, canary and formal invoke reuse one session-resolved binary identity
+
+The goal run SHALL resolve the headless binary once for the execution session at preflight, and
+SHALL reuse that resolved absolute path for the adapter version probe, the vision canary probe, and
+every formal phase invoke (`resolveHeadlessInvokePlan` built-in adapter plans SHALL use the
+session-resolved binary as `argv[0]`; custom `headless_invoke` templates are not injected).
+`adapter_probe` SHALL include the resolved binary path and shadowed-candidate diagnostics. Resume
+re-resolves in the new process. No cross-process registry or lockfile is introduced.
+
+Enforcement: `harness/scripts/utils/goal-preflight.ts`, `harness/scripts/utils/agent-invoke.ts`, `harness/scripts/goal-runner.ts`
+
+#### Scenario: adapter version probe runs the same absolute binary as the formal invoke
+
+- **WHEN** preflight resolves `C:\...\npm\codex.cmd` for the session
+- **THEN** `probeAdapterVersion` runs that absolute `.cmd` path (via cross-spawn), the canary probe
+  uses the same path, and the formal phase plan's `argv[0]` is the same absolute path
+
+### Requirement: Formal phase invoke hard CLI/guardian failures halt before harness with zero content retry
+
+After a formal phase agent invoke, a structural hard failure SHALL be classified by a shared pure
+function that covers (a) a structured `spawn_error` fact — including child spawn races, resolved
+binary short-circuits, and guardian containment establishment failures projected at the
+agent-invoke boundary as `[maison-guardian]` + stable ASCII operation marker
+(`CreateProcess(` / `AssignProcessToJobObject` / `ResumeThread`) with exit code 2 and never by
+localized text or exit code 2 alone — and (b) CLI/config argument incompatibility, and (c) the
+recovered Codex structured error envelope `status:400 + invalid_request_error + requires a newer
+version of Codex`. On a hit, the runner SHALL emit `phase_halt(adapter_cli_hard_failure)` before
+spawning any gate harness, register the incident as external, and SHALL NOT consume a content
+retry and SHALL NOT attribute `spec_file_exists`. Ordinary agent content failures (including exit 2
+without guardian diagnostics) SHALL keep the existing harness/retry semantics.
+
+Enforcement: `harness/scripts/utils/vision-canary.ts`, `harness/scripts/utils/agent-invoke.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/adjudication.ts`
+
+#### Scenario: Codex 0.138 model-compatibility 400 stops after one formal invoke
+
+- **WHEN** the formal phase invoke returns the Codex structured 400 envelope for a newer-required
+  model
+- **THEN** exactly one formal invoke is recorded (`agent_invoke_start` count 1), no harness is
+  spawned, no content retry is consumed, and the phase halts with `adapter_cli_hard_failure`
+
+#### Scenario: guardian CreateProcess error 5 stops before harness
+
+- **WHEN** the guardian exits 2 with `[maison-guardian] CreateProcess(CREATE_SUSPENDED) 失败: 5 ...`
+- **THEN** the invoke result carries the projected `spawn_error`
+  (`maison_guardian_containment_failed`), the phase halts with `adapter_cli_hard_failure`,
+  `agent_process_started` remains 0, no harness runs, and no content retry is consumed
+
+### Requirement: Inline canary signing consumes the shared canary decision SSOT on this invoke's stdout boundary
+
+The spec-phase inline canary signing point SHALL use `resolveCanaryCacheDecision`/`parseCanaryAnswer`
+exclusively (the `isCanaryAnswerComplete + classifyCanaryResponse(raw)` fork SHALL be removed).
+Structured adapters SHALL adjudicate from the pure `agent-events.jsonl` final-result projection;
+non-structured adapters SHALL consume only this invocation's `stdout` plus
+`exitCode/timed_out/silent_killed/skipped` facts — never stderr, prompt echo, or the human-readable
+mixed `agent-output.log`. A valid tail answer may sign the capability receipt; a standalone
+`CANNOT_SEE_IMAGE`, pure echo, or failed invoke SHALL NOT sign. Capability and auditability remain
+separate axes: adapters with `tool_event_provenance=none` (e.g. Codex) SHALL NOT sign per-image refs
+receipts or `vl_multimodal` even with a `tool_read` canary — they keep working with images but must
+record `verified: unverified`; structured adapters require per-image Read of this invoke for final
+signing. Prompt, closure-only read blocks, retry guidance, and the spec skill SHALL state the
+provenance-reachable exit for each adapter class; existing soft WARN / hard FAIL thresholds and the
+rejection of fabricated `verified + vl_multimodal` are unchanged.
+
+Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/vision-canary.ts`, `skills/feature/spec/SKILL.md`
+
+#### Scenario: prompt echo with placeholder keys plus a correct tail answer signs the capability receipt
+
+- **WHEN** the invoke stdout contains the canary prompt echo (placeholder keys, `CANNOT_SEE_IMAGE`)
+  followed by a complete correct answer
+- **THEN** the last-legal-assignment parser yields the canonical answer, `tool_read` is classified,
+  and the capability receipt is issued
+
+#### Scenario: pure echo or standalone blind declaration does not sign
+
+- **WHEN** the invoke stdout contains only the echoed prompt keys (placeholders) or only an
+  independent `CANNOT_SEE_IMAGE` line
+- **THEN** no capability receipt is issued, and the run continues on the blind workflow
+
+### Requirement: Requirement source provenance persists and drives a single shared reference-image denominator
+
+The `--requirement-file` shared resolver SHALL return the frozen text plus an optional
+`requirement_source_files[]` list (project-root-relative for in-project files; out-of-project
+sources are text-only and never scanned). A fresh goal manifest SHALL persist the list and include
+it in the identity hash when present; resume reads only frozen values; successors inherit and
+dedupe-append on explicit file increments. goal-mode entry and fidelity-intent-init SHALL consume
+the same result, and the fidelity-intent SSOT SHALL keep the same list as an optional field (no
+second image manifest). Reference-image discovery SHALL be a single bounded set: explicit project
+image paths in the requirement text UNION a one-level scan of supported images in each in-project
+source's direct parent directory, deduplicated by canonical path and deterministically sorted,
+falling back to `feature/ux-reference/` only when the union is empty. Inline requirements trigger
+no sibling scan; out-of-project sources are never scanned. That same discovery result SHALL be the
+expected denominator for the capability `derive.visual-reference` dependency, the spec OCR
+pre-scan, the phase prompt's authoritative image paths, and the reference mapping gate /
+`vision/spec-refs-receipt.json` production and verification — a spec that omits any discovered
+image SHALL fail; the spec SHALL NOT shrink the denominator itself.
+
+Enforcement: `harness/scripts/utils/goal-manifest.ts`, `harness/scripts/utils/fidelity-shared.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/capability-resolution.ts`, `harness/scripts/utils/critic-receipt-producer.ts`
+
+#### Scenario: three source-directory images flow through capability/OCR/prompt/receipt and a missing spec entry fails
+
+- **WHEN** a fresh run uses `--requirement-file` whose directory holds three supported images and
+  no explicit text path
+- **THEN** the three images form the shared discovery set used by OCR pre-scan, the phase prompt's
+  authoritative paths, `derive.visual-reference` dependencies, receipt production and verification;
+  if the agent's spec omits one of them, verification SHALL fail

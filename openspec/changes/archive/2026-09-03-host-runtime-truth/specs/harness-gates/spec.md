@@ -1,6 +1,6 @@
 # Harness Gates Spec Delta
 
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Reference-image receipt verification uses the runner's shared discovery denominator
 
