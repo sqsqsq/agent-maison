@@ -4,16 +4,16 @@ version: 3.0.0
 todos:
   - id: t1-headless-runtime-truth
     content: "P0 · headless runtime 真值、硬失败短路与 CodeAgent Goal-mode 放行——只改现有 `resolveHeadlessBinary`：外层保持 adapter candidate-name 顺序（含 Cursor `cursor-agent`→`agent` fallback），每个 name 内按 `where.exe`/PATH 目录原顺序取首个 Maison 在 Windows 明确支持的执行形态；不得跨目录偏好 `.exe`，extensionless POSIX/ELF shim 不得仅凭存在就判为可 spawn。preflight 返回本 execution session 的 resolved binary，adapter version probe、vision canary 与正式 phase invoke 全部复用该绝对路径（resume 新进程重新解析），从结构上保证 probe/invoke 同一身份；既有 `adapter_probe` 增补 `resolved_binary` 与被遮蔽候选诊断，禁止另建 CLI registry/lockfile。把既有 canary hard-CLI 判定抽成共享纯函数并增加已恢复的 Codex 结构化 `status=400 + invalid_request_error + requires a newer version of Codex` 精确签名；同时在既有 agent-invoke 结果边界把 guardian 自有的 CreateProcess/Assign/Resume 确定性建立失败投影为同一 `spawn_error` 事实，判定须绑定 `[maison-guardian]` 与稳定 ASCII operation marker，禁止依赖可能乱码的本地化文本或仅凭 `exitCode=2`（真实 agent 也可能返回 2）。正式 phase invoke 命中上述 hard failure 后，在 harness 前直接 `phase_halt(adapter_cli_hard_failure)`，incident 登记为 external，零内容 retry、零伪 `spec_file_exists` 归因；普通 agent 内容失败（含无 guardian 诊断的 exit 2）保持既有 harness/retry。按用户产品裁决删除 `assertAdapterHeadlessFullPermission` 对 CodeAgent 的专门拒绝并同步 adapter 注释/测试；复用既有 `--dangerously-skip-permissions`、stdin、stream-json 与 Read parser，Chrys 继续拒绝，不增实验开关、授权状态或推测性 flag 签名。CodeAgent 放行作为 T1 内独立小提交，宿主真实 smoke 再验证旗标与全权限事实。"
-    status: in_progress
+    status: completed
   - id: t2-requirement-source-provenance
     content: "P1 · `--requirement-file` 来源保留与同目录参考图贯通——共享 resolver 在仍只解析一次的前提下返回 frozen text + 可选 `requirement_source_files[]`；fresh goal manifest 持久化项目根相对来源列表并纳入 identity hash，resume 只读冻结值，successor 继承并在显式 file 增量时去重追加。goal-mode-entry 与 fidelity-intent-init 使用同一结果；phase-driven fidelity-intent SSOT 以可选字段保留同一来源，不建第二份图片清单。单一 bounded discovery 的集合语义冻结为：需求文本中可解析的显式项目图片 UNION 项目内 requirement source 各直接父目录的一层受支持图片，canonical path 去重并确定性排序；仅当该并集为空时 fallback 到 feature `ux-reference/`。inline requirement 不触发 sibling 扫描；项目外 source 继续只读正文、不扫描外部 sibling。该同一发现结果必须同时作为 capability `derive.visual-reference` 依赖、spec OCR 预扫、phase prompt authoritative paths，以及既有 reference mapping gate / `vision/spec-refs-receipt.json` 生产与验证的期望分母；agent/spec 少声明任一发现图片必须失败，禁止再由 spec 自己缩小分母。复用现有 receipt/gate，不建 reference-image manifest，不复制图片、不全仓搜索或要求宿主改写需求。"
-    status: in_progress
+    status: completed
   - id: t3-adapter-visual-evidence-truth
     content: "P0 · adapter 视觉答卷真值与证据可达路由——inline canary 签发点删除 `isCanaryAnswerComplete + classifyCanaryResponse(raw mixed log)` 分叉，统一复用既有 `resolveCanaryCacheDecision/parseCanaryAnswer`：Claude/CodeAgent 继续以纯 `agent-events.jsonl` 的 structured final-result 语义判卷，非结构化 adapter 只消费本次 `invoke.stdout` 与 `exitCode/timed_out/silent_killed/skipped` 事实，不把 stderr、prompt echo 和人读混合日志当答卷；有效尾部答卷可签 capability receipt，独立 `CANNOT_SEE_IMAGE`/纯回显/调用失败不得签。能力与可审计性分轴：Codex 即使 canary=tool_read，`tool_event_provenance=none` 仍不得签逐图 refs receipt 或 `vl_multimodal`；prompt、closure-only 读图块、retry guidance 与 `skills/feature/spec` 自检须按 provenance 明示可达出口——none 时继续用图片完成工作但产物诚实写 `verified: unverified`，structured_events 才要求本 invoke 逐图 Read 并争取终签。复用现有 soft/hard gate：best-effort + warn/reachable 以 WARN 可继续，hard contract/严格档仍 FAIL；虚假 `verified + vl_multimodal` 继续拒绝。不新增解析器、receipt、状态或证据层，不从普通文本猜 Read，不在本 change 接入未经实采的 `codex exec --json`。"
-    status: in_progress
+    status: completed
   - id: t4-contract-regression-and-closure
     content: "契约、事故回归、宿主回灌与收口——建立一个 OpenSpec change，修改既有 goal-runner / harness-gates / agent-adapters 契约：①Windows runtime、probe/invoke 同身份、hard CLI/guardian 早停与 CodeAgent 放行；②file requirement source 与共享图片期望集；③canary 判卷 SSOT、视觉能力/工具事件证据分轴及诚实降级。回归覆盖：Windows 四项真实候选选中 npm `codex.cmd`、Cursor fallback；0.138 事故 400 冻结为 `formal_invoke_attempts=1`、`harness=0`、`content_retry=0`，guardian error 5 冻结为 `guardian_attempts=1`、`agent_process_started=0`、`harness=0`、`content_retry=0`，普通内容失败/无 guardian 诊断 exit 2 仍跑 harness；三张 source 图片贯通 capability/OCR/prompt/reference gate-receipt 且 spec 漏一张失败；prompt echo 含占位键和 `CANNOT_SEE_IMAGE` + 尾部正确答卷须签 capability receipt，纯 echo/独立盲声明/失败 invoke 不签，Claude/CodeAgent structured 路径不回归；Codex none-provenance + best-effort/reachable + unverified 为 WARN，hard contract 仍 FAIL。目标测试与 typecheck 后只在首次整批收口跑 `cd harness && npm test`、`npm run openspec:validate`、plan/version/diff 检查。打包回灌后先做 bounded 宿主验证：Codex 复放第三次事故路径；CodeAgent 先记录 `--help`/version，再跑最短 Goal-mode smoke，验证无审批启动、shell、项目写入、stream-json 与图片 Read 事件；若真实 flag 错误则停在 hard-CLI 证据并据实追加签名，不预猜。release 门禁仍留发布阶段。"
-    status: in_progress
+    status: completed
 overview: >
   2026-08-23 三次宿主 run 连续暴露 runner 边界真值缺口，并形成一项 CodeAgent 支持裁决。其一，
   Windows binary resolver 会跨 PATH 目录全局偏好 `.exe`，从而跳过前面的 npm `codex.cmd`；
@@ -35,7 +35,7 @@ isProject: false
 
 # 宿主运行边界真值：实际 CLI、需求源图片与视觉证据可达性（c4e8a1f7）
 
-状态：**已终审（v3），未开工**
+状态：已闭环（2026-09-03）。三轮返修代码均已落地并本地验证（见下方实施记录，OpenSpec host-runtime-truth 6/7 → 7/7）；打包后 bounded 宿主验证 —— 用户 2026-09-03 裁决：3.0.0 窗口不再执行宿主回归，按完成登记，t1–t4 置 completed。
 
 ## 1. 三次事故与一项支持裁决的共同边界
 

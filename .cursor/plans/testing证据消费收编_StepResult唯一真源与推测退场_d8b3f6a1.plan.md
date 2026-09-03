@@ -89,19 +89,19 @@ version: 3.0.0
 todos:
   - id: t1-evidence-reconciliation
     content: T1 证据对账重键：p0 语义门改「计划要求×StepResult 对账」——判据=case.execution==completed ∧ case.verification==passed ∧ case.evidence==complete ∧ required_element_ids 映射 role=assertion,status=passed 步骤 ∧ forbidden_element_ids 映射 absence assertion,status=passed；interactive 与 goal 同源消费（goal 保留身份绑定增强）；通过分子只计满足全判据的 case。【依赖 hylyre 交付】
-    status: in_progress
+    status: completed
   - id: t2-derivation-compile-hardening
     content: T2 派生编译强化（可先行）：Step 4.5 正式 by_text 显式 match + 既有 index/scope/within/all 消歧键（require_unique 是 Hylyre 契约默认，不造 candidate_policy 字段）；放宽走新 timestamp 重派生纪律；禁运行时改写 selector；禁字符特征启发式。
     status: completed
   - id: t3-failure-kind-routing
     content: T3 失败归因接入：**已执行 case** 的 failed/skipped 消费 hylyre failure_kind/failure_code 两级路由；**explicit skip/未执行 case 无机器原因 → 保持 testing FAIL、不自动投 coding**（仅既有 capability resolution 证明 provider 缺失才 defer；禁按 TC 名称/散文推断）；p0-skip-repair-subtraction 契约反转经 T8 正式修订。【依赖 hylyre 交付】
-    status: in_progress
+    status: completed
   - id: t4-version-gate-and-legacy
     content: T4 三重判据门禁（版本+trace schema+StepResult 必需字段，挂 hylyre-ready.meta 链）；不满足时**任何 legacy case 状态都不得单独贡献 verification=passed**（不止 wait/toast 型）——默认 completion 要求升级后重跑，有限兼容仅限既有 telemetry 完整证明的 checkpoint，其余 inconclusive；不删历史。【与 T1 同开关落地】
     status: completed
   - id: t5-selector-contract-and-richtext
     content: T5 selector 契约门两层分型：静态门=ui-spec canonical 集内 substring 映射唯一或显式 index/scope/within/all（dump 仅建议/WARN，不参与授权——守 selector-contract SSOT 边界）；运行时门=StepResult.candidate_count==1 或显式消歧生效；富文本片段须声明独立 target，inline_target_unresolvable 走既有责任路由，禁点父中心。【依赖 hylyre 交付】
-    status: in_progress
+    status: completed
   - id: t6-telemetry-retirement
     content: T6 telemetry monkey-patch 退场：原生 StepResult 在场只认原生；过渡期旧 schema 用现有 telemetry；双在场一致性检查；最终删除。【依赖 hylyre 交付】
     status: completed
@@ -110,7 +110,7 @@ todos:
     status: completed
   - id: t8-openspec-and-contract-sync
     content: T8 契约同步（两段式）：T8a **第一刀代码前**新建 openspec change + delta + 修订 p0-skip-repair-subtraction 完成结论 + strict validate；T8b 实现后 tasks/SKILL/addendum/runbook 收口 + 再次 strict validate。执行顺序钉死：T8a → T2/T7 先行 → Hylyre 交付 → T1/T3/T4/T5/T6 → T8b。
-    status: in_progress
+    status: completed
 overview: >
   宿主实锤：Hylyre 空断言穿透 maison——p0 语义门只验「计划长得像有断言」+ trace case
   状态字符串，runtime evidence 在普通 testing 又被 capability SKIP，于是「wait_for 假
@@ -125,7 +125,7 @@ overview: >
 
 # testing 证据消费收编：StepResult 唯一真源与推测退场（d8b3f6a1）
 
-状态：**v5 已按 codex 二轮 4P1 残留清理修订（路由表三列制/legacy 总则四型齐列/边界节 defer 冲突消除/T8 两段式与执行顺序钉死），待终审确认后实施（未实施）**。
+状态：已闭环（2026-09-03）。T2/T7 先行落地；T1/T3/T4/T5/T6 在 Hylyre 0.5.x 交付后于 change testing-stepresult-evidence-consumption（已归档，tasks 4.1–4.5/5.2 全勾）落地；T8b 收口随 a6c4e9f2 T8 完成。t1/t3/t5/t8 frontmatter 此前漏翻，2026-09-03 按用户裁决补置 completed。
 触发：宿主 bc-openCard-1 testing 回灌暴露 Hylyre `wait_for` 空断言（TC-015 断言不存在元素判"通过"）后复盘：**maison 自身的消费面让空断言畅通无阻**——这不是可选配套，Hylyre 修好后若 maison 不改，旧"case 通过 + 计划含 wait_for"仍继续假判。配套需求文档见 [docs/vendor/hylyre-断言与证据完整性需求.md](../../docs/vendor/hylyre-断言与证据完整性需求.md)。
 
 ---

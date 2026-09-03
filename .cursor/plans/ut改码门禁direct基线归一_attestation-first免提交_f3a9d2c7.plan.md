@@ -47,7 +47,7 @@ todos:
     status: completed
   - id: t5-docs-sync
     content: T5 文档面同步：全仓 ut_no_src_mutation 提法扫替（提交基线/HARNESS_DIFF_BASE_REF 话术限定为 fallback 域）。
-    status: pending
+    status: completed
 overview: >
   宿主 bc-openCard-1 attended 实锤：UT 门禁 ut_no_src_mutation 在 direct 模式用 git 基线，
   把 coding 阶段 47 个合法未提交产物全判成 UT 违规，唯一出路被话术指向"提交"，与用户
@@ -61,6 +61,7 @@ overview: >
 # UT 改码门禁 direct 基线归一：attestation-first 免提交（f3a9d2c7）
 
 状态：**v3 终审通过后已实施（2026-08-28，分支 Br_release_3.0.0）：T1–T4 落地并吸收三轮实施 review（逐条修完，见下方偏离记录）；T5 文档扫替已完成，「RELEASE-NOTES 增补」经用户裁决**不在本轮做**——本窗口 `RELEASE-NOTES-v3.0.0.md` 尚不存在，等发布窗口统一生成，故 t5 todo 保持 pending。本轮改动已提交至 Br_release_3.0.0（未 push、未 cp 主干、未回灌宿主）。openspec change=`ut-direct-attestation-baseline`；`npm test` 3630 单测 + 46 fixture 全绿，`openspec:validate` 41/41，`check-plan-version` PASS。**
+状态更新（2026-09-03）：t5 按用户裁决置 completed；RELEASE-NOTES-v3.0.0 增补随发布窗口生成时统一处理，不再作为本 plan 待办。
 **宿主回灌已完成（2026-08-28，用户驱动，framework e21547c8）：验收场景 7 命中——review 重闭环刷新 attestation（13:55:37Z，114 文件/6 roots，contracts_sha256 逐字节吻合）后 UT 直接 PASS，`ut_no_src_mutation` 走 attested-clean 文案、无 git baseRef、全程零提交（宿主工作区 49 项未提交变更原样保留）。只读核验于当日完成。**
 
 ### 实施偏离记录（正文规范未改，按 plan 规则在此登记）

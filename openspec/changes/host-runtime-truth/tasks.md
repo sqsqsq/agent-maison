@@ -30,7 +30,8 @@
   可达处置）；P1 formalInvoke banner 不压签名；P1 manifest override 来源随 requirement
   替换（H4 集成回归）；P2 非 Windows PATH walk 语义、shadowed 聚合与同目录 PATHEXT
   诊断、inaccessible bare 不可 spawn。
-- [ ] **宿主回灌与收口**：`cd harness && npm test`、`npm run openspec:validate`、
+- [x] **宿主回灌与收口**：`cd harness && npm test`、`npm run openspec:validate`、
   `node scripts/check-plan-version.mjs`、`git diff --check`（整批收口只跑一次）；
   打包后 bounded 宿主验证（Codex 复放第三次事故路径；CodeAgent `--help`/version +
   最短 Goal-mode smoke）；本 change 不打包、不发布（release 门禁留发布阶段）。
+  - 2026-09-03 收口：仓内部分（npm test / openspec:validate / check-plan-version / git diff --check）随 3.0.0 收口批统跑；打包后宿主验证 —— 用户 2026-09-03 裁决：3.0.0 窗口不再执行宿主回归，按完成登记。
