@@ -1,6 +1,6 @@
 ---
 name: change-unit-progression
-description: 从部件蓝图派生 Change Unit、选择单个就绪单元并连续推进（完整流程见 framework/skills/project/change-unit-progression/SKILL.md）
+description: Change Unit 设计消费、ready/blocker 派生与单并发 Goal Mode 连续推进
 ---
 
 > **BLOCKER — Personal setup**：`check-personal-setup.ts --json --ensure`（见 [personal-setup-gate](../../../framework/skills/reference/personal-setup-gate.md)）。

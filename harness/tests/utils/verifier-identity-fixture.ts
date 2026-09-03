@@ -15,7 +15,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { spawn, spawnSync, type SpawnSyncReturns } from 'child_process';
 
-import { featurePhaseReportsDir } from '../../config';
+import { featureFilePath, featurePhaseReportsDir } from '../../config';
 import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
 import {
   RESULT_BLOCK_CLOSE,
@@ -68,10 +68,13 @@ export interface MakeProjectOptions {
   reportsDirPattern?: string;
   /** 磁盘配置里**不写** reports_dir_pattern（旧实例形态；TS 侧会注入默认值） */
   omitReportsDirPattern?: boolean;
+  /** 自定义 features_dir（缺省 doc/features）；receipt/reports 默认形态随之派生 */
+  featuresDir?: string;
 }
 
 /** 最小 full-track 工程：配置 + workflow 树 + git 基线。 */
 export function makeVerifierProject(opts: MakeProjectOptions = {}): { root: string; sha: string } {
+  const featuresDir = opts.featuresDir ?? 'doc/features';
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'verifier-identity-'));
   fs.mkdirSync(path.join(root, 'framework', 'harness', 'state'), { recursive: true });
   fs.mkdirSync(path.join(root, 'framework', 'workflows'), { recursive: true });
@@ -94,17 +97,17 @@ export function makeVerifierProject(opts: MakeProjectOptions = {}): { root: stri
           cross_module_exports_file: 'index.ts',
         },
         paths: {
-          features_dir: 'doc/features',
+          features_dir: featuresDir,
           module_catalog: 'doc/module-catalog.yaml',
           glossary: 'doc/glossary.yaml',
           glossary_seed: 'doc/glossary-seed.txt',
           architecture_md: 'doc/architecture.md',
           docs_committed: false,
           state_file: 'framework/harness/state/.current-phase.json',
-          receipt_dir_pattern: 'doc/features/<feature>/<phase>',
+          receipt_dir_pattern: `${featuresDir}/<feature>/<phase>`,
           ...(opts.omitReportsDirPattern
             ? {}
-            : { reports_dir_pattern: opts.reportsDirPattern ?? 'doc/features/<feature>/<phase>/reports' }),
+            : { reports_dir_pattern: opts.reportsDirPattern ?? `${featuresDir}/<feature>/<phase>/reports` }),
         },
         ...(opts.evidenceProfile ? { evidence_profile: opts.evidenceProfile } : {}),
       },
@@ -202,7 +205,8 @@ export function seedPhase(
     path.join(reportsDir, 'trace.json'),
     JSON.stringify({ schema_version: '1.0.0', feature, phase }),
   );
-  writeFile(path.join(root, 'doc', 'features', feature, phase, 'context-exploration.md'), '# context exploration\n');
+  // 一律走生产 feature 路径解析（自定义 features_dir / CU 物理目录），不手拼 doc/features
+  writeFile(featureFilePath(root, feature, path.join(phase, 'context-exploration.md')), '# context exploration\n');
 
   return { reportsDir, subjectId, promptPath, requestPath };
 }

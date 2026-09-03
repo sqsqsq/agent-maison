@@ -48,8 +48,7 @@
 
 > **正式需求**＝有明确交付或验收责任，且拟改变**部件行为、外部契约、数据/NFR、运行语义或架构责任**的事项；不改变这些语义的**纯文档和机械维护**除外。
 
-**是** → 先走 [`/component-design`](framework/skills/project/component-design/SKILL.md)（部件内设计阶段，组织侧称 Story Design）：需求源物化 → 正式性判定 → 部件演进蓝图 admitted → 拆出 1..N 个 Change Unit → 各 CU 按下面的施工分档落地 → 部件闭环。
-**否**（非正式维护动作：纯文档、机械重命名、依赖版本例行升级等） → 直接进 L0 / L1 施工分档，不建蓝图。
+**是** → 先走 [`/component-design`](framework/skills/project/component-design/SKILL.md)（部件内设计阶段，组织侧称 Story Design）：需求源物化 → 正式性判定 → 部件演进蓝图 admitted → 拆出 1..N 个 Change Unit → 各 CU 按下面的施工分档落地 → 部件闭环；**否**（非正式维护动作：纯文档、机械重命名、依赖版本例行升级等） → 直接进 L0 / L1 施工分档，不建蓝图。
 
 三条判定纪律：**上游显式**标为正式需求时该分类具有权威性（不得用本地判断降级）；**信息不足问人、不猜测**；**不加机器门**——这是路由指引，不新增 `track_scoring` 条目、不新增档位、不加 BLOCKER。`/spec` 与 `/change-lite` 在首次冻结施工意图处各兜底复核一次，命中即指回 `/component-design`，成本只是一份草稿。蓝图只有一种协议（**无档位、无升级状态机**），深度由真实影响面派生；宿主准入见 [真实宿主准入契约](framework/skills/reference/real-host-admission-and-feedback.md) §1。
 

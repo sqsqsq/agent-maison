@@ -22,13 +22,16 @@ import {
   receiptDirPath,
   resolveFeatureArtifact,
 } from '../../config';
-import { featureRelativePath } from '../../scripts/utils/feature-identity';
+import { encodeCuFeatureId, featureRelativePath } from '../../scripts/utils/feature-identity';
 import { detectRepoLayout, frameworkAbs } from '../../repo-layout';
 import { loadCatalog } from '../../scripts/utils/catalog-parser';
 import { scanReceiptPathReconcileCandidates } from '../../scripts/utils/receipt-path-reconcile';
 import { resolveGoalReportDir } from '../../scripts/utils/goal-manifest';
 import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-path';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
+import { verifierReportJsonPath } from '../../scripts/utils/verifier-evidence';
+// 3.0.0 verifier hook 协议（subject 绑定的 request/result 块）——H6/H7 走生产夹具，不手拼旧 payload
+import { makeVerifierProject, reportsDirOf, runVerifierRound, seedPhase } from '../utils/verifier-identity-fixture';
 
 interface UnitCaseResult {
   name: string;
@@ -501,67 +504,61 @@ function hookH5_verifierInvalidCuFallback(): void {
   }
 }
 
-/** H6：无 reports_dir_pattern 时 verifier hook 默认报告落 <features_dir>/<blueprint>/<unit>/<phase>
- *（BLOCKER2 正面用例：codex t4 一轮指出 hooks 无 pattern 时回退 framework/harness/reports
- * 违反 spec——已修；本用例验证修复后默认派生 features_dir） */
+/** verifier hook 解析 CU 物理路径所需的发布件内 SSOT 副本 + 工程根标记（同 buildCuProject 口径）。 */
+function installCuHookSsot(root: string): void {
+  fs.mkdirSync(path.join(root, 'framework', 'harness', 'scripts', 'utils'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'framework', 'harness', 'scripts', 'check-receipt.ts'), '// marker\n', 'utf8');
+  fs.copyFileSync(
+    path.resolve(__dirname, '..', '..', 'scripts', 'utils', 'feature-identity.js'),
+    path.join(root, 'framework', 'harness', 'scripts', 'utils', 'feature-identity.js'),
+  );
+}
+
+/** H6：无 reports_dir_pattern 时 verifier hook 默认报告落 <features_dir>/<blueprint>/<unit>/<phase>/reports
+ *（BLOCKER2 正面用例：hooks 无 pattern 时不得回退 framework/harness/reports；3.0.0 起 hook 按
+ * 调用侧 request 块归属、按 subject 分区落盘——路径口径与 TS 生产解析器 reportsDirOf 逐字对齐） */
 function hookH6_verifierDefaultReportsUnderFeaturesDir(): void {
-  const dir = makeTmp();
+  const { root } = makeVerifierProject({ featuresDir: 'requirements/features', omitReportsDirPattern: true });
   try {
-    buildCuProject(dir);
-    // 自定义 features_dir + 省略 reports_dir_pattern（证明默认派生，而非遗留框架路径）
-    writeConfig(dir, {
-      features_dir: 'requirements/features',
-      receipt_dir_pattern: 'requirements/features/<feature>/<phase>',
+    installCuHookSsot(root);
+    const featureId = encodeCuFeatureId(BLUEPRINT_ID, 'ledger-consumer');
+    const coding = seedPhase(root, featureId, 'coding');
+    const out = runVerifierRound({
+      root, feature: featureId, phase: 'coding', requestPath: coding.requestPath, subjectId: coding.subjectId,
     });
-    const featureId = `cu-${Buffer.from(`${BLUEPRINT_ID}\u0000ledger-consumer`).toString('base64url')}`;
-    writeState(dir, featureId, 'coding', 'sid-h6');
-    const transcriptPath = path.join(dir, 'transcripts', 'verifier.jsonl');
-    fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
-    fs.writeFileSync(transcriptPath, JSON.stringify({ role: 'assistant', content: 'verdict: PASS' }) + '\n', 'utf-8');
-    const out = runHook(VERIFIER_HOOK, { session_id: 'sid-h6', transcript_path: transcriptPath }, dir);
-    assert(out.status === 0, `H6 verifier hook 应 exit 0：${out.status}`);
-    // 默认报告路径 = <features_dir>/<blueprint_id>/<change_unit_id>/<phase>/reports/verifier.report.md
-    const cuReport = path.join(dir, 'requirements', 'features', BLUEPRINT_ID, 'ledger-consumer', 'coding', 'reports', 'verifier.report.md');
-    assert(fs.existsSync(cuReport), `H6 默认报告未落 CU 物理目录（features_dir 派生）：${cuReport}`);
-    // 路径级断言：报告所在路径不得含编码 id 段（交互路径 feature 原样是既有行为，
-    // headless 匿名化由 record-verifier-report-hook A 用例覆盖）
-    const cuReportPosix = cuReport.replace(/\\/g, '/');
-    assert(!cuReportPosix.includes(String(featureId)) && !cuReportPosix.includes('cu-'),
-      `H6 报告路径不得含编码 id：${cuReportPosix}`);
-    // 不得残留旧框架路径
-    assert(!fs.existsSync(path.join(dir, 'framework', 'harness', 'reports', ...featureRelativePath(featureId).split('/'), 'coding', 'verifier.report.md')),
-      'H6 不得写旧 framework/harness/reports 路径');
+    assert(out.status === 0, `H6 verifier hook 应 exit 0：${out.output}`);
+    const reportJson = verifierReportJsonPath(reportsDirOf(root, featureId, 'coding'), coding.subjectId);
+    const expectedDir = path.join(root, 'requirements', 'features', BLUEPRINT_ID, 'ledger-consumer', 'coding', 'reports');
+    assert(path.dirname(reportJson) === expectedDir, `H6 生产解析器默认目录错误：${reportJson}`);
+    assert(fs.existsSync(reportJson), `H6 默认报告未落 CU 物理目录（features_dir 派生）：${reportJson}`);
+    const reportPosix = reportJson.replace(/\\/g, '/');
+    assert(!reportPosix.includes(featureId) && !reportPosix.includes('/cu-'), `H6 报告路径不得含编码 id：${reportPosix}`);
+    assert(!fs.existsSync(path.join(root, 'framework', 'harness', 'reports')), 'H6 不得写旧 framework/harness/reports 路径');
   } finally {
-    rmDir(dir);
+    rmDir(root);
   }
 }
 
 /** H7：verifier hook 对显式 custom pattern 保留前缀层级、只展开 <feature> 为物理路径
  *（OpenSpec task 8.7 b：record-verifier-report.mjs 同需覆盖 custom pattern） */
 function hookH7_verifierCustomPatternKeepsStructure(): void {
-  const dir = makeTmp();
+  const { root } = makeVerifierProject({ reportsDirPattern: 'requirements/features/<feature>/phases/<phase>/reports' });
   try {
-    buildCuProject(dir);
-    const featureId = `cu-${Buffer.from(`${BLUEPRINT_ID}\u0000ledger-consumer`).toString('base64url')}`;
-    writeConfig(dir, {
-      features_dir: 'doc/features',
-      receipt_dir_pattern: 'doc/features/<feature>/<phase>',
-      reports_dir_pattern: 'requirements/features/<feature>/phases/<phase>/reports',
+    installCuHookSsot(root);
+    const featureId = encodeCuFeatureId(BLUEPRINT_ID, 'ledger-consumer');
+    const coding = seedPhase(root, featureId, 'coding');
+    const out = runVerifierRound({
+      root, feature: featureId, phase: 'coding', requestPath: coding.requestPath, subjectId: coding.subjectId,
     });
-    writeState(dir, featureId, 'coding', 'sid-h7');
-    const transcriptPath = path.join(dir, 'transcripts', 'verifier.jsonl');
-    fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
-    fs.writeFileSync(transcriptPath, JSON.stringify({ role: 'assistant', content: 'verdict: PASS' }) + '\n', 'utf-8');
-    const out = runHook(VERIFIER_HOOK, { session_id: 'sid-h7', transcript_path: transcriptPath }, dir);
-    assert(out.status === 0, `H7 verifier hook 应 exit 0：${out.status}`);
-    // 显式 custom pattern：前缀层级保留（requirements/features/<feature>/phases/<phase>/reports）
-    const cuReport = path.join(dir, 'requirements', 'features', BLUEPRINT_ID, 'ledger-consumer', 'phases', 'coding', 'reports', 'verifier.report.md');
-    assert(fs.existsSync(cuReport), `H7 报告未按 custom pattern 落盘：${cuReport}`);
-    const cuReportPosix = cuReport.replace(/\\/g, '/');
-    assert(!cuReportPosix.includes(String(featureId)) && !cuReportPosix.includes('cu-'),
-      `H7 报告路径不得含编码 id：${cuReportPosix}`);
+    assert(out.status === 0, `H7 verifier hook 应 exit 0：${out.output}`);
+    const reportJson = verifierReportJsonPath(reportsDirOf(root, featureId, 'coding'), coding.subjectId);
+    const expectedDir = path.join(root, 'requirements', 'features', BLUEPRINT_ID, 'ledger-consumer', 'phases', 'coding', 'reports');
+    assert(path.dirname(reportJson) === expectedDir, `H7 生产解析器 custom pattern 目录错误：${reportJson}`);
+    assert(fs.existsSync(reportJson), `H7 报告未按 custom pattern 落盘：${reportJson}`);
+    const reportPosix = reportJson.replace(/\\/g, '/');
+    assert(!reportPosix.includes(featureId) && !reportPosix.includes('/cu-'), `H7 报告路径不得含编码 id：${reportPosix}`);
   } finally {
-    rmDir(dir);
+    rmDir(root);
   }
 }
 

@@ -86,9 +86,13 @@ export function runAll(): UnitCaseResult[] {
     const rel = path.relative(FRAMEWORK_ROOT, SAMPLES_DIR).replace(/\\/g, '/');
     assert(rel.startsWith('docs/'), `样例目录必须在 docs/ 下，实际 ${rel}`);
     assert(!excluded.excludeRootDirs.includes('docs'), 'docs/ 不应被排除出发布件');
+    // docs/ 下允许存在针对 vendor 文档的排除（3.0.0 起 docs/vendor/**），但样例目录自身不得被任何 docs/ 规则命中
+    const docsGlobsCoveringSamples = excluded.excludeGlobs.filter(
+      glob => glob.startsWith('docs/') && `${rel}/`.startsWith(glob.replace(/[/]?[*][*]$/, '/')),
+    );
     assert(
-      !excluded.excludeGlobs.some(glob => glob.startsWith('docs/')),
-      `docs/ 下不应有排除规则：${excluded.excludeGlobs.join(', ')}`,
+      docsGlobsCoveringSamples.length === 0,
+      `样例目录 ${rel} 被发布排除规则命中：${docsGlobsCoveringSamples.join(', ')}`,
     );
     // 反向确认：harness/tests/** 确实被排除——样例不能放那里
     assert(excluded.excludeGlobs.includes('harness/tests/**'), 'harness/tests/** 应被排除（样例不得放 fixtures）');

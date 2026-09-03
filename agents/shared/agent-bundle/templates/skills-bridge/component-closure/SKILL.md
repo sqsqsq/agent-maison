@@ -1,6 +1,6 @@
 ---
 name: component-closure
-description: 从蓝图、Change Unit、Feature completion 与既有证据派生部件闭环（完整流程见 framework/skills/project/component-closure/SKILL.md）
+description: 从蓝图、Change Unit、Feature completion 与现有证据机械派生 Component closure
 ---
 
 > **BLOCKER — Personal setup**：`check-personal-setup.ts --json --ensure`（见 [personal-setup-gate](../../../framework/skills/reference/personal-setup-gate.md)）。
