@@ -66,6 +66,13 @@ export function runAll(): UnitCaseResult[] {
       const detail = JSON.stringify({ ...out, eventTypes: undefined });
 
       assert(out.error === null, `不得裸崩：${detail}`);
+      // 收官判据（codex review P2）：不只证明"路由对了"，还要证明这条路**真的把 run 走完**。
+      // 缺这两条时，一个在回退后卡死或半途终局的 run 也能让上面的路由断言全绿。
+      assert(out.exitCode === 0, `保守恢复须让本 run 正常收官（exit 0）：${detail}`);
+      assert(
+        out.phaseStartsThisCall.filter(p => p === 'coding').length >= 2,
+        `coding 必须被真正二次执行（回退不是只改状态）：${detail}`,
+      );
 
       // 路由判据：必须走 post-harness 基线对账那条，**不是** invoke 窗口归属那条。
       const drift = out.invalidationRecords.find(r =>

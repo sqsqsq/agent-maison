@@ -706,7 +706,10 @@ function stageGoal(ctx) {
   //     写明的 3.0.0 语义：作废本 invocation 与旧 closure，自动 backtrack 回 coding 全量重验。
   //   · `untrusted_source_drift_revalidation`：ut/testing **harness 之后**由
   //     `reconcileMutablePhaseSourceDrift` 比对 review closure 基线发现（同文件 :9340），
-  //     覆盖「不在任何 invoke 窗口内的漂移」。该路由由 adjudication.unit.test.ts 保持覆盖。
+  //     覆盖「不在任何 invoke 窗口内的漂移」。该路由的**运行时**覆盖在
+  //     `harness/tests/unit/goal-post-harness-drift.unit.test.ts`（真跑 driver 场景
+  //     `ut_source_drift_post_harness`）。注意 `adjudication.unit.test.ts` **不算**
+  //     这条的覆盖——它只调纯函数 `decide()`，碰不到上面两个生产入口。
   // 本用例钉前者（写窗口内），不写成 OR：路由静默改道应当让这条门红，而不是被兜住。
   const utMutationFeature = 'ut-source-mutation';
   runDriver('provision', null, utMutationFeature);

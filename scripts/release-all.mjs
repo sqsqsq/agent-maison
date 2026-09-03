@@ -13,6 +13,8 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
+import { collectReleaseFiles, loadReleaseExcludes, toPosixPath } from './release-pack-rules.mjs';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
 const HARNESS = path.join(REPO_ROOT, 'harness');
@@ -38,10 +40,81 @@ function readVersion() {
   return JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8')).version;
 }
 
+/**
+ * 打包前的干净树硬闸。
+ *
+ * 为什么必须有（2026-09-03 实证）：`pack-release.mjs` 把 `source_commit` 写成
+ * `git rev-parse HEAD`，打包的却是**工作区当前字节**，两者之间没有任何一致性校验。
+ * 于是脏树能铸出一个「自称来自某 commit、内容却不是该 commit」的发布件——拿着它回到
+ * 那个 commit 复现不出来。本轮真出过：带 5 个未提交文件（3 个进 zip）跑完整条链，
+ * verify 与 smoke 全绿，产物身份却是假的，最后是靠人读 `git status` 才发现。
+ *
+ * 闸放在链首而不是 pack 内：脏树时应当**一步都不跑**，而不是把几分钟测试跑完再拒。
+ * **不提供 `--allow-dirty`**——本地脏树想验打包规则用 `npm run release:verify`；
+ * 留逃生口等于把这道闸交还给"赶时间的人"，而它防的正是那一类事故。
+ *
+ * @param {string} repoRoot
+ */
+export function assertCleanWorktree(repoRoot) {
+  const r = spawnSync('git', ['status', '--porcelain', '--untracked-files=all'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
+  });
+  if (r.error || r.status !== 0) {
+    throw new Error(
+      `无法确认工作区状态（发布件身份取自 git HEAD，必须可判定）：${(r.stderr ?? r.error?.message ?? '').trim() || '非 git 检出'}`,
+    );
+  }
+  const dirty = (r.stdout ?? '').split('\n').map(l => l.trimEnd()).filter(Boolean);
+  if (dirty.length > 0) {
+    const shown = dirty.slice(0, 20).join('\n  ');
+    throw new Error(
+      `工作区不干净，拒绝打包：产物会写入 source_commit=HEAD，但内容是工作区字节，` +
+      `二者不一致的包无法由该提交复现。\n  ${shown}` +
+      (dirty.length > 20 ? `\n  …另有 ${dirty.length - 20} 项` : '') +
+      `\n先提交或还原上述改动再发布；只想验打包规则用 npm run release:verify。`,
+    );
+  }
+
+  // 第二道：`git status` 独木桥堵不住 **ignored** 文件（codex review P1，已实证）。
+  // Git 默认不报告被 `.gitignore` 忽略的路径，而 `collectReleaseFiles` 是**按磁盘遍历**
+  // 的（release-pack-rules.mjs:213 `fs.readdirSync`），从不咨询 git。于是
+  // `skills/hidden.tmp` 这类「被忽略但落在进包路径下」的文件，status 全绿却照样进 zip
+  // ——包里出现 HEAD 中根本不存在的文件，`source_commit` 同样说谎。
+  //
+  // 因此直接钉住真正要保证的性质：**进包的每个文件都必须受 Git 跟踪**。拿实际发布集合
+  // 与 `git ls-files` 求差集，比"再加 --ignored 扫一遍"精确——它只问责会进包的路径，
+  // 不会被仓库里合法的 ignored 产物（dist/、node_modules/…）误伤。
+  const ls = spawnSync('git', ['ls-files', '-z'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
+  });
+  if (ls.error || ls.status !== 0) {
+    throw new Error(`无法列出 Git 跟踪文件：${(ls.stderr ?? ls.error?.message ?? '').trim()}`);
+  }
+  const tracked = new Set((ls.stdout ?? '').split('\0').filter(Boolean).map(toPosixPath));
+  const { included } = collectReleaseFiles(repoRoot, loadReleaseExcludes());
+  const untrackedShipping = included.map(toPosixPath).filter(f => !tracked.has(f));
+  if (untrackedShipping.length > 0) {
+    const shown = untrackedShipping.slice(0, 20).join('\n  ');
+    throw new Error(
+      `发布集合含 ${untrackedShipping.length} 个不受 Git 跟踪的文件，拒绝打包：` +
+      `它们会进 zip，却不存在于 source_commit=HEAD（.gitignore 忽略的文件 git status 不报告）。\n  ${shown}` +
+      (untrackedShipping.length > 20 ? `\n  …另有 ${untrackedShipping.length - 20} 项` : '') +
+      `\n提交它们，或让发布排除规则/.gitignore 把它们挡在包外。`,
+    );
+  }
+}
+
 function main() {
   for (const [name, p] of [['ts-node', TSNODE], ['typescript', TSC]]) {
     if (!fs.existsSync(p)) throw new Error(`缺少 ${name}：${p}（先在 harness 下 npm install）`);
   }
+
+  // 0. 干净树硬闸（在任何耗时步骤之前）
+  assertCleanWorktree(REPO_ROOT);
 
   const version = readVersion();
   const distDir = path.join(REPO_ROOT, 'dist');
@@ -98,9 +171,14 @@ function main() {
   console.log(`\n[release:all] DONE → dist/${zipName} (+ ${manifestName})`);
 }
 
-try {
-  main();
-} catch (err) {
-  console.error(`\n[release:all] ${err.message}`);
-  process.exit(1);
+// 与 check-plan-version.mjs / verify-release-pack.mjs 同一守卫：直接执行才跑发布链，
+// 被 import（单测取 assertCleanWorktree）时不得有副作用。
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMain) {
+  try {
+    main();
+  } catch (err) {
+    console.error(`\n[release:all] ${err.message}`);
+    process.exit(1);
+  }
 }

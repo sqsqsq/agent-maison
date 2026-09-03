@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 
 import { writeInZipManifest } from '../pack-release.mjs';
 import { validateReleaseIdentityFields } from '../verify-release-pack.mjs';
+import { assertCleanWorktree } from '../release-all.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
@@ -112,5 +113,108 @@ test('t7 release verify：处理缺字段/格式非法的包（legacy 包、错 
       validateReleaseIdentityFields({ ...good, built_at: v }).some(e => e.includes('built_at')),
       `built_at=${JSON.stringify(v)} 必须判非法（不应抛异常）`,
     );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 干净树硬闸——包身份契约的另一半
+// ---------------------------------------------------------------------------
+//
+// `source_commit=HEAD` 只有在**工作区干净**时才代表包内容；脏树打出的包自称某 commit
+// 而内容不是，无法由该提交复现（2026-09-03 实证：带 5 个未提交文件跑完整条链，
+// verify 与 smoke 全绿而产物身份是假的）。这里真建临时仓跑两个分支，不留注入缝。
+test('release:all 干净树硬闸：干净放行；有改动（含 untracked）即拒并点名文件', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'am-clean-gate-'));
+  const git = (...args) => {
+    const r = spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
+    if (r.status !== 0) throw new Error(`git ${args.join(' ')} 失败：${r.stderr}`);
+  };
+  try {
+    git('init', '-q');
+    git('config', 'user.email', 't@t');
+    git('config', 'user.name', 't');
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'v1\n');
+    git('add', '-A');
+    git('commit', '-qm', 'init');
+
+    // ① 干净 → 放行
+    assert.doesNotThrow(() => assertCleanWorktree(repo), '干净树必须放行');
+
+    // ② tracked 改动 → 拒，且点名该文件
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'v2\n');
+    assert.throws(
+      () => assertCleanWorktree(repo),
+      /a\.txt/,
+      'tracked 改动必须拒绝并点名文件',
+    );
+    git('checkout', '--', 'a.txt');
+    assert.doesNotThrow(() => assertCleanWorktree(repo), '还原后须重新放行');
+
+    // ③ untracked 新文件 → 同样拒（--untracked-files=all；新增未提交的进包文件
+    //    与改动等价地让 source_commit 说谎）
+    fs.writeFileSync(path.join(repo, 'b.txt'), 'new\n');
+    assert.throws(
+      () => assertCleanWorktree(repo),
+      /b\.txt/,
+      'untracked 文件必须同样拒绝',
+    );
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// codex review P1（已实证）：`git status` 默认不报告被 .gitignore 忽略的路径，而打包器
+// 是按磁盘遍历的（release-pack-rules.mjs `fs.readdirSync`），从不咨询 git。于是「被忽略
+// 但落在进包路径下」的文件能让 status 全绿却照样进 zip——包里出现 HEAD 中不存在的文件。
+// 这一例正是那条通道：单靠 status 会放行，必须由「进包文件须受 Git 跟踪」这道闸拦下。
+test('干净树硬闸：被 .gitignore 忽略但会进包的文件必须拒绝（status 看不见它）', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'am-clean-gate-ignored-'));
+  const git = (...args) => {
+    const r = spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
+    if (r.status !== 0) throw new Error(`git ${args.join(' ')} 失败：${r.stderr}`);
+  };
+  try {
+    git('init', '-q');
+    git('config', 'user.email', 't@t');
+    git('config', 'user.name', 't');
+    fs.mkdirSync(path.join(repo, 'skills'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'skills', 'keep.md'), '# keep\n');
+    fs.writeFileSync(path.join(repo, '.gitignore'), 'skills/*.tmp\n');
+    git('add', '-A');
+    git('commit', '-qm', 'init');
+    assert.doesNotThrow(() => assertCleanWorktree(repo), '前置：此时应干净');
+
+    // `skills/` 会进包，`.tmp` 不在发布排除规则里 → 该文件确实会被收进 zip。
+    fs.writeFileSync(path.join(repo, 'skills', 'hidden.tmp'), 'ignored but shipped\n');
+
+    // 先证明这条通道确实绕过了 git status（否则本用例只是在重复上一例）。
+    const st = spawnSync('git', ['status', '--porcelain', '--untracked-files=all'], {
+      cwd: repo, encoding: 'utf8',
+    });
+    assert.equal(
+      (st.stdout ?? '').trim(), '',
+      'git status 本应看不见 ignored 文件——若这里非空，说明前提变了，本用例需重写',
+    );
+
+    assert.throws(
+      () => assertCleanWorktree(repo),
+      /hidden\.tmp/,
+      'ignored 但会进包的文件必须被拒（它不存在于 HEAD，却会进 zip）',
+    );
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('干净树硬闸：非 git 检出须给出可判定的失败，而不是静默放行', () => {
+  const notARepo = fs.mkdtempSync(path.join(os.tmpdir(), 'am-clean-gate-nogit-'));
+  try {
+    assert.throws(
+      () => assertCleanWorktree(notARepo),
+      /无法确认工作区状态/,
+      '状态不可判定时必须失败（发布件身份取自 HEAD）',
+    );
+  } finally {
+    fs.rmSync(notARepo, { recursive: true, force: true });
   }
 });
