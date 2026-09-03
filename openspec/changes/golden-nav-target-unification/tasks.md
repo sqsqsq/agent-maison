@@ -27,5 +27,6 @@
 - [x] 2.2 `cd harness && npm test`（typecheck + unit 全量 + fixtures 全量）
 - [x] 2.3 `npm run openspec:validate -- --all --strict`；`node scripts/check-plan-version.mjs`；
       `git diff --check` 干净
-- [ ] 2.4 宿主复验（golden 十固定屏经真实入口采集、HomeTab 负向证据落盘、evaluator
+- [x] 2.4 宿主复验（golden 十固定屏经真实入口采集、HomeTab 负向证据落盘、evaluator
       裁决）——需宿主安装新版本后执行，与 c4e8b1d3 Todo 5 同一次统一回归，本仓库内保持 pending
+  - 2026-09-03 收口登记：宿主回归/回灌/跨夜 run 验证不在 3.0.0 窗口执行（用户裁决，同 4bcee33d）；本轮 npm test 3795/3795 + fixtures 46/46、openspec:validate 44/44 strict、release:verify ALL PASS（--skip-plan-release-gate --skip-typecheck）。

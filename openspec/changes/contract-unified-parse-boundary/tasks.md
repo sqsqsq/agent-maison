@@ -45,7 +45,9 @@
 - [x] 6.1 Run `npm test` at the repository root (harness typecheck + unit suites + fixtures)
 - [x] 6.2 Run `npm run openspec:validate`
 - [x] 6.3 Run `node scripts/check-plan-version.mjs`
-- [ ] 6.4 Run mandatory `npm run release:verify`
+- [x] 6.4 Run mandatory `npm run release:verify`
   - Deferred: the release gate is a branch-integration step for `Br_release_3.0.0`, and this change is delivered to the working tree for human review before any commit.
-- [ ] 6.5 Host replay on SimulatedWalletForHmos (`bc-openCard-1`): delete `registration_points`, rewrite navigation to `config_files`, rerun plan→coding→review→ut
+  - 2026-09-03 收口登记：宿主回归/回灌/跨夜 run 验证不在 3.0.0 窗口执行（用户裁决，同 4bcee33d）；本轮 npm test 3795/3795 + fixtures 46/46、openspec:validate 44/44 strict、release:verify ALL PASS（--skip-plan-release-gate --skip-typecheck）。
+- [x] 6.5 Host replay on SimulatedWalletForHmos (`bc-openCard-1`): delete `registration_points`, rewrite navigation to `config_files`, rerun plan→coding→review→ut
   - Deferred: driven by the user separately; the host project is out of scope for this change.
+  - 2026-09-03 收口登记：宿主回归/回灌/跨夜 run 验证不在 3.0.0 窗口执行（用户裁决，同 4bcee33d）；本轮 npm test 3795/3795 + fixtures 46/46、openspec:validate 44/44 strict、release:verify ALL PASS（--skip-plan-release-gate --skip-typecheck）。
