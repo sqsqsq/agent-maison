@@ -51,7 +51,7 @@
 | **测试执行责任** | 派生器可自行 skip 用例 | 顶层 TC 必须声明 **`execution_channel`**；派生器无 skip 决策权；`manual` 永久 fail-closed |
 | **产品组件形态** | 框架不介入 | 中途曾下发强制 UI kit，**已整体撤销**——产品组件归属唯一归宿主 |
 | **framework 完整性** | per-file sha256 漂移判 BLOCKER + 宿主 Git 身份裁决 | **integrity 家族退场**；写权限由执行环境授予，宿主是不是 Git 仓完全无关 |
-| **自定义 `features_dir`** | harness 读、agent 写多处硬编码 `doc/features` | **读写路径 + prompt + gitignore 全链路**随配置 |
+| **自定义 `features_dir`** | harness 读、agent 写多处硬编码 `doc/features` | **读写路径 + prompt 全链路**随配置 |
 | **adapter** | claude / cursor / codex / generic | 增 **chrys**、**opencode**、**codeagent**；Windows CLI 选择改为按 PATH 真值解析 |
 
 ---
@@ -151,7 +151,7 @@ UT 改码门禁不再要求宿主先提交才能取基线：direct attestation �
 
 ### 9. 路径全链路治理、宿主运行边界真值与 adapter
 
-**自定义 `features_dir` 端到端贯通**（2.4.0 窗口）：共享 helper 与 framework/profile 散点全改走 `featureFilePath`/`relFeatureFile`；verify prompt 运行时替换 `{features_dir}`、skills/mdc/profile 文案占位符化、`canonical-gitignore` 函数化随配置生成、Stop hook 回执路径尊重 `receipt_dir_pattern`。默认布局（`doc/features`）宿主零行为变化。诚实豁免：`specs/phase-rules/*.yaml` 路径文案与 `_adhoc` 固定落点显式不动。
+**自定义 `features_dir` 端到端贯通**（2.4.0 窗口）：共享 helper 与 framework/profile 散点全改走 `featureFilePath`/`relFeatureFile`；verify prompt 运行时替换 `{features_dir}`、skills/mdc/profile 文案占位符化、Stop hook 回执路径尊重 `receipt_dir_pattern`。init 不读取、创建或修改宿主 `.gitignore` 等 SCM 配置（宿主 SCM 无关），运行时产物边界由 `specs/runtime-artifact-policy.json` 与各 writer 的路径契约保证。默认布局（`doc/features`）宿主零行为变化。诚实豁免：`specs/phase-rules/*.yaml` 路径文案与 `_adhoc` 固定落点显式不动。
 
 **宿主运行边界真值**（3.0.0 窗口）：
 
@@ -190,7 +190,7 @@ UT 改码门禁不再要求宿主先提交才能取基线：direct attestation �
 ## 升级指引（2.3.x → 3.0.0）
 
 1. 备份当前 `framework/` 版本。
-2. 部署 **`framework-3.0.0.zip`**（哈希见同批 manifest）或 submodule 更新到对应提交。
+2. 部署 **`framework-3.0.0.zip`**（哈希见同批 manifest）：解压已验证发布件到工程根 `framework/`（唯一支持的部署方式）。
 3. 工程根 **`/framework-init` UPDATE**（S1→S4）；确认 adapter 物化。
 4. 每位开发者跑 **`check-personal-setup --json --ensure`**。
 5. 验证：`cd framework/harness && npm test`。
@@ -201,7 +201,7 @@ UT 改码门禁不再要求宿主先提交才能取基线：direct attestation �
 10. **默认 `warn` 档的宿主**：若只写了 P0 节点而没做组件映射，plan 阶段会开始 BLOCKER——补齐 visual-parity / contracts 映射即可，framework 不规定组件如何实现。
 11. **verifier 存量产物**：已 closed 且 evidence 仍 fresh 的阶段零动作；新窗口生成但未闭环的 subject 只需**重跑当前 phase 的 harness**拿新 request，再按五步走完——不回退业务代码、不重写上游产物、不从 spec 重走。
 12. **不要**为了「解锁」去删除或重置 `run-control.json`；旧 run 也无需回填 `run_created` / `run_base_sha`，若 legacy anchor 已损坏，走显式 `--supersede --rebaseline-to` successor，不要编辑旧 manifest 洗白。
-13. **自定义 `features_dir`** 宿主：升级后读写、prompt、gitignore 自动随配置，无需手工改。
+13. **自定义 `features_dir`** 宿主：升级后读写、prompt 自动随配置，无需手工改；宿主 `.gitignore` 由宿主自行维护，init 不再读写。
 14. 自 **2.2.x 或更早直跳** 者，须叠加阅读 [`RELEASE-NOTES-v2.3.0.md`](RELEASE-NOTES-v2.3.0.md) 与 [`MIGRATION.md`](MIGRATION.md)。
 
 ---

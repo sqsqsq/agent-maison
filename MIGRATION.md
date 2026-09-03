@@ -234,7 +234,7 @@ report，**再跑一次完整 harness 会换代 subject**，刚发布的 verifie
 要点：
 
 1. **项目 config 变更**（架构 DSL、`materialized_adapters`、paths 等）在 S2 收集进 `configWritePayload`，S3 由 executor 写入。
-2. **个人 `agent_adapter` 与宿主 IDE 路径**不在项目 init 配置——首次跑 catalog/spec 等阶段时 `check-personal-setup.ts --json --ensure` 内联写入个人级 `framework.local.json`（多 adapter 见 [`personal-setup-gate`](skills/reference/personal-setup-gate.mdSKILL.md)）。
+2. **个人 `agent_adapter` 与宿主 IDE 路径**不在项目 init 配置——首次跑 catalog/spec 等阶段时 `check-personal-setup.ts --json --ensure` 内联写入个人级 `framework.local.json`（多 adapter 见 [`personal-setup-gate`](skills/reference/personal-setup-gate.md)）。
 3. **增删物化 adapter** 时更新 `materialized_adapters[]` 并重跑 S3；旧 adapter 目录可能残留，列给用户手工处理，**不自动强删**。
 
 日常 framework 版本跟进应走上述 UPDATE 编排，而不是手工散落改多份文件。

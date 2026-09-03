@@ -39,7 +39,7 @@ interaction-renderer and registry SSOT instead of per-skill widget-options files
 ### Requirement: Adapter outputs target instance project root
 
 The system SHALL generate all adapter artifacts relative to the consumer instance
-project root, not inside the framework submodule directory.
+project root, not inside the framework release directory.
 
 #### Scenario: Agent entry file targets instance root
 - **WHEN** framework-init runs with a selected adapter
@@ -80,7 +80,7 @@ and direct the user to project init without writing local config.
 - **THEN** `assert-active-adapter-materialized` MUST fail, `record-adapter` MUST
   be skipped, and `framework.local.json` MUST NOT be created or updated
 
-> **Enforced by:** `skills/reference/personal-setup-gate.mdSKILL.md`,
+> **Enforced by:** `skills/reference/personal-setup-gate.md`,
 > `harness/scripts/init-orchestrate.ts`,
 > `harness/tests/unit/init-orchestrate-smoke.unit.test.ts`
 
