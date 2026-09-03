@@ -15,20 +15,37 @@ import type {
   ProfileCapabilitySpec,
   CapabilitySeverityKeyword,
   ExtensionBundle,
+  ExtensionKnowledgeEntry,
+  ExtensionMcpAction,
+  ExtensionPhaseBinding,
+  ExtensionPhaseBindingSlot,
 } from './scripts/utils/types';
 import { normalizeCapabilityKey, normalizeCapabilitiesMap } from './scripts/utils/capability-alias';
 import { normalizePhaseId } from './scripts/utils/phase-alias';
+import { validateProjectRelativePath } from './scripts/utils/project-relative-path';
+import { resolveWorkflowSpec } from './workflow-loader';
+import { workflowFeaturePhases } from './scripts/utils/runtime-policy';
 
 export type { ExtensionBundle } from './scripts/utils/types';
 
 const SEVERITY_SET = new Set<CapabilitySeverityKeyword>(['BLOCKER', 'SKIP', 'WARN', 'MAJOR', 'MINOR']);
+const ACTION_SEVERITY_SET = new Set(['MAJOR', 'BLOCKER']);
+const BINDING_SLOTS = new Set<ExtensionPhaseBindingSlot>([
+  'before_phase_work', 'before_phase_verify', 'after_phase_verify_before_close',
+]);
+const SAFE_ID = /^[a-z][a-z0-9_-]*$/;
 
 function emptyBundle(rootDir: string | null): ExtensionBundle {
   return {
     rootDir,
     manifestPath: null,
+    manifestVersion: null,
+    featurePhases: [],
     skills: [],
     knowledgePaths: [],
+    knowledge: [],
+    mcpActions: {},
+    phaseBindings: {},
     hooks: {},
     extensionCapabilities: {},
     phaseRuleOverlayPaths: {},
@@ -42,14 +59,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function safeResolve(extRoot: string, rel: string): string {
-  const root = path.resolve(extRoot);
-  const cleaned = rel.trim().replace(/^\.\/+/, '');
-  const abs = path.resolve(root, cleaned);
-  const prefix = root.endsWith(path.sep) ? root : root + path.sep;
-  if (abs !== root && !abs.startsWith(prefix)) {
-    throw new Error(`路径越界：${rel}`);
-  }
-  return abs;
+  return path.resolve(extRoot, validateProjectRelativePath(extRoot, rel.trim().replace(/^\.\/+/, ''), 'extension 引用'));
+}
+
+function safeResolveProject(projectRoot: string, rel: string): string {
+  return path.resolve(projectRoot, validateProjectRelativePath(projectRoot, rel, 'mcp_actions.produces'));
+}
+
+function unknownKeys(value: Record<string, unknown>, allowed: readonly string[]): string[] {
+  const set = new Set(allowed);
+  return Object.keys(value).filter(key => !set.has(key));
 }
 
 function pushError(bundle: ExtensionBundle, code: string, message: string, p?: string): void {
@@ -59,6 +78,9 @@ function pushError(bundle: ExtensionBundle, code: string, message: string, p?: s
 function wipeProvides(b: ExtensionBundle): void {
   b.skills = [];
   b.knowledgePaths = [];
+  b.knowledge = [];
+  b.mcpActions = {};
+  b.phaseBindings = {};
   b.hooks = {};
   b.extensionCapabilities = {};
   b.phaseRuleOverlayPaths = {};
@@ -75,8 +97,19 @@ function finalize(bundle: ExtensionBundle): ExtensionBundle {
 /**
  * 扫描实例 extension 目录；manifest 缺失时返回空 bundle。
  */
-export function loadInstanceExtensions(projectRoot: string, extensionDirRel?: string): ExtensionBundle {
-  const rel = (extensionDirRel ?? 'doc/extensions').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+export function loadInstanceExtensions(
+  projectRoot: string,
+  extensionDirRel?: string,
+  options?: { frameworkRoot?: string },
+): ExtensionBundle {
+  let rel: string;
+  try {
+    rel = validateProjectRelativePath(projectRoot, extensionDirRel ?? 'doc/extensions', 'paths.extension_dir');
+  } catch (error) {
+    const invalid = emptyBundle(null);
+    pushError(invalid, 'extension_dir_path', (error as Error).message);
+    return invalid;
+  }
   const extRoot = path.join(projectRoot, ...rel.split('/').filter(Boolean));
 
   if (!fs.existsSync(extRoot) || !fs.statSync(extRoot).isDirectory()) {
@@ -106,13 +139,14 @@ export function loadInstanceExtensions(projectRoot: string, extensionDirRel?: st
   }
 
   const sv = raw.schema_version;
-  if (typeof sv !== 'string' || !sv.trim()) {
+  const schemaVersion = typeof sv === 'string' ? sv.trim() : '';
+  if (!schemaVersion) {
     pushError(bundle, 'manifest_schema_version', '缺少或非法 schema_version（须为非空字符串）', manifestPath);
-  } else if (sv.trim() !== '1.0') {
+  } else if (schemaVersion !== '1.0' && schemaVersion !== '1.1') {
     pushError(
       bundle,
       'manifest_schema_version_unsupported',
-      `不支持的 schema_version="${sv.trim()}"（当前仅 1.0）`,
+      `不支持的 schema_version="${schemaVersion}"（当前支持 1.0 / 1.1）`,
       manifestPath,
     );
   }
@@ -120,19 +154,49 @@ export function loadInstanceExtensions(projectRoot: string, extensionDirRel?: st
   const name = raw.name;
   if (typeof name !== 'string' || !name.trim()) {
     pushError(bundle, 'manifest_name', 'name 必须为非空字符串', manifestPath);
+  } else if (schemaVersion === '1.1' && !SAFE_ID.test(name.trim())) {
+    pushError(bundle, 'manifest_name', 'manifest 1.1 name 必须是小写 slug', manifestPath);
   }
 
   if (bundle.errors.length > 0) {
     return finalize(bundle);
   }
+  bundle.manifestVersion = schemaVersion as '1.0' | '1.1';
+  const is11 = bundle.manifestVersion === '1.1';
+  let featurePhases = new Set<string>();
+  if (is11) {
+    try {
+      const workflow = resolveWorkflowSpec(projectRoot, {
+        frameworkRoot: options?.frameworkRoot ?? path.resolve(__dirname, '..'),
+      });
+      featurePhases = new Set([
+        ...workflowFeaturePhases(workflow, 'full'),
+        ...workflowFeaturePhases(workflow, 'lite'),
+      ]);
+      bundle.featurePhases = [...featurePhases].sort();
+    } catch (error) {
+      pushError(bundle, 'manifest_workflow_unresolvable', (error as Error).message, manifestPath);
+    }
+  }
+  if (is11) {
+    for (const key of unknownKeys(raw, ['schema_version', 'name', 'version', 'description', 'framework_compat', 'provides', 'phase_bindings'])) {
+      pushError(bundle, 'manifest_unknown_field', `manifest 1.1 不支持字段：${key}`, manifestPath);
+    }
+  }
 
-  const provides = raw.provides;
+  const provides = raw.provides === undefined && is11 ? {} : raw.provides;
   if (provides === undefined || provides === null) {
+    if (is11 && provides === null) pushError(bundle, 'provides_not_object', 'manifest 1.1 provides 必须是 object', manifestPath);
     return finalize(bundle);
   }
   if (!isRecord(provides)) {
     pushError(bundle, 'provides_not_object', 'provides 必须是 object', manifestPath);
     return finalize(bundle);
+  }
+  if (is11) {
+    for (const key of unknownKeys(provides, ['skills', 'knowledge', 'hooks', 'capabilities', 'skill_assets', 'phase_rules_overlays', 'mcp_actions'])) {
+      pushError(bundle, 'provides_unknown_field', `manifest 1.1 provides 不支持字段：${key}`, manifestPath);
+    }
   }
 
   const skillsRaw = provides.skills;
@@ -143,8 +207,17 @@ export function loadInstanceExtensions(projectRoot: string, extensionDirRel?: st
       for (const s of skillsRaw) {
         if (typeof s !== 'string' || !s.trim()) {
           pushError(bundle, 'provides_skills_item', `非法 skill id：${String(s)}`, manifestPath);
+        } else if (!is11 || SAFE_ID.test(s.trim())) {
+          const id = s.trim();
+          bundle.skills.push(id);
+          if (is11) {
+            const skillPath = safeResolve(extRoot, `skills/${id}/SKILL.md`);
+            if (!fs.existsSync(skillPath) || !fs.statSync(skillPath).isFile()) {
+              pushError(bundle, 'skill_missing', `manifest skill 缺少 skills/${id}/SKILL.md`, skillPath);
+            }
+          }
         } else {
-          bundle.skills.push(s.trim());
+          pushError(bundle, 'provides_skills_item', `manifest 1.1 skill id 非法：${s.trim()}`, manifestPath);
         }
       }
     }
@@ -153,23 +226,138 @@ export function loadInstanceExtensions(projectRoot: string, extensionDirRel?: st
   const knowRaw = provides.knowledge;
   if (knowRaw !== undefined) {
     if (!Array.isArray(knowRaw)) {
-      pushError(bundle, 'provides_knowledge', 'provides.knowledge 必须是字符串数组', manifestPath);
+      pushError(bundle, 'provides_knowledge', 'provides.knowledge 必须是数组', manifestPath);
     } else {
       for (const k of knowRaw) {
-        if (typeof k !== 'string' || !k.trim()) {
+        let entry: ExtensionKnowledgeEntry | null = null;
+        if (typeof k === 'string' && k.trim()) {
+          const itemPath = k.trim();
+          entry = {
+            path: itemPath,
+            absPath: '',
+            summary: '',
+            audience: is11 ? [] : [],
+            legacy: true,
+          };
+        } else if (is11 && isRecord(k)) {
+          const extra = unknownKeys(k, ['path', 'summary', 'audience']);
+          if (extra.length > 0) {
+            pushError(bundle, 'knowledge_unknown_field', `knowledge 条目不支持字段：${extra.join(', ')}`, manifestPath);
+            continue;
+          }
+          const itemPath = typeof k.path === 'string' ? k.path.trim() : '';
+          const summary = typeof k.summary === 'string' ? k.summary.trim() : '';
+          const audienceRaw = k.audience;
+          let audience: 'global' | string[] | null = null;
+          if (audienceRaw === 'global') audience = 'global';
+          else if (Array.isArray(audienceRaw) && audienceRaw.length > 0 && audienceRaw.every(item =>
+            typeof item === 'string' && featurePhases.has(item))) {
+            audience = [...new Set(audienceRaw as string[])];
+          }
+          if (!itemPath || !summary || audience === null) {
+            pushError(bundle, 'provides_knowledge_item', 'knowledge 对象须含 path/summary 与 audience: global|Feature phase[]', manifestPath);
+            continue;
+          }
+          entry = { path: itemPath, absPath: '', summary, audience, legacy: false };
+        } else {
           pushError(bundle, 'provides_knowledge_item', `非法 knowledge 项：${String(k)}`, manifestPath);
           continue;
         }
         try {
-          const abs = safeResolve(extRoot, k.trim());
-          if (!fs.existsSync(abs)) {
-            pushError(bundle, 'knowledge_missing', `knowledge 文件不存在：${k.trim()}`, abs);
+          const abs = safeResolve(extRoot, entry.path);
+          if (!fs.existsSync(abs) || (is11 && !fs.statSync(abs).isFile())) {
+            pushError(bundle, 'knowledge_missing', `knowledge 文件不存在：${entry.path}`, abs);
           } else {
             bundle.knowledgePaths.push(abs);
+            bundle.knowledge.push({ ...entry, absPath: abs });
           }
         } catch (e) {
           pushError(bundle, 'knowledge_resolve', (e as Error).message, manifestPath);
         }
+      }
+    }
+  }
+
+  if (is11 && provides.mcp_actions !== undefined) {
+    if (!isRecord(provides.mcp_actions)) {
+      pushError(bundle, 'provides_mcp_actions', 'provides.mcp_actions 必须是 object', manifestPath);
+    } else for (const [id, value] of Object.entries(provides.mcp_actions)) {
+      if (!SAFE_ID.test(id) || !isRecord(value)) {
+        pushError(bundle, 'mcp_action_shape', `mcp action 非法：${id}`, manifestPath);
+        continue;
+      }
+      const extra = unknownKeys(value, ['tool', 'required', 'severity', 'produces', 'usage']);
+      if (extra.length > 0) {
+        pushError(bundle, 'mcp_action_forbidden_field', `mcp_actions.${id} 不支持字段：${extra.join(', ')}`, manifestPath);
+        continue;
+      }
+      const tool = typeof value.tool === 'string' ? value.tool.trim() : '';
+      const usage = typeof value.usage === 'string' ? value.usage.trim() : '';
+      const required = value.required;
+      const severity = value.severity ?? 'MAJOR';
+      const produces = Array.isArray(value.produces)
+        ? value.produces.filter((item): item is string => typeof item === 'string' && item.trim().length > 0).map(item => item.trim())
+        : [];
+      if (!tool || !usage || typeof required !== 'boolean' || produces.length === 0 || produces.length !== (value.produces as unknown[] | undefined)?.length || !ACTION_SEVERITY_SET.has(String(severity))) {
+        pushError(bundle, 'mcp_action_shape', `mcp_actions.${id} 须含 tool/required/produces/usage，severity 仅 MAJOR|BLOCKER`, manifestPath);
+        continue;
+      }
+      try {
+        const action: ExtensionMcpAction = {
+          id, tool, usage, required, severity: severity as 'MAJOR' | 'BLOCKER', produces,
+          produceAbsPaths: produces.map(item => safeResolveProject(projectRoot, item)),
+        };
+        bundle.mcpActions[id] = action;
+      } catch (error) {
+        pushError(bundle, 'mcp_action_produces_path', (error as Error).message, manifestPath);
+      }
+    }
+  }
+
+  if (is11 && raw.phase_bindings !== undefined) {
+    if (!isRecord(raw.phase_bindings)) {
+      pushError(bundle, 'phase_bindings_shape', 'phase_bindings 必须是 Feature phase -> slot 映射', manifestPath);
+    } else for (const [phase, slotsRaw] of Object.entries(raw.phase_bindings)) {
+      if (!featurePhases.has(phase) || !isRecord(slotsRaw)) {
+        pushError(bundle, 'phase_binding_phase', `phase_bindings 仅接受 Feature phase：${phase}`, manifestPath);
+        continue;
+      }
+      for (const slot of Object.keys(slotsRaw)) {
+        if (!BINDING_SLOTS.has(slot as ExtensionPhaseBindingSlot)) {
+          pushError(bundle, 'phase_binding_slot', `不支持 phase_bindings.${phase}.${slot}`, manifestPath);
+        }
+      }
+      const parsed: Partial<Record<ExtensionPhaseBindingSlot, ExtensionPhaseBinding[]>> = {};
+      for (const slot of BINDING_SLOTS) {
+        const list = slotsRaw[slot];
+        if (list === undefined) continue;
+        if (!Array.isArray(list)) {
+          pushError(bundle, 'phase_binding_items', `phase_bindings.${phase}.${slot} 必须是数组`, manifestPath);
+          continue;
+        }
+        const items: ExtensionPhaseBinding[] = [];
+        for (const value of list) {
+          if (!isRecord(value) || unknownKeys(value, ['kind', 'ref']).length > 0
+            || !['knowledge', 'skill', 'mcp'].includes(String(value.kind))
+            || typeof value.ref !== 'string' || !value.ref.trim()) {
+            pushError(bundle, 'phase_binding_item', `phase_bindings.${phase}.${slot} 条目须为 {kind,ref}`, manifestPath);
+            continue;
+          }
+          items.push({ kind: value.kind as ExtensionPhaseBinding['kind'], ref: value.ref.trim() });
+        }
+        if (items.length > 0) parsed[slot] = items;
+      }
+      bundle.phaseBindings[phase] = parsed;
+    }
+    const knowledgeRefs = new Set(bundle.knowledge.map(item => item.path));
+    for (const [phase, slots] of Object.entries(bundle.phaseBindings)) for (const [slot, items] of Object.entries(slots)) {
+      for (const item of items ?? []) {
+        const exists = item.kind === 'mcp'
+          ? Boolean(bundle.mcpActions[item.ref])
+          : item.kind === 'skill'
+            ? bundle.skills.includes(item.ref)
+            : knowledgeRefs.has(item.ref);
+        if (!exists) pushError(bundle, 'phase_binding_ref_missing', `phase_bindings.${phase}.${slot} 引用不存在：${item.kind}:${item.ref}`, manifestPath);
       }
     }
   }
@@ -342,6 +530,13 @@ export function loadInstanceExtensions(projectRoot: string, extensionDirRel?: st
   }
 
   return finalize(bundle);
+}
+
+/** undefined=无 manifest/合法 1.0 目录驱动；数组=1.1 严格清单或非法 manifest 的空选择。 */
+export function extensionSkillIdsForBridge(bundle: ExtensionBundle): readonly string[] | undefined {
+  if (bundle.errors.length > 0) return [];
+  if (!bundle.manifestPath) return undefined;
+  return bundle.manifestVersion === '1.1' ? bundle.skills : undefined;
 }
 
 /**

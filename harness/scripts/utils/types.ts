@@ -871,12 +871,45 @@ export interface ExtensionValidationError {
   path?: string;
 }
 
+export interface ExtensionKnowledgeEntry {
+  path: string;
+  absPath: string;
+  summary: string;
+  audience: 'global' | string[];
+  legacy: boolean;
+}
+
+export interface ExtensionMcpAction {
+  id: string;
+  tool: string;
+  required: boolean;
+  severity: 'MAJOR' | 'BLOCKER';
+  produces: string[];
+  produceAbsPaths: string[];
+  usage: string;
+}
+
+export interface ExtensionPhaseBinding {
+  kind: 'knowledge' | 'skill' | 'mcp';
+  ref: string;
+}
+
+export type ExtensionPhaseBindingSlot =
+  | 'before_phase_work'
+  | 'before_phase_verify'
+  | 'after_phase_verify_before_close';
+
 /** doc/extensions 解析产物（manifest 缺失则为零值 + rootDir=null） */
 export interface ExtensionBundle {
   rootDir: string | null;
   manifestPath: string | null;
+  manifestVersion: '1.0' | '1.1' | null;
+  featurePhases: string[];
   skills: string[];
   knowledgePaths: string[];
+  knowledge: ExtensionKnowledgeEntry[];
+  mcpActions: Record<string, ExtensionMcpAction>;
+  phaseBindings: Record<string, Partial<Record<ExtensionPhaseBindingSlot, ExtensionPhaseBinding[]>>>;
   hooks: Record<string, Record<string, string[]>>;
   extensionCapabilities: Record<string, ProfileCapabilitySpec>;
   phaseRuleOverlayPaths: Record<string, string>;

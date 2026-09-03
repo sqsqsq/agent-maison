@@ -53,6 +53,7 @@ interface ReceiptOpts {
    * 「账本内容不参与闭环裁决」。
    */
   goalLedgerRunId?: string;
+  extensionManifest?: string;
 }
 
 /** 构造一个「除被消融字段外全部合法」的 full track 工程；返回 { root, sha, phase }。 */
@@ -138,6 +139,10 @@ function buildProject(phase: string, opts: ReceiptOpts): { root: string; sha: st
     publishFixtureVerifierEvidence({ projectRoot: root, reportsDir, feature: 'demo', phase });
   }
 
+  if (opts.extensionManifest) {
+    fs.mkdirSync(path.join(root, 'doc', 'extensions'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'doc', 'extensions', 'manifest.yaml'), opts.extensionManifest, 'utf-8');
+  }
   const sha = initGit(root);
 
   const verifierBlock = opts.omitVerifier
@@ -294,6 +299,50 @@ const cases: Array<{ name: string; run: () => void }> = [
       try {
         const v = tryValidateReceipt(HARNESS_ROOT, root, 'review', 'demo');
         assert(v.status === 'failed', `expected failed under strict, got ${v.status}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'extension 1.1 after_phase_verify_before_close required produces 缺失 → 真 spawn receipt FAIL',
+    run: () => {
+      const extensionManifest = [
+        'schema_version: "1.1"', 'name: receipt-extension', 'provides:', '  skills: []',
+        '  mcp_actions:', '    close-action:', '      tool: host.close', '      required: true',
+        '      severity: BLOCKER', '      produces: [doc/missing-close.json]', '      usage: close',
+        'phase_bindings:', '  review:', '    after_phase_verify_before_close:',
+        '      - { kind: mcp, ref: close-action }', '',
+      ].join('\n');
+      const { root } = buildProject('review', {
+        evidenceProfile: 'balanced', omitVerifier: true, extensionManifest,
+      });
+      try {
+        const result = tryValidateReceipt(HARNESS_ROOT, root, 'review', 'demo');
+        assert(result.status === 'failed', `expected failed, got ${result.status}`);
+        assert((result.message ?? '').includes('extension_produces_'), result.message ?? 'missing message');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: '非法 extension manifest → 真 spawn receipt 复用 manifest BLOCKER，不静默关闭 gate',
+    run: () => {
+      const extensionManifest = [
+        'schema_version: "1.1"', 'name: invalid-receipt-extension', 'unknown: true',
+        'provides:', '  skills: []', '  mcp_actions:', '    close-action:',
+        '      tool: host.close', '      required: true', '      produces: [doc/missing-close.json]',
+        '      usage: close', 'phase_bindings:', '  review:', '    after_phase_verify_before_close:',
+        '      - { kind: mcp, ref: close-action }', '',
+      ].join('\n');
+      const { root } = buildProject('review', {
+        evidenceProfile: 'balanced', omitVerifier: true, extensionManifest,
+      });
+      try {
+        const result = tryValidateReceipt(HARNESS_ROOT, root, 'review', 'demo');
+        assert(result.status === 'failed', `expected failed, got ${result.status}`);
+        assert((result.message ?? '').includes('extension_manifest_manifest_unknown_field'), result.message ?? 'missing message');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

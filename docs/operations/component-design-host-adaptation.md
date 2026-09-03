@@ -311,6 +311,33 @@ revision N（被评审）
 > **为什么要换**：把设计语义留在评审载体里，会让评审文档同时是"派生物"又是"有判断的设计
 > 真源"，形成平行真源。蓝图承担设计权威后，Story Document 可以安心做零新事实的投影。
 
+### 7.1 用 extension 承载三条接缝
+
+Maison 3.1 的 `/extension` 是这三条接缝的静态输入通道，不是插件运行时。宿主把自己的 Story
+能力写成 `doc/extensions/skills/<id>/SKILL.md`，并在 manifest 1.1 的 `provides.skills[]` 声明；
+该 Skill 负责按宿主规则调用已经可用的工具、脱敏、落盘，再显式调用 `/component-design`：
+
+```text
+extension Skill
+  → 宿主工具获取 / 脱敏 / 项目内落盘
+  → mcp_actions.produces: requirement-source-materialization@1
+  → check:component-blueprint --materialization …
+  → /component-design
+  → 读取 component-blueprint.review.md 装配 Story Document
+  →（可选）mcp_actions.produces: blueprint-review-feedback@1
+  → check:component-blueprint --feedback …
+```
+
+- manifest 只写 `tool / required / severity / produces / usage`，不写 server、URL、token、command
+  或登录配置；工具执行与凭据均归宿主，Maison 只验证仓内产物。
+- `phase_bindings` 只管 Feature phases，**没有** `before_component_design`；设计前置动作由扩展 Skill
+  自身流程承载。绑定到 `/component-design` 的知识继续用 `skill_assets`。
+- `/extension inspect` 只在产物实际 `artifact` 被识别且通过既有 validator 后，才把 materialization /
+  feedback 标成 `evidenced` 并显示 `/component-design` 与接缝名；`usage` 文本不参与判断。工具可见性
+  只标 `agent_self_report`，不冒充完成证据。
+- 最小 manifest 见 [`samples/extension-m7-manifest.yaml`](samples/extension-m7-manifest.yaml)。其中路径与
+  tool id 是示例，接入时须替换为真实项目值。
+
 ---
 
 ## 8. 适配检查清单

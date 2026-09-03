@@ -195,6 +195,7 @@ import {
   type HookEventName,
 } from './hooks-dispatcher';
 import * as YAML from 'yaml';
+import { checkExtensionBindingProduces, checkExtensionManifest, formatExtensionPhasePrompt } from './scripts/utils/extension-runtime';
 import { detectRepoLayout, frameworkAbs, frameworkRelPath, frameworkLogicalRelPath, inferRepoLayout, type RepoLayout } from './repo-layout';
 import { probeAdapterImageInput, collectAuthoritativeImagePaths, resolveContextAdapterImageInput } from './scripts/utils/multimodal-probe';
 import { resolveEffectiveVisionContext } from './scripts/utils/effective-vision-context';
@@ -1006,6 +1007,19 @@ async function main(): Promise<void> {
   checks.push(...runProcessIntegrityPreflight({ projectRoot, harnessDir: harnessRoot }));
   checks.push(...(await emitLifecycle('pre_phase')));
   checks.push(...(await emitLifecycle('pre_check', { checkScript: `check-${phase}.ts` })));
+  checks.push(...checkExtensionManifest(resolvedProfile.extensionBundle));
+  checks.push(...checkExtensionBindingProduces({
+    bundle: resolvedProfile.extensionBundle,
+    projectRoot,
+    phase,
+    slot: 'before_phase_work',
+  }));
+  checks.push(...checkExtensionBindingProduces({
+    bundle: resolvedProfile.extensionBundle,
+    projectRoot,
+    phase,
+    slot: 'before_phase_verify',
+  }));
 
   // P0-2（plan d9b4f7e2 复审）：spec-loader 形状留痕升结构化 FAIL——归一化只防崩溃，
   // "modules: {} 被归空后某门禁安静 PASS"属静默洗形状，此处兜底拦截（agent 可修：
@@ -1148,6 +1162,9 @@ async function main(): Promise<void> {
         resolvedFrameworkRoot,
         {
           imageInput: context.adapterImageInput,
+          extensionInstructions: formatExtensionPhasePrompt(
+            resolvedProfile.extensionBundle, phase, projectRoot,
+          ),
           // 装配用哪个模板由 workflow 声明说了算（plan a9d4e7c2 P1-1）——
           // enabled 时 resolveVerifierPlan 必带出该路径。
           verifierPromptRel: verifierPlan.verifier_prompt ?? undefined,

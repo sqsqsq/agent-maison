@@ -118,6 +118,9 @@ docs:
       - framework/specs/workflow-schema.json
       - framework/specs/instance-extension-manifest.schema.yaml
       - framework/specs/lifecycle-hooks-schema.yaml
+      - framework/harness/extension-loader.ts
+      - framework/harness/scripts/utils/extension-runtime.ts
+      - framework/skills/project/extension/SKILL.md
     update_triggers:
       - workflow-schema.json / manifest schema / lifecycle-hooks-schema 字段变更
       - profile-loader 合并顺序或 extension 装载语义变更
@@ -125,12 +128,13 @@ docs:
 
   - path: framework/docs/evolution/extension-protocol-v1.md
     role: extension/workflow/hooks 三套协议的 schema_version 与 breaking 约定（v1 起点）
-    audience: framework 维护者 / 做多仓库同步的子模块管理者
+    audience: framework 维护者 / 做多仓库发布件同步的维护者
     sources:
       - framework/specs/workflow-schema.json
       - framework/specs/instance-extension-manifest.schema.yaml
       - framework/specs/lifecycle-hooks-schema.yaml
       - framework/MIGRATION.md
+      - framework/skills/project/extension/SKILL.md
     update_triggers:
       - 任一则 schema 主版本升级
       - MIGRATION.md 增加与本协议相关的迁移章节
@@ -229,12 +233,15 @@ docs:
       - framework/harness/scripts/utils/blueprint-review-projection.ts
       - framework/harness/scripts/check-component-blueprint.ts
       - framework/skills/project/component-design/SKILL.md
+      - framework/skills/project/extension/SKILL.md
+      - framework/specs/instance-extension-manifest.schema.yaml
       - framework/docs/operations/samples/requirement-source-materialization.valid.json
       - framework/docs/operations/samples/requirement-source-materialization.invalid-hash.json
       - framework/docs/operations/samples/blueprint-review-projection.valid.md
       - framework/docs/operations/samples/blueprint-review-projection.invalid-added-fact.md
       - framework/docs/operations/samples/blueprint-review-feedback.valid.json
       - framework/docs/operations/samples/blueprint-review-feedback.invalid-authority.json
+      - framework/docs/operations/samples/extension-m7-manifest.yaml
     update_triggers:
       - 三条接缝任一的 schema 字段、artifact 标识或必填面变更
       - check:component-blueprint 的 --materialization / --projection / --feedback 模式语义或诊断 id 变更
@@ -254,6 +261,12 @@ docs:
       - framework/harness/scripts/render-agents-md.mjs
       - framework/harness/extension-loader.ts
       - framework/harness/hooks-dispatcher.ts
+      - framework/harness/scripts/extension.ts
+      - framework/harness/scripts/utils/extension-inspect.ts
+      - framework/harness/scripts/utils/extension-runtime.ts
+      - framework/skills/project/extension/SKILL.md
+      - framework/agents/shared/agent-bundle/templates/skills-bridge/extension/SKILL.md
+      - framework/agents/codeagent/templates/commands/extension.md
       - framework/agents/adapter-schema.yaml
       - framework/agents/claude/adapter.yaml
       - framework/agents/cursor/adapter.yaml

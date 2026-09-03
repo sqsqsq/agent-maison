@@ -1,0 +1,25 @@
+# 最小示例：宿主 extension Skill 负责获取/脱敏/落盘；Maison 只验证仓内 produces。
+# server / URL / token / 登录配置不得写入 manifest。
+schema_version: "1.1"
+name: story-host-bridge
+provides:
+  skills:
+    - story-input
+  mcp_actions:
+    materialize-story-source:
+      tool: story.fetch_requirement
+      required: true
+      severity: BLOCKER
+      produces:
+        - doc/requirements/ledger.materialization.json
+      usage: /component-design 前获取并脱敏正式需求，产出 requirement-source-materialization@1
+    submit-blueprint-feedback:
+      tool: story.submit_feedback
+      required: false
+      produces:
+        - doc/reviews/ledger.feedback.json
+      usage: 评审后产出 blueprint-review-feedback@1；未产生时诚实降级
+
+# /component-design 不是 Feature phase，不增加 before_component_design。
+# story-input Skill 自身依次：materialization → /component-design → 消费 review.md → optional feedback。
+phase_bindings: {}

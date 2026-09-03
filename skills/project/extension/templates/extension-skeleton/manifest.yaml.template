@@ -1,0 +1,12 @@
+# 实例扩展 manifest；协议见 framework/specs/instance-extension-manifest.schema.yaml。
+schema_version: "1.1"
+name: project-extensions
+provides:
+  skills: []
+  knowledge: []
+  hooks: {}
+  capabilities: {}
+  skill_assets: {}
+  phase_rules_overlays: {}
+  mcp_actions: {}
+phase_bindings: {}

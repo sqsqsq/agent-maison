@@ -22,7 +22,7 @@
 | `profiles/` | **profile-plugin** | 宿主 toolchain / capability / overlay |
 | `agents/` | **agent-plugin** | IDE 适配（slash / 跳板 / rules） |
 | `workflows/` | **workflow**（可选） | phase DAG YAML，fork 自定义顺序 |
-| 实例根 `doc/extensions/` | **instance-extension** | 业务 SKILL、knowledge、hooks、manifest |
+| 实例根 `doc/extensions/` | **instance-extension** | 业务 SKILL、audience knowledge、hooks、MCP produces、Feature phase bindings |
 
 叠加顺序：**framework 默认 → profile → workflow → instance extensions**。详见 [docs/concepts/extensibility.md](docs/concepts/extensibility.md)。
 

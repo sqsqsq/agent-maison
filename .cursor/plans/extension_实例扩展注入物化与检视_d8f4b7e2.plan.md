@@ -38,7 +38,7 @@ todos:
       修复 agent_adapter 外迁后恒 generic 兜底的错误物化；生成物 ownership 标记与三态
       清理纪律（标记且内容等于规范渲染→可覆盖/清理；标记但内容漂移→报告不动；无标记
       →不碰）；AGENTS.md 实例扩展段同步重渲染。
-    status: pending
+    status: completed
   - id: t2-inspect-verify
     content: >
       批次一·检视与对账：inspect 输出（机器 JSON + 人话表）从 manifest/bundle/桥接产物
@@ -46,14 +46,14 @@ todos:
       产物将被 /component-design 或 M7 三条 seam 之一消费，§11），并如实标注「knowledge 当前
       零消费（待 t7）」；对账检查（目录 vs manifest 漂移、桥接缺失/过期/孤儿、坏引用）
       并入既有 check-extensions 通道（批次一为报告级，不阻断），不建平行检查框架。
-    status: pending
+    status: completed
   - id: t3-skeleton-drift
     content: >
       批次一·skeleton 漂移收敛：extension skeleton 的创建/修复职责归 /extension init
       承载（模板迁至 skill 附属目录或原地引用，D1）；framework-init 侧修正
       extension-skeleton README 的虚假宣称（S3 从未实现补全），改为指路 /extension；
       init 执行链零 extension 引用的现状经 D1 裁决后对齐（补任务或维持不做）。
-    status: pending
+    status: completed
   - id: t4-skill-entry
     content: >
       批次一·/extension SKILL 本体：skills/project/extension/SKILL.md + skills.index.yaml
@@ -62,7 +62,7 @@ todos:
       首屏为「注入面 × 生效时机 × 强制力」人话速查表（含 §3「story 类接入（M7）」行）；
       add 分支引导写 manifest 六域并
       自动跑 verify；红线（不碰凭据、不装 MCP server、不代签授权）写入 SKILL。
-    status: pending
+    status: completed
   - id: t5-parent-plan-link
     content: >
       批次一·蓝图挂接：向总计划 6f2a9d8c §7 provider 表增加一行、§4 依赖图增加
@@ -81,7 +81,7 @@ todos:
       /component-design 的前置输入由 extension skill 自身流程承载，§11）；required/optional 缺失语义、
       produces 未生成的失败分级、1.0 兼容读取零行为变化；物化 SSOT 由目录驱动切
       manifest 驱动的切换节奏在本 change 一并锁定（D3）。
-    status: pending
+    status: completed
   - id: t7-knowledge-consumer
     content: >
       批次二·knowledge 消费接线：按 audience 路由——phase 绑定条目在对应 phase 的
@@ -89,7 +89,7 @@ todos:
       AGENTS.md 实例知识段（随 t1 刷新命令更新）；旧式纯字符串兼容为全 phase 索引行、
       不进 AGENTS.md；绑定到 /component-design 或 app-component-blueprint 的知识走既有单
       Skill `skill_assets` 路径（不新发明 audience 值，§11）；t2 inspect 的「零消费」标注随之消除。
-    status: pending
+    status: completed
   - id: t8-phase-bindings
     content: >
       批次二·phase_bindings 执行接线：三槽位按强制力诚实分级——before_phase_work 为
@@ -97,7 +97,7 @@ todos:
       after_phase_verify_before_close 由 harness 在既有 check / receipt 门禁通道内校验
       produces（required 缺失按声明分级，进现有 CheckResult，不新增裁决入口）；
       inspect 增加三强度状态派生（available / scheduled / evidenced）。
-    status: pending
+    status: completed
   - id: t9-mcp-actions
     content: >
       批次二·mcp_actions 接线：声明+绑定+produces 产物校验（产物进既有 evidence 链；produces
@@ -106,7 +106,7 @@ todos:
       工具可见性检查实现为 agent 侧自查步骤（SKILL 流程），inspect 报告显式标注该项
       数据来源为 agent 自报；不物化 MCP、不管理 server/凭据/IDE 配置，配置指导以人话
       话术输出（fetch_fidelity 先例同款分工：宿主执行、仓内产物、Maison 验证）。
-    status: pending
+    status: completed
   - id: t10-m7-story-pattern-handoff
     content: >
       批次二·M7 使用模式交接（2026-09-03，§11）：① 宿主适配指南
@@ -119,7 +119,7 @@ todos:
       `source_sha256` → FAIL；feedback 同理；`/extension inspect` 对该产物列出消费者
       `/component-design` 与接缝名；④ 不修改模拟钱包 Story extension，只交付 Maison 协议、
       入口、示例与交接说明。
-    status: pending
+    status: completed
 isProject: false
 ---
 
@@ -356,3 +356,86 @@ mcp produces 进 evidence 的正反例；M7 接缝产物链正反例与 inspect 
 
 **新增 schema / 状态 / phase / registry / 平行真源**：没有（manifest 1.1 是 t6 既定的协议升级，
 本节不再加域、不加槽位）。
+
+## 12. 实施记录（2026-09-03）
+
+### 12.1 完成内容
+
+1. t1：`render-agents-md --all-materialized-adapters` 只读项目级 `materialized_adapters[]`；扩展 bridge 全 adapter 幂等刷新，带 ownership 标记并落实“规范件可覆盖/清理、漂移件报告不动、无标记不接管”三态；AGENTS/CLAUDE 扩展段同步渲染。
+2. t2：新增 `/extension inspect` 的 JSON 与人话表；类型/来源/时机/消费者/available|scheduled|evidenced/状态均从 manifest、bundle、桥接与产物派生；目录/manifest 与 bridge 漂移进入既有 `check-extensions` 的 MINOR 报告级 CheckResult。
+3. t3：skeleton 真源迁至 `skills/project/extension/templates/extension-skeleton/`；framework-init 旧目录只留 `/extension init` 指路，init 执行链继续零 extension 任务。
+4. t4：新增 `/extension` Skill 的 init/inspect/add/bind/materialize/verify/adjust 意图路由、首屏速查与安全红线；skills index、Cursor/Claude/CodeAgent command 模板及共享 skills-bridge 完成接线，覆盖六个非 generic adapter。
+5. t6：建立 OpenSpec change `extension-manifest-1-1`；manifest 1.1 支持 knowledge `{path,summary,audience}`、`mcp_actions` 与三个 Feature phase binding 槽位，拒绝连接/凭据字段；1.0、无 manifest、无目录保持兼容。
+6. t7：global knowledge 进入 AGENTS/CLAUDE；phase audience 与 1.1 legacy 字符串按规则进入对应 ai-prompt 动态索引；before-work 绑定在 AGENTS 每 phase 至多一行提示。
+7. t8：before-work/before-verify produces 进入既有 harness CheckResult；after-verify-before-close 进入既有 check-receipt；required 按 MAJOR/BLOCKER 失败，optional 缺失 SKIP 降级；未改 receipt schema 或完成事实。
+8. t9：MCP 仅声明宿主执行与仓内 produces；工具可见性仅当前 agent 自报并标 `agent_self_report`；普通产物与 M7 产物均进既有 CheckResult/evidence 链。
+9. t10：materialization/feedback 复用 `check-component-blueprint` 的正式实现；宿主适配 §7.1、随包 `extension-m7-manifest.yaml`、正反 fixture 链与 inspect 消费者说明均落地；未修改任何宿主 Story extension。
+
+### 12.2 改动文件
+
+- 协议/运行时：`specs/instance-extension-manifest.schema.yaml`；`harness/extension-loader.ts`、`harness/harness-runner.ts`、`harness/scripts/{extension,check-extensions,check-receipt,render-agents-md}.ts`、`harness/scripts/utils/{extension-inspect,extension-runtime,instance-skill-bridge,report-generator,template-renderer,types}.ts`。
+- Skill/adapter：`skills/project/extension/**`、`skills/skills.index.yaml`、`skills/README.md`、`skills/project/framework-init/prompts/workflow-selection.md`、`skills/project/framework-init/templates/extension-skeleton/**`（旧模板迁出，只留 README 指路）、`templates/AGENTS.md.template`、`agents/{README,adapter-schema}.yaml|md`、`agents/{claude,cursor,codeagent}/templates/commands/extension.md`、`agents/shared/agent-bundle/templates/skills-bridge/extension/SKILL.md`、`agents/{claude,cursor,generic}/adapter.yaml`。
+- 文档：`README.md`、`MIGRATION.md`、`docs/{DOC_INVENTORY.yaml,overview.md}`、`docs/concepts/extensibility.md`、`docs/evolution/{extension-protocol-v1,extension-e2e-acceptance}.md`、`docs/operations/{harness-runbook,component-design-host-adaptation}.md`、`docs/operations/samples/extension-m7-manifest.yaml`、`MAINTAINER-CHANGELOG.md`。
+- 测试：`harness/tests/run-unit.ts`、`harness/tests/unit/{adapter-bridge,extension-loader,extension-management,extension-runtime,hooks-dispatcher,resolve-skill-path,codeagent-adapter}.unit.test.ts`。
+- OpenSpec：`openspec/changes/extension-manifest-1-1/{.openspec.yaml,proposal.md,design.md,tasks.md,specs/instance-extension-management/spec.md}`；本 plan 仅更新 todo status 并追加本节。
+
+### 12.3 验证结果
+
+- `cd harness && npm test`：exit 0；typecheck PASS；unit **4106 passed / 0 failed**；fixtures **46 passed / 0 failed**。
+- extension/M7/adapter/docs 目标复核：**79 passed / 0 failed**，exit 0。
+- `npm run openspec:validate`：**35 passed / 0 failed**，exit 0；canonical Enforcement 路径检查 PASS。
+- `node scripts/check-plan-version.mjs`：default mode PASS，exit 0。
+- `npm run release:check-plans`：exit 1，精确剩余 **3 项**（总计划、e4、b9 未完成）；d8 已不在失败清单，符合总调度后续顺序。
+- `git diff --check`：exit 0。
+- EOL：37 个已跟踪改动文件均 `i/lf w/lf`；20 个新增文件扫描 `CR=0`。未触碰 `harness/tests/fixtures/component-blueprint/release-semantics.json`、e4/b9 plan、三个既有未归档 change 的 6.6/7.5 条目或任何宿主工程。
+
+### 12.4 变异自证
+
+1. 临时摘掉 `/extension materialize` 向 bridge 传递 1.1 `declaredSkillIds`：`extension-management` 精确在“1.1 must be manifest-driven”变红，exit 1；原样恢复后 4 passed / 0 failed，exit 0。
+2. 临时旁路 `requirement-source-materialization@1` 的既有 validator：M7 hash 反例不再产生 `materialization_source_hash_mismatch`，`extension-runtime` 精确变红，exit 1；原样恢复后 4 passed / 0 failed，exit 0。
+
+### 12.5 与 plan 的偏离
+
+无。adapter 接线按仓内真实拓扑落为 3 份 command 模板（Cursor/Claude/CodeAgent）+ 共享 skills-bridge（Codex/Chrys/OpenCode，并由 Cursor/generic 复用），覆盖全部 adapter；未给 `commands: null` 的 adapter 造无效目录。
+
+### 12.6 待裁决问题
+
+无。
+
+### 12.7 未做 / 留账
+
+- 未人为制造真实宿主事件；frontmatter `real_host_validation` 所述 AI 记账宿主消费证据按总计划随真实批次自然发生。
+- 未归档 `extension-manifest-1-1` OpenSpec change，留给总调度 review 后统一归档。
+- 未 commit；按任务书停在工作区，等待用户明确提交授权。
+
+### 12.8 Review 返修记录（2026-09-03）
+
+1. **非法 manifest fail-closed**：新增 `extensionSkillIdsForBridge` 三态判定；无 manifest/合法 1.0 才目录驱动，合法 1.1 严格按 `provides.skills[]`，任何非法 manifest 选择零 Skill。`render-agents-md` 写入口文件前先校验；普通 Feature harness 与 check-receipt 通过 `checkExtensionManifest` 把同一 loader 诊断投影为 BLOCKER。组合反例“非法 1.1 + rogue 目录 Skill + required binding”同时证明零注入与 Feature BLOCKER。
+2. **extension_dir 越界写闭合**：loader、`/extension init`、materialize 与 bridge 扫描统一复用 `validateProjectRelativePath`；`../outside`、`/absolute`、`C:/outside` 均拒绝，合法 `my/extensions` 通过，越界目标零写入。
+3. **active workflow phase 真值**：knowledge audience 与 phase_bindings 改从 active workflow 解析 Feature scope，按 full/lite 并集校验；`specc`、`component-design`、`catalog` 与自定义 global phase 均失败，自定义 Feature phase及默认 full/lite phases 通过；workflow 无法解析 fail-closed。`formatExtensionPhasePrompt` 对 global phase 返回空串。
+4. **旧 bridge 自动接管**：无 ownership 标记但逐字节等于旧版规范渲染的文件，inspect 记 `stale`，首次 materialize 补标记并计入 `filesWritten`；其它无标记用户文件继续 `untouched`。`MIGRATION.md` 已补迁移说明。
+5. **M7 诚实性**：删除 `usage.includes(...)` 类型猜测；`usage` 永远只供人读。只有产物实际 `artifact` 被识别且既有 validator 通过，inspect 才显示 `/component-design` seam consumer/evidenced。`usage` 写 M7 但内容为 `{}` 时只按普通 produces，通过显式 `--materialization` 仍命中原 validator FAIL。随包 `extension-m7-manifest.yaml` 已在临时工程配 stub Skill 与真实正例产物通过 loader，并由 inspect 派生两条 seam consumer。
+6. **接线级真 spawn**：在 `check-receipt-policy` 真实子进程夹具加入 after-close required produces 缺失，issue id 含 `extension_produces_`；在 `e2e-spec-requirement-closure` 临时 consumer 真 spawn `harness-runner.ts --phase spec`，before-verify required produces 缺失进入 script-report CheckResult FAIL。非法 manifest 的 runner/receipt 真 spawn 也分别命中 `extension_manifest_manifest_unknown_field_*` BLOCKER。
+7. **文档与收口**：`workflow-selection.md` 与 `agents-entry-detail.md` 的旧 S3 skeleton 权威说法已清零，统一指向 `/extension init`；`MAINTAINER-CHANGELOG.md` 已恢复为 HEAD 字节，留给 m5 的 `release:changelog`。首轮为满足 `entry_template_budget` 删除的 `AGENTS.md.template`“Framework 使用说明”快速索引行在此补记；Skill 索引仍保留，功能入口未丢失。
+8. **验收边界冲突处置**：未改 plan 前文 `real_host_validation`（任务书与 review 均规定 plan 前文不可改）。改在现有 OpenSpec proposal/spec/design 明确：d8 完成标准是 Maison 仓内协议、入口、发布件文档、样例及正反契约链；真实宿主采用与总计划 H1A 回灌发布后自然发生，不阻塞 d8 或 3.1.0 Maison 发布。
+
+**返修验证**：
+
+- `cd harness && npm test`：exit 0；typecheck PASS；unit **4119 passed / 0 failed**；fixtures **46 passed / 0 failed**。
+- 目标复核：extension 核心 **37/37**、check-receipt 真 spawn **11/11**、harness-runner 临时 consumer 真 spawn **6/6**，合计 **54/54**。
+- 接线变异自证：摘掉 check-receipt after-close 接线后，新增用例由 expected failed 变为 got passed，suite exit 1；恢复后 11/11。摘掉 harness-runner before-verify 接线后，新增用例观察到 harness 放行并单点变红，suite exit 1；恢复后 6/6。
+- `npm run openspec:validate`：**35 passed / 0 failed**，exit 0；OpenSpec `extension-manifest-1-1` 9/9 completed。
+- `node scripts/check-plan-version.mjs`：PASS，exit 0；`git diff --check`：PASS，exit 0。
+- `npm run release:check-plans`：exit 1，仍仅总计划、e4、b9 三项，d8 不在失败清单。
+- EOL：39 个已跟踪改动文件全部 `i/lf w/lf`；20 个新增文件 `CR=0`。
+- 未新增 registry、状态、phase、生命周期槽位或产物类型；未修改 package version、宿主工程、e4/b9 plan、M7 模拟钱包 extension 或禁止触碰的 release-semantics fixture；未 commit。
+
+### 12.9 Review 二次返修记录（2026-09-03）
+
+最新 review 撤回上一轮“旧 bridge 自动接管”要求，本轮按冻结红线做纯减法：删除 `withoutOwnership()`、safeWrite 自动补 ownership 分支及 inspect 的旧规范字节 `stale` 特判。现在任何无 ownership 文件一律由 inspect 标为 `unowned`，materialize 一律计入 `untouchedFiles` 并保持原字节；它不会进入未来 orphan cleanup。未新增 `--adopt` 或其它迁移入口。
+
+同步删除 MIGRATION、`/extension` Skill、extension-e2e 文档与 OpenSpec 中的自动接管例外；OpenSpec design 明确“任何无 ownership 文件都不接管、不清理”。§12.8 第 4 条是上一轮已执行但现被撤回的历史记录，以本节为最终结论，遵守实施记录只追加、不改前文的纪律。
+
+原“自动接管正例”已替换为反向回归：构造一个无标记且逐字节等于旧版规范渲染的 bridge，断言 inspect=`unowned`、materialize=`untouched`、`filesWritten` 不含该路径且文件字节不变。`adapter-bridge` **8/8 PASS**。
+
+**最终验证**：`cd harness && npm test` exit 0，typecheck PASS、unit **4119 passed / 0 failed**、fixtures **46 passed / 0 failed**；`npm run openspec:validate` **35/35 PASS**；默认 plan gate 与 `git diff --check` PASS；39 个已跟踪改动文件均 `i/lf w/lf`，20 个新增文件 `CR=0`；`MAINTAINER-CHANGELOG.md` 与 HEAD 无 diff。release plan gate 仍仅剩总计划、e4、b9 三项。未 commit，未归档 OpenSpec。

@@ -10,6 +10,12 @@ import {
   applyInstanceExtensions,
 } from '../../extension-loader';
 import type { HarnessResolvedProfile } from '../../scripts/utils/types';
+import { extensionSkillIdsForBridge } from '../../extension-loader';
+import { checkExtensionManifest } from '../../scripts/utils/extension-runtime';
+import { buildAgentsTemplateVars } from '../../scripts/utils/template-renderer';
+import { clearFrameworkConfigCache } from '../../config';
+
+const FRAMEWORK_DIR = path.resolve(__dirname, '..', '..', '..');
 
 export interface UnitCaseResult {
   name: string;
@@ -310,6 +316,171 @@ const cases: Case[] = [
       const b = loadInstanceExtensions(dir, 'my-ext');
       assert(b.manifestPath !== null && b.manifestPath.includes('my-ext'), 'manifest path');
       assert(b.errors.length === 0, 'valid');
+    },
+  },
+  {
+    name: 'manifest 1.1：knowledge audience、mcp_actions、三槽位解析',
+    run: () => {
+      const dir = mkTmp();
+      const root = path.join(dir, 'doc', 'extensions');
+      write(path.join(root, 'skills', 'story-input', 'SKILL.md'), '# story\n');
+      write(path.join(root, 'knowledge', 'global.md'), '# global\n');
+      write(path.join(root, 'knowledge', 'spec.md'), '# spec\n');
+      write(path.join(root, 'manifest.yaml'), [
+        'schema_version: "1.1"', 'name: extension-11', 'provides:',
+        '  skills: [story-input]', '  knowledge:',
+        '    - path: knowledge/global.md', '      summary: 全局约束', '      audience: global',
+        '    - path: knowledge/spec.md', '      summary: spec 输入', '      audience: [spec]',
+        '    - knowledge/legacy.md',
+        '  mcp_actions:', '    fetch-story:', '      tool: story.fetch', '      required: true',
+        '      severity: BLOCKER', '      produces: [doc/requirements/story.materialization.json]',
+        '      usage: component design 前取数',
+        'phase_bindings:', '  spec:', '    before_phase_work:',
+        '      - { kind: knowledge, ref: knowledge/spec.md }', '    before_phase_verify:',
+        '      - { kind: mcp, ref: fetch-story }', '',
+      ].join('\n'));
+      write(path.join(root, 'knowledge', 'legacy.md'), '# legacy\n');
+      const b = loadInstanceExtensions(dir);
+      assert(b.errors.length === 0, JSON.stringify(b.errors));
+      assert(b.manifestVersion === '1.1', 'version');
+      assert(b.knowledge.some(item => item.audience === 'global' && !item.legacy), 'global');
+      assert(b.knowledge.some(item => item.legacy && Array.isArray(item.audience)), 'legacy');
+      assert(b.mcpActions['fetch-story']?.severity === 'BLOCKER', 'action');
+      assert(b.phaseBindings.spec?.before_phase_verify?.[0]?.ref === 'fetch-story', 'binding');
+    },
+  },
+  {
+    name: 'manifest 1.1：MCP 连接字段与 before_component_design 均拒绝',
+    run: () => {
+      const dir = mkTmp();
+      const root = path.join(dir, 'doc', 'extensions');
+      write(path.join(root, 'manifest.yaml'), [
+        'schema_version: "1.1"', 'name: forbidden', 'provides:', '  mcp_actions:', '    bad:',
+        '      tool: bad.tool', '      required: true', '      produces: [doc/out.json]', '      usage: bad',
+        '      token: secret', 'phase_bindings:', '  spec:', '    before_component_design: []', '',
+      ].join('\n'));
+      const b = loadInstanceExtensions(dir);
+      assert(b.errors.some(error => error.code === 'mcp_action_forbidden_field'), 'token rejected');
+      assert(b.errors.some(error => error.code === 'phase_binding_slot'), 'slot rejected');
+      assert(Object.keys(b.mcpActions).length === 0 && Object.keys(b.phaseBindings).length === 0, 'wiped');
+    },
+  },
+  {
+    name: 'manifest 1.1：component-design / catalog / 未知 slug 均不是 Feature phase',
+    run: () => {
+      for (const phase of ['component-design', 'catalog', 'specc']) {
+        const dir = mkTmp();
+        const root = path.join(dir, 'doc', 'extensions');
+        write(path.join(root, 'manifest.yaml'), [
+          'schema_version: "1.1"', 'name: bad-phase', 'provides:', '  skills: []',
+          'phase_bindings:', `  ${phase}:`, '    before_phase_work: []', '',
+        ].join('\n'));
+        const b = loadInstanceExtensions(dir);
+        assert(b.errors.some(error => error.code === 'phase_binding_phase'), `${phase}: ${JSON.stringify(b.errors)}`);
+      }
+    },
+  },
+  {
+    name: 'manifest 1.1：knowledge audience 也只接受 active workflow Feature phase',
+    run: () => {
+      const dir = mkTmp();
+      const root = path.join(dir, 'doc', 'extensions');
+      write(path.join(root, 'knowledge', 'bad.md'), '# bad\n');
+      write(path.join(root, 'manifest.yaml'), [
+        'schema_version: "1.1"', 'name: bad-audience', 'provides:', '  knowledge:',
+        '    - { path: knowledge/bad.md, summary: bad, audience: [catalog] }', '',
+      ].join('\n'));
+      const b = loadInstanceExtensions(dir);
+      assert(b.errors.some(error => error.code === 'provides_knowledge_item'), JSON.stringify(b.errors));
+    },
+  },
+  {
+    name: 'manifest 1.1：active workflow 的 full/lite 并集与自定义 Feature phase',
+    run: () => {
+      const defaults = mkTmp();
+      const defaultRoot = path.join(defaults, 'doc', 'extensions');
+      write(path.join(defaultRoot, 'manifest.yaml'), 'schema_version: "1.1"\nname: default-phases\nprovides: {}\n');
+      const defaultBundle = loadInstanceExtensions(defaults);
+      for (const phase of ['spec', 'plan', 'coding', 'review', 'ut', 'testing', 'change', 'exit']) {
+        assert(defaultBundle.featurePhases.includes(phase), `default phase missing: ${phase}`);
+      }
+
+      const dir = mkTmp();
+      const frameworkRoot = path.join(dir, 'framework');
+      write(path.join(frameworkRoot, 'workflows', 'custom.workflow.yaml'), [
+        'schema_version: "1.0"', 'name: custom', 'auto_chain: [custom-work]', 'artifacts:',
+        '  - id: custom-global', '    scope: global', '    requires: []',
+        '  - id: custom-work', '    scope: feature', '    requires: []', '',
+      ].join('\n'));
+      write(path.join(dir, 'framework.config.json'), JSON.stringify({ active_workflow: 'custom' }));
+      const root = path.join(dir, 'doc', 'extensions');
+      write(path.join(root, 'knowledge', 'custom.md'), '# custom\n');
+      write(path.join(root, 'manifest.yaml'), [
+        'schema_version: "1.1"', 'name: custom-phases', 'provides:', '  knowledge:',
+        '    - { path: knowledge/custom.md, summary: custom, audience: [custom-work] }',
+        'phase_bindings:', '  custom-work:', '    before_phase_work:',
+        '      - { kind: knowledge, ref: knowledge/custom.md }', '',
+      ].join('\n'));
+      const custom = loadInstanceExtensions(dir, undefined, { frameworkRoot });
+      assert(custom.errors.length === 0, JSON.stringify(custom.errors));
+      assert(custom.featurePhases.includes('custom-work') && !custom.featurePhases.includes('custom-global'), 'custom scopes');
+
+      write(path.join(dir, 'framework.config.json'), JSON.stringify({ active_workflow: 'missing' }));
+      clearFrameworkConfigCache();
+      const unresolved = loadInstanceExtensions(dir, undefined, { frameworkRoot });
+      assert(unresolved.errors.some(error => error.code === 'manifest_workflow_unresolvable'), JSON.stringify(unresolved.errors));
+    },
+  },
+  {
+    name: 'manifest 非法：bridge 选择严格为空且 manifest 诊断保留',
+    run: () => {
+      const dir = mkTmp();
+      const root = path.join(dir, 'doc', 'extensions');
+      write(path.join(root, 'skills', 'rogue', 'SKILL.md'), '# rogue\n');
+      write(path.join(root, 'manifest.yaml'), [
+        'schema_version: "1.1"', 'name: invalid', 'unknown: true', 'provides:', '  skills: []',
+        '  mcp_actions:', '    required:', '      tool: host.required', '      required: true',
+        '      produces: [doc/missing.json]', '      usage: required', 'phase_bindings:', '  spec:',
+        '    before_phase_verify:', '      - { kind: mcp, ref: required }', '',
+      ].join('\n'));
+      const b = loadInstanceExtensions(dir);
+      assert(b.errors.some(error => error.code === 'manifest_unknown_field'), JSON.stringify(b.errors));
+      assert(extensionSkillIdsForBridge(b)?.length === 0, 'invalid manifest must select zero skills');
+      assert(checkExtensionManifest(b).some(check => check.status === 'FAIL' && check.severity === 'BLOCKER'), 'Feature gate blocker');
+      const vars = buildAgentsTemplateVars({ project_name: 'invalid' }, {
+        entryFile: 'AGENTS.md', projectRoot: dir, frameworkRoot: FRAMEWORK_DIR,
+      });
+      assert(!vars.EXTENSION_SKILL_SECTION.includes('rogue'), 'invalid manifest must not inject rogue into AGENTS');
+    },
+  },
+  {
+    name: 'paths.extension_dir：拒绝越界/绝对/盘符，接受自定义相对路径',
+    run: () => {
+      const dir = mkTmp();
+      for (const bad of ['../outside', '/absolute', 'C:/outside']) {
+        const b = loadInstanceExtensions(dir, bad);
+        assert(b.errors.some(error => error.code === 'extension_dir_path'), `${bad}: ${JSON.stringify(b.errors)}`);
+      }
+      write(path.join(dir, 'my', 'extensions', 'manifest.yaml'), 'schema_version: "1.0"\nname: safe\n');
+      const safe = loadInstanceExtensions(dir, 'my/extensions');
+      assert(safe.errors.length === 0 && Boolean(safe.manifestPath?.includes(path.join('my', 'extensions'))), JSON.stringify(safe.errors));
+    },
+  },
+  {
+    name: 'manifest 1.0：新域不消费且 legacy knowledge 保持无 audience 行为',
+    run: () => {
+      const dir = mkTmp();
+      const root = path.join(dir, 'doc', 'extensions');
+      write(path.join(root, 'knowledge', 'legacy.md'), '# legacy\n');
+      write(path.join(root, 'manifest.yaml'), [
+        'schema_version: "1.0"', 'name: legacy', 'provides:', '  knowledge: [knowledge/legacy.md]',
+        '  mcp_actions:', '    ignored: { tool: x, required: true, produces: [doc/x], usage: x }',
+        'phase_bindings:', '  spec:', '    before_phase_work: [{ kind: mcp, ref: ignored }]', '',
+      ].join('\n'));
+      const b = loadInstanceExtensions(dir);
+      assert(b.errors.length === 0, JSON.stringify(b.errors));
+      assert(b.manifestVersion === '1.0' && b.knowledge.length === 1, 'legacy loaded');
+      assert(Object.keys(b.mcpActions).length === 0 && Object.keys(b.phaseBindings).length === 0, 'new behavior absent');
     },
   },
 ];

@@ -99,6 +99,13 @@ skills:
           param_hint: "<feature>"
           availability_note: "有明确 feature 目标时可使用"
 
+  - id: extension
+    scope: project
+    source_rel: project/extension
+    order: 8
+    description: >
+      实例扩展初始化、检视、声明、全 adapter 物化、校验与调整
+
   - id: change-lite
     scope: feature
     source_rel: feature/change-lite

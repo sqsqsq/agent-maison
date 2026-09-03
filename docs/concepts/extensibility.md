@@ -1,6 +1,6 @@
 # Framework 可演进性与扩展分层
 
-本文描述 framework **三层叠加扩展模型**：在不引入物理 `framework/core/` 目录的前提下，如何用声明式 workflow、宿主 profile、IDE adapter 与实例侧 extension 接入业务知识与门禁。
+本文描述 framework 的叠加扩展模型：在不引入插件运行时的前提下，如何用声明式 workflow、宿主 profile、IDE adapter 与实例侧 extension 接入业务知识与门禁。
 
 模块级 **Code Graph** / 需求级 **flow DAG** 术语见 [code-graph.md](code-graph.md)。
 
@@ -71,7 +71,7 @@ flowchart TB
 | **framework 默认**（skills / specs / harness / templates / docs） | 通用阶段流程、YAML 规则、`check-*.ts`、共享模板 | 不写具体宿主编译命令细节（交给 profile）；不写业务名词规则（交给实例 catalog/glossary/extension） |
 | **profile**（`profiles/<name>/`） | 宿主 toolchain、capability provider、phase-rules overlay、Skill profile-addendum | 不写 IDE slash/跳板（交给 adapter）；不承担业务扩展包语义 |
 | **workflow**（`workflows/*.workflow.yaml`） | phase DAG、`requires`、可选裁剪/重排合法 phase | 不包含业务 Markdown SOP（交给 extension）；不替换 `check-*.ts` 实现 |
-| **instance extension**（`doc/extensions/`） | manifest、业务 SKILL、knowledge、hooks、可选 capability overlay | **不**修改 `framework/` 子模块源码；协议错误应在 `--phase extensions` 暴露 |
+| **instance extension**（`doc/extensions/`） | manifest、业务 SKILL、knowledge、hooks、可选 capability overlay、MCP action 产物契约与 Feature phase bindings | **不**修改 `framework/` 发布件；不装 MCP server、不存凭据；协议错误在 `--phase extensions` 暴露 |
 | **adapter**（`agents/<adapter>/`） | 把 Skill/extension 暴露给 Claude/Cursor 等客户端 | 不承担 harness 规则；不写 phase 校验逻辑 |
 
 ---
@@ -101,6 +101,12 @@ flowchart TB
 - [`framework/specs/lifecycle-hooks-schema.yaml`](../../specs/lifecycle-hooks-schema.yaml) — lifecycle hook 事件与上下文
 
 演进与 breaking 约定见：[extension-protocol-v1.md](../evolution/extension-protocol-v1.md)。
+
+Manifest 1.1 由 [`/extension`](../../skills/project/extension/SKILL.md) 管理：`knowledge` 按 audience
+路由到 AGENTS.md 或 Feature phase `ai-prompt.md`，`mcp_actions` 只声明宿主执行与仓内
+`produces`，`phase_bindings` 只有三个 Feature phase 槽位。1.0 继续按旧六域读取且不产生上述新行为。
+phase 名从 active workflow 的 Feature scope 派生；manifest 或 `paths.extension_dir` 非法时，bridge、
+Feature harness 与 receipt 均 fail-closed，不回退为目录驱动。
 
 ---
 

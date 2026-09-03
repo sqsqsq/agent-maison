@@ -148,7 +148,7 @@ framework 默认 → project_profile → active_workflow YAML → doc/extensions
 | **framework 核心** | `skills/`、`specs/`、`harness/` | 通用阶段流程与脚本门禁 |
 | **profile** | `profiles/<name>/` | 宿主 toolchain（如 hmos-app 的 hvigor/hdc/Hylyre）、phase-rules overlay、Skill addendum |
 | **workflow** | `workflows/*.yaml` | phase DAG 与 `requires` 依赖（默认 `spec-driven`） |
-| **instance extension** | 实例根 `doc/extensions/` | 业务 Skill、knowledge、lifecycle hooks、manifest |
+| **instance extension** | 实例根 `doc/extensions/` | 业务 Skill、audience knowledge、lifecycle hooks、MCP produces 与 Feature phase bindings |
 
 实现入口：`profile-loader.ts`、`extension-loader.ts`、`capability-registry.ts`。协议 SSOT 见 [`concepts/extensibility.md`](concepts/extensibility.md)。
 
@@ -171,6 +171,7 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 | **弱模型三层闭环**        | 步骤跳过 / 规则幻觉 | Layer 1（实例根全局入口 §4.1 / §5.1 / §6）+ Layer 2（`phase-completion-receipt.md` + `check-receipt.ts`）+ Layer 3（Stop hook，Claude adapter 下发）；[`agents/README.md`](../agents/README.md) |
 | **init 体检脚本化**       | 反 LLM 幻觉         | 10 项 `check-init.ts` 全脚本化；`--phase init --adapter <name>`；init-diff Hallucination Ban |
 | **v2.5 可扩展**           | workflow + 实例扩展 | `workflows/spec-driven.workflow.yaml`；全局 `--phase extensions`；`doc/extensions/` manifest + lifecycle hooks；`render-agents-md` 桥接扩展 Skill |
+| **v3.1 extension 1.1** | 宿主输入通道 | `/extension`；manifest 驱动全 adapter bridge、knowledge audience、三槽位 produces 门禁与 M7 接缝复用 |
 | **Profile 宿主解耦（2.0）** | 根目录中性化        | `profiles/hmos-app` / `generic`；`capability-registry` 按 profile 调度 `coding.compile` / `device_test.*`；宿主模板迁入 profile addendum |
 | **v2.6 compat**           | 升级撞墙过渡        | `doc/features/<feature>/compat.yaml` 可过期降级；`npm run backfill:context`；见 [`evolution/compat-protocol-v1.md`](evolution/compat-protocol-v1.md) |
 | **v2.7 hvigor 加速 + product 自动探测（hmos-app）** | hvigor 命令拼装 BLOCKER 与编译性能 | `profiles/hmos-app/harness/hvigor-runner.ts` 装配 flag；`detectProduct`；详见 [`profiles/hmos-app-harness-toolchain.md`](profiles/hmos-app-harness-toolchain.md) |
@@ -220,7 +221,7 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 ├── framework.config.json           ← 架构 DSL + project_profile + 路径 + adapter + 工具链
 ├── doc/
 │   ├── architecture.md             ← 架构级 SSOT（只记架构级变更）
-│   ├── extensions/                 ← 可选：实例扩展（manifest / hooks / knowledge）
+│   ├── extensions/                 ← 可选：实例扩展（manifest / skills / knowledge / hooks / actions / bindings）
 │   ├── module-catalog.yaml         ← 模块画像 SSOT
 │   ├── glossary.yaml               ← 业务术语 SSOT
 │   └── features/<feature>/         ← 一个需求一个目录（含各 phase 的 reports/）
@@ -589,11 +590,12 @@ Maison 在源仓完成 pack/release verify，交付 `framework-<semver>.zip`。�
 - `doc/architecture.md` · 架构级契约文档
 - `doc/module-catalog.yaml` · 模块画像 SSOT
 - `doc/glossary.yaml` · 业务术语 SSOT
-- `doc/extensions/` · 可选实例扩展（manifest / hooks / knowledge）
+- `doc/extensions/` · 可选实例扩展（manifest / skills / audience knowledge / hooks / actions / bindings）
 
 ### Skill 正文
 
 - [`../skills/project/framework-init/SKILL.md`](../skills/project/framework-init/SKILL.md)
+- [`../skills/project/extension/SKILL.md`](../skills/project/extension/SKILL.md)
 - [`../skills/project/catalog-bootstrap/SKILL.md`](../skills/project/catalog-bootstrap/SKILL.md)
 - [`../skills/feature/spec/SKILL.md`](../skills/feature/spec/SKILL.md)
 - [`../skills/feature/plan/SKILL.md`](../skills/feature/plan/SKILL.md)

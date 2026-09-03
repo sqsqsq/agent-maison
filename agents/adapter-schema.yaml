@@ -217,8 +217,8 @@ optional_fields:
   instance_skill_bridge:
     type: object | null
     description: |
-      可选。声明 render-agents-md 渲染入口 Markdown 后，如何把 doc/extensions/skills/<slug>/SKILL.md
-      暴露到 IDE（Cursor 跳板 / Claude slash）。generic adapter 的
+      可选。声明 render-agents-md 渲染入口 Markdown 后，如何把实例扩展 Skill 暴露到 IDE
+      （manifest 1.1 按 provides.skills[]；1.0 按目录；Cursor 跳板 / Claude slash）。generic adapter 的
       `skill_stub_target_dir` 由 `paths.agent_bundle_root` + `/skills` 在运行时解析。
       与内置 Skill 跳板或 slash 同名时自动加 ext- 前缀并 stderr 告警。
     fields:
@@ -550,7 +550,8 @@ placeholders:
     source: framework.config.json → paths.glossary
   EXTENSION_SKILL_SECTION:
     source: |
-      由 render-agents-md.ts 扫描 paths.extension_dir（默认 doc/extensions）下 skills/*/SKILL.md，
-      渲染「实例扩展 Skill」Markdown 小节；无扩展时为空白。
+      由 render-agents-md.ts 读取 paths.extension_dir（默认 doc/extensions）：manifest 1.1 按
+      provides.skills[] 渲染，1.0 保持 skills/*/SKILL.md 目录驱动；同时投影 global knowledge
+      与每 phase 至多一行 before_phase_work 提示。无扩展时为空白。
   ARCHITECTURE_MD_PATH:
     source: framework.config.json → paths.architecture_md

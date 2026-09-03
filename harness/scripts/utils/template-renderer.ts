@@ -12,6 +12,7 @@ import {
   resolveBridgeTargets,
   scanExtensionSkills,
 } from './instance-skill-bridge';
+import { extensionSkillIdsForBridge, loadInstanceExtensions } from '../../extension-loader';
 
 export type TemplateVars = Record<string, string>;
 
@@ -113,6 +114,36 @@ export interface BuildAgentsTemplateVarsOptions {
   };
 }
 
+function formatExtensionEntrySection(
+  base: string,
+  bundle: ReturnType<typeof loadInstanceExtensions>,
+  projectRoot: string,
+): string {
+  if (bundle.manifestVersion !== '1.1' || bundle.errors.length > 0) return base;
+  const lines = [base.trimEnd()];
+  const global = bundle.knowledge.filter(item => item.audience === 'global');
+  if (global.length > 0) {
+    lines.push('', '### 实例全局知识', '', '| 路径 | 摘要 |', '|---|---|');
+    for (const item of global) {
+      const source = path.relative(projectRoot, item.absPath).replace(/\\/g, '/');
+      lines.push(`| [${source}](${source}) | ${item.summary || '—'} |`);
+    }
+  }
+  const phases = Object.entries(bundle.phaseBindings)
+    .filter(([, slots]) => (slots.before_phase_work?.length ?? 0) > 0);
+  if (phases.length > 0) {
+    lines.push('', '### 实例阶段前置绑定', '');
+    const manifest = bundle.manifestPath
+      ? path.relative(projectRoot, bundle.manifestPath).replace(/\\/g, '/')
+      : 'doc/extensions/manifest.yaml';
+    for (const [phase, slots] of phases) {
+      const refs = slots.before_phase_work!.map(item => `${item.kind}:${item.ref}`).join('、');
+      lines.push('- `' + phase + '` 动笔前：先按 `' + manifest + '` 处理 ' + refs + '；运行 `/extension inspect` 查看路径、usage 与消费者。');
+    }
+  }
+  return `${lines.filter((line, index) => index > 0 || line.length > 0).join('\n')}\n`;
+}
+
 /**
  * 构建 AGENTS.md.template 全部占位符 vars（UPPERCASE keys）。
  */
@@ -141,7 +172,12 @@ export function buildAgentsTemplateVars(
       ? (config.paths as Record<string, unknown>)
       : {};
 
-  const rows = scanExtensionSkills(opts.projectRoot, extDir);
+  const bundle = loadInstanceExtensions(opts.projectRoot, extDir, { frameworkRoot: opts.frameworkRoot });
+  const rows = scanExtensionSkills(
+    opts.projectRoot,
+    extDir,
+    extensionSkillIdsForBridge(bundle),
+  );
   const reserved = loadReservedBridgeIds(opts.frameworkRoot);
   const { targets } = resolveBridgeTargets(rows, reserved);
 
@@ -181,7 +217,9 @@ export function buildAgentsTemplateVars(
     ),
     GLOSSARY_PATH: String(paths.glossary ?? cfgPaths.glossary ?? 'doc/glossary.yaml'),
     FEATURES_DIR: String(paths.features_dir ?? cfgPaths.features_dir ?? 'doc/features'),
-    EXTENSION_SKILL_SECTION: formatExtensionSkillSectionMarkdown(targets),
+    EXTENSION_SKILL_SECTION: formatExtensionEntrySection(
+      formatExtensionSkillSectionMarkdown(targets, bundle.manifestVersion === '1.1'), bundle, opts.projectRoot,
+    ),
   };
 }
 

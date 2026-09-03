@@ -272,6 +272,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'check-receipt-policy', modulePath: './unit/check-receipt-policy.unit.test' },
   { id: 'compat-loader', modulePath: './unit/compat-loader.unit.test' },
   { id: 'extension-loader', modulePath: './unit/extension-loader.unit.test' },
+  { id: 'extension-management', modulePath: './unit/extension-management.unit.test' },
+  { id: 'extension-runtime', modulePath: './unit/extension-runtime.unit.test' },
   { id: 'hooks-dispatcher', modulePath: './unit/hooks-dispatcher.unit.test' },
   { id: 'adapter-bridge', modulePath: './unit/adapter-bridge.unit.test' },
   { id: 'generic-bundle', modulePath: './unit/generic-bundle.unit.test' },

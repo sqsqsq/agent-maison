@@ -230,6 +230,7 @@ export function assembleAIPrompt(
   frameworkRoot?: string,
   options?: {
     imageInput?: ImageInputMode;
+    extensionInstructions?: string;
     /**
      * plan a9d4e7c2 P1-1：**workflow 声明的模板路径**（`verifier_prompt`，相对 harness 根），
      * 由 `resolveVerifierPlan` 带出。调用方必须传——装配用哪个模板是 workflow 的声明说了算。
@@ -325,6 +326,9 @@ export function assembleAIPrompt(
     tail +=
       '\n\n---\n\n## Lifecycle hooks（实例 / profile / framework）\n\n' +
       lifecycleHookFragments.map((f, i) => `### Hook fragment ${i + 1}\n\n${f}`).join('\n\n');
+  }
+  if (options?.extensionInstructions) {
+    tail += `\n\n---\n\n${options.extensionInstructions}\n`;
   }
 
   // 占位符填充抽成纯函数：写盘文本与规范化摘要**同一次装配、同一套输入**产出，

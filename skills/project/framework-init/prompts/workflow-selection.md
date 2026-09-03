@@ -10,8 +10,8 @@
 ## 实例扩展目录
 
 - `paths.extension_dir` 默认 **`doc/extensions`**（与 [instance-extension-manifest.schema.yaml](../../../../specs/instance-extension-manifest.schema.yaml) 一致）。
-- 目录骨架与 `manifest.yaml` 占位见 framework-init **S3 执行**（扩展目录骨架任务）。
+- 目录骨架与 `manifest.yaml` 由 [`/extension init`](../../extension/SKILL.md) 补缺；此职责不属于 framework-init。
 
 ## 与 adapter 的关系
 
-渲染 `AGENTS.md` / `CLAUDE.md` 时，`render-agents-md` 会读取当前 `agent_adapter` 的 `adapter.yaml → instance_skill_bridge`，为 `doc/extensions/skills/*/SKILL.md` 生成 Cursor 跳板与/或 Claude slash；详见 [framework/agents/adapter-schema.yaml](../../../../agents/adapter-schema.yaml)。
+实例扩展桥接由 [`/extension`](../../extension/SKILL.md) 管理；`/extension materialize` 只读项目级 `materialized_adapters[]`，为 manifest 声明的扩展 Skill 全量刷新 adapter 入口。

@@ -1,6 +1,17 @@
 # Framework 升级与迁移说明
 
-本文描述**实例工程**在 framework 子模块或配置演进时的预期做法。详细操作以 Skill 正文为准。
+本文描述**实例工程**集成新版 Maison 发布件或配置演进时的预期做法。详细操作以 Skill 正文为准。
+
+## 3.1.0：Extension manifest 1.1 与 `/extension`
+
+3.1.0 新增 `/extension` 单一管理入口，manifest 1.1 支持 knowledge audience、宿主执行的
+`mcp_actions` 与三个 Feature phase binding 槽位。1.0 manifest 继续兼容读取且行为不变；升级不是
+强制迁移。
+
+选择升级到 1.1 时：把需物化的 Skill 全量列入 `provides.skills[]`（1.1 不再物化未声明目录），
+把 global/phase knowledge 改成对象条目，按需声明 action 与 binding；随后运行 `/extension verify`
+和 `/extension materialize`。无 ownership 标记的旧 bridge 继续保留且不接管；MCP server、URL、
+token、command、登录配置不得进入 manifest。
 
 
 ## 3.1.0：正式需求统一经部件内设计阶段（路由变化）
@@ -819,7 +830,9 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 | `lifecycle_hooks_enabled` | 默认 `true`；`false` 时 harness 跳过 lifecycle hook 派发 |
 | `paths.extension_dir` | 默认 `"doc/extensions"` |
 
-**升级后动作**：S3 执行补缺扩展目录骨架；在 **`<repo-root>`** 重新执行 `node framework/harness/scripts/render-agents-md.mjs ...` 刷新入口并按 adapter 生成扩展跳板 / slash（勿在 `framework/harness/` cwd 下写 `framework/harness/scripts/...` 前缀）；`cd framework/harness && npm test`。
+**升级后动作**：需要实例扩展时运行 `/extension init` 补缺骨架，再运行 `/extension materialize`
+按项目 `materialized_adapters[]` 刷新入口与 bridge；framework-init 不创建 extension skeleton。
+最后运行 `/extension verify`。1.0 manifest 可继续原样使用。
 
 > v3.1 起这些字段（含 `state_machine.*`、`paths.state_file` / `receipt_dir_pattern` / `docs_committed`、
 > `toolchain.hvigor.*` 等）由 S3 `backfill-config` / merge-framework-config **机器化补缺合并**——见 §v3.1。

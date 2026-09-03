@@ -11,6 +11,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { detectRepoLayout } from '../repo-layout';
 import { emitInstanceSkillBridge } from './utils/instance-skill-bridge';
+import { extensionSkillIdsForBridge, loadInstanceExtensions } from '../extension-loader';
 import {
   assertNoUnreplacedPlaceholders,
   buildAgentsTemplateVars,
@@ -61,19 +62,23 @@ function parseArgs(argv: string[]): {
   '--out'?: string;
   '--config'?: string;
   '--no-instance-bridge'?: boolean;
+  '--all-materialized-adapters'?: boolean;
 } {
-  const known = new Set(['--entry-file', '--summary', '--out', '--config', '--no-instance-bridge']);
+  const known = new Set([
+    '--entry-file', '--summary', '--out', '--config', '--no-instance-bridge', '--all-materialized-adapters',
+  ]);
   const result: {
     '--entry-file'?: string;
     '--summary'?: string;
     '--out'?: string;
     '--config'?: string;
     '--no-instance-bridge'?: boolean;
+    '--all-materialized-adapters'?: boolean;
   } = {};
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
-    if (flag === '--no-instance-bridge') {
-      result['--no-instance-bridge'] = true;
+    if (flag === '--no-instance-bridge' || flag === '--all-materialized-adapters') {
+      result[flag] = true;
       continue;
     }
     if (!known.has(flag)) {
@@ -102,9 +107,21 @@ function printUsage(): void {
     'Usage: render-agents-md.ts --entry-file <EntryMarkdown.md> ' +
       '[--summary "<one-line>"] --out <path-relative-to-repo-root> ' +
       '[--config <path>] [--no-instance-bridge]\n' +
+      '  --all-materialized-adapters: 仅从项目 config.materialized_adapters[] 全量刷新扩展 Skill 桥接。\n' +
       '  --summary: 可选；未传时按 config.architecture 生成 DSL 风格架构摘要。\n' +
       '  --config: 默认读取仓库根下 framework.config.json；可指向其它 JSON（绝对路径或相对仓库根）。\n',
   );
+}
+
+export function resolveRenderBridgeAdapters(config: Record<string, unknown>, all: boolean): string[] {
+  const configured = Array.isArray(config.materialized_adapters)
+    ? config.materialized_adapters.filter(
+        (value): value is string => typeof value === 'string' && value.trim().length > 0,
+      ).map(value => value.trim())
+    : [];
+  const adapters = all ? [...new Set(configured)] : [String(config.agent_adapter ?? 'generic')];
+  if (all && adapters.length === 0) throw new Error('--all-materialized-adapters 要求项目 config.materialized_adapters[] 非空');
+  return adapters;
 }
 
 function main(): void {
@@ -117,6 +134,17 @@ function main(): void {
 
   const configPath = resolveConfigPath(args['--config']);
   const config = loadConfig(configPath);
+  const paths = (config.paths && typeof config.paths === 'object'
+    ? config.paths
+    : {}) as Record<string, unknown>;
+  const extDir =
+    typeof paths.extension_dir === 'string' && paths.extension_dir.trim()
+      ? paths.extension_dir.trim()
+      : 'doc/extensions';
+  const bundle = loadInstanceExtensions(REPO_ROOT, extDir, { frameworkRoot: FRAMEWORK_DIR });
+  if (bundle.errors.length > 0) {
+    fail(`extension manifest/路径非法：${bundle.errors.map(error => `${error.code}: ${error.message}`).join('；')}`);
+  }
   const tpl = loadTemplate();
   const vars = buildAgentsTemplateVars(config, {
     entryFile: args['--entry-file'],
@@ -142,28 +170,25 @@ function main(): void {
   );
 
   if (!args['--no-instance-bridge']) {
-    const paths = (config.paths && typeof config.paths === 'object'
-      ? config.paths
-      : {}) as Record<string, unknown>;
-    const extDir =
-      typeof paths.extension_dir === 'string' && paths.extension_dir.trim()
-        ? paths.extension_dir.trim()
-        : 'doc/extensions';
-    const emit = emitInstanceSkillBridge({
-      repoRoot: REPO_ROOT,
-      frameworkDir: FRAMEWORK_DIR,
-      agentAdapter: String(config.agent_adapter ?? 'generic'),
-      extensionDirRel: extDir,
-    });
-    for (const w of emit.warnings) {
-      process.stderr.write(`[render-agents-md] ${w}\n`);
-    }
-    if (emit.filesWritten.length > 0) {
+    let adapters: string[];
+    try { adapters = resolveRenderBridgeAdapters(config, Boolean(args['--all-materialized-adapters'])); }
+    catch (error) { fail((error as Error).message); }
+    const declaredSkillIds = extensionSkillIdsForBridge(bundle);
+    for (const agentAdapter of adapters) {
+      const emit = emitInstanceSkillBridge({
+        repoRoot: REPO_ROOT,
+        frameworkDir: FRAMEWORK_DIR,
+        agentAdapter,
+        extensionDirRel: extDir,
+        declaredSkillIds,
+      });
+      for (const w of emit.warnings) process.stderr.write(`[render-agents-md] ${w}\n`);
       process.stdout.write(
-        `[render-agents-md] instance_skill_bridge wrote ${emit.filesWritten.length} file(s)\n`,
+        `[render-agents-md] instance_skill_bridge adapter=${agentAdapter} wrote=${emit.filesWritten.length} ` +
+        `removed=${emit.filesRemoved.length} drifted=${emit.driftedFiles.length} untouched=${emit.untouchedFiles.length}\n`,
       );
     }
   }
 }
 
-main();
+if (require.main === module) main();

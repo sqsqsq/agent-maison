@@ -208,6 +208,67 @@ function repoDocFeatures(): string[] {
 interface Case { name: string; run: () => void | Promise<void> }
 const cases: Case[] = [
   {
+    name: 'extension before_phase_verify required produces 缺失进入 harness-runner summary CheckResult',
+    run: () => {
+      const { root, harnessDir } = provisionFramework();
+      try {
+        scaffoldFeature(root);
+        const extensionRoot = path.join(root, 'doc', 'extensions');
+        fs.mkdirSync(extensionRoot, { recursive: true });
+        fs.writeFileSync(path.join(extensionRoot, 'manifest.yaml'), [
+          'schema_version: "1.1"', 'name: runner-extension', 'provides:', '  skills: []',
+          '  mcp_actions:', '    verify-action:', '      tool: host.verify', '      required: true',
+          '      severity: BLOCKER', '      produces: [doc/missing-verify.json]', '      usage: verify',
+          'phase_bindings:', '  spec:', '    before_phase_verify:',
+          '      - { kind: mcp, ref: verify-action }', '',
+        ].join('\n'), 'utf-8');
+        git(root, ['add', '-A']);
+        git(root, ['commit', '-qm', 'extension fixture']);
+        const result = runHarness(harnessDir, ['--phase', 'spec', '--feature', 'demo', '--summary'], root);
+        assert(result.status !== 0, `required produces 缺失应失败：${result.stdout}`);
+        const report = readJson(root, 'doc/features/demo/spec/reports/script-report.json') as {
+          checks?: Array<{ id?: string; status?: string }>;
+        };
+        assert(report.checks?.some(check => check.id?.startsWith('extension_produces_') && check.status === 'FAIL'),
+          `summary/CheckResult 缺 extension_produces_ FAIL：${JSON.stringify(report.checks)}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: '非法 1.1 + rogue Skill + required binding：runner 明确 BLOCKER 且不降级目录注入',
+    run: () => {
+      const { root, harnessDir } = provisionFramework();
+      try {
+        scaffoldFeature(root);
+        const extensionRoot = path.join(root, 'doc', 'extensions');
+        fs.mkdirSync(path.join(extensionRoot, 'skills', 'rogue'), { recursive: true });
+        fs.writeFileSync(path.join(extensionRoot, 'skills', 'rogue', 'SKILL.md'), '# rogue\n', 'utf8');
+        fs.writeFileSync(path.join(extensionRoot, 'manifest.yaml'), [
+          'schema_version: "1.1"', 'name: invalid-runner-extension', 'unknown: true', 'provides:',
+          '  skills: []', '  mcp_actions:', '    verify-action:', '      tool: host.verify',
+          '      required: true', '      produces: [doc/missing-verify.json]', '      usage: verify',
+          'phase_bindings:', '  spec:', '    before_phase_verify:',
+          '      - { kind: mcp, ref: verify-action }', '',
+        ].join('\n'), 'utf-8');
+        git(root, ['add', '-A']);
+        git(root, ['commit', '-qm', 'invalid extension fixture']);
+        const result = runHarness(harnessDir, ['--phase', 'spec', '--feature', 'demo', '--summary'], root);
+        assert(result.status !== 0, `invalid manifest 应失败：${result.stdout}`);
+        const report = readJson(root, 'doc/features/demo/spec/reports/script-report.json') as {
+          checks?: Array<{ id?: string; status?: string; severity?: string }>;
+        };
+        assert(report.checks?.some(check => check.id?.startsWith('extension_manifest_manifest_unknown_field')
+          && check.status === 'FAIL' && check.severity === 'BLOCKER'),
+        `runner 缺 manifest BLOCKER：${JSON.stringify(report.checks)}`);
+        assert(!fs.existsSync(path.join(root, '.cac', 'commands', 'rogue.md')), 'rogue Skill 不得注入');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
     name: 'E2E attended：fenced request → initializer → formal harness → receipt/sync closure，旧 epoch 拒绝',
     run: async () => {
       const before = repoDocFeatures();

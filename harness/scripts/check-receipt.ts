@@ -88,6 +88,7 @@ import { SUMMARY_SCHEMA_VERSION_CURRENT } from './utils/quality-axes';
 import { recomputePhaseEvidenceStaleness } from './utils/phase-evidence-manifest';
 import { resolveContextAdapterImageInput } from './utils/multimodal-probe';
 import type { HarnessRunSummary, SoftAdvisory } from './utils/types';
+import { checkExtensionBindingProduces, checkExtensionManifest } from './utils/extension-runtime';
 
 /** Feature phase id（由 active workflow 定义；main() 内按 workflow 合法集校验——C0 收编）。 */
 type Phase = string;
@@ -342,6 +343,23 @@ function main(): void {
   }
 
   const issues: CheckIssue[] = [];
+  const extensionClosureChecks = [
+    ...checkExtensionManifest(resolvedProfile.extensionBundle),
+    ...checkExtensionBindingProduces({
+      bundle: resolvedProfile.extensionBundle,
+      projectRoot,
+      phase,
+      slot: 'after_phase_verify_before_close',
+    }),
+  ];
+  for (const check of extensionClosureChecks) {
+    if (check.status === 'FAIL') issues.push({
+      id: check.id,
+      severity: check.severity === 'BLOCKER' ? 'BLOCKER' : 'MAJOR',
+      message: check.details || check.description,
+    });
+    else if (check.status === 'SKIP') console.warn(`⚠ ${check.description}: ${check.details ?? ''}`);
+  }
 
   // 1. feature/phase 字段一致
   if (frontmatter.feature !== feature) {

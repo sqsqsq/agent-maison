@@ -10,11 +10,14 @@ import {
   emitInstanceSkillBridge,
   formatExtensionSkillSectionMarkdown,
   loadReservedBridgeIds,
+  inspectInstanceSkillBridgeArtifacts,
+  renderExtensionSkillStubMarkdown,
   resolveBridgeTargets,
   scanExtensionSkills,
 } from '../../scripts/utils/instance-skill-bridge';
 import { detectRepoLayout } from '../../repo-layout';
 import { clearFrameworkConfigCache } from '../../config';
+import { resolveRenderBridgeAdapters } from '../../scripts/render-agents-md';
 
 const FRAMEWORK_DIR = detectRepoLayout(__dirname).frameworkRoot;
 
@@ -39,6 +42,16 @@ function write(p: string, body: string): void {
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
+  {
+    name: '--all-materialized-adapters 只读项目数组并去重，不回退 personal agent_adapter',
+    run: () => {
+      assert.deepStrictEqual(
+        resolveRenderBridgeAdapters({ agent_adapter: 'generic', materialized_adapters: ['cursor', 'claude', 'cursor'] }, true),
+        ['cursor', 'claude'],
+      );
+      assert.throws(() => resolveRenderBridgeAdapters({ agent_adapter: 'claude' }, true), /materialized_adapters/);
+    },
+  },
   {
     name: 'scanExtensionSkills：无扩展目录 → 空数组',
     run: () => {
@@ -119,6 +132,85 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(!stub.includes('FULL-BODY-MARKER'), 'must NOT inline full body');
       fs.rmSync(root, { recursive: true, force: true });
       clearFrameworkConfigCache();
+    },
+  },
+  {
+    name: 'materialized_adapters：所有 adapter 都产出 ownership bridge，重复运行字节幂等',
+    run: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fw-ext-multi-'));
+      write(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify({
+          schema_version: '1.1', project_name: 'ext-multi', materialized_adapters: ['cursor', 'claude'],
+          architecture: minimalArch(), paths: { features_dir: 'doc/features' },
+        }),
+      );
+      write(path.join(root, 'doc/extensions/skills/customer-context/SKILL.md'), '# Customer context\n');
+      const first = ['cursor', 'claude'].map(agentAdapter => emitInstanceSkillBridge({
+        repoRoot: root, frameworkDir: FRAMEWORK_DIR, agentAdapter,
+      }));
+      assert(first.every(result => result.filesWritten.length === 1));
+      const cursor = fs.readFileSync(path.join(root, '.cursor/skills/customer-context/SKILL.md'), 'utf8');
+      const claude = fs.readFileSync(path.join(root, '.claude/commands/customer-context.md'), 'utf8');
+      assert(cursor.includes('agent-maison:instance-extension-bridge'));
+      assert(claude.includes('agent-maison:instance-extension-bridge'));
+      const second = ['cursor', 'claude'].map(agentAdapter => emitInstanceSkillBridge({
+        repoRoot: root, frameworkDir: FRAMEWORK_DIR, agentAdapter,
+      }));
+      assert(second.every(result => result.filesWritten.length === 0), 'canonical bytes must not be rewritten');
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'ownership 三态：规范孤儿清理、漂移保留、无标记不接管',
+    run: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fw-ext-ownership-'));
+      write(path.join(root, 'doc/extensions/skills/owned/SKILL.md'), '# Owned\n');
+      emitInstanceSkillBridge({ repoRoot: root, frameworkDir: FRAMEWORK_DIR, agentAdapter: 'cursor' });
+      const owned = path.join(root, '.cursor/skills/owned/SKILL.md');
+      fs.appendFileSync(owned, '\nmanual drift\n', 'utf8');
+      fs.rmSync(path.join(root, 'doc/extensions/skills/owned'), { recursive: true, force: true });
+      const drift = emitInstanceSkillBridge({ repoRoot: root, frameworkDir: FRAMEWORK_DIR, agentAdapter: 'cursor' });
+      assert(drift.driftedFiles.some(item => item.endsWith('owned/SKILL.md')));
+      assert(fs.existsSync(owned), 'drifted owned file must stay');
+
+      write(path.join(root, 'doc/extensions/skills/clean/SKILL.md'), '# Clean\n');
+      emitInstanceSkillBridge({ repoRoot: root, frameworkDir: FRAMEWORK_DIR, agentAdapter: 'cursor' });
+      const clean = path.join(root, '.cursor/skills/clean/SKILL.md');
+      fs.rmSync(path.join(root, 'doc/extensions/skills/clean'), { recursive: true, force: true });
+      const removed = emitInstanceSkillBridge({ repoRoot: root, frameworkDir: FRAMEWORK_DIR, agentAdapter: 'cursor' });
+      assert(removed.filesRemoved.some(item => item.endsWith('clean/SKILL.md')));
+      assert(!fs.existsSync(clean), 'canonical orphan must be removed');
+
+      write(path.join(root, 'doc/extensions/skills/manual/SKILL.md'), '# Source\n');
+      const manual = path.join(root, '.cursor/skills/manual/SKILL.md');
+      write(manual, '# user file\n');
+      const untouched = emitInstanceSkillBridge({ repoRoot: root, frameworkDir: FRAMEWORK_DIR, agentAdapter: 'cursor' });
+      assert(untouched.untouchedFiles.some(item => item.endsWith('manual/SKILL.md')));
+      assert.strictEqual(fs.readFileSync(manual, 'utf8'), '# user file\n');
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: '旧版规范 bridge 即使字节匹配也保持 unowned/untouched',
+    run: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fw-ext-legacy-unowned-'));
+      write(path.join(root, 'doc/extensions/skills/legacy/SKILL.md'), '# Legacy\n');
+      const targetRel = '.cursor/skills/legacy/SKILL.md';
+      const target = path.join(root, targetRel);
+      const legacy = renderExtensionSkillStubMarkdown('legacy', 'doc/extensions/skills/legacy/SKILL.md', targetRel, {
+        inline: false, frameworkDir: FRAMEWORK_DIR, projectRoot: root,
+      });
+      write(target, legacy);
+      const before = inspectInstanceSkillBridgeArtifacts({
+        repoRoot: root, frameworkDir: FRAMEWORK_DIR, agentAdapter: 'cursor',
+      });
+      assert(before.some(item => item.path === targetRel && item.state === 'unowned'));
+      const result = emitInstanceSkillBridge({ repoRoot: root, frameworkDir: FRAMEWORK_DIR, agentAdapter: 'cursor' });
+      assert(result.untouchedFiles.includes(targetRel), JSON.stringify(result));
+      assert(!result.filesWritten.includes(targetRel), JSON.stringify(result));
+      assert.strictEqual(fs.readFileSync(target, 'utf8'), legacy);
+      fs.rmSync(root, { recursive: true, force: true });
     },
   },
 ];

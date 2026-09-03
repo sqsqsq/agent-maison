@@ -86,7 +86,7 @@
 
 允许在不改 `framework/` 的前提下挂载业务 Skill/knowledge/phase 前后钩子。
 
-- **落点**：`doc/extensions/`（可由 `framework.config.json → paths.extension_dir` 覆盖）；首份骨架由 S3 执行自动从 `framework/skills/project/framework-init/templates/extension-skeleton/` 拷出；UPDATE 路径见 `framework/MIGRATION.md` v2.5。
+- **落点**：`doc/extensions/`（可由 `framework.config.json → paths.extension_dir` 覆盖）；首份骨架由 `/extension init` 从 `framework/skills/project/extension/templates/extension-skeleton/` 补缺，此职责不属于 framework-init；UPDATE 路径见 `framework/MIGRATION.md` 3.1.0。
 - **协议 SSOT**：`instance-extension-manifest.schema.yaml` · `lifecycle-hooks-schema.yaml` · `workflow-schema.json`；三层叠加见 `docs/concepts/extensibility.md`。
 
 **何时主动询问用户**（仅询问，不改 manifest、不给 y/n diff；本会话被 n 后不再就同一资料二次发问）：

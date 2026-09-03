@@ -5,6 +5,10 @@
 import type { PhaseChecker, CheckContext, CheckResult } from './utils/types';
 import { loadFrameworkConfig } from '../config';
 import { loadInstanceExtensions } from '../extension-loader';
+import { inspectInstanceExtensions } from './utils/extension-inspect';
+import { detectRepoLayout } from '../repo-layout';
+
+const FRAMEWORK_DIR = detectRepoLayout(__dirname).frameworkRoot;
 
 export const checker: PhaseChecker = {
   phase: 'extensions',
@@ -26,10 +30,7 @@ export const checker: PhaseChecker = {
             ? `扩展目录存在但未提供 manifest.yaml（跳过 provides）`
             : '未检测到实例扩展目录（零影响）',
       });
-      return results;
-    }
-
-    for (const e of bundle.errors) {
+    } else for (const e of bundle.errors) {
       results.push({
         id: `extension_manifest_${e.code}`,
         category: 'structure',
@@ -39,6 +40,16 @@ export const checker: PhaseChecker = {
         details: [e.message, e.path ?? '', bundle.manifestPath ?? ''].filter(Boolean).join('\n'),
       });
     }
+    const inspection = inspectInstanceExtensions(ctx.projectRoot, FRAMEWORK_DIR);
+    for (const finding of inspection.findings) results.push({
+      id: finding.code,
+      category: 'structure',
+      description: finding.message,
+      severity: 'MINOR',
+      status: 'FAIL',
+      details: finding.path ?? finding.message,
+      suggestion: '运行 /extension materialize 刷新桥接，或修正 manifest 与目录声明。',
+    });
     return results;
   },
 };

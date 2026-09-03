@@ -1,7 +1,7 @@
 // ============================================================================
 // codeagent-adapter.unit.test.ts — codeagent adapter（plan c7a9e2f4）
 // ============================================================================
-// 覆盖：adapter.yaml 结构/跨目录引用可解析；commands ×16 归一化等值（delta 白名单）；
+// 覆盖：adapter.yaml 结构/跨目录引用可解析；commands ×17 归一化等值（delta 白名单）；
 // settings.json 结构等值（无 $schema）；goal_capability 与 claude 逐字段等值；
 // defaultHeadlessInvokePlan 同构（binary=codeagentcli、adapterName 显式携带）；
 // 诊断归属不再误猜 cursor；IMAGE_READ_PARSERS 入册（2026-07-29 实采脱敏 fixture）；
@@ -43,7 +43,7 @@ const unattended = {
 // commands delta 白名单（T5 归一化等值；禁止"删任意含 codeagent 整段"式宽松归一）
 // --------------------------------------------------------------------------
 
-/** 普通 15 份唯一允许的 delta：身份行（含前置空行，与生成器插入形态逐字对应） */
+/** 普通 16 份唯一允许的 delta：身份行（含前置空行，与生成器插入形态逐字对应） */
 function identityLineFor(file: string): string {
   return `> 运行身份：codeagent（薄入口，逻辑以 framework SKILL 为准；勿被同名 \`.claude/commands/${file}\` 误导）`;
 }
@@ -159,9 +159,9 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(adapter.yamlParseable, 'codeagent yaml');
       assert.strictEqual(adapter.entryFile?.targetRel, 'AGENTS.md', 'codeagent entry');
       const targets = adapter.templateFiles.map(f => f.targetRel);
-      // commands ×16 自有副本
+      // commands ×17 自有副本
       const commandFiles = fs.readdirSync(CODEAGENT_COMMANDS_DIR).filter(f => f.endsWith('.md'));
-      assert.strictEqual(commandFiles.length, 16, `commands 应 16 份，实际 ${commandFiles.length}`);
+      assert.strictEqual(commandFiles.length, 17, `commands 应 17 份，实际 ${commandFiles.length}`);
       for (const f of commandFiles) {
         assert(targets.includes(`.cac/commands/${f}`), `.cac/commands/${f} 未进物化清单`);
       }
@@ -178,7 +178,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'commands 归一化等值：普通 15 份仅身份行 delta；goal-mode 三处 delta；其余逐字节同 claude',
+    name: 'commands 归一化等值：普通 16 份仅身份行 delta；goal-mode 三处 delta；其余逐字节同 claude',
     run: () => {
       const claudeFiles = fs.readdirSync(CLAUDE_COMMANDS_DIR).filter(f => f.endsWith('.md')).sort();
       const codeagentFiles = fs.readdirSync(CODEAGENT_COMMANDS_DIR).filter(f => f.endsWith('.md')).sort();

@@ -35,7 +35,7 @@
 
 | Phase       | check 脚本            | 对象 / 摘要 |
 | ----------- | --------------------- | ----------- |
-| `extensions` | `check-extensions.ts` | 实例扩展目录 [`doc/extensions/`](../../../doc/extensions/README.md)（manifest、hooks、skills 等）合法性 |
+| `extensions` | `check-extensions.ts` | 实例扩展 manifest、引用与 adapter bridge 对账；1.1 knowledge/action/binding 由对应 Feature phase 消费 |
 | `init`       | `check-init.ts`       | framework-init **体检**：`framework.config.json`、入口文件、adapter 模板、宿主工具链、`check-init.json` |
 | `catalog`    | `check-catalog.ts`    | `doc/module-catalog.yaml`；画像结构、`easily_confused_with`、`key_exports_fresh_vs_index`、`feature_scope_integrity` 等 |
 | `glossary`   | `check-glossary.ts`    | `doc/glossary.yaml`；术语结构、`seed_no_technical_words` 等 |
@@ -572,4 +572,3 @@ cat framework/harness/state/.current-phase.json
       last_seen_session_id / last_seen_at 字段（向后兼容：缺失即按"未盖章"处理）；
     - 与全局入口 §5.1.1 协同。
 -->
-

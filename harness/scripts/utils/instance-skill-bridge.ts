@@ -14,6 +14,7 @@ import {
 } from './materialize-agent-bundle-skills';
 import { resolveSkillPathOrNull } from './resolve-skill-path';
 import { isClaudeKernelAdapter } from './types';
+import { validateProjectRelativePath } from './project-relative-path';
 
 export interface ExtensionSkillScanRow {
   sourceSlug: string;
@@ -68,19 +69,30 @@ export function loadReservedBridgeIds(frameworkDir: string): Set<string> {
   return reserved;
 }
 
-export function scanExtensionSkills(projectRoot: string, extensionDirRel = 'doc/extensions'): ExtensionSkillScanRow[] {
-  const rel = extensionDirRel.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+export function scanExtensionSkills(
+  projectRoot: string,
+  extensionDirRel = 'doc/extensions',
+  declaredSkillIds?: readonly string[],
+): ExtensionSkillScanRow[] {
+  let rel: string;
+  try {
+    rel = validateProjectRelativePath(projectRoot, extensionDirRel, 'paths.extension_dir');
+  } catch {
+    return [];
+  }
   const extRoot = path.join(projectRoot, ...rel.split('/').filter(Boolean));
   const skillsRoot = path.join(extRoot, 'skills');
   if (!fs.existsSync(skillsRoot) || !fs.statSync(skillsRoot).isDirectory()) {
     return [];
   }
   const rows: ExtensionSkillScanRow[] = [];
+  const declared = declaredSkillIds ? new Set(declaredSkillIds) : null;
   for (const ent of fs.readdirSync(skillsRoot, { withFileTypes: true })) {
     if (!ent.isDirectory()) {
       continue;
     }
     const sourceSlug = ent.name;
+    if (declared && !declared.has(sourceSlug)) continue;
     if (!SAFE_TOKEN.test(sourceSlug)) {
       continue;
     }
@@ -129,7 +141,10 @@ export function resolveBridgeTargets(
   return { targets, warnings };
 }
 
-export function formatExtensionSkillSectionMarkdown(targets: ResolvedBridgeTarget[]): string {
+export function formatExtensionSkillSectionMarkdown(
+  targets: ResolvedBridgeTarget[],
+  manifestDriven = false,
+): string {
   if (targets.length === 0) {
     return '';
   }
@@ -137,7 +152,9 @@ export function formatExtensionSkillSectionMarkdown(targets: ResolvedBridgeTarge
     '',
     '### 实例扩展 Skill（doc/extensions）',
     '',
-    '以下由 `render-agents-md` 扫描 `doc/extensions/skills/*/SKILL.md` 自动生成；若与框架内置 Skill 跳板 / slash **同名**，桥接产物会自动加 `ext-` 前缀（见标识列）。',
+    manifestDriven
+      ? '以下由 `render-agents-md` 按 manifest `provides.skills[]` 自动生成；若与框架内置 Skill 跳板 / slash **同名**，桥接产物会自动加 `ext-` 前缀（见标识列）。'
+      : '以下由 `render-agents-md` 扫描 `doc/extensions/skills/*/SKILL.md` 自动生成；若与框架内置 Skill 跳板 / slash **同名**，桥接产物会自动加 `ext-` 前缀（见标识列）。',
     '',
     '| 标识 | Skill 路径 |',
     '|------|-----------|',
@@ -338,6 +355,153 @@ export function renderClaudeSlashMarkdown(bridgeId: string, skillMdRepoRelPosix:
 export interface EmitInstanceSkillBridgeResult {
   warnings: string[];
   filesWritten: string[];
+  filesRemoved: string[];
+  driftedFiles: string[];
+  untouchedFiles: string[];
+}
+
+type ExtensionBridgeKind = 'skill_stub' | 'command';
+
+interface ExtensionBridgeOwnership {
+  kind: ExtensionBridgeKind;
+  adapter: string;
+  bridgeId: string;
+  sourceRel: string;
+}
+
+const OWNERSHIP_PREFIX = '# agent-maison:instance-extension-bridge ';
+
+function withOwnership(body: string, ownership: ExtensionBridgeOwnership): string {
+  const lines = body.split('\n');
+  lines.splice(1, 0, `${OWNERSHIP_PREFIX}${JSON.stringify(ownership)}`);
+  return lines.join('\n');
+}
+
+function readOwnership(body: string): ExtensionBridgeOwnership | null {
+  const line = body.split(/\r?\n/, 5).find(item => item.startsWith(OWNERSHIP_PREFIX));
+  if (!line) return null;
+  try {
+    const value = JSON.parse(line.slice(OWNERSHIP_PREFIX.length)) as Partial<ExtensionBridgeOwnership>;
+    if (
+      (value.kind === 'skill_stub' || value.kind === 'command')
+      && typeof value.adapter === 'string'
+      && typeof value.bridgeId === 'string'
+      && typeof value.sourceRel === 'string'
+    ) {
+      return value as ExtensionBridgeOwnership;
+    }
+  } catch {
+    // 标记损坏按内容漂移处理，绝不接管或删除。
+  }
+  return null;
+}
+
+function canonicalOwnedBridge(
+  ownership: ExtensionBridgeOwnership,
+  targetRel: string,
+  frameworkDir: string,
+  projectRoot: string,
+): string {
+  const body = ownership.kind === 'command'
+    ? renderClaudeSlashMarkdown(ownership.bridgeId, ownership.sourceRel)
+    : renderExtensionSkillStubMarkdown(ownership.bridgeId, ownership.sourceRel, targetRel, {
+        inline: false,
+        frameworkDir,
+        projectRoot,
+      });
+  return withOwnership(body, ownership);
+}
+
+function directBridgeCandidates(base: string, kind: ExtensionBridgeKind): string[] {
+  if (!fs.existsSync(base) || !fs.statSync(base).isDirectory()) return [];
+  if (kind === 'command') {
+    return fs.readdirSync(base, { withFileTypes: true })
+      .filter(entry => entry.isFile() && entry.name.endsWith('.md'))
+      .map(entry => path.join(base, entry.name));
+  }
+  const out: string[] = [];
+  for (const entry of fs.readdirSync(base, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const candidate = path.join(base, entry.name, 'SKILL.md');
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) out.push(candidate);
+  }
+  return out;
+}
+
+export interface InstanceBridgeArtifactInspection {
+  adapter: string;
+  bridgeId: string;
+  sourceRel: string;
+  path: string;
+  state: 'present' | 'missing' | 'stale' | 'drifted' | 'unowned' | 'orphan';
+}
+
+export function inspectInstanceSkillBridgeArtifacts(options: {
+  repoRoot: string;
+  frameworkDir: string;
+  agentAdapter: string;
+  extensionDirRel?: string;
+  reserved?: Set<string>;
+  declaredSkillIds?: readonly string[];
+}): InstanceBridgeArtifactInspection[] {
+  const { repoRoot, frameworkDir, agentAdapter } = options;
+  const adapterPath = path.join(frameworkDir, 'agents', agentAdapter, 'adapter.yaml');
+  if (!fs.existsSync(adapterPath)) return [];
+  const bridgeCfg = parseInstanceSkillBridgeFromAdapter(fs.readFileSync(adapterPath, 'utf8'));
+  const stubDir = resolveSkillStubTargetDir(repoRoot, frameworkDir, agentAdapter);
+  const targets = resolveBridgeTargets(
+    scanExtensionSkills(repoRoot, options.extensionDirRel, options.declaredSkillIds),
+    options.reserved ?? loadReservedBridgeIds(frameworkDir),
+  ).targets;
+  const expected = new Map<string, { ownership: ExtensionBridgeOwnership; body: string }>();
+  const roots: Array<{ base: string; kind: ExtensionBridgeKind }> = [];
+  const add = (absPath: string, kind: ExtensionBridgeKind, bridgeId: string, sourceRel: string) => {
+    const ownership = { kind, adapter: agentAdapter, bridgeId, sourceRel };
+    const targetRel = path.relative(repoRoot, absPath).replace(/\\/g, '/');
+    expected.set(absPath, { ownership, body: canonicalOwnedBridge(ownership, targetRel, frameworkDir, repoRoot) });
+  };
+  if (stubDir) {
+    const base = path.join(repoRoot, ...stubDir.replace(/\\/g, '/').split('/').filter(Boolean));
+    roots.push({ base, kind: 'skill_stub' });
+    for (const target of targets) add(path.join(base, target.bridgeId, 'SKILL.md'), 'skill_stub', target.bridgeId, target.skillMdRepoRel);
+  }
+  if (bridgeCfg?.commands_target_dir) {
+    const base = path.join(repoRoot, ...bridgeCfg.commands_target_dir.replace(/\\/g, '/').split('/').filter(Boolean));
+    roots.push({ base, kind: 'command' });
+    for (const target of targets) add(path.join(base, `${target.bridgeId}.md`), 'command', target.bridgeId, target.skillMdRepoRel);
+  }
+  const out: InstanceBridgeArtifactInspection[] = [];
+  for (const [absPath, item] of expected) {
+    const targetRel = path.relative(repoRoot, absPath).replace(/\\/g, '/');
+    if (!fs.existsSync(absPath)) {
+      out.push({ adapter: agentAdapter, bridgeId: item.ownership.bridgeId, sourceRel: item.ownership.sourceRel, path: targetRel, state: 'missing' });
+      continue;
+    }
+    const current = fs.readFileSync(absPath, 'utf8');
+    const ownership = readOwnership(current);
+    const state = current === item.body
+      ? 'present'
+      : !ownership
+        ? (current.includes(OWNERSHIP_PREFIX) ? 'drifted' : 'unowned')
+        : current === canonicalOwnedBridge(ownership, targetRel, frameworkDir, repoRoot)
+          ? 'stale'
+          : 'drifted';
+    out.push({ adapter: agentAdapter, bridgeId: item.ownership.bridgeId, sourceRel: item.ownership.sourceRel, path: targetRel, state });
+  }
+  for (const { base, kind } of roots) {
+    for (const absPath of directBridgeCandidates(base, kind)) {
+      if (expected.has(absPath)) continue;
+      const current = fs.readFileSync(absPath, 'utf8');
+      const ownership = readOwnership(current);
+      if (!ownership || ownership.kind !== kind) continue;
+      const targetRel = path.relative(repoRoot, absPath).replace(/\\/g, '/');
+      out.push({
+        adapter: agentAdapter, bridgeId: ownership.bridgeId, sourceRel: ownership.sourceRel, path: targetRel,
+        state: current === canonicalOwnedBridge(ownership, targetRel, frameworkDir, repoRoot) ? 'orphan' : 'drifted',
+      });
+    }
+  }
+  return out.sort((a, b) => a.path.localeCompare(b.path));
 }
 
 export function emitInstanceSkillBridge(options: {
@@ -346,10 +510,14 @@ export function emitInstanceSkillBridge(options: {
   agentAdapter: string;
   extensionDirRel?: string;
   reserved?: Set<string>;
+  declaredSkillIds?: readonly string[];
 }): EmitInstanceSkillBridgeResult {
   const { repoRoot, frameworkDir, agentAdapter } = options;
   const warnings: string[] = [];
   const filesWritten: string[] = [];
+  const filesRemoved: string[] = [];
+  const driftedFiles: string[] = [];
+  const untouchedFiles: string[] = [];
 
   const skillStubDir = resolveSkillStubTargetDir(repoRoot, frameworkDir, agentAdapter);
   const adapterPath = path.join(frameworkDir, 'agents', agentAdapter, 'adapter.yaml');
@@ -361,47 +529,108 @@ export function emitInstanceSkillBridge(options: {
     if (agentAdapter === 'generic') {
       warnings.push('[instance-skill-bridge] generic：未配置 paths.agent_bundle_root，跳过扩展 skill 跳板');
     }
-    return { warnings, filesWritten };
+    return { warnings, filesWritten, filesRemoved, driftedFiles, untouchedFiles };
   }
 
-  const rows = scanExtensionSkills(repoRoot, options.extensionDirRel);
+  const rows = scanExtensionSkills(repoRoot, options.extensionDirRel, options.declaredSkillIds);
   const reserved = options.reserved ?? loadReservedBridgeIds(frameworkDir);
   const { targets, warnings: rw } = resolveBridgeTargets(rows, reserved);
   warnings.push(...rw);
 
-  // inline 已彻底废弃：扩展 skill（doc/extensions）一律生成 bridge 薄跳板，与内置 skill 行为一致。
-  // config 不再驱动 inline 物化（inline 仅保留为测试直接注入 bundle 对象的能力）。
-  const useInline = false;
+  const expected = new Map<string, string>();
+  const candidateRoots: Array<{ base: string; kind: ExtensionBridgeKind }> = [];
 
-  const mkdirWrite = (absPath: string, body: string) => {
+  const addExpected = (
+    absPath: string,
+    kind: ExtensionBridgeKind,
+    bridgeId: string,
+    sourceRel: string,
+  ) => {
+    const targetRel = path.relative(repoRoot, absPath).replace(/\\/g, '/');
+    expected.set(absPath, canonicalOwnedBridge({
+      kind,
+      adapter: agentAdapter,
+      bridgeId,
+      sourceRel,
+    }, targetRel, frameworkDir, repoRoot));
+  };
+
+  const safeWrite = (absPath: string, body: string) => {
+    const rel = path.relative(repoRoot, absPath).replace(/\\/g, '/');
+    if (fs.existsSync(absPath)) {
+      const current = fs.readFileSync(absPath, 'utf8');
+      if (current === body) return;
+      const ownership = readOwnership(current);
+      if (!ownership) {
+        if (current.includes(OWNERSHIP_PREFIX)) {
+          driftedFiles.push(rel);
+          warnings.push(`[instance-skill-bridge] ownership 标记损坏，保留不动：${rel}`);
+        } else {
+          untouchedFiles.push(rel);
+          warnings.push(`[instance-skill-bridge] 未接管无 ownership 标记的文件：${rel}`);
+        }
+        return;
+      }
+      const canonical = canonicalOwnedBridge(ownership, rel, frameworkDir, repoRoot);
+      if (current !== canonical) {
+        driftedFiles.push(rel);
+        warnings.push(`[instance-skill-bridge] ownership 文件内容已漂移，保留不动：${rel}`);
+        return;
+      }
+    }
     fs.mkdirSync(path.dirname(absPath), { recursive: true });
     fs.writeFileSync(absPath, body, 'utf8');
-    filesWritten.push(path.relative(repoRoot, absPath).replace(/\\/g, '/'));
+    filesWritten.push(rel);
   };
 
   if (skillStubDir) {
     const base = path.join(repoRoot, ...skillStubDir.replace(/\\/g, '/').split('/').filter(Boolean));
+    candidateRoots.push({ base, kind: 'skill_stub' });
     for (const t of targets) {
       const stubPath = path.join(base, t.bridgeId, 'SKILL.md');
-      const stubRel = path.relative(repoRoot, stubPath).replace(/\\/g, '/');
-      mkdirWrite(
-        stubPath,
-        renderExtensionSkillStubMarkdown(t.bridgeId, t.skillMdRepoRel, stubRel, {
-          inline: useInline,
-          frameworkDir,
-          projectRoot: repoRoot,
-        }),
-      );
+      addExpected(stubPath, 'skill_stub', t.bridgeId, t.skillMdRepoRel);
     }
   }
 
   if (bridgeCfg?.commands_target_dir) {
     const base = path.join(repoRoot, ...bridgeCfg.commands_target_dir.replace(/\\/g, '/').split('/').filter(Boolean));
+    candidateRoots.push({ base, kind: 'command' });
     for (const t of targets) {
       const cmdPath = path.join(base, `${t.bridgeId}.md`);
-      mkdirWrite(cmdPath, renderClaudeSlashMarkdown(t.bridgeId, t.skillMdRepoRel));
+      addExpected(cmdPath, 'command', t.bridgeId, t.skillMdRepoRel);
     }
   }
 
-  return { warnings, filesWritten };
+  for (const [absPath, body] of expected) safeWrite(absPath, body);
+
+  for (const { base, kind } of candidateRoots) {
+    for (const absPath of directBridgeCandidates(base, kind)) {
+      if (expected.has(absPath)) continue;
+      const current = fs.readFileSync(absPath, 'utf8');
+      const ownership = readOwnership(current);
+      const rel = path.relative(repoRoot, absPath).replace(/\\/g, '/');
+      if (!ownership) {
+        if (current.includes(OWNERSHIP_PREFIX)) {
+          driftedFiles.push(rel);
+          warnings.push(`[instance-skill-bridge] 孤儿 ownership 标记损坏，保留不动：${rel}`);
+        }
+        continue;
+      }
+      if (ownership.kind !== kind) continue;
+      const canonical = canonicalOwnedBridge(ownership, rel, frameworkDir, repoRoot);
+      if (current !== canonical) {
+        driftedFiles.push(rel);
+        warnings.push(`[instance-skill-bridge] 孤儿 ownership 文件内容已漂移，保留不动：${rel}`);
+        continue;
+      }
+      fs.unlinkSync(absPath);
+      if (kind === 'skill_stub') {
+        const parent = path.dirname(absPath);
+        if (fs.readdirSync(parent).length === 0) fs.rmdirSync(parent);
+      }
+      filesRemoved.push(rel);
+    }
+  }
+
+  return { warnings, filesWritten, filesRemoved, driftedFiles, untouchedFiles };
 }

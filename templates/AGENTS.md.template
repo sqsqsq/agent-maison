@@ -86,6 +86,7 @@
 | 0. 模块画像/术语表自举 | [framework/skills/project/catalog-bootstrap/SKILL.md](framework/skills/project/catalog-bootstrap/SKILL.md) |
 | 0. Code Graph 建图与维护 | [framework/skills/project/code-graph/SKILL.md](framework/skills/project/code-graph/SKILL.md) |
 | 0. 目标模式（goal-runner） | [framework/skills/project/goal-mode/SKILL.md](framework/skills/project/goal-mode/SKILL.md) |
+| 0. 实例扩展管理 | [framework/skills/project/extension/SKILL.md](framework/skills/project/extension/SKILL.md) |
 | **正式需求入口·部件内设计（Story Design）** | [framework/skills/project/component-design/SKILL.md](framework/skills/project/component-design/SKILL.md) |
 | 部件演进·蓝图 / CU 推进 / 部件闭环（直接入口） | [app-component-blueprint](framework/skills/project/app-component-blueprint/SKILL.md) · [change-unit-progression](framework/skills/project/change-unit-progression/SKILL.md) · [component-closure](framework/skills/project/component-closure/SKILL.md) |
 | L1. Lite 轨 | [framework/skills/feature/change-lite/SKILL.md](framework/skills/feature/change-lite/SKILL.md) |
@@ -114,7 +115,6 @@
 
 ## 七、快速索引
 
-- Framework 使用说明：[framework/README.md](framework/README.md)
 - Skill 索引：[framework/skills/README.md](framework/skills/README.md)
 - 功能需求产物目录：[{{FEATURES_DIR}}]({{FEATURES_DIR}})
 - catalog-bootstrap 全局阶段命令（无 `--feature`）：`cd framework/harness && npx ts-node harness-runner.ts --phase catalog`（或 `--phase glossary`）
