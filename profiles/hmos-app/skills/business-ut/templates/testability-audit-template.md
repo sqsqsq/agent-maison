@@ -17,7 +17,7 @@
 | Markdown 表格列 AC-1 / L1 / testable | `records:` 数组 + `acceptance_id: AC-1` |
 | 只有 prose 段落无 yaml 块 | 至少一个 ` ```yaml ` 块含 `records:` |
 | `acceptance_id: AC-1-a`（子编号） | 只用 acceptance.yaml 已有 ID，如 `AC-1`、`BD-1` |
-| `name: HAFullChainService.getData`（类.方法） | `name: HAFullChainService`（纯类名；方法级信息写 `entry_point.symbol` 或 mock-plan `methods[]`） |
+| `name: AnalyticsReporter.getData`（类.方法） | `name: AnalyticsReporter`（纯类名；方法级信息写 `entry_point.symbol` 或 mock-plan `methods[]`） |
 
 ## EXACT OUTPUT FORMAT — COPY AND FILL
 
@@ -27,37 +27,37 @@ feature: "<feature>"
 records:
   - acceptance_id: AC-1
     entry_point:
-      symbol: BankCardPetalOpenHwpInteraction.buildChannelPage
-      file: 02-Feature/FinancialCard/src/main/ets/BankCard/presentation/component/openCard/openHWP/BankCardPetalOpenHwpInteraction.ets
+      symbol: TaskEntryInteraction.buildChannelPage
+      file: 02-Feature/SampleFeature/src/main/ets/presentation/component/entry/TaskEntryInteraction.ets
     testability_level: L1
     dependencies:
-      - name: HAFullChainService
+      - name: AnalyticsReporter
         kind: di_injectable
         seam: subclass_override
-      - name: BundleUtil
+      - name: ConfigUtil
         kind: di_injectable
         seam: subclass_override
     verdict: testable
   - acceptance_id: AC-2
     entry_point:
-      symbol: BankCardPetalOpenHwpInteraction.buildChannelPage
-      file: 02-Feature/FinancialCard/src/main/ets/BankCard/presentation/component/openCard/openHWP/BankCardPetalOpenHwpInteraction.ets
+      symbol: TaskEntryInteraction.buildChannelPage
+      file: 02-Feature/SampleFeature/src/main/ets/presentation/component/entry/TaskEntryInteraction.ets
     testability_level: L1
     dependencies:
-      - name: HAFullChainService
+      - name: AnalyticsReporter
         kind: di_injectable
         seam: subclass_override
-      - name: BundleUtil
+      - name: ConfigUtil
         kind: di_injectable
         seam: subclass_override
     verdict: testable
   - acceptance_id: BD-1
     entry_point:
-      symbol: BankCardPetalOpenHwpInteraction.buildChannelPage
-      file: 02-Feature/FinancialCard/src/main/ets/BankCard/presentation/component/openCard/openHWP/BankCardPetalOpenHwpInteraction.ets
+      symbol: TaskEntryInteraction.buildChannelPage
+      file: 02-Feature/SampleFeature/src/main/ets/presentation/component/entry/TaskEntryInteraction.ets
     testability_level: L1
     dependencies:
-      - name: HAFullChainService
+      - name: AnalyticsReporter
         kind: di_injectable
         seam: subclass_override
     verdict: testable

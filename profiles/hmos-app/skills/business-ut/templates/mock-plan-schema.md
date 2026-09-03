@@ -24,13 +24,13 @@
 schema_version: "1.0"
 feature: "<feature>"
 imports:
-  - symbol: HAFullChainService
-    from: "@wallet/common-functions/src/main/ets/hiAnalytics/fullchain/HAFullChainService"
-  - symbol: BundleUtil
-    from: "02-Feature/FinancialCard/src/main/ets/BankCard/shared/utils/BundleUtil"
+  - symbol: AnalyticsReporter
+    from: "05-SystemBase/CommonFunctions/src/main/ets/analytics/AnalyticsReporter"
+  - symbol: ConfigUtil
+    from: "02-Feature/SampleFeature/src/main/ets/shared/utils/ConfigUtil"
 spies:
-  - target_class: HAFullChainService
-    target_file: "05-SystemBase/CommonFunctions/src/main/ets/hiAnalytics/fullchain/HAFullChainService.ets"
+  - target_class: AnalyticsReporter
+    target_file: "05-SystemBase/CommonFunctions/src/main/ets/analytics/AnalyticsReporter.ets"
     base_strategy: subclass
     spy_fields:
       - name: _callLog
@@ -47,9 +47,9 @@ spies:
           - id: success_both_channels
             params: []
             returns:
-              ts_expr: "((key: string): string | undefined => { this._callLog.push(key); if (key === 'mainChannel') return 'account_card'; if (key === 'subChannel') return 'add_card'; return undefined; })(params[0])"
-  - target_class: BundleUtil
-    target_file: "02-Feature/FinancialCard/src/main/ets/BankCard/shared/utils/BundleUtil.ets"
+              ts_expr: "((key: string): string | undefined => { this._callLog.push(key); if (key === 'mainChannel') return 'main_entry'; if (key === 'subChannel') return 'sub_entry'; return undefined; })(params[0])"
+  - target_class: ConfigUtil
+    target_file: "02-Feature/SampleFeature/src/main/ets/shared/utils/ConfigUtil.ets"
     base_strategy: subclass
     spy_fields:
       - name: _callLog
@@ -68,17 +68,17 @@ spies:
           text: "boolean"
         presets:
           - id: version_sufficient
-            params: ["com.huawei.hms.payment", "petal_support_petal_single_bind_version", "10028300"]
+            params: ["com.example.sampleapp", "sample_min_supported_version", "10028300"]
             returns:
               ts_expr: "true as boolean"
           - id: version_insufficient
-            params: ["com.huawei.hms.payment", "petal_support_petal_single_bind_version", "10028300"]
+            params: ["com.example.sampleapp", "sample_min_supported_version", "10028300"]
             returns:
               ts_expr: "false as boolean"
 fixtures:
   - name: defaultChannelPage
     type: "string"
-    ts_expr: "'HUAWEI_PAY_208_14'"
+    ts_expr: "'SAMPLE_CHANNEL_208_14'"
 ```
 
 ## 设计目的

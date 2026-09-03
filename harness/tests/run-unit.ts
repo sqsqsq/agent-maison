@@ -84,6 +84,9 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'smoke-lifecycle-registry', modulePath: './unit/smoke-lifecycle-registry.unit.test' },
   // e5d8a2c4 T4 用例 #8：在案"第一死"的行为钉（棘轮——T2 落地改行为后本套必红）
   { id: 'goal-park-resume', modulePath: './unit/goal-park-resume.unit.test' },
+  // post-harness 源码漂移路由（`untrusted_source_drift_revalidation`）的运行时回归——
+  // smoke goal/#5 只覆盖 invoke 窗口内的 `phase_write_violation` 那条。
+  { id: 'goal-post-harness-drift', modulePath: './unit/goal-post-harness-drift.unit.test' },
   { id: 'goal-product-preflight', modulePath: './unit/goal-product-preflight.unit.test' },
   { id: 'host-replay-fixes', modulePath: './unit/host-replay-fixes.unit.test' },
   // plan c6a9e4d2 t2/t3：Windows containment 装帧 + guardian 接管对账矩阵（只读投影/匹配才终止）
