@@ -1,6 +1,8 @@
 ---
 name: provider 通道 per-TC 机器证据绑定 — 当前 run 身份与证据闭环
-version: 3.0.0
+version: 3.2.0
+deferred_to: 3.2.0
+# 版本说明：原在 3.0.0 窗口 → 2026-09-03 用户裁决顺延 3.2.0。理由：capability 注册表当前只有 hylyre / hylyre_visual_diff 两个 testing provider，二者各有自己的 per-TC 绑定；hylyre 之外没有任何真实 provider producer，而本 plan T1 自身要求「无真实 producer 不得先建」。宿主自拟的 perf-probe / gesture-trace id 已由 b3d7e5a1 t2 在计划期拦下。顺延期间 provider 通道 TC 保持 fail-closed（unbound → FAIL/UNVERIFIED）。待性能/手势等 provider 真正立项后再启动。
 todos:
   - id: t1-select-first-real-provider-use-case
     content: T1 选择首个真实 provider 与真实 TC 用例：盘点现有 provider producer、其机器输出、调用入口与宿主需求，选定一个能端到端执行的 capability/provider/use case 作为唯一首批靶点；没有真实 producer 前不得先建多 provider 通用 envelope、registry 扩展或笛卡尔积框架。计划经独立 review 后，为该真实靶点新建独立 OpenSpec change 并先冻结契约，再动生产代码。
@@ -30,7 +32,7 @@ overview: >
 
 # provider 通道 per-TC 机器证据绑定：当前 run 身份与证据闭环（e7cecd22）
 
-状态：**仅建 plan，待独立 review；尚未创建 OpenSpec change，尚未实施。**
+状态：**2026-09-03 顺延 3.2.0（用户裁决，理由见 frontmatter 版本说明）；仅建 plan，待独立 review；尚未创建 OpenSpec change，尚未实施。**
 
 上游边界：plan [`testing回灌纠偏_入口可达性与首失败归因收口_a6c4e9f2`](./testing回灌纠偏_入口可达性与首失败归因收口_a6c4e9f2.plan.md)
 已经交付 `execution_channel`、visual per-TC binding、manual 永久 fail-closed 与 provider fail-closed
