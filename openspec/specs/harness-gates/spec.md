@@ -61,13 +61,25 @@ accidental leakage into the release artifact.
 ### Requirement: check-init probe phase is read-only
 
 The init inspection harness MUST NOT perform filesystem writes during probe.
-Writes previously done in check-init (gitignore ensure, deprecated cleanup,
-auto_overwrite sync) MUST be delegated to init-orchestrate approved tasks.
+Writes previously done in check-init (deprecated cleanup, auto_overwrite sync)
+MUST be delegated to init-orchestrate approved tasks.
+
+check-init MUST NOT read, diagnose, create, or modify the host project's
+`.gitignore` in any phase. The inspection table SHALL NOT contain a `.gitignore`
+inspection row, and no replacement inspection, advisory, or always-SKIP
+placeholder MAY be introduced for it. `check-init.ts` SHALL NOT import
+canonical-gitignore helpers, expose `gitignore_sync` on its report, or export
+gitignore parsing/coverage/advisory helpers from `__testing`.
 
 #### Scenario: check-init probe does not write gitignore
 - **WHEN** harness init phase runs against a project root without `.gitignore`
-- **THEN** the probe completes without creating or modifying `.gitignore`, and
-  inspection #11 reports `MISSING` until S3 `ensure-gitignore` executes
+- **THEN** the probe completes without creating, reading, or modifying `.gitignore`,
+  and the inspection table contains no `.gitignore` row at all
+
+#### Scenario: No compatibility shell replaces the removed inspection
+- **WHEN** the inspection table is enumerated after this change
+- **THEN** it MUST NOT contain any inspection whose target is the host `.gitignore`,
+  under the old index or any renamed/always-SKIP successor
 
 > **Enforced by:** `harness/scripts/check-init.ts`,
 > `harness/scripts/utils/init-task-planner.ts`
@@ -158,21 +170,6 @@ Enforcement: `harness/scripts/utils/phase-transition-policy.ts`
 
 - **WHEN** classifyPhaseVerdict receives INCOMPLETE with deferrable blocking_class per dependency_policy
 - **THEN** it MUST return `defer_external_and_continue_if_allowed`
-
-### Requirement: Init gitignore includes feature goal-runs
-
-The system SHALL include `doc/features/*/goal-runs/` in canonical init `.gitignore` patterns via `ensure-gitignore`, without ignoring the entire `doc/features/` tree.
-
-> **Former enforcement（已无现行实现）**：本 requirement 已由 active change
-> `framework-identity-boundary` 的 REMOVED delta 退役——`canonical-gitignore.ts` 与
-> executor 的 `ensure-gitignore` writer 均已删除，当前代码库**没有任何文件实现它**。
-> 这里刻意不写 `Enforcement:`：不得用现存但无关的文件冒充实现。requirement 本体
-> 保留至 archive，由该 REMOVED delta 承接删除。
-
-#### Scenario: Fresh init adds goal-runs ignore
-
-- **WHEN** `ensureCanonicalGitignore` runs on a project without the pattern
-- **THEN** `.gitignore` MUST gain `doc/features/*/goal-runs/` while retaining existing `doc/features/*/*/reports/*` and `/doc/features/_adhoc/` patterns
 
 ### Requirement: Screen-locked device produces the existing external-block contract
 
@@ -605,6 +602,8 @@ harness-runner 的 personal-setup 前置校验失败时 MUST 在退出前输出�
 
 check-receipt 的 verifier / invoked_via / trace_json / context_exploration / self_check 硬必需块 MUST 先查 evidence policy：`required` 走现有校验；`off` 记 `skipped_by_policy` 不 FAIL；`optional` 缺失仅 WARN；lite feature MUST 整体返回 exit 0 + 顶层 `not_applicable` 机读标注。
 
+verifier 块 MUST 消费共享的 verifier plan 解析结果，而非自行按 `policy.verifier` 二分：`disabled` 记 `skipped_by_policy` / `not_applicable` 且 loader 不调用、JSON 与 MD 与 request 均不要求；`blocked` MUST BLOCKER FAIL 并归因 `verifier_provider_unavailable`；`enabled` 走**身份验真**，按 summary 代际分派——当代只认身份验真通过的 `verifier.report.<subject>.json`，上一代按 grandfather / 指引重跑 harness 二分。回执手填的 `invoked_via` / `report_path` / `verdict` MUST NOT 单独构成通过或失败条件。
+
 #### Scenario: balanced 下 verifier off 的 receipt 通过
 - **WHEN** full×balanced 的 review phase receipt 无 verifier 节
 - **THEN** check-receipt 记 verifier=skipped_by_policy 且 exit 0
@@ -612,6 +611,10 @@ check-receipt 的 verifier / invoked_via / trace_json / context_exploration / se
 #### Scenario: strict 行为不变
 - **WHEN** 缺省 strict 下 receipt 缺 verifier verdict
 - **THEN** BLOCKER FAIL（与现状一致）
+
+#### Scenario: off 档不因缺 verifier 机器证据而失败
+- **WHEN** `policy.verifier=off` 的阶段既无 verifier JSON 也无 MD
+- **THEN** check-receipt MUST 记 `skipped_by_policy` 并 exit 0，且 MUST NOT 调用证据 loader
 
 > **Enforced by:** `harness/scripts/check-receipt.ts`
 
@@ -871,21 +874,19 @@ Enforcement: `harness/scripts/check-spec.ts`, `harness/scripts/check-testing.ts`
 
 ### Requirement: P0 skips and unreachable screens never launder into clean passes
 
-A skipped or unexecuted P0 TC and an unreachable required P0 visual target SHALL FAIL unless the cause is an enumerated external/capability blockage bound to real machine evidence, in which case the phase SHALL defer. An explicit skip or unexecuted case whose derive manifest contains only a TC id and no StepResult SHALL remain a testing-owned FAIL and SHALL produce zero automatic coding candidates; Maison MUST NOT infer a cause from the TC name, associated AC, or report prose. Only the existing capability-resolution path may classify a missing provider as capability defer. Missing status and unregistered trace skips remain testing-owned FAIL. New runs MUST NOT emit `await_human_p0_skip` or generic human-gate deferral for this evidence gap.
+**Superseded by `testing-stepresult-evidence-consumption` T8a.** A skipped or unexecuted P0 TC, and a P0 visual target registered unreachable, SHALL FAIL unless the cause is an enumerated external/capability blockage bound to real machine evidence, in which case the phase defers. An explicit skip or unexecuted case whose derive manifest has no StepResult SHALL remain testing-owned FAIL with zero automatic coding candidates; Maison MUST NOT infer a cause from TC names or report prose. Only the existing capability-resolution path may prove a missing provider and use the external/capability defer route. The dedicated headless halt `await_human_p0_skip` remains retired, and all P0 visual targets unreachable SHALL FAIL outright.
 
-Enforcement: `harness/scripts/check-testing.ts`, `harness/scripts/utils/p0-semantic-gates.ts`, `harness/scripts/utils/repair-candidates.ts`, `harness/scripts/goal-runner.ts`
+Enforcement: `harness/scripts/check-testing.ts`, `harness/scripts/utils/{p0-semantic-gates,goal-failure-classifier,adjudication}.ts`
 
-The same execution-completeness rule SHALL cover every top-level test-plan TC, including P1 and P2: a trace/report that omits an explicit-skip or unexecuted TC MUST keep testing FAIL even when all represented P0 cases pass. A trace case present with native non-passing axes remains a testing failure; only a machine-proven provider capability absence may defer.
+#### Scenario: unexecuted explicit skips remain testing-owned
 
-#### Scenario: Explicit skip without StepResult stays testing-owned
+- **WHEN** a derived plan registers TC-018 as an explicit skip with no StepResult, no waiver, and no machine-proven provider absence
+- **THEN** `p0_coverage_integrity` SHALL FAIL as testing-owned with zero automatic coding candidates and SHALL not emit `phase_halt(await_human_p0_skip)` or a guessed coding route
 
-- **WHEN** a derived plan registers a P0 TC as an explicit skip without a waiver, StepResult, or machine-proven capability absence
-- **THEN** `p0_coverage_integrity` SHALL FAIL, no automatic coding candidate SHALL be created, and the run SHALL remain in testing remediation
+#### Scenario: explicit skips without machine cause do not gain a coding route
 
-#### Scenario: A machine-proven provider absence may defer
-
-- **WHEN** a P0 case has no StepResult and the existing capability resolution proves the required provider is unavailable
-- **THEN** the phase SHALL use the existing capability/external defer path without guessing a product or coding failure
+- **WHEN** a derived plan registers 10 of 17 P0 TCs as explicit_skip with no waiver receipts and no StepResults
+- **THEN** the gate SHALL FAIL and all ten SHALL remain testing-owned; no TC name, AC association, or report prose SHALL create `code_regression` or a coding candidate
 
 ### Requirement: Declared fidelity is reconciled against detected intent
 
@@ -1196,7 +1197,9 @@ Enforcement: `harness/harness-runner.ts`, `harness/scripts/utils/quality-axes.ts
 
 ### Requirement: Plan closure proves contract file-reference authorization
 
-Before plan closure can pass, the harness SHALL parse `contracts.yaml` through the production contracts loader, resolve every schema-defined file reference into a normalized in-memory view, and require `references ⊆ contracts.files`. File references SHALL include at least `resource_keys[*].path`, media paths, page/route registration files, HAR index/builder/export files and every other contracts-schema field that identifies a materialized file. A missing membership MUST produce a plan-phase BLOCKER naming the path and source field.
+Before plan closure can pass, the harness SHALL parse `contracts.yaml` through the production contracts loader, resolve every schema-defined file reference into a normalized in-memory view, and require `references ⊆ contracts.files`. File references SHALL include at least `resource_keys[*].path`, media paths, the navigation registration/configuration file list `navigation.config_files[]`, HAR index/builder/export files and every other contracts-schema field that identifies a materialized file. A missing membership MUST produce a plan-phase BLOCKER naming the path and source field.
+
+Plan closure SHALL adjudicate path safety, normalization and authorization only. Physical existence of an authorized path is NOT a plan-phase verdict: a plan MAY declare a file that coding will create, and the existence verdict SHALL remain the coding-phase `file_completeness` check over `contracts.files`.
 
 Enforcement: `harness/scripts/check-plan.ts`, `harness/scripts/utils/spec-loader.ts`, `harness/scripts/utils/contract-reference-closure.ts`, `specs/phase-rules/plan-rules.yaml`
 
@@ -1214,6 +1217,11 @@ Enforcement: `harness/scripts/check-plan.ts`, `harness/scripts/utils/spec-loader
 
 - **WHEN** every normalized schema-defined file reference is already a member of normalized `contracts.files`
 - **THEN** the new gate SHALL not add a warning or failure
+
+#### Scenario: Authorized navigation config file is not materialized yet
+
+- **WHEN** `navigation.config_files` names a registration file that is present in `contracts.files` but does not exist on disk
+- **THEN** plan closure SHALL pass, and the missing file SHALL be adjudicated by the coding-phase `file_completeness` check instead
 
 ### Requirement: Contract reference expansion has one recovery path
 
@@ -1686,3 +1694,650 @@ Enforcement: `harness/scripts/utils/derived-hylyre-plan.ts`, `harness/scripts/ut
 - **WHEN** an adhoc steps file contains `start_app` in any position
 - **THEN** the adhoc linter SHALL reject it as before
 
+### Requirement: change phase gate
+
+`change` phase MUST 由 `check-change-lite.ts` 校验：change.md 章节存在性、scope 模块名对照 architecture/catalog 合法、验收与任务 checkbox 语法合规。
+
+#### Scenario: scope 模块名不合法
+- **WHEN** change.md 的 in_scope 模块不存在于 catalog/architecture
+- **THEN** change phase BLOCKER FAIL
+
+> **Enforced by:** `harness/scripts/check-change-lite.ts`
+
+### Requirement: exit gate is the single lite checkpoint
+
+`exit` phase MUST 一次性执行：编译 + lint（profile provider）+ `diff_within_scope` + 验收 checkbox 全勾校验 +（acceptance 存在 unit 层条目时）UT。`diff_within_scope` 在 lite 下 MUST NOT 被豁免（不降档红线）。
+
+#### Scenario: checkbox 未全勾
+- **WHEN** exit 运行时 change.md 验收清单存在未勾项
+- **THEN** exit FAIL，feature 不得判闭环
+
+#### Scenario: acceptance 无 unit 条目
+- **WHEN** feature 的验收清单不含 unit 层条目
+- **THEN** exit 不强制 UT，其余检查照跑
+
+> **Enforced by:** `harness/harness-runner.ts`, `harness/scripts/check-change-lite.ts`, 复用 coding 检查子集
+
+### Requirement: Runner filters DAG by track
+
+harness-runner MUST 按 feature 的 track（经 C0 `resolvePhaseChain`）过滤合法 phase 与 requires；对 lite feature 请求 full-only phase（如 plan）MUST 明确报错而非静默跑。
+
+#### Scenario: lite feature 误跑 plan phase
+- **WHEN** `--phase plan --feature <lite-feature>` 被执行
+- **THEN** runner 报"phase 不在该 feature track 的合法集"并 exit 非零
+
+> **Enforced by:** `harness/harness-runner.ts`, `harness/scripts/utils/runtime-policy.ts`
+
+### Requirement: Goal-env source-mutation gating shares the review-closure baseline and never trusts self-reported approvals
+
+In the goal orchestration environment, the UT source-mutation gate SHALL judge drift against the review closure attestation baseline through the same reconciliation and classification used by the runner, never against the run-start diff: legitimate coding-phase changes are outside the adjudication domain. Agent-written gap-notes and preauthorization SHALL remain provenance only. Any post-review protected-source drift SHALL fail the current invocation, invalidate affected closure trust, and route through the responsible-phase write-boundary/backtrack contract; a missing or corrupt review attestation SHALL fail closed without a run-start fallback. These blockers MUST NOT be registered `human_only` or released by a fingerprint-matching receipt. The non-goal path SHALL use the same machine boundary when invocation attribution is available and otherwise fail closed for owner revalidation.
+
+Enforcement: `harness/scripts/check-ut.ts`, `harness/scripts/utils/mutation-authorization.ts`, `harness/scripts/utils/goal-failure-classifier.ts`, `harness/scripts/goal-runner.ts`
+
+#### Scenario: legitimate coding work is not flagged by the UT gate
+
+- **WHEN** coding legitimately changed 36 files before review closure and only 1 file drifted after review
+- **THEN** the goal-env gate SHALL flag only the 1 post-review drift as `goal_post_review_source_mutation_unresolved` and the 36 coding changes SHALL not block
+
+#### Scenario: the self-signed seam no longer whiplashes harness-PASS into runner-HALT
+
+- **WHEN** an agent registers its own seam in gap-notes and modifies protected source after review closure in a goal run
+- **THEN** the harness gate itself SHALL FAIL with `goal_post_review_source_mutation_unresolved` instead of passing on the self-approval, and runner reconciliation SHALL invalidate trust and route to the responsible owner
+
+#### Scenario: a deleted attestation cannot be washed through a fallback baseline
+
+- **WHEN** the review closure attestation is missing while a goal run reaches ut
+- **THEN** the gate SHALL fail closed as `goal_review_closure_baseline_unavailable` without computing a run-start diff or consulting gap-notes
+
+### Requirement: UT scope is independent of Git staging and honest about feature ownership
+
+The hmos-app UT harness SHALL discover test files from the filesystem. Feature-scoped selection SHALL use explicit current-feature context paths and Git working paths as additive hints, and Git staging MUST NOT be required. Because AC, BD, and branch identifiers are feature-local, an `it()` tag by itself MUST NOT assign a filesystem test to the active feature. When no resolvable path hint exists, the harness SHALL retain the deterministic `scoped = all` fallback and report why it was used.
+
+#### Scenario: Ignored test is explicitly declared by the active feature
+- **WHEN** a filesystem-discovered `*.test.ets` file is ignored by Git and its path is declared in the active feature's context-exploration artifact
+- **THEN** that file MUST appear in the scoped UT set without `git add`
+- **AND** the scope diagnostics MUST identify the context path as its source
+
+#### Scenario: Two features reuse the same local acceptance ID
+- **WHEN** an old test and a current test both contain `[AC-01]` but only the current test has a current-feature Git or context path hint
+- **THEN** the current test MUST be scoped
+- **AND** the old test MUST NOT be added merely because its local tag equals the active feature's `AC-01`
+
+#### Scenario: Consumer project is not a Git repository
+- **WHEN** UT runs in a non-Git consumer project
+- **THEN** filesystem discovery and explicit context scoping MUST still operate
+- **AND** absent all path hints the harness MUST use `fallback:all` with a non-Git diagnostic rather than omit the tests
+
+> **Enforced by:** `profiles/hmos-app/harness/ut-file-scope.ts`, `harness/scripts/utils/ut-it-blocks.ts`, `harness/scripts/check-ut.ts`
+
+### Requirement: UT artifact loading distinguishes missing invalid and loaded inputs
+
+The UT harness SHALL preserve and report the observation state of DAG, testability-audit, mock-plan, and coverage-evidence inputs. A candidate that exists but cannot be parsed or has an invalid root structure MUST produce a path-specific BLOCKER and MUST NOT be reported as missing, silently skipped, or collapsed into an empty evidence set. Diagnostics SHALL include the canonical path or probed directories and a bounded parser or validation error.
+
+#### Scenario: DAG YAML is malformed
+- **WHEN** a `*.dag.yaml` candidate exists in an archived or ephemeral DAG directory but YAML parsing fails
+- **THEN** the UT report MUST identify that candidate path and parser failure as a BLOCKER
+- **AND** downstream coverage output MUST NOT imply that no DAG path was searched
+
+#### Scenario: Coverage evidence JSON is malformed
+- **WHEN** the canonical `<features_dir>/<feature>/ut/reports/coverage-evidence.json` exists but is invalid JSON or has an invalid document shape
+- **THEN** `ut_coverage_evidence_present` MUST report the exact canonical path and validation problem
+- **AND** it MUST NOT describe the file as missing
+
+#### Scenario: Optional UT machine artifact exists but is corrupt
+- **WHEN** testability-audit or mock-plan exists but contains an unparseable YAML document or invalid root shape
+- **THEN** the harness MUST surface the corrupt artifact as a BLOCKER even if a later consumer would otherwise treat an empty parse result as optional
+
+> **Enforced by:** `harness/scripts/check-ut.ts`, `harness/scripts/utils/coverage-evidence.ts`, `harness/scripts/utils/ut-artifact-parse.ts`, `harness/scripts/utils/ut-artifact-validate.ts`
+
+### Requirement: UT coverage gates report their actual evidence contracts
+
+Each UT coverage gate SHALL state the evidence sources it actually evaluates and SHALL list the bounded set of relevant files or identifiers it inspected on failure. `acceptance_coverage` SHALL evaluate DAG linkage only and MUST NOT instruct the user to add or stage an `it()` case. `ut_case_per_unit_ac` and `ut_coverage_evidence_resolves` SHALL distinguish UT-tag, DAG, ac-coverage, and mapping attempts. `ut_coverage_evidence_present` SHALL require the canonical evidence file and MUST NOT suggest that another evidence source substitutes for presence.
+
+#### Scenario: Tagged UT exists but DAG lacks linkage
+- **WHEN** an in-scope test has `[AC-01]` but every loaded DAG omits `AC-01` from top-level and node-level linkage
+- **THEN** `acceptance_coverage` MUST fail with a DAG-only explanation and the loaded DAG paths
+- **AND** UT-tag-aware gates MAY independently pass from the tagged case
+
+#### Scenario: Skill-authored mapping claims an unresolved source
+- **WHEN** a coverage-evidence mapping exists but its declared source has no matching underlying UT tag, archived/ephemeral DAG linkage, or ac-coverage fact
+- **THEN** `ut_coverage_evidence_mappings_complete` MUST identify the scope ID, declared source, and failed resolution reason
+
+#### Scenario: AC and BD share the same numeric suffix
+- **WHEN** acceptance contains `AC-01` and `BD-01` but a test name contains only `[AC-01]`
+- **THEN** the harness MUST count evidence for `AC-01` only
+- **AND** it MUST NOT treat `[AC-01]` as coverage for `BD-01`
+
+#### Scenario: Boundary-only test uses a direct BD tag
+- **WHEN** a test name starts with `[BD-01]` for a declared boundary
+- **THEN** the traceability-name gate MUST accept it without requiring an unrelated AC or branch prefix
+- **AND** documentation and gate suggestions MUST teach `[BD-<id>]` as a supported direct form
+
+> **Enforced by:** `harness/scripts/check-ut.ts`, `harness/scripts/utils/ac-coverage-report.ts`, `harness/scripts/utils/coverage-evidence.ts`, `profiles/hmos-app/phase-rules-overlays/ut-rules.overlay.yaml`
+
+### Requirement: UT feature rules only govern the feature-owned target set
+
+The UT harness SHALL resolve a target responsibility set from explicit user targets (`MAISON_UT_TARGETS`) plus one trusted pre-agent baseline. For a goal run, the baseline MUST come only from the validated `manifest.run_base_sha` birth contract shared with the UI scope gate; `HARNESS_DIFF_BASE_REF`, `trace.start_commit`, bare `HEAD` and a legacy coding-base file MUST NOT override or replace a new-schema goal baseline. For a non-goal manual harness, `HARNESS_DIFF_BASE_REF` remains a supported explicit baseline. Feature-scoped rules (MockKit policy, traceability tags, import whitelist, coverage gates) MUST consume only this target set. Legacy content that existed at the baseline MUST NOT be forced into the active feature's mock-plan, contracts, or AC tags. Without a trusted required baseline the harness SHALL fail closed to full scoped accountability.
+
+#### Scenario: Untouched legacy MockKit test no longer blocks the feature
+- **WHEN** a legacy test file that exists at the trusted baseline imports MockKit and is swept into scope by module discovery or context mention
+- **THEN** `ut_hypium_mockkit_policy` MUST NOT require the active feature's mock-plan or contracts to register it
+- **AND** the exemption MUST be disclosed with the baseline anchor in the check details
+
+#### Scenario: New cases added inside a legacy file are still governed
+- **WHEN** the active feature adds new `it()` cases or new mock usages (counted as a multiset, so re-mocking an already-mocked method counts) inside a baseline-existing file
+- **THEN** those additions MUST be governed by tag and MockKit rules at case level
+- **AND** baseline-existing cases and mock usages in the same file MUST remain exempt
+
+#### Scenario: Committed new tests are not laundered into legacy
+- **WHEN** new UT files are committed after goal-run birth
+- **THEN** the goal harness MUST compare them against the persisted `manifest.run_base_sha` rather than current HEAD, `trace.start_commit` or `HARNESS_DIFF_BASE_REF`
+- **AND** it MUST include them in the target responsibility set
+
+#### Scenario: Non-goal manual harness keeps its explicit env baseline
+- **WHEN** UT is run manually outside goal orchestration with a valid `HARNESS_DIFF_BASE_REF`
+- **THEN** the harness SHALL retain the existing env-baseline behavior
+
+> **Enforced by:** `harness/scripts/utils/ut-target-resolver.ts`, `harness/scripts/utils/goal-run-baseline.ts`, `harness/scripts/check-ut.ts`, `harness/scripts/utils/ut-artifact-parse.ts`
+
+### Requirement: Simulated diagnostics never outrank the real toolchain
+
+When the profile provides a real compile capability, the simulated TypeScript check (`ut_tsc_compiles`) SHALL report errors as WARN-level diagnostics and the only compile BLOCKER SHALL be the real toolchain compile gate. Statically unresolvable mock usages SHALL be reported as WARN, never as proven violations. Only when the profile declares the real compile capability as SKIP may the simulated check remain a FAIL-level gate.
+
+#### Scenario: Legacy file fails simulated tsc but compiles for real
+- **WHEN** a baseline-existing test file produces a TypeScript error under the simulated check while the real toolchain compiles the same module successfully
+- **THEN** `ut_tsc_compiles` MUST be WARN with guidance not to modify legacy code for it
+- **AND** the UT run MUST NOT be blocked by the simulated result
+
+> **Enforced by:** `profiles/hmos-app/harness/ut-host-impl.ts`, `harness/scripts/check-ut.ts`
+
+### Requirement: Suite failure ratchet uses an authorized baseline only
+
+The UT execution gate SHALL exempt only non-target failures listed in an authorized suite failure baseline (placed by the user or sampled by orchestration before the agent acts). The current run MUST NOT create or grow the baseline; it MAY only shrink it when listed failures no longer occur. Target-case failures MUST never be exempted. Case-level failures MUST NOT short-circuit remaining selected modules, exemption MUST be decided before interpreting a non-zero test exit code, and a PASS verdict REQUIRES real execution results from every selected module. Feature verdict and suite health SHALL be reported as separate conclusions.
+
+#### Scenario: No baseline means no exemption
+- **WHEN** real execution reports failures and no authorized baseline file exists
+- **THEN** all failures MUST be counted against the run (suite_health=UNKNOWN)
+- **AND** the details MUST explain the two legitimate ways to establish a baseline
+
+#### Scenario: Historic failure exempted, new regression still fails
+- **WHEN** an authorized baseline lists a legacy failure and the current run reproduces it alongside one new non-target failure
+- **THEN** the listed failure MUST be exempted and reported as suite_health=DEGRADED
+- **AND** the new failure MUST fail the gate
+
+> **Enforced by:** `harness/scripts/utils/ut-suite-baseline.ts`, `profiles/hmos-app/harness/ut-host-impl.ts`
+
+### Requirement: Destructive device remediation requires user confirmation
+
+When installation is rejected due to a version downgrade, the UT gate SHALL classify it as needing user confirmation, with a data-loss warning, and MUST NOT advise raising `app.versionCode`, uninstalling automatically, or setting uninstall environment variables from the UT chain (which has no uninstall executor). The shared low-level install diagnosis MUST stay scenario-neutral because the testing chain owns a controlled uninstall-retry channel.
+
+#### Scenario: Runtime downgrade maps to confirmation, not toolchain
+- **WHEN** preflight misses the downgrade and the real `hdc install` fails with a downgrade error
+- **THEN** the failure MUST be classified `install_needs_confirmation`/`needsConfirmation` rather than a generic install/toolchain failure
+- **AND** the suggestion MUST hand the decision to the user while preserving the fact that compilation passed
+
+> **Enforced by:** `profiles/hmos-app/harness/device-install-diag.ts`, `profiles/hmos-app/harness/ut-hvigor-test-failure.ts`, `profiles/hmos-app/harness/hdc-runner.ts`
+
+### Requirement: Device-test run artifacts are written to a fresh timestamped directory
+
+每次执行 device_test.run 前，check-testing MUST 在 `featurePhaseReportsDir/reports` 下新建 `<timestamp>/hylyre/` 目录（timestamp 为 UTC ISO 压缩形态 `<YYYYMMDD>T<HHMMSS>Z-<ms>`，保留毫秒精度，同秒连续执行仍须互异），并把选中的 `test-plan.hylyre.md` 及其同目录 `derive-manifest.json`（若存在）原样复制到新目录；本轮 `test-report.md` / `trace.json` / `failures/` MUST 全部写入新目录。目录认领 MUST 为排他式原子 mkdir（非 recursive；已存在即 `EEXIST`，fail-closed 零写入，不覆盖、不复用旧 timestamp 目录，不存在 existsSync+recursive mkdir 的 TOCTOU 竞态）。原始派生目录 MUST 保持字节不变（只读输入）。复制件 mtime MUST 以本次执行为时点，使既有 mtime 选择器自然落在新目录（消费者无需改动）。
+
+Enforcement: `harness/scripts/check-testing.ts`, `harness/scripts/utils/derived-hylyre-plan.ts`
+
+#### Scenario: 连续执行生成两个独立目录
+
+- **WHEN** 同一源派生计划被连续选中执行两次（含同秒不同毫秒）
+- **THEN** 生成两个不同 timestamp 的新执行目录，第二次执行产物写入第二个目录，选择器（mtime 最新）指向第二次目录
+
+#### Scenario: 目录冲突 fail-closed（原子认领）
+
+- **WHEN** 目标 `<timestamp>/hylyre/` 目录已存在（并发/重入，排他 mkdir 得 `EEXIST`)
+- **THEN** 本轮执行抵返 BLOCKER FAIL，不调用 runner、不覆盖旧目录、不写入任何文件
+
+### Requirement: Executed StepResult assertion mismatches are machine-fixable facts consumed by the candidate route
+
+The testing summary writer SHALL project a `p0_coverage_integrity` FAIL finding into an ordinary `RepairCandidate(category=coding)` only when an executed case has an authoritative Hylyre `StepResult` with `failure_kind=assertion` and `failure_code=assertion_mismatch`, and the existing machine conjunction for that finding holds. The projection SHALL retain the existing check id, TC list/gate details, stable item fingerprint, and `source_phase` — no `skip_reason_class` / `responsible_phase` agent-reported fields and no registration of the whole check into the check-id owner registry. Explicit-only or otherwise unexecuted findings with no `StepResult` SHALL remain testing-owned with zero coding candidates. Candidates SHALL NOT be cleared by a negative product conclusion: `report_validity` SHALL constrain only report free-text-derived (review) candidates; machine check / verifier-conjunction candidates SHALL survive `report_validity=FAIL`. External/toolchain machine signals SHALL keep suppressing candidates through the existing DEFERRED path; prose claiming "external" without a machine signal SHALL not create or suppress a coding route.
+
+Enforcement: `harness/scripts/utils/repair-candidates.ts`, `harness/harness-runner.ts`
+
+#### Scenario: a FAIL summary keeps an executed assertion-mismatch candidate
+
+- **WHEN** `report_validity=FAIL` while an executed case's `p0_coverage_integrity` finding has the `StepResult`-backed `assertion + assertion_mismatch` route and three visual candidates exist in the same summary
+- **THEN** the assertion-mismatch candidate and the visual candidates SHALL still be produced and assess SHALL backtrack to coding; only review free-text candidates SHALL be suppressed
+
+### Requirement: Device-scope P0 acceptance criteria require a P0-priority test case anchor
+
+The `acceptance_to_test_case` traceability gate SHALL additionally assert, for every criterion with `ut_layer ∈ {device, both}` and `priority=P0`, that at least one test case with `priority=P0` references that criterion (reusing the existing `parsePlanTcEntries` parser — no second priority/AC parser, no new check id / failure kind / candidate). A TC downgraded P0→P2 SHALL NOT escape the P0 full-denominator gate: the reference alone (ordinary coverage) is insufficient, and the missing P0-priority anchor SHALL fail `acceptance_to_test_case` as BLOCKER owned by testing. The details SHALL list ordinary AC coverage and P0-priority alignment coverage side by side.
+
+Enforcement: `harness/scripts/check-testing.ts`
+
+#### Scenario: a P0 AC downgrade leaves the denominator
+
+- **WHEN** the only TC referencing device P0 AC-5 is downgraded from P0 to P2 while the AC reference remains
+- **THEN** `acceptance_to_test_case` SHALL FAIL (BLOCKER, testing) naming AC-5 as having no P0-priority TC; when another P0 TC references AC-5 the gate SHALL pass
+
+### Requirement: Weakening-flag reports are judged by their conclusion, not by trace-faithful status words
+
+Under a weakening flag (`--skip-assert-expected`), the test-report SHALL keep projecting the Hylyre trace four-state table verbatim (报告/报告 "通过" included), with the flag disclosed and the "action-chain completion ≠ acceptance pass" distinction stated. `pass_rate_calculated` SHALL NOT fail `reportedPass > 0` per se; instead it SHALL fail when the weakening flag is present AND the report conclusion (parsed by the existing conclusion parser) declares 达标 — action-chain success SHALL NOT wash into full acceptance. Missing disclosure, overall-rate overclaim, trace/report mismatches, and the fresh negative-summary contradiction SHALL remain FAIL; the trace ceiling and P0 full-denominator constraints stay.
+
+Enforcement: `harness/scripts/check-testing.ts`, `harness/scripts/utils/testing-trace-gates.ts`
+
+#### Scenario: a faithful trace projection with a negative conclusion passes the report gate
+
+- **WHEN** the command carries `--skip-assert-expected`, the table projects the trace's 通过 verbatim with disclosure and the distinction statement, and the conclusion is 不达标
+- **THEN** `pass_rate_calculated` SHALL PASS (same verdict through the `quality-axes.ts` report-validity consumption); changing the conclusion to 达标 SHALL FAIL directly without relying on a fresh negative summary
+
+### Requirement: Goal UI and UT gates share one baseline resolver
+
+UI scope and UT target gates in a goal run SHALL consume the same `resolveGoalRunBaseline` result from `manifest.run_base_sha`. A new-schema run is identified by `run_created`; when that event exists, a missing or invalid manifest baseline required by the chain MUST fail and MUST NOT fall back to `coding-base.json`. Only a run without `run_created` and with both a valid authoritative legacy `run_start` and valid legacy anchor MAY use the legacy reader. Goal env construction SHALL remove inherited `HARNESS_DIFF_BASE_REF` and warn once; non-goal harness behavior remains unchanged.
+
+Enforcement: `harness/scripts/utils/goal-run-baseline.ts`, `harness/scripts/utils/ui-scope-gate.ts`, `harness/scripts/utils/ut-target-resolver.ts`, `harness/scripts/utils/phase-state.ts`
+
+#### Scenario: New run cannot fall back after base deletion
+
+- **WHEN** a run has `run_created`, its required `manifest.run_base_sha` is deleted, and a valid-looking `coding-base.json` is present
+- **THEN** both goal gates MUST fail the runtime-owned baseline contract and MUST NOT consult the legacy file
+
+#### Scenario: Goal env baseline is ignored and scrubbed
+
+- **WHEN** a goal run inherits `HARNESS_DIFF_BASE_REF`
+- **THEN** baseline resolution SHALL still use the manifest, child gate env SHALL omit the variable, and startup SHALL emit at most one warning
+
+### Requirement: Runtime-owned baseline failures are not agent repair work
+
+Missing or corrupt `run_created`, invalid required `run_base_sha`, legacy-era ambiguity and goal diff unavailability caused by baseline resolution SHALL use the existing goal failure classifier and MUST be classified non-`agent_fixable`. They MUST NOT be returned to the content agent as a retry task or registered in a parallel taxonomy.
+
+Enforcement: `harness/scripts/utils/goal-failure-classifier.ts`, `harness/scripts/utils/goal-run-baseline.ts`, `harness/scripts/goal-runner.ts`
+
+#### Scenario: Missing birth fact halts outside the content loop
+
+- **WHEN** a goal gate cannot obtain its required baseline because `run_created` or `run_base_sha` is missing/corrupt
+- **THEN** the blocker SHALL be runtime-owned and non-`agent_fixable`, with no content retry consuming an agent attempt
+
+### Requirement: One parse boundary decides contracts field legality
+
+The contracts parser SHALL be the single authority that recognizes file-bearing `contracts.yaml` field names. The consumer relation SHALL be one-directional: every canonical field MUST have an identified production consumer, and a field whose only existence is the parser's own inventory MUST NOT be canonical. The converse MUST NOT hold — a consumer reading a non-canonical raw field does NOT make that field legal; such a read is a defect to be migrated onto the parse boundary, and the schema SHALL be extended only by a deliberate decision recorded here, never as a consequence of the read existing. The `navigation` section SHALL expose exactly one file-bearing field, `config_files: string[]`, naming navigation registration/configuration files; the retired speculative synonyms (`main_pages_file`, `route_map_file`, `page_registration_file`, `route_registration_file`, `page_files`, `route_files`, `pages[]`, `routes[]`) SHALL be treated as unknown file-like fields.
+
+A downstream consumer MUST NOT re-interpret raw `contracts.navigation` fields. It SHALL consume the normalized reference view through a pure selector over the resolved closure, and a consumer declaration MUST NOT widen the set of legal contracts fields.
+
+Enforcement: `harness/scripts/utils/contract-reference-closure.ts`, `harness/scripts/utils/types.ts`, `profiles/hmos-app/harness/coding-host-rules.ts`, `specs/artifact-schemas/contracts.schema.yaml`
+
+#### Scenario: Retired navigation synonym is rejected
+
+- **WHEN** `contracts.yaml` declares `navigation.main_pages_file` or `navigation.pages[].registration_file`
+- **THEN** plan closure MUST report `unconsumed_file_field` for that source and MUST NOT resolve it into a reference
+
+#### Scenario: Consumer reads navigation paths through the boundary
+
+- **WHEN** the hmos-app coding host needs the navigation registration files
+- **THEN** it SHALL select them by reference kind from the resolved closure, and a raw read of `contracts.navigation` outside the parse-boundary module SHALL fail the architecture guard
+
+#### Scenario: Zero-consumer field stays rejected
+
+- **WHEN** `contracts.yaml` carries a `registration_points` collection that no production code consumes
+- **THEN** plan closure MUST keep reporting it as an unconsumed file-like field and MUST NOT normalize it into a supported alias
+
+### Requirement: Unknown nested contracts containers cannot hide file references
+
+The unconsumed-file-field detection MUST NOT depend on the outermost key matching the file-like name pattern. When an unknown field name does not match that pattern and its value is an object or array, the parser SHALL descend into the unknown subtree and report any file-like key carrying a file-like value as `unconsumed_file_field`, identifying the full source path. The descent MUST NOT be bounded by a nesting depth: a depth limit that silently stops is itself a fail-open, because burying the path deeper defeats the gate. Termination SHALL come from cycle detection over already-visited containers, not from truncation, and that protection SHALL cover **every** traversal on the rejection path — including the value-side file-like test — so that a self-referential YAML anchor cannot raise a stack overflow. An exception is the worst outcome available here: the closure runs during spec loading, so a throw aborts the load entirely and no structured `unconsumed_file_field` is ever produced. This descent SHALL remain rejection-only: it MUST NOT resolve references, MUST NOT authorize paths, and MUST NOT create a second interpretation of the document.
+
+Enforcement: `harness/scripts/utils/contract-reference-closure.ts`, `harness/scripts/check-plan.ts`
+
+#### Scenario: File path nested under a non-file-like container
+
+- **WHEN** `contracts.yaml` contains `navigation.routes[].file` or a deeper `navigation.groups[].tabs[].registration_file`
+- **THEN** plan closure MUST report each as `unconsumed_file_field` with its full source path instead of silently ignoring it
+
+#### Scenario: File path buried below any fixed nesting budget
+
+- **WHEN** a file-like key carrying a repository path sits deeper than any implementation nesting budget under unknown containers
+- **THEN** plan closure MUST still report it as `unconsumed_file_field` rather than return an empty issue set
+
+#### Scenario: Self-referential anchor inside a file-like value
+
+- **WHEN** a file-like key's value is a YAML structure that references itself through an anchor
+- **THEN** the parser MUST still report `unconsumed_file_field` for that key and MUST NOT raise a stack overflow that aborts spec loading
+
+#### Scenario: Rejection scan grants no authorization
+
+- **WHEN** the nested scan encounters a file-like leaf
+- **THEN** it SHALL only produce an invalid-reference issue and SHALL NOT add the path to the resolved reference set
+
+### Requirement: Navigation registration verdicts never fake success with SKIP
+
+The hmos-app `page_registration` structure check SHALL first determine whether the feature declares any `nav_destination` component. With no such component the check MAY SKIP. Once navigation destinations exist, an empty `navigation.config_files` declaration and a declared-but-unreadable registration file SHALL both be BLOCKER failures naming the gap; the check MUST NOT report SKIP for either. Only a readable registration set SHALL be adjudicated on its content.
+
+Enforcement: `profiles/hmos-app/harness/coding-host-rules.ts`
+
+#### Scenario: Navigation destinations without a registration declaration
+
+- **WHEN** components declare `nav_destination` but `navigation.config_files` is empty
+- **THEN** `page_registration` MUST fail as a missing registration declaration rather than skip
+
+#### Scenario: Declared registration file is absent
+
+- **WHEN** `navigation.config_files` names a file that cannot be read
+- **THEN** `page_registration` MUST fail and name the unreadable path in the same run
+
+### Requirement: Unconsumed file-like contract fields fail closure
+
+The plan contract loader SHALL retain an explicit inventory of supported file-reference fields. Any structured contracts field outside that inventory whose key and value identify a materialized project file MUST produce an invalid-reference BLOCKER; it MUST NOT be silently ignored merely because the artifact schema permits compatibility properties.
+
+Enforcement: `harness/scripts/utils/spec-loader.ts`, `harness/scripts/utils/contract-reference-closure.ts`, `harness/scripts/check-plan.ts`
+
+#### Scenario: Navigation route-map key is misspelled
+- **WHEN** `contracts.yaml` contains `navigation.route_map: src/routes.ts` instead of the registered `route_map_file`
+- **THEN** plan closure reports the source field as unconsumed/invalid and does not return an empty reference set
+
+#### Scenario: Extension metadata contains no file path
+- **WHEN** a compatibility extension contains scalar metadata that is not file-like
+- **THEN** the extension remains accepted and does not gain file authorization
+
+### Requirement: Direct-mode UT source-mutation gating is attestation-first and never accepts partial closure evidence as a downgrade licence
+
+Outside the goal orchestration environment, the UT source-mutation gate SHALL select its baseline by **baseline availability**, not by orchestration identity. It SHALL first determine whether the review phase is **formally closed** — the review `summary.json` satisfying `schema_version == "1.2"` AND `closure_status == "closed"` AND `closure_commit.schema_version == "1.0"` — and only then consult the review closure attestation. This order MUST NOT be inverted: the attestation is written before the final summary rename, so a crashed closure can leave an orphan attestation whose presence proves nothing about closure, and the orphan's **contents** MUST NOT be read or trusted.
+
+When review is formally closed and the attestation is readable, the gate SHALL adjudicate post-review drift by per-file content hash reconciliation and SHALL NOT depend on git commit state: coding-phase changes that the closed review already covered are outside the adjudication domain regardless of whether they were ever committed, and committing a post-review source edit SHALL NOT remove it from the drift set.
+
+The gate SHALL fail closed with `review_closure_baseline_unavailable`, without falling back to any git diff and without consulting gap-notes, user replies or any authorization list, whenever the closure evidence is **partial**: review formally closed but the attestation missing or unreadable; the closure state unreadable or unparseable; or a review closure attestation present on disk while the summary is missing, `open`, or legacy. The presence of the attestation file is evidence that this feature has already run the review closure machinery, so a summary that is subsequently absent or downgraded MUST NOT be interpreted as "this project never closed review". Without this rule, deleting `review/reports/summary.json` after a post-review source edit is committed silently downgrades the gate to the commit-blind working diff and passes, and the upstream verdict gate skips absent summaries as well, so nothing downstream catches it.
+
+Presence probes for these artifacts MUST distinguish "absent" from "could not be determined". `fs.existsSync` returns `false` for `EACCES`/`ENOTDIR`, and Windows reports both a file in the middle of a path and a dangling junction as `ENOENT`, so a probe SHALL resolve the absolute path top-down from the filesystem root — the report and receipt directory patterns may resolve outside the project root, so no in-project/out-of-project split may reintroduce single-shot probing — SHALL `lstat` each segment before following any link, and SHALL classify a non-directory path segment, a non-file target, an unresolvable link target, or any non-`ENOENT` error as unverifiable rather than absent. A review closure attestation that parses as JSON but whose `inventory.roots`/`inventory.files` are not well formed SHALL also be reported as an unavailable baseline rather than reaching reconciliation and surfacing as a generic framework fault.
+
+The git-diff fallback SHALL be reserved for the case where **no review closure evidence is observable on disk** — no attestation together with a summary that is absent, `open`, or legacy — and for profiles that explicitly disable the review phase. An `open` summary without an attestation is a normal state, not an error: the default workflow lets review and UT proceed in parallel. In that domain the gate SHALL retain the pre-existing behavior and SHALL state the baseline-degradation reason in its failure details.
+
+This requirement is scoped to *partial* evidence. Observability is the honest limit: deleting **every** review closure artifact leaves nothing to observe and still reaches the fallback, and the default workflow deliberately allows review and UT to proceed in parallel, so the absence of a summary cannot be treated as an error on its own. Defending against wholesale deletion of all evidence requires a DAG change or a trust anchor outside the workspace and is explicitly out of scope here.
+
+Post-review drift SHALL be reported under the existing `ut_no_src_mutation` id with `failure_kind` `post_review_source_drift` and MUST attribute the finding as post-review source drift rather than as authorship by the UT phase. Its guidance SHALL offer exactly two routes — return the change to coding and re-close review (which refreshes the baseline), or restore the reviewed file content from local history/backup and **verify** it against the attested sha256 — and SHALL NOT present the attestation as a source of file content, nor instruct anyone to commit coding artifacts, widen the diff base, or obtain an approval. The attestation stores `{path, sha256}` only, so it can confirm a restored file but cannot reconstruct one.
+
+Enforcement: `harness/scripts/check-ut.ts`, `harness/scripts/utils/source-drift-facts.ts`, `harness/scripts/utils/closure-attestation.ts`, `harness/scripts/utils/git-diff.ts`
+
+#### Scenario: Uncommitted coding artifacts do not block a UT run that only wrote tests
+
+- **WHEN** review is formally closed over a workspace holding never-committed coding artifacts and the UT phase only added files under the test subtree
+- **THEN** the gate SHALL PASS against the attestation baseline without requiring any commit, and SHALL report the attestation as the baseline instead of a git `baseRef`
+
+#### Scenario: Committing a post-review source edit does not wash it out
+
+- **WHEN** the UT phase modifies a protected product source file after review closure and then commits it
+- **THEN** the gate SHALL still FAIL with `post_review_source_drift` and list the file, because the content-hash baseline does not read git state
+
+#### Scenario: Deleting the review summary does not downgrade the gate
+
+- **WHEN** review closed, a post-review source edit was committed, and `review/reports/summary.json` is then deleted while the attestation remains on disk
+- **THEN** the gate SHALL FAIL with `review_closure_baseline_unavailable` instead of computing a working diff that cannot see the committed edit
+
+#### Scenario: A deleted attestation under a closed review fails closed
+
+- **WHEN** review is formally closed but `review-closure-attestation.json` is missing or unreadable
+- **THEN** the gate SHALL FAIL with `review_closure_baseline_unavailable` and SHALL NOT compute a run-start/working diff or consult gap-notes
+
+#### Scenario: An orphan attestation from a crashed closure is neither trusted nor treated as a downgrade licence
+
+- **WHEN** `review-closure-attestation.json` exists while the review summary is still `open` or has a legacy schema
+- **THEN** the gate SHALL NOT read the orphan's inventory and SHALL NOT fall back to git either; it SHALL fail closed and point at re-running the review closure
+
+#### Scenario: An unverifiable closure state is not resolved by guessing
+
+- **WHEN** the review summary cannot be read or parsed
+- **THEN** the gate SHALL fail closed rather than either trusting the attestation or falling back to the git baseline
+
+#### Scenario: A broken closure-artifact path is not read as "never closed"
+
+- **WHEN** the review reports directory is replaced by a file, or is otherwise unreadable, so a naive existence check reports both artifacts as absent
+- **THEN** the gate SHALL classify the probe as unverifiable and fail closed instead of computing a git diff
+
+#### Scenario: A structurally invalid attestation reports an unavailable baseline
+
+- **WHEN** review is formally closed and the attestation parses as JSON but its inventory entries lack `path`/`sha256`
+- **THEN** the gate SHALL FAIL with `review_closure_baseline_unavailable` and its guidance, not with a generic framework fault raised from reconciliation
+
+#### Scenario: Features with no observable closure evidence keep their existing behavior
+
+- **WHEN** neither a review summary nor a closure attestation is observable on disk and protected source differs from the diff base
+- **THEN** the gate SHALL FAIL exactly as before with `unauthorized_src_mutation`, the same affected files, and the same remediation wording
+
+### Requirement: The verifier plan is resolved once and consumed by every stage
+
+Whether a phase runs a verifier SHALL be resolved by one shared function from four inputs — the workflow's `verifier_prompt` declaration, the feature track, the resolved evidence policy, and the active adapter's declared verifier capability — producing exactly one of `disabled`, `enabled`, `blocked`. The runner's production path, the receipt gate, the Skill guidance and the hook recovery text SHALL all consume that single result; none of them SHALL re-derive applicability on its own.
+
+Resolution order SHALL be fixed and SHALL NOT be reordered by any caller: profile-disabled phase, then absent workflow declaration, then evidence policy `not_applicable` / `off`, then adapter capability, then enabled.
+
+`disabled` SHALL mean **absent equals zero**: no `ai-prompt.md`, no request, no subject, no invocation, and no closure requirement. A workflow that does not declare `verifier_prompt` for a phase SHALL be `disabled` — that is "not applicable", not "missing", and a fallback template SHALL NOT be synthesized to fill the gap. Artifacts left on disk by an earlier `enabled` generation SHALL **never** re-activate a capability the resolver has judged `disabled`, and switching a phase from `enabled` to `disabled` SHALL NOT require deleting them.
+
+The workflow/track/policy portion of the resolution SHALL apply in `goal` and `headless` runs exactly as in `interactive` ones; otherwise a `lite` feature under `goal` cannot turn the unconditional assembly off. The adapter-capability portion SHALL, for this change, apply to `interactive` only: `goal` publication responsibility still routes through the bedside bypass, and judging those modes `blocked` would flatten every `full × goal` phase into `INCOMPLETE`.
+
+The resolution result SHALL NOT be persisted as a summary snapshot or any other parallel state.
+
+Enforcement: `harness/scripts/utils/verifier-plan.ts`, `harness/harness-runner.ts`, `harness/scripts/check-receipt.ts`
+
+#### Scenario: A lite feature produces no verifier artifacts in any mode
+
+- **WHEN** a `lite` feature runs `change`, `coding` or `exit` in interactive, headless or goal mode
+- **THEN** the plan SHALL be `disabled`, no prompt/request/subject SHALL be written, and the closure path SHALL remain the existing change/coding/exit chain with the receipt mechanism not applicable
+
+#### Scenario: An undeclared phase is not applicable rather than missing
+
+- **WHEN** the active workflow declares no `verifier_prompt` for a phase
+- **THEN** the plan SHALL be `disabled`, and no fallback prompt template SHALL be synthesized
+
+#### Scenario: Leftover artifacts cannot resurrect a disabled capability
+
+- **WHEN** a phase that previously ran with `enabled` now resolves to `disabled` while its old prompt, request and report files remain on disk
+- **THEN** the gate SHALL still treat the phase as `disabled`, SHALL NOT consume those files, and SHALL NOT require their removal
+
+#### Scenario: A full goal phase keeps producing a request
+
+- **WHEN** a `full` feature phase runs under `goal` and the adapter has not registered that mode
+- **THEN** the plan SHALL be `enabled` — the production protocol migrates like any other run, while publication responsibility and closure adjudication for goal are unchanged
+
+### Requirement: A missing verifier provider never suppresses script diagnosis
+
+When the evidence policy declares `verifier` `required` in `interactive` mode and the active adapter has no registered capability, the plan SHALL be `blocked`. `blocked` SHALL NOT short-circuit the harness before the script gate runs. The priority ladder SHALL be:
+
+- the script gate always runs to completion;
+- a genuine script `FAIL` SHALL be reported as itself, with the provider gap recorded alongside rather than replacing it;
+- only when the script gate would otherwise pass SHALL the phase be reported as `INCOMPLETE` with a `verifier_provider_unavailable` attribution;
+- `enabled` produces the request; `disabled` follows the existing closure path unchanged.
+
+The gap SHALL surface at the harness and at the closure entry, not only at the very end of `check-receipt`.
+
+The verifier production surface SHALL be produced **only** when the plan is `enabled` **and** the script gate passed. `blocked` has no provider that could consume a prompt; a non-passing script run must not leave behind a request that looks callable, because the verifier's own contract forbids being invoked while the script gate is failing.
+
+`summary.next_action` SHALL be derived from the resolved plan and the current subject's evidence state, not from a fixed assumption that a passing script run always needs a verifier next. In particular a `blocked` phase SHALL NOT be projected onto the device-external recovery action: the top-level verdict becomes `INCOMPLETE` for a provider reason, and reporting it as "connect a device and re-run UT" sends the operator at an unrelated problem. The console SHALL render the machine projection rather than restating one hard-coded cause for every `INCOMPLETE`.
+
+Enforcement: `harness/harness-runner.ts`, `harness/scripts/check-receipt.ts`, `harness/scripts/utils/verifier-plan.ts`
+
+#### Scenario: A real script failure is not masked by the provider gap
+
+- **WHEN** the phase resolves to `blocked` and the script gate also reports genuine BLOCKER failures
+- **THEN** the phase verdict SHALL be `FAIL` and the real failures SHALL be reported in full
+
+#### Scenario: A passing script run under a missing provider is INCOMPLETE
+
+- **WHEN** the phase resolves to `blocked` and the script gate reports no other BLOCKER failure
+- **THEN** the phase verdict SHALL be `INCOMPLETE` attributed to `verifier_provider_unavailable`, the recommended action SHALL name the provider gap, and the closure entry SHALL refuse to pass the phase
+
+#### Scenario: A failing script run leaves no callable verifier surface
+
+- **WHEN** the plan is `enabled` but the script gate does not pass
+- **THEN** no prompt, request or subject SHALL be produced for that run, and the recommended action SHALL be to fix the reported blockers
+
+#### Scenario: A phase whose evidence already passes is not sent back to the verifier
+
+- **WHEN** the plan is `enabled`, the material is unchanged, and verified passing evidence already exists for the current subject
+- **THEN** the recommended action SHALL be to complete the receipt and closure, not to re-run the verifier against the same subject (which could only produce a conflict)
+
+### Requirement: check-receipt adjudicates verifier evidence by identity, dispatched on the resolved plan and the summary generation
+
+The receipt gate's verifier block SHALL stop treating the receipt's hand-written fields as machine facts, and SHALL stop using "is a subject present?" as its dispatch anchor. Subject presence conflated three roles at once — protocol generation, applicability, and evidence identity — so a phase whose verifier was legitimately turned off read as "an old artifact". Dispatch SHALL therefore be:
+
+- **plan `disabled`** → the loader SHALL NOT be called and neither the JSON, the markdown nor a request SHALL be required; the observed state SHALL record `not_applicable` or `skipped_by_policy` according to the resolution reason.
+- **plan `blocked`** → the gate SHALL BLOCKER FAIL with a `verifier_provider_unavailable` attribution. It SHALL NOT re-run the script diagnosis, which has already completed at the harness.
+- **plan `enabled` and the summary declares the current generation** → the gate SHALL load `verifier.report.<subject>.json` through the shared `loadVerifierEvidence()` boundary and SHALL verify five things: the JSON's feature/phase match the phase under check, the subagent identity is present, the stored `invocation_subject` and `result_subject` both equal the current `summary.verifier_subject_id`, the document is structurally valid for schema `2.0`, and `verdict` is consistent with `blocker_count` (`PASS` iff zero). Each failure form SHALL surface as its own machine-readable issue id whose guidance points at re-running the verifier with the recorded request, or at re-running the harness — never at editing the receipt.
+- **plan `enabled`, current generation, but no subject/request recorded** → the gate SHALL BLOCKER FAIL stating that this run produced no invocation credential, and direct the operator to re-run the harness. It SHALL NOT be reported as a legacy artifact.
+- **an earlier summary generation, the phase closed, and the pre-existing evidence manifest still recomputes as fresh** → the closure is **grandfathered**: the gate SHALL neither parse the markdown nor require a current-generation request, and SHALL rely on the pre-existing manifest freshness chain alone. Re-running check-receipt over such a phase is a **re-verification of the old closure against its own registration surface**, not a fresh adjudication. Grandfathering SHALL NOT bypass the existing freshness rules — the environment recomputation over `framework_config` / `workflow` / `gate_fingerprint` / `framework_version` still applies, and any of them changing still marks the phase stale.
+- **an earlier generation in every other case** → the gate SHALL BLOCKER FAIL and direct the operator to re-run the harness for that phase so it gains current-generation artifacts. The guidance SHALL be scoped to re-running that phase's harness and verifier; it SHALL NOT ask for business code to be reverted, for upstream artifacts to be rewritten, or for anything to be committed.
+
+Re-adjudication SHALL enter only through a new harness run that regenerates the summary; that is the single switch point between the grandfathered domain and the current one.
+
+Guidance emitted by the stop gate SHALL follow the same facts. When the script gate has already passed and only closure remains, the first recommended action SHALL be the closure-only entry (`--sync-closure`), never a full harness re-run: a full re-run reassembles a timestamped prompt, rotates the subject, and invalidates the verifier evidence that was just published — turning "almost closed" into an unbounded loop. A full re-run SHALL be recommended only when the script gate has not passed.
+
+The console guidance after a passing script run SHALL follow the derived `next_action` rather than the mere presence of a request file. A phase whose current subject already holds verified passing evidence SHALL NOT be told to invoke the verifier again — re-running the verifier against the same subject can only produce a conflict, and telling an operator to do so contradicts the material-addressed reuse contract directly.
+
+Machine facts that only become verifiable at closure SHALL be computed at closure. Verifier-derived repair candidates are the case in point: the summary writer runs **before** the verifier, so it can never see the current subject's conclusion, and the closure entry deliberately does not re-run the writer. The closure commit SHALL therefore recompute those candidates from the already-verified evidence before freezing the closed summary, using the same shared derivation as the writer and introducing no second state.
+
+Any consumer that reads verifier evidence **before** the current summary is on disk SHALL anchor to the subject it just issued, never to the summary's on-disk value — during a re-run that value still belongs to the previous run, and using it attributes the previous subject's conclusion to the new one.
+
+`closed` in the full/receipt closure domain SHALL mean **script verdict `PASS` and every `required` evidence item provided**, with the verifier item's requirement decided by the resolved plan rather than by a fixed four-item list. The `lite` track SHALL be untouched by this requirement: its change/coding/exit chain and its `receipt: not_applicable` semantics remain exactly as specified elsewhere.
+
+Enforcement: `harness/scripts/check-receipt.ts`, `harness/scripts/utils/verifier-evidence.ts`, `harness/scripts/utils/verifier-plan.ts`
+
+#### Scenario: A forged receipt plus an arbitrary markdown does not close a phase
+
+- **WHEN** a phase carries a current-generation summary with a subject, a receipt claiming `verifier_subagent.verdict: "PASS"`, and a hand-written `verifier.report.md`, but no identity-verified JSON
+- **THEN** check-receipt SHALL BLOCKER FAIL and attribute the failure to the missing machine truth
+
+#### Scenario: A grandfathered closure still verifies without a current-generation request
+
+- **WHEN** a phase closed before this change carries an earlier summary generation, a manifest that registered `verifier.report.md`, and that manifest still recomputes as fresh
+- **THEN** check-receipt SHALL pass, explicitly reporting that it took the grandfather route
+
+#### Scenario: A grandfathered closure whose old manifest went stale is not waved through
+
+- **WHEN** the same closure has its registered markdown modified, so the pre-existing manifest recomputes as stale
+- **THEN** check-receipt SHALL BLOCKER FAIL and direct the operator to re-run that phase's harness
+
+#### Scenario: Deleting the transcript does not invalidate published evidence
+
+- **WHEN** the subagent transcript referenced by the published JSON's audit metadata is deleted or moved after publication
+- **THEN** check-receipt SHALL still verify the evidence from in-repository values alone
+
+#### Scenario: A downstream rollback re-enters at the downstream phase
+
+- **WHEN** a downstream phase finds a defect, the responsible upstream phase is edited and its harness, verifier and receipt are re-run, and the downstream phase consequently becomes stale by freshness
+- **THEN** work SHALL resume at the downstream phase and, once its own harness and verifier are re-run, it SHALL become fresh again; the feature SHALL NOT be cleared and no commit SHALL be required
+
+#### Scenario: An almost-closed phase is not told to re-run the whole harness
+
+- **WHEN** the stop gate blocks a phase whose script verdict is `PASS` and whose closure is still open
+- **THEN** the first recommended action SHALL be the closure-only entry, and SHALL NOT be a full harness re-run
+
+#### Scenario: Verifier-derived candidates survive into the closed summary
+
+- **WHEN** a phase's verifier publishes a finding that yields a repair candidate, and the phase is then closed through the closure-only entry
+- **THEN** the closed summary SHALL carry the candidate derived from that verified evidence, **including** candidates whose derivation depends on a check's machine attribution — the closure-time reconstruction SHALL preserve that attribution rather than dropping it through a field-name mismatch
+
+#### Scenario: Reusable evidence is not sent back to the verifier by the console
+
+- **WHEN** the script gate passes and the derived action is to complete the receipt and closure
+- **THEN** the console SHALL say the current evidence is reusable and point at the closure-only entry, and SHALL NOT print the "deliver the request to the verifier" instruction
+
+#### Scenario: A re-run does not inherit the previous subject's candidates
+
+- **WHEN** the material changes so the subject rotates, and the previous subject still has published evidence carrying a finding
+- **THEN** the new run's summary SHALL NOT carry candidates derived from the previous subject's evidence
+
+### Requirement: Concurrent verifier rounds are separated by identity, and contradictions become an explicit conflict
+
+Concurrent verifier subagents are a supported normal state; the framework SHALL NOT serialize them with a lock, a queue, or a ban. Separation SHALL come from identity alone.
+
+Publication SHALL be a compare-and-set loop, not a read-then-write. Atomic replacement alone is insufficient: it only guarantees that no half-written file is observed, **not** that "read the existing document, decide, write" is atomic. Two concurrent rounds that both observe "no document yet" would both write `published`, and the later writer would silently overwrite the earlier one — a `PASS` swallowing a `FAIL`. Three invariants are therefore required:
+
+- the first publication for a subject SHALL go through an atomic **create-if-absent**; a writer that loses that race SHALL re-read and re-decide rather than overwrite;
+- `conflict` SHALL be **monotonic and absorbing** for a given subject: once a document is in conflict it SHALL NOT return to `published`;
+- these rules govern **one subject's own file only**; cross-subject interference is excluded structurally by the per-subject partition rather than by any authorization check.
+
+A round SHALL NOT move, delete or overwrite a file belonging to another subject, and SHALL NOT need permission to avoid doing so. Re-checking "am I still the current subject?" cannot close this race at any placement: the check and the mutation are two steps, and the subject can rotate between them — a later check only moves the window. The partition removes the shared mutable resource instead: each round derives its own filename from its invocation subject and touches nothing else, while `summary.verifier_subject_id` independently decides which file the consumers read. A stale round may therefore still write its own file; that file is simply outside every consumer's read surface.
+
+Publication SHALL be idempotent when the subject, the `agent_id`, and the conclusion fingerprint all match an already published document — and in that case the file SHALL NOT be rewritten, because rewriting would change `generated_at` and stale a manifest that has just frozen those bytes. When the subject matches but the `agent_id` or the conclusion fingerprint differs, the canonical document SHALL become `state: "conflict"` recording **both** sides' agent identity, verdict, blocker count and conclusion fingerprint; the shared loader SHALL refuse such a document and check-receipt SHALL BLOCKER FAIL. With three or more concurrent writers the recorded side list is best-effort and SHALL be marked as such — the conflict **state** never degrades, only a forensic entry may be lost. When the subject is stale relative to the current summary, the report SHALL land in the bedside file and SHALL NOT overwrite the canonical document.
+
+Conflict recovery guidance SHALL be executable: stop or await **all** verifiers for that subject; delete the conflict document, which is no longer any side's conclusion; then start exactly **one** verifier, delivering the request JSON named by `summary.verifier_request` in full. Re-running the harness SHALL NOT be presented as the recovery step: it rotates the subject only when the reviewed material actually changed, so with unchanged material it returns to the very same conflict.
+
+The loader SHALL recompute the conclusion fingerprint from the stored `verdict`, `blocker_count` and report text and SHALL reject a document whose stored fingerprint does not match. Accepting the stored value unverified would let an edit that flips a `FAIL` document to `PASS` — leaving the original fingerprint in place — pass verification intact.
+
+The write target SHALL be derived by the hook from the framework configuration plus the feature/phase named in the invocation request. The `prompt_path` claimed in that request SHALL be used **only** for an equality cross-check; a claim containing `..`, an absolute path, a drive prefix, or a different feature SHALL reject the whole round rather than degrade to writing somewhere else. A Task prompt that is not exactly one parseable request document — a hand-transcribed template, an edited field whose subject no longer recomputes, or a request followed by extra instructions — SHALL reject the round to the bedside file.
+
+Enforcement: `agents/claude/templates/hooks/record-verifier-report.mjs`, `harness/scripts/utils/verifier-evidence.ts`, `harness/scripts/utils/verifier-request.ts`, `harness/scripts/check-receipt.ts`
+
+#### Scenario: Interleaved verifier rounds each land in their own phase
+
+- **WHEN** verifier subagents for plan, coding and ut finish in an interleaved order while the shared state file points at coding
+- **THEN** each phase SHALL hold its own published document carrying its own subagent identity, and none SHALL be overwritten by another
+
+#### Scenario: A contradicting second round is recorded as a conflict, not resolved by arrival order
+
+- **WHEN** a second subagent reports `FAIL` under the same subject for which a first subagent already published `PASS`
+- **THEN** the canonical document SHALL become `state: "conflict"` recording both sides, and check-receipt SHALL FAIL
+
+#### Scenario: Genuinely concurrent rounds cannot let a PASS swallow a FAIL
+
+- **WHEN** two verifier rounds for the same subject publish contradicting verdicts concurrently, both having observed no existing document
+- **THEN** the canonical document SHALL end in `state: "conflict"` carrying both sides, and SHALL NOT end as a `published` document holding either single verdict
+
+#### Scenario: An edited conclusion is rejected even when its fingerprint is left untouched
+
+- **WHEN** a published document's `verdict`, `blocker_count` and report text are edited to claim a clean pass while `result_sha256` retains the original value
+- **THEN** the loader SHALL reject the document on fingerprint recomputation and check-receipt SHALL FAIL
+
+#### Scenario: A late round from a superseded subject cannot overwrite current evidence
+
+- **WHEN** a verifier from a previous harness run finishes after the subject has rotated
+- **THEN** the canonical document SHALL be unchanged and the late report SHALL land in the bedside file marked as a stale subject
+
+#### Scenario: Interleaved subjects cannot change each other's bytes
+
+- **WHEN** a round for subject A stops just before its final write, the runner rotates to subject B, a verifier for B publishes the current evidence, and A is then released
+- **THEN** B's file SHALL be byte-identical to before A resumed, A SHALL at most have written its own subject's file, and the loader SHALL still return B
+
+#### Scenario: An out-of-scope claimed path rejects the whole round
+
+- **WHEN** the invocation request claims a `prompt_path` that escapes the phase directory, is absolute, or names another feature
+- **THEN** no canonical document SHALL be written and the round SHALL be recorded in the bedside file as a rejected path claim
+
+#### Scenario: A request with extra instructions appended is rejected
+
+- **WHEN** the Task prompt carries the request JSON followed by additional text
+- **THEN** the round SHALL be rejected to the bedside file and no canonical document SHALL be written
+
+### Requirement: The review closure attestation binds identity-verified verifier evidence
+
+The review closure attestation's `verifier_report_sha256` SHALL bind the review phase's canonical verifier JSON and SHALL be populated **only** when that document passes identity verification; when verification fails the field SHALL be `null` rather than binding an unverified artifact. The attestation SHALL additionally record `verifier_subject_id` and `verifier_result_sha256` as readable anchors, and its `schema_version` SHALL advance to `1.1`.
+
+Because no consumer of the attestation reads the verifier binding — reconciliation, the testing `review_closure_attestation` gate and the check-ut goal branch all consume `inventory` — attestations written at `1.0` SHALL remain readable and SHALL continue to reconcile against their own recorded source baseline, exactly as the evidence manifest grandfathers older closures. A structurally malformed attestation SHALL still be reported as an unavailable baseline.
+
+Enforcement: `harness/scripts/utils/closure-attestation.ts`, `harness/scripts/utils/phase-closure-finalizer.ts`
+
+#### Scenario: A review closure without verified verifier evidence records a null binding
+
+- **WHEN** the review phase's verifier JSON is absent or fails identity verification at closure time
+- **THEN** the attestation SHALL record `verifier_report_sha256: null` rather than hashing the markdown
+
+#### Scenario: An attestation written before this change still reconciles
+
+- **WHEN** a `1.0` attestation from an earlier closure is consumed by source-drift reconciliation
+- **THEN** it SHALL remain readable and reconcile against its recorded inventory
+
+#### Scenario: A closed review at the current summary generation is a usable UT baseline
+
+- **WHEN** the review phase closes with the current summary generation and a valid `closure_commit`
+- **THEN** the UT attestation-first probe SHALL treat it as formally closed and usable as a baseline
+
+### Requirement: Reference-image receipt verification uses the runner's shared discovery denominator
+
+The `vision/spec-refs-receipt.json` production and verification SHALL use the runner's shared
+reference-image discovery set (requirement text explicit images UNION in-project requirement-source
+direct-parent-directory images, deduplicated and deterministically sorted, with the
+`ux-reference/` fallback only when the union is empty) as the expected denominator — recomputed
+from the frozen run manifest (`requirement` + `requirement_source_files`) — instead of deriving the
+denominator from the agent-produced `spec.md` alone. A spec that omits any discovered image SHALL
+fail verification; the spec cannot shrink the denominator. The existing soft WARN / hard FAIL
+thresholds and the rejection of fabricated `verified + vl_multimodal` are unchanged.
+
+Enforcement: `harness/scripts/utils/critic-receipt-producer.ts`, `harness/scripts/utils/fidelity-shared.ts`, `harness/scripts/goal-runner.ts`, `profiles/hmos-app/harness/spec-visual-handoff-check.ts`
+
+#### Scenario: spec omitting one discovered source image fails verification
+
+- **WHEN** the shared discovery set contains three images but the spec's declared references/Reads
+  cover only two
+- **THEN** receipt verification reports the missing image as unread/undeclared and the terminal
+  gate fails

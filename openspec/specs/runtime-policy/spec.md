@@ -33,15 +33,22 @@ TBD - created by archiving change verification-matrix. Update Purpose after arch
 
 ### Requirement: Anti-cheat red lines are outside the matrix
 
-The `framework_integrity`, build-fingerprint binding, asset-crop source/bbox/tool/hash reproduction, process-input sanitization, and `diff_within_scope` checks SHALL remain outside runtime policy's tier matrix
-and SHALL stay enabled. Legacy signer, confirmation, and halt-confirm quality credentials SHALL NOT be
-runtime red lines or matrix inputs and MUST NOT lower the actual machine checks.
+The framework control-plane write boundary, build-fingerprint binding, asset-crop reproduction, process-input sanitization, and `diff_within_scope` SHALL remain outside runtime policy's evidence-tier matrix. The framework boundary SHALL be enforced by an out-of-model read-only principal where available, or represented honestly by the cooperative editing-tool guard where it is not.
 
-Enforcement: `harness/scripts/utils/runtime-policy.ts`, `profiles/hmos-app/harness/asset-crop-validation.ts`, `harness/tests/`
+Runtime policy SHALL NOT introduce or lower a framework Git dirty check, HEAD/commit identity, per-file manifest hashing, sidecar self-check, foreign-file scan, trust baseline, allowlist, or bypass. The guard's shell/script/external-process blind spots SHALL remain explicit at every tier. Legacy signer/confirmation fields SHALL not lower actual machine checks.
 
-#### Scenario: legacy signer does not bypass crop reproduction
+The runtime-artifact policy consumed by this boundary SHALL describe only Maison output and guard paths. It SHALL NOT derive host source-control configuration, and no tier SHALL gain a compensating detector that reads or writes the host `.gitignore`.
 
-- **WHEN** a crop artifact has a legacy signer field but its current source/bbox reproduction fails
+Enforcement: `harness/scripts/utils/runtime-policy.ts`, `agents/shared/guard-framework-write-core.mjs`, `harness/tests/unit/runtime-policy.unit.test.ts`
+
+#### Scenario: Framework boundary does not depend on evidence tier
+
+- **WHEN** a lite track or relaxed evidence profile is active
+- **THEN** the environment read-only boundary or cooperative editing-tool guard SHALL remain unchanged, and no Git/hash detector SHALL be added as a tier-independent fallback
+
+#### Scenario: Legacy signer does not bypass crop reproduction
+
+- **WHEN** a crop artifact has a legacy signer field but current source/bbox reproduction fails
 - **THEN** the crop gate SHALL fail independently of runtime tier and signer identity
 
 ### Requirement: Resolved phase chains expose ownership inputs without becoming an owner registry
@@ -65,3 +72,47 @@ Enforcement: `harness/scripts/utils/runtime-policy.ts`, `harness/scripts/utils/c
 
 - **WHEN** a runtime provider declares step telemetry support but produces no observation file
 - **THEN** the capability report SHALL remain `available` and testing SHALL report evidence FAIL rather than rewriting support to capability-missing
+
+### Requirement: Runtime phase set derives from workflow
+
+所有运行时组件（harness-runner、check-receipt、phase-transition-policy、trace 校验、goal-runner/monitor/status、compat/backfill/exploration 工具）MUST 从 active workflow 的 `artifacts[]` 解析合法 feature phase 集，MUST NOT 各自持有 `spec|plan|coding|review|ut|testing` 硬编码枚举。
+
+#### Scenario: workflow 新增 phase 后运行时全链认可
+- **WHEN** workflow YAML 声明新 phase id（如 `change`/`exit`）且 harness 各入口以该 phase 运行
+- **THEN** check-receipt、transition-policy、trace 校验与 goal-runner 均接受该 phase，不出现"runner 放行、其它组件拒绝"的 split-brain
+
+> **Enforced by:** `harness/scripts/utils/runtime-policy.ts`, `harness/scripts/check-receipt.ts`, `harness/scripts/utils/phase-transition-policy.ts`
+
+### Requirement: Pure policy resolver set
+
+policy 模块 MUST 提供核心纯函数 `classifyRequestRoute()`、`resolveFeatureTrack()`、`resolveEvidencePolicy()`、`resolvePhaseChain()`；判定集合可由后续 change 在同一模块扩展（C5 增 `resolveCorrectionTarget` / `classifyCorrection` / `resolveEnforcementTier`），扩展 MUST 同守纯函数与 default 等值不变式；`resolveEvidencePolicy` MUST NOT 执行文件 I/O（`provided` 属校验层事实，不在 policy 输出枚举内），输出限于 `required|optional|off|not_applicable`。
+
+#### Scenario: headless 强制 strict
+- **WHEN** `runtimeContext.mode` 为 `headless` 或 `goal`，且 config 声明了任何降档
+- **THEN** `resolveEvidencePolicy` 仍按 strict 求解（全凭证 required）
+
+#### Scenario: default 态与现状等值
+- **WHEN** 无 feature.yaml、config 无 evidence 段、track 缺省 full
+- **THEN** 四判定输出与收编前硬编码行为逐一等值（契约单测断言）
+
+> **Enforced by:** `harness/scripts/utils/runtime-policy.ts`, `harness/tests/`（契约单测）
+
+### Requirement: Stop hook policy snapshot fail-safe
+
+harness-runner MUST 将 policy 快照（含 `policy_schema_version`、track、evidence 档位）写入 `.current-phase.json`；下发 Stop hook MUST 只读快照、MUST NOT import harness 模块；快照缺失、`policy_schema_version` 不符或解析失败时，hook MUST fail-safe 按 full+strict 全凭证判定放行条件。
+
+#### Scenario: 快照缺失时 fail-closed
+- **WHEN** Stop hook 读取 `.current-phase.json` 无 policy 快照字段（旧 state 或 runner 未写成功）
+- **THEN** hook 按 full+strict 判定（宁可多设防），不静默放行
+
+> **Enforced by:** `agents/claude/templates/hooks/check-phase-completion.mjs`, `harness/harness-runner.ts`
+
+### Requirement: Trace phase validation moves to runner
+
+`trace.schema.json` 的 `phase` 字段 MUST 放宽为形态 pattern；phase 语义合法性 MUST 由 runner 侧按 active workflow 合法集校验。
+
+#### Scenario: 旧 workflow 的 trace 继续合法
+- **WHEN** 既有 feature 在 spec-driven workflow 下产出 `phase: "coding"` 的 trace.json
+- **THEN** schema 与 runner 校验均通过（向后兼容零变化）
+
+> **Enforced by:** `harness/trace/trace.schema.json`, `harness/harness-runner.ts`

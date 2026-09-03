@@ -76,8 +76,6 @@ Enforcement: `harness/scripts/utils/vision-canary.ts`, `harness/scripts/utils/ag
   (`maison_guardian_containment_failed`), the phase halts with `adapter_cli_hard_failure`,
   `agent_process_started` remains 0, no harness runs, and no content retry is consumed
 
-## MODIFIED Requirements
-
 ### Requirement: Inline canary signing consumes the shared canary decision SSOT on this invoke's stdout boundary
 
 The spec-phase inline canary signing point SHALL use `resolveCanaryCacheDecision`/`parseCanaryAnswer`
