@@ -16,13 +16,10 @@
 //   · 材料变化 → 必换 subject → check-receipt 指引重跑 verifier。
 // 既**不承诺稳定**、也**不强制每跑必异**：不加 nonce / UUID / run sequence。
 //
-// `prompt_sha256` 直接哈希磁盘 ai-prompt.md 原文（EOL 归一后），**没有 canonical 投影**。
-// 上一代为了「零改动重跑不换代」而生的 canonical 投影 / telemetry 归一 / details_material
-// / 双文本渲染整套子系统已连根裁撤：时间戳导致换 subject 是**合法结果**，不是缺陷；
-// 任何「为提高复用率去改造 prompt producer」的动作都是投影机制换名回潮，禁止。
-//
-// `prompt_sha256` 的性质 = **误配检测**（harness 重跑过、文件已换代），在冻结威胁模型内
-// （防误操作而非防恶意），符合 plan 的否决闸。
+// plan 07a41ec6 T7：subject 改按 **审前材料视图** 寻址（verifier-material.ts）——phase 输入/产物、
+// verifier 会读的源码与图片、phase 规则、模板、gate 指纹、脚本报告 id/status/severity 投影。
+// `prompt_sha256` 仍随 request 出行（hook 用它核对 verifier 读的是不是这份原件），但**不再参与
+// subject 派生**：模板里的 {timestamp} 不该让一字未改的材料换代。
 //
 // 跨语言复刻约定：hook 是纯 .mjs（不落 TS），必须逐字符复刻 `canonicalRequestInput`
 // 与解析规则。任何格式变更须同步 agents/claude/templates/hooks/record-verifier-report.mjs
@@ -32,11 +29,11 @@
 import { SUBJECT_ID_PATTERN, normalizeEol, sha256 } from './verifier-subject';
 
 /** request 契约版本——字段面或派生算法变更必须提版本（旧 subject 自然换代）。 */
-export const VERIFIER_REQUEST_SCHEMA_VERSION = '1.0';
+export const VERIFIER_REQUEST_SCHEMA_VERSION = '1.1';
 /** 判别式：Task prompt 里那段 JSON 必须自述是它，才会被 hook 当调用凭证消费。 */
 export const VERIFIER_REQUEST_KIND = 'maison_verifier_request';
 /** subject 派生的规范化串前缀（与 schema 版本一起进哈希）。 */
-export const VERIFIER_REQUEST_SUBJECT_SCHEMA = 'maison-verifier-request@1';
+export const VERIFIER_REQUEST_SUBJECT_SCHEMA = 'maison-verifier-request@2';
 
 /** 参与 subject 派生的全部字段（**不含** subject_id 自身）。 */
 export interface VerifierRequestFields {
@@ -44,8 +41,10 @@ export interface VerifierRequestFields {
   phase: string;
   /** 仓根相对 posix 路径：`<features_dir>/<feature>/<phase>/reports/ai-prompt.md` */
   prompt_path: string;
-  /** 磁盘 ai-prompt.md 原文（EOL 归一后）的 sha256 */
+  /** 磁盘 ai-prompt.md 原文（EOL 归一后）的 sha256——hook 核对原件用，不参与 subject 派生 */
   prompt_sha256: string;
+  /** 审前材料视图指纹（verifier-material.ts）——subject 的寻址材料 */
+  material_sha256: string;
   gate_fingerprint: string | null;
   source_commit_sha: string | null;
   worktree_digest: string | null;
@@ -72,10 +71,10 @@ export function canonicalRequestInput(fields: VerifierRequestFields): string {
     `feature=${fields.feature}`,
     `phase=${fields.phase}`,
     `prompt_path=${fields.prompt_path}`,
-    `prompt_sha256=${fields.prompt_sha256}`,
+    `material_sha256=${fields.material_sha256}`,
     `gate_fingerprint=${fields.gate_fingerprint ?? '<absent>'}`,
-    `source_commit_sha=${fields.source_commit_sha ?? '<absent>'}`,
-    `worktree_digest=${fields.worktree_digest ?? '<absent>'}`,
+    // codex review（plan 07a41ec6 T7）：source_commit_sha / worktree_digest 只是审计字段——
+    // 它们随任何无关提交/工作区改动变化，进 subject 只会无效换代；审查材料变化已由 material_sha256 覆盖。
   ].join('\n');
 }
 
@@ -96,6 +95,7 @@ export function buildVerifierRequest(fields: VerifierRequestFields): VerifierReq
     phase: fields.phase,
     prompt_path: fields.prompt_path,
     prompt_sha256: fields.prompt_sha256,
+    material_sha256: fields.material_sha256,
     gate_fingerprint: fields.gate_fingerprint,
     source_commit_sha: fields.source_commit_sha,
     worktree_digest: fields.worktree_digest,
@@ -113,6 +113,7 @@ export function renderVerifierRequest(request: VerifierRequest): string {
       phase: request.phase,
       prompt_path: request.prompt_path,
       prompt_sha256: request.prompt_sha256,
+      material_sha256: request.material_sha256,
       gate_fingerprint: request.gate_fingerprint,
       source_commit_sha: request.source_commit_sha,
       worktree_digest: request.worktree_digest,
@@ -147,6 +148,7 @@ const VERIFIER_REQUEST_KEYS: ReadonlySet<string> = new Set([
   'phase',
   'prompt_path',
   'prompt_sha256',
+  'material_sha256',
   'gate_fingerprint',
   'source_commit_sha',
   'worktree_digest',
@@ -215,6 +217,7 @@ export function parseVerifierRequest(text: string | null | undefined): VerifierR
   // 哈希形态字段直接对**原值**做严格 pattern 校验（不 trim——带空白就不是合法 64 hex）。
   if (typeof doc.subject_id !== 'string' || !SUBJECT_ID_PATTERN.test(doc.subject_id)) return null;
   if (typeof doc.prompt_sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(doc.prompt_sha256)) return null;
+  if (typeof doc.material_sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(doc.material_sha256)) return null;
   const feature = readRequiredString(doc.feature);
   const phase = readRequiredString(doc.phase);
   const promptPath = readRequiredString(doc.prompt_path);
@@ -230,6 +233,7 @@ export function parseVerifierRequest(text: string | null | undefined): VerifierR
     phase,
     prompt_path: promptPath,
     prompt_sha256: doc.prompt_sha256,
+    material_sha256: doc.material_sha256,
     gate_fingerprint: gateFingerprint.value,
     source_commit_sha: sourceCommitSha.value,
     worktree_digest: worktreeDigest.value,

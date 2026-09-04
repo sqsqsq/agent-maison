@@ -154,6 +154,28 @@ interface CheckLike {
   severity: CheckResult['severity'];
   blocking_class?: string;
   failure_kind?: string;
+  /** plan 07a41ec6 T2：门禁的结构化载荷（p0 五数、unsupported_gap 计数）供 completion 投影读取 */
+  structured?: unknown;
+}
+
+/** plan 07a41ec6 T2：从门禁结构化载荷提取缺口计数（P0 gap / 全部 unsupported_gap）。 */
+export interface CompletionGaps {
+  p0: number;
+  total: number;
+}
+
+export function extractCompletionGaps(checks: readonly CheckLike[]): CompletionGaps {
+  let p0 = 0;
+  let total = 0;
+  for (const c of checks) {
+    const s = c.structured as Record<string, unknown> | undefined;
+    if (!s || typeof s !== 'object') continue;
+    if (c.id === 'p0_coverage_integrity' && typeof s.unsupported_gap === 'number') p0 = Math.max(p0, s.unsupported_gap);
+    if (c.id === 'testing_channel_evidence_obligation' && typeof s.unsupported_gap_count === 'number') {
+      total = Math.max(total, s.unsupported_gap_count);
+    }
+  }
+  return { p0, total: Math.max(total, p0) };
 }
 
 // ---------------------------------------------------------------------------
@@ -351,15 +373,18 @@ export function projectReleaseReadiness(axes: QualityAxes): ReleaseReadiness {
 }
 
 /** completion 投影标签（仅标签——不构成状态机；当前负面态走 needs_fix/external_dependency） */
-export function projectCompletionStatus(axes: QualityAxes): string {
+export function projectCompletionStatus(axes: QualityAxes, gaps?: CompletionGaps): string {
   const anyFail = AXIS_IDS.some(id => axes[id].applicable && axes[id].verdict === 'FAIL');
   if (anyFail) return 'INCOMPLETE';
+  // plan 07a41ec6 T2：P0 unsupported_gap 必须显著披露——留在分母、不算 PASS、不阻止完成
+  if (gaps && gaps.p0 > 0) return 'COMPLETE_WITH_P0_GAPS';
   const visualPending =
     (axes.visual.applicable && axes.visual.verdict !== 'PASS') ||
     (axes.asset.applicable && axes.asset.verdict !== 'PASS');
   if (visualPending) return 'FUNCTIONALLY_COMPLETE_VISUAL_PENDING';
   if (axes.evidence.applicable && axes.evidence.verdict !== 'PASS') return 'EVIDENCE_PENDING';
   if (axes.functional.verdict !== 'PASS') return 'FUNCTIONAL_PENDING';
+  if (gaps && gaps.total > 0) return 'COMPLETE_WITH_GAPS';
   return 'COMPLETE';
 }
 
@@ -437,7 +462,7 @@ export function deriveSummaryVerdictLattice(
     projected_verdict: post,
     has_blocked: hasBlocked,
     release_readiness: hasBlocked ? 'BLOCKED' : projectReleaseReadiness(quality_axes),
-    completion_status: hasBlocked ? 'INCOMPLETE' : projectCompletionStatus(quality_axes),
+    completion_status: hasBlocked ? 'INCOMPLETE' : projectCompletionStatus(quality_axes, extractCompletionGaps(checks)),
   };
 }
 

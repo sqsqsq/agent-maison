@@ -172,44 +172,21 @@
      - "异常处理" → error_handling_completeness
   4. 追溯率 ≥ 70%: PASS；< 70%: WARN
 
-### 检查 7: 探索覆盖充分性 (context_exploration_sufficiency)
-
-- **严重等级**: BLOCKER
-- **评估方法**:
-  1. 读取 `{features_dir}/{feature_name}/review/context-exploration.md`（schema 1.1.0）
-  2. 对照审查范围与 contracts：`source_code_paths`、`Code Facts` 是否覆盖被审源码
-  3. 探索与结论范围明显不匹配 → FAIL
-
-### 检查 8: 行为合规 — 研究有据 (behavior_research_grounded)
-
-- **严重等级**: BLOCKER
-- **评估方法**: 问题清单中的代码引用是否真实；未读代码即下结论 → FAIL
-
-### 检查 9: 行为合规 — 最小可行 (behavior_minimum_viable)
+### 检查 R: 跨产物引用核对 (reference_crosscheck)
 
 - **严重等级**: MAJOR
-- **评估方法**: 是否提出超出本次变更范围的「顺手改进」→ FAIL
+- **评估方法**: 逐条核对本阶段产物里的跨文件引用——问题条目引用的 `文件:行`、token/常量值、路径 ↔ 当前源码；视觉类问题 ↔ visual-debt 台账与 ui-spec 的实际值。每条引用都要打开被引用的原文核对，不凭记忆、不凭上下文摘要。
+- **判定标准**: 引用对象存在且含义一致 → PASS；个别引用漂移（行号/名称过期但对象仍可定位） → WARN；关键引用指向不存在或含义相反的对象 → FAIL
+- **证据**: 列出核对过的引用（`引用 → 原文位置`）与不一致项
 
-### 检查 10: 行为合规 — 追溯闭环 (behavior_verify_loop)
-
-- **严重等级**: MAJOR
-- **评估方法**: 问题 ↔ coding-rules ↔ contracts 追溯是否断链 → FAIL
-
-### 检查 11: 行为合规 — Scope 精准 (behavior_scope_surgical)
-
-- **严重等级**: BLOCKER
-- **评估方法**: 审查是否局限于本次 feature diff；评 unrelated 预存问题为 BLOCKER 且无依据 → FAIL
-
-### 检查 12: 阶段边界 — 禁止 autopilot (phase_transition_autopilot)
-
-- **严重等级**: MAJOR
-- **评估方法**: review 四件套 PASS 后 agent 在同一执行流自动开 business-ut，且**无** `review.ok_to_ut` / `phase.next_step` / batch 授权 → FAIL
 
 ---
 
 ## 六、上下文文件
 
-以下是本次验证涉及的所有文档和源代码文件：
+以下是本次验证的上下文：被审产物与直接依据内联；上游文档与源码只给**路径清单**，需要核对时用 Read 按路径读取，不要全量通读。
+
+被审 feature 根目录：`{features_dir}/{feature_name}/`（相对仓根；下方清单里的相对路径同样相对仓根）。
 
 {context_files}
 
@@ -217,153 +194,45 @@
 
 ## 七、输出格式（必须严格遵循）
 
-请以下方 YAML 格式输出验证结果。**不要**输出其他格式或自由文本。
+先给**汇总表**（每个检查项一行，PASS 也要列），再只对 **status ≠ PASS** 的项写 YAML 明细。
+PASS 项不写论证，证据一行即可；证据不足时给 WARN 并说明缺什么，不要硬判 FAIL。
+不要复述脚本 Harness 已判定的结构项，不要输出本节之外的自由文本。
+
+本轮检查项与严重等级：
+
+| id | severity |
+|---|---|
+| review_dimension_coverage | MAJOR |
+| issue_accuracy | BLOCKER |
+| fix_recommendation_actionable | MAJOR |
+| false_positive_rate | MAJOR |
+| blocker_threshold | BLOCKER |
+| coding_rules_referenced | MINOR |
+| reference_crosscheck | MAJOR |
+
+### 7.1 汇总表
+
+| id | status | severity | 证据（一行：文件:行 / 引文 / 数值） |
+|---|---|---|---|
+| <check_id> | PASS / WARN / FAIL / SKIP | <severity> | <一行证据> |
+
+### 7.2 非 PASS 项明细
 
 ```yaml
 verification_result:
   phase: "review"
   feature: "{feature_name}"
   timestamp: "{timestamp}"
-
-  checks:
-    # --- 检查 1: 审查维度覆盖度 ---
-    - id: review_dimension_coverage
-      status: PASS | FAIL | WARN
-      severity: MAJOR
+  checks:            # 只列 status ≠ PASS 的项；每项字段固定
+    - id: <check_id>
+      status: FAIL | WARN | SKIP
+      severity: <该项声明的 severity>
       details: |
-        各维度覆盖情况：
-        - 五层架构合规性: 已覆盖/未覆盖
-        - 模块内四层分层: 已覆盖/未覆盖
-        - 接口一致性: 已覆盖/未覆盖
-        - 资源引用完整性: 已覆盖/未覆盖
-        - 命名规范: 已覆盖/未覆盖
-        - 异常处理: 已覆盖/未覆盖
-        - spec 功能覆盖: 已覆盖/未覆盖
-        覆盖率: X/7
+        <证据：文件路径 + 行号/引文 + 判断依据>
       suggestion: |
-        <修正建议，若 PASS 可省略>
-
-    # --- 检查 2: 问题准确性 ---
-    - id: issue_accuracy
-      status: PASS | FAIL | WARN
-      severity: BLOCKER
-      details: |
-        抽样验证结果（N 条）：
-        - CR-XXX: PASS/误报 — <验证详情>
-        - CR-YYY: PASS/误报 — <验证详情>
-        - ...
-        误报率: X/N (XX%)
-      affected_files: [...]
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 3: 修复建议可操作性 ---
-    - id: fix_recommendation_actionable
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        可操作性评估：
-        - 具体可操作: X 条
-        - 模糊不可操作: Y 条
-        可操作率: X/(X+Y) (XX%)
-        不可操作示例：
-        - CR-XXX: "<修复建议内容>" — 缺少具体文件/方法
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 4: 误报率 ---
-    - id: false_positive_rate
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        逐条验证结果：
-        - CR-XXX: 正确/误报 — <原因>
-        - CR-YYY: 正确/误报 — <原因>
-        - ...
-        误报数: X  总数: N  误报率: XX%
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 5: BLOCKER 与结论一致性 ---
-    - id: blocker_threshold
-      status: PASS | FAIL | WARN
-      severity: BLOCKER
-      details: |
-        BLOCKER 数量: N
-        MAJOR 数量: N
-        报告结论: "通过/有条件通过/不通过"
-        一致性: 一致/不一致 — <原因>
-        BLOCKER 级别合理性：
-        - CR-XXX (BLOCKER): 合理/过高 — <原因>
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 6: 编码规则追溯 ---
-    - id: coding_rules_referenced
-      status: PASS | FAIL | WARN
-      severity: MINOR
-      details: |
-        分类追溯结果：
-        - "分层违规" (N条) → coding-rules: layer_compliance
-        - "接口不一致" (N条) → coding-rules: interface_signature_consistency
-        - ...
-        追溯率: X/N (XX%)
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 7: 探索覆盖充分性 ---
-    - id: context_exploration_sufficiency
-      status: PASS | FAIL | WARN
-      severity: BLOCKER
-      details: |
-        context-exploration.md: <路径>
-        摘要与审查范围/问题涉及文件的一致性: PASS/FAIL — <证据>
-        source_code_paths / Code Facts: PASS/FAIL
-      suggestion: |
-        <修正建议>
-
-    - id: behavior_research_grounded
-      status: PASS | FAIL | WARN
-      severity: BLOCKER
-      details: |
-        问题引用 ↔ 实际源码: PASS/FAIL
-      suggestion: |
-        <修正建议>
-
-    - id: behavior_minimum_viable
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        超出 diff 的改进建议: PASS/FAIL
-      suggestion: |
-        <修正建议>
-
-    - id: behavior_verify_loop
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        问题 ↔ rules/contracts: PASS/FAIL
-      suggestion: |
-        <修正建议>
-
-    - id: behavior_scope_surgical
-      status: PASS | FAIL | WARN
-      severity: BLOCKER
-      details: |
-        审查范围 ↔ 本次 diff: PASS/FAIL
-      suggestion: |
-        <修正建议>
-
-    - id: phase_transition_autopilot
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        review 闭环后未授权即开 business-ut: PASS/FAIL
-      suggestion: |
-        闭环后须 review.ok_to_ut / phase.next_step 停等（user-confirmation-ux §8）
-
+        <修正建议：谁改、改哪个文件、改成什么>
   summary:
-    total: 12
+    total: 7
     pass: <PASS 数>
     fail: <FAIL 数>
     warn: <WARN 数>

@@ -45,6 +45,7 @@ import {
 } from '../config';
 import { attachNavigationHints, extractTopPlanTestCasesForDeriveHint } from './utils/test-plan-derive-hint';
 import {
+  extractDerivedPlanCases,
   extractTcIdsFromPlanTable,
   selectBestNonPlaceholderDerivedPlan,
   evaluateChannelDerivedCoverage,
@@ -99,6 +100,19 @@ import type { DeviceTestBuildResult } from '../../profiles/hmos-app/harness/prov
 import type { HvigorRunResult } from '../../profiles/hmos-app/harness/hvigor-runner';
 import { isHvigorBuildSuccessful } from './utils/hvigor-runner';
 import { describeProductSelection } from '../../profiles/hmos-app/harness/product-selection';
+import { writeGeneratedTestReport } from '../../profiles/hmos-app/harness/test-report-writer';
+import {
+  computeExecutionKey,
+  decideReuse,
+  freezeRunArtifacts,
+  restoreFrozenRunArtifacts,
+  refreshStabilityForNewestRun,
+  sha256Text as sha256TextForKey,
+  writeExecutionKeyRecord,
+  writeStabilityReport,
+  type ExecutionKeyInputs,
+} from '../../profiles/hmos-app/harness/execution-key';
+import { parseHylyreTrace as parseHylyreTraceForReuse } from '../../profiles/hmos-app/harness/providers/device-test-run';
 
 /**
  * device_test_build 门禁的 PASS 判据（导出供 t1(f) 生产路径回归：**真实出口函数**）。
@@ -134,6 +148,7 @@ import {
 } from './utils/hylyre-root-pollution-warn';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import {
+  classifyDriftRisk,
   loadReviewClosureAttestation,
   reconcileSourceTreeAgainstAttestation,
 } from './utils/closure-attestation';
@@ -166,10 +181,11 @@ import {
   lintDerivedPlanSelectorContract,
   type AcceptanceActionBinding,
 } from '../../profiles/hmos-app/harness/selector-contract';
-import { loadAppInstallCandidateMeta } from '../../profiles/hmos-app/harness/hdc-runner';
+import { loadAppInstallCandidateMeta, resolveHdcExecutableSync, runHdcRaw } from '../../profiles/hmos-app/harness/hdc-runner';
 import {
   EXECUTION_CHANNEL_DOMAIN,
   evaluateExecutionChannelDeclaration,
+  inactiveCapabilityIdsFromProfile,
   registeredCapabilityIdsFromProfile,
   type ExecutionChannelDeclarationResult,
 } from './utils/execution-channel';
@@ -200,6 +216,8 @@ import {
   loadVisualScreenVerdicts,
   PROVIDER_EVIDENCE_CONTRACT,
 } from './utils/execution-channel-evidence';
+import { injectP0IdentityAssertions } from './utils/p0-identity-injection';
+import { buildCanonicalSelectorIndex, type CanonicalSelectorIndex } from './utils/planned-step-normalizer';
 import { evaluateFailureBoundary, resolveArtifact } from './utils/hylyre-artifact-resolution';
 import {
   parseRecordedNativeBinding,
@@ -2074,10 +2092,9 @@ function collectReportOnlyDerivedPlanStaticIssues(
       issues.push(`派生计划缺少顶层 TC：${coverage.missing.join(', ')}`);
     }
   }
-  const derivedStat = fs.statSync(derivedPath);
-  if (topStat && derivedStat.mtimeMs < topStat.mtimeMs) {
-    issues.push('派生计划早于顶层 test-plan.md（stale）');
-  }
+  // plan 07a41ec6 T6：派生计划新鲜度不再按 mtime——顶层 TC 集合/优先级/AC 引用由 coverage 门禁按内容核对，
+  // 标题、措辞、版本号的改动不得触发重派生/跑机。
+  void derivedPath;
 
   const staticPlanGates = collectDeviceTestStaticPlanGates(ctx, pick.selected.content, topRaw);
   const stepBlockers = staticPlanGates.stepLint.violations.filter(v => v.severity === 'BLOCKER');
@@ -3700,15 +3717,177 @@ function loadExecutionChannelDeclaration(
   planRaw?: string | null,
 ): ExecutionChannelDeclarationResult {
   // plan b3d7e5a1 T2：唯一注入点——provider id 的 registry 存在性查表（capabilities 缺席视为空 registry，fail-closed）。
+  const capabilities = (ctx.resolvedProfile as { capabilities?: Record<string, unknown> } | undefined)?.capabilities;
   const opts = {
-    registeredCapabilityIds: registeredCapabilityIdsFromProfile(
-      (ctx.resolvedProfile as { capabilities?: Record<string, unknown> } | undefined)?.capabilities,
-    ),
+    registeredCapabilityIds: registeredCapabilityIdsFromProfile(capabilities),
+    inactiveCapabilityIds: inactiveCapabilityIdsFromProfile(capabilities),
   };
   if (typeof planRaw === 'string') return evaluateExecutionChannelDeclaration(planRaw, opts);
   const resolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-plan.md');
   const raw = fs.existsSync(resolved.actualPath) ? fs.readFileSync(resolved.actualPath, 'utf-8') : '';
   return evaluateExecutionChannelDeclaration(raw, opts);
+}
+
+/**
+ * 派生计划是否落后于顶层 TC 表。共同字段直接对账；会被翻译成 Hylyre JSON 的「测试步骤」
+ * 则与既有 derive-hint-from-plan.json 的源 TC 快照对账，不新增文件/manifest。
+ */
+interface TcFreshnessBaseline {
+  test_cases?: ReturnType<typeof extractTopPlanTestCasesForDeriveHint>;
+}
+
+export function derivedPlanStaleByTcTable(
+  topRaw: string,
+  derivedContent: string,
+  baseline?: TcFreshnessBaseline | null,
+  derivedAfterHint = true,
+): boolean {
+  const topSection = getSectionContent(topRaw, '测试用例');
+  const derivedSection = getSectionContent(derivedContent, '测试用例清单') ?? getSectionContent(derivedContent, '测试用例');
+  const topTables = topSection ? extractTables(topSection) : [];
+  const derivedTables = derivedSection ? extractTables(derivedSection) : [];
+  if (topTables.length === 0) return false;
+  if (derivedTables.length === 0) return true;
+  const norm = (s: string): string => s.replace(/\s+/g, ' ').trim();
+  const hasColumns = (table: MdTable, groups: string[][]): boolean =>
+    groups.every(group => group.some(key => table.headers.some(header => header.includes(key))));
+  const sharedColumns = [
+    ['用例编号', '编号'], ['用例名称', '名称'], ['前置条件'], ['测试步骤', '步骤'],
+    ['预期结果'], ['优先级'], ['关联 AC', '关联验收标准', '关联'],
+  ];
+  if (!hasColumns(topTables[0], [...sharedColumns, ['执行通道', 'execution_channel']]) || !hasColumns(derivedTables[0], sharedColumns)) {
+    return true;
+  }
+
+  const top = new Map(extractTopPlanTestCasesForDeriveHint(topRaw).map(row => [row.tc_id, row]));
+  const derived = new Map(extractDerivedPlanCases(derivedContent).map(row => [row.tc_id, row]));
+  for (const [id, topRow] of top) {
+    const derivedRow = derived.get(id);
+    if (!derivedRow) continue; // TC 集合增删由 coverage gate 判
+    const common = [
+      [topRow.name, derivedRow.name],
+      [topRow.precondition, derivedRow.precondition],
+      [topRow.expected, derivedRow.expected],
+      [topRow.priority.toUpperCase(), derivedRow.priority.toUpperCase()],
+      [topRow.ac_ref.toUpperCase(), derivedRow.ac_ref.toUpperCase()],
+    ];
+    if (common.some(([a, b]) => norm(a) !== norm(b))) return true;
+  }
+
+  const source = baseline?.test_cases;
+  if (!Array.isArray(source)) return true; // 步骤已被翻译，缺源 TC 快照就无法比较，fail stale
+  if (!derivedAfterHint) return true; // hint 可刷新，但旧派生不能凭刷新 hint 被洗绿
+  const sourceFields = ['tc_id', 'name', 'precondition', 'steps_natural_language', 'expected', 'priority', 'ac_ref', 'execution_channel'] as const;
+  if (source.some(row => !row || sourceFields.some(key => typeof row[key] !== 'string'))) return true;
+  const sourceById = new Map(source.map(row => [row.tc_id.toUpperCase(), row]));
+  for (const [id, topRow] of top) {
+    const prior = sourceById.get(id);
+    if (!prior) continue; // TC 集合增删由 coverage gate 判
+    const behavior = [
+      [topRow.name, prior.name],
+      [topRow.precondition, prior.precondition],
+      [topRow.steps_natural_language, prior.steps_natural_language],
+      [topRow.expected, prior.expected],
+      [topRow.priority.toUpperCase(), prior.priority.toUpperCase()],
+      [topRow.ac_ref.toUpperCase(), prior.ac_ref.toUpperCase()],
+      [topRow.execution_channel.toLowerCase(), prior.execution_channel.toLowerCase()],
+    ];
+    if (behavior.some(([a, b]) => norm(a) !== norm(b))) return true;
+  }
+  return false;
+}
+
+/**
+ * codex review（plan 07a41ec6 T6）：执行键里的设备与显示身份——HARNESS_HDC_TARGET 优先，否则 `hdc list targets`
+ * 恰好一台时取其序列号；显示环境取 `wm size`（best-effort）。设备身份未知时不允许同键复用。
+ */
+function resolveExecutionDeviceIdentity(): { device: string | null; display_env: string } {
+  let device = process.env.HARNESS_HDC_TARGET?.trim() || null;
+  let exe: string | null = null;
+  try {
+    exe = resolveHdcExecutableSync();
+  } catch {
+    exe = null;
+  }
+  if (!device && exe) {
+    try {
+      const probe = runHdcRaw(exe, ['list', 'targets'], { timeout: 5000 });
+      const lines = String(probe.stdout ?? '').split(/\r?\n/).map(l => l.trim()).filter(l => l && !/\[Empty\]/i.test(l));
+      if (probe.status === 0 && lines.length === 1) device = lines[0];
+    } catch {
+      /* 探测失败 = 设备未知 */
+    }
+  }
+  let displayEnv = '';
+  if (device && exe) {
+    try {
+      const wm = runHdcRaw(exe, ['-t', device, 'shell', 'wm', 'size'], { timeout: 5000 });
+      if (wm.status === 0) displayEnv = String(wm.stdout ?? '').split(/\r?\n/)[0].trim();
+    } catch {
+      displayEnv = '';
+    }
+  }
+  return { device, display_env: displayEnv };
+}
+
+/** plan 07a41ec6 T3：feature ui-spec 的 canonical 索引（无 ui-spec 时 by_text 不能映射身份，只认 by_id 字面）。 */
+function buildCanonicalIndexForFeature(ctx: CheckContext): CanonicalSelectorIndex | null {
+  const doc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
+  return doc ? buildCanonicalSelectorIndex(doc) : null;
+}
+
+/** plan 07a41ec6 T3：按 acceptance checkpoint 注入 P0 身份断言（纯计算；调用方决定写到 run 副本）。 */
+function runP0IdentityInjection(ctx: CheckContext, derivedMd: string, topPlanMd: string) {
+  return injectP0IdentityAssertions({
+    derivedMd,
+    topPlanMd,
+    acceptance: loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature),
+    canonical: buildCanonicalIndexForFeature(ctx),
+  });
+}
+
+/**
+ * plan 07a41ec6 T2/T3：静态（跑机前）检查 P0 身份断言可注入性——action 不唯一 / 无绑定动作 /
+ * by_text 抢先于既有身份断言，都是 invalid_test，必须在设备操作前给出 TC/step/改法。
+ */
+function checkP0IdentityInjectionStatic(ctx: CheckContext, plan: string | null): CheckResult[] {
+  const id = 'p0_identity_injection';
+  const description = 'P0 身份断言可注入性（派生计划装载时由 harness 注入裸 by_id 断言）';
+  const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
+  const pick = selectBestNonPlaceholderDerivedPlan(reportsDir);
+  if (!pick.selected) {
+    return [{ id, category: 'structure', description, severity: 'MINOR', status: 'SKIP', details: '无有效派生 Hylyre 计划，注入检查跳过。' }];
+  }
+  const topPath = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-plan.md').actualPath;
+  const topRaw = plan ?? (fs.existsSync(topPath) ? fs.readFileSync(topPath, 'utf-8') : '');
+  const injection = runP0IdentityInjection(ctx, pick.selected.content, topRaw);
+  if (injection.gaps.length > 0) {
+    return [{
+      id,
+      category: 'structure',
+      description,
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      failure_kind: 'plan_contract',
+      details: [
+        `invalid_test：${injection.gaps.length} 处 P0 身份断言无法注入（跑机前必修）：`,
+        ...injection.gaps.map(g => `  - [${g.rule_id}] ${g.message}`),
+      ].join('\n'),
+      suggestion: '按每条 message 里的改法修正派生计划或 acceptance checkpoint；身份断言本身不用手写，harness 装载 run 副本时自动注入。',
+      structured: { gaps: injection.gaps },
+    }];
+  }
+  return [{
+    id,
+    category: 'structure',
+    description,
+    severity: 'BLOCKER',
+    status: 'PASS',
+    details: injection.injected.length > 0
+      ? `将注入 ${injection.injected.length} 条身份断言：${injection.injected.map(r => `${r.tc_id}/${r.ac_id}/${r.kind}:${r.element_id}`).join(', ')}（源派生计划不改，只写 run 副本）`
+      : '全部 P0 checkpoint 的身份断言已在派生计划中以精确形状存在，无需注入。',
+    structured: { injected: injection.injected },
+  }];
 }
 
 /**
@@ -3859,7 +4038,19 @@ function checkDeviceTestRunGate(
     const derivedStat = fs.statSync(derivedPath);
     const derivedMtimeIso = new Date(derivedStat.mtimeMs).toISOString();
     const topMtimeIso = topStat ? new Date(topStat.mtimeMs).toISOString() : undefined;
-    const stale = Boolean(topStat && derivedStat.mtimeMs < topStat.mtimeMs);
+    let tcBaseline: TcFreshnessBaseline | null = null;
+    let derivedAfterHint = false;
+    try {
+      const p = path.join(reportsBase, 'derive-hint-from-plan.json');
+      if (fs.existsSync(p)) {
+        tcBaseline = JSON.parse(fs.readFileSync(p, 'utf8')) as TcFreshnessBaseline;
+        derivedAfterHint = derivedStat.mtimeMs >= fs.statSync(p).mtimeMs;
+      }
+    } catch {
+      tcBaseline = null;
+    }
+    // 新鲜度按 TC 行行为内容对账；标题/说明/版本等表外散文不参与。
+    const stale = derivedPlanStaleByTcTable(topRaw, derivedContent, tcBaseline, derivedAfterHint);
 
     const hintBase: DeriveHintAugment = {
       top_tc_ids: topIds,
@@ -3921,7 +4112,7 @@ function checkDeviceTestRunGate(
           description: desc,
           severity: 'BLOCKER',
           status: 'FAIL',
-          details: `派生计划早于顶层 test-plan.md 更新（mtime），可能过期。请重新派生或更新派生文件后重试。\n${hintLine}`,
+          details: `派生计划与顶层 test-plan.md 的 TC 行行为字段不一致，或关键列/源 TC 快照无法比较。请按最新 hint 重新派生后重试。\n${hintLine}`,
         },
       ];
     }
@@ -4106,6 +4297,55 @@ function checkDeviceTestRunGate(
     // 原样复制选中的派生计划（含 derive-manifest.json）；本轮 report/trace/failures 全写
     // 新目录。原派生目录保持字节不变（只读输入）；目录冲突 fail-closed，不覆盖不复用。
     // 新目录 mtime 最新 → 既有选择器/evidence 消费者自然落在此目录，无需改消费者。
+    // plan 07a41ec6 T6：执行键 = 真实执行输入。注入后的派生计划内容先在内存里算（源文件不改），
+    // 同键且最新 run 成功、证据完整 → 直接复用其 trace/timing/meta，只重算报告与门禁；--force-device 强制真跑。
+    const hylyreCfg = resolveHylyreToolConfig(ctx.projectRoot);
+    const coldRestartEnv = process.env.HARNESS_DEVICE_TEST_COLD_RESTART?.trim();
+    const coldRestart =
+      coldRestartEnv === '1' ? true : coldRestartEnv === '0' ? false : hylyreCfg.cold_restart_before_run;
+    const injectionPreview = runP0IdentityInjection(ctx, fs.readFileSync(path.resolve(derivedPath), 'utf-8'), topRaw);
+    const deviceIdentity = resolveExecutionDeviceIdentity();
+    const executionKeyInputs: ExecutionKeyInputs = {
+      hap_sha256_full: hapHolder.hapSha256Full,
+      derived_plan_sha256: sha256TextForKey(injectionPreview.content),
+      device: deviceIdentity.device,
+      display_env: deviceIdentity.display_env,
+      reset_mode: coldRestart ? 'cold_restart' : 'warm',
+      hylyre_version: ready.hylyreVersion ?? null,
+      manifest_version: ready.manifestVersion ?? null,
+      profile: ctx.resolvedProfile.name,
+      tool_config_sha256: sha256TextForKey(JSON.stringify(hylyreCfg)),
+      flags: ['--skip-assert-expected', ...(coldRestartEnv ? [`HARNESS_DEVICE_TEST_COLD_RESTART=${coldRestartEnv}`] : [])],
+    };
+    const executionKey = computeExecutionKey(executionKeyInputs);
+    const reuse = ctx.forceDevice
+      ? { reusable: null, reason: '--force-device：用户要求真跑' }
+      : !executionKeyInputs.device
+        ? { reusable: null, reason: '设备身份未知（无 HARNESS_HDC_TARGET 且 hdc list targets 非唯一），不做同键复用' }
+        : decideReuse(reportsBase, executionKey);
+    const reusable = reuse.reusable;
+    let hylyreOutDir: string;
+    let runPlanPath: string;
+    let derivedPlanSha256AtStart: string | null;
+    let run: HylyreRunResult;
+    if (reusable) {
+      hylyreOutDir = reusable.runDir;
+      runPlanPath = path.join(hylyreOutDir, 'test-plan.hylyre.md');
+      derivedPlanSha256AtStart = sha256File(runPlanPath);
+      run = {
+        executed: false,
+        exitCode: 0,
+        ok: true,
+        command: `(reused_by_execution_key ${executionKey.slice(0, 16)} ← ${reusable.dirStamp})`,
+        reportPath: path.join(hylyreOutDir, 'test-report.md'),
+        tracePath: reusable.record.trace_path,
+        trace: parseHylyreTraceForReuse(reusable.record.trace_path),
+        logPath: '',
+        errors: [],
+      };
+      // codex review：复用不只重绑 trace——把该 run 冻结的 timing/meta 回填顶层，报告与门禁读到的是同一 run 的三件套
+      restoreFrozenRunArtifacts(hylyreOutDir, featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot));
+    } else {
     const freshRun = prepareFreshHylyreRunDir({
       reportsBase,
       sourceHylyrePlanAbsPath: path.resolve(derivedPath),
@@ -4123,18 +4363,22 @@ function checkDeviceTestRunGate(
         },
       ];
     }
-    const hylyreOutDir = freshRun.runDir;
-    const runPlanPath = freshRun.hylyrePlanAbsPath;
-    const derivedPlanSha256AtStart = sha256File(runPlanPath);
-    const hylyreCfg = resolveHylyreToolConfig(ctx.projectRoot);
+    hylyreOutDir = freshRun.runDir;
+    runPlanPath = freshRun.hylyrePlanAbsPath;
+    // plan 07a41ec6 T3：P0 身份断言注入只作用于 run 副本（源派生计划字节不变）；注入清单落盘供审计。
+    // 注入在计算 derivedPlanSha256AtStart 之前完成，trace/binding 一律绑定注入后的副本。
+    const injection = injectionPreview;
+    if (injection.changed) fs.writeFileSync(runPlanPath, injection.content, 'utf-8');
+    fs.writeFileSync(
+      path.join(hylyreOutDir, 'checkpoint-injection.json'),
+      JSON.stringify({ schema_version: '1.0', injected: injection.injected, gaps: injection.gaps }, null, 2),
+      'utf-8',
+    );
+    derivedPlanSha256AtStart = sha256File(runPlanPath);
     const appSnapshotCacheAbs = path.resolve(ctx.projectRoot, hylyreCfg.app_snapshot_cache_dir);
     fs.mkdirSync(appSnapshotCacheAbs, { recursive: true });
 
-    const coldRestartEnv = process.env.HARNESS_DEVICE_TEST_COLD_RESTART?.trim();
-    const coldRestart =
-      coldRestartEnv === '1' ? true : coldRestartEnv === '0' ? false : hylyreCfg.cold_restart_before_run;
-
-    const run = dispatchDeviceTestRun(ctx, {
+    run = dispatchDeviceTestRun(ctx, {
       projectRoot: ctx.projectRoot,
       harnessRoot: TESTING_HARNESS_ROOT,
       frameworkRoot: ctx.frameworkRoot,
@@ -4155,6 +4399,15 @@ function checkDeviceTestRunGate(
     }) as HylyreRunResult;
 
     if (!run.ok) {
+      // plan 07a41ec6 T6：失败轮同样落执行键记录——同键更晚失败不得复用更早成功
+      try {
+        writeExecutionKeyRecord(hylyreOutDir, {
+          schema_version: '1.0', execution_key: executionKey, inputs: executionKeyInputs,
+          trace_path: run.tracePath ?? path.join(hylyreOutDir, 'trace.json'),
+          run_started_at: new Date().toISOString(), outcome: run.trace?.outcome ?? 'runner_failed',
+          trace_sha256: run.tracePath ? sha256File(run.tracePath) : null, timing_complete: false,
+        });
+      } catch { /* 记录失败不改变门禁 */ }
       // P1（三轮 review）：**设备锁屏且恢复失败是外部阻断，不是工具链问题**。
       // 二者的处置完全不同：前者「人解锁后重跑」，后者「查签名/环境」。此前一律标
       // device_toolchain，锁屏这个真因在结论层被抹掉，指引把人带向错误方向。
@@ -4183,9 +4436,6 @@ function checkDeviceTestRunGate(
       ];
     }
 
-    const summary = run.trace
-      ? `outcome=${run.trace.outcome}, cases=${(run.trace.cases ?? []).length}`
-      : '无 trace.json';
 
     try {
       const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
@@ -4199,6 +4449,26 @@ function checkDeviceTestRunGate(
     } catch {
       /* timing 汇总失败不阻断 run 门禁 */
     }
+    // plan 07a41ec6 T6：本轮执行键记录（同键复用与稳定性统计的唯一依据）
+    try {
+      const reportsDirForFreeze = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
+      const frozenFiles = freezeRunArtifacts(reportsDirForFreeze, hylyreOutDir);
+      const timingRaw = readJsonRecord(path.join(reportsDirForFreeze, 'device-test-timing.json')).value;
+      const timingCases = Array.isArray(timingRaw?.cases) ? (timingRaw!.cases as unknown[]).length : 0;
+      writeExecutionKeyRecord(hylyreOutDir, {
+        schema_version: '1.0', execution_key: executionKey, inputs: executionKeyInputs,
+        trace_path: run.tracePath ?? path.join(hylyreOutDir, 'trace.json'),
+        run_started_at: new Date().toISOString(), outcome: run.trace?.outcome ?? 'unknown',
+        trace_sha256: run.tracePath ? sha256File(run.tracePath) : null,
+        timing_complete: timingCases >= (run.trace?.cases ?? []).length,
+        frozen_files: frozenFiles,
+      });
+    } catch { /* 记录失败不改变门禁 */ }
+    } // plan 07a41ec6 T6：end !reusable
+    const summary = run.trace
+      ? `outcome=${run.trace.outcome}, cases=${(run.trace.cases ?? []).length}`
+      : '无 trace.json';
+    try { writeStabilityReport(reportsBase, executionKey); } catch { /* 稳定性统计失败不阻断 */ }
 
     hapHolder.hylyreTracePath = run.tracePath;
     hapHolder.deviceTestRunExecuted = true;
@@ -4311,8 +4581,17 @@ function checkDeviceTestRunGate(
         description: desc,
         severity: 'BLOCKER',
         status: runGatePass ? 'PASS' : 'FAIL',
+        structured: {
+          execution_key: executionKey,
+          reused_by_execution_key: Boolean(reusable),
+          ...(reusable ? { reused_run_dir: path.relative(ctx.projectRoot, reusable.runDir).replace(/\\/g, '/') } : {}),
+          reuse_reason: reuse.reason,
+        },
         details: [
-          `真机自动化执行完成：exit=${run.exitCode}, ${summary}`,
+          reusable
+            ? `真机执行复用：device_run=reused_by_execution_key（${reuse.reason}；同键无需重新操作设备，--force-device 可强制真跑）`
+            : `真机自动化执行完成：exit=${run.exitCode}, ${summary}`,
+          `execution_key：${executionKey}（${reusable ? '复用' : '本轮'}；决策：${reuse.reason}）`,
           `报告：${run.reportPath}`,
           `trace：${run.tracePath}`,
           ...(runGatePass
@@ -4332,7 +4611,17 @@ function checkDeviceTestRunGate(
       },
     ];
 
-    if (run.ok && !isDeviceVisualDiffSkipped(ctx.resolvedProfile)) {
+    if (run.ok && reusable) {
+      out.push({
+        id: 'visual_diff_capture',
+        category: 'structure',
+        description: 'device_test.run 后 visual_diff 自动截图与骨架采集',
+        severity: 'MINOR',
+        status: 'PASS',
+        details: '同键复用：设备截图沿用被复用 run 的产物（visual-diff.json / device-screenshots），参考图或 ui-spec 变化时按现有截图重新比较，不重跑交互。',
+      });
+    }
+    if (run.ok && !reusable && !isDeviceVisualDiffSkipped(ctx.resolvedProfile)) {
       const specMd = loadSpecMarkdown(ctx.projectRoot, ctx.feature);
       if (specMd !== null) {
         const uiChange = parseUiChangeFromSpecMarkdown(specMd);
@@ -4708,7 +4997,8 @@ function checkReportTraceReconciliation(
         ...(recon.warnings.length ? [`notes:\n${recon.warnings.map(w => `  - ${w}`).join('\n')}`] : []),
       ].join('\n'),
       suggestion:
-        '按 device-testing Step 5.1 从 hylyre/trace.json 回填执行状态；禁止谎报通过或结论=达标当 trace.outcome≠success。',
+        '逐格按上面的失配项修正（报告执行表/耗时/run 身份由 harness 从 trace 与 timing 生成，不要手写；' +
+        '用 --report-reconcile-only 刷新机器段后再投 verifier）；禁止谎报通过或结论=达标当 trace.outcome≠success。',
     }];
   }
 
@@ -4826,11 +5116,6 @@ function checkHylyreCaseExecutionCompleteness(
   if (offChannelInTrace.length > 0) {
     details.push(`trace 含非 channel=hylyre 的 TC：${offChannelInTrace.join(', ')}（通道由顶层声明，执行侧不得改写）`);
   }
-  if (channelScoped && channelDecl.manual_tc_ids.length > 0) {
-    details.push(
-      `manual 通道 TC 无机器证据载体，持续留在分母 FAIL/UNVERIFIED：${channelDecl.manual_tc_ids.join(', ')}`,
-    );
-  }
   const ok = details.length === 0;
   const nonHylyreNote = channelScoped
     ? `；非 Hylyre 通道 ${topIds.length - expectedIds.length} 个仍在报告总分母，由 testing_channel_evidence_obligation 裁决（per-TC 证据绑定建立前保持 FAIL/UNVERIFIED）`
@@ -4931,9 +5216,8 @@ function loadUseCaseSpec(ctx: CheckContext): UseCasesSpec | null {
 /**
  * plan a6c4e9f2 T3：顶层执行通道声明门。
  * - 缺列/缺值/非法值 → BLOCKER（一次性迁移；harness 不猜通道）。
- * - manual 在场 → 显式记为未自动取证义务：manual 没有机器质量 PASS 载体，
- *   这些 TC 持续留在分母 FAIL/UNVERIFIED，本 feature testing 因此无法 PASS。
- *   这里就是它的"载体"，且刻意不提供任何人工提交入口/receipt/resume。
+ * - known manual gap / inactive provider → unsupported_gap；其余 manual/provider 写法
+ *   → invalid_test，均在 build/install/device 之前完成裁决。
  */
 /**
  * plan a6c4e9f2 T3（review P1）：设备流水线准入的**唯一**判据。
@@ -4964,12 +5248,20 @@ function checkExecutionChannelDeclaration(ctx: CheckContext, plan: string | null
     ...(decl.ok ? {} : { failure_kind: 'plan_contract' as const }),
     details: decl.ok
       ? `通道声明完整：hylyre=${decl.hylyre_tc_ids.length}、visual=${decl.visual_tc_ids.length}、` +
-        `provider=${decl.provider_tc_ids.length}、manual=${decl.manual_tc_ids.length}。` +
-        `派生器只编译 hylyre 集合，不得新增/删除/改写通道。`
+        `provider=${decl.provider_tc_ids.length}、manual=${decl.manual_tc_ids.length}；三态：` +
+        `executable=${decl.hylyre_tc_ids.length + decl.visual_tc_ids.length}、` +
+        `unsupported_gap=${decl.unsupported_gap_tc_ids.length}${decl.unsupported_gap_tc_ids.length > 0 ? `（${decl.unsupported_gap.map(g => `${g.tc_id}[${g.channel}:${g.reason}]`).join(', ')}；留分母、不算 PASS、不阻止完成）` : ''}、` +
+        `invalid_test=0。派生器只编译 hylyre 集合，不得新增/删除/改写通道。`
       : decl.detail,
+    ...(decl.ok && decl.unsupported_gap_tc_ids.length > 0
+      ? { structured: { unsupported_gap: decl.unsupported_gap, unsupported_gap_count: decl.unsupported_gap_tc_ids.length } }
+      : {}),
     suggestion: decl.ok
       ? '通道属计划 identity：修改必须经 test-plan review，不在 derive/回灌时静默重写。'
-      : `在顶层 test-plan.md「测试用例」表补「执行通道」列，每条 TC 取值 ${EXECUTION_CHANNEL_DOMAIN}；由测试计划作者决定并进入 review。`,
+      : (decl.invalid_test.length > 0
+          ? `逐条按 invalid_test 的改法修正：${decl.invalid_test.map(item => `${item.tc_id}（${item.why}→${item.fix}）`).join('；')}。`
+          : '') +
+        `在顶层 test-plan.md「测试用例」表补「执行通道」列，每条 TC 取值 ${EXECUTION_CHANNEL_DOMAIN}；由测试计划作者决定并进入 review，harness 不猜通道。`,
   });
   // plan a6c4e9f2 §2.2「未取证不通过」（review P0）：非 Hylyre 通道的 TC 已被移出
   // derived/trace/timing 的精确对账，如果这里不给它们一个**裁决**载体，它们就只剩报告
@@ -5018,10 +5310,21 @@ function checkChannelEvidenceObligation(
     }),
     visualTcIds: decl.visual_tc_ids,
     providerTcIds: decl.provider_tc_ids,
+    unregisteredProviderTcIds: decl.invalid_test.filter(i => i.raw.toLowerCase().startsWith('provider:')).map(i => i.tc_id),
     manualTcIds: decl.manual_tc_ids,
+    gaps: decl.unsupported_gap,
   });
-  const blocking = bindings.filter(b => b.verdict.kind !== 'covered');
+  // plan 07a41ec6 T2：unsupported_gap 不阻断——留分母、不算 PASS，只披露
+  const blocking = bindings.filter(b => b.verdict.kind !== 'covered' && b.verdict.kind !== 'unsupported_gap');
   const covered = bindings.filter(b => b.verdict.kind === 'covered');
+  const gaps = bindings.filter(b => b.verdict.kind === 'unsupported_gap');
+  const gapLines = gaps.length > 0
+    ? [
+        '',
+        `unsupported_gap ${gaps.length} 条（留在分母、不算 PASS、不阻止普通开发完成；报告结论与 completion_status 须披露）：`,
+        ...gaps.map(b => `  - [${b.channel}] ${b.tc_id}：${b.verdict.detail}`),
+      ]
+    : [];
   return [{
     id: 'testing_channel_evidence_obligation',
     category: 'structure',
@@ -5029,15 +5332,20 @@ function checkChannelEvidenceObligation(
     severity: 'BLOCKER',
     status: blocking.length === 0 ? 'PASS' : 'FAIL',
     ...(blocking.length === 0 ? {} : { failure_kind: 'testing_channel_unverified' as const }),
+    structured: {
+      unsupported_gap_count: gaps.length,
+      unsupported_gap: gaps.map(b => ({ tc_id: b.tc_id, channel: b.channel, detail: b.verdict.detail })),
+    },
     details: blocking.length === 0
       ? [
-          `非 hylyre 通道 ${covered.length} 条 TC 全部由机器证据闭合：`,
+          covered.length > 0 ? `非 hylyre 通道 ${covered.length} 条 TC 由机器证据闭合：` : '非 hylyre 通道无需机器闭合的 TC。',
           ...covered.map(b => `  - [${b.channel}] ${b.verdict.detail}`),
+          ...gapLines,
         ].join('\n')
       : [
-          '以下 TC 声明为非 hylyre 通道，但未由机器证据闭合，',
-          '因此留在分母 FAIL/UNVERIFIED，本 feature 的 testing 无法 PASS：',
+          '以下 TC 声明为非 hylyre 通道，但未由机器证据闭合（visual 绑定断裂/失效，或通道写法错误）：',
           ...blocking.map(b => `  - [${b.channel}/${b.verdict.kind}] ${b.tc_id}：${b.verdict.detail}`),
+          ...gapLines,
           ...(covered.length > 0
             ? ['', `已闭合 ${covered.length} 条：${covered.map(b => b.tc_id).join(', ')}`]
             : []),
@@ -5045,8 +5353,8 @@ function checkChannelEvidenceObligation(
     suggestion: blocking.length === 0
       ? 'visual 通道的结论来自本轮 visual-diff.json 的逐屏 verdict + 截图 hash/build 指纹复核；'
         + '改结论必须重跑视觉采集，不得改报告行或手改 JSON。'
-      : '短期：把确实要在本轮验证的 TC 改回 execution_channel=hylyre 并补齐可执行步骤，'
-        + '或补齐 visual 通道所缺的「关联 AC」/checkpoint 屏声明/本轮视觉产物。'
+      : 'visual 通道：补齐所缺的「关联 AC」/checkpoint 屏声明/本轮视觉产物；写法错误的 TC 改回 execution_channel=hylyre 并写出步骤，'
+        + '或按固定缺口类别写成 manual:<class>（工具确无原语时）。'
         + `provider 通道：${PROVIDER_EVIDENCE_CONTRACT}`
         + '任何情况下都不接受人工确认、confirmed_by、质量 receipt 或 manual resume 作为本轮通过证据。',
   }];
@@ -5323,12 +5631,72 @@ function buildTestingRunStatusResult(
   };
 }
 
+/**
+ * plan 07a41ec6 T5：报告由 harness 生成。只在存在权威 trace 时重写（无 trace 的轮次保留现有报告，
+ * 由 device_test_run 等门禁裁决）；首次覆盖手写报告时旧文迁到 testing/notes.legacy-report.md。
+ * 结果以 MINOR check 记账（生成失败只 WARN——报告类门禁随后会按现有报告如实判定）。
+ */
+function regenerateTestReport(
+  ctx: CheckContext,
+  holder: DeviceTestPipelineHolder,
+  plan: string | null,
+  channelDecl: ExecutionChannelDeclarationResult,
+  results: CheckResult[],
+): string | null {
+  const id = 'test_report_generated';
+  const description = 'test-report.md 由 harness 从权威 run 整份生成（plan 07a41ec6 T5）';
+  if (!plan) {
+    results.push({ id, category: 'structure', description, severity: 'MINOR', status: 'SKIP', details: '无顶层 test-plan.md，不生成报告。' });
+    return null;
+  }
+  const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
+  const tracePath = holder.hylyreTracePath ?? resolveAuthoritativeHylyreTracePath(reportsDir);
+  if (!tracePath || !fs.existsSync(tracePath)) {
+    results.push({ id, category: 'structure', description, severity: 'MINOR', status: 'SKIP', details: '本轮无权威 hylyre/trace.json，保留现有报告不重写（执行事实由 device_test_run 门禁裁决）。' });
+    return null;
+  }
+  try { refreshStabilityForNewestRun(reportsDir); } catch { /* 无记录则不写 */ }
+  const written = writeGeneratedTestReport({
+    projectRoot: ctx.projectRoot,
+    feature: ctx.feature,
+    reportsDir,
+    tracePath,
+    planMd: plan,
+    channelDecl,
+  });
+  if (!written.written) {
+    results.push({
+      id, category: 'structure', description, severity: 'MINOR', status: 'WARN',
+      details: `报告生成失败：${written.reason ?? '未知'}；沿用磁盘上的现有报告。`,
+      suggestion: '修复生成失败原因后重跑 harness 或 --report-reconcile-only。',
+    });
+    return null;
+  }
+  const c = written.conclusion!;
+  results.push({
+    id, category: 'structure', description, severity: 'MINOR', status: 'PASS',
+    details: [
+      `已生成 ${path.relative(ctx.projectRoot, written.path).replace(/\\/g, '/')}（权威 run ${path.relative(ctx.projectRoot, tracePath).replace(/\\/g, '/')}）`,
+      `按轴：功能=${c.functional} 稳定性=${c.stability} 视觉几何=${c.visual_geometry} 内容=${c.visual_content} 样式=${c.visual_style} 总体=${c.overall}（声明 ${c.declared_verdict}）`,
+      ...(c.gaps.length > 0 ? [`已知缺口 ${c.gaps.length} 项：${c.gaps.slice(0, 6).join('；')}`] : []),
+      ...(written.legacy_moved_to ? [`旧手写报告已迁至 ${path.relative(ctx.projectRoot, written.legacy_moved_to).replace(/\\/g, '/')}`] : []),
+    ].join('\n'),
+    structured: { conclusion: c },
+  });
+  try {
+    return fs.readFileSync(written.path, 'utf-8');
+  } catch {
+    return null;
+  }
+}
+
 const checker: PhaseChecker = {
   phase: 'testing',
 
   async check(ctx: CheckContext): Promise<CheckResult[]> {
     const plan = loadDoc(ctx, 'test-plan.md');
-    const report = loadDoc(ctx, 'test-report.md');
+    // plan 07a41ec6 T5：test-report.md 由 harness 生成（device run 之后 / report-only 之前重写），故为 let
+    let report = loadDoc(ctx, 'test-report.md');
 
     if (!plan && !report) {
       const missingDocs: CheckResult = {
@@ -5379,12 +5747,15 @@ const checker: PhaseChecker = {
     // 契约错误会在烧掉一次真机 run 之后才被报出来，且期间只跑了合法子集，产出半份 trace。
     // decl.ok=false 时零设备动作，只产结构化 BLOCKER。
     results.push(...safeRun(() => checkExecutionChannelDeclaration(ctx, plan), 'testing_execution_channel'));
+    results.push(...safeRun(() => checkP0IdentityInjectionStatic(ctx, plan), 'p0_identity_injection'));
     const channelDeclaration = loadExecutionChannelDeclaration(ctx, plan);
     // 声明未闭合时，被拦的是**设备动作**，不是全部分析。report-only 按契约零设备/零 provider
     // 调用，因此照常完整重算——通道迁移的 BLOCKER 已由上面那条 check 独立记账，phase 仍然 FAIL，
     // 不需要顺手把只读重算也关掉（那会让历史 run 连诊断都跑不了）。
     const pipelinePlan = shouldRunDevicePipeline(channelDeclaration, Boolean(ctx.reportReconcileOnly));
     if (pipelinePlan.reportOnly) {
+      // plan 07a41ec6 T5：report-only 先按权威 run 重写机器报告，再做对账（报告永不落后 run）
+      report = regenerateTestReport(ctx, deviceTestHapHolder, plan, channelDeclaration, results) ?? report;
       results.push(...checkReportReconcileOnlyPipeline(ctx, deviceTestHapHolder, plan, report));
     } else if (!pipelinePlan.device) {
       results.push({
@@ -5409,6 +5780,8 @@ const checker: PhaseChecker = {
         () => writeDeviceTestEvidenceIfEligible(ctx, deviceTestHapHolder),
         'device_test_evidence_write',
       ));
+      // plan 07a41ec6 T5：真机跑完即从本轮 trace/timing/meta 整份生成报告（agent 零手写）
+      report = regenerateTestReport(ctx, deviceTestHapHolder, plan, channelDeclaration, results) ?? report;
     }
     results.push(
       ...safeRun(
@@ -5547,6 +5920,8 @@ const checker: PhaseChecker = {
           evidenceGate: deviceTestHapHolder.hylyreEvidenceGate ?? null,
           derivedPlanPath: deviceTestHapHolder.nativeArtifactBinding?.derived_plan_path ?? null,
           reportConclusion: report ? parseReportConclusionVerdict(report) : null,
+          // plan 07a41ec6 T2：unsupported_gap 留分母、不算 PASS/FAIL（五数口径）
+          unsupportedGapTcIds: loadExecutionChannelDeclaration(ctx, plan ?? null).unsupported_gap_tc_ids,
         };
         return [...evaluateP0CoverageIntegrity(inputs), ...evaluateP0SemanticCoverage(inputs)];
       }, 'p0_semantic_gates'),
@@ -5608,37 +5983,45 @@ function checkReviewClosureAttestationGate(ctx: CheckContext): CheckResult[] {
       details: `project_profile=${ctx.resolvedProfile.name} 已禁用 review 阶段，无 attestation 可对账。`,
     }];
   }
+  // plan 07a41ec6 T8：不再一刀 BLOCKER。缺基线 / 有漂移都按风险分级给出所需的一次复核，
+  // 未做时 WARN 并如实标注（review 语义结论对这些改动未重审），不阻塞普通开发完成。
   const att = loadReviewClosureAttestation(ctx.projectRoot, ctx.feature);
   if (!att) {
     return [{
       id, category: 'structure', description,
-      severity: 'BLOCKER', status: 'FAIL',
+      severity: 'MAJOR', status: 'WARN',
       details:
-        '缺 review-closure-attestation.json（review 四件套闭环时由 check-receipt 生成）。' +
-        '无 grace window：存量 feature 首次跑新版 testing 前须补跑一次 review 闭环' +
-        '（fail-open 通道正是 bc-openCard 事故的形状）。',
-      suggestion: '回跑 review 闭环（harness + verifier + receipt + check-receipt）生成 attestation 后重试。',
+        '缺 review-closure-attestation.json（review 闭环时由 check-receipt 生成）——无法对 review 后源码漂移分级；' +
+        '按「未复核」如实标注，不据此阻塞 testing。',
+      structured: { baseline: 'unavailable', drift_classes: [], required_reviews: ['无基线：做一次最终合并 diff review'] },
+      suggestion: '重跑一次 review 闭环（harness → verifier → check-receipt）即可重建 attestation；本轮 testing 可先闭环。',
     }];
   }
   const rec = reconcileSourceTreeAgainstAttestation(ctx.projectRoot, att);
   if (!rec.ok) {
     const fmt = (label: string, arr: string[]): string =>
       arr.length === 0 ? '' : `\n${label}（${arr.length}）：${arr.slice(0, 8).join('、')}${arr.length > 8 ? '…' : ''}`;
+    const files = [...rec.added, ...rec.modified, ...rec.deleted];
+    const risk = classifyDriftRisk(files);
     return [{
       id, category: 'structure', description,
-      severity: 'BLOCKER', status: 'FAIL',
+      severity: 'MAJOR', status: 'WARN',
       details:
         'review 闭环后产品源码发生变更——review 审过的代码与当前代码不是同一份：' +
         fmt('新增', rec.added) + fmt('修改', rec.modified) + fmt('删除', rec.deleted) +
-        fmt('新出现的产品源码根', rec.new_roots),
+        fmt('新出现的产品源码根', rec.new_roots) +
+        `\n按风险分级所需复核：\n${risk.required_reviews.map(r => `  - ${r}`).join('\n')}` +
+        '\n未做上述复核时本轮 testing 仍可闭环，但 review 语义结论对这些改动**未重审**（如实标注，不洗绿）。',
+      structured: { baseline: 'attestation', drift_classes: risk.classes, required_reviews: risk.required_reviews, combined: risk.combined, new_roots: rec.new_roots },
+      affected_files: files,
       suggestion:
-        '产品代码变更须回跑 review 闭环重审后再进 testing（ut 期修 bug 合法但同样触发重审）；' +
-        '测试接缝不得改变用户可见流程/默认行为。',
+        '按上述分级做一次对应复核（不无条件重走 review→UT→testing）；' +
+        '改动若属需求/契约变化，走修正三问回责任阶段后 --revalidate。',
     }];
   }
   return [{
     id, category: 'structure', description,
-    severity: 'BLOCKER', status: 'PASS',
+    severity: 'MAJOR', status: 'PASS',
     details: `产品源码与 review 闭环快照一致（inventory ${att.inventory.file_count} 文件，roots=${att.inventory.roots.length}）。`,
   }];
 }

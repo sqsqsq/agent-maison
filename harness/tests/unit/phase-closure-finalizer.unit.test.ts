@@ -119,10 +119,6 @@ function finalize(
     frameworkRoot: FRAMEWORK_ROOT,
     feature: FEATURE,
     phase: PHASE,
-    receipt: {
-      status: 'passed',
-      receipt_path: path.relative(fixture.root, fixture.receiptPath).replace(/\\/g, '/'),
-    },
     persistPhaseState,
     prepareEvidence: () => ({ extraInputs: [], extraOutputs: [], requirementSha: null }),
     now: () => new Date('2026-07-30T00:00:00.000Z'),
@@ -137,10 +133,6 @@ function finalizeWithProductionEvidence(fixture: ReturnType<typeof mkProject>) {
     frameworkRoot: FRAMEWORK_ROOT,
     feature: FEATURE,
     phase: PHASE,
-    receipt: {
-      status: 'passed',
-      receipt_path: path.relative(fixture.root, fixture.receiptPath).replace(/\\/g, '/'),
-    },
     persistPhaseState: () => undefined,
     now: () => new Date('2026-07-30T00:00:00.000Z'),
   });
@@ -152,9 +144,8 @@ function seedOldClosureBinding(fixture: ReturnType<typeof mkProject>): {
 } {
   finalize(fixture);
   const oldManifest = loadPhaseEvidenceManifest(fixture.root, FEATURE, PHASE);
-  const oldPointer = readReceiptManifestPointer(fixture.root, FEATURE, PHASE);
   assert(Boolean(oldManifest), 'old manifest missing');
-  assert(Boolean(oldPointer), 'old pointer missing');
+  const oldPointer = oldManifest!.fileSha256; // plan 07a41ec6：回执指针已退出证据链，形状保留
 
   const reopened = JSON.parse(fixture.originalSummary) as HarnessRunSummary;
   reopened.warn_count = 1;
@@ -162,6 +153,35 @@ function seedOldClosureBinding(fixture: ReturnType<typeof mkProject>): {
   return { manifestSha: oldManifest!.fileSha256, pointerSha: oldPointer! };
 }
 const cases: Case[] = [
+  {
+    name: 'plan 07a41ec6 T7：summaryPatch 把 verifier_closure 写进闭环 summary（沿用既往 PASS 的诚实标注）',
+    run: () => {
+      const fixture = mkProject();
+      try {
+        const record = {
+          mode: 'completed_with_prior_review',
+          reviewed_subject_id: 'a'.repeat(64),
+          current_subject_id: 'b'.repeat(64),
+          current_material_not_reverified: ['doc/features/x/spec/spec.md'],
+        };
+        finalizePhaseClosure({
+          projectRoot: fixture.root,
+          frameworkRoot: FRAMEWORK_ROOT,
+          feature: FEATURE,
+          phase: PHASE,
+          persistPhaseState: () => undefined,
+          prepareEvidence: () => ({ extraInputs: [], extraOutputs: [], requirementSha: null }),
+          now: () => new Date('2026-07-30T00:00:00.000Z'),
+          summaryPatch: { verifier_closure: record },
+        });
+        const closed = JSON.parse(fs.readFileSync(fixture.summaryPath, 'utf8')) as Record<string, unknown>;
+        assert(closed.closure_status === 'closed', 'summary 应闭环');
+        assert(JSON.stringify(closed.verifier_closure) === JSON.stringify(record), `summaryPatch 应进入闭环 summary：${JSON.stringify(closed.verifier_closure)}`);
+      } finally {
+        fs.rmSync(fixture.root, { recursive: true, force: true });
+      }
+    },
+  },
   {
     name: 'production evidence binds project fallback attempts but never framework contracts',
     run: () => {
@@ -253,23 +273,20 @@ const cases: Case[] = [
     },
   },
   {
-    name: 'strict phase-state failure leaves a recoverable partial transaction and canonical summary open',
+    name: 'phase-state failure occurs after canonical summary commit; retry only resyncs compatibility state',
     run: () => {
       const fixture = mkProject();
       try {
-        let threw = false;
-        try {
-          finalize(fixture, () => { throw new Error('state denied'); });
-        } catch (error) {
-          threw = (error as Error).message.includes('state denied');
-        }
-        assert(threw, 'expected strict state error');
-        assert(fs.readFileSync(fixture.summaryPath, 'utf8') === fixture.originalSummary, 'summary changed');
+        const result = finalize(fixture, () => { throw new Error('state denied'); });
+        assert(result.phase_state_error === 'state denied', 'expected state sync warning');
+        assert(JSON.parse(fs.readFileSync(fixture.summaryPath, 'utf8')).closure_status === 'closed', 'summary must commit before state sync');
         const staged = fs.readdirSync(path.dirname(fixture.summaryPath))
           .filter((name) => name.includes('.staged-'));
-        assert(staged.length === 1, `partial transaction witness=${staged.join(',')}`);
-        const recovered = finalize(fixture);
-        assert(recovered.recovered_partial === true, 'state-cut transaction was not recovered');
+        assert(staged.length === 0, `committed summary must not leave staged witness=${staged.join(',')}`);
+        let resynced = 0;
+        const recovered = finalize(fixture, () => { resynced += 1; });
+        assert(recovered.transitioned === false, 'retry should observe already committed summary');
+        assert(resynced === 1, 'retry must resync compatibility state');
         assert(JSON.parse(fs.readFileSync(fixture.summaryPath, 'utf8')).closure_status === 'closed', 'summary not closed');
       } finally {
         fs.rmSync(fixture.root, { recursive: true, force: true });
@@ -486,15 +503,13 @@ const cases: Case[] = [
         assert(staged.length === 0, `unprovable staged temp was not cleaned: ${staged.join(',')}`);
         assert(loadPhaseEvidenceManifest(fixture.root, FEATURE, PHASE)?.fileSha256 === old.manifestSha,
           'old manifest should remain untouched for owner invalidation');
-        assert(readReceiptManifestPointer(fixture.root, FEATURE, PHASE) === old.pointerSha,
-          'old pointer should remain untouched for owner invalidation');
       } finally {
         fs.rmSync(fixture.root, { recursive: true, force: true });
       }
     },
   },
   {
-    name: 'old manifest pointer is replaced when the new manifest proves the staged closure',
+    name: 'new manifest proves the staged closure and recovery resumes it（plan 07a41ec6：回执指针已退出证据链）',
     run: () => {
       const fixture = mkProject();
       try {
@@ -507,13 +522,9 @@ const cases: Case[] = [
         const published = loadPhaseEvidenceManifest(fixture.root, FEATURE, PHASE);
         assert(Boolean(published), 'new manifest missing');
         assert(published!.fileSha256 !== old.manifestSha, 'new manifest did not replace the old binding');
-        assert(readReceiptManifestPointer(fixture.root, FEATURE, PHASE) === old.pointerSha,
-          'crash cut should still expose the old pointer');
 
         const recovered = finalize(fixture);
         assert(recovered.recovered_partial === true, 'new manifest transaction was not resumed');
-        assert(readReceiptManifestPointer(fixture.root, FEATURE, PHASE) === published!.fileSha256,
-          'recovery did not advance the pointer to the proven manifest');
         assert(JSON.parse(fs.readFileSync(fixture.summaryPath, 'utf8')).closure_status === 'closed',
           'recovery did not publish the canonical summary');
       } finally {
@@ -548,12 +559,39 @@ const cases: Case[] = [
             `${cut} manifest does not bind canonical summary`,
           );
           assert(!finalize(fixture).transitioned, `${cut} repeat was not idempotent`);
-          if (cut === 'after_manifest_publish' || cut === 'after_receipt_pointer' || cut === 'after_phase_state') {
+          if (cut === 'after_manifest_publish' || cut === 'after_receipt_pointer') {
             assert(recovered.recovered_partial === true, `${cut} did not resume the published transaction`);
           }
         } finally {
           fs.rmSync(fixture.root, { recursive: true, force: true });
         }
+      }
+    },
+  },
+  {
+    name: 'receipt is absent before closure and projected only after summary closes; projection failure is WARN-only',
+    run: () => {
+      const absent = mkProject();
+      try {
+        fs.unlinkSync(absent.receiptPath);
+        const result = finalize(absent);
+        assert(result.summary.closure_status === 'closed', 'summary should close without receipt input');
+        assert(fs.existsSync(absent.receiptPath), 'closed summary should best-effort project receipt');
+        assert(/receipt_schema:\s*"2\.1"/.test(fs.readFileSync(absent.receiptPath, 'utf8')), 'expected 2.1 projection');
+      } finally {
+        fs.rmSync(absent.root, { recursive: true, force: true });
+      }
+
+      const unwritable = mkProject();
+      try {
+        fs.unlinkSync(unwritable.receiptPath);
+        fs.mkdirSync(unwritable.receiptPath);
+        const result = finalize(unwritable);
+        assert(result.summary.closure_status === 'closed', 'receipt projection failure must not roll back closure');
+        assert(Boolean(result.receipt_projection_error), 'projection failure must be returned as warning detail');
+        assert(JSON.parse(fs.readFileSync(unwritable.summaryPath, 'utf8')).closure_status === 'closed', 'closed summary must remain durable');
+      } finally {
+        fs.rmSync(unwritable.root, { recursive: true, force: true });
       }
     },
   },

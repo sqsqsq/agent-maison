@@ -306,7 +306,6 @@ import {
   syncPhaseStateOnReceiptPassStrict,
   tryValidateReceipt,
 } from './utils/phase-state';
-import { writeReceiptScaffold } from './utils/receipt-scaffold';
 import {
   actionableDefectsToCandidates,
   mergeRepairCandidatesIntoSummary,
@@ -773,7 +772,6 @@ function hasTrustedPhaseClosureAfterRequest(input: {
   if (
     summary?.verdict !== 'PASS' ||
     summary.closure_status !== 'closed' ||
-    summary.receipt_status !== 'passed' ||
     summary.closure_commit?.schema_version !== '1.0' ||
     !Number.isFinite(committedMs) ||
     committedMs < requestMs
@@ -1724,7 +1722,6 @@ async function refreshCompletedUpstreamEvidenceDeterministic(opts: {
         frameworkRoot,
         feature: manifest.feature,
         phase,
-        receipt: { ...receiptValidation, status: 'passed' },
         goalRunId: manifest.run_id,
         goalAttemptId: originalAttempt,
         blockerCount: summary?.blockers?.length ?? 0,
@@ -6989,48 +6986,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           phaseDone = true;
           continue;
         }
-        // adjudicated-repair-loop（review 修复，续）：resumePostAgent 已在 attempt 分配
-        // 之前判定（见 totalTurns 前声明）——此处只保留 scaffold 跳过 + invoke_start 跳过。
-        // openspec runner-owned-machine-facts：回执骨架由 runner 在**每次真实 invoke 前**
-        // 单点 force 写入并预填本轮 attempt 身份——agent 只填自证字段，不抄写机器已知的
-        // 身份值（宿主实锤 run 20260815T023016Z-8c66cf：agent 手抄 "3"≠"i3"；run
-        // 20260816T071553Z-e72aee：coding 无 pass snapshot 时旧判据漏掉 force 重建，i4 身份
-        // 存活到 i5）。force 同时作废上一 attempt 的旧回执：旧完整声明不得让本 attempt 被
-        // 完成观测提前判完；agent 从内容轮起即见骨架，closure 可在同一 attempt 内完成
-        // （testing 不再必然多跑一轮真机流水线）。位置刻意在 capability/device 等全部
-        // 前置门**之后**、agent_invoke_start 之前——前置门 HALT（agent 未启动）时不得
-        // 提前销毁旧回执现场（codex review）。写失败即停：不启动 agent、不烧 attempt——
-        // 静默吞掉会让旧身份回执存活，receipt_attempt_identity 死结原样复发。
-        if (!dryRun && goalTrack !== 'lite' && !resumePostAgent) {
-          const scaffold = writeReceiptScaffold(projectRoot, manifest.feature, String(phase), {
-            attemptId: visualAttemptId,
-            force: true,
-          });
-          if (!scaffold.wrote) {
-            const scaffoldFailure = scaffold.failure ?? '骨架未写入且无原因（框架缺陷）';
-            goalEvents.emit({
-              type: 'phase_halt',
-              phase,
-              halt_reason: 'receipt_scaffold_unwritable',
-              detail: scaffoldFailure,
-              probe: 'storage_ready',
-              ...runDispositionFields(decide(
-                { incident: 'receipt_scaffold_unwritable', phase: String(phase), detail: scaffoldFailure },
-                NO_AUTHORITY,
-                { orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session', invocation: argv.resume ? 'resume' : 'fresh' },
-              )),
-            });
-            console.error(
-              `\n===== receipt_scaffold_unwritable =====\n${scaffoldFailure}\n`
-              + '本轮回执骨架无法写入——不启动 agent（旧身份回执存活会复发 receipt_attempt_identity 死结）。\n'
-              + '等待存储条件恢复后由 probe 唤醒。\n',
-            );
-            outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'receipt_scaffold_unwritable' });
-            halted = true;
-            phaseDone = true;
-            continue;
-          }
-        }
+        // plan 07a41ec6 T4：receipt 不再是 invoke/closure 前置物；closed summary 提交后才 best-effort 投影。
         // adjudicated-repair-loop（review 修复，续）：伪造 invoke 对象仅承载「已完成」
         // 语义；settled 事件由 containmentCtx=null 天然不重复（此分支不发）。
         if (!resumePostAgent) {
@@ -8114,7 +8070,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
               frameworkRoot,
               feature: manifest.feature,
               phase,
-              receipt: { ...receiptValidation, status: 'passed' },
               goalRunId: manifest.run_id,
               goalAttemptId: visualAttemptId,
               blockerCount: summary?.blockers?.length ?? 0,

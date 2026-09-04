@@ -8,7 +8,9 @@ import * as path from 'path';
 import {
   featurePhaseReportsDir,
   loadFrameworkConfig,
+  receiptFilePath,
   resolveFeatureArtifact,
+  resolveReceiptFilePath,
 } from '../../config';
 import { writeReviewClosureAttestation } from './closure-attestation';
 import {
@@ -20,23 +22,22 @@ import { computeGateFingerprint } from './gate-fingerprint';
 import {
   loadPhaseEvidenceManifest,
   phaseEvidenceManifestPath,
-  readReceiptManifestPointer,
   resolvePhaseEvidenceManifest,
   verifyPhaseEvidenceManifestWithStagedOutputs,
   writePhaseEvidenceManifest,
-  writeReceiptManifestPointer,
 } from './phase-evidence-manifest';
 import { isPidAlive } from './goal-run-lock';
 import {
   buildSummaryRepairCandidates,
   type RepairCandidateCheckInput,
 } from './repair-candidates';
-import { loadVerifierReportTextOrNull } from './verifier-evidence';
+import { deriveVerifierClosureRecord, loadVerifierReportTextOrNull } from './verifier-evidence';
 import {
   SUMMARY_ASSURANCE_SCHEMA_VERSIONS,
   SUMMARY_SCHEMA_VERSION_CURRENT,
 } from './quality-axes';
 import type { EvidencePolicySnapshot } from './runtime-policy';
+import { writeReceiptProjection } from './receipt-scaffold';
 import type { HarnessRunSummary, Phase } from './types';
 
 export interface ClosureCommitV1 {
@@ -55,14 +56,9 @@ export interface FinalizePhaseClosureOptions {
   /** Attempt identity already verified by the receipt validator; used to reject cross-attempt staged recovery. */
   goalAttemptId?: string;
   phase: string;
-  receipt: {
-    status: 'passed';
-    receipt_path: string;
-    exit_code?: number;
-  };
   blockerCount?: number;
   evidencePolicySnapshot?: EvidencePolicySnapshot | null;
-  /** Strict state persistence runs after evidence publication and before summary commit. */
+  /** summary commit 后同步兼容 state；summary.closure_status 才是闭环事实。 */
   persistPhaseState: () => void;
   now?: () => Date;
   /** Test seam; production callers omit this and use the canonical evidence preparation. */
@@ -73,6 +69,8 @@ export interface FinalizePhaseClosureOptions {
   };
   /** Assess is deliberately post-commit; failure does not roll back verified closure. */
   assessAfterCommit?: () => unknown;
+  /** plan 07a41ec6 T7：闭环定稿时附加/清除的 summary 字段（值为 null/undefined = 删除该键）。 */
+  summaryPatch?: Partial<Record<keyof HarnessRunSummary, unknown>>;
   /** Fault-injection seam. A selected cut simulates process death and intentionally preserves partial publication. */
   faultAt?: ClosurePublicationCut;
 }
@@ -93,6 +91,47 @@ export interface FinalizePhaseClosureResult {
   manifest_path: string;
   assess?: unknown;
   assess_error?: string;
+  phase_state_error?: string;
+  receipt_projection_error?: string;
+}
+
+function syncPhaseStateAfterClosure(opts: FinalizePhaseClosureOptions): string | undefined {
+  try {
+    opts.persistPhaseState();
+    return undefined;
+  } catch (error) {
+    const message = (error as Error).message;
+    console.warn(`⚠ phase state 同步失败（summary 已 closed，不影响闭环）：${message}`);
+    return message;
+  }
+}
+
+function receiptRel(opts: FinalizePhaseClosureOptions): string {
+  return path.relative(
+    opts.projectRoot,
+    receiptFilePath(opts.projectRoot, opts.feature, opts.phase),
+  ).replace(/\\/g, '/');
+}
+
+/** 新闭环不读 receipt；summary 提交后才 best-effort 生成兼容投影。legacy 回执只读、不覆盖。 */
+function projectReceiptAfterClosure(opts: FinalizePhaseClosureOptions): string | undefined {
+  try {
+    const receiptPath = resolveReceiptFilePath(opts.projectRoot, opts.feature, opts.phase).path;
+    if (fs.existsSync(receiptPath)) {
+      const raw = fs.readFileSync(receiptPath, 'utf8');
+      if (!/^receipt_schema:\s*"?2\.[01]"?/m.test(raw)) return undefined;
+    }
+    const projected = writeReceiptProjection(opts.projectRoot, opts.feature, opts.phase, {
+      frameworkRoot: opts.frameworkRoot,
+      attemptId: opts.goalAttemptId,
+    });
+    if (!projected.wrote) throw new Error(projected.failure ?? '回执投影写入失败');
+    return undefined;
+  } catch (error) {
+    const message = (error as Error).message;
+    console.warn(`⚠ 回执投影生成失败（summary 已 closed，不影响闭环）：${message}`);
+    return message;
+  }
 }
 
 class ClosureCrashSimulation extends Error {
@@ -301,16 +340,8 @@ function publishEvidenceBinding(
   });
   const written = writePhaseEvidenceManifest(opts.projectRoot, manifest);
   maybeCrash(opts, 'after_manifest_publish');
-  writeReceiptManifestPointer(
-    opts.projectRoot,
-    opts.feature,
-    opts.phase,
-    manifestRel,
-    written.sha256,
-  );
+  // plan 07a41ec6（codex review P0）：回执指针退出证据链——不再回写；回执是 harness 只读投影，可随时重生成。
   maybeCrash(opts, 'after_receipt_pointer');
-  opts.persistPhaseState();
-  maybeCrash(opts, 'after_phase_state');
   return { manifestRel, manifestSha: written.sha256 };
 }
 
@@ -330,7 +361,8 @@ function evidenceBindingMatches(
   const summaryRel = path.relative(opts.projectRoot, summaryPath).replace(/\\/g, '/');
   const summaryEntry = loaded.manifest.outputs.find((entry) => entry.path === summaryRel);
   if (!summaryEntry?.exists || summaryEntry.sha256 !== summarySha) return false;
-  return readReceiptManifestPointer(opts.projectRoot, opts.feature, opts.phase) === loaded.fileSha256;
+  // plan 07a41ec6（codex review P0）：回执指针退出证据链——manifest 自证 + summary 条目等值即为同一绑定。
+  return true;
 }
 
 function recoverPartialPublication(
@@ -360,7 +392,6 @@ function recoverPartialPublication(
         parsed.feature !== opts.feature || parsed.phase !== opts.phase ||
         parsed.verdict !== 'PASS' || parsed.blocker_count !== 0 || parsed.closure_status !== 'closed' ||
         parsed.closure_commit?.schema_version !== '1.0' ||
-        parsed.closure_commit.receipt_path !== opts.receipt.receipt_path ||
         parsed.closure_commit.evidence_manifest_path !== canonicalManifestRel ||
         !runMatches || !attemptMatches
       ) return [];
@@ -408,24 +439,19 @@ function recoverPartialPublication(
       `${verification.changed_paths.join(', ') || verification.integrity_errors?.join(', ') || 'unknown'}）`,
     );
   }
-  const pointer = readReceiptManifestPointer(opts.projectRoot, opts.feature, opts.phase);
-  if (pointer !== loaded.fileSha256) {
-    writeReceiptManifestPointer(
-      opts.projectRoot,
-      opts.feature,
-      opts.phase,
-      canonicalManifestRel,
-      loaded.fileSha256,
-    );
-  }
-  opts.persistPhaseState();
   fs.renameSync(candidate.stagedPath, summaryPath);
+  maybeCrash(opts, 'after_summary_rename');
+  const phaseStateError = syncPhaseStateAfterClosure(opts);
+  maybeCrash(opts, 'after_phase_state');
+  const receiptProjectionError = projectReceiptAfterClosure(opts);
   return {
     transitioned: true,
     recovered_partial: true,
     closure_fingerprint: candidate.sha256,
     summary: candidate.parsed,
     manifest_path: canonicalManifestRel,
+    ...(phaseStateError ? { phase_state_error: phaseStateError } : {}),
+    ...(receiptProjectionError ? { receipt_projection_error: receiptProjectionError } : {}),
   };
 }
 
@@ -488,12 +514,16 @@ function finalizePhaseClosureUnlocked(
         'closed summary 与既有 evidence binding 不一致；禁止按当前字节重新绑定，须失效并回退责任阶段',
       );
     }
+    const phaseStateError = syncPhaseStateAfterClosure(opts);
+    const receiptProjectionError = projectReceiptAfterClosure(opts);
     return {
       transitioned: false,
       evidence_rebound: false,
       closure_fingerprint: currentSha,
       summary: current.parsed,
       manifest_path: manifestRel,
+      ...(phaseStateError ? { phase_state_error: phaseStateError } : {}),
+      ...(receiptProjectionError ? { receipt_projection_error: receiptProjectionError } : {}),
     };
   }
 
@@ -585,7 +615,7 @@ function recomputeClosureRepairCandidates(
   const closureCommit: ClosureCommitV1 = {
     schema_version: '1.0',
     committed_at: committedAt,
-    receipt_path: opts.receipt.receipt_path,
+    receipt_path: receiptRel(opts),
     evidence_manifest_path: manifestRel,
   };
   // plan a9d4e7c2 P1-5：verifier 依赖的候选只有到这一步才有可验真的证据可依。
@@ -603,6 +633,29 @@ function recomputeClosureRepairCandidates(
     next_action: 'phase_closed_wait_user',
     closure_commit: closureCommit,
   };
+  // plan 07a41ec6 T7：verifier_closure 按磁盘事实派生（三条闭环路径同一口径）；调用方显式给了就以调用方为准。
+  const summaryPatch: Record<string, unknown> = { ...(opts.summaryPatch ?? {}) };
+  if (!Object.prototype.hasOwnProperty.call(summaryPatch, 'verifier_closure')) {
+    summaryPatch.verifier_closure = deriveVerifierClosureRecord(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot);
+  }
+  for (const [key, value] of Object.entries(summaryPatch)) {
+    if (value === null || value === undefined) delete (finalSummary as unknown as Record<string, unknown>)[key];
+    else (finalSummary as unknown as Record<string, unknown>)[key] = value;
+  }
+  // codex review：semantic_not_reverified 稳定进入 summary（不只在 revalidation 账本），去重后追加/清除
+  {
+    const signals = (finalSummary.readiness_signals ?? []).filter(s => s.id !== 'semantic_not_reverified');
+    const closure = (finalSummary as { verifier_closure?: { mode?: string; current_material_not_reverified?: string[] } }).verifier_closure;
+    if (closure?.mode === 'completed_with_prior_review') {
+      signals.push({
+        id: 'semantic_not_reverified',
+        status: 'unknown',
+        message:
+          `verifier 沿用既往 PASS 闭环；当前材料的语义未重审（差异：${(closure.current_material_not_reverified ?? []).slice(0, 6).join('、') || '无记录'}）`,
+      });
+    }
+    finalSummary.readiness_signals = signals;
+  }
   const finalBytes = JSON.stringify(finalSummary, null, 2);
   const summarySha = sha256Bytes(finalBytes);
   fs.mkdirSync(reportsDir, { recursive: true });
@@ -614,6 +667,8 @@ function recomputeClosureRepairCandidates(
     publishEvidenceBinding(opts, summaryPath, summarySha);
     fs.renameSync(stagedSummaryPath, summaryPath);
     maybeCrash(opts, 'after_summary_rename');
+    const phaseStateError = syncPhaseStateAfterClosure(opts);
+    maybeCrash(opts, 'after_phase_state');
 
     const result: FinalizePhaseClosureResult = {
       transitioned: true,
@@ -621,6 +676,9 @@ function recomputeClosureRepairCandidates(
       summary: finalSummary,
       manifest_path: manifestRel,
     };
+    if (phaseStateError) result.phase_state_error = phaseStateError;
+    const receiptProjectionError = projectReceiptAfterClosure(opts);
+    if (receiptProjectionError) result.receipt_projection_error = receiptProjectionError;
     if (opts.assessAfterCommit) {
       try {
         result.assess = opts.assessAfterCommit();

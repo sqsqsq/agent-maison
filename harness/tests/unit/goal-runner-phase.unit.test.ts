@@ -298,7 +298,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'detectHalfCompletedPhaseRecovery: fresh summary but stale receipt → null',
+    name: 'detectHalfCompletedPhaseRecovery: fresh closed summary ignores stale/missing receipt',
     run: () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'half-phase-stale-rcpt-'));
       mkProjectWithReportsPattern(root);
@@ -327,7 +327,11 @@ const cases: Array<{ name: string; run: () => void }> = [
         root,
         feature,
       );
-      assert(detected === null, 'stale receipt rejected');
+      assert(detected?.phase === 'coding', 'stale receipt must not block fresh closed summary');
+      fs.unlinkSync(receiptPath);
+      assert(detectHalfCompletedPhaseRecovery(
+        [{ type: 'agent_invoke_start', phase: 'coding', ts: startTs }], root, feature,
+      )?.phase === 'coding', 'missing receipt must not block recovery');
       fs.rmSync(root, { recursive: true, force: true });
     },
   },

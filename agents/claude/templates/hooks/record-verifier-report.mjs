@@ -77,9 +77,9 @@ const RESULT_BLOCK_OPEN = '<!-- maison-verifier-result:v1 -->';
 const RESULT_BLOCK_CLOSE = '<!-- /maison-verifier-result:v1 -->';
 const SUBJECT_ID_PATTERN = /^[0-9a-f]{64}$/;
 // request 契约（SSOT: harness/scripts/utils/verifier-request.ts）——逐字符复刻。
-const VERIFIER_REQUEST_SCHEMA_VERSION = '1.0';
+const VERIFIER_REQUEST_SCHEMA_VERSION = '1.1';
 const VERIFIER_REQUEST_KIND = 'maison_verifier_request';
-const VERIFIER_REQUEST_SUBJECT_SCHEMA = 'maison-verifier-request@1';
+const VERIFIER_REQUEST_SUBJECT_SCHEMA = 'maison-verifier-request@2';
 const AI_PROMPT_FILENAME = 'ai-prompt.md';
 
 // --------------------------------------------------------------------------
@@ -264,10 +264,9 @@ function canonicalRequestInput(f) {
     `feature=${f.feature}`,
     `phase=${f.phase}`,
     `prompt_path=${f.prompt_path}`,
-    `prompt_sha256=${f.prompt_sha256}`,
+    `material_sha256=${f.material_sha256}`,
     `gate_fingerprint=${f.gate_fingerprint ?? '<absent>'}`,
-    `source_commit_sha=${f.source_commit_sha ?? '<absent>'}`,
-    `worktree_digest=${f.worktree_digest ?? '<absent>'}`,
+    // source_commit_sha / worktree_digest 只是审计字段，不进 subject（与 verifier-request.ts 逐字符一致）
   ].join('\n');
 }
 
@@ -284,6 +283,7 @@ const VERIFIER_REQUEST_KEYS = new Set([
   'phase',
   'prompt_path',
   'prompt_sha256',
+  'material_sha256',
   'gate_fingerprint',
   'source_commit_sha',
   'worktree_digest',
@@ -327,6 +327,7 @@ function parseVerifierRequest(text) {
   if (doc.kind !== VERIFIER_REQUEST_KIND) return null;
   if (typeof doc.subject_id !== 'string' || !SUBJECT_ID_PATTERN.test(doc.subject_id)) return null;
   if (typeof doc.prompt_sha256 !== 'string' || !SUBJECT_ID_PATTERN.test(doc.prompt_sha256)) return null;
+  if (typeof doc.material_sha256 !== 'string' || !SUBJECT_ID_PATTERN.test(doc.material_sha256)) return null;
   const feature = readRequiredStr(doc.feature);
   const phase = readRequiredStr(doc.phase);
   const promptPath = readRequiredStr(doc.prompt_path);
@@ -340,6 +341,7 @@ function parseVerifierRequest(text) {
     phase,
     prompt_path: promptPath,
     prompt_sha256: doc.prompt_sha256,
+    material_sha256: doc.material_sha256,
     gate_fingerprint: gateFingerprint.value,
     source_commit_sha: sourceCommitSha.value,
     worktree_digest: worktreeDigest.value,

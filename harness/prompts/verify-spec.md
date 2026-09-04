@@ -48,38 +48,7 @@
 
 ## 五、语义检查项（你的核心任务）
 
-请逐一完成以下 **10** 项语义检查。每项都有具体的评估方法和判定标准（以 merged phase-rules 是否包含对应条目为准；overlay -only 项见 profile 的 `verify-spec.overlay.md`）。
-
-### 检查 1: 功能概述清晰度 (overview_clarity)
-
-- **严重等级**: MAJOR
-- **评估方法**:
-  1. 阅读「功能概述」章节
-  2. 判断是否满足：
-     - 一句话概括模块的核心价值（不超过 50 字为宜）
-     - 包含目标用户或使用场景的暗示
-     - 不使用空泛词汇（如"xxx 功能"、"相关能力"等）
-  3. 若概述过于冗长或使用列举方式而非总结性描述，视为质量不足
-
-### 检查 2: 使用场景具体性 (user_scenario_specificity)
-
-- **严重等级**: MAJOR
-- **评估方法**:
-  1. 阅读「目标用户与使用场景」章节
-  2. 对每个使用场景检查是否包含：
-     - 具体的用户角色（非泛化的"用户"）
-     - 明确的操作目标（用户想要完成什么）
-     - 前置条件（触发该场景需要什么条件）
-  3. 检查场景覆盖度：是否覆盖了主要使用路径
-
-### 检查 3: 功能描述可执行性 (feature_description_actionable)
-
-- **严重等级**: MAJOR
-- **评估方法**:
-  1. 逐条阅读功能清单表中每项的「描述」列
-  2. 判断每条描述是否足够具体，让开发人员无歧义地理解需要实现什么
-  3. 不允许仅有抽象描述（如"支持 xxx 功能"而没有说明具体行为）
-  4. 若某功能的 UI 交互、数据来源、结果预期均不明确，判为 FAIL
+请逐一完成以下 **7** 项语义检查。每项都有具体的评估方法和判定标准（以 merged phase-rules 是否包含对应条目为准；overlay -only 项见 profile 的 `verify-spec.overlay.md`）。
 
 ### 检查 4: 验收标准可测试性 (acceptance_testable)
 
@@ -92,14 +61,6 @@
      - 可以通过手动或自动化方式验证
   3. "暂不支持"类功能的 AC，只要指明"弹出 Toast"即视为可测试
   4. 若 AC 仅有定性描述（如"用户体验好"）而无量化标准，判为 FAIL
-
-### 检查 5: 宿主 UI 框架术语 (ui_component_terminology)
-
-- **严重等级**: 以 merged `spec-rules.yaml`（含 profile overlay）中本检查项声明为准；未声明时 **SKIP**
-- **评估方法**:
-  1. 在上方 Spec 的 `semantic_checks` 中查找是否存在 `ui_component_terminology`
-  2. **若不存在**：`status: SKIP`，`details` 写明「当前 profile 未注册此项」
-  3. **若存在**：按该条的 `description` / `ai_prompt_hint` 执行；并合并阅读 profile 的 `verify-spec.overlay.md`（若存在）中的补充说明
 
 ### 检查 6: 模拟范围意识 (simulation_scope_awareness)
 
@@ -144,35 +105,6 @@
   3. 若使用 `repo_assets` / `screenshot_pack`：对照脚本报告可能的 **Resolved Visual Sources**／`visual_resolution_rows`：`path` 是否为全分辨率真源或等价导出目录语义（而非聊天缩略图）？若 `agent_reachable=false`，正文是否给出**人工/NAS**可复验的批次、版本或与内门户截图的对照说明？
   4. 若使用 URL 类 `kind`：是否仍说明版本/帧/归档批次，避免「只有一个泛链接」导致无法对齐？内网门户若不可直连，是否在正文声明**可达代理**或可下载快照的策略？
 
-### 检查 10: 探索覆盖充分性 (context_exploration_sufficiency)
-
-- **严重等级**: BLOCKER
-- **评估方法**:
-  1. 读取 `{features_dir}/{feature_name}/spec/context-exploration.md`（schema 1.1.0）
-  2. 对照 spec 正文与 Scope/术语映射：`source_code_paths`、`Code Facts`、`decisions_unlocked` 是否与 spec 中的模块选型、流程、验收要点可追溯对应
-  3. 若 `coverage_risks` / `ready_to_produce` 与 spec 实际盲区矛盾 → FAIL
-  4. 探索文件缺失且脚本已 FAIL → 本项 FAIL
-
-### 检查 11: 行为合规 — 研究有据 (behavior_research_grounded)
-
-- **严重等级**: BLOCKER
-- **评估方法**: spec 中的现状描述/模块归属是否能在 Code Facts 中找到代码或 catalog 事实依据；凭空臆造 → FAIL
-
-### 检查 12: 行为合规 — 最小可行 (behavior_minimum_viable)
-
-- **严重等级**: MAJOR
-- **评估方法**: spec 是否超出用户诉求臆造功能/模块；明显投机需求 → FAIL
-
-### 检查 13: 行为合规 — 追溯闭环 (behavior_verify_loop)
-
-- **严重等级**: MAJOR
-- **评估方法**: 功能清单 ↔ 验收标准 ↔ Scope 是否断链 → FAIL
-
-### 检查 14: 行为合规 — Scope 精准 (behavior_scope_surgical)
-
-- **严重等级**: MAJOR
-- **评估方法**: in_scope/out_of_scope 是否与 catalog 一致；静默扩 scope → FAIL
-
 ### 检查 15: 保真档位与捕获完整性 (fidelity_capture_governance)
 
 - **严重等级**: BLOCKER（`fidelity_target: pixel_1to1` 时）
@@ -182,11 +114,21 @@
   3. 是否产出 `spec/asset-manifest.yaml`（`pixel_1to1` 联动 user_dir）？占位资产是否向用户显式说明？
   4. ui-spec 是否含 `must_have_elements` / `semantic_role` / `color_ref` 等新字段？脚本 `capture_completeness` / `fidelity_deferrals` 若 FAIL → 本项 FAIL
 
+### 检查 R: 跨产物引用核对 (reference_crosscheck)
+
+- **严重等级**: MAJOR
+- **评估方法**: 逐条核对本阶段产物里的跨文件引用——requirement_ref / 页面 ID / 术语 ↔ catalog、glossary、ui-spec 的真实条目；「出范围」声明 ↔ 功能清单与验收标准不自相矛盾。每条引用都要打开被引用的原文核对，不凭记忆、不凭上下文摘要。
+- **判定标准**: 引用对象存在且含义一致 → PASS；个别引用漂移（行号/名称过期但对象仍可定位） → WARN；关键引用指向不存在或含义相反的对象 → FAIL
+- **证据**: 列出核对过的引用（`引用 → 原文位置`）与不一致项
+
+
 ---
 
 ## 六、上下文文件
 
-以下是本次验证涉及的文档：
+以下是本次验证的上下文：被审产物与直接依据内联；上游文档与源码只给**路径清单**，需要核对时用 Read 按路径读取，不要全量通读。
+
+被审 feature 根目录：`{features_dir}/{feature_name}/`（相对仓根；下方清单里的相对路径同样相对仓根）。
 
 {context_files}
 
@@ -194,153 +136,45 @@
 
 ## 七、输出格式（必须严格遵循）
 
-请以下方 YAML 格式输出验证结果。**不要**输出其他格式或自由文本。
+先给**汇总表**（每个检查项一行，PASS 也要列），再只对 **status ≠ PASS** 的项写 YAML 明细。
+PASS 项不写论证，证据一行即可；证据不足时给 WARN 并说明缺什么，不要硬判 FAIL。
+不要复述脚本 Harness 已判定的结构项，不要输出本节之外的自由文本。
+
+本轮检查项与严重等级：
+
+| id | severity |
+|---|---|
+| acceptance_testable | BLOCKER |
+| simulation_scope_awareness | MAJOR |
+| business_flow_branch_coverage | MAJOR |
+| scenario_to_page | MAJOR |
+| visual_handoff_semantics | MAJOR |
+| reference_crosscheck | MAJOR |
+| fidelity_capture_governance | BLOCKER |
+
+### 7.1 汇总表
+
+| id | status | severity | 证据（一行：文件:行 / 引文 / 数值） |
+|---|---|---|---|
+| <check_id> | PASS / WARN / FAIL / SKIP | <severity> | <一行证据> |
+
+### 7.2 非 PASS 项明细
 
 ```yaml
 verification_result:
   phase: "spec"
   feature: "{feature_name}"
   timestamp: "{timestamp}"
-
-  checks:
-    # --- 检查 1: 功能概述清晰度 ---
-    - id: overview_clarity
-      status: PASS | FAIL | WARN
-      severity: MAJOR
+  checks:            # 只列 status ≠ PASS 的项；每项字段固定
+    - id: <check_id>
+      status: FAIL | WARN | SKIP
+      severity: <该项声明的 severity>
       details: |
-        <功能概述是否简洁明确，是否包含核心价值描述>
+        <证据：文件路径 + 行号/引文 + 判断依据>
       suggestion: |
-        <修正建议，若 PASS 可省略>
-
-    # --- 检查 2: 使用场景具体性 ---
-    - id: user_scenario_specificity
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        逐场景检查结果：
-        - S1: PASS/FAIL — 用户角色/操作目标/前置条件...
-        - S2: PASS/FAIL — ...
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 3: 功能描述可执行性 ---
-    - id: feature_description_actionable
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        逐功能检查结果：
-        - F1: PASS/FAIL — ...
-        - F2: PASS/FAIL — ...
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 4: 验收标准可测试性 ---
-    - id: acceptance_testable
-      status: PASS | FAIL | WARN
-      severity: BLOCKER
-      details: |
-        逐条 AC 检查结果：
-        - AC-1: PASS/FAIL — 是否包含操作步骤/预期结果...
-        - AC-2: PASS/FAIL — ...
-        可测试率: X/N
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 5: 宿主 UI 框架术语（仅当 spec 含 ui_component_terminology） ---
-    - id: ui_component_terminology
-      status: PASS | FAIL | WARN | SKIP
-      severity: MINOR
-      details: |
-        <SKIP 时写明未注册；否则给出证据>
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 6: 模拟范围意识 ---
-    - id: simulation_scope_awareness
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        依赖后端的功能点及其模拟标注情况：
-        - <功能>: PASS/FAIL — 是否标注模拟策略...
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 7: 业务流程分支覆盖 ---
-    - id: business_flow_branch_coverage
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        主路径覆盖: PASS/FAIL
-        异常路径覆盖: PASS/FAIL
-        功能点对应: X/N 功能在流程图中有节点
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 8: 使用场景到页面追溯 ---
-    - id: scenario_to_page
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        逐场景追溯结果：
-        - S1: PASS/FAIL — 操作 → 页面/组件
-        - S2: PASS/FAIL — ...
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 9: Visual Handoff 语义 ---
-    - id: visual_handoff_semantics
-      status: PASS | FAIL | WARN | SKIP
-      severity: MAJOR
-      details: |
-        <ui_change 与版面描述是否一致；是否与「以当前实现为基线」等矛盾>
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 10: 探索覆盖充分性 ---
-    - id: context_exploration_sufficiency
-      status: PASS | FAIL | WARN
-      severity: BLOCKER
-      details: |
-        context-exploration.md 路径: <...>
-        摘要与 spec 决策可追溯性: PASS/FAIL — <证据>
-        coverage_risks / ready_to_produce 与正文一致性: PASS/FAIL
-      suggestion: |
-        <修正建议>
-
-    - id: behavior_research_grounded
-      status: PASS | FAIL | WARN
-      severity: BLOCKER
-      details: |
-        Code Facts ↔ spec 现状/模块归属: PASS/FAIL
-      suggestion: |
-        <修正建议>
-
-    - id: behavior_minimum_viable
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        超用户诉求/投机功能: PASS/FAIL
-      suggestion: |
-        <修正建议>
-
-    - id: behavior_verify_loop
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        功能清单 ↔ AC ↔ Scope: PASS/FAIL
-      suggestion: |
-        <修正建议>
-
-    - id: behavior_scope_surgical
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        Scope 与 catalog 一致: PASS/FAIL
-      suggestion: |
-        <修正建议>
-
+        <修正建议：谁改、改哪个文件、改成什么>
   summary:
-    total: 14
+    total: 7
     pass: <PASS 数>
     fail: <FAIL 数>
     warn: <WARN 数>

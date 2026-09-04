@@ -109,11 +109,11 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'resolveEvidencePolicy：interactive/headless/goal 三态恒 strict（C0）',
+    name: 'resolveEvidencePolicy：interactive/headless/goal 的 verifier/trace/exploration strict，receipt 恒 not_applicable',
     run: () => {
       for (const mode of ['interactive', 'headless', 'goal'] as const) {
         const p = resolveEvidencePolicy('full', ctx(mode));
-        eq(p, { verifier: 'required', receipt: 'required', trace: 'required', exploration: 'required' }, mode);
+        eq(p, { verifier: 'required', receipt: 'not_applicable', trace: 'required', exploration: 'required' }, mode);
       }
     },
   },
@@ -214,23 +214,23 @@ const cases: Array<{ name: string; run: () => void }> = [
       const utCtx: RuntimeContext = { ...ctx('interactive'), phase: 'ut' };
       eq(
         resolveEvidencePolicy('full', specCtx, balancedCfg),
-        { verifier: 'required', receipt: 'required', trace: 'optional', exploration: 'required' },
+        { verifier: 'required', receipt: 'not_applicable', trace: 'optional', exploration: 'required' },
         'spec 在保留集内 required',
       );
       eq(
         resolveEvidencePolicy('full', codingCtx, balancedCfg),
-        { verifier: 'required', receipt: 'required', trace: 'optional', exploration: 'required' },
+        { verifier: 'required', receipt: 'not_applicable', trace: 'optional', exploration: 'required' },
         'coding 在保留集内 required',
       );
       eq(
         resolveEvidencePolicy('full', utCtx, balancedCfg),
-        { verifier: 'off', receipt: 'required', trace: 'optional', exploration: 'required' },
+        { verifier: 'off', receipt: 'not_applicable', trace: 'optional', exploration: 'required' },
         'ut 不在保留集 → verifier off',
       );
       // config 可覆写保留集
       eq(
         resolveEvidencePolicy('full', utCtx, { ...balancedCfg, balanced_verifier_retained_phases: ['ut'] }),
-        { verifier: 'required', receipt: 'required', trace: 'optional', exploration: 'required' },
+        { verifier: 'required', receipt: 'not_applicable', trace: 'optional', exploration: 'required' },
         '覆写保留集后 ut 变 required',
       );
     },
@@ -242,18 +242,18 @@ const cases: Array<{ name: string; run: () => void }> = [
       for (const mode of ['headless', 'goal'] as const) {
         eq(
           resolveEvidencePolicy('full', ctx(mode), balancedCfg),
-          { verifier: 'required', receipt: 'required', trace: 'required', exploration: 'required' },
+          { verifier: 'required', receipt: 'not_applicable', trace: 'required', exploration: 'required' },
           `${mode} 强制 strict，忽略 balanced config`,
         );
       }
     },
   },
   {
-    name: 'buildPolicySnapshot（C2）：lite track 输出 evidence.receipt=not_applicable（Stop hook gate 前提）',
+    name: 'buildPolicySnapshot：receipt 对所有 track 都是闭环后投影，policy not_applicable',
     run: () => {
       const snap = buildPolicySnapshot('lite');
       eq(snap.track, 'lite', 'track');
-      eq(snap.evidence.receipt, 'not_applicable', 'receipt 项——Stop hook policyRequires 据此放行 lite');
+      eq(snap.evidence.receipt, 'not_applicable', 'receipt 项不参与 Stop/closure');
       eq(snap.evidence.verifier, 'off', 'verifier 项');
     },
   },
@@ -328,14 +328,14 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'resolvePhaseClosureSource：lite 看 script verdict；full 看 receipt 状态',
+    name: 'resolvePhaseClosureSource：lite 看 script verdict；full 只看 summary closure',
     run: () => {
       eq(resolvePhaseClosureSource('lite', 'PASS', undefined), 'closed_by_exit_report', 'lite verdict=PASS');
-      eq(resolvePhaseClosureSource('lite', 'FAIL', 'passed'), 'open', 'lite 无视 receipt，只看 verdict');
+      eq(resolvePhaseClosureSource('lite', 'FAIL', 'closed'), 'open', 'lite 只看 verdict');
       eq(resolvePhaseClosureSource('lite', undefined, undefined), 'open', 'lite verdict 缺失');
-      eq(resolvePhaseClosureSource('full', 'PASS', 'passed'), 'receipt_passed', 'full receipt passed');
-      eq(resolvePhaseClosureSource('full', 'PASS', 'missing'), 'open', 'full 无视 verdict，只看 receipt');
-      eq(resolvePhaseClosureSource('full', 'PASS', 'not_applicable'), 'open', 'full 下 not_applicable 不等于 passed');
+      eq(resolvePhaseClosureSource('full', 'PASS', 'closed'), 'summary_closed', 'full summary closed');
+      eq(resolvePhaseClosureSource('full', 'PASS', 'open'), 'open', 'full 无视 verdict，只看 summary closure');
+      eq(resolvePhaseClosureSource('full', 'PASS', undefined), 'open', 'full 缺 summary closure 不放行');
     },
   },
 ];

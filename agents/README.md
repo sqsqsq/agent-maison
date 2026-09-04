@@ -237,7 +237,7 @@ user prompt —— 它必须恰好是那份 request JSON）、`last_assistant_me
 
 绑定=四方对账：request 自述 subject == 按 request 字段**重算**的 subject ==
 `summary.verifier_subject_id` == 终态块回显；且 `prompt_path` 等于由 config 推导的 canonical
-路径、`prompt_sha256` 等于该文件的磁盘实测哈希。任一字段缺失、转录不可读、request 不可解析
+路径、`prompt_sha256` 等于该文件的磁盘实测哈希（subject 本身按 `material_sha256` 审前材料视图派生，模板时间戳不换代；材料变了但历史有 PASS 时 check-receipt 沿用闭环并登记差异）。任一字段缺失、转录不可读、request 不可解析
 （手抄/夹带/改字段）、subject 不等或已换代、prompt 已被新一轮 harness 换代 → 落
 `framework/harness/state/last-verifier-report.json` 的 **bedside** 非权威记录（带机器可读
 `reason`），canonical 证据一字不动，`.current-phase.json` 一字不写。

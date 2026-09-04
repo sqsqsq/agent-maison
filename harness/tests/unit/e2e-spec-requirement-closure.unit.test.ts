@@ -323,6 +323,57 @@ const cases: Case[] = [
     },
   },
   {
+    name: 'E2E revalidate（plan 07a41ec6 T8）：spec 闭环后改 spec.md → 一条 --revalidate 重新 closed，标 script_revalidated + semantic_not_reverified',
+    run: () => {
+      const before = repoDocFeatures();
+      const { root, harnessDir } = provisionFramework();
+      try {
+        scaffoldFeature(root);
+        const init = run(harnessDir, 'fidelity-intent-init.ts', ['--feature', 'demo', '--requirement', '设计账户页，含余额展示与转账入口。'], root);
+        assert(init.status === 0, `Step1 init 失败：${init.stderr}`);
+        runHarness(harnessDir, ['--phase', 'spec', '--feature', 'demo', '--summary'], root);
+        const summary = readJson(root, 'doc/features/demo/spec/reports/summary.json');
+        assert(summary.verdict === 'PASS', `前提：首轮 spec 应 PASS，实得 ${summary.verdict}`);
+        writeValidSpecReceipt(root, summary);
+        const rc = run(harnessDir, 'check-receipt.ts', ['--feature', 'demo', '--phase', 'spec', '--project-root', root], root);
+        assert(rc.status === 0, `前提：首轮闭环应 exit 0：${rc.stderr}
+${rc.stdout}`);
+        assert(readJson(root, 'doc/features/demo/spec/reports/summary.json').closure_status === 'closed', '前提：首轮应 closed');
+
+        // 修正：直接改 SSOT（spec.md），不重新进入六阶段流程。
+        const specPath = path.join(root, 'doc', 'features', 'demo', 'spec', 'spec.md');
+        fs.writeFileSync(specPath, fs.readFileSync(specPath, 'utf-8').replace('账户页含余额展示与转账入口。', '账户页含余额展示与转账入口；修正记录：补充余额刷新说明。'), 'utf-8');
+
+        const rv = runHarness(harnessDir, ['--revalidate', '--feature', 'demo'], root);
+        assert(rv.status === 0, `--revalidate 应 exit 0，got ${rv.status}：${rv.stderr}
+${rv.stdout}`);
+        const after = readJson(root, 'doc/features/demo/spec/reports/summary.json');
+        assert(after.closure_status === 'closed', `重验后应重新 closed，实得 ${after.closure_status}
+${rv.stdout}`);
+        assert(after.verifier_subject_id !== summary.verifier_subject_id, '材料变了 subject 应换代');
+        assert(
+          (after.verifier_closure as { mode?: string } | undefined)?.mode === 'completed_with_prior_review',
+          `材料变了但历史有 PASS → 沿用并登记：${JSON.stringify(after.verifier_closure)}`,
+        );
+        assert(
+          (after.readiness_signals as Array<{ id: string }>).some((r) => r.id === 'script_revalidated'),
+          `summary 应标 script_revalidated：${JSON.stringify(after.readiness_signals)}`,
+        );
+        const record = readJson(root, 'doc/features/demo/revalidation.json');
+        const results = record.results as Array<{ phase: string; flags: string[]; verifier: string; closure_status: string }>;
+        assert(results.length === 1 && results[0].phase === 'spec' && results[0].closure_status === 'closed', JSON.stringify(record));
+        assert(results[0].flags.includes('script_revalidated') && results[0].flags.includes('semantic_not_reverified'), JSON.stringify(results[0]));
+        assert(results[0].verifier === 'completed_with_prior_review', JSON.stringify(results[0]));
+        // 第二次 --revalidate：链已 fresh，无目标，exit 0。
+        const again = runHarness(harnessDir, ['--revalidate', '--feature', 'demo'], root);
+        assert(again.status === 0 && /没有需要重验的阶段/.test(again.stdout), `fresh 链应无目标：${again.stdout}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        assert(JSON.stringify(repoDocFeatures()) === JSON.stringify(before), 'E2E 不得新增 repo doc/features');
+      }
+    },
+  },
+  {
     name: 'E2E goal gate：真实 harness-runner 只写 open base，外层 goal-runner 独占 full-track closure',
     run: () => {
       const before = repoDocFeatures();

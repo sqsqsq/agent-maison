@@ -28,17 +28,13 @@ export function buildClosureWallGuidance(opts: ClosureWallGuidanceOpts): string[
   // "只剩视觉验真等我签"。分类复用既有 ReceiptValidation 五态（不新建分类、不加字段）。
   const byStatus: Record<string, string[]> = {
     failed: [
-      `  1. 回执**存在但校验未通过**。先看校验输出的 BLOCKER 列表定位真因（不要预设是"人签"）：`,
+      `  1. 闭环条件校验未通过。先看 BLOCKER 列表定位 summary/verifier/policy 真因：`,
       `     ${verifyCmd}`,
-      '     常见真因：claimed_attempt_id 与本轮 attempt 失配、evidence manifest 非 fresh、',
-      '     反假设条款未全勾、verifier 报告缺失/过期。其中 attempt 失配与 stale 都不是人能签掉的。',
+      '     receipt 是 closed 后机器投影，不手填、不构成修复入口。',
       `  2. 若校验输出显示 verifier_subagent.verdict=FAIL，将当前结构化证据回馈责任阶段修复；`,
       `     视觉/裁剪义务只接受 source/hash/tool/provider 机器证据，不得在 ${receiptPathRel} 补签放行。`,
     ],
-    missing: [
-      `  1. **回执缺失**——agent 没有写出 ${receiptPathRel}。这不是人签问题：`,
-      '     让 agent 按阶段完成回执模板补写（含 verifier 调用自证与 attempt 身份），再续跑。',
-    ],
+    missing: [`  1. 兼容状态显示 receipt 缺失；直接运行 ${verifyCmd} 按 summary/verifier/policy 收口，无需手填 ${receiptPathRel}。`],
     error: [
       '  1. **回执校验探针自身执行失败**（framework/toolchain 问题，非产物问题）。',
       '     不要修改产物或 framework 发布件绕过；修复环境或把完整错误回灌 agent-maison 源仓。',

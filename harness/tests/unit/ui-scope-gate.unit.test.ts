@@ -272,13 +272,14 @@ export function runAll(): UnitCaseResult[] {
     });
   });
 
-  run(results, '篡改 plan evidence manifest → FAIL（回执指针失配——白名单来源防伪，接替旧快照锚防线）', () => {
+  run(results, '篡改 plan evidence manifest → FAIL（aggregate 自证——白名单来源防伪；plan 07a41ec6 起不再靠回执指针）', () => {
     const { root } = setupHost();
     withTrust(root, () => {
       anchor(root);
       const manifestAbs = path.join(root, 'doc', 'features', FEATURE, 'plan', 'reports', 'phase-evidence-manifest.json');
-      const doc = JSON.parse(fs.readFileSync(manifestAbs, 'utf-8')) as Record<string, unknown>;
-      doc.generated_at = '2099-01-01T00:00:00.000Z';
+      const doc = JSON.parse(fs.readFileSync(manifestAbs, 'utf-8')) as { outputs: Array<{ path: string; sha256: string | null }>; inputs: Array<{ path: string; sha256: string | null }> };
+      const contracts = [...doc.outputs, ...doc.inputs].find((e) => e.path.endsWith('contracts.yaml'));
+      if (contracts) contracts.sha256 = 'f'.repeat(64);
       fs.writeFileSync(manifestAbs, JSON.stringify(doc, null, 2), 'utf-8');
       w(root, DECLARED, 'struct CardPackPage { build() { Text("v2") } }');
       const r = gate(root);

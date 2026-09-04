@@ -59,6 +59,18 @@
       "minLength": 1,
       "description": "该 subject 的短 request JSON 仓根相对路径（Task prompt 的唯一投递体）；与 verifier_subject_id 同进同退"
     },
+    "verifier_closure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "reviewed_subject_id", "current_subject_id", "current_material_not_reverified"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["completed_with_prior_review"] },
+        "reviewed_subject_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "current_subject_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "current_material_not_reverified": { "type": "array", "items": { "type": "string" } }
+      },
+      "description": "plan 07a41ec6 T7：当前 subject 无 verifier 报告但本 phase 历史已有 PASS 时，闭环沿用该 PASS 并列出未重审的材料差异（诚实标注）；当前 subject 自身已验真时缺席"
+    },
     "gate_fingerprint": {
       "type": "string",
       "pattern": "^.+:[0-9a-f]{12}$",

@@ -17,7 +17,6 @@ import {
   DEFAULT_COMPLETION_POLL_MS,
 } from '../../scripts/utils/agent-invoke';
 import {
-  isReceiptFreshForInvokeStart,
   resolvePhaseHarnessVerdict,
 } from '../../scripts/utils/goal-runner-phase';
 import type { UnitCaseResult } from '../run-unit';
@@ -102,7 +101,7 @@ export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
   try {
 
-  run(results, 'R6：**四条件**齐备才算完成——占位文本/裸 JSON 不得触发收口', () => {
+  run(results, 'T4：summary identity + closure_status=closed 是完成判据，receipt 仅兼容投影', () => {
     const full = collectCompletionEvidence(
       hostWith({ receipt: FULL_RECEIPT, summary: FULL_SUMMARY }),
       FEATURE, PHASE,
@@ -116,7 +115,7 @@ export function runAll(): UnitCaseResult[] {
       FEATURE, PHASE,
     );
     assert(!isCompletionEvidenceComplete(placeholder), `占位文本不得算完成：${JSON.stringify(placeholder)}`);
-    assert(placeholder.missing!.includes('receipt'), '须指出回执不合格');
+    assert(placeholder.missing!.includes('summary'), '须指出 summary 身份不完整');
     assert(placeholder.missing!.includes('closure_status'), '须指出闭环未关');
 
     // S11：**未填写的模板占位**（`<feature-name>` 之类）不得算完成
@@ -127,14 +126,14 @@ export function runAll(): UnitCaseResult[] {
       }),
       FEATURE, PHASE,
     );
-    assert(!isCompletionEvidenceComplete(unfilled), '模板占位未填写不得算完成');
+    assert(isCompletionEvidenceComplete(unfilled), 'receipt 模板占位不得影响 closed summary');
 
     // S11：回执**身份不符**（别的 phase 的回执）不得算完成
     const wrongPhaseReceipt = collectCompletionEvidence(
       hostWith({ receipt: FULL_RECEIPT.replace(`"${PHASE}"`, '"coding"'), summary: FULL_SUMMARY }),
       FEATURE, PHASE,
     );
-    assert(!isCompletionEvidenceComplete(wrongPhaseReceipt), '回执 phase 不符不得算完成');
+    assert(isCompletionEvidenceComplete(wrongPhaseReceipt), 'receipt phase 不符不得影响 closed summary');
 
     // S11：summary **缺身份字段**不得当作通过（此前"字段缺失也算吻合"）
     const noIdentity = collectCompletionEvidence(
@@ -158,7 +157,7 @@ export function runAll(): UnitCaseResult[] {
       hostWith({ receipt: FULL_RECEIPT, summary: FULL_SUMMARY.replace('"passed"', '"failed"') }),
       FEATURE, PHASE,
     );
-    assert(!isCompletionEvidenceComplete(receiptNotPassed), 'receipt_status 未过不得算完成');
+    assert(isCompletionEvidenceComplete(receiptNotPassed), 'receipt_status 是兼容输出，不是完成输入');
 
     // 身份不符（读到别的 feature 的 summary）
     const wrongIdentity = collectCompletionEvidence(
@@ -168,12 +167,12 @@ export function runAll(): UnitCaseResult[] {
     assert(!isCompletionEvidenceComplete(wrongIdentity), '身份不符不得算完成');
 
     const noReceipt = collectCompletionEvidence(hostWith({ summary: FULL_SUMMARY }), FEATURE, PHASE);
-    assert(!isCompletionEvidenceComplete(noReceipt), '缺回执不算完成');
+    assert(isCompletionEvidenceComplete(noReceipt), '缺 receipt 不影响 closed summary');
 
     const emptyReceipt = collectCompletionEvidence(
       hostWith({ receipt: '', summary: FULL_SUMMARY }), FEATURE, PHASE,
     );
-    assert(!isCompletionEvidenceComplete(emptyReceipt), '空回执不算完成');
+    assert(isCompletionEvidenceComplete(emptyReceipt), '空 receipt 不影响 closed summary');
 
     const noSummary = collectCompletionEvidence(hostWith({ receipt: FULL_RECEIPT }), FEATURE, PHASE);
     assert(!isCompletionEvidenceComplete(noSummary), '缺 summary 不算完成');
@@ -202,7 +201,7 @@ export function runAll(): UnitCaseResult[] {
     assertEq(s.verdict, 'FAIL', 'verdict 如实记录');
   });
 
-  run(results, '三轮 P1：**字段值须成形**——schema/sha/时间戳任一不合法即不算完成', () => {
+  run(results, 'T4：receipt schema/sha/时间戳非法不影响 closed summary', () => {
     // 字段都在、都非占位，但值是随手编的 —— 此前这样就能触发提前 tree-kill
     const cases: Array<{ name: string; receipt: string }> = [
       { name: 'schema 不是 2.0', receipt: FULL_RECEIPT.replace('"2.0"', '"1.0"') },
@@ -219,11 +218,11 @@ export function runAll(): UnitCaseResult[] {
         FEATURE, PHASE,
       );
       assert(!s.receipt, `${c.name}：不得判为回执完整`);
-      assert(!isCompletionEvidenceComplete(s), `${c.name}：不得触发收口`);
+      assert(isCompletionEvidenceComplete(s), `${c.name}：receipt 不得阻止 closed summary`);
     }
   });
 
-  run(results, '三轮 P1：回执 sha 必须与 summary 的 run identity 锚一致', () => {
+  run(results, 'T4：receipt sha 不再绑定 summary；summary 身份与 closure 自证', () => {
     // sha 形态合法但与 summary 对不上 —— 伪造回执骗收口的最后一条路
     const mismatched = FULL_SUMMARY.replace(
       RECEIPT_SHA,
@@ -233,8 +232,8 @@ export function runAll(): UnitCaseResult[] {
       hostWith({ receipt: FULL_RECEIPT, summary: mismatched }),
       FEATURE, PHASE,
     );
-    assert(!s.summary, 'sha 与 summary 锚不一致时不得判为 summary 就绪');
-    assert(!isCompletionEvidenceComplete(s), '不得触发收口');
+    assert(s.summary, 'receipt sha 不参与 summary 身份');
+    assert(isCompletionEvidenceComplete(s), 'closed summary 应触发完成');
 
     // summary 缺锚同样不放行（schema 2.0 的产物必然带锚）
     const anchorless = JSON.stringify({
@@ -245,7 +244,7 @@ export function runAll(): UnitCaseResult[] {
       hostWith({ receipt: FULL_RECEIPT, summary: anchorless }),
       FEATURE, PHASE,
     );
-    assert(!isCompletionEvidenceComplete(s2), 'summary 缺 run identity 锚不得触发收口');
+    assert(isCompletionEvidenceComplete(s2), 'observer 只需 feature/phase 身份与 closed；质量由 finalizer 保证');
   });
 
   run(results, '新鲜度：基线已完整 → 探针恒 false（不得启动后立刻杀）', () => {
@@ -417,7 +416,7 @@ export function runAll(): UnitCaseResult[] {
     assertEq(probe.probe(), true, '本轮 attempt 的完成声明应命中');
   });
 
-  run(results, 't1 goal 模式不得回退时间戳：新鲜时间戳但缺 attempt 字段 → 不命中', () => {
+  run(results, 'T4 goal 模式：receipt 缺 attempt 字段不影响本 run 的 open→closed 跃迁', () => {
     // codex 复核订正：原实现缺字段就退到 claimed_completion_at，等于 goal 下没有绑定——
     // agent 自报未来时间仍能骗停本轮。goal 模式（invocation 带 attemptId）一律硬绑。
     const root = hostWith({});
@@ -433,7 +432,7 @@ export function runAll(): UnitCaseResult[] {
       withClaimedAt(FULL_RECEIPT, new Date(startedAtMs + 600_000).toISOString()),
       'run-A',
     );
-    assertEq(probe.probe(), false, 'goal 模式缺 claimed_attempt_id 一律不命中');
+    assertEq(probe.probe(), true, '同 run 的 closed summary 跃迁应命中');
   });
 
   run(results, 't1 goal 模式 run 身份缺失即 fail-closed', () => {
@@ -448,7 +447,7 @@ export function runAll(): UnitCaseResult[] {
     );
   });
 
-  run(results, 't1 显式绑定：claimed_attempt_id 不符当前 attempt → 不命中；相符 → 命中', () => {
+  run(results, 'T4：claimed_attempt_id 不参与 observer；run identity + closed 跃迁决定命中', () => {
     const stale = hostWith({});
     const staleProbe = createCompletionProbe({
       projectRoot: stale,
@@ -460,8 +459,9 @@ export function runAll(): UnitCaseResult[] {
     materializeEvidence(
       stale,
       withAttempt(withClaimedAt(FULL_RECEIPT, new Date(Date.now() + 60_000).toISOString()), 'i3'),
+      'run-A',
     );
-    assertEq(staleProbe.probe(), false, 'attempt=i3 的回执不得算作 i5 的完成');
+    assertEq(staleProbe.probe(), true, '旧 receipt attempt 不得阻止本 run 的 closed summary');
 
     const fresh = hostWith({});
     const freshProbe = createCompletionProbe({
@@ -474,21 +474,13 @@ export function runAll(): UnitCaseResult[] {
     assertEq(freshProbe.probe(), true, 'attempt 相符即命中（此时不看时间戳）');
   });
 
-  run(results, 't1 legacy 分支与 isReceiptFreshForInvokeStart 等价（两处判据不得漂移）', () => {
-    // 同一份"旧声明"素材，喂给两个实现应得同一结论；漂移会让 gate 与 observer 各说各话。
-    // **夹具必须带 `---` frontmatter**：isReceiptFreshForInvokeStart 只解析 frontmatter 块，
-    // 无分隔符时宽容返回 true（生产回执恒带分隔符，实证宿主
-    // doc/features/bc-openCard/coding/phase-completion-receipt.md）。用无分隔符的夹具比，
-    // 比的是解析面差异而不是判据差异。
+  run(results, 'T4：legacy receipt 时间戳不再参与 observer', () => {
     const root = hostWith({});
     const startedAtMs = Date.now();
     materializeEvidence(root, `---\n${FULL_RECEIPT}---\n`); // 旧 claimed_completion_at
     const state = collectCompletionEvidence(root, FEATURE, PHASE);
-    // legacy 分支只在**非 goal**（无 attemptId）下生效，故此处不传 attemptId
     const pure = isEvidenceFromCurrentInvocation(state, { startedAtMs });
-    const onDisk = isReceiptFreshForInvokeStart(root, FEATURE, PHASE as never, startedAtMs);
-    assertEq(pure, false, 'legacy 分支应判旧');
-    assertEq(pure, onDisk, '纯函数判据须与文件级判据同判（严格大于，语义对齐）');
+    assertEq(pure, true, 'closed summary 不因 legacy receipt 时间戳被阻止');
   });
 
   run(results, 't1 run 身份不符一律不命中（别的 run 的遗留证据）', () => {

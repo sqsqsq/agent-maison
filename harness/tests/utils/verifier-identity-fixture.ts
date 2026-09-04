@@ -17,6 +17,7 @@ import { spawn, spawnSync, type SpawnSyncReturns } from 'child_process';
 
 import { featurePhaseReportsDir } from '../../config';
 import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
+import { computeProductWorktreeDigest } from '../../scripts/utils/worktree-digest';
 import {
   RESULT_BLOCK_CLOSE,
   RESULT_BLOCK_OPEN,
@@ -28,6 +29,7 @@ import {
   verifierRequestFilename,
 } from '../../scripts/utils/verifier-request';
 import { SUMMARY_SCHEMA_VERSION_CURRENT } from '../../scripts/utils/quality-axes';
+import { VERIFIER_MATERIAL_SCHEMA, verifierMaterialFilename } from '../../scripts/utils/verifier-material';
 
 /** framework 源仓根（harness 的上一层）——gate 指纹与 hook 模板都锚在这里。 */
 export const FRAMEWORK_SOURCE_ROOT = path.resolve(__dirname, '..', '..', '..');
@@ -140,6 +142,8 @@ export interface SeedPhaseOptions {
   promptBody?: string;
   /** 写入 summary 的代际（迁移矩阵回归用；缺省=当代） */
   schemaVersion?: string;
+  /** 审前材料指纹（plan 07a41ec6 T7）；缺省 = promptBody 的哈希（改正文即换代，与旧夹具语义一致） */
+  materialSha256?: string;
 }
 
 /**
@@ -169,6 +173,7 @@ export function seedPhase(
           phase,
           prompt_path: promptRel,
           prompt_sha256: computePromptSha256(promptBody),
+          material_sha256: opts.materialSha256 ?? computePromptSha256(promptBody),
           gate_fingerprint: gateFingerprint,
           source_commit_sha: null,
           worktree_digest: null,
@@ -179,6 +184,20 @@ export function seedPhase(
   if (request) {
     requestPath = path.join(reportsDir, verifierRequestFilename(request.subject_id));
     writeFile(requestPath, renderVerifierRequest(request));
+    writeFile(
+      path.join(reportsDir, verifierMaterialFilename(request.subject_id)),
+      JSON.stringify({
+        schema: VERIFIER_MATERIAL_SCHEMA,
+        feature,
+        phase,
+        gate_fingerprint: gateFingerprint,
+        phase_rule_sha256: '',
+        template_sha256: '',
+        script_checks: [],
+        files: [{ path: promptRel, sha256: request.material_sha256 }],
+        material_sha256: request.material_sha256,
+      }),
+    );
   }
 
   const summary: Record<string, unknown> = {
@@ -191,6 +210,14 @@ export function seedPhase(
     warn_count: 0,
     ...(gateFingerprint ? { gate_fingerprint: gateFingerprint } : {}),
     closure_status: opts.closureStatus ?? 'open',
+    script_report: path.relative(root, path.join(reportsDir, 'script-report.json')).replace(/\\/g, '/'),
+    merged_report: path.relative(root, path.join(reportsDir, 'merged-report.md')).replace(/\\/g, '/'),
+    summary_json: path.relative(root, path.join(reportsDir, 'summary.json')).replace(/\\/g, '/'),
+    run_statuses: [], readiness_signals: [], blocking_warnings: [], blocking_skips: [], blockers: [],
+    next_action: 'run_verifier_then_receipt',
+    assurance: 'not_applicable', capability_resolutions: [], capability_resolution_contract_fingerprint: null,
+    source_commit_sha: spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).stdout.trim(),
+    worktree_digest: computeProductWorktreeDigest(root, ['app']),
   };
   if (subjectId) {
     summary.verifier_subject_id = subjectId;

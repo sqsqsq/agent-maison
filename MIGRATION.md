@@ -120,10 +120,9 @@ goal_capability:
 4. 跑 `check-receipt.ts`；
 5. 关环用 `harness-runner.ts --sync-closure --phase <phase> --feature <feature>`。
 
-**第 5 步的口径变了**：`subject` 现在**按实际审查材料寻址**（`prompt_sha256` 直接哈希磁盘
-`ai-prompt.md` 字节，没有任何 canonical 投影）。因为组装出的 prompt 内嵌时间戳与整份 script
-report，**再跑一次完整 harness 会换代 subject**，刚发布的 verifier 证据随之失效。`--sync-closure`
-不重跑脚本 harness、也不重发 request，正是为关环这一步存在的入口。
+**第 5 步的口径变了**：`subject` 按 `material_sha256` 审前材料视图寻址，`prompt_sha256` 只用于核对
+verifier 读取的磁盘原件，不参与 subject。重跑完整 harness 不会仅因模板时间戳换代 subject；
+closure-only 场景仍优先 `--sync-closure`，因为重跑脚本没有必要。
 
 **summary 升级到 1.3。** `ai_prompt` / `verifier_subject_id` / `verifier_request` 成为**条件字段**
 （仅 `enabled` 时在场）；`1.2` 仍可读，作为上一代闭环域。
@@ -134,10 +133,26 @@ report，**再跑一次完整 harness 会换代 subject**，刚发布的 verifie
 - 3.0.0 生成但**未闭环**的 subject/ai-prompt 不再继续发布：只需**重跑当前 phase 的 harness**
   （分钟级）拿到新 request，再按上面五步走完即可。**不回退业务代码、不重写上游产物、
   不从 spec 重走、也不要求提交。**
-- 下游发现缺陷时的正常回退不变：回责任上游改 → 重跑上游 harness/verifier/receipt →
+- 下游发现缺陷时的正常回退不变：回责任上游改 → 重跑上游 harness/verifier/check-receipt →
   下游因 freshness 变 stale → 从下游继续。不清空 feature。
 
 ---
+
+### 3.0.0：效率优先闭环——回执退出输入、verifier 一次化、证据按输入复用（Breaking，plan 07a41ec6）
+
+设计原则见 docs/overview.md §1.2.1（效率优先、可复用可带缺口完成但必须诚实标注）。消费者需要知道的变化：
+
+- **回执退出闭环输入**：新闭环只消费 base summary、verifier evidence 与 policy；`summary.closure_status=closed` 提交后才 best-effort 生成 `phase-completion-receipt.md` 只读投影（`receipt_schema: "2.1"`），投影失败只 WARN、不改变闭环，agent 不手填。`receipt_status` / `receipt_path` 仅为旧消费者兼容输出；3.0 之前手写的 legacy 回执（无 receipt_schema）在隔离分支只读兼容、不重写。
+- **修正命令删除**：`--correction-check` 与 hook 侧 correction gate 删除；feature 修正不再写 `.current-correction.json`（`--correction-init` 只打印责任阶段），重验统一走 `--revalidate --feature <f> [--from <phase>]`（检查执行器：只重跑脚本门禁并按既有闭环路径收口，FAIL 即停；账本 `<feature>/revalidation.json`；summary readiness_signals 标 `script_revalidated`）。
+- **verifier 一次化**：request schema 升为 1.1，subject 按**审前材料视图**（`material_sha256`：phase 输入/产物、verifier 会读的源码/图片、规则、模板、gate 指纹、脚本报告 id/status/severity 投影）派生，模板时间戳不再换代；每个 subject 落 `verifier.material.<subject>.json`。材料未变 → 复用既有报告；材料变了但本 phase 历史已有 PASS → check-receipt 沿用闭环并在 `summary.verifier_closure` 登记 `completed_with_prior_review` 与 `current_material_not_reverified`（WARN `verifier_prior_pass_reused`）；从未 PASS 过仍是 BLOCKER。ai-prompt 瘦身：脚本报告只带非 PASS 项，上游文档与源码只给路径清单；verify-*.md 删可读性/行为项、加跨产物引用核对、输出改"汇总表 + 非 PASS 明细"；verifier 的 WARN/UNKNOWN 本轮不修（记 notes.md），只有 BLOCKER 级 FAIL 触发重审。
+- **执行通道三态**：值域 `hylyre | visual | manual:<gap_class> | provider:<capability-id>`。固定 known class 且工具确无原语的 manual、inactive/SKIP provider 归 `unsupported_gap`（留分母、不算 PASS）；裸/未知 manual、未登记 provider、active 但当前无 per-TC producer 的 provider 归跑机前 `invalid_test`。P0 identity 断言由 harness 注入（`checkpoint-injection.json`），不再要求 agent 手写。
+- **真机证据按输入复用**：执行键（HAP 摘要 + 注入后派生计划 + 设备/显示环境 + 复位方式 + 工具链版本 + flags）相同，且**最新一条带 execution-key 的真实 attempt** 同键、成功、证据完整时才复用；最新是其他 key 或同键失败就真跑，不回捞任意历史 run。`--force-device` 强制真跑；每个 run 目录落 `execution-key.json`，稳定性按同键分组（含失败轮）写 `reports/stability.json`；TC 行行为内容变化会使派生计划 stale，表外标题/说明不触发。
+- **测试报告机器生成**：`test-report.md` 由 harness 从 trace/timing/visual-diff 生成（每轴结论 + 总体 达标/有条件达标/不达标），旧手写报告移到 `testing/notes.legacy-report.md`；review 报告统计表由 checker 自动回写，新增 `review_reference_lint`（path:line 新鲜度与计数自洽，WARN）。
+- **漂移分级**：`review_closure_attestation`（testing）与 `ut_no_src_mutation`（UT，review 后改产品代码）不再永久 BLOCKER：按改动类型列出所需的一次复核（文档不复审；测试代码只跑相关测试；逻辑 scoped diff review；布局/资源真机截图或 `--measure`；多类同时变化最终合并 diff review），未做时 WARN 并如实标注；UT 期改产品代码归类为 coding change（`structured.reclassified_as`）。
+- **视觉量测**：`--measure --feature <f> [--screen <id>]` 输出 `device-screenshots/measure-<screen>.json`（bounds/间距/重叠/与参考图差值/取色，三轴 geometry/content/style），补 visual-diff.json 的 defects[].note；不改 ui-spec，不改 verdict。无 delegated 视觉 provider 时 region_attest / critic 回执类证明 SKIP（`[no_provider]`）。
+- **phase executor 与 NEXT 行**：新增子 agent 模板 `agents/claude/templates/agents/phase-executor.md`（Claude 原生 /goal 路径每阶段最多一个 executor，与 GoalPhaseRuntime 互斥）；harness 输出末尾新增 `NEXT:` 动作行；`--failures-only` 已是默认。
+- **summary 新字段**：`verifier_closure`（沿用既往 PASS 时在场）；readiness_signal `script_revalidated`；`device_test_run.structured.execution_key / reused_by_execution_key`。
+- **codex review 收敛（2026-09-03）**：回执整体退出新闭环输入与 Stop 判据，只在 closed 后 best-effort 投影；freshness 只看 manifest 自身完整性与输入/产物哈希。subject 派生不含时间、`source_commit_sha` / `worktree_digest`；机器测试报告用权威 run 时间，材料视图纳入最新真机 run trace、visual-diff.json 与 lifecycle fragments。`ut_no_src_mutation` 的 goal/direct 路径统一分级 WARN；TC 行行为字段决定派生新鲜度；执行键只复用最新真实 attempt，稳定性结论需 ≥2 轮同键执行（含失败轮）；inactive provider 是 `unsupported_gap`，active 无 producer 是跑机前 `invalid_test`；completion 重投影保留 P0 gaps，`semantic_not_reverified` 进 readiness_signals；整屏 geometry 须全部元素定位且 PASS；`NEXT:` 一次列出全部 blocker。
 
 ## 首选路径：初始化 Skill 的 UPDATE 模式（编排化 · S1–S4）
 
@@ -182,11 +197,11 @@ report，**再跑一次完整 harness 会换代 subject**，刚发布的 verifie
 
 ## 顶层测试计划新增 `execution_channel`（3.0.0 Breaking）
 
-`test-plan.md`「测试用例清单」表每条 TC 必须声明唯一**执行通道**，值域冻结为 `hylyre` | `visual` | `manual` | `provider:<capability-id>`。缺列、缺值或非法值都会让 testing FAIL，并要求一次性迁移——harness **不会**按用例名、优先级或步骤散文替你猜通道。
+`test-plan.md`「测试用例清单」表每条 TC 必须声明唯一**执行通道**，值域冻结为 `hylyre | visual | manual:<gap_class> | provider:<capability-id>`。缺列、缺值或非法值都会让 testing FAIL，并要求一次性迁移——harness **不会**按用例名、优先级或步骤散文替你猜通道。
 
 - **为什么**：此前派生器可以自行写 `explicit_skip_tc_ids`。静态门拒绝入口 selector 后，它没有回报"无法编译"，而是把入口 TC 挪进 skip 仍宣称覆盖完整；剩余用例的前置状态随之全部失真，设备停在首页，一整轮执行级联失败。执行责任必须由测试计划作者声明，不能由编译器自行处置。
 - **派生器不再有 skip 决策权**：正式派生只编译 `channel=hylyre` 的**全集**，不得新增/删除/改写通道，也不再产出 `explicit_skip_tc_ids`（历史产物仍可读）。任一 `hylyre` case 编译失败——含"首个断言之前没有同 case 的 setup/navigation 动作"——则整份 Hylyre 计划不启动，并回报该 TC 的根因与下一责任阶段。
-- **`manual` 不能关质量门**：它表示"该测试义务当前没有机器证据载体"，会持续留在分母 FAIL/UNVERIFIED，**任一 manual TC 都会让本 feature 的 testing 无法 PASS**。这是冻结设计，不是执行器缺陷；框架不提供人工确认、`confirmed_by`、质量 receipt 或 manual resume 来关闭本轮质量门。
+- **manual/provider 三态**：固定 known class 且当前工具确无原语的 `manual:<gap_class>`、inactive/SKIP provider 为 `unsupported_gap`（留分母、不算 PASS）；裸 `manual`、未知 class、未登记 provider、active 但无 per-TC producer 的 provider 为跑机前 `invalid_test`。框架不接受人工确认、`confirmed_by`、质量 receipt 或 manual resume 把 gap 洗成 PASS。
 - **对账按通道精确**：derived/trace/timing 的精确集合只与 `channel=hylyre` 闭合，visual/manual/provider 的 TC 不再被误报成"缺 trace"；报告总分母仍覆盖全部顶层 TC。
 - **迁移动作**：在顶层 `test-plan.md` 用例表末尾加一列「执行通道」，逐条填写并进入 plan review。改动任一 TC 的通道都会改变计划 identity，不得在派生或回灌时静默重写。
 

@@ -7,6 +7,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { HylyreTrace, HylyreTraceCase } from '../../../profiles/hmos-app/harness/providers/device-test-run';
 import { parseHylyreTrace } from '../../../profiles/hmos-app/harness/providers/device-test-run';
+import { listExecutionKeyRuns } from '../../../profiles/hmos-app/harness/execution-key';
 import {
   selectBestNonPlaceholderDerivedPlan,
   tryParseYamlFrontmatter,
@@ -145,6 +146,10 @@ export function evaluateHylyreRunOutcome(trace: HylyreTrace | null): HylyreRunOu
 
 /** Resolve authoritative hylyre/trace.json from selected derived plan (never top-level backfill). */
 export function resolveAuthoritativeHylyreTracePath(reportsBase: string): string | null {
+  const latestAttempt = listExecutionKeyRuns(reportsBase)[0];
+  if (latestAttempt) {
+    return fs.existsSync(latestAttempt.record.trace_path) ? latestAttempt.record.trace_path : null;
+  }
   const pick = selectBestNonPlaceholderDerivedPlan(reportsBase);
   if (!pick.selected) return null;
   const hylyreDir = path.dirname(pick.selected.hylyrePath);

@@ -15,7 +15,7 @@ commands:
   subagents:
     target_dir: .claude/agents
     template_dir: templates/agents
-    update_policy: auto_overwrite               # verifier 等为协议级子 agent 配置
+    update_policy: auto_overwrite               # verifier / phase-executor 为协议级子 agent 配置
 
 skill_bridge: null
 

@@ -55,7 +55,7 @@
 3. Minimum Viable：产出不得超出用户诉求/上游契约（spec→plan→contracts→code）范围；禁止投机性抽象或"顺便加上"。
 4. Surgical：coding/review 仅触碰 scope 内变更；禁止顺手改相邻格式、注释或无关文件。
 5. Verify Before Proceed：Context Exploration 完成后自检路径存在性与 Code Facts 充分性；逐文件 lint/局部 harness，禁止批量产出后统一验证。
-6. 语义级行为合规由 verifier `behavior_*` 检查项（BLOCKER/MAJOR）与 Layer 2 量化门禁交叉 enforcement。
+6. 语义级行为合规由本规约 + Layer 2 量化门禁（context-exploration 阈值、写边界、diff 范围）enforcement；verifier 不再单列 `behavior_*` 检查项（plan 07a41ec6：verifier 只做首轮语义结论与跨产物引用核对）。
 
 ## 阶段边界推进（BLOCKER）
 
@@ -70,6 +70,8 @@
 3. AGENTS.md 全文未禁止主 agent 调用 shell/执行命令；空白处一律按"允许"理解。若你以为某条规则限制了你执行命令，请先核对反假设条款。
 4. **生产型（会写/改文件的）子 agent 派发纪律**：framework 不禁止派发写码子 agent，但**不信任其报告**。派发 prompt 最低纪律——前置「先 Read 目标文件验证改造对象存在；不存在立即 STOP 报告，禁止善意改造」；后置「完成后运行自验命令」；报告要求「实际修改文件清单 + 自验命令输出，禁用"应该/可能"模糊词」。**子 agent 报告不构成任何闭环凭证**：主 agent 必须以 `git diff` 对账实际改动后才可声明完成；门禁/凭证责任不可下放（verifier 除外，见上文 2）。
 5. **环境能力判定纪律**：凡断言"环境缺少某工具链"（hvigor/SDK/设备等），必须先运行 framework 探测命令（`detect-deveco.ts --json` / `check-personal-setup.ts --ensure`）并在结论中引用其输出；禁止凭 `command -v`/PATH 检查自报「沙箱无 X」——**未探测 = 未知，不是没有**。遇 `HARNESS_PREFLIGHT` 能力缺口时按其双出口处置：修环境（默认）或经用户确认后诚实停止——停止不放行不绕过，环境修好后用原命令 resume 即可继续（goal 模式 `--resume` 会重检放行）。
+6. **唯一执行 owner 与上下文减负（plan 07a41ec6 T9）**：Claude 原生 `/goal` 路径下主会话是薄 driver——每个阶段最多派发**一个** `subagent_type: phase-executor` 子代理，由它负责该阶段产出与自检（跑 harness、投 verifier、跑 check-receipt），主会话只投递最小输入（需求/acceptance/ui-spec/参考图路径、当前改动文件、当前 blocker、已接受 gaps、上一阶段 summary 路径、Skill 路径），收回 summary 路径与终态块；不传历史对话，子代理按需读取。同一会话上下文不连续执行两个阶段。Maison `/goal-mode`（GoalPhaseRuntime）是另一入口，两者不得同时推进同一任务；`--revalidate` 只是检查命令，不推进阶段。
+7. **子代理等待纪律**：对 verifier / phase-executor 的结果只能**同步等待**，或先做与其结果无关的工作；禁止 sleep、轮询、后台等待器；verifier 未返回前不得修改它正在审的材料。harness 输出末尾的 `NEXT:` 行就是下一步动作，照做即可，不要读 framework TS 源码反推门禁判词。
 
 ## §4.2 实例扩展与生命周期钩子
 
@@ -97,8 +99,8 @@
 
 1. `trace.json` 真实存在（缺失即视为阶段未完成）；
 2. 主 agent 已自跑 `harness-runner.ts`，verdict=PASS（或脚本退出码 0）；
-3. 主 agent 已通过 Task 工具调用 `subagent_type: verifier` 子 agent，且 verifier 报告 verdict=PASS；
-4. 主 agent 已填写 `framework/harness/templates/phase-completion-receipt.md` 模板对应的回执，并通过 `framework/harness/scripts/check-receipt.ts` 校验。
+3. verifier 报告 verdict=PASS（仅当 harness 为本阶段输出了 verifier request；只跑一次——材料未变复用既有报告，材料变了但历史有 PASS 时 check-receipt 沿用并在 `summary.verifier_closure` 标 `completed_with_prior_review` 与未重审差异；WARN/UNKNOWN 记 `<phase>/notes.md` 不修）；
+4. `framework/harness/scripts/check-receipt.ts` exit 0（回执 `phase-completion-receipt.md` 由 harness 从 summary/verifier 报告/真机产物**只读投影**生成，receipt_schema 2.1，agent 不手填任何字段）。
 
 严禁仅靠口头"完成"宣告而不留下上述四份物理凭证。若物理拦截层（Stop hook）检测到任一项缺失，将以 exit code 2 阻止当前消息结束，并把缺失项原文注入下一轮 prompt。被拦截后必须立即补齐缺失项，而不是再次声称完成。
 
@@ -127,6 +129,8 @@
 2. `check-receipt` exit 0 → 直接认定该 phase 已闭环；汇报交付摘要后 `phase.next_step` 停等，禁止重跑该阶段 harness/verifier。
 3. `check-receipt` exit 1/2 → 按 BLOCKER 列表补齐缺失项；禁止仅凭 `.current-phase.json` 的 `receipt.status=missing` 或 `summary.json` 的 `next_action=run_verifier_then_receipt` 宣告「未闭环」——二者可能滞后于 receipt 磁盘真相。
 4. `summary.json.closure_status=closed` 与 `state.receipt.status=passed` 可作为辅助信号；SSOT 仍是 `check-receipt.ts` exit 码。
+
+**已闭环 feature 的修正（plan 07a41ec6 T8）**：修正 = 直接改根因层 SSOT/代码/测试输入 → 一次 `harness-runner.ts --revalidate --feature <feature> [--from <phase>]`（检查执行器：按链找 stale 阶段逐个重跑脚本门禁并按既有闭环路径收口；FAIL 即停并打印 blocker 与改法；语义 verifier 不重审，结果标 `script_revalidated` / `semantic_not_reverified`，账本落 `<feature>/revalidation.json`）→ 按漂移分级补一次复核（文档不复审；测试代码只跑相关测试；导航/状态/交互做 scoped diff review；布局/字号/颜色/资源做真机截图或 `--measure`；多类同时变化做一次最终合并 diff review）→ 完。不重新进入六阶段流程，不重写 spec/plan/review 全文（只追加"修正记录"小节），不为修正另建 feature 或状态。
 
 ## §六 交互硬规则完整表述
 

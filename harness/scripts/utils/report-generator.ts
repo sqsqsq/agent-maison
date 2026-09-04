@@ -217,6 +217,57 @@ export function failScriptReportWithFatalError(
  * 将组装好的 prompt 写到 reports/{feature}/{phase}/ai-prompt.md。
  * 返回组装后的完整 prompt 文本。
  */
+/**
+ * 模板解析（plan 07a41ec6 T7 抽出）：workflow 声明的模板 + 可选 profile overlay。
+ * assembleAIPrompt 与审前材料视图（verifier-material.ts）共用同一份文本，模板改动即换 subject。
+ */
+export function loadVerifierPromptTemplate(
+  harnessRoot: string,
+  phase: Phase,
+  resolvedProfile?: HarnessResolvedProfile,
+  verifierPromptRel?: string,
+): string {
+  const declaredRel = verifierPromptRel?.trim();
+  const templatePath = declaredRel
+    ? path.resolve(harnessRoot, declaredRel)
+    : path.join(harnessRoot, 'prompts', `verify-${phase}.md`);
+  if (!fs.existsSync(templatePath)) {
+    // fail-closed：声明了却读不到 = 声明与磁盘不一致，必须明确失败。
+    // 绝不 fallback——"造一个通用模板顶上"会让 verifier 审了一份谁也没声明过的东西，
+    // 而绑定链照样把它当有效证据。
+    throw new Error(
+      `[report-generator] verifier prompt 模板不存在：${templatePath}` +
+        (declaredRel
+          ? `（workflow 为 phase "${phase}" 声明的是 verifier_prompt: ${declaredRel}）`
+          : `（phase "${phase}" 的默认模板）`) +
+        '。请修正 workflow 的 verifier_prompt 声明或补齐该模板；框架不会自动生成替代品。',
+    );
+  }
+  let template = fs.readFileSync(templatePath, 'utf-8');
+  if (resolvedProfile) {
+    const overlayPath = path.join(resolvedProfile.profileDir, 'harness', 'prompts', `verify-${phase}.overlay.md`);
+    if (fs.existsSync(overlayPath)) {
+      const overlay = fs.readFileSync(overlayPath, 'utf-8').trim();
+      if (overlay.length > 0) {
+        template = `${template.trimEnd()}\n\n---\n\n## Profile Overlay：${resolvedProfile.name}\n\n${overlay}\n`;
+      }
+    }
+  }
+  return template;
+}
+
+/**
+ * plan 07a41ec6 T7：prompt 内嵌的脚本报告只带 **非 PASS** 检查项全文，PASS 项只留 id 列表。
+ * verifier 的职责是语义审查，不是复读 60 条 PASS 的 details（宿主 ai-prompt 里脚本报告占 40%+）。
+ */
+export function projectScriptReportForPrompt(report: ScriptReport): Record<string, unknown> {
+  return {
+    ...report,
+    checks: report.checks.filter(c => c.status !== 'PASS'),
+    passed_check_ids: report.checks.filter(c => c.status === 'PASS').map(c => c.id),
+  };
+}
+
 export function assembleAIPrompt(
   harnessRoot: string,
   projectRoot: string,
@@ -243,45 +294,15 @@ export function assembleAIPrompt(
     verifierPromptRel?: string;
   },
 ): string {
-  const declaredRel = options?.verifierPromptRel?.trim();
-  const templatePath = declaredRel
-    ? path.resolve(harnessRoot, declaredRel)
-    : path.join(harnessRoot, 'prompts', `verify-${phase}.md`);
-  if (!fs.existsSync(templatePath)) {
-    // fail-closed：声明了却读不到 = 声明与磁盘不一致，必须明确失败。
-    // 绝不 fallback——"造一个通用模板顶上"会让 verifier 审了一份谁也没声明过的东西，
-    // 而绑定链照样把它当有效证据。
-    throw new Error(
-      `[report-generator] verifier prompt 模板不存在：${templatePath}` +
-        (declaredRel
-          ? `（workflow 为 phase "${phase}" 声明的是 verifier_prompt: ${declaredRel}）`
-          : `（phase "${phase}" 的默认模板）`) +
-        '。请修正 workflow 的 verifier_prompt 声明或补齐该模板；框架不会自动生成替代品。',
-    );
-  }
-  const template0 = fs.readFileSync(templatePath, 'utf-8');
-  let template: string = template0;
-
-  if (resolvedProfile) {
-    const overlayPath = path.join(
-      resolvedProfile.profileDir,
-      'harness',
-      'prompts',
-      `verify-${phase}.overlay.md`,
-    );
-    if (fs.existsSync(overlayPath)) {
-      const overlay = fs.readFileSync(overlayPath, 'utf-8').trim();
-      if (overlay.length > 0) {
-        template = `${template.trimEnd()}\n\n---\n\n## Profile Overlay：${resolvedProfile.name}\n\n${overlay}\n`;
-      }
-    }
-  }
+  const template = loadVerifierPromptTemplate(harnessRoot, phase, resolvedProfile, options?.verifierPromptRel);
 
   const dir = ensureReportDir(projectRoot, feature, phase, frameworkRoot);
   const contextImageDir = path.join(dir, 'context-images');
   let imageIdx = 0;
 
-  const contextSection = contextFiles
+  const pathEntries = contextFiles.filter(cf => cf.kind === 'path');
+  const inlineSection = contextFiles
+    .filter(cf => cf.kind !== 'path')
     .map(cf => {
       if (cf.kind === 'image' && cf.imagePath && fs.existsSync(cf.imagePath)) {
         fs.mkdirSync(contextImageDir, { recursive: true });
@@ -307,6 +328,16 @@ export function assembleAIPrompt(
       return `### ${cf.label}\n\n\`\`\`\n${cf.content}\n\`\`\``;
     })
     .join('\n\n');
+  // plan 07a41ec6 T7：上游文档 / 源码不内联，只给路径清单——verifier 按需 Read，不全量通读。
+  const pathSection =
+    pathEntries.length > 0
+      ? [
+          '### 按需读取的文件（未内联 · 需要核对时用 Read 按路径读取，不要全量通读）',
+          '',
+          ...pathEntries.map(cf => `- \`${cf.label}\`${cf.content.trim() ? ` — ${cf.content.trim()}` : ''}`),
+        ].join('\n')
+      : '';
+  const contextSection = [inlineSection, pathSection].filter(s => s.length > 0).join('\n\n');
   const sidecarNames: string[] = [];
   if (fs.existsSync(contextImageDir)) {
     for (const f of fs.readdirSync(contextImageDir).sort()) {

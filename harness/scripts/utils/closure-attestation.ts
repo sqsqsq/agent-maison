@@ -434,3 +434,51 @@ export function reconcileSourceTreeAgainstAttestation(
     added, modified, deleted, new_roots: newRoots,
   };
 }
+
+// ---------------------------------------------------------------------------
+// plan 07a41ec6 T8：review 后源码漂移的**风险分级**——不无条件重走 review→UT→testing，
+// 按改动类型给出所需的一次复核；未做时 WARN 并如实标注（不阻塞普通开发完成）。
+// ---------------------------------------------------------------------------
+
+export type DriftRiskClass = 'documentation' | 'test_code' | 'logic' | 'ui_layout' | 'visual_resource';
+
+export interface DriftRiskAssessment {
+  classes: Array<{ class: DriftRiskClass; files: string[] }>;
+  /** 每类一条所需复核；多类产品改动同时出现时追加"最终合并 diff review" */
+  required_reviews: string[];
+  combined: boolean;
+}
+
+const DRIFT_REVIEW_BY_CLASS: Record<DriftRiskClass, string> = {
+  documentation: '文档/报告/备注变化：不复审产品',
+  test_code: '测试代码变化：只跑相关测试（UT/testing 门禁本身已覆盖编译与用例）',
+  logic: '导航/状态/业务交互变化：做一次 scoped diff review',
+  ui_layout: '页面/组件文件变化（可能同时含布局与导航/状态逻辑）：做一次真机截图或 `--measure` 几何量测复核 + 一次 scoped diff review',
+  visual_resource: '资源文件变化：做一次真机截图或 `--measure` 几何量测复核',
+};
+
+/** 单文件归类（路径启发；同一文件只归一类，拿不准归 logic——最需要人看一眼的那类）。 */
+export function classifyDriftFile(rel: string): DriftRiskClass {
+  const p = rel.replace(/\\/g, '/').toLowerCase();
+  if (/\.(md|txt|adoc)$/.test(p) || /(^|\/)(doc|docs)\//.test(p)) return 'documentation';
+  if (/(^|\/)(test|tests|ohostest|__tests__|mock|mocks)(\/|$)/.test(p) || /\.(test|spec)\.(ets|ts|js|tsx)$/.test(p)) return 'test_code';
+  if (/(^|\/)resources\//.test(p) || /\.(png|jpe?g|webp|gif|svg|css|scss|less|ttf|otf|woff2?)$/.test(p)) return 'visual_resource';
+  if (/(^|\/)(pages|components|component|view|views|ui|widgets|layout)\//.test(p)) return 'ui_layout';
+  return 'logic';
+}
+
+export function classifyDriftRisk(files: string[]): DriftRiskAssessment {
+  const buckets = new Map<DriftRiskClass, string[]>();
+  for (const f of files) {
+    const cls = classifyDriftFile(f);
+    if (!buckets.has(cls)) buckets.set(cls, []);
+    buckets.get(cls)!.push(f);
+  }
+  const order: DriftRiskClass[] = ['logic', 'ui_layout', 'visual_resource', 'test_code', 'documentation'];
+  const classes = order.filter(c => buckets.has(c)).map(c => ({ class: c, files: [...buckets.get(c)!].sort() }));
+  const product = classes.filter(c => c.class !== 'documentation');
+  const required = classes.map(c => DRIFT_REVIEW_BY_CLASS[c.class]);
+  const combined = product.length >= 2;
+  if (combined) required.push('多类同时变化：做一次最终合并 diff review');
+  return { classes, required_reviews: required, combined };
+}

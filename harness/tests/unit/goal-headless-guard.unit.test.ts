@@ -2095,7 +2095,7 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
-      name: 'closure-only 生产接线消费 verdict 派生；骨架在每次 invoke 前单点 force 写入且写失败即停',
+      name: 'closure-only 生产接线消费 verdict 派生；receipt 不再是 invoke 前置物',
       run: () => {
         const runner = fs.readFileSync(path.resolve(__dirname, '../../scripts/goal-phase-runtime.ts'), 'utf8');
         assert(
@@ -2103,17 +2103,8 @@ export function runAll(): UnitCaseResult[] {
           'closure-only 不得再由 trustedSnapshot.kind 推断',
         );
         assert(!/trustedSnapshot/.test(runner.replace(/\/\/[^\n]*/g, '')), 'pass snapshot 可信加载不得回归生产代码');
-        // 单点写入：全轮（内容轮+closure 轮）invoke 前 force 写骨架——不再限 closureOnlyAttempt；
-        // adjudicated-repair-loop 例外：resume 跳过已 settled 的 agent 时不覆盖（复用原产物身份）。
-        assert(
-          /if \(!dryRun && goalTrack !== 'lite' && !resumePostAgent\) \{[\s\S]{0,250}writeReceiptScaffold[\s\S]{0,180}force: true/.test(runner),
-          '每次 invoke 前必须无条件 force 写入当前 attempt 身份骨架（lite/dryRun/resumePostAgent 除外）',
-        );
-        // 写失败 fail-closed：不启动 agent（静默吞=旧身份回执存活=身份死结复发）
-        assert(
-          /if \(!scaffold\.wrote\) \{[\s\S]{0,700}receipt_scaffold_unwritable/.test(runner),
-          '骨架写失败必须 halt（receipt_scaffold_unwritable），不得静默继续启动 agent',
-        );
+        assert(!/writeReceiptScaffold|receipt_scaffold_unwritable/.test(runner), 'receipt 不得阻止 agent invoke 或 closure');
+        assert(/receipt 不再是 invoke\/closure 前置物；closed summary 提交后才 best-effort 投影/.test(runner), 'goal runtime must document post-close projection');
       },
     },
     {
@@ -2176,16 +2167,15 @@ export function runAll(): UnitCaseResult[] {
         };
         // failed（事故形态）：必须先引导去看校验输出定位真因，且显式点名 attempt 失配/stale
         const failedText = buildClosureWallGuidance({ ...base, receiptStatus: 'failed' }).join('\n');
-        assert(/不要预设是"人签"/.test(failedText), `failed 须明确不预设人签：${failedText}`);
-        assert(/claimed_attempt_id/.test(failedText), 'failed 须点名 attempt 身份失配这一真实可能');
-        assert(/manifest/.test(failedText), 'failed 须点名 evidence manifest stale 这一真实可能');
+        assert(/summary\/verifier\/policy/.test(failedText), `failed 须指向当前闭环输入：${failedText}`);
+        assert(/receipt 是 closed 后机器投影/.test(failedText), 'failed 不应要求补签 receipt');
         assert(
           failedText.indexOf('check:plan') < failedText.indexOf('补签'),
           '定位命令须排在补签建议之前（先查真因再谈签字）',
         );
         // missing：回执压根没写，与人签无关
         const missingText = buildClosureWallGuidance({ ...base, receiptStatus: 'missing' }).join('\n');
-        assert(/这不是人签问题/.test(missingText), `missing 须否定人签：${missingText}`);
+        assert(/无需手填/.test(missingText), `missing 须说明 receipt 不需手填：${missingText}`);
         // error：探针崩溃＝框架/工具链问题
         const errorText = buildClosureWallGuidance({ ...base, receiptStatus: 'error' }).join('\n');
         assert(/不要试图补签|不要修改产物/.test(errorText), `error 须否定补签：${errorText}`);

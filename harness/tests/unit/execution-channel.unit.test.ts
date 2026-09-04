@@ -17,6 +17,7 @@ import {
   EXECUTION_CHANNEL_DOMAIN,
   evaluateExecutionChannelDeclaration,
   extractExecutionChannels,
+  inactiveCapabilityIdsFromProfile,
   parseExecutionChannel,
   registeredCapabilityIdsFromProfile,
 } from '../../scripts/utils/execution-channel';
@@ -79,21 +80,34 @@ test('声明了列但个别 TC 缺值 / 非法值 → 分别报 missing / illega
   assert.deepStrictEqual(decl.hylyre_tc_ids, ['TC-001']);
 });
 
-test('四通道分流正确，且 manual 在场时话术明说 feature testing 无法 PASS', () => {
+test('四通道分流正确；manual:<class> 判 unsupported_gap，裸 manual 与无 registry provider 判 invalid_test', () => {
   const decl = evaluateExecutionChannelDeclaration(topPlan([
     '| TC-001 | a | P0 | AC-1 | hylyre |',
     '| TC-002 | b | P0 | AC-2 | visual |',
     '| TC-003 | c | P1 | AC-3 | provider:toast_listener |',
-    '| TC-004 | d | P2 | AC-4 | manual |',
+    '| TC-004 | d | P2 | AC-4 | manual:perf_sampling |',
     '| TC-005 | e | P0 | AC-5 | hylyre |',
   ]));
-  assert.strictEqual(decl.ok, true);
+  assert.strictEqual(decl.ok, false);
   assert.deepStrictEqual(decl.hylyre_tc_ids, ['TC-001', 'TC-005']);
   assert.deepStrictEqual(decl.visual_tc_ids, ['TC-002']);
   assert.deepStrictEqual(decl.provider_tc_ids, [{ tc_id: 'TC-003', provider_id: 'toast_listener' }]);
   assert.deepStrictEqual(decl.manual_tc_ids, ['TC-004']);
-  assert.ok(/无法 PASS/.test(decl.detail), 'manual 的分母义务必须显式说清楚');
-  assert.ok(/冻结设计/.test(decl.detail), '须说明这是冻结设计而非执行器缺陷');
+  assert.deepStrictEqual(decl.unsupported_gap_tc_ids, ['TC-004']);
+  assert.ok(decl.unsupported_gap.some(g => g.tc_id === 'TC-004' && g.channel === 'manual' && g.reason === 'perf_sampling'));
+  assert.ok(decl.invalid_test.some(item => item.tc_id === 'TC-003' && /registry/.test(item.why)));
+  assert.ok(/不算 PASS/.test(decl.detail) && /不阻止普通开发完成/.test(decl.detail), 'gap 语义必须写清：留分母、不算 PASS、不阻止完成');
+
+  const bare = evaluateExecutionChannelDeclaration(topPlan(['| TC-004 | d | P2 | AC-4 | manual |']));
+  assert.strictEqual(bare.ok, false, '裸 manual 是 invalid_test，声明不闭合');
+  assert.deepStrictEqual(bare.unsupported_gap_tc_ids, []);
+  assert.strictEqual(bare.invalid_test[0]?.tc_id, 'TC-004');
+  assert.ok(/manual:</.test(bare.invalid_test[0]?.fix ?? ''), '改法必须给出 manual:<class> 写法');
+  assert.ok(/invalid_test/.test(bare.detail));
+
+  const unknownClass = evaluateExecutionChannelDeclaration(topPlan(['| TC-004 | d | P2 | AC-4 | manual:because_hard |']));
+  assert.strictEqual(unknownClass.ok, false, '枚举外的缺口类别不算机器证明');
+  assert.strictEqual(parseExecutionChannel('manual:perf_sampling')?.gap_reason, 'perf_sampling');
 });
 
 
@@ -102,12 +116,14 @@ test('四通道分流正确，且 manual 在场时话术明说 feature testing �
 // ---------------------------------------------------------------------------
 // 事故形态：宿主自拟 provider:device-test.perf-probe，声明门只验字面格式 → PASS，7 条 P0 跑完真机
 // 才被证据义务门判"永远不可能通过"。这里钉：未登记即计划期 BLOCKER、detail 给出已登记键清单、
-// 匹配是 normalize 后精确相等（不做分隔符/大小写/相似度归一）、无 opts 时纯词法逐字不变。
-test('plan b3d7e5a1 T2：未登记 provider id → ok=false + 已登记键清单；精确匹配；无 opts 行为不变', () => {
-  const registry = registeredCapabilityIdsFromProfile({
+// 匹配是 normalize 后精确相等（不做分隔符/大小写/相似度归一）；无 opts 也不得把 provider 当 gap。
+test('plan b3d7e5a1 T2：未登记 provider id → invalid；inactive → gap；active 无 producer → invalid', () => {
+  const capabilities = {
     'device_test.visual_diff': { severity: 'SKIP' },
     'prd.visual_handoff': { severity: 'BLOCKER' },
-  });
+  };
+  const registry = registeredCapabilityIdsFromProfile(capabilities);
+  const inactive = inactiveCapabilityIdsFromProfile(capabilities);
   assert.ok(registry.has('device_test.visual_diff'), 'severity=SKIP 的能力也"存在"（可用性归 capability-resolution）');
   assert.ok(registry.has('spec.visual_handoff') && !registry.has('prd.visual_handoff'), 'registry 键经 alias 归一为 canonical');
 
@@ -126,18 +142,18 @@ test('plan b3d7e5a1 T2：未登记 provider id → ok=false + 已登记键清单
   assert.ok(/不按名字猜能力/.test(unknown.detail));
   assert.ok(/已登记的 capability 键（normalize 后、字典序）：device_test\.visual_diff, spec\.visual_handoff/.test(unknown.detail), unknown.detail);
 
-  // 无 opts = 纯词法：与查表前逐字一致
+  // 无 opts 无法证明 provider inactive，也没有 producer → invalid_test
   const lexical = evaluateExecutionChannelDeclaration(plan);
-  assert.strictEqual(lexical.ok, true);
+  assert.strictEqual(lexical.ok, false);
   assert.deepStrictEqual(lexical.unknown_provider, []);
-  assert.ok(!/未登记/.test(lexical.detail));
+  assert.ok(lexical.invalid_test.some(item => item.tc_id === 'TC-002'));
 
-  // 已登记（含 SKIP）、canonical 与 legacy alias 两种写法都算存在
-  for (const id of ['device_test.visual_diff', 'spec.visual_handoff', 'prd.visual_handoff']) {
-    const ok = evaluateExecutionChannelDeclaration(topPlan([`| TC-002 | b | P1 | AC-2 | provider:${id} |`]), { registeredCapabilityIds: registry });
-    assert.strictEqual(ok.ok, true, `${id} 应视为已登记`);
-    assert.deepStrictEqual(ok.unknown_provider, []);
-  }
+  const skipped = evaluateExecutionChannelDeclaration(topPlan(['| TC-002 | b | P1 | AC-2 | provider:device_test.visual_diff |']), { registeredCapabilityIds: registry, inactiveCapabilityIds: inactive });
+  assert.strictEqual(skipped.ok, true, 'inactive/SKIP provider 是 unsupported_gap');
+  assert.deepStrictEqual(skipped.unsupported_gap_tc_ids, ['TC-002']);
+  const active = evaluateExecutionChannelDeclaration(topPlan(['| TC-002 | b | P1 | AC-2 | provider:spec.visual_handoff |']), { registeredCapabilityIds: registry, inactiveCapabilityIds: inactive });
+  assert.strictEqual(active.ok, false, 'active 但无 per-TC producer 必须跑机前 invalid_test');
+  assert.ok(active.invalid_test.some(item => /per-TC provider producer/.test(item.why)));
   // 分隔符变体不做模糊匹配 → unknown；大小写变体连字面格式都不合法 → illegal；两者都 FAIL
   for (const id of ['device_test.visual-diff', 'device-test.visual_diff', 'device_test_visual_diff']) {
     const variant = evaluateExecutionChannelDeclaration(topPlan([`| TC-002 | b | P1 | AC-2 | provider:${id} |`]), { registeredCapabilityIds: registry });
@@ -158,7 +174,21 @@ test('plan b3d7e5a1 T2：未登记 provider id → ok=false + 已登记键清单
   assert.deepStrictEqual(noProvider.unknown_provider, []);
 });
 
-test('plan b3d7e5a1 T2：check-testing 接线——未登记 id 产出 plan_contract BLOCKER 且零设备；report-only 不被截断；已登记放行', () => {
+test('provider 三态：inactive capability 是 gap；active 但无 per-TC producer 是跑机前 invalid_test', () => {
+  const registry = new Set(['device_test.visual_diff', 'device_test.perf_probe']);
+  const inactive = new Set(['device_test.perf_probe']);
+  const decl = evaluateExecutionChannelDeclaration(topPlan([
+    '| TC-001 | a | P0 | AC-1 | hylyre |',
+    '| TC-002 | b | P1 | AC-2 | provider:device_test.visual_diff |',
+    '| TC-003 | c | P1 | AC-3 | provider:device_test.perf_probe |',
+  ]), { registeredCapabilityIds: registry, inactiveCapabilityIds: inactive });
+  assert.strictEqual(decl.ok, false);
+  assert.deepStrictEqual(decl.unsupported_gap_tc_ids, ['TC-003'], '只有 SKIP 的 capability 才是 gap；可用 provider 留作 fail-closed 义务');
+  assert.ok(decl.unsupported_gap.some(g => g.tc_id === 'TC-003' && g.reason === 'provider_inactive:device_test.perf_probe'));
+  assert.ok(decl.invalid_test.some(item => item.tc_id === 'TC-002' && /per-TC provider producer/.test(item.why)));
+});
+
+test('check-testing 接线：未登记或 active 无 producer 都在设备前 BLOCKER；inactive provider 作为 gap 放行', () => {
   const ctxWith = (capabilities: Record<string, unknown>) =>
     ({ projectRoot: process.cwd(), feature: 'demo', phase: 'testing', resolvedProfile: { capabilities } }) as unknown as
       Parameters<typeof __testing_checkExecutionChannelDeclaration>[0];
@@ -180,8 +210,11 @@ test('plan b3d7e5a1 T2：check-testing 接线——未登记 id 产出 plan_cont
     '| TC-001 | a | P0 | AC-1 | hylyre |',
     '| TC-002 | b | P1 | AC-2 | provider:device_test.visual_diff |',
   ]);
-  const [passed] = __testing_checkExecutionChannelDeclaration(ctxWith(registered), okPlan);
-  assert.strictEqual(passed.status, 'PASS', passed.details);
+  const [activeBlocked] = __testing_checkExecutionChannelDeclaration(ctxWith(registered), okPlan);
+  assert.strictEqual(activeBlocked.status, 'FAIL', activeBlocked.details);
+  assert.deepStrictEqual(shouldRunDevicePipeline({ ok: false }, false), { device: false, reportOnly: false });
+  const [inactiveGap] = __testing_checkExecutionChannelDeclaration(ctxWith({ 'device_test.visual_diff': { severity: 'SKIP' } }), okPlan);
+  assert.strictEqual(inactiveGap.status, 'PASS', inactiveGap.details);
   // 缺 capabilities 的上下文按空 registry 处理（fail-closed），不静默放行
   const [noRegistry] = __testing_checkExecutionChannelDeclaration(ctxWith(undefined as unknown as Record<string, unknown>), okPlan);
   assert.strictEqual(noRegistry.status, 'FAIL');

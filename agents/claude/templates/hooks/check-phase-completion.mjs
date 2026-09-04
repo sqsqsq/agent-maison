@@ -169,9 +169,7 @@ function readStateFileRelFromConfig(projectRoot) {
 }
 
 /**
- * 解析 paths.features_dir（round7 skills/文案批 plan a9c4e7f1）：
- * 拦截提示里的回执目标路径须随实例配置，否则 custom features_dir 宿主的
- * agent 会被引导到错误回执目录、阶段闭环持续失败。缺配置回退默认。
+ * 解析 paths.features_dir：仅用于提示历史产物位置；receipt 不再是 Stop 判据。
  */
 function readFeaturesDirFromConfig(projectRoot) {
   try {
@@ -184,35 +182,6 @@ function readFeaturesDirFromConfig(projectRoot) {
   } catch {
     return 'doc/features';
   }
-}
-
-/**
- * 回执目标 rel 路径（codex review 采纳）：回执目录 SSOT 是 paths.receipt_dir_pattern
- * （与 harness config.ts receiptDirPath 同语义：pattern 相对工程根、<feature>/<phase>
- * 占位替换），仅拼 features_dir 默认结构会在自定义 pattern（如
- * doc/features/<feature>/phases/<phase>）宿主下引导 agent 写错目录。
- * 无 pattern 字段时回退 <features_dir>/<feature>/<phase>。
- */
-function resolveReceiptRelFromConfig(projectRoot, feature, phase) {
-  try {
-    const cfgPath = path.resolve(projectRoot, 'framework.config.json');
-    if (fs.existsSync(cfgPath)) {
-      const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
-      const pattern = cfg?.paths?.receipt_dir_pattern;
-      if (typeof pattern === 'string' && pattern.trim()) {
-        const dirRel = pattern
-          .trim()
-          .replace(/<feature>/g, feature)
-          .replace(/<phase>/g, phase)
-          .replace(/\\/g, '/')
-          .replace(/\/+$/, '');
-        return `${dirRel}/phase-completion-receipt.md`;
-      }
-    }
-  } catch {
-    /* fall through to default */
-  }
-  return `${readFeaturesDirFromConfig(projectRoot)}/${feature}/${phase}/phase-completion-receipt.md`;
 }
 
 /**
@@ -423,7 +392,7 @@ export function policyRequires(snapshot, item) {
   return level !== 'off' && level !== 'not_applicable';
 }
 
-export function evaluateState(state) {
+export function evaluateState(state, summary = null) {
   // 返回 { allow: boolean, reason: string, missing: string[] }
   if (!state || typeof state !== 'object') {
     return { allow: true, reason: 'no-state-file', missing: [] };
@@ -431,6 +400,11 @@ export function evaluateState(state) {
 
   if (typeof state.phase === 'string' && GLOBAL_PHASES.has(state.phase)) {
     return { allow: true, reason: 'global-phase-not-tracked', missing: [] };
+  }
+
+  // plan 07a41ec6 T4：磁盘 summary.closure_status 是新闭环唯一事实；receipt/state 仅兼容投影。
+  if (summary?.closure_status === 'closed') {
+    return { allow: true, reason: 'phase-closed', missing: [] };
   }
 
   const missing = [];
@@ -452,26 +426,7 @@ export function evaluateState(state) {
     missing.push(`harness blocker_count=${state.blocker_count}，必须为 0`);
   }
 
-  const policySnapshot = readPolicySnapshot(state);
-  const receipt = state.receipt ?? null;
-  if (!policyRequires(policySnapshot, 'receipt')) {
-    // evidence policy 声明本阶段 receipt 非必需（off / not_applicable）→ 不列缺项。
-    // C2 verification-matrix 起真实命中：lite track 的 policy_snapshot.evidence.receipt
-    // 恒为 not_applicable（buildPolicySnapshot 按 track 求解，见 runtime-policy.ts）——
-    // 该阶段的闭环仍受上面 status/verdict/blocker_count 三项约束，只是不再额外要求
-    // check-receipt.ts 产出的 receipt.status='passed'（lite 架构性不产生这份凭证）。
-  } else if (!receipt) {
-    missing.push(
-      'state.receipt=null，未跑 check-receipt.ts；阶段完成回执必须填写并通过校验',
-    );
-  } else if (receipt.status !== 'passed') {
-    missing.push(
-      `receipt.status="${receipt.status}"（路径：${receipt.receipt_path}）`,
-    );
-    if (receipt.message) {
-      missing.push(`  ↳ ${receipt.message.split(/\r?\n/).slice(0, 3).join(' / ')}`);
-    }
-  }
+  missing.push(`summary.closure_status="${summary?.closure_status ?? 'missing'}"，必须为 "closed"（receipt/state 不构成闭环事实）`);
 
   if (missing.length === 0) {
     return { allow: true, reason: 'phase-closed', missing: [] };
@@ -608,7 +563,7 @@ export function decideEscapeValve(prevSig, prevCount, signature, maxConsecutiveB
   return { count, release };
 }
 
-function buildBlockReason(state, missingItems, summaryHint = null, progress = null, featuresDir = 'doc/features', receiptRel = null) {
+function buildBlockReason(state, missingItems, summaryHint = null, progress = null, featuresDir = 'doc/features') {
   const phase = state.phase ?? 'unknown';
   const feature = state.feature ?? 'unknown';
   const rerunCmd = `cd framework/harness && npx ts-node harness-runner.ts --phase ${phase} --feature ${feature}`;
@@ -616,18 +571,16 @@ function buildBlockReason(state, missingItems, summaryHint = null, progress = nu
 
   // plan a9d4e7c2 P1-4：**首要动作必须按机器事实分流**。
   //
-  // 脚本已经 PASS、只差回执/闭环时，"重跑完整 harness"是**破坏性**建议：它会重新装配
-  // 含时间戳的 ai-prompt.md，subject 随之换代，刚发布的 verifier 证据当场失效——
-  // 弱模型照做就进入"跑→换代→证据失效→再跑"的死循环。这种情况下唯一正确的第一动作是
-  // `--sync-closure`：它不重跑脚本 harness、不重发 request，并会**准确报出**到底缺
-  // verifier 还是缺回执。只有脚本没过（FAIL/INCOMPLETE）时，重跑完整 harness 才是对的。
+  // 脚本已经 PASS、只差闭环时，第一动作是 `--sync-closure`：它不重跑脚本 harness，并会**准确报出**
+  // 到底缺 verifier 证据还是别的。（plan 07a41ec6 起 subject 按审前材料寻址，重跑 harness 不再因
+  // 时间戳换代；但重跑仍是多余动作。）只有脚本没过（FAIL/INCOMPLETE）时，重跑完整 harness 才是对的。
   const scriptPassed =
     (typeof state.verdict === 'string' && state.verdict === 'PASS') ||
     (summaryHint && summaryHint.verdict === 'PASS');
   const closureOpen = !summaryHint || summaryHint.closureStatus !== 'closed';
   const closureOnly = Boolean(scriptPassed && closureOpen);
   const headline = closureOnly
-    ? `[Stop Hook] 阶段未闭环：feature="${feature}" phase="${phase}"。脚本已 PASS，下一步只做这一件事——对齐闭环态（**不要**重跑完整 harness，那会换代 subject 并废掉已发布的 verifier 证据）：`
+    ? `[Stop Hook] 阶段未闭环：feature="${feature}" phase="${phase}"。脚本已 PASS，下一步只做这一件事——对齐闭环态（重跑完整 harness 不会因时间戳换 subject，但这里没有必要）：`
     : `[Stop Hook] 阶段未闭环：feature="${feature}" phase="${phase}"。下一步只做这一件事——真正修复后重跑 harness：`;
   const lines = [
     // 动作优先（弱模型友好）：先给"下一步只做这一件事"，把长说明收到后面。
@@ -649,20 +602,17 @@ function buildBlockReason(state, missingItems, summaryHint = null, progress = nu
     '如果你打算【继续这个阶段】，按下面顺序补齐：',
     ...(closureOnly
       ? [
-          `  1. 先跑 sync-closure（**不重跑脚本 harness、不换代 subject**）：`,
+          `  1. 先跑 sync-closure（**不重跑脚本 harness**）：`,
           `       ${syncCmd}`,
-          `     它会准确告诉你还缺什么：verifier 证据、回执，还是别的。exit 0 即闭环。`,
+          `     它会按 base summary、verifier evidence 与 policy 收口；exit 0 即闭环。receipt 只在 closed 后 best-effort 投影，不需要手填。`,
           `  2. 若它报 verifier 证据缺失且 summary.verifier_request 在场：`,
           `       ${summaryHint && summaryHint.verifierRequest ? summaryHint.verifierRequest : `<features_dir>/${feature}/${phase}/reports/verifier.request.<subject>.json`}`,
           `     用 Task 工具调 verifier 子 agent（subagent_type=verifier），`,
           `     prompt = 那份 request JSON 的**完整正文**（几十行，整段投递）。`,
           `     verifier 会按其中的 prompt_path 自行 Read ai-prompt.md；不要投递 ai-prompt.md`,
           `     全文、不要手抄或改写字段、不要附加说明——subject 由字段重算，抄错一处即失配。`,
-          `  3. 若它报回执缺失/不合格，填写阶段完成回执：`,
-          `       模板：framework/harness/templates/phase-completion-receipt.md`,
-          `       目标：${receiptRel ?? `${featuresDir}/${feature}/${phase}/phase-completion-receipt.md`}`,
-          `  4. 补齐后重跑第 1 步的 sync-closure，再尝试 stop。`,
-          `     **全程不要跑完整 harness**——脚本结论已经有效，重跑只会换代 subject。`,
+          `  3. verifier 返回后重跑第 1 步的 sync-closure，再尝试 stop。`,
+          `     **不要手填 receipt**；重跑完整 harness 不会因时间戳换 subject，但 closure-only 场景没有必要。`,
         ]
       : [
           `  1. 按 summary.next_action 修因（脚本尚未 PASS），然后自跑完整 harness：`,
@@ -677,11 +627,8 @@ function buildBlockReason(state, missingItems, summaryHint = null, progress = nu
           `     verifier 会按其中的 prompt_path 自行 Read ai-prompt.md；不要投递 ai-prompt.md`,
           `     全文、不要手抄或改写字段、不要附加说明。`,
           `     没有输出 request 且 next_action 也没指向 provider 问题 = 本阶段不适用 verifier，跳到第 3 步。`,
-          `  3. 填写阶段完成回执：`,
-          `       模板：framework/harness/templates/phase-completion-receipt.md`,
-          `       目标：${receiptRel ?? `${featuresDir}/${feature}/${phase}/phase-completion-receipt.md`}`,
-          `  4. 运行 ${syncCmd}`,
-          `     （只对齐闭环态、不重跑脚本 harness，也不会换代 subject）后再尝试 stop。`,
+          `  3. 运行 ${syncCmd}`,
+          `     （只读 base summary、verifier evidence 与 policy；receipt 在 closed 后机器投影）后再尝试 stop。`,
         ]),
     '',
     '如果你想【放弃这个阶段，转去做别的事】，先执行：',
@@ -709,83 +656,6 @@ function buildEscapeValveReason(state, count) {
     `  ② 放弃本阶段：     cd framework/harness && npx ts-node harness-runner.ts --clear-state`,
     `（本次已放行；state 仍 verdict=FAIL / receipt=missing，下游阶段门禁照常拦截，未绕过闭环。）`,
   ].join('\n');
-}
-
-// --------------------------------------------------------------------------
-// 7.5 correction 状态联动（C5-full hard_hook 深度集成）
-// --------------------------------------------------------------------------
-// 设计（openspec/changes/correction-routing/design.md「enforcement 分档」）：
-//   hard_hook（claude 系）档位下，Stop/SubagentStop 物理拦截须与 correction 状态
-//   联动——存在**当前会话**的 pending 修正时，即便 .current-phase.json 已闭环
-//   （甚至根本不存在），也不应放行 stop，直到 --correction-check 收口。
-// 独立于阶段闭环判定：即使没有 .current-phase.json（修正发生在已交付 feature 上），
-// 只要 .current-correction.json 存在且 pending + 属于当前会话 + 未过期，就拦截。
-// TTL/session 治理刻意与 harness/scripts/utils/correction-state.ts 的
-// CORRECTION_STATE_TTL_MS（24h）保持同一常量语义——hook 端不 import TS，独立维护，
-// 若未来调整需求实两处同步（与本文件顶部 HOOK_DEFAULT_* 的既有跨语言同步模式一致）。
-
-const CORRECTION_TTL_MS = 24 * 60 * 60 * 1000; // 24 小时；须与 CORRECTION_STATE_TTL_MS 同步
-
-function correctionStatePathFrom(stateAbs) {
-  return path.join(path.dirname(stateAbs), '.current-correction.json');
-}
-
-/**
- * 评估 correction state 是否应阻断本次 stop。
- * 只在"当前会话遗留"（sid 一致或双方缺 sid 时用 expires_at 兜底）且未过期时阻断；
- * 跨会话/过期一律放行（不阻断也不写 advisory——避免与主状态的 advisory 噪音叠加）。
- */
-export function evaluateCorrectionGate(correctionState, currentSid, now) {
-  if (!correctionState || typeof correctionState !== 'object') return { blocking: false };
-  if (correctionState.status !== 'pending') return { blocking: false };
-
-  const stateSid =
-    typeof correctionState.session_id === 'string' && correctionState.session_id.trim()
-      ? correctionState.session_id.trim()
-      : null;
-  if (stateSid && currentSid && stateSid !== currentSid) {
-    return { blocking: false, reasonSkipped: 'cross-session' };
-  }
-
-  const expiresAtMs = parseTimestampMs(correctionState.expires_at);
-  if (expiresAtMs != null && now > expiresAtMs) {
-    return { blocking: false, reasonSkipped: 'expired' };
-  }
-  // expires_at 缺失/不可解析时兜底用 created_at + TTL 判断，避免字段缺失被误判为永久阻断
-  if (expiresAtMs == null) {
-    const createdAtMs = parseTimestampMs(correctionState.created_at);
-    if (createdAtMs != null && now - createdAtMs > CORRECTION_TTL_MS) {
-      return { blocking: false, reasonSkipped: 'expired-fallback' };
-    }
-  }
-
-  return { blocking: true };
-}
-
-function buildCorrectionBlockReason(correctionState) {
-  const feature = correctionState.feature ?? '(no-feature / adhoc)';
-  const rootLayer = correctionState.root_layer ?? 'unknown';
-  const pendingPhases = Array.isArray(correctionState.revalidate)
-    ? correctionState.revalidate.filter((r) => r && r.status !== 'done').map((r) => r.phase)
-    : [];
-  const lines = [
-    `[Stop Hook] 存在未收口的中途修正：feature="${feature}" root_layer="${rootLayer}"。`,
-    '下一步只做这一件事——补齐 revalidate 后跑：',
-    '  → cd framework/harness && npx ts-node harness-runner.ts --correction-check',
-    '',
-    pendingPhases.length > 0
-      ? `待重验 phase：${pendingPhases.join('、')}（逐项重跑其 harness-runner.ts --phase <phase>）`
-      : '（revalidate 清单为空或已全部标记，直接跑 --correction-check 收口即可）',
-    '',
-    '如果这次修正已经不需要了，或想改变分层判定，重新走：',
-    '  → cd framework/harness && npx ts-node harness-runner.ts --correction-init',
-    '如果要彻底放弃这次修正（不再重验）：',
-    '  → cd framework/harness && npx ts-node harness-runner.ts --clear-state（一并清理修正状态）',
-    '',
-    '本提示与阶段闭环判定（CLAUDE.md §5.1）相互独立——即便当前阶段已闭环，',
-    '未收口的修正仍会拦截 stop（防止"改完就跑、没验证"）。',
-  ];
-  return lines.join('\n');
 }
 
 function buildAdvisory(state, stale) {
@@ -832,23 +702,11 @@ async function main() {
     readStateFileRelFromConfig(projectRoot) ?? 'framework/harness/state/.current-phase.json';
   const stateAbs = path.resolve(projectRoot, stateRel);
 
-  // 拿当前会话 id（correction 联动检查也要用，故提到 state 判空之前）
+  // 拿当前会话 id
   const sid =
     typeof payload?.session_id === 'string' && payload.session_id.trim()
       ? payload.session_id.trim()
       : null;
-
-  // correction 状态联动（C5-full）：独立于 .current-phase.json 是否存在/已闭环——
-  // 未收口的当前会话修正照样拦截 stop。
-  const correctionState = readJSONSafe(correctionStatePathFrom(stateAbs));
-  const correctionGate = evaluateCorrectionGate(correctionState, sid, Date.now());
-  if (correctionGate.blocking) {
-    const reason = buildCorrectionBlockReason(correctionState);
-    process.stdout.write(JSON.stringify({ decision: 'block', reason }));
-    process.stderr.write(reason + '\n');
-    process.exit(2);
-    return;
-  }
 
   const state = readJSONSafe(stateAbs);
 
@@ -877,7 +735,8 @@ async function main() {
     typeof state.consecutive_block_count === 'number' ? state.consecutive_block_count : 0;
 
   // 走闭环判定
-  const result = evaluateState(state);
+  const phaseSummary = readPhaseSummary(projectRoot, state);
+  const result = evaluateState(state, phaseSummary?.summary ?? null);
   if (result.allow) {
     // 闭环放行：盖章/last_seen + 清零逃生阀计数（仅在有残留计数时才写）
     const resetExtra =
@@ -909,8 +768,7 @@ async function main() {
   const reason = buildBlockReason(state, result.missing, readSummaryHint(projectRoot, state), {
     count,
     max: maxConsecutiveBlocks,
-  }, readFeaturesDirFromConfig(projectRoot),
-  resolveReceiptRelFromConfig(projectRoot, state.feature ?? 'unknown', state.phase ?? 'unknown'));
+  }, readFeaturesDirFromConfig(projectRoot));
   const decision = {
     decision: 'block',
     reason,

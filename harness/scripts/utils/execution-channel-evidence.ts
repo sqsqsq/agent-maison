@@ -26,15 +26,16 @@
 //   现在改为**复用既有** `validateVisualDiffJson` + `isStaleVisualDiffVerdict` +
 //   `isMissingEvaluatedScreenshotHash`，并要求本轮 visual 门自身 PASS，不另建第二判据。
 //
-//   provider —— **今天无法绑定，保持 fail-closed**。这不是偷懒：capability 解析记录
+//   provider —— active 且无 per-TC producer 在计划期即 invalid_test；inactive/SKIP 才
+//               作为 unsupported_gap 到这里披露。capability 解析记录
 //               （summary.capability_resolutions）是 **feature 级、按 capability id** 的，
 //               只有 `state=resolved|pruned|blocked|not_applicable`，**没有 TC 维度**；
 //               `profiles/*/harness/providers/` 下也没有任何 provider 产出 per-TC 结果。
 //               "某个能力在场"根本不证明"某个 TC 执行并通过了"。
 //               让它可通过的前提写在 `PROVIDER_EVIDENCE_CONTRACT`，由 provider 侧先实现。
 //
-//   manual   —— **冻结设计**，永远 fail-closed。人工确认、confirmed_by、质量 receipt、
-//               manual resume 都不构成机器质量证据。
+//   manual   —— known no-primitive class 为 unsupported_gap；裸/未知类别在计划期 invalid_test。
+//               人工确认、confirmed_by、质量 receipt、manual resume 都不构成 PASS。
 //
 // 安全方向：本模块只可能把"本来就 FAIL"的 TC 改判为 covered，因此每一条判据都取
 // **拒绝可疑**方向——缺映射、缺产物、缺条目、verdict 非 pass，一律 unbound。
@@ -69,7 +70,9 @@ export type ChannelEvidenceVerdict =
   /** 无法建立 TC→证据的机器绑定（缺映射/缺产物/缺条目） */
   | { kind: 'unbound'; detail: string }
   /** 该通道在设计上就没有机器质量 PASS 载体 */
-  | { kind: 'not_machine_provable'; detail: string };
+  | { kind: 'not_machine_provable'; detail: string }
+  /** plan 07a41ec6 T2：机器证明的工具缺口——留分母、不算 PASS、不阻止普通开发完成 */
+  | { kind: 'unsupported_gap'; detail: string };
 
 export interface ChannelEvidenceBinding {
   tc_id: string;
@@ -236,7 +239,11 @@ export interface ChannelEvidenceInput {
   visual: VisualScreenVerdicts;
   visualTcIds: string[];
   providerTcIds: Array<{ tc_id: string; provider_id: string }>;
+  /** codex review：registry 未登记的 provider TC（invalid_test）；缺省=按未登记措辞（旧口径） */
+  unregisteredProviderTcIds?: ReadonlyArray<string>;
   manualTcIds: string[];
+  /** plan 07a41ec6 T2：静态三态判定出的 unsupported_gap（来自 evaluateExecutionChannelDeclaration） */
+  gaps?: ReadonlyArray<{ tc_id: string; channel: 'manual' | 'provider'; reason: string }>;
 }
 
 /**
@@ -252,28 +259,51 @@ export function bindChannelEvidence(input: ChannelEvidenceInput): ChannelEvidenc
   for (const tcId of input.visualTcIds) {
     out.push({ tc_id: tcId, channel: 'visual', verdict: bindVisualTc(tcId, tcToAc, input) });
   }
+  const gapByTc = new Map((input.gaps ?? []).map(g => [g.tc_id.toUpperCase(), g]));
   for (const item of input.providerTcIds) {
+    const gap = gapByTc.get(item.tc_id.toUpperCase());
     out.push({
       tc_id: item.tc_id,
       channel: 'provider',
-      verdict: {
-        kind: 'unbound',
-        detail:
-          `provider:${item.provider_id} 没有 per-TC 证据载体——capability 解析记录是 feature 级、` +
-          `按 capability id 的（只有 state），providers 侧也不产出 TC 维度结果。${PROVIDER_EVIDENCE_CONTRACT}`,
-      },
+      verdict: gap
+        ? {
+            kind: 'unsupported_gap',
+            detail:
+              `provider:${item.provider_id} 已登记但当前版本不产出 per-TC 结果（${gap.reason}）——需求保留、带缺口完成；` +
+              `不算 PASS。${PROVIDER_EVIDENCE_CONTRACT}`,
+          }
+        : input.unregisteredProviderTcIds && !input.unregisteredProviderTcIds.includes(item.tc_id)
+          ? {
+              kind: 'unbound',
+              detail:
+                `provider:${item.provider_id} 已登记且当前可用，但没有 per-TC 结果绑定——不能借"已登记"逃出执行（fail-closed）：` +
+                `由 provider 产出 per-TC 结果，或改通道（hylyre / manual:<class>）。${PROVIDER_EVIDENCE_CONTRACT}`,
+            }
+          : {
+              kind: 'unbound',
+              detail:
+                `provider:${item.provider_id} 未在 capability registry 登记（invalid_test，跑机前必修）：` +
+                '改通道或先登记能力并提供 provider。',
+            },
     });
   }
   for (const tcId of input.manualTcIds) {
+    const gap = gapByTc.get(tcId.toUpperCase());
     out.push({
       tc_id: tcId,
       channel: 'manual',
-      verdict: {
-        kind: 'not_machine_provable',
-        detail:
-          'manual 没有机器质量 PASS 载体，这是冻结设计而不是执行器缺陷；' +
-          '人工确认 / confirmed_by / 质量 receipt / manual resume 都不构成本轮通过证据。',
-      },
+      verdict: gap
+        ? {
+            kind: 'unsupported_gap',
+            detail:
+              `manual:${gap.reason}——当前工具无该类原语，需求保留、带缺口完成；不算 PASS；` +
+              '人工确认 / confirmed_by / 质量 receipt / manual resume 都不构成本轮通过证据。',
+          }
+        : {
+            kind: 'not_machine_provable',
+            detail:
+              'manual 未声明机器可证明的缺口类别（invalid_test，跑机前必修）：写成 manual:<固定类别> 或改 hylyre 写出步骤。',
+          },
     });
   }
   return out;

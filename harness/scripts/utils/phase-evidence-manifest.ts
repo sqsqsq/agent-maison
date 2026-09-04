@@ -251,9 +251,15 @@ export function computeCanonicalReceiptSha256(
   phase: string,
   opts?: FeaturePathOptions,
 ): string | null {
-  const p = receiptPathForPhase(projectRoot, feature, phase, opts);
-  if (!fs.existsSync(p)) return null;
-  return sha256Text(canonicalizeReceiptContent(fs.readFileSync(p, 'utf-8')));
+  // plan 07a41ec6 T4：回执退出 evidence 链——它是 harness 的只读投影，不再参与 freshness。
+  // 保留函数签名供既有调用方；恒返回 null（旧 manifest 里的字符串值不再比较）。
+  void receiptPathForPhase;
+  void canonicalizeReceiptContent;
+  void projectRoot;
+  void feature;
+  void phase;
+  void opts;
+  return null;
 }
 
 /** 稳定序列化（键排序）——aggregate 与 manifest 文件哈希的共同基础 */
@@ -570,9 +576,8 @@ export function readReceiptManifestPointer(
 }
 
 /**
- * 封装序第 4 步：把 manifest 指针写进回执——**替换式**（先剔除既有指针行再追加），
- * 重跑 check-receipt 幂等，不产生多份陈旧指针。指针行在规范化时被剔除，
- * 写入前后回执规范化哈希不变（单测锁）。
+ * 把 manifest 指针写进回执（**仅人读线索**，plan 07a41ec6 起不再参与任何判定；回执由 harness 投影重生成时
+ * 指针自然消失，也不影响 freshness）。保留给旧夹具与人读排障。
  */
 export function writeReceiptManifestPointer(
   projectRoot: string,
@@ -630,6 +635,7 @@ export function verifyPhaseEvidenceManifestWithStagedOutputs(input: {
   stagedOutputs: Array<{ canonicalPath: string; sha256: string }>;
   frameworkRoot?: string;
   currentRequirementSha?: string | null;
+  /** 兼容保留：回执指针已退出证据链，本项不再参与判定。 */
   allowPriorReceiptPointer?: boolean;
 }): PhaseStalenessResult {
   const loaded = loadPhaseEvidenceManifest(input.projectRoot, input.feature, input.phase);
@@ -645,21 +651,7 @@ export function verifyPhaseEvidenceManifestWithStagedOutputs(input: {
       integrity_errors: loaded.integrityErrors,
     };
   }
-  const pointer = readReceiptManifestPointer(input.projectRoot, input.feature, input.phase);
-  if (
-    pointer !== null &&
-    pointer !== loaded.fileSha256 &&
-    input.allowPriorReceiptPointer !== true
-  ) {
-    return {
-      phase: input.phase,
-      verdict: 'tampered',
-      changed_paths: [],
-      receipt_changed: false,
-      integrity_errors: ['回执 evidence_manifest_sha256 与 partial publication manifest 不一致'],
-    };
-  }
-
+  // plan 07a41ec6（codex review P0）：回执指针不再参与 partial publication 的等价证明（manifest 自证）。
   const envNow = resolveEnvironment(input.projectRoot, input.phase, input.frameworkRoot);
   const envRec = loaded.manifest.environment;
   const envChanged: string[] = [];
@@ -698,8 +690,8 @@ export function verifyPhaseEvidenceManifestWithStagedOutputs(input: {
   for (const stagedPath of staged.keys()) {
     if (!seenStaged.has(stagedPath)) changed.add(stagedPath);
   }
-  const currentReceipt = computeCanonicalReceiptSha256(input.projectRoot, input.feature, input.phase);
-  const receiptChanged = currentReceipt !== loaded.manifest.receipt_sha256;
+  // plan 07a41ec6 T4：回执不再参与 freshness（receipt_changed 恒 false）
+  const receiptChanged = false;
   return changed.size > 0 || receiptChanged
     ? { phase: input.phase, verdict: 'stale', changed_paths: [...changed], receipt_changed: receiptChanged }
     : { phase: input.phase, verdict: 'fresh', changed_paths: [], receipt_changed: false };
@@ -753,25 +745,8 @@ export function recomputePhaseEvidenceStaleness(
       upstreamBad = phase;
       continue;
     }
-    // ② 回执指针锚：manifest 存在则回执**必须**有指针且一致——缺指针=fail-closed
-    //   （codex 六轮 P0-5：null 当兼容旧现场是 fail-open；真旧现场根本没有 manifest，
-    //    走上面的 'missing' 分支）。
-    const pointer = readReceiptManifestPointer(projectRoot, feature, phase);
-    if (pointer === null || pointer !== loaded.fileSha256) {
-      results.push({
-        phase,
-        verdict: 'tampered',
-        changed_paths: [],
-        receipt_changed: false,
-        integrity_errors: [
-          pointer === null
-            ? '回执缺 evidence_manifest_sha256 指针（manifest 存在时指针为闭环必备——缺失即证据链断裂）'
-            : '回执 evidence_manifest_sha256 与 manifest 当前文件哈希失配（manifest 被整体改写）',
-        ],
-      });
-      upstreamBad = phase;
-      continue;
-    }
+    // ② plan 07a41ec6（codex review P0）：回执指针退出证据链——manifest 的 schema/aggregate/条目哈希已自证完整性，
+    //    回执是闭环后的人读投影（可被 harness 随时重生成），不再作为 freshness 锚。
     // ②b 环境重算（codex 六轮 P0-5：记录了却不重算=装饰）：config/workflow/gate 指纹/
     //    framework 版本任一变化 → stale（environment_changed）。
     const envNow = resolveEnvironment(projectRoot, phase, opts?.frameworkRoot);
@@ -808,8 +783,8 @@ export function recomputePhaseEvidenceStaleness(
     for (const entry of [...manifest.inputs, ...manifest.outputs]) {
       if (!evidenceEntryMatchesCurrentFile(projectRoot, entry)) changed.add(entry.path);
     }
-    const currentReceipt = computeCanonicalReceiptSha256(projectRoot, feature, phase);
-    const receiptChanged = currentReceipt !== manifest.receipt_sha256;
+    // plan 07a41ec6 T4：回执不再参与 freshness（receipt_changed 恒 false）
+    const receiptChanged = false;
     if (changed.size > 0 || receiptChanged) {
       results.push({ phase, verdict: 'stale', changed_paths: [...changed], receipt_changed: receiptChanged });
       upstreamBad = phase;

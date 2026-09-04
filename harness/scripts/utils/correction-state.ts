@@ -2,9 +2,10 @@
 // correction-state.ts — .current-correction.json 持久化（C5-min correction-routing，
 // plan d4a7c1e8）
 // ============================================================================
-// 跨回合 / soft 档下 `--correction-check` 的稳定输入。落盘位置与
+// 仅 no-feature 修正（--adhoc-correction 读 base_commit）的持久化输入（plan 07a41ec6 T1 起
+// feature 修正不再写本文件，Stop hook 也不再读它）。落盘位置与
 // .current-phase.json 同目录（paths.state_file 的兄弟文件）。
-// 防串会话：session_id 不符或 expires_at 过期 → stale，--correction-check 拒绝
+// 防串会话：session_id 不符或 expires_at 过期 → stale，--adhoc-correction 拒绝
 // 并要求重建 correction（字段对齐 .current-phase.json 既有 session 治理）。
 
 import * as crypto from 'crypto';

@@ -163,52 +163,21 @@
   3. 对每条 P0 AC 给出追溯结果
   4. 若 P0 AC 在设计中找不到任何支撑，判为 FAIL
 
-### 检查 10: 探索覆盖充分性 (context_exploration_sufficiency)
-
-- **严重等级**: BLOCKER（与脚本 Harness 互补：量化阈值 + 本项语义审查）
-- **评估方法**:
-  1. 读取 `{features_dir}/{feature_name}/plan/context-exploration.md`（schema 1.1.0）
-  2. 对照 spec、acceptance、architecture、`framework.config.json`、module-catalog 及 plan 中的 contracts/导航/模块变更：摘要中的 `source_code_paths`、`Code Facts`、`decisions_unlocked` 是否覆盖**真正影响分层、依赖边、接口签名**的阅读证据
-  3. 若设计涉及多模块或大量 contracts 但摘要无对应代码/文档检索痕迹，或 `coverage_risks` 与已知交叉影响矛盾 → FAIL
-  4. subagent/并行探索与 SKILL 触发条件严重不符且复杂度已显然越阈 → FAIL
-  5. 探索文件缺失且脚本已 FAIL → 本项 FAIL；证据不足 → WARN
-
-### 检查 11: 行为合规 — 研究有据 (behavior_research_grounded)
-
-- **严重等级**: BLOCKER
-- **评估方法**:
-  1. 对照 [`agent-behavioral-principles.md`](../../skills/reference/agent-behavioral-principles.md) 原则 1（Research First）
-  2. plan 中的模块划分、文件路径、接口签名、复用决策是否均能在 Code Facts 或 `decisions_unlocked` 中找到代码/文档事实依据
-  3. 存在明显「凭空臆断」的路径、类名、依赖边 → FAIL
-
-### 检查 12: 行为合规 — 最小可行 (behavior_minimum_viable)
+### 检查 R: 跨产物引用核对 (reference_crosscheck)
 
 - **严重等级**: MAJOR
-- **评估方法**:
-  1. 对照原则 2（Minimum Viable Output）
-  2. 是否新增 spec 未驱动的模块/抽象/文件？是否过度工程化？
-  3. 明显超出 spec P0/P1 范围的设计 → FAIL
+- **评估方法**: 逐条核对本阶段产物里的跨文件引用——plan 引用的验收标准编号、接口名、模块路径 ↔ spec.md / contracts.yaml / architecture.md 中的真实条目。每条引用都要打开被引用的原文核对，不凭记忆、不凭上下文摘要。
+- **判定标准**: 引用对象存在且含义一致 → PASS；个别引用漂移（行号/名称过期但对象仍可定位） → WARN；关键引用指向不存在或含义相反的对象 → FAIL
+- **证据**: 列出核对过的引用（`引用 → 原文位置`）与不一致项
 
-### 检查 13: 行为合规 — 追溯闭环 (behavior_verify_loop)
-
-- **严重等级**: MAJOR
-- **评估方法**:
-  1. 对照原则 4（Verify Before Proceed）
-  2. spec 功能 ↔ plan 映射表 ↔ 文件结构/接口是否断链？
-  3. P0 需求在设计中无对应实现规划 → FAIL
-
-### 检查 14: 行为合规 — Scope 精准 (behavior_scope_surgical)
-
-- **严重等级**: MAJOR
-- **评估方法**:
-  1. plan.in_scope 是否严格继承 spec（含已批准扩展）？
-  2. 是否静默规划 out_of_scope 模块内实现？→ FAIL
 
 ---
 
 ## 六、上下文文件
 
-以下是本次验证涉及的所有文档：
+以下是本次验证的上下文：被审产物与直接依据内联；上游文档与源码只给**路径清单**，需要核对时用 Read 按路径读取，不要全量通读。
+
+被审 feature 根目录：`{features_dir}/{feature_name}/`（相对仓根；下方清单里的相对路径同样相对仓根）。
 
 {context_files}
 
@@ -216,162 +185,48 @@
 
 ## 七、输出格式（必须严格遵循）
 
-请以下方 YAML 格式输出验证结果。**不要**输出其他格式或自由文本。
+先给**汇总表**（每个检查项一行，PASS 也要列），再只对 **status ≠ PASS** 的项写 YAML 明细。
+PASS 项不写论证，证据一行即可；证据不足时给 WARN 并说明缺什么，不要硬判 FAIL。
+不要复述脚本 Harness 已判定的结构项，不要输出本节之外的自由文本。
+
+本轮检查项与严重等级：
+
+| id | severity |
+|---|---|
+| five_layer_compliance | BLOCKER |
+| module_internal_layer_compliance | BLOCKER |
+| module_minimality | MAJOR |
+| feature_split_accuracy | MAJOR |
+| data_type_legality | BLOCKER |
+| no_tbd_in_p0_p1 | BLOCKER |
+| architecture_doc_consistency | MAJOR |
+| navigation_flow_consistency | MAJOR |
+| acceptance_to_interface | MAJOR |
+| reference_crosscheck | MAJOR |
+
+### 7.1 汇总表
+
+| id | status | severity | 证据（一行：文件:行 / 引文 / 数值） |
+|---|---|---|---|
+| <check_id> | PASS / WARN / FAIL / SKIP | <severity> | <一行证据> |
+
+### 7.2 非 PASS 项明细
 
 ```yaml
 verification_result:
   phase: "plan"
   feature: "{feature_name}"
   timestamp: "{timestamp}"
-
-  checks:
-    # --- 检查 1: 五层架构合规性 ---
-    - id: five_layer_compliance
-      status: PASS | FAIL | WARN
-      severity: BLOCKER
+  checks:            # 只列 status ≠ PASS 的项；每项字段固定
+    - id: <check_id>
+      status: FAIL | WARN | SKIP
+      severity: <该项声明的 severity>
       details: |
-        逐模块检查结果：
-        - <模块名> (层): PASS/FAIL — ...
-        依赖方向检查: PASS/FAIL
+        <证据：文件路径 + 行号/引文 + 判断依据>
       suggestion: |
-        <修正建议，若 PASS 可省略>
-
-    # --- 检查 2: 模块内四层合规性 ---
-    - id: module_internal_layer_compliance
-      status: PASS | FAIL | WARN
-      severity: BLOCKER
-      details: |
-        逐模块文件路径检查：
-        - <模块名>: PASS/FAIL — <违规文件路径（如有）>
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 3: 模块最小性 ---
-    - id: module_minimality
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        逐模块必要性检查：
-        - <模块名>: PASS/FAIL — spec 驱动的功能点...
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 4: 功能拆分合理性 ---
-    - id: feature_split_accuracy
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        逐功能拆分检查：
-        - F1 → <模块>: PASS/FAIL — 职责匹配...
-        - F2 → <模块>: PASS/FAIL — ...
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 5: 数据类型合法性 ---
-    - id: data_type_legality
-      status: PASS | FAIL | WARN
-      severity: BLOCKER
-      details: |
-        逐模型字段类型检查：
-        - <ModelName>.<field>: <type> — PASS/FAIL
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 6: P0/P1 无未决项 ---
-    - id: no_tbd_in_p0_p1
-      status: PASS | FAIL | WARN
-      severity: BLOCKER
-      details: |
-        TBD/待定标记搜索结果：
-        - 第 X 行: "<上下文>" — P0/P1/P2 范围
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 7: 架构文档一致性 ---
-    - id: architecture_doc_consistency
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        architecture_impact: <none | dsl_change | module_set_change | responsibility_rewrite>
-        # impact == none 时：status=PASS，details 仅写 "NOT_APPLICABLE — feature 级变更"
-        # impact != none 时：
-        一致性对比：
-        - 分层归属: PASS/FAIL — <不一致之处>
-        - 跨模块依赖边: PASS/FAIL — <不一致之处>
-        - 出口约定 (cross_module_exports_file): PASS/FAIL — <不一致之处>
-        architecture_md_updates 落盘核查：
-        - <update 条目 1>: PASS/FAIL — <在 architecture.md 第 X 节找到 / 未找到>
-        - <update 条目 2>: PASS/FAIL — ...
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 8: 导航流程一致性 ---
-    - id: navigation_flow_consistency
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        spec 流程 → 导航设计 追溯：
-        - <路径>: PASS/FAIL — ...
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 9: 验收标准到接口追溯 ---
-    - id: acceptance_to_interface
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        逐 AC 追溯结果（P0/P1）：
-        - AC-1: PASS/FAIL — 模型: <>, 接口: <>, 组件: <>
-        - AC-2: PASS/FAIL — ...
-        P0 追溯覆盖率: X/N
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 10: 探索覆盖充分性 ---
-    - id: context_exploration_sufficiency
-      status: PASS | FAIL | WARN
-      severity: BLOCKER
-      details: |
-        context-exploration.md: <路径>
-        摘要与 plan/配置/spec 决策可追溯性: PASS/FAIL — <证据>
-        多模块或 contracts 复杂度与探索深度是否匹配: PASS/FAIL/WARN
-      suggestion: |
-        <修正建议>
-
-    - id: behavior_research_grounded
-      status: PASS | FAIL | WARN
-      severity: BLOCKER
-      details: |
-        Code Facts ↔ plan 决策因果: PASS/FAIL — <证据>
-      suggestion: |
-        <修正建议>
-
-    - id: behavior_minimum_viable
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        过度工程化/超 spec 范围: PASS/FAIL — <证据>
-      suggestion: |
-        <修正建议>
-
-    - id: behavior_verify_loop
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        spec ↔ plan 追溯断链: PASS/FAIL — <证据>
-      suggestion: |
-        <修正建议>
-
-    - id: behavior_scope_surgical
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        Scope 继承/静默扩展: PASS/FAIL — <证据>
-      suggestion: |
-        <修正建议>
-
+        <修正建议：谁改、改哪个文件、改成什么>
   summary:
-    total: 14
+    total: 10
     pass: <PASS 数>
     fail: <FAIL 数>
     warn: <WARN 数>

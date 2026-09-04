@@ -280,10 +280,10 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: '骨架未签（checkbox 未勾）→ failed（骨架不构成闭环）',
+    name: 'plan 07a41ec6 T4：反假设 checkbox 不再是判据（回执为机器投影）→ 未勾也 passed',
     run: () => {
       const v = runCase({ uncheckedBoxes: true });
-      assert(v.status === 'failed', `expected failed, got ${v.status}`);
+      assert(v.status === 'passed', `expected passed, got ${v.status}: ${v.message ?? ''}`);
     },
   },
   {
@@ -389,7 +389,7 @@ const cases: Array<{ name: string; run: () => void }> = [
   // 三例均只设 RUN_ID+ATTEMPT（不设 RUNNER/HEADLESS），复现该形态。
   // ==========================================================================
   {
-    name: 'f9c2e6b4 t1：仅 RUN_ID+ATTEMPT（cursor 丢 env 形态）且回执缺 claimed_attempt_id → failed',
+    name: 'plan 07a41ec6 T4：仅 RUN_ID+ATTEMPT 且 receipt 缺失 → 新闭环仍按 summary/verifier/policy passed',
     run: () => {
       const v = runCase(
         { summaryRunId: 'r-123' },
@@ -400,15 +400,11 @@ const cases: Array<{ name: string; run: () => void }> = [
           MAISON_GOAL_ATTEMPT_PHASE: PHASE,
         },
       );
-      assert(v.status === 'failed', `expected failed, got ${v.status}`);
-      assert(
-        (v.message ?? '').includes('claimed_attempt_id'),
-        `应点名 claimed_attempt_id 缺失：${v.message}`,
-      );
+      assert(v.status === 'passed', `expected passed（receipt 非输入），got ${v.status}: ${v.message ?? ''}`);
     },
   },
   {
-    name: 'f9c2e6b4 t1：仅 RUN_ID+ATTEMPT 且 claimed_attempt_id 与本轮不符（抄旧回执）→ failed',
+    name: 'plan 07a41ec6 T4：当前 receipt 的旧 claimed_attempt_id 不参与新闭环 → passed',
     run: () => {
       const v = runCase(
         { summaryRunId: 'r-123', claimedAttemptId: 'i3' },
@@ -419,11 +415,7 @@ const cases: Array<{ name: string; run: () => void }> = [
           MAISON_GOAL_ATTEMPT_PHASE: PHASE,
         },
       );
-      assert(v.status === 'failed', `expected failed, got ${v.status}`);
-      assert(
-        (v.message ?? '').includes('i3') && (v.message ?? '').includes('i5'),
-        `应点名两侧 attempt 值：${v.message}`,
-      );
+      assert(v.status === 'passed', `expected passed, got ${v.status}: ${v.message ?? ''}`);
     },
   },
   {
@@ -492,7 +484,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'b3e8d4c7 t1：goal context 有 attempt 却缺 ATTEMPT_PHASE → failed（fail-closed，不静默跳过门禁）',
+    name: 'plan 07a41ec6 T4：goal attempt phase 缺失不再由 receipt 门阻止新闭环',
     run: () => {
       const v = runCase(
         { summaryRunId: 'r-123', claimedAttemptId: 'i5' },
@@ -503,11 +495,7 @@ const cases: Array<{ name: string; run: () => void }> = [
           MAISON_GOAL_ATTEMPT_PHASE: undefined,
         },
       );
-      assert(v.status === 'failed', `expected failed, got ${v.status}`);
-      assert(
-        (v.message ?? '').includes('MAISON_GOAL_ATTEMPT_PHASE'),
-        `应点名 attempt phase 上下文缺失：${v.message}`,
-      );
+      assert(v.status === 'passed', `expected passed, got ${v.status}: ${v.message ?? ''}`);
     },
   },
   {
@@ -609,7 +597,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       const text3 = fs.readFileSync(r3.receiptPath!, 'utf-8');
       assert(text3.includes('claimed_attempt_id: "i4"'), '身份应更新为 i4');
       assert(!text3.includes('agent-filled'), '上一 attempt 的旧回执内容应被作废（防旧声明误命中完成观测）');
-      assert(/- \[ \]/.test(text3), '反假设 checkbox 应回到未勾（骨架不构成闭环）');
+      assert(/receipt_schema: "2\.1"/.test(text3), '重建后的回执是 2.1 机器投影（无反假设 checkbox）');
       // 非 goal（人工态）：attemptId 省略 → 字段留空
       const root2 = fs.mkdtempSync(path.join(os.tmpdir(), 'receipt-scaffold-'));
       const r4 = writeReceiptScaffold(root2, 'demo', PHASE, {});
@@ -621,7 +609,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: '骨架写失败携带真实原因（failure 非空）——runner 消费它 fail-closed，静默吞已根治',
+    name: 'legacy 投影 helper 写失败仍携带真实原因（闭环调用方只作 WARN）',
     run: () => {
       // 让回执路径落在一个"以文件占位"的目录下：mkdirSync 必然 EEXIST/ENOTDIR
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'receipt-scaffold-fail-'));
@@ -637,15 +625,12 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'goal 态 harness-runner 第二写入点让位：writeReceiptSkeletonIfMissing 见 MAISON_GOAL_ATTEMPT 即返回（生产接线）',
+    name: '生产接线：runner/invoke 前不写 receipt，finalizer 在 closed 后 best-effort 投影',
     run: () => {
-      // 源码正则钉接线：goal 态骨架唯一写者=goal runner（invoke 前 force 写入）；
-      // harness PASS 后的幂等首建只服务非 goal 手动流程。双写者会掩盖 runner 写失败。
       const harness = fs.readFileSync(path.resolve(__dirname, '../../harness-runner.ts'), 'utf8');
-      assert(
-        /function writeReceiptSkeletonIfMissing[\s\S]{0,400}if \(process\.env\.MAISON_GOAL_ATTEMPT\?\.trim\(\)\) return;/.test(harness),
-        'goal 态（MAISON_GOAL_ATTEMPT 存在）必须直接返回——不得保留第二写入点',
-      );
+      const finalizer = fs.readFileSync(path.resolve(__dirname, '../../scripts/utils/phase-closure-finalizer.ts'), 'utf8');
+      assert(!/writeReceiptSkeletonIfMissing|writeReceiptProjection/.test(harness), 'harness runner 不得在 closure 前写 receipt');
+      assert(/fs\.renameSync\(stagedSummaryPath, summaryPath\)[\s\S]{0,500}projectReceiptAfterClosure/.test(finalizer), 'receipt 只能在 summary commit 后 best-effort 投影');
     },
   },
 ];

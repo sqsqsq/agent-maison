@@ -15,7 +15,7 @@ commands:
                                                 # RESOLVED_ADAPTER 与权威段）；归一化等值由 unit test 守护
   subagents:
     target_dir: .cac/agents
-    template_dir: ../claude/templates/agents    # verifier.md 共享（无身份标记，grep 核实）
+    template_dir: ../claude/templates/agents    # verifier.md / phase-executor.md 共享（无身份标记，grep 核实）
     update_policy: auto_overwrite
 
 skill_bridge: null

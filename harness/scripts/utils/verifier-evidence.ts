@@ -22,6 +22,8 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import { diffVerifierMaterial, readVerifierMaterialOrNull } from './verifier-material';
+import type { VerifierClosureRecord } from './types';
 import * as path from 'path';
 
 import { featurePhaseReportsDir } from '../../config';
@@ -193,6 +195,65 @@ export function loadVerifierEvidence(
     };
   }
   return loadVerifierEvidenceForSubject(projectRoot, feature, phase, currentSubject, opts);
+}
+
+/**
+ * plan 07a41ec6 T7：本 phase 历史上**验真通过且 verdict=PASS** 的最新报告（按文件 mtime）。
+ * 当前 subject 无报告时 check-receipt 用它沿用闭环（completed_with_prior_review）；
+ * 从未 PASS 过 → null → 仍是 BLOCKER（至少要完整审一次）。
+ */
+export function findPriorPassVerifierEvidence(
+  projectRoot: string,
+  feature: string,
+  phase: string,
+  opts?: LoadVerifierEvidenceOptions & { excludeSubject?: string | null },
+): VerifierEvidence | null {
+  const dir = resolveReportsDir(projectRoot, feature, phase, opts?.frameworkRoot);
+  if (!fs.existsSync(dir)) return null;
+  let best: { evidence: VerifierEvidence; mtime: number } | null = null;
+  for (const name of fs.readdirSync(dir)) {
+    const m = /^verifier\.report\.([0-9a-f]{64})\.json$/.exec(name);
+    if (!m || m[1] === opts?.excludeSubject) continue;
+    const loaded = loadVerifierEvidenceForSubject(projectRoot, feature, phase, m[1], opts);
+    if (!loaded.ok || loaded.evidence.verdict !== 'PASS') continue;
+    let mtime = 0;
+    try {
+      mtime = fs.statSync(loaded.evidence.json_path_abs).mtimeMs;
+    } catch {
+      mtime = 0;
+    }
+    if (!best || mtime > best.mtime) best = { evidence: loaded.evidence, mtime };
+  }
+  return best?.evidence ?? null;
+}
+
+/**
+ * plan 07a41ec6 T7：闭环定稿时 verifier 结论来源的**唯一派生口径**（runner 在跑 finalize / check-receipt CLI /
+ * sync-closure 三条路径同一函数）：当前 subject 自身已验真 → null（不登记）；当前 subject 无报告但本 phase
+ * 历史已有 PASS → completed_with_prior_review + 未重审材料差异；其余（能力未启用 / 从未 PASS）→ null。
+ */
+export function deriveVerifierClosureRecord(
+  projectRoot: string,
+  feature: string,
+  phase: string,
+  frameworkRoot?: string,
+): VerifierClosureRecord | null {
+  const current = readSummaryVerifierSubjectId(projectRoot, feature, phase, frameworkRoot);
+  if (!current) return null;
+  const loaded = loadVerifierEvidenceForSubject(projectRoot, feature, phase, current, { frameworkRoot });
+  if (loaded.ok || loaded.code !== 'report_missing') return null;
+  const prior = findPriorPassVerifierEvidence(projectRoot, feature, phase, { frameworkRoot, excludeSubject: current });
+  if (!prior) return null;
+  const dir = resolveReportsDir(projectRoot, feature, phase, frameworkRoot);
+  return {
+    mode: 'completed_with_prior_review',
+    reviewed_subject_id: prior.subject_id,
+    current_subject_id: current,
+    current_material_not_reverified: diffVerifierMaterial(
+      readVerifierMaterialOrNull(dir, prior.subject_id),
+      readVerifierMaterialOrNull(dir, current),
+    ),
+  };
 }
 
 /**

@@ -132,6 +132,10 @@ export function buildStandardHylyreDeriveKnowledge(reset?: ResolvedHylyreResetId
       'feature ui-spec 是开放世界静态提示（既有入口/前置页面通常不重复建模）：selector 不在其中只给 WARN、不阻断，' +
       '最终真值是本轮 native StepResult 的 selector evidence；不要为了消 WARN 改写目标或伪造 ui-spec 节点；' +
       'start_app/stop_app 只允许作为 case 首部复位前奏（恰好一组 stop_app→start_app，身份见 reset_preamble；不得使用 clear_app），其它位置禁止；' +
-      '禁止 dump_ui 等 CLI 子命令作根键（观察由 harness 负责）。',
+      '禁止 dump_ui 等 CLI 子命令作根键（观察由 harness 负责）；' +
+      'P0 身份断言不用手写：harness 把派生计划装载进 run 目录时按 acceptance checkpoint 自动注入精确形状的 ' +
+      '{"wait_for"|"wait_gone":{"by_id":<id>,"timeout":N}}（源派生计划不改），派生只写导航、动作与 UX 断言——' +
+      'visible/enabled 等谓词断言保留但不算身份；scroll/swipe 是合法动作不改 touch；checkpoint action 在 case 内必须唯一，' +
+      '多候选或无绑定动作 = invalid_test，跑机前必修。',
   };
 }

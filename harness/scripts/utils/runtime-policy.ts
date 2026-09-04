@@ -50,8 +50,7 @@ export const POLICY_SCHEMA_VERSION = '1.0';
 // ---------------------------------------------------------------------------
 // evidence_policy_snapshot（C2 两层机读契约：policy 档 × 实际 validation_status）
 // ---------------------------------------------------------------------------
-// 与上面的 PolicySnapshot（C0/C1，Stop hook 唯一消费 evidence.receipt 做粗粒度 gate）
-// 是不同的字段——本契约由 check-receipt.ts 逐项计算写入 .current-phase.json，
+// 与上面的 PolicySnapshot 是不同的字段——本契约由 check-receipt.ts 逐项计算写入 .current-phase.json，
 // 承载 harness-runner closure 三态与 next_step 判定所需的细粒度信息。
 
 export type EvidenceValidationStatus = 'provided' | 'missing' | 'skipped_by_policy' | 'not_applicable';
@@ -85,22 +84,21 @@ export function resolveProfileLabel(
   return config?.evidence_profile === 'balanced' ? 'balanced' : 'strict';
 }
 
-export type ClosureSource = 'receipt_passed' | 'closed_by_exit_report' | 'open';
+export type ClosureSource = 'summary_closed' | 'closed_by_exit_report' | 'open';
 
 /**
- * closure 三态来源（C2 design.md）：full track 恒以 receipt 状态为准；lite track 的
- * receipt 架构性 not_applicable，闭环判据改为该 phase 自身的脚本 verdict（exit 报告）。
+ * closure 来源：full track 只认磁盘 summary.closure_status；lite track 由 exit 脚本 verdict 闭环。
  * 供 harness-runner writeRunSummary 与 goal-runner 的 closed 判定复用，避免各自各判。
  */
 export function resolvePhaseClosureSource(
   track: FeatureTrack,
   scriptVerdict: string | undefined,
-  receiptStatus: EvidenceValidationStatus | 'passed' | 'failed' | 'missing' | 'error' | undefined,
+  summaryClosureStatus: string | undefined,
 ): ClosureSource {
   if (track === 'lite') {
     return scriptVerdict === 'PASS' ? 'closed_by_exit_report' : 'open';
   }
-  return receiptStatus === 'passed' ? 'receipt_passed' : 'open';
+  return summaryClosureStatus === 'closed' ? 'summary_closed' : 'open';
 }
 
 /**
@@ -335,7 +333,7 @@ function manifestFieldPresent(v: unknown): boolean {
  * Claude Stop hook 在 MAISON_GOAL_HEADLESS=1 时直接旁路、无头进程物理拦截不在场，
  * 误判 hard_hook 会夸大保证 → 恒 headless_runner。
  * 其次 manifest 同时声明 settings_file + hooks（Stop/SubagentStop 注册链路在场）→ hard_hook；
- * 否则 soft_rule_only（三问 + checklist + --correction-check；不得宣称 Stop hook 必拦）。
+ * 否则 soft_rule_only（三问 + checklist + --revalidate；不得宣称 Stop hook 必拦；分档只描述阶段闭环，与修正无关）。
  */
 export function resolveEnforcementTier(
   manifest: AdapterEnforcementManifest | null | undefined,
@@ -357,7 +355,8 @@ export interface EvidenceProfileConfig {
 
 const STRICT_EVIDENCE: EvidencePolicy = {
   verifier: 'required',
-  receipt: 'required',
+  // plan 07a41ec6 T4：receipt 是 closed 后兼容投影，不是任何 profile 的闭环证据。
+  receipt: 'not_applicable',
   trace: 'required',
   exploration: 'required',
 };
@@ -385,7 +384,7 @@ export const DEFAULT_BALANCED_VERIFIER_RETAINED_PHASES: readonly string[] = ['sp
  *   - full × 非 interactive（headless/goal）→ 强制 STRICT（config 不参与求解）；
  *   - full × interactive × config.evidence_profile !== 'balanced' → STRICT（缺省零变化）；
  *   - full × interactive × balanced → verifier 仅保留集 phase required 其余 off，
- *     receipt 仍 required，trace 降 optional，exploration 维持 required（矩阵表未降）。
+ *     receipt 已退出闭环输入，trace 降 optional，exploration 维持 required。
  * default 等值不变式：无 config / mode≠interactive / track=full 时输出与 C0 逐一等值。
  */
 export function resolveEvidencePolicy(
@@ -405,19 +404,15 @@ export function resolveEvidencePolicy(
   const retained = config.balanced_verifier_retained_phases ?? DEFAULT_BALANCED_VERIFIER_RETAINED_PHASES;
   return {
     verifier: retained.includes(ctx.phase) ? 'required' : 'off',
-    receipt: 'required',
+    receipt: 'not_applicable',
     trace: 'optional',
     exploration: 'required',
   };
 }
 
 /**
- * 构造 policy 快照，随 .current-phase.json 落盘供 Stop hook 消费。
- * 快照的唯一消费点（check-phase-completion.mjs policyRequires）只读 `evidence.receipt`
- * 一项做 gate 判定；该项在 full track 下无论 strict/balanced/mode 恒为 'required'，
- * 故此处以缺省安全上下文求解（不威胁 default 等值不变式，也不需在 phase-state.ts
- * 内额外读 config/线程 mode——真正的逐项 policy 求解由 check-receipt.ts 的
- * evidence_policy_snapshot 承担，见 C2 design.md 两层契约）。
+ * 构造 policy 快照，随 .current-phase.json 落盘供旧消费者读取。
+ * Stop hook 自 plan 07a41ec6 起直接读取磁盘 summary.closure_status；receipt 项恒 not_applicable。
  */
 export function buildPolicySnapshot(track: FeatureTrack = 'full'): PolicySnapshot {
   const safeCtx: RuntimeContext = {

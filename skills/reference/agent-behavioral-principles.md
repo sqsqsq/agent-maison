@@ -2,7 +2,7 @@
 
 > **SSOT**：本文件是 framework 内 AI coding agent 的**行为层**约束，与 `framework/specs/phase-rules/`（产出结构）、`framework/harness/`（机械门禁）、`verify-*.md`（语义审查）叠加生效。
 >
-> **上位原则**：所有阶段同时遵循 [`docs/overview.md §1.2.1`](../../docs/overview.md#121-三条总设计原则) 的“简单优先”“回退重签”与“协作可恢复”；本文件不重复定义。
+> **上位原则**：所有阶段同时遵循 [`docs/overview.md §1.2.1`](../../docs/overview.md#121-四条总设计原则) 的“效率优先”“简单优先”“回退重签”与“协作可恢复”；本文件不重复定义。验证须覆盖当前真实风险，但不得把模型轮次、工具调用、重复验证或过程证据完美本身当作质量目标；边界不明时以真实宿主反馈迭代。
 >
 > 灵感来源：[Andrej Karpathy 对 LLM coding 的观察](https://x.com/karpathy/status/2015883857489522876)；工程化适配见 [andrej-karpathy-skills](https://github.com/multica-ai/andrej-karpathy-skills)。
 >
@@ -22,6 +22,7 @@
 4. **探索深度由 `exploration_strategy` 决定**（v2.10）：plan/coding **默认 subagent**（仅 L1 trivial 可豁免）；spec/review/ut 用**复合评分**（模块 LOC、跨层、fan-out 等）。须在 frontmatter 声明 `change_intent` / `estimated_loc_delta` / `touches_layers` / `adds_new_exports`。
 5. **不确定时停下来问用户**，禁止静默猜测后继续写 spec/plan/code。
 6. **计数/清单类量化 inventory 须脚本产出并留痕**：产物中写"全仓共 N 个 X"类断言时，必须由可复跑的脚本命令（带锚定的 grep/统计）产出，并留存命令与输出摘录——不接受徒手扫读的印象值（实例：宣称 43 个 namespace、实际 26 个）。
+7. **框架 / vendor 事实以当前 profile-addendum 与契约为准**：记忆（用户级 / 会话级 memory）只作搜索线索，不能作裁决依据；与 addendum、harness 输出冲突时以后者为准（plan 07a41ec6 T9）。
 
 ### 各阶段反例 / 正例
 
@@ -102,7 +103,7 @@
 |-----------|----------|
 | Research First | `source_code_paths`、`Code Facts`、`exploration_mode=subagent` |
 | Minimum Viable | `decisions_unlocked` 须 1:1 对应本阶段将要写的产出 |
-| Surgical | coding/review 阶段 verifier `behavior_scope_surgical` |
+| Surgical | coding/review 阶段 harness 写边界 / diff 范围检查（verifier 不再单列 behavior 项） |
 | Verify Before Proceed | `ready_to_produce` 仅自检通过后置 true；harness 量化阈值 |
 
 模板：[`framework/harness/templates/context-exploration.md`](../../harness/templates/context-exploration.md)  

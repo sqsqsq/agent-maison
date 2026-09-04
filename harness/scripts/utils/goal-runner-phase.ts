@@ -1280,11 +1280,10 @@ export function detectHalfCompletedPhaseRecovery(
 
   const summary = readPhaseSummaryPassReceipt(projectRoot, feature, phase);
   if (!summary || summary.verdict !== 'PASS') return null;
-  if (summary.receipt_status !== 'passed' || summary.closure_status !== 'closed') return null;
+  if (summary.closure_status !== 'closed') return null;
 
   const startMs = new Date(unclosed.ts).getTime();
   if (Number.isNaN(startMs) || summary.mtimeMs <= startMs) return null;
-  if (!isReceiptFreshForInvokeStart(projectRoot, feature, phase, startMs)) return null;
 
   return { phase, invokeStartTs: unclosed.ts };
 }

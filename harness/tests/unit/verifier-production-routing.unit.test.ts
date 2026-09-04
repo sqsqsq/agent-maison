@@ -194,6 +194,7 @@ function caseB_requestParsingIsStrict(): void {
     phase: 'review',
     prompt_path: 'doc/features/demo/review/reports/ai-prompt.md',
     prompt_sha256: 'a'.repeat(64),
+    material_sha256: 'b'.repeat(64),
     gate_fingerprint: null,
     source_commit_sha: null,
     worktree_digest: null,
@@ -613,7 +614,6 @@ function caseE_repairCandidatesSubjectAnchoring(): void {
       frameworkRoot: FRAMEWORK_ROOT,
       feature: 'demo',
       phase: 'ut',
-      receipt: { status: 'passed', receipt_path: receiptRel },
       blockerCount: 0,
       persistPhaseState: () => {},
     });
@@ -710,7 +710,6 @@ function caseE2_closureRecomputeKeepsFailureKind(): void {
       frameworkRoot: FRAMEWORK_ROOT,
       feature: 'demo',
       phase: 'ut',
-      receipt: { status: 'passed', receipt_path: receiptRel },
       blockerCount: 0,
       persistPhaseState: () => {},
     });

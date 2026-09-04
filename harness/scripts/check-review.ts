@@ -31,7 +31,7 @@ import {
   getColumnValues,
   extractDeclaredVerdict,
 } from './utils/markdown-parser';
-import { relFeatureArtifact, relFeatureFile, featureFilePath } from '../config';
+import { relFeatureArtifact, relFeatureFile, featureFilePath, resolveFeatureArtifact } from '../config';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { checkFactsArtifact } from './utils/context-facts';
 import { checkUpstreamVerdictGate } from './utils/upstream-verdict-gate';
@@ -342,12 +342,24 @@ function checkStatisticsSummary(ctx: CheckContext, report: string): CheckResult[
       }
 
       if (mismatches.length > 0) {
+        // plan 07a41ec6 T5：统计表是问题清单的派生值，由 checker 自动回写，不再让 agent 手工对账
+        const rewritten = rewriteStatisticsTable(report, counts);
+        if (rewritten && writeReviewReport(ctx, rewritten)) {
+          return [{
+            id: 'statistics_summary', category: 'structure',
+            description: ruleDesc(ctx, 'structure_checks', 'statistics_summary'),
+            severity: 'MAJOR', status: 'PASS',
+            details:
+              `问题统计表已由 harness 按问题清单自动回写（原不一致：${mismatches.join('；')}）：` +
+              `BLOCKER ${counts.BLOCKER} / MAJOR ${counts.MAJOR} / MINOR ${counts.MINOR} / INFO ${counts.INFO} / 合计 ${table.rows.length}。`,
+          }];
+        }
         return [{
           id: 'statistics_summary', category: 'structure',
           description: ruleDesc(ctx, 'structure_checks', 'statistics_summary'),
           severity: 'MAJOR', status: 'WARN',
-          details: `问题统计与问题清单计数不一致：\n${mismatches.map(m => `  - ${m}`).join('\n')}`,
-          suggestion: '请核对问题统计章节中各严重程度的数量，确保与问题清单表格一致。',
+          details: `问题统计与问题清单计数不一致（自动回写失败，统计表形状无法定位）：\n${mismatches.map(m => `  - ${m}`).join('\n')}`,
+          suggestion: '统计表须紧跟「问题统计」标题且为 Markdown 表格；修正形状后重跑，harness 会按问题清单自动回写数量。',
         }];
       }
     }
@@ -358,6 +370,107 @@ function checkStatisticsSummary(ctx: CheckContext, report: string): CheckResult[
     description: ruleDesc(ctx, 'structure_checks', 'statistics_summary'),
     severity: 'MAJOR', status: 'PASS',
     details: `问题统计包含 ${found.join('、')} 的计数汇总。`,
+  }];
+}
+
+/** plan 07a41ec6 T5：把「问题统计」标题后的第一张表替换为按问题清单重算的统计表；找不到表返回 null。 */
+function rewriteStatisticsTable(report: string, counts: Record<string, number>): string | null {
+  const lines = report.split('\n');
+  const heading = lines.findIndex(l => /^#{1,6}\s/.test(l) && l.includes('问题统计'));
+  if (heading < 0) return null;
+  let start = -1;
+  for (let i = heading + 1; i < lines.length; i += 1) {
+    if (/^#{1,6}\s/.test(lines[i])) break;
+    if (lines[i].trim().startsWith('|')) { start = i; break; }
+  }
+  if (start < 0) return null;
+  let end = start;
+  while (end < lines.length && lines[end].trim().startsWith('|')) end += 1;
+  const total = counts.BLOCKER + counts.MAJOR + counts.MINOR + counts.INFO;
+  const table = [
+    '| 严重程度 | 数量 |',
+    '|---------|------|',
+    `| BLOCKER | ${counts.BLOCKER} |`,
+    `| MAJOR | ${counts.MAJOR} |`,
+    `| MINOR | ${counts.MINOR} |`,
+    `| INFO | ${counts.INFO} |`,
+    `| **合计** | **${total}** |`,
+  ];
+  lines.splice(start, end - start, ...table);
+  return lines.join('\n');
+}
+
+function writeReviewReport(ctx: CheckContext, content: string): boolean {
+  try {
+    const resolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'review-report.md');
+    const target = resolved.exists ? resolved.actualPath : resolved.canonicalPath;
+    fs.writeFileSync(target, content, 'utf-8');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * plan 07a41ec6 T5：引用与计数 lint（只提示，不作语义证明）。
+ *   · `path:line` / `path:line-line` 引用：文件须存在、行号须在范围内（宿主 2026-09-02 回归 11 组行号漂移）；
+ *   · 计数自洽：问题清单行数 vs 统计表合计 vs 正文"共 N 条"。
+ * 新报告优先引用「文件 + symbol」；行号需要时由 renderer 生成。
+ */
+function checkReviewReferenceLint(ctx: CheckContext, report: string): CheckResult[] {
+  const id = 'review_reference_lint';
+  const description = 'review 报告引用新鲜度与计数自洽（WARN 提示：path:line 存在/范围、问题数三方一致）';
+  const findings: string[] = [];
+  const refRe = /([A-Za-z0-9_][A-Za-z0-9_./\\-]*\.(?:ets|ts|tsx|js|mjs|json5|json|md|yaml|yml|py|java|kt|swift)):(\d+)(?:-(\d+))?/g;
+  const seen = new Set<string>();
+  const lineCountCache = new Map<string, number | null>();
+  const lineCountOf = (abs: string): number | null => {
+    if (lineCountCache.has(abs)) return lineCountCache.get(abs)!;
+    let n: number | null = null;
+    try {
+      if (fs.existsSync(abs) && fs.statSync(abs).isFile()) n = fs.readFileSync(abs, 'utf-8').split('\n').length;
+    } catch { n = null; }
+    lineCountCache.set(abs, n);
+    return n;
+  };
+  let m: RegExpExecArray | null;
+  while ((m = refRe.exec(report)) !== null) {
+    const raw = m[0];
+    if (seen.has(raw)) continue;
+    seen.add(raw);
+    const rel = m[1].replace(/\\/g, '/');
+    const line = Number(m[2]);
+    const lineEnd = m[3] ? Number(m[3]) : line;
+    const abs = path.resolve(ctx.projectRoot, rel);
+    const count = lineCountOf(abs);
+    if (count === null) {
+      findings.push(`${raw}：文件不存在（相对仓根解析）`);
+    } else if (lineEnd > count) {
+      findings.push(`${raw}：行号超出范围（文件共 ${count} 行）`);
+    }
+  }
+  const table = getIssueTable(report);
+  const issueRows = table ? table.rows.filter(r => /CR-\d+/i.test(r[0] ?? '')).length : null;
+  const stats = getSectionContent(report, '问题统计') ?? '';
+  const totalMatch = /合计[^\d\n]*?(\d+)/.exec(stats);
+  const statsTotal = totalMatch ? Number(totalMatch[1]) : null;
+  if (issueRows !== null && statsTotal !== null && issueRows !== statsTotal) {
+    findings.push(`计数不一致：问题清单 ${issueRows} 条，问题统计合计 ${statsTotal}`);
+  }
+  const proseSections = [getSectionContent(report, '结论'), getSectionContent(report, '修复建议摘要')].filter((s): s is string => typeof s === 'string');
+  for (const sec of proseSections) {
+    const pm = /共\s*(\d+)\s*(?:条|个)\s*(?:问题|缺陷|项)/.exec(sec);
+    if (pm && issueRows !== null && Number(pm[1]) !== issueRows) {
+      findings.push(`计数不一致：正文"共 ${pm[1]} 条"，问题清单 ${issueRows} 条`);
+    }
+  }
+  if (findings.length === 0) {
+    return [{ id, category: 'structure', description, severity: 'MAJOR', status: 'PASS', details: `引用 ${seen.size} 处均可定位；计数自洽。` }];
+  }
+  return [{
+    id, category: 'structure', description, severity: 'MAJOR', status: 'WARN',
+    details: `${findings.length} 处提示：\n${findings.slice(0, 20).map(f => `  - ${f}`).join('\n')}`,
+    suggestion: '这些是确定性提示，不构成语义证明：刷新失效的 path:line（优先改为「文件 + symbol」引用），并让计数以问题清单为准（统计表已由 harness 回写）。',
   }];
 }
 
@@ -792,8 +905,8 @@ const checker: PhaseChecker = {
   phase: 'review',
 
   async check(ctx: CheckContext): Promise<CheckResult[]> {
-    const report = loadReviewReport(ctx);
-    if (!report) {
+    const loadedReport = loadReviewReport(ctx);
+    if (!loadedReport) {
       const reportRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'review-report.md');
       return [{
         id: 'review_report_exists', category: 'structure',
@@ -806,6 +919,7 @@ const checker: PhaseChecker = {
         blocking_class: 'review_context',
       }];
     }
+    let report: string = loadedReport;
 
     const results: CheckResult[] = [
       ...featureArtifactLayoutWarnings(ctx.projectRoot, ctx.feature, [
@@ -831,6 +945,9 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkSeverityValues(ctx, report), 'severity_values'));
     results.push(...safeRun(() => checkIssueCategoryValues(ctx, report), 'issue_category_values'));
     results.push(...safeRun(() => checkStatisticsSummary(ctx, report), 'statistics_summary'));
+    // codex review P2：统计表可能刚被回写——后续检查读回写后的正文，避免一轮无意义 WARN
+    report = loadReviewReport(ctx) ?? report;
+    results.push(...safeRun(() => checkReviewReferenceLint(ctx, report), 'review_reference_lint'));
     results.push(...safeRun(() => checkScopeDeclaration(ctx, report), 'scope_declaration'));
     results.push(...safeRun(() => checkConclusionWithVerdict(ctx, report), 'conclusion_with_verdict'));
     results.push(...safeRun(() => checkMetadataHeader(ctx, report), 'metadata_header'));
@@ -938,3 +1055,7 @@ function checkConditionalPassClosure(ctx: CheckContext, report: string): CheckRe
 }
 
 export default checker;
+
+/** 测试接缝（plan 07a41ec6 T5）：统计表自动回写与引用 lint 的直接入口。 */
+export const __testing_checkStatisticsSummary = checkStatisticsSummary;
+export const __testing_checkReviewReferenceLint = checkReviewReferenceLint;

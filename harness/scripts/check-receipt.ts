@@ -5,29 +5,21 @@
 //   npx ts-node framework/harness/scripts/check-receipt.ts \
 //     --feature <feature> --phase <spec|plan|coding|review|ut|testing>
 //
-// 行为：
-//   1. 读取回执（canonical spec/plan 目录；legacy prd/design 目录可回退，见 resolveReceiptFilePath）
-//   2. 解析 YAML frontmatter
-//   3. 校验：
-//      - feature / phase 字段与 CLI 参数一致
-//      - script_harness.exit_code === 0  &&  blocker_count === 0
-//      - verifier_subagent.verdict === "PASS"
-//      - trace_json.exists === true  且 trace_json.path 文件真实存在
-//      - testing 阶段且 profile 未 SKIP device_test.run 时：testing_run_artifacts 四字段与 Hylyre 产物路径
-//      - claimed_completion_commit_sha 是 40 位 hex 且在仓库中真实存在
-//      - self_check.q1_trace_json_abs_path 真实存在
-//      - self_check.q3_last_diff_file 为非空真实路径；
-//        当 paths.docs_committed=true 时还须在工作区可读（存在）
-//      - self_check.q4_no_hallucinated_rule_used === true
-//      - "反假设条款回顾" 三项 checkbox 全部为 [x]
-//      任一失败 → exit 1 + 详细 BLOCKER 报告
-//   4. profile `phases_disabled` 命中本 phase 时：不要求回执，直接 exit 0。
-//   5. 致命错误（回执文件缺失 / YAML 解析失败）→ exit 2。
+// 行为（plan 07a41ec6 T4 / openspec efficiency-first-closure）：
+//   1. 当前 schema 只校验 summary.json / verifier 报告 / policy；闭环成功后 best-effort 生成回执投影
+//      （receipt_schema 2.1，agent 零手填；备注写 <phase>/notes.md）：
+//      - base summary verdict=PASS 且 blocker_count=0，gate_fingerprint / source sha / worktree digest / run id 新鲜
+//      - verifier 证据按 resolved plan 验真（identity）——policy=required 时必须在场
+//      - trace.json 在 canonical 路径存在且可解析（policy 档决定缺失是 BLOCKER 还是 WARN）
+//      不再校验：commit sha 手抄、self_check 问答、反假设 checkbox（全部删除）。
+//      任一失败 → exit 1 + 详细 BLOCKER 报告；全部通过 → finalize closure（本命令即 finalize）。
+//   2. profile `phases_disabled` 命中本 phase 时：不要求回执，直接 exit 0。
+//   3. legacy 回执 YAML 解析失败 → exit 2；当前 schema 的投影写入失败只 WARN，不改变闭环。
 //
 // 退出码语义（与 harness-runner / Stop hook 协议一致）：
-//   0 = PASS（阶段闭环条件 4 满足）
-//   1 = 校验失败（回执存在但内容造假 / 不达标）
-//   2 = 致命错误（回执文件缺失 / 模板未填）
+//   0 = PASS（summary/verifier/policy 满足，阶段已闭环）
+//   1 = 校验失败（机器事实不达标）
+//   2 = 致命错误（legacy 回执解析失败）
 // ============================================================================
 
 import * as fs from 'fs';
@@ -72,6 +64,7 @@ import {
 } from './utils/multimodal-evidence-gate';
 import {
   loadVerifierEvidence,
+  findPriorPassVerifierEvidence,
   loadVerifierReportTextOrNull,
   readSummaryClosureStatus,
   readSummarySchemaVersion,
@@ -86,6 +79,9 @@ import {
 import { resolveVerifierCapability } from './utils/adapter-catalog';
 import { SUMMARY_SCHEMA_VERSION_CURRENT } from './utils/quality-axes';
 import { recomputePhaseEvidenceStaleness } from './utils/phase-evidence-manifest';
+import { RECEIPT_PROJECTION_SCHEMA } from './utils/receipt-scaffold';
+import { diffVerifierMaterial, readVerifierMaterialOrNull } from './utils/verifier-material';
+import type { VerifierClosureRecord } from './utils/types';
 import { resolveContextAdapterImageInput } from './utils/multimodal-probe';
 import type { HarnessRunSummary, SoftAdvisory } from './utils/types';
 
@@ -93,6 +89,7 @@ import type { HarnessRunSummary, SoftAdvisory } from './utils/types';
 type Phase = string;
 
 interface ReceiptFrontmatter {
+  receipt_schema?: string;
   feature?: string;
   phase?: string;
   agent_model?: string;
@@ -210,6 +207,8 @@ check-receipt.ts — 阶段完成回执校验（Layer 2 凭证）
 可选：
   --project-root <abs-path>   显式指定仓库根（默认从 __dirname 向上推导）
   --skip-state-sync          内部用：校验通过但不写 .current-phase.json（harness-runner tryValidateReceipt）
+
+说明：回执是 harness 的只读投影（schema 2.1），本命令先重新生成再校验；通过即 finalize closure。
 `);
 }
 
@@ -292,7 +291,7 @@ function main(): void {
   // lite track：receipt 机制架构性不适用（正常调用路径下 tryValidateReceipt 已在
   // phase-state.ts 短路、不会走到本进程；本分支是直接 CLI 调用的防御性兜底）——
   // 绝不当作 passed，也不触碰任何 state，交由 exit 阶段自身的 script-report 承载闭环。
-  if (policy.receipt === 'not_applicable') {
+  if (track === 'lite') {
     console.log(`\n🧾 check-receipt: feature=${feature}, phase=${phase}`);
     console.log(`   track=lite：receipt 机制不适用（evidence_policy_snapshot.profile_resolved=${profileResolved}）`);
     console.log('   闭环判据 = change.md checkbox 全勾 + exit 阶段 script-report verdict=PASS（非 receipt）。');
@@ -313,32 +312,27 @@ function main(): void {
   }
   console.log('');
 
-  if (!fs.existsSync(receiptPath)) {
-    console.error('❌ FATAL: 回执文件不存在。');
-    console.error('');
-    console.error('阶段闭环判定（全局入口 §5.1）required 闭环条件之一未满足：');
-    console.error(`  → ${receiptRel} 不存在`);
-    console.error('');
-    console.error('修复指引：');
-    console.error('  1. 复制模板到目标路径：');
-    console.error(`     framework/harness/templates/phase-completion-receipt.md`);
-    console.error(`     →  ${receiptRel}`);
-    console.error('  2. 真实填写所有字段（不允许编造）。');
-    console.error('  3. 重新执行本检查。');
-    process.exit(2);
-  }
-
-  const raw = fs.readFileSync(receiptPath, 'utf-8');
+  // plan 07a41ec6 T4：当前 schema 不读 receipt；闭环后才 best-effort 生成只读投影。
+  // 3.0 之前手写的 legacy 回执（无 receipt_schema）在隔离分支按旧格式只读兼容。
+  const currentSchema = readSummarySchemaVersion(projectRoot, feature, phase, frameworkRoot) === SUMMARY_SCHEMA_VERSION_CURRENT;
+  const existingRaw = !currentSchema && fs.existsSync(receiptPath) ? fs.readFileSync(receiptPath, 'utf-8') : null;
+  const existingIsLegacy = existingRaw !== null && !/^receipt_schema:\s*"?2\.[01]"?/m.test(existingRaw);
 
   let frontmatter: ReceiptFrontmatter;
   let bodyAfterFm = '';
-  try {
-    const parsed = parseFrontmatterAndBody(raw);
-    frontmatter = parsed.frontmatter;
-    bodyAfterFm = parsed.body;
-  } catch (err) {
-    console.error(`❌ FATAL: 回执 YAML frontmatter 解析失败: ${(err as Error).message}`);
-    process.exit(2);
+  if (existingIsLegacy) {
+    console.log('   legacy 回执（无 receipt_schema）：按旧格式只读校验，不重写');
+    try {
+      const parsed = parseFrontmatterAndBody(existingRaw!);
+      frontmatter = parsed.frontmatter;
+      bodyAfterFm = parsed.body;
+    } catch (err) {
+      console.error(`❌ FATAL: legacy 回执 YAML frontmatter 解析失败: ${(err as Error).message}`);
+      process.exit(2);
+    }
+  } else {
+    console.log(`   当前 schema：闭环只读 summary/verifier/policy；receipt_schema ${RECEIPT_PROJECTION_SCHEMA} 在 closed 后生成`);
+    frontmatter = { feature, phase, receipt_schema: RECEIPT_PROJECTION_SCHEMA };
   }
 
   const issues: CheckIssue[] = [];
@@ -366,7 +360,8 @@ function main(): void {
   // receipt-slim（plan e6a3c9f4 t2 / openspec receipt-slim）：receipt_schema=2.0 走瘦身契约——
   // 机器事实（harness verdict/blocker/fingerprint/trace 存在性）直读本次 base summary 与磁盘，
   // receipt 只承载不可派生自证；旧格式（无 receipt_schema）全量校验零变化。
-  const isSlim = String((frontmatter as { receipt_schema?: unknown }).receipt_schema ?? '').trim() === '2.0';
+  const receiptSchema = String((frontmatter as { receipt_schema?: unknown }).receipt_schema ?? '').trim();
+  const isSlim = receiptSchema === '2.0' || receiptSchema === RECEIPT_PROJECTION_SCHEMA;
   const canonicalReportsDir = featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot);
   const canonicalReportsRel = path.relative(projectRoot, canonicalReportsDir).replace(/\\/g, '/');
   let slimSummary: { verdict?: string; blocker_count?: number; feature?: string; phase?: string; gate_fingerprint?: unknown } | null = null;
@@ -659,6 +654,8 @@ function main(): void {
   //（与机器事实不符时降为 WARN，不再据以判 PASS/FAIL）。
   const vs = frontmatter.verifier_subagent ?? {};
   let verifierEvidence: VerifierEvidence | null = null;
+  // plan 07a41ec6 T7：沿用既往 PASS 闭环时的登记（null = 当前 subject 自身已验真，闭环时清除旧登记）
+  let verifierClosure: VerifierClosureRecord | null = null;
   if (verifierPlan.mode === 'disabled') {
     // **缺席即为零**：不调用 loader，JSON/MD/request 均不要求。磁盘上残留的旧
     // prompt/request/report 不得把这条轴重新激活（plan a9d4e7c2 否决闸）。
@@ -685,12 +682,42 @@ function main(): void {
     const currentGeneration = summarySchemaVersion === SUMMARY_SCHEMA_VERSION_CURRENT;
     if (currentGeneration && verifierSubjectId) {
       const loaded = loadVerifierEvidence(projectRoot, feature, phase, { frameworkRoot });
-      if (!loaded.ok) {
+      // plan 07a41ec6 T7：当前 subject 无报告，但本 phase 历史已有 PASS → 沿用（completed_with_prior_review），
+      // 把未重审的材料差异如实登记；从未 PASS 过才是 BLOCKER（至少要完整审一次）。
+      const priorPass =
+        !loaded.ok && loaded.code === 'report_missing'
+          ? findPriorPassVerifierEvidence(projectRoot, feature, phase, { frameworkRoot, excludeSubject: verifierSubjectId })
+          : null;
+      if (!loaded.ok && priorPass) {
+        const reportsDirAbs = featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot);
+        const notReverified = diffVerifierMaterial(
+          readVerifierMaterialOrNull(reportsDirAbs, priorPass.subject_id),
+          readVerifierMaterialOrNull(reportsDirAbs, verifierSubjectId),
+        );
+        verifierEvidence = priorPass;
+        observed.verifier = 'provided';
+        verifierClosure = {
+          mode: 'completed_with_prior_review',
+          reviewed_subject_id: priorPass.subject_id,
+          current_subject_id: verifierSubjectId,
+          current_material_not_reverified: notReverified,
+        };
+        warnings.push({
+          id: 'verifier_prior_pass_reused',
+          severity: 'MAJOR',
+          message:
+            `verifier 沿用既往 PASS（subject ${priorPass.subject_id.slice(0, 12)}…，${priorPass.json_path_rel}）；` +
+            `当前材料未经重审：${notReverified.join('、') || '（无差异记录）'}。` +
+            '语义结论只在首轮完整审查，之后只核对；如确需对当前材料重审，把 summary.verifier_request 指向的 request JSON 整段投给 verifier。',
+        });
+      } else if (!loaded.ok) {
         observed.verifier = 'missing';
         issues.push({
           id: `verifier_evidence_${loaded.code}`,
           severity: 'BLOCKER',
-          message: `【verifier 证据验真失败】${loaded.message}`,
+          message:
+            `【verifier 证据验真失败】${loaded.message}` +
+            (loaded.code === 'report_missing' ? '（本 phase 尚无任何 PASS 的 verifier 报告可沿用——至少要完整审一次。）' : ''),
         });
       } else {
         verifierEvidence = loaded.evidence;
@@ -898,7 +925,7 @@ function main(): void {
   } // end !isSlim（legacy §3.5 context_exploration）
 
   // 4.5 testing_run_artifacts（Hylyre 子产物；仅 phase=testing 且 device_test.run 非 SKIP）
-  if (phase === 'testing' && !isCapabilitySkipped(resolvedProfile, 'device_test.run')) {
+  if (!isSlim && phase === 'testing' && !isCapabilitySkipped(resolvedProfile, 'device_test.run')) {
     const tra = frontmatter.testing_run_artifacts ?? {};
     if (typeof tra.hylyre_run_exit_code !== 'number') {
       issues.push({
@@ -982,103 +1009,10 @@ function main(): void {
     }
   }
 
-  // 5. claimed_completion_commit_sha 必须是 40 位 hex 且在 git 中真实存在
-  const sha = (frontmatter.claimed_completion_commit_sha ?? '').trim();
-  if (!/^[0-9a-fA-F]{7,40}$/.test(sha)) {
-    issues.push({
-      id: 'commit_sha_format_invalid',
-      severity: 'BLOCKER',
-      message: `claimed_completion_commit_sha="${sha}" 不是合法 git SHA（7~40 位 hex）。`,
-    });
-  } else {
-    const verify = spawnSync('git', ['cat-file', '-e', sha], {
-      cwd: projectRoot,
-      shell: false,
-    });
-    if (verify.status !== 0) {
-      issues.push({
-        id: 'commit_sha_not_in_repo',
-        severity: 'BLOCKER',
-        message: `claimed_completion_commit_sha=${sha} 在仓库中不存在（git cat-file -e 返回非 0）；不允许伪造提交。`,
-      });
-    }
-  }
+  // 5.（已删除，plan 07a41ec6 T4）commit sha 由 summary.source_commit_sha 投影，不再手抄、不再 git cat-file 复核。
 
-  // 6. 自检题 Q1：trace.json 真实路径（slim：q1/q3/q4 随镜像块删除——q1 重复 trace 路径、
-  //    q3 无真 diff 对账、q4 与反假设 checkbox 重复；反假设自证由 §9 checkbox 承载）
-  const sc = frontmatter.self_check ?? {};
-  if (!isSlim) {
-  if (!sc.q1_trace_json_abs_path) {
-    issues.push({
-      id: 'self_check_q1_missing',
-      severity: 'BLOCKER',
-      message: 'self_check.q1_trace_json_abs_path 未填写。',
-    });
-  } else {
-    const q1Path = path.isAbsolute(sc.q1_trace_json_abs_path)
-      ? sc.q1_trace_json_abs_path
-      : path.resolve(projectRoot, sc.q1_trace_json_abs_path);
-    if (!fs.existsSync(q1Path)) {
-      issues.push({
-        id: 'self_check_q1_file_not_found',
-        severity: 'BLOCKER',
-        message: `self_check.q1_trace_json_abs_path="${sc.q1_trace_json_abs_path}" 不存在。`,
-      });
-    }
-  }
-
-  // 7. 自检题 Q3：`git diff --name-only` 末行路径；docs_committed=true 时必须存在
-  let docsCommitted = false;
-  try {
-    docsCommitted = loadFrameworkConfig(projectRoot).paths.docs_committed ?? false;
-  } catch {
-    docsCommitted = false;
-  }
-  const q3 = (sc.q3_last_diff_file ?? '').trim();
-  const q3LooksTemplate =
-    !q3 ||
-    q3.includes('<本阶段 git diff') ||
-    q3.includes('最后一行真实文件路径>');
-  if (q3LooksTemplate) {
-    issues.push({
-      id: 'self_check_q3_missing_or_placeholder',
-      severity: 'BLOCKER',
-      message: 'self_check.q3_last_diff_file 须替换为真实的末行变更路径（不可保留模板占位符）。',
-    });
-  } else if (docsCommitted) {
-    const q3Abs = path.isAbsolute(q3) ? path.normalize(q3) : path.resolve(projectRoot, q3);
-    if (!fs.existsSync(q3Abs)) {
-      issues.push({
-        id: 'self_check_q3_path_not_found',
-        severity: 'BLOCKER',
-        message:
-          `paths.docs_committed=true：self_check.q3_last_diff_file="${q3}" 解析为 ${q3Abs} 但文件不存在。` +
-          ' 若过程产物不入库，请将 framework.config.json 的 paths.docs_committed 置为 false。',
-      });
-    }
-  }
-
-  // 8. 自检题 Q4：必须为 true
-  if (sc.q4_no_hallucinated_rule_used !== true) {
-    issues.push({
-      id: 'self_check_q4_failed',
-      severity: 'BLOCKER',
-      message:
-        'self_check.q4_no_hallucinated_rule_used !== true。' +
-        ' 自承使用了不存在的规则 = 反假设条款触发 = 任务失败。',
-    });
-  }
-  } // end !isSlim（legacy §6-8 self_check）
-
-  // 9. "反假设条款回顾" 三项 checkbox 全部为 [x]
-  const checkboxResult = scanHallucinationCheckboxes(bodyAfterFm);
-  if (checkboxResult.total !== 3 || checkboxResult.checked !== 3) {
-    issues.push({
-      id: 'hallucination_checklist_incomplete',
-      severity: 'BLOCKER',
-      message: `反假设条款回顾未全部勾选：识别出 ${checkboxResult.total} 项，已勾选 ${checkboxResult.checked} 项；要求 3 项全部 [x]。`,
-    });
-  }
+  // 6–9.（已删除，plan 07a41ec6 T4）self_check 问答与反假设 checkbox 是代理自证，不构成机器事实；
+  //      宿主 2026-09-02 回归 check-receipt 41 次全在修这些字段。备注写 <phase>/notes.md。
 
   // 10. goal 环境：自动决议账本 schema + registry 完整性（goal-fakepass-hardening t1）
   //     JSONL 为判定 SSOT（markdown 仅人读投影）；registry 不可读同样 fail-closed——
@@ -1097,7 +1031,7 @@ function main(): void {
   // plan harness，plan 回执写的是 plan 自己的 attempt(i3)——跨阶段复验结构上永远不可能
   // 通过（填 i3≠i5，改 i5=伪造），把框架自己指的修复路堵死。
   // 跨阶段回执的新鲜度由 run_id 绑定 + evidence manifest + sha 三重承担，本就不缺 attempt。
-  if (inGoalReceiptContext) {
+  if (!isSlim && inGoalReceiptContext) {
     const currentAttempt = process.env.MAISON_GOAL_ATTEMPT?.trim();
     const attemptPhase = process.env.MAISON_GOAL_ATTEMPT_PHASE?.trim();
     const claimedAttempt = frontmatter.claimed_attempt_id?.trim();
@@ -1175,7 +1109,7 @@ function main(): void {
         `HARNESS_ADVISORY id=${mmAdvisory.id} status=${mmAdvisory.status} effective_image_input=${mmAdvisory.effective_image_input ?? 'n/a'}`,
       );
     }
-    console.log(`✅ PASS — 完成回执校验通过${isSlim ? '（瘦身格式 2.0，机器事实=本次 base summary 直读）' : ''}。`);
+    console.log(`✅ PASS — 闭环条件校验通过${isSlim ? '（当前 schema：机器事实直读 base summary/verifier/policy）' : '（legacy receipt 只读兼容）'}。`);
     console.log(
       isSlim
         ? `   - base summary: verdict=PASS, blocker_count=0, fingerprint fresh（${canonicalReportsRel}/summary.json）`
@@ -1186,13 +1120,12 @@ function main(): void {
         verifierPlan.mode === 'disabled'
           ? `${observed.verifier}（${verifierPlan.reason}）`
           : verifierEvidence
-            ? `verdict=${verifierEvidence.verdict}（机器真源 ${verifierEvidence.json_path_rel}，subject=${verifierEvidence.subject_id.slice(0, 12)}…，agent=${verifierEvidence.agent_id}）`
+            ? `verdict=${verifierEvidence.verdict}（机器真源 ${verifierEvidence.json_path_rel}，subject=${verifierEvidence.subject_id.slice(0, 12)}…，agent=${verifierEvidence.agent_id}）${verifierClosure ? '，沿用既往 PASS（completed_with_prior_review）' : ''}`
             : 'grandfather（上一代闭环，按旧 evidence manifest 登记面复核）'
       }`,
     );
     console.log(`   - trace_json: ${traceDisplay}`);
-    console.log(`   - commit_sha: ${sha}`);
-    console.log('   - 反假设条款 3/3 已勾选');
+    console.log(`   - commit_sha: ${(slimSummary as { source_commit_sha?: unknown } | null)?.source_commit_sha ?? frontmatter.claimed_completion_commit_sha ?? '(unknown)'}（summary 投影）`);
     if (warnings.length > 0) {
       console.log('');
       console.log(`⚠️  ${warnings.length} 项非阻塞提示：`);
@@ -1221,7 +1154,6 @@ function main(): void {
           frameworkRoot,
           feature,
           phase,
-          receipt: receiptValidation,
           blockerCount:
             isSlim
               ? slimSummary?.blocker_count ?? 0
@@ -1229,6 +1161,7 @@ function main(): void {
                 ? sh.blocker_count
                 : 0,
           evidencePolicySnapshot,
+          summaryPatch: { verifier_closure: verifierClosure },
           persistPhaseState: () =>
             syncPhaseStateOnReceiptPassStrict(
               projectRoot,
@@ -1277,9 +1210,8 @@ function main(): void {
   }
   console.error('');
   console.error('修复指引：');
-  console.error('  1. 不要篡改 receipt 数值伪造通过；check-receipt 会与真实文件 / git 状态比对。');
-  console.error('  2. 缺什么补什么：跑 harness、调用 verifier、生成 trace.json、再如实回填。');
-  console.error('  3. 全局入口 §6.5 反假设条款适用：本失败列表本身就是"为何不能放行"的逐字证据。');
+  console.error('  1. 回执由 harness 投影生成，改它不改变判定；缺什么补什么：跑 harness、调用 verifier、生成 trace.json。');
+  console.error('  2. 补齐后重跑本命令（或 harness-runner --sync-closure）即 finalize；备注写 <phase>/notes.md。');
   console.error('');
   process.exit(1);
 }
@@ -1373,22 +1305,6 @@ export function patchSummarySoftAdvisory(
 // 反假设条款 checkbox 扫描
 // --------------------------------------------------------------------------
 
-function scanHallucinationCheckboxes(body: string): { total: number; checked: number } {
-  // 只扫描 "反假设条款回顾" 段落内的 checkbox
-  const sectionMatch = /##\s+反假设条款回顾[\s\S]*$/i.exec(body);
-  if (!sectionMatch) return { total: 0, checked: 0 };
-  const section = sectionMatch[0];
-  // markdown checkbox: - [ ] / - [x] / - [X]
-  const lines = section.split(/\r?\n/);
-  let total = 0;
-  let checked = 0;
-  for (const line of lines) {
-    const m = /^\s*[-*]\s+\[( |x|X)\]\s+/.exec(line);
-    if (!m) continue;
-    total++;
-    if (m[1].toLowerCase() === 'x') checked++;
-  }
-  return { total, checked };
-}
+// scanHallucinationCheckboxes 已删除（plan 07a41ec6 T4）
 
 if (require.main === module) main();

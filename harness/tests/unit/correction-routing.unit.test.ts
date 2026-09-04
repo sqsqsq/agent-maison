@@ -26,7 +26,7 @@ import {
   resolveCurrentSessionSignal,
   writeCorrectionState,
 } from '../../scripts/utils/correction-state';
-import { closedPhasesFor, runCorrectionInit } from '../../scripts/utils/correction-commands';
+import { closedPhasesFor, resolveFeatureCorrectionRouting, runCorrectionInit } from '../../scripts/utils/correction-commands';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import {
   featurePhaseReportsDir,
@@ -328,8 +328,7 @@ const cases: Array<{ name: string; run: () => void }> = [
           frameworkRoot: FRAMEWORK_ROOT,
         });
         eq(code, 0, 'correction-init 应成功');
-        const state = readCorrectionState(dir);
-        eq(state?.auto_confirm_eligible, undefined, '新 writer 不再生成确认字段');
+        eq(readCorrectionState(dir), null, 'feature 修正不写 .current-correction.json（plan 07a41ec6 T1）');
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
@@ -346,9 +345,14 @@ const cases: Array<{ name: string; run: () => void }> = [
           requestText: '按钮颜色改一下',
           frameworkRoot: FRAMEWORK_ROOT,
         });
-        const state = readCorrectionState(dir);
-        eq(state?.root_layer, 'coding', '改产品代码应自动路由 coding');
-        eq(state?.auto_confirm_eligible, undefined, '新 writer 不再生成确认字段');
+        eq(readCorrectionState(dir), null, 'feature 修正不写状态');
+        const routing = resolveFeatureCorrectionRouting(
+          dir,
+          'demo-feat',
+          { requirement_changed: false, contract_changed: false, code_change_needed: true },
+          FRAMEWORK_ROOT,
+        );
+        eq(routing.root_layer, 'coding', '改产品代码应自动路由 coding');
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
@@ -365,8 +369,7 @@ const cases: Array<{ name: string; run: () => void }> = [
           requestText: '补一个遗漏的验证用例',
           frameworkRoot: FRAMEWORK_ROOT,
         });
-        const state = readCorrectionState(dir);
-        eq(state?.auto_confirm_eligible, undefined, 'strict 档由机器证据收口，不停等人签');
+        eq(readCorrectionState(dir), null, 'strict 档同样不写状态，由 --revalidate 脚本门禁收口');
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }

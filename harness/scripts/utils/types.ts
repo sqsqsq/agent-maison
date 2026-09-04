@@ -51,7 +51,8 @@ export type Phase = string;
 export interface ContextFileEntry {
   label: string;
   content: string;
-  kind?: 'text' | 'image';
+  /** path：不内联正文，只给路径清单（verifier 需要时自行 Read；plan 07a41ec6 T7 prompt 瘦身） */
+  kind?: 'text' | 'image' | 'path';
   /** 源图片绝对路径（kind=image 时） */
   imagePath?: string;
   mime?: string;
@@ -577,6 +578,17 @@ export interface SoftAdvisory {
  * `verifier_request` 仅在该 phase 的 verifier 能力 enabled 时在场；三职分离=代际靠
  * `schema_version`、适用性靠 policy（随时重算，不落快照）、身份靠 subject。
  * writer 恒写 1.3；1.0/1.1 仍视作 legacy_unverified，1.2 为可读的上一代闭环域。 */
+/**
+ * plan 07a41ec6 T7：闭环时 verifier 结论的来源登记。当前 subject 无报告、但本 phase 历史已有
+ * PASS 时，闭环沿用该 PASS 并如实列出未经重审的材料差异（诚实标注，不洗绿）。
+ */
+export interface VerifierClosureRecord {
+  mode: 'completed_with_prior_review';
+  reviewed_subject_id: string;
+  current_subject_id: string;
+  current_material_not_reverified: string[];
+}
+
 export interface HarnessRunSummary {
   schema_version: '1.0' | '1.1' | '1.2' | '1.3';
   phase: Phase;
@@ -622,6 +634,8 @@ export interface HarnessRunSummary {
   verifier_subject_id?: string;
   /** 该 subject 的短 request JSON 仓根相对路径（Task prompt 的唯一投递体）。 */
   verifier_request?: string;
+  /** plan 07a41ec6 T7：沿用既往 PASS 闭环时在场；当前 subject 自身已验真时缺席 */
+  verifier_closure?: VerifierClosureRecord;
   script_report: string;
   merged_report: string;
   /** verifier 能力 enabled 时才装配（1.3 起为条件字段）。 */
@@ -899,6 +913,8 @@ export interface CheckContext {
   skipVisualHandoff?: boolean;
   /** testing CLI `--report-reconcile-only`：只读既有执行产物并重算报告/门禁 */
   reportReconcileOnly?: boolean;
+  /** plan 07a41ec6 T6：testing 专属——忽略同执行键复用，强制真机真跑 */
+  forceDevice?: boolean;
   /** spec：ui-spec 脚本守门档位（framework.config.json → spec.ui_spec_enforcement，opt-in） */
   uiSpecEnforcement?: 'strict' | 'warn' | 'reachable' | 'off';
   /** CLI `--skip-ui-spec`：跳过 ui-spec 相关脚本检查 */

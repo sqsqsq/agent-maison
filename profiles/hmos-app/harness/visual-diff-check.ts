@@ -1577,7 +1577,8 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       line:
         `pixel_1to1 P0 屏 verdict=warn 却无可执行回修指令（must_fix 空，loop 无法精准回修；defects/reverse_missing 是证据非指令、不替代）：` +
         warnP0NoActionable.map(s => `${s.screen_id}(f=${s.fidelity_score ?? 'n/a'})`).join(', ') +
-        `；warn 须给 coding 可执行 must_fix（残差可接受则判 pass+minor defect 记录）`,
+        `；改法：warn 时把每处差异写进 must_fix（element / axis / ref_px / device_px / delta_px，可由 --measure 自动填差值），` +
+        `残差可接受则 verdict=pass 并在 defects 记 minor——二选一，不能只写 warn`,
     });
   }
 
@@ -2765,6 +2766,19 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     );
   }
 
+  // plan 07a41ec6 T10③：无 delegated 视觉 provider 时，region_attest / critic 回执类"证明"不作要求——
+  // 几何由机器（T8 / --measure）给结论，agent 看图后给普通视觉判断；content/style 未验证部分如实披露。
+  if (!resolveActiveVisualProvider(ctx.projectRoot, path.resolve(__dirname, '..', '..', '..')).pin) {
+    const waived = hits.filter(h => h.id === 'visual_diff_region_attest' || h.id === 'visual_diff_critic_receipt');
+    if (waived.length > 0) {
+      for (const w of waived) hits.splice(hits.indexOf(w), 1);
+      referenceNotes.push(
+        `[no_provider] 已按无 delegated 视觉 provider 场景 SKIP ${waived.length} 条 region_attest/critic 回执要求（plan 07a41ec6 T10）：` +
+          waived.map(w => w.line.split('：')[0]).slice(0, 4).join('；') +
+          '——请 agent 实际看图后给普通视觉判断；content/style 未验证部分如实标注。',
+      );
+    }
+  }
   const detailsWithNotes = referenceNotes.length > 0 ? `${details}\n${referenceNotes.join('\n')}` : details;
   const finalResult = finalizeVisualDiffHits(desc, reportRel, detailsWithNotes, hits);
 

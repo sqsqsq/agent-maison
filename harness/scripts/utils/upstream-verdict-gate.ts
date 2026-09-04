@@ -197,7 +197,11 @@ export function readUpstreamPhaseView(projectRoot: string, feature: string, phas
         freshness = res.verdict;
         freshnessDetail =
           res.integrity_errors?.join('；') ??
-          (res.changed_paths.length > 0 ? `变更证据：${res.changed_paths.slice(0, 5).join(', ')}` : undefined);
+          (res.changed_paths.length > 0
+            ? `变更证据：${res.changed_paths.slice(0, 5).join(', ')}——改法：重跑 ${phase} 的 harness` +
+              `（cd framework/harness && npx ts-node harness-runner.ts --phase ${phase} --feature ${feature}），` +
+              `或 --revalidate --feature ${feature} --from ${phase} 一次重闭该阶段及其下游`
+            : undefined);
       }
     }
   } catch {

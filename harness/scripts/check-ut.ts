@@ -64,7 +64,7 @@ import {
 } from '../config';
 import { isPhaseDisabledByProfile } from '../profile-loader';
 import { driftFactsFromClosureAttestation, partitionDriftByGitStatus } from './utils/source-drift-facts';
-import { reviewClosureAttestationPath } from './utils/closure-attestation';
+import { classifyDriftRisk, reviewClosureAttestationPath } from './utils/closure-attestation';
 import { classifySourceDrift } from './utils/mutation-authorization';
 import { hasGoalExecutionSignal, resolveHarnessDiffBaseRef } from './utils/phase-state';
 import {
@@ -886,21 +886,7 @@ function checkUtNoSrcMutationGoalEnv(ctx: CheckContext): CheckResult[] {
   // 三元组与 direct 模式 provider 同 schema；provenance/baseline_kind 是来源标注）。
   const closure = driftFactsFromClosureAttestation(ctx.projectRoot, ctx.feature);
   if (!closure) {
-    return [{
-      id: 'goal_review_closure_baseline_unavailable',
-      category: 'structure',
-      description: desc,
-      severity: 'BLOCKER',
-      status: 'FAIL',
-      details:
-        'goal 环境 review closure attestation 缺失/损坏——无源码基线，既判不了「review 后' +
-        '漂移」也不得放行（fail-closed；不回退 run-start diff、不读 gap-notes 授权）。',
-      failure_kind: 'goal_review_closure_baseline_unavailable',
-      blocking_class: 'goal_review_closure_baseline_unavailable',
-      suggestion:
-        '按既有回退协议失效旧 coding closure，回到 coding→review→ut/testing 重建合法基线；' +
-        '截断链由 supervisor 生成 coding 起点后继 run。',
-    }];
+    return [utBaselineUnavailableWarn(desc, 'goal 环境 review closure attestation 缺失/损坏——无源码基线，判不了「review 后漂移」。')];
   }
   if (closure.clean) {
     return [{
@@ -914,44 +900,8 @@ function checkUtNoSrcMutationGoalEnv(ctx: CheckContext): CheckResult[] {
         '（coding 阶段合法实现不在裁决域）。',
     }];
   }
-  const drift = {
-    added: closure.facts.added,
-    modified: closure.facts.modified,
-    deleted: closure.facts.deleted,
-  };
-  const decision = classifySourceDrift(drift, [], {
-    runId: (process.env.MAISON_GOAL_RUN_ID ?? '').trim(),
-    frozenManifestHash: null, // harness 侧无 run_start 冻结事件——preauth 本就不放行
-    phase: ctx.phase ?? 'ut',
-    expectedInventoryHash: closure.inventoryHash,
-    projectRoot: ctx.projectRoot,
-    feature: ctx.feature,
-    manifestIdentityAuthenticated: Boolean(process.env.MAISON_HMAC_GOAL_CHECKPOINT),
-    currentDriftFingerprint: null,
-  });
-  const files = [...drift.added, ...drift.modified, ...drift.deleted];
-  const violations = decision.kind === 'unauthorized' ? decision.violations : [];
-  return [{
-    id: 'goal_post_review_source_mutation_unresolved',
-    category: 'structure',
-    description: desc,
-    severity: 'BLOCKER',
-    status: 'FAIL',
-    details:
-      `goal 环境基线=review closure attestation：检测到 review 后未授权源码漂移（${files.length} 文件）：\n` +
-      files.slice(0, 10).map(f => `  - ${f}`).join('\n') +
-      (violations.length > 0 ? `\n判定：\n${violations.slice(0, 5).map(v => `  - ${v}`).join('\n')}` : '') +
-      '\n\n注意：gap-notes approved_src_mutations 为 agent 自报，不构成 runner 三源授权。',
-    affected_files: files,
-    failure_kind: 'goal_post_review_source_mutation_unresolved',
-    blocking_class: 'goal_post_review_source_mutation_unresolved',
-    suggestion:
-      '本 blocker 零内容重试——**agent 不得再改产物试图安抚它**。' +
-      'plan a5f9c3e2 t3②起，runner 对未受信漂移的默认处置是**保守恢复**：失效旧 coding ' +
-      'closure 及其后阶段，把该 diff 当未受信候选回退 coding→review→ut→testing 完整重验' +
-      '（无需人签，不跳过验证）。仅当结构前提不满足（截断链 / 回退预算耗尽 / 同一 drift ' +
-      '指纹重现）才 halt，届时出路由 runner 的 unauthorized_source_mutation halt guidance 给出。',
-  }];
+  const files = [...closure.facts.added, ...closure.facts.modified, ...closure.facts.deleted];
+  return [utDriftTieredWarn(desc, files, 'goal 环境基线=review closure attestation')];
 }
 
 /**
@@ -1182,25 +1132,7 @@ function checkUtNoSrcMutationDirectAttested(ctx: CheckContext, probeReason: stri
   const desc = ruleDesc(ctx, 'structure_checks', 'ut_no_src_mutation');
   const closure = driftFactsFromClosureAttestation(ctx.projectRoot, ctx.feature);
   if (!closure) {
-    // fail-closed：review 已正式闭环却拿不到它的源码基线（被删/损坏/schema 不符）——
-    // 既判不了「review 后漂移」，也**不得**静默回退到 run-start/working diff 冒充基线。
-    return [{
-      id: 'ut_no_src_mutation',
-      category: 'structure',
-      description: desc,
-      severity: 'BLOCKER',
-      status: 'FAIL',
-      details:
-        'review 已正式闭环，但 review-closure-attestation.json 缺失/不可读——源码基线不可用。\n' +
-        `闭环探测：${probeReason}\n` +
-        '不回退 run-start/working git diff 冒充基线（那正是把 coding 合法产物误判成 UT 改码的老路），' +
-        '也不读 gap-notes/用户回复放行。',
-      failure_kind: 'review_closure_baseline_unavailable',
-      blocking_class: 'ut_no_src_mutation',
-      suggestion:
-        '补跑一次 review 闭环（harness + verifier + receipt + check-receipt）重建 ' +
-        'review-closure-attestation.json 后重跑 UT 门禁；无需提交任何产物。',
-    }];
+    return [utBaselineUnavailableWarn(desc, `review 已正式闭环，但 review-closure-attestation.json 缺失/不可读——源码基线不可用。\n闭环探测：${probeReason}`)];
   }
   if (closure.clean) {
     return [{
@@ -1219,28 +1151,58 @@ function checkUtNoSrcMutationDirectAttested(ctx: CheckContext, probeReason: stri
     ...closure.facts.modified,
     ...closure.facts.deleted,
   ];
-  return [{
+  return [utDriftTieredWarn(desc, files, '基线=review closure attestation')];
+}
+
+/**
+ * plan 07a41ec6 T8（codex review P1-2）：review 后源码漂移 → 分级 WARN，direct / goal 两条路径同一投影。
+ * 不再永久 BLOCKER：UT 阶段改了生产代码按 coding change 归类（本轮 UT 门禁已覆盖编译与用例），
+ * review 语义结论对这些改动未重审，按风险分级给所需复核，如实标注、不阻塞普通开发完成。
+ */
+function utDriftTieredWarn(desc: string, files: string[], baselineNote: string): CheckResult {
+  const risk = classifyDriftRisk(files);
+  return {
     id: 'ut_no_src_mutation',
     category: 'structure',
     description: desc,
-    severity: 'BLOCKER',
-    status: 'FAIL',
+    severity: 'MAJOR',
+    status: 'WARN',
     details:
-      `基线=review closure attestation：检测到 review 后源码漂移（${files.length} 文件）：\n` +
+      `${baselineNote}：检测到 review 后源码漂移（${files.length} 文件）：\n` +
       files.slice(0, 10).map(f => `  - ${f}`).join('\n') +
       (files.length > 10 ? `\n  …（其余 ${files.length - 10} 个略）` : '') +
-      '\n\n门禁只判「review 审过的树变了」，不推断作者（可能是 UT 期改码，也可能是 review ' +
-      '后的人工/重 coding 改动）；gap-notes/用户回复不参与质量放行。',
+      '\n\n按 coding change 归类（plan 07a41ec6 T8）：本轮 UT 门禁已覆盖编译与用例；review 语义结论对这些改动未重审，' +
+      `所需复核：\n${risk.required_reviews.map(r => `  - ${r}`).join('\n')}` +
+      '\n门禁只判「review 审过的树变了」，不推断作者；gap-notes/用户回复不参与质量放行。',
     affected_files: files,
     failure_kind: 'post_review_source_drift',
     blocking_class: 'ut_no_src_mutation',
+    structured: { reclassified_as: 'coding_change', drift_classes: risk.classes, required_reviews: risk.required_reviews },
     suggestion:
-      '两条出路，二选一：①漂移是合法改动（可测性接缝/缺陷修复）→ 回 coding 纳入实现并重走 ' +
-      'review 闭环（重闭环即刷新 attestation 基线）后再闭环 UT；②漂移是误改/排障残留 → 从编辑器' +
-      '本地历史/备份取回 review 时的文件内容，再用 attestation 里该文件的 sha256 **核对**恢复结果' +
-      '（attestation 只存哈希不存内容，它能验证、不能还原；coding 产物也可能从未提交，别指望 git ' +
-      '里有旧版本）；取不回就走出路①回 coding 重建并重新闭环 review。无需提交任何产物。',
-  }];
+      '不阻塞 UT 闭环——按分级补一次对应复核（测试代码→相关测试；逻辑→scoped diff review；布局/资源→真机截图或 --measure）。' +
+      '漂移若属新功能实现 → 回 coding 纳入实现并按分级复核（不必重走整套 review 闭环）；' +
+      '若是误改/排障残留 → 从编辑器本地历史/备份取回 review 时的文件内容，再用 attestation 里该文件的 sha256 **核对**恢复结果' +
+      '（attestation 只存哈希不存内容，它能验证、不能还原）。',
+  };
+}
+
+/** 基线（review closure attestation）缺失/损坏 → WARN 如实标注（无法分级 → 最终合并 diff review），不阻塞普通开发完成。 */
+function utBaselineUnavailableWarn(desc: string, note: string): CheckResult {
+  return {
+    id: 'ut_no_src_mutation',
+    category: 'structure',
+    description: desc,
+    severity: 'MAJOR',
+    status: 'WARN',
+    details:
+      `${note}\n` +
+      '无法对 review 后源码漂移分级——按「未复核」如实标注：所需复核 = 一次最终合并 diff review（review 闭环快照缺失）。' +
+      '不回退 run-start/working git diff 冒充基线（那正是把 coding 合法产物误判成 UT 改码的老路），也不读 gap-notes/用户回复放行。',
+    failure_kind: 'review_closure_baseline_unavailable',
+    blocking_class: 'ut_no_src_mutation',
+    structured: { baseline: 'unavailable', drift_classes: [], required_reviews: ['无基线：做一次最终合并 diff review'] },
+    suggestion: '不阻塞 UT 闭环；重跑一次 review 闭环（harness → verifier → check-receipt）即可重建 attestation 基线。无需提交任何产物。',
+  };
 }
 
 /**
