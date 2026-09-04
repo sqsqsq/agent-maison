@@ -52,7 +52,7 @@
 - [x] 7.2 Because P2 extends existing Feature contracts/types/phase and Goal Mode integration while preserving `contracts.state_management` authority, run `cd harness && npm test` and resolve all regressions without weakening standalone Feature behavior.
 - [x] 7.3 Run `npm run openspec:validate`, `node scripts/check-plan-version.mjs` and `git diff --check`; if `openspec update` was used, first rerun `node scripts/patch-openspec-artifacts.mjs` as required.
 - [x] 7.4 Confirm no breaking consumer migration was introduced; update `MIGRATION.md` only if implementation evidence proves otherwise, and keep P3 Component closure explicitly out of this change.
-- [ ] 7.5 Leave `node scripts/check-plan-version.mjs --release` and `npm run release:verify` unchecked until total-plan m5/MG executes the batch release gates; do not claim either passed before that run.
+- [x] 7.5 Leave `node scripts/check-plan-version.mjs --release` and `npm run release:verify` unchecked until total-plan m5/MG executes the batch release gates; do not claim either passed before that run.
 
 ## 8. M5A evolution-workspace and identity correction (added 2026-08-21, plan e2a7c4b9)
 

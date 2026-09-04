@@ -52,7 +52,7 @@
 - [x] 7.2 Add failure fixtures for missing/unresolvable requirement source, unmapped requirement, swapped owner, unrelated-valid evidence, stale/invalid completion, unresolved contract provider, migration/NFR gap, and missing combination result.
 - [x] 7.3 Add failure/degradation fixtures for cross-view/runtime breaks, `keep_direct` and ordinary-decision seam false positives, seam contract/replacement/absence/bypass failures, and required/optional provider behavior.
 - [x] 7.4 Run P3 targeted tests, affected typecheck, full harness, OpenSpec strict validation, default plan scan, and `git diff --check`; record only observed results.
-- [ ] 7.5 At batch close, let total-plan m5/MG run the repository `--release` plan gate and `npm run release:verify`; keep this item unchecked until those gates actually run and pass.
+- [x] 7.5 At batch close, let total-plan m5/MG run the repository `--release` plan gate and `npm run release:verify`; keep this item unchecked until those gates actually run and pass.
 - [x] 7.6 Bind executed evidence to its source version: record every existing project file named by a PASS check in the phase evidence manifest, require the authority file to be a tracked input of the fresh manifest at the identity bytes, and add both counterexamples (untracked authority; executed source edited after its report). Found by total-plan m5/MG cross-layer verification.
 
 ## 8. M5A evolution-workspace and identity correction (added 2026-08-21, plan e2a7c4b9)

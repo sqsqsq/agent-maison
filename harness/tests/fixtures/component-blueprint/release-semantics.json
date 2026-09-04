@@ -1,7 +1,7 @@
 {
   "plan_name_contains": "P1_App部件发现蓝图与调和",
   "expected_version": "3.1.0",
-  "require_unfinished_todos": true,
+  "require_unfinished_todos": false,
   "required_delegation_phrases": [
     "总计划 m5/MG",
     "P1 不执行、不勾选、不宣称"

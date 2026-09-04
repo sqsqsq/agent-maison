@@ -753,10 +753,10 @@ export function runAll(): UnitCaseResult[] {
     const planName = fs.readdirSync(plansDir).find(name => name.includes(expected.plan_name_contains));
     assert(planName, 'P1 plan 未找到');
     const plan = fs.readFileSync(path.join(plansDir, planName), 'utf8');
-    const tasks = fs.readFileSync(path.join(repoRoot, 'openspec', 'changes', 'app-component-blueprint-and-reconciliation', 'tasks.md'), 'utf8');
+    const tasks = fs.readFileSync(path.join(repoRoot, 'openspec', 'changes', 'archive', '2026-09-04-app-component-blueprint-and-reconciliation', 'tasks.md'), 'utf8');
     const releaseContract = `${plan}\n${tasks}`;
     assert(plan.includes(`version: ${expected.expected_version}`), 'P1 plan 窗口版本不符');
-    assert(!expected.require_unfinished_todos || /status:\s*(pending|in_progress)|- \[ \] 6\.6/.test(releaseContract), 'P1 应保留委托给 m5/MG 的未完成 release 门');
+    assert(/status:\s*(pending|in_progress)|- \[ \] 6\.6/.test(releaseContract) === expected.require_unfinished_todos, 'P1 release 待办状态应与 m5/MG 批次收口事实一致');
     for (const phrase of expected.required_delegation_phrases) assert(releaseContract.includes(phrase), `缺 release 委托声明：${phrase}`);
     for (const command of expected.forbidden_p1_commands) {
       assert(releaseContract.includes(command), `委托命令未显式披露：${command}`);

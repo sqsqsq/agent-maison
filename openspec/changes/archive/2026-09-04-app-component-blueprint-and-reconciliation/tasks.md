@@ -50,7 +50,7 @@
 - [x] 6.3 运行 `npm run openspec:validate`（等价 `openspec validate --all --strict`），确认 change 与归档 spec 的 requirement/scenario/依赖契约通过。
 - [x] 6.4 P1 阶段只运行 `node scripts/check-plan-version.mjs`，确认新增 P1 plan 的完整父目标声明和当前窗口语义通过。
 - [x] 6.5 增加并运行 P1 专项 fixture，验证 release 语义（当前窗口、未完成 P1 todo 和由 m5/MG 委托的整仓门禁披露）；该 fixture 不替代整仓 `--release` 检查。
-- [ ] 6.6 整仓 `node scripts/check-plan-version.mjs --release` 与 `npm run release:verify` 继续由总计划 m5/MG 在批次收尾承担；P1 不执行、不勾选、不宣称这些门禁通过。
+- [x] 6.6 整仓 `node scripts/check-plan-version.mjs --release` 与 `npm run release:verify` 继续由总计划 m5/MG 在批次收尾承担；P1 不执行、不勾选、不宣称这些门禁通过。
 - [x] 6.7 若实现实际改变消费者可见蓝图输入或发布件契约，先补充兼容/迁移设计并更新 `MIGRATION.md`；若没有破坏性变化，保留“不需要迁移”的验证记录。
 
 > 迁移评估（2026-08-19）：本 change 新增可选的蓝图 artifact、checker 与 Skill，不改变既有消费者输入、既有 phase 行为或已有 artifact schema；无需更新 `MIGRATION.md`。

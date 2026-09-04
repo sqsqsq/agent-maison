@@ -37,7 +37,7 @@ Generated: 2026-09-04 · current window: `3.1.0`
   - `复杂能力建设3.1_P2_Change_Unit与连续推进_7b3c1e90.plan.md`
 - **复杂能力建设 3.1 — P3 部件组装与覆盖闭环** — (no overview) [6/6 completed]
   - `复杂能力建设3.1_P3_部件组装与覆盖闭环_9d4e2a71.plan.md`
-- **复杂能力建设 3.1 — 单部件复杂需求从蓝图到部件闭环首期总计划** — > [9/10 completed]
+- **复杂能力建设 3.1 — 单部件复杂需求从蓝图到部件闭环首期总计划** — > [10/10 completed]
   - `复杂能力建设3.1_单部件复杂需求闭环首期总计划_6f2a9d8c.plan.md`
 - **宿主入口 — 部件演进路线分档与蓝图 Skill 物化补链** — (no overview) [3/3 completed]
   - `宿主入口_部件演进路线分档与Skill物化_c4d7e9a2.plan.md`
