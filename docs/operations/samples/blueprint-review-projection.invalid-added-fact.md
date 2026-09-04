@@ -5,7 +5,7 @@ derived_from:
   blueprint_id: ledger-app-blueprint
   revision: 2
   source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
-  artifact_sha256: sha256:918a544f8230869ece7b3e4005e0aa42f610389a3b25e7c1c6ef3ed50c1384bb
+  artifact_sha256: sha256:24c32c0ccc9b55d3b3814b71523ecfa156bebe73cbfd8dfca405cef978685d90
 projection: component-blueprint-review@1
 ---
 

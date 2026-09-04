@@ -54,7 +54,7 @@ todos:
       review 消费与覆盖台账语义（含 t4 确定性检查清单）/ opt-in 零负担行为（D9）/ 明确
       排除范围（§4 全量入 out-of-scope）。
       `npm run openspec:validate`（脚本本身已含 --all --strict）通过后才允许开工 t1–t4。
-    status: pending
+    status: completed
   - id: t1-concept-and-paths
     content: >
       概念与配置位。① 配置链**全量**（codex P1-4 采纳，文件已实名核对）：
@@ -80,7 +80,7 @@ todos:
       ③ `templates/AGENTS.md.template` SSOT 表增加 conventions 行（措辞「可选资产·若存在」
       并指向 `/conventions-bootstrap` 为创建入口，防弱模型误以为必建）；
       ④ `docs/DOC_INVENTORY.yaml` 登记。配套 config 默认值 unit。
-    status: pending
+    status: completed
   - id: t2-bootstrap-skill
     content: >
       conventions-bootstrap skill（策展工作流，对标 catalog-bootstrap 交互纪律）：
@@ -102,7 +102,7 @@ todos:
       注册 `skills/skills.index.yaml`；全 adapter 命令模板 + agent-bundle skills-bridge
       全量接线（对照 catalog-bootstrap/code-graph 现有接线清单逐目录核对，防 c7a9e2f4
       接线检索四盲区复发）。
-    status: pending
+    status: completed
   - id: t3-blueprint-plan-consumption
     content: >
       蓝图→CU plan 消费接线（2026-09-03 前移：正式需求的首个消费点是 /component-design·P1
@@ -150,7 +150,7 @@ todos:
       空 locations/绝对路径/`..`/反斜杠；
       ④ generic + hmos-app 两份 plan-template 增加条件节，并核对 plan-rules 章节完整性
       检查不把该条件节误判为缺章（开放问题 O5）。
-    status: pending
+    status: completed
   - id: t4-review-consumption
     content: >
       review 主消费闭环（本 plan 的核心交付）：① code-review/SKILL.md +
@@ -195,7 +195,7 @@ todos:
       比对，不复活时序循环）/ 台账 GATE_DELEGATED ⟺ 该 id 为 gate 卡（双向：review 卡
       不得填 GATE_DELEGATED，gate 卡不得填其它值）。
       severity=MAJOR。review-rules.yaml 登记 + fixtures 全分支（见验收方向）。
-    status: pending
+    status: completed
   - id: t5-openspec-and-closure
     content: >
       收口：① OpenSpec change 终验——实现与 t0 锁定语义逐条对账（偏差当场同步，
@@ -207,7 +207,7 @@ todos:
       写 parity 声明）；③ 全量 unit +
       docs 一致性（DOC_INVENTORY / skills 索引 / adapter 接线清单交叉核对）；④ 维护者
       changelog 补一行。
-    status: pending
+    status: completed
 isProject: false
 ---
 
@@ -380,3 +380,23 @@ conventions.md（paths.conventions）
 
 **新增 schema / 状态 / phase / registry / 平行真源**：没有（provider-boundary 规则表加一行 optional Seam
 Card、同一 renderer 增量输出两处，均为既有表/既有 renderer 的扩展）。
+
+## 实施记录（2026-09-04）
+
+- OpenSpec change：`define-project-conventions`，保持 active，不归档；仅修改 Maison。
+- 已交付配置/helper、概念格式 SSOT、逐条确认 bootstrap、六宿主入口与共享 bridge、P1 optional provider/provenance/projection、CU contracts 归一化、review 全量台账与 verifier 上下文接线；未新增 registry、状态机、phase、蓝图 schema 或平行解析链。
+- 实证偏离：现行 UPDATE-overwrite 使用 raw baseline + 授权 payload + backfill，normalize 只做影子校验。因此 keep/overwrite 均不自动补 `paths.conventions`，CREATE 带默认键，三种形态 helper 结果一致；保留既有无损写入契约，不增加 CLI/builder 特例。
+- 补接既有模板变量链 `CONVENTIONS_PATH`，避免自定义路径下 AGENTS 行失真；已启用惯例的 review 上下文沿同一 collector 读取全部 contracts 目标，不再受旧 `.ets`/30 文件裁剪影响，未启用分支不变。
+- 目标验证：conventions 29/29、P1 96/96、M7 25/25；配置、adapter、bridge/index、文档预算/链接、confirmation UX 与 skill-creator 校验通过。goal/normal parity 证据与 adapter 接线记录见 change design。
+- 发布内容验证：既有 candidate 模式 `release:verify --skip-typecheck --skip-plan-release-gate` 通过临时 zip/manifest/LF/排除规则/解压接线断言；完整窗口发布仍由总计划与 b9 的未完 todo 阻止，不修改其状态，不向 dist 发布。
+- 最终验收：`cd harness && npm test` 全 PASS（typecheck + 4152 unit + 46 fixtures）；OpenSpec strict 36/36、plan 默认校验、diff whitespace 与全部改动文本 LF 检查通过。未 commit、未归档 OpenSpec；真实宿主 dogfood 仍为本 plan 之外的后续动作。
+
+## 复审返修记录（2026-09-04）
+
+- 上一节为首次实施验收记录；复审确认 1 项 P1、2 项 P2 后，t3/t4/t5 重开复核，不以旧测试结果替代本轮验收。
+- P1 在现有 provider validator 内用既有标题解析验证惯例 fact 的配置路径与真实 id，并要求节点/decision 的惯例 provenance/verification ref 对应同一 fact；投影和 review 继续消费该 fact 集，不新增引用协议。
+- 默认文件读取失败不再等同未启用：仅未显式配置且 ENOENT 使用 not_applicable，其余不可读保留 unknown/degraded。
+- 现有 collectSourceFiles 的完整读取分支保留全部 UTF-8 文本；NUL/非法 UTF-8 资源仅保留路径引用，不解码入 verifier。未改变原有带扩展名过滤分支。
+- 定向验证：conventions 35/35（含错误路径、未知 id、孤立节点/decision、默认文件 EACCES、31 个 TS + PNG/二进制混合输入及合法自定义路径贯穿），P1 96/96、M7 25/25；OpenSpec strict、plan、diff/LF 与 candidate 发布内容验证通过。完整 harness 正在本轮重新验收，随后记录结果。
+- 非阻断的 contracts 额外字段建议未实施；钱包 dogfood 仍非阻断后续；不改宿主、不 commit、不归档。
+- 本轮终验通过：`cd harness && npm test` = typecheck + 4158 unit + 46 fixtures 全 PASS；三项修复及直接回归已核对，t3/t4/t5 恢复 completed。OpenSpec strict、plan、diff/LF 与 candidate 发布内容验证通过，不把旧 4152 用例结果当作本轮新证明。

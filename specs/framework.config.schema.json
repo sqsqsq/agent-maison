@@ -43,6 +43,10 @@
         "glossary": { "type": "string" },
         "glossary_seed": { "type": "string" },
         "architecture_md": { "type": "string" },
+        "conventions": {
+          "type": "string",
+          "description": "可选工程惯例知识资产；默认 doc/conventions.md，文件存在即启用。"
+        },
         "state_file": { "type": "string" },
         "receipt_dir_pattern": { "type": "string" },
         "docs_committed": { "type": "boolean" },

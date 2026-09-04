@@ -42,6 +42,11 @@
 
 ## 三、问题清单
 
+<!-- 若 paths.conventions 文件存在，在本节之前追加「## 工程惯例覆盖台账」。
+每个惯例 id 恰一行：| 惯例 id | 判定 | 依据 |。
+判定：PASS / VIOLATION / GATE_DELEGATED / NOT_APPLICABLE / NOT_ASSESSED。
+VIOLATION 在下方问题行引用 id + 范例路径；存量违反只作 INFO advisory。无文件无声明则省略。 -->
+
 | 编号 | 严重程度 | 分类 | 问题描述 | 涉及文件 | 修复建议 |
 |------|---------|------|---------|---------|---------|
 | CR-001 | BLOCKER/MAJOR/MINOR/INFO | 分类名 | 具体问题描述（含代码证据） | `path/to/source-file` | 具体修复步骤 |

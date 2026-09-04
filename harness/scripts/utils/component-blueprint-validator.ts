@@ -71,7 +71,7 @@ export function validateComponentBlueprint(
     ...validateGeneratedBlueprintGraphs(blueprint),
     ...validateBlueprintReconciliation(blueprint),
     ...validateEvolutionDecisions(blueprint),
-    ...validateBlueprintProviders(blueprint),
+    ...validateBlueprintProviders(blueprint, { projectRoot: context.projectRoot }),
   ];
   out.push(...upstream);
   out.push(...validateBlueprintAdmission(blueprint, out));

@@ -301,6 +301,8 @@ export interface FrameworkPaths {
   glossary_seed: string;
   /** 架构说明文档 */
   architecture_md: string;
+  /** 可选工程惯例知识资产；文件存在即启用 */
+  conventions?: string;
   /**
    * 阶段状态机文件（agent 工作流强制门 / Layer 3）。
    *
@@ -617,6 +619,7 @@ export const DEFAULT_PATHS: FrameworkPaths = {
   glossary: 'doc/glossary.yaml',
   glossary_seed: 'doc/glossary-seed.txt',
   architecture_md: 'doc/architecture.md',
+  conventions: 'doc/conventions.md',
   state_file: 'framework/harness/state/.current-phase.json',
   receipt_dir_pattern: 'doc/features/<feature>/<phase>',
   reports_dir_pattern: 'doc/features/<feature>/<phase>/reports',
@@ -1681,6 +1684,26 @@ export function architectureMdPath(projectRoot: string): string {
   return path.join(projectRoot, loadFrameworkConfig(projectRoot).paths.architecture_md);
 }
 
+/** 可选工程惯例知识资产；调用方以文件存在性判断是否启用。 */
+export function conventionsPath(projectRoot: string): string {
+  return path.join(
+    projectRoot,
+    loadFrameworkConfig(projectRoot).paths.conventions ?? DEFAULT_PATHS.conventions!,
+  );
+}
+
+/** raw config 是否显式声明 paths.conventions；用于区分未启用与配置损坏。 */
+export function isConventionsPathExplicitlyConfigured(projectRoot: string): boolean {
+  const raw = readProjectConfigRaw(projectRoot).raw;
+  const paths = raw?.paths;
+  return Boolean(
+    paths &&
+    typeof paths === 'object' &&
+    !Array.isArray(paths) &&
+    typeof (paths as Record<string, unknown>).conventions === 'string',
+  );
+}
+
 /** 功能级需求目录的绝对路径（<root>/doc/features） */
 export function featuresDirPath(projectRoot: string): string {
   return path.join(projectRoot, loadFrameworkConfig(projectRoot).paths.features_dir);
@@ -2078,6 +2101,10 @@ export function relGlossarySeed(projectRoot: string): string {
 
 export function relArchitectureMd(projectRoot: string): string {
   return toPosix(loadFrameworkConfig(projectRoot).paths.architecture_md);
+}
+
+export function relConventions(projectRoot: string): string {
+  return toPosix(loadFrameworkConfig(projectRoot).paths.conventions ?? DEFAULT_PATHS.conventions!);
 }
 
 export function relFeaturesDir(projectRoot: string): string {

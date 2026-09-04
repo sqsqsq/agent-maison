@@ -13,8 +13,6 @@
 | Framework 接入方式 | `framework/` 子目录（Maison 发布件 zip 解压集成，非 git submodule） |
 | 架构摘要 | {{ARCHITECTURE_SUMMARY}} |
 
-详细架构说明：[{{ARCHITECTURE_MD_PATH}}]({{ARCHITECTURE_MD_PATH}})。
-
 ## 二、SSOT（Single Source of Truth）
 
 | 维度 | SSOT 文件 | 说明 |
@@ -23,6 +21,7 @@
 | 架构 DSL（机器可读） | [framework.config.json](framework.config.json) → `architecture` | 修改必过 `/framework-init`（UPDATE 模式） |
 | 模块画像（Catalog） | [{{MODULE_CATALOG_PATH}}]({{MODULE_CATALOG_PATH}}) | 职责/`NOT_responsible_for`/`easily_confused_with`。Scope 防错源头 |
 | 业务术语表（Glossary） | [{{GLOSSARY_PATH}}]({{GLOSSARY_PATH}}) | 自然语言业务名词 ↔ 权威模块映射 |
+| 工程惯例（Conventions，可选·若存在） | [{{CONVENTIONS_PATH}}]({{CONVENTIONS_PATH}}) | 横切工程实践；仅由 `/conventions-bootstrap` 创建并逐条确认 |
 {{PROFILE_AGENT_SSOT_ROWS}}
 | 阶段规则/校验脚本 | [framework/specs/phase-rules/](framework/specs/phase-rules/) / [framework/harness/scripts/](framework/harness/scripts/) | BLOCKER 级门禁 |
 

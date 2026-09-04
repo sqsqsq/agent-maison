@@ -309,6 +309,11 @@ export interface ContractsSpec {
     description?: string;
   }>;
   files: string[];
+  /** Project conventions applied by this Feature; normalized once by SpecLoader. */
+  conventions_applied?: Array<{
+    id: string;
+    planned_locations: string[];
+  }>;
   resource_keys?: Record<string, Record<string, ResourceEntry[]>>;
   /**
    * visual-capability-truth S6（P1-F）：宿主集成契约机器块——scope 一致性与可达性检查的

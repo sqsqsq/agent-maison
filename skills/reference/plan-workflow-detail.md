@@ -67,6 +67,7 @@ expansions_with_user_approval:
 | `state_management` | 状态管理方案 | 运行时施工事实唯一权威；CU-bound 时以 `design_ref` 关联 P1 flow，并可含 owner/contract、ordered steps、conditional mutation/publication/subscription/consumer、lifecycle 与 recovery；禁止平行 `runtime_flow_slices` |
 | `navigation` | 路由/导航设计 | 3.0 canonical **只有** `config_files[]`（导航注册/配置文件清单，如 `main_pages.json` / `route_map.json`），逐项列入 `files`；其它承载文件路径的 navigation 键（含嵌套 `pages[]`/`routes[]` 形态、`registration_points`）一律判 `unconsumed_file_field` BLOCKER |
 | `files` | 目录/文件结构规划 | **唯一文件授权集合**；下列一切文件引用都必须以规范化路径列入此处 |
+| `conventions_applied`（可选） | plan 条件节「遵循的既有惯例」 | `id` + 非空 `planned_locations[]`；location 仅允许项目相对 POSIX 文件/目录前缀，禁 glob/绝对路径/`..`/反斜杠；有所引蓝图时须覆盖其适用且命中本 CU scope 的惯例 |
 | `resource_keys` | 宿主资源引用 | **媒体资源 `path` / `media` 必须指向模块实际资源目录**（如 `<module>/src/main/resources/base/media/<key>.<ext>`），且逐项列入 `files`；不得写工程根相对路径——visual-parity 素材门禁以模块资源目录真实文件判定，曾发生 1×1 占位借工程根路径假 PASS |
 | `prd_to_code_traceability` | spec 功能映射表 | `key_files[]` 逐项列入 `files` |
 

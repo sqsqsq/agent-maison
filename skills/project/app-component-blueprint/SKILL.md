@@ -34,10 +34,11 @@
 
 ## 静态 provider 顺序
 
-1. `current-facts-discovery`：读取产品需求、代码、schema、接口、配置、测试及 architecture/catalog/code-graph/conventions；当前事实逐项保留 provenance 和冲突。
-2. `se-manual-contracts`：消费 SE/授权 owner 的 operation、DTO、mapping、错误、幂等和 NFR；来源不可达时保持 unknown，不编造字段。
-3. `app-design-lens`：回答模块边界、能力接缝、feature flag、生产者/消费者、生命周期、state owner、初始化、发布订阅、UI refresh、进程恢复十个根问题。
-4. `independent-design-questioning`：在隔离上下文质询适用视图、关系、flow 和根问题；编写方不得自证。
+1. `current-facts-discovery`：读取产品需求、代码、schema、接口、配置、测试及 architecture/catalog/code-graph；当前事实逐项保留 provenance 和冲突。
+2. `conventions-knowledge`（optional）：按 `paths.conventions`（缺失用 `doc/conventions.md`）解析；文件存在时必读全文，只把真正适用的 `##` id 交给既有 facts/provenance；默认未启用记 `not_applicable`，显式配置却不可读记 `unknown|degraded`。
+3. `se-manual-contracts`：消费 SE/授权 owner 的 operation、DTO、mapping、错误、幂等和 NFR；来源不可达时保持 unknown，不编造字段。
+4. `app-design-lens`：回答模块边界、能力接缝、feature flag、生产者/消费者、生命周期、state owner、初始化、发布订阅、UI refresh、进程恢复十个根问题。
+5. `independent-design-questioning`：在隔离上下文质询适用视图、关系、flow、根问题，以及适用惯例是否已被相关视图/decision 引用；编写方不得自证。
 
 provider 固定内置并消费同一协议；id 必须唯一，requirement 只允许 `required|optional`，权威与来源规则不得由蓝图作者覆盖。不得动态加载、注册第二个全局 provider 真源，亦不得写 Goal events/receipt/evidence 或 P2/P3 状态。
 
@@ -46,6 +47,7 @@ provider 固定内置并消费同一协议；id 必须唯一，requirement 只�
 ### 1. 发现与权威分位
 
 - 当前事实优先引用代码/schema/接口/配置/测试；知识资产提供稳定背景，不覆盖本次事实。当前范围的 requirement/goal/invariant/high-risk 必须在 `discovery.inputs.current_scope_items` 形成带稳定 id、可解析 source ref、provenance 和项目内来源实际原始字节 hash 的闭集；revision 可附加但不能替代 hash，并由 `discovery.requirement_traceability` 双向一一映射到真实蓝图稳定地址。
+- 惯例文件存在时完整读取，只把适用条目写入 `discovery.facts`：`provenance.source_kind: convention`、`source_ref: <配置路径>#<id>`、`evidence_strength: authoritative`。视图节点与 decision 继续用既有 `provenance` / `verification_refs` 引用同一 source ref；禁止新增 conventions 专用字段。
 - 同一语义冲突时保留双方 source ref 与 owner，禁止 last-write-wins。
 - 外部契约按 `contract_id` 建 operation→request/response DTO→mapping→error/idempotency/NFR 链；逐段解析项目内 `source_ref` 指向的权威文件/fragment 并真实比对，来源缺失或语义不同即 blocker。
 - mapping 只验证权威 wire 字段和显式转换/派生边；禁止将 wire DTO 与领域模型逐字段同形比较。

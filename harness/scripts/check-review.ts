@@ -31,7 +31,11 @@ import {
   getColumnValues,
   extractDeclaredVerdict,
 } from './utils/markdown-parser';
-import { relFeatureArtifact, relFeatureFile, featureFilePath } from '../config';
+import { relFeatureArtifact, relFeatureFile, featureFilePath, conventionsPath, relConventions } from '../config';
+import { loadPhaseRuleWithOverlays } from '../profile-loader';
+import { asRecord, asRecords } from './utils/component-blueprint-model';
+import { resolveChangeUnitRef } from './utils/change-unit-path';
+import { resolveComponentBlueprintRef } from './utils/component-blueprint-path';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { checkFactsArtifact } from './utils/context-facts';
 import { checkUpstreamVerdictGate } from './utils/upstream-verdict-gate';
@@ -759,6 +763,109 @@ export function checkVisualFidelityReview(ctx: CheckContext, report: string): Ch
 // Main Checker
 // --------------------------------------------------------------------------
 
+/** 惯例只解析标题和 gate 两字段；contracts 只消费 SpecLoader 的归一化结果。 */
+export function checkConventionsCoverage(ctx: CheckContext, report: string): CheckResult[] {
+  const id = 'conventions_coverage';
+  const declared = ctx.featureSpec.contracts?.conventions_applied ?? [];
+  const assetPath = conventionsPath(ctx.projectRoot);
+  const result = (status: CheckResult['status'], details: string): CheckResult[] => [{
+    id, category: 'traceability', severity: 'MAJOR', status,
+    description: ruleDesc(ctx, 'traceability_checks', id), details,
+    affected_files: [relConventions(ctx.projectRoot), relFeatureArtifact(ctx.projectRoot, ctx.feature, 'review-report.md')],
+    ...(status === 'FAIL' ? { suggestion: '按 details 补齐惯例覆盖台账或回 plan 修正 conventions_applied；不要复制 gate 判定结果。' } : {}),
+  }];
+  if (!fs.existsSync(assetPath)) {
+    return result(declared.length ? 'FAIL' : 'SKIP', declared.length
+      ? 'conventions_applied 非空，但惯例真源文件不存在。'
+      : '惯例文件不存在且无声明；本工程未启用惯例核对。');
+  }
+  let text: string;
+  try { text = fs.readFileSync(assetPath, 'utf8'); }
+  catch { return result('FAIL', '惯例文件存在但不可读取。'); }
+  const errors: string[] = [];
+  const headings = extractHeadings(text).filter(heading => heading.level === 2);
+  const lines = text.split(/\r?\n/);
+  const cards = headings.map((heading, index) => ({
+    id: heading.text,
+    body: lines.slice(heading.lineNumber, headings[index + 1]?.lineNumber ? headings[index + 1].lineNumber - 1 : lines.length).join('\n'),
+  }));
+  const ledgerHeadings = extractHeadings(report).filter(heading => heading.text.includes('工程惯例覆盖台账'));
+  if (ledgerHeadings.length !== 1) errors.push('须恰有一个「工程惯例覆盖台账」章节。');
+  const tables = extractTables(getSectionContent(report, '工程惯例覆盖台账') ?? '');
+  const ledger: Array<{ id: string; verdict: string; basis: string }> = [];
+  for (const table of tables) {
+    const idCol = table.headers.findIndex(header => /^(惯例\s*)?id$/i.test(header.trim()));
+    const verdictCol = table.headers.findIndex(header => header === '判定');
+    const basisCol = table.headers.findIndex(header => header === '依据');
+    if ([idCol, verdictCol, basisCol].some(index => index < 0)) {
+      errors.push('台账表头必须包含「惯例 id / 判定 / 依据」。');
+      continue;
+    }
+    for (const row of table.rows) ledger.push({ id: (row[idCol] ?? '').replace(/`/g, '').trim(), verdict: (row[verdictCol] ?? '').trim(), basis: (row[basisCol] ?? '').trim() });
+  }
+  for (const [side, ids] of [
+    ['惯例标题', cards.map(card => card.id)],
+    ['覆盖台账', ledger.map(row => row.id)],
+    ['conventions_applied', declared.map(entry => entry.id)],
+  ] as Array<[string, string[]]>) {
+    if (new Set(ids).size !== ids.length) errors.push(`${side} id 重复。`);
+  }
+  const cardIds = new Set(cards.map(card => card.id));
+  const ledgerIds = new Set(ledger.map(row => row.id));
+  if (cardIds.size !== ledgerIds.size || [...cardIds].some(cardId => !ledgerIds.has(cardId))) errors.push('台账 id 集合必须与惯例标题 id 集合精确相等。');
+  const verdicts = ['PASS', 'VIOLATION', 'GATE_DELEGATED', 'NOT_APPLICABLE', 'NOT_ASSESSED'];
+  const issueRows = getIssueTable(report)?.rows ?? [];
+  for (const row of ledger) {
+    if (!verdicts.includes(row.verdict)) errors.push(`${row.id} 判定值非法：${row.verdict}`);
+    if (!row.basis) errors.push(`${row.id} 缺一句依据。`);
+    const escaped = row.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const ref = new RegExp(`(^|[^A-Za-z0-9_-])${escaped}($|[^A-Za-z0-9_-])`);
+    if (row.verdict === 'VIOLATION' && !issueRows.some(issueRow => ref.test(issueRow.join(' ')))) errors.push(`${row.id} VIOLATION 未在问题清单引用该 id。`);
+  }
+  const loader = new SpecLoader(ctx.projectRoot, undefined, undefined, ctx.frameworkRoot);
+  for (const card of cards) {
+    const enforcement = [...card.body.matchAll(/^enforcement:\s*(.*?)\s*$/gm)];
+    const refs = [...card.body.matchAll(/^gate_ref:\s*(.*?)\s*$/gm)];
+    const gate = enforcement.length === 1 && enforcement[0][1] === 'gate';
+    if (enforcement.length && !gate) errors.push(`${card.id} enforcement 仅允许 gate，review 卡不应携带机器字段。`);
+    if (gate ? refs.length !== 1 : refs.length > 0) errors.push(`${card.id} gate_ref 必须且只能出现在 gate 卡中。`);
+    if (gate && refs.length === 1) {
+      const match = refs[0][1].match(/^([a-z][a-z0-9_-]*)\/([A-Za-z0-9_-]+)$/);
+      try {
+        if (!match) throw new Error('格式应为 phase/rule_id');
+        const rules = loadPhaseRuleWithOverlays(match[1], loader.loadPhaseRule(match[1]), ctx.resolvedProfile);
+        if (![rules.structure_checks, rules.semantic_checks, rules.traceability_checks].some(section => Object.prototype.hasOwnProperty.call(section ?? {}, match[2]))) throw new Error('resolved phase rules 中不存在该规则');
+      } catch (error) { errors.push(`${card.id} gate_ref 无效：${refs[0][1]}（${(error as Error).message}）`); }
+    }
+    const row = ledger.find(entry => entry.id === card.id);
+    if (row && (row.verdict === 'GATE_DELEGATED') !== gate) errors.push(`${card.id} GATE_DELEGATED 与 gate 卡必须双向对应。`);
+  }
+  const targets = ctx.featureSpec.contracts?.files ?? [];
+  for (const entry of declared) {
+    if (!cardIds.has(entry.id)) errors.push(`conventions_applied 引用不存在的惯例：${entry.id}`);
+    for (const location of entry.planned_locations) {
+      if (!targets.some(file => file === location || file.startsWith(`${location}/`))) errors.push(`${entry.id} planned_location 未命中目标文件集合：${location}`);
+    }
+  }
+  const cuRef = ctx.featureSpec.contracts?.change_unit?.change_unit_ref;
+  if (cuRef) {
+    try {
+      const cu = resolveChangeUnitRef(ctx.projectRoot, cuRef).changeUnit;
+      const blueprint = resolveComponentBlueprintRef(ctx.projectRoot, cu.component_blueprint_ref).blueprint;
+      const covered = new Set([...declared.map(entry => entry.id), ...ledger.filter(row => row.verdict === 'NOT_APPLICABLE').map(row => row.id)]);
+      for (const fact of asRecords(asRecord(blueprint.discovery)?.facts)) {
+        const provenance = asRecord(fact.provenance);
+        if (provenance?.source_kind !== 'convention') continue;
+        const sourceRef = String(provenance.source_ref ?? '');
+        const prefix = `${relConventions(ctx.projectRoot)}#`;
+        if (!sourceRef.startsWith(prefix) || !cardIds.has(sourceRef.slice(prefix.length))) errors.push(`蓝图惯例来源不在当前真源中：${sourceRef}`);
+        else if (!covered.has(sourceRef.slice(prefix.length))) errors.push(`蓝图惯例未被 CU 声明且未判 NOT_APPLICABLE：${sourceRef.slice(prefix.length)}`);
+      }
+    } catch (error) { errors.push(`无法核对所引蓝图惯例：${(error as Error).message}`); }
+  }
+  return result(errors.length ? 'FAIL' : 'PASS', errors.length ? errors.join('\n') : `全部 ${cards.length} 条惯例覆盖与声明一致；gate 仅验证引用存在性。`);
+}
+
 function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
   try {
     // t1d（plan e6a3c9f4）：编排边界附加产出来源，供报告/summary 定位真实产出方。
@@ -842,6 +949,7 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkIssueToFile(ctx, report), 'issue_to_file'));
     results.push(...safeRun(() => checkIssueToCodingRule(ctx, report), 'issue_to_coding_rule'));
     results.push(...safeRun(() => checkReviewScopeToDesign(ctx, report), 'review_scope_to_design'));
+    results.push(...safeRun(() => checkConventionsCoverage(ctx, report), 'conventions_coverage'));
     results.push(...safeRun(() => checkChangeUnitFeatureProjection(ctx, 'review'), 'change_unit_feature_projection'));
 
     // --- goal-fakepass-hardening 洞⑥：有条件通过闭环门禁 ---

@@ -48,7 +48,7 @@
 
 ## 五、语义检查项（你的核心任务）
 
-请逐一完成以下 7 项语义检查。每项都有具体的评估方法和判定标准。
+请逐一完成以下语义检查；惯例检查仅在上下文包含惯例文件时执行。
 
 ### 检查 1: 审查维度覆盖度 (review_dimension_coverage)
 
@@ -188,7 +188,7 @@
 ### 检查 9: 行为合规 — 最小可行 (behavior_minimum_viable)
 
 - **严重等级**: MAJOR
-- **评估方法**: 是否提出超出本次变更范围的「顺手改进」→ FAIL
+- **评估方法**: 是否提出超出目标文件集合、又无契约依据的「顺手改进」→ FAIL；目标集合内的存量惯例违反按 legacy advisory 处理。
 
 ### 检查 10: 行为合规 — 追溯闭环 (behavior_verify_loop)
 
@@ -198,7 +198,7 @@
 ### 检查 11: 行为合规 — Scope 精准 (behavior_scope_surgical)
 
 - **严重等级**: BLOCKER
-- **评估方法**: 审查是否局限于本次 feature diff；评 unrelated 预存问题为 BLOCKER 且无依据 → FAIL
+- **评估方法**: 审查范围是否由 `contracts.files` 目标文件集合定义；无依据把范围外问题升级 BLOCKER → FAIL。仅新代码惯例的存量违反按生效日与 blame 降为 legacy advisory；无历史为 NOT_ASSESSED advisory，不得阻断。
 
 ### 检查 12: 阶段边界 — 禁止 autopilot (phase_transition_autopilot)
 
@@ -206,6 +206,14 @@
 - **评估方法**: review 四件套 PASS 后 agent 在同一执行流自动开 business-ut，且**无** `review.ok_to_ut` / `phase.next_step` / batch 授权 → FAIL
 
 ---
+
+### 检查 13: 工程惯例台账语义 (conventions_semantics)
+
+- **严重等级**: MAJOR
+- 文件存在时独立读全文与目标源码，抽查台账判定并检查漏选；不得只因 plan 没声明便忽略条目。
+- 适用条目是否打开范例并验证文件/符号；失效只 WARN。VIOLATION 是否有同 id 与范例路径的问题，且符合性判断有代码依据。
+- CU 所引蓝图采用的惯例是否传到声明，未声明时 NOT_APPLICABLE 的理由是否真实；gate 卡只委托，不抄其它报告结果。
+- 按生效日与 git blame 核对 legacy advisory；无法断代不得升级阻断。无惯例文件时本项 SKIP。
 
 ## 六、上下文文件
 
@@ -334,7 +342,7 @@ verification_result:
       status: PASS | FAIL | WARN
       severity: MAJOR
       details: |
-        超出 diff 的改进建议: PASS/FAIL
+        超出目标文件集合的无依据改进建议: PASS/FAIL
       suggestion: |
         <修正建议>
 
@@ -350,7 +358,7 @@ verification_result:
       status: PASS | FAIL | WARN
       severity: BLOCKER
       details: |
-        审查范围 ↔ 本次 diff: PASS/FAIL
+        审查范围 ↔ 目标文件集合及 legacy advisory: PASS/FAIL
       suggestion: |
         <修正建议>
 
@@ -362,8 +370,16 @@ verification_result:
       suggestion: |
         闭环后须 review.ok_to_ut / phase.next_step 停等（user-confirmation-ux §8）
 
+    - id: conventions_semantics
+      status: PASS | FAIL | WARN | SKIP
+      severity: MAJOR
+      details: |
+        台账适用性/符合性、蓝图贯穿、范例验读与 legacy advisory: <证据；未启用则 SKIP>
+      suggestion: |
+        <修正建议>
+
   summary:
-    total: 12
+    total: 13
     pass: <PASS 数>
     fail: <FAIL 数>
     warn: <WARN 数>

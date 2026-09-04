@@ -26,6 +26,11 @@ export function renderBlueprintReviewMarkdown(blueprint: BlueprintRecord, artifa
   const review = asRecord(blueprint.review_summary);
   const decisions = asRecords(asRecord(blueprint.decisions_and_gaps)?.decisions);
   const gaps = asRecords(asRecord(blueprint.decisions_and_gaps)?.gaps);
+  const conventions = asRecords(asRecord(blueprint.discovery)?.facts)
+    .map(fact => asRecord(fact.provenance))
+    .filter(provenance => provenance?.source_kind === 'convention' && nonEmptyString(provenance.source_ref))
+    .map(provenance => String(provenance!.source_ref))
+    .sort();
   const lines: string[] = [
     '---',
     'derived_from:',
@@ -38,6 +43,14 @@ export function renderBlueprintReviewMarkdown(blueprint: BlueprintRecord, artifa
     String(review?.summary ?? ''),
     '',
   ];
+  if (conventions.length > 0) {
+    lines.push(
+      '## Adopted conventions',
+      '',
+      ...conventions.map(sourceRef => `- ${sourceRef.slice(sourceRef.lastIndexOf('#') + 1)} — ${sourceRef}`),
+      '',
+    );
+  }
   lines.push('## Design views', '');
   for (const view of asRecords(blueprint.design_views)) {
     lines.push(

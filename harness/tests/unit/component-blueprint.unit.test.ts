@@ -25,6 +25,7 @@ import { isApplicableView, isChangedView } from '../../scripts/utils/blueprint-v
 import { validateRuntimeDataFlows } from '../../scripts/utils/runtime-data-flow-check';
 import { checkCanonicalComponentBlueprint, resolveCliRefTarget } from '../../scripts/check-component-blueprint';
 import { clearSkillsIndexCache, resolveSkillPath } from '../../scripts/utils/resolve-skill-path';
+import { clearFrameworkConfigCache } from '../../config';
 
 interface UnitCaseResult {
   name: string;
@@ -215,6 +216,13 @@ function mutate(blueprint: BlueprintRecord, mutator: string): void {
     case 'remove-questioning': delete asRecord(blueprint.review_summary)!.questioning; break;
     case 'remove-questioning-scope': questioning!.items = asRecords(questioning!.items).slice(0, -1); break;
     case 'remove-current-facts-provider': blueprint.providers = asRecords(blueprint.providers).filter(provider => provider.provider_id !== 'current-facts-discovery'); break;
+    case 'remove-conventions-provider': blueprint.providers = asRecords(blueprint.providers).filter(provider => provider.provider_id !== 'conventions-knowledge'); break;
+    case 'claim-conventions-available-without-file': {
+      const provider = asRecords(blueprint.providers).find(item => item.provider_id === 'conventions-knowledge')!;
+      provider.available = true;
+      delete provider.missing_disposition;
+      break;
+    }
     case 'disable-contract-provider-without-disposition': {
       const provider = asRecords(blueprint.providers).find(item => item.provider_id === 'se-manual-contracts')!;
       provider.requirement = 'optional';
@@ -229,6 +237,7 @@ function mutate(blueprint: BlueprintRecord, mutator: string): void {
     case 'duplicate-authority-provider': blueprint.providers = [...asRecords(blueprint.providers), clone(asRecords(blueprint.providers)[0])]; break;
     case 'conditional-provider': asRecords(blueprint.providers)[1].requirement = 'conditional'; break;
     case 'tamper-provider-authority': asRecords(blueprint.providers)[0].authority_rule = 'Blueprint author is authority.'; break;
+    case 'tamper-conventions-authority': asRecords(blueprint.providers).find(item => item.provider_id === 'conventions-knowledge')!.authority_rule = 'Model inference is authority.'; break;
     case 'remove-evolution-evidence': evolutionDecision.variation_evidence = []; break;
     case 'remove-evolution-impact': delete evolutionDecision.impact; break;
     case 'remove-evolution-reextract-condition': delete evolutionDecision.reextract_condition; break;
@@ -519,6 +528,33 @@ export function runAll(): UnitCaseResult[] {
     const resolved = resolveSkillPath(frameworkDir, 'app-component-blueprint');
     assert(resolved.skillMdFrameworkRel === 'skills/project/app-component-blueprint/SKILL.md', `skill 路径错误：${resolved.skillMdFrameworkRel}`);
     assert(fs.existsSync(path.join(frameworkDir, resolved.skillMdFrameworkRel)), '索引指向的 SKILL.md 不存在');
+  }));
+
+  results.push(test('conventions provider distinguishes disabled, explicit-unreadable, and readable paths', () => {
+    withTempProject((projectRoot, filePath) => {
+      const blueprint = readYaml(filePath);
+      const provider = asRecords(blueprint.providers).find(item => item.provider_id === 'conventions-knowledge')!;
+      fs.writeFileSync(
+        path.join(projectRoot, 'framework.config.json'),
+        JSON.stringify({ paths: { conventions: 'doc/custom-conventions.md' } }),
+        'utf8',
+      );
+      clearFrameworkConfigCache();
+      let issues = validateComponentBlueprint(blueprint, { projectRoot, canonicalPath: filePath });
+      assert(issues.some(item => item.id === 'blueprint_conventions_provider_unreadable'), '显式不可读路径不得按 not_applicable 洗白');
+
+      fs.mkdirSync(path.join(projectRoot, 'doc'), { recursive: true });
+      fs.writeFileSync(path.join(projectRoot, 'doc', 'custom-conventions.md'), '# 工程惯例\n', 'utf8');
+      clearFrameworkConfigCache();
+      issues = validateComponentBlueprint(blueprint, { projectRoot, canonicalPath: filePath });
+      assert(issues.some(item => item.id === 'blueprint_conventions_provider_availability_mismatch'), '可读文件不得仍标 unavailable');
+
+      provider.available = true;
+      delete provider.missing_disposition;
+      issues = validateComponentBlueprint(blueprint, { projectRoot, canonicalPath: filePath });
+      assert(!issues.some(item => item.id.startsWith('blueprint_conventions_provider_')), '可读文件 + available=true 应通过 provider 语义');
+      clearFrameworkConfigCache();
+    });
   }));
 
   results.push(test('review Markdown is a one-way derived projection with full binding', () => {

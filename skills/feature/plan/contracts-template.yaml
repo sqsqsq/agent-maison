@@ -29,6 +29,10 @@ navigation:
 resource_keys: {}
 prd_to_code_traceability: []
 
+# Only emit when paths.conventions resolves to an existing file. Each id must exist
+# in that file; planned_locations are project-relative POSIX file/directory prefixes.
+# conventions_applied: []
+
 # Sole file-authorization set for coding/review/UT and every reference above.
 files:
   - "path/to/module/changed-file.ext"

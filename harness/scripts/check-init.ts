@@ -29,7 +29,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import * as YAML from 'yaml';
 
-import { DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY } from '../config';
+import { DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY, DEFAULT_PATHS as FRAMEWORK_DEFAULT_PATHS } from '../config';
 import { frameworkLogicalRelPath } from '../repo-layout';
 import { loadGoalCapability } from './utils/goal-adapter-capability';
 import {
@@ -154,6 +154,7 @@ const DEFAULT_PATHS = {
   glossary: 'doc/glossary.yaml',
   glossary_seed: 'doc/glossary-seed.txt',
   architecture_md: 'doc/architecture.md',
+  conventions: FRAMEWORK_DEFAULT_PATHS.conventions!,
 } as const;
 
 type TextArtifactCompareKind = 'byte_equal' | 'eol_only' | 'content_different';
@@ -914,6 +915,7 @@ function buildRenderEnv(
       architecture_md: cfg.paths.architecture_md,
       module_catalog: cfg.paths.module_catalog,
       glossary: cfg.paths.glossary,
+      conventions: cfg.paths.conventions,
       features_dir: cfg.paths.features_dir,
     },
   });
@@ -931,6 +933,7 @@ function buildRenderEnv(
     architecture_md_path: vars.ARCHITECTURE_MD_PATH,
     module_catalog_path: vars.MODULE_CATALOG_PATH,
     glossary_path: vars.GLOSSARY_PATH,
+    conventions_path: vars.CONVENTIONS_PATH,
     features_dir: vars.FEATURES_DIR,
     module_inner_layers_csv: Array.isArray(arch?.module_inner_layers)
       ? (arch.module_inner_layers as string[]).join(' / ')

@@ -53,10 +53,17 @@ skills:
           command_id: code-graph
           param_hint: "<ModuleName>"
 
+  - id: conventions-bootstrap
+    scope: project
+    source_rel: project/conventions-bootstrap
+    order: 3
+    description: >
+      逐条确认策展消费者工程的可选横切工程惯例知识资产
+
   - id: component-design
     scope: project
     source_rel: project/component-design
-    order: 3
+    order: 4
     description: >
       正式需求的部件内设计阶段入口（Story Design）：需求源物化 → 正式性确认 → 蓝图 admitted
       → 1..N canonical CU → 施工 readiness；终点是设计交接
@@ -64,28 +71,28 @@ skills:
   - id: app-component-blueprint
     scope: project
     source_rel: project/app-component-blueprint
-    order: 4
+    order: 5
     description: >
       App 部件发现、4+1 蓝图、运行时数据流、独立质询与调和
 
   - id: change-unit-progression
     scope: project
     source_rel: project/change-unit-progression
-    order: 5
+    order: 6
     description: >
       Change Unit 设计消费、ready/blocker 派生与单并发 Goal Mode 连续推进
 
   - id: component-closure
     scope: project
     source_rel: project/component-closure
-    order: 6
+    order: 7
     description: >
       从蓝图、Change Unit、Feature completion 与现有证据机械派生 Component closure
 
   - id: goal-mode
     scope: project
     source_rel: project/goal-mode
-    order: 7
+    order: 8
     description: >
       目标模式生产入口（有人在场先 prepare-run 再走 goal-mode-entry host bridge，无人值守走 detached runner）
     init_next_steps:
@@ -102,21 +109,21 @@ skills:
   - id: extension
     scope: project
     source_rel: project/extension
-    order: 8
+    order: 9
     description: >
       实例扩展初始化、检视、声明、全 adapter 物化、校验与调整
 
   - id: change-lite
     scope: feature
     source_rel: feature/change-lite
-    order: 9
+    order: 10
     description: >
       lite 轨单文档链（change → coding → exit；单模块小需求，判档经 feature.track gate）
 
   - id: spec
     scope: feature
     source_rel: feature/spec
-    order: 10
+    order: 11
     description: >
       spec 撰写
     init_next_steps:

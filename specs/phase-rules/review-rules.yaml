@@ -221,6 +221,10 @@ semantic_checks:
 # 追溯约束 — 脚本 + AI 联合检查
 # --------------------------------------------------------------------------
 traceability_checks:
+  conventions_coverage:
+    description: 惯例文件存在时核对全量台账、声明落位、蓝图贯穿与 gate 引用；无文件且无声明时跳过
+    severity: MAJOR
+
 
   change_unit_feature_projection:
     description: 审查 CU-bound Feature identity、ID-only mappings、运行时唯一真源与真实纵向接缝完整性

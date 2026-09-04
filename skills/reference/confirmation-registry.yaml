@@ -304,6 +304,26 @@ entries:
         portable: "暂不确认"
 
   # --- catalog-bootstrap catalog ---
+  - id: conventions.staging_card
+    skill: "conventions-bootstrap"
+    class: enum
+    ssot_anchor: "user-confirmation-ux.md §3.2"
+    skill_step: "Step 5 逐条确认"
+    portable_menu: "1=y确认 2=e修改 3=s跳过 4=q作废"
+    options:
+      - value: confirm
+        label: "确认 — 将当前惯例卡写入工程惯例资产"
+        portable: "1=y确认"
+      - value: edit
+        label: "修改 — 调整当前卡片后再次确认"
+        portable: "2=e修改"
+      - value: skip
+        label: "跳过 — 保留候选但本轮不入库"
+        portable: "3=s跳过"
+      - value: void
+        label: "作废 — 丢弃当前候选"
+        portable: "4=q作废"
+
   - id: catalog.staging_module
     skill: "catalog-bootstrap"
     class: enum

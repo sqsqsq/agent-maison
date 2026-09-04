@@ -254,7 +254,7 @@ const CANONICAL_EXPORTS_FILE_ALIASES: Record<string, string> = {
  *   | schema_version='1.1'                   | ✓ schema_version | 已覆盖 |
  *   | active_workflow='spec-driven'          | ✓                 | 已覆盖 |
  *   | lifecycle_hooks_enabled=true           | ✓                 | 已覆盖 |
- *   | paths.* 缺叶（DEFAULT_PATHS 11 键）    | ✓ 全部           | 已覆盖 |
+ *   | paths.* 结构默认缺叶                   | ✓（不含 conventions） | conventions 为 opt-in，UPDATE 不自动回填，运行时默认值兜底 |
  *   | state_machine.* 4 键                   | ✓ 全部           | 已覆盖 |
  *   | tools.* / spec.* / coding.* profile 缺叶 | ✓（profile-owned）| 已覆盖 |
  *   | architecture.cross_module_exports_file 已知大小写变体 | ✗ | **保留专门覆盖**：KNOWN 变体（Index.ets/INDEX.ETS/Index/INDEX）写盘时归一为 canonical（旧 derive 既有行为，落盘单点收口） |

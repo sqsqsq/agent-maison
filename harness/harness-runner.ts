@@ -95,6 +95,8 @@ import {
   catalogPath,
   glossaryPath,
   architectureMdPath,
+  conventionsPath,
+  relConventions,
   relCatalog,
   relGlossary,
   relArchitectureMd,
@@ -2686,7 +2688,7 @@ function recordStartCommit(
 // 上下文文件收集
 // --------------------------------------------------------------------------
 
-function collectContextFiles(
+export function collectContextFiles(
   specLoader: SpecLoader,
   layout: RepoLayout,
   phase: Phase,
@@ -2830,10 +2832,11 @@ function collectContextFiles(
   }
 
   if (['coding', 'review', 'ut'].includes(phase) && featureSpec.contracts) {
-    const sourceFiles = specLoader.collectSourceFiles(projectRoot, featureSpec.contracts, '.ets');
+    const conventionsReview = phase === 'review' && fs.existsSync(conventionsPath(projectRoot));
+    const sourceFiles = specLoader.collectSourceFiles(projectRoot, featureSpec.contracts, conventionsReview ? undefined : '.ets');
     let count = 0;
     for (const [filePath, content] of sourceFiles) {
-      if (count >= 30) {
+      if (!conventionsReview && count >= 30) {
         files.push({
           label: '(truncated)',
           content: `... 还有 ${sourceFiles.size - count} 个文件未包含`,
@@ -2846,6 +2849,10 @@ function collectContextFiles(
   }
 
   if (phase === 'review') {
+    const conventions = conventionsPath(projectRoot);
+    if (fs.existsSync(conventions)) {
+      files.push({ label: relConventions(projectRoot), content: fs.readFileSync(conventions, 'utf-8') });
+    }
     const reviewReport = specLoader.loadFeatureDoc(projectRoot, feature, 'review-report.md');
     if (reviewReport) {
       files.push({ label: relFeatureArtifact(projectRoot, feature, 'review-report.md'), content: reviewReport });

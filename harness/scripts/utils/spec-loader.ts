@@ -13,6 +13,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
+import { TextDecoder } from 'util';
 import {
   Phase,
   PhaseRuleSpec,
@@ -184,6 +185,7 @@ export class SpecLoader {
       const contracts = this.loadYamlMappingOrNull<ContractsSpec>(contractsPath, shapeIssues);
       if (contracts) {
         normalizeContractsFiles(contracts, contractsPath, this.projectRoot, shapeIssues);
+        normalizeConventionsApplied(contracts, contractsPath, this.projectRoot, shapeIssues);
         normalizeModuleDependencies(contracts, contractsPath, shapeIssues);
         normalizeTraceability(contracts, contractsPath, shapeIssues);
         // P0-2：agent 常把集合字段写成 {}/""（非数组真值），下游 for..of/.filter 直接
@@ -453,7 +455,17 @@ export class SpecLoader {
 
       const fullPath = path.join(projectRoot, relativePath);
       if (fs.existsSync(fullPath)) {
-        result.set(relativePath, fs.readFileSync(fullPath, 'utf-8'));
+        if (filterExt) {
+          result.set(relativePath, fs.readFileSync(fullPath, 'utf-8'));
+        } else {
+          const bytes = fs.readFileSync(fullPath);
+          let content = '二进制资源：仅保留本文件路径引用，不作为源码文本注入。';
+          if (!bytes.includes(0)) {
+            try { content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); }
+            catch { /* 非 UTF-8 字节保留路径引用。 */ }
+          }
+          result.set(relativePath, content);
+        }
       }
     }
     return result;
@@ -647,6 +659,70 @@ function normalizeContractsFiles(
   }
 
   contracts.files = normalized;
+}
+
+function normalizeConventionsApplied(
+  contracts: ContractsSpec,
+  contractsPath: string,
+  projectRoot: string,
+  shapeIssues: string[],
+): void {
+  const raw = (contracts as unknown as Record<string, unknown>).conventions_applied;
+  if (raw === undefined) return;
+  if (!Array.isArray(raw)) {
+    shapeIssues.push(`${path.basename(contractsPath)} 的 \`conventions_applied\` 应为数组——已按空数组防崩处理`);
+    contracts.conventions_applied = [];
+    return;
+  }
+
+  const seen = new Set<string>();
+  const kept: NonNullable<ContractsSpec['conventions_applied']> = [];
+  raw.forEach((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      shapeIssues.push(`${path.basename(contractsPath)} 的 \`conventions_applied[${index}]\` 应为映射——条目已剔除`);
+      return;
+    }
+    const record = item as Record<string, unknown>;
+    const id = typeof record.id === 'string' ? record.id.trim() : '';
+    const locations = record.planned_locations;
+    if (!id || !Array.isArray(locations) || locations.length === 0) {
+      shapeIssues.push(`${path.basename(contractsPath)} 的 \`conventions_applied[${index}]\` 必须含非空 id 与 planned_locations——条目已剔除`);
+      return;
+    }
+    if (seen.has(id)) {
+      shapeIssues.push(`${path.basename(contractsPath)} 的 \`conventions_applied\` id 重复：${id}——重复条目已剔除`);
+      return;
+    }
+    const normalized: string[] = [];
+    let invalid = false;
+    locations.forEach((location, locationIndex) => {
+      if (
+        typeof location !== 'string' ||
+        !location.trim() ||
+        location.includes('\\') ||
+        /[*?\[\]{}]/.test(location)
+      ) {
+        invalid = true;
+        return;
+      }
+      try {
+        normalized.push(path.posix.normalize(validateProjectRelativePath(
+          projectRoot,
+          location.trim(),
+          `conventions_applied[${index}].planned_locations[${locationIndex}]`,
+        )));
+      } catch {
+        invalid = true;
+      }
+    });
+    if (invalid || normalized.length !== locations.length) {
+      shapeIssues.push(`${path.basename(contractsPath)} 的 \`conventions_applied[${index}].planned_locations\` 含绝对路径、..、反斜杠、glob 或非字符串——条目已剔除`);
+      return;
+    }
+    seen.add(id);
+    kept.push({ id, planned_locations: normalized });
+  });
+  contracts.conventions_applied = kept;
 }
 
 // ---------------------------------------------------------------------------

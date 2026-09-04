@@ -8,6 +8,12 @@ cases:
   - id: required-provider-missing
     mutator: remove-current-facts-provider
     expected_issue: blueprint_required_provider_missing
+  - id: conventions-provider-card-required-even-when-disabled
+    mutator: remove-conventions-provider
+    expected_issue: blueprint_conventions_provider_missing
+  - id: disabled-conventions-cannot-claim-available
+    mutator: claim-conventions-available-without-file
+    expected_issue: blueprint_conventions_provider_availability_mismatch
   - id: optional-provider-degradation-missing
     mutator: disable-contract-provider-without-disposition
     expected_issue: blueprint_optional_provider_degradation_missing
@@ -40,4 +46,7 @@ cases:
     expected_issue: blueprint_provider_requirement_invalid
   - id: static-provider-authority-rule-is-frozen
     mutator: tamper-provider-authority
+    expected_issue: blueprint_provider_authority_rule_mismatch
+  - id: conventions-provider-authority-rule-is-frozen
+    mutator: tamper-conventions-authority
     expected_issue: blueprint_provider_authority_rule_mismatch

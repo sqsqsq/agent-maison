@@ -548,6 +548,8 @@ placeholders:
     source: framework.config.json → paths.module_catalog
   GLOSSARY_PATH:
     source: framework.config.json → paths.glossary
+  CONVENTIONS_PATH:
+    source: framework.config.json → paths.conventions（缺失时默认 doc/conventions.md）
   EXTENSION_SKILL_SECTION:
     source: |
       由 render-agents-md.ts 读取 paths.extension_dir（默认 doc/extensions）：manifest 1.1 按

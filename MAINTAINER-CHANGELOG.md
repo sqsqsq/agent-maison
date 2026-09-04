@@ -11,6 +11,8 @@ Generated: 2026-09-03 · current window: `3.0.0`
 
 ## 3.1.0
 
+- **工程惯例 e4** — 交付 opt-in conventions 资产与策展入口，复用 P1/CU/review 链完成引用、覆盖台账和后置核对（2026-09-04）。
+
 - **android 工程适配** — 在 maison 3.1.0 窗口落地 Android 工程支持：新增 android-app profile（Gradle/AGP/JUnit 工具链）与一个全新的、与 profile 正交的「workspace 拓扑」维度（single_tree / binary_deps / source_overlay），与真实工程"自下而上 AAR 分层集成"的生产构建同构，不造平行构建体系。交付物 = 1 份 master .plan.md + 4 个 OpenSpec change。 [0/6 completed]
   - `android_工程适配_5e3400c3.plan.md`
 - **goal 旧基线读取器清理** — 在 3.1.0 窗口删除已由 run_created 时代边界隔离的 goal legacy 基线读取面；仅做兼容代码与对应测试清理，不引入新机制。 [0/4 completed]

@@ -465,6 +465,20 @@ providers:
     conflict_behavior: Preserve conflict as frontier or blocker.
     available: true
     writes: [questioning_process_evidence]
+  - provider_id: conventions-knowledge
+    definition: Applicable project conventions as stable knowledge inputs.
+    consumer: [blueprint-builder, app-design-lens, independent-design-questioning]
+    provider: static conventions knowledge reader
+    requirement: optional
+    authority_rule: Project conventions are stable knowledge input, not current-code authority.
+    source_rule: Applicable facts cite the configured conventions file and exact heading id.
+    missing_behavior: Record not_applicable when disabled; unknown or degraded when configured but unreadable.
+    replacement_behavior: Preserve fact and provenance protocol; stale affected P1 results.
+    exit_behavior: Drop temporary reads; retain canonical provenance.
+    conflict_behavior: Current code facts win; preserve the conflicting convention source ref.
+    available: false
+    missing_disposition: not_applicable
+    writes: [canonical_blueprint_input]
 
 discovery:
   source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5

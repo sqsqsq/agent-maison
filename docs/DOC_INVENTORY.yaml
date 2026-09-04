@@ -156,6 +156,22 @@ docs:
       - flow DAG ephemeral 或 coverage-evidence 契约变更
       - 「dag」三重含义澄清或索引-only 原则调整
 
+  - path: framework/docs/concepts/conventions.md
+    role: 工程惯例资产的职责边界、弱结构格式与消费闭环唯一人读 SSOT
+    audience: framework 维护者 / 在消费者工程策展与使用横切工程实践的开发者
+    sources:
+      - framework/harness/config.ts
+      - framework/specs/framework.config.schema.json
+      - framework/skills/project/conventions-bootstrap/SKILL.md
+      - framework/skills/project/component-design/SKILL.md
+      - framework/skills/feature/plan/SKILL.md
+      - framework/skills/feature/code-review/SKILL.md
+      - framework/harness/scripts/check-review.ts
+    update_triggers:
+      - conventions 条目机器字段或默认路径改变
+      - bootstrap 确认/去重纪律改变
+      - 蓝图、CU contracts 或 review 台账消费协议改变
+
   - path: framework/docs/concepts/terminology-guarding.md
     role: 术语守门设计与演进路线图（catalog + glossary + 三道 BLOCKER）
     audience: 想了解 framework 如何对抗"卡中心 → CardManager"类术语误映射的人

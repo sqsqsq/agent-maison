@@ -75,7 +75,8 @@ export const FRAMEWORK_GENERIC_BACKFILL_FIELDS: ReadonlyArray<BackfillField> = [
     note: 'lifecycle_hooks_enabled 未声明：回填 true（与默认 spec-driven workflow 期望一致）',
   },
 
-  // paths.* —— 与 config.ts DEFAULT_PATHS 严格对齐
+  // paths.* —— 与 config.ts DEFAULT_PATHS 严格对齐，但不含 opt-in 的
+  // paths.conventions：UPDATE-keep 不回填该键，运行时由 DEFAULT_PATHS 兜底。
   {
     path: 'paths.features_dir',
     defaultValue: DEFAULT_PATHS.features_dir,

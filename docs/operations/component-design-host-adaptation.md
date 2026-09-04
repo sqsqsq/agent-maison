@@ -173,6 +173,10 @@ projection: component-blueprint-review@1
 正文包含设计视图（含 `Applicability` 与 `Evolution impact` 两个**正交**维度）、运行时数据流、
 权威契约、跨视图关系、独立质询、准入与决策/缺口。
 
+启用工程惯例后，蓝图实际采用的 convention id/source_ref 会由同一 renderer 输出为
+`Adopted conventions` 节；仍经同一 `--projection` 校验，宿主不补造另一份惯例正文。
+未启用时只有 canonical `providers[]` 中的 `conventions-knowledge` 卡诚实标记不可用，投影不凑空节。
+
 ### 4.3 铁律：Story 投影零新事实
 
 - 投影是 canonical YAML 的**单向确定性派生物**。宿主可以重排版式、翻译、套模板生成 Story

@@ -57,6 +57,16 @@ architecture_impact:
 
 ---
 
+## 遵循的既有惯例（仅惯例文件存在时输出）
+
+> 惯例文件不存在时整节省略。只列本次适用项；有所引蓝图时须与蓝图适用惯例集合一致。
+
+| 惯例 id | 范例路径 | 计划落位 |
+|---|---|---|
+| `{convention-id}` | `{golden-example}` | `{project-relative-file-or-directory}` |
+
+---
+
 ## 1. 模块架构图
 
 ```mermaid

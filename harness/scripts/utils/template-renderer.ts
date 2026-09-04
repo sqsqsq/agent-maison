@@ -5,7 +5,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY } from '../../config';
+import { DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY, DEFAULT_PATHS } from '../../config';
 import {
   formatExtensionSkillSectionMarkdown,
   loadReservedBridgeIds,
@@ -106,6 +106,7 @@ export interface BuildAgentsTemplateVarsOptions {
   architectureSummary?: string;
   agentAdapter?: string;
   paths?: {
+    conventions?: string;
     architecture_md?: string;
     module_catalog?: string;
     glossary?: string;
@@ -216,6 +217,9 @@ export function buildAgentsTemplateVars(
       paths.module_catalog ?? cfgPaths.module_catalog ?? 'doc/module-catalog.yaml',
     ),
     GLOSSARY_PATH: String(paths.glossary ?? cfgPaths.glossary ?? 'doc/glossary.yaml'),
+    CONVENTIONS_PATH: String(
+      paths.conventions ?? cfgPaths.conventions ?? DEFAULT_PATHS.conventions,
+    ),
     FEATURES_DIR: String(paths.features_dir ?? cfgPaths.features_dir ?? 'doc/features'),
     EXTENSION_SKILL_SECTION: formatExtensionEntrySection(
       formatExtensionSkillSectionMarkdown(targets, bundle.manifestVersion === '1.1'), bundle, opts.projectRoot,
@@ -236,6 +240,7 @@ export interface LegacyRenderEnv {
   architecture_md_path: string;
   module_catalog_path: string;
   glossary_path: string;
+  conventions_path?: string;
   features_dir: string;
   module_inner_layers_csv: string;
   cross_module_exports_file: string;
@@ -259,6 +264,7 @@ export function legacyRenderEnvToTemplateVars(env: LegacyRenderEnv): TemplateVar
     ARCHITECTURE_MD_PATH: env.architecture_md_path,
     MODULE_CATALOG_PATH: env.module_catalog_path,
     GLOSSARY_PATH: env.glossary_path,
+    CONVENTIONS_PATH: env.conventions_path ?? DEFAULT_PATHS.conventions!,
     FEATURES_DIR: env.features_dir,
     EXTENSION_SKILL_SECTION: env.extension_skill_section ?? '',
     MODULE_INNER_LAYERS_CSV: env.module_inner_layers_csv,

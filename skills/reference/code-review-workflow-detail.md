@@ -15,6 +15,24 @@
 
 **在线高保真**：review harness 消费 lock/快照做 fidelity 治理签字（ratchet/deferrals），不对图、不联网；像素对图仅在 device-testing。
 
+## 工程惯例核对（文件存在时）
+
+输入参数是**目标文件集合**；当前 Feature 模式由规范化 `contracts.files` 提供，不以 diff 定义范围。
+按 `paths.conventions`（缺失键使用框架默认值）读取全文，独立于 plan 的声明逐条执行：
+
+1. 判适用性，再核对目标代码是否符合；gate 索引卡不重判，固定 `GATE_DELEGATED`。
+2. 对 `contracts.conventions_applied` 核对“声明 vs 实现”；每个 planned location 须按完整路径段命中目标文件。
+3. CU 有所引蓝图时，蓝图 convention facts 中的 id 必须已声明，或在台账明确判 `NOT_APPLICABLE`；不得无声丢弃设计依据。
+4. 适用条目必须打开 Golden Example；文件不存在或 `#symbol` 文本找不到 → WARN，不做 hash/drift。
+5. 仅新代码条目：未跟踪/未提交行为新；`git blame` 日期 ≥ 生效日为新，早于生效日为 legacy。
+   legacy 违反只列 INFO advisory；无 blame/无历史记 `NOT_ASSESSED` advisory，不得阻断。
+
+报告追加「工程惯例覆盖台账」：每个 `##` id 恰一行，列为 `惯例 id | 判定 | 依据`。
+判定仅 `PASS / VIOLATION / GATE_DELEGATED / NOT_APPLICABLE / NOT_ASSESSED`；
+VIOLATION 必须在问题清单有引用同 id 与范例路径的条目（legacy 违反仍用 VIOLATION，但问题严重级别仅 INFO）。
+文件不存在且无声明不产出台账；文件缺失但声明非空必须报告悬空契约，不得按未启用跳过。
+review 只能建议将重复意见升格为惯例，写入仍由 `/conventions-bootstrap` 逐条确认。
+
 ## Step 2 审查子维度完整检查项
 
 **2.1 架构合规性（BLOCKER）**：①外层依赖合规——逐文件检查 import/包依赖是否违反 `outer_layers[].can_depend_on` 与同层 `intra_layer_deps` 策略；②模块内分层——验证 import 遵循 profile 声明的内层顺序；③文件完整性——对照 `contracts.yaml > files` 检查每个文件是否存在；④资源引用完整性——检查资源引用调用的 key 是否在资源定义中存在。
