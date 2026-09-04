@@ -245,11 +245,15 @@ The closure finalizer MUST treat `.current-phase.json` write failure as a failed
 - **THEN** the finalizer MUST stop before canonical summary commit
 
 ### Requirement: Harness output includes deterministic next-step guidance
-Feature-scope phase checks SHALL append a bounded next-step block outside the existing `HARNESS_SUMMARY` machine block. Global, sentinel `_global`, and `--adhoc-correction` paths SHALL remain silent.
 
-#### Scenario: Feature phase check completes
-- **WHEN** a supported feature phase reaches harness exit
-- **THEN** output SHALL include the current feature/phase/mode status and the assessment recommendation without changing the machine block
+Feature-scope phase checks SHALL append a bounded next-step block outside the `HARNESS_SUMMARY` machine block and SHALL end with a single `NEXT:` line naming the action to take, the check id and the path or step to change. Failures-only output SHALL remain the default.
+
+Enforcement: `harness/harness-runner.ts`, `harness/scripts/assess.ts`
+
+#### Scenario: A failing run tells the agent what to do
+
+- **WHEN** a feature phase check exits with one BLOCKER
+- **THEN** the last line SHALL read `NEXT: 修 <check id> 见 <path或step>，然后重跑本 harness`
 
 ### Requirement: The fidelity pregate re-verifies the routing SSOT instead of first-producing decisions
 
@@ -752,27 +756,25 @@ writeRunSummary MUST 拆为 base 与 closure patch 两段：base summary MUST �
 
 ### Requirement: check-receipt reads current-run base summary
 
-新格式（receipt_schema 2.0）下 check-receipt MUST 以本次 base summary 为唯一机器事实源：MUST 校验 feature/phase 精确匹配、verdict=PASS 且 blocker_count=0、gate_fingerprint 与当前门禁集重算一致；summary 缺失或不可解析 MUST 产 BLOCKER（禁止静默）。
+Closure SHALL read the current run's base summary, the script verdict and the resolved verifier policy directly. The receipt SHALL NOT be an input to closure and SHALL NOT enter the freshness hash. `check-receipt` SHALL remain as a read-only re-check of the same facts. feature/phase match, `verdict=PASS`, `blocker_count=0` and gate-fingerprint recomputation SHALL be judged from the base summary.
 
-#### Scenario: 旧 PASS summary 冒充
-- **WHEN** 本次 harness FAIL（base summary verdict=FAIL）而磁盘存在上次 PASS 的旧 summary
-- **THEN** check-receipt 以本次 base 为准判 FAIL；伪造 gate_fingerprint 的旧件因指纹重算不一致被拒
+Enforcement: `harness/scripts/check-receipt.ts`, `harness/scripts/utils/phase-closure-finalizer.ts`, `harness/harness-runner.ts`
 
-#### Scenario: 他 feature summary 串目录
-- **WHEN** receipt 声明 feature=A 而 canonical path 下 summary.feature=B
-- **THEN** check-receipt BLOCKER（feature/phase 精确匹配失败）
+#### Scenario: A missing receipt does not block closure
 
-> **Enforced by:** `harness/scripts/check-receipt.ts`
+- **WHEN** the base summary is PASS with zero blockers and the verifier policy is satisfied
+- **THEN** the phase closes without any agent-written receipt
 
 ### Requirement: Slim receipt keeps only non-derivable self-attestation
 
-新模板 MUST 删除 script_harness 镜像块、trace_json 块、self_check q1/q3；MUST 保留 agent 身份、claimed_completion_at/commit_sha、verifier 摘录、反假设 checkbox、testing_run_artifacts。骨架 MUST 仅在 verdict=PASS 且 receipt 缺失时幂等生成，checkbox 全未勾，且 MUST NOT 构成闭环。
+The receipt SHALL be a machine-generated read-only projection of closure facts. It SHALL contain no agent-filled fields: no agent model, timestamps, commit sha, verifier paths, testing artifact paths or anti-assumption checkboxes. Agent remarks SHALL go to `<phase>/notes.md`, which is non-gating.
 
-#### Scenario: 骨架未签不闭环
-- **WHEN** runner 生成瘦身骨架而 agent 未勾反假设 checkbox
-- **THEN** check-receipt FAIL，phase 不闭环；agent 补签后 PASS
+Enforcement: `harness/templates/phase-completion-receipt.md`, `harness/scripts/check-receipt.ts`, `harness/harness-runner.ts`
 
-> **Enforced by:** `harness/templates/phase-completion-receipt.md`, `harness/scripts/check-receipt.ts`
+#### Scenario: Editing notes never stales a closure
+
+- **WHEN** the agent appends a remark to `<phase>/notes.md` after closure
+- **THEN** no manifest becomes stale and no phase reopens
 
 ### Requirement: Process-integrity SSOT stays runner-side
 
@@ -826,14 +828,14 @@ return `needs_adapter_choice` when multiple; `no_materialized_adapter` when none
 
 ### Requirement: Review closure produces a source-tree attestation that testing reconciles fail-closed
 
-At the review four-artifact closure validation point (never from a standalone check-review run), the harness SHALL emit `review-closure-attestation.json` binding: contracts.yaml self hash and normalized files list; the full product source-tree inventory from profile-aware `discoverProductSourceRoots()` (union of outer-layer modules, build-profile modules, module-catalog package paths, profile standard roots, and residual src/main candidates; excluding test dirs, build outputs, framework/, doc/) with per-file sha256 and aggregate hash; review-report and verifier-report hashes; gate fingerprint; run/attempt identity. Two fail-safes: a discovered product source file belonging to no inventory root SHALL FAIL; an empty inventory for a project type expected to have product sources SHALL FAIL. check-testing SHALL reconcile the current tree against the attestation-frozen inventory: any added/modified/deleted non-test file → BLOCKER FAIL directing a review-closure re-run; a missing attestation SHALL FAIL with no grace window.
+At review closure the harness SHALL still emit `review-closure-attestation.json` with the source-tree inventory. Testing reconciliation SHALL classify each drifted file by risk tier and report the single verification the tier requires; an unmet tier SHALL be a WARN carrying the honest state, not a BLOCKER, and SHALL NOT demand a full review rerun.
 
-Enforcement: `harness/scripts/utils/closure-attestation.ts`（新增）, `harness/scripts/check-receipt.ts`（review 闭环点）, `harness/scripts/check-testing.ts`
+Enforcement: `harness/scripts/utils/closure-attestation.ts`, `harness/scripts/check-receipt.ts`, `harness/scripts/check-testing.ts`
 
-#### Scenario: fast-path constant added after review is caught regardless of contracts registration
+#### Scenario: A default-on behavior switch is still caught by its own gate
 
-- **WHEN** a new source file or a modified constant (e.g. DEVICE_TEST_FAST_PATH=true) lands in a product directory after review closure, whether or not contracts.yaml lists it
-- **THEN** testing reconciliation SHALL FAIL and demand a fresh review closure
+- **WHEN** a fast-path constant lands after review closure
+- **THEN** `product_behavior_switch_scan` SHALL still block it; the attestation gate itself reports the tier
 
 ### Requirement: Product behavior switches default-on are blockers with coordinate-bound waivers
 
@@ -1273,21 +1275,19 @@ Enforcement: `harness/scripts/check-testing.ts`, `harness/scripts/utils/p0-seman
 
 ### Requirement: Acceptance coverage is computed from checkpoint requirements and StepResult status
 
-For native runs, the trace SHALL also be bound to the actual derived plan through the existing run/identity receipt: `trace.artifacts.plan`, top-level plan path/SHA, derived-plan path/SHA, and trace path/SHA SHALL identify the same run. The ordered planned-step count, `index`, and `kind` SHALL match that derived plan case-by-case; at most one `expected_check` StepResult MAY appear as the final tail row. A newer or edited derived plan MUST NOT be used to reinterpret an existing native trace.
+For native runs the trace SHALL be bound to the actual run-copy derived plan. A case enters the P0 verified numerator only if execution completed, verification passed, evidence is complete and EVERY occurrence of each mapped checkpoint has a passed action and passed required/forbidden bare by_id StepResults in its own shared injection interval. A later occurrence's assertions SHALL NOT prove an earlier trigger, and checking only the first occurrence SHALL NOT prove the repeated flow. Step index and kind SHALL match the bound plan. For scroll/swipe with null native selector, binding SHALL use step kind/order and the local post-state identity assertions without rewriting the action. Accounting SHALL retain the existing total/verified_pass/unsupported_gap/failed/verified_coverage fields.
 
-Maison SHALL compute acceptance/P0 coverage from the plan's checkpoint requirements and authoritative StepResults. A case enters the acceptance pass numerator only if `execution=completed`, `verification=passed`, `evidence=complete`, all `required_element_ids` map to passed assertion Steps, and all `forbidden_element_ids` map to passed absence assertions. `verification=inconclusive` or `evidence=incomplete` SHALL remain in the uncovered denominator. A case with no assertion Step and no checked expected result SHALL NOT pass. This rule is shared by ordinary interactive and goal testing; goal-only identity and run binding are additional gates and SHALL NOT be removed.
+#### Scenario: A failed second occurrence cannot be hidden
+
+- **WHEN** the first trigger passes but the second action or its identity assertion fails, is missing, or only has evidence in another occurrence's interval
+- **THEN** P0 coverage SHALL fail even if CaseResult summary fields claim passed
 
 Enforcement: `harness/scripts/utils/p0-semantic-gates.ts`, `harness/scripts/check-testing.ts`, `harness/scripts/utils/quality-axes.ts`, `harness/scripts/utils/summary-blockers.ts`
 
-#### Scenario: Forbidden evidence is required
+#### Scenario: A scroll checkpoint binds through post-state
 
-- **WHEN** all required presence assertions pass but a checkpoint's forbidden element has no passed absence assertion
-- **THEN** the case SHALL remain outside the acceptance pass numerator
-
-#### Scenario: Inconclusive or incomplete evidence is not a pass
-
-- **WHEN** a case has `verification=inconclusive` or `evidence=incomplete` despite an old status of `通过`
-- **THEN** the case SHALL be counted as uncovered and SHALL NOT contribute `verification=passed`
+- **WHEN** the checkpoint action is `scroll` and the trace scroll step has `selector: null` but the injected `wait_for by_id` after it passed
+- **THEN** the case SHALL count as verified for that checkpoint
 
 ### Requirement: Testing failure routing consumes the frozen Hylyre taxonomy
 
@@ -1407,21 +1407,14 @@ Enforcement: `profiles/hmos-app/harness/selector-contract.ts`, `harness/scripts/
 
 ### Requirement: Report-only reconciliation fully recomputes testing projections without a device
 
-For native `schema_version=0.4-p0`, the timing producer SHALL sum each case's `steps[].duration_ms` and set `step_count` to the native ledger row count; log `cost:` allocation is permitted only for legacy schemas. Blocked, skipped, and trailing `expected_check` rows SHALL remain in the native case duration calculation.
+`--report-reconcile-only` SHALL read the existing authoritative trace, plan, timing, metadata and current inputs, regenerate the machine report, and recompute report/static gates, summary, quality axes and repair candidates without invoking hvigor, hdc, Hylyre, device or provider execution, visual capture or lifecycle hooks. The verifier subject SHALL follow the reviewed material only; a regenerated report changes the subject only when its machine content changed.
 
-Testing SHALL expose `--report-reconcile-only` as a testing-specific mode that reads only the existing authoritative trace, test plan, final device-test timing, build/install/run metadata, and current report inputs. It SHALL not invoke hvigor, hdc, Hylyre, any device/provider execution, visual capture, or executable lifecycle hook; it SHALL not create a new phase or sidecar. The mode SHALL rerun the complete report/static checks and use the existing writers to fully recompute `script-report`, summary, quality axes, and repair candidates rather than patching selected fields. The authoritative trace bytes SHALL remain unchanged. Before the writers consume the inputs, the mode SHALL close the same final run using existing fields: build/install `hapPath` and current HAP content fingerprint, build/install/run timestamps and `run_ended_at`, `timing.generated_at`, build/install reused values, trace feature, exact trace/timing case-id sets, run `trace_path`/`report_path`/`log_path`, and every report pipeline/case duration value. Report duration fields SHALL use exact integer milliseconds in `Nms` form (a valid comma-grouped form such as `1,234ms` MAY be read for legacy reports); a skip or blocked case already present in trace/timing SHALL use `0ms`, while `—` is reserved for an explicit skip not present in trace/timing. A missing or mismatched field SHALL FAIL closed. Report generation SHALL count skips in the correct denominator, use final build/install reused state and final timing, and backfill every case duration from the final run.
+Enforcement: `harness/scripts/check-testing.ts`, `harness/harness-runner.ts`, `profiles/hmos-app/harness/test-report-writer.ts`
 
-Enforcement: `harness/scripts/check-testing.ts`, `harness/harness-runner.ts`, `harness/scripts/utils/summary-blockers.ts`, `harness/scripts/utils/repair-candidates.ts`, `harness/scripts/utils/testing-trace-gates.ts`, `skills/reference/device-testing-workflow-detail.md`
+#### Scenario: Notes do not rotate the subject
 
-#### Scenario: Reconciliation uses no device tools or lifecycle hooks
-
-- **WHEN** an existing run has authoritative trace, plan, timing, report, and build/install/run metadata
-- **THEN** `--report-reconcile-only` SHALL complete report/static reconciliation without invoking hvigor, hdc, Hylyre, device/provider execution, visual capture, or any executable lifecycle hook
-
-#### Scenario: Reconciliation preserves the trace and recomputes outputs
-
-- **WHEN** the report or summary contains stale derived values before report-only reconciliation
-- **THEN** the mode SHALL leave trace bytes identical, reject any cross-run artifact combination, and rewrite the complete derived report/summary/quality axes from the authoritative inputs
+- **WHEN** only `testing/notes.md` changed since the last full run
+- **THEN** report-only reconciliation SHALL leave the verifier subject unchanged
 
 ### Requirement: Native StepResult evidence retires the telemetry bridge in stages
 
@@ -1472,35 +1465,14 @@ Enforcement: `harness/scripts/utils/test-plan-derive-hint.ts`, `harness/scripts/
 
 ### Requirement: Non-Hylyre channel cases carry a machine evidence obligation
 
-A test case whose `execution_channel` is not `hylyre` SHALL still owe machine evidence, and SHALL remain in the pass-rate denominator as FAIL/UNVERIFIED until that evidence closes. A channel declaration is a dispatch fact, never a pass.
-
-For `visual`, the obligation MAY close only through a binding whose every hop is an id-to-id lookup over existing structured artifacts: the case's structured acceptance references in the top-level plan, then those acceptance criteria's structured `checkpoint.pre_screen`/`post_screen`, then the same screen ids in the feature's authoritative visual-diff report. Maison MUST NOT infer the binding from case names, notes, linked flows, or report prose, and a missing hop SHALL be unbound rather than covered. The report SHALL be read from the feature's own visual artifact directory, validated by the existing visual-diff validator, and each bound screen SHALL additionally pass the existing evaluated-screenshot-hash, build-fingerprint, and evaluation-freshness checks; a screen whose recorded verdict cannot be re-verified against the on-disk screenshot and the current build SHALL NOT close the obligation. This obligation SHALL be evaluated **after** the visual capture and the visual gate itself, and SHALL consume that gate's actual verdict for the current run: an obligation evaluated before its evidence exists can only consume a stale artifact and SHALL NOT be treated as proof. Maison MUST NOT introduce a second, weaker reader of the visual report.
-
-For `provider:<capability-id>`, the obligation SHALL remain fail-closed until the provider itself emits per-test-case results — at minimum a test case id, a machine-decided outcome, and a re-checkable artifact reference bound to the current run identity. Feature-level capability resolution state SHALL NOT close it: that a capability resolved does not prove that a given case executed and passed.
-
-For `manual`, the obligation SHALL remain permanently fail-closed by design. Human confirmation, a confirmation receipt, a quality receipt, or a manual resume SHALL NOT satisfy it.
+A test case whose `execution_channel` is not `hylyre` SHALL still owe machine evidence; the obligation SHALL be projected through the tri-state. For `visual`, the obligation MAY close through the existing id-to-id binding into `visual-diff.json`. For `manual`, the case SHALL be `unsupported_gap` only when its `gap_reason` is one of the machine-proven no-primitive classes. For `provider:<capability-id>`, the case SHALL be `unsupported_gap` only when the capability is registered but inactive/SKIP; an unregistered provider or a registered active provider without a per-TC producer SHALL be `invalid_test` before device execution. `unsupported_gap` cases stay in the denominator, never count as PASS, and never block ordinary completion.
 
 Enforcement: `harness/scripts/check-testing.ts`, `harness/scripts/utils/execution-channel-evidence.ts`, `harness/scripts/utils/execution-channel.ts`
 
-#### Scenario: A visual case closes only through the full id chain over fresh evidence
+#### Scenario: A proven gap completes with disclosure
 
-- **WHEN** a `visual` case declares structured acceptance references whose checkpoints declare screens, the current-run visual gate passed, and every bound screen in the feature's visual-diff report carries a re-verifiable passing verdict for the current build
-- **THEN** the obligation SHALL close for that case, and the closure SHALL cite the case, the acceptance ids, and the screen ids
-
-#### Scenario: A visual case with an unverifiable screen verdict stays uncovered
-
-- **WHEN** a bound screen's recorded verdict cannot be re-verified — the evaluated screenshot hash is absent or no longer matches the on-disk file, the evaluated build fingerprint is not the current build, or the evaluation is marked invalidated
-- **THEN** the obligation SHALL NOT close, and the failure SHALL name the screen and the specific re-verification that failed
-
-#### Scenario: The obligation is not evaluated before its evidence exists
-
-- **WHEN** the channel evidence obligation would run before the visual capture and visual gate of the current run
-- **THEN** it SHALL NOT close from any pre-existing artifact, because such an artifact cannot prove the current run
-
-#### Scenario: A resolved capability does not close a provider case
-
-- **WHEN** a `provider:<capability-id>` case's capability resolves successfully but no per-test-case provider result exists
-- **THEN** the obligation SHALL remain unbound and the case SHALL stay FAIL/UNVERIFIED
+- **WHEN** a P1 frame-rate case is declared with `gap_reason: perf_sampling` and no capability provides sampling
+- **THEN** the run MAY complete as `COMPLETE_WITH_GAPS` with the case listed as unsupported_gap, not as PASS and not as a blocker
 
 ### Requirement: The Hylyre channel compiles all-or-nothing and the derive writer owns no skip decision
 
@@ -1527,28 +1499,14 @@ Enforcement: `harness/scripts/utils/derived-hylyre-plan.ts`, `harness/scripts/ch
 
 ### Requirement: The manual channel keeps an open obligation and cannot close a quality gate
 
-`manual` SHALL mean the test obligation currently has no machine evidence carrier. Maison SHALL NOT provide a manual pass writer, `confirmed_by`, human quality receipt, or manual resume that closes testing for the run. Any case declared `manual` SHALL remain in the denominator as FAIL/UNVERIFIED, and the feature's testing verdict SHALL NOT reach PASS while such a case exists. This is frozen design rather than an executor defect, and the guidance SHALL state it plainly. A human observation MAY become correction input for a later phase, but never evidence that closes this run.
-
-`visual` is intended to route into the existing visual capture/diff evidence path and `provider:<capability-id>` into the existing capability registry; neither may pass without its own machine evidence. A registered capability whose provider is missing or cannot be resolved SHALL surface as an explicit capability gap and SHALL NOT be converted into a skip; an id absent from the capability registry is a `plan_contract` BLOCKER at declaration time and never reaches capability resolution.
-
-Because non-Hylyre cases are deliberately excluded from the derived/trace/timing exact sets, they SHALL still be adjudicated by an explicit obligation carrier rather than by a self-reported report row. Until a per-case evidence binding exists for a channel — a machine mapping from the case to its visual target or to its capability evidence — every case on that channel SHALL remain in the denominator as FAIL/UNVERIFIED. Fail-closed is required here: a channel with no binding MUST NOT be treated as passed, and the gap SHALL be reported as a missing binding rather than as an executor defect.
+`manual` SHALL mean the obligation currently has no machine evidence carrier. Maison SHALL NOT provide a manual pass writer, `confirmed_by`, human quality receipt or manual resume. A `manual` case SHALL be classified by the tri-state: `unsupported_gap` when its reason is machine-proven, `invalid_test` when the current step primitives could express it. It SHALL never count as PASS; it SHALL NOT keep the feature from normal completion when it is a proven gap.
 
 Enforcement: `harness/scripts/check-testing.ts`, `harness/scripts/utils/quality-axes.ts`, `harness/capability-registry.ts`
 
-#### Scenario: A manual case keeps the feature out of PASS
+#### Scenario: A manual case that Hylyre could run is rejected before the device
 
-- **WHEN** every other case passes and one case is declared `manual`
-- **THEN** testing SHALL remain FAIL/UNVERIFIED for the feature and no writer SHALL accept a human confirmation as this run's evidence
-
-#### Scenario: A channel without a per-case evidence binding cannot pass
-
-- **WHEN** a case is declared `visual` or `provider:<capability-id>` and no machine binding proves that case's own evidence
-- **THEN** it SHALL stay in the denominator as FAIL/UNVERIFIED and SHALL NOT be closed by a report row that claims it passed
-
-#### Scenario: A missing provider is a capability gap, not a skip
-
-- **WHEN** a case declares `provider:<capability-id>` for a registered capability whose provider cannot be resolved
-- **THEN** the run SHALL report an explicit capability gap and SHALL NOT rewrite the case as skipped
+- **WHEN** a manual case's steps are all expressible with existing step primitives
+- **THEN** the static check SHALL report `invalid_test` and device execution SHALL not start
 
 ### Requirement: Coverage and report-only reconciliation are channel-precise
 
@@ -1725,24 +1683,14 @@ harness-runner MUST 按 feature 的 track（经 C0 `resolvePhaseChain`）过滤�
 
 ### Requirement: Goal-env source-mutation gating shares the review-closure baseline and never trusts self-reported approvals
 
-In the goal orchestration environment, the UT source-mutation gate SHALL judge drift against the review closure attestation baseline through the same reconciliation and classification used by the runner, never against the run-start diff: legitimate coding-phase changes are outside the adjudication domain. Agent-written gap-notes and preauthorization SHALL remain provenance only. Any post-review protected-source drift SHALL fail the current invocation, invalidate affected closure trust, and route through the responsible-phase write-boundary/backtrack contract; a missing or corrupt review attestation SHALL fail closed without a run-start fallback. These blockers MUST NOT be registered `human_only` or released by a fingerprint-matching receipt. The non-goal path SHALL use the same machine boundary when invocation attribution is available and otherwise fail closed for owner revalidation.
+In the goal environment the UT gate SHALL judge drift against the review closure attestation through the shared reconciliation and SHALL project the same tiered outcome as direct mode; self-reported approvals SHALL still carry no weight.
 
-Enforcement: `harness/scripts/check-ut.ts`, `harness/scripts/utils/mutation-authorization.ts`, `harness/scripts/utils/goal-failure-classifier.ts`, `harness/scripts/goal-runner.ts`
+Enforcement: `harness/scripts/check-ut.ts`, `harness/scripts/utils/mutation-authorization.ts`, `harness/scripts/utils/goal-failure-classifier.ts`
 
-#### Scenario: legitimate coding work is not flagged by the UT gate
+#### Scenario: Goal-env drift is tiered, not halted
 
-- **WHEN** coding legitimately changed 36 files before review closure and only 1 file drifted after review
-- **THEN** the goal-env gate SHALL flag only the 1 post-review drift as `goal_post_review_source_mutation_unresolved` and the 36 coding changes SHALL not block
-
-#### Scenario: the self-signed seam no longer whiplashes harness-PASS into runner-HALT
-
-- **WHEN** an agent registers its own seam in gap-notes and modifies protected source after review closure in a goal run
-- **THEN** the harness gate itself SHALL FAIL with `goal_post_review_source_mutation_unresolved` instead of passing on the self-approval, and runner reconciliation SHALL invalidate trust and route to the responsible owner
-
-#### Scenario: a deleted attestation cannot be washed through a fallback baseline
-
-- **WHEN** the review closure attestation is missing while a goal run reaches ut
-- **THEN** the gate SHALL fail closed as `goal_review_closure_baseline_unavailable` without computing a run-start diff or consulting gap-notes
+- **WHEN** one file drifted after review in a goal run
+- **THEN** the gate SHALL report the file's tier and required verification instead of an unresolved halt
 
 ### Requirement: UT scope is independent of Git staging and honest about feature ownership
 
@@ -2030,66 +1978,14 @@ Enforcement: `harness/scripts/utils/spec-loader.ts`, `harness/scripts/utils/cont
 
 ### Requirement: Direct-mode UT source-mutation gating is attestation-first and never accepts partial closure evidence as a downgrade licence
 
-Outside the goal orchestration environment, the UT source-mutation gate SHALL select its baseline by **baseline availability**, not by orchestration identity. It SHALL first determine whether the review phase is **formally closed** — the review `summary.json` satisfying `schema_version == "1.2"` AND `closure_status == "closed"` AND `closure_commit.schema_version == "1.0"` — and only then consult the review closure attestation. This order MUST NOT be inverted: the attestation is written before the final summary rename, so a crashed closure can leave an orphan attestation whose presence proves nothing about closure, and the orphan's **contents** MUST NOT be read or trusted.
+Outside the goal environment the UT gate SHALL still select its baseline by attestation availability and reconcile drift by per-file content hash. Its outcome SHALL be reclassification and tiered verification: production source changed during UT SHALL be reported as a coding change routed to compile and the related tests, with WARN and honest status, never a permanent BLOCKER. Unavailable closure evidence SHALL be reported as `review_closure_baseline_unavailable` WARN.
 
-When review is formally closed and the attestation is readable, the gate SHALL adjudicate post-review drift by per-file content hash reconciliation and SHALL NOT depend on git commit state: coding-phase changes that the closed review already covered are outside the adjudication domain regardless of whether they were ever committed, and committing a post-review source edit SHALL NOT remove it from the drift set.
+Enforcement: `harness/scripts/check-ut.ts`, `harness/scripts/utils/mutation-authorization.ts`
 
-The gate SHALL fail closed with `review_closure_baseline_unavailable`, without falling back to any git diff and without consulting gap-notes, user replies or any authorization list, whenever the closure evidence is **partial**: review formally closed but the attestation missing or unreadable; the closure state unreadable or unparseable; or a review closure attestation present on disk while the summary is missing, `open`, or legacy. The presence of the attestation file is evidence that this feature has already run the review closure machinery, so a summary that is subsequently absent or downgraded MUST NOT be interpreted as "this project never closed review". Without this rule, deleting `review/reports/summary.json` after a post-review source edit is committed silently downgrades the gate to the commit-blind working diff and passes, and the upstream verdict gate skips absent summaries as well, so nothing downstream catches it.
+#### Scenario: UT touches production code
 
-Presence probes for these artifacts MUST distinguish "absent" from "could not be determined". `fs.existsSync` returns `false` for `EACCES`/`ENOTDIR`, and Windows reports both a file in the middle of a path and a dangling junction as `ENOENT`, so a probe SHALL resolve the absolute path top-down from the filesystem root — the report and receipt directory patterns may resolve outside the project root, so no in-project/out-of-project split may reintroduce single-shot probing — SHALL `lstat` each segment before following any link, and SHALL classify a non-directory path segment, a non-file target, an unresolvable link target, or any non-`ENOENT` error as unverifiable rather than absent. A review closure attestation that parses as JSON but whose `inventory.roots`/`inventory.files` are not well formed SHALL also be reported as an unavailable baseline rather than reaching reconciliation and surfacing as a generic framework fault.
-
-The git-diff fallback SHALL be reserved for the case where **no review closure evidence is observable on disk** — no attestation together with a summary that is absent, `open`, or legacy — and for profiles that explicitly disable the review phase. An `open` summary without an attestation is a normal state, not an error: the default workflow lets review and UT proceed in parallel. In that domain the gate SHALL retain the pre-existing behavior and SHALL state the baseline-degradation reason in its failure details.
-
-This requirement is scoped to *partial* evidence. Observability is the honest limit: deleting **every** review closure artifact leaves nothing to observe and still reaches the fallback, and the default workflow deliberately allows review and UT to proceed in parallel, so the absence of a summary cannot be treated as an error on its own. Defending against wholesale deletion of all evidence requires a DAG change or a trust anchor outside the workspace and is explicitly out of scope here.
-
-Post-review drift SHALL be reported under the existing `ut_no_src_mutation` id with `failure_kind` `post_review_source_drift` and MUST attribute the finding as post-review source drift rather than as authorship by the UT phase. Its guidance SHALL offer exactly two routes — return the change to coding and re-close review (which refreshes the baseline), or restore the reviewed file content from local history/backup and **verify** it against the attested sha256 — and SHALL NOT present the attestation as a source of file content, nor instruct anyone to commit coding artifacts, widen the diff base, or obtain an approval. The attestation stores `{path, sha256}` only, so it can confirm a restored file but cannot reconstruct one.
-
-Enforcement: `harness/scripts/check-ut.ts`, `harness/scripts/utils/source-drift-facts.ts`, `harness/scripts/utils/closure-attestation.ts`, `harness/scripts/utils/git-diff.ts`
-
-#### Scenario: Uncommitted coding artifacts do not block a UT run that only wrote tests
-
-- **WHEN** review is formally closed over a workspace holding never-committed coding artifacts and the UT phase only added files under the test subtree
-- **THEN** the gate SHALL PASS against the attestation baseline without requiring any commit, and SHALL report the attestation as the baseline instead of a git `baseRef`
-
-#### Scenario: Committing a post-review source edit does not wash it out
-
-- **WHEN** the UT phase modifies a protected product source file after review closure and then commits it
-- **THEN** the gate SHALL still FAIL with `post_review_source_drift` and list the file, because the content-hash baseline does not read git state
-
-#### Scenario: Deleting the review summary does not downgrade the gate
-
-- **WHEN** review closed, a post-review source edit was committed, and `review/reports/summary.json` is then deleted while the attestation remains on disk
-- **THEN** the gate SHALL FAIL with `review_closure_baseline_unavailable` instead of computing a working diff that cannot see the committed edit
-
-#### Scenario: A deleted attestation under a closed review fails closed
-
-- **WHEN** review is formally closed but `review-closure-attestation.json` is missing or unreadable
-- **THEN** the gate SHALL FAIL with `review_closure_baseline_unavailable` and SHALL NOT compute a run-start/working diff or consult gap-notes
-
-#### Scenario: An orphan attestation from a crashed closure is neither trusted nor treated as a downgrade licence
-
-- **WHEN** `review-closure-attestation.json` exists while the review summary is still `open` or has a legacy schema
-- **THEN** the gate SHALL NOT read the orphan's inventory and SHALL NOT fall back to git either; it SHALL fail closed and point at re-running the review closure
-
-#### Scenario: An unverifiable closure state is not resolved by guessing
-
-- **WHEN** the review summary cannot be read or parsed
-- **THEN** the gate SHALL fail closed rather than either trusting the attestation or falling back to the git baseline
-
-#### Scenario: A broken closure-artifact path is not read as "never closed"
-
-- **WHEN** the review reports directory is replaced by a file, or is otherwise unreadable, so a naive existence check reports both artifacts as absent
-- **THEN** the gate SHALL classify the probe as unverifiable and fail closed instead of computing a git diff
-
-#### Scenario: A structurally invalid attestation reports an unavailable baseline
-
-- **WHEN** review is formally closed and the attestation parses as JSON but its inventory entries lack `path`/`sha256`
-- **THEN** the gate SHALL FAIL with `review_closure_baseline_unavailable` and its guidance, not with a generic framework fault raised from reconciliation
-
-#### Scenario: Features with no observable closure evidence keep their existing behavior
-
-- **WHEN** neither a review summary nor a closure attestation is observable on disk and protected source differs from the diff base
-- **THEN** the gate SHALL FAIL exactly as before with `unauthorized_src_mutation`, the same affected files, and the same remediation wording
+- **WHEN** a UT-phase edit modifies a production `.ets` file
+- **THEN** the gate SHALL classify it as a coding change requiring compile plus related tests and SHALL not block closure permanently
 
 ### Requirement: The verifier plan is resolved once and consumed by every stage
 
@@ -2164,73 +2060,14 @@ Enforcement: `harness/harness-runner.ts`, `harness/scripts/check-receipt.ts`, `h
 
 ### Requirement: check-receipt adjudicates verifier evidence by identity, dispatched on the resolved plan and the summary generation
 
-The receipt gate's verifier block SHALL stop treating the receipt's hand-written fields as machine facts, and SHALL stop using "is a subject present?" as its dispatch anchor. Subject presence conflated three roles at once — protocol generation, applicability, and evidence identity — so a phase whose verifier was legitimately turned off read as "an old artifact". Dispatch SHALL therefore be:
+The finalize step SHALL adjudicate verifier evidence. plan `disabled` → nothing required; plan `blocked` → BLOCKER `verifier_provider_unavailable`; plan `enabled` → load `verifier.report.<subject>.json` for the current subject through `loadVerifierEvidence()`. When the current subject has no report but the phase holds any identity-verified PASS report, closure SHALL proceed with `verifier: completed_with_prior_review` and `current_material_not_reverified` listing the differing material; it SHALL NOT be described as PASS for the current material. BLOCKER SHALL remain only when the policy is `required` and the phase never obtained a PASS report. Earlier-generation summaries keep the existing grandfather rule.
 
-- **plan `disabled`** → the loader SHALL NOT be called and neither the JSON, the markdown nor a request SHALL be required; the observed state SHALL record `not_applicable` or `skipped_by_policy` according to the resolution reason.
-- **plan `blocked`** → the gate SHALL BLOCKER FAIL with a `verifier_provider_unavailable` attribution. It SHALL NOT re-run the script diagnosis, which has already completed at the harness.
-- **plan `enabled` and the summary declares the current generation** → the gate SHALL load `verifier.report.<subject>.json` through the shared `loadVerifierEvidence()` boundary and SHALL verify five things: the JSON's feature/phase match the phase under check, the subagent identity is present, the stored `invocation_subject` and `result_subject` both equal the current `summary.verifier_subject_id`, the document is structurally valid for schema `2.0`, and `verdict` is consistent with `blocker_count` (`PASS` iff zero). Each failure form SHALL surface as its own machine-readable issue id whose guidance points at re-running the verifier with the recorded request, or at re-running the harness — never at editing the receipt.
-- **plan `enabled`, current generation, but no subject/request recorded** → the gate SHALL BLOCKER FAIL stating that this run produced no invocation credential, and direct the operator to re-run the harness. It SHALL NOT be reported as a legacy artifact.
-- **an earlier summary generation, the phase closed, and the pre-existing evidence manifest still recomputes as fresh** → the closure is **grandfathered**: the gate SHALL neither parse the markdown nor require a current-generation request, and SHALL rely on the pre-existing manifest freshness chain alone. Re-running check-receipt over such a phase is a **re-verification of the old closure against its own registration surface**, not a fresh adjudication. Grandfathering SHALL NOT bypass the existing freshness rules — the environment recomputation over `framework_config` / `workflow` / `gate_fingerprint` / `framework_version` still applies, and any of them changing still marks the phase stale.
-- **an earlier generation in every other case** → the gate SHALL BLOCKER FAIL and direct the operator to re-run the harness for that phase so it gains current-generation artifacts. The guidance SHALL be scoped to re-running that phase's harness and verifier; it SHALL NOT ask for business code to be reverted, for upstream artifacts to be rewritten, or for anything to be committed.
+Enforcement: `harness/scripts/check-receipt.ts`, `harness/scripts/utils/phase-closure-finalizer.ts`, `harness/scripts/utils/verifier-evidence.ts`
 
-Re-adjudication SHALL enter only through a new harness run that regenerates the summary; that is the single switch point between the grandfathered domain and the current one.
+#### Scenario: Changed material with a prior PASS completes honestly
 
-Guidance emitted by the stop gate SHALL follow the same facts. When the script gate has already passed and only closure remains, the first recommended action SHALL be the closure-only entry (`--sync-closure`), never a full harness re-run: a full re-run reassembles a timestamped prompt, rotates the subject, and invalidates the verifier evidence that was just published — turning "almost closed" into an unbounded loop. A full re-run SHALL be recommended only when the script gate has not passed.
-
-The console guidance after a passing script run SHALL follow the derived `next_action` rather than the mere presence of a request file. A phase whose current subject already holds verified passing evidence SHALL NOT be told to invoke the verifier again — re-running the verifier against the same subject can only produce a conflict, and telling an operator to do so contradicts the material-addressed reuse contract directly.
-
-Machine facts that only become verifiable at closure SHALL be computed at closure. Verifier-derived repair candidates are the case in point: the summary writer runs **before** the verifier, so it can never see the current subject's conclusion, and the closure entry deliberately does not re-run the writer. The closure commit SHALL therefore recompute those candidates from the already-verified evidence before freezing the closed summary, using the same shared derivation as the writer and introducing no second state.
-
-Any consumer that reads verifier evidence **before** the current summary is on disk SHALL anchor to the subject it just issued, never to the summary's on-disk value — during a re-run that value still belongs to the previous run, and using it attributes the previous subject's conclusion to the new one.
-
-`closed` in the full/receipt closure domain SHALL mean **script verdict `PASS` and every `required` evidence item provided**, with the verifier item's requirement decided by the resolved plan rather than by a fixed four-item list. The `lite` track SHALL be untouched by this requirement: its change/coding/exit chain and its `receipt: not_applicable` semantics remain exactly as specified elsewhere.
-
-Enforcement: `harness/scripts/check-receipt.ts`, `harness/scripts/utils/verifier-evidence.ts`, `harness/scripts/utils/verifier-plan.ts`
-
-#### Scenario: A forged receipt plus an arbitrary markdown does not close a phase
-
-- **WHEN** a phase carries a current-generation summary with a subject, a receipt claiming `verifier_subagent.verdict: "PASS"`, and a hand-written `verifier.report.md`, but no identity-verified JSON
-- **THEN** check-receipt SHALL BLOCKER FAIL and attribute the failure to the missing machine truth
-
-#### Scenario: A grandfathered closure still verifies without a current-generation request
-
-- **WHEN** a phase closed before this change carries an earlier summary generation, a manifest that registered `verifier.report.md`, and that manifest still recomputes as fresh
-- **THEN** check-receipt SHALL pass, explicitly reporting that it took the grandfather route
-
-#### Scenario: A grandfathered closure whose old manifest went stale is not waved through
-
-- **WHEN** the same closure has its registered markdown modified, so the pre-existing manifest recomputes as stale
-- **THEN** check-receipt SHALL BLOCKER FAIL and direct the operator to re-run that phase's harness
-
-#### Scenario: Deleting the transcript does not invalidate published evidence
-
-- **WHEN** the subagent transcript referenced by the published JSON's audit metadata is deleted or moved after publication
-- **THEN** check-receipt SHALL still verify the evidence from in-repository values alone
-
-#### Scenario: A downstream rollback re-enters at the downstream phase
-
-- **WHEN** a downstream phase finds a defect, the responsible upstream phase is edited and its harness, verifier and receipt are re-run, and the downstream phase consequently becomes stale by freshness
-- **THEN** work SHALL resume at the downstream phase and, once its own harness and verifier are re-run, it SHALL become fresh again; the feature SHALL NOT be cleared and no commit SHALL be required
-
-#### Scenario: An almost-closed phase is not told to re-run the whole harness
-
-- **WHEN** the stop gate blocks a phase whose script verdict is `PASS` and whose closure is still open
-- **THEN** the first recommended action SHALL be the closure-only entry, and SHALL NOT be a full harness re-run
-
-#### Scenario: Verifier-derived candidates survive into the closed summary
-
-- **WHEN** a phase's verifier publishes a finding that yields a repair candidate, and the phase is then closed through the closure-only entry
-- **THEN** the closed summary SHALL carry the candidate derived from that verified evidence, **including** candidates whose derivation depends on a check's machine attribution — the closure-time reconstruction SHALL preserve that attribution rather than dropping it through a field-name mismatch
-
-#### Scenario: Reusable evidence is not sent back to the verifier by the console
-
-- **WHEN** the script gate passes and the derived action is to complete the receipt and closure
-- **THEN** the console SHALL say the current evidence is reusable and point at the closure-only entry, and SHALL NOT print the "deliver the request to the verifier" instruction
-
-#### Scenario: A re-run does not inherit the previous subject's candidates
-
-- **WHEN** the material changes so the subject rotates, and the previous subject still has published evidence carrying a finding
-- **THEN** the new run's summary SHALL NOT carry candidates derived from the previous subject's evidence
+- **WHEN** spec.md changed after a verified PASS and the driver did not re-run the verifier
+- **THEN** the phase closes with `completed_with_prior_review` and the summary lists `spec.md` under `current_material_not_reverified`
 
 ### Requirement: Concurrent verifier rounds are separated by identity, and contradictions become an explicit conflict
 
@@ -2336,3 +2173,122 @@ Enforcement: `harness/scripts/utils/critic-receipt-producer.ts`, `harness/script
   cover only two
 - **THEN** receipt verification reports the missing image as unread/undeclared and the terminal
   gate fails
+
+### Requirement: Execution channels resolve to a machine-proven tri-state
+
+Every top-level test case SHALL resolve at plan time to exactly one of `executable`, `unsupported_gap`, `invalid_test`. `unsupported_gap` SHALL be admitted only for a fixed no-primitive manual class (`system_settings`, `perf_sampling`, `memory_sampling`, `resource_variant`, `data_injection`, `external_precondition`) or a registered provider capability that is explicitly inactive/SKIP. Bare or unknown manual values, unregistered providers, and registered active providers without a per-TC producer SHALL be `invalid_test` before any build/install/device action. A gap SHALL NOT count as PASS or FAIL, SHALL NOT block normal development completion, and SHALL stay in the original denominator: P0 accounting SHALL report `total`, `verified_pass`, `unsupported_gap`, `failed` and `verified_coverage`, and the completion status SHALL project `COMPLETE_WITH_P0_GAPS` whenever a P0 gap exists.
+
+Enforcement: `harness/scripts/utils/execution-channel.ts`, `harness/scripts/utils/execution-channel-evidence.ts`, `harness/scripts/check-testing.ts`, `harness/scripts/utils/p0-semantic-gates.ts`, `harness/scripts/utils/summary-blockers.ts`
+
+#### Scenario: A gap stays in the denominator
+
+- **WHEN** 16 P0 cases exist and 6 are `unsupported_gap` with machine-proven reasons
+- **THEN** the report SHALL show total 16 / verified_pass 10 / unsupported_gap 6 / verified_coverage 62.5% and completion status `COMPLETE_WITH_P0_GAPS`, never "10/10 100%"
+
+#### Scenario: An expressible case declared manual is a test-writing error
+
+- **WHEN** a case only needs tap, input and presence assertions but is declared `manual`
+- **THEN** the static check SHALL classify it `invalid_test` and block device execution with the fix "改为 hylyre 通道并写出步骤"
+
+### Requirement: P0 identity assertions are injected when the derived plan is loaded
+
+When testing copies the derived plan into the run directory it SHALL, for every P0 criterion checkpoint mapped to a case, insert a bare `{"wait_for":{"by_id":<id>,"timeout":N}}` for each required id and `{"wait_gone":{"by_id":<id>,"timeout":N}}` for each forbidden id after EACH matching checkpoint action and before a same-target `by_text` assertion in that occurrence. Injection and native P0 consumption SHALL share the same ordered intervals: after the trigger and before the next matching trigger, or an earlier back/home/start_app/stop_app/clear_app step. Equivalent bare assertions SHALL be reused only inside that interval. Repeated triggers SHALL NOT be rejected merely because multiple action steps exist. Original navigation, return/re-entry and predicate assertions (`visible`, `enabled`, layout, content) SHALL be preserved; actions SHALL NOT be deleted, split across cases or rewritten from scroll/swipe to touch to satisfy this gate. A genuinely ambiguous selector-to-target mapping SHALL yield `invalid_test` naming the TC, candidate steps and missing disambiguation information. The source derived plan file SHALL NOT be modified; injection indices SHALL refer to the final run copy.
+
+Enforcement: `harness/scripts/check-testing.ts`, `harness/scripts/utils/derived-hylyre-plan.ts`, `harness/scripts/utils/hylyre-planned-step-lint.ts`
+
+#### Scenario: Injection is idempotent and ordered before by_text
+
+- **WHEN** a case already has a `wait_for by_text` for the checkpoint element and no bare `by_id` assertion
+- **THEN** the run copy SHALL gain one bare `wait_for by_id` placed before the `by_text` step, and a second load SHALL not add another
+
+#### Scenario: Repeated entry stays one continuous case
+
+- **WHEN** TC-012 enters the add-card page, returns to the card-pack page, then triggers card_pack_add_card_row again
+- **THEN** both triggers and the return SHALL remain, and each trigger SHALL have its own required/forbidden identity assertions; loading the result again SHALL add no duplicate assertions
+
+#### Scenario: Target ambiguity is reported without weakening the test
+
+- **WHEN** a candidate action's by_text selector maps to multiple target ids without sufficient existing disambiguation
+- **THEN** the case SHALL be `invalid_test` naming the TC, candidate steps and missing selector information, without suggesting that repeated actions be removed or split into different cases
+
+### Requirement: Derived-plan lints reject unbindable P0 shapes before device execution
+
+`STEP-P0-IDENTITY` SHALL fire only when injection could not supply a bare identity assertion; `STEP-BYTEXT-ORDER` SHALL fire when a `by_text` assertion resolving to a checkpoint id precedes that id's identity assertion and injection could not reorder; check-spec SHALL reject a checkpoint `action` that is not an action value with the guidance to name the triggering action or use `required_element_ids`. Each BLOCKER SHALL name TC, step index, actual shape, expected shape and the direct fix. No Maison-side mirror of Hylyre selector constraint keys SHALL be maintained: identity is defined by exact step shape.
+
+Enforcement: `harness/scripts/utils/hylyre-planned-step-lint.ts`, `harness/scripts/check-spec.ts`, `harness/scripts/check-testing.ts`
+
+#### Scenario: A predicate assertion is not an error
+
+- **WHEN** a case carries `{"wait_for":{"by_id":"x","visible":true}}` and injection added the bare identity assertion
+- **THEN** no lint SHALL fire; the predicate step stays as a UX assertion
+
+### Requirement: Blocker diagnostics name the fix
+
+Every BLOCKER FAIL emitted by a feature-phase check SHALL carry a suggestion naming the artifact or step to change and the change to make. Fixtures SHALL prove the root cause is named for `p0_coverage_integrity` (each uncovered AC → TC/step/reason), `hylyre_selector_runtime_gate` (`step N request.kind=composite, remove <key> or rely on the injected identity assertion`), `visual_diff` pending or warn without must_fix, `testing_channel_evidence_obligation`, `report_trace_reconciliation` (mismatched cells), `upstream_verdict_gate` and evidence staleness (changed paths translated to "re-run <phase>"), and derived-plan freshness ("re-derive"). Runtime-gate wording SHALL NOT describe an agent authoring mistake as executor fraud.
+
+Enforcement: `harness/scripts/check-testing.ts`, `harness/scripts/check-spec.ts`, `harness/scripts/utils/p0-semantic-gates.ts`, `harness/scripts/utils/hylyre-selector-gates-v1.ts`, `harness/scripts/utils/upstream-verdict-gate.ts`
+
+#### Scenario: Composite selector is explained as a shape
+
+- **WHEN** a P0 assertion step resolved with `request.kind=composite`
+- **THEN** the gate detail SHALL name the step index and the constraint key and SHALL NOT use wording such as "疑似回填冒充"
+
+### Requirement: Device execution is keyed by real execution inputs
+
+Testing SHALL compute `execution_key = sha256(HAP full digest, run-copy derived plan digest, device identity and available display environment, reset mode, Hylyre/profile/provider/tool-config versions, normalized execution flags)` and record it in the run metadata. Full mode SHALL inspect only the newest real attempt carrying an execution key and reuse it only when that attempt has the current key, succeeded, and has complete trace/timing evidence. A newer different-key attempt or a newest same-key failure SHALL force a real run; temporary directories without an execution-key record SHALL not participate. It SHALL NOT reuse when the user asked for a fresh run or for N stability rounds. Document wording, report text and version numbers SHALL NOT trigger device operation. `--force-device` SHALL be the only explicit escape. Derived-plan freshness SHALL compare every execution/adjudication-relevant TC field (id, precondition, steps, expected result, AC links, priority and channel) while ignoring prose outside the canonical TC table; an uncomparable required column SHALL be stale.
+
+Enforcement: `harness/scripts/check-testing.ts`, `harness/scripts/utils/native-trace-binding.ts`, `profiles/hmos-app/harness/device-test-evidence.ts`, `profiles/hmos-app/harness/build-fingerprint.ts`
+
+#### Scenario: Only the latest real attempt can be reused
+
+- **WHEN** attempts are A(key-1 success), B(key-2 success), and the current key is key-1
+- **THEN** testing SHALL run the device instead of reaching back past B to reuse A
+
+#### Scenario: A later failure is never hidden by an earlier pass
+
+- **WHEN** two attempts share a key and the later one failed
+- **THEN** the earlier pass SHALL NOT be reused
+
+### Requirement: Stability is computed per execution key and includes failed attempts
+
+Stability SHALL be generated inside testing (no public CLI) by grouping attempts by the full execution key, including every eligible successful and failed attempt, carrying device environment and reset mode, counting only within the current requirement's scope, and reporting per TC the same-key rounds, consistent rounds and first divergent step. A requirement for two cold-start rounds SHALL require two real executions; the execution strategy SHALL be one full run plus one targeted cold-start re-verification of the relevant TCs.
+
+Enforcement: `profiles/hmos-app/harness/test-report-writer.ts`, `harness/scripts/check-testing.ts`
+
+#### Scenario: Failed attempts appear in the stability table
+
+- **WHEN** three same-key attempts exist and one failed at step 7 of TC-013
+- **THEN** the stability row for TC-013 SHALL show 3 rounds, 2 consistent, first divergence step 7
+
+### Requirement: The testing report is generated by the harness and concludes per axis
+
+`test-report.md` SHALL be generated by the harness from the authoritative run's trace, timing, build/install/run metadata, the gaps ledger, `visual-diff.json`, `visual-debt.json`, geometry measurement when present, the current quality axes and the stability data when present. Every section SHALL be deterministic and readable back by the existing report parsers. The conclusion SHALL be derived per axis — functional PASS/FAIL, interaction stability PASS/FAIL/UNKNOWN, visual geometry PASS/FAIL/UNKNOWN, visual content CHECKED/UNKNOWN, visual style CHECKED/UNKNOWN, known gaps — with an overall `COMPLETE` / `COMPLETE_WITH_GAPS` / `FAILED`. Incomplete visual evidence SHALL NOT block functional completion, and a report SHALL NOT claim UX conformance from the trace alone. Agent observations SHALL live in `testing/notes.md`, which SHALL NOT participate in gates, closure, subject or freshness. `--report-reconcile-only` SHALL regenerate the machine report. The review report's statistics table SHALL be recomputed by the checker, and citation/count lints SHALL be WARN only.
+
+Enforcement: `profiles/hmos-app/harness/test-report-writer.ts`, `harness/scripts/utils/testing-trace-gates.ts`, `harness/scripts/check-review.ts`, `harness/scripts/check-testing.ts`
+
+#### Scenario: Functional pass with visual failure is not COMPLETE
+
+- **WHEN** all 20 cases pass but `visual-diff.json` holds a FAIL screen
+- **THEN** the generated conclusion SHALL show functional PASS, visual geometry FAIL and an overall that is not `COMPLETE`
+
+### Requirement: Fast revalidation is a check executor, not a phase owner
+
+`--revalidate --feature <f> [--from <phase>]` SHALL resolve the phase chain, recompute staleness, and for each stale phase run the necessary existing checks against the actual stale inputs. It SHALL NOT regenerate phase artifacts, SHALL NOT require a receipt, SHALL NOT run the verifier by default, and SHALL finalize a passing phase through the common finalize with `script_revalidated` and `semantic_not_reverified` recorded. A failing phase SHALL stop the chain and print its blockers and fixes. It SHALL NOT be described as a full semantic re-review.
+
+Enforcement: `harness/harness-runner.ts`, `harness/scripts/utils/upstream-verdict-gate.ts`, `harness/scripts/utils/phase-evidence-manifest.ts`, `harness/scripts/utils/phase-closure-finalizer.ts`
+
+#### Scenario: A spec edit is revalidated in one command
+
+- **WHEN** acceptance.yaml changed after all six phases closed
+- **THEN** one `--revalidate` run SHALL re-check plan, coding, review, ut and testing, close each on PASS, and mark them `semantic_not_reverified`
+
+### Requirement: Post-review UX source drift is verified by risk tier
+
+Source changes after review closure SHALL be classified and each class SHALL require exactly one matching verification: documents, reports and notes → none; test code → run the related tests; navigation, state or business interaction → one scoped diff review; layout, font, color or resources → one device screenshot or geometry re-check; several classes at once → one final merged diff review. The testing `review_closure_attestation` gate SHALL report the required tier and SHALL WARN, not BLOCK, when it is unmet, recording the honest state. Production source modified during the UT phase SHALL be reclassified as a coding change and routed to compile and tests rather than ignored or permanently blocked.
+
+Enforcement: `harness/scripts/utils/closure-attestation.ts`, `harness/scripts/check-testing.ts`, `harness/scripts/check-ut.ts`, `harness/scripts/utils/mutation-authorization.ts`
+
+#### Scenario: Three layout constants need one geometry re-check
+
+- **WHEN** three padding constants changed after review closure
+- **THEN** the gate SHALL require one geometry re-check and SHALL NOT demand a full review→UT→testing rerun

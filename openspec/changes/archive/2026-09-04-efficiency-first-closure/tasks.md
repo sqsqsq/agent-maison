@@ -56,7 +56,7 @@
 
 - [x] 11.1 skills/reference、AGENTS.md.template、goal-mode-operations、MIGRATION.md 同步；保留四条总原则改动
 - [x] 11.2 `cd harness && npm test`、typecheck、`npm run openspec:validate`、`npm run release:check-plans`、LF；`npm run release:verify` 在发版时执行
-- [ ] 11.3 宿主验证由用户执行并回灌（不由实施代理发起）
+- [x] 11.3 宿主验证由用户执行并回灌（2026-09-04 用户明确确认已完成；非实施代理代跑）
 
 ## 12. 宿主回灌：同一 checkpoint 重复触发（07a41ec6 T12–T13）
 
