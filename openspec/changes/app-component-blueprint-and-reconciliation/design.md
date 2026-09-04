@@ -26,7 +26,7 @@ Stakeholder 分工如下：Agent 负责仓内事实调查和证据包；App desi
 - 不重新裁决能力架构、云侧或其它部件的外部契约；缺失契约只输出消费需求、推荐和带 owner 的 disposition。
 - 不把蓝图、`architecture/catalog/code-graph/conventions/spec/contracts/events` 合并为万能 schema，不建立新的手工完成台账、跨单元状态或恢复权威。
 - 不要求每个项目生成图，不把 Mermaid/其它图格式变成强制产物；不以“图能解析”证明内容完整。
-- 不改变当前消费者实例的输入格式、phase 行为、发布件或 `MIGRATION.md`；未来若发布蓝图格式导致消费者可见变更，须另开兼容与迁移评估。
+- 不改变蓝图输入格式或 Feature phase 行为；用户入口撤下与 UPDATE 处置同步 `MIGRATION.md`，不修改宿主工程。
 
 ## Decisions
 
@@ -146,7 +146,7 @@ App lens 可根据可追溯变化证据提出候选变化轴；只有同时具�
 
 ### 10. Provider 与 profile/adapter 保持静态、可替换边界
 
-P1 至少定义四个静态内置 provider 角色：当前事实发现、SE/人工契约输入、App design lens、独立设计质询；它们都消费稳定蓝图协议。provider id 必须唯一，requirement 只允许 `required|optional`，四张 Seam Card 的权威与来源规则按 capability spec 固定校验，不能由蓝图作者覆盖。权威与来源规则固定为：当前事实 provider 以代码/schema/接口/配置/测试等可复核仓内事实为权威，必须携带 `source_ref`、证据和可得的 source revision/hash；SE/人工契约 provider 以 SE/授权 owner 的 operation/DTO/mapping/error/NFR 输入为权威，必须携带契约 source ref、verification ref 和 provenance，禁止模型补造；App design lens 不是事实权威，只能以当前输入和 lens rule/version provenance 生成视图投影；独立质询 provider 也不是结论权威，只能以隔离读取的蓝图草稿、证据包和登记的外部输入形成带 evidence/source ref 的问题结果。`project_profile` 提供平台/项目事实和适用性线索，`design_lens` 负责部件特有问题，二者不互相冒充真源。e4 conventions 与 b9 组件资产有则消费、无则核心蓝图诚实降级；本 change 不扩写所有 profile，也不引入 Service 透镜。Skill 入口登记到既有 `skills/skills.index.yaml` 真源，不新增第二注册表。
+P1 至少定义四个静态内置 provider 角色：当前事实发现、SE/人工契约输入、App design lens、独立设计质询；它们都消费稳定蓝图协议。provider id 必须唯一，requirement 只允许 `required|optional`，四张 Seam Card 的权威与来源规则按 capability spec 固定校验，不能由蓝图作者覆盖。权威与来源规则固定为：当前事实 provider 以代码/schema/接口/配置/测试等可复核仓内事实为权威，必须携带 `source_ref`、证据和可得的 source revision/hash；SE/人工契约 provider 以 SE/授权 owner 的 operation/DTO/mapping/error/NFR 输入为权威，必须携带契约 source ref、verification ref 和 provenance，禁止模型补造；App design lens 不是事实权威，只能以当前输入和 lens rule/version provenance 生成视图投影；独立质询 provider 也不是结论权威，只能以隔离读取的蓝图草稿、证据包和登记的外部输入形成带 evidence/source ref 的问题结果。`project_profile` 提供平台/项目事实和适用性线索，`design_lens` 负责部件特有问题，二者不互相冒充真源。e4 conventions 与 b9 组件资产有则消费、无则核心蓝图诚实降级；本 change 不扩写所有 profile，也不引入 Service 透镜。仅 `/component-design` 登记到既有 `skills/skills.index.yaml`；P1 作为 `skills/reference/app-component-blueprint-workflow.md` 内部流程引用，不新增第二注册表。
 
 实现必须能替换某个 provider 而不改变 P2 的蓝图消费协议；required provider 缺失形成 blocker，optional provider 缺失形成可见降级或 unknown。provider 不得修改 events/receipt/evidence 完成事实，也不新增动态加载、注册表或运行时插件状态。
 
@@ -163,12 +163,19 @@ P1 至少定义四个静态内置 provider 角色：当前事实发现、SE/人�
 
 ## Migration Plan
 
-本 change 为设计与规格起草，不部署、不迁移、不修改现有消费者。未发布的 P1 artifact 可通过删除当前 change 目录回滚，P0 归档产物和总计划的已有未提交修改不在回滚范围内。
-
-后续实现应先在 fixture 中生成新蓝图协议，再接入 profile/lens 与 harness 门；只有确认已有消费者需要读取该协议并发生字段/行为不兼容时，才另开迁移 change，提供版本化读取、兼容窗口和 `MIGRATION.md`。本 P1 不宣称这些步骤已执行。
+本次入口收敛不改变蓝图协议或 checker。消费者通过 `/framework-init` UPDATE 物化统一入口，
+执行 `cleanup-deprecated` 后旧入口备份到 `.framework-backup/<timestamp>/` 再删除；跳过清理
+必须披露旧入口仍保留。精确路径与 `skill_assets` 绑定调整见 `MIGRATION.md`。本项只在仓内
+临时消费者目录验证，不执行真实宿主迁移或发布，也不修改归档历史。
 
 ## Open Questions
 
 - 首个真实宿主批次的数据域已经由总计划 §8.2 裁决为真实账目数据域；仍待确认的只是材料何时到位以及具体可访问的 operation/DTO/mapping、代码和运行时生命周期证据。材料到位前保持 fixture 级合同，不假造宿主事实。
 - 图形输出的具体格式与渲染 provider 待 P1 实施时依据真实消费者选择；本设计只锁定“生成时可解析、图不是真源”的边界。
 - revision/decision fingerprint 的具体编码和哈希算法待实现阶段复用仓库现有 fingerprint 工具；不得因此新增平行身份或恢复机制。
+
+## 设计入口收敛（2026-09-04，总计划 §6.8）
+
+公开入口只保留 `/component-design`；内部 P1 工作流沿 `skills/reference/*-workflow.md` 模式搬迁，保持 e4 惯例和 b9 组件资产段落及全部协议/checker 不变。入口先读取请求、canonical 蓝图和已有 CU，再执行需要的步骤：草稿继续设计/质询；查看和重入不调和、不改 revision；接受新事实/权威裁决或解决冲突后才按既有规则修订；完整交接时 0 CU 调既有 `acceptChangeUnitDecomposition`，已有 CU 直接复用并派生 readiness。局部操作到此结束，不强制进入后续步骤。
+
+UPDATE 仅补已知旧路径：`LEGACY_SKILL_BRIDGE_IDS` 承载旧 Skill id，覆盖 Cursor Skill、Claude/Codeagent command 和 generic 自定义 bundle；Cursor command 及 Codex/Chrys/OpenCode 各自原生 Skill 旧目录经 `deprecated_artifacts` 声明。沿既有 `cleanup-deprecated` 先备份再移除，跳过则如实披露。无通用孤儿扫描、别名或 loader 改造。规格引用同步未归档 changes，归档历史不动；P1 6.6 与 m5 发布门不属于本项。

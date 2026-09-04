@@ -12,7 +12,7 @@ The App lens MUST read index/catalog and live candidate usage when development o
 - **WHEN** a selection decision cites the configured index or catalog but that particular file cannot be read
 - **THEN** blueprint validation SHALL reject the decision; an unreferenced optional catalog may remain missing, with no added fragment resolver or hash-binding protocol
 
-> **Enforced by:** `harness/schemas/app-component-blueprint.schema.json`, `harness/scripts/utils/blueprint-evolution-decisions.ts`, `skills/project/app-component-blueprint/SKILL.md`, `skills/project/component-design/SKILL.md`
+> **Enforced by:** `harness/schemas/app-component-blueprint.schema.json`, `harness/scripts/utils/blueprint-evolution-decisions.ts`, `skills/reference/app-component-blueprint-workflow.md`, `skills/project/component-design/SKILL.md`
 
 ### Requirement: Static optional component-assets seam reports honest availability
 
@@ -30,7 +30,7 @@ Every blueprint MUST have one static optional component-assets Seam Card in the 
 - **WHEN** an unresolved component-assets gap has needed_by equal to the current slice and status blocker
 - **THEN** the existing admission validator SHALL derive an actual BLOCKER issue and the existing CU design gate SHALL reject construction even when the admission status is also blocker; a controlled future open_decision remains constructable
 
-> **Enforced by:** `harness/scripts/utils/blueprint-provider-boundary.ts`, `harness/scripts/utils/blueprint-admission.ts`, `skills/project/app-component-blueprint/SKILL.md`
+> **Enforced by:** `harness/scripts/utils/blueprint-provider-boundary.ts`, `harness/scripts/utils/blueprint-admission.ts`, `skills/reference/app-component-blueprint-workflow.md`
 
 ### Requirement: Review publication retains the canonical asset choice
 

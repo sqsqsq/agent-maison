@@ -90,3 +90,28 @@
 - [x] 8.10 App-only 诚实声明：缺 design lens 的 component type 返回 unsupported/missing design lens 明确失败，不强套 App 4+1；不借本 change 建设其它 profile 的 lens。
 - [x] 8.11 正反 fixture：`evolution_impact` 缺失/越界、零 changed 视图、`verified_unchanged` 缺证据、不变声明掩盖变化、不变声明未被质询核实；`verified_unchanged` 合法正例 + runtime `verified_unchanged` 跳过触发裁决（含 `changed` 对照，防恒真断言）。
 - [x] 8.12 三条接缝的随包有效/无效样例落发布件包含路径 `docs/operations/`（不放被排除的 `harness/tests/**`），并由仓内单测经**同一正式 checker** 验证正例通过、反例失败。
+
+## 9. 设计用户入口收敛（总计划 §6.8）
+
+> 本节 supersede 1.5 的 P1 独立 Skill 登记要求；既有完成历史保留，6.6 发布门不变。
+
+- [x] 9.1 同步 P1 入口行为及 instance-extension-management 知识路由 delta；迁移 P1 为 reference 工作流，撤下旧 command/index/bridge 并同步有效引用。
+- [x] 9.2 component-design 按请求与已有产物继续，保留只读/重入 revision、草稿、0 CU 首次交接、已有 CU 复用及局部完成边界；保留 e4/b9 与三条宿主接缝。
+- [x] 9.3 复用 UPDATE 备份清理声明，验证全部已物化 adapter（含 Cursor 两种产物与 generic 自定义 bundle）旧入口移除且统一入口/用户内容保留；同步安装/UPDATE 和消费者文档。
+- [x] 9.4 运行既有入口、UPDATE、交接测试及 harness 全量、OpenSpec strict、plan default 校验，报告实际范围与未完成事项供独立 review；不勾选发布门禁。
+
+### §9 实施与验证记录（2026-09-04）
+
+- 入口收敛：内置 Skill 18→17；旧 P1 移入 reference，三宿主 command 与共享 bridge 撤下。UPDATE 沿既有名单及 Cursor deprecated_artifacts 先备份再移除；临时消费者验证覆盖 Cursor 两种产物、Claude、Codeagent 与 generic 自定义 `.codex` bundle，保留统一入口和无关用户内容。
+- 流程走查：新建完整交接、草稿继续设计/质询、只读检查不写 canonical、无新事实重入不升 revision、admitted+0 CU 首次交接、已有 CU 复用均沿既有 P1/P2 helper；局部完成不冒充完整交接，不进入施工/P3。e4/b9 段落与三条接缝保留，有效 OpenSpec 引用同步；已归档 d8 的知识路由通过本 change 的 delta 同步，未修改 archive 历史。
+- `cd harness && npm test`：typecheck 通过；全量 unit 为 4200 passed / 2 failed，失败仅为本次 Skill 超 150 行预算与 Codeagent 旧 command 计数。消除重复说明后 Skill 为 149 行，计数同步为 18；随后 `test:unit -- --filter docs-authoring-lint` 18/18、`--filter codeagent-adapter` 11/11、`--filter component-design-handoff` 10/10 通过。依仓库窄返修规则复用其余全量结果，未重复执行整批单测，未宣称单次 `npm test` 零退出。
+- 补跑 `cd harness && npm run test:fixtures`：日志完整收尾，46 passed / 0 failed。原目标套件 resolve-skill-path 4/4、init-task-executor 25/25、component-blueprint 96/96；全量中的 component-assets 38/38、conventions 35/35 通过。OpenSpec strict + enforcement paths、plan default、相关 diff/LF 检查通过。
+- 范围无偏离；未新增隐藏注册、模式、状态机或第二流程，未改宿主工程，未推进 m5/发版。总计划 design-entry-convergence 保持 in_progress，等待独立 review 与提交后再完成；P1 6.6、P2/P3 发布门及 release-semantics 未改。
+
+### §9 独立 review 返修（2026-09-04）
+
+- 修复唯一 P2：首轮遗漏原生 codex/chrys/opencode 的 UPDATE 清理，generic 自定义 `.codex` 不能证明 codex adapter 分支。三个 adapter 分别以既有 `deprecated_artifacts` 声明 `skills/app-component-blueprint/`、`skills/app-component-blueprint/`、`skill/app-component-blueprint/`；不改清理解析器、不新增机制。迁移说明、init 提示及本 change 的规格/设计引用同步。
+- 扩展同一 UPDATE 用例为独立消费者场景：补声明前精确复现 3 项失败；补声明后 init-task-executor 28/28 通过，验证旧目录整体移除、备份字节可恢复、统一入口/用户内容保留、未执行清理时旧入口保留及重物化不再暴露旧入口。
+- typecheck、OpenSpec strict 37/37 + enforcement paths、plan default、diff 检查通过。其余实现未变，复用前轮有效全量/fixtures 结果，不重跑整批；等待独立复核与提交，总计划状态及发布门禁不变。
+
+- 独立复核收口：用户确认无其他意见，准许提交本轮实现与返修；无需进一步扩面，发布门禁仍由 m5 承担。

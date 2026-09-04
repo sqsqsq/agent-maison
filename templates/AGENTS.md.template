@@ -87,8 +87,8 @@
 | 0. Code Graph 建图与维护 | [framework/skills/project/code-graph/SKILL.md](framework/skills/project/code-graph/SKILL.md) |
 | 0. 目标模式（goal-runner） | [framework/skills/project/goal-mode/SKILL.md](framework/skills/project/goal-mode/SKILL.md) |
 | 0. 实例扩展管理 | [framework/skills/project/extension/SKILL.md](framework/skills/project/extension/SKILL.md) |
-| **正式需求入口·部件内设计（Story Design）** | [framework/skills/project/component-design/SKILL.md](framework/skills/project/component-design/SKILL.md) |
-| 部件演进·蓝图 / CU 推进 / 部件闭环（直接入口） | [app-component-blueprint](framework/skills/project/app-component-blueprint/SKILL.md) · [change-unit-progression](framework/skills/project/change-unit-progression/SKILL.md) · [component-closure](framework/skills/project/component-closure/SKILL.md) |
+| **创建或继续部件设计（Story Design，唯一设计入口）** | [framework/skills/project/component-design/SKILL.md](framework/skills/project/component-design/SKILL.md) |
+| CU 推进 / 部件闭环 | [change-unit-progression](framework/skills/project/change-unit-progression/SKILL.md) · [component-closure](framework/skills/project/component-closure/SKILL.md) |
 | L1. Lite 轨 | [framework/skills/feature/change-lite/SKILL.md](framework/skills/feature/change-lite/SKILL.md) |
 | 1-6. Spec/Plan/编码/审查/业务级UT/真机测试 | [framework/skills/feature/{spec,plan,coding,code-review,business-ut,device-testing}/SKILL.md](framework/skills/README.md) |
 

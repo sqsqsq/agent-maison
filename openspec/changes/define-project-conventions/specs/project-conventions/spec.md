@@ -46,7 +46,7 @@ When the asset exists, component design MUST read it in full and represent only 
 - **WHEN** a referenced blueprint cites an applicable convention but the CU omits it and review does not mark it `NOT_APPLICABLE`
 - **THEN** review validation SHALL report a MAJOR failure for losing a blueprint design basis
 
-> **Enforced by:** `skills/project/component-design/SKILL.md`, `skills/project/app-component-blueprint/SKILL.md`, `skills/feature/plan/SKILL.md`, `harness/scripts/utils/spec-loader.ts`, `harness/scripts/check-review.ts`
+> **Enforced by:** `skills/project/component-design/SKILL.md`, `skills/reference/app-component-blueprint-workflow.md`, `skills/feature/plan/SKILL.md`, `harness/scripts/utils/spec-loader.ts`, `harness/scripts/check-review.ts`
 
 ### Requirement: Activated review uses a complete deterministic coverage ledger
 

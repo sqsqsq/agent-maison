@@ -161,7 +161,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       const targets = adapter.templateFiles.map(f => f.targetRel);
       // commands 自有副本
       const commandFiles = fs.readdirSync(CODEAGENT_COMMANDS_DIR).filter(f => f.endsWith('.md'));
-      assert.strictEqual(commandFiles.length, 19, `commands 应 19 份，实际 ${commandFiles.length}`);
+      assert.strictEqual(commandFiles.length, 18, `commands 应 18 份，实际 ${commandFiles.length}`);
       for (const f of commandFiles) {
         assert(targets.includes(`.cac/commands/${f}`), `.cac/commands/${f} 未进物化清单`);
       }

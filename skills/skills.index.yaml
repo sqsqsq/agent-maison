@@ -72,15 +72,7 @@ skills:
     source_rel: project/component-design
     order: 4
     description: >
-      正式需求的部件内设计阶段入口（Story Design）：需求源物化 → 正式性确认 → 蓝图 admitted
-      → 1..N canonical CU → 施工 readiness；终点是设计交接
-
-  - id: app-component-blueprint
-    scope: project
-    source_rel: project/app-component-blueprint
-    order: 5
-    description: >
-      App 部件发现、4+1 蓝图、运行时数据流、独立质询与调和
+      创建或继续部件设计（Story Design）：按请求与已有产物继续，完整交接至 CU readiness，局部操作按需结束
 
   - id: change-unit-progression
     scope: project

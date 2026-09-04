@@ -42,7 +42,7 @@ npx ts-node scripts/extension.ts --project-root <宿主工程根> --action <init
 3. 新增 Skill 时同时创建 `skills/<id>/SKILL.md` 并在 `provides.skills[]` 声明；1.1 起未声明目录不物化。
 4. `phase_bindings` 只管 Feature phases，只有 `before_phase_work`、`before_phase_verify`、`after_phase_verify_before_close`；没有 `before_component_design`。设计前置输入由扩展 Skill 自身流程承载。
    phase 名必须来自 active workflow 的 Feature scope（full/lite 并集）；global phase 与拼错的 slug 都会失败。
-5. 绑定 `/component-design` 或 `app-component-blueprint` 的知识使用现有 `skill_assets`，不发明 audience。
+5. 绑定 唯一设计入口 `/component-design` 的知识使用现有 `skill_assets`，不发明 audience。
 6. 每次编辑后 `verify`，通过后再 `materialize` 并复查 `inspect`。
 
 ## MCP 与 M7 红线

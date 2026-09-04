@@ -24,7 +24,7 @@ import { requiredQuestioningScopes, unchangedViewQuestioningScopes } from '../..
 import { isApplicableView, isChangedView } from '../../scripts/utils/blueprint-views';
 import { validateRuntimeDataFlows } from '../../scripts/utils/runtime-data-flow-check';
 import { checkCanonicalComponentBlueprint, resolveCliRefTarget } from '../../scripts/check-component-blueprint';
-import { clearSkillsIndexCache, resolveSkillPath } from '../../scripts/utils/resolve-skill-path';
+import { clearSkillsIndexCache, listBuiltinSkillIds, resolveSkillPath } from '../../scripts/utils/resolve-skill-path';
 import { clearFrameworkConfigCache } from '../../config';
 
 interface UnitCaseResult {
@@ -522,12 +522,13 @@ export function runAll(): UnitCaseResult[] {
     });
   }));
 
-  results.push(test('app-component-blueprint is discoverable through the existing skill index SSOT', () => {
+  results.push(test('component-design is the sole design entry in the existing skill index SSOT', () => {
     const frameworkDir = path.resolve(__dirname, '..', '..', '..');
     clearSkillsIndexCache();
-    const resolved = resolveSkillPath(frameworkDir, 'app-component-blueprint');
-    assert(resolved.skillMdFrameworkRel === 'skills/project/app-component-blueprint/SKILL.md', `skill 路径错误：${resolved.skillMdFrameworkRel}`);
+    const resolved = resolveSkillPath(frameworkDir, 'component-design');
+    assert(resolved.skillMdFrameworkRel === 'skills/project/component-design/SKILL.md', `skill 路径错误：${resolved.skillMdFrameworkRel}`);
     assert(fs.existsSync(path.join(frameworkDir, resolved.skillMdFrameworkRel)), '索引指向的 SKILL.md 不存在');
+    assert(!listBuiltinSkillIds(frameworkDir).includes('app-component-blueprint'), '内部 P1 不得登记为公开 Skill');
   }));
 
   results.push(test('conventions provider distinguishes disabled, explicit-unreadable, and readable paths', () => {

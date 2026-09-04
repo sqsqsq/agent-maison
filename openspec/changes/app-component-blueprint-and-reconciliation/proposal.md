@@ -25,10 +25,10 @@ P0 已冻结复杂能力建设的对象边界、权威边界、unknown/dispositi
 
 ### Modified Capabilities
 
-- 无。P1 消费 `complex-capability-meta-model` 已归档的元模型与权威边界，不修改其既有 requirement。
+- `instance-extension-management`: 设计知识沿既有 `skill_assets` 绑定唯一公开入口 `/component-design`，不再指向 P1 内部流程。
 
 ## Impact
 
 - 设计/规格层：新增 OpenSpec capability spec，供后续 P1 实施及 P2/P3 作为准入契约消费；新增带完整 `parent_goal` 声明的 3.1.0 P1 子 plan。
-- 运行与发布：新增 provider-neutral 蓝图 schema、harness checker 与 Skill，并将 Skill 登记进既有 `skills.index.yaml` 真源；这是新增可选能力，不改变既有消费者输入或 phase 行为，因此不产生 `MIGRATION.md` 迁移要求。
+- 运行与发布：保留 provider-neutral 蓝图 schema/checker，设计公开入口收敛为 `/component-design`；P1 工作流移入 reference，撤下旧 command/index/bridge。UPDATE 复用既有备份清理机制，迁移说明同步 `MIGRATION.md`。
 - 验收边界：P1 实施运行受影响测试、OpenSpec strict validate、default plan 扫描和专项 fixture；整仓 `--release` 与 `release:verify` 继续由总计划 m5/MG 在批次收尾承担。

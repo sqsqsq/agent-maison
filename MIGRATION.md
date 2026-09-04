@@ -60,6 +60,21 @@ hash、authority、失败语义、两条最小接入流程、Story 类扩展职�
 2. 进行中的普通 Feature 无需任何操作。下一项正式需求开始前，先走 `/component-design`；已归属
    某个 `blueprint_id` 的继续原演进工作区。
 
+**设计入口收敛**：`/app-component-blueprint` 已撤下，创建、继续、查看、质询或调和蓝图统一使用
+`/component-design`。P1 协议/checker 与三条接缝不变，内部流程位于
+`framework/skills/reference/app-component-blueprint-workflow.md`。只读、重入和重跑 checker 不升
+revision；完整交接时才补首次 CU 分解，已有 CU 复用，局部操作不强制交接或自动施工。
+
+UPDATE 的 `cleanup-deprecated` 按已物化 adapter **先备份再移除**旧入口：Cursor 的
+`.cursor/commands/app-component-blueprint.md` 与 `.cursor/skills/app-component-blueprint/`、
+Claude 的 `.claude/commands/app-component-blueprint.md`、Codeagent 的
+`.cac/commands/app-component-blueprint.md`、Codex 的 `.codex/skills/app-component-blueprint/`、
+Chrys 的 `.agents/skills/app-component-blueprint/`、OpenCode 的 `.opencode/skill/app-component-blueprint/`、generic 的
+`<agent_bundle_root>/skills/app-component-blueprint/`（使用配置路径）。备份在
+`.framework-backup/<timestamp>/`，统一入口与无关用户内容保留。跳过清理时旧入口仍存在，
+仅更新发布件或重新物化不能视为旧入口已清理。设计知识绑定使用既有
+`skill_assets` 指向 `component-design`。
+
 
 ## 3.1.0：默认 receipt/reports 目录模式跟随 `paths.features_dir`（行为变化）
 

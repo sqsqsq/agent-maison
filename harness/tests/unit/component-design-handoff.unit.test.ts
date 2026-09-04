@@ -121,6 +121,63 @@ function assertStoppedAtHandoff(projectRoot: string): void {
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
 
+  results.push(test('design entry: draft/admitted local checks preserve canonical bytes and do not decompose', () => {
+    for (const admitted of [false, true]) withProject(projectRoot => {
+      emptyWorkspace(projectRoot);
+      const file = componentBlueprintPath(projectRoot, BLUEPRINT_ID);
+      if (!admitted) {
+        const draft = YAML.parse(fs.readFileSync(file, 'utf8'));
+        draft.review_summary.admission.status = 'blocked';
+        fs.writeFileSync(file, YAML.stringify(draft));
+      }
+      const before = fs.readFileSync(file, 'utf8');
+      for (let reentry = 0; reentry < 2; reentry++) {
+        const checked = checkCanonicalComponentBlueprint(projectRoot, BLUEPRINT_ID);
+        assert((checked.issues.filter(i => i.severity === 'BLOCKER').length === 0) === admitted, '草稿/准入检查失真');
+        assert(evaluateDesignPreparationEntry(projectRoot, BLUEPRINT_ID).canEnter === admitted, '草稿被当成已准入');
+        assert(!deriveDesignPreparationReadiness(projectRoot, BLUEPRINT_ID).ready, '局部检查被当成完整交接');
+      }
+      assert(fs.readFileSync(file, 'utf8') === before, '只读重入改变 canonical 字节/revision');
+      assert(enumerateCanonicalChangeUnits(projectRoot, BLUEPRINT_ID).length === 0, '局部操作自动创建 CU');
+      assertStoppedAtHandoff(projectRoot);
+    });
+  }));
+
+  results.push(test('design entry: existing admitted zero-CU design finishes handoff once and reuses accepted CU', () => {
+    withProject(projectRoot => {
+      const candidate = candidateFrom(projectRoot, 'ledger-refresh', 'continued-cu');
+      emptyWorkspace(projectRoot);
+      const blueprintFile = componentBlueprintPath(projectRoot, BLUEPRINT_ID);
+      const before = fs.readFileSync(blueprintFile, 'utf8');
+      const entry = evaluateDesignPreparationEntry(projectRoot, BLUEPRINT_ID);
+      assert(entry.canEnter && entry.existingChangeUnitIds.length === 0, '既有 0 CU 蓝图不能继续');
+      const accepted = acceptChangeUnitDecomposition(projectRoot, BLUEPRINT_ID, [candidate]);
+      const unitBefore = fs.readFileSync(accepted.accepted[0]!.canonicalPath, 'utf8');
+      const reentry = evaluateDesignPreparationEntry(projectRoot, BLUEPRINT_ID);
+      assert(reentry.existingChangeUnitIds.join(',') === 'continued-cu', '重入未找到可复用 CU');
+      assert(deriveDesignPreparationReadiness(projectRoot, BLUEPRINT_ID).ready, '既有 CU 无法交接');
+      let rejected = false;
+      try { acceptChangeUnitDecomposition(projectRoot, BLUEPRINT_ID, [candidate]); }
+      catch (error) { rejected = error instanceof ChangeUnitDecompositionRejected; }
+      assert(rejected, 'consumer 未拒绝重复接受');
+      assert(enumerateCanonicalChangeUnits(projectRoot, BLUEPRINT_ID).length === 1, '重复创建 CU');
+      assert(fs.readFileSync(accepted.accepted[0]!.canonicalPath, 'utf8') === unitBefore, '重入改写已接受 CU');
+      assert(fs.readFileSync(blueprintFile, 'utf8') === before, '首次分解或重入不应修订蓝图');
+      assertStoppedAtHandoff(projectRoot);
+    });
+  }));
+
+  results.push(test('design entry: internal P1 workflow links resolve within the release content', () => {
+    for (const rel of ['skills/project/component-design/SKILL.md', 'skills/reference/app-component-blueprint-workflow.md']) {
+      const file = path.join(FRAMEWORK_ROOT, rel);
+      for (const match of fs.readFileSync(file, 'utf8').matchAll(/\]\(([^)]+)\)/g)) {
+        const target = path.resolve(path.dirname(file), match[1]!.split('#')[0]!);
+        assert(fs.existsSync(target), `${rel} 引用缺失：${match[1]}`);
+        assert(!path.relative(FRAMEWORK_ROOT, target).startsWith('..'), '内部流程引用超出发布件');
+      }
+    }
+  }));
+
   // -------------------------------------------------------------------------
   // 单 CU 正式需求：完整设计交接
   // -------------------------------------------------------------------------

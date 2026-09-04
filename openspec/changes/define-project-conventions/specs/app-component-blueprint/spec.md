@@ -36,7 +36,7 @@ The static Seam Card freezes `authority_rule` as `Project conventions are stable
 - **WHEN** an applicable card constrains the component design
 - **THEN** the blueprint MUST cite the same configured-path/id source ref through existing fact and decision provenance without adding another schema field
 
-> **Enforced by (P1 implementation):** `harness/scripts/utils/blueprint-provider-boundary.ts`, `harness/scripts/utils/blueprint-discovery.ts`, `harness/scripts/check-component-blueprint.ts`, `skills/project/component-design/SKILL.md`, `skills/project/app-component-blueprint/SKILL.md`
+> **Enforced by (P1 implementation):** `harness/scripts/utils/blueprint-provider-boundary.ts`, `harness/scripts/utils/blueprint-discovery.ts`, `harness/scripts/check-component-blueprint.ts`, `skills/project/component-design/SKILL.md`, `skills/reference/app-component-blueprint-workflow.md`
 
 ### Requirement: Review projection publishes adopted convention refs without new facts
 

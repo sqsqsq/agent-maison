@@ -1,5 +1,5 @@
 ---
-description: 正式需求的部件内设计阶段入口（component-design / Story Design）
+description: 创建或继续部件设计（component-design / Story Design）
 argument-hint: <blueprint-id>
 ---
 

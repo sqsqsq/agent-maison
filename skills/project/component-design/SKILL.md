@@ -1,9 +1,9 @@
 ---
 name: component-design
-description: Formal-requirement entry into the component-internal design stage — materialize sources, confirm formality, build and admit a component evolution blueprint, decompose into 1..N canonical Change Units, and hand off to construction. Use for any formal requirement before spec/plan/change-lite; it stops at design handoff and never enters the P2 selector, Goal Mode or P3 closure.
+description: Create or continue a component design from the user's request and existing artifacts. Use for formal requirements, Story Design, blueprint inspection, questioning and reconciliation. Complete only the requested work; full handoff requires an admitted blueprint and canonical Change Units with readiness. Never enter the P2 selector, Goal Mode or P3 closure.
 ---
 
-# Component design（正式需求的部件内设计阶段）
+# Component design（创建或继续部件设计）
 
 > **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `design.formality_routing`
 > —— 正式性判定信息不足时以该确认点提问并停等（选项文案从 confirmation-registry.yaml 逐字引用）；
@@ -12,17 +12,33 @@ description: Formal-requirement entry into the component-internal design stage �
 **每一项正式需求都要先经过这里。** 组织侧把这个活动称为 **Story Design**；Maison 侧唯一
 canonical 设计产物是**部件演进蓝图**（Component Evolution Blueprint）。
 
-本 Skill 是一个**纯编排入口**：零新 CLI、零新状态、零新 registry。每一步都调用既有能力
-（[app-component-blueprint](../app-component-blueprint/SKILL.md) 建蓝图、P2 设计准备子流程
-写 CU），自身**不直接写 canonical CU**、不启动 Goal Mode。
+本 Skill 只编排 P1 蓝图内部工作流与 P2 设计准备段，自身不直接写 canonical CU、不启动 Goal Mode。
 
 ## 触发条件
 
-- “新需求 / 要改这个功能 / 这个 Story 怎么做 / 建部件设计 / Story Design”
+- “新需求 / 要改这个功能 / 这个 Story 怎么做 / 建部件设计 / Story Design / 继续设计 / 查看或质询蓝图 / 调和蓝图”
 - `/component-design <blueprint-id>`
 - `/spec` 或 `/change-lite` 的正式性兜底复核指回本入口时
 
-## 正式性判定（第 0 步，必答）
+## 先读请求与已有产物
+
+设计用户入口统一为 `/component-design`。按 `blueprint_id` 和配置的 `paths.features_dir` 读取同一
+演进工作区的 canonical 蓝图、已有 CU 及其引用；复用既有 resolver，不另建登记或模式字段。
+先明确用户本次需要的结果，再从尚未完成的步骤继续：
+
+- 新建正式需求：完成下方正式性判定与来源处理，再走蓝图、首次分解与 readiness 的完整交接链。
+- 已有草稿未 admitted：继续尚未完成的发现、设计与独立质询；用户只要求局部操作时到此结束。
+- 查看、解释、检查或评审：读取当前设计，复用 P1 质询与既有 publication/feedback 接缝。
+  **只读请求不修改 canonical 设计**，发现问题先报告；不得因已有蓝图就自动执行调和。
+- 仅重入、查看或重跑 checker **不增加 revision**。新事实、被接受的权威裁决或冲突解决才按
+  P1 调和规则形成正式修订；意见、建议与未接受反馈不自动升 revision。下游由各自权责重新派生。
+- 用户要求完成设计交接且蓝图已 admitted：0 CU 从第 3 步首次分解；已有 CU 复用并在第 4 步
+  派生 readiness，**不重复创建 CU**。需要改变已接受单元时走既有修订 / superseding 规则。
+
+已有设计的局部请求不重走新需求判定或来源物化；涉及新增需求时仍执行对应正式性与来源检查。
+局部操作不强制跑完分解和交接，不选择 CU、不启动 Goal Mode/P3。
+
+## 新需求正式性判定（第 0 步，必答）
 
 > **正式需求**＝有明确交付或验收责任，且拟改变**部件行为、外部契约、数据/NFR、运行语义
 > 或架构责任**的事项；不改变这些语义的**纯文档和机械维护**除外。
@@ -39,7 +55,7 @@ canonical 设计产物是**部件演进蓝图**（Component Evolution Blueprint�
 （Service、Library 等）建蓝图时**明确返回 unsupported / missing design lens 失败**并说明缺什么，
 不得强行送入 App 4+1 后宣称已支持；lens 建设由各自 profile 的独立变更承担。
 
-## 编排流程（终点=设计交接）
+## 编排流程（完整请求终点=设计交接，局部请求按需结束）
 
 ### 1. 需求源物化（seam：requirement-source-materialization，宿主 → Maison）
 
@@ -68,35 +84,20 @@ npm run check:component-blueprint -- --project-root <宿主根> --blueprint <blu
 
 ### 2. 蓝图发现 / 设计 / 质询 / 调和 → admitted
 
-调用 [app-component-blueprint](../app-component-blueprint/SKILL.md) 的既有流程，含组件资产读取、live 检索、decision 与 optional provider 可用性裁决；CU design_refs 引用选型，Feature 仅投影。
+调用 [P1 蓝图内部工作流](../../reference/app-component-blueprint-workflow.md) 的既有流程，含组件资产读取、live 检索、decision 与 optional provider 可用性裁决；CU design_refs 引用选型，Feature 仅投影。
 current-facts-discovery 前解析 `paths.conventions`（缺失用框架默认值）；文件存在时完整读取，只将适用条目交给既有 fact/provenance/decision 链。`conventions-knowledge` 未启用记 `available=false + not_applicable`，显式配置却不可读记 `unknown|degraded`，不得声称已消费。
 
-**内容深度由本次演进的真实影响面派生**（条件式设计义务），只有一种蓝图协议——**没有
-compact/full 档位、没有升级信号、没有升级状态机**：
-
-| 维度 | 语义 | 取值 |
-|---|---|---|
-| `applicability` | 部件类型固有适用性 | `applicable` / `not_applicable`（后者仍仅限 deployment，且须证据化裁决） |
-| `evolution_impact` | 本次演进影响（仅 applicable 视图携带） | `changed` / `verified_unchanged` |
-
-- 至少一个 `applicable` + `changed` 视图；全部 `verified_unchanged` = 本次不构成演进，
-  fail-closed；
-- `verified_unchanged` 必须带 `unchanged_evidence`（事实依据 + 当前态引用），据此免除
-  target/delta 与节点义务；视图内任一节点声明本次 delta 即失败——不变声明不得掩盖真实变化；
-- 小正式需求得到**薄蓝图**：未触发的义务表达为空集/不适用的合法结论，不用空章节凑齐形式。
-
-**条件式设计义务**（只在对应事实被发现时触发）：
-
-| 发现 | 义务 |
-|---|---|
-| 多个 CU | 完成 CU 边界与关系分析（真实依赖、共享资源、可并行性、独立性）；**只有事实要求时**才生成 `requires` 与顺序约束，不得为记录先后伪造依赖边 |
-| 共享部件级设计决策 | 只在蓝图裁决一次，各 CU 经 `design_refs` 消费；不在多个 Feature plan 各裁一次 |
-| “单独绿 ≠ 整体完成” | Component closure 追加真实组装与组合证据义务 |
-| （通用，单/多 CU 都适用） | 每个 CU 的 `safe_intermediate_state` |
+内容深度及条件式设计义务遵循上述 P1 内部工作流；只有一种蓝图协议，不设 compact/full 档位。
+小正式需求形成薄蓝图，未触发义务按合法空集/不适用表达，不凑空章节。
 
 ### 3. 分解为 1..N canonical Change Unit（经 P2 设计准备子流程）
 
-**本 Skill 自身不写 canonical CU。** 落盘经既有 P2 设计准备子流程完成：
+仅在用户要求完成设计交接且尚无 canonical CU 时进行首次分解；已有 CU 直接复用并转第 4 步。
+**本 Skill 自身不写 canonical CU。** 仅调用 [P2 设计准备段](../change-unit-progression/SKILL.md)，
+不执行该 Skill 的施工流程。实现入口为
+[`change-unit-design-preparation.ts`](../../../harness/scripts/utils/change-unit-design-preparation.ts)：
+`evaluateDesignPreparationEntry` 读取准入与已有单元，`acceptChangeUnitDecomposition` 委托唯一
+consumer validator 接受候选，`deriveDesignPreparationReadiness` 派生交接结果。
 
 1. 入口 = admitted blueprint —— **canonical CU 数量为 0 是合法入口**；
 2. decomposition provider / 设计者只提出**临时候选**（内存 / 临时报告）；
@@ -134,6 +135,8 @@ compact/full 档位、没有升级信号、没有升级状态机**：
 
 ## 完成边界
 
+局部操作完成只报告本次请求的结果及剩余设计缺口，不等于设计交接完成。
+
 设计交接完成 = **admitted blueprint + 已分解 1..N canonical CU + 每个 CU 建立 `design_refs`
 引用 + 后续施工 readiness**。
 
@@ -143,8 +146,4 @@ compact/full 档位、没有升级信号、没有升级状态机**：
 本结果只代表**设计阶段**完成，不代表任何 Change Unit 已施工、也不代表 Component closure
 已成立。
 
-## 关联文件
-
-- 宿主适配唯一人读入口：[component-design-host-adaptation.md](../../../docs/operations/component-design-host-adaptation.md)
-- 真实宿主准入与回灌契约：[real-host-admission-and-feedback.md](../../reference/real-host-admission-and-feedback.md)
-- 蓝图协议：[app-component-blueprint](../app-component-blueprint/SKILL.md)
+真实宿主进入条件与缺失路由见 [准入与回灌契约](../../reference/real-host-admission-and-feedback.md)。

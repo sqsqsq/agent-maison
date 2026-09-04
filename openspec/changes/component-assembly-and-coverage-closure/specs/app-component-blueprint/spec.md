@@ -31,7 +31,7 @@ App 部件发现 MUST 为每个当前态断言、设计输入、冲突和 unknow
 - **WHEN** current-scope source items and discovery facts remain byte-equivalent but a requirement is remapped to a corrected blueprint stable address
 - **THEN** `source_fingerprint` MUST remain unchanged while blueprint `revision` and `artifact_sha256` change, causing the old P3 `input_fingerprint` to become stale
 
-> **Enforced by (P1 implementation):** `skills/project/app-component-blueprint/SKILL.md`, `harness/schemas/app-component-blueprint.schema.json`, `harness/scripts/check-component-blueprint.ts`, `harness/scripts/utils/blueprint-discovery.ts`, `harness/scripts/utils/blueprint-provenance.ts`
+> **Enforced by (P1 implementation):** `skills/reference/app-component-blueprint-workflow.md`, `harness/schemas/app-component-blueprint.schema.json`, `harness/scripts/check-component-blueprint.ts`, `harness/scripts/utils/blueprint-discovery.ts`, `harness/scripts/utils/blueprint-provenance.ts`
 
 ### Requirement: Substantial evolution candidates receive explicit decisions
 

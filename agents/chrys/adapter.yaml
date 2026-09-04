@@ -45,6 +45,11 @@ goal_capability:
       write_mode: full-access
       approval_mode: never
 
+deprecated_artifacts:
+  - path: skills/app-component-blueprint/
+    action: backup_delete
+    reason: "设计入口收敛至 component-design，P1 改为内部工作流"
+
 post_install_hooks: []
 
 notes: |

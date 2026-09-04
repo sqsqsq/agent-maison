@@ -9,6 +9,7 @@ import { clearFrameworkConfigCache } from '../../config';
 import { executeInitTask, type InitExecutionContext } from '../../scripts/utils/init-task-executor';
 import { __testing_setDetectScanForEnsure } from '../../scripts/utils/personal-setup-gate';
 import type { InitTaskPlan } from '../../scripts/utils/init-task-planner';
+import type { CleanupResult } from '../../scripts/utils/init-sync-telemetry';
 import { detectRepoLayout, harnessRootFromLayout } from '../../repo-layout';
 
 function minimalArchitecture(): Record<string, unknown> {
@@ -1410,6 +1411,81 @@ const cases: Array<{ name: string; run: () => void }> = [
       clearFrameworkConfigCache();
     },
   },
+  ...[
+    {
+      adapters: ['cursor', 'claude', 'codeagent', 'generic'],
+      entryPaths: [
+        '.cursor/commands/component-design.md', '.cursor/skills/component-design/SKILL.md',
+        '.claude/commands/component-design.md', '.cac/commands/component-design.md',
+        '.codex/skills/component-design/SKILL.md',
+      ],
+    },
+    // 独立消费者，避免 generic 自定义 .codex 清理掩盖原生 codex 分支遗漏。
+    { adapters: ['codex'], entryPaths: ['.codex/skills/component-design/SKILL.md'] },
+    { adapters: ['chrys'], entryPaths: ['.agents/skills/component-design/SKILL.md'] },
+    { adapters: ['opencode'], entryPaths: ['.opencode/skill/component-design/SKILL.md'] },
+  ].map(({ adapters, entryPaths }) => ({
+    name: `设计入口 CREATE/UPDATE ${adapters.join('+')}：旧入口备份可恢复且统一入口/用户内容保留`,
+    run: () => {
+      const root = mkTmp();
+      const legacyPaths = entryPaths.map(p => p.replace('component-design', 'app-component-blueprint'));
+      const userPaths = entryPaths.map(p => p.replace('component-design', 'my-design'));
+      try {
+        fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({
+          schema_version: '1.1', project_name: 'entry-convergence',
+          materialized_adapters: adapters, architecture: minimalArchitecture(),
+          paths: { features_dir: 'doc/features', agent_bundle_root: '.codex' },
+        }));
+        clearFrameworkConfigCache();
+        const ctx: InitExecutionContext = {
+          projectRoot: root,
+          harnessRoot: harnessRootFromLayout(detectRepoLayout(path.join(__dirname, '../..'))),
+          plan: { schema_version: '1.0', scope: 'project', mode: 'create', generated_at: '', tasks: [] },
+          materializedAdapters: adapters,
+        };
+        const task = {
+          id: 'cleanup-deprecated', title: 'cleanup', category: 'mechanism', scope: 'project' as const,
+          deps: [], status: 'needed' as const, default_action: 'run' as const,
+          skippable: true, allowed_actions: ['run' as const],
+        };
+        const materialize = () => {
+          for (const adapter of adapters) executeInitTask({
+            ...task, id: `materialize-adapter:${adapter}`, params: { adapter },
+          }, 'run', ctx);
+        };
+        materialize();
+        for (const p of entryPaths) assert(fs.existsSync(path.join(root, p)), `CREATE 缺 ${p}`);
+        for (const p of legacyPaths) assert(!fs.existsSync(path.join(root, p)), `CREATE 暴露 ${p}`);
+        const entryBytes = entryPaths.map(p => fs.readFileSync(path.join(root, p), 'utf8'));
+        for (const p of [...legacyPaths, ...userPaths]) {
+          fs.mkdirSync(path.dirname(path.join(root, p)), { recursive: true });
+          fs.writeFileSync(path.join(root, p), `original content: ${p}`);
+        }
+        ctx.plan.mode = 'update';
+        // 只重新物化、未执行 cleanup-deprecated 时，旧入口仍在，不能宣称已清理。
+        materialize();
+        for (const p of legacyPaths) assert(fs.existsSync(path.join(root, p)), `物化不应越权清理 ${p}`);
+        const result = executeInitTask(task, 'run', ctx);
+        assert.strictEqual(result.cleanup_results?.length, legacyPaths.length);
+        for (const p of legacyPaths) {
+          assert(!fs.existsSync(path.join(root, p)), `UPDATE 未移除 ${p}`);
+          const row: CleanupResult | undefined = result.cleanup_results!.find(r => p === r.path || p.startsWith(r.path.replace(/\/$/, '') + '/'));
+          assert(row?.backup_path, `${p} 缺恢复路径`);
+          assert(!fs.existsSync(path.join(root, row.path)), `旧入口目录/文件残留：${row.path}`);
+          const suffix = p.slice(row.path.replace(/\/$/, '').length);
+          assert.strictEqual(fs.readFileSync(path.join(root, row.backup_path + suffix), 'utf8'), `original content: ${p}`);
+        }
+        materialize();
+        for (const p of legacyPaths) assert(!fs.existsSync(path.join(root, p)), `UPDATE 又物化了 ${p}`);
+        entryPaths.forEach((p, i) => assert.strictEqual(fs.readFileSync(path.join(root, p), 'utf8'), entryBytes[i]));
+        for (const p of userPaths) assert.strictEqual(fs.readFileSync(path.join(root, p), 'utf8'), `original content: ${p}`);
+        assert(!executeInitTask(task, 'run', ctx).cleanup_results?.length, '再次清理应为 no-op');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        clearFrameworkConfigCache();
+      }
+    },
+  })),
 ];
 
 export function runAll(): UnitCaseResult[] {

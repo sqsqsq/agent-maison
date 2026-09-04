@@ -1,6 +1,6 @@
 ---
 name: component-design
-description: 正式需求的部件内设计阶段入口（Story Design）：需求源物化 → 正式性确认 → 蓝图 admitted → 1..N canonical CU → 施工 readiness；终点是设计交接
+description: 创建或继续部件设计（Story Design）：按请求与已有产物继续，完整交接至 CU readiness，局部操作按需结束
 ---
 
 > **BLOCKER — Personal setup**：`check-personal-setup.ts --json --ensure`（见 [personal-setup-gate](../../../framework/skills/reference/personal-setup-gate.md)）。

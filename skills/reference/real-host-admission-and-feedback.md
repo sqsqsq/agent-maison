@@ -15,7 +15,7 @@
 **什么时候必须走本契约**：宿主需求按本节"进入判据与时机"被判定为**正式需求**（因而必经部件内
 设计阶段，入口 [component-design Skill](../project/component-design/SKILL.md)），或已明确归属于
 某个既有 `blueprint_id`（既有演进工作区 `<features_dir>/<blueprint_id>/`，蓝图本身由
-[app-component-blueprint Skill](../project/app-component-blueprint/SKILL.md) 建立）时，必须走本
+[P1 蓝图内部工作流](./app-component-blueprint-workflow.md) 建立）时，必须走本
 契约。随后每个施工单元（Change Unit，下称 CU）的进入、推进、闭环与回流均按本文执行。
 
 宿主侧适配（三条接缝的方向、artifact、字段、hash、authority、失败行为与接入流程）的唯一人读
@@ -25,7 +25,7 @@
 **作用域包含 pre-CU 蓝图准入**：在部件蓝图尚未建立、需求准备进入蓝图时，同样先按 §2 准入清单
 逐项核对。缺失项**只有在输入足以形成合法蓝图时**才在首次蓝图创建时写入 `decisions_and_gaps`；
 输入不足以形成合法蓝图（仓库/访问/构建不可用）时，直接按 §3 第三级 halt 并报告、不落盘。蓝图
-Skill 的入口链接（[app-component-blueprint](../project/app-component-blueprint/SKILL.md)）
+统一设计入口（[component-design](../project/component-design/SKILL.md)）
 指向本契约，即为此意。
 
 **与普通 Feature 的边界**：没有 `change_unit_ref` 的普通 Feature 走各自既有 Skill 与流程，不经过
@@ -140,7 +140,7 @@ AI 记账等真实宿主验证（H1 批次 1）以本文为入口开展；宿主
 - 缺失时：只形成**消费需求/提案**（蓝图 `gaps[]` 条目：`open_decision` / `blocker`，字段列全
   `owner`、`needed_by`、`unlock_condition`、`provenance`），**不得把
   Maison 提案冒充已批准契约**；"需求/提案 ≠ 已冻结契约"，Maison 不替云侧/授权 owner 裁决。
-- 契约链形状与既有表述见 [app-component-blueprint Skill](../project/app-component-blueprint/SKILL.md)
+- 契约链形状与既有表述见 [P1 蓝图内部工作流](./app-component-blueprint-workflow.md)
   的 SE 契约消费段，此处不复制。
 
 ## 6. 三批宿主目标与证据口径（自包含）

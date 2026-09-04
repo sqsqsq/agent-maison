@@ -20,7 +20,7 @@ App 部件发现 MUST 为每个当前态断言、设计输入、冲突和 unknow
 - **WHEN** 蓝图需要云侧 operation 的 DTO 语义，但唯一权威来源不可访问
 - **THEN** 相关字段保持 `unknown`，并形成带来源、owner 和解除条件的 `open_decision` 或 `blocker`，不得生成已批准的 request/response
 
-> **Enforced by (P1 implementation):** `skills/project/app-component-blueprint/SKILL.md`, `harness/scripts/check-component-blueprint.ts`, `harness/scripts/utils/blueprint-provenance.ts`
+> **Enforced by (P1 implementation):** `skills/reference/app-component-blueprint-workflow.md`, `harness/scripts/check-component-blueprint.ts`, `harness/scripts/utils/blueprint-provenance.ts`
 
 ### Requirement: Viewpoint contracts and App view instances are separate
 
@@ -111,7 +111,7 @@ App 部件发现 MUST 为每个当前态断言、设计输入、冲突和 unknow
 - **WHEN** 请求为一个没有 design lens 的 component type 建立部件演进蓝图
 - **THEN** 入口返回 unsupported / missing design lens 的明确失败，不生成套用 App 4+1 骨架的蓝图
 
-> **Enforced by (P1 implementation):** `skills/project/app-component-blueprint/SKILL.md`, `skills/project/component-design/SKILL.md`, `openspec/specs/complex-capability-meta-model/spec.md`
+> **Enforced by (P1 implementation):** `skills/reference/app-component-blueprint-workflow.md`, `skills/project/component-design/SKILL.md`, `openspec/specs/complex-capability-meta-model/spec.md`
 
 ### Requirement: The blueprint has one structured source with stable addresses
 
@@ -311,7 +311,7 @@ blueprint_id、revision、source_fingerprint、artifact_sha256），并完整投
 - **WHEN** 质询指出某模块的状态 owner，编写上下文只给出自然语言断言而无代码/schema/test provenance
 - **THEN** 该问题不能得到 `answered_with_evidence`，必须保持 unknown 并按门槛形成 open decision 或 blocker
 
-> **Enforced by (P1 implementation):** `skills/project/app-component-blueprint/SKILL.md`, `harness/scripts/utils/blueprint-questioning.ts`, `harness/scripts/check-component-blueprint.ts`
+> **Enforced by (P1 implementation):** `skills/reference/app-component-blueprint-workflow.md`, `harness/scripts/utils/blueprint-questioning.ts`, `harness/scripts/check-component-blueprint.ts`
 
 ### Requirement: Dispositions and layered admission preserve unknown
 
@@ -384,7 +384,7 @@ App design lens MAY 提出变化轴候选，但只有存在可追溯变化证据
 
 ### Requirement: Static providers consume one provider-neutral protocol
 
-本 P1 实现 MUST 将当前事实发现、SE/人工契约输入、App design lens 和独立设计质询作为静态内置 provider 接入同一蓝图协议，并把 P1 Skill 登记到既有 `skills/skills.index.yaml` 真源。provider id MUST 唯一，requirement 只允许 `required|optional`；四张 Seam Card 的 `authority_rule`/`source_rule` MUST 与下表冻结契约一致，重复 provider 不得按顺序或 Map 覆盖。required provider 缺失 MUST 形成结构化 blocker；optional provider 缺失 MUST 显示降级或 unknown。provider 替换不得改变 P2 消费的蓝图协议；provider MUST NOT 直接修改 Goal Mode 的 events/receipt/evidence，不得引入动态插件加载、第二全局注册表、跨单元运行状态或第二恢复权威。`project_profile` 只提供平台/项目事实和适用性线索，`design_lens` 只负责部件特有问题，e4/b9 等可选知识/资产 provider 缺失不应使核心蓝图伪造 PASS。
+本 P1 实现 MUST 将当前事实发现、SE/人工契约输入、App design lens 和独立设计质询作为静态内置 provider 接入同一蓝图协议，公开设计入口 MUST 仅为登记在既有 `skills/skills.index.yaml` 的 `/component-design`；P1 发现、设计、质询、准入与调和 MUST 由 `skills/reference/app-component-blueprint-workflow.md` 内部引用承载，不再登记为独立 Skill 或物化公开 command/bridge。provider id MUST 唯一，requirement 只允许 `required|optional`；四张 Seam Card 的 `authority_rule`/`source_rule` MUST 与下表冻结契约一致，重复 provider 不得按顺序或 Map 覆盖。required provider 缺失 MUST 形成结构化 blocker；optional provider 缺失 MUST 显示降级或 unknown。provider 替换不得改变 P2 消费的蓝图协议；provider MUST NOT 直接修改 Goal Mode 的 events/receipt/evidence，不得引入动态插件加载、第二全局注册表、跨单元运行状态或第二恢复权威。`project_profile` 只提供平台/项目事实和适用性线索，`design_lens` 只负责部件特有问题，e4/b9 等可选知识/资产 provider 缺失不应使核心蓝图伪造 PASS。
 
 四个静态 provider 的 Seam Card 固定如下；它们是本 capability spec 的协议条目，不是新的文件类型、注册表或权威：
 
@@ -407,7 +407,7 @@ provider 只能通过上述协议提供输入或派生报告，不能直接改�
 - **WHEN** b9 组件资产 provider 不存在，但 App 蓝图不依赖组件复用才能回答核心数据/状态问题
 - **THEN** 核心蓝图可以继续，但必须显示该维度的诚实 unknown/降级，不得呈现资产已被发现或验证
 
-> **Enforced by (P1 implementation):** `skills/skills.index.yaml`, `skills/project/app-component-blueprint/SKILL.md`, `harness/scripts/utils/blueprint-provider-boundary.ts`, `openspec/specs/complex-capability-meta-model/spec.md`
+> **Enforced by (P1 implementation):** `skills/skills.index.yaml`, `skills/reference/app-component-blueprint-workflow.md`, `harness/scripts/utils/blueprint-provider-boundary.ts`, `openspec/specs/complex-capability-meta-model/spec.md`
 
 ### Requirement: Three Story-class host seams are separate directional contracts
 
@@ -480,3 +480,26 @@ provider 只能通过上述协议提供输入或派生报告，不能直接改�
 - **THEN** 违反本契约——两条接缝方向相反、owner 不同，必须独立
 
 > **Enforced by (P1 implementation):** `harness/schemas/requirement-source-materialization.schema.json`, `harness/schemas/blueprint-review-feedback.schema.json`, `harness/schemas/app-component-blueprint.schema.json`, `harness/scripts/check-component-blueprint.ts`, `harness/scripts/utils/blueprint-host-seams.ts`, `harness/scripts/utils/blueprint-review-projection.ts`, `docs/operations/component-design-host-adaptation.md`
+
+### Requirement: One component design entry continues from existing artifacts
+
+/component-design MUST 创建或继续同一演进工作区的部件设计，依据用户请求与现有产物从未完成步骤继续，不新增模式、状态机或隐藏 Skill 注册机制。只读请求 MUST NOT 修改 canonical 设计；仅重入、查看、重跑 checker MUST NOT 增加 revision。新事实、被接受的权威裁决或冲突解决 MUST 按既有 reconciliation 形成正式修订；意见、建议及未接受反馈 MUST NOT 自动升 revision。P1 协议、三条宿主接缝及 e4/b9 的蓝图、CU/Feature/review/Story 消费链 MUST 保留。
+
+#### Scenario: Reenter or inspect an existing design
+
+- **WHEN** 用户查看、检查、质询或局部修改既有设计
+- **THEN** 入口只完成所请求的步骤；草稿未 admitted 时继续设计与质询，仅重入或只读检查不改变 canonical 字节或 revision，不强制分解或交接
+
+#### Scenario: Finish handoff with zero or existing change units
+
+- **WHEN** 用户要求完成设计交接，蓝图已 admitted
+- **THEN** 0 CU 时调用既有 P2 设计准备与 consumer validator 首次生成 1..N canonical CU；已有 CU 时复用并派生 design_refs/readiness，不重复接受；修订走既有 superseding 规则
+- **AND** 完整交接仍要求 admitted 蓝图、1..N canonical CU、design_refs 与 readiness，局部操作完成不冒充交接完成，不选择 CU、不启动 Goal Mode/P3
+
+#### Scenario: Install and update expose only the unified entry
+
+- **WHEN** 安装或 UPDATE 物化各 adapter
+- **THEN** 新产物只公开 /component-design；旧入口清理复用 cleanup-deprecated、LEGACY_SKILL_BRIDGE_IDS 和 adapter deprecated_artifacts，覆盖 Cursor command/Skill、Claude/Codeagent command、Codex/Chrys/OpenCode 原生 Skill 目录与 generic 配置 bundle 路径，先备份再删除明确旧路径，保留统一入口和无关用户内容
+- **AND** 用户跳过清理时 MUST 披露旧入口仍保留，不宣称清理完成
+
+> **Enforced by:** `skills/project/component-design/SKILL.md`, `skills/reference/app-component-blueprint-workflow.md`, `harness/scripts/utils/change-unit-design-preparation.ts`, `harness/scripts/utils/legacy-skill-bridge-cleanup.ts`, `agents/cursor/adapter.yaml`, existing entry/update/handoff unit tests

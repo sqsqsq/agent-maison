@@ -1,26 +1,13 @@
-# App Component Blueprint Skill
+# App Component Blueprint 内部工作流
 
-为一个 App 部件建立、检查和调和 provider-neutral 的 canonical 蓝图。蓝图是一次演进的设计权威（2026-08-21 裁决：不是部件常驻真源）；本 Skill 不创建 Change Unit、P2 ready set 或 P3 closure。
+由 [`/component-design`](../project/component-design/SKILL.md) 或合法内部消费者引用，负责 App 部件发现、设计、质询、准入与调和；不登记独立 Skill、不提供公开 command。蓝图是一次演进的设计权威，本流程不创建 CU、P2 ready set 或 P3 closure。
 
-## 触发条件
-
-- “发现 App 部件 / 建部件蓝图 / 适配 4+1 / 调和蓝图”
-- `/app-component-blueprint <blueprint-id>`
-
-> **入口关系（M7）**：**正式需求的常规入口是 [`/component-design`](../component-design/SKILL.md)**
-> ——它编排"需求源物化 → 正式性判定 → 本 Skill 建蓝图至 admitted → 分解 1..N 个 canonical
-> CU → readiness"。本 Skill 保留为**直接入口**：已明确要建 / 调和某份蓝图时可以直接进入。
-> 蓝图是每项正式需求在当前部件内的设计权威，不是"复杂多 CU 才启用的可选路线"；只有一种
-> 协议，内容深度由本次演进的真实影响面派生（**没有 compact/full 档位或升级状态机**）。
->
-> **支持范围**：当前只有 `hmos-app` / App component profile 具备 design lens。请求为其它
-> component type 建蓝图时，返回明确的 unsupported / missing design lens 失败，不得把它们
-> 强行送入 App 4+1 视图后宣称已支持。
+只有一种蓝图协议，内容深度由真实影响面派生；当前仅支持 `hmos-app` / App design lens，其它 component type 明确返回 unsupported / missing design lens。
 
 > 真实宿主的正式需求在进入蓝图前，材料准入与缺失路由见
-> [真实宿主准入与回灌契约](../../reference/real-host-admission-and-feedback.md)（适用范围内）；
+> [真实宿主准入与回灌契约](./real-host-admission-and-feedback.md)（适用范围内）；
 > 宿主侧三条接缝的适配细则见
-> [宿主适配指南](../../../docs/operations/component-design-host-adaptation.md)。
+> [宿主适配指南](../../docs/operations/component-design-host-adaptation.md)。
 
 ## 正式产物
 
@@ -46,6 +33,8 @@ provider 固定内置并消费同一协议；id 必须唯一，requirement 只�
 
 ### 1. 发现与权威分位
 
+先按 `blueprint_id` 读取已有 canonical 蓝图，遵循 `/component-design` 的请求范围：只读不写 canonical，草稿从未完成的设计/质询继续，已有 admitted 蓝图不因重入自动调和。
+
 - 当前事实优先引用代码/schema/接口/配置/测试；知识资产提供稳定背景，不覆盖本次事实。当前范围的 requirement/goal/invariant/high-risk 必须在 `discovery.inputs.current_scope_items` 形成带稳定 id、可解析 source ref、provenance 和项目内来源实际原始字节 hash 的闭集；revision 可附加但不能替代 hash，并由 `discovery.requirement_traceability` 双向一一映射到真实蓝图稳定地址。
 - 惯例文件存在时完整读取，只把适用条目写入 `discovery.facts`：`provenance.source_kind: convention`、`source_ref: <配置路径>#<id>`、`evidence_strength: authoritative`。视图节点与 decision 继续用既有 `provenance` / `verification_refs` 引用同一 source ref；禁止新增 conventions 专用字段。
 - 同一语义冲突时保留双方 source ref 与 owner，禁止 last-write-wins。
@@ -67,6 +56,15 @@ canonical YAML 根对象含 `component_id`、`blueprint_id`、`revision`、`sour
 - **至少一个 `applicable` + `changed` 视图**；全部 `verified_unchanged` = 本次不构成演进，fail-closed；
 - 六类 runtime flow 触发条件**只对 `runtime` = `changed` 评估**。
 
+**条件式设计义务**（只在对应事实被发现时触发）：
+
+| 发现 | 义务 |
+|---|---|
+| 多个 CU | 完成 CU 边界与关系分析（真实依赖、共享资源、可并行性、独立性）；**只有事实要求时**才生成 `requires` 与顺序约束，不得为记录先后伪造依赖边 |
+| 共享部件级设计决策 | 只在蓝图裁决一次，各 CU 经 `design_refs` 消费；不在多个 Feature plan 各裁一次 |
+| “单独绿 ≠ 整体完成” | Component closure 追加真实组装与组合证据义务 |
+| （通用，单/多 CU 都适用） | 每个 CU 的 `safe_intermediate_state` |
+
 ### 3. 运行时流与跨视图检查
 
 逐项裁决六类 flow 触发条件。触发时记录 source-of-truth/reconciliation、trigger idempotency、initial-load freshness、state owner、mutation/publication/subscription cleanup、consumer、failure/recovery、证据和验证引用，并覆盖 cold start、warm resume、page attach/detach、account switch、process recreation、background write。闭环关键集合不得为空；局部 id 唯一，mutation/subscription/consumer 的引用必须解析到真实 flow 对象。
@@ -78,6 +76,7 @@ scenario 必须追到 logical/runtime/development 以及适用 deployment；runt
 - 独立质询从 canonical YAML 派生 scope，唯一覆盖每个 view/relation/runtime flow 和十个 App 根问题，并逐项给出 evidence、disposition、frontier fingerprint、owner 和 verification refs。
 - root questions、contracts/design refs readiness 和 admission status 由实际质询/App lens 及 checker 结果派生，不接受自报布尔值。
 - 当前切片依赖的 unknown 必须 blocker；远期 open decision 必须有 owner、needed-by 和解除条件。
+- 仅重入、查看或重跑 checker 不增加 revision；意见、建议与未接受反馈不自动触发修订。接受新事实、权威裁决或解决冲突后，才按既有调和规则生成新 revision，不回写旧 revision。
 - 决策/契约版本/视图适用性变化时，只把 P1 自身派生结果标 stale 并按新 revision 重算；历史保留 provenance。
 - 下游发现 `component_blueprint_ref` 的 revision/source_fingerprint/artifact_sha256 不匹配时，在各自权威内重新派生；P1 不代写 ready/closure。
 
@@ -99,9 +98,9 @@ checker 无 BLOCKER，独立质询完成，当前切片可施工，P1 派生结�
 
 ## 组件资产 App lens（b9）
 
-新依赖边的人类裁决遵循 [用户确认 UX](../../reference/user-confirmation-ux.md)。
+新依赖边的人类裁决遵循 [用户确认 UX](./user-confirmation-ux.md)。
 
-沿 [组件资产 SSOT](../../../docs/concepts/component-assets.md) 消费配置的 index/catalog。development 或涉 UI 的 logical/scenarios 视图 changed 时，先读完整库存与策展卡，live 检索候选调用点，再按语义同一性、增量兼容、影响规模、变体轴判五级。每个页面/UI development 节点形成 component_asset_selection decision；节点沿既有 kind/decorator/navigation 信号并声明使用模块 module，target_ref 指该节点。provenance 指 index/catalog 证据，component_ref 指定义；owner/verification_refs 齐全。verified_unchanged development 不产生选型。
+沿 [组件资产 SSOT](../../docs/concepts/component-assets.md) 消费配置的 index/catalog。development 或涉 UI 的 logical/scenarios 视图 changed 时，先读完整库存与策展卡，live 检索候选调用点，再按语义同一性、增量兼容、影响规模、变体轴判五级。每个页面/UI development 节点形成 component_asset_selection decision；节点沿既有 kind/decorator/navigation 信号并声明使用模块 module，target_ref 指该节点。provenance 指 index/catalog 证据，component_ref 指定义；owner/verification_refs 齐全。verified_unchanged development 不产生选型。
 
 同一 providers[] 必有静态 optional component-assets 卡。冻结 authority_rule = `Source is component fact authority; curation is human selection guidance.`，source_rule = `Selection evidence cites the configured component index or catalog; component_ref identifies the asset.`。definition=共享 UI 资产输入，consumer=builder/lens/questioning，provider=静态 index/catalog reader；missing_behavior=诚实 unknown/degraded/not_applicable，replacement_behavior=同源重扫并使相关 P1 结果过期，exit_behavior=丢临时检索保留 provenance，conflict_behavior=源码优先且保留策展冲突，writes=[canonical_blueprint_input]。
 

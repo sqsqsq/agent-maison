@@ -12,6 +12,8 @@ import { parseCommandsTargetDir } from './instance-skill-bridge';
 import { isClaudeKernelAdapter } from './types';
 
 export const LEGACY_SKILL_BRIDGE_IDS = [
+  // 设计入口已收敛至 component-design；P1 仅作内部工作流。
+  'app-component-blueprint',
   // 00 / 0 前缀
   '00-framework-init',
   '0-catalog-bootstrap',
