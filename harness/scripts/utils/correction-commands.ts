@@ -1,10 +1,10 @@
 // ============================================================================
-// correction-commands.ts — 修正闭环三命令实现（C5-min correction-routing，
-// plan d4a7c1e8）
+// correction-commands.ts — 修正路由命令实现（C5-min correction-routing，plan d4a7c1e8；
+// plan 07a41ec6 T1 删除 --correction-check 与 touched_layers 对账）
 // ============================================================================
 // harness-runner 派发：
-//   --correction-init   ：归属 + 三问分层 → 写 .current-correction.json（pending）
-//   --correction-check  ：对照 revalidate 清单核查证据全绿 → status: closed
+//   --correction-init   ：归属 + 三问分层；feature 归属只打印责任阶段与重验提示（不写状态，
+//                         重验用 --revalidate）；no-feature 写 .current-correction.json 供 adhoc
 //   --adhoc-correction  ：no-feature 载体（compile + lint + 架构规则 + catalog
 //                         反查 touched modules；报告落 reports/_adhoc/<ts>/）
 // 验证转嫁禁令：revalidate 触及 testing/verification 而宿主无 device 能力 →
@@ -49,7 +49,6 @@ import {
 } from './correction-state';
 import { inferRepoLayout } from '../../repo-layout';
 import { loadFeatureTrackDecl, appendFeatureCorrectionHistory } from './feature-track';
-import { reconcileTouchedLayers } from './correction-layer-reconcile';
 import {
   resolveEnforcementTier,
   resolveFeatureTrack,
@@ -89,7 +88,7 @@ function readActiveStateFeature(projectRoot: string): string | null {
  * 已闭环 phase 集（track-aware，cursor 批次 2 review P1）：
  *   - full：receipt 文件存在（§5.1 闭环判据的确定性侧）；
  *   - lite：receipt 或该 phase script-report verdict=PASS——lite 无 receipt 机器件，
- *     以 exit/change 脚本报告为过渡闭环判据；与 --correction-check 的证据探测同源，
+ *     以 exit/change 脚本报告为过渡闭环判据；供修正路由的 revalidate 提示使用，
  *     C2 verification-matrix 统一 policy 后收敛为 receipt∨policy 判定。
  */
 export function closedPhasesFor(
@@ -147,12 +146,6 @@ export function runCorrectionInit(projectRoot: string, opts: CorrectionInitOpts)
     return 1;
   }
 
-  const baseCommit = resolveBaseCommit(projectRoot);
-  if (!baseCommit) {
-    console.error('❌ correction-init: 无法解析 git HEAD（base_commit 必需，红线 fail-closed）');
-    return 1;
-  }
-
   const fw = loadFrameworkConfig(projectRoot);
   const adapter = typeof fw.agent_adapter === 'string' ? fw.agent_adapter : '';
   const mode = isGoalOrchestrationEnv() ? 'goal' : 'interactive';
@@ -161,222 +154,76 @@ export function runCorrectionInit(projectRoot: string, opts: CorrectionInitOpts)
     { mode },
   );
 
-  let feature: string | null = null;
-  let rootLayer: string;
-  let touched: string[];
-  let revalidate: RevalidateEntry[];
-
   if (target.kind === 'feature') {
-    feature = target.feature;
-    const spec = resolveWorkflowSpec(projectRoot, { config: fw, frameworkRoot: opts.frameworkRoot });
-    const track = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature));
-    const closed = closedPhasesFor(
-      projectRoot,
-      feature,
-      workflowFeaturePhases(spec, track),
-      track,
-      opts.frameworkRoot,
-    );
-    const cls = classifyCorrection({ answers: opts.answers, spec, track, closedPhases: closed });
-    rootLayer = cls.root_layer;
-    touched = cls.touched_layers;
-    revalidate = cls.revalidate;
-
-  } else {
-    // no-feature：无 workflow 投影，层即类别；载体为 --adhoc-correction 单项清单。
-    rootLayer = resolveCorrectionCategory(opts.answers);
-    touched = touchedCategories(opts.answers);
-    revalidate = [{ phase: 'adhoc', status: 'pending' }];
+    // plan 07a41ec6 T1：feature 修正不写状态、无收口命令——三问只用于归责与重验提示，
+    // 重验由 --revalidate 只跑脚本门禁；修正历史仍记进 feature.yaml（可追溯性，非契约）。
+    const routing = resolveFeatureCorrectionRouting(projectRoot, target.feature, opts.answers, opts.frameworkRoot);
+    appendFeatureCorrectionHistory(projectRoot, target.feature, {
+      at: new Date().toISOString(),
+      type: 'correction',
+      root_layer: routing.root_layer,
+      touched_layers: routing.touched_layers,
+    });
+    console.log('✅ correction-init: 已按修正三问路由责任阶段（feature 修正不写状态、无收口命令）');
+    console.log(`   归属: ${target.feature}`);
+    console.log(`   root_layer: ${routing.root_layer} | touched: ${routing.touched_layers.join(', ')}`);
+    console.log(`   revalidate: ${routing.revalidate.map((r) => r.phase).join(' → ') || '(无已闭环下游)'}`);
+    console.log(`   enforcement_tier: ${tier}（只描述阶段闭环的物理拦截，与修正无关）`);
+    console.log(`   实施后：npx ts-node harness-runner.ts --revalidate --feature ${target.feature} --from ${routing.root_layer}`);
+    return 0;
   }
 
+  // no-feature：无 workflow 投影，层即类别；载体为 --adhoc-correction，需要 base_commit 状态。
+  const baseCommit = resolveBaseCommit(projectRoot);
+  if (!baseCommit) {
+    console.error('❌ correction-init: 无法解析 git HEAD（no-feature 修正的 base_commit 必需，红线 fail-closed）');
+    return 1;
+  }
+  const rootLayer = resolveCorrectionCategory(opts.answers);
+  const touched = touchedCategories(opts.answers);
+  const revalidate: RevalidateEntry[] = [{ phase: 'adhoc', status: 'pending' }];
   const state = buildCorrectionState({
-    feature,
+    feature: null,
     root_layer: rootLayer,
     touched_layers: touched,
     revalidate,
-    // session 信号真实接线（codex 批次 2 P1）：复用 .current-phase.json session 治理；
-    // 取不到 → null，staleness 退回 TTL 兜底
     session_id: resolveCurrentSessionSignal(projectRoot),
     base_commit: baseCommit,
     request_text: opts.requestText,
     enforcement_tier: tier,
   });
   const abs = writeCorrectionState(projectRoot, state);
-
-  console.log('✅ correction-init: 已写入修正状态（status: pending）');
+  console.log('✅ correction-init: 已写入 no-feature 修正状态（供 --adhoc-correction 读取 base_commit）');
   console.log(`   state: ${path.relative(projectRoot, abs).replace(/\\/g, '/')}`);
-  console.log(`   归属: ${feature ?? '(no-feature → --adhoc-correction)'}`);
   console.log(`   root_layer: ${rootLayer} | touched: ${touched.join(', ')}`);
-  console.log(`   revalidate: ${revalidate.map((r) => r.phase).join(' → ')}`);
-  console.log('   ✅ 已按 correction request 自动路由责任阶段；无需人签，完成以级联机器重验为准。');
-  console.log(
-    feature
-      ? '   实施后逐项重跑 revalidate phase 的 harness，再 --correction-check 收口。'
-      : '   实施后跑 --adhoc-correction，再 --correction-check 收口。',
-  );
+  console.log('   实施后跑 --adhoc-correction（报告落 reports/_adhoc/<ts>/）。');
   return 0;
 }
 
-// --------------------------------------------------------------------------
-// --correction-check
-// --------------------------------------------------------------------------
-
-interface EvidenceProbe {
-  ok: boolean;
-  detail: string;
+export interface FeatureCorrectionRouting {
+  feature: string;
+  root_layer: string;
+  touched_layers: string[];
+  revalidate: RevalidateEntry[];
 }
 
-function probePhaseEvidence(
+/** feature 修正的责任阶段路由（纯计算，不写任何状态；供 --correction-init 打印与单测）。 */
+export function resolveFeatureCorrectionRouting(
   projectRoot: string,
   feature: string,
-  phase: string,
-  createdAtMs: number,
+  answers: CorrectionAnswers,
   frameworkRoot?: string,
-): EvidenceProbe {
-  const reportAbs = path.join(
-    featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot),
-    'script-report.json',
-  );
-  if (!fs.existsSync(reportAbs)) {
-    return { ok: false, detail: `script-report.json 不存在（${phase} 门禁尚未重跑）` };
-  }
-  try {
-    const doc = JSON.parse(fs.readFileSync(reportAbs, 'utf-8')) as {
-      timestamp?: string;
-      summary?: { verdict?: string };
-    };
-    const ts = doc.timestamp ? Date.parse(doc.timestamp) : fs.statSync(reportAbs).mtimeMs;
-    if (!Number.isFinite(ts) || ts <= createdAtMs) {
-      return { ok: false, detail: `${phase} 报告早于修正起点（stale evidence，须重跑）` };
-    }
-    if (doc.summary?.verdict !== 'PASS') {
-      return { ok: false, detail: `${phase} 最新报告 verdict=${doc.summary?.verdict ?? '?'}（未绿）` };
-    }
-    return { ok: true, detail: `${phase} 报告 PASS 且晚于修正起点` };
-  } catch (err) {
-    return { ok: false, detail: `${phase} 报告解析失败：${(err as Error).message}` };
-  }
+): FeatureCorrectionRouting {
+  const fw = loadFrameworkConfig(projectRoot);
+  const spec = resolveWorkflowSpec(projectRoot, { config: fw, frameworkRoot });
+  const track = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature));
+  const closed = closedPhasesFor(projectRoot, feature, workflowFeaturePhases(spec, track), track, frameworkRoot);
+  const cls = classifyCorrection({ answers, spec, track, closedPhases: closed });
+  return { feature, root_layer: cls.root_layer, touched_layers: cls.touched_layers, revalidate: cls.revalidate };
 }
 
 export function adhocReportsRoot(harnessRoot: string): string {
   return path.join(harnessRoot, 'reports', '_adhoc');
-}
-
-function probeAdhocEvidence(harnessRoot: string, createdAtMs: number): EvidenceProbe {
-  const root = adhocReportsRoot(harnessRoot);
-  if (!fs.existsSync(root)) {
-    return { ok: false, detail: 'reports/_adhoc 不存在（--adhoc-correction 尚未跑）' };
-  }
-  const candidates = fs
-    .readdirSync(root, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
-    .map((e) => path.join(root, e.name, 'correction-report.json'))
-    .filter((p) => fs.existsSync(p));
-  let best: { ts: number; verdict: string } | null = null;
-  for (const p of candidates) {
-    try {
-      const doc = JSON.parse(fs.readFileSync(p, 'utf-8')) as { generated_at?: string; verdict?: string };
-      const ts = doc.generated_at ? Date.parse(doc.generated_at) : fs.statSync(p).mtimeMs;
-      if (Number.isFinite(ts) && (!best || ts > best.ts)) {
-        best = { ts, verdict: doc.verdict ?? '?' };
-      }
-    } catch {
-      /* skip corrupt */
-    }
-  }
-  if (!best || best.ts <= createdAtMs) {
-    return { ok: false, detail: '无晚于修正起点的 adhoc 报告（先跑 --adhoc-correction）' };
-  }
-  if (best.verdict !== 'PASS') {
-    return { ok: false, detail: `最新 adhoc 报告 verdict=${best.verdict}（未绿）` };
-  }
-  return { ok: true, detail: 'adhoc 报告 PASS 且晚于修正起点' };
-}
-
-export function runCorrectionCheck(
-  projectRoot: string,
-  harnessRoot: string,
-  frameworkRoot?: string,
-): number {
-  const state = readCorrectionState(projectRoot);
-  if (!state) {
-    console.error('❌ correction-check: 无有效 .current-correction.json —— 请先 --correction-init 建立修正状态');
-    return 1;
-  }
-  // session 信号来自 .current-phase.json 治理（换会话接管后 last_seen 变化 → mismatch）；
-  // 取不到信号时 TTL 兜底
-  const staleness = assessCorrectionStaleness(state, {
-    currentSessionId: resolveCurrentSessionSignal(projectRoot),
-  });
-  if (staleness.stale) {
-    console.error(`❌ correction-check: 修正状态 stale（${staleness.reason}）—— 请重建 correction（--correction-init）`);
-    return 1;
-  }
-  if (state.status === 'closed') {
-    console.log('✅ correction-check: 修正已闭环（status: closed）');
-    return 0;
-  }
-
-  const createdAtMs = Date.parse(state.created_at);
-  const pending: string[] = [];
-  const nextRevalidate: RevalidateEntry[] = state.revalidate.map((entry) => {
-    const probe =
-      entry.phase === 'adhoc'
-        ? probeAdhocEvidence(harnessRoot, createdAtMs)
-        : state.feature
-          ? probePhaseEvidence(projectRoot, state.feature, entry.phase, createdAtMs, frameworkRoot)
-          : { ok: false, detail: `feature 缺失但 revalidate 含 ${entry.phase}（state 损坏，请重建）` };
-    if (!probe.ok) pending.push(`  - ${entry.phase}: ${probe.detail}`);
-    else console.log(`   ✓ ${entry.phase}: ${probe.detail}`);
-    return { phase: entry.phase, status: probe.ok ? 'done' : 'pending' };
-  });
-
-  // C5-full touched_layers 对账：只拦"未声明层出现改动"（design.md「touched_layers 对账」）。
-  // fail-closed（codex review 采纳）：git diff 不可执行、或 base_commit 不可达导致
-  // baseIsFallback（静默退化为 HEAD..HEAD，会把已提交的越权改动从 changedFiles 中丢失）
-  // 均不得放行——否则对账形同虚设，"未声明层觉察即阻塞"这条红线可被悄悄绕过。
-  const diff = diffChangedFiles({ projectRoot, baseRef: state.base_commit });
-  if (!diff.executed) {
-    pending.push(
-      `  - touched_layers 对账: 无法执行 git diff（${diff.error ?? '未知原因'}），对账不可判（fail-closed，不放行）。`,
-    );
-  } else if (diff.baseIsFallback) {
-    pending.push(
-      `  - touched_layers 对账: base_commit="${state.base_commit}" 不可达，git diff 已静默退化为对比 HEAD 自身` +
-        `（会漏检已提交的越权改动，fail-closed，不放行）——请重建 correction（--correction-init）以刷新 base_commit。`,
-    );
-  } else {
-    const reconcile = reconcileTouchedLayers(projectRoot, state.feature, state.touched_layers, diff.changedFiles);
-    if (reconcile.undeclared.length > 0) {
-      pending.push(
-        `  - touched_layers 对账: 实际改动触及未声明层 ${reconcile.undeclared.join('、')}` +
-          `（已声明: ${state.touched_layers.join('、') || '(空)'}）——` +
-          `若确属组合修正，请重建 correction（--correction-init）把该层纳入声明；` +
-          `否则请检查是否有越界改动。`,
-      );
-    } else {
-      console.log(`   ✓ touched_layers 对账: 实际触及 ${reconcile.actualLayers.join('、') || '(无归属改动)'} 均在声明范围内`);
-    }
-  }
-
-  if (pending.length > 0) {
-    writeCorrectionState(projectRoot, { ...state, revalidate: nextRevalidate });
-    console.error('❌ correction-check: revalidate 未全绿——');
-    for (const line of pending) console.error(line);
-    return 1;
-  }
-
-  writeCorrectionState(projectRoot, { ...state, revalidate: nextRevalidate, status: 'closed' });
-  if (state.feature) {
-    appendFeatureCorrectionHistory(projectRoot, state.feature, {
-      at: new Date().toISOString(),
-      type: 'correction',
-      root_layer: state.root_layer,
-      touched_layers: state.touched_layers,
-    });
-  }
-  console.log('✅ correction-check: revalidate 全绿，修正闭环（status: closed）');
-  return 0;
 }
 
 // --------------------------------------------------------------------------

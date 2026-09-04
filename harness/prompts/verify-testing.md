@@ -62,8 +62,7 @@
   6. 检查「结论」**verdict** 在 **3 枚举**内：达标 / 有条件达标 / 不达标
   7. **必读 Hylyre trace 并全量对账**：定位 `testing/reports/<ts>/hylyre/trace.json`（与脚本 `report_trace_reconciliation` 同源，**禁止**使用顶层 `testing/reports/trace.json` 回填件）。**逐条**核对 `trace.cases[].id/status` 与顶层 `test-report.md`「测试执行结果」表一致；报告写「通过」但 trace 为「失败/阻塞」→ FAIL
   8. **trace.outcome 硬规则**：若 `trace.outcome !== success`（含 partial/failed/aborted），verifier **不得**给出 summary.verdict=PASS；报告结论=「达标」但 trace 非 success → FAIL
-  9. **TC 编号一致性（execution_channel SSOT）**：顶层 `test-plan.md` 每条 TC 声明唯一 **`execution_channel`**（`hylyre|visual|manual|provider:<capability-id>`）；派生计划的 TC 集合须与顶层 `channel=hylyre` 的集合**完全相等**——多出即 extra、缺失即 missing，都是脚本级 BLOCKER，`derive-hint-from-plan.json` 会带 `missing_tc_ids`。**不要用 `explicit_skip_tc_ids` 与派生表做并集**：正式派生计划登记 `explicit_skip_tc_ids` 本身就是 BLOCKER；历史产物里的该字段只作只读诊断，不贡献覆盖、不贡献 PASS。非 `hylyre` 通道的 TC 由各自通道的证据义务门裁决，不进派生表
-  10. 核对完成回执 `testing_run_artifacts` 中 **`hylyre_report_path` / `hylyre_trace_path`** 与磁盘一致（若 profile 要求）
+  9. **TC 编号一致性（execution_channel SSOT）**：顶层 `test-plan.md` 每条 TC 声明唯一 **`execution_channel`**（`hylyre|visual|manual:<gap_class>|provider:<capability-id>`）；派生计划的 TC 集合须与顶层 `channel=hylyre` 的集合**完全相等**——多出即 extra、缺失即 missing，都是脚本级 BLOCKER，`derive-hint-from-plan.json` 会带 `missing_tc_ids`。**不要用 `explicit_skip_tc_ids` 与派生表做并集**：正式派生计划登记 `explicit_skip_tc_ids` 本身就是 BLOCKER。known manual gap / inactive provider 才是 `unsupported_gap`；裸/未知 manual、未登记或 active 无 producer 的 provider 在跑机前判 `invalid_test`。非 `hylyre` 通道不进派生表
   11. **导航步骤静态门禁（NAV-001/002/003）**：脚本 `check-testing` 在真机 run 前校验派生表 JSON——禁止无 `area`/`at` 的横向 `swipe` 充当 Nav 返回；前序 TC 进入子页后、后续 TC 要求首页 Tab 时首步须 `back` 等。失败则 `coverage_reason=invalid_derived_steps`，须按 `derive-hint-from-plan.json` 的 `lint_violations` 与 `navigation_hint` **重新派生**（勿手改旧 timestamp 目录）
   12. **多 UI 入口覆盖（语义）**：若 `use-cases.yaml` 中同一 `user_actions.calls` 有多个 `ui_bindings.ui` 入口，派生 Hylyre 计划须各入口至少一条带 `entry_ui` 的用例；P0 缺覆盖 → 与脚本 `ui_entry_coverage` 一致判 FAIL
 
@@ -149,11 +148,21 @@
   4. **G3 样式/布局逐项核对（pixel_1to1）**：对 ui-spec 声明了 `variant` / `layout_group` / `align` / `width_ratio` / `bg_color` 的节点，逐一在真机截图上核对——按钮填充形态是否匹配 `variant`（实心/tonal/描边/幽灵/纯文字）、同 `layout_group` 元素是否真同行、`align`/`width_ratio` 是否一致（治"全宽 vs 右侧药丸"）、区域 `bg_color` 是否匹配（治灰底 vs 蓝底）；不符须写入对应屏 `must_fix`，pixel_1to1 下视为保真残差
   5. A/B/C 边界：C 类动态交互不在静态参考图承诺内
 
+### 检查 R: 跨产物引用核对 (reference_crosscheck)
+
+- **严重等级**: MAJOR
+- **评估方法**: 逐条核对本阶段产物里的跨文件引用——test-report 引述的结论、失败原因、截图路径 ↔ trace.json 与 device-screenshots 原文；「通过/失败」计数 ↔ trace 里的 case 状态。每条引用都要打开被引用的原文核对，不凭记忆、不凭上下文摘要。
+- **判定标准**: 引用对象存在且含义一致 → PASS；个别引用漂移（行号/名称过期但对象仍可定位） → WARN；关键引用指向不存在或含义相反的对象 → FAIL
+- **证据**: 列出核对过的引用（`引用 → 原文位置`）与不一致项
+
+
 ---
 
 ## 六、上下文文件
 
-以下是本次验证涉及的所有文档和 Spec 文件：
+以下是本次验证的上下文：被审产物与直接依据内联；上游文档与源码只给**路径清单**，需要核对时用 Read 按路径读取，不要全量通读。
+
+被审 feature 根目录：`{features_dir}/{feature_name}/`（相对仓根；下方清单里的相对路径同样相对仓根）。
 
 {context_files}
 
@@ -161,113 +170,53 @@
 
 ## 七、输出格式（必须严格遵循）
 
-请以下方 YAML 格式输出验证结果。**不要**输出其他格式或自由文本。
+先给**汇总表**（每个检查项一行，PASS 也要列），再只对 **status ≠ PASS** 的项写 YAML 明细。
+PASS 项不写论证，证据一行即可；证据不足时给 WARN 并说明缺什么，不要硬判 FAIL。
+不要复述脚本 Harness 已判定的结构项，不要输出本节之外的自由文本。
+
+本轮检查项与严重等级：
+
+| id | severity |
+|---|---|
+| device_test_run_consumption | BLOCKER |
+| test_case_completeness | MAJOR |
+| test_steps_reproducible | MAJOR |
+| expected_result_specific | MAJOR |
+| nfr_test_coverage | MAJOR |
+| defect_severity_consistency | MINOR |
+| pass_criteria_met | BLOCKER |
+| reference_crosscheck | MAJOR |
+| visual_diff_bidirectional | BLOCKER |
+
+### 7.1 汇总表
+
+| id | status | severity | 证据（一行：文件:行 / 引文 / 数值） |
+|---|---|---|---|
+| <check_id> | PASS / WARN / FAIL / SKIP | <severity> | <一行证据> |
+
+### 7.2 非 PASS 项明细
 
 ```yaml
 verification_result:
   phase: "testing"
   feature: "{feature_name}"
   timestamp: "{timestamp}"
-
-  checks:
-    # --- 检查 7: 真机自动化消费 ---
-    - id: device_test_run_consumption
-      status: PASS | FAIL | SKIP
-      severity: BLOCKER
+  checks:            # 只列 status ≠ PASS 的项；每项字段固定
+    - id: <check_id>
+      status: FAIL | WARN | SKIP
+      severity: <该项声明的 severity>
       details: |
-        profile device_test.run 状态：BLOCKER / SKIP
-        派生计划存在性 / 锚点 / 列顺序：...
-        trace.json 与报告对账：...
-      affected_files: []
+        <证据：文件路径 + 行号/引文 + 判断依据>
       suggestion: |
-        <修正建议；SKIP 时说明 profile 跳过原因>
-
-    # --- 检查 1: 测试用例完整性 ---
-    - id: test_case_completeness
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        业务路径覆盖分析：
-        - 正常路径: N/M 覆盖
-        - 异常路径: N/M 覆盖
-        - 遗漏场景: <列表或"无">
-      affected_files:
-        - "{features_dir}/{feature_name}/testing/test-plan.md"
-      suggestion: |
-        <补充建议，若 PASS 可省略>
-
-    # --- 检查 2: 测试步骤可重复性 ---
-    - id: test_steps_reproducible
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        抽样审查结果（N 条用例）：
-        - <TC-XXX>: PASS/FAIL — <步骤质量分析>
-        - ...
-        可重复率: X/N
-      affected_files: [...]
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 3: 预期结果具体性 ---
-    - id: expected_result_specific
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        预期结果质量评估：
-        - 具体可验证: N 条
-        - 模糊不可验证: N 条
-        - 模糊用例编号: [TC-XXX, ...]
-      affected_files: [...]
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 4: NFR 测试覆盖 ---
-    - id: nfr_test_coverage
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        NFR 覆盖分析：
-        - <NFR 指标>: 有/无 对应测试方案
-        - ...
-      affected_files: [...]
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 5: 缺陷严重程度一致性 ---
-    - id: defect_severity_consistency
-      status: PASS | FAIL | WARN
-      severity: MINOR
-      details: |
-        缺陷评级审查：
-        - <DEF-XXX>: 评级合理/不合理 — <原因>
-        - ... 或"无缺陷"
-      affected_files: [...]
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 6: 通过标准与结论一致性 ---
-    - id: pass_criteria_met
-      status: PASS | FAIL | WARN
-      severity: BLOCKER
-      details: |
-        通过标准验证：
-        - P0 通过率: XX% (阈值: 100%) — 达标/未达标
-        - P1 通过率: XX% (阈值: ≥95%) — 达标/未达标
-        - 总体通过率: XX% (阈值: ≥90%) — 达标/未达标
-        - 结论与数据一致性: 一致/不一致
-      affected_files: [...]
-      suggestion: |
-        <修正建议>
-
+        <修正建议：谁改、改哪个文件、改成什么>
   summary:
-    total: 7
+    total: 9
     pass: <PASS 数>
     fail: <FAIL 数>
     warn: <WARN 数>
     blockers: <severity=BLOCKER 且 status=FAIL 的数量>
     verdict: PASS | FAIL
-    # verdict 规则：若存在任何 BLOCKER 级 FAIL → FAIL；否则 → PASS（SKIP 不计入 FAIL）
+    # verdict 规则：若存在任何 BLOCKER 级 FAIL → FAIL；否则 → PASS
 ```
 
 ---

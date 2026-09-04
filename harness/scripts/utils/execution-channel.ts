@@ -23,12 +23,30 @@ export interface ExecutionChannel {
   kind: ExecutionChannelKind;
   /** kind='provider' 时的 capability id（其余为 undefined） */
   provider_id?: string;
+  /** kind='manual' 时声明的缺口类别（`manual:<class>`；plan 07a41ec6 T2 三态） */
+  gap_reason?: string;
   /** 计划中的原始字面量（用于报错回显与 identity 比对） */
   raw: string;
 }
 
 /** 冻结值域文案——报错与模板共用一处，避免两边漂移。 */
-export const EXECUTION_CHANNEL_DOMAIN = 'hylyre | visual | manual | provider:<capability-id>';
+export const EXECUTION_CHANNEL_DOMAIN = 'hylyre | visual | manual:<gap_class> | provider:<capability-id>';
+
+/**
+ * plan 07a41ec6 T2 三态：`manual:<class>` 只有引用这些固定的"当前工具无原语"类别才成立为 unsupported_gap；
+ * Hylyre 步骤原语能表达的用例写成 manual 一律 invalid_test（防止难写的 P0 被随手改 manual）。
+ */
+export const NO_PRIMITIVE_GAP_CLASSES = [
+  'system_settings',
+  'perf_sampling',
+  'memory_sampling',
+  'resource_variant',
+  'data_injection',
+  'external_precondition',
+] as const;
+export type NoPrimitiveGapClass = (typeof NO_PRIMITIVE_GAP_CLASSES)[number];
+
+export type ExecutionChannelState = 'executable' | 'unsupported_gap' | 'invalid_test';
 
 const PROVIDER_PREFIX = 'provider:';
 /** capability id 与既有 capability registry 同形：小写字母/数字/点/下划线/连字符 */
@@ -45,6 +63,10 @@ export function parseExecutionChannel(raw: unknown): ExecutionChannel | null {
   const lowered = value.toLowerCase();
   if (lowered === 'hylyre' || lowered === 'visual' || lowered === 'manual') {
     return { kind: lowered, raw: value };
+  }
+  if (lowered.startsWith('manual:')) {
+    const reason = lowered.slice('manual:'.length).trim();
+    if (/^[a-z][a-z0-9_]*$/.test(reason)) return { kind: 'manual', gap_reason: reason, raw: value };
   }
   if (lowered.startsWith(PROVIDER_PREFIX)) {
     const providerId = value.slice(PROVIDER_PREFIX.length).trim();
@@ -109,7 +131,7 @@ export interface ExecutionChannelDeclarationResult {
   duplicates: Array<{ tc_id: string; raws: string[] }>;
   /** channel=hylyre 的 TC（大写、去重、稳定顺序） */
   hylyre_tc_ids: string[];
-  /** channel=manual 的 TC——任一非空即本 feature testing 无法 PASS */
+  /** channel=manual 的 TC；具体由三态拆成 unsupported_gap / invalid_test。 */
   manual_tc_ids: string[];
   /** channel=visual 的 TC */
   visual_tc_ids: string[];
@@ -120,6 +142,14 @@ export interface ExecutionChannelDeclarationResult {
    * 匹配 = 双方经 normalizeCapabilityKey 后精确相等；不做分隔符/大小写/相似度归一——harness 不按名字猜能力。
    */
   unknown_provider: Array<{ tc_id: string; provider_id: string }>;
+  /**
+   * plan 07a41ec6 T2 三态：unsupported_gap = 机器证明的工具缺口（manual:<固定类别> / inactive provider）
+   * ——留在分母、不算 PASS、不阻止普通开发完成，报告与 completion_status 必须披露。
+   */
+  unsupported_gap: Array<{ tc_id: string; channel: 'manual' | 'provider'; reason: string }>;
+  unsupported_gap_tc_ids: string[];
+  /** invalid_test = 写法错误，跑机前必修：裸 manual / 未知缺口类别 / 未登记 provider / active 但无 per-TC producer */
+  invalid_test: Array<{ tc_id: string; raw: string; why: string; fix: string }>;
   /**
    * plan b3d7e5a1 T2（codex P1）：通道集合是否可用——列已声明且无缺值/非法/重复。与 `ok` 的差别只有
    * registry 未登记的 provider id：那是声明 BLOCKER，但 hylyre/visual/manual/provider 四个集合本身已解析，
@@ -141,11 +171,28 @@ export interface EvaluateExecutionChannelOptions {
    * 生产唯一注入点是 check-testing 的 loadExecutionChannelDeclaration；parseExecutionChannel 永不读 profile。
    */
   registeredCapabilityIds?: ReadonlySet<string>;
+  /**
+   * codex review（plan 07a41ec6 T2）：已登记但当前 profile 明确不可用（severity=SKIP）的 capability 键集。
+   * provider gap 只对这些 id 成立；已登记且可用的 provider 没有 per-TC 结果时仍是 fail-closed 义务，
+   * 不能借"已登记"逃出执行。省略 = 查表模式下不产生 provider gap（纯词法模式仍按登记与否处理）。
+   */
+  inactiveCapabilityIds?: ReadonlySet<string>;
 }
 
 /** 从 profile 的 capabilities map 取键集并 normalize（severity=SKIP 也算"存在"——可用性归 capability-resolution）。 */
 export function registeredCapabilityIdsFromProfile(capabilities: Record<string, unknown> | undefined): Set<string> {
   return new Set(Object.keys(capabilities ?? {}).map(key => normalizeCapabilityKey(key)));
+}
+
+/** profile 明确不可用（severity=SKIP / enabled=false）的 capability 键集——只有它们的 provider 通道才是 unsupported_gap。 */
+export function inactiveCapabilityIdsFromProfile(capabilities: Record<string, unknown> | undefined): Set<string> {
+  const out = new Set<string>();
+  for (const [key, raw] of Object.entries(capabilities ?? {})) {
+    const entry = (raw && typeof raw === 'object' ? raw : {}) as { severity?: unknown; enabled?: unknown };
+    const severity = typeof entry.severity === 'string' ? entry.severity.trim().toUpperCase() : '';
+    if (severity === 'SKIP' || entry.enabled === false) out.add(normalizeCapabilityKey(key));
+  }
+  return out;
 }
 
 export function evaluateExecutionChannelDeclaration(
@@ -157,6 +204,8 @@ export function evaluateExecutionChannelDeclaration(
   const illegal: Array<{ tc_id: string; raw: string }> = [];
   const hylyre: string[] = [];
   const manual: string[] = [];
+  const manualReason = new Map<string, string | undefined>();
+  const manualRaw = new Map<string, string>();
   const visual: string[] = [];
   const provider: Array<{ tc_id: string; provider_id: string }> = [];
 
@@ -183,7 +232,11 @@ export function evaluateExecutionChannelDeclaration(
       continue;
     }
     if (row.channel.kind === 'hylyre') hylyre.push(row.tc_id);
-    else if (row.channel.kind === 'manual') manual.push(row.tc_id);
+    else if (row.channel.kind === 'manual') {
+      manual.push(row.tc_id);
+      manualReason.set(row.tc_id, row.channel.gap_reason);
+      manualRaw.set(row.tc_id, row.raw);
+    }
     else if (row.channel.kind === 'visual') visual.push(row.tc_id);
     else provider.push({ tc_id: row.tc_id, provider_id: row.channel.provider_id! });
   }
@@ -192,6 +245,53 @@ export function evaluateExecutionChannelDeclaration(
   const unknownProvider = registry
     ? provider.filter(item => !registry.has(normalizeCapabilityKey(item.provider_id)))
     : [];
+  // plan 07a41ec6 T2 三态判定
+  const unsupportedGap: Array<{ tc_id: string; channel: 'manual' | 'provider'; reason: string }> = [];
+  const invalidTest: Array<{ tc_id: string; raw: string; why: string; fix: string }> = [];
+  const gapClasses: ReadonlySet<string> = new Set<string>(NO_PRIMITIVE_GAP_CLASSES);
+  for (const tc of manual) {
+    const reason = manualReason.get(tc);
+    if (reason && gapClasses.has(reason)) {
+      unsupportedGap.push({ tc_id: tc, channel: 'manual', reason });
+    } else {
+      invalidTest.push({
+        tc_id: tc,
+        raw: manualRaw.get(tc) ?? 'manual',
+        why: reason ? `缺口类别 ${reason} 不在固定枚举内` : '未声明机器可证明的缺口类别',
+        fix: `当前工具确无原语时写成 manual:<${NO_PRIMITIVE_GAP_CLASSES.join('|')}>；Hylyre 步骤原语能表达的一律改 hylyre 并写出步骤`,
+      });
+    }
+  }
+  const unknownProviderTc = new Set(unknownProvider.map(item => item.tc_id));
+  for (const item of provider) {
+    if (unknownProviderTc.has(item.tc_id)) {
+      invalidTest.push({
+        tc_id: item.tc_id,
+        raw: `provider:${item.provider_id}`,
+        why: 'capability registry 未登记',
+        fix: '改通道（hylyre/visual/manual:<class>）或先在 profile capabilities 登记该能力并提供 provider',
+      });
+    } else if (!registry) {
+      invalidTest.push({
+        tc_id: item.tc_id,
+        raw: `provider:${item.provider_id}`,
+        why: '未提供 capability registry，无法证明 provider 已登记且 inactive',
+        fix: '在 profile capabilities 登记该能力；inactive/SKIP 才能作为 unsupported_gap，接入 per-TC producer 后才能 executable',
+      });
+    } else if (opts?.inactiveCapabilityIds?.has(normalizeCapabilityKey(item.provider_id))) {
+      // 只有 profile 明确不可用（SKIP/disabled）的 capability 才是 gap。
+      unsupportedGap.push({ tc_id: item.tc_id, channel: 'provider', reason: `provider_inactive:${item.provider_id}` });
+    } else {
+      // 3.0.0 尚无 per-TC provider producer：active capability 不能执行该 TC，跑机前判 invalid_test。
+      invalidTest.push({
+        tc_id: item.tc_id,
+        raw: `provider:${item.provider_id}`,
+        why: 'capability 已登记且 active，但当前框架没有对应的 per-TC provider producer',
+        fix: '改为 hylyre/visual；工具确不可用时将 capability 标为 SKIP/disabled；将来接入 per-TC producer 后再使用 provider 通道',
+      });
+    }
+  }
+
   const lines: string[] = [];
   if (!table.column_declared) {
     lines.push(
@@ -217,7 +317,7 @@ export function evaluateExecutionChannelDeclaration(
     for (const item of unknownProvider) {
       lines.push(
         `${item.tc_id} 的 execution_channel=provider:${item.provider_id}：该能力不存在（capability registry 未登记），此 TC 不可能通过。` +
-        '请改通道（hylyre/visual/manual）或先在 profile capabilities 登记该能力并提供 provider；harness 不按名字猜能力。',
+        '请改通道（hylyre/visual/manual:<gap_class>）或先在 profile capabilities 登记该能力；harness 不按名字猜能力。',
       );
     }
     lines.push(
@@ -226,14 +326,17 @@ export function evaluateExecutionChannelDeclaration(
         : '当前 profile 未登记任何 capability。',
     );
   }
-  if (manual.length > 0) {
+  for (const item of invalidTest) {
+    lines.push(`${item.tc_id} 的 execution_channel=${JSON.stringify(item.raw)} 判 invalid_test：${item.why}。改法：${item.fix}`);
+  }
+  if (unsupportedGap.length > 0) {
     lines.push(
-      `注意：${manual.join(', ')} 声明为 manual——manual 当前没有机器质量 PASS 载体，` +
-      '这些 TC 会持续留在分母并保持 FAIL/UNVERIFIED，本 feature 的 testing 因此无法 PASS。这是冻结设计，不是执行器缺陷。',
+      `unsupported_gap（留在原始分母、不算 PASS、不阻止普通开发完成；报告结论与 completion_status 须披露）：` +
+      unsupportedGap.map(item => `${item.tc_id}[${item.channel}:${item.reason}]`).join(', '),
     );
   }
   return {
-    ok: table.column_declared && missing.length === 0 && illegal.length === 0 && duplicates.length === 0 && unknownProvider.length === 0,
+    ok: table.column_declared && missing.length === 0 && illegal.length === 0 && duplicates.length === 0 && invalidTest.length === 0,
     channels_resolved: table.column_declared && missing.length === 0 && illegal.length === 0 && duplicates.length === 0,
     column_declared: table.column_declared,
     missing,
@@ -244,6 +347,9 @@ export function evaluateExecutionChannelDeclaration(
     visual_tc_ids: [...new Set(visual)].sort(),
     provider_tc_ids: provider,
     unknown_provider: unknownProvider,
+    unsupported_gap: unsupportedGap,
+    unsupported_gap_tc_ids: [...new Set(unsupportedGap.map(item => item.tc_id))].sort(),
+    invalid_test: invalidTest,
     detail: lines.join('\n'),
   };
 }

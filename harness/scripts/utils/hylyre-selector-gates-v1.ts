@@ -44,7 +44,9 @@ export interface SelectorRuntimeResultV1 {
 }
 
 function isImpersonation(message: string): boolean {
-  return message.includes('回填');
+  // plan 07a41ec6 T2：判词已改成"回显了 request.value…不构成身份证据"（形状问题，不是执行器造假），
+  // 分类码保留 identity_impersonated 供既有消费者，匹配同时认旧词"回填"与新词"回显"。
+  return /回填|回显/.test(message);
 }
 
 /**

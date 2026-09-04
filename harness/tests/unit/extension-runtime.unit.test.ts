@@ -4,7 +4,7 @@ import * as path from 'path';
 import assert from 'assert';
 
 import { loadInstanceExtensions } from '../../extension-loader';
-import { checkExtensionBindingProduces, formatExtensionPhasePrompt } from '../../scripts/utils/extension-runtime';
+import { checkExtensionBindingProduces, extensionPhaseKnowledge, formatExtensionPhasePrompt } from '../../scripts/utils/extension-runtime';
 import { inspectInstanceExtensions } from '../../scripts/utils/extension-inspect';
 import { checkMaterializationOnly } from '../../scripts/check-component-blueprint';
 
@@ -163,6 +163,34 @@ const cases: Array<{ name: string; run: () => void }> = [
       const fail = checkExtensionBindingProduces({ bundle, projectRoot: root, phase: 'review', slot: 'after_phase_verify_before_close' });
       assert(fail[0].status === 'FAIL' && fail[0].details?.includes('review_feedback_authority_insufficient'));
       fs.rmSync(temp, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'extensionPhaseKnowledge：索引只按 audience；includeBound 并入本 phase 绑定引用的 knowledge（audience 属别的阶段也算）且去重',
+    run: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'extension-phase-knowledge-'));
+      write(path.join(root, 'doc/extensions/knowledge/spec.md'), '# spec\n');
+      write(path.join(root, 'doc/extensions/knowledge/plan.md'), '# plan\n');
+      manifest(root, '    none:\n      tool: host.none\n      required: false\n      produces: [doc/none.txt]\n      usage: none',
+        [
+          '  spec:', '    before_phase_work:',
+          '      - { kind: knowledge, ref: knowledge/plan.md }',
+          '      - { kind: knowledge, ref: knowledge/spec.md }',
+        ].join('\n'), [
+          '  knowledge:', '    - { path: knowledge/spec.md, summary: spec-only, audience: [spec] }',
+          '    - { path: knowledge/plan.md, summary: plan-only, audience: [plan] }',
+        ].join('\n'));
+      const bundle = loadInstanceExtensions(root);
+      assert.strictEqual(bundle.errors.length, 0, JSON.stringify(bundle.errors));
+      const index = extensionPhaseKnowledge(bundle, 'spec').map(item => item.path);
+      assert.deepStrictEqual(index, ['knowledge/spec.md'], 'formatter 索引只按 audience');
+      const material = extensionPhaseKnowledge(bundle, 'spec', { includeBound: true }).map(item => item.path).sort();
+      assert.deepStrictEqual(material, ['knowledge/plan.md', 'knowledge/spec.md'], 'materials 并入绑定引用且去重');
+      const prompt = formatExtensionPhasePrompt(bundle, 'spec', root);
+      assert(prompt.includes('- knowledge `knowledge/plan.md`') && !prompt.includes('- `doc/extensions/knowledge/plan.md`'), 'formatter 路由不变：绑定行有、索引无');
+      assert.deepStrictEqual(extensionPhaseKnowledge(bundle, 'catalog', { includeBound: true }), [], 'global phase 无扩展输入');
+      assert.deepStrictEqual(extensionPhaseKnowledge(undefined, 'spec', { includeBound: true }), []);
+      fs.rmSync(root, { recursive: true, force: true });
     },
   },
 ];

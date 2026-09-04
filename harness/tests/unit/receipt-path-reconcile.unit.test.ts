@@ -9,6 +9,7 @@ import { spawnSync } from 'child_process';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 import { SUMMARY_SCHEMA_VERSION_CURRENT } from '../../scripts/utils/quality-axes';
 import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
+import { computeProductWorktreeDigest } from '../../scripts/utils/worktree-digest';
 
 import {
   applyReceiptPathReconcileCandidate,
@@ -109,6 +110,15 @@ function writeModernArtifacts(root: string): { traceRel: string; verifierRel: st
         feature: 'demo',
         verdict: 'PASS',
         blocker_count: 0,
+        fail_count: 0, warn_count: 0,
+        script_report: 'doc/features/demo/review/reports/script-report.json',
+        merged_report: 'doc/features/demo/review/reports/merged-report.md',
+        summary_json: 'doc/features/demo/review/reports/summary.json',
+        run_statuses: [], readiness_signals: [], blocking_warnings: [], blocking_skips: [], blockers: [],
+        next_action: 'run_verifier_then_receipt',
+        assurance: 'not_applicable', capability_resolutions: [], capability_resolution_contract_fingerprint: null,
+        source_commit_sha: spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).stdout.trim(),
+        worktree_digest: computeProductWorktreeDigest(root, ['app']),
         // reconcile 会把 script_harness.report_dir 一并改指到 modern reports 目录，
         // 于是本 summary 也要带当前门禁集指纹，否则命中既有的 gate_fingerprint_stale。
         gate_fingerprint: computeGateFingerprint(path.resolve(__dirname, '..', '..', '..'), 'review'),

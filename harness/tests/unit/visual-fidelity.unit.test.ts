@@ -63,6 +63,7 @@ import { VISION_CANARY_PROBE_VERSION } from '../../scripts/utils/vision-canary';
 import { validateUiSpecSchema, BUTTON_VARIANT_ENUM, ALIGN_ENUM } from '../../../profiles/hmos-app/harness/ui-spec-schema-validate';
 import type { OcrResult } from '../../../profiles/hmos-app/harness/ocr-toolkit';
 import type { CheckContext, PhaseRuleSpec } from '../../scripts/utils/types';
+import { MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV, MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV } from '../../scripts/utils/phase-state';
 import { DEFAULT_LAYOUT } from '../utils/layout-test-helper';
 
 export interface UnitCaseResult {
@@ -161,6 +162,18 @@ function writeHeaderOnlyPng(outPath: string, w: number, h: number): void {
 
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
+  // plan 07a41ec6 T10③：无 delegated 视觉 provider 时 region_attest / critic 回执类证明按 SKIP 处理。
+  // 本套件校验的是这些证明在 **provider 在场** 时的判据，故整套声明一个测试 provider（名字刻意不与任何回执 adapter 相同）。
+  const prevProviderAdapter = process.env[MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV];
+  const prevProviderModel = process.env[MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV];
+  process.env[MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV] = 'test-delegated-provider';
+  process.env[MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV] = 'test-model';
+  const restoreProviderEnv = (): void => {
+    if (prevProviderAdapter === undefined) delete process.env[MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV];
+    else process.env[MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV] = prevProviderAdapter;
+    if (prevProviderModel === undefined) delete process.env[MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV];
+    else process.env[MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV] = prevProviderModel;
+  };
   const run = (name: string, fn: () => void) => {
     try {
       fn();
@@ -4646,5 +4659,6 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
+  restoreProviderEnv();
   return results;
 }

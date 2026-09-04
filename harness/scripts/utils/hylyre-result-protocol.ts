@@ -405,7 +405,10 @@ export function evaluateSelectorIdentity(selector: SelectorV1 | null): SelectorI
         // 反回填：0.4.1 的病就是把请求值回显成 selected_id 冒充身份。
         return {
           kind: 'invalid',
-          detail: `selected.id 回显了 request.value=${id}（request.kind=${request.kind}），疑似回填冒充实际身份`,
+          detail:
+            `selected.id 回显了 request.value=${id}，但 request.kind=${request.kind} 不是 by_id/by_key：` +
+            '这是计划步骤的形状问题（by_text 或带 visible/enabled/index 等谓词的复合选择器不构成 id 身份证据）。' +
+            `改法：身份断言用裸 {"wait_for":{"by_id":"${id}","timeout":N}}（harness 按 acceptance checkpoint 自动注入），UX 谓词断言另写一步。`,
         };
       }
       return { kind: 'proven', identity: selected };

@@ -4,6 +4,7 @@ import * as path from 'path';
 import type {
   CheckResult,
   ExtensionBundle,
+  ExtensionKnowledgeEntry,
   ExtensionMcpAction,
   ExtensionPhaseBindingSlot,
 } from './types';
@@ -18,14 +19,42 @@ function rel(projectRoot: string, target: string): string {
   return path.relative(projectRoot, target).replace(/\\/g, '/');
 }
 
+function phaseInputsActive(bundle: ExtensionBundle | undefined, phase: string): bundle is ExtensionBundle {
+  return Boolean(bundle && bundle.manifestVersion === '1.1' && bundle.errors.length === 0 && bundle.featurePhases.includes(phase));
+}
+
+/**
+ * 该 phase 的 knowledge 条目：audience 命中（含 legacy 字符串）；`includeBound` 时并入本 phase
+ * phase_bindings 里 `kind: knowledge` 引用的条目（loader 只查引用存在、不要求 audience 命中，
+ * 而 prompt 照样渲染该绑定行）。formatter 用前者做索引，verifier 审前材料用并集。
+ */
+export function extensionPhaseKnowledge(
+  bundle: ExtensionBundle | undefined,
+  phase: string,
+  opts?: { includeBound?: boolean },
+): ExtensionKnowledgeEntry[] {
+  if (!phaseInputsActive(bundle, phase)) return [];
+  const out = bundle.knowledge.filter(item => item.legacy
+    || (Array.isArray(item.audience) && item.audience.includes(phase)));
+  if (!opts?.includeBound) return out;
+  const seen = new Set(out.map(item => item.path));
+  for (const items of Object.values(bundle.phaseBindings[phase] ?? {})) {
+    for (const binding of items ?? []) {
+      if (binding.kind !== 'knowledge' || seen.has(binding.ref)) continue;
+      const entry = bundle.knowledge.find(item => item.path === binding.ref);
+      if (entry) { out.push(entry); seen.add(entry.path); }
+    }
+  }
+  return out;
+}
+
 export function formatExtensionPhasePrompt(
   bundle: ExtensionBundle | undefined,
   phase: string,
   projectRoot: string,
 ): string {
-  if (!bundle || bundle.manifestVersion !== '1.1' || bundle.errors.length > 0 || !bundle.featurePhases.includes(phase)) return '';
-  const knowledge = bundle.knowledge.filter(item => item.legacy
-    || (Array.isArray(item.audience) && item.audience.includes(phase)));
+  if (!phaseInputsActive(bundle, phase)) return '';
+  const knowledge = extensionPhaseKnowledge(bundle, phase);
   const slots = bundle.phaseBindings[phase] ?? {};
   if (knowledge.length === 0 && Object.keys(slots).length === 0) return '';
   const lines = ['## Instance extension inputs', ''];

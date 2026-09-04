@@ -100,7 +100,7 @@ export function isP0DeviceInteractive(ac: AcceptanceCriterion): boolean {
   return ac.priority === 'P0' && (layer === 'device' || layer === 'both') && Boolean(ac.linked_flow);
 }
 
-function checkpointComplete(cp: AcCheckpoint | undefined): boolean {
+export function checkpointComplete(cp: AcCheckpoint | undefined): boolean {
   return Boolean(
     cp &&
       cp.pre_screen &&
@@ -132,6 +132,18 @@ export function evaluateAcceptanceFlowStructure(projectRoot: string, feature: st
   for (const ac of p0) {
     if (!checkpointComplete(ac.checkpoint)) {
       failures.push(`${ac.id}：缺完整结构化 checkpoint（pre_screen/action.target_element_id/post_screen/required_element_ids）`);
+    }
+  }
+
+  // ①' plan 07a41ec6 T2：checkpoint.action.type 必须是可绑定动作——assert_visible 之类不是动作，
+  //    结构上永远绑不到 StepResult；在 spec 期就报，不等跑完真机。
+  for (const ac of p0) {
+    const type = ac.checkpoint?.action?.type;
+    if (typeof type === 'string' && type.trim() && !CHECKPOINT_ACTION_TYPES.has(type.trim().toLowerCase())) {
+      failures.push(
+        `${ac.id}：checkpoint.action.type=${type.trim()} 不是可绑定动作（可用：${[...CHECKPOINT_ACTION_TYPES].join('/')}）；` +
+          'assert_visible 类改为指定触发动作，并把要看见的元素放进 required_element_ids',
+      );
     }
   }
 
@@ -268,7 +280,27 @@ export function parsePlanTcEntries(planMd: string): PlanTcEntry[] {
 
 type ParsedStep = Record<string, unknown>;
 
-const ACTION_KINDS = new Set(['touch', 'input', 'swipe', 'scroll']);
+export const ACTION_KINDS = new Set(['touch', 'input', 'swipe', 'scroll']);
+/** acceptance checkpoint.action.type 的可绑定值域（tap/click 是 touch 的 acceptance 侧写法） */
+export const CHECKPOINT_ACTION_TYPES = new Set(['tap', 'touch', 'click', 'input', 'swipe', 'scroll']);
+/** trace 里 selector 为 null 的动作种类：checkpoint 经其后的身份断言（post-state）绑定，不要求 selector 身份 */
+const IDENTITY_FREE_ACTION_KINDS = new Set(['scroll', 'swipe']);
+
+/**
+ * plan 07a41ec6 T3：身份断言的**精确形状**——{"wait_for"|"wait_gone":{"by_id":<id>,"timeout":N}}。
+ * 不维护 Hylyre 约束键镜像：多任何一个键都不是身份断言（那是 UX 断言，保留但不算身份）。
+ */
+export function isBareIdentityAssertion(step: unknown, kind: 'wait_for' | 'wait_gone', elementId: string): boolean {
+  if (!step || typeof step !== 'object' || Array.isArray(step)) return false;
+  const root = step as Record<string, unknown>;
+  const keys = Object.keys(root);
+  if (keys.length !== 1 || keys[0] !== kind) return false;
+  const body = root[kind];
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
+  const bodyKeys = Object.keys(body as Record<string, unknown>);
+  if (bodyKeys.some(k => k !== 'by_id' && k !== 'timeout')) return false;
+  return (body as Record<string, unknown>).by_id === elementId;
+}
 
 export interface P0GateInputs {
   projectRoot: string;
@@ -283,6 +315,8 @@ export interface P0GateInputs {
   derivedPlanPath?: string | null;
   /** 报告结论声明（parseReportConclusionVerdict 输出） */
   reportConclusion: string | null;
+  /** plan 07a41ec6 T2：静态三态判定出的 unsupported_gap TC——留在分母、不算 PASS/FAIL、不阻止完成 */
+  unsupportedGapTcIds?: readonly string[];
   now?: () => Date;
 }
 
@@ -303,6 +337,10 @@ interface NativeP0Evaluation {
   caseEvaluations: NativeCaseEvaluation[];
   acceptedAcIds: Set<string>;
   acFailures: string[];
+  /** unsupported_gap 的 P0 TC（留分母） */
+  gapCaseIds: string[];
+  /** 只被 gap TC 引用、因此本轮无法验证的 P0 AC */
+  gapAcIds: string[];
   gateFailure?: string;
 }
 
@@ -424,17 +462,33 @@ function isAssertionPlanKind(kind: string): boolean {
  * 与 ui-spec 已证明的歧义）。这里只回答"计划里哪一步在说这个 id"；身份是否成立另由
  * selectorEvidenceMatches 用 native resolution 证明，两层不要互相搬。
  */
-function plannedStepBindsTarget(
+export function plannedStepBindsTarget(
   info: ReturnType<typeof normalizePlannedStep>,
   targetId: string,
-  canonical: CanonicalSelectorIndex,
+  canonical: CanonicalSelectorIndex | null,
   screenId?: string,
 ): boolean {
   const selector = info.selector;
   if (!selector) return false;
   if (selector.kind === 'by_id') return selector.value === targetId;
-  if (selector.kind === 'by_text') return canonicalIdsForPlannedStep(info, canonical, screenId).includes(targetId);
+  if (selector.kind === 'by_text') return canonical ? canonicalIdsForPlannedStep(info, canonical, screenId).includes(targetId) : false;
   return false;
+}
+
+/** 绑定 checkpoint 元素的全部 action 候选（注入与静态 lint 用：唯一才注入，多候选不猜）。 */
+export function findActionStepCandidates(
+  steps: ParsedStep[],
+  targetId: string,
+  canonical: CanonicalSelectorIndex | null,
+  screenId?: string,
+): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < steps.length; i += 1) {
+    const info = normalizePlannedStep(steps[i], i);
+    if (!ACTION_KINDS.has(info.kind)) continue;
+    if (plannedStepBindsTarget(info, targetId, canonical, screenId)) out.push(i);
+  }
+  return out;
 }
 
 function findPlannedStepIndex(
@@ -473,8 +527,10 @@ function evaluateNativeCase(
   acs: AcceptanceCriterion[],
   derivedSteps: ParsedStep[],
   canonical: CanonicalSelectorIndex,
+  plannedCaseId?: string,
 ): NativeCaseEvaluation {
-  const caseId = traceCase?.id?.toUpperCase() ?? '(missing)';
+  // plan 07a41ec6 T2：未执行的 case 也要按计划 id 点名，诊断不得只剩 "(missing)"
+  const caseId = traceCase?.id?.toUpperCase() ?? plannedCaseId?.toUpperCase() ?? '(missing)';
   const reasons: string[] = [];
   if (!traceCase) return { caseId, passed: false, reasons: ['trace 无该 CaseResult，未执行 case 不得凭计划状态通过'], acIds: acs.map(ac => ac.id) };
   if (traceCase.execution !== 'completed') reasons.push(`execution=${String(traceCase.execution)}`);
@@ -500,24 +556,24 @@ function evaluateNativeCase(
     }
     const actionIndex = findActionStepIndex(derivedSteps, cp!.action!.target_element_id!, canonical, cp!.pre_screen!);
     if (actionIndex === null) {
-      reasons.push(`${ac.id} 计划中无绑定 target=${cp!.action!.target_element_id} 的 action（by_id 须字面相等；by_text 须 ui-spec 文本映射）`);
+      reasons.push(`${ac.id} 计划中无绑定 target=${cp!.action!.target_element_id} 的 action（by_id 须字面相等；by_text 须 ui-spec 文本映射）——改法：在该 TC 补一步 touch/input/swipe/scroll 触发动作，或修正 checkpoint.action.target_element_id`);
       continue;
     }
     const action = nativeSteps[actionIndex];
     const actionPlan = normalizePlannedStep(derivedSteps[actionIndex], actionIndex);
     const actionCanonicalIds = canonicalIdsForStep(derivedSteps[actionIndex], canonical, cp!.pre_screen!);
-    if (
-      !action || action.index !== actionIndex || action.role !== 'action' ||
-      action.outcome?.status !== 'passed' ||
-      !selectorEvidenceMatches(
-        action,
-        cp!.action!.target_element_id!,
-        false,
-        actionPlan.selector,
-        actionCanonicalIds,
-      )
-    ) {
-      reasons.push(`${ac.id} action StepResult #${actionIndex} 缺失或未通过`);
+    // plan 07a41ec6 T2：scroll/swipe 在 trace 里 selector 为 null——按步骤种类与顺序定位后经其后的
+    // 身份断言（post-state）绑定，不要求 selector 身份；真实用户动作是 scroll 就保留 scroll，不改 touch。
+    const identityFree = IDENTITY_FREE_ACTION_KINDS.has(actionPlan.kind);
+    const actionOk = Boolean(
+      action && action.index === actionIndex && action.role === 'action' && action.outcome?.status === 'passed' &&
+      (identityFree || selectorEvidenceMatches(action, cp!.action!.target_element_id!, false, actionPlan.selector, actionCanonicalIds)),
+    );
+    if (!actionOk) {
+      reasons.push(
+        `${ac.id} action step ${actionIndex}（${actionPlan.kind}）StepResult 缺失或未通过` +
+          (identityFree ? '' : `（须 outcome.status=passed 且 selector 身份匹配 ${cp!.action!.target_element_id}）`),
+      );
     }
     for (const elementId of cp!.required_element_ids ?? []) {
       const plannedIndex = findPlannedStepIndex(derivedSteps, elementId, canonical, cp!.post_screen!, actionIndex, false);
@@ -530,7 +586,11 @@ function evaluateNativeCase(
         step.index !== plannedIndex ||
         !assertionEvidenceMatches(step, elementId, false, planned?.selector, canonicalIds)
       ) {
-        reasons.push(`${ac.id} required=${elementId} 缺 role=assertion,status=passed 的 presence StepResult`);
+        reasons.push(
+          plannedIndex === null
+            ? `${ac.id} required=${elementId}：计划中无裸 by_id 身份断言（期望形状 {"wait_for":{"by_id":"${elementId}","timeout":N}}，由 harness 按 checkpoint 注入；带 visible 等谓词或 by_text 的断言不算身份）`
+            : `${ac.id} required=${elementId}：step ${plannedIndex} 的 presence StepResult 未通过或身份不匹配（request.kind 须为 by_id 且 selected.id=${elementId}）`,
+        );
       }
     }
     // forbidden 不按 post_screen 限定：要求"应消失的元素"登记在 post_screen 的 ui-spec 里
@@ -547,7 +607,11 @@ function evaluateNativeCase(
         step.index !== plannedIndex ||
         !assertionEvidenceMatches(step, elementId, true, planned?.selector, canonicalIds)
       ) {
-        reasons.push(`${ac.id} forbidden=${elementId} 缺 role=assertion,status=passed 的 absence StepResult`);
+        reasons.push(
+          plannedIndex === null
+            ? `${ac.id} forbidden=${elementId}：计划中无裸 by_id 缺席断言（期望形状 {"wait_gone":{"by_id":"${elementId}","timeout":N}}，由 harness 按 checkpoint 注入）`
+            : `${ac.id} forbidden=${elementId}：step ${plannedIndex} 的 absence StepResult 未通过或身份不匹配（request.kind 须为 by_id，candidate_count=0）`,
+        );
       }
     }
   }
@@ -569,6 +633,8 @@ function evaluateNativeP0(inp: P0GateInputs): NativeP0Evaluation {
       caseEvaluations: [],
       acceptedAcIds: new Set(),
       acFailures: [],
+      gapCaseIds: [],
+      gapAcIds: [],
       gateFailure: `native evidence 未启用：${reason}；legacy case status 不得贡献 verification=passed`,
     };
   }
@@ -584,6 +650,8 @@ function evaluateNativeP0(inp: P0GateInputs): NativeP0Evaluation {
       caseEvaluations: [],
       acceptedAcIds: new Set(),
       acFailures: [],
+      gapCaseIds: [],
+      gapAcIds: [],
       gateFailure: 'authoritative trace 缺失，无法消费 CaseResult.steps[]',
     };
   }
@@ -609,6 +677,8 @@ function evaluateNativeP0(inp: P0GateInputs): NativeP0Evaluation {
       caseEvaluations: [],
       acceptedAcIds: new Set(),
       acFailures: [],
+      gapCaseIds: [],
+      gapAcIds: [],
       gateFailure: '无 authoritative 派生 Hylyre 计划，无法按 step index 对账',
     };
   }
@@ -624,6 +694,8 @@ function evaluateNativeP0(inp: P0GateInputs): NativeP0Evaluation {
       caseEvaluations: [],
       acceptedAcIds: new Set(),
       acFailures: [],
+      gapCaseIds: [],
+      gapAcIds: [],
       gateFailure: 'canonical ui-spec 不可解析，required/forbidden selector 映射拒绝通过',
     };
   }
@@ -642,10 +714,17 @@ function evaluateNativeP0(inp: P0GateInputs): NativeP0Evaluation {
   const traceSkipCaseIds: string[] = [];
   const unexecutedCaseIds: string[] = [];
   const acceptedAcIds = new Set<string>();
+  // plan 07a41ec6 T2：unsupported_gap 的 P0 TC 不进 pass/fail 评估，但留在分母（五数口径）
+  const gapSet = new Set((inp.unsupportedGapTcIds ?? []).map(id => id.toUpperCase()));
+  const gapCaseIds: string[] = [];
   for (const entry of p0Entries) {
+    if (gapSet.has(entry.id.toUpperCase())) {
+      gapCaseIds.push(entry.id);
+      continue;
+    }
     const acs = p0Acs.filter(ac => entry.acRefs.includes(ac.id));
     const traceCase = traceByTc.get(entry.id);
-    const evaluation = evaluateNativeCase(traceCase, acs, derivedByTc.get(entry.id) ?? [], canonical);
+    const evaluation = evaluateNativeCase(traceCase, acs, derivedByTc.get(entry.id) ?? [], canonical, entry.id);
     evaluations.push(evaluation);
     if (evaluation.passed) {
       passedCaseIds.push(entry.id);
@@ -661,8 +740,16 @@ function evaluateNativeP0(inp: P0GateInputs): NativeP0Evaluation {
       }
     }
   }
-  const acFailures = p0Acs
+  const gapAcIds = p0Acs
     .filter(ac => !acceptedAcIds.has(ac.id))
+    .filter(ac => {
+      const refs = p0Entries.filter(entry => entry.acRefs.includes(ac.id));
+      return refs.length > 0 && refs.every(entry => gapSet.has(entry.id.toUpperCase()));
+    })
+    .map(ac => ac.id);
+  const gapAcSet = new Set(gapAcIds);
+  const acFailures = p0Acs
+    .filter(ac => !acceptedAcIds.has(ac.id) && !gapAcSet.has(ac.id))
     .map(ac => {
       const related = evaluations.filter(e => e.acIds.includes(ac.id));
       const reason = related.flatMap(e => e.reasons).slice(0, 3).join('；') || '无通过的 StepResult 证据';
@@ -678,6 +765,8 @@ function evaluateNativeP0(inp: P0GateInputs): NativeP0Evaluation {
     caseEvaluations: evaluations,
     acceptedAcIds,
     acFailures,
+    gapCaseIds,
+    gapAcIds,
   };
 }
 
@@ -718,37 +807,55 @@ function evaluateNativeP0CoverageIntegrity(inp: P0GateInputs): CheckResult[] {
       },
     ];
   }
-  const passed = evaluation.passedCaseIds.length;
+  // plan 07a41ec6 T2：五数口径——gap 留在原始总分母、不算 PASS、不算 FAIL（codex 二轮 review）
   const total = evaluation.p0Entries.length;
-  const uncovered = total - passed;
-  const rate = `${passed}/${total}（覆盖率 ${Math.round((passed / total) * 100)}%）`;
+  const verifiedPass = evaluation.passedCaseIds.length;
+  const gapCount = evaluation.gapCaseIds.length;
+  const failed = total - verifiedPass - gapCount;
+  const coveragePct = Math.round((verifiedPass / total) * 1000) / 10;
+  const rate = `P0 total ${total} / verified_pass ${verifiedPass} / unsupported_gap ${gapCount} / failed ${failed} / verified_coverage ${coveragePct}%`;
+  const structured = {
+    p0_total: total,
+    verified_pass: verifiedPass,
+    unsupported_gap: gapCount,
+    failed,
+    verified_coverage: coveragePct,
+    gap_case_ids: evaluation.gapCaseIds,
+    gap_ac_ids: evaluation.gapAcIds,
+  };
+  const failedEvaluations = evaluation.caseEvaluations.filter(item => !item.passed);
   const result: CheckResult = {
     id,
     category: 'structure',
     description,
     severity: 'BLOCKER',
-    status: uncovered === 0 ? 'PASS' : 'FAIL',
+    status: failed === 0 ? 'PASS' : 'FAIL',
+    structured,
     details: [
-      `全分母口径：P0 CaseResult/StepResult 对账通过 ${rate}，未覆盖 ${uncovered}`,
-      `缺口分类：explicit skip ${evaluation.explicitSkipCaseIds.length}，trace skip ${evaluation.traceSkipCaseIds.length}，无执行记录 ${evaluation.unexecutedCaseIds.length}`,
-      ...evaluation.caseEvaluations
-        .filter(item => !item.passed)
-        .slice(0, 10)
-        .map(item => `  - ${item.caseId}：${item.reasons.slice(0, 3).join('；') || '无完整 acceptance evidence'}`),
-    ].join('\n'),
-    suggestion: uncovered === 0
-      ? '继续由当前 authoritative trace 驱动 report/summary/quality axes。'
-      : '补齐同一 CaseResult.steps[] 的三轴、required presence 与 forbidden absence assertion 后重跑；explicit skip 留在 testing，零自动 coding。',
+      rate,
+      gapCount > 0
+        ? `unsupported_gap ${gapCount} 条（留在分母、不算 PASS、不阻止普通开发完成；报告与 completion_status 须披露 COMPLETE_WITH_P0_GAPS）：${evaluation.gapCaseIds.join(', ')}`
+        : null,
+      failed > 0
+        ? `缺口分类：explicit skip ${evaluation.explicitSkipCaseIds.length}，trace skip ${evaluation.traceSkipCaseIds.length}，无执行记录 ${evaluation.unexecutedCaseIds.length}，执行了但证据不足 ${failed - evaluation.explicitSkipCaseIds.length - evaluation.traceSkipCaseIds.length - evaluation.unexecutedCaseIds.length}`
+        : null,
+      ...failedEvaluations.slice(0, 10).map(item => `  - ${item.caseId}：${item.reasons.slice(0, 3).join('；') || '无完整 acceptance evidence'}`),
+    ].filter((line): line is string => typeof line === 'string').join('\n'),
+    suggestion: failed === 0
+      ? (gapCount > 0
+          ? '已验证的 P0 全部通过；unsupported_gap 按缺口类别登记在报告结论，completion_status 为 COMPLETE_WITH_P0_GAPS，不阻止完成。'
+          : '继续由当前 authoritative trace 驱动 report/summary/quality axes。')
+      : '逐条按上面 TC/step 的原因处理：缺身份断言→重跑 harness 让注入生效或补触发动作；StepResult 未通过→修产品或修计划；未执行→补跑该 TC。explicit skip 留在 testing，零自动 coding。',
   };
   const results: CheckResult[] = [result];
-  if (uncovered > 0 && inp.reportConclusion === '达标') {
+  if (failed > 0 && inp.reportConclusion === '达标') {
     results.push({
       id: 'p0_pass_rate_dual_metrics',
       category: 'structure',
       description: 'P0 通过率与全分母对账',
       severity: 'BLOCKER',
       status: 'FAIL',
-      details: `报告声明「达标」，但 native evidence 全分母仅 ${rate}，不得以旧 case status 或已执行子集冒充全量。`,
+      details: `报告声明「达标」，但 native evidence 五数口径为 ${rate}，不得以旧 case status 或已执行子集冒充全量。`,
       suggestion: '将报告结论改为真实状态并补齐未覆盖的 native StepResult evidence。',
     });
   } else {
@@ -758,7 +865,7 @@ function evaluateNativeP0CoverageIntegrity(inp: P0GateInputs): CheckResult[] {
       description: 'P0 通过率与全分母对账',
       severity: 'BLOCKER',
       status: 'PASS',
-      details: `native evidence 全分母：${rate}，未覆盖 ${uncovered}。`,
+      details: `native evidence 五数口径：${rate}。`,
     });
   }
   return results;
@@ -798,7 +905,9 @@ export function evaluateP0SemanticCoverage(inp: P0GateInputs): CheckResult[] {
       description,
       severity: 'BLOCKER',
       status: 'PASS',
-      details: `P0 acceptance coverage 已按 ${evaluation.acceptedAcIds.size} 个 checkpoint 的 required/forbidden StepResult evidence 完整对账。`,
+      details:
+        `P0 acceptance coverage 已按 ${evaluation.acceptedAcIds.size} 个 checkpoint 的 required/forbidden StepResult evidence 完整对账` +
+        (evaluation.gapAcIds.length > 0 ? `；unsupported_gap 覆盖的 AC（本轮无法验证、已披露）：${evaluation.gapAcIds.join(', ')}` : '') + '。',
     },
     {
       id: 'p0_runtime_step_evidence_boundary',

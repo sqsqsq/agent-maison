@@ -122,16 +122,17 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
-  run(results, 'A4 closure 缺失/回执指针断裂 → closure_untrusted（证明不了授权）', () => {
+  run(results, 'A4 closure 缺失/manifest 条目被改 → closure_untrusted（证明不了授权）', () => {
     const root = setupHost();
     // 未闭环：manifest 缺失
     const missing = check(root);
     assert(missing.kind === 'replan' && missing.reason === 'closure_untrusted', `manifest 缺失应拒：${JSON.stringify(missing)}`);
-    // 闭环后整体改写 manifest（指针失配 → tampered）
+    // 闭环后改写 manifest 条目哈希（aggregate 自证失配 → tampered；plan 07a41ec6：回执指针已退出证据链，generated_at 不进 aggregate）
     closePlan(root);
     const manifestAbs = path.join(root, 'doc', 'features', FEATURE, 'plan', 'reports', 'phase-evidence-manifest.json');
-    const doc = JSON.parse(fs.readFileSync(manifestAbs, 'utf-8')) as Record<string, unknown>;
-    doc.generated_at = '2099-01-01T00:00:00.000Z';
+    const doc = JSON.parse(fs.readFileSync(manifestAbs, 'utf-8')) as { outputs: Array<{ path: string; sha256: string | null }>; inputs: Array<{ path: string; sha256: string | null }> };
+    const entry = [...doc.outputs, ...doc.inputs].find(e => e.path.endsWith('contracts.yaml')) ?? doc.outputs[0] ?? doc.inputs[0];
+    entry.sha256 = 'f'.repeat(64);
     fs.writeFileSync(manifestAbs, JSON.stringify(doc, null, 2), 'utf-8');
     const tampered = check(root);
     assert(tampered.kind === 'replan' && tampered.reason === 'closure_untrusted', `manifest 改写应拒：${JSON.stringify(tampered)}`);

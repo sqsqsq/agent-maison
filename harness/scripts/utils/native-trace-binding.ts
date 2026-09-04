@@ -190,9 +190,9 @@ export function validateNativeTraceArtifactBinding(
   if (options.expectedTracePath && !samePath(options.expectedTracePath, tracePath, baseDir)) {
     reasons.push(`记录的 trace_path=${options.expectedTracePath} 与当前=${tracePath} 不一致`);
   }
-  if (options.expectedTestPlanSha256 && testPlanSha256 !== options.expectedTestPlanSha256.trim().toLowerCase()) {
-    reasons.push(`test-plan SHA-256 与运行前记录不一致：${testPlanSha256 ?? '(missing)'} != ${options.expectedTestPlanSha256}`);
-  }
+  // plan 07a41ec6 T6：顶层 test_plan_sha256 退为审计信息——真实执行以派生计划（注入后 run 副本）为准，
+  // 改标题/措辞/版本号不得使 run 失效；派生计划与 trace 的 sha 仍严格绑定。
+  void options.expectedTestPlanSha256;
   if (options.expectedDerivedPlanSha256 && derivedPlanSha256 !== options.expectedDerivedPlanSha256.trim().toLowerCase()) {
     reasons.push(`derived-plan SHA-256 与运行前记录不一致：${derivedPlanSha256 ?? '(missing)'} != ${options.expectedDerivedPlanSha256}`);
   }

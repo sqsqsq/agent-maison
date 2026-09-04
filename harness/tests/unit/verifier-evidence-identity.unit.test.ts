@@ -737,6 +737,7 @@ function case10_adapterPayloadAndPathScope(): void {
           phase: String(original.phase),
           prompt_path: claimed,
           prompt_sha256: String(original.prompt_sha256),
+          material_sha256: String(original.material_sha256),
           gate_fingerprint: (original.gate_fingerprint as string | null) ?? null,
           source_commit_sha: (original.source_commit_sha as string | null) ?? null,
           worktree_digest: (original.worktree_digest as string | null) ?? null,
@@ -1125,18 +1126,41 @@ function case16_materialAddressedSubjectTwoNormalFlows(): void {
     const second = seedPhase(rotate.root, 'demo', PHASE, { promptBody: '# v2 需求已更新\n' });
     assert(second.subjectId !== first.subjectId, '材料变化必须换 subject');
     writeLegacyReceipt(rotate.root, 'demo', PHASE, rotate.sha);
+    // plan 07a41ec6 T7：材料变了但本 phase 历史已有 PASS → 沿用闭环（completed_with_prior_review），
+    // 未重审的材料差异如实登记在 summary.verifier_closure；不再强迫重跑 verifier。
     const res = runCheckReceipt(rotate.root, 'demo', PHASE);
-    assert(res.status !== 0, `材料变化且新 subject 无证据时不得放行：\n${res.output}`);
-    assert(
-      res.output.includes('verifier_evidence_report_missing'),
-      `应指向"该 subject 的证据缺失"：\n${res.output}`,
-    );
-    assert(
-      res.output.includes('verifier_request'),
-      `恢复指引须落到 request JSON（可执行），而不是"改文书"：\n${res.output}`,
-    );
+    assert(res.status === 0, `材料变化但历史已有 PASS 时应沿用闭环：\n${res.output}`);
+    assert(res.output.includes('verifier_prior_pass_reused'), `应显式提示沿用既往 PASS：\n${res.output}`);
+    // --skip-state-sync 下不定稿 summary；verifier_closure 的持久化由 phase-closure-finalizer 单测覆盖，
+    // 这里核对 check-receipt 如实报出被沿用的 subject 与未重审的材料差异。
+    assert(res.output.includes(first.subjectId.slice(0, 12)), `应指明被沿用的 subject：\n${res.output}`);
+    assert(res.output.includes('ai-prompt.md'), `未重审的材料差异须如实列出：\n${res.output}`);
   } finally {
     rmDir(rotate.root);
+  }
+
+  // 流③ 材料变了且本 phase **从未** PASS（只有 FAIL 历史）→ 仍是 BLOCKER：至少要完整审一次。
+  const never = makeVerifierProject();
+  try {
+    const first = seedPhase(never.root, 'demo', PHASE, { promptBody: '# v1\n' });
+    runVerifierRound({
+      root: never.root,
+      feature: 'demo',
+      phase: PHASE,
+      requestPath: first.requestPath,
+      subjectId: first.subjectId,
+      verdict: 'FAIL',
+      blockerCount: 2,
+    });
+    const second = seedPhase(never.root, 'demo', PHASE, { promptBody: '# v2 需求已更新\n' });
+    assert(second.subjectId !== first.subjectId, '材料变化必须换 subject');
+    writeLegacyReceipt(never.root, 'demo', PHASE, never.sha);
+    const res = runCheckReceipt(never.root, 'demo', PHASE);
+    assert(res.status !== 0, `从未 PASS 过的 phase 不得凭旧 FAIL 沿用：\n${res.output}`);
+    assert(res.output.includes('verifier_evidence_report_missing'), `应指向"该 subject 的证据缺失"：\n${res.output}`);
+    assert(res.output.includes('verifier_request'), `恢复指引须落到 request JSON（可执行）：\n${res.output}`);
+  } finally {
+    rmDir(never.root);
   }
 }
 
@@ -1167,6 +1191,7 @@ function case17_staleArtifactsCannotReactivateDisabled(): void {
     const cfg = readJson(cfgPath);
     cfg.evidence_profile = 'balanced';
     writeFile(cfgPath, JSON.stringify(cfg, null, 2));
+    seedPhase(root, 'demo', PHASE); // 模拟配置变更后的新 base summary；旧 verifier 文件保留。
 
     writeLegacyReceipt(root, 'demo', PHASE, sha);
     const res = runCheckReceipt(root, 'demo', PHASE);
@@ -1342,7 +1367,7 @@ const CASES: Array<{ name: string; fn: () => void | Promise<void> }> = [
   { name: '⑬ policy.verifier=off：loader 不调用，JSON/MD 均不要求（现状语义保留）', fn: case13_policyOffUnchanged },
   { name: '⑭ 177KB ai-prompt：Task 只收短 request，闭环正常（宿主实锤验收）', fn: case14_largePromptTravelsAsShortRequest },
   { name: '⑮ prompt 改一字节 → prompt_hash_mismatch（不发布 canonical）', fn: case15_promptByteChangeIsDetected },
-  { name: '⑯ 材料寻址双正常流：未变即复用直进 receipt / 变了则明确指引重跑 verifier', fn: case16_materialAddressedSubjectTwoNormalFlows },
+  { name: '⑯ 材料寻址三流：未变即复用 / 变了但历史有 PASS 则沿用闭环并登记差异 / 从未 PASS 则 BLOCKER', fn: case16_materialAddressedSubjectTwoNormalFlows },
   { name: '⑰ enabled→disabled：磁盘旧 request/report 不得重新激活能力，也不要求清理', fn: case17_staleArtifactsCannotReactivateDisabled },
   { name: '⑱ 当代 summary 缺 request → verifier_request_absent（不误判为上一代旧件）', fn: case18_currentGenerationWithoutRequest },
   { name: '⑲ 正常回退集成流：改上游 → 重跑上游 → 下游 stale → 从下游继续（不清空 feature）', fn: case19_upstreamRollbackLeavesDownstreamResumable },

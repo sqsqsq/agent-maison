@@ -492,32 +492,6 @@ structure_checks:
 # --------------------------------------------------------------------------
 semantic_checks:
 
-  overview_clarity:
-    description: >
-      「功能概述」必须是一句简洁明确的描述，说明模块的核心价值，
-      而非"xxx功能"这种空泛表述
-    severity: MAJOR
-    ai_prompt_hint: >
-      检查「功能概述」是否满足：(1) 一句话概括核心价值；
-      (2) 包含目标用户或使用场景的暗示；(3) 不使用空泛词汇
-
-  user_scenario_specificity:
-    description: >
-      「目标用户与使用场景」必须明确用户角色和具体场景描述，
-      场景应包含前置条件和用户意图
-    severity: MAJOR
-    ai_prompt_hint: >
-      检查每个使用场景是否包含：(1) 具体的用户角色；
-      (2) 明确的操作目标；(3) 前置条件
-
-  feature_description_actionable:
-    description: >
-      功能清单中每项的「描述」必须具体到可实现，不允许仅有抽象描述
-    severity: MAJOR
-    ai_prompt_hint: >
-      对功能清单中每一项，判断描述是否足够具体，
-      让开发人员无歧义地理解需要实现什么
-
   acceptance_testable:
     description: >
       每条验收标准必须是可测试、可量化的，包含明确的预期结果

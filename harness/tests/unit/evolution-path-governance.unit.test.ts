@@ -377,7 +377,29 @@ function writeConfig(dir: string, paths: Record<string, string>): void {
   }, null, 2), 'utf-8');
 }
 
-/** H1：默认 pattern 下 Stop hook 把 CU Feature 展开为物理路径（<blueprint_id>/<change_unit_id>/<phase>）
+/** closure-only 分支夹具：脚本已 PASS、闭环未 closed、summary 无 verifier_request → hook 打印
+ * `summary = <reports>/summary.json` 与第 2 步的 `<reports>/verifier.request.<subject>.json` 回退路径。
+ * summary.json 落在 hook 自己解析的物理 reports 目录（resolveFeaturePhaseReportDir，含 reports_dir_pattern）。 */
+function writeClosureOnlySummary(dir: string, reportsRel: string, sessionId: string): void {
+  const p = path.join(dir, ...reportsRel.split('/'), 'summary.json');
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, JSON.stringify({
+    verdict: 'PASS', closure_status: 'open', next_action: 'sync_closure', session_id: sessionId,
+  }, null, 2) + '\n', 'utf-8');
+}
+
+/** 断言 hook 阻断理由里的路径行都是 CU 物理路径：summary 行 + request 回退行正断言，编码 id 不得作路径段。
+ * 文案头部与命令行里的 feature 标识（`--feature <id>`、feature="<id>"）是身份实参而非路径，允许出现。 */
+function assertPhysicalPathLines(tag: string, reason: string, reportsRel: string, featureId: string): void {
+  assert(reason.includes(`summary = ${reportsRel}/summary.json`),
+    `${tag} summary 行应为物理 reports 目录：${reason.slice(0, 400)}`);
+  assert(reason.includes(`${reportsRel}/verifier.request.<subject>.json`),
+    `${tag} request 回退路径应为物理 reports 目录：${reason.slice(0, 400)}`);
+  assert(!reason.includes(`/${featureId}/`) && !reason.includes(`/${featureId}\\`),
+    `${tag} 编码 id 不得作路径段出现：${reason.slice(0, 400)}`);
+}
+
+/** H1：默认 pattern 下 Stop hook 把 CU Feature 展开为物理路径（<blueprint_id>/<change_unit_id>/<phase>/reports）
  * 口径：spec 禁止把编码 id 当物理路径、禁止 read/write 含编码 id 段；文案头部的
  * feature 标识（state.feature 原样回显）是状态标识而非路径，允许出现。 */
 function hookH1_defaultPatternCuPhysicalDir(): void {
@@ -385,27 +407,19 @@ function hookH1_defaultPatternCuPhysicalDir(): void {
   try {
     buildCuProject(dir);
     const featureId = `cu-${Buffer.from(`${BLUEPRINT_ID}\u0000ledger-consumer`).toString('base64url')}`;
-    writeConfig(dir, {
-      features_dir: 'doc/features',
-      receipt_dir_pattern: 'doc/features/<feature>/<phase>',
-    });
+    writeConfig(dir, { features_dir: 'doc/features' });
+    const reportsRel = `doc/features/${BLUEPRINT_ID}/ledger-consumer/coding/reports`;
     writeState(dir, featureId, 'coding', 'sid-h1');
+    writeClosureOnlySummary(dir, reportsRel, 'sid-h1');
     const out = runHook(CHECK_PHASE_HOOK, { session_id: 'sid-h1', stop_hook_active: false }, dir);
     assert(out.status === 2, `H1 未闭环应 exit 2：${out.status}`);
-    const reason = out.stderr;
-    // 回执目标 = CU 物理路径（不许把编码 id 当路径）
-    assert(reason.includes(`doc/features/${BLUEPRINT_ID}/ledger-consumer/coding/phase-completion-receipt.md`),
-      `H1 默认 pattern 应展开为 CU 物理目录：${reason.slice(0, 300)}`);
-    // 路径类输出不得含编码 id 段（“目标：”行必须展开为物理路径）
-    const targetLine = reason.split('\n').find(l => l.includes('目标：'));
-    assert(targetLine !== undefined && !targetLine.includes(featureId),
-      `H1 回执目标行不得含编码 id：${targetLine ?? '(无目标行)'}`);
+    assertPhysicalPathLines('H1', out.stderr, reportsRel, featureId);
   } finally {
     rmDir(dir);
   }
 }
 
-/** H2：自定义 pattern 保留前缀层级、只展开 <feature> 为物理路径 */
+/** H2：自定义 reports_dir_pattern 保留前缀层级、只展开 <feature> 为物理路径 */
 function hookH2_customPatternKeepsStructure(): void {
   const dir = makeTmp();
   try {
@@ -413,17 +427,14 @@ function hookH2_customPatternKeepsStructure(): void {
     const featureId = `cu-${Buffer.from(`${BLUEPRINT_ID}\u0000ledger-consumer`).toString('base64url')}`;
     writeConfig(dir, {
       features_dir: 'doc/features',
-      receipt_dir_pattern: 'requirements/features/<feature>/phases/<phase>',
+      reports_dir_pattern: 'requirements/features/<feature>/phases/<phase>/reports',
     });
+    const reportsRel = `requirements/features/${BLUEPRINT_ID}/ledger-consumer/phases/coding/reports`;
     writeState(dir, featureId, 'coding', 'sid-h2');
+    writeClosureOnlySummary(dir, reportsRel, 'sid-h2');
     const out = runHook(CHECK_PHASE_HOOK, { session_id: 'sid-h2', stop_hook_active: false }, dir);
     assert(out.status === 2, `H2 未闭环应 exit 2：${out.status}`);
-    const reason = out.stderr;
-    assert(reason.includes(`requirements/features/${BLUEPRINT_ID}/ledger-consumer/phases/coding/phase-completion-receipt.md`),
-      `H2 自定义 pattern 应保留前缀层级并展开物理路径：${reason.slice(0, 300)}`);
-    const targetLine = reason.split('\n').find(l => l.includes('目标：'));
-    assert(targetLine !== undefined && !targetLine.includes(featureId),
-      `H2 回执目标行不得含编码 id：${targetLine ?? '(无目标行)'}`);
+    assertPhysicalPathLines('H2', out.stderr, reportsRel, featureId);
   } finally {
     rmDir(dir);
   }

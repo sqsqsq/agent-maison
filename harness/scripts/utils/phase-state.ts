@@ -361,14 +361,6 @@ export function tryValidateReceipt(
     };
   }
 
-  if (!fs.existsSync(receiptAbs)) {
-    return {
-      status: 'missing',
-      receipt_path: receiptRel,
-      message: '回执文件不存在；本阶段尚未闭环（全局入口 §5.1 第 4 条）。',
-    };
-  }
-
   const checker = path.join(harnessRoot, 'scripts', 'check-receipt.ts');
   if (!fs.existsSync(checker)) {
     return {
@@ -534,7 +526,6 @@ export function runSyncClosureDetailed(
         frameworkRoot: frameworkRoot ?? path.resolve(harnessRoot, '..'),
         feature,
         phase,
-        receipt: { ...receiptValidation, status: 'passed' },
         persistPhaseState: () =>
           syncPhaseStateOnReceiptPassStrict(projectRoot, feature, phase, receiptValidation, {
             frameworkRoot,
@@ -548,7 +539,9 @@ export function runSyncClosureDetailed(
     console.log('');
     console.log('✅ sync-closure: 阶段已闭环（check-receipt PASS）');
     console.log(`   state: ${path.relative(projectRoot, statefilePath(projectRoot)).replace(/\\/g, '/')}`);
-    console.log(`   receipt: ${receiptValidation.receipt_path}`);
+    if (!finalized.receipt_projection_error) {
+      console.log(`   receipt projection: ${receiptValidation.receipt_path}`);
+    }
     console.log(
       `   closure_commit: ${finalized.transitioned ? 'committed' : 'already_committed'} ` +
         `(${finalized.closure_fingerprint.slice(0, 16)})`,

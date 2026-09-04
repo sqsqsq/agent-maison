@@ -30,7 +30,6 @@ import * as YAML from 'yaml';
 import { resolveGoalRunBaseline } from './goal-run-baseline';
 import {
   loadPhaseEvidenceManifest,
-  readReceiptManifestPointer,
 } from './phase-evidence-manifest';
 import { diffChangedFilesWithStatus, readFileAtRef, StatusDiffEntry } from './git-diff';
 
@@ -214,18 +213,7 @@ export function runUiDiffWithinDeclaredFiles(input: UiScopeGateInput): UiScopeGa
       suggestion: '重跑 plan 重新闭环（manifest 由 closure 重新生成）。',
     };
   }
-  const pointer = readReceiptManifestPointer(projectRoot, feature, 'plan');
-  if (pointer === null || pointer !== planEvidence.fileSha256) {
-    return {
-      status: 'FAIL',
-      failureKind: 'ui_scope_frozen_contract_missing',
-      details:
-        pointer === null
-          ? 'plan 回执缺 evidence_manifest_sha256 指针——证据链断裂，白名单来源不可信。'
-          : 'plan 回执指针与 evidence manifest 当前文件哈希失配（manifest 被整体改写）。',
-      suggestion: '重跑 plan 重新闭环恢复证据链。',
-    };
-  }
+  // plan 07a41ec6（codex review P0）：回执指针退出证据链；manifest 的 schema/aggregate 完整性已在上方自证。
   const contractsEntry = [...planEvidence.manifest.outputs, ...planEvidence.manifest.inputs].find(
     (f) => path.posix.basename(f.path.replace(/\\/g, '/')) === 'contracts.yaml',
   );

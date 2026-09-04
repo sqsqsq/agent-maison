@@ -33,6 +33,8 @@
 
 若 adapter 未声明 `in_session_reconcile + phase_context_isolation`，回退为“agent 自跑单 phase harness，再 assess”的手动编排；不得伪装为自治循环。无人值守需要 adapter 的 resume/handoff 能力，缺失时停止并明确说明能力缺口。
 
+**两入口互斥与 phase executor（plan 07a41ec6 T9）**：本 Skill（GoalPhaseRuntime）与 Claude 原生 `/goal` 路径是两个入口，不得同时推进同一任务。原生 `/goal` 路径下主会话是薄 driver：每个阶段最多派发一个 `subagent_type: phase-executor` 子代理负责该阶段的产出与自检（跑 harness、投 verifier、跑 check-receipt），主会话只投递最小输入并收回 summary 路径与终态块；同一会话上下文不连续执行两个阶段；`--revalidate` 只是检查命令，不推进阶段。
+
 ## 启动与续跑
 
 开始前按顺序执行：
@@ -68,3 +70,4 @@
 - 主 agent 必须自己运行 harness/runner；不得把命令作为唯一出路推给用户。
 - goal agent、attended/detached executor 与 supervisor 永不得构造 `--rebaseline-to`；该参数只属于 goal runtime 外的操作者管理命令，详见运行手册。
 - 不得把 INCOMPLETE 软化为 PASS，不得在 Skill 内新增阶段顺序或 verdict→next-phase 表。
+- 子代理（verifier / phase-executor）的结果只能同步等待，或先做与其结果无关的工作；禁止 sleep、轮询、后台等待器；verifier 未返回前不得修改它正在审的材料。

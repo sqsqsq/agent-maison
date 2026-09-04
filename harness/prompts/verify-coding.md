@@ -159,39 +159,6 @@
   3. 对每条 AC 给出 PASS / FAIL / WARN 判定
   4. 对 P2 的 AC 项，若未实现标注为 WARN（非 FAIL）
 
-### 检查 8: 探索覆盖充分性 (context_exploration_sufficiency)
-
-- **严重等级**: BLOCKER
-- **评估方法**:
-  1. 读取 `{features_dir}/{feature_name}/coding/context-exploration.md`（schema 1.1.0）
-  2. 对照 contracts、acceptance、plan：`source_code_paths`、`Code Facts` 是否覆盖实际改动文件
-  3. 探索文件缺失且脚本已 FAIL → 本项 FAIL
-
-### 检查 9: 行为合规 — 研究有据 (behavior_research_grounded)
-
-- **严重等级**: BLOCKER
-- **评估方法**: 实现是否能在 Code Facts 中找到依据；凭空虚构 API/路径 → FAIL
-
-### 检查 10: 行为合规 — 最小可行 (behavior_minimum_viable)
-
-- **严重等级**: MAJOR
-- **评估方法**: 是否实现 contracts 未声明的符号或投机抽象 → FAIL
-
-### 检查 11: 行为合规 — 追溯闭环 (behavior_verify_loop)
-
-- **严重等级**: MAJOR
-- **评估方法**: contracts ↔ 源码 ↔ acceptance 是否断链 → FAIL
-
-### 检查 12: 行为合规 — Scope 精准 (behavior_scope_surgical)
-
-- **严重等级**: BLOCKER
-- **评估方法**: git diff / 变更是否超出 plan scope 与 contracts 文件清单 → FAIL
-
-### 检查 13: 阶段边界 — 禁止 autopilot (phase_transition_autopilot)
-
-- **严重等级**: MAJOR
-- **评估方法**: 若对话/trace 显示 coding 四件套 PASS 后 agent **在同一执行流**自动 Read code-review / 写 review，且**无** `coding.ok_to_review` / `phase.next_step` / batch 授权（user-confirmation-ux §8）→ FAIL；仅「可进入 code-review」资格表述不构成授权
-
 ### 检查 14: 视觉背板语义 (visual_parity_backstop)
 
 - **严重等级**: BLOCKER（`fidelity_target: pixel_1to1` 时）/ MAJOR
@@ -200,11 +167,21 @@
   2. 映射 struct 源码是否引用对应 `$r('app.color.*')`（组件级，非 feature 全局有一处即可）
   3. `must_have_elements` 是否在组件树或 string/源码可见；脚本 `visual_parity` FAIL → 本项 FAIL
 
+### 检查 R: 跨产物引用核对 (reference_crosscheck)
+
+- **严重等级**: MAJOR
+- **评估方法**: 逐条核对本阶段产物里的跨文件引用——代码引用的接口签名、常量、资源 ID、路由 ↔ contracts.yaml / ui-spec.yaml / 资源文件；spec 验收标准编号 ↔ 代码注释或测试锚点。每条引用都要打开被引用的原文核对，不凭记忆、不凭上下文摘要。
+- **判定标准**: 引用对象存在且含义一致 → PASS；个别引用漂移（行号/名称过期但对象仍可定位） → WARN；关键引用指向不存在或含义相反的对象 → FAIL
+- **证据**: 列出核对过的引用（`引用 → 原文位置`）与不一致项
+
+
 ---
 
 ## 六、上下文文件
 
-以下是本次验证涉及的所有文档和源代码文件：
+以下是本次验证的上下文：被审产物与直接依据内联；上游文档与源码只给**路径清单**，需要核对时用 Read 按路径读取，不要全量通读。
+
+被审 feature 根目录：`{features_dir}/{feature_name}/`（相对仓根；下方清单里的相对路径同样相对仓根）。
 
 {context_files}
 
@@ -212,176 +189,55 @@
 
 ## 七、输出格式（必须严格遵循）
 
-请以下方 YAML 格式输出验证结果。**不要**输出其他格式或自由文本。
+先给**汇总表**（每个检查项一行，PASS 也要列），再只对 **status ≠ PASS** 的项写 YAML 明细。
+PASS 项不写论证，证据一行即可；证据不足时给 WARN 并说明缺什么，不要硬判 FAIL。
+不要复述脚本 Harness 已判定的结构项，不要输出本节之外的自由文本。
+
+本轮检查项与严重等级：
+
+| id | severity |
+|---|---|
+| coding_compile_gate | BLOCKER |
+| business_logic_correctness | MAJOR |
+| error_handling_completeness | MAJOR |
+| interface_signature_consistency | BLOCKER |
+| component_props_consistency | MAJOR |
+| data_ownership_compliance | MAJOR |
+| simulation_data_isolation | MINOR |
+| spec_acceptance_to_code | MAJOR |
+| reference_crosscheck | MAJOR |
+| visual_parity_backstop | BLOCKER |
+| visual_multimodal_parity | MAJOR |
+
+### 7.1 汇总表
+
+| id | status | severity | 证据（一行：文件:行 / 引文 / 数值） |
+|---|---|---|---|
+| <check_id> | PASS / WARN / FAIL / SKIP | <severity> | <一行证据> |
+
+### 7.2 非 PASS 项明细
 
 ```yaml
 verification_result:
   phase: "coding"
   feature: "{feature_name}"
   timestamp: "{timestamp}"
-
-  checks:
-    # --- 检查 0: 真实编译门禁 ---
-    - id: coding_compile_gate
-      status: PASS | FAIL | WARN
-      severity: BLOCKER
+  checks:            # 只列 status ≠ PASS 的项；每项字段固定
+    - id: <check_id>
+      status: FAIL | WARN | SKIP
+      severity: <该项声明的 severity>
       details: |
-        can_claim_done: YES/NO
-        coding_compile: PASS/FAIL/...
-        第一条编译错误: <file>:<line> — <message>
-        failure_kind: <project_dependency_missing|project_dependency_undeclared|project_dependency_install_failed|project_build|...>
-        next_action: <summary.next_action 或脚本建议>
-      affected_files: [...]
+        <证据：文件路径 + 行号/引文 + 判断依据>
       suggestion: |
-        <按 coding Step 6.5.2 修复后重跑 harness；禁止提议进入 code-review>
-
-    # --- 检查 1: 业务逻辑正确性 ---
-    - id: business_logic_correctness
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        <你的具体发现，包括哪些业务逻辑正确/不正确>
-      affected_files:
-        - "path/to/implementation-file"
-      suggestion: |
-        <修正建议，若 PASS 可省略>
-
-    # --- 检查 2: 异常处理完整性 ---
-    - id: error_handling_completeness
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        逐条列出每个边界场景的检查结果：
-        - BD-X (<scenario>): PASS/FAIL — 原因...
-        - BD-Y (<scenario>): PASS/FAIL — 原因...
-        - ... (覆盖 acceptance.yaml boundaries 中的所有 BD 项)
-      affected_files: [...]
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 3: 接口签名一致性 ---
-    - id: interface_signature_consistency
-      status: PASS | FAIL | WARN
-      severity: BLOCKER
-      details: |
-        逐类逐方法对比结果：
-        - <ClassName>.<methodName>: PASS/FAIL — ...
-        - ... (覆盖 contracts.yaml interfaces 中的所有 class/method)
-        数据模型对比：
-        - <ModelName>: PASS/FAIL — ...
-        - ... (覆盖 contracts.yaml data_models 中的所有模型)
-      affected_files: [...]
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 4: 组件 Props 一致性 ---
-    - id: component_props_consistency
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        逐组件对比 @State/@Prop/事件：
-        - <ComponentName>: PASS/FAIL — ...
-        - ... (覆盖 contracts.yaml components 中定义了 state/props/events 的所有组件)
-      affected_files: [...]
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 5: 数据所有权合规 ---
-    - id: data_ownership_compliance
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        <是否发现 presentation 层绕过 Repository 直接操作数据的情况>
-      affected_files: [...]
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 6: 模拟数据隔离 ---
-    - id: simulation_data_isolation
-      status: PASS | FAIL | WARN
-      severity: MINOR
-      details: |
-        <模拟数据封装情况，上层是否与数据来源解耦>
-      affected_files: [...]
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 7: spec 验收标准覆盖 ---
-    - id: spec_acceptance_to_code
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        逐条验收标准覆盖情况：
-        - <AC-id> (<description 摘要>): PASS/FAIL — ...
-        - ... (覆盖 acceptance.yaml criteria 中的所有 AC 项)
-        P0 覆盖率: X/N
-        P1 覆盖率: X/N
-        P2 覆盖率: X/N
-      affected_files: [...]
-      suggestion: |
-        <修正建议>
-
-    # --- 检查 8: 探索覆盖充分性 ---
-    - id: context_exploration_sufficiency
-      status: PASS | FAIL | WARN
-      severity: BLOCKER
-      details: |
-        context-exploration.md: <路径>
-        摘要与 contracts/实现/跨模块导出的一致性: PASS/FAIL — <证据>
-        source_code_paths / Code Facts: PASS/FAIL
-      affected_files:
-        - "{features_dir}/{feature_name}/coding/context-exploration.md"
-      suggestion: |
-        <修正建议>
-
-    - id: behavior_research_grounded
-      status: PASS | FAIL | WARN
-      severity: BLOCKER
-      details: |
-        Code Facts ↔ 实现决策: PASS/FAIL
-      suggestion: |
-        <修正建议>
-
-    - id: behavior_minimum_viable
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        超 contracts 投机实现: PASS/FAIL
-      suggestion: |
-        <修正建议>
-
-    - id: behavior_verify_loop
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        contracts ↔ code ↔ acceptance: PASS/FAIL
-      suggestion: |
-        <修正建议>
-
-    - id: behavior_scope_surgical
-      status: PASS | FAIL | WARN
-      severity: BLOCKER
-      details: |
-        diff 超出 plan scope/contracts: PASS/FAIL
-      suggestion: |
-        <修正建议>
-
-    - id: phase_transition_autopilot
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        coding 闭环后未授权即开 code-review: PASS/FAIL
-      suggestion: |
-        闭环后须 phase.next_step / coding.ok_to_review 停等（user-confirmation-ux §8）
-
+        <修正建议：谁改、改哪个文件、改成什么>
   summary:
-    total: 14
+    total: 11
     pass: <PASS 数>
     fail: <FAIL 数>
     warn: <WARN 数>
     blockers: <severity=BLOCKER 且 status=FAIL 的数量>
     verdict: PASS | FAIL
-    # verdict 规则：coding_compile_gate 或任何 BLOCKER 级 FAIL → FAIL；can_claim_done=NO 时也必须 FAIL
+    # verdict 规则：若存在任何 BLOCKER 级 FAIL → FAIL；否则 → PASS
 ```
 
 ---

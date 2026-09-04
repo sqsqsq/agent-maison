@@ -222,39 +222,21 @@
 
 - **输出**：隔离性问题清单
 
-### 检查 9: 探索覆盖充分性 (context_exploration_sufficiency)
-
-- **严重等级**: BLOCKER
-- **评估方法**:
-  1. 读取 `{features_dir}/{feature_name}/ut/context-exploration.md`（schema 1.1.0）
-  2. 对照 use-cases、contracts、被测入口：`source_code_paths`、`Code Facts` 是否一致
-  3. 探索文件缺失且脚本已 FAIL → 本项 FAIL
-
-### 检查 10: 行为合规 — 研究有据 (behavior_research_grounded)
-
-- **严重等级**: BLOCKER
-- **评估方法**: UT 结构是否基于 Code Facts 中的被测实现；臆造 handler → FAIL
-
-### 检查 11: 行为合规 — 最小可行 (behavior_minimum_viable)
+### 检查 R: 跨产物引用核对 (reference_crosscheck)
 
 - **严重等级**: MAJOR
-- **评估方法**: 是否超出 acceptance/use-cases 堆测试 → FAIL
+- **评估方法**: 逐条核对本阶段产物里的跨文件引用——测试用例引用的 use-case / AC 编号、mock 名称、DAG 节点 ↔ use-cases.yaml / acceptance.yaml / mock-plan / 源码符号。每条引用都要打开被引用的原文核对，不凭记忆、不凭上下文摘要。
+- **判定标准**: 引用对象存在且含义一致 → PASS；个别引用漂移（行号/名称过期但对象仍可定位） → WARN；关键引用指向不存在或含义相反的对象 → FAIL
+- **证据**: 列出核对过的引用（`引用 → 原文位置`）与不一致项
 
-### 检查 12: 行为合规 — 追溯闭环 (behavior_verify_loop)
-
-- **严重等级**: MAJOR
-- **评估方法**: branches ↔ linked_acceptance ↔ UT 断言是否断链 → FAIL
-
-### 检查 13: 行为合规 — Scope 精准 (behavior_scope_surgical)
-
-- **严重等级**: MAJOR
-- **评估方法**: UT 是否测试 scope 外模块/未声明 boundary → FAIL
 
 ---
 
 ## 六、上下文文件
 
-以下是本次验证涉及的所有文档、use-cases.yaml、DAG、业务编排源代码和 UT 文件：
+以下是本次验证的上下文：被审产物与直接依据内联；上游文档与源码只给**路径清单**，需要核对时用 Read 按路径读取，不要全量通读。
+
+被审 feature 根目录：`{features_dir}/{feature_name}/`（相对仓根；下方清单里的相对路径同样相对仓根）。
 
 {context_files}
 
@@ -262,199 +244,52 @@
 
 ## 七、输出格式（必须严格遵循）
 
-请以下方 YAML 格式输出验证结果。**不要**输出其他格式或自由文本。
+先给**汇总表**（每个检查项一行，PASS 也要列），再只对 **status ≠ PASS** 的项写 YAML 明细。
+PASS 项不写论证，证据一行即可；证据不足时给 WARN 并说明缺什么，不要硬判 FAIL。
+不要复述脚本 Harness 已判定的结构项，不要输出本节之外的自由文本。
+
+本轮检查项与严重等级：
+
+| id | severity |
+|---|---|
+| state_model_completeness | MAJOR |
+| ui_bindings_completeness | MAJOR |
+| handler_reachable | MAJOR |
+| end_to_end_driving | BLOCKER |
+| business_assertion_value | BLOCKER |
+| mock_plan_traceability | BLOCKER |
+| branch_coverage_semantic | MAJOR |
+| device_ac_delegation | BLOCKER |
+| stub_reasonableness | MAJOR |
+| test_isolation | MAJOR |
+| reference_crosscheck | MAJOR |
+
+### 7.1 汇总表
+
+| id | status | severity | 证据（一行：文件:行 / 引文 / 数值） |
+|---|---|---|---|
+| <check_id> | PASS / WARN / FAIL / SKIP | <severity> | <一行证据> |
+
+### 7.2 非 PASS 项明细
 
 ```yaml
 verification_result:
   phase: "ut"
   feature: "{feature_name}"
   timestamp: "{timestamp}"
-
-  checks:
-    - id: state_model_completeness
-      status: PASS | FAIL | WARN | SKIP
-      severity: MAJOR
+  checks:            # 只列 status ≠ PASS 的项；每项字段固定
+    - id: <check_id>
+      status: FAIL | WARN | SKIP
+      severity: <该项声明的 severity>
       details: |
-        逐 UseCase 审查（若无 use-cases.yaml 则 SKIP 并说明理由）：
-        - <use_case_id>: PASS/FAIL — <具体发现>
-        - 漏态: [...]
-      affected_files:
-        - "{features_dir}/{feature_name}/use-cases.yaml"
+        <证据：文件路径 + 行号/引文 + 判断依据>
       suggestion: |
-        <修正建议，若 PASS 可省略>
-
-    - id: ui_bindings_completeness
-      status: PASS | FAIL | WARN | SKIP
-      severity: MAJOR
-      details: |
-        逐 UseCase × ui_bindings 审查：
-        - <use_case_id>.<ui>:
-            role: <entry|progress|dialog|result|passive>
-            subscribes vs state_model 对齐: <YES/NO>
-        缺失 UI 绑定: [...]
-        data_boundaries 完备性: <评价>
-      affected_files: [...]
-      suggestion: |
-        <修正建议>
-
-    - id: handler_reachable
-      status: PASS | FAIL | WARN | SKIP
-      severity: MAJOR
-      details: |
-        逐条 calls 可达性评估（语义级，与脚本 named_business_handler 结构检查互补）：
-        - <use_case_id>.<ui>.<trigger>:
-            calls: <目标符号>
-            命名语义: <清晰|空壳|含义不明>
-            承载业务: <YES/NO/转发壳>
-            被 UT 调用: <YES/NO>
-        旁路清单: [...]
-      affected_files: [...]
-      suggestion: |
-        <修正建议>
-
-    - id: end_to_end_driving
-      status: PASS | FAIL | WARN
-      severity: BLOCKER
-      details: |
-        逐 it() 驱动力评估：
-        - <file>:"<it name>":
-            named_entry_called: YES/NO
-            boundary_callLog_asserts: <count>
-            state_asserts: <count>
-            phase_coverage: <中间态 + 终态是否齐全>
-            verdict: PASS/FAIL
-        ...
-      affected_files: [...]
-      suggestion: |
-        <修正建议>
-
-    - id: business_assertion_value
-      status: PASS | FAIL | WARN
-      severity: BLOCKER
-      details: |
-        逐 it() 业务价值评估：
-        - <file>:"<it name>":
-            linked_rule: <AC/BD/branch>
-            assertion_types: [返回值|状态迁移|调用序列|持久化|错误码|回滚]
-            exception_semantics: <YES/NO/NA>
-            verdict: PASS/FAIL
-      affected_files: [...]
-      suggestion: |
-        <修正建议>
-
-    - id: mock_plan_traceability
-      status: PASS | FAIL | WARN | SKIP
-      severity: BLOCKER
-      details: |
-        mock-plan ↔ DAG spy_preset ↔ UT preset 映射：
-        - 缺 preset / 未引用 / 与 ts_expr 不一致: [...]
-      affected_files:
-        - "{features_dir}/{feature_name}/ut/mock-plan.yaml"
-      suggestion: |
-        <修正建议>
-
-    - id: branch_coverage_semantic
-      status: PASS | FAIL | WARN | SKIP
-      severity: MAJOR
-      details: |
-        异常场景比对：
-        spec 列出的异常: [...]
-        use-cases.yaml 已覆盖: [...]
-        遗漏分支: [...]
-      affected_files: [...]
-      suggestion: |
-        建议新增 branches:
-        - id: <xxx>
-          scenario: <...>
-          linked_acceptance: [<AC-X>]
-
-    - id: device_ac_delegation
-      status: PASS | FAIL | WARN
-      severity: BLOCKER
-      details: |
-        device/both AC 列表: [...]
-        缺 device_focus 的 AC/BD: [...]
-        legacy device-testing-todo.md 是否存在（应删除）: YES/NO
-        ui_subscription 与 device_focus 一致性: [...]
-      affected_files:
-        - "{features_dir}/{feature_name}/acceptance.yaml"
-      suggestion: |
-        <为缺项补写 device_focus 片段；both 须拆分 ut_focus + device_focus>
-
-    - id: stub_reasonableness
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        替身审查：
-        - <SpyClassName / 原型替换点>: PASS/FAIL — <字段/值域/错误码合理性>
-        - 跨用例污染风险: [...]
-      affected_files: [...]
-      suggestion: |
-        <修正建议>
-
-    - id: test_isolation
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        隔离性分析：
-        - beforeEach 重建替身+上下文: YES/NO
-        - 共享可变状态: [...]
-        - 隐式依赖: [...]
-        - 原型替换还原: YES/NO/NA
-      affected_files: [...]
-      suggestion: |
-        <修正建议>
-
-    - id: context_exploration_sufficiency
-      status: PASS | FAIL | WARN
-      severity: BLOCKER
-      details: |
-        context-exploration.md: <路径>
-        摘要与 use-cases/contracts/被测入口探索一致性: PASS/FAIL — <证据>
-        source_code_paths / Code Facts: PASS/FAIL
-      affected_files:
-        - "{features_dir}/{feature_name}/ut/context-exploration.md"
-      suggestion: |
-        <修正建议>
-
-    - id: behavior_research_grounded
-      status: PASS | FAIL | WARN
-      severity: BLOCKER
-      details: |
-        Code Facts ↔ 被测实现: PASS/FAIL
-      suggestion: |
-        <修正建议>
-
-    - id: behavior_minimum_viable
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        超 acceptance 堆测: PASS/FAIL
-      suggestion: |
-        <修正建议>
-
-    - id: behavior_verify_loop
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        branches ↔ AC ↔ UT: PASS/FAIL
-      suggestion: |
-        <修正建议>
-
-    - id: behavior_scope_surgical
-      status: PASS | FAIL | WARN
-      severity: MAJOR
-      details: |
-        UT 范围 ↔ contracts/boundaries: PASS/FAIL
-      suggestion: |
-        <修正建议>
-
+        <修正建议：谁改、改哪个文件、改成什么>
   summary:
-    total: 15
+    total: 11
     pass: <PASS 数>
     fail: <FAIL 数>
     warn: <WARN 数>
-    skip: <SKIP 数>
     blockers: <severity=BLOCKER 且 status=FAIL 的数量>
     verdict: PASS | FAIL
     # verdict 规则：若存在任何 BLOCKER 级 FAIL → FAIL；否则 → PASS

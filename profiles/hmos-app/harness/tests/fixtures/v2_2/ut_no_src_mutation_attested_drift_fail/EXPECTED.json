@@ -2,13 +2,17 @@
   "rules": [
     {
       "id": "ut_no_src_mutation",
-      "status": "FAIL",
-      "severity": "BLOCKER",
+      "status": "WARN",
+      "severity": "MAJOR",
       "details_includes": "review 后源码漂移"
     },
     {
       "id": "ut_no_src_mutation",
       "details_includes": "DemoFlow.ets"
+    },
+    {
+      "id": "ut_no_src_mutation",
+      "details_includes": "按 coding change 归类"
     }
   ]
 }

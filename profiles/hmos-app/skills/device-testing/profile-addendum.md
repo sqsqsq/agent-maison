@@ -77,6 +77,26 @@
 - **即席入口**：`npm run adhoc-device-test`（device-testing Step 4.B）同样在 run 前 **`ensureHylyreReady`**；**勿**使用 `harness-runner --feature _adhoc`。
 - **单机 ensure 失败诊断**：[hylyre-host-preflight.md](../../../../skills/feature/device-testing/reference/hylyre-host-preflight.md)（agent 按日志处理宿主因素，不要求用户 pip）。
 
+### 已知边界（按当前 Hylyre 版本与 capability 判定，plan 07a41ec6 T2）
+
+宿主 bc-openCard-1 2026-09-02 回归里，下面每一条都是代理跑完真机、读 framework 源码后才撞出来的。写在这里的目的是**计划期就绕开**，不是永久事实——版本或 capability 变了以此表为准更新，判断不得来自记忆。
+
+| 边界 | 现状（Hylyre 0.5.x / 当前 profile） | 计划期怎么做 |
+|------|------------------------------------|------------|
+| `wait_for` 超时 | **超时 = 失败**（driver 观测语义 `assertion.mismatch`），不是异常；裸 `{"wait_for":{"by_id":…,"timeout":N}}` 就是有断言力的身份断言 | 不要为"防假绿"加 `visible:true`——那会把 request.kind 变成 composite，身份门不认；身份断言由 harness 注入，谓词断言另写一步 |
+| `scroll_to` 方向 | 只向下滚动 | 多锚点 `scroll_to` 必须严格自顶向下排列 |
+| `assert_toast` | 当前版本不可用（恒失败） | Toast 用 `{"wait_for":{"by_text":"…","match":"exact","timeout":N}}` |
+| 步骤耗时 | driver / UI 树刷新开销未校准，同一 `touch` 实测 0.3–1.8s，不能当应用时延 | ≤ 秒级的时延类 NFR 无测量通道 → `manual:perf_sampling`（unsupported_gap，留分母披露） |
+| 帧率 / 内存 | 当前 capability 无采样通道 | `manual:perf_sampling` / `manual:memory_sampling` |
+| 系统设置类前置（大字号/深色/RTL） | 切换系统设置在被测应用之外，无步骤原语 | `manual:system_settings` |
+| 资源变体 / 数据注入 / 外部前置 | 需另构 HAP 或注入仓储 | `manual:resource_variant` / `manual:data_injection` / `manual:external_precondition` |
+| `manual`（裸） / 未知 gap / 未登记 `provider:<id>` | 未证明缺口或声明非法 → **invalid_test**，跑机前必修 | 写已知 `manual:<gap_class>`，或改 hylyre / visual |
+| inactive/SKIP `provider:<id>` | **unsupported_gap**（留分母、不算 PASS） | 保留需求并在报告披露 |
+| active 但无 per-TC producer 的 `provider:<id>` | 当前 3.0.0 为 **invalid_test**，跑机前必修 | 改现有可执行通道；真正接入 producer 后再使用 provider |
+| 长参考图 | 参考图高于视口时像素口径不成立（`visual_reference_viewport` 前置门） | 按锚点拆成多个视口尺寸的 screen，各自裁图 + nav 末步 `scroll_to` |
+| `capture_completeness` | 全局口径：ref element id 出现在任一 ui-spec 节点或 must_have 即算，不按屏 | 长图拆屏时不必逐屏重复声明 |
+| P0 checkpoint 绑定 | `action.type` 必须是 tap/touch/click/input/swipe/scroll；`scroll`/`swipe` 在 trace 里 selector 为 null，经其后的身份断言（post-state）绑定 | `assert_visible` 类改为指定触发动作，要看见的元素进 required_element_ids |
+
 ### hypium 临时目录（`tmp_hypium/`）
 
 - **来源**：Hylyre 传递依赖 **hypium** 在进程 **cwd** 下创建 `./tmp_hypium`（UI 树 `*_tmp_uitree.json`、截图等），非本仓库业务代码。
@@ -129,12 +149,12 @@
 ### plan 派生缺失时的结构化提示
 
 - 若尚未落盘 **`…/testing/reports/<timestamp>/hylyre/test-plan.hylyre.md`** 就跑 **`testing` harness**，脚本 **`check-testing.ts`** 会 **FAIL**，并写入 **`<features_dir>/<feature>/testing/reports/derive-hint-from-plan.json`**（schema 4）：顶层用例行 + **`navigation_hint`** + 可选 **`lint_violations`**，以及**机读步骤目录**（`allowed_step_roots` / `step_shape_catalog` / `canonical_format`——翻译步骤以此为准，不依赖已读语法文档），便于下一轮 Agent 派生。
-- **SSOT 覆盖门禁（execution_channel）**：顶层 **`test-plan.md`** 为唯一用例清单权威，且每条 TC 声明唯一 **`execution_channel`**（`hylyre | visual | manual | provider:<capability-id>`）。**`testing/reports/*/hylyre/test-plan.hylyre.md`** 中声明的 TC（表格「用例编号」列）必须与顶层 `channel=hylyre` 的集合**完全相等**——缺失 missing FAIL、多出 extra FAIL。含「烟测占位」等标记的派生文件视为**无效**，不参与选中。未执行的顶层 TC（包括 P1/P2）不能让 testing 通过；只有 trace 内结构化 capability failure（`outcome.status=failed` + `failure.domain=capability`，或 `outcome.status=blocked` + `cause.type=capability`）或既有 capability resolution 事实可 defer。
+- **SSOT 覆盖门禁（execution_channel）**：顶层 **`test-plan.md`** 为唯一用例清单权威，且每条 TC 声明唯一 **`execution_channel`**（`hylyre | visual | manual:<gap_class> | provider:<capability-id>`）。**`testing/reports/*/hylyre/test-plan.hylyre.md`** 中声明的 TC（表格「用例编号」列）必须与顶层 `channel=hylyre` 的集合**完全相等**——缺失 missing FAIL、多出 extra FAIL。含「烟测占位」等标记的派生文件视为**无效**，不参与选中。未执行的顶层 TC（包括 P1/P2）不能让 testing 通过；只有机器证明的 known manual gap 或 inactive/SKIP provider 可记 `unsupported_gap`，其余非法写法在任何设备动作前失败。
 - **派生器没有 skip 决策权（BLOCKER）**：正式派生计划**禁止**写 `explicit_skip_tc_ids`（frontmatter 与 `derive-manifest.json` 同禁），登记本身即 BLOCKER。某条 `channel=hylyre` 的 TC 写不成可靠 Hylyre JSON 时，**整份 Hylyre 计划不启动**，回报该 TC 根因与下一责任阶段，交回顶层计划作者改通道或补入口定义——不得降级成跳过。
   - **legacy（只读兼容，禁止复制）**：历史产物里的 `explicit_skip_tc_ids` 仍可被解析，仅用于诊断旧 run；它**不贡献 PASS**、**不产 coding candidate**，等同「未执行」保持 testing FAIL，也不得按 TC 名称或报告散文投 coding。新计划/新派生器一律不写。
 - **选派生文件**：在 `testing/reports` 多个子目录并存时，按各 `test-plan.hylyre.md` 的 **mtime 从新到旧** 试用，**跳过占位**，首个有效者即为本次 `hylyre run` 输入。勿依赖目录名字典序。
 - **新鲜度**：若顶层 **`test-plan.md`** 的 mtime **新于**选中的派生文件，脚本 **BLOCKER**（`coverage_reason=stale`），须重派生或更新派生文件。
-- **只读抽取 CLI**（不写入 feature 目录，默认 stdout）：`cd framework/harness && npm run derive-hylyre-plan-hint -- --feature <feature>`；可选 `--out <path>` 写文件。
+- **派生入口 CLI**：先运行 `cd framework/harness && npm run derive-hylyre-plan-hint -- --feature <feature>`，默认输出 stdout 并把源 TC 基线写到 canonical testing reports 下 `derive-hint-from-plan.json`，然后再生成派生计划；不需要先跑 harness 失败。`--out <path>` 保留给显式导出，正式派生使用默认 canonical 路径。
 
 ### 即席模式（`_adhoc`）
 
@@ -172,12 +192,14 @@
 - Hylyre 子目录产出 **`test-report.md`（5 章节）** 与 **`trace.json`（cases[]）**。正式 testing 的最低消费契约为 Hylyre `0.5.0`、trace `schema_version=0.4-p0`、`result_protocol=hylyre.step-outcome/1`（Step Outcome v1，trace 顶层与 `environment` 两处都必须一致）；每个 CaseResult 必须带 `execution`/`verification`/`evidence`/`expected_check_mode`/`steps[]`，每个 StepResult 必须带 `index`/`kind`/`role`/`duration_ms`/`device_session`/`outcome`/`selector`/`artifacts`/`diagnostic`/`extensions`。**状态位于 `outcome.status`（`passed|failed|blocked|skipped` 四态判别式）**：`passed` 带 `observation`、`failed` 带 `failure{domain,code,facts}`、`blocked` 带 `cause`、`skipped` 带 `reason`；selector 位于 `selector.request`/`selector.resolution`。`CaseResult.status` 的中文枚举只是兼容投影，**不得用于任何裁决**。native trace 还须经 `trace.artifacts.plan` 与既有 run/identity receipt 绑定实际 derived plan、top plan、trace 路径/SHA，并逐项核对 StepResult count/index/kind（唯一尾部 `expected_check` 除外）。
 - `ensureHylyreReady` 成功后会写 `hylyre-ready.meta.json`；P0 gate 对账 `release.manifest.json` → ready 的 installed/manifest version → `trace.environment.hylyre_version`，并要求 trace 顶层与 environment 的 schema 都为 `0.4-p0`、protocol 都为 `hylyre.step-outcome/1`。任一版本/schema/protocol/字段事实缺失时，旧 case `status=通过` 不得冒充 `verification=passed`，默认升级 Hylyre 后重跑；历史文件不删除。
 - Harness 在 **`device_test.run` 成功后** 写入 **`reports/<feature>/testing/device-test-timing.json`**（流水线各阶段 ms + 各 TC 耗时）。schema `0.4-p0` 时各 TC 耗时直接汇总 `CaseResult.steps[].duration_ms`，`step_count` 等于 ledger 行数；只有 legacy schema 才使用旧日志 `cost:` 分配。
-- Agent 将最终 run 的 **cases[].status** 与顶层计划对齐合并到 **`<features_dir>/<feature>/testing/test-report.md`**：状态枚举 **通过 / 失败 / 阻塞 / 跳过**；skip 保留并计入正确分母；**必须**读取最终 `device-test-timing.json`，使用最终 build/install reused 状态（流水线说明列显式写 `reused=true|false`）、最终 timing 与每个 case 的最终 **duration_ms**；报告耗时统一写精确整数毫秒 `Nms`（如 `1234ms`，历史 `1,234ms` 可读）；已进入 trace/timing 的 skip/block case 写 `0ms`，仅未进入 trace/timing 的用例（非 hylyre 通道或历史 legacy skip）写 `—`；禁止把首轮真编或旧轮 timing 写成最终执行轮数据；结论 **达标 / 有条件达标 / 不达标**（与现有模板一致）。P0 acceptance coverage 不看 `CaseResult.status` 单列（中文枚举只是兼容投影），而是按 checkpoint required/forbidden 与同 index StepResult 的 `role` / `outcome.status` / `observation` 对账；`--skip-assert-expected` 只由 `expected_check_mode` 表达，不等于整个 case 未验证。
+- **报告由 harness 整份生成**：使用同一权威 run 的 trace/timing/meta、视觉证据与 stability 生成 `testing/test-report.md` 的状态、耗时、统计与逐轴结论。Agent 只读结果，补充观察写 `testing/notes.md`，不手工回填表格或计算结论。P0 覆盖仍按 checkpoint 与 StepResult 机器事实对账，中文 `CaseResult.status` 仅为兼容投影。
 - 已执行失败只消费 nested `outcome.failure`：`outcome.status=failed` 且 `failure.domain=assertion`、`failure.code=assertion.mismatch` 才可能进入既有 coding candidate（还须同 case 存在较小 index 且 `outcome.status=passed` 的 action，否则留 testing）；`failure.domain=selector` 先重派生/补消歧，`failure.domain=capability` 走 capability defer，`failure.domain=infrastructure` 走 external/toolchain。**未尝试的步骤不生成 failure route**：`outcome.status=blocked` 读 `outcome.cause`——`cause.type=capability` 只投影 1 次 capability defer、`cause.type=infrastructure` 只投影 1 次 external/toolchain、`cause.type=prior_step` 零 route 零 disposition；`outcome.status=skipped` 读 `outcome.reason`，`reason.type=policy` 不产生 capability defer。禁止读 flat `status`/`failure_kind`/`failure_code`/`evidence.executed` 重建成败。rich-text 的 coding/spec/plan owner 接入既有 repair-candidate writer；无 StepResult 的未执行项保持 testing FAIL、零自动 coding；不从 TC 名称、AC、notes 或报告散文猜原因。
 - native StepResult 在场时只认 native；旧 runtime telemetry 不再被新 run producer 调用，历史 telemetry 仅用于具体 checkpoint 的有限兼容或 native/legacy 一致性 WARN，不合成 CaseResult/StepResult 第二真源。
-- 非 `channel=hylyre` 的 TC 本就不进派生计划，在顶层报告中按其通道的实际结论如实登记；缺 per-TC 机器证据时保持 FAIL/UNVERIFIED，**不得**写成「跳过」冒充已覆盖。
+- 非 `channel=hylyre` 的 TC 不进派生计划；known manual gap / inactive provider 的 `unsupported_gap` 留分母、不算 PASS，披露后可完成；其余非法声明在跑机前判 `invalid_test`，不得用「跳过」冒充已覆盖。
 - **Toast 等能力不可用**：`blocked` 还是 `failed` 由 Hylyre 按冻结 builder 判定表的 **attempted 事实**决定——dispatch **之前**能力探针已证明缺失 → `outcome.status=blocked` + `cause.type=capability`（`cause.code` 如 `capability.unsupported`/`capability.not_configured`，须带 `facts.probe_status/probe_source`）；已 dispatch **之后**才返回不支持 → `outcome.status=failed` + `failure.domain=capability`、`failure.code=capability.unsupported`。Maison 只消费这两处 nested 事实：blocked 投 capability defer（0 route），failed 产 1 条自带 capability defer 的 route；两者都是 **0 coding candidate**。**不得**再写 flat `failure_kind=capability`，只有 `diagnostic` 散文而无 `facts` 的能力声明**不能**驱动 defer，也不得把能力缺失改写成人工 skip 或应用 coding 缺陷。
-- **报告重算**：run 产出 trace、agent 基于最终 trace/timing 写好顶层报告后，可执行 `--report-reconcile-only --phase testing --feature <feature>`；该模式只读现有 trace/plan/report/timing/build-install-run meta，完整重算 report/static checks、summary、quality axes 与既有 repair candidates，零 hvigor/hdc/Hylyre/设备/视觉采集/可执行 lifecycle hook 调用，authoritative trace 字节保持不变。门禁会对账同一最终 run 的 HAP 路径与内容指纹、meta 时间顺序、trace/report/log 路径、trace feature、timing 全 pipeline 字段与 reused 值、trace/timing 精确 case 集合，以及报告流水线和逐 case duration；不能用首轮或旧轮字段拼成 PASS。
+- **同键复用与 `--force-device`**（plan 07a41ec6 T6）：真机执行键 = HAP 摘要 + 注入后派生计划 + 设备/显示环境 + 复位方式 + 工具链版本 + flags；同键最近一次成功且证据完整的 run 直接复用（只重算报告与门禁，`device_test_run.structured.reused_by_execution_key=true`），更晚失败不被更早成功覆盖；用户要 fresh 或 N 轮稳定性时加 `--force-device`。每个 run 目录落 `execution-key.json`，稳定性按同键分组（含失败轮）写 `reports/stability.json`。
+- **视觉量测 `--measure --feature <feature> [--screen <id>]`**（plan 07a41ec6 T10）：对 ui-spec 声明元素输出 bounds/间距/重叠/与参考图差值（px 与按 360vp 设计宽估算的 vp）/取色，写 `device-screenshots/measure-<screen>.json` 并把量测事实补进 visual-diff.json 的 defects[].note；只测量不裁决，不改 ui-spec，不改 verdict。
+- **报告重算**：run 已有 trace 时，直接执行 `--report-reconcile-only --phase testing --feature <feature>`，由 harness 重生成顶层报告并重算 report/static checks、summary、quality axes 与既有 repair candidates；不要求 agent 预先写报告，零 hvigor/hdc/Hylyre/设备/视觉采集/可执行 lifecycle hook 调用，authoritative trace 字节不变。
 
 ### 环境变量（摘要）
 

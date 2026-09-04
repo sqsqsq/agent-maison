@@ -40,7 +40,7 @@ export interface CorrectionHistoryEntry {
 
 /**
  * appendFeatureCorrectionHistory：feature.yaml 不存在（no-feature 修正、或 feature 未曾声明 track）时静默跳过——
- * 修正历史是锦上添花的可追溯性记录，不是阻断性契约，文件缺失不应让 --correction-check 收口失败。
+ * 修正历史是锦上添花的可追溯性记录，不是阻断性契约，文件缺失不应让修正路由（--correction-init）失败。
  */
 export function appendFeatureCorrectionHistory(
   projectRoot: string,

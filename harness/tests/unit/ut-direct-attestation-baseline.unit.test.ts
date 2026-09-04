@@ -243,7 +243,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: '② attested 漂移 FAIL：failure_kind=post_review_source_drift + affected_files 精确 + 零授权提法',
+    name: '② attested 漂移 → WARN 归类 coding change（plan 07a41ec6 T8）：failure_kind=post_review_source_drift + affected_files 精确 + 零授权提法',
     run: () => {
       const root = makeProject();
       try {
@@ -253,7 +253,11 @@ const cases: Array<{ name: string; run: () => void }> = [
         writeFile(root, SRC_REL, 'export class DemoFlow { run(): number { return 99; } }\n');
 
         const r = one(root);
-        assert(r.status === 'FAIL' && r.severity === 'BLOCKER', `期望 BLOCKER FAIL：${r.status}`);
+        assert(r.status === 'WARN' && r.severity === 'MAJOR', `期望 MAJOR WARN（归类 coding change，不阻塞）：${r.status}/${r.severity}`);
+        assert(
+          (r.structured as { reclassified_as?: string } | undefined)?.reclassified_as === 'coding_change',
+          `应归类为 coding_change：${JSON.stringify(r.structured)}`,
+        );
         assert(
           r.failure_kind === 'post_review_source_drift',
           `failure_kind 应为 post_review_source_drift，实际 ${r.failure_kind}`,
@@ -293,7 +297,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: '③ review 已闭环但 attestation 被删 → fail-closed BLOCKER，不静默回退 git',
+    name: '③ review 已闭环但 attestation 被删 → WARN 如实标注基线不可用（plan 07a41ec6 T8），不静默回退 git',
     run: () => {
       const root = makeProject();
       try {
@@ -305,11 +309,12 @@ const cases: Array<{ name: string; run: () => void }> = [
         git(root, ['commit', '-q', '-m', 'review reports']);
 
         const r = one(root);
-        assert(r.status === 'FAIL' && r.severity === 'BLOCKER', `期望 fail-closed，实际 ${r.status}`);
+        assert(r.status === 'WARN' && r.severity === 'MAJOR', `期望 MAJOR WARN（基线不可用如实标注，不阻塞），实际 ${r.status}/${r.severity}`);
         assert(
           r.failure_kind === 'review_closure_baseline_unavailable',
           `failure_kind 应为 review_closure_baseline_unavailable，实际 ${r.failure_kind}`,
         );
+        assert((r.structured as { baseline?: string } | undefined)?.baseline === 'unavailable', JSON.stringify(r.structured));
         assert(!(r.details ?? '').includes('baseRef='), `不得回退 git 基线：${r.details}`);
         assert(
           !AUTHORIZATION_WORDING.test((r.details ?? '') + (r.suggestion ?? '')),
@@ -424,7 +429,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: '⑥ commit 洗码负例：attested 分支下 UT 改码后 git commit，仍 FAIL',
+    name: '⑥ commit 洗码负例：attested 分支下 UT 改码后 git commit，漂移仍被如实标注（WARN，不被洗白成 PASS）',
     run: () => {
       const root = makeProject();
       try {
@@ -436,7 +441,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         git(root, ['commit', '-q', '-m', 'ut sneaks a source edit']);
 
         const r = one(root);
-        assert(r.status === 'FAIL', `commit 不得洗白漂移，实际 ${r.status}：${r.details}`);
+        assert(r.status === 'WARN', `commit 不得洗白漂移（须仍标 WARN 而非 PASS），实际 ${r.status}：${r.details}`);
         assert(
           r.failure_kind === 'post_review_source_drift',
           `failure_kind=${r.failure_kind}`,
@@ -514,7 +519,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: '⑨ closed summary + 结构损坏 attestation（合法 JSON）→ review_closure_baseline_unavailable，不是 framework_bug',
+    name: '⑨ closed summary + 结构损坏 attestation（合法 JSON）→ review_closure_baseline_unavailable WARN，不是 framework_bug',
     run: () => {
       const root = makeProject();
       try {
@@ -529,7 +534,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         }, null, 2), 'utf-8');
 
         const r = one(root);
-        assert(r.status === 'FAIL', `期望 fail-closed，实际 ${r.status}：${r.details}`);
+        assert(r.status === 'WARN', `期望基线不可用 WARN（不阻塞），实际 ${r.status}：${r.details}`);
         assert(
           r.failure_kind === 'review_closure_baseline_unavailable',
           `结构损坏须落基线不可用而非 framework_bug（实际 ${r.failure_kind}）`,

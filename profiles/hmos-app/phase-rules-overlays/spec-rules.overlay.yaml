@@ -6,11 +6,5 @@ phase: spec
 version: "1.0"
 applies_to: "<features_dir>/{module}/spec/spec.md"
 
-semantic_checks:
-  ui_component_terminology:
-    description: >
-      界面描述中引用的 UI 组件应优先使用 ArkUI 术语
-      （Column、Row、List、Tabs、Navigation、Swiper 等）
-    severity: MINOR
-    ai_prompt_hint: >
-      检查界面描述中的组件类型是否使用了 ArkUI 组件名称
+# plan 07a41ec6 T7：ui_component_terminology（ArkUI 术语可读性项）已随 verifier 可读性检查一并裁撤
+semantic_checks: {}

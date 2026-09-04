@@ -153,7 +153,6 @@ export function tryCloseUpstreamPhase(input: UpstreamClosureInput): UpstreamClos
         phase: target,
         goalRunId: input.goalRunId,
         goalAttemptId: input.attemptId,
-        receipt: { ...validation, status: 'passed' },
         blockerCount: 0,
         persistPhaseState: () => { /* no-op: do not move current phase */ },
       });
@@ -189,7 +188,6 @@ export function tryCloseUpstreamPhase(input: UpstreamClosureInput): UpstreamClos
       phase: target,
       goalRunId: input.goalRunId,
       goalAttemptId: input.attemptId,
-      receipt: { ...validation, status: 'passed' },
       blockerCount: 0,
       // 上游关环**不动当前 phase 指针**——本模块只补上游的 closure 凭证。
       persistPhaseState: () => { /* no-op：不改 .current-phase.json */ },

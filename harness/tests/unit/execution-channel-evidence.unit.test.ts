@@ -317,23 +317,33 @@ test('多 AC 的 visual TC：任一 AC 缺屏声明即整体 unbound', () => {
   });
 });
 
-test('provider 通道仍 fail-closed，且给出可实现的契约而不是空拒绝', () => {
+test('provider 通道：inactive/SKIP → unsupported_gap（不算 PASS）；无 gap 证明 → unbound/invalid_test', () => {
   withRoot(healthyRoot, root => {
-    const [binding] = bindChannelEvidence(
-      input(root, { visualTcIds: [], providerTcIds: [{ tc_id: 'TC-010', provider_id: 'some_cap' }] }),
+    const providerTcIds = [{ tc_id: 'TC-010', provider_id: 'some_cap' }];
+    const [gap] = bindChannelEvidence(
+      input(root, { visualTcIds: [], providerTcIds, gaps: [{ tc_id: 'TC-010', channel: 'provider', reason: 'provider_inactive:some_cap' }] }),
     );
-    assert.strictEqual(binding.verdict.kind, 'unbound');
-    assert.ok(binding.verdict.detail.includes('per-TC'));
-    assert.ok(binding.verdict.detail.includes('feature 级'));
+    assert.strictEqual(gap.verdict.kind, 'unsupported_gap');
+    assert.ok(gap.verdict.detail.includes('per-TC'));
+    assert.ok(gap.verdict.detail.includes('不算 PASS'));
     assert.ok(PROVIDER_EVIDENCE_CONTRACT.includes('tc_id'));
+    const [unbound] = bindChannelEvidence(input(root, { visualTcIds: [], providerTcIds }));
+    assert.strictEqual(unbound.verdict.kind, 'unbound');
+    assert.ok(unbound.verdict.detail.includes('invalid_test'));
   });
 });
 
-test('manual 通道永远不可机器证明（冻结设计）', () => {
+test('manual 通道：manual:<class> → unsupported_gap（人工确认仍不算证据）；裸 manual → not_machine_provable/invalid_test', () => {
   withRoot(healthyRoot, root => {
-    const [binding] = bindChannelEvidence(input(root, { visualTcIds: [], manualTcIds: ['TC-020'] }));
-    assert.strictEqual(binding.verdict.kind, 'not_machine_provable');
-    assert.ok(binding.verdict.detail.includes('confirmed_by'));
+    const [gap] = bindChannelEvidence(
+      input(root, { visualTcIds: [], manualTcIds: ['TC-020'], gaps: [{ tc_id: 'TC-020', channel: 'manual', reason: 'system_settings' }] }),
+    );
+    assert.strictEqual(gap.verdict.kind, 'unsupported_gap');
+    assert.ok(gap.verdict.detail.includes('confirmed_by'));
+    assert.ok(gap.verdict.detail.includes('不算 PASS'));
+    const [bare] = bindChannelEvidence(input(root, { visualTcIds: [], manualTcIds: ['TC-020'] }));
+    assert.strictEqual(bare.verdict.kind, 'not_machine_provable');
+    assert.ok(bare.verdict.detail.includes('invalid_test'));
   });
 });
 

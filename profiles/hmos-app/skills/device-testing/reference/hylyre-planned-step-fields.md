@@ -33,6 +33,8 @@
 {"wait_for":{"by_text":"加载完成","match":"exact","scope":"top_overlay","timeout":10}}
 ```
 
+**P0 身份断言不用手写（plan 07a41ec6 T3）**：harness 把派生计划装载进 run 目录时，按 acceptance checkpoint 自动插入精确形状的 `{"wait_for":{"by_id":"<required_id>","timeout":10}}` / `{"wait_gone":{"by_id":"<forbidden_id>","timeout":10}}`（源文件不改，注入清单落 `checkpoint-injection.json`）。派生只写导航、动作与 UX 断言：`visible` / `enabled` 等谓词断言**保留**为独立 UX 断言，但不算身份证据——上表的富选择器字段一旦出现在断言里，request.kind 就是 composite，P0 身份门只认裸 by_id。checkpoint 的触发动作在 case 内必须唯一，多候选或无绑定动作会在跑机前判 invalid_test 并列出 step。scroll/swipe 是合法动作，不要为过门禁改成 touch。已知边界表见 profile-addendum「已知边界」。
+
 ## 滚动（Hylyre 0.2+ · 0.3 先匹配）
 
 **`scroll_to` 根键**（长列表 / 虚拟化，自动滚到目标可见）。Hylyre 0.3+：**滚动前先**在容器子树/全树匹配，目标已在屏内时立即返回，避免空滚。

@@ -1,7 +1,7 @@
 #!/usr/bin/env npx ts-node
 /**
- * 从 doc/features/<feature>/testing/test-plan.md（兼容旧扁平路径）抽取用例行，输出 JSON（stdout），
- * 供 Agent 或本地脚本生成 test-plan.hylyre.md。
+ * 从 doc/features/<feature>/testing/test-plan.md（兼容旧扁平路径）抽取用例行，默认将 JSON
+ * 写到 testing reports 的 derive-hint-from-plan.json 并输出 stdout，再据此生成 test-plan.hylyre.md。
  *
  * 用法（在实例仓库根目录）：
  *   cd framework/harness && npx ts-node scripts/derive-hylyre-plan-hint.ts --feature home-page
@@ -17,7 +17,7 @@ import {
   listSnapshotPages,
   resolveDefaultSnapshotBundle,
 } from './utils/app-snapshot-cache-hint';
-import { resolveFeatureArtifact, relFeatureArtifact } from '../config';
+import { resolveFeatureArtifact, relFeatureArtifact, featurePhaseReportsDir } from '../config';
 import { buildStandardHylyreDerivePayloadBase, resolveHylyreResetIdentity } from './utils/hylyre-standard-derive-knowledge';
 import { loadUiSpecFile, uiSpecAbsPath } from './utils/ui-spec-shared';
 import { buildSelectorContractQuery } from '../../profiles/hmos-app/harness/selector-contract';
@@ -98,16 +98,14 @@ const payload = {
     setup_before_assertion:
       'every channel=hylyre case MUST contain at least one action step before its first assertion step in the same case (STEP-SETUP); do not rely on screen state left by another case',
     manual_note:
-      'a manual TC has no machine quality-PASS carrier: it stays FAIL/UNVERIFIED in the denominator and keeps the feature testing from passing — this is frozen design, not an executor defect',
+      'manual:<known_class> with no tool primitive is an unsupported_gap: keep it in the denominator, never count it as PASS, and allow completion with disclosure; bare manual or an unknown class is invalid_test before device execution',
   },
   test_cases,
 };
 
 const text = `${JSON.stringify(payload, null, 2)}\n`;
-if (outPath) {
-  fs.mkdirSync(path.dirname(outPath), { recursive: true });
-  fs.writeFileSync(outPath, text, 'utf-8');
-  console.error(`已写入 ${path.resolve(outPath)}`);
-} else {
-  process.stdout.write(text);
-}
+const target = outPath || path.join(featurePhaseReportsDir(projectRoot, feature, 'testing'), 'derive-hint-from-plan.json');
+fs.mkdirSync(path.dirname(target), { recursive: true });
+fs.writeFileSync(target, text, 'utf-8');
+console.error(`已写入 ${path.resolve(target)}`);
+if (!outPath) process.stdout.write(text);

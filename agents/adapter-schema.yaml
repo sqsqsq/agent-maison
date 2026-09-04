@@ -449,7 +449,7 @@ optional_fields:
           结论的发布机制 id。subagent_stop：由 SubagentStop hook
           （agents/claude/templates/hooks/record-verifier-report.mjs，claude-kernel 家族共享）
           做四方对账（request 自述 subject == 重算 subject == summary 现值 == 终态块回显，
-          且 prompt_path/prompt_sha256 与磁盘相符）后发布
+          且 prompt_path/prompt_sha256 与磁盘相符；subject 按 material_sha256 审前材料视图寻址）后发布
           `verifier.report.<subject>.json`。
       modes:
         type: list

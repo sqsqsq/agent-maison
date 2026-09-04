@@ -134,27 +134,6 @@ const cases: Case[] = [
     },
   },
   {
-    name: '回执规范化幂等：追加三类指针行不改变规范化哈希',
-    run: () => {
-      const root = mkProject();
-      seedSpecPhase(root);
-      const before = computeCanonicalReceiptSha256(root, FEATURE, 'spec');
-      const p = receiptPathForPhase(root, FEATURE, 'spec');
-      fs.appendFileSync(p, [
-        'evidence_manifest: "doc/features/x/spec/reports/phase-evidence-manifest.json"',
-        'evidence_manifest_sha256: "deadbeef"',
-        '  phase_closure_fingerprint: "abc"',
-      ].join('\n') + '\n', 'utf-8');
-      const after = computeCanonicalReceiptSha256(root, FEATURE, 'spec');
-      assert.strictEqual(after, before, '指针行剔除后哈希不变');
-      // 而正文变化必须可见
-      fs.appendFileSync(p, 'verdict_note: changed\n', 'utf-8');
-      assert.notStrictEqual(computeCanonicalReceiptSha256(root, FEATURE, 'spec'), before);
-      // CRLF 归一
-      assert.strictEqual(canonicalizeReceiptContent('a\r\nb'), 'a\nb');
-    },
-  },
-  {
     name: 'aggregate 不含时间戳：不同 now 生成的 aggregate 相同；manifest 文件哈希≠aggregate（不自 hash）',
     run: () => {
       const root = mkProject();
@@ -189,21 +168,6 @@ const cases: Case[] = [
     },
   },
   {
-    name: 'staleness：回执正文变更 → receipt_changed；指针行追加不触发',
-    run: () => {
-      const root = mkProject();
-      seedSpecPhase(root);
-      writeManifestWithPointer(root, 'spec');
-      let r = recomputePhaseEvidenceStaleness(root, FEATURE, ['spec']);
-      assert.strictEqual(r[0].verdict, 'fresh', '指针回写不算篡改');
-      const p = receiptPathForPhase(root, FEATURE, 'spec');
-      fs.appendFileSync(p, 'blocker_count: 999\n', 'utf-8');
-      r = recomputePhaseEvidenceStaleness(root, FEATURE, ['spec']);
-      assert.strictEqual(r[0].verdict, 'stale');
-      assert.strictEqual(r[0].receipt_changed, true);
-    },
-  },
-  {
     name: 'tamper（codex 五轮 P0 复现）：改文件+同步改 entry 哈希留旧 aggregate → tampered 不洗白',
     run: () => {
       const root = mkProject();
@@ -223,29 +187,6 @@ const cases: Case[] = [
       const r = recomputePhaseEvidenceStaleness(root, FEATURE, ['spec']);
       assert.strictEqual(r[0].verdict, 'tampered', 'aggregate 重算必须抓住条目改写');
       assert.ok(r[0].integrity_errors!.some((e) => /aggregate 重算失配/.test(e)));
-    },
-  },
-  {
-    name: 'tamper：回执指针锚——用生产 writer 写指针（codex P0-1：writer 空行不得使刚生成即 stale）',
-    run: () => {
-      const root = mkProject();
-      seedSpecPhase(root);
-      const written = writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root, feature: FEATURE, phase: 'spec' as Phase, now: FIXED_NOW }));
-      // 生产 writer 写指针（含尾部空行分隔）——规范化剔指针+归一尾空行后哈希须稳定
-      const relManifest = 'doc/features/' + FEATURE + '/spec/reports/phase-evidence-manifest.json';
-      writeReceiptManifestPointer(root, FEATURE, 'spec', relManifest, written.sha256);
-      const r0 = recomputePhaseEvidenceStaleness(root, FEATURE, ['spec']);
-      assert.strictEqual(r0[0].verdict, 'fresh', `刚生成即 stale：${JSON.stringify(r0[0])}`);
-      // 重跑 writer 幂等（不叠加空行/指针）
-      writeReceiptManifestPointer(root, FEATURE, 'spec', relManifest, written.sha256);
-      assert.strictEqual(recomputePhaseEvidenceStaleness(root, FEATURE, ['spec'])[0].verdict, 'fresh');
-      // 攻击：改文件后整体重新生成 manifest（aggregate 自洽）——但回执指针没跟上
-      const acc = resolveFeatureArtifact(root, FEATURE, 'acceptance.yaml').actualPath;
-      fs.appendFileSync(acc, 'x: 1\n', 'utf-8');
-      writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root, feature: FEATURE, phase: 'spec' as Phase, now: FIXED_NOW }));
-      const r = recomputePhaseEvidenceStaleness(root, FEATURE, ['spec']);
-      assert.strictEqual(r[0].verdict, 'tampered');
-      assert.ok(r[0].integrity_errors!.some((e) => /指针|evidence_manifest_sha256/.test(e)));
     },
   },
   {
@@ -305,15 +246,19 @@ const cases: Case[] = [
     },
   },
   {
-    name: 'fail-closed：manifest 存在但回执无指针 → tampered（codex P0-5：null 不当兼容旧现场）',
+    name: 'plan 07a41ec6（codex review P0）：回执指针退出证据链——manifest 完整且无指针 → fresh；回执被投影重写 → 仍 fresh',
     run: () => {
       const root = mkProject();
       seedSpecPhase(root);
       writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root, feature: FEATURE, phase: 'spec' as Phase, now: FIXED_NOW }));
       // 不写指针
-      const r = recomputePhaseEvidenceStaleness(root, FEATURE, ['spec']);
-      assert.strictEqual(r[0].verdict, 'tampered');
-      assert.ok(r[0].integrity_errors!.some((e) => /缺 evidence_manifest_sha256 指针/.test(e)));
+      let r = recomputePhaseEvidenceStaleness(root, FEATURE, ['spec']);
+      assert.strictEqual(r[0].verdict, 'fresh', JSON.stringify(r[0]));
+      // 回执整文件被 harness 投影重写（无指针、正文变化）——不得使刚闭环的阶段自失效
+      fs.writeFileSync(receiptPathForPhase(root, FEATURE, 'spec'), '---\nreceipt_schema: "2.1"\nfeature: "x"\n---\n', 'utf-8');
+      r = recomputePhaseEvidenceStaleness(root, FEATURE, ['spec']);
+      assert.strictEqual(r[0].verdict, 'fresh', JSON.stringify(r[0]));
+      assert.strictEqual(r[0].receipt_changed, false);
     },
   },
   {

@@ -18,7 +18,7 @@
 // 都返回 unverifiable；'no-git' 仅保留"status 失败（非 git 仓/git 坏）"信息值。
 // 闭环判定收紧在 check-receipt：**只有两侧都是 16 hex（或双 no-layers）才走相等比较**，
 // 其余一律 BLOCKER——no-git===no-git / unverifiable===unverifiable 的假匹配被构造性排除。
-// doc/（回执/trace/报告）与 framework/ 的变动仍不在摘要内——agent 正常填回执不自我失效。
+// doc/（receipt 投影/trace/报告）与 framework/ 的变动仍不在摘要内。
 // 写读两端（harness-runner / check-receipt）共用本函数，天然同一口径。
 // ============================================================================
 

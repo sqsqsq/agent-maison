@@ -55,8 +55,7 @@ const HOOK_PATH = frameworkAbs(LAYOUT, 'agents/claude/templates/hooks/check-phas
 
 interface FixtureOptions {
   /**
-   * 已闭环 state（status=harness_finished + verdict=PASS + blocker_count=0 + receipt.status=passed）
-   * vs 未闭环。默认未闭环（更接近 hook 默认拦截路径）。
+   * 已闭环 summary（closure_status=closed）vs 未闭环。state receipt 只作兼容投影。
    */
   closed?: boolean;
   /** state.session_id；undefined 表示该字段不写入；null 表示显式写 null（"未盖章"语义） */
@@ -148,18 +147,19 @@ function makeFixture(opts: FixtureOptions): string {
     }
     fs.writeFileSync(stateAbs, JSON.stringify(state, null, 2) + '\n', 'utf-8');
   }
-  if (opts.summaryNextAction || opts.blockerIds) {
+  if (opts.closed || opts.summaryNextAction || opts.blockerIds) {
     const phase = opts.phaseOverride ?? 'coding';
     const blockers = (opts.blockerIds ?? []).map((id) => ({ id }));
-    const summaryAbs = path.join(dir, 'doc', 'features', 'demo-feature', phase, 'reports', 'summary.json');
+    const featuresDir = opts.pathsOverride?.features_dir ?? 'doc/features';
+    const summaryAbs = path.join(dir, featuresDir, 'demo-feature', phase, 'reports', 'summary.json');
     fs.mkdirSync(path.dirname(summaryAbs), { recursive: true });
     fs.writeFileSync(summaryAbs, JSON.stringify({
       schema_version: '1.0',
       phase,
       feature: 'demo-feature',
-      verdict: 'FAIL',
-      blocker_count: blockers.length || 1,
-      fail_count: 1,
+      verdict: opts.closed ? 'PASS' : 'FAIL',
+      blocker_count: opts.closed ? 0 : blockers.length || 1,
+      fail_count: opts.closed ? 0 : 1,
       warn_count: 0,
       script_report: `doc/features/demo-feature/${phase}/reports/script-report.json`,
       merged_report: `doc/features/demo-feature/${phase}/reports/merged-report.md`,
@@ -170,7 +170,8 @@ function makeFixture(opts: FixtureOptions): string {
       blocking_warnings: [],
       blocking_skips: [],
       blockers,
-      next_action: opts.summaryNextAction ?? 'declare_dependencies_then_rerun',
+      next_action: opts.closed ? 'phase_closed_wait_user' : opts.summaryNextAction ?? 'declare_dependencies_then_rerun',
+      closure_status: opts.closed ? 'closed' : 'open',
     }, null, 2), 'utf-8');
   }
   return dir;
@@ -309,9 +310,7 @@ function testT21_liteNotApplicableReceiptStillClosed(): void {
   }
 }
 
-function testT22_fullTrackReceiptStillRequired(): void {
-  // 回归对照：full track（或无 snapshot）时，receipt=null 依旧必须拦——防止 T21 的
-  // 豁免逻辑被误用成"全局放过 receipt 检查"。
+function testT22_closedSummaryWithoutReceiptPasses(): void {
   const dir = makeFixture({
     closed: true,
     stateSessionId: 'sid-A',
@@ -320,15 +319,15 @@ function testT22_fullTrackReceiptStillRequired(): void {
   });
   try {
     const out = runHook({ session_id: 'sid-A' }, dir);
-    assertEq(out.status, 2, 'T22 full track（无 lite snapshot）+ receipt=null → 仍 exit 2');
-    assertStderrContains(out, '未跑 check-receipt.ts', 'T22 应报 receipt 缺失');
+    assertEq(out.status, 0, 'T22 summary closed + receipt=null → exit 0');
+    assertStderrNotContains(out, '未闭环', 'T22 receipt 缺失不得影响 closed summary');
   } finally {
     rmDir(dir);
   }
 }
 
 // --------------------------------------------------------------------------
-// C5-full：correction 状态联动（hard_hook 深度集成）
+// correction 状态不再拦截 stop（plan 07a41ec6 T1）：以下用例钉住"存在 .current-correction.json 也放行"
 // --------------------------------------------------------------------------
 
 function writeCorrectionState(dir: string, overrides: Record<string, unknown>): void {
@@ -351,15 +350,14 @@ function writeCorrectionState(dir: string, overrides: Record<string, unknown>): 
   fs.writeFileSync(abs, JSON.stringify({ ...base, ...overrides }, null, 2) + '\n', 'utf-8');
 }
 
-function testT23_pendingCorrectionSameSessionBlocks(): void {
-  // 没有 .current-phase.json（阶段已交付后的修正场景）+ 当前会话 pending correction → 仍应拦截
+function testT23_pendingCorrectionSameSessionDoesNotBlock(): void {
+  // 没有 .current-phase.json + 当前会话 pending correction → 不再拦截（correction 硬路径已删）
   const dir = makeFixture({ writeStateFile: false });
   try {
     writeCorrectionState(dir, { session_id: 'sid-A' });
     const out = runHook({ session_id: 'sid-A' }, dir);
-    assertEq(out.status, 2, 'T23 pending correction 同会话 → exit 2');
-    assertStderrContains(out, 'correction-check', 'T23 stderr 应指引 --correction-check');
-    assertStderrContains(out, '未收口的中途修正', 'T23 stderr 应说明是 correction 拦截而非阶段拦截');
+    assertEq(out.status, 0, 'T23 pending correction 同会话 → exit 0');
+    if (/correction-check/.test(out.stderr)) throw new Error('T23 不应再指引 --correction-check');
   } finally {
     rmDir(dir);
   }
@@ -401,13 +399,13 @@ function testT26_expiredCorrectionDoesNotBlock(): void {
   }
 }
 
-function testT27_correctionBlocksEvenWhenPhaseClosed(): void {
-  // 阶段本身已闭环（会 exit 0），但仍有未收口的 correction → 仍应拦截（两个判据独立）
+function testT27_correctionNeverBlocksWhenPhaseClosed(): void {
+  // 阶段已闭环 + pending correction → exit 0（correction 状态对 Stop hook 无任何作用）
   const dir = makeFixture({ closed: true, stateSessionId: 'sid-A', updatedAtOffsetMs: -1000 });
   try {
     writeCorrectionState(dir, { session_id: 'sid-A' });
     const out = runHook({ session_id: 'sid-A' }, dir);
-    assertEq(out.status, 2, 'T27 阶段已闭环但 correction 未收口 → 仍 exit 2');
+    assertEq(out.status, 0, 'T27 阶段已闭环 + pending correction → exit 0');
   } finally {
     rmDir(dir);
   }
@@ -783,32 +781,20 @@ function testT19_signatureParityWithGoal(): void {
   }
 }
 
-function testT20_blockReasonRespectsReceiptDirPattern(): void {
-  // round7 skills/文案批（plan a9c4e7f1 review 闭环，codex 意见）：拦截文案的回执目标
-  // 须尊重回执目录 SSOT paths.receipt_dir_pattern（<feature>/<phase> 占位替换），而非
-  // 仅拼 features_dir 默认结构——自定义 pattern（…/phases/<phase>）宿主下否则 agent
-  // 被引导写错目录、闭环持续卡死。
+function testT20_receiptPassedButSummaryOpenBlocks(): void {
   const dir = makeFixture({
     closed: false,
     stateSessionId: 'sid-A',
-    pathsOverride: {
-      features_dir: 'requirements/features',
-      receipt_dir_pattern: 'requirements/features/<feature>/phases/<phase>',
+    summaryNextAction: 'fill_receipt_then_sync_closure',
+    stateExtra: {
+      status: 'harness_finished', verdict: 'PASS', blocker_count: 0,
+      receipt: { status: 'passed', receipt_path: 'doc/features/demo-feature/coding/phase-completion-receipt.md' },
     },
   });
   try {
     const out = runHook({ session_id: 'sid-A' }, dir);
-    assertEq(out.status, 2, 'T20 同会话 + 未闭环 → exit 2');
-    assertStderrContains(
-      out,
-      'requirements/features/demo-feature/phases/coding/phase-completion-receipt.md',
-      'T20 回执目标须按 receipt_dir_pattern 解析',
-    );
-    assertStderrNotContains(
-      out,
-      'doc/features/demo-feature/coding/phase-completion-receipt.md',
-      'T20 不得引导默认布局回执路径',
-    );
+    assertEq(out.status, 2, 'T20 state receipt passed + summary open → exit 2');
+    assertStderrContains(out, 'summary.closure_status="open"', 'T20 Stop 只认 summary closed');
   } finally {
     rmDir(dir);
   }
@@ -848,20 +834,20 @@ const CASES: Array<{ name: string; fn: () => void }> = [
     fn: testT21_liteNotApplicableReceiptStillClosed,
   },
   {
-    name: 'T22 full track（无 lite snapshot）+ receipt=null → 仍 exit 2（防豁免逻辑误用回归钉）',
-    fn: testT22_fullTrackReceiptStillRequired,
+    name: 'T22 summary closed + receipt=null → exit 0（receipt 非 Stop 判据）',
+    fn: testT22_closedSummaryWithoutReceiptPasses,
   },
   {
-    name: 'T20 拦截文案回执目标尊重 receipt_dir_pattern（custom 宿主）',
-    fn: testT20_blockReasonRespectsReceiptDirPattern,
+    name: 'T20 state receipt passed 但 summary open → 仍阻止',
+    fn: testT20_receiptPassedButSummaryOpenBlocks,
   },
   { name: 'T18 真重跑 harness（last_run_at 变）→ 逃生阀计数归零', fn: testT18_realRerunResetsCounter },
   { name: 'T19 hook signature 与 goal extractBlockerSignature 同语义', fn: testT19_signatureParityWithGoal },
-  { name: 'T23 pending correction 同会话（无 phase state）→ exit 2', fn: testT23_pendingCorrectionSameSessionBlocks },
+  { name: 'T23 pending correction 同会话（无 phase state）→ 不拦截 exit 0（T1 删硬路径）', fn: testT23_pendingCorrectionSameSessionDoesNotBlock },
   { name: 'T24 pending correction 跨会话 → 不拦截 exit 0', fn: testT24_pendingCorrectionCrossSessionDoesNotBlock },
   { name: 'T25 已闭环 correction → 不拦截 exit 0', fn: testT25_closedCorrectionDoesNotBlock },
   { name: 'T26 已过期 correction → 不拦截 exit 0', fn: testT26_expiredCorrectionDoesNotBlock },
-  { name: 'T27 阶段已闭环但 correction 未收口 → 仍 exit 2（两判据独立）', fn: testT27_correctionBlocksEvenWhenPhaseClosed },
+  { name: 'T27 阶段已闭环 + pending correction → exit 0（correction 对 hook 无作用）', fn: testT27_correctionNeverBlocksWhenPhaseClosed },
 ];
 
 export function runAll(): UnitCaseResult[] {
