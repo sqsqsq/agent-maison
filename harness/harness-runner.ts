@@ -24,6 +24,7 @@ import * as fs from 'fs';
 import { spawnSync } from 'child_process';
 import minimist from 'minimist';
 import { SpecLoader, FeatureArtifactInspection } from './scripts/utils/spec-loader';
+import { componentReviewContext } from './scripts/utils/component-selection-check';
 import {
   generateScriptReport,
   assembleAIPrompt,
@@ -96,6 +97,7 @@ import {
   glossaryPath,
   architectureMdPath,
   conventionsPath,
+  componentIndexPath,
   relConventions,
   relCatalog,
   relGlossary,
@@ -2832,7 +2834,7 @@ export function collectContextFiles(
   }
 
   if (['coding', 'review', 'ut'].includes(phase) && featureSpec.contracts) {
-    const conventionsReview = phase === 'review' && fs.existsSync(conventionsPath(projectRoot));
+    const conventionsReview = phase === 'review' && (fs.existsSync(conventionsPath(projectRoot)) || fs.existsSync(componentIndexPath(projectRoot)));
     const sourceFiles = specLoader.collectSourceFiles(projectRoot, featureSpec.contracts, conventionsReview ? undefined : '.ets');
     let count = 0;
     for (const [filePath, content] of sourceFiles) {
@@ -2849,6 +2851,7 @@ export function collectContextFiles(
   }
 
   if (phase === 'review') {
+    files.push(...componentReviewContext(projectRoot));
     const conventions = conventionsPath(projectRoot);
     if (fs.existsSync(conventions)) {
       files.push({ label: relConventions(projectRoot), content: fs.readFileSync(conventions, 'utf-8') });

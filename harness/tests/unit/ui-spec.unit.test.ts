@@ -623,6 +623,20 @@ export function runAll(): UnitCaseResult[] {
     });
   };
 
+  run('b9 asset_selection 保持 visual-parity PASS 与缺失映射 FAIL 判定', () => {
+    const root = mkProject();
+    try {
+      for (const files of [undefined, []] as Array<string[] | undefined>) {
+        const ctx = ownershipCtx(root, { enforcement: 'warn', files });
+        const before = checkVisualParityCoverage(ctx)[0];
+        for (const component of ctx.featureSpec.contracts!.components) component.asset_selection = { resolution: 'custom', rationale: '私有 UI' };
+        const after = checkVisualParityCoverage(ctx)[0];
+        if (before.status !== after.status || before.details !== after.details) throw new Error('asset_selection 改变了 visual-parity 判定');
+        if (after.status !== (files ? 'FAIL' : 'PASS')) throw new Error(`目标分支未命中：${after.status}`);
+      }
+    } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
   run('t3⑤ 所有权硬地板①：默认 warn 下 P0 缺 contract_component 仍 BLOCKER FAIL（不降级）', () => {
     const root = mkProject();
     try {

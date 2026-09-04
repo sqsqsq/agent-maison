@@ -60,6 +60,13 @@ skills:
     description: >
       逐条确认策展消费者工程的可选横切工程惯例知识资产
 
+  - id: component-catalog-bootstrap
+    scope: project
+    source_rel: project/component-catalog-bootstrap
+    order: 3.5
+    description: >
+      发现共享 UI 组件并逐条确认增量策展组件台账
+
   - id: component-design
     scope: project
     source_rel: project/component-design

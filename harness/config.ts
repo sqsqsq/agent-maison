@@ -303,6 +303,8 @@ export interface FrameworkPaths {
   architecture_md: string;
   /** 可选工程惯例知识资产；文件存在即启用 */
   conventions?: string;
+  component_index?: string;
+  component_catalog?: string;
   /**
    * 阶段状态机文件（agent 工作流强制门 / Layer 3）。
    *
@@ -620,6 +622,8 @@ export const DEFAULT_PATHS: FrameworkPaths = {
   glossary_seed: 'doc/glossary-seed.txt',
   architecture_md: 'doc/architecture.md',
   conventions: 'doc/conventions.md',
+  component_index: 'doc/component-index.yaml',
+  component_catalog: 'doc/component-catalog.yaml',
   state_file: 'framework/harness/state/.current-phase.json',
   receipt_dir_pattern: 'doc/features/<feature>/<phase>',
   reports_dir_pattern: 'doc/features/<feature>/<phase>/reports',
@@ -1690,6 +1694,22 @@ export function conventionsPath(projectRoot: string): string {
     projectRoot,
     loadFrameworkConfig(projectRoot).paths.conventions ?? DEFAULT_PATHS.conventions!,
   );
+}
+
+export function componentIndexPath(projectRoot: string): string {
+  return path.join(projectRoot, relComponentIndex(projectRoot));
+}
+
+export function componentCatalogPath(projectRoot: string): string {
+  return path.join(projectRoot, relComponentCatalog(projectRoot));
+}
+
+export function relComponentIndex(projectRoot: string): string {
+  return toPosix(loadFrameworkConfig(projectRoot).paths.component_index ?? DEFAULT_PATHS.component_index!);
+}
+
+export function relComponentCatalog(projectRoot: string): string {
+  return toPosix(loadFrameworkConfig(projectRoot).paths.component_catalog ?? DEFAULT_PATHS.component_catalog!);
 }
 
 /** raw config 是否显式声明 paths.conventions；用于区分未启用与配置损坏。 */

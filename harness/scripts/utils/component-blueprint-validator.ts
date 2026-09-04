@@ -70,7 +70,7 @@ export function validateComponentBlueprint(
     ...validateBlueprintQuestioning(blueprint),
     ...validateGeneratedBlueprintGraphs(blueprint),
     ...validateBlueprintReconciliation(blueprint),
-    ...validateEvolutionDecisions(blueprint),
+    ...validateEvolutionDecisions(blueprint, context.projectRoot),
     ...validateBlueprintProviders(blueprint, { projectRoot: context.projectRoot }),
   ];
   out.push(...upstream);

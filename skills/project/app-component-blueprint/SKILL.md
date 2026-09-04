@@ -96,3 +96,13 @@ npm run check:component-blueprint -- --project-root <宿主根> --blueprint <blu
 ## 完成边界
 
 checker 无 BLOCKER，独立质询完成，当前切片可施工，P1 派生结果与当前 revision/fingerprint 一致。此结果只代表 P1 蓝图完成，不代表 P2 Change Unit 或 P3 Component closure 完成。
+
+## 组件资产 App lens（b9）
+
+新依赖边的人类裁决遵循 [用户确认 UX](../../reference/user-confirmation-ux.md)。
+
+沿 [组件资产 SSOT](../../../docs/concepts/component-assets.md) 消费配置的 index/catalog。development 或涉 UI 的 logical/scenarios 视图 changed 时，先读完整库存与策展卡，live 检索候选调用点，再按语义同一性、增量兼容、影响规模、变体轴判五级。每个页面/UI development 节点形成 component_asset_selection decision；节点沿既有 kind/decorator/navigation 信号并声明使用模块 module，target_ref 指该节点。provenance 指 index/catalog 证据，component_ref 指定义；owner/verification_refs 齐全。verified_unchanged development 不产生选型。
+
+同一 providers[] 必有静态 optional component-assets 卡。冻结 authority_rule = `Source is component fact authority; curation is human selection guidance.`，source_rule = `Selection evidence cites the configured component index or catalog; component_ref identifies the asset.`。definition=共享 UI 资产输入，consumer=builder/lens/questioning，provider=静态 index/catalog reader；missing_behavior=诚实 unknown/degraded/not_applicable，replacement_behavior=同源重扫并使相关 P1 结果过期，exit_behavior=丢临时检索保留 provenance，conflict_behavior=源码优先且保留策展冲突，writes=[canonical_blueprint_input]。
+
+无 UI 维度可 not_applicable；有 UI 缺索引必须 unknown|degraded + unknown gap（verification_refs 含 provider:component-assets），owner/needed_by/unlock_condition 齐全。远期 open_decision 可继续，当前切片依赖则 blocker，不伪造选型。依赖预检复用 componentDependencyAllowed；顺序换选>plan 声明下沉>用户批新边。DSL 未获批准不能自改；未决新边保留 open_decision/blocker 和引用该 decision 的 gap，获批后更新正确 DSL 与决定。Story publication 由同一 renderer 输出四个选型字段并跑 --projection。

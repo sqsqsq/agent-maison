@@ -9,6 +9,9 @@ schema_version: "1.0"
 profile: hmos-app
 
 assets:
+  component-catalog-bootstrap:
+    component_card_template: templates/component-card-template.yaml
+    curate_component_prompt: prompts/curate-component.md
   framework-init:
     preset_5_layer_sample: templates/preset-5-layer.sample.json
 

@@ -165,7 +165,8 @@ export function renderBlueprintReviewMarkdown(blueprint: BlueprintRecord, artifa
     '',
     '## Decisions and gaps',
     '',
-    ...decisions.map(decision => `- decision ${String(decision.decision_id)}: ${String(decision.status)}; owner=${display(decision.owner)}; verification=${refs(decision.verification_refs)}`),
+    ...decisions.map(decision => `- decision ${String(decision.decision_id)}: ${String(decision.status)}; owner=${display(decision.owner)}; verification=${refs(decision.verification_refs)}`
+      + (decision.kind === 'component_asset_selection' ? `; target_ref=${display(decision.target_ref)}; asset_resolution=${display(decision.asset_resolution)}; component_ref=${display(decision.component_ref)}; rationale=${display(decision.rationale)}` : '')),
     ...gaps.map(gap => `- gap ${String(gap.gap_id)}: ${String(gap.status)}; owner=${String(gap.owner)}; needed_by=${display(gap.needed_by)}; unlock=${display(gap.unlock_condition)}`),
     '',
     '> Derived projection only. The canonical YAML remains the machine SSOT.',

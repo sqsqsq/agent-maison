@@ -1196,3 +1196,7 @@ cd framework/harness && npm run backfill:context -- --feature <name> --phases sp
 ### v2.2：tsc 静态扫描 + 改源码门禁 + named_handler 放宽（历史）
 
 未在本文记录细节，可在 git log 里搜 `feat(harness): v2.2`。
+
+### 3.1.0 可选组件资产
+
+未生成 component-index 的 Feature 无需补合同；显式生成索引即启用，进行中的页面/UI Feature 须回 plan 补 components.asset_selection。蓝图须补 optional component-assets Seam Card，诚实记录可用性，选型经既有 CU decision refs 投影。配置路径、字段和刷新命令见 [组件资产](docs/concepts/component-assets.md)。

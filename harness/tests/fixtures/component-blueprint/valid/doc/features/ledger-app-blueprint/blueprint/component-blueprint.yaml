@@ -480,6 +480,21 @@ providers:
     missing_disposition: not_applicable
     writes: [canonical_blueprint_input]
 
+  - provider_id: component-assets
+    definition: Shared UI component inventory and human curation.
+    consumer: [blueprint-builder, app-design-lens, independent-design-questioning]
+    provider: static component asset reader
+    requirement: optional
+    authority_rule: Source is component fact authority; curation is human selection guidance.
+    source_rule: Selection evidence cites the configured component index or catalog; component_ref identifies the asset.
+    missing_behavior: Preserve unknown gaps when UI applies; not_applicable only without UI.
+    replacement_behavior: Rescan sources and stale affected P1 results.
+    exit_behavior: Drop temporary reads and retain provenance.
+    conflict_behavior: Source facts win; preserve curation conflicts.
+    available: false
+    missing_disposition: not_applicable
+    writes: [canonical_blueprint_input]
+
 discovery:
   source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
   facts:

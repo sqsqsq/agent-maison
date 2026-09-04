@@ -33,6 +33,7 @@
     "goal:supervise": "ts-node scripts/goal-supervise.ts",
     "validate:ut-artifact": "ts-node scripts/validate-ut-artifact.ts",
     "bootstrap:code-graph": "ts-node scripts/bootstrap-code-graph.ts",
+    "bootstrap:component-index": "ts-node scripts/bootstrap-component-index.ts",
     "check:component-blueprint": "ts-node scripts/check-component-blueprint.ts",
     "check:change-unit": "ts-node scripts/check-change-unit.ts",
     "check:component-closure": "ts-node scripts/check-component-closure.ts",

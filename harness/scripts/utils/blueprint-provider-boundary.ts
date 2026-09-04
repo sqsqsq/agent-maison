@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import { conventionsPath, relConventions, isConventionsPathExplicitlyConfigured } from '../../config';
 import { extractHeadings } from './markdown-parser';
+import { isUiComponent, readComponentIndex } from './component-assets';
 import {
   BlueprintIssue,
   BlueprintRecord,
@@ -18,6 +19,7 @@ export const STATIC_BLUEPRINT_PROVIDERS = [
   'app-design-lens',
   'independent-design-questioning',
   'conventions-knowledge',
+  'component-assets',
 ] as const;
 
 const FORBIDDEN_WRITES = ['goal_events', 'goal_receipt', 'goal_evidence', 'p2_ready_set', 'p3_closure'];
@@ -42,6 +44,10 @@ const STATIC_PROVIDER_SOURCE_RULES: Record<string, { authority_rule: string; sou
   'conventions-knowledge': {
     authority_rule: 'Project conventions are stable knowledge input, not current-code authority.',
     source_rule: 'Applicable facts cite the configured conventions file and exact heading id.',
+  },
+  'component-assets': {
+    authority_rule: 'Source is component fact authority; curation is human selection guidance.',
+    source_rule: 'Selection evidence cites the configured component index or catalog; component_ref identifies the asset.',
   },
 };
 
@@ -148,6 +154,24 @@ export function validateBlueprintProviders(
         } else if (disabled && provider.missing_disposition !== 'not_applicable') {
           out.push(issue('blueprint_conventions_provider_disabled_disposition_invalid', `$.providers[${providers.indexOf(provider)}].missing_disposition`, '默认路径无文件且未显式配置表示未启用，必须标记 not_applicable。'));
         }
+      }
+    }
+    if (providerId === 'component-assets') {
+      const base = `$.providers[${providers.indexOf(provider)}]`;
+      if (provider.requirement !== 'optional') out.push(issue('blueprint_component_provider_requirement_invalid', base, 'component-assets 必须为 optional。'));
+      const hasUi = asRecords(blueprint.design_views).some(v => ['development', 'logical', 'scenarios'].includes(String(v.view_id)) && asRecords(v.nodes).some(isUiComponent));
+      let available: boolean | undefined;
+      if (context.projectRoot) {
+        try { available = readComponentIndex(context.projectRoot) !== null; }
+        catch { available = false; }
+        if (provider.available !== available) out.push(issue('blueprint_component_provider_availability_mismatch', `${base}.available`, 'available 必须与索引实际可读性一致。'));
+      }
+      if (provider.available === false || available === false) {
+        if (hasUi) {
+          if (!['unknown', 'degraded'].includes(String(provider.missing_disposition))) out.push(issue('blueprint_component_provider_disposition_invalid', base, '有 UI 维度却缺索引时必须 unknown|degraded，不能 not_applicable。'));
+          const gaps = asRecords(asRecord(blueprint.decisions_and_gaps)?.gaps);
+          if (!gaps.some(g => g.knowledge_state === 'unknown' && ['open_decision', 'blocker'].includes(String(g.status)) && asStrings(g.verification_refs).includes('provider:component-assets'))) out.push(issue('blueprint_component_provider_gap_missing', base, '缺组件选型评估须有 unknown gap，verification_refs 引用 provider:component-assets；沿既有 needed_by 区分远期/当前切片。'));
+        } else if (provider.missing_disposition !== 'not_applicable') out.push(issue('blueprint_component_provider_disposition_invalid', base, '无 UI/组件选型维度应记 not_applicable。'));
       }
     }
     for (const write of asStrings(provider.writes)) {

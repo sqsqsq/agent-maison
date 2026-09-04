@@ -1,0 +1,18 @@
+cases:
+  - { name: reuse, selection: { resolution: reuse, component_ref: 'SharedUi/src/SettingRow.ets#SettingRow' }, pass: true }
+  - { name: configure, selection: { resolution: configure, component_ref: 'SharedUi/src/SettingRow.ets#SettingRow', bindings: { title: 设置 } }, pass: true }
+  - { name: adapt, selection: { resolution: adapt, component_ref: 'SharedUi/src/SettingRow.ets#SettingRow', rationale: 局部组合 }, pass: true }
+  - { name: evolve, selection: { resolution: evolve, component_ref: 'SharedUi/src/SettingRow.ets#SettingRow', rationale: 兼容增加参数 }, pass: true }
+  - { name: custom, selection: { resolution: custom, rationale: 无共享语义匹配 }, pass: true }
+  - { name: missing-selection, pass: false }
+  - { name: unknown-resolution, selection: { resolution: new, rationale: x }, pass: false }
+  - { name: missing-ref, selection: { resolution: reuse }, pass: false }
+  - { name: missing-configure-ref, selection: { resolution: configure }, pass: false }
+  - { name: missing-adapt-ref, selection: { resolution: adapt, rationale: x }, pass: false }
+  - { name: missing-evolve-ref, selection: { resolution: evolve, rationale: x }, pass: false }
+  - { name: dangling-ref, selection: { resolution: reuse, component_ref: 'SharedUi/src/Missing.ets#Missing' }, pass: false }
+  - { name: missing-custom-reason, selection: { resolution: custom }, pass: false }
+  - { name: missing-adapt-reason, selection: { resolution: adapt, component_ref: 'SharedUi/src/SettingRow.ets#SettingRow' }, pass: false }
+  - { name: missing-evolve-reason, selection: { resolution: evolve, component_ref: 'SharedUi/src/SettingRow.ets#SettingRow' }, pass: false }
+  - { name: invalid-id, selection: { resolution: reuse, component_ref: '../bad#Ref' }, pass: false }
+  - { name: array-shape, selection: [], pass: false }

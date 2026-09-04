@@ -19,4 +19,22 @@ structure_checks: {}
 
 semantic_checks: {}
 
-traceability_checks: {}
+traceability_checks:
+  component_index_fresh:
+    severity: MAJOR
+    description: 组件资产检查；语义见 docs/concepts/component-assets.md。
+  component_export_warning:
+    severity: MAJOR
+    description: 组件资产检查；语义见 docs/concepts/component-assets.md。
+  component_uncurated:
+    severity: MAJOR
+    description: 组件资产检查；语义见 docs/concepts/component-assets.md。
+  component_catalog_dangling:
+    severity: MAJOR
+    description: 组件资产检查；语义见 docs/concepts/component-assets.md。
+  component_catalog_reference:
+    severity: MAJOR
+    description: 组件资产检查；语义见 docs/concepts/component-assets.md。
+  component_golden_missing:
+    severity: MAJOR
+    description: 组件资产检查；语义见 docs/concepts/component-assets.md。

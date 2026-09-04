@@ -221,6 +221,22 @@ semantic_checks:
 # 追溯约束 — 脚本 + AI 联合检查
 # --------------------------------------------------------------------------
 traceability_checks:
+  component_asset_selection:
+    severity: BLOCKER
+    description: 组件资产检查；语义见 docs/concepts/component-assets.md。
+  component_asset_projection:
+    severity: BLOCKER
+    description: 组件资产检查；语义见 docs/concepts/component-assets.md。
+  component_export_registered:
+    severity: BLOCKER
+    description: 组件资产检查；语义见 docs/concepts/component-assets.md。
+  component_new_static_checks:
+    severity: BLOCKER
+    description: 组件资产检查；语义见 docs/concepts/component-assets.md。
+  component_uncurated:
+    severity: MAJOR
+    description: 组件资产检查；语义见 docs/concepts/component-assets.md。
+
   conventions_coverage:
     description: 惯例文件存在时核对全量台账、声明落位、蓝图贯穿与 gate 引用；无文件且无声明时跳过
     severity: MAJOR

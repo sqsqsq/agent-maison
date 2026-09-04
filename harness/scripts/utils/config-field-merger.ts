@@ -77,6 +77,7 @@ export const FRAMEWORK_GENERIC_BACKFILL_FIELDS: ReadonlyArray<BackfillField> = [
 
   // paths.* —— 与 config.ts DEFAULT_PATHS 严格对齐，但不含 opt-in 的
   // paths.conventions：UPDATE-keep 不回填该键，运行时由 DEFAULT_PATHS 兜底。
+  // paths.component_index / component_catalog 同属 opt-in：不回填，文件存在才启用。
   {
     path: 'paths.features_dir',
     defaultValue: DEFAULT_PATHS.features_dir,

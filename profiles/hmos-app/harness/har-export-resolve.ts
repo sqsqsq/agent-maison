@@ -75,13 +75,14 @@ function resolveFallbackEntryPath(
   projectRoot: string,
   packagePath: string,
   indexFileName: string,
+  read?: (relativePath: string) => string | null,
 ): string {
   const candidates = [
     `${packagePath}/${indexFileName}`,
     `${packagePath}/src/main/ets/${indexFileName}`,
   ];
   for (const relPath of candidates) {
-    if (fs.existsSync(path.join(projectRoot, relPath))) {
+    if (read ? read(relPath) !== null : fs.existsSync(path.join(projectRoot, relPath))) {
       return relPath;
     }
   }
@@ -92,10 +93,11 @@ export function resolveHarExportEntryPath(
   projectRoot: string,
   mod: Pick<{ name: string; package_path: string }, 'name' | 'package_path'>,
   indexFileName: string,
+  read?: (relativePath: string) => string | null,
 ): HarExportEntryResolution {
   const packagePath = normalizeRelativePath(mod.package_path);
   const ohPackagePath = path.join(projectRoot, packagePath, 'oh-package.json5');
-  const ohPackageContent = readFileIfExists(ohPackagePath);
+  const ohPackageContent = read ? read(`${packagePath}/oh-package.json5`) : readFileIfExists(ohPackagePath);
 
   if (ohPackageContent) {
     try {
@@ -120,7 +122,7 @@ export function resolveHarExportEntryPath(
       }
     } catch {
       return {
-        relPath: resolveFallbackEntryPath(projectRoot, packagePath, indexFileName),
+        relPath: resolveFallbackEntryPath(projectRoot, packagePath, indexFileName, read),
         source: 'framework.config fallback',
         warning: `${mod.name}: oh-package.json5 解析失败，已回退到默认出口路径`,
       };
@@ -128,7 +130,7 @@ export function resolveHarExportEntryPath(
   }
 
   return {
-    relPath: resolveFallbackEntryPath(projectRoot, packagePath, indexFileName),
+    relPath: resolveFallbackEntryPath(projectRoot, packagePath, indexFileName, read),
     source: 'framework.config fallback',
   };
 }

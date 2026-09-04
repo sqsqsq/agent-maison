@@ -1,0 +1,11 @@
+# 字段 SSOT：framework/docs/concepts/component-assets.md
+schema_version: '1.0'
+components:
+  - id: SharedUi/src/main/ets/SettingRow.ets#SettingRow
+    intent: [设置项]
+    one_liner: 展示设置项标题、说明与操作入口
+    use_when: [设置页的单行操作]
+    not_for: [复杂表单编辑]
+    easily_confused_with: []
+    status: recommended
+    notes: ''

@@ -14,6 +14,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { TextDecoder } from 'util';
+import { selectionShapeIssues } from './component-assets';
 import {
   Phase,
   PhaseRuleSpec,
@@ -199,6 +200,14 @@ export class SpecLoader {
         normalizeArrayField(contracts as unknown as Record<string, unknown>, 'data_models', contractsPath, shapeIssues);
         normalizeArrayField(contracts as unknown as Record<string, unknown>, 'interfaces', contractsPath, shapeIssues);
         normalizeArrayField(contracts as unknown as Record<string, unknown>, 'components', contractsPath, shapeIssues);
+        for (const [index, component] of (contracts.components ?? []).entries()) {
+          if (component.asset_selection === undefined) continue;
+          const errors = selectionShapeIssues(component.asset_selection);
+          if (errors.length) {
+            shapeIssues.push(`${path.basename(contractsPath)} components[${index}].asset_selection: ${errors.join('；')}`);
+            delete component.asset_selection;
+          }
+        }
         normalizeArrayField(contracts as unknown as Record<string, unknown>, 'state_management', contractsPath, shapeIssues);
         if (contracts.change_unit && typeof contracts.change_unit === 'object' && !Array.isArray(contracts.change_unit)) {
           const changeUnit = contracts.change_unit as unknown as Record<string, unknown>;

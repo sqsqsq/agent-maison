@@ -196,6 +196,24 @@ function pageRegistration(root: string, spec: FeatureSpec): CheckResult {
 
 const cases: Case[] = [
   {
+    name: 'b9 asset_selection 经同一 loader 保留页面注册 PASS/FAIL 与引用闭包',
+    run: () => {
+      for (const materialize of [undefined, []] as Array<string[] | undefined>) withHostProject({ materialize }, (root, spec) => {
+        const before = pageRegistration(root, spec);
+        const component = spec.contracts!.components[0];
+        component.asset_selection = { resolution: 'custom', rationale: '私有页面' };
+        const YAML = require('yaml');
+        writeFile(path.join(root, 'doc/features', FEATURE, 'contracts.yaml'), YAML.stringify(spec.contracts));
+        const loaded = new SpecLoader(root).loadFeatureSpec(FEATURE);
+        assert(loaded.contracts!.components[0].asset_selection?.resolution === 'custom', 'loader 必须保留选型');
+        const after = pageRegistration(root, loaded);
+        assert(before.status === after.status && before.details === after.details, JSON.stringify({ before, after }));
+        assert(after.status === (materialize ? 'FAIL' : 'PASS'), '必须实际执行页面注册检查');
+        assert(planClosure(root, loaded).status === 'PASS', '引用闭包不变');
+      });
+    },
+  },
+  {
     name: 'c7e2a9d4 T4 正例：宿主形态 config_files 同时通过 plan 闭环与 page_registration（非 SKIP）',
     run: () => withHostProject({}, (root, spec) => {
       assert(spec.referenceClosure, 'SpecLoader 必须产出 referenceClosure');

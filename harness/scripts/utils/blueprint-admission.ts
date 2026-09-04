@@ -52,6 +52,12 @@ export function validateBlueprintAdmission(
     if (gap.needed_by === currentSlice?.slice_id && gap.status !== 'blocker') {
       out.push(issue('blueprint_current_unknown_not_blocking', `$.decisions_and_gaps.gaps[${index}].status`, '当前切片依赖的 unknown 必须是 blocker。'));
     }
+    if (gap.needed_by === currentSlice?.slice_id && gap.status === 'blocker'
+      && asStrings(gap.verification_refs).includes('provider:component-assets')) {
+      const id = 'blueprint_current_asset_blocker';
+      out.push(issue(id, `$.decisions_and_gaps.gaps[${index}]`, '当前切片的组件资产缺口尚未解除，不得进入 CU 施工。'));
+      blockerIds.push(id);
+    }
     if (gap.status === 'open_decision') {
       for (const field of ['owner', 'needed_by', 'unlock_condition']) {
         if (!nonEmptyString(gap[field])) out.push(issue('blueprint_future_gap_uncontrolled', `$.decisions_and_gaps.gaps[${index}].${field}`, `远期 open decision 缺 ${field}。`));

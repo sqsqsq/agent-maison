@@ -107,6 +107,8 @@ export interface BuildAgentsTemplateVarsOptions {
   agentAdapter?: string;
   paths?: {
     conventions?: string;
+    component_index?: string;
+    component_catalog?: string;
     architecture_md?: string;
     module_catalog?: string;
     glossary?: string;
@@ -220,6 +222,8 @@ export function buildAgentsTemplateVars(
     CONVENTIONS_PATH: String(
       paths.conventions ?? cfgPaths.conventions ?? DEFAULT_PATHS.conventions,
     ),
+    COMPONENT_INDEX_PATH: String(paths.component_index ?? cfgPaths.component_index ?? DEFAULT_PATHS.component_index),
+    COMPONENT_CATALOG_PATH: String(paths.component_catalog ?? cfgPaths.component_catalog ?? DEFAULT_PATHS.component_catalog),
     FEATURES_DIR: String(paths.features_dir ?? cfgPaths.features_dir ?? 'doc/features'),
     EXTENSION_SKILL_SECTION: formatExtensionEntrySection(
       formatExtensionSkillSectionMarkdown(targets, bundle.manifestVersion === '1.1'), bundle, opts.projectRoot,
@@ -241,6 +245,8 @@ export interface LegacyRenderEnv {
   module_catalog_path: string;
   glossary_path: string;
   conventions_path?: string;
+  component_index_path?: string;
+  component_catalog_path?: string;
   features_dir: string;
   module_inner_layers_csv: string;
   cross_module_exports_file: string;
@@ -265,6 +271,8 @@ export function legacyRenderEnvToTemplateVars(env: LegacyRenderEnv): TemplateVar
     MODULE_CATALOG_PATH: env.module_catalog_path,
     GLOSSARY_PATH: env.glossary_path,
     CONVENTIONS_PATH: env.conventions_path ?? DEFAULT_PATHS.conventions!,
+    COMPONENT_INDEX_PATH: env.component_index_path ?? DEFAULT_PATHS.component_index!,
+    COMPONENT_CATALOG_PATH: env.component_catalog_path ?? DEFAULT_PATHS.component_catalog!,
     FEATURES_DIR: env.features_dir,
     EXTENSION_SKILL_SECTION: env.extension_skill_section ?? '',
     MODULE_INNER_LAYERS_CSV: env.module_inner_layers_csv,

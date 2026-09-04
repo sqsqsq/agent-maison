@@ -22,6 +22,23 @@ x-file-reference-fields:
 type: object
 additionalProperties: true
 properties:
+  components:
+    type: array
+    description: Existing component tree; asset_selection is the blueprint decision construction projection. Format SSOT is docs/concepts/component-assets.md.
+    items:
+      type: object
+      additionalProperties: true
+      properties:
+        asset_selection:
+          type: object
+          additionalProperties: false
+          required: [resolution]
+          properties:
+            resolution: { enum: [reuse, configure, adapt, evolve, custom] }
+            component_ref: { type: string, minLength: 1 }
+            rationale: { type: string, minLength: 1 }
+            bindings: { type: object }
+          description: Conditional required fields and ID validity are enforced by SpecLoader; absence is allowed until the index is enabled.
   change_unit:
     type: object
     description: ID-only construction projection bound to one canonical change-unit@1 ref; semantic completeness is enforced by phase checkers.

@@ -43,6 +43,7 @@ import {
   enumerateFeatures,
 } from '../config';
 import { getCatalogAllowedModuleFormats } from '../profile-loader';
+import { checkComponentCatalog } from './utils/component-catalog-check';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -814,6 +815,7 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => runEntryFileMatchesOhPackageMain(ctx, catalog), 'entry_file_matches_oh_package_main'));
     results.push(...safeRun(() => runKeyExportsFreshVsIndex(ctx, catalog), 'key_exports_fresh_vs_index'));
     results.push(...safeRun(() => checkFeatureScopeIntegrity(ctx, catalog), 'feature_scope_integrity'));
+    results.push(...checkComponentCatalog(ctx.projectRoot));
 
     return results;
   },

@@ -179,6 +179,11 @@
       "required": ["decision_id", "status", "owner", "provenance", "verification_refs"],
       "properties": {
         "decision_id": { "$ref": "#/$defs/stableId" },
+        "kind": { "type": "string" },
+        "target_ref": { "type": "string" },
+        "asset_resolution": { "enum": ["reuse", "configure", "adapt", "evolve", "custom"] },
+        "component_ref": { "type": "string" },
+        "rationale": { "type": "string" },
         "status": { "enum": ["answered_with_evidence", "decided_with_authority", "open_decision", "blocker", "not_applicable"] },
         "owner": { "type": "string", "minLength": 1 },
         "human_decision": { "enum": ["establish_seam", "keep_direct"] },

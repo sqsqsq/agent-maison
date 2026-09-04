@@ -18,6 +18,22 @@ structure_checks: {}
 semantic_checks: {}
 
 traceability_checks:
+  component_asset_selection:
+    severity: BLOCKER
+    description: 组件资产检查；语义见 docs/concepts/component-assets.md。
+  component_asset_projection:
+    severity: BLOCKER
+    description: 组件资产检查；语义见 docs/concepts/component-assets.md。
+  component_export_registered:
+    severity: BLOCKER
+    description: 组件资产检查；语义见 docs/concepts/component-assets.md。
+  component_new_static_checks:
+    severity: BLOCKER
+    description: 组件资产检查；语义见 docs/concepts/component-assets.md。
+  component_uncurated:
+    severity: MAJOR
+    description: 组件资产检查；语义见 docs/concepts/component-assets.md。
+
   change_unit_feature_projection:
     description: CU-bound Feature 必须以 canonical change_unit_ref 和完整 ID-only mappings 施工，且机械派生 use-case/DAG 义务
     severity: BLOCKER

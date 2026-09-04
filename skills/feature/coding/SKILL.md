@@ -130,3 +130,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {
 ## 收尾
 
 阶段结束时只呈现 Harness 输出的「下一步」段落，不自行推导或补写跨阶段建议。
+
+## 组件资产施工（若启用）
+
+Context Facts 必读 contracts.components.asset_selection、component_ref 定义与 live 调用点，按 [组件资产 SSOT](../../../docs/concepts/component-assets.md) 实施。复用/配置不得误把使用方 file 当定义文件，evolve 仅在已批准范围修改共享模块。新共享合法导出后重跑 index，私有 custom 不登记。发现选型或依赖决策不成立时回蓝图/plan 重签；新边沿既有人授权 await-confirm，不即兴下沉。

@@ -45,12 +45,12 @@ function readBridgeDescription(skillId: string): string {
 
 const cases: Array<{ name: string; run: () => void }> = [
   {
-    name: 'loadSkillsIndex: 17 个 builtin skill 且路径可解析',
+    name: 'loadSkillsIndex: 18 个 builtin skill 且路径可解析',
     run: () => {
       const index = loadSkillsIndex(FRAMEWORK_DIR, true);
-      assert(index.skills.length === 17, `skills.length=${index.skills.length}`);
+      assert(index.skills.length === 18, `skills.length=${index.skills.length}`);
       const ids = listBuiltinSkillIds(FRAMEWORK_DIR);
-      assert(ids.length === 17, `ids.length=${ids.length}`);
+      assert(ids.length === 18, `ids.length=${ids.length}`);
       for (const id of ids) {
         const r = resolveSkillPath(FRAMEWORK_DIR, id);
         assert(fs.existsSync(skillMdAbs(FRAMEWORK_DIR, id)), `missing ${r.skillMdFrameworkRel}`);

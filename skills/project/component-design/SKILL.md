@@ -68,7 +68,7 @@ npm run check:component-blueprint -- --project-root <宿主根> --blueprint <blu
 
 ### 2. 蓝图发现 / 设计 / 质询 / 调和 → admitted
 
-调用 [app-component-blueprint](../app-component-blueprint/SKILL.md) 的既有流程，不在此复述。
+调用 [app-component-blueprint](../app-component-blueprint/SKILL.md) 的既有流程，含组件资产读取、live 检索、decision 与 optional provider 可用性裁决；CU design_refs 引用选型，Feature 仅投影。
 current-facts-discovery 前解析 `paths.conventions`（缺失用框架默认值）；文件存在时完整读取，只将适用条目交给既有 fact/provenance/decision 链。`conventions-knowledge` 未启用记 `available=false + not_applicable`，显式配置却不可读记 `unknown|degraded`，不得声称已消费。
 
 **内容深度由本次演进的真实影响面派生**（条件式设计义务），只有一种蓝图协议——**没有

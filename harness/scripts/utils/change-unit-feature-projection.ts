@@ -30,6 +30,7 @@ import { AcceptanceSpec, CheckContext, CheckResult, ContractsSpec } from './type
 import { validateChangeUnitEvolutionSeam } from './change-unit-evolution-seam';
 import { validateChangeUnitDesign } from './change-unit-design-gate';
 import { validateProjectRelativePath } from './project-relative-path';
+import { checkComponentSelections, componentProjectionErrors } from './component-selection-check';
 
 /**
  * M7：`change` 是 lite 轨的首个 phase，扮演 full 轨 `plan` 在"冻结施工契约"上的角色。
@@ -537,6 +538,7 @@ export function validateChangeUnitFeatureProjection(
     projectRoot,
   ));
   issues.push(...checkDesignMappings(cu, records(section.design_ref_mappings), phase, projectRoot));
+  issues.push(...componentProjectionErrors(projectRoot, contracts!, cu).map(message => issue('component_asset_projection', message)));
   const runtime = runtimeFacts(contracts!);
   issues.push(...runtime.issues);
   issues.push(...checkVerticalSlice(projectRoot, cu, contracts!));
@@ -563,6 +565,7 @@ export function checkChangeUnitFeatureProjection(
   phase: ProjectionPhase,
   dags: DagProjectionLike[] = [],
 ): CheckResult[] {
+  const componentChecks = ['plan', 'change', 'coding', 'review'].includes(phase) ? checkComponentSelections(ctx) : [];
   const result = validateChangeUnitFeatureProjection(
     ctx.projectRoot,
     ctx.feature,
@@ -572,23 +575,23 @@ export function checkChangeUnitFeatureProjection(
     phase,
     dags,
   );
-  if (!result.applicable) return [];
+  if (!result.applicable) return componentChecks;
   if (result.issues.length > 0) {
-    return result.issues.map(item => ({
+    return [...componentChecks, ...result.issues.map(item => ({
       id: item.id,
-      category: 'traceability',
+      category: 'traceability' as const,
       description: 'Change Unit → Feature ID-only 施工投影',
-      severity: 'BLOCKER',
-      status: 'FAIL',
+      severity: 'BLOCKER' as const,
+      status: 'FAIL' as const,
       details: item.message,
       suggestion: item.route === 'reconcile_blueprint'
         ? '停止 Feature 补模，返回 P1 调和 canonical blueprint。'
         : item.route === 'repair_change_unit'
           ? '修正 canonical CU 定义并重新绑定 Feature。'
           : '修正 contracts.change_unit ID-only 映射或既有 state_management 施工事实。',
-    }));
+    }))];
   }
-  return [{
+  return [...componentChecks, {
     id: 'change_unit_feature_projection',
     category: 'traceability',
     description: 'Change Unit → Feature ID-only 施工投影',

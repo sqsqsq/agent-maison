@@ -294,6 +294,7 @@ export interface ContractsSpec {
     }>;
   }>;
   components: Array<{
+    asset_selection?: import('./component-assets').AssetSelection;
     name: string;
     module: string;
     file: string;

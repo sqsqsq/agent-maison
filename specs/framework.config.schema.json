@@ -40,6 +40,8 @@
       "properties": {
         "features_dir": { "type": "string" },
         "module_catalog": { "type": "string" },
+        "component_index": { "type": "string", "description": "可选源码派生组件索引；文件存在即启用。" },
+        "component_catalog": { "type": "string", "description": "可选人工策展组件台账；引用组件索引。" },
         "glossary": { "type": "string" },
         "glossary_seed": { "type": "string" },
         "architecture_md": { "type": "string" },

@@ -36,3 +36,7 @@ prd_to_code_traceability: []
 # Sole file-authorization set for coding/review/UT and every reference above.
 files:
   - "path/to/module/changed-file.ext"
+
+# 组件选型嵌在上方既有 components 条目；完整字段/必填矩阵见 docs/concepts/component-assets.md。
+# asset_selection: {resolution: reuse, component_ref: 'SharedUi/src/main/ets/Row.ets#Row'}
+# 多组件沿 children 关联；CU 关联沿既有 design_ref_mappings，不增 decision_ref。

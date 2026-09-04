@@ -408,3 +408,5 @@ npm run check:component-closure -- --project-root <root> --blueprint <id>
 - 不规定你们的评审系统、权限机制或归档时点；
 - 不提供把宿主 Story 扩展改造成 adapter 的具体代码——本文给的是契约、失败语义与验证方式，
   实现由宿主自己按语言与工程习惯完成。
+
+组件库存接入沿 [组件资产 SSOT](../concepts/component-assets.md)：所有蓝图增加静态 optional component-assets Seam Card，changed development 的 UI 节点经五级选型 decision 接入原 CU design_refs。宿主只提供可选 index/catalog 输入，不另建 provider registry；无资产时按 UI 维度和 needed_by 如实保留 unknown/gap。

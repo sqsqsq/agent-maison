@@ -51,6 +51,7 @@ function discoverProfileUnitSuites(): Array<{ id: string; modulePath: string }> 
 }
 
 const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
+  { id: 'component-assets', modulePath: './unit/component-assets.unit.test' },
   { id: 'conventions', modulePath: './unit/conventions.unit.test' },
   { id: 'component-blueprint', modulePath: './unit/component-blueprint.unit.test' },
   { id: 'change-unit-progression', modulePath: './unit/change-unit-progression.unit.test' },

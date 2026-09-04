@@ -83,6 +83,8 @@
   "paths": {
     "features_dir": "doc/features",
     "module_catalog": "doc/module-catalog.yaml",
+    "component_index": "doc/component-index.yaml",
+    "component_catalog": "doc/component-catalog.yaml",
     "glossary": "doc/glossary.yaml",
     "glossary_seed": "doc/glossary-seed.txt",
     "architecture_md": "doc/architecture.md",

@@ -133,3 +133,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase review --feature {
 ## 收尾
 
 阶段结束时只呈现 Harness 输出的「下一步」段落，不自行推导或补写跨阶段建议。
+
+## 组件资产审查（若启用）
+
+读取 [组件资产 SSOT](../../../docs/concepts/component-assets.md)、index/catalog 摘要、候选 live 调用点与全部目标源码，核对蓝图决定、合同选型和实际实现是否一致。语义重复由 verifier 结合调用点判断；同一组件包装 ≥2 给 WARN 建议 evolve，不做文本匹配 gate。新共享导出须登记且适用静态项无 fail/unknown；存量 unknown 不阻断，私有 custom 不要求登记，uncurated 仅建议增量策展。三个静态项不代表渲染或真机能力。

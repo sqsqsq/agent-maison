@@ -194,7 +194,7 @@ async function checkExitLint(ctx: CheckContext): Promise<CheckResult[]> {
 // --------------------------------------------------------------------------
 
 /** 以 change.md scope 解析出的模块路径合成 contracts 视图（ut-host-impl 的既有输入形状） */
-function syntheticContractsView(
+export function syntheticContractsView(
   ctx: CheckContext,
   resolution: ModulePrefixResolution,
 ): ContractsSpec {

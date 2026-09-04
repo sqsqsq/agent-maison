@@ -105,3 +105,9 @@ architecture_impact:
 - **Feature 级变更禁入 architecture.md**：既有模块内新增/修改页面组件接口数据模型、修 bug/样式/文案、in_scope 完全落在已有模块内、仅 `exposed_capabilities_public` 新增而职责未变——一律不算架构级。
 
 > **为什么这样设计**：architecture.md 负责分层/模块集合/依赖边/出口约定；module-catalog.yaml 负责模块细粒度职责与能力；git history + `<features_dir>/<feature>/` 负责 feature 级变更日志——三者各司其职。
+
+## 组件选型施工投影（index 文件存在时）
+
+字段与判据只读 [组件资产 SSOT](../../docs/concepts/component-assets.md)。Context Facts 必读 index/catalog、CU design_refs 指向的蓝图选型 decision、候选定义及 live 调用点。页面/UI components 的 asset_selection 为单值对象，严格展开蓝图 resolution/component_ref/rationale，bindings 才是本地施工信息；用既有 design_ref_mappings 的 implementation_refs 定位 file#name。多组件沿 children 拆条目，不再自行裁决或造 decision_ref。工具类 kind 豁免，无 index 时不新增本节产物要求。
+
+依赖使用 components[].module→index.module 经现有 DSL helper 实时预检。evolve provider 须在 in_scope_modules；换选返回蓝图重签，下沉须写进 plan 范围。normal 与 goal 权责一致：goal 换选自动、下沉经 auto-replan、新边停放 await-confirm 等用户批后 resume，不能以自改 DSL 或重写需求绕过。

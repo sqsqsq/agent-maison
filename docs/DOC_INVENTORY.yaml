@@ -24,6 +24,13 @@
 schema_version: "1.0"
 
 docs:
+  - path: framework/docs/concepts/component-assets.md
+    sources:
+      - framework/harness/scripts/utils/component-assets.ts
+      - framework/profiles/hmos-app/harness/component-extractor.ts
+      - framework/skills/project/component-catalog-bootstrap/SKILL.md
+    update_triggers:
+      - 组件索引、策展、选型或静态检查契约改变
   # --------------------------------------------------------------------------
   # 全景介绍（顶层入口）
   # --------------------------------------------------------------------------
