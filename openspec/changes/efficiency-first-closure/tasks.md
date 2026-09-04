@@ -17,7 +17,7 @@
 
 ## 3. P0 身份断言注入（T3）
 
-- [x] 3.1 run 副本装载时注入，幂等、唯一定位、多候选报 invalid_test、UX 断言保留、源文件不改
+- [x] 3.1 run 副本装载时注入，幂等、按触发区间绑定；合法重复触发逐次验证，真正目标歧义报 invalid_test；UX 断言保留、源文件不改
 
 ## 4. 闭环读 summary，回执退出输入（T4）
 
@@ -57,3 +57,8 @@
 - [x] 11.1 skills/reference、AGENTS.md.template、goal-mode-operations、MIGRATION.md 同步；保留四条总原则改动
 - [x] 11.2 `cd harness && npm test`、typecheck、`npm run openspec:validate`、`npm run release:check-plans`、LF；`npm run release:verify` 在发版时执行
 - [ ] 11.3 宿主验证由用户执行并回灌（不由实施代理发起）
+
+## 12. 宿主回灌：同一 checkpoint 重复触发（07a41ec6 T12–T13）
+
+- [x] 12.1 注入和 P0 证据消费共用逐次触发区间，保留 TC-012 完整连续导航和 UX 断言；只拒绝真正无法消歧的目标绑定，同步规格与提示
+- [x] 12.2 补齐重复触发/失败/区间隔离/幂等/兼容回归，执行 typecheck、目标测试及一次完整门禁后停 review（不提交、不打包、不运行宿主真机）

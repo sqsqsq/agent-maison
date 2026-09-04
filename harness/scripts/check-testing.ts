@@ -3847,7 +3847,7 @@ function runP0IdentityInjection(ctx: CheckContext, derivedMd: string, topPlanMd:
 }
 
 /**
- * plan 07a41ec6 T2/T3：静态（跑机前）检查 P0 身份断言可注入性——action 不唯一 / 无绑定动作 /
+ * plan 07a41ec6 T2/T3：静态（跑机前）检查 P0 身份断言可注入性——目标绑定歧义 / 无绑定动作 /
  * by_text 抢先于既有身份断言，都是 invalid_test，必须在设备操作前给出 TC/step/改法。
  */
 function checkP0IdentityInjectionStatic(ctx: CheckContext, plan: string | null): CheckResult[] {

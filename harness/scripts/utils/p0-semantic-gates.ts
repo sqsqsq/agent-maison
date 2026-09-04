@@ -475,7 +475,7 @@ export function plannedStepBindsTarget(
   return false;
 }
 
-/** 绑定 checkpoint 元素的全部 action 候选（注入与静态 lint 用：唯一才注入，多候选不猜）。 */
+/** 绑定 checkpoint 元素的全部 action 候选；多个 step 可以是同一流程中的合法重复触发。 */
 export function findActionStepCandidates(
   steps: ParsedStep[],
   targetId: string,
@@ -491,6 +491,32 @@ export function findActionStepCandidates(
   return out;
 }
 
+/** 注入与消费共用触发区间；目标自身不唯一才是歧义，重复触发不是歧义。 */
+export function resolveCheckpointActionWindows(
+  steps: ParsedStep[],
+  targetId: string,
+  canonical: CanonicalSelectorIndex | null,
+  screenId?: string,
+): { windows: Array<{ actionIndex: number; endIndex: number }>; ambiguousSteps: number[] } {
+  const candidates = findActionStepCandidates(steps, targetId, canonical, screenId);
+  const ambiguousSteps = candidates.filter(i => {
+    const info = normalizePlannedStep(steps[i], i);
+    return info.selector?.kind === 'by_text' && canonical !== null &&
+      canonicalIdsForPlannedStep(info, canonical, screenId).length !== 1;
+  });
+  const windows = candidates.map((actionIndex, n) => {
+    let endIndex = candidates[n + 1] ?? steps.length;
+    for (let i = actionIndex + 1; i < endIndex; i += 1) {
+      if (['back', 'home', 'stop_app', 'start_app', 'clear_app'].includes(normalizePlannedStep(steps[i], i).kind)) {
+        endIndex = i;
+        break;
+      }
+    }
+    return { actionIndex, endIndex };
+  });
+  return { windows, ambiguousSteps };
+}
+
 function findPlannedStepIndex(
   steps: ParsedStep[],
   targetId: string,
@@ -498,26 +524,15 @@ function findPlannedStepIndex(
   screenId: string | undefined,
   afterIndex: number,
   absence: boolean,
+  endIndex: number,
 ): number | null {
-  for (let i = Math.max(0, afterIndex + 1); i < steps.length; i += 1) {
+  for (let i = Math.max(0, afterIndex + 1); i < endIndex; i += 1) {
     const info = normalizePlannedStep(steps[i], i);
     if (!isAssertionPlanKind(info.kind)) continue;
     if (absence !== (info.kind === 'wait_gone')) continue;
-    if (plannedStepBindsTarget(info, targetId, canonical, screenId)) return i;
-  }
-  return null;
-}
-
-function findActionStepIndex(
-  steps: ParsedStep[],
-  targetId: string,
-  canonical: CanonicalSelectorIndex,
-  screenId: string,
-): number | null {
-  for (let i = 0; i < steps.length; i += 1) {
-    const info = normalizePlannedStep(steps[i], i);
-    if (!ACTION_KINDS.has(info.kind)) continue;
-    if (plannedStepBindsTarget(info, targetId, canonical, screenId)) return i;
+    if (isBareIdentityAssertion(steps[i], absence ? 'wait_gone' : 'wait_for', targetId)) return i;
+    // UX 谓词断言不是身份；by_text 抢先仍按既有 STEP-BYTEXT-ORDER 判无效，不能冒充裸 by_id。
+    if (info.selector?.kind === 'by_text' && plannedStepBindsTarget(info, targetId, canonical, screenId)) return i;
   }
   return null;
 }
@@ -554,64 +569,74 @@ function evaluateNativeCase(
       reasons.push(`${ac.id} checkpoint 不完整`);
       continue;
     }
-    const actionIndex = findActionStepIndex(derivedSteps, cp!.action!.target_element_id!, canonical, cp!.pre_screen!);
-    if (actionIndex === null) {
+    const { windows, ambiguousSteps } = resolveCheckpointActionWindows(derivedSteps, cp!.action!.target_element_id!, canonical, cp!.pre_screen!);
+    if (windows.length === 0) {
       reasons.push(`${ac.id} 计划中无绑定 target=${cp!.action!.target_element_id} 的 action（by_id 须字面相等；by_text 须 ui-spec 文本映射）——改法：在该 TC 补一步 touch/input/swipe/scroll 触发动作，或修正 checkpoint.action.target_element_id`);
       continue;
     }
-    const action = nativeSteps[actionIndex];
-    const actionPlan = normalizePlannedStep(derivedSteps[actionIndex], actionIndex);
-    const actionCanonicalIds = canonicalIdsForStep(derivedSteps[actionIndex], canonical, cp!.pre_screen!);
-    // plan 07a41ec6 T2：scroll/swipe 在 trace 里 selector 为 null——按步骤种类与顺序定位后经其后的
-    // 身份断言（post-state）绑定，不要求 selector 身份；真实用户动作是 scroll 就保留 scroll，不改 touch。
-    const identityFree = IDENTITY_FREE_ACTION_KINDS.has(actionPlan.kind);
-    const actionOk = Boolean(
-      action && action.index === actionIndex && action.role === 'action' && action.outcome?.status === 'passed' &&
-      (identityFree || selectorEvidenceMatches(action, cp!.action!.target_element_id!, false, actionPlan.selector, actionCanonicalIds)),
-    );
-    if (!actionOk) {
-      reasons.push(
-        `${ac.id} action step ${actionIndex}（${actionPlan.kind}）StepResult 缺失或未通过` +
-          (identityFree ? '' : `（须 outcome.status=passed 且 selector 身份匹配 ${cp!.action!.target_element_id}）`),
-      );
+    if (ambiguousSteps.length > 0) {
+      reasons.push(`${caseId} ${ac.id} 候选 action step ${ambiguousSteps.join(', ')} 的 by_text 对应多个目标，缺唯一 selector 绑定；补 by_id 或现有 scope/index 消歧，保留全部导航动作`);
+      continue;
     }
-    for (const elementId of cp!.required_element_ids ?? []) {
-      const plannedIndex = findPlannedStepIndex(derivedSteps, elementId, canonical, cp!.post_screen!, actionIndex, false);
-      const step = plannedIndex === null ? null : nativeSteps[plannedIndex];
-      const planned = plannedIndex === null ? null : normalizePlannedStep(derivedSteps[plannedIndex], plannedIndex);
-      const canonicalIds = plannedIndex === null ? [] : canonicalIdsForStep(derivedSteps[plannedIndex], canonical, cp!.post_screen!);
-      if (
-        plannedIndex === null ||
-        !step ||
-        step.index !== plannedIndex ||
-        !assertionEvidenceMatches(step, elementId, false, planned?.selector, canonicalIds)
-      ) {
+    for (const { actionIndex, endIndex } of windows) {
+      const action = nativeSteps[actionIndex];
+      const actionPlan = normalizePlannedStep(derivedSteps[actionIndex], actionIndex);
+      const actionCanonicalIds = canonicalIdsForStep(derivedSteps[actionIndex], canonical, cp!.pre_screen!);
+      // plan 07a41ec6 T2：scroll/swipe 在 trace 里 selector 为 null——按步骤种类与顺序定位后经其后的
+      // 身份断言（post-state）绑定，不要求 selector 身份；真实用户动作是 scroll 就保留 scroll，不改 touch。
+      const identityFree = IDENTITY_FREE_ACTION_KINDS.has(actionPlan.kind);
+      const actionOk = Boolean(
+        action && action.index === actionIndex && action.kind === actionPlan.kind && action.role === 'action' && action.outcome?.status === 'passed' &&
+        (identityFree || selectorEvidenceMatches(action, cp!.action!.target_element_id!, false, actionPlan.selector, actionCanonicalIds)),
+      );
+      if (!actionOk) {
         reasons.push(
-          plannedIndex === null
-            ? `${ac.id} required=${elementId}：计划中无裸 by_id 身份断言（期望形状 {"wait_for":{"by_id":"${elementId}","timeout":N}}，由 harness 按 checkpoint 注入；带 visible 等谓词或 by_text 的断言不算身份）`
-            : `${ac.id} required=${elementId}：step ${plannedIndex} 的 presence StepResult 未通过或身份不匹配（request.kind 须为 by_id 且 selected.id=${elementId}）`,
+          `${ac.id} action step ${actionIndex}（${actionPlan.kind}）StepResult 缺失或未通过` +
+            (identityFree ? '' : `（须 outcome.status=passed 且 selector 身份匹配 ${cp!.action!.target_element_id}）`),
         );
       }
-    }
-    // forbidden 不按 post_screen 限定：要求"应消失的元素"登记在 post_screen 的 ui-spec 里
-    // 才能证明它不在场，自相矛盾（宿主 AC-3 的 forbidden 只属 pre_screen）。by_id 字面绑定后
-    // 限屏本就无意义；by_text 用不限屏的 canonical 映射。
-    for (const elementId of cp!.forbidden_element_ids ?? []) {
-      const plannedIndex = findPlannedStepIndex(derivedSteps, elementId, canonical, undefined, actionIndex, true);
-      const step = plannedIndex === null ? null : nativeSteps[plannedIndex];
-      const planned = plannedIndex === null ? null : normalizePlannedStep(derivedSteps[plannedIndex], plannedIndex);
-      const canonicalIds = plannedIndex === null ? [] : canonicalIdsForStep(derivedSteps[plannedIndex], canonical);
-      if (
-        plannedIndex === null ||
-        !step ||
-        step.index !== plannedIndex ||
-        !assertionEvidenceMatches(step, elementId, true, planned?.selector, canonicalIds)
-      ) {
-        reasons.push(
-          plannedIndex === null
-            ? `${ac.id} forbidden=${elementId}：计划中无裸 by_id 缺席断言（期望形状 {"wait_gone":{"by_id":"${elementId}","timeout":N}}，由 harness 按 checkpoint 注入）`
-            : `${ac.id} forbidden=${elementId}：step ${plannedIndex} 的 absence StepResult 未通过或身份不匹配（request.kind 须为 by_id，candidate_count=0）`,
-        );
+      for (const elementId of cp!.required_element_ids ?? []) {
+        const plannedIndex = findPlannedStepIndex(derivedSteps, elementId, canonical, cp!.post_screen!, actionIndex, false, endIndex);
+        const step = plannedIndex === null ? null : nativeSteps[plannedIndex];
+        const planned = plannedIndex === null ? null : normalizePlannedStep(derivedSteps[plannedIndex], plannedIndex);
+        const canonicalIds = plannedIndex === null ? [] : canonicalIdsForStep(derivedSteps[plannedIndex], canonical, cp!.post_screen!);
+        if (
+          plannedIndex === null ||
+          !isBareIdentityAssertion(derivedSteps[plannedIndex], 'wait_for', elementId) ||
+          !step ||
+          step.index !== plannedIndex ||
+          step.kind !== 'wait_for' ||
+          !assertionEvidenceMatches(step, elementId, false, planned?.selector, canonicalIds)
+        ) {
+          reasons.push(
+            plannedIndex === null
+              ? `${ac.id} action step ${actionIndex} 后、step ${endIndex} 前 required=${elementId}：计划中无裸 by_id 身份断言（期望形状 {"wait_for":{"by_id":"${elementId}","timeout":N}}，不得借用其它触发区间的证据；UX 谓词断言保留）`
+              : `${ac.id} required=${elementId}：step ${plannedIndex} 的 presence StepResult 未通过或身份不匹配（request.kind 须为 by_id 且 selected.id=${elementId}）`,
+          );
+        }
+      }
+      // forbidden 不按 post_screen 限定：要求"应消失的元素"登记在 post_screen 的 ui-spec 里
+      // 才能证明它不在场，自相矛盾（宿主 AC-3 的 forbidden 只属 pre_screen）。by_id 字面绑定后
+      // 限屏本就无意义；by_text 用不限屏的 canonical 映射。
+      for (const elementId of cp!.forbidden_element_ids ?? []) {
+        const plannedIndex = findPlannedStepIndex(derivedSteps, elementId, canonical, undefined, actionIndex, true, endIndex);
+        const step = plannedIndex === null ? null : nativeSteps[plannedIndex];
+        const planned = plannedIndex === null ? null : normalizePlannedStep(derivedSteps[plannedIndex], plannedIndex);
+        const canonicalIds = plannedIndex === null ? [] : canonicalIdsForStep(derivedSteps[plannedIndex], canonical);
+        if (
+          plannedIndex === null ||
+          !isBareIdentityAssertion(derivedSteps[plannedIndex], 'wait_gone', elementId) ||
+          !step ||
+          step.index !== plannedIndex ||
+          step.kind !== 'wait_gone' ||
+          !assertionEvidenceMatches(step, elementId, true, planned?.selector, canonicalIds)
+        ) {
+          reasons.push(
+            plannedIndex === null
+              ? `${ac.id} action step ${actionIndex} 后、step ${endIndex} 前 forbidden=${elementId}：计划中无裸 by_id 缺席断言（期望形状 {"wait_gone":{"by_id":"${elementId}","timeout":N}}，不得借用其它触发区间的证据）`
+              : `${ac.id} forbidden=${elementId}：step ${plannedIndex} 的 absence StepResult 未通过或身份不匹配（request.kind 须为 by_id，candidate_count=0）`,
+          );
+        }
       }
     }
   }

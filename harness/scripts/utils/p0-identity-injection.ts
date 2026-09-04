@@ -8,8 +8,8 @@
 //   · 身份证据 = harness 按 acceptance checkpoint 注入的**精确形状**裸断言
 //     {"wait_for":{"by_id":<id>,"timeout":N}} / {"wait_gone":{"by_id":<id>,"timeout":N}}；
 //   · 代理写的 visible/enabled/布局/内容谓词断言原样保留，是独立的 UX 断言，不删不改。
-// 注入发生在派生计划复制进 run 目录时（源文件不改）；只在 checkpoint action 与插入位置
-// 唯一确定时注入，多候选输出 actionable gap（invalid_test），不猜；scroll/swipe 不改 touch。
+// 注入发生在派生计划复制进 run 目录时（源文件不改）；合法重复触发逐次注入，证据不跨区间。
+// 只有目标本身无法唯一绑定时才输出 actionable gap；scroll/swipe 不改 touch。
 // 不维护任何 Hylyre 约束键镜像：身份以"精确形状"定义。
 // ============================================================================
 
@@ -26,7 +26,7 @@ import {
 } from './planned-step-normalizer';
 import {
   checkpointComplete,
-  findActionStepCandidates,
+  resolveCheckpointActionWindows,
   isBareIdentityAssertion,
   isP0DeviceInteractive,
   parsePlanTcEntries,
@@ -80,18 +80,20 @@ function firstByTextAssertionIndexFor(
   elementId: string,
   canonical: CanonicalSelectorIndex | null,
   afterIndex: number,
+  endIndex: number,
+  screenId?: string,
 ): number | null {
   if (!canonical) return null;
-  for (let i = afterIndex + 1; i < steps.length; i += 1) {
+  for (let i = afterIndex + 1; i < endIndex; i += 1) {
     const info = normalizePlannedStep(steps[i], i);
     if (info.role !== 'assertion' || info.selector?.kind !== 'by_text') continue;
-    if (canonicalIdsForPlannedStep(info, canonical).includes(elementId)) return i;
+    if (canonicalIdsForPlannedStep(info, canonical, screenId).includes(elementId)) return i;
   }
   return null;
 }
 
-function bareIdentityIndex(steps: Step[], kind: IdentityAssertionKind, elementId: string, afterIndex: number): number | null {
-  for (let i = afterIndex + 1; i < steps.length; i += 1) {
+function bareIdentityIndex(steps: Step[], kind: IdentityAssertionKind, elementId: string, afterIndex: number, endIndex: number): number | null {
+  for (let i = afterIndex + 1; i < endIndex; i += 1) {
     if (isBareIdentityAssertion(steps[i], kind, elementId)) return i;
   }
   return null;
@@ -129,8 +131,8 @@ export function injectP0IdentityAssertions(input: InjectionInput): InjectionResu
     for (const ac of acs) {
       const cp = ac.checkpoint!;
       const target = cp.action!.target_element_id!;
-      const candidates = findActionStepCandidates(steps, target, input.canonical, cp.pre_screen);
-      if (candidates.length === 0) {
+      const { windows, ambiguousSteps } = resolveCheckpointActionWindows(steps, target, input.canonical, cp.pre_screen);
+      if (windows.length === 0) {
         gaps.push({
           tc_id: row.tc_id,
           ac_id: ac.id,
@@ -142,47 +144,55 @@ export function injectP0IdentityAssertions(input: InjectionInput): InjectionResu
         });
         continue;
       }
-      if (candidates.length > 1) {
+      if (ambiguousSteps.length > 0) {
         gaps.push({
           tc_id: row.tc_id,
           ac_id: ac.id,
           rule_id: 'STEP-P0-IDENTITY',
-          candidates,
+          candidates: ambiguousSteps,
           message:
-            `${row.tc_id} 有多个 action 步骤都绑定 ${ac.id} 的 checkpoint 元素 ${target}（step ${candidates.join(', ')}），` +
-            '注入位置不唯一，不猜。改法：把重复动作拆到不同 case，或只保留一次触发动作。',
+            `${row.tc_id} ${ac.id} 候选 action step ${ambiguousSteps.join(', ')} 的 by_text 对应多个目标（checkpoint=${target}），` +
+            '缺唯一 selector 绑定，不猜。改法：补 by_id 或现有 scope/index 消歧；保留全部导航、返回和重复触发，不删动作、不拆连续流程。',
         });
         continue;
       }
-      const actionIndex = candidates[0];
-      let cursor = actionIndex + 1;
       const wanted: Array<{ id: string; kind: IdentityAssertionKind }> = [
         ...(cp.required_element_ids ?? []).map(id => ({ id, kind: 'wait_for' as const })),
         ...(cp.forbidden_element_ids ?? []).map(id => ({ id, kind: 'wait_gone' as const })),
       ];
-      for (const want of wanted) {
-        const existing = bareIdentityIndex(steps, want.kind, want.id, actionIndex);
-        const firstByText = firstByTextAssertionIndexFor(steps, want.id, input.canonical, actionIndex);
-        if (existing !== null) {
-          if (firstByText !== null && firstByText < existing) {
-            gaps.push({
-              tc_id: row.tc_id,
-              ac_id: ac.id,
-              rule_id: 'STEP-BYTEXT-ORDER',
-              message:
-                `${row.tc_id} step ${firstByText} 的 by_text 断言先于 step ${existing} 的身份断言（同指 ${want.id}）；` +
-                'P0 身份覆盖取首个匹配，by_text 不构成 id 身份证明。改法：把 step ' +
-                `${firstByText} 移到 step ${existing} 之后。`,
-            });
+      // 从后向前处理，较早区间插入不会使尚未处理的 action index 漂移。
+      for (const window of [...windows].reverse()) {
+        const actionIndex = window.actionIndex;
+        let endIndex = window.endIndex;
+        let cursor = actionIndex + 1;
+        for (const want of wanted) {
+          const existing = bareIdentityIndex(steps, want.kind, want.id, actionIndex, endIndex);
+          const firstByText = firstByTextAssertionIndexFor(steps, want.id, input.canonical, actionIndex, endIndex, want.kind === 'wait_for' ? cp.post_screen : undefined);
+          if (existing !== null) {
+            if (firstByText !== null && firstByText < existing) {
+              gaps.push({
+                tc_id: row.tc_id,
+                ac_id: ac.id,
+                rule_id: 'STEP-BYTEXT-ORDER',
+                message:
+                  `${row.tc_id} step ${firstByText} 的 by_text 断言先于 step ${existing} 的身份断言（同指 ${want.id}）；` +
+                  'P0 身份覆盖取首个匹配，by_text 不构成 id 身份证明。改法：把 step ' +
+                  `${firstByText} 移到 step ${existing} 之后。`,
+              });
+            }
+            cursor = Math.max(cursor, existing + 1);
+            continue;
           }
-          cursor = Math.max(cursor, existing + 1);
-          continue;
+          const insertAt = firstByText !== null && firstByText < cursor ? firstByText : cursor;
+          steps.splice(insertAt, 0, { [want.kind]: { by_id: want.id, timeout } });
+          endIndex += 1;
+          for (const record of injected) {
+            if (record.tc_id === row.tc_id && record.index >= insertAt) record.index += 1;
+          }
+          injected.push({ tc_id: row.tc_id, ac_id: ac.id, element_id: want.id, kind: want.kind, index: insertAt });
+          cursor = insertAt + 1;
+          changedRow = true;
         }
-        const insertAt = firstByText !== null && firstByText < cursor ? firstByText : cursor;
-        steps.splice(insertAt, 0, { [want.kind]: { by_id: want.id, timeout } });
-        injected.push({ tc_id: row.tc_id, ac_id: ac.id, element_id: want.id, kind: want.kind, index: insertAt });
-        cursor = insertAt + 1;
-        changedRow = true;
       }
     }
     if (changedRow) rewritten.set(row.tc_id, steps.map(step => JSON.stringify(step)).join(' ; '));
