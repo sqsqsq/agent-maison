@@ -33,7 +33,7 @@
 {"wait_for":{"by_text":"加载完成","match":"exact","scope":"top_overlay","timeout":10}}
 ```
 
-**P0 身份断言不用手写（plan 07a41ec6 T3）**：harness 把派生计划装载进 run 目录时，按 acceptance checkpoint 自动插入精确形状的 `{"wait_for":{"by_id":"<required_id>","timeout":10}}` / `{"wait_gone":{"by_id":"<forbidden_id>","timeout":10}}`（源文件不改，注入清单落 `checkpoint-injection.json`）。派生只写导航、动作与 UX 断言：`visible` / `enabled` 等谓词断言**保留**为独立 UX 断言，但不算身份证据——上表的富选择器字段一旦出现在断言里，request.kind 就是 composite，P0 身份门只认裸 by_id。checkpoint 的触发动作在 case 内必须唯一，多候选或无绑定动作会在跑机前判 invalid_test 并列出 step。scroll/swipe 是合法动作，不要为过门禁改成 touch。已知边界表见 profile-addendum「已知边界」。
+**P0 身份断言不用手写（plan 07a41ec6 T3/T12）**：harness 装载 run 副本时，按 acceptance checkpoint 自动插入裸 `wait_for by_id`（required）/ `wait_gone by_id`（forbidden），源文件不改。同一 case 的合法重复触发会逐次注入与验证：证据只属于该动作之后、下次同目标触发或更早的返回/复位之前；已有等价裸断言仅在该区间复用。完整的进入→返回→再次进入必须保留，不能删动作或拆 case 来过门禁。`visible` / `enabled` 等 UX 谓词断言原样保留但不代替身份；真正的 selector 目标歧义或无匹配动作仍在跑机前判 invalid_test，点名 TC/step 与缺少的消歧信息。scroll/swipe 不改 touch。已知边界见 profile-addendum。
 
 ## 滚动（Hylyre 0.2+ · 0.3 先匹配）
 

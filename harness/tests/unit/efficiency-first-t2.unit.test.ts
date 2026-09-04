@@ -18,12 +18,14 @@ import {
   evaluateP0SemanticCoverage,
   findActionStepCandidates,
   isBareIdentityAssertion,
+  resolveCheckpointActionWindows,
   type AcceptanceFlowsDoc,
 } from '../../scripts/utils/p0-semantic-gates';
 import { injectP0IdentityAssertions } from '../../scripts/utils/p0-identity-injection';
 import { extractDerivedPlanCases } from '../../scripts/utils/derived-hylyre-plan';
 import { extractTopPlanTestCasesForDeriveHint } from '../../scripts/utils/test-plan-derive-hint';
 import { derivedPlanStaleByTcTable } from '../../scripts/check-testing';
+import { buildCanonicalSelectorIndex, normalizePlannedStep } from '../../scripts/utils/planned-step-normalizer';
 import {
   extractCompletionGaps,
   projectCompletionStatus,
@@ -246,17 +248,25 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: '注入：多候选 action 不猜 → STEP-P0-IDENTITY 列候选；无绑定动作 → 给改法',
+    name: '注入：目标本身多映射才是真歧义；重复触发不删动作；无绑定动作给改法',
     run: () => {
+      const canonical = buildCanonicalSelectorIndex({ screens: [{ id: 'bank_list', root: {
+        type: 'column', children: [
+          { id: 'bank_row_cmb', type: 'button', text: '添加' },
+          { id: 'other_row', type: 'button', text: '添加' },
+        ],
+      } }] } as any);
       const ambiguous = injectP0IdentityAssertions({
-        derivedMd: derivedMd('{"touch":{"by_id":"bank_row_cmb"}} ; {"wait_for":{"by_text":"x","match":"exact","timeout":10}} ; {"touch":{"by_id":"bank_row_cmb"}}'),
-        topPlanMd: PLAN_MD, acceptance: acceptanceDoc(), canonical: null,
+        derivedMd: derivedMd('{"touch":{"by_text":"添加","match":"exact"}} ; {"wait_for":{"by_text":"x","match":"exact","timeout":10}} ; {"touch":{"by_text":"添加","match":"exact"}}'),
+        topPlanMd: PLAN_MD, acceptance: acceptanceDoc(), canonical,
       });
       assert.strictEqual(ambiguous.changed, false);
       assert.strictEqual(ambiguous.gaps.length, 1);
       assert.strictEqual(ambiguous.gaps[0].rule_id, 'STEP-P0-IDENTITY');
       assert.deepStrictEqual(ambiguous.gaps[0].candidates, [0, 2]);
       assert.ok(/step 0, 2/.test(ambiguous.gaps[0].message) && /不猜/.test(ambiguous.gaps[0].message));
+      assert.ok(/缺唯一 selector/.test(ambiguous.gaps[0].message));
+      assert.ok(!/只保留一次|拆到不同 case/.test(ambiguous.gaps[0].message));
 
       const none = injectP0IdentityAssertions({
         derivedMd: derivedMd('{"touch":{"by_id":"other_row"}} ; {"wait_for":{"by_id":"card_type_agree_btn","timeout":10}}'),
@@ -265,6 +275,119 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert.strictEqual(none.gaps.length, 1);
       assert.ok(/没有任何 action 步骤绑定 AC-5 的 checkpoint 元素 bank_row_cmb/.test(none.gaps[0].message));
       assert.ok(/改法/.test(none.gaps[0].message));
+    },
+  },
+  {
+    name: 'TC-012 重复 checkpoint：完整导航保留、逐次取证、失败不 PASS、区间隔离、裸断言复用与 UX/源文件不变',
+    run: () => {
+      const root = mkProject();
+      try {
+        const target = 'card_pack_add_card_row';
+        const title = 'add_card_title';
+        const absent = 'card_pack_empty_hint';
+        const ac: AcceptanceFlowsDoc = { flows: { repeat_entry: ['card_pack', 'add_card'] }, criteria: [{
+          id: 'AC-12', priority: 'P0', ut_layer: 'device', linked_flow: 'repeat_entry',
+          checkpoint: { pre_screen: 'card_pack', action: { type: 'touch', target_element_id: target }, post_screen: 'add_card',
+            required_element_ids: [title], forbidden_element_ids: [absent] },
+        }] };
+        writeFile(root, path.relative(root, resolveFeatureArtifact(root, FEATURE, 'acceptance.yaml').canonicalPath), JSON.stringify(ac));
+        writeFile(root, path.relative(root, uiSpecAbsPath(root, FEATURE)), JSON.stringify({ screens: [], assets: [] }));
+        const md = (steps: Array<Record<string, unknown>>) => [...DERIVED_HEADER,
+          `| TC-012 | 进入→返回→再次进入 | ${steps.map(s => JSON.stringify(s)).join(' ; ')} | P0 | AC-12 |`,
+        ].join('\n');
+        const enter = { touch: { by_id: target } };
+        const bare = [{ wait_for: { by_id: title, timeout: 10 } }, { wait_gone: { by_id: absent, timeout: 10 } }];
+        const uxVisible = { wait_for: { by_id: title, visible: true, timeout: 10 } };
+        const uxEnabled = { wait_for: { by_id: title, enabled: true, timeout: 10 } };
+        const original = [enter, uxVisible, { back: {} }, { wait_for: { by_id: target, timeout: 10 } }, enter, uxEnabled];
+        const originalMd = md(original);
+        const sourcePath = path.join(root, 'source/test-plan.hylyre.md');
+        const runPath = path.join(root, 'run/test-plan.hylyre.md');
+        writeFile(root, path.relative(root, sourcePath), originalMd);
+        const inject = (steps: Array<Record<string, unknown>>) => injectP0IdentityAssertions({
+          derivedMd: md(steps), topPlanMd: originalMd, acceptance: ac, canonical: null,
+        });
+        const verify = (planned: Array<Record<string, unknown>>, mutate?: (steps: any[]) => void) => {
+          writeFile(root, path.relative(root, runPath), md(planned));
+          const native: any[] = planned.map((step, i) => {
+            const info = normalizePlannedStep(step, i);
+            const id = info.selector?.value ?? '';
+            if (info.kind === 'wait_gone') return {
+              ...passedPresence(i, id), kind: 'wait_gone',
+              outcome: { status: 'passed', observation: { kind: 'assertion', assertion_type: 'absence', facts: { observed_present: false, candidate_count: 0 } } },
+              selector: { request: { kind: 'by_id', value: id }, resolution: { state: 'not_found', candidate_count: 0, selected: null, candidates: [] } },
+            };
+            if (info.kind === 'wait_for') {
+              const result = passedPresence(i, id);
+              if (!isBareIdentityAssertion(step, 'wait_for', id)) result.selector.request.kind = 'composite';
+              return result;
+            }
+            return { ...passedAction(i, info.kind, id), ...(['back', 'scroll', 'swipe'].includes(info.kind) ? { selector: null } : {}) };
+          });
+          mutate?.(native);
+          const trace = nativeTrace([{ id: 'TC-012', status: '通过', execution: 'completed', verification: 'passed', evidence: 'complete', expected_check_mode: 'empty', steps: native }]);
+          const input = { projectRoot: root, feature: FEATURE, planMd: originalMd, reportMd: '', trace, evidenceGate: NATIVE_GATE, derivedPlanPath: runPath, reportConclusion: null };
+          return [evaluateP0CoverageIntegrity(input)[0], evaluateP0SemanticCoverage(input)[0]];
+        };
+        const assertVerdict = (results: ReturnType<typeof verify>, verdict: 'PASS' | 'FAIL') => {
+          for (const result of results) assert.strictEqual(result.status, verdict, result.details);
+        };
+
+        const first = inject(original);
+        assert.deepStrictEqual(first.gaps, []);
+        assert.strictEqual(first.injected.length, 4, '两次触发各补 required/forbidden');
+        const planned = stepsOf(first.content, 'TC-012');
+        const injectedIndices = new Set(first.injected.map(r => r.index));
+        assert.deepStrictEqual(planned.filter((_, i) => !injectedIndices.has(i)), original, '全部动作、返回和 UX 谓词须原样保留');
+        for (const record of first.injected) assert.ok(isBareIdentityAssertion(planned[record.index], record.kind, record.element_id), '注入清单必须使用最终 step index');
+        assert.strictEqual(fs.readFileSync(sourcePath, 'utf8'), originalMd, '源派生文件不可写');
+        const again = inject(planned);
+        assert.strictEqual(again.changed, false);
+        assert.deepStrictEqual(again.injected, []);
+        assert.strictEqual(again.content, first.content, '重复装载逐字幂等');
+        assertVerdict(verify(planned), 'PASS');
+
+        const windows = resolveCheckpointActionWindows(planned, target, null).windows;
+        assert.strictEqual(windows.length, 2);
+        for (const failAt of [...windows.map(w => w.actionIndex), ...injectedIndices]) {
+          assertVerdict(verify(planned, native => {
+            native[failAt].outcome = { status: 'failed', failure: { domain: 'assertion', code: 'assertion.mismatch', facts: {} } };
+          }), 'FAIL'); // 即使 CaseResult 自报 passed，也不能漏掉第二次动作/断言失败
+        }
+        assertVerdict(verify(planned, native => { native[windows[1].actionIndex].kind = 'input'; }), 'FAIL');
+
+        for (const incomplete of [
+          [enter, { back: {} }, enter, ...bare], // 第二次的断言不能证明第一次
+          [enter, ...bare, { back: {} }, enter], // 只验第一次不能代表重复流程
+          [enter, enter, ...bare], // 不靠 back 也必须在下次触发前截止
+          [enter, { back: {} }, ...bare, enter, ...bare], // 返回后的断言不能倒借给前一次进入
+          [enter, bare[0], { back: {} }, enter, ...bare], // forbidden 同样不得跨区间
+        ]) assertVerdict(verify(incomplete), 'FAIL');
+
+        const existing = [enter, uxVisible, ...bare, { back: {} }, enter, uxEnabled, ...bare];
+        assert.deepStrictEqual(inject(existing).injected, [], '区间内已有裸断言继续复用，UX 谓词不占身份断言位置');
+        assertVerdict(verify(existing), 'PASS');
+        assert.strictEqual(inject([enter, uxVisible, { back: {} }, enter, ...bare]).injected.length, 2, '仅补第一次，不借第二次已有断言');
+        assertVerdict(verify([enter, ...bare]), 'PASS');
+        for (const kind of ['scroll', 'swipe']) {
+          const action = { [kind]: { by_id: target, direction: 'down' } };
+          const repeated = inject([action, uxVisible, action, uxEnabled]);
+          const result = stepsOf(repeated.content, 'TC-012');
+          assert.deepStrictEqual(result.filter(step => kind in step), [action, action], '重复 scroll/swipe 不改 touch');
+          assertVerdict(verify(result), 'PASS');
+        }
+
+        const selectorDoc = { screens: [{ id: 'card_pack', root: { type: 'column', children: [
+          { id: target, type: 'button', text: '添加' }, { id: 'other_add', type: 'button', text: '添加' },
+        ] } }], assets: [] };
+        writeFile(root, path.relative(root, uiSpecAbsPath(root, FEATURE)), JSON.stringify(selectorDoc));
+        const ambiguous = [{ touch: { by_text: '添加', match: 'exact' } }, ...bare];
+        const blocked = injectP0IdentityAssertions({ derivedMd: md(ambiguous), topPlanMd: originalMd, acceptance: ac, canonical: buildCanonicalSelectorIndex(selectorDoc as any) });
+        assert.deepStrictEqual(blocked.gaps[0].candidates, [0]);
+        assertVerdict(verify(ambiguous), 'FAIL');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
     },
   },
   {

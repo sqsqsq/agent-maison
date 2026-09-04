@@ -20,7 +20,7 @@ Enforcement: `harness/scripts/utils/execution-channel.ts`, `harness/scripts/util
 
 ### Requirement: P0 identity assertions are injected when the derived plan is loaded
 
-When testing copies the newest derived plan into the run directory it SHALL, for every P0 criterion checkpoint mapped to a case, insert a bare `{"wait_for":{"by_id":<id>,"timeout":N}}` for each required id and `{"wait_gone":{"by_id":<id>,"timeout":N}}` for each forbidden id after the checkpoint action step and before any `by_text` assertion resolving to the same canonical id. Existing equivalent bare assertions SHALL be kept (idempotent), agent-written predicate assertions (`visible`, `enabled`, layout, content) SHALL be preserved as UX assertions and never deleted, `scroll`/`swipe` actions SHALL NOT be rewritten to `touch`, and an ambiguous action or insertion position SHALL yield an actionable `invalid_test` gap listing the candidates instead of a guess. The source derived plan file SHALL NOT be modified; the run copy SHALL carry the injection list.
+When testing copies the derived plan into the run directory it SHALL, for every P0 criterion checkpoint mapped to a case, insert a bare `{"wait_for":{"by_id":<id>,"timeout":N}}` for each required id and `{"wait_gone":{"by_id":<id>,"timeout":N}}` for each forbidden id after EACH matching checkpoint action and before a same-target `by_text` assertion in that occurrence. Injection and native P0 consumption SHALL share the same ordered intervals: after the trigger and before the next matching trigger, or an earlier back/home/start_app/stop_app/clear_app step. Equivalent bare assertions SHALL be reused only inside that interval. Repeated triggers SHALL NOT be rejected merely because multiple action steps exist. Original navigation, return/re-entry and predicate assertions (`visible`, `enabled`, layout, content) SHALL be preserved; actions SHALL NOT be deleted, split across cases or rewritten from scroll/swipe to touch to satisfy this gate. A genuinely ambiguous selector-to-target mapping SHALL yield `invalid_test` naming the TC, candidate steps and missing disambiguation information. The source derived plan file SHALL NOT be modified; injection indices SHALL refer to the final run copy.
 
 Enforcement: `harness/scripts/check-testing.ts`, `harness/scripts/utils/derived-hylyre-plan.ts`, `harness/scripts/utils/hylyre-planned-step-lint.ts`
 
@@ -29,10 +29,15 @@ Enforcement: `harness/scripts/check-testing.ts`, `harness/scripts/utils/derived-
 - **WHEN** a case already has a `wait_for by_text` for the checkpoint element and no bare `by_id` assertion
 - **THEN** the run copy SHALL gain one bare `wait_for by_id` placed before the `by_text` step, and a second load SHALL not add another
 
-#### Scenario: Ambiguity is reported, not guessed
+#### Scenario: Repeated entry stays one continuous case
 
-- **WHEN** two steps in the case could be the checkpoint action
-- **THEN** no assertion SHALL be injected and the case SHALL be `invalid_test` naming both candidate steps
+- **WHEN** TC-012 enters the add-card page, returns to the card-pack page, then triggers card_pack_add_card_row again
+- **THEN** both triggers and the return SHALL remain, and each trigger SHALL have its own required/forbidden identity assertions; loading the result again SHALL add no duplicate assertions
+
+#### Scenario: Target ambiguity is reported without weakening the test
+
+- **WHEN** a candidate action's by_text selector maps to multiple target ids without sufficient existing disambiguation
+- **THEN** the case SHALL be `invalid_test` naming the TC, candidate steps and missing selector information, without suggesting that repeated actions be removed or split into different cases
 
 ### Requirement: Derived-plan lints reject unbindable P0 shapes before device execution
 
@@ -142,7 +147,12 @@ Enforcement: `harness/scripts/check-testing.ts`, `harness/scripts/utils/quality-
 
 ### Requirement: Acceptance coverage is computed from checkpoint requirements and StepResult status
 
-For native runs the trace SHALL be bound to the actual run-copy derived plan. Maison SHALL compute acceptance/P0 coverage from checkpoint requirements and authoritative StepResults: a case enters the verified numerator only if execution completed, verification passed, evidence is complete and every required presence / forbidden absence has a passed bare `by_id` StepResult at or after the checkpoint action. For `scroll` and `swipe` actions whose trace selector is null, the action SHALL be located by step kind and order and the checkpoint SHALL bind through the post-state identity assertions. Accounting SHALL report total, verified_pass, unsupported_gap, failed and verified_coverage.
+For native runs the trace SHALL be bound to the actual run-copy derived plan. A case enters the P0 verified numerator only if execution completed, verification passed, evidence is complete and EVERY occurrence of each mapped checkpoint has a passed action and passed required/forbidden bare by_id StepResults in its own shared injection interval. A later occurrence's assertions SHALL NOT prove an earlier trigger, and checking only the first occurrence SHALL NOT prove the repeated flow. Step index and kind SHALL match the bound plan. For scroll/swipe with null native selector, binding SHALL use step kind/order and the local post-state identity assertions without rewriting the action. Accounting SHALL retain the existing total/verified_pass/unsupported_gap/failed/verified_coverage fields.
+
+#### Scenario: A failed second occurrence cannot be hidden
+
+- **WHEN** the first trigger passes but the second action or its identity assertion fails, is missing, or only has evidence in another occurrence's interval
+- **THEN** P0 coverage SHALL fail even if CaseResult summary fields claim passed
 
 Enforcement: `harness/scripts/utils/p0-semantic-gates.ts`, `harness/scripts/check-testing.ts`, `harness/scripts/utils/quality-axes.ts`, `harness/scripts/utils/summary-blockers.ts`
 

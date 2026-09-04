@@ -12,8 +12,9 @@
    生成时间、merged report。不复用 finalize 后的 manifest aggregate（含 summary 与 report，会成环），不新增落盘 manifest。
 3. **执行通道三态**：固定无原语 manual 类别与 inactive/SKIP provider 为 `unsupported_gap`；裸/未知 manual、未登记 provider、
    active 但无 per-TC producer 的 provider 为跑机前 `invalid_test`。gap 留在原始分母，五数输出。
-4. **身份断言注入**：在 check-testing 把最新派生计划复制进 run 目录时注入，源文件不改；只在 action 与位置唯一时注入，
-   否则 invalid_test 并列候选；scroll/swipe 在 trace 里 selector 为 null，p0-semantic-gates 改用 post-state 绑定。
+4. **身份断言注入**：装载 run 副本时对同一 checkpoint 的每次合法触发分别注入；注入与运行期消费共用步骤区间，
+   截止于下次同目标触发或更早的 back/home/应用复位，不跨区间借断言。区间内裸 by_id 幂等复用，完整导航与 UX 断言保留；
+   只有目标映射本身不能唯一确定等真实歧义才 invalid_test，并点名候选 step/缺少的 selector 信息，不建议删除或拆开重复导航。
 5. **执行键**：HAP 摘要 + run 副本派生计划摘要 + 设备身份/显示环境 + reset mode + 工具链版本 + flags；只复用最新一条
    带 execution-key 的真实 attempt（同键、成功、证据完整）；不回捞跨 key 历史；`--force-device` 是唯一逃生口。
 6. **报告生成**：testing 的 writer 消费 trace/timing/meta/gaps/visual-diff/visual-debt/measure/quality axes/stability，
