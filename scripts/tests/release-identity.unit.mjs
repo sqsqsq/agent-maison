@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { writeInZipManifest } from '../pack-release.mjs';
 import { validateReleaseIdentityFields } from '../verify-release-pack.mjs';
 import { assertCleanWorktree } from '../release-all.mjs';
+import { collectReleaseFiles, loadReleaseExcludes, runSyntheticRuleTests } from '../release-pack-rules.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
@@ -42,6 +43,26 @@ function repoHeadCommit() {
   assert.equal(r.status, 0, '测试须在 git 检出内运行');
   return r.stdout.trim();
 }
+
+test('发布排除计数允许空 temp，非空 temp 仍全部排除且缺规则仍失败', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'am-release-temp-'));
+  createdRoots.push(repo);
+  for (const dir of ['scripts', '.cursor', 'temp/nested']) {
+    fs.mkdirSync(path.join(repo, dir), { recursive: true });
+  }
+  fs.writeFileSync(path.join(repo, 'scripts/pack-release.mjs'), '');
+  fs.writeFileSync(path.join(repo, '.cursor/notes.md'), '');
+  const rules = loadReleaseExcludes();
+  assert.deepEqual(runSyntheticRuleTests(repo, rules), [], '只有空子目录时排除文件数应允许为零');
+  fs.writeFileSync(path.join(repo, 'temp/nested/scratch.txt'), 'scratch');
+  assert.deepEqual(runSyntheticRuleTests(repo, rules), []);
+  const files = collectReleaseFiles(repo, rules);
+  assert.equal(files.excludedCountsByRule['excludeRootDirs:temp'], 1);
+  assert.ok(files.excluded.includes('temp/nested/scratch.txt'));
+  assert.ok(!files.included.some(file => file.startsWith('temp/')));
+  const missingRule = { ...rules, excludeRootDirs: rules.excludeRootDirs.filter(dir => dir !== 'temp') };
+  assert.ok(runSyntheticRuleTests(repo, missingRule).some(error => error.includes('temp/ must be excluded')));
+});
 
 test('t7 打包生成：writeInZipManifest 写入 source_commit（=打包源仓 HEAD）与 built_at（UTC ISO）；files[]/sidecar 链不变', () => {
   const staging = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'am-id-pack-')), 'framework');

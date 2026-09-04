@@ -304,8 +304,8 @@ export function runSyntheticRuleTests(repoRoot, rules) {
   if (fs.existsSync(path.join(repoRoot, 'temp'))) {
     const { include } = classifyPath('temp/.gitkeep', rules);
     if (include) errors.push('temp/ must be excluded from release (dev-only scratch)');
-    if ((excludedCountsByRule['excludeRootDirs:temp'] ?? 0) < 1) {
-      errors.push('collect: excludeRootDirs:temp count missing');
+    if ((excludedCountsByRule['excludeRootDirs:temp'] ?? 0) !== excluded.filter(p => p.startsWith('temp/')).length) {
+      errors.push('collect: excludeRootDirs:temp count mismatch');
     }
   }
 

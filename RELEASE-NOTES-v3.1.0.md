@@ -38,3 +38,5 @@ Extension 1.0 继续兼容；选择 1.1 时须在 `provides.skills[]` 列全待�
 P1/P2/P3 已于 2026-09-04 同步规格并归档，各自的 release task 按上述结果勾选。归档后 OpenSpec strict validation 为 37/37，Enforcement 路径校验通过；已有 e4/b9 蓝图 requirement 5/5 原样保留。P1 测试的 active-change 路径在归档后实测 95/96，改为确定的归档路径并核对终态后 96/96。
 
 完整 `release:all`（含同 zip 临时消费者 smoke）将在干净的本地收口提交上执行；该链未完成前，不宣称发布件终验通过。最终产物与结果将在执行后追加。
+
+首次 `release:all` 在提交 `7105cffd` 上通过 typecheck、unit 4205/4205、fixtures 46/46，随后在打包规则测试失败：`collect: excludeRootDirs:temp count missing`。本轮移动日志后留下的空 `temp/m5/` 触发了错误的“目录存在即至少排除一个文件”断言。已将断言改为实际排除文件数一致性比较，保留 temp 排除规则与 zip 不得含 temp 的断言；新增空目录、非空目录和缺失排除规则回归，先红后绿，发布脚本测试 30/30。失败 staging 已清理，未进入消费者 smoke，也未产出正式 zip。修复后重跑完整发布链，不增加跳过门禁或续跑机制。
