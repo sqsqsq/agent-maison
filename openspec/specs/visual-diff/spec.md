@@ -336,35 +336,25 @@ Enforcement: `profiles/hmos-app/harness/visual-diff-check.ts`
 
 ### Requirement: Empty defects on a pixel_1to1 P0 pass screen require region attestation
 
-Under pixel_1to1, a P0 pass screen with `defects: []` SHALL carry machine-produced `region_attest[]` — one entry per must-have element or zone, using a supported content/hash-bound comparison method. Human/signature methods and free-text `by` values MUST NOT satisfy coverage. Missing attestation SHALL be a BLOCKER. Attestation SHALL cover every declared `must_have_elements` id, and `diff_logged` entries SHALL correlate to a defect or must_fix item; otherwise the gate SHALL FAIL. Pass burden of proof is per-region current machine evidence, not "no problem seen".
+When a visual provider is available, a pixel_1to1 P0 pass screen with `defects: []` SHALL carry provider-produced `region_attest[]`. When no visual provider is available, the attestation requirement SHALL be SKIP: the machine geometry status and the agent's ordinary visual judgment SHALL be recorded, content and style SHALL be disclosed as UNKNOWN, and functional completion SHALL NOT be blocked by the missing attestation.
 
 Enforcement: `profiles/hmos-app/harness/visual-diff-check.ts`
 
-#### Scenario: bare empty defects cannot pass
+#### Scenario: No provider, no fake attestation
 
-- **WHEN** a pixel_1to1 P0 screen has verdict=pass, defects=[] and no region_attest
-- **THEN** the gate SHALL FAIL demanding per-region attestation
+- **WHEN** the profile resolves no visual provider and a P0 screen passes geometry
+- **THEN** the gate reports SKIP for region attestation and UNKNOWN for content/style instead of demanding an attestation nobody can produce
 
 ### Requirement: Paired-crop evidence and critic receipt are validated, provenance stated honestly
 
-`region_attest` entries with `method: paired_crop_compare` SHALL reference an evidence crop inside the feature's `device-screenshots/_attest/` directory, fresh for the evaluated screenshot, and SHALL carry recomputable evidence, screenshot, reference, and bbox bindings. File existence alone is insufficient. Whenever region attestations exist, the current critic machine-evidence record SHALL be structurally valid, identify the actual provider/invocation, cover every attested screenshot and paired crop, and carry recomputable hashes. Missing, invalid, uncovered, stale, or hash-mismatched evidence SHALL block pixel completion. `input_provenance: unverified` MAY disclose unavailable read-event telemetry and MAY still support repair when payload identity/content validates, but it MUST NOT be described as verified machine closure or handed to a human signature path.
+When a provider produced `region_attest` with `method: paired_crop_compare`, the evidence crop SHALL exist, be fresh and carry recomputable hashes. When no provider exists, the critic receipt and paired-crop requirements SHALL be SKIP, never WARN or FAIL.
 
 Enforcement: `profiles/hmos-app/harness/visual-diff-check.ts`
 
-#### Scenario: attest claim without evidence file fails
+#### Scenario: Missing critic receipt without a provider is not a finding
 
-- **WHEN** region_attest claims paired_crop_compare but the referenced crop file does not exist
-- **THEN** the gate SHALL FAIL (pixel_1to1 BLOCKER)
-
-#### Scenario: unverified provenance is recorded, not inflated
-
-- **WHEN** an interactive-agent receipt carries input_provenance: unverified with valid structure and crop coverage
-- **THEN** validation MAY use it for repair while any release-required machine-evidence obligation remains UNVERIFIED or capability-deferred according to current policy
-
-#### Scenario: handwritten verified claims are downgraded until an issuer exists
-
-- **WHEN** a receipt claims input_provenance: verified while no runner-issued signing section exists (rev10 — tool_read adapters cannot prove injection and the runner issuance chain has not landed, so any verified receipt today is agent-handwritten)
-- **THEN** the gate SHALL apply the stricter verified-claim validations, downgrade the effective tier to unverified with an explicit WARN, and SHALL NOT produce candidate-pass(verified) until receipts carry a validated runner signing section
+- **WHEN** no visual provider is registered for the profile
+- **THEN** `visual_diff_critic_receipt` reports SKIP
 
 ### Requirement: Runtime layout tree is captured per screen and geometry invariants are asserted (T8)
 
@@ -471,3 +461,14 @@ Enforcement: `profiles/hmos-app/harness/visual-diff-capture.ts`（含 `captureVi
 
 - **WHEN** a caller invokes `captureVisualDiff` without explicit `goldenTargets`/`goldenForbidden` while `MAISON_GOLDEN_CONTRACT` names a contract with both positive screens and forbidden entries, and capture consumes both (evidence production enabled)
 - **THEN** the contract file SHALL be read and parsed exactly once, and the two legacy loader entry points SHALL return the same values as the combined loader
+
+### Requirement: Geometry measurement is a fact producer with three-axis status
+
+`--measure --feature <f> [--screen <id>]` SHALL read the screen's layout dump and screenshot and produce recomputable facts for the ui-spec declared elements: bounds, card edges, spacing and row pitch, overlaps, reference-versus-device deltas in px and in vp derived from row pitch, and color samples. It SHALL write `measure-<screen_id>.json` and print a human-readable table. Status SHALL be reported on three axes: geometry PASS/FAIL (thresholds from the ui-spec element tolerance; a profile default is advisory only), content CHECKED/UNKNOWN, style CHECKED/UNKNOWN. Measurement SHALL fill `defects[].note` facts in `visual-diff.json` but SHALL NOT rewrite the ui-spec source, SHALL NOT override an agent or provider verdict, SHALL NOT equal a pixel_1to1 PASS, and geometry PASS SHALL NOT lift the visual or release block by itself. At most a bbox suggestion MAY be printed for spec use.
+
+Enforcement: `profiles/hmos-app/harness/visual-diff-check.ts`, `profiles/hmos-app/harness/layout-oracle-check.ts`, `harness/harness-runner.ts`
+
+#### Scenario: Measurement never becomes a verdict
+
+- **WHEN** every measured delta is within tolerance
+- **THEN** the screen's verdict stays whatever the agent or provider recorded and release readiness is unchanged

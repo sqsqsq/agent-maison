@@ -200,19 +200,14 @@ Enforcement: `skills/project/goal-mode/SKILL.md`, `docs/operations/goal-mode-run
 
 ### Requirement: Attended goal mode is a thin executor over the shared runtime
 
-Attended goal mode SHALL use `GoalPhaseRuntime` for all lifecycle decisions and SHALL implement only the existing host `phase_execute_request`/response transport as an `AttendedGoalPhaseExecutor`. The request SHALL carry the immutable fenced `PhaseExecutionContext`; the host callback MUST return only invocation output and MUST NOT assess, invoke harness gates, advance phases, close receipts or emit canonical verdict/backtrack events independently.
+Two attended entries SHALL exist and SHALL be mutually exclusive for one task: Maison `/goal-mode`, where `GoalPhaseRuntime` owns every lifecycle decision through the `phase_execute_request` transport, and the native goal path, where the host session is the thin driver over per-phase executors. A task started on one entry SHALL NOT be advanced by the other. Under `/goal-mode` the request SHALL still carry the immutable fenced `PhaseExecutionContext` and retries, closure and owner fences remain runtime-owned.
 
 Enforcement: `harness/scripts/utils/goal-in-session-driver.ts`, `harness/scripts/utils/goal-phase-executor.ts`, `skills/project/goal-mode/SKILL.md`, `skills/reference/goal-mode-operations.md`
 
-#### Scenario: Attended retry is runtime-owned
+#### Scenario: Entries do not co-drive
 
-- **WHEN** an attended executor returns an agent result whose gate verdict requires retry
-- **THEN** `GoalPhaseRuntime` SHALL decide and record the retry; the in-session host SHALL only receive the next fenced execution request
-
-#### Scenario: Attended close uses the common finalizer
-
-- **WHEN** an attended phase is ready to close
-- **THEN** the shared runtime SHALL run the same harness and closure finalizer used by detached execution
+- **WHEN** a feature has an active `/goal-mode` run
+- **THEN** the native goal path SHALL refuse to advance the same feature and point to the running run
 
 ### Requirement: Shared runtime enforces attended authorization boundaries
 
@@ -264,3 +259,14 @@ Enforcement: `harness/scripts/goal-mode-entry.ts`, `harness/scripts/goal-phase-r
 #### Scenario: Attended runtime is invoked without a host executor
 - **WHEN** code requests attended execution directly from `GoalPhaseRuntime` without an injected executor
 - **THEN** startup fails before owner progression instead of exposing another stdio protocol shape
+
+### Requirement: The native goal path runs one phase executor per phase and never hand-rolls waiting
+
+When a task is driven by the host's native goal persistence (Claude `/goal`), the main session SHALL act as a thin driver: it SHALL delegate each feature phase to exactly one `phase-executor` subagent with the minimal inputs (requirement path, acceptance / ui-spec / reference image paths, current changed files, current blockers, accepted gaps, previous phase summary path, the phase skill path), SHALL NOT pass conversation history, and SHALL NOT execute two phases consecutively in the same context. The executor SHALL run the phase harness, invoke the verifier when required and call finalize. Verifier and subagent results SHALL be awaited synchronously or left for unrelated work; `sleep`, polling loops and background waiters SHALL NOT be used, and verifier inputs SHALL NOT be modified while a verifier runs.
+
+Enforcement: `skills/project/goal-mode/SKILL.md`, `skills/reference/agents-entry-detail.md`, `agents/claude/templates/goal-condition.md`, `agents/claude/templates/agents/phase-executor.md`
+
+#### Scenario: Six phases, six fresh contexts
+
+- **WHEN** a native goal spans spec through testing
+- **THEN** each phase runs in its own executor and the main context only accumulates six summary paths and terminal blocks

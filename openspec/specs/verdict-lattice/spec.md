@@ -38,19 +38,14 @@ Enforcement: `harness/schemas/summary.schema.json`, `harness/scripts/utils/quali
 
 ### Requirement: Dual projections keep phase advance and release readiness distinct
 
-The top-level phase verdict SHALL be produced only by the active phase matrix and `projectPhaseAdvanceVerdict`; `QualityAxis` MUST NOT gain a persisted `required_for_phase_advance` field or a second required-axis source. Feature completion and `release_readiness` SHALL project only from applicable axes marked `required_for_release` through `projectReleaseReadiness` and `verify-feature-completion`. A required FAIL or UNVERIFIED blocks the corresponding projection; capability-missing projects `DEFERRED_CAPABILITY_MISSING`; optional UNVERIFIED remains advisory only where the current release policy permits it. No human confirmation, receipt, manual resume, or accepted-debt state SHALL lift a deterministic FAIL or required evidence gap.
+The top-level phase verdict SHALL be produced only by the active phase matrix and `projectPhaseAdvanceVerdict`; `QualityAxis` MUST NOT gain a persisted `required_for_phase_advance` field. Visual gaps, unsupported gaps and non-reverified verification SHALL NOT block phase advance or normal completion; release readiness SHALL keep its own matrix, and a geometry PASS from measurement SHALL NOT lift a release visual block by itself.
 
 Enforcement: `harness/scripts/utils/quality-axes.ts`, `harness/scripts/utils/phase-transition-policy.ts`, `harness/scripts/utils/verify-feature-completion.ts`
 
-#### Scenario: phase matrix and release axis differ without duplicate fields
+#### Scenario: Geometry PASS leaves release as it was
 
-- **WHEN** a visual axis is optional for the current phase advance but required for release and remains UNVERIFIED
-- **THEN** the phase MAY advance under the phase matrix while release remains blocked, with no `required_for_phase_advance` field written to the axis
-
-#### Scenario: deterministic FAIL ignores a signer
-
-- **WHEN** an applicable required axis is FAIL and a legacy human receipt or `confirmed_by` value is present
-- **THEN** both current phase/release projections SHALL retain the machine FAIL according to their existing matrices
+- **WHEN** measurement reports geometry PASS while content and style are UNKNOWN
+- **THEN** phase advance proceeds and release readiness remains governed by its existing evidence policy
 
 ### Requirement: Legacy 1.0 summaries cannot silently feed 1.1 completions
 

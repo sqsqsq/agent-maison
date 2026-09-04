@@ -15,28 +15,25 @@ TBD - created by archiving change correction-routing. Update Purpose after archi
 
 ### Requirement: Correction classifies to root layer with machine-computed revalidation
 
-A correction SHALL be classified by `classifyCorrection` into `{root_layer, touched_layers[], revalidate[]}`. The revalidation set SHALL contain the root layer and every already-closed downstream phase required by the resolved workflow; revalidation is machine gate execution, not re-production of unaffected upstream artifacts. In attended mode the routing may be shown for user editing, but it SHALL NOT require a confirmation receipt. In unattended mode a frozen correction input plus the existing deterministic classifier SHALL route automatically; low confidence or ambiguous ownership SHALL fail closed as unresolved input rather than create a human quality gate. Any stale closure SHALL return to its owner through the same backtrack/re-sign path.
+A correction SHALL still be classified by `classifyCorrection` into `{root_layer, touched_layers[], revalidate[]}` for routing and for the revalidation hint. Revalidation SHALL be executed by `--revalidate`, which runs only the necessary existing checks against stale inputs; it SHALL NOT re-produce unaffected artifacts, SHALL NOT require receipts and SHALL NOT run the verifier by default. No closing command SHALL be required for a feature correction to end.
 
-Enforcement: `harness/scripts/utils/runtime-policy.ts`, `harness/scripts/utils/correction-routing.ts`, `harness/scripts/goal-runner.ts`
+Enforcement: `harness/scripts/utils/correction-routing.ts`, `harness/harness-runner.ts`
 
-#### Scenario: post-delivery implementation defect starts a successor
+#### Scenario: A coding correction ends without a ledger
 
-- **WHEN** a completed feature receives frozen feedback that spacing is wrong while requirements are unchanged and the classifier resolves coding as the root
-- **THEN** a successor/correction run SHALL route to coding and revalidate its closed downstream phases without modifying the predecessor's completion proof
+- **WHEN** a correction rooted at coding is implemented and `--revalidate` passes
+- **THEN** the correction is finished; no state file and no reconciliation command are involved
 
 ### Requirement: Correction state persists for self-check
 
-correction 会话 MUST 持久化 `harness/state/.current-correction.json`，字段 MUST 含 schema_version / feature? / root_layer / touched_layers / revalidate / status / created_at / session_id / base_commit / request_fingerprint / enforcement_tier / expires_at；`--correction-check` MUST 以其为稳定输入核查 revalidate 清单全绿后置 closed。session_id 不符（超 grace）或已过期的 state MUST 判 stale——`--correction-check` MUST 拒绝并要求重建 correction，防跨会话误读旧 state（对齐 `.current-phase.json` 既有 session 治理）。
+Only no-feature (`--adhoc-correction`) corrections SHALL persist state, and only the fields the adhoc path consumes (`base_commit`, `session_id`, `created_at`, `expires_at`). Feature corrections SHALL NOT write `.current-correction.json`, and the Stop hook SHALL NOT read it.
 
-#### Scenario: 跨回合自检
-- **WHEN** 修正实施后（同会话或 grace 内）执行 `--correction-check`
-- **THEN** 命令读 state 对照清单逐项核查门禁已重跑且绿，否则报缺项 exit 非零
+Enforcement: `harness/scripts/utils/correction-state.ts`, `harness/harness-runner.ts`
 
-#### Scenario: 陈旧 correction state 被拒
-- **WHEN** `--correction-check` 读到 session_id 不符且超 grace、或 expires_at 已过的 state
-- **THEN** 判 stale 并 exit 非零，提示重建 correction，不得按旧清单放行
+#### Scenario: Feature corrections leave no state behind
 
-> **Enforced by:** `harness/harness-runner.ts`（--correction-check）, `harness/scripts/utils/phase-state.ts`（session 治理复用）
+- **WHEN** a correction is initiated for an existing feature
+- **THEN** no `.current-correction.json` is written and stopping the session is never blocked on its account
 
 ### Requirement: No-feature corrections run via adhoc entry
 
@@ -54,17 +51,14 @@ correction 会话 MUST 持久化 `harness/state/.current-correction.json`，字�
 
 ### Requirement: Enforcement tier is adapter-honest
 
-修正闭环保证 MUST 按三档判定并如实声明：`hard_hook` / `headless_runner` / `soft_rule_only`。判档 MUST 为派生纯函数 `resolveEnforcementTier(adapterManifest, runtimeContext)`——依据 adapter manifest 既有 `settings_file`+`hooks` 声明与 `runtimeContext.mode` 派生，MUST NOT 新增 adapter schema 字段，MUST NOT 按 adapter 名字硬编码。派生优先级 MUST 为 mode 先行：`mode ∈ {headless, goal}` → headless_runner（即便 manifest 有 hooks——goal 无头进程下 Stop hook 旁路，物理拦截不在场）；其后 hooks → hard_hook；否则 soft_rule_only。任何文档、报告或剧本 MUST NOT 对 soft_rule_only 档宣称"Stop hook 一定拦"。
+`resolveEnforcementTier` SHALL keep describing whether physical Stop interception exists for phase closure. No tier SHALL claim that corrections are intercepted, because correction reconciliation no longer exists.
 
-#### Scenario: cursor 档的诚实声明
-- **WHEN** 修正流程在 cursor adapter 下运行并输出闭环说明
-- **THEN** 说明标注 soft_rule_only 档保证边界，不承诺物理拦截
+Enforcement: `harness/scripts/utils/runtime-policy.ts`, `agents/README.md`
 
-#### Scenario: Claude goal 模式不判 hard_hook
-- **WHEN** claude adapter（manifest 有 hooks）在 goal-runner 无头模式下执行修正
-- **THEN** enforcement tier 判 headless_runner，报告不得声称物理拦截
+#### Scenario: hard_hook tier makes no correction claim
 
-> **Enforced by:** `harness/scripts/utils/runtime-policy.ts`, `agents/README.md`
+- **WHEN** the Claude adapter resolves to `hard_hook`
+- **THEN** documentation and reports SHALL describe phase-closure interception only
 
 ### Requirement: Verification hand-off is an evidence gap
 
@@ -76,20 +70,6 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/capability
 
 - **WHEN** a correction's revalidation includes P0 device testing and preflight proves the selected profile/provider cannot supply it
 - **THEN** the correction SHALL defer with the exact capability blocker and SHALL NOT announce completion or wait for a quality signature
-
-### Requirement: Reconciliation blocks undeclared touched layers
-
-（C5-full）回合收尾对账 MUST 只拦"未声明的 touched layer"：声明仅 spec/plan 却出现 code diff MUST 拦；声明含 coding 的组合修正 MUST 放行但 MUST 重验 coding 及下游。correction 状态 MUST 并入 evidence_policy_snapshot 机制。
-
-#### Scenario: 组合修正合法
-- **WHEN** 确认 gate 声明 touched_layers=[spec, coding] 且实施中同轮改了 spec 与代码
-- **THEN** 对账放行，revalidate 含 coding 及下游门禁
-
-#### Scenario: 假申报被拦
-- **WHEN** 声明 touched_layers=[spec] 但回合产生了源码 diff
-- **THEN** 对账 FAIL（按 enforcement 档拦截或报缺项）
-
-> **Enforced by:** `harness/harness-runner.ts`, `agents/claude/templates/hooks/check-phase-completion.mjs`（hard_hook 档）
 
 ### Requirement: User feedback after completion is successor input, not retrospective confirmation
 
