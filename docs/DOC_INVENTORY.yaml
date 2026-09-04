@@ -25,6 +25,7 @@ schema_version: "1.0"
 
 docs:
   - path: framework/docs/concepts/component-assets.md
+    role: 组件资产发现、选型与静态能力证据说明
     sources:
       - framework/harness/scripts/utils/component-assets.ts
       - framework/profiles/hmos-app/harness/component-extractor.ts

@@ -40,3 +40,7 @@ P1/P2/P3 已于 2026-09-04 同步规格并归档，各自的 release task 按上
 完整 `release:all`（含同 zip 临时消费者 smoke）将在干净的本地收口提交上执行；该链未完成前，不宣称发布件终验通过。最终产物与结果将在执行后追加。
 
 首次 `release:all` 在提交 `7105cffd` 上通过 typecheck、unit 4205/4205、fixtures 46/46，随后在打包规则测试失败：`collect: excludeRootDirs:temp count missing`。本轮移动日志后留下的空 `temp/m5/` 触发了错误的“目录存在即至少排除一个文件”断言。已将断言改为实际排除文件数一致性比较，保留 temp 排除规则与 zip 不得含 temp 的断言；新增空目录、非空目录和缺失排除规则回归，先红后绿，发布脚本测试 30/30。失败 staging 已清理，未进入消费者 smoke，也未产出正式 zip。修复后重跑完整发布链，不增加跳过门禁或续跑机制。
+
+第二次 `release:all` 在提交 `37239f3a` 上通过同样的全量回归和 zip 校验，临时消费者安装、提交与 clone 成功，但 UPDATE 的全局 docs phase 失败，后续阶段未执行，staging 已清理。仓内 `npm run check:docs` 复现为 `doc_missing_role`：`docs/DOC_INVENTORY.yaml` 的 component-assets 条目缺必填 `role`。仅补齐该字段后，目标检查 exit 0、零 BLOCKER；未放宽 inventory schema。第三次发布链将验证修复后的完整 zip。
+
+已观测的非阻断项：standalone docs 检查仍有基于提交时间的 `doc_freshness` MAJOR 提示，未据此宣称对应文档语义已逐份核验；Node 输出 DEP0190 弃用告警。临时消费者第一次 npm install 的 audit 请求发生 registry 超时，npm 安装仍 exit 0；本次不宣称依赖安全审计通过。
