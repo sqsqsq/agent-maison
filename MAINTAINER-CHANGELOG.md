@@ -2,25 +2,51 @@
 
 > 由 `npm run release:changelog` 从 `.cursor/plans/*.plan.md` 自动生成。消费者向变更见 `RELEASE-NOTES-v*.md` 与 `MIGRATION.md`。
 
-Generated: 2026-09-03 · current window: `3.0.0`
+Generated: 2026-09-04 · current window: `3.1.0`
 
 ## 3.2.0
 
+- **android 工程适配** — 在 maison 3.2.0 窗口落地 Android 工程支持：新增 android-app profile（Gradle/AGP/JUnit 工具链）与一个全新的、与 profile 正交的「workspace 拓扑」维度（single_tree / binary_deps / source_overlay），与真实工程"自下而上 AAR 分层集成"的生产构建同构，不造平行构建体系。交付物 = 1 份 master .plan.md + 4 个 OpenSpec change。 [0/6 completed]
+  - `android_工程适配_5e3400c3.plan.md`
+- **goal 旧基线读取器清理** — > [0/4 completed]
+  - `goal旧基线读取器清理_legacy_coding_base与run_start回退_7b2e4c1a.plan.md`
 - **provider 通道 per-TC 机器证据绑定 — 当前 run 身份与证据闭环** — > [0/6 completed]
   - `provider通道per-TC机器证据绑定_当前run身份与证据闭环_e7cecd22.plan.md`
+- **完整性与授权加固 — 反回滚独立锚 / 变更判真分类器** — > [0/3 completed]
+  - `完整性与授权加固_反回滚锚与变更判真与foreign-file复扫_b8d3c6a5.plan.md`
+- **视觉证据链深化 — build fingerprint 链接入 / TC 执行器级联控制** — > [0/2 completed]
+  - `视觉证据链深化_build指纹链与TC级联执行器_c2e9f4d7.plan.md`
 
 ## 3.1.0
 
-- **组件资产 b9** — 增加 opt-in 共享组件索引/逐条确认台账，蓝图五级选型经既有 CU 投影到 Feature，接入依赖预检、有限静态检查和 review live 上下文（2026-09-04）。
-
-- **工程惯例 e4** — 交付 opt-in conventions 资产与策展入口，复用 P1/CU/review 链完成引用、覆盖台账和后置核对（2026-09-04）。
-
-- **android 工程适配** — 在 maison 3.1.0 窗口落地 Android 工程支持：新增 android-app profile（Gradle/AGP/JUnit 工具链）与一个全新的、与 profile 正交的「workspace 拓扑」维度（single_tree / binary_deps / source_overlay），与真实工程"自下而上 AAR 分层集成"的生产构建同构，不造平行构建体系。交付物 = 1 份 master .plan.md + 4 个 OpenSpec change。 [0/6 completed]
-  - `android_工程适配_5e3400c3.plan.md`
-- **goal 旧基线读取器清理** — 在 3.1.0 窗口删除已由 run_created 时代边界隔离的 goal legacy 基线读取面；仅做兼容代码与对应测试清理，不引入新机制。 [0/4 completed]
-  - `goal旧基线读取器清理_legacy_coding_base与run_start回退_7b2e4c1a.plan.md`
-- **完整性与授权加固 — 反回滚独立锚 / 变更判真分类器** — > [0/3 completed]
-  - `完整性与授权加固_反回滚锚与变更判真与foreign-file复扫_b8d3c6a5.plan.md`
+- **extension — 实例扩展注入、物化与检视（实例扩展管理 project skill）** — > [10/10 completed]
+  - `extension_实例扩展注入物化与检视_d8f4b7e2.plan.md`
+- **复杂能力 P0 — 元模型、边界与父目标声明校验** — > [6/6 completed]
+  - `复杂能力P0_元模型边界与父目标声明校验_e7b3a9d4.plan.md`
+- **复杂能力建设 3.1 — M5A 演进工作区与蓝图身份纠偏** — (no overview) [5/5 completed]
+  - `复杂能力建设3.1_M5A_演进工作区与蓝图身份纠偏_e2a7c4b9.plan.md`
+- **复杂能力建设 3.1 — M6 真实宿主准入与回灌契约** — (no overview) [3/3 completed]
+  - `复杂能力建设3.1_M6_真实宿主准入与回灌契约_f3b9d2c7.plan.md`
+- **复杂能力建设 3.1 — M7 正式需求统一蓝图入口、条件式设计义务与 Story 投影接缝** — (no overview) [6/6 completed]
+  - `复杂能力建设3.1_M7_正式需求统一蓝图入口与Story投影_f9e2c7b4.plan.md`
+- **复杂能力建设 3.1 — MG 机械闭环终验与跨层回归** — (no overview) [7/7 completed]
+  - `复杂能力建设3.1_MG_机械闭环终验与跨层回归_2d6b4f83.plan.md`
+- **复杂能力建设 3.1 — P1 App 部件发现、适配 4+1 蓝图与调和** — (no overview) [6/6 completed]
+  - `复杂能力建设3.1_P1_App部件发现蓝图与调和_41c8b6e2.plan.md`
+- **复杂能力建设 3.1 — P2 Change Unit、设计消费与连续推进** — (no overview) [6/6 completed]
+  - `复杂能力建设3.1_P2_Change_Unit与连续推进_7b3c1e90.plan.md`
+- **复杂能力建设 3.1 — P3 部件组装与覆盖闭环** — (no overview) [6/6 completed]
+  - `复杂能力建设3.1_P3_部件组装与覆盖闭环_9d4e2a71.plan.md`
+- **复杂能力建设 3.1 — 单部件复杂需求从蓝图到部件闭环首期总计划** — > [9/10 completed]
+  - `复杂能力建设3.1_单部件复杂需求闭环首期总计划_6f2a9d8c.plan.md`
+- **宿主入口 — 部件演进路线分档与蓝图 Skill 物化补链** — (no overview) [3/3 completed]
+  - `宿主入口_部件演进路线分档与Skill物化_c4d7e9a2.plan.md`
+- **宿主运行边界真值 — 实际 CLI、需求源图片与视觉证据可达性** — > [4/4 completed]
+  - `宿主启动输入真值_实际CLI选择与需求源图片发现_c4e8a1f7.plan.md`
+- **工程惯例（conventions）— 第五类知识资产与 review 后置核对闭环** — > [6/6 completed]
+  - `工程惯例conventions_第五类知识资产与review后置核对_e4b9c2d6.plan.md`
+- **组件资产 — 发现、选型与能力证据（component-discovery-selection-and-capability-evidence）** — > [6/6 completed]
+  - `组件资产_发现选型与能力证据_b9e2c7d4.plan.md`
 
 ## 3.0.0
 
@@ -124,8 +150,6 @@ Generated: 2026-09-03 · current window: `3.0.0`
   - `修复环裁决化_候选真伪裁决与收敛不变式与增量修复环_e2b7c4a9.plan.md`
 - **场外信任状态最小化 — 测试隔离 / 生命周期回收 / 单写者修复 / 金丝雀临时化** — > [4/4 completed]
   - `场外信任状态最小化_测试泄漏根治与终局回收_b7e4d2a9.plan.md`
-- **宿主运行边界真值 — 实际 CLI、需求源图片与视觉证据可达性** — > [4/4 completed]
-  - `宿主启动输入真值_实际CLI选择与需求源图片发现_c4e8a1f7.plan.md`
 - **宿主回灌三修 — 截断链预检鸡生蛋、wall-clock 活跃预算、halt 出路真实化** — > [5/5 completed]
   - `宿主回灌三修_截断链预检与活跃预算与halt出路_e7c2a4d8.plan.md`
 - **收官真值与强制 kit 撤销 — 完成≠通过、错误约束删除与活性真值** — > [5/5 completed]
