@@ -68,6 +68,9 @@ deprecated_artifacts:
   - path: rules/widget-options/
     action: backup_delete
     reason: "v4.0 起选项文案合入 confirmation-registry.yaml"
+  - path: hooks/record-verifier-report.mjs
+    action: backup_delete
+    reason: "plan d2f7a9c4：SubagentStop 发布链整体删除，verifier 报告改由调用方写出；settings.json 已无注册，遗留脚本是死文件"
 
 # 视觉委托（plan ab072691）：本 adapter 可作**只读视觉 provider**。
 # 只读手段=只读工具集合（`--tools Read`）叠加锁定版 safe mode 的定制隔离；
