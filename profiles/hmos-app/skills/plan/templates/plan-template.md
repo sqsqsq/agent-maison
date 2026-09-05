@@ -149,4 +149,4 @@ flowchart LR
 
 ## 宿主扩展（可选）
 
-鸿蒙专有细则（ArkUI 导航、能力权限、存储类型等）通过 `doc/extensions/knowledge/`、`hooks/plan/on_context_load.md` 与 `phase_rules_overlays.plan` 叠加。
+鸿蒙专有细则（ArkUI 导航、能力权限、存储类型等）通过 `doc/extensions/knowledge/`（作者动笔前读；goal 模式下注入阶段 prompt）与 `phase_rules_overlays.plan`（harness 强制）叠加；`hooks/plan/on_context_load.md` 的片段只进 verifier 上下文，不会自动送达作者。

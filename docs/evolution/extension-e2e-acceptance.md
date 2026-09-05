@@ -24,7 +24,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase extensions
 - `knowledge/naming-taboos.md`
 - `hooks/coding/pre_check.mjs` 与 `hooks/spec/on_context_load.md`
 
-跑一次 **feature 链**上阶段（如 `spec` / `plan` / `coding`）时，lifecycle hook 应**注入片段**且不默认阻断主链（演示 hook 仅追加轻量 prompt 片段）。
+跑一次 **feature 链**上阶段（如 `spec` / `plan` / `coding`）时，lifecycle hook 应**注入 verifier prompt 片段**且不默认阻断主链（演示 hook 仅追加轻量 prompt 片段；片段不进作者动笔前的上下文）。
 
 ## 3. `render-agents-md` 与桥接产物
 
