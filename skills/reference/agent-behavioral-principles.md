@@ -23,6 +23,7 @@
 5. **不确定时停下来问用户**，禁止静默猜测后继续写 spec/plan/code。
 6. **计数/清单类量化 inventory 须脚本产出并留痕**：产物中写"全仓共 N 个 X"类断言时，必须由可复跑的脚本命令（带锚定的 grep/统计）产出，并留存命令与输出摘录——不接受徒手扫读的印象值（实例：宣称 43 个 namespace、实际 26 个）。
 7. **框架 / vendor 事实以当前 profile-addendum 与契约为准**：记忆（用户级 / 会话级 memory）只作搜索线索，不能作裁决依据；与 addendum、harness 输出冲突时以后者为准（plan 07a41ec6 T9）。
+8. **动笔前读宿主扩展的作者输入**：`<extension_dir>/manifest.yaml` 的 `provides.knowledge` 所列文件中适用于本阶段者，读后把路径写进 Code Facts；goal 模式下同一清单已注入阶段 prompt（plan a7c3e9d2）。`hooks/<phase>/on_context_load.md` 只进 verifier 上下文，不算送达。
 
 ### 各阶段反例 / 正例
 

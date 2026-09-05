@@ -14,7 +14,7 @@
 - **演进工作区**：蓝图位于 `<features_dir>/<blueprint_id>/blueprint/`，CU 与施工产物位于 `<features_dir>/<blueprint_id>/<change_unit_id>/`。同部件多次演进互不覆盖，跨蓝图不能满足依赖或继承完成事实。
 - **连续推进与部件闭环**：CU 消费稳定 `design_refs`，ready set 从依赖、阻塞与真实完成事实派生；复用既有 Goal Mode 恢复。closure 核对需求、设计、实现、运行时边、组合证据及知识归位，单 CU 与多 CU 共用算法。
 - **宿主适配接缝**：需求物化、评审发布、评审反馈保持各自方向和权责。发布件内的 `docs/operations/component-design-host-adaptation.md` 提供适配契约、样例与校验命令。
-- **知识与扩展接线**：`/extension` 和 manifest 1.1 支持知识受众、声明式物化与阶段绑定；工程惯例进入蓝图、CU 和 review；组件资产发现与选型通过既有 provenance、decision 和施工契约消费。缺少输入时如实显示不可用、未知或降级。
+- **知识与扩展接线**：`/extension` 和 manifest 1.1 支持知识受众、声明式物化与阶段绑定；工程惯例进入蓝图、CU 和 review；组件资产发现与选型通过既有 provenance、decision 和施工契约消费。缺少输入时如实显示不可用、未知或降级。goal 模式作者 prompt 同样注入本阶段的 1.1 knowledge 索引与阶段绑定，并计入 verifier 审前材料（plan a7c3e9d2）。
 
 ## 升级操作
 

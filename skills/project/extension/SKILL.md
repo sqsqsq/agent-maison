@@ -12,7 +12,7 @@ description: 管理实例侧 doc/extensions：初始化、检视、添加声明�
 | phase_rules_overlays | phase 规则合并时 | harness 强制 |
 | capabilities | 能力裁决 / 降级时 | harness 强制 |
 | skill_assets | 对应 Skill 消费时 | harness 强制 |
-| knowledge（audience 路由） | phase → ai-prompt 索引；global → AGENTS.md | 文本指令 + inspect 证据 |
+| knowledge（audience 路由） | phase → verifier ai-prompt 索引与 goal 作者 prompt 索引；global → AGENTS.md | 文本指令 + inspect 证据 |
 | phase_bindings 三槽位 | Feature phase 动笔前 / 校验前 / 校验后关环前 | 文本指令或既有 check / receipt 门禁 |
 | mcp_actions | 绑定槽位内由 agent 调用，produces 落项目内 | 产物校验进入既有 CheckResult |
 | story 类接入（M7 三接缝） | `/component-design` 前产出 materialization，之后消费 publication / 产出 feedback | `check:component-blueprint --materialization/--feedback` fail-closed |

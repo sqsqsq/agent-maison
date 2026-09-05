@@ -13,6 +13,14 @@
 和 `/extension materialize`。无 ownership 标记的旧 bridge 继续保留且不接管；MCP server、URL、
 token、command、登录配置不得进入 manifest。
 
+**goal 作者前置输入（plan a7c3e9d2）**：goal 模式在作者阶段 prompt 的 `Skill absolute path` 行后注入一句读取指令加
+`formatExtensionPhasePrompt` 的输出（本阶段 audience 命中的 knowledge 索引、legacy 字符串、`phase_bindings.<phase>` 三槽），
+与 verifier ai-prompt 用同一 formatter；同一份扩展输入同时计入 verifier 审前材料（改 knowledge / audience / 绑定会换 subject，
+沿用历史 PASS 时按 `extension_instructions` 与文件路径披露未重审差异）。manifest 1.0 在作者侧不注入：要让作者动笔前看到要求，
+须升 1.1 并给 knowledge 声明 audience。manifest 非法时只 `console.warn`「作者前置输入未注入」并指向 `--phase extensions`，不 HALT。
+`hooks/<phase>/on_context_load.md` 的片段只在通过 verifier request 资格判定并装配 verifier ai-prompt 时消费（含产品失败诊断轮），
+从不进作者上下文；交互模式由行为规约原则 1 第 8 条指引作者读 knowledge。
+
 
 ## 3.1.0：正式需求统一经部件内设计阶段（路由变化）
 
