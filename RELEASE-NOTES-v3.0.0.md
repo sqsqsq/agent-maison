@@ -45,7 +45,7 @@
 | **视觉判定新鲜度** | 判定可跨构建复用，旧结论蒙混 | 判定绑定**截图 hash + 安装包指纹**，构建变更即失效重验 |
 | **phase 合格性** | 散在脚本与 prompt 约定 | `skills/feature/<skill>/contract.yaml` 声明的结构化 inputs/capabilities/produces/checks |
 | **深度/档位** | 深度裁剪（`depth` 家族） | **`assurance` + `capability_resolutions`**（summary 1.3），能力裁剪取代深度裁剪 |
-| **verifier** | 每阶段必跑的仪式，投递 `ai-prompt.md` 全文 | **按能力启用三态**（disabled/enabled/blocked）+ **短 request JSON** 投递 |
+| **verifier** | 每阶段必跑的仪式，投递 `ai-prompt.md` 全文；结论由 SubagentStop hook 发布 | **按能力启用二态**（disabled/enabled）+ **短 request JSON** 投递；报告由**调用方**写出，hook 整体删除 |
 | **上游绿灯** | 下游不校验上游裁决 | **`upstream_verdict_gate`**：上游非 PASS / blocker 未清 / 证据 stale → 下游 BLOCKER |
 | **testing 证据** | 信 trace 的「通过」字符串 | **Hylyre StepResult v1 三轴**（execution/verification/evidence）逐步对账 |
 | **测试执行责任** | 派生器可自行 skip 用例 | 顶层 TC 必须声明 **`execution_channel`**；派生器无 skip 决策权；`manual` 永久 fail-closed |
@@ -125,7 +125,8 @@
 - **Skill contract 成为运行时输入**：结构化 inputs / capabilities / produces / checks 由 `skills/feature/<skill>/contract.yaml` 声明；
 - **`next.json` 是投影**：`assess@1` 从 summary / closure / evidence / goal 指纹重算 gap 与唯一 recommendation，**不要写脚本直接编辑**；
 - **能力裁剪取代深度裁剪（Breaking）**：`summary.depth`、`quality_depth`、`missing_optional_inputs`、`minimum_depth_by_phase` 删除，改为 `assurance` + `capability_resolutions` + contract fingerprint。`minimum_assurance` 只影响 `assess@1` 的 `insufficient_assurance`，**不能放宽 quality axes、phase closure 或 release**；
-- **verifier 能力化（Breaking）**：三态 disabled / enabled / blocked。`disabled` 是**缺席即为零**——不生成 prompt/request，闭环也不要求 verifier 证据，磁盘上的旧文件永远不会重新激活已关闭的能力。投递协议改为**短 request JSON**（旧规则投递 177KB 级 `ai-prompt.md` 全文，往返有损且零校验）。subject 按实际审查材料寻址，关环走 `--sync-closure`；
+- **verifier 能力化（Breaking）**：二态 disabled / enabled。`disabled` 是**缺席即为零**——不生成 prompt/request，闭环也不要求 verifier 证据，磁盘上的旧文件永远不会重新激活已关闭的能力。投递协议改为**短 request JSON**（旧规则投递 177KB 级 `ai-prompt.md` 全文，往返有损且零校验）。subject 按实际审查材料寻址，关环走 `--sync-closure`；
+- **verifier 报告即真源（Breaking，plan d2f7a9c4）**：机器真源改为 `verifier.report.<subject>.md`，由**派发 verifier 的 agent** 把回复原样写入 `summary.verifier_report`。SubagentStop hook、canonical JSON、结论指纹、conflict 状态机、bedside 旁路、adapter 的 `verifier_capability` 矩阵与 `blocked` 态整体删除；报告不再进 evidence manifest 与 closure attestation 哈希。三种运行模式判定一致——此前 hook 在 goal/headless 一律不发布，让无人值守 run 永远闭不了环；
 - **framework 轻量化重构**：lite / balanced / full 三档工作流与验证收敛，档位决定哪些 phase 保留 verifier 与哪些检查生效。
 
 ### 5. 反假 PASS 证据体系
@@ -228,7 +229,7 @@ UT 改码门禁不再要求宿主先提交才能取基线：direct attestation �
 - **编辑工具守卫堵不住场外进程**：无强隔离环境下，shell、脚本与 `node -e` 不在射程；这是如实声明的能力边界，真正的写保护要靠执行环境（task sandbox / 只读挂载 / 受限 token + ACL）。
 - **视觉裁判**只保证文本存在性与运行时几何为鲁棒判据；非文本观感（胶囊/容器形态）靠 review 人审与用户终验，框架不造像素位置类门禁（实测恒误报）。
 - **`probe_failed` 不作内容正证据**：建议给每个 P0/golden 目标屏配至少一个 id 锚点，否则错页只能判证据不足。
-- **adapter 能力不对等**：external_runner 类 adapter 不承诺与 claude 同级质量；未登记 `verifier_capability` 的 adapter 在 `full × interactive` 下判 `blocked`——这是如实结论，不是回归。
+- **adapter 能力不对等**：external_runner 类 adapter 不承诺与 claude 同级质量；未登记 `verifier_subagent` 的 adapter（cursor / opencode / chrys / generic）判 `disabled / adapter_has_no_reviewer`——闭环照常进行，verifier 轴如实记 `not_reviewed`，这是诚实标注，不是阻断。
 - **宿主真机回归不在本窗口执行**：3.0.0 的收口按裁决以仓内全量校验为准（单测 + fixtures + OpenSpec strict + release 门禁全绿），宿主侧真机复验留给宿主自行安排。
 
 ---

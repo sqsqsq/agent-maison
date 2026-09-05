@@ -28,7 +28,6 @@
 
 以下文件若存在命中，多半来自 adapter/verifier 会话残留或本仓目录名，**不作为 profile 正文质量评判依据**：
 
-- `framework/harness/state/last-verifier-report.{json,md}`（若在仓库中出现）。
 - 应用工程根路径名中含产品代号（不与 framework Profile 耦合）时，可排除在 Profile 正文扫描之外。
 
 建议在跑「正文词表扫描」时对 `framework/harness/state/` 使用 `--glob '!**/state/**'` 或等价排除。
