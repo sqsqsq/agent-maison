@@ -50,6 +50,8 @@ import {
 } from './utils/adjudication';
 import { writeLivenessBeacon } from './utils/liveness-beacon';
 import { loadResolvedProfile } from '../profile-loader';
+// plan a7c3e9d2：作者前置输入 formatter（文件路径 / 函数名 / 签名 / 标题与主干 extension-runtime.ts 对齐）
+import { formatExtensionPhasePrompt } from './utils/extension-runtime';
 import { tryLoadUtSourceRootResolver } from '../profile-host-loader';
 import { runCapabilityPreflight, emitHarnessPreflightGap } from './utils/capability-preflight';
 import { preflightDeviceTestEvidenceCapability } from '../capability-registry';
@@ -3363,6 +3365,27 @@ function buildPhaseWriteRecoveryContextBlock(ctx: PhaseWriteRecoveryPromptContex
   ].join('\n');
 }
 
+/**
+ * plan a7c3e9d2：作者动笔前的实例扩展输入——goal 模式是框架唯一给作者组 prompt 的位置。
+ * 判断顺序固定：无 bundle → 空；errors 非空 → warn 后空（不把"取不到"伪装成"没有"）；
+ * 无 manifest / 无目录（manifestPath === null）→ 空且不出声；否则渲染。
+ * errors 必须先于 manifestPath 判断：主干 loader 在 paths.extension_dir 非法时返回 manifestPath: null 且带 errors。
+ * 不新增 goal 事件、状态、门禁——manifest 合法性由全局 `--phase extensions` 门禁负责。
+ */
+export function extensionInputsForPhase(projectRoot: string, phase: string): string {
+  const bundle = loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot)).extensionBundle;
+  if (!bundle) return '';
+  if (bundle.errors.length > 0) {
+    const brief = bundle.errors.slice(0, 3).map(e => `${e.code}: ${e.message}`).join('；');
+    console.warn(
+      `[goal-runner] ⚠ extension manifest 非法，作者前置输入未注入：${brief}；运行 harness-runner.ts --phase extensions 修复。`,
+    );
+    return '';
+  }
+  if (bundle.manifestPath === null) return '';
+  return formatExtensionPhasePrompt(bundle, phase, projectRoot);
+}
+
 export function buildPhasePrompt(
   manifest: GoalManifest,
   projectRoot: string,
@@ -3387,6 +3410,8 @@ export function buildPhasePrompt(
   /** 本 phase 此前 attempt 的累计消耗（plan P0-1.6"已耗时"，复审补）。 */
   phasePrior?: { attempts: number; elapsedMs: number },
   phaseWriteBoundary?: PhaseWriteBoundaryResolution,
+  /** plan a7c3e9d2：实例扩展的作者前置输入段（extensionInputsForPhase 产出；空串 / 缺省 = 不注入）。 */
+  extensionInputs?: string,
 ): string {
   const skillAbs = path.join(frameworkRoot, PHASE_SKILL_REL[phase]);
   const parts = [
@@ -3409,6 +3434,10 @@ export function buildPhasePrompt(
     '',
     `Read and follow the phase skill: ${PHASE_SKILL_REL[phase]}`,
     `Skill absolute path: ${skillAbs}`,
+    // cp→main: 本块保留——主干 buildPhasePrompt 尚无扩展注入，d8f4b7e2 自陈的"通用注入"由此落地；读取指令放这里不放 formatter，formatter 被主干替换后指令仍在。
+    ...(extensionInputs
+      ? ['', "Before writing this phase's artifacts, read the instance extension inputs below that apply to this phase.", '', extensionInputs]
+      : []),
     // plan f4c8d2b7 t6：仅 ut 阶段注入两产物格式契约与 SSOT 解析后的模板真实路径——
     // headless agent 拿不到 profile-skill-asset 多跳指针后面的 OUTPUT CONTRACT（宿主
     // 实锤：精准踩中模板明文禁止的 Markdown 表格）。通用注入属 d8f4b7e2 范围，落地后本块退役。
@@ -6555,6 +6584,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
               }
             : undefined,
           phaseWriteBoundary ?? undefined,
+          // cp→main: 先 cp 写边界批次（plan 1741b6f2）再 cp 本批，避免上一实参的上下文冲突；主干 loadResolvedProfile 同样挂 extensionBundle，此行无需改。
+          extensionInputsForPhase(projectRoot, String(phase)),
         ) + inlineCanaryBlock +
           // S4：回退后 review 注入增量重点复审清单（授权 ≠ 免审）
           (phase === 'review' && backtrackReviewFocus.length > 0

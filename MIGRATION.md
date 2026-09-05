@@ -212,6 +212,14 @@ generic 未登记（共享规则被物化不等于运行时会读取）。未登
 - **退役的 halt_reason**：`phase_write_owner_unresolved`、`phase_write_boundary_unresolved`、`pre_invoke_snapshot_failed`、`post_invoke_snapshot_failed`、`unauthorized_source_mutation`、`goal_post_review_source_mutation_unresolved`、`goal_review_closure_baseline_unavailable` 新 run 不再写入；`testing_write_violation` 早已无产地。注册表条目保留并标 legacy-only，历史 `events.jsonl` 仍可解释，旧事件不改写。
 - **放弃了什么**：未登记路径与产品源码域的跨阶段写入不再"即时"阻断，改为留痕加由 checker 稍后裁决，失去一部分早期发现能力。真实编译、测试、验收失败与范围越界的处理一律不变。
 
+### 3.0.x：goal 作者前置输入——manifest 1.0 knowledge 索引注入阶段 prompt（临时，plan a7c3e9d2）
+
+`hooks/<phase>/on_context_load.md` 的片段只在装配 verifier ai-prompt 时消费（脚本 PASS 且 verifier 启用），从不进入作者动笔前的上下文；此前文档把它写成"宿主叠加指令"是误导，已订正。3.0.x 起 goal 模式在作者阶段 prompt 里注入 `doc/extensions/manifest.yaml` 的 `provides.knowledge`（1.0 字符串）索引与一句读取指令，作者动笔前即知道要读哪些文件；交互模式由 Skill 行为规约（原则 1 第 8 条）指引读取。
+
+- **宿主登记方式**：把各阶段的作者要求文件登记进 `provides.knowledge`（字符串，文件须存在）。1.0 语义是全部 Feature phase 都列出，文件名带阶段名（如 `knowledge/plan-author.md`）以便作者分辨。hooks 原样保留，仍只进 verifier。
+- **manifest 非法时**：goal 侧只 `console.warn`"作者前置输入未注入"并指向 `--phase extensions`，不新增门禁、不 HALT。
+- **升 3.1.0 的退出条件（不是无感接续）**：3.1.0 的同名 formatter 对 manifest 1.0 返回空串，升级后仍用 1.0 的宿主会**失去**这条 goal 作者提示。要保留效果，须把 knowledge 改成 1.1 对象（`{path, summary, audience: [<phase>]}`），按需再声明 `phase_bindings.<phase>.before_phase_work`；升级后段落形状不变，只是按阶段精确。
+
 ## 首选路径：初始化 Skill 的 UPDATE 模式（编排化 · S1–S4）
 
 当实例根已存在 `framework.config.json` 时，再次执行 [`framework-init`](skills/project/framework-init/SKILL.md)（`/framework-init`）进入 **UPDATE** 模式，流程为：

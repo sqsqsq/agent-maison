@@ -333,6 +333,10 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   // plan c4e8a1f7：宿主运行边界真值——CLI 选择/guardian 投影/硬失败共享分类/
   // canary 判卷 SSOT/requirement source provenance/共享参考图集合/refs receipt 分母
   { id: 'host-runtime-truth', modulePath: './unit/host-runtime-truth.unit.test' },
+  // plan a7c3e9d2 t3：goal 作者 prompt 注入 extension knowledge 索引（formatter / 注入 / manifest→invoke 送达接线）。
+  // 顺序约束：本套件在进程内跑 goalMain，会安装 goal runtime 的 SIGINT/SIGTERM handler（收到即 exit 130）；
+  // device-session 套件用 process.emit('SIGINT') 测自身清理，故必须排在它之后——与其它 goalMain 类套件同位。
+  { id: 'goal-extension-author-inputs', modulePath: './unit/goal-extension-author-inputs.unit.test' },
   { id: 'phase-evidence-manifest', modulePath: './unit/phase-evidence-manifest.unit.test' },
   { id: 'closure-attestation', modulePath: './unit/closure-attestation.unit.test' },
   { id: 'headless-assumptions', modulePath: './unit/headless-assumptions.unit.test' },

@@ -88,6 +88,10 @@
 
 **放弃了什么**：未登记路径与产品源码域的跨阶段写入不再即时阻断，改为留痕加由 checker 稍后裁决，失去一部分早期发现能力。真实编译、测试、验收失败与范围越界的处理一律不变。
 
+### 1c. goal 作者前置输入：extension knowledge 索引注入阶段 prompt（3.0.x 临时，plan a7c3e9d2）
+
+宿主扩展写在 `hooks/<phase>/on_context_load.md` 的"写作要求"从未送达作者：该事件只在装配 verifier ai-prompt 时消费，作者只能在门禁报错后反推。3.0.x 起 goal 模式在作者阶段 prompt 开头注入 `provides.knowledge`（manifest 1.0）的索引与一句读取指令；把 hook 说成"叠加指令"的六处文档已订正；交互模式由行为规约原则 1 第 8 条指引。这是临时方案：3.1.0 的同名 formatter 只认 manifest 1.1，升级后须改 1.1 声明，见 MIGRATION。
+
 ### 2. Goal 运行时归一（出生契约 · 单一调和循环 · 契约引用闭包）
 
 三条根因各对应一个里程碑，由总纲 plan 统一验收：
