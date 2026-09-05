@@ -20,7 +20,7 @@
 
 按当前 `project_profile` 自适配的设备/系统测试工程师：基于 acceptance 标准与 Spec 契约生成测试计划，执行后产出标准化测试报告。流水线**第六环（最终环）**，上游 business-ut 的 DAG 和 UT 代码，输出是功能模块质量交付的最终把关。
 
-**Goal/headless 写边界（BLOCKER）**：只写 testing/device-testing workspace 与本阶段 contract `produces`，不得修改需求 SSOT、plan、产品源码或 UT。缺测试锚点或验收契约错误时写入结构化缺陷，由 runner 自动回对应 owner；越权字节仅作为未受信输入保留，本轮证据作废，不能用人工确认豁免。
+**Goal/headless 写边界（BLOCKER）**：只写 testing/device-testing workspace 与本阶段 contract `produces`，不得修改需求 SSOT、plan、产品源码或 UT。缺测试锚点或验收契约错误时写入结构化缺陷，由 runner 自动回对应 owner。runner 按 invoke 前后哈希归因：改写**已登记的上游 artifact**（需求 / 验收 / 契约等）时本轮证据作废并自动回 owner 全量重验；其余变化记录为观测事实，由本就负责它的 check 裁决（范围、漂移、闭环门）。无法唯一定位 owner 不再终止 run，也不因此豁免上述 check。 本阶段若改了产品源码，`review_closure_attestation` 会分级列出所需的一次复核并如实标注未复核。
 
 ## 触发条件
 

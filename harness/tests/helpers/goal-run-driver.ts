@@ -397,7 +397,6 @@ async function runScenario(args: {
   let agentCalls = 0;
   let crashMutationInjected = false;
   let utSourceMutationInjected = false;
-  let utSourceMutationBlockerEmitted = false;
   (goal.__testing_setInvokeAgent as (f: unknown) => void)(async (
     _plan: unknown, _agentRoot: unknown, invokeOpts: { outputLogPath?: string } = {},
   ) => {
@@ -452,17 +451,12 @@ async function runScenario(args: {
         w(root, FIXTURE_PRODUCT_FILE,
           `struct ${FIXTURE_PRODUCT_STRUCT} { build() { Text("drifted-after-harness") } }`);
       }
+      // plan 1741b6f2 T3：`goal_post_review_source_mutation_unresolved` 已随 runner 级
+      // drift reconciliation 一并退役（生产端无产地），桩不再伪造它——否则这套回归
+      // 断言的是一个production里不存在的形态。漂移注入保留：新契约下它由责任 checker
+      // 单次分级裁决（checker WARN + readiness signal 披露），不再二次阻断收官。
       const failureBlockers =
-        (scenario === 'ut_source_mutation' || scenario === 'ut_source_drift_post_harness')
-          && String(ph) === 'ut'
-          && utSourceMutationInjected && !utSourceMutationBlockerEmitted
-          ? [{
-              id: 'goal_post_review_source_mutation_unresolved',
-              classification: 'goal_post_review_source_mutation_unresolved',
-              affected_files: [FIXTURE_PRODUCT_FILE],
-              details_excerpt: 'UT agent 在 review closure 后改写产品源码。',
-            }]
-          : scenario === 'ut_build_failure' && String(ph) === 'ut'
+        scenario === 'ut_build_failure' && String(ph) === 'ut'
             ? [
                 {
                   id: 'ut_hvigor_build',
@@ -502,9 +496,6 @@ async function runScenario(args: {
       if (failureBlockers) {
         // 失败轮不写 receipt/closure；只留下与正式 summary 同形的 blocker，
         // 让 runner 真实走 source-drift / build-attribution 分支。
-        if (scenario === 'ut_source_mutation' || scenario === 'ut_source_drift_post_harness') {
-          utSourceMutationBlockerEmitted = true;
-        }
         fs.writeFileSync(path.join(dir, 'summary.json'), JSON.stringify({
           schema_version: '1.2', assurance: 'full',
           capability_resolutions: [], capability_resolution_contract_fingerprint: null,

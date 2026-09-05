@@ -10,7 +10,9 @@
 // clean_pass（openspec design §3.3，六条件）：
 //   verdict PASS ∧ 无 pending must-review ∧ 无 P0/行为开关 waiver ∧ 无档位钳制封顶
 //   ∧ 非 DEFERRED/PARTIAL ∧ closure 血缘一致（evidence manifest fresh + review
-//   attestation 对账 ok）。任一不满足 → 禁止生成 completion（generate 直接 throw）。
+//   attestation **在场**）。任一不满足 → 禁止生成 completion（generate 直接 throw）。
+//   plan 1741b6f2 T3：基线在场时的普通源码漂移不在此重判——它已由责任 checker 分级为
+//   WARN 并经 readiness signal 披露；这里再判一次会把"披露"变成第三次阻断。
 //
 // 原件落 runner-owned run 目录（goal-runs/<run_id>/feature-completion.json，原子写），
 // feature 根只放投影（路径+sha256 指针）。手工伪造：投影/原件哈希对不上、或重算
@@ -24,7 +26,6 @@ import * as path from 'path';
 import { featureFilePath, receiptDirPath, resolveFeatureArtifact } from '../../config';
 import {
   loadReviewClosureAttestation,
-  reconcileSourceTreeAgainstAttestation,
 } from './closure-attestation';
 import { classifyGoalRunsDir, collectRequirementSsotPaths, computeRunRequirementSha } from './fidelity-shared';
 import { SUMMARY_ASSURANCE_SCHEMA_VERSIONS, validateSummaryV11 } from './quality-axes';
@@ -308,21 +309,18 @@ export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[]
     }
   }
 
-  // ⑥ review attestation（needs_fix：缺失/失配须回跑 review 闭环）
+  // ⑥ review attestation（needs_fix：基线缺失须回跑 review 闭环）
+  //
+  // plan 1741b6f2 T3：**基线存在时的普通源码漂移不在这里裁决**。同一批事实已由责任
+  // checker 判过一次——`ut_no_src_mutation` / `review_closure_attestation` 按
+  // classifyDriftRisk 分级为 WARN 并列出所需的一次复核（plan 07a41ec6 T8），披露则经
+  // 本轮 summary 的 `post_review_source_drift_unreviewed` readiness signal。在此重算一遍
+  // 会把那条"可继续、披露未复核"的结论压成 needs_fix：run 各阶段全过却收在 PARTIAL、
+  // 退出码 2、且不生成完成凭证——那不是披露，是第三次阻断。
+  // 基线**缺失**仍判 needs_fix：那是"没有任何证据"，与"有证据且已分级"不同族。
   if (chain.includes('review')) {
-    const att = loadReviewClosureAttestation(projectRoot, feature);
-    if (!att) {
+    if (!loadReviewClosureAttestation(projectRoot, feature)) {
       issues.push({ phase: 'review', condition: 'attestation_present', detail: '缺 review-closure-attestation.json', kind: 'needs_fix' });
-    } else {
-      const rec = reconcileSourceTreeAgainstAttestation(projectRoot, att);
-      if (!rec.ok) {
-        issues.push({
-          phase: 'review',
-          condition: 'attestation_reconciled',
-          detail: `review 后产品源码变更 added=${rec.added.length} modified=${rec.modified.length} deleted=${rec.deleted.length} new_roots=${rec.new_roots.length}`,
-          kind: 'needs_fix',
-        });
-      }
     }
   }
 

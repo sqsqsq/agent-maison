@@ -24,6 +24,7 @@ import { assessObservation, observeFeatureState, type AssessObservation, type As
 import {
   decideNextAction,
   capabilityBlockedReadinessSignals,
+  buildReadinessSignals,
 } from '../../harness-runner';
 import type { CheckResult, ScriptReport, HarnessRunSummary } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
@@ -485,6 +486,35 @@ const cases: Case[] = [
         assert(!nonreqBlock.includes('fidelity-intent-init'), 'other capability 明细不得出现 req 专属话术');
         assert(specBlock.includes('fidelity-intent-init'), 'req capability 明细含 req 专属话术');
       } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  // ---- plan 1741b6f2 T3：最后一个 testing 阶段披露"未复核" ----
+  {
+    name: '1741b6f2 testing 的 review_closure_attestation=WARN → 本轮 readiness signal 披露未复核',
+    run: () => {
+      const drift = (status: CheckResult['status']): CheckResult => ({
+        id: 'review_closure_attestation',
+        category: 'structure',
+        description: 'review 闭环源码快照对账',
+        severity: 'MAJOR',
+        status,
+        details: 'review 闭环后产品源码发生变更\n所需复核：\n  - 导航/状态/业务交互变化：做一次 scoped diff review',
+      });
+      const report = (checks: CheckResult[]): ScriptReport =>
+        mkScriptReport({ phase: 'testing', assurance: 'full', checks });
+      // 时序要点：测试报告在本轮更早的时点已生成，读盘只会拿到上一轮——所以披露必须
+      // 从**当轮内存 report** 派生，不能回读 script-report.json。
+      const warned = buildReadinessSignals(report([drift('WARN')]));
+      const signal = warned.find((s) => s.id === 'post_review_source_drift_unreviewed');
+      assert(!!signal, `WARN 须产出未复核 signal：${JSON.stringify(warned)}`);
+      assert(signal!.status === 'unknown', `未复核须是 unknown，实得 ${signal!.status}`);
+      assert(signal!.source_check === 'review_closure_attestation', 'signal 须点名来源 check');
+      assert((signal!.message ?? '').includes('所需复核'), 'message 须带 checker 已给的所需复核');
+      // 转绿即无信号；非 testing 阶段同样不产（该 check 只在 testing 侧存在）。
+      assert(!buildReadinessSignals(report([drift('PASS')]))
+        .some((s) => s.id === 'post_review_source_drift_unreviewed'), 'PASS 不得再报未复核');
+      assert(!buildReadinessSignals({ ...report([drift('WARN')]), phase: 'ut' })
+        .some((s) => s.id === 'post_review_source_drift_unreviewed'), '非 testing 阶段不得产该信号');
     },
   },
 ];

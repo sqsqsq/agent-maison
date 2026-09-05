@@ -869,6 +869,19 @@ function assertRunReachedEnd(probe: RunProbe, label: string): void {
   assert(!probe.events.some(e => e.type === 'phase_halt'), `${label}：不得有 phase_halt`);
 }
 
+/**
+ * plan 1741b6f2 T3：review 后普通产品源码漂移的正确收场——只裁决一次。
+ * 责任 checker 分级为 WARN 并列出所需复核，披露走本轮 summary 的 readiness signal；
+ * runner 不回退、不 halt，completion 侧也不再把它重判成 needs_fix。
+ * 终态必须是正常收官：把 PARTIAL 固化成预期，等于把"第三次阻断"写进契约。
+ */
+function assertRunFinishedWithDriftDisclosed(probe: RunProbe, label: string): void {
+  assertRunReachedEnd(probe, label);
+  assert(!probe.events.some(e => e.type === 'phase_backtrack_requested'), `${label}：不得回退`);
+  assert(probe.events.filter(e => e.type === 'phase_verdict').length === 6,
+    `${label}：六个阶段须各出一次 verdict（无重跑）`);
+}
+
 /** 干净 testing 轮的标准产物：全 pass、无 must_fix（advance 条件） */
 /**
  * adjudicated-repair-loop M2（plan e2b7c4a9）：写 testing 报告 defect-review 复核块——
@@ -1519,7 +1532,9 @@ test('e9d4b7a3 t1 入口④（三轮 review 阻断回归）：源=A、manifest �
   assert(!manifestB.requirement!.includes(nativeReq), 'manifest 自带文本 B 不得被合并进后继任务');
 });
 
-test('E2E-2a testing 改产品源码 → 当前证据作废并自动回 coding 全量重验', async () => {
+// plan 1741b6f2 T1/T3：产品源码域的跨阶段写入由 review_closure_attestation 单次分级裁决。
+// 写归因跑在 gate 之前，若它抢先回退，那条分级 WARN 永远走不到——所以这里只记录、不回退。
+test('E2E-2a testing 改产品源码 → 记录观测事实并交 checker，不抢先回退', async () => {
   const { root } = setupHost();
   const probe = await runChain(root, {
     onTesting: ({ root: r, attempt }) => {
@@ -1528,24 +1543,44 @@ test('E2E-2a testing 改产品源码 → 当前证据作废并自动回 coding �
         writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("x").id("hacked") } }');
       }
     },
-    onCoding: ({ root: r, attempt }) => {
-      if (attempt > 1) writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("owner-revalidated") } }');
-    },
   });
-  const v = probe.events.find(e => e.type === 'phase_write_violation') as
-    { violations?: Array<{ path?: string; owner?: string; pre_sha256?: string; post_sha256?: string }> } | undefined;
-  assert(!!v, `须落 phase_write_violation：${probe.events.map(e => e.type).join(',')}`);
-  const item = (v!.violations ?? []).find(c => c.path?.includes('AllBanksPage.ets'));
-  assert(item?.owner === 'coding', `须精确点名文件及 coding owner：${JSON.stringify(v)}`);
+  assert(!hasEvent(probe.events, 'phase_write_violation'),
+    `产品源码域不得判 violation：${JSON.stringify(probe.events.filter(e => e.type === 'phase_write_violation'))}`);
+  const observed = probe.events.find(e => e.type === 'phase_write_observed') as
+    { observations?: Array<{ path?: string; owner?: string; disposition?: string; pre_sha256?: string; post_sha256?: string }> } | undefined;
+  assert(!!observed, `须落 phase_write_observed：${probe.events.map(e => e.type).join(',')}`);
+  const item = (observed!.observations ?? []).find(c => c.path?.includes('AllBanksPage.ets'));
+  assert(item?.owner === 'coding' && item.disposition === 'deferred_to_checker',
+    `须精确点名文件、保留 coding owner 并标 deferred：${JSON.stringify(observed)}`);
   assert(/^[0-9a-f]{64}$/.test(item?.pre_sha256 ?? '') && /^[0-9a-f]{64}$/.test(item?.post_sha256 ?? ''),
-    '事件须携安全 pre/post hash');
-  const bt = probe.events.find(e => e.type === 'phase_backtrack_requested' && (e as { reason?: string }).reason === 'phase_write_violation') as
-    { to_phase?: string; invalidated_phases?: string[] } | undefined;
-  assert(bt?.to_phase === 'coding' && (bt.invalidated_phases ?? []).includes('testing'),
-    `须执行 coding backtrack 事务：${JSON.stringify(bt)}`);
-  assert(probe.harnessPhases.filter(p => p === 'testing').length === 1,
-    `污染的首轮 testing gate 必须跳过，仅重验轮运行一次，实得 [${probe.harnessPhases.join(',')}]`);
-  assertRunReachedEnd(probe, 'E2E-2a recovery');
+    '事件须携安全 pre/post hash（留痕不减）');
+  assert(!probe.events.some(e => e.type === 'phase_backtrack_requested'
+    && (e as { reason?: string }).reason === 'phase_write_violation'),
+  '不得由写归因触发回退');
+  assert(probe.harnessPhases.includes('testing'), 'testing gate 须照常运行，由它裁决漂移');
+  assertRunFinishedWithDriftDisclosed(probe, 'E2E-2a deferred');
+});
+
+// plan 1741b6f2：裁撤写归因裁决不得把**真实失败**一并洗白。漂移与硬 FAIL 同时在场时，
+// 漂移交 checker、FAIL 照旧 FAIL——这是本次减法的下限。
+test('E2E-2a-neg 漂移 + 真实门禁 FAIL → 仍然 FAIL，不因写归因放宽而洗绿', async () => {
+  const { root } = setupHost();
+  const probe = await runChain(root, {
+    onTesting: ({ root: r }) => {
+      writeCleanTesting(r);
+      writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("drifted") } }');
+    },
+    onHarnessSummary: ({ phase }) =>
+      phase === 'testing' ? { blockers: [GENERIC_BLOCKER] } : null,
+  });
+  assert(runEndStatus(probe.events) !== 'CHAIN_SLICE_COMPLETED'
+    && runEndStatus(probe.events) !== 'COMPLETED',
+  `真实 BLOCKER 在场时不得宣称完成：${runEndStatus(probe.events)}`);
+  assert(probe.exitCode !== 0, '真实失败须以非零退出');
+  const observed = probe.events.find(e => e.type === 'phase_write_observed') as
+    { observations?: Array<{ path?: string }> } | undefined;
+  assert((observed?.observations ?? []).some(c => c.path?.includes(PRODUCT_FILE)),
+    '漂移仍须留痕（放宽的是裁决，不是留痕）');
 });
 
 test('E2E-2b testing 改 spec-owned acceptance → 自动回 spec，不落 display-only rerun 建议', async () => {
@@ -1914,15 +1949,17 @@ test('R-6b 上一 run 遗留但 build+截图一致的 must_fix → 仍回退（i
   assertRunReachedEnd(probe, 'R-6b');
 });
 
+// 熔断面改用**已登记的 artifact 域**（acceptance.yaml）：产品源码域已交 checker，
+// 只有 artifact 域仍走 violation → 回退，所以指纹熔断也只在这一面可测。
 test('R-7 相同 phase_write_violation 第二次出现 → fingerprint fuse，不能无限回退', async () => {
   const { root } = setupHost();
   const probe = await runChain(root, {
     onTesting: ({ root: r }) => {
       writeCleanTesting(r);
-      writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("hacked") } }');
+      writeFile(r, `doc/features/${FEATURE}/acceptance.yaml`, `feature: ${FEATURE}\ncriteria:\n  - relaxed\n`);
     },
-    onCoding: ({ root: r, attempt }) => {
-      if (attempt > 1) writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("x") } }');
+    onSpec: ({ root: r, attempt }) => {
+      if (attempt > 1) writeFile(r, `doc/features/${FEATURE}/acceptance.yaml`, `feature: ${FEATURE}\ncriteria: []\n`);
     },
   });
   assert(probe.events.filter(e => e.type === 'phase_write_violation').length === 2,
@@ -2220,7 +2257,7 @@ test('T1-1 hvigor 合法生成（testing invoke 内新增模块根 BuildProfile.
   });
 });
 
-test('T1-2 混合场景（生成物 + 真源码改动）→ 生成物单列、真源码走 owner 回退', async () => {
+test('T1-2 混合场景（生成物 + 真源码改动）→ 生成物单列、真源码留痕交 checker', async () => {
   await withCleanDeviceTestEnv(async () => {
     const { root } = setupHost();
     const probe = await runChain(root, {
@@ -2229,25 +2266,23 @@ test('T1-2 混合场景（生成物 + 真源码改动）→ 生成物单列、�
         if (attempt === 1) writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("tampered") } }');
         writeCleanTesting(r);
       },
-      onCoding: ({ root: r, attempt }) => {
-        if (attempt > 1) writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("fixed") } }');
-      },
     });
-    const v = probe.events.find(e => e.type === 'phase_write_violation') as
-      { violations?: Array<{ path?: string }> } | undefined;
-    assert(!!v, `混合场景须维持 violation：${probe.events.map(e => e.type).join(',')}`);
-    assert((v!.violations ?? []).some(c => c.path?.includes(PRODUCT_FILE)),
-      `violations 须含真违规：${JSON.stringify(v)}`);
-    assert(!(v!.violations ?? []).some(c => c.path?.includes('BuildProfile.ets')),
-      `violations 不得混入生成物：${JSON.stringify(v)}`);
+    const observed = probe.events.find(e => e.type === 'phase_write_observed') as
+      { observations?: Array<{ path?: string; disposition?: string }> } | undefined;
+    assert(!!observed, `混合场景须留痕：${probe.events.map(e => e.type).join(',')}`);
+    assert((observed!.observations ?? []).some(c => c.path?.includes(PRODUCT_FILE) && c.disposition === 'deferred_to_checker'),
+      `真源码改动须点名并交 checker：${JSON.stringify(observed)}`);
+    // 合法生成物走既有降级通道，不混进写归因的观测集。
+    assert(!(observed!.observations ?? []).some(c => c.path?.includes('BuildProfile.ets')),
+      `观测集不得混入合法生成物：${JSON.stringify(observed)}`);
     const generated = probe.events.find(e => e.type === 'testing_generated_file_change') as
       { files?: string[] } | undefined;
     assert((generated?.files ?? []).includes(GEN_FILE_REL), `生成物须单列：${JSON.stringify(generated)}`);
-    assertRunReachedEnd(probe, 'T1-2 recovery');
+    assertRunFinishedWithDriftDisclosed(probe, 'T1-2 deferred');
   });
 });
 
-test('T1-3 篡改的生成物（常量与冻结配置不符）→ 仍 phase violation', async () => {
+test('T1-3 篡改的生成物（常量与冻结配置不符）→ 不得降级为合法生成物，须留痕', async () => {
   await withCleanDeviceTestEnv(async () => {
     const { root } = setupHost();
     const probe = await runChain(root, {
@@ -2257,9 +2292,14 @@ test('T1-3 篡改的生成物（常量与冻结配置不符）→ 仍 phase viol
         writeCleanTesting(r);
       },
     });
-    assert(hasEvent(probe.events, 'phase_write_violation'),
-      `常量篡改须判 violation：${probe.events.map(e => e.type).join(',')}`);
-    assert(!hasEvent(probe.events, 'testing_generated_file_change'), '篡改不得降级');
+    // 防假 PASS 的关键性质不变：篡改不得被当成"只是构建产物"洗掉。它现在按源码域漂移
+    // 留痕并由 review_closure_attestation 分级，而不是静默通过。
+    assert(!hasEvent(probe.events, 'testing_generated_file_change'), '篡改不得降级为合法生成物');
+    const observed = probe.events.find(e => e.type === 'phase_write_observed') as
+      { observations?: Array<{ path?: string; disposition?: string }> } | undefined;
+    assert((observed?.observations ?? []).some(c => c.path?.includes('BuildProfile.ets')
+      && c.disposition === 'deferred_to_checker'),
+    `篡改生成物须留痕并交 checker：${JSON.stringify(observed)}`);
   });
 });
 
