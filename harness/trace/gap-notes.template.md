@@ -92,5 +92,5 @@
 
 - trace.json: `./trace.json`（与同目录 `gap-notes.md` 配对）
 - 脚本 harness：`script-report.json`、`summary.json`、`merged-report.md` 等，与上文同目录（推荐前缀 `doc/features/<feature>/<phase>/reports/`；未配置 `reports_dir_pattern` 时为 `framework/harness/reports/<feature>/<phase>/`）
-- verifier 报告：`verifier.report.md`（同上目录）
+- verifier 报告：`verifier.report.<subject>.md`（同上目录；路径见 summary.verifier_report）
 - 关键对话片段（可选，脱敏后贴）：

@@ -30,11 +30,14 @@ tools: Read, Glob, Grep
 }
 ```
 
-它是 `harness-runner` 单点生成的**调用凭证**，也是 SubagentStop hook 绑定报告归属的唯一
-调用侧依据。`subject_id` 由其余字段重算得出；其中 `material_sha256` 是**审前材料视图**
-（phase 产物、你会读的源码/图片、规则、模板、脚本报告投影）的指纹——材料没变就是同一个
-subject，你的报告会被后续 harness 重跑**直接复用**，所以**一次审透**。任何一处被手抄错、
-被改写，或 JSON 里多出一个键、前后夹带一句话，绑定都会失配，你的报告会落 bedside、不入闭环。
+它是 `harness-runner` 单点生成的**调用凭证**。`subject_id` 由其余字段重算得出；其中
+`material_sha256` 是**审前材料视图**（phase 产物、你会读的源码/图片、规则、模板、脚本报告
+投影）的指纹——材料没变就是同一个 subject，你的报告会被后续 harness 重跑**直接复用**，
+所以**一次审透**。
+
+你的回复会由**调用方**原样写入 `summary.verifier_report` 指向的报告文件（你自己不写盘）。
+终态块里的 `verifier_subject_id` 必须逐字回显 request 的 `subject_id`：回显不上就是"这份
+报告审的不是当前材料"，闭环侧会判失配并要求重跑。
 
 **如果你收到的不是这样一份纯 request JSON**（被手抄成模板、只给了 feature/phase/路径、
 或 JSON 外还有说明文字）：照常输出审查结论，并在正文显著位置写明「未收到合法 verifier

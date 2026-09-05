@@ -93,7 +93,8 @@ goal_capability:
 ### verifier 能力化、短 request 投递与 summary 1.3（Breaking，plan a9d4e7c2）
 
 **verifier 不再是每阶段必跑的仪式，而是按能力启用。** 一次解析 workflow 的 `verifier_prompt`
-声明、feature track、evidence policy 与 adapter 的 `verifier_capability`，得到三态之一：
+声明、feature track、evidence policy 与 adapter 有没有审查员，得到二态之一
+（`blocked` 第三态已随 plan d2f7a9c4 删除，见下一节）：
 
 - `disabled`：**缺席即为零**——不生成 `ai-prompt.md`、不生成 request、summary 不写
   `verifier_subject_id` / `verifier_request` / `ai_prompt`，闭环也不要求 verifier 证据。
@@ -101,14 +102,8 @@ goal_capability:
   workflow 未声明 `verifier_prompt` 的 phase 都在此列。**磁盘上残留的旧 prompt/request/report
   永远不会重新激活已关闭的能力，也不需要你去清理。**
 - `enabled`：生成 `verifier.request.<subject>.json`，正常执行 verifier。
-- `blocked`：policy 声明 `required` 但当前 adapter 没有登记该模式的 verifier 能力。
-  **脚本门禁照常完整执行**——脚本 FAIL 如实报真实失败；脚本 PASS 才报
-  `INCOMPLETE / verifier_provider_unavailable`。
 
-**adapter 侧需要动手的一处**：`agents/<adapter>/adapter.yaml` 新增 `verifier_capability`
-（`transport` / `publisher` / `modes`）。claude 与 codeagent 已随发布件登记 `interactive`。
-自建 adapter 若确实具备 SubagentStop 发布链路且已实测，可照此登记；**未登记 = 无能力**，
-`full × interactive` 下会被判 `blocked`（这是如实结论，不是回归）。
+**adapter 侧需要动手的一处**：见下一节的 `verifier_subagent` 布尔字段。
 
 **投递协议改为短 request JSON（Breaking）。** 旧规则「把 `ai-prompt.md` 全文原样投递给 Task」
 已删除：真实样张可达 177KB，往返有损且机器块之外零校验。新规则——
@@ -135,6 +130,58 @@ closure-only 场景仍优先 `--sync-closure`，因为重跑脚本没有必要�
   不从 spec 重走、也不要求提交。**
 - 下游发现缺陷时的正常回退不变：回责任上游改 → 重跑上游 harness/verifier/check-receipt →
   下游因 freshness 变 stale → 从下游继续。不清空 feature。
+
+---
+
+### 3.0.0：verifier 报告即真源，SubagentStop 发布链整体删除（Breaking，plan d2f7a9c4）
+
+**病根**：verifier 结论此前必须由 SubagentStop hook 四方对账后发布成 canonical
+`verifier.report.<subject>.json`，check-receipt 只认这一份。而该 hook 在
+`MAISON_GOAL_HEADLESS=1` 下一律落 bedside 旁路、不发布——两条规则交集为空。宿主
+bc-openCard-1 于 2026-09-04 起的两轮无人值守 goal run，harness `verdict=PASS / blockers=[]`、
+verifier 真跑且 PASS，闭环仍永远差最后一步，最终 `closure_wall_repeated` 熔断。同一根病因还有
+第二个受害者：codex 等无 hook 的 adapter 自 2026-08-29 起被判 `blocked`，`full` track 事实不可用。
+
+hook 独占发布、四方对账、conflict 状态机、16 种 bedside 分类、结论指纹重算，整体服务于「主 agent
+不能伪造 PASS」这一个防篡改目标。按 docs/overview.md §1.2.1 的效率优先原则，这不是高优先级；
+而它的 fail-closed 教条把「发布手续失败」判成「检查根本不存在」。本次整体删除。
+
+**机器真源改为 `<reports>/verifier.report.<subject>.md`，写者是调用方。** verifier 子代理行为不变
+（只读工具集，回复完整报告，末尾恰好一个终态块）；派发它的 phase executor / 主 agent 把回复
+**原样全文**写入 `summary.verifier_report` 指向的路径，再跑 check-receipt。不摘要、不只贴终态块：
+正文里的发现是 repair candidates 与多模态审查的输入。
+
+**闭环校验只剩三条**：报告文件在、终态块回显的 subject 等于 `summary.verifier_subject_id`、
+`verdict` 与 `blocker_count` 一致。任一不成立的唯一恢复动作是重跑 verifier 并重写报告
+（loader 错误码由 10 种减到 4 种）。
+
+**adapter 声明改为一个布尔 `verifier_subagent`**，语义是「宿主实跑观测过该工具能起 verifier
+子代理」，与运行模式、发布机制无关。claude / codeagent / codex 已登记；cursor / opencode / chrys /
+generic 未登记（共享规则被物化不等于运行时会读取）。未登记 = plan 判
+`disabled / adapter_has_no_reviewer`：不生成 request、不重跑、**不阻断**，check-receipt 以 WARN 如实
+披露 verifier 轴 `not_reviewed`。
+
+**三种运行模式解析结果完全一致**，verifier 判定不再有任何 `MAISON_GOAL_HEADLESS` 分支。
+
+**报告哈希门删除**：verifier 报告不再进 evidence manifest 保护面；closure attestation 删
+`verifier_report_sha256` / `verifier_result_sha256`，只留 `verifier_subject_id`，`schema_version`
+升 `1.2`（`1.0` / `1.1` 仍可读）。一份刻意不做防篡改的文件，不能同时充当「改了就 stale」的绊线。
+
+**升级动作（实例工程）：**
+
+1. 重新物化 `.claude/settings.json`（codeagent 为 `.cac/settings.json`）——`SubagentStop` 段已删除；
+2. 删除实例里的 `.claude/hooks/record-verifier-report.mjs`（`.cac/hooks/` 同）；
+3. `framework/harness/state/last-verifier-report.{json,md}` 若存在可直接删除，已无消费者；
+4. 重新物化规则跳板与 `.claude/agents/verifier.md`（措辞已更新，工具集与输出格式不变）；
+5. 自建 adapter 若已实测能派发 verifier 子代理，在 `adapter.yaml` 写 `verifier_subagent: true`。
+
+**存量产物**：旧 `verifier.report.<subject>.json` 不再被读取，不必清理。已 closed 的阶段不受影响；
+被 `--revalidate` 或重跑 harness 带回 open 的阶段，若没有当代 MD 报告，需要重审一次
+（一次审查换掉整条代际分派轴——`summary.schema_version` 不再参与 verifier 证据裁决）。
+
+**放弃的准确性**（plan d2f7a9c4 一、放弃项）：报告可被伪造或事后修改而不被机器识别；同 subject
+并发不再报 conflict；不再核对子代理身份。兜底靠下游阶段门禁与人；`subject` 仍挡住「旧 PASS 冒充
+当前结果」这一真实错误源。
 
 ---
 
