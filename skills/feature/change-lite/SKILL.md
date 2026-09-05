@@ -14,7 +14,7 @@
 
 lite 轨（L1）：单模块小需求的轻量链——单文档 `change.md` 承载叙述，`change → coding → exit` 三段，验证收敛到 **exit 一次性出口门禁**（编译 + lint + `diff_within_scope` 红线 + 验收 checkbox 全勾 + 条件 UT）。跨模块 / 像素级 UI 保真 / goal 模式一律走 full 全链（spec→…→testing），不适用本 Skill。
 
-**Goal/headless 写边界（BLOCKER）**：每个 lite phase 只写其 contract `produces` 与动态解析出的 Scope/UT 路径；`change` 不写实现，`coding` 不改 `change.md`，`exit` 只验证/产出自身报告。越权字节保留为未受信输入、本轮证据作废并自动回唯一 owner 重验；无唯一 owner 时 fail-closed，不能靠人工确认放行。
+**Goal/headless 写边界（BLOCKER）**：每个 lite phase 只写其 contract `produces` 与动态解析出的 Scope/UT 路径；`change` 不写实现，`coding` 不改 `change.md`，`exit` 只验证/产出自身报告。runner 按 invoke 前后哈希归因：改写**已登记的上游 artifact**（需求 / 验收 / 契约等）时本轮证据作废并自动回 owner 全量重验；其余变化记录为观测事实，由本就负责它的 check 裁决（范围、漂移、闭环门）。无法唯一定位 owner 不再终止 run，也不因此豁免上述 check。
 
 | 叙述产物 | 路径 | 寿命 |
 |----------|------|------|

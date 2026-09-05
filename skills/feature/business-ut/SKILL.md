@@ -23,7 +23,7 @@
 
 资深宿主侧业务级 UT 工程师：作为**既有代码的消费者**，读懂业务编排源码（coding 自选形态）与 data 层源码，产出可通过 harness 出口检查的 UT + DAG。UT 运行框架/编译/执行链路以当前 `project_profile` addendum 与 `ut.compile`/`ut.run` capabilities 为准。流水线**第五环**，上游 plan（`use-cases.yaml`，条件式）/coding/code-review，输出流入 device-testing（消费 `acceptance.yaml > device_focus`）。
 
-**Goal/headless 写边界（BLOCKER）**：只写 profile resolver 给出的 UT 根与本阶段 contract `produces`；不得改需求契约、产品实现源码、review 或 testing 产物。发现可测性缺口须报告并由 runner 回责任阶段；越权字节不获信任，本轮证据作废并自动回 owner 重验，不能用人工确认豁免。
+**Goal/headless 写边界（BLOCKER）**：只写 profile resolver 给出的 UT 根与本阶段 contract `produces`；不得改需求契约、产品实现源码、review 或 testing 产物。发现可测性缺口须报告并由 runner 回责任阶段。runner 按 invoke 前后哈希归因：改写**已登记的上游 artifact**（需求 / 验收 / 契约等）时本轮证据作废并自动回 owner 全量重验；其余变化记录为观测事实，由本就负责它的 check 裁决（范围、漂移、闭环门）。无法唯一定位 owner 不再终止 run，也不因此豁免上述 check。 本阶段若改了生产代码，`ut_no_src_mutation` 会按 coding change 归类并给出所需的一次复核。
 
 ## 触发条件
 

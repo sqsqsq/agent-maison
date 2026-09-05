@@ -2402,7 +2402,7 @@ function extractCompileFirstError(report: ScriptReport): HarnessRunSummary['comp
   return undefined;
 }
 
-function buildReadinessSignals(report: ScriptReport): HarnessRunSummary['readiness_signals'] {
+export function buildReadinessSignals(report: ScriptReport): HarnessRunSummary['readiness_signals'] {
   const signals: HarnessRunSummary['readiness_signals'] = [];
 
   if (report.phase === 'docs') {
@@ -2473,6 +2473,18 @@ function buildReadinessSignals(report: ScriptReport): HarnessRunSummary['readine
   }
 
   if (report.phase === 'testing') {
+    // plan 1741b6f2 T3：review 后源码漂移由 review_closure_attestation 单次裁决为 WARN，
+    // 但 testing 常常是链上最后一个阶段——没有下一阶段可以承接"所需复核"。测试报告在本轮
+    // 更早的时点就已生成，读盘只会拿到上一轮，故走本轮 report 的 readiness 通道披露。
+    const postReviewDrift = report.checks.find(c => c.id === 'review_closure_attestation');
+    if (postReviewDrift?.status === 'WARN') {
+      signals.push({
+        id: 'post_review_source_drift_unreviewed',
+        status: 'unknown',
+        source_check: 'review_closure_attestation',
+        message: postReviewDrift.details,
+      });
+    }
     const install = report.checks.find(c => c.id === 'device_test_install');
     const build = report.checks.find(c => c.id === 'device_test_build');
     if (

@@ -104,7 +104,7 @@ export function runAll(): UnitCaseResult[] {
       'testing workspace must be testing-owned');
   });
 
-  run(results, 'unknown custom phase and unregistered new paths fail closed without an owner manifest', () => {
+  run(results, 'unknown custom phase and unregistered new paths resolve to no owner without an owner manifest', () => {
     const root = makeHost();
     const boundary = resolve(root, [...CHAIN, 'custom-export']);
     assert(boundary.diagnostics.some((item) => item.includes('custom-export') && item.includes('read-only')),
@@ -113,7 +113,7 @@ export function runAll(): UnitCaseResult[] {
     assert(ownership.status === 'none' && ownership.owner === null, 'unregistered custom output must have no owner');
   });
 
-  run(results, 'multiple owners are explicit and fail closed', () => {
+  run(results, 'multiple owners are reported explicitly with both candidates retained', () => {
     const root = makeHost();
     const boundary = resolve(root);
     const acceptance = resolvePhasePathOwnership(boundary, `doc/features/${FEATURE}/acceptance.yaml`);
@@ -162,7 +162,7 @@ export function runAll(): UnitCaseResult[] {
       'diagnostic must retain safe pre/post hashes');
   });
 
-  run(results, 'coding may create scoped source but may not write the profile UT root', () => {
+  run(results, 'coding source is allowed and a cross-phase source write defers to its checker', () => {
     const root = makeHost();
     const boundary = resolve(root);
     const pre = capturePhaseInvocationSnapshot(boundary);
@@ -174,8 +174,58 @@ export function runAll(): UnitCaseResult[] {
     if (diff.kind !== 'changed') return;
     const classified = classifyPhaseInvocationChanges(boundary, 'coding', diff.changes);
     assert(classified.allowed.some((item) => item.path.endsWith('/NewCard.ets')), 'coding source addition should be allowed');
-    assert(classified.violations.some((item) => item.owner === 'ut' && item.path.endsWith('/New.test.ets')),
-      'UT source addition during coding must route to UT owner');
+    // plan 1741b6f2 T1: a source-role cross-phase write still resolves its owner and stays
+    // fully auditable, but it no longer pre-empts the graded checker disposition.
+    const utWrite = classified.observed.find((item) => item.path.endsWith('/New.test.ets'));
+    assert(utWrite?.owner === 'ut' && utWrite.disposition === 'deferred_to_checker',
+      `UT source addition during coding must be observed and deferred: ${JSON.stringify(classified.observed)}`);
+    assert(!classified.violations.some((item) => item.path.endsWith('/New.test.ets')),
+      'a source-role cross-phase write must not raise a write violation');
+  });
+
+  run(results, 'harness-written feature-root records are observed as unattributed, never violations', () => {
+    const root = makeHost();
+    const boundary = resolve(root);
+    const pre = capturePhaseInvocationSnapshot(boundary);
+    // These are exactly the paths that terminated the 2026-09-04 host run: the harness
+    // derives them itself, and the artifact inventory describes skill narratives only.
+    write(root, `doc/features/${FEATURE}/visual-debt.json`, '{"schema_version":"1.0","entries":[]}\n');
+    write(root, `doc/features/${FEATURE}/visual-debt.md`, '# debt\n');
+    write(root, `doc/features/${FEATURE}/revalidation.json`, '{"records":[]}\n');
+    write(root, `doc/features/${FEATURE}/spec/notes.md`, '# notes\n');
+    const post = capturePhaseInvocationSnapshot(boundary);
+    const diff = diffPhaseInvocationSnapshots(pre, post);
+    assert(diff.kind === 'changed', 'unregistered feature-root writes must stay visible');
+    if (diff.kind !== 'changed') return;
+    const classified = classifyPhaseInvocationChanges(boundary, 'spec', diff.changes);
+    assert(classified.violations.length === 0,
+      `unregistered paths must not be violations: ${JSON.stringify(classified.violations)}`);
+    for (const rel of ['visual-debt.json', 'visual-debt.md', 'revalidation.json', 'notes.md']) {
+      const item = classified.observed.find((entry) => entry.path.endsWith(rel));
+      assert(item?.disposition === 'unattributed', `${rel} must be observed as unattributed`);
+      assert(/^[0-9a-f]{64}$/.test(item?.postSha256 ?? ''), `${rel} must keep an auditable post hash`);
+    }
+  });
+
+  run(results, 'a multi-owner path is observed rather than fail-closed', () => {
+    const root = makeHost();
+    const boundary = resolve(root);
+    // Two owners for one path is a registry ambiguity, not agent misbehaviour.
+    const contested = boundary.domains[0]?.path ?? '';
+    assert(contested.length > 0, 'fixture must resolve at least one domain');
+    const forged: PhaseWriteBoundaryResolution = {
+      ...boundary,
+      domains: [
+        { owner: 'spec', kind: 'artifact', match: 'exact', path: contested, source: 'test:a' },
+        { owner: 'plan', kind: 'artifact', match: 'exact', path: contested, source: 'test:b' },
+      ],
+    };
+    const classified = classifyPhaseInvocationChanges(forged, 'coding', [
+      { path: contested, how: 'modified', preSha256: 'a'.repeat(64), postSha256: 'b'.repeat(64) },
+    ]);
+    assert(classified.violations.length === 0, 'multi-owner must not be a violation');
+    assert(classified.observed[0]?.disposition === 'unattributed',
+      `multi-owner must be observed as unattributed: ${JSON.stringify(classified.observed)}`);
   });
 
   return results;

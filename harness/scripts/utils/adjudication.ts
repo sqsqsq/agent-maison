@@ -184,7 +184,9 @@ export type RecoverAction = 'backtrack_to_coding' | 'retry_transaction';
  */
 export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.freeze({
   // --- 本 plan 打通的两条恢复路 -------------------------------------------
-  /** ut/testing 期产品源码漂移：保守恢复=失效旧 coding closure 及其后阶段、回退重验。 */
+  /** legacy-only（plan 1741b6f2 T3/T4）：runner 级 drift reconciliation 已删除，新 run 不再
+   *  写入本 halt——同一漂移事实改由 ut_no_src_mutation / review_closure_attestation 单次分级
+   *  裁决。条目保留仅供历史 events.jsonl 解释与归档工具，不参与新 run 决策。 */
   unauthorized_source_mutation: { class: 'recoverable', recover_action: 'backtrack_to_coding' },
 
   // --- 结构上无法在本 run 继续 ---------------------------------------------
@@ -192,13 +194,18 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   backtrack_limit: { class: 'recoverable', structurally_terminal: true },
   backtrack_fingerprint_repeat: { class: 'recoverable', structurally_terminal: true },
   backtrack_target_absent: { class: 'recoverable', structurally_terminal: true },
-  /** 写边界/owner 无法从既有 SSOT 唯一解析，框架无法安全归因或自动重验。 */
+  /** legacy-only（plan 1741b6f2 T1/T2/T4）：归属信息不足不再是裁决依据——owner 解析不出
+   *  只说明 artifact inventory 不描述该路径（它按定义只收 skill 叙事产物），不构成越权；
+   *  边界解析失败只说明本次拿不到归因证据。两者现均降为 phase_write_boundary_degraded /
+   *  phase_write_observed 诊断事件，新 run 不再写入本 halt。条目保留供历史事件解释。 */
   phase_write_boundary_unresolved: { class: 'framework_fault', structurally_terminal: true },
   phase_write_owner_unresolved: { class: 'framework_fault', structurally_terminal: true },
   /** 同一越权写入已在本 run 重现，现有收敛熔断不允许 resume 重置。 */
   phase_write_violation_repeat: { class: 'recoverable', structurally_terminal: true },
-  /** invocation 后快照失败时无法证明写入归因，属于不可继续的框架事务失败。 */
+  /** legacy-only（plan 1741b6f2 T2/T4）：见 pre_invoke_snapshot_failed；新 run 不再写入。 */
   post_invoke_snapshot_failed: { class: 'framework_fault', structurally_terminal: true },
+  /** legacy-only：本 id 已无产地，仅 goal-phase-runtime 的 resume 兼容读取历史 events.jsonl
+   *  时用到（该保护按事件本身而非 halt_reason 判定）。plan 1741b6f2 不重设计历史 run 恢复。 */
   testing_write_violation: { class: 'recoverable', structurally_terminal: true },
   visual_ledger_integrity: { class: 'framework_fault', structurally_terminal: true },
 
@@ -345,7 +352,8 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
 
   // --- harness 侧 blocking_class（与上面的 halt_reason 同为 incident 形态；
   //     观测层按同一注册表投影，见 projectToObservedActionability） --------------
-  /** unauthorized_source_mutation 的 harness 侧孪生：同样走保守回退重验。 */
+  /** legacy-only（plan 1741b6f2 T3/T4）：unauthorized_source_mutation 的 harness 侧孪生，
+   *  随 runner 级 reconciliation 一并退役；保留仅供历史事件解释。 */
   goal_post_review_source_mutation_unresolved: {
     class: 'recoverable', recover_action: 'backtrack_to_coding',
   },
@@ -368,6 +376,8 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   pass_snapshot_journal_unverifiable: {
     class: 'recoverable', recover_action: 'retry_transaction', suspected_misclassified: true,
   },
+  /** legacy-only（plan 1741b6f2 T2/T4）：快照拿不到只意味着本次 invocation 无写归因证据，
+   *  不是产物有问题——现降为诊断并继续出 verdict，新 run 不再写入这两个 halt。 */
   pre_invoke_snapshot_failed: { class: 'external', suspected_misclassified: true },
   /** runner-owned-machine-facts：invoke 前回执骨架写失败（目录只读/模板缺失/文件占用）。
    *  不启动 agent、不烧 attempt——静默吞会让旧身份回执存活，receipt_attempt_identity
@@ -383,6 +393,8 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   closure_finalization_failed: {
     class: 'recoverable', recover_action: 'retry_transaction', suspected_misclassified: true,
   },
+  /** legacy-only（plan 1741b6f2 T3/T4）：缺 attestation 基线现由 checker 报"无基线：做一次
+   *  最终合并 diff review"并继续，不再 halt；保留仅供历史事件解释。 */
   goal_review_closure_baseline_unavailable: {
     class: 'recoverable', recover_action: 'backtrack_to_coding', suspected_misclassified: true,
   },

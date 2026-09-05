@@ -570,27 +570,46 @@ const incidentClosureCases: TestCase[] = [
     },
   },
   {
-    name: '事故②跨 resume：drift 指纹须落 events 且从 priorEvents 回放（重启不得失忆白吃预算）',
+    name: 'plan 1741b6f2：runner 级 source drift 二次裁决已删除，不得复活',
     run: () => {
       const src = stripComments(fs.readFileSync(path.join(SCRIPTS_DIR, 'goal-phase-runtime.ts'), 'utf8'));
-      // ① 保守恢复事件必须持久化 drift_fingerprint
+      // 同一批漂移事实只由责任 checker 裁决一次（ut_no_src_mutation /
+      // review_closure_attestation，两者按 classifyDriftRisk 分级并给出所需复核）。
+      // runner 在推进前重算一遍，会把 checker 已判的「可继续、披露未复核」升级成强制
+      // 整链回退——那正是本 plan 删掉的重复裁决，任何形态的复活都要在这里红。
       assert(
-        /drift_fingerprint:\s*driftDecision\.driftFingerprint/.test(src),
-        'phase_backtrack_requested 未持久化 drift_fingerprint —— resume 后无从回放',
+        !/reconcileMutablePhaseSourceDrift/.test(src),
+        'runner 级 drift reconciliation 已退役，不得重新引入',
       );
-      // ② 启动期必须从 events 回放进 seenDriftFingerprints
       assert(
-        /seenDriftFingerprints\.add\(ev\.drift_fingerprint\)/.test(src),
-        '启动期未从 priorEvents 回放 drift 指纹',
+        !/seenDriftFingerprints/.test(src),
+        'drift 指纹集随二次裁决一并删除（没有第二次裁决就没有重复吃预算的问题）',
       );
-      // ③ 声明必须早于回放循环（否则 TDZ / 回放落空）
-      const declIdx = src.indexOf('const seenDriftFingerprints');
-      const replayIdx = src.indexOf('seenDriftFingerprints.add(ev.drift_fingerprint)');
-      assert(declIdx > 0 && replayIdx > declIdx, '声明必须早于 events 回放');
-      // ④ 全文只有一处声明（防止又出现第二个「每进程新建」的集合）
       assert(
-        src.split('const seenDriftFingerprints').length - 1 === 1,
-        'seenDriftFingerprints 只允许一处声明',
+        !/untrusted_source_drift_revalidation/.test(src),
+        '窗口外漂移不得再产出 untrusted_source_drift_revalidation 失效记录',
+      );
+      // 归属信息不足同样不再终局——它只说明 artifact inventory 不描述该路径，
+      // 或本次拿不到归因证据；两者都不是"产物有问题"的证据。
+      for (const retired of [
+        'phase_write_owner_unresolved',
+        'phase_write_boundary_unresolved',
+        'pre_invoke_snapshot_failed',
+        'post_invoke_snapshot_failed',
+      ]) {
+        assert(
+          !new RegExp(`halt_reason:\\s*'${retired}'`).test(src),
+          `${retired} 已退役，不得再作为 halt 产地`,
+        );
+      }
+      // 退役不等于静默：三类归因缺口改发诊断事件，事实仍然留痕。
+      assert(
+        (src.match(/phase_write_boundary_degraded/g) ?? []).length >= 3,
+        '边界解析失败/源码域不可解/前后快照失败三处都须发 phase_write_boundary_degraded 诊断',
+      );
+      assert(
+        /type:\s*'phase_write_observed'/.test(src),
+        '无 owner / 交 checker 的变化须落 phase_write_observed，留痕不得省',
       );
     },
   },

@@ -73,6 +73,21 @@
 
 配套的生存能力（其中一半来自 2.4.0 窗口、在本窗口被继续加固）：宿主无关的存活语义与启动后自校验、liveness beacon、supervisor auto-resume、声明式 launch-liveness-wakeup、Job 团灭与孤儿治理、resume 真源收编、Stop hook 逃生阀、超时与 API 断流的正确分类（`transient_api_error` 不再误判 no_progress）。过夜任务的失败模式从「静默死亡显示运行中」「静默等人」变成「据实回退重修或诚实终止」。
 
+### 1b. 写边界从归属门禁改为归因诊断（plan 1741b6f2）
+
+**以前的问题**
+3.0.0 新增的 phase 写边界把三件事绑成一步：发现文件变了、判断谁改的、决定 run 能否继续。后两步不可靠。`inventory.yaml` 按定义只描述 skill 叙事产物（明确排除 harness 派生报告），却被拿来审判整个 feature 目录——于是 harness 自己写的 `visual-debt.json` / `visual-debt.md`、`revalidation.json` 与各阶段 `notes.md` 全部解析不到 owner，被判 `phase_write_owner_unresolved` 并终结 run。宿主 2026-09-04 的 spec 阶段就是这样在 verdict=PASS、blockers 空、20 个 logo 裁剪坐标全部冻结完成的情况下停掉的。补文件名排除名单堵不住：阶段 SKILL 要求 agent 在自己进程内跑 `harness-runner.ts`，harness 的写入必然落在归因窗口内。
+
+**3.0.0 的做法**
+写边界降为它本来就做得到的事——归因，不是裁决：
+
+- 归属信息不足（未登记 / 多归属 / 边界解析失败 / 前后快照失败）一律降为诊断事件，run 继续，事实完整留痕；
+- 跨阶段写入按既有路径角色分流：命中 inventory 登记的 **artifact 域**（需求 / 验收 / 契约）时，作废本轮证据并自动回 owner 重验的行为**完全不变**；只匹配到产品源码或阶段工作区的，交给本就在判它的 checker；
+- 删除源码漂移的第二、第三次裁决——写归因跑在 gate 之前，它和 goal 外层重判合起来让 §「漂移分级」的 WARN 永远走不到；completion 侧的 clean-pass 收集器同样不再把已分级的漂移记成阻断项（否则各阶段全过仍收在 PARTIAL、无完成凭证）。基线缺失仍是阻断项：那是没有证据；
+- testing 作为链上最后一个阶段时，「未复核」经本轮 summary 的 readiness signal `post_review_source_drift_unreviewed` 如实披露。
+
+**放弃了什么**：未登记路径与产品源码域的跨阶段写入不再即时阻断，改为留痕加由 checker 稍后裁决，失去一部分早期发现能力。真实编译、测试、验收失败与范围越界的处理一律不变。
+
 ### 2. Goal 运行时归一（出生契约 · 单一调和循环 · 契约引用闭包）
 
 三条根因各对应一个里程碑，由总纲 plan 统一验收：

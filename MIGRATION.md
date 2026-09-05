@@ -154,6 +154,17 @@ closure-only 场景仍优先 `--sync-closure`，因为重跑脚本没有必要�
 - **summary 新字段**：`verifier_closure`（沿用既往 PASS 时在场）；readiness_signal `script_revalidated`；`device_test_run.structured.execution_key / reused_by_execution_key`。
 - **codex review 收敛（2026-09-03）**：回执整体退出新闭环输入与 Stop 判据，只在 closed 后 best-effort 投影；freshness 只看 manifest 自身完整性与输入/产物哈希。subject 派生不含时间、`source_commit_sha` / `worktree_digest`；机器测试报告用权威 run 时间，材料视图纳入最新真机 run trace、visual-diff.json 与 lifecycle fragments。`ut_no_src_mutation` 的 goal/direct 路径统一分级 WARN；TC 行行为字段决定派生新鲜度；执行键只复用最新真实 attempt，稳定性结论需 ≥2 轮同键执行（含失败轮）；inactive provider 是 `unsupported_gap`，active 无 producer 是跑机前 `invalid_test`；completion 重投影保留 P0 gaps，`semantic_not_reverified` 进 readiness_signals；整屏 geometry 须全部元素定位且 PASS；`NEXT:` 一次列出全部 blocker。
 
+### 3.0.0：写边界从归属门禁改为归因诊断（plan 1741b6f2）
+
+写边界原本把三件事绑成一步：发现文件变了、判断谁改的、决定 run 能否继续。后两步不可靠——`specs/artifact-schemas/inventory.yaml` 按定义只描述 skill 叙事产物（明确排除 harness 派生报告），却被拿来审判整个 feature 目录，于是 harness 自己写的 `visual-debt.json` / `visual-debt.md`、`revalidation.json`、各阶段 `notes.md` 全部解析不到 owner，被判 `phase_write_owner_unresolved` 并终结整个 run。宿主 2026-09-04 的 spec 阶段就是这样在 verdict=PASS、blockers 空、产物齐全的情况下停掉的。消费者需要知道的变化：
+
+- **归属信息不足不再是裁决依据**：owner 解析不出（未登记 / 多归属）改为落 `phase_write_observed` 事件（含路径、pre/post 哈希、候选 owner、匹配角色）后继续执行。不再产生 violation、不再 HALT。**不采用文件名排除名单**——名单堵不严，因为阶段 SKILL 要求 agent 在自己进程内跑 `harness-runner.ts`，harness 的写入必然落在归因窗口内。
+- **跨阶段写入按既有路径角色分流**：命中 inventory 登记的 **artifact 域**（需求 / 验收 / 契约等）时，既有的"作废本轮证据 + 自动回退 owner 重验"完全不变；只匹配到**产品源码或阶段工作区**的跨阶段写入不再在此抢先回退，交给本就在判它的 checker（`check-coding` 范围门、`ut_no_src_mutation`、`review_closure_attestation`）。写归因跑在 gate 之前，原先的抢先回退会让 07a41ec6 的分级 WARN 永远走不到。
+- **归因链自身故障降级**：写边界解析失败、本阶段源码域解析不出、invoke 前后快照失败，一律发 `phase_write_boundary_degraded` 诊断并跳过本阶段写归因，阶段照常出 verdict。缺归因证据不等于产物有问题。
+- **源码漂移只裁决一次**：删除 goal 运行时的 `reconcileMutablePhaseSourceDrift` 二次裁决及其强制回退与缺基线 halt；`collectCleanPassIssues` 也不再把"基线在场但对账不符"记成 `attestation_reconciled(needs_fix)`（那会让各阶段全过的 run 仍收在 PARTIAL、退出码 2 且不生成完成凭证——那是第三次阻断，不是披露）。基线**缺失**仍判 needs_fix：那是没有证据，不是有证据且已分级。漂移处置以 checker 的分级 WARN 与所需复核为准；checker 判 BLOCKER 时照常经 assess 走 `backtrack_to_phase`。testing 是链上最后一个阶段时，"未复核"通过本轮 summary 的 readiness signal `post_review_source_drift_unreviewed`（status=`unknown`）披露。
+- **退役的 halt_reason**：`phase_write_owner_unresolved`、`phase_write_boundary_unresolved`、`pre_invoke_snapshot_failed`、`post_invoke_snapshot_failed`、`unauthorized_source_mutation`、`goal_post_review_source_mutation_unresolved`、`goal_review_closure_baseline_unavailable` 新 run 不再写入；`testing_write_violation` 早已无产地。注册表条目保留并标 legacy-only，历史 `events.jsonl` 仍可解释，旧事件不改写。
+- **放弃了什么**：未登记路径与产品源码域的跨阶段写入不再"即时"阻断，改为留痕加由 checker 稍后裁决，失去一部分早期发现能力。真实编译、测试、验收失败与范围越界的处理一律不变。
+
 ## 首选路径：初始化 Skill 的 UPDATE 模式（编排化 · S1–S4）
 
 当实例根已存在 `framework.config.json` 时，再次执行 [`framework-init`](skills/project/framework-init/SKILL.md)（`/framework-init`）进入 **UPDATE** 模式，流程为：

@@ -21,7 +21,7 @@
 
 资深宿主应用开发工程师：按 plan.md 逐模块生成与 `contracts.yaml` 对齐、可通过 harness 出口检查的实现代码。流水线**第三环**，上游 `plan.md`，输出流入 code-review。
 
-**Goal/headless 写边界（BLOCKER）**：只写冻结 Scope/contracts 解析出的实现源码与本阶段 contract `produces`；不得改 spec/plan/acceptance、profile UT 根或 testing 产物。若契约范围不足，只报告发现并由 runner 自动回责任阶段；越权字节保留为未受信输入、本轮证据作废，不能用人工确认豁免。
+**Goal/headless 写边界（BLOCKER）**：只写冻结 Scope/contracts 解析出的实现源码与本阶段 contract `produces`；不得改 spec/plan/acceptance、profile UT 根或 testing 产物。若契约范围不足，只报告发现并由 runner 自动回责任阶段。runner 按 invoke 前后哈希归因：改写**已登记的上游 artifact**（需求 / 验收 / 契约等）时本轮证据作废并自动回 owner 全量重验；其余变化记录为观测事实，由本就负责它的 check 裁决（范围、漂移、闭环门）。无法唯一定位 owner 不再终止 run，也不因此豁免上述 check。
 
 ## 触发条件
 

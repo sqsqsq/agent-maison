@@ -1,8 +1,5 @@
-# phase-write-boundary Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change autonomous-recovery-without-human-gates. Update Purpose after archive.
-## Requirements
 ### Requirement: Phase write ownership is derived from existing workflow contracts and scope resolvers
 
 For every controlled phase invocation, the harness SHALL derive the writable artifact and source domains from the resolved workflow chain, `loadFeatureContracts`/`phaseContractIndex`, contract `produces`, the artifact registry and phase-evidence resolver, coding plan/module scope, the active profile's UT test-root resolver, and the existing testing protected-source resolver. The workflow SHALL provide phase membership/order only and MUST NOT be treated as a path-owner table. A path that uniquely matches the current phase's existing producer/resolver SHALL be writable. A path with no match or multiple owners SHALL be recorded as an observed fact with its candidate owners and matched roles, and the invocation SHALL continue; it SHALL NOT produce a write violation, halt the run, or yield a terminal incident. The resolver MUST NOT be extended with a file-name exclusion list, a parallel permission table, or a persisted owner manifest to compensate for paths the artifact registry deliberately does not describe.
@@ -23,27 +20,6 @@ Enforcement: `harness/scripts/utils/phase-write-boundary.ts`, `harness/scripts/u
 
 - **WHEN** the phase skill runs `harness-runner.ts` inside the agent process and the harness writes the feature-root visual debt ledger, which the artifact registry does not describe
 - **THEN** the change SHALL be recorded as an observed unattributed fact and the phase SHALL continue to its verdict, with no violation and no terminal incident
-
-### Requirement: Invocation attribution excludes pre-existing and runner-owned writes
-
-The runner SHALL snapshot normalized paths and content hashes immediately before and after the agent process boundary and attribute only the delta introduced by that invocation. Pre-existing dirty files SHALL not be blamed on the phase. Runner-authored events, summaries, manifests, pointers, phase state, and evidence refreshes SHALL be tagged/handled as runner-owned facts; where a phase skill runs the harness inside the agent process, harness-derived writes that fall inside the window SHALL be handled as unattributed observations rather than agent violations. Paths with multiple roles SHALL be deduplicated by normalized path while preserving the role set in diagnostics. When the boundary cannot be resolved, or either snapshot cannot be taken, the runner SHALL record the failure, skip attribution for that invocation, and continue to the phase verdict; missing attribution SHALL NOT be treated as evidence of a violation and SHALL NOT terminate the run. No persistent pass snapshot or off-repository attribution state SHALL be introduced.
-
-Enforcement: `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/phase-write-boundary.ts`, `harness/scripts/utils/diff-scope.ts`, `harness/scripts/utils/testing-write-boundary.ts`
-
-#### Scenario: a dirty acceptance file is unchanged by plan
-
-- **WHEN** `acceptance.yaml` is dirty before the plan invocation and its content hash is unchanged afterwards
-- **THEN** the plan invocation SHALL NOT be attributed that change and SHALL NOT emit a phase write violation for it
-
-#### Scenario: runner finalization does not implicate the agent
-
-- **WHEN** the runner publishes a summary, evidence manifest, pointer, and phase state after the agent exits
-- **THEN** those mutations SHALL be excluded from the invocation delta and attributed to the runner
-
-#### Scenario: a snapshot cannot be taken
-
-- **WHEN** the pre-invocation or post-invocation snapshot fails on storage or permission grounds
-- **THEN** the runner SHALL record the failure as a diagnostic, mark this invocation as unattributed, and let the phase produce its ordinary verdict
 
 ### Requirement: A downstream write invalidates trust and backtracks to the owner
 
@@ -66,3 +42,23 @@ Enforcement: `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/pha
 - **WHEN** the same owner/path violation recurs with the same recovery fingerprint or the bytes continue changing during recovery
 - **THEN** the existing convergence/integrity budget SHALL terminate the loop with a precise reason instead of retrying forever
 
+### Requirement: Invocation attribution excludes pre-existing and runner-owned writes
+
+The runner SHALL snapshot normalized paths and content hashes immediately before and after the agent process boundary and attribute only the delta introduced by that invocation. Pre-existing dirty files SHALL not be blamed on the phase. Runner-authored events, summaries, manifests, pointers, phase state, and evidence refreshes SHALL be tagged/handled as runner-owned facts; where a phase skill runs the harness inside the agent process, harness-derived writes that fall inside the window SHALL be handled as unattributed observations rather than agent violations. Paths with multiple roles SHALL be deduplicated by normalized path while preserving the role set in diagnostics. When the boundary cannot be resolved, or either snapshot cannot be taken, the runner SHALL record the failure, skip attribution for that invocation, and continue to the phase verdict; missing attribution SHALL NOT be treated as evidence of a violation and SHALL NOT terminate the run. No persistent pass snapshot or off-repository attribution state SHALL be introduced.
+
+Enforcement: `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/phase-write-boundary.ts`, `harness/scripts/utils/diff-scope.ts`, `harness/scripts/utils/testing-write-boundary.ts`
+
+#### Scenario: a dirty acceptance file is unchanged by plan
+
+- **WHEN** `acceptance.yaml` is dirty before the plan invocation and its content hash is unchanged afterwards
+- **THEN** the plan invocation SHALL NOT be attributed that change and SHALL NOT emit a phase write violation for it
+
+#### Scenario: runner finalization does not implicate the agent
+
+- **WHEN** the runner publishes a summary, evidence manifest, pointer, and phase state after the agent exits
+- **THEN** those mutations SHALL be excluded from the invocation delta and attributed to the runner
+
+#### Scenario: a snapshot cannot be taken
+
+- **WHEN** the pre-invocation or post-invocation snapshot fails on storage or permission grounds
+- **THEN** the runner SHALL record the failure as a diagnostic, mark this invocation as unattributed, and let the phase produce its ordinary verdict

@@ -36,7 +36,6 @@ import { parseTestCaseFlowBlock, triageCascade } from './utils/test-case-flow';
 import {
   buildAgentTimeoutRepeatedGuidance,
   buildBudgetExhaustedGuidance,
-  buildUnauthorizedMutationGuidance,
   buildClosureWallGuidance,
   buildFrameworkBugGuidance,
   buildFrameworkIntegrityGuidance,
@@ -3219,59 +3218,6 @@ export function capRunStatusForDeviceAuthenticity(
   };
 }
 
-/** ut/testing 期 source drift 对账 + 授权分类（attestation 缺失=review 未闭环，归上游门禁管，此处不判）。 */
-export type MutablePhaseDriftDecision = DriftClassification & {
-  /** plan e7c2a4d8 T3b/c：当前 drift 内容 fingerprint 与条目（裁决请求单/比对消费；
-   * no_drift 或不可计算时为 null）。 */
-  driftFingerprint?: string | null;
-  driftEntries?: DriftFingerprintEntry[] | null;
-  /** T4d（v6 轮 P0）：goal 环境 attestation 缺失/损坏→不走 reconciliation 的 fail-closed
-   * 信号（调用方发射 goal_review_closure_baseline_unavailable，本函数不再静默 no_drift）。 */
-  baselineUnavailable?: boolean;
-};
-
-export function reconcileMutablePhaseSourceDrift(args: {
-  projectRoot: string;
-  manifest: GoalManifest;
-  phase: FeaturePhase;
-  frozenManifestHash: string | null;
-  /** goal 编排环境（缺 attestation fail-closed）；非 goal 消费面维持现 fallback 语义。 */
-  goalEnv?: boolean;
-}): MutablePhaseDriftDecision {
-  const att = loadReviewClosureAttestation(args.projectRoot, args.manifest.feature);
-  if (!att) {
-    // T4d：goal 环境无基线既判不了「review 后漂移」也不得放行——上抛 fail-closed 信号；
-    // 非 goal 交互模式保持现行为（no_drift 回退）。
-    if (args.goalEnv) return { kind: 'no_drift', baselineUnavailable: true };
-    return { kind: 'no_drift' };
-  }
-  const rec = reconcileSourceTreeAgainstAttestation(args.projectRoot, att);
-  if (rec.ok) return { kind: 'no_drift' };
-  // 当前 drift 内容 fingerprint 只用于恢复去重与诊断，不再作为人工授权钥匙。
-  const drift = { added: rec.added, modified: rec.modified, deleted: rec.deleted };
-  const fp = computeCurrentDriftFingerprint(args.projectRoot, drift);
-  const decision = classifySourceDrift(
-    drift,
-    [],
-    {
-      runId: args.manifest.run_id,
-      frozenManifestHash: args.frozenManifestHash,
-      // legacy classifier context：phase 与 source_inventory_before 仍用于责任诊断，
-      // 不再参与任何人签授权。
-      phase: String(args.phase),
-      expectedInventoryHash: att.inventory.aggregate_sha256 ?? null,
-      projectRoot: args.projectRoot,
-      // feature 仅用于绑定诊断范围；旧 confirmation receipt 已无授权语义。
-      feature: args.manifest.feature,
-      // 十三轮 P1-3：runner 进程持 key（子进程已剥离）——无 key 部署下 pre_run_manifest
-      // 整链（manifest 文件+run_start 冻结事件）在 agent 可写面，不构成机器可信授权。
-      // 5a 完成刀：签名维度已删——身份字段不再有 authenticated/unauthenticated 之分
-      manifestIdentityAuthenticated: false,
-      currentDriftFingerprint: fp?.fingerprint ?? null,
-    },
-  );
-  return { ...decision, driftFingerprint: fp?.fingerprint ?? null, driftEntries: fp?.entries ?? null };
-}
 
 /**
  * plan c4e8a1f7 T3（评审 P1 修复）：closure 读图块的“能看图 × 能审计”两轴判定（纯函数）。
@@ -5317,10 +5263,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
     const seenRoundFingerprints = new Set<string>();
     // plan a5f9c3e2 t3②：未受信漂移的保守恢复防震荡——同一 drift 内容指纹重现即判
     // terminal（回退→agent 又加同一处接缝→再回退，纯烧预算）。与 seenRoundFingerprints
-    // 同款手法（含**从 events 回放**，见下方恢复循环），键空间不同（drift 内容 vs 整轮
-    // 缺陷集合）故分立集合，共用回退预算。**必须跨 resume 记忆**：否则重启即失忆，
-    // 同一漂移会再吃一次回退预算，违反「同 fingerprint 重现即 terminal」。
-    const seenDriftFingerprints = new Set<string>();
+    // plan 1741b6f2 T3：drift 指纹集随 runner 级 reconciliation 一并删除——没有第二次
+    // 裁决就没有「同一漂移再吃一次回退预算」这回事。manifest.inherited_drift_fingerprints
+    // 仍是后继身份元数据（goal-manifest 侧），此处不再消费。
     // 注：t5 的 scope 自动回退**刻意不设第三个指纹集**——收敛只由 DEFAULT_MAX_BACKTRACKS
     // 负责。上面两个集合针对「完全相同的不可修复结果再现」（terminal 语义）；scope 不足
     // 是正常演进，加指纹反而会在 plan 第一次没扩对时堵掉第二次重新裁决的机会。
@@ -5430,9 +5375,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
     for (const fingerprint of manifest.inherited_round_fingerprints ?? []) {
       if (typeof fingerprint === 'string' && fingerprint) seenRoundFingerprints.add(fingerprint);
     }
-    for (const fingerprint of manifest.inherited_drift_fingerprints ?? []) {
-      if (typeof fingerprint === 'string' && fingerprint) seenDriftFingerprints.add(fingerprint);
-    }
     // v23 F1：整轮集合指纹从有效 events 恢复（直接读 round_fingerprint 字段，不从有界
     // defects[] 反算）；缺陷交接上下文取最近一条回退事件的 defects[]（一次遍历取两者）
     for (const e of priorEvents) {
@@ -5453,11 +5395,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
       scopeReplanContext = ev.to_phase === 'plan'
         ? resolveScopeReplanContext({ projectRoot, reason: ev.reason, files: ev.files })
         : null;
-      // plan a5f9c3e2 t3②：未受信漂移指纹同样回放——跨 resume 记住「这个漂移已回退过」，
-      // 否则重启即失忆，同一漂移会再吃一次回退预算（违反「同 fingerprint 重现即 terminal」）。
-      if (typeof ev.drift_fingerprint === 'string' && ev.drift_fingerprint) {
-        seenDriftFingerprints.add(ev.drift_fingerprint);
-      }
       // 无条件覆盖（review 第 10 轮）：授权回退事件不带 defects[]——只在非空时覆盖会让
       // 后续授权回退仍携带早已修好的旧缺陷。每条回退事件都重置 context 为其 defects ?? []。
       backtrackCodingContext = Array.isArray(ev.defects) ? ev.defects : [];
@@ -5903,7 +5840,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
 
     let halted = false;
     // S4 回退状态机：计数从 events 回放（进程重启不清零）；上限 1 次/run。
-    let backtrackToIdx: number | null = null;
     // T1④：回退计数同样沿 supersede 链折叠（budgetFoldEvents ⊇ priorEvents）
     let backtracksUsed = budgetFoldEvents.filter(e => (e as { type?: string }).type === 'phase_backtrack_requested').length;
     let backtrackReviewFocus: string[] = [];
@@ -6565,7 +6501,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
           continue;
         }
 
-        let phaseWriteBoundary: PhaseWriteBoundaryResolution;
+        // Attribution is best-effort: when the boundary cannot be resolved the run loses
+        // write attribution for this invocation, which is not evidence that anything is
+        // wrong with the deliverable.  The phase still produces its ordinary verdict, and
+        // the gates that actually judge scope and drift are untouched.
+        let phaseWriteBoundary: PhaseWriteBoundaryResolution | null = null;
         try {
           phaseWriteBoundary = resolvePhaseWriteBoundary({
             projectRoot,
@@ -6579,27 +6519,18 @@ Goal runner — tool-agnostic multi-phase orchestrator
           });
         } catch (error) {
           const detail = `phase write boundary resolution failed: ${(error as Error).message}`;
-          goalEvents.emit({ type: 'phase_halt', phase, halt_reason: 'phase_write_boundary_unresolved', detail });
-          outcomes.push({
-            phase, verdict: 'FAIL', halted: true, retries,
-            halt_reason: 'phase_write_boundary_unresolved', halt_guidance: detail,
-          });
-          console.error(`\n===== phase_write_boundary_unresolved =====\n${detail}\n`);
-          halted = true;
-          phaseDone = true;
-          continue;
+          phaseWriteBoundary = null;
+          goalEvents.emit({ type: 'phase_write_boundary_degraded', phase, detail });
+          console.warn(`[goal-runner] ⚠ 写归因不可用（${detail}）——本阶段不做写归因，质量门禁照常执行。`);
         }
-        if (phaseWriteBoundary.unresolvedSourcePhases.includes(String(phase))) {
+        if (phaseWriteBoundary?.unresolvedSourcePhases.includes(String(phase))) {
+          // An unresolved source phase means plan/change scope does not map to module
+          // paths.  check-coding already judges exactly that and states the fix, so
+          // halting here would be a second verdict on the same fact.
           const detail = phaseWriteBoundary.diagnostics.join('；');
-          goalEvents.emit({ type: 'phase_halt', phase, halt_reason: 'phase_write_boundary_unresolved', detail });
-          outcomes.push({
-            phase, verdict: 'FAIL', halted: true, retries,
-            halt_reason: 'phase_write_boundary_unresolved', halt_guidance: detail,
-          });
-          console.error(`\n===== phase_write_boundary_unresolved =====\n${detail}\n`);
-          halted = true;
-          phaseDone = true;
-          continue;
+          phaseWriteBoundary = null;
+          goalEvents.emit({ type: 'phase_write_boundary_degraded', phase, detail });
+          console.warn(`[goal-runner] ⚠ 本阶段源码域无法解析（${detail}）——不做写归因；范围违规仍由 check-coding 判定。`);
         }
 
         const prompt = buildPhasePrompt(
@@ -6623,7 +6554,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 elapsedMs: priorAttemptDurationsMs.reduce((a, b) => a + b, 0),
               }
             : undefined,
-          phaseWriteBoundary,
+          phaseWriteBoundary ?? undefined,
         ) + inlineCanaryBlock +
           // S4：回退后 review 注入增量重点复审清单（授权 ≠ 免审）
           (phase === 'review' && backtrackReviewFocus.length > 0
@@ -6962,29 +6893,20 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // Every real phase invocation is bracketed by the same filesystem/hash
         // snapshot.  The comparison is pre/post invocation, never against HEAD,
         // so a pre-existing dirty file is not blamed on this phase.
-        const preInvokeWriteSnap = !dryRun && !resumePostAgent
+        const capturedPreInvokeSnap = !dryRun && !resumePostAgent && phaseWriteBoundary
           ? capturePhaseInvocationSnapshot(phaseWriteBoundary)
           : null;
-        if (preInvokeWriteSnap && !/^[0-9a-f]{64}$/.test(preInvokeWriteSnap.sha256)) {
-          goalEvents.emit({
-            type: 'phase_halt', phase, halt_reason: 'pre_invoke_snapshot_failed',
-            reason: preInvokeWriteSnap.failureReason,
-            probe: 'storage_ready',
-            ...runDispositionFields(decide(
-              { incident: 'pre_invoke_snapshot_failed', phase: String(phase), detail: preInvokeWriteSnap.failureReason ?? undefined },
-              NO_AUTHORITY,
-              { orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session', invocation: argv.resume ? 'resume' : 'fresh' },
-            )),
-          });
-          console.error(
-            `\n===== pre_invoke_snapshot_failed =====\n`
-            + `invoke 前快照失败：${preInvokeWriteSnap.failureReason ?? preInvokeWriteSnap.sha256}\n`
-            + `没有可信基线不得调用 agent（phase 写归因无从谈起）。等待存储/目录条件恢复后由 probe 唤醒。\n`,
-          );
-          outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'pre_invoke_snapshot_failed' });
-          halted = true;
-          phaseDone = true;
-          continue;
+        // A snapshot the storage layer could not produce leaves this invocation
+        // unattributed.  That is a gap in the audit trail, not a defect in the work, so
+        // the phase proceeds and the quality gates decide as usual.
+        const preInvokeWriteSnap =
+          capturedPreInvokeSnap && /^[0-9a-f]{64}$/.test(capturedPreInvokeSnap.sha256)
+            ? capturedPreInvokeSnap
+            : null;
+        if (capturedPreInvokeSnap && !preInvokeWriteSnap) {
+          const detail = `invoke 前快照失败：${capturedPreInvokeSnap.failureReason ?? capturedPreInvokeSnap.sha256}`;
+          goalEvents.emit({ type: 'phase_write_boundary_degraded', phase, invoke_id: invokeId, detail });
+          console.warn(`[goal-runner] ⚠ ${detail}——本阶段不做写归因，质量门禁照常执行。`);
         }
         // plan 07a41ec6 T4：receipt 不再是 invoke/closure 前置物；closed summary 提交后才 best-effort 投影。
         // adjudicated-repair-loop（review 修复，续）：伪造 invoke 对象仅承载「已完成」
@@ -7393,23 +7315,19 @@ Goal runner — tool-agnostic multi-phase orchestrator
         }
         flushProgress();
 
-        // Generic phase write attribution.  It runs before critic receipts,
-        // journal replay and gate execution, so evidence from a violating
-        // invocation can never become trusted.
-        if (preInvokeWriteSnap) {
+        // Generic phase write attribution.  It runs before critic receipts, journal
+        // replay and gate execution, which is why it only invalidates trust for a
+        // registered artifact owned by an earlier phase: everything it could say about
+        // product source is said again, with grading, by the checkers further down.
+        if (preInvokeWriteSnap && phaseWriteBoundary) {
           const postInvokeWriteSnap = capturePhaseInvocationSnapshot(phaseWriteBoundary);
           const snapshotDiff = diffPhaseInvocationSnapshots(preInvokeWriteSnap, postInvokeWriteSnap);
           if (snapshotDiff.kind === 'unverifiable') {
+            // Same reasoning as the pre-invocation snapshot: no attribution evidence is
+            // not the same as evidence of a violation.
             const detail = `invoke 后写归因快照不可核实：${snapshotDiff.reason}`;
-            goalEvents.emit({ type: 'phase_halt', phase, halt_reason: 'post_invoke_snapshot_failed', detail });
-            outcomes.push({
-              phase, verdict: 'FAIL', halted: true, retries,
-              halt_reason: 'post_invoke_snapshot_failed', halt_guidance: detail,
-            });
-            console.error(`\n===== post_invoke_snapshot_failed =====\n${detail}\n`);
-            halted = true;
-            phaseDone = true;
-            continue;
+            goalEvents.emit({ type: 'phase_write_boundary_degraded', phase, invoke_id: invokeId, detail });
+            console.warn(`[goal-runner] ⚠ ${detail}——本轮归因作废，阶段照常出 verdict。`);
           }
           if (snapshotDiff.kind === 'changed') {
             let attributableChanges: PhaseInvocationChange[] = [...snapshotDiff.changes];
@@ -7439,6 +7357,30 @@ Goal runner — tool-agnostic multi-phase orchestrator
               String(phase),
               attributableChanges,
             );
+            if (classifiedWrites.observed.length > 0) {
+              // Attribution without adjudication: unresolved ownership is a gap in the
+              // artifact registry (which describes skill narratives only), and a
+              // source/workspace cross-phase write is already graded once by its checker.
+              // Both stay auditable here without invalidating this invocation.
+              goalEvents.emit({
+                type: 'phase_write_observed',
+                phase,
+                invoke_id: invokeId,
+                observations: classifiedWrites.observed.slice(0, 50).map((observation) => ({
+                  path: observation.path,
+                  how: observation.how,
+                  disposition: observation.disposition,
+                  owner: observation.owner,
+                  owner_candidates: observation.ownerCandidates,
+                  pre_sha256: observation.preSha256,
+                  post_sha256: observation.postSha256,
+                  roles: observation.roles,
+                })),
+                observed_count: classifiedWrites.observed.length,
+                pre_snapshot: preInvokeWriteSnap.sha256,
+                post_snapshot: postInvokeWriteSnap.sha256,
+              });
+            }
             if (classifiedWrites.violations.length > 0) {
               const violationFacts = classifiedWrites.violations.map((violation) => ({
                 path: violation.path,
@@ -7468,8 +7410,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 post_snapshot: postInvokeWriteSnap.sha256,
               });
 
-              const allUniquelyOwned = classifiedWrites.violations.every((violation) =>
-                violation.status === 'unique' && violation.owner !== null);
+              // Every violation now carries a uniquely resolved artifact owner by
+              // construction, so unresolved ownership is no longer a halt reason here.
               const owners = [...new Set(classifiedWrites.violations
                 .map((violation) => violation.owner)
                 .filter((owner): owner is string => owner !== null))];
@@ -7478,7 +7420,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
               const targetIdx = targetOwner ? chain.indexOf(targetOwner as FeaturePhase) : -1;
               let haltReason: string | null = null;
               if (repeated) haltReason = 'phase_write_violation_repeat';
-              else if (!allUniquelyOwned) haltReason = 'phase_write_owner_unresolved';
               else if (targetIdx < 0 || targetIdx >= phaseIdx) haltReason = 'backtrack_target_absent';
               else if (backtracksUsed >= DEFAULT_MAX_BACKTRACKS) haltReason = 'backtrack_limit';
 
@@ -9130,268 +9071,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
         }
 
-        // visual-capability-truth S4：review 闭环后的可变阶段（ut/testing）在任何推进/
-        // 重试决策生效前做 runner 级 source drift reconciliation——先分类后动作
-        // （codex plan 审查一轮 B4：不见码就回退=给非法改码洗白的通道）：
-        //   授权链命中 → 自动回退 coding（review/ut 失效，增量重点复审）；
-        //   未授权/超界/无 receipt → HALT（人工裁决后可显式授权）。
-        // plan e7c2a4d8 T4d（codex 四轮 P0-c）：goal 环境专用 blocker 出现时短路内容
-        // 重试——reconciliation 门放宽为「action!=='retry' ∨ 存在该 blocker」，同一事故
-        // 一个出口（unauthorized halt），不转化为 harness FAIL 后的内容重试循环。
-        const hasPostReviewReconciliationBlocker =
-          (decisionSummary?.blockers ?? []).some(
-            (b) => {
-              const id = (b as { id?: string }).id;
-              return id === 'goal_post_review_source_mutation_unresolved' ||
-                id === 'goal_review_closure_baseline_unavailable';
-            },
-          );
-        if (
-          !dryRun && (phase === 'ut' || phase === 'testing') &&
-          (action !== 'retry' || hasPostReviewReconciliationBlocker)
-        ) {
-          let driftDecision = reconcileMutablePhaseSourceDrift({
-            projectRoot,
-            manifest,
-            phase,
-            frozenManifestHash,
-            goalEnv: true,
-          });
-          // T4d：goal 环境 attestation 缺失/损坏 → 不得放行；按既有
-          // backtrack_to_coding 责任阶段重新建立基线。若当前链截断，交给 T3 的后继
-          // run 路由，不伪造当前 run 的连续性。
-          const chainHasCodingReview =
-            chain.includes('coding' as FeaturePhase) && chain.includes('review' as FeaturePhase);
-          const baselineUnavailable = Boolean(driftDecision.baselineUnavailable);
-          if (baselineUnavailable) {
-            const baselineDecision = decide(
-              {
-                incident: 'goal_review_closure_baseline_unavailable',
-                phase: String(phase),
-                chain_has_coding_review: chainHasCodingReview,
-                backtrack_budget_remaining: DEFAULT_MAX_BACKTRACKS - backtracksUsed,
-              },
-              NO_AUTHORITY,
-              {
-                orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session',
-                invocation: argv.resume ? 'resume' : 'fresh',
-              },
-            );
-            if (baselineDecision.kind === 'recover' && baselineDecision.action === 'backtrack_to_coding') {
-              // 让下面唯一的 backtrack 路由完成事件落盘、缓存退位和执行指针移动。
-              driftDecision = { kind: 'unauthorized', files: [], violations: ['review closure baseline unavailable'] };
-            } else {
-              const baselineGuidance = [
-                `【${manifest.feature} · run ${manifest.run_id} · ${phase}】review closure attestation 缺失/损坏——`,
-                '当前链无法在本 run 回到 coding 建立基线；不读取 run-start diff、不采信 gap-notes 授权。',
-                'T3 将在截断链不可回退时自动 supersede 并生成 coding 起点后继 run。',
-              ].join('\n');
-              goalEvents.emit({
-                type: 'phase_halt',
-                phase,
-                halt_reason: 'goal_review_closure_baseline_unavailable',
-                verdict,
-                halt_guidance: baselineGuidance,
-                successor_required: true,
-                // runner-owned-machine-facts 收口（codex）：后继起点显式声明——halt 发生在
-                // review，但语义要求回 coding 建基线；不带此字段时 supervisor 按 event.phase
-                // 推导会从 review 重启，原地重撞。
-                successor_start_phase: 'coding',
-                ...runDispositionFields({ kind: 'recover', action: 'backtrack_to_coding', reason: baselineDecision.reason }),
-              });
-              console.error(`\n===== goal_review_closure_baseline_unavailable =====\n${baselineGuidance}\n`);
-              outcomes.push({
-                phase, verdict, halted: true, retries,
-                halt_reason: 'goal_review_closure_baseline_unavailable',
-                halt_guidance: baselineGuidance,
-              });
-              halted = true;
-              phaseDone = true;
-              continue;
-            }
-          }
-          // T3b（codex 二轮 P0-b 方案 1）：authorized_backtrack 仅当当前 chain 同时含
-          // coding 与 review——截断链即使裁决有效也无法在本 run 回退重验。
-          // plan a5f9c3e2 t3②：未受信漂移的**保守恢复**裁决（统一内核给出，不在此就地判）。
-          // 恢复本身不降低保证——失效旧 coding closure 及其后阶段、把 diff 当未受信候选
-          // 完整重走 coding→review→ut→testing，故**不需要任何授权**。
-          // 纪律：复用执行机制（失效事务 / 回退预算 / phase 回退执行器），
-          // **不复用授权语义**——不产 matched_receipts、不标 authorized。
-          let untrustedRevalidation = baselineUnavailable;
-          let untrustedTerminalReason = '';
-          // codex 八轮 P2：**保存真实裁决结果**供后续事件投影原样复用——此前落事件时
-          // 手工重造 Decision，今天结果一致，但 decide() 一改，执行动作与报告投影就会分叉。
-          let untrustedDecision: Decision | null = baselineUnavailable ? decide(
-            {
-              incident: 'goal_review_closure_baseline_unavailable',
-              phase: String(phase),
-              chain_has_coding_review: chainHasCodingReview,
-              backtrack_budget_remaining: DEFAULT_MAX_BACKTRACKS - backtracksUsed,
-            },
-            NO_AUTHORITY,
-            {
-              orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session',
-              invocation: argv.resume ? 'resume' : 'fresh',
-            },
-          ) : null;
-          if (driftDecision.kind === 'unauthorized') {
-            const driftFp = driftDecision.driftFingerprint ?? null;
-            const driftDisposition = decide(
-              {
-                incident: 'unauthorized_source_mutation',
-                phase: String(phase),
-                files: driftDecision.files,
-                chain_has_coding_review: chainHasCodingReview,
-                backtrack_budget_remaining: DEFAULT_MAX_BACKTRACKS - backtracksUsed,
-                round_fingerprint_repeated: Boolean(driftFp && seenDriftFingerprints.has(driftFp)),
-              },
-              NO_AUTHORITY,
-              {
-                orchestration: 'goal',
-                owner_kind: runtimeOwnerKind,
-                // 铁律 (c)：can_prompt_now 不改变裁决，只供 L3 话术选择措辞。
-                can_prompt_now: runtimeOwnerKind === 'session',
-                invocation: argv.resume ? 'resume' : 'fresh',
-              },
-            );
-            untrustedDecision = driftDisposition;
-            if (driftDisposition.kind === 'recover' && driftDisposition.action === 'backtrack_to_coding') {
-              untrustedRevalidation = true;
-              if (driftFp) seenDriftFingerprints.add(driftFp);
-            } else {
-              untrustedTerminalReason = driftDisposition.reason;
-            }
-          }
-          if (untrustedRevalidation && driftDecision.kind === 'unauthorized') {
-            if (backtracksUsed >= DEFAULT_MAX_BACKTRACKS) {
-              const backtrackLimitDecision = decide(
-                { incident: 'backtrack_limit', phase: String(phase) },
-                NO_AUTHORITY,
-                {
-                  orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session',
-                  invocation: argv.resume ? 'resume' : 'fresh',
-                },
-              );
-              goalEvents.emit({
-                type: 'phase_halt',
-                phase,
-                halt_reason: 'backtrack_limit',
-                verdict,
-                ...runDispositionFields(backtrackLimitDecision),
-              });
-              console.error(`\n===== backtrack_limit =====\n回退预算已耗尽（所有回退共用 ${DEFAULT_MAX_BACKTRACKS} 次/run）——本 run 终止（防回退震荡烧预算）。\n`);
-              outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'backtrack_limit' });
-              halted = true;
-              phaseDone = true;
-              continue;
-            }
-            backtracksUsed++;
-            const codingIdx = chain.indexOf('coding' as FeaturePhase);
-            const invalidatedPhases = chain
-              .slice(codingIdx >= 0 ? codingIdx : 0, phaseIdx + 1)
-              .filter(p => outcomes.some(o => o.phase === p));
-            // 失效事实一次性落盘；缓存 head/内存锚是其后的可重复副作用。
-            const invalidationTxId = `${manifest.run_id}-bt${backtracksUsed}`;
-            const backtrackReason = UNTRUSTED_DRIFT_REASON;
-            const backtrackProjection = {
-              reason: UNTRUSTED_DRIFT_REASON,
-              authorized: false,
-              // 持久化 drift 指纹供 resume 回放，防重启失忆重复消耗预算。
-              drift_fingerprint: driftDecision.driftFingerprint ?? null,
-              ...(untrustedDecision ? runDispositionFields(untrustedDecision) : {}),
-            };
-
-            goalEvents.emit({
-              type: 'phase_backtrack_requested',
-              phase: String(phase),
-              from_phase: phase,
-              to_phase: chain[Math.max(codingIdx, 0)],
-              invalidated_phases: invalidatedPhases.map(String),
-              ...backtrackProjection,
-              files: driftDecision.files.slice(0, 20),
-              defects: [],
-              fingerprint: driftDecision.driftFingerprint ?? null,
-              invalidation_tx_id: invalidationTxId,
-            });
-            goalEvents.emit({ type: 'phase_backtrack_started', to_phase: chain[Math.max(codingIdx, 0)] });
-            // 被失效 attempt 从 outcomes 剔除（goal report/resume 只见最新有效 attempt；
-            // 常驻 summary 将被回退后的重跑覆盖，upstream gate 消费面天然新鲜化）
-            outcomes = outcomes.filter(o => !invalidatedPhases.includes(o.phase));
-            // 增量重点复审清单注入（回退后 review prompt 消费）
-            backtrackReviewFocus = driftDecision.files;
-            // review 第 10 轮（P1-4）：授权回退**不携带**缺陷清单——必须清空缺陷交接上下文，
-            // 否则上一次 visual 回退已修好的旧缺陷会被再次注入 coding prompt。
-            backtrackCodingContext = [];
-            // 同款纪律（codex 冻结项④）：非 repair 回退必须清空候选交接，否则旧 CR 会
-            // 继续注入后续 prompt。
-            backtrackRepairCandidates = [];
-            backtrackToIdx = Math.max(codingIdx, 0);
-            // M1 t1.6（adjudicated-repair-loop）：completed 移到回退链真正完成之后——
-            // 目标 coding 执行完毕（settled/verdict）后补发，不再在此提前发射（修 :7592 时序）。
-            pendingBacktrackCompletion = {
-              toPhase: chain[Math.max(codingIdx, 0)],
-              signalDriven: false,
-              preSnapshot: null,
-            };
-            console.log(
-              `[a5f9c3e2] 未受信源码漂移（${driftDecision.files.length} 文件）——保守恢复：` +
-              '失效旧 coding closure 及其后阶段，携未受信 diff 完整重验（无需人签，不跳过验证）' +
-              `→ 回退 ${chain[backtrackToIdx]}→review→ut→${phase}（消耗共用回退预算 ${backtracksUsed}/${DEFAULT_MAX_BACKTRACKS}）`,
-            );
-            phaseDone = true;
-            continue;
-          }
-          if (driftDecision.kind === 'unauthorized') {
-            // T4c（codex 二轮 P1-5）：处置前先快照 harness 证据——UT 实测 PASS 不得在
-            // 报告里呈现为「FAIL / Summary —」；outcome verdict=harness 真值 +
-            // halted=transition 轴分离。
-            const snap = snapshotPhaseHarness(
-              projectRoot, manifest.feature, phase, manifest.report_dir, frameworkRoot,
-            );
-            // T3c：banner/phase_halt 事件/goal-report 单 SSOT——builder 按能力真值分层，
-            // 只列当下真正可走的路（旧 banner「写 receipt 后 --resume」属过度承诺，已废）。
-            const mutationGuidance = buildUnauthorizedMutationGuidance({
-              feature: manifest.feature,
-              runId: manifest.run_id,
-              phase: String(phase),
-              violations: driftDecision.violations,
-              // t3②：走到这里说明保守恢复被**结构性前提**挡住（截断链 / 预算耗尽 /
-              // 同一 drift 指纹重现）——话术须先讲清这一点，否则人会以为「又是要签字」。
-              conservativeRecoveryBlockedReason: untrustedTerminalReason || null,
-              chainHasCodingReview,
-              harnessPrefixRel: layout.frameworkRel ? path.posix.join(layout.frameworkRel, 'harness') : 'harness',
-            }).join('\n');
-            goalEvents.emit({
-              type: 'phase_halt',
-              phase,
-              halt_reason: 'unauthorized_source_mutation',
-              verdict,
-              files: driftDecision.files.slice(0, 20),
-              violations: driftDecision.violations.slice(0, 10),
-              halt_guidance: mutationGuidance,
-              // t4④：走到这里=保守恢复被结构前提挡住，结构上无法在本 run 继续。
-              // 同样投影真实裁决结果，不手写字面量、不重造 Decision。
-              ...(untrustedDecision ? runDispositionFields(untrustedDecision) : {}),
-              conservative_recovery_blocked: untrustedTerminalReason || null,
-            });
-            console.error(`\n===== unauthorized_source_mutation =====\n${mutationGuidance}\n`);
-            outcomes.push({
-              phase,
-              verdict, // harness 真值（如 PASS）——transition 由 halted/halt_reason 表达
-              halted: true,
-              retries,
-              halt_reason: 'unauthorized_source_mutation',
-              halt_guidance: mutationGuidance,
-              summary_path: snap.snapshot_files['summary.json'] ?? summaryPath ?? undefined,
-              report_dir: snap.snapshotDirRel,
-              snapshot_files: snap.snapshot_files,
-              verifier_evidence: snap.verifier_evidence,
-            });
-            halted = true;
-            phaseDone = true;
-            continue;
-          }
-        }
+        // plan 1741b6f2 T3：runner 级 source drift reconciliation 已删除。同一批漂移事实
+        // 由责任 checker 单次裁决——UT 走 ut_no_src_mutation、testing 走
+        // review_closure_attestation，两者都按 classifyDriftRisk 分级并给出所需复核
+        // （plan 07a41ec6 T8）。runner 在此重算一遍只会把 checker 已判的"可继续、
+        // 披露未复核"升级成强制整链回退，是同一事实的第二次裁决。checker 判 BLOCKER
+        // 时照常经 assess 走 backtrack_to_phase，回退能力本身未削弱。
 
         // 【ui_scope_violation → plan 专用回退分支已删除 · 责任阶段统一路由收编】
         // 该事实现由 harness 侧共享层产出 plan 类 repair candidate（check id 机器归属，
@@ -9702,11 +9387,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
       }
 
       if (halted) break;
-      // S4：授权回退——跳回 coding（for 递增后落位），review/ut/testing 依链重走。
-      if (backtrackToIdx !== null) {
-        phaseIdx = backtrackToIdx - 1;
-        backtrackToIdx = null;
-      }
     }
 
     if (runtimeBoundaryYielded) {

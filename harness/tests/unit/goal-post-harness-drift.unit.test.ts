@@ -61,48 +61,45 @@ export function runAll(): UnitCaseResult[] {
   const feature = 'ut-post-harness-drift';
   const host = setupMinimalHost(feature, 'hmos-app');
   try {
-    run('post-harness 源码漂移 → untrusted_source_drift_revalidation 自动回 coding（非 write violation）', () => {
+    run('post-harness 源码漂移 → 单次裁决：不回退、不 halt，run 跑完并如实披露', () => {
       const out = runDriver('ut_source_drift_post_harness', feature, host);
       const detail = JSON.stringify({ ...out, eventTypes: undefined });
 
       assert(out.error === null, `不得裸崩：${detail}`);
-      // 收官判据（codex review P2）：不只证明"路由对了"，还要证明这条路**真的把 run 走完**。
-      // 缺这两条时，一个在回退后卡死或半途终局的 run 也能让上面的路由断言全绿。
-      assert(out.exitCode === 0, `保守恢复须让本 run 正常收官（exit 0）：${detail}`);
+      // 核心判据：runner 不再就同一批漂移事实做第二次裁决。责任 checker
+      // （ut_no_src_mutation / review_closure_attestation）已按 classifyDriftRisk 分级，
+      // runner 重判只会把「可继续、披露未复核」升级成「必须整链回退」。
       assert(
-        out.phaseStartsThisCall.filter(p => p === 'coding').length >= 2,
-        `coding 必须被真正二次执行（回退不是只改状态）：${detail}`,
+        !out.invalidationRecords.some(r => r.reason === 'untrusted_source_drift_revalidation'),
+        `runner 不得再产出 untrusted_source_drift_revalidation（该裁决已退役）：${detail}`,
       );
-
-      // 路由判据：必须走 post-harness 基线对账那条，**不是** invoke 窗口归属那条。
-      const drift = out.invalidationRecords.find(r =>
-        r.reason === 'untrusted_source_drift_revalidation');
       assert(
-        drift !== undefined,
-        `漂移落在 invoke 窗口外时，必须由 reconcileMutablePhaseSourceDrift 判定并落 `
-        + `untrusted_source_drift_revalidation（goal-phase-runtime.ts:9340）：${detail}`,
+        !out.eventTypes.includes('phase_backtrack_requested'),
+        `窗口外漂移不得触发强制回退：${detail}`,
       );
       assert(
         !out.invalidationRecords.some(r => r.reason === 'phase_write_violation'),
-        `窗口外漂移不得被归属为 agent 越界写（那会掩盖本路由）：${detail}`,
+        `窗口外漂移不得被归属为 agent 越界写：${detail}`,
       );
 
-      // 语义判据：失效 coding 起的下游并回 coding 全量重验。
-      assert(drift!.to_phase === 'coding', `须回 coding 重验：${detail}`);
+      // 收官判据：run 走完全链、零 halt，coding 不被二次拉起。
+      assert(out.phaseHalts.length === 0, `不得 halt：${detail}`);
       assert(
-        (drift!.invalidated_phases ?? []).includes('coding')
-        && (drift!.invalidated_phases ?? []).includes('review'),
-        `coding 与 review 的旧 closure 都须失效：${detail}`,
+        out.phaseStartsThisCall.filter(p => p === 'coding').length === 1,
+        `coding 不得被重复拉起（无回退）：${detail}`,
+      );
+      assert(
+        out.phaseStartsThisCall.includes('testing'),
+        `链须走到 testing，由它的 checker 裁决漂移：${detail}`,
       );
 
-      // 接线判据：事件真的落盘，且不退化成求人 / 终局。
+      // 收官判据：普通漂移只裁决一次，completion 侧不得再判 needs_fix 把 run 压成
+      // PARTIAL / exit 2 / 无完成凭证——那是第三次阻断，不是披露。披露面是责任 checker
+      // 的分级 WARN 与本轮 summary 的 readiness signal（各有独立单测）。
+      assert(out.exitCode === 0, `普通漂移不得阻断收官（exit 0）：${detail}`);
       assert(
-        out.eventTypes.includes('phase_backtrack_requested'),
-        `须产出 phase_backtrack_requested：${detail}`,
-      );
-      assert(
-        !out.phaseHalts.some(h => h.halt_reason === 'awaiting_human_review'),
-        `保守恢复不得退回人工签字：${detail}`,
+        out.runEndStatus === 'CHAIN_SLICE_COMPLETED' || out.runEndStatus === 'COMPLETED',
+        `须正常收官（实得 ${out.runEndStatus}）：${detail}`,
       );
     });
   } finally {

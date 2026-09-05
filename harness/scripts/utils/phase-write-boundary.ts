@@ -443,34 +443,61 @@ export function diffPhaseInvocationSnapshots(
 
 export interface PhaseWriteViolation extends PhaseInvocationChange, PhasePathOwnership {
   currentPhase: string;
-  violation: 'no_owner' | 'multiple_owners' | 'wrong_phase';
+  violation: 'wrong_phase';
+}
+
+/**
+ * Attribution that deliberately stops short of a verdict.
+ *   - `unattributed`: ownership does not resolve.  The artifact inventory describes
+ *     skill-authored narratives only, so harness ledgers, revalidation records and
+ *     phase notes are permanently absent from it; a missing owner is a gap in the
+ *     registry, not evidence that the agent overstepped.
+ *   - `deferred_to_checker`: ownership resolves to another phase, but only through a
+ *     product-source or phase-workspace role.  Those are already judged once, and with
+ *     graded dispositions, by check-coding's scope gate, `ut_no_src_mutation` and
+ *     `review_closure_attestation`.  Attribution runs before the gates, so blocking here
+ *     would pre-empt the graded judgement it duplicates.
+ */
+export interface PhaseWriteObservation extends PhaseInvocationChange, PhasePathOwnership {
+  currentPhase: string;
+  disposition: 'unattributed' | 'deferred_to_checker';
 }
 
 export function classifyPhaseInvocationChanges(
   resolution: PhaseWriteBoundaryResolution,
   currentPhase: string,
   changes: readonly PhaseInvocationChange[],
-): { allowed: PhaseInvocationChange[]; violations: PhaseWriteViolation[] } {
+): {
+  allowed: PhaseInvocationChange[];
+  violations: PhaseWriteViolation[];
+  observed: PhaseWriteObservation[];
+} {
   const allowed: PhaseInvocationChange[] = [];
   const violations: PhaseWriteViolation[] = [];
+  const observed: PhaseWriteObservation[] = [];
   for (const change of changes) {
     const ownership = resolvePhasePathOwnership(resolution, change.path);
     if (ownership.status === 'unique' && ownership.owner === currentPhase) {
       allowed.push(change);
       continue;
     }
-    violations.push({
+    // Only an inventory-registered artifact domain carries the accountability that the
+    // invalidate-and-backtrack recovery assumes; the role set is already resolved above,
+    // so no second permission table is needed to make the split.
+    const registeredArtifact =
+      ownership.status === 'unique' && ownership.roles.some((role) => role.kind === 'artifact');
+    if (registeredArtifact) {
+      violations.push({ ...change, ...ownership, currentPhase, violation: 'wrong_phase' });
+      continue;
+    }
+    observed.push({
       ...change,
       ...ownership,
       currentPhase,
-      violation: ownership.status === 'none'
-        ? 'no_owner'
-        : ownership.status === 'multiple'
-          ? 'multiple_owners'
-          : 'wrong_phase',
+      disposition: ownership.status === 'unique' ? 'deferred_to_checker' : 'unattributed',
     });
   }
-  return { allowed, violations };
+  return { allowed, violations, observed };
 }
 
 export function renderPhaseWriteBoundaryGuidance(
@@ -481,12 +508,13 @@ export function renderPhaseWriteBoundaryGuidance(
   const exact = mine.filter((domain) => domain.match === 'exact').map((domain) => domain.path);
   const prefixes = mine.filter((domain) => domain.match === 'prefix').map((domain) => `${domain.path}/**`);
   return [
-    '**Phase write boundary (machine-enforced around this invocation):**',
-    `- Current phase: \`${currentPhase}\`. Writable registered paths:`,
+    '**Phase write boundary (recorded around this invocation):**',
+    `- Current phase: \`${currentPhase}\`. Registered paths this phase owns:`,
     ...[...new Set([...exact, ...prefixes])].sort().map((p) => `  - \`${p}\``),
-    ...(mine.length === 0 ? ['  - (none; this phase is read-only)'] : []),
-    '- Every other feature artifact, product/test source path, and root build configuration is read-only.',
-    '- Pre-existing dirty bytes are not attributed to this invocation. A changed earlier-owner path is preserved as untrusted bytes; the runner invalidates evidence and backtracks to that owner for full revalidation.',
+    ...(mine.length === 0 ? ['  - (none registered for this phase)'] : []),
+    '- Writing a registered artifact owned by an earlier phase invalidates this invocation: the bytes are preserved as untrusted and the runner backtracks to that owner for full revalidation. Do not repair an earlier phase\'s artifact in place.',
+    '- Pre-existing dirty bytes are not attributed to this invocation.',
+    '- Other changes are recorded and judged by the checks that own them (scope, drift, and closure gates); they are not silently permitted.',
     '- `goal-runs/**`, closure state, manifests, pointers, summaries, and evidence refreshes are runner-owned. Do not edit them.',
   ];
 }

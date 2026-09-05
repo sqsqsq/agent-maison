@@ -21,7 +21,7 @@
 
 按当前 `project_profile` 自适配的实现规划师：把 spec 转化为可落地的实现计划。流水线**第二环**，上游 `spec.md`，输出流入 coding。
 
-**Goal/headless 写边界（BLOCKER）**：只写本阶段 contract `produces` 声明的 plan/contracts/use-cases 产物；尤其不得新建或修补 spec-owned 的 `acceptance.yaml`、`spec.md`、`ui-spec.yaml`，也不得修改实现源码、UT 或 testing 产物。发现上游缺口只记录事实，由 runner 自动回 spec；越权字节不获信任或人工豁免。
+**Goal/headless 写边界（BLOCKER）**：只写本阶段 contract `produces` 声明的 plan/contracts/use-cases 产物；尤其不得新建或修补 spec-owned 的 `acceptance.yaml`、`spec.md`、`ui-spec.yaml`，也不得修改实现源码、UT 或 testing 产物。发现上游缺口只记录事实，由 runner 自动回 spec。runner 按 invoke 前后哈希归因：改写**已登记的上游 artifact**（需求 / 验收 / 契约等）时本轮证据作废并自动回 owner 全量重验；其余变化记录为观测事实，由本就负责它的 check 裁决（范围、漂移、闭环门）。无法唯一定位 owner 不再终止 run，也不因此豁免上述 check。
 
 | 叙述产物 | 路径 | 寿命 |
 |----------|------|------|
