@@ -112,7 +112,7 @@ function buildProject(phase: string, opts: ReceiptOpts): { root: string; sha: st
   const ceAbs = path.join(featureDir, 'context-exploration.md');
   fs.writeFileSync(ceAbs, '# context exploration\n', 'utf-8');
   // plan e5b8c3f7：verifier 证据 = summary.verifier_subject_id + 身份验真过的
-  // verifier.report.json（与 SubagentStop hook 同形，经共享 fixture 工具发布）。
+  // verifier.report.<subject>.md（与生产同形，经共享 fixture 工具写入）。
   // omitVerifier 时**两者都不写**——这正是"verifier 缺失"的新形态（旧形态是不写 MD）。
   if (!opts.omitVerifier) {
     fs.writeFileSync(
@@ -165,7 +165,7 @@ function buildProject(phase: string, opts: ReceiptOpts): { root: string; sha: st
     : [
         'verifier_subagent:',
         '  invoked_via: "Task(subagent_type=verifier)"',
-        '  report_path: "doc/features/demo/' + phase + '/reports/verifier.report.json"',
+        '  report_path: "doc/features/demo/' + phase + '/reports/verifier.report.md"',
         '  verdict: "PASS"',
         '',
       ].join('\n');

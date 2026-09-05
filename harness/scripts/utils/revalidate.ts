@@ -21,6 +21,7 @@ import { featureDir, featurePhaseReportsDir } from '../../config';
 import { recomputePhaseEvidenceStaleness, type PhaseStalenessResult } from './phase-evidence-manifest';
 import { runSyncClosureDetailed } from './phase-state';
 import { resolveUpstreamPhaseChain } from './upstream-verdict-gate';
+import { loadVerifierEvidenceForSubject } from './verifier-evidence';
 
 /** 子进程 harness 据此在 summary 里标 script_revalidated（不宣称语义再审）。 */
 export const REVALIDATE_ENV = 'MAISON_REVALIDATE';
@@ -104,11 +105,19 @@ function readSummary(projectRoot: string, feature: string, phase: string, framew
   }
 }
 
-function verifierModeOf(projectRoot: string, feature: string, phase: string, summary: SummaryLike | null, frameworkRoot?: string): RevalidationPhaseResult['verifier'] {
+/**
+ * 重验账本里的 verifier 字段（**只是记录，不阻断**）。plan d2f7a9c4：走共享 loader 读 MD，
+ * 不手拼路径、不看残留旧 .json——否则同材料复用会被误记成 missing。export 供单测直驱。
+ */
+export function verifierModeOf(projectRoot: string, feature: string, phase: string, summary: SummaryLike | null, frameworkRoot?: string): RevalidationPhaseResult['verifier'] {
   if (!summary?.verifier_subject_id) return 'not_applicable';
   if (summary.verifier_closure?.mode === 'completed_with_prior_review') return 'completed_with_prior_review';
-  const report = path.join(featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot), `verifier.report.${summary.verifier_subject_id}.json`);
-  return fs.existsSync(report) ? 'reused_same_material' : 'missing';
+  // plan d2f7a9c4：走共享 loader（读 MD + 校验终态块），不手拼路径、不看残留旧 .json。
+  // 只有"存在且校验通过"才算可复用；报告在但终态块坏 = 不可复用，与缺失同判。
+  const loaded = loadVerifierEvidenceForSubject(projectRoot, feature, phase, summary.verifier_subject_id, {
+    frameworkRoot,
+  });
+  return loaded.ok ? 'reused_same_material' : 'missing';
 }
 
 function printBlockers(summary: SummaryLike | null): void {

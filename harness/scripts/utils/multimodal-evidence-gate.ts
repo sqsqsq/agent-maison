@@ -10,13 +10,12 @@ export interface MultimodalEvidenceGateInput {
   adapter: string;
   imageInput: ImageInputMode;
   /**
-   * verifier 结论正文。**只**能来自身份验真后的 `verifier.report.json`
-   * （plan e5b8c3f7：check-receipt 经 loadVerifierReportTextOrNull 传入）——
-   * 裸读 Markdown 等于让"编辑 MD"就能伪造读图证据块。验真不通过时传 undefined，
-   * 落下面既有的"未取得读图证据"降级通道。
+   * verifier 结论正文。只能来自 `loadVerifierReportTextOrNull`（plan d2f7a9c4：读当前
+   * subject 的 verifier.report.<subject>.md，subject 回显与 verdict 自洽才接受）。
+   * 校验不通过时传 undefined，落下面既有的"未取得读图证据"降级通道。
    */
   verifierReportText?: string;
-  /** 强制解析仅 claude-kernel 家族（claude/codeagent；SubagentStop hook 发布 verifier.report.json，check-receipt 按 isClaudeKernelAdapter 传入） */
+  /** 强制解析仅 claude-kernel 家族（claude/codeagent；check-receipt 按 isClaudeKernelAdapter 传入） */
   forceParse: boolean;
 }
 
@@ -77,9 +76,9 @@ export function evaluateMultimodalEvidenceGate(
 }
 
 /**
- * @deprecated plan e5b8c3f7：读图证据的正文来源已切到身份验真后的
- * `verifier.report.json`（`loadVerifierReportTextOrNull`）。本函数不再有生产调用点，
- * 保留仅为兼容窗口——**不得**用它把 `verifier.report.md` 重新接回任何机器判定面。
+ * @deprecated 读图证据的正文来源统一走 `loadVerifierReportTextOrNull`（它按当前 subject
+ * 定位报告并校验终态块）。本函数不再有生产调用点，保留仅为兼容窗口——**不得**用它绕开
+ * subject 校验去裸读任意路径的报告文件。
  */
 export function readVerifierReportFile(absPath: string): string | null {
   if (!fs.existsSync(absPath)) return null;

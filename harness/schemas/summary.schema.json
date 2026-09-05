@@ -59,6 +59,11 @@
       "minLength": 1,
       "description": "该 subject 的短 request JSON 仓根相对路径（Task prompt 的唯一投递体）；与 verifier_subject_id 同进同退"
     },
+    "verifier_report": {
+      "type": "string",
+      "minLength": 1,
+      "description": "本轮 verifier 报告的落盘路径（仓根相对，<reports>/verifier.report.<subject>.md）。单写者=派发 verifier 的 agent：把 verifier 回复原样写到这里再跑 check-receipt；与 verifier_subject_id 同进同退（plan d2f7a9c4）"
+    },
     "verifier_closure": {
       "type": "object",
       "additionalProperties": false,

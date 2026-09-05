@@ -43,8 +43,6 @@ import {
 } from '../../config';
 import { inferRepoLayout } from '../../repo-layout';
 import { computeGateFingerprint } from './gate-fingerprint';
-import { readSummaryVerifierSubjectId } from './verifier-evidence';
-import { verifierReportJsonFilename } from './verifier-subject';
 import {
   goalManifestHashMatchesModuloAdapterProvenance,
   type GoalManifest,
@@ -142,7 +140,7 @@ export const PHASE_OPTIONAL_OUTPUT_RELPATHS_BY_PHASE: Partial<Record<Phase, stri
 
 /**
  * 阶段 reports 产出（receiptDir/reports 下；存在才纳入）——codex 五轮 P1：
- * collectCleanPassIssues 消费 summary.json 的 verdict，summary/verifier/trace 必须
+ * collectCleanPassIssues 消费 summary.json 的 verdict，summary/trace 必须
  * 在 manifest 保护面内，否则闭环后把 FAIL 改 PASS 不触发 staleness。
  */
 export const PHASE_REPORTS_OUTPUT_FILES = [
@@ -150,11 +148,9 @@ export const PHASE_REPORTS_OUTPUT_FILES = [
   'trace.json',
   'device-test-evidence.json',
 ] as const;
-// verifier 机器证据**不在**本表内（review 四轮 P0）：它按 subject 分区
-// （`verifier.report.<64位subject>.json`），文件名要到 summary 才知道，因此由
-// resolvePhaseEvidenceManifest 按**当前 subject** 动态登记。人读投影（.md）一直不进
-// 保护面。grandfather：旧 manifest 里登记过的固定名条目字节对账照旧生效——校验侧遍历的
-// 是 manifest 里已记录的条目，不是本表。
+// verifier 报告**不在**本表内，也不再动态登记（plan d2f7a9c4）：它的内容刻意不做防篡改，
+// 登记字节会让 manifest 成为「改报告唯一还有机器后果」的地方。旧 manifest 里登记过的
+// verifier 条目字节对账照旧生效——校验侧遍历的是 manifest 里已记录的条目，不是本表。
 
 export interface ResolveManifestOptions {
   projectRoot: string;
@@ -426,19 +422,10 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
     const rel = toPosixRel(projectRoot, abs);
     if (fs.existsSync(abs) || stagedHashes.has(rel)) addEntry(abs, 'output');
   }
-  // verifier 机器证据按 subject 分区，文件名由当前 summary 决定（review 四轮 P0）。
-  // subject 缺席=旧件，走 grandfather：它那份固定名条目已登记在**旧** manifest 里。
-  const verifierSubject = readSummaryVerifierSubjectId(
-    projectRoot,
-    feature,
-    String(phase),
-    opts.frameworkRoot,
-  );
-  if (verifierSubject) {
-    const abs = path.join(reportsDir, verifierReportJsonFilename(verifierSubject));
-    const rel = toPosixRel(projectRoot, abs);
-    if (fs.existsSync(abs) || stagedHashes.has(rel)) addEntry(abs, 'output');
-  }
+  // verifier 报告**不登记**（plan d2f7a9c4）。它的内容刻意不做防篡改：loader 只校验
+  // subject 回显与 verdict 自洽，不验指纹。若这里仍登记它的字节，manifest 就成了「改报告
+  // 唯一还有机器后果」的地方——与裁决规则自相矛盾，也会复活当初催生 subject 分区的那条
+  // stale 级联。闭环采用的结论记在 summary，而 summary 在保护面内。
   // P0 runtime telemetry lives in the authoritative timestamped Hylyre trace.
   // The canonical device-test evidence points to that trace; derive the second
   // output from the existing artifact so the phase manifest binds both without

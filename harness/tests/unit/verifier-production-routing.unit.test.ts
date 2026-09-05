@@ -29,7 +29,7 @@ import {
 import { buildSummaryRepairCandidates } from '../../scripts/utils/repair-candidates';
 import { finalizePhaseClosure } from '../../scripts/utils/phase-closure-finalizer';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
-import { makeVerifierProject, reportsDirOf, rmDir, writeFile } from '../utils/verifier-identity-fixture';
+import { makeVerifierProject, reportsDirOf, rmDir, writeFile } from '../utils/verifier-project-fixture';
 import type { CheckResult, HarnessRunSummary, Phase, ScriptReport } from '../../scripts/utils/types';
 
 export interface UnitCaseResult {
@@ -256,27 +256,17 @@ function caseB_requestParsingIsStrict(): void {
     );
   }
 
-  // ⑤ hook 侧（.mjs）必须与 TS 同规则：两端各写一套就是两份会漂移的真源。
-  const hookSrc = fs.readFileSync(
-    path.join(FRAMEWORK_ROOT, 'agents', 'claude', 'templates', 'hooks', 'record-verifier-report.mjs'),
-    'utf-8',
-  );
-  assert(hookSrc.includes('VERIFIER_REQUEST_KEYS'), 'hook 侧必须有同一套精确键集');
-  assert(hookSrc.includes('readNullableStr'), 'hook 侧必须有同一套可空字段严格读取');
-  assert(hookSrc.includes('readRequiredStr'), 'hook 侧必须有同一套"字段值原样取用"');
-  assert(
-    !/doc\.(feature|phase|prompt_path|prompt_sha256|subject_id)\.trim\(\)/.test(hookSrc),
-    'hook 侧不得再对字段值 trim 后取用',
-  );
+  // ⑤ 跨语言复刻断言已随 SubagentStop hook 一并删除（plan d2f7a9c4）：request 解析现在
+  //    只有 TS 一份实现，不再有第二套会漂移的真源。
 }
 
 // --------------------------------------------------------------------------
-// C. 三态 × 脚本 verdict 的生产分流 + next_action 分流表
+// C. 二态 × 脚本 verdict 的生产分流 + next_action 分流表
 // --------------------------------------------------------------------------
 function caseC_productionAndNextActionRouting(): void {
-  const plan = (mode: 'disabled' | 'enabled' | 'blocked') => ({
+  const plan = (mode: 'disabled' | 'enabled') => ({
     mode,
-    reason: mode === 'blocked' ? ('verifier_provider_unavailable' as const) : ('policy_required' as const),
+    reason: 'policy_required' as const,
     verifier_prompt: 'prompts/verify-review.md',
     message: `test-${mode}`,
   });
@@ -330,39 +320,33 @@ function caseC_productionAndNextActionRouting(): void {
     }
   }
 
-  // ③ blocked → 零 verifier 产物；next_action 必须是 provider 问题，**不得**是设备问题
+  // ③ adapter 无审查员 → plan 判 disabled/adapter_has_no_reviewer：零 verifier 产物，
+  //    且**不得**产生任何阻断性 next_action。旧实现在这里判 blocked 并落
+  //    resolve_verifier_provider_then_rerun（spec 阶段甚至被投影成 device_ready_then_rerun_ut），
+  //    整条 full track 在无 hook 的 adapter 上因此不可用（plan d2f7a9c4 D4）。
   {
     const { root } = makeVerifierProject();
     try {
       const dir = reportsDirOf(root, 'demo', 'review');
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, 'ai-prompt.md'), '# prompt v1\n', 'utf-8');
-      // blocked 时 runner 会推一条 BLOCKER FAIL（externalBlocked/capability_missing）→ 顶层 INCOMPLETE
-      const blockedCheck: CheckResult = {
-        id: 'verifier_provider_unavailable',
-        category: 'structure',
-        description: 'verifier provider',
-        severity: 'BLOCKER',
-        status: 'FAIL',
-        details: 'no provider',
-        failure_kind: 'capability_missing',
-        blocking_class: 'externalBlocked',
-      };
-      const s = writeRunSummaryBase(
-        root,
-        scriptReportOf('demo', 'review', root, [blockedCheck]),
-        FRAMEWORK_ROOT,
-        { verifierPlan: plan('blocked') },
-      );
-      assert(!s.verifier_request, 'blocked 时不得写 request（没有 provider 能消费它）');
+      const s = writeRunSummaryBase(root, scriptReportOf('demo', 'review', root, [OK_CHECK]), FRAMEWORK_ROOT, {
+        verifierPlan: {
+          mode: 'disabled' as const,
+          reason: 'adapter_has_no_reviewer' as const,
+          verifier_prompt: 'prompts/verify-review.md',
+          message: 'test-no-reviewer',
+        },
+      });
+      assert(!s.verifier_request, '无审查员时不得写 request（没人能消费它）');
+      assert(!s.verifier_subject_id && !s.ai_prompt, '无审查员时 verifier 字段整组缺席');
       assert(
-        s.next_action === 'resolve_verifier_provider_then_rerun',
-        `blocked 必须给 provider 动作；实得 ${s.next_action}` +
-          '（旧实现在这里落 device_ready_then_rerun_ut——spec 阶段被指去修真机环境）',
+        s.next_action === 'fill_receipt_then_sync_closure',
+        `无审查员 ∧ 脚本 PASS 应直奔闭环（如实披露而非阻断），实得 ${s.next_action}`,
       );
       assert(
-        !String(s.next_action).includes('device_ready'),
-        'provider 缺失绝不能被投影成设备问题',
+        !String(s.next_action).includes('device_ready') && !String(s.next_action).includes('provider'),
+        '缺审查员绝不能被投影成设备问题或 provider 阻断',
       );
     } finally {
       rmDir(root);
@@ -731,7 +715,11 @@ function caseE2_closureRecomputeKeepsFailureKind(): void {
 // --------------------------------------------------------------------------
 function caseF_consoleGuidanceFollowsNextAction(): void {
   const plan = { message: 'PLAN_MESSAGE_SENTINEL' };
-  const withReq = { verifier_request: 'doc/features/demo/review/reports/verifier.request.abc.json', verifier_subject_id: 'a'.repeat(64) };
+  const withReq = {
+    verifier_request: 'doc/features/demo/review/reports/verifier.request.abc.json',
+    verifier_subject_id: 'a'.repeat(64),
+    verifier_report: `doc/features/demo/review/reports/verifier.report.${'a'.repeat(64)}.md`,
+  };
 
   const needVerifier = buildPassGuidanceLines(
     { next_action: 'run_verifier_then_receipt', ...withReq },
@@ -741,6 +729,10 @@ function caseF_consoleGuidanceFollowsNextAction(): void {
   ).join('\n');
   assert(needVerifier.includes(withReq.verifier_request), '需要跑 verifier 时必须给出 request 路径');
   assert(needVerifier.includes('投给 subagent_type=verifier'), '需要跑 verifier 时必须叫人投 request');
+  // plan d2f7a9c4：报告由调用方写。指引必须同时给出**写到哪里**——只说"投 request"会让
+  // verifier 跑完却没人落盘，闭环侧只看到 report_missing。
+  assert(needVerifier.includes(withReq.verifier_report), '必须给出报告落盘路径');
+  assert(/原样|全文/.test(needVerifier), '必须要求原样全文写入，不能只说"写下来"');
 
   // 关键：证据已可复用时**不得**再叫人投 request——这正是与材料寻址契约冲突的那句。
   const reuse = buildPassGuidanceLines(
@@ -776,20 +768,21 @@ function caseF_consoleGuidanceFollowsNextAction(): void {
   assert(findings.includes('修改材料'), 'verifier FAIL 时应指向改材料');
   assert(!findings.includes('投给 subagent_type=verifier'), 'verifier FAIL 时不得叫人对同 subject 重跑');
 
-  const blocked = buildPassGuidanceLines(
-    { next_action: 'resolve_verifier_provider_then_rerun', verifier_request: undefined, verifier_subject_id: undefined },
-    plan,
+  // adapter 无审查员走 disabled 分支：转述 plan 理由 + 直奔闭环。**不得**出现阻断话术。
+  const noReviewer = buildPassGuidanceLines(
+    { next_action: 'fill_receipt_then_sync_closure', verifier_request: undefined, verifier_subject_id: undefined },
+    { message: '当前 adapter 未登记 verifier_subagent' },
     'review',
     'demo',
   ).join('\n');
-  assert(blocked.includes('PLAN_MESSAGE_SENTINEL'), 'blocked 应转述 provider 判定理由');
-  assert(!blocked.includes('--sync-closure'), 'blocked 不得指向闭环');
+  assert(noReviewer.includes('未登记 verifier_subagent'), '无审查员时应转述 plan 的判定理由');
+  assert(noReviewer.includes('--sync-closure'), '无审查员时同样直奔闭环，不阻断');
 }
 
 const CASES: Array<{ name: string; fn: () => void }> = [
   { name: 'A workflow 声明的 verifier_prompt 决定实际装配的模板；缺文件明确失败、无 fallback', fn: caseA_declaredTemplateIsTheOneAssembled },
   { name: 'B request 解析严格：JSON 内夹带字段 / 可空字段错误类型 / subject 不可外部传入', fn: caseB_requestParsingIsStrict },
-  { name: 'C 三态 × 脚本 verdict 的生产分流与 next_action 分流表（blocked 不落设备分支）', fn: caseC_productionAndNextActionRouting },
+  { name: 'C 二态 × 脚本 verdict 的生产分流与 next_action 分流表（无审查员不阻断）', fn: caseC_productionAndNextActionRouting },
   { name: 'D Stop hook 首要动作：PASS 只差闭环 → sync-closure；脚本 FAIL → 完整重跑', fn: caseD_stopHookFirstActionRouting },
   { name: 'E repair_candidates 锚到本轮 subject；闭环时按已验真证据重算', fn: caseE_repairCandidatesSubjectAnchoring },
   { name: 'E2 闭环重算保留 failure_kind：code_regression 合取候选不得静默消失', fn: caseE2_closureRecomputeKeepsFailureKind },

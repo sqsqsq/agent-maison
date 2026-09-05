@@ -628,12 +628,19 @@ export interface HarnessRunSummary {
    * plan a9d4e7c2：本轮 run 的 verifier 证据身份（runner 单点生成，agent 零参与）。
    * **按实际审查材料寻址**——相同材料复用同一 subject（既有验真 JSON 直接进 receipt），
    * 材料变化必换 subject；不加 nonce，也不承诺跨 harness run 稳定。
-   * 仅在 verifier 能力 enabled 时在场；disabled/blocked 时缺席（缺席=不适用，不是"缺失"）。
+   * 仅在 verifier plan enabled 时在场；disabled 时缺席（缺席=不适用，不是"缺失"）。
    * 派生输入见 verifier-request.ts（明确排除整份 summary SHA，防闭环自锁）。
    */
   verifier_subject_id?: string;
   /** 该 subject 的短 request JSON 仓根相对路径（Task prompt 的唯一投递体）。 */
   verifier_request?: string;
+  /**
+   * plan d2f7a9c4：本轮 verifier 报告的落盘路径（仓根相对，`<reports>/verifier.report.<subject>.md`）。
+   * **单写者是派发 verifier 的那个 agent**——它把 verifier 的回复原样写到这里，然后跑
+   * check-receipt。该字段存在的意义是调用方永远不用自己拼路径，NEXT 行直接点名它。
+   * 与 verifier_subject_id / verifier_request 同进同退。
+   */
+  verifier_report?: string;
   /** plan 07a41ec6 T7：沿用既往 PASS 闭环时在场；当前 subject 自身已验真时缺席 */
   verifier_closure?: VerifierClosureRecord;
   script_report: string;

@@ -12,15 +12,20 @@
 //
 //   这个阶段是否存在？          → workflow + feature track（调用方已裁掉轨外 phase）
 //   这个阶段是否需要 verifier？ → workflow 的 verifier_prompt 声明 + evidence policy
-//   当前 adapter 能不能执行？   → adapter 的 verifier_capability（仅实测 mode 登记）
+//   当前 adapter 有没有审查员？ → adapter 的布尔 verifier_subagent（宿主实测登记）
 //   本次报告属于哪个 run？      → verifier request 的 subject（见 verifier-request.ts）
 //
-// ─── 三态语义 ───────────────────────────────────────────────────────────────
+// ─── 二态语义（plan d2f7a9c4：blocked 整体删除）─────────────────────────────
 //   disabled：不生成 ai-prompt / request / subject，不调用，不校验——**缺席即为零**；
-//   enabled ：生成 request 并执行 verifier；
-//   blocked ：policy=required 但当前 adapter 无能力——**脚本检查照常完整执行**，
-//             script PASS 后才报 INCOMPLETE / verifier_provider_unavailable
-//            （provider 缺失不覆盖真实脚本失败、不禁基本诊断，也不拖到 receipt 才死）。
+//   enabled ：生成 request 并执行 verifier。
+//
+// 曾经的第三态 blocked 表达的是「policy 要 verifier，但当前 adapter 发布不了」。报告改由
+// **调用方**写出后，发布不再有 adapter 差异，该态没有指称对象。剩下的唯一缺口是「这个工具
+// 起不了子代理」，按 disabled/adapter_has_no_reviewer 如实披露、不阻断闭环。
+//
+// **判定与运行模式无关**（本轮的病根）：旧口径下 adapter 能力门只作用于 interactive，而 hook
+// 在 goal/headless 一律落 bedside 不发布——两条规则交集为空，一次真跑通过的审查永远闭不了环，
+// 宿主两轮无人值守 run 因此熔断。此处不得再出现任何 runtimeMode 分支。
 //
 // ─── 两条不可让步的边界 ─────────────────────────────────────────────────────
 // 1. **声明在场即真源**：workflow 声明 `verifier_prompt` = 该 phase 具备 verifier 能力，
@@ -34,7 +39,7 @@
 import type { WorkflowSpec } from '../../workflow-loader';
 import type { EvidenceLevel, EvidencePolicy, FeatureTrack, RuntimeMode } from './runtime-policy';
 
-export type VerifierPlanMode = 'disabled' | 'enabled' | 'blocked';
+export type VerifierPlanMode = 'disabled' | 'enabled';
 
 export type VerifierPlanReason =
   /** profile 禁用整个 phase */
@@ -45,10 +50,10 @@ export type VerifierPlanReason =
   | 'policy_off'
   /** evidence policy 判 not_applicable（如 lite track） */
   | 'policy_not_applicable'
+  /** 当前 adapter 未登记 verifier_subagent = 没有审查员（如实披露，不阻断） */
+  | 'adapter_has_no_reviewer'
   | 'policy_required'
-  | 'policy_optional'
-  /** required 但当前 adapter 未登记该 mode 的 verifier 能力 */
-  | 'verifier_provider_unavailable';
+  | 'policy_optional';
 
 export interface VerifierPlan {
   mode: VerifierPlanMode;
@@ -57,27 +62,6 @@ export interface VerifierPlan {
   verifier_prompt: string | null;
   /** 人读一句话（控制台 / Skill 指引 / check-receipt 话术共用，避免各写一份）。 */
   message: string;
-}
-
-// ---------------------------------------------------------------------------
-// adapter 能力声明
-// ---------------------------------------------------------------------------
-
-/** 证据投递机制 id（机制名非厂商名——多个 adapter 可共用同一机制）。 */
-export const VERIFIER_CAPABILITY_TRANSPORTS = ['repo_file_request'] as const;
-export type VerifierCapabilityTransport = (typeof VERIFIER_CAPABILITY_TRANSPORTS)[number];
-
-/** 证据发布机制 id。 */
-export const VERIFIER_CAPABILITY_PUBLISHERS = ['subagent_stop'] as const;
-export type VerifierCapabilityPublisher = (typeof VERIFIER_CAPABILITY_PUBLISHERS)[number];
-
-/** 可登记的运行模式（= RuntimeMode；**只登记真实实测过的**，不许预填）。 */
-export const VERIFIER_CAPABILITY_MODES = ['interactive', 'headless', 'goal'] as const;
-
-export interface VerifierCapabilityDeclaration {
-  transport: VerifierCapabilityTransport;
-  publisher: VerifierCapabilityPublisher;
-  modes: readonly RuntimeMode[];
 }
 
 // ---------------------------------------------------------------------------
@@ -94,23 +78,18 @@ export interface ResolveVerifierPlanInput {
   /** workflow artifact 的 `verifier_prompt`；缺席 = 该 phase 不具备 verifier 能力。 */
   workflowVerifierPrompt?: string | null;
   phaseDisabledByProfile?: boolean;
-  /** adapter 的 verifier_capability 声明；null/undefined = 未声明 = 无能力。 */
-  adapterCapability?: VerifierCapabilityDeclaration | null;
+  /** adapter 的布尔 verifier_subagent；缺省 = 无审查员。 */
+  adapterHasVerifierSubagent?: boolean;
   /** 仅用于话术。 */
   adapterName?: string;
 }
 
-function hasMode(cap: VerifierCapabilityDeclaration | null | undefined, mode: RuntimeMode): boolean {
-  return Boolean(cap && cap.modes.includes(mode));
-}
-
 /**
  * 四问一次解析。**顺序即优先级**，任何调用方都不得插队或另判：
- *   profile 禁用 > workflow 未声明 > policy 不适用/off > adapter 能力 > 启用。
+ *   profile 禁用 > workflow 未声明 > policy 不适用/off > adapter 无审查员 > 启用。
  *
- * adapter 能力判定**本轮仅 interactive**：goal/headless 的 verifier 发布权责由
- * goal 侧 bedside 特例承担（其删除另立后续，须真实 goal payload 验收），此处若也按
- * 「未登记即 blocked」判定，会把 full×goal 一刀切成 INCOMPLETE，属越权。
+ * interactive / headless / goal 三种模式解析结果完全一致——**不得引入任何 mode 分支**。
+ * runtimeMode 只进话术。
  */
 export function resolveVerifierPlan(input: ResolveVerifierPlanInput): VerifierPlan {
   const prompt = typeof input.workflowVerifierPrompt === 'string' && input.workflowVerifierPrompt.trim()
@@ -155,16 +134,16 @@ export function resolveVerifierPlan(input: ResolveVerifierPlanInput): VerifierPl
     };
   }
 
-  if (level === 'required' && input.runtimeMode === 'interactive' && !hasMode(input.adapterCapability, 'interactive')) {
+  if (!input.adapterHasVerifierSubagent) {
     return {
-      mode: 'blocked',
-      reason: 'verifier_provider_unavailable',
+      mode: 'disabled',
+      reason: 'adapter_has_no_reviewer',
       verifier_prompt: prompt,
       message:
-        `阶段 ${where} 的 evidence policy 判 verifier=required，但当前 adapter` +
-        `${input.adapterName ? ` "${input.adapterName}"` : ''} 未登记 interactive 模式的 verifier 能力` +
-        '（agents/<adapter>/adapter.yaml 的 verifier_capability.modes）。' +
-        '脚本检查照常完整执行；脚本 PASS 时本阶段按 INCOMPLETE / verifier_provider_unavailable 处理。',
+        `阶段 ${where}：当前 adapter${input.adapterName ? ` "${input.adapterName}"` : ''} 未登记 ` +
+        'verifier_subagent（agents/<adapter>/adapter.yaml），本工具起不了 verifier 子 agent。' +
+        '不生成 request、不重跑；闭环照常进行，verifier 轴如实记 not_reviewed 并披露——' +
+        '这是环境事实，不是产物缺陷。',
     };
   }
 

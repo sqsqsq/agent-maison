@@ -1,5 +1,5 @@
 {
-  "_comment_top": "弱模型工作流强制门 / Layer 3 合作式拦截（codeagent；与 agents/claude/templates/settings.json 同构，差异仅：无 $schema、路径 .cac/、变量 ${CODEAGENT3_PROJECT_DIR}）。Stop hook 校验阶段闭环；SubagentStop hook 落地 verifier 报告；PreToolUse hook 拦截发布件 framework/ 的编辑类写入。它只覆盖 Write/Edit/MultiEdit/NotebookEdit；shell、脚本与场外进程不在射程，也没有事后 Git/hash detector 兜底。真正隔离须由 task sandbox / 只读挂载 / 受限 OS token 提供。",
+  "_comment_top": "弱模型工作流强制门 / Layer 3 合作式拦截（codeagent；与 agents/claude/templates/settings.json 同构，差异仅：无 $schema、路径 .cac/、变量 ${CODEAGENT3_PROJECT_DIR}）。Stop hook 校验阶段闭环；PreToolUse hook 拦截发布件 framework/ 的编辑类写入。它只覆盖 Write/Edit/MultiEdit/NotebookEdit；shell、脚本与场外进程不在射程，也没有事后 Git/hash detector 兜底。真正隔离须由 task sandbox / 只读挂载 / 受限 OS token 提供。",
   "hooks": {
     "PreToolUse": [
       {
@@ -19,17 +19,6 @@
           {
             "type": "command",
             "command": "node \"${CODEAGENT3_PROJECT_DIR}/.cac/hooks/check-phase-completion.mjs\""
-          }
-        ]
-      }
-    ],
-    "SubagentStop": [
-      {
-        "matcher": "verifier",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CODEAGENT3_PROJECT_DIR}/.cac/hooks/record-verifier-report.mjs\""
           }
         ]
       }

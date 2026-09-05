@@ -66,11 +66,22 @@ function provisionFramework(): { root: string; harnessDir: string } {
   return { root, harnessDir: harness };
 }
 
-function run(harnessDir: string, script: string, args: string[], root: string): { status: number; stdout: string; stderr: string } {
+function run(
+  harnessDir: string,
+  script: string,
+  args: string[],
+  root: string,
+  envOverrides: Record<string, string | undefined> = {},
+): { status: number; stdout: string; stderr: string } {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const [key, value] of Object.entries(envOverrides)) {
+    if (value === undefined) delete env[key];
+    else env[key] = value;
+  }
   const r = spawnSync(
     process.platform === 'win32' ? 'npx.cmd' : 'npx',
     ['ts-node', path.join(harnessDir, 'scripts', script), ...args],
-    { cwd: harnessDir, encoding: 'utf-8', shell: process.platform === 'win32' },
+    { cwd: harnessDir, encoding: 'utf-8', shell: process.platform === 'win32', env },
   );
   return { status: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 }
@@ -100,12 +111,11 @@ function git(root: string, args: string[]): void {
 }
 
 /** 铺一个完整 spec 工程（PASS 所需：spec.md + acceptance + facts + source + git）。 */
-// plan a9d4e7c2: interactive full-track spec requires an adapter that actually
-// registers a verifier capability; `generic` has no SubagentStop publisher, so it
-// now resolves to `blocked` (INCOMPLETE / verifier_provider_unavailable) by design.
-// `codeagent` registers one and shares AGENTS.md as its entry file, so the
-// personal-setup gate stays satisfied by this scaffold.
-// The goal-mode case below passes its own adapter and is unaffected.
+// plan d2f7a9c4: full-track spec needs an adapter that declares `verifier_subagent`.
+// `codeagent` does, and shares AGENTS.md as its entry file, so the personal-setup gate
+// stays satisfied by this scaffold. An adapter without the declaration resolves to
+// `disabled / adapter_has_no_reviewer` — closure still passes, carrying `not_reviewed`
+// (see the undeclared-adapter case below).
 function scaffoldFeature(root: string, adapter = 'codeagent'): void {
   fs.mkdirSync(path.join(root, 'doc', 'features', 'demo', 'spec'), { recursive: true });
   fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({
@@ -175,8 +185,8 @@ function readJson(root: string, rel: string): Record<string, unknown> {
 
 function writeValidSpecReceipt(root: string, summary: Record<string, unknown>, attemptId = ''): void {
   const reportsDir = path.join(root, 'doc/features/demo/spec/reports');
-  // plan e5b8c3f7：verifier 证据 = 与 hook 同形的 canonical JSON，subject 取自
-  // 本次真实 harness run 写入 summary 的 verifier_subject_id（不重写 summary 字节）。
+  // plan d2f7a9c4：verifier 证据 = 调用方按 summary.verifier_report 写下的报告，
+  // subject 取自本次真实 harness run 写入 summary 的 verifier_subject_id（不重写 summary 字节）。
   publishFixtureVerifierEvidence({
     projectRoot: root,
     reportsDir,
@@ -193,7 +203,7 @@ function writeValidSpecReceipt(root: string, summary: Record<string, unknown>, a
     `claimed_completion_commit_sha: "${String(summary.source_commit_sha)}"`, `claimed_attempt_id: "${attemptId}"`,
     'verifier_subagent:', '  invoked_via: "Task(subagent_type=verifier)"',
     '  prompt_template: "framework/harness/prompts/verify-spec.md"',
-    '  report_path: "doc/features/demo/spec/reports/verifier.report.json"', '  verdict: "PASS"',
+    '  report_path: "doc/features/demo/spec/reports/verifier.report.md"', '  verdict: "PASS"',
     '  ran_at: "2026-08-11T10:00:00+08:00"', '---', '',
     '## 反假设条款回顾', '', '- [x] 我没有引用不存在规则', '- [x] 若曾认为受限已逐字 quote', '- [x] 没有把假设当借口', '',
   ].join('\n'), 'utf-8');
@@ -290,6 +300,156 @@ const cases: Case[] = [
         const ssotPath = path.join(root, 'doc/features/demo/spec/reports/fidelity-intent.json');
         assert(crypto.createHash('sha256').update(fs.readFileSync(ssotPath)).digest('hex') === fidelityHash,
           '旧 epoch 拒绝路径改写了 fidelity SSOT');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        assert(JSON.stringify(repoDocFeatures()) === JSON.stringify(before), 'E2E 不得新增 repo doc/features');
+      }
+    },
+  },
+  {
+    name: 'E2E goal 无人值守：headless 全程 goal 身份 → summary.verifier_report 与 NEXT 行一致 → 写报告 → closed',
+    run: async () => {
+      // **本轮病根的端到端看门狗**（plan d2f7a9c4）。旧口径：adapter 能力门只作用于
+      // interactive，而 SubagentStop hook 在 MAISON_GOAL_HEADLESS=1 下一律落 bedside 不发布，
+      // 两条规则交集为空 → harness PASS、verifier 真跑且 PASS，闭环仍永远差最后一步 →
+      // 宿主 bc-openCard-1 两轮 closure_wall_repeated 熔断。
+      //
+      // 复现要点：**从 harness 到 check-receipt 全程带同一套 goal 身份**（真实 run manifest +
+      // RUN_ID/ATTEMPT），中途退出 goal 环境就绕开了 goal 侧那套 fail-closed 校验，
+      // 也就不算复现原场景（codex review 指出的覆盖边界）。
+      const before = repoDocFeatures();
+      const { root, harnessDir } = provisionFramework();
+      try {
+        scaffoldFeature(root);
+        const runId = '20260905T000000Z-headless-e2e';
+        const prepared = prepareGoalModeRun({
+          projectRoot: root,
+          frameworkRoot: path.join(root, 'framework'),
+          feature: 'demo',
+          runId,
+          adapter: 'codeagent',
+          adapterSource: 'local_config',
+          requirement: '设计账户页，含余额展示与转账入口。',
+          endPhase: 'spec',
+        });
+        const attemptId = `${runId}-i1`;
+        const control = readRunControl(prepared.runDir, runId);
+        // owner kind 取 session：CLI initializer 的 attended 上下文只接受 session owner
+        // （生产无人值守由 goal-runner preflight 内部初始化，不经这条 CLI）。owner 种类与本用例
+        // 要验的 verifier 链路无关——环境仍是 MAISON_GOAL_HEADLESS=1，harness 与 check-receipt
+        // 全程按 goal 判定。
+        const owner = casAcquireRunOwner(prepared.runDir, runId, control?.current_epoch ?? 0, {
+          kind: 'session', owner_id: 'headless-e2e-owner', lease_ms: 120_000,
+        });
+        assert(owner.ok, 'run owner acquisition failed');
+        const goalEnv = {
+          MAISON_GOAL_HEADLESS: '1',
+          MAISON_GOAL_RUN_ID: runId,
+          MAISON_GOAL_ATTEMPT: attemptId,
+          MAISON_GOAL_ATTEMPT_PHASE: 'spec',
+        };
+
+        // SSOT 身份必须绑定当前 goal run（生产里由 goal-runner preflight 做），否则
+        // fidelity_capability_pregate 判「SSOT 身份非当前 goal run」。
+        const init = run(harnessDir, 'fidelity-intent-init.ts', [
+          '--feature', 'demo', '--requirement', '设计账户页，含余额展示与转账入口。',
+          '--goal-run-id', runId, '--goal-phase', 'spec',
+          '--goal-attempt-id', attemptId,
+          '--goal-owner-id', 'headless-e2e-owner',
+          '--goal-owner-epoch', String(owner.ok ? owner.control.current_epoch : 0),
+        ], root, goalEnv);
+        assert(init.status === 0, `initializer 失败：${init.stderr}`);
+
+        const hr = runHarness(harnessDir, ['--phase', 'spec', '--feature', 'demo', '--summary'], root, goalEnv);
+        const summary = readJson(root, 'doc/features/demo/spec/reports/summary.json');
+        assert(summary.verdict === 'PASS', `headless spec 应 PASS：${hr.stdout}\n${hr.stderr}`);
+
+        // ① headless 下必须照常签发调用面——旧口径这里也签发，但没人能发布结论。
+        assert(Boolean(summary.verifier_subject_id), 'headless 下必须签发 subject');
+        assert(Boolean(summary.verifier_request), 'headless 下必须写 verifier_request');
+        const reportRel = String(summary.verifier_report ?? '');
+        assert(
+          reportRel.endsWith(`verifier.report.${String(summary.verifier_subject_id)}.md`),
+          `summary.verifier_report 应按 subject 分区，实得 ${reportRel}`,
+        );
+
+        // ② NEXT 行必须点名同一个路径——调用方不用自己拼。
+        assert(hr.stdout.includes(reportRel), `NEXT 指引必须给出报告路径 ${reportRel}：${hr.stdout}`);
+
+        // ③ 调用方按那个指针把 verifier 回复原样写下（真模型能力由宿主回跑验收）。
+        //    刻意**用 summary 的指针**定位，而不是自己拼路径：夹具与被测各拼各的，会一起"通过"。
+        const reportAbs = path.join(root, reportRel);
+        fs.mkdirSync(path.dirname(reportAbs), { recursive: true });
+        publishFixtureVerifierEvidence({
+          projectRoot: root,
+          reportsDir: path.dirname(reportAbs),
+          feature: 'demo',
+          phase: 'spec',
+          subjectId: String(summary.verifier_subject_id),
+          skipSummaryPatch: true,
+        });
+        assert(fs.existsSync(reportAbs), `报告必须落在 summary 指针处：${reportRel}`);
+        fs.writeFileSync(path.join(root, 'doc/features/demo/spec/reports/trace.json'), '{"trace": []}', 'utf-8');
+
+        // ④ 闭环达成：全程 goal 身份，不再有 verifier_evidence_report_missing / closure_wall_repeated。
+        const rc = run(harnessDir, 'check-receipt.ts', [
+          '--feature', 'demo', '--phase', 'spec', '--project-root', root,
+        ], root, goalEnv);
+        const out = `${rc.stdout}\n${rc.stderr}`;
+        assert(rc.status === 0, `headless 全程 goal 身份下闭环应 exit 0，实得 ${rc.status}：${out}`);
+        assert(!out.includes('verifier_evidence_report_missing'), `不得再报证据缺失：${out}`);
+        const closed = readJson(root, 'doc/features/demo/spec/reports/summary.json');
+        assert(closed.closure_status === 'closed', `headless 下必须真正 closed，实得 ${closed.closure_status}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        assert(JSON.stringify(repoDocFeatures()) === JSON.stringify(before), 'E2E 不得新增 repo doc/features');
+      }
+    },
+  },
+  {
+    name: 'E2E adapter 未登记 verifier_subagent：不签发 request，闭环照常并披露 not_reviewed',
+    run: () => {
+      // plan d2f7a9c4 D4：起不了子代理是环境事实，不是产物缺陷。旧口径判 blocked →
+      // INCOMPLETE，整条 full track 在这些 adapter 上不可用（codex 08-29 起即如此）。
+      const before = repoDocFeatures();
+      const { root, harnessDir } = provisionFramework();
+      try {
+        scaffoldFeature(root, 'opencode');
+        const init = run(harnessDir, 'fidelity-intent-init.ts', [
+          '--feature', 'demo', '--requirement', '设计账户页，含余额展示与转账入口。',
+        ], root);
+        assert(init.status === 0, `initializer 失败：${init.stderr}`);
+
+        const hr = runHarness(harnessDir, ['--phase', 'spec', '--feature', 'demo', '--summary'], root);
+        const summary = readJson(root, 'doc/features/demo/spec/reports/summary.json');
+        assert(summary.verdict === 'PASS', `无审查员不得影响脚本结论：${hr.stdout}\n${hr.stderr}`);
+        assert(!summary.verifier_subject_id && !summary.verifier_request && !summary.verifier_report,
+          '无审查员时 verifier 字段整组缺席（不生成没人能消费的 request）');
+        const reportsDir = path.join(root, `doc/features/demo/spec/reports`);
+        assert(!fs.readdirSync(reportsDir).some((f) => f.startsWith('verifier.request.')),
+          '磁盘不得留下无人能消费的 request');
+
+        fs.writeFileSync(path.join(reportsDir, 'trace.json'), '{"trace": []}', 'utf-8');
+        const rc = run(harnessDir, 'check-receipt.ts', [
+          '--feature', 'demo', '--phase', 'spec', '--project-root', root,
+        ], root);
+        const out = `${rc.stdout}\n${rc.stderr}`;
+        assert(rc.status === 0, `无审查员应照常闭环，实得 ${rc.status}：${out}`);
+        assert(/not_reviewed/.test(out), `闭环记录必须如实披露 not_reviewed：${out}`);
+        // **控制台不算披露**（codex review P1）：run 结束就没了。持久面是 summary——
+        // D0 第 4 条要求"可以不复审，但不能把未复审描述成已 PASS"。
+        const closed = readJson(root, 'doc/features/demo/spec/reports/summary.json');
+        const signals = (closed.readiness_signals ?? []) as Array<{ id?: string; status?: string }>;
+        const notReviewed = signals.find((sig) => sig.id === 'verifier_not_reviewed');
+        assert(
+          Boolean(notReviewed),
+          `summary.readiness_signals 必须持久记录未审查事实，实得 ${JSON.stringify(signals)}`,
+        );
+        assert(
+          notReviewed?.status === 'unknown',
+          `未审查是"无结论"（unknown），不得标成 ready，也不得标成 incomplete（那会指人去完成一件完不成的事）；实得 ${notReviewed?.status}`,
+        );
+        assert(!/verifier_provider_unavailable/.test(out), `不得再报 provider 阻断：${out}`);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
         assert(JSON.stringify(repoDocFeatures()) === JSON.stringify(before), 'E2E 不得新增 repo doc/features');

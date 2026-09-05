@@ -167,7 +167,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       }
       // 跨目录共享：verifier / hooks / rules
       assert(targets.includes('.cac/agents/verifier.md'), 'verifier 共享模板未进清单');
-      for (const hook of ['guard-framework-write.mjs', 'check-phase-completion.mjs', 'record-verifier-report.mjs']) {
+      for (const hook of ['guard-framework-write.mjs', 'check-phase-completion.mjs']) {
         assert(targets.includes(`.cac/hooks/${hook}`), `.cac/hooks/${hook} 未进清单`);
       }
       assert(targets.includes('.cac/rules/interaction-renderer.md'), 'rules 共享模板未进清单');

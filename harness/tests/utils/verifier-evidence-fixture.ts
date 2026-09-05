@@ -1,19 +1,20 @@
 // ============================================================================
-// verifier-evidence-fixture.ts — 测试侧「发布一份合法 verifier 机器证据」的共享工具
+// verifier-evidence-fixture.ts — 测试侧「调用方把 verifier 回复写成报告」的共享工具
 // ============================================================================
-// plan e5b8c3f7 T5。生产侧的发布者是 SubagentStop hook；单测 fixture 不跑 hook，
-// 但必须产出与 hook **同形**的产物，否则测的是幻想中的格式。
-// 因此本工具刻意复用生产 SSOT：schema 版本与 result hash 都来自
-// scripts/utils/verifier-subject.ts / verifier-evidence.ts，不在这里手抄常量。
+// plan d2f7a9c4：生产侧的写者是**派发 verifier 的那个 agent**（phase executor / 主 agent），
+// 它把 verifier 的回复原样写入 `summary.verifier_report`。单测不跑真模型，但必须产出与生产
+// 同形的字节，否则测的是幻想中的格式。
+//
+// 因此本工具刻意复用生产 SSOT：终态块标记与文件名都来自 scripts/utils/verifier-subject.ts，
+// 不在这里手抄常量。签名保持与上一代一致（jsonPath 字段仍在，指向 MD——调用点不必改）。
 // ============================================================================
 
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { VERIFIER_REPORT_SCHEMA_VERSION } from '../../scripts/utils/verifier-evidence';
 import {
-  computeVerifierResultSha256,
-  verifierReportJsonFilename,
+  RESULT_BLOCK_CLOSE,
+  RESULT_BLOCK_OPEN,
   verifierReportMdFilename,
 } from '../../scripts/utils/verifier-subject';
 
@@ -28,37 +29,58 @@ export function fixtureSubjectId(seed = 'fixture'): string {
 
 export interface PublishFixtureVerifierEvidenceOptions {
   projectRoot: string;
-  /** reports 目录绝对路径（summary.json / verifier.report.json 所在处） */
+  /** reports 目录绝对路径（summary.json / verifier.report.<subject>.md 所在处） */
   reportsDir: string;
   feature: string;
   phase: string;
   subjectId?: string;
   verdict?: 'PASS' | 'FAIL';
   blockerCount?: number;
-  agentId?: string;
-  agentType?: string;
+  /** 报告正文（终态块之前的部分）——生产里就是 verifier 回复的全文 */
   reportText?: string;
-  /** 直接落 conflict 态（回归 8） */
-  conflictWith?: { agentId: string; verdict: 'PASS' | 'FAIL'; blockerCount: number; reportText?: string };
-  /** 不去动 summary.json（用于「subject 缺席」/「三值不等」类负例） */
+  /** 终态块里回显的 subject；默认与文件名同 subject（负例可故意写错） */
+  echoSubjectId?: string;
+  /** 不去动 summary.json（用于「subject 缺席」类负例） */
   skipSummaryPatch?: boolean;
-  /** 写进 summary 的 subject 与 JSON 里的不同（回归 3 迟到 / 错位） */
+  /** 写进 summary 的 subject 与报告文件名不同（迟到 / 错位负例） */
   summarySubjectId?: string;
+  /** 只写终态块、不写正文——复现「调用方没写全文」的坏形态 */
+  blockOnly?: boolean;
+  /** 追加第二个终态块——复现「多份回答拼接」的坏形态 */
+  duplicateBlock?: boolean;
 }
 
-/** 把 verifier_subject_id 补进已存在的 summary.json（runner 生产侧的等价效果）。 */
-export function patchSummarySubject(reportsDir: string, subjectId: string): void {
+/**
+ * 把 verifier_subject_id / verifier_report 补进已存在的 summary.json（runner 生产侧的等价效果）。
+ * `projectRoot` 必填：`verifier_report` 的契约是**仓根相对路径**，按 reports 目录反推基准会得到
+ * `spec/reports/…` 这种半截路径——夹具与被测代码各自拼路径时能一起"通过"，正是这类测试的盲区。
+ */
+export function patchSummarySubject(projectRoot: string, reportsDir: string, subjectId: string): void {
   const p = path.join(reportsDir, 'summary.json');
   if (!fs.existsSync(p)) return;
   const doc = JSON.parse(fs.readFileSync(p, 'utf-8')) as Record<string, unknown>;
   doc.verifier_subject_id = subjectId;
+  doc.verifier_report = path
+    .relative(projectRoot, path.join(reportsDir, verifierReportMdFilename(subjectId)))
+    .replace(/\\/g, '/');
   // 与生产 atomicWriteJson 同形（无尾换行），避免 fixture 改写 summary 字节口径。
   fs.writeFileSync(p, JSON.stringify(doc, null, 2), 'utf-8');
 }
 
+/** 终态块（生产格式，由 parseResultBlock 解析）。 */
+export function renderResultBlock(subjectId: string, verdict: 'PASS' | 'FAIL', blockerCount: number): string {
+  return [
+    RESULT_BLOCK_OPEN,
+    `verifier_subject_id: ${subjectId}`,
+    `verdict: ${verdict}`,
+    `blocker_count: ${blockerCount}`,
+    RESULT_BLOCK_CLOSE,
+  ].join('\n');
+}
+
 /**
- * 发布一份与 hook 同形的 canonical 证据（默认 PASS/0 blocker），并把 subject 写进
- * summary.json。返回 subject 与 JSON 绝对路径。
+ * 写一份与生产同形的 verifier 报告（默认 PASS/0 blocker），并把 subject 写进 summary.json。
+ * 返回 subject 与报告绝对路径（`jsonPath` 为兼容别名，与 `mdPath` 同值）。
  */
 export function publishFixtureVerifierEvidence(
   opts: PublishFixtureVerifierEvidenceOptions,
@@ -66,83 +88,29 @@ export function publishFixtureVerifierEvidence(
   const subjectId = opts.subjectId ?? fixtureSubjectId(`${opts.feature}/${opts.phase}`);
   const verdict = opts.verdict ?? 'PASS';
   const blockerCount = opts.blockerCount ?? (verdict === 'PASS' ? 0 : 1);
-  const reportText = opts.reportText ?? `# Verifier Report — ${opts.feature} / ${opts.phase}\n\nverdict: ${verdict}\n`;
-  const agentId = opts.agentId ?? 'agent-fixture-1';
-  // 证据按 subject 分区（review 四轮 P0）——夹具必须与生产同名，否则 loader 找不到。
-  const jsonPath = path.join(opts.reportsDir, verifierReportJsonFilename(subjectId));
-  const mdPath = path.join(opts.reportsDir, verifierReportMdFilename(subjectId));
-
-  fs.mkdirSync(opts.reportsDir, { recursive: true });
-
-  const base = {
-    schema_version: VERIFIER_REPORT_SCHEMA_VERSION,
-    state: 'published' as string,
-    feature: opts.feature,
-    phase: opts.phase,
-    subject_id: subjectId,
-    invocation_subject: subjectId,
-    result_subject: subjectId,
-    agent_id: agentId,
-    agent_type: opts.agentType ?? 'verifier',
-    verdict,
-    blocker_count: blockerCount,
-    result_sha256: computeVerifierResultSha256({ verdict, blocker_count: blockerCount, report_text: reportText }),
-    report_text: reportText,
-    report_md_path: path.relative(opts.projectRoot, mdPath).replace(/\\/g, '/'),
-    generated_at: '2026-08-29T00:00:00.000Z',
-    audit: {
-      agent_transcript_path: null,
-      main_transcript_path: null,
-      session_id: null,
-      recorded_by: 'tests/utils/verifier-evidence-fixture.ts',
-    },
-  } as Record<string, unknown>;
-
-  if (opts.conflictWith) {
-    const other = opts.conflictWith;
-    const otherText = other.reportText ?? `# other side\n\nverdict: ${other.verdict}\n`;
-    base.state = 'conflict';
-    base.conflict = {
-      detected_at: '2026-08-29T00:00:01.000Z',
-      sides: [
-        { agent_id: agentId, agent_type: 'verifier', verdict, blocker_count: blockerCount, result_sha256: base.result_sha256, observed_at: base.generated_at },
-        {
-          agent_id: other.agentId,
-          agent_type: 'verifier',
-          verdict: other.verdict,
-          blocker_count: other.blockerCount,
-          result_sha256: computeVerifierResultSha256({
-            verdict: other.verdict,
-            blocker_count: other.blockerCount,
-            report_text: otherText,
-          }),
-          observed_at: '2026-08-29T00:00:01.000Z',
-        },
-      ],
-    };
-  }
-
-  fs.writeFileSync(jsonPath, `${JSON.stringify(base, null, 2)}\n`, 'utf-8');
-  fs.writeFileSync(
-    mdPath,
+  const echoSubject = opts.echoSubjectId ?? subjectId;
+  const body =
+    opts.reportText ??
     [
-      '# Verifier 子 agent 报告（人读投影）',
+      `# Verifier 报告 — ${opts.feature} / ${opts.phase}`,
       '',
-      '> 机器真源是同目录 `verifier.report.json`；本 MD 机器不解析。',
+      '| check | verdict | 证据 |',
+      '| --- | --- | --- |',
+      `| 语义一致性 | ${verdict} | fixture |`,
       '',
-      `- verdict: ${verdict}`,
-      '',
-      '```',
-      reportText,
-      '```',
-      '',
-    ].join('\n'),
-    'utf-8',
-  );
+    ].join('\n');
+  const block = renderResultBlock(echoSubject, verdict, blockerCount);
+  const text = opts.blockOnly
+    ? `${block}\n`
+    : `${body}\n${block}\n${opts.duplicateBlock ? `\n${block}\n` : ''}`;
+
+  const mdPath = path.join(opts.reportsDir, verifierReportMdFilename(subjectId));
+  fs.mkdirSync(opts.reportsDir, { recursive: true });
+  fs.writeFileSync(mdPath, text, 'utf-8');
 
   if (!opts.skipSummaryPatch) {
-    patchSummarySubject(opts.reportsDir, opts.summarySubjectId ?? subjectId);
+    patchSummarySubject(opts.projectRoot, opts.reportsDir, opts.summarySubjectId ?? subjectId);
   }
 
-  return { subjectId, jsonPath, mdPath };
+  return { subjectId, jsonPath: mdPath, mdPath };
 }

@@ -217,7 +217,7 @@ function buildSlimProject(opts: SlimOpts): { root: string } {
     ...(opts.claimedAttemptId ? [`claimed_attempt_id: "${opts.claimedAttemptId}"`] : []),
     'verifier_subagent:',
     '  invoked_via: "Task(subagent_type=verifier)"',
-    `  report_path: "doc/features/demo/${PHASE}/reports/verifier.report.json"`,
+    `  report_path: "doc/features/demo/${PHASE}/reports/verifier.report.md"`,
     '  verdict: "PASS"',
     '---',
     '',
