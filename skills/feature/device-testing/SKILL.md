@@ -13,6 +13,7 @@
 ## 条件加载索引
 
 - 存在 `framework/profiles/<project_profile.name>/skills/device-testing/profile-addendum.md` 时先读（宿主 toolchain/打包装机/设备探测细则）。
+- **Agent 行为规约（BLOCKER）**：[agent-behavioral-principles.md](../../reference/agent-behavioral-principles.md)。
 - **Step 1.5 打包装机协议 / Step 4.5 Hylyre 派生计划全套 / Step 4.B 即席模式全套 / Step 4.6 视觉 diff 回环（含全部事故派生判裁规则）/ Step 5.1 机器报告读取 / Step 6 自检完整清单**：完整读 [device-testing-workflow-detail.md](../../reference/device-testing-workflow-detail.md)。
 - `` `profile-skill-asset:<skill>/<asset_key>` `` 按 [Profile skill asset protocol](../../README.md#profile-skill-asset-protocol) 解析。
 

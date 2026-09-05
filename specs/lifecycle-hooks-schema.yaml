@@ -26,7 +26,10 @@ hook_events:
   - id: post_verifier
     description: After verifier completes (when applicable).
   - id: on_context_load
-    description: While assembling ai-prompt.md / context for the phase.
+    description: >-
+      Fired at the end of the harness check flow. Fragments are consumed only when the verifier
+      ai-prompt is assembled (script verdict PASS and verifier enabled); they never enter the
+      author's pre-write context.
   - id: on_violation
     description: When a check returns BLOCKER or MAJOR (after classification).
 
