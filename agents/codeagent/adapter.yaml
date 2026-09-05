@@ -42,6 +42,12 @@ hooks:
   template_dir: ../claude/templates/hooks
   update_policy: auto_overwrite
 
+# 退役产物（路径相对 adapter 根 .cac/）：UPDATE 的 S3 cleanup-deprecated 备份到 .framework-backup/<stamp>/ 后删除。
+deprecated_artifacts:
+  - path: hooks/record-verifier-report.mjs
+    action: backup_delete
+    reason: "plan d2f7a9c4：SubagentStop 发布链整体删除，verifier 报告改由调用方写出；settings.json 已无注册，遗留脚本是死文件"
+
 # verifier 子代理能力（plan d2f7a9c4）：与 claude 共享 verifier.md 模板与同一套 request 协议；
 # 2026-08-29 宿主实抓确认可派发 verifier 子 agent。报告由调用方写出，无 hook 发布环。
 verifier_subagent: true

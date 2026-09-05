@@ -178,6 +178,19 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    // plan d2f7a9c4 收尾：SubagentStop 发布链删除后，宿主遗留的 record-verifier-report.mjs 由 UPDATE 的
+    // cleanup-deprecated 按本声明 backup_delete；hooks 物化只复制不清理，漏声明 = 宿主永远留着死文件。
+    name: 'deprecated_artifacts: claude 与 codeagent 均声明退役 hooks/record-verifier-report.mjs（backup_delete）',
+    run: () => {
+      for (const name of ['claude', 'codeagent'] as const) {
+        const adapter = checkInitTesting.loadAdapter(name);
+        const entry = adapter.deprecatedArtifacts.find(e => e.path === 'hooks/record-verifier-report.mjs');
+        assert(entry, `${name} adapter 未声明退役 hooks/record-verifier-report.mjs`);
+        assert.strictEqual(entry!.action, 'backup_delete', `${name} 退役动作应为 backup_delete`);
+      }
+    },
+  },
+  {
     name: 'commands 归一化等值：普通 11 份仅身份行 delta；goal-mode 三处 delta；其余逐字节同 claude',
     run: () => {
       const claudeFiles = fs.readdirSync(CLAUDE_COMMANDS_DIR).filter(f => f.endsWith('.md')).sort();

@@ -294,3 +294,14 @@ next_action 分流表把它抓住了。
 openspec 30/30；空白与 LF 干净；**全量 3809 passed / 0 failed（308 套件）**。
 
 仍未做：宿主验证（T6 第 6 项，status 保持 pending）。本轮未提交任何 commit。
+
+**2026-09-05 收尾（用户核查 MIGRATION 升级动作时发现，Claude 实施，codex 复核方向一致）**：T3 删了
+`record-verifier-report.mjs` 模板与两份 settings.json 的 SubagentStop 注册，但漏了把它登记进 adapter 的
+`deprecated_artifacts`——hooks 段物化只复制不清理（init-task-executor 仅 copyFileSync），宿主上的旧脚本会一直
+留着，T5 的 MIGRATION 于是把"手动删"写成了升级步骤。现补：claude / codeagent 两份 adapter.yaml 各声明
+`hooks/record-verifier-report.mjs: backup_delete`（UPDATE 的 S3 `cleanup-deprecated` 备份到 `.framework-backup/<stamp>/`
+后删，结果进 run-log `cleanup_results`）；MIGRATION 第 2 条改为自动清理、第 3 条 `last-verifier-report.*`
+改为"运行时状态、无消费者、可保留"（它在 gitignore 的 harness/state 下，adapter 根够不到，不为死文件加机制）。
+回归：codeagent-adapter 套件新增一条断言两份 adapter 均有该声明。验证：check-adapter-catalog-consistency PASS、
+init-task-executor 24/24、init-orchestrate 82/82、codeagent-adapter 12/12、adapter-bridge 4/4；
+全量 `npm test` 3815 passed / 0 failed + fixtures 46/46。宿主需重新打包集成才能获得此项。未提交。

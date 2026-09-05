@@ -170,8 +170,8 @@ generic 未登记（共享规则被物化不等于运行时会读取）。未登
 **升级动作（实例工程）：**
 
 1. 重新物化 `.claude/settings.json`（codeagent 为 `.cac/settings.json`）——`SubagentStop` 段已删除；
-2. 删除实例里的 `.claude/hooks/record-verifier-report.mjs`（`.cac/hooks/` 同）；
-3. `framework/harness/state/last-verifier-report.{json,md}` 若存在可直接删除，已无消费者；
+2. `.claude/hooks/record-verifier-report.mjs`（`.cac/hooks/` 同）由 `/framework-init` UPDATE 的 S3 `cleanup-deprecated` 任务按 adapter 的 `deprecated_artifacts` 声明自动备份到 `.framework-backup/<stamp>/` 后删除，结果进 run-log 的 `cleanup_results`；跳过该任务则不清理，无须手动删；
+3. `framework/harness/state/last-verifier-report.{json,md}` 是运行时状态，已无生产消费者，可保留，无须清理；
 4. 重新物化规则跳板与 `.claude/agents/verifier.md`（措辞已更新，工具集与输出格式不变）；
 5. 自建 adapter 若已实测能派发 verifier 子代理，在 `adapter.yaml` 写 `verifier_subagent: true`。
 
