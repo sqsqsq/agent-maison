@@ -19,6 +19,7 @@ import {
   resolveReceiptFilePath,
 } from '../../config';
 import { resolveAuthoritativeHylyreTracePath } from './testing-trace-gates';
+import { loadVerifierEvidenceForSubject } from './verifier-evidence';
 
 export const RECEIPT_PROJECTION_SCHEMA = '2.1';
 
@@ -79,15 +80,6 @@ function readExistingAttemptId(receiptPath: string): string | null {
   }
 }
 
-function readVerifierVerdict(reportAbs: string): string {
-  try {
-    const raw = JSON.parse(fs.readFileSync(reportAbs, 'utf-8')) as { verdict?: unknown };
-    return typeof raw.verdict === 'string' ? raw.verdict : '';
-  } catch {
-    return '';
-  }
-}
-
 function toPosixRel(projectRoot: string, abs: string): string {
   return path.relative(projectRoot, abs).replace(/\\/g, '/');
 }
@@ -131,14 +123,17 @@ export function collectReceiptProjectionFacts(
   let reportPath = '';
   let verdict = '';
   // 当前 subject 的报告优先；沿用既往 PASS 闭环（plan 07a41ec6 T7）时投影被沿用的那份。
+  // plan d2f7a9c4：真源是 MD，且**只经共享 loader 取**——手拼路径读文件正是当初让四处
+  // 消费点各自漂移的写法；残留的旧 .json 一律不看（它已退出读取面）。
   for (const subject of [summary?.verifier_subject_id, summary?.verifier_closure?.reviewed_subject_id]) {
     if (!subject || reportPath) continue;
     try {
-      const reportsDir = featurePhaseReportsDir(projectRoot, feature, phase, opts?.frameworkRoot);
-      const abs = path.join(reportsDir, `verifier.report.${subject}.json`);
-      if (fs.existsSync(abs)) {
-        reportPath = toPosixRel(projectRoot, abs);
-        verdict = readVerifierVerdict(abs);
+      const loaded = loadVerifierEvidenceForSubject(projectRoot, feature, phase, subject, {
+        frameworkRoot: opts?.frameworkRoot,
+      });
+      if (loaded.ok) {
+        reportPath = loaded.evidence.md_path_rel;
+        verdict = loaded.evidence.verdict;
       }
     } catch {
       /* 缺项留空 */

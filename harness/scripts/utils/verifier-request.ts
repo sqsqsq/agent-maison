@@ -6,8 +6,9 @@
 //   · 「把 ai-prompt.md 全文原样投递给 Task」这条不可执行也不可验证的规则
 //     （宿主实锤：177KB prompt 有损往返，块外零校验静默）。
 //
-// 新协议只有一句话：**runner 写一份几十行的 request JSON，主 agent 把这份 JSON 整段
-// 作为 Task prompt 投给 verifier，verifier 按 `prompt_path` 自己 Read 磁盘原件。**
+// 新协议只有一句话：**runner 写一份几十行的 request JSON，调用方把这份 JSON 整段作为
+// Task prompt 投给 verifier，verifier 按 `prompt_path` 自己 Read 磁盘原件，回复由调用方
+// 原样写入 `summary.verifier_report`。**（写报告的是调用方，不是 verifier——plan d2f7a9c4）
 // 大文件不再过传输面，抄错任何字段 → subject 重算失配 → 明确失败（不再有静默审错）。
 //
 // ─── subject 语义（本 plan 的核心裁决）─────────────────────────────────────────
@@ -18,19 +19,15 @@
 //
 // plan 07a41ec6 T7：subject 改按 **审前材料视图** 寻址（verifier-material.ts）——phase 输入/产物、
 // verifier 会读的源码与图片、phase 规则、模板、gate 指纹、脚本报告 id/status/severity 投影。
-// `prompt_sha256` 仍随 request 出行（hook 用它核对 verifier 读的是不是这份原件），但**不再参与
-// subject 派生**：模板里的 {timestamp} 不该让一字未改的材料换代。
-//
-// 跨语言复刻约定：hook 是纯 .mjs（不落 TS），必须逐字符复刻 `canonicalRequestInput`
-// 与解析规则。任何格式变更须同步 agents/claude/templates/hooks/record-verifier-report.mjs
-// （codeagent 共享同一份 hook 模板），并由 verifier-evidence-identity 单测守护。
+// `prompt_sha256` 仍随 request 出行（审计用：记下签发时磁盘原件的字节），但**不参与 subject
+// 派生**：模板里的 {timestamp} 不该让一字未改的材料换代。
 // ============================================================================
 
 import { SUBJECT_ID_PATTERN, normalizeEol, sha256 } from './verifier-subject';
 
 /** request 契约版本——字段面或派生算法变更必须提版本（旧 subject 自然换代）。 */
 export const VERIFIER_REQUEST_SCHEMA_VERSION = '1.1';
-/** 判别式：Task prompt 里那段 JSON 必须自述是它，才会被 hook 当调用凭证消费。 */
+/** 判别式：Task prompt 里那段 JSON 必须自述是它，才会被当作调用凭证解析。 */
 export const VERIFIER_REQUEST_KIND = 'maison_verifier_request';
 /** subject 派生的规范化串前缀（与 schema 版本一起进哈希）。 */
 export const VERIFIER_REQUEST_SUBJECT_SCHEMA = 'maison-verifier-request@2';
@@ -41,7 +38,7 @@ export interface VerifierRequestFields {
   phase: string;
   /** 仓根相对 posix 路径：`<features_dir>/<feature>/<phase>/reports/ai-prompt.md` */
   prompt_path: string;
-  /** 磁盘 ai-prompt.md 原文（EOL 归一后）的 sha256——hook 核对原件用，不参与 subject 派生 */
+  /** 磁盘 ai-prompt.md 原文（EOL 归一后）的 sha256——审计用，不参与 subject 派生 */
   prompt_sha256: string;
   /** 审前材料视图指纹（verifier-material.ts）——subject 的寻址材料 */
   material_sha256: string;
@@ -63,7 +60,7 @@ export function computePromptSha256(promptText: string): string {
 
 /**
  * subject 的**规范化输入串**（纯函数，无 I/O）——派生前的唯一真源。
- * 字段顺序固定在此，不依赖 JSON.stringify 的键序偶然性；hook 侧逐字符复刻。
+ * 字段顺序固定在此，不依赖 JSON.stringify 的键序偶然性。
  */
 export function canonicalRequestInput(fields: VerifierRequestFields): string {
   return [
@@ -102,7 +99,7 @@ export function buildVerifierRequest(fields: VerifierRequestFields): VerifierReq
   };
 }
 
-/** 落盘/投递文本（键序固定；hook 与人都按这份字节读）。 */
+/** 落盘/投递文本（键序固定；机器与人都按这份字节读）。 */
 export function renderVerifierRequest(request: VerifierRequest): string {
   return `${JSON.stringify(
     {
@@ -123,7 +120,7 @@ export function renderVerifierRequest(request: VerifierRequest): string {
   )}\n`;
 }
 
-/** request 文件按 subject 分区（同 subject 的并发仍走 hook 的 CAS/conflict）。 */
+/** request 文件按 subject 分区（不同 subject 天然不同文件）。 */
 export function verifierRequestFilename(subjectId: string): string {
   const v = typeof subjectId === 'string' ? subjectId.trim() : '';
   if (!SUBJECT_ID_PATTERN.test(v)) {
@@ -195,8 +192,7 @@ function readNullableString(v: unknown): { ok: true; value: string | null } | { 
  * 字符串值一律**原样**参与重算，绝不 `trim` 后当同一份材料：外层排版空白是格式，
  * 字段值里的空白是内容。
  *
- * 形态非法（缺字段、kind 不符、subject 形态错、自述 subject 与重算不符）一律返回 null，
- * 由调用方按具名 bedside 态落盘。
+ * 形态非法（缺字段、kind 不符、subject 形态错、自述 subject 与重算不符）一律返回 null。
  */
 export function parseVerifierRequest(text: string | null | undefined): VerifierRequest | null {
   if (!nonEmpty(text)) return null;

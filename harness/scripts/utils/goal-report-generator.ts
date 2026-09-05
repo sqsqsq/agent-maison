@@ -128,8 +128,8 @@ export interface GoalPhaseOutcome {
   /** Set when closure gate blocked advance (open receipt / timeout). */
   advance_blocked?: boolean;
   snapshot_files?: PhaseSnapshotFiles;
-  /** plan e5b8c3f7 T3：快照时点的 verifier 机器事实（身份验真后的 JSON 真源）；
-   *  验真不通过=null。**不得**回头解析快照里的 verifier.report.md（那只是人读存档）。 */
+  /** plan d2f7a9c4：快照时点的 verifier 机器事实（从当前 subject 的报告解析）；
+   *  校验不通过=null——此时快照里没有可采信的 verifier 结论，不猜。 */
   verifier_evidence?: PhaseSnapshotVerifierEvidence | null;
   // P0-B/P0-D（codex P3）诊断保真：只读 goal-report 的下游也能看到真因原文。
   failure_kind_classified?: string;

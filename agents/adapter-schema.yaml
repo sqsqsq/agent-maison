@@ -407,55 +407,36 @@ optional_fields:
           模型回放旗标 token（如 `--model` / `-m`）——provider 的 model 必须真实进入该旗标。
           无回放旗标的 adapter 不具 provider 资格（否则「声称已钉、实际未钉」）。
 
-  verifier_capability:
-    type: object | null
+  verifier_subagent:
+    type: boolean | optional
+    default: false
     description: |
-      可选（plan a9d4e7c2）。声明本 adapter **能不能执行 verifier 闭环**。
+      可选（plan d2f7a9c4）。**只回答一个问题**：宿主实测过本 adapter 能不能派发
+      verifier 子 agent。与运行模式无关、与发布机制无关、与内核家族无关。
 
-      背景：verifier 曾被做成「每阶段必跑的仪式」——policy 说 off、runner 仍无条件装配
-      产物、文档仍无条件要求四件套，适用性只在最末端的 check-receipt 才判。收口后
-      verifier 降为按 workflow/track/policy/adapter 能力**动态启用的能力**，本字段回答
-      其中第三问「当前 adapter 能不能执行」。
+      背景：verifier 的**调用**通道从来是 adapter 无关的——共享规则
+      （agents/shared/agent-bundle/templates/rules/framework-agent-execution.mdc §3）
+      对每个 adapter 都要求「Task 触发 subagent_type: verifier，prompt = request JSON
+      整段」，终态块契约写在 harness/prompts/verify-*.md 里随 ai-prompt.md 渲染。
+      本字段的前身 verifier_capability（transport/publisher/modes）描述的是**发布**
+      机制；报告改由调用方写出后，发布不再有 adapter 差异，那套矩阵整体删除。
 
-      **本字段的完整声明就是能力资格**——运行时由 `resolveVerifierPlan`
-      （harness/scripts/utils/verifier-plan.ts）消费，经
-      `resolveVerifierCapability`（adapter-catalog.ts）扫描本字段派生。禁止在
-      TypeScript 里另建 adapter 白名单、禁止按内核家族推断、禁止以「有 hooks 目录」
-      推断——三者都会与本字段形成平行真源。
+      运行时由 resolveVerifierPlan（harness/scripts/utils/verifier-plan.ts）消费，
+      经 resolveVerifierSubagentDeclared（adapter-catalog.ts）读取。禁止在 TypeScript
+      里另建 adapter 白名单、禁止按内核家族推断、禁止以「有 subagents 模板目录」或
+      「有 hooks 目录」推断——都会与本字段形成平行真源。
 
-      未声明 / 声明不完整 = 无能力（不是「降级可用」）。此时：
-        · policy 判 verifier=required 且 mode=interactive → `blocked`：**脚本检查照常
-          完整执行**，脚本 FAIL 如实报真因；脚本 PASS 才报
-          `INCOMPLETE / verifier_provider_unavailable`（provider 缺失不禁基本诊断）；
-        · policy 判 off / not_applicable → 与本字段无关，恒 disabled、零产物。
+      **入册纪律（BLOCKER）**：true 只登记**宿主实跑观测过**的 adapter。
+      共享规则文件被物化 ≠ 运行时会读取：opencode 明写 .opencode/rules/* 不被自动
+      加载，chrys 的 rules 是「引用可达」，generic 是任意外部 CLI。虚标会让每个阶段
+      走「report missing → 重跑 → 仍 missing」，正是本次要消除的失败形态。
 
-      **入册纪律（BLOCKER）**：`modes` 只登记**真实实测过**的运行模式。claude / codeagent
-      的 interactive 已由宿主 SubagentStop 实抓验收；headless / goal 目前仍走 bedside
-      旁路，未验收前不得预填——虚标会让 runner 生成一份永远没人发布的 request。
-    fields:
-      transport:
-        type: string
-        enum: ["repo_file_request"]
-        description: |
-          调用凭证的投递机制 id（机制名非厂商名）。
-          repo_file_request：runner 在阶段 reports 目录写
-          `verifier.request.<64位subject>.json`，调用方把**该 JSON 整段**作为 Task prompt
-          投给 verifier；verifier 按其中的 `prompt_path` 自行 Read 磁盘 ai-prompt.md。
-          大文件不过传输面，抄错任何字段 → subject 重算失配 → 明确失败。
-      publisher:
-        type: string
-        enum: ["subagent_stop"]
-        description: |
-          结论的发布机制 id。subagent_stop：由 SubagentStop hook
-          （agents/claude/templates/hooks/record-verifier-report.mjs，claude-kernel 家族共享）
-          做四方对账（request 自述 subject == 重算 subject == summary 现值 == 终态块回显，
-          且 prompt_path/prompt_sha256 与磁盘相符；subject 按 material_sha256 审前材料视图寻址）后发布
-          `verifier.report.<subject>.json`。
-      modes:
-        type: list
-        description: |
-          已实测支持的运行模式，非空；取值 interactive | headless | goal。
-          未列入的模式 = 该模式下无能力。
+      缺省 / false = 无审查员。此时 resolveVerifierPlan 判
+      disabled / adapter_has_no_reviewer：不生成 request、不重跑，闭环不阻断，
+      check-receipt 以 WARN 披露 verifier 轴 not_reviewed（诚实标注，不冒充 PASS）。
+
+      已登记 true：claude、codeagent（SubagentStop 时代即实证）、codex（宿主 2026-09-05
+      确认每阶段起 verifier 子代理）。cursor / opencode / chrys / generic 未登记。
 
   user_confirmation:
     type: object | null

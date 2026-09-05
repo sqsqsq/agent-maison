@@ -25,7 +25,9 @@ description: 单阶段执行者。Claude 原生 /goal 路径下由薄 driver 主
    看输出末尾的 `NEXT:` 行照做，直到脚本 PASS——**一轮处理全部已知阻断再重跑**（NEXT 会列出本轮全部 blocker），不要修一个跑一次；
    判词与改法以 harness 输出和 `script-report.json` 的 `details/suggestion` 为准，**不读 framework TS 源码反推门禁**。
 4. harness 输出 verifier request 时：把 `verifier.request.<subject>.json` **整段**作为 Task prompt 投给
-   `subagent_type: verifier`，**同步等待**其返回；等待期间只做与其结果无关的工作，**不得修改它正在审的材料**；
+   `subagent_type: verifier`，**同步等待**其返回，然后用 Write 把它的回复**原样全文**写入
+   `summary.verifier_report` 指向的路径（不摘要、不只贴终态块——正文里的发现是 repair candidates
+   与多模态审查的输入；写报告的是你，不是 verifier）；等待期间只做与其结果无关的工作，**不得修改它正在审的材料**；
    禁止 sleep / 轮询 / 后台等待器。verifier 只有 **BLOCKER 级 FAIL** 才需要修；WARN / UNKNOWN 记入 `<phase>/notes.md`。
 5. 收口：`npx ts-node scripts/check-receipt.ts --feature <feature> --phase <phase>`（回执由 harness 投影生成，不手填）；exit 0 = 闭环。
 6. 回传：只回 `summary.json` 路径、`closure_status`、verifier 终态块、未解决的 blocker / gap 列表。

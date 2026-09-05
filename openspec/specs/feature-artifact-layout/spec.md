@@ -29,8 +29,9 @@ contains `<feature>`, Goal Mode run/event/manifest/lock/resume paths, context an
 artifacts, SpecLoader/catalog/receipt reconciliation enumeration, the P1/P2/P3
 blueprint/change-unit/closure resolvers, CLIs and Skills, **and every independent production
 entry shipped in the release**: the plain-Node hooks distributed to host agents
-(`check-phase-completion.mjs`, `record-verifier-report.mjs` and any hook that resolves a receipt
-or report location), agent-facing boundary/prompt text that declares writable Feature paths
+(`check-phase-completion.mjs` and any hook that resolves a receipt
+or report location; the retired `record-verifier-report.mjs` publisher is gone, the verifier report path is now
+resolved by the TS `reportsDirOf` production resolver used by the caller that writes the report), agent-facing boundary/prompt text that declares writable Feature paths
 (e.g. the testing write boundary), compat message templates (`{feature}`), check-spec asset
 fallback paths, and framework smoke/lifecycle scripts. The SSOT SHALL be one dependency-free
 module that the TypeScript harness and plain-Node hooks import alike; hooks MUST NOT carry a
@@ -106,9 +107,9 @@ layout; no second hand-written artifact list is permitted.
   pattern's own structure with `<feature>` expanded to `<blueprint_id>/<change_unit_id>`
 
 #### Scenario: Shipped hooks resolve the CU physical directory
-- **WHEN** the distributed `check-phase-completion.mjs` and `record-verifier-report.mjs` hooks run for a
-  CU Feature
-- **THEN** with the default patterns the receipt they check and the verifier report they write SHALL
+- **WHEN** the distributed `check-phase-completion.mjs` hook runs for a CU Feature, or the caller writes the
+  verifier report through the production reports-dir resolver
+- **THEN** with the default patterns the reports directory the hook prints and the verifier report the caller writes SHALL
   resolve to `<features_dir>/<blueprint_id>/<change_unit_id>/<phase>/…`; with a custom pattern they SHALL
   resolve to that pattern with only `<feature>` expanded to `<blueprint_id>/<change_unit_id>` (e.g.
   `requirements/features/<blueprint_id>/<change_unit_id>/phases/<phase>/…`); in both cases they SHALL go
@@ -551,4 +552,3 @@ Enforcement: `harness/scripts/utils/verifier-evidence.ts`, `harness/scripts/util
 
 - **WHEN** a closed phase's `verifier.report.<subject>.md` is modified
 - **THEN** evidence manifest recomputation and the review closure attestation SHALL both remain valid, and no phase SHALL be marked stale
-

@@ -53,7 +53,17 @@ export const POLICY_SCHEMA_VERSION = '1.0';
 // 与上面的 PolicySnapshot 是不同的字段——本契约由 check-receipt.ts 逐项计算写入 .current-phase.json，
 // 承载 harness-runner closure 三态与 next_step 判定所需的细粒度信息。
 
-export type EvidenceValidationStatus = 'provided' | 'missing' | 'skipped_by_policy' | 'not_applicable';
+/**
+ * 证据轴的观测状态。`not_reviewed`（plan d2f7a9c4）：能力本该跑但当前 adapter 起不了
+ * verifier 子代理——**如实标注、不阻断闭环**，绝不写成 provided，也不是 missing（不是产物
+ * 缺陷，是环境事实）。
+ */
+export type EvidenceValidationStatus =
+  | 'provided'
+  | 'missing'
+  | 'skipped_by_policy'
+  | 'not_applicable'
+  | 'not_reviewed';
 
 export interface EvidenceItemState {
   policy: EvidenceLevel;

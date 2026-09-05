@@ -97,14 +97,15 @@ function writeModernArtifacts(root: string): { traceRel: string; verifierRel: st
   );
   writeFile(path.join(root, verifierRel), 'verdict: PASS\n');
   // plan e5b8c3f7：check-receipt 的 verifier 面已改判身份验真——modern 侧必须有
-  // summary.verifier_subject_id + 同形的 verifier.report.json，否则命中"旧件"分派。
+  // summary.verifier_subject_id + 同形的 verifier.report.<subject>.md，否则命中"旧件"分派。
   const modernReportsDir = path.join(root, 'doc/features/demo/review/reports');
   writeFile(
     path.join(modernReportsDir, 'summary.json'),
     JSON.stringify(
       {
-        // plan a9d4e7c2 T3: dispatch is keyed on schema_version now, so the fixture
-        // must carry the current generation or it is (correctly) treated as legacy.
+        // The legacy-receipt compat branch still reads schema_version, so the fixture
+        // carries the current generation. Verifier evidence no longer dispatches on it
+        // (plan d2f7a9c4).
         schema_version: SUMMARY_SCHEMA_VERSION_CURRENT,
         phase: 'review',
         feature: 'demo',

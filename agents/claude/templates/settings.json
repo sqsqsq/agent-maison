@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "_comment_top": "弱模型工作流强制门 / Layer 3 合作式拦截。Stop hook 在主 agent 即将结束消息时执行，校验当前阶段是否闭环（CLAUDE.md §5.1 四条件）；SubagentStop hook 在 verifier 子 agent 结束时落地报告，供 check-receipt.ts 引用；PreToolUse hook 拦截发布件 framework/ 的编辑类写入。它只覆盖 Write/Edit/MultiEdit/NotebookEdit；shell、脚本与场外进程不在射程，也没有事后 Git/hash detector 兜底。真正隔离须由 task sandbox / 只读挂载 / 受限 OS token 提供。",
+  "_comment_top": "弱模型工作流强制门 / Layer 3 合作式拦截。Stop hook 在主 agent 即将结束消息时执行，校验当前阶段是否闭环（CLAUDE.md §5.1 四条件）；PreToolUse hook 拦截发布件 framework/ 的编辑类写入。它只覆盖 Write/Edit/MultiEdit/NotebookEdit；shell、脚本与场外进程不在射程，也没有事后 Git/hash detector 兜底。真正隔离须由 task sandbox / 只读挂载 / 受限 OS token 提供。",
   "hooks": {
     "PreToolUse": [
       {
@@ -20,17 +20,6 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/check-phase-completion.mjs\""
-          }
-        ]
-      }
-    ],
-    "SubagentStop": [
-      {
-        "matcher": "verifier",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/record-verifier-report.mjs\""
           }
         ]
       }

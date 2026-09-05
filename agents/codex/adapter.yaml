@@ -26,6 +26,14 @@ user_confirmation:
 # codex exec 读图能力待实测；默认定档 none
 image_input: none
 
+# verifier 子代理能力（plan d2f7a9c4）：只回答「能不能派发 verifier 子 agent」，与运行模式、
+# 发布机制无关。调用协议 adapter 无关——共享规则 bundle（.codex/rules）与 AGENTS.md 要求
+# Task 触发 subagent_type=verifier、prompt = request JSON 整段；终态块契约随 ai-prompt.md 渲染。
+# 入册凭据：宿主 2026-09-05 用户确认——codex 在每个阶段都会起 verifier 子 agent 完成审查。
+# 2026-08-29 到 2026-09-05 期间本 adapter 曾因「无 SubagentStop hook」被判 blocked、full track
+# 事实不可用；报告改由调用方写出后该限制消失（plan d2f7a9c4 D4）。
+verifier_subagent: true
+
 # 视觉委托（plan ab072691）：本 adapter 可作**只读视觉 provider**。
 # 只读手段=exec 的只读沙箱档位；**绝不复用** goal headless 的 danger-full-access argv。
 # stdout 信封复用 e6 已验证的 turn JSONL 终态契约（completion 成立且无 terminal failure

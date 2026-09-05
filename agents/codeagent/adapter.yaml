@@ -26,7 +26,7 @@ rules:
   update_policy: prompt_if_changed
 
 
-# codeagent 的 .cac/settings.json：注册 Stop / SubagentStop / PreToolUse hook，
+# codeagent 的 .cac/settings.json：注册 Stop / PreToolUse hook，
 # 「弱模型工作流强制门」Layer 3 物理拦截入口（与 claude 同构）。原样拷贝，不做占位符替换。
 # 与 claude 版差异仅三处：无 $schema、路径 .cac/、变量 ${CODEAGENT3_PROJECT_DIR}
 #（2026-07-29 宿主实证：hook 进程注入该变量且 ${...} 占位符可展开）。
@@ -42,13 +42,9 @@ hooks:
   template_dir: ../claude/templates/hooks
   update_policy: auto_overwrite
 
-# verifier 能力声明（plan a9d4e7c2）：与 claude 共享同一份 hook 模板与同一套 request 协议。
-# modes 只登记实测过的模式——codeagent 的 interactive SubagentStop payload 已于 2026-08-29
-# 宿主实抓（消费的四个字段全在场且语义同构，见下方 notes）；headless / goal 未验收，不预填。
-verifier_capability:
-  transport: repo_file_request
-  publisher: subagent_stop
-  modes: ["interactive"]
+# verifier 子代理能力（plan d2f7a9c4）：与 claude 共享 verifier.md 模板与同一套 request 协议；
+# 2026-08-29 宿主实抓确认可派发 verifier 子 agent。报告由调用方写出，无 hook 发布环。
+verifier_subagent: true
 
 instance_skill_bridge:
   commands_target_dir: .cac/commands
@@ -97,16 +93,8 @@ notes: |
   - CODEAGENT3_ 前缀带版本号，codeagent 大版本升级可能改名；升级时按 plan c7a9e2f4 T0
     探针法重采（hooks env 链两个变量名都覆盖）。
   - hard_hook 档位的对外声明以 plan c7a9e2f4 T6 宿主验收（PreToolUse exit2 真拒写/
-    Stop 真拦收尾/SubagentStop 真落报告）完成为准。
-  - **verifier 闭环绑定：已实抓确认**（宿主采集 2026-08-29；实况见 plan e5b8c3f7 附录 A
-    与 openspec/changes/verifier-evidence-identity/tasks.md 附录 B）。
-    SubagentStop hook 以 payload 的子 agent 身份（agent_id / agent_transcript_path /
-    last_assistant_message）做三重等值绑定后才发布 verifier.report.json；实抓证实 codeagent
-    四个消费字段全在场且语义与 claude 同构（transcript_path=主会话、agent_transcript_path=
-    子代理且指向真实文件，其首条 user prompt 复现原样投递的 Task prompt）→ **共享 hook 直接
-    成立，无需 adapter-specific 分支**。payload 另有 is_kia_repo / process_id 两个本 hook 不
-    消费的字段（未知字段一律忽略），少一个 claude 侧本就可选的 prompt_id。
-  - **已实证差异：SubagentStop 的 matcher 不按 agent type 过滤**——注册项一律触发（实抓中
-    matcher="verifier" 对一个 agent_type="" 的子 agent 同样触发）。settings.json 里的
-    matcher 因此只是提示、不是过滤器；绑定完全不依赖它：非 verifier 子 agent 的转录里没有
-    verifier 证据身份机器块，一律 invocation_subject_absent → bedside，永远发布不了 canonical。
+    Stop 真拦收尾）完成为准。
+  - **verifier 子代理可派发：已实抓确认**（宿主采集 2026-08-29）——子代理身份字段齐备、
+    首条 user prompt 复现原样投递的 Task prompt，故 verifier_subagent: true。
+    plan d2f7a9c4 起报告由**调用方**把 verifier 回复原样写入 summary.verifier_report，
+    SubagentStop 发布环整体删除；本条只作为「能派发子代理」的入册凭据保留。

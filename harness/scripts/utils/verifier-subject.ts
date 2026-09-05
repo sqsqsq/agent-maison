@@ -1,10 +1,9 @@
 // ============================================================================
 // verifier-subject.ts — verifier 证据身份（subject）的基础原语
 // ============================================================================
-// 职责收窄到三件事，其余全部裁撤（plan a9d4e7c2 T4）：
-//   1. subject 的形态契约（64 位小写 hex）与证据文件的**分区文件名**；
-//   2. verifier 终态块（v1 格式不变）的唯一解析口径；
-//   3. 结论指纹 computeVerifierResultSha256（幂等/conflict 分治判据）。
+// 职责收窄到两件事，其余全部裁撤（plan a9d4e7c2 T4，plan d2f7a9c4 再减一）：
+//   1. subject 的形态契约（64 位小写 hex）与报告文件的**分区文件名**；
+//   2. verifier 终态块（v1 格式不变）的唯一解析口径。
 //
 // **已删除，且不得恢复**（上一代「稳定 subject」承诺催生的整套投影子系统）：
 //   · `computeVerifierSubjectId` / `canonicalVerifierInput` / `VerifierSubjectInputs`
@@ -16,9 +15,9 @@
 //     / `parseSubjectBlock` —— 调用凭证改为短 request JSON（verifier-request.ts），
 //     ai-prompt.md 不再被注入任何机器块。
 //
-// 跨语言复刻约定：hook 是纯 .mjs（不落 TS），必须复刻终态块格式与结论指纹算法。
-// 任何格式变更须同步 agents/claude/templates/hooks/record-verifier-report.mjs
-// （codeagent 共享同一份 hook 模板），并由 verifier-evidence-identity 单测守护。
+// 终态块格式是**跨 adapter 的公共契约**：7 份 harness/prompts/verify-*.md 里的输出规定、
+// 每个 adapter 的 verifier 子代理回复、以及本文件的解析器必须逐字一致。改格式须同步改那 7
+// 份模板（plan d2f7a9c4：hook 侧的 .mjs 复刻已随 hook 一并删除）。
 // ============================================================================
 
 import * as crypto from 'crypto';
@@ -51,19 +50,13 @@ export function normalizeEol(text: string): string {
 /**
  * 证据文件按 **subject 分区**（保留自 plan e5b8c3f7 review 四轮 P0）。
  *
- * 此前所有 verifier 竞争同一个 `verifier.report.json`：无论把"我还有权限吗"这次复查放得
+ * 此前所有 verifier 竞争同一个 `verifier.report.md`：无论把"我还有权限吗"这次复查放得
  * 多晚，它与"改共享文件"始终是两步，两步之间就能换代——授权检查只能把窗口往后挪，消不掉。
  * 分区之后窗口根本不存在：不同 subject 天然写不同文件，谁也没有能力移动、删除或覆盖另一个
  * subject 的文件；`summary.verifier_subject_id` 单独决定"当前机器证据是哪一个文件"。
- * 同一 subject 的并发仍走 CAS + `published → conflict` 单调升级。
  *
  * 只接受合法 64 位 subject——半截/伪造 id 不得凭空造出一个文件名。
  */
-export function verifierReportJsonFilename(subjectId: string): string {
-  return `verifier.report.${assertSubjectId(subjectId)}.json`;
-}
-
-/** 人读投影的分区文件名（与 JSON 同 subject，机器不解析）。 */
 export function verifierReportMdFilename(subjectId: string): string {
   return `verifier.report.${assertSubjectId(subjectId)}.md`;
 }
@@ -104,20 +97,4 @@ export function parseResultBlock(text: string | null | undefined): VerifierResul
   if (verdictRaw !== 'PASS' && verdictRaw !== 'FAIL') return null;
   if (blockerRaw === null || !/^\d+$/.test(blockerRaw)) return null;
   return { subject_id: subjectId, verdict: verdictRaw, blocker_count: Number(blockerRaw) };
-}
-
-/** 结论指纹：幂等/conflict 分治的判据（同 subject + 同 agent_id + 同 result hash = 幂等）。 */
-export function computeVerifierResultSha256(input: {
-  verdict: string;
-  blocker_count: number;
-  report_text: string;
-}): string {
-  return sha256(
-    [
-      `verdict=${input.verdict}`,
-      `blocker_count=${input.blocker_count}`,
-      'report_text:',
-      normalizeEol(input.report_text),
-    ].join('\n'),
-  );
 }

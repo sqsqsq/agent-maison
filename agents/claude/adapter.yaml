@@ -25,7 +25,7 @@ rules:
   update_policy: prompt_if_changed
 
 
-# Claude Code 的 .claude/settings.json：注册 Stop / SubagentStop / PreToolUse 等 hook，
+# Claude Code 的 .claude/settings.json：注册 Stop / PreToolUse 等 hook，
 # 是「弱模型工作流强制门」Layer 3 物理拦截的入口。原样拷贝，不做占位符替换。
 settings_file:
   template_path: templates/settings.json        # 相对于 adapter 目录
@@ -36,7 +36,6 @@ settings_file:
 # 通过 stdin 接收 JSON payload，通过 stderr + exit code 与客户端协议通信。
 # 关键脚本：
 #   - check-phase-completion.mjs（Stop hook，按 CLAUDE.md §5.1 四条件物理拦截"假完成"）
-#   - record-verifier-report.mjs（SubagentStop hook，落地 verifier 子 agent 报告）
 #   - guard-framework-write.mjs（PreToolUse hook，拦编辑类工具写只读 vendored framework/；
 #     判定核心在发布件 framework/agents/shared/，plan e8f5a2c7 G1a）
 hooks:
@@ -44,18 +43,12 @@ hooks:
   template_dir: templates/hooks                 # 相对于 adapter 目录
   update_policy: auto_overwrite                 # Stop hook 等与 harness 契约绑定
 
-# verifier 能力声明（plan a9d4e7c2）：verifier 是**按能力启用**的，不是每阶段仪式。
-# transport=repo_file_request：runner 写 verifier.request.<subject>.json，主 agent 把该
-# JSON 整段作为 Task prompt 投递，verifier 自行 Read 其中的 prompt_path。
-# publisher=subagent_stop：结论由 SubagentStop hook（templates/hooks/record-verifier-report.mjs）
-# 四方对账后发布为 verifier.report.<subject>.json。
-# modes 只登记**真实实测过**的运行模式：interactive 已由宿主实抓验收（plan e5b8c3f7 附录 A）；
-# headless / goal 目前仍走 bedside 旁路，未验收前不得预填——虚标只会让 runner 生成一份
-# 永远没人发布的 request。
-verifier_capability:
-  transport: repo_file_request
-  publisher: subagent_stop
-  modes: ["interactive"]
+# verifier 子代理能力（plan d2f7a9c4）：只回答「能不能派发 verifier 子 agent」，与运行
+# 模式、发布机制无关。调用协议 adapter 无关（共享规则要求 Task 触发 subagent_type=verifier、
+# prompt = request JSON 整段；终态块契约在 harness/prompts/verify-*.md）；报告由**调用方**
+# 把 verifier 回复原样写入 summary.verifier_report，不再有 hook 发布这一环。
+# 本 adapter 自 .claude/agents/verifier.md 物化起即实证可派发。
+verifier_subagent: true
 
 instance_skill_bridge:
   commands_target_dir: .claude/commands
