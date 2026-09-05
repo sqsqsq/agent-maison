@@ -606,7 +606,7 @@ harness-runner 的 personal-setup 前置校验失败时 MUST 在退出前输出�
 
 check-receipt 的 verifier / invoked_via / trace_json / context_exploration / self_check 硬必需块 MUST 先查 evidence policy：`required` 走现有校验；`off` 记 `skipped_by_policy` 不 FAIL；`optional` 缺失仅 WARN；lite feature MUST 整体返回 exit 0 + 顶层 `not_applicable` 机读标注。
 
-verifier 块 MUST 消费共享的 verifier plan 解析结果，而非自行按 `policy.verifier` 二分：`disabled` 记 `skipped_by_policy` / `not_applicable` 且 loader 不调用、JSON 与 MD 与 request 均不要求；`blocked` MUST BLOCKER FAIL 并归因 `verifier_provider_unavailable`；`enabled` 走**身份验真**，按 summary 代际分派——当代只认身份验真通过的 `verifier.report.<subject>.json`，上一代按 grandfather / 指引重跑 harness 二分。回执手填的 `invoked_via` / `report_path` / `verdict` MUST NOT 单独构成通过或失败条件。
+verifier 块 MUST 消费共享的 verifier plan 解析结果，而非自行按 `policy.verifier` 二分：`disabled` 记 `skipped_by_policy` / `not_applicable` 且 loader 不调用、报告与 request 均不要求，其中 `adapter_has_no_reviewer` MUST 记 `not_reviewed` 并以非阻断 WARN 披露；`enabled` 读当前 subject 的 `verifier.report.<subject>.md`，仅当终态块回显 `summary.verifier_subject_id` 且 verdict 与 blocker_count 自洽时接受。代际分派 MUST NOT 参与（plan d2f7a9c4：按 `summary.schema_version` 劈成两代会让能力被合法关闭读成这是旧件）。回执手填的 `invoked_via` / `report_path` / `verdict` MUST NOT 单独构成通过或失败条件。
 
 #### Scenario: balanced 下 verifier off 的 receipt 通过
 - **WHEN** full×balanced 的 review phase receipt 无 verifier 节
@@ -1989,13 +1989,15 @@ Enforcement: `harness/scripts/check-ut.ts`, `harness/scripts/utils/mutation-auth
 
 ### Requirement: The verifier plan is resolved once and consumed by every stage
 
-Whether a phase runs a verifier SHALL be resolved by one shared function from four inputs — the workflow's `verifier_prompt` declaration, the feature track, the resolved evidence policy, and the active adapter's declared verifier capability — producing exactly one of `disabled`, `enabled`, `blocked`. The runner's production path, the receipt gate, the Skill guidance and the hook recovery text SHALL all consume that single result; none of them SHALL re-derive applicability on its own.
+Whether a phase runs a verifier SHALL be resolved by one shared function from four inputs — the workflow's `verifier_prompt` declaration, the feature track, the resolved evidence policy, and whether the active adapter declares `verifier_subagent` — producing exactly one of `disabled` or `enabled`. The runner's production path, the receipt gate and the Skill guidance SHALL all consume that single result; none of them SHALL re-derive applicability on its own.
 
-Resolution order SHALL be fixed and SHALL NOT be reordered by any caller: profile-disabled phase, then absent workflow declaration, then evidence policy `not_applicable` / `off`, then adapter capability, then enabled.
+Resolution order SHALL be fixed and SHALL NOT be reordered by any caller: profile-disabled phase, then absent workflow declaration, then evidence policy `not_applicable` / `off`, then absent adapter reviewer, then enabled.
 
 `disabled` SHALL mean **absent equals zero**: no `ai-prompt.md`, no request, no subject, no invocation, and no closure requirement. A workflow that does not declare `verifier_prompt` for a phase SHALL be `disabled` — that is "not applicable", not "missing", and a fallback template SHALL NOT be synthesized to fill the gap. Artifacts left on disk by an earlier `enabled` generation SHALL **never** re-activate a capability the resolver has judged `disabled`, and switching a phase from `enabled` to `disabled` SHALL NOT require deleting them.
 
-The workflow/track/policy portion of the resolution SHALL apply in `goal` and `headless` runs exactly as in `interactive` ones; otherwise a `lite` feature under `goal` cannot turn the unconditional assembly off. The adapter-capability portion SHALL, for this change, apply to `interactive` only: `goal` publication responsibility still routes through the bedside bypass, and judging those modes `blocked` would flatten every `full × goal` phase into `INCOMPLETE`.
+The resolution SHALL be identical in `interactive`, `headless` and `goal`. There SHALL be no mode-conditional branch anywhere in verifier adjudication: the previous asymmetry — an adapter-capability gate that applied to `interactive` only, paired with a publication path that refused to publish under `goal` — produced an empty intersection in which a completed, passing review could never close a phase, and burned two unattended runs before anyone noticed.
+
+There SHALL be no third state. A `blocked` outcome existed to express "policy demands a verifier that this adapter cannot publish"; with publication no longer adapter-specific, the only remaining gap is a tool that cannot dispatch a subagent, which is disclosed as `disabled` rather than raised as a failure.
 
 The resolution result SHALL NOT be persisted as a summary snapshot or any other parallel state.
 
@@ -2016,143 +2018,15 @@ Enforcement: `harness/scripts/utils/verifier-plan.ts`, `harness/harness-runner.t
 - **WHEN** a phase that previously ran with `enabled` now resolves to `disabled` while its old prompt, request and report files remain on disk
 - **THEN** the gate SHALL still treat the phase as `disabled`, SHALL NOT consume those files, and SHALL NOT require their removal
 
-#### Scenario: A full goal phase keeps producing a request
+#### Scenario: A full goal phase resolves exactly as interactive
 
-- **WHEN** a `full` feature phase runs under `goal` and the adapter has not registered that mode
-- **THEN** the plan SHALL be `enabled` — the production protocol migrates like any other run, while publication responsibility and closure adjudication for goal are unchanged
+- **WHEN** a `full` feature phase runs under `goal` with an adapter declaring `verifier_subagent`
+- **THEN** the plan SHALL be `enabled`, the same request and report protocol SHALL apply, and closure SHALL be reachable without any operator intervention
 
-### Requirement: A missing verifier provider never suppresses script diagnosis
+#### Scenario: An adapter without a reviewer disables rather than blocks
 
-When the evidence policy declares `verifier` `required` in `interactive` mode and the active adapter has no registered capability, the plan SHALL be `blocked`. `blocked` SHALL NOT short-circuit the harness before the script gate runs. The priority ladder SHALL be:
-
-- the script gate always runs to completion;
-- a genuine script `FAIL` SHALL be reported as itself, with the provider gap recorded alongside rather than replacing it;
-- only when the script gate would otherwise pass SHALL the phase be reported as `INCOMPLETE` with a `verifier_provider_unavailable` attribution;
-- `enabled` produces the request; `disabled` follows the existing closure path unchanged.
-
-The gap SHALL surface at the harness and at the closure entry, not only at the very end of `check-receipt`.
-
-The verifier production surface SHALL be produced **only** when the plan is `enabled` **and** the script gate passed. `blocked` has no provider that could consume a prompt; a non-passing script run must not leave behind a request that looks callable, because the verifier's own contract forbids being invoked while the script gate is failing.
-
-`summary.next_action` SHALL be derived from the resolved plan and the current subject's evidence state, not from a fixed assumption that a passing script run always needs a verifier next. In particular a `blocked` phase SHALL NOT be projected onto the device-external recovery action: the top-level verdict becomes `INCOMPLETE` for a provider reason, and reporting it as "connect a device and re-run UT" sends the operator at an unrelated problem. The console SHALL render the machine projection rather than restating one hard-coded cause for every `INCOMPLETE`.
-
-Enforcement: `harness/harness-runner.ts`, `harness/scripts/check-receipt.ts`, `harness/scripts/utils/verifier-plan.ts`
-
-#### Scenario: A real script failure is not masked by the provider gap
-
-- **WHEN** the phase resolves to `blocked` and the script gate also reports genuine BLOCKER failures
-- **THEN** the phase verdict SHALL be `FAIL` and the real failures SHALL be reported in full
-
-#### Scenario: A passing script run under a missing provider is INCOMPLETE
-
-- **WHEN** the phase resolves to `blocked` and the script gate reports no other BLOCKER failure
-- **THEN** the phase verdict SHALL be `INCOMPLETE` attributed to `verifier_provider_unavailable`, the recommended action SHALL name the provider gap, and the closure entry SHALL refuse to pass the phase
-
-#### Scenario: A failing script run leaves no callable verifier surface
-
-- **WHEN** the plan is `enabled` but the script gate does not pass
-- **THEN** no prompt, request or subject SHALL be produced for that run, and the recommended action SHALL be to fix the reported blockers
-
-#### Scenario: A phase whose evidence already passes is not sent back to the verifier
-
-- **WHEN** the plan is `enabled`, the material is unchanged, and verified passing evidence already exists for the current subject
-- **THEN** the recommended action SHALL be to complete the receipt and closure, not to re-run the verifier against the same subject (which could only produce a conflict)
-
-### Requirement: check-receipt adjudicates verifier evidence by identity, dispatched on the resolved plan and the summary generation
-
-The finalize step SHALL adjudicate verifier evidence. plan `disabled` → nothing required; plan `blocked` → BLOCKER `verifier_provider_unavailable`; plan `enabled` → load `verifier.report.<subject>.json` for the current subject through `loadVerifierEvidence()`. When the current subject has no report but the phase holds any identity-verified PASS report, closure SHALL proceed with `verifier: completed_with_prior_review` and `current_material_not_reverified` listing the differing material; it SHALL NOT be described as PASS for the current material. BLOCKER SHALL remain only when the policy is `required` and the phase never obtained a PASS report. Earlier-generation summaries keep the existing grandfather rule.
-
-Enforcement: `harness/scripts/check-receipt.ts`, `harness/scripts/utils/phase-closure-finalizer.ts`, `harness/scripts/utils/verifier-evidence.ts`
-
-#### Scenario: Changed material with a prior PASS completes honestly
-
-- **WHEN** spec.md changed after a verified PASS and the driver did not re-run the verifier
-- **THEN** the phase closes with `completed_with_prior_review` and the summary lists `spec.md` under `current_material_not_reverified`
-
-### Requirement: Concurrent verifier rounds are separated by identity, and contradictions become an explicit conflict
-
-Concurrent verifier subagents are a supported normal state; the framework SHALL NOT serialize them with a lock, a queue, or a ban. Separation SHALL come from identity alone.
-
-Publication SHALL be a compare-and-set loop, not a read-then-write. Atomic replacement alone is insufficient: it only guarantees that no half-written file is observed, **not** that "read the existing document, decide, write" is atomic. Two concurrent rounds that both observe "no document yet" would both write `published`, and the later writer would silently overwrite the earlier one — a `PASS` swallowing a `FAIL`. Three invariants are therefore required:
-
-- the first publication for a subject SHALL go through an atomic **create-if-absent**; a writer that loses that race SHALL re-read and re-decide rather than overwrite;
-- `conflict` SHALL be **monotonic and absorbing** for a given subject: once a document is in conflict it SHALL NOT return to `published`;
-- these rules govern **one subject's own file only**; cross-subject interference is excluded structurally by the per-subject partition rather than by any authorization check.
-
-A round SHALL NOT move, delete or overwrite a file belonging to another subject, and SHALL NOT need permission to avoid doing so. Re-checking "am I still the current subject?" cannot close this race at any placement: the check and the mutation are two steps, and the subject can rotate between them — a later check only moves the window. The partition removes the shared mutable resource instead: each round derives its own filename from its invocation subject and touches nothing else, while `summary.verifier_subject_id` independently decides which file the consumers read. A stale round may therefore still write its own file; that file is simply outside every consumer's read surface.
-
-Publication SHALL be idempotent when the subject, the `agent_id`, and the conclusion fingerprint all match an already published document — and in that case the file SHALL NOT be rewritten, because rewriting would change `generated_at` and stale a manifest that has just frozen those bytes. When the subject matches but the `agent_id` or the conclusion fingerprint differs, the canonical document SHALL become `state: "conflict"` recording **both** sides' agent identity, verdict, blocker count and conclusion fingerprint; the shared loader SHALL refuse such a document and check-receipt SHALL BLOCKER FAIL. With three or more concurrent writers the recorded side list is best-effort and SHALL be marked as such — the conflict **state** never degrades, only a forensic entry may be lost. When the subject is stale relative to the current summary, the report SHALL land in the bedside file and SHALL NOT overwrite the canonical document.
-
-Conflict recovery guidance SHALL be executable: stop or await **all** verifiers for that subject; delete the conflict document, which is no longer any side's conclusion; then start exactly **one** verifier, delivering the request JSON named by `summary.verifier_request` in full. Re-running the harness SHALL NOT be presented as the recovery step: it rotates the subject only when the reviewed material actually changed, so with unchanged material it returns to the very same conflict.
-
-The loader SHALL recompute the conclusion fingerprint from the stored `verdict`, `blocker_count` and report text and SHALL reject a document whose stored fingerprint does not match. Accepting the stored value unverified would let an edit that flips a `FAIL` document to `PASS` — leaving the original fingerprint in place — pass verification intact.
-
-The write target SHALL be derived by the hook from the framework configuration plus the feature/phase named in the invocation request. The `prompt_path` claimed in that request SHALL be used **only** for an equality cross-check; a claim containing `..`, an absolute path, a drive prefix, or a different feature SHALL reject the whole round rather than degrade to writing somewhere else. A Task prompt that is not exactly one parseable request document — a hand-transcribed template, an edited field whose subject no longer recomputes, or a request followed by extra instructions — SHALL reject the round to the bedside file.
-
-Enforcement: `agents/claude/templates/hooks/record-verifier-report.mjs`, `harness/scripts/utils/verifier-evidence.ts`, `harness/scripts/utils/verifier-request.ts`, `harness/scripts/check-receipt.ts`
-
-#### Scenario: Interleaved verifier rounds each land in their own phase
-
-- **WHEN** verifier subagents for plan, coding and ut finish in an interleaved order while the shared state file points at coding
-- **THEN** each phase SHALL hold its own published document carrying its own subagent identity, and none SHALL be overwritten by another
-
-#### Scenario: A contradicting second round is recorded as a conflict, not resolved by arrival order
-
-- **WHEN** a second subagent reports `FAIL` under the same subject for which a first subagent already published `PASS`
-- **THEN** the canonical document SHALL become `state: "conflict"` recording both sides, and check-receipt SHALL FAIL
-
-#### Scenario: Genuinely concurrent rounds cannot let a PASS swallow a FAIL
-
-- **WHEN** two verifier rounds for the same subject publish contradicting verdicts concurrently, both having observed no existing document
-- **THEN** the canonical document SHALL end in `state: "conflict"` carrying both sides, and SHALL NOT end as a `published` document holding either single verdict
-
-#### Scenario: An edited conclusion is rejected even when its fingerprint is left untouched
-
-- **WHEN** a published document's `verdict`, `blocker_count` and report text are edited to claim a clean pass while `result_sha256` retains the original value
-- **THEN** the loader SHALL reject the document on fingerprint recomputation and check-receipt SHALL FAIL
-
-#### Scenario: A late round from a superseded subject cannot overwrite current evidence
-
-- **WHEN** a verifier from a previous harness run finishes after the subject has rotated
-- **THEN** the canonical document SHALL be unchanged and the late report SHALL land in the bedside file marked as a stale subject
-
-#### Scenario: Interleaved subjects cannot change each other's bytes
-
-- **WHEN** a round for subject A stops just before its final write, the runner rotates to subject B, a verifier for B publishes the current evidence, and A is then released
-- **THEN** B's file SHALL be byte-identical to before A resumed, A SHALL at most have written its own subject's file, and the loader SHALL still return B
-
-#### Scenario: An out-of-scope claimed path rejects the whole round
-
-- **WHEN** the invocation request claims a `prompt_path` that escapes the phase directory, is absolute, or names another feature
-- **THEN** no canonical document SHALL be written and the round SHALL be recorded in the bedside file as a rejected path claim
-
-#### Scenario: A request with extra instructions appended is rejected
-
-- **WHEN** the Task prompt carries the request JSON followed by additional text
-- **THEN** the round SHALL be rejected to the bedside file and no canonical document SHALL be written
-
-### Requirement: The review closure attestation binds identity-verified verifier evidence
-
-The review closure attestation's `verifier_report_sha256` SHALL bind the review phase's canonical verifier JSON and SHALL be populated **only** when that document passes identity verification; when verification fails the field SHALL be `null` rather than binding an unverified artifact. The attestation SHALL additionally record `verifier_subject_id` and `verifier_result_sha256` as readable anchors, and its `schema_version` SHALL advance to `1.1`.
-
-Because no consumer of the attestation reads the verifier binding — reconciliation, the testing `review_closure_attestation` gate and the check-ut goal branch all consume `inventory` — attestations written at `1.0` SHALL remain readable and SHALL continue to reconcile against their own recorded source baseline, exactly as the evidence manifest grandfathers older closures. A structurally malformed attestation SHALL still be reported as an unavailable baseline.
-
-Enforcement: `harness/scripts/utils/closure-attestation.ts`, `harness/scripts/utils/phase-closure-finalizer.ts`
-
-#### Scenario: A review closure without verified verifier evidence records a null binding
-
-- **WHEN** the review phase's verifier JSON is absent or fails identity verification at closure time
-- **THEN** the attestation SHALL record `verifier_report_sha256: null` rather than hashing the markdown
-
-#### Scenario: An attestation written before this change still reconciles
-
-- **WHEN** a `1.0` attestation from an earlier closure is consumed by source-drift reconciliation
-- **THEN** it SHALL remain readable and reconcile against its recorded inventory
-
-#### Scenario: A closed review at the current summary generation is a usable UT baseline
-
-- **WHEN** the review phase closes with the current summary generation and a valid `closure_commit`
-- **THEN** the UT attestation-first probe SHALL treat it as formally closed and usable as a baseline
+- **WHEN** the evidence policy resolves `verifier` to `required` and the adapter declares no `verifier_subagent`
+- **THEN** the plan SHALL be `disabled` with reason `adapter_has_no_reviewer`, and no request SHALL be issued
 
 ### Requirement: Reference-image receipt verification uses the runner's shared discovery denominator
 
@@ -2292,3 +2166,75 @@ Enforcement: `harness/scripts/utils/closure-attestation.ts`, `harness/scripts/ch
 
 - **WHEN** three padding constants changed after review closure
 - **THEN** the gate SHALL require one geometry re-check and SHALL NOT demand a full review→UT→testing rerun
+
+### Requirement: check-receipt adjudicates verifier evidence by subject echo
+
+The finalize step SHALL adjudicate verifier evidence from the resolved plan alone. plan `disabled` → nothing required; plan `enabled` → load `<reports>/verifier.report.<subject>.md` for the current subject through the shared loader, which SHALL accept it only when the terminal block echoes `summary.verifier_subject_id` and `verdict` agrees with `blocker_count`.
+
+Adjudication SHALL NOT dispatch on `summary.schema_version`. Splitting the read surface into a current generation and a grandfathered one made "the capability was legitimately turned off" indistinguishable from "this is an old artifact"; a phase re-validated without a current report is simply reviewed again, which costs one review and removes an entire dispatch axis.
+
+When the current subject has no report but the phase holds any verified PASS report, closure SHALL proceed with `verifier: completed_with_prior_review` and `current_material_not_reverified` listing the differing material; it SHALL NOT be described as PASS for the current material. BLOCKER SHALL remain only when the policy is `required` and the phase never obtained a PASS report.
+
+When the plan is `disabled` for reason `adapter_has_no_reviewer`, the gate SHALL pass and SHALL disclose the verifier axis as `not_reviewed` in a non-blocking warning. A tool that cannot dispatch a subagent is an environment fact; refusing to close the phase over it makes the whole `full` track unusable on that adapter, while an honest disclosure keeps the closure record truthful.
+
+Hand-written receipt fields SHALL hold no adjudication authority; a mismatch with the machine fact SHALL be a warning, never a verdict.
+
+Enforcement: `harness/scripts/check-receipt.ts`, `harness/scripts/utils/phase-closure-finalizer.ts`, `harness/scripts/utils/verifier-evidence.ts`
+
+#### Scenario: Changed material with a prior PASS completes honestly
+
+- **WHEN** spec.md changed after a verified PASS and the dispatcher did not re-run the verifier
+- **THEN** the phase SHALL close with `completed_with_prior_review` and the summary SHALL list `spec.md` under `current_material_not_reverified`
+
+#### Scenario: An adapter without a reviewer closes with disclosure
+
+- **WHEN** the active adapter declares no `verifier_subagent` and a `full` phase's script gate passes
+- **THEN** no request SHALL have been issued, the gate SHALL pass, and the verifier axis SHALL be recorded as `not_reviewed` with a non-blocking warning
+
+#### Scenario: An unreadable report is a re-run, not a closure wall
+
+- **WHEN** the report for the current subject is missing, carries zero or multiple terminal blocks, or contradicts its own blocker count
+- **THEN** the gate SHALL name that single failure and SHALL instruct the dispatcher to re-run the verifier and rewrite the report
+
+### Requirement: The review closure attestation records the reviewed verifier subject
+
+The review closure attestation SHALL record `verifier_subject_id` as a readable anchor naming which material the review phase's verifier examined, and its `schema_version` SHALL advance to `1.2`. It SHALL NOT hash the verifier report.
+
+Hashing the report would reintroduce, through the attestation, exactly the tamper detection this change removes from the loader: a report whose modification is deliberately undetectable must not simultaneously stale a closure when edited. The conclusion the closure adopted is already recorded in the summary.
+
+Because no consumer of the attestation reads the verifier binding — reconciliation, the testing `review_closure_attestation` gate and the check-ut goal branch all consume `inventory` — attestations written at `1.0` or `1.1` SHALL remain readable and SHALL continue to reconcile against their own recorded source baseline, exactly as the evidence manifest grandfathers older closures. A structurally malformed attestation SHALL still be reported as an unavailable baseline.
+
+Enforcement: `harness/scripts/utils/closure-attestation.ts`, `harness/scripts/utils/phase-closure-finalizer.ts`
+
+#### Scenario: A review closure records the subject without hashing the report
+
+- **WHEN** the review phase closes with a verified verifier report
+- **THEN** the attestation SHALL record that report's `verifier_subject_id` and SHALL carry no report hash field
+
+#### Scenario: An attestation written before this change still reconciles
+
+- **WHEN** a `1.0` or `1.1` attestation from an earlier closure is consumed by source-drift reconciliation
+- **THEN** it SHALL remain readable and reconcile against its recorded inventory
+
+#### Scenario: A closed review at the current summary generation is a usable UT baseline
+
+- **WHEN** the review phase closes with the current summary generation and a valid `closure_commit`
+- **THEN** the UT attestation-first probe SHALL treat it as formally closed and usable as a baseline
+
+### Requirement: The phase evidence manifest excludes the verifier report
+
+The phase evidence manifest SHALL register the phase's own outputs — the summary, the script report, the trace and the phase artifacts — so that a later edit to any of them marks the closure stale. The verifier report SHALL NOT be registered.
+
+Its content is deliberately unprotected: the loader performs no tamper detection on it, so registering its bytes would make the manifest the only place where editing the report has a machine consequence — contradicting the adjudication rule and reviving the stale cascade that motivated subject partitioning in the first place. The conclusion a closure adopted is recorded in the summary, which is registered.
+
+Enforcement: `harness/scripts/utils/phase-evidence-manifest.ts`
+
+#### Scenario: Editing a closed phase's verifier report does not stale it
+
+- **WHEN** a closed phase's `verifier.report.<subject>.md` is edited and the manifest is recomputed
+- **THEN** the phase SHALL remain fresh and no downstream phase SHALL be invalidated
+
+#### Scenario: Editing the summary still stales the closure
+
+- **WHEN** a closed phase's `summary.json` is edited
+- **THEN** manifest recomputation SHALL report the phase stale

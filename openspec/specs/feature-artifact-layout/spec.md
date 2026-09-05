@@ -272,33 +272,6 @@ lite track 的叙述产物 MUST 为单文档 `change.md`（意图 / scope in-out
 
 > **Enforced by:** `harness/scripts/check-change-lite.ts`, `workflows/spec-driven.workflow.yaml`
 
-### Requirement: verifier.report.json is the sole machine truth; the markdown is a human projection
-
-Each phase whose verifier capability resolves to `enabled` SHALL carry its machine-consumable verdict in a **subject-partitioned** file, `<reports>/verifier.report.<subject>.json` (`schema_version` `"2.0"`), published by the SubagentStop hook only after identity binding succeeds. `summary.verifier_subject_id` alone decides which file is the current machine evidence.
-
-The partition is not a naming convention — it is what makes cross-subject interference structurally impossible. A single fixed filename makes every round compete for one mutable file, and any "am I still authorized?" check is separated from the mutation by a gap in which the subject can rotate; moving that check later only moves the window. With one file per subject, no round can move, delete or overwrite another subject's file, and the question never arises. A file that self-declares a different subject than its own name SHALL fail closed; it SHALL NOT be moved or repaired. Stale files from superseded subjects SHALL be left in place — they are outside every consumer's read surface, and automatic cleanup would reintroduce concurrent deletion. The document SHALL record the subagent identity (`agent_id`, `agent_type`), **two separately stored subjects** (`invocation_subject` and `result_subject`), a strictly parsed `verdict` (`PASS`/`FAIL`), `blocker_count`, a `result_sha256` conclusion fingerprint, the full `report_text`, and audit-only metadata (`agent_transcript_path`, `session_id`) that participates in no adjudication.
-
-`<reports>/verifier.report.<subject>.md` SHALL be a human-readable projection regenerated from that JSON. Inside the subject/JSON closure domain no machine consumer may parse it: not the receipt gate, not repair-candidate derivation, not the multimodal read-image evidence gate, not the goal phase snapshot. Every one of them SHALL read the identity-verified JSON through the shared `loadVerifierEvidence()` boundary and SHALL NOT fall back to the markdown when verification fails — a verification failure is the "no evidence" path, not a licence to read an unverified artifact.
-
-Consequently the markdown SHALL NOT enter the **new** evidence manifest protection set, and editing it SHALL change no machine conclusion. A closure that was published before this change keeps its **own** manifest registration: the recorded `verifier.report.md` bytes still participate in hash reconciliation there, so editing the markdown of a grandfathered closure still marks it stale. That is byte protection under the old registration surface, not semantic parsing, and it is the only remaining place where the markdown affects a machine outcome.
-
-Enforcement: `agents/claude/templates/hooks/record-verifier-report.mjs`, `harness/scripts/utils/verifier-evidence.ts`, `harness/scripts/utils/phase-evidence-manifest.ts`, `harness/scripts/utils/goal-phase-snapshot.ts`
-
-#### Scenario: Editing the markdown changes nothing in the new closure domain
-
-- **WHEN** a phase holds an identity-verified `verifier.report.<subject>.json` and someone rewrites the companion markdown to claim the opposite verdict
-- **THEN** the loader, the repair-candidate and read-image evidence text sources, the goal snapshot machine fields, and the check-receipt verdict SHALL all be byte-identical to before the edit
-
-#### Scenario: Editing the markdown of a grandfathered closure still stales it
-
-- **WHEN** an older closure whose manifest registered `verifier.report.md` has that file modified
-- **THEN** manifest recomputation SHALL report the phase stale under its own registration surface
-
-#### Scenario: An unverifiable JSON does not fall back to the markdown
-
-- **WHEN** the current subject's JSON is missing, unparseable, in conflict state, or fails the in-repository subject comparison
-- **THEN** every machine consumer SHALL behave as if no verifier evidence exists and SHALL NOT read the markdown instead
-
 ### Requirement: The verifier is invoked through a short request whose subject addresses the reviewed material
 
 `harness-runner` SHALL write exactly one `verifier.request.<subject>.json` when the verifier capability is `enabled`. `subject_id` SHALL be the SHA-256 of the pre-verifier material view computed at request issue time: the phase's actual input file hashes (resolved from the loader REQUIRED/OPTIONAL tables), the phase's primary artifact hashes, the source/trace/visual/machine-report files the verifier actually reads, the phase rule hash, the verifier prompt template hash and the gate fingerprint. It SHALL exclude the verifier report itself, summary runtime fields, the receipt, the `ai-prompt.md` generation timestamp and the merged report. Identical material SHALL address the same subject across harness re-runs so an existing verified report is reused; changed material addresses a new subject.
@@ -312,18 +285,27 @@ Enforcement: `harness/scripts/utils/verifier-request.ts`, `harness/scripts/utils
 
 ### Requirement: Summary schema 1.3 makes the verifier fields conditional and separates the three roles
 
-The run summary writer SHALL emit `schema_version` `"1.3"`, in which `ai_prompt`, `verifier_subject_id` and `verifier_request` are **conditional** fields present only when the phase's verifier capability resolved to `enabled`. Their absence SHALL mean "not applicable", never "missing".
+The run summary writer SHALL emit `schema_version` `"1.3"`, in which `ai_prompt`, `verifier_subject_id`, `verifier_request` and `verifier_report` are **conditional** fields present only when the phase's verifier plan resolved to `enabled`. Their absence SHALL mean "not applicable", never "missing".
+
+`verifier_report` SHALL be written at request issue time, as the project-root-relative path `<reports>/verifier.report.<subject>.md`. It exists so the dispatching agent never composes that path itself; the console `NEXT` line SHALL name it directly.
 
 The three roles previously conflated in one field SHALL be separated: **generation** is carried by `schema_version`, **applicability** is recomputed on demand from the resolved verifier plan, and **identity** is carried by `verifier_subject_id`. No applicability snapshot SHALL be persisted into the summary — applicability is a judgement that can be recomputed at any time, and freezing it into a field turns it into state that drifts.
 
 `1.2` SHALL remain readable as the previous closure generation, and `1.0` / `1.1` SHALL remain readable as legacy with unknown assurance. The assurance obligations that `1.2` introduced (`assurance`, capability resolutions and fingerprint, `closure_status`) SHALL apply unchanged to `1.3`; consumers SHALL express that as a version **set**, not as an equality against a single literal, so that a future generation does not silently drop out of every gate.
+
+Verifier evidence adjudication SHALL NOT dispatch on `schema_version`. The generation field records the summary's own shape; using it to pick between two verifier evidence protocols made a legitimately disabled capability read as "old artifact".
 
 Enforcement: `harness/schemas/summary.schema.json`, `harness/scripts/utils/types.ts`, `harness/scripts/utils/quality-axes.ts`, `harness/harness-runner.ts`, `harness/scripts/utils/phase-closure-finalizer.ts`
 
 #### Scenario: A disabled phase writes no verifier fields at all
 
 - **WHEN** the resolved verifier plan for a phase is `disabled`
-- **THEN** the summary SHALL carry no `ai_prompt`, no `verifier_subject_id` and no `verifier_request`, and no prompt, request or report SHALL be produced
+- **THEN** the summary SHALL carry no `ai_prompt`, no `verifier_subject_id`, no `verifier_request` and no `verifier_report`, and no prompt, request or report SHALL be produced
+
+#### Scenario: An enabled phase names its report path up front
+
+- **WHEN** the plan is `enabled` and the script gate passes
+- **THEN** the summary SHALL carry `verifier_report` pointing at `<reports>/verifier.report.<subject>.md`, and the console `NEXT` line SHALL instruct the dispatcher to write the verifier's reply to exactly that path
 
 #### Scenario: The current generation is accepted by every assurance consumer
 
@@ -377,4 +359,33 @@ Enforcement: `specs/artifact-schemas/inventory.yaml`, `harness/scripts/utils/vis
 
 - **WHEN** `visual-debt.json` exists but cannot be parsed
 - **THEN** the reader SHALL fail closed on the corrupt content rather than treating the ledger as absent, independently of any write-boundary decision
+
+### Requirement: The verifier report markdown is the sole machine truth, written by the invoking agent
+
+Each phase whose verifier plan resolves to `enabled` SHALL carry its machine-consumable verdict in a **subject-partitioned** markdown file, `<reports>/verifier.report.<subject>.md`. `summary.verifier_subject_id` alone decides which file is the current machine evidence, and `summary.verifier_report` names its path.
+
+There SHALL be exactly **one writer**: the agent that dispatched the verifier. The verifier subagent SHALL keep its read-only tool grant and SHALL keep replying with the full report ending in exactly one versioned terminal block; the dispatcher SHALL write that reply **verbatim** — not summarized, not reduced to the terminal block — to the path named by `summary.verifier_report`. The verifier SHALL NOT be granted write access, the request SHALL NOT carry a report path for the verifier to write to, and no fallback second writer SHALL exist. A fallback in which the dispatcher writes only what it happens to hold would produce a report carrying a terminal block and no findings, which the loader would accept while repair candidates, WARN items and the multimodal review text silently vanish.
+
+The subject partition SHALL be preserved: one file per subject, so no round can move, delete or overwrite another subject's file. A file whose terminal block echoes a different subject than its own name SHALL fail closed and SHALL NOT be repaired or moved. Stale files from superseded subjects SHALL be left in place; they are outside every consumer's read surface.
+
+Adjudication SHALL rest on exactly three facts: the file exists, the terminal block echoes `summary.verifier_subject_id`, and `verdict` agrees with `blocker_count` (`PASS` ⟺ zero). A conclusion fingerprint, a subagent identity, a stored invocation/result subject pair, and a publication state machine SHALL NOT be required. The single recovery action for any failure SHALL be to re-run the verifier and rewrite the report.
+
+The report SHALL NOT enter the evidence manifest protection set and SHALL NOT be hashed into the review closure attestation. Editing it after closure SHALL NOT mark any phase stale: the conclusion that closure adopted is already recorded in the summary, and a report whose modification is undetectable by design must not simultaneously act as a tamper tripwire.
+
+Enforcement: `harness/scripts/utils/verifier-evidence.ts`, `harness/scripts/utils/verifier-subject.ts`, `harness/harness-runner.ts`, `harness/scripts/check-receipt.ts`
+
+#### Scenario: The dispatcher writes the verifier's full reply
+
+- **WHEN** a verifier subagent returns a full report ending in one terminal block
+- **THEN** the dispatching agent SHALL write that reply verbatim to `summary.verifier_report`, and the loader SHALL return its full text as `report_text` for repair candidates and read-image evidence
+
+#### Scenario: A report echoing a stale subject is not evidence
+
+- **WHEN** a report file's terminal block echoes a subject that differs from `summary.verifier_subject_id`
+- **THEN** the loader SHALL report a subject mismatch, the phase SHALL be treated as having no current evidence, and the guidance SHALL be to re-run the verifier
+
+#### Scenario: Editing the report after closure stales nothing
+
+- **WHEN** a closed phase's `verifier.report.<subject>.md` is modified
+- **THEN** evidence manifest recomputation and the review closure attestation SHALL both remain valid, and no phase SHALL be marked stale
 
