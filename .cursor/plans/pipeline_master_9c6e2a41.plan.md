@@ -1,25 +1,25 @@
 ---
 name: 六阶段效率与准确性重构总计划 — HMOS × Claude/Codex × goal/非goal
-overview: B01先细化施工图，后续批次按逐批宿主反馈滚动设计；核心四格实测，codeagent及attended保留fixture覆盖，不新增机制。
+overview: B01先细化施工图，后续批次滚动设计，宿主回归收敛为两个检查点（B02 后、B06）；核心四格实测，codeagent及attended保留fixture覆盖，不新增机制。
 version: 3.0.0
 todos:
   - id: b01-accept-verifier-repair
     content: 验收B01施工图：负面结果可诊断回修、输出解析一致、删除过时指令；目标测试和用户触发的C-U宿主回归通过。
     status: pending
   - id: b02-accept-vision-evidence
-    content: B01宿主反馈后细化并验收B02，解除inline终签死锁与非goal/attended不可达；保留completion probe，完成本批C-U回归。
+    content: B01本地验收后细化并验收B02，解除inline终签死锁与非goal/attended不可达；保留completion probe，完成B01+B02合并C-U回归（spec→ut窗口）。
     status: pending
   - id: b03-accept-execution-reuse
-    content: B02反馈后细化并验收B03，按真实浪费解决UT重复构建/执行和报告整理，不重构进程生命周期；完成本批C-U回归。
+    content: B02本地验收后细化并验收B03，按真实浪费解决UT重复构建/执行和报告整理，不重构进程生命周期；本地验收，宿主回归并入B06。
     status: pending
   - id: b04-accept-attribution-prior-review
-    content: 细化并验收B04的归因与prior review消费两项，不改one-shot、不新增变化范围调度；完成本批C-U回归。
+    content: 细化并验收B04的归因与prior review消费两项，不改one-shot、不新增变化范围调度；本地验收，宿主回归并入B06。
     status: pending
   - id: b05-accept-phase-contracts
-    content: 细化并验收B05的默认strict/显式配置、剩余F09、plan不适用出口和expect数量WARN口径；完成本批C-U回归。
+    content: 细化并验收B05的默认strict/显式配置、剩余F09、plan不适用出口和expect数量WARN口径；本地验收，宿主回归并入B06。
     status: pending
   - id: b06-accept-matrix-delivery
-    content: 复用逐批C-U证据，补C-N/X-U/X-N真实差异与codeagent/attended回放fixture，完成候选件验收与发布就绪。
+    content: 复用B02后的合并C-U证据，完成B03–B05的C-U回归，补C-N/X-U/X-N真实差异与codeagent/attended回放fixture，完成候选件验收与发布就绪。
     status: pending
 ---
 
@@ -27,7 +27,7 @@ todos:
 
 ## 1. 目标与执行方式
 
-用户要求覆盖HMOS的Claude、Codex两类adapter及goal/非goal，并按总plan和子plan分批完成。2026-09-06吸收Claude评审：只有B01细化为可执行施工图，B02至B06保留提纲，前批宿主反馈后再细化、评审、实施。施工图须有具体行为、文件、非目标、代价、提交边界和可执行验收；不机械照搬07a41ec6的篇幅或取舍数量。
+用户要求覆盖HMOS的Claude、Codex两类adapter及goal/非goal，并按总plan和子plan分批完成。2026-09-06吸收Claude评审：只有B01细化为可执行施工图，B02至B06保留提纲，前批本地验收通过后再细化、评审、实施。宿主回归收敛为两个检查点（用户2026-09-06裁定）：B02完成后一次，spec→ut窗口同时验收B01与B02对真实模型行为的改动；B05完成后一次并入B06矩阵。代价：B03–B05若有只在宿主暴露的问题，靠批次边界重打候选件二分定位，而不是逐批实跑。施工图须有具体行为、文件、非目标、代价、提交边界和可执行验收；不机械照搬07a41ec6的篇幅或取舍数量。
 
 覆盖 spec → plan → coding → review → ut → testing。原则SSOT：[overview §1.2.1](../../docs/overview.md#121-四条总设计原则)。保留原生编译/测试、质量目标、范围授权、设备凭据和硬预算；不新增平行状态机、常态人签、通用缓存平台或独立传输层。
 
@@ -40,7 +40,7 @@ todos:
 | 意见 | 裁决与落实 |
 |---|---|
 | B01只有原则、缺施工细节 | 采纳：B01冻结D0至D8、精确资格、调用顺序、命令与宿主完成判据；其余五批滚动细化 |
-| 宿主验证太晚 | 采纳：每批C-U受影响goal窗口通过后再进下一批；B06只补差异格，不叠五批才试 |
+| 宿主验证太晚 | 采纳后于09-06按用户裁定收敛为两个检查点（B02后、B06），见§1；B06只补差异格 |
 | 撤回completion-kill改造 | 采纳：B02去inline质量消费者后保留summary probe/grace/kill。stdout仍供CLI硬失败诊断和usage，不能说完全无消费者，但不据此等待阶段全文；独立visual provider不混改 |
 | 矩阵过重 | 主实测C-U/C-N/X-U/X-N；K/A保留静态、生产函数、回放、fixture覆盖，不强制本机缺席工具实测，不新增支持；满足原请求的两类adapter×两模式 |
 | Codex传输前提过时 | 采纳：接受09-05宿主确认的verifier能力与现有Task/subagent_type协议，B01只核对，不抽象传输层 |
@@ -86,19 +86,19 @@ N的manual/batch作为授权子用例，不增加两套真实六阶段验收。�
 | 批 | 子plan | 当前范围 | 状态 |
 |---|---|---|---|
 | B01 | [verifier回修施工图](pipeline_b01_verifier_repair_3a7f9c12.plan.md) | F01/F02、明确F09删除、adapter现状核对 | 可按施工图评审实施 |
-| B02 | [视觉提纲](pipeline_b02_vision_evidence_8d2b4f60.plan.md) | inline/goal身份死锁与视觉事实分离 | B01宿主后细化 |
-| B03 | [执行复用提纲](pipeline_b03_execution_reuse_5e1c7a93.plan.md) | 重复构建/执行、报告整理，保留probe | B02宿主后细化 |
-| B04 | [归因与prior review提纲](pipeline_b04_scoped_recovery_2f8a6d40.plan.md) | 仅归因和prior review消费者一致 | B03宿主后细化 |
-| B05 | [策略与适用性提纲](pipeline_b05_phase_contracts_7b3e9a15.plan.md) | 默认strict/显式配置、剩余F09、n/a、数量WARN | B04宿主后细化 |
+| B02 | [视觉提纲](pipeline_b02_vision_evidence_8d2b4f60.plan.md) | inline/goal身份死锁与视觉事实分离 | B01本地验收后细化 |
+| B03 | [执行复用提纲](pipeline_b03_execution_reuse_5e1c7a93.plan.md) | 重复构建/执行、报告整理，保留probe | B02本地验收后细化 |
+| B04 | [归因与prior review提纲](pipeline_b04_scoped_recovery_2f8a6d40.plan.md) | 仅归因和prior review消费者一致 | B03本地验收后细化 |
+| B05 | [策略与适用性提纲](pipeline_b05_phase_contracts_7b3e9a15.plan.md) | 默认strict/显式配置、剩余F09、n/a、数量WARN | B04本地验收后细化 |
 | B06 | [差异验收提纲](pipeline_b06_matrix_acceptance_4d9c1f72.plan.md) | 核心四格差异、补充fixture、发布就绪 | 前批证据齐后细化 |
 
-前批代码、相关文档、目标测试及C-U宿主验收通过后才推进；用户未触发宿主运行则host todo保持pending。若已知后批缺陷挡住目标窗口，明确记录依赖并调整前置顺序，不造PASS、不越批热修，也不连续叠五批未验收改动。
+前批代码、相关文档、目标测试通过并提交后即可细化下一批；宿主C-U回归只在B02后与B06两处，用户未触发则对应host todo保持pending。若已知后批缺陷挡住目标窗口，明确记录依赖并调整前置顺序，不造PASS、不越批热修，也不连续叠五批未验收改动。
 
 本轮取消通用completion probe重构、one-shot改造、新变化范围调度、可测性前移体系、测试质量体系重写、K/A新增真实支持。既有局部重验/漂移分级照常使用。观察项再入实施必须重登frontmatter，不能成为隐藏待办。
 
 ## 6. 逐批宿主与交付
 
-每批先准备校验的candidate zip、变更说明及精确宿主命令，由用户触发集成和C-U运行，或明确委托后执行。bc-openCard-1作产品基线，优先隔离验收副本，从有效上游进入受影响阶段并跑到本批窗口闭环，不每批重写六阶段。
+每个宿主检查点（B02后、B06）先准备校验的candidate zip、变更说明及精确宿主命令，由用户触发集成和C-U运行，或明确委托后执行。bc-openCard-1作产品基线，优先隔离验收副本，从有效上游进入受影响阶段并跑到本批窗口闭环，不每批重写六阶段。
 
 必须有真实goal调用、目标生产行为及无直接回归；诊断发现产品FAIL是合法中间态，最终须回owner修好并闭环。未解决外部依赖如实未完成，不用dry-run或中间FAIL冒充宿主通过。
 
