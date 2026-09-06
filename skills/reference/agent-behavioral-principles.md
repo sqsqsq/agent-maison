@@ -16,10 +16,10 @@
 
 ### Framework 约束
 
-1. **每个阶段主产物写入前**，须完成 Research Sub-Phase 并落盘 `context-exploration.md`（`schema_version: "1.1.0"`）。
-2. **`source_code_paths` 须列出真实 Read/Grep 过的源码路径**；harness 会验证磁盘存在。
+1. **每个阶段主产物写入前**，须完成 Research Sub-Phase 并落盘事实：**建立阶段**（full=spec / lite=change）写 `<features_dir>/<feature>/context/facts.md` 全量事实；**后续 delta 阶段**（plan/coding/review/ut/testing、lite 的 coding/exit）只追加 `## phase_delta: <phase>` 增量节，不重做全量探索。旧版 per-phase `context-exploration.md`（`schema_version: "1.1.0"`）仍作兼容路径读取。
+2. **`source_code_paths` 须列出真实 Read/Grep 过的源码路径**；数量下限与磁盘存在性由 harness 在**建立阶段与旧 `context-exploration.md` 兼容路径**校验（delta 阶段只校验 `phase_delta` 节存在且非空——不校验数量不等于可以不读）。
 3. **文档与代码不一致时，以代码为准**，在 Code Facts 中显式标注差异。
-4. **探索深度由 `exploration_strategy` 决定**（v2.10）：plan/coding **默认 subagent**（仅 L1 trivial 可豁免）；spec/review/ut 用**复合评分**（模块 LOC、跨层、fan-out 等）。须在 frontmatter 声明 `change_intent` / `estimated_loc_delta` / `touches_layers` / `adds_new_exports`。
+4. **探索深度由 `exploration_strategy` 决定**（v2.10）：plan/coding `default_mode: subagent`，spec/review/ut 用**复合评分**（模块 LOC、跨层、fan-out 等）；L1 trivial 命中豁免条件、L2_small 复合评分低于阈值同样豁免，L4 architectural 全阶段强制。须在 frontmatter 声明 `change_intent` / `estimated_loc_delta` / `touches_layers` / `adds_new_exports`。**该判定同样只在建立阶段与兼容路径生效**（`harness/scripts/utils/context-facts.ts`）——delta 阶段不按数量或 subagent 硬判，复杂问题该起子代理探索仍须起。
 5. **不确定时停下来问用户**，禁止静默猜测后继续写 spec/plan/code。
 6. **计数/清单类量化 inventory 须脚本产出并留痕**：产物中写"全仓共 N 个 X"类断言时，必须由可复跑的脚本命令（带锚定的 grep/统计）产出，并留存命令与输出摘录——不接受徒手扫读的印象值（实例：宣称 43 个 namespace、实际 26 个）。
 7. **框架 / vendor 事实以当前 profile-addendum 与契约为准**：记忆（用户级 / 会话级 memory）只作搜索线索，不能作裁决依据；与 addendum、harness 输出冲突时以后者为准（plan 07a41ec6 T9）。
@@ -102,7 +102,7 @@
 
 | 本规约原则 | Gate 落点 |
 |-----------|----------|
-| Research First | `source_code_paths`、`Code Facts`、`exploration_mode=subagent` |
+| Research First | 建立阶段：`source_code_paths`、`Code Facts`、`exploration_mode`（数量阈值 + subagent 判定）；delta 阶段：`## phase_delta: <phase>` 节非空 |
 | Minimum Viable | `decisions_unlocked` 须 1:1 对应本阶段将要写的产出 |
 | Surgical | coding/review 阶段 harness 写边界 / diff 范围检查（verifier 不再单列 behavior 项） |
 | Verify Before Proceed | `ready_to_produce` 仅自检通过后置 true；harness 量化阈值 |
@@ -114,9 +114,12 @@
 
 ## 弱模型自检清单（Research Sub-Phase 结束前）
 
+> 下列量化项按**建立阶段**（full=spec / lite=change）与旧 `context-exploration.md` 兼容路径逐条校验；
+> delta 阶段（plan/coding/review/ut/testing）只校验 `facts.md` 的 `## phase_delta: <phase>` 节存在且非空。
+
 ```
 [ ] 已完整阅读本文件四原则
-[ ] context-exploration.md schema_version = 1.1.0
+[ ] facts.md schema_version = "1.0"（旧 context-exploration.md 兼容路径为 1.1.0）
 [ ] source_code_paths 中每个路径在仓库中存在
 [ ] Code Facts 表格 ≥ 本阶段 min_code_facts
 [ ] key_inputs_read 覆盖 phase-rules + profile 要求的子串

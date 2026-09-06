@@ -493,6 +493,9 @@ export interface SummaryJson {
     evidence_manifest_path?: string;
   };
   next_action?: string;
+  /** D2（plan 3a7f9c12）：诊断请求的两个路径——失败回喂据此给出可执行动作。 */
+  verifier_request?: string;
+  verifier_report?: string;
   blockers?: Array<{
     id?: string;
     blocking_class?: string;
@@ -1043,6 +1046,19 @@ export function extractPriorFailureContext(summary: SummaryJson): string {
     const meta = extractBlockingMeta(summary);
     if (meta.failure_kind) lines.push(`- failure_kind: ${meta.failure_kind}`);
   }
+  // D2（plan 3a7f9c12）：产品失败诊断轮——回喂必须给出可执行动作，否则 agent 只看到一串
+  // blocker 就去改产品，而这些失败恰恰要先由 verifier 逐条确认才知道该改哪儿。
+  if (summary.next_action === 'run_verifier_for_repair') {
+    lines.push(
+      '- next_action: run_verifier_for_repair — this product FAIL is diagnosable, and the harness issued a verifier ' +
+        'request despite the script FAIL. Do NOT edit product code yet.',
+      `  1) deliver ${summary.verifier_request ?? 'summary.verifier_request'} verbatim as the Task prompt to subagent_type=verifier;`,
+      `  2) write its reply verbatim to ${summary.verifier_report ?? 'summary.verifier_report'};`,
+      '  3) end this invocation and report the current FAIL plus those two paths — the outer runner re-runs the gate ' +
+        'harness and recomputes repair candidates. Do NOT re-run the harness yourself, and do NOT wait for candidates ' +
+        'or closure before returning (the product is still FAIL; the phase cannot close yet).',
+    );
+  }
   return [`Verdict: ${verdict}`, ...lines].join('\n');
 }
 
@@ -1588,9 +1604,12 @@ function buildUnattendedExecutionBlock(
     '  authorization: the runner three-source chain will still HALT on any protected-source change they',
     '  "approve". Even if a gap-note claims a seam was approved, do NOT (re-)implement it — log the request',
     '  as must_review and continue without the mutation.',
-    '- Product source under test phases is attestation-locked: any product-code change after review closure',
-    '  fails testing (`review_closure_attestation` BLOCKER). Test seams MUST NOT alter user-visible flows or',
-    '  default behavior — a `*_FAST_PATH`-style switch defaulting to true is a blocker, not a workaround.',
+    '- Product source after review closure is reconciled against the closure attestation: a drift is graded by',
+    '  risk and reported as a WARN naming the review it still owes (`review_closure_attestation` in testing,',
+    '  `ut_no_src_mutation` in ut) — it does not silently pass, and it is not a licence to keep editing.',
+    '  You still own the drift: fold it back into coding and re-close review, or do the graded review it names.',
+    '  Test seams MUST NOT alter user-visible flows or default behavior — a `*_FAST_PATH`-style switch',
+    '  defaulting to true is a blocker, not a workaround.',
     '',
     'After auto-resolving gates: **continue producing phase artifacts** and run harness. Do NOT halt at confirmation gates.',
     '',

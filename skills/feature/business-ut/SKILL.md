@@ -129,7 +129,7 @@ cover_existing_code / repair 模式下须同时给显式基线锚 `HARNESS_DIFF_
 
 **报告由你写入，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，用 Write 把它的回复**原样全文**写进 `summary.verifier_report` 指向的路径（`<reports>/verifier.report.<subject>.md`），再跑 `check-receipt`。不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入；只有终态块的报告能通过校验，却会把这些全部丢掉。
 
-**harness 没有输出 request 时先看 `summary.next_action`，别急着下结论**：①能力未启用（policy/workflow/profile 判定）→ 本阶段就没有 verifier 这一环，不要去找、不要补造，闭环也不要求它；②当前 adapter 未登记 `verifier_subagent`（起不了 verifier 子代理）→ 本阶段无此环，闭环照常进行，`check-receipt` 会以 WARN 如实标注 `not_reviewed`；③脚本尚未 PASS → 本轮刻意不产出 verifier 调用面，先修 BLOCKER 再说。
+**harness 没有输出 request 时先看 `summary.next_action`，别急着下结论**：①能力未启用（policy/workflow/profile 判定）→ 本阶段就没有 verifier 这一环，不要去找、不要补造，闭环也不要求它；②当前 adapter 未登记 `verifier_subagent`（起不了 verifier 子代理）→ 本阶段无此环，闭环照常进行，`check-receipt` 会以 WARN 如实标注 `not_reviewed`；③脚本尚未 PASS → 本轮**通常**刻意不产出 verifier 调用面，先修 BLOCKER 再说；**例外**是 `next_action=run_verifier_for_repair`——review 负面裁决与 UT 真实断言失败（`code_regression`）这两类已复现的可诊断产品失败，harness 会在脚本 FAIL 下照样签发 request，因为它们的回修候选本就依赖 verifier 逐条确认。照常投 request、原样写报告；**产品 FAIL 与 open 闭环状态不因此改变**，别在拿到逐条结论前改产品。
 
 ## 门禁清单表（v2.1 检查覆盖项）
 

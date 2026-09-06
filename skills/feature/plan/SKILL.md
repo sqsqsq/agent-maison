@@ -61,7 +61,7 @@ coding/review/UT/harness **一律优先读 `contracts.yaml`**，避免与 plan.m
 
 1. **读取分析 spec**：功能清单/页面列表/业务流程/数据实体/验收标准 → 功能点清单。
 2. **读架构文档 & 分析工程结构**：`doc/architecture.md` 已有模块/依赖/公共能力 → 交叉验证代码现状 → 确定新建/修改模块。
-3. **Research Sub-Phase**（Context Facts Gate·BLOCKER，功能拆分与 Scope 冻结前完成，C4）：必读 spec/acceptance/architecture/catalog/config + Step 2 规划的全部源码路径（`source_code_paths` ≥5）；`paths.conventions` 文件存在时必读全文并选择真正适用的 id。index 文件存在时须按 reference 的「组件选型施工投影」节读取资产并投影蓝图决定。plan 阶段**默认 MUST** subagent（仅 L1 trivial 可豁免）；追加 `<features_dir>/<feature>/context/facts.md` 的 `## phase_delta: plan` 节（无新增事实写 "none"；facts.md 由 spec 阶段建立，本阶段不重做全量探索）。
+3. **Research Sub-Phase**（Context Facts Gate·BLOCKER，功能拆分与 Scope 冻结前完成，C4）：必读 spec/acceptance/architecture/catalog/config + Step 2 规划的源码路径；`paths.conventions` 文件存在时必读全文并选择真正适用的 id。index 文件存在时须按 reference 的「组件选型施工投影」节读取资产并投影蓝图决定。追加 `<features_dir>/<feature>/context/facts.md` 的 `## phase_delta: plan` 节（无新增事实写 "none"，不得留空）。**plan 是 delta 阶段**：`source_code_paths` 数量下限与 subagent 强制只在**建立阶段**（full=spec / lite=change）和旧 `context-exploration.md` 兼容路径生效（`harness/scripts/utils/context-facts.ts`），本阶段不重做全量探索、也不按数量硬判——但必要的实际阅读与复杂问题的子代理探索不因此免除。
 4. **Scope 继承与扩展提议**（详见 reference）：继承 spec Scope 并冻结 `in_scope_modules`；扩展须走提议流程经 `plan.scope_expansion` 用户确认。
 5. **功能拆分到模块**：逐功能点分配模块（须落在 in_scope 内），输出拆分表（`plan.split_table`：`1=确认` `2=修改`）。
 6. **设计模块架构**：Mermaid 依赖图 + 目录/文件结构规划 + 模块配置变更清单。
@@ -96,7 +96,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase plan --feature {mo
 
 **Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 Task prompt 投给 verifier——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。**报告由你写入，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，用 Write 把它的回复**原样全文**写进 `summary.verifier_report` 指向的路径（`<reports>/verifier.report.<subject>.md`），再跑 `check-receipt`。不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入；只有终态块的报告能通过校验，却会把这些全部丢掉。
 
-**harness 没有输出 request 时先看 `summary.next_action`，别急着下结论**：①能力未启用（policy/workflow/profile 判定）→ 本阶段就没有 verifier 这一环，不要去找、不要补造，闭环也不要求它；②当前 adapter 未登记 `verifier_subagent`（起不了 verifier 子代理）→ 本阶段无此环，闭环照常进行，`check-receipt` 会以 WARN 如实标注 `not_reviewed`；③脚本尚未 PASS → 本轮刻意不产出 verifier 调用面，先修 BLOCKER 再说。
+**harness 没有输出 request 时先看 `summary.next_action`，别急着下结论**：①能力未启用（policy/workflow/profile 判定）→ 本阶段就没有 verifier 这一环，不要去找、不要补造，闭环也不要求它；②当前 adapter 未登记 `verifier_subagent`（起不了 verifier 子代理）→ 本阶段无此环，闭环照常进行，`check-receipt` 会以 WARN 如实标注 `not_reviewed`；③脚本尚未 PASS → 本轮**通常**刻意不产出 verifier 调用面，先修 BLOCKER 再说；**例外**是 `next_action=run_verifier_for_repair`——review 负面裁决与 UT 真实断言失败（`code_regression`）这两类已复现的可诊断产品失败，harness 会在脚本 FAIL 下照样签发 request，因为它们的回修候选本就依赖 verifier 逐条确认。照常投 request、原样写报告；**产品 FAIL 与 open 闭环状态不因此改变**，别在拿到逐条结论前改产品。
 
 ## 阶段闭环判定（全局入口 §5.1）
 
