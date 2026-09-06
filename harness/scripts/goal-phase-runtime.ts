@@ -1534,11 +1534,20 @@ export function buildCapabilityBlock(advisory: CapabilityAdvisory): string[] {
   return lines;
 }
 
+/**
+ * plan 5e1c7a93 D4：本块拆两段，**正文一字不改，只改归属**——
+ * - 模式段（headless 声明 / approval_mode / MUST NOT stop to ask / 覆盖 phase SKILL 停等 /
+ *   逐门自动决议与 headless-assumptions 账本）：**只注入 detached**；
+ * - 红线段（gate-integrity 四条 + deterministicDetectorLines）：两种形态**照常注入**。
+ * attended 走 AttendedGoalPhaseExecutor 的 bridge，phase SKILL 的停等确认按原义执行——
+ * 不能再被同一份提示词同时要求「停下来问」和「停下来问 = 任务失败」。
+ */
 function buildUnattendedExecutionBlock(
   manifest: GoalManifest,
   phase: FeaturePhase,
   projectRoot: string,
   capabilityAdvisory?: CapabilityAdvisory,
+  attended = false,
 ): string[] {
   // plan a8e5c3f9 t6：prompt 用 effective 权限（恒 never）——不再随旧 manifest 摇摆。
   const approval = effectiveHeadlessUnattended(manifest.unattended).approval_mode;
@@ -1564,7 +1573,7 @@ function buildUnattendedExecutionBlock(
         '  per-screen signature path. Register genuinely undecidable items in the blind-review',
         '  pending list (see phase SKILL) instead of fabricating a verdict or endlessly re-attempting.',
       ];
-  return [
+  const modeLines = [
     '## Unattended execution (headless goal-mode) (BLOCKER — overrides phase SKILL stop-and-ask)',
     '',
     'This run is **headless / unattended**. There is **no interactive user** in this session.',
@@ -1578,8 +1587,8 @@ function buildUnattendedExecutionBlock(
     '',
     'For every **in-phase** confirmation gate (registry class gate/enum/matrix/artifact_checkbox):',
     '- Resolve automatically per `skills/reference/user-confirmation-ux.md` **§9 Goal/headless**.',
-    `- Record **every** auto-decision as one JSON line in \`${assumptionsRel}\` (machine SSOT; check-receipt`,
-    '  BLOCKER-validates schema and registry completeness — a gate without a ledger line fails the phase closure):',
+    `- Record **every** auto-decision as one JSON line in \`${assumptionsRel}\` (machine SSOT; the ledger is an`,
+    '  audit trail — it is not authorization, and a missing ledger line does not by itself veto phase closure):',
     '  `{"decision_id":"<unique>","run_id":"<this run id>","phase":"<phase>","gate_id":"<registry id>",' +
       '"class":"<gate|enum|matrix|artifact_checkbox|freeform>","decision":"<what you chose, or n/a: reason>",' +
       '"must_review":true|false,"source":"agent","ts":"<ISO 8601>"}`',
@@ -1603,6 +1612,16 @@ function buildUnattendedExecutionBlock(
     '',
     'After auto-resolving gates: **continue producing phase artifacts** and run harness. Do NOT halt at confirmation gates.',
     '',
+  ];
+  const attendedModeLines = [
+    '## Attended execution (session owner)',
+    '',
+    'This run is **attended**: a session owner is present and reachable through the executor bridge.',
+    "Phase SKILL stop-and-ask confirmations execute as written — stop, ask, and wait for the owner's reply;",
+    'the bridge relays it back. This is not a licence to widen scope or to ask instead of doing the work.',
+    '',
+  ];
+  const redLineLines = [
     '**Gate-integrity red lines (BLOCKER — violations are task failure, not a path to completion):**',
     '- NEVER write legacy quality-signature fields such as `confirmed_by`; current quality conclusions require machine evidence.',
     '- `bbox_verified_by` / `approved_by` / `user_requirement` may only carry their narrowly defined provenance or external-authority semantics; they never override quality FAIL.',
@@ -1613,6 +1632,7 @@ function buildUnattendedExecutionBlock(
     '  and allow_local_drift are retired and ignored on read. Found a framework bug? HALT and report it upstream.',
     ...deterministicDetectorLines,
   ];
+  return [...(attended ? attendedModeLines : modeLines), ...redLineLines];
 }
 
 /**
@@ -3420,6 +3440,11 @@ export function buildPhasePrompt(
   phaseWriteBoundary?: PhaseWriteBoundaryResolution,
   /** plan a7c3e9d2：实例扩展的作者前置输入段（extensionInputsForPhase 产出；空串 / 缺省 = 不注入）。 */
   extensionInputs?: string,
+  /**
+   * plan 5e1c7a93 D4：本轮是否 attended（session owner 在场）。true = 不注入无人值守模式段，
+   * 只注入完整性红线与确定性检测段。缺省 false，既有调用逐字不变。
+   */
+  attended?: boolean,
 ): string {
   const skillAbs = path.join(frameworkRoot, PHASE_SKILL_REL[phase]);
   const parts = [
@@ -3430,7 +3455,7 @@ export function buildPhasePrompt(
     '',
     formatDeferredUpstreamNotice(deferredUpstream),
     ...(capabilityAdvisory ? buildCapabilityBlock(capabilityAdvisory) : []),
-    ...buildUnattendedExecutionBlock(manifest, phase, projectRoot, capabilityAdvisory ?? undefined),
+    ...buildUnattendedExecutionBlock(manifest, phase, projectRoot, capabilityAdvisory ?? undefined, attended === true),
     '',
     '## Orchestrator constraints (BLOCKER)',
     '',
@@ -6588,6 +6613,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
             : undefined,
           phaseWriteBoundary ?? undefined,
           extensionInputsForPhase(projectRoot, String(phase)),
+          // plan 5e1c7a93 D4：attended 不注入无人值守禁问块（B02 已把 attended ⇔ session owner
+          // 做成双向约束，信号唯一且已被拒绝启动分支守住）。
+          executorMode === 'attended',
         ) +
           // S4：回退后 review 注入增量重点复审清单（授权 ≠ 免审）
           (phase === 'review' && backtrackReviewFocus.length > 0
