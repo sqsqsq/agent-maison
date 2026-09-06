@@ -12,6 +12,7 @@ import * as path from 'path';
 import { createHash } from 'crypto';
 import {
   evaluateConsumerGolden,
+  main as evaluatorMain,
   type GoldenEvalReport,
 } from '../../scripts/consumer-golden/evaluate-bc-opencard';
 import { hashScreenshotFile } from '../../../profiles/hmos-app/harness/visual-diff-check';
@@ -49,7 +50,7 @@ interface Host { root: string; fwRoot: string; manifestSha: string; buildFp: str
 /** 健康宿主（round20 起按**真实生产契约**造）：contract 十屏全采（run/build/eval-hash 三绑定）
  * + testing 成功闭环事件 + v1.1 coding summary（quality_axes.asset + script_report 指针 +
  * run_id）+ script-report.json.checks + HomeTab wrapper 证据 + candidate sidecar。 */
-function setupHost(): Host {
+function setupHost(feature: string = FEATURE): Host {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'consumer-golden-'));
   w(root, 'framework.config.json', JSON.stringify({
     schema_version: '1.1',
@@ -64,7 +65,7 @@ function setupHost(): Host {
     paths: { features_dir: 'doc/features', docs_committed: false, reports_dir_pattern: 'doc/features/<feature>/<phase>/reports' },
     materialized_adapters: ['cursor'],
   }, null, 2));
-  const featRel = `doc/features/${FEATURE}`;
+  const featRel = `doc/features/${feature}`;
   // framework 树（featurePhaseReportsDir 解析 frameworkRoot 需要；与 testing-integrity 夹具同坑）
   fs.mkdirSync(path.join(root, 'framework', 'workflows'), { recursive: true });
   // build 身份：install meta + hap（与生产同口径现算——evaluator 的 build 绑定按此比对）
@@ -72,7 +73,7 @@ function setupHost(): Host {
   w(root, `${featRel}/testing/reports/device-test-install.meta.json`,
     JSON.stringify({ hapPath: 'build/default/app.hap' }));
   clearFrameworkConfigCache();
-  const buildFp = resolveCurrentBuildFingerprint(root, FEATURE, 'testing')!;
+  const buildFp = resolveCurrentBuildFingerprint(root, feature, 'testing')!;
   if (!buildFp) throw new Error('夹具须能算出 build fingerprint（install meta + hap 已造）');
   const screens = CONTRACT_CAPTURES.map(id => {
     const shotRel = `${featRel}/device-testing/device-screenshots/shot-${id}.png`;
@@ -502,6 +503,63 @@ export function runAll(): UnitCaseResult[] {
     const r3 = evalHost(h3);
     const i3 = itemOf(r3, 'required_assets');
     assert(i3.verdict === 'FAIL' && i3.detail.includes('run_id'), `run_id 失配须拦：${i3.detail}`);
+  });
+
+  // --- plan 4d9c1f72 D7 (b)：`--feature` 贯通四个消费点 + 默认值零行为变化 ---
+
+  run(results, '默认等值回归：显式传 feature=bc-openCard 与不传，报告除 generated_at 外逐字节相等', () => {
+    const h = setupHost();
+    const implicit = evalHost(h);
+    const explicit = evalHost(h, { feature: FEATURE });
+    // 四个消费点全部投影进这份报告：feature 字段（报告体）、featureDir（十屏/事件/forbidden 项）、
+    // featurePhaseReportsDir（素材门 required_assets 项）、build 指纹（build_binding* 项）。
+    const strip = (r: GoldenEvalReport): string =>
+      JSON.stringify({ ...r, generated_at: '<ts>' }, null, 2);
+    assert(strip(implicit) === strip(explicit), '默认值路径与显式默认值必须逐字节相等');
+    assert(implicit.feature === FEATURE, `报告 feature 字段须仍为 ${FEATURE}，实为 ${implicit.feature}`);
+    assert(implicit.verdict === 'PASS', '默认路径仍须 PASS');
+    // 空白/空串也回落默认（`--feature` 传空不得把 featureDir 打歪）
+    assert(strip(evalHost(h, { feature: '   ' })) === strip(implicit), '空白 feature 须回落默认');
+  });
+
+  run(results, 'feature 贯通：宿主目录名为 bc-openCard-1 时，传 feature 全项 PASS；不传则默认名读不到产物', () => {
+    const alt = 'bc-openCard-1';
+    const h = setupHost(alt);
+    const withFeature = evalHost(h, { feature: alt });
+    assert(withFeature.verdict === 'PASS',
+      `传 feature 须全项 PASS：${JSON.stringify(withFeature.items.filter(i => i.verdict === 'FAIL'), null, 2)}`);
+    assert(withFeature.feature === alt, `报告 feature 字段须回写 ${alt}`);
+    assert(Object.keys(withFeature.screenshot_hashes).length === 10, '十屏 hash 须入报告（featureDir 已切换）');
+    assert(withFeature.install_meta !== null, 'install meta 须读到（featureDir 已切换）');
+
+    // 不传 → 仍按 bc-openCard 找，四个消费点全落空
+    const withoutFeature = evalHost(h);
+    assert(withoutFeature.verdict === 'FAIL', '不传 feature 时默认名读不到产物，必须 FAIL');
+    assert(itemOf(withoutFeature, 'run_binding').verdict === 'FAIL', 'featureDir 落空 → run_binding FAIL');
+    assert(itemOf(withoutFeature, 'build_binding_available').verdict === 'FAIL', '指纹落空 → build_binding_available FAIL');
+    assert(itemOf(withoutFeature, 'required_assets').verdict === 'FAIL', 'coding reports 落空 → required_assets FAIL');
+    assert(withoutFeature.feature === FEATURE, `不传时报告 feature 须仍是 ${FEATURE}`);
+  });
+
+  run(results, 'CLI：--feature 被真正解析（flag 名回归；不传时仍是默认 feature）', () => {
+    const alt = 'bc-openCard-1';
+    const h = setupHost(alt);
+    const outWith = path.join(h.root, 'out-with.json');
+    const codeWith = evaluatorMain([
+      '--project-root', h.root, '--run-id', RUN_ID, '--feature', alt, '--out', outWith,
+    ]);
+    const rWith = JSON.parse(fs.readFileSync(outWith, 'utf-8')) as GoldenEvalReport;
+    assert(rWith.feature === alt, `CLI --feature 须生效，实为 ${rWith.feature}`);
+    // frameworkRoot 走缺省推导（仓内源码树无 RELEASE-MANIFEST.sha256）→ candidate_binding 必 FAIL，
+    // 因此只断言 flag 解析与非 candidate 项，不断言总裁决。
+    assert(codeWith === 1, 'CLI 在源码树下返回 1（candidate_binding FAIL），非 flag 问题');
+    assert(itemOf(rWith, 'run_binding').verdict === 'PASS', 'CLI 传 feature 后 run_binding 须 PASS');
+
+    const outWithout = path.join(h.root, 'out-without.json');
+    evaluatorMain(['--project-root', h.root, '--run-id', RUN_ID, '--out', outWithout]);
+    const rWithout = JSON.parse(fs.readFileSync(outWithout, 'utf-8')) as GoldenEvalReport;
+    assert(rWithout.feature === FEATURE, `CLI 不传 --feature 时须回落 ${FEATURE}`);
+    assert(itemOf(rWithout, 'run_binding').verdict === 'FAIL', '不传时 featureDir 落空 → run_binding FAIL');
   });
 
   return results;

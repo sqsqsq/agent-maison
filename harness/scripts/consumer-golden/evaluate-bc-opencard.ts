@@ -17,7 +17,11 @@
 // CLI：
 //   npx ts-node harness/scripts/consumer-golden/evaluate-bc-opencard.ts \
 //     --project-root <hostRoot> --run-id <goalRunId> \
-//     [--expected-manifest-sha <hex64>] [--out <reportPath>]
+//     [--feature <featureName>] [--expected-manifest-sha <hex64>] [--out <reportPath>]
+//
+// `--feature` 缺省为 `bc-openCard`（golden 立项时的 feature 名）。宿主 feature 目录名
+// 与它不一致时（例如 `bc-openCard-1`）必须显式传，否则 featureDir / 指纹 / coding 素材门
+// 三处全部读到不存在的路径，run_binding 必 FAIL。默认值下行为与加该参数前逐字相同。
 // ============================================================================
 
 import * as fs from 'fs';
@@ -25,7 +29,8 @@ import * as path from 'path';
 import { createHash } from 'crypto';
 import { featureDir, featurePhaseReportsDir } from '../../config';
 
-const FEATURE = 'bc-openCard';
+/** golden 立项时的 feature 名；`--feature` / `GoldenEvalInput.feature` 缺省即此值。 */
+const DEFAULT_FEATURE = 'bc-openCard';
 
 export interface GoldenContract {
   schema_version: string;
@@ -64,6 +69,8 @@ export interface GoldenEvalInput {
   /** candidate 记录的 in-zip manifest sha（Todo 4 candidate 流程传入）；null=仅记录不比对 */
   expectedManifestSha?: string | null;
   contractPath?: string;
+  /** 宿主 feature 目录名；缺省 `bc-openCard`（不传时行为与本参数存在之前逐字相同） */
+  feature?: string;
 }
 
 interface VisualDiffScreenRow {
@@ -89,13 +96,13 @@ function screenshotHashOf(abs: string): string | null {
 }
 
 /** 当前 build fingerprint（与 goal-runner/capture 同一生产口径：install meta 的 hap 现算） */
-function currentBuildFpOf(projectRoot: string): string | null {
+function currentBuildFpOf(projectRoot: string, feature: string): string | null {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { resolveCurrentBuildFingerprint } = require('../../../profiles/hmos-app/harness/build-fingerprint') as {
       resolveCurrentBuildFingerprint: (r: string, f: string, ph?: string) => string | null;
     };
-    return resolveCurrentBuildFingerprint(projectRoot, FEATURE, 'testing');
+    return resolveCurrentBuildFingerprint(projectRoot, feature, 'testing');
   } catch {
     return null;
   }
@@ -115,12 +122,13 @@ function sha256File(abs: string): string {
 
 export function evaluateConsumerGolden(input: GoldenEvalInput): GoldenEvalReport {
   const { projectRoot, runId } = input;
+  const feature = input.feature?.trim() || DEFAULT_FEATURE;
   const frameworkRoot = input.frameworkRoot ?? path.resolve(__dirname, '..', '..', '..');
   const contractPath =
     input.contractPath ?? path.join(__dirname, 'bc-opencard.golden-contract.json');
   const contract = loadContract(contractPath);
   const items: GoldenEvalItem[] = [];
-  const featDir = featureDir(projectRoot, FEATURE);
+  const featDir = featureDir(projectRoot, feature);
 
   // --- 绑定 0a：candidate manifest（安装的就是这个 candidate）---
   const sidecarPath = path.join(frameworkRoot, 'RELEASE-MANIFEST.sha256');
@@ -205,7 +213,7 @@ export function evaluateConsumerGolden(input: GoldenEvalInput): GoldenEvalReport
       });
 
   // --- 绑定 0c：当前 build fingerprint（round20 P1——同 run 内换 build 后旧截图不得过关）---
-  const currentFp = currentBuildFpOf(projectRoot);
+  const currentFp = currentBuildFpOf(projectRoot, feature);
   items.push(currentFp
     ? { id: 'build_binding_available', verdict: 'PASS', detail: `当前 build fingerprint=${currentFp}（install meta + hap 现算）。` }
     : {
@@ -346,7 +354,7 @@ export function evaluateConsumerGolden(input: GoldenEvalInput): GoldenEvalReport
   let assetDetail = '';
   let assetFail = false;
   try {
-    const reportsDir = featurePhaseReportsDir(projectRoot, FEATURE, 'coding', frameworkRoot);
+    const reportsDir = featurePhaseReportsDir(projectRoot, feature, 'coding', frameworkRoot);
     const summaryPath = path.join(reportsDir, 'summary.json');
     if (!fs.existsSync(summaryPath)) {
       assetFail = true;
@@ -503,7 +511,7 @@ export function evaluateConsumerGolden(input: GoldenEvalInput): GoldenEvalReport
 
   return {
     schema_version: '1.0',
-    feature: FEATURE,
+    feature,
     run_id: runId,
     generated_at: new Date().toISOString(),
     installed_manifest_sha256: installedSha,
@@ -528,13 +536,14 @@ export function main(argv = process.argv.slice(2)): number {
   const projectRoot = argOf(argv, '--project-root');
   const runId = argOf(argv, '--run-id');
   if (!projectRoot || !runId) {
-    console.error('用法：evaluate-bc-opencard --project-root <hostRoot> --run-id <goalRunId> [--expected-manifest-sha <hex64>] [--out <path>]');
+    console.error(`用法：evaluate-bc-opencard --project-root <hostRoot> --run-id <goalRunId> [--feature <name>（缺省 ${DEFAULT_FEATURE}）] [--expected-manifest-sha <hex64>] [--out <path>]`);
     return 2;
   }
   const report = evaluateConsumerGolden({
     projectRoot: path.resolve(projectRoot),
     runId,
     expectedManifestSha: argOf(argv, '--expected-manifest-sha') ?? null,
+    feature: argOf(argv, '--feature'),
   });
   const out = argOf(argv, '--out') ??
     path.join(path.resolve(projectRoot), 'doc', 'consumer-golden-report.json');

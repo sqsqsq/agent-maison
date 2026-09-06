@@ -143,7 +143,9 @@ function buildCandidate() {
     console.log('       UITree 负向证据——宿主 visual-diff-nav 配置须含 HomeTab 到达步骤）');
     console.log('  3) 回归完成后用包内 evaluator 裁决（PASS 才回来 candidate:promote）：');
     console.log('       npx ts-node harness/scripts/consumer-golden/evaluate-bc-opencard.ts \\');
-    console.log(`         --project-root <hostRoot> --run-id <goalRunId> --expected-manifest-sha ${manifest.inZipManifest.sha256}`);
+    console.log(`         --project-root <hostRoot> --run-id <goalRunId> --feature <宿主 feature 目录名> --expected-manifest-sha ${manifest.inZipManifest.sha256}`);
+    console.log('     （`--feature` 缺省 `bc-openCard`——宿主 doc/features/ 下的目录名不是它时必须显式传，');
+    console.log('       否则 featureDir / build 指纹 / coding 素材门三处都读不存在的路径，run_binding 必 FAIL）');
   } finally {
     fs.rmSync(stagingDir, { recursive: true, force: true });
   }
