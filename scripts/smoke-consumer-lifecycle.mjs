@@ -694,42 +694,36 @@ function stageGoal(ctx) {
   // fresh→park→resume→ready 全链真跑天然覆盖。
   ctx.log('goal/#4：pass snapshot 已退役——全链零场外快照依赖（前四段覆盖）');
 
-  // 第六段（T4#5）：UT agent 窗口真实改产品源码。runner 必须把 review closure
-  // 后的漂移作为未受信事实，原子失效 coding/review/ut 并自动回 coding；不得把它
-  // 变成 testing_write_violation 或人工签字循环。
+  // 第六段（T4#5）：UT agent 窗口真实改产品源码。
   //
-  // 2026-09-03 路由校准（**只改期望的 reason 字面量，实质保证一个不减**）：
-  // 未受信源码漂移有两条都活着的生产路径——
-  //   · `phase_write_violation`：改写落在 agent invoke 窗口内，由 pre/post hash 直接
-  //     归属到该次 invocation（goal-phase-runtime.ts:7504）。这是本场景（UT agent
-  //     在自己窗口里改产品源码）的确定性路由，也是 MIGRATION「视觉闭环二期 S4」
-  //     写明的 3.0.0 语义：作废本 invocation 与旧 closure，自动 backtrack 回 coding 全量重验。
-  //   · `untrusted_source_drift_revalidation`：ut/testing **harness 之后**由
-  //     `reconcileMutablePhaseSourceDrift` 比对 review closure 基线发现（同文件 :9340），
-  //     覆盖「不在任何 invoke 窗口内的漂移」。该路由的**运行时**覆盖在
-  //     `harness/tests/unit/goal-post-harness-drift.unit.test.ts`（真跑 driver 场景
-  //     `ut_source_drift_post_harness`）。注意 `adjudication.unit.test.ts` **不算**
-  //     这条的覆盖——它只调纯函数 `decide()`，碰不到上面两个生产入口。
-  // 本用例钉前者（写窗口内），不写成 OR：路由静默改道应当让这条门红，而不是被兜住。
+  // 2026-09-05 语义变更（plan `写边界归属门禁裁撤…_1741b6f2`，提交 002fc87c）：写边界
+  // 降为归因诊断，不再兼任裁决。纯 source / phase_workspace 域的跨阶段写入只发
+  // `phase_write_observed` 留痕后继续跑，`phase_write_violation` + 自动回退 coding 仅
+  // 保留给 inventory 显式登记的 artifact 域；源码漂移交责任 checker 分级 WARN
+  // 单次裁决（`ut_no_src_mutation` MAJOR WARN + `post_review_source_drift_unreviewed`
+  // readiness signal），不再作废本轮证据、不进等待人工态。
+  // 所以本段钉的是「留痕 + 不终局 + 正常收官」：旧断言（自动 backtrack 回 coding）
+  // 是被本次变更刻意撤掉的行为，钉着它等于把已退役的硬门重新焊死。
+  //
+  // 披露面（WARN / readiness signal）本段**不**断言：它落在 script-report / 本轮
+  // summary，driver outcome（goal-run-driver.ts:100 GoalRunOutcome）不带这些字段，
+  // 为一条 smoke 断言去扩 driver 不划算；披露面的回归在
+  // `harness/tests/unit/goal-post-harness-drift.unit.test.ts` 与 checker 各自单测里。
   const utMutationFeature = 'ut-source-mutation';
   runDriver('provision', null, utMutationFeature);
   const utMutation = runDriver('ut_source_mutation', null, utMutationFeature);
-  const mutationRecord = utMutation.invalidationRecords.find(r =>
-    r.reason === 'phase_write_violation'
-      && r.to_phase === 'coding'
-      && r.invalidated_phases?.includes('coding')
-      && r.invalidated_phases?.includes('review'));
   if (utMutation.error !== null || utMutation.exitCode !== 0
-    || !mutationRecord
-    || !utMutation.phaseStartsThisCall.includes('coding')
-    || utMutation.eventTypes.includes('testing_write_violation')
+    || !utMutation.eventTypes.includes('phase_write_observed')
+    || utMutation.eventTypes.includes('phase_write_violation')
+    || utMutation.invalidationRecords.some(r => r.reason === 'phase_write_violation')
     || utMutation.phaseHalts.some(h => h.halt_reason === 'awaiting_human_review')) {
     throw new Error(
-      'goal/#5：UT 改源码应自动回 coding 并重新闭环，不得求人/终局。实得 '
+      'goal/#5：UT 窗口内改产品源码应只留痕（phase_write_observed）并正常收官，'
+      + '不得回到 phase_write_violation 自动回退或人工签字循环。实得 '
       + JSON.stringify(utMutation),
     );
   }
-  ctx.log('goal/#5：UT 源码漂移经原子失效自动回 coding，重跑后收官');
+  ctx.log('goal/#5：UT 源码漂移只留痕 phase_write_observed，无失效回退/无人工终局，run 正常收官');
 
   // 第六段（T2 5c）：唯一原子失效记录落盘后立即模拟进程崩溃，再用同一 run 恢复。
   // 断言 crash 窗只有 requested、没有 pending/completed 二态；resume 仍从 plan 起步，
