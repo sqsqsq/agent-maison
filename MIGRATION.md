@@ -516,6 +516,54 @@ coding 只读 contracts —— 不 scaffold 就判「未物化」、scaffold 就
 
 ---
 
+## 构建执行复用与报告分层（execution-reuse-and-report-layering）
+
+本节全部为**消费者无需动手**的行为变化：没有新 env、没有新 CLI、没有新产物格式要迁移；旧记录不带执行键即不参与复用，自然失效。
+
+### UT 一次门禁只出一次 ohosTest 包
+
+同一次 `--phase ut` 里，`ut_hvigor_build` 出的包直接交给 `ut_hvigor_test` 用，test 阶段不再用同参数重跑一次 `genOnDeviceTestHap`。
+
+- **可见变化**：`hvigor-ut-build.<module>.log` 与同名 `.meta.json` 在 test 阶段跑完后**仍是 build 阶段那一份**（此前会被第二次构建覆盖，事后无法证明第一次编译发生过）。
+- **不承诺节省量**：「hvigor 命中 cache 只需毫秒」在仓内无任何证据（`HvigorRunResult` 无 cache 字段、诊断不解析该信号），本次确定收回的只是**一次无条件进程 spawn** 与上面那次日志覆盖；真实耗时以宿主实测为准。
+- **放弃的准确性**：test 阶段不再顺手重建包。包在两次门禁之间被外力删改时，从「第二次构建重新出包」退化为 `hap_not_found` 报错——判据仍是真实产物在盘。
+
+### UT 执行键复用（新目录 `<reports>/<feature>/ut/<stamp>/ut/`）
+
+UT 装机执行开始沿用 testing 侧既有的执行键复用：输入完全没变、上一轮同键成功且证据齐备时，回填冻结件重算门禁，**不发一条装机/执行 hdc**（`hdc list targets` / `wm size` 这类**设备身份查询**不算执行调用，仍会发生）。
+
+- **新落盘目录**：`doc/features/<feature>/ut/<stamp>/ut/`，内含 `execution-key.json` 与逐模块冻结件 `frozen.ut-result.<module>.json` / `frozen.hdc-test.<module>.log`；顶层同时留一份 `ut-result.<module>.json`。旧 run 目录不带执行键记录，天然不参与复用。
+- **整轮键、不做半复用**：HAP 摘要、选中用例集、hvigor invocation fingerprint 三项**按模块名排序逐模块拼接后再 sha256**。任一模块的任一项变 → 整轮真跑。这样 suite 棘轮的「全部模块已执行」判据永远看的是同一轮结果，不会拿到跨轮拼装。
+- **四类一律真跑**：本次调用没真的出过包（例如直调 test helper 的路径）、任一输入变、最新同键 attempt 失败、执行事实冻结件缺失、设备身份未知、`--force-device`。
+- **`--force-device` 覆盖面**：help 文案由「testing 专属」改为「testing / ut」，语义不变——仍是唯一显式逃生口。
+- **`timing_complete` 字段一名两义**：hylyre leg 仍是「timing 覆盖全部 case」，UT leg 是「全部选中模块的结果与 hdc 日志已逐模块冻结」。字段名沿用以免动 testing 侧 schema 与消费者，含义差异见 `execution-key.ts` 的类型注释。
+- **每轮都留一条描述自己结局的记录**：UT 在 dispatch **之前**先落一条 `outcome:'started'` 的非成功记录，跑完覆盖成真实结果。跑挂/被杀/抛异常的那轮因此留下的最新记录是非成功的，下一轮不会把更早的成功当成「最新」。
+
+### `hdc-test.log` 改为 `hdc-test.<module>.log`（Breaking：只影响按字面名找日志的人工习惯）
+
+多 ohosTest 模块时旧的固定名会被第二个模块覆盖。现在按模块命名，实际路径见 `ut_hvigor_test` 结果的日志落盘行。若你的脚本或笔记里硬编码了 `hdc-test.log`，改成按 check 结果给出的路径读。
+
+### report-only 对账区分执行事实与派生统计
+
+`--report-reconcile-only` 的 check id（`report_reconcile_only`）、BLOCKER 严重度与「零设备调用」承诺全部不变，缺口分两类处置：
+
+- **执行事实缺口**（哪个包 / 哪台设备 / 哪次 run / 哪些 case 真跑过；含源 meta 本身缺 `reused` 布尔或 `hapBuiltAt`）→ 仍是 **BLOCKER FAIL**。
+- **派生统计缺口**（timing 文件缺失或陈旧、pipeline 段耗时、case 耗时行、报告正文与 timing 不符）→ **先重建**（timing 由 trace + meta 重算，报告正文由既有生成器重算），重建后闭合即 PASS；仍不闭合才 `status: WARN`（severity 仍 BLOCKER）+ `failure_kind: derived_statistic_unavailable`，details 明写「该统计项为 UNKNOWN，不构成执行事实结论」。**没有新增 check id、没有新增 CheckStatus 成员。**
+- **原始协议缺口不是派生统计缺口**：v1 结果缺 schema 必填（含 `stepResultV1.duration_ms`）仍由冻结 schema 门判 `unsupported_result_protocol`，是 hard。
+- **性能类 AC 例外**：test-plan「关联 AC」列写了 `NFR-*`、且该 id 在 spec 的 `acceptance.performance[]` 里声明时，该 TC 的耗时缺口**不接受重建**，留在 hard 桶。两侧任一没写就识别不到，按 soft 处理——这是 spec 书写约定的已知边界，本次**不加新校验**。
+
+### 「没量到」不再写成 `0ms`
+
+`device-test-timing.json` 的 `cases[].duration_ms` 放宽为 `number | null`。legacy `0.3-p0` 日志 cost 分配分支里没有对应 cost 行的 case 记 `null`；报告对应耗时格写空值占位（`—`），不再写假的 `0ms`。**v1（`0.4-p0`）分支一行未改**：`steps=[]` 的 skip case 求和得 `0` 是**正确的 0**，照旧写 `0ms`。`UNKNOWN` 字面量只出现在 check details 与报告备注列，绝不写进被耗时解析读的格子。
+
+### attended 不再被注入无人值守禁问块
+
+attended（session owner 在场、走 executor bridge）的 phase prompt 不再包含 `## Unattended execution` 模式段（headless 声明、`approval_mode`、"MUST NOT stop to ask"、覆盖 phase SKILL 停等、逐门自动决议与 `headless-assumptions` 账本指令），改为一句诚实说明：phase SKILL 的停等确认按原义执行、经 bridge 回传。**完整性红线与确定性检测段两种形态照常注入，正文一字未改。**
+
+顺带纠正 detached 正文里一条失效话术：账本缺行会让 `check-receipt` BLOCKER 判 phase closure 失败——该否决已退役，现改为「账本是审计留痕，不构成授权，也不单独否决 closure」。attended 的 `headless-assumptions.jsonl` 会因此更稀疏，该账本本就无门禁消费者。
+
+---
+
 ## 把 framework 发布件集成到目标工程
 
 Maison 只交付已经过 pack/release verify 的 `framework-<semver>.zip`。在目标工程根解压，得到 `<repo-root>/framework/`；升级时用新发布件镜像覆盖旧目录。不要从源仓直接挑文件复制，也不要采用第二种 Git 布局。
