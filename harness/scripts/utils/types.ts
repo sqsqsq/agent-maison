@@ -562,6 +562,21 @@ export interface CheckResult {
   structured?: unknown;
 }
 
+/**
+ * `structured.applicability` 的唯一取值（plan 7b3e9a15 D2，codex 实施 review 一轮 medium）：
+ * 该 check 的判据**已确认不适用**——不是"没跑成"。SKIP+BLOCKER 的既有语义是后者，
+ * 于是真 n/a 会进 `summary.blocking_skips` 并让 `decideNextAction` 提前返回
+ * `review_blocking_skips_then_verifier`。带本标注的 SKIP 由 writer 排除出阻断跳过项；
+ * status/severity 一律不变（展示面、质量轴计数、blocker 聚合口径都不动）。
+ */
+export const CHECK_NOT_APPLICABLE_MARKER = 'not_applicable';
+
+/** 该 check 是否已确认不适用（读 `structured.applicability`，形状不符一律 false）。 */
+export function isCheckNotApplicable(check: Pick<CheckResult, 'structured'>): boolean {
+  const s = check.structured as { applicability?: unknown } | null | undefined;
+  return typeof s === 'object' && s !== null && s.applicability === CHECK_NOT_APPLICABLE_MARKER;
+}
+
 /** harness summary.json 软 WARN（不抬 blocker；与 summary.schema.json soft_advisory 对齐） */
 export interface SoftAdvisory {
   id: string;
