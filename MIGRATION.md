@@ -600,6 +600,44 @@ attended（session owner 在场、走 executor bridge）的 phase prompt 不再�
 
 ---
 
+## 显式 `evidence_profile: balanced` 现在在 goal/headless 也生效（B05）
+
+**缺省不写该字段的工程零变化**——三个 mode 下仍逐一等值于 strict。此前 `resolveEvidencePolicy` 在 `mode !== 'interactive'` 时直接返回 strict，`config` 参数根本不参与求解：宿主在 `framework.config.json` 里写了 `evidence_profile: "balanced"`，goal 编排的每一轮都被无声丢弃。现在降档只由 config 显式声明触发，与 mode 无关；档位仍写进 `evidence_policy_snapshot.profile_resolved` 与控制台。
+
+声明 balanced 后的代价分**两条范围不同**的轴，不要合并理解：
+
+| 轴 | 范围 | 效果 |
+|---|---|---|
+| **verifier** | plan / review / ut / testing **四个** phase | 关闭：不签发 request、闭环不要求该轴。**spec / coding 仍 required**（保留集写死为 `{spec, coding}`，`balanced_verifier_retained_phases` 未接线，宿主不可调） |
+| **trace** | **全部六个** feature phase（**含仍要求 verifier 的 spec / coding**） | 缺失由 FAIL 降 WARN。**"提供但损坏"仍恒 BLOCKER**——本批同批修好了 legacy 回执路径上的一个洞：过去是否去读磁盘由回执自报的 `trace_json.exists/path` 决定，canonical 路径上一份损坏 trace.json 配一句 `trace_json: {}` 就能在 optional 档下降成 missing WARN。现在**以盘上文件为准**，回执声明只在 canonical 缺席时作兼容回退 |
+
+`receipt` 两档同为 `not_applicable`（07a41ec6 T4 起已退出闭环输入），`exploration` 两档同为 `required`——这两条零变化。脚本门禁、编译/执行、契约闭包、范围与漂移判定、`product_behavior_switch_scan` / `p0_coverage_integrity` / pixel_1to1 等红线**一律不降**。
+
+**policy off 只是"不要求"，不等于"忽略"。** 当前 subject 已有一份验真通过（终态块回显 subject 匹配、verdict 与 blocker_count 自洽）且 verdict ≠ PASS 的 verifier 报告时，即使该 phase 的 verifier 已被关掉，闭环仍照常否决（`verifier_not_pass` BLOCKER），summary 保留 `verifier_subject_id` / `verifier_report` 并把 `next_action` 定为 `fix_verifier_findings_then_rerun_harness`。沿用的前提是**材料身份未变**：该 subject 签发时落盘的材料视图（`verifier.material.<subject>.json`）与本轮重算的材料面在 phase 输入/产物文件哈希、`gate_fingerprint`、脚本报告投影三项上全等。**改 `evidence_profile` 本身不构成材料换代**——档位不在材料面内，所以"strict 轮跑出 FAIL、随后改成 balanced"不会把这份否决洗掉；改了 phase 输入/产物文件才会。（prompt 模板与被审源码这两面在关轴后算不出来，明确排除在比较外：它们变了仍会沿用旧 FAIL，是多否决方向。）**报告缺席或为 PASS 时才是零要求、不阻断**——这正是 balanced 买到的东西。解除一份已记录的 FAIL 需要跑一轮 strict 让 verifier 自己撤回结论；改配置不构成通过。
+
+## plan 三章节可声明「不适用：<依据>」（B05）
+
+`data_model_typed` / `interface_signatures_complete` / `component_tree_per_page` 过去只认代码块，纯逻辑或无新页面的 feature 只能编造一个空 `interface` 过门。现在章节在场且正文含 `不适用：<依据>` 行时：
+
+- `contracts.yaml` 对应集合（`data_models` / `interfaces` / `components`）为空 **且真源可信** → 记 **SKIP**（severity 各自不变），`details` 写明判据来源与作者依据；
+- 集合里有条目却写不适用 → **假 n/a**，按各自原 severity 记 **FAIL** 并点名 contracts 条目（两个 BLOCKER 项因此阻断本阶段；`component_tree_per_page` 是 MAJOR，属 check FAIL 而非阶段阻断）；
+- **真源不可信一律不接受声明**：`contracts.yaml` 缺失、根节点非 mapping 解析失败、或该集合有 `shape_issues` 留痕（例如 `data_models: {}` 被归空）时落回今天的判定，绝不给 SKIP。
+
+章节本身仍必须在场（由 `required_chapters` 独立要求）；判据只看 contracts 集合是否为空，不推断 contracts 自身有没有漏声明，也不解读 `components[].kind`。
+
+## verify-ut 不再按 expect 数量判 FAIL（B05）
+
+检查 4B 第 5 条改为按"该 `it` 若被错误实现会不会失败 + 是否覆盖该规则的边界/异常"判定：**用单条精确断言完整验证一个纯函数是合法形态**，不再因"只有 1 个 expect"判 BLOCKER FAIL；堆三条 `assertLargerThan(0)` 却对错误实现照样通过的空壳用例仍判 FAIL，"只测 repository 静态数据结构而 acceptance 要求业务流程"这一支保留。
+
+配套给检查 4 第 1 条与 4B 第 2 条各加了适用范围（否则单断言用例仍会被这两条判 FAIL）：
+
+- **纯函数 / 单规则用例**（无 data_boundary 替身、无多阶段状态迁移）：调用序列断言与中间态/终态断言按**不适用**处理，4B 第 2 条的"两类断言"不作要求；
+- **流程类用例**（驱动 coordinator / 涉及 data_boundary / 有阶段迁移）：三项要求与两类断言**逐字保留**，判定逻辑不变。
+
+形态由被测对象决定，verifier 按代码判，不接受"我说它是纯函数"。脚本侧 `it_drives_flow` 的 severity/status/判定式**一字未改**（本就是 MAJOR WARN），只是它的建议不再指向数字。
+
+---
+
 ## 把 framework 发布件集成到目标工程
 
 Maison 只交付已经过 pack/release verify 的 `framework-<semver>.zip`。在目标工程根解压，得到 `<repo-root>/framework/`；升级时用新发布件镜像覆盖旧目录。不要从源仓直接挑文件复制，也不要采用第二种 Git 布局。
