@@ -6,7 +6,13 @@ import * as path from 'path';
 
 export interface DeviceTestTimingCase {
   id: string;
-  duration_ms: number;
+  /**
+   * plan 5e1c7a93 D3：`null` = 本轮**没量到**（legacy `0.3-p0` 日志里没有对应 cost 行），
+   * 与「真的 0ms」区分开——报告里写 `—`，不再写成假的 `0ms`。
+   * v1 分支不产生 null：requireV1ForGate 已保证每个 step 带 duration_ms，
+   * `steps=[]` 的 skip case 求和得 0 是**正确的 0**。
+   */
+  duration_ms: number | null;
   step_count: number;
 }
 
@@ -41,8 +47,9 @@ function readJsonSafe<T>(p: string): T | null {
 
 /**
  * 以 trace cases[] 为全量 case 集合，tool_calls 只负责把 log cost 分配到对应 TC。
- * Hylyre 的 StepSkipped case 不会产生成功后的 tool_call，因此必须保留为 0/0，
- * 不能因 tool_calls 非空而从 timing 中消失。
+ * Hylyre 的 StepSkipped case 不会产生成功后的 tool_call，因此**不能因 tool_calls 非空而
+ * 从 timing 中消失**；plan 5e1c7a93 D3 起它在 legacy 分支记 `null/0`（没量到，报告写 `—`），
+ * v1（`0.4-p0`）分支仍按 steps 求和得 `0/0`（那是**正确的 0**，一行不改）。
  */
 export function parseCaseDurationsFromLogAndTrace(
   logContent: string,
@@ -144,7 +151,8 @@ export function parseCaseDurationsFromLogAndTrace(
 
   return allCaseIds.map((id, i) => ({
     id,
-    duration_ms: perCaseMs[i] ?? 0,
+    // D3：日志里没有对应 cost 行的 case = 没量到（null），不是 0ms。
+    duration_ms: (perCaseSteps[i] ?? 0) > 0 ? (perCaseMs[i] ?? 0) : null,
     step_count: perCaseSteps[i] ?? 0,
   }));
 }

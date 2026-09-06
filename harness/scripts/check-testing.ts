@@ -111,6 +111,7 @@ import {
   writeExecutionKeyRecord,
   writeStabilityReport,
   type ExecutionKeyInputs,
+  type ExecutionKeyRunView,
 } from '../../profiles/hmos-app/harness/execution-key';
 import { parseHylyreTrace as parseHylyreTraceForReuse } from '../../profiles/hmos-app/harness/providers/device-test-run';
 
@@ -181,7 +182,7 @@ import {
   lintDerivedPlanSelectorContract,
   type AcceptanceActionBinding,
 } from '../../profiles/hmos-app/harness/selector-contract';
-import { loadAppInstallCandidateMeta, resolveHdcExecutableSync, runHdcRaw } from '../../profiles/hmos-app/harness/hdc-runner';
+import { loadAppInstallCandidateMeta, resolveExecutionDeviceIdentity } from '../../profiles/hmos-app/harness/hdc-runner';
 import {
   EXECUTION_CHANNEL_DOMAIN,
   evaluateExecutionChannelDeclaration,
@@ -213,6 +214,7 @@ import { evaluateSelectorRuntimeV1 } from './utils/hylyre-selector-gates-v1';
 import { collectFailureRoutesV1 } from './utils/hylyre-failure-routing-v1';
 import {
   bindChannelEvidence,
+  extractTcNfrRefs,
   loadVisualScreenVerdicts,
   PROVIDER_EVIDENCE_CONTRACT,
 } from './utils/execution-channel-evidence';
@@ -2205,6 +2207,12 @@ function checkReportReconcileOnlyPipeline(
   holder: DeviceTestPipelineHolder,
   plan: string | null,
   report: string | null,
+  /**
+   * 生产入口（:5844）在调用本函数**之前**就用 regenerateTestReport 从 trace 整份重写过
+   * 报告正文——性能类 AC 的耗时缺口只存在于重写前的那一份里（codex review 第 1 轮 #2）。
+   * 调用方把重写前的盘上正文原样传进来，性能缺口在**首次重建之前**识别并留在 hard 桶。
+   */
+  reportBeforeRebuild?: string | null,
 ): CheckResult[] {
   const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
   const buildPath = path.join(reportsDir, 'device-test-build.result.json');
@@ -2216,10 +2224,13 @@ function checkReportReconcileOnlyPipeline(
   const buildTool = readJsonRecord(buildToolPath);
   const install = readJsonRecord(installPath);
   const run = readJsonRecord(runPath);
-  const timing = readJsonRecord(timingPath);
+  let timing = readJsonRecord(timingPath);
   const tracePath = resolveAuthoritativeHylyreTracePath(reportsDir);
   const trace = tracePath ? parseHylyreTrace(tracePath) : null;
+  // plan 5e1c7a93 D3：执行事实缺口（hard，仍 BLOCKER FAIL）与派生统计缺口（soft，先重建、
+  // 不可重建则 WARN + UNKNOWN）分两桶。check id、严重度、report-only 的「零设备调用」承诺全不变。
   const issues: string[] = [];
+  const softIssues: string[] = [];
 
   const readyRecord = readJsonRecord(path.join(reportsDir, 'hylyre-ready.meta.json'));
   const hylyreCfg = resolveHylyreToolConfig(ctx.projectRoot);
@@ -2356,8 +2367,33 @@ function checkReportReconcileOnlyPipeline(
     ranAt = readTimestamp(runRecord, 'ran_at', 'device-test-run.meta.json', issues);
   }
 
+  // plan 5e1c7a93 D3：派生统计**先重建**——timing 由 trace + build/install/run meta 重算
+  // （collectDeviceTestTimings + writeDeviceTestTimingJson），只有重建后仍不闭合的才进 soft
+  // 桶判 UNKNOWN + WARN。纯读盘 + 纯计算：不触发设备 / hvigor / hdc / Hylyre 任何调用。
+  let derivedRebuilt = false;
+  if (!runSkipped && tracePath && trace) {
+    try {
+      const rebuiltDoc = collectDeviceTestTimings({
+        projectRoot: ctx.projectRoot,
+        feature: ctx.feature,
+        reportsDir,
+        hylyreTracePath: tracePath,
+      });
+      const same =
+        JSON.stringify(rebuiltDoc.pipeline) === JSON.stringify(timing.value?.pipeline) &&
+        JSON.stringify(rebuiltDoc.cases) === JSON.stringify(timing.value?.cases);
+      if (!same) {
+        writeDeviceTestTimingJson(reportsDir, rebuiltDoc);
+        timing = readJsonRecord(timingPath);
+        derivedRebuilt = true;
+      }
+    } catch {
+      /* 重建失败 = 该派生统计不可重建，由 soft 桶判 UNKNOWN */
+    }
+  }
+
   if (!runSkipped && timing.value) {
-    timingGeneratedAt = readTimestamp(timing.value, 'generated_at', 'device-test-timing.json', issues);
+    timingGeneratedAt = readTimestamp(timing.value, 'generated_at', 'device-test-timing.json', softIssues);
   }
 
   if (!buildSkipped && !installSkipped) {
@@ -2409,7 +2445,8 @@ function checkReportReconcileOnlyPipeline(
     }
   }
   if (!runSkipped && runEndedAt.ms !== null && timingGeneratedAt.ms !== null && runEndedAt.ms > timingGeneratedAt.ms) {
-    issues.push(`timing.generated_at=${timingGeneratedAt.raw} 早于 run_ended_at=${runEndedAt.raw}`);
+    // D3：源 meta 都在，陈旧的只是 timing 这份投影——重算即闭合，不得逼一次真机重跑。
+    softIssues.push(`timing.generated_at=${timingGeneratedAt.raw} 早于 run_ended_at=${runEndedAt.raw}`);
   }
   if (!buildSkipped && !installSkipped && !runSkipped &&
       buildAt.ms !== null && installAt.ms !== null && runStartedAt.ms !== null &&
@@ -2455,28 +2492,29 @@ function checkReportReconcileOnlyPipeline(
         (timingPipeline as Record<string, unknown>).hap_built_at === null)
     );
     if (!timingShapeValid) {
-      issues.push(`缺失或无效的最终 ${path.basename(timingPath)}${timing.error ? `（${timing.error}）` : ''}`);
+      softIssues.push(`缺失或无效的最终 ${path.basename(timingPath)}${timing.error ? `（${timing.error}）` : ''}`);
     }
   }
 
   if (timingShapeValid && timing.value && timingPipeline && Array.isArray(timingCases)) {
     const pipeline = timingPipeline as Record<string, unknown>;
     for (const key of ['build_ms', 'install_ms', 'hylyre_run_ms', 'page_save_ms']) {
-      if (!hasOwn(pipeline, key)) issues.push(`device-test-timing.json.pipeline 缺少字段：${key}`);
+      if (!hasOwn(pipeline, key)) softIssues.push(`device-test-timing.json.pipeline 缺少字段：${key}`);
       else if (pipeline[key] !== null && finiteNonNegative(pipeline[key]) === null) {
-        issues.push(`device-test-timing.json.pipeline.${key} 不是非负数或 null：${String(pipeline[key])}`);
+        softIssues.push(`device-test-timing.json.pipeline.${key} 不是非负数或 null：${String(pipeline[key])}`);
       }
     }
-    compareTimingPipelineOptionalNumber(issues, pipeline, 'total_harness_ms');
+    compareTimingPipelineOptionalNumber(softIssues, pipeline, 'total_harness_ms');
 
     if (typeof buildRecord?.reused !== 'boolean' || typeof installRecord?.reused !== 'boolean') {
       issues.push('build/install meta 缺少 boolean reused，无法闭合 timing 复用状态');
     } else {
+      // D3：源 meta 合法（上面的守卫已过），不一致的只是 timing 投影 → soft。
       if (pipeline.build_reused !== buildRecord.reused) {
-        issues.push(`timing.pipeline.build_reused=${String(pipeline.build_reused)} 与 build.reused=${String(buildRecord.reused)} 不一致`);
+        softIssues.push(`timing.pipeline.build_reused=${String(pipeline.build_reused)} 与 build.reused=${String(buildRecord.reused)} 不一致`);
       }
       if (pipeline.install_reused !== installRecord.reused) {
-        issues.push(`timing.pipeline.install_reused=${String(pipeline.install_reused)} 与 install.reused=${String(installRecord.reused)} 不一致`);
+        softIssues.push(`timing.pipeline.install_reused=${String(pipeline.install_reused)} 与 install.reused=${String(installRecord.reused)} 不一致`);
       }
     }
 
@@ -2484,7 +2522,7 @@ function checkReportReconcileOnlyPipeline(
     const buildToolDuration = finiteNonNegative(buildTool.value?.durationMs);
     if (buildRecord?.reused !== true && buildResultDuration !== null && buildToolDuration !== null &&
         Math.abs(buildResultDuration - buildToolDuration) > 1) {
-      issues.push(`build duration sources 不一致：device-test-build=${buildResultDuration}ms，hvigor meta=${buildToolDuration}ms`);
+      softIssues.push(`build duration sources 不一致：device-test-build=${buildResultDuration}ms，hvigor meta=${buildToolDuration}ms`);
     }
     const buildDurationSource = buildRecord?.reused === true
       ? 0
@@ -2496,38 +2534,43 @@ function checkReportReconcileOnlyPipeline(
       ? finiteNonNegative((pageSave as Record<string, unknown>).duration_ms)
       : null;
     if (buildDurationSource === null && buildRecord?.reused !== true) {
-      issues.push('build meta 缺少有效 hvigorDurationMs/durationMs，无法确认最终 build 耗时');
+      softIssues.push('build meta 缺少有效 hvigorDurationMs/durationMs，无法确认最终 build 耗时');
     }
     if (installDurationSource === null && installRecord?.reused !== true) {
-      issues.push('device-test-install.meta.json 缺少有效 durationMs，无法确认最终 install 耗时');
+      softIssues.push('device-test-install.meta.json 缺少有效 durationMs，无法确认最终 install 耗时');
     }
     if (runDurationSource === null) {
-      issues.push('device-test-run.meta.json 缺少有效 run_duration_ms，无法确认最终 Hylyre 耗时');
+      softIssues.push('device-test-run.meta.json 缺少有效 run_duration_ms，无法确认最终 Hylyre 耗时');
     }
     if (pageSave === null || typeof pageSave !== 'object' || pageSaveDurationSource === null) {
-      issues.push('device-test-run.meta.json 缺少有效 hylyre_page_save.duration_ms，无法确认最终 page save 耗时');
+      softIssues.push('device-test-run.meta.json 缺少有效 hylyre_page_save.duration_ms，无法确认最终 page save 耗时');
     }
-    compareTimingPipelineNumber(issues, pipeline, 'build_ms', buildDurationSource);
-    compareTimingPipelineNumber(issues, pipeline, 'install_ms', installDurationSource);
-    compareTimingPipelineNumber(issues, pipeline, 'hylyre_run_ms', runDurationSource);
-    compareTimingPipelineNumber(issues, pipeline, 'page_save_ms', pageSaveDurationSource);
+    compareTimingPipelineNumber(softIssues, pipeline, 'build_ms', buildDurationSource);
+    compareTimingPipelineNumber(softIssues, pipeline, 'install_ms', installDurationSource);
+    compareTimingPipelineNumber(softIssues, pipeline, 'hylyre_run_ms', runDurationSource);
+    compareTimingPipelineNumber(softIssues, pipeline, 'page_save_ms', pageSaveDurationSource);
 
     const buildHapBuiltAt = buildRecord?.hapBuiltAt;
     if (typeof buildHapBuiltAt !== 'string' || !buildHapBuiltAt.trim() || !Number.isFinite(Date.parse(buildHapBuiltAt))) {
       issues.push(`device-test-build.result.json.hapBuiltAt 缺失或非法：${String(buildHapBuiltAt)}`);
     } else if (pipeline.hap_built_at !== buildHapBuiltAt) {
-      issues.push(`timing.pipeline.hap_built_at=${String(pipeline.hap_built_at)} 与 build.hapBuiltAt=${buildHapBuiltAt} 不一致`);
+      // D3：源 meta 合法，陈旧的只是 timing 投影 → soft。
+      softIssues.push(`timing.pipeline.hap_built_at=${String(pipeline.hap_built_at)} 与 build.hapBuiltAt=${buildHapBuiltAt} 不一致`);
     }
 
-    const timingById = new Map<string, number>();
+    const timingById = new Map<string, number | null>();
     for (const row of timingCases as Array<Record<string, unknown>>) {
       const id = typeof row?.id === 'string' ? row.id.trim().toUpperCase() : '';
-      const duration = finiteNonNegative(row?.duration_ms);
+      // plan 5e1c7a93 D3：null = 本轮没量到（legacy cost 分配分支），是**合法的 UNKNOWN 行**，
+      // 不是非法行；它单独出一条 UNKNOWN soft issue（带 TC id，供性能类 AC 前置判据识别）。
+      const unmeasured = row?.duration_ms === null;
+      const duration = unmeasured ? null : finiteNonNegative(row?.duration_ms);
       const stepCount = row?.step_count;
-      if (!id || duration === null || typeof stepCount !== 'number' || !Number.isInteger(stepCount) || stepCount < 0 || timingById.has(id)) {
-        issues.push('device-test-timing.json 的 case duration/step_count 行无效或重复');
+      if (!id || (!unmeasured && duration === null) || typeof stepCount !== 'number' || !Number.isInteger(stepCount) || stepCount < 0 || timingById.has(id)) {
+        softIssues.push('device-test-timing.json 的 case duration/step_count 行无效或重复');
         continue;
       }
+      if (unmeasured) softIssues.push(`最终 timing 的 case 耗时未量到（UNKNOWN）：${id}`);
       timingById.set(id, duration);
     }
     const traceIds = new Set<string>();
@@ -2540,8 +2583,8 @@ function checkReportReconcileOnlyPipeline(
         else traceIds.add(id);
       }
       const timingIds = new Set(timingById.keys());
-      for (const id of traceIds) if (!timingIds.has(id)) issues.push(`最终 timing 缺少 case duration：${id}`);
-      for (const id of timingIds) if (!traceIds.has(id)) issues.push(`最终 timing 含 trace 不存在的旧 case：${id}`);
+      for (const id of traceIds) if (!timingIds.has(id)) softIssues.push(`最终 timing 缺少 case duration：${id}`);
+      for (const id of timingIds) if (!traceIds.has(id)) softIssues.push(`最终 timing 含 trace 不存在的旧 case：${id}`);
     }
     if (trace && trace.feature !== ctx.feature) {
       issues.push(`authoritative trace.feature=${trace.feature} 与当前 feature=${ctx.feature} 不一致`);
@@ -2550,14 +2593,60 @@ function checkReportReconcileOnlyPipeline(
     timingDoc = timing.value as unknown as DeviceTestTimingDocument;
   }
 
+  // plan 5e1c7a93 D3：性能类 AC 的耗时**不得由重建路径提供**——识别必须发生在重建之前。
+  // 识别路径：featureSpec.acceptance.performance[].id ∩ test-plan「关联 AC」列的 NFR 引用
+  // （extractTcNfrRefs）。两侧任一为空 → 性能集合为空，不误伤（识别路径的已知边界）。
+  const perfAcIds = new Set(
+    (ctx.featureSpec?.acceptance?.performance ?? [])
+      .map(item => String((item as { id?: unknown }).id ?? '').trim().toUpperCase())
+      .filter(Boolean),
+  );
+  const perfTcIds = perfAcIds.size > 0 && plan
+    ? [...extractTcNfrRefs(plan).entries()]
+        .filter(([, refs]) => refs.some(ref => perfAcIds.has(ref)))
+        .map(([tc]) => tc)
+    : [];
+  const mentionsPerfTc = (text: string): boolean =>
+    perfTcIds.length > 0 && perfTcIds.some(tc => text.toUpperCase().includes(tc));
+  const perfHardIssues: string[] = softIssues.filter(mentionsPerfTc);
+
   if (report && timingDoc) {
     const channelDecl = loadExecutionChannelDeclaration(ctx, plan);
-    const reportTiming = reconcileReportWithDeviceTestTiming(report, {
-      timing: timingDoc,
+    const reconcileWith = (md: string) => reconcileReportWithDeviceTestTiming(md, {
+      timing: timingDoc!,
       ...(buildAt.raw ? { buildTimestamp: buildAt.raw } : {}),
       ...(channelDecl.column_declared ? { hylyreTcIds: channelDecl.hylyre_tc_ids } : {}),
     });
-    issues.push(...reportTiming.mismatches);
+    // 性能 case 的 duration 必须来自本次或被复用的**真实执行** trace——它的对账缺口
+    // 在**任何**重建之前就扣下，不允许被重算的报告正文抹平。生产入口已经先重写过一次，
+    // 所以「重建前」的那一份必须由调用方传进来（codex review 第 1 轮 #2）。
+    if (reportBeforeRebuild && reportBeforeRebuild !== report) {
+      perfHardIssues.push(...reconcileWith(reportBeforeRebuild).mismatches.filter(mentionsPerfTc));
+    }
+    let reportTiming = reconcileWith(report);
+    perfHardIssues.push(...reportTiming.mismatches.filter(mentionsPerfTc));
+    // plan 5e1c7a93 D3：报告正文与 timing 不符是**派生一致性**缺口——先由既有
+    // writeGeneratedTestReport 从 trace + plan 重算正文再复算，仍不闭合才进 soft 桶。
+    // 报告本就在同一轮的后续 check 里被整份重算，这里只是把重算提前到对账之前。
+    if (reportTiming.mismatches.length > 0 && plan && tracePath) {
+      try {
+        const rewritten = writeGeneratedTestReport({
+          projectRoot: ctx.projectRoot,
+          feature: ctx.feature,
+          reportsDir,
+          tracePath,
+          planMd: plan,
+          channelDecl,
+        });
+        if (rewritten.written) {
+          derivedRebuilt = true;
+          reportTiming = reconcileWith(fs.readFileSync(rewritten.path, 'utf-8'));
+        }
+      } catch {
+        /* 重建失败 = 该派生统计不可重建，由 soft 桶判 UNKNOWN */
+      }
+    }
+    softIssues.push(...reportTiming.mismatches);
   }
 
   holder.buildReused = Boolean(buildRecord?.reused);
@@ -2621,22 +2710,42 @@ function checkReportReconcileOnlyPipeline(
 
   const id = 'report_reconcile_only';
   const desc = ruleDesc(ctx, 'structure_checks', id);
-  const detailLines = issues.length === 0
+  // plan 5e1c7a93 D3：命中性能 TC 的耗时缺口一律回 hard 桶（识别与扣留都发生在重建之前）。
+  const hardIssues = [
+    ...issues,
+    ...[...new Set(perfHardIssues)].map(issue => `${issue}（性能类 AC：耗时必须真实量测，不接受重建或 UNKNOWN）`),
+  ];
+  const derivedIssues = softIssues.filter(issue => !perfHardIssues.includes(issue));
+  const detailLines = hardIssues.length === 0
     ? [`已读取 authoritative trace=${tracePath}，cases=${trace?.cases?.length ?? 0}；路径/指纹/时间戳/复用状态/精确 case 集合/报告耗时均与同一最终 run 闭合。`]
-    : issues.map(issue => `  - ${issue}`);
+    : hardIssues.map(issue => `  - ${issue}`);
+  const derivedLines = derivedIssues.length === 0
+    ? []
+    : [
+        `派生统计 UNKNOWN（${derivedIssues.length} 项）：该统计项为 UNKNOWN，不构成执行事实结论；` +
+        `${derivedRebuilt ? '已由 trace + meta 重建后复算，' : ''}仍不闭合的项如下（报告耗时格写空值占位，不写数字）：`,
+        ...derivedIssues.map(issue => `  - ${issue}`),
+      ];
+  // hard 缺口在 → FAIL；只有派生缺口 → WARN（severity 保持 BLOCKER，即既有「BLOCKER 级 WARN」形态）。
+  const reconcileStatus: CheckResult['status'] =
+    hardIssues.length > 0 ? 'FAIL' : derivedIssues.length > 0 ? 'WARN' : 'PASS';
   const reconcileResult: CheckResult = {
     id,
     category: 'structure',
     description: desc,
     severity: 'BLOCKER',
-    status: issues.length === 0 ? 'PASS' : 'FAIL',
+    status: reconcileStatus,
     details: [
       'report-only reconciliation 只读既有 test-plan/report/trace/timing/build-install-run meta；未调用设备、hvigor、hdc、Hylyre 或视觉采集。',
       ...detailLines,
+      ...derivedLines,
     ].join('\n'),
-    suggestion: issues.length === 0
+    ...(reconcileStatus === 'WARN' ? { failure_kind: 'derived_statistic_unavailable' } : {}),
+    suggestion: reconcileStatus === 'PASS'
       ? '继续由既有 report/trace/static checks 与 summary writer 完整重算派生结果。'
-      : '补齐同一最终 run 的 authoritative trace、test-plan、test-report、device-test-timing 与 build/install/run meta 后重新执行 report-only。',
+      : reconcileStatus === 'WARN'
+        ? '派生统计缺口不构成执行事实结论；如需数字，补齐 build/install/run meta 的 durationMs 后重跑 report-only。'
+        : '补齐同一最终 run 的 authoritative trace、test-plan、test-report、device-test-timing 与 build/install/run meta 后重新执行 report-only。',
   };
   const selectorBlockers = staticPlan.selectorWarnings.filter(v => v.severity === 'BLOCKER');
   const selectorResult: CheckResult[] = staticPlan.selectorWarnings.length > 0
@@ -3797,39 +3906,6 @@ export function derivedPlanStaleByTcTable(
   return false;
 }
 
-/**
- * codex review（plan 07a41ec6 T6）：执行键里的设备与显示身份——HARNESS_HDC_TARGET 优先，否则 `hdc list targets`
- * 恰好一台时取其序列号；显示环境取 `wm size`（best-effort）。设备身份未知时不允许同键复用。
- */
-function resolveExecutionDeviceIdentity(): { device: string | null; display_env: string } {
-  let device = process.env.HARNESS_HDC_TARGET?.trim() || null;
-  let exe: string | null = null;
-  try {
-    exe = resolveHdcExecutableSync();
-  } catch {
-    exe = null;
-  }
-  if (!device && exe) {
-    try {
-      const probe = runHdcRaw(exe, ['list', 'targets'], { timeout: 5000 });
-      const lines = String(probe.stdout ?? '').split(/\r?\n/).map(l => l.trim()).filter(l => l && !/\[Empty\]/i.test(l));
-      if (probe.status === 0 && lines.length === 1) device = lines[0];
-    } catch {
-      /* 探测失败 = 设备未知 */
-    }
-  }
-  let displayEnv = '';
-  if (device && exe) {
-    try {
-      const wm = runHdcRaw(exe, ['-t', device, 'shell', 'wm', 'size'], { timeout: 5000 });
-      if (wm.status === 0) displayEnv = String(wm.stdout ?? '').split(/\r?\n/)[0].trim();
-    } catch {
-      displayEnv = '';
-    }
-  }
-  return { device, display_env: displayEnv };
-}
-
 /** plan 07a41ec6 T3：feature ui-spec 的 canonical 索引（无 ui-spec 时 by_text 不能映射身份，只认 by_id 字面）。 */
 function buildCanonicalIndexForFeature(ctx: CheckContext): CanonicalSelectorIndex | null {
   const doc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
@@ -3929,6 +4005,42 @@ function collectDeviceTestStaticPlanGates(
   const navLint = lintDerivedHylyrePlanSteps(derivedContent, topCases);
   return { stepLint, selectorWarnings, navLint };
 }
+/**
+ * 复用轮的冻结件回填 + 派生统计重建——**每轮只回填一次**（codex review 第 1 轮 #4）。
+ * 旧写法在重建之后又 restore 了一次，把重建好的完整 timing 覆盖回不完整的冻结副本，
+ * 报告与门禁读到的仍是旧数据。返回 false = 重建覆盖不全，调用方 fail-closed 回落真跑。
+ */
+function adoptFrozenRunArtifactsForReuse(
+  ctx: CheckContext,
+  reusable: ExecutionKeyRunView,
+  rebuildRequired: boolean,
+): boolean {
+  const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
+  try {
+    // codex review：复用不只重绑 trace——把该 run 冻结的 timing/meta 回填顶层，报告与门禁读到的是同一 run 的三件套
+    restoreFrozenRunArtifacts(reusable.runDir, reportsDir);
+    if (!rebuildRequired) return true;
+    const rebuiltDoc = collectDeviceTestTimings({
+      projectRoot: ctx.projectRoot,
+      feature: ctx.feature,
+      reportsDir,
+      hylyreTracePath: reusable.record.trace_path,
+    });
+    const reusedTrace = parseHylyreTraceForReuse(reusable.record.trace_path);
+    const expected = new Set((reusedTrace?.cases ?? []).map(c => String(c.id).trim().toUpperCase()));
+    const got = new Set(rebuiltDoc.cases.map(c => c.id.trim().toUpperCase()));
+    if (!(expected.size > 0 && [...expected].every(idc => got.has(idc)))) return false;
+    // 重建结果落盘发生在**唯一一次** restore 之后，此后本轮不再回填冻结件。
+    writeDeviceTestTimingJson(reportsDir, rebuiltDoc);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** V8：把复用轮的「回填一次 + 重建」序列暴露给单测，断言最终盘上 timing 是重建结果。 */
+export const __testing_adoptFrozenRunArtifactsForReuse = adoptFrozenRunArtifactsForReuse;
+
 function checkDeviceTestRunGate(
   ctx: CheckContext,
   hapHolder: DeviceTestPipelineHolder,
@@ -4323,7 +4435,13 @@ function checkDeviceTestRunGate(
       : !executionKeyInputs.device
         ? { reusable: null, reason: '设备身份未知（无 HARNESS_HDC_TARGET 且 hdc list targets 非唯一），不做同键复用' }
         : decideReuse(reportsBase, executionKey);
-    const reusable = reuse.reusable;
+    // plan 5e1c7a93 D3：派生证据不全不再直接拒绝复用——回填后先重建 timing，重建后
+    // 覆盖不全则 fail-closed 回落真跑（不带半份统计签发）。执行事实缺口仍由 decideReuse
+    // 直接拒绝（reusable=null），走不到这里。
+    let reusable = reuse.reusable;
+    if (reusable && !adoptFrozenRunArtifactsForReuse(ctx, reusable, Boolean(reuse.evidenceRebuildRequired))) {
+      reusable = null;
+    }
     let hylyreOutDir: string;
     let runPlanPath: string;
     let derivedPlanSha256AtStart: string | null;
@@ -4343,8 +4461,8 @@ function checkDeviceTestRunGate(
         logPath: '',
         errors: [],
       };
-      // codex review：复用不只重绑 trace——把该 run 冻结的 timing/meta 回填顶层，报告与门禁读到的是同一 run 的三件套
-      restoreFrozenRunArtifacts(hylyreOutDir, featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot));
+      // 冻结件回填（含派生统计重建）已在 adoptFrozenRunArtifactsForReuse 里做过，**每轮只一次**：
+      // 再 restore 一次会把重建好的 timing 覆盖回不完整的冻结副本（codex review 第 1 轮 #4）。
     } else {
     const freshRun = prepareFreshHylyreRunDir({
       reportsBase,
@@ -5755,8 +5873,11 @@ const checker: PhaseChecker = {
     const pipelinePlan = shouldRunDevicePipeline(channelDeclaration, Boolean(ctx.reportReconcileOnly));
     if (pipelinePlan.reportOnly) {
       // plan 07a41ec6 T5：report-only 先按权威 run 重写机器报告，再做对账（报告永不落后 run）
+      // codex review 第 1 轮 #2：重写前的盘上正文必须原样传给对账——性能类 AC 的耗时缺口
+      // 只在这一份里可见，重写之后差异已被抹平，hard 缺口会凭空消失。
+      const reportBeforeRebuild = report;
       report = regenerateTestReport(ctx, deviceTestHapHolder, plan, channelDeclaration, results) ?? report;
-      results.push(...checkReportReconcileOnlyPipeline(ctx, deviceTestHapHolder, plan, report));
+      results.push(...checkReportReconcileOnlyPipeline(ctx, deviceTestHapHolder, plan, report, reportBeforeRebuild));
     } else if (!pipelinePlan.device) {
       results.push({
         id: 'device_test_run',

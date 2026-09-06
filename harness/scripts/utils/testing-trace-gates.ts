@@ -263,6 +263,16 @@ function reportStageRow(table: MdTable, label: string): string[] | null {
   return table.rows.find(cells => normalizeReportCell(cells[0] ?? '').includes(label)) ?? null;
 }
 
+/**
+ * 空值感知的耗时对账（plan 5e1c7a93 D3）：expected 为 null（未量到）时只接受空值占位（`—`），
+ * 有数时才做 ±1ms 减法。流水线阶段行与 case 行共用这一条判据，不各写一份。
+ */
+function durationCellMatches(parsed: { valid: boolean; ms: number | null }, expectedMs: number | null): boolean {
+  if (!parsed.valid) return false;
+  if (expectedMs === null) return parsed.ms === null;
+  return parsed.ms !== null && Math.abs(parsed.ms - expectedMs) <= 1;
+}
+
 function compareReportDuration(
   mismatches: string[],
   label: string,
@@ -278,15 +288,12 @@ function compareReportDuration(
     mismatches.push(`报告流水线阶段 ${label} 耗时非法：${raw || '(empty)'}`);
     return;
   }
+  if (durationCellMatches(parsed, expectedMs)) return;
   if (expectedMs === null) {
-    if (parsed.ms !== null) {
-      mismatches.push(`报告流水线阶段 ${label} 应为无数据占位，实际=${raw}`);
-    }
+    mismatches.push(`报告流水线阶段 ${label} 应为无数据占位，实际=${raw}`);
     return;
   }
-  if (parsed.ms === null || Math.abs(parsed.ms - expectedMs) > 1) {
-    mismatches.push(`报告流水线阶段 ${label}=${raw}，最终 timing=${expectedMs}ms`);
-  }
+  mismatches.push(`报告流水线阶段 ${label}=${raw}，最终 timing=${expectedMs}ms`);
 }
 
 function compareReportTimestamp(
@@ -387,9 +394,14 @@ export function reconcileReportWithDeviceTestTiming(
       continue;
     }
     const row = rows[0]!;
-    const parsed = parseDurationCell(row.durationRaw);
-    if (!parsed.valid || parsed.ms === null || Math.abs(parsed.ms - timingCase.duration_ms) > 1) {
-      mismatches.push(`报告 case ${timingCase.id} 耗时=${row.durationRaw || '(empty)'}，最终 timing=${timingCase.duration_ms}ms`);
+    // plan 5e1c7a93 D3（codex round2）：duration_ms 放宽为 number | null 后走与
+    // compareReportDuration 同一条空值分支——timing 为 null 时报告格应是空值占位（`—`），
+    // 有数时才做 ±1ms 减法。否则刚放行的 `—` 会立刻变成一条伪 mismatch。
+    if (!durationCellMatches(parseDurationCell(row.durationRaw), timingCase.duration_ms)) {
+      mismatches.push(
+        `报告 case ${timingCase.id} 耗时=${row.durationRaw || '(empty)'}，最终 timing=` +
+        `${timingCase.duration_ms === null ? '无数据（应为 — 占位）' : `${timingCase.duration_ms}ms`}`,
+      );
     }
   }
   const timingIds = new Set(timing.cases.map(timingCase => timingCase.id.toUpperCase()));

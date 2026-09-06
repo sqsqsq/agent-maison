@@ -324,7 +324,11 @@ export function generateTestReport(input: TestReportWriterInput): GeneratedTestR
         const t = timingByTc.get(row.id);
         const status = (['通过', '失败', '阻塞', '跳过'].includes(tc.status) ? tc.status : '阻塞') as RowStatus;
         const note = status === '失败' || status === '阻塞' ? firstFailedStepSummary(tc) : '';
-        exec.push({ ...row, status, duration: t ? ms(t.duration_ms) : '0ms', note, source: 'hylyre' });
+        // plan 5e1c7a93 D3：timing 整行缺席、或该行没量到（duration_ms=null）→ 写 `—`
+        // （与同函数 :329/:333 的既有空值占位同款），**不再把"没量到"写成假的 `0ms`**；
+        // timing 行在场且值为 0 仍照写 `0ms`（skip case 的正确 0）。
+        const durationCell = t && t.duration_ms !== null ? ms(t.duration_ms) : '—';
+        exec.push({ ...row, status, duration: durationCell, note, source: 'hylyre' });
       } else {
         exec.push({ ...row, status: '跳过', duration: '—', note: trace ? '未进入本轮权威 trace（explicit skip 或未派生）' : '本轮无权威 trace', source: 'absent' });
       }

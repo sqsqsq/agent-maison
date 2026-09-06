@@ -116,6 +116,37 @@ export function extractTcAcceptanceRefs(planMd: string): Map<string, string[]> {
   return out;
 }
 
+/**
+ * 从同一张表的同一列读出 TC → 关联的性能 AC（`NFR-N`）。
+ *
+ * plan 5e1c7a93 D3：`extractAcceptanceIdRefs` 的 `ACCEPTANCE_ID_PATTERN`（`^(AC|BD)-…`）
+ * 永不产生 `NFR-*`，而改它会破坏另外四个消费者的契约——所以这里是它的**兄弟导出**，
+ * 同表同列、词法只把 `AC|BD` 换成 `NFR`。识别不到（列里没写 NFR）是已知边界，
+ * 该 TC 的 timing 缺口按 soft 处理，不误伤成 FAIL。
+ */
+export function extractTcNfrRefs(planMd: string): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  const section = getSectionContent(planMd, '测试用例') ?? getSectionContent(planMd, '测试用例清单') ?? '';
+  const tables = extractTables(section || planMd);
+  if (tables.length === 0) return out;
+  const table = tables[0];
+  const idCol = pickColumnIndex(table, ['用例编号', '编号', 'TC-ID', 'TC ID']);
+  const acCol = pickColumnIndex(table, ['关联 AC', '关联']);
+  if (acCol < 0) return out;
+  for (const row of table.rows) {
+    const tcRaw = (idCol >= 0 ? row[idCol] : row[0] || '').trim();
+    const matched = tcRaw.match(/TC-\d+/i);
+    if (!matched) continue;
+    const refs = [...new Set(
+      (row[acCol] ?? '').split(/[,，、;；\s]+/)
+        .map(t => t.trim().toUpperCase())
+        .filter(t => /^NFR-(?:G\d+|\d+)$/.test(t)),
+    )];
+    if (refs.length > 0) out.set(matched[0].toUpperCase(), refs);
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // visual-diff.json 的逐屏 verdict
 // ---------------------------------------------------------------------------

@@ -33,7 +33,9 @@ uidriver.touch cost: 0.289s
     },
   },
   {
-    name: 'parseCaseDurationsFromLogAndTrace: trace 中 pass+skip 全量保留，skip 为 0/0',
+    // plan 5e1c7a93 D3：legacy 分支里"日志没有对应 cost 行"的 case 记 null（没量到），
+    // 不再写成假的 0ms；不变量仍是**不得从 timing 里消失**。
+    name: 'parseCaseDurationsFromLogAndTrace: trace 中 pass+skip 全量保留，legacy skip 记 null/0',
     run: () => {
       const parsed = parseCaseDurationsFromLogAndTrace(
         'uidriver.touch cost: 0.100s\nuidriver.touch cost: 0.200s\n',
@@ -52,7 +54,7 @@ uidriver.touch cost: 0.289s
       if (pass.duration_ms !== 300 || pass.step_count !== 2) {
         throw new Error(`pass timing: ${JSON.stringify(pass)}`);
       }
-      if (skip.duration_ms !== 0 || skip.step_count !== 0) {
+      if (skip.duration_ms !== null || skip.step_count !== 0) {
         throw new Error(`skip timing: ${JSON.stringify(skip)}`);
       }
     },
