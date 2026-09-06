@@ -144,6 +144,57 @@ const cases: Array<{ name: string; run: () => void }> = [
       if (!verifyUt.includes('禁止修改业务源码')) {
         throw new Error('UT 阶段禁改业务源码的纪律必须保留');
       }
+
+      // ====================================================================
+      // V5（plan 7b3e9a15 D3/D4）：本批的五条文案守卫，逐条读**真实文件**。
+      // ====================================================================
+      // ① verify-ut.md：数量不再是判据，但流程类用例的中间态/终态与异常 path 要求仍在。
+      if (/每个\s*it\s*只有\s*1\s*个\s*expect/.test(verifyUt)) {
+        throw new Error('verify-ut.md 仍按 expect 数量硬判 FAIL（D3 已改为"错误实现会不会让该 it 失败"）');
+      }
+      if (!verifyUt.includes('覆盖**中间态与终态**')) {
+        throw new Error('verify-ut.md 必须保留检查 4 对**流程类用例**的中间态/终态要求');
+      }
+      if (!verifyUt.includes('回滚行为或 `not_called`')) {
+        throw new Error('verify-ut.md 必须保留 4B 第 3 条的异常 path 要求');
+      }
+      if (!/纯函数\s*\/\s*单规则用例/.test(verifyUt)) {
+        throw new Error('verify-ut.md 必须写明纯函数/单规则用例的适用范围限定（否则单断言用例仍被别的条款判 FAIL）');
+      }
+      // ② business-ut-workflow-detail.md：同一条退出路径的相邻两句一起对齐（:121 与 :122）。
+      const businessUt = read('skills/reference/business-ut-workflow-detail.md');
+      if (/`ut_no_src_mutation`[^\n]*保持\s*BLOCKER/.test(businessUt)) {
+        throw new Error('business-ut-workflow-detail 仍写 ut_no_src_mutation「保持 BLOCKER」（check-ut.ts 已是 MAJOR WARN）');
+      }
+      if (/完整重走\s*review\s*→\s*ut\s*→\s*testing/.test(businessUt)) {
+        throw new Error('business-ut-workflow-detail 仍写「完整重走 review→ut→testing」（代码给的是分级复核）');
+      }
+      if (!businessUt.includes('不得要求用户提交 coding 产物来过门禁')) {
+        throw new Error('禁止提交换基线的纪律必须保留');
+      }
+      // ③ device-testing-workflow-detail.md：分级复核，且 FAST_PATH 真红线一字不动。
+      if (/拦下，须回跑\s*review\s*重审/.test(deviceDetail)) {
+        throw new Error('device-testing-workflow-detail 仍写「拦下，须回跑 review 重审」（四个出口无一 BLOCKER）');
+      }
+      if (!/`\*_FAST_PATH`/.test(deviceDetail)) {
+        throw new Error('测试接缝红线（*_FAST_PATH）必须保留');
+      }
+      // ④ check-testing.ts:6095 的 JSDoc 末句与同函数 :6107–6108 的纠偏注释自洽。
+      const checkTesting = read('harness/scripts/check-testing.ts');
+      if (/任何差异\/缺\s*attestation\s*→\s*\*{0,2}BLOCKER\*{0,2}/.test(checkTesting)) {
+        throw new Error('check-testing.ts 的 JSDoc 仍写「任何差异/缺 attestation → BLOCKER」，与同函数体的分级 WARN 自相矛盾');
+      }
+      if (!checkTesting.includes('不再一刀 BLOCKER')) {
+        throw new Error('check-testing.ts 的分级说明注释必须保留');
+      }
+      // ⑤ goal-mode-runbook.md:148：report-only 不再以「agent 已写好 test-report.md」为前置。
+      const runbook = read('docs/operations/goal-mode-runbook.md');
+      if (/agent\s*已基于最终\s*trace\/timing\s*写好顶层\s*`test-report\.md`\s*后/.test(runbook)) {
+        throw new Error('goal-mode-runbook 仍把「agent 已写好 test-report.md」当 --report-reconcile-only 前置（B03 后由 harness 生成）');
+      }
+      if (!runbook.includes('--report-reconcile-only')) {
+        throw new Error('runbook 必须仍说明 --report-reconcile-only 的用法');
+      }
     },
   },
   {

@@ -132,15 +132,19 @@
 
 - **严重等级**: **BLOCKER**
 - **评估方法**:
-  1. 对每个 `it()` 用例，检查下面三项是否同时成立：
+- **适用范围（先判用例形态，再套下面第 1 条的三项）**：
+  - **流程类用例** = 驱动 coordinator / 涉及 data_boundary 替身 / 有阶段状态迁移。第 1 条三项**逐字适用**，判定逻辑不变。
+  - **纯函数 / 单规则用例** = 无 data_boundary 替身、无多阶段状态迁移。它既没有替身可断言调用序列，也没有中间态可断——第 1 条的「callLog / 调用序列断言」与「状态多阶段断言」两项按**不适用**处理（不是"不成立"，不判 FAIL），只要求：该 `it` 若被错误实现会失败 + 覆盖了该规则的边界/异常。
+  - 形态由**被测对象**决定（有替身/有阶段就是流程类），verifier 按代码判，**不接受**"我说它是纯函数"。
+  1. 对每个 `it()` 用例，检查下面三项是否同时成立（后两项按上面的适用范围）：
      - **命名入口驱动**：用例通过调用 `ui_bindings.user_actions.calls` 声明的命名函数（或 `coordinator` 的方法）驱动业务，而不是直接构造一个数据对象、绕过业务编排检查 Repository
      - **callLog / 调用序列断言**：对 data_boundary 替身（`SpyXxx` / `FakeXxx` / `StubXxx` / 原型替换）的 `callLog` 或 `called*` 计数断言至少出现 1 次
      - **状态多阶段断言**：对业务状态字段（`phase` / `errorCode` / 业务 model 的关键字段）做 `expect` 至少 2 次，且覆盖**中间态与终态**
   2. 对比对应 branch 的 `expected_phase_sequence` 与 `expected_port_calls` / `not_called`：UT 的断言是否与之一致
   3. 若 `use-cases.yaml` 不存在：退化判定——用例必须至少调用一个**真实业务函数**（而非仅 `expect(repo.getX().length).assertLargerThan(0)` 的单数据接口断言）
   4. 判定逻辑：
-     - 三项全部成立 → PASS
-     - 任一项不成立 → FAIL（BLOCKER）
+     - **适用的**各项全部成立 → PASS
+     - **适用的**任一项不成立 → FAIL（BLOCKER）
      - 信息不足 → WARN
 
 - **反例**：`expect((await cardRepo.getCardList()).length).assertLargerThan(0)`（未驱动 coordinator/命名函数，单数据接口断言）→ FAIL
@@ -150,10 +154,10 @@
 - **严重等级**: **BLOCKER**
 - **评估方法**:
   1. 每个 `it()` 必须能说明它验证了哪条业务规则，而不是只验证"函数能返回"或"数组非空"。
-  2. happy path 至少包含三类断言中的两类：返回值 / 状态迁移 / data_boundary 调用序列 / 持久化结果。
+  2. happy path 至少包含三类断言中的两类：返回值 / 状态迁移 / data_boundary 调用序列 / 持久化结果。**适用范围**：本项只对**流程类用例**（驱动 coordinator / 涉及 data_boundary 替身 / 有阶段状态迁移）要求；**纯函数 / 单规则用例**不作此要求（它只有返回值一类可断言），判据回到第 1 项与下面第 5 项。
   3. 异常 path 必须断言错误状态、错误码、回滚行为或 `not_called`，不能只断言"不会 crash"。
   4. Spy/Stub 的预设值必须与业务场景相关；重复的 mock 值但不同 `it()` 名称不算有效分支覆盖。
-  5. 若发现形式化 UT（例如每个 it 只有 1 个 expect，或只测 repository 静态数据结构而 acceptance 要求业务流程），判定 FAIL。
+  5. 判据是**该 `it` 若被错误实现会不会失败**，以及**是否覆盖了该规则的边界/异常**——不是断言条数。用单条精确断言完整验证一个纯函数是**合法形态**，不得因此判 FAIL；反之，堆三条 `assertLargerThan(0)` 却对错误实现照样通过的空壳用例仍判 FAIL。「只测 repository 静态数据结构而 acceptance 要求业务流程」这一支**保留**（它判的是测错了对象，不是数量），判定 FAIL。
 
 - **输出**：逐个 `it()` 标注业务规则、断言类型数量、是否覆盖异常语义。
 
