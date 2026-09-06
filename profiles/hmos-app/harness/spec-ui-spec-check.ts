@@ -21,7 +21,7 @@ import { validateUiSpecSchema } from './ui-spec-schema-validate';
 import { isHardPixelContract } from '../../../harness/scripts/utils/fidelity-shared';
 import { readCanaryToolReadSignal } from '../../../harness/scripts/utils/multimodal-probe';
 import { loadFrameworkConfig } from '../../../harness/config';
-import { verifyVlSigningChain } from '../../../harness/scripts/utils/critic-receipt-producer';
+import { severestVlFailureKind, verifyVlSigningChain } from '../../../harness/scripts/utils/critic-receipt-producer';
 
 function ruleDesc(
   ctx: CheckContext,
@@ -302,25 +302,42 @@ export function checkUiSpecFidelityGate(ctx: CheckContext, specMarkdown: string)
         affected_files: [uiSpecRel],
       }];
     }
-    // 当前 invocation 的 capability + reference-read receipts 是唯一签名证据。
+    // plan 8d2b4f60 D1/D2：能力=本 run probe 实测金丝雀，证据=材料寻址的参考图读取记录。
     // 产物内容反证由同轮 vision_output_counterevidence 独立 FAIL/WARN，不再落跨轮账本。
     const chain = verifyVlSigningChain({ projectRoot: ctx.projectRoot, feature: ctx.feature });
     const signFailures: string[] = [...chain.failures];
     if (signFailures.length > 0) {
+      // D7 四态：按最严重的一类选词，不新增 check id、不改严重度阶梯。
+      const kind = severestVlFailureKind(chain.failureKinds) ?? 'mismatch';
+      const headline = {
+        unreachable: '【vl_multimodal 未验证（结构性不可达）】本执行形态无法产生逐图验读证据，按 unverified 处理：',
+        not_probed: '【vl_multimodal 未验证（不可终签）】本 run 未由 preflight 探测产生视觉能力金丝雀，按 unverified 处理：',
+        not_yet: '【vl_multimodal 尚未生成】本轮参考图验读回执还没签发，按 unverified 处理：',
+        mismatch: '【vl_multimodal 验证不通过】当前证据与材料不符，按 unverified 处理：',
+      }[kind];
+      const suggestion = {
+        unreachable:
+          '出路：①诚实改 verified: unverified（软档 WARN 可继续、hard pixel contract 仍 FAIL，不伪造签名）；' +
+          '②可达组合只有 goal 编排 + detached 执行 + 有逐图 Read 审计的 adapter'
+          + '（tool_event_provenance=structured_events）——换该组合重跑本阶段。',
+        not_probed:
+          '出路：①若设了 vision.image_input_override，删掉它让 preflight 探测一次（用户自我声明不构成视觉能力证据）；' +
+          '②重跑使金丝雀刷新（过期/属旧 run/model pin 失配时）；③否则诚实改 verified: unverified。',
+        not_yet:
+          '出路：写完交回 runner——回执在 agent invocation 结束后由 runner 签发，外层 gate 会重算；' +
+          '阶段内自跑 harness 的首轮必然还没有它，不要据此自降档。',
+        mismatch:
+          '出路：补读 unread 的参考图；核对参考图是否在签发后被替换（hash 失配即已变）；' +
+          '确认回执的 run/adapter 与当前运行身份一致。',
+      }[kind];
       return [{
         id: 'ui_spec_fidelity_gate',
         category: 'structure',
         description: desc,
         severity: 'BLOCKER',
         status: 'FAIL',
-        details: [
-          '【vl_multimodal 终签拒收】当前 invocation 回执不完整，按 unverified 处理：',
-          ...signFailures.map(f => `  - ${f}`),
-        ].join('\n'),
-        suggestion:
-          '出路：①当前视觉调用补齐 canary 与逐参考图读取；' +
-          '②若 adapter 无逐图 Read 审计能力（tool_event_provenance != structured_events），vl_multimodal 终签' +
-          '结构性不可达——诚实改 verified: unverified（软档 WARN 可继续，hard contract 仍 FAIL，不伪造签名）。',
+        details: [headline, ...signFailures.map(f => `  - ${f}`)].join('\n'),
+        suggestion,
         affected_files: [uiSpecRel],
       }];
     }
@@ -332,8 +349,11 @@ export function checkUiSpecFidelityGate(ctx: CheckContext, specMarkdown: string)
       status: 'PASS',
       details:
         `ui-spec verified=${verified}（method=${doc.verified_method ?? 'n/a'}）；` +
-        `终签信任链齐备：capability receipt（${chain.capReceipt!.binding_path}，runner 事件锚）+ ` +
-        `refs 验读 ${chain.currentRefs.length} 张（逐张 hash 核对）+ attestation=verified + policy=visual。`,
+        `能力=run 级实测金丝雀（verdict=${chain.capabilityVerdict ?? 'n/a'}、scope=run_probed、来源 probe）+ ` +
+        `refs 验读 ${chain.currentRefs.length} 张（逐张 hash 核对）+ attestation=verified + policy=visual` +
+        (chain.carriedRefs.length > 0
+          ? `；其中 ${chain.carriedRefs.length} 张读取记录来自本 run 先前 invocation（内容未变）`
+          : '') + '。',
       affected_files: [uiSpecRel],
     }];
   }

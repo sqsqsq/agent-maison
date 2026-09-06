@@ -452,8 +452,11 @@ export function checkVisionOutputCounterevidence(ctx: CheckContext): CheckResult
         id, category: 'structure', description,
         severity: 'BLOCKER', status: 'PASS',
         details:
-          `无确定性反证、正向 provenance 成立且当前 invocation 回执完整（texts=${scan.counters.texts_total} 全匹配；` +
-          `invoke=${chain.expectedInvoke}）。`,
+          `无确定性反证、正向 provenance 成立且本 run 的材料证据完整（texts=${scan.counters.texts_total} 全匹配；` +
+          `refs 验读 ${chain.currentRefs.length} 张，逐张 hash 核对` +
+          (chain.carriedRefs.length > 0
+            ? `，其中 ${chain.carriedRefs.length} 张读取记录来自本 run 先前 invocation（内容未变）`
+            : '') + '）。',
       }];
     }
     return [{
