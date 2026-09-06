@@ -18,29 +18,17 @@ import {
 } from './multimodal-probe';
 
 export type VisionCapabilityVerdict = 'tool_read' | 'native' | 'none' | 'unknown';
-export type VisionCapabilityScope = 'adapter_declared' | 'run_probed' | 'invocation_bound';
+export type VisionCapabilityScope = 'adapter_declared' | 'run_probed';
 
 export interface VisionCapabilityAxis {
   verdict: VisionCapabilityVerdict;
   scope: VisionCapabilityScope;
   evidence: {
+    /** 只有 canary 分支写它——它同时是「本 axis 来源为 probe」的唯一判据（plan 8d2b4f60 D1）。 */
     canary_probed_at?: string;
     canary_run_id?: string;
-    binding_path?: 'route_equality' | 'inline_canary';
     reason: string;
   };
-}
-
-export interface CapabilityReceipt {
-  schema_version: '1.0';
-  adapter: string;
-  run_id: string;
-  invoke_id: string;
-  binding_path: 'route_equality' | 'inline_canary';
-  verdict: Exclude<VisionCapabilityVerdict, 'unknown'>;
-  provider?: string;
-  model?: string;
-  at: string;
 }
 
 export interface EffectiveVisionContext {
@@ -51,7 +39,6 @@ export interface ResolveVisionContextArgs {
   projectRoot: string;
   feature: string;
   runId?: string;
-  invokeId?: string;
   adapter?: string;
   modelPin?: string;
   frameworkRoot?: string;
@@ -61,50 +48,12 @@ export function visionArtifactsDir(projectRoot: string, feature: string): string
   return path.join(featureDir(projectRoot, feature), 'vision');
 }
 
-export function capabilityReceiptPath(projectRoot: string, feature: string): string {
-  return path.join(visionArtifactsDir(projectRoot, feature), 'capability-receipt.json');
-}
-
 export function sha256File(absPath: string): string | null {
   try {
     return crypto.createHash('sha256').update(fs.readFileSync(absPath)).digest('hex');
   } catch {
     return null;
   }
-}
-
-export function readCapabilityReceipt(projectRoot: string, feature: string): CapabilityReceipt | null {
-  const receiptPath = capabilityReceiptPath(projectRoot, feature);
-  if (!fs.existsSync(receiptPath)) return null;
-  try {
-    const parsed = JSON.parse(fs.readFileSync(receiptPath, 'utf-8')) as CapabilityReceipt;
-    return parsed?.schema_version === '1.0' && parsed.invoke_id && parsed.binding_path ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Runner-owned current-invocation receipt. */
-export function writeCapabilityReceipt(
-  projectRoot: string,
-  feature: string,
-  receipt: Omit<CapabilityReceipt, 'schema_version' | 'at'> & { at?: string },
-): CapabilityReceipt {
-  const full: CapabilityReceipt = {
-    schema_version: '1.0',
-    at: receipt.at ?? new Date().toISOString(),
-    adapter: receipt.adapter,
-    run_id: receipt.run_id,
-    invoke_id: receipt.invoke_id,
-    binding_path: receipt.binding_path,
-    verdict: receipt.verdict,
-    ...(receipt.provider ? { provider: receipt.provider } : {}),
-    ...(receipt.model ? { model: receipt.model } : {}),
-  };
-  const receiptPath = capabilityReceiptPath(projectRoot, feature);
-  fs.mkdirSync(path.dirname(receiptPath), { recursive: true });
-  fs.writeFileSync(receiptPath, `${JSON.stringify(full, null, 2)}\n`, 'utf-8');
-  return full;
 }
 
 function resolveAdapter(args: ResolveVisionContextArgs): string {
@@ -119,26 +68,6 @@ function resolveAdapter(args: ResolveVisionContextArgs): string {
 
 function resolveCapabilityAxis(args: ResolveVisionContextArgs): VisionCapabilityAxis {
   const adapter = resolveAdapter(args);
-
-  if (args.invokeId) {
-    const receipt = readCapabilityReceipt(args.projectRoot, args.feature);
-    if (
-      receipt &&
-      receipt.invoke_id === args.invokeId &&
-      (!args.runId || receipt.run_id === args.runId) &&
-      receipt.adapter === adapter &&
-      (!args.modelPin || receipt.model === args.modelPin)
-    ) {
-      return {
-        verdict: receipt.verdict,
-        scope: 'invocation_bound',
-        evidence: {
-          binding_path: receipt.binding_path,
-          reason: `runner receipt（${receipt.binding_path}）`,
-        },
-      };
-    }
-  }
 
   let local: ReturnType<typeof loadLocalConfig> = null;
   try {

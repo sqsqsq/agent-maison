@@ -637,20 +637,38 @@ cases.push(
     },
   },
   {
-    name: 'buildClosureVisualEvidenceBlock: 列出参考图+「允许读/禁改」话术；空集返回空串',
+    // plan 8d2b4f60 D3：终签改材料寻址后，closure 轮不再被要求逐图重读——
+    // 原断言（Mandatory/REQUIRED/invocation-bound）是本批必改项，不是回归。
+    name: 'buildClosureVisualEvidenceBlock: 列出参考图+「允许读/禁改」话术；不含强制重读五串；空集返回空串',
     run: () => {
       const block = buildClosureVisualEvidenceBlock([
         'doc/features/demo/ux-reference/1-home.jpg',
         'doc/features/demo/ux-reference/2-list.png',
       ]);
-      assert(block.includes('Mandatory read-only visual evidencing for THIS invocation'), '标题在场');
+      assert(block.includes('## Read-only visual evidencing (spec closure)'), '新标题在场');
       assert(block.includes('- doc/features/demo/ux-reference/1-home.jpg'), '逐张列路径');
       assert(block.includes('- doc/features/demo/ux-reference/2-list.png'), '逐张列路径 2');
       assert(
-        block.includes('Reading them is required and allowed; modifying any artifact remains forbidden'),
-        '必须同时讲清「允许且必需读」与「仍禁改产物」——冻结豁免的是改产物，不是只读取证',
+        block.includes('FROZEN applies to artifacts, NOT to read-only evidencing'),
+        'FROZEN 豁免只读取证的句子保留',
       );
-      assert(block.includes('ui_spec_fidelity_gate'), '点名不读图的后果（refs 回执 partial → 终签拒收）');
+      assert(
+        block.includes('Reading them is allowed;') && block.includes('modifying any artifact remains forbidden'),
+        '仍禁改产物',
+      );
+      assert(
+        block.includes('THIS run still count as long as their content has not changed'),
+        '须写明本 run 内读过且内容未变即可采信',
+      );
+      for (const forbidden of [
+        'Mandatory',
+        'REQUIRED',
+        'only accepts reference images actually read during THIS invocation',
+        'read EVERY authoritative',
+        'Skipping any image',
+      ]) {
+        assert(!block.includes(forbidden), `强制重读文案须删除：${forbidden}`);
+      }
       assert(buildClosureVisualEvidenceBlock([]) === '', '无参考图不注入');
     },
   },

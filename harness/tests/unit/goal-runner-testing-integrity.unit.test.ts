@@ -66,6 +66,7 @@ import type { UnitCaseResult } from '../run-unit';
 import { AttendedGoalPhaseExecutor } from '../../scripts/utils/goal-phase-executor';
 import { prepareGoalModeRun, runGoalModeHostBridge } from '../../scripts/goal-mode-entry';
 import { resolveWorkflowSpec, type WorkflowSpec } from '../../workflow-loader';
+import { checkUiSpecFidelityGate } from '../../../profiles/hmos-app/harness/spec-ui-spec-check';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 const PRODUCT_FILE = '02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets';
@@ -257,6 +258,8 @@ interface AgentCtx {
   attempt: number;
   prompt: string;
   runId: string;
+  /** phases/<phase>/agent-output.log 绝对路径——agent-events.jsonl 由它派生（plan 8d2b4f60 V1/V2） */
+  outputLogPath: string;
 }
 
 export interface RunProbe {
@@ -276,6 +279,12 @@ export interface RunProbe {
   harnessFidelityContexts: Array<{ phase: string; fields: HarnessFidelityContextFields }>;
   /** adjudicated-repair-loop：receipt validator 实际调用次数（uncertain 停等断言=0） */
   receiptValidationCalls: Array<{ phase: string }>;
+  /**
+   * plan 8d2b4f60 §6：`realSpecFidelityGate` 打开时，**真实** checkUiSpecFidelityGate 在
+   * runtime 内逐轮产出的结论——它同时决定该轮 harness 的 exitCode/summary（FAIL 走既有
+   * failOverride → 真实 writeRunSummaryBase），因此这里的记录即"gate 控制了推进/重跑"的证据。
+   */
+  specGateResults: Array<{ attempt: number; status: string; details: string; suggestion: string }>;
   exitCode: number;
   root: string;
   reportDir: string;
@@ -360,8 +369,23 @@ export async function runGoalRuntimeChain(
     hostMaxRounds?: number;
     runId?: string;
     failExecutorFor?: (phase: string, attempt: number) => boolean;
+    /**
+     * codex 实施 review 第 1 轮 finding 1：复现 completion probe 收口即 tree-kill 的
+     * **既有 InvokeResult 形状**（`exitCode!==0` + `completion_observed` + `kill_attempted`，
+     * 见 agent-invoke.ts:1474/1481）。返回 null = 默认结果；只覆盖返回字段，不换 seam。
+     */
+    invokeResultFor?: (phase: string, attempt: number) => Record<string, unknown> | null;
     /** Production runtime workflow resolution seam used to simulate config drift on resume. */
     workflowTransform?: (workflow: WorkflowSpec) => WorkflowSpec;
+    /**
+     * plan 8d2b4f60 §6（第 2 轮 plan review finding 14）：让 **真实**
+     * `checkUiSpecFidelityGate` 在 runtime 内决定 spec 轮的 exitCode/summary。
+     * 关时（默认）既有全部用例逐字不变；开时 spec 分支先跑真实 gate：
+     * FAIL → 走既有 `failOverride` 路径（真实 `writeRunSummaryBase` 落 BLOCKER FAIL +
+     * exitCode 1，runtime 据此重跑）；否则走既有 PASS summary 分支（runtime 推进）。
+     * 事后直调 gate 只能证明"gate 对这堆磁盘状态会给什么结论"，证明不了它控制了推进。
+     */
+    realSpecFidelityGate?: boolean;
   } = {},
 ): Promise<RunProbe> {
   const invokedPhases: string[] = [];
@@ -375,6 +399,7 @@ export async function runGoalRuntimeChain(
   const harnessDeviceEnvs: Array<{ phase: string; env: Record<string, string> | undefined }> = [];
   const harnessFidelityContexts: Array<{ phase: string; fields: HarnessFidelityContextFields }> = [];
   const receiptValidationCalls: Array<{ phase: string }> = [];
+  const specGateResults: RunProbe['specGateResults'] = [];
   const attempts = new Map<string, number>();
   const prevArgv = process.argv;
   const prevCwd = process.cwd();
@@ -402,6 +427,7 @@ export async function runGoalRuntimeChain(
       const ctx: AgentCtx = {
         root, phase, attempt: n, prompt,
         runId: extraEnv.MAISON_GOAL_RUN_ID ?? '',
+        outputLogPath: String((o as { outputLogPath?: string })?.outputLogPath ?? ''),
       };
       if (phase === 'testing') opts.onTesting?.(ctx);
       if (phase === 'coding') opts.onCoding?.(ctx);
@@ -413,6 +439,7 @@ export async function runGoalRuntimeChain(
         stdout: failed ? '' : 'done',
         stderr: failed ? 'injected executor failure' : '',
         command: 'fake-agent',
+        ...(opts.invokeResultFor?.(phase, n) ?? {}),
       };
     }) as never);
     __testing_setRepoLayout(layoutFieldsForTmpHost(root));
@@ -482,10 +509,49 @@ export async function runGoalRuntimeChain(
       });
       // b3e8d4c7 t5：FAIL 覆写**先于**默认 PASS 产出——FAIL 轮不写回执（回执=闭环凭证，
       // FAIL 却有回执会让下游判据错乱），只落 FAIL summary 并以非零退出返回。
-      const failOverride = opts.onHarnessSummary?.({
+      let failOverride = opts.onHarnessSummary?.({
         phase: String(ph),
         attempt: harnessPhases.filter(p => p === String(ph)).length,
       });
+      // plan 8d2b4f60 §6：真实 gate 在 runtime 内决定推进/重跑（不是事后补一次直调）。
+      if (!failOverride && opts.realSpecFidelityGate && String(ph) === 'spec') {
+        const specMdAbs = path.join(pr, 'doc', 'features', feat, 'spec', 'spec.md');
+        const specMd = fs.existsSync(specMdAbs) ? fs.readFileSync(specMdAbs, 'utf-8') : '';
+        const gateCtx = {
+          phase: 'spec', feature: feat, projectRoot: pr,
+          phaseRule: {
+            structure_checks: {
+              ui_spec_fidelity_gate: { description: 'ui-spec fidelity gate', severity: 'BLOCKER' },
+            },
+          },
+          featureSpec: { feature: feat },
+          uiSpecEnforcement: 'warn',
+          fidelityTarget: 'pixel_1to1',
+          acceptanceStrictness: 'hard',
+          frameworkRoot: _fr,
+        } as unknown as CheckContext;
+        // 生产里 gate harness 是 runner spawn 的子进程，身份由 extraEnv 注入
+        //（goal-phase-runtime.ts:1203）；进程内跑真实 gate 须同口径临时注入。
+        const prevRun = process.env.MAISON_GOAL_RUN_ID;
+        const prevAtt = process.env.MAISON_GOAL_ATTEMPT;
+        process.env.MAISON_GOAL_RUN_ID = roundIdentity?.runId ?? gm?.run_id ?? '';
+        process.env.MAISON_GOAL_ATTEMPT = roundIdentity?.attemptId ?? '';
+        let gateChecks: CheckResult[];
+        try {
+          gateChecks = checkUiSpecFidelityGate(gateCtx, specMd)
+            .filter(c => c.id === 'ui_spec_fidelity_gate');
+        } finally {
+          if (prevRun === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = prevRun;
+          if (prevAtt === undefined) delete process.env.MAISON_GOAL_ATTEMPT; else process.env.MAISON_GOAL_ATTEMPT = prevAtt;
+        }
+        for (const c of gateChecks) {
+          specGateResults.push({
+            attempt: harnessPhases.filter(p => p === 'spec').length,
+            status: c.status, details: c.details ?? '', suggestion: c.suggestion ?? '',
+          });
+        }
+        if (gateChecks.some(c => c.status === 'FAIL')) failOverride = { checks: gateChecks };
+      }
       if (failOverride) {
         const failDir = path.join(pr, 'doc', 'features', feat, String(ph), 'reports');
         fs.mkdirSync(failDir, { recursive: true });
@@ -649,6 +715,8 @@ export async function runGoalRuntimeChain(
         attempt: n,
         prompt,
         runId,
+        // attended 走 phase_execute_request，本轮**不产生**任何 invoke 日志（plan 8d2b4f60 D2）
+        outputLogPath: '',
       };
       if (phase === 'testing') opts.onTesting?.(ctx);
       if (phase === 'coding') opts.onCoding?.(ctx);
@@ -824,6 +892,7 @@ export async function runGoalRuntimeChain(
       harnessDeviceEnvs,
       harnessFidelityContexts,
       receiptValidationCalls,
+      specGateResults,
       exitCode, root, reportDir,
       events: readEvents(reportDir),
     };
@@ -3433,6 +3502,353 @@ test('b5f1d9c3 legacy uncertain payload：不再创建人工停等或 resume-onl
     `legacy uncertain 不得创建人工停等：${JSON.stringify(probe1.events.filter(e => e.type === 'phase_halt'))}`,
   );
   assertRunReachedEnd(probe1, 'b5f1d9c3 legacy uncertain');
+});
+
+// ============================================================================
+// plan 8d2b4f60 V1/V2/V5：视觉证据材料绑定的生产接线回归
+// 链路：runtime → produceSpecRefsReceipt → loadSpecRefsReceipt → **真实**
+// checkUiSpecFidelityGate → phase 推进（realSpecFidelityGate 开关，见 §6）。
+// 只替换外部调用（agent 进程），gate/回执生产/summary writer 全走生产实现。
+// ============================================================================
+
+const B02_REF_REL = `doc/features/${FEATURE}/ux-reference/1-home.png`;
+
+/** 把 spec 期的 vl_multimodal 证据面铺齐：claude 入口文件、ui_change 块、verified ui-spec、参考图。 */
+function seedB02SpecEvidence(root: string): void {
+  // claude 的 agent_entry_file 是 CLAUDE.md（cursor 是 AGENTS.md）——adapterEntryExists 要求在盘
+  writeFile(root, 'CLAUDE.md', '# CLAUDE\n');
+  writeFile(root, `doc/features/${FEATURE}/spec/spec.md`, [
+    '# spec', '',
+    '```yaml',
+    'ui_change: new_or_changed',
+    '```', '',
+    `参考图：${B02_REF_REL}`, '',
+  ].join('\n'));
+  writeFile(root, `doc/features/${FEATURE}/spec/ui-spec.yaml`, [
+    'schema_version: "1.0"',
+    'verified: verified',
+    'verified_method: vl_multimodal',
+    'fidelity_target: pixel_1to1',
+    'screens:',
+    '  - id: home',
+    '    priority: P0',
+    '    root: { type: navigation_frame, order: 0 }',
+    'tokens: { color_primary: "#000000" }',
+    'assets: []',
+    '',
+  ].join('\n'));
+  writeFile(root, B02_REF_REL, 'REF-HOME-BYTES-V1');
+}
+
+/** claude 家族 stream-json 的真实 Read 事件形状（不手拼 refs 回执）。 */
+function claudeReadEventLine(relPath: string): string {
+  return JSON.stringify({
+    type: 'assistant',
+    message: { content: [{ type: 'tool_use', id: 'toolu_b02', name: 'Read', input: { file_path: relPath } }] },
+  });
+}
+
+function writeAgentEvents(outputLogPath: string, lines: string[]): void {
+  if (!outputLogPath) return;
+  const eventsAbs = path.join(path.dirname(outputLogPath), 'agent-events.jsonl');
+  fs.mkdirSync(path.dirname(eventsAbs), { recursive: true });
+  fs.writeFileSync(eventsAbs, lines.length > 0 ? `${lines.join('\n')}\n` : '', 'utf-8');
+}
+
+function specRefsReceiptOf(root: string): Record<string, unknown> | null {
+  const p = path.join(root, 'doc', 'features', FEATURE, 'vision', 'spec-refs-receipt.json');
+  return fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, 'utf-8')) as Record<string, unknown> : null;
+}
+
+/** closure-only 轮的五串强制重读文案（D3 已删除，最终拼装 prompt 里一个都不许有） */
+const B02_FORBIDDEN_REREAD = [
+  'Mandatory',
+  'REQUIRED',
+  'only accepts reference images actually read during THIS invocation',
+  'read EVERY authoritative',
+  'Skipping any image',
+];
+
+/**
+ * codex 实施 review 第 1 轮 finding 1：closure-only 轮必须由 **runtime 真实的重试条件**
+ * 造出来（上一轮 PASS + closure open → advance_blocked → retry），不能拿"注入 FAIL 逼出
+ * 第二轮"冒充——后者进不了 `isClosureOnlyRetryPending`，closure prompt 接线断开也仍绿。
+ *
+ * 造法：让 spec 首轮（attempt 身份 i1）的 receipt 探针 failed → classifyClosureKind 归
+ * `receipt_repair_with_verifier` → driverGuardAction 停在 retry → phase_verdict
+ * `PASS + advance_blocked + retry`；下一轮 spec 即真正的 closure-only 轮。
+ */
+const b02FailFirstSpecClosure = (attempt: string, ph: string): boolean =>
+  ph === 'spec' && attempt === 'i1';
+
+function assertB02ClosureOnlyRound(probe: RunProbe, specPrompts: string[], label: string): void {
+  assert(
+    probe.events.some(e => e.type === 'phase_verdict' && e.phase === 'spec'
+      && e.verdict === 'PASS' && e.advance_blocked === true && e.action === 'retry'),
+    `${label}：须由真实 closure 重试条件（PASS+advance_blocked+retry）产生 closure-only 轮：` +
+      JSON.stringify(probe.events.filter(e => e.type === 'phase_verdict' && e.phase === 'spec')),
+  );
+  assert(specPrompts.length >= 2, `${label}：应有第二轮 spec invoke（实得 ${specPrompts.length}）`);
+  const closure = specPrompts[specPrompts.length - 1];
+  assert(closure.includes('## Closure-only attempt (BLOCKER)'),
+    `${label}：末轮 prompt 须是 closure-only 形态：${closure.slice(-1200)}`);
+  assert(closure.includes('## Read-only visual evidencing (spec closure)'),
+    `${label}：closure 轮仍须列参考图（新标题）：${closure.slice(-1200)}`);
+  for (const forbidden of B02_FORBIDDEN_REREAD) {
+    assert(!closure.includes(forbidden),
+      `${label}：最终拼装 prompt 不得含强制重读文案「${forbidden}」`);
+  }
+}
+
+test('B02-V1 真实 closure-only 轮：refs 全读 + completion probe 收口被 kill（非零退出）→ 无 inline canary/capability_receipt，真实 gate PASS 并推进', async () => {
+  const { root } = setupHost('claude');
+  try {
+    seedB02SpecEvidence(root);
+    const specPrompts: string[] = [];
+    const probe = await runGoalRuntimeChain(root, {
+      adapter: 'claude',
+      realSpecFidelityGate: true,
+      failReceiptFor: b02FailFirstSpecClosure,
+      // 复现宿主 i4：closure-only 轮被 completion probe 观察到收口后 tree-kill——
+      // exitCode≠0 但 completion_observed/kill_attempted 在场（agent-invoke 的既有结果形状）
+      invokeResultFor: (phase, attempt) => phase === 'spec' && attempt >= 2
+        ? {
+            exitCode: 1,
+            stdout: '',
+            stderr: 'tree-kill after closure observed',
+            completion_observed: true,
+            kill_attempted: true,
+          }
+        : null,
+      onSpec: (ctx) => {
+        specPrompts.push(ctx.prompt);
+        writeAgentEvents(ctx.outputLogPath, [claudeReadEventLine(B02_REF_REL)]);
+      },
+      onTesting: (ctx) => { writeCleanTesting(ctx.root); },
+    });
+    // ① closure-only 轮真实成立，且 prompt 无五串重读要求
+    assertB02ClosureOnlyRound(probe, specPrompts, 'B02-V1');
+    // ② prompt 不含 inline canary 块（D1 已整链删除）
+    for (const p of specPrompts) {
+      assert(!/Inline visual verification/.test(p), `prompt 不得再有 inline canary 块：${p.slice(0, 300)}`);
+      assert(!/TOP_LEFT_COLOR=/.test(p), 'prompt 不得再出题');
+    }
+    // ③ 无 capability_receipt 事件
+    assert(!hasEvent(probe.events, 'capability_receipt'), 'capability_receipt 事件应已删除');
+    // ④ refs 回执 complete（非零退出不影响材料审计），逐图 read 全 true
+    const refsEvents = probe.events.filter(e => e.type === 'spec_refs_receipt_produced');
+    assert(refsEvents.length >= 2, `每轮 invoke 均应签发 refs 回执事件：${JSON.stringify(refsEvents)}`);
+    assert(refsEvents.every(e => e.status === 'complete'), JSON.stringify(refsEvents));
+    const receipt = specRefsReceiptOf(root)!;
+    assert(receipt.schema_version === '1.1', JSON.stringify(receipt.schema_version));
+    assert(!('invoke_id' in receipt), '回执顶层不得再有 invoke_id');
+    assert((receipt.refs as Array<{ read: boolean }>).every(r => r.read === true),
+      `closure 轮重读后逐图须 read=true：${JSON.stringify(receipt.refs)}`);
+    // ⑤ 真实 gate 在 runtime 内逐轮 PASS，且 closure-only 轮后 phase 推进（不因终签被拒重跑）
+    assert(probe.specGateResults.length >= 2, `realSpecFidelityGate 应逐轮产出结论：${JSON.stringify(probe.specGateResults)}`);
+    assert(
+      probe.specGateResults.every(r => r.status === 'PASS'),
+      `gate 应 PASS：${JSON.stringify(probe.specGateResults)}`,
+    );
+    assert(
+      probe.harnessPhases.filter(p => p === 'spec').length === 2,
+      `spec 只应跑「首轮 + closure-only 轮」两轮：${JSON.stringify(probe.harnessPhases)}`,
+    );
+    assertRunReachedEnd(probe, 'B02-V1');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('B02-V1b 反向对照：参考图未读 → 真实 gate FAIL 且 runtime 真的重跑 spec（证明 gate 控制推进）', async () => {
+  const { root } = setupHost('claude');
+  try {
+    seedB02SpecEvidence(root);
+    const probe = await runGoalRuntimeChain(root, {
+      adapter: 'claude',
+      realSpecFidelityGate: true,
+      onSpec: (ctx) => { writeAgentEvents(ctx.outputLogPath, []); },
+      onTesting: (ctx) => { writeCleanTesting(ctx.root); },
+    });
+    assert(probe.specGateResults.length > 0, '应有 gate 结论');
+    assert(probe.specGateResults[0].status === 'FAIL', JSON.stringify(probe.specGateResults[0]));
+    assert(/验证不通过/.test(probe.specGateResults[0].details), probe.specGateResults[0].details);
+    assert(
+      probe.harnessPhases.filter(p => p === 'spec').length > 1,
+      `gate FAIL 必须让 runtime 重跑 spec：${JSON.stringify(probe.harnessPhases)}`,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('B02-V2 复现 08-15：真实 closure-only 轮零读图，先前 invoke 已读满且图未变 → 签名成立、carried_over>0、goal-report 有注记行', async () => {
+  const { root } = setupHost('claude');
+  try {
+    seedB02SpecEvidence(root);
+    const specPrompts: string[] = [];
+    const probe = await runGoalRuntimeChain(root, {
+      adapter: 'claude',
+      realSpecFidelityGate: true,
+      // finding 1：closure-only 由真实重试条件产生（不再用注入 FAIL 逼出第二轮）
+      failReceiptFor: b02FailFirstSpecClosure,
+      onSpec: (ctx) => {
+        specPrompts.push(ctx.prompt);
+        // 第 1 轮读满；closure-only 轮一张都不读
+        writeAgentEvents(ctx.outputLogPath, ctx.attempt === 1 ? [claudeReadEventLine(B02_REF_REL)] : []);
+      },
+      onTesting: (ctx) => { writeCleanTesting(ctx.root); },
+    });
+    assertB02ClosureOnlyRound(probe, specPrompts, 'B02-V2');
+    const refsEvents = probe.events.filter(e => e.type === 'spec_refs_receipt_produced');
+    assert(refsEvents.length >= 2, `应有两轮回执事件：${JSON.stringify(refsEvents)}`);
+    const last = refsEvents[refsEvents.length - 1];
+    assert(last.status === 'complete', `零读图轮凭继承仍应 complete：${JSON.stringify(last)}`);
+    assert(Number(last.carried_over) > 0, `carried_over 须 >0（事件字段，不是回执字段）：${JSON.stringify(last)}`);
+    const receipt = specRefsReceiptOf(root)!;
+    const refs = receipt.refs as Array<{ read: boolean; read_at_invoke?: string }>;
+    assert(refs.every(r => r.read === true), JSON.stringify(refs));
+    // 第 2 轮 gate（真实实现）PASS 并披露沿用
+    const lastGate = probe.specGateResults[probe.specGateResults.length - 1];
+    assert(lastGate.status === 'PASS', JSON.stringify(probe.specGateResults));
+    assert(/读取记录来自本 run 先前 invocation/.test(lastGate.details), lastGate.details);
+    // goal-report.md 实际文本含注记行
+    const reportMd = path.join(probe.reportDir, 'goal-report.md');
+    assert(fs.existsSync(reportMd), `goal-report.md 应生成：${reportMd}`);
+    const md = fs.readFileSync(reportMd, 'utf-8');
+    assert(/↳ 参考图读取/.test(md), `goal-report 须含参考图读取注记行：\n${md.slice(0, 1500)}`);
+    // 零读图的 closure-only 轮凭继承记录推进：spec 不因终签被拒再重跑
+    assert(
+      probe.harnessPhases.filter(p => p === 'spec').length === 2,
+      `零读图 closure 轮须推进、不重跑：${JSON.stringify(probe.harnessPhases)}`,
+    );
+    assertRunReachedEnd(probe, 'B02-V2');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('B02-V5③ attended 轮不生产/不覆盖 refs 回执：只发 skipped 事件，不把遗留 detached 日志重签成新材料', async () => {
+  const { root } = setupHost('claude');
+  try {
+    seedB02SpecEvidence(root);
+    // codex 实施 review 第 1 轮 finding 2：必须是**同一个未封卷 run 的接管**——换 run 会
+    // 把指定现场（同 run 遗留日志 + 替换参考图）整个绕开。
+    // 第 1 段：detached 跑 spec，写出 phases/spec/agent-events.jsonl 与 1.1 回执，
+    // 并让 spec gate 恒 FAIL（非视觉原因）直到内容重试耗尽 → run 停在 spec、可 resume。
+    const first = await runGoalRuntimeChain(root, {
+      adapter: 'claude',
+      onSpec: (ctx) => { writeAgentEvents(ctx.outputLogPath, [claudeReadEventLine(B02_REF_REL)]); },
+      onHarnessSummary: ({ phase }) => (phase === 'spec' ? { blockers: [GENERIC_BLOCKER] } : null),
+      onTesting: (ctx) => { writeCleanTesting(ctx.root); },
+    });
+    const runId = path.basename(first.reportDir);
+    assert(hasEvent(first.events, 'phase_halt'), `前置：run 须停在 spec（未封卷）：${runEndStatus(first.events)}`);
+    const before = specRefsReceiptOf(root);
+    assert(before !== null, 'detached 轮应写出回执');
+    assert(first.events.some(e => e.type === 'spec_refs_receipt_produced' && e.status === 'complete'),
+      JSON.stringify(first.events.filter(e => e.type === 'spec_refs_receipt_produced')));
+    const staleEvents = path.join(first.reportDir, 'phases', 'spec', 'agent-events.jsonl');
+    assert(fs.existsSync(staleEvents), `遗留 agent-events.jsonl 应仍在盘（本用例的攻击面）：${staleEvents}`);
+    // cooldown 是独立硬防线（判定早于 forceResume）——按既有用例同法把 run_end 回拨 10 分钟
+    {
+      const evPath = path.join(first.reportDir, 'events.jsonl');
+      const patched = fs.readFileSync(evPath, 'utf-8').split('\n').map(l => {
+        if (!l.trim()) return l;
+        try {
+          const e = JSON.parse(l) as { type?: string; ts?: string };
+          if (e.type === 'run_end' && e.ts) {
+            e.ts = new Date(Date.parse(e.ts) - 10 * 60 * 1000).toISOString();
+            return JSON.stringify(e);
+          }
+        } catch { /* keep */ }
+        return l;
+      });
+      fs.writeFileSync(evPath, patched.join('\n'), 'utf-8');
+    }
+    // 替换一张参考图（若 attended 轮真去审计遗留日志，就会拼出"旧日志 + 新哈希"的新回执）
+    writeFile(root, B02_REF_REL, 'REF-HOME-BYTES-V2-REPLACED');
+    const beforeJson = JSON.stringify(before);
+    const beforeBytes = fs.readFileSync(
+      path.join(root, 'doc', 'features', FEATURE, 'vision', 'spec-refs-receipt.json'));
+    // 第 2 段：**同一 run** 切 attended（session owner，真实 AttendedGoalPhaseExecutor
+    // bridge）resume——agent 不产任何新日志，盘上仍是上一轮 detached 的 agent-events.jsonl。
+    const second = await runGoalRuntimeChain(root, {
+      adapter: 'claude',
+      resume: runId,
+      forceResume: true,
+      executorMode: 'attended',
+      realSpecFidelityGate: true,
+      onTesting: (ctx) => { writeCleanTesting(ctx.root); },
+    });
+    assert(second.invokedPhases.includes('spec'),
+      `attended 段须接管同一 run 的 spec：${JSON.stringify(second.invokedPhases)}`);
+    const attendedRefsEvents = second.events
+      .filter(e => e.type === 'spec_refs_receipt_produced')
+      .filter(e => String(e.invoke_id ?? '').length > 0)
+      // 只看 attended 段新落的事件（events.jsonl 是同一 run 的追加日志，含第 1 段的 complete）
+      .filter(e => !first.events.some(f => f.type === 'spec_refs_receipt_produced' && f.invoke_id === e.invoke_id));
+    assert(attendedRefsEvents.length > 0,
+      `attended 段应有 refs 回执事件：${JSON.stringify(second.events.filter(e => e.type === 'spec_refs_receipt_produced'))}`);
+    for (const e of attendedRefsEvents) {
+      assert(e.status === 'skipped' && e.reason === 'attended_no_invoke_audit',
+        `attended 轮回执事件须为 skipped/attended_no_invoke_audit：${JSON.stringify(e)}`);
+    }
+    // 回执**字节不变**（attended 不生产、不覆盖）
+    assert(JSON.stringify(specRefsReceiptOf(root)) === beforeJson,
+      'attended 轮不得覆盖既有回执（绝不出现"旧日志 + 新图哈希"的新回执）');
+    assert(fs.readFileSync(
+      path.join(root, 'doc', 'features', FEATURE, 'vision', 'spec-refs-receipt.json')).equals(beforeBytes),
+      'attended 轮回执文件字节须逐字不变');
+    // 真实 gate 在 attended 轮判「结构性不可达」拒签（run-control owner.kind=session）
+    assert(second.specGateResults.length > 0,
+      `attended 段应有真实 gate 结论：${JSON.stringify(second.specGateResults)}`);
+    for (const r of second.specGateResults) {
+      assert(r.status === 'FAIL', `attended 轮 gate 必须拒签：${JSON.stringify(r)}`);
+      assert(/结构性不可达/.test(r.details), `拒签须归「未验证（结构性不可达）」：${r.details}`);
+      assert(/owner\.kind=session/.test(r.details), `拒签理由须点名 attended 判据：${r.details}`);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('B02-D7 runtime 入口反向约束：attended executor 配 process owner 一律拒绝启动', async () => {
+  const { root } = setupHost('claude');
+  const prevArgv = process.argv;
+  const prevCwd = process.cwd();
+  try {
+    process.chdir(root);
+    clearFrameworkConfigCache();
+    process.argv = [
+      'node', 'goal-runner.ts', '--feature', FEATURE,
+      '--requirement', 'attended owner 反向约束',
+      '--start', 'spec', '--end', 'testing', '--adapter', 'claude',
+      '--foreground-ok', '--force',
+    ];
+    const errs: string[] = [];
+    const prevError = console.error;
+    console.error = (...args: unknown[]): void => { errs.push(args.map(String).join(' ')); };
+    let exitCode: number;
+    try {
+      exitCode = await goalMain({
+        args: [...process.argv.slice(2), '--runtime-executor', 'attended', '--runtime-owner', 'process'],
+        ownerKind: 'process',
+        executor: new AttendedGoalPhaseExecutor(async () => ({ status: 'passed', phase: 'spec' })),
+      } as never);
+    } finally {
+      console.error = prevError;
+    }
+    assert(exitCode === 1, `attended + process owner 必须拒绝启动，实得 exit=${exitCode}`);
+    assert(
+      errs.some(e => /attended executor 必须配 session owner/.test(e)),
+      `拒绝文案须说明原因：${JSON.stringify(errs)}`,
+    );
+  } finally {
+    process.argv = prevArgv;
+    try { process.chdir(prevCwd); } catch { /* ignore */ }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 // ---------------------------------------------------------------------------
