@@ -19,8 +19,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { featurePhaseReportsDir } from '../../config';
-import { resolvePhaseEvidenceManifest } from './phase-evidence-manifest';
+import { createRuntimeArtifactPredicate, resolvePhaseEvidenceManifest } from './phase-evidence-manifest';
 import type { ContextFileEntry, Phase } from './types';
 
 export const VERIFIER_MATERIAL_SCHEMA = 'maison-verifier-material@1';
@@ -105,10 +104,10 @@ export interface BuildVerifierMaterialInput {
 
 export function buildVerifierMaterialView(input: BuildVerifierMaterialInput): VerifierMaterialView {
   const { projectRoot, feature, phase } = input;
-  const reportsRel = toPosixRel(projectRoot, featurePhaseReportsDir(projectRoot, feature, phase, input.frameworkRoot));
   const files = new Map<string, string | null>();
-  const isRuntimeArtifact = (rel: string): boolean =>
-    rel === reportsRel || rel.startsWith(`${reportsRel}/`) || path.basename(rel) === 'phase-completion-receipt.md';
+  // 排除规则与 `phaseEvidenceManifestCandidatePaths`（沿用判据的"属不属 manifest 面"判定）
+  // 共用同一个谓词——两边分叉会让自定义 reports_dir_pattern 下的沿用判据恒失配（codex 三轮 medium）。
+  const isRuntimeArtifact = createRuntimeArtifactPredicate({ projectRoot, feature, phase, frameworkRoot: input.frameworkRoot });
 
   try {
     const manifest = resolvePhaseEvidenceManifest({

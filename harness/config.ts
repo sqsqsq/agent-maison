@@ -462,9 +462,11 @@ export interface FrameworkConfig {
   /** @deprecated 仅为存量 config 无损读取/UPDATE 保留；运行时读取即忽略，不影响 guard/verdict。 */
   integrity?: FrameworkIntegrityConfig;
   /**
-   * C2 verification-matrix：full track 交互态的证据档位（缺省 strict=现状零变化）。
-   * 只在 resolveEvidencePolicy 的 mode==='interactive' 分支参与求解；headless/goal
-   * 恒强制 strict，本字段不生效。`minimal` 非法值——它是 lite track 的求解结果。
+   * C2 verification-matrix：full track 的证据档位（缺省 strict=现状零变化）。
+   * plan 7b3e9a15 D1：显式声明 balanced 在**任意 mode**（interactive / headless / goal）
+   * 下同样生效，三态求解结果逐一相同——verifier 只保留 {spec, coding} 两阶段、trace 六个
+   * feature phase 一律降 optional；不写该字段的工程零变化。`minimal` 非法值——它是 lite
+   * track 的求解结果。
    */
   evidence_profile?: 'strict' | 'balanced';
   /**

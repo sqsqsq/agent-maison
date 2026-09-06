@@ -696,9 +696,30 @@ function main(): void {
   // plan 07a41ec6 T7：沿用既往 PASS 闭环时的登记（null = 当前 subject 自身已验真，闭环时清除旧登记）
   let verifierClosure: VerifierClosureRecord | null = null;
   if (verifierPlan.mode === 'disabled') {
-    // **缺席即为零**：不调用 loader，报告/request 均不要求。磁盘上残留的旧
-    // prompt/request/report 不得把这条轴重新激活（plan a9d4e7c2 否决闸）。
-    if (verifierPlan.reason === 'adapter_has_no_reviewer') {
+    // **缺席即为零**：报告/request 均不要求。磁盘上残留的旧 prompt/request/report 不得把
+    // 这条轴重新激活（plan a9d4e7c2 否决闸）——判据仍只有 `summary.verifier_subject_id`
+    // 这一个身份锚，`loadVerifierEvidence` 以它为准，从不扫目录。
+    //
+    // S0b（plan 7b3e9a15 D1）：policy off = "不要求"，**不等于"忽略"**。writer 在 disabled
+    // 下只有沿用到一份已验真的非 PASS 报告时才保留 `verifier_subject_id`（见
+    // harness-runner.ts resolveCarriedVerifierSubject：签发时落盘的材料视图与本轮重算的
+    // policy 无关材料面——manifest 文件 + gate 指纹 + 脚本报告投影——全等）；锚在场就说明"同一份
+    // 材料上已经存在一个负面结论"，此时仍照常否决。锚缺席才是零要求、不阻断——那正是
+    // balanced 想买到的东西。
+    const carried = loadVerifierEvidence(projectRoot, feature, phase, { frameworkRoot });
+    if (carried.ok && carried.evidence.verdict !== 'PASS') {
+      verifierEvidence = carried.evidence;
+      observed.verifier = 'provided';
+      issues.push({
+        id: 'verifier_not_pass',
+        severity: 'BLOCKER',
+        message:
+          `verifier 机器结论 verdict=${carried.evidence.verdict}（blocker_count=${carried.evidence.blocker_count}，` +
+          `来源 ${carried.evidence.md_path_rel}），必须为 PASS。本阶段的 verifier 已被 evidence policy 关闭` +
+          `（${verifierPlan.reason}）——关轴只免除"要求提供"，不免除已有的负面结论：` +
+          '修复缺陷后跑一轮 strict 让 verifier 自己撤回结论，改回执或改配置都不构成通过。',
+      });
+    } else if (verifierPlan.reason === 'adapter_has_no_reviewer') {
       // 环境事实，不是产物缺陷：闭环照常，但必须诚实标注——绝不写成"已审查通过"。
       observed.verifier = 'not_reviewed';
       warnings.push({
@@ -714,7 +735,10 @@ function main(): void {
           ? 'not_applicable'
           : 'skipped_by_policy';
     }
-    console.log(`   ℹ verifier: ${verifierPlan.message}`);
+    console.log(
+      `   ℹ verifier: ${verifierPlan.message}` +
+        (verifierEvidence ? ' 但沿用当前 subject 的既有否决（verifier_not_pass，见上）。' : ''),
+    );
   } else {
     const verifierSubjectId = readSummaryVerifierSubjectId(projectRoot, feature, phase, frameworkRoot);
     if (verifierSubjectId) {
@@ -834,11 +858,28 @@ function main(): void {
       }
     }
   } else {
-  traceProvided = tj.exists === true && Boolean(tj.path);
-  traceDisplay = traceProvided ? `${tj.path}（存在）` : `未提供（${policy.trace} 档）`;
+  // S0b（plan 7b3e9a15 D1）：**以盘上文件为准，不信回执自报**。旧口径先看 tj.exists/tj.path
+  // 才决定要不要读磁盘，于是"canonical 路径躺着一份损坏 trace.json + 回执写 `trace_json: {}`"
+  // 在 optional 档（balanced）下只落 missing WARN——损坏证据被一句自报藏掉，而"提供但损坏恒
+  // BLOCKER"本应无豁免。slim 分支（上面）早已是磁盘直查，此处与它同源。
+  // 回执手填字段早已退出裁决权威，`tj.path` 只在 canonical 缺席时作兼容回退。
+  const traceCanonicalAbs = path.join(canonicalReportsDir, 'trace.json');
+  const traceCanonicalOnDisk = fs.existsSync(traceCanonicalAbs);
+  const traceAbs = traceCanonicalOnDisk
+    ? traceCanonicalAbs
+    : tj.path
+      ? path.resolve(projectRoot, tj.path)
+      : null;
+  const traceLabel = traceCanonicalOnDisk
+    ? `${canonicalReportsRel}/trace.json（磁盘直查）`
+    : `trace_json.path="${tj.path}"`;
+  traceProvided = traceCanonicalOnDisk || (tj.exists === true && Boolean(tj.path));
+  traceDisplay = traceProvided ? `${traceLabel}（存在）` : `未提供（${policy.trace} 档）`;
   observed.trace = traceProvided ? 'provided' : 'missing';
   if (!traceProvided) {
-    const traceMissingDetail = `trace_json.exists=${tj.exists ?? '<missing>'}, trace_json.path=${tj.path ?? '<missing>'}`;
+    const traceMissingDetail =
+      `${canonicalReportsRel}/trace.json 不在盘上; ` +
+      `trace_json.exists=${tj.exists ?? '<missing>'}, trace_json.path=${tj.path ?? '<missing>'}`;
     if (policy.trace === 'required') {
       if (tj.exists !== true) {
         issues.push({
@@ -862,22 +903,21 @@ function main(): void {
       });
     }
   } else {
-    const traceAbs = path.resolve(projectRoot, tj.path!);
-    if (!fs.existsSync(traceAbs)) {
+    if (!traceAbs || !fs.existsSync(traceAbs)) {
       issues.push({
         id: 'trace_json_file_not_found',
         severity: 'BLOCKER',
-        message: `trace_json.path="${tj.path}" 在文件系统中不存在（提供了却是假的，optional 不豁免——全局入口 §5.1）。`,
+        message: `${traceLabel} 在文件系统中不存在（提供了却是假的，optional 不豁免——全局入口 §5.1）。`,
       });
-    } else if (tj.schema_valid !== false) {
-      // 尽可能解析一下
+    } else if (traceCanonicalOnDisk || tj.schema_valid !== false) {
+      // canonical 在盘上时一律解析——`schema_valid: false` 是回执自报，不得用来跳过损坏判定。
       try {
         JSON.parse(fs.readFileSync(traceAbs, 'utf-8'));
       } catch {
         issues.push({
           id: 'trace_json_not_parseable',
           severity: 'BLOCKER',
-          message: `trace_json.path="${tj.path}" 不是合法 JSON。`,
+          message: `${traceLabel} 不是合法 JSON。`,
         });
       }
     }

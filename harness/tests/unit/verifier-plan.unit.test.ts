@@ -13,9 +13,15 @@
 //   · adapter 无审查员 → disabled/adapter_has_no_reviewer（如实披露），**不是** blocked。
 // ============================================================================
 
+import * as fs from 'fs';
 import * as path from 'path';
 
 import { canProduceVerifierRequest, resolveVerifierPlan, workflowVerifierPrompt } from '../../scripts/utils/verifier-plan';
+// V1（plan 7b3e9a15）：生产接线——真实 policy → 真实 plan → 真实 Step 4 装配 → 真实 writer。
+import { writeRunSummaryBase } from '../../harness-runner';
+import { assembleAIPrompt } from '../../scripts/utils/report-generator';
+import { makeVerifierProject, reportsDirOf, rmDir } from '../utils/verifier-project-fixture';
+import type { CheckResult, Phase, ScriptReport } from '../../scripts/utils/types';
 // D1 归因回退用**生产实现**（runner 唯一的"失败归因：xxx"解析器），不在测试里复刻正则。
 import { extractFailureClassification as parseFailureClassificationFromDetails } from '../../harness-runner';
 import { resolveVerifierSubagentDeclared } from '../../scripts/utils/adapter-catalog';
@@ -392,6 +398,115 @@ function case7_d1RequestEligibility(): void {
   }
 }
 
+// --------------------------------------------------------------------------
+// 8. V1（plan 7b3e9a15 S0/D1）：goal×balanced 的 policy 一路走到落盘产物
+// --------------------------------------------------------------------------
+// 生产接线要求（§6）：真实 `resolveEvidencePolicy` → 真实 `resolveVerifierPlan` → **真实
+// Step 4 门控**（`canProduceVerifierRequest`，与生产 harness-runner.ts 的
+// `resolveVerifierRequestEligibility` 同一实现）→ 放行时以**真实 `assembleAIPrompt`** 落盘
+// ai-prompt.md → 真实已导出的 `writeRunSummaryBase`。
+//
+// 为什么必须带上 Step 4：`issueVerifierRequest` 在读不到 ai-prompt.md 时直接 `return null`
+// （writer 自身不生成 prompt）。空目录直调 writer 时 spec 侧也会零产物，review 侧的"全部
+// 缺席"就只证明了目录是空的——与 policy 无关。故断言顺序固定为「先证 Step 4 被 policy
+// 关闭，再证产物缺席」。
+const HARNESS_ROOT = path.resolve(__dirname, '..', '..');
+
+function v1ScriptReport(feature: string, phase: string, projectRoot: string): ScriptReport {
+  const checks: CheckResult[] = [
+    { id: 'demo_ok', category: 'structure', description: 'demo', severity: 'BLOCKER', status: 'PASS', details: 'ok' },
+  ];
+  return {
+    phase: phase as Phase,
+    feature,
+    timestamp: new Date().toISOString(),
+    project_root: projectRoot,
+    assurance: 'full',
+    capability_resolutions: [],
+    capability_resolution_contract_fingerprint: null,
+    checks,
+    summary: { total: 1, pass: 1, fail: 0, warn: 0, skip: 0, blockers: 0, verdict: 'PASS' },
+  };
+}
+
+function case8_goalBalancedProductionWiring(): void {
+  const spec = loadWorkflowSpec(FRAMEWORK_SOURCE_ROOT, WORKFLOW_NAME);
+  const balancedCfg = { evidence_profile: 'balanced' };
+
+  for (const [phase, expectIssued] of [['review', false], ['spec', true]] as Array<[string, boolean]>) {
+    const { root } = makeVerifierProject({ evidenceProfile: 'balanced' });
+    try {
+      const policy = resolveEvidencePolicy('full', ctx('goal', phase), balancedCfg);
+      const plan = resolveVerifierPlan({
+        phase,
+        track: 'full',
+        runtimeMode: 'goal',
+        policy,
+        workflowVerifierPrompt: workflowVerifierPrompt(spec, phase),
+        phaseDisabledByProfile: false,
+        adapterHasVerifierSubagent: true,
+        adapterName: 'claude',
+      });
+      const report = v1ScriptReport('demo', phase, root);
+      // 生产 Step 4 的同一门控（harness-runner.ts:1168 / :1878 都只是它的包装调用点）。
+      const gate = canProduceVerifierRequest({
+        planMode: plan.mode,
+        phase,
+        scriptVerdict: report.summary.verdict,
+        checks: report.checks,
+        reportValidity: 'PASS',
+        hasBlockedCapability: false,
+        parseClassificationFromDetails: parseFailureClassificationFromDetails,
+      });
+
+      if (expectIssued) {
+        assert(policy.verifier === 'required', `spec 在保留集内应 required，实得 ${policy.verifier}`);
+        assert(plan.mode === 'enabled', `spec×goal×balanced 应 enabled，实得 ${plan.mode}/${plan.reason}`);
+        assert(plan.reason === 'policy_required', `实得 reason=${plan.reason}`);
+        assert(gate.allowed, `Step 4 门控须放行，实得 ${JSON.stringify(gate)}`);
+      } else {
+        // **先证"Step 4 被 policy 关闭"**——不是"空目录里没有 prompt"。
+        assert(policy.verifier === 'off', `goal×balanced×review 的 verifier 应 off，实得 ${policy.verifier}`);
+        assert(plan.mode === 'disabled', `实得 ${plan.mode}/${plan.reason}`);
+        assert(plan.reason === 'policy_off', `实得 reason=${plan.reason}`);
+        assert(!gate.allowed, `Step 4 门控必须因 plan disabled 拒绝装配，实得 ${JSON.stringify(gate)}`);
+      }
+
+      const dir = reportsDirOf(root, 'demo', phase);
+      fs.mkdirSync(dir, { recursive: true });
+      // Step 4：门控放行才装配（与生产 harness-runner.ts:1169–1210 同形）。
+      if (gate.allowed) {
+        assembleAIPrompt(
+          HARNESS_ROOT,
+          root,
+          phase as Phase,
+          'demo',
+          [],
+          '{"checks":[]}',
+          'rule: {}',
+          undefined,
+          undefined,
+          FRAMEWORK_SOURCE_ROOT,
+          { verifierPromptRel: plan.verifier_prompt ?? undefined },
+        );
+      }
+      const promptOnDisk = fs.existsSync(path.join(dir, 'ai-prompt.md'));
+      assert(promptOnDisk === expectIssued, `ai-prompt.md 在盘上=${promptOnDisk}，期望 ${expectIssued}`);
+
+      const summary = writeRunSummaryBase(root, report, FRAMEWORK_SOURCE_ROOT, { verifierPlan: plan });
+      for (const field of ['verifier_subject_id', 'verifier_request', 'verifier_report', 'ai_prompt'] as const) {
+        const present = Boolean((summary as unknown as Record<string, unknown>)[field]);
+        assert(
+          present === expectIssued,
+          `${phase}: summary.${field} 在场=${present}，期望 ${expectIssued}（next_action=${summary.next_action}）`,
+        );
+      }
+    } finally {
+      rmDir(root);
+    }
+  }
+}
+
 const CASES: Array<{ name: string; fn: () => void }> = [
   { name: '① lite（interactive/goal/headless × change/coding/exit）恒 disabled，零 verifier 产物', fn: case1_liteIsAlwaysDisabled },
   { name: '② workflow 未声明 verifier_prompt = 不适用，不得 fallback 造模板', fn: case2_workflowSilenceMeansNotApplicable },
@@ -400,6 +515,7 @@ const CASES: Array<{ name: string; fn: () => void }> = [
   { name: '⑤ profile 禁用 phase 优先于 policy 与 adapter 能力', fn: case5_profileDisabledWins },
   { name: '⑥ verifier_subagent 布尔真源：磁盘声明说了算，codex 与 claude 同判', fn: case6_reviewerDeclarationIsTheOnlyTruth },
   { name: '⑦ D1 request 生产资格：review 负面/UT code_regression 窄放行；材料与环境失败一律不放行', fn: case7_d1RequestEligibility },
+  { name: '⑧ V1（B05）：goal×balanced 经真实 policy→plan→Step 4 装配→writer，review 零产物/spec 全在场', fn: case8_goalBalancedProductionWiring },
 ];
 
 export async function runAll(): Promise<UnitCaseResult[]> {

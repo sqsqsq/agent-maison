@@ -1315,6 +1315,79 @@ function caseJ_outerGoalRerunRequiresLiveOrchestration(): void {
   }
 }
 
+// --------------------------------------------------------------------------
+// K. V7（plan 7b3e9a15 D3/S2）：**整份物化 prompt** 的数量口径一致性
+// --------------------------------------------------------------------------
+// D3 改了 verify-ut.md 的三处（检查 4 第 1 条的适用范围、4B 第 2 条的适用范围、4B 第 5 条的
+// 判据改写）。三处必须一起到位——只改其中一处，单断言纯函数用例仍会被别的保留条款判 FAIL。
+//
+// 断言落在**真实模板物化后落盘的 ai-prompt.md** 上，不是读源文件：verifier 实际读的是这份
+// 装配产物（模板 + overlay + 报告嵌入），源文件对了而装配丢了正文同样是缺陷。
+// 与 case A 的区别：A 用 sentinel 假模板验"装配用了哪一份"（改前改后均绿），本例用**真实
+// HARNESS_ROOT + 真实 prompts/verify-ut.md** 验正文内容（**改前必红**）。
+function caseK_materializedUtPromptCountingRule(): void {
+  const { root } = makeVerifierProject();
+  try {
+    assembleAIPrompt(
+      HARNESS_ROOT,
+      root,
+      'ut' as Phase,
+      'demo',
+      [],
+      '{"checks":[]}',
+      'rule: {}',
+      undefined,
+      undefined,
+      FRAMEWORK_ROOT,
+      { verifierPromptRel: 'prompts/verify-ut.md' },
+    );
+    const onDisk = fs.readFileSync(path.join(reportsDirOf(root, 'demo', 'ut'), 'ai-prompt.md'), 'utf-8');
+
+    // ① 4B 第 5 条：数量硬判已删，判据是"错误实现会不会让该 it 失败"。
+    assert(
+      !/每个\s*it\s*只有\s*1\s*个\s*expect/.test(onDisk),
+      '物化 prompt 仍含「每个 it 只有 1 个 expect」式数量硬判——单条精确断言的纯函数用例会被判 BLOCKER FAIL',
+    );
+    assert(
+      onDisk.includes('该 `it` 若被错误实现会不会失败'),
+      '物化 prompt 必须写明改写后的判据（4B 第 5 条）',
+    );
+    assert(
+      onDisk.includes('只测 repository 静态数据结构'),
+      '「测错了对象」这一支必须保留——它判的不是数量',
+    );
+
+    // ② 检查 4 第 1 条的适用范围限定（纯函数/单规则用例的两项按不适用处理）。
+    assert(
+      /纯函数\s*\/\s*单规则用例/.test(onDisk),
+      '物化 prompt 缺检查 4 的适用范围限定——单断言用例仍会在检查 4 上挂一次',
+    );
+    assert(
+      onDisk.includes('不接受') && onDisk.includes('我说它是纯函数'),
+      '适用范围必须写明"形态由被测对象决定、不接受作者声称"',
+    );
+
+    // ③ 4B 第 2 条的适用范围限定。
+    assert(
+      onDisk.includes('happy path 至少包含三类断言中的两类') && /本项只对\*\*流程类用例\*\*/.test(onDisk),
+      '物化 prompt 缺 4B 第 2 条的适用范围限定——单断言用例仍会在 4B 第 2 条上挂一次',
+    );
+
+    // ④ 流程类用例的既有硬要求与检查 4 第 2/3 条、4C 正文**原样在内**（D3 不许扩面）。
+    for (const kept of [
+      '覆盖**中间态与终态**',
+      'expected_phase_sequence',
+      '退化判定',
+      'mock_plan_traceability',
+      '回滚行为或 `not_called`',
+    ]) {
+      assert(onDisk.includes(kept), `物化 prompt 丢了必须保留的正文：${kept}`);
+    }
+  } finally {
+    rmDir(root);
+  }
+}
+
 const CASES: Array<{ name: string; fn: () => void }> = [
   { name: 'A workflow 声明的 verifier_prompt 决定实际装配的模板；缺文件明确失败、无 fallback', fn: caseA_declaredTemplateIsTheOneAssembled },
   { name: 'B request 解析严格：JSON 内夹带字段 / 可空字段错误类型 / subject 不可外部传入', fn: caseB_requestParsingIsStrict },
@@ -1327,6 +1400,7 @@ const CASES: Array<{ name: string; fn: () => void }> = [
   { name: 'H D1 资格边界与诊断正文：混合失败/坏报告/环境归因零产物；ai-prompt 只在诊断分支附说明', fn: caseH_diagnosisEligibilityAndPromptNotice },
   { name: 'I D3/D4 必需检查项缺失/冲突 → 报告格式修复出口，不落回"先修 blocker"、不指人改产品', fn: caseI_unreadableReportBodyKeepsFormatRepairExit },
   { name: 'J D2.5 外层重跑判据：owner 须 active 且带 attempt 身份；released/orphaned/quiescing 回落自跑', fn: caseJ_outerGoalRerunRequiresLiveOrchestration },
+  { name: 'K V7（B05）：真实 verify-ut.md 物化后的整份 prompt 三处数量口径一致（数量不再是判据）', fn: caseK_materializedUtPromptCountingRule },
 ];
 
 export async function runAll(): Promise<UnitCaseResult[]> {

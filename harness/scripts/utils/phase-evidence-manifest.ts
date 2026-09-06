@@ -34,6 +34,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import {
+  artifactReadCandidatePaths,
   featurePhaseReportsDir,
   loadFrameworkConfig,
   receiptDirPath,
@@ -465,6 +466,80 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
     ...core,
     aggregate_sha256: computeAggregate(core),
   };
+}
+
+/**
+ * 该 phase 的 manifest 面**候选**路径全集（不看存在性，含 legacy 读回退路径）。
+ *
+ * 为什么需要它：`resolvePhaseEvidenceManifest` 的可选条目「存在才纳入」——文件被删后
+ * 整条从 manifest 消失，只比"本轮 manifest 里有的"识别不了删除。沿用判据
+ * （harness-runner `carriedMaterialStillCurrent`）用本集合判定"旧材料视图里的某个文件
+ * 属不属于 manifest 面"，据此做双向核对。表沿用本模块与 spec-loader 的既有 SSOT，
+ * 不另立手写表。
+ *
+ * reports/ 下的运行期产出**不在**集合内：由 `createRuntimeArtifactPredicate` 统一排除——
+ * 与 `buildVerifierMaterialView` 是**同一条**规则，不复制第二份（codex review 三轮 medium）。
+ */
+export function phaseEvidenceManifestCandidatePaths(opts: {
+  projectRoot: string;
+  feature: string;
+  phase: Phase;
+  frameworkRoot?: string;
+  featurePathOpts?: FeaturePathOptions;
+}): Set<string> {
+  const { projectRoot, feature, phase } = opts;
+  const isRuntimeArtifact = createRuntimeArtifactPredicate({
+    projectRoot,
+    feature,
+    phase: String(phase),
+    frameworkRoot: opts.frameworkRoot,
+  });
+  const out = new Set<string>();
+  const add = (rel: string): void => {
+    if (!isRuntimeArtifact(rel)) out.add(rel);
+  };
+  for (const name of [
+    ...(REQUIRED_FEATURE_FILES_BY_PHASE[phase] ?? []),
+    ...(OPTIONAL_FEATURE_FILES_BY_PHASE[phase] ?? []),
+    ...(PHASE_OUTPUT_FILES_BY_PHASE[phase] ?? []),
+    ...(PHASE_OPTIONAL_OUTPUT_FILES_BY_PHASE[phase] ?? []),
+  ]) {
+    for (const abs of artifactReadCandidatePaths(projectRoot, feature, name, opts.featurePathOpts)) {
+      add(toPosixRel(projectRoot, abs));
+    }
+  }
+  for (const rel of PHASE_OPTIONAL_OUTPUT_RELPATHS_BY_PHASE[phase] ?? []) {
+    add(toPosixRel(projectRoot, featureFilePath(projectRoot, feature, rel, opts.featurePathOpts)));
+  }
+  return out;
+}
+
+/**
+ * manifest 面的**运行期产出排除谓词**：reports 目录（含其下全部文件）与阶段回执不属于 manifest 面。
+ *
+ * 唯一口径（SSOT）：材料视图的构建侧 `buildVerifierMaterialView`（verifier-material.ts）与
+ * 归属判定侧 `phaseEvidenceManifestCandidatePaths` 共用本函数。两边各写一份规则的后果
+ * （codex review 三轮 medium，已内存复现）：`reports_dir_pattern` 指向 phase 目录**本身**时，
+ * review-report.md 在构建侧被当运行期产出排除、只能经 contextFiles 进旧视图，却被候选集认成
+ * manifest 面 → 沿用判据的反向比较恒 false → 材料一字未动、仅切 balanced 也丢弃 subject，
+ * strict 轮的 FAIL 否决随之落空（少否决）。
+ *
+ * `frameworkRoot` 惰性用于 `featurePhaseReportsDir` 的回退分支（配置有 reports_dir_pattern 时不需要）。
+ */
+export function createRuntimeArtifactPredicate(opts: {
+  projectRoot: string;
+  feature: string;
+  phase: string;
+  frameworkRoot?: string;
+}): (relPath: string) => boolean {
+  const reportsRel = toPosixRel(
+    opts.projectRoot,
+    featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot),
+  );
+  return (relPath: string): boolean =>
+    relPath === reportsRel ||
+    relPath.startsWith(`${reportsRel}/`) ||
+    path.basename(relPath) === 'phase-completion-receipt.md';
 }
 
 export function phaseEvidenceManifestPath(projectRoot: string, feature: string, phase: string): string {
