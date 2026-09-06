@@ -338,6 +338,40 @@ export function orderUtModulesForCompile(
     .map(x => x.m);
 }
 
+/**
+ * D1（plan 3a7f9c12）：本轮 UT 失败是否为**真实用例断言失败**（可归 code_regression）。
+ *
+ * 严格 fail-closed —— 只要有一丝"没跑起来 / 环境挡住了"的痕迹就返回 false，让
+ * `buildUtHvigorTestFailDetails` 的原归因（或 unknown）留着：把所有非工具链错误默认
+ * 当产品缺陷，正是本 plan 明令禁止的洗绿路径。返回 true 只表示**可以进入测试语义
+ * 诊断**，是否真要改产品仍由 verifier 合取（end_to_end_driving ∧ business_assertion_value）决定。
+ */
+export function isRealAssertionFailure(
+  bad: UtHvigorTestFailureModule[],
+  allModulesExecuted: boolean,
+): boolean {
+  // 选中模块没全部产出真实执行结果 → 不完整的执行不得被描述成"产品跑挂了"。
+  if (!allModulesExecuted || bad.length === 0) return false;
+  return bad.every(({ result }) => {
+    if (result.toolMissing === true || result.timedOut === true || result.executed !== true) return false;
+    if (result.installBlocking?.kind && result.installBlocking.kind !== 'clear') return false;
+    // 结构化环境/运行基础故障优先于文本——但**断言诊断不是环境诊断**：生产 hdc-runner 对
+    // 真实用例失败固定产出 `failedAt='no_pass'`（`aa.report ? 'no_pass' : 'run'`）与
+    // `runDiagnosis.kind='test_failed'`（classifyAaTestFailure 的首个分支）。把这两个字段
+    // 一律当环境故障，等于把**唯一的真实断言形状**排除在诊断之外（codex 一轮 high）。
+    // 其余 failedAt（metadata/hap_not_found/install/run）与其余 runDiagnosis.kind
+    // （device_locked/aa_test_timeout/aa_test_no_result/install_* 等）仍一律否决。
+    const evidence = result.onDeviceFailureEvidence;
+    if (evidence?.installDiagnosis) return false; // install 只在失败时带诊断 → 环境
+    if (evidence?.failedAt && evidence.failedAt !== 'no_pass') return false;
+    if (evidence?.runDiagnosis && evidence.runDiagnosis.kind !== 'test_failed') return false;
+    const test = result.testResult;
+    return Boolean(
+      test && (test.total ?? 0) > 0 && (test.failed ?? 0) > 0 && (test.failures?.length ?? 0) > 0,
+    );
+  });
+}
+
 function checkUtHvigorBuild(
   ctx: CheckContext,
   scopedUtFiles: Array<{ path: string }> = [],
@@ -996,7 +1030,11 @@ function checkUtHvigorTest(
       status: 'FAIL',
       details: formatted.lines.join('\n') + ratchetNote,
       affected_files: formatted.affectedFiles,
-      failure_kind: formatted.failureKind,
+      // D1（plan 3a7f9c12）：格式器只对**工具链/设备/安装**族给 failureKind，普通用例断言
+      // 失败一路走默认分支返回 undefined——于是 code_regression 合取（回修候选、verifier
+      // 诊断资格）在真实生产路径上恒不成立（F01/V2 断点）。这里补上唯一缺的那一格：
+      // 全部选中模块真实跑完、且每个 bad 模块都是"跑起来了、跑出用例、有用例失败"。
+      failure_kind: formatted.failureKind ?? (isRealAssertionFailure(bad, allModulesExecuted) ? 'code_regression' : undefined),
       blocking_class: formatted.blockingClass,
       suggestion: formatted.suggestion,
     },

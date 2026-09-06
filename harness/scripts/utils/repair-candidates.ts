@@ -408,26 +408,117 @@ export function checkOwnedCandidate(input: CheckOwnedCandidateInput): RepairCand
 }
 
 // ---------------------------------------------------------------------------
-// verifier 报告 check 状态宽松解析（ut 侧 device_ac_delegation 消费——verifier YAML
-// 形态：`- id: <check>` 后随 `status: PASS|FAIL|WARN`）
+// verifier 报告 check 状态解析（D3 · plan 3a7f9c12）
 // ---------------------------------------------------------------------------
+// F02 实锤：`verify-*.md` §7.1 要求的**正式输出**是一张汇总表（每个检查项一行，PASS 也列），
+// §7.2 的 YAML 明细**只列 status ≠ PASS 的项**。旧解析器只认 YAML 的 `- id: / status:`，
+// 于是「PASS」这一半永远读不到——`end_to_end_driving` / `business_assertion_value` 的
+// PASS 合取恒不成立，UT 的 coding 候选在规范报告下恒为零；只有写了非规范 PASS YAML 的报告
+// 才碰巧能产出候选。两种形态给出**不同结论**，正是本 plan 要收口的等值缺口。
+//
+// 收口：先读正式汇总表（复用 markdown-parser.extractTables，不另写表格解析器），再叠加旧
+// YAML 形态；两处口径合并去重。只认 PASS/FAIL/WARN；同条一致重复去重；**冲突或坏状态一律
+// 不采信（null）**——不选择有利的那个 PASS。null 走各消费者既有的「未确认」通道。
+// ---------------------------------------------------------------------------
+
+type VerifierCheckStatus = 'PASS' | 'FAIL' | 'WARN';
+
+/**
+ * 单元格/字面量归一：只剥**允许的装饰**（反引号、加粗/斜体、删除线、首尾空白）后
+ * **精确**匹配单一状态；其余（SKIP、`PASS / FAIL`、`NOT PASS`、`<PASS>`、空）= 坏状态。
+ *
+ * 旧实现用 `/\b(PASS|FAIL|WARN)\b/` 取**第一个**状态词，于是冲突态（`PASS / FAIL`）、
+ * 否定态（`NOT PASS`）与占位符（`<PASS>`）全部被采信成 PASS，并据此产出 coding 候选
+ * ——正是 D3 明令禁止的"选择有利的那个 PASS"（codex 一轮 medium）。
+ */
+function normalizeVerifierStatusCell(raw: string | undefined): VerifierCheckStatus | null {
+  const token = (raw ?? '').replace(/[`*_~]/g, '').trim().toUpperCase();
+  return token === 'PASS' || token === 'FAIL' || token === 'WARN' ? token : null;
+}
+
+/**
+ * 表格 id 单元格归一（模型常写成 `` `end_to_end_driving` `` 或 **加粗**）。
+ * **不剥下划线**——它是 check id 的一部分（`end_to_end_driving`），当成强调符号剥掉
+ * 会让所有 id 永远匹配不上。
+ */
+function normalizeVerifierIdCell(raw: string | undefined): string {
+  return (raw ?? '').replace(/[`*~\s]/g, '');
+}
 
 export function parseVerifierCheckStatus(
   text: string,
   checkId: string,
-): 'PASS' | 'FAIL' | 'WARN' | null {
+): VerifierCheckStatus | null {
   if (!text || !text.trim()) return null;
+  const seen = new Set<VerifierCheckStatus>();
+  let malformed = false;
+
+  // ① 正式汇总表：**精确**列头 id + status（`| id | status | severity | 证据 |`）。
+  //    列头不精确的表一概不看——prompt 里「本轮检查项与严重等级」表只有 id/severity，
+  //    宽松匹配会把它当结论表读，凭空造出并不存在的状态。
+  for (const table of extractTables(text)) {
+    const iId = table.headers.findIndex(h => h.trim().toLowerCase() === 'id');
+    const iStatus = table.headers.findIndex(h => h.trim().toLowerCase() === 'status');
+    if (iId < 0 || iStatus < 0) continue;
+    for (const row of table.rows) {
+      if (normalizeVerifierIdCell(row[iId]) !== checkId) continue;
+      const status = normalizeVerifierStatusCell(row[iStatus]);
+      if (status) seen.add(status);
+      else malformed = true; // SKIP / 空 / `<status>` 占位 / 乱写 → 不采信
+    }
+  }
+
+  // ② 旧 YAML 形态（`- id: <check>` 后 3 行内的 `status:`）——继续兼容，不再首个即返回。
+  //    值取**整行剩余部分**（归一函数自己 trim）而非首个非空白词：`(\S+)` 会先把
+  //    `status: PASS / FAIL` 截成 `PASS` 再归一，整格精确匹配就白做了（codex 二轮 medium）。
+  //    prompt 模板里的 `status: FAIL | WARN | SKIP` 占位行同理，照抄不改一律不采信。
   const lines = text.split(/\r?\n/);
+  const idLine = new RegExp(`^\\s*-\\s*id:\\s*${checkId}\\s*$`);
   for (let i = 0; i < lines.length; i++) {
-    if (!new RegExp(`^\\s*-\\s*id:\\s*${checkId}\\s*$`).test(lines[i])) continue;
+    if (!idLine.test(lines[i])) continue;
+    let status: VerifierCheckStatus | null = null;
     for (let j = i + 1; j < Math.min(i + 4, lines.length); j++) {
-      const m = /^\s*status:\s*(PASS|FAIL|WARN)\b/.exec(lines[j]);
-      if (m) return m[1] as 'PASS' | 'FAIL' | 'WARN';
+      const m = /^\s*status:\s*(.*)$/.exec(lines[j]);
+      if (m) {
+        status = normalizeVerifierStatusCell(m[1]);
+        break;
+      }
       if (/^\s*-\s*id:/.test(lines[j])) break;
     }
-    return null;
+    if (status) seen.add(status);
+    else malformed = true;
   }
-  return null;
+
+  if (malformed || seen.size !== 1) return null;
+  return [...seen][0];
+}
+
+/**
+ * D3/D4（plan 3a7f9c12）：诊断轮的**必需检查项**能不能从当前 subject 的正文里读出来。
+ *
+ * loader 的终态校验只证明报告有一个自洽的结论块（PASS/0 或 FAIL/B），**不**证明这些
+ * 项可采信。表格/YAML 缺项或冲突时，正确的出路是「按 verifier 的原始回复重写报告」——
+ * 而不是把调用方指回"先修原始 blocker"（重复 harness 只会复用同一份坏正文，零候选）。
+ *
+ * 返回读不出来的必需项 id；空数组 = 正文可采信。两个分支都复用本文件已有解析器，
+ * 不另写第二套判据：
+ *  · ut：`end_to_end_driving` / `business_assertion_value`（候选合取的两项，D3 表 UT 行）；
+ *  · review：`issue-verification` 逐条验证块（负面裁决必然有待核问题，块缺席=格式缺口）。
+ */
+export function findUnreadableDiagnosisChecks(
+  phase: string,
+  verifierReportText: string | null,
+): string[] {
+  if (!verifierReportText || !verifierReportText.trim()) return [];
+  if (phase === 'ut') {
+    return ['end_to_end_driving', 'business_assertion_value'].filter(
+      id => parseVerifierCheckStatus(verifierReportText, id) === null,
+    );
+  }
+  if (phase === 'review') {
+    return parseIssueVerificationBlock(verifierReportText).ok ? [] : [ISSUE_VERIFICATION_FENCE];
+  }
+  return [];
 }
 
 // ---------------------------------------------------------------------------

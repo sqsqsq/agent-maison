@@ -250,6 +250,12 @@ verification_result:
 3. 问题准确性验证（检查 2）要求你阅读实际源代码来验证问题是否真实存在
 4. 对每一项检查，请给出**具体的代码/文档证据**（文件路径 + 关键引文），而非泛泛而谈
 5. BLOCKER 与结论一致性（检查 5）是 BLOCKER 级别——结论必须与问题统计匹配
+6. **报告终态 ≠ 产品裁决**（本节尤其适用于「本轮为产品失败诊断」请求）：终态块的 `blocker_count`
+   只数**你自己这轮语义检查**中 severity=BLOCKER 且 status=FAIL 的项数，`verdict=PASS` 当且仅当它为 0。
+   审查报告确认了 N 条产品缺陷、review 结论是「不通过」/「有条件通过」，**都不进这个计数**——
+   报告准确且你自己无 BLOCKER FAIL 时正确终态就是 `PASS / 0`；产品的 FAIL 与 open 闭环状态由 harness 保持，
+   不会因你判 PASS 而放行。反过来，把 confirmed 条数当 `blocker_count`、或为了"和产品一致"硬写 FAIL，
+   会造出 `FAIL / 0`、`PASS / 非 0` 这类自相矛盾的无效证据，并让逐条 confirmed 派生的回修候选整批消失。
 
 ---
 

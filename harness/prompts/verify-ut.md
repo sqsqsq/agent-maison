@@ -34,9 +34,10 @@
 1. **禁止修改业务源码**：business-ut 阶段**禁止**对**业务实现源码树**（如设计/contracts 列出的 `src/main` 或等价非测试根目录；路径前缀以本实例为准）下任何文件做**任何修改**（包括"顺手抽个函数方便 UT 调用"、"把 private 改成 public"、"新增一个工具函数"、"修改 barrel 导出路径"等）。
 2. **可测性缺口交回 coding**：如确实无法通过 UT/Spy/Stub/原型替换绕过，记录文件、变更签名、技术理由和影响面，产出 coding repair candidate；由 coding owner 修改后重走 review→ut。
 3. **人工授权不放行**：用户回复、署名、receipt 或 legacy `gap-notes.md > approved_src_mutations[]` 只可作为历史/普通输入，不得把源码漂移改判为 PASS。
-4. **任一源码改动均违规**：脚本 Harness 的 `ut_no_src_mutation` BLOCKER 在 review 正式闭环后按 review closure attestation 的逐文件内容哈希对账产品源码树（review 未闭环时才回退 `src/main` 的 git diff）；UT invocation 内任何业务源码改动都会 FAIL 并回 coding，**提交与否不影响结论**。
+4. **任一源码改动均违规**：脚本 Harness 的 `ut_no_src_mutation` 在 review 正式闭环后按 review closure attestation 的逐文件内容哈希对账产品源码树（review 未闭环时才回退 `src/main` 的 git diff）。**它已不是永久 BLOCKER**：漂移按风险分级记 MAJOR WARN（`check-ut.ts` `utDriftTieredWarn`），归类为 coding change 并列出所需复核，不阻塞 UT 闭环；纪律不变——UT 阶段仍禁止改业务源码，漂移仍要回 coding 纳入并按分级复核，**提交与否不影响结论**。你不得据此把已退役的硬门重新施加回来（把 WARN 说成 BLOCKER 就是），也不得反过来把它当作"改码没关系"。
 5. **作为审查员的你**：在语义检查时，若发现 UT 目录外（即 `src/main` 侧）的业务代码与 plan.md / contracts.yaml 声明不一致，或出现"为了 UT 便利而新增的辅助函数"嫌疑（无对应 spec/plan 依据的工具函数、Getter/Setter 等），请在 `end_to_end_driving` 或新增的 `src_mutation_discipline` 项中标 BLOCKER。
 6. **必须确认真实执行状态**：若脚本报告中的 `ut_run_status` 显示 `当前是否可以宣称 UT 完成：否`，或 **`ut.run`** 为 FAIL（报告可能仍显示 legacy 名 `ut_hvigor_test`）/ 被 **`ut.compile`**（legacy `ut_hvigor_build`）短路，则最终 `summary.verdict` 必须为 `FAIL`。不要把 `ut_tsc_compiles PASS` 误判为 UT 已真实运行通过。
+   > **例外（产品失败诊断请求）**：本 prompt 若带「本轮为产品失败诊断」一节，则 harness 已确认这是它主动签发的诊断请求——`ut.compile` 通过、`ut.run` 是**真实用例断言失败**（归因 `code_regression`）、且没有其它 BLOCKER FAIL/SKIP。此时**照常**逐项完成语义检查，尤其是 `end_to_end_driving` 与 `business_assertion_value` 这两项（它们的 PASS/FAIL 决定这次失败该回 coding 改产品还是回 UT 改测试）。`ut.run` 的产品执行 FAIL 由 harness 原样保留，**不由你的报告继承**：`summary.verdict` / `blocker_count` 只表示**本轮语义检查**的结论——你自己判出的 BLOCKER 级 FAIL 有几条就写几条，一条都没有就写 `PASS / 0`。把产品 FAIL 抄进终态并跳过这两项检查，只会让本该产生的回修候选整批消失。原生编译/执行约束在常规验证请求下不降低。
 
 > 典型违规迹象（请特别留意）：
 > - 业务源码树（非测试目录）里新增了看似仅为 UT 服务的函数，但该函数**没有对应的 spec/plan 条目**；

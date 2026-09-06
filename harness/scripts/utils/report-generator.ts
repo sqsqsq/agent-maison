@@ -268,6 +268,38 @@ export function projectScriptReportForPrompt(report: ScriptReport): Record<strin
   };
 }
 
+/**
+ * D1/D2（plan 3a7f9c12）：产品失败诊断的 prompt 正文段。
+ *
+ * 只说三件事，且每件都必须说：①本轮脚本是 FAIL 而不是 PASS，你被叫来是**因为**它 FAIL；
+ * ②哪几条失败是被放行的（其余 BLOCKER 一条都不存在，否则本轮根本不会有 request）；
+ * ③报告终态 = 本轮**语义检查**的结论，与产品是否合格是两件事——不得为了"和产品一致"
+ * 就把终态改成 FAIL 并跳过检查项（D3 的终态口径：blocker_count 只数本轮语义 BLOCKER FAIL）。
+ */
+function formatRepairDiagnosisNotice(
+  diagnosis: { failedCheckIds: readonly string[]; reason: string },
+): string {
+  const ids = diagnosis.failedCheckIds.length > 0 ? diagnosis.failedCheckIds.join('、') : '(未列出)';
+  return [
+    '## 本轮为产品失败诊断（脚本 verdict=FAIL）',
+    '',
+    '本轮脚本门禁**未通过**，request 仍被签发——这是框架对已复现的两类可诊断产品失败开的窄例外：',
+    `**${diagnosis.reason}**`,
+    '',
+    `- 已被放行的失败检查项：\`${ids}\`。除它们之外本轮**没有**其它 BLOCKER 级 FAIL/SKIP，也没有未解析的 capability——`,
+    '  否则不会有这份 request（材料/环境问题的出路是先修材料/环境，不是叫审查员来看半份材料）。',
+    '- 上方内嵌的脚本报告是**原始 FAIL 报告**，没有被投影成 PASS。产品的 FAIL 与 open 闭环状态本轮不变，',
+    '  你的结论也**不会**改变它们：修好产品才能 PASS。',
+    '',
+    '**你要做的**：照常按「语义检查项」逐项评估并给出汇总表——尤其是与这些失败直接相关的项',
+    '（review：问题清单逐条是否属实、论证是否成立；ut：测试是否真在驱动业务、断言是否有价值）。',
+    '',
+    '**终态块的口径不变**：`blocker_count` = **本轮你自己的语义检查**中 severity=BLOCKER 且 status=FAIL 的项数，',
+    '`verdict=PASS` 当且仅当它为 0。**不要**因为产品失败就把终态写成 FAIL——那是把产品裁决塞进报告裁决，',
+    '会让本该产生的回修候选整批消失；也**不要**因为你判 PASS 就宣称产品通过。两者是两个独立事实。',
+  ].join('\n');
+}
+
 export function assembleAIPrompt(
   harnessRoot: string,
   projectRoot: string,
@@ -292,6 +324,12 @@ export function assembleAIPrompt(
      * 声明路径不可读即抛错，绝不回退。
      */
     verifierPromptRel?: string;
+    /**
+     * D1/D2（plan 3a7f9c12）：本轮属**产品失败诊断**（脚本 FAIL 的窄放行分支）。
+     * 在场时正文尾部追加一段说明——列出已被放行的失败 check、以及"报告终态只表示本轮
+     * 语义检查结论，产品执行 FAIL 原样保留"。缺省 = 常规验证请求，正文一字不变。
+     */
+    repairDiagnosis?: { failedCheckIds: readonly string[]; reason: string };
   },
 ): string {
   const template = loadVerifierPromptTemplate(harnessRoot, phase, resolvedProfile, options?.verifierPromptRel);
@@ -346,6 +384,9 @@ export function assembleAIPrompt(
   }
 
   let tail = '';
+  if (options?.repairDiagnosis) {
+    tail += `\n\n---\n\n${formatRepairDiagnosisNotice(options.repairDiagnosis)}\n`;
+  }
   if (phase === 'coding' && options?.imageInput === 'tool_read') {
     tail +=
       '\n\n---\n\n## 多模态读图取证（tool_read · M3）\n\n' +

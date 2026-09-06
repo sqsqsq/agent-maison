@@ -156,6 +156,193 @@ export function resolveVerifierPlan(input: ResolveVerifierPlanInput): VerifierPl
 }
 
 // ---------------------------------------------------------------------------
+// D1（plan 3a7f9c12）：request **生产资格**——脚本非 PASS 时的窄放行
+// ---------------------------------------------------------------------------
+// 病根（F01，宿主生产 writer 复现）：Step 4 与 writeRunSummaryBase 都写死
+// `enabled ∧ 脚本 verdict=PASS` 才装配/签发。于是 review 的负面裁决
+// （negative_verdict_closure / conditional_pass_closure）与 UT 的真实断言失败
+// 永远拿不到 verifier request——而这两类失败的回修候选恰恰**依赖** verifier
+// 逐条确认。产品 FAIL 于是只能原地重试到耗尽。
+//
+// 收口：只放行**已复现**的两类可诊断失败，其余 FAIL/INCOMPLETE 一律保持原样
+// （先修输入/环境的出路不能被"叫个 verifier 看看"顶掉）。本函数**只判资格**：
+// 不读模型、不执行 provider、不改产品 verdict/closure，也不新建模块或配置。
+// Step 4 与 writer 共用它——两处判据不得再各写一套。
+// ---------------------------------------------------------------------------
+
+/** UT 运行/编译门禁的 legacy ≡ canonical 别名（capability-registry 同一对照，此处只取字面量避免反向依赖）。 */
+const UT_RUN_CHECK_IDS: ReadonlySet<string> = new Set(['ut_hvigor_test', 'ut_run']);
+const UT_COMPILE_CHECK_IDS: ReadonlySet<string> = new Set(['ut_hvigor_build', 'ut_compile']);
+
+/** D1 放行的 review 负面裁决 check（产品裁决传播门禁，报告本身合法）。 */
+export const REVIEW_NEGATIVE_CLOSURE_CHECK_IDS: ReadonlySet<string> = new Set([
+  'negative_verdict_closure',
+  'conditional_pass_closure',
+]);
+
+/** CheckResult 的最小只读形状（避免 verifier-plan 反向依赖 types.ts / capability-registry）。 */
+export interface VerifierEligibilityCheck {
+  id: string;
+  status: string;
+  severity?: string;
+  /** 机器归因（优先）；缺失才用 details 文本回退。 */
+  failure_kind?: string;
+  details?: string;
+}
+
+export interface CanProduceVerifierRequestInput {
+  /** resolveVerifierPlan 的结果模式。 */
+  planMode: VerifierPlanMode;
+  phase: string;
+  /** 脚本报告顶层 verdict（PASS / FAIL / INCOMPLETE）。 */
+  scriptVerdict: string;
+  checks: ReadonlyArray<VerifierEligibilityCheck>;
+  /** harness 派生的 report_validity（quality-axes deriveReportValidity）。 */
+  reportValidity: 'PASS' | 'FAIL' | 'UNVERIFIED';
+  /** deriveSummaryVerdictLattice 的 has_blocked 投影（capability 输入未解析）。 */
+  hasBlockedCapability: boolean;
+  /**
+   * details 文本兜底归因解析器（harness-runner 的 extractFailureClassification）。
+   * **不在这里复制第二段"失败归因：xxx"正则**——归因口径全仓只有一处实现。
+   */
+  parseClassificationFromDetails?: (details: string) => string | undefined;
+}
+
+export interface VerifierRequestEligibility {
+  /** 是否装配 ai-prompt 并签发 request。 */
+  allowed: boolean;
+  /**
+   * · `normal`：原成功路径（enabled ∧ 脚本 PASS），资格与本 plan 之前完全一致；
+   * · `repair_diagnosis`：D1 窄放行的产品失败诊断；
+   * · `none`：不生产。
+   */
+  kind: 'normal' | 'repair_diagnosis' | 'none';
+  /** 人读一句话（控制台 / ai-prompt 诊断说明共用）。 */
+  reason: string;
+  /** 诊断分支下**已被放行**的失败 check id（进 ai-prompt 的诊断说明；normal/none 为空）。 */
+  diagnosticCheckIds: string[];
+}
+
+const NOT_ALLOWED = (reason: string): VerifierRequestEligibility => ({
+  allowed: false,
+  kind: 'none',
+  reason,
+  diagnosticCheckIds: [],
+});
+
+/** 归因口径：结构化 failure_kind 优先，缺失才用调用方注入的 details 回退解析器。 */
+function classificationOf(
+  check: VerifierEligibilityCheck,
+  parse?: (details: string) => string | undefined,
+): string | undefined {
+  return check.failure_kind ?? (check.details ? parse?.(check.details) : undefined);
+}
+
+/**
+ * D1 资格判定。**顺序即优先级**，调用方不得插队或另判：
+ *   plan 非 enabled > 脚本 PASS（原路径） > capability blocked > 两类可诊断失败 > 不生产。
+ *
+ * 表（plan 3a7f9c12 §D1）：
+ * | verifier disabled                                            | 否 |
+ * | enabled ∧ 脚本 PASS                                          | 是（原成功路径，资格不变） |
+ * | review 脚本 FAIL ∧ report_validity=PASS ∧ BLOCKER FAIL 全为   | 是（诊断负面产品） |
+ * |   negative_verdict_closure/conditional_pass_closure ∧ 无      |    |
+ * |   BLOCKER SKIP ∧ 无 blocked capability                       |    |
+ * | ut 脚本 FAIL ∧ ut 编译 PASS ∧ ut 运行 FAIL 且归因            | 是（核对测试语义） |
+ * |   code_regression ∧ 无其它 BLOCKER FAIL/SKIP ∧ 无 blocked    |    |
+ * |   ∧ report_validity ≠ FAIL                                   |    |
+ * | 其它 FAIL/INCOMPLETE、缺源码、坏格式、编译/设备/工具失败      | 否（保留先修输入/环境的出路） |
+ */
+export function canProduceVerifierRequest(
+  input: CanProduceVerifierRequestInput,
+): VerifierRequestEligibility {
+  if (input.planMode !== 'enabled') {
+    return NOT_ALLOWED('verifier plan 判 disabled：缺席即为零，不装配也不签发。');
+  }
+  if (input.scriptVerdict === 'PASS') {
+    return { allowed: true, kind: 'normal', reason: '脚本 verdict=PASS：按原成功路径签发。', diagnosticCheckIds: [] };
+  }
+  if (input.scriptVerdict !== 'FAIL') {
+    return NOT_ALLOWED(`脚本 verdict=${input.scriptVerdict}：只有 FAIL 才可能进入诊断窄例外。`);
+  }
+  // capability 输入未解析 = 材料/环境未就绪，先补输入，不叫 verifier 看半份材料。
+  if (input.hasBlockedCapability) {
+    return NOT_ALLOWED('存在 blocked capability（输入未解析）：先补齐输入，不进入失败诊断。');
+  }
+
+  const blockerFails = input.checks.filter(c => c.status === 'FAIL' && c.severity === 'BLOCKER');
+  const blockerSkips = input.checks.filter(c => c.status === 'SKIP' && c.severity === 'BLOCKER');
+  if (blockerSkips.length > 0) {
+    return NOT_ALLOWED(
+      `存在 BLOCKER SKIP（${blockerSkips.map(c => c.id).join('、')}）：门禁未跑完，不进入失败诊断。`,
+    );
+  }
+  if (blockerFails.length === 0) {
+    return NOT_ALLOWED('脚本 FAIL 但无 BLOCKER FAIL：非本 plan 已复现的两类失败，保持原分流。');
+  }
+
+  if (input.phase === 'review') {
+    // 报告工件本身坏了（结构/引用/结论一致性 FAIL）→ 先修报告，不请 verifier 审一份坏报告。
+    if (input.reportValidity !== 'PASS') {
+      return NOT_ALLOWED(`review report_validity=${input.reportValidity}：先修报告工件，不进入失败诊断。`);
+    }
+    const off = blockerFails.filter(c => !REVIEW_NEGATIVE_CLOSURE_CHECK_IDS.has(c.id));
+    if (off.length > 0) {
+      return NOT_ALLOWED(
+        `除负面裁决外还有 BLOCKER FAIL（${off.map(c => c.id).join('、')}）：混合失败不放行，先修其余项。`,
+      );
+    }
+    return {
+      allowed: true,
+      kind: 'repair_diagnosis',
+      reason:
+        'review 产品负面裁决（结论=不通过 / 有条件通过且 MAJOR 未闭环）且报告工件合法：' +
+        '放行 verifier 逐条核对，产品 verdict/closure 不变。',
+      diagnosticCheckIds: blockerFails.map(c => c.id),
+    };
+  }
+
+  if (input.phase === 'ut') {
+    // 纯 UT 可能未执行报告格式检查而合法为 UNVERIFIED——只挡 FAIL，不机械要求 PASS。
+    if (input.reportValidity === 'FAIL') {
+      return NOT_ALLOWED('ut report_validity=FAIL：先修报告工件，不进入失败诊断。');
+    }
+    const compile = input.checks.filter(c => UT_COMPILE_CHECK_IDS.has(c.id));
+    if (compile.length === 0 || !compile.every(c => c.status === 'PASS')) {
+      return NOT_ALLOWED('UT 编译门禁未 PASS（或缺席）：编译失败先修编译，不当成测试语义问题。');
+    }
+    const runFails = blockerFails.filter(c => UT_RUN_CHECK_IDS.has(c.id));
+    const off = blockerFails.filter(c => !UT_RUN_CHECK_IDS.has(c.id));
+    if (off.length > 0) {
+      return NOT_ALLOWED(
+        `除 UT 执行外还有 BLOCKER FAIL（${off.map(c => c.id).join('、')}）：UT 结构/材料坏时先修 UT 自身。`,
+      );
+    }
+    if (runFails.length === 0) {
+      return NOT_ALLOWED('无 UT 执行门禁 FAIL：不是已复现的真实断言失败形态。');
+    }
+    // 归因必须**每一条**都是 code_regression：混合环境/工具链失败不得冒充产品缺陷。
+    const kinds = runFails.map(c => classificationOf(c, input.parseClassificationFromDetails));
+    if (!kinds.every(k => k === 'code_regression')) {
+      return NOT_ALLOWED(
+        `UT 执行失败归因为 ${kinds.map(k => k ?? 'unknown').join('、')}：` +
+          '只有真实断言失败（code_regression）才进入测试语义诊断，环境/工具链失败先修环境。',
+      );
+    }
+    return {
+      allowed: true,
+      kind: 'repair_diagnosis',
+      reason:
+        'UT 编译通过、真实用例断言失败（code_regression）且无其它结构阻塞：' +
+        '放行 verifier 核对测试语义，产品执行 FAIL 保持不变。',
+      diagnosticCheckIds: runFails.map(c => c.id),
+    };
+  }
+
+  return NOT_ALLOWED(`phase=${input.phase} 无已复现的可诊断失败形态：保持原分流（先修 BLOCKER）。`);
+}
+
+// ---------------------------------------------------------------------------
 // 薄 I/O 装配（不做裁决，只把声明面取齐）
 // ---------------------------------------------------------------------------
 

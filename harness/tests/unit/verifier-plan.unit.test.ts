@@ -15,7 +15,9 @@
 
 import * as path from 'path';
 
-import { resolveVerifierPlan, workflowVerifierPrompt } from '../../scripts/utils/verifier-plan';
+import { canProduceVerifierRequest, resolveVerifierPlan, workflowVerifierPrompt } from '../../scripts/utils/verifier-plan';
+// D1 归因回退用**生产实现**（runner 唯一的"失败归因：xxx"解析器），不在测试里复刻正则。
+import { extractFailureClassification as parseFailureClassificationFromDetails } from '../../harness-runner';
 import { resolveVerifierSubagentDeclared } from '../../scripts/utils/adapter-catalog';
 import { resolveEvidencePolicy, type RuntimeContext, type RuntimeMode } from '../../scripts/utils/runtime-policy';
 import { loadWorkflowSpec } from '../../workflow-loader';
@@ -238,6 +240,158 @@ function case6_reviewerDeclarationIsTheOnlyTruth(): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// ⑦ D1（plan 3a7f9c12）：request 生产资格——脚本非 PASS 时的窄放行
+// ---------------------------------------------------------------------------
+
+type EligibilityCheck = { id: string; status: string; severity?: string; failure_kind?: string; details?: string };
+
+const BLOCKER_FAIL = (id: string, extra: Partial<EligibilityCheck> = {}): EligibilityCheck =>
+  ({ id, status: 'FAIL', severity: 'BLOCKER', ...extra });
+const BLOCKER_PASS = (id: string): EligibilityCheck => ({ id, status: 'PASS', severity: 'BLOCKER' });
+
+function eligibility(over: Partial<Parameters<typeof canProduceVerifierRequest>[0]>) {
+  return canProduceVerifierRequest({
+    planMode: 'enabled',
+    phase: 'review',
+    scriptVerdict: 'FAIL',
+    checks: [],
+    reportValidity: 'PASS',
+    hasBlockedCapability: false,
+    // 归因回退用**生产实现**（runner 的 extractFailureClassification），不复刻正则。
+    parseClassificationFromDetails: parseFailureClassificationFromDetails,
+    ...over,
+  });
+}
+
+function case7_d1RequestEligibility(): void {
+  // 前提：disabled 与脚本 PASS 两条既有路径的资格不因本 plan 改变（V6 无回归）。
+  assert(!eligibility({ planMode: 'disabled', scriptVerdict: 'PASS' }).allowed, 'disabled 恒不生产');
+  const normal = eligibility({ scriptVerdict: 'PASS', checks: [BLOCKER_PASS('demo')] });
+  assert(normal.allowed && normal.kind === 'normal', `enabled ∧ PASS 走原成功路径，实得 ${JSON.stringify(normal)}`);
+
+  // review 两类负面裁决：单独或并存都放行，且 kind=repair_diagnosis、列出放行的 check。
+  for (const ids of [
+    ['negative_verdict_closure'],
+    ['conditional_pass_closure'],
+    ['negative_verdict_closure', 'conditional_pass_closure'],
+  ]) {
+    const got = eligibility({ checks: ids.map(id => BLOCKER_FAIL(id)) });
+    assert(got.allowed && got.kind === 'repair_diagnosis', `${ids.join('+')} 应放行诊断，实得 ${JSON.stringify(got)}`);
+    assert(
+      ids.every(id => got.diagnosticCheckIds.includes(id)),
+      `放行的失败 check 必须逐条列出（进 ai-prompt 诊断说明）：${JSON.stringify(got.diagnosticCheckIds)}`,
+    );
+  }
+
+  // V3 review 负例：混合其它 BLOCKER FAIL / BLOCKER SKIP / 报告工件坏 / capability blocked 一律不放行。
+  assert(
+    !eligibility({ checks: [BLOCKER_FAIL('negative_verdict_closure'), BLOCKER_FAIL('review_context_complete')] }).allowed,
+    '缺源码等其它 BLOCKER FAIL 在场时不得放行（先修材料）',
+  );
+  assert(
+    !eligibility({
+      checks: [BLOCKER_FAIL('negative_verdict_closure'), { id: 'coding_rules_present', status: 'SKIP', severity: 'BLOCKER' }],
+    }).allowed,
+    'BLOCKER SKIP 在场时不得放行（门禁没跑完）',
+  );
+  assert(
+    !eligibility({ checks: [BLOCKER_FAIL('negative_verdict_closure')], reportValidity: 'FAIL' }).allowed,
+    'report_validity=FAIL（坏表/坏格式）时不得放行',
+  );
+  assert(
+    !eligibility({ checks: [BLOCKER_FAIL('negative_verdict_closure')], hasBlockedCapability: true }).allowed,
+    'blocked capability 在场时不得放行（先补输入）',
+  );
+  assert(
+    !eligibility({ checks: [BLOCKER_FAIL('negative_verdict_closure')], scriptVerdict: 'INCOMPLETE' }).allowed,
+    'INCOMPLETE 不进诊断窄例外',
+  );
+
+  // UT：编译 PASS + 执行 FAIL 且归因 code_regression 才放行；legacy/canonical 两套 id 同判。
+  for (const [compileId, runId] of [
+    ['ut_hvigor_build', 'ut_hvigor_test'],
+    ['ut_compile', 'ut_run'],
+  ]) {
+    const got = eligibility({
+      phase: 'ut',
+      reportValidity: 'UNVERIFIED', // 纯 UT 可能未执行报告格式检查而合法为 UNVERIFIED
+      checks: [BLOCKER_PASS(compileId), BLOCKER_FAIL(runId, { failure_kind: 'code_regression' })],
+    });
+    assert(got.allowed && got.kind === 'repair_diagnosis', `${runId} code_regression 应放行，实得 ${JSON.stringify(got)}`);
+    assert(got.diagnosticCheckIds.includes(runId), `须列出 ${runId}`);
+  }
+  // 结构化字段缺失但 details 含真实旧「失败归因」原文 → 走生产回退解析器同样放行。
+  const viaDetails = eligibility({
+    phase: 'ut',
+    reportValidity: 'UNVERIFIED',
+    checks: [
+      BLOCKER_PASS('ut_hvigor_build'),
+      BLOCKER_FAIL('ut_hvigor_test', { details: 'hypium 结果：total=1, failed=1\n失败归因：code_regression' }),
+    ],
+  });
+  assert(viaDetails.allowed, `details 原文归因回退须等价放行：${JSON.stringify(viaDetails)}`);
+  // 结构化归因优先于文本：device_blocked 结构化在场时，details 里写 code_regression 也不采信。
+  const structuredWins = eligibility({
+    phase: 'ut',
+    reportValidity: 'UNVERIFIED',
+    checks: [
+      BLOCKER_PASS('ut_hvigor_build'),
+      BLOCKER_FAIL('ut_hvigor_test', { failure_kind: 'device_blocked', details: '失败归因：code_regression' }),
+    ],
+  });
+  assert(!structuredWins.allowed, `结构化环境归因必须压过文本，实得 ${JSON.stringify(structuredWins)}`);
+
+  // V3 UT 负例：编译失败 / 归因非 code_regression / 结构坏 / report_validity=FAIL 一律不放行。
+  assert(
+    !eligibility({
+      phase: 'ut', reportValidity: 'UNVERIFIED',
+      checks: [BLOCKER_FAIL('ut_hvigor_build'), BLOCKER_FAIL('ut_hvigor_test', { failure_kind: 'code_regression' })],
+    }).allowed,
+    '编译 FAIL 时先修编译',
+  );
+  assert(
+    !eligibility({
+      phase: 'ut', reportValidity: 'UNVERIFIED',
+      checks: [BLOCKER_PASS('ut_hvigor_build'), BLOCKER_FAIL('ut_hvigor_test', { failure_kind: 'device_toolchain' })],
+    }).allowed,
+    '工具链/设备归因不得进入测试语义诊断',
+  );
+  assert(
+    !eligibility({
+      phase: 'ut', reportValidity: 'UNVERIFIED',
+      checks: [BLOCKER_PASS('ut_hvigor_build'), BLOCKER_FAIL('ut_hvigor_test')],
+    }).allowed,
+    '无归因（unknown）不得冒充产品缺陷',
+  );
+  assert(
+    !eligibility({
+      phase: 'ut', reportValidity: 'UNVERIFIED',
+      checks: [
+        BLOCKER_PASS('ut_hvigor_build'),
+        BLOCKER_FAIL('ut_hvigor_test', { failure_kind: 'code_regression' }),
+        BLOCKER_FAIL('test_registration'),
+      ],
+    }).allowed,
+    'UT 结构门禁坏时先修 UT 自身',
+  );
+  assert(
+    !eligibility({
+      phase: 'ut', reportValidity: 'FAIL',
+      checks: [BLOCKER_PASS('ut_hvigor_build'), BLOCKER_FAIL('ut_hvigor_test', { failure_kind: 'code_regression' })],
+    }).allowed,
+    'ut report_validity=FAIL 时先修报告工件',
+  );
+
+  // 其它 phase 没有已复现的可诊断形态——不得顺带开口子。
+  for (const phase of ['spec', 'plan', 'coding', 'testing']) {
+    assert(
+      !eligibility({ phase, checks: [BLOCKER_FAIL('negative_verdict_closure')] }).allowed,
+      `${phase} 不得因 review/ut 的窄例外被顺带放行`,
+    );
+  }
+}
+
 const CASES: Array<{ name: string; fn: () => void }> = [
   { name: '① lite（interactive/goal/headless × change/coding/exit）恒 disabled，零 verifier 产物', fn: case1_liteIsAlwaysDisabled },
   { name: '② workflow 未声明 verifier_prompt = 不适用，不得 fallback 造模板', fn: case2_workflowSilenceMeansNotApplicable },
@@ -245,6 +399,7 @@ const CASES: Array<{ name: string; fn: () => void }> = [
   { name: '④ 三模式同判；adapter 无审查员 → disabled/adapter_has_no_reviewer', fn: case4_modeAgnosticAndReviewerDisclosure },
   { name: '⑤ profile 禁用 phase 优先于 policy 与 adapter 能力', fn: case5_profileDisabledWins },
   { name: '⑥ verifier_subagent 布尔真源：磁盘声明说了算，codex 与 claude 同判', fn: case6_reviewerDeclarationIsTheOnlyTruth },
+  { name: '⑦ D1 request 生产资格：review 负面/UT code_regression 窄放行；材料与环境失败一律不放行', fn: case7_d1RequestEligibility },
 ];
 
 export async function runAll(): Promise<UnitCaseResult[]> {

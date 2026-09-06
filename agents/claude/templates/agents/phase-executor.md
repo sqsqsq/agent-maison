@@ -24,7 +24,9 @@ description: 单阶段执行者。Claude 原生 /goal 路径下由薄 driver 主
 3. 自跑 harness：`cd framework/harness && npx ts-node harness-runner.ts --phase <phase> --feature <feature>`。
    看输出末尾的 `NEXT:` 行照做，直到脚本 PASS——**一轮处理全部已知阻断再重跑**（NEXT 会列出本轮全部 blocker），不要修一个跑一次；
    判词与改法以 harness 输出和 `script-report.json` 的 `details/suggestion` 为准，**不读 framework TS 源码反推门禁**。
-4. harness 输出 verifier request 时：把 `verifier.request.<subject>.json` **整段**作为 Task prompt 投给
+   **例外**：`next_action=run_verifier_for_repair` 表示本轮产品 FAIL 但失败可诊断（review 负面裁决 / UT 真实断言失败），
+   harness 已在脚本 FAIL 下签发了 request——先做第 4 步拿逐条结论，**不要先去改产品**。
+4. harness 输出 verifier request 时（脚本 PASS，或上面那条诊断例外）：把 `verifier.request.<subject>.json` **整段**作为 Task prompt 投给
    `subagent_type: verifier`，**同步等待**其返回，然后用 Write 把它的回复**原样全文**写入
    `summary.verifier_report` 指向的路径（不摘要、不只贴终态块——正文里的发现是 repair candidates
    与多模态审查的输入；写报告的是你，不是 verifier）；等待期间只做与其结果无关的工作，**不得修改它正在审的材料**；
@@ -32,6 +34,10 @@ description: 单阶段执行者。Claude 原生 /goal 路径下由薄 driver 主
 5. 收口：`npx ts-node scripts/check-receipt.ts --feature <feature> --phase <phase>`（回执由 harness 投影生成，不手填）；exit 0 = 闭环。
 6. 回传：只回 `summary.json` 路径、`closure_status`、verifier 终态块、未解决的 blocker / gap 列表。
    不回传报告全文，不复述 harness 输出。
+   **产品失败诊断轮（第 3 步的例外）**：写完 verifier 报告即回传当前 FAIL 与 summary / 报告路径，本轮到此结束——
+   **不要求**回修候选已生成，也**不要求** phase 已 closed（产品没修好本来就闭不了环）。goal 编排下由外层 runner
+   重跑 gate harness 并重算候选，你**不要**为了拿候选再自跑一次 harness（NEXT 行会明说是哪一种）；
+   非 goal 才由你自己重跑一次本阶段 harness。不得因为"还没 closed"就向 bridge 回报 `passed`。
 
 ## 硬性规则
 
