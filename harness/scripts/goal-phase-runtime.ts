@@ -821,7 +821,16 @@ export function buildCurrentAttemptFailureProjection(input: {
   blockerSignature: string;
   failureKindForEvent?: FailureKind;
 } {
-  const hasEvidence = input.decisionSummary !== null || input.hasRuntimeFailureEvidence;
+  // plan 2f8a6d40 D1：**有 summary ≠ 有失败**。收紧前 `decisionSummary !== null` 单独成立，
+  // 于是 `PASS + blockers:[] + advance_blocked=closure_open + retry` 这一支（宿主 run
+  // 20260905T103028Z-79d3fd 第 85 行）被 catch-all 打上 code_regression——closure 未闭环
+  // 是工作流状态，与产品代码无关。现在 summary 只有**自己表达了失败**（verdict 非 PASS，
+  // 或 blockers 非空）才算失败事实；`hasRuntimeFailureEvidence`（超时/agent 失败/非零退出/
+  // closure 定稿错误/可信缺陷等）逐字不动，仍单独充分。
+  const summaryStatesFailure =
+    input.decisionSummary !== null &&
+    (input.decisionSummary.verdict !== 'PASS' || (input.decisionSummary.blockers ?? []).length > 0);
+  const hasEvidence = summaryStatesFailure || input.hasRuntimeFailureEvidence;
   return {
     hasEvidence,
     blockingMeta: extractBlockingMeta(input.decisionSummary),

@@ -11,6 +11,8 @@ import {
   filterSignatureBlockers,
   resolveBlockerActionability,
   isSpecCaptureGapBlockerId,
+  CUMULATIVE_HALT_FAMILY,
+  EXTERNAL_RETRY_RESPONSIBILITY_KINDS,
   SIGNATURE_HALT_KINDS,
   type GoalSummaryLike,
 } from '../../scripts/utils/goal-failure-classifier';
@@ -131,6 +133,33 @@ const cases: Array<{ name: string; run: () => void }> = [
       // ocr_unavailable 被 toolchain 先行吸收
       const toolKind = classifyFailureKind(S([{ id: 'capture_completeness_external_ocr_unavailable' }]));
       if (toolKind !== 'toolchain') throw new Error(`ocr_unavailable kind=${toolKind}`);
+    },
+  },
+  {
+    // plan 2f8a6d40 V4：D2 的纯函数护栏。端到端由 V3（goal-runner-testing-integrity 的
+    // 真实 gate → 真实 writer → 真实 classifier）承担；这里只锁归类落位与"三个集合零改动"。
+    name: 'B04-V4 classify: ui_spec_fidelity_gate → spec_capture_gap（不入三个 halt 集合、actionability 不变）',
+    run: () => {
+      const kind = classifyFailureKind(S([{ id: 'ui_spec_fidelity_gate' }]));
+      if (kind !== 'spec_capture_gap') throw new Error(`kind=${kind}——缺证类失败不得落 code_regression`);
+      if (!isSpecCaptureGapBlockerId('ui_spec_fidelity_gate')) throw new Error('精确 id 落位失败');
+      for (const [name, set] of [
+        ['SIGNATURE_HALT_KINDS', SIGNATURE_HALT_KINDS],
+        ['CUMULATIVE_HALT_FAMILY', CUMULATIVE_HALT_FAMILY],
+        ['EXTERNAL_RETRY_RESPONSIBILITY_KINDS', EXTERNAL_RETRY_RESPONSIBILITY_KINDS],
+      ] as const) {
+        if (set.has('spec_capture_gap' as never)) throw new Error(`spec_capture_gap 不得入 ${name}`);
+      }
+      // 该 blocker 仍是 agent 可修（本批不给它加 actionability 注册项 → 不新建求人路径）
+      const act = resolveBlockerActionability({ id: 'ui_spec_fidelity_gate' });
+      if (act !== 'agent_fixable') throw new Error(`actionability=${act}——不得因归因改动而变`);
+      // 既有归类不受影响
+      if (classifyFailureKind(S([{ id: 'capture_completeness_external' }])) !== 'spec_capture_gap') {
+        throw new Error('capture_completeness_external 既有归类被改坏');
+      }
+      if (classifyFailureKind(S([{ id: 'some_unrelated_gate' }])) !== 'code_regression') {
+        throw new Error('catch-all 被误扩大');
+      }
     },
   },
   {
