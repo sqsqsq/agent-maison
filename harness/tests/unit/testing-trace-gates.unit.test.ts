@@ -23,9 +23,9 @@ import type { UseCasesSpec } from '../../scripts/utils/types';
 
 import type { UnitCaseResult } from '../run-unit';
 
-const CASES: Array<{ name: string; run: () => void }> = [];
+const CASES: Array<{ name: string; run: () => void | Promise<void> }> = [];
 
-function test(name: string, run: () => void): void {
+function test(name: string, run: () => void | Promise<void>): void {
   CASES.push({ name, run });
 }
 
@@ -77,7 +77,9 @@ function makeReportOnlyFixture(): ReportOnlyFixture {
   fs.mkdirSync(runDir, { recursive: true });
   fs.mkdirSync(featureDir, { recursive: true });
 
-  const t0 = Date.now();
+  // plan 5e1c7a93 D3：派生统计可被 trace+meta 重建，重建产物的 generated_at 是**当下**。
+  // 夹具时间必须落在过去（生产里 run_ended_at 恒在过去），否则重建反而制造时序倒挂。
+  const t0 = Date.now() - 60_000;
   const buildAt = new Date(t0).toISOString();
   const installAt = new Date(t0 + 1000).toISOString();
   const runStartedAt = new Date(t0 + 2000).toISOString();
@@ -283,7 +285,10 @@ test('parseReportExecutionRows: report duration uses integer Nms and reads comma
   assert.ok(!recon.ok && recon.mismatches.some(m => m.includes('TC-001')));
 });
 
-test('trace pass+skip: timing keeps skip as 0/0 and report reconciliation passes with 0ms', () => {
+// plan 5e1c7a93 D3：legacy `0.3-p0` 的 cost 分配分支里，日志没有对应 cost 行的 case =
+// **没量到**（duration_ms=null），报告格写 `—`；这与 v1 分支 `steps=[]` 求和得 0 的
+// **正确的 0** 是两回事（v1 分支一行不改，见下一个用例）。
+test('trace pass+skip: legacy 无 cost 行的 skip case 记 null（不是 0ms），报告 — 占位对账通过', () => {
   const timingCases = parseCaseDurationsFromLogAndTrace(
     'uidriver.touch cost: 1.234s\n',
     {
@@ -293,7 +298,7 @@ test('trace pass+skip: timing keeps skip as 0/0 and report reconciliation passes
   );
   assert.deepStrictEqual(timingCases, [
     { id: 'TC-001', duration_ms: 1234, step_count: 1 },
-    { id: 'TC-002', duration_ms: 0, step_count: 0 },
+    { id: 'TC-002', duration_ms: null, step_count: 0 },
   ]);
   const timing: import('../../../profiles/hmos-app/harness/device-test-timings').DeviceTestTimingDocument = {
     schema_version: '1.0', feature: 'demo', generated_at: '2026-08-30T01:00:04.000Z',
@@ -314,7 +319,7 @@ test('trace pass+skip: timing keeps skip as 0/0 and report reconciliation passes
     '| 元数据 | 值 |', '| --- | --- |', '| HAP 落盘时间 (hapBuiltAt) | — |', '',
     '## 二、测试执行结果', '',
     '| 用例编号 | 执行状态 | 耗时 |', '| --- | --- | --- |',
-    '| TC-001 | 通过 | 1234ms |', '| TC-002 | 跳过 | 0ms |',
+    '| TC-001 | 通过 | 1234ms |', '| TC-002 | 跳过 | — |',
   ].join('\n');
   const recon = reconcileReportWithDeviceTestTiming(report, { timing });
   assert.deepStrictEqual(recon, { ok: true, mismatches: [] });
@@ -546,9 +551,13 @@ test('report-reconcile-only: 只读最终 trace/timing/meta 并完整通过输�
   }
 });
 
-test('report-reconcile-only: 拒绝跨轮时间/复用/feature/case/duration 错配', () => {
+// plan 5e1c7a93 D3：这张表现在同时钉住**分桶**——动摇「哪个包/哪台设备/哪次 run/哪些 case
+// 真跑过」的仍是 hard（BLOCKER FAIL）；只是 timing/报告这层派生投影陈旧的走 soft：先由
+// trace+meta 重建，重建后闭合即 PASS，且绝不出现在 hard 桶里（那正是本批要消除的
+// 「一行陈旧统计逼一次真机重跑」）。
+test('report-reconcile-only: 执行事实错配仍 FAIL；派生投影陈旧走重建通道', () => {
   const fs = require('fs') as typeof import('fs');
-  const mutations: Array<{ name: string; apply: (fixture: ReportOnlyFixture) => void; expected: RegExp }> = [
+  const mutations: Array<{ name: string; apply: (fixture: ReportOnlyFixture) => void; expected: RegExp; derived?: true }> = [
     {
       name: 'build after install',
       apply: fixture => {
@@ -567,7 +576,9 @@ test('report-reconcile-only: 拒绝跨轮时间/复用/feature/case/duration 错
         value.pipeline.build_reused = true;
         fs.writeFileSync(p, JSON.stringify(value));
       },
+      // 源 meta 合法，陈旧的只是投影 → 重建即闭合
       expected: /timing\.pipeline\.build_reused/,
+      derived: true,
     },
     {
       name: 'timing contains an old case',
@@ -578,6 +589,7 @@ test('report-reconcile-only: 拒绝跨轮时间/复用/feature/case/duration 错
         fs.writeFileSync(p, JSON.stringify(value));
       },
       expected: /最终 timing 含 trace 不存在的旧 case：TC-999/,
+      derived: true,
     },
     {
       name: 'trace feature differs from current feature',
@@ -603,6 +615,7 @@ test('report-reconcile-only: 拒绝跨轮时间/复用/feature/case/duration 错
         assert.strictEqual(directRecon.ok, false, JSON.stringify(directRecon));
       },
       expected: /报告 case TC-001 耗时=252ms/,
+      derived: true,
     },
   ];
 
@@ -611,12 +624,273 @@ test('report-reconcile-only: 拒绝跨轮时间/复用/feature/case/duration 错
     try {
       mutation.apply(fixture);
       const result = __testing_checkReportReconcileOnlyPipeline(reportOnlyContext(fixture.root))[0]!;
-      assert.strictEqual(result.status, 'FAIL', `${mutation.name} should fail\n${result.details}`);
-      assert.match(result.details ?? '', mutation.expected, `${mutation.name}\n${result.details}`);
+      const details = result.details ?? '';
+      const hardBlock = details.split('派生统计 UNKNOWN')[0]!;
+      if (mutation.derived) {
+        assert.strictEqual(result.status, 'PASS', `${mutation.name} 属派生投影，重建后应闭合\n${details}`);
+        assert.ok(!mutation.expected.test(hardBlock), `${mutation.name} 不得留在 hard 桶\n${hardBlock}`);
+      } else {
+        assert.strictEqual(result.status, 'FAIL', `${mutation.name} should fail\n${details}`);
+        assert.match(hardBlock, mutation.expected, `${mutation.name}\n${details}`);
+      }
     } finally {
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }
   }
+});
+
+// ---------------------------------------------------------------------------
+// plan 5e1c7a93 D3 验收：V7⑤（UNKNOWN + WARN）/ V7b（原始协议缺口仍 hard）/ V9（性能类 AC）
+// ---------------------------------------------------------------------------
+
+/** 报告对账全程不得发生 hvigor/hdc/Hylyre/python 的进程调用（计数在 spawnSync 边界）。 */
+function withSpawnGuard<T>(fn: () => T): { value: T; spawned: string[] } {
+  const cp = require('child_process') as { spawnSync: (...a: unknown[]) => unknown };
+  const original = cp.spawnSync;
+  const spawned: string[] = [];
+  cp.spawnSync = function (file: unknown, args: unknown, ...rest: unknown[]): unknown {
+    const command = [String(file), ...(Array.isArray(args) ? args.map(String) : [])].join(' ');
+    if (/hvigor|hdc|hylyre|python/i.test(command)) {
+      spawned.push(command);
+      return { status: 0, signal: null, stdout: '', stderr: '', pid: 0, output: [] };
+    }
+    return (original as (...a: unknown[]) => unknown).call(cp, file, args, ...rest);
+  };
+  try {
+    return { value: fn(), spawned };
+  } finally {
+    cp.spawnSync = original;
+  }
+}
+
+// V7⑤：device-test-run.meta.json 缺 run_duration_ms —— UNKNOWN 的唯一可达现场之一
+// （pipeline 段耗时的源 meta 不在 trace 里，requireV1ForGate 管不到，重建也无从推导）。
+test('V7⑤ report-only: pipeline 段源 meta 缺 durationMs → WARN + derived_statistic_unavailable，全程零设备调用', () => {
+  const fs = require('fs') as typeof import('fs');
+  const path = require('path') as typeof import('path');
+  const fixture = makeReportOnlyFixture();
+  try {
+    const runMetaPath = path.join(fixture.reportsDir, 'device-test-run.meta.json');
+    const runMeta = JSON.parse(fs.readFileSync(runMetaPath, 'utf8')) as Record<string, unknown>;
+    delete runMeta.run_duration_ms;
+    fs.writeFileSync(runMetaPath, JSON.stringify(runMeta));
+
+    const { value: results, spawned } = withSpawnGuard(
+      () => __testing_checkReportReconcileOnlyPipeline(reportOnlyContext(fixture.root)),
+    );
+    const result = results[0]!;
+    assert.strictEqual(result.status, 'WARN', result.details);
+    assert.strictEqual(result.severity, 'BLOCKER', 'severity 保持 BLOCKER（BLOCKER 级 WARN 形态）');
+    assert.strictEqual(result.failure_kind, 'derived_statistic_unavailable', JSON.stringify(result));
+    assert.match(result.details ?? '', /UNKNOWN/, result.details);
+    assert.match(result.details ?? '', /不构成执行事实结论/, result.details);
+    assert.match(result.details ?? '', /run_duration_ms/, result.details);
+    assert.deepStrictEqual(spawned, [], `report-only 不得发生任何设备/工具进程调用：${spawned.join(' | ')}`);
+
+    // 报告耗时格必须是空值占位，不能是 UNKNOWN 字面量（parseDurationCell 只认 — - n/a na 不适用）
+    const reportMd = fs.readFileSync(
+      path.join(fixture.root, 'doc', 'features', 'demo', 'testing', 'test-report.md'),
+      'utf8',
+    );
+    assert.ok(!/\|\s*UNKNOWN\s*\|/.test(reportMd), 'UNKNOWN 不得写进被 parseDurationCell 读的格子');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+// V7b 反例守卫：v1 trace 的某个 step 删掉 duration_ms —— 这是**原始协议缺口**，
+// 必须由 requireV1ForGate 判 hard（BLOCKER FAIL），不得进 soft 桶、不得走 WARN 通道。
+test('V7b report-only: v1 step 缺 duration_ms 是原始协议缺口 → hard FAIL，不进派生桶', () => {
+  const fs = require('fs') as typeof import('fs');
+  const fixture = makeReportOnlyFixture();
+  try {
+    const trace = JSON.parse(fs.readFileSync(fixture.tracePath, 'utf8')) as {
+      cases?: Array<{ steps?: Array<Record<string, unknown>> }>;
+    };
+    const firstStep = trace.cases?.[0]?.steps?.[0];
+    assert.ok(firstStep && 'duration_ms' in firstStep, 'golden trace 应有 step.duration_ms');
+    delete firstStep!.duration_ms;
+    fs.writeFileSync(fixture.tracePath, JSON.stringify(trace));
+
+    const result = __testing_checkReportReconcileOnlyPipeline(reportOnlyContext(fixture.root))[0]!;
+    assert.strictEqual(result.status, 'FAIL', result.details);
+    assert.notStrictEqual(result.failure_kind, 'derived_statistic_unavailable', JSON.stringify(result));
+    const hardBlock = (result.details ?? '').split('派生统计 UNKNOWN')[0]!;
+    assert.match(hardBlock, /duration_ms|结果协议|schema/, hardBlock);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+// V9：性能类 AC 的耗时不得由重建路径提供。①识别到（performance[].id ∩「关联 AC」列的 NFR）
+// → 归 hard 桶 BLOCKER FAIL；②识别不到（列里没写 NFR）→ 按 soft 处理，不误伤成 FAIL。
+test('V9 report-only: 性能类 TC 的耗时缺口归 hard；识别不到时按 soft 不误伤', () => {
+  const fs = require('fs') as typeof import('fs');
+  const path = require('path') as typeof import('path');
+  const planRow = (acCell: string) => [
+    '## 测试用例', '',
+    '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC |',
+    '| --- | --- | --- | --- | --- | --- | --- |',
+    `| TC-001 | demo | app | tap | pass | P0 | ${acCell} |`,
+  ].join('\n');
+  const perfCtx = (root: string) => {
+    const ctx = reportOnlyContext(root) as unknown as Record<string, unknown>;
+    ctx.featureSpec = { acceptance: { performance: [{ id: 'NFR-1', metric: 'p95', target: '<800ms' }] } };
+    return ctx as unknown as import('../../scripts/utils/types').CheckContext;
+  };
+
+  for (const [acCell, expected] of [['AC-001, NFR-1', 'FAIL'], ['AC-001', 'PASS']] as const) {
+    const fixture = makeReportOnlyFixture();
+    try {
+      const featureDir = path.join(fixture.root, 'doc', 'features', 'demo', 'testing');
+      fs.writeFileSync(path.join(featureDir, 'test-plan.md'), planRow(acCell));
+      // 报告里 TC-001 的耗时与最终 timing 不符：非性能 TC 时由重建抹平，性能 TC 时必须留在 hard 桶
+      const reportPath = path.join(featureDir, 'test-report.md');
+      fs.writeFileSync(reportPath, fs.readFileSync(reportPath, 'utf8').replace('250ms', '252ms'));
+
+      const result = __testing_checkReportReconcileOnlyPipeline(perfCtx(fixture.root))[0]!;
+      assert.strictEqual(result.status, expected, `关联 AC=${acCell}\n${result.details}`);
+      if (expected === 'FAIL') {
+        const hardBlock = (result.details ?? '').split('派生统计 UNKNOWN')[0]!;
+        assert.match(hardBlock, /TC-001/, hardBlock);
+        assert.match(hardBlock, /性能类 AC：耗时必须真实量测/, hardBlock);
+      }
+    } finally {
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  }
+});
+
+// V9 生产入口版（codex review 第 1 轮 #2）：完整 checker 在进入对账之前就用
+// regenerateTestReport 从 trace 整份重写了报告正文（check-testing.ts:5844），只看重写后的
+// 正文时 252ms↔250ms 这条性能缺口凭空消失。这一例跑**完整 checker**，钉住性能缺口在
+// **首次重建之前**被识别并留在 hard 桶。
+test('V9 完整 checker：性能类 TC 的耗时缺口在首次重建前被扣下（识别不到时仍不误伤）', async () => {
+  const fs = require('fs') as typeof import('fs');
+  const path = require('path') as typeof import('path');
+  const checker = require('../../scripts/check-testing').default as {
+    check: (ctx: import('../../scripts/utils/types').CheckContext) => Promise<Array<import('../../scripts/utils/types').CheckResult>>;
+  };
+  const planRow = (acCell: string) => [
+    '## 测试用例', '',
+    '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC |',
+    '| --- | --- | --- | --- | --- | --- | --- |',
+    `| TC-001 | demo | app | tap | pass | P0 | ${acCell} |`,
+  ].join('\n');
+
+  for (const [acCell, expected] of [['AC-001, NFR-1', 'FAIL'], ['AC-001', 'PASS']] as const) {
+    const fixture = makeReportOnlyFixture();
+    try {
+      const featureDir = path.join(fixture.root, 'doc', 'features', 'demo', 'testing');
+      fs.writeFileSync(path.join(featureDir, 'test-plan.md'), planRow(acCell));
+      // timing 先对齐 trace 的可重建值（0ms）——这样重建后一切闭合，唯一残留的缺口就是
+      // **重写前**那份报告与 timing 的差；否则重建本身制造的瞬时差会掩盖本例要问的问题。
+      const timing = JSON.parse(fs.readFileSync(fixture.timingPath, 'utf8')) as {
+        cases: Array<{ duration_ms: number | null }>;
+      };
+      timing.cases[0]!.duration_ms = 0;
+      fs.writeFileSync(fixture.timingPath, JSON.stringify(timing));
+      const reportPath = path.join(featureDir, 'test-report.md');
+      fs.writeFileSync(reportPath, fs.readFileSync(reportPath, 'utf8').replace('250ms', '252ms'));
+
+      const ctx = reportOnlyContext(fixture.root) as unknown as Record<string, unknown>;
+      ctx.reportReconcileOnly = true;
+      ctx.featureSpec = { acceptance: { performance: [{ id: 'NFR-1', metric: 'p95', target: '<800ms' }] } };
+      const { value: results, spawned } = withSpawnGuard(
+        () => checker.check(ctx as unknown as import('../../scripts/utils/types').CheckContext),
+      );
+      const all = await results;
+      // 前置：生产入口确实先重写过报告——否则这一例证不了"重建前扣下"
+      const generated = all.find(r => r.id === 'test_report_generated');
+      assert.strictEqual(
+        generated?.status, 'PASS',
+        `完整 checker 必须先整份重写报告：${JSON.stringify(generated)}`,
+      );
+      assert.ok(
+        !fs.readFileSync(reportPath, 'utf8').includes('252ms'),
+        '重写后盘上正文里的 252ms 应已被 trace 的真实耗时抹平（缺口只存在于重写前那一份）',
+      );
+      const reconcile = all.find(r => r.id === 'report_reconcile_only');
+      assert.ok(reconcile, `完整 checker 必须产出 report_reconcile_only：${all.map(r => r.id).join(',')}`);
+      assert.strictEqual(reconcile!.status, expected, `关联 AC=${acCell}\n${reconcile!.details}`);
+      if (expected === 'FAIL') {
+        const hardBlock = (reconcile!.details ?? '').split('派生统计 UNKNOWN')[0]!;
+        assert.match(hardBlock, /TC-001/, hardBlock);
+        assert.match(hardBlock, /性能类 AC：耗时必须真实量测/, hardBlock);
+      }
+      assert.deepStrictEqual(spawned, [], `report-only 完整 checker 不得发生设备/工具进程调用：${spawned.join(' | ')}`);
+    } finally {
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  }
+});
+
+// V8（codex review 第 1 轮 #4）：复用轮**只回填一次**冻结件——重建后的完整 timing 不得
+// 被不完整的旧冻结副本盖回去；最终报告读取的必须是重建结果。
+test('V8 复用回填：重建后的 timing 不被旧冻结件覆盖，报告读到的是重建结果', () => {
+  const fs = require('fs') as typeof import('fs');
+  const path = require('path') as typeof import('path');
+  const { __testing_adoptFrozenRunArtifactsForReuse } = require('../../scripts/check-testing') as {
+    __testing_adoptFrozenRunArtifactsForReuse: (
+      ctx: import('../../scripts/utils/types').CheckContext,
+      reusable: { runDir: string; dirStamp: string; record: Record<string, unknown> },
+      rebuildRequired: boolean,
+    ) => boolean;
+  };
+  const fixture = makeReportOnlyFixture();
+  try {
+    const runDir = path.join(fixture.reportsDir, '20260830T010000Z-001', 'hylyre');
+    // 执行事实组冻结件完整；派生组（timing）是**缺一条 case** 的陈旧投影
+    fs.copyFileSync(
+      path.join(fixture.reportsDir, 'device-test-run.meta.json'),
+      path.join(runDir, 'frozen.device-test-run.meta.json'),
+    );
+    const stale = JSON.parse(fs.readFileSync(fixture.timingPath, 'utf8')) as { cases: unknown[] };
+    stale.cases = [];
+    fs.writeFileSync(path.join(runDir, 'frozen.device-test-timing.json'), JSON.stringify(stale));
+    fs.writeFileSync(fixture.timingPath, JSON.stringify(stale));
+
+    const ok = __testing_adoptFrozenRunArtifactsForReuse(
+      reportOnlyContext(fixture.root),
+      {
+        runDir,
+        dirStamp: '20260830T010000Z-001',
+        record: {
+          trace_path: fixture.tracePath,
+          timing_complete: false,
+          frozen_files: ['frozen.device-test-timing.json', 'frozen.device-test-run.meta.json'],
+        },
+      },
+      true,
+    );
+    assert.strictEqual(ok, true, '执行事实齐备 + trace 完整 → 重建应成功');
+    const finalTiming = JSON.parse(fs.readFileSync(fixture.timingPath, 'utf8')) as {
+      cases: Array<{ id: string; duration_ms: number | null }>;
+    };
+    assert.deepStrictEqual(
+      finalTiming.cases.map(c => c.id),
+      ['TC-001'],
+      '最终盘上的 timing 必须是重建结果，不得被旧冻结副本覆盖回去',
+    );
+    // 报告消费者读到的就是这一份：完整 timing → 对账闭合
+    const result = __testing_checkReportReconcileOnlyPipeline(reportOnlyContext(fixture.root))[0]!;
+    assert.strictEqual(result.status, 'PASS', result.details);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+// 接线锁：复用路径全仓只允许**一处** restoreFrozenRunArtifacts 调用（就在上面那个 helper 里）。
+// 再加一处就会把重建结果覆盖回去——这正是 codex #4 报的缺陷形态。
+test('接线：check-testing 的复用路径只回填一次冻结件', () => {
+  const fs = require('fs') as typeof import('fs');
+  const path = require('path') as typeof import('path');
+  const src = fs.readFileSync(
+    path.resolve(__dirname, '../../scripts/check-testing.ts'),
+    'utf-8',
+  );
+  const calls = src.match(/restoreFrozenRunArtifacts\(/g) ?? [];
+  assert.strictEqual(calls.length, 1, `复用路径只允许一处回填调用，实际 ${calls.length} 处`);
 });
 
 // plan b3d7e5a1 T2（codex P1）：registry 未登记的 provider id 只是声明 BLOCKER；report-only 的派生/trace/timing
@@ -645,7 +919,10 @@ test('report-reconcile-only: hylyre + 未登记 provider 通道 → 仍按 hylyr
   }
 });
 
-test('report-reconcile-only: 缺最终 timing 时 fail-closed，不降级为局部重算', () => {
+// plan 5e1c7a93 D3：timing 文件缺失属**派生统计**缺口（可由 trace+meta 重建），
+// 不再单独把一轮真实完整的 run 判成执行事实缺口。这里锁的是：仍然 FAIL，但 FAIL 的
+// 理由必须是**执行事实/协议**缺口，timing 那条不得再出现在 hard 桶里。
+test('report-reconcile-only: 缺最终 timing 走重建通道；FAIL 仍由执行事实/协议缺口驱动', () => {
   const fs = require('fs') as typeof import('fs');
   const os = require('os') as typeof import('os');
   const path = require('path') as typeof import('path');
@@ -668,7 +945,9 @@ test('report-reconcile-only: 缺最终 timing 时 fail-closed，不降级为局�
     resolvedProfile: { capabilities: {} },
   } as unknown as import('../../scripts/utils/types').CheckContext)[0];
   assert.strictEqual(result.status, 'FAIL', result.details);
-  assert.match(result.details, /device-test-timing\.json/);
+  assert.match(result.details, /结果协议无法消费/, result.details);
+  const hardBlock = result.details!.split('派生统计 UNKNOWN')[0]!;
+  assert.ok(!/缺失或无效的最终 device-test-timing\.json/.test(hardBlock), hardBlock);
   fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -843,11 +1122,11 @@ test('report-reconcile-only: native trace 必须绑定同一 derived plan/trace 
   }
 });
 
-export function runAll(): UnitCaseResult[] {
+export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
   for (const c of CASES) {
     try {
-      c.run();
+      await c.run();
       results.push({ name: c.name, ok: true });
     } catch (e) {
       results.push({ name: c.name, ok: false, error: (e as Error).message });
