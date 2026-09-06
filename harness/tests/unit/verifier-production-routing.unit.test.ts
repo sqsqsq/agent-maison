@@ -19,7 +19,20 @@ import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 
-import { buildPassGuidanceLines, writeRunSummaryBase } from '../../harness-runner';
+import {
+  buildNextLine,
+  buildPassGuidanceLines,
+  outerGoalHarnessWillRerun,
+  writeRunSummaryBase,
+} from '../../harness-runner';
+import { featureDir } from '../../config';
+import {
+  casAcquireRunOwner,
+  ensureRunControl,
+  markExpiredSessionOrphaned,
+  quiesceRunOwner,
+  releaseRunOwner,
+} from '../../scripts/utils/goal-run-control';
 import { assembleAIPrompt } from '../../scripts/utils/report-generator';
 import {
   buildVerifierRequest,
@@ -516,6 +529,42 @@ function caseD_stopHookFirstActionRouting(): void {
   } finally {
     rmDir(failRoot);
   }
+
+  // ③ D2（codex 一轮 medium）：诊断轮（脚本 FAIL + next_action=run_verifier_for_repair）
+  //    首要动作是投 verifier；收尾**不得**是 sync-closure（base summary 仍 FAIL、
+  //    候选未重算，finalizer 必拒），必须给出非 goal 重跑本阶段 harness 的出口。
+  const diagRoot = makeStopHookProject({ verdict: 'FAIL', nextAction: 'run_verifier_for_repair' });
+  try {
+    const r = spawnSync('node', [STOP_HOOK], {
+      input: JSON.stringify({ session_id: 's1', cwd: diagRoot, hook_event_name: 'Stop', stop_hook_active: false }),
+      env: { ...process.env, CLAUDE_PROJECT_DIR: diagRoot },
+      encoding: 'utf-8',
+      timeout: 15_000,
+    });
+    const out = `${r.stdout ?? ''}\n${r.stderr ?? ''}`;
+    const firstAction = out.split('\n').find((l) => l.trim().startsWith('→'));
+    assert(Boolean(firstAction), `应有首要动作行：\n${out}`);
+    assert(
+      (firstAction as string).includes('subagent_type=verifier'),
+      `诊断轮首要动作应为投 verifier，实得：${firstAction}`,
+    );
+    assert(
+      !(firstAction as string).includes('--sync-closure'),
+      `诊断轮首要动作不得是 sync-closure：${firstAction}`,
+    );
+    assert(
+      /不要跑\s*sync-closure/.test(out),
+      `诊断轮必须显式排除 sync-closure（finalizer 拒 FAIL）：\n${out}`,
+    );
+    assert(
+      out.includes('非 goal') && /harness-runner\.ts\s*\\?\s*\n?\s*--phase review/.test(out.replace(/\s+/g, ' ')),
+      `诊断轮须给非 goal 的"重跑本阶段 harness 重算候选"出口：\n${out}`,
+    );
+    assert(out.includes('交回') || out.includes('由外层 runner'), `诊断轮须区分正式 goal 编排的交回路径：\n${out}`);
+    assert(out.includes('owner'), `诊断轮须指向"按 NEXT 找 owner 回修"：\n${out}`);
+  } finally {
+    rmDir(diagRoot);
+  }
 }
 
 // --------------------------------------------------------------------------
@@ -779,6 +828,493 @@ function caseF_consoleGuidanceFollowsNextAction(): void {
   assert(noReviewer.includes('--sync-closure'), '无审查员时同样直奔闭环，不阻断');
 }
 
+// --------------------------------------------------------------------------
+// G/H. D1 窄放行的生产接线（plan 3a7f9c12）
+// --------------------------------------------------------------------------
+// 全程驱动**生产实现**：Step 4 的装配器 assembleAIPrompt、writer writeRunSummaryBase、
+// 解析器 parseVerifierCheckStatus、候选组装 buildSummaryRepairCandidates、NEXT 行
+// buildNextLine。测试里不手搓 summary、不手造 classification、不用源码正则冒充接线。
+
+/** report_validity=PASS 需要一条已执行的报告工件检查（deriveReportValidity 的输入面）。 */
+const REPORT_VALIDITY_OK: CheckResult = {
+  id: 'conclusion_with_verdict',
+  category: 'structure',
+  description: '结论声明行存在且与统计一致',
+  severity: 'BLOCKER',
+  status: 'PASS',
+  details: '结论：不通过；BLOCKER=0 MAJOR=2',
+};
+
+/** check-review.checkNegativeVerdictClosure 的真实产出形状（结论=不通过 → 产品裁决传播）。 */
+const NEGATIVE_VERDICT_CLOSURE_FAIL: CheckResult = {
+  id: 'negative_verdict_closure',
+  category: 'structure',
+  description: '负面产品裁决闭环门禁（结论=不通过 → 阻断 phase 闭环，修复重跑后方可推进）',
+  severity: 'BLOCKER',
+  status: 'FAIL',
+  details: '审查结论=「不通过」——产品负面裁决不得闭环推进。报告本身合法≠产品通过。',
+  suggestion: '修复问题清单中的问题后重跑 coding→review；verifier 的 PASS 只证明报告可信，不构成产品通过。',
+  failure_kind: 'negative_review_verdict',
+  blocking_class: 'product_verdict',
+};
+
+/** review 报告：结论=不通过 + 一条未关闭 BLOCKER（问题清单表与生产解析器同形）。 */
+const REVIEW_REPORT_NEGATIVE = [
+  '# Review 报告', '',
+  '## 问题清单', '',
+  '| ID | 严重程度 | 分类 | 涉及文件 | 修复建议 | 状态 |',
+  '|---|---|---|---|---|---|',
+  '| CR-001 | BLOCKER | 逻辑错误 | `02-Feature/F/src/main/ets/OpenCardFlow.ets` | 消费 upsertCard 的 duplicated 字段并提示 | 未关闭 |',
+  '', '## 结论', '', '结论：不通过', '',
+].join('\n');
+
+/** verifier 报告：正式汇总表 + issue-verification 逐条 confirmed（终态 PASS/0，D3 口径）。 */
+const REVIEW_VERIFIER_REPORT = [
+  '# Verifier Report', '',
+  '| id | status | severity | 证据 |',
+  '|---|---|---|---|',
+  '| issue_accuracy | PASS | BLOCKER | 逐条打开源码核对，CR-001 属实 |',
+  '| blocker_threshold | PASS | BLOCKER | 结论与统计一致 |',
+  '',
+  '```issue-verification',
+  '- issue: CR-001',
+  '  verdict: confirmed',
+  '  evidence: OpenCardFlow.ets | 消费 upsertCard 的 duplicated 字段并提示',
+  '```',
+  '',
+].join('\n');
+
+function caseG_reviewNegativeVerdictProducesDiagnosisRequest(): void {
+  const plan = {
+    mode: 'enabled' as const,
+    reason: 'policy_required' as const,
+    verifier_prompt: 'prompts/verify-review.md',
+    message: 'test',
+  };
+  const { root } = makeVerifierProject();
+  try {
+    const dir = reportsDirOf(root, 'demo', 'review');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'ai-prompt.md'), '# review prompt v1\n', 'utf-8');
+    const report = scriptReportOf('demo', 'review', root, [REPORT_VALIDITY_OK, NEGATIVE_VERDICT_CLOSURE_FAIL]);
+    assert(report.summary.verdict === 'FAIL', '构造性前提：负面裁决 BLOCKER FAIL 必须把脚本 verdict 打成 FAIL');
+
+    // ① 脚本 FAIL 仍签发 request（V1 的起点）——旧实现在这里恒零产物，回修链就此断掉。
+    const s1 = writeRunSummaryBase(root, report, FRAMEWORK_ROOT, { verifierPlan: plan });
+    assert(Boolean(s1.verifier_subject_id), 'review 负面裁决须签发 subject（D1 窄放行）');
+    assert(
+      fs.existsSync(path.join(root, s1.verifier_request as string)),
+      'request 文件必须真的落盘（不是只写字段）',
+    );
+    assert(Boolean(s1.verifier_report), '必须同时给出报告落盘路径，否则没人知道写哪儿');
+    // ② 产品裁决一字不改：FAIL / open，且没有任何候选（还没有正文可采信）。
+    assert(s1.verdict === 'FAIL', `产品 verdict 必须保持 FAIL，实得 ${s1.verdict}`);
+    assert(s1.closure_status === 'open', `closure 必须保持 open，实得 ${s1.closure_status}`);
+    assert((s1.repair_candidates ?? []).length === 0, '还没有 verifier 正文时不得凭空造候选');
+    // ③ next_action 必须是诊断动作，**不能**被通用"先修 blocker"吞掉。
+    assert(
+      s1.next_action === 'run_verifier_for_repair',
+      `D1 诊断轮 next_action 应为 run_verifier_for_repair，实得 ${s1.next_action}`,
+    );
+    // ④ NEXT 行必须给齐 request 路径、报告路径与后续命令（非 goal：自己重跑一次）。
+    const nextLine = buildNextLine(s1, 'review', 'demo');
+    assert(nextLine.includes(s1.verifier_request as string), `NEXT 须给 request 路径：${nextLine}`);
+    assert(nextLine.includes(s1.verifier_report as string), `NEXT 须给报告落盘路径：${nextLine}`);
+    assert(nextLine.includes('harness-runner.ts --phase review'), `非 goal 须叫调用方自己重跑：${nextLine}`);
+    assert(!nextLine.includes('一轮修完全部'), `不得落回通用"先修 blocker"文案：${nextLine}`);
+    // goal 外层会重跑时，必须明说"别自己再跑一次"（V7：agent 侧新增 harness 调用数为 0）。
+    const goalLine = buildNextLine(s1, 'review', 'demo', { outerGoalRerun: true });
+    assert(
+      goalLine.includes('外层') && !goalLine.includes('harness-runner.ts --phase review'),
+      `goal 编排下不得再叫 agent 自跑 harness：${goalLine}`,
+    );
+
+    // ⑤ verifier 跑完、调用方原样写回报告 → 重跑 writer（外层 gate harness 或非 goal 自跑）
+    //    → 候选出现、NEXT 落回"修产品"。
+    fs.writeFileSync(
+      path.join(root, 'doc', 'features', 'demo', 'review', 'review-report.md'),
+      REVIEW_REPORT_NEGATIVE,
+      'utf-8',
+    );
+    publishFixtureVerifierEvidence({
+      projectRoot: root,
+      reportsDir: dir,
+      feature: 'demo',
+      phase: 'review',
+      subjectId: s1.verifier_subject_id as string,
+      verdict: 'PASS',
+      reportText: REVIEW_VERIFIER_REPORT,
+      skipSummaryPatch: true,
+    });
+    const s2 = writeRunSummaryBase(root, report, FRAMEWORK_ROOT, { verifierPlan: plan });
+    assert(
+      s2.verifier_subject_id === s1.verifier_subject_id,
+      '构造性前提：材料未变必须寻址到同一 subject（否则刚写的报告作废）',
+    );
+    const candidates = s2.repair_candidates ?? [];
+    assert(
+      candidates.some((c) => c.id === 'CR-001' && c.category === 'coding'),
+      `逐条 confirmed 后须产出 owner=coding 的候选：${JSON.stringify(candidates)}`,
+    );
+    assert(s2.verdict === 'FAIL' && s2.closure_status === 'open', '产品仍 FAIL/open——诊断不是通过');
+    assert(
+      s2.next_action !== 'run_verifier_for_repair',
+      `已有当前 subject 的可用正文后不得再指人重跑 verifier，实得 ${s2.next_action}`,
+    );
+  } finally {
+    rmDir(root);
+  }
+}
+
+function caseH_diagnosisEligibilityAndPromptNotice(): void {
+  const plan = (prompt: string) => ({
+    mode: 'enabled' as const,
+    reason: 'policy_required' as const,
+    verifier_prompt: prompt,
+    message: 'test',
+  });
+
+  // ① V3 负例：负面裁决 + 另一条真实 BLOCKER FAIL（缺源码/坏材料）→ 零 verifier 产物。
+  {
+    const { root } = makeVerifierProject();
+    try {
+      const dir = reportsDirOf(root, 'demo', 'review');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'ai-prompt.md'), '# prompt\n', 'utf-8');
+      const s = writeRunSummaryBase(
+        root,
+        scriptReportOf('demo', 'review', root, [REPORT_VALIDITY_OK, NEGATIVE_VERDICT_CLOSURE_FAIL, FAIL_CHECK]),
+        FRAMEWORK_ROOT,
+        { verifierPlan: plan('prompts/verify-review.md') },
+      );
+      assert(!s.verifier_subject_id && !s.verifier_request, '混合失败不得签发 request');
+      assert(
+        fs.readdirSync(dir).every((f) => !f.startsWith('verifier.request.')),
+        '磁盘不得留下 request 文件',
+      );
+      assert(s.next_action === 'fix_blockers_then_rerun', `应落回先修材料，实得 ${s.next_action}`);
+    } finally {
+      rmDir(root);
+    }
+  }
+
+  // ② V3 负例：report_validity=FAIL（报告工件坏）→ 零 verifier 产物。
+  {
+    const { root } = makeVerifierProject();
+    try {
+      const dir = reportsDirOf(root, 'demo', 'review');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'ai-prompt.md'), '# prompt\n', 'utf-8');
+      const brokenReport: CheckResult = { ...REPORT_VALIDITY_OK, status: 'FAIL', details: '结论段缺声明行' };
+      const s = writeRunSummaryBase(
+        root,
+        scriptReportOf('demo', 'review', root, [brokenReport, NEGATIVE_VERDICT_CLOSURE_FAIL]),
+        FRAMEWORK_ROOT,
+        { verifierPlan: plan('prompts/verify-review.md') },
+      );
+      assert(!s.verifier_request, 'report_validity=FAIL 时不得签发 request（先修报告工件）');
+    } finally {
+      rmDir(root);
+    }
+  }
+
+  // ③ V2 生产接线：UT 真实断言失败（结构化 code_regression）→ 签发诊断 request。
+  {
+    const { root } = makeVerifierProject();
+    try {
+      const dir = reportsDirOf(root, 'demo', 'ut');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'ai-prompt.md'), '# ut prompt\n', 'utf-8');
+      const utCompilePass: CheckResult = {
+        id: 'ut_hvigor_build', category: 'structure', description: 'ut 编译',
+        severity: 'BLOCKER', status: 'PASS', details: '编译通过',
+      };
+      const utRunFail: CheckResult = {
+        id: 'ut_hvigor_test', category: 'structure', description: 'ut 装机执行',
+        severity: 'BLOCKER', status: 'FAIL',
+        details: 'hypium 结果：total=1, passed=0, failed=1, skipped=0\nsuite_health: UNKNOWN',
+        failure_kind: 'code_regression',
+        affected_files: ['feature_opencard@ohosTest'],
+      };
+      // ut_run_status 是 MINOR WARN 派生面板，can_claim_done=NO——它**不得**吞掉诊断动作。
+      const utRunStatus: CheckResult = {
+        id: 'ut_run_status', category: 'structure', description: 'UT 运行面板',
+        severity: 'MINOR', status: 'WARN',
+        details: '当前是否可以宣称 UT 完成：否\ncan_claim_done: NO',
+      };
+      const s = writeRunSummaryBase(
+        root,
+        scriptReportOf('demo', 'ut', root, [utCompilePass, utRunFail, utRunStatus]),
+        FRAMEWORK_ROOT,
+        { verifierPlan: plan('prompts/verify-ut.md') },
+      );
+      assert(Boolean(s.verifier_request), 'UT 真实断言失败须签发诊断 request');
+      assert(
+        s.next_action === 'run_verifier_for_repair',
+        `ut_run_status 的 can_claim_done=NO 不得吞掉诊断动作，实得 ${s.next_action}`,
+      );
+      assert(s.verdict === 'FAIL', '产品 verdict 保持 FAIL');
+
+      // 环境类归因（device_toolchain）则一律不放行——同一 writer、同一形状，只换归因。
+      const toolchain: CheckResult = { ...utRunFail, failure_kind: 'device_toolchain', blocking_class: 'device_toolchain' };
+      const { root: root2 } = makeVerifierProject();
+      try {
+        const dir2 = reportsDirOf(root2, 'demo', 'ut');
+        fs.mkdirSync(dir2, { recursive: true });
+        fs.writeFileSync(path.join(dir2, 'ai-prompt.md'), '# ut prompt\n', 'utf-8');
+        const s2 = writeRunSummaryBase(
+          root2,
+          scriptReportOf('demo', 'ut', root2, [utCompilePass, toolchain, utRunStatus]),
+          FRAMEWORK_ROOT,
+          { verifierPlan: plan('prompts/verify-ut.md') },
+        );
+        assert(!s2.verifier_request, '设备/工具链归因不得签发诊断 request');
+        assert(s2.next_action !== 'run_verifier_for_repair', `环境失败应走原分流，实得 ${s2.next_action}`);
+      } finally {
+        rmDir(root2);
+      }
+    } finally {
+      rmDir(root);
+    }
+  }
+
+  // ④ 诊断说明必须真的进 ai-prompt 正文（接收端契约的另一半），且只在诊断分支出现。
+  {
+    const { root } = makeVerifierProject();
+    const fakeHarness = fs.mkdtempSync(path.join(os.tmpdir(), 'verifier-diag-tpl-'));
+    try {
+      const rel = 'prompts/verify-review.md';
+      writeFile(path.join(fakeHarness, rel), '# tpl\n\n{script_report}\n');
+      const withNotice = assembleAIPrompt(
+        fakeHarness, root, 'review' as Phase, 'demo', [], '{"checks":[]}', 'rule: {}',
+        undefined, undefined, FRAMEWORK_ROOT,
+        {
+          verifierPromptRel: rel,
+          repairDiagnosis: { failedCheckIds: ['negative_verdict_closure'], reason: 'test-reason-sentinel' },
+        },
+      );
+      assert(withNotice.includes('本轮为产品失败诊断'), '诊断分支必须在正文附加说明');
+      assert(withNotice.includes('negative_verdict_closure'), '必须列出已放行的失败 check');
+      assert(withNotice.includes('test-reason-sentinel'), '必须转述放行理由');
+      assert(/blocker_count/.test(withNotice), '必须明确终态计数口径（D3）');
+      const onDisk = fs.readFileSync(path.join(reportsDirOf(root, 'demo', 'review'), 'ai-prompt.md'), 'utf-8');
+      assert(onDisk.includes('本轮为产品失败诊断'), '落盘的 ai-prompt.md 同样带说明（verifier 读的是磁盘原件）');
+
+      const without = assembleAIPrompt(
+        fakeHarness, root, 'review' as Phase, 'demo', [], '{"checks":[]}', 'rule: {}',
+        undefined, undefined, FRAMEWORK_ROOT, { verifierPromptRel: rel },
+      );
+      assert(!without.includes('本轮为产品失败诊断'), '常规验证请求的正文一字不变');
+    } finally {
+      fs.rmSync(fakeHarness, { recursive: true, force: true });
+      rmDir(root);
+    }
+  }
+}
+
+// --------------------------------------------------------------------------
+// I. D3/D4：正文不可采信 → 报告格式修复出口（codex 一轮 medium）
+// --------------------------------------------------------------------------
+// loader 的终态校验只证明报告有个自洽的结论块。必需检查项缺项/冲突时若落回通用
+// "先修 blocker"，重复 harness 只会复用同一份坏正文 → 恒零候选、指人去改产品。
+function caseI_unreadableReportBodyKeepsFormatRepairExit(): void {
+  const plan = (prompt: string) => ({
+    mode: 'enabled' as const,
+    reason: 'policy_required' as const,
+    verifier_prompt: prompt,
+    message: 'test',
+  });
+
+  // ① review：终态 PASS/0 自洽，但正文缺 issue-verification 块（必需项读不出来）。
+  {
+    const { root } = makeVerifierProject();
+    try {
+      const dir = reportsDirOf(root, 'demo', 'review');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'ai-prompt.md'), '# review prompt v1\n', 'utf-8');
+      writeFile(path.join(root, 'doc', 'features', 'demo', 'review', 'review-report.md'), REVIEW_REPORT_NEGATIVE);
+      const report = scriptReportOf('demo', 'review', root, [REPORT_VALIDITY_OK, NEGATIVE_VERDICT_CLOSURE_FAIL]);
+      const s1 = writeRunSummaryBase(root, report, FRAMEWORK_ROOT, { verifierPlan: plan('prompts/verify-review.md') });
+      publishFixtureVerifierEvidence({
+        projectRoot: root,
+        reportsDir: dir,
+        feature: 'demo',
+        phase: 'review',
+        subjectId: s1.verifier_subject_id as string,
+        verdict: 'PASS',
+        reportText: [
+          '# Verifier Report', '',
+          '| id | status | severity | 证据 |',
+          '|---|---|---|---|',
+          '| issue_accuracy | PASS | BLOCKER | 抽样核对 |',
+          '',
+        ].join('\n'),
+        skipSummaryPatch: true,
+      });
+      const s2 = writeRunSummaryBase(root, report, FRAMEWORK_ROOT, { verifierPlan: plan('prompts/verify-review.md') });
+      assert(s2.verifier_subject_id === s1.verifier_subject_id, '构造性前提：材料未变须寻址同一 subject');
+      assert((s2.repair_candidates ?? []).length === 0, '构造性前提：缺逐条验证块本就产不出候选');
+      assert(
+        s2.next_action === 'run_verifier_for_repair',
+        `正文不可采信时不得落回"先修 blocker"，实得 ${s2.next_action}`,
+      );
+      const nextLine = buildNextLine(s2, 'review', 'demo');
+      assert(nextLine.includes('重写'), `NEXT 须给"按原始回复重写报告"的出口：${nextLine}`);
+      assert(!nextLine.includes('一轮修完全部'), `不得把调用方指回修原始 blocker：${nextLine}`);
+      assert(s2.verdict === 'FAIL' && s2.closure_status === 'open', '产品仍 FAIL/open');
+    } finally {
+      rmDir(root);
+    }
+  }
+
+  // ② ut：两个候选必需检查冲突/占位（`PASS / FAIL`、`<PASS>`）→ 同样走格式修复出口。
+  {
+    const { root } = makeVerifierProject();
+    try {
+      const dir = reportsDirOf(root, 'demo', 'ut');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'ai-prompt.md'), '# ut prompt v1\n', 'utf-8');
+      const utCompilePass: CheckResult = {
+        id: 'ut_hvigor_build', category: 'structure', description: 'ut 编译',
+        severity: 'BLOCKER', status: 'PASS', details: '编译通过',
+      };
+      const utRunFail: CheckResult = {
+        id: 'ut_hvigor_test', category: 'structure', description: 'ut 装机执行',
+        severity: 'BLOCKER', status: 'FAIL',
+        details: 'hypium 结果：total=1, passed=0, failed=1, skipped=0',
+        failure_kind: 'code_regression',
+        affected_files: ['feature_opencard@ohosTest'],
+      };
+      const report = scriptReportOf('demo', 'ut', root, [utCompilePass, utRunFail]);
+      const s1 = writeRunSummaryBase(root, report, FRAMEWORK_ROOT, { verifierPlan: plan('prompts/verify-ut.md') });
+      assert(Boolean(s1.verifier_subject_id), '构造性前提：UT 断言失败须签发诊断 request');
+      publishFixtureVerifierEvidence({
+        projectRoot: root,
+        reportsDir: dir,
+        feature: 'demo',
+        phase: 'ut',
+        subjectId: s1.verifier_subject_id as string,
+        verdict: 'PASS',
+        reportText: [
+          '# Verifier Report', '',
+          '| id | status | severity | 证据 |',
+          '|---|---|---|---|',
+          '| end_to_end_driving | PASS / FAIL | BLOCKER | 自相矛盾 |',
+          '| business_assertion_value | <PASS> | BLOCKER | 占位没填 |',
+          '',
+        ].join('\n'),
+        skipSummaryPatch: true,
+      });
+      const s2 = writeRunSummaryBase(root, report, FRAMEWORK_ROOT, { verifierPlan: plan('prompts/verify-ut.md') });
+      assert(
+        (s2.repair_candidates ?? []).every((c) => c.id !== 'ut_product_assertion_failure'),
+        `冲突/占位状态不得产出 coding 候选：${JSON.stringify(s2.repair_candidates)}`,
+      );
+      assert(
+        s2.next_action === 'run_verifier_for_repair',
+        `UT 必需检查项冲突时同样保持格式修复出口，实得 ${s2.next_action}`,
+      );
+
+      // 正例对照：同一 subject 换成可读的正式汇总表 → 恢复既有分流（不得恒触发格式修复）
+      publishFixtureVerifierEvidence({
+        projectRoot: root,
+        reportsDir: dir,
+        feature: 'demo',
+        phase: 'ut',
+        subjectId: s1.verifier_subject_id as string,
+        verdict: 'PASS',
+        reportText: [
+          '# Verifier Report', '',
+          '| id | status | severity | 证据 |',
+          '|---|---|---|---|',
+          '| end_to_end_driving | PASS | BLOCKER | 真实驱动业务 |',
+          '| business_assertion_value | PASS | BLOCKER | 断言有业务价值 |',
+          '',
+        ].join('\n'),
+        skipSummaryPatch: true,
+      });
+      const s3 = writeRunSummaryBase(root, report, FRAMEWORK_ROOT, { verifierPlan: plan('prompts/verify-ut.md') });
+      assert(
+        (s3.repair_candidates ?? []).some((c) => c.id === 'ut_product_assertion_failure' && c.category === 'coding'),
+        `可读正文须恢复 coding 候选：${JSON.stringify(s3.repair_candidates)}`,
+      );
+      assert(
+        s3.next_action !== 'run_verifier_for_repair',
+        `正文可采信后不得再指人重跑/重写，实得 ${s3.next_action}`,
+      );
+    } finally {
+      rmDir(root);
+    }
+  }
+}
+
+// --------------------------------------------------------------------------
+// J. D2.5：goal 外层是否真的会重跑（codex 一轮 medium）
+// --------------------------------------------------------------------------
+// 旧判据只查 run-control 文件可读——残留 MAISON_GOAL_RUN_ID 指向已 released/orphaned
+// 的 run 时仍提示"写完报告即返回"，而实际上没人重算候选，阶段就此卡死。
+function caseJ_outerGoalRerunRequiresLiveOrchestration(): void {
+  const ENV_KEYS = [
+    'MAISON_GOAL_RUN_ID', 'MAISON_GOAL_ATTEMPT', 'MAISON_GOAL_ATTEMPT_PHASE',
+    'MAISON_GOAL_GATE_HARNESS', 'MAISON_GOAL_RUNNER', 'MAISON_GOAL_HEADLESS',
+  ];
+  const before = new Map(ENV_KEYS.map((k) => [k, process.env[k]]));
+  const { root } = makeVerifierProject();
+  try {
+    for (const k of ENV_KEYS) delete process.env[k];
+    // agent 侧 goal 轮：有 run/attempt 身份，但没有 gate authority。
+    const runId = '20260906T010203Z-b01fix';
+    process.env.MAISON_GOAL_RUN_ID = runId;
+    process.env.MAISON_GOAL_ATTEMPT = 'i3';
+    const runDir = path.join(featureDir(root, 'demo'), 'goal-runs', runId);
+
+    assert(outerGoalHarnessWillRerun(root, 'demo') === false, 'run-control 尚未初始化时必须保守判 false');
+    ensureRunControl(runDir, runId);
+    assert(
+      outerGoalHarnessWillRerun(root, 'demo') === false,
+      '文件在场但无 owner（无人认领）不得当成"外层会重跑"——旧实现正是在这里误判 true',
+    );
+
+    const acquired = casAcquireRunOwner(runDir, runId, 0, { kind: 'process', owner_id: 'owner-1' });
+    assert(acquired.ok === true, '构造性前提：须能取得 owner');
+    const token = (acquired as { ok: true; token: { run_id: string; owner_id: string; epoch: number } }).token;
+    assert(outerGoalHarnessWillRerun(root, 'demo') === true, 'owner=active 时才承认编排仍会重跑');
+
+    // attempt 身份缺席 = 残留环境变量，不是编排发下来的这一轮
+    delete process.env.MAISON_GOAL_ATTEMPT;
+    assert(outerGoalHarnessWillRerun(root, 'demo') === false, '缺 attempt 身份时不得假定外层会重跑');
+    process.env.MAISON_GOAL_ATTEMPT = 'i3';
+
+    // 收尾中（quiescing）不承诺再跑一轮
+    quiesceRunOwner(runDir, token);
+    assert(outerGoalHarnessWillRerun(root, 'demo') === false, 'quiescing 不得当成会重跑');
+    // 已交出（released）——codex 点名的两种残留态之一
+    releaseRunOwner(runDir, token, { allowQuiescing: true });
+    assert(outerGoalHarnessWillRerun(root, 'demo') === false, 'released 不得当成会重跑');
+
+    // orphaned_session——另一种残留态（session 租约过期）
+    const runId2 = '20260906T010203Z-b01fix2';
+    process.env.MAISON_GOAL_RUN_ID = runId2;
+    const runDir2 = path.join(featureDir(root, 'demo'), 'goal-runs', runId2);
+    ensureRunControl(runDir2, runId2);
+    const acq2 = casAcquireRunOwner(runDir2, runId2, 0, { kind: 'session', owner_id: 'sess-1', lease_ms: 1 });
+    assert(acq2.ok === true, '构造性前提：须能取得 session owner');
+    markExpiredSessionOrphaned(runDir2, runId2, Date.now() + 10_000);
+    assert(outerGoalHarnessWillRerun(root, 'demo') === false, 'orphaned_session 不得当成会重跑');
+
+    // gate authority 在场（runner 直接 spawn 的 gate harness）不是 agent 侧
+    process.env.MAISON_GOAL_RUN_ID = runId;
+    process.env.MAISON_GOAL_GATE_HARNESS = '1';
+    assert(outerGoalHarnessWillRerun(root, 'demo') === false, 'gate harness 自身不是 agent 侧');
+  } finally {
+    for (const [k, v] of before) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    rmDir(root);
+  }
+}
+
 const CASES: Array<{ name: string; fn: () => void }> = [
   { name: 'A workflow 声明的 verifier_prompt 决定实际装配的模板；缺文件明确失败、无 fallback', fn: caseA_declaredTemplateIsTheOneAssembled },
   { name: 'B request 解析严格：JSON 内夹带字段 / 可空字段错误类型 / subject 不可外部传入', fn: caseB_requestParsingIsStrict },
@@ -787,6 +1323,10 @@ const CASES: Array<{ name: string; fn: () => void }> = [
   { name: 'E repair_candidates 锚到本轮 subject；闭环时按已验真证据重算', fn: caseE_repairCandidatesSubjectAnchoring },
   { name: 'E2 闭环重算保留 failure_kind：code_regression 合取候选不得静默消失', fn: caseE2_closureRecomputeKeepsFailureKind },
   { name: 'F 控制台指引跟随 next_action：证据可复用时不得再要求重跑 verifier', fn: caseF_consoleGuidanceFollowsNextAction },
+  { name: 'G D1 review 负面裁决：脚本 FAIL 仍签发诊断 request；报告写回后产 owner 候选，产品仍 FAIL/open', fn: caseG_reviewNegativeVerdictProducesDiagnosisRequest },
+  { name: 'H D1 资格边界与诊断正文：混合失败/坏报告/环境归因零产物；ai-prompt 只在诊断分支附说明', fn: caseH_diagnosisEligibilityAndPromptNotice },
+  { name: 'I D3/D4 必需检查项缺失/冲突 → 报告格式修复出口，不落回"先修 blocker"、不指人改产品', fn: caseI_unreadableReportBodyKeepsFormatRepairExit },
+  { name: 'J D2.5 外层重跑判据：owner 须 active 且带 attempt 身份；released/orphaned/quiescing 回落自跑', fn: caseJ_outerGoalRerunRequiresLiveOrchestration },
 ];
 
 export async function runAll(): Promise<UnitCaseResult[]> {

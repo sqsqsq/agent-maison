@@ -380,12 +380,15 @@ function writeConfig(dir: string, paths: Record<string, string>): void {
 /** closure-only 分支夹具：脚本已 PASS、闭环未 closed、summary 无 verifier_request → hook 打印
  * `summary = <reports>/summary.json` 与第 2 步的 `<reports>/verifier.request.<subject>.json` 回退路径。
  * summary.json 落在 hook 自己解析的物理 reports 目录（resolveFeaturePhaseReportDir，含 reports_dir_pattern）。 */
-function writeClosureOnlySummary(dir: string, reportsRel: string, sessionId: string): void {
+type SummaryVariant = 'closure_only' | 'repair_diagnosis';
+function writeClosureOnlySummary(dir: string, reportsRel: string, sessionId: string, variant: SummaryVariant = 'closure_only'): void {
   const p = path.join(dir, ...reportsRel.split('/'), 'summary.json');
   fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, JSON.stringify({
-    verdict: 'PASS', closure_status: 'open', next_action: 'sync_closure', session_id: sessionId,
-  }, null, 2) + '\n', 'utf-8');
+  // repair_diagnosis（plan 3a7f9c12 D2）：脚本 FAIL 但可诊断 → hook 首要动作是投 verifier request，走同一路径模板行。
+  const body = variant === 'repair_diagnosis'
+    ? { verdict: 'FAIL', closure_status: 'open', next_action: 'run_verifier_for_repair', session_id: sessionId }
+    : { verdict: 'PASS', closure_status: 'open', next_action: 'sync_closure', session_id: sessionId };
+  fs.writeFileSync(p, JSON.stringify(body, null, 2) + '\n', 'utf-8');
 }
 
 /** 断言 hook 阻断理由里的路径行都是 CU 物理路径：summary 行 + request 回退行正断言，编码 id 不得作路径段。
@@ -410,10 +413,12 @@ function hookH1_defaultPatternCuPhysicalDir(): void {
     writeConfig(dir, { features_dir: 'doc/features' });
     const reportsRel = `doc/features/${BLUEPRINT_ID}/ledger-consumer/coding/reports`;
     writeState(dir, featureId, 'coding', 'sid-h1');
-    writeClosureOnlySummary(dir, reportsRel, 'sid-h1');
-    const out = runHook(CHECK_PHASE_HOOK, { session_id: 'sid-h1', stop_hook_active: false }, dir);
-    assert(out.status === 2, `H1 未闭环应 exit 2：${out.status}`);
-    assertPhysicalPathLines('H1', out.stderr, reportsRel, featureId);
+    for (const variant of ['closure_only', 'repair_diagnosis'] as const) {
+      writeClosureOnlySummary(dir, reportsRel, 'sid-h1', variant);
+      const out = runHook(CHECK_PHASE_HOOK, { session_id: 'sid-h1', stop_hook_active: false }, dir);
+      assert(out.status === 2, `H1/${variant} 未闭环应 exit 2：${out.status}`);
+      assertPhysicalPathLines(`H1/${variant}`, out.stderr, reportsRel, featureId);
+    }
   } finally {
     rmDir(dir);
   }
@@ -431,10 +436,12 @@ function hookH2_customPatternKeepsStructure(): void {
     });
     const reportsRel = `requirements/features/${BLUEPRINT_ID}/ledger-consumer/phases/coding/reports`;
     writeState(dir, featureId, 'coding', 'sid-h2');
-    writeClosureOnlySummary(dir, reportsRel, 'sid-h2');
-    const out = runHook(CHECK_PHASE_HOOK, { session_id: 'sid-h2', stop_hook_active: false }, dir);
-    assert(out.status === 2, `H2 未闭环应 exit 2：${out.status}`);
-    assertPhysicalPathLines('H2', out.stderr, reportsRel, featureId);
+    for (const variant of ['closure_only', 'repair_diagnosis'] as const) {
+      writeClosureOnlySummary(dir, reportsRel, 'sid-h2', variant);
+      const out = runHook(CHECK_PHASE_HOOK, { session_id: 'sid-h2', stop_hook_active: false }, dir);
+      assert(out.status === 2, `H2/${variant} 未闭环应 exit 2：${out.status}`);
+      assertPhysicalPathLines(`H2/${variant}`, out.stderr, reportsRel, featureId);
+    }
   } finally {
     rmDir(dir);
   }

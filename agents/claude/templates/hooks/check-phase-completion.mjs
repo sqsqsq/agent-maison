@@ -616,13 +616,30 @@ function buildBlockReason(state, missingItems, summaryHint = null, progress = nu
     (summaryHint && summaryHint.verdict === 'PASS');
   const closureOpen = !summaryHint || summaryHint.closureStatus !== 'closed';
   const closureOnly = Boolean(scriptPassed && closureOpen);
+  // D2（plan 3a7f9c12）：产品失败诊断轮——脚本仍 FAIL，写完 verifier 报告后 base summary
+  // 依旧 FAIL、候选尚未重算，sync-closure 的 finalizer 必然拒收。这条分支的正确出口是
+  // 「重跑本阶段 harness 让 writer 重算候选，再看新 summary 的 NEXT 找 owner」；
+  // 正式 goal 编排下则写完即交回 runner（外层自己会跑 gate harness，不要自跑）。
+  const repairDiagnosis = Boolean(summaryHint && summaryHint.nextAction === 'run_verifier_for_repair');
   const headline = closureOnly
     ? `[Stop Hook] 阶段未闭环：feature="${feature}" phase="${phase}"。脚本已 PASS，下一步只做这一件事——对齐闭环态（重跑完整 harness 不会因时间戳换 subject，但这里没有必要）：`
-    : `[Stop Hook] 阶段未闭环：feature="${feature}" phase="${phase}"。下一步只做这一件事——真正修复后重跑 harness：`;
+    : repairDiagnosis
+      ? `[Stop Hook] 阶段未闭环：feature="${feature}" phase="${phase}"。产品 FAIL 但失败可诊断，下一步只做这一件事——把 verifier request 投给 verifier 并写回报告（先别改产品、也别急着重跑 harness）：`
+      : `[Stop Hook] 阶段未闭环：feature="${feature}" phase="${phase}"。下一步只做这一件事——真正修复后重跑 harness：`;
   const lines = [
     // 动作优先（弱模型友好）：先给"下一步只做这一件事"，把长说明收到后面。
     headline,
-    `  → ${closureOnly ? syncCmd : rerunCmd}`,
+    `  → ${
+      closureOnly
+        ? syncCmd
+        : repairDiagnosis
+          ? `Task(subagent_type=verifier, prompt=${
+              summaryHint && summaryHint.verifierRequest
+                ? summaryHint.verifierRequest
+                : (reportsDirRel ? `${reportsDirRel}/verifier.request.<subject>.json` : '本阶段 reports 目录下的 verifier.request.<subject>.json')
+            } 的完整正文)，再按下面第 3 步收尾`
+          : rerunCmd
+    }`,
     // M5A：CU Feature 物理路径解析失败（identity 非法 / SSOT 缺失）时点名诊断，不生成任何伪路径。
     ...(reportsDirRel === null && feature.startsWith('cu-')
       ? ['  （无法解析 CU Feature 物理路径：framework SSOT 缺失/损坏或 identity 非法——请先修复 framework 安装或 CU 身份后重跑）']
@@ -659,7 +676,9 @@ function buildBlockReason(state, missingItems, summaryHint = null, progress = nu
           `  1. 按 summary.next_action 修因（脚本尚未 PASS），然后自跑完整 harness：`,
           `       cd framework/harness && npx ts-node harness-runner.ts \\`,
           `         --phase ${phase} --feature ${feature}`,
-          `  2. 脚本 PASS 后若输出了 verifier request（summary.verifier_request 在场），`,
+          `     例外：next_action=run_verifier_for_repair 表示本轮产品 FAIL 但失败可诊断，`,
+          `     harness 已在脚本 FAIL 下签发了 request——先做第 2 步，别急着改产品。`,
+          `  2. summary.verifier_request 在场时（脚本 PASS，或上面那条诊断例外），`,
           `     用 Task 工具调 verifier 子 agent（subagent_type=verifier），`,
           `     prompt = 那份 request JSON 的**完整正文**（几十行，整段投递）。`,
           `     verifier 会按其中的 prompt_path 自行 Read ai-prompt.md；不要投递 ai-prompt.md`,
@@ -667,8 +686,21 @@ function buildBlockReason(state, missingItems, summaryHint = null, progress = nu
           `     verifier 返回后，把它的回复**原样全文**写入 summary.verifier_report 指向的路径`,
           `     （报告由你写，不是 verifier 写；不摘要、不只贴终态块）。`,
           `     没有输出 request = 本阶段不适用 verifier，跳到第 3 步。`,
-          `  3. 运行 ${syncCmd}`,
-          `     （只读 base summary、verifier evidence 与 policy；receipt 在 closed 后机器投影）后再尝试 stop。`,
+          ...(repairDiagnosis
+            ? [
+                `  3. 诊断轮（next_action=run_verifier_for_repair）**不要跑 sync-closure**：`,
+                `     脚本仍 FAIL、回修候选尚未重算，finalizer 必然拒收。按你所处的模式二选一：`,
+                `     · 正式 goal 编排（外层 runner 拉起的轮次）：写完报告即结束本轮，`,
+                `       回传当前 FAIL 与 summary/报告路径，由外层 runner 重跑 gate harness 重算候选；不要自跑。`,
+                `     · 非 goal（你自己在跑本阶段）：重跑一次本阶段 harness 让 writer 重算回修候选：`,
+                `           ${rerunCmd}`,
+                `       然后按新 summary 的 NEXT 指引找到 owner 阶段回修（当前阶段不改产品）。`,
+                `     harness 的 NEXT 一行已按上述两种模式给出对应措辞，以它为准。`,
+              ]
+            : [
+                `  3. 运行 ${syncCmd}`,
+                `     （只读 base summary、verifier evidence 与 policy；receipt 在 closed 后机器投影）后再尝试 stop。`,
+              ]),
         ]),
     '',
     '如果你想【放弃这个阶段，转去做别的事】，先执行：',

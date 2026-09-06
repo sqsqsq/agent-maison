@@ -11,6 +11,7 @@ import {
   checkOwnedCandidate,
   deriveCategoryFromFiles,
   itemFingerprintOf,
+  findUnreadableDiagnosisChecks,
   parseIssueVerificationBlock,
   parseVerifierCheckStatus,
   resolveInvalidatablePhases,
@@ -19,6 +20,18 @@ import {
   validateRepairCandidatesShape,
 } from '../../scripts/utils/repair-candidates';
 import { mapCategoryToChainPhase } from '../../scripts/utils/correction-routing';
+// D1/D3（plan 3a7f9c12）：真实生产件——UT 失败格式器、ut-host 归因判据、runner 的归因回退解析器。
+// 测试与生产共用同一实现，禁止在测试里手搓 classification 或复刻正则（codex 冻结项③/⑤）。
+import { buildUtHvigorTestFailDetails, type UtHvigorTestFailureModule } from '../../../profiles/hmos-app/harness/ut-hvigor-test-failure';
+import { isRealAssertionFailure } from '../../../profiles/hmos-app/harness/ut-host-impl';
+// V2 夹具必须是**生产结果形状**：hypium 解析器 + aa test 分类器 + 证据组装器现算，
+// 不手拼 failedAt/runDiagnosis（codex 一轮 high：旧夹具省掉这两个字段，真实路径没被覆盖）。
+import { classifyAaTestFailure, parseHypiumStdout } from '../../../profiles/hmos-app/harness/hdc-runner';
+import {
+  buildOnDeviceFailureEvidence,
+  ensureFailedAtStageTag,
+} from '../../../profiles/hmos-app/harness/hvigor-runner';
+import { extractFailureClassification as parseFailureClassificationFromDetails } from '../../harness-runner';
 import { selectRunnerActionFromAssess } from '../../scripts/utils/goal-assess-driver';
 import { recommendationAuthorized } from '../../scripts/utils/goal-in-session-driver';
 import { formatRepairCandidatesMenu } from '../../scripts/utils/assess-renderer';
@@ -81,6 +94,122 @@ const CR1 = { id: 'CR-001', sev: 'MAJOR', state: '未关闭', files: '`02-Featur
 const CR2 = { id: 'CR-002', sev: 'MAJOR', state: '未关闭', files: '02-Feature/F/src/main/ets/OpenCardFlow.ets', fix: '消费 upsertCard 的 duplicated 字段并提示' };
 const CR3 = { id: 'CR-003', sev: 'MAJOR', state: '未关闭', files: '02-Feature/F/src/main/ets/BankCardRepository.ets', fix: 'catch 块补 Logger.error' };
 
+// ---------------------------------------------------------------------------
+// D1/D3 夹具（plan 3a7f9c12）
+// ---------------------------------------------------------------------------
+
+/** verify-ut.md §7.1 要求的**正式**输出：汇总表每项一行（PASS 也列），§7.2 YAML 只列非 PASS。 */
+const UT_SEMANTICS_TABLE = [
+  '# Verifier Report', '',
+  '### 7.1 汇总表', '',
+  '| id | status | severity | 证据 |',
+  '|---|---|---|---|',
+  '| end_to_end_driving | PASS | BLOCKER | AccountServiceTest.ets:31 真实调用 openCard 流程 |',
+  '| business_assertion_value | PASS | BLOCKER | 断言余额与卡列表长度，非 length>0 |',
+  '| device_ac_delegation | FAIL | BLOCKER | AC-07 属设备域，应回 spec 建模 |',
+  '', '### 7.2 非 PASS 项明细', '',
+  '```yaml',
+  'verification_result:',
+  '  checks:',
+  '    - id: device_ac_delegation',
+  '      status: FAIL',
+  '      severity: BLOCKER',
+  '```', '',
+].join('\n');
+
+/** 旧的「全项都写进 YAML」形态（非规范但曾是唯一可被解析的形态）。 */
+const UT_SEMANTICS_LEGACY_YAML = [
+  '# Verifier Report', '',
+  '- id: end_to_end_driving',
+  '  status: PASS',
+  '- id: business_assertion_value',
+  '  status: PASS',
+  '- id: device_ac_delegation',
+  '  status: FAIL',
+  '',
+].join('\n');
+
+/** 真机 `aa test` 在**用例断言失败**时的原始 stdout（hypium 报文形状）。 */
+const AA_TEST_ASSERTION_STDOUT = [
+  'OHOS_REPORT_STATUS: class=AccountServiceTest',
+  'OHOS_REPORT_STATUS: test=should_return_masked_card_no_after_open',
+  'OHOS_REPORT_STATUS: stack=expect(actual).assertEqual("**** 1234") but got "6222021234567890"',
+  'OHOS_REPORT_RESULT: stream=Tests run: 1, Failure: 1, Error: 0, Pass: 0, Ignore: 0',
+].join('\n');
+
+/**
+ * V2 夹具：**完整生产结果形状**的 on-device UT 断言失败——跑起来了、跑出了用例、有用例失败。
+ *
+ * 全部字段由生产件现算，不手拼（codex 一轮 high 的返修要求）：
+ *   `parseHypiumStdout` → 统计与失败用例；
+ *   `classifyAaTestFailure` → `runDiagnosis.kind='test_failed'`；
+ *   `failedAt='no_pass'` → hdc-runner 失败返回处的 `aa.report ? 'no_pass' : 'run'`；
+ *   `buildOnDeviceFailureEvidence` / `ensureFailedAtStageTag` → hvigor-runner 的折叠。
+ *
+ * 旧夹具**省掉了** `onDeviceFailureEvidence`，于是"断言失败恒带 failedAt+runDiagnosis"
+ * 这条唯一的真实路径根本没被覆盖；生产上它被 `isRealAssertionFailure` 一律当环境故障否掉。
+ */
+const REAL_ASSERTION_MODULE: UtHvigorTestFailureModule = (() => {
+  const hypium = parseHypiumStdout(AA_TEST_ASSERTION_STDOUT);
+  if (!hypium || hypium.total !== 1 || hypium.failed !== 1 || hypium.failures.length !== 1) {
+    throw new Error(`V2 夹具前提：生产解析器须解析出 1 条失败用例，实得 ${JSON.stringify(hypium)}`);
+  }
+  const aaTest = {
+    ok: false,
+    exitCode: 1,
+    durationMs: 42_000,
+    output: AA_TEST_ASSERTION_STDOUT,
+    report: hypium,
+    diagnosis: classifyAaTestFailure(AA_TEST_ASSERTION_STDOUT, 1, hypium),
+  };
+  if (aaTest.diagnosis.kind !== 'test_failed') {
+    throw new Error(`V2 夹具前提：断言失败的生产分类须为 test_failed，实得 ${aaTest.diagnosis.kind}`);
+  }
+  // hdc-runner 的失败返回原句：`failedAt: aa.report ? 'no_pass' : 'run'`。
+  const failedAt = aaTest.report ? ('no_pass' as const) : ('run' as const);
+  const evidence = buildOnDeviceFailureEvidence(
+    { signSkipped: undefined, signingConfigMissing: undefined },
+    {
+      failedAt,
+      unsignedPresent: undefined,
+      install: { ok: true, exitCode: 0, durationMs: 900, output: 'install ok' },
+      aaTest,
+    },
+  );
+  if (evidence.failedAt !== 'no_pass' || evidence.runDiagnosis?.kind !== 'test_failed') {
+    throw new Error(`V2 夹具前提：证据须带 failedAt=no_pass + runDiagnosis=test_failed，实得 ${JSON.stringify(evidence)}`);
+  }
+  return {
+    module: 'feature_opencard',
+    result: {
+      executed: true,
+      exitCode: aaTest.exitCode,
+      durationMs: 42_000,
+      logExcerpt: AA_TEST_ASSERTION_STDOUT,
+      logPath: 'framework/harness/reports/hdc-test.log',
+      errors: ensureFailedAtStageTag(
+        [{ message: `失败阶段：${aaTest.diagnosis.kind}；${aaTest.diagnosis.summary}\n修复建议：${aaTest.diagnosis.suggestion}` }],
+        failedAt,
+      ),
+      testResult: hypium,
+      onDeviceFailureEvidence: evidence,
+    },
+  };
+})();
+
+/** 由生产格式器与生产归因判据组装的 check（与 checkUtHvigorTest 最终返回同形）。 */
+const UT_REAL_ASSERTION_CHECK = (() => {
+  const formatted = buildUtHvigorTestFailDetails([REAL_ASSERTION_MODULE]);
+  return {
+    id: 'ut_hvigor_test',
+    status: 'FAIL',
+    severity: 'BLOCKER',
+    details: formatted.lines.join('\n'),
+    affected_files: formatted.affectedFiles,
+    failure_kind: isRealAssertionFailure([REAL_ASSERTION_MODULE], true) ? 'code_regression' : undefined,
+  };
+})();
+
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
 
@@ -134,6 +263,319 @@ export function runAll(): UnitCaseResult[] {
     assert(parseVerifierCheckStatus(text, 'device_ac_delegation') === 'FAIL', 'FAIL 解析');
     assert(parseVerifierCheckStatus(text, 'other') === 'PASS', 'PASS 解析');
     assert(parseVerifierCheckStatus(text, 'missing') === null, '缺席 null');
+  });
+
+  // --- D3（plan 3a7f9c12）：正式汇总表 ≡ 旧 YAML，冲突不采信 -----------------
+
+  run(results, 'V4 正式汇总表与旧 YAML 等值：同义去重、冲突/坏状态不采信、消费者结果一致', () => {
+    // verify-ut.md §7.1 要求的正式形态：汇总表每项一行（PASS 也列），YAML 只列非 PASS。
+    // 旧解析器只认 YAML → PASS 永远读不到 → UT coding 候选恒零（F02）。
+    assert(
+      parseVerifierCheckStatus(UT_SEMANTICS_TABLE, 'end_to_end_driving') === 'PASS',
+      `正式汇总表的 PASS 必须能读到：${parseVerifierCheckStatus(UT_SEMANTICS_TABLE, 'end_to_end_driving')}`,
+    );
+    assert(
+      parseVerifierCheckStatus(UT_SEMANTICS_TABLE, 'business_assertion_value') === 'PASS',
+      '表格第二行同样须读到',
+    );
+    assert(
+      parseVerifierCheckStatus(UT_SEMANTICS_TABLE, 'device_ac_delegation') === 'FAIL',
+      '表格里的 FAIL 同样按表读',
+    );
+    // 反引号/加粗修饰不改变结论（模型常这么写）
+    assert(
+      parseVerifierCheckStatus(
+        ['| id | status |', '|---|---|', '| `end_to_end_driving` | **PASS** |'].join('\n'),
+        'end_to_end_driving',
+      ) === 'PASS',
+      '单元格修饰须归一',
+    );
+    // prompt 里「本轮检查项与严重等级」表只有 id/severity——列头不精确不得当结论表读
+    assert(
+      parseVerifierCheckStatus(
+        ['| id | severity |', '|---|---|', '| end_to_end_driving | BLOCKER |'].join('\n'),
+        'end_to_end_driving',
+      ) === null,
+      '缺 status 列的表不得凭空造状态',
+    );
+    // 同条一致重复（表 + YAML 都写 PASS）→ 去重后仍是 PASS
+    assert(
+      parseVerifierCheckStatus(
+        `${UT_SEMANTICS_TABLE}\n\n- id: end_to_end_driving\n  status: PASS\n`,
+        'end_to_end_driving',
+      ) === 'PASS',
+      '同义重复须去重而非判冲突',
+    );
+    // 冲突（表 PASS / YAML FAIL）→ 不采信，绝不选有利的 PASS
+    assert(
+      parseVerifierCheckStatus(
+        `${UT_SEMANTICS_TABLE}\n\n- id: end_to_end_driving\n  status: FAIL\n`,
+        'end_to_end_driving',
+      ) === null,
+      '冲突必须 null（不得选择有利 PASS）',
+    );
+    // 坏状态（SKIP / 占位符 / 单元格内冲突 / 否定态）→ 不采信。
+    // codex 一轮 medium：旧实现取单元格里**第一个**状态词，于是 `PASS / FAIL`、`NOT PASS`、
+    // `<PASS>` 全被采信成 PASS 并据此产 coding 候选；必须精确匹配整个单元格。
+    for (const bad of ['SKIP', '<status>', '待定', 'PASS / FAIL', 'NOT PASS', '<PASS>', 'PASS（部分）', '']) {
+      assert(
+        parseVerifierCheckStatus(
+          ['| id | status |', '|---|---|', `| end_to_end_driving | ${bad} |`].join('\n'),
+          'end_to_end_driving',
+        ) === null,
+        `坏状态「${bad}」必须 null`,
+      );
+    }
+    // 旧 YAML 形态同一口径（同一归一函数，两条路径都不得放过占位/否定值）。
+    // codex 二轮 medium：`status:` 后旧实现只取首个非空白词，含空格的坏值（`PASS / FAIL`、
+    // 模板占位 `FAIL | WARN | SKIP`）会被截断后当成合法状态——必须整行值精确匹配。
+    for (const bad of [
+      '<PASS>', 'NOT_PASS', 'SKIP',
+      'PASS / FAIL', 'NOT PASS', '<PASS>', 'PASS（部分）',
+      'FAIL | WARN | SKIP', 'PASS 或 FAIL', '',
+    ]) {
+      assert(
+        parseVerifierCheckStatus(`- id: end_to_end_driving\n  status: ${bad}\n`, 'end_to_end_driving') === null,
+        `YAML 坏状态「${bad}」必须 null`,
+      );
+    }
+    // 合法值不受影响：整行值 trim 后仍精确匹配（含缩进 / 行尾空白 / 装饰）
+    for (const [good, want] of [['PASS', 'PASS'], ['  FAIL   ', 'FAIL'], ['**WARN**', 'WARN']] as const) {
+      assert(
+        parseVerifierCheckStatus(`- id: end_to_end_driving\n  status: ${good}\n`, 'end_to_end_driving') === want,
+        `YAML 合法值「${good}」须解析为 ${want}`,
+      );
+    }
+    // 占位/冲突值必须真的把候选拦下来（解析 null → 合取不成立 → 零 coding 候选）
+    const viaPlaceholder = buildSummaryRepairCandidates({
+      phase: 'ut', checks: [UT_REAL_ASSERTION_CHECK], reportValidity: 'PASS', reviewReportText: null,
+      verifierReportText: [
+        '| id | status | severity | 证据 |', '|---|---|---|---|',
+        '| end_to_end_driving | <PASS> | BLOCKER | 占位没填 |',
+        '| business_assertion_value | PASS / FAIL | BLOCKER | 自相矛盾 |',
+      ].join('\n'),
+    });
+    assert(
+      !viaPlaceholder.some(c => c.id === 'ut_product_assertion_failure'),
+      `占位/冲突状态不得产出 coding 候选：${JSON.stringify(viaPlaceholder)}`,
+    );
+    // 同一拦截必须在旧 YAML 形态上成立（codex 二轮 medium 的可驱动路径：终态合法 +
+    // 另一必需项 PASS + 冲突值被截断成 PASS → 不可读项为空 + 错误产 coding 候选，
+    // goal 据此回退去改产品）。
+    const yamlConflict = [
+      '# Verifier Report', '',
+      '- id: end_to_end_driving',
+      '  status: PASS / FAIL',
+      '- id: business_assertion_value',
+      '  status: PASS',
+      '',
+    ].join('\n');
+    assert(
+      findUnreadableDiagnosisChecks('ut', yamlConflict).join() === 'end_to_end_driving',
+      `YAML 冲突值须报成不可读项：${JSON.stringify(findUnreadableDiagnosisChecks('ut', yamlConflict))}`,
+    );
+    const viaYamlConflict = buildSummaryRepairCandidates({
+      phase: 'ut', checks: [UT_REAL_ASSERTION_CHECK], reportValidity: 'PASS',
+      reviewReportText: null, verifierReportText: yamlConflict,
+    });
+    assert(
+      !viaYamlConflict.some(c => c.id === 'ut_product_assertion_failure'),
+      `YAML 冲突值不得产出 coding 候选：${JSON.stringify(viaYamlConflict)}`,
+    );
+    // 消费者等值：两种形态经**同一条生产接线**产出同一批候选
+    const viaTable = buildSummaryRepairCandidates({
+      phase: 'ut', checks: [UT_REAL_ASSERTION_CHECK], reportValidity: 'PASS',
+      reviewReportText: null, verifierReportText: UT_SEMANTICS_TABLE,
+    });
+    const viaYaml = buildSummaryRepairCandidates({
+      phase: 'ut', checks: [UT_REAL_ASSERTION_CHECK], reportValidity: 'PASS',
+      reviewReportText: null, verifierReportText: UT_SEMANTICS_LEGACY_YAML,
+    });
+    assert(
+      viaTable.some(c => c.id === 'ut_product_assertion_failure' && c.category === 'coding'),
+      `正式汇总表须产出 coding 候选：${JSON.stringify(viaTable)}`,
+    );
+    // device_ac_delegation FAIL 走同一口径（三项共用解析器）
+    assert(
+      viaTable.some(c => c.id === 'device_ac_delegation' && c.category === 'spec'),
+      `device_ac_delegation 亦须按表读并归 spec：${JSON.stringify(viaTable)}`,
+    );
+    assert(
+      JSON.stringify(viaTable) === JSON.stringify(viaYaml),
+      `两种形态消费者结果必须等值：\n表=${JSON.stringify(viaTable)}\nYAML=${JSON.stringify(viaYaml)}`,
+    );
+  });
+
+  run(results, 'D3/D4 必需检查项可采信性：缺项/冲突指向报告格式修复，不指向改产品', () => {
+    // 正文可采信 → 空数组（不打扰既有分流）
+    assert(
+      findUnreadableDiagnosisChecks('ut', UT_SEMANTICS_TABLE).length === 0,
+      '正式汇总表可读时不得报格式问题',
+    );
+    assert(
+      findUnreadableDiagnosisChecks('ut', UT_SEMANTICS_LEGACY_YAML).length === 0,
+      '旧 YAML 同样可读',
+    );
+    // 缺项 / 冲突 / 占位 → 点名读不出来的必需项
+    assert(
+      findUnreadableDiagnosisChecks(
+        'ut',
+        ['| id | status |', '|---|---|', '| end_to_end_driving | PASS |'].join('\n'),
+      ).join() === 'business_assertion_value',
+      '缺一项须点名该项',
+    );
+    assert(
+      findUnreadableDiagnosisChecks(
+        'ut',
+        [
+          '| id | status |', '|---|---|',
+          '| end_to_end_driving | PASS / FAIL |',
+          '| business_assertion_value | <PASS> |',
+        ].join('\n'),
+      ).length === 2,
+      '冲突与占位两项都须点名',
+    );
+    // review 分支：负面裁决必然有待核问题——issue-verification 块缺席=格式缺口
+    assert(
+      findUnreadableDiagnosisChecks('review', verifierWith([{ id: 'CR-001', verdict: 'confirmed' }])).length === 0,
+      '逐条验证块在场时 review 正文可采信',
+    );
+    assert(
+      findUnreadableDiagnosisChecks('review', '# Verifier Report\n\n结论：PASS\n').join() === 'issue-verification',
+      'review 缺逐条验证块须报格式缺口',
+    );
+    // 没有正文（还没写报告）不是格式问题——那条路由由 verifier evidence=absent 负责
+    assert(findUnreadableDiagnosisChecks('ut', null).length === 0, '缺正文不归格式问题');
+    assert(findUnreadableDiagnosisChecks('coding', 'whatever').length === 0, '非诊断阶段不判定');
+  });
+
+  run(results, 'V2 真实 hvigor 失败 formatter → 归因补齐 → 候选（不手造 classification）', () => {
+    // ⓪ 构造性前提：夹具是**生产形状**——断言失败恒带 failedAt=no_pass + runDiagnosis=test_failed。
+    //    （codex 一轮 high：旧夹具省了这两个字段，于是真实路径上的否决从未被测出来。）
+    const producedEvidence = REAL_ASSERTION_MODULE.result.onDeviceFailureEvidence;
+    assert(
+      producedEvidence?.failedAt === 'no_pass' && producedEvidence.runDiagnosis?.kind === 'test_failed',
+      `V2 夹具必须是完整生产形状：${JSON.stringify(producedEvidence)}`,
+    );
+
+    // ① 复现断点：真实格式器对普通断言失败返回 failureKind=undefined，details 也不含归因文本。
+    const formatted = buildUtHvigorTestFailDetails([REAL_ASSERTION_MODULE]);
+    assert(
+      formatted.failureKind === undefined,
+      `构造性前提：真实格式器对普通断言失败不给 failureKind（这正是 F01 断点），实得 ${formatted.failureKind}`,
+    );
+    const rawDetails = formatted.lines.join('\n');
+    assert(
+      !/失败归因：/.test(rawDetails),
+      `构造性前提：details 原文不含"失败归因："（正则回退也读不到）：\n${rawDetails}`,
+    );
+    // 光有原文、没有归因 → 现有候选组装恒为零（旧生产行为）
+    const before = buildSummaryRepairCandidates({
+      phase: 'ut',
+      checks: [{ id: 'ut_hvigor_test', status: 'FAIL', severity: 'BLOCKER', details: rawDetails }],
+      reportValidity: 'PASS', reviewReportText: null, verifierReportText: UT_SEMANTICS_TABLE,
+      parseClassificationFromDetails: parseFailureClassificationFromDetails,
+    });
+    assert(
+      !before.some(c => c.id === 'ut_product_assertion_failure'),
+      `断点复现：无归因时不得产出 coding 候选，实得 ${JSON.stringify(before)}`,
+    );
+
+    // ② 生产端最小补接：ut-host-impl 的真实判据（全部模块跑完 ∧ 真跑出用例 ∧ 有用例失败）
+    assert(
+      isRealAssertionFailure([REAL_ASSERTION_MODULE], true) === true,
+      '真实断言失败须判为可归 code_regression',
+    );
+    const after = buildSummaryRepairCandidates({
+      phase: 'ut',
+      checks: [{
+        id: 'ut_hvigor_test', status: 'FAIL', severity: 'BLOCKER', details: rawDetails,
+        affected_files: formatted.affectedFiles,
+        failure_kind: isRealAssertionFailure([REAL_ASSERTION_MODULE], true) ? 'code_regression' : undefined,
+      }],
+      reportValidity: 'PASS', reviewReportText: null, verifierReportText: UT_SEMANTICS_TABLE,
+      parseClassificationFromDetails: parseFailureClassificationFromDetails,
+    });
+    assert(
+      after.some(c => c.id === 'ut_product_assertion_failure' && c.category === 'coding'),
+      `补齐结构化归因后须产出 coding 候选：${JSON.stringify(after)}`,
+    );
+
+    // ③ 缺结构化字段但 details 含真实旧「失败归因」原文 → 回退解析器仍可采信
+    const legacyText = `${rawDetails}\n失败归因：code_regression`;
+    const viaFallback = buildSummaryRepairCandidates({
+      phase: 'ut',
+      checks: [{ id: 'ut_hvigor_test', status: 'FAIL', severity: 'BLOCKER', details: legacyText }],
+      reportValidity: 'PASS', reviewReportText: null, verifierReportText: UT_SEMANTICS_TABLE,
+      parseClassificationFromDetails: parseFailureClassificationFromDetails,
+    });
+    assert(
+      viaFallback.some(c => c.id === 'ut_product_assertion_failure'),
+      `details 原文归因回退须等价：${JSON.stringify(viaFallback)}`,
+    );
+
+    // ④ 结构化环境故障优先于文本：锁屏证据在场时不得判 code_regression
+    const lockedModule: UtHvigorTestFailureModule = {
+      module: REAL_ASSERTION_MODULE.module,
+      result: {
+        ...REAL_ASSERTION_MODULE.result,
+        onDeviceFailureEvidence: {
+          runDiagnosis: { kind: 'device_locked' as const, summary: '设备锁屏', suggestion: '解锁后重跑' },
+        },
+      },
+    };
+    assert(
+      isRealAssertionFailure([lockedModule], true) === false,
+      '结构化设备阻断在场时不得冒充产品缺陷',
+    );
+    const lockedFormatted = buildUtHvigorTestFailDetails([lockedModule]);
+    assert(
+      lockedFormatted.failureKind === 'device_blocked' && lockedFormatted.blockingClass === 'externalBlocked',
+      `锁屏须保留格式器原归因：${JSON.stringify(lockedFormatted.failureKind)}/${JSON.stringify(lockedFormatted.blockingClass)}`,
+    );
+    // ④b 只有 no_pass/test_failed 这一对算断言诊断：其余阶段/诊断族仍一律否决
+    //    （放宽判据后最容易出的洗绿口，逐个钉住）。
+    for (const [label, evidence] of [
+      ['failedAt=run（aa test 没起来）', { failedAt: 'run' as const }],
+      ['failedAt=install（装机失败）', { failedAt: 'install' as const }],
+      ['failedAt=hap_not_found（没出包）', { failedAt: 'hap_not_found' as const }],
+      [
+        'runDiagnosis=aa_test_no_result（跑了但没报文）',
+        { failedAt: 'no_pass' as const, runDiagnosis: { kind: 'aa_test_no_result' as const, summary: 's', suggestion: 'g' } },
+      ],
+      [
+        'installDiagnosis 在场（装机诊断）',
+        { failedAt: 'no_pass' as const, installDiagnosis: { kind: 'install_downgrade' as const, summary: 's', suggestion: 'g' } },
+      ],
+    ] as const) {
+      assert(
+        isRealAssertionFailure(
+          [{ module: 'ModA', result: { ...REAL_ASSERTION_MODULE.result, onDeviceFailureEvidence: { ...evidence } } }],
+          true,
+        ) === false,
+        `${label} 不得判 code_regression`,
+      );
+    }
+
+    // ⑤ 未完整执行 / 无实际 failures 一律不得改归 code_regression
+    assert(
+      isRealAssertionFailure([REAL_ASSERTION_MODULE], false) === false,
+      '选中模块未全部产出真实结果时不得判 code_regression',
+    );
+    assert(
+      isRealAssertionFailure(
+        [{ module: 'ModA', result: { ...REAL_ASSERTION_MODULE.result, testResult: { total: 0, passed: 0, failed: 0, skipped: 0, failures: [] } } }],
+        true,
+      ) === false,
+      'total=0（一个用例都没跑到）不得判 code_regression',
+    );
+    assert(
+      isRealAssertionFailure(
+        [{ module: 'ModA', result: { ...REAL_ASSERTION_MODULE.result, timedOut: true } }],
+        true,
+      ) === false,
+      'timedOut 不得判 code_regression',
+    );
   });
 
   // --- review 侧信任合取 --------------------------------------------------

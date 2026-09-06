@@ -28,8 +28,9 @@ hook_events:
   - id: on_context_load
     description: >-
       Fired at the end of the harness check flow. Fragments are consumed only when the verifier
-      ai-prompt is assembled (script verdict PASS and verifier enabled); they never enter the
-      author's pre-write context.
+      ai-prompt is assembled — that is, when the verifier request eligibility check admits the phase
+      (script PASS, or a diagnosable product failure admitted for a repair-diagnosis round); they never
+      enter the author's pre-write context.
   - id: on_violation
     description: When a check returns BLOCKER or MAJOR (after classification).
 

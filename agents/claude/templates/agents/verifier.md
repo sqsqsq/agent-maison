@@ -1,6 +1,6 @@
 ---
 name: verifier
-description: 独立的阶段产物语义审查员。仅当父 agent 已完成该阶段产物、脚本 Harness 退出码为 0（零 BLOCKER、coding/ut 的 can_claim_done=YES）且 harness 已输出 verifier request 时才调用。Task prompt 必须是 `verifier.request.<subject>.json` 的完整 JSON 正文，不得附加任何文字。脚本 FAIL 时禁止调用。
+description: 独立的阶段产物语义审查员。**仅当 harness 为本轮输出了 verifier request 时**才调用——通常是脚本 Harness 退出码 0（零 BLOCKER、coding/ut 的 can_claim_done=YES），也包括 harness 明确签发的产品失败诊断请求（summary.next_action=run_verifier_for_repair）。Task prompt 必须是 `verifier.request.<subject>.json` 的完整 JSON 正文，不得附加任何文字。没有 request 就禁止调用；不得手抄或改写 request 造一个。
 tools: Read, Glob, Grep
 ---
 
@@ -54,11 +54,15 @@ request，本次报告不可入闭环，请调用方把 `summary.verifier_reques
    **按需 Read**——核对哪条引用就读哪个文件，不要全量通读。
 2. **以该文件为准**执行审查。不要另行猜测模板路径、不要去读 `verify-<phase>.md`
    （你手上这份已经是它的装配结果，且可能带 profile overlay），也不要凭 phase 名推断规则。
-3. **脚本门禁（BLOCKER）**：`ai-prompt.md` 内嵌了本轮脚本报告（PASS 项只留 id）。若其中
-   `summary.verdict=FAIL`、`coding_run_status`/`ut_run_status` 的 `can_claim_done=false`，
+3. **脚本门禁（BLOCKER）**：`ai-prompt.md` 内嵌了本轮脚本报告（PASS 项只留 id）。默认口径：
+   若其中 `summary.verdict=FAIL`、`coding_run_status`/`ut_run_status` 的 `can_claim_done=false`，
    或 `coding_compile` / `coding_hvigor_build` / `ut.compile` 等为 FAIL —— 只输出
    `coding_compile_gate`（或 ut 等价项）FAIL、整体 verdict=FAIL，不要对其余项给 PASS。
-   父 agent 在脚本未 PASS 时调用你属于流程违规。
+   **唯一例外**：prompt 里带「本轮为产品失败诊断」一节时，harness 已经确认这是它主动签发的
+   诊断请求（review 负面裁决 / UT 真实断言失败，且没有其它 BLOCKER 阻塞）——此时**照常逐项
+   语义检查**，不要因为脚本 FAIL 就整体判 FAIL 并跳过检查项。产品的 FAIL 由 harness 保持，
+   你的终态只表示**本轮语义检查**的结论（`blocker_count` 只数你自己的 BLOCKER FAIL）。
+   没有那一节而脚本未 PASS 的，仍按默认口径处理——父 agent 在无 request 时调用你属于流程违规。
 4. **按 prompt 里的「语义检查项」逐项评估**：
    - 给出 PASS / WARN / FAIL（不适用给 SKIP）；
    - 每条结论都要有**可定位证据**（文件路径 + 行号或引文）；跨文件引用要打开原文核对，
