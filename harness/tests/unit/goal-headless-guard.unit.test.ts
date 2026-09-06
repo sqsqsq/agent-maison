@@ -984,6 +984,42 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
+      // V10（plan 5e1c7a93 D4）：无人值守禁问块只注入 detached。attended 走 bridge，
+      // phase SKILL 的停等确认按原义执行——不得再被同一份提示词要求「停下来问 = 任务失败」。
+      // 完整性红线与确定性检测段两种形态都必须在场。
+      name: 'V10 buildPhasePrompt: attended 不注入模式段、仍注入红线段；detached 逐字不变',
+      run: () => {
+        const detached = buildPhasePrompt(MINIMAL_MANIFEST, FRAMEWORK_ROOT, 'spec', FRAMEWORK_ROOT, []);
+        const attended = buildPhasePrompt(
+          MINIMAL_MANIFEST, FRAMEWORK_ROOT, 'spec', FRAMEWORK_ROOT, [],
+          undefined, undefined, undefined, undefined, undefined, undefined,
+          undefined, undefined, undefined, undefined, undefined,
+          true,
+        );
+        for (const needle of ['## Unattended execution', 'MUST NOT stop to ask', 'overrides', 'approval_mode', '§9', 'headless-assumptions']) {
+          assert(detached.includes(needle), `detached 应保留模式段：${needle}`);
+          assert(!attended.includes(needle), `attended 不得注入模式段：${needle}`);
+        }
+        for (const needle of [
+          'Gate-integrity red lines',
+          'NEVER write legacy quality-signature fields such as `confirmed_by`',
+          'NEVER tamper with gate artifacts',
+          'NEVER modify the framework control plane',
+          'Deterministic detectors',
+        ]) {
+          assert(detached.includes(needle), `detached 应保留红线段：${needle}`);
+          assert(attended.includes(needle), `attended 必须照常注入红线段：${needle}`);
+        }
+        assert(attended.includes('## Attended execution (session owner)'), 'attended 应有诚实说明段');
+        // 失效话术已纠正：账本是留痕，不是授权，也不单独否决 closure
+        assert(
+          !detached.includes('a gate without a ledger line fails the phase closure'),
+          'check-receipt 已退役该否决（check-receipt.ts:1076），不得继续喂假 BLOCKER',
+        );
+        assert(detached.includes('it is not authorization'), '账本话术应改为留痕/非授权');
+      },
+    },
+    {
       // P0-2（round6 收尾批·codex 意见）：visual_gap 重试指导必须含弃判禁令——
       // fail_signals 非空不得 pending、须转 must_fix 并在本轮修码重测（终局 run 实锤 agent 弃判）。
       name: 'T4 矛盾指令根除：testing 版指导不得含「本轮改码」，且明令零源码写入',
