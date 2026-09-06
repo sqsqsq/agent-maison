@@ -17,7 +17,9 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { clearFrameworkConfigCache } from '../../config';
+import { clearFrameworkConfigCache, featurePhaseReportsDir, resolveReceiptFilePath } from '../../config';
+import { finalizePhaseClosure } from '../../scripts/utils/phase-closure-finalizer';
+import { snapshotPhaseHarness } from '../../scripts/utils/goal-phase-snapshot';
 import {
   loadVerifierEvidence,
   loadVerifierEvidenceForSubject,
@@ -375,6 +377,174 @@ function case9_revalidateLedgerReadsMarkdown(): void {
   });
 }
 
+// --------------------------------------------------------------------------
+// B04-V5 / B04-V6（plan 2f8a6d40 D3）：goal 阶段快照对"沿用既往 PASS"的证据回落
+// --------------------------------------------------------------------------
+// 全程真实生产函数：publishFixtureVerifierEvidence（与生产同形的报告字节）→
+// deriveVerifierClosureRecord（唯一派生口径）→ finalizePhaseClosure（真实闭环定稿，
+// 写 verifier_closure 与 semantic_not_reverified）→ snapshotPhaseHarness（被测对象）。
+// 不手拼 summary 的 verifier_closure / readiness_signals 字段。
+
+const FRAMEWORK_ROOT = path.resolve(__dirname, '..', '..', '..');
+const RUN_REPORT_DIR = 'doc/goal-runs/run-b04';
+
+/** 可过 finalizer 的最小 1.2 host（形状照 phase-closure-finalizer 套件的 mkProject）。 */
+function makeClosureHost(): { root: string; reportsDir: string } {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-b04-snapshot-'));
+  fs.writeFileSync(
+    path.join(root, 'framework.config.json'),
+    JSON.stringify({
+      schema_version: '1.1',
+      project_name: 'b04-snapshot',
+      project_profile: { name: 'generic' },
+      agent_adapter: 'generic',
+      architecture: {
+        outer_layers: [{ id: 'app', can_depend_on: [], intra_layer_deps: 'forbid' }],
+        module_inner_layers: ['content'],
+        inner_dependency_direction: 'upward',
+        cross_module_exports_file: 'index.ts',
+      },
+      paths: { features_dir: 'doc/features' },
+    }),
+    'utf8',
+  );
+  const featureRoot = path.join(root, 'doc', 'features', FEATURE);
+  fs.mkdirSync(path.join(featureRoot, PHASE), { recursive: true });
+  fs.writeFileSync(path.join(featureRoot, PHASE, 'spec.md'), '# Demo\n', 'utf8');
+  fs.writeFileSync(path.join(featureRoot, 'acceptance.yaml'), 'criteria: []\n', 'utf8');
+  const reportsDir = featurePhaseReportsDir(root, FEATURE, PHASE, FRAMEWORK_ROOT);
+  fs.mkdirSync(reportsDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(reportsDir, 'summary.json'),
+    JSON.stringify({
+      schema_version: '1.2', phase: PHASE, feature: FEATURE, verdict: 'PASS',
+      blocker_count: 0, fail_count: 0, warn_count: 0,
+      script_report: 'script-report.json', merged_report: 'merged-report.md',
+      summary_json: 'summary.json',
+      run_statuses: [], readiness_signals: [], blocking_warnings: [], blocking_skips: [], blockers: [],
+      next_action: 'run_receipt', closure_status: 'open', assurance: 'full',
+    }, null, 2),
+    'utf8',
+  );
+  const receiptPath = resolveReceiptFilePath(root, FEATURE, PHASE).path;
+  fs.mkdirSync(path.dirname(receiptPath), { recursive: true });
+  fs.writeFileSync(receiptPath, '# receipt\n\nclaimed: true\n', 'utf8');
+  clearFrameworkConfigCache();
+  return { root, reportsDir };
+}
+
+function withClosureHost(fn: (host: { root: string; reportsDir: string }) => void): void {
+  const host = makeClosureHost();
+  try {
+    fn(host);
+  } finally {
+    fs.rmSync(host.root, { recursive: true, force: true });
+    clearFrameworkConfigCache();
+  }
+}
+
+/** 真实闭环定稿（verifier_closure 由 deriveVerifierClosureRecord 现算，不手写）。 */
+function closeWithRealFinalizer(root: string): void {
+  finalizePhaseClosure({
+    projectRoot: root,
+    frameworkRoot: FRAMEWORK_ROOT,
+    feature: FEATURE,
+    phase: PHASE,
+    persistPhaseState: () => undefined,
+    prepareEvidence: () => ({ extraInputs: [], extraOutputs: [], requirementSha: null }),
+    summaryPatch: { verifier_closure: deriveVerifierClosureRecord(root, FEATURE, PHASE) },
+  });
+}
+
+function readSnapshotSummary(root: string): Record<string, unknown> {
+  return JSON.parse(
+    fs.readFileSync(path.join(root, RUN_REPORT_DIR, 'phases', PHASE, 'harness', 'summary.json'), 'utf-8'),
+  ) as Record<string, unknown>;
+}
+
+function caseB04V5_snapshotArchivesReusedReport(): void {
+  withClosureHost(({ root, reportsDir }) => {
+    const priorSubject = fixtureSubjectId('b04-prior');
+    const currentSubject = fixtureSubjectId('b04-current');
+    // subject A：完整审过并 PASS
+    const published = publishFixtureVerifierEvidence({
+      projectRoot: root, reportsDir, feature: FEATURE, phase: PHASE,
+      subjectId: priorSubject, skipSummaryPatch: true,
+    });
+    // 材料变更 → 当前 subject B，B 还没有报告
+    const summaryPath = path.join(reportsDir, 'summary.json');
+    const doc = JSON.parse(fs.readFileSync(summaryPath, 'utf-8')) as Record<string, unknown>;
+    doc.verifier_subject_id = currentSubject;
+    fs.writeFileSync(summaryPath, JSON.stringify(doc, null, 2), 'utf-8');
+
+    closeWithRealFinalizer(root);
+    const snap = snapshotPhaseHarness(root, FEATURE, PHASE as never, RUN_REPORT_DIR, FRAMEWORK_ROOT);
+
+    // 快照必须归档"这次闭环真正依据的那份报告"，并标注它是沿用
+    assert(
+      snap.verifier_evidence?.subject_id === priorSubject,
+      `快照应归档被沿用的 subject A，实得 ${snap.verifier_evidence?.subject_id ?? 'null'}`,
+    );
+    assert(snap.verifier_evidence?.verdict === 'PASS', `实得 ${snap.verifier_evidence?.verdict ?? 'null'}`);
+    assert(
+      snap.verifier_evidence?.reused_from_prior_review === true,
+      '沿用既往 PASS 时必须标注 reused_from_prior_review',
+    );
+    const reportRel = snap.snapshot_files['verifier.report.md'];
+    assert(reportRel !== null, '沿用闭环的存档不得缺 verifier.report.md');
+    assert(
+      fs.readFileSync(path.join(root, reportRel as string)).equals(fs.readFileSync(published.mdPath)),
+      '存档报告字节须等于被沿用的那份 A',
+    );
+    // 三处并陈：同目录 summary 副本自证"沿用 + 未重审"
+    const copied = readSnapshotSummary(root);
+    const closure = copied.verifier_closure as { mode?: string; reviewed_subject_id?: string } | undefined;
+    assert(closure?.mode === 'completed_with_prior_review', `实得 ${closure?.mode ?? 'null'}`);
+    assert(closure?.reviewed_subject_id === priorSubject, 'closure 记录的 subject 须与快照 subject 一致');
+    assert(
+      ((copied.readiness_signals ?? []) as Array<{ id?: string }>).some(s => s.id === 'semantic_not_reverified'),
+      'summary 副本须保留 semantic_not_reverified（材料未重审）',
+    );
+  });
+}
+
+function caseB04V6_snapshotFallbackGuards(): void {
+  // ① 当前 subject 自己有验真 PASS 报告 → 取当前证据，不得标沿用（回落不得抢在当前证据之前）
+  withClosureHost(({ root, reportsDir }) => {
+    const current = fixtureSubjectId('b04-self');
+    publishFixtureVerifierEvidence({
+      projectRoot: root, reportsDir, feature: FEATURE, phase: PHASE, subjectId: current,
+    });
+    closeWithRealFinalizer(root);
+    const snap = snapshotPhaseHarness(root, FEATURE, PHASE as never, RUN_REPORT_DIR, FRAMEWORK_ROOT);
+    assert(snap.verifier_evidence?.subject_id === current, '当前 subject 有报告时须取当前证据');
+    assert(
+      snap.verifier_evidence?.reused_from_prior_review === undefined,
+      '当前材料自己审过时不得标 reused_from_prior_review',
+    );
+    assert(snap.snapshot_files['verifier.report.md'] !== null, '当前证据的报告须归档');
+  });
+  // ② 本 phase 从未 PASS 过 → 无 verifier_closure，快照仍是 null（不得凭空回落）
+  withClosureHost(({ root, reportsDir }) => {
+    const current = fixtureSubjectId('b04-never');
+    const summaryPath = path.join(reportsDir, 'summary.json');
+    const doc = JSON.parse(fs.readFileSync(summaryPath, 'utf-8')) as Record<string, unknown>;
+    doc.verifier_subject_id = current;
+    fs.writeFileSync(summaryPath, JSON.stringify(doc, null, 2), 'utf-8');
+    // 同 phase 只留一份 FAIL 报告——不得被当成可沿用的既往 PASS
+    publishFixtureVerifierEvidence({
+      projectRoot: root, reportsDir, feature: FEATURE, phase: PHASE,
+      subjectId: fixtureSubjectId('b04-failonly'), verdict: 'FAIL', blockerCount: 2,
+      skipSummaryPatch: true,
+    });
+    assert(deriveVerifierClosureRecord(root, FEATURE, PHASE) === null, 'FAIL-only 不得派生沿用闭环');
+    closeWithRealFinalizer(root);
+    const snap = snapshotPhaseHarness(root, FEATURE, PHASE as never, RUN_REPORT_DIR, FRAMEWORK_ROOT);
+    assert(snap.verifier_evidence === null, `从未 PASS 过不得回落出证据：${JSON.stringify(snap.verifier_evidence)}`);
+    assert(snap.snapshot_files['verifier.report.md'] === null, '不得归档一份 FAIL 或不存在的报告');
+  });
+}
+
 const CASES: Array<{ name: string; fn: () => void }> = [
   { name: '① 命中：report_text 是报告全文（不是只剩终态块）', fn: case1_hit },
   { name: '② 四类失败各自独立错误码，恢复话术只指向重跑 verifier', fn: case2_failuresAllPointToRerun },
@@ -385,6 +555,8 @@ const CASES: Array<{ name: string; fn: () => void }> = [
   { name: '⑦ summary.verifier_report 是仓根相对路径，按它能找到报告', fn: case7_reportPointerIsRepoRelative },
   { name: '⑧ 回执投影从 MD 取 report_path/verdict，残留旧 JSON 不被采信', fn: case8_receiptProjectionReadsMarkdown },
   { name: '⑨ 重验账本按 MD 判复用；终态块坏 = 不可复用', fn: case9_revalidateLedgerReadsMarkdown },
+  { name: 'B04-V5 沿用既往 PASS 闭环 → goal 快照归档被沿用的报告并标注沿用', fn: caseB04V5_snapshotArchivesReusedReport },
+  { name: 'B04-V6 快照回落反例：当前证据优先、从未 PASS 不得凭空回落', fn: caseB04V6_snapshotFallbackGuards },
 ];
 
 export function runAll(): UnitCaseResult[] {
