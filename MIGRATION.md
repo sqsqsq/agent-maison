@@ -327,6 +327,19 @@ generic 未登记（共享规则被物化不等于运行时会读取）。未登
 - **退役的 halt_reason**：`phase_write_owner_unresolved`、`phase_write_boundary_unresolved`、`pre_invoke_snapshot_failed`、`post_invoke_snapshot_failed`、`unauthorized_source_mutation`、`goal_post_review_source_mutation_unresolved`、`goal_review_closure_baseline_unavailable` 新 run 不再写入；`testing_write_violation` 早已无产地。注册表条目保留并标 legacy-only，历史 `events.jsonl` 仍可解释，旧事件不改写。
 - **放弃了什么**：未登记路径与产品源码域的跨阶段写入不再"即时"阻断，改为留痕加由 checker 稍后裁决，失去一部分早期发现能力。真实编译、测试、验收失败与范围越界的处理一律不变。
 
+### 3.0.x：可诊断的产品失败照样签发 verifier request（非 Breaking，plan 3a7f9c12 / openspec verifier-repair-diagnostics）
+
+回修候选依赖 verifier 逐条确认，而 verifier request 此前只在脚本 `verdict=PASS` 时签发——于是 review 的负面裁决（`negative_verdict_closure` / `conditional_pass_closure`）与 UT 的真实用例断言失败这两类产品失败，永远拿不到能驱动回修的证据，只能原地重试到预算耗尽。3.0.x 起 harness 对这两类**已复现**的失败照样装配 `ai-prompt.md` 并签发 request。
+
+- **产品裁决一字不改**：`verdict=FAIL`、exit 1、`closure_status=open` 全部保持。verifier 的 PASS 只证明"这份报告可信"，不构成产品通过；失败的 phase 也不要求先闭环。
+- **只开两扇门**：review 需 `report_validity=PASS`、BLOCKER FAIL 全为上述两条、无 BLOCKER SKIP、无未解析 capability；UT 需编译 PASS、执行 FAIL 且归因 `code_regression`、无其它 BLOCKER FAIL/SKIP。缺源码、坏表、编译/设备/工具链失败、混合失败与 `INCOMPLETE` 一律保持原样（先修输入或环境）。
+- **新的 `next_action` 取值 `run_verifier_for_repair`**：不是新阶段、不是新状态机。控制台 `NEXT` 行会给齐 request 路径、报告落盘路径与后续命令。goal 编排下写完报告即回传本轮（外层 runner 会重跑 gate harness 并重算候选，agent **不要**自己再跑一次）；非 goal 才由调用方自己重跑一次本阶段 harness。
+- **报告终态口径不变，但现在写明了**：`blocker_count` 只数**本轮 verifier 自己的语义检查**中 severity=BLOCKER 且 status=FAIL 的项数，`verdict=PASS` 当且仅当为 0。确认了 N 条产品缺陷但审查自身无 BLOCKER FAIL 时，正确终态是 `PASS / 0`——不要把产品 FAIL 抄进终态，那会让逐条 confirmed 派生的回修候选整批消失。
+- **verifier 报告的机器解析改读正式汇总表**：`verify-*.md` §7.1 的 `| id | status | ... |` 表现在可被机器读取（此前只认 §7.2 的 YAML，而 YAML 按契约只列非 PASS 项，于是所有 PASS 对机器不可见）。旧 YAML 形态继续兼容；同条一致重复去重，**冲突或坏状态一律不采信**（不会选择有利的 PASS），落回既有"未确认/修格式"通道。宿主无需改写历史报告。
+- **UT 真实断言失败现在带机器归因**：全部选中模块真跑完、且每个失败模块确实跑出用例并有用例失败、无工具缺失/超时/装机预检阻塞/结构化设备故障时，`ut_hvigor_test` 会带 `failure_kind=code_regression`。环境类失败保持原归因，不会被改判成产品缺陷。
+- **消费者需要动手**：重新物化 `.claude/agents/verifier.md`、`phase-executor.md` 与 Stop hook（`.cac` 同），使它们的调用前置由"脚本 PASS 才可调用"改为"harness 签发了 request 才可调用"。未刷新的实例只会继续拒绝在脚本 FAIL 时派发 verifier，即改动前的行为，不会出错。
+- **放弃的准确性**：只开放已复现的两类失败，其余可诊断失败仍需新证据才登记；诊断请求不能证明 verifier 诚实读了 FAIL 报告而非盖章放行（兜底是产品裁决不变 + 逐条 confirmed 合取，不是防篡改）；既非正式表格也非旧 YAML 的自由文本报告仍无法采信，须修格式；`code_regression` 由"没有环境证据"反推，某种无结构化证据的真机故障仍可能被误读为产品缺陷——但它只解锁一次语义审查，永不改写产品裁决。
+
 ## 首选路径：初始化 Skill 的 UPDATE 模式（编排化 · S1–S4）
 
 当实例根已存在 `framework.config.json` 时，再次执行 [`framework-init`](skills/project/framework-init/SKILL.md)（`/framework-init`）进入 **UPDATE** 模式，流程为：
