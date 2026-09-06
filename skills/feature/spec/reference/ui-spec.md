@@ -201,7 +201,7 @@ assets:
 
 ui-spec 生成后、进 plan 前：
 
-1. **多模态 gate**（M3，条件具备）：VL 核对且当前 hash-bound provenance/终签链完整后，设 `verified: verified` + `verified_method: vl_multimodal`。
+1. **多模态 gate**（M3，条件具备）：VL 核对且当前 hash-bound provenance/终签链完整后，设 `verified: verified` + `verified_method: vl_multimodal`。终签绑的是**材料**不是调用：**本 run 内读过且图内容未变即可采信，closure 轮不必逐张重读**；图被替换（hash 失配）必须重读（plan 8d2b4f60 D2/D3）。能力条件是本 run 由 preflight 探测产生的金丝雀——`vision.image_input_override` 是用户自我声明，不构成实测证据。
 2. **无可靠 VL 能力**：只能 `verified: unverified` → 连带降级 C/D/K（见下表）；required 义务按 capability-missing/deferred 投影，不能由人签改为 PASS。
 3. **盲档 + OCR 辅助**（v2.5+，多模态降级阶梯）：无视觉能力时，`verified: unverified`（同 2，机读信号不变——OCR 辅助不等于视觉验真）；提取工作法见下方「盲档工作法」，**禁止假装完成了看图核对**。
 4. **有 VL 但无逐图 Read 审计链**（plan c4e8a1f7 T3，能力与可审计性分轴）：`tool_event_provenance=none` 的 adapter（如 codex）**能看图**但 runner 无法从事件审计「逐张读过」——`verified: verified + vl_multimodal` 的 refs receipt/终签链结构性不可达，只能 `verified: unverified`（best-effort/reachable 档 WARN 可继续、hard contract FAIL，门槛不降）；伪造 `verified: verified` 恒被拒。
