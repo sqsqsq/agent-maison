@@ -340,6 +340,21 @@ generic 未登记（共享规则被物化不等于运行时会读取）。未登
 - **消费者需要动手**：重新物化 `.claude/agents/verifier.md`、`phase-executor.md` 与 Stop hook（`.cac` 同），使它们的调用前置由"脚本 PASS 才可调用"改为"harness 签发了 request 才可调用"。未刷新的实例只会继续拒绝在脚本 FAIL 时派发 verifier，即改动前的行为，不会出错。
 - **放弃的准确性**：只开放已复现的两类失败，其余可诊断失败仍需新证据才登记；诊断请求不能证明 verifier 诚实读了 FAIL 报告而非盖章放行（兜底是产品裁决不变 + 逐条 confirmed 合取，不是防篡改）；既非正式表格也非旧 YAML 的自由文本报告仍无法采信，须修格式；`code_regression` 由"没有环境证据"反推，某种无结构化证据的真机故障仍可能被误读为产品缺陷——但它只解锁一次语义审查，永不改写产品裁决。
 
+### 3.0.x：视觉终签改绑材料，invoke 级金丝雀回执停产（非 Breaking，plan 8d2b4f60 / openspec vision-evidence-material-binding）
+
+`vl_multimodal` 终签此前把两件事都绑在**一次 agent 调用**上：能力证明（prompt 内嵌金丝雀，答案必须写在终态输出末尾）与材料证据（参考图逐张读取回执）。两条绑定各烧掉整轮：收口轮被 completion probe 杀进程 → 答卷从未产生 → 拒签（宿主 run `20260905T103028Z-79d3fd` spec-i4，三张参考图明明都读过）；closure 轮不重读图 → 回执 partial → 拒签 → `content_retry_exhausted`（run `20260815T070732Z-013297`）。3.0.x 起能力回落 **run 级 preflight 金丝雀**，材料证据改按**内容哈希**寻址。
+
+- **`vision/capability-receipt.json` 停止产出**：类型、读写函数、`invocation_bound` 能力档、`capability_receipt` 事件与 prompt 内嵌金丝雀块整套删除。**盘上残留无害**——已无任何消费者，不影响任何门禁结论，无需迁移动作。preflight 金丝雀的出题/渲染/TTL/采信谓词、completion probe 与独立 visual provider 一字未动。
+- **能力条件必须来自实测 probe**：终签要求能力档 `scope=run_probed` **且来源是 probe**（即金丝雀分支写的 `canary_probed_at` 在场）。设了 `vision.image_input_override` 的宿主**拿不到 `vl_multimodal`**：override 分支先返回、根本不读金丝雀，而 preflight 见 override 即跳过探测，本 run 零实测证据。出路是删掉 override 让 preflight 实测一次，或诚实写 `verified: unverified`（软档 WARN 可继续、hard pixel contract 仍 FAIL）。拒签文案不会宣称"实测"。
+- **`vision/spec-refs-receipt.json` 升 schema `1.1`，loader 只收 1.1**：删顶层 `invoke_id`，每张图增 `read_at_invoke`。旧 `1.0` 回执一律视同"无回执"——消费面报"尚未生成"、生产面从零重算。**不能靠 `goal_run_id` 作废**：同 run resume 时它恰好等于当前 run，只有版本判据挡得住。**无需迁移脚本**：回执是每轮可重算的派生物，重算成本=一次事件日志解析。
+- **跨 invoke 取并集，图变即作废**：同一 run 内先前 invoke 读过的图，只要内容哈希未变就继续采信；图被替换即判 unread、必须重读。closure 轮因此不再被要求逐张重读，提示词里"必须读满"与"产物 FROZEN"的自相矛盾一并删除。跨 run 仍精确等值不复用。
+- **同名异路径不再算读**：Read 命中改为规范化完整路径等值（win32 不分大小写）。此前"读了 `tmp/1-home.png`、签了 `ux-reference/1-home.png` 的哈希"是成立的。
+- **attended 轮不生产回执**：阶段日志路径按 phase 固定，attended 轮不产生本次调用的工具事件，若照签就会把**上一轮 detached 的**日志配上新图哈希，拼出一张看似崭新的回执。现在 attended 只发 `spec_refs_receipt_produced` 的 `status:'skipped'`+`reason:'attended_no_invoke_audit'`，不写盘、不覆盖既有回执。配套：runtime 拒绝 `attended` executor 配 `process` owner（此前只禁 `session`+`detached`），否则 gate 判不出 attended。
+- **拒签文案分四态**：不可达（执行形态/无逐图审计能力）> 未实测（本 run 无 probe 金丝雀）> 尚未生成（回执由 runner 在 invoke 结束后签发，阶段内自跑 harness 的首轮必然还没有它）> 验证不通过（材料核对失败）。**不新增 check id、不改严重度阶梯**。此前"无回执"被一律当成"执行形态不支持"，会在正常首轮教模型自降档。
+- **沿用先前 invocation 的读取记录会被披露**：`spec_refs_receipt_produced` 事件带 `carried_over` 计数，`goal-report.md` 多渲染一行 `↳ 参考图读取` 注记（与既有"预算提示""模型核验"同段同写法）。不新增 check/WARN/summary 字段。
+- **删掉了事件锚**：不再校验"该 invoke 的最后一条 runner 事件 + 回执文件 sha256 一致"。**放弃的准确性**：agent 在调用窗口内伪造回执不再被顺序信任拆穿；兜底仍是冻结 manifest 重算分母（不可自缩）与逐张哈希核对。其余取舍：能力粒度从"这次调用能看图"退到"这个 run 实测能看图"（run 中途被切到盲模型不当场察觉，兜底为 `pin_verify_mismatch` 告警与 `vision_output_counterevidence` 产物反证）；后续轮改了产物却没重读图仍带签名（图一变即失效）；Windows 上仅大小写不同的两个真实文件被判同一张（NTFS 默认不区分大小写，实际不可构造）；closure 提示词不再提前劝阻，图被替换时多绕一轮。
+- **消费者无需动手**：无配置变更、无产物迁移、无模板重新物化。
+
 ## 首选路径：初始化 Skill 的 UPDATE 模式（编排化 · S1–S4）
 
 当实例根已存在 `framework.config.json` 时，再次执行 [`framework-init`](skills/project/framework-init/SKILL.md)（`/framework-init`）进入 **UPDATE** 模式，流程为：
