@@ -58,6 +58,7 @@ import { setupMinimalHost } from '../helpers/goal-run-driver';
 import { inferRepoLayout } from '../../repo-layout';
 import { clearFrameworkConfigCache } from '../../config';
 import { writeLocalConfig } from '../../scripts/utils/framework-local-config';
+import { VISION_CANARY_PROBE_VERSION } from '../../scripts/utils/vision-canary';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 
@@ -377,13 +378,16 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         assert.strictEqual(got, q.expect, `quadrant hasVision=${q.hasVision} provenance=${q.provenance} → ${got}（期望 ${q.expect}）`);
         // 组合接线：判定结果直接喂 block helper，断言实际文案分派
         const block = buildClosureVisualEvidenceBlock(refs, got);
+        // plan 8d2b4f60 D3：structured 分支不再输出 Mandatory/REQUIRED 强制重读块，
+        // 改为「列出参考图 + 图变了要重读」；二态分派本身不变。
         if (q.expect === 'structured_events') {
-          assert(block.includes('Mandatory read-only visual evidencing'), `structured 象限应输出 REQUIRED 块（hasVision=${q.hasVision} provenance=${q.provenance}）`);
+          assert(block.includes('## Read-only visual evidencing (spec closure)'), `structured 象限应输出只读取证块（hasVision=${q.hasVision} provenance=${q.provenance}）`);
           assert(!block.includes('honest unverified exit'), 'structured 象限不应输出 unverified 块');
         } else {
           assert(block.includes('honest unverified exit'), `非结构化象限应输出 unverified 块（hasVision=${q.hasVision} provenance=${q.provenance}）`);
-          assert(!block.includes('Mandatory read-only visual evidencing'), '非结构化象限不应输出 REQUIRED 块');
+          assert(!block.includes('## Read-only visual evidencing (spec closure)'), '非结构化象限不应输出只读取证块');
         }
+        assert(!block.includes('Mandatory'), '两个象限都不得再出现强制重读文案');
       }
       // 调用处接线回归（评审实锤组合：判盲 + structured 不得再被当成 structured）
       const blindStructured = resolveClosureReadRequirement(false, 'structured_events');
@@ -667,63 +671,42 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           requirement: '三张图',
           requirement_source_files: ['doc/features/demo/req/原始需求.md'],
         }), 'utf-8');
-        // 事件绑定：能力回执 + refs 回执（仅覆盖 2 张 → 缺 1 张 → FAIL）
-        const events = [
-          JSON.stringify({ type: 'capability_receipt', invoke_id: 'spec-i1', status: 'issued_inline_canary', receipt_sha256: 'a'.repeat(64) }),
-          JSON.stringify({ type: 'spec_refs_receipt_produced', invoke_id: 'spec-i1', status: 'complete', receipt_sha256: 'b'.repeat(64) }),
-        ].join('\n');
-        fs.writeFileSync(path.join(goalRuns, 'events.jsonl'), events, 'utf-8');
+        // plan 8d2b4f60 D1/D2：能力=本 run probe 金丝雀（capability receipt 与事件锚已删除），
+        // 证据=schema 1.1 材料寻址回执（仅覆盖 2 张 → 缺 1 张 → FAIL）。
+        fs.writeFileSync(path.join(root, 'framework.local.json'), JSON.stringify({
+          schema_version: '1.0',
+          vision: {
+            canary: {
+              adapter: 'claude', verdict: 'tool_read', probed_at: new Date().toISOString(),
+              probe_version: VISION_CANARY_PROBE_VERSION, probed_via: 'goal', run_id: runId,
+            },
+          },
+        }), 'utf-8');
         const visionDir = path.join(root, 'doc', 'features', 'demo', 'vision');
         fs.mkdirSync(visionDir, { recursive: true });
-        fs.writeFileSync(path.join(visionDir, 'capability-receipt.json'), JSON.stringify({
-          schema_version: '1.0',
-          adapter: 'claude',
-          run_id: runId,
-          invoke_id: 'spec-i1',
-          binding_path: 'inline_canary',
-          verdict: 'tool_read',
-          model: 'unknown',
-        }), 'utf-8');
         const sha256File = (p: string): string => require('crypto').createHash('sha256').update(fs.readFileSync(p)).digest('hex');
-        // 重写回执以匹配事件 hash
-        fs.writeFileSync(path.join(visionDir, 'capability-receipt.json'), JSON.stringify({
-          schema_version: '1.0',
-          adapter: 'claude',
-          run_id: runId,
-          invoke_id: 'spec-i1',
-          binding_path: 'inline_canary',
-          verdict: 'tool_read',
-          model: 'unknown',
-        }), 'utf-8');
-        // refs 回执只覆盖 2 张（c.png 缺失）
         fs.writeFileSync(path.join(visionDir, 'spec-refs-receipt.json'), JSON.stringify({
-          schema_version: '1.0',
+          schema_version: '1.1',
           adapter: 'claude',
           goal_run_id: runId,
-          invoke_id: 'spec-i1',
           produced_at: new Date().toISOString(),
           refs: [
-            { path: path.join(reqDir, 'a.png'), hash: sha256File(path.join(reqDir, 'a.png')), read: true },
-            { path: path.join(reqDir, 'b.png'), hash: sha256File(path.join(reqDir, 'b.png')), read: true },
+            { path: path.join(reqDir, 'a.png'), hash: sha256File(path.join(reqDir, 'a.png')), read: true, read_at_invoke: 'spec-i1' },
+            { path: path.join(reqDir, 'b.png'), hash: sha256File(path.join(reqDir, 'b.png')), read: true, read_at_invoke: 'spec-i1' },
           ],
           unread: [],
           attestation: { goal_run_id: runId, evidence_log_path: 'x/agent-events.jsonl', evidence_log_hash: 'c'.repeat(16), source: 'runner_transcript_audit' },
         }), 'utf-8');
-        // events 中的 hash 必须匹配文件（简化：重写 events 用实际 hash）
-        const capHash = sha256File(path.join(visionDir, 'capability-receipt.json'));
-        const refsHash = sha256File(path.join(visionDir, 'spec-refs-receipt.json'));
-        fs.writeFileSync(path.join(goalRuns, 'events.jsonl'), [
-          JSON.stringify({ type: 'capability_receipt', invoke_id: 'spec-i1', status: 'issued_inline_canary', receipt_sha256: capHash }),
-          JSON.stringify({ type: 'spec_refs_receipt_produced', invoke_id: 'spec-i1', status: 'complete', receipt_sha256: refsHash }),
-        ].join('\n'), 'utf-8');
 
         const { verifyVlSigningChain } = require('../../scripts/utils/critic-receipt-producer') as typeof import('../../scripts/utils/critic-receipt-producer');
         const prevEnv = { RUN: process.env.MAISON_GOAL_RUN_ID, ATT: process.env.MAISON_GOAL_ATTEMPT };
         process.env.MAISON_GOAL_RUN_ID = runId;
         process.env.MAISON_GOAL_ATTEMPT = 'i1';
         try {
+          clearFrameworkConfigCache();
           const result = verifyVlSigningChain({ projectRoot: root, feature: 'demo' });
           assert.strictEqual(result.ok, false, '回执未覆盖全部发现图 → 终签必须拒');
+          assert.ok(result.failureKinds.every(k => k === 'mismatch'), `分母缺口应归"验证不通过"：${JSON.stringify(result.failureKinds)}`);
           assert.ok(result.currentRefs.length === 3, `期望分母=共享集合 3 张，实得 ${result.currentRefs.length}`);
           assert.ok(result.failures.some(f => /未覆盖当前参考图/.test(f) || /无验读事件/.test(f)), JSON.stringify(result.failures));
         } finally {

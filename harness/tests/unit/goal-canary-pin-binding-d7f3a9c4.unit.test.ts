@@ -64,6 +64,7 @@ import { clearFrameworkConfigCache, featureFilePath } from '../../config';
 import { loadResolvedProfile } from '../../profile-loader';
 import { DEFAULT_LAYOUT } from '../utils/layout-test-helper';
 import { checkUiSpecFidelityGate } from '../../../profiles/hmos-app/harness/spec-ui-spec-check';
+import { severestVlFailureKind, verifyVlSigningChain } from '../../scripts/utils/critic-receipt-producer';
 import { VISION_CANARY_PROBE_VERSION } from '../../scripts/utils/vision-canary';
 import { FIXTURE_CANARY_KEY } from '../utils/canary-fixture-key';
 
@@ -703,6 +704,156 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
+    },
+  },
+  // ==========================================================================
+  // plan 8d2b4f60：V4 能力来源矩阵 + V2 goal-report 披露文本
+  // ==========================================================================
+  {
+    name: 'V4 能力来源矩阵：五种金丝雀态与 image_input_override 一律「未验证（未实测）」，文案不得称实测',
+    run: () => {
+      const root = mkTmp();
+      const runId = 'run-V4';
+      try {
+        const feature = 'demo';
+        const featureAbs = path.join(root, 'doc', 'features', feature);
+        const refDir = path.join(featureAbs, 'ux-reference');
+        fs.mkdirSync(refDir, { recursive: true });
+        fs.mkdirSync(path.join(featureAbs, 'vision'), { recursive: true });
+        fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({
+          schema_version: '1.0', project_name: 'demo', project_type: 'app',
+          project_profile: { name: 'hmos-app' }, agent_adapter: 'claude',
+          paths: { features_dir: 'doc/features' },
+        }), 'utf-8');
+        const refAbs = path.join(refDir, 'home.png');
+        fs.writeFileSync(refAbs, 'REF-BYTES', 'utf-8');
+        const refRel = 'doc/features/demo/ux-reference/home.png';
+        const runDir = path.join(featureAbs, 'goal-runs', runId);
+        fs.mkdirSync(runDir, { recursive: true });
+        fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify({
+          adapter: 'claude', run_id: runId, feature, requirement: `参考图在 ${refRel}。`,
+        }), 'utf-8');
+        const refHash = require('crypto').createHash('sha256').update('REF-BYTES').digest('hex');
+        fs.writeFileSync(path.join(featureAbs, 'vision', 'spec-refs-receipt.json'), JSON.stringify({
+          schema_version: '1.1', adapter: 'claude', goal_run_id: runId,
+          produced_at: new Date().toISOString(),
+          // 先前 invocation 读到、内容未变（D4 沿用披露的正例）
+          refs: [{ path: refAbs, hash: refHash, read: true, read_at_invoke: 'spec-i0' }],
+          unread: [],
+          attestation: { goal_run_id: runId, evidence_log_path: 'x', evidence_log_hash: 'y', source: 'runner_transcript_audit' },
+        }), 'utf-8');
+
+        const prevRun = process.env.MAISON_GOAL_RUN_ID;
+        const prevAtt = process.env.MAISON_GOAL_ATTEMPT;
+        process.env.MAISON_GOAL_RUN_ID = runId;
+        process.env.MAISON_GOAL_ATTEMPT = 'i1';
+        try {
+          const chain = (): ReturnType<typeof verifyVlSigningChain> => {
+            clearFrameworkConfigCache();
+            return verifyVlSigningChain({ projectRoot: root, feature });
+          };
+          const expectNotProbed = (label: string): void => {
+            const r = chain();
+            assert.strictEqual(r.ok, false, `${label} 应拒签`);
+            assert.strictEqual(severestVlFailureKind(r.failureKinds), 'not_probed', `${label}：${JSON.stringify(r.failureKinds)}`);
+            assert.ok(!r.failures.some(f => /实测/.test(f)), `${label} 文案不得出现「实测」结论：${JSON.stringify(r.failures)}`);
+          };
+          // ① 缺失
+          writeLocalConfig(root, { schema_version: '1.0' });
+          expectNotProbed('无金丝雀');
+          // ② verdict=none
+          writeCanary(root, freshCanary({ adapter: 'claude', verdict: 'none', run_id: runId }));
+          expectNotProbed('verdict=none');
+          // ③ verdict=ocr_capable（resolver 映射成 unknown）
+          writeCanary(root, freshCanary({ adapter: 'claude', verdict: 'ocr_capable', run_id: runId }));
+          expectNotProbed('verdict=ocr_capable');
+          // ④ 过期（probe_version 不符 → stale）
+          writeCanary(root, freshCanary({ adapter: 'claude', run_id: runId, probe_version: VISION_CANARY_PROBE_VERSION - 1 }));
+          expectNotProbed('过期金丝雀');
+          // ⑤ 属旧 run
+          writeCanary(root, freshCanary({ adapter: 'claude', run_id: 'run-OLD' }));
+          expectNotProbed('属旧 run');
+          // ⑥ image_input_override 在场（scope=run_probed 但来源非 probe）
+          writeLocalConfig(root, { schema_version: '1.0', vision: { image_input_override: 'tool_read' } });
+          expectNotProbed('override 无 probe 缓存');
+          // ⑥b override + 本 run 有效 probe 金丝雀：override 分支先返回、不读 canary → 同样拒签
+          //（第 2 轮 plan review 裁定删除原「可终签」正例，改为此负例）
+          writeLocalConfig(root, {
+            schema_version: '1.0',
+            vision: {
+              image_input_override: 'tool_read',
+              canary: freshCanary({ adapter: 'claude', run_id: runId }),
+            },
+          });
+          expectNotProbed('override + 有效 probe 缓存');
+          // 正例对照：只有 probe 来源的金丝雀才可终签
+          writeCanary(root, freshCanary({ adapter: 'claude', run_id: runId }));
+          const ok = chain();
+          assert.strictEqual(ok.ok, true, `probe 来源应可终签：${JSON.stringify(ok.failures)}`);
+          assert.deepStrictEqual(ok.carriedRefs, ['home.png'], JSON.stringify(ok.carriedRefs));
+        } finally {
+          if (prevRun === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = prevRun;
+          if (prevAtt === undefined) delete process.env.MAISON_GOAL_ATTEMPT; else process.env.MAISON_GOAL_ATTEMPT = prevAtt;
+          clearFrameworkConfigCache();
+        }
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'V2 goal-report：spec_refs_receipt_produced 的 carried_over>0 渲染「↳ 参考图读取」注记行；=0 不渲染',
+    run: () => {
+      const report: GoalReport = {
+        schema_version: '1.0', run_id: 'run-V2', feature: 'demo', status: 'COMPLETED',
+        phases: [{ phase: 'spec', verdict: 'PASS' }],
+        deferred_phases: [], generated_at: '2026-09-06T00:00:00Z',
+      };
+      const withCarried = generateGoalReportMarkdown(report, {
+        events: [{ type: 'spec_refs_receipt_produced', phase: 'spec', invoke_id: 'spec-i2', status: 'complete', carried_over: 3 }],
+        warnDigest: new Map(),
+      });
+      assert(/↳ 参考图读取/.test(withCarried), `报告须渲染沿用注记行：${withCarried}`);
+      assert(/本 run 先前 invocation 记录 3 张（内容未变）/.test(withCarried), withCarried);
+      const noCarried = generateGoalReportMarkdown(report, {
+        events: [{ type: 'spec_refs_receipt_produced', phase: 'spec', invoke_id: 'spec-i1', status: 'complete', carried_over: 0 }],
+        warnDigest: new Map(),
+      });
+      assert(!/↳ 参考图读取/.test(noCarried), '无沿用不得渲染注记行');
+      const skipped = generateGoalReportMarkdown(report, {
+        events: [{ type: 'spec_refs_receipt_produced', phase: 'spec', invoke_id: 'spec-i1', status: 'skipped', reason: 'attended_no_invoke_audit' }],
+        warnDigest: new Map(),
+      });
+      assert(!/↳ 参考图读取/.test(skipped), 'skipped 事件无 carried_over，不得渲染');
+    },
+  },
+  {
+    // codex 实施 review 第 1 轮 finding 3：披露按**末轮**事件，不取该 phase 历史最大值。
+    name: 'V2b goal-report：i2 沿用 3 张、i3 全部重读（carried_over=0）→ 不得把旧轮的 3 张说成本轮',
+    run: () => {
+      const report: GoalReport = {
+        schema_version: '1.0', run_id: 'run-V2b', feature: 'demo', status: 'COMPLETED',
+        phases: [{ phase: 'spec', verdict: 'PASS' }],
+        deferred_phases: [], generated_at: '2026-09-06T00:00:00Z',
+      };
+      const md = generateGoalReportMarkdown(report, {
+        events: [
+          { type: 'spec_refs_receipt_produced', phase: 'spec', invoke_id: 'spec-i2', status: 'complete', carried_over: 3 },
+          { type: 'spec_refs_receipt_produced', phase: 'spec', invoke_id: 'spec-i3', status: 'complete', carried_over: 0 },
+        ],
+        warnDigest: new Map(),
+      });
+      assert(!/↳ 参考图读取/.test(md), `末轮 carried_over=0 不得渲染沿用注记行：${md}`);
+      assert(!/记录 3 张/.test(md), `历史最大值不得被披露为本轮事实：${md}`);
+      // 反向：末轮仍有沿用时按末轮张数披露（不受更早轮的更大值影响）
+      const lastCarried = generateGoalReportMarkdown(report, {
+        events: [
+          { type: 'spec_refs_receipt_produced', phase: 'spec', invoke_id: 'spec-i2', status: 'complete', carried_over: 3 },
+          { type: 'spec_refs_receipt_produced', phase: 'spec', invoke_id: 'spec-i3', status: 'complete', carried_over: 1 },
+        ],
+        warnDigest: new Map(),
+      });
+      assert(/本 run 先前 invocation 记录 1 张（内容未变）/.test(lastCarried), lastCarried);
     },
   },
 ];

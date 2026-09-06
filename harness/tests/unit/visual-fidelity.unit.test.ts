@@ -245,16 +245,15 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
-  // vl_multimodal 只绑定当前 capability/reference receipts；旧 attestation/policy 文件不参与。
-  run('ui_spec_vl_sign_current_receipts_and_legacy_ledgers_ignored', () => {
+  // plan 8d2b4f60 D1/D2/D7：能力=本 run probe 金丝雀，证据=材料寻址的 1.1 refs 回执；
+  // capability receipt / invoke_id 等值 / 事件锚已删除，旧 attestation/policy 文件不参与。
+  run('ui_spec_vl_sign_run_probe_plus_material_refs_and_legacy_ledgers_ignored', () => {
     const root = mkProject();
     const prevRunId = process.env.MAISON_GOAL_RUN_ID;
     const prevAttempt = process.env.MAISON_GOAL_ATTEMPT;
     process.env.MAISON_GOAL_RUN_ID = 'runx';
     process.env.MAISON_GOAL_ATTEMPT = 'i2';
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const evc = require('../../scripts/utils/effective-vision-context') as typeof import('../../scripts/utils/effective-vision-context');
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const crp = require('../../scripts/utils/critic-receipt-producer') as typeof import('../../scripts/utils/critic-receipt-producer');
       const featureAbs = path.join(root, 'doc', 'features', 'bank-card');
@@ -290,73 +289,109 @@ export function runAll(): UnitCaseResult[] {
         requirement: `参考图在 ${refRel}。`,
       }), 'utf-8');
       const refsPath = path.join(featureAbs, 'vision', 'spec-refs-receipt.json');
-      const writeChain = (opts: {
-        invoke?: string;
+      // 能力轴：本 run probe 产生的金丝雀（scope=run_probed 且 evidence.canary_probed_at 在场）
+      const writeProbeCanary = (over: Record<string, unknown> = {}): void => {
+        writeLocalConfig(root, {
+          schema_version: '1.0',
+          vision: {
+            canary: {
+              adapter: 'claude', verdict: 'tool_read', probed_at: new Date().toISOString(),
+              probe_version: VISION_CANARY_PROBE_VERSION, probed_via: 'goal', run_id: 'runx',
+              ...over,
+            },
+          },
+        } as never);
+      };
+      const writeRefsReceipt = (opts: {
+        schema?: string;
+        runId?: string;
         emptyRefs?: boolean;
-        skipEvents?: boolean;
+        readAtInvoke?: string;
+        hash?: string;
       } = {}): void => {
-        const invokeId = opts.invoke ?? 'spec-i2';
-        evc.writeCapabilityReceipt(root, 'bank-card', {
-          adapter: 'claude', run_id: 'runx', invoke_id: invokeId,
-          binding_path: 'inline_canary', verdict: 'tool_read',
-        });
         fs.mkdirSync(path.dirname(refsPath), { recursive: true });
         fs.writeFileSync(refsPath, JSON.stringify({
-          schema_version: '1.0', adapter: 'claude', goal_run_id: 'runx', invoke_id: invokeId,
-          produced_at: '2026-07-19T00:00:00.000Z',
-          refs: opts.emptyRefs ? [] : [{ path: refAbs, hash: refHash, read: true }],
+          schema_version: opts.schema ?? '1.1',
+          adapter: 'claude',
+          goal_run_id: opts.runId ?? 'runx',
+          produced_at: '2026-09-06T00:00:00.000Z',
+          refs: opts.emptyRefs ? [] : [{
+            path: refAbs, hash: opts.hash ?? refHash, read: true,
+            ...(opts.readAtInvoke ? { read_at_invoke: opts.readAtInvoke } : {}),
+          }],
           unread: [],
           attestation: { goal_run_id: 'runx', evidence_log_path: 'x', evidence_log_hash: 'y', source: 'runner_transcript_audit' },
         }), 'utf-8');
-        const eventsAbs = path.join(runDir, 'events.jsonl');
-        if (opts.skipEvents) {
-          fs.rmSync(eventsAbs, { force: true });
-          return;
-        }
-        const capSha = crp.sha256FileFull(evc.capabilityReceiptPath(root, 'bank-card'))!;
-        const refsSha = crp.sha256FileFull(refsPath)!;
-        fs.writeFileSync(eventsAbs, [
-          JSON.stringify({ type: 'capability_receipt', invoke_id: invokeId, status: 'issued_inline_canary', receipt_sha256: capSha }),
-          JSON.stringify({ type: 'spec_refs_receipt_produced', invoke_id: invokeId, status: 'complete', receipt_sha256: refsSha }),
-        ].join('\n') + '\n', 'utf-8');
       };
-      const gate = (): { status: string; details?: string } => {
+      const gate = (): { status: string; details?: string; suggestion?: string } => {
+        clearFrameworkConfigCache();
         const r = checkUiSpecFidelityGate(baseCtx(root), specMd);
-        return r.find((x: { id: string }) => x.id === 'ui_spec_fidelity_gate') as { status: string; details?: string };
+        return r.find((x: { id: string }) => x.id === 'ui_spec_fidelity_gate') as { status: string; details?: string; suggestion?: string };
       };
 
-      // ① 当前调用两份回执 + runner 事件锚完整 → PASS
-      writeChain();
+      // ① run 级 probe 金丝雀 + 1.1 refs 回执（材料核对通过）→ PASS，无 invoke 绑定要求
+      writeProbeCanary();
+      writeRefsReceipt();
       const h1 = gate();
-      if (h1.status !== 'PASS') throw new Error(`当前回执链应通过：${(h1.details ?? '').slice(0, 500)}`);
-      // ② 旧 attempt（spec-i1）→ 拒
-      writeChain({ invoke: 'spec-i1' });
+      if (h1.status !== 'PASS') throw new Error(`run 级实测 + 材料证据应通过：${(h1.details ?? '').slice(0, 500)}`);
+      if (!/run 级实测金丝雀/.test(h1.details ?? '')) throw new Error(`PASS details 应披露 run 级能力来源：${h1.details}`);
+      // ①b 读取记录来自本 run 先前 invocation（内容未变）→ 仍 PASS 且诚实标注
+      writeRefsReceipt({ readAtInvoke: 'spec-i1' });
+      const h1b = gate();
+      if (h1b.status !== 'PASS' || !/读取记录来自本 run 先前 invocation/.test(h1b.details ?? '')) {
+        throw new Error(`跨 invocation 沿用应通过并披露：${h1b.status} ${(h1b.details ?? '').slice(0, 400)}`);
+      }
+      // ①c 与 ①b 同一份回执，只是 read_at_invoke 等于本轮 → 不出现沿用标注
+      writeRefsReceipt({ readAtInvoke: 'spec-i2' });
+      const h1c = gate();
+      if (h1c.status !== 'PASS' || /读取记录来自本 run 先前 invocation/.test(h1c.details ?? '')) {
+        throw new Error(`本轮重读不得标注为沿用：${h1c.status} ${(h1c.details ?? '').slice(0, 400)}`);
+      }
+      // ② 无 probe 金丝雀（本 run 未实测）→ "未验证（未实测）"，文案不得出现"实测"结论
+      writeLocalConfig(root, { schema_version: '1.0' } as never);
+      writeRefsReceipt();
       const h2 = gate();
-      if (h2.status !== 'FAIL' || !/属旧 invocation/.test(h2.details ?? '')) {
-        throw new Error(`旧 attempt 应拒：${(h2.details ?? '').slice(0, 400)}`);
+      if (h2.status !== 'FAIL' || !/未验证（不可终签）/.test(h2.details ?? '')) {
+        throw new Error(`无实测金丝雀应拒：${(h2.details ?? '').slice(0, 400)}`);
       }
-      // ③ endsWith 后缀旁路（coding-i2）→ 拒（精确等值）
-      writeChain({ invoke: 'coding-i2' });
+      // ②b image_input_override 在场（scope=run_probed 但来源非 probe）→ 同样归"未实测"
+      writeLocalConfig(root, {
+        schema_version: '1.0', vision: { image_input_override: 'tool_read' },
+      } as never);
+      const h2b = gate();
+      if (h2b.status !== 'FAIL' || !/未验证（不可终签）/.test(h2b.details ?? '')) {
+        throw new Error(`override 不构成实测证据，应拒：${(h2b.details ?? '').slice(0, 400)}`);
+      }
+      if (/实测/.test(h2b.suggestion ?? '') === false && /image_input_override/.test(h2b.suggestion ?? '') === false) {
+        throw new Error(`override 的出路须点名删除 override：${h2b.suggestion}`);
+      }
+      // ③ schema 1.0 残留（同 run resume：goal_run_id 恰好命中）→ "尚未生成"，不按 1.0 继承
+      writeProbeCanary();
+      writeRefsReceipt({ schema: '1.0' });
       const h3 = gate();
-      if (h3.status !== 'FAIL' || !/属旧 invocation/.test(h3.details ?? '')) {
-        throw new Error(`coding-i2 后缀旁路应拒：${(h3.details ?? '').slice(0, 400)}`);
+      if (h3.status !== 'FAIL' || !/尚未生成/.test(h3.details ?? '')) {
+        throw new Error(`1.0 残留应判尚未生成：${(h3.details ?? '').slice(0, 400)}`);
       }
-      // ④ 无 runner 事件锚（agent 伪造回执文件）→ 拒
-      writeChain({ skipEvents: true });
+      // ④ refs 回执属旧 run → "验证不通过"
+      writeRefsReceipt({ runId: 'old-run' });
       const h4 = gate();
-      if (h4.status !== 'FAIL' || !/(runner 事件锚|events 不可读)/.test(h4.details ?? '')) {
-        throw new Error(`无事件锚应拒：${(h4.details ?? '').slice(0, 400)}`);
+      if (h4.status !== 'FAIL' || !/验证不通过/.test(h4.details ?? '') || !/属旧 run/.test(h4.details ?? '')) {
+        throw new Error(`旧 run 回执应拒：${(h4.details ?? '').slice(0, 400)}`);
       }
       // ⑤ 空 refs 回执（不覆盖当前 authoritative refs）→ 拒
-      writeChain({ emptyRefs: true });
+      writeRefsReceipt({ emptyRefs: true });
       const h5 = gate();
       if (h5.status !== 'FAIL' || !/未覆盖当前参考图/.test(h5.details ?? '')) {
         throw new Error(`空 refs 回执应拒：${(h5.details ?? '').slice(0, 400)}`);
       }
-      // ⑥ 遗留账本即使损坏/声明 blind_safe，也不得改变当前终签结果。
-      writeChain();
+      // ⑥ 遗留账本（含旧 capability-receipt.json）即使损坏/声明 blind_safe，也不改变终签结果。
+      writeRefsReceipt();
       fs.writeFileSync(path.join(featureAbs, 'vision', 'artifact-attestations.jsonl'), '{legacy-broken\n', 'utf-8');
       fs.writeFileSync(path.join(featureAbs, 'vision', 'policy-downgrades.jsonl'), '{"mode":"blind_safe"}\n', 'utf-8');
+      fs.writeFileSync(path.join(featureAbs, 'vision', 'capability-receipt.json'), JSON.stringify({
+        schema_version: '1.0', adapter: 'claude', run_id: 'runx', invoke_id: 'spec-i9',
+        binding_path: 'inline_canary', verdict: 'none',
+      }), 'utf-8');
       const h6 = gate();
       if (h6.status !== 'PASS') throw new Error(`遗留账本不得致盲：${(h6.details ?? '').slice(0, 500)}`);
     } finally {
