@@ -671,6 +671,42 @@ attended（session owner 在场、走 executor bridge）的 phase prompt 不再�
 
 ---
 
+## 失败归因与 prior review 消费一致（attribution-and-prior-review-consistency）
+
+本节全部为**消费者无需动手**的行为变化：没有新 env、没有新 CLI、没有新分类、没有新状态；旧 run 的相关字段仍可读，只作历史看。
+
+### PASS、无 blocker 且无 runtime 失败事实的轮次不再输出 `failure_kind_classified`
+
+判据由「本轮有 summary」收紧为「本轮有失败」：summary 必须**自己表达失败**（`verdict` 非 `PASS`，或 `blockers` 非空）才算失败事实；缺 `verdict` 的 summary 按 fail-closed 仍算失败。满足收紧条件的轮次，`phase_verdict` 不再带 `failure_kind_classified`，`reconcile_observation.phase_outcome` 不再带 `failure_kind`，也不再合成 blocker 签名。
+
+- **典型现场**：脚本 PASS、零 blocker、`harness_exit=0`、`advance_blocked=true` / `advance_block_reason=closure_open`、`action=retry` 的那一轮。closure 未闭环是**工作流状态**，此前却被 catch-all 标成 `code_regression`，还经 `--resume` 的 continuation 带进下一轮。
+- **不是「PASS 就一定没有 kind」**：`hasRuntimeFailureEvidence` 一字未改，仍单独充分——超时、API 错、空产出、操作者中断、`agent_failed`、harness 非零退出、closure 定稿错误、可信缺陷或 unverified 非空，任一在场时 PASS 轮照常输出该字段。按「PASS 就没有 kind」去排障会读错。
+- **FAIL / INCOMPLETE 一字未改**，`advance_block_reason` / `assess_recommendation.reason` / blocker 列表照常落盘。
+- **放弃的准确性**：无失败事实的那一轮读不到任何 kind 字样，事后排障改看上面三项。这正是 P1-8 立项时接受的代价，本次只是把它从 `advance` 支补齐到 `retry` 支。
+
+### `ui_spec_fidelity_gate` 的归因由 `code_regression` 改 `spec_capture_gap`
+
+该门禁的每个 FAIL 出口（`unreachable` / `not_probed` / `not_yet` / `mismatch`，以及「有视觉能力却没核对原图」）说的都是**验读证据没建立起来**，没有一支指向产品源码。此前落 catch-all 后会触发「查 goal-run 起始 commit 以来改过的文件、先把上一轮改动 revert 掉」的重试指导——对一个缺视觉回执的 spec 阶段是错向指令，改后不再触发。
+
+- **熔断/累计 halt/责任归属全部不变**：`spec_capture_gap` 不在 signature halt、累计 halt 家族与外部重试责任三个集合里，与 `code_regression` 今天的待遇逐字相同；该 blocker 仍是 `agent_fixable`，回喂与签名过滤不变。
+- **没有新增分类**：不新增 `FailureKind` 成员、`CheckStatus`、check id 或 blocker schema 字段。B02 的四态措辞继续只做人读文案，留在 blocker 的 `details` / `suggestion` 里逐条回喂。
+- **放弃的准确性**：①事件层分不出 `mismatch` 与 `not_probed`，差别只在 `details`/`suggestion`；②归因按 id 落位而非写 `CheckResult.failure_kind`，故这四个出口的 blocker `classification` 仍为空——重试 prompt 里这一条是无标签的 `- ui_spec_fidelity_gate` + details + suggestion，不会出现 `[spec_capture_gap]` 字样；③本次**不**给它加 actionability 注册项，结构性 `unreachable` 仍按 agent 可修重试。
+
+### goal 阶段存档在沿用既往 PASS 时会出现 `verifier.report.md`
+
+以 `completed_with_prior_review` 闭环的 phase，其 run 级存档（`<run>/phases/<phase>/harness/`）此前是 `verifier_evidence: null` + `verifier.report.md: null`——同目录 `summary.json` 副本却写着「沿用既往 PASS 闭环、材料未重审」，只读存档的下游会读成「这阶段根本没有可采信的 verifier 结论」。
+
+- **现在**：存档按「当前 subject 优先，回落 `summary.verifier_closure.reviewed_subject_id`」取第一份验真通过的证据，把**被沿用的那份报告**复制为 `verifier.report.md`，并在 `verifier_evidence` 上置 `reused_from_prior_review: true`。
+- **两条反例不变**：当前 subject 自己有验真报告时取当前证据、**不**标沿用；本 phase 从未 PASS 过时存档仍是 null + 文件 null，不会凭空回落到一份 FAIL 或不存在的报告。
+- **文件名与快照集合未变**，也没有新增 evidence 校验状态。
+- **放弃的准确性**：存档里的 `verifier.report.md` 可能不针对当前材料——靠 `reused_from_prior_review`、同目录 `verifier_closure` 与 `semantic_not_reverified` 三处并陈防误读。goal report 的 MD 正文本就不渲染该字段，本次也不新开渲染面。
+
+### prior review 的复用政策一字未改
+
+`findPriorPassVerifierEvidence` 的择新规则、「从未 PASS 过仍是 BLOCKER」、WARN `verifier_prior_pass_reused` 的 id 与严重度、`current_material_not_reverified` 的 diff 口径、以及非 goal NEXT「先去跑 verifier」与 check-receipt 兜底沿用的先后关系，全部保持原样。
+
+---
+
 ## 把 framework 发布件集成到目标工程
 
 Maison 只交付已经过 pack/release verify 的 `framework-<semver>.zip`。在目标工程根解压，得到 `<repo-root>/framework/`；升级时用新发布件镜像覆盖旧目录。不要从源仓直接挑文件复制，也不要采用第二种 Git 布局。

@@ -386,6 +386,16 @@ export async function runGoalRuntimeChain(
      * 事后直调 gate 只能证明"gate 对这堆磁盘状态会给什么结论"，证明不了它控制了推进。
      */
     realSpecFidelityGate?: boolean;
+    /**
+     * plan 2f8a6d40 §6（codex plan review 第 1 轮 finding 1）：把 spec 的 **PASS** 出口也
+     * 接到真实 `writeRunSummaryBase`。默认（关）时 PASS 出口仍是既有手写 summary，其余
+     * 用例逐字不变；开时用真实 gate 本轮产出的 `CheckResult[]` 组 `ScriptReport` 交给生产
+     * writer 落盘——lattice / blockers / next_action / readiness_signals 全由 writer 派生，
+     * runner 再读回喂进真实 `classifyFailureKind`。归因用例（V1）不能拿手写 PASS summary
+     * 冒充端到端：那样 `check → summary writer → runner` 三段里的中段仍是假的。
+     * 需与 `realSpecFidelityGate` 同开（PASS 出口的 checks 来源就是真实 gate）。
+     */
+    realPassSummaryWriter?: boolean;
   } = {},
 ): Promise<RunProbe> {
   const invokedPhases: string[] = [];
@@ -513,6 +523,8 @@ export async function runGoalRuntimeChain(
         phase: String(ph),
         attempt: harnessPhases.filter(p => p === String(ph)).length,
       });
+      // plan 2f8a6d40：本轮真实 gate 的 CheckResult（PASS 出口交给真实 writer 用）。
+      let specGateChecks: CheckResult[] | null = null;
       // plan 8d2b4f60 §6：真实 gate 在 runtime 内决定推进/重跑（不是事后补一次直调）。
       if (!failOverride && opts.realSpecFidelityGate && String(ph) === 'spec') {
         const specMdAbs = path.join(pr, 'doc', 'features', feat, 'spec', 'spec.md');
@@ -550,6 +562,7 @@ export async function runGoalRuntimeChain(
             status: c.status, details: c.details ?? '', suggestion: c.suggestion ?? '',
           });
         }
+        specGateChecks = gateChecks;
         if (gateChecks.some(c => c.status === 'FAIL')) failOverride = { checks: gateChecks };
       }
       if (failOverride) {
@@ -648,6 +661,66 @@ export async function runGoalRuntimeChain(
           gateFingerprint: 'integration-spy', runIdentity: null,
         });
       }
+      // phase-evidence-manifest + 回执指针（生产 writer 同源；lineage_fresh 巡检消费）。
+      // frameworkRoot 不传——verify 侧重算 environment 时也是 guess 口径，两侧必须同源，
+      // 否则 gate_fingerprint/framework_version 恒 stale；requirementSha 绑定当前 run
+      //（记录 null 会被判 requirement_unbound，fail-closed 正确但非本套被测对象）。
+      const writeManifestAndPointer = (): void => {
+        try {
+          const manifest = resolvePhaseEvidenceManifest({
+            projectRoot: pr, feature: feat, phase: String(ph),
+            extraInputs: [], extraOutputs: [],
+            requirementSha: gm?.run_id
+              ? computeRunRequirementSha(pr, feat, gm.run_id, 'doc/features')
+              : null,
+          });
+          const written = writePhaseEvidenceManifest(pr, manifest);
+          const rel = path.relative(pr, written.absPath).split(path.sep).join('/');
+          writeReceiptManifestPointer(pr, feat, String(ph), rel, written.sha256);
+        } catch { /* manifest 失败 → clean-pass 会如实判 needs_fix（非本套被测对象） */ }
+      };
+      // plan 2f8a6d40 §6：PASS 出口的真实 writer 支路——用真实 gate 本轮产出的 PASS
+      // CheckResult 组 ScriptReport 交给生产 `writeRunSummaryBase`（与 FAIL 出口同一实现），
+      // summary 的 verdict/lattice/blockers/next_action 全部由 writer 派生后落盘，runner
+      // 读回即真实 `decisionSummary`。V1 的归因断言必须站在这条支路上。
+      if (opts.realPassSummaryWriter && specGateChecks && specGateChecks.length > 0) {
+        // `ui_spec_fidelity_gate` 走 `ui_spec_` 前缀落 **visual** 轴（quality-axes.ts:109）；
+        // functional 轴零执行会被如实判 UNVERIFIED → 整份 summary 投影成 INCOMPLETE，
+        // 造不出 V1 要的 PASS 轮。补一条真实 spec 门禁本就会产出的 functional PASS
+        //（`spec_file_exists`，check-spec.ts:1486）作为该轴的执行事实——不是伪造结论，
+        // 是把 fake harness 的 check 集补到"能让真实 writer 正常投影"的最小形状。
+        const passChecks: CheckResult[] = [
+          {
+            id: 'spec_file_exists', category: 'structure',
+            description: 'spec 文件存在', severity: 'BLOCKER', status: 'PASS',
+            details: 'fake harness：spec.md 在场',
+          },
+          ...specGateChecks,
+        ];
+        const passReport: ScriptReport = {
+          phase: String(ph) as Phase,
+          feature: feat,
+          timestamp: new Date().toISOString(),
+          project_root: pr,
+          assurance: 'full',
+          capability_resolutions: [],
+          capability_resolution_contract_fingerprint: null,
+          checks: passChecks,
+          summary: {
+            total: passChecks.length,
+            pass: passChecks.filter(c => c.status === 'PASS').length,
+            fail: 0, warn: 0, skip: 0, blockers: 0,
+            verdict: 'PASS',
+          },
+        };
+        writeRunSummaryBase(pr, passReport, _fr);
+        writeManifestAndPointer();
+        opts.afterHarnessPass?.({
+          root: pr, phase: String(ph),
+          runId: gm?.run_id ?? '', attemptId: roundIdentity?.attemptId ?? '',
+        });
+        return { exitCode: 0, timedOut: false };
+      }
       // v1.2 完整契约 open summary（goal-runner 通过共享 finalizer 提交 closure；
       // 手搓半 summary 会被判 needs_fix → PARTIAL，链到不了 clean completion）
       const axis = (verdict: string): Record<string, unknown> => ({
@@ -670,22 +743,7 @@ export async function runGoalRuntimeChain(
         // adjudicated-repair-loop M2：测试注入（visual_round 回执等，验证提前停等不丢投影）
         ...(String(ph) === 'testing' ? (opts.testingSummaryExtras ?? {}) : {}),
       }, null, 2), 'utf-8');
-      // phase-evidence-manifest + 回执指针（生产 writer 同源；lineage_fresh 巡检消费）。
-      // frameworkRoot 不传——verify 侧重算 environment 时也是 guess 口径，两侧必须同源，
-      // 否则 gate_fingerprint/framework_version 恒 stale；requirementSha 绑定当前 run
-      //（记录 null 会被判 requirement_unbound，fail-closed 正确但非本套被测对象）。
-      try {
-        const manifest = resolvePhaseEvidenceManifest({
-          projectRoot: pr, feature: feat, phase: String(ph),
-          extraInputs: [], extraOutputs: [],
-          requirementSha: gm?.run_id
-            ? computeRunRequirementSha(pr, feat, gm.run_id, 'doc/features')
-            : null,
-        });
-        const written = writePhaseEvidenceManifest(pr, manifest);
-        const rel = path.relative(pr, written.absPath).split(path.sep).join('/');
-        writeReceiptManifestPointer(pr, feat, String(ph), rel, written.sha256);
-      } catch { /* manifest 失败 → clean-pass 会如实判 needs_fix（非本套被测对象） */ }
+      writeManifestAndPointer();
       opts.afterHarnessPass?.({
         root: pr,
         phase: String(ph),
@@ -3582,12 +3640,30 @@ const b02FailFirstSpecClosure = (attempt: string, ph: string): boolean =>
   ph === 'spec' && attempt === 'i1';
 
 function assertB02ClosureOnlyRound(probe: RunProbe, specPrompts: string[], label: string): void {
+  const closureRetryRounds = probe.events.filter(e => e.type === 'phase_verdict' && e.phase === 'spec'
+    && e.verdict === 'PASS' && e.advance_blocked === true && e.action === 'retry');
   assert(
-    probe.events.some(e => e.type === 'phase_verdict' && e.phase === 'spec'
-      && e.verdict === 'PASS' && e.advance_blocked === true && e.action === 'retry'),
+    closureRetryRounds.length > 0,
     `${label}：须由真实 closure 重试条件（PASS+advance_blocked+retry）产生 closure-only 轮：` +
       JSON.stringify(probe.events.filter(e => e.type === 'phase_verdict' && e.phase === 'spec')),
   );
+  // plan 2f8a6d40 V1（D1）：这一轮没有任何失败事实——脚本 PASS、零 blocker、harness 退出
+  // 码 0、agent 未失败；`advance_blocked=closure_open` 是工作流状态，不是产品代码缺陷。
+  // 故 phase_verdict 不得带 failure_kind_classified，reconcile 投影也不得带 failure_kind。
+  // **改前实得 code_regression**（复现宿主 run 20260905T103028Z-79d3fd 第 85 行）。
+  for (const e of closureRetryRounds) {
+    assert(
+      !('failure_kind_classified' in e) || e.failure_kind_classified === undefined,
+      `${label}：无失败事实的 PASS+advance_blocked+retry 轮不得带 failure_kind_classified：` +
+        JSON.stringify({ failure_kind_classified: e.failure_kind_classified, blocker_signature: e.blocker_signature }),
+    );
+    const phaseOutcome = (e.reconcile_observation as { phase_outcome?: Record<string, unknown> } | undefined)
+      ?.phase_outcome;
+    assert(
+      !phaseOutcome || phaseOutcome.failure_kind === undefined,
+      `${label}：同轮 reconcile_observation.phase_outcome 不得带 failure_kind：${JSON.stringify(phaseOutcome)}`,
+    );
+  }
   assert(specPrompts.length >= 2, `${label}：应有第二轮 spec invoke（实得 ${specPrompts.length}）`);
   const closure = specPrompts[specPrompts.length - 1];
   assert(closure.includes('## Closure-only attempt (BLOCKER)'),
@@ -3608,6 +3684,9 @@ test('B02-V1 真实 closure-only 轮：refs 全读 + completion probe 收口被 
     const probe = await runGoalRuntimeChain(root, {
       adapter: 'claude',
       realSpecFidelityGate: true,
+      // plan 2f8a6d40 V1：目标轮（PASS+advance_blocked+retry）的 summary 必须来自真实
+      // writeRunSummaryBase，否则归因断言站在手写 JSON 上，证不了生产接线。
+      realPassSummaryWriter: true,
       failReceiptFor: b02FailFirstSpecClosure,
       // 复现宿主 i4：closure-only 轮被 completion probe 观察到收口后 tree-kill——
       // exitCode≠0 但 completion_observed/kill_attempted 在场（agent-invoke 的既有结果形状）
@@ -3676,6 +3755,21 @@ test('B02-V1b 反向对照：参考图未读 → 真实 gate FAIL 且 runtime �
     assert(
       probe.harnessPhases.filter(p => p === 'spec').length > 1,
       `gate FAIL 必须让 runtime 重跑 spec：${JSON.stringify(probe.harnessPhases)}`,
+    );
+    // plan 2f8a6d40 V3（D2）：端到端归因——真实 checkUiSpecFidelityGate FAIL → 真实
+    // writeRunSummaryBase 落 blocker → runner 读回 → 真实 classifyFailureKind →
+    // phase_verdict。**改前实得 code_regression**（复现宿主 run …79d3fd 第 104 行）。
+    const failVerdicts = probe.events.filter(
+      e => e.type === 'phase_verdict' && e.phase === 'spec' && e.verdict === 'FAIL',
+    );
+    assert(failVerdicts.length > 0, `应有 spec FAIL verdict：${JSON.stringify(
+      probe.events.filter(e => e.type === 'phase_verdict' && e.phase === 'spec'))}`);
+    assert(
+      failVerdicts.every(e => e.failure_kind_classified === 'spec_capture_gap'),
+      `ui_spec_fidelity_gate 缺证失败须归 spec_capture_gap（不得 code_regression）：` +
+        JSON.stringify(failVerdicts.map(e => ({
+          blocker_signature: e.blocker_signature, failure_kind_classified: e.failure_kind_classified,
+        }))),
     );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
