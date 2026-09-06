@@ -639,10 +639,20 @@ export function classifyFailureKind(
   return 'code_regression';
 }
 
+/**
+ * plan 2f8a6d40 D2：精确 id（非前缀）也归 spec_capture_gap。`ui_spec_fidelity_gate` 的四个
+ * FAIL 出口（spec-ui-spec-check.ts:296/:334/:375）**全部**是"验读证据没建立起来"——
+ * unreachable / not_probed / not_yet / mismatch / 有视觉能力却没核对原图，没有一支指向产品
+ * 源码。落 catch-all 的 code_regression 会触发 goal-phase-runtime.ts:3568 的"先 revert 上一轮
+ * 改动"指导，对一个缺视觉回执的 spec 阶段是错向指令（宿主 run 20260905T103028Z-79d3fd 第 104 行）。
+ * 与 isCaptureBlockerId / isToolchainBlockerId 同一写法（前缀 ∪ 精确 id 集）。
+ */
+const SPEC_CAPTURE_GAP_BLOCKER_IDS: ReadonlySet<string> = new Set<string>(['ui_spec_fidelity_gate']);
+
 /** spec 期捕获完整性缺口族（capture_completeness / capture_completeness_external 等；
- * ocr_unavailable 已被 toolchain 表先行吸收） */
+ * ocr_unavailable 已被 toolchain 表先行吸收）+ ui-spec 保真门的缺证类失败 */
 export function isSpecCaptureGapBlockerId(id: string): boolean {
-  return id.startsWith('capture_completeness');
+  return id.startsWith('capture_completeness') || SPEC_CAPTURE_GAP_BLOCKER_IDS.has(id);
 }
 
 /** Collect affected_files from deterministic blockers on the summary. */

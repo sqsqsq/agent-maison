@@ -510,6 +510,64 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
+      // plan 2f8a6d40 V2：D1 的纯函数护栏——"本轮有 summary"不等于"本轮有失败"。
+      // 端到端由 V1（goal-runner-testing-integrity）承担；这里只锁投影函数的四组入参。
+      name: 'B04-V2 无失败事实的 PASS 轮不产出归因；失败事实的任一来源仍产出',
+      run: () => {
+        const passNoBlockers = { verdict: 'PASS' as const, blockers: [] };
+        // ① PASS + 无 blocker + 无 runtime 失败事实 —— 宿主 run 20260905T103028Z-79d3fd
+        // 第 85 行的现场（advance_blocked=closure_open + retry）。改前实得 code_regression。
+        const clean = buildCurrentAttemptFailureProjection({
+          decisionSummary: passNoBlockers,
+          failureKind: 'code_regression',
+          phase: 'spec',
+          hasRuntimeFailureEvidence: false,
+        });
+        assert(clean.hasEvidence === false, 'PASS+无 blocker+无 runtime 事实不得算失败事实');
+        assert(clean.failureKindForEvent === undefined, 'PASS 无失败事实轮不得写 failure_kind_classified');
+        assert(clean.blockerSignature === '', 'PASS 无失败事实轮不得合成 blocker signature');
+        // ② 同① 但有 runtime 失败事实（超时/agent 失败/非零退出/closure 错误/可信缺陷任一）
+        const runtimeFact = buildCurrentAttemptFailureProjection({
+          decisionSummary: passNoBlockers,
+          failureKind: 'agent_timeout',
+          phase: 'spec',
+          hasRuntimeFailureEvidence: true,
+        });
+        assert(runtimeFact.failureKindForEvent === 'agent_timeout', 'runtime 失败事实仍单独充分');
+        // ③ FAIL summary
+        const failed = buildCurrentAttemptFailureProjection({
+          decisionSummary: { verdict: 'FAIL' as const, blockers: [] },
+          failureKind: 'code_regression',
+          phase: 'spec',
+          hasRuntimeFailureEvidence: false,
+        });
+        assert(failed.failureKindForEvent === 'code_regression', 'FAIL summary 本身即失败事实');
+        // ④ PASS summary + 非空 blockers（畸形 summary：保守保留）
+        const passWithBlockers = buildCurrentAttemptFailureProjection({
+          decisionSummary: {
+            verdict: 'PASS' as const,
+            blockers: [{ id: 'ui_spec_fidelity_gate' }],
+          },
+          failureKind: 'spec_capture_gap',
+          phase: 'spec',
+          hasRuntimeFailureEvidence: false,
+        });
+        assert(passWithBlockers.failureKindForEvent === 'spec_capture_gap', 'PASS+非空 blockers 仍保留归因');
+        assert(
+          passWithBlockers.blockerSignature === 'ui_spec_fidelity_gate',
+          `PASS+非空 blockers 仍保留签名：${passWithBlockers.blockerSignature}`,
+        );
+        // 缺 verdict 的 summary 走 fail-closed（不得被当成 PASS 而吞掉归因）
+        const noVerdict = buildCurrentAttemptFailureProjection({
+          decisionSummary: { blockers: [] },
+          failureKind: 'code_regression',
+          phase: 'spec',
+          hasRuntimeFailureEvidence: false,
+        });
+        assert(noVerdict.failureKindForEvent === 'code_regression', '缺 verdict 不得被当成 PASS');
+      },
+    },
+    {
       name: 'current attempt 接线：decisionSummary 是 meta/signature/repair/reconcile/event 的唯一 summary 输入',
       run: () => {
         const source = fs.readFileSync(path.resolve(__dirname, '../../scripts/goal-phase-runtime.ts'), 'utf-8');
