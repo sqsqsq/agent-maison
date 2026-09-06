@@ -745,6 +745,32 @@ attended（session owner 在场、走 executor bridge）的 phase prompt 不再�
 
 ---
 
+## 3.0.x：consumer golden evaluator 加 `--feature`（非 Breaking，plan 4d9c1f72 D7）
+
+`harness/scripts/consumer-golden/evaluate-bc-opencard.ts` 此前把 feature 名写死为 `bc-openCard`，宿主的 feature 目录叫别的名字（例如 `bc-openCard-1`）时，`featureDir`、当前 build 指纹、coding 素材门三处一起读到不存在的路径，`run_binding` 必 FAIL，`candidate:promote` 也就永远拿不到 `verdict=PASS`。
+
+- **新增 `--feature <name>`**（导出 API 同步加可选 `GoldenEvalInput.feature`），贯通全部四个消费点：build 指纹、`featureDir`（goal-runs 事件 / device-testing 证据）、coding `summary.json` 素材门、报告体的 `feature` 字段。
+- **默认值仍是 `bc-openCard`**：不传该参数（或传空白）时四处取值与加参数之前**逐字相同**，报告除时间戳外逐字节相等（回归用例见 `harness/tests/unit/consumer-golden.unit.test.ts`）。
+- **消费者动作**：宿主 feature 目录名不是 `bc-openCard` 时，跑包内 evaluator 要显式加 `--feature <宿主 feature 目录名>`；`candidate:build` 打印的第 3 步提示已同步带上该参数。名字就是 `bc-openCard` 的宿主无需任何改动。
+
+---
+
+## 3.0.x 索引：六阶段重构 B01–B05（只索引，各节正文见对应小节）
+
+3.0.x 的五批改动各自已有小节，本节**只做索引**，不重复正文。**唯一需要消费者动手的是 B01**；其余四批升级后即生效，无需任何动作。
+
+| 批 | 小节标题（本文件内） | 一句话 | 消费者动作 |
+|---|---|---|---|
+| B01 | 「3.0.x：可诊断的产品失败照样签发 verifier request（非 Breaking，plan 3a7f9c12 / openspec verifier-repair-diagnostics）」 | review 的负面裁决与 UT 的真实断言失败这两类**已复现**的产品失败，现在照样签发 verifier request 驱动回修；产品裁决（`verdict=FAIL` / exit 1 / `closure_status=open`）一字不改 | **需要动手**：重新物化 `.claude/agents/verifier.md`、`phase-executor.md` 与 Stop hook（`.cac` 同），把调用前置由"脚本 PASS 才可调用"改为"harness 签发了 request 才可调用"。未刷新只会保持改动前行为，不会出错 |
+| B02 | 「3.0.x：视觉终签改绑材料，invoke 级金丝雀回执停产（非 Breaking，plan 8d2b4f60 / openspec vision-evidence-material-binding）」 | `vl_multimodal` 的能力证明回落到 run 级 preflight 金丝雀、材料证据改按内容哈希寻址，`vision/capability-receipt.json` 与 `capability_receipt` 事件整套停产 | 无需动手。盘上残留的旧回执文件无消费者、不影响任何门禁结论，不必清理 |
+| B03 | 「构建执行复用与报告分层（execution-reuse-and-report-layering）」（含其下四个 `###`：UT 一次出包 / UT 执行键复用 / `hdc-test.<module>.log` / report-only 对账分层 / 「没量到」不写 `0ms` / attended 不再注入无人值守禁问块） | UT 一次门禁只出一次 ohosTest 包；同输入第二次调用按执行键复用冻结件、零装机零执行；report-only 对账把"执行事实"与"派生统计"分成 FAIL / WARN 两桶 | 无需动手。只有"按字面名 `hdc-test.log` 找日志"的人工习惯要改成 `hdc-test.<module>.log` |
+| B04 | 「失败归因与 prior review 消费一致（attribution-and-prior-review-consistency）」（含其下四个 `###`） | PASS、无 blocker 且无 runtime 失败事实的轮不再输出 `failure_kind_classified`；`ui_spec_fidelity_gate` 的归因由 `code_regression` 改 `spec_capture_gap`；沿用既往 PASS 的阶段存档会带 `verifier.report.md` | 无需动手。prior review 的复用**政策**一字未改，变的只是呈现与归因 |
+| B05 | 「显式 `evidence_profile: balanced` 现在在 goal/headless 也生效（B05）」+「plan 三章节可声明「不适用：\<依据\>」（B05）」+「verify-ut 不再按 expect 数量判 FAIL（B05）」三节 | 显式 balanced 在 goal/headless 与 interactive 同解（**默认仍是 strict**，不写该键行为不变）；plan 三章节可声明「不适用：\<依据\>」；verify-ut 不再按 `expect` 条数硬判 FAIL | 无需动手。想降档才写 `evidence_profile: balanced`；关轴 ≠ 忽略已有负面结论（`verifier_not_pass` 仍拦） |
+
+> **标题层级不齐（已知，不改）**：B01/B02 两节是 `###`（挂在本文件开头 3.0.0 大节之下），B03–B05 是 `##`。本索引按实际层级指路——统一层级会打断已发出的锚点引用，收益为零。
+
+---
+
 ## 把 framework 发布件集成到目标工程
 
 Maison 只交付已经过 pack/release verify 的 `framework-<semver>.zip`。在目标工程根解压，得到 `<repo-root>/framework/`；升级时用新发布件镜像覆盖旧目录。不要从源仓直接挑文件复制，也不要采用第二种 Git 布局。
