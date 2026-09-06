@@ -2265,9 +2265,11 @@ function checkItDrivesFlow(
     status: 'WARN',
     details: `${weak.length} 个 it() 用例驱动力不足：\n${truncateList(weak, 15)}`,
     affected_files: [...new Set(affected)],
+    // plan 7b3e9a15 D3：数量是本 WARN 的**触发线索**，不是判据（severity/status 与判定式
+    // 一字不改，只把建议从"补够条数"改回"确认这条 it 真的在驱动业务"）。
     suggestion: strict
-      ? '有 use-cases.yaml 时每条 it() 应：(1) 调用 coordinator 的命名方法驱动；(2) 对 Spy/Fake/Stub 的 callLog/.calls 做 ≥2 次调用序列断言；(3) 对业务状态/phase 做 ≥2 次断言。'
-      : '每条 it() 至少包含 ≥2 个 expect()，避免空断言用例。',
+      ? '数量是本 WARN 的触发线索，不是判据；请确认该 it() 覆盖了命名入口驱动、调用序列与状态迁移（纯函数/单规则用例只需保证错误实现会让它失败并覆盖边界/异常）。'
+      : '数量是本 WARN 的触发线索，不是判据；请确认该 it() 覆盖了命名入口驱动、调用序列与状态迁移，而不是补足 expect() 条数。',
   }];
 }
 

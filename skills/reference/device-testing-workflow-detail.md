@@ -94,7 +94,7 @@
 - **测试接缝不得改变用户可见流程/默认行为**：`*_FAST_PATH`/`DEVICE_TEST*`/`SKIP_SMS*` 类
   开关默认 `true` = `product_behavior_switch_scan` BLOCKER（bc-openCard 事故：点银行直写卡
   跳结果页）。可测性接缝限 `.id()` 锚点等**不改行为**的改动——且 review 闭环后任何产品
-  源码变更都会被 `review_closure_attestation` 拦下，须回跑 review 重审。
+  源码变更都会由 `review_closure_attestation` 分级列出所需的一次复核，未复核时如实标注。
 - **P0 用例 skip 证据边界（c7e4a2d9 / testing-stepresult-evidence-consumption）**：
   未执行的 P0 → `p0_coverage_integrity` BLOCKER（fail-closed 不变）。没有
   `CaseResult.steps[]` 的未执行缺口保持 testing-owned FAIL、零自动 coding

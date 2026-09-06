@@ -6092,7 +6092,9 @@ const checker: PhaseChecker = {
  * t2（goal-fakepass-hardening）：testing 期产品源码 vs review 闭环快照对账。
  * bc-openCard 事故：testing 期写入 DEVICE_TEST_FAST_PATH=true 短路核心流程，review 审过的
  * 代码与真机跑的不是同一份。基线=attestation 固化 inventory；走树=冻结 roots ∪ 当前重
- * discovery（新增整模块可见）。任何差异/缺 attestation → BLOCKER，指引回跑 review 闭环。
+ * discovery（新增整模块可见）。缺基线 / 有漂移都**按风险分级**给出所需的一次复核，未做时
+ * MAJOR WARN 并如实标注（review 语义结论对这些改动未重审），不一刀 BLOCKER——见函数体
+ * :6107–6108 的同源说明与四个出口。
  */
 function checkReviewClosureAttestationGate(ctx: CheckContext): CheckResult[] {
   const id = 'review_closure_attestation';
