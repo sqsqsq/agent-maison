@@ -39,25 +39,54 @@ export interface ExecutionKeyRecord {
   schema_version: '1.0';
   execution_key: string;
   inputs: ExecutionKeyInputs;
+  /** hylyre leg：Hylyre trace 绝对路径；UT leg 无 trace，恒空串（执行事实由冻结件组担保） */
   trace_path: string;
   run_started_at: string;
   outcome: string;
   trace_sha256: string | null;
+  /**
+   * 「派生证据完整」。两个 leg 含义不同（plan 5e1c7a93 D2「放弃的准确性」①）：
+   * hylyre leg = timing 覆盖全部 case；UT leg = 全部选中模块的结果与 hdc 日志已逐模块冻结。
+   * 沿用旧名以免动 testing 侧 schema 与消费者。
+   */
   timing_complete: boolean;
   /** codex review：本 run 冻结的顶层 timing/meta 副本（run 目录内文件名）；复用时回填顶层，避免旧 trace + 新 meta 拼装 */
   frozen_files?: string[];
 }
 
-/** 顶层共享文件 → run 目录内冻结副本名 */
-export const FROZEN_RUN_ARTIFACTS: ReadonlyArray<{ top: string; frozen: string }> = [
-  { top: 'device-test-timing.json', frozen: 'frozen.device-test-timing.json' },
-  { top: 'device-test-run.meta.json', frozen: 'frozen.device-test-run.meta.json' },
+/**
+ * 顶层共享文件 → run 目录内冻结副本名。
+ * plan 5e1c7a93 D3：`group` 区分**执行事实**（trace / run meta / UT 逐模块结果与 hdc 日志，
+ * 缺任一即拒绝复用）与**派生统计**（timing 等，缺失走重建通道，不逼真机重跑）。
+ */
+export type FrozenArtifactGroup = 'execution' | 'derived';
+export interface FrozenArtifactSpec {
+  top: string;
+  frozen: string;
+  group: FrozenArtifactGroup;
+}
+
+export const FROZEN_RUN_ARTIFACTS: ReadonlyArray<FrozenArtifactSpec> = [
+  { top: 'device-test-timing.json', frozen: 'frozen.device-test-timing.json', group: 'derived' },
+  { top: 'device-test-run.meta.json', frozen: 'frozen.device-test-run.meta.json', group: 'execution' },
 ];
 
+/** plan 5e1c7a93 D2：UT leg 的冻结件按模块展开（整轮键 + 逐模块冻结件）。 */
+export function utFrozenRunArtifacts(modules: readonly string[]): FrozenArtifactSpec[] {
+  return [...modules].sort().flatMap(m => [
+    { top: `ut-result.${m}.json`, frozen: `frozen.ut-result.${m}.json`, group: 'execution' as const },
+    { top: `hdc-test.${m}.log`, frozen: `frozen.hdc-test.${m}.log`, group: 'execution' as const },
+  ]);
+}
+
 /** 把本 run 的顶层 timing/meta 冻结进 run 目录；返回冻结成功的文件名。 */
-export function freezeRunArtifacts(reportsDir: string, runDir: string): string[] {
+export function freezeRunArtifacts(
+  reportsDir: string,
+  runDir: string,
+  artifacts: ReadonlyArray<FrozenArtifactSpec> = FROZEN_RUN_ARTIFACTS,
+): string[] {
   const out: string[] = [];
-  for (const f of FROZEN_RUN_ARTIFACTS) {
+  for (const f of artifacts) {
     const src = path.join(reportsDir, f.top);
     if (!fs.existsSync(src)) continue;
     try {
@@ -71,9 +100,13 @@ export function freezeRunArtifacts(reportsDir: string, runDir: string): string[]
 }
 
 /** 复用同键 run 时把它冻结的 timing/meta 回填到顶层（报告与门禁读顶层）。 */
-export function restoreFrozenRunArtifacts(runDir: string, reportsDir: string): string[] {
+export function restoreFrozenRunArtifacts(
+  runDir: string,
+  reportsDir: string,
+  artifacts: ReadonlyArray<FrozenArtifactSpec> = FROZEN_RUN_ARTIFACTS,
+): string[] {
   const restored: string[] = [];
-  for (const f of FROZEN_RUN_ARTIFACTS) {
+  for (const f of artifacts) {
     const src = path.join(runDir, f.frozen);
     if (!fs.existsSync(src)) continue;
     fs.copyFileSync(src, path.join(reportsDir, f.top));
@@ -98,9 +131,23 @@ export function computeExecutionKey(inputs: ExecutionKeyInputs): string {
   return sha256Text(stableStringify({ ...inputs, flags: [...inputs.flags].sort() }));
 }
 
+/**
+ * 记录写出必须是**原子替换**（codex review 第 1 轮 #3）。原地 writeFileSync 会先截断：
+ * 失败轮覆盖前置 `started` 记录时若写失败，盘上留下空文件 / 半份 JSON，
+ * `listExecutionKeyRuns` 把它当损坏记录跳过 → 最新一条又变成**更早的成功** → 洗绿。
+ * 同目录临时文件 + rename：写失败时盘上仍是完整的前置记录，下一轮据它拒绝复用。
+ */
 export function writeExecutionKeyRecord(runDir: string, record: ExecutionKeyRecord): void {
   fs.mkdirSync(runDir, { recursive: true });
-  fs.writeFileSync(path.join(runDir, EXECUTION_KEY_FILE), JSON.stringify(record, null, 2), 'utf-8');
+  const target = path.join(runDir, EXECUTION_KEY_FILE);
+  const tmp = path.join(runDir, `.${EXECUTION_KEY_FILE}.${process.pid}.tmp`);
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(record, null, 2), 'utf-8');
+    fs.renameSync(tmp, target);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch { /* 临时件已不在 */ }
+    throw e;
+  }
 }
 
 export interface ExecutionKeyRunView {
@@ -110,13 +157,16 @@ export interface ExecutionKeyRunView {
   dirStamp: string;
 }
 
-/** 扫描 <reportsBase>/<stamp>/hylyre/execution-key.json，按目录 stamp 降序（最新在前）。 */
-export function listExecutionKeyRuns(reportsBase: string): ExecutionKeyRunView[] {
+/** plan 5e1c7a93 D2：run 目录段名——testing 侧恒 'hylyre'，UT 侧 'ut'。 */
+export type ExecutionKeyLeg = 'hylyre' | 'ut';
+
+/** 扫描 <reportsBase>/<stamp>/<leg>/execution-key.json，按目录 stamp 降序（最新在前）。 */
+export function listExecutionKeyRuns(reportsBase: string, leg: ExecutionKeyLeg = 'hylyre'): ExecutionKeyRunView[] {
   const out: ExecutionKeyRunView[] = [];
   if (!fs.existsSync(reportsBase)) return out;
   for (const ent of fs.readdirSync(reportsBase, { withFileTypes: true })) {
     if (!ent.isDirectory()) continue;
-    const runDir = path.join(reportsBase, ent.name, 'hylyre');
+    const runDir = path.join(reportsBase, ent.name, leg);
     const p = path.join(runDir, EXECUTION_KEY_FILE);
     if (!fs.existsSync(p)) continue;
     try {
@@ -132,28 +182,69 @@ export function listExecutionKeyRuns(reportsBase: string): ExecutionKeyRunView[]
 export interface ReuseDecision {
   reusable: ExecutionKeyRunView | null;
   reason: string;
+  /**
+   * plan 5e1c7a93 D3：可复用但**派生证据**（timing 等）不全——调用方回填后先重建，
+   * 重建仍不闭合则 fail-closed 回落真跑。执行事实缺口不走这条通道（直接 reusable=null）。
+   */
+  evidenceRebuildRequired?: boolean;
+}
+
+export interface DecideReuseOptions {
+  leg?: ExecutionKeyLeg;
+  /** 本轮期望的冻结件集合；UT leg 由 utFrozenRunArtifacts(mods) 现算（整轮键 + 逐模块冻结件） */
+  artifacts?: ReadonlyArray<FrozenArtifactSpec>;
+  /**
+   * 排除本轮自己的 run 目录。记录前置（D2）先落一条 'started' 记录才轮到复用判定，
+   * 不排除的话最新一条永远是自己，复用恒不命中。
+   */
+  excludeRunDir?: string;
 }
 
 /**
  * 3.0.0 简化：只看最新一条带 execution-key 的真实 attempt。
- * 最新 attempt 必须同键、成功且证据完整；更新的别键或同键失败都重新真跑。
- * 没有 execution-key 的临时空目录不进入 listExecutionKeyRuns，天然不参与判断。
+ * 最新 attempt 必须同键、成功且执行事实完整；更新的别键或同键失败都重新真跑。
+ * 没有 execution-key 的临时空目录不进入 listExecutionKeyRuns，天然不参与判断——
+ * 所以生产路径必须在 dispatch **之前**先落一条非成功 attempt（plan 5e1c7a93 D2），
+ * 否则跑挂的那轮不留痕、上一轮的成功会被当成"最新"。
  */
-export function decideReuse(reportsBase: string, executionKey: string): ReuseDecision {
-  const latest = listExecutionKeyRuns(reportsBase)[0];
+export function decideReuse(
+  reportsBase: string,
+  executionKey: string,
+  opts: DecideReuseOptions = {},
+): ReuseDecision {
+  const artifacts = opts.artifacts ?? FROZEN_RUN_ARTIFACTS;
+  const exclude = opts.excludeRunDir ? path.resolve(opts.excludeRunDir) : null;
+  const latest = listExecutionKeyRuns(reportsBase, opts.leg ?? 'hylyre')
+    .filter(r => !exclude || path.resolve(r.runDir) !== exclude)[0];
   if (!latest) return { reusable: null, reason: '无 execution-key 历史 run' };
   if (latest.record.execution_key !== executionKey) {
     return { reusable: null, reason: `最新 run ${latest.dirStamp} 是其他 execution key，重新真跑` };
   }
   if (latest.record.outcome !== 'success') return { reusable: null, reason: `最新同键 run ${latest.dirStamp} outcome=${latest.record.outcome}，重新真跑` };
-  if (!latest.record.timing_complete) return { reusable: null, reason: `最新同键 run ${latest.dirStamp} 的 timing 不完整` };
-  if (!fs.existsSync(latest.record.trace_path)) return { reusable: null, reason: `最新同键 run ${latest.dirStamp} 的 trace 缺失` };
-  const frozen = latest.record.frozen_files ?? [];
-  const expected = FROZEN_RUN_ARTIFACTS.map(f => f.frozen);
-  if (!expected.every(name => frozen.includes(name) && fs.existsSync(path.join(latest.runDir, name)))) {
-    return { reusable: null, reason: `最新同键 run ${latest.dirStamp} 未冻结 timing/meta 副本（旧版记录），不复用` };
+  // trace_path 为空串 = 该 leg 没有 Hylyre trace（UT leg）；执行事实由下面的冻结件组担保。
+  if (latest.record.trace_path && !fs.existsSync(latest.record.trace_path)) {
+    return { reusable: null, reason: `最新同键 run ${latest.dirStamp} 的 trace 缺失` };
   }
-  return { reusable: latest, reason: `最近同键 run ${latest.dirStamp} 成功、证据完整（timing/meta 已冻结）` };
+  const frozen = latest.record.frozen_files ?? [];
+  const present = (name: string): boolean => frozen.includes(name) && fs.existsSync(path.join(latest.runDir, name));
+  const missingExecution = artifacts.filter(f => f.group === 'execution' && !present(f.frozen));
+  if (missingExecution.length > 0) {
+    return {
+      reusable: null,
+      reason: `最新同键 run ${latest.dirStamp} 执行事实冻结件缺失（${missingExecution.map(f => f.frozen).join(', ')}），重新真跑`,
+    };
+  }
+  const missingDerived = artifacts.filter(f => f.group === 'derived' && !present(f.frozen));
+  if (missingDerived.length > 0 || !latest.record.timing_complete) {
+    return {
+      reusable: latest,
+      evidenceRebuildRequired: true,
+      reason: missingDerived.length > 0
+        ? `最近同键 run ${latest.dirStamp} 执行事实齐备，派生冻结件缺失（${missingDerived.map(f => f.frozen).join(', ')}），先重建`
+        : `最近同键 run ${latest.dirStamp} 执行事实齐备，派生证据不完整（timing_complete=false），先重建`,
+    };
+  }
+  return { reusable: latest, reason: `最近同键 run ${latest.dirStamp} 成功、证据完整（执行事实与派生副本均已冻结）` };
 }
 
 // ---------------------------------------------------------------- 稳定性

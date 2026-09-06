@@ -362,6 +362,44 @@ export function resetHdcExecutableCache(): void {
 }
 
 /**
+ * 执行键里的设备与显示身份——HARNESS_HDC_TARGET 优先，否则 `hdc list targets` 恰好一台时取其
+ * 序列号；显示环境取 `wm size`（best-effort）。设备身份未知时不允许同键复用。
+ *
+ * plan 5e1c7a93 D2：原为 check-testing.ts 的模块私有函数，UT leg 也要用，下移到已拥有
+ * runHdcRaw / resolveHdcExecutableSync 的本文件，两侧共用一份，不复制。
+ * 注意：这两条是**身份查询**，不是装机/执行调用——report-only 与复用轮的"零设备调用"
+ * 承诺不含它们（见 plan §6）。
+ */
+export function resolveExecutionDeviceIdentity(): { device: string | null; display_env: string } {
+  let device = process.env.HARNESS_HDC_TARGET?.trim() || null;
+  let exe: string | null = null;
+  try {
+    exe = resolveHdcExecutableSync();
+  } catch {
+    exe = null;
+  }
+  if (!device && exe) {
+    try {
+      const probe = runHdcRaw(exe, ['list', 'targets'], { timeout: 5000 });
+      const lines = String(probe.stdout ?? '').split(/\r?\n/).map(l => l.trim()).filter(l => l && !/\[Empty\]/i.test(l));
+      if (probe.status === 0 && lines.length === 1) device = lines[0];
+    } catch {
+      /* 探测失败 = 设备未知 */
+    }
+  }
+  let displayEnv = '';
+  if (device && exe) {
+    try {
+      const wm = runHdcRaw(exe, ['-t', device, 'shell', 'wm', 'size'], { timeout: 5000 });
+      if (wm.status === 0) displayEnv = String(wm.stdout ?? '').split(/\r?\n/)[0].trim();
+    } catch {
+      displayEnv = '';
+    }
+  }
+  return { device, display_env: displayEnv };
+}
+
+/**
  * 解析 hdc 所在 toolchains 目录（不要求 `hdc list targets` 探测成功）。
  * 供 Python/Hypium 子进程 PATH 注入：Hypium 以裸命令 `hdc` 查找，不读 Node 侧绝对路径。
  */
@@ -1189,7 +1227,8 @@ export function classifyAaTestFailure(
     kind: 'aa_test_no_result',
     summary: `aa test 未输出 OHOS_REPORT_RESULT（exit=${exitCode}），无法确认用例真实执行。`,
     suggestion:
-      '查看 hdc-test.log，重点检查 testRunner 路径、ohosTest module name、测试 Ability 是否启动，以及设备是否弹出权限/锁屏/前台限制。',
+      // plan 5e1c7a93 D2：日志已按模块命名（hdc-test.<module>.log），实际路径见 check 的 logPath。
+      '查看本模块的 hdc-test.<module>.log（实际路径见 check 结果的日志落盘行），重点检查 testRunner 路径、ohosTest module name、测试 Ability 是否启动，以及设备是否弹出权限/锁屏/前台限制。',
   };
 }
 
@@ -1445,7 +1484,9 @@ function finalize(
   // 落盘日志
   try {
     const dir = ensureHdcLogReportDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot);
-    const file = path.join(dir, 'hdc-test.log');
+    // plan 5e1c7a93 D2：按模块命名——两个 ohosTest 模块时旧的固定 hdc-test.log 会被
+    // 第二个模块覆盖，逐模块冻结件（frozen.hdc-test.<module>.log）的前提是先按模块落盘。
+    const file = path.join(dir, `hdc-test.${opts.srcModuleName}.log`);
     fs.writeFileSync(file, res.logExcerpt, 'utf-8');
     res.logPath = path.relative(process.cwd(), file).replace(/\\/g, '/');
   } catch {

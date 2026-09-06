@@ -427,7 +427,7 @@ Harness — Spec/Harness 验证工具
   --measure                 视觉量测（只测量不裁决）：对 ui-spec 声明元素输出 bounds/间距/重叠/与参考图差值/取色，写 device-screenshots/measure-<screen>.json（需 --feature；可选 --screen <id>；由 profile 提供）
                             不重跑 verifier：材料未变复用既有报告，材料变了但历史有 PASS 标 completed_with_prior_review
   --report-reconcile-only   testing 专属：只读既有 trace/plan/timing/meta，完整重算报告门禁，不调用设备/provider/视觉/lifecycle hook
-  --force-device            testing 专属：忽略同执行键复用，强制真机真跑（用户要求 fresh 或 N 轮稳定性时用）
+  --force-device            testing / ut：忽略同执行键复用，强制真机真跑（用户要求 fresh 或 N 轮稳定性时用）
   --summary                 输出稳定短摘要，并写入实例解析的报告目录（同 phase）summary.json
   --failures-only           控制台只打印 FAIL/WARN/BLOCKER-SKIP 项（默认已启用；保留给脚本显式表达）
   --skip-visual-handoff     spec 阶段跳过 Visual Handoff 脚本检查（应急）；建议设置环境变量 HARNESS_SKIP_VISUAL_HANDOFF_REASON 留审计说明

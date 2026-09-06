@@ -267,7 +267,7 @@ function actionFor(item: ClassifiedFailure): string {
   return item.deviceBlocked
     ? '设备已连接但锁屏：请人解锁真机并保持在桌面/前台后重跑；这是环境问题，不要改动代码或 UT。'
     : stageHint
-      ? '按上方“失败阶段/修复建议”处理后重跑；完整输出见 hdc-test.log。'
+      ? '按上方“失败阶段/修复建议”处理后重跑；完整输出见 hdc-test.<module>.log。'
       : '按失败用例堆栈定位问题：可能是 UT 逻辑错误、被测业务实现与 UT 预期不一致、或 Spy/Stub 预设值不对。' +
         '修改 UT 后重跑；若需要动业务源码，先按 SKILL.md > 约束 #12 的 HARD STOP 流程征得用户同意。';
 }
