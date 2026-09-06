@@ -4,7 +4,12 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 
 import { clearFrameworkConfigCache } from '../../config';
-import { checkContractFileReferenceClosure } from '../../scripts/check-plan';
+import {
+  checkComponentTreePerPage,
+  checkContractFileReferenceClosure,
+  checkDataModelTyped,
+  checkInterfaceSignaturesComplete,
+} from '../../scripts/check-plan';
 import {
   CONTRACT_FILE_REFERENCE_FIELDS,
   CONTRACT_FILE_REFERENCE_KINDS,
@@ -12,7 +17,7 @@ import {
   selectContractReferencePaths,
 } from '../../scripts/utils/contract-reference-closure';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
-import type { CheckContext, FeatureSpec } from '../../scripts/utils/types';
+import { isCheckNotApplicable, type CheckContext, type CheckResult, type FeatureSpec } from '../../scripts/utils/types';
 import { ensureConsumerFrameworkTree } from '../utils/layout-test-helper';
 
 export interface UnitCaseResult {
@@ -48,7 +53,7 @@ function listFiles(root: string): string[] {
   return out.sort();
 }
 
-function withProject<T>(contractsYaml: string, fn: (root: string, spec: FeatureSpec) => T): T {
+function withProject<T>(contractsYaml: string | null, fn: (root: string, spec: FeatureSpec) => T): T {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'contract-reference-closure-'));
   try {
     clearFrameworkConfigCache();
@@ -78,7 +83,12 @@ function withProject<T>(contractsYaml: string, fn: (root: string, spec: FeatureS
       },
     }));
     ensureConsumerFrameworkTree(root);
-    writeFile(path.join(root, 'doc', 'features', 'bc-openCard', 'contracts.yaml'), contractsYaml);
+    // contractsYaml === null：**不写** contracts.yaml（V4 的「真源缺失」负例）。
+    if (contractsYaml !== null) {
+      writeFile(path.join(root, 'doc', 'features', 'bc-openCard', 'contracts.yaml'), contractsYaml);
+    } else {
+      fs.mkdirSync(path.join(root, 'doc', 'features', 'bc-openCard'), { recursive: true });
+    }
     const spec = new SpecLoader(root).loadFeatureSpec('bc-openCard');
     return fn(root, spec);
   } finally {
@@ -128,6 +138,155 @@ const RETIRED_NAVIGATION_SHAPES: ReadonlyArray<{ source: string; yaml: string[] 
   { source: 'navigation.routes[0].page_file', yaml: ['  routes:', `    - { name: R, page_file: ${RETIRED_SHAPE_PATH} }`] },
   { source: 'navigation.routes[0].route_file', yaml: ['  routes:', `    - { name: R, route_file: ${RETIRED_SHAPE_PATH} }`] },
   { source: 'navigation.routes[0].registration_file', yaml: ['  routes:', `    - { name: R, registration_file: ${RETIRED_SHAPE_PATH} }`] },
+];
+
+// ============================================================================
+// V4（plan 7b3e9a15 D2/S1）：plan 三章节的「依据明确的不适用」出口
+// ============================================================================
+// 一律经**真实 SpecLoader**（withProject 已用）+ **真实 check-plan 导出函数**——不手拼
+// FeatureSpec，也不复刻判定逻辑。
+//
+// 正例（contracts 对应集合为空、真源可信）→ SKIP；反例（contracts 里有条目却写 n/a）→
+// FAIL 且 severity 与今天相同；三条**真源不可信**负例 → 一律不得出现 SKIP，落回今天的判定
+// （这三条是**改前改后均绿的回归护栏**，不是缺陷断言：S1 之前三个 check 根本没有 SKIP 出口）。
+const NA_PLAN_MD = [
+  '## 数据模型定义',
+  '',
+  '不适用：本 feature 是纯路由改造，不引入任何新模型。',
+  '',
+  '## 服务层接口定义',
+  '',
+  '- 不适用：无新增服务层接口，复用既有 CardService。',
+  '',
+  '## 页面组件树',
+  '',
+  '**不适用**：本 feature 不新增页面。',
+  '',
+].join('\n');
+
+/** 三章节都在场、但都写了真实内容（用于确认 n/a 分支确实是被声明行触发的）。 */
+const EMPTY_CONTRACTS = ['schema_version: "1.0"', 'feature: bc-openCard', 'files: []'].join('\n');
+
+function planCtx(root: string, spec: FeatureSpec): CheckContext {
+  return {
+    phase: 'plan',
+    feature: 'bc-openCard',
+    projectRoot: root,
+    featureSpec: spec,
+    phaseRule: { phase: 'plan', structure_checks: {} },
+  } as unknown as CheckContext;
+}
+
+interface NaProbe { id: string; status: string; severity: string; details: string; suggestion?: string; structured?: unknown }
+
+function runThreeChecks(root: string, spec: FeatureSpec, design: string): NaProbe[] {
+  const ctx = planCtx(root, spec);
+  return [
+    checkDataModelTyped(ctx, design)[0],
+    checkInterfaceSignaturesComplete(ctx, design)[0],
+    checkComponentTreePerPage(ctx, design)[0],
+  ] as NaProbe[];
+}
+
+const naCases: Case[] = [
+  {
+    name: 'V4 正例：三章节声明「不适用：<依据>」且 contracts 对应集合为空 → SKIP（severity 各自不变）',
+    run: () => withProject(EMPTY_CONTRACTS, (root, spec) => {
+      assert(spec.contracts !== undefined, '构造性前提：contracts 必须挂载（真源在场）');
+      assert(!spec.shape_issues?.length, `构造性前提：不得有 shape_issues，实得 ${JSON.stringify(spec.shape_issues)}`);
+      const [dm, iface, comp] = runThreeChecks(root, spec, NA_PLAN_MD);
+      for (const [r, collection] of [[dm, 'data_models'], [iface, 'interfaces'], [comp, 'components']] as Array<[NaProbe, string]>) {
+        assert(r.status === 'SKIP', `${r.id} 应 SKIP，实得 ${r.status}：${r.details}`);
+        assert(r.details.includes(`contracts.${collection} 长度为 0`), `${r.id} details 须写明判据来源：${r.details}`);
+        // codex 实施 review 一轮 medium：真 n/a 必须带机读标注，否则 SKIP+BLOCKER 会被
+        // writer 当成"门禁没跑完"收进 blocking_skips，提前返回 review_blocking_skips_then_verifier。
+        assert(
+          isCheckNotApplicable(r as unknown as CheckResult),
+          `${r.id} 的 SKIP 必须带 structured.applicability=not_applicable，实得 ${JSON.stringify(r.structured)}`,
+        );
+      }
+      assert(dm.details.includes('纯路由改造'), `须带出作者依据：${dm.details}`);
+      assert(dm.severity === 'BLOCKER' && iface.severity === 'BLOCKER', 'BLOCKER 两项 severity 不变');
+      assert(comp.severity === 'MAJOR', `component_tree_per_page 仍是 MAJOR，实得 ${comp.severity}`);
+    }),
+  },
+  {
+    name: 'V4 反例：contracts 里有条目却声明不适用 → 假 n/a 仍 FAIL（severity 与今天相同、details 点名条目、有 suggestion）',
+    run: () => withProject([
+      'schema_version: "1.0"',
+      'feature: bc-openCard',
+      'files: []',
+      'data_models:',
+      '  - name: CardSummary',
+      '    module: CardFeature',
+      '    file: 02-Feature/CardFeature/src/main/ets/model/CardSummary.ets',
+      '    kind: interface',
+      '    fields: []',
+      'interfaces:',
+      '  - module: CardFeature',
+      '    layer: domain',
+      '    file: 02-Feature/CardFeature/src/main/ets/service/CardService.ets',
+      '    class: CardService',
+      '    methods: []',
+      'components:',
+      '  - name: CardListPage',
+      '    module: CardFeature',
+      '    file: 02-Feature/CardFeature/src/main/ets/pages/CardListPage.ets',
+      '    kind: page',
+    ].join('\n'), (root, spec) => {
+      const [dm, iface, comp] = runThreeChecks(root, spec, NA_PLAN_MD);
+      for (const [r, needle] of [[dm, 'CardSummary'], [iface, 'CardService'], [comp, 'CardListPage']] as Array<[NaProbe, string]>) {
+        assert(r.status === 'FAIL', `${r.id} 假 n/a 必须 FAIL，实得 ${r.status}`);
+        assert(r.details.includes(needle), `${r.id} details 须点名 contracts 条目：${r.details}`);
+        assert(Boolean(r.suggestion), `${r.id} 假 n/a 的 FAIL 必须自带 suggestion（ratchet 只减不增）`);
+      }
+      assert(dm.severity === 'BLOCKER' && iface.severity === 'BLOCKER' && comp.severity === 'MAJOR', '三者 severity 与今天相同');
+    }),
+  },
+  {
+    name: 'V4 护栏：contracts.yaml 缺失 → 三个 check 一律不出现 SKIP（落回今天的判定）',
+    run: () => withProject(null, (root, spec) => {
+      assert(spec.contracts === undefined, '构造性前提：contracts 不得挂载');
+      for (const r of runThreeChecks(root, spec, NA_PLAN_MD)) {
+        assert(r.status !== 'SKIP', `${r.id} 在真源缺失时不得放行，实得 ${r.status}`);
+      }
+    }),
+  },
+  {
+    name: 'V4 护栏：contracts.yaml 根节点非 mapping（解析失败）→ 三个 check 一律不出现 SKIP',
+    run: () => withProject('- just\n- a\n- list\n', (root, spec) => {
+      assert(spec.contracts === undefined, '构造性前提：根节点非 mapping 时 loader 不挂载 contracts');
+      for (const r of runThreeChecks(root, spec, NA_PLAN_MD)) {
+        assert(r.status !== 'SKIP', `${r.id} 在解析失败时不得放行，实得 ${r.status}`);
+      }
+    }),
+  },
+  {
+    name: 'V4 护栏：data_models/interfaces/components 被写成 {} 归空并留 shape_issues → 一律不出现 SKIP',
+    run: () => withProject([
+      'schema_version: "1.0"',
+      'feature: bc-openCard',
+      'files: []',
+      'data_models: {}',
+      'interfaces: {}',
+      'components: {}',
+    ].join('\n'), (root, spec) => {
+      assert(spec.contracts !== undefined, '构造性前提：contracts 仍挂载（只是集合被归空）');
+      for (const collection of ['data_models', 'interfaces', 'components']) {
+        assert(
+          (spec.shape_issues ?? []).some(i => i.includes('contracts.yaml') && i.includes(`\`${collection}\``)),
+          `构造性前提：${collection} 必须留下 shape_issues；实得 ${JSON.stringify(spec.shape_issues)}`,
+        );
+        assert(
+          ((spec.contracts as unknown as Record<string, unknown>)[collection] as unknown[]).length === 0,
+          `构造性前提：${collection} 已被归空数组（"集合为空"在这里不等于"确实不涉及"）`,
+        );
+      }
+      for (const r of runThreeChecks(root, spec, NA_PLAN_MD)) {
+        assert(r.status !== 'SKIP', `${r.id} 在该集合有形状留痕时不得放行，实得 ${r.status}`);
+      }
+    }),
+  },
 ];
 
 const cases: Case[] = [
@@ -484,6 +643,7 @@ const cases: Case[] = [
       assert(result.status === 'FAIL' && result.severity === 'BLOCKER', JSON.stringify(result));
     }),
   },
+  ...naCases,
 ];
 
 export function runAll(): UnitCaseResult[] {

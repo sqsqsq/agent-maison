@@ -23,6 +23,7 @@ import {
   PhaseChecker,
   CheckContext,
   CheckResult,
+  CHECK_NOT_APPLICABLE_MARKER,
 } from './utils/types';
 import { SpecLoader } from './utils/spec-loader';
 import {
@@ -499,10 +500,90 @@ function checkFileStructurePerModule(ctx: CheckContext, design: string): CheckRe
   }];
 }
 
-function checkDataModelTyped(ctx: CheckContext, design: string): CheckResult[] {
+/** plan 7b3e9a15 D2：plan 三章节与 contracts 集合的一一对应。 */
+export type PlanSectionCollection = 'data_models' | 'interfaces' | 'components';
+
+/** 章节正文里的「不适用：<依据>」声明行（允许列表项前缀与粗体包裹）。 */
+const SECTION_NOT_APPLICABLE_RE = /^[ \t]*(?:[-*+][ \t]+)?\**不适用\**[ \t]*[:：][ \t]*(\S.*?)[ \t]*$/m;
+
+/**
+ * plan 7b3e9a15 D2：「依据明确的不适用」出口的**唯一**判定实现，三个 check 共用。
+ *
+ * 纯函数（只读 ctx.featureSpec 与章节正文，零 I/O、零写入）。返回值是 CheckResult 的
+ * 状态片段——severity 由各调用点保留自己的既有值（`component_tree_per_page` 是 MAJOR，
+ * 另两个是 BLOCKER；提 severity 属改质量红线，本批不做）。
+ *
+ * **可用性前提写死在这里**（§1-② 已核实上游并不保证）。三条同时成立才允许走 n/a：
+ *   1. `ctx.featureSpec.contracts` 在场（contracts.yaml 缺失时 loader 根本不挂载）；
+ *   2. contracts.yaml 解析成功（根节点非 mapping 时 loader 同样不挂载——与 1 合流）；
+ *   3. `shape_issues` 里没有指向该集合的留痕。
+ *
+ * 第 3 条堵掉最危险的一类：`data_models: {}` 被 spec-loader 的 normalizeArrayField 归空后
+ * 长度为 0，只看"数组为空"就会把一份**写错形状**的 contracts 判成"确实不涉及"。三条里任一
+ * 不成立 → 返回 null → 落回今天的全部判定，**绝不给 SKIP**。
+ *
+ * 放弃的准确性：只看 contracts 对应数组是否为空，不校验 contracts 本身有没有漏声明——
+ * 那属 spec→plan 追溯与契约闭包的职责。作者同时在 contracts 漏声明并在 plan 写 n/a 时本
+ * 出口拦不住；代价接受，理由是不新建第二套适用性真源。
+ */
+export function resolveSectionApplicability(
+  ctx: CheckContext,
+  sectionContent: string,
+  collection: PlanSectionCollection,
+): { status: CheckResult['status']; details: string; suggestion?: string; structured?: unknown } | null {
+  const declared = SECTION_NOT_APPLICABLE_RE.exec(sectionContent);
+  if (!declared) return null;
+  const rationale = declared[1];
+
+  const contracts = ctx.featureSpec?.contracts as Record<string, unknown> | undefined;
+  if (!contracts) return null; // 前提 1+2：真源不可信 → 落回原判定
+  const shapeTainted = (ctx.featureSpec?.shape_issues ?? []).some(
+    issue => issue.includes('contracts.yaml') && issue.includes(`\`${collection}`),
+  );
+  if (shapeTainted) return null; // 前提 3
+
+  const raw = contracts[collection];
+  const entries = Array.isArray(raw) ? raw : [];
+  if (entries.length > 0) {
+    const named = entries
+      .slice(0, 5)
+      .map((e, i) => {
+        const r = (e ?? {}) as Record<string, unknown>;
+        const label = [r.name, r.class, r.file].find(v => typeof v === 'string' && v.trim());
+        return `  - ${typeof label === 'string' ? label : `${collection}[${i}]`}`;
+      })
+      .join('\n');
+    return {
+      status: 'FAIL',
+      details:
+        `章节声明「不适用：${rationale}」，但 contracts.${collection} 里有 ${entries.length} 条声明：\n${named}` +
+        (entries.length > 5 ? '\n  - …' : ''),
+      suggestion: `删掉「不适用」声明并按 contracts.${collection} 的条目补齐本章节；若这些条目确实不该存在，先改 contracts.yaml。`,
+    };
+  }
+  return {
+    status: 'SKIP',
+    details: `判据 contracts.${collection} 长度为 0（真源在场、解析成功、无形状留痕）；作者依据：${rationale}`,
+    // codex 实施 review 第 1 轮 medium：SKIP+BLOCKER 的既有语义是"门禁没跑完"——
+    // writer 的 blocking_skips 收它、`decideNextAction` 据此提前返回
+    // `review_blocking_skips_then_verifier`，把**已确认不适用**的章节说成待办、还绕过
+    // disabled 与 verifier FAIL 两条分支。status/severity 一字不改（展示面与质量轴口径
+    // 不动），只加这一条机读标注，由 writer 侧把真 n/a 排除出阻断跳过项。
+    structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
+  };
+}
+
+// D2/V4：导出供单测走**真实函数**（不复刻判定逻辑）。
+export function checkDataModelTyped(ctx: CheckContext, design: string): CheckResult[] {
   const section = getSectionContent(design, '数据模型定义');
   if (!section) {
     return [{ id: 'data_model_typed', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'data_model_typed'), severity: 'BLOCKER', status: 'FAIL', details: '未找到「数据模型定义」章节。' }];
+  }
+
+  // D2：章节在场、内容如实标注不适用 → SKIP；contracts 里有条目却写不适用 → 假 n/a FAIL。
+  const applicability = resolveSectionApplicability(ctx, section, 'data_models');
+  if (applicability) {
+    return [{ id: 'data_model_typed', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'data_model_typed'), severity: 'BLOCKER', ...applicability }];
   }
 
   const tsBlocks = extractCodeBlocks(section).filter(b =>
@@ -536,10 +617,16 @@ function checkDataModelTyped(ctx: CheckContext, design: string): CheckResult[] {
   return [{ id: 'data_model_typed', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'data_model_typed'), severity: 'BLOCKER', status: 'PASS', details: `找到 ${modelBlocks.length} 个数据模型代码块，未使用 any 类型。` }];
 }
 
-function checkInterfaceSignaturesComplete(ctx: CheckContext, design: string): CheckResult[] {
+// D2/V4：导出供单测走**真实函数**（不复刻判定逻辑）。
+export function checkInterfaceSignaturesComplete(ctx: CheckContext, design: string): CheckResult[] {
   const section = getSectionContent(design, '服务层接口定义');
   if (!section) {
     return [{ id: 'interface_signatures_complete', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'interface_signatures_complete'), severity: 'BLOCKER', status: 'FAIL', details: '未找到「服务层接口定义」章节。' }];
+  }
+
+  const applicability = resolveSectionApplicability(ctx, section, 'interfaces');
+  if (applicability) {
+    return [{ id: 'interface_signatures_complete', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'interface_signatures_complete'), severity: 'BLOCKER', ...applicability }];
   }
 
   const codeBlocks = extractCodeBlocks(section).filter(b =>
@@ -582,10 +669,18 @@ function checkInterfaceSignaturesComplete(ctx: CheckContext, design: string): Ch
   }];
 }
 
-function checkComponentTreePerPage(ctx: CheckContext, design: string): CheckResult[] {
+// D2/V4：导出供单测走**真实函数**（不复刻判定逻辑）。
+export function checkComponentTreePerPage(ctx: CheckContext, design: string): CheckResult[] {
   const section = getSectionContent(design, '页面组件树');
   if (!section) {
     return [{ id: 'component_tree_per_page', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'component_tree_per_page'), severity: 'MAJOR', status: 'FAIL', details: '未找到「页面组件树」章节。' }];
+  }
+
+  // D2：判据用 contracts.components **整体**为空，不区分"页面组件"与"普通组件"
+  //（`kind` 字段没有机器约束）——宁可让"有组件无页面"的 feature 仍走原判定，也不猜 kind。
+  const applicability = resolveSectionApplicability(ctx, section, 'components');
+  if (applicability) {
+    return [{ id: 'component_tree_per_page', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'component_tree_per_page'), severity: 'MAJOR', ...applicability }];
   }
 
   const subsections = getSubsectionHeadings(design, '页面组件树');
