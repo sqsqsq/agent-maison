@@ -17,6 +17,7 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import assert from 'assert';
 import type { CheckContext } from '../../../../../harness/scripts/utils/types';
@@ -24,6 +25,7 @@ import { withDefaultLayoutFields, layoutFieldsForHost, DEFAULT_LAYOUT } from '..
 import {
   isHvigorBuildSuccessful,
   parseBuildErrors,
+  runHvigorTest,
 } from '../../../../../harness/scripts/utils/hvigor-runner';
 import {
   classifyCodingCompileFailure,
@@ -199,6 +201,76 @@ const cases: Array<{ name: string; run: () => void }> = [
         'perModuleStatusLines 状态行必须与 bad 过滤同源（报告与门禁同判）',
       );
       assert(!/r\.exitCode === 0 && r\.errors\.length === 0/.test(src), 'ut-host 不得残留 errors.length 判据');
+    },
+  },
+  {
+    // V2（plan 5e1c7a93 D1）：临时工程无 hvigor 工具链，直调真实 runHvigorTest。
+    // ①不传 prebuild → 内建 runHvigorBuild 走到 resolveUtHvigorSpawnPlan → toolMissing:true；
+    // ②传成功 prebuild → 内建被真的跳过，推进到 install 前置段（command 带 install_preflight
+    //   前缀），不再报 toolMissing。不靠源码正则，靠真实返回值。
+    name: 'V2 prebuild 在场时 runHvigorTest 跳过内建出包（spawn 边界计数为证）',
+    run: () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'b03-v2-'));
+      // 计数发生在**进程调用边界**（child_process.spawnSync），不是 provider 边界：
+      // hvigor 命令一律不真跑（返回合成非零结果），hdc 一律返回空（→ 无设备）。
+      const cp = require('child_process') as { spawnSync: (...a: unknown[]) => unknown };
+      const original = cp.spawnSync;
+      const spawned: string[] = [];
+      cp.spawnSync = function (file: unknown, args: unknown, ...rest: unknown[]): unknown {
+        const command = [String(file), ...(Array.isArray(args) ? args.map(String) : [])].join(' ');
+        if (/hvigor/i.test(command)) {
+          spawned.push(command);
+          return { status: 1, signal: null, stdout: '', stderr: 'B03_FAKE_HVIGOR', pid: 0, output: [] };
+        }
+        if (/hdc/i.test(command)) {
+          return { status: 0, signal: null, stdout: '', stderr: '', pid: 0, output: [] };
+        }
+        return (original as (...a: unknown[]) => unknown).call(cp, file, args, ...rest);
+      };
+      try {
+        fs.mkdirSync(path.join(tmp, 'entry'), { recursive: true });
+        fs.writeFileSync(path.join(tmp, 'build-profile.json5'), '{}\n');
+        const base = {
+          projectRoot: tmp,
+          harnessRoot: path.resolve(hmosProfileDir, '../../harness'),
+          frameworkRoot: path.resolve(hmosProfileDir, '../..'),
+          feature: 'b03-v2',
+          phase: 'ut',
+          moduleName: 'entry',
+          moduleSrcPath: 'entry',
+          product: 'default',
+        };
+        spawned.length = 0;
+        const noPrebuild = runHvigorTest({ ...base });
+        const withoutCount = spawned.length;
+        assert(
+          !/install_preflight/.test(noPrebuild.command ?? ''),
+          '①无 prebuild 时内建构建失败即返回，不应推进到装机前置段',
+        );
+
+        spawned.length = 0;
+        const withPrebuild = runHvigorTest({
+          ...base,
+          prebuild: {
+            executed: true,
+            exitCode: 0,
+            durationMs: 1,
+            logExcerpt: 'BUILD SUCCESSFUL',
+            errors: [],
+            command: 'genOnDeviceTestHap',
+          },
+        });
+        assert.strictEqual(spawned.length, 0, `②prebuild 在场时 hvigor spawn 必须为 0，实际=${spawned.join(' | ')}`);
+        assert(withoutCount > spawned.length, `①无 prebuild 时应真的 spawn 过 hvigor，实际=${withoutCount}`);
+        assert(!withPrebuild.toolMissing, '②prebuild 在场时不得再走内建构建（不应报 toolMissing）');
+        assert(
+          /^genOnDeviceTestHap \+/.test(withPrebuild.command ?? ''),
+          `②prebuild 在场时应推进到装机段，实际 command=${withPrebuild.command}`,
+        );
+      } finally {
+        cp.spawnSync = original;
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
     },
   },
 ];

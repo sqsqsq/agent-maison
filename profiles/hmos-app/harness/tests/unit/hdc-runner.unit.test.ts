@@ -771,6 +771,27 @@ const cases: Array<{ name: string; run: () => void }> = [
       assertEq(detectInstallDowngrade(null, { installed: true, versionCode: 6 }), false, '候选未声明不判');
     },
   },
+  {
+    // plan 5e1c7a93 D2：hdc 日志按模块命名——固定 hdc-test.log 会被第二个 ohosTest 模块
+    // 覆盖，逐模块冻结件（frozen.hdc-test.<module>.log）的前提是它先按模块落盘。
+    // finalize 是文件私有函数、写点在真机链路尾部；这里锁的是**命名接线**（非调用次数）。
+    name: 'hdc 日志按模块命名（5e1c7a93 D2）：finalize 不得再写固定 hdc-test.log',
+    run: () => {
+      const src = fs.readFileSync(path.join(__dirname, '..', '..', 'hdc-runner.ts'), 'utf-8');
+      assertEq(
+        /path\.join\(dir, `hdc-test\.\$\{opts\.srcModuleName\}\.log`\)/.test(src),
+        true,
+        'finalize 必须用 srcModuleName 拼日志名',
+      );
+      assertEq(
+        /path\.join\(dir, 'hdc-test\.log'\)/.test(src),
+        false,
+        '不得残留固定 hdc-test.log 写点',
+      );
+      const stale = src.split(/\r?\n/).filter(l => /hdc-test\.log/.test(l) && !/<module>/.test(l) && !/^\s*\/\//.test(l));
+      assertEq(stale.length, 0, `诊断话术不得再引用固定 hdc-test.log：${stale.join(' | ')}`);
+    },
+  },
 ];
 
 export function runAll(): UnitCaseResult[] {

@@ -59,12 +59,16 @@ export type UtHostImpl = {
     scopedUtFiles?: Array<{ path: string }>,
     /** 基线新增（本 feature 责任域）的 scoped UT 文件；用于编译顺序：feature 归属模块优先 */
     featureNewUtFiles?: Array<{ path: string }>,
+    /** plan 5e1c7a93 D1：同次 check-ut 调用内共享的 ohosTest 出包结果（调用方按次创建） */
+    builds?: Map<string, unknown>,
   ): CheckResult[];
   checkUtHvigorTest(
     ctx: CheckContext,
     scopedUtFiles?: Array<{ path: string }>,
     /** 本 feature 责任域用例（含文件路径，供推导 module::test 身份；target 失败永不豁免） */
     targetCases?: Array<{ path: string; test: string }>,
+    /** plan 5e1c7a93 D1：build 阶段出的包；缺席即走 runHvigorTest 内建出包，行为逐字不变 */
+    builds?: Map<string, unknown>,
   ): CheckResult[];
   checkTestRegistration(
     ctx: CheckContext,

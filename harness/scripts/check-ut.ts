@@ -4521,12 +4521,16 @@ const checker: PhaseChecker = {
     // 时 tsc 保持 FAIL（仅存护城河不降级）。降级逻辑在 profile checkUtTscCompiles 内。
     results.push(...safeRun(() => utHost.checkUtTscCompiles(ctx, allUtFiles), 'ut_tsc_compiles'));
     // v2.2 方案 B：由 profile ut.compile 能力驱动的真实测试模块编译
+    // plan 5e1c7a93 D1：collector 按次创建，生命周期就是这一次 check-ut——build 侧写入、
+    // test 侧命中即跳过内建出包，同一门禁内同 (module, product) 只出一次 ohosTest 包。
+    const utBuilds = new Map<string, unknown>();
     const hvigorBuildResults = safeRun(
       // 显式目标文件（repair）必须进编译/执行集合，即使不在 scoped
       () => utHost.checkUtHvigorBuild(
         ctx,
         [...scopedUtFiles, ...targetResolution.explicitTargetFiles.filter(e => !scopedUtFiles.some(s => s.path === e.path))],
         featureNewUtFiles,
+        utBuilds,
       ),
       'ut_hvigor_build',
     );
@@ -4583,7 +4587,7 @@ const checker: PhaseChecker = {
         ...scopedUtFiles,
         ...targetResolution.explicitTargetFiles.filter(e => !scopedUtFiles.some(s => s.path === e.path)),
       ];
-      results.push(...safeRun(() => utHost.checkUtHvigorTest(ctx, runScope, targetCases), 'ut_hvigor_test'));
+      results.push(...safeRun(() => utHost.checkUtHvigorTest(ctx, runScope, targetCases, utBuilds), 'ut_hvigor_test'));
     }
     // v2.2 红线 5.2：business-ut 不得擅改业务源码
     results.push(...safeRun(() => checkUtNoSrcMutation(ctx), 'ut_no_src_mutation'));

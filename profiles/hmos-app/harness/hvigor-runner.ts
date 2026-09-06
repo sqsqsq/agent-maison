@@ -2222,14 +2222,20 @@ export function runHvigorTest(
     moduleSrcPath: string;
     /** t5（plan a7c3f9e2）：本次构建显式 product（由 ut-host 单次解析传入） */
     product?: string;
+    /**
+     * plan 5e1c7a93 D1：同次 harness 调用内 ut_hvigor_build 已经出过的同参数包。
+     * 在场即跳过 ① 的内建出包（调用方只在 isHvigorBuildSuccessful 时才传）；
+     * 缺席时行为逐字不变（check-exit 直调等无 collector 路径）。
+     */
+    prebuild?: HvigorRunResult;
   },
 ): HvigorRunResult {
   const t0 = Date.now();
 
-  // ① 出包：genOnDeviceTestHap（与 ut_hvigor_build 共享 task；hvigor 命中 cache 时只需毫秒）。
+  // ① 出包：genOnDeviceTestHap（与 ut_hvigor_build 共享 task）。
   //    ohosTest 模块的 task 入口必须用 hook task，不能用 `test`（要 TestAbility）也不能
   //    用 OhosTestCompileArkTS（CLI 拒收的内部 task）。
-  const buildRes = runHvigorBuild({
+  const buildRes = opts.prebuild ?? runHvigorBuild({
     ...opts,
     moduleName: opts.moduleName,
     target: 'ohosTest',

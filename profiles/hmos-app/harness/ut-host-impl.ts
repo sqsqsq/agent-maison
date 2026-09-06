@@ -36,6 +36,21 @@ import {
   isHvigorBuildSuccessful,
   moduleDeclaresOhosTestTarget,
 } from './hvigor-runner';
+import { computeHvigorInvocationFingerprint } from './toolchain-probe';
+import { featurePhaseReportsDir } from '../../../harness/config';
+import { computeHapSha256Full } from './build-fingerprint';
+import { discoverOhosTestArtifacts, resolveExecutionDeviceIdentity } from './hdc-runner';
+import {
+  computeExecutionKey,
+  decideReuse,
+  freezeRunArtifacts,
+  restoreFrozenRunArtifacts,
+  sha256Text,
+  utFrozenRunArtifacts,
+  writeExecutionKeyRecord,
+  type ExecutionKeyInputs,
+  type ReuseDecision,
+} from './execution-key';
 import {
   resolveProductSelection,
   describeProductSelection,
@@ -372,10 +387,26 @@ export function isRealAssertionFailure(
   });
 }
 
-function checkUtHvigorBuild(
+/**
+ * plan 5e1c7a93 D1：build 与 test 两侧对同一 (module, product) 算同一个 collector 键。
+ * 维度逐字对齐 runHvigorTest 内建那次 runHvigorBuild 的入参。
+ */
+export function utBuildCollectorKey(projectRoot: string, moduleName: string, product?: string): string {
+  return computeHvigorInvocationFingerprint(projectRoot, {
+    module: moduleName,
+    target: 'ohosTest',
+    task: 'genOnDeviceTestHap',
+    product,
+    buildMode: 'test',
+  });
+}
+
+export function checkUtHvigorBuild(
   ctx: CheckContext,
   scopedUtFiles: Array<{ path: string }> = [],
   featureNewUtFiles: Array<{ path: string }> = [],
+  /** plan 5e1c7a93 D1：同次 check-ut 调用内共享的出包结果收集器（调用方按次创建） */
+  builds?: Map<string, unknown>,
 ): CheckResult[] {
   if (isCapabilitySkipped(ctx.resolvedProfile, 'ut.compile')) {
     const desc = ruleDesc(ctx, 'structure_checks', 'ut_hvigor_build');
@@ -460,6 +491,10 @@ function checkUtHvigorBuild(
     if (res.executed && res.exitCode !== 0) {
       const tnf = detectHvigorTaskNotFound(mergeUtCompileLogForClassification(ctx, res));
       if (tnf) entry.taskNotFound = tnf;
+    }
+    // D1：只有真成功的出包才进 collector——skip/失败不得被洗成"本次已出包"。
+    if (builds && isHvigorBuildSuccessful(res)) {
+      builds.set(utBuildCollectorKey(ctx.projectRoot, mod.name, selection.product ?? undefined), res);
     }
     perModule.push(entry);
     if (res.toolMissing || res.skippedByEnv) break; // 全局性问题：后续模块必然同因失败
@@ -761,11 +796,146 @@ function formatDependencyIssue(issue: any): string {
   return lines.join('\n');
 }
 
-function checkUtHvigorTest(
+// ---------------------------------------------------------------------------
+// plan 5e1c7a93 D2：UT 执行键（整轮键 + 逐模块冻结件）
+// ---------------------------------------------------------------------------
+
+/** run 目录时间戳——与 testing 侧 hylyreRunTimestamp 同式，两侧 stamp 可直接比较新旧。 */
+function utRunTimestamp(nowMs?: number): string {
+  const d = new Date(nowMs ?? Date.now());
+  const ms = String(d.getUTCMilliseconds()).padStart(3, '0');
+  return d.toISOString().replace(/[-:.]/g, '').replace(/(\d{4}T\d{6})\d+Z$/, `$1Z-${ms}`);
+}
+
+const UT_MODULE_RESULT_PREFIX = 'ut-result.';
+
+function utModuleResultPath(reportsBase: string, moduleName: string): string {
+  return path.join(reportsBase, `${UT_MODULE_RESULT_PREFIX}${moduleName}.json`);
+}
+
+function writeUtModuleResult(reportsBase: string, moduleName: string, result: unknown): void {
+  fs.mkdirSync(reportsBase, { recursive: true });
+  fs.writeFileSync(utModuleResultPath(reportsBase, moduleName), JSON.stringify(result, null, 2), 'utf-8');
+}
+
+/** 复用轮按盘重建逐模块结果；缺失/损坏 → 一个不可复用的空结果（下游判 NOT_EXECUTED）。 */
+function readUtModuleResult(reportsBase: string, moduleName: string): any {
+  try {
+    return JSON.parse(fs.readFileSync(utModuleResultPath(reportsBase, moduleName), 'utf-8'));
+  } catch {
+    return { executed: false, exitCode: -1, durationMs: 0, logExcerpt: '', errors: [] };
+  }
+}
+
+/**
+ * 单模块「这一轮真的跑通了」的判据（codex review 第 1 轮 #1）。执行键记录的 success 判据
+ * 严于门禁 PASS（棘轮豁免不在此列，见 plan 收尾补记 2），但绝不能松于它：
+ * `exitCode` 是 hdc 原始退出码，Hypium 报 Failure 而 hdc 退 0 时它仍是 0，必须另看
+ * `testResult.failed`；工具缺失 / env 跳过 / 装机阻塞同样不算跑通。
+ */
+export function utModuleRoundSucceeded(result: {
+  executed?: boolean;
+  toolMissing?: boolean;
+  skippedByEnv?: boolean;
+  timedOut?: boolean;
+  exitCode?: number;
+  installBlocking?: unknown;
+  testResult?: { total?: number; failed?: number };
+}): boolean {
+  return Boolean(
+    result.executed === true &&
+      !result.toolMissing &&
+      !result.skippedByEnv &&
+      !result.timedOut &&
+      !result.installBlocking &&
+      result.exitCode === 0 &&
+      (result.testResult?.total ?? 0) > 0 &&
+      (result.testResult?.failed ?? 0) === 0,
+  );
+}
+
+export interface UtReuseEligibility {
+  eligible: boolean;
+  reason: string;
+  /** 模块名 → 磁盘上 signed HAP 的完整摘要（缺失为 null） */
+  hapDigests: Map<string, string | null>;
+}
+
+/**
+ * 复用资格前置：只有"本次调用内该模块真的出过包、且该包就是盘上这一份"才有资格谈复用。
+ * 两条都满足才查 decideReuse——否则测试源码已改但没重编译时，旧 HAP 仍在盘会让编译与执行
+ * 一起被跳过。无 collector 的路径（check-exit.ts 直调）天然不满足第一条，行为逐字不变。
+ */
+function evaluateUtReuseEligibility(
+  ctx: CheckContext,
+  mods: Array<{ name: string; package_path: string }>,
+  product: string | undefined,
+  builds?: Map<string, unknown>,
+): UtReuseEligibility {
+  const hapDigests = new Map<string, string | null>();
+  for (const mod of mods) {
+    const discovery = discoverOhosTestArtifacts(ctx.projectRoot, mod.package_path, mod.name, product);
+    hapDigests.set(mod.name, computeHapSha256Full(discovery.signedPath));
+  }
+  if (!builds) {
+    return { eligible: false, reason: '本次调用无成功 prebuild，不做同键复用', hapDigests };
+  }
+  for (const mod of mods) {
+    const built = builds.get(utBuildCollectorKey(ctx.projectRoot, mod.name, product));
+    if (!built || !isHvigorBuildSuccessful(built)) {
+      return { eligible: false, reason: `本次调用无成功 prebuild（${mod.name}），不做同键复用`, hapDigests };
+    }
+    if (!hapDigests.get(mod.name)) {
+      return { eligible: false, reason: `本次调用出的包在盘上取不到摘要（${mod.name}），不做同键复用`, hapDigests };
+    }
+  }
+  return { eligible: true, reason: '本次调用内全部模块均有成功 prebuild 且摘要可取', hapDigests };
+}
+
+/** 三项摘要按模块名排序后逐模块拼接再 sha256——任一模块变即整轮键变（不做半复用）。 */
+function aggregateByModule(entries: Array<[string, string]>): string {
+  return sha256Text([...entries].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map(([m, v]) => `${m}=${v}`).join('\n'));
+}
+
+function buildUtExecutionKeyInputs(
+  ctx: CheckContext,
+  mods: Array<{ name: string; package_path: string }>,
+  targetCases: Array<{ path: string; test: string }>,
+  product: string | undefined,
+  eligibility: UtReuseEligibility,
+): ExecutionKeyInputs {
+  const identity = resolveExecutionDeviceIdentity();
+  const casesByModule = new Map<string, string[]>(mods.map(m => [m.name, []]));
+  for (const c of targetCases) {
+    const owner = mods.find(m => c.path.includes(m.package_path));
+    // 归属不明的用例进全部模块——宁可键更敏感（多真跑），不可漏掉输入变化
+    for (const m of owner ? [owner] : mods) casesByModule.get(m.name)!.push(`${m.name}::${c.path}::${c.test}`);
+  }
+  return {
+    hap_sha256_full: aggregateByModule(mods.map(m => [m.name, eligibility.hapDigests.get(m.name) ?? ''])),
+    derived_plan_sha256: aggregateByModule(mods.map(m => [m.name, sha256Text([...casesByModule.get(m.name)!].sort().join('\n'))])),
+    device: identity.device,
+    display_env: identity.display_env,
+    // UT leg 沿用字段位、不为一条 leg 拆结构
+    reset_mode: 'n/a',
+    hylyre_version: null,
+    manifest_version: null,
+    profile: ctx.resolvedProfile.name,
+    tool_config_sha256: aggregateByModule(mods.map(m => [m.name, utBuildCollectorKey(ctx.projectRoot, m.name, product)])),
+    flags: Object.keys(process.env)
+      .filter(k => /^HARNESS_SKIP_HVIGOR/.test(k))
+      .sort()
+      .map(k => `${k}=${process.env[k]}`),
+  };
+}
+
+export function checkUtHvigorTest(
   ctx: CheckContext,
   scopedUtFiles: Array<{ path: string }> = [],
   /** 责任域用例（含所属文件路径）——模块由 package_path 归属推导，构成 module::test 身份 */
   targetCases: Array<{ path: string; test: string }> = [],
+  /** plan 5e1c7a93 D1：同次 check-ut 调用内 ut_hvigor_build 出的包；缺席即走内建出包 */
+  builds?: Map<string, unknown>,
 ): CheckResult[] {
   if (isCapabilitySkipped(ctx.resolvedProfile, 'ut.run')) {
     const desc = ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test');
@@ -885,10 +1055,56 @@ function checkUtHvigorTest(
     ];
   }
 
+  // ------------------------------------------------------------------ plan 5e1c7a93 D2
+  // UT 同键复用：整轮键 + 逐模块冻结件。裁决公式一律复用 decideReuse，不新写谓词。
+  const reportsBase = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, 'ut', ctx.frameworkRoot);
+  const moduleNames = mods.map(m => m.name);
+  const utArtifacts = utFrozenRunArtifacts(moduleNames);
+  const eligibility = evaluateUtReuseEligibility(ctx, mods, selection.product ?? undefined, builds);
+  const keyInputs = buildUtExecutionKeyInputs(ctx, mods, targetCases, selection.product ?? undefined, eligibility);
+  const executionKey = computeExecutionKey(keyInputs);
+
+  // 记录前置（codex round2）：dispatch **之前**先落一条非成功 attempt——decideReuse 只看
+  // 最新一条**带键记录**，没有它时"跑挂/抛异常的那轮"会被上一轮的成功洗绿。
+  const runDir = path.join(reportsBase, utRunTimestamp(), 'ut');
+  let preRecordOk = true;
+  try {
+    fs.mkdirSync(runDir, { recursive: true });
+    writeExecutionKeyRecord(runDir, {
+      schema_version: '1.0', execution_key: executionKey, inputs: keyInputs,
+      trace_path: '', run_started_at: new Date().toISOString(), outcome: 'started',
+      trace_sha256: null, timing_complete: false, frozen_files: [],
+    });
+  } catch {
+    preRecordOk = false;
+  }
+
+  const reuse: ReuseDecision = !preRecordOk
+    ? { reusable: null, reason: '执行键前置记录写入失败，本轮不做同键复用' }
+    : ctx.forceDevice
+      ? { reusable: null, reason: '--force-device：用户要求真跑' }
+      : !keyInputs.device
+        ? { reusable: null, reason: '设备身份未知（无 HARNESS_HDC_TARGET 且 hdc list targets 非唯一），不做同键复用' }
+        : !eligibility.eligible
+          ? { reusable: null, reason: eligibility.reason }
+          : decideReuse(reportsBase, executionKey, { leg: 'ut', artifacts: utArtifacts, excludeRunDir: runDir });
+
   // plan 423e5d0f P1-2（codex 修正）：**用例失败不短路**——棘轮裁决需要全部选中模块的
   // 完整结果（半途 PASS=假绿）；只有链路级失败（工具缺失/未执行/无测试结果的异常退出）
   // 才短路（后续模块大概率同因失败，且修复靶点已明确）。
   const perModule: UtHvigorTestFailureModule[] = [];
+  // UT leg 无派生统计可重建：evidenceRebuildRequired 一律 fail-closed 回落真跑。
+  const reusedRun = reuse.reusable && !reuse.evidenceRebuildRequired ? reuse.reusable : null;
+  const reuseNote =
+    `\nexecution_key: ${executionKey.slice(0, 16)}（` +
+    `${reusedRun ? `同键复用 ${reusedRun.dirStamp}` : '本轮真跑'}：${reuse.reason}）`;
+  if (reusedRun) {
+    // 复用轮：回填逐模块冻结件后按盘重建结果，**不调 dispatchUtRun、不发一条装机/执行 hdc**。
+    restoreFrozenRunArtifacts(reusedRun.runDir, reportsBase, utArtifacts);
+    for (const mod of mods) {
+      perModule.push({ module: mod.name, result: readUtModuleResult(reportsBase, mod.name) });
+    }
+  } else {
   for (const mod of mods) {
     const res = dispatchUtRun(ctx, {
       projectRoot: ctx.projectRoot,
@@ -898,12 +1114,38 @@ function checkUtHvigorTest(
       moduleName: mod.name,
       moduleSrcPath: mod.package_path,
       product: selection.product ?? undefined,
+      // D1：本次调用内已出过的同参数包直接下传，runHvigorTest 据此跳过内建出包。
+      prebuild: builds?.get(utBuildCollectorKey(ctx.projectRoot, mod.name, selection.product ?? undefined)),
     });
     perModule.push({ module: mod.name, result: res });
     const caseLevelFailure = res.executed && !!res.testResult && (res.testResult.total ?? 0) > 0;
     if (res.toolMissing || (!caseLevelFailure && (!res.executed || res.exitCode !== 0))) {
       break;
     }
+  }
+  }
+  // 记录覆盖：把前置的 'started' 覆盖成本轮真实结果。**部分模块失败也记整轮失败**；
+  // 覆盖失败（异常/磁盘）时前置的非成功记录留在盘上，下轮拿不到"最新同键成功" → 真跑。
+  if (preRecordOk) {
+    try {
+      for (const x of perModule) writeUtModuleResult(reportsBase, x.module, x.result);
+      const frozenFiles = freezeRunArtifacts(reportsBase, runDir, utArtifacts);
+      // codex review 第 1 轮 #1：**用例失败不得被记成 success**。`exitCode` 是 hdc 的原始
+      // 退出码（hvigor-runner.ts:2304 `onDevice.aaTest?.exitCode`），Hypium 报 Failure: 1 而
+      // hdc 退出 0 时它仍是 0；只看它 → 失败轮记 success → 下一轮同键跳过真跑、复用失败结果。
+      // 成功判据：全部模块执行完成 **且用例零失败 且无工具/装机/设备阻塞**。
+      const roundOk = perModule.length === mods.length && perModule.every(x => utModuleRoundSucceeded(x.result));
+      const frozenComplete = utArtifacts.every(f => frozenFiles.includes(f.frozen));
+      writeExecutionKeyRecord(runDir, {
+        schema_version: '1.0', execution_key: executionKey, inputs: keyInputs,
+        trace_path: '', run_started_at: new Date().toISOString(),
+        outcome: roundOk ? 'success' : 'failed',
+        trace_sha256: null,
+        // UT leg 的「派生证据完整」= 全部选中模块的结果与 hdc 日志已逐模块冻结（见 execution-key.ts 注释）
+        timing_complete: frozenComplete,
+        frozen_files: frozenFiles,
+      });
+    } catch { /* 记录失败不改变门禁；前置的非成功记录已挡住旧成功 */ }
   }
   const allModulesExecuted =
     perModule.length === mods.length &&
@@ -989,7 +1231,7 @@ function checkUtHvigorTest(
         status: 'FAIL',
         details:
           `选中 ${mods.length} 个模块，仅 ${perModule.length} 个产生真实执行结果——不完整的执行不得判 PASS。` +
-          `已执行：${perModule.map(x => x.module).join(', ') || '(无)'}${ratchetNote}`,
+          `已执行：${perModule.map(x => x.module).join(', ') || '(无)'}${ratchetNote}${reuseNote}`,
         suggestion:
           '检查未执行模块的链路失败原因（见已执行模块的日志与归因），修复后重跑；不得以部分模块结果宣称 UT 通过。',
       },
@@ -1015,7 +1257,7 @@ function checkUtHvigorTest(
         details:
           `全部 ${perModule.length} 个 ohosTest 模块装机执行通过（target 无失败）：` +
           `total=${totals.total}, passed=${totals.passed}, failed=${totals.failed}；` +
-          `目标设备：${devProbe.targets.join(' / ')}${ratchetNote}`,
+          `目标设备：${devProbe.targets.join(' / ')}${ratchetNote}${reuseNote}`,
       },
     ];
   }
@@ -1028,7 +1270,7 @@ function checkUtHvigorTest(
       description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test'),
       severity: 'BLOCKER',
       status: 'FAIL',
-      details: formatted.lines.join('\n') + ratchetNote,
+      details: formatted.lines.join('\n') + ratchetNote + reuseNote,
       affected_files: formatted.affectedFiles,
       // D1（plan 3a7f9c12）：格式器只对**工具链/设备/安装**族给 failureKind，普通用例断言
       // 失败一路走默认分支返回 undefined——于是 code_regression 合取（回修候选、verifier
