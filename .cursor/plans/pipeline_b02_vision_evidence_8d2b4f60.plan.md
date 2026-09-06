@@ -1,10 +1,10 @@
 ---
 name: 六阶段重构 B02 提纲 — 视觉能力与材料证据
-overview: B01宿主反馈后细化，解除inline回执死锁与非goal/attended不可达，保留既有completion probe，不扩大视觉系统。
+overview: B01本地验收后细化，解除inline回执死锁与非goal/attended不可达，保留既有completion probe，不扩大视觉系统。
 version: 3.0.0
 todos:
   - id: b02-detail-after-b01
-    content: B01的C-U宿主验收后，按实际反馈细化本批到文件/调用顺序、代价、提交边界和可执行验收，再实施。
+    content: B01本地验收并提交后，细化本批到文件/调用顺序、代价、提交边界和可执行验收，再实施。
     status: pending
   - id: b02-capability-lifecycle
     content: 删除每invocation inline考试及相应终签前置，复用现有canary/effective vision；探测异常不判无视觉，保留通用completion probe。
@@ -19,13 +19,13 @@ todos:
     content: 同步本批必要文档/OpenSpec与目标测试，核对独立visual provider正文消费者不受影响，完成候选件本地验收。
     status: pending
   - id: b02-host-acceptance
-    content: 用户触发候选件集成和bc-openCard-1的C-U spec受影响goal回归，确认纯收口不重考、不拒签，窗口闭环后才进B03。
+    content: 用户触发候选件集成和bc-openCard-1的C-U合并回归（spec→ut窗口，同时验收B01 V9与本批），确认纯收口不重考、不拒签、负面结果可回修；B03细化不等待此项。
     status: pending
 ---
 
 # B02滚动提纲
 
-总plan：[9c6e2a41](pipeline_master_9c6e2a41.plan.md)。依赖 [B01](pipeline_b01_verifier_repair_3a7f9c12.plan.md) 宿主通过。本文件不是当前施工图，首todo完成细化后才实施。
+总plan：[9c6e2a41](pipeline_master_9c6e2a41.plan.md)。依赖 [B01](pipeline_b01_verifier_repair_3a7f9c12.plan.md) 本地验收（已完成、已提交）；宿主回归与B01合并在本批之后进行。本文件不是当前施工图，首todo完成细化后才实施。
 
 ## 已确认范围
 

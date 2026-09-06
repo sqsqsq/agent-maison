@@ -321,3 +321,4 @@ S0至S3是可审查提交/变更组，不要求自动git commit。
 - 最终 `candidate:build`（scratchpad b01/candidate-build-5.log）：typecheck 通过、unit 3825/3825、fixtures 46/46、consumer smoke 全段通过，`[candidate] BUILT → dist/candidates/framework-3.0.0-candidate.zip`，zip sha256 `5f58436440b7c6919856e7c6cadd7816e4fd98f2d399ead7d51fe9b6a65d32d0`。
 - 提交：按 §4 分四笔（smoke 前置修复 / D6 指令清理 / D1–D4 生产代码与模板 / plan 与 OpenSpec），不带署名。
 - `b01-local-acceptance` 置 completed；`b01-host-acceptance`（V9）保持 pending：候选件集成到验收宿主与 C-U goal run 由用户触发。宿主命令模板见 §7 与"S0–S3 本地实施"记录。
+- 2026-09-06 用户裁定：宿主回归收敛为两个检查点，V9 与 B02 合并为一次 C-U 回归（spec→ut 窗口）；`b01-host-acceptance` 待该次 run。
