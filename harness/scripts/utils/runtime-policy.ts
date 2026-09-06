@@ -90,7 +90,7 @@ export function resolveProfileLabel(
   config?: EvidenceProfileConfig | null,
 ): 'strict' | 'balanced' | 'minimal' {
   if (track === 'lite') return 'minimal';
-  if (ctx.mode !== 'interactive') return 'strict';
+  // plan 7b3e9a15 D1：显式 balanced 在任意 mode 下都成立（缺省仍 strict）。
   return config?.evidence_profile === 'balanced' ? 'balanced' : 'strict';
 }
 
@@ -389,13 +389,17 @@ const LITE_EVIDENCE: EvidencePolicy = {
 export const DEFAULT_BALANCED_VERIFIER_RETAINED_PHASES: readonly string[] = ['spec', 'coding'];
 
 /**
- * 证据档位求解（C2 verification-matrix；design.md 矩阵表）：
+ * 证据档位求解（C2 verification-matrix；design.md 矩阵表；plan 7b3e9a15 D1）：
  *   - lite（任意 mode）→ LITE_EVIDENCE（架构性 not_applicable，见上）；
- *   - full × 非 interactive（headless/goal）→ 强制 STRICT（config 不参与求解）；
- *   - full × interactive × config.evidence_profile !== 'balanced' → STRICT（缺省零变化）；
- *   - full × interactive × balanced → verifier 仅保留集 phase required 其余 off，
- *     receipt 已退出闭环输入，trace 降 optional，exploration 维持 required。
- * default 等值不变式：无 config / mode≠interactive / track=full 时输出与 C0 逐一等值。
+ *   - full × config.evidence_profile !== 'balanced' → STRICT（缺省零变化，**含三个 mode**）；
+ *   - full × balanced（**任意 mode**：interactive / headless / goal 逐一相同）→ verifier
+ *     仅保留集 phase required 其余 off，receipt 已退出闭环输入，trace **无条件**降 optional
+ *     （含保留集里的 spec/coding），exploration 维持 required。
+ * `ctx.mode` 不再参与本函数求解——降档只由 config 显式声明触发（B05 前 headless/goal 会
+ * 早退成 STRICT，即"config 参数根本不参与求解"，宿主写了 balanced 也无声丢弃）。
+ * default 等值不变式：无 config / track=full 时三个 mode 的输出与 C0 逐一等值。
+ * policy off ≠ 忽略：关轴只免除"要求提供"，当前 subject 已有的有效非 PASS verifier 报告
+ * 仍照常否决（harness-runner writeRunSummaryBase / check-receipt disabled 分支）。
  */
 export function resolveEvidencePolicy(
   track: FeatureTrack,
@@ -404,9 +408,6 @@ export function resolveEvidencePolicy(
 ): EvidencePolicy {
   if (track === 'lite') {
     return { ...LITE_EVIDENCE };
-  }
-  if (ctx.mode !== 'interactive') {
-    return { ...STRICT_EVIDENCE };
   }
   if (config?.evidence_profile !== 'balanced') {
     return { ...STRICT_EVIDENCE };

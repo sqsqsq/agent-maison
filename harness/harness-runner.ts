@@ -35,9 +35,11 @@ import {
 } from './scripts/utils/report-generator';
 import {
   buildVerifierMaterialView,
+  readVerifierMaterialOrNull,
   writeVerifierMaterial,
   type VerifierMaterialView,
 } from './scripts/utils/verifier-material';
+import { phaseEvidenceManifestCandidatePaths } from './scripts/utils/phase-evidence-manifest';
 import { REVALIDATE_ENV, runRevalidate } from './scripts/utils/revalidate';
 import { resolveAuthoritativeHylyreTracePath } from './scripts/utils/testing-trace-gates';
 import {
@@ -48,6 +50,7 @@ import {
   ScriptReport,
   GLOBAL_FEATURE_SENTINEL,
   HarnessRunSummary,
+  isCheckNotApplicable,
 } from './scripts/utils/types';
 import { isLegacyPhaseId, normalizePhaseId } from './scripts/utils/phase-alias';
 import { buildSummaryBlockers } from './scripts/utils/summary-blockers';
@@ -147,7 +150,7 @@ import {
   renderVerifierRequest,
   verifierRequestFilename,
 } from './scripts/utils/verifier-request';
-import { verifierReportMdFilename } from './scripts/utils/verifier-subject';
+import { SUBJECT_ID_PATTERN, verifierReportMdFilename } from './scripts/utils/verifier-subject';
 import {
   canProduceVerifierRequest,
   resolveVerifierPlan,
@@ -1770,8 +1773,12 @@ export function writeRunSummaryBase(
       suggestion: c.suggestion,
       ...(c.source ? { source: c.source } : {}),
     }));
+  // plan 7b3e9a15 D2（codex 实施 review 一轮 medium）：SKIP+BLOCKER 的语义是"门禁没跑完"。
+  // 已确认不适用的章节（check-plan 的 n/a 出口）同样是 SKIP+BLOCKER，进这里就会让
+  // decideNextAction 提前返回 review_blocking_skips_then_verifier——把不适用说成待办，
+  // 还绕过 disabled 与 verifier FAIL 两条分支。按机读标注排除，status/severity 不动。
   const blockingSkips = report.checks
-    .filter(c => c.status === 'SKIP' && c.severity === 'BLOCKER')
+    .filter(c => c.status === 'SKIP' && c.severity === 'BLOCKER' && !isCheckNotApplicable(c))
     .map(c => ({
       id: c.id,
       blocking_class: c.blocking_class,
@@ -1887,21 +1894,29 @@ export function writeRunSummaryBase(
         material: opts?.verifierMaterial ?? null,
       })
     : null;
+  // S0b（plan 7b3e9a15 D1）：policy off = "不要求"，**不等于"忽略"**。disabled 时不签发新
+  // 凭证，但同一份材料上已经存在的有效负面结论不得被静默丢弃——沿用上一轮的 subject。
+  const carriedVerifierSubjectId = verifierIssued
+    ? null
+    : resolveCarriedVerifierSubject(projectRoot, report, frameworkRoot, opts?.verifierPlan?.mode, gateFingerprint ?? null);
+  const anchoredSubjectId = verifierIssued?.subjectId ?? carriedVerifierSubjectId;
   const verifierEvidence = resolveVerifierEvidenceState(
     projectRoot,
     report,
     frameworkRoot,
     opts?.verifierPlan?.mode,
-    verifierIssued?.subjectId ?? null,
+    anchoredSubjectId,
+    carriedVerifierSubjectId !== null,
   );
   // plan a9d4e7c2 P1-5：锚到本轮刚签发的 subject（不传 subjectId 会读到**上一轮**的
   // 磁盘 summary 现值）。此处提到 candidate 组装之前是因为 D3/D4 的正文可采信性判定
-  // 与候选组装读的必须是同一份正文。
+  // 与候选组装读的必须是同一份正文。S0b：沿用态锚到沿用的 subject（同样是显式 subject，
+  // 不是"读磁盘现值"）。
   const verifierReportText = loadVerifierReportTextOrNull(
     projectRoot,
     report.feature,
     report.phase,
-    { frameworkRoot, subjectId: verifierIssued?.subjectId ?? null },
+    { frameworkRoot, subjectId: anchoredSubjectId },
   );
   // D3/D4（codex 一轮 medium）：终态自洽 ≠ 正文可采信。诊断轮的必需检查项读不出来
   // （表格/YAML 缺项、冲突、占位）时**不得**落回"先修原始 blocker"——那条路让重复
@@ -1991,7 +2006,14 @@ export function writeRunSummaryBase(
           verifier_request: verifierIssued.requestRel,
           verifier_report: verifierIssued.reportRel,
         }
-      : {}),
+      : carriedVerifierSubjectId
+        ? {
+            // S0b：沿用态只保留身份锚与报告落点——本轮**没有**签发新凭证，写
+            // verifier_request 会指向一份不属于本轮的 request，诱导调用方再投一次。
+            verifier_subject_id: carriedVerifierSubjectId,
+            verifier_report: rel(verifierReportMdFilename(carriedVerifierSubjectId)),
+          }
+        : {}),
     ...(process.env.MAISON_GOAL_RUN_ID?.trim() ? { run_id: process.env.MAISON_GOAL_RUN_ID.trim() } : {}),
     ...(visualRound ? { visual_round: visualRound } : {}),
   };
@@ -2054,8 +2076,13 @@ function resolveVerifierEvidenceState(
   frameworkRoot: string,
   mode: 'disabled' | 'enabled' | undefined,
   issuedSubjectId: string | null,
+  /**
+   * S0b（plan 7b3e9a15 D1）：本轮 policy off，但沿用到了一份**已验真的非 PASS** 报告
+   * （由 resolveCarriedVerifierSubject 判定）。此时 mode 仍是 disabled，却必须报 'fail'。
+   */
+  carriedFail = false,
 ): 'not_applicable' | 'absent' | 'pass' | 'fail' | 'invalid' {
-  if (mode !== 'enabled') return 'not_applicable';
+  if (mode !== 'enabled') return carriedFail ? 'fail' : 'not_applicable';
   if (!issuedSubjectId) return 'absent';
   const loaded = loadVerifierEvidenceForSubject(
     projectRoot,
@@ -2066,6 +2093,125 @@ function resolveVerifierEvidenceState(
   );
   if (loaded.ok) return loaded.evidence.verdict === 'PASS' ? 'pass' : 'fail';
   return loaded.code === 'report_missing' ? 'absent' : 'invalid';
+}
+
+/**
+ * S0b（plan 7b3e9a15 D1）：policy off 下"当前 subject 已有的有效负面结论"的取法。
+ *
+ * disabled 时 Step 4 被 policy 关闭，`buildVerifierMaterialView` 的**全部**输入在 writer 里
+ * 取不到（模板 / phase 规则文本 / contextFiles），无法重算 subject。改为按**既有材料身份**
+ * 判定沿用：拿上一轮落盘 summary 的 `verifier_subject_id`，再把它当初签发时落盘的材料视图
+ * （`verifier.material.<subject>.json`）与**本轮以 policy 无关输入重算**的材料视图逐面比较。
+ *
+ * 参与比较的是材料视图里 policy 无关的三面（见 carriedMaterialStillCurrent）：
+ *   · phase 输入/产物文件哈希（`resolvePhaseEvidenceManifest`，与 policy 无关）；
+ *   · `gate_fingerprint`；
+ *   · `script_checks` 投影（`<id>=<status>/<severity>`）。
+ *
+ * **刻意不用 `source_commit_sha` / `worktree_digest`**（codex 实施 review 第 1 轮 high）：
+ * 二者早已退出 subject 派生（verifier-request.ts `canonicalRequestInput`），且
+ * `worktree_digest` 把 `framework.config.json` 算在内（worktree-digest.ts ROOT_CONFIG_PATHSPECS）
+ * ——用它们当沿用判据时，"strict 轮跑出有效 FAIL → 只把 evidence_profile 改成 balanced"
+ * 就会因摘要漂移丢弃 subject，脚本 PASS 直接放行。那是**少否决**，恰是本条要堵的洞。
+ *
+ * 放弃的准确性：模板 / phase 规则 / contextFiles（源码、用例、图片）三面在 disabled 下取不到，
+ * 明确**排除**在比较之外——"prompt 模板或被审源码已改而 manifest 文件与脚本结论未变"仍会沿用
+ * 旧 FAIL（多否决，不是少否决）。解除它需要跑一轮 strict 让 verifier 自己撤回结论——只有
+ * verifier 能收回 verifier 的负面结论，改配置不构成洗白。
+ */
+function resolveCarriedVerifierSubject(
+  projectRoot: string,
+  report: ScriptReport,
+  frameworkRoot: string,
+  mode: 'disabled' | 'enabled' | undefined,
+  gateFingerprint: string | null,
+): string | null {
+  if (mode === 'enabled') return null;
+  const dir = featurePhaseReportsDir(projectRoot, report.feature, report.phase, frameworkRoot);
+  let prior: Record<string, unknown>;
+  try {
+    prior = JSON.parse(fs.readFileSync(path.join(dir, 'summary.json'), 'utf-8')) as Record<string, unknown>;
+  } catch {
+    return null; // 无上一轮 summary / 不可解析 → 无沿用锚，零要求
+  }
+  const subjectId = typeof prior.verifier_subject_id === 'string' ? prior.verifier_subject_id.trim() : '';
+  if (!SUBJECT_ID_PATTERN.test(subjectId)) return null;
+  // 材料视图缺席（凭证由更早的、还不落材料视图的世代签发）→ 无从核实身份，不沿用。
+  const priorMaterial = readVerifierMaterialOrNull(dir, subjectId);
+  if (!priorMaterial) return null;
+  if (
+    !carriedMaterialStillCurrent(
+      priorMaterial,
+      // policy 无关的材料面：manifest 文件 + gate + 脚本报告投影。取不到的三面传空值——
+      // 它们不参与比较（carriedMaterialStillCurrent 只读上面三面）。
+      buildVerifierMaterialView({
+        projectRoot,
+        feature: report.feature,
+        phase: report.phase,
+        frameworkRoot,
+        gateFingerprint,
+        phaseRuleText: '',
+        templateText: '',
+        checks: report.checks,
+        contextFiles: [],
+      }),
+      phaseEvidenceManifestCandidatePaths({
+        projectRoot,
+        feature: report.feature,
+        phase: report.phase as Phase,
+        // reports 面的排除与上面 buildVerifierMaterialView 同参解析（自定义 reports_dir_pattern
+        // 下两边必须算出同一个 reports 目录，否则归属判定分叉——codex 三轮 medium）。
+        frameworkRoot,
+      }),
+    )
+  ) {
+    return null;
+  }
+  const loaded = loadVerifierEvidenceForSubject(projectRoot, report.feature, report.phase, subjectId, {
+    frameworkRoot,
+  });
+  // 只沿用**已验真的负面结论**：PASS 不需要沿用（policy off 本就不要求这条轴），
+  // 无效/缺席同样落回零要求——balanced 买到的正是"没有报告时不阻断"。
+  if (!loaded.ok || loaded.evidence.verdict === 'PASS') return null;
+  console.log(
+    `   ℹ [verifier] policy off，但当前 subject ${subjectId.slice(0, 12)}… 已有有效 ` +
+      `verdict=${loaded.evidence.verdict} 报告（${loaded.evidence.md_path_rel}）——沿用该否决，不签发新凭证。`,
+  );
+  return subjectId;
+}
+
+/**
+ * 沿用判据：签发时的材料视图与本轮重算视图在 **policy 无关的三面**上全等。
+ *
+ * 文件面**双向**核对（codex 实施 review 二轮 medium）：
+ *   · 本轮材料面里的每个文件，签发时视图必须有同路径同哈希；
+ *   · 签发时视图里**属于 manifest 面**（`phaseEvidenceManifestCandidatePaths`）的文件，
+ *     本轮必须仍在且同哈希。
+ * 单向比较漏掉删除——`resolvePhaseEvidenceManifest` 的可选条目「存在才纳入」，被删的可选
+ * 输入（如 review 的 spec.md）整条从本轮 manifest 消失，正向遍历永远看不到它。
+ *
+ * 签发时视图多出来的 context-only 条目（contextFiles 带进去的源码/用例/图片，以及
+ * `reports_dir_pattern` 落在 phase 目录内时被构建器当运行期产出排除掉的那些产物）仍**排除**
+ * 在外——disabled 下算不出来，比较它们只会把"多否决"变成"少否决"。候选集与构建器共用
+ * `createRuntimeArtifactPredicate`，归属判定逐字同源（codex 三轮 medium）。
+ */
+function carriedMaterialStillCurrent(
+  prior: VerifierMaterialView,
+  current: VerifierMaterialView,
+  manifestFace: ReadonlySet<string>,
+): boolean {
+  if ((prior.gate_fingerprint ?? null) !== (current.gate_fingerprint ?? null)) return false;
+  if (prior.script_checks.join('\n') !== current.script_checks.join('\n')) return false;
+  const priorFiles = new Map(prior.files.map(f => [f.path, f.sha256]));
+  const currentFiles = new Map(current.files.map(f => [f.path, f.sha256]));
+  for (const [p, sha] of currentFiles) {
+    if (!priorFiles.has(p) || priorFiles.get(p) !== sha) return false;
+  }
+  for (const [p, sha] of priorFiles) {
+    if (!manifestFace.has(p)) continue;
+    if (!currentFiles.has(p) || currentFiles.get(p) !== sha) return false;
+  }
+  return true;
 }
 
 /**
@@ -2129,17 +2275,27 @@ function issueVerifierRequest(input: {
   return { subjectId: request.subject_id, requestRel: rel(requestAbs), reportRel: rel(reportAbs) };
 }
 
-/** 当前 git HEAD（best-effort；非 git 环境返回 null）——run identity 锚。 */
-let cachedHeadSha: string | null | undefined;
+/**
+ * 当前 git HEAD（best-effort；非 git 环境返回 null）——run identity 锚。
+ *
+ * 缓存**按 projectRoot 分键**：生产里一个进程只服务一个工程，但 writer 已被 `export`，
+ * 单进程内为两个不同工程各写一次 summary 是合法调用（单测即如此）。全局单值缓存会把第一个
+ * 工程的 HEAD 算到第二个头上，落盘一份 `source_commit_sha` 与自身 HEAD 不符的 summary
+ * （check-receipt 侧表现为 `slim_summary_source_sha_stale`）。
+ */
+const cachedHeadShaByRoot = new Map<string, string | null>();
 function resolveGitHeadSha(projectRoot: string): string | null {
-  if (cachedHeadSha !== undefined) return cachedHeadSha;
+  const hit = cachedHeadShaByRoot.get(projectRoot);
+  if (hit !== undefined) return hit;
+  let sha: string | null;
   try {
     const r = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: projectRoot, encoding: 'utf-8', shell: false });
-    cachedHeadSha = r.status === 0 ? r.stdout.trim() : null;
+    sha = r.status === 0 ? r.stdout.trim() : null;
   } catch {
-    cachedHeadSha = null;
+    sha = null;
   }
-  return cachedHeadSha;
+  cachedHeadShaByRoot.set(projectRoot, sha);
+  return sha;
 }
 
 /** 原子写 JSON（tmp+rename）——崩溃不留半截文件。 */
@@ -2447,13 +2603,15 @@ function decideNextAction(
     // 旧实现恒返回 `run_verifier_then_receipt`，于是 disabled 的阶段被指去跑一个不存在的
     // verifier，已有 PASS 证据的阶段被指去重跑（同 subject 重跑只会造 conflict）。
     const mode = opts?.verifierMode ?? 'enabled';
+    // S0b（plan 7b3e9a15 D1）：'fail' 必须**先于** disabled 早退处理。policy off 下 writer
+    // 仍可能沿用当前 subject 的有效负面报告（resolveCarriedVerifierSubject），若让 disabled
+    // 先返回闭环指令，这条 case 永远读不到，等于把已有的否决换成一句"去填回执"。
+    // 同 subject 重跑 verifier 只会撞出 conflict：必须先改材料，让 subject 换代。
+    if (opts?.verifierEvidence === 'fail') return 'fix_verifier_findings_then_rerun_harness';
     if (mode === 'disabled') return 'fill_receipt_then_sync_closure';
     switch (opts?.verifierEvidence) {
       case 'pass':
         return 'fill_receipt_then_sync_closure';
-      case 'fail':
-        // 同 subject 重跑 verifier 只会撞出 conflict：必须先改材料，让 subject 换代。
-        return 'fix_verifier_findings_then_rerun_harness';
       case 'invalid':
         return 'rerun_verifier_with_current_request';
       default:

@@ -236,15 +236,43 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'resolveEvidencePolicy（C2）：headless/goal 恒 strict，balanced config 不生效',
+    // plan 7b3e9a15 D1（B05 S0）：显式 balanced 不再在 goal/headless 被早退丢弃。
+    // 改前 :408–410 的 `ctx.mode !== 'interactive'` 早退让 config **根本不参与求解**，
+    // 宿主 framework.config.json 写了 balanced 也无声变 strict。
+    name: 'resolveEvidencePolicy（B05 D1）：显式 balanced 在 interactive/headless/goal 三态逐一相同',
     run: () => {
       const balancedCfg = { evidence_profile: 'balanced' };
-      for (const mode of ['headless', 'goal'] as const) {
+      const expectRetained = { verifier: 'required', receipt: 'not_applicable', trace: 'optional', exploration: 'required' };
+      const expectOff = { verifier: 'off', receipt: 'not_applicable', trace: 'optional', exploration: 'required' };
+      for (const mode of ['interactive', 'headless', 'goal'] as const) {
+        // ctx() 的默认 phase=coding（保留集内）——**保留阶段 trace 例**：verifier 仍 required
+        // 的同时 trace 已 optional，钉住"verifier 四阶段 / trace 六阶段"两个范围并不相等
+        // （runtime-policy.ts 只有 verifier 那一行按 phase 分流，trace 是无条件的）。
+        eq(resolveEvidencePolicy('full', ctx(mode), balancedCfg), expectRetained, `${mode}×coding（保留集内）`);
         eq(
-          resolveEvidencePolicy('full', ctx(mode), balancedCfg),
-          { verifier: 'required', receipt: 'not_applicable', trace: 'required', exploration: 'required' },
-          `${mode} 强制 strict，忽略 balanced config`,
+          resolveEvidencePolicy('full', { ...ctx(mode), phase: 'spec' }, balancedCfg),
+          expectRetained,
+          `${mode}×spec（保留集内）`,
         );
+        for (const phase of ['plan', 'review', 'ut', 'testing']) {
+          eq(
+            resolveEvidencePolicy('full', { ...ctx(mode), phase }, balancedCfg),
+            expectOff,
+            `${mode}×${phase}（保留集外 → verifier off）`,
+          );
+        }
+      }
+    },
+  },
+  {
+    // default 等值不变式：删早退后缺省仍由"config 不是 balanced → STRICT"这一支承接。
+    name: 'resolveEvidencePolicy（B05 D1）：无 evidence_profile 时三态恒 strict（缺省零变化）',
+    run: () => {
+      const strict = { verifier: 'required', receipt: 'not_applicable', trace: 'required', exploration: 'required' };
+      for (const mode of ['interactive', 'headless', 'goal'] as const) {
+        eq(resolveEvidencePolicy('full', ctx(mode)), strict, `${mode} 无 config`);
+        eq(resolveEvidencePolicy('full', ctx(mode), null), strict, `${mode} config=null`);
+        eq(resolveEvidencePolicy('full', ctx(mode), { evidence_profile: 'strict' }), strict, `${mode} 显式 strict`);
       }
     },
   },
@@ -264,7 +292,11 @@ const cases: Array<{ name: string; run: () => void }> = [
       eq(resolveProfileLabel('lite', ctx('headless'), { evidence_profile: 'balanced' }), 'minimal', 'lite 恒 minimal');
       eq(resolveProfileLabel('full', ctx('interactive')), 'strict', 'full 缺省 strict');
       eq(resolveProfileLabel('full', ctx('interactive'), { evidence_profile: 'balanced' }), 'balanced', 'full balanced');
-      eq(resolveProfileLabel('full', ctx('goal'), { evidence_profile: 'balanced' }), 'strict', 'goal 强制 strict 标签');
+      // plan 7b3e9a15 D1：resolveProfileLabel:93 的同形早退一并删除——标签必须与
+      // resolveEvidencePolicy 的求解结果一致，否则控制台/快照会写着 strict 却按 balanced 跑。
+      eq(resolveProfileLabel('full', ctx('goal'), { evidence_profile: 'balanced' }), 'balanced', 'goal 显式 balanced');
+      eq(resolveProfileLabel('full', ctx('headless'), { evidence_profile: 'balanced' }), 'balanced', 'headless 显式 balanced');
+      eq(resolveProfileLabel('full', ctx('goal')), 'strict', 'goal 无 config 仍 strict');
     },
   },
   {
