@@ -9,6 +9,7 @@ import {
   type PhaseExecutionContext,
 } from '../../scripts/utils/goal-phase-executor';
 import { GoalPhaseRuntime } from '../../scripts/utils/goal-phase-runtime';
+import { extractPriorFailureContext } from '../../scripts/goal-runner';
 import { projectCanonicalLifecycle } from '../../scripts/utils/goal-canonical-lifecycle';
 import type { HeadlessInvokePlan } from '../../scripts/utils/agent-invoke';
 import {
@@ -77,6 +78,37 @@ function canonicalOf(probe: RunProbe): ReturnType<typeof projectCanonicalLifecyc
 }
 
 const cases: Case[] = [
+  {
+    // V7（plan 3a7f9c12 D2.5）：goal 失败回喂必须把"写完报告即回传"讲清楚——
+    // 少了这段，agent 只看到一串 blocker 就去改产品（这些失败恰恰要先由 verifier
+    // 逐条确认），或为了拿候选自己再跑一次 harness（外层马上还要跑一次，纯重复）。
+    name: 'D1 repair diagnosis feedback: deliver request, write report, return without re-running harness',
+    run: () => {
+      const feed = extractPriorFailureContext({
+        verdict: 'FAIL',
+        next_action: 'run_verifier_for_repair',
+        verifier_request: 'doc/features/f1/review/reports/verifier.request.abc.json',
+        verifier_report: 'doc/features/f1/review/reports/verifier.report.abc.md',
+        blockers: [{ id: 'negative_verdict_closure', details_excerpt: '审查结论=「不通过」' }],
+      });
+      assert(feed.includes('run_verifier_for_repair'), feed);
+      assert(feed.includes('verifier.request.abc.json'), `must name the request path: ${feed}`);
+      assert(feed.includes('verifier.report.abc.md'), `must name the report path: ${feed}`);
+      assert(/Do NOT edit product code yet/.test(feed), `must hold off on product edits: ${feed}`);
+      assert(/Do NOT re-run the harness yourself/.test(feed), `must not ask the agent to re-run: ${feed}`);
+      assert(
+        feed.replace(/\s+/g, ' ').includes('do NOT wait for candidates or closure before returning'),
+        `must not require candidates/closure before returning: ${feed}`,
+      );
+      // 常规 FAIL 一字不变（没有 next_action 就不该冒出诊断段落）
+      const plain = extractPriorFailureContext({
+        verdict: 'FAIL',
+        next_action: 'fix_blockers_then_rerun',
+        blockers: [{ id: 'demo_fail', details_excerpt: 'x' }],
+      });
+      assert(!plain.includes('run_verifier_for_repair'), plain);
+    },
+  },
   {
     name: 'M2 structural zero: thin shells and executors contain no private lifecycle or gate path',
     run: () => {

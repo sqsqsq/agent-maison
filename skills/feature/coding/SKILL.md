@@ -58,7 +58,7 @@
 
 1. **读取解析 plan.md + Spec 契约**：以 `contracts.yaml` 为权威来源（modules/files/data_models/interfaces/components/navigation/resource_keys），plan.md 为补充上下文；acceptance.yaml 提取验收标准和边界用例。输出模块×层实现清单（`coding.module_batch`：`1=下一模块` `2=修改本模块`）。
 2. **确定实现顺序**：双重自底向上——模块间按 `outer_layers`/`intra_layer_deps` 声明（被依赖方先落地）；模块内按 profile 声明的层顺序（常见 shared→data→domain→presentation）。
-3. **Research Sub-Phase**（Context Facts Gate·BLOCKER，写第一个实现层源文件前完成，C4）：**UI 需求先做 Step 2.5a 视觉真源 Read**（详见 reference，8 项 pixel_1to1 BLOCKER）。必读 plan/contracts/acceptance/use-cases（若有）/architecture DSL/跨模块出口 + 已有源码（`source_code_paths`≥3）；coding **默认 MUST** subagent（仅 L1 trivial 可豁免）；追加 `<features_dir>/<feature>/context/facts.md` 的 `## phase_delta: coding` 节（无新增事实写 "none"）。
+3. **Research Sub-Phase**（Context Facts Gate·BLOCKER，写第一个实现层源文件前完成，C4）：**UI 需求先做 Step 2.5a 视觉真源 Read**（详见 reference，8 项 pixel_1to1 BLOCKER）。必读 plan/contracts/acceptance/use-cases（若有）/architecture DSL/跨模块出口 + 已有源码；追加 `<features_dir>/<feature>/context/facts.md` 的 `## phase_delta: coding` 节（无新增事实写 "none"，不得留空）。**coding 是 delta 阶段**：`source_code_paths` 数量下限与 subagent 强制只在**建立阶段**（full=spec / lite=change）和旧 `context-exploration.md` 兼容路径生效（`harness/scripts/utils/context-facts.ts`），本阶段不重做全量探索、也不按数量硬判——但必要的实际阅读与复杂问题的子代理探索不因此免除。
 4. **逐模块逐层生成代码**（强制逐文件 Lint 门禁）：开文件前自检（重读易错手册相关条 + 确认路径在 in_scope 内）→ 按 contracts.yaml 强契约生成 → 只写当前一个文件 → 立即 `ReadLints` 零 error 才能开下一文件 → 对照易错手册自校对 → 检查层间依赖 → 展示给用户确认。
 5. **业务编排**（详见 reference，仅 use-cases.yaml 存在时）：三形态（Page 命名方法/协调类/导出命名函数）按复杂度自选，`named_business_handler` 强制校验命名符号、禁匿名 lambda、禁新造 Port。
 6. **模块配置与资源文件**：模块包描述/构建配置/module.json5/根级模块清单/依赖清单；资源文件按 profile 目录布局；路由配置按 profile 约定注册。
@@ -92,7 +92,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {
 
 **报告由你写入，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，用 Write 把它的回复**原样全文**写进 `summary.verifier_report` 指向的路径（`<reports>/verifier.report.<subject>.md`），再跑 `check-receipt`。不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入；只有终态块的报告能通过校验，却会把这些全部丢掉。
 
-**harness 没有输出 request 时先看 `summary.next_action`，别急着下结论**：①能力未启用（policy/workflow/profile 判定）→ 本阶段就没有 verifier 这一环，不要去找、不要补造，闭环也不要求它；②当前 adapter 未登记 `verifier_subagent`（起不了 verifier 子代理）→ 本阶段无此环，闭环照常进行，`check-receipt` 会以 WARN 如实标注 `not_reviewed`；③脚本尚未 PASS → 本轮刻意不产出 verifier 调用面，先修 BLOCKER 再说。
+**harness 没有输出 request 时先看 `summary.next_action`，别急着下结论**：①能力未启用（policy/workflow/profile 判定）→ 本阶段就没有 verifier 这一环，不要去找、不要补造，闭环也不要求它；②当前 adapter 未登记 `verifier_subagent`（起不了 verifier 子代理）→ 本阶段无此环，闭环照常进行，`check-receipt` 会以 WARN 如实标注 `not_reviewed`；③脚本尚未 PASS → 本轮**通常**刻意不产出 verifier 调用面，先修 BLOCKER 再说；**例外**是 `next_action=run_verifier_for_repair`——review 负面裁决与 UT 真实断言失败（`code_regression`）这两类已复现的可诊断产品失败，harness 会在脚本 FAIL 下照样签发 request，因为它们的回修候选本就依赖 verifier 逐条确认。照常投 request、原样写报告；**产品 FAIL 与 open 闭环状态不因此改变**，别在拿到逐条结论前改产品。
 
 ## 阶段闭环判定（全局入口 §5.1）
 

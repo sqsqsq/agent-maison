@@ -87,6 +87,66 @@ exploration_mode: sequential
 
 const cases: Array<{ name: string; run: () => void }> = [
   {
+    // V8（plan 3a7f9c12 D6）：过时硬文案与已实现行为对齐。
+    // 实现事实（本文件其余用例已钉死）：量化阈值与 subagent 强制**只在建立阶段**
+    // （full=spec / lite=change）和旧 context-exploration.md 兼容路径生效；delta 阶段
+    // 只要求 `## phase_delta: <phase>` 节存在且非空。Skill 若仍写"默认 MUST subagent /
+    // source_code_paths ≥N"，弱模型就会去补一份门禁根本不查的东西，或误以为漏了必修项。
+    name: 'V8 D6 文案对齐：delta 阶段不再要求 MUST subagent / 源码数量下限，建立阶段与安全约束仍在',
+    run: () => {
+      const repoRoot = path.resolve(__dirname, '..', '..', '..');
+      const read = (rel: string): string => fs.readFileSync(path.join(repoRoot, rel), 'utf-8');
+      const deltaSkills: Array<[string, string]> = [
+        ['skills/feature/plan/SKILL.md', 'plan'],
+        ['skills/feature/coding/SKILL.md', 'coding'],
+      ];
+      for (const [rel, phase] of deltaSkills) {
+        const text = read(rel);
+        if (/默认\s*\*?\*?MUST\*?\*?\s*subagent/.test(text)) {
+          throw new Error(`${rel} 仍写「默认 MUST subagent」——delta 阶段门禁不作此要求`);
+        }
+        if (/source_code_paths\s*[≥>]=?\s*\d/.test(text)) {
+          throw new Error(`${rel} 仍写 source_code_paths 数量下限——delta 阶段门禁不查数量`);
+        }
+        if (!text.includes(`## phase_delta: ${phase}`)) {
+          throw new Error(`${rel} 必须仍要求追加 phase_delta 节（实际生效的门禁）`);
+        }
+        if (!/建立阶段/.test(text)) {
+          throw new Error(`${rel} 须说明量化阈值/subagent 强制只在建立阶段生效`);
+        }
+      }
+      // 行为规约：同一口径；建立阶段与"必要实际阅读"仍须保留（不是把要求整体删掉）。
+      const principles = read('skills/reference/agent-behavioral-principles.md');
+      if (/plan\/coding\s*\*\*默认\s*subagent\*\*（仅\s*L1\s*trivial\s*可豁免）/.test(principles)) {
+        throw new Error('agent-behavioral-principles 仍写「仅 L1 trivial 可豁免」——L2 复合评分低于阈值同样豁免');
+      }
+      if (!principles.includes('建立阶段') || !principles.includes('phase_delta')) {
+        throw new Error('agent-behavioral-principles 须说明建立阶段/delta 阶段的分工');
+      }
+      // goal runtime 的 attestation 提示：与 review_closure_attestation 的实际分级（MAJOR WARN）一致。
+      const runtime = read('harness/scripts/goal-phase-runtime.ts');
+      if (/attestation-locked/.test(runtime)) {
+        throw new Error('goal runtime 仍称产品源码 attestation-locked——实际是分级 WARN + owner 责任');
+      }
+      if (!/`\*_FAST_PATH`-style switch/.test(runtime)) {
+        throw new Error('测试捷径红线（FAST_PATH 开关）必须保留');
+      }
+      // 无 provider 时不得硬要 region_attest / critic 回执（07a41ec6 T10 已实现的豁免）。
+      const deviceDetail = read('skills/reference/device-testing-workflow-detail.md');
+      if (!/无\s*delegated\s*视觉\s*provider/.test(deviceDetail)) {
+        throw new Error('device-testing-workflow-detail 须限定 region_attest/critic 的适用条件');
+      }
+      // verify-ut 的 ut_no_src_mutation：对齐 MAJOR WARN 分级，纪律不变。
+      const verifyUt = read('harness/prompts/verify-ut.md');
+      if (/`ut_no_src_mutation`\s*BLOCKER/.test(verifyUt)) {
+        throw new Error('verify-ut.md 仍把 ut_no_src_mutation 写成 BLOCKER（代码已是 MAJOR WARN）');
+      }
+      if (!verifyUt.includes('禁止修改业务源码')) {
+        throw new Error('UT 阶段禁改业务源码的纪律必须保留');
+      }
+    },
+  },
+  {
     name: 'isFactsEstablishingPhase: 只有 spec/change 为建立阶段',
     run: () => {
       eq(isFactsEstablishingPhase('spec'), true, 'spec');
