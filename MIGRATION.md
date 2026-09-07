@@ -389,6 +389,16 @@ generic 未登记（共享规则被物化不等于运行时会读取）。未登
 |----|------|
 | **S1 探测** | `init-orchestrate.ts --scope project` 只读产出 `InitTaskPlan`（**零写盘**） |
 | **S2 计划批准** | `init.task_plan` + `init.materialized_adapters` 多选；手动模式用 `init.task_decision`（**禁止 Q1=y**） |
+### 3.0.x：Codex verifier 子代理模板收编（Breaking，plan 7b2e9d4c / openspec codex-verifier-subagent-template）
+
+宿主 `.codex/agents/verifier.toml` 一直是宿主 2026-05-25 手工提交带入的私产（Cursor 会话手写），framework 的 codex adapter 从未有过 agents 模板，两份宿主的内容都停在 5 月契约。3.0.x 起它被收编为受管模板：由 claude 的 `agents/claude/templates/agents/verifier.md` 渲染成 `agents/codex/templates/agents/verifier.toml`（`cd harness && npm run sync:codex-agents`；等值由 unit test 守护），随发布件下发。
+
+- **行为变化（Breaking）**：UPDATE 起 `.codex/agents/verifier.toml` 由 framework 模板**自动对齐**（顶层 `subagents` + `update_policy: auto_overwrite`）。**宿主手写版被无提示覆盖是预期行为**；旧文件先备份到 `.framework-backup/<stamp>/.codex/agents/verifier.toml`，需要旧话术就去备份里取。
+- **verifier 行为差异**：新模板按 request / `prompt_path` 契约工作——`ai-prompt.md` 是本轮权威指令，**不再自读** `verify-<phase>.md`、`verify-*.overlay.md` 与 `phase-rules/<phase>-rules.yaml`（旧 toml 每阶段都在白读三份文件），输出末尾恰好一个终态块（`verifier_subject_id` 逐字回显），并带上"收到的不是纯 request JSON 时声明不可入闭环"一节。
+- **`sandbox_mode = "read-only"` 只是角色默认值**，不是隔离保证：Codex 在 spawn_agent 时先套角色配置、再用**父线程实时权限覆盖**，Maison goal 的 codex 父进程恒为 `danger-full-access`，所以 goal 路径下 verifier 子线程是全权限。"不写盘"由模板正文的硬性规则承担，与 5 月以来的实际状态一致。
+- **宿主不应再手改该文件**：要改审查员人设，改 `agents/claude/templates/agents/verifier.md`、重跑 `npm run sync:codex-agents`、重新发布。
+- **未改动**：`verifier_subagent` 布尔语义与位置、claude / codeagent 的 `commands.subagents` 声明与模板、`harness/prompts/verify-*.md` 与 ai-prompt 装配、codex 的 hooks（Stop hook 不做、写守卫暂缓，裁决登记在 `agents/codex/adapter.yaml` notes）。
+
 | **S3 执行** | 枚举 decision JSON + context JSON（OS 临时目录绝对路径）→ `init-orchestrate --execute` → preflight + `executeInitPlan` |
 | **S4 摘要** | `buildRunSummary(run-log)` |
 

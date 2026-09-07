@@ -18,23 +18,23 @@ overview: >
 version: 3.0.0
 todos:
   - id: cvt-plan-review
-    content: 施工图待用户评审（09-07 用户裁定：plan 评审不走循环，Fable 直接写、用户评审；开发+检视走循环）。第 1 轮评审两处修订 + 一处实施提醒已落盘（§8）。评审通过后先提交 plan 基线再开工（B07 教训）。
-    status: pending
+    content: 施工图待用户评审（09-07 用户裁定：plan 评审不走循环，Fable 直接写、用户评审；开发+检视走循环）。第 1 轮评审两处修订 + 一处实施提醒已落盘（§8）。评审通过后先提交 plan 基线再开工（B07 教训）。用户 09-07 通过，基线 defc8b74。
+    status: completed
   - id: cvt-render
     content: 按 D1 新增 harness/scripts/utils/codex-agent-toml.ts：renderCodexAgentToml(md) 解析 verifier.md frontmatter（name/description/tools）与正文，输出 TOML（literal 多行字符串 '''，含 ''' 或 name≠verifier 或 tools 越出只读集合时抛错；tools 只读集合 → `sandbox_mode = "read-only"` 角色默认值 + 注明父线程覆盖）；CLI 入口 harness/scripts/sync-codex-agent-templates.ts + npm script sync:codex-agents；生成并提交 agents/codex/templates/agents/verifier.toml。
-    status: pending
+    status: completed
   - id: cvt-schema-init
     content: 按 D2 adapter-schema.yaml 新增顶层 subagents（字段同 commands.subagents，二选一、顶层优先）；check-init.ts 把子代理模板收集移到 `if (cfg.commands …)` 块之外，读 cfg.subagents ?? cfg.commands?.subagents；codex adapter.yaml 加 subagents 块（target_dir .codex/agents、update_policy auto_overwrite）并改掉"历史 init 曾误物化"注释；claude/codeagent 不动。
-    status: pending
+    status: completed
   - id: cvt-tests
     content: 按 §6 新增 harness/tests/unit/codex-adapter-verifier-template.unit.test.ts（V1 等值/漂移、V2 转义与结构、V3a–V3c 临时工程真实执行入口：首次生成 / 旧 toml 备份后覆盖并幂等 / planner 产出同步任务、V4 二选一一致性）；adapter-catalog-consistency 补 codex 断言。
-    status: pending
+    status: completed
   - id: cvt-docs-spec
     content: 按 D6 更新 agents/README.md 两张矩阵的 codex 行与 verifier 段、agents/codex/adapter.yaml notes（含 D5 两行）；新增 openspec change codex-verifier-subagent-template（agent-adapters ADDED requirement：模板存在、由渲染函数生成、等值测试守护、只读为角色默认值而非保证；schema 位置 MODIFIED/ADDED）；MIGRATION.md 3.0.x 一节。
-    status: pending
+    status: completed
   - id: cvt-local-acceptance
-    content: V1–V6 目标测试全绿；收尾一次 `cd harness && npm test` + `npm run openspec:validate` + 发布件校验（toml 入包）；codex review ≤3 轮后按 §4 提交边界提交。
-    status: pending
+    content: V1–V6 目标测试全绿；收尾一次 `cd harness && npm test` + `npm run openspec:validate` + 发布件校验（toml 入包）；codex review ≤3 轮后按 §4 提交边界提交。09-07 完成：单测 3917/3919（2 项为 worktree 联接假象，主库重跑通过）、夹具 46/46、openspec 38、V5 候选口径 ALL PASS，codex 两轮收敛。
+    status: completed
   - id: cvt-host-acceptance
     content: 宿主验收（§7）：集成候选件 → framework-init UPDATE 覆盖 .codex/agents/verifier.toml（S3 run-log 记同步与备份）→ 同款只读冒烟：终态块 + 子线程不再读 verify-<phase>.md / phase-rules。触发方式按用户当时授权。
     status: pending
@@ -59,7 +59,7 @@ todos:
 | F05 | 能过的原因与代价：request 的 `prompt_path` 指向的 ai-prompt.md 第 4700 行起自带终态块契约（7 份 verify-*.md 都有），模型把 toml 旧指令与之调和。子线程按旧 toml 额外读了 `framework/harness/prompts/verify-testing.md`（2 次）、`verify-testing.overlay.md`、`phase-rules/testing-rules.yaml`——verifier.md 明令不读（ai-prompt.md 已是装配结果，且可能带 profile overlay），每阶段都在白花 | 子线程 rollout 的 tool 参数路径统计 |
 | F06 | Codex agent 文件的机制：`.codex/agents/*.toml` 由 `discover_agent_roles_in_dir(config_folder.join("agents"))` 发现；解析后摘掉 `name` / `description` / `nickname_candidates`，**其余键作为该角色的 config 层**（`developer_instructions` 必填非空，`sandbox_mode` / `model` 等 config.toml 键同样可写）。本机 0.153.4 `features list`：`multi_agent stable true` | codex 源 `core/src/config/agent_roles.rs`（发现 :76，解析 :296–312，必填校验 :360–377）；`config/src/config_toml.rs:692` AgentRoleToml |
 | F07 | 物化机制现状：check-init 只在 `if (cfg.commands && typeof cfg.commands === 'object')` 块内从 `cfg.commands.subagents` 收集子代理模板（整目录 verbatim、按 update_policy），codex 的 `commands: null` 进不了这个块；schema 把 subagents 定义在 commands 之下且 commands.target_dir/template_dir 非可选。`commands.subagents` 的读者只有 check-init 一处；`commands?.target_dir` 的两处读者都已判空 | [check-init.ts:672–690](../../harness/scripts/check-init.ts:672)；[adapter-schema.yaml:83](../../agents/adapter-schema.yaml:83)；`grep -rn "commands\.subagents\|commands?\.target_dir"` |
-| F08 | `auto_overwrite` 的真实执行链：S1 体检第 3 项按 templateFiles 逐文件产出 inspection → planner 对 `update_policy=auto_overwrite` 产 `sync-auto-overwrite:<target>` 任务、其余产 `materialize-adapter-file:<target>` → executor 调 `applyInitMechanismSync(projectRoot, adapter, { includeTargets })`：目标缺失则写入，存在且不同则先备份到 `.framework-backup/<UTC>/` 再覆盖，返回 `file_results` / `backupRelDir`；首次物化由 `materialize-adapter:<name>` 整包写盘。既有 unit test 已用临时工程 + 真实入口验证 claude 的 settings.json / hooks 同步 | [init-task-planner.ts:193–224](../../harness/scripts/utils/init-task-planner.ts:193)；[init-task-executor.ts:728–745](../../harness/scripts/utils/init-task-executor.ts:728)；[check-init.ts:1911–1935](../../harness/scripts/check-init.ts:1911)；[init-task-executor.unit.test.ts:928](../../harness/tests/unit/init-task-executor.unit.test.ts:928)、:777 |
+| F08 | `auto_overwrite` 的真实执行链：S1 体检第 3 项按 templateFiles 逐文件产出 inspection → planner 对 `update_policy=auto_overwrite` 产 `sync-auto-overwrite:<target>` 任务、其余产 `materialize-adapter-file:<target>` → executor 调 `applyInitMechanismSync(projectRoot, adapter, { includeTargets })`：目标缺失则写入，存在且不同则先备份到 `.framework-backup/<UTC>/` 再覆盖，返回 `file_results` / `backupRelDir`；首次物化由 `materialize-adapter:<name>` 整包写盘。既有 unit test 已用临时工程 + 真实入口验证 claude 的 settings.json / hooks 同步。**现状缺口**：逐文件 `sync-auto-overwrite:` 任务只为**首位** adapter 产出，次位 adapter 全靠 `materialize-adapter:<name>` 整包任务逐个 `syncTemplateTarget`，verbatim 目标直接覆盖、**无备份**；宿主两份 `materialized_adapters` 都是 chrys/claude/codeagent/codex/cursor，codex 正是次位（codex review 第 1 轮 high，修法见 D8） | [init-task-planner.ts:193–224](../../harness/scripts/utils/init-task-planner.ts:193)；[init-task-executor.ts:728–745](../../harness/scripts/utils/init-task-executor.ts:728)；[check-init.ts:1911–1935](../../harness/scripts/check-init.ts:1911)；[init-task-executor.unit.test.ts:928](../../harness/tests/unit/init-task-executor.unit.test.ts:928)、:777 |
 | F09 | 发布件打包按 include-unless-excluded 规则，`agents/**` 整目录入包（现 manifest 含 `agents/claude/templates/agents/verifier.md`），`.toml` 不在排除名单 | [release-pack-rules.mjs:112–132](../../scripts/release-pack-rules.mjs:112)；`dist/framework-3.0.0.manifest.json` |
 | F10 | verifier.md 正文无反斜杠、无 `'''`、无 `"""`；frontmatter description 单行、无单引号——可整段放进 TOML literal 多行字符串，零转义 | `grep -c` 统计 |
 | F11 | codex adapter.yaml 注释"历史 init 曾误物化 Claude Stop/SubagentStop 协议脚本"与 F01 不符：是宿主手工提交带入，不是 init。清理逻辑只看路径不看来源，结论不受影响，但注释要改 | [codex/adapter.yaml:87](../../agents/codex/adapter.yaml:87) |
@@ -179,12 +179,20 @@ Claude 侧 `tools: Read, Glob, Grep` 是工具可见性；Codex 角色文件没�
 3. 9eb3d293 的 deprecated_artifacts 不加 `agents/verifier.toml`：它现在是受管模板，不是退役物。
 4. `harness/prompts/verify-*.md` 与 ai-prompt 装配不变。
 
+### D8：次位 adapter 的 auto_overwrite 文件经整包物化时也走备份同步
+
+**这是既有缺口，不是本 plan 引入的**（codex review 第 1 轮 high；现状见 F08 末句）：逐文件 `sync-auto-overwrite:<target>` 任务只为首位 adapter 产出，走 `applyInitMechanismSync`（已存在且内容不同 → 先备份到 `.framework-backup/<stamp>/` 再覆盖）；次位 adapter 没有逐文件任务，`materialize-adapter:<name>` 整包任务对每个 templateFile 调 `syncTemplateTarget`，verbatim 目标**直接覆盖、无备份**。宿主两份工程的 `materialized_adapters` 都是 `chrys, claude, codeagent, codex, cursor`——**codex 是次位**，本 plan 的 `.codex/agents/verifier.toml`（auto_overwrite、覆盖宿主手写版）正好命中，§5-4「有备份」在宿主环境下不成立。
+
+修法（最小、复用既有备份逻辑，不新造）：`init-task-executor.ts` 的 `materialize-adapter:` 分支里，把 `update_policy === 'auto_overwrite' && kind !== 'materialized'` 的 templateFiles 从 `syncTemplateTarget` 循环里剔除，改由一次 `applyInitMechanismSync(ctx.projectRoot, adapter, { ownedByTask })` 承担（该函数自带同一条筛选谓词，且已接受 `ownedByTask`：被逐文件任务持有的目标返回 `delegated`）；两组 results 合并进 `fileResults`，`message` 在有 `backupRelDir` 时追加「（备份 …）」。首位 adapter 行为不变（其 auto_overwrite 目标被逐文件任务持有 → 仍是 delegated）；structured_upsert 两边同语义（`computeHooksConfigUpsert`），`blocked` 仍经 `throwIfBlocked` 让任务 failed。
+
+验收 V3d（§6）。放弃的准确性：auto_overwrite 目标在整包物化时不再经 `syncTemplateTarget` 的 `rendered` / skill_bridge 特判——全仓现有 auto_overwrite 声明（claude/codeagent 的 subagents+hooks+settings_file、codex 的 subagents、cursor 的 hooks_config）全是 `verbatim` / `structured_upsert`，无占位符渲染需求，且首位 adapter 的逐文件同步链本来就是这个语义；若将来有人给 `rendered` 模板标 auto_overwrite，两条链会一起写原始模板（不是本改动引入的新偏差）。另：模板文件缺失时 `applyInitMechanismSync` 写 stderr 后跳过，而 `syncTemplateTarget` 抛错——该情形由 `template_files_resolvable` 检查项覆盖，不在此处补第二道。
+
 ## 4. 文件与提交边界
 
 | 提交 | 文件 |
 |---|---|
 | 0 `docs(plan): Codex verifier 模板收编施工图（plan 7b2e9d4c）` | 本 plan（评审通过后先提交基线） |
-| 1 `feat(adapters): codex verifier 子代理模板由 claude verifier.md 渲染 + 顶层 subagents 声明（plan 7b2e9d4c D1/D2/D3）` | `harness/scripts/utils/codex-agent-toml.ts`、`harness/scripts/sync-codex-agent-templates.ts`、`harness/package.json`、`agents/codex/templates/agents/verifier.toml`（生成）、`agents/codex/adapter.yaml`、`agents/adapter-schema.yaml`、`harness/scripts/check-init.ts`、`harness/tests/unit/codex-adapter-verifier-template.unit.test.ts`、`harness/tests/unit/adapter-catalog-consistency.unit.test.ts` |
+| 1 `feat(adapters): codex verifier 子代理模板由 claude verifier.md 渲染 + 顶层 subagents 声明（plan 7b2e9d4c D1/D2/D3/D8）` | `harness/scripts/utils/codex-agent-toml.ts`、`harness/scripts/sync-codex-agent-templates.ts`、`harness/package.json`、`agents/codex/templates/agents/verifier.toml`（生成）、`agents/codex/adapter.yaml`、`agents/adapter-schema.yaml`、`harness/scripts/check-init.ts`、`harness/scripts/utils/init-task-executor.ts`（D8）、`harness/tests/unit/codex-adapter-verifier-template.unit.test.ts`、`harness/tests/unit/adapter-catalog-consistency.unit.test.ts`、`harness/tests/run-unit.ts`（注册新套件） |
 | 2 `docs(adapters): codex verifier 模板与 hooks 裁决同步规格、README、MIGRATION（plan 7b2e9d4c D5/D6）` | `agents/README.md`、`openspec/changes/codex-verifier-subagent-template/**`、`MIGRATION.md`、本 plan 实施记录 |
 
 提交 1/2 须在 codex review 通过后再打（[先 review 再提交]），不署名；不跑宿主。
@@ -194,7 +202,7 @@ Claude 侧 `tools: Read, Glob, Grep` 是工具可见性；Codex 角色文件没�
 1. **toml 是提交进仓库的派生物，不是 init 时渲染**：verifier.md 改动后必须重跑同步命令；漏跑由 unit test 抓，不由运行时抓。换来 init/planner/executor 零改动。
 2. **没有物理只读**：`sandbox_mode = "read-only"` 只是角色默认值，spawn 时被父线程实时权限覆盖（F13）；goal 下 verifier 子线程是 danger-full-access，"不写盘"靠 developer_instructions 的硬性规则。与 Claude 侧"看不到写工具"不等价。本轮不新造隔离（D3）。
 3. **不做 Stop hook**：codex 交互会话的"假完成"只有软约束（D5）。
-4. **宿主手写 toml 被无提示覆盖**（auto_overwrite）：宿主若曾在 toml 里加过自己的话术会丢（有备份）。MIGRATION 写明。
+4. **宿主手写 toml 被无提示覆盖**（auto_overwrite）：宿主若曾在 toml 里加过自己的话术会丢（有备份——次位 adapter 整包物化时同样备份，见 D8；此前只有首位 adapter 的逐文件同步链有）。MIGRATION 写明。
 5. **冒烟只做了一次、一个阶段（testing）、且父进程只读**：结论"过期 toml 仍能过"是单样本；本 plan 的动机不依赖它（多读三份文件、旧路径、无非法 request 处置都是静态可见的差异）。
 6. **生成与覆盖行为在临时工程用真实执行入口验证（V3a–V3c），宿主真实 UPDATE 仍是宿主验收项**：前者证明机制正确，后者证明宿主环境（trusted、备份目录、S3 run-log）没有意外。
 
@@ -206,6 +214,7 @@ Claude 侧 `tools: Read, Glob, Grep` 是工具可见性；Codex 角色文件没�
 | V2 | 转义与结构 | 渲染结果：`name = "verifier"`、`sandbox_mode = "read-only"` 且其上一行注释含"默认值"与"父线程"字样、`description = '''…'''` 恰为 frontmatter 原文、`developer_instructions = '''` 与 `'''` 之间恰为正文原文；正文或 description 含 `'''` 时抛错；`tools` 含 `Write` 时抛错；frontmatter `name` ≠ verifier 时抛错；输出以 LF 结尾且无 CRLF |
 | V3a | **首次生成**（临时工程 + 真实执行入口，复用 [init-task-executor.unit.test.ts:777](../../harness/tests/unit/init-task-executor.unit.test.ts:777) 的写法） | `mkTmp()` 写 `framework.config.json`（`materialized_adapters: ['codex']`），**不预置** `.codex/agents/verifier.toml`；`executeInitTask({ id: 'materialize-adapter:codex', … }, 'run', ctx)` 后：`.codex/agents/verifier.toml` 存在且与 `agents/codex/templates/agents/verifier.toml` 逐字节相等；`file_results` 含该 targetRel 且 effect 为 created；无 `.framework-backup/` 目录 |
 | V3b | **旧 toml 备份后覆盖 + 幂等**（同 :928 的写法） | 预置 5 月契约内容（取 F02 片段）到 `.codex/agents/verifier.toml`；`executeInitTask({ id: 'sync-auto-overwrite:.codex/agents/verifier.toml', category: 'adapter-template-sync', … }, 'run', ctx)` 后：文件与模板逐字节相等；`file_results[0].targetRel` 为该路径且 effect 为 updated；返回 `message` 含"备份"；`.framework-backup/<stamp>/.codex/agents/verifier.toml` 存在且逐字节等于预置的旧内容。**再执行一次**：文件不变、effect 为 unchanged、`.framework-backup/` 下不新增目录 |
+| V3d | **次位 adapter 整包物化也备份**（D8；同 :928 的写法，改用整包任务入口） | 临时工程 `materialized_adapters: ['claude','codex']`（codex 次位，`ctx.materializedAdapters` 同值、`plan.tasks` 为空即"无逐文件任务"形态），预置 5 月契约内容到 `.codex/agents/verifier.toml`；`executeInitTask({ id: 'materialize-adapter:codex', … }, 'run', ctx)` 后：文件与模板逐字节相等、该 targetRel 的 effect 为 `updated`、`message` 含"备份"、`.framework-backup/<stamp>/.codex/agents/verifier.toml` 逐字节等于预置旧内容。**再执行一次**：effect `unchanged`、`.framework-backup/` 下目录数不变。同时 `init-task-executor` 既有套件全过（尤其 :777「delegates owned per-file targets」与 :858「inline 不重复计入」） |
 | V3c | **planner 真的会产出这条任务**（复用 `adapter-catalog-consistency` 对 `probeInitTaskPlan` 的用法） | 临时工程（`materialized_adapters: ['codex']`）预置旧 toml → `probeInitTaskPlan` 的任务表含 `sync-auto-overwrite:.codex/agents/verifier.toml`（`params.update_policy = 'auto_overwrite'`），且**不含** `materialize-adapter-file:.codex/agents/verifier.toml`；不预置时同样含 sync 任务（缺失即写入）。同时 `__testing.loadAdapter('codex').templateFiles` 该条目 `kind: 'verbatim'`、`origin` 以 `subagents.template_dir/` 开头；`loadAdapter('claude')` / `('codeagent')` 的 verifier.md / phase-executor.md 条目不变（origin 仍 `commands.subagents.template_dir/…`） |
 | V4 | 二选一一致性（扩 `adapter-catalog-consistency`） | 遍历 `agents/*/adapter.yaml`：不存在同时声明顶层 `subagents` 与 `commands.subagents` 的 adapter；codex 顶层 `subagents.update_policy === 'auto_overwrite'`；codex `commands === null` 保持 |
 | V5 | 发布件 | `npm run candidate:build`（或既有 release:verify 路径）后 manifest 含 `agents/codex/templates/agents/verifier.toml`；`scripts/verify-release-pack.mjs` 通过 |
@@ -241,7 +250,7 @@ npm run openspec:validate
 2. 同款只读冒烟（scratchpad `verifier-smoke-prompt.txt` 的做法：`codex --ask-for-approval never exec --sandbox read-only --json < prompt`，request 取当时最新的 `verifier.request.<subject>.json`）：回复末尾恰好一个终态块且 `parseResultBlock` 成功；宿主 porcelain 前后一致。
 3. 子线程 rollout（`~/.codex/sessions/<date>/rollout-*-<child>.jsonl`，`agent_role=verifier`）：**不再**出现 `verify-<phase>.md` / `phase-rules` 读取——这是新 toml 生效的直接证据。不再把"子线程沙箱为 read-only"当验收项（F13：只读父进程下必然成立，证明不了 toml）。
 
-**完成 = V1–V6 全绿（含 V3a–V3c）+ 一次全量 `npm test` 全绿 + 提交 1/2 经 codex review 通过并落盘。** 宿主验收结果回灌 §8。
+**完成 = V1–V6 全绿（含 V3a–V3d）+ 一次全量 `npm test` 全绿 + 提交 1/2 经 codex review 通过并落盘。** 宿主验收结果回灌 §8。
 
 ## 8. 修订记录
 
@@ -254,3 +263,157 @@ npm run openspec:validate
 - **P1 只读沙箱钉定不成立**：Codex spawn 先套角色配置再用父线程实时权限覆盖（`apply_role_to_config` → `apply_spawn_agent_runtime_overrides`，写入 approval_policy 与 permission_profile），goal 父进程是 danger-full-access；只读父进程的冒烟证明不了 toml。→ 新增 F13；D3 改为"角色默认值 + 意图声明，不构成隔离，本轮不新造隔离机制"；标题、overview、toml 内注释、D6 规格措辞（不得写成保证）、§5-2、§7-3 同步修正；文件名从"只读沙箱钉定"改为"verifier.md派生"。
 - **P2 本地验收只证清单有文件**：原 V3 只看 `loadAdapter().templateFiles`，生成与覆盖全在完成判据之外。→ 拆为 V3a（`materialize-adapter:codex` 首次生成）、V3b（`sync-auto-overwrite:<target>` 旧 toml 备份后覆盖 + 幂等）、V3c（`probeInitTaskPlan` 产出同步任务 + 清单条目），全部在临时工程用真实执行入口跑，复用 init-task-executor.unit.test.ts :777 / :928 与 adapter-catalog-consistency 的既有写法；完成判据明写含 V3a–V3c；§5 新增第 6 条说明本地验证与宿主验收的分工。
 - **实施提醒（D2）**：子代理模板收集必须移出 `if (cfg.commands …)` 块，`commands: null` 的 codex 才进得去；只在原位置换二选一表达式无效。→ D2 改为块外收集并给出代码形态；F07 补写块的条件。
+
+### 2026-09-07：实施循环与本地验收（Fable 调度 / Opus 开发 / codex 审）
+
+- 开发回合 1（Opus）：D1/D2/V1–V4/D6 全部落盘（见实施记录）；偏离三项如实登记（run-unit 显式注册表须改、`AdapterConfig` 类型不存在、V2 注释块判据）。
+- codex review 第 1 轮 needs-attention（2 high + 2 medium）：① 次位 adapter 整包物化覆盖 auto_overwrite 文件不备份——宿主两份 config 均为 chrys/claude/codeagent/codex/cursor，codex 正是次位，真实命中 → 新增 D8 + V3d；② 实施记录声称的骨架顺序保护未实现 → V2 改逐行比对前 9 行；③ 渲染器删了正文首空行与尾随空格，违反 D1 逐字保留 → 只归一 EOL 与尾部换行，重新生成 toml；④ MIGRATION.md 混入 B08 hunk → 提交时按 hunk 挑选。
+- 开发回合 2（Opus）：三项修复 + V3d 反例实证（临时删 executor 一行即 FAIL）。
+- codex review 第 2 轮 **approve，零 finding**；两轮 review 前后本 plan 范围文件哈希一致（codex 未改树）。
+- 本地验收：全量 `npm test` 在隔离 worktree（HEAD 256914a6 + 本 plan 17 个文件）跑，单测 3919 项中 3917 通过，2 个失败均为 worktree 里 `harness/node_modules` 目录联接的环境假象（一个把联接当作"发布进 ignored 目录的文件"，一个对联接建符号链接被 Windows 拒绝），两套件在主库重跑 2/2 与 28/28 通过；夹具 46/46（主库）；openspec 38 项通过。V5：同一 worktree `release:pack` included=1101、manifest 含 `agents/codex/templates/agents/verifier.toml`，`verify-release-pack --skip-typecheck --skip-plan-release-gate`（候选件口径）ALL PASS。工作区与 B08（9b2d5e7c）并行，B08 文件零触碰。
+- 遗留：宿主验收（§7）未做，`cvt-host-acceptance` 保持 pending。
+
+## 实施记录
+
+验证日志目录：`<scratch>/`（`u1.log` 新套件、`u2.log` adapter-catalog-consistency、`u3.log` init-task-executor、`u4.log` codeagent-adapter）。全量 `cd harness && npm test` 本轮**未跑**（由调度者在 review 通过后跑一次）；宿主验收（§7）**未跑**，由用户触发。本轮零 codex 调用、零宿主读写。
+
+### 2026-09-07 · D1 渲染函数 + 同步 CLI + 派生 toml（完成）
+
+**改动文件**
+
+| 文件 | 变化 |
+|---|---|
+| `harness/scripts/utils/codex-agent-toml.ts`（新增，66 行） | `renderCodexAgentToml(markdown)`:16。frontmatter 逐行解析成 key→value（非 `key: value` 行即抛错，钉住「description 单行」）；`name !== 'verifier'` 抛错 :32；`tools` 越出 `READ_ONLY_TOOLS = {Read, Glob, Grep}`:8 或为空抛错 :41；description / 正文含三引号抛错 :47。骨架顺序与 D1 逐字一致，`sandbox_mode = "read-only"`:59 上方三行注释（tools 映射 / 默认值+父线程覆盖 / 硬性规则承担） |
+| `harness/scripts/sync-codex-agent-templates.ts`（新增，26 行） | 读 `agents/claude/templates/agents/verifier.md` → 渲染 → 写 `OUT_REL`:14（`fs.writeFileSync` utf-8，字符串已是 LF，Windows 不做行尾转换） |
+| `harness/package.json`:25 | `"sync:codex-agents": "ts-node scripts/sync-codex-agent-templates.ts"` |
+| `agents/codex/templates/agents/verifier.toml`（新增生成物，6361 字节） | `name = "verifier"`:3、`sandbox_mode = "read-only"`:8、`developer_instructions` 起始 :9；无 CRLF |
+
+**为什么最小**：无 TOML 依赖（F10 现状零转义需求）、无通用 md→adapter 框架、无 templateFiles 新 kind；frontmatter 解析用一条正则而不是 YAML 解析器——「description 原文」就是那一行的字面量，YAML 反而会做二次解释。
+
+**验证**：`npx ts-node --transpile-only scripts/sync-codex-agent-templates.ts` 一次生成；node 扫 15 个改动文件全部 LF（无 CR/CRLF）。
+
+### 2026-09-07 · D2 schema 顶层 subagents + check-init 块外收集 + codex adapter.yaml（完成）
+
+**改动文件**
+
+| 文件 | 变化 |
+|---|---|
+| `harness/scripts/check-init.ts`:672–693 | `commands` 块只留 `commands.template_dir`；子代理收集移到块**外**（:684 `const subagents = cfg.subagents ?? (cfg.commands && typeof cfg.commands === 'object' ? cfg.commands.subagents : undefined)`），`fieldLabel` 按来源二选一 :690。`collectDir` 与 `parseUpdatePolicy` 一字未动 |
+| `agents/adapter-schema.yaml`:106–125 | 新增顶层 `subagents`（target_dir / template_dir / update_policy），描述写明「无 slash 面的 adapter 在顶层声明、`commands.subagents` 是历史位置、不得两处同时声明、顶层优先、一致性由 adapter-catalog-consistency 钉住」；:74 `commands` 描述补一句指向 |
+| `agents/codex/adapter.yaml`:13–18 | 顶层 `subagents`：`.codex/agents` / `templates/agents` / `auto_overwrite` |
+| 同上 :39–41 | `verifier_subagent: true` 入册凭据补 09-07 主宿主只读冒烟一行（F04） |
+| 同上 :95–96 | F11 注释改为「宿主曾于 2026-05-25 手工提交（Cursor 会话）带入…；先清旧注册再备份删除脚本」 |
+| 同上 :110–111 | notes 加 D5 两行：Stop hook 不做 / 写守卫暂缓，各带复检触发 |
+
+claude / codeagent 的 `commands.subagents` 与模板零改动（V3c 用例逐条钉住 origin 仍为 `commands.subagents.template_dir/…`）。
+
+**为什么最小**：只搬一段收集逻辑、schema 只加一个可选字段；没有把三个 adapter 一起搬顶层（D2 已裁掉）。
+
+### 2026-09-07 · V1–V4 测试（完成）
+
+| 文件 | 变化 |
+|---|---|
+| `harness/tests/unit/codex-adapter-verifier-template.unit.test.ts`（新增，7 用例） | V1 等值 :114（渲染结果 vs 磁盘 toml，EOL 归一后 `strictEqual`）、V1 漂移 :120（正文把「\*\*独立的审查员\*\*」改一个字符后渲染必须与磁盘不等，且先断言反例确实命中正文）、V2 结构 :129（`name` 行；description 从 verifier.md 现读回来逐字比；`sandbox_mode` 上方**连续注释块**含「默认值」与「父线程」；`developer_instructions` 内文等于独立推导的 `bodyFromMarkdown(md)`；无 CR、LF 收尾）、V2 抛错 :165（正文三引号 / description 三引号 / `tools: Read, Write` / `name: reviewer` / 无 frontmatter 五条）、V3a :185、V3b :221、V3c :271 |
+| `harness/tests/unit/adapter-catalog-consistency.unit.test.ts`:226 | V4：遍历 `agents/*/adapter.yaml`，无 adapter 两处同时声明 subagents；codex 顶层 `target_dir=.codex/agents`、`update_policy=auto_overwrite`、`commands` 仍为 null |
+| `harness/tests/run-unit.ts`:295 | 注册新套件（见「未做 / 存疑」第 1 条） |
+
+V3a：临时工程只写 `framework.config.json`（`materialized_adapters: ['codex']`），**不预置** toml → `executeInitTask({ id: 'materialize-adapter:codex' }, 'run', ctx)` → 文件存在且与模板 `Buffer.equals`、`file_results` 该行 `effect='created'`、无 `.framework-backup/`。
+
+V3b：预置 5 月契约片段 → `sync-auto-overwrite:.codex/agents/verifier.toml` → 与模板逐字节相等、`file_results.length===1` 且 `effect='updated'`、`message` 含「备份」、`.framework-backup/<stamp>/.codex/agents/verifier.toml` 内容 `strictEqual` 旧原文；**再执行一次** → 文件不变、`effect='unchanged'`、备份目录列表 `deepStrictEqual` 不变。
+
+V3c：预置 / 不预置两种起点各跑一次 `probeInitTaskPlan({ scope: 'project' })`，任务表都含 `sync-auto-overwrite:.codex/agents/verifier.toml`（`params.update_policy='auto_overwrite'`）且**不含** `materialize-adapter-file:` 同名任务；`__testing.loadAdapter('codex')` 该条目 `kind='verbatim'`、`update_policy='auto_overwrite'`、`origin` 以 `subagents.template_dir/` 开头；claude 的 verifier.md / phase-executor.md 与 codeagent 的两份仍以 `commands.subagents.template_dir/` 开头。
+
+### 2026-09-07 · D6 规格与文档（完成）
+
+| 文件 | 变化 |
+|---|---|
+| `agents/README.md`:25–28 | 目录树 codex 段补 `templates/agents/`（注明生成物、勿手改） |
+| 同上 :108 / :205 | 两张矩阵的 codex 行补 `.codex/agents/verifier.toml`（生成物；第二张标注来自顶层 `subagents`） |
+| 同上 :242–246 | verifier 段补一段：codex 审查员人设由 claude verifier.md 渲染、顶层 subagents + auto_overwrite、`sandbox_mode` 只是角色默认值不构成隔离 |
+| `openspec/changes/codex-verifier-subagent-template/proposal.md`（新增） | Why=F01–F04（含「能过是因为 ai-prompt.md 自带契约、代价是多读三份文件」）、What Changes、Impact（含 5 条放弃的准确性） |
+| 同上 `tasks.md`（新增） | 4 组任务，V5 / 全量 npm test / 宿主验收留 `[ ]` |
+| 同上 `specs/agent-adapters/spec.md`（新增） | **两条 ADDED**：① The Codex adapter ships a verifier subagent template rendered from the Claude verifier template（SHALL exist + auto_overwrite；SHALL be rendered by `renderCodexAgentToml`；三种抛错；equivalence SHALL be test-enforced；只读 **as the role default only** 且 SHALL NOT be described as an isolation guarantee）+ 2 scenario；② Adapter subagent templates may be declared at the adapter top level（二选一、顶层优先、须在 commands 块外收集、与 `verifier_subagent` 无关）+ 2 scenario |
+| `MIGRATION.md`:275–282 | 3.0.x 新节：UPDATE 自动对齐 + 备份、手写版被覆盖是预期、verifier 行为差异（不再自读 verify-&lt;phase&gt;.md / overlay / phase-rules）、`sandbox_mode` 只是角色默认值、宿主不应再手改该文件、未改动清单 |
+
+D6 要求先 grep `openspec/specs/agent-adapters/spec.md` 判断 schema 位置是 MODIFIED 还是 ADDED：`grep -n "subagent"` 命中 :478（Claude phase-executor 模板）、:489/:497（`verifier_subagent` 布尔，只说「不得由 subagents 模板目录推断」），**没有**任何 requirement 谈声明位置 → 按 D6 落 **ADDED**。
+
+### 验证
+
+| 命令 | 结论 |
+|---|---|
+| `cd harness && npm run typecheck` | **PASS**（无输出即通过） |
+| `cd harness && npx ts-node --transpile-only tests/run-unit.ts --filter codex-adapter-verifier-template` | **PASS** 7 passed / 0 failed |
+| `cd harness && npx ts-node --transpile-only tests/run-unit.ts --filter adapter-catalog-consistency` | **PASS** 12 passed / 0 failed（V4 前为 11） |
+| `cd harness && npx ts-node --transpile-only tests/run-unit.ts --filter init-task-executor` | **PASS** 28 passed / 0 failed |
+| `cd harness && npx ts-node --transpile-only tests/run-unit.ts --filter codeagent-adapter` | **PASS** 12 passed / 0 failed |
+| `npm run openspec:validate` | **PASS** 38 passed / 0 failed，含 `✓ change/codex-verifier-subagent-template`；enforcement 路径全解析 |
+| LF 扫描（node 逐字节扫 15 个改动文件） | **PASS** 无 CR / CRLF |
+| V5 发布件 | **部分**：`classifyPath('agents/codex/templates/agents/verifier.toml')` = `{include:true,rule:null}`，`collectReleaseFiles(repoRoot)` 的 1101 个 included 里含该路径（与 `agents/claude/templates/agents/verifier.md` 同列）。未跑 `candidate:build`——见「未做 / 存疑」第 2 条 |
+
+注：`tests/run-unit.ts` 的过滤器是 `--filter <id>`（位置参数会被忽略并跑全量套件），上表命令已按此形态记录。
+
+### 未做 / 存疑
+
+1. **`harness/tests/run-unit.ts` 不在 §4 提交清单，但必须改**：run-unit 的 `CORE_SUITES` 是**显式注册表**（:53–:380），不是自动发现；`discoverProfileUnitSuites()` 只扫 `profiles/*/harness/tests/unit`。不注册则新套件永远不跑（`EXPLICIT_SUITE_IDS` 的缺失 FAIL 保护也管不到未注册的文件）。已在 :295 加一行注册。**请调度者把该文件补进提交 1 的清单**。
+2. **V5 只做了规则级验证，未跑 `npm run candidate:build`**：该命令第一步就是完整测试 + pack（脚本头注释「完成测试 + pack + zip 内容校验」），等于任务卡禁止的全量 `npm test`。改用发布件规则模块直接判定（见上表），机制与 manifest 同源。真 manifest 由调度者收尾时的 `candidate:build` / `release:verify` 出。
+3. **`AdapterConfig` 类型加可选 `subagents`（D2 末句）未做**：全仓 `grep -rn "AdapterConfig"` 零命中——check-init 里解析 adapter.yaml 的变量是 `let cfg: any`（:596），只有 `AdapterDescriptor`（:371，描述的是解析**结果**，不含 yaml 原始字段）。没有可加字段的类型，按最小改动不新造一个。
+4. ~~**V2 的「`sandbox_mode` 上一行注释」按「上方连续注释块」断言**~~——**该条已被返修回合 2 F2 推翻并修正**。原文声称「骨架注释顺序变动仍会被抓」**不成立**：连续注释块只断言了整块含「默认值」「父线程」两个词，块内换序、增删其它注释行都抓不到。回合 2 改为逐行比对渲染结果前 9 行（见「返修回合 2」F2）。
+5. 宿主验收（§7）与全量 `npm test` 未跑，按任务卡由调度者/用户触发；todos 状态本回合未改。
+6. 本轮未碰 claude / codeagent 的任何文件、未碰 verifier.md 正文、未碰 planner/executor、未新增 templateFiles kind（与 §2 非目标一致）。工作区里其它代理的 WIP 文件一个字节未碰。
+
+### 返修回合 2（2026-09-07 · codex review 第 1 轮 4 条 finding，全部采纳）
+
+验证日志：`<scratch>/cvt/r2-u1.log`（新套件）、`r2-init-task-executor.log`、`r2-adapter-catalog-consistency.log`、`r2-init-orchestrate.log`、`r2-hooks-config-upsert.log`。本回合零 codex 调用、零宿主读写；工作区里 B08（plan 9b2d5e7c）的 WIP 文件一个字节未碰。
+
+#### F1 [high] 次位 adapter 的 auto_overwrite 覆盖不备份 → 已修（新增 D8）
+
+`harness/scripts/utils/init-task-executor.ts` `materialize-adapter:` 分支：
+
+- :767–:770 新增四行注释说明 D8；:772 `if (f.update_policy === 'auto_overwrite' && f.kind !== 'materialized') continue;` 把这批文件从 `syncTemplateTarget` 循环里剔除；
+- :775 `const mechanism = applyInitMechanismSync(ctx.projectRoot, adapter, { ownedByTask });`、:776 `fileResults.push(...mechanism.results);`（该函数 [check-init.ts:1934–1935](../../harness/scripts/check-init.ts:1934) 自带同一条筛选谓词，:1939 对 `ownedByTask` 持有的目标回 `delegated`，:1996–:2006 备份后覆盖）；
+- :781–:783 `message` 在 `mechanism.backupRelDir` 非空时追加「（备份 …）」。
+
+`applyInitMechanismSync` 已在文件头 :57 从 `checkInitTesting` 解构，无新增 import。generic adapter 的 `applyGenericAdapterBundle` 在 `loadInspectorEnv` 里就地改写同一个 descriptor 对象，`applyInitMechanismSync` 收到的是改写后的 `adapter`，bundle 重定向的 targetRel 不会漏。
+
+**新增 V3d**（`harness/tests/unit/codex-adapter-verifier-template.unit.test.ts`:261）：`materialized_adapters: ['claude','codex']`、`plan.tasks` 为空（次位 adapter 无逐文件任务的真实形态），预置 `LEGACY_TOML` → `materialize-adapter:codex` → 与模板逐字节相等 / `effect='updated'` / `message` 含「备份」/ 备份文件 `strictEqual` 旧原文 / 恰好 1 个备份目录；再执行一次 → `effect='unchanged'` 且备份目录 `deepStrictEqual` 不变。辅助函数 `mkTmpProject`:44 与 `ctxFor`:73 加了 `adapters` 形参（默认 `['codex']`，V3a–V3c 行为不变）。
+
+**反例已实证**：临时删掉 :772 那一行（其余不动）跑新套件 → `FAIL V3d`、7 passed / 1 failed；恢复后 8 passed / 0 failed。即 V3d 确实钉住的是备份，不是别的。
+
+#### F2 [high] 「骨架注释顺序变动仍会被抓」不成立 → 已修
+
+`codex-adapter-verifier-template.unit.test.ts` V2 结构用例（:121，改名为「骨架前 9 行逐行等于 D1 顺序；正文逐字节保留」）：删掉 `lines.includes(...)` 与「上方连续注释块含两个词」的松判据，改为 :129 `assert.deepStrictEqual(toml.split('\n').slice(0, 9), [ … ])` —— 第 1–3、5–9 行为 D1 骨架的固定字符串，第 4 行为 `description = '''${desc}'''`（`desc` 仍从 verifier.md frontmatter 现读）。骨架行的顺序、措辞、增删一律失败。保留 `toml.endsWith("\n'''\n")` :141 与无 CR :142。
+
+原「未做 / 存疑」第 4 条已在上方划掉并改成如实描述。
+
+#### F3 [medium] 正文未按 D1 逐字保留 → 已修
+
+- `harness/scripts/utils/codex-agent-toml.ts`:21 `const body = text.slice(fmMatch[0].length).replace(/\n*$/, '\n');`（原 `.replace(/^\n+/, '').replace(/\s+$/, '')` 删首空行、吞末行尾随空格，超出 D1 授权的两件事）；:13–:14 文件头 doc 注释同步改为「正文逐字保留——只做 EOL 归一 LF、尾部恰好一个换行；不去首空行、不去尾随空格」。
+- 重跑 `npm run sync:codex-agents` 重新生成 `agents/codex/templates/agents/verifier.toml`：6361 → **6362 字节**，`developer_instructions = '''` 之后多出一个空行（verifier.md frontmatter 与正文之间那一行），无 CR、单个 `\n` 结尾（node 逐字节核）。
+- 测试侧删掉与生产同源的 `bodyFromMarkdown` helper（原 :31–:36，同款裁剪 → 循环论证）；V2 改用**合成** markdown 断言逐字节：:147 `synthetic = '---\nname: verifier\ndescription: 审查员\ntools: Read, Glob, Grep\n---\n\nline  \n\n'`，先整体转成 CRLF 再渲染，:151 `assert.strictEqual(rendered.slice(openAt + open.length), "\nline  \n'''\n")` —— 首空行、行尾两个空格、尾部恰好一个换行三件事一次钉住，且顺带覆盖 EOL 归一。V1 等值 :106 与 V1 漂移 :112 原样保留。
+
+#### F4 [medium] MIGRATION.md 混入 B08 hunk → 已确认（本回合无改动）
+
+`git diff -U0 -- MIGRATION.md` 两个 hunk：`@@ -264,0 +265,8 @@`（3.0.x 复用轮证据 / 装机复用 / 长图参考，plan 9b2d5e7c = B08，**非本 plan**，本回合与回合 1 均未碰）、`@@ -274,6 +282,16 @@`（3.0.x Codex verifier 子代理模板收编，本 plan）。`git diff -- harness/tests/run-unit.ts` 只有 :294–:295 两行新增（注释 + 套件注册），无其它改动。
+
+#### 验证
+
+| 命令 | 结论 |
+|---|---|
+| `cd harness && npm run typecheck` | **PASS**（无输出即通过） |
+| `cd harness && npx ts-node --transpile-only tests/run-unit.ts --filter codex-adapter-verifier-template` | **PASS** 8 passed / 0 failed（回合 1 为 7，新增 V3d） |
+| `cd harness && npx ts-node --transpile-only tests/run-unit.ts --filter init-task-executor` | **PASS** 28 passed / 0 failed（含 :777 delegates owned per-file targets、:858 inline 不重复计入） |
+| `cd harness && npx ts-node --transpile-only tests/run-unit.ts --filter adapter-catalog-consistency` | **PASS** 12 passed / 0 failed |
+| `cd harness && npx ts-node --transpile-only tests/run-unit.ts --filter init-orchestrate` | **PASS** 82 passed / 0 failed |
+| `cd harness && npx ts-node --transpile-only tests/run-unit.ts --filter hooks-config-upsert` | **PASS** 14 passed / 0 failed |
+| `npm run openspec:validate` | **PASS** 39 passed / 0 failed（含 `✓ change/codex-verifier-subagent-template`；enforcement 路径全解析） |
+| 新 toml 逐字节（node） | **PASS** 6362 字节、无 CR、末字节单个 `\n`（非 `\n\n`） |
+| LF 扫描（node 逐字节扫 16 个本 plan 相关文件） | **PASS** 无 CR / CRLF |
+| V3d 反例（临时删 executor :772 一行） | **PASS**（如期 FAIL V3d，7/1；恢复后 8/0） |
+
+#### 未做 / 存疑（返修回合 2）
+
+1. **§5 的补句放在第 4 条而不是任务卡说的第 1 条**：§5-1 讲的是「toml 是提交进仓库的派生物、漏跑同步由 unit test 抓」，与备份无关；§5-4 才是「宿主手写 toml 被无提示覆盖（有备份）」——D8 修的正是这句在宿主环境下不成立。已补在 §5-4 括号里。若调度者坚持字面位置，请指出。
+2. **D8 的行为差异（放弃的准确性，已写进 D8 正文）**：auto_overwrite 目标在整包物化时不再经 `syncTemplateTarget` 的 `rendered` / skill_bridge goal-mode 特判。已核实全仓所有 auto_overwrite 声明（claude/codeagent 的 subagents+hooks+settings_file、codex 的 subagents、cursor 的 hooks_config）都是 `verbatim` 或 `structured_upsert`，无一 `rendered`；且首位 adapter 的 `sync-auto-overwrite:` 链本来就是这个语义。将来若有人给 `rendered` 模板标 auto_overwrite，两条链会一起写原始模板——这不是本改动引入的新偏差，但也没被任何测试钉住。
+3. **模板缺失时的行为从抛错变成跳过**：`applyInitMechanismSync` 模板读不到时写 stderr 后 `continue`（不产 file_result），`syncTemplateTarget` 是抛错。auto_overwrite 目标全部由扫模板目录枚举而来（除 settings_file / hooks_config 按路径声明），缺失情形由 `template_files_resolvable` 检查项覆盖，本回合不补第二道防线。
+4. **`applyInitMechanismSync` 用 check-init 模块级 `FRAMEWORK_ROOT`，`syncTemplateTarget` 用 `frameworkRootFromCtx(ctx)`**：两者在本仓与宿主 vendored 布局下同值（既有 `sync-auto-overwrite:` 链一直这么用），但如果将来出现 ctx.harnessRoot 指向另一份 framework 的场景，两条链会取不同模板根。本回合不统一（会扩到 D8 之外的既有代码面）。
+5. 全量 `cd harness && npm test`、`candidate:build`（V5）、宿主验收（§7）本回合仍**未跑**，与回合 1 一致；todos 状态未改。
