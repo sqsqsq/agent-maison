@@ -33,6 +33,9 @@ todos:
   - id: b06-host-b07-reacceptance
     content: 用户触发——B07（视觉回修归因与 golden 复用校验，plan 6e4a2c8b）本地完成并进候选件后，按 §7.2 P0.5 裁定 golden 适用性，以用户指定的窗口做范围明确的补验收（不再起同条件 spec→testing 长 run 只为复现）；结果回填 §6 登记表。B07 的完成判据不含此项。 **09-07 已跑：run 20260907T063800Z-26c3b0，B07 目标行为实测成立（三轮拦下 minor、零候选、零回退）；run 因缺口①②③ HALTED/no_progress_visual_gap，见 §6 登记表。**
     status: completed
+  - id: b06-host-b08-reacceptance
+    content: 用户触发——B08（复用证据绑定与长图推导，plan 9b2d5e7c）本地完成并进候选件后，按 §7.2 P0.5 裁定 golden 适用性，跑 testing→testing 截断窗口；观察 i2 类复用轮是否直接闭合、代理与外层执行键是否相等（不再交替真跑）、两张长图屏是否有 `_derived-ref` 派生参考且 verifier 终判；结果回填 §6 登记表。B08 的完成判据不含此项。
+    status: pending
   - id: b06-release-readiness-closeout
     content: 本地与宿主两侧真实完成后才回填登记表、勾各批 host todo 与总 plan 里程碑；不为过门禁提前勾完成。
     status: pending
