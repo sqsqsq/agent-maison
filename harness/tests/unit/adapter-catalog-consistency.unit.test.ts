@@ -3,6 +3,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as YAML from 'yaml';
 
 import {
   AdapterCatalogError,
@@ -219,6 +220,33 @@ const cases: Array<{ name: string; run: () => void }> = [
       // 只有 goal-mode 须显式声明 cursor 运行身份（唯一携带 RESOLVED_ADAPTER 的 slash）
       const gm = fs.readFileSync(path.join(cursorDir, 'goal-mode.md'), 'utf-8');
       assert(/RESOLVED_ADAPTER）\*{0,2}[：:]\s*cursor/.test(gm), 'goal-mode 须声明 RESOLVED_ADAPTER：cursor');
+    },
+  },
+  {
+    name: 'V4 subagents 二选一：顶层与 commands.subagents 不得同时声明；codex 顶层 auto_overwrite',
+    run: () => {
+      const agentsDir = path.join(REPO_FRAMEWORK_ROOT, 'agents');
+      let sawCodex = false;
+      for (const ent of fs.readdirSync(agentsDir, { withFileTypes: true })) {
+        if (!ent.isDirectory()) continue;
+        const yamlPath = path.join(agentsDir, ent.name, 'adapter.yaml');
+        if (!fs.existsSync(yamlPath)) continue;
+        const cfg = YAML.parse(fs.readFileSync(yamlPath, 'utf-8')) as {
+          commands?: { subagents?: unknown } | null;
+          subagents?: { target_dir?: string; template_dir?: string; update_policy?: string } | null;
+        };
+        const top = cfg?.subagents;
+        const nested = cfg?.commands && typeof cfg.commands === 'object' ? cfg.commands.subagents : undefined;
+        assert(!(top && nested), `${ent.name}: subagents 不得同时声明在顶层与 commands 之下`);
+        if (ent.name === 'codex') {
+          sawCodex = true;
+          assert(!!top, 'codex 须在顶层声明 subagents');
+          assert(top!.target_dir === '.codex/agents', `codex subagents.target_dir=${top!.target_dir}`);
+          assert(top!.update_policy === 'auto_overwrite', `codex subagents.update_policy=${top!.update_policy}`);
+          assert(((cfg as { commands?: unknown }).commands ?? null) === null, 'codex commands 须保持 null');
+        }
+      }
+      assert(sawCodex, '未找到 codex adapter.yaml');
     },
   },
   {

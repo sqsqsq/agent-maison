@@ -764,14 +764,23 @@ export function executeInitTask(
         syncTemplateTarget(ctx, adapter, renderEnv, adapter.entryFile.targetRel, { ownedByTask }),
       );
     }
+    // D8（plan 7b2e9d4c）：auto_overwrite 文件改走 applyInitMechanismSync——已存在且内容不同时
+    // 先备份到 .framework-backup/<stamp>/ 再覆盖，与首位 adapter 的 sync-auto-overwrite:<target>
+    // 逐文件任务同一条写盘链。此前次位 adapter（宿主里 codex 就是次位）没有逐文件任务，整包
+    // 物化直接 syncTemplateTarget 覆盖宿主手写文件、无备份。ownedByTask 语义两条链一致。
     for (const f of adapter.templateFiles) {
+      if (f.update_policy === 'auto_overwrite' && f.kind !== 'materialized') continue;
       fileResults.push(syncTemplateTarget(ctx, adapter, renderEnv, f.targetRel, { ownedByTask }));
     }
+    const mechanism = applyInitMechanismSync(ctx.projectRoot, adapter, { ownedByTask });
+    fileResults.push(...mechanism.results);
     throwIfBlocked(fileResults);
 
     const fileEffects = aggregateFileEffects(fileResults);
     return {
-      message: formatBundleSyncMessage(name, fileEffects),
+      message:
+        formatBundleSyncMessage(name, fileEffects) +
+        (mechanism.backupRelDir ? `（备份 ${mechanism.backupRelDir}）` : ''),
       file_effects: fileEffects,
       file_results: fileResults,
     };

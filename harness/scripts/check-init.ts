@@ -678,14 +678,18 @@ function loadAdapter(adapter: string): AdapterDescriptor {
         parseUpdatePolicy(cfg.commands.update_policy),
       );
     }
-    if (cfg.commands.subagents && cfg.commands.subagents.template_dir && cfg.commands.subagents.target_dir) {
-      collectDir(
-        cfg.commands.subagents.template_dir,
-        cfg.commands.subagents.target_dir,
-        'commands.subagents.template_dir',
-        parseUpdatePolicy(cfg.commands.subagents.update_policy),
-      );
-    }
+  }
+  // 子代理模板：顶层 subagents 优先，commands.subagents 是历史位置（语义相同，schema 禁止同时声明）。
+  // 必须在 commands 块**之外**收集——codex 的 `commands: null` 进不了上面那个块（plan 7b2e9d4c D2）。
+  const subagents = cfg.subagents
+    ?? (cfg.commands && typeof cfg.commands === 'object' ? cfg.commands.subagents : undefined);
+  if (subagents && subagents.template_dir && subagents.target_dir) {
+    collectDir(
+      subagents.template_dir,
+      subagents.target_dir,
+      cfg.subagents ? 'subagents.template_dir' : 'commands.subagents.template_dir',
+      parseUpdatePolicy(subagents.update_policy),
+    );
   }
   if (cfg.skill_bridge && typeof cfg.skill_bridge === 'object'
     && cfg.skill_bridge.template_dir && cfg.skill_bridge.target_dir) {
