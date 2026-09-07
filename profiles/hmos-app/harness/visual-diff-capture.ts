@@ -25,7 +25,7 @@ import {
   computeEdgeDensityTileDivergence,
   isJimpAvailable,
   readImageDimensions,
-  referenceViewportIncompatible,
+  resolveCompareReference,
 } from './image-toolkit';
 import type { VisualDiffReport, VisualDiffScreenEntry } from './visual-diff-check';
 import { hashScreenshotFile, isCaptureMutableVerdict } from './visual-diff-check';
@@ -1044,19 +1044,28 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
   // 当前参考图尺寸判定；命中的屏：①不得跳采（旧 pass/score/edge/provider 产物不能靠"同 build 同 hash"存活）；
   // ②merge 前整条剔除——复用 identity mismatch 的 invalidateScreenIds 通道（瞬时、不落盘、不新增持久字段）；
   // ③零成功采集的早退路径同样剪除。重采后的新条目再由 refForPixel 判定不产 score/edge，check 侧独立 FAIL/WARN。
+  // B08 D3（plan 9b2d5e7c）：采集 / provider / 检查 / spec 前置门共用 resolveCompareReference——只有
+  // `incompatible`（宽度不同，或顶部一屏派生失败）才失效；`top_slice`（同宽更高）屏按普通屏处理：
+  // 同 build 同 hash 可跳采，旧裁决不整条剔除；像素度量吃派生图（与截图同尺寸同原点，不换算）。
+  const compareRefOf = (refAbs: string, refId: string, shotAbs: string) =>
+    resolveCompareReference({ refAbs, shotDims: readImageDimensions(shotAbs), projectRoot: opts.projectRoot, feature: opts.feature, refId });
   const viewportIncompatibleIds: string[] = [];
   if (refIndex) {
     for (const [sid, prev] of existingById) {
       const shot = prev.screenshot_path;
       if (typeof shot !== 'string' || !shot.trim()) continue;
       const shotAbs = path.isAbsolute(shot) ? shot : path.resolve(opts.projectRoot, shot);
-      const refAbs = resolveRefSourceImage(refIndex, (prev.ref_id ?? sid).trim()).path;
+      const refId = (prev.ref_id ?? sid).trim();
+      const refAbs = resolveRefSourceImage(refIndex, refId).path;
       if (!refAbs) continue;
-      if (referenceViewportIncompatible(readImageDimensions(refAbs), readImageDimensions(shotAbs))) {
+      if (compareRefOf(refAbs, refId, shotAbs).mode === 'incompatible') {
         viewportIncompatibleIds.push(sid);
       }
     }
   }
+  /** 像素度量的参考输入：direct=原图、top_slice=派生图、incompatible=null（score_floor/edge 不产出） */
+  const refForPixelOf = (refAbs: string | null, refId: string, shotAbs: string): string | null =>
+    refAbs ? compareRefOf(refAbs, refId, shotAbs).path : null;
 
   const capturedScreens: Array<{ entry: VisualDiffScreenEntry; hash: string }> = [];
   const p0CaptureFailures: string[] = [];
@@ -1234,7 +1243,8 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
     }
     // plan b3d7e5a1 T5（codex P1）：整页参考图不进任何像素度量——尺寸不兼容按"无参考图"处理，score_floor/edge 不产出；
     // 判定与 visual-diff-check 的前置门同一函数，check 侧会独立 FAIL/WARN 并点名。
-    const refForPixel = refAbs && referenceViewportIncompatible(readImageDimensions(refAbs), readImageDimensions(paths.abs)) ? null : refAbs;
+    // B08 D3：同宽更高的参考图按顶部一屏派生图产 score/edge（resolveCompareReference 单一入口）。
+    const refForPixel = refForPixelOf(refAbs, refId, paths.abs);
     const floor = resolveScoreFloor(paths.abs, refForPixel, Boolean(opts.computeScoreFloor));
     const edge = resolveEdgeSentinel(paths.abs, refForPixel, Boolean(opts.computeScoreFloor));
     const screenshotHash = hashScreenshotFile(paths.abs);
@@ -1324,7 +1334,7 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
       // overlay 的参考图取其基屏（parentScreenId）——与 visual-diff.json ref_id=基屏 一致。
       const refId = ov.parentScreenId;
       const refAbs = refIndex ? resolveRefSourceImage(refIndex, refId).path : null;
-      const refForPixel = refAbs && referenceViewportIncompatible(readImageDimensions(refAbs), readImageDimensions(paths.abs)) ? null : refAbs;
+      const refForPixel = refForPixelOf(refAbs, refId, paths.abs);
       const floor = resolveScoreFloor(paths.abs, refForPixel, Boolean(opts.computeScoreFloor));
       const edge = resolveEdgeSentinel(paths.abs, refForPixel, Boolean(opts.computeScoreFloor));
       const screenshotHash = hashScreenshotFile(paths.abs);

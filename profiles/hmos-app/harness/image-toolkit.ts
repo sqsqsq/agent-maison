@@ -5,6 +5,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
+import { featureDir } from '../../../harness/config';
+import type { UiSpecComponentNode, UiSpecScreen } from '../../../harness/scripts/utils/ui-spec-shared';
 
 export interface LabColor {
   L: number;
@@ -389,6 +391,122 @@ export function referenceViewportIncompatible(
   const rw = ref?.w ?? 0; const rh = ref?.h ?? 0; const vw = viewport?.w ?? 0; const vh = viewport?.h ?? 0;
   if (rw <= 0 || rh <= 0 || vw <= 0 || vh <= 0) return false;
   return rh / rw > (vh / vw) * REFERENCE_VIEWPORT_ASPECT_TOLERANCE;
+}
+
+// ---------------------------------------------------------------------------
+// B08 D3（plan 9b2d5e7c）：长图参考的顶部一屏推导——采集 / provider / 检查 / spec 前置门共用同一判据与入口
+// ---------------------------------------------------------------------------
+
+/** direct=按原图比对；top_slice=参考图同宽更高，按顶部一屏派生图比对；incompatible=宽度不同，整屏剔除（现状） */
+export type CompareReferenceMode = 'direct' | 'top_slice' | 'incompatible';
+
+/**
+ * 判据（唯一）：可推导 := 既有 `referenceViewportIncompatible`（×1.15）**且** `ref.w === shot.w`。
+ * 不另写增量式公式；宽度不同 → incompatible → 现状整屏剔除。
+ */
+export function classifyCompareReference(
+  ref: { w: number | null; h: number | null } | null,
+  shot: { w: number | null; h: number | null } | null,
+): CompareReferenceMode {
+  if (!referenceViewportIncompatible(ref, shot)) return 'direct';
+  return ref?.w === shot?.w ? 'top_slice' : 'incompatible';
+}
+
+/** 派生参考图目录：`device-testing/device-screenshots/_derived-ref/` */
+export function derivedRefDir(projectRoot: string, feature: string): string {
+  return path.join(featureDir(projectRoot, feature), 'device-testing', 'device-screenshots', '_derived-ref');
+}
+
+export interface CompareReferenceResolution {
+  /** 比对输入路径：direct=原图；top_slice=派生图；incompatible=null */
+  path: string | null;
+  mode: CompareReferenceMode;
+  /** top_slice 时 `shot.h / ref.h`（范围划分 splitMustHaveByTopSlice 的输入） */
+  ratio?: number;
+  refDims: ImageDims | null;
+  shotDims: ImageDims | null;
+  note?: string;
+}
+
+/**
+ * 单一入口：`top_slice` 时**每次**用 jimp 把原图顶部 `shot.h` 像素重裁到
+ * `_derived-ref/<ref_id>.top<shotH>.png`（覆盖写；不看已有文件、不做缓存判定），返回派生路径。
+ * 派生图与截图同尺寸、同原点（页顶左上）——所有参考侧坐标天然同坐标系，不做任何换算。
+ * 派生失败（jimp 不可用 / 裁切异常）→ 按 incompatible 剔除并在 note 说明（fail-closed，不洗绿）。
+ */
+export function resolveCompareReference(opts: {
+  refAbs: string;
+  shotDims: ImageDims | null;
+  projectRoot: string;
+  feature: string;
+  refId: string;
+}): CompareReferenceResolution {
+  const refDims = readImageDimensions(opts.refAbs);
+  const shotDims = opts.shotDims;
+  const mode = classifyCompareReference(refDims, shotDims);
+  if (mode === 'direct') return { path: opts.refAbs, mode, refDims, shotDims };
+  if (mode === 'incompatible') return { path: null, mode, refDims, shotDims };
+  const shotH = shotDims!.h!;
+  const outAbs = path.join(derivedRefDir(opts.projectRoot, opts.feature), `${opts.refId}.top${shotH}.png`);
+  if (!isJimpAvailable()) {
+    return { path: null, mode: 'incompatible', refDims, shotDims, note: '顶部一屏派生失败：jimp 不可用' };
+  }
+  fs.mkdirSync(path.dirname(outAbs), { recursive: true });
+  const out = runJimpWorker(['crop-top', opts.refAbs, String(shotH), outAbs]);
+  if (out.ok !== true || out.height !== shotH || out.width !== refDims!.w) {
+    return {
+      path: null, mode: 'incompatible', refDims, shotDims,
+      note: `顶部一屏派生失败：${typeof out.error === 'string' ? out.error : `派生尺寸 ${String(out.width)}×${String(out.height)} 与截图不符`}`,
+    };
+  }
+  return { path: outAbs, mode, ratio: shotH / refDims!.h!, refDims, shotDims };
+}
+
+export interface TopSliceMustHaveSplit {
+  /** 声明 bbox 完整落在顶部一屏内（y+h ≤ ratio）——照常要求出现、照常报缺失 */
+  inScope: string[];
+  /** 声明 bbox 完全在顶部一屏之外（y ≥ ratio）——不要求出现、不算 missing、不算 pass，记未验证 */
+  outOfScope: string[];
+  /** 跨线或无 bbox 声明——范围未确定，记未验证 */
+  undetermined: string[];
+}
+
+/**
+ * 比对范围由 ui-spec **声明**确定（codex 第 2 轮 #1）：只用元素声明的归一化 bbox（相对参考原图），
+ * `ratio = shot.h / ref.h`。不读 layout dump、不读 locateElements——产品漏画顶部元素时它仍在
+ * "范围内"，照常报缺失。provider 覆盖与 visual_diff_region_attest 都从这里取范围内子集。
+ */
+export function splitMustHaveByTopSlice(
+  uiScreen: Pick<UiSpecScreen, 'must_have_elements' | 'root'> | undefined,
+  ratio: number,
+): TopSliceMustHaveSplit {
+  const bboxById = new Map<string, number[]>();
+  const walk = (n: UiSpecComponentNode | undefined): void => {
+    if (!n) return;
+    if (typeof n.id === 'string' && n.id && Array.isArray(n.bbox) && n.bbox.length === 4) bboxById.set(n.id, n.bbox);
+    for (const c of n.children ?? []) walk(c);
+  };
+  walk(uiScreen?.root);
+  const out: TopSliceMustHaveSplit = { inScope: [], outOfScope: [], undetermined: [] };
+  for (const el of uiScreen?.must_have_elements ?? []) {
+    const scope = topSliceScopeOf(bboxById.get(el), ratio);
+    if (scope === 'in') out.inScope.push(el);
+    else if (scope === 'out') out.outOfScope.push(el);
+    else out.undetermined.push(el);
+  }
+  return out;
+}
+
+/**
+ * 单个声明 bbox 的范围判定（splitMustHaveByTopSlice 与 OCR 锚点期望集合共用同一口径）：
+ * `y+h ≤ ratio` 内 / `y ≥ ratio` 外 / 跨线或无 bbox 未确定。
+ */
+export function topSliceScopeOf(bbox: unknown, ratio: number): 'in' | 'out' | 'undetermined' {
+  if (!Array.isArray(bbox) || bbox.length !== 4 || !bbox.every(v => typeof v === 'number' && Number.isFinite(v))) return 'undetermined';
+  const y = bbox[1] as number; const h = bbox[3] as number;
+  if (y + h <= ratio) return 'in';
+  if (y >= ratio) return 'out';
+  return 'undetermined';
 }
 
 /**

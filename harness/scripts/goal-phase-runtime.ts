@@ -2105,6 +2105,40 @@ export interface DeviceTestCollectContext {
   harnessWindow: { startMs: number; endMs: number };
   /** testing 阶段 reports 目录（evidence 与 run meta 所在） */
   reportsDir: string;
+  /** B08 D1（plan 9b2d5e7c）：工程根——复用 doc 的 reused_run_dir 相对它解析 */
+  projectRoot: string;
+  /**
+   * B08 D1：当前盘上 HAP 的完整 sha256（goal 运行时从 device-test-install.meta.json + 盘上 HAP
+   * 三核算出，见 resolveCurrentHapSha256Full）；null = 不可核验。只在 doc.install_reused 时消费。
+   */
+  currentHapSha256Full?: string | null;
+}
+
+/**
+ * B08 D1（codex 第 2 轮 #3）：装机复用轮的"当前 HAP 完整摘要"——采信端在 harness 之外拿不到
+ * holder，改从**既有装机产物**算：读 `reportsDir/device-test-install.meta.json` 的
+ * hapPath / hapMtimeMs / hapSizeBytes / hapSha256（12 位短指纹），对盘上文件核 mtime 与 size
+ * 一致后算 sha256 全量，并要求短指纹是其前缀；任一不符或 meta 缺失 → null。
+ * 不新增身份系统、不与 doc 自身字段比较。
+ */
+export function resolveCurrentHapSha256Full(projectRoot: string, reportsDir: string): string | null {
+  try {
+    const meta = JSON.parse(
+      fs.readFileSync(path.join(reportsDir, 'device-test-install.meta.json'), 'utf-8'),
+    ) as { hapPath?: unknown; hapMtimeMs?: unknown; hapSizeBytes?: unknown; hapSha256?: unknown };
+    if (
+      typeof meta.hapPath !== 'string' || !meta.hapPath.trim() ||
+      typeof meta.hapMtimeMs !== 'number' || typeof meta.hapSizeBytes !== 'number' ||
+      typeof meta.hapSha256 !== 'string' || !meta.hapSha256.trim()
+    ) return null;
+    const abs = path.isAbsolute(meta.hapPath) ? meta.hapPath : path.join(projectRoot, meta.hapPath);
+    const st = fs.statSync(abs);
+    if (st.mtimeMs !== meta.hapMtimeMs || st.size !== meta.hapSizeBytes) return null;
+    const full = createHash('sha256').update(fs.readFileSync(abs)).digest('hex');
+    return full.startsWith(meta.hapSha256.trim().toLowerCase()) ? full : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -2197,8 +2231,38 @@ export function validateDeviceTestEvidenceBinding(
   ) {
     return 'evidence 设备元组与当前 attempt 冻结元组不一致（比完整三元组，不只比 serial）';
   }
-  if (doc.install_executed !== true || doc.install_ok !== true) {
+  // B08 D1（plan 9b2d5e7c）：复用态按"记录身份"采信——装机复用核当前 HAP 完整摘要（不要求本轮真装）；
+  // 设备复用核被复用 run 的执行键记录（与 decideReuse 同一判据 isExecutionRecordReusable），跳过
+  // run meta 时间窗（复用回填的是冻结 meta，时间必在窗外）。非复用 doc 四项检查逐字不变。
+  const installReused = doc.install_reused === true;
+  const runReused = doc.reused_by_execution_key === true;
+  if (installReused) {
+    if (!ctx.currentHapSha256Full) return '当前 HAP 完整摘要不可核验（install meta 缺失或与盘上 HAP 不一致）';
+    if (doc.hap_sha256_full !== ctx.currentHapSha256Full) return '复用装机的 HAP 摘要与当前不一致';
+  } else if (doc.install_executed !== true || doc.install_ok !== true) {
     return 'evidence 无本轮真实安装成功事实（install reuse/失败不作数）';
+  }
+  if (runReused) {
+    const runDirRel = String(doc.reused_run_dir ?? '').trim();
+    const runDir = runDirRel ? path.resolve(ctx.projectRoot, runDirRel) : null;
+    let identity: { ok: boolean; reason: string };
+    try {
+      const profileDir = path.join(__dirname, '..', '..', 'profiles', 'hmos-app', 'harness');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const ek = require(path.join(profileDir, 'execution-key')) as {
+        EXECUTION_KEY_FILE: string;
+        isExecutionRecordReusable: (record: unknown, runDir: string, opts: { executionKey: string }) => { ok: boolean; reason: string };
+      };
+      if (!runDir || !doc.execution_key) {
+        identity = { ok: false, reason: 'doc 缺 reused_run_dir / execution_key' };
+      } else {
+        const record = JSON.parse(fs.readFileSync(path.join(runDir, ek.EXECUTION_KEY_FILE), 'utf-8')) as { execution_key?: unknown };
+        identity = ek.isExecutionRecordReusable(record, runDir, { executionKey: doc.execution_key });
+      }
+    } catch (e) {
+      identity = { ok: false, reason: `执行键记录不可读：${(e as Error).message}` };
+    }
+    if (!identity.ok) return `复用记录身份不匹配（${identity.reason}）`;
   }
   // trace 一致性：writer 直取本轮 holder；collector 以权威 resolver 二次核验两者一致
   const authoritative = resolveAuthoritativeHylyreTracePath(ctx.reportsDir);
@@ -2210,6 +2274,7 @@ export function validateDeviceTestEvidenceBinding(
   if (!Number.isFinite(writtenAt) || writtenAt < ctx.harnessWindow.startMs || writtenAt > ctx.harnessWindow.endMs) {
     return 'evidence written_at 不在本 attempt 的 harness 窗口内';
   }
+  if (runReused) return null; // 复用回填的是被复用 run 的冻结 meta，其时间窗由记录身份担保
   try {
     const meta = JSON.parse(
       fs.readFileSync(path.join(ctx.reportsDir, 'device-test-run.meta.json'), 'utf-8'),
@@ -8001,6 +8066,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 reportsDir: featurePhaseReportsDir(
                   projectRoot, manifest.feature, String(phase), frameworkRoot,
                 ),
+                projectRoot,
+                // B08 D1：装机复用轮的当前 HAP 完整摘要（install meta + 盘上 HAP 三核）
+                currentHapSha256Full: resolveCurrentHapSha256Full(
+                  projectRoot,
+                  featurePhaseReportsDir(projectRoot, manifest.feature, String(phase), frameworkRoot),
+                ),
               })
             : { defects: [], unverified: [] };
         // P0-5（plan 7c4f2e9b）：in-flow 探针结果 hoist——closure_kind 分类 fresh 路径
@@ -8233,7 +8304,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
             closureFinalizationError !== null ||
             interactionSentinel !== null ||
             actionableResult.defects.length > 0 ||
-            actionableResult.unverified.length > 0,
+            // B08 D4（plan 9b2d5e7c）：unverified（证据身份不齐待重采）不再单独构成失败事实——宿主 i2
+            // 的 PASS+retry 因 evidence 绑定失败带上 code_regression。保留**可信真机根失败**这一项：
+            // 绑定通过且 case 失败（test_contract/environment/unknown 也走 unverified 通路）是真实失败
+            // 事实，否则既有「Test-contract attribution survives retry and resume」的 test_contract
+            // 归因无法持久化到 phase_verdict（f4 t1）。与任一其他失败事实并存时归因照旧保留。
+            (actionableResult.trustedDeviceRootClassifications?.length ?? 0) > 0,
         });
         const meta = currentFailureProjection.blockingMeta;
         // P0-B §七.3：签名必须使用 evidence 精修后的最终 kind。否则 phase_verdict 虽然

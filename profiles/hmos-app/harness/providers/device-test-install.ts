@@ -61,7 +61,10 @@ export interface DeviceTestInstallResult {
    * d9e4b7c1 T2：**调用 hdc install 之前**计算的完整 64 hex HAP 摘要——
    * device-test-evidence 的 build 绑定字段。装机后写 meta 时才算（旧口径）存在
    * "安装中 HAP 被并发重建 → 记到设备上没有的字节"的 TOCTOU；装前计算钉死
-   * "装入的就是这些字节"。reuse/未执行安装路径为 null（evidence 要求 executed）。
+   * "装入的就是这些字节"。
+   * B08 D2（plan 9b2d5e7c）：装机复用分支同源回传当前 HAP 的完整摘要——它是执行键的输入
+   * （check-testing.ts:4431），复用分支回 null 会让代理与外层的执行键交替、复用被"最新一条"
+   * 挡住（宿主 run 20260907T063800Z-26c3b0 一小时内真机跑了四遍）。未执行安装路径仍为 null。
    */
   hapSha256Full?: string | null;
 }
@@ -283,10 +286,13 @@ export function installDeviceTestApp(opts: DeviceTestInstallOptions): DeviceTest
     versionAllowsReuse;
 
   if (canReuseInstall) {
+    // B08 D2：与真装分支同源（computeHapSha256Full(opts.hapPath)）——执行键的 HAP 输入不因复用而空
+    const reusedHapSha256Full = computeHapSha256Full(opts.hapPath);
     const logLines = [
       `[hap] ${opts.hapPath}`,
       describeInstallReuse(installedParse, candVc),
       `[hap_fp] mtimeMs=${hapFp!.mtimeMs} size=${hapFp!.size}`,
+      `[hap_sha256_full] ${reusedHapSha256Full ?? '(不可读)'}`,
     ];
     const logPath = writeInstallArtifacts(opts, {
       logLines,
@@ -313,6 +319,7 @@ export function installDeviceTestApp(opts: DeviceTestInstallOptions): DeviceTest
       ok: true,
       logPath,
       errors: [],
+      hapSha256Full: reusedHapSha256Full,
     };
   }
 

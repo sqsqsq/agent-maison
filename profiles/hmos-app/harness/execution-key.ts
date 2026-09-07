@@ -201,6 +201,39 @@ export interface DecideReuseOptions {
 }
 
 /**
+ * B08 D1（plan 9b2d5e7c）：一条执行键记录的**身份判据**——同键、成功、trace 在盘、执行事实
+ * 冻结件齐。decideReuse 与 goal 侧的复用证据采信（validateDeviceTestEvidenceBinding）共用
+ * 这一个函数，采信不得比复用更严：派生组缺 / `timing_complete=false` **不是**拒绝理由
+ * （decideReuse 对它走重建通道）。`label` 只进人读原因（decideReuse 传 dirStamp）。
+ */
+export function isExecutionRecordReusable(
+  record: ExecutionKeyRecord,
+  runDir: string,
+  opts: { executionKey: string; artifacts?: ReadonlyArray<FrozenArtifactSpec>; label?: string },
+): { ok: boolean; reason: string } {
+  const artifacts = opts.artifacts ?? FROZEN_RUN_ARTIFACTS;
+  const label = opts.label ?? path.basename(path.dirname(runDir));
+  if (record.execution_key !== opts.executionKey) {
+    return { ok: false, reason: `最新 run ${label} 是其他 execution key，重新真跑` };
+  }
+  if (record.outcome !== 'success') return { ok: false, reason: `最新同键 run ${label} outcome=${record.outcome}，重新真跑` };
+  // trace_path 为空串 = 该 leg 没有 Hylyre trace（UT leg）；执行事实由下面的冻结件组担保。
+  if (record.trace_path && !fs.existsSync(record.trace_path)) {
+    return { ok: false, reason: `最新同键 run ${label} 的 trace 缺失` };
+  }
+  const frozen = record.frozen_files ?? [];
+  const present = (name: string): boolean => frozen.includes(name) && fs.existsSync(path.join(runDir, name));
+  const missingExecution = artifacts.filter(f => f.group === 'execution' && !present(f.frozen));
+  if (missingExecution.length > 0) {
+    return {
+      ok: false,
+      reason: `最新同键 run ${label} 执行事实冻结件缺失（${missingExecution.map(f => f.frozen).join(', ')}），重新真跑`,
+    };
+  }
+  return { ok: true, reason: `同键 run ${label} 成功、执行事实冻结件齐备` };
+}
+
+/**
  * 3.0.0 简化：只看最新一条带 execution-key 的真实 attempt。
  * 最新 attempt 必须同键、成功且执行事实完整；更新的别键或同键失败都重新真跑。
  * 没有 execution-key 的临时空目录不进入 listExecutionKeyRuns，天然不参与判断——
@@ -217,23 +250,10 @@ export function decideReuse(
   const latest = listExecutionKeyRuns(reportsBase, opts.leg ?? 'hylyre')
     .filter(r => !exclude || path.resolve(r.runDir) !== exclude)[0];
   if (!latest) return { reusable: null, reason: '无 execution-key 历史 run' };
-  if (latest.record.execution_key !== executionKey) {
-    return { reusable: null, reason: `最新 run ${latest.dirStamp} 是其他 execution key，重新真跑` };
-  }
-  if (latest.record.outcome !== 'success') return { reusable: null, reason: `最新同键 run ${latest.dirStamp} outcome=${latest.record.outcome}，重新真跑` };
-  // trace_path 为空串 = 该 leg 没有 Hylyre trace（UT leg）；执行事实由下面的冻结件组担保。
-  if (latest.record.trace_path && !fs.existsSync(latest.record.trace_path)) {
-    return { reusable: null, reason: `最新同键 run ${latest.dirStamp} 的 trace 缺失` };
-  }
+  const identity = isExecutionRecordReusable(latest.record, latest.runDir, { executionKey, artifacts, label: latest.dirStamp });
+  if (!identity.ok) return { reusable: null, reason: identity.reason };
   const frozen = latest.record.frozen_files ?? [];
   const present = (name: string): boolean => frozen.includes(name) && fs.existsSync(path.join(latest.runDir, name));
-  const missingExecution = artifacts.filter(f => f.group === 'execution' && !present(f.frozen));
-  if (missingExecution.length > 0) {
-    return {
-      reusable: null,
-      reason: `最新同键 run ${latest.dirStamp} 执行事实冻结件缺失（${missingExecution.map(f => f.frozen).join(', ')}），重新真跑`,
-    };
-  }
   const missingDerived = artifacts.filter(f => f.group === 'derived' && !present(f.frozen));
   if (missingDerived.length > 0 || !latest.record.timing_complete) {
     return {

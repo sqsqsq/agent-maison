@@ -756,6 +756,47 @@ cases.push({
   },
 });
 
+// ---------------- B08 R1 返修（plan 9b2d5e7c，codex #2）：visual_reference_viewport 来源的清偿条件 ----------------
+
+cases.push({
+  name: 'B08 visual_reference_viewport 清偿：参考图换成兼容图后（testing visual_diff PASS 且 structured.kind=visual_diff，该 check 缺席）→ closed',
+  run: () => {
+    const opened = deriveVisualDebt('demo', [chk('visual_reference_viewport', 'WARN', 'MINOR')], null);
+    assertEq(opened.entries.find(e => e.source_check_id === 'visual_reference_viewport')!.status, 'open', 'top_slice WARN 先产 open 债务');
+    const after = deriveVisualDebt('demo', [{ ...chk('visual_diff', 'PASS'), structured: { kind: 'visual_diff' } }], opened);
+    assertEq(after.entries.find(e => e.source_check_id === 'visual_reference_viewport')!.status, 'closed', '视觉流水线真跑且 PASS → 缺席清偿');
+  },
+});
+
+cases.push({
+  name: 'B08 visual_reference_viewport 保留：该 check 缺席但本轮 visual_diff 为 SKIP / 缺报告 WARN / 解析失败 FAIL（无 structured.kind）→ 仍 open',
+  run: () => {
+    const opened = deriveVisualDebt('demo', [chk('visual_reference_viewport', 'WARN', 'MINOR')], null);
+    for (const round of [
+      [chk('visual_diff', 'SKIP')],
+      [chk('visual_diff', 'WARN')],
+      [chk('visual_diff', 'FAIL')],
+      [chk('visual_diff', 'PASS')], // 没有 structured.kind=visual_diff 的 PASS 行（非流水线产出）不算证据
+      [],
+    ]) {
+      const after = deriveVisualDebt('demo', round, opened);
+      assertEq(after.entries.find(e => e.source_check_id === 'visual_reference_viewport')!.status, 'open', `缺席且无有效 visual_diff PASS 须保留 open：${JSON.stringify(round)}`);
+    }
+  },
+});
+
+cases.push({
+  name: 'B08 visual_reference_viewport 不提前关闭：长图未动、只重跑 spec（前置门对可推导屏出 PASS 行）→ 历史条目保留 open',
+  run: () => {
+    const opened = deriveVisualDebt('demo', [chk('visual_reference_viewport', 'WARN', 'MINOR')], null);
+    const specRerun = deriveVisualDebt('demo', [chk('visual_reference_viewport', 'PASS', 'MINOR')], opened);
+    assertEq(specRerun.entries.find(e => e.source_check_id === 'visual_reference_viewport')!.status, 'open', 'spec 阶段 PASS 行不是清偿证据');
+    // 其他来源的 PASS 清偿规则不受影响
+    const other = deriveVisualDebt('demo', [chk('visual_diff', 'WARN')], null);
+    assertEq(deriveVisualDebt('demo', [chk('visual_diff', 'PASS')], other).entries.find(e => e.source_check_id === 'visual_diff')!.status, 'closed', '其他来源仍按明确 PASS 清偿');
+  },
+});
+
 // ---------------- codex 实施 review P0-3：裸 1.1 summary 拒收 ----------------
 
 cases.push({

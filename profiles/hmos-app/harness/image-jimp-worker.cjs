@@ -94,6 +94,19 @@ async function runCrop(imagePath, bbox, padding, outPath) {
   return { ok: true, width: cropped.bitmap.width, height: cropped.bitmap.height };
 }
 
+/**
+ * B08 D3（plan 9b2d5e7c）：顶部一屏派生——原图顶部 `height` 像素**逐像素**裁出（不 trim、不缩放），
+ * 派生图与设备截图同尺寸同原点，参考侧坐标不换算。
+ * argv: crop-top <imagePath> <height> <outPath>
+ */
+async function runCropTop(imagePath, heightStr, outPath) {
+  const img = await Jimp.read(imagePath);
+  const h = Math.max(1, Math.min(img.bitmap.height, parseInt(heightStr, 10) || 0));
+  const cropped = img.clone().crop(0, 0, img.bitmap.width, h);
+  await cropped.writeAsync(outPath);
+  return { ok: true, width: cropped.bitmap.width, height: cropped.bitmap.height };
+}
+
 async function runSample(imagePath, bbox, padding) {
   const img = await Jimp.read(imagePath);
   const { x, y, cw, ch, w } = bboxPixels(img, bbox, padding);
@@ -387,6 +400,12 @@ async function main() {
     const [x, y, w, h, paddingStr, outPath] = rest;
     const padding = parseFloat(paddingStr);
     const result = await runCrop(imagePath, [x, y, w, h], padding, outPath);
+    process.stdout.write(JSON.stringify(result));
+    return;
+  }
+  if (cmd === 'crop-top') {
+    const [heightStr, outPath] = rest;
+    const result = await runCropTop(imagePath, heightStr, outPath);
     process.stdout.write(JSON.stringify(result));
     return;
   }

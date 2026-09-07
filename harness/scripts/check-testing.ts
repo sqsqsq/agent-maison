@@ -1938,6 +1938,16 @@ interface DeviceTestPipelineHolder {
   installOk: boolean;
   /** 装机前计算的完整 64 hex HAP 摘要（provider 回传） */
   hapSha256Full: string | null;
+  // B08 D1（plan 9b2d5e7c）：复用态事实——evidence 写出门槛改为"装机事实已知 ∧ 设备执行事实存在"，
+  // 复用轮照常写出并按执行键身份采信；缺省 false/null = 非复用（旧行为逐字不变）。
+  /** 本轮装机为复用（同 HAP 未变、设备已装）；摘要仍由 provider 同源回传到 hapSha256Full */
+  installReused?: boolean;
+  /** 本轮 device_test.run 为同键复用（decideReuse 命中） */
+  deviceRunReused?: boolean;
+  /** 本轮执行键（真跑与复用都记） */
+  executionKey?: string | null;
+  /** 被复用 run 目录（相对 projectRoot，正斜杠） */
+  reusedRunDir?: string | null;
   /** Native/legacy evidence decision for the same run; in-memory only. */
   hylyreEvidenceGate?: HylyreEvidenceGateResult;
   /** Existing run/evidence identity for native trace/plan binding. */
@@ -3154,6 +3164,7 @@ function checkDeviceTestInstallGate(
     // d9e4b7c1 T2：未合并的实装事实（evidence 写入门槛消费）
     holder.installExecuted = res.executed === true && res.reused !== true;
     holder.installOk = res.ok === true && holder.installExecuted;
+    holder.installReused = res.reused === true;
     holder.hapSha256Full = res.hapSha256Full ?? null;
 
     const installDetail = res.reused
@@ -3189,13 +3200,16 @@ function checkDeviceTestInstallGate(
  * install provider 知道 executed/ok/hash、run provider 知道 trace/cases，二者都不具备
  * 写入的全部事实；由 build→install→run 完成后的本函数单点合成）。
  *
- * 写入门槛（plan d9e4b7c1 v13 冻结，全部满足才写）：
+ * 写入门槛（plan d9e4b7c1 v13 冻结；B08 D1 plan 9b2d5e7c 把前两条事实放宽到复用态）：
  *   · MAISON_GOAL_GATE_HARNESS==='1'（runner 直 spawn 的 gate 专属标记）；
  *   · goal run/attempt 身份完整；
- *   · 本轮真实安装成功（installExecuted && installOk——installPassed 合并了 reuse 不作数）；
- *   · device_test.run 已执行且本轮 trace 在盘（trace_path 直取 holder，禁调 authoritative
- *     resolver——那是 collector 的二次核验器，writer 用它会把旧 trace 洗成本轮）；
+ *   · 装机事实已知：本轮真实安装成功（installExecuted && installOk）**或** 装机复用同 HAP
+ *     （installPassed && installReused && hapSha256Full 非空——摘要由 install provider 复用分支同源回传）；
+ *   · 设备执行事实存在：device_test.run 真跑或同键复用，且 trace 在盘（trace_path 直取 holder，
+ *     禁调 authoritative resolver——那是 collector 的二次核验器，writer 用它会把旧 trace 洗成本轮）；
  *   · 写前复算 HAP 完整摘要与装机前一致（compose 内执行，TOCTOU 钉死）。
+ * 复用事实以可选字段（install_reused / reused_by_execution_key / execution_key / reused_run_dir）
+ * 写进 doc，schema_version 仍 1.1；采信端按执行键身份核验（goal-phase-runtime validateDeviceTestEvidenceBinding）。
  * 结果语义（review P1：evidence 生成失败不得静默吞——"真机测的是旧 HAP、当前 HAP 已变化"
  * 时 compose 会拒绝，若只 warn 则 collector 把缺文件当无信号、testing 可能假放行）：
  *   · 非 goal gate / goal 身份不全 → []（普通模式零变化）；
@@ -3215,14 +3229,24 @@ export function writeDeviceTestEvidenceIfEligible(
   const goalRunId = process.env.MAISON_GOAL_RUN_ID?.trim() ?? '';
   const attemptId = process.env.MAISON_GOAL_ATTEMPT?.trim() ?? '';
   if (!goalRunId || !attemptId) return [];
-  if (!holder.installExecuted || !holder.installOk) {
-    console.warn('[device-test-evidence] 未写入：本轮无真实安装成功事实（上游 install 门禁负责裁决）');
+  const installKnown =
+    (holder.installExecuted && holder.installOk) ||
+    (holder.installPassed && holder.installReused === true && Boolean(holder.hapSha256Full));
+  if (!installKnown) {
+    console.warn('[device-test-evidence] 未写入：本轮装机事实未知（既非真实安装成功，也非复用同 HAP；上游 install 门禁负责裁决）');
     return [];
   }
   if (!holder.deviceTestRunExecuted || !holder.hylyreTracePath) {
     console.warn('[device-test-evidence] 未写入：本轮 device_test.run 未执行或 trace 缺失（上游 run 门禁负责裁决）');
     return [];
   }
+  // B08 D1：复用态事实（全部可选；非复用轮 install_reused/reused_by_execution_key=false，其余不写）
+  const reuseFields = {
+    install_reused: holder.installReused === true,
+    reused_by_execution_key: holder.deviceRunReused === true,
+    ...(holder.executionKey ? { execution_key: holder.executionKey } : {}),
+    ...(holder.deviceRunReused === true && holder.reusedRunDir ? { reused_run_dir: holder.reusedRunDir } : {}),
+  };
   // 至此：正式 gate 已完成真实安装与 run——evidence 必须写出，任何失败都是 BLOCKER
   const fail = (details: string): CheckResult[] => [{
     id, category: 'structure', description: desc, severity: 'BLOCKER', status: 'FAIL',
@@ -3268,6 +3292,7 @@ export function writeDeviceTestEvidenceIfEligible(
       written_at: new Date().toISOString(),
       cases: [],
       artifact_binding: holder.nativeArtifactBinding,
+      ...reuseFields,
     };
     try {
       fs.mkdirSync(reportsDir, { recursive: true });
@@ -3312,7 +3337,7 @@ export function writeDeviceTestEvidenceIfEligible(
   try {
     const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
     fs.mkdirSync(reportsDir, { recursive: true });
-    const doc = { ...composed.doc, written_at: new Date().toISOString() };
+    const doc = { ...composed.doc, ...reuseFields, written_at: new Date().toISOString() };
     fs.writeFileSync(deviceTestEvidencePath(reportsDir), `${JSON.stringify(doc, null, 2)}\n`, 'utf-8');
   } catch (e) {
     return fail(`写盘异常：${(e as Error).message}`);
@@ -4600,6 +4625,10 @@ function checkDeviceTestRunGate(
 
     hapHolder.hylyreTracePath = run.tracePath;
     hapHolder.deviceTestRunExecuted = true;
+    // B08 D1：复用态事实进 holder（evidence 写出与采信按执行键身份，不再按本轮时间窗）
+    hapHolder.deviceRunReused = Boolean(reusable);
+    hapHolder.executionKey = executionKey;
+    hapHolder.reusedRunDir = reusable ? path.relative(ctx.projectRoot, reusable.runDir).replace(/\\/g, '/') : null;
 
     const outcomeEval = evaluateHylyreRunOutcome(run.trace);
     let evidenceGate: HylyreEvidenceGateResult | null = null;

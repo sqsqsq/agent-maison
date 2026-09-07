@@ -40,7 +40,10 @@ import {
   EDGE_SENTINEL_MIN_UNCOVERED,
   REFERENCE_VIEWPORT_ASPECT_TOLERANCE,
   readImageDimensions,
-  referenceViewportIncompatible,
+  resolveCompareReference,
+  splitMustHaveByTopSlice,
+  topSliceScopeOf,
+  type TopSliceMustHaveSplit,
 } from './image-toolkit';
 const REFERENCE_VIEWPORT_ASPECT_TOLERANCE_TEXT = String(REFERENCE_VIEWPORT_ASPECT_TOLERANCE);
 import { isHardPixelContract, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
@@ -1323,11 +1326,16 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   // 下游 edge sentinel、全局元素越界 OCR、锚点缺失 OCR、文本块 OCR、弃判判定一律只消费 comparableScreens；
   // capture 侧的 score_floor/edge 与 delegated provider 的 target 装配也用同一判据（见 visual-diff-capture /
   // visual-provider-review），所以长图在任何入口都产不出内容结论。兼容时零结果、零注记（check 集合逐字不变）。
+  // B08 D3（plan 9b2d5e7c）：同宽更高的参考图不再剔除，按顶部一屏派生图比对（resolveCompareReference
+  // 单一入口，与采集 / provider / spec 前置门同判据）；比对范围由 ui-spec 声明 bbox 划分
+  // （splitMustHaveByTopSlice），范围外 / 未确定的 must_have 以本 check 的 WARN 行 + 视觉债务披露。
   const viewportIncompatible = new Map<string, string>();
+  const topSliceScreens = new Map<string, { derivedPath: string; ratio: number; split: TopSliceMustHaveSplit; line: string }>();
   let referenceViewportResult: CheckResult | null = null;
   if (specMd) {
     const refIndexForViewport = buildAuthoritativeRefImageIndex(ctx, specMd);
     const screenRefIdsForViewport = new Map<string, string>();
+    const uiScreensForViewport = new Map((uiDoc?.screens ?? []).map(s => [s.id, s] as const));
     for (const sc of uiDoc?.screens ?? []) screenRefIdsForViewport.set(sc.id, sc.ref_id ?? sc.id);
     for (const s of rep.screens) {
       const refId =
@@ -1337,15 +1345,34 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
         canonicalOverlayBase(s.screen_id);
       const refAbs = resolveRefSourceImage(refIndexForViewport, refId).path;
       if (!refAbs || !s.screenshot_path) continue;
-      const refDims = readImageDimensions(refAbs);
-      const shotDims = readImageDimensions(resolveShotPath(ctx.projectRoot, s.screenshot_path));
-      if (referenceViewportIncompatible(refDims, shotDims)) {
+      const cmp = resolveCompareReference({
+        refAbs,
+        shotDims: readImageDimensions(resolveShotPath(ctx.projectRoot, s.screenshot_path)),
+        projectRoot: ctx.projectRoot,
+        feature: ctx.feature,
+        refId,
+      });
+      const { refDims, shotDims } = cmp;
+      if (cmp.mode === 'incompatible') {
         viewportIncompatible.set(
           s.screen_id,
-          `${s.screen_id}: 参考图 ${refDims!.w}×${refDims!.h} vs 视口 ${shotDims!.w}×${shotDims!.h}`,
+          `${s.screen_id}: 参考图 ${refDims!.w}×${refDims!.h} vs 视口 ${shotDims!.w}×${shotDims!.h}${cmp.note ? `（${cmp.note}）` : ''}`,
         );
+      } else if (cmp.mode === 'top_slice' && cmp.path) {
+        const uiScreen = uiScreensForViewport.get(canonicalOverlayBase(s.screen_id)) ?? uiScreensForViewport.get(s.screen_id);
+        const split = splitMustHaveByTopSlice(uiScreen, cmp.ratio!);
+        const named = (ids: string[]): string => (ids.length ? `（${ids.slice(0, 6).join('/')}${ids.length > 6 ? '…' : ''}）` : '');
+        topSliceScreens.set(s.screen_id, {
+          derivedPath: cmp.path,
+          ratio: cmp.ratio!,
+          split,
+          line:
+            `${s.screen_id}: 参考图 ${refDims!.w}×${refDims!.h} 高于视口 ${shotDims!.w}×${shotDims!.h}，按顶部一屏（entry state）比对；` +
+            `范围外 ${split.outOfScope.length} 个${named(split.outOfScope)} / 未确定 ${split.undetermined.length} 个${named(split.undetermined)} must_have 元素未验证`,
+        });
       }
     }
+    const topSliceLines = [...topSliceScreens.values()].map(t => t.line);
     if (viewportIncompatible.size > 0) {
       const ratchet = fidelityRatchetFailOrWarn(ctx, true);
       const excluded = [...viewportIncompatible.values()];
@@ -1357,10 +1384,24 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
         status: ratchet.status,
         details:
           `以下 ${excluded.length} 屏的参考图高宽比超出实测视口 ×${REFERENCE_VIEWPORT_ASPECT_TOLERANCE_TEXT}（整页拼接图 vs 单视口），` +
-          `不构成合法像素参考，已从本轮全部 pixel/OCR 内容比对剔除：${excluded.join('；')}`,
+          `不构成合法像素参考，已从本轮全部 pixel/OCR 内容比对剔除：${excluded.join('；')}` +
+          (topSliceLines.length > 0 ? `\n另 ${topSliceLines.length} 屏同宽更高、按顶部一屏推导比对：${topSliceLines.join('；')}` : ''),
         suggestion:
           '责任在 spec 参考资产。出路由作者建模而非机器推导：长页按锚点拆成多个 screen，每段一个 viewport 尺寸的 ref_id 裁图，visual-diff-nav.json 中该段 nav 末步 scroll_to 锚点元素（选对齐确定的元素，如列表项）。像素路径的前提：每段 nav 从已知状态出发，且滚动落点已证明可重复（宿主至少两个冷启动轮次的中/尾 checkpoint 落点一致）；无法证明的段落不放 pixel_1to1 屏，继续 FAIL 而不宣称支持。不属于像素验收范围的段落须明确排除在 pixel_1to1 屏之外，由需求/spec 的功能或结构 AC 覆盖——当前没有屏级/段级 fidelity 档位。' +
-          '每屏参考图兼容后现有 visual pipeline 原样运行；不做自动 crop/分段/拼接，也不按参考图改写 viewport。',
+          '每屏参考图兼容后现有 visual pipeline 原样运行；仅顶部一屏推导（同宽更高的参考图按顶部 viewport 高度比对，其余部分未验证）；不做分段/拼接，也不按参考图改写 viewport。',
+        affected_files: [reportRel],
+      };
+    } else if (topSliceLines.length > 0) {
+      // 顶部之外零证据：显式未验证（WARN + 视觉债务条目），不是新门槛；页面按段建模或参考资产换成单视口图后转绿
+      referenceViewportResult = {
+        id: 'visual_reference_viewport',
+        category: 'structure',
+        description: '参考图与设备视口尺寸兼容性前置门（plan b3d7e5a1 T5）',
+        severity: 'MINOR',
+        status: 'WARN',
+        details: `以下 ${topSliceLines.length} 屏的参考图同宽更高、按顶部一屏推导比对（B08 D3）：${topSliceLines.join('；')}`,
+        suggestion:
+          '顶部一屏之外的 must_have 元素本轮未验证（不算缺失也不算通过）。要把它们纳入验证：长页按锚点拆成多个 viewport 尺寸的 screen（各自 ref_id + nav 末步 scroll_to），或把参考资产换成单视口图；不做分段/拼接推导。',
         affected_files: [reportRel],
       };
     }
@@ -1438,6 +1479,10 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   const referenceNotes: string[] = [];
   if (viewportIncompatible.size > 0) {
     referenceNotes.push(`[reference_viewport] 参考图与视口尺寸不兼容、已从全部内容比对剔除：${[...viewportIncompatible.values()].join('；')}`);
+  }
+  if (topSliceScreens.size > 0) {
+    // B08 D3：杜绝"整屏 PASS"误读——顶部一屏之外的部分零证据
+    referenceNotes.push(`[reference_top_slice] 按顶部一屏比对；其余部分未验证：${[...topSliceScreens.values()].map(t => t.line).join('；')}`);
   }
 
   const hits: VisualDiffHit[] = [];
@@ -1631,10 +1676,26 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       const texts = nodes.map(n => n.text).filter((t): t is string => typeof t === 'string' && t.trim().length > 0);
       if (texts.length > 0) screenAnchors.set(sc.id, texts);
     }
+    // B08 R1 返修（codex #1）：top_slice 屏的 OCR 期望集合按 splitMustHaveByTopSlice 同一口径（声明 bbox）收窄到
+    // 范围内节点文本；范围外 / 未确定不入期望集合、不算缺失。按报告屏 id 写入——collectGrossMissingAnchorText
+    // 先查 screen_id 再回落基屏，故本条目优先于上面整页集合（空集合也要写，否则回落到整页）。
+    for (const [screenId, t] of topSliceScreens) {
+      const base = canonicalOverlayBase(screenId);
+      if (!p0BaseIds.has(base) || !passBaseIds.has(base)) continue;
+      const sc = (uiDoc.screens ?? []).find(x => x.id === base);
+      if (!sc) continue;
+      const nodes = collectAllComponentNodes({ screens: [sc], tokens: {}, assets: [] } as UiSpecDoc);
+      screenAnchors.set(
+        screenId,
+        nodes.filter(n => topSliceScopeOf(n.bbox, t.ratio) === 'in').map(n => n.text).filter((x): x is string => typeof x === 'string' && x.trim().length > 0),
+      );
+    }
     const missingRes = collectGrossMissingAnchorText(
       screenAnchors,
       comparableScreens.filter(s => s.verdict === 'pass'),
       rel => resolveShotPath(ctx.projectRoot, rel),
+      // 与文本布局门同一 OCR 注入缝（测试用；缺省仍走真实 ocrImageWords）
+      injectedVisualDiffOcrFn ?? undefined,
     );
     if (missingRes.violations.length > 0) {
       const ratchet = fidelityRatchetFailOrWarn(ctx, false);
@@ -1685,7 +1746,8 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       screenTextsMap,
       comparableScreens,
       rel => resolveShotPath(ctx.projectRoot, rel),
-      s => resolveRefSourceImage(refIndex, refIdFor(s)).path,
+      // B08 D3：比对域索引——top_slice 屏指向派生图（与截图同坐标系，OCR 文本位置不换算）；其余原图
+      s => topSliceScreens.get(s.screen_id)?.derivedPath ?? resolveRefSourceImage(refIndex, refIdFor(s)).path,
       // adjudicated-repair-loop：OCR 注入缝（测试用；缺省走真实 ocrImageWords）
       injectedVisualDiffOcrFn ?? undefined,
     );
@@ -1789,7 +1851,8 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       if (attest.length === 0) continue;
       const regions = new Set(attest.map(a => a.region));
       const uiScreen = uiById.get(canonicalOverlayBase(s.screen_id)) ?? uiById.get(s.screen_id);
-      const expected = uiScreen?.must_have_elements ?? [];
+      // B08 D3：top_slice 屏只要求范围内子集（与 provider 覆盖预检同一纯函数取值）；范围外/未确定不算 missing
+      const expected = topSliceScreens.get(s.screen_id)?.split.inScope ?? uiScreen?.must_have_elements ?? [];
       const missing = expected.filter(e => !regions.has(e));
       if (missing.length > 0) {
         coverageMisses.push(`${s.screen_id}（缺 ${missing.slice(0, 6).join('/')}${missing.length > 6 ? '…' : ''}）`);

@@ -19,7 +19,22 @@ import {
 } from '../../../profiles/hmos-app/harness/visual-diff-check';
 import { appendVisualRound, evaluateVisualRound, visualRoundsLedgerPath } from '../../scripts/utils/visual-rounds-ledger';
 import { buildVisualDiffMdBody, captureVisualDiff, collectDuplicateHashGroups, mergeCapturedScreenEntry, mergeVisualDiffReports, resolveShotPaths, sanitizeVisualDiffScreenSlug } from '../../../profiles/hmos-app/harness/visual-diff-capture';
-import { cropAssetFromBbox, computeHistogramSimilarity, isJimpAvailable, sampleColorFromBbox } from '../../../profiles/hmos-app/harness/image-toolkit';
+import {
+  classifyCompareReference,
+  cropAssetFromBbox,
+  computeHistogramSimilarity,
+  isJimpAvailable,
+  readImageDimensions,
+  resolveCompareReference,
+  sampleColorFromBbox,
+  splitMustHaveByTopSlice,
+} from '../../../profiles/hmos-app/harness/image-toolkit';
+import {
+  buildVisualProviderReviewPrompt,
+  collectReviewTargets,
+  validateVisualProviderReviewPayload,
+} from '../../../profiles/hmos-app/harness/visual-provider-review';
+import { deriveVisualDebt } from '../../scripts/utils/visual-debt';
 import { collectUiSpecGateConfirmedScreens } from '../../../profiles/hmos-app/harness/ui-spec-gate';
 import {
   loadVisualParityMappings,
@@ -4577,7 +4592,15 @@ export function runAll(): UnitCaseResult[] {
   // 宿主实证：expanded（高 4350）/ all_banks（高 8312）整页参考图对 2120 高视口——旧链只在 OCR
   // 乱序时降级 uncertain，像素口径静默变结构口径。现在：内容比对之前判尺寸；pixel_1to1 下
   // 独立 FAIL 且该屏不进入任何 pixel/OCR 内容比对；兼容时零结果（check 集合逐字不变）。
-  const seedViewportProject = (refH: number, opts: { shotH?: number } = {}) => {
+  /**
+   * B08 D3（plan 9b2d5e7c）：`refW` 缺省 1320（与视口同宽 → 可顶部一屏推导）；不兼容用例须显式给
+   * 不同宽度（1080）。`real` = 用 jimp 写真 PNG（派生裁切需要可解码的像素），否则只写 PNG 头。
+   * `mustHave` = 声明三类 must_have（t1 顶部 bbox / t2 下方 bbox / t3 无 bbox）供范围划分用例。
+   */
+  const seedViewportProject = (
+    refH: number,
+    opts: { shotH?: number; refW?: number; real?: boolean; mustHave?: boolean; anchors?: boolean } = {},
+  ) => {
     const root = mkProject();
     const feature = 'bank-card';
     const specDir = path.join(root, 'doc', 'features', feature, 'spec');
@@ -4587,7 +4610,9 @@ export function runAll(): UnitCaseResult[] {
     fs.mkdirSync(refDir, { recursive: true });
     fs.mkdirSync(shotDir, { recursive: true });
     const refRel = `doc/features/${feature}/spec/assets/ref-home.png`;
-    writeHeaderOnlyPng(path.join(root, refRel), 1320, refH);
+    const refW = opts.refW ?? 1320;
+    if (opts.real) writeMinimalColorPng(path.join(root, refRel), refW, refH, 0xffffffff);
+    else writeHeaderOnlyPng(path.join(root, refRel), refW, refH);
     fs.writeFileSync(path.join(specDir, 'spec.md'), [
       '```yaml', 'ui_change: new_or_changed', 'visual_handoff:',
       '  kind: authoritative_refs', '  authoritative_refs:',
@@ -4596,9 +4621,19 @@ export function runAll(): UnitCaseResult[] {
     fs.writeFileSync(path.join(specDir, 'ui-spec.yaml'), [
       'schema_version: "1.0"', 'verified: unverified', 'screens:',
       '  - id: home', '    priority: P0', '    ref_id: home',
+      ...(opts.mustHave ? ['    must_have_elements: [t1, t2, t3]'] : []),
       '    root:', '      type: navigation_frame', '      order: 0', '      children:',
       '        - id: t1', '          type: content_display', '          order: 0', '          text: 添加卡片',
+      ...(opts.mustHave ? ['          bbox: [0.1, 0.05, 0.4, 0.04]'] : []),
       '        - id: t2', '          type: content_display', '          order: 1', '          text: 中信银行',
+      ...(opts.mustHave ? ['          bbox: [0.1, 0.7, 0.4, 0.04]'] : []),
+      ...(opts.mustHave ? ['        - id: t3', '          type: content_display', '          order: 2', '          text: 更多'] : []),
+      // B08 R1 返修（codex #1）夹具：三个顶部文本（含 t1）+ 三个范围外/未确定文本，锚点缺失门须只按顶部集合判
+      ...(opts.anchors ? [
+        '        - id: t4', '          type: content_display', '          order: 3', '          text: 卡片余额', '          bbox: [0.1, 0.12, 0.4, 0.04]',
+        '        - id: t5', '          type: content_display', '          order: 4', '          text: 最近交易', '          bbox: [0.1, 0.2, 0.4, 0.04]',
+        '        - id: t6', '          type: content_display', '          order: 5', '          text: 查看全部', '          bbox: [0.1, 0.85, 0.4, 0.04]',
+      ] : []),
       'tokens: {}', 'assets: []',
     ].join('\n'));
     fs.writeFileSync(path.join(dtDir, 'visual-diff.md'), '# diff');
@@ -4628,9 +4663,10 @@ export function runAll(): UnitCaseResult[] {
     return { seen, fn };
   };
 
-  run('b3d7e5a1 T5：整页参考图（1320×4350 / 1320×8312）对 1320×2120 视口在 pixel_1to1 下独立 FAIL，且该屏不进入内容比对', () => {
+  // B08 D3（plan 9b2d5e7c）V6：宽度不同（1080 vs 1320）才是"不兼容"——同宽更高的参考图改走顶部一屏推导（见下方 V5）。
+  run('b3d7e5a1 T5 / B08-V6：宽度不同的整页参考图（1080×4350 / 1080×8312）对 1320×2120 视口在 pixel_1to1 下独立 FAIL，且该屏不进入内容比对', () => {
     for (const refH of [4350, 8312]) {
-      const { root, shotRel } = seedViewportProject(refH);
+      const { root, shotRel } = seedViewportProject(refH, { refW: 1080 });
       const spy = ocrSpy();
       __testing_setVisualDiffOcrFn(spy.fn);
       try {
@@ -4639,7 +4675,7 @@ export function runAll(): UnitCaseResult[] {
           { status: string; severity: string; details?: string; suggestion?: string } | undefined;
         if (!gate) throw new Error(`refH=${refH}：缺 visual_reference_viewport 结果：${JSON.stringify(r.map((x: { id: string; status: string }) => `${x.id}:${x.status}`))}`);
         if (gate.status !== 'FAIL' || gate.severity !== 'BLOCKER') throw new Error(`refH=${refH}：须 BLOCKER FAIL，实得 ${gate.severity}/${gate.status}`);
-        if (!new RegExp(`home[^\\n]*1320×${refH}[^\\n]*1320×2120`).test(gate.details ?? '')) throw new Error(`须点名屏与两侧尺寸：${gate.details}`);
+        if (!new RegExp(`home[^\\n]*1080×${refH}[^\\n]*1320×2120`).test(gate.details ?? '')) throw new Error(`须点名屏与两侧尺寸：${gate.details}`);
         if (!/ref_id/.test(gate.suggestion ?? '') || /reference_region|crop resolver/.test(gate.suggestion ?? '')) throw new Error(`修复指引须指向换图更新 ref_id，且不得引入 crop 体系：${gate.suggestion}`);
         const vd = r.find((x: { id: string }) => x.id === 'visual_diff') as { details?: string } | undefined;
         if (!/\[reference_viewport\][^\n]*home/.test(vd?.details ?? '')) throw new Error(`visual_diff details 须点名被剔除屏：${vd?.details}`);
@@ -4672,16 +4708,16 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
-  run('b3d7e5a1 T5（codex P1）：capture 像素度量与 delegated provider target 都不吃整页参考图；兼容图照常', () => {
+  run('b3d7e5a1 T5（codex P1）/ B08-V5/V6：capture 像素度量与 delegated provider target 不吃宽度不同的整页参考图；兼容图照常；同宽更高图按顶部一屏派生图产度量并进 provider', () => {
     if (!isJimpAvailable()) return; // score_floor/edge 需要 jimp；无 jimp 环境跳过
-    for (const [refH, expectMetrics] of [[4350, false], [2120, true]] as Array<[number, boolean]>) {
+    for (const [refW, refH, expectMetrics] of [[108, 4350, false], [132, 2120, true], [132, 4350, true]] as Array<[number, number, boolean]>) {
       const root = mkProject();
       try {
         const specDir = path.join(root, 'doc', 'features', 'bank-card', 'spec');
         const refDir = path.join(specDir, 'assets');
         fs.mkdirSync(refDir, { recursive: true });
         const refRel = 'doc/features/bank-card/spec/assets/ref-home.png';
-        writeMinimalColorPng(path.join(root, refRel), 132, Math.round(refH / 10), 0xffffffff);
+        writeMinimalColorPng(path.join(root, refRel), refW, Math.round(refH / 10), 0xffffffff);
         fs.writeFileSync(path.join(specDir, 'spec.md'), [
           '```yaml', 'ui_change: new_or_changed', 'visual_handoff:',
           '  kind: authoritative_refs', '  authoritative_refs:', '    - id: home', `      path: ${refRel}`, '```', '',
@@ -4708,17 +4744,20 @@ export function runAll(): UnitCaseResult[] {
         const row = raw.screens[0]!;
         const hasMetrics = typeof row.score_floor === 'number' || typeof row.edge_tile_divergence === 'number';
         if (hasMetrics !== expectMetrics) {
-          throw new Error(`refH=${refH}：像素度量 ${expectMetrics ? '应' : '不应'}产出，实得 ${JSON.stringify({ score_floor: row.score_floor, edge: row.edge_tile_divergence })}`);
+          throw new Error(`ref=${refW}×${refH}：像素度量 ${expectMetrics ? '应' : '不应'}产出，实得 ${JSON.stringify({ score_floor: row.score_floor, edge: row.edge_tile_divergence })}`);
         }
-        const { collectReviewTargets } = require('../../../profiles/hmos-app/harness/visual-provider-review') as {
-          collectReviewTargets: (c: unknown, screens: unknown[]) => Array<{ screen_id: string }>;
-        };
         const targets = collectReviewTargets(
-          { projectRoot: root, feature: 'bank-card', specVisualSources: { external_roots: [], allow_absolute_paths: false, allow_network_paths: false } },
-          raw.screens,
+          { projectRoot: root, feature: 'bank-card', specVisualSources: { external_roots: [], allow_absolute_paths: false, allow_network_paths: false } } as unknown as CheckContext,
+          raw.screens as unknown as Parameters<typeof collectReviewTargets>[1],
         );
-        const targeted = targets.some(t => t.screen_id === 'home');
-        if (targeted !== expectMetrics) throw new Error(`refH=${refH}：provider target ${expectMetrics ? '应' : '不应'}包含 home，实得 ${JSON.stringify(targets)}`);
+        const target = targets.find(t => t.screen_id === 'home');
+        if (Boolean(target) !== expectMetrics) throw new Error(`ref=${refW}×${refH}：provider target ${expectMetrics ? '应' : '不应'}包含 home，实得 ${JSON.stringify(targets)}`);
+        // B08 D3：同宽更高 → provider 拿到的是顶部一屏派生图（refAbs 指向 _derived-ref/home.top<shotH>.png）
+        const topSlice = refW === 132 && refH === 4350;
+        if (target && topSlice !== /_derived-ref[\\/]home\.top212\.png$/.test(target.refAbs)) {
+          throw new Error(`ref=${refW}×${refH}：provider refAbs ${topSlice ? '应' : '不应'}为派生图，实得 ${target.refAbs}`);
+        }
+        if (target && topSlice && !target.topSlice) throw new Error('top_slice 屏的 provider target 须带 topSlice 说明');
       } finally {
         clearFrameworkConfigCache();
         fs.rmSync(root, { recursive: true, force: true });
@@ -4726,9 +4765,9 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
-  run('b3d7e5a1 T5（codex P1）：同 build 同 hash 的长图旧 PASS 不得跳采/保留——本轮重建为 pending 且旧 score/edge/attest 不可消费；兼容图仍按既有跳采', () => {
+  run('b3d7e5a1 T5（codex P1）/ B08-V6：同 build 同 hash 的宽度不同长图旧 PASS 不得跳采/保留——本轮重建为 pending 且旧 score/edge/attest 不可消费；兼容图仍按既有跳采', () => {
     for (const [refH, expectStaleDrop] of [[4350, true], [2120, false]] as Array<[number, boolean]>) {
-      const { root, shotRel } = seedViewportProject(refH);
+      const { root, shotRel } = seedViewportProject(refH, { refW: expectStaleDrop ? 1080 : 1320 });
       try {
         const shotAbs = path.join(root, shotRel);
         const shotBytes = fs.readFileSync(shotAbs);
@@ -4777,8 +4816,8 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
-  run('b3d7e5a1 T5：低档位（非 pixel_1to1）整页参考图按既有 ratchet → WARN，不静默升级为像素 PASS', () => {
-    const { root } = seedViewportProject(4350);
+  run('b3d7e5a1 T5 / B08-V6：低档位（非 pixel_1to1）宽度不同的整页参考图按既有 ratchet → WARN，不静默升级为像素 PASS', () => {
+    const { root } = seedViewportProject(4350, { refW: 1080 });
     const spy = ocrSpy();
     __testing_setVisualDiffOcrFn(spy.fn);
     try {
@@ -4786,6 +4825,278 @@ export function runAll(): UnitCaseResult[] {
       const gate = r.find((x: { id: string }) => x.id === 'visual_reference_viewport') as { status: string; severity: string } | undefined;
       if (!gate) throw new Error('低档位也须产出 visual_reference_viewport（WARN），不得静默');
       if (gate.status !== 'WARN' || gate.severity !== 'MAJOR') throw new Error(`低档位须 MAJOR WARN，实得 ${gate.severity}/${gate.status}`);
+    } finally {
+      __testing_setVisualDiffOcrFn(null);
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // B08 D3（plan 9b2d5e7c）：长图参考的顶部一屏推导——V5 / V7 / V8 / V9（V6 见上方改造过的 b3d7e5a1 用例）
+  // -------------------------------------------------------------------------
+  const CTX_FOR_PROVIDER = (root: string): CheckContext =>
+    ({ projectRoot: root, feature: 'bank-card', specVisualSources: { external_roots: [], allow_absolute_paths: false, allow_network_paths: false } } as unknown as CheckContext);
+
+  run('B08-V5 顶部一屏推导：ref 1320×4350 / shot 1320×2120 → mode=top_slice、派生文件高 2120；检查：该屏进比对域（OCR 吃派生图）、前置门无 FAIL 行、notes 含"按顶部一屏比对；其余部分未验证"', () => {
+    if (!isJimpAvailable()) return;
+    const { root, shotRel } = seedViewportProject(4350, { real: true });
+    const spy = ocrSpy();
+    __testing_setVisualDiffOcrFn(spy.fn);
+    try {
+      const refAbs = path.join(root, 'doc', 'features', 'bank-card', 'spec', 'assets', 'ref-home.png');
+      const cmp = resolveCompareReference({ refAbs, shotDims: readImageDimensions(path.join(root, shotRel)), projectRoot: root, feature: 'bank-card', refId: 'home' });
+      if (cmp.mode !== 'top_slice' || !cmp.path) throw new Error(`须 top_slice：${JSON.stringify(cmp)}`);
+      if (!/_derived-ref[\\/]home\.top2120\.png$/.test(cmp.path)) throw new Error(`派生路径须为 _derived-ref/home.top2120.png：${cmp.path}`);
+      const dd = readImageDimensions(cmp.path);
+      if (dd?.w !== 1320 || dd?.h !== 2120) throw new Error(`派生文件须 1320×2120，实得 ${JSON.stringify(dd)}`);
+      if (Math.abs((cmp.ratio ?? 0) - 2120 / 4350) > 1e-9) throw new Error(`ratio 须 = shot.h/ref.h：${cmp.ratio}`);
+      if (classifyCompareReference({ w: 1320, h: 4350 }, { w: 1320, h: 2120 }) !== 'top_slice') throw new Error('classify 同宽更高须 top_slice');
+      if (classifyCompareReference({ w: 1320, h: 2120 }, { w: 1320, h: 2120 }) !== 'direct') throw new Error('classify 同尺寸须 direct');
+
+      const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const gate = r.find((x: { id: string }) => x.id === 'visual_reference_viewport') as { status: string; severity: string; details?: string } | undefined;
+      if (!gate) throw new Error('top_slice 屏须出 visual_reference_viewport WARN 行（显式未验证）');
+      if (gate.status !== 'WARN' || gate.severity !== 'MINOR') throw new Error(`top_slice 屏须 MINOR WARN 而非 FAIL，实得 ${gate.severity}/${gate.status}`);
+      if (!/home[^\n]*1320×4350[^\n]*1320×2120[^\n]*顶部一屏/.test(gate.details ?? '')) throw new Error(`WARN 行须点名屏、尺寸与顶部一屏：${gate.details}`);
+      const vd = r.find((x: { id: string }) => x.id === 'visual_diff') as { details?: string } | undefined;
+      if (!/\[reference_top_slice\][^\n]*按顶部一屏比对；其余部分未验证/.test(vd?.details ?? '')) throw new Error(`visual_diff details 须注明顶部一屏比对与未验证：${vd?.details}`);
+      if (/\[reference_viewport\]/.test(vd?.details ?? '')) throw new Error(`top_slice 屏不得被记为剔除：${vd?.details}`);
+      if (!spy.seen.some(pth => /_derived-ref\/home\.top2120\.png$/.test(pth))) throw new Error(`内容比对须吃派生图，实际 OCR 调用：${spy.seen.join(', ')}`);
+      if (spy.seen.some(pth => pth.endsWith('ref-home.png'))) throw new Error(`内容比对不得再读原图：${spy.seen.join(', ')}`);
+    } finally {
+      __testing_setVisualDiffOcrFn(null);
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('B08-V7 连续两轮不回 pending：同 build 同截图 hash 的 top_slice 屏第二轮保留条目（不剔除、不重采）、verdict 不清回 pending、score/edge 有值；补齐既有验收前提（attest / critic 回执 / reverse_missing）后两轮最终 visual_diff 均非 FAIL', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    const spy = ocrSpy();
+    __testing_setVisualDiffOcrFn(spy.fn);
+    try {
+      const specDir = path.join(root, 'doc', 'features', 'bank-card', 'spec');
+      const refDir = path.join(specDir, 'assets');
+      fs.mkdirSync(refDir, { recursive: true });
+      const refRel = 'doc/features/bank-card/spec/assets/ref-home.png';
+      writeMinimalColorPng(path.join(root, refRel), 132, 435, 0xffffffff);
+      fs.writeFileSync(path.join(specDir, 'spec.md'), [
+        '```yaml', 'ui_change: new_or_changed', 'visual_handoff:',
+        '  kind: authoritative_refs', '  authoritative_refs:', '    - id: home', `      path: ${refRel}`, '```', '',
+      ].join('\n'));
+      // 声明一个无文本元素 home_root：既作 region_attest 的举证区域，也是 T8 / runtime_mount_conformance 的 locator-required 元素（dump 里同 id 挂载）
+      fs.writeFileSync(path.join(specDir, 'ui-spec.yaml'), [
+        'schema_version: "1.0"', 'verified: human_confirmed', 'screens:',
+        '  - id: home', '    priority: P0', '    ref_id: home',
+        '    root: { type: navigation_frame, order: 0, children: [{ id: home_root, type: content_display, order: 0 }] }',
+        'tokens: {}', 'assets: []',
+      ].join('\n'));
+      const dtDir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing');
+      fs.mkdirSync(path.join(dtDir, 'reports'), { recursive: true });
+      fs.writeFileSync(path.join(dtDir, 'visual-diff.md'), '# diff');
+      const dumpJson = JSON.stringify({
+        schema_version: 'hylyre-hypium-ui-dump-v1',
+        tree: {
+          attributes: { bounds: '[0,0][132,212]', type: 'Screen', text: '', id: '', key: '', clickable: 'false' },
+          children: [{
+            attributes: { bounds: '[0,0][132,212]', type: 'root', text: '', id: '', key: '', clickable: 'false' },
+            children: [{ attributes: { bounds: '[10,20][120,60]', type: 'Text', text: '', id: 'home_root', key: '', clickable: 'false' }, children: [] }],
+          }],
+        },
+      });
+      const specMd = fs.readFileSync(path.join(specDir, 'spec.md'), 'utf-8');
+      const shotBytesOf = (): Buffer => {
+        const tmp = path.join(root, 'shot-src.png');
+        writeMinimalColorPng(tmp, 132, 212, 0xffffffff);
+        return fs.readFileSync(tmp);
+      };
+      const shotBytes = shotBytesOf();
+      const capture = () => captureVisualDiff({
+        projectRoot: root, feature: 'bank-card', specMd, ctx: baseCtx(root, { fidelityTarget: 'pixel_1to1' }),
+        computeScoreFloor: true, currentBuildFingerprint: 'fp-same',
+        screenshotFn: ({ destAbs }) => { fs.writeFileSync(destAbs, shotBytes); return { ok: true }; },
+        // pixel_1to1 P0 屏的既有前提：布局树 dump 随截图同采（缺 dump 走 visual_diff_layout_dump_missing WARN，与 top_slice 无关）
+        layoutDumpFn: ({ destAbs }) => { fs.writeFileSync(destAbs, dumpJson, 'utf-8'); return { ok: true }; },
+      });
+      // 最终结果只认 id 恰为 visual_diff 的那一条（finalizeVisualDiffHits：零命中 → PASS；低阶命中会把 id 改成命中 id，此处一律视为缺结果并列出全部 id）
+      const finalVisualDiff = (label: string): { status: string; details?: string } => {
+        const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+        const gate = r.find((x: { id: string }) => x.id === 'visual_reference_viewport') as { status: string } | undefined;
+        if (gate && gate.status === 'FAIL') throw new Error(`${label}：top_slice 屏在检查侧不得 FAIL 前置门`);
+        const vd = r.find((x: { id: string }) => x.id === 'visual_diff') as { status: string; details?: string } | undefined;
+        if (!vd) throw new Error(`${label}：缺 visual_diff 结果：${JSON.stringify(r.map((x: { id: string; status: string; details?: string }) => `${x.id}:${x.status}:${(x.details ?? '').slice(0, 200)}`))}`);
+        if (/\[reference_viewport\]|pending=[1-9]/.test(vd.details ?? '')) throw new Error(`${label}：top_slice 屏不得被剔除或回 pending：${vd.details}`);
+        return vd;
+      };
+      const first = capture();
+      if (!first.ok || first.screensWritten !== 1) throw new Error(`第一轮采集须成功：${JSON.stringify(first)}`);
+      const jsonPath = first.jsonPath;
+      const doc1 = JSON.parse(fs.readFileSync(jsonPath, 'utf-8')) as { screens: Array<Record<string, unknown>> };
+      const row1 = doc1.screens.find(s => s.screen_id === 'home')!;
+      if (typeof row1.score_floor !== 'number') throw new Error(`第一轮 top_slice 屏须产 score_floor：${JSON.stringify(row1)}`);
+      // 模拟评估落定（按既有 pixel_1to1 验收前提）：pass + 被评 hash + reverse_missing 枚举 + 机器 region_attest + critic 回执覆盖被评截图
+      row1.verdict = 'pass';
+      row1.evaluated_screenshot_hash = row1.screenshot_hash;
+      row1.must_fix = []; row1.defects = []; row1.reverse_missing = [];
+      row1.region_attest = [{ region: 'home_root', verdict: 'no_diff', method: 'vl_screening', by: 'visual_provider:test' }];
+      fs.writeFileSync(jsonPath, JSON.stringify(doc1, null, 2));
+      fs.writeFileSync(path.join(dtDir, 'reports', 'critic-receipt.json'), JSON.stringify({
+        schema_version: '1.0', critic_run_id: 'test-run', adapter: 'test', prompt_hash: 'deadbeef',
+        input_provenance: 'unverified', image_inputs: [{ path: row1.screenshot_path as string }],
+      }));
+      const vd1 = finalVisualDiff('第一轮');
+      if (vd1.status !== 'PASS') throw new Error(`第一轮补齐前提后 visual_diff 须 PASS，实得 ${vd1.status}：${vd1.details}`);
+      const second = capture();
+      if (!second.ok || (second.screensPreservedBuildValid ?? 0) !== 1) throw new Error(`第二轮 top_slice 屏须按同 build 同 hash 跳采：${JSON.stringify(second)}`);
+      const row2 = (JSON.parse(fs.readFileSync(jsonPath, 'utf-8')) as { screens: Array<Record<string, unknown>> }).screens.find(s => s.screen_id === 'home')!;
+      if (row2.verdict !== 'pass') throw new Error(`第二轮 verdict 不得清回 pending，实得 ${String(row2.verdict)}`);
+      if (typeof row2.score_floor !== 'number' || typeof row2.edge_tile_divergence !== 'number') throw new Error(`第二轮 score/edge 须仍有值：${JSON.stringify(row2)}`);
+      if (!Array.isArray(row2.region_attest) || row2.region_attest.length !== 1) throw new Error(`第二轮 region_attest 须跨轮存活：${JSON.stringify(row2)}`);
+      const vd2 = finalVisualDiff('第二轮');
+      if (vd2.status !== 'PASS') throw new Error(`第二轮 visual_diff 须仍 PASS（跳采不得清掉前提），实得 ${vd2.status}：${vd2.details}`);
+      if (!fs.existsSync(path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots', '_derived-ref', 'home.top212.png'))) {
+        throw new Error('派生图须落在 _derived-ref/home.top212.png');
+      }
+    } finally {
+      __testing_setVisualDiffOcrFn(null);
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('B08-V8 范围划分、两处覆盖门与债务（正反两向）：inScope=[t1]/outOfScope=[t2]/undetermined=[t3]；provider 覆盖与 visual_diff_region_attest 只要求 t1；WARN 含"范围外 1 / 未确定 1"；visual-debt 产生条目；capture_completeness_external 分母不动；反向：t1 缺失照常报缺', () => {
+    if (!isJimpAvailable()) return;
+    const { root, shotRel } = seedViewportProject(4350, { real: true, mustHave: true });
+    const spy = ocrSpy();
+    __testing_setVisualDiffOcrFn(spy.fn);
+    try {
+      const uiDoc = loadUiSpecFile(uiSpecAbsPath(root, 'bank-card'))!;
+      const ratio = 2120 / 4350;
+      const split = splitMustHaveByTopSlice(uiDoc.screens![0], ratio);
+      if (JSON.stringify(split) !== JSON.stringify({ inScope: ['t1'], outOfScope: ['t2'], undetermined: ['t3'] })) {
+        throw new Error(`范围划分只信声明 bbox：${JSON.stringify(split)}`);
+      }
+      const shotAbs = path.join(root, shotRel);
+      const shotHash = hashScreenshotFile(shotAbs)!;
+      const jsonPath = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots', 'visual-diff.json');
+      const writeScreen = (attest: string[]): void => {
+        fs.writeFileSync(jsonPath, JSON.stringify({
+          schema_version: '1.1',
+          screens: [{
+            screen_id: 'home', ref_id: 'home', verdict: 'pass',
+            screenshot_path: shotRel, screenshot_hash: shotHash, evaluated_screenshot_hash: shotHash,
+            must_fix: [], reverse_missing: [], defects: [],
+            region_attest: attest.map(region => ({ region, verdict: 'no_diff', method: 'vl_screening', by: 'visual_provider:test' })),
+          }],
+        }, null, 2));
+      };
+      // 正向：只举证 t1
+      writeScreen(['t1']);
+      const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const vd = r.find((x: { id: string }) => x.id === 'visual_diff') as { details?: string } | undefined;
+      if (/region_attest 未覆盖屏级 must_have_elements/.test(vd?.details ?? '')) throw new Error(`范围外/未确定元素不得算 missing：${vd?.details}`);
+      const gate = r.find((x: { id: string }) => x.id === 'visual_reference_viewport') as { status: string; severity: string; details?: string } | undefined;
+      if (!gate || gate.status !== 'WARN' || gate.severity !== 'MINOR') throw new Error(`须 MINOR WARN：${JSON.stringify(gate)}`);
+      if (!/范围外 1 个（t2） \/ 未确定 1 个（t3）/.test(gate.details ?? '')) throw new Error(`WARN 行须列出范围外 / 未确定：${gate.details}`);
+      const debt = deriveVisualDebt('bank-card', r.map(x => ({ id: x.id, status: x.status, severity: x.severity, details: x.details ?? '', structured: x.structured })), null);
+      const entry = debt.entries.find(e => e.source_check_id === 'visual_reference_viewport');
+      if (!entry || entry.status !== 'open' || !/顶部一屏外未验证/.test(entry.summary)) throw new Error(`须产生 visual_reference_viewport 债务条目：${JSON.stringify(debt.entries)}`);
+      // provider 覆盖门：target 只要求 t1；prompt 明示勿判 t2/t3 缺失；只举证 t1 的载荷合法
+      const screens = (JSON.parse(fs.readFileSync(jsonPath, 'utf-8')) as { screens: unknown[] }).screens as Parameters<typeof collectReviewTargets>[1];
+      const targets = collectReviewTargets(CTX_FOR_PROVIDER(root), screens);
+      const target = targets.find(t => t.screen_id === 'home');
+      if (!target || JSON.stringify(target.mustHaveElements) !== JSON.stringify(['t1'])) throw new Error(`provider 覆盖只要求范围内子集：${JSON.stringify(target)}`);
+      if (JSON.stringify(target.topSlice?.unverifiedElements) !== JSON.stringify(['t2', 't3'])) throw new Error(`provider 须拿到未验证清单：${JSON.stringify(target.topSlice)}`);
+      const prompt = buildVisualProviderReviewPrompt(targets, { requireRegionAttest: true });
+      if (!/reference_image is the TOP viewport-height slice/.test(prompt) || !/do_not_judge_missing: t2, t3/.test(prompt)) throw new Error(`prompt 须明示顶部一屏与勿判缺失：${prompt}`);
+      const payload = (attest: string[]): string => JSON.stringify({
+        schema_version: '1.0', image_hashes: [target.refHash, target.shotHash],
+        screens: [{ screen_id: 'home', reference_image_hash: target.refHash, evaluated_screenshot_hash: target.shotHash, must_fix: [], defects: [],
+          region_attest: attest.map(region => ({ region, verdict: 'no_diff', method: 'vl_screening' })) }],
+      });
+      const okOnlyT1 = validateVisualProviderReviewPayload(payload(['t1']), { targets, requireRegionAttest: true });
+      if (!okOnlyT1.ok) throw new Error(`只举证范围内 t1 须合法：${(okOnlyT1 as { reason: string }).reason}`);
+      // 反向：t1（顶部元素）缺失——不得被划到范围外；两处覆盖门都照常报缺 t1
+      const badNoT1 = validateVisualProviderReviewPayload(payload(['t2']), { targets, requireRegionAttest: true });
+      if (badNoT1.ok || !/缺 t1/.test((badNoT1 as { reason: string }).reason)) throw new Error(`provider 覆盖须报缺 t1：${JSON.stringify(badNoT1)}`);
+      writeScreen(['t2']);
+      const r2 = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const vd2 = r2.find((x: { id: string }) => x.id === 'visual_diff') as { details?: string } | undefined;
+      if (!/region_attest 未覆盖屏级 must_have_elements[^\n]*home（缺 t1）/.test(vd2?.details ?? '')) throw new Error(`gate 须照常报缺 t1：${vd2?.details}`);
+      // capture_completeness_external 的分母不动：该检查源码不消费任何顶部一屏范围划分
+      const cce = fs.readFileSync(path.resolve(__dirname, '../../../profiles/hmos-app/harness/capture-completeness-check.ts'), 'utf-8');
+      if (/top_slice|resolveCompareReference|splitMustHaveByTopSlice|classifyCompareReference/.test(cce)) throw new Error('capture_completeness_external 分母不得接入顶部一屏范围划分');
+    } finally {
+      __testing_setVisualDiffOcrFn(null);
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('B08-V8（R1 返修，codex #1）OCR 锚点缺失门遵守顶部范围：六个声明文本仅三个在顶部；截图 OCR 有全部顶部文本 → 不报缺失（整页口径会误报 3/6）；截图缺顶部文本 → 照常报缺失（缺 3/3）', () => {
+    if (!isJimpAvailable()) return;
+    const { root, shotRel } = seedViewportProject(4350, { real: true, mustHave: true, anchors: true });
+    const topWords = ['添加卡片', '卡片余额', '最近交易'];
+    const shotAbs = path.join(root, shotRel);
+    const shotHash = hashScreenshotFile(shotAbs)!;
+    const jsonPath = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots', 'visual-diff.json');
+    fs.writeFileSync(jsonPath, JSON.stringify({
+      schema_version: '1.1',
+      screens: [{
+        screen_id: 'home', ref_id: 'home', verdict: 'pass',
+        screenshot_path: shotRel, screenshot_hash: shotHash, evaluated_screenshot_hash: shotHash,
+        must_fix: [], reverse_missing: [], defects: [],
+        region_attest: [{ region: 't1', verdict: 'no_diff', method: 'vl_screening', by: 'visual_provider:test' }],
+      }],
+    }, null, 2));
+    const ocrWith = (shotWords: string[]) => (imgPath: string): OcrResult => {
+      const isShot = String(imgPath).replace(/\\/g, '/').endsWith(shotRel);
+      const words = (isShot ? shotWords : topWords).map((text, i) => ({ text, conf: 90, bbox: [0.1, 0.05 + i * 0.08, 0.4, 0.04] }));
+      return { ok: true, width: 1320, height: 2120, words } as unknown as OcrResult;
+    };
+    try {
+      // 正向：截图有全部顶部文本 → 期望集合只含顶部三项，零缺失（整页口径下会算成缺 3/6 ≥ 50% 而 FAIL）
+      __testing_setVisualDiffOcrFn(ocrWith(topWords));
+      const r1 = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const d1 = r1.map((x: { details?: string }) => x.details ?? '').join('\n');
+      if (/锚点文本整块缺失/.test(d1)) throw new Error(`范围外 / 未确定文本不得算缺失：${d1}`);
+      // 反向：截图没有任何顶部文本 → 按顶部集合正常报缺失（缺 3/3，不得被划到范围外）
+      __testing_setVisualDiffOcrFn(ocrWith(['中信银行']));
+      const r2 = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const d2 = r2.map((x: { details?: string }) => x.details ?? '').join('\n');
+      if (!/锚点文本整块缺失[^\n]*home\(缺 3\/3: 添加卡片,卡片余额,最近交易\)/.test(d2)) throw new Error(`顶部文本缺失须照常报缺（缺 3/3）：${d2}`);
+    } finally {
+      __testing_setVisualDiffOcrFn(null);
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('B08-V9 同尺寸原图换内容 → 派生图随原图更新（sha 变化）；派生顶部与截图对不上 → 既有 OCR ratchet FAIL，不出 PASS', () => {
+    if (!isJimpAvailable()) return;
+    const { root, shotRel } = seedViewportProject(4350, { real: true });
+    try {
+      const refAbs = path.join(root, 'doc', 'features', 'bank-card', 'spec', 'assets', 'ref-home.png');
+      const shotDims = readImageDimensions(path.join(root, shotRel));
+      const c1 = resolveCompareReference({ refAbs, shotDims, projectRoot: root, feature: 'bank-card', refId: 'home' });
+      const sha1 = hashScreenshotFile(c1.path!);
+      writeMinimalColorPng(refAbs, 1320, 4350, 0xff0000ff); // 同尺寸换内容
+      const c2 = resolveCompareReference({ refAbs, shotDims, projectRoot: root, feature: 'bank-card', refId: 'home' });
+      const sha2 = hashScreenshotFile(c2.path!);
+      if (c1.path !== c2.path || !sha1 || !sha2 || sha1 === sha2) throw new Error(`派生图须每次重裁（同路径、内容随原图更新）：${sha1} vs ${sha2}`);
+      // 对不上不洗绿：派生图（参考侧）两文本同行，截图侧分居两行 → 文本块结构背离 FAIL（pixel hard）
+      __testing_setVisualDiffOcrFn((imgPath: string): OcrResult => {
+        const derived = /_derived-ref/.test(String(imgPath));
+        return { ok: true, width: 1320, height: 2120, words: derived
+          ? [{ text: '添加卡片', conf: 90, bbox: [0.1, 0.1, 0.3, 0.04] }, { text: '中信银行', conf: 90, bbox: [0.5, 0.1, 0.3, 0.04] }]
+          : [{ text: '添加卡片', conf: 90, bbox: [0.1, 0.1, 0.3, 0.04] }, { text: '中信银行', conf: 90, bbox: [0.1, 0.5, 0.3, 0.04] }],
+        } as unknown as OcrResult;
+      });
+      const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const vd = r.find((x: { id: string }) => x.id === 'visual_diff') as { status: string; details?: string } | undefined;
+      if (!vd || vd.status !== 'FAIL' || !/文本块结构背离/.test(vd.details ?? '')) throw new Error(`派生顶部与截图对不上须走 ratchet FAIL：${JSON.stringify(vd)}`);
     } finally {
       __testing_setVisualDiffOcrFn(null);
       clearFrameworkConfigCache();
