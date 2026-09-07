@@ -189,7 +189,7 @@ export function computeHooksConfigUpsert(
   return { status: 'updated', nextText: stringifyDoc(nextDoc) };
 }
 
-export type RemovalStatus = 'removed' | 'unchanged' | 'invalid_json' | 'missing';
+export type RemovalStatus = 'removed' | 'unchanged' | 'invalid_json' | 'invalid_schema' | 'missing';
 
 export interface RemovalResult {
   status: RemovalStatus;
@@ -205,24 +205,56 @@ export interface RemovalResult {
 export function computeHooksConfigRemoval(
   existingText: string | null,
   ownedCommands: readonly string[],
+  ownedScriptPaths: readonly string[] = [],
 ): RemovalResult {
   if (existingText === null) return { status: 'missing' };
   const doc = parseDoc(existingText);
   if (!doc) return { status: 'invalid_json' };
-  if (!doc.hooks || typeof doc.hooks !== 'object' || Array.isArray(doc.hooks)) {
+  if (doc.hooks === undefined) {
     return { status: 'unchanged', nextText: existingText };
   }
+  if (!doc.hooks || typeof doc.hooks !== 'object' || Array.isArray(doc.hooks)
+    || Object.values(doc.hooks).some(arr => !Array.isArray(arr))) {
+    return { status: 'invalid_schema' };
+  }
   const owned = new Set([...ownedCommands, ...LEGACY_OWNED_COMMANDS]);
+  const normalizeScriptPath = (p: string): string => {
+    const normalized = p.replace(/\\/g, '/');
+    return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+  };
+  const scripts = new Set(ownedScriptPaths.map(normalizeScriptPath));
+  const isOwned = (command: string): boolean => {
+    if (owned.has(command)) return true;
+    // 仅认 node 的单脚本调用；不按文件名子串猜测任意宿主 shell 命令归属。
+    const match = command.match(/^node(?:\.exe)?\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|<>]+))\s*$/i);
+    if (!match) return false;
+    const script = (match[1] ?? match[2] ?? match[3]!).replace(/\\/g, '/')
+      .replace(/^(?:\.\/|\$(?:\{[A-Z0-9_]*PROJECT_(?:DIR|ROOT)\}|[A-Z0-9_]*PROJECT_(?:DIR|ROOT))\/)/, '');
+    return scripts.has(normalizeScriptPath(script));
+  };
   const hooks = { ...(doc.hooks as Record<string, unknown>) };
   let changed = false;
+  const removeEntries = (arr: unknown[]): unknown[] => arr.flatMap(e => {
+    const command = entryCommand(e);
+    if (command !== null && isOwned(command)) {
+      changed = true;
+      return [];
+    }
+    if (e && typeof e === 'object' && !Array.isArray(e)) {
+      const group = e as Record<string, unknown>;
+      if (Array.isArray(group.hooks)) {
+        const kept = removeEntries(group.hooks);
+        if (JSON.stringify(kept) !== JSON.stringify(group.hooks)) {
+          return kept.length ? [{ ...group, hooks: kept }] : [];
+        }
+      }
+    }
+    return [e];
+  });
   for (const [event, arr] of Object.entries(hooks)) {
     if (!Array.isArray(arr)) continue;
-    const kept = arr.filter((e) => {
-      const c = entryCommand(e);
-      return c === null || !owned.has(c);
-    });
-    if (kept.length !== arr.length) {
-      changed = true;
+    const kept = removeEntries(arr);
+    if (JSON.stringify(kept) !== JSON.stringify(arr)) {
       if (kept.length === 0) delete hooks[event];
       else hooks[event] = kept;
     }

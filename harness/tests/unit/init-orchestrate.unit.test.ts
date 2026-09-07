@@ -889,6 +889,11 @@ const cases: Array<{ name: string; run: () => void }> = [
             file_effects: { created: 1, updated: 2, unchanged: 3, delegated: 4, blocked: 0 },
           },
           {
+            task_id: 'cleanup-deprecated', action: 'run', status: 'executed', category: 'mechanism',
+            message: '更新注册（备份 .framework-backup/test）',
+            cleanup_effects: { backup_deleted: 0, hook_configs_updated: 1 },
+          },
+          {
             task_id: 'write-architecture',
             action: 'skip',
             status: 'skipped',
@@ -901,6 +906,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(s.includes('## 类别摘要'));
       assert(s.includes('config: ensure-config overwrite'));
       assert(s.includes('claude（created 1 / updated 2 / unchanged 3 / delegated 4）'));
+      assert(s.includes('backup_deleted 0，hook_configs_updated 1（备份 .framework-backup/test）'));
       assert(s.includes('docs: 1 项保留磁盘（skip）'));
     },
   },

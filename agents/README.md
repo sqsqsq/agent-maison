@@ -82,7 +82,9 @@ schema、组合约束与 fallback 以 [`adapter-schema.yaml`](./adapter-schema.y
 - **正确落点**：扩写写到 `framework/skills/<n>/` 正文及同目录 `prompts/`、`templates/`、`reference/`；需要改跳板默认形态时改 **本目录下对应 adapter 子目录** 的 `templates/`，再经 Framework 初始化（framework-init）render 下发，**勿**仅在实例跳板内手补。
 - Cursor 侧的会话级总规则与本条呼应：见 `cursor/templates/rules/framework.mdc`（Skill 路由第三条）。
 
-**v2.3+ 扁平 skill-id**：实例根跳板目录/文件使用扁平名（如 `.cursor/skills/coding/`、`.claude/commands/coding.md`），不再生成编号形态的旧目录。UPDATE `framework-init` 的 `cleanup-deprecated` 任务会按 `materialized_adapters` 自动 `backup_delete` 遗留 skill 跳板（含语义旧名如 `prd-design` / `requirement-design`；备份 `.framework-backup/<timestamp>/`）；**勿**再依赖宿主手工删旧跳板。旧 adapter 级废弃目录（`adapter.yaml` `deprecated_artifacts`）仍走同一任务。
+**全 adapter 升级清理**：UPDATE `framework-init` 的 `cleanup-deprecated` 检查发布件中全部 adapter，包含已退出 `materialized_adapters` 的历史残留。旧 skill/command 名（编号、`prd-design` / `requirement-design`、`goal-orchestration` 等）按各 adapter 的物化目录声明清理，generic 跟随 `paths.agent_bundle_root`。专属退役文件登记在 `adapter.yaml` 的 `deprecated_artifacts`；退役 hook 同时登记 `hook_configs`，先移除旧注册再删除脚本，保留宿主其他 hook/配置。所有修改先备份到 `.framework-backup/<timestamp>/`，S3 run-log 分别记录删除数与 hook 配置更新数。配置仍含脚本引用时保留脚本并记 blocked；非法配置记 failed，其余 adapter/旧跳板继续处理，最终任务如实报失败。CREATE 或跳过清理任务不执行此操作。
+
+**维护约定**：删除或迁移已发布的模板时，必须同步登记旧产物路径或共享旧 skill/command 名，并验证升级清理；仅删除发布件模板不会自动删除宿主文件。无专属退役项的 adapter 可省略 `deprecated_artifacts`，仍支持共享清理机制。共享目录内仍被其他 adapter 使用的现行产物、未知宿主自有文件不作整目录清空；“无 deprecated 需清理”仅表示已登记范围没有命中，不代表任意历史误生成文件均不存在。
 
 ## Init Skill：编排流（framework-init · S1–S4）
 

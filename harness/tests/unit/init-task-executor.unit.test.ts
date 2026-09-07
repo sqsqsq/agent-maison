@@ -10,6 +10,9 @@ import { executeInitTask, type InitExecutionContext } from '../../scripts/utils/
 import { __testing_setDetectScanForEnsure } from '../../scripts/utils/personal-setup-gate';
 import type { InitTaskPlan } from '../../scripts/utils/init-task-planner';
 import { detectRepoLayout, harnessRootFromLayout } from '../../repo-layout';
+import { __testing as checkInitTesting } from '../../scripts/check-init';
+import { listAvailableAdapters } from '../../scripts/utils/adapter-catalog';
+import { executeInitPlan } from '../../scripts/init-orchestrate';
 
 function minimalArchitecture(): Record<string, unknown> {
   return {
@@ -73,6 +76,199 @@ const ensureConfigTask = {
 };
 
 const cases: Array<{ name: string; run: () => void }> = [
+  {
+    name: 'cleanup 部分失败：保留未知注册的脚本，后续 adapter/旧跳板继续，run-log 保留成功与失败并允许重试',
+    run: () => {
+      const root = mkTmp();
+      const write = (rel: string, text: string) => {
+        fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+        fs.writeFileSync(path.join(root, rel), text);
+      };
+      try {
+        write('framework.config.json', JSON.stringify(legalCursorConfigWritePayload()));
+        write('.claude/settings.json', 'invalid-json');
+        write('.claude/hooks/record-verifier-report.mjs', 'claude-old');
+        write('.claude/commands/goal-orchestration.md', 'old bridge');
+        write('.codex/hooks/check-phase-completion.mjs', 'codex-stop');
+        write('.codex/hooks/record-verifier-report.mjs', 'codex-report');
+        const source = JSON.stringify({ hooks: { Stop: [{ command: 'node "$VAR"/.codex/hooks/check-phase-completion.mjs --flag' }] } });
+        write('.codex/hooks.json', source);
+        write('.cac/hooks/record-verifier-report.mjs', 'ca-old');
+        write('.opencode/skill/prd-design/SKILL.md', 'old');
+        clearFrameworkConfigCache();
+        const plan: InitTaskPlan = { schema_version: '1.0', scope: 'project', mode: 'update', generated_at: '', tasks: [
+          { ...ensureConfigTask, id: 'cleanup-deprecated' },
+          { ...ensureConfigTask, id: 'dependent', deps: ['cleanup-deprecated'] },
+        ] };
+        const options = { projectRoot: root, harnessRoot: path.resolve(__dirname, '../..'), plan,
+          decision: { schema_version: '1.0' as const, scope: 'project' as const, decision_mode: 'smart' as const,
+            materialized_adapters: ['cursor'],
+            plan_generated_at: '', tasks: plan.tasks.map(t => ({ task_id: t.id, action: 'run' as const })) } };
+        const log = executeInitPlan(options);
+        const cleanup = log.entries[0]!;
+        assert.strictEqual(cleanup.status, 'failed');
+        assert.strictEqual(log.entries[1]!.reason, 'dependency_blocked');
+        assert.strictEqual(cleanup.cleanup_effects?.blocked, 1);
+        assert.strictEqual(cleanup.cleanup_effects?.failed, 1);
+        assert(cleanup.cleanup_results?.some(r => r.adapter === 'claude' && r.status === 'failed' && r.message?.includes('settings.json')));
+        assert(cleanup.cleanup_results?.some(r => r.path === '.codex/hooks/check-phase-completion.mjs' && r.status === 'blocked'));
+        assert.strictEqual(fs.readFileSync(path.join(root, '.codex/hooks.json'), 'utf-8'), source);
+        assert.strictEqual(fs.readFileSync(path.join(root, '.codex/hooks/check-phase-completion.mjs'), 'utf-8'), 'codex-stop');
+        assert.strictEqual(fs.readFileSync(path.join(root, '.claude/hooks/record-verifier-report.mjs'), 'utf-8'), 'claude-old');
+        for (const rel of ['.claude/commands/goal-orchestration.md', '.cac/hooks', '.codex/hooks/record-verifier-report.mjs', '.opencode/skill/prd-design']) {
+          assert(!fs.existsSync(path.join(root, rel)), `未继续清理 ${rel}`);
+        }
+        assert(cleanup.cleanup_results?.some(r => r.adapter === 'codeagent' && r.backup_path));
+        write('.claude/settings.json', '{}');
+        write('.codex/hooks.json', '{}');
+        const retried = executeInitTask(plan.tasks[0]!, 'run', { projectRoot: root, harnessRoot: options.harnessRoot, plan });
+        assert.strictEqual(retried.failed, false);
+        assert(!fs.existsSync(path.join(root, '.codex/hooks')));
+        assert(!fs.existsSync(path.join(root, '.claude/hooks')));
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        clearFrameworkConfigCache();
+      }
+    },
+  },
+  {
+    name: '无法识别的复合、拼接引用在 removed/unchanged 两种分支均保留脚本，缺失脚本仍记录 blocked',
+    run: () => {
+      const root = mkTmp();
+      try {
+        const adapter = checkInitTesting.loadAdapter('codex');
+        const scriptRel = '.codex/hooks/check-phase-completion.mjs';
+        fs.mkdirSync(path.join(root, '.codex/hooks'), { recursive: true });
+        for (const command of [`node "$VAR"/${scriptRel} --flag`, `node ${scriptRel} && node host.mjs`, `node ${scriptRel} --flag`]) {
+          for (const recognized of [false, true]) {
+            fs.writeFileSync(path.join(root, scriptRel), 'old');
+            fs.writeFileSync(path.join(root, '.codex/hooks.json'), JSON.stringify({ hooks: { Stop: [
+              { command }, ...(recognized ? [{ command: `node ${scriptRel}` }] : []),
+            ] } }));
+            const result = checkInitTesting.applyDeprecatedArtifactsCleanup(root, adapter, 'update');
+            assert.strictEqual(result.blocked.length, 1, command);
+            assert.strictEqual(result.cleaned.length, recognized ? 1 : 0);
+            assert.strictEqual(fs.readFileSync(path.join(root, scriptRel), 'utf-8'), 'old');
+          }
+        }
+        fs.unlinkSync(path.join(root, scriptRel));
+        assert.strictEqual(checkInitTesting.applyDeprecatedArtifactsCleanup(root, adapter, 'update').blocked.length, 1);
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: 'UPDATE 全 adapter 退役：离开物化列表也清理，备份原件、保留现行/宿主产物、重复执行幂等',
+    run: () => {
+      const root = mkTmp();
+      const frameworkRoot = path.resolve(__dirname, '../../..');
+      const write = (rel: string, text: string) => {
+        fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+        fs.writeFileSync(path.join(root, rel), text);
+      };
+      try {
+        write('framework.config.json', JSON.stringify(legalCursorConfigWritePayload()));
+        const retired = new Map<string, string>();
+        const preserved = new Map<string, string>();
+        for (const name of listAvailableAdapters(frameworkRoot).names) {
+          const adapter = checkInitTesting.loadAdapter(name);
+          const cfg = adapter.rawConfig as any;
+          const targets = [
+            { dir: name === 'generic' ? '.agents/skills' : cfg.skill_bridge?.target_dir, suffix: '/SKILL.md' },
+            { dir: cfg.commands?.target_dir, suffix: '.md' },
+          ];
+          for (const target of targets.filter(t => t.dir)) {
+            const old = `${target.dir}/goal-orchestration${target.suffix}`;
+            retired.set(old, `old:${old}`);
+            preserved.set(`${target.dir}/coding${target.suffix}`, 'current');
+            preserved.set(`${target.dir}/host-custom${target.suffix}`, 'host');
+          }
+          for (const entry of adapter.deprecatedArtifacts) {
+            if (!entry.path.startsWith('hooks/')) continue;
+            const base = cfg.rules.target_dir.replace(/\/rules$/, '');
+            retired.set(`${base}/${entry.path}`, `old:${name}:${entry.path}`);
+          }
+        }
+        for (const [rel, content] of [...retired, ...preserved]) write(rel, content);
+        const configs = new Map<string, string>();
+        for (const base of ['.claude', '.cac', '.codex']) {
+          const rel = `${base}/${base === '.codex' ? 'hooks.json' : 'settings.json'}`;
+          const commands = [...retired.keys()].filter(p => p.startsWith(`${base}/hooks/`));
+          const settings = base === '.codex' ? null : JSON.parse(fs.readFileSync(path.join(frameworkRoot,
+            'agents', base === '.cac' ? 'codeagent' : 'claude', 'templates/settings.json'), 'utf-8'));
+          const templateCommand = settings?.hooks.Stop[0].hooks[0].command as string | undefined;
+          const original = JSON.stringify({ keep: 'host-config', hooks: { Stop: [{ matcher: '*', extra: true,
+            hooks: [...commands.map(p => ({ type: 'command', command: templateCommand
+              ? templateCommand.replace('check-phase-completion.mjs', path.basename(p)) : `node "${p}"` })),
+              { type: 'command', command: 'node host-hook.mjs' }],
+          }] } });
+          write(rel, original);
+          configs.set(rel, original);
+        }
+        clearFrameworkConfigCache();
+        const ctx: InitExecutionContext = {
+          projectRoot: root, harnessRoot: path.join(frameworkRoot, 'harness'), materializedAdapters: ['cursor'],
+          plan: { schema_version: '1.0', scope: 'project', mode: 'update', generated_at: '', tasks: [] },
+        };
+        const task = { ...ensureConfigTask, id: 'cleanup-deprecated' };
+        const result = executeInitTask(task, 'run', ctx);
+        for (const [rel, content] of retired) {
+          assert(!fs.existsSync(path.join(root, rel)), `残留 ${rel}`);
+          const record = result.cleanup_results?.find(item => rel.startsWith(item.path.replace(/\/$/, '') + '/') || item.path === rel);
+          assert(record?.backup_path, `未记录备份 ${rel}`);
+          const backupFile = record.path.endsWith('/') ? `${record.backup_path}SKILL.md` : record.backup_path;
+          assert.strictEqual(fs.readFileSync(path.join(root, backupFile), 'utf-8'), content);
+        }
+        for (const [rel, content] of preserved) assert.strictEqual(fs.readFileSync(path.join(root, rel), 'utf-8'), content);
+        for (const [rel, original] of configs) {
+          const next = JSON.parse(fs.readFileSync(path.join(root, rel), 'utf-8'));
+          assert.strictEqual(next.keep, 'host-config');
+          assert.deepStrictEqual(next.hooks.Stop, [{ matcher: '*', extra: true,
+            hooks: [{ type: 'command', command: 'node host-hook.mjs' }] }]);
+          const record = result.cleanup_results?.find(item => item.path === rel);
+          assert.strictEqual(record?.kind, 'hook_registration');
+          assert.strictEqual(fs.readFileSync(path.join(root, record!.backup_path!), 'utf-8'), original);
+        }
+        assert.strictEqual(result.cleanup_effects?.hook_configs_updated, 3);
+        assert.strictEqual(result.cleanup_effects?.backup_deleted, retired.size);
+        assert.strictEqual(executeInitTask(task, 'run', ctx).cleanup_results, undefined);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        clearFrameworkConfigCache();
+      }
+    },
+  },
+  {
+    name: '所有 adapter 共用退役 hook 清理：脚本已丢失仍清注册；非法 JSON/schema 与越界声明零写入',
+    run: () => {
+      const frameworkRoot = path.resolve(__dirname, '../../..');
+      for (const name of listAvailableAdapters(frameworkRoot).names) {
+        const root = mkTmp();
+        try {
+          const adapter = checkInitTesting.loadAdapter(name);
+          const targetRoot = '.custom';
+          adapter.deprecatedArtifacts = [{ path: 'hooks/retired.mjs', action: 'backup_delete', reason: 'test', hookConfigs: ['hooks.json'] }];
+          fs.mkdirSync(path.join(root, targetRoot, 'hooks'), { recursive: true });
+          const configFile = path.join(root, targetRoot, 'hooks.json');
+          fs.writeFileSync(configFile, JSON.stringify({ keep: 1, hooks: { Stop: [{ command: 'node .custom/hooks/retired.mjs' }] } }));
+          const cleaned = checkInitTesting.applyDeprecatedArtifactsCleanup(root, adapter, 'update', { targetRoot: ' .custom/ ' }).cleaned;
+          assert.deepStrictEqual(cleaned.map(c => c.action), ['remove_hook_registration'], name);
+          assert.deepStrictEqual(JSON.parse(fs.readFileSync(configFile, 'utf-8')), { keep: 1, hooks: {} });
+          const script = path.join(root, targetRoot, 'hooks/retired.mjs');
+          fs.writeFileSync(script, 'old');
+          for (const invalid of ['not-json', '{"hooks":{"Stop":{}}}']) {
+            fs.writeFileSync(configFile, invalid);
+            assert.throws(() => checkInitTesting.applyDeprecatedArtifactsCleanup(root, adapter, 'update', { targetRoot }), /无法安全清理/);
+            assert.strictEqual(fs.readFileSync(configFile, 'utf-8'), invalid);
+            assert.strictEqual(fs.readFileSync(script, 'utf-8'), 'old');
+          }
+          adapter.deprecatedArtifacts[0]!.path = '../host.txt';
+          assert.throws(() => checkInitTesting.applyDeprecatedArtifactsCleanup(root, adapter, 'update', { targetRoot }), /非法相对路径/);
+        } finally {
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      }
+    },
+  },
   {
     // plan 33714d0c：宿主 .gitignore 不再属于 Maison 契约——writer 已整体删除。
     // 这条是**退役回归**：即使旧 decision/run-log 仍带该 task_id（历史 staging 复用），

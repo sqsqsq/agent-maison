@@ -19,6 +19,7 @@ import type { FrameworkPackageIdentity } from './framework-integrity';
 import { detectLegacySkillBridgePresence } from './legacy-skill-bridge-cleanup';
 import {
   resolveMaterializedAdaptersFromContext,
+  resolveMaterializedAdaptersForCleanup,
   resolveProjectMaterializedAdapters,
 } from './materialized-adapters-resolve';
 import {
@@ -534,7 +535,10 @@ export function probeInitTaskPlan(options: PlanProbeOptions): InitTaskPlan {
       : buildProjectTasks(inspections, mode, materialized);
 
   if (scope === 'project' && mode === 'update') {
-    const presence = detectLegacySkillBridgePresence(projectRoot, cfgSources.config, materialized);
+    const cleanupAdapters = resolveMaterializedAdaptersForCleanup(
+      { materializedAdapters: materialized }, cfgSources.config, cfgSources, probeFrameworkRoot,
+    );
+    const presence = detectLegacySkillBridgePresence(projectRoot, cfgSources.config, cleanupAdapters);
     if (presence.count > 0) {
       tasks = tasks.map(t =>
         t.id === 'cleanup-deprecated'

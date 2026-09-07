@@ -2,14 +2,13 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import YAML from 'yaml';
 
 import type { FrameworkConfig } from '../../config';
-import { frameworkAbs, inferRepoLayout } from '../../repo-layout';
+import { resolveProbeFrameworkRoot } from '../../repo-layout';
 import type { InitMode } from '../check-init';
 import { validateAgentBundleRoot, type ResolvedAgentBundlePaths } from './agent-bundle-paths';
 import type { CleanupResult } from './init-sync-telemetry';
-import { parseCommandsTargetDir } from './instance-skill-bridge';
-import { isClaudeKernelAdapter } from './types';
 
 export const LEGACY_SKILL_BRIDGE_IDS = [
   // 00 / 0 前缀
@@ -29,6 +28,10 @@ export const LEGACY_SKILL_BRIDGE_IDS = [
   // 编号旧名（v2.3 前 prd/design 阶段）
   '1-prd-design',
   '2-requirement-design',
+  'framework-setup',
+  'goal-orchestration',
+  'app-component-blueprint',
+  'ut-audit',
 ] as const;
 
 export type LegacySkillBridgeId = (typeof LEGACY_SKILL_BRIDGE_IDS)[number];
@@ -79,7 +82,7 @@ function removePathRecursive(abs: string): void {
   fs.rmSync(abs, { recursive: true, force: true });
 }
 
-function assertSafeProjectRelativePath(projectRoot: string, relPosix: string): string {
+export function assertSafeProjectRelativePath(projectRoot: string, relPosix: string): string {
   const normalized = toPosix(relPosix).replace(/\/+$/, '');
   if (!normalized || normalized.includes('..') || path.isAbsolute(normalized)) {
     throw new Error(`[legacy-skill-bridge] 非法相对路径: ${relPosix}`);
@@ -89,13 +92,20 @@ function assertSafeProjectRelativePath(projectRoot: string, relPosix: string): s
   if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) {
     throw new Error(`[legacy-skill-bridge] 路径越界: ${relPosix}`);
   }
+  // 删除/备份前检查现存祖先，禁止经 symlink/junction 越出宿主。
+  let existing = absPath;
+  while (!fs.existsSync(existing)) existing = path.dirname(existing);
+  const realRel = path.relative(fs.realpathSync(projectRoot), fs.realpathSync(existing));
+  if (realRel.startsWith('..') || path.isAbsolute(realRel)) {
+    throw new Error(`[legacy-skill-bridge] 实际路径越界: ${relPosix}`);
+  }
   return absPath;
 }
 
 function ensureBackupDir(projectRoot: string, session: BackupSession): string {
   if (!session.backupRelDir) {
     session.backupRelDir = `.framework-backup/${session.stamp}`;
-    fs.mkdirSync(path.join(projectRoot, session.backupRelDir), { recursive: true });
+    fs.mkdirSync(assertSafeProjectRelativePath(projectRoot, session.backupRelDir), { recursive: true });
   }
   return session.backupRelDir;
 }
@@ -120,66 +130,40 @@ export function readGenericBundlePathsFromConfigPaths(
   };
 }
 
-/** claude-kernel 家族 commands 目录历史缺省（manifest 不可读时的兜底；与 instance-skill-bridge 同语义） */
-const KERNEL_COMMANDS_DIR_DEFAULTS: Record<string, string> = {
-  claude: '.claude/commands',
-  codeagent: '.cac/commands',
-};
-
-/**
- * claude-kernel 家族 legacy 路径 manifest 化（codex P2 回灌，plan c7a9e2f4 #12）：
- * 与 instance-skill-bridge 主入口同径——优先读 vendored agents/<name>/adapter.yaml 的
- * commands.target_dir，避免未来 target_dir 调整时清理路径漂移；manifest 不可读
- * （测试夹具/异常布局）回落历史缺省。
- */
-function kernelCommandsDir(projectRoot: string, adapter: string): string {
-  try {
-    const layout = inferRepoLayout(projectRoot);
-    const yamlPath = frameworkAbs(layout, 'agents', adapter, 'adapter.yaml');
-    if (fs.existsSync(yamlPath)) {
-      const parsed = parseCommandsTargetDir(fs.readFileSync(yamlPath, 'utf-8'));
-      if (parsed) return parsed.replace(/\\/g, '/').replace(/\/+$/, '');
-    }
-  } catch {
-    /* fallthrough to default */
-  }
-  return KERNEL_COMMANDS_DIR_DEFAULTS[adapter]!;
-}
-
-function legacyRelPathForAdapter(
+/** 路径来自物化声明；不另维护 adapter → 目录映射。 */
+function legacyTargetsForAdapter(
   adapter: string,
-  legacyId: string,
   config: FrameworkConfig,
   projectRoot: string,
-): string | null {
-  const name = adapter.trim().toLowerCase();
-  if (name === 'cursor') {
-    return `.cursor/skills/${legacyId}/`;
+): Array<{ dir: string; suffix: string }> {
+  if (adapter === 'generic') {
+    return [{ dir: readGenericBundlePathsFromConfigPaths(config.paths).skillsDir, suffix: '/' }];
   }
-  if (isClaudeKernelAdapter(name)) {
-    // claude=历史遗留真实存在；codeagent=新 adapter 现阶段恒 no-op，登记以防未来 skill-id 演化
-    return `${kernelCommandsDir(projectRoot, name)}/${legacyId}.md`;
-  }
-  if (name === 'generic') {
-    const bundle = readGenericBundlePathsFromConfigPaths(config.paths);
-    return `${bundle.skillsDir}/${legacyId}/`;
-  }
-  return null;
+  const frameworkRoot = resolveProbeFrameworkRoot(projectRoot, path.resolve(__dirname, '../..'));
+  const yamlPath = path.join(frameworkRoot, 'agents', adapter, 'adapter.yaml');
+  if (!fs.existsSync(yamlPath)) return [];
+  const cfg = YAML.parse(fs.readFileSync(yamlPath, 'utf-8'));
+  return [
+    { dir: cfg?.skill_bridge?.target_dir, suffix: '/' },
+    { dir: cfg?.commands?.target_dir, suffix: '.md' },
+  ].filter((target): target is { dir: string; suffix: string } => typeof target.dir === 'string');
 }
 
 export function collectLegacySkillBridgePaths(
   opts: LegacySkillBridgeCleanupOptions,
 ): LegacySkillBridgePath[] {
   const out: LegacySkillBridgePath[] = [];
-  const seenAdapters = new Set<string>();
+  const seenPaths = new Set<string>();
   for (const raw of opts.materializedAdapters) {
     const adapter = raw.trim();
-    if (!adapter || seenAdapters.has(adapter)) continue;
-    seenAdapters.add(adapter);
-    for (const legacyId of LEGACY_SKILL_BRIDGE_IDS) {
-      const relPosix = legacyRelPathForAdapter(adapter, legacyId, opts.config, opts.projectRoot);
-      if (!relPosix) continue;
-      out.push({ adapter, relPosix: toPosix(relPosix), legacyId });
+    if (!adapter) continue;
+    for (const target of legacyTargetsForAdapter(adapter, opts.config, opts.projectRoot)) {
+      for (const legacyId of LEGACY_SKILL_BRIDGE_IDS) {
+        const relPosix = toPosix(target.dir + '/' + legacyId + target.suffix);
+        if (seenPaths.has(relPosix)) continue;
+        seenPaths.add(relPosix);
+        out.push({ adapter, relPosix, legacyId });
+      }
     }
   }
   return out;
@@ -224,13 +208,12 @@ export function applyLegacySkillBridgeCleanup(
 
     if (session) {
       backupRelDir = ensureBackupDir(opts.projectRoot, session);
-      const backupAbs = path.join(opts.projectRoot, backupRelDir, entry.relPosix);
+      const backupAbs = assertSafeProjectRelativePath(opts.projectRoot, `${backupRelDir}/${entry.relPosix}`);
       copyPathRecursive(absPath, backupAbs);
     } else {
       const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
       backupRelDir = `.framework-backup/${stamp}`;
-      fs.mkdirSync(path.join(opts.projectRoot, backupRelDir), { recursive: true });
-      const backupAbs = path.join(opts.projectRoot, backupRelDir, entry.relPosix);
+      const backupAbs = assertSafeProjectRelativePath(opts.projectRoot, `${backupRelDir}/${entry.relPosix}`);
       copyPathRecursive(absPath, backupAbs);
     }
 

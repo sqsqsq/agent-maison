@@ -212,6 +212,13 @@ generic 未登记（共享规则被物化不等于运行时会读取）。未登
 - **退役的 halt_reason**：`phase_write_owner_unresolved`、`phase_write_boundary_unresolved`、`pre_invoke_snapshot_failed`、`post_invoke_snapshot_failed`、`unauthorized_source_mutation`、`goal_post_review_source_mutation_unresolved`、`goal_review_closure_baseline_unavailable` 新 run 不再写入；`testing_write_violation` 早已无产地。注册表条目保留并标 legacy-only，历史 `events.jsonl` 仍可解释，旧事件不改写。
 - **放弃了什么**：未登记路径与产品源码域的跨阶段写入不再"即时"阻断，改为留痕加由 checker 稍后裁决，失去一部分早期发现能力。真实编译、测试、验收失败与范围越界的处理一律不变。
 
+### 3.0.x：全 adapter 退役产物清理（UPDATE 行为变化）
+
+- 集成新发布件后执行 `framework-init` UPDATE。`cleanup-deprecated` 检查发布件所有 adapter 的已登记退役项，包括不在本次 `materialized_adapters` 中的历史残留；不会因为当前只选 Cursor 就忽略旧 `.claude`、`.cac`、`.codex` 产物。
+- 旧 skill/command 清理路径由各 adapter 的目录声明派生，generic 跟随 `paths.agent_bundle_root`。新增清理 `framework-setup`、`goal-orchestration`、`app-component-blueprint`、`ut-audit`；共享目录内的现行入口和宿主自有文件保留。
+- 退役 hook 使用 `deprecated_artifacts[].hook_configs` 声明旧注册所在的 JSON 文件，先备份并移除注册，再删除脚本。此字段用于退役清理；adapter 顶层 `hooks_config` 用于安装当前注册，两者用途不同。配置里仍含脚本引用时保留脚本并记 `blocked`，不猜测改写复合命令；只移除删除脚本后已空的 `hooks/`，不整目录清空。
+- 全部备份在 `.framework-backup/<timestamp>/`。非法配置或未能清除的引用不阻止其他 adapter/旧跳板继续清理；最终任务标为 failed，S3 run-log 保留成功项与 `blocked`/`failed` 原因。按日志修复旧注册后重跑 UPDATE；不要直接删脚本来消除报错。CREATE 或跳过该任务不清理。
+
 ### 3.0.x：goal 作者前置输入——manifest 1.0 knowledge 索引注入阶段 prompt（临时，plan a7c3e9d2）
 
 `hooks/<phase>/on_context_load.md` 的片段只在装配 verifier ai-prompt 时消费（脚本 PASS 且 verifier 启用），从不进入作者动笔前的上下文；此前文档把它写成"宿主叠加指令"是误导，已订正。3.0.x 起 goal 模式在作者阶段 prompt 里注入 `doc/extensions/manifest.yaml` 的 `provides.knowledge`（1.0 字符串）索引与一句读取指令，作者动笔前即知道要读哪些文件；交互模式由 Skill 行为规约（原则 1 第 8 条）指引读取。

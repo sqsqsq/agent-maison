@@ -84,6 +84,17 @@ goal_capability:
 
 post_install_hooks: []
 
+# 历史 init 曾误物化 Claude Stop/SubagentStop 协议脚本；先清旧注册再备份删除脚本。
+deprecated_artifacts:
+  - path: hooks/check-phase-completion.mjs
+    action: backup_delete
+    hook_configs: [hooks.json]
+    reason: "Codex adapter 不再物化此 Claude Stop 协议脚本"
+  - path: hooks/record-verifier-report.mjs
+    action: backup_delete
+    hook_configs: [hooks.json]
+    reason: "SubagentStop 发布链退役，Codex 历史误物化残留"
+
 notes: |
   - 与 generic 类似，但 bundle 默认落 `.codex/skills`；非标路径须编辑 framework.config.json。
   - native /goal 第一版仅 metadata + 条件模板占位；闭环裁决由 goal-runner + harness 承担。

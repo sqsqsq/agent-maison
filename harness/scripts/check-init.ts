@@ -47,7 +47,7 @@ import {
   PendingMigrationEntry,
 } from './utils/config-field-merger';
 import { loadLocalConfig } from './utils/framework-local-config';
-import { computeHooksConfigUpsert } from './utils/hooks-config-upsert';
+import { computeHooksConfigUpsert, computeHooksConfigRemoval } from './utils/hooks-config-upsert';
 import { PhaseChecker, CheckContext, CheckResult } from './utils/types';
 import {
   buildFrameworkIdentityResult,
@@ -59,7 +59,7 @@ import {
   readAgentBundlePathsFromConfig,
   type ResolvedAgentBundlePaths,
 } from './utils/agent-bundle-paths';
-import { readGenericBundlePathsFromConfigPaths } from './utils/legacy-skill-bridge-cleanup';
+import { assertSafeProjectRelativePath, readGenericBundlePathsFromConfigPaths } from './utils/legacy-skill-bridge-cleanup';
 import {
   listFrameworkBuiltinSkillDirs,
   materializeAgentBundleSkills,
@@ -382,7 +382,7 @@ interface AdapterDescriptor {
   /** adapter.yaml 中声明的所有 template 路径，用于 template_files_resolvable */
   declaredTemplatePaths: Array<{ field: string; abs: string; exists: boolean }>;
   /** deprecated_artifacts 列表（check-init UPDATE 时 backup_delete） */
-  deprecatedArtifacts: Array<{ path: string; action: string; reason: string }>;
+  deprecatedArtifacts: Array<{ path: string; action: string; reason: string; hookConfigs?: string[] }>;
   /** 解析后的 adapter.yaml 原始对象（供 target root 等推导） */
   rawConfig: Record<string, unknown> | null;
 }
@@ -417,6 +417,7 @@ function resolveAdapterTargetRoot(cfg: Record<string, unknown> | null): string |
     (cfg.rules as { target_dir?: string } | undefined)?.target_dir,
     (cfg.hooks as { target_dir?: string } | undefined)?.target_dir,
     (cfg.commands as { target_dir?: string } | undefined)?.target_dir,
+    (cfg.skill_bridge as { target_dir?: string } | undefined)?.target_dir,
   ].filter((d): d is string => typeof d === 'string' && d.includes('/'));
   for (const d of candidates) {
     const posix = d.replace(/\\/g, '/');
@@ -486,46 +487,92 @@ export function applyDeprecatedArtifactsCleanup(
   projectRoot: string,
   adapter: AdapterDescriptor,
   mode: InitMode,
-  options?: { backupSession?: DeprecatedCleanupBackupSession },
-): { cleaned: NonNullable<CheckInitReport['deprecated_artifacts_cleaned']>; backupRelDir: string | null } {
+  options?: { backupSession?: DeprecatedCleanupBackupSession; targetRoot?: string },
+): { cleaned: NonNullable<CheckInitReport['deprecated_artifacts_cleaned']>; blocked: Array<{ path: string; reason: string }>; backupRelDir: string | null } {
   const cleaned: NonNullable<CheckInitReport['deprecated_artifacts_cleaned']> = [];
+  const blocked: Array<{ path: string; reason: string }> = [];
   if (mode !== 'update') {
-    return { cleaned, backupRelDir: null };
+    return { cleaned, blocked, backupRelDir: null };
   }
   const entries = adapter.deprecatedArtifacts;
-  if (!entries.length) return { cleaned, backupRelDir: null };
+  if (!entries.length) return { cleaned, blocked, backupRelDir: null };
 
-  const root = resolveAdapterTargetRoot(adapter.rawConfig);
-  if (!root) return { cleaned, backupRelDir: null };
+  const root = (options?.targetRoot?.trim() || resolveAdapterTargetRoot(adapter.rawConfig))
+    ?.replace(/\\/g, '/').replace(/\/+$/, '');
+  if (!root) return { cleaned, blocked, backupRelDir: null };
 
   const session = options?.backupSession;
   let backupRelDir: string | null = session?.backupRelDir ?? null;
+  const backup = (relPath: string): string => {
+    const source = assertSafeProjectRelativePath(projectRoot, relPath);
+    if (!backupRelDir) {
+      backupRelDir = `.framework-backup/${session?.stamp ?? nowStamp()}`;
+      if (session) session.backupRelDir = backupRelDir;
+    }
+    const backupRelPath = `${backupRelDir}/${relPath}`;
+    const backupAbs = assertSafeProjectRelativePath(projectRoot, backupRelPath);
+    // 一个配置可能在同一轮退役多个脚本，保留首次修改前的完整原件。
+    if (!fs.existsSync(backupAbs)) copyPathRecursive(source, backupAbs);
+    return backupRelPath;
+  };
+  const registrations = new Map<string, string[]>();
+  for (const entry of entries) {
+    if (entry.action !== 'backup_delete') continue;
+    const scriptRel = toPosix(`${root}/${entry.path}`);
+    assertSafeProjectRelativePath(projectRoot, scriptRel);
+    for (const cfg of entry.hookConfigs ?? []) {
+      const configRel = toPosix(`${root}/${cfg}`);
+      registrations.set(configRel, [...(registrations.get(configRel) ?? []), scriptRel]);
+    }
+  }
+  // 先解析所有旧注册，非法配置不改写、也不先删其脚本制造悬空引用。
+  const rewrites = [...registrations].flatMap(([relPath, scripts]) => {
+    const absPath = assertSafeProjectRelativePath(projectRoot, relPath);
+    if (!fs.existsSync(absPath)) return [];
+    const removal = computeHooksConfigRemoval(fs.readFileSync(absPath, 'utf-8'), [], [
+      ...scripts, ...scripts.map(p => path.resolve(projectRoot, p)),
+    ]);
+    if (removal.status === 'invalid_json' || removal.status === 'invalid_schema') {
+      throw new Error(`[check-init] 无法安全清理退役 hook 注册：${relPath} (${removal.status})`);
+    }
+    // ponytail: 按文件名保守保留可能仍被引用的脚本；只有真实误报再细化命令解析。
+    const remaining = JSON.stringify(JSON.parse(removal.nextText!)).toLowerCase();
+    for (const script of scripts) {
+      if (remaining.includes(path.posix.basename(script).toLowerCase())) {
+        blocked.push({ path: script, reason: `${relPath} 仍含脚本引用，保留文件；请核对并移除旧注册后重跑` });
+      }
+    }
+    return removal.status === 'removed' ? [{ relPath, absPath, nextText: removal.nextText! }] : [];
+  });
+  for (const rewrite of rewrites) {
+    const backupPath = backup(rewrite.relPath);
+    fs.writeFileSync(rewrite.absPath, rewrite.nextText, 'utf-8');
+    cleaned.push({ path: rewrite.relPath, action: 'remove_hook_registration',
+      reason: '移除退役脚本注册，保留宿主其余配置', backup_path: backupPath });
+  }
   for (const entry of entries) {
     if (entry.action !== 'backup_delete') continue;
     const relPath = entry.path.replace(/\\/g, '/').replace(/\/+$/, '');
-    const absPath = path.join(projectRoot, root, relPath);
+    const absPath = assertSafeProjectRelativePath(projectRoot, `${root}/${relPath}`);
+    if (blocked.some(item => item.path === `${root}/${relPath}`)) continue;
     if (!fs.existsSync(absPath)) continue;
 
-    if (!backupRelDir) {
-      const stamp = session?.stamp ?? nowStamp();
-      backupRelDir = `.framework-backup/${stamp}`;
-      fs.mkdirSync(path.join(projectRoot, backupRelDir), { recursive: true });
-      if (session) session.backupRelDir = backupRelDir;
-    }
-    const backupAbs = path.join(projectRoot, backupRelDir, root, relPath);
-    copyPathRecursive(absPath, backupAbs);
+    const backupPath = backup(`${root}/${relPath}`);
     removePathRecursive(absPath);
+    // 仅移除清空的 hooks 目录；不递归清空 adapter 根或宿主自有文件。
+    const parent = path.dirname(absPath);
+    if (path.posix.dirname(relPath) === 'hooks' && fs.readdirSync(parent).length === 0) fs.rmdirSync(parent);
     cleaned.push({
       path: toPosix(path.join(root, relPath)),
       action: entry.action,
       reason: entry.reason,
-      backup_path: toPosix(path.join(backupRelDir, root, relPath)),
+      backup_path: toPosix(backupPath),
     });
     process.stderr.write(
       `[check-init] deprecated artifact backup_delete: ${root}/${relPath} → ${backupRelDir}/${root}/${relPath}\n`,
     );
   }
-  return { cleaned, backupRelDir };
+  return { cleaned, blocked, backupRelDir };
 }
 
 function loadAdapter(adapter: string): AdapterDescriptor {
@@ -573,6 +620,8 @@ function loadAdapter(adapter: string): AdapterDescriptor {
         path: row.path,
         action: row.action,
         reason: typeof row.reason === 'string' ? row.reason : '',
+        hookConfigs: Array.isArray(row.hook_configs)
+          ? row.hook_configs.filter((p): p is string => typeof p === 'string') : undefined,
       });
     }
   }
