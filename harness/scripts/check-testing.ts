@@ -4041,6 +4041,16 @@ function adoptFrozenRunArtifactsForReuse(
 /** V8：把复用轮的「回填一次 + 重建」序列暴露给单测，断言最终盘上 timing 是重建结果。 */
 export const __testing_adoptFrozenRunArtifactsForReuse = adoptFrozenRunArtifactsForReuse;
 
+/**
+ * B07 D3：当前生效 golden contract 的身份（MAISON_GOLDEN_CONTRACT 指向文件的 sha256 前 16 位；
+ * 未设/不可读 → 'none'）。只做报告披露，不入执行键——普通测试结论与 golden 结论在同一报告里分开可读。
+ */
+function goldenContractIdentity(projectRoot: string): string {
+  const raw = process.env.MAISON_GOLDEN_CONTRACT?.trim();
+  if (!raw) return 'none';
+  return sha256File(path.isAbsolute(raw) ? raw : path.resolve(projectRoot, raw))?.slice(0, 16) ?? 'none';
+}
+
 function checkDeviceTestRunGate(
   ctx: CheckContext,
   hapHolder: DeviceTestPipelineHolder,
@@ -4729,17 +4739,12 @@ function checkDeviceTestRunGate(
       },
     ];
 
-    if (run.ok && reusable) {
-      out.push({
-        id: 'visual_diff_capture',
-        category: 'structure',
-        description: 'device_test.run 后 visual_diff 自动截图与骨架采集',
-        severity: 'MINOR',
-        status: 'PASS',
-        details: '同键复用：设备截图沿用被复用 run 的产物（visual-diff.json / device-screenshots），参考图或 ui-spec 变化时按现有截图重新比较，不重跑交互。',
-      });
-    }
-    if (run.ok && !reusable && !isDeviceVisualDiffSkipped(ctx.resolvedProfile)) {
+    // B07 D3（plan 6e4a2c8b）：采集块提成局部闭包——同键复用且 golden contract 生效时
+    // 也走同一入口（只补采集，不重跑 device_test/UT）。golden 身份不入执行键；两分支的
+    // visual_diff_capture 行都披露 golden_contract=<sha256 前 16 位>|none。
+    const goldenContractId = goldenContractIdentity(ctx.projectRoot);
+    const captureIfUiChanged = (logPath: string): void => {
+      if (isDeviceVisualDiffSkipped(ctx.resolvedProfile)) return;
       const specMd = loadSpecMarkdown(ctx.projectRoot, ctx.feature);
       if (specMd !== null) {
         const uiChange = parseUiChangeFromSpecMarkdown(specMd);
@@ -4760,7 +4765,7 @@ function checkDeviceTestRunGate(
               pythonPath: ready.pythonPath,
               hypiumWorkDir,
               deviceSn: process.env.HARNESS_HDC_TARGET,
-              logPath: run.logPath,
+              logPath,
             }),
             // t2（plan c6d8f2b4）：截图同时点 dump 布局树（layout-<screen_id>.json），T8 几何不变量消费。
             // 轻量化守恒（rev8/D11）：仅 pixel_1to1 档采集——semantic_layout/reference_only 不付
@@ -4770,7 +4775,7 @@ function checkDeviceTestRunGate(
                   pythonPath: ready.pythonPath,
                   hypiumWorkDir,
                   deviceSn: process.env.HARNESS_HDC_TARGET,
-                  logPath: run.logPath,
+                  logPath,
                 })
               : undefined,
             // 与 device_test.run 的 app 启动方式对齐（宿主热修回收，round6 收尾批 P0-3）
@@ -4779,13 +4784,36 @@ function checkDeviceTestRunGate(
               hypiumWorkDir,
               deviceSn: process.env.HARNESS_HDC_TARGET,
               bundleName,
-              logPath: run.logPath,
-              ...readDeviceTestRunHylyreNavOpts(run.logPath),
+              logPath,
+              ...readDeviceTestRunHylyreNavOpts(logPath),
             }),
-          }));
+          }).map(r => ({ ...r, details: `${r.details ?? ''}\ngolden_contract=${goldenContractId}` })));
         }
       }
+    };
+    if (run.ok && reusable) {
+      if (loadGoldenContractFromEnv(ctx.projectRoot).targets !== null) {
+        // golden 生效：不得把 visual_diff_capture 直接记 PASS——golden 模式的"本 run 强制重采 +
+        // forbidden 证据生产"只在采集入口里运行。nav 参数读顶层已回填的 device-test-run.meta.json
+        //（adoptFrozenRunArtifactsForReuse 已回填），故 logPath 取顶层 reportsDir 下路径；
+        // 不得用 reusable.runDir 拼（读不到 meta，退回 omitBundle:false）。
+        captureIfUiChanged(path.join(
+          featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot),
+          'visual-diff-capture.reuse.log',
+        ));
+      } else {
+        out.push({
+          id: 'visual_diff_capture',
+          category: 'structure',
+          description: 'device_test.run 后 visual_diff 自动截图与骨架采集',
+          severity: 'MINOR',
+          status: 'PASS',
+          details: '同键复用：设备截图沿用被复用 run 的产物（visual-diff.json / device-screenshots），参考图或 ui-spec 变化时按现有截图重新比较，不重跑交互。' +
+            `\ngolden_contract=${goldenContractId}`,
+        });
+      }
     }
+    if (run.ok && !reusable) captureIfUiChanged(run.logPath);
 
     const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
     const pollutionHit = loadTestingRootPollutionMeta(reportsDir);
@@ -5029,6 +5057,9 @@ export function runDeviceVisualDiffCapture(
   }
   return [];
 }
+
+/** B07 V4/V5：复用分支的生产接线（同键复用 × golden 采集）——单测注入 mock 传输面走真实门禁。 */
+export const __testing_checkDeviceTestRunGate = checkDeviceTestRunGate;
 
 /** Test seam: static derived-plan validation must happen before install-based runtime SKIP. */
 export function __testing_checkDeviceTestRunGateBeforeInstall(ctx: CheckContext): CheckResult[] {

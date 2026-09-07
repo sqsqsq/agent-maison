@@ -25,6 +25,7 @@ import {
   type BacktrackWindowEvent,
 } from '../../scripts/goal-runner';
 import { actionableDefectsToCandidates, validateRepairCandidatesShape } from '../../scripts/utils/repair-candidates';
+import { assessObservation, type AssessObservation, type AssessPhaseObservation } from '../../scripts/utils/assess';
 import type { UnitCaseResult } from '../run-unit';
 
 function assert(condition: boolean, message: string): void {
@@ -399,6 +400,47 @@ export function runAll(): UnitCaseResult[] {
       haltEv({}), // 无任何执行事件
     ]);
     assert(r === null, '无 settled 不派生');
+  });
+
+  // B07 D1（plan 6e4a2c8b）V6：宿主 i13 观测形状的决策重放——verdict PASS、
+  // repair_candidates=[]（D1 之后 12 条 minor 不再物化）、visual_diff WARN 留台账、
+  // backtracks_used=2。只断言 assess 不再请求第三次回退；不断言任何 run 终态（旧 TERMINAL 不改写）。
+  run('B07-V6 决策重放：i13 形状 + repair_candidates=[] → assess 不返回 rerun_phase/backtrack_to_phase', () => {
+    const H = 'a'.repeat(64);
+    const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
+    const phaseObs = (phase: string, extra: Partial<AssessPhaseObservation> = {}): AssessPhaseObservation => ({
+      phase, summary_state: 'current', schema_version: '1.2', verdict: 'PASS', closure: 'closed',
+      assurance: 'full', required_assurance: null, assurance_satisfied: null, deferred: false,
+      summary_fingerprint: H, evidence_fingerprint: H, ...extra,
+    });
+    const i13Defects = Array.from({ length: 12 }, (_, i) => `visual|screen|minor#${i}`);
+    const observe = (candidates: AssessPhaseObservation['repair_candidates']): AssessObservation => ({
+      schema_version: '1.0', feature: 'bc-openCard', workflow: 'spec-driven', track: 'full', goal_end: 'testing',
+      phases: chain.map(p => phaseObs(p, p === 'testing' ? { repair_candidates: candidates } : {})),
+      fingerprints: { workflow: H, track: H, goal: H, run_attempt: H, summaries: H, evidence: H, reconcile: H, observed: H },
+      reconcile: {
+        schema_version: '1.0', state: 'active',
+        phase_outcome: { phase: 'testing', verdict: 'PASS', legacy_action: 'advance' },
+        blockers: [],
+        deterministic_defects: i13Defects,
+        residual_fingerprints: i13Defects,
+        budgets: { retries_used: 0, max_retries_per_phase: 2, backtracks_used: 2 },
+        repair_convergence: { eligible_empty: false, open_signal_count: 12, attempted_signal_count: 1 },
+      },
+    });
+    // 对照：改动前 12 条 minor 各成一条 coding 候选 → assess 请求回 coding（第三次回退）
+    const before = assessObservation(observe(i13Defects.map((fp, i) => ({
+      id: `visual_diff:screen${i}`, category: 'coding' as const, item_fingerprint: FP_A.slice(0, 63) + String(i % 10),
+    }))));
+    assert(before.recommendation.action === 'rerun_phase' && before.recommendation.phase === 'coding'
+      && before.recommendation.runner_action === 'backtrack_to_phase',
+      `对照（候选非空）应请求回 coding：${JSON.stringify(before.recommendation)}`);
+    // D1 之后：候选为空，deterministic_defects 仍 12 条（只是诊断投影，不决定路由）
+    const after = assessObservation(observe([]));
+    assert(after.recommendation.action !== 'rerun_phase',
+      `不得再 rerun_phase：${JSON.stringify(after.recommendation)}`);
+    assert(after.recommendation.runner_action !== 'backtrack_to_phase',
+      `不得再 backtrack_to_phase：${JSON.stringify(after.recommendation)}`);
   });
 
   // 标准执行模式：逐条执行并捕获异常（不可只登记 ok:true——那是假 PASS）
