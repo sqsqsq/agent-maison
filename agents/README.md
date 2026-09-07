@@ -22,9 +22,10 @@ framework/agents/
 ├── cursor/                      ← Cursor adapter（AGENTS.md + .cursor/skills/ 跳板 + .cursor/rules/）
 │   ├── adapter.yaml
 │   └── templates/
-└── codex/                       ← Codex CLI adapter（AGENTS.md + .codex/skills/ 跳板 + goal_capability）
+└── codex/                       ← Codex CLI adapter（AGENTS.md + .codex/skills/ 跳板 + .codex/agents/ + goal_capability）
     ├── adapter.yaml
     └── templates/
+        └── agents/              ← 角色 toml（verifier.toml，由 claude verifier.md 渲染，勿手改）
 ├── chrys/                       ← Chrys agent adapter（AGENTS.md + .agents/ bundle + chrys run headless）
 │   ├── adapter.yaml
 │   └── templates/
@@ -104,7 +105,7 @@ schema、组合约束与 fallback 以 [`adapter-schema.yaml`](./adapter-schema.y
 | `generic` | `AGENTS.md` | `{paths.agent_bundle_root}/skills/` + `{paths.agent_bundle_root}/rules/`（根目录名由用户指定，如 `.agents`） |
 | `claude` | `CLAUDE.md` | `.claude/commands/*.md`、`.claude/agents/verifier.md`、`.claude/settings.json`、`.claude/hooks/*.mjs` |
 | `cursor` | `AGENTS.md` | `.cursor/skills/<skill>/SKILL.md`（8 份内置跳板）、`.cursor/rules/framework.mdc` |
-| `codex` | `AGENTS.md` | `.codex/skills/<skill>/SKILL.md`（bridge 跳板）、`.codex/rules/interaction-renderer.md` |
+| `codex` | `AGENTS.md` | `.codex/skills/<skill>/SKILL.md`（bridge 跳板）、`.codex/rules/interaction-renderer.md`、`.codex/agents/verifier.toml`（生成物） |
 | `chrys` | `AGENTS.md` | `.agents/skills/<skill>/SKILL.md`（bridge 跳板）、`.agents/rules/interaction-renderer.md` |
 | `opencode` | `AGENTS.md` | `.opencode/skill/<skill>/SKILL.md`（自有原生目录；bridge 跳板；技能自动注册为 slash）、`.opencode/rules/interaction-renderer.md` |
 | `codeagent` | `AGENTS.md` | `.cac/commands/*.md`（自有副本，身份行=codeagent）、`.cac/agents/verifier.md`、`.cac/settings.json`（变量 `${CODEAGENT3_PROJECT_DIR}`）、`.cac/hooks/*.mjs`、`.cac/rules/*.md`（与 claude 共享模板） |
@@ -201,7 +202,7 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 | generic | AGENTS.md | — | `{agent_bundle_root}/skills/*`（bridge 薄跳板；inline 已废弃） | `{agent_bundle_root}/rules/*.mdc` | — | — |
 | claude  | CLAUDE.md | `.claude/commands/*.md` + `.claude/agents/verifier.md` | — | `.claude/rules/*.md` | `.claude/settings.json` | `.claude/hooks/*.mjs` |
 | cursor  | AGENTS.md | — | `.cursor/skills/<skill>/SKILL.md`（模板 SSOT：`shared/agent-bundle/templates/skills-bridge`） | `.cursor/rules/*.mdc` | — | — |
-| codex   | AGENTS.md | — | `.codex/skills/<skill>/SKILL.md`（bridge 跳板） | `.codex/rules/interaction-renderer.md` | — | — |
+| codex   | AGENTS.md | —（顶层 `subagents` → `.codex/agents/verifier.toml`，生成物） | `.codex/skills/<skill>/SKILL.md`（bridge 跳板） | `.codex/rules/interaction-renderer.md` | — | — |
 | chrys   | AGENTS.md | — | `.agents/skills/<skill>/SKILL.md`（bridge 跳板） | `.agents/rules/interaction-renderer.md` | — | — |
 | opencode | AGENTS.md | —（技能自动注册 slash） | `.opencode/skill/<skill>/SKILL.md`（自有原生目录；bridge 跳板） | `.opencode/rules/interaction-renderer.md` | — | — |
 | codeagent | AGENTS.md | `.cac/commands/*.md`（自有副本）+ `.cac/agents/verifier.md`（共享模板） | — | `.cac/rules/*.md`（共享模板） | `.cac/settings.json` | `.cac/hooks/*.mjs`（共享模板） |
@@ -237,6 +238,11 @@ verifier 不是每阶段必跑的仪式，而是按 workflow 声明 + evidence p
 
 写者只有一个，且不是 verifier 自己：verifier 保持只读工具集。闭环侧只校验三条——文件在、终态块
 回显的 subject 等于 `summary.verifier_subject_id`、verdict 与 blocker_count 一致。
+
+**codex 的审查员人设由 claude 的 `verifier.md` 渲染**（`.codex/agents/verifier.toml`，顶层 `subagents`
+声明 + `auto_overwrite`；`cd harness && npm run sync:codex-agents` 生成，等值由 unit test 守护）；
+其中 `sandbox_mode = "read-only"` **只是角色默认值**——Codex spawn_agent 会用父线程实时权限覆盖
+（goal 父进程为 danger-full-access），不构成隔离保证，不写盘靠正文硬性规则（plan 7b2e9d4c D1/D3）。
 
 **只登记宿主实跑观测过的 adapter**（入册纪律）：claude / codeagent / codex 已登记；
 cursor / opencode / chrys / generic 未登记。共享规则文件被物化 **不等于** 运行时会读取——opencode
