@@ -36,8 +36,8 @@ todos:
     content: V1–V6 目标测试全绿；收尾一次 `cd harness && npm test` + `npm run openspec:validate` + 发布件校验（toml 入包）；codex review ≤3 轮后按 §4 提交边界提交。09-07 完成：单测 3917/3919（2 项为 worktree 联接假象，主库重跑通过）、夹具 46/46、openspec 38、V5 候选口径 ALL PASS，codex 两轮收敛。
     status: completed
   - id: cvt-host-acceptance
-    content: 宿主验收（§7）：集成候选件 → framework-init UPDATE 覆盖 .codex/agents/verifier.toml（S3 run-log 记同步与备份）→ 同款只读冒烟：终态块 + 子线程不再读 verify-<phase>.md / phase-rules。触发方式按用户当时授权。
-    status: pending
+    content: 宿主验收（§7）：集成候选件 → framework-init UPDATE 覆盖 .codex/agents/verifier.toml（S3 run-log 记同步与备份）→ 同款只读冒烟：终态块 + 子线程不再读 verify-<phase>.md / phase-rules。触发方式按用户当时授权。09-07 用户在主宿主 codex 会话完成：toml 对齐、终态块解析成功、零写入、子线程按工具参数统计零读 verify-*.md/phase-rules；判词 FAIL(blocker 1) 是对产品测试报告通过率口径错误的真实发现（§8）。
+    status: completed
 ---
 
 # 施工图
@@ -272,6 +272,14 @@ npm run openspec:validate
 - codex review 第 2 轮 **approve，零 finding**；两轮 review 前后本 plan 范围文件哈希一致（codex 未改树）。
 - 本地验收：全量 `npm test` 在隔离 worktree（HEAD 256914a6 + 本 plan 17 个文件）跑，单测 3919 项中 3917 通过，2 个失败均为 worktree 里 `harness/node_modules` 目录联接的环境假象（一个把联接当作"发布进 ignored 目录的文件"，一个对联接建符号链接被 Windows 拒绝），两套件在主库重跑 2/2 与 28/28 通过；夹具 46/46（主库）；openspec 38 项通过。V5：同一 worktree `release:pack` included=1101、manifest 含 `agents/codex/templates/agents/verifier.toml`，`verify-release-pack --skip-typecheck --skip-plan-release-gate`（候选件口径）ALL PASS。工作区与 B08（9b2d5e7c）并行，B08 文件零触碰。
 - 遗留：宿主验收（§7）未做，`cvt-host-acceptance` 保持 pending。
+
+### 2026-09-07：宿主验收（用户在主宿主 codex 会话执行，通过）
+
+- 前提：`.codex/agents/verifier.toml` 与发布件模板 diff 为空（升级与 UPDATE 由用户自行完成，不在本 plan 范围）。
+- 冒烟：codex 会话 spawn_agent 起 verifier 子线程（rollout `01a07bcb`，20:14），request 仍为 testing 阶段的 d3d50c0f…；回复末尾恰好一个终态块，`parseResultBlock` 解析成功；工作区前后 porcelain 一致。
+- 子线程读取面（按工具调用参数统计，不按字符串出现次数）：`verify-*.md` 0 次、`framework/specs/phase-rules/**` 0 次、`ai-prompt.md` 多次分段读取。§7 第 3 条成立——新 toml 生效，F05 的三份冗余读取消失。**话术勘误**：最初给宿主的判据用 `grep -c 'phase-rules'` 数字符串，把 ai-prompt.md 正文里的提及（装配 prompt 自带"以下是 phase-rules/testing-rules.yaml 的完整内容"等 4 处）也算了进去，宿主据此报"phase-rules: 4 ≠ 0"停在第 3 步；调度者直接读同机 rollout 的工具参数核实后判 PASS。以后此类判据一律看工具调用参数。
+- 判词差异（如实登记，非模板缺陷）：同一 subject，Claude 15:35 报告 PASS；旧 toml 下 codex 对 `pass_criteria_met` 给 WARN（"报告统计表采用的阈值、分母与测试计划不同"）；新 toml 下 codex 对同一事实给 **FAIL（BLOCKER）**，证据具体到 test-plan.md:177–184 与 ai-prompt.md:4584–4591（计划按 7 条可执行子集、总体阈值 ≥85%；报告写成 P1 7/10=70%、总体 87% 对 ≥90% 并标未达标）。这是对产品测试报告口径错误的真实发现，按 verifier.md"证据充分才 FAIL"口径成立；模型间判词方差是既有事实，不由本 plan 处理。宿主若要闭环该阶段，应修测试报告的通过率表，不是改模板。
+- `cvt-host-acceptance` 关闭。
 
 ## 实施记录
 
