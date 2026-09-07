@@ -1,0 +1,61 @@
+# visual-diff Spec Delta
+
+## MODIFIED Requirements
+
+### Requirement: A reference image incompatible with the device viewport is rejected before content comparison
+
+A screen's reference image SHALL be dimension-checked against the device viewport before any pixel or OCR content comparison consumes it. The check reuses the existing image dimension reader and reference resolution: the reference is the screen's `ref_id` image, the viewport is the fidelity lock `viewport` during spec and the actual captured screenshot during testing, and the two are compared by height/width ratio with the same ×1.15 threshold the OCR text-placement gate already uses for full-page detection, held as one shared constant.
+
+The judgement SHALL have exactly three outcomes, produced by one shared function (`classifyCompareReference`) and one shared entry point (`resolveCompareReference`) that every consumer calls — capture invalidation and pixel metrics, the delegated provider's target assembly, the check's pre-gate and comparison index, and the spec-phase pre-gate:
+
+- **direct** — aspect within the tolerance: the original image is the comparison input; the existing pipeline runs unchanged, with no `visual_reference_viewport` result.
+- **top_slice** — aspect exceeds the tolerance **and** `ref.w === shot.w`: the comparison input is the reference's top `shot.h` pixels, re-cropped by machine on every call into `device-testing/device-screenshots/_derived-ref/<ref_id>.top<shotH>.png` (overwritten; no existence or size caching), so that the derived slice and the screenshot share size and origin and no reference-side coordinate is rescaled. The screen SHALL stay in the comparison domain and be treated as an ordinary screen by capture (same build + same hash may skip recapture; the prior verdict is not dropped). A derivation failure SHALL fall back to `incompatible` with a note.
+- **incompatible** — aspect exceeds the tolerance and the widths differ: under `pixel_1to1` the screen SHALL FAIL (`visual_reference_viewport`, responsibility: spec reference asset) and SHALL be excluded from every pixel/OCR content comparison of that round; under lower fidelity tiers the existing ratchet decides WARN/SKIP and the pixel caliber SHALL NOT be silently upgraded to a pass.
+
+For a `top_slice` screen the comparison scope SHALL be decided by the ui-spec **declared** normalized bboxes only (`splitMustHaveByTopSlice`, `ratio = shot.h / ref.h`): a must_have element with `y + h ≤ ratio` is in scope, `y ≥ ratio` is out of scope, crossing the line or undeclared is undetermined. Layout dumps and locator results SHALL NOT participate in the scope decision, so a top element the product failed to render stays in scope and is reported missing as before. The delegated provider's coverage pre-check and the `visual_diff_region_attest` gate SHALL both take the in-scope subset as the expected set from that one function, and the OCR anchor-missing gate (`visual_diff_text_missing`) SHALL build its expected text set from the declared nodes whose bbox is in scope by the same rule — out-of-scope and undetermined texts are neither expected nor counted missing; the provider prompt SHALL state that the reference is the top viewport slice of a taller page (entry state) and list out-of-scope/undetermined elements as "do not judge missing". Out-of-scope and undetermined must_have elements SHALL be neither missing nor passed: they are **unverified**, disclosed by a `visual_reference_viewport` MINOR WARN line naming the screen, both sizes, and `N out of scope / M undetermined`, by a `visual_reference_viewport` visual-debt source entry (opened by the existing WARN/FAIL rule; cleared only by testing evidence — when the check is absent or only PASS rows remain, the entry SHALL close only if the same round carries a `visual_diff` result with `status === 'PASS'` and `structured.kind === 'visual_diff'`, i.e. the visual pipeline actually ran; the spec-phase PASS row, a SKIP, a missing report or a parse failure SHALL NOT clear it), and by `visual_diff` details / reference notes saying the screen was compared by its top slice and the rest is unverified. `capture_completeness_external`'s denominator SHALL NOT change. A derived slice that does not match the entry-state screenshot SHALL take the existing pixel/OCR ratchet to WARN/FAIL — never a PASS.
+
+Attestation crops (`region_attest.source_bbox`, `source_ref_hash`) and reference receipts SHALL keep binding the original image; the verifier does not see the derived slice. When the lock declares no viewport, spec SHALL WARN that the check is deferred to testing rather than pass by silence. The authored remedy for `incompatible` and for unverified regions stays: model a long page as several screens, each with its own viewport-sized `ref_id` image and a nav config ending in `scroll_to` an anchor element, under the same repeatable-scroll precondition as before. Maison SHALL derive only the top slice: no per-screen crop regions, no segmentation, no scroll stitching, no rewriting of the viewport from the reference, no second reference source; the existing full-page `uncertain` downgrade in the OCR gate remains as defensive diagnostics.
+
+Enforcement: `profiles/hmos-app/harness/image-toolkit.ts`, `profiles/hmos-app/harness/image-jimp-worker.cjs`, `profiles/hmos-app/harness/visual-diff-capture.ts`, `profiles/hmos-app/harness/visual-provider-review.ts`, `profiles/hmos-app/harness/visual-diff-check.ts`, `profiles/hmos-app/harness/fidelity-snapshot-check.ts`, `profiles/hmos-app/harness/visual-diff-ocr-gates.ts`, `harness/scripts/utils/visual-debt.ts`
+
+#### Scenario: A full-page reference of a different width fails under pixel_1to1
+
+- **WHEN** a P0 screen's reference image is 1080×4350 or 1080×8312 and the device viewport is 1320×2120 under `pixel_1to1`
+- **THEN** `visual_reference_viewport` SHALL FAIL naming the screen and both sizes, and that screen SHALL produce no pixel or OCR content hit in the round
+
+#### Scenario: A same-width taller reference is compared by its top slice
+
+- **WHEN** a P0 screen's reference image is 1320×4350 and the device viewport is 1320×2120
+- **THEN** the comparison input for capture metrics, the delegated provider and the OCR text-placement gate SHALL be `_derived-ref/<ref_id>.top2120.png` (1320×2120), the screen SHALL stay in the comparison domain, `visual_reference_viewport` SHALL be a MINOR WARN naming the top-slice comparison, and `visual_diff` details SHALL say the rest is unverified
+- **AND** with the same build and screenshot hash a second capture SHALL keep the entry (no drop, no recapture, verdict not reset to pending) with score/edge values present
+
+#### Scenario: Scope is decided by declared bboxes and disclosed as unverified
+
+- **WHEN** the screen declares must_have elements A (bbox entirely above `ratio`), B (bbox entirely below) and C (no bbox), and the screenshot shows A
+- **THEN** the provider coverage pre-check and `visual_diff_region_attest` SHALL require attestation for A only, the WARN line SHALL read `1 out of scope / 1 undetermined`, a `visual_reference_viewport` debt entry SHALL be open, and `capture_completeness_external` SHALL be unchanged
+- **AND** when A is absent from the screenshot it SHALL still be reported missing by both gates
+
+#### Scenario: A changed reference refreshes the slice and a mismatching slice is not washed green
+
+- **WHEN** the reference file's content changes with unchanged dimensions, or the derived slice's text structure differs from the screenshot
+- **THEN** the next call SHALL rewrite the derived slice (different hash), and the mismatch SHALL surface through the existing OCR text-placement ratchet as WARN/FAIL
+
+#### Scenario: A compatible reference changes nothing
+
+- **WHEN** the reference image and the viewport are both 1320×2120, or the author has modeled the long page as several screens each carrying a viewport-sized `ref_id` image
+- **THEN** the existing visual pipeline SHALL run with byte-identical checks and results
+
+#### Scenario: Lower tiers follow the ratchet
+
+- **WHEN** the same incompatible (different-width) reference is evaluated under a fidelity tier below `pixel_1to1`
+- **THEN** the check SHALL emit WARN or SKIP per the existing ratchet and SHALL NOT report a pixel-caliber pass
+
+#### Scenario: An undeclared spec viewport defers rather than passes
+
+- **WHEN** the fidelity lock declares no `viewport` during the spec phase
+- **THEN** spec SHALL WARN that the dimension check is deferred to testing, and testing SHALL perform it against the captured screenshot size
+
+#### Scenario: The spec pre-gate names derivable references
+
+- **WHEN** the fidelity lock declares `viewport` 1320×2120 and a screen's reference is 1320×4350
+- **THEN** the spec pre-gate SHALL emit a PASS row stating that testing will compare the top slice and the rest is unverified, and a 1080×4350 reference SHALL still FAIL under `pixel_1to1`

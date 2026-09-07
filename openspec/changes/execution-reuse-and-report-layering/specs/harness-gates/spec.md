@@ -14,7 +14,9 @@ Because the decision inspects only records that exist, a round SHALL record a no
 
 "Complete evidence" SHALL be defined per leg and SHALL be split into two groups. **Execution-fact** artifacts (the trace and run metadata for the testing leg; the per-module result and device log for the UT leg) SHALL be required: a missing one refuses reuse and forces a real run. **Derived** artifacts (timing projections) SHALL NOT by themselves refuse reuse: they SHALL take the rebuild channel, and only a rebuild that still fails to close SHALL fall back to a real run, fail-closed. The `timing_complete` field SHALL carry "derived evidence complete" with a leg-specific meaning, documented in the record's schema and in the migration notes.
 
-Enforcement: `harness/scripts/check-testing.ts`, `harness/scripts/check-ut.ts`, `harness/scripts/utils/native-trace-binding.ts`, `profiles/hmos-app/harness/execution-key.ts`, `profiles/hmos-app/harness/ut-host-impl.ts`, `profiles/hmos-app/harness/hdc-runner.ts`, `profiles/hmos-app/harness/device-test-evidence.ts`, `profiles/hmos-app/harness/build-fingerprint.ts`
+The HAP full digest that enters the testing key SHALL come from the install provider on **both** of its paths (plan 9b2d5e7c D2): the install-reuse branch (HAP unchanged, bundle already on the device) SHALL compute the current HAP file's full sha256 from the same function as the real-install branch and return it as `hapSha256Full`, so a reuse round and a real-install round for one HAP produce one key. The 12-hex `hapSha256` in `device-test-install.meta.json` SHALL NOT be used as a fallback for the key, and records whose `hap_sha256_full` is null SHALL NOT be skipped by the newest-record rule (skipping would hide a newer failure behind an older success); such old records stay on disk and cost at most one ordinary real run. The record identity predicate — same key, `outcome=success`, trace on disk, execution-fact artifacts present — SHALL be one exported function (`isExecutionRecordReusable`) that `decideReuse` and the goal collector's reuse-evidence binding both call, so trust in a reused round is never stricter than reuse itself.
+
+Enforcement: `harness/scripts/check-testing.ts`, `harness/scripts/check-ut.ts`, `harness/scripts/utils/native-trace-binding.ts`, `profiles/hmos-app/harness/execution-key.ts`, `profiles/hmos-app/harness/ut-host-impl.ts`, `profiles/hmos-app/harness/hdc-runner.ts`, `profiles/hmos-app/harness/device-test-evidence.ts`, `profiles/hmos-app/harness/build-fingerprint.ts`, `profiles/hmos-app/harness/providers/device-test-install.ts`
 
 #### Scenario: Only the latest real attempt can be reused
 
@@ -45,6 +47,11 @@ Enforcement: `harness/scripts/check-testing.ts`, `harness/scripts/check-ut.ts`, 
 
 - **WHEN** the newest same-key attempt succeeded and only its frozen timing copy is missing
 - **THEN** the run SHALL be reused with a rebuild requirement, and only a rebuild that cannot close SHALL fall back to a real run
+
+#### Scenario: Install reuse and real install produce one key
+
+- **WHEN** the same HAP is installed for real in one round and reused by the install provider in the next
+- **THEN** both rounds' records SHALL carry the same 64-hex `hap_sha256_full` and the same `execution_key`, and the second round SHALL reuse the first
 
 ### Requirement: Report-only reconciliation fully recomputes testing projections without a device
 
