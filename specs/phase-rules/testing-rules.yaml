@@ -448,11 +448,19 @@ traceability_checks:
 
   plan_references_unit_layer_ac:
     description: >
-      test-plan 关联了 ut_layer=unit 的 AC/BD 时 WARN（unit 由 business-ut UT 覆盖）
-    severity: MINOR
+      按 TC 引用形态分档：某条 TC 仅关联 ut_layer=unit 的 AC/BD（且无 NFR 引用）时 BLOCKER
+      （该 TC 应由 business-ut 覆盖，须从 test-plan 删除，不得改标 manual 通道）；
+      混合引用（unit + device/both 或 NFR）仅 WARN。
+      在任何 build/install/device 动作之前裁决，BLOCKER 时零设备调用。
+    severity: BLOCKER
     rule:
-      source: "test-plan.md"
-      warn_if_refs: 'ut_layer == "unit"'
+      source: "test-plan.md > 测试用例清单.关联 AC"
+      block_if_all_refs: 'ut_layer == "unit" and no NFR ref'
+      warn_if_any_ref: 'ut_layer == "unit"'
+      skip_if: >
+        该 TC 不裁决：引用为空；含无法解析的编号；引用的 AC/BD 未声明 ut_layer；
+        用例编号建立不了 TC-N 关联（交 acceptance_to_test_case / test_case_to_acceptance /
+        acceptance_ut_layer_complete 与编号结构检查）
 
   test_case_to_acceptance:
     description: >

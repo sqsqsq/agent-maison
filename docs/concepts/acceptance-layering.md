@@ -72,7 +72,7 @@ flowchart LR
 
 - `acceptance_to_test_case` 分母仅 `ut_layer ∈ {device, both}` 的 P0/P1
 - `test_plan_freshness_vs_acceptance`：`acceptance.yaml` 新于 `test-plan.md` → BLOCKER
-- plan 若关联 `ut_layer=unit` 的 AC → **WARN**（鼓励从 plan 剔除）
+- plan 若关联 `ut_layer=unit` 的 AC：某条 TC **仅**关联 unit 层 AC/BD 且无 NFR 引用 → **BLOCKER**（该 TC 由 business-ut 覆盖，须从 test-plan 删除；不得改 UT，也不得改标 `manual:*` 绕过），且在任何 build/install/device 动作之前裁决、零设备调用；混合引用（unit + device/both 或 NFR）→ **WARN**（鼓励从「关联 AC」列剔除 unit 引用）
 
 ---
 

@@ -1234,6 +1234,103 @@ test('B08-V4 最新一条规则不变：[success A] → [failed A] → decideReu
   }
 });
 
+// R8 生产入口版：「TC 仅关联 unit 层 AC」是计划契约错误，必须在 build/install/device 之前
+// 拦住，并且短路文案要写真实原因（宿主案例里 AI 看不到跑机之后那条 MINOR 提示，于是改 UT、
+// 改标 manual 绕了一大圈）。这里跑**完整 checker**，通道声明刻意闭合，排除"被通道门顺手拦下"。
+function r8Fixture(): { root: string; planPath: string } {
+  const fs = require('fs') as typeof import('fs');
+  const path = require('path') as typeof import('path');
+  const fixture = makeReportOnlyFixture();
+  const planPath = path.join(fixture.root, 'doc', 'features', 'demo', 'testing', 'test-plan.md');
+  fs.writeFileSync(planPath, [
+    '## 测试用例', '',
+    '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC | 执行通道 |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- |',
+    '| TC-001 | demo | app | tap | pass | P0 | AC-001 | hylyre |',
+  ].join('\n'));
+  return { root: fixture.root, planPath };
+}
+
+const R8_UNIT_ACCEPTANCE = {
+  acceptance: { criteria: [{ id: 'AC-001', priority: 'P0', ut_layer: 'unit', description: 'RDB 去重' }] },
+};
+
+test('R8 完整 checker：TC 仅关联 unit 层 AC → 设备流水线零动作，device_test_run 短路文案写真实原因', async () => {
+  const fs = require('fs') as typeof import('fs');
+  const checker = require('../../scripts/check-testing').default as {
+    check: (ctx: import('../../scripts/utils/types').CheckContext) => Promise<Array<import('../../scripts/utils/types').CheckResult>>;
+  };
+  const { root } = r8Fixture();
+  try {
+    const ctx = reportOnlyContext(root) as unknown as Record<string, unknown>;
+    ctx.reportReconcileOnly = false;
+    ctx.featureSpec = R8_UNIT_ACCEPTANCE;
+    const { value, spawned } = withSpawnGuard(
+      () => checker.check(ctx as unknown as import('../../scripts/utils/types').CheckContext),
+    );
+    const all = await value;
+
+    const unitAc = all.filter(r => r.id === 'plan_references_unit_layer_ac');
+    assert.strictEqual(unitAc.length, 1, `分层结果只算一次：${JSON.stringify(unitAc.map(r => r.status))}`);
+    assert.strictEqual(unitAc[0]!.status, 'FAIL', unitAc[0]!.details);
+    assert.strictEqual(unitAc[0]!.severity, 'BLOCKER', JSON.stringify(unitAc[0]));
+
+    // 前置：通道声明本身是闭合的——所以下面的短路只可能来自 R8 这条门
+    const channel = all.find(r => r.id === 'testing_execution_channel');
+    assert.strictEqual(channel?.status, 'PASS', `通道门必须闭合：${JSON.stringify(channel)}`);
+
+    const run = all.find(r => r.id === 'device_test_run');
+    assert.strictEqual(run?.status, 'SKIP', JSON.stringify(run));
+    assert.strictEqual(run?.severity, 'BLOCKER', JSON.stringify(run));
+    assert.match(run!.details ?? '', /测试计划含仅关联 unit 层 AC 的用例，已在设备动作前停下/, run!.details);
+    assert.ok(
+      !(run!.details ?? '').includes('执行通道声明未闭合'),
+      `短路文案不得沿用通道未闭合的假原因：${run!.details}`,
+    );
+    assert.match(run!.details ?? '', /TC-001/, run!.details);
+    for (const id of ['device_test_build', 'device_test_install']) {
+      assert.ok(!all.some(r => r.id === id), `不得启动设备流水线，却出现了 ${id}`);
+    }
+    assert.deepStrictEqual(spawned, [], `BLOCKER 短路后不得发生任何设备/工具进程调用：${spawned.join(' | ')}`);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('R8 完整 checker：--report-reconcile-only 不因该 BLOCKER 提前返回，仍完整只读分析', async () => {
+  const fs = require('fs') as typeof import('fs');
+  const checker = require('../../scripts/check-testing').default as {
+    check: (ctx: import('../../scripts/utils/types').CheckContext) => Promise<Array<import('../../scripts/utils/types').CheckResult>>;
+  };
+  const { root } = r8Fixture();
+  try {
+    const ctx = reportOnlyContext(root) as unknown as Record<string, unknown>;
+    ctx.reportReconcileOnly = true;
+    ctx.featureSpec = R8_UNIT_ACCEPTANCE;
+    const { value, spawned } = withSpawnGuard(
+      () => checker.check(ctx as unknown as import('../../scripts/utils/types').CheckContext),
+    );
+    const all = await value;
+
+    assert.strictEqual(
+      all.find(r => r.id === 'plan_references_unit_layer_ac')?.status, 'FAIL',
+      'report-only 也照常记账这条 BLOCKER',
+    );
+    // 只读重算照跑到底：报告重写 + 对账都必须产出（BLOCKER 不得把诊断路径一起关掉）
+    assert.strictEqual(all.find(r => r.id === 'test_report_generated')?.status, 'PASS',
+      `report-only 必须仍整份重写报告：${JSON.stringify(all.find(r => r.id === 'test_report_generated'))}`);
+    assert.ok(all.some(r => r.id === 'report_reconcile_only'),
+      `report-only 必须仍产出对账结果：${all.map(r => r.id).join(',')}`);
+    assert.ok(
+      !all.some(r => (r.details ?? '').includes('已在设备动作前停下')),
+      'report-only 不走 R8 短路分支（只读分析照跑到底）',
+    );
+    assert.deepStrictEqual(spawned, [], `report-only 不得发生任何设备/工具进程调用：${spawned.join(' | ')}`);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
   for (const c of CASES) {
