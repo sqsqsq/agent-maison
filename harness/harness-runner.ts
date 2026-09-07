@@ -129,16 +129,10 @@ import { evaluateConfigPlacementGate } from './scripts/utils/config-placement-ga
 import { resolvePhasePersonalPrerequisites } from './scripts/utils/phase-personal-prerequisites';
 import { runCapabilityPreflight, emitHarnessPreflightGap } from './scripts/utils/capability-preflight';
 import {
-  applyFrozenDeviceEnv,
+  applyPhaseEntryDeviceGate,
   buildTestingTargetKindCap,
-  runPhaseEntryDeviceGate,
 } from './scripts/utils/device-readiness-gate';
 import { phaseRequiresDevice } from './scripts/utils/phase-device-requirement';
-import {
-  defaultProcessProbe,
-  reclaimManagedDevice,
-  registerManagedDeviceCleanup,
-} from './scripts/utils/device-session';
 import { computeProductWorktreeDigest } from './scripts/utils/worktree-digest';
 import {
   loadVerifierEvidenceForSubject,
@@ -878,7 +872,14 @@ async function main(): Promise<void> {
     {
       let gate;
       try {
-        gate = await runPhaseEntryDeviceGate({ projectRoot, phase });
+        // 起门 → notes → 托管回收登记 → 原子注入 env，整条接线在 applyPhaseEntryDeviceGate
+        // 内（c7d2a9e4 D1：即席 CLI 与 device:ready 共用同一条，纪律不抄第二遍）。
+        gate = await applyPhaseEntryDeviceGate({
+          projectRoot,
+          phase,
+          startedBy: `harness-${phase}-${process.pid}`,
+          log: line => console.log(`   · [device] ${line}`),
+        });
       } catch (err) {
         // 策略检查/就绪核心自身执行失败（凭据库不可读、配置损坏…）：与
         // `device_policy_unset`（正常态）严格区分——必须停止，不得当成"未配置"
@@ -886,51 +887,9 @@ async function main(): Promise<void> {
         console.error(`   ✗ 设备策略检查执行失败：${(err as Error).message.replace(/\n/g, '\n     ')}`);
         process.exit(1);
       }
-      for (const n of gate.notes) console.log(`   · [device] ${n}`);
-      // **回收登记必须早于任何退出分支**（codex 二轮 P1）：托管模拟器"起来了但没就绪"
-      // （boot 超时/仍锁屏）是**普通、可执行清理的失败路径**，不是 SIGKILL 边界。
-      // 此前把这段放在 `!gate.ok` 之后，那个实例会零凭证泄漏。
-      if (gate.managed) {
-        // 普通模式的设备生命周期**就是本进程**，故身份留在内存、退出即回收，不落
-        // device-session.json（单文件 session + 跨 run 对账是 goal 的模型，normal
-        // 模式没有 run 目录也没有对账方，写了也无人消费）。
-        // **诚实边界**：进程被硬杀（SIGKILL/断电）留下的孤儿实例，普通模式没有兜底
-        // 对账，需用户手动关闭——goal 模式才有下次启动对账那张网。
-        const identity = gate.managed;
-        const serial = gate.target?.serial ?? gate.orphanSerial ?? null;
-        registerManagedDeviceCleanup(() => {
-          const out = reclaimManagedDevice(
-            {
-              schema_version: '1.0',
-              serial,
-              target_kind: 'emulator',
-              started_by_run: `harness-${phase}-${process.pid}`,
-              managed: identity,
-              status: gate.ok ? 'ready' : 'failed',
-              updated_at: new Date().toISOString(),
-            },
-            defaultProcessProbe(),
-          );
-          if (out.action === 'reclaimed') {
-            console.log(`[device] 退出：已回收本次托管启动的模拟器（pid=${out.pid}）`);
-          } else if (out.action === 'refused') {
-            console.error(
-              `[device] 退出：托管模拟器未能回收（${out.reason}）——请手动结束 pid=${identity.pid}`,
-            );
-          }
-        });
-      }
       if (!gate.ok) {
         console.error(`   ✗ ${(gate.reason ?? '设备前置未通过').replace(/\n/g, '\n     ')}`);
         process.exit(1);
-      }
-      if (gate.env) {
-        // **整组原子注入**（codex 二轮 P0 + 三轮 P1）：逐键"不存在才写"会留下继承来的
-        // 陈旧 MAISON_DEVICE_CREDENTIAL_REF（manual 策略下被运行期优先取用 → 自动输 PIN）；
-        // 保留旧 HARNESS_HDC_TARGET 则会在已授权降级后造出"hdc 操作离线真机、门以为是
-        // 模拟器"的目标分裂。规则与理由见 applyFrozenDeviceEnv（提成函数以便行为测试）。
-        applyFrozenDeviceEnv(process.env, gate.env);
-        console.log(`   ✓ 设备目标已解析并注入：${process.env.HARNESS_HDC_TARGET}`);
       }
       // 模拟器/未知目标上的 testing **不得冒充真机整体通过**（harness-gates spec）。
       // 既有封顶判据只在 goal-runner 被消费；普通模式此前根本没有 target kind 可用，

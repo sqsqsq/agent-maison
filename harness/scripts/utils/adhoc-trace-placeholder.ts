@@ -11,6 +11,8 @@ export type AdhocErrorKind =
   | 'warmup_failed'
   | 'run_crashed'
   | 'plan_lint_blocker'
+  /** 设备入口门未通过（策略未配置 / 目标歧义 / 设备阻断）——零设备命令即中止 */
+  | 'device_not_ready'
   | 'unknown';
 
 export interface AdhocTracePlaceholder {

@@ -7,9 +7,10 @@ import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { collectPolicyStatus, enroll, setPolicy, rebind } from '../../scripts/device-policy';
+import { collectPolicyStatus, enroll, setPolicy, rebind, ready } from '../../scripts/device-policy';
 import { clearFrameworkConfigCache } from '../../config';
 import { FakeCredentialProvider } from '../helpers/fake-credential-provider';
+import type { UnlockDeps } from '../../scripts/utils/device-unlock-helper';
 import type { UnitCaseResult } from '../run-unit';
 
 const tmpRoots: string[] = [];
@@ -48,8 +49,69 @@ function hostWith(device?: unknown): string {
   return root;
 }
 
-export function runAll(): UnitCaseResult[] {
+// ============================================================================
+// c7d2a9e4 D2 / V3：`--ready` 全部走注入——不碰真实凭据库、不碰真实 hdc、不碰真机
+// ============================================================================
+
+type ReadyDeps = NonNullable<Parameters<typeof ready>[2]>;
+
+/** 捕获 stdout/stderr（`--json` 契约要求 stdout 恰为一段 JSON） */
+async function callReady(
+  opts: Parameters<typeof ready>[1],
+  deps: ReadyDeps,
+): Promise<{ exit: number; stdout: string; stderr: string }> {
+  let out = '';
+  let err = '';
+  const origOut = process.stdout.write.bind(process.stdout);
+  const origErr = process.stderr.write.bind(process.stderr);
+  const cap = (sink: (s: string) => void): typeof process.stdout.write =>
+    ((chunk: string | Uint8Array) => {
+      sink(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf-8'));
+      return true;
+    }) as typeof process.stdout.write;
+  process.stdout.write = cap(s => { out += s; });
+  process.stderr.write = cap(s => { err += s; });
+  try {
+    const exit = await ready('/tmp/device-ready-test', opts, deps);
+    return { exit, stdout: out, stderr: err };
+  } finally {
+    process.stdout.write = origOut;
+    process.stderr.write = origErr;
+  }
+}
+
+/** 未就绪时不得有任何设备操作：recover 一旦被调就记一次 */
+function recoverSpy(result?: ReturnType<NonNullable<ReadyDeps['recover']>>) {
+  const calls: Array<{ serial: string; credentialRef: string | null }> = [];
+  const recover: NonNullable<ReadyDeps['recover']> = input => {
+    calls.push({ serial: input.serial, credentialRef: input.credentialRef });
+    return result ?? { recovered: true, note: '设备未锁屏', reason: 'not_locked' };
+  };
+  return { calls, recover };
+}
+
+const frozenDeps = (
+  env: NodeJS.ProcessEnv,
+  spy: ReturnType<typeof recoverSpy>,
+  credentialRef: string | null = 'maison/device/PHONE-1/v1',
+): ReadyDeps => ({
+  env,
+  recover: spy.recover,
+  buildUnlockDeps: () => ({} as UnlockDeps),
+  resolveAttemptCredentialRef: () => credentialRef,
+  gate: async () => { throw new Error('冻结上下文 MUST NOT 调门解析目标'); },
+});
+
+export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
+  async function runAsync(name: string, fn: () => Promise<void>): Promise<void> {
+    try {
+      await fn();
+      results.push({ name, ok: true });
+    } catch (err) {
+      results.push({ name, ok: false, error: (err as Error).stack ?? (err as Error).message });
+    }
+  }
   try {
 
   run(results, '未配置 → device_policy_unset + 四选一指引（供主 agent 在起 runner 前询问）', () => {
@@ -664,6 +726,171 @@ export function runAll(): UnitCaseResult[] {
     assert(!/nextVersionFor/.test(src), '不得保留按项目推导版本的旧路径');
     // serial 须先过字符集校验再进 PowerShell target
     assert(/isValidSerial\(serial\)/.test(src), 'serial 须校验字符集');
+  });
+
+  await runAsync('V3 --ready 非冻结：走入口门；ok/unset/ambiguous/blocked 判定完成一律退出 0（看 code）', async () => {
+    // ① ok：JSON 恰为一段、serial/target_kind 取门的 target；人读退出 0
+    const okGate: ReadyDeps['gate'] = async () => ({
+      ok: true,
+      notes: ['设备策略检查通过（code=ok）'],
+      target: { serial: 'PHONE-1', targetKind: 'physical' },
+    });
+    const okJson = await callReady({ json: true }, { env: {}, gate: okGate });
+    assertEq(okJson.exit, 0, 'ok --json 退出 0');
+    const parsed = JSON.parse(okJson.stdout) as Record<string, unknown>;
+    assertEq(parsed.ok, true, 'ok=true');
+    assertEq(parsed.code, 'ready', "code='ready'");
+    assertEq(parsed.serial, 'PHONE-1', 'serial 取门解析出的目标');
+    assertEq(parsed.target_kind, 'physical', 'target_kind 取门解析出的分类');
+    assertEq(parsed.reused_frozen, false, '非冻结路径 reused_frozen=false');
+    assert(
+      (parsed.notes as string[]).some(n => n.includes('只对本次调用有效')),
+      'notes 须说明结果只对本次调用有效、后续入口各自起门',
+    );
+    const okHuman = await callReady({}, { env: {}, gate: okGate });
+    assertEq(okHuman.exit, 0, '人读 ok → 0');
+    assertEq(okHuman.stdout.trim().startsWith('{'), false, '人读模式不输出 JSON');
+
+    // ② unset：**退出 0**，reason 逐字等于门透传的 guidance（不在此另抄四选一）
+    const guidance = '[device] 本阶段需要设备，但设备策略不可用（code=device_policy_unset）。\n四选一：① 手工解锁 …';
+    const unset = await callReady(
+      { json: true },
+      { env: {}, gate: async () => ({ ok: false, code: 'device_policy_unset', notes: [], reason: guidance }) },
+    );
+    assertEq(unset.exit, 0, '未配置是正常态，--json 仍退出 0（与 --check 同款两段契约）');
+    const unsetParsed = JSON.parse(unset.stdout) as Record<string, unknown>;
+    assertEq(unsetParsed.code, 'device_policy_unset', 'code 透出未配置');
+    assertEq(unsetParsed.reason, guidance, 'reason 逐字透传门的 guidance');
+    assertEq(unsetParsed.serial, null, '未解析出目标 → serial=null');
+    assertEq(
+      (await callReady({}, { env: {}, gate: async () => ({ ok: false, code: 'device_policy_unset', notes: [], reason: guidance }) })).exit,
+      3,
+      '人读模式 !ok → 3',
+    );
+
+    // ③ AMBIGUOUS / BLOCKED 各自透出
+    for (const code of ['ambiguous', 'blocked'] as const) {
+      const r = await callReady(
+        { json: true },
+        { env: {}, gate: async () => ({ ok: false, code, notes: [], reason: `原因-${code}` }) },
+      );
+      assertEq(r.exit, 0, `${code} 判定完成同样退出 0`);
+      assertEq((JSON.parse(r.stdout) as Record<string, unknown>).code, code, `${code} 须原样透出`);
+    }
+
+    // ④ 门抛出 = 执行失败：非零 + stdout 无 JSON + stderr 说明不是"未配置"
+    const boom = await callReady(
+      { json: true },
+      { env: {}, gate: async () => { throw new Error('[device-policy] 凭据库不可读（vault down）'); } },
+    );
+    assertEq(boom.exit, 1, '执行失败须非零');
+    assertEq(boom.stdout.trim(), '', '执行失败时 stdout 不得有 JSON');
+    assert(/不是.*未配置|不要据此重新登记/.test(boom.stderr), `stderr 须说明这不是未配置：${boom.stderr}`);
+
+    // ⑤ --serial 走门既有优先级：先写 HARNESS_HDC_TARGET 再起门
+    const env: NodeJS.ProcessEnv = {};
+    let gateEnv: NodeJS.ProcessEnv | undefined;
+    await callReady(
+      { serial: 'PHONE-9', json: true },
+      {
+        env,
+        gate: async o => {
+          gateEnv = o.env;
+          return { ok: true, notes: [], target: { serial: 'PHONE-9', targetKind: 'physical' } };
+        },
+      },
+    );
+    assertEq(env.HARNESS_HDC_TARGET, 'PHONE-9', '--serial 须写进 env 供门解析');
+    assertEq(gateEnv?.HARNESS_HDC_TARGET, 'PHONE-9', '门须收到该目标（不另建第二套解析）');
+  });
+
+  await runAsync('V3 --ready 冻结上下文：沿用原目标与原授权，只有 recovered=true 判成功；异 serial 零设备操作', async () => {
+    const frozen = (extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({
+      MAISON_DEVICE_ATTEMPT_FROZEN: '1',
+      HARNESS_HDC_TARGET: 'PHONE-1',
+      MAISON_DEVICE_TARGET_KIND: 'physical',
+      ...extra,
+    });
+
+    // ① recovered=true → ok，带冻结目标与冻结分类
+    const okSpy = recoverSpy();
+    const ok = await callReady({ json: true }, frozenDeps(frozen(), okSpy));
+    const okParsed = JSON.parse(ok.stdout) as Record<string, unknown>;
+    assertEq(ok.exit, 0, '判定完成退出 0');
+    assertEq(okParsed.ok, true, 'recovered=true → ok');
+    assertEq(okParsed.code, 'ready', "code='ready'");
+    assertEq(okParsed.reused_frozen, true, '须标记复用冻结上下文');
+    assertEq(okParsed.serial, 'PHONE-1', 'serial 取冻结目标');
+    assertEq(okParsed.target_kind, 'physical', 'target_kind 取冻结分类');
+    assertEq(okSpy.calls[0]?.credentialRef, 'maison/device/PHONE-1/v1', 'credentialRef 由 resolveAttemptCredentialRef 给出');
+
+    // ② 冻结且无 ref（未授权）→ 恢复照样只拿到 null，绝不回落读 config
+    const nullRefSpy = recoverSpy({
+      recovered: false,
+      note: '设备锁屏且未登记自动解锁凭据——请人解锁设备后重跑',
+      authorized: false,
+      reason: 'unauthorized',
+    });
+    const unauthorized = await callReady({ json: true }, frozenDeps(frozen(), nullRefSpy, null));
+    const unauthorizedParsed = JSON.parse(unauthorized.stdout) as Record<string, unknown>;
+    assertEq(nullRefSpy.calls[0]?.credentialRef, null, '冻结且无 ref → null（不读 config）');
+    assertEq(unauthorizedParsed.ok, false, 'unauthorized 不得判成功');
+    assertEq(unauthorizedParsed.code, 'blocked', 'unauthorized → blocked');
+    assert(String(unauthorizedParsed.reason).includes('请人解锁设备'), 'reason 用 note 原文');
+
+    // ③ unlock_failed 同样 blocked
+    const failSpy = recoverSpy({
+      recovered: false,
+      note: 'unlock_blocked:wrong_pin（凭据已烧毁）',
+      authorized: true,
+      reason: 'unlock_failed',
+    });
+    const failed = JSON.parse((await callReady({ json: true }, frozenDeps(frozen(), failSpy))).stdout) as Record<string, unknown>;
+    assertEq(failed.ok, false, 'unlock_failed 不得判成功');
+    assertEq(failed.code, 'blocked', 'unlock_failed → blocked');
+    assertEq(failed.reason, 'unlock_blocked:wrong_pin（凭据已烧毁）', 'reason 用 note 原文');
+
+    // ④ unknown：**同样不放行**，且不得宣称设备确定锁着
+    const unknownSpy = recoverSpy({
+      recovered: false,
+      note: '唤醒后仍无法判定锁屏状态（不猜）',
+      authorized: false,
+      reason: 'unknown',
+    });
+    const unknown = JSON.parse((await callReady({ json: true }, frozenDeps(frozen(), unknownSpy))).stdout) as Record<string, unknown>;
+    assertEq(unknown.ok, false, 'unknown 不得放行（独立命令没有后续操作来验证）');
+    assertEq(unknown.code, 'blocked', 'unknown → blocked');
+    assert(String(unknown.reason).includes('无法确认锁屏状态'), `reason 须如实说判不出：${unknown.reason}`);
+    assert(!/已锁|锁着/.test(String(unknown.reason)), `MUST NOT 宣称设备确定锁住：${unknown.reason}`);
+
+    // ⑤ --serial ≠ 冻结目标 → 拒绝且**零设备操作**
+    const mismatchSpy = recoverSpy();
+    const mismatch = await callReady({ serial: 'PHONE-OTHER', json: true }, frozenDeps(frozen(), mismatchSpy));
+    const mismatchParsed = JSON.parse(mismatch.stdout) as Record<string, unknown>;
+    assertEq(mismatch.exit, 0, '判定完成退出 0');
+    assertEq(mismatchParsed.ok, false, '冻结目标不可切换');
+    assertEq(mismatchParsed.code, 'frozen_target_mismatch', 'code 须点名目标不匹配');
+    assertEq(mismatchParsed.serial, 'PHONE-1', 'serial 仍是冻结目标');
+    assertEq(mismatchSpy.calls.length, 0, '**零设备操作**：恢复函数不得被调用');
+
+    // ⑥ 冻结但缺 HARNESS_HDC_TARGET = 上下文损坏：复用门的原文，零设备操作
+    const corruptSpy = recoverSpy();
+    const corruptEnv: NodeJS.ProcessEnv = { MAISON_DEVICE_ATTEMPT_FROZEN: '1' };
+    const corrupt = await callReady(
+      { json: true },
+      {
+        env: corruptEnv,
+        recover: corruptSpy.recover,
+        buildUnlockDeps: () => ({} as UnlockDeps),
+        resolveAttemptCredentialRef: () => null,
+        gate: async () => ({ ok: false, notes: [], reason: '[device] 冻结上下文损坏，拒绝继续' }),
+      },
+    );
+    const corruptParsed = JSON.parse(corrupt.stdout) as Record<string, unknown>;
+    assertEq(corruptParsed.ok, false, '冻结上下文损坏须拒绝');
+    assertEq(corruptParsed.code, 'blocked', '损坏归 blocked');
+    assert(String(corruptParsed.reason).includes('冻结上下文损坏'), 'reason 复用门的原文，不另写一份');
+    assertEq(corruptSpy.calls.length, 0, '损坏时零设备操作');
   });
 
   return results;

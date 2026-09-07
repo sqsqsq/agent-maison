@@ -92,9 +92,29 @@ export function projectHdcExecFact(
   };
 }
 
+/**
+ * 本文件**唯一**的 hdc 调用点。可执行路径复用 hdc-runner 的既有解析器
+ * （`HARNESS_HDC_EXE` / `HDC_EXE` → PATH 上的 `hdc` → DevEco 安装路径推导），
+ * 不复制第二套：PATH 无 hdc 但配了绝对路径的宿主（Cursor / CI 子进程常见），
+ * 裸 `spawnSync('hdc')` 会让就绪门误判"目标离线"。
+ *
+ * 懒 `require`：hdc-runner 经 device-recovery-bridge 懒回调本文件，静态 import 会成环
+ * （同款做法见 device-recovery-bridge.ts:55、capability-preflight.ts:62）。
+ * 解析失败一律回落 `'hdc'`——与本改造前行为一致，不新增失败态。
+ */
 function runHdc(args: string[], timeoutMs = HDC_PROBE_TIMEOUT_MS): HdcExecFact {
+  let exe = 'hdc';
+  try {
+    /* eslint-disable @typescript-eslint/no-require-imports */
+    const hdcRunner =
+      require('../../../profiles/hmos-app/harness/hdc-runner') as typeof import('../../../profiles/hmos-app/harness/hdc-runner');
+    /* eslint-enable @typescript-eslint/no-require-imports */
+    exe = hdcRunner.resolveHdcExecutableSync() || 'hdc';
+  } catch {
+    exe = 'hdc';
+  }
   return projectHdcExecFact(
-    spawnSync('hdc', args, { encoding: 'utf-8', timeout: timeoutMs, windowsHide: true }),
+    spawnSync(exe, args, { encoding: 'utf-8', timeout: timeoutMs, windowsHide: true }),
   );
 }
 

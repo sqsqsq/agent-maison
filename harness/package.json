@@ -37,7 +37,8 @@
     "device:policy": "ts-node scripts/device-policy.ts --check --json",
     "device:enroll": "ts-node scripts/device-policy.ts --enroll",
     "device:set": "ts-node scripts/device-policy.ts --set",
-    "device:rebind": "ts-node scripts/device-policy.ts --rebind"
+    "device:rebind": "ts-node scripts/device-policy.ts --rebind",
+    "device:ready": "ts-node scripts/device-policy.ts --ready"
   },
   "dependencies": {
     "chalk": "^4.1.2",
