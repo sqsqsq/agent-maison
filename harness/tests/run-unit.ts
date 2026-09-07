@@ -306,6 +306,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'adhoc-trace-placeholder', modulePath: './unit/adhoc-trace-placeholder.unit.test' },
   { id: 'confirmation-ux', modulePath: './unit/confirmation-ux.unit.test' },
   { id: 'adapter-catalog-consistency', modulePath: './unit/adapter-catalog-consistency.unit.test' },
+  // plan 7b2e9d4c：codex verifier 角色 toml 由 claude verifier.md 渲染（等值 / 转义 / 物化）
+  { id: 'codex-adapter-verifier-template', modulePath: './unit/codex-adapter-verifier-template.unit.test' },
   { id: 'phase-transition-policy', modulePath: './unit/phase-transition-policy.unit.test' },
   { id: 'goal-runner-policy', modulePath: './unit/goal-runner-policy.unit.test' },
   { id: 'goal-runner-phase', modulePath: './unit/goal-runner-phase.unit.test' },

@@ -22,6 +22,7 @@
     "test:fixtures": "ts-node --transpile-only tests/run-tests.ts",
     "test:unit": "ts-node --transpile-only tests/run-unit.ts",
     "test": "npm run typecheck && npm run test:unit && npm run test:fixtures",
+    "sync:codex-agents": "ts-node scripts/sync-codex-agent-templates.ts",
     "backfill:context": "ts-node scripts/backfill-context-exploration.ts",
     "derive-hylyre-plan-hint": "ts-node scripts/derive-hylyre-plan-hint.ts",
     "derive-adhoc-hylyre-hint": "ts-node scripts/derive-adhoc-hylyre-hint.ts",

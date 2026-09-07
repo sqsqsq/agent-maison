@@ -71,6 +71,7 @@ optional_fields:
     description: |
       slash 命令路由文件（Claude Code 的 .claude/commands/*.md 是此字段的典型用例）。
       若 adapter 所依附的 agent 不支持 slash（例如 Cursor），置为 null。
+      子 agent 模板见 `commands.subagents`（历史位置）或顶层 `subagents`（无 slash 面的 adapter）。
     fields:
       target_dir:
         type: string
@@ -100,6 +101,28 @@ optional_fields:
         type: string | optional
         description: >
           同上，作用于 slash commands 整块（不含 subagents）。
+        enum: ["auto_overwrite", "prompt_if_changed"]
+
+  subagents:
+    type: object | null
+    description: |
+      可选。子 agent 配置模板目录，字段与 `commands.subagents` 完全相同（target_dir /
+      template_dir / update_policy），语义也相同。**无 slash 命令面的 adapter（commands: null，
+      如 codex）在顶层声明**；`commands.subagents` 是历史位置，claude / codeagent 保持不动。
+      二选一：同一 adapter **不得两处同时声明**（顶层优先，一致性由
+      harness/tests/unit/adapter-catalog-consistency.unit.test.ts 钉住）。
+    fields:
+      target_dir:
+        type: string
+        description: 生成到实例工程根的目录，例如 ".codex/agents"
+      template_dir:
+        type: string
+        description: 相对于 adapter 目录
+      update_policy:
+        type: string | optional
+        description: >
+          UPDATE 体检第 3 项：POPULATED 时是否免 y/n 自动对齐模板。
+          auto_overwrite=机制代码；缺省或未写=prompt_if_changed。
         enum: ["auto_overwrite", "prompt_if_changed"]
 
   skill_bridge:

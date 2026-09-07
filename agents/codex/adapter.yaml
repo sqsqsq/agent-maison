@@ -10,6 +10,12 @@ agent_entry_file:
 
 commands: null
 
+# 无 slash 面，子 agent 模板在顶层声明（schema 顶层 subagents，plan 7b2e9d4c D2）
+subagents:
+  target_dir: .codex/agents
+  template_dir: templates/agents               # verifier.toml 由 claude verifier.md 渲染（plan 7b2e9d4c D1）
+  update_policy: auto_overwrite                # 协议级子 agent 配置，与 claude 同款
+
 skill_bridge:
   target_dir: .codex/skills
   template_dir: ../shared/agent-bundle/templates/skills-bridge
@@ -30,6 +36,8 @@ image_input: none
 # 发布机制无关。调用协议 adapter 无关——共享规则 bundle（.codex/rules）与 AGENTS.md 要求
 # Task 触发 subagent_type=verifier、prompt = request JSON 整段；终态块契约随 ai-prompt.md 渲染。
 # 入册凭据：宿主 2026-09-05 用户确认——codex 在每个阶段都会起 verifier 子 agent 完成审查。
+# 2026-09-07 主宿主只读冒烟复证（plan 7b2e9d4c F04）：codex exec 真实 spawn_agent 起
+# agent_role=verifier 子线程，回复末尾恰好一个终态块，parseResultBlock 解析为 subject 回显 / PASS / blocker 0。
 # 2026-08-29 到 2026-09-05 期间本 adapter 曾因「无 SubagentStop hook」被判 blocked、full track
 # 事实不可用；报告改由调用方写出后该限制消失（plan d2f7a9c4 D4）。
 verifier_subagent: true
@@ -84,7 +92,8 @@ goal_capability:
 
 post_install_hooks: []
 
-# 历史 init 曾误物化 Claude Stop/SubagentStop 协议脚本；先清旧注册再备份删除脚本。
+# 宿主曾于 2026-05-25 手工提交（Cursor 会话）带入 Claude Stop/SubagentStop 协议脚本副本；
+# 先清旧注册再备份删除脚本（plan 7b2e9d4c F01/F11：不是 init 物化的）。
 deprecated_artifacts:
   - path: skills/app-component-blueprint/
     action: backup_delete
@@ -101,3 +110,5 @@ deprecated_artifacts:
 notes: |
   - 与 generic 类似，但 bundle 默认落 `.codex/skills`；非标路径须编辑 framework.config.json。
   - native /goal 第一版仅 metadata + 条件模板占位；闭环裁决由 goal-runner + harness 承担。
+  - Stop hook（check-phase-completion）**不做**（plan 7b2e9d4c D5）：goal 主路径是 codex exec，闭环由 harness + check-receipt 判；复检触发＝宿主出现一次 codex 交互会话把未闭环阶段报成完成的事故。
+  - 写守卫（guard-framework-write）**暂缓**（plan 7b2e9d4c D5）：技术可行（hooks.json 结构化 upsert + matcher apply_patch），但无事故记录；复检触发＝宿主出现一次 codex 写入 framework/ 的事故（porcelain 或 release:verify 抓到）。
