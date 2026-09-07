@@ -92,7 +92,7 @@ N的manual/batch作为授权子用例，不增加两套真实六阶段验收。�
 | B05 | [策略与适用性提纲](pipeline_b05_phase_contracts_7b3e9a15.plan.md) | 默认strict/显式配置、剩余F09、n/a、数量WARN | B04本地验收后细化 |
 | B06 | [差异验收提纲](pipeline_b06_matrix_acceptance_4d9c1f72.plan.md) | 核心四格差异、补充fixture、发布就绪 | 前批证据齐后细化 |
 | B07 | [视觉回修归因与golden复用施工图](pipeline_b07_visual_repair_attribution_6e4a2c8b.plan.md) | minor视觉信号不产coding候选、T8 hard不得降级、复用不绕过golden采集、B06 E格适用性前置 | 本地完成并提交（09-07：06dcfe1d 施工图 / 40ec6c26 D1–D3 / 1387a249 D6 / C3 实施记录）；codex 两轮 approve、全量 npm test 3901+46 全过；宿主补验收归 B06 `b06-host-b07-reacceptance` |
-| B08 | [复用证据绑定与长图推导施工图](pipeline_b08_reuse_evidence_and_ref_derivation_9b2d5e7c.plan.md) | 复用态证据按执行键身份核验、执行键 HAP 回落与 hap 未知记录不参与复用、参考图顶部一屏推导、unverifiable retry 不打归因 | B07 补验收后新增（09-07），待用户评审 |
+| B08 | [复用证据绑定与长图推导施工图](pipeline_b08_reuse_evidence_and_ref_derivation_9b2d5e7c.plan.md) | 复用态证据按执行键身份核验、执行键 HAP 回落与 hap 未知记录不参与复用、参考图顶部一屏推导、unverifiable retry 不打归因 | 本地完成并提交（09-07：be5a3448 施工图 / 90ce28a0 D1–D4 / 8f76266e D6 / C3 实施记录）；codex 两轮 approve、全量 npm test 3937+46 全过；宿主补验收归 B06 `b06-host-b08-reacceptance` |
 
 前批代码、相关文档、目标测试通过并提交后即可细化下一批；宿主C-U回归只在B02后与B06两处，用户未触发则对应host todo保持pending。若已知后批缺陷挡住目标窗口，明确记录依赖并调整前置顺序，不造PASS、不越批热修，也不连续叠五批未验收改动。
 
