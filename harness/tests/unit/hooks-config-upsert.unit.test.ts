@@ -32,6 +32,52 @@ const DESIRED = JSON.stringify({
 });
 
 const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
+  {
+    name: '真实 Claude/CA 模板变量、无花括号变量与 Windows 绝对路径识别',
+    run: () => {
+      for (const adapter of ['claude', 'codeagent']) {
+        const template = JSON.parse(fs.readFileSync(frameworkAbs(LAYOUT, 'agents', adapter, 'templates/settings.json'), 'utf-8'));
+        const command = template.hooks.Stop[0].hooks[0].command.replace('check-phase-completion.mjs', 'record-verifier-report.mjs');
+        const script = `${adapter === 'claude' ? '.claude' : '.cac'}/hooks/record-verifier-report.mjs`;
+        const absolute = `C:/host with space/${script}`;
+        for (const cmd of [command, command.replace(/\$\{([^}]+)\}/g, '$$$1'),
+          `node "${absolute.replace(/\//g, '\\')}"`]) {
+          const source = JSON.stringify({ hooks: { SubagentStop: [{ hooks: [{ command: cmd }] }] } });
+          const result = computeHooksConfigRemoval(source, [], [script, absolute]);
+          assert(result.status === 'removed', `${adapter}: ${cmd}: ${result.status}`);
+          assert(Object.keys(JSON.parse(result.nextText!).hooks).length === 0, result.nextText!);
+        }
+      }
+    },
+  },
+  {
+    name: '退役脚本注册：直接/嵌套、环境变量/绝对路径均可清理，第三方与复合命令保留且幂等',
+    run: () => {
+      const script = '.codex/hooks/retired.mjs';
+      const absolute = 'C:/host with space/.codex/hooks/retired.mjs';
+      const unrelated = [
+        { command: 'node tools/.codex/hooks/retired.mjs' },
+        { command: 'echo node .codex/hooks/retired.mjs' },
+        { command: 'node .codex/hooks/retired.mjs && node host-hook.mjs' },
+      ];
+      const source = JSON.stringify({ keep: { a: 1 }, hooks: {
+        Stop: [
+          { command: `node "${absolute}"` },
+          { command: 'node "${CODEX_PROJECT_DIR}/.codex/hooks/retired.mjs"' },
+          { matcher: '*', custom: true, hooks: [{ type: 'command', command: `node ./${script}` }, ...unrelated] },
+        ],
+        SubagentStop: [{ hooks: [{ command: `node '${script}'` }] }],
+        Nested: [{ hooks: [{ hooks: [{ command: `node ${script}` }, { command: 'host' }] }] }],
+      } });
+      const result = computeHooksConfigRemoval(source, [], [script, absolute]);
+      assert(result.status === 'removed', JSON.stringify(result));
+      assert(result.nextText === JSON.stringify({ keep: { a: 1 }, hooks: {
+        Stop: [{ matcher: '*', custom: true, hooks: unrelated }],
+        Nested: [{ hooks: [{ hooks: [{ command: 'host' }] }] }],
+      } }, null, 2) + '\n', result.nextText ?? 'missing');
+      assert(computeHooksConfigRemoval(result.nextText!, [], [script, absolute]).status === 'unchanged', '应幂等');
+    },
+  },
   // ------------------------------------------------------------------------
   // 第四轮 P1 四件套
   // ------------------------------------------------------------------------

@@ -466,8 +466,11 @@ optional_fields:
     default: []
     description: |
       已废弃的 adapter 产物路径（相对于 adapter target 根，如 .claude/）。
-      check-init UPDATE 模式下发现时 action: backup_delete，
-      自动备份到 .framework-backup/<timestamp>/ 后删除，结果写入 check-init.json。
+      所有 adapter 共用此能力，无专属退役项时可省略清单。删除/迁移已发布模板时，
+      必须登记旧路径；旧 skill/command 名复用 legacy-skill-bridge-cleanup 的共享清单。
+      UPDATE 的 cleanup-deprecated 检查发布件全部 adapter（含已退出物化列表的历史残留），
+      自动备份到 .framework-backup/<timestamp>/ 后删除，结果写入 S3 run-log。
+      generic 根跟随 paths.agent_bundle_root；共享目录不得整目录退役仍在使用的产物。
     items:
       path:
         type: string
@@ -478,6 +481,14 @@ optional_fields:
       reason:
         type: string
         description: 废弃原因，写入 check-init.json 供诊断
+      hook_configs:
+        type: list | optional
+        description: |
+          引用此退役脚本的共享 JSON 配置路径，相对同一 adapter 根（如 settings.json）。
+          先备份并移除指向该脚本的 node 注册（支持直接 command 和嵌套 hooks），保留宿主
+          其余条目/字段，再删除脚本；脚本已缺失时仍清注册。仍有脚本引用时保留脚本并记 blocked。
+          非法 JSON/schema 不修改并报告失败；不阻断其他 adapter 清理，最终任务如实标为 failed。
+          此字段属于退役产物，与 adapter 顶层安装当前注册用的 hooks_config 不同。
 
   notes:
     type: string

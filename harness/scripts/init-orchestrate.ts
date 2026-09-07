@@ -884,13 +884,15 @@ function summaryCategoryKey(entry: InitRunLogEntry): string {
 }
 
 function formatEntryCategoryLine(entry: InitRunLogEntry): string {
-  if (entry.cleanup_effects?.backup_deleted) {
+  if (entry.cleanup_effects) {
     const backupHint = entry.message.includes('.framework-backup/')
       ? entry.message.match(/（备份 ([^）]+)）/)?.[1]
       : undefined;
-    return backupHint
-      ? `backup_deleted ${entry.cleanup_effects.backup_deleted}（备份 ${backupHint}）`
-      : `backup_deleted ${entry.cleanup_effects.backup_deleted}`;
+    const counts = `backup_deleted ${entry.cleanup_effects.backup_deleted}`
+      + (entry.cleanup_effects.hook_configs_updated ? `，hook_configs_updated ${entry.cleanup_effects.hook_configs_updated}` : '')
+      + (entry.cleanup_effects.blocked ? `，blocked ${entry.cleanup_effects.blocked}` : '')
+      + (entry.cleanup_effects.failed ? `，failed ${entry.cleanup_effects.failed}` : '');
+    return backupHint ? `${counts}（备份 ${backupHint}）` : counts;
   }
   if (entry.file_effects) {
     const adapterMatch = entry.task_id.match(/^materialize-adapter:(.+)$/);
@@ -1121,10 +1123,11 @@ export function executeInitPlan(options: ExecuteOptions): InitRunLog {
 
     try {
       const result = executeInitTask(task, action, ctx);
+      if (result.failed) failedIds.add(task.id);
       entries.push({
         task_id: task.id,
         action,
-        status: 'executed',
+        status: result.failed ? 'failed' : 'executed',
         message: result.message,
         category: task.category,
         title: task.title,

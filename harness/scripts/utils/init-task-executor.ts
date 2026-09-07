@@ -545,7 +545,7 @@ export function executeInitTask(
 
       const sources = loadFrameworkConfigWithSources(ctx.projectRoot);
       const config = sources.config;
-      const adapters = resolveMaterializedAdaptersForCleanup(ctx, config, sources);
+      const adapters = resolveMaterializedAdaptersForCleanup(ctx, config, sources, path.resolve(ctx.harnessRoot, '..'));
       const backupSession: BackupSession = {
         stamp: new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z'),
       };
@@ -553,41 +553,58 @@ export function executeInitTask(
       const cleanupResults: CleanupResult[] = [];
 
       for (const name of adapters) {
-        const adapter = loadAdapter(name);
-        const { cleaned } = applyDeprecatedArtifactsCleanup(
-          ctx.projectRoot,
-          adapter,
-          mode,
-          { backupSession },
-        );
-        for (const item of cleaned) {
-          cleanupResults.push({
-            path: item.path,
-            backup_path: item.backup_path ?? undefined,
-            kind: 'deprecated_artifact',
-            adapter: name,
+        try {
+          const adapter = loadAdapter(name);
+          const { cleaned, blocked } = applyDeprecatedArtifactsCleanup(
+            ctx.projectRoot, adapter, mode,
+            { backupSession, targetRoot: name === 'generic' ? config.paths.agent_bundle_root : undefined },
+          );
+          for (const item of cleaned) {
+            cleanupResults.push({
+              path: item.path, backup_path: item.backup_path ?? undefined,
+              kind: item.action === 'remove_hook_registration' ? 'hook_registration' : 'deprecated_artifact',
+              adapter: name,
+            });
+          }
+          for (const item of blocked) {
+            cleanupResults.push({ path: item.path, kind: 'deprecated_artifact', adapter: name,
+              status: 'blocked', message: item.reason });
+          }
+        } catch (e) {
+          cleanupResults.push({ path: name, kind: 'deprecated_artifact', adapter: name,
+            status: 'failed', message: (e as Error).message });
+        }
+        // 一个 adapter 的注册配置损坏，不妨碍其旧跳板或其他 adapter 的安全清理。
+        try {
+          const legacy = applyLegacySkillBridgeCleanup({
+            projectRoot: ctx.projectRoot, materializedAdapters: [name], mode, config, backupSession,
           });
+          cleanupResults.push(...legacy.cleaned);
+        } catch (e) {
+          cleanupResults.push({ path: name, kind: 'legacy_skill_bridge', adapter: name,
+            status: 'failed', message: (e as Error).message });
         }
       }
 
-      const legacy = applyLegacySkillBridgeCleanup({
-        projectRoot: ctx.projectRoot,
-        materializedAdapters: adapters,
-        mode,
-        config,
-        backupSession,
-      });
-      cleanupResults.push(...legacy.cleaned);
-
       const backupRelDir = backupSession.backupRelDir ?? null;
-      const total = cleanupResults.length;
-      const cleanupEffects: CleanupEffects = { backup_deleted: total };
+      const issues = cleanupResults.filter(item => item.status);
+      const successes = cleanupResults.filter(item => !item.status);
+      const total = successes.length;
+      const hookConfigs = successes.filter(item => item.kind === 'hook_registration').length;
+      const cleanupEffects: CleanupEffects = {
+        backup_deleted: total - hookConfigs,
+        ...(issues.length ? { blocked: issues.filter(i => i.status === 'blocked').length,
+          failed: issues.filter(i => i.status === 'failed').length } : {}),
+        ...(hookConfigs ? { hook_configs_updated: hookConfigs } : {}),
+      };
 
       return {
-        message: total
-          ? `cleanup backup_delete ${total} 项${backupRelDir ? `（备份 ${backupRelDir}）` : ''}`
-          : '无 deprecated / 遗留跳板需清理',
-        ...(total > 0 ? { cleanup_results: cleanupResults, cleanup_effects: cleanupEffects } : {}),
+        failed: issues.length > 0,
+        message: (total
+          ? `cleanup backup_delete ${total - hookConfigs} 项${hookConfigs ? `，更新 hook 注册 ${hookConfigs} 份` : ''}${backupRelDir ? `（备份 ${backupRelDir}）` : ''}`
+          : issues.length ? '退役清理有未完成项' : '无 deprecated / 遗留跳板需清理')
+          + (issues.length ? '；' + issues.map(i => i.adapter + ': ' + i.status + ' ' + i.message).join('；') : ''),
+        ...(cleanupResults.length > 0 ? { cleanup_results: cleanupResults, cleanup_effects: cleanupEffects } : {}),
       };
     }
     case 'harness-install':

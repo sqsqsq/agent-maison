@@ -167,19 +167,58 @@ injects platform-specific rendering protocol into the consumer instance.
 > **Enforced by:** `agents/adapter-schema.yaml`, `agents/*/adapter.yaml`,
 > `harness/scripts/check-init.ts`, `harness/scripts/smoke-interaction-renderer.ts`
 
-### Requirement: Claude adapter declares deprecated artifact cleanup
+### Requirement: All adapters support deprecated artifact cleanup
 
-The system SHALL declare `deprecated_artifacts` on the Claude adapter for legacy
-interaction-layer files superseded by registry schema 2.0 and interaction-renderer.
+The system SHALL execute registered artifact retirement through the UPDATE S3
+`cleanup-deprecated` task. Cleanup SHALL cover every adapter in the release,
+including adapters absent from the current `materialized_adapters` selection.
+Adapters MAY omit `deprecated_artifacts` when they have no dedicated retired paths.
+Cleanup SHALL preserve host-owned content and back up changed artifacts under
+`.framework-backup/<timestamp>/`; S1 probing SHALL remain read-only.
 
-#### Scenario: UPDATE mode backup-deletes legacy rules
-- **WHEN** check-init runs in UPDATE mode and legacy paths exist under
-  `.claude/rules/` (e.g. `confirmation-ux.md`, `widget-options/`)
-- **THEN** check-init MUST backup-delete them to `.framework-backup/<timestamp>/`
-  and record entries in `check-init.json` → `deprecated_artifacts_cleaned`
+#### Scenario: UPDATE cleans registered artifacts of an unselected adapter
+- **WHEN** the current materialization selection contains only Cursor but registered
+  retired files exist under `.claude/`, `.cac/` or `.codex/`
+- **THEN** S3 SHALL inspect and clean those registered paths as well, without
+  requiring those adapters to be rematerialized or clearing their entire directories
 
-> **Enforced by:** `agents/claude/adapter.yaml`, `harness/scripts/check-init.ts`,
-> `harness/scripts/smoke-interaction-renderer.ts`
+#### Scenario: Legacy bridges follow adapter directory declarations
+- **WHEN** registered legacy skill or command names exist in an adapter's materialization directory
+- **THEN** cleanup SHALL derive their paths from that adapter's `skill_bridge` and
+  `commands` declarations; generic SHALL follow `paths.agent_bundle_root`
+- **AND** current entries and unrelated host files SHALL remain intact
+
+#### Scenario: Retired hook registrations are removed before scripts
+- **WHEN** a retired script declares `deprecated_artifacts[].hook_configs`
+- **THEN** cleanup SHALL back up and remove recognized registrations from those
+  shared JSON files before deleting the script, preserving other configuration
+- **AND** registration cleanup SHALL run even if the script is already missing;
+  an empty `hooks/` directory left by successful script deletion SHALL be removed
+
+#### Scenario: Unresolved references retain scripts and report incomplete cleanup
+- **WHEN** configuration still contains a retired script's filename after recognized
+  registrations have been removed
+- **THEN** cleanup SHALL retain the script and record `blocked`, rather than deleting
+  it beneath a remaining reference or guessing how to rewrite a composite command
+
+#### Scenario: Local failures do not stop other cleanup
+- **WHEN** an adapter's configuration is invalid, cleanup raises an error, or a script is blocked
+- **THEN** other adapters and legacy bridge cleanup SHALL continue
+- **AND** the final cleanup task SHALL be failed; S3 run-log SHALL retain successful
+  `cleanup_results`, `cleanup_effects`, and blocked/failed diagnostics, so correction
+  and retry do not discard already completed cleanup
+
+#### Scenario: CREATE, skip and repeat execution
+- **WHEN** init is in CREATE mode or cleanup is explicitly skipped
+- **THEN** no retirement cleanup SHALL occur
+- **WHEN** UPDATE cleanup is repeated after successful retirement
+- **THEN** already-cleaned files and registrations SHALL produce no further changes
+
+> **Enforced by:** `agents/adapter-schema.yaml`, `harness/scripts/check-init.ts`,
+> `harness/scripts/utils/init-task-executor.ts`, `harness/scripts/init-orchestrate.ts`,
+> `harness/scripts/utils/materialized-adapters-resolve.ts`,
+> `harness/scripts/utils/legacy-skill-bridge-cleanup.ts`,
+> `harness/scripts/utils/hooks-config-upsert.ts`
 
 ### Requirement: Cursor adapter external_runner headless_invoke declaration
 

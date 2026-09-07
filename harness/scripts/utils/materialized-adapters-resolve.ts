@@ -1,6 +1,7 @@
 // materialized-adapters-resolve.ts — materialized_adapters 四级回落（无环共享）
 
 import type { FrameworkConfig, FrameworkConfigWithSources } from '../../config';
+import { listAvailableAdapters } from './adapter-catalog';
 
 /** 本地结构化类型；禁止 Pick<InitExecutionContext, …> 以免反向依赖 executor */
 export type MaterializedAdaptersContext = {
@@ -53,12 +54,19 @@ export function resolveProjectMaterializedAdapters(
   return hint ? [hint] : ['generic'];
 }
 
-/** S3 cleanup / S1 probe 四级回落（去重、trim） */
+/** S3 cleanup / S1 probe：配置回落 + 发布件全部 adapter，覆盖已退出物化列表的历史残留。 */
 export function resolveMaterializedAdaptersForCleanup(
   ctx: MaterializedAdaptersContext,
   config: FrameworkConfig,
   sources?: FrameworkConfigWithSources,
+  frameworkRoot?: string,
 ): string[] {
+  if (frameworkRoot) {
+    return dedupeTrimmed([
+      ...resolveMaterializedAdaptersForCleanup(ctx, config, sources),
+      ...listAvailableAdapters(frameworkRoot).names,
+    ]);
+  }
   const fromCtx = normalizeAdapterList(ctx.materializedAdapters);
   if (fromCtx.length > 0) return dedupeTrimmed(fromCtx);
 
