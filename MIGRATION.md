@@ -255,6 +255,11 @@ generic 未登记（共享规则被物化不等于运行时会读取）。未登
 - **删掉了事件锚**：不再校验"该 invoke 的最后一条 runner 事件 + 回执文件 sha256 一致"。**放弃的准确性**：agent 在调用窗口内伪造回执不再被顺序信任拆穿；兜底仍是冻结 manifest 重算分母（不可自缩）与逐张哈希核对。其余取舍：能力粒度从"这次调用能看图"退到"这个 run 实测能看图"（run 中途被切到盲模型不当场察觉，兜底为 `pin_verify_mismatch` 告警与 `vision_output_counterevidence` 产物反证）；后续轮改了产物却没重读图仍带签名（图一变即失效）；Windows 上仅大小写不同的两个真实文件被判同一张（NTFS 默认不区分大小写，实际不可构造）；closure 提示词不再提前劝阻，图被替换时多绕一轮。
 - **消费者无需动手**：无配置变更、无产物迁移、无模板重新物化。
 
+### 3.0.x：视觉回修候选按严重度分流，同键复用不绕过 golden 采集（非 Breaking，plan 6e4a2c8b / openspec visual-repair-severity-and-golden-reuse）
+
+- **行为变化**：结构化视觉 defect 只有 `severity=major|blocker` 才产 coding 回修候选，`minor` 留在报告 WARN 与视觉债务台账（`needs_fix` 仍阻断 release）、不再消耗回退预算（宿主 run `20260906T143404Z-ab463c` 的两次已用回退均为真实修复，其 12 条 minor 声明差曾以 coding 候选身份错误请求第三次回退，因预算耗尽触发 `backtrack_limit` 停机）；T8 hard 命中被转录成 `minor` 现在由 `visual_diff_finding_transcription` 拦下（hard 合同 FAIL、best_effort WARN，文案给出下限 major）；testing 同键复用时若 `MAISON_GOLDEN_CONTRACT` 生效，`visual_diff_capture` 不再直接记 PASS，而是走既有采集入口只补采集（device_test/UT 不重跑，nav 参数读顶层已回填的 `device-test-run.meta.json`），两分支的 `visual_diff_capture` details 都多一行 `golden_contract=<sha256 前 16 位>|none`。defect schema、回退预算、T8 档位、verifier 模板、golden 夹具、执行键一律未动，消费者无需动手。
+- **放弃的准确性**：verifier 误标为 `minor` 的真实产品缺陷本轮不产候选，等下一轮 verifier 或人工升级；只守 hard 档，warn 档 T8 转录成 minor 后不进回修是本意；复用分支不防 `env -u`——代理清掉 golden 变量时框架只能如实写 `golden_contract=none`，由 evaluator 既有的 run 绑定把这种 PASS 判 FAIL。
+
 ## 首选路径：初始化 Skill 的 UPDATE 模式（编排化 · S1–S4）
 
 当实例根已存在 `framework.config.json` 时，再次执行 [`framework-init`](skills/project/framework-init/SKILL.md)（`/framework-init`）进入 **UPDATE** 模式，流程为：
