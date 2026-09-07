@@ -24,8 +24,10 @@ import * as os from 'os';
 import * as path from 'path';
 import { loadResolvedProfile } from '../../profile-loader';
 import { clearFrameworkConfigCache } from '../../config';
-import { runDeviceVisualDiffCapture, type DeviceVisualDiffCaptureDevices } from '../../scripts/check-testing';
+import { runDeviceVisualDiffCapture, __testing_checkDeviceTestRunGate, type DeviceVisualDiffCaptureDevices } from '../../scripts/check-testing';
 import { identityFingerprintOf } from '../../../profiles/hmos-app/harness/visual-diff-capture';
+import { computeHapSha256Full } from '../../../profiles/hmos-app/harness/build-fingerprint';
+import { parseHylyreTrace } from '../../../profiles/hmos-app/harness/providers/device-test-run';
 import type { CheckContext, CheckResult } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -483,6 +485,211 @@ test('⑤b golden forbidden HomeTab 缺已确认 identity → pixel hard 下 nav
       `forbidden 目标须纳入 identity 需求集（缺已确认 identity 即 FAIL）：${JSON.stringify(results)}`);
     assert.ok((gate?.details ?? '').includes('HomeTab'),
       `细节须点名 HomeTab 缺 identity：${gate?.details}`);
+  } finally {
+    if (prev === undefined) delete process.env.MAISON_GOLDEN_CONTRACT;
+    else process.env.MAISON_GOLDEN_CONTRACT = prev;
+    teardown(c);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// B07 D3（plan 6e4a2c8b）V4/V5：check-testing 生产接线——同键复用分支 × golden 采集
+//   走真实 checkDeviceTestRunGate：第一轮 mock device_test.run 真跑并落执行键记录；第二轮同键
+//   复用。只 mock 设备传输面（ready/run dispatch、hdc 设备身份、hylyre 三个构建器）。
+// ---------------------------------------------------------------------------
+
+const TRACE_GOLDEN = path.resolve(
+  FRAMEWORK_ROOT, 'profiles', 'hmos-app', 'vendor', 'hylyre', 'src', 'hylyre', 'contracts', 'golden', 'trace', 'valid', 'all-passed.json',
+);
+
+/** 顶层/派生计划 + derive hint（步骤翻译基线）+ 安装候选：让 run 门禁的静态段全部放行 */
+function writeReuseGateFixture(c: UnitCtx): { reportsDir: string; holder: Parameters<typeof __testing_checkDeviceTestRunGate>[1] } {
+  const root = c.projectRoot;
+  const reportsDir = path.join(root, 'doc', 'features', FEATURE, 'testing', 'reports');
+  writeFile(root, 'AppScope/app.json5', '{ "app": { "bundleName": "com.example.bctest", "versionCode": 1, "versionName": "1.0.0" } }');
+  writeFile(root, `doc/features/${FEATURE}/testing/test-plan.md`, [
+    '## 测试用例', '',
+    '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC | 执行通道 |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- |',
+    '| TC-001 | demo | 冷启动 | 点击钱包页并等待成功标题 | 通过 | P0 | AC-001 | hylyre |',
+  ].join('\n'));
+  const hintPath = path.join(reportsDir, 'derive-hint-from-plan.json');
+  writeFile(root, path.relative(root, hintPath), JSON.stringify({
+    test_cases: [{
+      tc_id: 'TC-001', name: 'demo', precondition: '冷启动', steps_natural_language: '点击钱包页并等待成功标题',
+      expected: '通过', priority: 'P0', ac_ref: 'AC-001', execution_channel: 'hylyre',
+    }],
+  }));
+  const past = new Date(Date.now() - 60_000);
+  fs.utimesSync(hintPath, past, past);
+  writeFile(root, `doc/features/${FEATURE}/testing/reports/20260101T000000Z/hylyre/test-plan.hylyre.md`, [
+    '## 测试用例清单', '',
+    '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC |',
+    '| --- | --- | --- | --- | --- | --- | --- |',
+    '| TC-001 | demo | 冷启动 | {"touch":{"by_id":"tab_wallet"}}; {"wait_for":{"by_id":"success_title"}} | 通过 | P0 | AC-001 |',
+  ].join('\n'));
+  const holder = {
+    ...c.holder,
+    installExecuted: true,
+    installOk: true,
+    hapSha256Full: computeHapSha256Full(c.holder.hapPath!),
+  };
+  return { reportsDir, holder };
+}
+
+interface GateMocks {
+  events: Array<{ kind: string; screen: string }>;
+  navOpts: Array<Record<string, unknown>>;
+  runCalls: number;
+}
+
+/** 只替换设备传输面；其余（执行键、复用判定、冻结件回填、采集入口）全走生产代码 */
+function withGateMocks<T>(reportsDir: string, fn: (m: GateMocks) => T): T {
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const registry = require('../../capability-registry') as Record<string, unknown>;
+  const hylyreShot = require('../../../profiles/hmos-app/harness/visual-diff-hylyre-screenshot') as Record<string, unknown>;
+  const hdcRunner = require('../../../profiles/hmos-app/harness/hdc-runner') as Record<string, unknown>;
+  /* eslint-enable @typescript-eslint/no-require-imports */
+  const saved = {
+    ensureReady: registry.dispatchDeviceTestEnsureReady,
+    run: registry.dispatchDeviceTestRun,
+    identity: hdcRunner.resolveExecutionDeviceIdentity,
+    shot: hylyreShot.buildHylyreVisualDiffScreenshotFn,
+    dump: hylyreShot.buildHylyreLayoutDumpFn,
+    nav: hylyreShot.buildHylyreNavExecutorFn,
+  };
+  const m: GateMocks = { events: [], navOpts: [], runCalls: 0 };
+  const devs = devices(m.events);
+  registry.dispatchDeviceTestEnsureReady = () => ({
+    ok: true, pythonPath: 'python', hylyreVersion: '0.5.0', manifestVersion: '0.5.0',
+    versionConsistent: true, source: 'env_override', doctorOk: true, errors: [],
+  });
+  registry.dispatchDeviceTestRun = (_ctx: unknown, opts: { traceOutPath: string; reportOutPath: string }) => {
+    m.runCalls++;
+    const trace = JSON.parse(fs.readFileSync(TRACE_GOLDEN, 'utf-8')) as Record<string, any>;
+    trace.feature = FEATURE;
+    trace.cases[0].id = 'TC-001';
+    trace.cases[0].name = 'demo';
+    trace.cases[0].ac_ref = 'AC-001';
+    for (const call of trace.tool_calls as Array<Record<string, unknown>>) call.case = 'TC-001';
+    fs.mkdirSync(path.dirname(opts.traceOutPath), { recursive: true });
+    fs.writeFileSync(opts.traceOutPath, JSON.stringify(trace));
+    fs.writeFileSync(opts.reportOutPath, '# Hylyre report\n');
+    const logPath = path.join(path.dirname(opts.traceOutPath), 'device-test-run.log');
+    fs.writeFileSync(logPath, 'mock run log\n');
+    const t0 = Date.now() - 5000;
+    // 宿主现场：主测试以 omit_bundle + page_name 启动，nav 须与之对齐
+    fs.writeFileSync(path.join(reportsDir, 'device-test-run.meta.json'), JSON.stringify({
+      ok: true, exit_code: 0, trace_path: opts.traceOutPath, report_path: opts.reportOutPath, log_path: logPath,
+      run_started_at: new Date(t0).toISOString(), run_ended_at: new Date(t0 + 500).toISOString(),
+      ran_at: new Date(t0 + 500).toISOString(), run_duration_ms: 500,
+      omit_bundle_for_hylyre: true, hypium_page_name: 'PhoneAbility', aa_start_ok: true,
+    }));
+    return {
+      executed: true, exitCode: 0, ok: true, command: 'mock hylyre run',
+      reportPath: opts.reportOutPath, tracePath: opts.traceOutPath, trace: parseHylyreTrace(opts.traceOutPath),
+      logPath, errors: [],
+    };
+  };
+  hdcRunner.resolveExecutionDeviceIdentity = () => ({ device: 'dev-A', display_env: '1080x2400' });
+  hylyreShot.buildHylyreVisualDiffScreenshotFn = () => devs.screenshotFn;
+  hylyreShot.buildHylyreLayoutDumpFn = () => devs.layoutDumpFn;
+  hylyreShot.buildHylyreNavExecutorFn = (opts: Record<string, unknown>) => { m.navOpts.push(opts); return devs.navExecutorFn; };
+  try {
+    return fn(m);
+  } finally {
+    registry.dispatchDeviceTestEnsureReady = saved.ensureReady;
+    registry.dispatchDeviceTestRun = saved.run;
+    hdcRunner.resolveExecutionDeviceIdentity = saved.identity;
+    hylyreShot.buildHylyreVisualDiffScreenshotFn = saved.shot;
+    hylyreShot.buildHylyreLayoutDumpFn = saved.dump;
+    hylyreShot.buildHylyreNavExecutorFn = saved.nav;
+  }
+}
+
+const REUSE_PASS_LINE =
+  '同键复用：设备截图沿用被复用 run 的产物（visual-diff.json / device-screenshots），参考图或 ui-spec 变化时按现有截图重新比较，不重跑交互。';
+
+/** 两轮门禁：第一轮 mock 真跑（spec.md 暂缺 → 不采集），第二轮同键复用（spec.md 就位） */
+function runGateTwice(c: UnitCtx, m: GateMocks, holder: Parameters<typeof __testing_checkDeviceTestRunGate>[1]): {
+  first: CheckResult[]; second: CheckResult[];
+} {
+  const specMd = path.join(c.projectRoot, 'doc', 'features', FEATURE, 'spec', 'spec.md');
+  const specBody = fs.readFileSync(specMd, 'utf-8');
+  fs.rmSync(specMd);
+  const first = __testing_checkDeviceTestRunGate(c.ctx, { ...holder });
+  const firstRun = first.find(r => r.id === 'device_test_run') as CheckResult & { structured?: Record<string, unknown> };
+  assert.ok(firstRun, `第一轮须产出 device_test_run：${JSON.stringify(first.map(r => [r.id, r.status]))}`);
+  assert.strictEqual(firstRun.status, 'PASS', `第一轮真跑须 PASS：${firstRun.details}`);
+  assert.strictEqual(firstRun.structured?.reused_by_execution_key, false, '第一轮不是复用');
+  assert.strictEqual(m.runCalls, 1, '第一轮真跑一次');
+  assert.deepStrictEqual(m.events, [], '第一轮无 spec.md：不采集');
+  fs.writeFileSync(specMd, specBody, 'utf-8');
+  const second = __testing_checkDeviceTestRunGate(c.ctx, { ...holder });
+  const secondRun = second.find(r => r.id === 'device_test_run') as CheckResult & { structured?: Record<string, unknown> };
+  assert.ok(secondRun, `第二轮须产出 device_test_run：${JSON.stringify(second.map(r => [r.id, r.status]))}`);
+  assert.strictEqual(secondRun.structured?.reused_by_execution_key, true, `第二轮须同键复用：${secondRun.details}`);
+  assert.strictEqual(m.runCalls, 1, 'device_test 未重跑（复用只补采集）');
+  return { first, second };
+}
+
+test('B07-V4 golden 生效时复用不绕过：不推"同键复用 PASS"、走采集入口、nav omitBundle=true、details 带 golden_contract', () => {
+  const c = setup();
+  const prev = process.env.MAISON_GOLDEN_CONTRACT;
+  try {
+    const goldenAbs = writeGolden(c.projectRoot);
+    process.env.MAISON_GOLDEN_CONTRACT = goldenAbs;
+    const sha16 = crypto.createHash('sha256').update(fs.readFileSync(goldenAbs)).digest('hex').slice(0, 16);
+    writeFile(c.projectRoot, `doc/features/${FEATURE}/device-testing/visual-diff-nav.json`, baseNav().navFile);
+    const { reportsDir, holder } = writeReuseGateFixture(c);
+    withGateMocks(reportsDir, m => {
+      const { second } = runGateTwice(c, m, holder);
+      const captures = second.filter(r => r.id === 'visual_diff_capture');
+      assert.strictEqual(captures.length, 1, `恰一条 visual_diff_capture：${JSON.stringify(captures)}`);
+      const cap = captures[0];
+      assert.ok(!(cap.details ?? '').includes(REUSE_PASS_LINE), `golden 生效不得直接记复用 PASS：${cap.details}`);
+      assert.strictEqual(cap.status, 'PASS', `采集入口须 PASS：${cap.details}`);
+      assert.ok((cap.details ?? '').includes(`golden_contract=${sha16}`), `details 须披露 golden 身份：${cap.details}`);
+      // 采集入口真的跑了：golden target 集合（P0 ∪ golden P1 ∪ forbidden）被导航/截图
+      for (const screen of ['all_banks', 'bank_card_list_sheet__overlay__0', 'HomeTab']) {
+        assert.ok(m.events.some(e => e.kind === 'nav' && e.screen === screen),
+          `${screen} 须被导航：${m.events.map(e => `${e.kind}:${e.screen}`).join(',')}`);
+      }
+      assert.ok(m.events.some(e => e.kind === 'shot' && e.screen === 'all_banks'), 'P0 屏须截图');
+      // nav 参数读顶层已回填的 device-test-run.meta.json（不是 reusable.runDir、不是 ''）
+      assert.strictEqual(m.navOpts.length, 1, `nav 构建器恰调一次：${JSON.stringify(m.navOpts)}`);
+      assert.strictEqual(m.navOpts[0].omitBundle, true, `nav 须与主测试启动方式对齐（omitBundle=true）：${JSON.stringify(m.navOpts[0])}`);
+      assert.strictEqual(m.navOpts[0].hypiumPageName, 'PhoneAbility');
+      assert.strictEqual(path.dirname(String(m.navOpts[0].logPath)), reportsDir, 'logPath 落在顶层 reportsDir');
+      // 采集产物：golden P1 overlay 进入 visual-diff.json（同 ① 用例的生产语义）
+      const ids = loadVisualDiffJson(c.projectRoot).map(s => s.screen_id);
+      assert.ok(ids.includes('bank_card_list_sheet__overlay__0'), `golden P1 须被采集：${ids.join(', ')}`);
+    });
+  } finally {
+    if (prev === undefined) delete process.env.MAISON_GOLDEN_CONTRACT;
+    else process.env.MAISON_GOLDEN_CONTRACT = prev;
+    teardown(c);
+  }
+});
+
+test('B07-V5 无 golden 时复用不变：逐字相同的 PASS 行 + golden_contract=none，传输面零事件', () => {
+  const c = setup();
+  const prev = process.env.MAISON_GOLDEN_CONTRACT;
+  try {
+    delete process.env.MAISON_GOLDEN_CONTRACT;
+    writeFile(c.projectRoot, `doc/features/${FEATURE}/device-testing/visual-diff-nav.json`, baseNav().navFile);
+    const { reportsDir, holder } = writeReuseGateFixture(c);
+    withGateMocks(reportsDir, m => {
+      const { second } = runGateTwice(c, m, holder);
+      const captures = second.filter(r => r.id === 'visual_diff_capture');
+      assert.strictEqual(captures.length, 1, `恰一条 visual_diff_capture：${JSON.stringify(captures)}`);
+      assert.strictEqual(captures[0].status, 'PASS');
+      assert.strictEqual(captures[0].severity, 'MINOR');
+      assert.strictEqual(captures[0].details, `${REUSE_PASS_LINE}\ngolden_contract=none`, '复用 PASS 行逐字不变 + 身份披露');
+      assert.deepStrictEqual(m.events, [], '无 golden：复用不触碰设备');
+      assert.deepStrictEqual(m.navOpts, [], '无 golden：不装配 nav');
+      assert.deepStrictEqual(loadVisualDiffJson(c.projectRoot), [], '无 golden：不产生新的采集产物');
+    });
   } finally {
     if (prev === undefined) delete process.env.MAISON_GOLDEN_CONTRACT;
     else process.env.MAISON_GOLDEN_CONTRACT = prev;

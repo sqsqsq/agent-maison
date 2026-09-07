@@ -2332,7 +2332,12 @@ export function collectActionableDefects(
           .filter((x): x is { d: unknown; fp: string } => x !== null);
         if (structural.length > 0) {
           // 每信号一条候选；defect.must_fix_refs 反向解析到该屏 must_fix 原文作指令
+          // B07 D1（plan 6e4a2c8b）：结构化 defect 按 severity 分流——minor 不产回修候选
+          //（留视觉债务台账 / 报告 WARN），major/blocker 照旧；provider 源同规则。
+          // 宿主 i13：12 条 minor 声明差以 coding 候选身份吃掉最后一次回退。零文本解析。
+          let minorSkipped = 0;
           for (const { d, fp } of structural) {
+            if ((d as { severity?: unknown }).severity === 'minor') { minorSkipped++; continue; }
             // plan ab072691 t5⑤：**provider 评审缺陷是独立的 critic candidate 源**，
             // 不是 producer 感知信号。它结构上恒「未经 primary defect-review 复核」——
             // provider 后于 primary 运行，而且让**盲的** primary 去复核视觉缺陷是伪制衡。
@@ -2365,6 +2370,9 @@ export function collectActionableDefects(
               // provider 源例外（见上）：直接物化回修，不进复核/停等管线。
               signal_identity: !fromVisualProvider,
             });
+          }
+          if (minorSkipped > 0) {
+            console.warn(`[actionable] ${id}: ${minorSkipped} 条 minor 视觉信号不产回修候选（留视觉债务台账 / 报告 WARN）`);
           }
         } else {
           // 纯文本 must_fix 保底：整屏文案 hash（legacy；信号级收敛不作用于其后代候选）

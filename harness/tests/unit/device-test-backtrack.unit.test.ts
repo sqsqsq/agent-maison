@@ -18,7 +18,9 @@ import {
   parseDerivedPlanSteps,
   parseFailureArtifactsClause,
 } from '../../../profiles/hmos-app/harness/device-test-evidence';
-import { computeHapSha256Full } from '../../../profiles/hmos-app/harness/build-fingerprint';
+import { computeHapSha256Full, resolveCurrentBuildFingerprint } from '../../../profiles/hmos-app/harness/build-fingerprint';
+import { computeDefectFingerprint, hashScreenshotFile } from '../../../profiles/hmos-app/harness/visual-diff-check';
+import { actionableDefectsToCandidates } from '../../scripts/utils/repair-candidates';
 import {
   collectActionableDefects,
   evaluateUnverifiedRound,
@@ -690,6 +692,131 @@ export function runAll(): UnitCaseResult[] {
     assert(res2.defects.filter(d => d.source === 'device_test').length === 0
       && res2.unverified.filter(u => u.source === 'device_test').length === 0,
       '缺 evidence = 无 device 信号（门禁失败路径自会接管），不制造噪音');
+  });
+
+  // ==========================================================================
+  // B07 D1（plan 6e4a2c8b）V1/V2：collectActionableDefects §A 按 defect.severity 分流
+  // 夹具按宿主 run 20260906T143404Z-ab463c testing-i13 的 visual-diff.json 形状造：
+  // 3 屏 warn、12 条 minor defect（10 条 T8 源 + 2 条 other 无源）、must_fix 带 [owner=spec]、
+  // 截图/build 身份绑定齐全（③④ 成立，走到信号级候选分支）。
+  // ==========================================================================
+  type HostDefect = {
+    class: string; element: string; bbox: number[]; severity: string; note: string;
+    must_fix_refs: number[]; source?: { producer: 'T8'; finding_id: string; signal: string };
+  };
+  const t8 = (signal: string, n: number, element: string, refs: number[], severity = 'minor'): HostDefect => ({
+    class: 'other', element, bbox: [0.1, 0.1 * n, 0.5, 0.05], severity,
+    note: `${signal} 声明口径差（--measure 实测与参考图一致，非渲染缺陷）`, must_fix_refs: refs,
+    source: { producer: 'T8', finding_id: `f${signal.slice(0, 2).toLowerCase()}${n}`, signal },
+  });
+  const other = (n: number, element: string, refs: number[]): HostDefect => ({
+    class: 'other', element, bbox: [0.2, 0.1 * n, 0.4, 0.05], severity: 'minor',
+    note: '参考图为整页长图，被 visual_reference_viewport 剔出比对——保真度 UNKNOWN', must_fix_refs: refs,
+  });
+  /** 宿主 i13 形状：屏 → 12 条 minor（B1×6、B2×1、B3×2、A1_unlocatable×1、other×2） */
+  function hostI13Screens(): Array<{ id: string; defects: HostDefect[] }> {
+    return [
+      { id: 'add_card_home_collapsed', defects: [
+        t8('B1_layout_group_divergent', 1, 'hc_bank_row_cmb', [0]),
+        t8('B1_layout_group_divergent', 2, 'hc_bank_row_icbc', [0]),
+        t8('B1_layout_group_divergent', 3, 'hc_bank_row_abc', [0]),
+        t8('B2_group_container_missing', 4, 'hc_bank_list', [1]),
+      ] },
+      { id: 'add_card_home_expanded', defects: [
+        t8('B1_layout_group_divergent', 1, 'he_bank_row_1', [0]),
+        t8('B1_layout_group_divergent', 2, 'he_bank_row_2', [0]),
+        t8('B1_layout_group_divergent', 3, 'he_bank_row_3', [0]),
+        t8('B3_order_inverted', 4, 'he_view_all_banks_link', [1]),
+        other(5, 'he_page', [1]),
+      ] },
+      { id: 'all_banks', defects: [
+        t8('B3_order_inverted', 1, 'ab_search', [0]),
+        t8('A1_forbidden_overlap_unlocatable', 2, 'ab_list', [1]),
+        other(3, 'ab_page', [1]),
+      ] },
+    ];
+  }
+  /** 写 install meta + 截图 + visual-diff.json（身份齐全），返回写盘的屏 */
+  function writeHostI13VisualDiff(f: Fixture, screens: Array<{ id: string; defects: HostDefect[] }>): void {
+    w(f.root, `doc/features/${FEATURE}/testing/reports/device-test-install.meta.json`,
+      JSON.stringify({ hapPath: 'build/app.hap' }));
+    const buildFp = resolveCurrentBuildFingerprint(f.root, FEATURE, 'testing');
+    assert(!!buildFp, '夹具须能算出 build fingerprint（install meta + hap 已造）');
+    const rows = screens.map(sc => {
+      const shotRel = `doc/features/${FEATURE}/device-testing/device-screenshots/shot-${sc.id}.png`;
+      w(f.root, shotRel, `png-bytes-${sc.id}`);
+      const h = hashScreenshotFile(path.join(f.root, shotRel));
+      return {
+        screen_id: sc.id, verdict: 'warn', screenshot_path: shotRel,
+        screenshot_hash: h, evaluated_screenshot_hash: h, evaluated_build_fingerprint: buildFp,
+        must_fix: ['[owner=spec] 声明的同行关系未实现：ui-spec 行高口径与参考图不一致', '[owner=spec] 声明的分组容器缺失：需求未定义分组'],
+        defects: sc.defects,
+      };
+    });
+    w(f.root, `doc/features/${FEATURE}/device-testing/device-screenshots/visual-diff.json`,
+      JSON.stringify({ schema_version: '1.1', screens: rows }, null, 2));
+  }
+  function captureWarn<T>(fn: () => T): { value: T; warns: string[] } {
+    const warns: string[] = [];
+    const orig = console.warn;
+    console.warn = (...args: unknown[]) => { warns.push(args.map(String).join(' ')); };
+    try {
+      return { value: fn(), warns };
+    } finally {
+      console.warn = orig;
+    }
+  }
+
+  t('B07-V1 minor 不产候选：宿主 i13 形状 12 条 minor → visual actionable 0、unverified 0、console 计数', () => {
+    const f = setupFixture();
+    try {
+      const screens = hostI13Screens();
+      nodeAssert.strictEqual(screens.reduce((n, s) => n + s.defects.length, 0), 12, '夹具须恰为 12 条 defect');
+      nodeAssert.ok(screens.every(s => s.defects.every(d => d.severity === 'minor')), '夹具全部 minor');
+      writeHostI13VisualDiff(f, screens);
+      const { value: res, warns } = captureWarn(() => collectActionableDefects(f.root, FEATURE, 'run-1'));
+      nodeAssert.deepStrictEqual(res.defects.filter(d => d.source === 'visual_diff'), [],
+        `minor 视觉信号不得产 coding 候选：${JSON.stringify(res.defects)}`);
+      nodeAssert.deepStrictEqual(res.unverified, [], `身份齐全，不得进 unverified：${JSON.stringify(res.unverified)}`);
+      const counted = warns.filter(l => l.includes('minor 视觉信号不产回修候选'));
+      nodeAssert.strictEqual(counted.length, 3, `每屏一行计数：${JSON.stringify(warns)}`);
+      nodeAssert.ok(counted.some(l => l.includes('add_card_home_expanded: 5 条')), `计数须按屏：${JSON.stringify(counted)}`);
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    }
+  });
+
+  t('B07-V2 major 仍进候选：同夹具改 1 条 T8 为 major → 恰 1 条 visual_diff/signal_identity，指纹与改动前逐字相同，category=coding', () => {
+    const f = setupFixture();
+    try {
+      const screens = hostI13Screens();
+      const promoted = screens[0].defects[0];
+      promoted.severity = 'major';
+      writeHostI13VisualDiff(f, screens);
+      const res = collectActionableDefects(f.root, FEATURE, 'run-1');
+      const visual = res.defects.filter(d => d.source === 'visual_diff');
+      nodeAssert.strictEqual(visual.length, 1, `恰 1 条 actionable：${JSON.stringify(visual)}`);
+      nodeAssert.strictEqual(visual[0].screen_or_case_id, 'add_card_home_collapsed');
+      nodeAssert.strictEqual(visual[0].signal_identity, true, 'T8 结构化信号进 signal@1');
+      // 指纹 = 既有 computeDefectFingerprint(screen, defect)（screen|class|element|bbox_bucket|T8#finding_id），D1 未触碰
+      nodeAssert.strictEqual(
+        visual[0].fingerprint,
+        computeDefectFingerprint('add_card_home_collapsed', promoted as never),
+        '指纹须与改动前该条逐字相同',
+      );
+      nodeAssert.strictEqual(visual[0].fingerprint, 'add_card_home_collapsed|other|hc_bank_row_cmb|0.1,0.1,0.5,0.1|T8#fb11');
+      nodeAssert.ok(visual[0].instructions[0].startsWith('B1_layout_group_divergent'), '指令首条=defect.note');
+      nodeAssert.ok(visual[0].instructions.includes('[owner=spec] 声明的同行关系未实现：ui-spec 行高口径与参考图不一致'),
+        'must_fix_refs 反向解析原文（不读 [owner=…] 前缀）');
+      const cands = actionableDefectsToCandidates(visual, 'testing');
+      nodeAssert.strictEqual(cands[0].category, 'coding');
+      nodeAssert.strictEqual(cands[0].identity_schema, 'signal@1');
+      nodeAssert.deepStrictEqual(res.unverified, []);
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    }
   });
 
   return cases;

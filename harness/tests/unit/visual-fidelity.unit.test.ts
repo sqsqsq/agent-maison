@@ -3672,6 +3672,105 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
+  // B07 D2（plan 6e4a2c8b）V3：T8 hard 命中（A1_forbidden_overlap）被一条 severity=minor、
+  // finding_id 对上的 defect"消账" → visual_diff_finding_transcription 出"hard 命中被降级"；
+  // hard 合同 FAIL 且 fingerprintable=false；best_effort 沿既有 ratchet WARN；改 major → hit 消失。
+  run('b07_v3_t8_hard_finding_transcribed_as_minor_is_intercepted', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    try {
+      const dir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'), '```yaml\nui_change: new_or_changed\n```\n');
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'visual-diff.md'), '# diff');
+      const shot = path.join(dir, 'shot-home.png');
+      writeMinimalRedPng(shot, 10, 10);
+      const h = hashScreenshotFile(shot);
+      fs.writeFileSync(
+        uiSpecAbsPath(root, 'bank-card'),
+        JSON.stringify({
+          schema_version: '1.0',
+          screens: [{
+            id: 'home', priority: 'P0',
+            forbidden_overlap: [['close', 'bank_surface']],
+            root: { type: 'navigation_frame', order: 0, children: [
+              { id: 'close', type: 'button', text: '关闭' },
+              { id: 'bank_surface', type: 'image' },
+            ] },
+          }],
+          tokens: {}, assets: [],
+        }),
+        'utf-8',
+      );
+      // 运行时 dump 已采集（captured）：close 与 bank_surface 真相交 → A1_forbidden_overlap hard
+      fs.writeFileSync(path.join(dir, 'layout-home.json'), JSON.stringify({
+        schema_version: 'hylyre-hypium-ui-dump-v1',
+        tree: {
+          attributes: { bounds: '[0,0][1000,2000]', type: 'Screen', text: '', id: '', key: '', clickable: 'false' },
+          children: [{
+            attributes: { bounds: '[0,100][1000,2000]', type: 'root', text: '', id: '', key: '', clickable: 'false' },
+            children: [
+              { attributes: { bounds: '[100,200][400,400]', type: 'Button', text: '关闭', id: 'close', key: '', clickable: 'true' }, children: [] },
+              { attributes: { bounds: '[300,300][700,600]', type: 'Image', text: '', id: 'bank_surface', key: '', clickable: 'true' }, children: [] },
+            ],
+          }],
+        },
+      }), 'utf-8');
+      const writeDiff = (severity: 'minor' | 'major', findingId: string | null): void => {
+        fs.writeFileSync(path.join(dir, 'visual-diff.json'), JSON.stringify({
+          schema_version: '1.1',
+          screens: [{
+            screen_id: 'home', verdict: 'fail',
+            screenshot_path: 'doc/features/bank-card/device-testing/device-screenshots/shot-home.png',
+            ref_id: 'home', evaluated_screenshot_hash: h, screenshot_hash: h,
+            layout_dump_status: 'captured',
+            must_fix: ['修复重叠'], reverse_missing: [],
+            defects: [{
+              class: 'overlap', element: 'close', bbox: [0.1, 0.1, 0.2, 0.2], severity, note: 'x', must_fix_refs: [0],
+              ...(findingId ? { source: { producer: 'T8', finding_id: findingId, signal: 'A1_forbidden_overlap' } } : {}),
+            }],
+          }],
+        }), 'utf-8');
+      };
+      const hardCtx = () => baseCtx(root, { fidelityTarget: 'pixel_1to1' });
+      const softCtx = () => baseCtx(root, { fidelityTarget: 'pixel_1to1', acceptanceStrictness: 'best_effort' });
+      const details = (r: unknown[]): string => ((r[0] as { details?: string }).details ?? '');
+      const fingerprintable = (r: unknown[]): unknown =>
+        ((r[0] as { structured?: { fingerprintable?: boolean } }).structured ?? {}).fingerprintable;
+      // ① 先取真实 finding_id（不预填 source：命中"发现未落账"，从行文里读 id）
+      writeDiff('major', null);
+      const probe = details(checkVisualDiff(hardCtx()));
+      const m = /home\[A1_forbidden_overlap#([0-9a-f]{16})\]/.exec(probe);
+      if (!m) throw new Error(`夹具须产出 A1_forbidden_overlap hard 发现：${probe.slice(0, 600)}`);
+      const findingId = m[1];
+      // ② hard 合同：minor 消账 → FAIL + 独立文案 + fingerprintable=false
+      writeDiff('minor', findingId);
+      const hard = checkVisualDiff(hardCtx());
+      const hd = details(hard);
+      if (!/【t2 hard 命中被降级】/.test(hd)) throw new Error(`hard 合同须出"hard 命中被降级"：${hd.slice(0, 600)}`);
+      if (!hd.includes(`home[A1_forbidden_overlap#${findingId}]`)) throw new Error(`须点名该发现：${hd.slice(0, 600)}`);
+      if (!/severity 至少 major/.test(hd)) throw new Error('文案须给出下限 major');
+      if (/【t2 发现未落账】/.test(hd)) throw new Error('finding_id 已对上，不得再报"发现未落账"');
+      if ((hard[0] as { status?: string }).status !== 'FAIL') throw new Error(`hard 合同须 FAIL：${(hard[0] as { status?: string }).status}`);
+      if (fingerprintable(hard) !== false) throw new Error(`降级消账的轮次不得可指纹：${String(fingerprintable(hard))}`);
+      // ③ best_effort：同一 hit 沿既有 ratchet 只 WARN（不新增全局硬门禁）
+      const soft = checkVisualDiff(softCtx());
+      const sd = details(soft);
+      if (!/【t2 hard 命中被降级】/.test(sd)) throw new Error(`best_effort 仍须提示降级：${sd.slice(0, 600)}`);
+      if ((soft[0] as { status?: string }).status === 'FAIL') throw new Error(`best_effort 下不得因本条 FAIL：${sd.slice(0, 600)}`);
+      // ④ 同发现改 major → 该 hit 消失，且轮次恢复可指纹（对照，证明 ② 的 false 来自本条）
+      writeDiff('major', findingId);
+      const fixed = checkVisualDiff(hardCtx());
+      const fd = details(fixed);
+      if (/【t2 hard 命中被降级】/.test(fd)) throw new Error(`major 转录不得命中降级档：${fd.slice(0, 600)}`);
+      if (/【t2 发现未落账】/.test(fd)) throw new Error('major + finding_id 对上 = 合法转录');
+      if (fingerprintable(fixed) !== true) throw new Error(`合法转录轮次应可指纹：${String(fingerprintable(fixed))}`);
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   // ==========================================================================
   // t1/t2/t6b（plan f7a3d9c2）：指纹熔断 e2e + must_fix 锚定 + 低档守恒
   // ==========================================================================

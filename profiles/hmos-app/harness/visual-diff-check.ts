@@ -2468,33 +2468,42 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   const unloggedWarnFindingIds: string[] = [];
   {
     const unloggedHard: string[] = [];
+    // B07 D2（plan 6e4a2c8b）：hard 命中被转录成 minor——机器确定性证据不得降级。
+    // 与 unloggedHard 同 ratchet、同 hit id，文案独立；warn 档转录成 minor 完全合法。
+    const downgradedHard: string[] = [];
     const unloggedWarn: string[] = [];
     const templates: string[] = [];
     for (const { screen_id, finding } of t8Findings) {
       if (finding.tier === 'advisory') continue;
       const entry = byScreenId.get(screen_id);
       const defects = entry?.defects ?? [];
+      const label = `${screen_id}[${finding.signal}#${finding.finding_id}]`;
+      // 三种匹配路径任一命中即取该 defect（匹配顺序与此前布尔 some/|| 逐字相同）
       const matched =
-        defects.some(d => t8FindingIdOf(d.source) === finding.finding_id) ||
-        (finding.elements.length > 0 &&
-          defects.some(
-            d =>
-              typeof d.element === 'string' &&
-              finding.elements.includes(d.element) &&
-              signalExpectedClasses(finding.signal).has(d.class),
-          )) ||
+        defects.find(d => t8FindingIdOf(d.source) === finding.finding_id) ??
+        (finding.elements.length > 0
+          ? defects.find(
+              d =>
+                typeof d.element === 'string' &&
+                finding.elements.includes(d.element) &&
+                signalExpectedClasses(finding.signal).has(d.class),
+            )
+          : undefined) ??
         // review-fix（codex P2-2）：bbox legacy 回退同样须语义类一致——同区域一个无关
         // 类别的 defect 不得消账（IoU 只证"位置重叠"，不证"同一问题"）。
-        (Array.isArray(finding.bbox) &&
-          defects.some(
-            d =>
-              Array.isArray(d.bbox) &&
-              d.bbox.length === 4 &&
-              signalExpectedClasses(finding.signal).has(d.class) &&
-              normRectIoU(finding.bbox as number[], d.bbox) >= TRANSCRIPTION_BBOX_IOU_MIN,
-          ));
-      if (matched) continue;
-      const label = `${screen_id}[${finding.signal}#${finding.finding_id}]`;
+        (Array.isArray(finding.bbox)
+          ? defects.find(
+              d =>
+                Array.isArray(d.bbox) &&
+                d.bbox.length === 4 &&
+                signalExpectedClasses(finding.signal).has(d.class) &&
+                normRectIoU(finding.bbox as number[], d.bbox) >= TRANSCRIPTION_BBOX_IOU_MIN,
+            )
+          : undefined);
+      if (matched) {
+        if (finding.tier === 'hard' && matched.severity === 'minor') downgradedHard.push(label);
+        continue;
+      }
       if (finding.tier === 'hard') {
         unloggedHard.push(label);
         if (templates.length < 3) {
@@ -2527,6 +2536,21 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
           `【t2 发现未落账】T8 hard 命中无对应 defect（source.finding_id/element/bbox 均未对上）：` +
           `${unloggedHard.slice(0, 6).join(', ')}${unloggedHard.length > 6 ? `…共 ${unloggedHard.length} 处` : ''}` +
           `——照抄模板进该屏 defects[]（并折算 must_fix）：${templates.join(' ')}`,
+      });
+    }
+    if (downgradedHard.length > 0) {
+      const ratchet = pixel1to1
+        ? fidelityRatchetFailOrWarn(ctx, false)
+        : { severity: 'MAJOR' as const, status: 'WARN' as const };
+      if (ratchet.status === 'FAIL') transcriptionDirty = true;
+      pushVisualDiffHit(hits, {
+        id: 'visual_diff_finding_transcription',
+        severity: ratchet.severity,
+        status: ratchet.status,
+        line:
+          `【t2 hard 命中被降级】T8 hard 命中转录为 minor（机器确定性证据不得降级）：` +
+          `${downgradedHard.slice(0, 6).join(', ')}${downgradedHard.length > 6 ? `…共 ${downgradedHard.length} 处` : ''}` +
+          `——severity 至少 major`,
       });
     }
     if (unloggedWarn.length > 0) {
