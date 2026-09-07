@@ -1926,8 +1926,6 @@ export const VISUAL_GAP_RETRY_GUIDANCE_TESTING: readonly string[] = [
  * reference_only 被实测证伪、blank_ratio 无区分力，那套只会打回好版本）：
  *   A) visual-diff.json 里**新鲜**的 must_fix（5 条谓词，见下）；
  *   B) 本轮导航**新增** faultlog 的 crash_suspected（F3 集合差归档，含 run_id）。
- * 结构性素材问题（悬空 $r / 物化缺失）不在此——F4 已做成 coding 侧确定性 FAIL，
- * coding 阶段就会失败，不需要绕到 testing 再发现一次。
  *
  * 【actionable 谓词（v23 冻结，5 条同时满足）】
  *   ① verdict ∈ {warn, fail}；② must_fix[] 非空；③ evaluated_screenshot_hash 与

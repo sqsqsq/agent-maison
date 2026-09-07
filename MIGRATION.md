@@ -7,6 +7,8 @@
 
 3.0.0 把 phase 合格性与 goal 跨阶段推进收敛为机器契约：
 
+- **资源引用门禁退役**：删除 coding 阶段的 `media_reference_integrity` BLOCKER，补齐此前 `resource_integrity` 的退役；资源引用合法性统一由 `coding_compile` 真实编译承担。升级后，受该静态门禁误报阻断的 feature 重跑 coding harness 即可，无需扩充 `contracts.modules` 或补占位素材。
+
 ### contracts.yaml 文件引用闭包（Breaking）
 
 - plan closure 现在把 contracts 中 schema 声明的文件字段解析为内存视图，并要求它们全部属于规范化后的顶层 `contracts.files`。覆盖 data model/interface/component 文件、`resource_keys` 的 `path`/`media`、`navigation.config_files`、HAR build/export 文件和 `prd_to_code_traceability[].key_files`。

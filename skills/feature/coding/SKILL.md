@@ -74,7 +74,7 @@
 | 文件完整性 | contracts.yaml 列出文件均存在 | BLOCKER |
 | 分层合规 | 模块内 import 不违反内层顺序 | BLOCKER |
 | 模块间依赖 | import 不违反外层依赖矩阵 | BLOCKER |
-| 资源引用完整性 | 宿主资源引用 API 与资源定义一致 | BLOCKER |
+| 资源引用完整性 | 由 `coding_compile` 真实编译承担，资源合法性以编译结果为唯一真源 | BLOCKER |
 | 模块导出 / 模块注册 / 页面注册 | 跨模块出口正确导出 / 构建清单注册 / 路由清单登记 | BLOCKER |
 | 硬编码字符串 | presentation 层 UI 文本走资源机制 | MAJOR |
 | 命名规范 / 禁止 any | 命名约定 / 无 any 类型 | MAJOR |
