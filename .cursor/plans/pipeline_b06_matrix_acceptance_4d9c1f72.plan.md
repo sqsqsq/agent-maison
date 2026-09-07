@@ -28,7 +28,10 @@ todos:
     content: 用户触发——按 §7.2-B/C/D 跑 C-N / X-U / X-N 三个差异格（各自选定片段与判据，须在 A 的 evaluator 报告保存之后）；任一格未跑即保持 pending，不用回放冒充。
     status: pending
   - id: b06-host-golden-and-promote
-    content: 用户触发——按 §7.2-E 设 MAISON_GOLDEN_CONTRACT 采集并跑包内 evaluator（带 `--feature bc-openCard-1`）；verdict=PASS 才具备 promote 前提。正式 promote 不是本 plan 的完成前置。
+    content: 用户触发——先过 §7.2 P0.5 golden 适用性裁定（基线匹配才设 MAISON_GOLDEN_CONTRACT）；按 §7.2-E 跑包内 evaluator（带 `--feature bc-openCard-1`）；verdict=PASS 才具备 promote 前提。基线不匹配的 run 保留 FAIL 原样并注「验收样本不适用」，不记 N/A。正式 promote 不是本 plan 的完成前置。
+    status: pending
+  - id: b06-host-b07-reacceptance
+    content: 用户触发——B07（视觉回修归因与 golden 复用校验，plan 6e4a2c8b）本地完成并进候选件后，按 §7.2 P0.5 裁定 golden 适用性，以用户指定的窗口做范围明确的补验收（不再起同条件 spec→testing 长 run 只为复现）；结果回填 §6 登记表。B07 的完成判据不含此项。
     status: pending
   - id: b06-release-readiness-closeout
     content: 本地与宿主两侧真实完成后才回填登记表、勾各批 host todo 与总 plan 里程碑；不为过门禁提前勾完成。
@@ -331,11 +334,13 @@ P1 的四个文件另走一笔提交（evaluator + 其 unit 用例 + `candidate-
 >
 > **替代方案（推荐，且与 §7.2-E 的"独立验收副本"同一份拷贝）**：claude 两格与 codex 两格各用一份 `<hostRoot>` 拷贝，各自 framework.local.json 记各自 adapter，全程零 override、零回写，也顺带解决 E 的共享产物覆盖问题。**二选一，不得两者都不做。**
 
+**P0.5 golden 适用性裁定（A 启动前，一次；B07 plan review #1）**：对照**独立确认的需求基线**（原始需求文 + 用户确认的屏清单——不是本 run 的产物，也不是 spec 自己）与 contract `positive_screens`（十屏）。**匹配** → A 命令保留 `$env:MAISON_GOLDEN_CONTRACT = …;` 首段，之后 spec 漏屏、采集缺屏一律是**真实 FAIL**（那正是 golden 要抓的）。**不匹配** → A 去掉首段、不带 golden；E 仍照跑并保存报告，结论保留 FAIL 原样并注明「验收样本不适用（contract 立项需求 ≠ 当前基线）」——不记 N/A、不改写历史结果、不从产物反推 contract；promote 前提在该基线上不成立，如实登记。**执行 harness 期间不得 `env -u` / 清空该变量**：golden fail-closed BLOCKER 是验收结论，出现即停、回到本条重裁。当前 bc-openCard-1 基线（原始需求 3 图）与十屏 contract **不匹配**（run `20260906T143404Z-ab463c` 已证：contract 屏无法解析为 capture target）——除非用户另行确认基线，A 不带 golden。
+
 #### A. C-U 合并回归（同时验收第一个检查点与 B03–B05）
 
     $env:MAISON_GOLDEN_CONTRACT = 'framework/harness/scripts/consumer-golden/bc-opencard.golden-contract.json'; Set-Location <hostRoot>\framework\harness; npx ts-node scripts/goal-runner.ts --feature bc-openCard-1 --adapter claude --requirement-file '<hostRoot>\doc\features\原始需求\1-1-银行卡\原始需求.md' --start spec --end testing --detach
 
-窗口按 D1 是 `--start spec --end testing`（此前给用户的是 `--end ut`，结构上过不了 evaluator 的 `run_binding`）。golden env **必须在起 run 的同一 shell、起 run 之前**设（candidate-release.mjs:135–146 的三步之二），否则采集仍是 P0-only。**证据路径**：`<hostRoot>\doc\features\bc-openCard-1\goal-runs\<runId>\`。
+窗口按 D1 是 `--start spec --end testing`（此前给用户的是 `--end ut`，结构上过不了 evaluator 的 `run_binding`）。golden env **必须在起 run 的同一 shell、起 run 之前**设（candidate-release.mjs:135–146 的三步之二），否则采集仍是 P0-only。**首段是否保留由 P0.5 决定**：判「匹配」保留；判「不匹配」（当前 bc-openCard-1 基线即如此）去掉 `$env:MAISON_GOLDEN_CONTRACT = …;` 再起 run。**证据路径**：`<hostRoot>\doc\features\bc-openCard-1\goal-runs\<runId>\`。
 
 **观察点（逐条给出真实落点，不要去 events 里找不在那儿的字段）**：
 
@@ -363,7 +368,7 @@ P1 的四个文件另走一笔提交（evaluator + 其 unit 用例 + `candidate-
 
 因此 A→B→C→D→E 的顺序会让 A 的证据被 B/C/D 覆盖，evaluator 必然 FAIL 且无法区分"框架回归失败"与"证据被覆盖"。**若无法保证顺序**，替代方案是给差异格用**独立验收副本**（另一份 `<hostRoot>` 拷贝），两者取其一，不得两者都不做。
 
-另需宿主 `visual-diff-nav` 配置含 HomeTab 到达步骤，否则负向证据不生产、`ten_fixed_screens_exact_set` 与 forbidden 项必 FAIL。**判定**：`verdict=PASS` → 具备 promote 前提；任一 FAIL 先按 items 的 detail 分清是"证据绑定问题"还是"产品/框架问题"，不要一律记成回归失败。
+另需宿主 `visual-diff-nav` 配置含 HomeTab 到达步骤，否则负向证据不生产、`ten_fixed_screens_exact_set` 与 forbidden 项必 FAIL。**判定**：`verdict=PASS` → 具备 promote 前提；任一 FAIL 先按 items 的 detail 分清是"证据绑定问题"还是"产品/框架问题"，不要一律记成回归失败。 P0.5 判「不匹配」的 run：evaluator 照跑、报告照存，结论保留 **FAIL** 原样并注明「验收样本不适用（contract 立项需求 ≠ 当前基线）」；不记 N/A、不改写历史结果、不从产物反推 contract。
 
 #### B. C-N（Claude 非 goal）——只跑 review 阶段
 
@@ -671,3 +676,7 @@ P1 的四个文件另走一笔提交（evaluator + 其 unit 用例 + `candidate-
 - evaluator `--feature` 已提交 f9b7088e；`npm run candidate:build`（scratchpad b06/candidate-build-1.log）：typecheck 通过、unit 3889/3889、fixtures 46/46、consumer smoke 全段通过、`[candidate] BUILT`。
 - **P0 真值（用户可直接抄，或按 P0 命令自取）**：zip = `dist/candidates/framework-3.0.0-candidate.zip`，zip sha256 = `81ccabafdfb3dd58b21b5b6c7aaaa1273481fb8c99307e97c0f00fa7157cd84c`，in-zip manifest sha256 = `85cd283f7a17eb178b458b887d9740b8fe1e9663ccb3fb4d8b8352b02310d7cd`（`--expected-manifest-sha` 用后者）。
 - 运行单经 codex 实施 review 第 1 轮三处修订后再复核；`b06-candidate-rebuild-after-d7` 置 completed。四条宿主 todo 与 `b06-release-readiness-closeout` 保持 pending，由用户触发。
+
+### 2026-09-07：B07 plan review 引发的运行单修订（只改 §7.2 与 frontmatter，未跑宿主、未提交）
+
+codex 对 B07 施工图的 #1/#4：golden 适用性裁定前移到 §7.2 共同前置 **P0.5**（A 启动前，依据独立确认的需求基线）；A 命令的 golden 首段改为按 P0.5 条件保留；E 对不匹配基线的 run 保留 FAIL 并注「验收样本不适用」，不记 N/A；新增待办 `b06-host-b07-reacceptance`（用户触发）承接 B07 之后的补验收，B07 自身不含宿主判据。run `20260906T143404Z-ab463c` 的 E 结论按此记法，不改写。
