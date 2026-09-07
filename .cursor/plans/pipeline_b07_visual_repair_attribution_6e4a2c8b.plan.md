@@ -5,25 +5,25 @@ version: 3.0.0
 todos:
   - id: b07-plan-review
     content: 施工图由用户评审（plan 阶段不走 dev/review 循环）；codex 只读评审第 1 轮四处补正已落盘（§8）。评审通过后进入实施，实施与检视按循环协议（Opus 实施、codex review、三轮熔断、通过即提交）。
-    status: pending
+    status: completed
   - id: b07-collector-severity
     content: 按 D1 改 collectActionableDefects §A：结构化 defect severity=minor 不产候选（console 一行计数），major/blocker 照旧；不解析 note、不读 `[owner=…]` 前缀、不加字段。
-    status: pending
+    status: completed
   - id: b07-hard-floor
     content: 按 D2 在 visual_diff_finding_transcription 对账里加"hard 命中被转录为 minor"一档，与 hard 未落账同 ratchet（hard 合同 FAIL / best_effort 沿既有 WARN）；warn 档 T8 不受影响。
-    status: pending
+    status: completed
   - id: b07-reuse-golden-capture
     content: 按 D3 改 check-testing 复用分支：MAISON_GOLDEN_CONTRACT 生效时不再直接 PASS visual_diff_capture，而是调用既有 runDeviceVisualDiffCapture 入口（只补采集，不重跑 device_test/UT），nav 参数读顶层已回填的 device-test-run.meta.json；两分支的 visual_diff_capture details 都带 golden_contract 身份。
-    status: pending
+    status: completed
   - id: b07-b06-runsheet
     content: 按 D4：B06 §7.2 新增 P0.5 golden 适用性裁定（A 启动前）、A 命令的 golden 首段改为条件、E 的"样本不适用"记法、禁止运行中清空变量；B06 新增 `b06-host-b07-reacceptance` 待办。已在 plan 阶段落盘（09-07），实施时只核对不重写。
     status: completed
   - id: b07-spec-docs
     content: 按 D6：一个新 change 目录两条 delta（候选严重度门槛；复用不绕过 golden 采集）+ MIGRATION 3.0.x 两行。总 plan §5 行与里程碑已在 plan 阶段落盘。
-    status: pending
+    status: completed
   - id: b07-local-acceptance
     content: V1–V6 全绿 + typecheck + LF 扫描 + 根 AGENTS 要求的一次 `cd harness && npm test` 全量（改动发布内容）；文案返修不重复全测。候选件重建与宿主验收不在本批。
-    status: pending
+    status: completed
 ---
 
 # B07 施工图
@@ -189,4 +189,99 @@ codex #1：适用性放在 E 太晚，且不能拿"spec 缺屏"当 N/A 的依据
 
 ## 实施记录
 
-（待实施）
+验证日志目录：`<scratch>/b07/`（`dev1-before-<suite>.log` 改动前基线、`dev1-<suite>.log` 改动后、`dev1-<suite>.counter-D<n>.log` 反证）。全量 `cd harness && npm test` 本轮**未跑**（由调度者在 review 通过后跑一次）。
+
+### 2026-09-07 · D1 候选收集按 severity 分流（完成）
+
+**改动文件**
+
+| 文件 | 变化 |
+|---|---|
+| `harness/scripts/goal-phase-runtime.ts`:2332–2337 / :2371–2373 | `collectActionableDefects` §A 的 `for (const { d, fp } of structural)` 循环首行加 `if (d.severity === 'minor') { minorSkipped++; continue; }`；循环结束 `minorSkipped > 0` 时 `console.warn('[actionable] <screen>: N 条 minor 视觉信号不产回修候选（留视觉债务台账 / 报告 WARN）')`。provider 源同规则（同一循环）。major/blocker 分支、纯文本 must_fix 兜底（`else`）、unverified 通路（③④）逐字未动 |
+
+**为什么最小**：只读既有结构化字段 `severity`，不解析 note / `[owner=…]`、不加字段、不建路由；一处 `continue` + 一行计数。
+
+**验证**
+
+- `npm --prefix harness run test:unit -- --filter device-test-backtrack`：17 → 19 passed / 0 failed（`dev1-device-test-backtrack.log`）
+  - V1（`device-test-backtrack.unit.test.ts`:770）：宿主 i13 形状（3 屏 warn、12 条 minor：T8 ×10 + other ×2、must_fix 带 `[owner=spec]`、截图/build 身份齐全）→ visual actionable 0、unverified 0、console 三行按屏计数
+  - V2（:790）：同夹具 1 条 T8 改 major → 恰 1 条 `visual_diff`/`signal_identity=true`，fingerprint === `computeDefectFingerprint(screen, defect)`（`add_card_home_collapsed|other|hc_bank_row_cmb|0.1,0.1,0.5,0.1|T8#fb11`），`actionableDefectsToCandidates` → `category=coding`/`signal@1`
+- 反证（`dev1-device-test-backtrack.counter-D1.log`）：把分流条件改回 `if (false)` → 17 passed / **2 failed**（V1 得到与宿主一致的 12 条 coding 候选，V2 得到 12 条）；改动文件 sha256 前 16 位 `7140fbe7aa3a2b56` 复原前后一致
+- V6 见下节（决策重放）
+
+**放弃的准确性**：与 §5 D1 一致——verifier 误标 minor 的真实缺陷本轮不产候选，留 WARN/台账。
+
+### 2026-09-07 · D2 hard 命中不得转录成 minor（完成）
+
+**改动文件**
+
+| 文件 | 变化 |
+|---|---|
+| `profiles/hmos-app/harness/visual-diff-check.ts`:2471–2473 / :2481–2506 / :2541–2554 | 对账 ① 的 `matched` 由布尔 `some/\|\|` 改为 `find/??`（三条匹配路径与顺序逐字相同，取到匹配 defect）；`finding.tier === 'hard' && matched.severity === 'minor'` → `downgradedHard`；新增一段与 `unloggedHard` 同 ratchet（`pixel1to1 ? fidelityRatchetFailOrWarn(ctx,false) : MAJOR WARN`）、同 hit id `visual_diff_finding_transcription`、独立文案 `【t2 hard 命中被降级】…——severity 至少 major`，FAIL 时 `transcriptionDirty = true`。`label` 计算前移到匹配之前（无语义变化）。模板、warn 档、must_fix 锚定 ② 未动 |
+
+**为什么最小**：复用既有匹配路径与 ratchet，不加 hit id、不加全局硬门禁。
+
+**验证**
+
+- `npm --prefix harness run test:unit -- --filter visual-fidelity`：126 → 127 passed / 0 failed（`dev1-visual-fidelity.log`）
+  - V3（`visual-fidelity.unit.test.ts`:3678）：P0 屏 A1_forbidden_overlap hard 发现（layout dump captured）先跑一次读出真实 finding_id，再以 `severity=minor` + 该 finding_id 消账：hard 合同 → 结果 FAIL、details 含降级文案与 `home[A1_forbidden_overlap#<id>]`、不再报"发现未落账"、`structured.fingerprintable === false`；best_effort → 同文案、结果非 FAIL；同发现改 major → 降级 hit 消失、`fingerprintable === true`（对照，证明 false 来自本条）
+- 反证（`dev1-visual-fidelity.counter-D2.log`）：把 `downgradedHard.push` 条件改成 `if (false)` → 126 passed / **1 failed**（V3：hard 合同未出降级文案）；sha256 前 16 位 `9ec8fd6e7963816e` 复原前后一致
+
+**放弃的准确性**：与 §5 D2 一致——只守 hard 档；best_effort 沿既有 WARN。
+
+### 2026-09-07 · D3 复用分支不绕过 golden 采集（完成）
+
+**改动文件**
+
+| 文件 | 变化 |
+|---|---|
+| `harness/scripts/check-testing.ts`:4742–4816 | 原 :4742–4786 采集块提成局部闭包 `captureIfUiChanged(logPath)`（三处 `run.logPath` → 参数 `logPath`，其余逐字不动），返回值 `.map` 追加 `golden_contract=<id>` 到 details；`run.ok && reusable`：`loadGoldenContractFromEnv(ctx.projectRoot).targets !== null` → 调 `captureIfUiChanged(path.join(featurePhaseReportsDir(...), 'visual-diff-capture.reuse.log'))`，否则原 PASS 行 + `\ngolden_contract=<id>`；`run.ok && !reusable` → `captureIfUiChanged(run.logPath)` |
+| `harness/scripts/check-testing.ts`:4044–4052 | 新增 5 行 `goldenContractIdentity(projectRoot)`：`MAISON_GOLDEN_CONTRACT` 指向文件（相对路径按 projectRoot 解析，与 loader 同口径）的 `sha256File` 前 16 位，未设/不可读 → `'none'` |
+| `harness/scripts/check-testing.ts`:5062 | 测试缝 `export const __testing_checkDeviceTestRunGate = checkDeviceTestRunGate;`（与既有 :4042 `__testing_adoptFrozenRunArtifactsForReuse` 同写法）——**plan 未列**，用于 V4/V5 走真实门禁而不需再 mock build/install 两道门 |
+
+**为什么最小**：golden 不入执行键（入键会让 golden 开/关都重跑整套 device_test）；采集入口本身不改；details 追加放在闭包一处 `.map`，capture 的 PASS/FAIL/WARN 各形态统一披露。
+
+**验证**
+
+- `npm --prefix harness run test:unit -- --filter golden-nav-capture-wiring`：8 → 10 passed / 0 failed（`dev1-golden-nav-capture-wiring.log`）
+  - V4（`golden-nav-capture-wiring.unit.test.ts`:636）：走真实 `checkDeviceTestRunGate` 两轮——只 mock 传输面（`dispatchDeviceTestEnsureReady` / `dispatchDeviceTestRun`（写发布件 golden trace `all-passed.json` + 顶层 `device-test-run.meta.json{omit_bundle_for_hylyre:true, hypium_page_name:'PhoneAbility'}`）/ `resolveExecutionDeviceIdentity` / hylyre 三个构建器）；执行键、`decideReuse`、冻结件回填、采集入口全走生产代码。第一轮真跑 PASS `reused_by_execution_key=false`；第二轮 `reused_by_execution_key=true`、`dispatchDeviceTestRun` 仍只调 1 次、无"同键复用…PASS"行、`visual_diff_capture` PASS 且 details 含 `golden_contract=<sha16>`、`all_banks`/`bank_card_list_sheet__overlay__0`/`HomeTab` 被导航、nav 构建器恰调 1 次且 `omitBundle=true`/`hypiumPageName='PhoneAbility'`、`logPath` 的 dirname 是顶层 reportsDir、golden P1 进入 visual-diff.json
+  - V5（:675）：同两轮、去掉 env → `visual_diff_capture` details === 原 PASS 行 + `\ngolden_contract=none`、severity MINOR、传输面零事件、未装配 nav、无新采集产物
+- 反证（`dev1-golden-nav-capture-wiring.counter-D3.log`）：复用分支 golden 条件改成 `false &&` → 9 passed / **1 failed**（V4：details 是"同键复用…PASS"+`golden_contract=7513ef9ca8f9fa9a`）；sha256 前 16 位 `c4fb3ae781de3ded` 复原前后一致
+
+**放弃的准确性**：与 §5 D3 一致——不入执行键、不防 `env -u`，只披露 `golden_contract=none`。
+
+### 2026-09-07 · V6 决策重放（完成）
+
+- `harness/tests/unit/goal-runner-repair-convergence.unit.test.ts`:408：以宿主 i13 观测形状（六阶段全 PASS/closed、testing `repair_candidates=[]`、reconcile active、`deterministic_defects`/`residual_fingerprints` 12 条、`backtracks_used=2`、`repair_convergence{12/1}`）调 `assessObservation`：`action !== 'rerun_phase'` 且 `runner_action !== 'backtrack_to_phase'`；对照：同观测给 12 条 coding 候选 → `rerun_phase → coding`/`backtrack_to_phase`（改动前形态）。不断言任何 run 终态。
+- `npm --prefix harness run test:unit -- --filter goal-runner-repair-convergence`：23 → 24 passed / 0 failed（`dev1-goal-runner-repair-convergence.log`）
+
+### 2026-09-07 · D6 规格与文档（完成）
+
+- `openspec/changes/visual-repair-severity-and-golden-reuse/`：`proposal.md`、`tasks.md`、`specs/goal-runner/spec.md`（MODIFIED「Visual signals are adjudicated before candidate materialization」+ 2 scenario）、`specs/visual-diff/spec.md`（MODIFIED「Findings and must_fix items must be transcribed with structured anchors」+ 1 scenario；MODIFIED「Golden contract targets share one canonical target set across nav, identity, and capture」+ 2 scenario）。**取舍**：D3 的复用规则没放 harness-gates「Device execution is keyed by real execution inputs」——该 requirement 已被在途 change `execution-reuse-and-report-layering` 整段 MODIFIED，再叠一份会在归档时互相覆盖；golden 采集入口的 requirement 在 visual-diff 且无在途冲突，enforcement 本就是 `check-testing.ts`。
+- `MIGRATION.md`：新增 `### 3.0.x：视觉回修候选按严重度分流，同键复用不绕过 golden 采集` 两行（行为变化 + 放弃的准确性）。
+- `npm run openspec:validate`：见 `dev1-openspec-validate.log`。
+
+### 2026-09-07 · R1 codex review 返修（完成）
+
+codex 第 1 轮（`b07/codex-review-1.md`）六条中四条 medium 为变更集混入 plan 文档的基线问题（调度者以提交 plan 基线 06dcfe1d 解决）；本节只处理其余两条。未改代码，未重跑单测。
+
+| 条目 | 文件:行 | 改动 |
+|---|---|---|
+| [medium] 旧场景与新增规则矛盾 | `openspec/changes/visual-repair-severity-and-golden-reuse/specs/visual-diff/spec.md`:18–21 | 「hard finding transcribed via finding_id passes」的 WHEN 补上 `severity` 为 `major` 或 `blocker` 的条件，THEN 注明 `minor` 命中改走下方「transcribed as minor is intercepted」场景。两条场景由此互斥，与 D2 实现（`visual-diff-check.ts`:2504 `finding.tier === 'hard' && matched.severity === 'minor'` → `downgradedHard`）一致。同 delta 其余场景（filler defects 锚定、golden 五条）核对无矛盾；基线 spec 该 requirement 只有这两条场景，delta 未漏带 |
+| [low] 回退历史描述不准确 | `MIGRATION.md`:260 | "12 条 minor 声明差曾以 coding 候选身份吃掉最后一次回退" → "两次已用回退均为真实修复，其 12 条 minor 声明差曾以 coding 候选身份错误请求第三次回退，因预算耗尽触发 `backtrack_limit` 停机"，对齐 §1 |
+
+验证：`npm run openspec:validate` → 36 passed / 0 failed、enforcement 路径 PASS（`fix1-openspec-validate.log`）；`node lf-scan.js` → scanned 13 files, CRLF 0（`fix1-lf-scan.log`）。
+
+### 未做 / 存疑
+
+- 全量 `cd harness && npm test` 未跑（本轮约定由调度者跑）；`b07-local-acceptance` 保持 in_progress。
+- 与 plan 的偏离：① check-testing.ts 多一处测试缝 `__testing_checkDeviceTestRunGate`（:5062，一行）；② 采集结果的 `golden_contract` 追加实现为闭包内对 `runDeviceVisualDiffCapture` 返回值 `.map`（所有状态形态统一披露），而不是改 `runDeviceVisualDiffCapture` 内部的 PASS 行——入口函数与其 8 条既有用例零改动。
+- 单测 V4/V5 用 `require()` 覆写 `capability-registry` / `hdc-runner` / `visual-diff-hylyre-screenshot` 的导出（finally 复原），依赖 ts-node CommonJS 输出的属性查找时机；若将来改成 ESM 需换缝。
+- 宿主补验收、候选件重建归 B06 `b06-host-b07-reacceptance`（用户触发）。
+
+### 2026-09-07：codex 实施 review 两轮、全量测试、三笔提交（调度记录）
+
+- R1 `needs-attention` 六条：两条实修（openspec 旧场景补 severity 条件；MIGRATION 回退史措辞对齐 §1），四条 medium 是变更集里混入未提交 plan 文档——调度者把施工图 + B06 P0.5 + 总 plan 行单独提交为基线 06dcfe1d 解决，之后 plan 相对基线只含 todo 状态与实施记录。R2 `approve`，无 finding；确认四 suite 19/127/10/24 未减、typecheck 与 openspec 36/0 通过。
+- 全量 `cd harness && npm test`（根 AGENTS.md:68）一次：unit 3901 passed / 0 failed，fixtures 46 passed / 0 failed（日志 scratchpad `b07/full-npm-test.log`）。
+- 提交：C1 40ec6c26（D1–D3 + V1–V6）、C2 1387a249（openspec delta + MIGRATION）、C3 本实施记录。未重建候选件、未跑宿主；宿主补验收归 B06 `b06-host-b07-reacceptance`（用户触发）。
+- 每轮盘上核实：逐文件 hash 快照（hashes-before-dev1 / after-dev1 / after-fix1）证明 B06、总 plan 与用户的未跟踪 device-ready plan 全程未被触碰。
