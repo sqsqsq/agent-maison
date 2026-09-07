@@ -17,7 +17,7 @@ import { __testing_checkReportReconcileOnlyPipeline } from '../../scripts/check-
 import { resolveFeatureArtifact } from '../../config';
 import { extractTables, getSectionContent } from '../../scripts/utils/markdown-parser';
 import type { HylyreTrace } from '../../../profiles/hmos-app/harness/providers/device-test-run';
-import { computeHapBuildFingerprint } from '../../../profiles/hmos-app/harness/build-fingerprint';
+import { computeHapBuildFingerprint, computeHapSha256Full } from '../../../profiles/hmos-app/harness/build-fingerprint';
 import { parseCaseDurationsFromLogAndTrace } from '../../../profiles/hmos-app/harness/device-test-timings';
 import type { UseCasesSpec } from '../../scripts/utils/types';
 
@@ -1119,6 +1119,118 @@ test('report-reconcile-only: native trace 必须绑定同一 derived plan/trace 
       `ready 已证明 native 时坏 trace 不得伪装 capability missing：${JSON.stringify(staleGate)}`);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// B08 D2（plan 9b2d5e7c）V3：装机复用分支与真装分支同源回传当前 HAP 的 64 位 sha256 → 两路径同键。
+// 只 mock hdc 传输面（probe / bm dump / install / 候选元数据 / 装前就绪桥），provider 主体走生产代码。
+// ---------------------------------------------------------------------------
+test('B08-V3 同一 HAP：一次真装、一次装机复用 → 两条记录 inputs.hap_sha256_full 均为同一 64 位 hex，execution_key 相等', () => {
+  const fs = require('fs') as typeof import('fs');
+  const os = require('os') as typeof import('os');
+  const path = require('path') as typeof import('path');
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const { installDeviceTestApp } = require('../../../profiles/hmos-app/harness/providers/device-test-install') as typeof import('../../../profiles/hmos-app/harness/providers/device-test-install');
+  const { computeExecutionKey } = require('../../../profiles/hmos-app/harness/execution-key') as typeof import('../../../profiles/hmos-app/harness/execution-key');
+  const hdc = require('../../../profiles/hmos-app/harness/hdc-runner') as Record<string, unknown>;
+  const bridge = require('../../../profiles/hmos-app/harness/device-recovery-bridge') as Record<string, unknown>;
+  /* eslint-enable @typescript-eslint/no-require-imports */
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'b08-install-reuse-'));
+  const saved = {
+    probeDevices: hdc.probeDevices, runHdcShellBmDump: hdc.runHdcShellBmDump, installHap: hdc.installHap,
+    parseInstalledBundleVersionFromDump: hdc.parseInstalledBundleVersionFromDump, loadAppInstallCandidateMeta: hdc.loadAppInstallCandidateMeta,
+    ensureReadyBefore: bridge.ensureReadyBefore,
+    envForce: process.env.HARNESS_DEVICE_TEST_FORCE_INSTALL, envSkip: process.env.HARNESS_SKIP_DEVICE_TEST_INSTALL,
+    envUninstall: process.env.HARNESS_DEVICE_TEST_UNINSTALL_BEFORE_INSTALL,
+  };
+  let installCalls = 0;
+  try {
+    delete process.env.HARNESS_DEVICE_TEST_FORCE_INSTALL;
+    delete process.env.HARNESS_SKIP_DEVICE_TEST_INSTALL;
+    delete process.env.HARNESS_DEVICE_TEST_UNINSTALL_BEFORE_INSTALL;
+    fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({
+      schema_version: '1.1', project_name: 'T', project_profile: { name: 'hmos-app', sub_variant: 'app' },
+      architecture: { outer_layers: [{ id: '02-Feature', can_depend_on: [], intra_layer_deps: 'dag' }], module_inner_layers: ['shared'], inner_dependency_direction: 'upward', cross_module_exports_file: 'index.ets' },
+      paths: { features_dir: 'doc/features', docs_committed: false, reports_dir_pattern: 'doc/features/<feature>/<phase>/reports' },
+      materialized_adapters: ['cursor'],
+    }));
+    const hapPath = path.join(root, 'entry-signed.hap');
+    fs.writeFileSync(hapPath, 'same-hap-bytes-for-both-paths');
+    hdc.probeDevices = () => ({ hdcPresent: true, available: true, targets: ['dev-A'] });
+    hdc.runHdcShellBmDump = () => ({ exitCode: 0, output: 'versionCode: 1' });
+    hdc.parseInstalledBundleVersionFromDump = () => ({ installed: true, versionCode: 1 });
+    hdc.loadAppInstallCandidateMeta = () => ({ bundleName: 'com.example.b08', versionCode: 1, versionName: '1.0.0' });
+    hdc.installHap = () => { installCalls += 1; return { ok: true, exitCode: 0, durationMs: 1, output: 'install ok' }; };
+    bridge.ensureReadyBefore = () => ({ ready: true, blocked: false, note: 'mock ready', authorized: true });
+    const opts = { projectRoot: root, harnessRoot: root, feature: 'demo', phase: 'testing', hapPath };
+    const real = installDeviceTestApp({ ...opts, buildReused: false });
+    assert.strictEqual(real.ok, true, `真装须成功：${JSON.stringify(real.errors)}`);
+    assert.strictEqual(real.reused, false);
+    assert.strictEqual(installCalls, 1, '真装调用 hdc install 一次');
+    const reused = installDeviceTestApp({ ...opts, buildReused: true });
+    assert.strictEqual(reused.ok, true, `复用须成功：${JSON.stringify(reused.errors)}`);
+    assert.strictEqual(reused.reused, true, `第二次须走装机复用：${JSON.stringify(reused)}`);
+    assert.strictEqual(installCalls, 1, '复用不再调用 hdc install');
+    const full = computeHapSha256Full(hapPath)!;
+    assert.ok(/^[0-9a-f]{64}$/.test(full));
+    assert.strictEqual(real.hapSha256Full, full, '真装回传 64 位完整摘要');
+    assert.strictEqual(reused.hapSha256Full, full, '装机复用分支须同源回传 64 位完整摘要（不为 null、不是 12 位短指纹）');
+    const inputsOf = (hap: string | null | undefined) => ({
+      hap_sha256_full: hap ?? null, derived_plan_sha256: 'b'.repeat(64), device: 'dev-A', display_env: '', reset_mode: 'cold_restart',
+      hylyre_version: '0.5.1', manifest_version: '0.5.1', profile: 'hmos-app', tool_config_sha256: 'c'.repeat(64), flags: ['--skip-assert-expected'],
+    });
+    assert.strictEqual(computeExecutionKey(inputsOf(real.hapSha256Full)), computeExecutionKey(inputsOf(reused.hapSha256Full)), '两路径执行键相等');
+    assert.notStrictEqual(computeExecutionKey(inputsOf(reused.hapSha256Full)), computeExecutionKey(inputsOf(null)), '与 hap=null 记录的键不同（旧记录最多导致一次正常真跑）');
+  } finally {
+    hdc.probeDevices = saved.probeDevices; hdc.runHdcShellBmDump = saved.runHdcShellBmDump; hdc.installHap = saved.installHap;
+    hdc.parseInstalledBundleVersionFromDump = saved.parseInstalledBundleVersionFromDump; hdc.loadAppInstallCandidateMeta = saved.loadAppInstallCandidateMeta;
+    bridge.ensureReadyBefore = saved.ensureReadyBefore;
+    for (const [k, v] of [['HARNESS_DEVICE_TEST_FORCE_INSTALL', saved.envForce], ['HARNESS_SKIP_DEVICE_TEST_INSTALL', saved.envSkip], ['HARNESS_DEVICE_TEST_UNINSTALL_BEFORE_INSTALL', saved.envUninstall]] as Array<[string, string | undefined]>) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// B08 D1 V4：decideReuse 提取 isExecutionRecordReusable 后行为逐字不变——[success A] → [failed A] 不复用；
+// 派生不齐（timing_complete=false）在身份判据里不是拒绝理由（decideReuse 走重建），采信不得比复用更严。
+test('B08-V4 最新一条规则不变：[success A] → [failed A] → decideReuse 不复用；isExecutionRecordReusable 与之同源、派生不齐仍 ok', () => {
+  const fs = require('fs') as typeof import('fs');
+  const os = require('os') as typeof import('os');
+  const path = require('path') as typeof import('path');
+  const ek = require('../../../profiles/hmos-app/harness/execution-key') as typeof import('../../../profiles/hmos-app/harness/execution-key');
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'b08-exec-key-'));
+  try {
+    const key = 'a'.repeat(64);
+    const inputs = { hap_sha256_full: 'h'.repeat(64), derived_plan_sha256: 'b'.repeat(64), device: 'dev-A', display_env: '', reset_mode: 'cold_restart', hylyre_version: '0.5.1', manifest_version: '0.5.1', profile: 'hmos-app', tool_config_sha256: 'c'.repeat(64), flags: [] };
+    const writeRun = (stamp: string, outcome: string, timingComplete: boolean) => {
+      const runDir = path.join(base, stamp, 'hylyre');
+      fs.mkdirSync(runDir, { recursive: true });
+      const tracePath = path.join(runDir, 'trace.json');
+      fs.writeFileSync(tracePath, '{}');
+      for (const f of ek.FROZEN_RUN_ARTIFACTS) fs.writeFileSync(path.join(runDir, f.frozen), '{}');
+      ek.writeExecutionKeyRecord(runDir, {
+        schema_version: '1.0', execution_key: key, inputs, trace_path: tracePath, run_started_at: new Date().toISOString(),
+        outcome, trace_sha256: null, timing_complete: timingComplete, frozen_files: ek.FROZEN_RUN_ARTIFACTS.map(f => f.frozen),
+      });
+      return runDir;
+    };
+    const okDir = writeRun('20260907-000001', 'success', false);
+    const rebuild = ek.decideReuse(base, key);
+    assert.ok(rebuild.reusable && rebuild.evidenceRebuildRequired === true, `派生不齐 → 先重建：${JSON.stringify(rebuild)}`);
+    const okRecord = JSON.parse(fs.readFileSync(path.join(okDir, ek.EXECUTION_KEY_FILE), 'utf-8'));
+    assert.strictEqual(ek.isExecutionRecordReusable(okRecord, okDir, { executionKey: key }).ok, true, '身份判据：timing_complete=false 不是拒绝理由');
+    assert.strictEqual(ek.isExecutionRecordReusable(okRecord, okDir, { executionKey: 'z'.repeat(64) }).ok, false, '身份判据：键不同拒');
+    const failDir = writeRun('20260907-000002', 'failed', true);
+    const later = ek.decideReuse(base, key);
+    assert.strictEqual(later.reusable, null, '最新同键失败不得复用更早成功');
+    assert.strictEqual(later.reason, '最新同键 run 20260907-000002 outcome=failed，重新真跑', 'decideReuse 原因逐字不变');
+    const failRecord = JSON.parse(fs.readFileSync(path.join(failDir, ek.EXECUTION_KEY_FILE), 'utf-8'));
+    const identity = ek.isExecutionRecordReusable(failRecord, failDir, { executionKey: key, label: '20260907-000002' });
+    assert.deepStrictEqual(identity, { ok: false, reason: later.reason }, '采信端与 decideReuse 共用同一判据与原因');
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
   }
 });
 

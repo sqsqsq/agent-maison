@@ -697,6 +697,42 @@ test('B07-V5 无 golden 时复用不变：逐字相同的 PASS 行 + golden_cont
   }
 });
 
+// B08 D1（plan 9b2d5e7c）：真实 checkDeviceTestRunGate 两轮——复用轮把执行键身份写进 holder
+//（evidence writer 据此写 reused_by_execution_key / execution_key / reused_run_dir）。
+test('B08-V1 接线：真跑轮 holder.deviceRunReused=false；同键复用轮 holder 带 deviceRunReused=true、同一 executionKey、reusedRunDir 指向被复用 run（相对 projectRoot）', () => {
+  const c = setup();
+  const prev = process.env.MAISON_GOLDEN_CONTRACT;
+  try {
+    delete process.env.MAISON_GOLDEN_CONTRACT;
+    writeFile(c.projectRoot, `doc/features/${FEATURE}/device-testing/visual-diff-nav.json`, baseNav().navFile);
+    const { reportsDir, holder } = writeReuseGateFixture(c);
+    withGateMocks(reportsDir, m => {
+      const h1 = { ...holder } as typeof holder & { deviceRunReused?: boolean; executionKey?: string | null; reusedRunDir?: string | null };
+      const first = __testing_checkDeviceTestRunGate(c.ctx, h1);
+      assert.strictEqual((first.find(r => r.id === 'device_test_run') as CheckResult).status, 'PASS');
+      assert.strictEqual(h1.deviceRunReused, false, '真跑轮不是复用');
+      assert.ok(/^[0-9a-f]{64}$/.test(String(h1.executionKey)), `真跑轮也记执行键：${h1.executionKey}`);
+      assert.strictEqual(h1.reusedRunDir, null);
+      const h2 = { ...holder } as typeof h1;
+      const second = __testing_checkDeviceTestRunGate(c.ctx, h2);
+      const secondRun = second.find(r => r.id === 'device_test_run') as CheckResult & { structured?: Record<string, unknown> };
+      assert.strictEqual(secondRun.structured?.reused_by_execution_key, true, `第二轮须同键复用：${secondRun.details}`);
+      assert.strictEqual(m.runCalls, 1, 'device_test 未重跑');
+      assert.strictEqual(h2.deviceRunReused, true, '复用轮 holder 记复用');
+      assert.strictEqual(h2.executionKey, h1.executionKey, '两轮执行键相等');
+      assert.strictEqual(h2.reusedRunDir, secondRun.structured?.reused_run_dir, 'reusedRunDir 与 structured.reused_run_dir 同源');
+      assert.ok(String(h2.reusedRunDir).startsWith(`doc/features/${FEATURE}/testing/reports/`) && String(h2.reusedRunDir).endsWith('/hylyre'),
+        `reusedRunDir 相对 projectRoot：${h2.reusedRunDir}`);
+      assert.ok(fs.existsSync(path.join(c.projectRoot, String(h2.reusedRunDir), 'execution-key.json')), '被复用 run 目录含执行键记录');
+      assert.strictEqual(h2.deviceTestRunExecuted, true, '复用轮 deviceTestRunExecuted 仍为 true（设备执行事实存在）');
+    });
+  } finally {
+    if (prev === undefined) delete process.env.MAISON_GOLDEN_CONTRACT;
+    else process.env.MAISON_GOLDEN_CONTRACT = prev;
+    teardown(c);
+  }
+});
+
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
   for (const c of cases) {

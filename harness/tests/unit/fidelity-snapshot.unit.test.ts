@@ -456,23 +456,30 @@ export function runAll(): UnitCaseResult[] {
     ].join('\n'));
   };
 
-  run('b3d7e5a1 T5 spec：lock.viewport=1320×2120 而参考 PNG 1320×4350 → pixel_1to1 FAIL；1320×2120 → 零结果；低档 WARN', () => {
+  // B08 D3（plan 9b2d5e7c）：宽度不同（1080）才不兼容；同宽更高（1320×4350）可顶部一屏推导 → 一行 PASS 注明推导
+  run('b3d7e5a1 T5 / B08 spec：lock.viewport=1320×2120 而参考 PNG 1080×4350 → pixel_1to1 FAIL；1320×2120 → 零结果；低档 WARN；1320×4350 → PASS 注"顶部一屏推导"', () => {
     const root = mkProject();
     try {
       writeUiSpecHome(root);
       const dir = writeLockAndPng(root, 'bank-card', [{ id: 'home', png: 'home.png' }], { viewport: { w: 1320, h: 2120 } });
-      fs.writeFileSync(path.join(dir, 'home.png'), headerOnlyPng(1320, 4350));
+      fs.writeFileSync(path.join(dir, 'home.png'), headerOnlyPng(1080, 4350));
       const hard = checkReferenceViewportSpec(baseCtx(root, 'bank-card', { fidelityTarget: 'pixel_1to1', acceptanceStrictness: 'hard' }), fidelitySpecMd());
       if (hard.length !== 1 || hard[0].id !== 'visual_reference_viewport' || hard[0].status !== 'FAIL' || hard[0].severity !== 'BLOCKER') {
         throw new Error(`pixel_1to1 下须 BLOCKER FAIL：${JSON.stringify(hard)}`);
       }
-      if (!/home[^\n]*1320×4350[^\n]*1320×2120/.test(hard[0].details ?? '')) throw new Error(`须点名屏与尺寸：${hard[0].details}`);
+      if (!/home[^\n]*1080×4350[^\n]*1320×2120/.test(hard[0].details ?? '')) throw new Error(`须点名屏与尺寸：${hard[0].details}`);
       if (!/ref_id/.test(hard[0].suggestion ?? '')) throw new Error(`修复指引须指向换图更新 ref_id：${hard[0].suggestion}`);
+      if (/自动 crop/.test(hard[0].suggestion ?? '') || !/顶部一屏推导/.test(hard[0].suggestion ?? '')) throw new Error(`suggestion 文案须与 testing 同步（仅顶部一屏推导）：${hard[0].suggestion}`);
       const soft = checkReferenceViewportSpec(baseCtx(root, 'bank-card'), fidelitySpecMd());
       if (soft.length !== 1 || soft[0].status !== 'WARN') throw new Error(`低档位须 WARN：${JSON.stringify(soft)}`);
       fs.writeFileSync(path.join(dir, 'home.png'), headerOnlyPng(1320, 2120));
       const compatible = checkReferenceViewportSpec(baseCtx(root, 'bank-card', { fidelityTarget: 'pixel_1to1', acceptanceStrictness: 'hard' }), fidelitySpecMd());
       if (compatible.length !== 0) throw new Error(`兼容时须零结果（不新增 PASS）：${JSON.stringify(compatible)}`);
+      fs.writeFileSync(path.join(dir, 'home.png'), headerOnlyPng(1320, 4350));
+      const derivable = checkReferenceViewportSpec(baseCtx(root, 'bank-card', { fidelityTarget: 'pixel_1to1', acceptanceStrictness: 'hard' }), fidelitySpecMd());
+      if (derivable.length !== 1 || derivable[0].status !== 'PASS' || !/home[^\n]*1320×4350[^\n]*顶部一屏推导/.test(derivable[0].details ?? '')) {
+        throw new Error(`同宽更高须 PASS 并注明顶部一屏推导：${JSON.stringify(derivable)}`);
+      }
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

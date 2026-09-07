@@ -25,7 +25,7 @@ import { featureDir } from '../../../harness/config';
 import { loadUiSpecFile, uiSpecAbsPath } from '../../../harness/scripts/utils/ui-spec-shared';
 import { isPixel1to1, loadSpecMarkdown } from '../../../harness/scripts/utils/fidelity-shared';
 import { buildAuthoritativeRefImageIndex, resolveRefSourceImage } from './authoritative-ref-images';
-import { readImageDimensions, referenceViewportIncompatible } from './image-toolkit';
+import { readImageDimensions, resolveCompareReference, splitMustHaveByTopSlice } from './image-toolkit';
 import { canonicalOverlayBase } from './visual-diff-nav';
 import { resolveActiveVisualProvider } from '../../../harness/scripts/utils/visual-provider-identity';
 import {
@@ -49,7 +49,7 @@ export const VISUAL_PROVIDER_REVIEW_SCHEMA_VERSION = '1.0';
 
 export interface ReviewTargetScreen {
   screen_id: string;
-  /** 参考原图（工程内真实绝对路径） */
+  /** 参考比对图（工程内真实绝对路径）：direct=原图；top_slice=顶部一屏派生图（B08 D3） */
   refAbs: string;
   refHash: string;
   /** 实机截图（工程内真实绝对路径） */
@@ -57,7 +57,14 @@ export interface ReviewTargetScreen {
   shotHash: string;
   /** ui-spec 目标节点摘要（优先级 + 屏级必备元素）——只给"该看什么"，不给结论 */
   priority?: string;
+  /** top_slice 屏 = splitMustHaveByTopSlice 的范围内子集；其余屏 = 屏级全部 must_have_elements */
   mustHaveElements?: string[];
+  /** B08 D3：参考图为长页顶部一屏（entry state）——只评本屏范围 */
+  topSlice?: {
+    refDims: { w: number; h: number };
+    /** 范围外 / 未确定的 must_have 元素：勿判缺失（未验证，由 visual_reference_viewport WARN + 债务披露） */
+    unverifiedElements: string[];
+  };
 }
 
 function sha16(abs: string): string | null {
@@ -115,26 +122,42 @@ export function collectReviewTargets(
     if (!fs.existsSync(shotAbs) || !fs.existsSync(refAbs)) continue;
     // plan b3d7e5a1 T5（codex P1）：整页参考图不交给 delegated provider——与 check 侧前置门同一判据，
     // 该屏由 visual_reference_viewport 独立裁决，不在长图上产出 provider verdict/must_fix。
-    if (referenceViewportIncompatible(readImageDimensions(refAbs), readImageDimensions(shotAbs))) {
+    // B08 D3：同宽更高的参考图按顶部一屏派生图评审（resolveCompareReference 单一入口），只有宽度不同才剔除。
+    const cmp = resolveCompareReference({
+      refAbs, shotDims: readImageDimensions(shotAbs), projectRoot, feature, refId: refIdFor(s),
+    });
+    if (cmp.mode === 'incompatible' || !cmp.path) {
       viewportOut?.viewportIncompatibleIds.push(s.screen_id);
       continue;
     }
+    const refForReview = cmp.path;
     const shotHash = sha16(shotAbs);
-    const refHash = sha16(refAbs);
+    const refHash = sha16(refForReview);
     if (!shotHash || !refHash) continue;
     // plan ab072691 t5④（六轮返修 P0）：ui-spec 查找与严格 gate **同一口径**——先按 overlay
     // 归一化回基屏，再回落原 id。overlay 的 P0 与 `must_have_elements` 通常声明在基屏上；
     // 若这里查不到 spec，`priority` 为空 → 采信前的区域覆盖预检被跳过，严格 gate 才发现
     // 覆盖不全，造成一次无效评审。故在采信前使用与 gate 相同的 overlay 归一化口径。
     const spec = byId.get(canonicalOverlayBase(s.screen_id)) ?? byId.get(s.screen_id);
+    // B08 D3：top_slice 屏的 must_have 覆盖只要求范围内子集（与 visual_diff_region_attest 同一纯函数取值）
+    const split = cmp.mode === 'top_slice' ? splitMustHaveByTopSlice(spec, cmp.ratio!) : null;
+    const mustHave = split ? split.inScope : [...(spec?.must_have_elements ?? [])];
     out.push({
       screen_id: s.screen_id,
-      refAbs,
+      refAbs: refForReview,
       refHash,
       shotAbs,
       shotHash,
       ...(spec?.priority ? { priority: spec.priority } : {}),
-      ...(spec?.must_have_elements?.length ? { mustHaveElements: [...spec.must_have_elements] } : {}),
+      ...(mustHave.length ? { mustHaveElements: mustHave } : {}),
+      ...(split
+        ? {
+            topSlice: {
+              refDims: { w: cmp.refDims!.w!, h: cmp.refDims!.h! },
+              unverifiedElements: [...split.outOfScope, ...split.undetermined],
+            },
+          }
+        : {}),
     });
   }
   return out;
@@ -175,6 +198,15 @@ export function buildVisualProviderReviewPrompt(
       `  device_screenshot: ${t.shotAbs}  (hash ${t.shotHash})`,
       ...(t.priority ? [`  priority: ${t.priority}`] : []),
       ...(t.mustHaveElements ? [`  ui-spec required elements: ${t.mustHaveElements.join(', ')}`] : []),
+      // B08 D3：顶部一屏派生图——只评本屏范围；范围外/未确定元素勿判缺失
+      ...(t.topSlice
+        ? [
+            `  reference_note: reference_image is the TOP viewport-height slice of a taller page mockup (${t.topSlice.refDims.w}x${t.topSlice.refDims.h}, entry state). Judge ONLY what falls inside this slice.`,
+            ...(t.topSlice.unverifiedElements.length
+              ? [`  do_not_judge_missing: ${t.topSlice.unverifiedElements.join(', ')}  (declared below/across the slice boundary — unverified here, NOT defects)`]
+              : []),
+          ]
+        : []),
     );
   }
   lines.push(

@@ -158,6 +158,15 @@ export interface DeviceTestEvidenceDoc {
   runtime_fidelity?: RuntimeFidelityEvidence;
   /** Native trace/run identity; this is binding metadata, not a second evidence ledger. */
   artifact_binding?: DeviceTestArtifactBinding;
+  // B08 D1（plan 9b2d5e7c）：复用态事实——全部可选，旧 doc 无字段 = 非复用（采信行为逐字不变）。
+  /** 本轮装机为复用同 HAP（摘要仍在 hap_sha256_full，采信端与当前盘上 HAP 比对） */
+  install_reused?: boolean;
+  /** 本轮 device_test.run 为同键复用（采信端按 reused_run_dir 的执行键记录身份核验） */
+  reused_by_execution_key?: boolean;
+  /** 本轮执行键（真跑与复用都写） */
+  execution_key?: string;
+  /** 被复用 run 目录（相对 projectRoot，正斜杠；仅 reused_by_execution_key=true 时写） */
+  reused_run_dir?: string;
 }
 
 /** coordinator 写入前的草稿（written_at 由 check-testing 落盘时刻统一盖） */

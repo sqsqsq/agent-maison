@@ -3919,6 +3919,111 @@ test('B02-D7 runtime 入口反向约束：attended executor 配 process owner �
 });
 
 // ---------------------------------------------------------------------------
+// B08 D4（plan 9b2d5e7c）V10：unverified 不单独构成失败事实——仅 unverified 的 PASS+retry 轮不带
+// failure_kind_classified / blocker_signature；与 harness FAIL 或可信缺陷并存时归因照旧保留。
+// ---------------------------------------------------------------------------
+
+function testingVerdicts(events: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return events.filter(e => e.type === 'phase_verdict' && e.phase === 'testing');
+}
+
+test('B08-V10(a) harness PASS + 仅 unverified：phase_verdict 无 failure_kind_classified、无 blocker_signature，action 仍 retry', async () => {
+  const { root } = setupHost();
+  const probe = await runChain(root, {
+    onTesting: ({ root: r }) => writeVisualDiff(r, [{ id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT], freshHash: false }]),
+  });
+  assert(hasEvent(probe.events, 'unverifiable_must_fix'), `须落 unverifiable_must_fix：${probe.events.map(e => e.type).join(',')}`);
+  const verdicts = testingVerdicts(probe.events);
+  assert(verdicts.length >= 2 && verdicts.some(e => e.verdict === 'PASS' && e.action === 'retry'),
+    `仅 unverified 须 PASS+retry：${JSON.stringify(verdicts.map(e => ({ verdict: e.verdict, action: e.action })))}`);
+  for (const e of verdicts.filter(e => e.verdict === 'PASS')) {
+    assert(e.failure_kind_classified === undefined,
+      `仅 unverified 的 PASS 轮不得带 failure_kind_classified（宿主 i2：PASS+retry 却带 code_regression）：${JSON.stringify({ failure_kind_classified: e.failure_kind_classified, blocker_signature: e.blocker_signature })}`);
+    assert(e.blocker_signature === undefined || e.blocker_signature === '', `不得合成 blocker_signature：${String(e.blocker_signature)}`);
+  }
+});
+
+test('B08-V10(b) harness FAIL + unverified：归因与 blocker_signature 照旧保留', async () => {
+  const { root } = setupHost();
+  const probe = await runChain(root, {
+    onTesting: ({ root: r }) => writeVisualDiff(r, [{ id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT], freshHash: false }]),
+    onHarnessSummary: ({ phase }) => phase === 'testing' ? { blockers: [GENERIC_BLOCKER] } : null,
+  });
+  const fails = testingVerdicts(probe.events).filter(e => e.verdict === 'FAIL');
+  assert(fails.length > 0, `须有 testing FAIL verdict：${JSON.stringify(testingVerdicts(probe.events).map(e => e.verdict))}`);
+  for (const e of fails) {
+    assert(typeof e.failure_kind_classified === 'string' && e.failure_kind_classified.length > 0,
+      `harness FAIL 轮须保留归因：${JSON.stringify(e)}`);
+    assert(typeof e.blocker_signature === 'string' && e.blocker_signature.length > 0, `harness FAIL 轮须保留 blocker_signature：${JSON.stringify(e)}`);
+  }
+});
+
+test('B08-V10(c) 可信缺陷 + unverified：回退照旧发生，归因与 blocker_signature 保留', async () => {
+  const { root } = setupHost();
+  const FP = signalFp('add_card_home', 'shape_mismatch', 'hc_page_title', [0.1, 0.2, 0.3, 0.4]);
+  const probe = await runChain(root, {
+    onTesting: ({ root: r, attempt }) => {
+      if (attempt === 1) {
+        writeVisualDiff(r, [
+          { id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT],
+            defects: [{ class: 'shape_mismatch', element: 'hc_page_title', bbox: [0.1, 0.2, 0.3, 0.4], severity: 'major', note: '标题错位', must_fix_refs: [0] }] },
+          { id: 'all_banks', verdict: 'warn', mustFix: [MUST_FIX_TEXT], freshHash: false },
+        ]);
+        writeConfirmedReview(r, [FP]);
+      } else {
+        writeCleanTesting(r);
+      }
+    },
+    onCoding: ({ root: r, attempt }) => {
+      if (attempt > 1) writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("fixed") } }');
+    },
+  });
+  assert(hasEvent(probe.events, 'phase_backtrack_requested'), `可信缺陷须回退：${probe.events.map(e => e.type).join(',')}`);
+  const first = testingVerdicts(probe.events)[0];
+  // 可信视觉缺陷驱动回退：归因 code_regression 照旧持久化（blocker_signature 由 summary blockers 派生，
+  // PASS summary 下本就为空——改动前后相同，不作断言）
+  assert(!!first && first.failure_kind_classified === 'code_regression' && first.action === 'backtrack_to_phase',
+    `可信缺陷 + unverified 的首轮 verdict 须保留归因：${JSON.stringify({ failure_kind_classified: first?.failure_kind_classified, action: first?.action })}`);
+});
+
+test('B08-V10(d) 可信真机根失败（test_contract，走 unverified 通路）仍是失败事实：归因 test_contract 照旧持久化', async () => {
+  // 与 f4 t1 同形：evidence 绑定通过、根 case 分类 test_contract → 不回退、但 failure_kind_classified 须在
+  await withCleanDeviceTestEnv(async () => {
+    const { root } = setupHost();
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { deviceTestEvidencePath } = require('../../scripts/utils/device-test-evidence-shared') as
+      typeof import('../../scripts/utils/device-test-evidence-shared');
+    const reportsDir = path.join(root, 'doc/features', FEATURE, 'testing', 'reports');
+    const runDirAbs = path.join(reportsDir, '20260101T000000Z', 'hylyre');
+    fs.mkdirSync(runDirAbs, { recursive: true });
+    fs.writeFileSync(path.join(runDirAbs, 'test-plan.hylyre.md'), [
+      '## 测试用例清单', '',
+      '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC |',
+      '|---|---|---|---|---|---|---|',
+      '| TC-006 | 契约失配 | 冷启动 | {"touch":{"by_id":"missing_anchor"}} | 正确 | P0 | AC-1 |',
+    ].join('\n'), 'utf-8');
+    const tracePath = path.join(runDirAbs, 'trace.json');
+    const probe = await runChain(root, {
+      onTesting: ({ root: r }) => writeCleanTesting(r),
+      onTestingHarness: ({ runId, attemptId }) => {
+        fs.writeFileSync(tracePath, JSON.stringify({ schema_version: '0.2-p4', feature: FEATURE, phase: 'testing', outcome: 'partial', cases: [{ id: 'TC-006', status: '失败' }] }), 'utf-8');
+        fs.writeFileSync(path.join(reportsDir, 'device-test-run.meta.json'), JSON.stringify({ run_started_at: new Date().toISOString(), run_ended_at: new Date().toISOString() }), 'utf-8');
+        fs.writeFileSync(deviceTestEvidencePath(reportsDir), JSON.stringify({
+          schema_version: '1.1', goal_run_id: runId, attempt_id: attemptId,
+          device_target: { serial: 'fake-device', target_kind: 'physical', session_id: null },
+          hap_sha256_full: 'f'.repeat(64), install_executed: true, install_ok: true,
+          trace_path: path.resolve(tracePath), run_failure_kind: null, written_at: new Date().toISOString(),
+          cases: [{ case_id: 'TC-006', status: '失败', classification: 'test_contract',
+            failing_step: { index: 0, action: 'touch', selector_kind: 'by_id', selector: 'missing_anchor' }, expected_screen: 'add_card_home_collapsed', evidence: {} }],
+        }, null, 2), 'utf-8');
+      },
+    });
+    const verdicts = testingVerdicts(probe.events);
+    assert(verdicts.length >= 1 && verdicts.every(e => e.failure_kind_classified === 'test_contract'),
+      `可信 test_contract 根失败须持久化归因：${JSON.stringify(verdicts.map(e => ({ verdict: e.verdict, action: e.action, failure_kind_classified: e.failure_kind_classified })))}`);
+    assert(!hasEvent(probe.events, 'phase_backtrack_requested'), 'test_contract 不得回退 coding');
+  });
+});
 
 export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];

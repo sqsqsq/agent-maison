@@ -25,10 +25,17 @@ import {
   collectActionableDefects,
   evaluateUnverifiedRound,
   refineFailureKindWithTrustedDeviceEvidence,
+  resolveCurrentHapSha256Full,
   validateDeviceTestEvidenceBinding,
   type DeviceTestCollectContext,
 } from '../../scripts/goal-runner';
 import { deviceTestEvidencePath, type DeviceTestEvidenceDoc } from '../../scripts/utils/device-test-evidence-shared';
+import {
+  EXECUTION_KEY_FILE,
+  FROZEN_RUN_ARTIFACTS,
+  decideReuse,
+  writeExecutionKeyRecord,
+} from '../../../profiles/hmos-app/harness/execution-key';
 import { clearFrameworkConfigCache } from '../../config';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -314,6 +321,7 @@ function writeEvidence(
     expectedTarget: { ...TARGET },
     harnessWindow: { startMs, endMs: Date.now() + 1000 },
     reportsDir: f.reportsDir,
+    projectRoot: f.root,
   };
 }
 
@@ -813,6 +821,177 @@ export function runAll(): UnitCaseResult[] {
       nodeAssert.strictEqual(cands[0].category, 'coding');
       nodeAssert.strictEqual(cands[0].identity_schema, 'signal@1');
       nodeAssert.deepStrictEqual(res.unverified, []);
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    }
+  });
+
+  // ==========================================================================
+  // B08 D1（plan 9b2d5e7c）V1/V2：复用轮照常写出证据（真实 writeDeviceTestEvidenceIfEligible），
+  // 采信按执行键身份（与 decideReuse 同一判据），跳过本轮真装与 run meta 时间窗。
+  // ==========================================================================
+  type Holder = Record<string, unknown>;
+  const withGateEnv = <T>(fn: () => T): T => {
+    const saved = {
+      MAISON_GOAL_GATE_HARNESS: process.env.MAISON_GOAL_GATE_HARNESS,
+      MAISON_GOAL_RUN_ID: process.env.MAISON_GOAL_RUN_ID,
+      MAISON_GOAL_ATTEMPT: process.env.MAISON_GOAL_ATTEMPT,
+      HARNESS_HDC_TARGET: process.env.HARNESS_HDC_TARGET,
+      MAISON_DEVICE_TARGET_KIND: process.env.MAISON_DEVICE_TARGET_KIND,
+      MAISON_DEVICE_SESSION_ID: process.env.MAISON_DEVICE_SESSION_ID,
+    };
+    process.env.MAISON_GOAL_GATE_HARNESS = '1';
+    process.env.MAISON_GOAL_RUN_ID = 'run-1';
+    process.env.MAISON_GOAL_ATTEMPT = 'att-1';
+    process.env.HARNESS_HDC_TARGET = TARGET.serial;
+    process.env.MAISON_DEVICE_TARGET_KIND = TARGET.target_kind;
+    process.env.MAISON_DEVICE_SESSION_ID = TARGET.session_id;
+    try {
+      return fn();
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  };
+  /** 装机产物：install meta（hapPath / mtime / size / 12 位短指纹）——采信端据此算当前 HAP 完整摘要 */
+  const writeInstallMeta = (f: Fixture): void => {
+    const st = fs.statSync(f.hapPath);
+    fs.writeFileSync(path.join(f.reportsDir, 'device-test-install.meta.json'), JSON.stringify({
+      ok: true, hapPath: f.hapPath, reused: true, hapMtimeMs: st.mtimeMs, hapSizeBytes: st.size, hapSha256: f.hapSha.slice(0, 12),
+    }), 'utf-8');
+  };
+  const writeRunMeta = (f: Fixture, offsetMs: number): void => {
+    fs.writeFileSync(path.join(f.reportsDir, 'device-test-run.meta.json'), JSON.stringify({
+      run_started_at: new Date(Date.now() - offsetMs - 500).toISOString(),
+      run_ended_at: new Date(Date.now() - offsetMs - 100).toISOString(),
+    }), 'utf-8');
+  };
+  /** 被复用 run 的执行键记录（成功、执行事实冻结件齐、timing_complete=false → decideReuse 走派生重建） */
+  const writeReusedRecord = (f: Fixture, key: string, over: Partial<{ outcome: string; dropExecutionFrozen: boolean }> = {}): string => {
+    const runDir = path.dirname(f.tracePath);
+    const execution = FROZEN_RUN_ARTIFACTS.filter(a => a.group === 'execution');
+    for (const a of execution) {
+      if (over.dropExecutionFrozen) fs.rmSync(path.join(runDir, a.frozen), { force: true });
+      else fs.writeFileSync(path.join(runDir, a.frozen), '{}', 'utf-8');
+    }
+    writeExecutionKeyRecord(runDir, {
+      schema_version: '1.0', execution_key: key,
+      inputs: { hap_sha256_full: f.hapSha, derived_plan_sha256: 'b'.repeat(64), device: TARGET.serial, display_env: '', reset_mode: 'cold_restart', hylyre_version: '0.5.1', manifest_version: '0.5.1', profile: 'hmos-app', tool_config_sha256: 'c'.repeat(64), flags: [] },
+      trace_path: f.tracePath, run_started_at: new Date(Date.now() - 3_600_000).toISOString(), outcome: over.outcome ?? 'success',
+      trace_sha256: null, timing_complete: false, frozen_files: execution.map(a => a.frozen),
+    });
+    return runDir;
+  };
+  const collectCtx = (f: Fixture, startMs: number): DeviceTestCollectContext => ({
+    attemptId: 'att-1',
+    expectedTarget: { ...TARGET },
+    harnessWindow: { startMs, endMs: Date.now() + 1000 },
+    reportsDir: f.reportsDir,
+    projectRoot: f.root,
+    currentHapSha256Full: resolveCurrentHapSha256Full(f.root, f.reportsDir),
+  });
+  const writeViaProduction = (f: Fixture, holder: Holder): DeviceTestEvidenceDoc => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { writeDeviceTestEvidenceIfEligible } = require('../../scripts/check-testing') as {
+      writeDeviceTestEvidenceIfEligible: (ctx: Record<string, unknown>, holder: Holder, composeFn?: (o: Record<string, unknown>) => unknown) => Array<{ status: string; details: string }>;
+    };
+    const ctx = { projectRoot: f.root, feature: FEATURE, phase: 'testing', frameworkRoot: path.resolve(__dirname, '..', '..', '..') };
+    const r = withGateEnv(() => writeDeviceTestEvidenceIfEligible(ctx, holder, () => composeOk(f, { installExecuted: false, installOk: false })));
+    assert(r.length === 1 && r[0].status === 'PASS', `复用轮须照常写出 evidence：${JSON.stringify(r)}`);
+    return JSON.parse(fs.readFileSync(deviceTestEvidencePath(f.reportsDir), 'utf-8')) as DeviceTestEvidenceDoc;
+  };
+  const KEY = 'k'.repeat(64);
+  const baseReuseHolder = (f: Fixture): Holder => ({
+    hapPath: f.hapPath, installPassed: true, installExecuted: false, installOk: false, installReused: true,
+    hapSha256Full: f.hapSha, deviceTestRunExecuted: true, hylyreTracePath: f.tracePath,
+  });
+
+  t('B08-V1(a) 装机复用 + 设备真跑：真实写出 install_reused=true / reused_by_execution_key=false，run meta 在窗内 → 采信 null', () => {
+    const f = setupFixture();
+    try {
+      const startMs = Date.now() - 1000;
+      const doc = writeViaProduction(f, { ...baseReuseHolder(f), deviceRunReused: false, executionKey: KEY, reusedRunDir: null });
+      assert(doc.install_reused === true && doc.reused_by_execution_key === false && doc.execution_key === KEY && doc.reused_run_dir === undefined && doc.install_executed === false,
+        `doc 复用字段：${JSON.stringify({ install_reused: doc.install_reused, reused_by_execution_key: doc.reused_by_execution_key, execution_key: doc.execution_key, reused_run_dir: doc.reused_run_dir })}`);
+      assert(doc.schema_version === '1.1', 'schema_version 仍 1.1');
+      writeInstallMeta(f);
+      writeRunMeta(f, 0);
+      const ctx = collectCtx(f, startMs);
+      assert(ctx.currentHapSha256Full === f.hapSha, `当前 HAP 完整摘要须由 install meta + 盘上 HAP 算出：${ctx.currentHapSha256Full}`);
+      assert(validateDeviceTestEvidenceBinding(doc, 'run-1', ctx) === null, `装机复用 + 真跑须采信：${validateDeviceTestEvidenceBinding(doc, 'run-1', ctx)}`);
+      // 反例：当前 HAP 完整摘要与 doc 不一致（装机后换了 HAP 但 meta 也跟着更新）→ 拒
+      const other = { ...ctx, currentHapSha256Full: 'f'.repeat(64) };
+      assert(validateDeviceTestEvidenceBinding(doc, 'run-1', other) === '复用装机的 HAP 摘要与当前不一致', '摘要不一致须拒');
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    }
+  });
+
+  t('B08-V1(b)(c) 两者均复用：真实 decideReuse 命中（timing_complete=false → 派生重建）→ 写出 → 冻结 meta 在窗外仍采信；盘上 HAP 被替换 → "当前 HAP 完整摘要不可核验"', () => {
+    const f = setupFixture();
+    try {
+      const startMs = Date.now() - 1000;
+      const runDir = writeReusedRecord(f, KEY);
+      const reuse = decideReuse(f.reportsDir, KEY);
+      assert(reuse.reusable !== null && reuse.evidenceRebuildRequired === true, `决定复用（派生重建）：${JSON.stringify(reuse)}`);
+      const reusedRunDir = path.relative(f.root, reuse.reusable!.runDir).replace(/\\/g, '/');
+      const doc = writeViaProduction(f, { ...baseReuseHolder(f), deviceRunReused: true, executionKey: KEY, reusedRunDir });
+      assert(doc.install_reused === true && doc.reused_by_execution_key === true && doc.execution_key === KEY && doc.reused_run_dir === reusedRunDir,
+        `doc 复用字段：${JSON.stringify({ install_reused: doc.install_reused, reused_by_execution_key: doc.reused_by_execution_key, execution_key: doc.execution_key, reused_run_dir: doc.reused_run_dir })}`);
+      assert(path.resolve(f.root, doc.reused_run_dir!) === path.resolve(runDir), 'reused_run_dir 相对 projectRoot 指向被复用 run');
+      writeInstallMeta(f);
+      writeRunMeta(f, 3_600_000); // 冻结 meta：一小时前（窗外）
+      const ctx = collectCtx(f, startMs);
+      assert(validateDeviceTestEvidenceBinding(doc, 'run-1', ctx) === null, `两者均复用须采信（跳过 run meta 时间窗）：${validateDeviceTestEvidenceBinding(doc, 'run-1', ctx)}`);
+      // (c) 盘上 HAP 被替换（size 变）→ 当前摘要不可核验
+      fs.writeFileSync(f.hapPath, 'hap-bytes-v2-replaced', 'utf-8');
+      const ctxReplaced = collectCtx(f, startMs);
+      assert(ctxReplaced.currentHapSha256Full === null, 'HAP 与 install meta 不一致时摘要须 null');
+      assert(validateDeviceTestEvidenceBinding(doc, 'run-1', ctxReplaced) === '当前 HAP 完整摘要不可核验（install meta 缺失或与盘上 HAP 不一致）',
+        `HAP 被替换须拒：${validateDeviceTestEvidenceBinding(doc, 'run-1', ctxReplaced)}`);
+      // 非复用轮 install meta 也在场但摘要只在 install_reused 时消费：非复用 doc 逐字走旧四项
+      fs.rmSync(path.join(f.reportsDir, 'device-test-install.meta.json'), { force: true });
+      assert(resolveCurrentHapSha256Full(f.root, f.reportsDir) === null, 'meta 缺失 → null');
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    }
+  });
+
+  t('B08-V2 复用身份不符三例各返回"复用记录身份不匹配（…）"；非复用 doc 在窗外 / 无真装仍返回旧原因（逐字不变）', () => {
+    const f = setupFixture();
+    try {
+      const startMs = Date.now() - 1000;
+      writeReusedRecord(f, KEY);
+      const reusedRunDir = path.relative(f.root, path.dirname(f.tracePath)).replace(/\\/g, '/');
+      const doc = writeViaProduction(f, { ...baseReuseHolder(f), deviceRunReused: true, executionKey: KEY, reusedRunDir });
+      writeInstallMeta(f);
+      writeRunMeta(f, 3_600_000);
+      const ctx = collectCtx(f, startMs);
+      assert(validateDeviceTestEvidenceBinding(doc, 'run-1', ctx) === null, '前置：身份齐备时采信');
+      // ① 记录 key 不同
+      writeReusedRecord(f, 'z'.repeat(64));
+      const r1 = validateDeviceTestEvidenceBinding(doc, 'run-1', ctx);
+      assert(r1 !== null && /^复用记录身份不匹配（.*其他 execution key.*）$/.test(r1), `key 不同须拒：${r1}`);
+      // ② outcome=failed
+      writeReusedRecord(f, KEY, { outcome: 'failed' });
+      const r2 = validateDeviceTestEvidenceBinding(doc, 'run-1', ctx);
+      assert(r2 !== null && /^复用记录身份不匹配（.*outcome=failed.*）$/.test(r2), `失败记录须拒：${r2}`);
+      // ③ 执行事实冻结件缺一
+      writeReusedRecord(f, KEY, { dropExecutionFrozen: true });
+      const r3 = validateDeviceTestEvidenceBinding(doc, 'run-1', ctx);
+      assert(r3 !== null && /^复用记录身份不匹配（.*执行事实冻结件缺失.*frozen\.device-test-run\.meta\.json.*）$/.test(r3), `冻结件缺失须拒：${r3}`);
+      // ④ 非复用 doc：run meta 在窗外 → 旧原因逐字不变；install_executed=false → 旧原因逐字不变
+      fs.rmSync(path.join(path.dirname(f.tracePath), EXECUTION_KEY_FILE), { force: true });
+      const plain = { ...doc, install_reused: false, reused_by_execution_key: false, install_executed: true, install_ok: true } as DeviceTestEvidenceDoc;
+      delete (plain as { reused_run_dir?: string }).reused_run_dir;
+      assert(validateDeviceTestEvidenceBinding(plain, 'run-1', ctx) === 'run meta 的 run_started_at/run_ended_at 不在本 attempt 的 harness 窗口内', '非复用 doc 时间窗原因逐字不变');
+      const plainNoInstall = { ...plain, install_executed: false } as DeviceTestEvidenceDoc;
+      assert(validateDeviceTestEvidenceBinding(plainNoInstall, 'run-1', ctx) === 'evidence 无本轮真实安装成功事实（install reuse/失败不作数）', '非复用 doc 装机原因逐字不变');
     } finally {
       fs.rmSync(f.root, { recursive: true, force: true });
       clearFrameworkConfigCache();

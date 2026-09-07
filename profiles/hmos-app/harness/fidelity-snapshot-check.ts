@@ -17,7 +17,7 @@ import {
 } from '../../../harness/scripts/utils/fidelity-lock-shared';
 import { loadUiSpecFile, parseVisualHandoffYamlRoot, uiSpecAbsPath } from '../../../harness/scripts/utils/ui-spec-shared';
 import { buildAuthoritativeRefImageIndex, resolveRefSourceImage } from './authoritative-ref-images';
-import { REFERENCE_VIEWPORT_ASPECT_TOLERANCE, readImageDimensions, referenceViewportIncompatible } from './image-toolkit';
+import { REFERENCE_VIEWPORT_ASPECT_TOLERANCE, classifyCompareReference, readImageDimensions } from './image-toolkit';
 
 function ruleDesc(ctx: CheckContext, id: string): string {
   const checks = ctx.phaseRule.structure_checks as Record<string, { description: string }>;
@@ -138,7 +138,9 @@ export function summarizeOnlineFidelityHandoff(specMd: string): string | null {
  *   testing 会用实测截图尺寸再判一次）；
  * - lock 未声明 viewport：WARN 明示推迟到 testing，不 PASS-by-silence；
  * - 不兼容屏：pixel_1to1 → BLOCKER FAIL，低档 → 既有 ratchet WARN；全部兼容 → 零结果（check 集合逐字不变）。
- * 出路由作者建模：长页拆成多个 viewport 尺寸的 screen（各自 ref_id + nav 末步 scroll_to 锚点）；不建 reference_region/crop/自动分段体系。
+ * - B08 D3（plan 9b2d5e7c）：同宽更高的参考图可按顶部一屏推导（判据与 testing 三处同源 classifyCompareReference）——
+ *   只出一行 PASS 注明"顶部一屏推导"（spec 阶段不产派生图）；宽度不同仍按不兼容处理。
+ * 出路由作者建模：长页拆成多个 viewport 尺寸的 screen（各自 ref_id + nav 末步 scroll_to 锚点）；不建 reference_region/自动分段/拼接体系。
  */
 export function checkReferenceViewportSpec(ctx: CheckContext, specMd: string): CheckResult[] {
   const doc = parseVisualHandoffYamlRoot(specMd);
@@ -157,7 +159,7 @@ export function checkReferenceViewportSpec(ctx: CheckContext, specMd: string): C
   const specRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'spec.md');
   const remedy =
     '责任在 spec 参考资产。出路由作者建模而非机器推导：长页按锚点拆成多个 screen，每段一个 viewport 尺寸的 ref_id 裁图，visual-diff-nav.json 中该段 nav 末步 scroll_to 锚点元素（选对齐确定的元素，如列表项；nav 校验复用 planned-step 全键表，scroll_to 本就合法）；像素路径前提：每段 nav 从已知状态出发且滚动落点已证明可重复（宿主至少两个冷启动轮次的中/尾 checkpoint 落点一致），否则继续 FAIL 而不宣称支持；不属像素范围的段落排除在 pixel_1to1 屏之外、由功能/结构 AC 覆盖——没有屏级/段级 fidelity 档位。' +
-    '每屏参考图兼容后现有 visual pipeline 原样运行；不做自动 crop/分段/拼接，也不按参考图改写 viewport。';
+    '每屏参考图兼容后现有 visual pipeline 原样运行；仅顶部一屏推导（同宽更高的参考图按顶部 viewport 高度比对，其余部分未验证）；不做分段/拼接，也不按参考图改写 viewport。';
   if (!lock.viewport) {
     return [{
       id,
@@ -173,15 +175,31 @@ export function checkReferenceViewportSpec(ctx: CheckContext, specMd: string): C
   const refIndex = buildAuthoritativeRefImageIndex(ctx, specMd);
   const viewport = { w: lock.viewport.w, h: lock.viewport.h };
   const incompatible: string[] = [];
+  const derivable: string[] = [];
   for (const sc of screens) {
     const refAbs = resolveRefSourceImage(refIndex, sc.ref_id ?? sc.id).path;
     if (!refAbs) continue;
     const dims = readImageDimensions(refAbs);
-    if (referenceViewportIncompatible(dims, viewport)) {
+    const mode = classifyCompareReference(dims, viewport);
+    if (mode === 'incompatible') {
       incompatible.push(`${sc.id}: 参考图 ${dims!.w}×${dims!.h} vs lock.viewport ${viewport.w}×${viewport.h}`);
+    } else if (mode === 'top_slice') {
+      derivable.push(`${sc.id}: 参考图 ${dims!.w}×${dims!.h} 高于 lock.viewport ${viewport.w}×${viewport.h}，testing 按顶部一屏推导比对（其余部分未验证）`);
     }
   }
-  if (incompatible.length === 0) return [];
+  if (incompatible.length === 0) {
+    if (derivable.length === 0) return [];
+    return [{
+      id,
+      category: 'structure',
+      description,
+      severity: 'MINOR',
+      status: 'PASS',
+      details: `以下 ${derivable.length} 屏的参考图同宽更高，按顶部一屏推导（B08 D3）：${derivable.join('；')}`,
+      suggestion: remedy,
+      affected_files: [specRel],
+    }];
+  }
   const ratchet = fidelityRatchetFailOrWarn(ctx, true);
   return [{
     id,
@@ -191,7 +209,8 @@ export function checkReferenceViewportSpec(ctx: CheckContext, specMd: string): C
     status: ratchet.status,
     details:
       `以下 ${incompatible.length} 屏的参考图高宽比超出 lock.viewport ×${REFERENCE_VIEWPORT_ASPECT_TOLERANCE}（整页拼接图 vs 单视口），` +
-      `不构成合法像素参考：${incompatible.join('；')}`,
+      `不构成合法像素参考：${incompatible.join('；')}` +
+      (derivable.length > 0 ? `\n另 ${derivable.length} 屏同宽更高，按顶部一屏推导：${derivable.join('；')}` : ''),
     suggestion: remedy,
     affected_files: [specRel],
   }];

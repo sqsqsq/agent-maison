@@ -57,6 +57,8 @@ const DEBT_SOURCE_CHECKS: Record<string, { label: string }> = {
   visual_multimodal_parity: { label: '视觉多模态层降级（盲档 SKIP，保真未验）' },
   capture_completeness_external: { label: '参考图覆盖缺口（盲档能力/证据清单）' },
   visual_diff: { label: '设备视觉对照未产出/未达' },
+  // B08 D3（plan 9b2d5e7c）：长图参考按顶部一屏比对时，顶部之外的 must_have 零证据——显式未验证入债务
+  visual_reference_viewport: { label: '参考图顶部一屏外未验证' },
 };
 
 export function visualDebtJsonPath(projectRoot: string, feature: string): string {
@@ -151,13 +153,25 @@ export function deriveVisualDebt(
 
   for (const [checkId, meta] of Object.entries(DEBT_SOURCE_CHECKS)) {
     const hits = checks.filter(c => c.id === checkId);
+    const worst = hits.find(c => c.status === 'FAIL') ?? hits.find(c => c.status === 'WARN')
+      ?? hits.find(c => c.status === 'SKIP' && c.severity !== 'MINOR');
+    if (checkId === 'visual_reference_viewport' && !worst) {
+      // B08 R1 返修（codex #2）：该来源在 testing 侧"全部兼容 → 零结果"，缺席不能按"保留"处理（换成兼容图后永不清偿）；
+      // spec 前置门对可推导屏出的 PASS 行也不是清偿证据（长图未动、只重跑 spec 就会提前关闭）。
+      // 唯一清偿证据 = 本轮 visual_diff PASS 且 structured.kind==='visual_diff'（视觉流水线真跑了）；否则历史条目原样保留。
+      const cleared = checks.some(
+        c => c.id === 'visual_diff' && c.status === 'PASS' && (c.structured as { kind?: unknown } | undefined)?.kind === 'visual_diff',
+      );
+      for (const pe of prevEntries.filter(e => e.source_check_id === checkId)) {
+        emit(cleared && pe.status !== 'closed' ? { ...pe, status: 'closed' } : pe);
+      }
+      continue;
+    }
     if (hits.length === 0) {
       // 本轮缺席：历史条目单调保留（含该 check 的全部 scope 子条目）
       for (const pe of prevEntries.filter(e => e.source_check_id === checkId)) emit(pe);
       continue;
     }
-    const worst = hits.find(c => c.status === 'FAIL') ?? hits.find(c => c.status === 'WARN')
-      ?? hits.find(c => c.status === 'SKIP' && c.severity !== 'MINOR');
     if (!worst) {
       // 本轮明确 PASS → 该 check 全部历史条目闭账 closed（审计保留）
       for (const pe of prevEntries.filter(e => e.source_check_id === checkId)) {
