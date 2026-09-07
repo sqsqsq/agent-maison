@@ -4,6 +4,23 @@
 `testing`），进入该阶段之前必须确认设备策略。**goal 与普通模式同一契约**——两种模式下
 用户都不该自己去猜"为什么设备用不了、有没有别的办法"。
 
+## 用户要求解锁 / 操作设备时的正道
+
+「解锁手机 / 手机准备好了吗 / 唤醒设备」既不是 feature 也不带 bundle，不必先找需求目录：
+
+- **只要解锁或确认设备** → 跑 `cd framework/harness && npx ts-node scripts/device-policy.ts --ready --json`（直接调脚本，不要走 `npm run`，理由见下节）。
+- **解锁后还要操作某个 App** → 直接跑即席 CLI（`npm run adhoc-device-test`，已内置同一道设备门），**不要**先 `--ready` 再即席：重复检查一次，`managed` 档还会把模拟器起停两趟。
+
+**两段判定与 `--check` 完全相同**：退出码非零或 stdout 不是合法 JSON = 执行失败，停止并把原因交回用户，**不得**当成"未配置"去引导登记；退出码 0 则按 `code` 处置：
+
+| `code` | 处置 |
+|--------|------|
+| `ready` | 按 `target_kind` 说话：`physical` 才是"手机已解锁"；`emulator` 是"手机未就绪，已授权的模拟器路径可用"；`unknown` 如实说"目标可用但未完成真机 attestation"。结果**只对本次调用有效**，后续命令各自起门重解析 |
+| `device_policy_unset` | 才走下面的四选一；选 ② 由用户在自己终端登记后**由 agent 自跑 `--ready --json` 确认**，不再让用户重跑探测 |
+| `ambiguous` / `blocked` / `frozen_target_mismatch` | 把 `reason` 原文交给用户并按其中指引处置；不改代码、不徒手处置锁屏 |
+
+**不碰 PIN ≠ 不能解锁**——登记由用户完成，**使用已登记凭据解锁由框架自动执行**，agent 的职责是调 `--ready` 或即席 CLI，不是回答"我不能解锁设备"。
+
 ## 为什么是前置而不是运行期处理
 
 设备就绪门排在 `agent_invoke_start` 之前：未取得 READY 就不调 agent，agent 便根本不会
@@ -39,7 +56,7 @@ JSON 就没法直接 parse 了。这与 [personal-setup-gate](personal-setup-gat
 | `code` | 行为 |
 |--------|------|
 | `ok` | 当前**有一条可用的设备路径** → 继续本阶段 |
-| `device_policy_unset` | **必须先问用户四选一**（见下），落盘后重跑确认 `code=ok` |
+| `device_policy_unset` | **必须先问用户四选一**（见下），落盘 / 登记后由 agent 跑 `--ready --json` 确认 `code=ready`（`--check` 本身只探测策略、不碰设备） |
 
 **`code` 是唯一的处置真源**——`configured` 只表示"是否**表达过**策略意图"，两者刻意解耦：
 配置里写了 `unlock.mode=credential` 但凭据库里那条凭据已 `burned`/不存在时，
@@ -100,8 +117,8 @@ cd framework/harness && npm run device:enroll -- --serial <设备序列号>
 >   goal / 项目 / 并发进程都不再尝试；零输入分支（未登记 / 形态不支持 / 并发占用 / 布局
 >   未就绪）不烧毁。唯一出路是重新登记（生成新版本）。这是防"反复试错把手机锁死"的止损设计。
 
-用户跑完后**重跑上面那条探测命令**（`npx ts-node scripts/device-policy.ts --check --json`，
-同样不要走 `npm run`）确认 `code=ok` 再继续。
+用户跑完后**由 agent 自跑** `npx ts-node scripts/device-policy.ts --ready --json`（同样不要走
+`npm run`）确认 `code=ready` 再继续——不再让用户重跑探测。
 
 ## 已登记但引用丢失时：显式 rebind（不重输 PIN）
 
@@ -129,4 +146,4 @@ cd framework/harness && npm run device:rebind -- --serial <设备序列号> --ve
 `blocking_class=externalBlocked` + `failure_kind=device_blocked`，指引指向**人解锁设备**。
 此时**不要**改产品代码，也**不得绕开框架徒手处置锁屏**（枚举 PIN、hdc 注入口令）——按指引
 请人处理后重跑本阶段即可。若已登记 credential 且凭据处于 `ready` 状态，重跑本阶段由框架
-自动解锁（PIN 全程不经对话与 agent）。
+自动解锁（PIN 全程不经对话与 agent）。重跑前可先跑 `--ready --json` 确认设备此刻确实就绪。

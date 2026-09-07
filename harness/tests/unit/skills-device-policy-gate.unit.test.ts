@@ -184,6 +184,70 @@ export function runAll(): UnitCaseResult[] {
     );
   });
 
+  // -------------------------------------------------------------------------
+  // 解锁 / 设备就绪的「正道」话术（plan c7d2a9e4 V5）
+  // 缺口复盘：文档只写禁令（不碰 PIN / 不徒手处置锁屏），没有一句「用户要解锁且凭据
+  // 可用时该怎么做」，且 SKILL 把 feature/receipt/acceptance 前置摆在模式分流之前 →
+  // 宿主 agent 面对「解锁手机」既进不去流程也不敢动手，只会反复拒绝。
+  // -------------------------------------------------------------------------
+
+  run(results, 'device-testing SKILL 先分流后前置，且设备就绪请求可识别', () => {
+    const skill = fs.readFileSync(path.join(SKILLS, PHASE_SKILL.testing), 'utf-8');
+    const routeIdx = skill.indexOf('## 请求分流');
+    const preIdx = skill.indexOf('## 前置');
+    assert(routeIdx >= 0, 'SKILL 须有「## 请求分流」顶节（设备级请求先判后进）');
+    assert(preIdx >= 0, 'SKILL 须保留「## 前置」段');
+    assert(routeIdx < preIdx, '「## 请求分流」必须排在「## 前置」之前——否则设备级请求仍会先撞 feature/acceptance 前置');
+    // 前置只对正式模式成立：即席与设备就绪不该被 feature/receipt/acceptance 挡住
+    const preBlock = skill.slice(preIdx, skill.indexOf('\n## ', preIdx + 1));
+    assert(/只适用于正式模式/.test(preBlock), '「前置」段首须限定「只适用于正式模式」');
+    assert(/解锁手机/.test(skill), '触发条件须含「解锁手机」（自然语言直达设备就绪轨）');
+    assert(/--ready --json/.test(skill), 'SKILL 分流表须给出 `--ready --json` 正道命令');
+  });
+
+  run(results, '设备策略门文档有「正道节」：怎么解锁、结果怎么说、不重复起门', () => {
+    const doc = fs.readFileSync(path.join(SKILLS, GATE_DOC_REL), 'utf-8');
+    assert(/##\s*用户要求解锁 \/ 操作设备时的正道/.test(doc), '须有解锁正道节标题');
+    assert(/scripts\/device-policy\.ts --ready --json/.test(doc), '正道节须给出 `--ready --json` 命令');
+    assert(/不碰 PIN ≠ 不能解锁/.test(doc), '须有「不碰 PIN ≠ 不能解锁」定性——只写禁令正是本次事故的根因');
+    // `ok` 不等于「手机已解锁」：三态必须逐个说清，否则模拟器会被说成真机
+    for (const kind of ['physical', 'emulator', 'unknown']) {
+      assert(doc.includes(`\`${kind}\``), `须按 target_kind 三态说话，缺 \`${kind}\``);
+    }
+    assert(/已授权.{0,4}模拟器/.test(doc), 'emulator 态须说「手机未就绪、已授权模拟器可用」而不是「已解锁」');
+    // 反向钉：不得教「先 --ready 再即席」（重复起门，managed 档会起停两趟）；
+    // 允许**禁令**形态的同款字样（"不要先 `--ready` 再即席"），只拦正向指令。
+    const bad = doc
+      .split('\n')
+      .filter(line => /先\s*`?--ready`?\s*再.{0,6}即席|先 ready 再即席/.test(line))
+      .filter(line => !/不要|不得|禁止|勿/.test(line));
+    assertEq(bad.length, 0, `不得把「先 --ready 再即席」写成正向指令：\n  ${bad.join('\n  ')}`);
+  });
+
+  run(results, '执行规则与命令模板：禁手写解锁脚本、「解锁手机」有入口映射', () => {
+    const mdc = fs.readFileSync(
+      path.join(REPO, 'agents/shared/agent-bundle/templates/rules/framework-agent-execution.mdc'),
+      'utf-8',
+    );
+    assert(/ensureUnlocked/.test(mdc) && /不得为解锁/.test(mdc), '§1 须禁止手写脚本直调 `ensureUnlocked` 等 harness 内部函数');
+    assert(/解锁手机/.test(mdc) && /--ready --json/.test(mdc), '§2 须把「解锁手机」映射到 agent 自跑 `--ready --json`');
+
+    const cmdRels = ['claude', 'codeagent', 'cursor'].map(a => `agents/${a}/templates/commands/device-testing.md`);
+    const hints = new Set<string>();
+    for (const rel of cmdRels) {
+      const text = fs.readFileSync(path.join(REPO, rel), 'utf-8');
+      const m = /^argument-hint:\s*(.+)$/m.exec(text);
+      assert(m !== null, `${rel} 缺 argument-hint`);
+      hints.add((m as RegExpExecArray)[1].trim());
+      assert(/请求分流/.test(text), `${rel} 须指向 SKILL 的「请求分流」节（无 feature 名也能进）`);
+    }
+    assertEq(hints.size, 1, `三个 adapter 的 argument-hint 必须一致，实际：${[...hints].join(' | ')}`);
+    assertEq([...hints][0], '[feature-name]', 'feature 名对设备就绪/即席不是必填，argument-hint 须为可选形态');
+
+    const registry = fs.readFileSync(path.join(SKILLS, 'reference/confirmation-registry.yaml'), 'utf-8');
+    assert(/--ready/.test(registry), 'registry notes 须改为「落盘/登记后由 agent 跑 `--ready`」确认');
+  });
+
   run(results, '不需设备的 phase **不强制**加前置（避免无谓噪声）', () => {
     // coding 只声明 coding.compile，不在任何 profile 的 device_capabilities 里 →
     // 不应被要求加设备策略前置。这条防的是"一刀切给所有 skill 加门"。
