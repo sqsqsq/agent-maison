@@ -27,7 +27,7 @@
   "source_sha256_note": "含 bounded-sync-wait.ts——它是解锁链的实际依赖（settle 原语），2026-07-30 验收时尚不存在，旧记录 new_dependencies_not_covered 明确列出并刻意未纳入；本次一并纳入。",
   "superseded_by_source_change": {
     "recorded_at": "2026-09-07",
-    "by": "2026-09-07 c7d2a9e4 D1/R1：device-readiness-gate.ts 新增 applyPhaseEntryDeviceGate（搬运 harness-runner 入口门接线：起门→notes→托管回收登记→原子注入 env，供 harness-runner / 即席 CLI / device-policy --ready 共用）并给 PhaseEntryDeviceGateDecision 补可选 code；device-readiness-deps.ts 的 runHdc 改为复用 hdc-runner.resolveHdcExecutableSync 解析可执行路径（懒 require，解析失败回落 'hdc'）。未改 ensureDeviceReady 核心解锁/降级逻辑、未改 device-unlock-helper.ts / bounded-sync-wait.ts（二者哈希与本记录一致）。待复验范围：入口门接线与 hdc 路径解析下的真机就绪判定与自动解锁。",
+    "by": "2026-09-07 c7d2a9e4 D1/R1：device-readiness-gate.ts 新增 applyPhaseEntryDeviceGate（搬运 harness-runner 入口门接线：起门→notes→托管回收登记→原子注入 env，供 harness-runner / 即席 CLI / device-policy --ready 共用）并给 PhaseEntryDeviceGateDecision 补可选 code；device-readiness-deps.ts 的 runHdc 改为复用 hdc-runner.resolveHdcExecutableSync 解析可执行路径（懒 require，解析失败回落 'hdc'）。未改 ensureDeviceReady 核心解锁/降级逻辑、未改 device-unlock-helper.ts / bounded-sync-wait.ts（二者哈希与本记录一致）。待复验范围：入口门接线与 hdc 路径解析下的真机就绪判定与自动解锁；2026-09-07 宿主中期复验通过（见 interim_reverification），欠账未关闭。",
     "status": "PENDING_REAL_DEVICE_REVERIFICATION",
     "note": "上面 source_sha256 是 2026-08-17 真机验收当时所验源码的哈希，**不得为迁就代码改动而重写**——那等于伪造真机证据。本次改动后需在真机上重跑同一验收流程并落新记录；在此之前本条证据只证明「旧代码曾在真机上通过」。",
     "new_dependencies_not_covered": [
@@ -45,7 +45,40 @@
         "verified_sha256": "4a26d263fec16ac300349daed1de128bef3ed196636c6e1a11827b1387c69c82",
         "current_sha256": "74b7fd95ef31d83a348fe86180ad9852545d69c62990e5089d8c0319402df5fe"
       }
-    ]
+    ],
+    "interim_reverification": {
+      "recorded_at": "2026-09-07",
+      "source": "宿主 SimulatedWalletForHmos 真机，用户触发、宿主 agent 自跑两条命令：① `npx ts-node scripts/device-policy.ts --ready --json`；② 即席 `adhoc-device-test --bundle com.example.simulatedwallet --dump-ui-only`（冷重启后 dump 首页）。本仓库侧零真机接触、零宿主写入，结果为用户转述回灌。",
+      "serial": "3UJ0225321000395",
+      "ready_json": {
+        "ok": true,
+        "code": "ready",
+        "serial": "3UJ0225321000395",
+        "target_kind": "physical",
+        "notes": "wake → unlock: 已用登记凭据解锁并复验"
+      },
+      "adhoc_trace": {
+        "trace": "doc/features/_adhoc/testing/reports/20260907-170757/hylyre/trace.json",
+        "ui_dump": "doc/app-snapshot-cache/com.example.simulatedwallet/dump-ui-20260907.json",
+        "path_base": "宿主工程 D:/1.code/SimulatedWalletForHmos（上述均为宿主相对路径）",
+        "note": "TC-001 通过，设备门 ADHOC_PHASE=device_gate 已过。"
+      },
+      "source_at_time": {
+        "harness/scripts/utils/device-readiness-gate.ts": "49b735fe81c062dedb6927f44c3b92750b9080b71b5c66434e1bbe2a6d989fbc",
+        "harness/scripts/utils/device-readiness-deps.ts": "74b7fd95ef31d83a348fe86180ad9852545d69c62990e5089d8c0319402df5fe",
+        "note": "取自本对象 changed_files 的 current_sha256（程序读取，非手抄）；即此次宿主复验所跑的正是当前这两个文件。"
+      },
+      "proves": [
+        "生产解锁链在当前 device-readiness-gate.ts / device-readiness-deps.ts 上于真机完成 wake → 快照 → 输入 → 复验解锁：notes 里的「已用登记凭据解锁并复验」只在该条生产路径上产生。",
+        "hdc 路径解析（runHdc 经 hdc-runner.resolveHdcExecutableSync）在宿主真机生效：即席 dump-ui-only 过了设备门并成功取到首页 UI dump。"
+      ],
+      "does_not_prove": [
+        "起始态未被证明为时钟锁屏页（无 start_state_proof 同款的 screen_lock_root_present / pin_container_present 判定），因此 reveal 是否执行未知——若首帧已停在 PIN 页则整条 reveal 路径被绕过。",
+        "未采集 events.jsonl（device_unlock_attempt / device_ready 两条事件）、waited_ms（实测 suspend 后 45s 才锁）、credential_state_after（解锁后凭据是否回到 ready）。"
+      ],
+      "closes_pending": false,
+      "note": "本次结果不满足活跃验收记录的判据面（harness/tests/unit/device-lockscreen-parser.unit.test.ts:120-190），故只登记为中期复验，status 保持 PENDING_REAL_DEVICE_REVERIFICATION 不变；关闭须按 a4e7c2f9 plan t8 流程另落一条新验收记录目录并同步更新测试常量与 supersedes 互指。"
+    }
   },
   "result": {
     "passed": true,
