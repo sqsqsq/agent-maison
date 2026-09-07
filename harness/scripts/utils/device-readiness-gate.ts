@@ -24,6 +24,9 @@ import type { LockScreenSnapshot, RevealOutcome, UnlockFailureKind } from './dev
 import {
   capsTestingConclusion,
   classifyTargetKind,
+  defaultProcessProbe,
+  reclaimManagedDevice,
+  registerManagedDeviceCleanup,
   type DeviceTargetKind,
   type ManagedProcessIdentity,
 } from './device-session';
@@ -678,6 +681,14 @@ export interface PhaseEntryDeviceGateDecision {
   ok: boolean;
   /** 未通过时的人读原因（调用方原样打印后非零退出，不再调用任何 checker/provider） */
   reason?: string;
+  /**
+   * 未通过的**机器可读**分类（纯附加；harness-runner 不读）。
+   *
+   * 供 `device-policy --ready --json` 区分"策略没配"与"设备阻断"，免得调用方去解析
+   * `reason` 文案或再跑一次 `collectPolicyStatus`。冻结上下文损坏那条不填——它既不是
+   * 策略问题也不是设备问题，调用方按"执行环境损坏"处理。
+   */
+  code?: 'device_policy_unset' | 'ambiguous' | 'blocked';
   notes: string[];
   /** 通过且本次真的解析了目标时给出；调用方据此注入 env */
   env?: Record<string, string>;
@@ -752,6 +763,7 @@ export async function runPhaseEntryDeviceGate(opts: {
   if (status.code !== 'ok') {
     return {
       ok: false,
+      code: 'device_policy_unset',
       notes,
       reason:
         `[device] 本阶段需要设备，但设备策略不可用（code=${status.code}）。\n` +
@@ -780,6 +792,7 @@ export async function runPhaseEntryDeviceGate(opts: {
         : '[device] 设备未就绪，已在执行任何设备操作之前阻断。';
     return {
       ok: false,
+      code: res.state === 'AMBIGUOUS' ? 'ambiguous' : 'blocked',
       notes,
       // 孤儿托管实例随失败一起交出（与 goal 适配层的 orphanManaged 投影同款）：
       // 调用方必须先登记回收再退出，否则这个已启动的进程再无回收凭证。
@@ -830,6 +843,77 @@ export function applyFrozenDeviceEnv(
   for (const [k, v] of Object.entries(gateEnv)) {
     procEnv[k] = v;
   }
+}
+
+/**
+ * 入口门的**完整执行**：起门 → 打 notes → 登记托管回收 → 原子注入 env。
+ *
+ * 从 harness-runner 原样搬来（c7d2a9e4 D1），**语义零变化**；抽出来是因为即席 CLI 与
+ * `device-policy --ready` 需要同一条接线，而"回收登记必须早于任何退出分支"这条纪律
+ * 复制第二遍就一定会被抄漏。调用方仍自己决定 `process.exit` / 写 placeholder。
+ *
+ * 顺序不可换：门抛出（策略检查自身执行失败）原样上抛；`managed` 无论 ok 与否都**先**
+ * 登记回收——托管实例"起来了但没就绪"是普通失败路径，晚登记即零凭证泄漏。
+ */
+export async function applyPhaseEntryDeviceGate(opts: {
+  projectRoot: string;
+  phase: string;
+  /** 回收记录里的 `started_by_run`（普通模式 `harness-<phase>-<pid>`，即席 `adhoc-<pid>`） */
+  startedBy: string;
+  /** 人读输出落点（不给则静默）；JSON 契约的调用方不要传，改读返回的 notes */
+  log?: (line: string) => void;
+  /** 注入点：默认 `process.env`——既是门读冻结上下文的来源，也是原子注入的落点 */
+  env?: NodeJS.ProcessEnv;
+  /** 注入点：默认 `runPhaseEntryDeviceGate` */
+  gate?: (o: {
+    projectRoot: string;
+    phase: string;
+    env?: NodeJS.ProcessEnv;
+  }) => Promise<PhaseEntryDeviceGateDecision>;
+  /** 注入点：默认 `registerManagedDeviceCleanup` */
+  registerCleanup?: (cleanup: () => void) => void;
+}): Promise<PhaseEntryDeviceGateDecision> {
+  const env = opts.env ?? process.env;
+  const log = opts.log ?? ((): void => {});
+  const decision = await (opts.gate ?? runPhaseEntryDeviceGate)({
+    projectRoot: opts.projectRoot,
+    phase: opts.phase,
+    env,
+  });
+  for (const n of decision.notes) log(n);
+
+  // **回收登记必须早于任何返回**（codex 二轮 P1）：身份留在内存、退出即回收，不落
+  // device-session.json（单文件 session + 跨 run 对账是 goal 的模型）。诚实边界：进程被
+  // 硬杀（SIGKILL/断电）留下的孤儿实例没有兜底对账，需用户手动关闭。
+  if (decision.managed) {
+    const identity = decision.managed;
+    const serial = decision.target?.serial ?? decision.orphanSerial ?? null;
+    (opts.registerCleanup ?? registerManagedDeviceCleanup)(() => {
+      const out = reclaimManagedDevice(
+        {
+          schema_version: '1.0',
+          serial,
+          target_kind: 'emulator',
+          started_by_run: opts.startedBy,
+          managed: identity,
+          status: decision.ok ? 'ready' : 'failed',
+          updated_at: new Date().toISOString(),
+        },
+        defaultProcessProbe(),
+      );
+      if (out.action === 'reclaimed') {
+        log(`退出：已回收本次托管启动的模拟器（pid=${out.pid}）`);
+      } else if (out.action === 'refused') {
+        console.error(`[device] 退出：托管模拟器未能回收（${out.reason}）——请手动结束 pid=${identity.pid}`);
+      }
+    });
+  }
+
+  if (decision.ok && decision.env) {
+    applyFrozenDeviceEnv(env, decision.env);
+    log(`设备目标已解析并注入：${env.HARNESS_HDC_TARGET}`);
+  }
+  return decision;
 }
 
 /**

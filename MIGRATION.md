@@ -367,6 +367,18 @@ generic 未登记（共享规则被物化不等于运行时会读取）。未登
 - **行为变化**：结构化视觉 defect 只有 `severity=major|blocker` 才产 coding 回修候选，`minor` 留在报告 WARN 与视觉债务台账（`needs_fix` 仍阻断 release）、不再消耗回退预算（宿主 run `20260906T143404Z-ab463c` 的两次已用回退均为真实修复，其 12 条 minor 声明差曾以 coding 候选身份错误请求第三次回退，因预算耗尽触发 `backtrack_limit` 停机）；T8 hard 命中被转录成 `minor` 现在由 `visual_diff_finding_transcription` 拦下（hard 合同 FAIL、best_effort WARN，文案给出下限 major）；testing 同键复用时若 `MAISON_GOLDEN_CONTRACT` 生效，`visual_diff_capture` 不再直接记 PASS，而是走既有采集入口只补采集（device_test/UT 不重跑，nav 参数读顶层已回填的 `device-test-run.meta.json`），两分支的 `visual_diff_capture` details 都多一行 `golden_contract=<sha256 前 16 位>|none`。defect schema、回退预算、T8 档位、verifier 模板、golden 夹具、执行键一律未动，消费者无需动手。
 - **放弃的准确性**：verifier 误标为 `minor` 的真实产品缺陷本轮不产候选，等下一轮 verifier 或人工升级；只守 hard 档，warn 档 T8 转录成 minor 后不进回修是本意；复用分支不防 `env -u`——代理清掉 golden 变量时框架只能如实写 `golden_contract=none`，由 evaluator 既有的 run 绑定把这种 PASS 判 FAIL。
 
+### 3.0.x：即席跑机内置设备门 + `device:ready` 独立就绪入口（Breaking，plan c7d2a9e4 / openspec adhoc-device-entry-gate）
+
+即席设备 CLI（`adhoc-device-test`）此前**从未接入设备入口门**：全文只有一行读 `HARNESS_HDC_TARGET`，而普通模式/goal 之外没有任何人注入它；恢复桥又只消费已注入的目标（`未显式指定目标，跳过就绪检查`），于是"凭据登记好了却永远不触发自动解锁"，锁屏上跑即席只会一路撞到 `screen is locked`。同时全仓没有任何"只解锁 / 只确认设备"的命令，解锁只是重跑设备阶段的副作用。3.0.x 起两件事收口：即席三个碰设备分支内置同一道门，另加一个独立就绪入口。
+
+- **行为变化（Breaking）**：即席执行（`--plan` / `--steps-file`）、`--dump-ui-only`、`--observe-ui` 三个分支现在都在**第一个设备命令之前**起设备门（`ensureHylyreReady` 之后；stderr 出现 `ADHOC_PHASE=device_gate`）。此前它在单设备宿主上不问策略、由 hdc 隐式选唯一在线设备直接跑；现在**策略 ok 才跑**，`device_policy_unset` 即 fail-fast、原文透传四选一。**存量用户首次会撞一次四选一**：只想保持原来的手工解锁习惯，跑一条 `npm run device:set -- --manual-unlock` 即可（manual 档=人保证设备可用，框架不碰口令），此后行为与从前一致外加一次 wake+快照（设备已解锁时约 1–3 s）。仅 derive（只给 `--steps`）与用法错误分支不起门。门未通过时不发出任何设备命令，执行/observe 分支落 `error_kind='device_not_ready'` 的 trace placeholder。
+- **新命令 `npm run device:ready`**（`npx ts-node scripts/device-policy.ts --ready [--serial <sn>] [--json]`）：把"解锁手机 / 手机准备好了吗"变成一个可点名的动作，不需要 feature、bundle、acceptance 或测试报告。非冻结上下文走与阶段入口**同一道门**（策略 → 解析 → 就绪 → 注入），冻结上下文（goal 注入的子进程）沿用冻结目标与冻结授权、复用运行期恢复，异 `--serial` 直接拒绝且零设备操作。
+- **`--ready --json` 与 `--check --json` 同一份两段契约**：判定完成（`ready` / `device_policy_unset` / `ambiguous` / `blocked` / `frozen_target_mismatch`）一律**退出 0**，调用方看 `code`；只有执行失败（凭据库不可读、配置损坏）非零退出且 stdout 无 JSON。JSON 形状：`{ ok, code, serial, target_kind, reused_frozen, notes, reason? }`。人读模式沿用 `0 / 3 / 1`。
+- **结果只对本次调用有效**：`ok=true` 表示这次确认了 `serial` 这台目标可用——`target_kind=physical` 才能说"手机已解锁"，`emulator` 是"手机未就绪、已授权模拟器可用"，`unknown` 是"目标可用但未完成真机 attestation"。该命令**不持有托管会话、不跨命令传递目标**（managed 档下起的实例随进程退出即回收），后续即席/正式入口各自起门重解析；notes 里写着这条边界。**要操作 App 就直接跑即席 CLI**（它自带门），不要先 `--ready` 再即席（重复检查，managed 档还会起停两次）。
+- **请删掉自写的解锁脚本**：临时补接线用的脚本（直调 `ensureUnlocked` / `buildUnlockDeps` / 硬编码凭据版本、绕过 `collectPolicyStatus` 策略入口）现在没有存在理由，改用 `device:ready` 或即席 CLI。**若它落在 `framework/` 目录下尤须删除**——那里是发布件解压目录，消费者写入违反 consumer-framework-boundary，下次 UPDATE 会被覆盖。
+- **未改动**：PIN 仍只能由用户本人在真实 TTY 用 `--enroll` 登记（agent 不代跑、口令不进对话），`ensureDeviceReady` / `runPhaseEntryDeviceGate` 的冻结放行 / `ensureDeviceReadyAtRuntime` / `collectPolicyStatus` / 恢复桥的判定一律未动，即席也没有变成 phase。
+- **放弃的准确性**：① 每次即席执行多一次 wake+快照，managed 档下门可能起模拟器实例；② `--ready` 在 managed 档只能证明"能起来并就绪"，随即回收；③ 冻结上下文里的 `--ready` 只做运行期恢复，探测判不出（`unknown`）报 `ok=false, code='blocked'`（"无法确认锁屏状态"）而不放行——独立命令没有后续操作可验证，宁可让人看一眼手机；④ `--ready` 成功不等于此后一直解锁，锁屏超时后仍由既有运行期恢复桥再解一次，不加轮询保活。
+
 ## 首选路径：初始化 Skill 的 UPDATE 模式（编排化 · S1–S4）
 
 当实例根已存在 `framework.config.json` 时，再次执行 [`framework-init`](skills/project/framework-init/SKILL.md)（`/framework-init`）进入 **UPDATE** 模式，流程为：

@@ -5,6 +5,7 @@
 
 import {
   applyFrozenDeviceEnv,
+  applyPhaseEntryDeviceGate,
   buildTestingTargetKindCap,
   deviceEnvFor,
   ensureDeviceReady,
@@ -846,19 +847,24 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       /phaseRequiresDevice\(phase, resolvedProfile\)/.test(src),
       '入口门须由 phaseRequiresDevice 派生（不得硬编码 phase 名）',
     );
-    assert(/await runPhaseEntryDeviceGate\(/.test(src), '须调用入口门');
+    assert(/await applyPhaseEntryDeviceGate\(/.test(src), '须调用入口门（经共享 helper）');
     // 门必须排在 Step 2（脚本 harness=设备操作发生地）之前
-    const gateIdx = src.indexOf('runPhaseEntryDeviceGate(');
+    const gateIdx = src.indexOf('applyPhaseEntryDeviceGate(');
     const stepTwoIdx = src.indexOf("console.log('\\n🔧 Step 2");
     assert(gateIdx > 0 && stepTwoIdx > 0, '两个锚点都须存在');
     assert(gateIdx < stepTwoIdx, '设备前置必须排在 Step 2 脚本 harness 之前（任何设备操作之前）');
-    // env 注入与 testing 封顶都走**生产函数**（行为由下面独立用例验证，此处只钉接线）
+    // env 注入与托管回收登记随 helper 一起下沉（c7d2a9e4 D1）：接线钉改钉 helper 源码，
+    // 顺序与"无论 ok 与否都先登记"的行为由本文件的 D1 helper 行为用例验证。
+    const helperSrc = fsMod.readFileSync(
+      pathMod.join(__dirname, '..', '..', 'scripts', 'utils', 'device-readiness-gate.ts'),
+      'utf-8',
+    );
     assert(
-      /applyFrozenDeviceEnv\(process\.env, gate\.env\)/.test(src),
+      /applyFrozenDeviceEnv\(env, decision\.env\)/.test(helperSrc),
       'env 注入须走 applyFrozenDeviceEnv（原子整组，不得逐键"不存在才写"）',
     );
     assert(
-      !/if \(!process\.env\[k\]\) process\.env\[k\] = v/.test(src),
+      !/if \(!(?:proc)?[Ee]nv\[k\]\) (?:proc)?[Ee]nv\[k\] = v/.test(helperSrc),
       '不得逐键"不存在才写"——那会把陈旧的冻结上下文留在 env 里',
     );
     assert(
@@ -869,14 +875,14 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       /if \(deviceConclusionCap\) checks\.push\(deviceConclusionCap\)/.test(src),
       '封顶结果须入 checks 账（参与 violations/报告/退出码），否则等于没封',
     );
-    // 托管实例必须注册回收，且**早于**任何退出分支
-    assert(/registerManagedDeviceCleanup\(/.test(src), '托管模拟器须注册退出回收，否则进程泄漏');
-    const cleanupIdx = src.indexOf('registerManagedDeviceCleanup(');
-    const exitIdx = src.indexOf("console.error(`   ✗ ${(gate.reason");
-    assert(cleanupIdx > 0 && exitIdx > 0, '两个锚点都须存在');
+    // 托管实例必须注册回收（登记点在 helper 内，且早于任何返回——见 D1 helper 行为用例）
     assert(
-      cleanupIdx < exitIdx,
-      '回收登记必须排在 !gate.ok 的退出分支之前——托管实例"起来了但没就绪"是普通失败路径，晚登记即泄漏',
+      /registerManagedDeviceCleanup\b/.test(helperSrc) && /reclaimManagedDevice\(/.test(helperSrc),
+      '托管模拟器须注册退出回收，否则进程泄漏',
+    );
+    assert(
+      !/registerManagedDeviceCleanup\b/.test(src),
+      'harness-runner 不得再自己抄一份回收登记（纪律只留一处）',
     );
     // 编译跳过 flag 不得用来免除设备门：UT 的真机执行只受 HARNESS_SKIP_HVIGOR_TEST 控制，
     // testing 更完全不认这个编译 flag——用它让路等于门形同虚设。
@@ -1019,6 +1025,306 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     assertEq(
       buildTestingTargetKindCap('ut', { serial: '127.0.0.1:5555', targetKind: 'emulator' }), undefined,
       'ut 允许在模拟器上 PASS（既有语义不得被改宽或改严）',
+    );
+  });
+
+  // ==========================================================================
+  // c7d2a9e4 D1：共享 helper applyPhaseEntryDeviceGate（起门 → notes → 托管回收登记 →
+  // 原子注入 env）。即席 CLI 与 device:ready 复用同一条接线，纪律不抄第二遍。
+  // ==========================================================================
+
+  await run(results, 'V1 helper：ok+env → 整组原子注入；!ok → env 零改动；冻结放行原样返回', async () => {
+    const env: NodeJS.ProcessEnv = {
+      MAISON_DEVICE_CREDENTIAL_REF: 'maison/device/OLD-PHONE/v9',
+      UNRELATED_VAR: 'keep-me',
+    };
+    const notesSeen: string[] = [];
+    const okDecision = await applyPhaseEntryDeviceGate({
+      projectRoot: '/tmp/x',
+      phase: 'testing',
+      startedBy: 'adhoc-1',
+      env,
+      log: line => notesSeen.push(line),
+      registerCleanup: () => { throw new Error('无 managed 不得登记回收'); },
+      gate: async () => ({
+        ok: true,
+        notes: ['设备策略检查通过（code=ok）'],
+        env: deviceEnvFor({ serial: 'dev-1', targetKind: 'physical' }, 'sess-1'),
+        target: { serial: 'dev-1', targetKind: 'physical' },
+      }),
+    });
+    assertEq(okDecision.ok, true, 'ok 决策原样返回');
+    assertEq(env.HARNESS_HDC_TARGET, 'dev-1', '目标须注入到调用方给的 env');
+    assertEq(env.MAISON_DEVICE_CREDENTIAL_REF, undefined, '陈旧冻结上下文须被整组删除');
+    assertEq(env.UNRELATED_VAR, 'keep-me', '非 MAISON_DEVICE_* 不得被动到');
+    assert(notesSeen.includes('设备策略检查通过（code=ok）'), '门的 notes 须逐条透出');
+    assert(notesSeen.some(l => l.includes('设备目标已解析并注入')), '注入后须打一行目标');
+
+    const blockedEnv: NodeJS.ProcessEnv = { HARNESS_HDC_TARGET: 'stale-phone' };
+    const blocked = await applyPhaseEntryDeviceGate({
+      projectRoot: '/tmp/x',
+      phase: 'testing',
+      startedBy: 'adhoc-1',
+      env: blockedEnv,
+      gate: async () => ({ ok: false, code: 'blocked' as const, notes: [], reason: '设备仍锁屏' }),
+    });
+    assertEq(blocked.code, 'blocked', 'code 原样透出');
+    assertEq(blockedEnv.HARNESS_HDC_TARGET, 'stale-phone', '!ok 时 env 零改动（不得注入任何目标）');
+
+    const frozenEnv: NodeJS.ProcessEnv = { MAISON_DEVICE_ATTEMPT_FROZEN: '1', HARNESS_HDC_TARGET: 'goal-phone' };
+    const frozen = await applyPhaseEntryDeviceGate({
+      projectRoot: '/tmp/x',
+      phase: 'testing',
+      startedBy: 'adhoc-1',
+      env: frozenEnv,
+      gate: async () => ({ ok: true, notes: ['复用已冻结的 attempt 目标 goal-phone'], reusedFrozen: true }),
+    });
+    assertEq(frozen.reusedFrozen, true, '冻结放行须原样返回');
+    assertEq(frozenEnv.HARNESS_HDC_TARGET, 'goal-phone', '冻结放行不产 env 片段 → 零改动');
+  });
+
+  await run(results, 'V1 helper：managed 无论 ok 与否都在返回前登记回收；门抛出则原样上抛且不登记不注入', async () => {
+    const identity = { pid: 4242, startedAtMs: 1_700_000_000_000, executable: 'C:/emu.exe', profile: 'Pura 90' };
+    const registered: number[] = [];
+    const env: NodeJS.ProcessEnv = {};
+    const failed = await applyPhaseEntryDeviceGate({
+      projectRoot: '/tmp/x',
+      phase: 'ut',
+      startedBy: 'harness-ut-1',
+      env,
+      registerCleanup: () => { registered.push(registered.length); },
+      gate: async () => ({
+        ok: false,
+        code: 'blocked' as const,
+        notes: [],
+        reason: '模拟器未在预算内就绪',
+        managed: identity,
+        orphanSerial: 'emu-x',
+      }),
+    });
+    assertEq(failed.ok, false, '未就绪须阻断');
+    assertEq(registered.length, 1, '**失败路径也必须登记回收**——晚登记即零凭证泄漏');
+
+    await applyPhaseEntryDeviceGate({
+      projectRoot: '/tmp/x',
+      phase: 'ut',
+      startedBy: 'harness-ut-1',
+      env,
+      registerCleanup: () => { registered.push(registered.length); },
+      gate: async () => ({
+        ok: true,
+        notes: [],
+        managed: identity,
+        env: deviceEnvFor({ serial: 'emu-x', targetKind: 'emulator' }, 's'),
+        target: { serial: 'emu-x', targetKind: 'emulator' },
+      }),
+    });
+    assertEq(registered.length, 2, 'ok 路径同样登记回收');
+
+    const throwEnv: NodeJS.ProcessEnv = {};
+    let thrown: Error | null = null;
+    try {
+      await applyPhaseEntryDeviceGate({
+        projectRoot: '/tmp/x',
+        phase: 'ut',
+        startedBy: 'harness-ut-1',
+        env: throwEnv,
+        registerCleanup: () => { registered.push(registered.length); },
+        gate: async () => { throw new Error('[device-policy] 凭据库不可读（vault down）'); },
+      });
+    } catch (e) {
+      thrown = e as Error;
+    }
+    assert(thrown !== null && /凭据库不可读/.test(thrown.message), '门抛出须原样上抛（执行失败通道）');
+    assertEq(registered.length, 2, '抛出时不得登记回收');
+    assertEq(Object.keys(throwEnv).length, 0, '抛出时不得注入任何 env');
+  });
+
+  await run(results, 'V1 门的三个 ok:false 返回点各带 code（unset / ambiguous / blocked）', async () => {
+    const unset = await runPhaseEntryDeviceGate({ ...entryBench({ policyCode: 'device_policy_unset' }).args, env: {} });
+    assertEq(unset.code, 'device_policy_unset', '策略未配置 → device_policy_unset');
+
+    const ambiguous = await runPhaseEntryDeviceGate({
+      ...entryBench({ result: { state: 'AMBIGUOUS', reason: '多设备', notes: [] } }).args,
+      env: {},
+    });
+    assertEq(ambiguous.code, 'ambiguous', 'AMBIGUOUS → ambiguous');
+
+    const blocked = await runPhaseEntryDeviceGate({
+      ...entryBench({ result: { state: 'BLOCKED', reason: '仍锁屏', notes: [] } }).args,
+      env: {},
+    });
+    assertEq(blocked.code, 'blocked', 'BLOCKED → blocked');
+
+    const corrupt = await runPhaseEntryDeviceGate({
+      ...entryBench({}).args,
+      env: { MAISON_DEVICE_ATTEMPT_FROZEN: '1' },
+    });
+    assertEq(corrupt.code, undefined, '冻结上下文损坏不填 code（既非策略问题也非设备问题）');
+
+    const ok = await runPhaseEntryDeviceGate({ ...entryBench({}).args, env: {} });
+    assertEq(ok.code, undefined, '通过时不带 code');
+  });
+
+  await run(results, 'V2 即席 CLI 接线：三个碰设备分支按块在首个设备操作前起门，derive-only 不起门', async () => {
+    const fsMod = await import('fs');
+    const pathMod = await import('path');
+    const src = fsMod.readFileSync(
+      pathMod.join(__dirname, '..', '..', 'scripts', 'adhoc-device-test.ts'), 'utf-8',
+    );
+    /** 从 `anchor` 处的 `{` 起做花括号配对，切出整个块（源码内无跨块字符串花括号） */
+    const braceBlock = (text: string, anchor: string): string | null => {
+      const s = text.indexOf(anchor);
+      if (s < 0) return null;
+      let depth = 0;
+      for (let i = text.indexOf('{', s); i >= 0 && i < text.length; i++) {
+        if (text[i] === '{') depth++;
+        else if (text[i] === '}' && --depth === 0) return text.slice(s, i + 1);
+      }
+      return null;
+    };
+
+    /**
+     * 断言体独立成函数，供末尾**负例**（内存中删掉 `!gate.ok` 分支）复用：
+     * 只断"某处有 process.exit"抓到的可能是 catch 里的那个，删掉整个失败分支照样绿。
+     */
+    const assertWiring = (source: string): void => {
+      /** 按执行路径切块——不固定全文件顺序，也不数调用次数 */
+      const slice = (startAnchor: string, endAnchor: string): string => {
+        const s = source.indexOf(startAnchor);
+        assert(s > 0, `切片起点缺失：${startAnchor}`);
+        const e = source.indexOf(endAnchor, s + startAnchor.length);
+        assert(e > s, `切片终点缺失：${endAnchor}`);
+        return source.slice(s, e + endAnchor.length);
+      };
+
+      // ① dump-ui-only：门在 runAdhocDumpUi 之前，且**判定失败分支自己**退出
+      const dumpBlock = slice('if (dumpUiOnly) {', 'process.exit(0);');
+      const dumpGate = dumpBlock.indexOf('applyPhaseEntryDeviceGate(');
+      const dumpCall = dumpBlock.indexOf('runAdhocDumpUi(');
+      assert(dumpGate > 0 && dumpCall > 0, 'dump-ui-only 块内两个锚点都须存在');
+      assert(dumpGate < dumpCall, 'dump-ui-only：门必须早于 runAdhocDumpUi（它是该分支第一个设备操作）');
+      const dumpFail = braceBlock(dumpBlock, 'if (!gate.ok) {');
+      assert(dumpFail !== null, 'dump-ui-only：缺 `if (!gate.ok)` 分支——判定失败会继续 dump');
+      assert(dumpFail!.includes('process.exit('), 'dump-ui-only：`!gate.ok` 分支内须 process.exit');
+      assert(
+        dumpBlock.indexOf(dumpFail!) < dumpCall,
+        'dump-ui-only：`!gate.ok` 分支须整体早于 runAdhocDumpUi',
+      );
+
+      // ② 执行 / observe 主路径：门在 resolveMainAbilityForBundle（首个 bm dump）之前，
+      //    失败分支内先写 device_not_ready placeholder 再退出
+      const execBlock = slice("logAdhocPhase('ensure')", "logAdhocPhase('run')");
+      const execGate = execBlock.indexOf('applyPhaseEntryDeviceGate(');
+      const execAbility = execBlock.indexOf('resolveMainAbilityForBundle(');
+      assert(execGate > 0 && execAbility > 0, '主路径两个锚点都须存在');
+      assert(execGate < execAbility, '主路径：门必须早于 resolveMainAbilityForBundle');
+      const execFail = braceBlock(execBlock, 'if (!gate.ok) {');
+      assert(execFail !== null, '主路径：缺 `if (!gate.ok)` 分支——判定失败会继续发设备命令');
+      const writeIdx = execFail!.indexOf('writeAdhocTracePlaceholder(');
+      const placeholderIdx = execFail!.indexOf("error_kind: 'device_not_ready'");
+      const exitIdx = execFail!.indexOf('process.exit(');
+      assert(writeIdx > 0, '`!gate.ok` 分支内须调用 writeAdhocTracePlaceholder（只留字面量不写盘＝无证据）');
+      assert(placeholderIdx > writeIdx, 'device_not_ready 须是该调用的参数（在调用之后）');
+      assert(exitIdx > writeIdx, 'placeholder 写完之后才退出（先落证据再退）');
+      assert(
+        execBlock.indexOf(execFail!) > execGate && execBlock.indexOf(execFail!) + execFail!.length < execAbility,
+        '主路径：`!gate.ok` 分支须整体位于门之后、resolveMainAbilityForBundle 之前',
+      );
+
+      // ③ derive-only：不碰设备 → 不起门
+      const deriveBlock = slice('if (isDeriveOnly) {', 'process.exit(0);');
+      assert(
+        !deriveBlock.includes('applyPhaseEntryDeviceGate('),
+        'derive-only 不碰设备，MUST NOT 起门（起了就是白解锁一台手机）',
+      );
+
+      // ④ 目标只在门之后读：顶层不得再有先于门的 HARNESS_HDC_TARGET 读取
+      const firstGate = source.indexOf('await applyPhaseEntryDeviceGate(');
+      const firstDeviceSn = source.indexOf('const deviceSn = process.env.HARNESS_HDC_TARGET');
+      assert(firstGate > 0 && firstDeviceSn > 0, '两个锚点都须存在');
+      assert(firstDeviceSn > firstGate, '顶层不得在起门之前读 HARNESS_HDC_TARGET（那是 env 恒空的老形态）');
+      assert(source.includes("logAdhocPhase('device_gate')"), '须打 ADHOC_PHASE=device_gate 锚点');
+    };
+
+    assertWiring(src);
+
+    // 负例：内存中删掉两个 `!gate.ok` 分支后本断言体必须失败（否则它没钉住判定失败退出）
+    let stripped = src;
+    for (;;) {
+      const block = braceBlock(stripped, 'if (!gate.ok) {');
+      if (block === null) break;
+      stripped = stripped.replace(block, '');
+    }
+    let negative: Error | null = null;
+    try { assertWiring(stripped); } catch (e) { negative = e as Error; }
+    assert(negative !== null, '负例失守：删掉 `!gate.ok` 分支后断言仍通过 ⇒ 没钉住"判定失败即退出"');
+
+    // 负例二：只把主路径失败分支里的写盘调用换成 `void (`（参数与 exit 全留），
+    // 断言体仍须失败——否则"门失败先落 placeholder"没被钉住，只钉了字面量。
+    const execFailSrc = braceBlock(src.slice(src.indexOf("logAdhocPhase('ensure')")), 'if (!gate.ok) {');
+    assert(execFailSrc !== null, '负例二取块失败：主路径 `!gate.ok` 分支不存在');
+    const noWrite = src.replace(
+      execFailSrc!,
+      execFailSrc!.replace('writeAdhocTracePlaceholder(', 'void ('),
+    );
+    assert(noWrite !== src, '负例二未生效：主路径失败分支里没有 writeAdhocTracePlaceholder(');
+    let negative2: Error | null = null;
+    try { assertWiring(noWrite); } catch (e) { negative2 = e as Error; }
+    assert(negative2 !== null, '负例二失守：主路径失败分支不写 placeholder 时断言仍通过');
+  });
+
+  await run(results, 'F1 就绪门复用既有 HDC 路径解析：配了 HARNESS_HDC_EXE 就不得裸跑 `hdc`', async () => {
+    // 事故形态：deps 的唯一 hdc 调用点写死 `spawnSync('hdc', …)`，PATH 无 hdc 但配了绝对
+    // 路径的宿主（Cursor / CI 子进程常见）会被门误判"目标离线"。全程注入，零真机。
+    const fsMod = await import('fs');
+    const osMod = await import('os');
+    const pathMod = await import('path');
+    /* eslint-disable @typescript-eslint/no-require-imports */
+    const cp = require('child_process') as typeof import('child_process');
+    const hdcRunner = require('../../../profiles/hmos-app/harness/hdc-runner') as
+      typeof import('../../../profiles/hmos-app/harness/hdc-runner');
+    const deps = require('../../scripts/utils/device-readiness-deps') as
+      typeof import('../../scripts/utils/device-readiness-deps');
+    /* eslint-enable @typescript-eslint/no-require-imports */
+
+    const tmpDir = fsMod.mkdtempSync(pathMod.join(osMod.tmpdir(), 'maison-hdc-exe-'));
+    const fakeExe = pathMod.join(tmpDir, 'hdc-fake.exe');
+    fsMod.writeFileSync(fakeExe, '');
+    const realSpawnSync = cp.spawnSync;
+    const prevEnv: Record<string, string | undefined> = {
+      HARNESS_HDC_EXE: process.env.HARNESS_HDC_EXE,
+      HDC_EXE: process.env.HDC_EXE,
+      HARNESS_HDC_TARGET: process.env.HARNESS_HDC_TARGET,
+    };
+    const spawned: string[] = [];
+    try {
+      process.env.HARNESS_HDC_EXE = fakeExe;
+      delete process.env.HDC_EXE;
+      delete process.env.HARNESS_HDC_TARGET;
+      hdcRunner.resetHdcExecutableCache();
+      // 换掉 child_process 模块对象上的 spawnSync：解析器的 `list targets` 探针与就绪门的
+      // 实际调用都经它（commonjs 下两侧都是属性访问），一处拦截即覆盖两者
+      (cp as unknown as { spawnSync: unknown }).spawnSync = (file: string) => {
+        spawned.push(String(file));
+        return { pid: 0, output: [], stdout: '[Empty]', stderr: '', status: 0, signal: null };
+      };
+      assertEq(deps.listHdcTargets().length, 0, '桩回 [Empty] → 无目标（判据一字未改）');
+      deps.wakeDevice('dev-1');
+    } finally {
+      (cp as unknown as { spawnSync: unknown }).spawnSync = realSpawnSync;
+      for (const k of Object.keys(prevEnv)) {
+        const v = prevEnv[k];
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+      hdcRunner.resetHdcExecutableCache();
+      fsMod.rmSync(tmpDir, { recursive: true, force: true });
+    }
+    assert(spawned.length >= 2, `探针与 wake 都须真的 spawn（实得 ${spawned.length}）`);
+    assert(
+      spawned.every(f => f === fakeExe),
+      `就绪门须用解析出的可执行路径，不得回落裸 hdc：${JSON.stringify(spawned)}`,
     );
   });
 

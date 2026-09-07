@@ -20,6 +20,10 @@
 import { spawnSync } from 'child_process';
 import * as path from 'path';
 import { detectRepoLayout } from '../repo-layout';
+import { applyPhaseEntryDeviceGate } from './utils/device-readiness-gate';
+import { ensureDeviceReadyAtRuntime } from './utils/device-runtime-recovery';
+import { buildUnlockDeps, resolveAttemptCredentialRef } from './utils/device-readiness-deps';
+import type { UnlockDeps } from './utils/device-unlock-helper';
 import { loadLocalConfig, updateLocalConfig, localConfigPath } from './utils/framework-local-config';
 import {
   allocateCredentialVersion,
@@ -369,7 +373,144 @@ export function rebind(
   }
 }
 
-export function main(argv: string[]): number {
+/**
+ * `--ready` 的机器可读结果（c7d2a9e4 D2）。
+ *
+ * `ok=true` 只表示**本次调用**确认了 `serial` 这台目标可用；`target_kind='physical'`
+ * 才能对用户说"手机已解锁"。CLI 写 `process.env` 只影响本进程，**不承诺跨命令继承目标**。
+ */
+export interface DeviceReadyResult {
+  ok: boolean;
+  code: 'ready' | 'device_policy_unset' | 'ambiguous' | 'blocked' | 'frozen_target_mismatch';
+  serial: string | null;
+  target_kind: string | null;
+  reused_frozen: boolean;
+  notes: string[];
+  reason?: string;
+}
+
+/** 结果作用域的诚实说明——不加字段、不加会话保持，只把边界写进 notes */
+const READY_SCOPE_NOTE =
+  '托管模拟器随本进程退出回收；结果只对本次调用有效，后续入口各自起门。';
+
+/**
+ * 独立的设备就绪入口：`npx ts-node scripts/device-policy.ts --ready [--serial <sn>] [--json]`。
+ *
+ * 两条路径都**复用既有函数**，不建第三套目标解析：
+ * - 非冻结（普通终端 / 非 goal 会话）→ 走入口门 `applyPhaseEntryDeviceGate`（策略 → 解析
+ *   → 就绪 → 注入 env）；
+ * - 冻结（goal 注入的子进程）→ **不调门**（门在此只会放行，回答不了"此刻就绪吗"），
+ *   沿用冻结目标与冻结授权，复用运行期恢复 `ensureDeviceReadyAtRuntime`；异 serial 直接
+ *   拒绝且零设备操作。
+ *
+ * 输出契约与 `--check` 同款两段：`--json` 判定完成一律退出 0（看 `code`），
+ * 只有**执行失败**非零且 stdout 无 JSON。
+ */
+export async function ready(
+  projectRoot: string,
+  opts: { serial?: string; json?: boolean },
+  deps: {
+    env?: NodeJS.ProcessEnv;
+    gate?: typeof applyPhaseEntryDeviceGate;
+    recover?: typeof ensureDeviceReadyAtRuntime;
+    buildUnlockDeps?: () => UnlockDeps;
+    resolveAttemptCredentialRef?: (projectRoot: string) => string | null;
+  } = {},
+): Promise<number> {
+  const env = deps.env ?? process.env;
+  const gate = deps.gate ?? applyPhaseEntryDeviceGate;
+  const startedBy = `device-ready-${process.pid}`;
+  let result: DeviceReadyResult;
+  try {
+    if (env.MAISON_DEVICE_ATTEMPT_FROZEN !== '1') {
+      // `--serial` 走门既有的"env > target_serial > 唯一在线"优先级，不另写一套
+      if (opts.serial) env.HARNESS_HDC_TARGET = opts.serial;
+      const d = await gate({ projectRoot, phase: 'device-ready', startedBy, env });
+      result = {
+        ok: d.ok,
+        code: d.ok ? 'ready' : (d.code ?? 'blocked'),
+        serial: d.target?.serial ?? null,
+        target_kind: d.target?.targetKind ?? null,
+        reused_frozen: false,
+        notes: d.notes,
+        ...(d.ok ? {} : { reason: d.reason ?? '设备前置未通过' }),
+      };
+    } else {
+      const target = env.HARNESS_HDC_TARGET?.trim() || null;
+      const targetKind = env.MAISON_DEVICE_TARGET_KIND ?? null;
+      if (!target) {
+        // 冻结上下文损坏：**复用门的原文**（门在该分支零设备操作、零策略查询）
+        const d = await gate({ projectRoot, phase: 'device-ready', startedBy, env });
+        result = {
+          ok: false,
+          code: 'blocked',
+          serial: null,
+          target_kind: null,
+          reused_frozen: true,
+          notes: d.notes,
+          reason: d.reason ?? '冻结上下文损坏',
+        };
+      } else if (opts.serial && opts.serial !== target) {
+        result = {
+          ok: false,
+          code: 'frozen_target_mismatch',
+          serial: target,
+          target_kind: targetKind,
+          reused_frozen: true,
+          notes: [`本次 attempt 已冻结在目标 ${target}（未做任何设备操作）`],
+          reason:
+            `[device] 本次 attempt 已冻结在目标 ${target}，不能改用 --serial ${opts.serial}——` +
+            '冻结目标不可切换（否则会出现"解锁 A、操作 B"）。\n' +
+            '  若确需换设备，请在 goal 之外的普通终端里重跑。',
+        };
+      } else {
+        const rec = (deps.recover ?? ensureDeviceReadyAtRuntime)({
+          serial: target,
+          // 冻结且无 ref = 本 attempt 未授权，绝不回落读配置
+          credentialRef: (deps.resolveAttemptCredentialRef ?? resolveAttemptCredentialRef)(projectRoot),
+          deps: (deps.buildUnlockDeps ?? buildUnlockDeps)(),
+        });
+        const base = {
+          serial: target,
+          target_kind: targetKind,
+          reused_frozen: true,
+          notes: [rec.note],
+        };
+        // **只有 recovered=true 判成功**：独立命令没有后续操作来验证"判不出"，
+        // 宁可让用户看一眼手机，也不给一个查不到依据的"已解锁"。
+        result = rec.recovered
+          ? { ok: true, code: 'ready', ...base }
+          : {
+              ok: false,
+              code: 'blocked',
+              ...base,
+              reason:
+                rec.reason === 'unknown'
+                  ? '[device] 无法确认锁屏状态（唤醒后仍判不出）——请看一眼设备，确认屏幕状态后重试。'
+                  : rec.note,
+            };
+      }
+    }
+  } catch (err) {
+    // 执行失败通道（凭据库不可读、配置损坏、就绪核心异常）：stdout 无 JSON、非零退出
+    console.error(
+      `[device-policy] --ready 执行失败：${(err as Error).message}\n` +
+        '  这**不是**"未配置"，不要据此重新登记凭据——先排查上面的原因。',
+    );
+    return 1;
+  }
+  result.notes = [...result.notes, READY_SCOPE_NOTE];
+  if (opts.json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return 0;
+  }
+  for (const n of result.notes) console.log(`  · ${n}`);
+  console.log(`[device-policy] code=${result.code}`);
+  if (result.reason) console.log(result.reason);
+  return result.ok ? 0 : 3;
+}
+
+export function main(argv: string[]): number | Promise<number> {
   const valueOf = (flag: string): string | undefined => {
     const i = argv.indexOf(flag);
     return i >= 0 ? argv[i + 1]?.trim() : undefined;
@@ -400,6 +541,9 @@ export function main(argv: string[]): number {
       emulatorProfile: valueOf('--emulator-profile'),
       targetSerial: valueOf('--serial'),
     });
+  }
+  if (argv.includes('--ready')) {
+    return ready(projectRoot, { serial: valueOf('--serial'), json: argv.includes('--json') });
   }
   if (argv.includes('--enroll')) {
     const i = argv.indexOf('--serial');
@@ -439,5 +583,7 @@ export function main(argv: string[]): number {
 }
 
 if (require.main === module) {
-  process.exitCode = main(process.argv.slice(2));
+  const exit = main(process.argv.slice(2));
+  if (typeof exit === 'number') process.exitCode = exit;
+  else void exit.then(code => { process.exitCode = code; });
 }

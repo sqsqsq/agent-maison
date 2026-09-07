@@ -23,6 +23,8 @@ const ERROR_KINDS: AdhocErrorKind[] = [
   'warmup_failed',
   'run_crashed',
   'plan_lint_blocker',
+  // c7d2a9e4 D1：即席 CLI 的设备入口门未通过（零设备命令即中止）
+  'device_not_ready',
   'unknown',
 ];
 
