@@ -31,8 +31,8 @@ todos:
     content: 用户触发——先过 §7.2 P0.5 golden 适用性裁定（基线匹配才设 MAISON_GOLDEN_CONTRACT）；按 §7.2-E 跑包内 evaluator（带 `--feature bc-openCard-1`）；verdict=PASS 才具备 promote 前提。基线不匹配的 run 保留 FAIL 原样并注「验收样本不适用」，不记 N/A。正式 promote 不是本 plan 的完成前置。
     status: pending
   - id: b06-host-b07-reacceptance
-    content: 用户触发——B07（视觉回修归因与 golden 复用校验，plan 6e4a2c8b）本地完成并进候选件后，按 §7.2 P0.5 裁定 golden 适用性，以用户指定的窗口做范围明确的补验收（不再起同条件 spec→testing 长 run 只为复现）；结果回填 §6 登记表。B07 的完成判据不含此项。
-    status: pending
+    content: 用户触发——B07（视觉回修归因与 golden 复用校验，plan 6e4a2c8b）本地完成并进候选件后，按 §7.2 P0.5 裁定 golden 适用性，以用户指定的窗口做范围明确的补验收（不再起同条件 spec→testing 长 run 只为复现）；结果回填 §6 登记表。B07 的完成判据不含此项。 **09-07 已跑：run 20260907T063800Z-26c3b0，B07 目标行为实测成立（三轮拦下 minor、零候选、零回退）；run 因缺口①②③ HALTED/no_progress_visual_gap，见 §6 登记表。**
+    status: completed
   - id: b06-release-readiness-closeout
     content: 本地与宿主两侧真实完成后才回填登记表、勾各批 host todo 与总 plan 里程碑；不为过门禁提前勾完成。
     status: pending
@@ -236,6 +236,19 @@ P1 的四个文件另走一笔提交（evaluator + 其 unit 用例 + `candidate-
 | B05 | 显式 balanced / n/a 出口 | §7.2-G④ | 待填（默认配置结构上进不去） | 待填 | **不在必跑项**，未跑即缺口，`b05-host-acceptance` 保持 pending |
 | B05 | 本地 review 轮数 | 读 B05 plan 修订记录 | codex review **三轮** + 调度者把关（[b05 plan](pipeline_b05_phase_contracts_7b3e9a15.plan.md):409/:462/:490/:524） | 静态 | 同上 |
 | B06 | 本批施工图 review 轮数 | 读本文件 §8 | codex plan review **两轮**（第 1 轮 10 条 / 第 2 轮 8 条，全数采纳） | 静态 | 施工图审得再细也不替代宿主实测 |
+| B07 | minor 视觉信号不产 coding 候选（D1） | `goal-runs/20260907T063800Z-26c3b0/detach.log` grep `[actionable]` | `add_bank_card_collapsed: 9 条`（i1/i2/i3）、`add_bank_card_expanded: 2 条`、`all_banks: 1 条`（i2）；三轮 `deterministic_defects=[]`；全 run 无 `phase_backtrack_requested`，`backtracks_used=0` | 实测 | — |
+| B07 | 12 条 minor 下 harness 的裁决 | 同上 detach.log:1229–1288（i2） | `WARN [MAJOR] visual_diff … must_fix=6 … defects=12`；`Total 60 / FAIL 0 / WARN 4`；`Blockers: 0`；`Verdict: PASS`；`can_claim_done=YES` | 实测 | i2 随即被 `unverifiable_must_fix` 判 retry（缺口①） |
+| B07 | golden 身份披露（D3） | `testing/reports/script-report.json` 的 `visual_diff_capture` details | `screens=2 / preserved_build_valid=1 / golden_contract=none` | 实测 | "同键复用 PASS"那条未观测到（i3 外层 harness 真跑，缺口②） |
+| B07 | run 终态 | `goal-runs/20260907T063800Z-26c3b0/events.jsonl:110` | `run_end status=HALTED halt_reason=no_progress_visual_gap run_disposition=TERMINAL`；i1 FAIL→retry、i2 PASS→retry、i3 FAIL→halt（retries 2/2） | 实测 | 缺口①②③，均非 B07 改动引起 |
+| B07 | E（P0.5 判不匹配，照跑照存） | `goal-runs/20260907T063800Z-26c3b0/golden-report.json` | `verdict=FAIL`：FAIL 7（run_binding、ten_fixed_screens_exact_set、verdict_all_pass、screenshot_binding、required_assets、forbidden_HomeTab、key_overlays_and_completion）/ PASS 8；exact_set 缺 9 屏、多 2 屏 | 实测 | 验收样本不适用（contract 立项需求 ≠ 当前基线），不改写 |
+| B03（补） | 执行键复用是否真命中 | `testing/reports/*/hylyre/execution-key.json`（09-06 17:51 起 5 条） | 键交替：`21071a69…(hap=null)` 06:44 / `a7685ee1…(hap=20956575)` 07:08 / `21071a69…` 07:24 / `a7685ee1…` 07:40；i2 外层 harness 07:18:19–07:18:52（33 s）复用 070508Z（`capture_not_run`）；i3 外层因"最新 run 072045Z 是其他 execution key"真跑 20 例 + 装机 | 实测 | 缺口② |
+
+**B07 补验收暴露的缺口（09-07，均已核到代码分支；是否进 B08 由用户定）**
+
+① **同键复用 × 证据时间窗**：`goal-phase-runtime.ts`:2211–2220 要求 `device-test-run.meta.json` 的 `run_started_at/run_ended_at` 落在本 attempt 的 harness 窗口内；同键复用回填的是被复用 run 的冻结 meta，时间必在窗外 → `unverifiable_must_fix` → retry。复用一旦发生就必被否决，B03 的复用收益在 goal 模式下归零并额外消耗 retry 预算。
+② **执行键记录被 hap=null 的代理内部调用污染**：testing 代理自己跑的 `harness-runner --phase testing` 落下 `hap_sha256_full=null` 的成功记录；`execution-key.ts`:204–221 `decideReuse` 只看最新一条 → 外层 harness 看到"最新是其他 key"→ 每轮真跑 20 例 + 装机。
+③ **重采后 reference_viewport 剔除屏留 pending**：i3 重采后 `add_bank_card_expanded` / `all_banks`（参考图 4350 / 8312 px 长图）verifier 未终判（critic `unread_screenshots=1`），P0 未覆盖 → `visual_diff` FAIL → retries 耗尽 → `no_progress_visual_gap`。上一 run 同两屏被判 warn+UNKNOWN，本次留 pending，是 verifier 行为差异；需求资产（整页长图）是根因。
+④ i2 `verdict=PASS + action=retry`（理由 unverifiable 证据）却带 `failure_kind_classified=code_regression`，与 B04 A4 口径待核。
 
 **各批触及的 suite（供回归定位，非行为证据）**——由 `git diff --name-only <批区间> -- 'harness/tests/unit/*' 'profiles/*/harness/*test*'` 现取：
 
@@ -680,3 +693,7 @@ P1 的四个文件另走一笔提交（evaluator + 其 unit 用例 + `candidate-
 ### 2026-09-07：B07 plan review 引发的运行单修订（只改 §7.2 与 frontmatter，未跑宿主、未提交）
 
 codex 对 B07 施工图的 #1/#4：golden 适用性裁定前移到 §7.2 共同前置 **P0.5**（A 启动前，依据独立确认的需求基线）；A 命令的 golden 首段改为按 P0.5 条件保留；E 对不匹配基线的 run 保留 FAIL 并注「验收样本不适用」，不记 N/A；新增待办 `b06-host-b07-reacceptance`（用户触发）承接 B07 之后的补验收，B07 自身不含宿主判据。run `20260906T143404Z-ab463c` 的 E 结论按此记法，不改写。
+
+### 2026-09-07：B07 补验收回填（宿主 run 20260907T063800Z-26c3b0，未提交候选件、未改宿主）
+
+截断窗口 `--start testing --end testing`、不设 golden（P0.5）。D1 实测成立；golden_contract=none 披露成立；E 如实 FAIL 并标不适用。run 未闭环：HALTED / no_progress_visual_gap，原因是 §6 新登记的缺口①②③（复用证据被时间窗否决、hap=null 记录污染执行键、长图屏重采后留 pending），与 B07 改动无关。`b06-host-b07-reacceptance` 勾完成（动作已做、结果已记），`b06-host-merged-cu-run` 等其余宿主待办保持 pending。
