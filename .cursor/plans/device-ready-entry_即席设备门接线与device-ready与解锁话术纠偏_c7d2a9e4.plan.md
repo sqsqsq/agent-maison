@@ -254,6 +254,30 @@ cd harness && npm test
 
 codex 结论：整体已收敛，修正后即可收口进入实施。
 
+### 2026-09-07：宿主复验（用户触发）——通过，登记为中期复验
+
+§7 的宿主复验由用户在真机上触发，两步结果（用户转述）：
+
+| 步 | 命令 | 结果 |
+|---|---|---|
+| 1 | `npx ts-node scripts/device-policy.ts --ready --json` | `ok=true`、`code=ready`、`serial=3UJ0225321000395`、`target_kind=physical`；notes：`wake → unlock: 已用登记凭据解锁并复验` |
+| 2 | 即席 `adhoc-device-test --bundle com.example.simulatedwallet --dump-ui-only`（冷重启后 dump 首页） | dump 成功；trace `doc/features/_adhoc/testing/reports/20260907-170757/hylyre/trace.json`（TC-001 通过，`ADHOC_PHASE=device_gate` 已过）；UI dump `doc/app-snapshot-cache/com.example.simulatedwallet/dump-ui-20260907.json`（均为宿主工程相对路径） |
+
+**最终判据（§7 末句）**：宿主里用自然语言说「解锁手机」，agent 全程直接跑 `--ready`——无拒绝、无自写脚本、无让用户手动跑命令。**通过**。
+
+**证明了什么**：① 生产解锁链在当前 `device-readiness-gate.ts` / `device-readiness-deps.ts` 上于真机完成 wake → 快照 → 输入 → 复验解锁（`已用登记凭据解锁并复验` 这句 note 只在该条生产路径上产生）；② hdc 路径解析（`runHdc` 经 `hdc-runner.resolveHdcExecutableSync`）在宿主生效——即席 dump-ui-only 过了设备门并取到首页 dump。
+
+**为什么不关闭 `PENDING_REAL_DEVICE_REVERIFICATION`**：本次结果不落在活跃验收记录的判据面上（`harness/tests/unit/device-lockscreen-parser.unit.test.ts:120-190`），四项缺失：
+
+1. 未采集 `events.jsonl` 的两条事件（`device_unlock_attempt` outcome=succeeded + `device_ready` target_kind=physical、同 serial）；
+2. 无 `start_state_proof`——起始态未被证明为**时钟锁屏页**（`screen_lock_root_present=true` 且 `pin_container_present=false`）；若首帧已停在 PIN 页，`completeKeypad` 直接命中十键、**reveal 根本不执行**，正是本次修复要验的那条路径；
+3. 无 `waited_ms`（实测 suspend 后 3s 不锁、45s 才锁，只声明 suspend 不足以保证进入锁屏）；
+4. 无 `reveal_executed` 与 `credential_state_after=ready`。
+
+故只登记为**中期复验**：`.../a4e7c2f9-live-gate-2026-08-17T110000Z/verification.json` 的 `superseded_by_source_change` 内新增 `interim_reverification`（含上表原文要点、`source_at_time` 两哈希取自同对象 `changed_files.current_sha256`、`proves` / `does_not_prove` / `closes_pending:false`），`status`、`source_sha256`、`changed_files`、`new_dependencies_*` 一律不动。不伪造 `events.jsonl` 或 `start_state_proof`。
+
+**关闭路径**（按 a4e7c2f9 plan t8 流程，届时执行）：`power-shell suspend` → 等待 ≥45s 至真正锁屏 → `power-shell wakeup` → `uitest dumpLayout` 交**生产 parser** 判定锁屏根在场且 PIN 容器不在场（起始态要证明、不能只声明做过 suspend）→ `runDeviceReadinessGate(buildDeviceReadinessInput(hostRoot))` 采集两条事件 → 落**新记录目录** + 同步更新测试常量（`REQUIRED_ACCEPTANCE_SOURCES`、`ACCEPTANCE_DIR`）与新旧记录 `supersedes` / `closed_by` 互指。`profiles/hmos-app/harness/hdc-runner.ts` 是否纳入新的 `source_sha256`，届时裁定（现记录 `new_dependencies_not_covered` 已挂账）。
+
 ## 实施记录
 
 验证日志目录：`<scratch>/dre/`（`before-dev1-c1-<suite>.log` 改动前基线、`dev1-c1-<suite>.log` 改动后、`dev1-c1-typecheck.log`、`dev1-c1-lf-scan.log`）。全量 `cd harness && npm test` 本轮**未跑**（由调度者在 review 通过后跑一次）；宿主复验（§7）**未跑**，由用户触发。本轮全部验证零真机、零 hdc：`--ready` 的进程级 smoke 用未配置策略的临时 host，门在策略检查处即 fail-fast。
