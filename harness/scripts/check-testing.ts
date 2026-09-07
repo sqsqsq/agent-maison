@@ -1308,7 +1308,14 @@ export function checkVisualDebtDisclosure(ctx: CheckContext, report: string | nu
 // Traceability Checks
 // --------------------------------------------------------------------------
 
-function extractTestCaseACRefs(plan: string): Map<string, string[]> {
+/**
+ * TC → 「关联 AC」列里**合词法**的 AC/BD 引用。
+ *
+ * `rawTokens`（可选出参）同步收下切分后的**原始** token（未经 `ACCEPTANCE_ID_PATTERN`
+ * 过滤）。R8 需要它来判「这条 TC 的引用是否全部可解析」——只看过滤后的集合会把
+ * `AC-003, AC-XYZ` 误当成"只引用了 unit AC"。其余调用方不传，行为不变。
+ */
+function extractTestCaseACRefs(plan: string, rawTokens?: Map<string, string[]>): Map<string, string[]> {
   const result = new Map<string, string[]>();
   const section = getSectionContent(plan, '测试用例');
   if (!section) return result;
@@ -1327,8 +1334,10 @@ function extractTestCaseACRefs(plan: string): Map<string, string[]> {
     const acRefs = (row[acCol] || '').trim();
     if (tcId && acRefs) {
       // e9d4b7a3 t2：词法 SSOT（ACCEPTANCE_ID_PATTERN）——不再本地复写第二套 ^(AC|BD)- 规则
-      const refs = acRefs.split(/[,，、\s]+/).filter(r => ACCEPTANCE_ID_PATTERN.test(r));
+      const tokens = acRefs.split(/[,，、\s]+/).filter(t => t.length > 0);
+      const refs = tokens.filter(r => ACCEPTANCE_ID_PATTERN.test(r));
       result.set(tcId, refs);
+      rawTokens?.set(tcId, tokens);
     }
   }
 
@@ -1565,65 +1574,100 @@ function checkTestPlanFreshnessVsAcceptance(ctx: CheckContext): CheckResult[] {
   }];
 }
 
-function checkPlanReferencesUnitLayerAc(ctx: CheckContext, plan: string | null): CheckResult[] {
+/**
+ * R8：TC **仅**关联 unit 层 AC/BD ⇒ BLOCKER（该 TC 根本不该存在于真机计划里）。
+ *
+ * 分档（按每条 TC 的引用形态）：
+ * - 引用非空、**每个原始 token 都解析得到**、全部 `ut_layer=unit` → BLOCKER FAIL；
+ * - 同样全部解析得到、含 unit 且另有 device/both/NFR → MINOR WARN（保持既有语义）；
+ * - 其余一律**不裁决**（本检查对该 TC 沉默，交 `acceptance_to_test_case` /
+ *   `test_case_to_acceptance` / `acceptance_ut_layer_complete` / 编号结构检查）：
+ *   · 空引用；
+ *   · 原始 token 里有解析不到的项（未知 AC、`AC-XYZ` 这类不合词法的写法）；
+ *   · 引用的 AC/BD 存在但**未声明 `ut_layer`**——未声明不等于 unit；
+ *   · 用例编号建立不了 `TC-\d+` 关联（codex review P1-1：此时 `extractTcNfrRefs`
+ *     根本不会为该行产出条目，"查不到 NFR" 只是缺映射，不能当成"没有 NFR"）。
+ *
+ * NFR/性能引用复用 `extractTcNfrRefs`（与 5e1c7a93 D3 同一条识别路径），不写第二套正则。
+ */
+export function checkPlanReferencesUnitLayerAc(ctx: CheckContext, plan: string | null): CheckResult[] {
   const id = 'plan_references_unit_layer_ac';
   const acceptance = ctx.featureSpec.acceptance;
+  const base = { id, category: 'traceability' as const, description: ruleDesc(ctx, 'traceability_checks', id) };
   if (!acceptance || !plan) {
-    return [{
-      id,
-      category: 'traceability',
-      description: ruleDesc(ctx, 'traceability_checks', id),
-      severity: 'MINOR',
-      status: 'SKIP',
-      details: 'acceptance 或 test-plan 不可用。',
-    }];
+    return [{ ...base, severity: 'MINOR', status: 'SKIP', details: 'acceptance 或 test-plan 不可用。' }];
   }
-  const unitOnlyIds = new Set(
-    (acceptance.criteria ?? [])
-      .filter(c => c.ut_layer === 'unit')
-      .map(c => c.id.toUpperCase().replace(/\s/g, '')),
-  );
-  for (const b of acceptance.boundaries ?? []) {
-    if (b.ut_layer === 'unit') unitOnlyIds.add(b.id.toUpperCase().replace(/\s/g, ''));
+  const normId = (s: string): string => s.toUpperCase().replace(/\s/g, '');
+  const layerById = new Map<string, string | undefined>();
+  for (const item of [...(acceptance.criteria ?? []), ...(acceptance.boundaries ?? [])]) {
+    layerById.set(normId(item.id), item.ut_layer);
   }
-  if (unitOnlyIds.size === 0) {
-    return [{
-      id,
-      category: 'traceability',
-      description: ruleDesc(ctx, 'traceability_checks', id),
-      severity: 'MINOR',
-      status: 'SKIP',
-      details: '无 ut_layer=unit 的 AC/BD。',
-    }];
+  if (![...layerById.values()].some(l => l === 'unit')) {
+    return [{ ...base, severity: 'MINOR', status: 'SKIP', details: '无 ut_layer=unit 的 AC/BD。' }];
   }
-  const acRefs = extractTestCaseACRefs(plan);
-  const hits: string[] = [];
-  for (const refs of acRefs.values()) {
-    for (const ref of refs) {
-      const norm = ref.toUpperCase().replace(/\s/g, '');
-      if (unitOnlyIds.has(norm)) hits.push(ref);
+
+  const nfrRefs = extractTcNfrRefs(plan);
+  const unitOnlyTcs: string[] = [];
+  const mixedHits: string[] = [];
+  const rawTokens = new Map<string, string[]>();
+  extractTestCaseACRefs(plan, rawTokens);
+  for (const [tcId, tokens] of rawTokens) {
+    if (tokens.length === 0) continue;
+    // extractTcNfrRefs 的键是规范化的 `TC-\d+`（与执行通道声明同一口径）；建立不了
+    // 关联就等于拿不到该行的 NFR 视图，不裁决。
+    const tcKey = tcId.match(/TC-\d+/i)?.[0]?.toUpperCase();
+    if (!tcKey) continue;
+    const nfrOfTc = new Set(nfrRefs.get(tcKey) ?? []);
+    const unitRefs: string[] = [];
+    let hasNonUnit = false;
+    let unresolved = false;
+    for (const token of tokens) {
+      const norm = normId(token);
+      // NFR-* 由 extractTcNfrRefs 解析；它是合法的非 unit 引用，不算"未解析"。
+      if (nfrOfTc.has(norm)) { hasNonUnit = true; continue; }
+      const layer = layerById.get(norm);
+      if (layer === undefined) { unresolved = true; break; }
+      if (layer === 'unit') unitRefs.push(token);
+      else hasNonUnit = true;
     }
+    if (unresolved || unitRefs.length === 0) continue;
+    if (hasNonUnit) mixedHits.push(`${tcId} → ${unitRefs.join(', ')}`);
+    else unitOnlyTcs.push(`${tcId} 仅关联 unit 层 AC（${unitRefs.join(', ')}）`);
   }
-  const unique = [...new Set(hits)];
-  if (unique.length === 0) {
+
+  if (unitOnlyTcs.length > 0) {
     return [{
-      id,
-      category: 'traceability',
-      description: ruleDesc(ctx, 'traceability_checks', id),
+      ...base,
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      failure_kind: 'plan_contract',
+      details:
+        // 这是"照单删除"清单，必须逐条列全——截断会藏起第 11 条，设备短路文案又复用这段。
+        `test-plan 有 ${unitOnlyTcs.length} 条用例仅关联 unit 层 AC/BD，应由 business-ut 覆盖：\n` +
+        `${unitOnlyTcs.map(t => `  - ${t}`).join('\n')}\n` +
+        '请从 test-plan.md 删除这些 TC。本问题不要求修改 UT，也不能通过 manual 通道解决。' +
+        (mixedHits.length > 0 ? `\n另有混合引用（unit + device/both/NFR，仅提示）：\n${truncateList(mixedHits, 10)}` : ''),
+      suggestion:
+        '删除这些 TC（连同其执行通道声明与派生 hylyre 行）；unit 层 AC 的覆盖义务在 business-ut，' +
+        '不得改标 manual:*，也不得为它们改写 UT。',
+    }];
+  }
+  if (mixedHits.length > 0) {
+    return [{
+      ...base,
       severity: 'MINOR',
-      status: 'PASS',
-      details: 'test-plan 未关联 ut_layer=unit 的 AC/BD（符合 device 执行层分母）。',
+      status: 'WARN',
+      details:
+        `test-plan 有 ${mixedHits.length} 条用例同时关联了 unit 层 AC/BD（unit 部分应由 business-ut UT 覆盖）：\n` +
+        truncateList(mixedHits, 10),
+      suggestion: '从真机 TC 的「关联 AC」列剔除 unit 层引用，仅保留 ut_layer∈{device,both} 与 NFR。',
     }];
   }
   return [{
-    id,
-    category: 'traceability',
-    description: ruleDesc(ctx, 'traceability_checks', id),
+    ...base,
     severity: 'MINOR',
-    status: 'WARN',
-    details:
-      `test-plan 关联了 ${unique.length} 个 unit 层 AC/BD（应由 business-ut UT 覆盖）：\n${truncateList(unique, 10)}`,
-    suggestion: '从真机 test-plan 剔除 unit 层 AC，仅保留 ut_layer∈{device,both}。',
+    status: 'PASS',
+    details: 'test-plan 未关联 ut_layer=unit 的 AC/BD（符合 device 执行层分母）。',
   }];
 }
 
@@ -5399,17 +5443,18 @@ function loadUseCaseSpec(ctx: CheckContext): UseCasesSpec | null {
  */
 /**
  * plan a6c4e9f2 T3（review P1）：设备流水线准入的**唯一**判据。
- * - report-only 按契约零设备/零 provider 调用，无论声明是否闭合都完整只读重算
- *   （通道迁移 BLOCKER 已独立记账，phase 仍 FAIL；历史 run 必须保持可诊断）；
- * - 其余情况必须先看 `decl.ok`：缺列/缺值/非法值/同 TC 重复一律不进 build/install/
- *   Hylyre/device，也**不跑"合法子集"**（那会产出半份 trace）。
+ * - report-only 按契约零设备/零 provider 调用，无论计划契约是否闭合都完整只读重算
+ *   （契约 BLOCKER 已独立记账，phase 仍 FAIL；历史 run 必须保持可诊断）；
+ * - 其余情况必须先看计划契约 `ok`：通道声明缺列/缺值/非法值/同 TC 重复，或（R8）存在
+ *   仅关联 unit 层 AC 的 TC，一律不进 build/install/Hylyre/device，也**不跑"合法子集"**
+ *   （那会产出半份 trace）。调用方负责把这些前置裁决合成 `ok`，并在短路结果里写真实原因。
  */
 export function shouldRunDevicePipeline(
-  declaration: { ok: boolean },
+  planContract: { ok: boolean },
   reportReconcileOnly: boolean,
 ): { device: boolean; reportOnly: boolean } {
   if (reportReconcileOnly) return { device: false, reportOnly: true };
-  return { device: declaration.ok, reportOnly: false };
+  return { device: planContract.ok, reportOnly: false };
 }
 
 function checkExecutionChannelDeclaration(ctx: CheckContext, plan: string | null): CheckResult[] {
@@ -5926,11 +5971,20 @@ const checker: PhaseChecker = {
     // decl.ok=false 时零设备动作，只产结构化 BLOCKER。
     results.push(...safeRun(() => checkExecutionChannelDeclaration(ctx, plan), 'testing_execution_channel'));
     results.push(...safeRun(() => checkP0IdentityInjectionStatic(ctx, plan), 'p0_identity_injection'));
+    // R8：「TC 仅关联 unit 层 AC」同样是**计划契约错误**（这条 TC 不该存在于真机计划里），
+    // 所以与通道声明并列前移到 build/install/device 之前裁决一次——跑完机再提示等于白烧一轮，
+    // 而且 AI 会去改 UT / 改标 manual 绕路。分层结果只在这里算一次，后面不再重算。
+    const unitLayerAcResults = safeRun(() => checkPlanReferencesUnitLayerAc(ctx, plan), 'plan_references_unit_layer_ac');
+    results.push(...unitLayerAcResults);
+    const unitOnlyTcBlocked = unitLayerAcResults.find(r => r.severity === 'BLOCKER' && r.status === 'FAIL');
     const channelDeclaration = loadExecutionChannelDeclaration(ctx, plan);
     // 声明未闭合时，被拦的是**设备动作**，不是全部分析。report-only 按契约零设备/零 provider
     // 调用，因此照常完整重算——通道迁移的 BLOCKER 已由上面那条 check 独立记账，phase 仍然 FAIL，
     // 不需要顺手把只读重算也关掉（那会让历史 run 连诊断都跑不了）。
-    const pipelinePlan = shouldRunDevicePipeline(channelDeclaration, Boolean(ctx.reportReconcileOnly));
+    const pipelinePlan = shouldRunDevicePipeline(
+      { ok: channelDeclaration.ok && !unitOnlyTcBlocked },
+      Boolean(ctx.reportReconcileOnly),
+    );
     if (pipelinePlan.reportOnly) {
       // plan 07a41ec6 T5：report-only 先按权威 run 重写机器报告，再做对账（报告永不落后 run）
       // codex review 第 1 轮 #2：重写前的盘上正文必须原样传给对账——性能类 AC 的耗时缺口
@@ -5945,10 +5999,19 @@ const checker: PhaseChecker = {
         description: ruleDesc(ctx, 'structure_checks', 'device_test_run'),
         severity: 'BLOCKER',
         status: 'SKIP',
-        details:
-          '顶层 execution_channel 声明未闭合，已在任何 build/install/device 动作之前停下（零设备调用）。\n' +
-          channelDeclaration.detail,
-        suggestion: `先修好顶层 test-plan.md 的执行通道声明（${EXECUTION_CHANNEL_DOMAIN}）再跑 testing；harness 不按用例文字猜通道，也不会只跑"合法子集"。`,
+        details: [
+          ...(unitOnlyTcBlocked
+            ? ['测试计划含仅关联 unit 层 AC 的用例，已在设备动作前停下（零设备调用）。\n' + unitOnlyTcBlocked.details]
+            : []),
+          ...(channelDeclaration.ok
+            ? []
+            : ['顶层 execution_channel 声明未闭合，已在任何 build/install/device 动作之前停下（零设备调用）。\n' +
+               channelDeclaration.detail]),
+        ].join('\n\n'),
+        suggestion: unitOnlyTcBlocked
+          ? '先按 plan_references_unit_layer_ac 从 test-plan.md 删除仅关联 unit 层 AC 的 TC 再跑 testing。' +
+            (channelDeclaration.ok ? '' : `同轮还须修好执行通道声明（${EXECUTION_CHANNEL_DOMAIN}）。`)
+          : `先修好顶层 test-plan.md 的执行通道声明（${EXECUTION_CHANNEL_DOMAIN}）再跑 testing；harness 不按用例文字猜通道，也不会只跑"合法子集"。`,
       });
     } else {
       results.push(...checkDeviceTestBuildGate(ctx, deviceTestHapHolder));
@@ -6010,7 +6073,7 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkDeviceCaseNormalization(ctx), 'device_case_contract'));
     results.push(...safeRun(() => checkTestPlanFreshnessVsAcceptance(ctx), 'test_plan_freshness_vs_acceptance'));
     results.push(...safeRun(() => checkAcceptanceToTestCase(ctx, plan), 'acceptance_to_test_case'));
-    results.push(...safeRun(() => checkPlanReferencesUnitLayerAc(ctx, plan), 'plan_references_unit_layer_ac'));
+    // plan_references_unit_layer_ac 已在设备流水线之前裁决（见上），此处不重算。
     results.push(...safeRun(() => checkTestCaseToAcceptance(ctx, plan), 'test_case_to_acceptance'));
     results.push(...safeRun(() => checkBoundaryCoverage(ctx, plan), 'boundary_coverage'));
     results.push(...safeRun(() => checkPlanToReportConsistency(ctx, plan, report), 'plan_to_report_consistency'));
