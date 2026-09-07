@@ -1,5 +1,5 @@
 // ============================================================================
-// goal-runner-testing-integrity.unit.test.ts — v23 最小闭环 8 项验收
+// goal-runner-testing-integrity.unit.test.ts — v23 最小闭环验收
 // ----------------------------------------------------------------------------
 // 唯一被测目标：**testing 不改码 → 产出可信缺陷 → runner 回 coding → 修好重测 →
 // run 正常完成**。用 __testing_set* 注入缝在进程内跑真实 phase 循环：
@@ -12,7 +12,6 @@
 //         修复后 run 正常完成（outcomes 对齐）
 //   E2E-4 本 run 新增 crash 归档 → 回 coding + prompt 含 crash 指令与诊断路径；
 //         旧 run 残留 → 不回退
-//   E2E-5 素材确定性事实 → coding 门禁档位无关 FAIL（直接函数断言）
 //   R-6a  identity 不匹配的 stale must_fix 不回退
 //   R-6b  上一 run 但 build+截图一致 → 仍回退（保护 visual-diff 跨轮持久化设计）
 //   R-7   相同 phase_write_violation 重复出现 → 既有收敛熔断
@@ -1938,32 +1937,6 @@ test('E2E-4 本 run crash 归档 → 回 coding（prompt 含 crash 指令+诊断
       `旧 run 残留不得回退：${probe.events.filter(e => e.type === 'phase_backtrack_requested').length} 次`);
     assertRunReachedEnd(probe, 'E2E-4b');
   }
-});
-
-test('E2E-5 素材确定性事实 → coding 门禁档位无关 FAIL（$r 悬空直接函数断言）', async () => {
-  const { root } = setupHost();
-  // 源码引用不存在的 media → checkMediaReferenceIntegrity 必 FAIL（BLOCKER，与档位无关）
-  writeFile(root, PRODUCT_FILE,
-    "struct AllBanksPage { build() { Image($r('app.media.cmb_bank_logo')) } }");
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { checkMediaReferenceIntegrity } = require('../../../profiles/hmos-app/harness/visual-parity-backstop') as {
-    checkMediaReferenceIntegrity: (ctx: unknown) => Array<{ id: string; status: string; severity: string; details: string }>;
-  };
-  const ctx = {
-    projectRoot: root,
-    feature: FEATURE,
-    phase: 'coding',
-    phaseRule: { structure_checks: {} },
-    featureSpec: {
-      feature: FEATURE,
-      contracts: { modules: [{ name: 'FinancialCard', package_path: '02-Feature/FinancialCard' }] },
-    },
-  };
-  const rs = checkMediaReferenceIntegrity(ctx);
-  const r = rs.find(x => x.id === 'media_reference_integrity');
-  assert(!!r && r.status === 'FAIL' && r.severity === 'BLOCKER',
-    `悬空 $r 须 BLOCKER FAIL：${JSON.stringify(rs)}`);
-  assert(r!.details.includes('cmb_bank_logo'), `须点名悬空 key：${r!.details}`);
 });
 
 test('R-6a identity 不匹配/缺失的 must_fix 一律不回退（③④ 缺身份=fail-closed）', async () => {

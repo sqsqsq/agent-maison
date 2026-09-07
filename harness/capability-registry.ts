@@ -352,13 +352,7 @@ export function dispatchCodingVisualParity(ctx: CheckContext): CheckResult[] {
     'coding.visual_parity',
     'checkVisualParity',
   );
-  // v23 F4：悬空 $r 引用扫描——coding 是素材被删的实际现场，确定性 FAIL 档位无关。
-  //（asset-nondestructive 的五级证据/baseline 体系已删，此为唯一保留的素材完整性硬门禁；
-  //  "文件存在但页面没渲染"交 visual-diff，"换成错误真图"交视觉对照，不伪装成静态可判。）
-  const mediaRefFn = requireProviderFunction<(c: CheckContext) => CheckResult[]>(
-    ctx.resolvedProfile, 'coding.visual_parity', 'checkMediaReferenceIntegrity',
-  );
-  return [...fn(ctx), ...mediaRefFn(ctx)];
+  return fn(ctx);
 }
 
 export function dispatchPlanVisualParity(ctx: CheckContext): CheckResult[] {

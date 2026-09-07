@@ -318,7 +318,7 @@ test('golden(B) 反向：事故视觉债务里的素材占位项 → 当前口�
   );
   // 当前口径（v23 F4）：被 $r 引用的非占位素材物化缺失 = coding 门禁**档位无关 FAIL**
   //（visual_parity_asset_materialized 无条件 BLOCKER），不再经通用指标绕行，也不挂
-  // needs_human 了事——该断言由 8 项验收 E2E-5 与 parity-check 单测承接。
+  // needs_human 了事——该断言由 parity-check 单测承接。
 });
 
 export function runAll(): UnitCaseResult[] {

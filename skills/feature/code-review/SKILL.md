@@ -40,7 +40,8 @@ review 阶段不执行宿主包管理器依赖安装命令，也不使用 `HARNE
 | 审查维度 | 主要依据 | 严重级别 |
 |----------|---------|---------|
 | 架构合规性 | `doc/architecture.md` + `architecture` DSL | BLOCKER |
-| 模块内四层分层 / 接口一致性 / 文件完整性 / 资源引用完整性 | `coding-rules.yaml` / `contracts.yaml` | BLOCKER |
+| 模块内四层分层 / 接口一致性 / 文件完整性 | `coding-rules.yaml` / `contracts.yaml` | BLOCKER |
+| 资源引用完整性 | `coding_compile` 真实编译结果 | BLOCKER |
 | 命名规范 / 硬编码字符串 | `coding-rules.yaml` | MAJOR |
 | 异常处理 / 业务逻辑正确性 | `acceptance.yaml` / `plan.md` | MAJOR |
 | 数据所有权 / 模拟数据隔离 | `coding-rules.yaml` | MAJOR/MINOR |
