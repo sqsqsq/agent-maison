@@ -8,18 +8,18 @@ todos:
     status: pending
   - id: fc-asset-axis
     content: 按 D1：(a) harness-runner.ts:1542 → inferRepoLayout；(b) 删 :1602 硬编码 issue；(c) quality-axes 零映射 check 的 visual/asset 轴 → NOT_APPLICABLE，**testing 期 asset 除外**（保留继承入口）；导出 resolveAssetAxisInheritance；V1–V3。
-    status: pending
+    status: completed
   - id: fc-native-runtime-completion
     content: 按 D2：runtimeFidelityEvidenceIssue 按 dispatchHylyreResult 三态分派——v1 → native（artifact_binding ∧ run/attempt ∧ manifest 绑定）；legacy_unsupported ∧ runtime_fidelity → 原 legacy 校验；unsupported → needs_fix 永不回落；V4–V7。
-    status: pending
+    status: completed
   - id: fc-visual-debt-ledger
-    content: 按 D3：(a) 账本对 visual_diff 源按 structured.kind 归集；(b) 三态收口——FAIL 入账/开账，PASS 或 WARN 关账，仅 SKIP 或缺席保留历史；(c) 保留 visual_reference_viewport 源登记，删其特殊清偿分支；(d) 债务压 visual 轴只在 testing 期；V8–V11。
-    status: pending
+    content: 按 D3：(a) 账本对 visual_diff 源按 structured.kind 归集；(b) 四态收口——FAIL 或非 MINOR SKIP 入账/开账，PASS 或 WARN 关账，仅 MINOR SKIP 或缺席保留历史（实施 review R1 SKIP 裁定）；(c) 保留 visual_reference_viewport 源登记，删其特殊清偿分支；(d) 债务压 visual 轴只在 testing 期；(e) 缺陷用 FAIL、披露用 WARN——四个缺陷源 MAJOR FAIL（实施 review R2）；V8–V11、V13。
+    status: completed
   - id: fc-spec-docs
-    content: 按 D5：新 change 三条 delta + MIGRATION 3.0.x（不写"旧 feature 须整链重跑"）。
-    status: pending
+    content: 按 D5：新 change 三条 delta + MIGRATION 3.0.x（不写"旧 feature 须整链重跑"）；R2 加 harness-gates MODIFIED（render visibility MAJOR FAIL）。
+    status: completed
   - id: fc-local-acceptance
-    content: V1–V12 全绿 + typecheck + LF 扫描 + 一次全量 `cd harness && npm test`。宿主收尾按 §5 在本地修复后据实核对，由用户触发。
+    content: V1–V13 全绿 + typecheck + LF 扫描 + 一次全量 `cd harness && npm test`。宿主收尾按 §5 在本地修复后据实核对，由用户触发。
     status: pending
 isProject: false
 ---
@@ -112,18 +112,24 @@ switch dispatchHylyreResult(raw).kind:
 ### D3 视觉债务账本（四处）
 
 **(a) 归集按 kind。** `deriveVisualDebt` 对 `checkId==='visual_diff'`：`hits = checks.filter(c => c.id==='visual_diff' || (c.structured as {kind?:unknown})?.kind==='visual_diff')`（[visual-diff-check.ts:855](../../profiles/hmos-app/harness/visual-diff-check.ts) 冻结的 structured 形状）。
-**(b) 三态收口（R2 #2）。** 替换 :155 的 `worst` 与 :172 的 `!worst` 分支：
+**(b) 四态收口（R2 #2 + 实施 review R1 SKIP 裁定）。** 替换 :155 的 `worst` 与 :172 的 `!worst` 分支——只从旧 `worst` 里去掉 WARN，`SKIP && severity !== 'MINOR'` 那条兜底放回（盲档 `visual_diff` 整体 SKIP 时没有任何东西阻断发布，不能假定所有盲档都有能力投影兜底）：
 ```
-const fail = hits.find(c => c.status === 'FAIL');
+const worst = hits.find(c => c.status === 'FAIL') ?? hits.find(c => c.status === 'SKIP' && c.severity !== 'MINOR');
 const settled = hits.some(c => c.status === 'PASS' || c.status === 'WARN');
-if (hits.length === 0 || (!fail && !settled)) → 历史条目单调保留（缺席 / 仅 SKIP）
-else if (!fail)                                → 该 check 全部历史条目 closed
-else                                           → 以 fail 为 worst 开账/续账（既有 scope 逻辑不变）
+if (!worst && !settled) → 历史条目单调保留（缺席 / 仅 MINOR SKIP）
+else if (!worst)        → 该 check 全部历史条目 closed（PASS 或 WARN）
+else                    → 以 worst 开账/续账（既有 scope 逻辑不变）
 ```
 WARN 的披露面不变：check 结果、summary、`visual_debt_disclosure` 照旧，只是不入账、不阻断。
 放弃的准确性（**用户已授权，不再询问**）：WARN 级视觉缺口（OCR 未捕获行、静态启发分、顶部一屏外、布局不变量 minor）不再阻断 release。B08 D3 "reference_viewport 阻断 release 直到按段建模/换图"据此撤销：该条目在长图需求上永不转绿，效果等于长图需求永不发布，与 B08 选顶部一屏推导的初衷相反。FAIL 来源（真缺陷）仍入账阻断；B07 D1 minor 不产候选不受影响。
 **(c) 保留来源登记，删特殊分支（R2 #3）。** `DEBT_SOURCE_CHECKS` 里 `visual_reference_viewport` **保留**；:158–170 B08 的特殊清偿分支删除，让它走 (b) 的通用规则——宿主现有那条 open 条目在下一轮 `visual_reference_viewport` WARN 时按 settled 关账。
 **(d) 压轴只在 testing。** `applyVisualDebtPipeline` 压 visual 轴的分支加 `report.phase === 'testing'`；账本写入仍每阶段执行（各阶段 FAIL 债务照记）。release point 在 testing，上游阶段的 visual 轴只反映本阶段检查；否则回退重跑的 coding 会被 testing 遗留债务污染快照。
+
+### D3(e) 缺陷用 FAIL、披露用 WARN（实施 review R2 返修）
+
+**事实**：`resolveVerdictFromChecks`（report-generator.ts:762）、`buildSummaryBlockers`（summary-blockers.ts:40）、quality-axes hardFails 都只数 BLOCKER FAIL——MAJOR FAIL 对 phase verdict / blockers / advance / visual 轴与 WARN 等价，只有账本把它当债务。四个生产者用 WARN 承载**观察到的缺陷**并靠账本阻断 release：① `render_visibility_calibrate`（render-visibility.ts，节点在、像素不可见；规格 harness-gates「debt-gated observation」）；② `asset_placeholder_present`（coding-visual-parity-check.ts，占位可见≠真素材；规格 harness-gates:282「placeholder with debt」）；③ `asset_materialization_sanity` 非 critical 分支；④ `visual_parity_unverified_crop` 非硬像素分支。D3(b) "WARN 不入账"会把这四条通道关掉。用户授权的"视觉 WARN 披露不阻断"只针对披露性差异（`static_fidelity_score`、`capture_completeness_external`、`visual_reference_viewport`、仅 minor 命中的 `visual_diff`），不含这四条。
+**裁定**：四处缺陷分支 `status: 'WARN'` → `'FAIL'`，severity 保持 MAJOR（不得升 BLOCKER）。phase verdict、summary.blockers、quality 轴 hardFails 只数 BLOCKER FAIL，对这四类检查不变；账本按四态开账 → testing 期压 visual 轴 → release BLOCKED，与改前一致。`on_violation` 生命周期 hook 按其契约（BLOCKER/MAJOR 触发，`specs/lifecycle-hooks-schema.yaml:33`）会多收到这四类违例——本仓与 hmos-app profile 未注册任何 on_violation hook，故当前无行为差异；若将来扩展层注册了返回 BLOCKER 的 hook，它对这四类缺陷的裁决权与对其它 MAJOR FAIL 相同（实施 review R3 修正声明）。不加按来源的特判。其余债务源的 WARN 全部是披露，保持 WARN（分类表见 §9 R2 记录）。
+放弃的准确性：这四类缺陷从此在 phase report「失败项明细」与 summary fail 计数里显示为 FAIL 而非 WARN（`goal-report` 的 WARN 计数不再含它们）；它们原本就不阻断 phase verdict / blockers，现在仍不阻断；`on_violation` hook 会多收到这四类违例（当前无注册 hook，无行为差异）。
 
 ### D4 不做
 
@@ -152,10 +158,11 @@ WARN 的披露面不变：check 结果、summary、`visual_debt_disclosure` 照�
 | V6 | 三态：v1 trace + doc 含 runtime_fidelity → 只走 native；**unsupported trace（缺 schema_version / 混装）+ runtime_fidelity 完整 → 仍 needs_fix，不回落**；legacy_unsupported + runtime_fidelity → legacy 分支行为不变 | 同上（R2 针对性用例） |
 | V7 | 既有负例 :195、:279 逐字通过；legacy 校验函数 diff 为零 | 同上 + git diff |
 | V8 | 账本归集：历史 `debt:visual_diff`(BLOCKER) + 本轮 `{id:'visual_diff_layout_invariants', WARN, structured:{kind:'visual_diff'}}` → closed；本轮 kind 命中 FAIL → open；本轮 `visual_diff` PASS → closed | visual-debt 单测 |
-| V9 | 三态收口：历史 open 条目 + 本轮该 check **仅 SKIP** → 保持 open（R2 #2 针对性用例）；本轮缺席 → 保持 open；本轮 WARN → closed；本轮 FAIL → open | 同上 |
+| V9 | 四态收口：历史 open 条目 + 本轮该 check **仅 MINOR SKIP** → 保持 open 不新开账（R2 #2 针对性用例）；**BLOCKER SKIP → 开账/续账**（R1 SKIP 裁定）；本轮缺席 → 保持 open；本轮 WARN → closed；本轮 FAIL → open | 同上 |
 | V10 | reference_viewport：历史 open 条目 + 本轮 `visual_reference_viewport` WARN → closed（走通用规则，R2 #3 针对性用例）；来源登记仍在表内 | 同上 |
 | V11 | runner：coding 阶段有 open 债务时 visual 轴不被压；testing 阶段有 open 债务时压 UNVERIFIED（既有语义） | harness-runner 单测 |
 | V12 | typecheck、LF 扫描（node）、一次全量 `cd harness && npm test` | — |
+| V13 | D3(e)：四个缺陷源 MAJOR FAIL → `resolveVerdictFromChecks` PASS、`buildSummaryBlockers` 空、`deriveVisualDebt` 各开一条 open、转 PASS/WARN 关账；`render_visibility_calibrate` 完整链（逐屏开账 → testing 期 `applyVisualDebtPipeline` 压 visual UNVERIFIED、release BLOCKED；coding 期不压）；`asset_placeholder_present` 生产者断言 FAIL/MAJOR | visual-debt / harness-runner-asset-inheritance / profile asset-placeholder 单测 |
 
 ## 5. 宿主收尾（用户触发，本地修复后据实核对，不在本批判据）
 
@@ -174,6 +181,7 @@ WARN 的披露面不变：check 结果、summary、`visual_debt_disclosure` 照�
 | 全 advance 的 PARTIAL run 纯 resume 时 `lastTestingTargetKind=null` 不封顶（设备封顶型 PARTIAL 的洞，本 run 未触发） | 框架 |
 | `runtime_mount_conformance` 挂载率 54%（长列表未滚入）作为 WARN 披露是否足够 | 需求资产 |
 | 7.2b 构建指纹与源码链密码学绑定 | plan c2e9f4d7（3.1.0） |
+| B08 在途 change `reuse-evidence-binding-and-reference-derivation` 须先于本 change 归档，否则其 visual-diff delta（viewport WARN 开账 + 特殊清偿）会把旧债务规则写回主规格 | 归档顺序 |
 
 ## 7. 交叠与依赖
 
@@ -186,7 +194,182 @@ WARN 的披露面不变：check 结果、summary、`visual_debt_disclosure` 照�
 - **v3（宿主只读侦察）**：PARTIAL 根因是 clean-pass needs_fix 非设备封顶；新增 §1.3 账本根因。
 - **v4（用户问"有没有搞复杂"）——砍掉五项**：完成侧重算 HAP、账本 `source_status` 两档阻断、完成侧按 retry_phase 特判、血缘改造 + resume 守卫、D2 的 schema/binding 重算。
 - **codex R2（09-08）三条 P1 + 两条提醒 + 收尾范围，全采纳**：#1 零检查面 NOT_APPLICABLE 会跳掉 testing asset 继承 → D1(c) 排除 testing 期 asset，V2 针对性用例；#2 `worst=FAIL` 会让仅 SKIP 关掉历史真失败 → D3(b) 三态收口（FAIL 开账 / PASS·WARN 关账 / SKIP·缺席保留），V9；#3 删来源登记不会删宿主已有条目 → D3(c) 保留登记、删特殊分支，V10；D2 补 `unsupported` 永不回落 legacy，V6；删"仍须用户拍板"（WARN 披露不阻断已授权）；§5 改为本地修复后按现有刷新路径（独立 harness 重闭环）据实定范围，MIGRATION 不写强制整链重跑，血缘问题登记 §6 不恢复 v3 改造。
+- **实施 review R1（09-08，codex）needs-attention 四条 + SKIP 裁定**：两处既有断言适配、V6 夹具补全、visual-diff delta 改 MODIFIED、plan 状态行恢复；BLOCKER SKIP 开账口径恢复（四态）——§9 R1 返修。
+- **实施 review R2（09-08，调度者核）**："WARN 不入账"关掉了四条靠账本阻断发布的缺陷通道 → D3(e) 缺陷用 FAIL、披露用 WARN（severity 不变），V13；harness-gates render-visibility Requirement MODIFIED——§9 R2 返修。
+- **实施 review R3（09-08，codex needs-attention 1 high + 1 medium，调度者裁定）**：MAJOR FAIL 进 `on_violation` hook 属 FAIL 语义，不做按 id 豁免——修声明（§3 D3(e)、§9 R2、MIGRATION、proposal / visual-diff delta）+ runner 级回归（dispatchLifecycleHooks 路径）+ 核对回喂/verifier 资格；feature-artifact-layout「a user name cannot close visual debt」前提改为"来源未按四态结清"——§9 R3 返修。
 
 ## 9. 实施记录
 
-（实施时由子代理续写：每条改动给 `grep -n` 行号证据。）
+验证日志目录：`<scratch>/fc/`（`dev1-before-<suite>.log` 改动前基线、`dev1-<suite>.log` 改动后、`dev1-typecheck.log`、`dev1-openspec-validate.log`、`dev1-lf-scan.log`、`dev1-extra-<suite>.log` 顺带回归）。全量 `cd harness && npm test` 本轮**未跑**（由调度者在 review 通过后跑一次）。工作区基线 4f3d9812，未提交。
+
+### 2026-09-08 · D1 asset 轴：布局推断、删 7.2b 硬编码缺证、零映射轴降解（完成）
+
+**改动文件**
+
+| 文件 | 变化 |
+|---|---|
+| `harness/harness-runner.ts`:1508 | `resolveAssetAxisInheritance` 加 `export`（签名不变，供 V1 直测） |
+| `harness/harness-runner.ts`:1542–1544 | `detectRepoLayout(projectRoot)` → `inferRepoLayout(projectRoot)`（:211 既有 import；`detectRepoLayout` 仍在 :517 用于 harnessRoot，import 不动） |
+| `harness/harness-runner.ts`:1601–1603 | 删 `issues.push('build fingerprint 链未接入（tasks 7.2b pending）…')` 一行；注释改为"链 3（build）由本阶段 `device_test_install` 的 build/install HAP 指纹一致性承担（check-testing :2456）；不一致时 testing FAIL，不会到继承"。`provenanceIntact: issues.length === 0` 不动 |
+| `harness/scripts/utils/quality-axes.ts`:260–266 | evidence 降解（:257）旁加 `if ((id === 'visual' || (id === 'asset' && phase !== 'testing')) && applicable && b.sources.length === 0) applicable = false;`——判据是零映射（`sources.length === 0`）不是零执行；`applyAssetAxisInheritance` 未改 |
+
+**为什么最小**：一词替换 + 删一行 + 一条与 evidence 同形的降解；不加 detect→infer 兜底、不改 `detectRepoLayout` 语义、不在 review/ut 做继承（D4）。FAIL 安全网不受影响：零映射意味着没有任何 check（含 FAIL）落在该轴。
+
+**验证**
+
+- `npm --prefix harness run test:unit -- --filter harness-runner-asset-inheritance`：新 suite 3/0（`dev1-harness-runner-asset-inheritance.log`；注册于 `harness/tests/run-unit.ts`:375–376，**plan 未列该文件**——`--filter` 只认 CORE_SUITES 注册 id，不注册无法按 suite 跑）
+  - V1（`harness-runner-asset-inheritance.unit.test.ts`:90）：consumer 临时工程 `<tmp>/framework/{workflows,package.json,specs/phase-rules/coding-rules.yaml}` + coding summary 1.2（asset PASS、`gate_fingerprint` = `computeGateFingerprint(<tmp>/framework,'coding')`、`asset_debt_revision: 'no-debt'`）+ 真实 `writeReviewClosureAttestation`（空 inventory）+ 无账本 → `provenanceIntact=true`、`provenanceDetail='ok'`、evidenceRefs 含 `summary:`/`inventory:`/`debt:no-debt`；`deriveSummaryVerdictLattice([visual_diff PASS], testing)` 的 asset 为 UNVERIFIED 零 source（D1(c) 保留入口）→ `applyAssetAxisInheritance` 后 PASS、`inherited:coding:` 引用形态；反例 gate_fingerprint 末位改一位 → `provenanceIntact=false`、detail 含"漂移"、apply 后 STALE
+  - V1b（:126）：缺 review attestation → 不继承（fail-closed 不变）
+- `npm --prefix harness run test:unit -- --filter quality-axes`：13 → **14 passed / 0 failed**（`dev1-before-quality-axes.log` → `dev1-quality-axes.log`）
+  - V2（`quality-axes.unit.test.ts`:160）：phase=ut、ui-spec 有 assets、checks 只有 `ut_run` → visual/asset 两轴 NOT_APPLICABLE 且 `validateQualityAxes` 零错；phase=testing、只有 `visual_diff` → asset 仍 applicable+UNVERIFIED、`source_checks=[]`；ut 加一条 `asset_materialization_sanity` SKIP → asset UNVERIFIED(needs_fix)
+- V3：quality-axes 既有 13 例逐字通过；顺带回归 `check-receipt-policy` 19/0（真实 `writeRunSummaryBase` 走 `resolveAxisApplicability`→`deriveSummaryVerdictLattice`→`applyVisualDebtPipeline`）、`summary-schema` 7/0、`negative-verdict-gate` 16/0、`pass-snapshot` 5/0、`attempt-axes-timeline` 2/0（`dev1-extra-*.log`）
+
+**放弃的准确性**：与 §3 D1 一致——继承不再单独复核 HAP，HAP↔源码树绑定靠链 1（attestation 源码未漂移）+ B03 ut 出包唯一化间接成立，密码学绑定留 7.2b。
+
+### 2026-09-08 · D2 完成侧按 trace 协议三态分派（完成）
+
+**改动文件**
+
+| 文件 | 变化 |
+|---|---|
+| `harness/scripts/utils/runtime-step-evidence.ts`:456–459 / :468–491 | 从 `validateRuntimeFidelityEvidenceDocument` 末段**提取**导出 `phaseManifestBindsRuntimeArtifacts(projectRoot, feature, doc): string \| null`（manifest 缺失 / 两文件任一未绑定的两条文案逐字不变）；原函数改为 `const unbound = …; if (unbound) return unbound;`，legacy 校验其余字节零 diff（`git diff` 只有该块） |
+| `harness/scripts/utils/verify-feature-completion.ts`:37–38 / :386–424 | `runtimeFidelityEvidenceIssue`：读 doc（不可读原文案）→ run/attempt 非空时须等于 `doc.goal_run_id`/`attempt_id`（文案沿用 legacy 两条）→ 读 `doc.trace_path`（不可读 → `trace 不可读：…`）→ `switch (dispatchHylyreResult(raw).kind)`：`v1` → 缺 `artifact_binding` 文案 / `phaseManifestBindsRuntimeArtifacts`；`legacy_unsupported` → 有 `runtime_fidelity` 才调原 `validateRuntimeFidelityEvidenceDocument`（参数不变），否则"既无 native v1 trace 也无 legacy runtime_fidelity"；其余 → `trace 协议不可判别/混装：<detail>`（不回落）。import 加 `dispatchHylyreResult`、`phaseManifestBindsRuntimeArtifacts` |
+
+native 分支不调 `requireV1ForGate`、不调 `validateNativeTraceArtifactBinding`、不重算 HAP（plan D2 "同一批事实只裁决一次"）。
+
+**验证**
+
+- `npm --prefix harness run test:unit -- --filter verify-feature-completion`：14 → **17 passed / 0 failed**（`dev1-before-verify-feature-completion.log` → `dev1-verify-feature-completion.log`）
+  - 夹具（`verify-feature-completion.unit.test.ts`:114–189）：`seedCleanChain(root, { chain?, invocations?, beforeClosure? })`——缺省行为逐字同旧（13 处既有调用不改）；`invocations=true` 每 phase 落 `agent_invoke_start`（attempt=`i<N>`）；`beforeClosure` 在 manifest 冻结前写 P0 acceptance / evidence / trace；`writeNativeRuntimeEvidence` 写 v1 信封 trace（只需过 `dispatchHylyreResult`：schema_version + result_protocol + environment + cases[]）到 `<testing reports>/hylyre/trace.json` 与 doc（无 `runtime_fidelity`、有 `artifact_binding`、run=RUN1 attempt=i4）
+  - V4（:382）：chain `spec/plan/testing` → `collectCleanPassIssues` **零 issue**（断言整表为空，不只 runtime）→ `resolvePhaseRunIds` attempts.testing=i4 → `generate` 成功 → `verify` VALID——首个 P0 需求干净完成正例
+  - V5（:402）：attempt_id 改 i9 → `attempt_id 不匹配`；trace 放 reports 目录外（manifest 不冻结）→ `未绑定 runtime 产物`；删 `artifact_binding` → `缺 artifact_binding`；legacy 0.3-p0 trace 且无 runtime_fidelity → `既无 native v1 trace 也无 legacy runtime_fidelity`
+  - V6（:423）：v1 + doc 带（不完整的）`runtime_fidelity` → 零 issue（只走 native）；缺 `schema_version` / `0.3-p0` 却声明 `result_protocol`（混装）+ `runtime_fidelity` → 各一条 `trace 协议不可判别/混装`；`0.3-p0` + `runtime_fidelity`（bindings 身份对）→ 一条既非 native/unsupported 文案、来自 legacy 重算的失败原因（legacy 分支行为不变）
+  - V7：既有负例（`:195`"P0 runtime fidelity 改为机器证据硬门"、`:279`"无机器运行时证据…legacy receipt 无放行权"）逐字通过；legacy 校验函数 diff 仅提取块
+- typecheck 绿（`dev1-typecheck.log`）
+
+**放弃的准确性**：与 §3 D2 一致——完成侧信任 testing 门禁的 native 校验与冻结 manifest，不做第二次裁决。
+
+### 2026-09-08 · D3 视觉债务账本：按 kind 归集、三态收口（R1 返修改四态，见下）、删 B08 特殊分支、压轴只在 testing（完成）
+
+**改动文件**
+
+| 文件 | 变化 |
+|---|---|
+| `harness/scripts/utils/visual-debt.ts`:154–178 | 循环内：`hits` 对 `checkId==='visual_diff'` 加 `structured.kind==='visual_diff'` 判定（D3(a)）；`worst = FAIL ?? WARN ?? SKIP(非 MINOR)` 与 `!worst` 分支替换为 `worst = FAIL ?? SKIP(非 MINOR)` / `settled = hits.some(PASS‖WARN)`（R1 返修：SKIP 兜底放回，见下节）：`!worst && !settled`（缺席 / 仅 MINOR SKIP）→ 历史保留；`!worst` → 该 check 全部历史 closed；否则以 `worst` 走既有 scope 逻辑（`scopesOf` / `currentIds` / 历史 scope 闭账逐字不变）（D3(b)）；:158–170 B08 `visual_reference_viewport` 特殊清偿分支删除，`DEBT_SOURCE_CHECKS`:61 条目**保留**（D3(c)）。:49 与 :110–112 两处注释同步 |
+| `harness/harness-runner.ts`:1620 / :1639–1641 | `applyVisualDebtPipeline` 加 `export`（V11 直测）；压 visual 轴的 `if` 加 `report.phase === 'testing' &&`；账本写入、release/completion 重投影仍每阶段执行（D3(d)） |
+
+**为什么最小**：归集只多一个 `||`；收口是把三元 `worst` 里的 WARN 去掉、加一个 `settled` 布尔（R1 返修后 SKIP 兜底放回），不加 `source_status`、不加迁移器；特殊分支纯删除（登记保留即宿主已有条目可达）；压轴只加一个相等判断。`finalizeVisualDiffHits` 的 id 改名不动（B07 归因消费）。
+
+**验证**
+
+- `npm --prefix harness run test:unit -- --filter visual-debt`：33 → **33 passed / 0 failed**（`dev1-before-visual-debt.log` → `dev1-visual-debt.log`；用例数不减：B08 三条特殊分支用例改写为 V10 一条 + 新增 V8/V9 两条）
+  - 既有用例按新语义调整（`visual-debt.unit.test.ts`:85–99、:114、:734、:750、:879、:1051）：原"WARN → open"的夹具改 FAIL，并在首例断言 WARN 来源不入账
+  - V8（:773）：历史 `debt:visual_diff`(BLOCKER open) + 本轮 `{id:'visual_diff_layout_invariants', WARN, structured:{kind:'visual_diff'}}` → closed；kind 命中 FAIL → 以 `debt:visual_diff` 开账；`visual_diff` PASS → closed；kind 为 `render_visibility` 的改名 id 不归集（缺席保留）
+  - V9（:791）：历史 open + 仅 SKIP(BLOCKER) → open 且不新开账；缺席 → open；WARN → closed 且 `countBlockingDebt.open=0`；FAIL → open；SKIP+WARN → closed
+  - V10（:810）：历史 open + 本轮 `visual_reference_viewport` WARN → closed（通用规则）；本轮 `visual_diff` PASS(kind) 且该 check 缺席 → 保留 open（特殊分支已删）；该 check FAIL 仍开账（登记保留）；WARN 不新开账
+- V11（`harness-runner-asset-inheritance.unit.test.ts`:136）：预置 open 债务（来源本轮缺席）+ `[coding_compile, visual_parity]` PASS → 真实 `applyVisualDebtPipeline`：coding 期 visual 仍 PASS、release READY、账本仍写（历史 open 保留）；testing 期 visual UNVERIFIED(needs_fix, retry_phase=testing)、release BLOCKED
+
+**放弃的准确性**：与 §3 D3 一致（用户已授权）——WARN 级视觉缺口（OCR 未捕获行、静态启发分、顶部一屏外、布局不变量 minor）不再入账/阻断 release（盲档 BLOCKER-SKIP 的入账在 R1 返修中恢复），只经 check 结果、summary、`visual_debt_disclosure` 披露；FAIL 来源仍入账阻断；上游阶段 visual 轴不再反映 testing 遗留债务。
+
+### 2026-09-08 · D5 规格与文档（完成）
+
+- `openspec/changes/completion-native-runtime-and-visual-debt/`：`proposal.md`、`tasks.md`、`specs/runtime-step-evidence/spec.md`（ADDED「Completion consumes native runtime evidence」，4 scenario）、`specs/visual-diff/spec.md`（ADDED「Visual debt settles by structured kind with FAIL-only entry and testing-only axis suppression」，4 scenario；既有 visual-diff spec 无债务 Requirement，B08 在途 delta 未动）、`specs/verdict-lattice/spec.md`（MODIFIED「summary 1.1 separates report validity from product quality axes」：加零映射降解一段 + 2 scenario，原文与既有 scenario 逐字保留）。
+- `MIGRATION.md`:273–281 新增 `### 3.0.x：asset 轴 consumer 继承修复、P0 需求完成凭证自本版可达、WARN 视觉缺口不再阻断 release` 一节（四条行为变化各附放弃的准确性；"旧 feature 无需整链重跑"按 §1.4 现有刷新路径写，**未写强制整链重跑**；消费者无需动手）。
+- `npm run openspec:validate`：40 passed / 0 failed，enforcement 路径 PASS（`dev1-openspec-validate.log`）。
+- LF：`node lf-scan.js` 扫 16 个改动/新建文件，CRLF 0（`dev1-lf-scan.log`）；本 plan 文件（路径含中文，git porcelain 引号转义使脚本漏扫）另以 node 单独核过无 CRLF。
+
+### 2026-09-08 · R1 返修（完成）
+
+codex 实施 review R1 结论 needs-attention（`<scratch>/fc/review-r1-result.md`），逐条返修；日志 `dev2-<suite>.log`（同目录）。基线仍 4f3d9812，未提交。
+
+1. **[high] 两处既有断言适配新语义**（范围扩展：`visual-fidelity` / `visual-provider` 两个 suite 各只改与账本语义相关的断言，其余覆盖不动）
+   - `harness/tests/unit/visual-fidelity.unit.test.ts`:4969（用例名）/ :5005–5013：B08-V8 原断言 "viewport WARN → open 债务条目" 改为 "WARN 不入账（`deriveVisualDebt(…, null)` 无该来源条目）+ 历史 open 条目按 WARN closed"；OCR/覆盖门/prompt/反向断言逐字保留。
+   - `harness/tests/unit/visual-provider.unit.test.ts`:973 "t5 BLOCKER SKIP 债务投影" **原样保留**（第 5 条裁定恢复 SKIP 开账后该断言天然通过）。
+2. **[high] V6 夹具结构完整**：`harness/tests/unit/verify-feature-completion.unit.test.ts`:425–445 `legacyFidelity` 改为 schema_version + provider 四字段 + bindings 十字段（全部有形值）+ 一条完整 `RuntimeCheckpointEvidence`；unsupported 两例（`{ cases: [] }` 缺 schema_version；`0.3-p0` 却带 `result_protocol` 混装）加断言 `kind === 'needs_fix'` 且文案含 "不可判别/混装"（:456–458）。v1 例与 legacy 例共用同一完整夹具（legacy 例仍因占位 sha 重算不一致落 legacy 文案，行为不变）。`tasks.md` 2.3 文字改为与事实一致（仍勾选：返修后已满足）。
+3. **[medium] 规格冲突改 MODIFIED**：
+   - `openspec/changes/completion-native-runtime-and-visual-debt/specs/visual-diff/spec.md`：ADDED 要求改名/改文为四态；新增 **MODIFIED**「A reference image incompatible with the device viewport is rejected before content comparison」——正文以 B08 在途 delta（`openspec/changes/reuse-evidence-binding-and-reference-derivation/specs/visual-diff/spec.md`，**B08 尚未归档进 `openspec/specs/`**，主规格该 Requirement 仍是 B08 之前的文本）为底，把 "WARN 开账 + 特殊清偿" 一句改为 "WARN 是披露不是债务、不开账、特殊清偿撤销、登记保留"；Scenario「Scope is decided by declared bboxes and disclosed as unverified, not as debt」改为 "no debt entry opened + 历史条目 closed"。
+   - 新增 `openspec/changes/completion-native-runtime-and-visual-debt/specs/feature-artifact-layout/spec.md`：**MODIFIED**「Visual debt lives in a harness-derived JSON ledger with a markdown projection」——`closed` 含义扩为 "本轮该 check PASS 或 WARN"，FAIL / 非 MINOR SKIP 开账，MINOR SKIP / 缺席保留；原 Scenario「a user name cannot close visual debt」逐字保留，加一条 WARN 关账 / BLOCKER SKIP 开账 Scenario。
+   - `proposal.md` Impact 同步；`npm run openspec:validate`（`--all --strict` + enforcement 路径）见验证表。
+4. **[low] plan 状态行**：第 29 行恢复为 4f3d9812 原文（`git show 4f3d9812:<plan> | sed -n 29p`），实施状态只写 §9。
+5. **SKIP 裁定（四态）**：`harness/scripts/utils/visual-debt.ts`:166–169 `worst = FAIL ?? SKIP(非 MINOR)`——只把旧代码的 `SKIP && severity !== 'MINOR'` 兜底放回，WARN 不入账不变；:49、:114–116 注释同步。plan §3 D3(b) 伪代码、todo、§4 V9、§9 D3 表格/放弃的准确性、openspec visual-diff delta、`MIGRATION.md`:279 措辞同步为 "FAIL 或非 MINOR SKIP 开账"。
+   - V9（`visual-debt.unit.test.ts`:791–814）改四态：MINOR SKIP 保留不新开账；**BLOCKER SKIP 无历史开账（needs_fix、`countBlockingDebt.open=1`）/ 有历史续账**；MINOR SKIP+WARN 关账；BLOCKER SKIP+WARN 仍 open。
+   - 盲档混合回归（`harness-runner-asset-inheritance.unit.test.ts`:163–181）：`coding_compile` PASS（只为让 functional 轴有执行面）+ `runtime_mount_conformance` PASS + `visual_diff` SKIP/BLOCKER，无历史 → 生产 `deriveVisualDebt` open≥1；构造性前提断言压轴前 visual PASS / release READY（即 codex 复现的漏洞）→ 真实 `applyVisualDebtPipeline` 后账本落盘 open≥1、testing visual UNVERIFIED(needs_fix)、release BLOCKED。
+
+**验证**（日志 `<scratch>/fc/dev2-*.log`）：typecheck 绿；quality-axes 14/0；verify-feature-completion 17/0；visual-debt 33/0；harness-runner-asset-inheritance 3 → 4/0；visual-fidelity 132/0；visual-provider 70/0；全量 unit 与 openspec validate、LF 扫描见汇报验证表。用例数未减少。
+
+### 2026-09-08 · R2 返修 D3(e)（完成）
+
+议题：回合 2 存疑项——D3(b) "WARN 不入账"关掉了四条按设计靠账本阻断发布的缺陷通道。裁定 D3(e)：缺陷用 FAIL、披露用 WARN；severity 保持 MAJOR。日志 `<scratch>/fc/dev3-*.log`（`dev3-before-<suite>.log` 改前基线）。基线仍 4f3d9812，未提交。
+
+**改动文件**
+
+| 文件 | 变化 |
+|---|---|
+| `profiles/hmos-app/harness/render-visibility.ts`:171–173 / :179 | `render_visibility_calibrate` 命中分支 `status: 'WARN'` → `'FAIL'`（MAJOR 不变）；注释与 details「终态语义」改为"MAJOR FAIL：不计入 phase verdict/blockers（只数 BLOCKER），findings 入 visual-debt 阻断 release" |
+| `profiles/hmos-app/harness/coding-visual-parity-check.ts`:545–549 | `visual_parity_unverified_crop` 非硬像素分支 `{MAJOR, WARN}` → `{MAJOR, FAIL}`（硬像素分支仍 `fidelityRatchetFailOrWarn` → BLOCKER FAIL） |
+| 同文件 :622–624 | `asset_materialization_sanity` `status: anyCritical ? 'FAIL' : 'WARN'` → `'FAIL'`（severity 仍 `anyCritical ? BLOCKER : MAJOR`） |
+| 同文件 :644–645 / :682 | `asset_placeholder_present` WARN → FAIL（MAJOR）；块首注释同步 |
+| `profiles/hmos-app/harness/visual-diff-check.ts`:1097 / :1395 | 两处过期注释：calibrate "WARN 观察不阻断" → "MAJOR FAIL 不计入 phase verdict/blockers"；viewport top_slice "（WARN + 视觉债务条目）" → "MINOR WARN，披露不入债务（D3(b)/(c) 撤销 B08 开账）"——代码未动 |
+
+**消费者 grep**（`grep -rn` 四个 check id 于 harness/、profiles/、docs/、openspec/）：生产代码里没有任何按 `status === 'WARN'` 消费这四个 id 的地方——`annotateAssetTriState.observe` 用 `every(PASS)`（FAIL/WARN 同为 UNVERIFIED，不变）；`report-generator.ts`:484/:507 按 status 分「失败项明细」/「警告项」渲染（现落失败项明细，即放弃的准确性）；`goal-report-generator.ts`:87 只数 WARN id（不再含这四个）；`check-coding.ts`:573 / `check-testing.ts`:5807 / `harness-runner.ts`:1730 的 `blockingWarnings` 只看 BLOCKER WARN；`repair-candidates.ts`:637 的 FAIL 候选要求 `failure_kind/repair_owner` 字段（这四个不带）；B07 归因（`hasRuntimeFailureEvidence`）与盲档投影不引用这四个 id。`docs/operations/blind-host-replay-runbook.md`:51/:67 只提 findings 不提 WARN，未改。golden `harness/tests/golden/bc-opencard/artifacts/visual-debt.json` 只是账本历史条目，不含 check status。
+
+**债务源 WARN 生产路径分类**（第 2 条）：
+
+| 来源 | WARN 生产处 | 分类 | 依据 |
+|---|---|---|---|
+| `render_visibility_calibrate` | render-visibility.ts:171 | **缺陷 → FAIL** | 注释"findings 入 visual-debt 阻断 release"；harness-gates「debt-gated observation」 |
+| `asset_placeholder_present` | coding-visual-parity-check.ts:674 | **缺陷 → FAIL** | 注释"逐素材入视觉债务…release 保持 BLOCKED"；harness-gates:282「placeholder with debt」 |
+| `asset_materialization_sanity`（非 critical） | 同文件 :616 | **缺陷 → FAIL** | 注释"空白/纯色/损坏素材在任何保真档位都不是合法交付物" |
+| `visual_parity_unverified_crop`（非硬像素） | 同文件 :549 | **缺陷 → FAIL** | 注释"未 verified 的 crop 资产不得被源码消费/物化" |
+| `visual_multimodal_parity` | multimodal-evidence-gate.ts:59/:67 | 披露（保持 WARN） | 注释"无证据 → WARN…多模态降级"；delegated-vision:192「Optional evidence MAY use the existing advisory degradation policy」；结果类型无 FAIL 态 |
+| `visual_parity`（soft） | coding-visual-parity-check.ts:312–316 | 披露（保持 WARN） | 仅在配置 `visual_parity_enforcement=warn/reachable` 且非硬像素时——配置声明的 advisory；硬契约已 FAIL |
+| `visual_diff`（`finalizeVisualDiffHits`） | visual-diff-check.ts:1005 | 披露（保持 WARN） | 只有 minor 命中时 top.status=WARN 并改名 `visual_diff_layout_invariants`（B07 归因消费）；用户授权列表 |
+| `capture_completeness_external` | capture-completeness-check.ts:577 / :587–593（ratchet） | 披露（保持 WARN） | 盲档"降 MAJOR/WARN，人一次终审"；软档 `fidelityRatchetFailOrWarn(ctx, true)`；用户授权列表 |
+| `static_fidelity_score` | static-fidelity-score.ts:113 / :228–230（ratchet 三元） | 披露（保持 WARN） | "静态保真分仅供参考，不作保真结论"；用户授权列表 |
+| `visual_reference_viewport` | visual-diff-check.ts:1384（ratchet） / :1400–1401 | 披露（保持 WARN） | 顶部一屏外 MINOR WARN，D3(b)/(c) 已撤销 B08 开账（用户授权列表）；:1392 过期注释已改；incompatible 分支走 ratchet |
+
+无"注释/规格明确说入债务阻断 release 却保持 WARN"的来源——改 FAIL 的只有上表四条。
+
+**规格**：新增 `openspec/changes/completion-native-runtime-and-visual-debt/specs/harness-gates/spec.md` **MODIFIED**「On-device rendered visibility is a debt-gated observation」（标题逐字；正文写明 MAJOR FAIL、不升 BLOCKER、不计入 phase verdict/blockers、入账阻断 release；原 Scenario 逐字保留 + 新增一条）。harness-gates:282「Blind-crop c3 waiver…」正文只说 "placeholder with debt"、无 WARN/observation 措辞，未 MODIFIED；delegated-vision:185 段讲 provider 失败降级（披露类），未改。visual-diff ADDED 要求加"缺陷 FAIL / 披露 WARN"一段 + 一条 Scenario；`proposal.md` What Changes/Impact、`tasks.md` 3.4/4.1 同步。
+
+**单测**（用例数 33→34、4→5、11→11、132→132，不减）：
+- `visual-debt.unit.test.ts`:1093–1113 新增「D3(e) 四个缺陷源 MAJOR FAIL」：生产 `resolveVerdictFromChecks` = PASS、`buildSummaryBlockers` 空、`deriveVisualDebt` 四条 open/MAJOR、转 PASS/WARN 关账；:891 / :1063 / :1066 三态标注夹具的 WARN 输入改 FAIL（语义：这些 id 不再产 WARN）。
+- `harness-runner-asset-inheritance.unit.test.ts`:183–212 新增「R2 D3(e) 完整链」：`render_visibility_calibrate` MAJOR FAIL（structured findings 两屏）→ verdict PASS、blockers 空、逐屏 `debt:render_visibility_calibrate:s1` open=2 → 构造性前提压轴前 visual PASS/release READY → 真实 `applyVisualDebtPipeline` 后 testing visual UNVERIFIED(needs_fix)、release BLOCKED；coding 期不压。
+- `profiles/hmos-app/harness/tests/unit/asset-placeholder.unit.test.ts`:233–235 组 3 断言 WARN → FAIL + severity MAJOR。
+
+**验证**：typecheck 绿（`dev3-typecheck.log`）；visual-debt 34/0、visual-fidelity 132/0、harness-runner-asset-inheritance 5/0、profile asset-placeholder 11/0（`dev3-<suite>.log`）；全量 unit、openspec validate、LF 扫描见汇报验证表。
+
+**放弃的准确性**：与 §3 D3(e) 一致——四类缺陷在报告里显示为 FAIL 而非 WARN；phase verdict / blockers / hardFails 只数 BLOCKER FAIL，对这四类不变；`on_violation` hook 按契约多收到它们（本仓无注册 hook，见 R3 返修）。
+
+### 2026-09-08 · R3 返修（完成）
+
+议题：codex 实施 review R2 needs-attention——[high] D3(e) 的 MAJOR FAIL 会进 `on_violation` 生命周期 hook（harness-runner.ts:1082–1090），§9 R2"阶段推进不变"声明不成立；[medium] feature-artifact-layout Scenario「a user name cannot close visual debt」前提与四态规则冲突。调度者裁定：不做按 id 的 hook 豁免（新特判），MAJOR 级缺陷触发 on_violation 是 FAIL 语义的一部分；修声明与回归。日志 `<scratch>/fc/dev4-*.log`。基线仍 4f3d9812，未提交。
+
+**事实核对**：`violations = checks.filter(FAIL ∧ (BLOCKER ∨ MAJOR))`（harness-runner.ts:1081–1083）每条 `emitLifecycle('on_violation')`（:1084–1090），hook 返回的 CheckResult 并入 checks；契约原文 `specs/lifecycle-hooks-schema.yaml:33`、plan 5ec9b7fe:310「BLOCKER / MAJOR 触发时」。全仓 `grep -rn on_violation` 除 dispatcher 类型（hooks-dispatcher.ts:19）、schema、runner、testing-trace-gates 报告态用例外无任何注册 hook：`harness/hooks/` 目录不存在、`profiles/hmos-app/` 无 `hooks/`、无 extension bundle 登记。
+
+**改动**
+
+| 文件 | 变化 |
+|---|---|
+| §3 D3(e) 裁定与放弃的准确性 | "phase/advance/blockers 逐字不变" → "phase verdict、summary.blockers、quality 轴 hardFails 只数 BLOCKER FAIL，对这四类检查不变；`on_violation` hook 按契约会多收到这四类违例——本仓与 hmos-app profile 未注册任何 on_violation hook，当前无行为差异；将来注册返回 BLOCKER 的 hook，其对这四类的裁决权与对其它 MAJOR FAIL 相同" |
+| §9 R2 放弃的准确性 | 同上口径 |
+| `MIGRATION.md` 3.0.x「缺陷用 FAIL、披露用 WARN」行 | "阶段推进逐字不变" → 同上口径（半句） |
+| `openspec/changes/completion-native-runtime-and-visual-debt/proposal.md` D3(e) 段、`specs/visual-diff/spec.md` 缺陷/披露 Requirement | 同一声明的英文本："phase/advance behaviour is byte-for-byte unchanged" / "phase behaviour is unchanged" → verdict/blockers 不变 + on_violation 契约半句（plan 之外的同名声明，未改则下轮 review 仍会指出） |
+| `openspec/changes/completion-native-runtime-and-visual-debt/specs/feature-artifact-layout/spec.md`:13–15 | Scenario「a user name cannot close visual debt」WHEN 改为"its source check has not settled under the four-state rule in the current round (no PASS or WARN; only FAIL, non-MINOR SKIP, or absence)"；新增 AND"legacy acceptance metadata SHALL NOT by itself close the entry" |
+| `harness/tests/unit/harness-runner-asset-inheritance.unit.test.ts` | 新增「R3 on_violation 契约」用例（5→6）：`render_visibility_calibrate` MAJOR FAIL → 与 :1082 逐字相同谓词得 violations=1 → `collectHookSlots(真实 harness/, 'testing', 'on_violation', hmos-app)`=0 → 生产 `dispatchLifecycleHooks` 派发一次返回空 → 并入后 `resolveVerdictFromChecks`=PASS、`buildSummaryBlockers`=[]。用例数组 `run` 允许 Promise，`runAll` 改 async（run-unit.ts:421 已接受 Promise）。**为什么不走 runner 入口**：`emitLifecycle` 是 `main` 内闭包（harness-runner.ts:978），未导出且绑定整段 runner 状态；它对外只做一件事——委托 `dispatchLifecycleHooks`，故用该导出 API + 相同谓词构造同等断言。用例指向真实仓库目录，任何人注册 on_violation hook 即红，强制同步更新声明。 |
+
+**1c 重试回喂与 verifier 请求资格核对**（只记录，未改）：
+- `extractPriorFailureContext`（goal-phase-runtime.ts:1003–1013）只读 `summary.blockers`，而 `buildSummaryBlockers`（summary-blockers.ts:40）只收 BLOCKER FAIL → 四类 MAJOR FAIL **不进回喂**。
+- `resolveVerifierRequestEligibility`（harness-runner.ts:1447–1466）把 `report.summary.verdict`（BLOCKER-only）与 `report.checks` 交 `canProduceVerifierRequest`（verifier-plan.ts:256）；后者 `scriptVerdict === 'PASS'` 即 normal 放行，FAIL 分支只过滤 BLOCKER FAIL/SKIP → 四类 MAJOR FAIL **不影响资格**。
+- 唯一影响路径即 codex 所指：扩展层 on_violation hook 返回 `ok:false` 且 `severityOverride` 缺省/BLOCKER（hooks-dispatcher.ts:177–189，默认 severity 见 :48：extension 层 MAJOR、framework/profile 层 BLOCKER）→ 并入 checks 后 verdict FAIL → 回喂/资格随之变化。这是 hook 对任何 MAJOR FAIL 的既有裁决权，不因 id 豁免；当前无注册 hook，不构成"PASS 阶段变 FAIL"。
+
+**验证**：见汇报验证表（`dev4-typecheck.log`、`dev4-harness-runner-asset-inheritance.log` 6/0、`dev4-unit-full.log` 全量、`dev4-lf-scan.log`、`dev4-openspec-validate.log`）。
+
+**放弃的准确性**：无新增——本轮只把声明改准，不动生产代码。
+
+### 未做 / 存疑
+
+- **V12 全量**：`npm run test:unit` 全量已在 R2/R3 返修各跑一次（`dev3-unit-full.log` 3958/0；`dev4-unit-full.log` 见 R3 汇报）；`cd harness && npm test`（含 `test:fixtures`）未跑，由调度者决定。
+- **plan 未列的改动文件**：`harness/tests/run-unit.ts`（注册新 suite，两行）。另 `applyVisualDebtPipeline` 加了 `export`（plan 只写导出 `resolveAssetAxisInheritance`）——V11 直测生产函数最小路径，避免搭 `writeRunSummaryBase` 整套夹具。
+- ~~D3(b) 把盲档 **BLOCKER-SKIP** 来源也从"入账"改为"保留历史/不新开账"~~——实施 review R1 裁定恢复既有 SKIP 兜底（四态），见下节第 5 条。
+- §5 宿主收尾未做、未触碰宿主工程。§6 血缘登记项未动。
