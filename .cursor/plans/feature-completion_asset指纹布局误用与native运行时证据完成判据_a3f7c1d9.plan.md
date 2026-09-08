@@ -5,7 +5,7 @@ version: 3.0.0
 todos:
   - id: fc-plan-review
     content: 施工图由用户 + codex 评审。R1 四条、R2（v4 三处裁剪出错 + D2 unsupported 回落 + 收尾范围）已采纳（§8）。通过后先把本 plan 提交为基线，再按循环协议实施。
-    status: pending
+    status: completed
   - id: fc-asset-axis
     content: 按 D1：(a) harness-runner.ts:1542 → inferRepoLayout；(b) 删 :1602 硬编码 issue；(c) quality-axes 零映射 check 的 visual/asset 轴 → NOT_APPLICABLE，**testing 期 asset 除外**（保留继承入口）；导出 resolveAssetAxisInheritance；V1–V3。
     status: completed
@@ -20,13 +20,13 @@ todos:
     status: completed
   - id: fc-local-acceptance
     content: V1–V13 全绿 + typecheck + LF 扫描 + 一次全量 `cd harness && npm test`。宿主收尾按 §5 在本地修复后据实核对，由用户触发。
-    status: pending
+    status: completed
 isProject: false
 ---
 
 # feature-completion 完成判据修复（a3f7c1d9）
 
-状态：**v5，待 review，未开工。** 原则 SSOT：[overview §1.2.1](../../docs/overview.md#121-四条总设计原则)（效率优先、简单优先、减法；每项改动写明放弃的准确性）。
+状态：**已实施并提交（4f3d9812 基线 → a230a5a8 D2 / 118bb6a4 D1+D3 / b3b71c2d D5；codex 实施 review 三轮，第 3 轮 approve；全量 npm test unit 3959/0、fixtures 46/0）。待办：§5 宿主收尾由用户触发。** 原则 SSOT：[overview §1.2.1](../../docs/overview.md#121-四条总设计原则)（效率优先、简单优先、减法；每项改动写明放弃的准确性）。
 
 **完成边界**：本 plan 的完成 = 本地修复 + §4 判据。宿主收尾（§5）在本地修复后据实核对范围，由用户触发；需求是否完成以凭证为准。
 
