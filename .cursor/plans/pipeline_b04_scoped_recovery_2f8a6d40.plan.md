@@ -22,8 +22,8 @@ todos:
     content: 完成 V1 至 V7 的真实 classifier/phase_verdict 生产路径与真实 loader/finalizer/快照测试、OpenSpec delta 与 MIGRATION 同步、candidate 本地验收。
     status: completed
   - id: b04-host-acceptance
-    content: 并入B06的C-U回归：在宿主实测归因话术与 prior review 呈现与实际一致，本批不单独触发宿主窗口。
-    status: pending
+    content: 并入B06的C-U回归：在宿主实测归因话术与 prior review 呈现与实际一致，本批不单独触发宿主窗口。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
+    status: cancelled
 ---
 
 # B04施工图

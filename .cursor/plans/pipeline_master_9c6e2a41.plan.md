@@ -4,23 +4,23 @@ overview: B01先细化施工图，后续批次滚动设计，宿主回归收敛�
 version: 3.0.0
 todos:
   - id: b01-accept-verifier-repair
-    content: 验收B01施工图：负面结果可诊断回修、输出解析一致、删除过时指令；目标测试和用户触发的C-U宿主回归通过。
-    status: pending
+    content: 验收B01施工图：负面结果可诊断回修、输出解析一致、删除过时指令；目标测试和用户触发的C-U宿主回归通过。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
+    status: cancelled
   - id: b02-accept-vision-evidence
-    content: B01本地验收后细化并验收B02，解除inline终签死锁与非goal/attended不可达；保留completion probe，完成B01+B02合并C-U回归（spec→ut窗口）。
-    status: pending
+    content: B01本地验收后细化并验收B02，解除inline终签死锁与非goal/attended不可达；保留completion probe，完成B01+B02合并C-U回归（spec→ut窗口）。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
+    status: cancelled
   - id: b03-accept-execution-reuse
-    content: B02本地验收后细化并验收B03，按真实浪费解决UT重复构建/执行和报告整理，不重构进程生命周期；本地验收，宿主回归并入B06。
-    status: pending
+    content: B02本地验收后细化并验收B03，按真实浪费解决UT重复构建/执行和报告整理，不重构进程生命周期；本地验收，宿主回归并入B06。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
+    status: cancelled
   - id: b04-accept-attribution-prior-review
-    content: 细化并验收B04的归因与prior review消费两项，不改one-shot、不新增变化范围调度；本地验收，宿主回归并入B06。
-    status: pending
+    content: 细化并验收B04的归因与prior review消费两项，不改one-shot、不新增变化范围调度；本地验收，宿主回归并入B06。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
+    status: cancelled
   - id: b05-accept-phase-contracts
-    content: 细化并验收B05的默认strict/显式配置、剩余F09、plan不适用出口和expect数量WARN口径；本地验收，宿主回归并入B06。
-    status: pending
+    content: 细化并验收B05的默认strict/显式配置、剩余F09、plan不适用出口和expect数量WARN口径；本地验收，宿主回归并入B06。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
+    status: cancelled
   - id: b06-accept-matrix-delivery
-    content: 复用B02后的合并C-U证据，完成B03–B05的C-U回归，补C-N/X-U/X-N真实差异与codeagent/attended回放fixture，完成候选件验收与发布就绪。
-    status: pending
+    content: 复用B02后的合并C-U证据，完成B03–B05的C-U回归，补C-N/X-U/X-N真实差异与codeagent/attended回放fixture，完成候选件验收与发布就绪。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
+    status: cancelled
 ---
 
 # 六阶段重构总计划

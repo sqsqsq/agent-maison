@@ -19,8 +19,8 @@ todos:
     content: 按D8同步四份OpenSpec delta（含visual-capability-routing规范性正文）、MIGRATION与spec侧文档，扩既有目标套件（含attended bridge与goal-report文本断言），核对独立visual provider不受影响，完成候选件本地验收。
     status: completed
   - id: b02-host-acceptance
-    content: 用户触发候选件集成和bc-openCard-1的C-U合并回归（spec→ut窗口，同时验收B01 V9与本批），确认纯收口不重考、不拒签、负面结果可回修；B03细化不等待此项。
-    status: pending
+    content: 用户触发候选件集成和bc-openCard-1的C-U合并回归（spec→ut窗口，同时验收B01 V9与本批），确认纯收口不重考、不拒签、负面结果可回修；B03细化不等待此项。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
+    status: cancelled
 ---
 
 # B02施工图

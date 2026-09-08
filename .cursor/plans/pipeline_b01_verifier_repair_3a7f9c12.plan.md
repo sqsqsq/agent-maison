@@ -31,8 +31,8 @@ todos:
     content: 按命令表完成typecheck、目标生产链测试及candidate构建全量验收，准备候选件与bc-openCard-1受影响窗口的精确宿主命令。
     status: completed
   - id: b01-host-acceptance
-    content: 用户触发候选件集成和C-U goal回归后，核对负面诊断→owner修复→窗口闭环及无直接回归；证据通过后验收B01并细化B02。
-    status: pending
+    content: 用户触发候选件集成和C-U goal回归后，核对负面诊断→owner修复→窗口闭环及无直接回归；证据通过后验收B01并细化B02。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
+    status: cancelled
 ---
 
 # B01施工图

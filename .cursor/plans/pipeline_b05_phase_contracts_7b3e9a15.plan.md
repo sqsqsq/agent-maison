@@ -25,8 +25,8 @@ todos:
     content: 完成 V1 至 V8 的验收——真实 policy→resolveVerifierPlan→已导出 writeRunSummaryBase 的产物断言、真实 SpecLoader + check-plan 导出函数的 n/a 正反例与三条真源不可信负例、goalIdentity 走 goal 态的 check-receipt 用例与闭环负例、整份物化 prompt 的一致性断言，OpenSpec delta 与 MIGRATION 同步、candidate 本地验收。
     status: completed
   - id: b05-host-acceptance
-    content: 并入 B06 的 C-U 回归：宿主实测 balanced 显式配置、n/a 出口与数量口径，本批不单独触发宿主窗口。
-    status: pending
+    content: 并入 B06 的 C-U 回归：宿主实测 balanced 显式配置、n/a 出口与数量口径，本批不单独触发宿主窗口。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
+    status: cancelled
 ---
 
 # B05施工图

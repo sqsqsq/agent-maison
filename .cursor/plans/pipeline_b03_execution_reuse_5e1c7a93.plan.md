@@ -22,8 +22,8 @@ todos:
     content: 完成V1至V11（含V3a/V3b、V4b、V6b、V7b）的进程调用边界计数测试、OpenSpec delta与MIGRATION同步、candidate本地验收。
     status: completed
   - id: b03-host-acceptance
-    content: 并入B06的C-U回归：在宿主实测本批的重复消除量与真实测试不漏，本批不单独触发宿主窗口。
-    status: pending
+    content: 并入B06的C-U回归：在宿主实测本批的重复消除量与真实测试不漏，本批不单独触发宿主窗口。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
+    status: cancelled
 ---
 
 # B03施工图

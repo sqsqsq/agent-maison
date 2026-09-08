@@ -22,23 +22,23 @@ todos:
     content: 本地前置——D7 (b) 落地且 MIGRATION 索引段落盘后按总plan §6 重建候选件；§7.2 共同前置与 E 的 zip 路径 / sha256 / manifest SHA 由重建后的 manifest 取值填入，旧候选件的实跑只作旧版本回归证据。
     status: completed
   - id: b06-host-merged-cu-run
-    content: 用户触发——按 §7.2-A 一张运行单跑完 B01–B05 合并 C-U（spec→testing 窗口），跑完**立即**执行 §7.2-E 保存报告；自然运行未命中 B01/B02 触发条件的项按 §7.2-G 隔离场景补跑，未命中即保持 pending。
-    status: pending
+    content: 用户触发——按 §7.2-A 一张运行单跑完 B01–B05 合并 C-U（spec→testing 窗口），跑完**立即**执行 §7.2-E 保存报告；自然运行未命中 B01/B02 触发条件的项按 §7.2-G 隔离场景补跑，未命中即保持 pending。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
+    status: cancelled
   - id: b06-host-diff-cells
-    content: 用户触发——按 §7.2-B/C/D 跑 C-N / X-U / X-N 三个差异格（各自选定片段与判据，须在 A 的 evaluator 报告保存之后）；任一格未跑即保持 pending，不用回放冒充。
-    status: pending
+    content: 用户触发——按 §7.2-B/C/D 跑 C-N / X-U / X-N 三个差异格（各自选定片段与判据，须在 A 的 evaluator 报告保存之后）；任一格未跑即保持 pending，不用回放冒充。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
+    status: cancelled
   - id: b06-host-golden-and-promote
-    content: 用户触发——先过 §7.2 P0.5 golden 适用性裁定（基线匹配才设 MAISON_GOLDEN_CONTRACT）；按 §7.2-E 跑包内 evaluator（带 `--feature bc-openCard-1`）；verdict=PASS 才具备 promote 前提。基线不匹配的 run 保留 FAIL 原样并注「验收样本不适用」，不记 N/A。正式 promote 不是本 plan 的完成前置。
-    status: pending
+    content: 用户触发——先过 §7.2 P0.5 golden 适用性裁定（基线匹配才设 MAISON_GOLDEN_CONTRACT）；按 §7.2-E 跑包内 evaluator（带 `--feature bc-openCard-1`）；verdict=PASS 才具备 promote 前提。基线不匹配的 run 保留 FAIL 原样并注「验收样本不适用」，不记 N/A。正式 promote 不是本 plan 的完成前置。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
+    status: cancelled
   - id: b06-host-b07-reacceptance
     content: 用户触发——B07（视觉回修归因与 golden 复用校验，plan 6e4a2c8b）本地完成并进候选件后，按 §7.2 P0.5 裁定 golden 适用性，以用户指定的窗口做范围明确的补验收（不再起同条件 spec→testing 长 run 只为复现）；结果回填 §6 登记表。B07 的完成判据不含此项。 **09-07 已跑：run 20260907T063800Z-26c3b0，B07 目标行为实测成立（三轮拦下 minor、零候选、零回退）；run 因缺口①②③ HALTED/no_progress_visual_gap，见 §6 登记表。**
     status: completed
   - id: b06-host-b08-reacceptance
-    content: 用户触发——B08（复用证据绑定与长图推导，plan 9b2d5e7c）本地完成并进候选件后，按 §7.2 P0.5 裁定 golden 适用性，跑 testing→testing 截断窗口；观察 i2 类复用轮是否直接闭合、代理与外层执行键是否相等（不再交替真跑）、两张长图屏是否有 `_derived-ref` 派生参考且 verifier 终判；结果回填 §6 登记表。B08 的完成判据不含此项。
-    status: pending
+    content: 用户触发——B08（复用证据绑定与长图推导，plan 9b2d5e7c）本地完成并进候选件后，按 §7.2 P0.5 裁定 golden 适用性，跑 testing→testing 截断窗口；观察 i2 类复用轮是否直接闭合、代理与外层执行键是否相等（不再交替真跑）、两张长图屏是否有 `_derived-ref` 派生参考且 verifier 终判；结果回填 §6 登记表。B08 的完成判据不含此项。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
+    status: cancelled
   - id: b06-release-readiness-closeout
-    content: 本地与宿主两侧真实完成后才回填登记表、勾各批 host todo 与总 plan 里程碑；不为过门禁提前勾完成。
-    status: pending
+    content: 本地与宿主两侧真实完成后才回填登记表、勾各批 host todo 与总 plan 里程碑；不为过门禁提前勾完成。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
+    status: cancelled
 ---
 
 # B06施工图
