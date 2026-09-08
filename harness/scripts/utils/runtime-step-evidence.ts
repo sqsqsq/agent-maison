@@ -454,22 +454,37 @@ export function validateRuntimeFidelityEvidenceDocument(opts: {
   }
 
   if (opts.requirePhaseManifestBinding !== false) {
-    const loaded = loadPhaseEvidenceManifest(opts.projectRoot, opts.feature, 'testing');
-    if (!loaded) return 'testing phase-evidence-manifest 缺失';
-    const evidencePath = path.join(
-      receiptDirPath(opts.projectRoot, opts.feature, 'testing'),
-      'reports',
-      'device-test-evidence.json',
-    );
-    const expected = [evidencePath, opts.doc.trace_path].map(abs => ({
-      rel: path.relative(opts.projectRoot, path.resolve(abs)).split(path.sep).join('/'),
-      sha: sha256File(path.resolve(abs)),
-    }));
-    for (const item of expected) {
-      const entry = loaded.manifest.outputs.find(row => row.path === item.rel);
-      if (!item.sha || !entry || entry.sha256 !== item.sha || entry.exists !== true) {
-        return `testing phase evidence 未绑定 runtime 产物：${item.rel}`;
-      }
+    const unbound = phaseManifestBindsRuntimeArtifacts(opts.projectRoot, opts.feature, opts.doc);
+    if (unbound) return unbound;
+  }
+  return null;
+}
+
+/**
+ * plan a3f7c1d9 D2：testing phase-evidence-manifest 是否冻结了 device-test-evidence.json 与
+ * doc.trace_path 两份 runtime 产物（从 validateRuntimeFidelityEvidenceDocument 末段提取，
+ * native v1 与 legacy 两分支共用）。返回 null=已绑定；字符串=未绑定原因。
+ */
+export function phaseManifestBindsRuntimeArtifacts(
+  projectRoot: string,
+  feature: string,
+  doc: DeviceTestEvidenceDoc,
+): string | null {
+  const loaded = loadPhaseEvidenceManifest(projectRoot, feature, 'testing');
+  if (!loaded) return 'testing phase-evidence-manifest 缺失';
+  const evidencePath = path.join(
+    receiptDirPath(projectRoot, feature, 'testing'),
+    'reports',
+    'device-test-evidence.json',
+  );
+  const expected = [evidencePath, doc.trace_path].map(abs => ({
+    rel: path.relative(projectRoot, path.resolve(abs)).split(path.sep).join('/'),
+    sha: sha256File(path.resolve(abs)),
+  }));
+  for (const item of expected) {
+    const entry = loaded.manifest.outputs.find(row => row.path === item.rel);
+    if (!item.sha || !entry || entry.sha256 !== item.sha || entry.exists !== true) {
+      return `testing phase evidence 未绑定 runtime 产物：${item.rel}`;
     }
   }
   return null;
