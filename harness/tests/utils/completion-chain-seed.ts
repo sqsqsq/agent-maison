@@ -30,6 +30,8 @@ export interface SeedCompletionChainOptions {
   runId?: string;
   /** 确定性时间；默认与既有夹具同锚 */
   now?: () => Date;
+  invocations?: boolean;
+  beforeClosure?: (projectRoot: string) => void;
 }
 
 const DEFAULT_NOW = () => new Date('2026-07-13T00:00:00.000Z');
@@ -173,7 +175,13 @@ export function seedCleanCompletionChain(options: SeedCompletionChainOptions): v
   seedFeatureArtifactIfAbsent(projectRoot, feature, 'plan.md', '# plan\n');
   seedFeatureArtifactIfAbsent(projectRoot, feature, 'contracts.yaml', 'files: []\n');
 
-  writeRunEvents(projectRoot, feature, runId, successfulRunEvents(chain));
+  options.beforeClosure?.(projectRoot);
+  const events = successfulRunEvents(chain);
+  writeRunEvents(projectRoot, feature, runId, options.invocations
+    ? events.flatMap(event => event.type === 'phase_start'
+      ? [event, { ...event, type: 'agent_invoke_start', invoke_id: `${runId}-${event.phase}-i${chain.indexOf(String(event.phase)) + 2}` }]
+      : [event])
+    : events);
 
   if (chain.includes('review')) {
     writeReviewClosureAttestation({ projectRoot, feature, expectProductSources: false, now });

@@ -34,7 +34,8 @@ import {
   deviceTestEvidencePath,
   type DeviceTestEvidenceDoc,
 } from './device-test-evidence-shared';
-import { validateRuntimeFidelityEvidenceDocument } from './runtime-step-evidence';
+import { dispatchHylyreResult } from './hylyre-result-protocol';
+import { phaseManifestBindsRuntimeArtifacts, validateRuntimeFidelityEvidenceDocument } from './runtime-step-evidence';
 import { isP0DeviceInteractive, loadAcceptanceFlowsDoc } from './p0-semantic-gates';
 import {
   computeCanonicalReceiptSha256,
@@ -383,14 +384,43 @@ export function runtimeFidelityEvidenceIssue(
   } catch (error) {
     return `device-test-evidence.json 缺失或不可解析：${(error as Error).message}`;
   }
-  return validateRuntimeFidelityEvidenceDocument({
-    projectRoot,
-    feature,
-    doc,
-    expectedGoalRunId,
-    expectedAttemptId,
-    requirePhaseManifestBinding: true,
-  });
+  // 身份：run/attempt 由 resolvePhaseRunIds 重算，doc 自报值须相等（文案沿用 legacy 两条）。
+  if (expectedGoalRunId && doc.goal_run_id !== expectedGoalRunId) {
+    return `runtime evidence goal_run_id 不匹配（${doc.goal_run_id} vs ${expectedGoalRunId}）`;
+  }
+  if (expectedAttemptId && doc.attempt_id !== expectedAttemptId) {
+    return `runtime evidence attempt_id 不匹配（${doc.attempt_id} vs ${expectedAttemptId}）`;
+  }
+  // plan a3f7c1d9 D2：按 trace 协议三态分派（runtime-step-evidence spec：native 是唯一裁决源）。
+  // native 分支只确认"是 v1、身份对、artifact_binding 在、manifest 冻结未改"——schema/binding/
+  // HAP 已由 testing 门禁闭环时验过并被 manifest 冻结、⑤ lineage_fresh 保证未改，完成侧不重算
+  // （同一批事实只裁决一次）。
+  let raw: unknown;
+  try {
+    raw = JSON.parse(fs.readFileSync(doc.trace_path, 'utf-8'));
+  } catch (error) {
+    return `trace 不可读：${(error as Error).message}`;
+  }
+  const dispatch = dispatchHylyreResult(raw);
+  switch (dispatch.kind) {
+    case 'v1':
+      if (!doc.artifact_binding) return 'native trace 在场但缺 artifact_binding';
+      return phaseManifestBindsRuntimeArtifacts(projectRoot, feature, doc);
+    case 'legacy_unsupported':
+      // 过渡：legacy trace 只在 doc 带 runtime_fidelity 时走原 legacy 校验（逐字不变）。
+      if (!doc.runtime_fidelity) return '既无 native v1 trace 也无 legacy runtime_fidelity';
+      return validateRuntimeFidelityEvidenceDocument({
+        projectRoot,
+        feature,
+        doc,
+        expectedGoalRunId,
+        expectedAttemptId,
+        requirePhaseManifestBinding: true,
+      });
+    default:
+      // 不可判别/混装：即使 doc 带 runtime_fidelity 也不回落 legacy（产出方自身不自洽）。
+      return `trace 协议不可判别/混装：${dispatch.detail}`;
+  }
 }
 
 /** legacy needs_human 仍可被读取；当前 collectCleanPassIssues 不再生成它。 */

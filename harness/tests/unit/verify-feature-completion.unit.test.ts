@@ -75,9 +75,61 @@ function writeRunEvents(root: string, runId: string, events: Array<Record<string
   seedWriteRunEvents(root, FEATURE, runId, normalized);
 }
 
-/** 全链干净现场——实现见 tests/utils/completion-chain-seed.ts（唯一实现，MG 跨层链共用）。 */
-function seedCleanChain(root: string): void {
-  seedCleanCompletionChain({ projectRoot: root, feature: FEATURE, chain: CHAIN, now: FIXED_NOW });
+/** 全链干净现场——复用 completion-chain-seed，保留主干共享夹具契约。 */
+function seedCleanChain(
+  root: string,
+  opts?: { chain?: string[]; invocations?: boolean; beforeClosure?: (root: string) => void },
+): void {
+  seedCleanCompletionChain({
+    projectRoot: root, feature: FEATURE, chain: opts?.chain ?? CHAIN, now: FIXED_NOW,
+    invocations: opts?.invocations, beforeClosure: opts?.beforeClosure,
+  });
+}
+
+// ---------------- plan a3f7c1d9 V4–V6 夹具：P0 acceptance + native v1 信封 trace + device-test-evidence ----------------
+const CHAIN_T = ['spec', 'plan', 'testing'];
+const P0_ACCEPTANCE = [
+  'schema_version: "1.0"',
+  `feature: ${FEATURE}`,
+  'flows: { f: { screens: [a, b] } }',
+  'criteria:',
+  '  - id: AC-1',
+  '    priority: P0',
+  '    ut_layer: device',
+  '    linked_flow: f',
+].join('\n') + '\n';
+/** 只需过 dispatchHylyreResult（schema_version + result_protocol + environment + cases[]），不必是完整 golden */
+const V1_TRACE = {
+  schema_version: '0.4-p0', result_protocol: 'hylyre.step-outcome/1',
+  environment: { trace_schema_version: '0.4-p0', result_protocol: 'hylyre.step-outcome/1', selector_engine: 'fixture' },
+  cases: [], tool_calls: [],
+};
+const LEGACY_TRACE = { schema_version: '0.3-p0', feature: FEATURE, cases: [] };
+
+function writeNativeRuntimeEvidence(
+  root: string,
+  over?: { trace?: unknown; traceAbs?: string; doc?: Record<string, unknown> },
+): void {
+  const reportsDir = path.join(receiptDirPath(root, FEATURE, 'testing'), 'reports');
+  const traceAbs = over?.traceAbs ?? path.join(reportsDir, 'hylyre', 'trace.json');
+  fs.mkdirSync(path.dirname(traceAbs), { recursive: true });
+  fs.writeFileSync(traceAbs, JSON.stringify(over?.trace ?? V1_TRACE, null, 2) + '\n', 'utf-8');
+  const cryptoM = require('crypto') as typeof import('crypto');
+  const traceSha = cryptoM.createHash('sha256').update(fs.readFileSync(traceAbs)).digest('hex');
+  const doc: Record<string, unknown> = {
+    schema_version: '1.1', goal_run_id: 'RUN1', attempt_id: 'i4',
+    device_target: { serial: 'dev-1', target_kind: 'physical', session_id: null },
+    hap_sha256_full: 'a'.repeat(64), install_executed: true, install_ok: true,
+    trace_path: traceAbs, run_failure_kind: null, written_at: '2026-07-12T23:03:40.000Z', cases: [],
+    artifact_binding: {
+      test_plan_path: 'testing/test-plan.md', test_plan_sha256: 'b'.repeat(64),
+      derived_plan_path: 'testing/derived-plan.json', derived_plan_sha256: 'c'.repeat(64),
+      trace_path: traceAbs, trace_sha256: traceSha,
+    },
+    ...over?.doc,
+  };
+  fs.mkdirSync(reportsDir, { recursive: true });
+  fs.writeFileSync(path.join(reportsDir, 'device-test-evidence.json'), JSON.stringify(doc, null, 2) + '\n', 'utf-8');
 }
 
 function runDirAbs(root: string, runId: string): string {
@@ -262,6 +314,93 @@ const cases: Case[] = [
         collectCleanPassIssues({ projectRoot: root, feature: FEATURE, chain: CHAIN }).some((i) => i.condition === 'runtime_step_evidence'),
         'legacy receipt 不得解除机器证据缺失',
       );
+    },
+  },
+  // ---------------- plan a3f7c1d9 D2：完成侧按 trace 协议三态分派（V4–V7）----------------
+  {
+    name: 'V4 正例：P0 device flow + native v1 trace + artifact_binding + testing manifest 冻结 → 无 runtime_step_evidence；generate 成功、verify VALID（首个 P0 需求干净完成正例）',
+    run: () => {
+      const root = mkProject();
+      seedCleanChain(root, {
+        chain: CHAIN_T, invocations: true,
+        beforeClosure: (r) => { writeArtifact(r, 'acceptance.yaml', P0_ACCEPTANCE); writeNativeRuntimeEvidence(r); },
+      });
+      const issues = collectCleanPassIssues({ projectRoot: root, feature: FEATURE, chain: CHAIN_T });
+      assert.strictEqual(
+        issues.length, 0,
+        `native v1 证据在场且被 manifest 冻结时不得有任何 clean-pass issue：${issues.map((i) => `[${i.phase}] ${i.condition}: ${i.detail}`).join('；')}`,
+      );
+      const { runIds, attempts } = resolvePhaseRunIds(root, FEATURE, CHAIN_T);
+      assert.strictEqual(attempts.testing, 'i4', 'testing attempt 推导');
+      generate(root, { chain: CHAIN_T, phaseRunIds: runIds, phaseAttempts: attempts });
+      const v = verify(root, { expectedChain: CHAIN_T });
+      assert.strictEqual(v.verdict, 'VALID', v.reasons.join('；'));
+    },
+  },
+  {
+    name: 'V5 反例：attempt_id 改 → 不匹配；manifest 不含 trace → 未绑定；缺 artifact_binding → 文案；legacy_unsupported 且无 runtime_fidelity → 文案',
+    run: () => {
+      const runtimeIssue = (seed: (r: string) => void): string => {
+        const root = mkProject();
+        seedCleanChain(root, { chain: CHAIN_T, invocations: true, beforeClosure: (r) => { writeArtifact(r, 'acceptance.yaml', P0_ACCEPTANCE); seed(r); } });
+        const hit = collectCleanPassIssues({ projectRoot: root, feature: FEATURE, chain: CHAIN_T }).find((i) => i.condition === 'runtime_step_evidence');
+        assert.ok(hit, '须产生 runtime_step_evidence 违例');
+        assert.strictEqual(hit!.kind, 'needs_fix');
+        return hit!.detail;
+      };
+      assert.match(runtimeIssue((r) => writeNativeRuntimeEvidence(r, { doc: { attempt_id: 'i9' } })), /attempt_id 不匹配/);
+      assert.match(
+        runtimeIssue((r) => writeNativeRuntimeEvidence(r, { traceAbs: path.join(r, 'elsewhere', 'trace.json') })),
+        /未绑定 runtime 产物/,
+        'trace 不在 reports 目录 → manifest 不冻结 → 未绑定',
+      );
+      assert.match(runtimeIssue((r) => writeNativeRuntimeEvidence(r, { doc: { artifact_binding: undefined } })), /缺 artifact_binding/);
+      assert.match(runtimeIssue((r) => writeNativeRuntimeEvidence(r, { trace: LEGACY_TRACE })), /既无 native v1 trace 也无 legacy runtime_fidelity/);
+    },
+  },
+  {
+    name: 'V6 三态：v1 trace + doc 含 runtime_fidelity → 只走 native（无 issue）；unsupported trace + runtime_fidelity → 仍 needs_fix 不回落；legacy_unsupported + runtime_fidelity → legacy 分支',
+    run: () => {
+      // 结构完整的 legacy runtime_fidelity（provider 四字段、bindings 十字段、一条完整 checkpoint）——
+      // 证明 unsupported 分支的 needs_fix 不是因为字段缺失，而是 trace 协议不可判别/混装本身。
+      const legacyFidelity = {
+        schema_version: '1.0',
+        provider: { id: 'hylyre', version: '0.4.0', collector: 'hylyre-runtime-telemetry', collector_version: '0.4.0' },
+        bindings: {
+          feature: FEATURE, goal_run_id: 'RUN1', attempt_id: 'i4', device_session_id: 'sess-1',
+          acceptance_sha256: 'd'.repeat(64), test_plan_sha256: 'b'.repeat(64), derived_plan_sha256: 'c'.repeat(64),
+          hap_sha256_full: 'a'.repeat(64), testing_source_aggregate: 'e'.repeat(64), trace_sha256: 'f'.repeat(64),
+        },
+        checkpoints: [{
+          acceptance_id: 'AC-1', flow_id: 'f', case_id: 'TC-1', step_index: 0, action_kind: 'tap',
+          declared_target_element_id: 'btn_open',
+          actual_hit: { stable_node_id: 'node#btn_open', bounds: [0, 0, 100, 40] },
+          pre_screen: { declared_screen_id: 'a', signature_sha256: '1'.repeat(64), observed_element_ids: ['btn_open'] },
+          post_screen: { declared_screen_id: 'b', signature_sha256: '2'.repeat(64), observed_element_ids: ['title_b'] },
+          required_observations: [{ element_id: 'title_b', present: true }],
+          forbidden_observations: [{ element_id: 'err_toast', present: false }],
+          outcome: 'passed',
+        }],
+      };
+      const issuesFor = (seed: (r: string) => void) => {
+        const root = mkProject();
+        seedCleanChain(root, { chain: CHAIN_T, invocations: true, beforeClosure: (r) => { writeArtifact(r, 'acceptance.yaml', P0_ACCEPTANCE); seed(r); } });
+        return collectCleanPassIssues({ projectRoot: root, feature: FEATURE, chain: CHAIN_T }).filter((i) => i.condition === 'runtime_step_evidence');
+      };
+      // v1 + runtime_fidelity（legacy 重算必不过：sha 均为占位）→ native 分支不看它 → 无 issue
+      assert.deepStrictEqual(issuesFor((r) => writeNativeRuntimeEvidence(r, { doc: { runtime_fidelity: legacyFidelity } })), [], 'v1 只走 native');
+      // unsupported：缺 schema_version / 混装（legacy 版本却声明 result_protocol）→ 即使带 runtime_fidelity 也不回落
+      for (const trace of [{ cases: [] }, { schema_version: '0.3-p0', result_protocol: 'hylyre.step-outcome/1', cases: [] }]) {
+        const hits = issuesFor((r) => writeNativeRuntimeEvidence(r, { trace, doc: { runtime_fidelity: legacyFidelity } }));
+        assert.strictEqual(hits.length, 1, `unsupported trace 须 needs_fix：${JSON.stringify(trace)}`);
+        assert.strictEqual(hits[0].kind, 'needs_fix', 'unsupported 是 needs_fix，不是 needs_human');
+        assert.match(hits[0].detail, /trace 协议不可判别\/混装/, '结构完整的 runtime_fidelity 也不回落 legacy');
+      }
+      // legacy_unsupported + runtime_fidelity → 原 legacy 校验（过渡）：不是 native/unsupported 文案，而是 legacy 重算的失败原因
+      const legacyHits = issuesFor((r) => writeNativeRuntimeEvidence(r, { trace: LEGACY_TRACE, doc: { runtime_fidelity: legacyFidelity } }));
+      assert.strictEqual(legacyHits.length, 1);
+      assert.doesNotMatch(legacyHits[0].detail, /既无 native|不可判别|缺 artifact_binding/);
+      assert.match(legacyHits[0].detail, /runtime fidelity|trace/, `legacy 分支文案：${legacyHits[0].detail}`);
     },
   },
   {
