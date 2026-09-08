@@ -48,6 +48,8 @@ developer_instructions = '''
 request，本次报告不可入闭环，请调用方把 `summary.verifier_request` 指向的 JSON 整段重投」。
 **不要自行编造 subject_id。**
 
+> **路径解析（BLOCKER）**：`<features_dir>/<feature>/…` 一律经框架解析——`<feature>` 是物理 Feature 路径（语义见 [路径术语表](../../framework/skills/reference/agents-entry-detail.md)），由调用方/CLI 输出给出；不得把逻辑 identity（含编码 `cu-…`）拼接进路径。
+
 ## 工作流
 
 1. **Read `prompt_path` 指向的文件**。那份 `ai-prompt.md` 是 harness 按 workflow 声明的模板
