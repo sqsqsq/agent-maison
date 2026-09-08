@@ -257,6 +257,13 @@ export function deriveQualityAxes(
     if (id === 'evidence' && applicable && b.executed === 0 && b.hardFails.length === 0) {
       applicable = false;
     }
+    // plan a3f7c1d9 D1(c)：visual/asset 轴**零映射 check**（该 phase 无此检查面，如 ut 无
+    // visual、plan/review 无 asset）→ NOT_APPLICABLE。判据是零映射而非零执行：有 check 但
+    // 全 SKIP（盲档）仍 UNVERIFIED。testing 期 asset 除外——零检查面正是
+    // applyAssetAxisInheritance 的入口（codex R2 #1），保持 UNVERIFIED 交继承接管。
+    if ((id === 'visual' || (id === 'asset' && phase !== 'testing')) && applicable && b.sources.length === 0) {
+      applicable = false;
+    }
 
     let verdict: AxisVerdict;
     let resolution: AxisResolution | null = null;

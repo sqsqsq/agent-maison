@@ -230,7 +230,9 @@ test('六轮 P1-3：占位检查按 $r 实际引用模块限定——未引用�
     fs.writeFileSync(etsBFile, "Image($r('app.media.bank_logo_x'))\n", 'utf-8');
     const r3 = checkVisualParity(ctx).find(r => r.id === 'asset_placeholder_present');
     assert.ok(r3, '引用模块的占位须命中');
-    assert.strictEqual(r3!.status, 'WARN');
+    // plan a3f7c1d9 D3(e)：缺陷用 FAIL（MAJOR：不计入 phase verdict/blockers，入 visual-debt 阻断 release）
+    assert.strictEqual(r3!.status, 'FAIL');
+    assert.strictEqual(r3!.severity, 'MAJOR', '不得升 BLOCKER');
     assert.ok(r3!.details.includes('bank_logo_x'), r3!.details);
   });
 });

@@ -542,9 +542,11 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
       });
     }
     if (unverified.length > 0) {
+      // plan a3f7c1d9 D3(e)：缺陷用 FAIL。非硬像素契约下 MAJOR FAIL：不计入 phase verdict/blockers（只数 BLOCKER），
+      // findings 入 visual-debt 阻断 release。
       const { severity, status } = isHardPixelContract(ctx)
         ? fidelityRatchetFailOrWarn(ctx, false)
-        : { severity: 'MAJOR' as const, status: 'WARN' as const };
+        : { severity: 'MAJOR' as const, status: 'FAIL' as const };
       results.push({
         id: 'visual_parity_unverified_crop',
         category: 'structure',
@@ -616,9 +618,10 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
           id: 'asset_materialization_sanity',
           category: 'structure',
           description: desc,
-          // brand-critical 命中（fail 或 unverified）→ BLOCKER/FAIL 不分档位；仅普通素材/role 失配 → MAJOR/WARN
+          // brand-critical 命中（fail 或 unverified）→ BLOCKER/FAIL 不分档位；仅普通素材/role 失配 → MAJOR FAIL
+          // （plan a3f7c1d9 D3(e)：不计入 phase verdict/blockers（只数 BLOCKER），findings 入 visual-debt 阻断 release）
           severity: anyCritical ? 'BLOCKER' : 'MAJOR',
-          status: anyCritical ? 'FAIL' : 'WARN',
+          status: 'FAIL',
           details: [
             `【P0-B 物化 sanity·role 分档（阈值版本 ${ASSET_SANITY_THRESHOLD_VERSION}）】空白/纯色/损坏素材在任何保真档位都不是合法交付物；内容统计未执行（unverified）不作已验放行：`,
             ...sanityViolations.map(v => v.line),
@@ -638,7 +641,8 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
   }
 
   // blind-visual-hardening 四轮 P0-1：占位在场检测——maison 占位 SVG（provenance marker）
-  // 可见、sanity 会 PASS，但**占位≠素材已供给**：逐素材 WARN 入视觉债务（needs_fix），
+  // 可见、sanity 会 PASS，但**占位≠素材已供给**：逐素材 MAJOR FAIL 入视觉债务（needs_fix；plan a3f7c1d9 D3(e)：
+  // 不计入 phase verdict/blockers（只数 BLOCKER），findings 入 visual-debt 阻断 release），
   // brand-critical 占位 → release 经债务链保持 BLOCKED（直至真素材替换或人工验收 receipt）。
   // 五轮 P1-3：**全模块匹配**（first-match 会漏掉"A 模块真素材、B 模块占位"的实际引用模块）。
   {
@@ -675,7 +679,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
           category: 'structure',
           description: desc,
           severity: 'MAJOR',
-          status: 'WARN',
+          status: 'FAIL',
           details: [
             `【占位在场】${placeholderHits.length} 项素材当前为 maison 占位（可见但≠真素材）：`,
             ...placeholderHits.map(h => `  - ${h.key}（${h.kind}${h.critical ? '，brand-critical' : ''}）`),

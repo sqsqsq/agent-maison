@@ -372,6 +372,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'integration-tc-flow', modulePath: './unit/integration-tc-flow.unit.test' },
   { id: 'blind-crop-prohibition', modulePath: './unit/blind-crop-prohibition.unit.test' },
   { id: 'visual-debt', modulePath: './unit/visual-debt.unit.test' },
+  // plan a3f7c1d9 V1/V11：asset 轴继承五指纹 I/O 面 + 债务压轴只在 testing
+  { id: 'harness-runner-asset-inheritance', modulePath: './unit/harness-runner-asset-inheritance.unit.test' },
   // plan 7c4f2e9b（cc-spec 卡死根治）六套件
   { id: 'claude-envelope', modulePath: './unit/claude-envelope.unit.test' },
   { id: 'ui-spec-schema-strict', modulePath: './unit/ui-spec-schema-strict.unit.test' },

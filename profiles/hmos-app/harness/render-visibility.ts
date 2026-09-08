@@ -168,13 +168,15 @@ export function checkRenderVisibilityCalibrate(ctx: CheckContext): CheckResult[]
   }
   return [{
     id, category: 'structure', description,
-    severity: 'MAJOR', status: 'WARN', // 终态观察：不阻断 phase；findings 入 visual-debt 阻断 release
+    // plan a3f7c1d9 D3(e)：缺陷用 FAIL、披露用 WARN。MAJOR FAIL：不计入 phase verdict/blockers（只数 BLOCKER），
+    // findings 入 visual-debt 阻断 release（账本只对 FAIL / 非 MINOR SKIP 开账，WARN 会关账）。
+    severity: 'MAJOR', status: 'FAIL',
     details: [
       `【渲染可见性（债务门控观察）】${findings.length} 处 Image 节点"存在但像素不可见"（bc-openCard 假可见形态）：`,
       ...findings.slice(0, 12).map(f =>
         `  - [${f.screen}] node#${f.nodeIndex} bounds=${JSON.stringify(f.bounds)}：${f.assessment.reasons.join('；')}`),
       findings.length > 12 ? `  …还有 ${findings.length - 12} 处` : null,
-      '【终态语义】本节点 WARN 观察、findings 入 visual-debt；open debt 令 visual 轴 UNVERIFIED 并阻断 release，不设独立 enforce 节点。',
+      '【终态语义】本节点 MAJOR FAIL：不计入 phase verdict/blockers（只数 BLOCKER）；findings 入 visual-debt，open debt 令 testing 期 visual 轴 UNVERIFIED 并阻断 release，不设独立 enforce 节点。',
     ].filter(Boolean).join('\n'),
     suggestion:
       '空白 Image 通常=占位/素材缺失或资源引用错误——用真实素材或按 role 生成可见语义占位；' +
