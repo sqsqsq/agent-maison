@@ -287,7 +287,7 @@ generic 未登记（共享规则被物化不等于运行时会读取）。未登
 **升级动作（实例工程）：**
 
 1. 重新物化 `.claude/settings.json`（codeagent 为 `.cac/settings.json`）——`SubagentStop` 段已删除；
-2. `.claude/hooks/record-verifier-report.mjs`（`.cac/hooks/` 同）由 `/framework-init` UPDATE 的 S3 `cleanup-deprecated` 任务按 adapter 的 `deprecated_artifacts` 声明自动备份到 `.framework-backup/<stamp>/` 后删除，结果进 run-log 的 `cleanup_results`；跳过该任务则不清理，无须手动删；
+2. `.claude/hooks/record-verifier-report.mjs`（`.cac/hooks/` 同）由 `/framework-init` UPDATE 的 S3 `cleanup-deprecated` 任务按 adapter 的 `deprecated_artifacts` 声明自动备份到 `.framework-backup/<stamp>/` 后删除，`.claude/settings.json` / `settings.local.json` 内的旧注册一并移除，结果进 run-log 的 `cleanup_results`；跳过该任务则不清理，无须手动删；
 3. `framework/harness/state/last-verifier-report.{json,md}` 是运行时状态，已无生产消费者，可保留，无须清理；
 4. 重新物化规则跳板与 `.claude/agents/verifier.md`（措辞已更新，工具集与输出格式不变）；
 5. 自建 adapter 若已实测能派发 verifier 子代理，在 `adapter.yaml` 写 `verifier_subagent: true`。
@@ -333,8 +333,8 @@ generic 未登记（共享规则被物化不等于运行时会读取）。未登
 
 - 集成新发布件后执行 `framework-init` UPDATE。`cleanup-deprecated` 检查发布件所有 adapter 的已登记退役项，包括不在本次 `materialized_adapters` 中的历史残留；不会因为当前只选 Cursor 就忽略旧 `.claude`、`.cac`、`.codex` 产物。
 - 旧 skill/command 清理路径由各 adapter 的目录声明派生，generic 跟随 `paths.agent_bundle_root`。新增清理 `framework-setup`、`goal-orchestration`、`app-component-blueprint`、`ut-audit`；共享目录内的现行入口和宿主自有文件保留。
-- 退役 hook 使用 `deprecated_artifacts[].hook_configs` 声明旧注册所在的 JSON 文件，先备份并移除注册，再删除脚本。此字段用于退役清理；adapter 顶层 `hooks_config` 用于安装当前注册，两者用途不同。配置里仍含脚本引用时保留脚本并记 `blocked`，不猜测改写复合命令；只移除删除脚本后已空的 `hooks/`，不整目录清空。
-- 全部备份在 `.framework-backup/<timestamp>/`。非法配置或未能清除的引用不阻止其他 adapter/旧跳板继续清理；最终任务标为 failed，S3 run-log 保留成功项与 `blocked`/`failed` 原因。按日志修复旧注册后重跑 UPDATE；不要直接删脚本来消除报错。CREATE 或跳过该任务不清理。
+- 退役 hook 使用 `deprecated_artifacts[].hook_configs` 声明旧注册所在的 JSON 文件，先备份并移除注册，再删除脚本。此字段用于退役清理；adapter 顶层 `hooks_config` 用于安装当前注册，两者用途不同。配置里仍含脚本引用时保留脚本并记 `blocked`，不猜测改写复合命令；引用解析到工程外的绝对路径（指向别的仓库）不阻断删除本地副本，改记 `warning` 并点名该路径待人工核对。`blocked` / `warning` 都不会把任务判为 `failed`——`failed` 只留给非法 JSON/schema、越界路径等异常。只移除删除脚本后已空的 `hooks/`，不整目录清空。
+- 全部备份在 `.framework-backup/<timestamp>/`。非法配置或未能清除的引用都不阻止其他 adapter/旧跳板继续清理，两类都进 S3 run-log 并与成功项一并保留，但任务状态不同：异常（非法 JSON/schema、路径越界等抛错）记 `failed` 并把任务标为 failed；未能清除的引用只记 `blocked`/`warning`，是如实记录的部分结果，不把任务标为 failed。按日志修复旧注册后重跑 UPDATE；不要直接删脚本来消除报错。CREATE 或跳过该任务不清理。
 
 ### 3.0.x：可诊断的产品失败照样签发 verifier request（非 Breaking，plan 3a7f9c12 / openspec verifier-repair-diagnostics）
 

@@ -78,7 +78,7 @@ const ensureConfigTask = {
 
 const cases: Array<{ name: string; run: () => void }> = [
   {
-    name: 'cleanup 部分失败：保留未知注册的脚本，后续 adapter/旧跳板继续，run-log 保留成功与失败并允许重试',
+    name: 'cleanup 工程内未识别引用：保留该脚本记 blocked，其余 adapter/旧跳板继续，任务不 failed 且后继任务照常执行',
     run: () => {
       const root = mkTmp();
       const write = (rel: string, text: string) => {
@@ -87,7 +87,6 @@ const cases: Array<{ name: string; run: () => void }> = [
       };
       try {
         write('framework.config.json', JSON.stringify(legalCursorConfigWritePayload()));
-        write('.claude/settings.json', 'invalid-json');
         write('.claude/hooks/record-verifier-report.mjs', 'claude-old');
         write('.claude/commands/goal-orchestration.md', 'old bridge');
         write('.codex/hooks/check-phase-completion.mjs', 'codex-stop');
@@ -107,29 +106,274 @@ const cases: Array<{ name: string; run: () => void }> = [
             plan_generated_at: '', tasks: plan.tasks.map(t => ({ task_id: t.id, action: 'run' as const })) } };
         const log = executeInitPlan(options);
         const cleanup = log.entries[0]!;
-        assert.strictEqual(cleanup.status, 'failed');
-        assert.strictEqual(log.entries[1]!.reason, 'dependency_blocked');
+        assert.strictEqual(cleanup.status, 'executed');
+        assert.strictEqual(log.entries[1]!.status, 'executed');
+        assert.notStrictEqual(log.entries[1]!.reason, 'dependency_blocked');
         assert.strictEqual(cleanup.cleanup_effects?.blocked, 1);
-        assert.strictEqual(cleanup.cleanup_effects?.failed, 1);
-        assert(cleanup.cleanup_results?.some(r => r.adapter === 'claude' && r.status === 'failed' && r.message?.includes('settings.json')));
+        assert(!cleanup.cleanup_effects?.failed, 'blocked 不得升级成 failed');
         assert(cleanup.cleanup_results?.some(r => r.path === '.codex/hooks/check-phase-completion.mjs' && r.status === 'blocked'));
         assert.strictEqual(fs.readFileSync(path.join(root, '.codex/hooks.json'), 'utf-8'), source);
         assert.strictEqual(fs.readFileSync(path.join(root, '.codex/hooks/check-phase-completion.mjs'), 'utf-8'), 'codex-stop');
-        assert.strictEqual(fs.readFileSync(path.join(root, '.claude/hooks/record-verifier-report.mjs'), 'utf-8'), 'claude-old');
-        for (const rel of ['.claude/commands/goal-orchestration.md', '.cac/hooks', '.codex/hooks/record-verifier-report.mjs', '.opencode/skill/prd-design']) {
+        for (const rel of ['.claude/hooks/record-verifier-report.mjs', '.claude/commands/goal-orchestration.md',
+          '.cac/hooks', '.codex/hooks/record-verifier-report.mjs', '.opencode/skill/prd-design']) {
           assert(!fs.existsSync(path.join(root, rel)), `未继续清理 ${rel}`);
         }
         assert(cleanup.cleanup_results?.some(r => r.adapter === 'codeagent' && r.backup_path));
-        write('.claude/settings.json', '{}');
         write('.codex/hooks.json', '{}');
         const retried = executeInitTask(plan.tasks[0]!, 'run', { projectRoot: root, harnessRoot: options.harnessRoot, plan });
         assert.strictEqual(retried.failed, false);
         assert(!fs.existsSync(path.join(root, '.codex/hooks')));
-        assert(!fs.existsSync(path.join(root, '.claude/hooks')));
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
         clearFrameworkConfigCache();
       }
+    },
+  },
+  {
+    name: 'cleanup 异常路径：settings.json 非法 JSON → 任务 failed、脚本保留、后继任务 dependency_blocked',
+    run: () => {
+      const root = mkTmp();
+      const write = (rel: string, text: string) => {
+        fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+        fs.writeFileSync(path.join(root, rel), text);
+      };
+      try {
+        write('framework.config.json', JSON.stringify(legalCursorConfigWritePayload()));
+        write('.claude/settings.json', 'invalid-json');
+        write('.claude/hooks/record-verifier-report.mjs', 'claude-old');
+        write('.cac/hooks/record-verifier-report.mjs', 'ca-old');
+        clearFrameworkConfigCache();
+        const plan: InitTaskPlan = { schema_version: '1.0', scope: 'project', mode: 'update', generated_at: '', tasks: [
+          { ...ensureConfigTask, id: 'cleanup-deprecated' },
+          { ...ensureConfigTask, id: 'dependent', deps: ['cleanup-deprecated'] },
+        ] };
+        const log = executeInitPlan({ projectRoot: root, harnessRoot: path.resolve(__dirname, '../..'), plan,
+          decision: { schema_version: '1.0' as const, scope: 'project' as const, decision_mode: 'smart' as const,
+            materialized_adapters: ['cursor'],
+            plan_generated_at: '', tasks: plan.tasks.map(t => ({ task_id: t.id, action: 'run' as const })) } });
+        const cleanup = log.entries[0]!;
+        assert.strictEqual(cleanup.status, 'failed');
+        assert.strictEqual(cleanup.cleanup_effects?.failed, 1);
+        assert.strictEqual(log.entries[1]!.reason, 'dependency_blocked');
+        assert(cleanup.cleanup_results?.some(r => r.adapter === 'claude' && r.status === 'failed' && r.message?.includes('settings.json')));
+        assert.strictEqual(fs.readFileSync(path.join(root, '.claude/hooks/record-verifier-report.mjs'), 'utf-8'), 'claude-old');
+        assert(!fs.existsSync(path.join(root, '.cac/hooks')), '其他 adapter 应继续清理');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        clearFrameworkConfigCache();
+      }
+    },
+  },
+  {
+    // 缺陷 1：Claude Code / codeagent 都会读 settings.local.json 的 hooks；框架从不写该文件，
+    // 但宿主可能手工注册——只声明 settings.json 会删脚本却留下悬空注册。
+    // 走 executeInitTask（生产接线），不直接调 applyDeprecatedArtifactsCleanup。
+    name: 'cleanup：settings.json 与 settings.local.json（含 .cac/）同时注册时逐份移除并备份',
+    run: () => {
+      const root = mkTmp();
+      const write = (rel: string, text: string) => {
+        fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+        fs.writeFileSync(path.join(root, rel), text);
+      };
+      const registration = (dir: string) => `${JSON.stringify({ hooks: { SubagentStop: [{ matcher: '*', hooks: [
+        { type: 'command', command: `node "\${CLAUDE_PROJECT_DIR}/${dir}/hooks/record-verifier-report.mjs"` },
+        { type: 'command', command: 'node host-hook.mjs' },
+      ] }] } }, null, 2)}\n`;
+      const configs = new Map<string, string>([
+        ['.claude/settings.json', registration('.claude')],
+        ['.claude/settings.local.json', registration('.claude')],
+        ['.cac/settings.local.json', registration('.cac')],
+      ]);
+      try {
+        write('framework.config.json', JSON.stringify(legalCursorConfigWritePayload()));
+        write('.claude/hooks/record-verifier-report.mjs', 'claude-old');
+        write('.cac/hooks/record-verifier-report.mjs', 'ca-old');
+        for (const [rel, text] of configs) write(rel, text);
+        clearFrameworkConfigCache();
+        const result = executeInitTask({ ...ensureConfigTask, id: 'cleanup-deprecated' }, 'run', {
+          projectRoot: root, harnessRoot: path.resolve(__dirname, '../..'), materializedAdapters: ['cursor'],
+          plan: { schema_version: '1.0', scope: 'project', mode: 'update', generated_at: '', tasks: [] },
+        } as InitExecutionContext);
+        assert.strictEqual(result.failed, false);
+        assert(!result.cleanup_effects?.blocked && !result.cleanup_effects?.warning,
+          `不应有 blocked/warning：${JSON.stringify(result.cleanup_effects)}`);
+        for (const rel of ['.claude/hooks/record-verifier-report.mjs', '.cac/hooks']) {
+          assert(!fs.existsSync(path.join(root, rel)), `未删除 ${rel}`);
+        }
+        for (const [rel, original] of configs) {
+          const next = JSON.parse(fs.readFileSync(path.join(root, rel), 'utf-8'));
+          assert.deepStrictEqual(next.hooks.SubagentStop, [{ matcher: '*',
+            hooks: [{ type: 'command', command: 'node host-hook.mjs' }] }], `${rel} 内旧注册未移除`);
+          const record = result.cleanup_results?.find(r => r.path === rel && r.kind === 'hook_registration');
+          assert(record?.backup_path, `${rel} 未备份`);
+          assert.strictEqual(fs.readFileSync(path.join(root, record!.backup_path!), 'utf-8'), original,
+            `${rel} 备份非改前原件`);
+        }
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        clearFrameworkConfigCache();
+      }
+    },
+  },
+  {
+    // isOutsideProject 的反向锚：解析得出、但落在**工程内**的绝对路径引用必须 blocked。
+    // （既有 blocked 用例用的是带参数复合命令，extractNodeScriptPath 返回 null，区分不了变异。）
+    name: 'cleanup：hooks.json 引用工程内绝对路径（非 owned 位置）→ blocked、脚本保留、不记 warning',
+    run: () => {
+      const root = mkTmp();
+      try {
+        const adapter = checkInitTesting.loadAdapter('codex');
+        fs.mkdirSync(path.join(root, '.codex/hooks'), { recursive: true });
+        const inside = path.join(root, 'other', 'check-phase-completion.mjs');
+        fs.writeFileSync(path.join(root, '.codex/hooks.json'),
+          JSON.stringify({ hooks: { Stop: [{ command: `node "${inside.replace(/\\/g, '/')}"` }] } }));
+        fs.writeFileSync(path.join(root, '.codex/hooks/check-phase-completion.mjs'), 'local-copy');
+        const result = checkInitTesting.applyDeprecatedArtifactsCleanup(root, adapter, 'update');
+        assert.deepStrictEqual(result.warnings, [], '工程内引用不得记 warning');
+        assert.strictEqual(result.blocked.length, 1, JSON.stringify(result.blocked));
+        assert.strictEqual(result.blocked[0]!.path, '.codex/hooks/check-phase-completion.mjs');
+        assert.strictEqual(fs.readFileSync(path.join(root, '.codex/hooks/check-phase-completion.mjs'), 'utf-8'),
+          'local-copy', '工程内仍有引用时脚本须保留');
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    // M1：工程自身经 junction 别名注册（字面路径越界、realpath 后仍在工程内）——
+    // 必须按工程内引用处理，脚本保留、配置逐字不变，不得当成"别的仓库"删掉。
+    name: 'cleanup：工程自身的 junction 别名路径 → blocked、脚本保留、hooks.json 逐字不变',
+    run: () => {
+      const root = fs.realpathSync(mkTmp());
+      const linkDir = fs.realpathSync(mkTmp());
+      const alias = path.join(linkDir, 'project-alias');
+      try {
+        fs.symlinkSync(root, alias, process.platform === 'win32' ? 'junction' : 'dir');
+        const adapter = checkInitTesting.loadAdapter('codex');
+        fs.mkdirSync(path.join(root, '.codex/hooks'), { recursive: true });
+        const source = `${JSON.stringify({ version: 1, hooks: { Stop: [
+          { command: `node '${path.join(alias, '.codex', 'hooks', 'check-phase-completion.mjs')}'` },
+        ] } }, null, 2)}\n`;
+        fs.writeFileSync(path.join(root, '.codex/hooks.json'), source);
+        fs.writeFileSync(path.join(root, '.codex/hooks/check-phase-completion.mjs'), 'local-copy');
+        const result = checkInitTesting.applyDeprecatedArtifactsCleanup(root, adapter, 'update');
+        assert.deepStrictEqual(result.warnings, [], 'junction 别名不是工程外');
+        assert.strictEqual(result.blocked.length, 1, JSON.stringify(result.blocked));
+        assert.strictEqual(fs.readFileSync(path.join(root, '.codex/hooks/check-phase-completion.mjs'), 'utf-8'),
+          'local-copy', 'junction 别名引用不得删脚本');
+        assert.strictEqual(fs.readFileSync(path.join(root, '.codex/hooks.json'), 'utf-8'), source,
+          'hooks.json 须逐字不变');
+      } finally {
+        fs.rmSync(alias, { recursive: true, force: true });
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(linkDir, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    // 缺陷 2：宿主 .codex/hooks.json 的 Stop 指向**另一个仓库**的绝对路径（那边文件已不存在）。
+    // 文件名兜底不得据此判"仍被引用"，更不得把 blocked 升级成任务 failed。
+    name: 'cleanup：hooks.json 引用工程外绝对路径 → 删本地副本、配置逐字不变、记 warning 且任务不 failed',
+    run: () => {
+      const root = mkTmp();
+      try {
+        fs.mkdirSync(path.join(root, '.codex/hooks'), { recursive: true });
+        fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify(legalCursorConfigWritePayload()));
+        const outside = path.resolve(os.tmpdir(), 'outside-project-repo', '.codex', 'hooks', 'check-phase-completion.mjs');
+        const source = `${JSON.stringify({ version: 1, hooks: { Stop: [{ command: `node '${outside}'` }] } }, null, 2)}\n`;
+        fs.writeFileSync(path.join(root, '.codex/hooks.json'), source);
+        fs.writeFileSync(path.join(root, '.codex/hooks/check-phase-completion.mjs'), 'local-copy');
+        clearFrameworkConfigCache();
+        const ctx: InitExecutionContext = {
+          projectRoot: root, harnessRoot: path.resolve(__dirname, '../..'), materializedAdapters: ['cursor'],
+          plan: { schema_version: '1.0', scope: 'project', mode: 'update', generated_at: '', tasks: [] },
+        };
+        const result = executeInitTask({ ...ensureConfigTask, id: 'cleanup-deprecated' }, 'run', ctx);
+        assert.strictEqual(result.failed, false);
+        assert.strictEqual(result.cleanup_effects?.warning, 1);
+        assert(!result.cleanup_effects?.blocked, '工程外引用不得记 blocked');
+        assert(!fs.existsSync(path.join(root, '.codex/hooks/check-phase-completion.mjs')), '工程外引用不应阻断删除本地副本');
+        assert.strictEqual(fs.readFileSync(path.join(root, '.codex/hooks.json'), 'utf-8'), source, 'hooks.json 须逐字不变');
+        const warn = result.cleanup_results?.find(r => r.status === 'warning');
+        assert(warn?.message?.includes(outside.replace(/\\/g, '/')), `warning 须点名工程外路径：${warn?.message}`);
+        assert(result.cleanup_results?.some(r => r.path === '.codex/hooks/check-phase-completion.mjs' && r.backup_path));
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        clearFrameworkConfigCache();
+      }
+    },
+  },
+  {
+    // M2：工程外 command 与工程内引用**同处一个对象**时，只能剔除 command 键；
+    // 丢掉整个对象会连带丢掉 args 里的工程内引用，把 blocked 误降成 warning + 删脚本。
+    name: 'cleanup：同一对象内 工程外 command + 工程内 args → blocked、脚本保留、hooks.json 不变',
+    run: () => {
+      const root = mkTmp();
+      try {
+        const adapter = checkInitTesting.loadAdapter('codex');
+        fs.mkdirSync(path.join(root, '.codex/hooks'), { recursive: true });
+        const outside = path.resolve(os.tmpdir(), 'outside-project-repo', '.codex', 'hooks', 'check-phase-completion.mjs');
+        const source = JSON.stringify({ hooks: { Stop: [
+          { command: `node '${outside.replace(/\\/g, '/')}'`, args: ['.codex/hooks/check-phase-completion.mjs'] },
+        ] } });
+        fs.writeFileSync(path.join(root, '.codex/hooks.json'), source);
+        fs.writeFileSync(path.join(root, '.codex/hooks/check-phase-completion.mjs'), 'local-copy');
+        const result = checkInitTesting.applyDeprecatedArtifactsCleanup(root, adapter, 'update');
+        assert.deepStrictEqual(result.warnings, [], 'args 里仍有工程内引用，不得只记 warning');
+        assert.strictEqual(result.blocked.length, 1, JSON.stringify(result.blocked));
+        assert.strictEqual(fs.readFileSync(path.join(root, '.codex/hooks/check-phase-completion.mjs'), 'utf-8'), 'local-copy');
+        assert.strictEqual(fs.readFileSync(path.join(root, '.codex/hooks.json'), 'utf-8'), source, 'hooks.json 须逐字不变');
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    // M1：工程内以两个点开头的合法目录名（`..cache/`）不是越界——
+    // `rel.startsWith('..')` 会把它判成工程外，删掉仍被引用的本地脚本。
+    name: 'cleanup：hooks.json 引用工程内 ..cache/ 目录 → blocked、脚本保留、不记 warning',
+    run: () => {
+      const root = fs.realpathSync(mkTmp());
+      try {
+        const adapter = checkInitTesting.loadAdapter('codex');
+        fs.mkdirSync(path.join(root, '.codex/hooks'), { recursive: true });
+        fs.mkdirSync(path.join(root, '..cache'), { recursive: true });
+        const inside = path.join(root, '..cache', 'check-phase-completion.mjs');
+        fs.writeFileSync(inside, 'dot-dot-dir-copy');
+        fs.writeFileSync(path.join(root, '.codex/hooks.json'),
+          JSON.stringify({ hooks: { Stop: [{ command: `node "${inside.replace(/\\/g, '/')}"` }] } }));
+        fs.writeFileSync(path.join(root, '.codex/hooks/check-phase-completion.mjs'), 'local-copy');
+        const result = checkInitTesting.applyDeprecatedArtifactsCleanup(root, adapter, 'update');
+        assert.deepStrictEqual(result.warnings, [], '..cache 是工程内合法目录，不得记 warning');
+        assert.strictEqual(result.blocked.length, 1, JSON.stringify(result.blocked));
+        assert.strictEqual(fs.readFileSync(path.join(root, '.codex/hooks/check-phase-completion.mjs'), 'utf-8'),
+          'local-copy', '工程内仍有引用时脚本须保留');
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    // P2：路径含**未展开变量**（`$env:VAR`、`%VAR%`）时字面目录必然不存在，祖先上溯会落到
+    // Temp 等工程外目录 → 误判工程外删本地副本，宿主 hook 随即 MODULE_NOT_FOUND。
+    // 运行时展开后可能正指向本工程；框架不解释 shell，一律保守当工程内。
+    name: 'cleanup：hooks.json 引用含未展开变量的绝对路径 → blocked、脚本保留、hooks.json 逐字不变、不记 warning',
+    run: () => {
+      const root = fs.realpathSync(mkTmp());
+      try {
+        const adapter = checkInitTesting.loadAdapter('codex');
+        fs.mkdirSync(path.join(root, '.codex/hooks'), { recursive: true });
+        for (const variable of ['$env:MAISON_REVIEW_DIR', '%MAISON_REVIEW_DIR%']) {
+          const unexpanded = path.resolve(os.tmpdir(), variable, '.codex', 'hooks', 'check-phase-completion.mjs');
+          const source = JSON.stringify({ hooks: { Stop: [
+            { command: `node "${unexpanded.replace(/\\/g, '/')}"` },
+          ] } });
+          fs.writeFileSync(path.join(root, '.codex/hooks.json'), source);
+          fs.writeFileSync(path.join(root, '.codex/hooks/check-phase-completion.mjs'), 'local-copy');
+          const result = checkInitTesting.applyDeprecatedArtifactsCleanup(root, adapter, 'update');
+          assert.deepStrictEqual(result.warnings, [], `${variable}：未展开变量不得判工程外`);
+          assert.strictEqual(result.blocked.length, 1, `${variable}：${JSON.stringify(result.blocked)}`);
+          assert.strictEqual(result.blocked[0]!.path, '.codex/hooks/check-phase-completion.mjs');
+          assert.strictEqual(fs.readFileSync(path.join(root, '.codex/hooks/check-phase-completion.mjs'), 'utf-8'),
+            'local-copy', `${variable}：脚本须保留`);
+          assert.strictEqual(fs.readFileSync(path.join(root, '.codex/hooks.json'), 'utf-8'), source,
+            `${variable}：hooks.json 须逐字不变`);
+        }
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
     },
   },
   {

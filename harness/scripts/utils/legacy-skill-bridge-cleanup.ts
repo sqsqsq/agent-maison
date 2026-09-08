@@ -8,6 +8,7 @@ import type { FrameworkConfig } from '../../config';
 import { resolveProbeFrameworkRoot } from '../../repo-layout';
 import type { InitMode } from '../check-init';
 import { validateAgentBundleRoot, type ResolvedAgentBundlePaths } from './agent-bundle-paths';
+import { isInsideProjectRoot } from './project-relative-path';
 import type { CleanupResult } from './init-sync-telemetry';
 
 export const LEGACY_SKILL_BRIDGE_IDS = [
@@ -60,6 +61,8 @@ export interface LegacySkillBridgePath {
 export interface LegacySkillBridgePresence {
   count: number;
   samples: string[];
+  /** 只读探测中无法判定的路径（junction/symlink 越界等）；S3 删除时会抛错并按 adapter 记 failed */
+  skipped: Array<{ relPosix: string; reason: string }>;
 }
 
 function toPosix(p: string): string {
@@ -90,15 +93,13 @@ export function assertSafeProjectRelativePath(projectRoot: string, relPosix: str
     throw new Error(`[legacy-skill-bridge] 非法相对路径: ${relPosix}`);
   }
   const absPath = path.resolve(projectRoot, normalized);
-  const rel = path.relative(projectRoot, absPath);
-  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) {
+  if (absPath === path.resolve(projectRoot) || !isInsideProjectRoot(projectRoot, absPath)) {
     throw new Error(`[legacy-skill-bridge] 路径越界: ${relPosix}`);
   }
   // 删除/备份前检查现存祖先，禁止经 symlink/junction 越出宿主。
   let existing = absPath;
   while (!fs.existsSync(existing)) existing = path.dirname(existing);
-  const realRel = path.relative(fs.realpathSync(projectRoot), fs.realpathSync(existing));
-  if (realRel.startsWith('..') || path.isAbsolute(realRel)) {
+  if (!isInsideProjectRoot(fs.realpathSync(projectRoot), fs.realpathSync(existing))) {
     throw new Error(`[legacy-skill-bridge] 实际路径越界: ${relPosix}`);
   }
   return absPath;
@@ -183,14 +184,23 @@ export function detectLegacySkillBridgePresence(
     config,
   });
   const samples: string[] = [];
+  const skipped: LegacySkillBridgePresence['skipped'] = [];
   let count = 0;
   for (const entry of paths) {
-    const absPath = assertSafeProjectRelativePath(projectRoot, entry.relPosix);
+    // 只读探测不得因单条路径不可判定（junction/symlink 越界等）整体失败——否则 S1 生不出计划。
+    // 删除路径 applyLegacySkillBridgeCleanup 仍然抛错，安全锚不变。
+    let absPath: string;
+    try {
+      absPath = assertSafeProjectRelativePath(projectRoot, entry.relPosix);
+    } catch (e) {
+      skipped.push({ relPosix: entry.relPosix, reason: (e as Error).message });
+      continue;
+    }
     if (!fs.existsSync(absPath)) continue;
     count++;
     if (samples.length < 5) samples.push(entry.relPosix);
   }
-  return { count, samples };
+  return { count, samples, skipped };
 }
 
 export function applyLegacySkillBridgeCleanup(

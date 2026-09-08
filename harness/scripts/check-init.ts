@@ -47,7 +47,7 @@ import {
   PendingMigrationEntry,
 } from './utils/config-field-merger';
 import { loadLocalConfig } from './utils/framework-local-config';
-import { computeHooksConfigUpsert, computeHooksConfigRemoval } from './utils/hooks-config-upsert';
+import { computeHooksConfigUpsert, computeHooksConfigRemoval, extractNodeScriptPath } from './utils/hooks-config-upsert';
 import { PhaseChecker, CheckContext, CheckResult } from './utils/types';
 import {
   buildFrameworkIdentityResult,
@@ -65,6 +65,7 @@ import {
   materializeAgentBundleSkills,
   materializeInlineSkillMarkdown,
 } from './utils/materialize-agent-bundle-skills';
+import { isInsideProjectRoot } from './utils/project-relative-path';
 import { resolveSkillPath } from './utils/resolve-skill-path';
 
 // --------------------------------------------------------------------------
@@ -479,6 +480,58 @@ function removePathRecursive(abs: string): void {
   fs.rmSync(abs, { recursive: true, force: true });
 }
 
+/**
+ * 脚本路径是否解析到本工程之外；相对路径一律视为工程内。
+ * 比的是**真实路径**——工程自身的 junction/symlink 别名字面看着越界，realpath 后仍是工程内，
+ * 不得据此删掉仍被引用的脚本。取最近存在的祖先做 realpath；无法判定一律返回 false（视为
+ * 工程内 → blocked，fail-closed）。
+ */
+function isOutsideProject(projectRoot: string, scriptPath: string): boolean {
+  // 含未展开变量/shell 表达式（`$` `%` 反引号）的路径由宿主 shell 运行时展开，字面目录
+  // 不存在、祖先上溯到的 Temp 等目录不代表真实去向——一律当工程内（blocked），不解释 shell。
+  // `${…PROJECT_DIR}/` 前缀已由 extractNodeScriptPath 剥除，不受此条影响。
+  if (/[$%`]/.test(scriptPath)) return false;
+  if (!path.isAbsolute(scriptPath)) return false;
+  try {
+    let existing = path.resolve(scriptPath);
+    while (!fs.existsSync(existing)) {
+      const parent = path.dirname(existing);
+      if (parent === existing) return false;
+      existing = parent;
+    }
+    return !isInsideProjectRoot(fs.realpathSync(projectRoot), fs.realpathSync(existing));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 递归剔除引用 `base` 且「解析出单脚本路径、该路径指向工程外」的 **command 键**，
+ * 被剔除的路径写进 `ctx.offsite`。只删这一个键、不丢整个对象——同对象里的
+ * args/matcher/任意字段仍留在剩余文档里，工程内的残留引用因此照样落 blocked。
+ */
+function stripOffsiteCommands(
+  node: unknown,
+  ctx: { projectRoot: string; base: string; offsite: string[] },
+): unknown {
+  if (Array.isArray(node)) return node.map(item => stripOffsiteCommands(item, ctx));
+  if (node && typeof node === 'object') {
+    const kept: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+      if (k === 'command' && typeof v === 'string' && v.toLowerCase().includes(ctx.base)) {
+        const script = extractNodeScriptPath(v);
+        if (script !== null && isOutsideProject(ctx.projectRoot, script)) {
+          ctx.offsite.push(script);
+          continue;
+        }
+      }
+      kept[k] = stripOffsiteCommands(v, ctx);
+    }
+    return kept;
+  }
+  return node;
+}
+
 export interface DeprecatedCleanupBackupSession {
   stamp: string;
   backupRelDir?: string;
@@ -489,18 +542,19 @@ export function applyDeprecatedArtifactsCleanup(
   adapter: AdapterDescriptor,
   mode: InitMode,
   options?: { backupSession?: DeprecatedCleanupBackupSession; targetRoot?: string },
-): { cleaned: NonNullable<CheckInitReport['deprecated_artifacts_cleaned']>; blocked: Array<{ path: string; reason: string }>; backupRelDir: string | null } {
+): { cleaned: NonNullable<CheckInitReport['deprecated_artifacts_cleaned']>; blocked: Array<{ path: string; reason: string }>; warnings: Array<{ path: string; reason: string }>; backupRelDir: string | null } {
   const cleaned: NonNullable<CheckInitReport['deprecated_artifacts_cleaned']> = [];
   const blocked: Array<{ path: string; reason: string }> = [];
+  const warnings: Array<{ path: string; reason: string }> = [];
   if (mode !== 'update') {
-    return { cleaned, blocked, backupRelDir: null };
+    return { cleaned, blocked, warnings, backupRelDir: null };
   }
   const entries = adapter.deprecatedArtifacts;
-  if (!entries.length) return { cleaned, blocked, backupRelDir: null };
+  if (!entries.length) return { cleaned, blocked, warnings, backupRelDir: null };
 
   const root = (options?.targetRoot?.trim() || resolveAdapterTargetRoot(adapter.rawConfig))
     ?.replace(/\\/g, '/').replace(/\/+$/, '');
-  if (!root) return { cleaned, blocked, backupRelDir: null };
+  if (!root) return { cleaned, blocked, warnings, backupRelDir: null };
 
   const session = options?.backupSession;
   let backupRelDir: string | null = session?.backupRelDir ?? null;
@@ -536,10 +590,19 @@ export function applyDeprecatedArtifactsCleanup(
     if (removal.status === 'invalid_json' || removal.status === 'invalid_schema') {
       throw new Error(`[check-init] 无法安全清理退役 hook 注册：${relPath} (${removal.status})`);
     }
-    // ponytail: 按文件名保守保留可能仍被引用的脚本；只有真实误报再细化命令解析。
-    const remaining = JSON.stringify(JSON.parse(removal.nextText!)).toLowerCase();
+    // 按文件名保守保留可能仍被引用的脚本；但文件名兜底只对**解析到本工程内**的引用生效——
+    // 宿主 hooks.json 里指向另一个仓库绝对路径的注册与本工程的副本无关，不得阻断删除。
+    const nextDoc = JSON.parse(removal.nextText!);
+    const remaining = JSON.stringify(nextDoc).toLowerCase();
     for (const script of scripts) {
-      if (remaining.includes(path.posix.basename(script).toLowerCase())) {
+      const base = path.posix.basename(script).toLowerCase();
+      if (!remaining.includes(base)) continue;
+      const offsite: string[] = [];
+      const stripped = stripOffsiteCommands(nextDoc, { projectRoot, base, offsite });
+      if (offsite.length > 0 && !JSON.stringify(stripped).toLowerCase().includes(base)) {
+        warnings.push({ path: script,
+          reason: `${relPath} 引用工程外路径 ${offsite.join('、')}，未改写，请人工核对` });
+      } else {
         blocked.push({ path: script, reason: `${relPath} 仍含脚本引用，保留文件；请核对并移除旧注册后重跑` });
       }
     }
@@ -573,7 +636,7 @@ export function applyDeprecatedArtifactsCleanup(
       `[check-init] deprecated artifact backup_delete: ${root}/${relPath} → ${backupRelDir}/${root}/${relPath}\n`,
     );
   }
-  return { cleaned, blocked, backupRelDir };
+  return { cleaned, blocked, warnings, backupRelDir };
 }
 
 function loadAdapter(adapter: string): AdapterDescriptor {

@@ -891,6 +891,7 @@ function formatEntryCategoryLine(entry: InitRunLogEntry): string {
     const counts = `backup_deleted ${entry.cleanup_effects.backup_deleted}`
       + (entry.cleanup_effects.hook_configs_updated ? `，hook_configs_updated ${entry.cleanup_effects.hook_configs_updated}` : '')
       + (entry.cleanup_effects.blocked ? `，blocked ${entry.cleanup_effects.blocked}` : '')
+      + (entry.cleanup_effects.warning ? `，warning ${entry.cleanup_effects.warning}` : '')
       + (entry.cleanup_effects.failed ? `，failed ${entry.cleanup_effects.failed}` : '');
     return backupHint ? `${counts}（备份 ${backupHint}）` : counts;
   }

@@ -539,13 +539,14 @@ export function probeInitTaskPlan(options: PlanProbeOptions): InitTaskPlan {
       { materializedAdapters: materialized }, cfgSources.config, cfgSources, probeFrameworkRoot,
     );
     const presence = detectLegacySkillBridgePresence(projectRoot, cfgSources.config, cleanupAdapters);
-    if (presence.count > 0) {
+    const hints = [
+      ...(presence.count > 0 ? [`发现 ${presence.count} 处，S3 将 backup_delete`] : []),
+      ...(presence.skipped.length > 0 ? [`${presence.skipped.length} 处路径无法探测，S3 将报告清理异常`] : []),
+    ];
+    if (hints.length > 0) {
       tasks = tasks.map(t =>
         t.id === 'cleanup-deprecated'
-          ? {
-              ...t,
-              title: `deprecated + 遗留 skill 跳板 cleanup（发现 ${presence.count} 处，S3 将 backup_delete）`,
-            }
+          ? { ...t, title: `deprecated + 遗留 skill 跳板 cleanup（${hints.join('；')}）` }
           : t,
       );
     }

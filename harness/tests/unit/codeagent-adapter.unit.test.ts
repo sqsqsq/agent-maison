@@ -187,6 +187,9 @@ const cases: Array<{ name: string; run: () => void }> = [
         const entry = adapter.deprecatedArtifacts.find(e => e.path === 'hooks/record-verifier-report.mjs');
         assert(entry, `${name} adapter 未声明退役 hooks/record-verifier-report.mjs`);
         assert.strictEqual(entry!.action, 'backup_delete', `${name} 退役动作应为 backup_delete`);
+        // Claude Code 也读 settings.local.json 的 hooks；漏声明 = 删了脚本却留悬空注册。
+        assert.deepStrictEqual(entry!.hookConfigs, ['settings.json', 'settings.local.json'],
+          `${name} hook_configs 须同时覆盖 settings.json 与 settings.local.json`);
       }
     },
   },

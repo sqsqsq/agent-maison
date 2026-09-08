@@ -555,7 +555,7 @@ export function executeInitTask(
       for (const name of adapters) {
         try {
           const adapter = loadAdapter(name);
-          const { cleaned, blocked } = applyDeprecatedArtifactsCleanup(
+          const { cleaned, blocked, warnings } = applyDeprecatedArtifactsCleanup(
             ctx.projectRoot, adapter, mode,
             { backupSession, targetRoot: name === 'generic' ? config.paths.agent_bundle_root : undefined },
           );
@@ -569,6 +569,10 @@ export function executeInitTask(
           for (const item of blocked) {
             cleanupResults.push({ path: item.path, kind: 'deprecated_artifact', adapter: name,
               status: 'blocked', message: item.reason });
+          }
+          for (const item of warnings) {
+            cleanupResults.push({ path: item.path, kind: 'deprecated_artifact', adapter: name,
+              status: 'warning', message: item.reason });
           }
         } catch (e) {
           cleanupResults.push({ path: name, kind: 'deprecated_artifact', adapter: name,
@@ -591,15 +595,19 @@ export function executeInitTask(
       const successes = cleanupResults.filter(item => !item.status);
       const total = successes.length;
       const hookConfigs = successes.filter(item => item.kind === 'hook_registration').length;
+      const countOf = (status: NonNullable<CleanupResult['status']>) =>
+        issues.filter(i => i.status === status).length;
       const cleanupEffects: CleanupEffects = {
         backup_deleted: total - hookConfigs,
-        ...(issues.length ? { blocked: issues.filter(i => i.status === 'blocked').length,
-          failed: issues.filter(i => i.status === 'failed').length } : {}),
+        ...(issues.length ? { blocked: countOf('blocked'), warning: countOf('warning'),
+          failed: countOf('failed') } : {}),
         ...(hookConfigs ? { hook_configs_updated: hookConfigs } : {}),
       };
 
       return {
-        failed: issues.length > 0,
+        // blocked（工程内仍有引用，脚本已保留）与 warning（工程外引用，已删本地副本）都是
+        // 如实记录的部分结果，不是任务失败；failed 只留给 catch 到的异常。
+        failed: countOf('failed') > 0,
         message: (total
           ? `cleanup backup_delete ${total - hookConfigs} 项${hookConfigs ? `，更新 hook 注册 ${hookConfigs} 份` : ''}${backupRelDir ? `（备份 ${backupRelDir}）` : ''}`
           : issues.length ? '退役清理有未完成项' : '无 deprecated / 遗留跳板需清理')

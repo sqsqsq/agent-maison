@@ -5,7 +5,9 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import type { FrameworkConfig } from '../../config';
+import { clearFrameworkConfigCache, type FrameworkConfig } from '../../config';
+import { executeInitTask } from '../../scripts/utils/init-task-executor';
+import { probeInitTaskPlan } from '../../scripts/utils/init-task-planner';
 import {
   applyLegacySkillBridgeCleanup,
   collectLegacySkillBridgePaths,
@@ -185,6 +187,92 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert.strictEqual(presence.count, 1);
       assert(presence.samples[0]!.includes('3-coding'));
       fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    // 缺陷 3：S1 只读探测撞上指向工程外的 junction/symlink 时曾整体抛错，
+    // 让 probeInitTaskPlan 生不出计划——探测须逐条跳过并如实报告。
+    name: 'detectLegacySkillBridgePresence：路径经 junction 指向工程外时不抛错，逐条计入 skipped；planner 仍出计划并在 title 提示',
+    run: () => {
+      const root = fs.realpathSync(mkTmp());
+      const outside = fs.realpathSync(mkTmp());
+      try {
+        fs.mkdirSync(path.join(root, '.codex', 'skills'), { recursive: true });
+        fs.symlinkSync(outside, path.join(root, '.codex', 'skills', 'app-component-blueprint'),
+          process.platform === 'win32' ? 'junction' : 'dir');
+
+        const presence = detectLegacySkillBridgePresence(root, baseConfig(), ['codex']);
+        assert.strictEqual(presence.skipped.length, 1, `skipped 应恰含一条，实际=${JSON.stringify(presence.skipped)}`);
+        assert(presence.skipped[0]!.relPosix.includes('app-component-blueprint'));
+        assert(presence.skipped[0]!.reason.length > 0, 'skipped 须带原因');
+
+        fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({
+          schema_version: '1.1',
+          project_name: 'junction-probe',
+          materialized_adapters: ['codex'],
+          architecture: baseConfig().architecture,
+          paths: { features_dir: 'doc/features' },
+        }));
+        clearFrameworkConfigCache();
+        const plan = probeInitTaskPlan({ projectRoot: root, scope: 'project', adapter: 'codex' });
+        assert.strictEqual(plan.mode, 'update', 'framework.config.json 存在时应为 UPDATE');
+        const task = plan.tasks.find(t => t.id === 'cleanup-deprecated');
+        assert(task, '计划应含 cleanup-deprecated');
+        assert(task!.title.includes('无法探测') && task!.title.includes('S3 将报告清理异常'),
+          `title 未提示无法探测的路径：${task!.title}`);
+      } finally {
+        fs.rmSync(path.join(root, '.codex'), { recursive: true, force: true });
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(outside, { recursive: true, force: true });
+        clearFrameworkConfigCache();
+      }
+    },
+  },
+  {
+    // 缺陷 3 的第二形态：整根 `.codex` 就是指向工程外的 junction。
+    // S1 只读探测须跳过并出计划；S3 删除路径保持抛错——该 adapter 记 failed、任务 failed，
+    // 其他 adapter 照常清理。
+    name: '整根 .codex 为工程外 junction：planner 仍出计划，S3 该 adapter failed 且其他 adapter 照常清理',
+    run: () => {
+      const root = fs.realpathSync(mkTmp());
+      const outside = fs.realpathSync(mkTmp());
+      try {
+        fs.mkdirSync(path.join(outside, 'skills', 'app-component-blueprint'), { recursive: true });
+        fs.symlinkSync(outside, path.join(root, '.codex'), process.platform === 'win32' ? 'junction' : 'dir');
+        fs.mkdirSync(path.join(root, '.claude', 'commands'), { recursive: true });
+        fs.writeFileSync(path.join(root, '.claude', 'commands', 'goal-orchestration.md'), 'old bridge');
+        fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({
+          schema_version: '1.1',
+          project_name: 'junction-root',
+          materialized_adapters: ['codex'],
+          architecture: baseConfig().architecture,
+          paths: { features_dir: 'doc/features' },
+        }));
+        clearFrameworkConfigCache();
+
+        const plan = probeInitTaskPlan({ projectRoot: root, scope: 'project', adapter: 'codex' });
+        const task = plan.tasks.find(t => t.id === 'cleanup-deprecated');
+        assert(task, '计划应含 cleanup-deprecated');
+        assert(task!.title.includes('无法探测'), `title 未提示无法探测的路径：${task!.title}`);
+
+        const result = executeInitTask({ ...task!, id: 'cleanup-deprecated' }, 'run', {
+          projectRoot: root, harnessRoot: path.resolve(__dirname, '../..'),
+          materializedAdapters: ['codex'], plan,
+        });
+        assert.strictEqual(result.failed, true, '越界异常须把任务判为 failed');
+        const failure = result.cleanup_results?.find(
+          r => r.adapter === 'codex' && r.kind === 'legacy_skill_bridge' && r.status === 'failed');
+        assert(failure, `codex legacy 清理应记 failed：${JSON.stringify(result.cleanup_results)}`);
+        assert(/越界/.test(failure!.message ?? ''), `failed 原因须点名越界：${failure!.message}`);
+        assert(failure!.message?.includes('.codex/'), `failed 原因须点名越界路径：${failure!.message}`);
+        assert(!fs.existsSync(path.join(root, '.claude', 'commands', 'goal-orchestration.md')),
+          '其他 adapter 的旧跳板应照常清理');
+      } finally {
+        fs.rmSync(path.join(root, '.codex'), { recursive: true, force: true });
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(outside, { recursive: true, force: true });
+        clearFrameworkConfigCache();
+      }
     },
   },
   {

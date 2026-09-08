@@ -28,6 +28,12 @@ export function renderCodexAgentToml(markdown: string): string {
     fields.set(kv[1]!, kv[2]!.trim());
   }
 
+  // 未映射键静默丢弃 = codex 角色悄悄少一条约束；只认三个键，越出即人工重审。
+  const unmapped = [...fields.keys()].filter(k => k !== 'name' && k !== 'description' && k !== 'tools');
+  if (unmapped.length) {
+    throw new Error(`frontmatter 出现未映射键 ${unmapped.join(', ')}，codex 角色文件无对应字段，需人工重审`);
+  }
+
   const name = fields.get('name');
   if (name !== 'verifier') {
     throw new Error(`本渲染器只承诺 verifier 角色，frontmatter name=${name ?? '<缺失>'}`);

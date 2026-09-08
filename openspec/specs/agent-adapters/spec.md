@@ -200,13 +200,22 @@ Cleanup SHALL preserve host-owned content and back up changed artifacts under
   registrations have been removed
 - **THEN** cleanup SHALL retain the script and record `blocked`, rather than deleting
   it beneath a remaining reference or guessing how to rewrite a composite command
+- **AND** only when every remaining reference is a resolved single-script path outside
+  the project SHALL the local copy still be deleted, recording a `warning` naming those
+  paths and leaving the host configuration byte-for-byte unchanged; a path carrying an
+  unexpanded variable or shell expression is never treated as outside the project
 
 #### Scenario: Local failures do not stop other cleanup
-- **WHEN** an adapter's configuration is invalid, cleanup raises an error, or a script is blocked
-- **THEN** other adapters and legacy bridge cleanup SHALL continue
-- **AND** the final cleanup task SHALL be failed; S3 run-log SHALL retain successful
-  `cleanup_results`, `cleanup_effects`, and blocked/failed diagnostics, so correction
-  and retry do not discard already completed cleanup
+- **WHEN** an adapter's configuration is invalid or cleanup raises an error
+- **THEN** other adapters and legacy bridge cleanup SHALL continue and the final
+  cleanup task SHALL be failed
+- **WHEN** a script is instead `blocked`, or its references are unresolved-but-offsite
+  (`warning`)
+- **THEN** other cleanup SHALL likewise continue and the final cleanup task SHALL NOT
+  be failed
+- **AND** in every case S3 run-log SHALL retain successful `cleanup_results`,
+  `cleanup_effects`, and blocked/warning/failed diagnostics, so correction and retry
+  do not discard already completed cleanup
 
 #### Scenario: CREATE, skip and repeat execution
 - **WHEN** init is in CREATE mode or cleanup is explicitly skipped

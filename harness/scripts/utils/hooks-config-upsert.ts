@@ -199,6 +199,18 @@ export interface RemovalResult {
 }
 
 /**
+ * 从 hook command 抽出「node 单脚本调用」的脚本路径：斜杠归一，去掉 `./` 与
+ * `${…PROJECT_DIR}/` 前缀。复合/拼接命令（`&&`、带参数等）返回 null——不猜归属。
+ * 归属判定（本文件）与退役清理的引用去向判定（check-init）共用同一份解析，勿另抄正则。
+ */
+export function extractNodeScriptPath(command: string): string | null {
+  const match = command.match(/^node(?:\.exe)?\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|<>]+))\s*$/i);
+  if (!match) return null;
+  return (match[1] ?? match[2] ?? match[3]!).replace(/\\/g, '/')
+    .replace(/^(?:\.\/|\$(?:\{[A-Z0-9_]*PROJECT_(?:DIR|ROOT)\}|[A-Z0-9_]*PROJECT_(?:DIR|ROOT))\/)/, '');
+}
+
+/**
  * 卸载/adapter 切换：删除全部 owned/legacy command 条目，保留第三方条目与容器结构；
  * 事件数组删空后移除该事件键（空容器清理），其余顶层字段原样保留。
  */
@@ -225,12 +237,8 @@ export function computeHooksConfigRemoval(
   const scripts = new Set(ownedScriptPaths.map(normalizeScriptPath));
   const isOwned = (command: string): boolean => {
     if (owned.has(command)) return true;
-    // 仅认 node 的单脚本调用；不按文件名子串猜测任意宿主 shell 命令归属。
-    const match = command.match(/^node(?:\.exe)?\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|<>]+))\s*$/i);
-    if (!match) return false;
-    const script = (match[1] ?? match[2] ?? match[3]!).replace(/\\/g, '/')
-      .replace(/^(?:\.\/|\$(?:\{[A-Z0-9_]*PROJECT_(?:DIR|ROOT)\}|[A-Z0-9_]*PROJECT_(?:DIR|ROOT))\/)/, '');
-    return scripts.has(normalizeScriptPath(script));
+    const script = extractNodeScriptPath(command);
+    return script !== null && scripts.has(normalizeScriptPath(script));
   };
   const hooks = { ...(doc.hooks as Record<string, unknown>) };
   let changed = false;

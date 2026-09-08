@@ -152,7 +152,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'V2 抛错：正文含 三引号 / description 含 三引号 / tools 越出只读集合 / name 非 verifier',
+    name: 'V2 抛错：正文含 三引号 / description 含 三引号 / tools 越出只读集合 / name 非 verifier / 未映射键',
     run: () => {
       const fm = 'name: verifier\ndescription: 审查员\ntools: Read, Glob, Grep';
       throwsWith(() => renderCodexAgentToml(mkMarkdown(fm, "正文里有 ''' 三引号")), '正文含');
@@ -169,6 +169,11 @@ const cases: Array<{ name: string; run: () => void }> = [
         '只承诺 verifier 角色',
       );
       throwsWith(() => renderCodexAgentToml('没有 frontmatter\n'), '缺少 frontmatter');
+      // 未映射键静默丢弃 = codex 角色悄悄少一条约束；须抛错要人工重审
+      throwsWith(
+        () => renderCodexAgentToml(mkMarkdown(`${fm}\nmodel: opus`, '正文')),
+        '未映射键',
+      );
     },
   },
   {
