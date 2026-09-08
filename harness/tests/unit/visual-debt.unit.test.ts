@@ -82,11 +82,13 @@ function chk(id: string, status: CheckResult['status'], severity: CheckResult['s
 
 const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   {
-    name: '派生：WARN/FAIL 源均为 open(needs_fix)；PASS 源无债务',
+    // plan a3f7c1d9 D3(b)：WARN 是披露不是债务（原用例 crop WARN → open 改为 FAIL → open）
+    name: '派生：FAIL 源为 open(needs_fix)；WARN 源只披露不入账；PASS 源无债务',
     run: () => {
       const doc = deriveVisualDebt('demo', [
-        chk('visual_parity_unverified_crop', 'WARN'),
+        chk('visual_parity_unverified_crop', 'FAIL'),
         chk('asset_materialization_sanity', 'FAIL', 'BLOCKER'),
+        chk('static_fidelity_score', 'WARN'),
         chk('visual_diff', 'PASS'),
       ], null);
       const crop = doc.entries.find(e => e.source_check_id === 'visual_parity_unverified_crop')!;
@@ -94,6 +96,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assertEq(crop.resolution_class, 'needs_fix', 'crop needs_fix');
       const sanity = doc.entries.find(e => e.source_check_id === 'asset_materialization_sanity')!;
       assertEq(sanity.resolution_class, 'needs_fix', 'sanity needs_fix');
+      assertTrue(!doc.entries.some(e => e.source_check_id === 'static_fidelity_score'), 'WARN 源不入账（只披露）');
       assertTrue(!doc.entries.some(e => e.source_check_id === 'visual_diff'), 'PASS 源无债务');
     },
   },
@@ -108,7 +111,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         ],
       };
       const doc = deriveVisualDebt('demo', [
-        chk('visual_parity_unverified_crop', 'WARN'),
+        chk('visual_parity_unverified_crop', 'FAIL'), // a3f7c1d9 D3(b)：仍未绿=FAIL（WARN 已改为关账）
         chk('visual_diff', 'PASS'),
       ], prev);
       const reopened = doc.entries.find(e => e.id === 'debt:visual_parity_unverified_crop')!;
@@ -728,7 +731,7 @@ cases.push({
     const afterCoding = deriveVisualDebt('demo', [chk('visual_parity', 'FAIL', 'BLOCKER')], null);
     assertEq(afterCoding.entries.find(e => e.source_check_id === 'visual_parity')!.status, 'open', 'coding open');
     // testing 轮：不跑 visual_parity（只有设备类检查）——历史债务必须单调保留
-    const afterTesting = deriveVisualDebt('demo', [chk('visual_diff', 'WARN')], afterCoding);
+    const afterTesting = deriveVisualDebt('demo', [chk('visual_diff', 'FAIL')], afterCoding); // a3f7c1d9：FAIL 才入账
     const kept = afterTesting.entries.find(e => e.source_check_id === 'visual_parity');
     assertTrue(kept !== undefined, '缺席 check 的历史债务不得蒸发（事故：跨阶段覆盖清空）');
     assertEq(kept!.status, 'open', '保持 open');
@@ -744,7 +747,7 @@ cases.push({
   name: 'P0-1 scope 粒度：render_visibility 结构化 findings → 逐屏子条目（debt:<check>:<screen>），单屏修复单独闭账',
   run: () => {
     const withFindings = (screens: string[]): ReturnType<typeof chk> & { structured: unknown } => ({
-      ...chk('render_visibility_calibrate', 'WARN'),
+      ...chk('render_visibility_calibrate', 'FAIL'), // a3f7c1d9：FAIL 才入账
       structured: { kind: 'render_visibility', findings: screens.map(s => ({ screen: s })) },
     });
     const r1 = deriveVisualDebt('demo', [withFindings(['s1', 's2'])], null);
@@ -756,44 +759,77 @@ cases.push({
   },
 });
 
-// ---------------- B08 R1 返修（plan 9b2d5e7c，codex #2）：visual_reference_viewport 来源的清偿条件 ----------------
+// ---------------- plan a3f7c1d9 D3：账本按 kind 归集、四态收口（R1 返修恢复 SKIP 兜底）、B08 reference_viewport 特殊清偿撤销 ----------------
+
+/** 历史 open 条目（宿主 deb77f 形态：i9 真缺陷轮遗留的 BLOCKER visual_diff 债务） */
+function openHistory(sourceCheckId: string, severity = 'BLOCKER'): VisualDebtDoc {
+  return {
+    schema_version: '1.0', feature: 'demo',
+    entries: [{ id: `debt:${sourceCheckId}`, source_check_id: sourceCheckId, severity, summary: 'x', status: 'open', resolution_class: 'needs_fix' }],
+  };
+}
 
 cases.push({
-  name: 'B08 visual_reference_viewport 清偿：参考图换成兼容图后（testing visual_diff PASS 且 structured.kind=visual_diff，该 check 缺席）→ closed',
+  name: 'V8 归集按 structured.kind：历史 debt:visual_diff(BLOCKER) + 本轮 visual_diff_layout_invariants WARN(kind=visual_diff) → closed；kind 命中 FAIL → open；visual_diff PASS → closed',
   run: () => {
-    const opened = deriveVisualDebt('demo', [chk('visual_reference_viewport', 'WARN', 'MINOR')], null);
-    assertEq(opened.entries.find(e => e.source_check_id === 'visual_reference_viewport')!.status, 'open', 'top_slice WARN 先产 open 债务');
-    const after = deriveVisualDebt('demo', [{ ...chk('visual_diff', 'PASS'), structured: { kind: 'visual_diff' } }], opened);
-    assertEq(after.entries.find(e => e.source_check_id === 'visual_reference_viewport')!.status, 'closed', '视觉流水线真跑且 PASS → 缺席清偿');
+    const renamedWarn = { ...chk('visual_diff_layout_invariants', 'WARN'), structured: { kind: 'visual_diff' } };
+    const closedByWarn = deriveVisualDebt('demo', [renamedWarn], openHistory('visual_diff'));
+    assertEq(closedByWarn.entries.find(e => e.id === 'debt:visual_diff')!.status, 'closed', '改名 WARN 命中按 kind 归集 → 关账（原按 id 归集永不闭账）');
+    const renamedFail = { ...chk('visual_diff_layout_invariants', 'FAIL', 'BLOCKER'), structured: { kind: 'visual_diff' } };
+    const openedByFail = deriveVisualDebt('demo', [renamedFail], null);
+    const e = openedByFail.entries.find(e => e.source_check_id === 'visual_diff');
+    assertTrue(e !== undefined && e.status === 'open' && e.id === 'debt:visual_diff', 'kind 命中 FAIL → 以 visual_diff 之名开账');
+    const closedByPass = deriveVisualDebt('demo', [chk('visual_diff', 'PASS')], openHistory('visual_diff'));
+    assertEq(closedByPass.entries.find(e => e.id === 'debt:visual_diff')!.status, 'closed', '本轮 PASS → closed');
+    // 非 visual_diff kind 的改名 id 不归入 visual_diff（判据是 structured.kind，不是 id 前缀）
+    const otherKind = deriveVisualDebt('demo', [{ ...chk('visual_diff_layout_invariants', 'WARN'), structured: { kind: 'render_visibility' } }], openHistory('visual_diff'));
+    assertEq(otherKind.entries.find(e => e.id === 'debt:visual_diff')!.status, 'open', '非 visual_diff kind 不归集 → 缺席保留');
   },
 });
 
 cases.push({
-  name: 'B08 visual_reference_viewport 保留：该 check 缺席但本轮 visual_diff 为 SKIP / 缺报告 WARN / 解析失败 FAIL（无 structured.kind）→ 仍 open',
+  name: 'V9 四态收口（codex R2 #2 + 实施 review R1 SKIP 裁定）：历史 open + 本轮仅 MINOR SKIP → 保持 open 不新开账；BLOCKER SKIP → 开账/续账；缺席 → open；WARN → closed；FAIL → open',
   run: () => {
-    const opened = deriveVisualDebt('demo', [chk('visual_reference_viewport', 'WARN', 'MINOR')], null);
-    for (const round of [
-      [chk('visual_diff', 'SKIP')],
-      [chk('visual_diff', 'WARN')],
-      [chk('visual_diff', 'FAIL')],
-      [chk('visual_diff', 'PASS')], // 没有 structured.kind=visual_diff 的 PASS 行（非流水线产出）不算证据
-      [],
-    ]) {
-      const after = deriveVisualDebt('demo', round, opened);
-      assertEq(after.entries.find(e => e.source_check_id === 'visual_reference_viewport')!.status, 'open', `缺席且无有效 visual_diff PASS 须保留 open：${JSON.stringify(round)}`);
-    }
+    const onlyMinorSkip = deriveVisualDebt('demo', [chk('visual_diff', 'SKIP', 'MINOR')], openHistory('visual_diff'));
+    assertEq(onlyMinorSkip.entries.find(e => e.id === 'debt:visual_diff')!.status, 'open', '仅 MINOR SKIP 不得关掉历史真失败');
+    assertEq(onlyMinorSkip.entries.length, 1, '仅 MINOR SKIP 不新开账');
+    assertEq(deriveVisualDebt('demo', [chk('visual_diff', 'SKIP', 'MINOR')], null).entries.length, 0, '无历史 + MINOR SKIP → 不开账');
+    // 盲档 BLOCKER SKIP：既有兜底放回——无历史也开账（否则盲档 visual_diff 整体 SKIP 时没有任何东西阻断发布）
+    const blockerSkip = deriveVisualDebt('demo', [chk('visual_diff', 'SKIP', 'BLOCKER')], null);
+    const bs = blockerSkip.entries.find(e => e.id === 'debt:visual_diff');
+    assertTrue(bs !== undefined && bs.status === 'open' && bs.severity === 'BLOCKER' && bs.resolution_class === 'needs_fix', 'BLOCKER SKIP 开账（needs_fix）');
+    assertEq(countBlockingDebt(blockerSkip).open, 1, 'BLOCKER SKIP 阻断');
+    assertEq(deriveVisualDebt('demo', [chk('visual_diff', 'SKIP', 'BLOCKER')], openHistory('visual_diff')).entries.find(e => e.id === 'debt:visual_diff')!.status, 'open', 'BLOCKER SKIP 续账');
+    const absent = deriveVisualDebt('demo', [], openHistory('visual_diff'));
+    assertEq(absent.entries.find(e => e.id === 'debt:visual_diff')!.status, 'open', '缺席保留');
+    const warn = deriveVisualDebt('demo', [chk('visual_diff', 'WARN')], openHistory('visual_diff'));
+    assertEq(warn.entries.find(e => e.id === 'debt:visual_diff')!.status, 'closed', 'WARN 关账');
+    assertEq(countBlockingDebt(warn).open, 0, 'WARN 不阻断');
+    const fail = deriveVisualDebt('demo', [chk('visual_diff', 'FAIL', 'BLOCKER')], openHistory('visual_diff'));
+    assertEq(fail.entries.find(e => e.id === 'debt:visual_diff')!.status, 'open', 'FAIL 续账');
+    // MINOR SKIP 与 WARN 并存：settled 优先于保留；BLOCKER SKIP 与 WARN 并存：worst 优先于 settled
+    const skipAndWarn = deriveVisualDebt('demo', [chk('visual_diff', 'SKIP', 'MINOR'), chk('visual_diff', 'WARN')], openHistory('visual_diff'));
+    assertEq(skipAndWarn.entries.find(e => e.id === 'debt:visual_diff')!.status, 'closed', 'MINOR SKIP+WARN → 关账');
+    const blockerSkipAndWarn = deriveVisualDebt('demo', [chk('visual_diff', 'SKIP', 'BLOCKER'), chk('visual_diff', 'WARN')], openHistory('visual_diff'));
+    assertEq(blockerSkipAndWarn.entries.find(e => e.id === 'debt:visual_diff')!.status, 'open', 'BLOCKER SKIP+WARN → 仍 open');
   },
 });
 
 cases.push({
-  name: 'B08 visual_reference_viewport 不提前关闭：长图未动、只重跑 spec（前置门对可推导屏出 PASS 行）→ 历史条目保留 open',
+  name: 'V10 reference_viewport 走通用规则（codex R2 #3）：历史 open + 本轮 visual_reference_viewport WARN → closed；特殊清偿分支已删；来源登记仍在表内',
   run: () => {
-    const opened = deriveVisualDebt('demo', [chk('visual_reference_viewport', 'WARN', 'MINOR')], null);
-    const specRerun = deriveVisualDebt('demo', [chk('visual_reference_viewport', 'PASS', 'MINOR')], opened);
-    assertEq(specRerun.entries.find(e => e.source_check_id === 'visual_reference_viewport')!.status, 'open', 'spec 阶段 PASS 行不是清偿证据');
-    // 其他来源的 PASS 清偿规则不受影响
-    const other = deriveVisualDebt('demo', [chk('visual_diff', 'WARN')], null);
-    assertEq(deriveVisualDebt('demo', [chk('visual_diff', 'PASS')], other).entries.find(e => e.source_check_id === 'visual_diff')!.status, 'closed', '其他来源仍按明确 PASS 清偿');
+    // 宿主现有那条 open 条目在下一轮 visual_reference_viewport WARN 时按 settled 关账
+    const closedByWarn = deriveVisualDebt('demo', [chk('visual_reference_viewport', 'WARN', 'MINOR')], openHistory('visual_reference_viewport', 'MINOR'));
+    assertEq(closedByWarn.entries.find(e => e.id === 'debt:visual_reference_viewport')!.status, 'closed', 'WARN → closed（通用规则）');
+    // B08 特殊分支已删：本轮 visual_diff PASS(kind) 不再替它清偿——该 check 缺席 → 保留
+    const absent = deriveVisualDebt('demo', [{ ...chk('visual_diff', 'PASS'), structured: { kind: 'visual_diff' } }], openHistory('visual_reference_viewport', 'MINOR'));
+    assertEq(absent.entries.find(e => e.id === 'debt:visual_reference_viewport')!.status, 'open', '缺席保留（不再由 visual_diff 代为清偿）');
+    // 来源登记保留：FAIL 仍能开账（删登记只会让宿主已有条目永久 open——R2 #3）
+    const opened = deriveVisualDebt('demo', [chk('visual_reference_viewport', 'FAIL', 'MINOR')], null);
+    assertEq(opened.entries.find(e => e.source_check_id === 'visual_reference_viewport')?.status, 'open', '来源仍登记：FAIL 开账');
+    // WARN 不再新开账（B08 的 top_slice WARN 债务改为只披露）
+    const warnOnly = deriveVisualDebt('demo', [chk('visual_reference_viewport', 'WARN', 'MINOR')], null);
+    assertTrue(!warnOnly.entries.some(e => e.source_check_id === 'visual_reference_viewport'), 'WARN 不入账');
   },
 });
 
@@ -849,10 +885,10 @@ cases.push({
   name: '三轮次要项：三态标注只更新本轮观察到的维度——render 缺席时历史 VERIFIED 不被覆盖',
   run: () => {
     const { annotateAssetTriState } = require('../../scripts/utils/visual-debt') as typeof import('../../scripts/utils/visual-debt');
-    const prevDoc = deriveVisualDebt('demo', [chk('visual_parity_unverified_crop', 'WARN')], null);
+    const prevDoc = deriveVisualDebt('demo', [chk('visual_parity_unverified_crop', 'FAIL')], null);
     prevDoc.entries[0].asset_render_status = 'VERIFIED'; // 历史某轮 render 已验
     const annotated = annotateAssetTriState(prevDoc, [
-      chk('visual_parity_unverified_crop', 'WARN'),
+      chk('visual_parity_unverified_crop', 'FAIL'), // a3f7c1d9 D3(e)：缺陷用 FAIL
       chk('asset_materialization_sanity', 'PASS'),
       // 本轮无 render_visibility_calibrate / visual_parity——两维度不得被改写
     ]);
@@ -1021,13 +1057,13 @@ cases.push({
 cases.push({
   name: 'P1-F 三态标注：sanity 绿/parity 红/render 红 → source=VERIFIED, binding/render=UNVERIFIED（rollup 可判哪一态卡住）',
   run: () => {
-    const doc = deriveVisualDebt('demo', [chk('visual_parity_unverified_crop', 'WARN')], null);
+    const doc = deriveVisualDebt('demo', [chk('visual_parity_unverified_crop', 'FAIL')], null);
     const { annotateAssetTriState } = require('../../scripts/utils/visual-debt') as typeof import('../../scripts/utils/visual-debt');
     const annotated = annotateAssetTriState(doc, [
-      chk('visual_parity_unverified_crop', 'WARN'),
+      chk('visual_parity_unverified_crop', 'FAIL'), // a3f7c1d9 D3(e)：缺陷用 FAIL
       chk('asset_materialization_sanity', 'PASS'),
       chk('visual_parity', 'FAIL', 'BLOCKER'),
-      chk('render_visibility_calibrate', 'WARN'),
+      chk('render_visibility_calibrate', 'FAIL'),
     ]);
     const e = annotated.entries.find(x => x.source_check_id === 'visual_parity_unverified_crop')!;
     assertEq(e.asset_source_status, 'VERIFIED', 'source');
@@ -1051,6 +1087,28 @@ cases.push({
     assertTrue(/severity:\s*'BLOCKER'/.test(window), 'nav 门禁块须保持 severity BLOCKER');
     assertTrue(/status:\s*'FAIL'/.test(window), 'nav 门禁块须保持 status FAIL');
     assertTrue(!/fidelityRatchetFailOrWarn/.test(window), 'nav 门禁块不得回归 fidelityRatchet 档位降级');
+  },
+});
+
+// plan a3f7c1d9 D3(e)：缺陷用 FAIL、披露用 WARN——四个缺陷源以 MAJOR FAIL 表达：
+// 不计入 phase verdict / summary blockers（两者只数 BLOCKER FAIL），账本按四态开账阻断 release。
+cases.push({
+  name: 'D3(e) 四个缺陷源 MAJOR FAIL：phase verdict 仍 PASS、blockers 空、账本各开一条 open；转 PASS/WARN 关账',
+  run: () => {
+    const { resolveVerdictFromChecks } = require('../../scripts/utils/report-generator') as typeof import('../../scripts/utils/report-generator');
+    const { buildSummaryBlockers } = require('../../scripts/utils/summary-blockers') as typeof import('../../scripts/utils/summary-blockers');
+    const DEFECT_IDS = ['render_visibility_calibrate', 'asset_placeholder_present', 'asset_materialization_sanity', 'visual_parity_unverified_crop'];
+    const checks = DEFECT_IDS.map(id => ({ ...chk(id, 'FAIL'), category: 'structure' as const, description: id }));
+    assertEq(resolveVerdictFromChecks(checks), 'PASS', 'MAJOR FAIL 不计入 phase verdict');
+    assertEq(buildSummaryBlockers(checks, (text: string) => text, () => undefined).length, 0, 'MAJOR FAIL 不入 blockers');
+    const doc = deriveVisualDebt('demo', checks, null);
+    for (const id of DEFECT_IDS) {
+      const e = doc.entries.find(x => x.source_check_id === id);
+      assertTrue(Boolean(e) && e!.status === 'open' && e!.severity === 'MAJOR', `${id} 开账 open/MAJOR`);
+    }
+    assertEq(countBlockingDebt(doc).open, 4, '四条阻断债务');
+    const settled = deriveVisualDebt('demo', DEFECT_IDS.map((id, i) => chk(id, i % 2 ? 'WARN' : 'PASS')), doc);
+    assertEq(countBlockingDebt(settled).open, 0, 'PASS/WARN 关账');
   },
 });
 

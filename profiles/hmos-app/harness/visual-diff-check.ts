@@ -1094,7 +1094,7 @@ export function checkVisualDiffDeterministicOnly(ctx: CheckContext): CheckResult
 export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
   const results = checkVisualDiffCore(ctx);
   // P0-B④ calibrate：采集物（shot-*/layout-*）在即评，自守卫（无目录/无配对→零结果）；
-  // WARN 观察不阻断，findings 供视觉债务与 enforce 校准消费。
+  // 命中为 MAJOR FAIL（plan a3f7c1d9 D3(e)：不计入 phase verdict/blockers），findings 供视觉债务与 enforce 校准消费。
   results.push(...safeCalibrate(ctx));
   // plan e6b3f8d2 t3：UI kit 三段闭环·运行时段随强制 kit 一并撤销（锚点机制已删除）。
   // 运行时结构证据继续由下面的 runtime_mount_conformance（uitree 挂载轴）承担。
@@ -1392,7 +1392,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
         affected_files: [reportRel],
       };
     } else if (topSliceLines.length > 0) {
-      // 顶部之外零证据：显式未验证（WARN + 视觉债务条目），不是新门槛；页面按段建模或参考资产换成单视口图后转绿
+      // 顶部之外零证据：显式未验证（MINOR WARN，披露不入债务——plan a3f7c1d9 D3(b)/(c) 撤销 B08 开账），不是新门槛；页面按段建模或参考资产换成单视口图后转绿
       referenceViewportResult = {
         id: 'visual_reference_viewport',
         category: 'structure',

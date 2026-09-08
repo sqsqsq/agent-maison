@@ -4966,7 +4966,7 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
-  run('B08-V8 范围划分、两处覆盖门与债务（正反两向）：inScope=[t1]/outOfScope=[t2]/undetermined=[t3]；provider 覆盖与 visual_diff_region_attest 只要求 t1；WARN 含"范围外 1 / 未确定 1"；visual-debt 产生条目；capture_completeness_external 分母不动；反向：t1 缺失照常报缺', () => {
+  run('B08-V8 范围划分、两处覆盖门与债务（正反两向）：inScope=[t1]/outOfScope=[t2]/undetermined=[t3]；provider 覆盖与 visual_diff_region_attest 只要求 t1；WARN 含"范围外 1 / 未确定 1"；visual-debt 不入账（WARN 只披露，plan a3f7c1d9 D3(b)）、历史条目 closed；capture_completeness_external 分母不动；反向：t1 缺失照常报缺', () => {
     if (!isJimpAvailable()) return;
     const { root, shotRel } = seedViewportProject(4350, { real: true, mustHave: true });
     const spy = ocrSpy();
@@ -5000,9 +5000,15 @@ export function runAll(): UnitCaseResult[] {
       const gate = r.find((x: { id: string }) => x.id === 'visual_reference_viewport') as { status: string; severity: string; details?: string } | undefined;
       if (!gate || gate.status !== 'WARN' || gate.severity !== 'MINOR') throw new Error(`须 MINOR WARN：${JSON.stringify(gate)}`);
       if (!/范围外 1 个（t2） \/ 未确定 1 个（t3）/.test(gate.details ?? '')) throw new Error(`WARN 行须列出范围外 / 未确定：${gate.details}`);
-      const debt = deriveVisualDebt('bank-card', r.map(x => ({ id: x.id, status: x.status, severity: x.severity, details: x.details ?? '', structured: x.structured })), null);
-      const entry = debt.entries.find(e => e.source_check_id === 'visual_reference_viewport');
-      if (!entry || entry.status !== 'open' || !/顶部一屏外未验证/.test(entry.summary)) throw new Error(`须产生 visual_reference_viewport 债务条目：${JSON.stringify(debt.entries)}`);
+      // plan a3f7c1d9 D3(b)：viewport WARN 只披露不入账（B08 原"开账 + 特殊清偿"撤销）；宿主已有的 open 条目按通用规则 closed
+      const checkLikes = r.map(x => ({ id: x.id, status: x.status, severity: x.severity, details: x.details ?? '', structured: x.structured }));
+      const debt = deriveVisualDebt('bank-card', checkLikes, null);
+      if (debt.entries.some(e => e.source_check_id === 'visual_reference_viewport')) throw new Error(`viewport WARN 不得入账：${JSON.stringify(debt.entries)}`);
+      const settled = deriveVisualDebt('bank-card', checkLikes, {
+        schema_version: '1.0', feature: 'bank-card',
+        entries: [{ id: 'debt:visual_reference_viewport', source_check_id: 'visual_reference_viewport', severity: 'MINOR', summary: '参考图顶部一屏外未验证', status: 'open', resolution_class: 'needs_fix' }],
+      });
+      if (settled.entries.find(e => e.id === 'debt:visual_reference_viewport')?.status !== 'closed') throw new Error(`历史 viewport 条目须按 WARN 关账：${JSON.stringify(settled.entries)}`);
       // provider 覆盖门：target 只要求 t1；prompt 明示勿判 t2/t3 缺失；只举证 t1 的载荷合法
       const screens = (JSON.parse(fs.readFileSync(jsonPath, 'utf-8')) as { screens: unknown[] }).screens as Parameters<typeof collectReviewTargets>[1];
       const targets = collectReviewTargets(CTX_FOR_PROVIDER(root), screens);

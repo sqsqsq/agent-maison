@@ -156,6 +156,33 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
+    // plan a3f7c1d9 D1(c) / V2（codex R2 #1 针对性用例）
+    name: 'V2 零映射 check 的 visual/asset 轴 NOT_APPLICABLE；testing 期 asset 零映射仍 UNVERIFIED（继承入口保留）；有 SKIP 检查仍 UNVERIFIED',
+    run: () => {
+      // ut 期：ui-spec 有 assets，但本阶段无任何 visual/asset 检查 → 两轴 NOT_APPLICABLE
+      const ut = deriveQualityAxes([chk({ id: 'ut_run' })], { phase: 'ut', visualApplicable: true, assetApplicable: true });
+      assertEq(ut.visual.verdict, 'NOT_APPLICABLE', 'ut visual NA');
+      assertEq(ut.visual.applicable, false, 'ut visual applicable=false');
+      assertEq(ut.asset.verdict, 'NOT_APPLICABLE', 'ut asset NA');
+      assertEq(ut.asset.applicable, false, 'ut asset applicable=false');
+      assertEq(validateQualityAxes(ut).length, 0, `schema 不变量：${validateQualityAxes(ut).join('；')}`);
+      // testing 期：asset 零映射保持 applicable+UNVERIFIED（applyAssetAxisInheritance 的入口条件）
+      const testing = deriveQualityAxes([chk({ id: 'visual_diff' })], UI_OPTS);
+      assertEq(testing.visual.verdict, 'PASS', 'testing visual 有检查照常');
+      assertEq(testing.asset.applicable, true, 'testing asset 仍 applicable');
+      assertEq(testing.asset.verdict, 'UNVERIFIED', 'testing asset 零映射仍 UNVERIFIED');
+      assertEq(testing.asset.source_checks.length, 0, 'testing asset 零 source_checks（继承入口）');
+      // 有一条 asset_* SKIP（盲档）→ 有映射但零执行 → UNVERIFIED（判据是零映射不是零执行）
+      const skipped = deriveQualityAxes(
+        [chk({ id: 'ut_run' }), chk({ id: 'asset_materialization_sanity', status: 'SKIP', severity: 'MINOR' })],
+        { phase: 'ut', visualApplicable: true, assetApplicable: true },
+      );
+      assertEq(skipped.asset.verdict, 'UNVERIFIED', 'SKIP 映射仍 UNVERIFIED');
+      assertEq(skipped.asset.resolution?.class, 'needs_fix', 'needs_fix');
+      assertEq(validateQualityAxes(skipped).length, 0, 'schema 不变量');
+    },
+  },
+  {
     name: '等价性：projected_verdict ≡ resolveVerdictFromChecks（PASS/FAIL/外部 INCOMPLETE 三形态）',
     run: () => {
       const shapes: CheckResult[][] = [

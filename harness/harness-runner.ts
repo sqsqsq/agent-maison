@@ -1529,7 +1529,7 @@ function resolveAxisApplicability(
  * （源码/资产未漂移——build/source/inventory 三链的现实可得代理）；visual-debt 无 open 的
  * asset 域条目（debt revision 面）。证据引用=coding summary sha256 + attestation inventory。
  */
-function resolveAssetAxisInheritance(
+export function resolveAssetAxisInheritance(
   projectRoot: string,
   feature: string,
 ): import('./scripts/utils/quality-axes').AssetAxisInheritance | null {
@@ -1563,7 +1563,9 @@ function resolveAssetAxisInheritance(
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const gf = require('./scripts/utils/gate-fingerprint') as typeof import('./scripts/utils/gate-fingerprint');
-      const layout = detectRepoLayout(projectRoot);
+      // plan a3f7c1d9 D1(a)：detectRepoLayout 从入参向上找 harness-runner.ts，consumer/standalone
+      // 的 projectRoot 都在它下方 → 恒抛 → 恒"重算异常"不继承；按 projectRoot 推断布局。
+      const layout = inferRepoLayout(projectRoot);
       const current = gf.computeGateFingerprint(layout.frameworkRoot, 'coding');
       const recorded =
         typeof parsed.gate_fingerprint === 'string'
@@ -1620,10 +1622,9 @@ function resolveAssetAxisInheritance(
     } catch (e) {
       issues.push(`debt 账本读取异常：${(e as Error).message}`);
     }
-    // 指纹链 3（build fingerprint，三轮 review P1-5 fail-closed）：7.2b 落地前 build 链
-    // 不可证——**不允许部分 provenance 的 PASS 继承**（spec 要求五链全一致），恒并入缺证
-    // 原因 → 继承保持 STALE/needs_fix；build 身份钩子（hylyre 实机采集）接入后解除。
-    issues.push('build fingerprint 链未接入（tasks 7.2b pending）——五链不齐，asset 轴不继承');
+    // 指纹链 3（build）由本阶段 `device_test_install` 的 build/install HAP 指纹一致性承担
+    // （check-testing :2456）；不一致时 testing FAIL，不会到继承。HAP↔源码树的密码学绑定
+    // 留 7.2b（plan c2e9f4d7，3.1.0），此处不再恒并入缺证原因（plan a3f7c1d9 D1(b)）。
     return {
       upstreamPhase: 'coding',
       upstreamVerdict: upstreamVerdict as import('./scripts/utils/quality-axes').AxisVerdict,
@@ -1640,7 +1641,7 @@ function resolveAssetAxisInheritance(
   }
 }
 
-function applyVisualDebtPipeline(
+export function applyVisualDebtPipeline(
   projectRoot: string,
   report: ScriptReport,
   lattice: ReturnType<typeof deriveSummaryVerdictLattice>,
@@ -1659,7 +1660,9 @@ function applyVisualDebtPipeline(
 
     const { open } = countBlockingDebt(debtDoc);
     const visual = lattice.quality_axes.visual;
-    if (open > 0 && visual.applicable && visual.verdict === 'PASS') {
+    // plan a3f7c1d9 D3(d)：压轴只在 testing（release point）——上游阶段的 visual 轴只反映
+    // 本阶段检查，否则回退重跑的 coding 会被 testing 遗留债务污染快照；账本写入仍每阶段执行。
+    if (report.phase === 'testing' && open > 0 && visual.applicable && visual.verdict === 'PASS') {
       lattice.quality_axes.visual = {
         ...visual,
         verdict: 'UNVERIFIED',
