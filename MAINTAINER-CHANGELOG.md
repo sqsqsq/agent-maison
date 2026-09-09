@@ -120,11 +120,11 @@ Generated: 2026-09-09 · current window: `3.1.0`
   - `pipeline_b01_verifier_repair_3a7f9c12.plan.md`
 - **六阶段重构 B02 — 视觉能力与材料证据施工图** — 删除invoke级inline金丝雀全链，参考图读取记录改绑材料哈希；能力真值回落run级preflight金丝雀，保留completion probe与独立visual provider，不扩大视觉系统。 [6/6 completed]
   - `pipeline_b02_vision_evidence_8d2b4f60.plan.md`
-- **六阶段重构 B03 — 构建执行复用与报告整理施工图** — UT出包在同次harness内唯一化、外层重复真机执行按执行键复用、报告对账区分执行事实与派生统计、attended不再被注入无人值守禁问块；保留completion probe、terminal仲裁与硬预算。 [5/7 completed]
+- **六阶段重构 B03 — 构建执行复用与报告整理施工图** — UT出包在同次harness内唯一化、外层重复真机执行按执行键复用、报告对账区分执行事实与派生统计、attended不再被注入无人值守禁问块；保留completion probe、terminal仲裁与硬预算。 [6/7 completed]
   - `pipeline_b03_execution_reuse_5e1c7a93.plan.md`
-- **六阶段重构 B04 — 失败归因与 prior review 消费一致施工图** — 无失败事实的 attempt 不再被标注 code_regression；ui_spec_fidelity_gate 的缺证类失败归入既有 spec_capture_gap；goal 快照对 completed_with_prior_review 补既有 reviewed_subject 回落。one-shot 与新变化范围调度保持 cancelled。 [4/7 completed]
+- **六阶段重构 B04 — 失败归因与 prior review 消费一致施工图** — 无失败事实的 attempt 不再被标注 code_regression；ui_spec_fidelity_gate 的缺证类失败归入既有 spec_capture_gap；goal 快照对 completed_with_prior_review 补既有 reviewed_subject 回落。one-shot 与新变化范围调度保持 cancelled。 [5/7 completed]
   - `pipeline_b04_scoped_recovery_2f8a6d40.plan.md`
-- **六阶段重构 B05 — 既有策略配置与适用性出口施工图** — 显式 evidence_profile=balanced 在 goal/headless 生效（默认仍 strict）；plan 对确实不涉及的模型/服务/页面接受依据明确的不适用出口；verify-ut 的单 expect 硬判改为线索；剩余三处过时硬文案对齐。可测性前移保持 cancelled。 [6/8 completed]
+- **六阶段重构 B05 — 既有策略配置与适用性出口施工图** — 显式 evidence_profile=balanced 在 goal/headless 生效（默认仍 strict）；plan 对确实不涉及的模型/服务/页面接受依据明确的不适用出口；verify-ut 的单 expect 硬判改为线索；剩余三处过时硬文案对齐。可测性前移保持 cancelled。 [7/8 completed]
   - `pipeline_b05_phase_contracts_7b3e9a15.plan.md`
 - **六阶段重构 B06 — 四主格差异验收与发布就绪施工图** — 本地只做矩阵证据清单、每格精确运行单、次要格静态/生产函数核对、收益与缺口登记表、候选件与迁移说明收口；C-U 合并回归与 C-N/X-U/X-N 三个差异格、golden 采集与 promote 全部由用户在验收宿主触发。未实测的格一律不写 PASS。 [8/12 completed]
   - `pipeline_b06_matrix_acceptance_4d9c1f72.plan.md`
@@ -132,7 +132,7 @@ Generated: 2026-09-09 · current window: `3.1.0`
   - `pipeline_b07_visual_repair_attribution_6e4a2c8b.plan.md`
 - **六阶段重构 B08 — 复用证据绑定、执行键身份与长图参考推导施工图** — 同键复用轮照常写出真机证据并按"与 decideReuse 同一判据"的执行键身份采信（不再拿本 attempt 的时间窗与本轮装机否决）；装机复用分支回传当前 HAP 的完整摘要，代理与外层的执行键从此相等（不做短指纹回落、不跳过任何记录）；参考图与视口同宽但更高时，采集、provider、检查三处共用同一"顶部一屏"比对输入，比对范围与区域外元素的未验证状态写清并沿既有覆盖/债务机制传递；unverified 不再单独构成失败事实。预算、T8、verifier 指引、执行键构成不动。B08 只做本地修复；宿主补验收归 B06。 [7/7 completed]
   - `pipeline_b08_reuse_evidence_and_ref_derivation_9b2d5e7c.plan.md`
-- **六阶段效率与准确性重构总计划 — HMOS × Claude/Codex × goal/非goal** — B01先细化施工图，后续批次滚动设计，宿主回归收敛为两个检查点（B02 后、B06）；核心四格实测，codeagent及attended保留fixture覆盖，不新增机制。 [2/6 completed]
+- **六阶段效率与准确性重构总计划 — HMOS × Claude/Codex × goal/非goal** — B01先细化施工图，后续批次滚动设计，宿主回归收敛为两个检查点（B02 后、B06）；核心四格实测，codeagent及attended保留fixture覆盖，不新增机制。 [5/6 completed]
   - `pipeline_master_9c6e2a41.plan.md`
 - **plan 待办 SSOT — frontmatter todos 唯一真源，正文未勾项拦截** — > [3/3 completed]
   - `plan待办SSOT_frontmatter唯一真源与正文未勾项拦截_a3e7d1c9.plan.md`
@@ -168,7 +168,7 @@ Generated: 2026-09-09 · current window: `3.1.0`
   - `verifier能力化_policy驱动短request与稳定subject裁撤_a9d4e7c2.plan.md`
 - **verifier 证据身份绑定 — subject 指纹与 JSON 真源收编** — > [6/6 completed]
   - `verifier证据身份绑定_subject指纹与JSON真源收编_e5b8c3f7.plan.md`
-- **verifier 证据链裁剪 — 删 SubagentStop hook 发布与身份绑定 / 报告即真源 / adapter 能力矩阵归零 / goal 与 interactive 一条路** — > [6/7 completed]
+- **verifier 证据链裁剪 — 删 SubagentStop hook 发布与身份绑定 / 报告即真源 / adapter 能力矩阵归零 / goal 与 interactive 一条路** — > [7/7 completed]
   - `verifier证据链裁剪_删hook发布与身份绑定_报告即真源_d2f7a9c4.plan.md`
 - **vision-canary 缓存生命周期与探测有效性加固 — probe_version 迁移 + 严格判卷 + TTL** — (no overview) [0/0 completed]
   - `vision-canary-probe-validity_探测失败不落盲档缓存_c7d2e9a4.plan.md`

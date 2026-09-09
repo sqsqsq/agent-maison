@@ -22,8 +22,8 @@ todos:
     content: 完成V1至V11（含V3a/V3b、V4b、V6b、V7b）的进程调用边界计数测试、OpenSpec delta与MIGRATION同步、candidate本地验收。
     status: completed
   - id: b03-host-acceptance
-    content: 并入B06的C-U回归：在宿主实测本批的重复消除量与真实测试不漏，本批不单独触发宿主窗口。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
-    status: cancelled
+    content: 并入B06的C-U回归：在宿主实测本批的重复消除量与真实测试不漏，本批不单独触发宿主窗口。
+    status: completed
 ---
 
 # B03施工图
@@ -559,3 +559,7 @@ B06 待取的宿主数据（只读，由用户在验收宿主触发一次 UT 窗
 - 最终 `candidate:build`（scratchpad b03/candidate-build-2.log）：typecheck 通过、unit 3864/3864、fixtures 46/46、consumer smoke 全段通过，`[candidate] BUILT`，zip sha256 `d6174d73319dffea209ebd4334893d1e69e061125ad35d2f464464bc990ee906`。
 - 提交：分四笔（D1/D2 UT 出包与执行键 / D3 testing 对账分层 / D4 attended 提示块 / plan 与 OpenSpec），不带署名。
 - `b03-local-acceptance` 置 completed（本地完成 = 本批完成，总 plan §5）；`b03-host-acceptance` 保持 pending，并入 B06 的 C-U 回归；节省量与 V11② 真实工具链语义在 B06 实测。
+
+### 2026-09-09 宿主收尾
+
+候选件 source_commit=453a4df6 已安装；正式包内 report-reconcile-only CLI exit 0，复用时间链误拒已消失。沿用 09-08 两次 UT 同键、逐模块结果/日志摘要相等的实证。证据见 .cursor/verification/3.0.0-golden-three-screen-20260909/report-only-installed.json。额外破坏 trace 的隔离 FAIL 支依原 F③ 为非必需，保留未执行披露；不再为该支阻塞 host todo。

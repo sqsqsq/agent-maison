@@ -1,0 +1,355 @@
+{
+  "schema_version": "1.3",
+  "phase": "review",
+  "feature": "bc-openCard-1",
+  "verdict": "PASS",
+  "report_validity": "PASS",
+  "quality_axes": {
+    "functional": {
+      "applicable": true,
+      "required_for_release": true,
+      "verdict": "PASS",
+      "blocking_class": null,
+      "source_checks": [
+        "capability_review_code_context",
+        "capability_review_design_context",
+        "conditional_pass_closure",
+        "context_exploration_facts_phase_delta_present",
+        "issue_to_coding_rule",
+        "issue_to_file",
+        "negative_verdict_closure",
+        "node_options_injection",
+        "review_reference_lint",
+        "review_scope_to_design",
+        "scope_declaration",
+        "upstream_verdict_gate"
+      ],
+      "resolution": null
+    },
+    "visual": {
+      "applicable": true,
+      "required_for_release": true,
+      "verdict": "PASS",
+      "blocking_class": null,
+      "source_checks": [
+        "capability_review_visual_context",
+        "visual_fidelity_review"
+      ],
+      "resolution": null
+    },
+    "asset": {
+      "applicable": false,
+      "required_for_release": false,
+      "verdict": "NOT_APPLICABLE",
+      "blocking_class": null,
+      "source_checks": [],
+      "resolution": null
+    },
+    "evidence": {
+      "applicable": true,
+      "required_for_release": true,
+      "verdict": "PASS",
+      "blocking_class": null,
+      "source_checks": [
+        "capability_review_acceptance_context"
+      ],
+      "resolution": null
+    }
+  },
+  "release_readiness": "READY",
+  "completion_status": "COMPLETE",
+  "blocker_count": 0,
+  "fail_count": 0,
+  "warn_count": 0,
+  "gate_fingerprint": "3.0.0:e4fc0d9b6303",
+  "asset_debt_revision": "no-debt",
+  "script_report": "doc/features/bc-openCard-1/review/reports/script-report.json",
+  "merged_report": "doc/features/bc-openCard-1/review/reports/merged-report.md",
+  "ai_prompt": "doc/features/bc-openCard-1/review/reports/ai-prompt.md",
+  "summary_json": "doc/features/bc-openCard-1/review/reports/summary.json",
+  "run_statuses": [],
+  "readiness_signals": [],
+  "blocking_warnings": [],
+  "blocking_skips": [],
+  "blockers": [],
+  "next_action": "phase_closed_wait_user",
+  "closure_status": "closed",
+  "assurance": "full",
+  "capability_resolutions": [
+    {
+      "id": "capability_review_code_context",
+      "axis": "functional",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "fail",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "code",
+          "state": "resolved",
+          "selected_source": "derive.codebase",
+          "selected_source_fingerprint": "941ddf59a8c89fb7ca25aaf80228500dc31261fbc4f4b161904106ab52c8f8c1",
+          "attempts": [
+            {
+              "kind": "derive",
+              "source": "derive.codebase",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\module-catalog.yaml",
+                  "exists": true,
+                  "sha256": "1b1d96bd492e81757d642d6ad0e28456a9bd7db7b7b0ebfc19e29dc23d1607a7",
+                  "role": "derive"
+                }
+              ],
+              "detail": "project_root"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability_review_design_context",
+      "axis": "functional",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "prune",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "spec",
+          "state": "resolved",
+          "selected_source": "spec@1",
+          "selected_source_fingerprint": "cb11197db49c92a48d944fd0d5650529c6e0847e6fed13e9f12bff875a6e6ccc",
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "spec@1",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\bc-openCard-1\\PRD.md",
+                  "exists": false,
+                  "sha256": null,
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\bc-openCard-1\\prd\\PRD.md",
+                  "exists": false,
+                  "sha256": null,
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\bc-openCard-1\\prd\\spec.md",
+                  "exists": false,
+                  "sha256": null,
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\bc-openCard-1\\spec.md",
+                  "exists": false,
+                  "sha256": null,
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\bc-openCard-1\\spec\\spec.md",
+                  "exists": true,
+                  "sha256": "a7256e0d09045c3d5827ad26ef28003458afb9e6782e3643c77c4a19330434da",
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "spec",
+              "detail": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\bc-openCard-1\\spec\\spec.md"
+            }
+          ]
+        },
+        {
+          "id": "plan",
+          "state": "resolved",
+          "selected_source": "plan@1",
+          "selected_source_fingerprint": "229f639aae1138bd65ef7bbd9701b4868103eded04f05009797931796154673c",
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "plan@1",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\bc-openCard-1\\design.md",
+                  "exists": false,
+                  "sha256": null,
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\bc-openCard-1\\design\\design.md",
+                  "exists": false,
+                  "sha256": null,
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\bc-openCard-1\\design\\plan.md",
+                  "exists": false,
+                  "sha256": null,
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\bc-openCard-1\\plan.md",
+                  "exists": false,
+                  "sha256": null,
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\bc-openCard-1\\plan\\plan.md",
+                  "exists": true,
+                  "sha256": "3ac0ed3dfbfc61fdb17ddd72459335eb8b23914b1797da53e95967e94ef7688a",
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "plan",
+              "detail": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\bc-openCard-1\\plan\\plan.md"
+            }
+          ]
+        },
+        {
+          "id": "contracts",
+          "state": "resolved",
+          "selected_source": "contracts@1",
+          "selected_source_fingerprint": "d1c6fe4647be6bdb1c79780bd0e422a1a9f7e6825aef98d88b29fe9b23798e47",
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "contracts@1",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\bc-openCard-1\\contracts.yaml",
+                  "exists": true,
+                  "sha256": "56985d48dc72702a13de23fb51ef3be7e57526a26618e4c4298919b290ced613",
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "plan",
+              "detail": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\bc-openCard-1\\contracts.yaml"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability_review_acceptance_context",
+      "axis": "evidence",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "prune",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "acceptance",
+          "state": "resolved",
+          "selected_source": "acceptance@1",
+          "selected_source_fingerprint": "735924d24780fbbb620b3a1ed9a923f49ebc412ced950b2d0a7ff98ddf36bfa1",
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "acceptance@1",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\bc-openCard-1\\acceptance.yaml",
+                  "exists": true,
+                  "sha256": "3d0b56778f447283232f7f3dd60ed9054cbd828cc959b49bfcdff4d3a7e3ee1a",
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "spec",
+              "detail": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\bc-openCard-1\\acceptance.yaml"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability_review_visual_context",
+      "axis": "visual",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "prune",
+      "applicability_provider_id": "applicability.ui",
+      "applicability_dependencies": [
+        {
+          "path": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\bc-openCard-1\\PRD.md",
+          "exists": false,
+          "sha256": null,
+          "role": "applicability"
+        },
+        {
+          "path": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\bc-openCard-1\\prd\\PRD.md",
+          "exists": false,
+          "sha256": null,
+          "role": "applicability"
+        },
+        {
+          "path": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\bc-openCard-1\\prd\\spec.md",
+          "exists": false,
+          "sha256": null,
+          "role": "applicability"
+        },
+        {
+          "path": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\bc-openCard-1\\spec.md",
+          "exists": false,
+          "sha256": null,
+          "role": "applicability"
+        },
+        {
+          "path": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\bc-openCard-1\\spec\\spec.md",
+          "exists": true,
+          "sha256": "a7256e0d09045c3d5827ad26ef28003458afb9e6782e3643c77c4a19330434da",
+          "role": "applicability"
+        }
+      ],
+      "inputs": [
+        {
+          "id": "ui_spec",
+          "state": "resolved",
+          "selected_source": "ui-spec@1",
+          "selected_source_fingerprint": "999f6d6d0274c9a994f1df33d0e5c8a952d4ba1ec2935e6856651dd874e88ebe",
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "ui-spec@1",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\bc-openCard-1\\spec\\ui-spec.yaml",
+                  "exists": true,
+                  "sha256": "ae39945cb838d1ae479328a95d3deeeb351c332f5bb930c5dc3c5eed313650bd",
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "spec",
+              "detail": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\bc-openCard-1\\spec\\ui-spec.yaml"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "capability_resolution_contract_fingerprint": "c69fcb60e0688069ffb09a7f528851d737680710bbf66f0d74e68a149f091956",
+  "generated_at": "2026-09-09T01:26:13.452Z",
+  "source_commit_sha": "cf9c8a707c8843dadbe5e8a30aa5c735c67ba42d",
+  "worktree_digest": "c06656cfc8b50d15",
+  "verifier_subject_id": "a2c141d668a023de61d7e2af79c1a58e92d2df1c048d95541387fc4da66cf996",
+  "verifier_request": "doc/features/bc-openCard-1/review/reports/verifier.request.a2c141d668a023de61d7e2af79c1a58e92d2df1c048d95541387fc4da66cf996.json",
+  "verifier_report": "doc/features/bc-openCard-1/review/reports/verifier.report.a2c141d668a023de61d7e2af79c1a58e92d2df1c048d95541387fc4da66cf996.md",
+  "run_id": "20260909T012304Z-0e9d23",
+  "receipt_status": "passed",
+  "closure_commit": {
+    "schema_version": "1.0",
+    "committed_at": "2026-09-09T01:26:16.146Z",
+    "receipt_path": "doc/features/bc-openCard-1/review/phase-completion-receipt.md",
+    "evidence_manifest_path": "doc/features/bc-openCard-1/review/reports/phase-evidence-manifest.json"
+  }
+}

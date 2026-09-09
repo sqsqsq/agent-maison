@@ -1,0 +1,25 @@
+{
+  "kind": "isolated_host_cli",
+  "phase_verdict": {
+    "total": 58,
+    "pass": 36,
+    "fail": 4,
+    "warn": 4,
+    "skip": 14,
+    "blockers": 4,
+    "verdict": "FAIL"
+  },
+  "check": {
+    "id": "it_drives_flow",
+    "category": "structure",
+    "description": "每条 it() 用例应端到端驱动业务流，不是单接口断言。量化门槛：\n  - 若 feature 产出了 use-cases.yaml：≥2 次 boundary 调用断言 + ≥2 处\n    coordinator.state / flow.state 断言；\n  - 否则：≥1 次对被测函数的调用 + ≥1 条 expect 断言（弱门槛，\n    简单 feature 不强求端到端编排）。",
+    "severity": "MAJOR",
+    "status": "WARN",
+    "details": "1 个 it() 用例驱动力不足：\n  - 02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_ut.test.ets: \"release isolated single assertion\" — portRefs=0 stateRefs=0 expects=1",
+    "affected_files": [
+      "02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_ut.test.ets"
+    ],
+    "suggestion": "数量是本 WARN 的触发线索，不是判据；请确认该 it() 覆盖了命名入口驱动、调用序列与状态迁移，而不是补足 expect() 条数。",
+    "source": "it_drives_flow"
+  }
+}

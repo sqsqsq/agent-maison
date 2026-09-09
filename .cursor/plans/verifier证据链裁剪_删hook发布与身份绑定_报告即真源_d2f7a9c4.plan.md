@@ -65,7 +65,7 @@ todos:
     content: >-
       （主干副本：责任转交 Br_release_3.0.0——宿主实测在分支线登记；本次主干集成验证由 plan c7e2a9f4 承担；cancelled 只表示 main 不再拥有此任务，不代表验收完成，AGENTS.md 责任转交口径）
       T6 收口验证。整批：`cd harness && npm test`、typecheck、`npm run openspec:validate`、`npm run release:check-plans`、LF（node 扫）与 `git diff --check`。宿主：由用户拿新发布件在 bc-openCard-1 起无人值守 goal run 跑 spec 阶段（本次熔断的原场景），预期 phase executor 把 verifier 回复写出 verifier.report.<subject>.md、gate harness 的 check-receipt closed、无 closure_wall_repeated；attended 与 interactive 各跑一阶段确认同路；codex 跑一阶段确认从 INCOMPLETE 恢复闭环。不做 A/B；问题回灌本 plan 七、实施记录。
-    status: cancelled
+    status: completed
 ---
 
 # verifier 证据链裁剪：删 SubagentStop hook 发布与身份绑定 / 报告即真源 / adapter 能力矩阵归零 / goal 与 interactive 一条路（d2f7a9c4）
@@ -316,3 +316,7 @@ Claude unattended 原 spec 场景已覆盖：A spec 收口重试后 advance，B 
 ### 2026-09-08 · T6 模式补验收进展
 
 Claude 非 goal review 已实际执行并闭环（claude -p 会话，C-N）；Codex goal run 20260908T143359Z-3b4759 的 review→ut PASS/advance 且 CHAIN_SLICE_COMPLETED，review 真派发 verifier 并原样落报告；当前 Codex 会话再执行非 goal review，22/22 PASS、receipt exit 0，无新增 goal run（X-N）。相应日志见 B06 §10 的 verification 目录。t6 保持 pending，剩余 attended 阶段真实闭环；不要求重复已经覆盖的 Claude unattended、非 goal与 Codex 模式。
+
+### 2026-09-09 · T6 attended 阶段闭环完成
+
+同一候选包在宿主隔离副本通过正式 goal-mode-entry host bridge + 独立 phase context 跑 review：run 20260909T012304Z-0e9d23，phase_verdict PASS/advance、agent_failed=false、summary PASS/closed、22/22，receipt exit 0；原生 MD verifier 真源正常复用。attended 阶段要求已覆盖；run 总态 PARTIAL（副本保留 B05 的其他阶段失败场景），不把它说成完整需求发布通过。加上 09-08 已完成的 unattended/interactive/Codex 实证，T6 模式验收完成。全量3962/0+46/0、typecheck 和包校验沿用本候选构建；全局发布门仍由 B06 收尾，不重复测。证据：.cursor/verification/3.0.0-golden-three-screen-20260909/attended-review-*。
