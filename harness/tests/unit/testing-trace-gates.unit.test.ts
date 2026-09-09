@@ -1331,6 +1331,50 @@ test('R8 完整 checker：--report-reconcile-only 不因该 BLOCKER 提前返回
   }
 });
 
+test('report-only：同 HAP 重装后可读已绑定的旧执行，缺记录/错 HAP/错 trace/失败记录仍拒绝倒序', () => {
+  const fs = require('fs') as typeof import('fs');
+  const path = require('path') as typeof import('path');
+  const os = require('os') as typeof import('os');
+  const { createHash } = require('crypto') as typeof import('crypto');
+  const { computeExecutionKey, freezeRunArtifacts, writeExecutionKeyRecord } =
+    require('../../../profiles/hmos-app/harness/execution-key') as typeof import('../../../profiles/hmos-app/harness/execution-key');
+  const hash = (file: string): string => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  for (const variant of ['bound', 'missing', 'wrong-hap', 'wrong-trace', 'failed'] as const) {
+    const fixture = makeReportOnlyFixture();
+    try {
+      const installPath = path.join(fixture.reportsDir, 'device-test-install.meta.json');
+      const install = JSON.parse(fs.readFileSync(installPath, 'utf8'));
+      install.timestamp = new Date(Date.parse(fixture.runEndedAt) + 1000).toISOString();
+      fs.writeFileSync(installPath, JSON.stringify(install));
+      if (variant !== 'missing') {
+        const runDir = path.dirname(fixture.tracePath);
+        const inputs = {
+          hap_sha256_full: variant === 'wrong-hap' ? '0'.repeat(64) : computeHapSha256Full(fixture.hapPath),
+          derived_plan_sha256: hash(path.join(runDir, 'test-plan.hylyre.md')),
+          device: 'test-device', display_env: '', reset_mode: 'cold', hylyre_version: '0.5.1',
+          manifest_version: '0.5.1', profile: 'hmos-app', tool_config_sha256: '', flags: [],
+        };
+        writeExecutionKeyRecord(runDir, {
+          schema_version: '1.0', execution_key: computeExecutionKey(inputs), inputs,
+          trace_path: fixture.tracePath, run_started_at: fixture.runStartedAt,
+          outcome: variant === 'failed' ? 'failed' : 'success',
+          trace_sha256: variant === 'wrong-trace' ? '0'.repeat(64) : hash(fixture.tracePath),
+          timing_complete: true, frozen_files: freezeRunArtifacts(fixture.reportsDir, runDir),
+        });
+      }
+      const traceBefore = fs.readFileSync(fixture.tracePath);
+      const result = __testing_checkReportReconcileOnlyPipeline(reportOnlyContext(fixture.root))[0];
+      assert.strictEqual(result.status, variant === 'bound' ? 'PASS' : 'FAIL', `${variant}: ${result.details}`);
+      if (variant !== 'bound') assert.match(result.details, /时间链不闭合/, variant);
+      assert.deepStrictEqual(fs.readFileSync(fixture.tracePath), traceBefore);
+    } finally {
+      assert.strictEqual(path.dirname(path.resolve(fixture.root)), path.resolve(os.tmpdir()));
+      assert.ok(path.basename(fixture.root).startsWith('report-reconcile-only-'));
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  }
+});
+
 export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
   for (const c of CASES) {

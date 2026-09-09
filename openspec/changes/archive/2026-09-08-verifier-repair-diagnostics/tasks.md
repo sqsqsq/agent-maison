@@ -38,9 +38,9 @@
 - [x] 6.3 `repair-candidates`: table ≡ legacy YAML equivalence through `buildSummaryRepairCandidates`, conflict/duplicate/malformed handling, and the V2 chain from the real `buildUtHvigorTestFailDetails` output (reproduce the missing-attribution break first)
 - [x] 6.4 `goal-phase-runtime`: the diagnosis feedback text; `context-facts`: the D6 instruction alignment
 - [x] 6.5 `node scripts/check-plan-version.mjs`, `npm --prefix harness run typecheck`, the five `test:unit --filter` runs, `npm run openspec:validate`
-- [ ] 6.6 `npm run candidate:build` reaches `BUILT` — blocked by a pre-existing failure unrelated to this change: the consumer
-      lifecycle smoke `goal/#5` (driver scenario `ut_source_mutation`) records `phase_write_observed` but never
-      `phase_write_violation`, so no backtrack to coding happens. Verified pre-existing by re-running the same driver
-      scenario with every change in this batch stashed: identical result. typecheck + unit 3822/3822 + fixtures 46/46 +
-      pack + zip verification all pass; only that last smoke gate blocks the candidate
-- [ ] 6.7 Host acceptance: user-triggered `C-U` goal run over the affected bc-openCard-1 window — diagnosis → candidate → owner repair → window closure (not run here; the user triggers it)
+- [x] 6.6 Candidate build completed after the initial consumer smoke blocker was resolved; The current candidate manifest records complete=true, built_at=2026-09-08T11:26:37.817Z, smoke_checked_at=2026-09-08T11:28:48.454Z, source_commit bb4aed67. Its in-zip manifest SHA matches the installed host manifest; ZIP SHA=7e1472c011b46b77eb1131b8cac892ca63c5b11d4c42e6ca57b12f9de6814656.
+- [x] 6.7 Host acceptance: user-triggered `C-U` goal run over the affected bc-openCard-1 window — diagnosis → candidate → owner repair → window closure (not run here; the user triggers it)
+
+## 2026-09-08 closeout evidence
+
+The original 6.6 note described an earlier goal/#5 smoke failure, not a current failure. Existing candidate complete=true supersedes that build status. Host deb77f shows review FAIL → repair candidates → coding rerun → review PASS; successor 73fc05 closes all six phases and verifies VALID. The old PARTIAL run is not relabelled successful. See B01 latest implementation record and B06 §10.

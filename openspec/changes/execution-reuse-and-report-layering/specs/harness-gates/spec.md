@@ -55,6 +55,8 @@ Enforcement: `harness/scripts/check-testing.ts`, `harness/scripts/check-ut.ts`, 
 
 ### Requirement: Report-only reconciliation fully recomputes testing projections without a device
 
+Report-only reconciliation SHALL allow a later installation of the same HAP to coexist with an earlier verified execution. When the latest execution-key record is still reusable under the existing predicate and its trace path/hash and full HAP digest match the artifacts being reconciled, the current install timestamp SHALL NOT be required to precede that reused run's start. Build-before-install and the run's own start/end ordering SHALL still be checked. Missing records, changed HAP/trace identity, or a failed latest record SHALL NOT authorize this exception, and timestamps SHALL NOT be rewritten to manufacture ordering.
+
 `--report-reconcile-only` SHALL read the existing authoritative trace, plan, timing, metadata and current inputs, regenerate the machine report, and recompute report/static gates, summary, quality axes and repair candidates without invoking hvigor, hdc, Hylyre, device or provider execution, visual capture or lifecycle hooks. The verifier subject SHALL follow the reviewed material only; a regenerated report changes the subject only when its machine content changed.
 
 Reconciliation SHALL distinguish **execution-fact** gaps from **derived-statistic** gaps. An execution-fact gap — anything that unsettles which package, which device, which run or which cases really executed, including source metadata that is itself missing or malformed — SHALL remain a BLOCKER FAIL. A derived-statistic gap — a timing file that is missing or stale, a pipeline duration projection, a case duration row, a report body that disagrees with timing — SHALL first be **rebuilt** from the trace and the source metadata using the existing timing collector and report generator; only a gap that still fails to close after the rebuild SHALL be reported with `status` WARN at unchanged BLOCKER severity, `failure_kind` naming an unavailable derived statistic, and details stating explicitly that the statistic is UNKNOWN and does not constitute an execution-fact conclusion. Neither branch SHALL trigger any device, hvigor, hdc or Hylyre invocation, and no new check id, status member or severity SHALL be introduced.
@@ -91,6 +93,12 @@ Enforcement: `harness/scripts/check-testing.ts`, `harness/harness-runner.ts`, `h
 
 - **WHEN** a test case links a performance acceptance id and its report duration disagrees with the trace
 - **THEN** the gap SHALL remain a BLOCKER FAIL naming that the performance duration must be really measured
+
+#### Scenario: Reinstalling the same HAP does not invalidate an eligible earlier execution
+
+- **WHEN** the current installation occurs after a successful run and the latest eligible execution-key record binds the same HAP and trace
+- **THEN** report-only SHALL reconcile that execution without device calls or a time-chain failure
+- **AND** an absent record, changed HAP/trace hash, or failed latest record SHALL keep the time-chain failure
 
 ## ADDED Requirements
 

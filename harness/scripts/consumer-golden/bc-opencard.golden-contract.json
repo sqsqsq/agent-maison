@@ -1,26 +1,21 @@
 {
   "schema_version": "1.0",
-  "feature": "bc-openCard",
-  "note": "c4e8b1d3 G3 golden screen oracle：10 个固定正向需求屏（9 P0 + P1 bank_card_list_sheet——第 10 张原始需求图对应页面）。集合与 declared↔capture 映射固定，不从 P0 / 宿主本轮 ui-spec / 数量动态推导（三条推导路径均被证伪：漏 P1 屏 / ui-spec 误改自证 / 错误屏替换凑数）。HomeTab 是第 11 个负向目标，不计入正向屏。随 candidate zip 发布，evaluator 按精确集合相等裁决。",
+  "feature": "bc-openCard-1",
+  "note": "2026-09-09 用户确认采用三屏发布验收基线。依据 doc/features/原始需求/1-1-银行卡/原始需求.md（SHA256 e306d003101f4230618ae39e001af8ed72c94ab4c03d3b67dac5ddf1b9dbfc3c）的页面说明与资源索引：添加银行卡收起态、展开态、全部银行页。卡类型半模态明确暂不实现；短信验证、成功页、卡详情等旧十屏内容和 HomeTab 专项负向采集不属于本基线。已有路由回归由需求 AC/真机用例验证。固定集合与 declared/capture 映射不从本轮 ui-spec、截图数量或测试结果生成；顶部一屏外未验证与已接受 minor 差异只披露，不要求视觉满分。",
   "positive_screens": [
-    { "declared": "add_card_home_collapsed", "capture": "add_card_home_collapsed" },
-    { "declared": "add_card_home_expanded", "capture": "add_card_home_expanded" },
-    { "declared": "all_banks", "capture": "all_banks" },
-    { "declared": "card_type_sheet", "capture": "card_type_sheet__overlay__0" },
-    { "declared": "card_select", "capture": "card_select" },
-    { "declared": "sms_verify", "capture": "sms_verify__overlay__0" },
-    { "declared": "add_success", "capture": "add_success" },
-    { "declared": "card_detail", "capture": "card_detail" },
-    { "declared": "card_pack_with_cards", "capture": "card_pack_with_cards" },
-    { "declared": "bank_card_list_sheet", "capture": "bank_card_list_sheet__overlay__0" }
-  ],
-  "forbidden": [
     {
-      "id": "HomeTab",
-      "anchor": "bank_card_section",
-      "evidence": "device-testing/device-screenshots/layout-HomeTab.json",
-      "note": "R4 回归：WalletMain 主页不得出现银行卡区块（误开发的直接复归目标）。evidence（相对 feature 目录）由 golden 采集自动生产：设 MAISON_GOLDEN_CONTRACT 后 capture 按 nav 配置导航该屏 + UITree dump，写 golden_forbidden_evidence wrapper（run_id + build fingerprint 绑定）；evaluator 只认本 run + 当前 build 的 wrapper，裸 dump/历史残留不采信。宿主 visual-diff-nav 配置须含 HomeTab 到达步骤"
+      "declared": "add_bank_card_collapsed",
+      "capture": "add_bank_card_collapsed"
+    },
+    {
+      "declared": "add_bank_card_expanded",
+      "capture": "add_bank_card_expanded"
+    },
+    {
+      "declared": "all_banks",
+      "capture": "all_banks"
     }
   ],
-  "key_overlays_and_completion": ["card_type_sheet__overlay__0", "sms_verify__overlay__0", "add_success"]
+  "forbidden": [],
+  "key_overlays_and_completion": []
 }

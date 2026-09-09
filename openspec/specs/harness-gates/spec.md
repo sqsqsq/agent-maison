@@ -999,7 +999,7 @@ Enforcement: `profiles/hmos-app/harness/{asset-integrity,coding-visual-parity-ch
 
 ### Requirement: On-device rendered visibility is a debt-gated observation
 
-A device-side check SHALL compare rendered regions against the screenshot using its calibrated deterministic observations and write machine-derived visual debt. An open required debt SHALL keep the visual axis unclosed and release blocked; it SHALL close only after source/binding/render evidence verifies the fix. New debt MUST NOT enter an accepted-by-human state, and no receipt SHALL clear it. Optional low-confidence observations remain advisory according to the existing calibrated policy.
+A device-side check SHALL compare rendered regions against the screenshot using its calibrated deterministic observations and write machine-derived visual debt. A hit ("node present, pixels invisible") SHALL be expressed as a `MAJOR` `FAIL` — a defect, not a disclosure (plan a3f7c1d9 D3(e): defects FAIL, disclosures WARN): it MUST NOT be raised to `BLOCKER`, so it is not counted by the phase verdict or the summary blockers (both count only `BLOCKER` FAIL) and the phase still advances; its findings enter the visual-debt ledger, and an open required debt SHALL keep the testing visual axis unclosed and release blocked; it SHALL close only after source/binding/render evidence verifies the fix. New debt MUST NOT enter an accepted-by-human state, and no receipt SHALL clear it. Optional low-confidence observations (`unknown` regions) remain advisory according to the existing calibrated policy and SHALL NOT be reported as hits.
 
 Enforcement: `profiles/hmos-app/harness/render-visibility.ts`, `harness/scripts/utils/visual-debt.ts`, `harness/harness-runner.ts`
 
@@ -1007,6 +1007,11 @@ Enforcement: `profiles/hmos-app/harness/render-visibility.ts`, `harness/scripts/
 
 - **WHEN** a current rendered-visibility finding remains open but legacy accepted-by metadata exists
 - **THEN** current projection SHALL keep the required visual axis unclosed
+
+#### Scenario: an invisible region is a MAJOR FAIL that blocks release through the ledger, not the phase verdict
+
+- **WHEN** `render_visibility_calibrate` finds an Image node whose region is invisible in the screenshot
+- **THEN** the check result SHALL be `MAJOR` / `FAIL`, the phase verdict SHALL still be `PASS` with no summary blocker for it, the ledger SHALL hold an open `debt:render_visibility_calibrate:<screen>` entry, and the testing visual axis SHALL be `UNVERIFIED` with release `BLOCKED`
 
 ### Requirement: Fidelity intent tri-state detection covers phase-driven runs
 
@@ -1081,79 +1086,6 @@ MUST 以首句声明编译形态未经确认。
 > `profiles/hmos-app/harness/providers/device-test-build.ts`,
 > `harness/scripts/check-testing.ts`,
 > `harness/tests/unit/*`（product-selection / hvigor-build-verdict / detect-product 语义）
-
-### Requirement: Normal-mode device phases resolve one target at entry and share it across the whole chain
-
-普通模式（`harness-runner --phase <p>`）在 `phaseRequiresDevice(p, profile)` 为真时，MUST 在
-**任何设备操作之前**（脚本 harness 执行前）完成设备前置：策略检查 → 目标解析 → 就绪。
-就绪 MUST 复用与 goal 侧**同一个共享核心** `ensureDeviceReady`；MUST NOT 使用只读探针
-（`probeDeviceReadiness`，不 wake/不解锁/不启动降级）替代，MUST NOT 直接调用运行期恢复
-（`ensureDeviceReadyAtRuntime`，它要求已有 serial、不负责选目标）。
-
-**目标 MUST 只解析一次**，并 MUST 注入 `HARNESS_HDC_TARGET`，使后续 wake、解锁、`bm dump`、
-install、`aa test` 全链共用同一 serial。解析优先级 MUST 为：显式 `HARNESS_HDC_TARGET` >
-`device.target_serial` > 唯一在线设备；多台在线且无 `target_serial` MUST 走既有 AMBIGUOUS
-停止求人。已显式设定的环境变量 MUST NOT 被覆盖。
-
-配置目标不在线时 MUST 阻断，或走**已授权的**模拟器降级（`existing|managed`）；
-**MUST NOT 跳过检查后让 hdc 隐式选择另一台在线设备**。
-
-策略 `code=device_policy_unset` 时 MUST 前脚本 fail-fast：原文透传 `guidance`、非零退出、
-MUST NOT 调用任何 checker/provider、MUST NOT 发出任何设备命令。四选一文案 MUST 保持单一
-真源在 `device-policy`，MUST NOT 在门内另抄一份。策略检查自身执行失败（凭据库不可读、配置
-损坏）MUST 与 `device_policy_unset` 分开报告，MUST NOT 引导用户重新登记凭据。
-
-MUST NOT 为此新增 diagnosis kind、平行的 provider 局部门或第二套目标解析。profile 侧的
-运行期恢复桥 MUST 只消费入口注入的目标，MUST NOT 读取 `framework.local.json` 自行解析目标。
-
-**编译跳过类环境开关 MUST NOT 用于免除本门**：它们只跳过编译，UT 的真机执行受独立开关
-控制、testing 更不认编译开关，据此让路等于门形同虚设。
-
-托管启动（`managed`）的模拟器 MUST 在本进程退出时按既有所有权四元组回收，且回收登记
-MUST 早于任何失败退出分支——「实例已启动但未就绪」（boot 超时/仍锁屏）是普通的可执行清理
-失败路径，晚登记即零凭证泄漏。就绪核心给出的孤儿实例身份 MUST 随失败结果一并交出。
-
-冻结上下文 MUST **整组原子**注入：应用后进程内的 `MAISON_DEVICE_*` MUST 恰好等于本次
-`deviceEnvFor` 的产出，未返回的键 MUST 被删除。MUST NOT 逐键「不存在才写」——继承而来的
-陈旧 `MAISON_DEVICE_CREDENTIAL_REF` 会被运行期优先取用，形成「`manual` 策略下仍自动输入
-PIN」的越权路径。
-
-`HARNESS_HDC_TARGET` **同样 MUST 以门的解析结果为准**，MUST NOT 保留注入前的旧值：显式目标
-的优先级在门的**输入阶段**已经兑现，未降级时写回的本就是同一值，而发生**已授权降级**时最终
-目标是模拟器 serial。保留旧值会产出 `HARNESS_HDC_TARGET`（离线真机）与
-`MAISON_DEVICE_TARGET_KIND=emulator` 并存的目标分裂——hdc 操作离线真机，而设备门与 testing
-封顶都以为目标是模拟器。
-
-#### Scenario: manual 策略下不得残留陈旧凭据引用
-- **WHEN** 进程继承了 `MAISON_DEVICE_CREDENTIAL_REF` 而本次策略为 `manual`（本次不产出 ref）
-- **THEN** 注入后该变量 MUST 不存在，运行期 MUST NOT 取到任何凭据引用
-
-#### Scenario: 托管实例启动后未就绪
-- **WHEN** 降级启动了托管模拟器但它未在预算内就绪，入口前置判定失败
-- **THEN** 该实例的所有权身份 MUST 随失败结果交出，且 MUST 在进程退出前登记回收
-
-#### Scenario: 显式目标离线后走已授权降级
-- **WHEN** 显式 `HARNESS_HDC_TARGET` 指向的真机不在线，入口前置按已授权 `existing`/`managed` 降级到模拟器
-- **THEN** 注入后的 `HARNESS_HDC_TARGET` MUST 等于该模拟器 serial，MUST NOT 保留离线真机
-- **AND** `MAISON_DEVICE_TARGET_KIND` 与 testing 封顶判据 MUST 与该同一目标同源
-
-#### Scenario: 需设备 phase 在策略不可用时零设备操作
-- **WHEN** `phaseRequiresDevice` 为真且 `device-policy --check` 返回 `device_policy_unset`
-- **THEN** harness-runner MUST 非零退出并透传四选一 guidance
-- **AND** MUST NOT 执行任何 checker/provider，MUST NOT 发出 `hdc install` 或 `aa test`
-
-#### Scenario: 配置目标离线且无授权降级
-- **WHEN** `device.target_serial` 指向的设备不在线，另有一台其它设备在线，且 `emulator_fallback=disabled`
-- **THEN** 入口前置 MUST 阻断，MUST NOT 把那台在线设备当作目标注入
-
-#### Scenario: 解析结果贯通全链
-- **WHEN** 入口前置取得 READY
-- **THEN** `HARNESS_HDC_TARGET` MUST 被注入为该目标，且解锁链与 hdc 命令 MUST 使用同一 serial
-
-> **Enforced by:** `harness/harness-runner.ts`,
-> `harness/scripts/utils/device-readiness-gate.ts`,
-> `profiles/hmos-app/harness/device-recovery-bridge.ts`,
-> `harness/tests/unit/device-readiness-gate.unit.test.ts`
 
 ### Requirement: Frozen attempt context is identified by target and frozen marker together
 
@@ -1995,6 +1927,8 @@ Resolution order SHALL be fixed and SHALL NOT be reordered by any caller: profil
 
 `disabled` SHALL mean **absent equals zero**: no `ai-prompt.md`, no request, no subject, no invocation, and no closure requirement. A workflow that does not declare `verifier_prompt` for a phase SHALL be `disabled` — that is "not applicable", not "missing", and a fallback template SHALL NOT be synthesized to fill the gap. Artifacts left on disk by an earlier `enabled` generation SHALL **never** re-activate a capability the resolver has judged `disabled`, and switching a phase from `enabled` to `disabled` SHALL NOT require deleting them.
 
+`enabled` SHALL mean the capability exists this round; whether a request is actually issued SHALL be a separate judgement made by the shared request-eligibility predicate, which covers both the ordinary `PASS` path and the two narrow diagnosable-failure shapes. Applicability and eligibility SHALL remain two questions with two answers: a phase may be `enabled` and still issue nothing.
+
 The resolution SHALL be identical in `interactive`, `headless` and `goal`. There SHALL be no mode-conditional branch anywhere in verifier adjudication: the previous asymmetry — an adapter-capability gate that applied to `interactive` only, paired with a publication path that refused to publish under `goal` — produced an empty intersection in which a completed, passing review could never close a phase, and burned two unattended runs before anyone noticed.
 
 There SHALL be no third state. A `blocked` outcome existed to express "policy demands a verifier that this adapter cannot publish"; with publication no longer adapter-specific, the only remaining gap is a tool that cannot dispatch a subagent, which is disclosed as `disabled` rather than raised as a failure.
@@ -2008,25 +1942,10 @@ Enforcement: `harness/scripts/utils/verifier-plan.ts`, `harness/harness-runner.t
 - **WHEN** a `lite` feature runs `change`, `coding` or `exit` in interactive, headless or goal mode
 - **THEN** the plan SHALL be `disabled`, no prompt/request/subject SHALL be written, and the closure path SHALL remain the existing change/coding/exit chain with the receipt mechanism not applicable
 
-#### Scenario: An undeclared phase is not applicable rather than missing
+#### Scenario: An enabled phase can still issue nothing
 
-- **WHEN** the active workflow declares no `verifier_prompt` for a phase
-- **THEN** the plan SHALL be `disabled`, and no fallback prompt template SHALL be synthesized
-
-#### Scenario: Leftover artifacts cannot resurrect a disabled capability
-
-- **WHEN** a phase that previously ran with `enabled` now resolves to `disabled` while its old prompt, request and report files remain on disk
-- **THEN** the gate SHALL still treat the phase as `disabled`, SHALL NOT consume those files, and SHALL NOT require their removal
-
-#### Scenario: A full goal phase resolves exactly as interactive
-
-- **WHEN** a `full` feature phase runs under `goal` with an adapter declaring `verifier_subagent`
-- **THEN** the plan SHALL be `enabled`, the same request and report protocol SHALL apply, and closure SHALL be reachable without any operator intervention
-
-#### Scenario: An adapter without a reviewer disables rather than blocks
-
-- **WHEN** the evidence policy resolves `verifier` to `required` and the adapter declares no `verifier_subagent`
-- **THEN** the plan SHALL be `disabled` with reason `adapter_has_no_reviewer`, and no request SHALL be issued
+- **WHEN** the plan resolves `enabled` and the script gate fails outside the two diagnosable shapes
+- **THEN** the plan SHALL remain `enabled`, no request SHALL be issued, and the closure gate SHALL keep treating the phase as one that owes a verifier once its script gate passes
 
 ### Requirement: Reference-image receipt verification uses the runner's shared discovery denominator
 
@@ -2039,7 +1958,30 @@ denominator from the agent-produced `spec.md` alone. A spec that omits any disco
 fail verification; the spec cannot shrink the denominator. The existing soft WARN / hard FAIL
 thresholds and the rejection of fabricated `verified + vl_multimodal` are unchanged.
 
-Enforcement: `harness/scripts/utils/critic-receipt-producer.ts`, `harness/scripts/utils/fidelity-shared.ts`, `harness/scripts/goal-runner.ts`, `profiles/hmos-app/harness/spec-visual-handoff-check.ts`
+The receipt SHALL be addressed by material rather than by invocation. It SHALL bind `goal_run_id`,
+the adapter, and each image's content hash; it SHALL NOT carry a top-level invocation id, and
+verification SHALL NOT require an invocation-id equality or a runner event anchor over the receipt
+file's digest. Production SHALL merge across invocations of the same run: a previous `read` SHALL be
+inherited only while run, adapter and the image's content hash are all unchanged, and a replaced
+image SHALL invalidate its record. A Read event SHALL match a reference image only by normalized
+full path — a same-basename file at a different path SHALL NOT count as read. The receipt schema is
+`1.1`; the loader SHALL accept only `1.1` and SHALL treat any other version as "no receipt", because
+a same-run resume leaves a `1.0` residue whose `goal_run_id` matches and only the version test can
+reject it.
+
+A round that produced no per-image audit of its own SHALL NOT sign one. Because phase log paths are
+fixed per phase, an attended round would otherwise re-audit the previous detached round's event log
+and combine it with the current image hashes into a receipt that looks new; receipt production SHALL
+therefore require a detached executor, and an attended round SHALL emit its production event with a
+skipped status and a reason and write nothing. The runtime SHALL reject an `attended` executor paired
+with a `process` owner, so the gate's only reliable in-machine attended signal (run-control
+`owner.kind === 'session'`) cannot be bypassed.
+
+Carrying a previous invocation's read forward SHALL be disclosed: the production event SHALL carry
+the carried-over count and the goal report SHALL render it as one note row of the kind it already
+renders. No new check id, severity, WARN class or summary field SHALL be introduced for it.
+
+Enforcement: `harness/scripts/utils/critic-receipt-producer.ts`, `harness/scripts/utils/fidelity-shared.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-report-generator.ts`, `profiles/hmos-app/harness/spec-visual-handoff-check.ts`
 
 #### Scenario: spec omitting one discovered source image fails verification
 
@@ -2047,6 +1989,26 @@ Enforcement: `harness/scripts/utils/critic-receipt-producer.ts`, `harness/script
   cover only two
 - **THEN** receipt verification reports the missing image as unread/undeclared and the terminal
   gate fails
+
+#### Scenario: a same-basename file at another path is not a read
+
+- **WHEN** the invocation reads `tmp/1-home.png` while the authoritative image is
+  `ux-reference/1-home.png` with different content
+- **THEN** the authoritative image SHALL be recorded unread and SHALL NOT be signed with its own hash
+
+#### Scenario: a replaced image invalidates the carried-over read
+
+- **WHEN** an earlier invocation of this run read two images, one of them is then replaced, and the
+  next invocation reads nothing
+- **THEN** the unchanged image keeps its read and is counted as carried over, while the replaced one
+  becomes unread and the sign-off is refused
+
+#### Scenario: an attended round does not re-sign a leftover log
+
+- **WHEN** a detached round leaves `agent-events.jsonl` on disk, a reference image is replaced, and
+  the next round runs attended
+- **THEN** the production event SHALL be skipped with an attended reason, and the existing receipt
+  file SHALL be left byte-identical
 
 ### Requirement: Execution channels resolve to a machine-proven tri-state
 
@@ -2238,3 +2200,282 @@ Enforcement: `harness/scripts/utils/phase-evidence-manifest.ts`
 
 - **WHEN** a closed phase's `summary.json` is edited
 - **THEN** manifest recomputation SHALL report the phase stale
+
+### Requirement: A diagnosable product failure still issues a verifier request
+
+Verifier request production SHALL be decided by one shared pure predicate consumed by both the prompt assembly step and the summary writer. Its inputs SHALL be the resolved verifier plan, the phase, the script verdict and checks, the derived `report_validity`, and the existing `has_blocked` capability projection; no caller SHALL re-derive eligibility on its own, and the predicate SHALL NOT read a model, execute a provider, or persist state.
+
+`disabled` SHALL produce nothing. `enabled` with a `PASS` script verdict SHALL keep the existing success path unchanged. `enabled` with a `FAIL` script verdict SHALL produce a request in exactly two shapes, both reproduced in production:
+
+- **review** — `report_validity=PASS`, at least one BLOCKER FAIL, every BLOCKER FAIL is `negative_verdict_closure` or `conditional_pass_closure`, no BLOCKER SKIP, no blocked capability;
+- **ut** — the UT compile gate PASS, the UT run gate FAIL attributed `code_regression`, no other BLOCKER FAIL or SKIP, no blocked capability, and `report_validity` not `FAIL`.
+
+Every other failure — `INCOMPLETE`, missing source, malformed report artifacts or UT structure, compile / device / toolchain failures, and any mix of a negative verdict with a material failure — SHALL produce nothing, preserving the existing "fix the input or the environment first" exit. UT SHALL NOT mechanically require `report_validity=PASS`: a pure UT round may legitimately be `UNVERIFIED` because no report-format check ran, and eligibility rests on the real compile and execution facts. `ut_run_status` is a derived MINOR WARN panel and SHALL NOT block a diagnosis the predicate already allowed.
+
+Attribution SHALL be read as `CheckResult.failure_kind` first, falling back to the existing `失败归因：` details parser only when the structured field is absent; structured device/toolchain classification SHALL win over conflicting text. There SHALL be exactly one implementation of that fallback parser.
+
+The product verdict, blocker count and `closure_status` SHALL NOT change because a diagnosis request was issued. A verifier PASS SHALL NOT be consumable as a product PASS, and the failing phase SHALL NOT be required to close before the diagnosis runs.
+
+Enforcement: `harness/scripts/utils/verifier-plan.ts`, `harness/harness-runner.ts`, `profiles/hmos-app/harness/ut-host-impl.ts`
+
+#### Scenario: A negative review verdict reaches the verifier
+
+- **WHEN** review's script gate fails with `negative_verdict_closure` as its only BLOCKER FAIL, the report artifact checks pass, and no capability is blocked
+- **THEN** the prompt SHALL be assembled, a request SHALL be issued and written to disk, and the summary SHALL still record `verdict=FAIL` with `closure_status=open` and no repair candidates until a report exists
+
+#### Scenario: A negative verdict mixed with a material failure produces nothing
+
+- **WHEN** review fails with `negative_verdict_closure` plus any other BLOCKER FAIL or BLOCKER SKIP, or with `report_validity=FAIL`
+- **THEN** no prompt, request or subject SHALL be produced and the next action SHALL remain the existing fix-the-blockers route
+
+#### Scenario: A real UT assertion failure is attributed and released
+
+- **WHEN** every selected ohosTest module produced a real execution result and each failing module ran, produced cases, and failed some with concrete failures, with no missing tool, no timeout, no non-clear install blocking and no structured on-device failure evidence
+- **THEN** the `ut_hvigor_test` FAIL SHALL carry `failure_kind=code_regression`, its details SHALL remain the unmodified formatter text, and the UT diagnosis request SHALL be issued
+
+#### Scenario: An environment failure is never re-attributed as a product defect
+
+- **WHEN** the UT failure carries a structured device or toolchain classification, an incomplete module execution, `total=0`, or a timeout
+- **THEN** the formatter's own attribution SHALL stand, `code_regression` SHALL NOT be written, and no diagnosis request SHALL be issued
+
+### Requirement: The repair diagnosis next action is decided first and rendered with its paths
+
+When a diagnosis request has been issued and the current subject has no usable report text, `next_action` SHALL be `run_verifier_for_repair`. "Usable" SHALL mean more than a self-consistent terminal block: the checks that decide this diagnosis SHALL also be readable from the body — for UT the two candidate-required checks, for review the per-issue verification block. When they are missing, conflicting or placeholder, the round SHALL stay on this action and the NEXT line SHALL point at rewriting the report from the verifier's original reply, not at changing the product; falling back to the generic "fix the blockers" route makes the repeated harness re-read the same unusable body forever and produce no candidates. It SHALL be decided before every other branch of the next-action projection: the UT panel's `can_claim_done=false` route is otherwise always satisfied by exactly these failures and would swallow the diagnosis. Eligibility has already excluded every material and environment failure, so deciding it first SHALL NOT pre-empt any real fix-first route. It is an action string only — no new phase, no parallel state machine — and the PASS path SHALL be unchanged. Once a usable report exists for the current subject, the action SHALL fall back to the ordinary failure routing so the recomputed repair candidates drive the owner.
+
+The failure console SHALL render this action before the generic "non-PASS means fix the blockers" line, and SHALL name the request path, the report write path and the follow-up command. The follow-up SHALL distinguish the two orchestrations: under goal orchestration the dispatcher ends the round and returns, because the outer runner re-runs the gate harness and recomputes candidates; otherwise the dispatcher re-runs this phase's harness once. That distinction SHALL be derived from the actual orchestration context — a residual environment variable alone SHALL NOT be treated as proof that an outer runner exists, and when it cannot be confirmed the conservative "re-run it yourself" instruction SHALL be given. A readable run-control file is not that proof either: the invocation SHALL carry the attempt identity the orchestration injects alongside the run id, and the run's owner SHALL still be `active`. A `released`, `orphaned_session` or `quiescing` owner means nobody will recompute the candidates, so those SHALL fall back to the self-rerun instruction.
+
+The goal failure feedback SHALL carry the same three instructions and SHALL NOT require candidates to exist or the phase to be closed before the round returns; an attended callback SHALL NOT report `passed` to compensate.
+
+Enforcement: `harness/harness-runner.ts`, `harness/scripts/goal-runner.ts`, `agents/claude/templates/agents/phase-executor.md`, `agents/claude/templates/hooks/check-phase-completion.mjs`
+
+#### Scenario: The UT completion panel does not swallow the diagnosis
+
+- **WHEN** a UT diagnosis request is issued while `ut_run_status` reports `can_claim_done: NO`
+- **THEN** `next_action` SHALL be `run_verifier_for_repair`
+
+#### Scenario: The goal round does not run a second harness
+
+- **WHEN** the round runs inside a confirmed goal agent invocation
+- **THEN** the NEXT line SHALL tell the dispatcher to write the report and return, and SHALL NOT instruct it to re-run the phase harness
+
+#### Scenario: A stale run id does not claim an outer rerun
+
+- **WHEN** the environment still carries a run id whose run-control owner is `released`, `orphaned_session` or `quiescing`, or whose attempt identity is absent
+- **THEN** the NEXT line SHALL give the self-rerun instruction
+
+#### Scenario: An unreadable report body routes to a format repair
+
+- **WHEN** the current subject's report has a self-consistent terminal block but its diagnosis-required checks cannot be read (missing, conflicting or placeholder)
+- **THEN** `next_action` SHALL remain `run_verifier_for_repair`, the NEXT line SHALL instruct rewriting the report from the verifier's original reply, and no candidate SHALL be derived from that body
+
+#### Scenario: The report arrives and the owner candidate appears
+
+- **WHEN** the verifier's reply has been written verbatim for the current subject and the harness runs again over unchanged material
+- **THEN** the subject SHALL be unchanged, the per-issue confirmations SHALL produce owner-routed repair candidates, `next_action` SHALL no longer be `run_verifier_for_repair`, and the product SHALL remain FAIL with `closure_status=open`
+
+### Requirement: A refused visual sign-off names which of four states applies
+
+The sign-off verifier SHALL label every failure with exactly one of `unreachable`, `not_probed`,
+`not_yet` or `mismatch`, and `ui_spec_fidelity_gate` SHALL choose its message and its way out from
+the most severe label present, in that order. No new check id and no change to the existing severity
+ladder SHALL be introduced.
+
+- `unreachable` SHALL be decided **only** by execution shape and audit capability: no goal run/attempt
+  identity, an attended round (run-control `owner.kind === 'session'`), or an adapter with no
+  registered structured-event parser. Its way out SHALL be to record `verified: unverified` honestly,
+  naming goal orchestration + detached execution + a structured-events adapter as the reachable
+  combination.
+- `not_probed` SHALL cover a reachable shape whose run holds no probe-produced canary — including a
+  `vision.image_input_override`, an expired canary, one belonging to another run, one failing the
+  model pin, and a verdict that is not a real visual read. Its way out SHALL name deleting the
+  override so preflight measures once, or re-running so the canary refreshes, or recording
+  `unverified`.
+- `not_yet` SHALL cover a reachable, measured run whose reference-read receipt is simply absent or
+  not schema `1.1`. Its way out SHALL be to hand the work back to the runner, which signs the receipt
+  after the invocation ends — the in-phase harness of a normal first round always sees no receipt,
+  and it SHALL NOT be told that its execution shape is unsupported.
+- `mismatch` SHALL cover material disagreement: unread images, hash mismatches, an uncovered
+  denominator, or a run/adapter mismatch. Its way out SHALL name reading the missing images and
+  checking whether a reference image was replaced.
+
+Enforcement: `harness/scripts/utils/critic-receipt-producer.ts`, `profiles/hmos-app/harness/spec-ui-spec-check.ts`
+
+#### Scenario: a normal first round is told to wait, not to downgrade
+
+- **WHEN** the in-phase harness of a reachable, measured goal round runs before the runner has signed
+  this round's receipt
+- **THEN** the gate SHALL report "not yet produced" and SHALL NOT state that the execution shape does
+  not support `vl_multimodal`
+
+#### Scenario: an unmeasured run is not described as measured
+
+- **WHEN** the run holds no probe-produced canary
+- **THEN** the gate SHALL report the state as not measured and its text SHALL NOT assert that visual
+  capability was measured
+
+### Requirement: Plan chapters accept a grounded not-applicable declaration only when the contract source is trustworthy
+
+`data_model_typed`, `interface_signatures_complete` and `component_tree_per_page` SHALL accept a chapter that states it does not apply, provided the chapter is present and carries a declaration line with the author's grounds, and the corresponding `contracts.yaml` collection (`data_models`, `interfaces`, `components`) is empty. The judgement SHALL be made by one shared pure function consumed by all three checks — no per-check copy, no applicability ledger, no registry file, and no structure whose name would read as an exemption registry.
+
+Trustworthiness of the source SHALL be a precondition written into that function, not assumed from upstream. All three SHALL hold: `featureSpec.contracts` is mounted; `contracts.yaml` parsed successfully (an unparseable root mounts nothing, so the two conditions merge); and `shape_issues` carries no entry for that collection. This last one matters because the loader normalizes a non-array truthy value such as `data_models: {}` into an empty array and only records `shape_issues`, so "the collection is empty" is otherwise indistinguishable from "the shape was written wrong". If any precondition fails, the function SHALL return no verdict and every existing judgement SHALL stand unchanged.
+
+A true declaration SHALL record `SKIP` at the check's existing severity, with `details` naming both the criterion (the contracts collection and its length) and the author's stated grounds. A false declaration — the collection is non-empty — SHALL record `FAIL` at that same existing severity, name the contract entries it found, and carry a suggestion. Severities SHALL NOT be raised: `component_tree_per_page` stays MAJOR, so its false-declaration FAIL is a check failure and not a phase blocker, while the other two remain BLOCKER and do block the phase.
+
+Chapter presence SHALL remain required by `required_chapters` — this exit is for "the chapter is there and honestly says the feature has none of these", never for a missing chapter. The judgement SHALL read only whether the contracts collection is empty; it SHALL NOT attempt to infer whether contracts itself under-declares, and SHALL NOT interpret the `components[].kind` field.
+
+A confirmed not-applicable result SHALL be machine-readable, and the run summary's `blocking_skips` SHALL exclude it. A `SKIP` at BLOCKER severity otherwise means "the gate did not run", which routes the run to `review_blocking_skips_then_verifier` — mislabelling a confirmed non-applicable chapter as outstanding work and short-circuiting the disabled and verifier-FAIL branches of the next-action resolution. The marker SHALL NOT change the check's `status` or `severity`, so display, blocker aggregation and quality-axis counting stay exactly as they are today.
+
+Enforcement: `harness/scripts/check-plan.ts`, `harness/scripts/utils/spec-loader.ts`, `harness/harness-runner.ts`
+
+#### Scenario: A grounded declaration on an empty collection records SKIP
+
+- **WHEN** the chapter is present, states that it does not apply with grounds, `contracts.yaml` is mounted and parsed, the matching collection is empty, and no `shape_issues` names that collection
+- **THEN** the check SHALL record `SKIP` at its existing severity with the criterion and the grounds in `details`, and SHALL NOT record FAIL
+
+#### Scenario: A declaration contradicted by contracts still fails
+
+- **WHEN** the chapter declares that it does not apply but the matching contracts collection has entries
+- **THEN** the check SHALL record `FAIL` at its existing severity, name the entries found in contracts, and carry a suggestion to remove the declaration or fix `contracts.yaml`
+
+#### Scenario: An untrustworthy contract source never accepts the declaration
+
+- **WHEN** `contracts.yaml` is missing, or its root node is not a mapping, or `shape_issues` names that collection
+- **THEN** the declaration SHALL NOT be accepted, no `SKIP` SHALL be produced, and the check SHALL fall back to its existing judgement; the shape deviation SHALL keep surfacing through `feature_spec_shape` on the runner path
+
+#### Scenario: A confirmed not-applicable SKIP does not block the run
+
+- **WHEN** a plan run records a confirmed not-applicable `SKIP` at BLOCKER severity and every other check passes
+- **THEN** the summary's `blocking_skips` SHALL be empty and `next_action` SHALL NOT be `review_blocking_skips_then_verifier`; when the axis is off and a carried verifier FAIL exists, `next_action` SHALL still resolve to the verifier-fix branch
+
+### Requirement: Normal-mode device phases, the ad-hoc device CLI and the standalone readiness entry resolve one target at entry and share it across the whole chain
+
+普通模式（`harness-runner --phase <p>`）在 `phaseRequiresDevice(p, profile)` 为真时，MUST 在
+**任何设备操作之前**（脚本 harness 执行前）完成设备前置：策略检查 → 目标解析 → 就绪。
+就绪 MUST 复用与 goal 侧**同一个共享核心** `ensureDeviceReady`；MUST NOT 使用只读探针
+（`probeDeviceReadiness`，不 wake/不解锁/不启动降级）替代，MUST NOT 直接调用运行期恢复
+（`ensureDeviceReadyAtRuntime`，它要求已有 serial、不负责选目标）。
+
+**同一道门 MUST 覆盖进程级的每一个设备入口**：普通模式的 `harness-runner`、即席设备 CLI
+（`adhoc-device-test`）的 `--dump-ui-only` / 执行（`--plan` / `--steps-file`）/ `--observe-ui`
+三个分支，以及独立就绪入口 `device-policy --ready`。这三类入口 MUST 共用**同一条接线实现**
+（起门 → 打 notes → 登记托管回收 → 原子注入 env），MUST NOT 各抄一份——「回收登记必须早于
+任何退出分支」这类纪律抄第二遍就会被抄漏。即席 CLI 的门 MUST 在该分支**第一个设备命令之前**
+（`runAdhocDumpUi` / `resolveMainAbilityForBundle`）起，且 MUST 在不碰设备的 `ensureHylyreReady`
+之后起（避免门刚解锁又在等待 pip 期间息屏）。门未通过时 MUST NOT 再发出任何设备命令；执行与
+`--observe-ui` 分支 MUST 落既有 trace placeholder 并归 `error_kind='device_not_ready'`。
+仅 derive（只给 `--steps`）与用法错误分支 MUST NOT 起门——它们不碰设备。即席 CLI MUST NOT
+自建交互式四选一：`device_policy_unset` 时原文透传 `guidance` 后 fail-fast，与 harness-runner 同款。
+
+**目标 MUST 只解析一次**，并 MUST 注入 `HARNESS_HDC_TARGET`，使后续 wake、解锁、`bm dump`、
+install、`aa test` 全链共用同一 serial。解析优先级 MUST 为：显式 `HARNESS_HDC_TARGET` >
+`device.target_serial` > 唯一在线设备；多台在线且无 `target_serial` MUST 走既有 AMBIGUOUS
+停止求人。已显式设定的环境变量 MUST NOT 被覆盖。即席 CLI MUST 在门之后才读取设备目标，
+MUST NOT 在起门之前读 `HARNESS_HDC_TARGET`——那正是「env 恒空 → 恢复桥整体跳过 → 已登记的
+凭据永不被使用」的老形态。
+
+配置目标不在线时 MUST 阻断，或走**已授权的**模拟器降级（`existing|managed`）；
+**MUST NOT 跳过检查后让 hdc 隐式选择另一台在线设备**。
+
+策略 `code=device_policy_unset` 时 MUST 前脚本 fail-fast：原文透传 `guidance`、非零退出、
+MUST NOT 调用任何 checker/provider、MUST NOT 发出任何设备命令。四选一文案 MUST 保持单一
+真源在 `device-policy`，MUST NOT 在门内另抄一份。策略检查自身执行失败（凭据库不可读、配置
+损坏）MUST 与 `device_policy_unset` 分开报告，MUST NOT 引导用户重新登记凭据。
+
+**独立就绪入口 `device-policy --ready [--serial <sn>] [--json]`**（`npm run device:ready`）：
+未处于冻结上下文时 MUST 走同一道入口门（`--serial` 经既有优先级写入 `HARNESS_HDC_TARGET` 后
+再起门），MUST NOT 自建第二套目标解析。处于冻结上下文（`MAISON_DEVICE_ATTEMPT_FROZEN=1`）时
+MUST NOT 调门——门在该上下文只会放行，回答不了「此刻是否就绪」；MUST 沿用冻结目标与冻结授权
+（`resolveAttemptCredentialRef`，冻结且无 ref 即未授权，MUST NOT 回落读配置）并复用运行期恢复
+`ensureDeviceReadyAtRuntime`。冻结路径 **MUST 只把 `recovered=true` 判成功**：`unauthorized`
+与 `unlock_failed` 归 `ok=false, code='blocked'` 并原文透传 note；探测判不出（`reason='unknown'`）
+**同样** MUST 归 `ok=false, code='blocked'`，其 `reason` MUST 如实说明无法确认锁屏状态，
+MUST NOT 宣称设备确定锁住，也 MUST NOT 放行——桥对 `unknown` 的放行语义只属于**有后续操作
+去验证**的调用方，独立命令没有后续操作。`--serial` 与冻结目标不一致时 MUST 拒绝
+（`code='frozen_target_mismatch'`）且 MUST 零设备操作。恢复桥本身 MUST NOT 因此改变判定。
+
+`--ready --json` MUST 沿用 `--check` 的**两段退出码契约**：判定完成（含 `ready`、
+`device_policy_unset`、`ambiguous`、`blocked`、`frozen_target_mismatch`）一律退出 0，调用方看
+`code`；**只有执行失败**（凭据库不可读、配置损坏、就绪核心抛出）MUST 非零退出且 stdout 无
+JSON，stderr MUST 说明这不是「未配置」、不要据此重新登记。结果 MUST 带上实际目标
+（`serial` / `target_kind`，未解析出目标为 null）与 `reused_frozen`。`ok=true` MUST 只被理解为
+**本次调用**确认了该目标可用：该入口 MUST NOT 持有托管会话、MUST NOT 承诺跨命令继承目标
+（后续入口各自起门重解析），这一边界 MUST 写在结果的 notes 里而不是新增字段。
+
+判定分类 MUST 机器可读：门的失败返回 MUST 带一个可选 `code`（`device_policy_unset` /
+`ambiguous` / `blocked`），使 JSON 消费方 MUST NOT 靠解析 `reason` 文案或重跑
+`collectPolicyStatus` 来区分「策略没配」与「设备阻断」。
+
+MUST NOT 为此新增 diagnosis kind、平行的 provider 局部门或第二套目标解析，MUST NOT 把即席
+CLI 变成一个 phase（不新增 `phaseRequiresDevice('adhoc')`），MUST NOT 新增恢复状态机或跨命令
+会话保持。profile 侧的运行期恢复桥 MUST 只消费入口注入的目标，MUST NOT 读取
+`framework.local.json` 自行解析目标。
+
+**编译跳过类环境开关 MUST NOT 用于免除本门**：它们只跳过编译，UT 的真机执行受独立开关
+控制、testing 更不认编译开关，据此让路等于门形同虚设。
+
+托管启动（`managed`）的模拟器 MUST 在本进程退出时按既有所有权四元组回收，且回收登记
+MUST 早于任何失败退出分支——「实例已启动但未就绪」（boot 超时/仍锁屏）是普通的可执行清理
+失败路径，晚登记即零凭证泄漏。就绪核心给出的孤儿实例身份 MUST 随失败结果一并交出。
+
+冻结上下文 MUST **整组原子**注入：应用后进程内的 `MAISON_DEVICE_*` MUST 恰好等于本次
+`deviceEnvFor` 的产出，未返回的键 MUST 被删除。MUST NOT 逐键「不存在才写」——继承而来的
+陈旧 `MAISON_DEVICE_CREDENTIAL_REF` 会被运行期优先取用，形成「`manual` 策略下仍自动输入
+PIN」的越权路径。
+
+`HARNESS_HDC_TARGET` **同样 MUST 以门的解析结果为准**，MUST NOT 保留注入前的旧值：显式目标
+的优先级在门的**输入阶段**已经兑现，未降级时写回的本就是同一值，而发生**已授权降级**时最终
+目标是模拟器 serial。保留旧值会产出 `HARNESS_HDC_TARGET`（离线真机）与
+`MAISON_DEVICE_TARGET_KIND=emulator` 并存的目标分裂——hdc 操作离线真机，而设备门与 testing
+封顶都以为目标是模拟器。
+
+#### Scenario: manual 策略下不得残留陈旧凭据引用
+- **WHEN** 进程继承了 `MAISON_DEVICE_CREDENTIAL_REF` 而本次策略为 `manual`（本次不产出 ref）
+- **THEN** 注入后该变量 MUST 不存在，运行期 MUST NOT 取到任何凭据引用
+
+#### Scenario: 托管实例启动后未就绪
+- **WHEN** 降级启动了托管模拟器但它未在预算内就绪，入口前置判定失败
+- **THEN** 该实例的所有权身份 MUST 随失败结果交出，且 MUST 在进程退出前登记回收
+
+#### Scenario: 显式目标离线后走已授权降级
+- **WHEN** 显式 `HARNESS_HDC_TARGET` 指向的真机不在线，入口前置按已授权 `existing`/`managed` 降级到模拟器
+- **THEN** 注入后的 `HARNESS_HDC_TARGET` MUST 等于该模拟器 serial，MUST NOT 保留离线真机
+- **AND** `MAISON_DEVICE_TARGET_KIND` 与 testing 封顶判据 MUST 与该同一目标同源
+
+#### Scenario: 需设备 phase 在策略不可用时零设备操作
+- **WHEN** `phaseRequiresDevice` 为真且 `device-policy --check` 返回 `device_policy_unset`
+- **THEN** harness-runner MUST 非零退出并透传四选一 guidance
+- **AND** MUST NOT 执行任何 checker/provider，MUST NOT 发出 `hdc install` 或 `aa test`
+
+#### Scenario: 配置目标离线且无授权降级
+- **WHEN** `device.target_serial` 指向的设备不在线，另有一台其它设备在线，且 `emulator_fallback=disabled`
+- **THEN** 入口前置 MUST 阻断，MUST NOT 把那台在线设备当作目标注入
+
+#### Scenario: 解析结果贯通全链
+- **WHEN** 入口前置取得 READY
+- **THEN** `HARNESS_HDC_TARGET` MUST 被注入为该目标，且解锁链与 hdc 命令 MUST 使用同一 serial
+
+#### Scenario: 即席执行在策略不可用时零设备命令
+- **WHEN** 用户跑 `adhoc-device-test --bundle <id> --steps-file <p>` 而设备策略为 `device_policy_unset`
+- **THEN** CLI MUST 在 `resolveMainAbilityForBundle` 之前阻断、原文透传 guidance 并非零退出
+- **AND** MUST 落 `error_kind='device_not_ready'` 的 trace placeholder，MUST NOT 发出任何 `bm dump` / `aa` 命令
+
+#### Scenario: 即席 derive 不起门
+- **WHEN** 只给了 `--bundle` 与 `--steps`（仅推导步骤，不执行）
+- **THEN** MUST NOT 起设备门、MUST NOT 唤醒或解锁任何设备
+
+#### Scenario: 冻结上下文里的独立就绪判不出锁屏状态
+- **WHEN** `--ready` 在 `MAISON_DEVICE_ATTEMPT_FROZEN=1` 下运行，运行期恢复返回 `recovered=false, reason='unknown'`
+- **THEN** 结果 MUST 是 `ok=false, code='blocked'` 且 `reason` MUST 如实说明无法确认锁屏状态
+- **AND** MUST NOT 宣称设备已锁，`--json` MUST 仍退出 0
+
+#### Scenario: 冻结目标不可被 --serial 切换
+- **WHEN** `--ready --serial <另一台>` 在冻结上下文中运行
+- **THEN** 结果 MUST 是 `ok=false, code='frozen_target_mismatch'`，且 MUST 零设备操作（不 wake、不解锁、不探测）
+
+> **Enforced by:** `harness/harness-runner.ts`,
+> `harness/scripts/utils/device-readiness-gate.ts`,
+> `harness/scripts/adhoc-device-test.ts`,
+> `harness/scripts/device-policy.ts`,
+> `profiles/hmos-app/harness/device-recovery-bridge.ts`,
+> `harness/tests/unit/device-readiness-gate.unit.test.ts`,
+> `harness/tests/unit/device-policy-cli.unit.test.ts`

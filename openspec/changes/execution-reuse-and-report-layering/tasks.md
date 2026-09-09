@@ -43,3 +43,9 @@
 - [x] 5.2 This change's `goal-runner` delta (unattended prompt injection and ledger wording)
 - [x] 5.3 `MIGRATION.md` section: the UT run directory, `timing_complete` per leg, `--force-device` scope, the report-only WARN/UNKNOWN shape, `hdc-test.<module>.log`
 - [ ] 5.4 Host regression is registered under B06 and is deliberately not done here
+
+## 2026-09-08 continued host acceptance
+
+Existing paired UT freezes 20260908T132915Z-016 / 20260908T133016Z-874 have equal keys and identical per-module result/log hashes. The actual installed report-only CLI exposed install-after-reused-run ordering rejection (install 13:49 vs run 13:34). The local checker now accepts that ordering only for a latest reusable record bound to the same HAP/trace; target suite 31/0 and typecheck pass, and a read-only invocation of the corrected checker on unchanged host artifacts passes. Full suite results and deployed acceptance remain to be recorded in B06; task 5.4 stays open.
+
+Local full regression completed: 结果：3960 passed, 0 failed (共 3960); 结果：46 passed, 0 failed (共 46). Typecheck passed with npm test. The corrected production code is not deployed; host task 5.4 remains open.

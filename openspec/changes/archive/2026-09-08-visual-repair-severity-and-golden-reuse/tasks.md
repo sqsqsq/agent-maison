@@ -21,5 +21,9 @@
 
 - [x] 4.1 This change's `goal-runner` and `visual-diff` deltas
 - [x] 4.2 `MIGRATION.md` 3.0.x entry (behaviour change + accepted accuracy loss)
-- [ ] 4.3 `cd harness && npm test` full pass (root AGENTS requirement; run once by the dispatcher after review)
-- [ ] 4.4 Host re-acceptance is registered under B06 `b06-host-b07-reacceptance` and is deliberately not done here
+- [x] 4.3 `cd harness && npm test` full pass (root AGENTS requirement; run once by the dispatcher after review)
+- [x] 4.4 Host re-acceptance is registered under B06 `b06-host-b07-reacceptance` and is deliberately not done here
+
+## 2026-09-08 closeout evidence
+
+Full test evidence is recorded by subsequent B08/a3f7c1d9 local acceptance. B06 b06-host-b07-reacceptance was already completed from run 20260907T063800Z-26c3b0: minor signals produced no repair candidates/backtracks. Its HALTED terminal and non-applicable golden sample remain recorded; 73fc05 additionally completes with disclosed minor differences. This is not golden release acceptance.

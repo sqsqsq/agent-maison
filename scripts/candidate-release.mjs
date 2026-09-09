@@ -135,12 +135,11 @@ function buildCandidate() {
     const contractRel = 'framework/harness/scripts/consumer-golden/bc-opencard.golden-contract.json';
     console.log('[candidate] 宿主 golden 回归入口（三步，缺一不可）：');
     console.log('  1) 安装该 zip（非可变 staging 目录）到宿主 framework/；');
-    console.log('  2) **设 golden 采集 env 后**在同一 shell 跑 goal run（否则采集仍是 P0-only，');
-    console.log('     P1 屏 bank_card_list_sheet 不会被采、HomeTab 负向证据不会生产、evaluator 必然 FAIL）：');
+    console.log('  2) 核对随包 golden 契约与原始需求一致，再在同一 shell 设采集 env 并跑 goal run：');
     console.log(`     PowerShell:  $env:MAISON_GOLDEN_CONTRACT = '${contractRel}'`);
     console.log(`     bash:        export MAISON_GOLDEN_CONTRACT='${contractRel}'`);
-    console.log('     （相对宿主 projectRoot；golden 模式同时强制十屏本 run 重采 + 生产 HomeTab');
-    console.log('       UITree 负向证据——宿主 visual-diff-nav 配置须含 HomeTab 到达步骤）');
+    console.log('     （相对宿主 projectRoot；当前基线为收起态、展开态、全部银行三屏。');
+    console.log('       只采契约声明的目标，不要求旧需求的短信、完成页或 HomeTab 专项证据）');
     console.log('  3) 回归完成后用包内 evaluator 裁决（PASS 才回来 candidate:promote）：');
     console.log('       npx ts-node harness/scripts/consumer-golden/evaluate-bc-opencard.ts \\');
     console.log(`         --project-root <hostRoot> --run-id <goalRunId> --feature <宿主 feature 目录名> --expected-manifest-sha ${manifest.inZipManifest.sha256}`);

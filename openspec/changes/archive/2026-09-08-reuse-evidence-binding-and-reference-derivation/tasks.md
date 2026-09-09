@@ -31,5 +31,9 @@
 
 - [x] 5.1 This change's `goal-runner` and `visual-diff` deltas; the `harness-gates` install-reuse paragraph stacked into the in-flight `execution-reuse-and-report-layering` delta
 - [x] 5.2 `MIGRATION.md` 3.0.x entry (three behaviour changes with accepted accuracy loss)
-- [ ] 5.3 `cd harness && npm test` full pass (root AGENTS requirement; run once by the dispatcher after review)
-- [ ] 5.4 Host re-acceptance is registered under B06 `b06-host-b08-reacceptance` and is deliberately not done here
+- [x] 5.3 `cd harness && npm test` full pass (root AGENTS requirement; run once by the dispatcher after review)
+- [x] 5.4 Host re-acceptance is registered under B06 `b06-host-b08-reacceptance` and is deliberately not done here
+
+## 2026-09-08 closeout evidence
+
+Plan B08 local full test: unit 3937/0, fixtures 46/0. B06 §10 records host runs deb77f and 73fc05: native execution-key reuse writes evidence, HAP key no longer alternates for the same inputs, top slices are used, and 73fc05 completes VALID without retry/backtrack. Top-slice disclosure semantics are superseded by completion-native-runtime-and-visual-debt.

@@ -316,7 +316,15 @@ goal-runner MUST 在 testing attempt 开始时解析并冻结 {product, buildMod
 
 ### Requirement: Device-test defects join the existing backtrack loop
 
-`ActionableDefect.source` MUST 支持 `'device_test'`。goal-runner 的缺陷收集 MUST 只消费正式 gate 写出的 `device-test-evidence.json`，且 MUST 在 spawn gate harness 之前删除该文件（窗口内单写者防伪）。消费前 MUST 校验：goal_run_id/attempt_id 与当前精确相等；device_target 与当前 attempt 冻结设备元组精确相等（由 runner 内存直传，MUST NOT 从事件反推）；install_executed 与 install_ok 为真；trace_path 与权威 trace resolver 结果一致；`written_at`（collector 唯一时间裁决字段，文件 mtime 仅诊断）与 run meta 的run_started_at/run_ended_at 同落本 attempt 的 harness_start~harness_end 窗口。
+`ActionableDefect.source` MUST 支持 `'device_test'`。goal-runner 的缺陷收集 MUST 只消费正式 gate 写出的 `device-test-evidence.json`，且 MUST 在 spawn gate harness 之前删除该文件（窗口内单写者防伪）。消费前 MUST 校验：goal_run_id/attempt_id 与当前精确相等；device_target 与当前 attempt 冻结设备元组精确相等（由 runner 内存直传，MUST NOT 从事件反推）；trace_path 与权威 trace resolver 结果一致；`written_at`（collector 唯一时间裁决字段，文件 mtime 仅诊断）落本 attempt 的 harness_start~harness_end 窗口。
+
+装机与设备执行两项事实按 doc 的复用字段分两种口径（字段全部可选，schema_version 仍 1.1；无字段的 doc 即非复用 doc，其校验逐字不变）：
+
+- 非复用 doc：install_executed 与 install_ok 为真；run meta 的 run_started_at/run_ended_at 同落本 attempt 的 harness 窗口。
+- `install_reused=true`：MUST NOT 要求本轮真装，改核 `hap_sha256_full` 等于**当前盘上 HAP 的完整摘要**。该摘要由 goal 运行时在组装 collector 上下文时从既有装机产物算出：读 `device-test-install.meta.json` 的 `hapPath` / `hapMtimeMs` / `hapSizeBytes` / 12 位 `hapSha256`，对盘上文件核 mtime 与 size 一致后算 sha256 全量并要求短指纹为其前缀；任一不符或 meta 缺失 → 摘要不可核验 → 该 doc 不采信。MUST NOT 与 doc 自身字段比较，MUST NOT 新增身份系统。
+- `reused_by_execution_key=true`：doc MUST 带 `execution_key` 与 `reused_run_dir`（相对 projectRoot）；采信 MUST 读该目录的 `execution-key.json`，要求 `record.execution_key === doc.execution_key` 且记录通过与 `decideReuse` **同一**身份判据（`isExecutionRecordReusable`：同键、outcome=success、trace 在盘、execution 组冻结件齐；derived 组缺失或 `timing_complete=false` MUST NOT 是拒绝理由——它们在 decideReuse 里走重建通道），并 MUST 跳过 run meta 时间窗（复用回填的是被复用 run 的冻结 meta）。采信规则 MUST NOT 比 `decideReuse` 更严。
+
+正式 gate 的写出门槛与之对应：装机事实已知（本轮真装成功，或装机复用同 HAP 且 install provider 同源回传了完整摘要）∧ 设备执行事实存在（真跑或同键复用且 trace 在盘）才写；两者任一未知照旧不写（上游门禁裁决）。
 
 仅 `device_target.target_kind === 'physical'` 且 `classification === 'product_actionable'`
 的 case MUST 进入 ActionableDefect 走既有 `backtrack_to_coding` 与 roundFingerprint
@@ -328,6 +336,8 @@ goal-runner MUST 在 testing attempt 开始时解析并冻结 {product, buildMod
 source（visual|device_test），retry/halt 指引 MUST 按 source 分支；事件类型名
 `unverifiable_must_fix` MUST 保持不变。
 
+unverified entries 本身（证据身份不齐、待重采——evidence 绑定失败、截图/build 身份不匹配等）MUST NOT 单独构成本 attempt 的运行期失败事实：仅此类 unverified（脚本 PASS、零 blocker、无可信缺陷、无可信真机根失败、无超时/崩溃/非零退出/closure 定稿错误）的轮次 MUST NOT 写 `failure_kind_classified` 与 blocker_signature，`unverifiableOnly` 的 retry 处置不变。绑定**通过**且根 case 失败的可信真机证据（`trustedDeviceRootClassifications` 非空，含走 unverified 通路的 test_contract/environment/unknown 分类）仍是失败事实——否则「Test-contract attribution survives retry and resume」的 `test_contract` 归因无法持久化；unverified 与任一其他失败事实并存时归因照旧保留。
+
 #### Scenario: 真机 spec 锚点缺失自动回修
 - **WHEN** 正式 gate evidence 中某根故障 case 分类为 product_actionable 且
   target_kind=physical，全部身份校验通过
@@ -337,6 +347,24 @@ source（visual|device_test），retry/halt 指引 MUST 按 source 分支；事�
 - **WHEN** evidence 的 run/attempt/device_target/trace/时间窗任一与当前 attempt 不符，
   或 target_kind 非 physical
 - **THEN** 相关 case 进入 unverified 通路（retry 引导重采，耗尽 halt），不回退 coding
+
+#### Scenario: 装机复用 + 设备真跑的证据照常写出并采信
+- **WHEN** 本轮 install provider 走复用分支（同 HAP、设备已装）并回传完整摘要，device_test.run 真跑，正式 gate 写出 `install_reused=true` / `reused_by_execution_key=false` 的 doc，install meta 与盘上 HAP 三核一致
+- **THEN** collector 采信该 doc（不要求本轮真装），run meta 时间窗照常核验
+
+#### Scenario: 同键复用轮的证据按记录身份采信
+- **WHEN** decideReuse 命中最新同键成功 run（执行冻结件齐、`timing_complete=false` 触发派生重建），doc 带 `reused_by_execution_key=true` / `execution_key` / `reused_run_dir`，被复用 run 的冻结 meta 时间在本 attempt 窗口之外
+- **THEN** collector 采信该 doc：记录身份通过同一判据，run meta 时间窗被跳过，`written_at` 仍须在窗内
+- **AND** 记录键不同、outcome 非 success 或 execution 组冻结件缺失时，返回 `复用记录身份不匹配（<reason>）` 并进入 unverified 通路
+
+#### Scenario: 盘上 HAP 与装机产物不一致时复用装机不采信
+- **WHEN** doc 为 `install_reused=true`，而 `device-test-install.meta.json` 缺失、或其 mtime/size/短指纹与盘上 HAP 任一不符
+- **THEN** collector 返回 `当前 HAP 完整摘要不可核验` 并进入 unverified 通路
+
+#### Scenario: 仅 unverified 的轮次不带归因
+- **WHEN** testing 脚本 PASS、零 blocker，唯一的信号是截图身份不匹配的 must_fix（unverified）
+- **THEN** 该轮 `phase_verdict` 为 PASS + retry 且不带 `failure_kind_classified` / blocker_signature
+- **AND** 同轮存在 harness FAIL 或可信缺陷时，归因与 blocker_signature 与改动前相同
 
 ### Requirement: Timeout attribution follows the freshness decision table
 
@@ -819,7 +847,9 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/repair-can
 
 Visual signals SHALL be classified and validated before candidate materialization. A deterministic producer signal whose applicability/evidence contract passes SHALL materialize directly as a trusted machine repair candidate even when the primary agent disputes or omits it. A current delegated-provider payload that passes identity/hash/schema validation SHALL materialize through its existing provider path. Producer uncertainty or invalid/unreliable provider evidence SHALL not create a candidate: required quality stays FAIL/UNVERIFIED or capability-deferred and optional quality may remain advisory. The runner MUST NOT write `repair_adjudication_pending`, await `visual-confirm`, consume `confirmed_by`, or use human judgment as a third authority. Visual-round integrity and convergence events SHALL still be recorded before disposition.
 
-Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/repair-candidates.ts`, `profiles/hmos-app/harness/visual-diff-check.ts`, `profiles/hmos-app/harness/visual-provider-review.ts`, `harness/scripts/utils/adjudication.ts`
+Structured visual defects SHALL additionally be routed by their machine `severity` before materialization. A structured defect with `severity: minor` — whether attributed to a T8 producer, to a delegated visual provider, or to no producer — SHALL NOT produce a coding repair candidate; it SHALL remain in the report WARN; WARN-only disclosure SHALL NOT open blocking debt under the later completion-native-runtime-and-visual-debt policy, and the runner SHALL log one per-screen count of minor signals withheld. Defects with `severity: major` or `blocker` SHALL materialize exactly as before, with unchanged signal identity, fingerprint and instruction assembly. The collector MUST NOT parse defect notes or must_fix prose (including an `[owner=…]` prefix) to derive ownership, and MUST NOT add a defect field for it. Plain-text must_fix items with no structured defect SHALL keep the legacy whole-screen fallback, and screens whose screenshot or build identity cannot be verified SHALL keep the unverified route.
+
+Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/repair-candidates.ts`, `profiles/hmos-app/harness/visual-diff-check.ts`, `profiles/hmos-app/harness/visual-provider-review.ts`, `harness/scripts/utils/adjudication.ts`
 
 #### Scenario: deterministic signal survives agent dispute
 
@@ -830,6 +860,17 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/repair-can
 
 - **WHEN** a producer cannot reliably compare a required signal
 - **THEN** the required axis SHALL remain unclosed or capability-deferred without finalizing PASS or entering WAITING(human)
+
+#### Scenario: minor visual signals do not spend the backtrack budget
+
+- **WHEN** every structured defect on the warn screens of a fresh, identity-bound `visual-diff.json` is `severity: minor` (host testing-i13: 12 such defects, must_fix prefixed `[owner=spec]`)
+- **THEN** `collectActionableDefects` SHALL produce zero visual actionable items and zero unverified items, the phase summary SHALL carry no visual repair candidate, and assess SHALL NOT recommend `rerun_phase` / `backtrack_to_phase` for them
+- **AND** the `visual_diff` WARN disclosure SHALL remain; its settled WARN SHALL NOT retain blocking debt under the later completion-native-runtime-and-visual-debt policy
+
+#### Scenario: a major defect still materializes unchanged
+
+- **WHEN** one of those T8 defects is recorded with `severity: major`
+- **THEN** exactly that defect SHALL become an actionable item with `signal_identity=true`, a fingerprint byte-identical to `computeDefectFingerprint(screen, defect)`, and a `coding` candidate
 
 ### Requirement: WAITING-projected halts revalidate before re-invoking the agent
 
@@ -1182,14 +1223,21 @@ Enforcement: `harness/scripts/utils/receipt-scaffold.ts`, `harness/harness-runne
 
 ### Requirement: Spec closure-only prompts mandate read-only visual re-evidencing
 
-For spec closure-only attempts the runner prompt SHALL state that FROZEN applies to artifacts, not to read-only evidencing, and SHALL list every authoritative reference image (derived from the spec visual handoff) with an instruction to read each one during the current invocation — because the `vl_multimodal` final sign-off is invocation-bound and MUST NOT be relaxed or satisfied by reusing a previous invocation's refs receipt. Modifying artifacts remains forbidden.
+For spec closure-only attempts the runner prompt SHALL state that FROZEN applies to artifacts, not to read-only evidencing, and SHALL list every authoritative reference image derived from the spec visual handoff. It SHALL state that an image already read earlier in **this run** still counts while its content is unchanged, and that a changed image must be re-read. It SHALL NOT order a per-image re-read of every listed image, SHALL NOT describe the `vl_multimodal` sign-off as invocation-bound, and SHALL NOT threaten a partial receipt or a gate failure for not re-reading. Modifying artifacts remains forbidden.
+
+The honest-`unverified` variant — issued when this invocation lacks working vision or per-image Read auditing — is unchanged.
 
 Enforcement: `harness/scripts/goal-runner.ts`（`buildClosureVisualEvidenceBlock`）, `harness/scripts/check-spec.ts`（gate 判定不变）
 
-#### Scenario: a closure-only attempt can pass the invocation-bound visual sign-off
+#### Scenario: a closure-only attempt passes the sign-off without re-reading
 
-- **WHEN** a spec closure-only attempt starts with 10 authoritative reference images and the agent follows the prompt's read-only evidencing list
-- **THEN** the refs receipt for this invocation is complete and `ui_spec_fidelity_gate` no longer fails structurally on the closure attempt
+- **WHEN** a spec closure-only attempt starts, an earlier invocation of the same run already read all authoritative reference images, and none of them changed
+- **THEN** the prompt lists the images without a mandatory re-read instruction, the receipt carries the earlier reads forward, and `ui_spec_fidelity_gate` does not fail structurally on the closure attempt
+
+#### Scenario: the prompt no longer contradicts FROZEN
+
+- **WHEN** the closure prompt is assembled for a structured-events adapter
+- **THEN** the assembled prompt SHALL contain none of `Mandatory`, `REQUIRED`, `only accepts reference images actually read during THIS invocation`, `read EVERY authoritative`, `Skipping any image`
 
 ### Requirement: Run end-state classification uses the executed slice; the assumptions ledger never gates it
 
@@ -1902,37 +1950,6 @@ Enforcement: `harness/scripts/utils/vision-canary.ts`, `harness/scripts/utils/ag
   (`maison_guardian_containment_failed`), the phase halts with `adapter_cli_hard_failure`,
   `agent_process_started` remains 0, no harness runs, and no content retry is consumed
 
-### Requirement: Inline canary signing consumes the shared canary decision SSOT on this invoke's stdout boundary
-
-The spec-phase inline canary signing point SHALL use `resolveCanaryCacheDecision`/`parseCanaryAnswer`
-exclusively (the `isCanaryAnswerComplete + classifyCanaryResponse(raw)` fork SHALL be removed).
-Structured adapters SHALL adjudicate from the pure `agent-events.jsonl` final-result projection;
-non-structured adapters SHALL consume only this invocation's `stdout` plus
-`exitCode/timed_out/silent_killed/skipped` facts — never stderr, prompt echo, or the human-readable
-mixed `agent-output.log`. A valid tail answer may sign the capability receipt; a standalone
-`CANNOT_SEE_IMAGE`, pure echo, or failed invoke SHALL NOT sign. Capability and auditability remain
-separate axes: adapters with `tool_event_provenance=none` (e.g. Codex) SHALL NOT sign per-image refs
-receipts or `vl_multimodal` even with a `tool_read` canary — they keep working with images but must
-record `verified: unverified`; structured adapters require per-image Read of this invoke for final
-signing. Prompt, closure-only read blocks, retry guidance, and the spec skill SHALL state the
-provenance-reachable exit for each adapter class; existing soft WARN / hard FAIL thresholds and the
-rejection of fabricated `verified + vl_multimodal` are unchanged.
-
-Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/vision-canary.ts`, `skills/feature/spec/SKILL.md`
-
-#### Scenario: prompt echo with placeholder keys plus a correct tail answer signs the capability receipt
-
-- **WHEN** the invoke stdout contains the canary prompt echo (placeholder keys, `CANNOT_SEE_IMAGE`)
-  followed by a complete correct answer
-- **THEN** the last-legal-assignment parser yields the canonical answer, `tool_read` is classified,
-  and the capability receipt is issued
-
-#### Scenario: pure echo or standalone blind declaration does not sign
-
-- **WHEN** the invoke stdout contains only the echoed prompt keys (placeholders) or only an
-  independent `CANNOT_SEE_IMAGE` line
-- **THEN** no capability receipt is issued, and the run continues on the blind workflow
-
 ### Requirement: Requirement source provenance persists and drives a single shared reference-image denominator
 
 The `--requirement-file` shared resolver SHALL return the frozen text plus an optional
@@ -1960,4 +1977,3 @@ Enforcement: `harness/scripts/utils/goal-manifest.ts`, `harness/scripts/utils/fi
 - **THEN** the three images form the shared discovery set used by OCR pre-scan, the phase prompt's
   authoritative paths, `derive.visual-reference` dependencies, receipt production and verification;
   if the agent's spec omits one of them, verification SHALL fail
-

@@ -1,6 +1,6 @@
 # Framework 3.0.0 发布说明
 
-**发布日期**：2026-09-03
+**状态**：发布验收中；本文于 2026-09-09 更新，正式发布日期待发布门禁通过后登记。
 **对比基线**：Framework 2.3.0（`framework-2.3.0.zip`）
 **发布件**：`dist/framework-3.0.0.zip`（SHA256 见同批产出的 `dist/framework-3.0.0.manifest.json`；包内 `RELEASE-MANIFEST.json` 记录对应 `source_commit`）
 **适用读者**：接入本 Framework 的工程负责人、AI Agent 使用者、Framework 维护者
@@ -13,7 +13,7 @@
 
 ## 这份文档是写给谁的？
 
-**Framework 3.0.0** 是 2.3.0 之后**两个开发窗口**（2.4.0 窗口 33 个 plan + 3.0.0 窗口 72 个 plan，合计 **105 个 plan**）的一次性交付，也是一次 **major** 演进。主题一句话：
+**Framework 3.0.0** 是 2.3.0 之后 **2.4.0 与 3.0.0 两个开发窗口**的一次性交付，也是一次 **major** 演进。维护计划数量以版本脚本扫描为准。主题一句话：
 
 > **把「谁说通过」换成「机器事实证明通过」，并让无人值守链路在没有人签字的情况下自己走完。**
 
@@ -48,7 +48,7 @@
 | **verifier** | 每阶段必跑的仪式，投递 `ai-prompt.md` 全文；结论由 SubagentStop hook 发布 | **按能力启用二态**（disabled/enabled）+ **短 request JSON** 投递；报告由**调用方**写出，hook 整体删除 |
 | **上游绿灯** | 下游不校验上游裁决 | **`upstream_verdict_gate`**：上游非 PASS / blocker 未清 / 证据 stale → 下游 BLOCKER |
 | **testing 证据** | 信 trace 的「通过」字符串 | **Hylyre StepResult v1 三轴**（execution/verification/evidence）逐步对账 |
-| **测试执行责任** | 派生器可自行 skip 用例 | 顶层 TC 必须声明 **`execution_channel`**；派生器无 skip 决策权；`manual` 永久 fail-closed |
+| **测试执行责任** | 派生器可自行 skip 用例 | 顶层 TC 必须声明 **`execution_channel`**；派生器无 skip 决策权；已知 manual 能力缺口留分母、不算 PASS，可带披露完成 |
 | **产品组件形态** | 框架不介入 | 中途曾下发强制 UI kit，**已整体撤销**——产品组件归属唯一归宿主 |
 | **framework 完整性** | per-file sha256 漂移判 BLOCKER + 宿主 Git 身份裁决 | **integrity 家族退场**；写权限由执行环境授予，宿主是不是 Git 仓完全无关 |
 | **自定义 `features_dir`** | harness 读、agent 写多处硬编码 `doc/features` | **读写路径 + prompt + gitignore 全链路**随配置 |
@@ -149,7 +149,7 @@
 
 - **Hylyre 改为源码树 vendor**：`.whl` 退役，schema 2 双兼容，发布件按 LF 字节逐文件 sha256 冻结；
 - **StepResult v1 三轴**：`execution` / `verification` / `evidence` 分立，P0 语义门从「计划形态 × case 状态字符串」改为**计划要求 × StepResult 逐步对账**（required/forbidden element 均需映射到 role=assertion 且 status=passed 的步骤）；
-- **`execution_channel`（Breaking）**：顶层 `test-plan.md` 每条 TC 必须声明唯一执行通道（`hylyre` | `visual` | `manual` | `provider:<capability-id>`）。派生器不再有 skip 决策权，编译失败即 FAIL；**`manual` 表示「该测试义务当前没有机器证据载体」，会持续留在分母，任一 manual TC 都让本 feature testing 无法 PASS**（冻结设计）；
+- **`execution_channel`（Breaking）**：顶层 `test-plan.md` 每条 TC 必须声明唯一执行通道（`hylyre` | `visual` | `manual:<gap_class>` | `provider:<capability-id>`）。派生器不再有 skip 决策权，编译失败即 FAIL；已登记的 manual 能力缺口为 `unsupported_gap`，保留分母、不计 PASS，披露后可带缺口完成；裸 `manual` 或未知类别属于非法声明；
 - **selector 恢复开放世界语义**：feature ui-spec 只建模新增页面，既有入口天然缺席，故 ui-spec miss 只给 provenance WARN，最终合法性由本轮真机 StepResult 的 candidate_count 裁决；静态 BLOCKER 收窄为可确定错误；
 - **失败归因两级路由**：已执行 case 的 failed 消费机器 `failure.domain`/`failure.code`；**未执行且无机器原因的 explicit skip 保持 testing FAIL、零自动 coding 归因**（不再从 TC 名称或报告散文推断责任）。
 
@@ -183,6 +183,17 @@ UT 改码门禁不再要求宿主先提交才能取基线：direct attestation �
 
 ---
 
+## 本窗口后续收口
+
+- **发布回归样本三屏基线**：随包 bc-openCard golden 契约按已确认原始需求验证收起态、展开态和全部银行页，不再要求旧需求的短信、完成页或 HomeTab 专项证据；精确集合、绑定与质量检查保留。这是回归样本范围调整，不限制其他宿主的页面数量。
+- **负面结果可回修**：review 或 UT 的可诊断产品失败仍可签发 verifier 请求，形成责任阶段的修复候选；失败与缺证据分开处理。
+- **减少重复执行**：UT 出包与装机执行、真机执行按既有执行键复用；报告整理可走 `--report-reconcile-only`，不重新操作设备。复用仍须满足真实输入与冻结产物条件。
+- **策略按声明生效**：显式 `evidence_profile: balanced` 在 goal 与非 goal 下同样生效；关闭可选 verifier 要求不等于忽略仍有效的负面结论。plan 对确实不存在的数据模型、接口或组件允许有依据的不适用声明。
+- **视觉差异正常披露**：同宽长图按顶部一屏推导比较，视口外未验证部分只披露、不单独阻断 release；允许披露的 minor/WARN 差异不要求满分或像素级一致。真实缺陷继续按 FAIL 与既有债务规则处理，旧债务在来源检查完成后可正常收口。
+- **完成判据接通 native 证据**：修复 asset 继承的布局解析与遗留缺证判断；阶段没有映射检查的 visual/asset 轴按适用性处理，testing asset 保留继承入口；P0 完成检查消费已有 native trace 与绑定，不再要求该路径不产出的旧 `runtime_fidelity` 字段。
+- **UT 分层护栏**：testing 计划中仅关联明确 unit 层 AC/BD 的用例会在设备动作前被指出；混合 device/both/NFR 引用不误拦，缺失或未知引用交相应检查处理。不为修正测试计划而重写正确的 UT。
+- **Codex verifier 与设备入口**：framework-init 可备份并更新由共享 verifier.md 派生的 Codex verifier.toml；角色只读配置是默认值，不能宣称独立物理隔离。设备就绪与即席入口复用设备策略和恢复链，不再要求用户手写解锁脚本。
+
 ## 中途出现又被删除的机制（2.4.0 窗口交付，3.0.0 窗口取消）
 
 2.4.0 从未发布，因此下列机制**你不会在 3.0.0 里见到**。列出来是为了避免读到旧材料时误以为它们仍然存在：
@@ -210,11 +221,11 @@ UT 改码门禁不再要求宿主先提交才能取基线：direct attestation �
 ## 升级指引（2.3.x → 3.0.0）
 
 1. 备份当前 `framework/` 版本。
-2. 部署 **`framework-3.0.0.zip`**（哈希见同批 manifest）或 submodule 更新到对应提交。
+2. 将 Maison 构建并校验的 **`framework-3.0.0.zip`** 解压集成到工程根的 `framework/`（哈希见同批 manifest）。
 3. 工程根 **`/framework-init` UPDATE**（S1→S4）；确认 adapter 物化。
 4. 每位开发者跑 **`check-personal-setup --json --ensure`**。
-5. 验证：`cd framework/harness && npm test`。
-6. **存量 feature 首次跑新版 testing 前，先补跑一次 review 闭环**（生成 `review/reports/review-closure-attestation.json`），否则 `review_closure_attestation` BLOCKER。
+5. 在 `framework/harness` 安装运行依赖，并按实际任务运行对应 harness 阶段；开发仓单测不随发布件交付，不要求消费者运行 `npm test`。
+6. **存量 feature 的 review 闭环证据**优先复用；缺失或源码变化时按新版 harness 的具体提示处理，普通未复核项按风险披露，不为补手续无条件重跑整链。
 7. **顶层 `test-plan.md` 用例表加「执行通道」列**并逐条填写，进入 plan review；改动任一 TC 的通道会改变计划 identity，不得在派生或回灌时静默重写。
 8. **`contracts.yaml` 补引用闭包**：`contract_file_reference_closure` 失败时，把诊断中确需交付的路径逐项加入顶层 `contracts.files`；navigation 只保留 `config_files`，删除 `registration_points`。
 9. **UI 需求首次跑 coding/testing** 会遇到视觉确定性门禁（烤字 / 原子图标 / 素材物化 / 结构声明台账）；`chi_sim` OCR 模型随发布件下发，无需另装。
@@ -228,13 +239,13 @@ UT 改码门禁不再要求宿主先提交才能取基线：direct attestation �
 
 ## 已知边界
 
-- **`manual` 执行通道永久 fail-closed**：这是冻结设计——没有机器证据载体的测试义务不会因为「人看过了」而通过。需要它 PASS，就得给出机器证据通道。
-- **provider 通道 per-TC 证据绑定尚未实现**：`provider:<capability-id>` 声明的 TC 目前一律 unbound，保持 FAIL/UNVERIFIED。当前 capability 注册表里只有 hylyre 与 hylyre_visual_diff 两个 testing provider，二者各有自己的绑定；等出现真实 provider producer 后再做（plan `e7cecd22` 已顺延 3.2.0）。
+- **manual 能力缺口不等于测试通过**：已知缺口允许披露后完成，但不计通过分子；人工确认不能把未执行项改成 PASS。
+- **provider 通道 per-TC 证据绑定尚未实现**：未登记 provider、已启用但无逐 TC 结果生产者的 provider 属非法测试声明；已登记但 inactive/SKIP 的 provider 按已知能力缺口披露。绑定能力建设已顺延 3.2.0。
 - **编辑工具守卫堵不住场外进程**：无强隔离环境下，shell、脚本与 `node -e` 不在射程；这是如实声明的能力边界，真正的写保护要靠执行环境（task sandbox / 只读挂载 / 受限 token + ACL）。
 - **视觉裁判**只保证文本存在性与运行时几何为鲁棒判据；非文本观感（胶囊/容器形态）靠 review 人审与用户终验，框架不造像素位置类门禁（实测恒误报）。
 - **`probe_failed` 不作内容正证据**：建议给每个 P0/golden 目标屏配至少一个 id 锚点，否则错页只能判证据不足。
 - **adapter 能力不对等**：external_runner 类 adapter 不承诺与 claude 同级质量；未登记 `verifier_subagent` 的 adapter（cursor / opencode / chrys / generic）判 `disabled / adapter_has_no_reviewer`——闭环照常进行，verifier 轴如实记 `not_reviewed`，这是诚实标注，不是阻断。
-- **宿主真机回归不在本窗口执行**：3.0.0 的收口按裁决以仓内全量校验为准（单测 + fixtures + OpenSpec strict + release 门禁全绿），宿主侧真机复验留给宿主自行安排。
+- **发布验收状态**：bc-openCard-1 已完成真实 Claude goal 全链回归并得到 feature completion VALID；该结果不替代尚未完成的其他模式与 golden 发布验收，最终状态以开发仓 B06 登记及发布门禁为准。
 
 ---
 
@@ -244,7 +255,7 @@ UT 改码门禁不再要求宿主先提交才能取基线：direct attestation �
 |------|------|
 | [`RELEASE-NOTES-v2.3.0.md`](RELEASE-NOTES-v2.3.0.md) | 上一个**已发布**版本（2.3，首创 Goal 模式）增量说明 |
 | [`MIGRATION.md`](MIGRATION.md) | 升级步骤与全部破坏性变更逐条 |
-| [`MAINTAINER-CHANGELOG.md`](MAINTAINER-CHANGELOG.md) | 逐 plan 流水（开发者向；2.4.0 与 3.0.0 两个窗口共 105 条） |
+| [`MAINTAINER-CHANGELOG.md`](MAINTAINER-CHANGELOG.md) | 逐 plan 流水（开发者向，数量与状态由脚本生成） |
 | [`docs/operations/goal-mode-runbook.md`](docs/operations/goal-mode-runbook.md) | Goal 模式运行手册（含停摆处置与 rebaseline 口径） |
 | [`docs/concepts/skill-contracts.md`](docs/concepts/skill-contracts.md) | Skill 契约 |
 | [`docs/concepts/reconcile-loop.md`](docs/concepts/reconcile-loop.md) | assess 调和循环 |

@@ -104,6 +104,7 @@ import { writeGeneratedTestReport } from '../../profiles/hmos-app/harness/test-r
 import {
   computeExecutionKey,
   decideReuse,
+  listExecutionKeyRuns,
   freezeRunArtifacts,
   restoreFrozenRunArtifacts,
   refreshStabilityForNewestRun,
@@ -2505,7 +2506,18 @@ function checkReportReconcileOnlyPipeline(
   if (!buildSkipped && !installSkipped && !runSkipped &&
       buildAt.ms !== null && installAt.ms !== null && runStartedAt.ms !== null &&
       (buildAt.ms > installAt.ms || installAt.ms > runStartedAt.ms)) {
-    issues.push('build → install → run_started_at 时间链不闭合');
+    // 同一 HAP 可以在已验证执行之后再次装机，随后复用旧 run；本轮装机时间不是旧 run 的前置时间。
+    // 只在最新执行记录仍可复用、且绑定当前 HAP/trace 时接受这条时间倒序；run 内部时序照常核验。
+    const latest = listExecutionKeyRuns(reportsDir)[0];
+    const boundRun = latest && tracePath && buildHapPath &&
+      recordedPathForProject(ctx.projectRoot, latest.record.trace_path) === path.resolve(tracePath) &&
+      latest.record.trace_sha256 === sha256File(tracePath) &&
+      latest.record.inputs?.hap_sha256_full === computeHapSha256Full(buildHapPath) &&
+      Array.isArray(latest.record.inputs?.flags) &&
+      decideReuse(reportsDir, computeExecutionKey(latest.record.inputs)).reusable;
+    if (!boundRun || buildAt.ms > installAt.ms) {
+      issues.push('build → install → run_started_at 时间链不闭合');
+    }
   }
 
   if (!runSkipped && runRecord) {

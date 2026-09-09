@@ -3,7 +3,7 @@
 // ----------------------------------------------------------------------------
 // evaluator 是纯聚合器：夹具铺满宿主回归产物的健康形态 → PASS；逐项打破 →
 // 对应 item FAIL（集合不等/must_fix/crash/forbidden anchor/绑定失配）。
-// contract 用随包真件（10 固定屏），不造平行契约。
+// 当前随包三屏基线单独验真；十屏仅作为历史输入夹具保留通用聚合器的回归覆盖。
 // ============================================================================
 
 import * as fs from 'fs';
@@ -27,6 +27,8 @@ const CONTRACT_CAPTURES = [
   'card_type_sheet__overlay__0', 'card_select', 'sms_verify__overlay__0',
   'add_success', 'card_detail', 'card_pack_with_cards', 'bank_card_list_sheet__overlay__0',
 ];
+const THREE_SCREEN_CAPTURES = ['add_bank_card_collapsed', 'add_bank_card_expanded', 'all_banks'];
+const SHIPPED_CONTRACT = path.resolve(__dirname, '../../scripts/consumer-golden/bc-opencard.golden-contract.json');
 
 function run(results: UnitCaseResult[], name: string, fn: () => void): void {
   try {
@@ -45,12 +47,12 @@ function w(root: string, rel: string, content: string | Buffer): void {
   fs.writeFileSync(p, content);
 }
 
-interface Host { root: string; fwRoot: string; manifestSha: string; buildFp: string }
+interface Host { root: string; fwRoot: string; manifestSha: string; buildFp: string; contractPath: string }
 
-/** 健康宿主（round20 起按**真实生产契约**造）：contract 十屏全采（run/build/eval-hash 三绑定）
+/** 历史十屏宿主夹具（保留既有边界覆盖）：contract 十屏全采（run/build/eval-hash 三绑定）
  * + testing 成功闭环事件 + v1.1 coding summary（quality_axes.asset + script_report 指针 +
  * run_id）+ script-report.json.checks + HomeTab wrapper 证据 + candidate sidecar。 */
-function setupHost(feature: string = FEATURE): Host {
+function setupHost(feature: string = FEATURE, captures: readonly string[] = CONTRACT_CAPTURES): Host {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'consumer-golden-'));
   w(root, 'framework.config.json', JSON.stringify({
     schema_version: '1.1',
@@ -75,7 +77,7 @@ function setupHost(feature: string = FEATURE): Host {
   clearFrameworkConfigCache();
   const buildFp = resolveCurrentBuildFingerprint(root, feature, 'testing')!;
   if (!buildFp) throw new Error('夹具须能算出 build fingerprint（install meta + hap 已造）');
-  const screens = CONTRACT_CAPTURES.map(id => {
+  const screens = captures.map(id => {
     const shotRel = `${featRel}/device-testing/device-screenshots/shot-${id}.png`;
     w(root, shotRel, Buffer.from(`png-${id}`));
     // 与生产同一 hash 口径（sha256 前 16 hex）——evaluator 的截图绑定校验按此比对
@@ -122,10 +124,18 @@ function setupHost(feature: string = FEATURE): Host {
   }, null, 2));
   // candidate 安装形态：framework 根有 in-zip sidecar
   const fwRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'golden-fw-'));
+  // 历史十屏仅用于测试配置化的集合/overlay/forbidden 校验，不再是发布基线。
+  const contractPath = path.join(fwRoot, 'legacy-test-contract.json');
+  fs.writeFileSync(contractPath, JSON.stringify({
+    schema_version: '1.0', feature: FEATURE,
+    positive_screens: CONTRACT_CAPTURES.map(capture => ({ declared: capture, capture })),
+    forbidden: [{ id: 'HomeTab', anchor: 'bank_card_section', evidence: 'device-testing/device-screenshots/layout-HomeTab.json' }],
+    key_overlays_and_completion: ['card_type_sheet__overlay__0', 'sms_verify__overlay__0', 'add_success'],
+  }));
   const manifestSha = createHash('sha256').update('fake-manifest').digest('hex');
   w(fwRoot, 'RELEASE-MANIFEST.sha256', `${manifestSha}\n`);
   clearFrameworkConfigCache();
-  return { root, fwRoot, manifestSha, buildFp };
+  return { root, fwRoot, manifestSha, buildFp, contractPath };
 }
 
 function evalHost(h: Host, overrides: Partial<Parameters<typeof evaluateConsumerGolden>[0]> = {}): GoldenEvalReport {
@@ -134,6 +144,7 @@ function evalHost(h: Host, overrides: Partial<Parameters<typeof evaluateConsumer
     runId: RUN_ID,
     frameworkRoot: h.fwRoot,
     expectedManifestSha: h.manifestSha,
+    contractPath: h.contractPath,
     ...overrides,
   });
 }
@@ -147,6 +158,30 @@ function itemOf(r: GoldenEvalReport, id: string): { verdict: string; detail: str
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
 
+  run(results, '随包基线固定为用户确认的三屏，三屏齐备通过，不追加旧页面义务', () => {
+    const contract = JSON.parse(fs.readFileSync(SHIPPED_CONTRACT, 'utf8'));
+    assert(JSON.stringify(contract.positive_screens) === JSON.stringify(
+      THREE_SCREEN_CAPTURES.map(id => ({ declared: id, capture: id }))), '固定集合必须来自已确认三屏需求');
+    assert(contract.forbidden.length === 0 && contract.key_overlays_and_completion.length === 0,
+      '不得附加旧 HomeTab、短信或完成页专项义务');
+    const h = setupHost(FEATURE, THREE_SCREEN_CAPTURES);
+    const r = evalHost(h, { contractPath: SHIPPED_CONTRACT });
+    assert(r.verdict === 'PASS', JSON.stringify(r.items.filter(i => i.verdict === 'FAIL')));
+    assert(Object.keys(r.screenshot_hashes).length === 3, '三屏截图仍须绑定');
+    assert(itemOf(r, 'fixed_screens_exact_set').detail.includes('3 个'), '说明须按契约数量生成');
+    assert(itemOf(r, 'key_overlays_and_completion').detail.includes('未要求'), '空义务不声称已采到');
+  });
+
+  run(results, '三屏基线仍拒绝漏屏和用错误页面凑足三屏', () => {
+    for (const captures of [THREE_SCREEN_CAPTURES.slice(0, 2),
+      ['wrong_screen', 'add_bank_card_expanded', 'all_banks']]) {
+      const h = setupHost(FEATURE, captures);
+      const r = evalHost(h, { contractPath: SHIPPED_CONTRACT });
+      assert(itemOf(r, 'fixed_screens_exact_set').verdict === 'FAIL', '不可仅按数量或现有产物接受');
+      assert(r.verdict === 'FAIL', '漏屏/替换屏仍拒绝');
+    }
+  });
+
   run(results, '健康宿主 → 全项 PASS，总裁决 PASS，截图 hash 进诊断附件', () => {
     const h = setupHost();
     const r = evalHost(h);
@@ -155,14 +190,14 @@ export function runAll(): UnitCaseResult[] {
     assert(r.installed_manifest_sha256 === h.manifestSha, 'manifest sha 须记录');
   });
 
-  run(results, '缺 P1 屏（bank_card_list_sheet__overlay__0）→ ten_fixed_screens_exact_set FAIL 点名缺失', () => {
+  run(results, '缺 P1 屏（bank_card_list_sheet__overlay__0）→ fixed_screens_exact_set FAIL 点名缺失', () => {
     const h = setupHost();
     const vdPath = path.join(h.root, `doc/features/${FEATURE}/device-testing/device-screenshots/visual-diff.json`);
     const doc = JSON.parse(fs.readFileSync(vdPath, 'utf-8')) as { screens: Array<{ screen_id: string }> };
     doc.screens = doc.screens.filter(s => s.screen_id !== 'bank_card_list_sheet__overlay__0');
     fs.writeFileSync(vdPath, JSON.stringify(doc, null, 2));
     const r = evalHost(h);
-    const i = itemOf(r, 'ten_fixed_screens_exact_set');
+    const i = itemOf(r, 'fixed_screens_exact_set');
     assert(i.verdict === 'FAIL' && i.detail.includes('bank_card_list_sheet__overlay__0'),
       `缺 P1 屏须点名 FAIL：${i.detail}`);
     assert(r.verdict === 'FAIL', '总裁决 FAIL');
@@ -180,7 +215,7 @@ export function runAll(): UnitCaseResult[] {
     victim.screenshot_path = shotRel;
     fs.writeFileSync(vdPath, JSON.stringify(doc, null, 2));
     const r = evalHost(h);
-    const i = itemOf(r, 'ten_fixed_screens_exact_set');
+    const i = itemOf(r, 'fixed_screens_exact_set');
     assert(i.verdict === 'FAIL' && i.detail.includes('card_detail') && i.detail.includes('wrong_screen'),
       `替换屏须同时点名缺失与多余：${i.detail}`);
   });
@@ -260,14 +295,14 @@ export function runAll(): UnitCaseResult[] {
       `跨 run 截图须点名 FAIL：${i.detail}`);
   });
 
-  run(results, 'round19 P2：重复 screen ID → ten_fixed_screens_exact_set FAIL（不被 Map 吞掉）', () => {
+  run(results, 'round19 P2：重复 screen ID → fixed_screens_exact_set FAIL（不被 Map 吞掉）', () => {
     const h = setupHost();
     const vdPath = path.join(h.root, `doc/features/${FEATURE}/device-testing/device-screenshots/visual-diff.json`);
     const doc = JSON.parse(fs.readFileSync(vdPath, 'utf-8')) as { screens: Array<Record<string, unknown>> };
     doc.screens.push({ ...doc.screens.find(s => s.screen_id === 'all_banks')! });
     fs.writeFileSync(vdPath, JSON.stringify(doc, null, 2));
     const r = evalHost(h);
-    const i = itemOf(r, 'ten_fixed_screens_exact_set');
+    const i = itemOf(r, 'fixed_screens_exact_set');
     assert(i.verdict === 'FAIL' && i.detail.includes('重复=[all_banks]'), `重复条目须 FAIL：${i.detail}`);
   });
 

@@ -1414,3 +1414,11 @@ cd framework/harness && npm run backfill:context -- --feature <name> --phases sp
 ### v2.2：tsc 静态扫描 + 改源码门禁 + named_handler 放宽（历史）
 
 未在本文记录细节，可在 git log 里搜 `feat(harness): v2.2`。
+
+### 3.0.x：report-only 允许同包重装后的已验证执行复用
+
+报告整理不再把“最新装机晚于被复用 run”直接判为时间链断裂。仅当最新执行键记录仍可复用、trace 路径和摘要及完整 HAP 摘要一致时，允许使用早于本次装机的真实执行；build/install 顺序和 run 内部起止顺序仍校验。无需修改宿主时间戳或重跑 UI 用例。
+
+### 3.0.x：bc-openCard 发布回归样本改为已确认三屏
+
+2026-09-09 用户确认以 bc-openCard-1 原始需求为准。随包 bc-opencard.golden-contract.json 固定为添加银行卡收起态、展开态、全部银行页；短信、完成页、卡详情等旧十屏内容及 HomeTab 专项负向采集不再要求。evaluator 检查项 ten_fixed_screens_exact_set 更名为 fixed_screens_exact_set；精确集合、截图/构建/run 绑定、崩溃、素材与未修复缺陷检查继续生效。CLI 的 --feature 参数及其历史默认值不变，当前宿主应显式传 --feature bc-openCard-1。这只调整随包回归样本，不限制其他宿主的页面数量。
