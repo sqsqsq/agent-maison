@@ -306,3 +306,13 @@ openspec 30/30；空白与 LF 干净；**全量 3809 passed / 0 failed（308 套
 回归：codeagent-adapter 套件新增一条断言两份 adapter 均有该声明。验证：check-adapter-catalog-consistency PASS、
 init-task-executor 24/24、init-orchestrate 82/82、codeagent-adapter 12/12、adapter-bridge 4/4；
 全量 `npm test` 3815 passed / 0 failed + fixtures 46/46。宿主需重新打包集成才能获得此项。未提交。
+
+### 2026-09-08 · T6 宿主证据部分回填
+
+宿主：`D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-1`。旧 run A=`20260908T011803Z-deb77f`（包源码 `1d82b276`，PARTIAL）；新 run B=`20260908T130534Z-73fc05`（包源码 `bb4aed6734e4b9f007c17f6f3fd81d2f813106b6`）。B 的 events.jsonl:3 记录 supersede A，六阶段 PASS/advance，:122 为 CHAIN_SLICE_COMPLETED；只读调用安装版 verifyFeatureCompletion 返回 VALID、reasons=[]。原件/投影 original_sha256=`3b4edd82c0795d7420aa8247674a3f4dd31f4c09780a7836633f8d68ba8a0536`。A 的 PARTIAL 保留原样，不改称成功。
+
+Claude unattended 原 spec 场景已覆盖：A spec 收口重试后 advance，B 全链闭环 VALID，两次均无 closure_wall_repeated；已有 MD verifier 报告被实际消费。t6-verify-and-host 仍 pending：原条款还要求 attended、interactive、Codex 各一阶段真实闭环。09-07 Codex verifier 子线程模板冒烟仅验证模板读取与报告，不替代 Codex 阶段闭环。复用本地全测记录，不重复跑；剩余验收见 B06 §10。
+
+### 2026-09-08 · T6 模式补验收进展
+
+Claude 非 goal review 已实际执行并闭环（claude -p 会话，C-N）；Codex goal run 20260908T143359Z-3b4759 的 review→ut PASS/advance 且 CHAIN_SLICE_COMPLETED，review 真派发 verifier 并原样落报告；当前 Codex 会话再执行非 goal review，22/22 PASS、receipt exit 0，无新增 goal run（X-N）。相应日志见 B06 §10 的 verification 目录。t6 保持 pending，剩余 attended 阶段真实闭环；不要求重复已经覆盖的 Claude unattended、非 goal与 Codex 模式。

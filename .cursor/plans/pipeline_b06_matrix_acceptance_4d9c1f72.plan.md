@@ -28,20 +28,22 @@ todos:
     content: 用户触发——按 §7.2-B/C/D 跑 C-N / X-U / X-N 三个差异格（各自选定片段与判据，须在 A 的 evaluator 报告保存之后）；任一格未跑即保持 pending，不用回放冒充。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
     status: cancelled
   - id: b06-host-golden-and-promote
-    content: 用户触发——先过 §7.2 P0.5 golden 适用性裁定（基线匹配才设 MAISON_GOLDEN_CONTRACT）；按 §7.2-E 跑包内 evaluator（带 `--feature bc-openCard-1`）；verdict=PASS 才具备 promote 前提。基线不匹配的 run 保留 FAIL 原样并注「验收样本不适用」，不记 N/A。正式 promote 不是本 plan 的完成前置。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
-    status: cancelled
+    content: 用户 2026-09-09 已确认采用 bc-openCard-1 原始三屏需求作为 golden 发布基线（收起态、展开态、全部银行）；旧十屏不再用于本次发布。新候选件集成后用包内 evaluator 带 --feature bc-openCard-1 验证，同包绑定且 verdict=PASS 才具备 promote 前提；本地新基线对旧包产物的诊断 PASS 不冒充正式候选件验收。正式 promote 不是本 plan 的完成前置。
+    status: pending
   - id: b06-host-b07-reacceptance
     content: 用户触发——B07（视觉回修归因与 golden 复用校验，plan 6e4a2c8b）本地完成并进候选件后，按 §7.2 P0.5 裁定 golden 适用性，以用户指定的窗口做范围明确的补验收（不再起同条件 spec→testing 长 run 只为复现）；结果回填 §6 登记表。B07 的完成判据不含此项。 **09-07 已跑：run 20260907T063800Z-26c3b0，B07 目标行为实测成立（三轮拦下 minor、零候选、零回退）；run 因缺口①②③ HALTED/no_progress_visual_gap，见 §6 登记表。**
     status: completed
   - id: b06-host-b08-reacceptance
-    content: 用户触发——B08（复用证据绑定与长图推导，plan 9b2d5e7c）本地完成并进候选件后，按 §7.2 P0.5 裁定 golden 适用性，跑 testing→testing 截断窗口；观察 i2 类复用轮是否直接闭合、代理与外层执行键是否相等（不再交替真跑）、两张长图屏是否有 `_derived-ref` 派生参考且 verifier 终判；结果回填 §6 登记表。B08 的完成判据不含此项。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
-    status: cancelled
+    content: 用户触发——B08（复用证据绑定与长图推导，plan 9b2d5e7c）本地完成并进候选件后，按 §7.2 P0.5 裁定 golden 适用性，跑 testing→testing 截断窗口；观察 i2 类复用轮是否直接闭合、代理与外层执行键是否相等（不再交替真跑）、两张长图屏是否有 `_derived-ref` 派生参考且 verifier 终判；结果回填 §6 登记表。B08 的完成判据不含此项。
+    status: completed
   - id: b06-release-readiness-closeout
     content: 本地与宿主两侧真实完成后才回填登记表、勾各批 host todo 与总 plan 里程碑；不为过门禁提前勾完成。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
     status: cancelled
 ---
 
 # B06施工图
+
+> 当前 golden 基线：用户于 2026-09-09 明确采用原始三屏需求，当前执行口径见 §11；此前十屏契约与失败记录保留作历史，不再作为本次发布的页面范围。
 
 总plan：[9c6e2a41](pipeline_master_9c6e2a41.plan.md)。批次门（总plan §1/§5）：宿主回归只有两个检查点——B02 后与 B06。**第一个检查点用户尚未触发**（证据见 §1），所以 B06 是这两个检查点的**唯一一次**合并执行。原则 SSOT：[overview §1.2.1](../../docs/overview.md#121-四条总设计原则)。
 
@@ -700,3 +702,86 @@ codex 对 B07 施工图的 #1/#4：golden 适用性裁定前移到 §7.2 共同�
 ### 2026-09-07：B07 补验收回填（宿主 run 20260907T063800Z-26c3b0，未提交候选件、未改宿主）
 
 截断窗口 `--start testing --end testing`、不设 golden（P0.5）。D1 实测成立；golden_contract=none 披露成立；E 如实 FAIL 并标不适用。run 未闭环：HALTED / no_progress_visual_gap，原因是 §6 新登记的缺口①②③（复用证据被时间窗否决、hap=null 记录污染执行键、长图屏重采后留 pending），与 B07 改动无关。`b06-host-b07-reacceptance` 勾完成（动作已做、结果已记），`b06-host-merged-cu-run` 等其余宿主待办保持 pending。
+
+## 10. 2026-09-08 版本收尾登记（当前状态）
+
+本节为当前证据与剩余验收的唯一索引；上文施工图、旧表与运行单保留作历史依据，不因回填改写设计。用户授权执行发布收尾第 1–3 项：核实、回填、状态同步与已完成 change 归档；本轮未执行宿主回归、golden、打包或 promote。
+
+### 已核实的宿主证据
+
+宿主：`D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-1`。旧 run A=`20260908T011803Z-deb77f`（包源码 `1d82b276`，PARTIAL）；新 run B=`20260908T130534Z-73fc05`（包源码 `bb4aed6734e4b9f007c17f6f3fd81d2f813106b6`）。B 的 events.jsonl:3 记录 supersede A，六阶段 PASS/advance，:122 为 CHAIN_SLICE_COMPLETED；只读调用安装版 verifyFeatureCompletion 返回 VALID、reasons=[]。原件/投影 original_sha256=`3b4edd82c0795d7420aa8247674a3f4dd31f4c09780a7836633f8d68ba8a0536`。A 的 PARTIAL 保留原样，不改称成功。
+
+| 观察点 | 当前证据 | 收口情况 |
+|---|---|---|
+| C-U 全链最终完成 | B 六阶段 closed/PASS，run_end 成功、verify=VALID | 已覆盖正常全链；b06-host-merged-cu-run 仍包含专项分支与 E 报告，暂不整体关闭 |
+| B01 负面诊断→owner 修复 | A review-i5 FAIL → coding-i6 PASS → review-i7 PASS；B 最终 VALID | B01 host todo 与总 plan B01 关闭 |
+| B02 收口与证据复用 | A spec-i1 PASS/closure_open/retry；i2 refs complete/carried_over=3、advance；无 capability_receipt；B 一轮 spec 通过 | B02 host todo 与总 plan B02 关闭 |
+| B03 UT 与设备同键复用 | B ut_hvigor_test PASS，13/13，同键复用 20260908T132915Z-016；testing device_test_run 同键复用 20260908T133416Z-536 | 复用命中已覆盖；成对结果对账、report-only 三态尚未登记，B03 host 保留 pending |
+| B04 prior review 与无失败归因 | A/B goal-report coding/review/ut/testing 有 reused_from_prior_review；B 六个 phase_verdict PASS、无 failure_kind_classified | 这两项已覆盖；X-U 的 spec_capture_gap 实际 FAIL 分支未覆盖，B04 host 保留 pending |
+| B05 默认配置与数量检查 | B it_drives_flow=PASS（基础 ≥2 expect）；没有 balanced/n/a 的实测证据 | 不把 PASS 当数量 WARN 分支覆盖；B05 host 保留 pending |
+| B08 复用证据与长图推导 | A/B 最终 gate 同键复用且设备证据写出；B 无重试/回退并最终 VALID；两张长图有顶部推导、三屏 pass | b06-host-b08-reacceptance 关闭。采用本次已授权整链 supersede 回归中的 testing 覆盖原截断窗口观察点，无需再单独跑一次 |
+| a3f7c1d9 完成判据 | B 零检查面 NOT_APPLICABLE、asset 继承 PASS、native 无 runtime_fidelity 仍通过、四条债务 closed | 本地与宿主回归完成，见该 plan 最新实施记录 |
+| 视觉与能力披露 | B testing COMPLETE_WITH_GAPS / READY；P0 13/13，manual 缺口不计 PASS | 已接受的披露不追加测试；与 golden 指定样本验收区分 |
+
+### 唯一剩余验收清单（按现有待办归属，无新增测试机制）
+
+| 现有待办/责任 | 尚缺什么 | 最小下一步与可复用项 |
+|---|---|---|
+| B06 b06-host-diff-cells | C-N（Claude 非goal review）、X-U（Codex goal review→ut）、X-N（Codex 非goal review）真实结果 | 只跑原 §7.2-B/C/D 差异片段；先按 E 保存主格证据或使用独立验收副本，避免覆盖现场；不再跑第二条完整 C-U |
+| B03 host（B06 §7.2-F） | 真跑/复用的配对 UT 结果逐模块一致性；report-only hard/derived 三态记录 | 先查已有 run 冻结件可否直接形成配对；能取证就不跑；不足才补 F 的最小片段，FAIL 分支按原计划在隔离副本处理 |
+| B04 host（B06 §7.2-C/G③） | ui_spec_fidelity_gate 实际 FAIL 时是否归 spec_capture_gap | 与 X-U 补验收合并；已有 prior review 与 PASS 无失败归因证据不重验 |
+| B05 host（B06 §7.2-A6/G④） | 默认 strict 原始策略输出、显式 balanced、plan n/a、数量不足 WARN 分支 | 先查现有日志；实际缺失的按既有场景补最小片段，不为制造 WARN 改产品，不把本地单测当宿主实测 |
+| d2f7a9c4 t6-verify-and-host | attended、interactive、Codex 阶段闭环 | Claude unattended 原场景已验；interactive/Codex 尽量与三差异格共用；attended 按原待办另补一个阶段。模板子线程冒烟不等于阶段闭环 |
+| adhoc-device-entry-gate tasks 4.5（原 change 管理） | device:ready 真机解锁与 ad-hoc dump-ui 入口 | 短设备入口复验；goal 中设备就绪事件不能替代 ad-hoc 入口验收。本地 plan 已完成，不为此重开开发任务 |
+| B06 b06-host-golden-and-promote | 最终候选件对应、样本适用的 golden evaluator PASS | A/B 均未设 golden（B 明确按用户回归指令执行）；现有报告不能冒充 golden。先核 §7.2 P0.5 样本适用性，再安排原 E；不以已接受的长图披露阻止普通需求完成 |
+| B06 b06-release-readiness-closeout / 总 plan | 上述真实结果回填、未完待办关闭、最终发布门禁 | 本轮不提前勾选。发布说明/changelog 与最终包复核属于后续收尾步骤；宿主测试通过的包优先复用，不为文档回填重复跑测试 |
+
+### 当前包与发布边界
+
+宿主安装包源码为 bb4aed67（含 R8、B08、Codex verifier 与 a3f7c1d9）；本次成功不是旧 1d82b276 包的结果。阶段 READY/feature VALID 不等于 Maison 3.0.0 已发布。candidate/promote 的同包身份与 golden 前提需在后续发布步骤核对。本节不重建候选件，不改旧 run，也不改已接受的视觉口径。
+
+包身份补核：当前 candidate built_at=2026-09-08T11:26:37.817Z，complete=true，consumer smoke=2026-09-08T11:28:48.454Z；zip sha256=7e1472c011b46b77eb1131b8cac892ca63c5b11d4c42e6ca57b12f9de6814656；in-zip manifest sha256=8ada2693d26f8615362e4d071daba6882931433a630a46d8e8194744b3680087，与宿主安装 manifest 实际字节一致。后续发布优先沿用这份已验收 candidate，不为本轮 dev-only 回填重新打包。
+
+本轮归档：verifier-repair-diagnostics、vision-evidence-material-binding、phase-contracts-and-applicability、codex-verifier-subagent-template、visual-repair-severity-and-golden-reuse、reuse-evidence-binding-and-reference-derivation、completion-native-runtime-and-visual-debt（均在 openspec/changes/archive/2026-09-08-*，规格已同步）。B05 归档仅表示该 change 已完成的本地实施，不替代仍 pending 的 B05 host todo。剩余活动 change 为 execution-reuse-and-report-layering、attribution-and-prior-review-consistency、adhoc-device-entry-gate，均仅余宿主待办。
+
+### 2026-09-08 继续收尾：先复用已有证据
+
+- 实证文件统一放 [.cursor/verification/3.0.0-closeout-20260908](../verification/3.0.0-closeout-20260908/README.md)。
+- B03：既有 UT run 20260908T132915Z-016 与 20260908T133016Z-874 的 execution_key 相等、outcome 均 success；逐模块 frozen.ut-result.WalletMain.json 与 frozen.hdc-test.WalletMain.log SHA 完全相等。F①b 的逐模块结果一致性已有证据，无须为此再跑 UT；F① 的强制真跑/复用配对操作与 F③ report-only 三态仍按原判据区分，不把冻结件比较说成新设备执行。
+- B05：对宿主现有 ut 阶段实际跑 check-receipt --skip-state-sync，exit 0、PASS，HARNESS_EVIDENCE_POLICY profile_resolved=strict。仅该阶段的默认策略输出已取证，不替代 balanced/n/a 或数量 WARN 分支。
+- 已执行 E：安装版 evaluator 对 73fc05 输出 FAIL（原样保存 golden-73fc05.json）。candidate_binding、run_binding、build_binding_available、required_assets、no_must_fix 等 PASS；失败为 ten_fixed_screens_exact_set、forbidden_HomeTab、key_overlays_and_completion。当前已确认三屏需求与旧十屏 contract 不匹配，不能以此要求当前产品扩建页面；发布验收基线已向用户澄清，未改 contract、不伪造 PASS。
+
+- C-N 已执行真实 Claude 非 goal review（claude -p 会话，日志 claude-nongoal-review.jsonl）：22/22 PASS、closure closed、check-receipt exit 0、local adapter 保持 claude、无新增 goal run。框架沿用 prior PASS，未实际派发新 verifier，未触发失败重跑；主流程已覆盖，原运行单的条件分支仍按未触发披露，不制造失败。
+- X-U 已按 §7.2-C 启动 Codex goal review→ut，run 20260908T143359Z-3b4759；尚在运行，本行不记完成。--override-adapter 会切换 local 到 codex，差异验收结束后恢复原 claude 身份。
+- adhoc-device-entry-gate 的外置宿主待办已完成：device-ready 真机解锁并复验 + ad-hoc dump-ui 经过 device_gate、exit 0。对应 change tasks 4.5 已关闭，无需再补该项。
+- default strict 已补 spec/plan/coding/ut/testing 五阶段 check-receipt 的原始输出（均 exit 0），review 的实际输出见 C-N 会话日志。
+
+- 设备入口变更已归档为 openspec/changes/archive/2026-09-08-adhoc-device-entry-gate 并同步规范；活动 change 现余 B03/B04 两项。发布说明已改为验收中，并纠正 manual 缺口、长图披露、release-only 集成、消费者不跑开发仓单测等过时口径；changelog 已刷新。
+
+### 2026-09-08 差异模式与 report-only 结果
+
+- X-U：真实 Codex goal run 20260908T143359Z-3b4759，review/ut 均 PASS/advance，run_end=CHAIN_SLICE_COMPLETED。Codex JSON 终态/usage 与 verifier 子代理均实际发生；verifier 的 reference_crosscheck 为 MAJOR FAIL（旧 review 文档引用了旧视觉状态），整体终态 PASS，未触发产品回修。证据：verification 目录的 codex-goal-report.json、codex-goal-events.json，以及宿主 run 内两阶段 agent-output.log。
+- X-N：当前 Codex 会话直接调用正式非 goal review harness（复用刚完成的源码审查），22/22 PASS、closure closed、check-receipt exit 0；goal-runs 目录无新增。日志 codex-nongoal-review.log、check-receipt.review.codex.log。没有额外创建一个 Codex CLI 会话重读全部材料。个人身份已通过原 recordAdapterToLocal 恢复 claude。
+- 差异主流程已都有实际运行；C-N 的新 verifier 派发与失败重跑未触发，X-U 的 spec_capture_gap 分支不在 review→ut 窗口内，按原条款保留未覆盖，不整体关闭 b06-host-diff-cells。
+- F③ 实际 report-only CLI 发现 BLOCKER：build=13:49:00、install=13:49:03，复用 run 起止=13:34:18–13:37:34；原检查仍强制 install≤run_start。该 run/HAP 已按执行键复用，这一时间比较误拒；原始 FAIL 留在 testing-report-only.log、testing-script-report.reportonly.json。
+- 本地最小修复：check-testing 对最新记录按既有 decideReuse、当前 HAP/trace 摘要与路径绑定核验；仅该条件成立时接受重装晚于旧执行，run 内部顺序与 build/install 顺序仍检查。不改宿主 framework、不改时间戳。目标 testing-trace-gates 31/0、typecheck 通过；本地修正 checker 只读同一份未变宿主证据得到 report_reconcile_only PASS（reportonly-local-fix-host-evidence.json），这不是已部署版本回归通过。全测记录后补。
+- 非 goal 回归与 F③ 会重写共享 phase 产物：当前宿主 testing summary 是本次 report-only 的 FAIL/open，review 的非 goal manifest 不含原 goal requirement 绑定；故当前完成投影已 INVALID。旧成功 run/完成原件与 golden 原始报告均保留，未手改凭证或恢复假绿。后续部署修复版并按最终验收基线收尾，不能再把当前状态表述为 VALID。
+- 本次生产修复尚未入 candidate；前一条“文档回填无需重打”仅适用于此前纯文档阶段。该修复验收/提交后需要新候选件，并按变更范围复验，不重新做整套产品设计。
+
+- d2f7a9c4 T6：本轮 C-N 已实跑非 goal review 并闭环，X-U 已实跑 Codex review→ut 并闭环，X-N 当前 Codex 会话非 goal review 也闭环；其剩余真实模式缺口收窄为 attended 阶段（不拿 detached X-U 冒充 attended）。
+- X-U 写入观测仅有 UT 构建生成的三个 BuildProfile.ets（AccountManager/CommFunc/CommUI），未修改业务实现或 UT 源码；该片段 UT 为实际执行 13/13，不宣称全程零设备执行。
+
+全量验证完成：结果：3960 passed, 0 failed (共 3960)；结果：46 passed, 0 failed (共 46)。typecheck 随 npm test 通过；OpenSpec strict/enforcement、plan 开发校验与 git diff --check 通过。生产修复未提交、未打包、未部署；完整日志 .cursor/verification/3.0.0-closeout-20260908/full-harness-test.log。
+
+## 11. 2026-09-09 用户确认三屏 golden 基线
+
+用户明确选择三屏，不再要求旧十屏样本。依据宿主原始需求 doc/features/原始需求/1-1-银行卡/原始需求.md（SHA256 e306d003101f4230618ae39e001af8ed72c94ab4c03d3b67dac5ddf1b9dbfc3c）：页面说明与资源表仅为收起态、展开态、全部银行；卡类型半模态明确暂不实现。发布契约固定为 add_bank_card_collapsed、add_bank_card_expanded、all_banks，不从当前 ui-spec 或截图数量反推。
+
+- bc-opencard.golden-contract.json 改为三屏，删除旧短信/完成页/卡详情/选卡等范围及 HomeTab 专项负向采集要求；原需求的旧路由兼容仍由已有验收/真机用例负责，不因换基线删除。
+- evaluator 精确集合检查改为 fixed_screens_exact_set，说明按契约数量生成；截图/构建/run 绑定、素材、崩溃、未修复缺陷检查保留。没有半模态/完成页义务时明确说明“不要求”，不声称已采集。
+- 旧十屏仅保留为单测临时输入，验证聚合器的集合、overlay 和 forbidden 通用能力；新三屏正例、漏屏和替换屏反例独立覆盖发布真件，采集 env 装载器也直接断言三屏映射。
+- 目标验证：consumer-golden 26/0，golden-capture-targets 8/0，typecheck PASS。新 evaluator + 新契约只读现有宿主 run 73fc05 的产物，14 项诊断全 PASS；结果封装为 local_baseline_diagnostic，见 .cursor/verification/3.0.0-golden-three-screen-20260909/existing-host-diagnostic.json，不可用于 promote。此前旧十屏 FAIL 报告原样保留。
+- 当前宿主仍安装 bb4aed67，尚未包含本次三屏契约和上一轮 report-only 时间链修复；不热改宿主 framework、不声称已用新包验收。代码验证完成后再按同包原则处理候选件与正式 evaluator，host/golden 待办保持 pending。
+- 顶部一屏外未验证和已接受 minor 差异只披露、不单独阻断，不再询问此项。
+
+三屏基线全量验证完成：结果：3962 passed, 0 failed (共 3962)；结果：46 passed, 0 failed (共 46)；typecheck、plan 开发校验、OpenSpec strict/enforcement、git diff --check 均通过。日志 .cursor/verification/3.0.0-golden-three-screen-20260909/full-harness-test.log。尚未提交、构建或部署新候选件，正式 golden 待办不提前关闭。

@@ -27,13 +27,17 @@
       idempotence, V3c planner task and catalog entry — V3a–V3c through the real execution entries in a temp project
 - [x] 3.2 `harness/tests/unit/adapter-catalog-consistency.unit.test.ts`: V4 mutual exclusivity across all adapters
 - [x] 3.3 `npm --prefix harness run typecheck`, the four targeted unit suites, `npm run openspec:validate`
-- [ ] 3.4 V5 release packaging: the manifest contains `agents/codex/templates/agents/verifier.toml`
-- [ ] 3.5 One full `cd harness && npm test`
+- [x] 3.4 V5 release packaging: the manifest contains `agents/codex/templates/agents/verifier.toml`
+- [x] 3.5 One full `cd harness && npm test`
 
 ## 4. Docs (plan 7b2e9d4c D6)
 
 - [x] 4.1 `agents/README.md`: codex rows in both matrices, the verifier section, the directory tree
 - [x] 4.2 `MIGRATION.md` 3.0.x section
-- [ ] 4.3 Host acceptance (user-triggered, not part of this change's completion): UPDATE overwrites
+- [x] 4.3 Host acceptance (user-triggered, not part of this change's completion): UPDATE overwrites
       `.codex/agents/verifier.toml` with a backup, and the child thread no longer reads `verify-<phase>.md` or
       the phase rules
+
+## 2026-09-08 closeout evidence
+
+Completed from plan 7b2e9d4c local acceptance and 2026-09-07 host record: template shipped in the verified package; full test results and worktree-specific reruns recorded; host verifier tool reads exclude verify-*/phase-rules. These stale checkboxes are synchronized, not newly executed.

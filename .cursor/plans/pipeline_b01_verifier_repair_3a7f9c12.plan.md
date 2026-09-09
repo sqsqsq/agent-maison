@@ -31,8 +31,8 @@ todos:
     content: 按命令表完成typecheck、目标生产链测试及candidate构建全量验收，准备候选件与bc-openCard-1受影响窗口的精确宿主命令。
     status: completed
   - id: b01-host-acceptance
-    content: 用户触发候选件集成和C-U goal回归后，核对负面诊断→owner修复→窗口闭环及无直接回归；证据通过后验收B01并细化B02。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
-    status: cancelled
+    content: 用户触发候选件集成和C-U goal回归后，核对负面诊断→owner修复→窗口闭环及无直接回归；证据通过后验收B01并细化B02。
+    status: completed
 ---
 
 # B01施工图
@@ -322,3 +322,9 @@ S0至S3是可审查提交/变更组，不要求自动git commit。
 - 提交：按 §4 分四笔（smoke 前置修复 / D6 指令清理 / D1–D4 生产代码与模板 / plan 与 OpenSpec），不带署名。
 - `b01-local-acceptance` 置 completed；`b01-host-acceptance`（V9）保持 pending：候选件集成到验收宿主与 C-U goal run 由用户触发。宿主命令模板见 §7 与"S0–S3 本地实施"记录。
 - 2026-09-06 用户裁定：宿主回归收敛为两个检查点，V9 与 B02 合并为一次 C-U 回归（spec→ut 窗口）；`b01-host-acceptance` 待该次 run。
+
+### 2026-09-08 · B01 宿主验收收口
+
+宿主：`D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-1`。旧 run A=`20260908T011803Z-deb77f`（包源码 `1d82b276`，PARTIAL）；新 run B=`20260908T130534Z-73fc05`（包源码 `bb4aed6734e4b9f007c17f6f3fd81d2f813106b6`）。B 的 events.jsonl:3 记录 supersede A，六阶段 PASS/advance，:122 为 CHAIN_SLICE_COMPLETED；只读调用安装版 verifyFeatureCompletion 返回 VALID、reasons=[]。原件/投影 original_sha256=`3b4edd82c0795d7420aa8247674a3f4dd31f4c09780a7836633f8d68ba8a0536`。A 的 PARTIAL 保留原样，不改称成功。
+
+A 的 events.jsonl:171 为 review FAIL、repair_candidates=CR-002/CR-003；:172 实际回退 coding；:187 coding PASS；:208 review PASS/advance。随后 testing 的真实失败也回退修复，B 对同一需求完成全链复验并 verify=VALID。以 A 证明负面诊断与 owner 回修，以 B 证明修复后的最终闭环，不将 A 的终态改写。关闭 b01-host-acceptance；完整证据与剩余版本验收只在 B06 最新登记维护。

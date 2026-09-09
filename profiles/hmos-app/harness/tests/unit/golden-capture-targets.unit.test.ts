@@ -119,16 +119,15 @@ test('③ contract 屏在 ui-spec 缺失 / 形态不符 → fail-closed（errors
     `p0CaptureFailures 须含 ghost_screen：${(r.p0CaptureFailures ?? []).join(', ')}`);
 });
 
-test('随包 contract 文件：shape 合法 + 与 env 装载器互通 + bank_card_list_sheet 映射在场', () => {
+test('随包 contract 文件：与 env 装载器互通，固定为已确认三屏', () => {
   const contractAbs = path.resolve(__dirname, '../../../../../harness/scripts/consumer-golden/bc-opencard.golden-contract.json');
   assert.ok(fs.existsSync(contractAbs), `随包 contract 须存在：${contractAbs}`);
   const prev = process.env.MAISON_GOLDEN_CONTRACT;
   process.env.MAISON_GOLDEN_CONTRACT = contractAbs;
   try {
     const targets = loadGoldenContractTargetsFromEnv(path.dirname(contractAbs));
-    assert.ok(targets && targets.length === 10, `contract 须固定 10 屏：${targets?.length}`);
-    assert.ok(targets!.some(t => t.declared === 'bank_card_list_sheet' && t.capture === 'bank_card_list_sheet__overlay__0'),
-      'P1 屏 declared↔capture 映射须在 contract 内');
+    assert.deepStrictEqual(targets, ['add_bank_card_collapsed', 'add_bank_card_expanded', 'all_banks']
+      .map(id => ({ declared: id, capture: id })), '随包固定集合须为三屏，不从 P0 或现有截图反推');
   } finally {
     if (prev === undefined) delete process.env.MAISON_GOLDEN_CONTRACT;
     else process.env.MAISON_GOLDEN_CONTRACT = prev;

@@ -24,5 +24,9 @@
 
 - [x] 4.1 This change's `runtime-step-evidence`, `visual-diff` (ADDED + MODIFIED viewport requirement), `feature-artifact-layout` (MODIFIED ledger requirement), `verdict-lattice`, `harness-gates` (MODIFIED render-visibility requirement: MAJOR FAIL, debt-gated) deltas
 - [x] 4.2 `MIGRATION.md` 3.0.x entry (no forced full-chain rerun)
-- [ ] 4.3 `cd harness && npm test` full pass (run once by the dispatcher after review)
-- [ ] 4.4 Host re-acceptance per plan §5 (user-triggered, scope decided after the local fix)
+- [x] 4.3 `cd harness && npm test` full pass (run once by the dispatcher after review)
+- [x] 4.4 Host re-acceptance per plan §5 (user-triggered, scope decided after the local fix)
+
+## 2026-09-08 closeout evidence
+
+Plan a3f7c1d9 records full npm test: unit 3959/0, fixtures 46/0. Host run 20260908T130534Z-73fc05 on bb4aed67: six closed PASS phases, CHAIN_SLICE_COMPLETED, verifyFeatureCompletion VALID with no reasons; four debts closed, native P0 13/13. B06 §10 is the consolidated evidence index.

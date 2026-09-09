@@ -36,6 +36,10 @@
 - [x] 4.2 `device-policy-cli`: `--ready` matrix, fully injected — no real credential store, no real hdc, no device
 - [x] 4.3 `adhoc-trace-placeholder`: `device_not_ready` round-trip
 - [x] 4.4 `npm --prefix harness run typecheck` + the three `test:unit --filter` runs + `npm run openspec:validate`
-- [ ] 4.5 Host acceptance (user-triggered, not part of this change's completion): `--ready --json` on the host reaches
+- [x] 4.5 Host acceptance (user-triggered, not part of this change's completion): `--ready --json` on the host reaches
       `code=ready` with `target_kind=physical` and the device unlocks; an ad-hoc `--dump-ui-only` shows
       `ADHOC_PHASE=device_gate` and no longer prints "未显式指定目标，跳过就绪检查"
+
+## 2026-09-08 host acceptance
+
+On SimulatedWalletForHmos with installed source_commit bb4aed67, the real device-policy --ready --json returned code=ready and target_kind=physical, with a note confirming unlock through the registered credential and re-verification. The real ad-hoc --bundle com.example.simulatedwallet --dump-ui-only returned exit 0, emitted ADHOC_PHASE=device_gate and produced a dump; it did not print the old target-not-explicit skip. Evidence: .cursor/verification/3.0.0-closeout-20260908/device-ready.log and adhoc-dump.log; no credential value was read or changed.

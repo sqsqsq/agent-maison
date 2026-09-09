@@ -543,3 +543,7 @@ codex 第 2 轮只读 review 结论：**1 条 medium**，R1 其余五项（F1/F2
 
 - 真机复验待用户在宿主触发（plan §7）；本轮真机零接触、宿主零接触。
 - 生产代码本轮零改动。
+
+### 2026-09-08 · 宿主入口复验通过
+
+宿主 SimulatedWalletForHmos，安装包 source_commit=bb4aed67。真实 device-policy --ready --json 返回 ready/physical，notes 明确已用登记凭据解锁并复验；随后 adhoc-device-test --bundle com.example.simulatedwallet --dump-ui-only 实际 exit 0、出现 ADHOC_PHASE=device_gate 并产出 dump，无旧的未指定目标跳过提示。证据见 .cursor/verification/3.0.0-closeout-20260908/device-ready.log、adhoc-dump.log；未读取/修改凭据内容，未启动测试用例或改变产品代码。本地与原先外置的宿主入口复验均已完成。

@@ -4,11 +4,11 @@ overview: B01先细化施工图，后续批次滚动设计，宿主回归收敛�
 version: 3.0.0
 todos:
   - id: b01-accept-verifier-repair
-    content: 验收B01施工图：负面结果可诊断回修、输出解析一致、删除过时指令；目标测试和用户触发的C-U宿主回归通过。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
-    status: cancelled
+    content: 验收B01施工图：负面结果可诊断回修、输出解析一致、删除过时指令；目标测试和用户触发的C-U宿主回归通过。
+    status: completed
   - id: b02-accept-vision-evidence
-    content: B01本地验收后细化并验收B02，解除inline终签死锁与非goal/attended不可达；保留completion probe，完成B01+B02合并C-U回归（spec→ut窗口）。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
-    status: cancelled
+    content: B01本地验收后细化并验收B02，解除inline终签死锁与非goal/attended不可达；保留completion probe，完成B01+B02合并C-U回归（spec→ut窗口）。
+    status: completed
   - id: b03-accept-execution-reuse
     content: B02本地验收后细化并验收B03，按真实浪费解决UT重复构建/执行和报告整理，不重构进程生命周期；本地验收，宿主回归并入B06。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
     status: cancelled
@@ -109,3 +109,7 @@ B07（09-07 据 B06 取证新增，[6e4a2c8b](pipeline_b07_visual_repair_attribu
 仅plan变动跑plan校验；生产改动typecheck和目标测试，发布内容遵守AGENTS全测。candidate:build已有的全量结果复用，纯文字返修不再全测。收益从现有events/summary/tool日志记录，不建A/B或基准平台。
 
 复用 [candidate-release](../../scripts/candidate-release.mjs) 构建/测试/校验，宿主替换和物化由用户触发，禁止热改framework源码。实施及宿主验证真实完成才勾plan，之后按既有promote提升同一zip并补全局发布门禁；正式发版不是plan完成之前的循环前置，本计划只交付候选件验收与发布就绪。
+
+### 2026-09-08 · 版本收尾状态同步
+
+B01/B02 的宿主验收已按两次实跑及最终 VALID 收口，见各批最新实施记录。B08 与完成判据修复宿主观察点已通过；B03/B04/B05/B06 不整批提前勾选。唯一剩余验收索引见 [B06 §10](pipeline_b06_matrix_acceptance_4d9c1f72.plan.md#10-2026-09-08-版本收尾登记当前状态)；此前背景段落为历史记录，不代表当前尚无宿主 run。

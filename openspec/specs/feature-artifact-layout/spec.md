@@ -285,14 +285,21 @@ Enforcement: `harness/scripts/utils/phase-evidence-manifest.ts`, `harness/script
 
 ### Requirement: Visual debt lives in a harness-derived JSON ledger with a markdown projection
 
-`doc/features/<feature>/visual-debt.json` SHALL be the machine truth for visual debt, derived by the harness from current asset, ui-spec, deterministic visual, provider, materialization, and render-visibility evidence — never agent-authored. Entries carry stable identity, source check, optional asset/screen identity, severity, status `open|closed`, and a machine resolution class. `closed` means fixed and reverified; there is no `accepted` quality-bypass state and new entries MUST NOT carry `accepted_by` or `acceptance_receipt`. `visual-debt.md` is a human projection only. Open required debt maps to the existing quality axes and blocks release; optional unverified debt remains advisory only where existing release policy permits it.
+`doc/features/<feature>/visual-debt.json` SHALL be the machine truth for visual debt, derived by the harness from current asset, ui-spec, deterministic visual, provider, materialization, and render-visibility evidence — never agent-authored. Entries carry stable identity, source check, optional asset/screen identity, severity, status `open|closed`, and a machine resolution class. `closed` means the source check settled in the current round: PASS (fixed and reverified) or WARN (the finding is now disclosure, not debt — plan a3f7c1d9 D3(b)); a FAIL or a non-`MINOR` SKIP of the source keeps or opens the entry, and a round with only `MINOR` SKIP hits or no hit for the source leaves history unchanged. There is no `accepted` quality-bypass state and new entries MUST NOT carry `accepted_by` or `acceptance_receipt`. `visual-debt.md` is a human projection only. Open required debt maps to the existing quality axes and blocks release at the testing release point; optional unverified debt remains advisory only where existing release policy permits it.
 
 Enforcement: `harness/scripts/utils/visual-debt.ts`, `harness/harness-runner.ts`, `harness/scripts/check-testing.ts`
 
 #### Scenario: a user name cannot close visual debt
 
-- **WHEN** an open visual debt entry has legacy acceptance metadata but its source evidence has not been fixed and reverified
+- **WHEN** an open visual debt entry has legacy acceptance metadata but its source check has not settled under the four-state rule in the current round (no PASS or WARN; only FAIL, non-`MINOR` SKIP, or absence)
 - **THEN** the entry SHALL remain open for current projection and release SHALL remain blocked when the axis is required
+- **AND** the legacy acceptance metadata (a user name or receipt) SHALL NOT by itself close the entry
+
+#### Scenario: a WARN settles the entry, a non-MINOR SKIP does not
+
+- **WHEN** an open entry's source check reports WARN in the current round
+- **THEN** the entry SHALL be `closed` and SHALL NOT count toward blocking debt
+- **AND** when the same source instead reports SKIP with severity `BLOCKER`, the entry SHALL stay or become `open` with `needs_fix`
 
 ### Requirement: Asset debt clears only through source, binding, and render verification
 
@@ -318,14 +325,21 @@ Enforcement: `harness/scripts/check-spec.ts`, `harness/scripts/utils/visual-debt
 
 ### Requirement: Visual execution artifacts are current receipts only
 
-The feature vision directory SHALL use `capability-receipt.json` and `spec-refs-receipt.json` as short-lived current execution evidence. The framework SHALL NOT require or maintain feature-scoped artifact-attestation or policy-downgrade ledgers.
+The feature vision directory SHALL use `spec-refs-receipt.json` as short-lived current execution evidence. `capability-receipt.json` SHALL NOT be produced or read: visual capability is a run-level fact resolved from the preflight probe canary, not a per-invocation artifact. The framework SHALL NOT require or maintain feature-scoped artifact-attestation or policy-downgrade ledgers.
+
+A stale `capability-receipt.json` left by an earlier version SHALL be inert — no consumer reads it, and its presence or contents SHALL NOT change any gate result. No migration step SHALL be required.
 
 Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/critic-receipt-producer.ts`, `harness/scripts/utils/effective-vision-context.ts`
 
 #### Scenario: Upgraded consumer keeps old ledgers without migration
 
-- **WHEN** a consumer upgrades while old visual JSONL ledgers remain on disk
-- **THEN** initialization proceeds without reading, migrating, anchoring, or deleting those files
+- **WHEN** an upgraded consumer still holds `artifact-attestations.jsonl`, `policy-downgrades.jsonl` and a `capability-receipt.json` from an earlier version
+- **THEN** every gate result SHALL be identical to a project with none of those files, and no migration step SHALL be required
+
+#### Scenario: A stale schema 1.0 reference receipt is recomputed, not inherited
+
+- **WHEN** a `spec-refs-receipt.json` at schema `1.0` remains on disk — including on a same-run resume, where its `goal_run_id` equals the current run
+- **THEN** the loader SHALL return no receipt, the consumer SHALL report "not yet produced", the producer SHALL recompute from zero, and the stale `read` flags SHALL NOT be inherited
 
 ### Requirement: Blind-mode placeholder metadata is schema-valid but non-authoritative
 
@@ -494,14 +508,30 @@ Enforcement: `harness/scripts/utils/phase-evidence-manifest.ts`, `harness/script
 
 ### Requirement: Verifier output is a terminal block plus an item table
 
-The verifier's answer SHALL consist of the versioned terminal block and one table of check id / verdict / one-line evidence / fix, with no prose sections. The SubagentStop hook SHALL keep reading only the terminal block.
+The verifier's answer SHALL consist of the versioned terminal block and one table of check id / verdict / one-line evidence / fix, with no prose sections.
 
-Enforcement: `harness/prompts/verify-spec.md`, `harness/prompts/verify-plan.md`, `harness/prompts/verify-coding.md`, `harness/prompts/verify-review.md`, `harness/prompts/verify-ut.md`, `harness/prompts/verify-testing.md`, `agents/claude/templates/agents/verifier.md`
+The terminal block SHALL carry exactly one meaning in both the ordinary and the diagnosis branch: `blocker_count` is the number of items in **this round's own semantic checks** whose severity is BLOCKER and whose status is FAIL; `verdict=PASS` if and only if `blocker_count` is zero. The block SHALL echo the current subject. `FAIL` with zero blockers and `PASS` with a non-zero count SHALL be rejected as invalid evidence.
+
+Confirmed product defects SHALL NOT enter that count. A review report that accurately confirms N unclosed product problems while the review itself has no semantic BLOCKER FAIL SHALL be `PASS / 0`, and the product summary SHALL remain FAIL and open — the report's credibility and the product's quality are two separate facts. A diagnosis request SHALL NOT force the report to inherit the product's FAIL, and SHALL NOT be answered by skipping the semantic checks: for UT, the two candidate-required checks SHALL still be evaluated, because their PASS/FAIL is what decides whether the failure routes to coding or back to the tests. Equally, a `PASS` terminal block SHALL NOT be described as the product passing.
+
+Where the round is not a diagnosis request, the native compile and execution preconditions on the verifier SHALL be unchanged.
+
+Enforcement: `harness/prompts/verify-spec.md`, `harness/prompts/verify-plan.md`, `harness/prompts/verify-coding.md`, `harness/prompts/verify-review.md`, `harness/prompts/verify-ut.md`, `harness/prompts/verify-testing.md`, `agents/claude/templates/agents/verifier.md`, `harness/scripts/utils/verifier-evidence.ts`
 
 #### Scenario: The report returned to the driver is short
 
 - **WHEN** a verifier finishes a phase with 12 checks
 - **THEN** its final message is the 12-row table and the terminal block only
+
+#### Scenario: An accurate report of a failing product is PASS / 0
+
+- **WHEN** a review diagnosis confirms three unclosed product defects and the review round itself has no BLOCKER-severity semantic FAIL
+- **THEN** the terminal block SHALL be `PASS / 0`, the per-issue confirmations SHALL be able to drive candidates, and the product summary SHALL stay FAIL with `closure_status=open`
+
+#### Scenario: A UT diagnosis still evaluates the candidate-required checks
+
+- **WHEN** a UT diagnosis request is answered
+- **THEN** `end_to_end_driving` and `business_assertion_value` SHALL each carry a real verdict, and the product execution FAIL SHALL remain recorded by the harness rather than copied into the terminal block
 
 ### Requirement: Harness-derived records and phase notes live outside the artifact inventory by design
 
@@ -552,3 +582,47 @@ Enforcement: `harness/scripts/utils/verifier-evidence.ts`, `harness/scripts/util
 
 - **WHEN** a closed phase's `verifier.report.<subject>.md` is modified
 - **THEN** evidence manifest recomputation and the review closure attestation SHALL both remain valid, and no phase SHALL be marked stale
+
+
+### Requirement: A diagnosis prompt states the failure, the released checks and the terminal-state rule
+
+When the request was issued under the diagnosable-product-failure path, the assembled `ai-prompt.md` SHALL carry a section stating that this round's script verdict is FAIL, listing the check ids that were released, and restating the terminal-state counting rule. It SHALL be produced as an in-memory option of the existing prompt assembly — no new request field, no persisted mode, no second prompt producer. Ordinary verification requests SHALL be byte-identical to before.
+
+The embedded script report SHALL remain the raw FAIL report. It SHALL NOT be projected into a PASS, and the section SHALL state that the product's FAIL and open closure are unchanged by the verifier's conclusion.
+
+Enforcement: `harness/scripts/utils/report-generator.ts`, `harness/harness-runner.ts`
+
+#### Scenario: The notice reaches the file the verifier actually reads
+
+- **WHEN** a diagnosis request is assembled
+- **THEN** both the returned prompt text and the `ai-prompt.md` written to disk SHALL contain the section, naming every released check id and the `blocker_count` rule
+
+#### Scenario: A normal request carries no notice
+
+- **WHEN** the script gate passed and the request is an ordinary verification request
+- **THEN** the assembled prompt SHALL contain no diagnosis section
+
+### Requirement: Verifier check status is read from the formal summary table and the legacy YAML alike
+
+The machine reader of per-check verdicts SHALL parse the formal §7.1 summary table through the shared markdown table extractor, accepting only a table whose headers exactly contain `id` and `status`, and SHALL additionally accept the legacy `- id: / status:` YAML shape. The formal prompt requires the summary table to list every check including PASS rows while the YAML detail block lists only non-PASS items; reading the YAML alone made every PASS machine-invisible, so a report that follows the prompt and one that ignores it produced different candidate sets from the same conclusion.
+
+Only `PASS`, `FAIL` and `WARN` SHALL be recognized. Repeated consistent statements of the same check SHALL dedupe to one value. Conflicting statements, and statuses that are absent, placeholder or otherwise unrecognized, SHALL NOT be accepted and SHALL fall through to each consumer's existing unconfirmed / format-repair path; the reader SHALL NOT resolve a conflict by choosing the favourable `PASS`. Cell decoration (backticks, emphasis) SHALL be normalized, but the check id itself SHALL be preserved intact. After that normalization the whole cell SHALL match a single status **exactly**: scanning for the first status word inside the cell accepts a conflict (`PASS / FAIL`), a negation (`NOT PASS`) and an unfilled placeholder (`<PASS>`) as `PASS`, which is the same "choose the favourable value" the paragraph forbids.
+
+`end_to_end_driving`, `business_assertion_value` and `device_ac_delegation` SHALL share this one reader. The verifier SHALL NOT be asked to emit an extra PASS YAML block to compensate, and review's per-issue verification and evidence binding SHALL be unchanged — a summary-table PASS SHALL NOT substitute for a per-issue `confirmed`.
+
+Enforcement: `harness/scripts/utils/repair-candidates.ts`, `harness/scripts/utils/markdown-parser.ts`, `harness/prompts/verify-ut.md`
+
+#### Scenario: The formal table and the legacy YAML yield the same candidates
+
+- **WHEN** the same conclusions are expressed once as a §7.1 summary table and once as legacy per-check YAML
+- **THEN** the candidate assembly SHALL produce identical results
+
+#### Scenario: A conflict is refused rather than resolved
+
+- **WHEN** the summary table and the YAML detail block state different statuses for the same check
+- **THEN** the reader SHALL return no status and no candidate SHALL be derived from it
+
+#### Scenario: A conflicting, negated or placeholder cell is refused
+
+- **WHEN** a status cell reads `PASS / FAIL`, `NOT PASS` or `<PASS>`
+- **THEN** the reader SHALL return no status and no candidate SHALL be derived from it

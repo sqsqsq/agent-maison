@@ -521,3 +521,92 @@ Enforcement: `agents/adapter-schema.yaml`, `agents/claude/adapter.yaml`, `agents
 
 - **WHEN** an adapter receives the shared rule bundle that describes verifier dispatch but has no observed subagent run
 - **THEN** capability resolution SHALL still return `false`, and no heuristic over template directories or rule files SHALL override the declaration
+
+### Requirement: The verifier subagent dispatches on an issued request, not on a passing script gate
+
+The dispatch precondition carried by the verifier subagent template, the phase-executor template, the Stop hook guidance and the six feature Skills SHALL be "the harness issued a verifier request for this round", not "the script gate passed". The two coincide on every ordinary round; they differ exactly on the two diagnosable product failures the harness deliberately releases, and a precondition written as "script FAIL means never dispatch" makes the framework's own request undispatchable.
+
+The verifier's default handling of a failing script gate SHALL be unchanged: it collapses to the compile/run gate FAIL and does not grade the remaining items. That default SHALL be overridden only by the diagnosis section present in the assembled prompt, which the harness writes only when it issued the request itself. A round with no such section and no passing script gate SHALL still be treated as a protocol violation by the caller.
+
+Absence of a request SHALL keep its three existing meanings — capability not enabled, adapter without a reviewer, script not yet passing — and the dispatcher SHALL consult `summary.next_action` rather than inferring from the absence alone.
+
+No adapter capability declaration changes. `verifier_subagent` remains the single boolean, and the adapters that share `agents/claude/templates/agents` inherit the amended templates unchanged.
+
+Enforcement: `agents/claude/templates/agents/verifier.md`, `agents/claude/templates/agents/phase-executor.md`, `agents/claude/templates/hooks/check-phase-completion.mjs`, `agents/codeagent/adapter.yaml`, `skills/feature/*/SKILL.md`
+
+#### Scenario: A diagnosis request is dispatched despite the failing gate
+
+- **WHEN** `summary.next_action` is `run_verifier_for_repair` and `summary.verifier_request` is present
+- **THEN** the dispatcher SHALL deliver the request verbatim, write the reply verbatim to `summary.verifier_report`, and SHALL NOT edit product source before reading the per-issue conclusions
+
+#### Scenario: A failing gate with no request is still not dispatchable
+
+- **WHEN** the script gate fails and no request was issued
+- **THEN** the dispatcher SHALL fix the blockers and re-run, and SHALL NOT hand-write a request to reach the verifier
+
+#### Scenario: A shared-template adapter inherits the amended precondition
+
+- **WHEN** an adapter declares `template_dir: ../claude/templates/agents`
+- **THEN** its materialized verifier and phase-executor templates SHALL carry the same dispatch precondition with no adapter-specific text
+
+### Requirement: The Codex adapter ships a verifier subagent template rendered from the Claude verifier template
+
+`agents/codex/templates/agents/verifier.toml` SHALL exist and SHALL be declared in the codex adapter's subagent
+templates with `update_policy: auto_overwrite`, so that `framework-init` materializes it to `.codex/agents/verifier.toml`
+and re-aligns it on UPDATE.
+
+The file SHALL be a derivative, never a hand-maintained second copy of the verifier persona. It SHALL be produced by
+`renderCodexAgentToml` from `agents/claude/templates/agents/verifier.md`, which remains the single source of the
+verifier body. The renderer SHALL carry the frontmatter `description` and the whole body into TOML literal multi-line
+strings, and SHALL fail rather than guess: a frontmatter `name` other than `verifier`, a `tools` list reaching outside
+`{Read, Glob, Grep}`, or a `'''` sequence inside the description or the body SHALL each raise an error. Equivalence
+between the rendered result and the committed file SHALL be test-enforced, so that editing the Claude template without
+re-running the sync command fails the unit suite.
+
+The template SHALL declare `sandbox_mode = "read-only"` **as the role default only**. Codex applies the role
+configuration when spawning a subagent and then overwrites it with the parent thread's live permissions, and the
+Maison goal parent process runs with full access; the declaration therefore SHALL NOT be described, in the file, the
+adapter or the docs, as an isolation guarantee or as physical read-only enforcement. The "does not write" constraint
+SHALL be carried by the hard rules in the rendered instructions.
+
+Enforcement: `harness/scripts/utils/codex-agent-toml.ts`, `harness/scripts/sync-codex-agent-templates.ts`, `agents/codex/adapter.yaml`, `agents/codex/templates/agents/verifier.toml`, `harness/tests/unit/codex-adapter-verifier-template.unit.test.ts`
+
+#### Scenario: UPDATE backs up and overwrites a hand-written host file
+
+- **WHEN** a host that carries its own `.codex/agents/verifier.toml` runs framework-init UPDATE
+- **THEN** the old file SHALL be copied to `.framework-backup/<stamp>/.codex/agents/verifier.toml` and the target
+  SHALL become byte-identical to the framework template; a second run SHALL report the target unchanged and SHALL NOT
+  create another backup
+
+#### Scenario: An unsynced Claude template edit fails the suite
+
+- **WHEN** `agents/claude/templates/agents/verifier.md` is edited without re-running `npm run sync:codex-agents`
+- **THEN** the equivalence unit test SHALL FAIL, naming the rendered result and the committed file as different
+
+### Requirement: Adapter subagent templates may be declared at the adapter top level
+
+An adapter SHALL be able to declare its subagent template directory either at the top level of `agents/<name>/adapter.yaml`
+as `subagents`, or in the historical position `commands.subagents`. Both positions SHALL carry the same fields
+(`target_dir`, `template_dir`, `update_policy`) and the same semantics, and an adapter SHALL NOT declare both — when the
+top-level field is present it SHALL win, and the mutual exclusivity SHALL be test-enforced across every adapter.
+
+Collection SHALL happen outside the `commands` block: an adapter whose agent has no slash command surface declares
+`commands: null`, and a subagent declaration reachable only from inside that block would never be materialized. The
+resolved source SHALL be visible in the per-file inspection origin so that a materialized target names the field it came
+from.
+
+Declaring a subagent template directory SHALL remain unrelated to `verifier_subagent`, which stays a standalone boolean
+about observed dispatch capability and SHALL NOT be inferred from the presence of a template directory.
+
+Enforcement: `agents/adapter-schema.yaml`, `agents/codex/adapter.yaml`, `harness/scripts/check-init.ts`, `harness/tests/unit/adapter-catalog-consistency.unit.test.ts`
+
+#### Scenario: A slashless adapter materializes its subagent template
+
+- **WHEN** an adapter declares `commands: null` and a top-level `subagents` block, and framework-init materializes it
+- **THEN** every file under the declared `template_dir` SHALL appear in the adapter's template file list with the
+  declared `update_policy`, and SHALL be written under the declared `target_dir`
+
+#### Scenario: Adapters keeping the historical position are unaffected
+
+- **WHEN** an adapter declares `commands.subagents` and no top-level `subagents`
+- **THEN** its template entries SHALL keep the `commands.subagents.template_dir` origin and the same targets as before

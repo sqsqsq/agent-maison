@@ -2,7 +2,7 @@
 
 > 由 `npm run release:changelog` 从 `.cursor/plans/*.plan.md` 自动生成。消费者向变更见 `RELEASE-NOTES-v*.md` 与 `MIGRATION.md`。
 
-Generated: 2026-09-04 · current window: `3.1.0`
+Generated: 2026-09-09 · current window: `3.1.0`
 
 ## 3.2.0
 
@@ -50,6 +50,8 @@ Generated: 2026-09-04 · current window: `3.1.0`
 
 ## 3.0.0
 
+- **3.0.0 效率优先 — 闭环仪式减法 / 判词给改法 / 派生与量测机器化 / verifier 一次化与核对化 / 回执与报告机器化 / 真机证据按输入复用 / 上下文减负** — > [14/14 completed]
+  - `3.0.0效率优先_闭环仪式减法与verifier一次化与证据按输入复用_07a41ec6.plan.md`
 - **3.0 小修合集 — 失败归因一致性 / patch 脚本幂等 / 锁屏自动解锁正确性** — > [3/3 completed]
   - `3.0小修合集_归因一致性与写保护时点与脚本幂等与工作区根_f4b2c8e6.plan.md`
 - **Maison 优化项 — provider 计划期查表、参考图视口尺寸前置门、受限 case 首部复位、versionCode=0 归一** — > [7/7 completed]
@@ -62,12 +64,18 @@ Generated: 2026-09-04 · current window: `3.1.0`
   - `cc-spec卡死根治_PASS态冻结与门禁可修复性与无头求人闭环_7c4f2e9b.plan.md`
 - **codeagent adapter 接入——.cac 物化与 claude 差异最小化** — 新增 codeagent（Claude Code CLI 内核衍生，物化目录 .cac，headless CLI=codeagentcli）adapter。T0 六项宿主探针已全部回灌（2026-07-29），三处待定分支全部收敛到最优形态：settings.json 用 ${CODEAGENT3_PROJECT_DIR}（实证可展开）、AskUserQuestion 同名同签名（rules 共享成立）、Read 事件同构（视觉链入册）。收敛原则：只共享经实证且不含 adapter 身份/工具能力/目标目录差异的模板——共享=verifier/goal-condition/hooks/rules/AGENTS.md，分叉=settings.json+12 份 commands（身份行仿 cursor 先例）。hooks 项目根解析升级 import.meta.url 自锚+CODEAGENT3 env（cd 漂移已实证）；goal 接线 13 点闭合清单（含 keyed registry/substring dispatch 盲区与哨兵两处实采漏判修复）。 [6/7 completed]
   - `codeagent_adapter接入_cac物化与claude差异最小化_c7a9e2f4.plan.md`
+- **Codex verifier 模板收编 — 宿主手写 toml 纳入 framework 管理、由 verifier.md 生成、只读仅为角色默认值** — > [7/7 completed]
+  - `codex-verifier-template_宿主手写toml收编与verifier.md派生_7b2e9d4c.plan.md`
 - **宿主 framework 写保护与完整性加固** — > [7/7 completed]
   - `consumer-guard_宿主framework写保护与完整性加固_e8f5a2c7.plan.md`
 - **contracts 统一解析边界 — 引用闭环真源收编与裸读禁令** — > [5/5 completed]
   - `contracts统一解析边界_引用闭环真源收编与裸读禁令_c7e2a9d4.plan.md`
 - **critic 闭环基础设施加固 — 结构化发现 + 熔断账本 + 回执生产 + 静稳采样 + 校准回灌** — > [11/12 completed]
   - `critic-loop-hardening_自动闭环机器化与校准回灌_f7a3d9c2.plan.md`
+- **设备就绪正道 — 即席入口接设备门、独立 device:ready 与解锁话术纠偏** — > [7/7 completed]
+  - `device-ready-entry_即席设备门接线与device-ready与解锁话术纠偏_c7d2a9e4.plan.md`
+- **feature-completion — 完成凭证结构性不可达的框架缺口（宿主 run deb77f 实证）** — 宿主 run 20260908T011803Z-deb77f 六阶段 PASS 闭环、真机 P0 13/13、三屏 visual-diff 全 pass 且 0 must_fix，却收 PARTIAL、无完成凭证。只读复现 collectCleanPassIssues 的 11 条并逐条追到源码，是三组 writer/消费侧缺口而非产品问题：① asset 轴（指纹链 0 布局误用、指纹链 3 硬编码"恒不继承"、零检查面轴判 UNVERIFIED）；② 完成侧只认 legacy runtime_fidelity；③ 视觉债务账本按 check id 归集，而 visual_diff 结果在只有 WARN 命中时被改名，BLOCKER 债务永不闭账；账本又把 WARN 来源当阻断、并对每个阶段的 summary 压 visual 轴。全部修在产生错误事实的 writer 处，每处几行，不加字段、不加消费侧特判、不建新机制。宿主收尾范围在本地修复后按实际可复用路径核对，不预设整链重跑。 [6/6 completed]
+  - `feature-completion_asset指纹布局误用与native运行时证据完成判据_a3f7c1d9.plan.md`
 - **framework-init 正向意图收口 — 删除 Git 专用路由与 init 宿主 SCM 耦合** — > [7/7 completed]
   - `framework-init正向意图收口_删除Git专用路由与runtime完整性残留_33714d0c.plan.md`
 - **framework-init 误触发纠偏（方案已撤回）** — > [0/1 completed]
@@ -108,6 +116,24 @@ Generated: 2026-09-04 · current window: `3.1.0`
   - `interactive-vision-canary_交互式视觉能力实测与local无感收口_b7e42d19.plan.md`
 - **运行时布局树几何 oracle + 自报度量诚实性治理 + VL critic 闭环 — 视觉回环几何盲区根治** — > [12/13 completed]
   - `layout-oracle_视觉几何盲区根治_c6d8f2b4.plan.md`
+- **六阶段重构 B01 — 负面结果verifier回修施工图与过时指令删除** — 窄放行可诊断的review/UT产品失败，接通请求、输出、候选和下一步；保留产品FAIL、Task协议、原生执行与completion probe。 [10/10 completed]
+  - `pipeline_b01_verifier_repair_3a7f9c12.plan.md`
+- **六阶段重构 B02 — 视觉能力与材料证据施工图** — 删除invoke级inline金丝雀全链，参考图读取记录改绑材料哈希；能力真值回落run级preflight金丝雀，保留completion probe与独立visual provider，不扩大视觉系统。 [6/6 completed]
+  - `pipeline_b02_vision_evidence_8d2b4f60.plan.md`
+- **六阶段重构 B03 — 构建执行复用与报告整理施工图** — UT出包在同次harness内唯一化、外层重复真机执行按执行键复用、报告对账区分执行事实与派生统计、attended不再被注入无人值守禁问块；保留completion probe、terminal仲裁与硬预算。 [5/7 completed]
+  - `pipeline_b03_execution_reuse_5e1c7a93.plan.md`
+- **六阶段重构 B04 — 失败归因与 prior review 消费一致施工图** — 无失败事实的 attempt 不再被标注 code_regression；ui_spec_fidelity_gate 的缺证类失败归入既有 spec_capture_gap；goal 快照对 completed_with_prior_review 补既有 reviewed_subject 回落。one-shot 与新变化范围调度保持 cancelled。 [4/7 completed]
+  - `pipeline_b04_scoped_recovery_2f8a6d40.plan.md`
+- **六阶段重构 B05 — 既有策略配置与适用性出口施工图** — 显式 evidence_profile=balanced 在 goal/headless 生效（默认仍 strict）；plan 对确实不涉及的模型/服务/页面接受依据明确的不适用出口；verify-ut 的单 expect 硬判改为线索；剩余三处过时硬文案对齐。可测性前移保持 cancelled。 [6/8 completed]
+  - `pipeline_b05_phase_contracts_7b3e9a15.plan.md`
+- **六阶段重构 B06 — 四主格差异验收与发布就绪施工图** — 本地只做矩阵证据清单、每格精确运行单、次要格静态/生产函数核对、收益与缺口登记表、候选件与迁移说明收口；C-U 合并回归与 C-N/X-U/X-N 三个差异格、golden 采集与 promote 全部由用户在验收宿主触发。未实测的格一律不写 PASS。 [8/12 completed]
+  - `pipeline_b06_matrix_acceptance_4d9c1f72.plan.md`
+- **六阶段重构 B07 — 视觉回修归因与 golden 复用校验施工图** — 视觉信号进回修候选时按 defect 严重度分流（minor 不产 coding 候选、留在既有视觉债务台账），T8 hard 命中不得被转录成 minor；testing 同键复用时若当前设了 golden contract，仍走既有采集入口而不是把 visual_diff_capture 直接记 PASS；golden contract 的适用性在 B06 运行单 A 启动前裁定。预算、量测、defect schema、verifier 指引一律不动。B07 只做本地修复；宿主补验收归 B06。 [7/7 completed]
+  - `pipeline_b07_visual_repair_attribution_6e4a2c8b.plan.md`
+- **六阶段重构 B08 — 复用证据绑定、执行键身份与长图参考推导施工图** — 同键复用轮照常写出真机证据并按"与 decideReuse 同一判据"的执行键身份采信（不再拿本 attempt 的时间窗与本轮装机否决）；装机复用分支回传当前 HAP 的完整摘要，代理与外层的执行键从此相等（不做短指纹回落、不跳过任何记录）；参考图与视口同宽但更高时，采集、provider、检查三处共用同一"顶部一屏"比对输入，比对范围与区域外元素的未验证状态写清并沿既有覆盖/债务机制传递；unverified 不再单独构成失败事实。预算、T8、verifier 指引、执行键构成不动。B08 只做本地修复；宿主补验收归 B06。 [7/7 completed]
+  - `pipeline_b08_reuse_evidence_and_ref_derivation_9b2d5e7c.plan.md`
+- **六阶段效率与准确性重构总计划 — HMOS × Claude/Codex × goal/非goal** — B01先细化施工图，后续批次滚动设计，宿主回归收敛为两个检查点（B02 后、B06）；核心四格实测，codeagent及attended保留fixture覆盖，不新增机制。 [2/6 completed]
+  - `pipeline_master_9c6e2a41.plan.md`
 - **plan 待办 SSOT — frontmatter todos 唯一真源，正文未勾项拦截** — > [3/3 completed]
   - `plan待办SSOT_frontmatter唯一真源与正文未勾项拦截_a3e7d1c9.plan.md`
 - **resume 验证优先 — 停等后先重验、不再无条件重调 agent** — > [3/3 completed]
@@ -142,12 +168,18 @@ Generated: 2026-09-04 · current window: `3.1.0`
   - `verifier能力化_policy驱动短request与稳定subject裁撤_a9d4e7c2.plan.md`
 - **verifier 证据身份绑定 — subject 指纹与 JSON 真源收编** — > [6/6 completed]
   - `verifier证据身份绑定_subject指纹与JSON真源收编_e5b8c3f7.plan.md`
+- **verifier 证据链裁剪 — 删 SubagentStop hook 发布与身份绑定 / 报告即真源 / adapter 能力矩阵归零 / goal 与 interactive 一条路** — > [6/7 completed]
+  - `verifier证据链裁剪_删hook发布与身份绑定_报告即真源_d2f7a9c4.plan.md`
 - **vision-canary 缓存生命周期与探测有效性加固 — probe_version 迁移 + 严格判卷 + TTL** — (no overview) [0/0 completed]
   - `vision-canary-probe-validity_探测失败不落盲档缓存_c7d2e9a4.plan.md`
 - **事故修复四件套 — local config 无损写回 / codex 审批旗标位置 / 解锁话术 / 显式凭据 rebind** — > [4/4 completed]
   - `事故修复四件套_config无损写回与codex审批位置与解锁话术与凭据rebind_c9f4e7a2.plan.md`
+- **作者前置输入接线 — goal 作者 prompt 注入 extension knowledge 索引 / 文档纠偏 / 接缝对齐主干以便 cp** — > [6/6 completed]
+  - `作者前置输入接线_goal作者prompt注入knowledge索引_接缝对齐主干cp_a7c3e9d2.plan.md`
 - **修复环裁决化 — 候选真伪裁决、收敛不变式与增量修复环** — > [3/3 completed]
   - `修复环裁决化_候选真伪裁决与收敛不变式与增量修复环_e2b7c4a9.plan.md`
+- **写边界归属门禁裁撤 — 归因只做归因 / 信息缺失不再终局 / 源码漂移单次裁决** — > [7/7 completed]
+  - `写边界归属门禁裁撤_信息缺失不再终局与源码漂移单次裁决_1741b6f2.plan.md`
 - **场外信任状态最小化 — 测试隔离 / 生命周期回收 / 单写者修复 / 金丝雀临时化** — > [4/4 completed]
   - `场外信任状态最小化_测试泄漏根治与终局回收_b7e4d2a9.plan.md`
 - **宿主回灌三修 — 截断链预检鸡生蛋、wall-clock 活跃预算、halt 出路真实化** — > [5/5 completed]

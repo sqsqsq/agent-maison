@@ -30,5 +30,9 @@
 - [x] 4.2 `MIGRATION.md`: `capability-receipt.json` stops being produced; the refs receipt moves to schema 1.1 and the loader accepts only 1.1
 - [x] 4.3 Extend the existing suites — no new suite, no new framework: `effective-vision-context` (capability source), `critic-receipt-producer` (path matching, cross-invoke union, 1.0 residue, the three unreachable predicates), `visual-fidelity` (the four states through the real gate), `goal-runner-phase` / `host-runtime-truth` (closure prompt), `goal-canary-pin-binding` (capability-source matrix, goal-report text), `goal-runner-testing-integrity` (V1/V2/V5 through the production wiring, plus the runtime-entry constraint)
 - [x] 4.4 `node scripts/check-plan-version.mjs`, `npm --prefix harness run typecheck`, the eleven `test:unit --filter` runs, `npm run openspec:validate`
-- [ ] 4.5 `npm run candidate:build` — run by the dispatcher after review, not here
-- [ ] 4.6 Host acceptance: the user-triggered `C-U` regression over bc-openCard-1 (spec→ut window), merged with B01's V9
+- [x] 4.5 `npm run candidate:build` — run by the dispatcher after review, not here
+- [x] 4.6 Host acceptance: the user-triggered `C-U` regression over bc-openCard-1 (spec→ut window), merged with B01's V9
+
+## 2026-09-08 closeout evidence
+
+The current candidate manifest records complete=true, built_at=2026-09-08T11:26:37.817Z, smoke_checked_at=2026-09-08T11:28:48.454Z, source_commit bb4aed67. Its in-zip manifest SHA matches the installed host manifest; ZIP SHA=7e1472c011b46b77eb1131b8cac892ca63c5b11d4c42e6ca57b12f9de6814656. B02 host acceptance is now closed using deb77f spec closure retry/carried_over=3 and successor 73fc05 full-chain VALID. See B06 §10; no rerun performed for checkbox synchronization.

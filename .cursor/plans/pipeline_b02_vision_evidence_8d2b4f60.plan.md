@@ -19,8 +19,8 @@ todos:
     content: 按D8同步四份OpenSpec delta（含visual-capability-routing规范性正文）、MIGRATION与spec侧文档，扩既有目标套件（含attended bridge与goal-report文本断言），核对独立visual provider不受影响，完成候选件本地验收。
     status: completed
   - id: b02-host-acceptance
-    content: 用户触发候选件集成和bc-openCard-1的C-U合并回归（spec→ut窗口，同时验收B01 V9与本批），确认纯收口不重考、不拒签、负面结果可回修；B03细化不等待此项。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
-    status: cancelled
+    content: 用户触发候选件集成和bc-openCard-1的C-U合并回归（spec→ut窗口，同时验收B01 V9与本批），确认纯收口不重考、不拒签、负面结果可回修；B03细化不等待此项。
+    status: completed
 ---
 
 # B02施工图
@@ -386,3 +386,9 @@ S0至S3是可审查提交/变更组，不要求自动git commit。
 - 最终 `candidate:build`（scratchpad b02/candidate-build-2.log）：typecheck 通过、unit 3840/3840、fixtures 46/46、consumer smoke 全段通过，`[candidate] BUILT → dist/candidates/framework-3.0.0-candidate.zip`，zip sha256 `cf0ea6d043147fa1697e0376b02bc951208d3a3144568713a8d72317f344584d`。
 - 提交：分三笔（D1–D3 生产核心删改 / D4–D7 消费面与文案 / plan 与 OpenSpec），不带署名。
 - `b02-contract-local` 置 completed；`b02-host-acceptance` 保持 pending：候选件集成到验收宿主与 C-U 合并回归（spec→ut 窗口，同时验收 B01 V9）由用户触发。
+
+### 2026-09-08 · B02 宿主验收收口
+
+宿主：`D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-1`。旧 run A=`20260908T011803Z-deb77f`（包源码 `1d82b276`，PARTIAL）；新 run B=`20260908T130534Z-73fc05`（包源码 `bb4aed6734e4b9f007c17f6f3fd81d2f813106b6`）。B 的 events.jsonl:3 记录 supersede A，六阶段 PASS/advance，:122 为 CHAIN_SLICE_COMPLETED；只读调用安装版 verifyFeatureCompletion 返回 VALID、reasons=[]。原件/投影 original_sha256=`3b4edd82c0795d7420aa8247674a3f4dd31f4c09780a7836633f8d68ba8a0536`。A 的 PARTIAL 保留原样，不改称成功。
+
+A 的 events.jsonl:49 为 spec PASS/advance_blocked/closure_open/retry，:63 第二轮 refs status=complete、carried_over=3，:67 spec PASS/advance；A 全 run 无 capability_receipt 事件，未再次执行旧 inline canary 签发。B 的 spec 一轮 PASS/advance，refs complete；最终全链 VALID。与既有 attended/非goal 本地测试合并复用，关闭 b02-host-acceptance。C-N/X-U/X-N 的真实模式差异仍由 B06 独立待办承担，未用 fixture 冒充实测。

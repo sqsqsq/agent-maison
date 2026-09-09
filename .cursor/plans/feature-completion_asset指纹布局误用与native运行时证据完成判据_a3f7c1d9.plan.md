@@ -26,7 +26,7 @@ isProject: false
 
 # feature-completion 完成判据修复（a3f7c1d9）
 
-状态：**已实施并提交（4f3d9812 基线 → a230a5a8 D2 / 118bb6a4 D1+D3 / b3b71c2d D5；codex 实施 review 三轮，第 3 轮 approve；全量 npm test unit 3959/0、fixtures 46/0）。待办：§5 宿主收尾由用户触发。** 原则 SSOT：[overview §1.2.1](../../docs/overview.md#121-四条总设计原则)（效率优先、简单优先、减法；每项改动写明放弃的准确性）。
+状态：**已实施并提交（4f3d9812 基线 → a230a5a8 D2 / 118bb6a4 D1+D3 / b3b71c2d D5；codex 实施 review 三轮，第 3 轮 approve；全量 npm test unit 3959/0、fixtures 46/0）。宿主收尾：2026-09-08 run 73fc05 已回归通过，verify=VALID（见文末回填）。** 原则 SSOT：[overview §1.2.1](../../docs/overview.md#121-四条总设计原则)（效率优先、简单优先、减法；每项改动写明放弃的准确性）。
 
 **完成边界**：本 plan 的完成 = 本地修复 + §4 判据。宿主收尾（§5）在本地修复后据实核对范围，由用户触发；需求是否完成以凭证为准。
 
@@ -373,3 +373,12 @@ codex 实施 review R1 结论 needs-attention（`<scratch>/fc/review-r1-result.m
 - **plan 未列的改动文件**：`harness/tests/run-unit.ts`（注册新 suite，两行）。另 `applyVisualDebtPipeline` 加了 `export`（plan 只写导出 `resolveAssetAxisInheritance`）——V11 直测生产函数最小路径，避免搭 `writeRunSummaryBase` 整套夹具。
 - ~~D3(b) 把盲档 **BLOCKER-SKIP** 来源也从"入账"改为"保留历史/不新开账"~~——实施 review R1 裁定恢复既有 SKIP 兜底（四态），见下节第 5 条。
 - §5 宿主收尾未做、未触碰宿主工程。§6 血缘登记项未动。
+
+### 2026-09-08 · 宿主回归通过（发布收尾回填）
+
+宿主：`D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-1`。旧 run A=`20260908T011803Z-deb77f`（包源码 `1d82b276`，PARTIAL）；新 run B=`20260908T130534Z-73fc05`（包源码 `bb4aed6734e4b9f007c17f6f3fd81d2f813106b6`）。B 的 events.jsonl:3 记录 supersede A，六阶段 PASS/advance，:122 为 CHAIN_SLICE_COMPLETED；只读调用安装版 verifyFeatureCompletion 返回 VALID、reasons=[]。原件/投影 original_sha256=`3b4edd82c0795d7420aa8247674a3f4dd31f4c09780a7836633f8d68ba8a0536`。A 的 PARTIAL 保留原样，不改称成功。
+
+- 六条回归判据已直接读取宿主文件并复核：零检查面 NOT_APPLICABLE、testing asset/visual PASS、native P0 13/13 与 p0_runtime_step_evidence PASS、四条视觉债务 closed、完成投影真实生成并 VALID。
+- testing summary：COMPLETE_WITH_GAPS / release_readiness=READY；顶部一屏外未验证、manual 工具缺口与已接受 minor 差异只披露，不追加满分或拆图要求。
+- build 复用；装机实际执行，Hylyre 真跑 `testing/reports/20260908T133416Z-536/hylyre`，最终 gate 同键复用（key=`1c4e33761d97d0d25e0d47e1cc19ebef28ec495498c25bebc023dd46119df9ed`）。不把真实执行说成零跑机。
+- 本 plan 本地与本次宿主回归已收口；不代表整个 3.0.0 已发布。本轮仅回填记录，不改宿主、不重跑测试。
