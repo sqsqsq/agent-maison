@@ -117,3 +117,11 @@ B01/B02 的宿主验收已按两次实跑及最终 VALID 收口，见各批最�
 ### 2026-09-09 3.0.0发布收口
 
 用户明确取消剩余补测并要求正式发布；已完成实证原样保留，未覆盖项披露，剩余golden补验取消。B01–B06全部收口，采用既有同字节候选件正式交付；不把宿主历史HALTED改写为成功。详见B06最终发布裁定。
+
+### 2026-09-09 主干回灌闭环
+
+主干已按 `git cherry-pick -x` 顺序接收发布分支 `7906a7d2..60dac348` 的全部九笔提交，包括完成判据与质量轴修复、report-only 时间链与三屏 golden、OpenSpec 归档、宿主验收证据和 3.0.0 正式发布记录。87 份 `version: 3.0.0` plan 的 todo 状态均与发布分支最终状态一致，无未完成待办；取消的补测仍为 cancelled，历史 HALTED 与覆盖缺口不改写为通过。
+
+主干 `package.json.version` 保持 3.1.0，保留 3.1.0 独有规格与实现；changelog 从主干 plan 重生成。完成凭证测试新增场景接入主干 `completion-chain-seed.ts`，保留共享夹具唯一实现及既有产物、manifest 输入绑定。此次同步不重新打包或发布 3.0.0。
+
+主干验收：`cd harness && npm test` 全 PASS（typecheck、4382 unit、46 fixtures）；`npm run openspec:validate` 37/37 且 Enforcement 路径通过；默认与 release 模式 plan 校验通过；本批 diff/LF 检查通过。

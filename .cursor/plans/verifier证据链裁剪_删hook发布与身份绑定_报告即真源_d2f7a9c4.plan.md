@@ -63,7 +63,7 @@ todos:
     status: completed
   - id: t6-verify-and-host
     content: >-
-      （主干副本：责任转交 Br_release_3.0.0——宿主实测在分支线登记；本次主干集成验证由 plan c7e2a9f4 承担；cancelled 只表示 main 不再拥有此任务，不代表验收完成，AGENTS.md 责任转交口径）
+      （主干副本：2026-09-09 已回灌 Br_release_3.0.0 的宿主验收与闭环记录；本 todo 按分支最终事实 completed，证据及覆盖边界见本 plan 最新实施记录。）
       T6 收口验证。整批：`cd harness && npm test`、typecheck、`npm run openspec:validate`、`npm run release:check-plans`、LF（node 扫）与 `git diff --check`。宿主：由用户拿新发布件在 bc-openCard-1 起无人值守 goal run 跑 spec 阶段（本次熔断的原场景），预期 phase executor 把 verifier 回复写出 verifier.report.<subject>.md、gate harness 的 check-receipt closed、无 closure_wall_repeated；attended 与 interactive 各跑一阶段确认同路；codex 跑一阶段确认从 INCOMPLETE 恢复闭环。不做 A/B；问题回灌本 plan 七、实施记录。
     status: completed
 ---
