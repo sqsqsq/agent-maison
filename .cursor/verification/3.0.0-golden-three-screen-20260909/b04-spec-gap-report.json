@@ -1,0 +1,593 @@
+{
+  "phase": "spec",
+  "feature": "bc-openCard-1",
+  "timestamp": "2026-09-09T01:32:23.190Z",
+  "project_root": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host",
+  "assurance": "full",
+  "capability_resolutions": [
+    {
+      "id": "capability_spec_requirement",
+      "axis": "functional",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "fail",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "requirement",
+          "state": "resolved",
+          "selected_source": "derive.requirement",
+          "selected_source_fingerprint": "6042977c3545547d0ff6b7210bdf9eee93182d7ca4224ed1ae068b4111a3d441",
+          "attempts": [
+            {
+              "kind": "derive",
+              "source": "derive.requirement",
+              "state": "resolved",
+              "dependencies": [],
+              "detail": "goal_requirement:dc554530ee6c513d"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability_spec_codebase",
+      "axis": "functional",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "prune",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "codebase",
+          "state": "resolved",
+          "selected_source": "derive.codebase",
+          "selected_source_fingerprint": "941ddf59a8c89fb7ca25aaf80228500dc31261fbc4f4b161904106ab52c8f8c1",
+          "attempts": [
+            {
+              "kind": "derive",
+              "source": "derive.codebase",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\module-catalog.yaml",
+                  "exists": true,
+                  "sha256": "1b1d96bd492e81757d642d6ad0e28456a9bd7db7b7b0ebfc19e29dc23d1607a7",
+                  "role": "derive"
+                }
+              ],
+              "detail": "project_root"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability_spec_visual_reference",
+      "axis": "visual",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "fail",
+      "applicability_provider_id": "applicability.pixel_fidelity",
+      "applicability_dependencies": [
+        {
+          "path": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\bc-openCard-1\\spec\\reports\\fidelity-intent.json",
+          "exists": true,
+          "sha256": "5ff3a8eccbc0cec29de60e2d7db6c225a33fbf2e2816da9e8d955310fc9a2b42",
+          "role": "applicability"
+        }
+      ],
+      "inputs": [
+        {
+          "id": "visual_reference",
+          "state": "resolved",
+          "selected_source": "derive.visual-reference",
+          "selected_source_fingerprint": "17dc0e36e6a741b1cafd6e57d35cb70607285e66d63117279d042a23c6edf2a5",
+          "attempts": [
+            {
+              "kind": "derive",
+              "source": "derive.visual-reference",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\原始需求\\1-1-银行卡\\1-a-添加银行卡页面收起态.jpg",
+                  "exists": true,
+                  "sha256": "28550939b94064424ab7ba5d531bbab25ddbb2c0f0720e74fab8a2e5c5da646d",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\原始需求\\1-1-银行卡\\1-b-添加银行卡页面展开态.jpg",
+                  "exists": true,
+                  "sha256": "2be2c7f7e81fc373e4367a3910f29b64aabc32a0f1f268e0dd7fc29a65316522",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\原始需求\\1-1-银行卡\\2-全部银行页面.jpg",
+                  "exists": true,
+                  "sha256": "1ea25336cb87c2beb570af378174b53c9ae324b0abdff982c4029b5207390c0f",
+                  "role": "derive"
+                }
+              ],
+              "detail": "reference_images:3"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "capability_resolution_contract_fingerprint": "0949489a5deadbc5759c0bb061034892289f5183a67f8645bfcbcaf6f65ae64a",
+  "checks": [
+    {
+      "id": "node_options_injection",
+      "category": "structure",
+      "description": "进程预加载注入自检（P0-7：门禁产物防篡改）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "NODE_OPTIONS/execArgv/.node-options/.npmrc 未检出预加载注入。"
+    },
+    {
+      "id": "required_chapters",
+      "category": "structure",
+      "description": "spec 必须包含以下 10 个一级或二级章节（按 Markdown heading 匹配）： 术语映射表、功能概述、Scope 声明、目标用户与使用场景、功能清单、 页面/界面描述、业务流程图、异常/边界场景处理、非功能性需求、验收标准",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "全部 10 个必需章节均存在。",
+      "source": "required_chapters"
+    },
+    {
+      "id": "terminology_mapping_table",
+      "category": "structure",
+      "description": "「术语映射表」章节必须存在且为 spec Step 1.5 产出的标准格式： (1) 至少包含一行业务术语； (2) 每行必须包含：原始术语、权威模块、所属层、置信度、易混项、用户确认； (3) 所有行的「用户确认」列必须为 `[x]`（本项目不启用 auto-approve）；\n    C4 exploration-scale：`project_scale=small` 时可用节末一行\n    \"- [x] 已对照 architecture.md 模块清单一次性确认全部术语映射\" 整体替代逐行确认；\n(4) 每行的「权威模块」必须存在于 doc/module-catalog.yaml 的模块名集合内； (5) 空映射表不被允许（即便只有一个术语也要显式列出）。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "18 条术语全部已确认，权威模块对齐 module-catalog，与 glossary 无冲突。",
+      "source": "terminology_mapping_table"
+    },
+    {
+      "id": "scope_declaration",
+      "category": "structure",
+      "description": "「Scope 声明」章节必须包含一个 yaml 代码块，定义 in_scope_modules、 out_of_scope_modules、rationale 三个字段；in_scope_modules 至少一项。 这是 Scope 守门机制的起点：plan 阶段的模块范围必须是本字段的子集。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "in_scope_modules: WalletMain、Phone；out_of_scope_modules: CommUI、CommFunc、AccountManager；rationale: 已填写",
+      "source": "scope_declaration"
+    },
+    {
+      "id": "scope_matches_catalog",
+      "category": "structure",
+      "description": "「Scope 声明」章节的 `in_scope_modules` 和 `out_of_scope_modules` 列出的每一个模块名，都必须在 doc/module-catalog.yaml 里真实存在， 防止 AI 自造模块名或写错名称。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "Scope 声明中全部 5 个模块名均存在于 doc/module-catalog.yaml。",
+      "source": "scope_matches_catalog"
+    },
+    {
+      "id": "terminology_modules_within_scope",
+      "category": "structure",
+      "description": "「术语映射表」里每一行的「权威模块」必须出现在 `in_scope_modules` 或 `out_of_scope_modules` 之一。 该 check 捕捉一类典型不一致：spec 作者列了某术语的消歧归属 （参考示例：\"卡中心 → CardManager\"），却忘了把对应模块声明进 Scope。 未声明 → plan / coding 不知道该模块究竟是\"本需求要改\"还是 \"只是消歧用\"，后续极易跨模块改错或漏改。 合法的修法有两种：\n  (1) 把该模块加进 in_scope_modules（本需求确实要改它）\n      或 out_of_scope_modules（仅供消歧，不改）；\n  (2) 从术语映射表里删掉这一行（该术语本来就不在本需求语境里）。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "术语映射表中全部 18 条权威模块均已在 Scope 声明中出现。",
+      "source": "terminology_modules_within_scope"
+    },
+    {
+      "id": "visual_handoff",
+      "category": "structure",
+      "description": "（spec 驱动 + opt-in：`spec` 段默认不在模板 skeleton；仅当配置了 spec.visual_handoff_enforcement 或对「缺 ui_change 整块」有特殊 FAIL/WARN 需求时参见 framework.config.json。 CLI --skip-visual-handoff 可跳过。） 若无含根字段 ui_change 的 ```yaml``` 代码块且无 spec.opt-in.strict/warn/reachable， check-spec 不产生此项（静默）。存在块时 ui_change ∈ {none, reuse_only, impl_out_of_band, new_or_changed, copy_edits_only}； new_or_changed / copy_edits_only 必须提供 visual_handoff.kind 与 authoritative_refs； path 经由 resolveAuthoritativePath 解析后须在 agent 侧 existsSync（或按 enforcement reachable/warn 降级）， 支持相对仓库根、${VAR}、获准的绝对路径/UNC；url 类 kind 校验 http(s) URL。 详见 framework/skills/feature/spec/reference/visual-handoff.md。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "ui_change=new_or_changed，kind=screenshot_pack；3 条 authoritative_refs 结构化与可达校验通过",
+      "affected_files": [
+        "doc/features/bc-openCard-1/spec/spec.md"
+      ],
+      "visual_resolution_rows": [
+        {
+          "ref_id": "ref_collapsed",
+          "declared_path": "doc/features/原始需求/1-1-银行卡/1-a-添加银行卡页面收起态.jpg",
+          "resolved_absolute": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\原始需求\\1-1-银行卡\\1-a-添加银行卡页面收起态.jpg",
+          "agent_reachable": true,
+          "resolution_kind": "relative_repo"
+        },
+        {
+          "ref_id": "ref_expanded",
+          "declared_path": "doc/features/原始需求/1-1-银行卡/1-b-添加银行卡页面展开态.jpg",
+          "resolved_absolute": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\原始需求\\1-1-银行卡\\1-b-添加银行卡页面展开态.jpg",
+          "agent_reachable": true,
+          "resolution_kind": "relative_repo"
+        },
+        {
+          "ref_id": "ref_all_banks",
+          "declared_path": "doc/features/原始需求/1-1-银行卡/2-全部银行页面.jpg",
+          "resolved_absolute": "D:\\1.code\\agent-maison-br\\.cursor\\verification\\3.0.0-golden-three-screen-20260909\\isolated-host\\doc\\features\\原始需求\\1-1-银行卡\\2-全部银行页面.jpg",
+          "agent_reachable": true,
+          "resolution_kind": "relative_repo"
+        }
+      ],
+      "source": "visual_handoff"
+    },
+    {
+      "id": "visual_handoff_denominator",
+      "category": "structure",
+      "description": "（spec 驱动 + opt-in：`spec` 段默认不在模板 skeleton；仅当配置了 spec.visual_handoff_enforcement 或对「缺 ui_change 整块」有特殊 FAIL/WARN 需求时参见 framework.config.json。 CLI --skip-visual-handoff 可跳过。） 若无含根字段 ui_change 的 ```yaml``` 代码块且无 spec.opt-in.strict/warn/reachable， check-spec 不产生此项（静默）。存在块时 ui_change ∈ {none, reuse_only, impl_out_of_band, new_or_changed, copy_edits_only}； new_or_changed / copy_edits_only 必须提供 visual_handoff.kind 与 authoritative_refs； path 经由 resolveAuthoritativePath 解析后须在 agent 侧 existsSync（或按 enforcement reachable/warn 降级）， 支持相对仓库根、${VAR}、获准的绝对路径/UNC；url 类 kind 校验 http(s) URL。 详见 framework/skills/feature/spec/reference/visual-handoff.md。",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "spec 声明覆盖 runner 发现的全部 3 张参考图（分母一致，无自缩）",
+      "affected_files": [
+        "doc/features/bc-openCard-1/spec/spec.md"
+      ],
+      "source": "visual_handoff"
+    },
+    {
+      "id": "fidelity_target_declared",
+      "category": "structure",
+      "description": "Visual Handoff yaml 块可选 fidelity_target（pixel_1to1|semantic_layout，默认 semantic_layout） 与 asset_acquisition_mode；pixel_1to1 联动抬升 effective user_dir 并贯穿 spec/coding/testing ratchet。",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "fidelity_target=pixel_1to1；asset_acquisition_mode=auto_crop",
+      "affected_files": [
+        "doc/features/bc-openCard-1/spec/spec.md"
+      ],
+      "source": "visual_handoff"
+    },
+    {
+      "id": "vision_output_counterevidence",
+      "category": "structure",
+      "description": "视觉产出反证器（当前产物无状态检查：冲突 FAIL、证据缺口 WARN）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "无确定性反证且文本正向匹配（texts=81），但终签链未绑定（attended 执行形态无本次 invocation 的逐图 Read 审计（run-control owner.kind=session，runner 不审计遗留日志）——vl_multimodal 结构性不可达）——当前产物保持 unverified，但后续 attempt 仍可重新读图补齐。",
+      "source": "vision_output_counterevidence"
+    },
+    {
+      "id": "ui_spec_structure",
+      "category": "structure",
+      "description": "ui_change=new_or_changed / copy_edits_only 时须产出 doc/features/{feature}/spec/ui-spec.yaml： schema_version、非空 screens/tokens/assets；P0 屏须 root 组件树；每个 asset 须 resolved_path 或 placeholder+rationale；verified 字段驱动 DSL gate 与下游降级。 只查结构完整，非对图保真（保真由 fidelity gate + static_fidelity_score + visual_diff 承担）。 profile 分态：hmos-app 启用 / generic SKIP。详见 ui-spec.md。",
+      "severity": "MAJOR",
+      "status": "WARN",
+      "details": "ui_change=new_or_changed；screens=5；tokens=26；assets=20；verified=unverified\n本规则只查结构完整，非对图保真（保真由 DSL gate + 静态分 + 渲染 diff 承担）。\n提示：ui-spec verified=unverified：DSL 未过原图 gate；下游 parity 只报结构不报保真。",
+      "affected_files": [
+        "doc/features/bc-openCard-1/spec/ui-spec.yaml"
+      ],
+      "source": "ui_spec_structure"
+    },
+    {
+      "id": "ui_spec_fidelity_gate",
+      "category": "structure",
+      "description": "ui-spec 仅在 verified_method=vl_multimodal 且当前 hash-bound 机器证据链完整时， 方可作为保真基线进 plan；unverified 以及 legacy human_confirmed/human_gate 均按 未验真处理，WARN/FAIL（按 ui_spec_enforcement 档位）并触发 D/K 降级语义。",
+      "severity": "BLOCKER",
+      "status": "FAIL",
+      "details": "ui-spec verified=unverified：未经当前机器多模态证据核对，不得作为保真基线进 plan（可降级继续但须显式标注）。",
+      "suggestion": "处理：①adapter 有逐图 Read 审计能力（tool_event_provenance=structured_events）且本 invocation 真视觉在位时，逐张读图并签 refs receipt 后设 verified: verified + verified_method: vl_multimodal；②adapter 无逐图 Read 审计能力（none-provenance）或本 invocation 判盲时，vl_multimodal 结构性不可达，诚实保留 verified: unverified（soft 档 WARN 可继续、hard contract 仍 FAIL，不伪造签名）。",
+      "affected_files": [
+        "doc/features/bc-openCard-1/spec/ui-spec.yaml"
+      ],
+      "source": "ui_spec_structure"
+    },
+    {
+      "id": "capture_completeness",
+      "category": "structure",
+      "description": "ref-elements.yaml 为参考图侧独立枚举（分母不得取自 ui-spec/countMappableNodes）； pixel_1to1 覆盖不足 → BLOCKER。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "分母=doc/features/bc-openCard-1/spec/ref-elements.yaml；参考图枚举 235 项均已映射到 ui-spec must_have_elements（100%）",
+      "affected_files": [
+        "doc/features/bc-openCard-1/spec/ref-elements.yaml",
+        "doc/features/bc-openCard-1/spec/ui-spec.yaml"
+      ],
+      "source": "ui_spec_structure"
+    },
+    {
+      "id": "ui_spec_bbox_semantic",
+      "category": "structure",
+      "description": "P0-A（plan f2d8c4a6）：bbox 坐标语义确定性门禁。SSOT=[x,y,w,h] 归一化，VL 产出曾系统性转置为 [y,x,h,w]（round6 真凶，一个转置同时污染素材裁剪/token 采色/布局 ground truth）。 第 0 层零依赖 orientation 预检：横排多字文本节点 w<h 系统性出现（≥60% 且 ≥5 个）→ 疑似转置； 第 1 层 OCR 交叉校验：原图 OCR 词框行聚类 × 文本节点 bbox 双语义 IoU，decisive ≥5 且转置占比 ≥80% → 系统性转置 BLOCKER（阈值来自 2026-07-02 OCR spike 实测：坏态 22:0 判转置、修正态 22:0 判正确）。 OCR 不可用/覆盖不足时 pixel_1to1 不得 PASS（toolchain 归因，不静默 SKIP）。 门禁只判不改：修复=全文档 bbox/source_bbox 统一换轴后重跑，不自动回写、不自签。",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "bbox 坐标语义 OCR 验证通过：decisive 32（原语义 32 : 转置 0），覆盖率 87%",
+      "affected_files": [
+        "doc/features/bc-openCard-1/spec/ui-spec.yaml"
+      ],
+      "source": "ui_spec_structure"
+    },
+    {
+      "id": "capture_completeness_external",
+      "category": "structure",
+      "description": "P0-D（plan f2d8c4a6）：spec 完整性**外部对照**——真分母=参考原图 OCR 全文清单（状态栏 band 剔除、 单字符/纯符号去噪、金额样式保留），替换\"分母是 agent 自己抽的清单\"的 RC4 自循环（round6 实证： 右置副标题×5/优化横幅/¥119.40 连续两轮漏抽而 capture 100% PASS）。OCR 行未被 ui-spec/ref-elements 文本集覆盖 → 逐条 disposition（补 implement 建模，或在真实能力缺失时 capability defer）才可收口， pixel_1to1 BLOCKER；人签不得补足缺失机器证据。 反向 diff（spec 有而原图无=疑似幻觉）仅低置信注记。OCR 不可用 → pixel_1to1 不得 PASS（toolchain）。 诚实边界：只保证\"文本进了分母\"，不保证\"建模位置/分组正确\"。",
+      "severity": "MAJOR",
+      "status": "WARN",
+      "details": "【P0-D 盲档降级】原图 OCR 文本 22/70 行未被 spec 捕获（真分母覆盖率 69%）——当前 adapter 无视觉能力（adapterImageInput=none），无法逐条辨认噪声/真文本，已自动登记待复核清单：\n  doc/features/bc-openCard-1/spec/reports/blind-review-pending.yaml\n【诚实边界】本门禁只保证\"原图文本都进了 spec 分母\"（真分母=OCR 全文），不保证建模位置/分组正确（归 structure lint / review 视觉维度 / device 回环）；单字符角标/纯符号行已剔除（误报面>收益，known-miss）。",
+      "suggestion": "已写入 doc/features/bc-openCard-1/spec/reports/blind-review-pending.yaml（22 条，auto_disposition: unverifiable_blind）；收口阶段真人一次终审：确需实现→补 ref-elements + ui-spec 建模；确不实现→ref-elements defer + 签字。盲档下不要求 agent 逐条判断（那是无解题），不得靠删分母放行——分母是原图 OCR，删不掉。",
+      "affected_files": [
+        "doc/features/bc-openCard-1/spec/reports/blind-review-pending.yaml",
+        "doc/features/bc-openCard-1/spec/ref-elements.yaml",
+        "doc/features/bc-openCard-1/spec/ui-spec.yaml"
+      ],
+      "source": "ui_spec_structure"
+    },
+    {
+      "id": "asset_acquisition",
+      "category": "structure",
+      "description": "crop 类 assets 由 runner 按 spec 冻结的 source_ref/source_bbox 确定性裁图并记录源、算法/工具、 参数和输出 hash；产物还必须通过 asset_crop_validation 独立复验。旧 human_crop_confirmed / crop_confirmed_by 不构成授权或质量证明。依赖工具不可用时不得静默 SKIP，应走 capability 语义。",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "bank_logo_cmb：已存在（验真归 asset_crop_validation）；bank_logo_icbc：已存在（验真归 asset_crop_validation）；bank_logo_citic：已存在（验真归 asset_crop_validation）；bank_logo_hxb：已存在（验真归 asset_crop_validation）；bank_logo_ccb：已存在（验真归 asset_crop_validation）；bank_logo_abc：已存在（验真归 asset_crop_validation）；bank_logo_bocom：已存在（验真归 asset_crop_validation）；bank_logo_psbc：已存在（验真归 asset_crop_validation）；bank_logo_spdb：已存在（验真归 asset_crop_validation）；bank_logo_cmbc：已存在（验真归 asset_crop_validation）；bank_logo_pab：已存在（验真归 asset_crop_validation）；bank_logo_cgb：已存在（验真归 asset_crop_validation）；bank_logo_cib：已存在（验真归 asset_crop_validation）；bank_logo_bosh：已存在（验真归 asset_crop_validation）；bank_logo_bobj：已存在（验真归 asset_crop_validation）；bank_logo_bonj：已存在（验真归 asset_crop_validation）；bank_logo_bonb：已存在（验真归 asset_crop_validation）；bank_logo_bogz：已存在（验真归 asset_crop_validation）；bank_logo_ceb：已存在（验真归 asset_crop_validation）；bank_logo_boc：已存在（验真归 asset_crop_validation）",
+      "affected_files": [
+        "doc/features/bc-openCard-1/ui-spec.yaml"
+      ],
+      "source": "asset_acquisition"
+    },
+    {
+      "id": "asset_manifest",
+      "category": "structure",
+      "description": "pixel_1to1 联动 user_dir 须产出 spec/asset-manifest.yaml；占位资产须显式清单（拒绝 AI 山寨）。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "doc/features/bc-openCard-1/asset-manifest.yaml 已登记 20 项；ui-spec 需 20 项美术相关资产",
+      "affected_files": [
+        "doc/features/bc-openCard-1/asset-manifest.yaml"
+      ],
+      "source": "asset_acquisition"
+    },
+    {
+      "id": "asset_crop_validation",
+      "category": "structure",
+      "description": "P0-B（plan f2d8c4a6）：裁剪产物验真。对**全部** acquisition:crop 资产（新裁/历史已存在/已物化 一律重验，堵 existsSync→continue 的坏图复通过洞）：确定性 sanity（条状塌缩/icon 长宽比与面积占比/ 纯色/空白，可一票否决），并按当前 source_ref/source_bbox 与冻结算法确定性重裁后比较输出 hash； 可用 VL 仅作为额外机器语义证据。旧 bbox_verified_by/human_crop_confirmed/crop_confirmed_by 只读且不豁免验真。源、hash、工具 provenance 缺失或重裁不一致时 pixel_1to1 不得静默 PASS。 机器裁决落 spec/reports/asset-crop-validation.json，coding 物化门禁消费（未 verified 不得进模块 media）。",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "crop 资产验真：verified 20 / failed 0 / pending 0（共 20，含历史已存在产物，无\"已存在\"豁免）\ncontact-sheet: doc/features/bc-openCard-1/spec/reports/asset-contact-sheet-1-b-_.png（20 项）\n机器裁决：doc/features/bc-openCard-1/spec/reports/asset-crop-validation.json",
+      "affected_files": [
+        "doc/features/bc-openCard-1/spec/ui-spec.yaml"
+      ],
+      "source": "asset_acquisition"
+    },
+    {
+      "id": "goal_run_identity_intact",
+      "category": "structure",
+      "description": "goal-runs 目录完整性（started-but-manifest-less 残留 fail-closed）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "无损坏 goal-run 残留。",
+      "source": "goal_run_identity_intact"
+    },
+    {
+      "id": "fidelity_capability_pregate",
+      "category": "structure",
+      "description": "fidelity 路由 SSOT 复核（真冲突=pixel∧hard∧clamp；含混/自声明自动定档不阻塞）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "路由：inferred=pixel_1to1 selected=pixel_1to1 effective=pixel_1to1 strictness=best_effort asset=auto_crop source=requirement_self_declared。",
+      "source": "fidelity_capability_pregate"
+    },
+    {
+      "id": "blind_crop_prohibition",
+      "category": "structure",
+      "description": "盲档 crop 左移禁令（禁执行/自证裁剪；可信外部产物按 c1-c3 放行为消费态）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "盲档下 20 项 crop 资产全部满足可信消费态（c1-c3）：bank_logo_cmb, bank_logo_icbc, bank_logo_citic, bank_logo_hxb, bank_logo_ccb, bank_logo_abc, bank_logo_bocom, bank_logo_psbc, bank_logo_spdb, bank_logo_cmbc…",
+      "source": "blind_crop_prohibition"
+    },
+    {
+      "id": "feature_table_format",
+      "category": "structure",
+      "description": "「功能清单」章节必须包含一个 Markdown 表格，且表头至少包含 编号、功能名称、优先级、描述 四列",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "功能清单表格包含 11 行，表头列齐全。",
+      "source": "feature_table_format"
+    },
+    {
+      "id": "priority_values",
+      "category": "structure",
+      "description": "功能清单表格中「优先级」列的值必须为 P0/P1/P2/P3 之一",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "全部 11 行的优先级值合法。",
+      "source": "priority_values"
+    },
+    {
+      "id": "at_least_one_p0",
+      "category": "structure",
+      "description": "功能清单中必须包含至少一个 P0 功能项",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "共 9 个 P0 功能项。",
+      "source": "at_least_one_p0"
+    },
+    {
+      "id": "acceptance_criteria_format",
+      "category": "structure",
+      "description": "「验收标准」章节中每条标准必须包含唯一编号（如 AC-1、AC-2）， 且编号需关联到功能清单中的功能编号",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "验收标准包含 21 条唯一 AC 项。",
+      "source": "acceptance_criteria_format"
+    },
+    {
+      "id": "mermaid_flowchart",
+      "category": "structure",
+      "description": "「业务流程图」章节必须包含至少一个 Mermaid 代码块 （```mermaid ... ```），且使用 flowchart 语法",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "找到 2 个 Mermaid 流程图。",
+      "source": "mermaid_flowchart"
+    },
+    {
+      "id": "exception_table_format",
+      "category": "structure",
+      "description": "「异常/边界场景处理」章节必须包含 Markdown 表格，且表头至少包含 编号、异常场景、处理方式 三列",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "异常场景表格包含 7 行，表头列齐全。",
+      "source": "exception_table_format"
+    },
+    {
+      "id": "minimum_exception_scenarios",
+      "category": "structure",
+      "description": "异常场景至少覆盖 3 种基本类型：网络异常、数据为空、功能暂不支持",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "异常场景共 7 种（≥ 3）。",
+      "source": "minimum_exception_scenarios"
+    },
+    {
+      "id": "nfr_quantified",
+      "category": "structure",
+      "description": "「非功能性需求」章节中的性能指标必须包含量化数值 （如 ≤ 1.5 秒、≥ 54 FPS），不允许仅有定性描述",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "非功能性需求包含量化数值指标。",
+      "source": "nfr_quantified"
+    },
+    {
+      "id": "page_description_completeness",
+      "category": "structure",
+      "description": "「页面/界面描述」章节中每个页面必须包含组件表格（至少含 组件、类型、交互行为 三列）",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "全部 5 个页面均有组件表格。",
+      "source": "page_description_completeness"
+    },
+    {
+      "id": "metadata_header",
+      "category": "structure",
+      "description": "spec 文档顶部必须包含模块标识、版本、创建日期、状态等元数据",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "元数据齐全：模块标识、版本、创建日期、最后更新、状态",
+      "source": "metadata_header"
+    },
+    {
+      "id": "acceptance_yaml_present",
+      "category": "structure",
+      "description": "doc/features/{feature}/acceptance.yaml 必须存在（spec 从 spec 提取的验收 SSOT）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "doc/features/bc-openCard-1/acceptance.yaml 已存在。"
+    },
+    {
+      "id": "acceptance_ut_layer_complete",
+      "category": "structure",
+      "description": "acceptance.yaml 中每条 criterion/boundary 必须声明合法 ut_layer（unit/device/both）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "全部 28 条 AC/BD 均有合法 ut_layer。"
+    },
+    {
+      "id": "acceptance_device_focus_present",
+      "category": "structure",
+      "description": "ut_layer∈{device,both} 须填写 device_focus；both 须同时填写 ut_focus 与 device_focus",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "device/both 共 20 条均已声明 device_focus（及 both 的 ut_focus）。"
+    },
+    {
+      "id": "legacy_device_testing_todo_deprecated",
+      "category": "structure",
+      "description": "device-testing-todo.md 已废弃；若仍存在且缺 device_focus 则 WARN（过渡期）",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "未检测到 legacy device-testing-todo.md。"
+    },
+    {
+      "id": "feature_to_acceptance",
+      "category": "traceability",
+      "description": "每个 P0/P1 功能（功能清单中的编号）必须在「验收标准」中 有至少一条对应的 AC 项（通过 AC 项中的功能编号引用关联）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "全部 10 个 P0/P1 功能均有验收标准。",
+      "source": "feature_to_acceptance"
+    },
+    {
+      "id": "acceptance_to_feature",
+      "category": "traceability",
+      "description": "每条验收标准（AC 项）必须关联到至少一个功能编号",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "全部 21 条 AC 均关联到功能编号。",
+      "source": "acceptance_to_feature"
+    },
+    {
+      "id": "glossary_terms_used_in_body",
+      "category": "traceability",
+      "description": "若 doc/glossary.yaml 中的某术语（含 aliases）在 spec **正文** （术语映射表章节之外的全部内容）出现，但**未**列在术语映射表里 → WARN（最后一道术语漏建档兜底网）。 该 check 防止\"spec 作者把某业务词当作普通词写进正文， 实际它在 glossary 里有明确归属\"导致 plan / 3 走偏。 处理方式：\n  (1) 若确实是业务术语 → 把它加进术语映射表（推荐）；\n  (2) 若只是在正文里偶然带过的非业务用词 → 可忽略本 WARN；\n  (3) 若该词在不同语境下含义不同 → 在 glossary 里补 alias 或\n      明确 disambiguation，让 lookup 命中精确语境。\n命中规则：对 glossary.terms[].term 与 .aliases[] 做朴素子串扫描。 为避免重复触发，已在术语映射表中显式列出该 term / 其 aliases / 同 一 glossary 条目其它 alias 的，本 check 视为已覆盖。",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "spec 正文使用的 glossary 术语均已在术语映射表中显式声明。",
+      "source": "glossary_terms_used_in_body"
+    },
+    {
+      "id": "fidelity_intent_reconciliation",
+      "category": "structure",
+      "description": "保真档位声明 vs 需求 SSOT 强意图对账（强 1:1 意图禁止静默降档）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "intent=strong_pixel，declared=pixel_1to1——无禁止的降级。",
+      "source": "fidelity_intent_reconciliation"
+    },
+    {
+      "id": "acceptance_flow_structure",
+      "category": "structure",
+      "description": "P0 交互 AC 结构化 checkpoint + flows 三约束 + requirement_ref 验存",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "P0 交互 AC 13 条 checkpoint/引文/flow 合成全部合法。",
+      "source": "acceptance_flow_structure"
+    },
+    {
+      "id": "acceptance_flow_contract",
+      "category": "structure",
+      "description": "结构化流程模型机器契约（spec-owned + phase-evidence freshness）",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "P0 flow/checkpoint 来自 spec-owned acceptance.yaml；结构由 acceptance_flow_model 校验，freshness 由当前 phase evidence manifest 绑定。",
+      "source": "acceptance_flow_contract"
+    },
+    {
+      "id": "ux_reference_mapping",
+      "category": "structure",
+      "description": "ux-reference 参考图逐图建模对账（未映射/越权 out-of-scope 拦截）",
+      "severity": "MINOR",
+      "status": "SKIP",
+      "details": "无 ux-reference 参考图。",
+      "source": "ux_reference_mapping"
+    },
+    {
+      "id": "capability_spec_requirement",
+      "category": "structure",
+      "description": "capability input contract resolved (capability_spec_requirement)",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "axis=functional; all declared pre-check inputs resolved",
+      "source": "capability-resolution.ts"
+    },
+    {
+      "id": "capability_spec_codebase",
+      "category": "structure",
+      "description": "capability input contract resolved (capability_spec_codebase)",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "axis=functional; all declared pre-check inputs resolved",
+      "source": "capability-resolution.ts"
+    },
+    {
+      "id": "capability_spec_visual_reference",
+      "category": "structure",
+      "description": "capability input contract resolved (capability_spec_visual_reference)",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "axis=visual; all declared pre-check inputs resolved",
+      "source": "capability-resolution.ts"
+    }
+  ],
+  "summary": {
+    "total": 45,
+    "pass": 41,
+    "fail": 1,
+    "warn": 2,
+    "skip": 1,
+    "blockers": 1,
+    "verdict": "FAIL"
+  }
+}

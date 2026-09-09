@@ -29,4 +29,6 @@
 - [x] 5.1 This change's `goal-runner` delta
 - [x] 5.2 This change's `harness-gates` delta
 - [x] 5.3 `MIGRATION.md` section: the narrowed attribution condition, the ui-spec gate's new kind, and the archived reused report
-- [ ] 5.4 Host regression is registered under B06 and is deliberately not done here
+- [x] 5.4 Host regression is registered under B06 and is deliberately not done here
+
+2026-09-09: real installed-package isolated host spec gate FAIL was classified spec_capture_gap by the canonical runtime via a Codex attended bridge. Prior-review and no-failure attribution observations are retained from earlier real host runs. This closes the B04 host observations without claiming the controlled negative run passed.

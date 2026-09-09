@@ -11,13 +11,13 @@ todos:
     status: completed
   - id: b03-accept-execution-reuse
     content: B02本地验收后细化并验收B03，按真实浪费解决UT重复构建/执行和报告整理，不重构进程生命周期；本地验收，宿主回归并入B06。
-    status: pending
+    status: completed
   - id: b04-accept-attribution-prior-review
     content: 细化并验收B04的归因与prior review消费两项，不改one-shot、不新增变化范围调度；本地验收，宿主回归并入B06。
-    status: pending
+    status: completed
   - id: b05-accept-phase-contracts
     content: 细化并验收B05的默认strict/显式配置、剩余F09、plan不适用出口和expect数量WARN口径；本地验收，宿主回归并入B06。
-    status: pending
+    status: completed
   - id: b06-accept-matrix-delivery
     content: 复用B02后的合并C-U证据，完成B03–B05的C-U回归，补C-N/X-U/X-N真实差异与codeagent/attended回放fixture，完成候选件验收与发布就绪。
     status: pending

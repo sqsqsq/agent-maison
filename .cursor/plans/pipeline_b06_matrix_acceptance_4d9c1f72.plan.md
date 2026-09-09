@@ -785,3 +785,14 @@ codex 对 B07 施工图的 #1/#4：golden 适用性裁定前移到 §7.2 共同�
 - 顶部一屏外未验证和已接受 minor 差异只披露、不单独阻断，不再询问此项。
 
 三屏基线全量验证完成：结果：3962 passed, 0 failed (共 3962)；结果：46 passed, 0 failed (共 46)；typecheck、plan 开发校验、OpenSpec strict/enforcement、git diff --check 均通过。日志 .cursor/verification/3.0.0-golden-three-screen-20260909/full-harness-test.log。尚未提交、构建或部署新候选件，正式 golden 待办不提前关闭。
+
+## 12. 2026-09-09 提交、同包回归与专项收尾
+
+- 开发仓提交 453a4df68fb72fa515500848720a3ee28887bbe1；candidate:build exit 0，全量3962/0、fixtures46/0、typecheck、zip校验、consumer lifecycle smoke通过。zip SHA c1285f7322bf38db9cea56edfd5f7207bb97b49564deb6855ce18e8b071abfbb；包内 manifest SHA 8783a8df3202f53099e87be1d3506cf90355ed00ed528994f295ce74c11224b9。
+- 同包已装宿主，保留旧包备份 .framework-backup/release-3.0.0-20260909/previous-framework；正式 report-reconcile-only exit 0。B03同键配对沿用既有证据，host todo完成并归档。
+- B05在同包隔离宿主正式CLI命中 balanced verifier=off、三项n/a SKIP+not_applicable、单expect MAJOR WARN；分支观察通过，不把故意不完整的隔离场景整体FAIL写成PASS。host todo完成。
+- d2 attended review：20260909T012304Z-0e9d23 经正式host bridge和隔离phase代理，review PASS/advance、22/22、receipt closed；run总态PARTIAL受副本其他阶段故意FAIL影响，阶段闭环要求已满足。T6完成。
+- B04隔离Codex attended spec负例：20260909T012757Z-77b2c9，ui_spec_fidelity_gate FAIL被唯一runtime归spec_capture_gap，随后owner停止场景，HALTED原样留存。此项通过真实共同runtime替代G③原detached启动形态；X-U正常流程仍用09-08实证，不混称。B04 host完成并归档。
+- 主宿主回归run 20260909T011221Z-710361：先发现Claude OAuth过期，代理未执行；真机遭USB连接方式系统弹窗遮挡，已用Back关闭。切Codex续跑时代理误将新版安装的6个文件git restore为旧HEAD；driver已中止、从原候选ZIP重新安装，并在宿主仅提交framework安装基线583281c4（业务代码未提交或修改）。混版轮证据不用于发布。现已再次从同一run续跑，结果待正式终态和golden。
+- 三个差异模式主流程此前已实跑；C-N新verifier派发/失败重跑两项未触发，且Claude当前登录过期。已向用户提出仅将这两项作为非阻断披露的明确裁定；未收到确认前不关闭对应B06待办，不改原计划正文。
+- 证据索引：.cursor/verification/3.0.0-golden-three-screen-20260909/README.md。当前发布门仅余B06与总计划；正式promote尚未执行。

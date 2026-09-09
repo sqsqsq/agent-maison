@@ -23,7 +23,7 @@ todos:
     status: completed
   - id: b04-host-acceptance
     content: 并入B06的C-U回归：在宿主实测归因话术与 prior review 呈现与实际一致，本批不单独触发宿主窗口。
-    status: pending
+    status: completed
 ---
 
 # B04施工图
@@ -327,3 +327,7 @@ B06 登记项（本批不做）：bc-openCard-1 的 C-U 回归核对——同类
 - `candidate:build`（scratchpad b04/candidate-build-1.log）：typecheck 通过、unit 3868/3868、fixtures 46/46、consumer smoke 全段通过，`[candidate] BUILT`，zip sha256 `251776d27bf322c3b3e7d948db36254ba1644b14574b5569fc3274e1a605a9d2`。
 - 提交：分三笔（D1/D2 归因 / D3 快照回落 / plan 与 OpenSpec 与测试接线），不带署名。
 - 实施类 todo 与 `b04-local-acceptance` 置 completed（本地完成 = 本批完成）；`b04-host-acceptance` 保持 pending，并入 B06 的 C-U 回归。
+
+### 2026-09-09 宿主归因负例收尾
+
+同包宿主隔离副本通过正式 Codex attended goal bridge + 独立 spec phase executor 执行负例：strict + verified:unverified，真实 ui_spec_fidelity_gate 为唯一 BLOCKER FAIL；唯一 runtime 产出 phase_verdict.failure_kind_classified=spec_capture_gap、action=retry，未归 code_regression。run=20260909T012757Z-77b2c9；捕获后由 owner 以 waiting 停止，HALTED 原样保留，不称需求通过。本次用真实 attended Codex 进入同一 GoalPhaseRuntime 取代原 G③ 的 detached spec 命令，避免为同一分类器再次启动完整模型修复；差异模式 X-U 的正常闭环沿用 09-08 独立实跑。prior-review 归档与无失败归因也沿用既有 A/B 及本次 attended review。证据：.cursor/verification/3.0.0-golden-three-screen-20260909/b04-spec-gap-*。

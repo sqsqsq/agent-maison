@@ -26,7 +26,7 @@ todos:
     status: completed
   - id: b05-host-acceptance
     content: 并入 B06 的 C-U 回归：宿主实测 balanced 显式配置、n/a 出口与数量口径，本批不单独触发宿主窗口。
-    status: pending
+    status: completed
 ---
 
 # B05施工图
@@ -528,3 +528,7 @@ B06 登记项（本批不做）：bc-openCard-1 的 C-U 回归核对——宿主
 - 最终 `candidate:build`（scratchpad b05/candidate-build-4.log）见下一条记录；提交分四笔（策略与 off≠忽略 / plan n/a 出口 / UT 数量口径与文案 / plan 与 OpenSpec），不带署名。
 - `b05-local-acceptance` 置 completed（本地完成 = 本批完成）；`b05-host-acceptance` 保持 pending，并入 B06。
 - 最终 `candidate:build`（b05/candidate-build-4.log）：typecheck 通过、unit 全过、fixtures 46/46、consumer smoke 全段通过，`[candidate] BUILT`，zip sha256 `4c95abad37c7d8e5fddee27b358cee4522017d8a31a4a4994b3106c4f60b3436`。
+
+### 2026-09-09 宿主隔离副本收尾
+
+安装同一候选包，在宿主文件副本通过正式 CLI 实测：显式 balanced 在 goal 模式的 check-receipt 输出 verifier=off；plan 三项 n/a 为 SKIP + structured.applicability=not_applicable；单 expect 用例的 it_drives_flow 为 MAJOR WARN。原宿主无配置、契约或测试改动。隔离 plan/ut 整体 FAIL 来自刻意清空 UI 契约后其他完整性检查、测试标签及未复制构建依赖；带 goal 环境的 receipt 因无 run identity 也为 FAIL，不能表述为阶段整体通过或完整 goal 回归。本 todo 的三项观察点均命中。默认 strict 的六阶段输出沿用 09-08 实证，off≠忽略的负例沿用已通过的本地测试。证据见 .cursor/verification/3.0.0-golden-three-screen-20260909/b05-*.json / *.log。

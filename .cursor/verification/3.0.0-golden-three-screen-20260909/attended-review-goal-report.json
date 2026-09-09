@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0",
+  "run_id": "20260909T012304Z-0e9d23",
+  "feature": "bc-openCard-1",
+  "status": "PARTIAL",
+  "phases": [
+    {
+      "phase": "review",
+      "verdict": "PASS",
+      "summary_path": "doc/features/bc-openCard-1/goal-runs/20260909T012304Z-0e9d23/phases/review/harness/summary.json",
+      "report_dir": "doc/features/bc-openCard-1/goal-runs/20260909T012304Z-0e9d23/phases/review/harness",
+      "retries": 0,
+      "agent_exit_code": 0,
+      "snapshot_files": {
+        "summary.json": "doc/features/bc-openCard-1/goal-runs/20260909T012304Z-0e9d23/phases/review/harness/summary.json",
+        "script-report.json": "doc/features/bc-openCard-1/goal-runs/20260909T012304Z-0e9d23/phases/review/harness/script-report.json",
+        "merged-report.md": "doc/features/bc-openCard-1/goal-runs/20260909T012304Z-0e9d23/phases/review/harness/merged-report.md",
+        "trace.json": "doc/features/bc-openCard-1/goal-runs/20260909T012304Z-0e9d23/phases/review/harness/trace.json",
+        "verifier.report.md": "doc/features/bc-openCard-1/goal-runs/20260909T012304Z-0e9d23/phases/review/harness/verifier.report.md"
+      },
+      "verifier_evidence": {
+        "subject_id": "a2c141d668a023de61d7e2af79c1a58e92d2df1c048d95541387fc4da66cf996",
+        "verdict": "PASS",
+        "blocker_count": 0
+      },
+      "advance_blocked": false
+    }
+  ],
+  "deferred_phases": [],
+  "generated_at": "2026-09-09T01:26:16.261Z",
+  "fidelity_routing": {
+    "inferred": "pixel_1to1",
+    "selected": "pixel_1to1",
+    "effective": "pixel_1to1",
+    "strictness": "best_effort",
+    "asset_acquisition_mode": "auto_crop",
+    "clamped": false,
+    "source": "requirement_self_declared",
+    "decision_id": "dc2f055071de228b"
+  }
+}

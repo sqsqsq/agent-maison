@@ -1,0 +1,50 @@
+{
+  "kind": "isolated_host_cli",
+  "phase_verdict": {
+    "total": 30,
+    "pass": 24,
+    "fail": 1,
+    "warn": 0,
+    "skip": 5,
+    "blockers": 1,
+    "verdict": "FAIL"
+  },
+  "checks": [
+    {
+      "id": "data_model_typed",
+      "category": "structure",
+      "description": "数据模型定义必须使用 TypeScript/ArkTS 代码块， 包含字段名、类型、说明；不允许使用 any 类型",
+      "severity": "BLOCKER",
+      "status": "SKIP",
+      "details": "判据 contracts.data_models 长度为 0（真源在场、解析成功、无形状留痕）；作者依据：隔离验收场景仅验证已有配置，本场景不新增模型、接口或页面，对应契约集合为空。",
+      "structured": {
+        "applicability": "not_applicable"
+      },
+      "source": "data_model_typed"
+    },
+    {
+      "id": "interface_signatures_complete",
+      "category": "structure",
+      "description": "服务层接口定义中，所有方法必须包含完整的方法签名： 方法名、入参（名+类型）、返回类型、是否异步",
+      "severity": "BLOCKER",
+      "status": "SKIP",
+      "details": "判据 contracts.interfaces 长度为 0（真源在场、解析成功、无形状留痕）；作者依据：隔离验收场景仅验证已有配置，本场景不新增模型、接口或页面，对应契约集合为空。",
+      "structured": {
+        "applicability": "not_applicable"
+      },
+      "source": "interface_signatures_complete"
+    },
+    {
+      "id": "component_tree_per_page",
+      "category": "structure",
+      "description": "每个页面必须有对应的组件树，使用树形文本图展示层级关系",
+      "severity": "MAJOR",
+      "status": "SKIP",
+      "details": "判据 contracts.components 长度为 0（真源在场、解析成功、无形状留痕）；作者依据：隔离验收场景仅验证已有配置，本场景不新增模型、接口或页面，对应契约集合为空。",
+      "structured": {
+        "applicability": "not_applicable"
+      },
+      "source": "component_tree_per_page"
+    }
+  ]
+}
