@@ -96,13 +96,13 @@ Generated: 2026-09-09 · current window: `3.0.0`
   - `pipeline_b04_scoped_recovery_2f8a6d40.plan.md`
 - **六阶段重构 B05 — 既有策略配置与适用性出口施工图** — 显式 evidence_profile=balanced 在 goal/headless 生效（默认仍 strict）；plan 对确实不涉及的模型/服务/页面接受依据明确的不适用出口；verify-ut 的单 expect 硬判改为线索；剩余三处过时硬文案对齐。可测性前移保持 cancelled。 [7/8 completed]
   - `pipeline_b05_phase_contracts_7b3e9a15.plan.md`
-- **六阶段重构 B06 — 四主格差异验收与发布就绪施工图** — 本地只做矩阵证据清单、每格精确运行单、次要格静态/生产函数核对、收益与缺口登记表、候选件与迁移说明收口；C-U 合并回归与 C-N/X-U/X-N 三个差异格、golden 采集与 promote 全部由用户在验收宿主触发。未实测的格一律不写 PASS。 [8/12 completed]
+- **六阶段重构 B06 — 四主格差异验收与发布就绪施工图** — 本地只做矩阵证据清单、每格精确运行单、次要格静态/生产函数核对、收益与缺口登记表、候选件与迁移说明收口；C-U 合并回归与 C-N/X-U/X-N 三个差异格、golden 采集与 promote 全部由用户在验收宿主触发。未实测的格一律不写 PASS。 [11/12 completed]
   - `pipeline_b06_matrix_acceptance_4d9c1f72.plan.md`
 - **六阶段重构 B07 — 视觉回修归因与 golden 复用校验施工图** — 视觉信号进回修候选时按 defect 严重度分流（minor 不产 coding 候选、留在既有视觉债务台账），T8 hard 命中不得被转录成 minor；testing 同键复用时若当前设了 golden contract，仍走既有采集入口而不是把 visual_diff_capture 直接记 PASS；golden contract 的适用性在 B06 运行单 A 启动前裁定。预算、量测、defect schema、verifier 指引一律不动。B07 只做本地修复；宿主补验收归 B06。 [7/7 completed]
   - `pipeline_b07_visual_repair_attribution_6e4a2c8b.plan.md`
 - **六阶段重构 B08 — 复用证据绑定、执行键身份与长图参考推导施工图** — 同键复用轮照常写出真机证据并按"与 decideReuse 同一判据"的执行键身份采信（不再拿本 attempt 的时间窗与本轮装机否决）；装机复用分支回传当前 HAP 的完整摘要，代理与外层的执行键从此相等（不做短指纹回落、不跳过任何记录）；参考图与视口同宽但更高时，采集、provider、检查三处共用同一"顶部一屏"比对输入，比对范围与区域外元素的未验证状态写清并沿既有覆盖/债务机制传递；unverified 不再单独构成失败事实。预算、T8、verifier 指引、执行键构成不动。B08 只做本地修复；宿主补验收归 B06。 [7/7 completed]
   - `pipeline_b08_reuse_evidence_and_ref_derivation_9b2d5e7c.plan.md`
-- **六阶段效率与准确性重构总计划 — HMOS × Claude/Codex × goal/非goal** — B01先细化施工图，后续批次滚动设计，宿主回归收敛为两个检查点（B02 后、B06）；核心四格实测，codeagent及attended保留fixture覆盖，不新增机制。 [5/6 completed]
+- **六阶段效率与准确性重构总计划 — HMOS × Claude/Codex × goal/非goal** — B01先细化施工图，后续批次滚动设计，宿主回归收敛为两个检查点（B02 后、B06）；核心四格实测，codeagent及attended保留fixture覆盖，不新增机制。 [6/6 completed]
   - `pipeline_master_9c6e2a41.plan.md`
 - **plan 待办 SSOT — frontmatter todos 唯一真源，正文未勾项拦截** — > [3/3 completed]
   - `plan待办SSOT_frontmatter唯一真源与正文未勾项拦截_a3e7d1c9.plan.md`

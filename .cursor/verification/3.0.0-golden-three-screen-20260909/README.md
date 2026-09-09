@@ -19,3 +19,7 @@ Candidate source: 453a4df68fb72fa515500848720a3ee28887bbe1. Full candidate build
 - Two untriggered C-N branches are pending the user’s release-scope decision. No final release or golden PASS is asserted yet.
 
 The isolated-host folder is a disposable copy, excluded only through this checkout’s local Git exclude. Raw model logs, full test logs and private host copies are kept locally; selected reports and this index are the committed evidence.
+
+## Final release — 2026-09-09
+
+The user explicitly cancelled all remaining tests and requested formal release. B06 and the master plan are closed; release:check-plans PASS. The same validated candidate ZIP was promoted without rebuilding or rerunning tests. Final SHA256: c1285f7322bf38db9cea56edfd5f7207bb97b49564deb6855ce18e8b071abfbb. See formal-release.manifest.json. Final golden/completion revalidation is cancelled, not asserted PASS; historical HALTED/stale results remain unchanged. No production or release-script changes were made for this closeout.

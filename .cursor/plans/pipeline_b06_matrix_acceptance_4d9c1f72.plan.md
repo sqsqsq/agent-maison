@@ -29,7 +29,7 @@ todos:
     status: completed
   - id: b06-host-golden-and-promote
     content: 用户 2026-09-09 已确认采用 bc-openCard-1 原始三屏需求作为 golden 发布基线（收起态、展开态、全部银行）；旧十屏不再用于本次发布。新候选件集成后用包内 evaluator 带 --feature bc-openCard-1 验证，同包绑定且 verdict=PASS 才具备 promote 前提；本地新基线对旧包产物的诊断 PASS 不冒充正式候选件验收。正式 promote 不是本 plan 的完成前置。
-    status: pending
+    status: cancelled
   - id: b06-host-b07-reacceptance
     content: 用户触发——B07（视觉回修归因与 golden 复用校验，plan 6e4a2c8b）本地完成并进候选件后，按 §7.2 P0.5 裁定 golden 适用性，以用户指定的窗口做范围明确的补验收（不再起同条件 spec→testing 长 run 只为复现）；结果回填 §6 登记表。B07 的完成判据不含此项。 **09-07 已跑：run 20260907T063800Z-26c3b0，B07 目标行为实测成立（三轮拦下 minor、零候选、零回退）；run 因缺口①②③ HALTED/no_progress_visual_gap，见 §6 登记表。**
     status: completed
@@ -38,7 +38,7 @@ todos:
     status: completed
   - id: b06-release-readiness-closeout
     content: 本地与宿主两侧真实完成后才回填登记表、勾各批 host todo 与总 plan 里程碑；不为过门禁提前勾完成。
-    status: pending
+    status: completed
 ---
 
 # B06施工图
@@ -802,3 +802,9 @@ codex 对 B07 施工图的 #1/#4：golden 适用性裁定前移到 §7.2 共同�
 用户答复“全关闭”：C-N 新 verifier 派发与失败后重跑两个未触发分支以非阻断披露收口，不声称这两项已实测 PASS。已有 C-U 六阶段成功 run 73fc05 及 B01/B02 实证足以关闭合并回归待办；C-N/X-U/X-N 主流程均实际运行，关闭差异格待办。最新同包 golden 与正式发布仍由各自待办承接，不用旧成功 run 替代。
 
 最新宿主事实：710361 于 02:20Z HALTED/content_retry_exhausted。17 条 Hylyre 用例、build/install、visual/asset/evidence 均已 PASS；当前唯一实质阻断是 upstream_verdict_gate，testing_run_status 为其汇总。原因精确为 driver 在 review/UT 通过后切换 Claude→Codex 并 rebase adapter_model_pin，改变该 run manifest，使 review/UT manifest 绑定 stale；不是产品失败，也不是视觉分数不足。剩余最小收尾为新建固定 adapter/model 的 review→ut→testing 窗口，优先复用已有执行证据，完成 verify-feature-completion 与同包 golden 后再 promote。无需重写 spec/plan、产品代码或增加新机制。
+
+### 2026-09-09 最终发布裁定
+
+用户明确要求：“把版本闭环，不要浪费时间了，剩下的测试都不需要。如果需要打发布件就打个正式发布件，需要闭环一些结论就去闭环。”据此取消剩余 golden 补验与 review→ut→testing 重跑要求，以已有3962/0单测、46/0 fixtures、包校验与consumer smoke，以及宿主17条真机用例通过等实证结束3.0.0发布验收。未执行项按取消记录，不伪造golden PASS、feature VALID或成功run；710361的HALTED和adapter/model切换导致的上游凭证stale保留原样，不再阻断本版本发布。
+
+正式交付直接提升已构建并验证的候选ZIP，字节不变、不改生产代码、不重建、不复测。既有 candidate:promote 入口硬性要求golden PASS报告，故本次按用户明确裁定执行一次发布运维提升，并在正式sidecar记录剩余验收已取消的原因；不改发布脚本，不伪造评估报告。B06及总计划收口，后续如有真实宿主反馈另按实际问题处理，不为本次发布增设待办。
