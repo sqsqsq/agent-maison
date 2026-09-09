@@ -22,11 +22,11 @@ todos:
     content: 本地前置——D7 (b) 落地且 MIGRATION 索引段落盘后按总plan §6 重建候选件；§7.2 共同前置与 E 的 zip 路径 / sha256 / manifest SHA 由重建后的 manifest 取值填入，旧候选件的实跑只作旧版本回归证据。
     status: completed
   - id: b06-host-merged-cu-run
-    content: 用户触发——按 §7.2-A 一张运行单跑完 B01–B05 合并 C-U（spec→testing 窗口），跑完**立即**执行 §7.2-E 保存报告；自然运行未命中 B01/B02 触发条件的项按 §7.2-G 隔离场景补跑，未命中即保持 pending。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
-    status: cancelled
+    content: 用户触发——按 §7.2-A 一张运行单跑完 B01–B05 合并 C-U（spec→testing 窗口），跑完**立即**执行 §7.2-E 保存报告；自然运行未命中 B01/B02 触发条件的项按 §7.2-G 隔离场景补跑，未命中即保持 pending。
+    status: completed
   - id: b06-host-diff-cells
-    content: 用户触发——按 §7.2-B/C/D 跑 C-N / X-U / X-N 三个差异格（各自选定片段与判据，须在 A 的 evaluator 报告保存之后）；任一格未跑即保持 pending，不用回放冒充。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
-    status: cancelled
+    content: 用户触发——按 §7.2-B/C/D 跑 C-N / X-U / X-N 三个差异格（各自选定片段与判据，须在 A 的 evaluator 报告保存之后）；任一格未跑即保持 pending，不用回放冒充。
+    status: completed
   - id: b06-host-golden-and-promote
     content: 用户 2026-09-09 已确认采用 bc-openCard-1 原始三屏需求作为 golden 发布基线（收起态、展开态、全部银行）；旧十屏不再用于本次发布。新候选件集成后用包内 evaluator 带 --feature bc-openCard-1 验证，同包绑定且 verdict=PASS 才具备 promote 前提；本地新基线对旧包产物的诊断 PASS 不冒充正式候选件验收。正式 promote 不是本 plan 的完成前置。
     status: pending
@@ -796,3 +796,9 @@ codex 对 B07 施工图的 #1/#4：golden 适用性裁定前移到 §7.2 共同�
 - 主宿主回归run 20260909T011221Z-710361：先发现Claude OAuth过期，代理未执行；真机遭USB连接方式系统弹窗遮挡，已用Back关闭。切Codex续跑时代理误将新版安装的6个文件git restore为旧HEAD；driver已中止、从原候选ZIP重新安装，并在宿主仅提交framework安装基线583281c4（业务代码未提交或修改）。混版轮证据不用于发布。现已再次从同一run续跑，结果待正式终态和golden。
 - 三个差异模式主流程此前已实跑；C-N新verifier派发/失败重跑两项未触发，且Claude当前登录过期。已向用户提出仅将这两项作为非阻断披露的明确裁定；未收到确认前不关闭对应B06待办，不改原计划正文。
 - 证据索引：.cursor/verification/3.0.0-golden-three-screen-20260909/README.md。当前发布门仅余B06与总计划；正式promote尚未执行。
+
+### 2026-09-09 用户关闭未触发条件分支，收口范围确认
+
+用户答复“全关闭”：C-N 新 verifier 派发与失败后重跑两个未触发分支以非阻断披露收口，不声称这两项已实测 PASS。已有 C-U 六阶段成功 run 73fc05 及 B01/B02 实证足以关闭合并回归待办；C-N/X-U/X-N 主流程均实际运行，关闭差异格待办。最新同包 golden 与正式发布仍由各自待办承接，不用旧成功 run 替代。
+
+最新宿主事实：710361 于 02:20Z HALTED/content_retry_exhausted。17 条 Hylyre 用例、build/install、visual/asset/evidence 均已 PASS；当前唯一实质阻断是 upstream_verdict_gate，testing_run_status 为其汇总。原因精确为 driver 在 review/UT 通过后切换 Claude→Codex 并 rebase adapter_model_pin，改变该 run manifest，使 review/UT manifest 绑定 stale；不是产品失败，也不是视觉分数不足。剩余最小收尾为新建固定 adapter/model 的 review→ut→testing 窗口，优先复用已有执行证据，完成 verify-feature-completion 与同包 golden 后再 promote。无需重写 spec/plan、产品代码或增加新机制。
