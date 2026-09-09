@@ -1,6 +1,6 @@
 # Framework 3.0.0 发布说明
 
-**状态**：发布验收中；本文于 2026-09-09 更新，正式发布日期待发布门禁通过后登记。
+**状态**：已发布，2026-09-09。
 **对比基线**：Framework 2.3.0（`framework-2.3.0.zip`）
 **发布件**：`dist/framework-3.0.0.zip`（SHA256 见同批产出的 `dist/framework-3.0.0.manifest.json`；包内 `RELEASE-MANIFEST.json` 记录对应 `source_commit`）
 **适用读者**：接入本 Framework 的工程负责人、AI Agent 使用者、Framework 维护者
@@ -263,3 +263,11 @@ UT 改码门禁不再要求宿主先提交才能取基线：direct attestation �
 ---
 
 **Framework 3.0.0** — 把「谁说通过」换成「机器事实证明通过」：人签质量通行证整体退役、Goal 运行时归一为单一调和循环、视觉保真从 OCR 文本信号长成几何 oracle 与盲档委托、反假 PASS 证据体系成链，framework 运行时与宿主 Git/hash 彻底解耦。
+
+## 2026-09-09 发布验收结论
+
+本版正式交付沿用源码453a4df68fb72fa515500848720a3ee28887bbe1构建的同一候选ZIP。3962项单测、46项fixtures、typecheck、发布包校验和consumer lifecycle smoke均通过；宿主17条Hylyre用例及视觉、素材检查已通过。
+
+用户明确取消剩余补测并批准版本收口。两项未触发的Claude非goal条件分支、最终同包golden补验与凭证重闭环不再作为本版发布前置；不将它们记成已测PASS。宿主run 710361在adapter/model切换后因上游凭证stale而HALTED的历史记录保留，本次版本发布不宣称该run或其完成投影已转绿。已接受的manual能力缺口与视觉minor差异继续披露。
+
+正式ZIP SHA256：`c1285f7322bf38db9cea56edfd5f7207bb97b49564deb6855ce18e8b071abfbb`。本次收尾没有新增生产代码修改。

@@ -19,8 +19,8 @@ todos:
     content: 细化并验收B05的默认strict/显式配置、剩余F09、plan不适用出口和expect数量WARN口径；本地验收，宿主回归并入B06。
     status: completed
   - id: b06-accept-matrix-delivery
-    content: 复用B02后的合并C-U证据，完成B03–B05的C-U回归，补C-N/X-U/X-N真实差异与codeagent/attended回放fixture，完成候选件验收与发布就绪。（责任转交 origin/Br_release_3.0.0：main 不再拥有本 todo，取消不代表验收完成）
-    status: cancelled
+    content: 复用B02后的合并C-U证据，完成B03–B05的C-U回归，补C-N/X-U/X-N真实差异与codeagent/attended回放fixture，完成候选件验收与发布就绪。
+    status: completed
 ---
 
 # 六阶段重构总计划
@@ -113,3 +113,7 @@ B07（09-07 据 B06 取证新增，[6e4a2c8b](pipeline_b07_visual_repair_attribu
 ### 2026-09-08 · 版本收尾状态同步
 
 B01/B02 的宿主验收已按两次实跑及最终 VALID 收口，见各批最新实施记录。B08 与完成判据修复宿主观察点已通过；B03/B04/B05/B06 不整批提前勾选。唯一剩余验收索引见 [B06 §10](pipeline_b06_matrix_acceptance_4d9c1f72.plan.md#10-2026-09-08-版本收尾登记当前状态)；此前背景段落为历史记录，不代表当前尚无宿主 run。
+
+### 2026-09-09 3.0.0发布收口
+
+用户明确取消剩余补测并要求正式发布；已完成实证原样保留，未覆盖项披露，剩余golden补验取消。B01–B06全部收口，采用既有同字节候选件正式交付；不把宿主历史HALTED改写为成功。详见B06最终发布裁定。
