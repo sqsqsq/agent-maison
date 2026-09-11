@@ -24,6 +24,8 @@ import { __testing_checkDeviceTestRunGateBeforeInstall } from '../../scripts/che
 import type { CheckContext, CheckResult } from '../../scripts/utils/types';
 import { buildGoalManifestFromInput, writeGoalManifest } from '../../scripts/utils/goal-manifest';
 import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
+import { createGoalRun, loadFrozenExecutionScope } from '../../scripts/utils/goal-run-creation';
+import { resolveExecutionScope, type ObligationApplicability } from '../../scripts/utils/execution-scope';
 import { applyCapabilityResolutionProjection, deriveSummaryVerdictLattice } from '../../scripts/utils/quality-axes';
 import { normalizeDeviceTestCases } from '../../scripts/utils/device-test-case-kernel';
 
@@ -266,6 +268,72 @@ function modernFixture(root: string, artifact = 'contracts@1', policy = 'fail'):
 }
 
 cases.push(
+  {
+    name: 'real birth to P2 bridge to P1 rebinds edited code but preserves contracts and acceptance',
+    run: () => project(root => {
+      const fixture = modernFixture(root);
+      const contractFile = path.join(fixture.framework, 'skills/feature/code-review/contract.yaml');
+      const contract = YAML.parse(fs.readFileSync(contractFile, 'utf8'));
+      contract.phases.review.inputs = [
+        { id: 'payload', sources: [{ kind: 'derive', provider_id: 'derive.codebase' }] },
+        { id: 'contracts', sources: [{ kind: 'artifact', artifact: 'contracts@1' }] },
+        { id: 'acceptance', sources: [{ kind: 'artifact', artifact: 'acceptance@1' }] },
+      ];
+      contract.phases.review.capabilities[0].inputs = ['payload', 'contracts', 'acceptance'];
+      contract.phases.review.capabilities[0].obligation_kinds = ['code-review'];
+      fs.writeFileSync(contractFile, YAML.stringify(contract));
+      write(root, 'src/target.ts', 'export const value = 1;');
+      write(root, 'doc/features/demo/contracts.yaml', 'files: []');
+      write(root, 'doc/features/demo/acceptance.yaml', 'criteria: []');
+      const options = { frameworkRoot: fixture.framework, projectRoot: root, feature: 'demo', phase: 'review', track: 'full' as const, testTargets: ['src/target.ts'], inputContext: { ...fixture.context, obligations: { 'code-review': 'required' as const } } };
+      const initial = resolveCapabilityInputs(options);
+      assert(initial.report.assurance === 'full', JSON.stringify(initial.report));
+      const bindings = initial.report.capabilities[0].inputs.map(input => input.binding!);
+      const scope = resolveExecutionScope({ request: { completion_target: 'request', requested_results: ['review'], requested_phases: ['review'] }, contract_fingerprints: [], facts: [
+        { id: 'code:review', kind: 'code-review', applicability: 'required', reason: 'review authorized implementation', basis: [bindings[0]] },
+        { id: 'design:existing', kind: 'design-context', applicability: 'required', reason: 'fixed design', basis: [bindings[1]], satisfied_by: [bindings[1]] },
+        { id: 'acceptance:existing', kind: 'acceptance-context', applicability: 'required', reason: 'fixed acceptance', basis: [bindings[2]], satisfied_by: [bindings[2]] },
+      ] }, { schema_version: '1.2', name: 'fixture', auto_chain: ['spec', 'plan', 'review'], artifacts: ['spec', 'plan', 'review'].map(id => ({ id, scope: 'feature', requires: [], obligation_provider_id: `obligations.${id}` })) });
+      const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'source-rebinding', unattended: { write_mode: 'full-access', approval_mode: 'never' }, execution_scope: scope, chain_override: scope.phase_chain }, { projectRoot: root });
+      createGoalRun({ projectRoot: root, manifest, chain: scope.phase_chain });
+      write(root, 'src/target.ts', 'export const value = 2;');
+      const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot: fixture.framework, feature: 'demo', phase: 'review', featuresDir: 'doc/features', goalRunId: manifest.run_id });
+      const resolve = () => resolveCapabilityInputs({ ...options, ...bridge });
+      const current = resolve();
+      assert(current.report.assurance === 'full', JSON.stringify(current.report));
+      assert(current.report.capabilities[0].inputs[0].binding!.content_fingerprint !== bindings[0].content_fingerprint, 'current source was not rebound');
+      assert(JSON.stringify(loadFrozenExecutionScope(root, 'demo', manifest.run_id)) === JSON.stringify(scope), 'birth basis was rewritten');
+      assert(resolveCapabilityInputs({ ...options, inputContext: { ...bridge.inputContext!, expected_bindings: bindings } }).report.assurance === 'blocked', 'counterexample must reject the old source binding');
+      for (const [file, original, changed] of [['contracts.yaml', 'files: []', 'files: [changed.ts]'], ['acceptance.yaml', 'criteria: []', 'criteria: []\nversion: changed']]) {
+        write(root, 'doc/features/demo/' + file, changed);
+        assert(resolve().report.assurance === 'blocked', `changed ${file} accepted`);
+        write(root, 'doc/features/demo/' + file, original);
+      }
+      assert(resolve().report.assurance === 'full', 'restored immutable inputs did not resolve');
+    }),
+  },
+  {
+    name: 'frozen obligations aggregate required and unknown without order-dependent capability pruning',
+    run: () => project(root => {
+      const fixture = modernFixture(root, 'acceptance@1');
+      const contractFile = path.join(fixture.framework, 'skills/feature/code-review/contract.yaml');
+      fs.writeFileSync(contractFile, fs.readFileSync(contractFile, 'utf8').replace('review-context', 'device-evidence'));
+      write(root, 'doc/features/demo/acceptance.yaml', 'criteria: []');
+      const combinations: ObligationApplicability[][] = [['required', 'not_applicable'], ['not_applicable', 'required'], ['not_applicable', 'not_applicable'], ['unknown', 'not_applicable'], ['not_applicable', 'unknown'], ['required', 'unknown']];
+      for (const [index, states] of combinations.entries()) {
+        const scope = resolveExecutionScope({ request: { completion_target: 'request', requested_results: ['review'], requested_phases: ['spec'] }, contract_fingerprints: [], facts: states.map((applicability, i) => ({ id: `device:${i}`, kind: 'device-evidence', applicability, reason: 'sourced applicability', basis: [] })) }, { schema_version: '1.2', name: 'fixture', auto_chain: ['spec', 'review'], artifacts: [{ id: 'spec', scope: 'feature', requires: [], obligation_provider_id: 'obligations.spec' }, { id: 'review', scope: 'feature', requires: [], obligation_provider_id: 'obligations.testing' }] });
+        const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: `aggregate-${index}`, adapter: 'codex', requirement: 'review scoped evidence', unattended: { write_mode: 'full-access', approval_mode: 'never' }, execution_scope: scope, chain_override: scope.phase_chain }, { projectRoot: root });
+        createGoalRun({ projectRoot: root, manifest, chain: scope.phase_chain });
+        const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot: fixture.framework, feature: 'demo', phase: 'review', featuresDir: 'doc/features', goalRunId: manifest.run_id });
+        const expected = states.includes('required') ? 'required' : states.includes('unknown') ? 'unknown' : 'not_applicable';
+        assert(bridge.inputContext?.obligations['device-evidence'] === expected, JSON.stringify(bridge));
+        const report = fixture.resolve(bridge.inputContext).report;
+        assert(report.capabilities[0].state === (expected === 'required' ? 'resolved' : expected === 'unknown' ? 'blocked' : 'not_applicable'), JSON.stringify(report));
+        if (expected === 'required') assert(report.capabilities[0].inputs.length > 0, 'required inputs skipped');
+        if (states.includes('unknown')) assert(loadFrozenExecutionScope(root, 'demo', manifest.run_id)!.unresolved.length > 0, 'unknown gap discarded');
+      }
+    }),
+  },
   {
     name: 'composable inputs: registered alternate artifact content reaches existing checker without a second read',
     run: () => project(root => {

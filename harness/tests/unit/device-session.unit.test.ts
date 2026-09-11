@@ -267,17 +267,23 @@ export async function runAll(): Promise<UnitCaseResult[]> {
 
   await run(results, '信号清理：只清一次；反注册后不再触发（正常释放不重复回收）', () => {
     let calls = 0;
+    const existing = new Set(process.listeners('SIGINT'));
     const off = registerManagedDeviceCleanup(() => { calls += 1; });
-    process.emit('SIGINT' as never);
+    // Exercise only this registration; unrelated runtime listeners may legitimately exit.
+    const listeners = process.listeners('SIGINT').filter(listener => !existing.has(listener));
+    assertEq(listeners.length, 1, '须注册自己的 SIGINT 监听器');
+    listeners[0]('SIGINT');
     assertEq(calls, 1, 'SIGINT 应触发一次清理');
-    process.emit('SIGINT' as never);
+    listeners[0]('SIGINT');
     assertEq(calls, 1, '重复信号不得重复清理');
     off();
+    assert(!process.listeners('SIGINT').includes(listeners[0]), '反注册须移除自己的监听器');
 
     let later = 0;
+    const priorTerm = process.listeners('SIGTERM');
     const off2 = registerManagedDeviceCleanup(() => { later += 1; });
     off2();
-    process.emit('SIGTERM' as never);
+    assertEq(process.listeners('SIGTERM').length, priorTerm.length, '反注册不得留下 SIGTERM 监听器');
     assertEq(later, 0, '反注册后不得再触发');
   });
 

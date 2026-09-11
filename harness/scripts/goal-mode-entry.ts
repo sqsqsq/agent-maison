@@ -37,7 +37,7 @@ import {
 import { resolveWorkflowSpec } from '../workflow-loader';
 import { relFeaturesDir } from '../config';
 import { featurePhasesFromWorkflow, resolveAutoChain } from './utils/phase-transition-policy';
-import { loadFeatureTrackDecl } from './utils/feature-track';
+import { loadFeatureTrackDecl, resolveFeatureExecutionScope } from './utils/feature-track';
 import { resolveFeatureTrack } from './utils/runtime-policy';
 import { validateMinimumAssurance } from './utils/skill-contract';
 import { loadGoalCapability, routeGoalCapability } from './utils/goal-adapter-capability';
@@ -98,6 +98,8 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
     throw new Error('--prepare-run requires --feature, --adapter, and --requirement');
   }
   const workflow = resolveWorkflowSpec(options.projectRoot, { frameworkRoot: options.frameworkRoot });
+  const executionScope = resolveFeatureExecutionScope(options.projectRoot, feature, workflow, options.frameworkRoot);
+  if (executionScope && !executionScope.phase_chain.length) throw new Error('[goal-mode-entry] empty scope: verify existing results without creating a run');
   const manifest = buildGoalManifestFromInput(
     {
       feature,
@@ -108,8 +110,9 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
         : {}),
       adapter,
       ...(options.adapterSource ? { adapter_provenance: options.adapterSource } : {}),
-      start_phase: options.startPhase ?? 'spec',
-      end_phase: options.endPhase ?? 'testing',
+      ...(executionScope ? { execution_scope: executionScope, chain_override: [...executionScope.phase_chain] } : {}),
+      start_phase: options.startPhase ?? executionScope?.phase_chain[0] ?? 'spec',
+      end_phase: options.endPhase ?? executionScope?.phase_chain.at(-1) ?? 'testing',
       // plan a8e5c3f9 t6：headless 即全权限——新 manifest 直接写 effective 值
       //（此前 workspace-write + on-request 让 claude 连 dontAsk 都拿不到，与无人值守自相矛盾）。
       unattended: { write_mode: 'full-access', approval_mode: 'never', max_turns: 20 },
@@ -145,7 +148,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
     throw new Error(`[goal-mode-entry] run manifest already exists: ${manifestPath}`);
   }
   const track = resolveFeatureTrack(loadFeatureTrackDecl(options.projectRoot, feature));
-  const chain = resolveAutoChain(
+  const chain = executionScope?.phase_chain ?? resolveAutoChain(
     workflow,
     manifest.start_phase,
     manifest.end_phase,
@@ -156,15 +159,16 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
     requestedChain: chain,
     fullWorkflowChain: featurePhasesFromWorkflow(workflow, track),
     requiresLegacyFidelityRecovery:
-      loadInertLegacyFidelityIntentSsot(options.projectRoot, feature) !== null,
+      !executionScope && loadInertLegacyFidelityIntentSsot(options.projectRoot, feature) !== null,
   });
   createGoalRun({ projectRoot: options.projectRoot, manifest, chain: actualChain });
-  const runDir = path.resolve(options.projectRoot, ...manifest.report_dir.split('/'));
+  let runDir = path.resolve(options.projectRoot, ...manifest.report_dir.split('/'));
   ensureRunControl(runDir, manifest.run_id);
   return { manifest, manifestPath, runDir };
 }
 
 export interface GoalModeHostBridgeOptions {
+  onScopeHandoff?: import('./goal-phase-runtime').GoalPhaseRuntimeLaunchOptions['onScopeHandoff'];
   projectRoot: string;
   frameworkRoot: string;
   feature: string;
@@ -213,7 +217,7 @@ export async function runGoalModeHostBridge(
 ): Promise<InSessionRoundResult> {
   // Caller declaration is only a startup assertion. It is deliberately not persisted as mode state.
   assertAttendedRunMode(options.runMode);
-  const manifest = loadGoalManifestFromRun(options.projectRoot, options.runId, {
+  let manifest = loadGoalManifestFromRun(options.projectRoot, options.runId, {
     feature: options.feature,
     featuresDir: relFeaturesDir(options.projectRoot),
   });
@@ -245,7 +249,7 @@ export async function runGoalModeHostBridge(
   if (attendedRoute.kind !== 'in_session') {
     throw new Error(`[goal-mode-entry] attended capability route 非法：${attendedRoute.reason}`);
   }
-  const runDir = path.resolve(options.projectRoot, ...manifest.report_dir.split('/'));
+  let runDir = path.resolve(options.projectRoot, ...manifest.report_dir.split('/'));
   const hasExecutionStart = loadEventsJsonl(path.join(runDir, 'events.jsonl'))
     .some((event) => event.type === 'run_start');
   const executor = new AttendedGoalPhaseExecutor(async (context) => {
@@ -262,7 +266,8 @@ export async function runGoalModeHostBridge(
     );
     return outcome;
   });
-  const exitCode = await new GoalPhaseRuntime({
+  const runtime = new GoalPhaseRuntime({
+    onScopeHandoff: options.onScopeHandoff,
     args: [
       hasExecutionStart ? '--resume' : '--attach-created', manifest.run_id,
       '--feature', manifest.feature,
@@ -279,7 +284,12 @@ export async function runGoalModeHostBridge(
     authorization: options.authorization ?? { mode: 'goal_mode' },
     ...(options.leaseMs !== undefined ? { leaseMs: options.leaseMs } : {}),
     ...(options.maxRounds !== undefined ? { maxRounds: options.maxRounds } : {}),
-  }).run();
+  });
+  const exitCode = await runtime.run();
+  if (runtime.lastRunId && runtime.lastRunId !== manifest.run_id) {
+    manifest = loadGoalManifestFromRun(options.projectRoot, runtime.lastRunId, { feature: options.feature });
+    runDir = path.resolve(options.projectRoot, manifest.report_dir);
+  }
 
   const rawEvents = loadEventsJsonl(path.join(runDir, 'events.jsonl'));
   const canonical = projectCanonicalLifecycle(rawEvents);
@@ -379,8 +389,8 @@ async function main(): Promise<void> {
           ...(resolved.sources.length > 0 ? { requirementSourceFiles: resolved.sources } : {}),
         };
       })(),
-      startPhase: String(argv.start ?? 'spec'),
-      endPhase: String(argv.end ?? 'testing'),
+      startPhase: typeof argv.start === 'string' ? argv.start : undefined,
+      endPhase: typeof argv.end === 'string' ? argv.end : undefined,
     });
     console.log(JSON.stringify({
       type: 'goal_run_prepared',

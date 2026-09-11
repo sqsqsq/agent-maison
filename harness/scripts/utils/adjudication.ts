@@ -183,6 +183,7 @@ export type RecoverAction = 'backtrack_to_coding' | 'retry_transaction';
  * **新增 incident 未在此注册 → t4 元门禁单测红**，写不出第二套分类。
  */
 export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.freeze({
+  execution_scope_unresolved: { class: 'external' },
   // --- 本 plan 打通的两条恢复路 -------------------------------------------
   /** legacy-only（plan 1741b6f2 T3/T4）：runner 级 drift reconciliation 已删除，新 run 不再
    *  写入本 halt——同一漂移事实改由 ut_no_src_mutation / review_closure_attestation 单次分级

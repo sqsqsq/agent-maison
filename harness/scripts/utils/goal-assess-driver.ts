@@ -71,7 +71,7 @@ export function selectRunnerActionFromAssess(
     }
     return 'halt';
   }
-  if (recommendation.action === 'validate_feature_completion') return 'advance';
+  if (recommendation.action === 'validate_feature_completion' || recommendation.action === 'revise_scope') return 'advance';
 
   const relation = targetRelation(recommendation, input.currentPhase, input.chain);
   // 责任阶段统一路由（plan b6e4c9f2）：**唯一**回退动作是 backtrack_to_phase——目标缺席

@@ -31,6 +31,8 @@
 
 import { recomputePhaseEvidenceStaleness } from './phase-evidence-manifest';
 import { validateProjectRelativePath } from './project-relative-path';
+import type { ExecutionScope } from './execution-scope';
+import { executionScopeEvidenceIssues } from './verify-feature-completion';
 
 /** 触发面的**闭集**——跨 resume 回放时只认这三个值，未知一律不采信 */
 export const SCOPE_REPLAN_TRIGGERS = [
@@ -190,11 +192,19 @@ export type PlanAuthorityOutcome =
  * git history）。有 diff 时直接进入 replan：不把旧字节写回宿主，replan 重出 plan 产物。
  */
 export function checkPlanAuthority(input: {
+  executionScope?: ExecutionScope;
   projectRoot: string;
   feature: string;
   /** framework 根（gate 指纹重算口径）；缺省由 recompute 侧从 projectRoot 推导 */
   frameworkRoot?: string;
 }): PlanAuthorityOutcome {
+  if (input.executionScope) {
+    const design = input.executionScope.obligations.filter(o => o.kind === 'design-context' && o.applicability === 'required');
+    if (design.length && design.every(o => o.satisfied_by?.length) && !input.executionScope.obligations.some(o => o.kind === 'design-decision' && o.applicability !== 'not_applicable' && !o.satisfied_by?.length)) {
+      const issues = executionScopeEvidenceIssues(input.projectRoot, input.feature, input.executionScope, new Set(design.map(o => o.id)));
+      return issues.length ? { kind: 'replan', reason: 'live_drift', detail: issues.join('; '), affectedFiles: [] } : { kind: 'ok' };
+    }
+  }
   // runner-owned-machine-facts 裁剪（codex 定案；宿主实锤 run 20260815T162931Z-3aa520）：
   // 授权唯一依据=仓内 fresh 的 **plan closure**（phase-evidence-manifest + 回执指针，
   // 跨 run 稳定）。per-run pass snapshot 只是同阶段 closure-retry 的 TOCTOU 缓存，

@@ -148,7 +148,7 @@
         "action": {
           "enum": [
             "run_phase", "rerun_phase", "complete_closure", "resolve_deferred",
-            "restore_inputs_and_rerun", "validate_feature_completion", "stop"
+            "restore_inputs_and_rerun", "validate_feature_completion", "revise_scope", "stop"
           ]
         },
         "phase": { "type": ["string", "null"] },

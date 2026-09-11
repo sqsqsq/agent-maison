@@ -34,7 +34,7 @@ import {
   main as goalMain,
 } from '../../scripts/goal-runner';
 import { inferRepoLayout } from '../../repo-layout';
-import { clearFrameworkConfigCache } from '../../config';
+import { clearFrameworkConfigCache, featureFilePath } from '../../config';
 import { writeReviewClosureAttestation } from '../../scripts/utils/closure-attestation';
 import {
   resolvePhaseEvidenceManifest,
@@ -297,6 +297,10 @@ export interface RunProbe {
 export async function runGoalRuntimeChain(
   root: string,
   opts: {
+    frameworkRoot?: string;
+    onScopeHandoff?: (boundary: 'intent' | 'released' | 'born') => void;
+    featureId?: string;
+    freshEndPhase?: string;
     onTesting?: (ctx: AgentCtx) => void;
     onCoding?: (ctx: AgentCtx) => void;
     onSpec?: (ctx: AgentCtx) => void;
@@ -360,6 +364,9 @@ export async function runGoalRuntimeChain(
     executorMode?: 'attended' | 'detached';
     adapter?: string;
     viaHostBridge?: boolean;
+    viaRuntimeClass?: boolean;
+    launchCwd?: string;
+    launchArgs?: string[];
     hostAuthorization?: {
       mode: 'manual' | 'batch_authorized' | 'goal_mode';
       through_phase?: string;
@@ -397,6 +404,8 @@ export async function runGoalRuntimeChain(
     realPassSummaryWriter?: boolean;
   } = {},
 ): Promise<RunProbe> {
+  const frameworkRoot = opts.frameworkRoot ?? REPO_ROOT;
+  const featureId = opts.featureId ?? FEATURE;
   const invokedPhases: string[] = [];
   const harnessPhases: string[] = [];
   /** device-readiness t3：就绪门实际被调用的 phase 序列（断言"只在需设备 phase 执行"） */
@@ -451,7 +460,7 @@ export async function runGoalRuntimeChain(
         ...(opts.invokeResultFor?.(phase, n) ?? {}),
       };
     }) as never);
-    __testing_setRepoLayout(layoutFieldsForTmpHost(root));
+    __testing_setRepoLayout({ ...layoutFieldsForTmpHost(root), frameworkRoot });
     if (opts.workflowTransform) {
       __testing_setWorkflowResolver((projectRoot, workflowOptions) =>
         opts.workflowTransform!(resolveWorkflowSpec(projectRoot, workflowOptions)));
@@ -485,7 +494,7 @@ export async function runGoalRuntimeChain(
           message: `injected failure for attempt=${attempt} phase=${ph}`,
         };
       }
-      const receiptPath = path.join(_pr, 'doc', 'features', feat, String(ph), 'phase-completion-receipt.md');
+      const receiptPath = featureFilePath(_pr, feat, String(ph) + '/phase-completion-receipt.md');
       if (attempt && fs.existsSync(receiptPath)) {
         const claimed = /claimed_attempt_id:\s*"([^"]*)"/.exec(fs.readFileSync(receiptPath, 'utf-8'))?.[1] ?? '';
         if (claimed && claimed !== attempt) {
@@ -526,7 +535,7 @@ export async function runGoalRuntimeChain(
       let specGateChecks: CheckResult[] | null = null;
       // plan 8d2b4f60 §6：真实 gate 在 runtime 内决定推进/重跑（不是事后补一次直调）。
       if (!failOverride && opts.realSpecFidelityGate && String(ph) === 'spec') {
-        const specMdAbs = path.join(pr, 'doc', 'features', feat, 'spec', 'spec.md');
+        const specMdAbs = featureFilePath(pr, feat, 'spec/spec.md');
         const specMd = fs.existsSync(specMdAbs) ? fs.readFileSync(specMdAbs, 'utf-8') : '';
         const gateCtx = {
           phase: 'spec', feature: feat, projectRoot: pr,
@@ -565,7 +574,7 @@ export async function runGoalRuntimeChain(
         if (gateChecks.some(c => c.status === 'FAIL')) failOverride = { checks: gateChecks };
       }
       if (failOverride) {
-        const failDir = path.join(pr, 'doc', 'features', feat, String(ph), 'reports');
+        const failDir = featureFilePath(pr, feat, String(ph) + '/reports');
         fs.mkdirSync(failDir, { recursive: true });
         // 责任阶段统一路由（c7e4a2d9 review 二轮 P1）：`checks` 形态走**真实 summary writer**
         // writeRunSummaryBase（与 harness-runner 生产同一实现）——lattice（report_validity）/
@@ -609,6 +618,7 @@ export async function runGoalRuntimeChain(
           };
           // 生产 writer 落盘（真实 lattice/blockers/candidates 派生 + validateSummaryV11 +
           // atomicWriteJson）——不再手写 summary.json
+          if (opts.frameworkRoot) fs.writeFileSync(path.join(failDir, 'script-report.json'), JSON.stringify(scriptReport));
           writeRunSummaryBase(pr, scriptReport, _fr);
           return { exitCode: 1, timedOut: false };
         }
@@ -642,9 +652,10 @@ export async function runGoalRuntimeChain(
           attempt: harnessPhases.filter(p => p === 'testing').length,
         });
       }
-      const phaseDir = path.join(pr, 'doc', 'features', feat, String(ph));
+      const phaseDir = featureFilePath(pr, feat, String(ph));
       const dir = path.join(phaseDir, 'reports');
       fs.mkdirSync(dir, { recursive: true });
+      if (opts.frameworkRoot) fs.writeFileSync(path.join(dir, 'script-report.json'), JSON.stringify({ phase: String(ph), feature: feat, checks: [], summary: { verdict: 'PASS', total: 0, pass: 0, fail: 0, warn: 0, skip: 0, blockers: 0 } }));
       // e9d4b7a3 t5：回执写入 claimed_attempt_id（roundIdentity 身份）——identity-aware
       // validateReceipt 桩据此做同阶段等值校验（镜像 check-receipt 语义）。
       fs.writeFileSync(path.join(phaseDir, 'phase-completion-receipt.md'), [
@@ -669,6 +680,7 @@ export async function runGoalRuntimeChain(
           const manifest = resolvePhaseEvidenceManifest({
             projectRoot: pr, feature: feat, phase: String(ph),
             extraInputs: [], extraOutputs: [],
+            ...(opts.frameworkRoot ? { frameworkRoot } : {}),
             requirementSha: gm?.run_id
               ? computeRunRequirementSha(pr, feat, gm.run_id, 'doc/features')
               : null,
@@ -799,7 +811,7 @@ export async function runGoalRuntimeChain(
     if (!opts.resume && (opts.freshBudget || opts.freshManifestContent)) {
       const manifestYaml = opts.freshManifestContent
         ?? [
-          `feature: ${FEATURE}`,
+          `feature: ${featureId}`,
           `budget:`,
           `  max_total_turns: ${opts.freshBudget!.max_total_turns}`,
           `unattended:`,
@@ -819,7 +831,7 @@ export async function runGoalRuntimeChain(
       // （旧版 run 语义）；追补一对闭合的 bound/settled 模拟 3.0.0 干净收尾形态
       // （真实 3.0.0 run 每次 invoke 都落），对账归 no_unclosed_bounds。
       const resumeEventsPath = path.join(
-        root, 'doc/features', FEATURE, 'goal-runs', opts.resume, 'events.jsonl',
+        root, 'doc/features', featureId, 'goal-runs', opts.resume, 'events.jsonl',
       );
       if (fs.existsSync(resumeEventsPath)) {
         const raw = fs.readFileSync(resumeEventsPath, 'utf-8');
@@ -845,7 +857,7 @@ export async function runGoalRuntimeChain(
     }
     process.argv = opts.resume
       ? [
-          'node', 'goal-runner.ts', '--resume', opts.resume, '--feature', FEATURE,
+          'node', 'goal-runner.ts', '--resume', opts.resume, '--feature', featureId,
           '--foreground-ok', '--force',
           // 无 HMAC 测试宿主的 resume 须弱 ack vision 账本（生产合法路径；终态封顶人工复核）
           ...(opts.forceResume ? ['--force-resume', '--ack-unverified-ledgers'] : []),
@@ -855,12 +867,12 @@ export async function runGoalRuntimeChain(
         ]
       : [
           'node', 'goal-runner.ts',
-          '--feature', FEATURE,
+          '--feature', featureId,
           ...(!opts.omitRequirement && !opts.freshRequirementFile
             ? ['--requirement', opts.freshRequirement ?? '真机测试银行卡开卡流程']
             : []),
           ...(opts.freshRequirementFile ? ['--requirement-file', 'increment-req.txt'] : []),
-          '--start', opts.freshStartPhase ?? 'spec', '--end', 'testing',
+          '--start', opts.freshStartPhase ?? 'spec', '--end', opts.freshEndPhase ?? 'testing',
           '--adapter', opts.adapter ?? 'cursor',
           ...(opts.runId ? ['--run-id', opts.runId] : []),
           '--foreground-ok', '--force',
@@ -870,41 +882,43 @@ export async function runGoalRuntimeChain(
           ...supersedeArgs,
           ...rebaselineArgs,
         ];
-    process.chdir(root);
+    process.argv.push(...(opts.launchArgs ?? []));
+    process.chdir(opts.launchCwd ?? root);
     clearFrameworkConfigCache();
     let bridgeReportDir: string | null = null;
     const exitCode = opts.viaHostBridge
       ? await (async () => {
           const bridgeManifest = opts.resume
-            ? loadGoalManifestFromRun(root, opts.resume, { feature: FEATURE })
+            ? loadGoalManifestFromRun(root, opts.resume, { feature: featureId })
             : prepareGoalModeRun({
                 projectRoot: root,
-                frameworkRoot: REPO_ROOT,
-                feature: FEATURE,
+                frameworkRoot: frameworkRoot,
+                feature: featureId,
                 runId: opts.runId,
                 adapter: opts.adapter ?? 'codex',
                 adapterSource: 'user_explicit',
                 requirement: opts.freshRequirement ?? '真机测试银行卡开卡流程',
-                startPhase: opts.freshStartPhase ?? 'spec',
-                endPhase: 'testing',
+                startPhase: opts.freshStartPhase,
+                endPhase: opts.freshEndPhase,
               }).manifest;
           bridgeReportDir = path.resolve(root, bridgeManifest.report_dir);
           const result = await runGoalModeHostBridge({
             projectRoot: root,
-            frameworkRoot: REPO_ROOT,
-            feature: FEATURE,
+            frameworkRoot: frameworkRoot,
+            feature: featureId,
             runId: bridgeManifest.run_id,
             adapter: opts.adapter ?? 'codex',
             runMode: 'attended',
             ...(opts.hostAuthorization ? { authorization: opts.hostAuthorization } : {}),
             ...(opts.hostLeaseMs !== undefined ? { leaseMs: opts.hostLeaseMs } : {}),
             ...(opts.hostMaxRounds !== undefined ? { maxRounds: opts.hostMaxRounds } : {}),
-            executePhase: async (phase, recommendation) => recordAttendedPhase(
+            onScopeHandoff: opts.onScopeHandoff,
+            executePhase: async (phase, recommendation, context) => recordAttendedPhase(
               phase,
               typeof recommendation === 'object' && recommendation && 'instruction' in recommendation
                 ? String((recommendation as { instruction?: unknown }).instruction ?? '')
                 : '',
-              bridgeManifest.run_id,
+              context?.runId ?? bridgeManifest.run_id,
             ),
             forceTakeover: opts.forceResume,
           });
@@ -915,6 +929,8 @@ export async function runGoalRuntimeChain(
               ? 2
               : 1;
         })()
+      : opts.viaRuntimeClass
+      ? await new (require('../../scripts/goal-phase-runtime').GoalPhaseRuntime)({ args: process.argv.slice(2), onScopeHandoff: opts.onScopeHandoff }).run()
       : opts.executorMode === 'attended'
       ? await goalMain({
           args: [
@@ -926,7 +942,7 @@ export async function runGoalRuntimeChain(
           executor: attendedExecutor,
         })
       : await goalMain();
-    const runsDir = path.join(root, 'doc/features', FEATURE, 'goal-runs');
+    const runsDir = featureFilePath(root, featureId, 'goal-runs');
     const runs = fs.existsSync(runsDir)
       ? fs.readdirSync(runsDir).filter(n => !n.startsWith('.'))
       : [];

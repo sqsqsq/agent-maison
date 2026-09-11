@@ -566,6 +566,8 @@ export interface VisualHandoffResolutionRow {
 
 /** 单项检查结果 */
 export interface CheckResult {
+  /** Owning checker may propose new sourced facts; only runtime may freeze a successor. */
+  scope_revision_input?: import('./execution-scope').ExecutionScopeInput;
   id: string;
   category: 'structure' | 'semantic' | 'traceability';
   description: string;

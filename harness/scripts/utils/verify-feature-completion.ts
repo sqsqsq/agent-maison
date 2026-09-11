@@ -22,6 +22,11 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { validateExecutionScope, executionCompletionPhases, isExecutionSourceBasis, type ExecutionScope } from './execution-scope';
+import { loadGoalManifestFromRun } from './goal-manifest';
+import { assertGoalRunAttachable, loadFrozenExecutionScope } from './goal-run-creation';
+import { isInsideProjectRoot } from './project-relative-path';
+import { loadEventsJsonl, resolveEffectiveRunEnd } from './goal-runner-phase';
 
 import { featureFilePath, receiptDirPath, resolveFeatureArtifact } from '../../config';
 import {
@@ -49,6 +54,54 @@ export const FEATURE_COMPLETION_FILENAME = 'feature-completion.json';
 // 1.1（codex 八轮 P2）：新增 requirement_sha256/testing_source_aggregate/per-phase attempt
 // 等必需绑定字段——旧 1.0 completion 结构不同，schema_version 不匹配即 INVALID。
 export const FEATURE_COMPLETION_SCHEMA_VERSION = '1.1';
+
+/** Recheck P1 bindings and real phase evidence; scope declarations never count as PASS. */
+export function executionScopeEvidenceIssues(projectRoot: string, feature: string, scope: ExecutionScope, obligationIds?: ReadonlySet<string>): string[] {
+  validateExecutionScope(scope);
+  const issues = scope.unresolved.filter(gap => !obligationIds || obligationIds.has(gap.obligation_id)).map(gap => `${gap.obligation_id}: ${gap.reason}`);
+  for (const obligation of scope.obligations.filter(o => !obligationIds || obligationIds.has(o.id))) {
+    for (const { ref, basis } of [...obligation.basis.map(ref => ({ ref, basis: true })), ...(obligation.satisfied_by ?? []).map(ref => ({ ref, basis: false }))]) {
+      if ('input_id' in ref) {
+        if (!Array.isArray(ref.dependencies) || !/^[0-9a-f]{64}$/.test(ref.content_fingerprint)) { issues.push(`${obligation.id}: invalid input binding`); continue; }
+        for (const dep of ref.dependencies) {
+          // Executed output duties describe the input code at birth; their result is
+          // checked by the existing write-set/baseline and phase evidence chain.
+          if (basis && isExecutionSourceBasis(projectRoot, scope, obligation, dep)) continue;
+          if (!isInsideProjectRoot(projectRoot, dep.path) || sha256File(dep.path) !== dep.sha256 || fs.existsSync(dep.path) !== dep.exists) issues.push(`${obligation.id}: input binding stale ${dep.path}`);
+        }
+      } else {
+        try {
+          const source = loadGoalManifestFromRun(projectRoot, ref.run_id, { feature });
+          assertGoalRunAttachable(projectRoot, source);
+          const terminal = resolveEffectiveRunEnd(loadEventsJsonl(path.join(projectRoot, source.report_dir, 'events.jsonl')));
+          const evidence = loadPhaseEvidenceManifest(projectRoot, feature, ref.phase);
+          const fresh = recomputePhaseEvidenceStaleness(projectRoot, feature, [ref.phase])[0];
+          const identity = resolvePhaseRunIds(projectRoot, feature, [ref.phase]);
+          if (!terminal || !['CHAIN_SLICE_COMPLETED', 'COMPLETED'].includes(String(terminal.status)) || identity.runIds[ref.phase] !== ref.run_id || !evidence?.integrityOk || evidence.manifest.aggregate_sha256 !== ref.evidence_manifest_aggregate || fresh.verdict !== 'fresh') issues.push(`${obligation.id}: reused evidence invalid`);
+        } catch { issues.push(`${obligation.id}: reused run missing/corrupt`); }
+      }
+    }
+    if (obligation.applicability === 'required' && obligation.satisfied_by?.some(ref => 'input_id' in ref) && !['acceptance-context', 'design-context'].includes(obligation.kind)) issues.push(`${obligation.id}: output obligation requires execution evidence`);
+  }
+  return issues;
+}
+
+/** Empty scopes reuse existing verified results; this operation never creates a run/certificate. */
+export function verifyReusedExecutionScope(projectRoot: string, feature: string, scope: ExecutionScope): { complete: boolean; reasons: string[] } {
+  const reasons = executionScopeEvidenceIssues(projectRoot, feature, scope);
+  if (scope.phase_chain.length) reasons.push('范围仍有待执行阶段');
+  if (scope.completion_target === 'feature' && !reasons.length) {
+    const result = verifyFeatureCompletion({ projectRoot, feature, expectedChain: executionCompletionPhases(scope), expectedTrack: 'full' });
+    if (result.verdict !== 'VALID') reasons.push(...result.reasons);
+    else {
+      const projection = JSON.parse(fs.readFileSync(featureFilePath(projectRoot, feature, FEATURE_COMPLETION_FILENAME), 'utf8')) as CompletionProjection;
+      const original = JSON.parse(fs.readFileSync(path.join(projectRoot, projection.original_path), 'utf8')) as FeatureCompletion;
+      const prior = loadFrozenExecutionScope(projectRoot, feature, original.run_id);
+      if (!prior || JSON.stringify(prior.requested_results) !== JSON.stringify(scope.requested_results)) reasons.push('既有完成记录未证明当前请求目标覆盖');
+    }
+  }
+  return { complete: !reasons.length, reasons };
+}
 
 export type CompletionVerdictKind = 'VALID' | 'STALE' | 'INVALID';
 
@@ -168,6 +221,7 @@ function readSummaryLattice(
 }
 
 export interface CleanPassOptions {
+  executionScope?: ExecutionScope;
   projectRoot: string;
   feature: string;
   chain: string[];
@@ -183,6 +237,11 @@ export interface CleanPassOptions {
 export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[] {
   const { projectRoot, feature, chain } = opts;
   const issues: CleanPassIssue[] = [];
+  if (opts.executionScope) {
+    for (const detail of executionScopeEvidenceIssues(projectRoot, feature, opts.executionScope)) issues.push({ phase: chain[0] ?? 'scope', condition: 'execution_scope', detail, kind: 'needs_fix' });
+    if (opts.executionScope.completion_target !== 'feature') issues.push({ phase: chain[0] ?? 'scope', condition: 'execution_scope', detail: 'request-only 不能签发 Feature completion', kind: 'needs_fix' });
+    if (JSON.stringify(chain) !== JSON.stringify(executionCompletionPhases(opts.executionScope))) issues.push({ phase: chain[0] ?? 'scope', condition: 'execution_scope', detail: '完成链与冻结范围失配', kind: 'needs_fix' });
+  }
 
   // ⓪ plan e7c2a4d8 T1d（v22 P1）：曾启动却缺 manifest 的 corrupt run 在场 → 完成
   //    判定 fail-closed（不得静默把权威改选到其他 run）。
@@ -477,6 +536,8 @@ export function generateFeatureCompletion(opts: GenerateCompletionOptions): {
   projectionAbs: string;
   completion: FeatureCompletion;
 } {
+  const scope = loadFrozenExecutionScope(opts.projectRoot, opts.feature, opts.runId);
+  if (scope) opts = { ...opts, executionScope: scope };
   const issues = collectCleanPassIssues({
     ...opts,
     currentRequirementSha: opts.currentRequirementSha ?? computeRunRequirementSha(opts.projectRoot, opts.feature, opts.runId),
@@ -785,7 +846,16 @@ export function verifyFeatureCompletion(opts: VerifyCompletionOptions): Completi
   }
   // workflow_track 与消费方独立解析的 track 对账（expectedChain 同哲学：不信自报；
   // 十轮 P2 后 expectedTrack 必填，此处无条件比对）
-  if (completion.workflow_track !== opts.expectedTrack) {
+  let frozenScope: ExecutionScope | undefined;
+  try {
+    frozenScope = loadFrozenExecutionScope(projectRoot, feature, completion.run_id);
+    if (frozenScope) {
+      const gaps = executionScopeEvidenceIssues(projectRoot, feature, frozenScope);
+      if (frozenScope.completion_target !== 'feature' || gaps.length) return { verdict: 'INVALID', reasons: ['冻结范围尚未完成', ...gaps] };
+      opts = { ...opts, expectedChain: executionCompletionPhases(frozenScope) };
+    }
+  } catch (error) { return { verdict: 'INVALID', reasons: [`完成出生范围不可验证：${String(error)}`] }; }
+  if (!frozenScope && completion.workflow_track !== opts.expectedTrack) {
     return {
       verdict: 'INVALID',
       reasons: [`workflow_track 与消费方解析失配：${completion.workflow_track} ≠ ${opts.expectedTrack}`],

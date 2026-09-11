@@ -258,7 +258,7 @@ function scanHaltReasonLiteralsIn(src: string): string[] {
   const spans: string[] = [];
   // 窗口放宽到 600：展开后的多分支三元比 300 长，截断会让后面的分支静默逃逸
   //（此前 no_progress_* 家族正是这样漏掉的）。
-  for (const m of src.matchAll(/haltReason\s*=[\s\S]{0,600}?;/g)) spans.push(m[0]);
+  for (const m of src.matchAll(/haltReason\s*=(?!=|>)[\s\S]{0,600}?;/g)) spans.push(m[0]);
   for (const m of src.matchAll(/halt_reason:\s*[\s\S]{0,200}?[,}]/g)) spans.push(m[0]);
   const hits = new Set<string>();
   for (const span of spans.map(stripComparisonOperands)) {
@@ -337,6 +337,8 @@ const metaGateCases: TestCase[] = [
         assert(novel.length === 1, `扫描器漏掉了新 halt_reason：${src} → ${JSON.stringify(found)}`);
       }
       // 反向：已注册的不得误报
+      assert(scanHaltReasonLiteralsIn(`haltReason === 'execution_scope_unresolved' ? decide({ invocation: 'fresh' }) : undefined;`).length === 0,
+        '比较表达式不得被当作 haltReason 赋值扫描');
       assert(
         scanHaltReasonLiteralsIn(`halt_reason: 'backtrack_limit',`).every((r) => Boolean(lookupIncident(r))),
         '已注册项被误报为缺失',

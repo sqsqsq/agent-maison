@@ -5,11 +5,20 @@
   "schema_version": "1.1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "name", "artifacts"],
+  "required": [
+    "schema_version",
+    "name",
+    "artifacts"
+  ],
   "properties": {
     "schema_version": {
       "type": "string",
-      "description": "Workflow manifest schema version (independent from framework semver)."
+      "description": "Workflow manifest schema version (independent from framework semver).",
+      "enum": [
+        "1.0",
+        "1.1",
+        "1.2"
+      ]
     },
     "name": {
       "type": "string",
@@ -20,19 +29,27 @@
     },
     "transition_policy": {
       "type": "string",
-      "enum": ["manual", "batch_authorized", "goal_mode"],
+      "enum": [
+        "manual",
+        "batch_authorized",
+        "goal_mode"
+      ],
       "description": "Phase boundary UX policy; default manual when omitted."
     },
     "auto_chain": {
       "type": "array",
-      "items": { "type": "string" },
+      "items": {
+        "type": "string"
+      },
       "description": "Optional ordered feature phase chain override for goal_mode (full track); omit to derive from DAG."
     },
     "auto_chain_by_track": {
       "type": "object",
       "additionalProperties": {
         "type": "array",
-        "items": { "type": "string" }
+        "items": {
+          "type": "string"
+        }
       },
       "description": "1.1: per-track ordered feature chain. MUST declare an entry for every non-full track that has track-only phases (no implicit derivation — plan d4a7c1e8 决策 19)."
     },
@@ -42,7 +59,11 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "scope", "requires"],
+        "required": [
+          "id",
+          "scope",
+          "requires"
+        ],
         "properties": {
           "id": {
             "type": "string",
@@ -51,7 +72,10 @@
           },
           "scope": {
             "type": "string",
-            "enum": ["global", "feature"]
+            "enum": [
+              "global",
+              "feature"
+            ]
           },
           "check": {
             "type": "string",
@@ -63,11 +87,19 @@
           },
           "requires": {
             "type": "array",
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
           },
           "tracks": {
             "type": "array",
-            "items": { "type": "string", "enum": ["full", "lite"] },
+            "items": {
+              "type": "string",
+              "enum": [
+                "full",
+                "lite"
+              ]
+            },
             "minItems": 1,
             "description": "1.1: feature phase track membership. Feature scope defaults to [\"full\"] when omitted (lite membership MUST be explicit); MUST NOT be declared on global scope (globals apply to all tracks)."
           },
@@ -75,13 +107,17 @@
             "type": "object",
             "additionalProperties": {
               "type": "array",
-              "items": { "type": "string" }
+              "items": {
+                "type": "string"
+              }
             },
             "description": "1.1: per-track requires override. A track member whose plain `requires` references a feature phase outside that track MUST declare this (no implicit drop — plan d4a7c1e8 决策 19)."
           },
           "optional_deps": {
             "type": "array",
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
           },
           "verifier_prompt": {
             "type": "string",
@@ -90,9 +126,75 @@
           "skill_doc": {
             "type": "string",
             "description": "Relative path to SKILL.md anchor (optional, informational)."
+          },
+          "obligation_provider_id": {
+            "type": "string",
+            "enum": [
+              "obligations.spec",
+              "obligations.plan",
+              "obligations.coding",
+              "obligations.review",
+              "obligations.ut",
+              "obligations.testing",
+              "obligations.project"
+            ]
           }
         }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "schema_version": {
+            "const": "1.2"
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "auto_chain_by_track"
+          ]
+        },
+        "properties": {
+          "artifacts": {
+            "items": {
+              "required": [
+                "obligation_provider_id"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "tracks"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "requires_by_track"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "artifacts": {
+            "items": {
+              "not": {
+                "required": [
+                  "obligation_provider_id"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

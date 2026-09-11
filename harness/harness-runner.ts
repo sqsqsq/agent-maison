@@ -832,6 +832,7 @@ async function main(): Promise<void> {
   if (!phaseIsGlobal) {
     try {
       const capabilityInput = resolveCapabilityResolutionEntryInput({
+        frameworkRoot: resolvedFrameworkRoot,
         projectRoot,
         feature,
         phase,

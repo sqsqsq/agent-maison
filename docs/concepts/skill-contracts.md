@@ -56,6 +56,16 @@ Feature evidence/恢复/verifier 使用同一 facts 路径；request 不调用 F
 
 新 facts evidence 条目在既有 manifest 内以 `facts_phase` 标明基线＋本阶段增量投影，后续无关增量不改变它；旧条目仍按原始字节核验。发布前，baseline.dependencies 与 resolved-input 来源共用 exists/sha256 比对，来源变化或删除报既有 stale，不重签新字节。
 
+## P2 运行接线
+
+workflow 1.2 用静态 `obligation_provider_id` 表达职责，`resolveExecutionScope` 统一计算执行范围；auto_chain 只提供稳定默认次序。P3/P6 提供规范化请求与有来源的业务事实，验收分层复用既有检查，未知保持具体缺口。候选中的契约指纹由出生入口从安装的 contracts 重算。
+
+完整交付在现有 Goal manifest/run_created 冻结 execution_scope，phase_chain、chain_override、start/end 必须同值投影。恢复只读出生范围，Feature 候选和后来的 track/默认排序不覆盖它。Scope 的控制边与依据仍在同一 manifest 内，不建立平行图。
+
+P1 调用上下文、阶段指令、assess、完成验证和 CU expected execution 都沿实际 run 身份读取该范围。有效施工输入可承接信息要求，真正未完成的设计决策/控制前置仍回责任方；request-only 及 unknown 不签 Feature completion，全复用只验证现有结果，不造空 run。
+
+责任 checker 可在既有 CheckResult 中提出 `scope_revision_input`。runtime 只在真实边界记录一次交接意图，封卷并释放旧 owner/锁后，用同一出生函数创建或恢复固定 ID 的后继。预算、权限和 pin 继承；失败来源保持 PARTIAL/HALTED，其裸 PASS 不变成复用证据。前驱临时恢复状态保留到后继完成后，沿既有 GC 清理。默认 spec-driven 尚未切换，P3–P6 的具体 Skill 迁移和 P7 的公开切换继续按计划推进。
+
 ## 输入读取矩阵与迁移责任（P1）
 
 以下为实施时的读取合同；不是运行状态表。来源列的 `@1` 指 inventory，derive 指静态 provider。所有上游输入都不要求本次重产；需要新裁决/操作时才形成控制依赖，不能把现有 requires 全部改名为 control。当前阶段自己的产物仍需检查。

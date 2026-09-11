@@ -185,6 +185,7 @@ export function effectiveRequires(
   artifact: WorkflowArtifact,
   track: FeatureTrack,
 ): string[] {
+  if (spec.schema_version === '1.2') return [];
   const override = artifact.requires_by_track?.[track];
   if (override) return [...override];
   return artifact.requires.filter((r) => {
@@ -195,7 +196,7 @@ export function effectiveRequires(
 
 /** track 过滤后的拓扑序（Kahn + ready 字典序，与 listWorkflowPhases 同法——full 轨输出与其等值）。 */
 function trackOrderedPhases(spec: WorkflowSpec, track: FeatureTrack): string[] {
-  const arts = spec.artifacts.filter((a) => artifactInTrack(a, track));
+  const arts = spec.artifacts.filter((a) => spec.schema_version === '1.2' || artifactInTrack(a, track));
   const idSet = new Set(arts.map((a) => a.id));
   const indegree = new Map<string, number>();
   const adj = new Map<string, string[]>();
@@ -233,7 +234,7 @@ export function workflowFeaturePhases(spec: WorkflowSpec, track: FeatureTrack = 
   const featureIds = new Set(
     spec.artifacts.filter((a) => a.scope === 'feature').map((a) => a.id),
   );
-  return trackOrderedPhases(spec, track).filter((id) => featureIds.has(id));
+  return (spec.schema_version === '1.2' ? listWorkflowPhases(spec) : trackOrderedPhases(spec, track)).filter((id) => featureIds.has(id));
 }
 
 export function isWorkflowFeaturePhase(spec: WorkflowSpec, phase: string): boolean {
@@ -258,7 +259,7 @@ export interface PhaseChain {
  * 只做一致性解析，不做隐式推导（auto_chain_by_track 缺失/不互洽由 loader FAIL——C1 决策 19）。
  */
 export function resolvePhaseChain(spec: WorkflowSpec, track: FeatureTrack = 'full'): PhaseChain {
-  const ordered = trackOrderedPhases(spec, track);
+  const ordered = spec.schema_version === '1.2' ? [...new Set([...(spec.auto_chain ?? []), ...spec.artifacts.map(a => a.id)])] : trackOrderedPhases(spec, track);
   const featureIds = new Set(
     spec.artifacts.filter((a) => a.scope === 'feature').map((a) => a.id),
   );

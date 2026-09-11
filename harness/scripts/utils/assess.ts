@@ -1,3 +1,5 @@
+import { executionCompletionPhases, type ExecutionScope } from './execution-scope';
+import { loadFrozenExecutionScope } from './goal-run-creation';
 // ============================================================================
 // assess.ts — deterministic, level-triggered feature reconciliation (assess@1)
 // ============================================================================
@@ -60,6 +62,7 @@ export interface AssessAuthorizationContext {
 
 /** Injected by a reconcile driver; assess never reads event logs directly. */
 export interface ReconcileObservationV1 {
+  scope_revision?: ExecutionScope;
   schema_version: '1.0';
   state: 'active' | 'fused';
   reason?: string;
@@ -147,6 +150,7 @@ export interface AssessPrunedPropagation {
   source: string;
 }
 export interface AssessObservation {
+  execution_scope?: ExecutionScope;
   schema_version: '1.0';
   feature: string;
   workflow: string;
@@ -182,6 +186,7 @@ export interface AssessRecommendation {
     | 'resolve_deferred'
     | 'restore_inputs_and_rerun'
     | 'validate_feature_completion'
+    | 'revise_scope'
     | 'stop';
   phase: string | null;
   reason: string;
@@ -441,10 +446,11 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
   const workflow = resolveWorkflowSpec(options.projectRoot, {
     frameworkRoot: options.frameworkRoot,
   });
-  const track = resolveFeatureTrack(loadFeatureTrackDecl(options.projectRoot, options.feature));
-  const allPhases = resolvePhaseChain(workflow, track).featureOrdered.map(String);
+  const scope = options.runId ? loadFrozenExecutionScope(options.projectRoot, options.feature, options.runId) : undefined;
+  const track = scope ? 'full' : resolveFeatureTrack(loadFeatureTrackDecl(options.projectRoot, options.feature));
+  const allPhases = scope ? executionCompletionPhases(scope) : resolvePhaseChain(workflow, track).featureOrdered.map(String);
   if (allPhases.length === 0) throw new Error(`[assess] workflow=${workflow.name} track=${track} 无 feature phase`);
-  const goalEnd = options.goalEnd ?? allPhases[allPhases.length - 1];
+  const goalEnd = scope ? allPhases[allPhases.length - 1] : options.goalEnd ?? allPhases[allPhases.length - 1];
   const phases = sliceThrough(allPhases, goalEnd);
   const frameworkRoot = options.frameworkRoot ??
     path.resolve(__dirname, '..', '..', '..');
@@ -585,12 +591,13 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
     });
   });
   const prunedPropagations = collectPrunedPropagations(currentSummaries);
-  const workflowFingerprint = hash(workflow);
+  const workflowFingerprint = scope ? scope.policy_fingerprint : hash(workflow);
   const trackFingerprint = hash({
     track,
-    feature_decl: fileHash(featureFilePath(options.projectRoot, options.feature, 'feature.yaml')),
+    feature_decl: scope ? null : fileHash(featureFilePath(options.projectRoot, options.feature, 'feature.yaml')),
   });
   const goalFingerprint = hash({
+    execution_scope: scope ?? null,
     goal_end: goalEnd,
     minimum_assurance: options.minimumAssurance ?? {},
   });
@@ -623,6 +630,7 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
   return {
     schema_version: '1.0',
     feature: options.feature,
+    ...(scope ? { execution_scope: scope } : {}),
     workflow: workflow.name,
     track,
     goal_end: goalEnd,
@@ -880,6 +888,16 @@ export function assessObservation(
   const gaps = gapsFromObservation(observation);
   const fused = observation.reconcile?.state === 'fused';
   const recommendation = recommendationForObservation(observation, gaps, fused);
+  if (!fused && observation.reconcile?.scope_revision) {
+    recommendation.action = 'revise_scope'; recommendation.phase = null;
+    recommendation.reason = 'new sourced facts require a successor scope';
+    delete recommendation.runner_action;
+  } else if (!gaps.length && observation.execution_scope?.unresolved.length) {
+    const gap = observation.execution_scope.unresolved[0];
+    gaps.push({ phase: gap.owner, kind: 'missing', detail: gap.reason });
+    recommendation.action = 'stop'; recommendation.phase = null;
+    recommendation.reason = 'execution_scope_unresolved: ' + gap.reason;
+  }
   const reconciled = gaps.length === 0 && !fused &&
     recommendation.action === 'validate_feature_completion';
   const resultWithoutProjection = {

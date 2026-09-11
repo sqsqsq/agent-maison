@@ -4,6 +4,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { featureRelativePath } from './feature-identity';
 import { featurePhaseReportsDir, receiptFilePath } from '../../config';
 import type { GoalPhaseOutcome } from './goal-report-generator';
 import type {
@@ -590,7 +591,7 @@ export function collectSupersededAncestorEvents(opts: {
     if (!id || visited.has(id)) continue;
     visited.add(id);
     const abs = path.join(
-      opts.projectRoot, opts.featuresDir, opts.feature, 'goal-runs', id, 'events.jsonl');
+      opts.projectRoot, opts.featuresDir, featureRelativePath(opts.feature), 'goal-runs', id, 'events.jsonl');
     const evs = load(abs);
     chainEvents.push(...evs);
     queue.push(...extractSupersedeTargets(evs));

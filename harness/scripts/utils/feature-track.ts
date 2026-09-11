@@ -1,3 +1,12 @@
+import { resolveExecutionScope, type ExecutionScope, type ExecutionScopeInput } from './execution-scope';
+import type { WorkflowSpec } from '../../workflow-loader';
+import * as crypto from 'crypto';
+import type { AcceptanceSpec } from './types';
+import type { InputBinding } from './capability-resolution';
+import { isInsideProjectRoot } from './project-relative-path';
+import { loadFrozenExecutionScope } from './goal-run-creation';
+import { loadFeatureContracts, contractFingerprint } from './skill-contract';
+import { inferRepoLayout } from '../../repo-layout';
 // ============================================================================
 // feature-track.ts — feature.yaml 的 track 声明读取（C1 feature-track，plan d4a7c1e8）
 // ============================================================================
@@ -17,6 +26,8 @@ export function featureTrackDeclPath(projectRoot: string, feature: string): stri
 }
 
 export function loadFeatureTrackDecl(projectRoot: string, feature: string): FeatureTrackDecl | null {
+  const runId = process.env.MAISON_GOAL_RUN_ID?.trim();
+  if (runId && loadFrozenExecutionScope(projectRoot, feature, runId)) return { track: 'full' };
   try {
     const abs = featureTrackDeclPath(projectRoot, feature);
     if (!fs.existsSync(abs)) return null;
@@ -59,4 +70,30 @@ export function appendFeatureCorrectionHistory(
   } catch {
     // 写入失败不阻断修正闭环——历史记录是可追溯性增强，非红线契约
   }
+}
+
+/** Only fresh 1.2 runs read the candidate; resume never consults this mutable file. */
+export function resolveFeatureExecutionScope(projectRoot: string, feature: string, workflow: WorkflowSpec, frameworkRoot?: string): ExecutionScope | undefined {
+  if (workflow.schema_version !== '1.2') return undefined;
+  const raw = YAML.parse(fs.readFileSync(featureTrackDeclPath(projectRoot, feature), 'utf8')) as { execution_scope?: ExecutionScopeInput };
+  if (!raw?.execution_scope) throw new Error('[execution-scope] workflow 1.2 缺少运行前范围输入');
+  raw.execution_scope.contract_fingerprints = loadFeatureContracts(frameworkRoot ?? inferRepoLayout(projectRoot).frameworkRoot).map(contractFingerprint);
+  return resolveExecutionScope(raw.execution_scope, workflow, readScopeAcceptance(projectRoot, raw.execution_scope));
+}
+
+/** Materialize only the acceptance binding selected by the normalized request, never scan history. */
+export function readScopeAcceptance(projectRoot: string, input: ExecutionScopeInput): { value: AcceptanceSpec; binding: InputBinding } | undefined {
+  const binding = input.facts.flatMap(fact => fact.basis).find(binding => binding.source.kind === 'artifact' && binding.source.artifact === 'acceptance@1');
+  if (!binding) return undefined;
+  for (const dep of binding.dependencies) {
+    if (!isInsideProjectRoot(projectRoot, dep.path)) throw new Error('[execution-scope] acceptance source outside project');
+    const exists = fs.existsSync(dep.path);
+    const hash = exists ? crypto.createHash('sha256').update(fs.readFileSync(dep.path)).digest('hex') : null;
+    if (exists !== dep.exists || hash !== dep.sha256) throw new Error(`[execution-scope] acceptance binding stale: ${dep.path}`);
+  }
+  const source = binding.dependencies.find(dep => dep.exists && dep.role === 'artifact');
+  if (!source) throw new Error('[execution-scope] acceptance binding has no content');
+  const value = YAML.parse(fs.readFileSync(source.path, 'utf8')) as AcceptanceSpec;
+  if (!value || !Array.isArray(value.criteria) || (value.boundaries !== undefined && !Array.isArray(value.boundaries))) throw new Error('[execution-scope] acceptance structure invalid');
+  return { value, binding };
 }

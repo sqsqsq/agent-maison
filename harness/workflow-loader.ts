@@ -5,6 +5,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
+import { OBLIGATION_PROVIDERS } from './scripts/utils/execution-scope';
 import type { FrameworkConfig } from './config';
 import { loadFrameworkConfig } from './config';
 import { inferRepoLayout } from './repo-layout';
@@ -15,6 +16,7 @@ export interface WorkflowArtifact {
   check?: string;
   rule?: string;
   requires: string[];
+  obligation_provider_id?: string;
   optional_deps?: string[];
   verifier_prompt?: string;
   skill_doc?: string;
@@ -68,6 +70,11 @@ export function listWorkflowPhases(spec: WorkflowSpec): string[] {
   const idSet = new Set(ids);
   if (idSet.size !== ids.length) {
     throw new Error('[workflow-loader] artifact id 重复');
+  }
+  if (spec.schema_version === '1.2') {
+    const preferred = spec.auto_chain ?? [];
+    if (new Set(preferred).size !== preferred.length || preferred.some(id => !idSet.has(id))) throw new Error('[workflow-loader] 1.2 auto_chain 含重复或未知阶段');
+    return [...new Set([...preferred, ...ids])];
   }
 
   const indegree = new Map<string, number>();
@@ -123,9 +130,10 @@ function validateWorkflow(raw: Partial<WorkflowSpec>, filePath: string): void {
     throw new Error(`[workflow-loader] 非法 workflow YAML：${filePath}`);
   }
   const isV11 = raw.schema_version === '1.1';
-  if (raw.schema_version !== '1.0' && !isV11) {
+  const isV12 = raw.schema_version === '1.2';
+  if (raw.schema_version !== '1.0' && !isV11 && !isV12) {
     throw new Error(
-      `[workflow-loader] 不支持的 schema_version="${String(raw.schema_version)}"（${filePath}）；当前支持 1.0 / 1.1`,
+      `[workflow-loader] 不支持的 schema_version="${String(raw.schema_version)}"（${filePath}）；当前支持 1.0 / 1.1 / 1.2`,
     );
   }
   if (!raw.name || typeof raw.name !== 'string') {
@@ -190,6 +198,10 @@ function validateWorkflow(raw: Partial<WorkflowSpec>, filePath: string): void {
   }
 
   validateTrackDeclarations(raw as WorkflowSpec, isV11, filePath);
+  for (const a of raw.artifacts) {
+    if (isV12 && (!a.obligation_provider_id || !OBLIGATION_PROVIDERS[a.obligation_provider_id])) throw new Error('[workflow-loader] phase ' + a.id + ' 缺少已注册 obligation_provider_id');
+    if (!isV12 && a.obligation_provider_id !== undefined) throw new Error('[workflow-loader] obligation_provider_id 仅限 workflow 1.2');
+  }
 
   listWorkflowPhases(raw as WorkflowSpec);
 }

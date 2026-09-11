@@ -1,3 +1,4 @@
+import { validateExecutionScope } from './execution-scope';
 /**
  * Fresh goal-run birth contract.
  *
@@ -15,9 +16,85 @@ import {
   manifestIdentityFieldDigest,
   normalizeGoalPhaseChain,
   writeGoalManifest,
+  loadGoalManifestFromRun,
+  inheritSuccessorManifest,
+  buildGoalManifestFromInput,
+  SCOPE_REVISION_FIELDS,
   type GoalManifest,
 } from './goal-manifest';
 import { loadEventsJsonlStrict, type GoalRunEvent } from './goal-runner-phase';
+import { featureFilePath } from '../../config';
+import type { ExecutionScope } from './execution-scope';
+import { executionScopeFingerprint } from './execution-scope';
+import { readRunControl, ensureRunControl } from './goal-run-control';
+import { executionScopeEvidenceIssues } from './verify-feature-completion';
+import { resolveEffectiveRunEnd } from './goal-runner-phase';
+
+export interface ScopeRevisionRequested {
+  type: 'scope_revision_requested';
+  successor_run_id: string;
+  source_scope_fingerprint: string;
+  execution_scope: ExecutionScope;
+  allowed_fields: readonly string[];
+}
+
+/** Called only after the source runtime's finally releases owner and Feature locks. */
+export function createScopeSuccessor(projectRoot: string, feature: string, sourceRunId: string): GoalManifest | undefined {
+  if (!loadFrozenExecutionScope(projectRoot, feature, sourceRunId)) return undefined;
+  const source = loadGoalManifestFromRun(projectRoot, sourceRunId, { feature });
+  const sourceDir = path.join(projectRoot, source.report_dir);
+  const loaded = loadEventsJsonlStrict(path.join(sourceDir, 'events.jsonl'));
+  if (loaded.corruptLines.length) throw new Error('[execution-scope] corrupt handoff events');
+  const requests = loaded.events.filter(event => event.type === 'scope_revision_requested') as unknown as ScopeRevisionRequested[];
+  if (!requests.length) return undefined;
+  if (new Set(requests.map(request => executionScopeFingerprint({ successor_run_id: request.successor_run_id, source_scope_fingerprint: request.source_scope_fingerprint, execution_scope: request.execution_scope, allowed_fields: request.allowed_fields }))).size !== 1) throw new Error('[execution-scope] conflicting handoff intents');
+  const request = requests[0];
+  if (JSON.stringify(request.allowed_fields) !== JSON.stringify(SCOPE_REVISION_FIELDS)) throw new Error('[execution-scope] invalid revision field boundary');
+  if (!source.execution_scope || executionScopeFingerprint(source.execution_scope) !== request.source_scope_fingerprint) throw new Error('[execution-scope] source scope mismatch');
+  const terminal = resolveEffectiveRunEnd(loaded.events);
+  if (!terminal || !['CHAIN_SLICE_COMPLETED', 'PARTIAL', 'HALTED'].includes(String(terminal.status))) return undefined;
+  const owner = readRunControl(sourceDir, source.run_id)?.owner;
+  if (owner && owner.state !== 'released') return undefined;
+  assertGoalRunAttachable(projectRoot, source);
+  const scope = validateExecutionScope(request.execution_scope);
+  if (!scope.phase_chain.length || scope.completion_target !== source.execution_scope.completion_target || JSON.stringify(scope.requested_results) !== JSON.stringify(source.execution_scope.requested_results)) throw new Error('[execution-scope] successor changed request boundary');
+  const template = buildGoalManifestFromInput({ feature, run_id: request.successor_run_id }, { projectRoot });
+  const records = loaded.events as unknown as Array<{ round_fingerprint?: string; drift_fingerprint?: string }>;
+  const successor = inheritSuccessorManifest(template, source, {
+    round: records.flatMap(event => typeof event.round_fingerprint === 'string' ? [event.round_fingerprint] : []),
+    drift: records.flatMap(event => typeof event.drift_fingerprint === 'string' ? [event.drift_fingerprint] : []),
+  }, scope);
+  const successorDir = path.join(projectRoot, successor.report_dir);
+  const state = inspectGoalRunCreationFiles(path.join(successorDir, 'manifest.json'), path.join(successorDir, 'events.jsonl'));
+  if (state.state === 'complete') {
+    const existing = loadGoalManifestFromRun(projectRoot, successor.run_id, { feature });
+    if (existing.successor_of !== sourceRunId || executionScopeFingerprint(existing.execution_scope) !== executionScopeFingerprint(scope)) throw new Error('[execution-scope] successor lineage/scope mismatch');
+    return existing;
+  }
+  if (state.state !== 'absent') throw new Error('[execution-scope] successor creation_incomplete; repair this birth, do not allocate another id: ' + (state.state === 'creation_incomplete' ? state.reason : state.state));
+  const unresolved = new Set(scope.unresolved.map(gap => `${gap.obligation_id}: ${gap.reason}`));
+  const evidenceIssues = executionScopeEvidenceIssues(projectRoot, feature, scope).filter(issue => !unresolved.has(issue));
+  if (evidenceIssues.length) throw new Error('[execution-scope] successor evidence stale: ' + evidenceIssues.join('; '));
+  const creation = createGoalRun({ projectRoot, manifest: successor, chain: scope.phase_chain,
+    firstImplementationSuccessor: !source.run_base_sha && !source.phase_chain?.some(phase => phase === 'coding' || phase === 'ut') });
+  fs.appendFileSync(creation.eventsPath, JSON.stringify({ ...buildSupersedeAuditEvent({ targetRunId: source.run_id, supersedingRunId: successor.run_id, creation }), ts: new Date().toISOString() }) + '\n');
+  ensureRunControl(path.join(projectRoot, successor.report_dir), successor.run_id);
+  return successor;
+}
+
+/** Birth metadata distinguishes legacy absence from a damaged/stripped modern scope. */
+export function loadFrozenExecutionScope(projectRoot: string, feature: string, runId: string): ExecutionScope | undefined {
+  if (!runId || runId.startsWith('.') || /[\\/]/.test(runId)) throw new Error('[execution-scope] invalid run id');
+  const dir = featureFilePath(projectRoot, feature, `goal-runs/${runId}`);
+  const file = path.join(dir, 'manifest.json');
+  const raw = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown> : undefined;
+  const eventsFile = path.join(dir, 'events.jsonl');
+  const born = fs.existsSync(eventsFile) ? loadEventsJsonlStrict(eventsFile).events.find(event => event.type === 'run_created') as unknown as RunCreatedEvent | undefined : undefined;
+  if (!Object.prototype.hasOwnProperty.call(raw ?? {}, 'execution_scope') && !Object.prototype.hasOwnProperty.call(born?.manifest_identity_fields ?? {}, 'execution_scope')) return undefined;
+  const manifest = loadGoalManifestFromRun(projectRoot, runId, { feature });
+  assertGoalRunAttachable(projectRoot, manifest);
+  return validateExecutionScope(manifest.execution_scope);
+}
 
 export interface RunCreatedEvent extends Record<string, unknown> {
   type: 'run_created';
@@ -142,6 +219,7 @@ export function createGoalRun(options: {
   rebaselineFromRunId?: string;
   /** Tests only: deterministic HEAD resolver. */
   resolveHead?: () => string;
+  firstImplementationSuccessor?: boolean;
 }): GoalRunCreationResult {
   const manifestPath = path.join(options.projectRoot, options.manifest.report_dir, 'manifest.json');
   const eventsPath = path.join(options.projectRoot, options.manifest.report_dir, 'events.jsonl');
@@ -153,10 +231,12 @@ export function createGoalRun(options: {
   }
 
   const phaseChain = normalizeGoalPhaseChain(options.chain, 'resolved phase chain');
+  if (options.manifest.execution_scope && JSON.stringify(validateExecutionScope(options.manifest.execution_scope).phase_chain) !== JSON.stringify(phaseChain)) throw new Error('[goal-run-creation] scope/chain mismatch');
+  if (options.manifest.execution_scope && (options.manifest.start_phase !== phaseChain[0] || options.manifest.end_phase !== phaseChain.at(-1) || JSON.stringify(options.manifest.chain_override) !== JSON.stringify(phaseChain))) throw new Error('[goal-run-creation] scope start/end/chain_override mismatch');
   options.manifest.phase_chain = phaseChain;
 
   if (chainRequiresRunBase(phaseChain)) {
-    if (options.manifest.successor_of) {
+    if (options.manifest.successor_of && !options.firstImplementationSuccessor) {
       if (!options.manifest.run_base_sha) {
         throw new Error(
           '[goal-run-creation] successor 缺少可信 lineage run_base_sha；须人工 rebaseline supersede',
@@ -266,6 +346,8 @@ function validateRunCreatedEvent(event: GoalRunEvent, manifest: GoalManifest): s
   if (raw.event_hash !== runCreatedHash(withoutHash)) {
     return 'run_created.event_hash 不匹配';
   }
+  if (Object.prototype.hasOwnProperty.call(fields, 'execution_scope') !== Object.prototype.hasOwnProperty.call(manifest, 'execution_scope') || (manifest.execution_scope && fields.execution_scope !== computeManifestIdentityFields(manifest).execution_scope)) return 'execution_scope 与出生摘要不匹配';
+  if (manifest.execution_scope && fields.successor_of !== computeManifestIdentityFields(manifest).successor_of) return 'successor_of 与出生摘要不匹配';
   const birthHasBase = Object.prototype.hasOwnProperty.call(fields, 'run_base_sha');
   const manifestHasBase = Object.prototype.hasOwnProperty.call(manifest, 'run_base_sha');
   if (birthHasBase !== manifestHasBase) {

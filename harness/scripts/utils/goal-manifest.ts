@@ -1,3 +1,4 @@
+import { validateExecutionScope, type ExecutionScope } from './execution-scope';
 /**
  * Goal manifest parser — SSOT for goal-runner CLI and
  * {features_dir}/<feature>/goal-runs/<run-id>/manifest.json
@@ -75,6 +76,7 @@ export interface UnattendedContract {
 }
 
 export interface GoalManifest {
+  execution_scope?: ExecutionScope;
   schema_version: '1.0';
   start_phase: FeaturePhase;
   end_phase: FeaturePhase;
@@ -205,6 +207,8 @@ export function computeManifestIdentityFields(manifest: GoalManifest): Record<st
     unattended: manifest.unattended,
     pre_authorized_mutations: manifest.pre_authorized_mutations ?? null,
   };
+  if (Object.prototype.hasOwnProperty.call(manifest, 'execution_scope')) fields.execution_scope = JSON.parse(JSON.stringify(manifest.execution_scope ?? null));
+  if (manifest.execution_scope && manifest.successor_of) fields.successor_of = manifest.successor_of;
   // adapter_model_pin 条件入集——键在场即在
   // 哈希，旧 manifest 无键不受影响（凭空补默认会让既有 run resume 多出字段→误判漂移）。
   if (Object.prototype.hasOwnProperty.call(manifest, 'adapter_model_pin')) {
@@ -700,6 +704,7 @@ export function buildGoalManifestFromInput(
     runBaseSha = raw;
   }
 
+  const scope = Object.prototype.hasOwnProperty.call(input, 'execution_scope') ? validateExecutionScope(input.execution_scope) : undefined;
   const phaseChain = Object.prototype.hasOwnProperty.call(input, 'phase_chain')
     ? normalizeGoalPhaseChain(input.phase_chain)
     : undefined;
@@ -712,9 +717,10 @@ export function buildGoalManifestFromInput(
     ...(requirementSourceFiles ? { requirement_source_files: requirementSourceFiles } : {}),
     ...(runBaseSha ? { run_base_sha: runBaseSha } : {}),
     ...(phaseChain ? { phase_chain: phaseChain } : {}),
+    ...(scope ? { execution_scope: structuredClone(scope) } : {}),
     schema_version: '1.0',
-    start_phase: normalizePhase(input.start_phase, 'spec'),
-    end_phase: normalizePhase(input.end_phase, 'testing'),
+    start_phase: normalizePhase(input.start_phase, scope?.phase_chain[0] ?? 'spec'),
+    end_phase: normalizePhase(input.end_phase, scope?.phase_chain.at(-1) ?? 'testing'),
     feature: String(input.feature ?? '').trim(),
     requirement: typeof input.requirement === 'string' ? input.requirement : undefined,
     adapter: typeof input.adapter === 'string' ? input.adapter.trim() : undefined,
@@ -741,6 +747,8 @@ export function buildGoalManifestFromInput(
  */
 export const SUCCESSOR_REQUIREMENT_INCREMENT_MARKER =
   '## 本轮修复增量 (successor requirement increment)';
+
+export const SCOPE_REVISION_FIELDS = ['execution_scope', 'phase_chain', 'start_phase', 'end_phase', 'chain_override'] as const;
 
 /** 合并后的 requirement 是否携带显式修复增量段。 */
 export function isSuccessorRepairRequirement(requirement: string | undefined | null): boolean {
@@ -778,6 +786,7 @@ export function inheritSuccessorManifest(
     round: readonly string[];
     drift: readonly string[];
   },
+  scopeRevision?: ExecutionScope,
 ): GoalManifest {
   const unique = (values: readonly string[]): string[] =>
     [...new Set(values.map(value => value.trim()).filter(Boolean))];
@@ -810,7 +819,8 @@ export function inheritSuccessorManifest(
   const mergedSourceFiles = [...new Set([...sourceFiles, ...explicitFiles])];
   return {
     ...inherited,
-    start_phase: manifest.start_phase,
+    start_phase: scopeRevision ? validateExecutionScope(scopeRevision).phase_chain[0] : manifest.start_phase,
+    ...(scopeRevision ? { execution_scope: structuredClone(scopeRevision), phase_chain: [...scopeRevision.phase_chain], chain_override: [...scopeRevision.phase_chain], end_phase: scopeRevision.phase_chain.at(-1)! } : {}),
     run_id: manifest.run_id,
     report_dir: manifest.report_dir,
     created_at: manifest.created_at,
@@ -1073,6 +1083,10 @@ export function validateLoadedGoalManifest(
   }
   if (manifest.run_base_sha !== undefined && !/^[0-9a-f]{40}$/.test(manifest.run_base_sha)) {
     throw new Error('[goal-manifest] run_base_sha 必须为 exact 40-hex Git SHA');
+  }
+  if (Object.prototype.hasOwnProperty.call(manifest, 'execution_scope')) {
+    validateExecutionScope(manifest.execution_scope);
+    if (JSON.stringify(manifest.phase_chain) !== JSON.stringify(manifest.execution_scope!.phase_chain)) throw new Error('[goal-manifest] execution_scope/phase_chain mismatch');
   }
   if (manifest.phase_chain !== undefined) {
     manifest.phase_chain = normalizeGoalPhaseChain(manifest.phase_chain);

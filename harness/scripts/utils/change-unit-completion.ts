@@ -7,6 +7,9 @@ import { filterAuthoritativeEvents, loadEventsJsonl, resolveEffectiveRunEnd } fr
 import { featurePhasesFromWorkflow } from './phase-transition-policy';
 import { loadFeatureTrackDecl } from './feature-track';
 import { resolveFeatureTrack } from './runtime-policy';
+import { loadFrozenExecutionScope } from './goal-run-creation';
+import { executionCompletionPhases } from './execution-scope';
+import { isInsideProjectRoot } from './project-relative-path';
 import { CompletionVerdict, verifyFeatureCompletion } from './verify-feature-completion';
 import { ChangeUnitArtifact } from './change-unit-model';
 import {
@@ -53,6 +56,19 @@ export function resolveChangeUnitExpectedExecution(
   projectRoot: string,
   featureId: string,
 ): { expectedTrack: string; expectedChain: string[] } {
+  const projectionFile = featureFilePath(projectRoot, featureId, 'feature-completion.json');
+  if (fs.existsSync(projectionFile)) {
+    const projection = JSON.parse(fs.readFileSync(projectionFile, 'utf8')) as { original_path?: string };
+    if (projection.original_path) {
+      const original = path.resolve(projectRoot, projection.original_path);
+      if (!isInsideProjectRoot(featureFilePath(projectRoot, featureId, 'goal-runs'), original)) throw new Error('completion 原件不在该 Feature 的 run 目录');
+      const record = JSON.parse(fs.readFileSync(original, 'utf8')) as { run_id?: string };
+      if (record.run_id) {
+        const scope = loadFrozenExecutionScope(projectRoot, featureId, record.run_id);
+        if (scope) return { expectedTrack: 'full', expectedChain: executionCompletionPhases(scope) };
+      }
+    }
+  }
   const workflow = resolveWorkflowSpec(projectRoot);
   const track = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, featureId));
   return { expectedTrack: track, expectedChain: featurePhasesFromWorkflow(workflow, track) };
