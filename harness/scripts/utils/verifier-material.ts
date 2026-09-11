@@ -21,6 +21,9 @@ import * as path from 'path';
 
 import { createRuntimeArtifactPredicate, resolvePhaseEvidenceManifest } from './phase-evidence-manifest';
 import type { ContextFileEntry, Phase } from './types';
+import type { ResolvedPhaseInputs } from './capability-resolution';
+import type { FactsInvocationContext } from './context-facts';
+import { stableStringify } from './phase-evidence-manifest';
 
 export const VERIFIER_MATERIAL_SCHEMA = 'maison-verifier-material@1';
 
@@ -47,6 +50,7 @@ export interface VerifierMaterialView {
   /** 按路径排序的材料文件 */
   files: VerifierMaterialFile[];
   material_sha256: string;
+  input_bindings_sha256?: string;
 }
 
 function sha256Text(text: string): string {
@@ -78,6 +82,7 @@ export function computeMaterialSha256(view: Omit<VerifierMaterialView, 'material
       `template_sha256=${view.template_sha256}`,
       `lifecycle_sha256=${view.lifecycle_sha256 ?? ''}`,
       `extension_sha256=${view.extension_sha256 ?? ''}`,
+      ...(view.input_bindings_sha256 ? [`input_bindings_sha256=${view.input_bindings_sha256}`] : []),
       ...view.script_checks.map(c => `check=${c}`),
       ...view.files.map(f => `file=${f.path} sha256=${f.sha256 ?? '<absent>'}`),
     ].join('\n'),
@@ -85,6 +90,8 @@ export function computeMaterialSha256(view: Omit<VerifierMaterialView, 'material
 }
 
 export interface BuildVerifierMaterialInput {
+  resolvedInputs?: ResolvedPhaseInputs;
+  factsContext?: FactsInvocationContext;
   projectRoot: string;
   feature: string;
   phase: string;
@@ -111,6 +118,8 @@ export function buildVerifierMaterialView(input: BuildVerifierMaterialInput): Ve
 
   try {
     const manifest = resolvePhaseEvidenceManifest({
+      resolvedInputs: input.resolvedInputs,
+      factsContext: input.factsContext,
       projectRoot,
       feature,
       phase: phase as Phase,
@@ -120,7 +129,8 @@ export function buildVerifierMaterialView(input: BuildVerifierMaterialInput): Ve
       if (isRuntimeArtifact(entry.path)) continue;
       files.set(entry.path, entry.sha256);
     }
-  } catch {
+  } catch (error) {
+    if (input.resolvedInputs) throw error;
     /* manifest 解析失败（无 frameworkRoot 等）→ 只按上下文文件寻址 */
   }
 
@@ -140,6 +150,7 @@ export function buildVerifierMaterialView(input: BuildVerifierMaterialInput): Ve
 
   const base = {
     schema: VERIFIER_MATERIAL_SCHEMA,
+    ...(input.resolvedInputs ? { input_bindings_sha256: sha256Text(stableStringify(Object.entries(input.resolvedInputs.values).map(([id, value]) => [id, value.state === 'resolved' ? value.binding : value]))) } : {}),
     feature,
     phase,
     gate_fingerprint: input.gateFingerprint,

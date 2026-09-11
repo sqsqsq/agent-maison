@@ -1,5 +1,7 @@
 # Agent 行为规约 — Karpathy 四原则（Framework 全生命周期适配）
 
+> **输入协议边界**：以下 full=spec / lite=change 的 facts 建立与固定上游阅读口径仅适用于 1.0。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。默认入口尚未切换，不能自行补造调用上下文。
+
 > **SSOT**：本文件是 framework 内 AI coding agent 的**行为层**约束，与 `framework/specs/phase-rules/`（产出结构）、`framework/harness/`（机械门禁）、`verify-*.md`（语义审查）叠加生效。
 >
 > **上位原则**：所有阶段同时遵循 [`docs/overview.md §1.2.1`](../../docs/overview.md#121-四条总设计原则) 的“效率优先”“简单优先”“回退重签”与“协作可恢复”；本文件不重复定义。验证须覆盖当前真实风险，但不得把模型轮次、工具调用、重复验证或过程证据完美本身当作质量目标；边界不明时以真实宿主反馈迭代。

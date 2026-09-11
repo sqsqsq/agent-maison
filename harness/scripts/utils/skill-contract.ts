@@ -27,6 +27,13 @@ export const DERIVE_PROVIDER_IDS = [
   'derive.visual-reference',
 ] as const;
 export type DeriveProviderId = typeof DERIVE_PROVIDER_IDS[number];
+export const DERIVE_PROVIDER_TYPES: Readonly<Record<DeriveProviderId, string>> = {
+  'derive.codebase': 'source-targets',
+  'derive.requirement': 'requirement-text',
+  'derive.test-targets': 'source-targets',
+  'derive.adhoc-cases': 'device-cases',
+  'derive.visual-reference': 'reference-images',
+};
 
 export const APPLICABILITY_PROVIDER_IDS = [
   'applicability.always',
@@ -51,6 +58,8 @@ export interface ContractCapability {
   axis: AxisId;
   inputs: string[];
   tracks: FeatureTrackName[];
+  obligation_kinds?: string[];
+  input_role?: 'base' | 'enhancement';
   applicability_provider_id?: ApplicabilityProviderId;
   on_missing: 'prune' | 'fail';
 }
@@ -71,7 +80,7 @@ export interface PhaseContract {
 }
 
 export interface SkillContract {
-  schema_version: '1.0';
+  schema_version: '1.0' | '1.1';
   skill: string;
   skill_doc: 'SKILL.md';
   phases: Record<string, PhaseContract>;
@@ -157,10 +166,11 @@ function validateInput(raw: unknown, label: string): ContractInput {
     throw new Error(`[skill-contract] ${label}.sources 必须为非空数组`);
   }
   const sources = raw.sources.map((source, index) => validateInputSource(source, `${label}.sources[${index}]`));
+  for (const key of Object.keys(raw)) if (!['id', 'sources'].includes(key)) throw new Error(`[skill-contract] ${label} 含未知字段 ${key}`);
   return { id: raw.id, sources };
 }
 
-function validateCapability(raw: unknown, label: string, phaseTracks: readonly FeatureTrackName[], inputIds: ReadonlySet<string>): ContractCapability {
+function validateCapability(raw: unknown, label: string, phaseTracks: readonly FeatureTrackName[], inputIds: ReadonlySet<string>, modern = false): ContractCapability {
   assertRecord(raw, label);
   assertString(raw.id, `${label}.id`);
   if (!validId(raw.id)) throw new Error(`[skill-contract] ${label}.id 格式非法`);
@@ -172,7 +182,18 @@ function validateCapability(raw: unknown, label: string, phaseTracks: readonly F
   for (const inputId of raw.inputs) {
     if (!inputIds.has(inputId)) throw new Error(`[skill-contract] ${label}.inputs 引用未知 input "${inputId}"`);
   }
-  const tracks = validateTracks(raw.tracks, `${label}.tracks`);
+  const tracks = modern ? [] : validateTracks(raw.tracks, `${label}.tracks`);
+  if (modern && raw.tracks !== undefined) throw new Error(`[skill-contract] ${label}: 1.1 不允许 tracks`);
+  if (modern) {
+    if (raw.obligation_kinds !== undefined) {
+      assertStringArray(raw.obligation_kinds, `${label}.obligation_kinds`);
+      if (raw.obligation_kinds.some(id => !/^[a-z][a-z0-9-]*$/.test(id)) || new Set(raw.obligation_kinds).size !== raw.obligation_kinds.length) throw new Error(`[skill-contract] ${label}.obligation_kinds 非法`);
+      if (raw.input_role !== undefined) throw new Error(`[skill-contract] ${label}: obligation_kinds 与 input_role 互斥`);
+    } else if (raw.input_role !== 'base' && raw.input_role !== 'enhancement') {
+      throw new Error(`[skill-contract] ${label}: 未绑定义务须声明 input_role=base|enhancement`);
+    }
+    if (raw.input_role === 'base' && raw.on_missing !== 'fail') throw new Error(`[skill-contract] ${label}: base input 必须 fail`);
+  }
   if (tracks.some((track) => !phaseTracks.includes(track))) {
     throw new Error(`[skill-contract] ${label}.tracks 必须是 phase tracks 子集`);
   }
@@ -187,7 +208,7 @@ function validateCapability(raw: unknown, label: string, phaseTracks: readonly F
   }
   const keys = new Set(Object.keys(raw));
   for (const key of keys) {
-    if (!['id', 'axis', 'inputs', 'tracks', 'applicability_provider_id', 'on_missing'].includes(key)) {
+    if (!['id', 'axis', 'inputs', 'tracks', 'applicability_provider_id', 'on_missing', ...(modern ? ['obligation_kinds', 'input_role'] : [])].includes(key)) {
       throw new Error(`[skill-contract] ${label} 含未知字段 ${key}`);
     }
   }
@@ -198,12 +219,15 @@ function validateCapability(raw: unknown, label: string, phaseTracks: readonly F
     tracks,
     ...(raw.applicability_provider_id ? { applicability_provider_id: raw.applicability_provider_id as ApplicabilityProviderId } : {}),
     on_missing: raw.on_missing,
+    ...(modern && raw.obligation_kinds ? { obligation_kinds: raw.obligation_kinds as string[] } : {}),
+    ...(modern && raw.input_role ? { input_role: raw.input_role as 'base' | 'enhancement' } : {}),
   };
 }
 
-function validatePhase(raw: unknown, label: string): PhaseContract {
+function validatePhase(raw: unknown, label: string, modern = false): PhaseContract {
   assertRecord(raw, label);
-  const tracks = validateTracks(raw.tracks, `${label}.tracks`);
+  const tracks = modern ? [] : validateTracks(raw.tracks, `${label}.tracks`);
+  if (modern && raw.tracks !== undefined) throw new Error(`[skill-contract] ${label}: 1.1 不允许 tracks`);
   if (!Array.isArray(raw.inputs)) throw new Error(`[skill-contract] ${label}.inputs 必须是数组`);
   const inputs = raw.inputs.map((input, index) => validateInput(input, `${label}.inputs[${index}]`));
   const inputIds = inputs.map((input) => input.id);
@@ -212,7 +236,7 @@ function validatePhase(raw: unknown, label: string): PhaseContract {
     throw new Error(`[skill-contract] ${label}.capabilities 必须为非空数组`);
   }
   const capabilities = raw.capabilities.map((capability, index) =>
-    validateCapability(capability, `${label}.capabilities[${index}]`, tracks, new Set(inputIds)));
+    validateCapability(capability, `${label}.capabilities[${index}]`, tracks, new Set(inputIds), modern));
   const capabilityIds = capabilities.map((capability) => capability.id);
   if (new Set(capabilityIds).size !== capabilityIds.length) {
     throw new Error(`[skill-contract] ${label} capability id 重复`);
@@ -267,14 +291,15 @@ export function loadSkillContract(filePath: string): SkillContract {
   if (!fs.existsSync(filePath)) throw new Error(`[skill-contract] 未找到 contract：${filePath}`);
   const raw = YAML.parse(fs.readFileSync(filePath, 'utf8')) as unknown;
   assertRecord(raw, filePath);
-  if (raw.schema_version !== '1.0') throw new Error(`[skill-contract] ${filePath} schema_version 仅支持 1.0`);
+  for (const key of Object.keys(raw)) if (!['schema_version', 'skill', 'skill_doc', 'phases'].includes(key)) throw new Error(`[skill-contract] ${filePath} 含未知字段 ${key}`);
+  if (raw.schema_version !== '1.0' && raw.schema_version !== '1.1') throw new Error(`[skill-contract] ${filePath} schema_version 仅支持 1.0|1.1`);
   assertString(raw.skill, `${filePath}.skill`);
   if (raw.skill_doc !== 'SKILL.md') throw new Error(`[skill-contract] ${filePath}.skill_doc 必须为 SKILL.md`);
   assertRecord(raw.phases, `${filePath}.phases`);
   const phases: Record<string, PhaseContract> = {};
-  for (const [phase, value] of Object.entries(raw.phases)) phases[phase] = validatePhase(value, `${raw.skill}.phases.${phase}`);
+  for (const [phase, value] of Object.entries(raw.phases)) phases[phase] = validatePhase(value, `${raw.skill}.phases.${phase}`, raw.schema_version === '1.1');
   if (Object.keys(phases).length === 0) throw new Error(`[skill-contract] ${filePath}.phases 不得为空`);
-  return { schema_version: '1.0', skill: raw.skill, skill_doc: 'SKILL.md', phases, source_path: filePath };
+  return { schema_version: raw.schema_version, skill: raw.skill, skill_doc: 'SKILL.md', phases, source_path: filePath };
 }
 
 export function loadFeatureContracts(frameworkRoot: string): SkillContract[] {

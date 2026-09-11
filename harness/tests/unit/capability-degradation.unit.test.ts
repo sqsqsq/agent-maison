@@ -2,6 +2,16 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as YAML from 'yaml';
+import { resolveCapabilityInputs, type PhaseInputContext } from '../../scripts/utils/capability-resolution';
+import { collectContextFiles } from '../../harness-runner';
+import { buildVerifierMaterialView } from '../../scripts/utils/verifier-material';
+import { SpecLoader } from '../../scripts/utils/spec-loader';
+import { checkConventionsCoverage } from '../../scripts/check-review';
+import { loadFeatureContracts, loadArtifactInventory } from '../../scripts/utils/skill-contract';
+import { validateContractConsistency } from '../../scripts/check-contract-consistency';
+import { loadWorkflowSpec } from '../../workflow-loader';
+import { resolvePhaseEvidenceManifest, phaseEvidenceManifestCandidatePaths, stableStringify } from '../../scripts/utils/phase-evidence-manifest';
 import {
   assertCapabilityConsumption,
   capabilityResolutionChecks,
@@ -236,6 +246,145 @@ const cases: TestCase[] = [...fallbackAndInvalidCases,
     }),
   },
 ];
+
+
+function modernFixture(root: string, artifact = 'contracts@1', policy = 'fail'): { framework: string; context: PhaseInputContext; resolve: (context?: PhaseInputContext) => ReturnType<typeof resolveCapabilityInputs> } {
+  const framework = path.join(root, 'maison');
+  for (const relative of ['skills/feature', 'workflows', 'specs/artifact-schemas']) {
+    fs.cpSync(path.join(FRAMEWORK_ROOT, relative), path.join(framework, relative), { recursive: true });
+  }
+  write(root, 'framework.config.json', JSON.stringify({ paths: { features_dir: 'doc/features' }, project_profile: { name: 'generic' } }));
+  write(framework, 'skills/feature/code-review/contract.yaml', YAML.stringify({
+    schema_version: '1.1', skill: 'code-review', skill_doc: 'SKILL.md', phases: { review: {
+      inputs: [{ id: 'payload', sources: [{ kind: 'artifact', artifact }] }],
+      capabilities: [{ id: 'capability_review_payload', axis: 'functional', inputs: ['payload'], obligation_kinds: ['review-context'], on_missing: policy }],
+      produces: [{ artifact: 'review-report@1' }], verifies: { check: 'check-review.ts' },
+    } },
+  }));
+  const context: PhaseInputContext = { schema_version: '1.1', subject: { feature: 'demo' }, obligations: { 'review-context': 'required' }, required_outputs: [] };
+  return { framework, context, resolve: (inputContext = context) => resolveCapabilityInputs({ frameworkRoot: framework, projectRoot: root, feature: 'demo', phase: 'review', track: 'full', inputContext }) };
+}
+
+cases.push(
+  {
+    name: 'composable inputs: registered alternate artifact content reaches existing checker without a second read',
+    run: () => project(root => {
+      const fixture = modernFixture(root);
+      const inventoryFile = path.join(fixture.framework, 'specs/artifact-schemas/inventory.yaml');
+      const inventory = YAML.parse(fs.readFileSync(inventoryFile, 'utf8'));
+      inventory.artifacts.find((a: { id: string }) => a.id === 'contracts@1').paths = ['missing-contracts.yaml', 'supplied-contracts.yaml', 'unused-contracts.yaml'];
+      fs.writeFileSync(inventoryFile, YAML.stringify(inventory));
+      write(root, 'doc/features/demo/supplied-contracts.yaml', YAML.stringify({ files: ['src/a.ets'], conventions_applied: [{ id: 'must-review', planned_locations: ['src/a.ets'] }] }));
+      const resolution = fixture.resolve();
+      assert(resolution.report.assurance === 'full', JSON.stringify(resolution.report));
+      const value = resolution.inputs!.values.payload;
+      assert(value.state === 'resolved', 'payload unresolved');
+      if (value.state !== 'resolved') return;
+      assert(value.binding.dependencies.some(dep => dep.path.endsWith('missing-contracts.yaml') && !dep.exists), 'missing preferred source not bound');
+      assert(!value.binding.dependencies.some(dep => dep.path.endsWith('unused-contracts.yaml')), 'unused source was read');
+      assert(value.binding.content_fingerprint === crypto.createHash('sha256').update(stableStringify(value.value)).digest('hex'), 'content binding mismatch');
+      const loader = new SpecLoader(root, undefined, undefined, FRAMEWORK_ROOT);
+      const featureSpec = loader.loadFeatureSpec('demo', resolution.inputs);
+      const ctx = { projectRoot: root, feature: 'demo', phaseRule: {}, featureSpec } as CheckContext;
+      const checks = checkConventionsCoverage(ctx, '');
+      assert(checks.some(c => c.status === 'FAIL' && c.details?.includes('conventions_applied 非空')), JSON.stringify(checks));
+      write(root, 'doc/features/demo/missing-contracts.yaml', 'files: []');
+      assert(fixture.resolve({ ...fixture.context, expected_bindings: [value.binding] }).report.assurance === 'blocked', 'new preferred source did not invalidate binding');
+      fs.unlinkSync(path.join(root, 'doc/features/demo/supplied-contracts.yaml'));
+      assert(loader.loadFeatureSpec('demo', resolution.inputs).contracts?.conventions_applied?.length === 1, 'checker input reopened physical file');
+      const prompt = collectContextFiles(loader, { kind: 'standalone', projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, frameworkRel: '' }, 'review', 'demo', featureSpec, { resolvedInputs: resolution.inputs });
+      assert(prompt.some(entry => entry.content.includes('must-review')), 'verifier did not consume resolved content');
+      assert(loader.inspectFeatureArtifacts('demo', 'coding', resolution.inputs).missingRequiredFiles.length === 0, 'legacy fixed files still required');
+      assert(!fs.existsSync(path.join(root, 'doc/features/demo/spec')), 'invented spec stage');
+    }),
+  },
+  {
+    name: 'composable inputs: invalid content stops fallback and required obligation cannot prune',
+    run: () => project(root => {
+      const fixture = modernFixture(root, 'acceptance@1', 'prune');
+      assert(fixture.resolve().report.assurance === 'blocked', 'required missing input was pruned');
+      write(root, 'doc/features/demo/acceptance.yaml', 'criteria: not-an-array');
+      const result = fixture.resolve();
+      assert(result.inputs!.values.payload.state === 'invalid', JSON.stringify(result));
+      assert(result.report.assurance === 'blocked', 'invalid was pruned');
+      const inactive = fixture.resolve({ ...fixture.context, obligations: { 'review-context': 'not_applicable' } });
+      assert(inactive.report.capabilities[0].inputs.length === 0, 'N/A read sources');
+      const unknown = fixture.resolve({ ...fixture.context, obligations: {} });
+      assert(unknown.report.assurance === 'blocked', 'unknown became N/A');
+    }),
+  },
+  {
+    name: 'composable inputs: explicit invalidation and stale scope binding reject older valid content',
+    run: () => project(root => {
+      const fixture = modernFixture(root, 'acceptance@1');
+      write(root, 'doc/features/demo/acceptance.yaml', 'criteria: []');
+      const first = fixture.resolve();
+      const binding = first.report.capabilities[0].inputs[0].binding!;
+      const stale = fixture.resolve({ ...fixture.context, expected_bindings: [{ ...binding, content_fingerprint: '0'.repeat(64) }] });
+      assert(stale.report.assurance === 'blocked', 'stale binding accepted');
+      const invalidated = fixture.resolve({ ...fixture.context, invalidated_sources: { 'acceptance@1': 'new authorized behavior supersedes old acceptance' } });
+      assert(invalidated.report.assurance === 'blocked', 'new decision ignored');
+      assert(Object.isFrozen(first.report.capabilities[0].inputs), 'report not immutable');
+      assert(!JSON.stringify(first.report).includes('"value"'), 'report duplicated content');
+    }),
+  },
+  {
+    name: 'composable inputs: static producer registration is separate from ancestry and every fallback is typed',
+    run: () => project(root => {
+      const fixture = modernFixture(root);
+      const contracts = loadFeatureContracts(fixture.framework);
+      const workflow = loadWorkflowSpec(fixture.framework, 'spec-driven');
+      workflow.artifacts.find(a => a.id === 'review')!.requires = [];
+      const ids = new Set(loadArtifactInventory(fixture.framework).artifacts.map(a => a.id));
+      let issues = validateContractConsistency(fixture.framework, workflow, contracts, ids);
+      assert(!issues.some(i => i.message.startsWith('review')), JSON.stringify(issues));
+      contracts.find(c => c.skill === 'code-review')!.phases.review.inputs[0].sources.push({ kind: 'derive', provider_id: 'derive.requirement' });
+      issues = validateContractConsistency(fixture.framework, workflow, contracts, ids);
+      assert(issues.some(i => i.message.includes('source content types differ')), 'incompatible fallback passed');
+    }),
+  },
+  {
+    name: 'composable inputs: evidence and candidate surface use actual attempted inputs and detect drift',
+    run: () => project(root => {
+      const fixture = modernFixture(root, 'acceptance@1');
+      write(root, 'doc/features/demo/acceptance.yaml', 'criteria: []');
+      const { inputs } = fixture.resolve();
+      const opts = { projectRoot: root, frameworkRoot: fixture.framework, feature: 'demo', phase: 'review' as const, resolvedInputs: inputs };
+      const manifest = resolvePhaseEvidenceManifest(opts);
+      const material = buildVerifierMaterialView({ ...opts, gateFingerprint: null, phaseRuleText: '', templateText: '', checks: [], contextFiles: [] });
+      assert(!!material.input_bindings_sha256, 'verifier material omitted content bindings');
+      assert(manifest.inputs.some(e => e.path.endsWith('acceptance.yaml')), 'input not bound');
+      assert(!manifest.inputs.some(e => e.path.endsWith('plan.md')), 'legacy input invented');
+      assert(!phaseEvidenceManifestCandidatePaths(opts).has('doc/features/demo/plan/plan.md'), 'legacy candidate invented');
+      write(root, 'doc/features/demo/acceptance.yaml', 'criteria: [{id: AC-1}]');
+      expectThrow(() => resolvePhaseEvidenceManifest(opts), 'input binding stale');
+    }),
+  },
+);
+
+
+cases.push({
+  name: 'composable inputs: request target derivation is bounded and never touches a Feature path',
+  run: () => project(root => {
+    const fixture = modernFixture(root);
+    const file = path.join(fixture.framework, 'skills/feature/code-review/contract.yaml');
+    const contract = YAML.parse(fs.readFileSync(file, 'utf8'));
+    contract.phases.review.inputs[0].sources = [{ kind: 'derive', provider_id: 'derive.test-targets' }];
+    fs.writeFileSync(file, YAML.stringify(contract));
+    write(root, 'src/target.ts', 'export const expected = 1;');
+    const context: PhaseInputContext = { ...fixture.context, subject: { request_sha256: 'a'.repeat(64) } };
+    expectThrow(() => resolveCapabilityResolutionEntryInput({ projectRoot: root, feature: '', phase: 'review', featuresDir: 'doc/features', invocation: { inputContext: context, factsContext: { subject: { request_sha256: 'a'.repeat(64), report_dir: 'reports/request' }, first_phase: 'review', source_paths: [], required_input_snippets: [] }, testTargets: ['src/target.ts'] } }), 'facts do not cover explicit request targets');
+    const options = { frameworkRoot: fixture.framework, projectRoot: root, feature: '', phase: 'review', track: 'full' as const, inputContext: context, testTargets: ['src/target.ts'] };
+    const resolution = resolveCapabilityInputs(options);
+    assert(resolution.report.assurance === 'full', JSON.stringify(resolution.report));
+    const value = resolution.inputs!.values.payload;
+    assert(value.state === 'resolved' && JSON.stringify(value.value).includes('expected = 1'), 'target content absent');
+    assert(resolveCapabilityInputs({ ...options, testTargets: ['../outside'] }).report.assurance === 'blocked', 'target escaped project');
+    assert(resolveCapabilityInputs({ ...options, testTargets: ['missing.ts'] }).report.assurance === 'blocked', 'missing target broadened to repository');
+    assert(resolveCapabilityInputs({ ...options, testTargets: ['missing.ts', '../outside'] }).inputs!.values.payload.state === 'invalid', 'absent target masked invalid later target');
+    expectThrow(() => resolvePhaseEvidenceManifest({ projectRoot: root, frameworkRoot: fixture.framework, feature: '', phase: 'review', resolvedInputs: resolution.inputs }), 'Feature evidence requires');
+  }),
+});
 
 export function runAll(): Array<{ name: string; ok: boolean; error?: string }> {
   return cases.map((testCase) => { try { testCase.run(); return { name: testCase.name, ok: true }; } catch (error) { return { name: testCase.name, ok: false, error: (error as Error).message }; } });

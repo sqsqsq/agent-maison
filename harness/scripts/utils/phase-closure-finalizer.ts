@@ -49,6 +49,8 @@ export interface ClosureCommitV1 {
 }
 
 export interface FinalizePhaseClosureOptions {
+  resolvedInputs?: import('./capability-resolution').ResolvedPhaseInputs;
+  factsContext?: import('./context-facts').FactsInvocationContext;
   projectRoot: string;
   frameworkRoot: string;
   feature: string;
@@ -301,7 +303,7 @@ function productionEvidence(
   }
   return {
     extraInputs: [...new Set([
-      ...collectRequirementSsotPaths(opts.projectRoot, opts.feature, featuresDirRel),
+      ...(opts.resolvedInputs ? [] : collectRequirementSsotPaths(opts.projectRoot, opts.feature, featuresDirRel)),
       ...capabilityResolutionEvidenceInputs(summaryPath, opts.projectRoot),
       ...executedEvidenceInputs(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot),
     ])].sort(),
@@ -374,6 +376,8 @@ function publishEvidenceBinding(
   const manifestRel = path.relative(opts.projectRoot, manifestAbs).replace(/\\/g, '/');
   const evidence = opts.prepareEvidence ? opts.prepareEvidence() : productionEvidence(opts, summaryPath);
   const manifest = resolvePhaseEvidenceManifest({
+    resolvedInputs: opts.resolvedInputs,
+    factsContext: opts.factsContext,
     projectRoot: opts.projectRoot,
     feature: opts.feature,
     phase: opts.phase as Phase,

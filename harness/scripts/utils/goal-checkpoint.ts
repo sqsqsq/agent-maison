@@ -18,7 +18,7 @@ import {
   readContextExplorationInspection,
   type ContextExplorationInspection,
 } from './context-exploration';
-import { isFactsEstablishingPhase, resolveFactsAbsPath } from './context-facts';
+import { isFactsEstablishingPhase, resolveFactsAbsPath, type FactsInvocationContext } from './context-facts';
 import { extractHeadings } from './markdown-parser';
 import { relFeatureFile } from '../../config';
 
@@ -43,9 +43,10 @@ function readFactsOrLegacyInspection(
   projectRoot: string,
   feature: string,
   phase: FeaturePhase,
+  context?: FactsInvocationContext,
 ): ContextExplorationInspection | null {
-  if (isFactsEstablishingPhase(phase)) {
-    const abs = resolveFactsAbsPath(projectRoot, feature);
+  if (isFactsEstablishingPhase(phase, context)) {
+    const abs = resolveFactsAbsPath(projectRoot, feature, context);
     if (fs.existsSync(abs)) {
       try {
         const raw = fs.readFileSync(abs, 'utf-8');
@@ -67,7 +68,7 @@ function readFactsOrLegacyInspection(
       }
     }
   }
-  if (!isContextExplorationPhase(phase)) return null;
+  if (context || !isContextExplorationPhase(phase)) return null;
   return readContextExplorationInspection(projectRoot, feature, phase);
 }
 
@@ -113,9 +114,10 @@ export function deriveResumeInspection(
   feature: string,
   phase: FeaturePhase,
   sinceMs: number,
+  context?: FactsInvocationContext,
 ): ResumeInspection | null {
-  if (!isContextExplorationPhase(phase) && !isFactsEstablishingPhase(phase)) return null;
-  const insp = readFactsOrLegacyInspection(projectRoot, feature, phase);
+  if (!isContextExplorationPhase(phase) && !isFactsEstablishingPhase(phase, context)) return null;
+  const insp = readFactsOrLegacyInspection(projectRoot, feature, phase, context);
   if (!insp) return null;
   if (insp.mtimeMs === null || insp.mtimeMs < sinceMs) return null; // 陈旧/非本 run
 
@@ -130,7 +132,7 @@ export function deriveResumeInspection(
   // 验真第 2 重：审查/契约范围内（contracts.files 交集）。
   // 安全兜底：若 scope 过滤会把 skip-list 清空（多为路径格式不一致），退回仅 existsSync，
   // 避免 P2 静默失效（越界文件被 skip 无害，报告门禁仍强制范围内文件覆盖）。
-  const scope = loadContractsFileScope(projectRoot, feature);
+  const scope = context ? new Set(context.source_paths) : loadContractsFileScope(projectRoot, feature);
   let inspectedFiles = existing;
   if (scope) {
     const inScope = existing.filter(f => scope.has(normalizeRel(f)));

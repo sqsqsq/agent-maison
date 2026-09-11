@@ -2,6 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change complex-capability-meta-model. Update Purpose after archive.
+> 动态工作流 g1 已对齐目标规范；新协议的生产接线与验收由 P1–P7 分别完成。
+> 本次规范修改不表示动态运行能力已上线，旧运行仍依出生协议兼容。
+
 ## Requirements
 ### Requirement: Parent-goal declaration validation
 
@@ -99,7 +102,7 @@ legacy allowlist 与 `version`/`deferred_to` 既有语义不变。不强制所�
 - **Change Unit**：凡属某部件蓝图分解产物的单元 MUST 引用恰好一份所属蓝图，只消费显式
   `requires`、只声明显式 `provides`；**非正式维护动作**（不改变部件行为、外部契约、数据/
   NFR、运行语义或架构责任的纯文档与机械维护）MUST NOT 被要求建立蓝图或 canonical CU，它
-  继续走既有轻量 Feature 路径；**存量平铺 Feature**（无 `change_unit_ref`）MUST 保持既有
+  按请求终点与真实输入独立执行，不强造 Feature/CU/run；**存量平铺 Feature**（无 `change_unit_ref`）MUST 保持既有
   行为，MUST NOT 被自动迁移、自动转为 CU 或自动 credit completion；上述两类单元在显式归属
   某份蓝图前 MUST NOT 参与任何 Component closure 聚合；
 - **Component closure** MUST 由蓝图、单元契约与既有执行完成事实（events/receipt/
@@ -291,9 +294,11 @@ Consumer MUST NOT 绕过接缝直接依赖具体实现，且绕过 MUST 可被�
 3. **不新增机器门**：MUST NOT 为正式性判定新增 `track_scoring` 条目、新档位或机器
    BLOCKER；判定结果 MUST NOT 成为可手改的持久状态字段。
 
-**兜底双入口**：`/spec` 与 `/change-lite` 在首次冻结施工意图处 MUST 各自识别"事项符合正式
-需求判据却未经蓝图"的情形，指出应先经 `/component-design` 并给出回退入口。兜底 MUST NOT
-只放在 spec 阶段（lite 轨没有 spec），MUST NOT 实现为阻断式机器门。
+**全入口兜底**：统一入口与首个实际 Skill 在首次冻结施工意图处 MUST 识别事项符合正式
+需求判据却未经蓝图的情形，指出应先经 `/component-design` 并给出回退入口。兜底 MUST NOT
+依赖本次执行 spec；旧 `/change-lite` 入口在兼容期保持同一纪律。MUST NOT 新增正式性评分、
+持久分类字段或阻断式机器门。只设计、审查或测试的请求 MUST 在其授权终点止步，
+MUST NOT 冒充完整实现交付或绕过正式实现需求的蓝图准入。
 
 #### Scenario: 上游显式分类具有权威性
 
@@ -305,19 +310,20 @@ Consumer MUST NOT 绕过接缝直接依赖具体实现，且绕过 MUST 可被�
 - **WHEN** 事项描述不足以判断它是否改变部件行为、外部契约、数据/NFR、运行语义或架构责任
 - **THEN** 入口 MUST 向人提出判定问题并等待确认，MUST NOT 自行择一继续
 
-#### Scenario: lite 轨兜底不依赖 spec
+#### Scenario: 首个实际 Skill 兜底不依赖 spec
 
-- **WHEN** 一项符合正式需求判据的事项被直接带入 `/change-lite`
-- **THEN** `/change-lite` 在首次冻结施工意图处 MUST 指出应先经 `/component-design` 并给出
-  回退入口；MUST NOT 因为 lite 轨没有 spec 阶段而失去兜底
+- **WHEN** 一项符合正式需求判据的事项被直接带入 coding（或旧协议 `/change-lite`）
+- **THEN** 首个实际 Skill 在首次冻结施工意图处 MUST 指出应先经 `/component-design` 并给出
+  回退入口；MUST NOT 因为本次没有 spec 阶段而失去兜底
 
 #### Scenario: 正式性判定不得变成机器档位
 
 - **WHEN** 某 change 为正式性判定新增 `track_scoring` 评分项或阻断式 BLOCKER
 - **THEN** 该 change 违反本契约，openspec review MUST 拒绝
 
-> **Enforced by:** 本 capability spec 作为 `/component-design`、`/spec`、`/change-lite`
-> 与 `templates/AGENTS.md.template` §4.0 路由的准入约束；话术落点由 t4 的发布件改动承载
+> **Enforced by:** 本 capability spec 与父 goal §8/§9；全入口接线由动态工作流 P6 在
+> `templates/AGENTS.md.template`、`skills/feature/*/SKILL.md` 和 `skills/project/*/SKILL.md` 承载。
+> 旧 `/spec`、`/change-lite` 兜底在兼容期保留；g1 不宣称入口已切换。
 
 ### Requirement: Conditional design obligations replace entry gates
 
@@ -467,3 +473,21 @@ MUST 返回明确的 unsupported / missing design lens 失败，MUST NOT 把 Ser
 > **Enforced by:** 本 capability spec 作为 P1 change 与 `/component-design` 编排入口的准入
 > 约束；lens 建设本身由各自 profile 的独立 change 承担
 
+### Requirement: Applicable construction obligations preserve layered completion
+
+蓝图 MUST 保持正式需求目标与共同决策权威，CU MUST 保持当前切片与目标谓词；spec/plan 只补本次未满足的验收/施工设计义务。已有合法完整内容可经施工投影承接，MUST NOT 为阶段形式重写共同设计或生成空文件。信息/格式承接 MUST NOT 代替真实授权与先行控制事实。
+
+独立 Skill 完成只表示请求职责完成；Feature 完成 MUST 由同一有效范围、适用目标与既有真实运行证据验证，不以末段名称或阶段自报完成判定。CU MUST 只消费独立验证的 VALID completion 和当前 CU 映射；Component closure MUST 继续检查共同决策、目标覆盖与真实组装义务；跨部件能力完成仍归上游。合法无蓝图维护/专项入口 MUST NOT 被强造蓝图、Code Graph 或 CU。
+
+#### Scenario: Different units have different phase scopes
+- **WHEN** 同蓝图的两个 CU 分别是内部逻辑修复和页面交互
+- **THEN** 两者 MUST 可采用不同执行范围，部件闭环仍检查真实组装与组合证据
+
+#### Scenario: Design-only request stops at design
+- **WHEN** 用户只授权设计，尚未请求实现
+- **THEN** 设计结果 MUST 不自动创建施工 run 或被解释为 Feature/CU 已交付
+
+> **Enforced by:** 父 goal §8/§9 与本规范；后续动态工作流 P2/P3/P7 在
+> `harness/scripts/utils/verify-feature-completion.ts`、
+> `harness/scripts/utils/change-unit-completion.ts` 和
+> `harness/scripts/utils/component-closure-obligations.ts` 接线。

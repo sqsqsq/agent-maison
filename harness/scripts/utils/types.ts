@@ -986,6 +986,8 @@ export interface PhaseChecker {
 
 /** 传入检查器的上下文 */
 export interface CheckContext {
+  resolvedInputs?: import('./capability-resolution').ResolvedPhaseInputs;
+  factsContext?: import('./context-facts').FactsInvocationContext;
   phase: Phase;
   feature: string;
   projectRoot: string;

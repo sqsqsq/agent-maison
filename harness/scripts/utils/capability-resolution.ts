@@ -5,6 +5,11 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as YAML from 'yaml';
+import { auditSchemaSupport, validateLiteSchema } from './lite-json-schema';
+import { stableStringify } from './phase-evidence-manifest';
+import { validateProjectRelativePath } from './project-relative-path';
+import { SpecLoader } from './spec-loader';
 import { artifactReadCandidatePaths, catalogPath, featureFilePath, loadFrameworkConfig } from '../../config';
 import type { CheckResult } from './types';
 import { normalizeDeviceTestCases } from './device-test-case-kernel';
@@ -57,6 +62,36 @@ export interface InputResolution {
   selected_source: string | null;
   selected_source_fingerprint: string | null;
   attempts: SourceAttempt[];
+  binding?: InputBinding;
+}
+
+export interface InputBinding {
+  input_id: string;
+  source: ContractInputSource;
+  dependencies: ResolutionDependency[];
+  source_refs: string[];
+  content_fingerprint: string;
+}
+
+export type ResolvedInput<T = unknown> =
+  | { state: 'resolved'; value: T; binding: InputBinding }
+  | { state: 'absent' | 'invalid'; attempts: SourceAttempt[]; detail: string };
+
+/** P2/P6 supply verified invocation facts; this is not another persisted scope. */
+export interface PhaseInputContext {
+  schema_version: '1.1';
+  subject: { feature: string } | { request_sha256: string };
+  obligations: Record<string, 'required' | 'not_applicable' | 'unknown'>;
+  required_outputs: string[];
+  expected_bindings?: InputBinding[];
+  invalidated_sources?: Record<string, string>;
+}
+
+export interface ResolvedPhaseInputs {
+  context: PhaseInputContext;
+  phase: string;
+  values: Record<string, ResolvedInput>;
+  artifacts: Record<string, unknown>;
 }
 
 export interface CapabilityResolution {
@@ -67,6 +102,7 @@ export interface CapabilityResolution {
   on_missing: ContractCapability['on_missing'];
   applicability_provider_id: string | null;
   applicability_dependencies: ResolutionDependency[];
+  applicability_detail?: string;
   inputs: InputResolution[];
 }
 
@@ -94,12 +130,16 @@ export interface CapabilityResolutionOptions {
    * source 直接父目录扫描输入——同一共享发现集合，杜绝第二套分母）。 */
   requirementSourceFiles?: string[];
   adhocCases?: string;
+  inputContext?: PhaseInputContext;
+  /** Explicit bounded source targets from the normalized P6 request. */
+  testTargets?: string[];
 }
 
 interface ProviderResult {
   state: InputResolutionState;
   dependencies: ResolutionDependency[];
   detail?: string;
+  value?: unknown;
 }
 
 interface ApplicabilityResult {
@@ -137,6 +177,7 @@ function resolveArtifact(
   projectRoot: string,
   feature: string,
   source: Extract<ContractInputSource, { kind: 'artifact' }>,
+  modern = false,
 ): ProviderResult {
   const inventory = loadArtifactInventory(frameworkRoot);
   const registered = inventory.artifacts.find((artifact) => artifact.id === source.artifact);
@@ -146,11 +187,39 @@ function resolveArtifact(
     const direct = featureFilePath(projectRoot, feature, relativePath);
     return [...new Set([...fromRegistry, direct])];
   });
-  const dependencies = dedupeDependencies(candidates.map((candidate) => dependency(candidate, 'artifact')));
+  const dependencies: ResolutionDependency[] = [];
+  for (const candidate of candidates) {
+    const dep = dependency(candidate, 'artifact');
+    dependencies.push(dep);
+    if (modern && dep.exists) break;
+  }
+  if (!modern) dependencies.splice(0, dependencies.length, ...dedupeDependencies(dependencies));
   const selected = dependencies.find((entry) => entry.exists);
   if (!selected) return { state: 'absent', dependencies, detail: `${source.artifact} missing` };
   if (selected.sha256 === null) {
     return { state: 'invalid', dependencies, detail: `${source.artifact} is not a readable file: ${selected.path}` };
+  }
+  if (modern) {
+    try {
+      const raw = fs.readFileSync(selected.path, 'utf8');
+      let value = /\.ya?ml$|\.json$/i.test(selected.path) ? YAML.parse(raw) : raw;
+      const schema = YAML.parse(fs.readFileSync(path.join(frameworkRoot, 'specs/artifact-schemas', registered.schema), 'utf8'));
+      const supported = auditSchemaSupport(Object.fromEntries(Object.entries(schema).filter(([key]) => !key.startsWith('x-'))));
+      if (supported.length) throw new Error(`unsupported artifact schema: ${JSON.stringify(supported)}`);
+      const issues = validateLiteSchema(value, schema);
+      if (issues.length || value === undefined || value === null || value === '') {
+        return { state: 'invalid', dependencies, detail: JSON.stringify(issues.length ? issues : ['empty content']) };
+      }
+      if (['acceptance@1', 'contracts@1', 'use-cases@1'].includes(source.artifact)) {
+        const parsed = new SpecLoader(projectRoot, undefined, undefined, frameworkRoot).loadFeatureSpec(feature, {
+          context: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] },
+          phase: '', values: {}, artifacts: { [source.artifact]: value },
+        });
+        if (parsed.shape_issues?.length) return { state: 'invalid', dependencies, detail: parsed.shape_issues.join('; ') };
+        value = source.artifact === 'acceptance@1' ? parsed.acceptance : source.artifact === 'contracts@1' ? parsed.contracts : parsed.useCases;
+      }
+      return { state: 'resolved', dependencies, value, detail: selected.path };
+    } catch (error) { return { state: 'invalid', dependencies, detail: String(error) }; }
   }
   return { state: 'resolved', dependencies, detail: selected.path };
 }
@@ -167,6 +236,30 @@ function resolveDerive(
   source: Extract<ContractInputSource, { kind: 'derive' }>,
   options: CapabilityResolutionOptions,
 ): ProviderResult {
+  if (options.inputContext) {
+    if (source.provider_id === 'derive.requirement') {
+      return options.requirement?.trim()
+        ? { state: 'resolved', dependencies: [], value: options.requirement.trim() }
+        : { state: 'absent', dependencies: [], detail: 'explicit invocation requirement missing' };
+    }
+    if (source.provider_id === 'derive.test-targets' || source.provider_id === 'derive.codebase') {
+      const targets = options.testTargets;
+      if (!targets?.length) return { state: 'absent', dependencies: [], detail: 'explicit source targets missing' };
+      let safeTargets: string[];
+      try { safeTargets = targets.map(target => validateProjectRelativePath(projectRoot, target, 'source target')); }
+      catch (error) { return { state: 'invalid', dependencies: [], detail: String(error) }; }
+      const deps = safeTargets.map(target => dependency(path.resolve(projectRoot, target), 'derive'));
+      const unreadable = deps.find(dep => dep.exists && !dep.sha256);
+      if (unreadable) return { state: 'invalid', dependencies: deps, detail: 'source target unreadable: ' + unreadable.path };
+      const missing = deps.find(dep => !dep.exists);
+      if (missing) return { state: 'absent', dependencies: deps, detail: 'source target missing: ' + missing.path };
+      return { state: 'resolved', dependencies: deps, value: targets.map((target, i) => ({ path: target, content: fs.readFileSync(deps[i].path, 'utf8') })) };
+    }
+    if (source.provider_id === 'derive.visual-reference' && !feature) {
+      return { state: 'absent', dependencies: [], detail: 'request visual references require an explicit provider input' };
+    }
+    if (source.provider_id === 'derive.visual-reference' && !options.requirement?.trim()) return { state: 'absent', dependencies: [], detail: 'explicit visual requirement missing' };
+  }
   switch (source.provider_id) {
     case 'derive.codebase': {
       const deps = sourceTreeDependency(projectRoot);
@@ -292,7 +385,7 @@ function resolveDerive(
         const deps = dedupeDependencies(
           refs.slice(0, 20).map((r) => dependency(path.isAbsolute(r) ? r : path.join(projectRoot, r), 'derive')),
         );
-        return { state: 'resolved', dependencies: deps, detail: `reference_images:${refs.length}` };
+        return { state: 'resolved', dependencies: deps, value: refs, detail: `reference_images:${refs.length}` };
       }
       return {
         state: 'absent',
@@ -347,6 +440,7 @@ function resolveDerive(
       return {
         state: 'resolved',
         dependencies: deps,
+        value: normalized.cases,
         detail: `adhoc_cases:${stableFingerprint(normalized.cases).slice(0, 16)}`,
       };
     }
@@ -357,6 +451,12 @@ function resolveApplicability(
   capability: ContractCapability,
   options: CapabilityResolutionOptions,
 ): ApplicabilityResult {
+  if (options.inputContext) {
+    const states = (capability.obligation_kinds ?? []).map(kind => options.inputContext!.obligations[kind] ?? 'unknown');
+    if (states.includes('unknown')) return { applicable: true, invalid: true, dependencies: [], detail: 'obligation applicability unknown: ' + capability.obligation_kinds?.filter((_, i) => states[i] === 'unknown').join(', ') };
+    if (states.length) return { applicable: states.includes('required'), dependencies: [] };
+    return { applicable: true, dependencies: [] };
+  }
   if (!capability.tracks.includes(options.track)) return { applicable: false, dependencies: [], detail: 'track excluded' };
   const provider = capability.applicability_provider_id ?? 'applicability.always';
   if (provider === 'applicability.always') return { applicable: true, dependencies: [] };
@@ -402,12 +502,20 @@ function resolveInput(
   input: ContractInput,
   options: CapabilityResolutionOptions,
   artifactProducers: ReadonlyMap<string, string>,
+  resolved?: ResolvedPhaseInputs,
 ): InputResolution {
   const attempts: SourceAttempt[] = [];
   for (const source of input.sources) {
-    const result = source.kind === 'artifact'
-      ? resolveArtifact(options.frameworkRoot, options.projectRoot, options.feature, source)
-      : resolveDerive(options.projectRoot, options.feature, source, options);
+    const sourceId = source.kind === 'artifact' ? source.artifact : source.provider_id;
+    const invalidation = options.inputContext?.invalidated_sources?.[sourceId];
+    let result: ProviderResult = invalidation ? { state: 'invalid', dependencies: [], detail: invalidation }
+      : source.kind === 'artifact'
+        ? !options.feature && resolved ? { state: 'absent', dependencies: [], detail: 'request has no Feature artifact' }
+          : resolveArtifact(options.frameworkRoot, options.projectRoot, options.feature, source, !!resolved)
+        : resolveDerive(options.projectRoot, options.feature, source, options);
+    if (resolved && result.state === 'resolved' && result.value === undefined) {
+      result = { ...result, state: 'invalid', detail: 'provider returned no consumable content' };
+    }
     const attempt: SourceAttempt = {
       kind: source.kind,
       source: source.kind === 'artifact' ? source.artifact : source.provider_id,
@@ -419,19 +527,42 @@ function resolveInput(
       ...(result.detail ? { detail: result.detail } : {}),
     };
     attempts.push(attempt);
+    let binding: InputBinding | undefined;
+    if (result.state === 'resolved' && resolved) {
+      binding = { input_id: input.id, source, dependencies: dedupeDependencies(attempts.flatMap(attempt => attempt.dependencies)),
+        source_refs: result.dependencies.filter(d => d.exists).map(d => path.relative(options.projectRoot, d.path).replace(/\\/g, '/')),
+        content_fingerprint: crypto.createHash('sha256').update(stableStringify(result.value)).digest('hex') };
+      const expected = options.inputContext?.expected_bindings?.find(b => b.input_id === input.id);
+      if (expected && stableStringify(expected) !== stableStringify(binding)) {
+        result = { ...result, state: 'invalid', detail: 'input binding stale; return to scope owner' };
+        attempt.state = 'invalid'; attempt.detail = result.detail;
+      } else {
+        resolved.values[input.id] = { state: 'resolved', value: result.value, binding };
+        if (source.kind === 'artifact') resolved.artifacts[source.artifact] = result.value;
+      }
+    }
     if (result.state === 'resolved') {
       return {
         id: input.id,
         state: 'resolved',
         selected_source: attempt.source,
-        selected_source_fingerprint: stableFingerprint(attempt),
+        selected_source_fingerprint: binding?.content_fingerprint ?? stableFingerprint(attempt),
+        ...(binding ? { binding } : {}),
         attempts,
       };
     }
     if (result.state === 'invalid' || result.state === 'not_applicable') {
+      if (resolved) resolved.values[input.id] = { state: 'invalid', attempts, detail: result.detail ?? 'invalid input' };
       return { id: input.id, state: result.state, selected_source: null, selected_source_fingerprint: null, attempts };
     }
   }
+  if (resolved && options.inputContext?.expected_bindings?.some(binding => binding.input_id === input.id)) {
+    const detail = 'input binding stale: previously bound input is absent';
+    if (attempts.length) attempts[attempts.length - 1].detail = detail;
+    resolved.values[input.id] = { state: 'invalid', attempts, detail };
+    return { id: input.id, state: 'invalid', selected_source: null, selected_source_fingerprint: null, attempts };
+  }
+  if (resolved) resolved.values[input.id] = { state: 'absent', attempts, detail: attempts.at(-1)?.detail ?? 'missing input' };
   return { id: input.id, state: 'absent', selected_source: null, selected_source_fingerprint: null, attempts };
 }
 
@@ -440,6 +571,7 @@ function resolveCapability(
   phase: PhaseContract,
   options: CapabilityResolutionOptions,
   artifactProducers: ReadonlyMap<string, string>,
+  resolve: (input: ContractInput) => InputResolution,
 ): CapabilityResolution {
   const applicability = resolveApplicability(capability, options);
   if (applicability.invalid) {
@@ -451,6 +583,7 @@ function resolveCapability(
       on_missing: capability.on_missing,
       applicability_provider_id: capability.applicability_provider_id ?? 'applicability.always',
       applicability_dependencies: applicability.dependencies,
+      ...(options.inputContext && applicability.detail ? { applicability_detail: applicability.detail } : {}),
       inputs: [],
     };
   }
@@ -463,17 +596,18 @@ function resolveCapability(
       on_missing: capability.on_missing,
       applicability_provider_id: capability.applicability_provider_id ?? 'applicability.always',
       applicability_dependencies: applicability.dependencies,
+      ...(options.inputContext && applicability.detail ? { applicability_detail: applicability.detail } : {}),
       inputs: [],
     };
   }
   const byId = new Map(phase.inputs.map((input) => [input.id, input]));
-  const inputs = capability.inputs.map((inputId) => resolveInput(byId.get(inputId)!, options, artifactProducers));
+  const inputs = capability.inputs.map((inputId) => resolve(byId.get(inputId)!));
   const hasInvalid = inputs.some((input) => input.state === 'invalid' || input.state === 'not_applicable');
   const hasAbsent = inputs.some((input) => input.state === 'absent');
   const state: CapabilityResolutionState = hasInvalid
     ? 'blocked'
     : hasAbsent
-      ? capability.on_missing === 'fail' ? 'blocked' : 'pruned'
+      ? capability.on_missing === 'fail' || (options.inputContext && capability.obligation_kinds?.some(kind => options.inputContext!.obligations[kind] === 'required')) ? 'blocked' : 'pruned'
       : 'resolved';
   return {
     id: capability.id,
@@ -506,12 +640,41 @@ function artifactProducerMap(contracts: readonly SkillContract[]): Map<string, s
  * later projections; runtime build/install/run outcomes intentionally do not enter it.
  */
 export function resolveCapabilityReport(options: CapabilityResolutionOptions): CapabilityResolutionReport {
+  return resolveCapabilityInputs(options).report;
+}
+
+export function resolveCapabilityInputs(options: CapabilityResolutionOptions): { report: CapabilityResolutionReport; inputs?: ResolvedPhaseInputs } {
   const contracts = loadFeatureContracts(options.frameworkRoot);
   const indexed = phaseContractIndex(contracts).get(options.phase);
   if (!indexed) throw new Error(`[capability-resolution] phase 无 contract：${options.phase}`);
+  if ((indexed.contract.schema_version === '1.1') !== !!options.inputContext) {
+    throw new Error('[capability-resolution] contract/invocation schema mismatch');
+  }
+  const inputs: ResolvedPhaseInputs | undefined = options.inputContext
+    ? { context: structuredClone(options.inputContext), phase: options.phase, values: {}, artifacts: {} } : undefined;
+  if (inputs) {
+    const subject = inputs.context.subject;
+    if (('feature' in subject ? subject.feature !== options.feature : !!options.feature || !/^[0-9a-f]{64}$/.test(subject.request_sha256))) {
+      throw new Error('[capability-resolution] invocation subject mismatch');
+    }
+  }
   const artifactProducers = artifactProducerMap(contracts);
+  const cache = new Map<string, InputResolution>();
+  const resolve = (input: ContractInput): InputResolution => {
+    if (!cache.has(input.id)) cache.set(input.id, resolveInput(input, options, artifactProducers, inputs));
+    return cache.get(input.id)!;
+  };
   const capabilities = indexed.phase.capabilities.map((capability) =>
-    resolveCapability(capability, indexed.phase, options, artifactProducers));
+    resolveCapability(capability, indexed.phase, options, artifactProducers, resolve));
+  if (inputs && options.feature) {
+    const inventory = loadArtifactInventory(options.frameworkRoot);
+    for (const name of inputs.context.required_outputs) {
+      const output = inventory.artifacts.find(entry => entry.paths.includes(name));
+      if (!output || !indexed.phase.produces.some(p => p.artifact === output.id)) {
+        throw new Error(`undeclared phase output: ${name}`);
+      }
+    }
+  }
   const sourceAttemptDependencies = dedupeDependencies(capabilities.flatMap((capability) => [
     ...capability.applicability_dependencies,
     ...capability.inputs.flatMap((input) => input.attempts.flatMap((attempt) => attempt.dependencies)),
@@ -521,7 +684,7 @@ export function resolveCapabilityReport(options: CapabilityResolutionOptions): C
     : capabilities.some((capability) => capability.state === 'pruned')
       ? 'degraded'
       : 'full';
-  return {
+  const report: CapabilityResolutionReport = {
     schema_version: '1.0',
     phase: options.phase,
     feature: options.feature,
@@ -531,6 +694,16 @@ export function resolveCapabilityReport(options: CapabilityResolutionOptions): C
     assurance,
     source_attempt_dependencies: sourceAttemptDependencies,
   };
+  if (inputs) {
+    const freeze = (value: unknown): void => {
+      if (!value || typeof value !== 'object' || Object.isFrozen(value)) return;
+      for (const child of Object.values(value)) freeze(child);
+      Object.freeze(value);
+    };
+    freeze(report);
+    freeze(inputs);
+  }
+  return { report, inputs };
 }
 
 /**

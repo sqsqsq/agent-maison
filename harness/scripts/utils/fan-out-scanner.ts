@@ -93,8 +93,9 @@ export function computeMaxDependencyFanOut(
   projectRoot: string,
   feature: string,
   frameworkRoot?: string,
+  inScopeOverride?: string[],
 ): number {
-  const inScope = readInScopeModules(projectRoot, feature, frameworkRoot);
+  const inScope = inScopeOverride ?? readInScopeModules(projectRoot, feature, frameworkRoot);
   if (inScope.length === 0) return 0;
 
   const catalog = loadCatalogModules(projectRoot);
@@ -141,8 +142,9 @@ export function computeMaxInScopeModuleLoc(
   projectRoot: string,
   feature: string,
   frameworkRoot?: string,
+  inScopeOverride?: string[],
 ): number {
-  const inScope = readInScopeModules(projectRoot, feature, frameworkRoot);
+  const inScope = inScopeOverride ?? readInScopeModules(projectRoot, feature, frameworkRoot);
   if (inScope.length === 0) return 0;
 
   const catalog = loadCatalogModules(projectRoot);

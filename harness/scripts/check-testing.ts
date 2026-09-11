@@ -5958,6 +5958,8 @@ const checker: PhaseChecker = {
     results.push(
       ...safeRun(
         () => checkFactsArtifact(ctx.projectRoot, ctx.feature, 'testing', {
+          factsContext: ctx.factsContext,
+          resolvedInputs: ctx.resolvedInputs,
           phaseRule: ctx.phaseRule,
           profileName: ctx.resolvedProfile.name,
           frameworkRoot: ctx.frameworkRoot,

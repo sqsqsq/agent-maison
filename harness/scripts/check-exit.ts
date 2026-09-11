@@ -434,6 +434,8 @@ export const checker: PhaseChecker = {
     // 7) Context Facts Gate —— facts.md 本阶段 phase_delta 节（C4，delta 阶段，非建立阶段）
     results.push(
       ...checkFactsArtifact(ctx.projectRoot, ctx.feature, 'exit', {
+          factsContext: ctx.factsContext,
+          resolvedInputs: ctx.resolvedInputs,
         phaseRule: ctx.phaseRule,
         profileName: ctx.resolvedProfile.name,
         frameworkRoot: ctx.frameworkRoot,

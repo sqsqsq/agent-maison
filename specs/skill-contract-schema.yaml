@@ -6,7 +6,7 @@ required: [schema_version, skill, skill_doc, phases]
 additionalProperties: false
 properties:
   schema_version:
-    const: "1.0"
+    enum: ["1.0", "1.1"]
   skill:
     type: string
     pattern: "^[a-z][a-z0-9-]*$"
@@ -21,7 +21,7 @@ properties:
 $defs:
   phase:
     type: object
-    required: [tracks, inputs, capabilities, produces, verifies]
+    required: [inputs, capabilities, produces, verifies]
     additionalProperties: false
     properties:
       tracks:
@@ -75,7 +75,7 @@ $defs:
           provider_id: { type: string, pattern: "^[a-z][a-z0-9_.-]*$" }
   capability:
     type: object
-    required: [id, axis, inputs, tracks, on_missing]
+    required: [id, axis, inputs, on_missing]
     additionalProperties: false
     properties:
       id: { type: string, pattern: "^[a-z][a-z0-9_]*$" }
@@ -93,6 +93,12 @@ $defs:
       applicability_provider_id:
         type: string
         pattern: "^[a-z][a-z0-9_.-]*$"
+      obligation_kinds:
+        type: array
+        minItems: 1
+        uniqueItems: true
+        items: { type: string, pattern: "^[a-z][a-z0-9-]*$" }
+      input_role: { enum: [base, enhancement] }
       on_missing: { enum: [prune, fail] }
   output:
     type: object
@@ -104,3 +110,43 @@ $defs:
     oneOf:
       - required: [artifact]
       - required: [kind, id]
+# Version-specific fields share the same input/output definitions.
+allOf:
+  - if:
+      properties:
+        schema_version: { const: "1.0" }
+    then:
+      properties:
+        phases:
+          additionalProperties:
+            required: [tracks]
+            properties:
+              capabilities:
+                items:
+                  required: [tracks]
+                  not:
+                    anyOf:
+                      - required: [obligation_kinds]
+                      - required: [input_role]
+    else:
+      properties:
+        phases:
+          additionalProperties:
+            not: { required: [tracks] }
+            properties:
+              capabilities:
+                items:
+                  not: { required: [tracks] }
+                  oneOf:
+                    - required: [obligation_kinds]
+                      not: { required: [input_role] }
+                    - required: [input_role]
+                      not: { required: [obligation_kinds] }
+                  allOf:
+                    - if:
+                        required: [input_role]
+                        properties:
+                          input_role: { const: base }
+                      then:
+                        properties:
+                          on_missing: { const: fail }

@@ -16,6 +16,7 @@ import {
   loadArtifactInventory,
   loadFeatureContracts,
   phaseContractIndex,
+  DERIVE_PROVIDER_TYPES,
   type ContractCapability,
   type PhaseContract,
   type SkillContract,
@@ -179,8 +180,35 @@ export function validateContractConsistency(
       issues.push({ code: 'check_provider', message: `${artifact.id}: contract check=${phase.verifies.check}，workflow check=${String(artifact.check)}` });
     }
     const expectedTracks = workflowTracks(artifact);
-    if (!sameSet(phase.tracks, expectedTracks)) {
+    if (contract.schema_version === '1.0' && !sameSet(phase.tracks, expectedTracks)) {
       issues.push({ code: 'track_mismatch', message: `${artifact.id}: contract tracks=[${phase.tracks.join(',')}]，workflow tracks=[${expectedTracks.join(',')}]` });
+    }
+
+    if (contract.schema_version === '1.1') {
+      const ids = new Set<string>();
+      for (const capability of phase.capabilities) {
+        if (ids.has(capability.id)) issues.push({ code: 'capability_duplicate', message: `${artifact.id}: ${capability.id} 重复` });
+        ids.add(capability.id);
+        if (!capability.obligation_kinds?.length && capability.input_role !== 'base' && capability.input_role !== 'enhancement') {
+          issues.push({ code: 'capability_input', message: `${artifact.id}: ${capability.id} 缺义务或基础/增强归属` });
+        }
+        for (const id of capability.inputs) if (!phase.inputs.some(input => input.id === id)) issues.push({ code: 'capability_input', message: `${artifact.id}: unknown input ${id}` });
+      }
+      for (const input of phase.inputs) {
+        const types = new Set<string>();
+        for (const source of input.sources) {
+          if (source.kind === 'derive') {
+            const type = DERIVE_PROVIDER_TYPES[source.provider_id];
+            if (!type) issues.push({ code: 'capability_input', message: `${artifact.id}/${input.id}: unregistered derive ${source.provider_id}` });
+            else types.add(type);
+          } else {
+            types.add(source.artifact);
+            if (!registeredArtifactIds.has(source.artifact)) issues.push({ code: 'unregistered_artifact', message: `${artifact.id}/${input.id}: ${source.artifact}` });
+            if (!producers.get(source.artifact)?.size) issues.push({ code: 'missing_producer', message: `${artifact.id}/${input.id}: ${source.artifact} 无责任 producer` });
+          }
+        }
+        if (types.size !== 1) issues.push({ code: 'capability_input', message: `${artifact.id}/${input.id}: source content types differ: ${[...types].join(',')}` });
+      }
     }
     validateCapabilities(artifact.id, phase, expectedTracks, issues);
     if (!artifact.skill_doc) {

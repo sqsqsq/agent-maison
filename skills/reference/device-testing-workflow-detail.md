@@ -1,5 +1,7 @@
 # device-testing 阶段详细流程（条件加载：执行对应 Step 时读）
 
+> **输入协议边界**：以下 full=spec / lite=change 的 facts 建立与固定上游阅读口径仅适用于 1.0。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。默认入口尚未切换，不能自行补造调用上下文。
+
 > SSOT 索引见 [`skills/feature/device-testing/SKILL.md`](../feature/device-testing/SKILL.md)。本文承载 Step 1.5 打包装机协议、Step 4.5 Hylyre 派生计划全套操作、Step 4.B 即席模式全套操作、Step 4.6 视觉 diff 回环（含全部事故派生的确定性判裁规则，逐字保留不得精简）、Step 5.1 机器报告读取、Step 6 质量门禁自检清单；触发/门禁清单/闭环判定仍以主文档为准。
 
 ## Step 1.5 打包与装机（profile capability）

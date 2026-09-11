@@ -31,6 +31,8 @@
 
 import * as crypto from 'crypto';
 import * as fs from 'fs';
+import { resolveFactsAbsPath, isFactsEstablishingPhase, factsPhaseFingerprint } from './context-facts';
+import { isInsideProjectRoot } from './project-relative-path';
 import * as path from 'path';
 
 import {
@@ -73,6 +75,8 @@ export interface EvidenceEntry {
   /** 文件不存在时为 null（诚实记录，不伪造） */
   sha256: string | null;
   exists: boolean;
+  /** Only new facts entries use a phase projection; legacy entries retain byte hashes. */
+  facts_phase?: string;
 }
 
 export interface EvidenceEnvironment {
@@ -155,6 +159,8 @@ export const PHASE_REPORTS_OUTPUT_FILES = [
 // verifier 条目字节对账照旧生效——校验侧遍历的是 manifest 里已记录的条目，不是本表。
 
 export interface ResolveManifestOptions {
+  resolvedInputs?: import('./capability-resolution').ResolvedPhaseInputs;
+  factsContext?: import('./context-facts').FactsInvocationContext;
   projectRoot: string;
   feature: string;
   phase: Phase;
@@ -197,6 +203,7 @@ function evidenceEntryMatchesCurrentFile(
   entry: EvidenceEntry,
 ): boolean {
   const absPath = path.join(projectRoot, entry.path);
+  if (entry.facts_phase !== undefined) return factsEvidenceHash(absPath, entry.facts_phase) === entry.sha256;
   const current = sha256File(absPath);
   if (current === entry.sha256) return true;
   if (!isGoalRunManifestPath(entry.path) || entry.sha256 === null || !fs.existsSync(absPath)) return false;
@@ -206,6 +213,11 @@ function evidenceEntryMatchesCurrentFile(
   } catch {
     return false;
   }
+}
+
+function factsEvidenceHash(absPath: string, phase: string): string | null {
+  try { return factsPhaseFingerprint(fs.readFileSync(absPath, 'utf8'), phase); }
+  catch { return null; }
 }
 
 function sha256Text(text: string): string {
@@ -355,15 +367,16 @@ function guessFrameworkRoot(projectRoot: string): string | null {
  */
 export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): PhaseEvidenceManifest {
   const { projectRoot, feature, phase } = opts;
+  if (opts.factsContext && !('feature' in opts.factsContext.subject)) throw new Error('Feature evidence requires Feature facts subject');
   const nowIso = (opts.now ? opts.now() : new Date()).toISOString();
 
-  const inputNames = [
+  const inputNames = opts.resolvedInputs ? [] : [
     ...(REQUIRED_FEATURE_FILES_BY_PHASE[phase] ?? []),
     ...(OPTIONAL_FEATURE_FILES_BY_PHASE[phase] ?? []).filter((f) =>
       resolveFeatureArtifact(projectRoot, feature, f, opts.featurePathOpts).exists,
     ),
   ];
-  const outputNames = [
+  const outputNames = opts.resolvedInputs ? opts.resolvedInputs.context.required_outputs : [
     ...(PHASE_OUTPUT_FILES_BY_PHASE[phase] ?? []),
     ...(PHASE_OPTIONAL_OUTPUT_FILES_BY_PHASE[phase] ?? []).filter((f) =>
       resolveFeatureArtifact(projectRoot, feature, f, opts.featurePathOpts).exists,
@@ -383,6 +396,7 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
   }
 
   const entryMap = new Map<string, EvidenceEntry>();
+  const factsPath = opts.factsContext ? resolveFactsAbsPath(projectRoot, feature, opts.factsContext) : undefined;
   const addEntry = (absPath: string, role: 'input' | 'output'): void => {
     const rel = toPosixRel(projectRoot, absPath);
     const base = path.basename(rel);
@@ -396,10 +410,33 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
       if (prev.role !== role) prev.role = 'both';
       return;
     }
-    const hash = stagedHashes.get(rel) ?? sha256File(absPath);
-    entryMap.set(rel, { path: rel, role, sha256: hash, exists: hash !== null });
+    const isFacts = factsPath !== undefined && path.resolve(absPath) === path.resolve(factsPath);
+    const hash = isFacts ? factsEvidenceHash(absPath, String(phase)) : stagedHashes.get(rel) ?? sha256File(absPath);
+    entryMap.set(rel, { path: rel, role, sha256: hash, exists: hash !== null, ...(isFacts ? { facts_phase: String(phase) } : {}) });
+  };
+  const addBoundInput = (dep: import('./capability-resolution').ResolutionDependency): void => {
+    if (sha256File(dep.path) !== dep.sha256 || fs.existsSync(dep.path) !== dep.exists) throw new Error(`input binding stale: ${dep.path}`);
+    addEntry(dep.path, 'input');
   };
 
+  if (opts.resolvedInputs) {
+    if (!('feature' in opts.resolvedInputs.context.subject) || opts.resolvedInputs.context.subject.feature !== feature || opts.resolvedInputs.phase !== String(phase)) {
+      throw new Error('[phase-evidence-manifest] Feature evidence requires matching Feature invocation');
+    }
+    for (const value of Object.values(opts.resolvedInputs.values)) {
+      const deps = value.state === 'resolved' ? value.binding.dependencies : value.attempts.flatMap(a => a.dependencies);
+      for (const dep of deps) {
+        if (!isInsideProjectRoot(projectRoot, dep.path) || (opts.frameworkRoot && path.resolve(opts.frameworkRoot) !== path.resolve(projectRoot) && isInsideProjectRoot(opts.frameworkRoot, dep.path))) continue;
+        addBoundInput(dep);
+      }
+    }
+  }
+  if (opts.factsContext) {
+    const factsPath = resolveFactsAbsPath(projectRoot, feature, opts.factsContext);
+    addEntry(factsPath, isFactsEstablishingPhase(String(phase), opts.factsContext) ? 'output' : 'input');
+    for (const source of opts.factsContext.source_paths) addEntry(path.resolve(projectRoot, source), 'input');
+    if (opts.factsContext.baseline) for (const dep of opts.factsContext.baseline.dependencies) addBoundInput(dep);
+  }
   for (const name of inputNames) {
     addEntry(resolveFeatureArtifact(projectRoot, feature, name, opts.featurePathOpts).actualPath, 'input');
   }
@@ -410,7 +447,7 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
     addEntry(resolveFeatureArtifact(projectRoot, feature, name, opts.featurePathOpts).actualPath, 'output');
   }
   // spec 子目录按需产出（存在才纳入）
-  for (const rel of PHASE_OPTIONAL_OUTPUT_RELPATHS_BY_PHASE[phase] ?? []) {
+  for (const rel of opts.resolvedInputs ? [] : PHASE_OPTIONAL_OUTPUT_RELPATHS_BY_PHASE[phase] ?? []) {
     const abs = featureFilePath(projectRoot, feature, rel, opts.featurePathOpts);
     if (fs.existsSync(abs)) addEntry(abs, 'output');
   }
@@ -481,6 +518,8 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
  * 与 `buildVerifierMaterialView` 是**同一条**规则，不复制第二份（codex review 三轮 medium）。
  */
 export function phaseEvidenceManifestCandidatePaths(opts: {
+  resolvedInputs?: import('./capability-resolution').ResolvedPhaseInputs;
+  factsContext?: import('./context-facts').FactsInvocationContext;
   projectRoot: string;
   feature: string;
   phase: Phase;
@@ -488,6 +527,7 @@ export function phaseEvidenceManifestCandidatePaths(opts: {
   featurePathOpts?: FeaturePathOptions;
 }): Set<string> {
   const { projectRoot, feature, phase } = opts;
+  if (opts.resolvedInputs && (!('feature' in opts.resolvedInputs.context.subject) || opts.resolvedInputs.context.subject.feature !== feature || opts.resolvedInputs.phase !== String(phase))) throw new Error('Feature evidence requires matching Feature invocation');
   const isRuntimeArtifact = createRuntimeArtifactPredicate({
     projectRoot,
     feature,
@@ -498,6 +538,21 @@ export function phaseEvidenceManifestCandidatePaths(opts: {
   const add = (rel: string): void => {
     if (!isRuntimeArtifact(rel)) out.add(rel);
   };
+  if (opts.resolvedInputs) {
+    for (const value of Object.values(opts.resolvedInputs.values)) {
+      for (const dep of value.state === 'resolved' ? value.binding.dependencies : value.attempts.flatMap(a => a.dependencies)) {
+        if (!isInsideProjectRoot(projectRoot, dep.path) || (opts.frameworkRoot && path.resolve(opts.frameworkRoot) !== path.resolve(projectRoot) && isInsideProjectRoot(opts.frameworkRoot, dep.path))) continue;
+        add(toPosixRel(projectRoot, dep.path));
+      }
+    }
+    for (const name of opts.resolvedInputs.context.required_outputs) add(toPosixRel(projectRoot, resolveFeatureArtifact(projectRoot, feature, name, opts.featurePathOpts).actualPath));
+    if (opts.factsContext) {
+      add(toPosixRel(projectRoot, resolveFactsAbsPath(projectRoot, feature, opts.factsContext)));
+      for (const source of opts.factsContext.source_paths) add(toPosixRel(projectRoot, path.resolve(projectRoot, source)));
+      for (const dep of opts.factsContext.baseline?.dependencies ?? []) add(toPosixRel(projectRoot, dep.path));
+    }
+    return out;
+  }
   for (const name of [
     ...(REQUIRED_FEATURE_FILES_BY_PHASE[phase] ?? []),
     ...(OPTIONAL_FEATURE_FILES_BY_PHASE[phase] ?? []),
@@ -579,7 +634,8 @@ function isValidEntry(e: unknown): e is EvidenceEntry {
   return !!o && typeof o.path === 'string' && o.path.length > 0
     && (o.role === 'input' || o.role === 'output' || o.role === 'both')
     && (o.sha256 === null || typeof o.sha256 === 'string')
-    && typeof o.exists === 'boolean';
+    && typeof o.exists === 'boolean'
+    && (o.facts_phase === undefined || (typeof o.facts_phase === 'string' && o.facts_phase.length > 0));
 }
 
 export interface LoadedManifest {
@@ -609,6 +665,7 @@ export function loadPhaseEvidenceManifest(
     if (String(manifest.phase) !== String(phase)) errors.push(`manifest.phase 失配：${String(manifest.phase)} ≠ ${phase}`);
     if (!Array.isArray(manifest.inputs) || !manifest.inputs.every(isValidEntry)) errors.push('inputs 结构非法');
     if (!Array.isArray(manifest.outputs) || !manifest.outputs.every(isValidEntry)) errors.push('outputs 结构非法');
+    if (errors.length === 0 && [...manifest.inputs, ...manifest.outputs].some(entry => entry.facts_phase !== undefined && entry.facts_phase !== manifest.phase)) errors.push('facts_phase 与 manifest.phase 失配');
     if (!manifest.environment || typeof manifest.environment !== 'object') errors.push('environment 缺失');
     if (typeof manifest.aggregate_sha256 !== 'string') errors.push('aggregate_sha256 缺失');
     if (errors.length === 0 && recomputeManifestAggregate(manifest) !== manifest.aggregate_sha256) {

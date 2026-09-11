@@ -40,6 +40,7 @@ import {
   writeVerifierMaterial,
   type VerifierMaterialView,
 } from './scripts/utils/verifier-material';
+import { resolveFactsAbsPath } from './scripts/utils/context-facts';
 import { phaseEvidenceManifestCandidatePaths } from './scripts/utils/phase-evidence-manifest';
 import { REVALIDATE_ENV, runRevalidate } from './scripts/utils/revalidate';
 import { resolveAuthoritativeHylyreTracePath } from './scripts/utils/testing-trace-gates';
@@ -202,7 +203,7 @@ import {
   assertCapabilityConsumption,
   capabilityResolutionChecks,
   collectBlockedCapabilityFacts,
-  resolveCapabilityReport,
+  resolveCapabilityInputs,
   type CapabilityResolutionReport,
 } from './scripts/utils/capability-resolution';
 import { assessAndRenderNextStep } from './scripts/utils/assess-renderer';
@@ -821,7 +822,55 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const artifactInspection = phaseIsGlobal ? null : specLoader.inspectFeatureArtifacts(feature, phase);
+  // Contract capability resolution is the one immutable pre-check report. It is
+  // intentionally computed before checker execution and never receives runtime
+  // build/install/run outcomes.
+  const capabilityInputChecks: CheckResult[] = [];
+  let capabilityReport: CapabilityResolutionReport | undefined;
+  let resolvedInputs: import('./scripts/utils/capability-resolution').ResolvedPhaseInputs | undefined;
+  let factsContext: import('./scripts/utils/context-facts').FactsInvocationContext | undefined;
+  if (!phaseIsGlobal) {
+    try {
+      const capabilityInput = resolveCapabilityResolutionEntryInput({
+        projectRoot,
+        feature,
+        phase,
+        featuresDir: featuresRel,
+        goalRunId: process.env.MAISON_GOAL_RUN_ID,
+        explicitAdhocCases: typeof args['adhoc-cases'] === 'string' ? args['adhoc-cases'] : undefined,
+      });
+      const resolution = resolveCapabilityInputs({
+        frameworkRoot: resolvedFrameworkRoot,
+        projectRoot,
+        feature,
+        phase,
+        track: resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature)),
+        ...capabilityInput,
+      });
+      capabilityReport = resolution.report;
+      if (resolution.inputs) {
+        resolvedInputs = resolution.inputs;
+        factsContext = capabilityInput.factsContext;
+      }
+    } catch (error) {
+      capabilityInputChecks.push({
+        id: 'capability_resolution_contract',
+        category: 'structure',
+        description: 'feature capability contract resolves before checker execution',
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details: (error as Error).message,
+        suggestion: '修复 contract.yaml 的 capability/input source 声明后重跑。',
+      });
+    }
+  }
+
+  if (capabilityInputChecks.length) {
+    const quickReport = generateScriptReport(harnessRoot, phase, feature, projectRoot, capabilityInputChecks, resolvedFrameworkRoot);
+    printReportToConsole(quickReport, { failuresOnly: true });
+    process.exit(1);
+  }
+  const artifactInspection = phaseIsGlobal ? null : specLoader.inspectFeatureArtifacts(feature, phase, resolvedInputs);
   if (artifactInspection) {
     printFeatureArtifactInspection(projectRoot, artifactInspection, featuresRel);
     if (artifactInspection.verdict === 'missing_directory' || artifactInspection.verdict === 'path_not_directory') {
@@ -835,7 +884,7 @@ async function main(): Promise<void> {
   }
 
   // catalog/glossary 是全局阶段，不加载功能级规约
-  const featureSpec = phaseIsGlobal ? { feature } : specLoader.loadFeatureSpec(feature);
+  const featureSpec = phaseIsGlobal ? { feature } : specLoader.loadFeatureSpec(feature, resolvedInputs);
 
   if (phaseIsGlobal) {
     console.log(`   ⊘ 全局阶段（${phase}）：跳过功能级规约加载。`);
@@ -936,6 +985,8 @@ async function main(): Promise<void> {
     phaseIsGlobal,
   });
   const context: CheckContext = {
+    resolvedInputs,
+    factsContext,
     phase,
     feature,
     projectRoot,
@@ -1007,41 +1058,7 @@ async function main(): Promise<void> {
     return hookCheckResults;
   }
 
-  let checks: CheckResult[] = [];
-  // Contract capability resolution is the one immutable pre-check report. It is
-  // intentionally computed before checker execution and never receives runtime
-  // build/install/run outcomes.
-  let capabilityReport: CapabilityResolutionReport | undefined;
-  if (!phaseIsGlobal) {
-    try {
-      const capabilityInput = resolveCapabilityResolutionEntryInput({
-        projectRoot,
-        feature,
-        phase,
-        featuresDir: featuresRel,
-        goalRunId: process.env.MAISON_GOAL_RUN_ID,
-        explicitAdhocCases: typeof args['adhoc-cases'] === 'string' ? args['adhoc-cases'] : undefined,
-      });
-      capabilityReport = resolveCapabilityReport({
-        frameworkRoot: resolvedFrameworkRoot,
-        projectRoot,
-        feature,
-        phase,
-        track: resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature)),
-        ...capabilityInput,
-      });
-    } catch (error) {
-      checks.push({
-        id: 'capability_resolution_contract',
-        category: 'structure',
-        description: 'feature capability contract resolves before checker execution',
-        severity: 'BLOCKER',
-        status: 'FAIL',
-        details: (error as Error).message,
-        suggestion: '修复 contract.yaml 的 capability/input source 声明后重跑。',
-      });
-    }
-  }
+  let checks: CheckResult[] = [...capabilityInputChecks];
   // P0-7②：进程预加载注入自检（file-drift 对进程注入无感，须独立防线）。
   checks.push(...runProcessIntegrityPreflight({ projectRoot, harnessDir: harnessRoot }));
   checks.push(...(await emitLifecycle('pre_phase')));
@@ -1159,6 +1176,8 @@ async function main(): Promise<void> {
         throw new TypeError('relativePath.endsWith is not a function (simulated by HARNESS_FORCE_STEP4_FAIL)');
       }
       const contextFiles = collectContextFiles(specLoader, layout, phase, feature, featureSpec, {
+        resolvedInputs: context.resolvedInputs,
+        factsContext: context.factsContext,
         adapterMultimodal: context.adapterMultimodal,
         adapterImageInput: context.adapterImageInput,
         specVisualSources: context.specVisualSources,
@@ -1196,6 +1215,8 @@ async function main(): Promise<void> {
       );
       console.log(`   ✓ AI prompt 已写入 ${reportDirRel}/ai-prompt.md`);
       verifierMaterial = buildVerifierMaterialView({
+        resolvedInputs,
+        factsContext,
         projectRoot,
         feature,
         phase,
@@ -1238,6 +1259,8 @@ async function main(): Promise<void> {
   // 阶段状态机：先落 base summary，再由 check-receipt 按 summary/verifier/policy 尝试 finalize。
   // receipt 只在 summary closed 后 best-effort 投影，不是输入或 Stop 判据。
   let baseSummary = writeRunSummaryBase(projectRoot, finalReport, resolvedFrameworkRoot, {
+    resolvedInputs,
+    factsContext,
     verifierPlan,
     verifierMaterial,
   });
@@ -1268,6 +1291,8 @@ async function main(): Promise<void> {
   ) {
     try {
       const finalized = finalizePhaseClosure({
+        resolvedInputs,
+        factsContext,
         projectRoot,
         frameworkRoot: resolvedFrameworkRoot,
         feature,
@@ -1297,6 +1322,8 @@ async function main(): Promise<void> {
         resolvedFrameworkRoot,
       );
       baseSummary = writeRunSummaryBase(projectRoot, finalReport, resolvedFrameworkRoot, {
+        resolvedInputs,
+        factsContext,
         verifierPlan,
         verifierMaterial,
       });
@@ -1729,6 +1756,8 @@ export function writeRunSummaryBase(
   report: ScriptReport,
   frameworkRoot: string,
   opts?: {
+    resolvedInputs?: CheckContext['resolvedInputs'];
+    factsContext?: CheckContext['factsContext'];
     /**
      * 本次 run 的 verifier 能力解析结果（plan a9d4e7c2）。缺省 = 调用方未解析
      * （测试桩入口）→ 按 disabled 处理：不写 verifier 字段、不生成 request。
@@ -1884,7 +1913,7 @@ export function writeRunSummaryBase(
   // 凭证，但同一份材料上已经存在的有效负面结论不得被静默丢弃——沿用上一轮的 subject。
   const carriedVerifierSubjectId = verifierIssued
     ? null
-    : resolveCarriedVerifierSubject(projectRoot, report, frameworkRoot, opts?.verifierPlan?.mode, gateFingerprint ?? null);
+    : resolveCarriedVerifierSubject(projectRoot, report, frameworkRoot, opts?.verifierPlan?.mode, gateFingerprint ?? null, opts?.resolvedInputs, opts?.factsContext);
   const anchoredSubjectId = verifierIssued?.subjectId ?? carriedVerifierSubjectId;
   const verifierEvidence = resolveVerifierEvidenceState(
     projectRoot,
@@ -2111,6 +2140,8 @@ function resolveCarriedVerifierSubject(
   frameworkRoot: string,
   mode: 'disabled' | 'enabled' | undefined,
   gateFingerprint: string | null,
+  resolvedInputs?: CheckContext['resolvedInputs'],
+  factsContext?: CheckContext['factsContext'],
 ): string | null {
   if (mode === 'enabled') return null;
   const dir = featurePhaseReportsDir(projectRoot, report.feature, report.phase, frameworkRoot);
@@ -2131,6 +2162,8 @@ function resolveCarriedVerifierSubject(
       // policy 无关的材料面：manifest 文件 + gate + 脚本报告投影。取不到的三面传空值——
       // 它们不参与比较（carriedMaterialStillCurrent 只读上面三面）。
       buildVerifierMaterialView({
+        resolvedInputs,
+        factsContext,
         projectRoot,
         feature: report.feature,
         phase: report.phase,
@@ -2142,6 +2175,8 @@ function resolveCarriedVerifierSubject(
         contextFiles: [],
       }),
       phaseEvidenceManifestCandidatePaths({
+        resolvedInputs,
+        factsContext,
         projectRoot,
         feature: report.feature,
         phase: report.phase as Phase,
@@ -2186,6 +2221,7 @@ function carriedMaterialStillCurrent(
   current: VerifierMaterialView,
   manifestFace: ReadonlySet<string>,
 ): boolean {
+  if (prior.input_bindings_sha256 !== current.input_bindings_sha256) return false;
   if ((prior.gate_fingerprint ?? null) !== (current.gate_fingerprint ?? null)) return false;
   if (prior.script_checks.join('\n') !== current.script_checks.join('\n')) return false;
   const priorFiles = new Map(prior.files.map(f => [f.path, f.sha256]));
@@ -3067,6 +3103,8 @@ export function collectContextFiles(
   feature: string,
   featureSpec: import('./scripts/utils/types').FeatureSpec,
   opts?: {
+    resolvedInputs?: CheckContext['resolvedInputs'];
+    factsContext?: CheckContext['factsContext'];
     adapterMultimodal?: boolean;
     adapterImageInput?: 'none' | 'tool_read' | 'native_attach';
     specVisualSources?: CheckContext['specVisualSources'];
@@ -3074,6 +3112,22 @@ export function collectContextFiles(
 ): import('./scripts/utils/types').ContextFileEntry[] {
   const { projectRoot } = layout;
   const files: import('./scripts/utils/types').ContextFileEntry[] = [];
+
+  if (opts?.resolvedInputs) {
+    for (const [id, value] of Object.entries(opts.resolvedInputs.values)) {
+      if (value.state !== 'resolved') continue;
+      files.push({ label: '(resolved input ' + id + ')', content: typeof value.value === 'string' ? value.value : YAML.stringify(value.value) });
+    }
+    for (const name of feature ? opts.resolvedInputs.context.required_outputs : []) {
+      const content = specLoader.loadFeatureDoc(projectRoot, feature, name);
+      if (content !== null) files.push({ label: relFeatureArtifact(projectRoot, feature, name), content });
+    }
+    if (opts.factsContext) {
+      const factsPath = resolveFactsAbsPath(projectRoot, feature, opts.factsContext);
+      if (fs.existsSync(factsPath)) files.push({ label: path.relative(projectRoot, factsPath).replace(/\\/g, '/'), content: fs.readFileSync(factsPath, 'utf8') });
+    }
+    return files;
+  }
 
   // catalog/glossary 是全局阶段：上下文只包含两份 SSOT 文件本身，
   // 不读任何 feature 维度的 spec.md / plan.md / 源码。

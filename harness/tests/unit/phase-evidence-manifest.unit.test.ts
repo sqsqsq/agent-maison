@@ -25,7 +25,11 @@ import {
   resolvePhaseEvidenceManifest,
   writePhaseEvidenceManifest,
   writeReceiptManifestPointer,
+  verifyPhaseEvidenceManifestWithStagedOutputs,
+  sha256File,
 } from '../../scripts/utils/phase-evidence-manifest';
+import { resolveFactsAbsPath, factsBaselineFingerprint, type FactsInvocationContext } from '../../scripts/utils/context-facts';
+import { buildVerifierMaterialView } from '../../scripts/utils/verifier-material';
 import type { Phase } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -68,6 +72,59 @@ function writeManifestWithPointer(root: string, phase: string): void {
 interface Case { name: string; run: () => void }
 
 const cases: Case[] = [
+  {
+    name: 'facts 只绑定基线与本阶段增量，普通和 staged 新鲜度同判',
+    run: () => {
+      const root = mkProject();
+      const factsContext: FactsInvocationContext = { subject: { feature: FEATURE, run_id: 'run' }, first_phase: 'coding', source_paths: [], required_input_snippets: [] };
+      const file = resolveFactsAbsPath(root, FEATURE, factsContext);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      const base = '---\nschema_version: "1.1"\nfeature: ' + FEATURE + '\nestablished_by: coding\n---\n## Code Facts\nbase fact\n';
+      const coding = '\n## phase_delta: coding\noriginal coding fact\n';
+      const review = '\n## phase_delta: review\nnone\n';
+      const assertVerdict = (phase: string, verdict: string): void => {
+        assert.strictEqual(recomputePhaseEvidenceStaleness(root, FEATURE, [phase])[0].verdict, verdict);
+        assert.strictEqual(verifyPhaseEvidenceManifestWithStagedOutputs({ projectRoot: root, feature: FEATURE, phase, stagedOutputs: [] }).verdict, verdict);
+      };
+      fs.writeFileSync(file, base + coding);
+      writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root, feature: FEATURE, phase: 'coding', factsContext }));
+      assertVerdict('coding', 'fresh');
+      fs.appendFileSync(file, review);
+      assertVerdict('coding', 'fresh');
+      writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root, feature: FEATURE, phase: 'review', factsContext: { ...factsContext, baseline: { established_by: 'coding', fingerprint: factsBaselineFingerprint(base), dependencies: [] } } }));
+      fs.appendFileSync(file, '\n## phase_delta: testing\nnone\n');
+      assertVerdict('coding', 'fresh');
+      assertVerdict('review', 'fresh');
+      fs.writeFileSync(file, base + coding + review.replace('none', 'changed review fact'));
+      assertVerdict('coding', 'fresh');
+      assertVerdict('review', 'stale');
+      fs.writeFileSync(file, base + coding.replace('original', 'changed') + review);
+      assertVerdict('coding', 'stale');
+      fs.writeFileSync(file, base.replace('base fact', 'changed base') + coding + review);
+      assertVerdict('coding', 'stale');
+      assertVerdict('review', 'stale');
+    },
+  },
+  {
+    name: 'facts 原来源在 manifest 与 verifier 发布前必须保持绑定，不能重签新字节',
+    run: () => {
+      for (const includeSourcePath of [false, true]) {
+        const root = mkProject();
+        const source = path.join(root, 'source.ts');
+        fs.writeFileSync(source, 'before');
+        const dep = { path: source, exists: true, sha256: sha256File(source), role: 'derive' as const };
+        const factsContext: FactsInvocationContext = { subject: { feature: FEATURE, run_id: 'run' }, first_phase: 'review', source_paths: includeSourcePath ? ['source.ts'] : [], required_input_snippets: [], baseline: { established_by: 'coding', fingerprint: 'baseline', dependencies: [dep] } };
+        const resolvedInputs = { context: { schema_version: '1.1' as const, subject: { feature: FEATURE }, obligations: {}, required_outputs: [] }, phase: 'review', values: {}, artifacts: {} };
+        const opts = { projectRoot: root, feature: FEATURE, phase: 'review', factsContext, resolvedInputs };
+        const publishers = [() => resolvePhaseEvidenceManifest(opts), () => buildVerifierMaterialView({ ...opts, gateFingerprint: null, phaseRuleText: '', templateText: '', checks: [], contextFiles: [] })];
+        for (const publish of publishers) assert.doesNotThrow(publish);
+        fs.writeFileSync(source, 'after');
+        for (const publish of publishers) assert.throws(publish, /input binding stale/);
+        fs.unlinkSync(source);
+        for (const publish of publishers) assert.throws(publish, /input binding stale/);
+      }
+    },
+  },
   {
     name: 'inputs 与 spec-loader 表同源（review：REQUIRED 全入，OPTIONAL 仅存在才入）',
     run: () => {

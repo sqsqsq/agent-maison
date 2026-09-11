@@ -1,5 +1,7 @@
 # business-ut 阶段详细流程（条件加载：执行对应 Step 时读）
 
+> **输入协议边界**：以下 full=spec / lite=change 的 facts 建立与固定上游阅读口径仅适用于 1.0。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。默认入口尚未切换，不能自行补造调用上下文。
+
 > SSOT 索引见 [`skills/feature/business-ut/SKILL.md`](../feature/business-ut/SKILL.md)。本文承载 Lite Mode 判定、Step 1.0 摘取协议、Step 1.5/1.6 可测性预检与 Test Double Plan、Step 2/3 DAG 与 UT 代码生成细节、Step 7.5/7.6 编译与装机运行闭环、Step 8.0 Core 节点闸门、约束#12 HARD STOP 完整流程；触发/门禁清单/闭环判定仍以主文档为准。
 
 ## Lite Mode 判定（Step 1 之前）

@@ -13,6 +13,10 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
+import type { ResolutionDependency } from './capability-resolution';
+import { isInsideProjectRoot, validateProjectRelativePath } from './project-relative-path';
+import { extractTables } from './markdown-parser';
 
 import { featuresDirPath } from '../../config';
 // M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT
@@ -32,11 +36,32 @@ import { resolveFeatureTrack } from './runtime-policy';
 /** 该 track 的首个 feature phase——建立 facts.md 全量事实的阶段。 */
 export const FACTS_ESTABLISHING_PHASES: ReadonlySet<string> = new Set(['spec', 'change']);
 
-export function isFactsEstablishingPhase(phase: string): boolean {
+/** Supplied by the invoking runtime/request entry, never read from authored facts. */
+export interface FactsInvocationContext {
+  subject: { feature: string; run_id: string } | { request_sha256: string; report_dir: string };
+  first_phase: string;
+  source_paths: string[];
+  required_input_snippets: string[];
+  /** Validated predecessor/current baseline: preserve its real establishing phase. */
+  baseline?: { established_by: string; fingerprint: string; dependencies: ResolutionDependency[] };
+}
+
+export function factsBaselineFingerprint(raw: string): string {
+  return crypto.createHash('sha256').update(raw.replace(/\r\n/g, '\n').split(/^##\s*phase_delta:/m)[0].trimEnd()).digest('hex');
+}
+
+export function isFactsEstablishingPhase(phase: string, context?: FactsInvocationContext): boolean {
+  if (context) return !context.baseline && context.first_phase === phase;
   return FACTS_ESTABLISHING_PHASES.has(phase);
 }
 
-export function resolveFactsAbsPath(projectRoot: string, feature: string): string {
+export function resolveFactsAbsPath(projectRoot: string, feature: string, context?: FactsInvocationContext): string {
+  if (context && 'request_sha256' in context.subject) {
+    const reportDir = path.resolve(projectRoot, context.subject.report_dir);
+    const relative = path.relative(projectRoot, reportDir);
+    if (!relative || !isInsideProjectRoot(projectRoot, reportDir)) throw new Error('request facts report_dir must be inside project');
+    return path.join(reportDir, 'context', 'facts.md');
+  }
   return path.join(featuresDirPath(projectRoot), ...featureRelativePath(feature).split('/'), 'context', 'facts.md');
 }
 
@@ -54,6 +79,15 @@ function findPhaseDeltaSection(body: string, phase: string): PhaseDeltaSection {
   return { present: true, content: (m[1] ?? '').trim() };
 }
 
+/** Bind the baseline and this phase's delta, not later append-only investigation. */
+export function factsPhaseFingerprint(raw: string, phase: string): string {
+  const { body, error } = parseContextExploration(raw);
+  if (error) throw new Error(error);
+  return crypto.createHash('sha256').update(JSON.stringify([
+    factsBaselineFingerprint(raw), findPhaseDeltaSection(body, phase),
+  ])).digest('hex');
+}
+
 function checkEstablishingFacts(
   projectRoot: string,
   feature: string,
@@ -67,7 +101,7 @@ function checkEstablishingFacts(
   return runQuantitativeChecks(
     projectRoot,
     feature,
-    phase as ContextExplorationPhase,
+    phase,
     fm,
     body,
     relPath,
@@ -134,8 +168,58 @@ function checkFactsFile(
   }
 
   const results: CheckResult[] = [];
-  const schemaVersion = (fm.schema_version ?? '').trim();
-  if (schemaVersion !== '1.0') {
+  const schemaVersion = typeof fm.schema_version === 'string' ? fm.schema_version.trim() : '';
+  const invocation = options?.factsContext;
+  if (invocation) {
+    const issue = (id: string, details: string): void => { results.push({ id, category: 'structure', description: 'facts 调用身份、来源与范围一致', severity: 'BLOCKER', status: 'FAIL', details, suggestion: '按实际调用身份与目标补齐 facts；来源或基线已变化时回责任方重新验证，不伪造建立阶段。', affected_files: [relPath] }); };
+    const subject = invocation.subject;
+    if (!options?.resolvedInputs || options.resolvedInputs.phase !== phase) issue('context_exploration_facts_input_context', '须由当前调用提供同一 resolvedInputs，不能回退读取旧 Feature 文件');
+    const inputSubject = options?.resolvedInputs?.context.subject;
+    if (inputSubject && ('feature' in subject
+      ? !('feature' in inputSubject) || inputSubject.feature !== subject.feature
+      : !('request_sha256' in inputSubject) || inputSubject.request_sha256 !== subject.request_sha256)) issue('context_exploration_facts_input_context', 'facts 与输入解析 subject 不一致');
+    const record = fm as Record<string, unknown>;
+    const declared = Array.isArray(fm.source_code_paths) ? fm.source_code_paths.filter((source): source is string => typeof source === 'string') : [];
+    if (schemaVersion !== '1.1' && !(schemaVersion === '1.0' && invocation.baseline)) issue('context_exploration_facts_schema_version', '新事实须使用 1.1；旧 1.0 仅可经显式 baseline 承接');
+    if ('feature' in subject) {
+      if (subject.feature !== feature || fm.feature !== feature || record.request_sha256 !== undefined) issue('context_exploration_facts_feature_match', 'Feature subject 不匹配或混入 request 身份');
+      if (!subject.run_id || (!invocation.baseline && record.run_id !== subject.run_id)) issue('context_exploration_facts_run_match', '建立事实必须绑定真实调用 run_id');
+    } else if (feature || fm.feature !== undefined || record.run_id !== undefined || !/^[0-9a-f]{64}$/.test(subject.request_sha256) || record.request_sha256 !== subject.request_sha256) {
+      issue('context_exploration_facts_request_match', 'request subject 不匹配或混入 Feature/run 身份');
+    }
+    const expectedPhase = invocation.baseline?.established_by ?? invocation.first_phase;
+    if (record.established_by !== expectedPhase || !expectedPhase || (!invocation.baseline && phase !== invocation.first_phase)) issue('context_exploration_facts_established_by_invalid', '建立资格必须来自首个实际调用或经验证的已有基线');
+    if (invocation.baseline) {
+      if (factsBaselineFingerprint(raw) !== invocation.baseline.fingerprint) issue('context_exploration_facts_baseline_stale', 'facts 基线已变化，须重新验证来源');
+      for (const dep of invocation.baseline.dependencies) {
+        if (!isInsideProjectRoot(projectRoot, dep.path)) { issue('context_exploration_facts_source_stale', '事实来源不在项目内'); continue; }
+        let hash: string | null = null;
+        try { hash = crypto.createHash('sha256').update(fs.readFileSync(dep.path)).digest('hex'); } catch { /* stale below */ }
+        if (hash !== dep.sha256 || fs.existsSync(dep.path) !== dep.exists) issue('context_exploration_facts_source_stale', dep.path);
+      }
+      for (const source of declared) {
+        if (!invocation.baseline.dependencies.some(dep => path.resolve(dep.path) === path.resolve(projectRoot, source) && dep.exists && dep.sha256)) issue('context_exploration_facts_source_stale', `基线未绑定原有来源：${source}`);
+      }
+    }
+    const deltaPaths = extractTables(findPhaseDeltaSection(body, phase).content)
+      .filter(table => table.headers.some(header => /事实/.test(header)))
+      .flatMap(table => { const column = table.headers.findIndex(header => /路径/.test(header)); return column < 0 ? [] : table.rows.map(row => (row[column] ?? '').replace(/`/g, '').trim()); });
+    for (const input of Object.values(options?.resolvedInputs?.values ?? {})) {
+      if (input.state !== 'resolved' || input.binding.source.kind !== 'derive' || !['derive.codebase', 'derive.test-targets'].includes(input.binding.source.provider_id)) continue;
+      for (const dep of input.binding.dependencies.filter(dep => dep.exists && dep.role === 'derive')) {
+        if (!invocation.source_paths.some(source => path.resolve(projectRoot, source) === path.resolve(dep.path))) issue('context_exploration_facts_scope_coverage', `facts 未承接解析后的真实目标：${dep.path}`);
+      }
+    }
+    for (const source of invocation.source_paths) {
+      if (!declared.includes(source) && !deltaPaths.includes(source)) issue('context_exploration_facts_scope_coverage', `当前目标未覆盖：${source}`);
+      try {
+        const safe = validateProjectRelativePath(projectRoot, source, 'facts source');
+        const abs = path.resolve(projectRoot, safe);
+        if (!fs.statSync(abs).isFile()) throw new Error('not a file');
+        fs.accessSync(abs, fs.constants.R_OK);
+      } catch { issue('context_exploration_facts_scope_coverage', `当前来源不可读或越界：${source}`); }
+    }
+  } else if (schemaVersion !== '1.0') {
     // P1-8（plan d9b4f7e2，07-13 chrys 案 i4/i5 实证连踩两轮）：facts.md 的 "1.0" 与隔壁
     // context-exploration.md 的 1.0.0/1.1.0 是**两套版本号体系**，弱模型极易写混——
     // details 直接给期望值 + 最小合法模板，不让 agent 猜。
@@ -153,7 +237,7 @@ function checkFactsFile(
     });
   }
 
-  if (fm.feature !== feature) {
+  if (!invocation && fm.feature !== feature) {
     results.push({
       id: 'context_exploration_facts_feature_match',
       category: 'structure',
@@ -166,7 +250,7 @@ function checkFactsFile(
   }
 
   const establishedBy = String((fm as Record<string, unknown>).established_by ?? '').trim();
-  if (!establishedBy || !isFactsEstablishingPhase(establishedBy)) {
+  if (!invocation && (!establishedBy || !isFactsEstablishingPhase(establishedBy))) {
     results.push({
       id: 'context_exploration_facts_established_by_invalid',
       category: 'structure',
@@ -178,7 +262,7 @@ function checkFactsFile(
         `在 frontmatter 顶层补一行，如：established_by: spec`,
       affected_files: [relPath],
     });
-  } else {
+  } else if (!invocation) {
     // codex review 采纳：仅校验 established_by ∈ {spec,change} 不够——full track 的 feature
     // 若沿用早年 lite 阶段建立的 facts.md（established_by: change），delta 阶段（plan/coding/...）
     // 只查 phase_delta 节，不会发现"这份事实基线其实是按 lite 更轻的门槛建立的"。
@@ -225,9 +309,10 @@ function checkFactsFile(
     });
   }
 
-  if (isFactsEstablishingPhase(phase)) {
+  if ((invocation && options?.resolvedInputs) || (!invocation && isFactsEstablishingPhase(phase))) {
     results.push(...checkEstablishingFacts(projectRoot, feature, phase, fm, body, relPath, options));
-  } else {
+  }
+  if (!isFactsEstablishingPhase(phase, invocation)) {
     results.push(...checkDeltaFacts(body, phase, relPath));
   }
 
@@ -245,14 +330,14 @@ export function checkFactsArtifact(
   phase: string,
   options?: ContextExplorationCheckOptions,
 ): CheckResult[] {
-  const factsAbs = resolveFactsAbsPath(projectRoot, feature);
+  const factsAbs = resolveFactsAbsPath(projectRoot, feature, options?.factsContext);
   const factsRel = path.relative(projectRoot, factsAbs).replace(/\\/g, '/');
 
   if (fs.existsSync(factsAbs)) {
     return checkFactsFile(factsAbs, factsRel, projectRoot, feature, phase, options);
   }
 
-  if (isContextExplorationPhase(phase)) {
+  if (!options?.factsContext && isContextExplorationPhase(phase)) {
     const legacyResults = checkContextExplorationArtifact(
       projectRoot,
       feature,
@@ -282,8 +367,8 @@ export function checkFactsArtifact(
     severity: 'BLOCKER',
     status: 'FAIL',
     details: `缺失：${factsRel}`,
-    suggestion: isFactsEstablishingPhase(phase)
-      ? '本阶段是该 track 的首个 feature phase，须建立 facts.md（frontmatter + Code Facts 表 + 首个 phase_delta 节）。'
+    suggestion: isFactsEstablishingPhase(phase, options?.factsContext)
+      ? '本阶段负责建立 facts.md（frontmatter + Code Facts 表）；必须记录实际建立阶段，不补造 spec/change 执行。'
       : '本阶段依赖已建立的 facts.md；若上游建立阶段尚未产出，请先完成该阶段，或运行 backfill-context-exploration.ts --to-facts 从旧产物归并。',
     affected_files: [factsRel],
   }];

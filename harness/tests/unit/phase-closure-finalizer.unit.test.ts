@@ -154,6 +154,34 @@ function seedOldClosureBinding(fixture: ReturnType<typeof mkProject>): {
 }
 const cases: Case[] = [
   {
+    name: 'facts 来源绑定经 closure finalizer 同样校验，变化或删除不得提交',
+    run: () => {
+      for (const mutation of ['unchanged', 'changed', 'deleted']) {
+        const fixture = mkProject();
+        const source = path.join(fixture.root, 'source.ts');
+        fs.writeFileSync(source, 'before');
+        const dependency = { path: source, exists: true, sha256: sha256File(source), role: 'derive' as const };
+        if (mutation === 'changed') fs.writeFileSync(source, 'after');
+        if (mutation === 'deleted') fs.unlinkSync(source);
+        let failure = '';
+        try {
+          finalizePhaseClosure({
+            projectRoot: fixture.root, frameworkRoot: FRAMEWORK_ROOT, feature: FEATURE, phase: PHASE,
+            factsContext: { subject: { feature: FEATURE, run_id: 'run' }, first_phase: PHASE, source_paths: ['source.ts'], required_input_snippets: [], baseline: { established_by: PHASE, fingerprint: 'baseline', dependencies: [dependency] } },
+            persistPhaseState: () => undefined,
+            prepareEvidence: () => ({ extraInputs: [], extraOutputs: [], requirementSha: null }),
+            assessAfterCommit: () => undefined,
+          });
+        } catch (error) { failure = (error as Error).message; }
+        if (mutation === 'unchanged') assert(!failure, failure);
+        else {
+          assert(failure.includes('input binding stale'), failure || 'silently published changed facts source');
+          assert(JSON.parse(fs.readFileSync(fixture.summaryPath, 'utf8')).closure_status !== 'closed', 'invalid source committed closure');
+        }
+      }
+    },
+  },
+  {
     name: 'production evidence binds the project files that PASS checks actually executed',
     run: () => {
       const fixture = mkProject();

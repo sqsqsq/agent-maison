@@ -5,6 +5,8 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as YAML from 'yaml';
+import { validateLiteSchema } from '../../scripts/utils/lite-json-schema';
 import { loadWorkflowSpec } from '../../workflow-loader';
 import { checkContractConsistency, validateContractConsistency } from '../../scripts/check-contract-consistency';
 import {
@@ -120,6 +122,28 @@ const cases: Case[] = [
     },
   },
 ];
+
+
+cases.push({
+  name: 'contract 1.1 schema and parser agree on obligation/base/enhancement and version boundaries',
+  run: () => {
+    const modern = prefix.join('\n').replace('schema_version: "1.0"', 'schema_version: "1.1"').replace(/^.*tracks:.*\n/gm, '').replace('        on_missing: fail', '        obligation_kinds: [design-context]\n        on_missing: fail');
+    const file = writeContract(modern);
+    const schema = YAML.parse(fs.readFileSync(path.join(FRAMEWORK_ROOT, 'specs/skill-contract-schema.yaml'), 'utf8'));
+    assert(validateLiteSchema(YAML.parse(modern), schema).length === 0, '1.1 schema rejected');
+    assert(loadSkillContract(file).schema_version === '1.1', '1.1 parser rejected');
+    for (const text of [
+      modern.replace('        obligation_kinds: [design-context]\n', ''),
+      modern.replace('obligation_kinds: [design-context]', 'input_role: base').replace('on_missing: fail', 'on_missing: prune'),
+      modern.replace('schema_version: "1.1"', 'schema_version: "1.0"'),
+      modern.replace('    inputs:', '    tracks: [full]\n    inputs:'),
+    ]) {
+      fs.writeFileSync(file, text);
+      let rejected = false; try { loadSkillContract(file); } catch { rejected = true; }
+      assert(rejected && validateLiteSchema(YAML.parse(text), schema).length > 0, 'schema/parser failed to reject invalid combination');
+    }
+  },
+});
 
 export function runAll(): UnitCaseResult[] {
   return cases.map((testCase) => {

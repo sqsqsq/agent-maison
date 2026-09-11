@@ -4441,6 +4441,8 @@ const checker: PhaseChecker = {
 
     featureGate('context_exploration_gate', () =>
       checkFactsArtifact(ctx.projectRoot, ctx.feature, 'ut', {
+          factsContext: ctx.factsContext,
+          resolvedInputs: ctx.resolvedInputs,
         phaseRule: ctx.phaseRule,
         profileName: ctx.resolvedProfile.name,
         frameworkRoot: ctx.frameworkRoot,

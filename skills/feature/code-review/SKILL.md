@@ -1,5 +1,7 @@
 # Code Review Skill (`code-review`)
 
+> **输入协议边界**：以下 full=spec / lite=change 的 facts 建立与固定上游阅读口径仅适用于 1.0。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。默认入口尚未切换，不能自行补造调用上下文。
+
 > **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `review.module_name` / `review.report_save` / `review.ok_to_ut` / `phase.next_step`。
 
 ## 前置

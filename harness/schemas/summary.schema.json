@@ -255,7 +255,19 @@
         "state": { "enum": ["resolved", "absent", "invalid", "not_applicable"] },
         "selected_source": { "type": ["string", "null"] },
         "selected_source_fingerprint": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
-        "attempts": { "type": "array", "items": { "$ref": "#/$defs/source_attempt" } }
+        "attempts": { "type": "array", "items": { "$ref": "#/$defs/source_attempt" } },
+        "binding": {
+          "type": "object",
+          "required": ["input_id", "source", "dependencies", "source_refs", "content_fingerprint"],
+          "additionalProperties": false,
+          "properties": {
+            "input_id": { "type": "string" },
+            "source": { "type": "object" },
+            "dependencies": { "type": "array", "items": { "$ref": "#/$defs/resolution_dependency" } },
+            "source_refs": { "type": "array", "items": { "type": "string" } },
+            "content_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          }
+        }
       }
     },
     "capability_resolution": {
@@ -269,6 +281,7 @@
         "state": { "enum": ["resolved", "pruned", "blocked", "not_applicable"] },
         "on_missing": { "enum": ["prune", "fail"] },
         "applicability_provider_id": { "type": ["string", "null"] },
+        "applicability_detail": { "type": "string" },
         "applicability_dependencies": { "type": "array", "items": { "$ref": "#/$defs/resolution_dependency" } },
         "inputs": { "type": "array", "items": { "$ref": "#/$defs/input_resolution" } }
       }

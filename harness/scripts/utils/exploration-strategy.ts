@@ -3,6 +3,7 @@
 // ============================================================================
 
 import * as YAML from 'yaml';
+import type { ResolvedPhaseInputs } from './capability-resolution';
 import type {
   ExplorationChangeSignals,
   ExplorationComplexityLevel,
@@ -19,7 +20,7 @@ import { SpecLoader } from './spec-loader';
 import { computeMaxDependencyFanOut, computeMaxInScopeModuleLoc } from './fan-out-scanner';
 
 /** `change` = lite track 建立阶段（C4 facts.md 契约），与 context-exploration.ts 的同名类型保持同步。 */
-export type ContextExplorationPhase = 'spec' | 'plan' | 'coding' | 'review' | 'ut' | 'change';
+export type ContextExplorationPhase = string;
 
 /** frontmatter 子集（避免与 context-exploration 循环依赖） */
 export interface ExplorationFrontmatterInput {
@@ -249,16 +250,17 @@ export function resolveExplorationStrategy(
   return phaseRule?.exploration_strategy;
 }
 
-function countInScopeModules(projectRoot: string, feature: string, frameworkRoot?: string): number {
+function countInScopeModules(projectRoot: string, feature: string, frameworkRoot?: string, inputs?: ResolvedPhaseInputs): number {
   const loader = new SpecLoader(projectRoot, undefined, undefined, frameworkRoot);
-  const prd = loader.loadFeatureDoc(projectRoot, feature, 'spec.md');
+  const prd = loader.loadFeatureDoc(projectRoot, feature, 'spec.md', inputs);
   if (!prd) return 0;
   const { scope } = parseScope(prd);
   return scope?.in_scope_modules?.length ?? 0;
 }
 
-function countContractFiles(projectRoot: string, feature: string, frameworkRoot?: string): number {
+function countContractFiles(projectRoot: string, feature: string, frameworkRoot?: string, inputs?: ResolvedPhaseInputs): number {
   const loader = new SpecLoader(projectRoot, undefined, undefined, frameworkRoot);
+  if (inputs) { const value = inputs.artifacts['contracts@1'] as { files?: unknown[] } | undefined; return value?.files?.length ?? 0; }
   const raw = loader.loadFeatureDoc(projectRoot, feature, 'contracts.yaml');
   if (!raw) return 0;
   try {
@@ -269,8 +271,9 @@ function countContractFiles(projectRoot: string, feature: string, frameworkRoot?
   }
 }
 
-function countUseCases(projectRoot: string, feature: string, frameworkRoot?: string): number {
+function countUseCases(projectRoot: string, feature: string, frameworkRoot?: string, inputs?: ResolvedPhaseInputs): number {
   const loader = new SpecLoader(projectRoot, undefined, undefined, frameworkRoot);
+  if (inputs) { const value = inputs.artifacts['use-cases@1'] as { use_cases?: unknown[] } | undefined; return value?.use_cases?.length ?? 0; }
   const raw = loader.loadFeatureDoc(projectRoot, feature, 'use-cases.yaml');
   if (!raw) return 0;
   try {
@@ -288,26 +291,27 @@ export function legacyRequiresSubagent(
   feature: string,
   thresholds: ExplorationThresholds,
   frameworkRoot?: string,
+  inputs?: ResolvedPhaseInputs,
 ): boolean {
   if (phase === 'spec' || phase === 'plan') {
     const gte = thresholds.require_subagent_when_scope_gte;
     if (gte === undefined || gte <= 0) return false;
-    return countInScopeModules(projectRoot, feature, frameworkRoot) >= gte;
+    return countInScopeModules(projectRoot, feature, frameworkRoot, inputs) >= gte;
   }
   if (phase === 'coding') {
     const gt = thresholds.require_subagent_when_contract_files_gt;
     if (gt === undefined) return false;
-    return countContractFiles(projectRoot, feature, frameworkRoot) > gt;
+    return countContractFiles(projectRoot, feature, frameworkRoot, inputs) > gt;
   }
   if (phase === 'review') {
     const gt = thresholds.require_subagent_when_review_files_gt;
     if (gt === undefined) return false;
-    return countContractFiles(projectRoot, feature, frameworkRoot) > gt;
+    return countContractFiles(projectRoot, feature, frameworkRoot, inputs) > gt;
   }
   if (phase === 'ut') {
     const gt = thresholds.require_subagent_when_use_cases_gt;
     if (gt === undefined) return false;
-    return countUseCases(projectRoot, feature, frameworkRoot) > gt;
+    return countUseCases(projectRoot, feature, frameworkRoot, inputs) > gt;
   }
   return false;
 }
@@ -359,14 +363,15 @@ function resolveDimensionValue(
   feature: string,
   signals: ExplorationChangeSignals,
   frameworkRoot?: string,
+  inputs?: ResolvedPhaseInputs,
 ): number {
   switch (dim.id) {
     case 'module_loc':
-      return computeMaxInScopeModuleLoc(projectRoot, feature, frameworkRoot);
+      return computeMaxInScopeModuleLoc(projectRoot, feature, frameworkRoot, inputs ? parseScope(String(inputs.artifacts['spec@1'] ?? '')).scope?.in_scope_modules ?? [] : undefined);
     case 'scope_breadth':
-      return countInScopeModules(projectRoot, feature, frameworkRoot);
+      return countInScopeModules(projectRoot, feature, frameworkRoot, inputs);
     case 'dependency_fan_out':
-      return computeMaxDependencyFanOut(projectRoot, feature, frameworkRoot);
+      return computeMaxDependencyFanOut(projectRoot, feature, frameworkRoot, inputs ? parseScope(String(inputs.artifacts['spec@1'] ?? '')).scope?.in_scope_modules ?? [] : undefined);
     default:
       return 0;
   }
@@ -393,6 +398,7 @@ export function computeExplorationScore(
   feature: string,
   signals: ExplorationChangeSignals,
   frameworkRoot?: string,
+  inputs?: ResolvedPhaseInputs,
 ): number {
   let total = 0;
   for (const dim of scoring.dimensions) {
@@ -400,7 +406,7 @@ export function computeExplorationScore(
       total += resolveSignalScore(dim, signals);
       continue;
     }
-    const value = resolveDimensionValue(dim, projectRoot, feature, signals, frameworkRoot);
+    const value = resolveDimensionValue(dim, projectRoot, feature, signals, frameworkRoot, inputs);
     total += scoreFromTiers(value, dim.tiers, dim.weight);
   }
   return total;
@@ -456,12 +462,13 @@ export function determineExplorationMode(
   thresholds: ExplorationThresholds,
   phaseRule?: PhaseRuleSpec,
   frameworkRoot?: string,
+  inputs?: ResolvedPhaseInputs,
 ): ExplorationModeDecision {
   const strategy = resolveExplorationStrategy(phase, phaseRule);
   const mode = String(fm.exploration_mode ?? '').trim().toLowerCase();
 
   if (!strategy) {
-    const legacy = legacyRequiresSubagent(phase, projectRoot, feature, thresholds, frameworkRoot);
+    const legacy = legacyRequiresSubagent(phase, projectRoot, feature, thresholds, frameworkRoot, inputs);
     return {
       requiresSubagent: legacy,
       applySequentialMultiplier: legacy && mode === 'sequential',
@@ -499,7 +506,7 @@ export function determineExplorationMode(
 
   if (defaultMode === 'subagent') {
     if (complexity === 'L2_small' && scoring) {
-      const score = computeExplorationScore(scoring, projectRoot, feature, signals, frameworkRoot);
+      const score = computeExplorationScore(scoring, projectRoot, feature, signals, frameworkRoot, inputs);
       if (score < scoring.threshold) {
         return {
           requiresSubagent: false,
@@ -532,7 +539,7 @@ export function determineExplorationMode(
   }
 
   if (scoring) {
-    const score = computeExplorationScore(scoring, projectRoot, feature, signals, frameworkRoot);
+    const score = computeExplorationScore(scoring, projectRoot, feature, signals, frameworkRoot, inputs);
     const requires = score >= scoring.threshold;
     return {
       requiresSubagent: requires,
@@ -547,7 +554,7 @@ export function determineExplorationMode(
     };
   }
 
-  const legacy = legacyRequiresSubagent(phase, projectRoot, feature, thresholds, frameworkRoot);
+  const legacy = legacyRequiresSubagent(phase, projectRoot, feature, thresholds, frameworkRoot, inputs);
   return {
     requiresSubagent: legacy,
     applySequentialMultiplier: legacy && mode === 'sequential',

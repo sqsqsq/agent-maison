@@ -14,6 +14,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { TextDecoder } from 'util';
+import type { ResolvedPhaseInputs } from './capability-resolution';
 import { selectionShapeIssues } from './component-assets';
 import {
   Phase,
@@ -168,8 +169,23 @@ export class SpecLoader {
   // 功能级规约
   // --------------------------------------------------------------------------
 
-  loadFeatureSpec(feature: string): FeatureSpec {
-    const featureDir = this.featureDirAbs(feature);
+  loadFeatureSpec(feature: string, resolved?: ResolvedPhaseInputs): FeatureSpec {
+    if (resolved && ('feature' in resolved.context.subject ? resolved.context.subject.feature !== feature : !!feature)) {
+      throw new Error('[spec-loader] resolved input subject mismatch');
+    }
+    const featureDir = resolved && !feature ? this.projectRoot : this.featureDirAbs(feature);
+    const read = <T>(name: string, artifact: string, issues: string[]): T | null => {
+      if (!resolved) {
+        const file = path.join(featureDir, name);
+        return fs.existsSync(file) ? this.loadYamlMappingOrNull<T>(file, issues) : null;
+      }
+      const value = resolved.artifacts[artifact];
+      if (value !== undefined) return structuredClone(value) as T;
+      // A phase's own outputs are checked as outputs, not frozen upstream inputs.
+      const file = path.join(featureDir, name);
+      return resolved.context.required_outputs.includes(name) && fs.existsSync(file)
+        ? this.loadYamlMappingOrNull<T>(file, issues) : null;
+    };
 
     const spec: FeatureSpec = { feature };
     // P0-2（plan d9b4f7e2 复审）：形状偏差留痕——由 harness-runner 产出结构化 FAIL
@@ -178,12 +194,12 @@ export class SpecLoader {
     const shapeIssues: string[] = [];
 
     const contractsPath = path.join(featureDir, 'contracts.yaml');
-    if (fs.existsSync(contractsPath)) {
+    if (resolved ? resolved.artifacts['contracts@1'] !== undefined || resolved.context.required_outputs.includes('contracts.yaml') : fs.existsSync(contractsPath)) {
       // 复审修复（codex P1）：根节点守卫——YAML 解析为 null/标量/数组时，旧实现在
       // normalizeContractsFiles 解引用即 TypeError，harness 在 safeRun 之前致命退出、
       // 无 summary（比门禁 FAIL 更毒）。按"无法解析"语义处理：不挂载 + 留痕，
       // 下游 acceptance_yaml_present/契约类门禁按缺失裁决。
-      const contracts = this.loadYamlMappingOrNull<ContractsSpec>(contractsPath, shapeIssues);
+      const contracts = read<ContractsSpec>('contracts.yaml', 'contracts@1', shapeIssues);
       if (contracts) {
         normalizeContractsFiles(contracts, contractsPath, this.projectRoot, shapeIssues);
         normalizeConventionsApplied(contracts, contractsPath, this.projectRoot, shapeIssues);
@@ -270,8 +286,8 @@ export class SpecLoader {
     }
 
     const acceptancePath = path.join(featureDir, 'acceptance.yaml');
-    if (fs.existsSync(acceptancePath)) {
-      const acceptance = this.loadYamlMappingOrNull<AcceptanceSpec>(acceptancePath, shapeIssues);
+    if (resolved ? resolved.artifacts['acceptance@1'] !== undefined || resolved.context.required_outputs.includes('acceptance.yaml') : fs.existsSync(acceptancePath)) {
+      const acceptance = read<AcceptanceSpec>('acceptance.yaml', 'acceptance@1', shapeIssues);
       if (acceptance) {
         // 复审修复（cursor 阻断2）：AcceptanceSpec 的集合字段是 criteria/boundaries
         // （rev1 误写 use_cases——acceptance 根本没有该字段，等于零防护）。
@@ -283,8 +299,8 @@ export class SpecLoader {
 
     // v2: use-cases.yaml（可选）——定义业务流程 UseCase / ports / branches
     const useCasesPath = path.join(featureDir, 'use-cases.yaml');
-    if (fs.existsSync(useCasesPath)) {
-      const useCases = this.loadYamlMappingOrNull<UseCasesSpec>(useCasesPath, shapeIssues);
+    if (resolved ? resolved.artifacts['use-cases@1'] !== undefined || resolved.context.required_outputs.includes('use-cases.yaml') : fs.existsSync(useCasesPath)) {
+      const useCases = read<UseCasesSpec>('use-cases.yaml', 'use-cases@1', shapeIssues);
       if (useCases) {
         normalizeArrayField(useCases as unknown as Record<string, unknown>, 'use_cases', useCasesPath, shapeIssues);
         // P0-2 复审（codex P1/cursor）：嵌套集合在 loader 统一归一——check-ut 的 reduce、
@@ -348,11 +364,11 @@ export class SpecLoader {
     return null;
   }
 
-  inspectFeatureArtifacts(feature: string, phase?: Phase): FeatureArtifactInspection {
+  inspectFeatureArtifacts(feature: string, phase?: Phase, resolved?: ResolvedPhaseInputs): FeatureArtifactInspection {
     const featureDir = this.featureDirAbs(feature);
     const featureDirParent = this.featuresDir;
-    const requiredFiles = phase ? REQUIRED_FEATURE_FILES_BY_PHASE[phase] ?? [] : [];
-    const optionalFiles = phase ? OPTIONAL_FEATURE_FILES_BY_PHASE[phase] ?? [] : [];
+    const requiredFiles = resolved ? resolved.context.required_outputs : phase ? REQUIRED_FEATURE_FILES_BY_PHASE[phase] ?? [] : [];
+    const optionalFiles = resolved ? [] : phase ? OPTIONAL_FEATURE_FILES_BY_PHASE[phase] ?? [] : [];
 
     let pathKind: FeatureArtifactInspection['pathKind'] = 'missing';
     if (fs.existsSync(featureDir)) {
@@ -432,7 +448,12 @@ export class SpecLoader {
    * @param feature 功能模块名 (如 'home-page')
    * @param docName 文档名 (如 'spec.md', 'plan.md')
    */
-  loadFeatureDoc(projectRoot: string, feature: string, docName: string): string | null {
+  loadFeatureDoc(projectRoot: string, feature: string, docName: string, inputs?: ResolvedPhaseInputs): string | null {
+    if (inputs) {
+      const id = docName.replace(/\.md$/, '') + '@1';
+      const value = inputs.artifacts[id];
+      return typeof value === 'string' ? value : null;
+    }
     const resolved = resolveFeatureArtifact(projectRoot, feature, docName, this.featurePathOpts(projectRoot));
     if (!resolved.exists) return null;
     return fs.readFileSync(resolved.actualPath, 'utf-8');

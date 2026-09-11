@@ -7,10 +7,12 @@
 // frontmatter 校验（schema_version/feature/established_by/ready_to_produce/blocker_risk）。
 
 import * as fs from 'fs';
+import * as crypto from 'crypto';
 import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
-import { checkFactsArtifact, resolveFactsAbsPath, isFactsEstablishingPhase } from '../../scripts/utils/context-facts';
+import type { ResolvedPhaseInputs } from '../../scripts/utils/capability-resolution';
+import { checkFactsArtifact, resolveFactsAbsPath, isFactsEstablishingPhase, factsBaselineFingerprint, type FactsInvocationContext } from '../../scripts/utils/context-facts';
 import { featureTrackDeclPath } from '../../scripts/utils/feature-track';
 
 export interface UnitCaseResult {
@@ -489,6 +491,61 @@ exploration_mode: sequential
     },
   },
 ];
+
+
+function modernFactsCase(request: boolean): void {
+  const dir = mkProject();
+  try {
+    const phase = request ? 'review' : 'coding';
+    const sourcePaths = Array.from({ length: 6 }, (_, i) => 'src/file' + i + '.ts');
+    for (const source of sourcePaths) {
+      const file = path.join(dir, source); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, 'export const value = 1;\n');
+    }
+    const subject = request ? { request_sha256: 'a'.repeat(64), report_dir: 'reports/review-request' } : { feature: 'demo', run_id: 'real-run' };
+    const context: FactsInvocationContext = { subject, first_phase: phase, source_paths: sourcePaths, required_input_snippets: ['src/file0.ts'] };
+    const inputContext = { schema_version: '1.1' as const, subject: request ? { request_sha256: 'a'.repeat(64) } : { feature: 'demo' }, obligations: {}, required_outputs: [] };
+    const resolvedInputs: ResolvedPhaseInputs = { context: inputContext, phase, values: {}, artifacts: {} };
+    const fm = {
+      schema_version: '1.1',
+      ...(request ? { request_sha256: 'a'.repeat(64) } : { feature: 'demo', run_id: 'real-run' }),
+      established_by: phase, ready_to_produce: true, has_blocker_coverage_risk: false,
+      source_code_paths: sourcePaths, key_inputs_read: sourcePaths, files_inspected_count: 12,
+      searches_performed_estimate: 10, decisions_unlocked: ['verified target implementation'],
+      exploration_mode: 'sequential', change_intent: 'typo_fix', estimated_loc_delta: 1, single_function_scope: true,
+    };
+    const body = '\n## Code Facts\n| 路径 | 事实 | 影响 |\n|---|---|---|\n' + sourcePaths.map(p => '| ' + p + ' | exports current value | review existing behavior |').join('\n');
+    const raw = '---\n' + YAML.stringify(fm) + '---\n' + body;
+    const file = resolveFactsAbsPath(dir, request ? '' : 'demo', context);
+    fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, raw);
+    const options = { factsContext: context, resolvedInputs, profileName: 'generic' };
+    const initial = checkFactsArtifact(dir, request ? '' : 'demo', phase, options);
+    eq(initial.filter(r => r.status === 'FAIL'), [], 'first real phase facts');
+    eq(isFactsEstablishingPhase(phase, context), true, 'actual first phase');
+    if (request) {
+      eq(fs.existsSync(path.join(dir, 'doc/features')), false, 'request must not create Feature paths');
+      fs.writeFileSync(file, raw.replace('request_sha256:', 'feature: demo\nrequest_sha256:'));
+      eq(includesId(checkFactsArtifact(dir, '', phase, options), 'context_exploration_facts_request_match', 'FAIL'), true, 'mixed subject rejected');
+    } else {
+      const inherited: FactsInvocationContext = { ...context, first_phase: 'testing', subject: { feature: 'demo', run_id: 'successor-run' }, baseline: { established_by: phase, fingerprint: factsBaselineFingerprint(raw), dependencies: sourcePaths.map(source => ({ path: path.join(dir, source), exists: true, sha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(dir, source))).digest('hex'), role: 'derive' as const })) } };
+      fs.writeFileSync(file, raw + '\n## phase_delta: testing\nnone\n');
+      const successor = checkFactsArtifact(dir, 'demo', 'testing', { ...options, factsContext: inherited, resolvedInputs: { ...resolvedInputs, phase: 'testing' } });
+      eq(successor.filter(r => r.status === 'FAIL'), [], 'successor retains real establishing phase');
+      fs.writeFileSync(path.join(dir, 'src/new.ts'), 'export const newValue = 2;');
+      fs.writeFileSync(file, raw + '\n## phase_delta: testing\n| 路径 | 事实 | 影响 |\n|---|---|---|\n| src/new.ts | new target exists | validate new branch |\n');
+      const extended = checkFactsArtifact(dir, 'demo', 'testing', { ...options, factsContext: { ...inherited, source_paths: [...sourcePaths, 'src/new.ts'] }, resolvedInputs: { ...resolvedInputs, phase: 'testing' } });
+      eq(extended.filter(r => r.status === 'FAIL'), [], 'new facts extend delta without mutating baseline');
+      fs.writeFileSync(file, raw.replace('ready_to_produce: true', 'ready_to_produce: false') + '\n## phase_delta: testing\nnone\n');
+      eq(includesId(checkFactsArtifact(dir, 'demo', 'testing', { ...options, factsContext: inherited, resolvedInputs: { ...resolvedInputs, phase: 'testing' } }), 'context_exploration_facts_baseline_stale', 'FAIL'), true, 'changed baseline rejected');
+      fs.writeFileSync(file, raw);
+      eq(includesId(checkFactsArtifact(dir, 'demo', 'coding'), 'context_exploration_facts_schema_version', 'FAIL'), true, 'new record cannot silently enter legacy');
+    }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+}
+
+cases.push(
+  { name: 'facts 1.1: coding establishes real baseline and successor preserves provenance', run: () => modernFactsCase(false) },
+  { name: 'facts 1.1: request review uses explicit report directory and exclusive subject', run: () => modernFactsCase(true) },
+);
 
 export function runAll(): UnitCaseResult[] {
   return cases.map((c) => {

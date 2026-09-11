@@ -61,7 +61,7 @@ function loadReviewReport(ctx: CheckContext): string | null {
 
 function loadDesign(ctx: CheckContext): string | null {
   return new SpecLoader(ctx.projectRoot, undefined, undefined, ctx.frameworkRoot)
-    .loadFeatureDoc(ctx.projectRoot, ctx.feature, 'plan.md');
+    .loadFeatureDoc(ctx.projectRoot, ctx.feature, 'plan.md', ctx.resolvedInputs);
 }
 
 function checkReviewContext(ctx: CheckContext): CheckResult[] {
@@ -1039,6 +1039,8 @@ const checker: PhaseChecker = {
     results.push(
       ...safeRun(
         () => checkFactsArtifact(ctx.projectRoot, ctx.feature, 'review', {
+          factsContext: ctx.factsContext,
+          resolvedInputs: ctx.resolvedInputs,
           phaseRule: ctx.phaseRule,
           profileName: ctx.resolvedProfile.name,
           frameworkRoot: ctx.frameworkRoot,

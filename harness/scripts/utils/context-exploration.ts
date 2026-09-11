@@ -15,9 +15,10 @@ import {
   resolveExplorationStrategy,
 } from './exploration-strategy';
 import { LEGACY_EXPLORATION_PHASES } from './runtime-policy';
+import { validateProjectRelativePath } from './project-relative-path';
 
 /** `change` = lite track 的建立阶段（C4 facts.md 契约，与 `spec` 同源角色）。 */
-export type ContextExplorationPhase = 'spec' | 'plan' | 'coding' | 'review' | 'ut' | 'change';
+export type ContextExplorationPhase = string;
 
 /** legacy exploration-snippets.yaml phase keys（≥2 minor 窗口 fallback） */
 const LEGACY_EXPLORATION_SNIPPET_PHASE_KEYS: Partial<Record<ContextExplorationPhase, string>> = {
@@ -117,6 +118,8 @@ export interface ContextExplorationFrontmatter {
 }
 
 export interface ContextExplorationCheckOptions {
+  factsContext?: import('./context-facts').FactsInvocationContext;
+  resolvedInputs?: import('./capability-resolution').ResolvedPhaseInputs;
   phaseRule?: PhaseRuleSpec;
   profileName?: string;
   frameworkRoot?: string;
@@ -249,7 +252,9 @@ export function resolveThresholds(
   phase: ContextExplorationPhase,
   phaseRule?: PhaseRuleSpec,
 ): ExplorationThresholds {
-  const defaults = DEFAULT_EXPLORATION_THRESHOLDS[phase];
+  const defaults = DEFAULT_EXPLORATION_THRESHOLDS[phase] ?? {
+    min_files_inspected: 1, min_source_code_paths: 1, min_searches: 1, min_code_facts: 1,
+  };
   const fromRule = phaseRule?.exploration_thresholds ?? {};
   return { ...defaults, ...fromRule };
 }
@@ -291,7 +296,7 @@ export function resolvePhaseInputSnippets(
   profileName: string,
   phaseRule?: PhaseRuleSpec,
 ): string[] {
-  const base = CONTEXT_EXPLORATION_PHASE_INPUT_SNIPPETS[phase];
+  const base = CONTEXT_EXPLORATION_PHASE_INPUT_SNIPPETS[phase] ?? [];
   const profileExtra = loadProfileExplorationSnippets(profileName, phase);
   const ruleExtra = phaseRule?.exploration_thresholds?.phase_input_snippets_extra ?? [];
   const merged = [...base, ...profileExtra, ...ruleExtra];
@@ -338,7 +343,7 @@ export function runQuantitativeChecks(
     options?.profileName ?? loadFrameworkConfig(projectRoot).project_profile?.name ?? 'hmos-app';
 
   const strategy = resolveExplorationStrategy(phase, options?.phaseRule);
-  const decision = determineExplorationMode(
+  const decision = options?.factsContext?.baseline ? { requiresSubagent: false, applySequentialMultiplier: false, complexity: 'L3_moderate' as const, reason: 'validated baseline', score: undefined } : determineExplorationMode(
     phase,
     projectRoot,
     feature,
@@ -346,12 +351,15 @@ export function runQuantitativeChecks(
     thresholds,
     options?.phaseRule,
     options?.frameworkRoot,
+    options?.resolvedInputs,
   );
   const mode = String(fm.exploration_mode ?? '').trim().toLowerCase();
 
   if (decision.applySequentialMultiplier && strategy) {
     thresholds = applySequentialMultiplier(thresholds, strategy);
   }
+
+  if (options?.factsContext?.baseline) thresholds = { ...thresholds, min_source_code_paths: 0, min_files_inspected: 0, min_searches: 0, min_code_facts: 1 };
 
   const sourcePaths = dedupeNormalizedPaths(normalizeStringArray(fm.source_code_paths));
   const decisions = normalizeStringArray(fm.decisions_unlocked);
@@ -380,7 +388,13 @@ export function runQuantitativeChecks(
   const missingOnDisk: string[] = [];
   for (const rel of sourcePaths) {
     const abs = path.isAbsolute(rel) ? rel : path.join(projectRoot, rel);
-    if (!fs.existsSync(abs)) missingOnDisk.push(rel);
+    try {
+      if (options?.factsContext) {
+        validateProjectRelativePath(projectRoot, rel, 'source_code_paths');
+        if (!fs.statSync(abs).isFile()) throw new Error('invalid source path');
+      }
+      fs.accessSync(abs, fs.constants.R_OK);
+    } catch { missingOnDisk.push(rel); }
   }
   if (missingOnDisk.length > 0) {
     results.push({
@@ -509,7 +523,9 @@ export function runQuantitativeChecks(
     }
   }
 
-  const requiredSnippets = resolvePhaseInputSnippets(phase, profileName, options?.phaseRule);
+  const requiredSnippets = options?.factsContext
+    ? [...options.factsContext.required_input_snippets, ...loadProfileExplorationSnippets(profileName, phase), ...(options.phaseRule?.exploration_thresholds?.phase_input_snippets_extra ?? [])]
+    : resolvePhaseInputSnippets(phase, profileName, options?.phaseRule);
   const haystack = [
     flattenKeyInputs(fm.key_inputs_read),
     ...sourcePaths.map(p => p.toLowerCase()),

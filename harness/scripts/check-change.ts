@@ -212,6 +212,8 @@ export const checker: PhaseChecker = {
 
     results.push(
       ...checkFactsArtifact(ctx.projectRoot, ctx.feature, 'change', {
+          factsContext: ctx.factsContext,
+          resolvedInputs: ctx.resolvedInputs,
         phaseRule: ctx.phaseRule,
         profileName: ctx.resolvedProfile.name,
         frameworkRoot: ctx.frameworkRoot,
