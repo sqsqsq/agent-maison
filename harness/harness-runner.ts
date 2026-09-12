@@ -198,6 +198,7 @@ import {
 } from './scripts/utils/runtime-policy';
 import { loadFeatureTrackDecl } from './scripts/utils/feature-track';
 import { resolveCapabilityResolutionEntryInput } from './scripts/utils/capability-resolution-entry-input';
+import { runExplicitRequest } from './scripts/utils/request-phase';
 import { finalizePhaseClosure } from './scripts/utils/phase-closure-finalizer';
 import {
   assertCapabilityConsumption,
@@ -340,8 +341,9 @@ const args = minimist(process.argv.slice(2), {
     'phase', 'feature', 'ai-report', 'adapter', 'workflow', 'adhoc-cases', 'correction-request',
     'q-requirement', 'q-contract', 'q-code', 'goal-run-id', 'goal-attempt-id',
     'goal-owner-id', 'goal-owner-epoch', 'from', 'screen',
+    'request-file', 'report-dir', 'project-root', 'framework-root',
   ],
-  boolean: ['list', 'help', 'verbose', 'clear-state', 'sync-closure', 'report-reconcile-only', 'force-device', 'revalidate', 'measure', 'summary', 'failures-only', 'skip-visual-handoff', 'skip-ui-spec', 'skip-visual-parity', 'correction-init', 'adhoc-correction'],
+  boolean: ['list', 'help', 'verbose', 'clear-state', 'sync-closure', 'report-reconcile-only', 'force-device', 'revalidate', 'measure', 'summary', 'failures-only', 'skip-visual-handoff', 'skip-ui-spec', 'skip-visual-parity', 'correction-init', 'adhoc-correction', 'prepare-request'],
   alias: {
     p: 'phase',
     f: 'feature',
@@ -415,6 +417,9 @@ Harness — Spec/Harness 验证工具
   -p, --phase <phase>       指定验证阶段（合法集合由当前 workflow 决定，默认见 framework/workflows/spec-driven.workflow.yaml）
   --workflow <name>         覆盖 framework.config.json 的 active_workflow（CLI 优先）
   -f, --feature <name>      指定功能模块名 (如 home-page)；全局 scope 阶段可不填（默认 _global）
+  --request-file <path>     review/ut/testing 专项请求 JSON；必须配 --report-dir，不与 Feature/Goal 身份并用
+  --report-dir <path>       专项请求独立报告目录（项目内、Feature/framework/.git 外）
+  --prepare-request        只解析专项目标、基线和待补输入，输出 JSON，不写控制文件或运行 checker
   --adapter <adapter_name>      init 必选；须与 framework/agents/<adapter_name>/ 存在且含 adapter.yaml（其他阶段忽略）
   --goal-run-id <run_id>    attended phase context；须与下面三项成组传入
   --goal-attempt-id <id>    attended attempt identity（来自 phase_execute_request）
@@ -520,6 +525,14 @@ async function main(): Promise<void> {
   }
 
   const harnessRoot = __dirname;
+  if (args['request-file'] !== undefined || args['report-dir'] !== undefined || args['prepare-request']) {
+    const detected = detectRepoLayout(harnessRoot);
+    try {
+      process.exitCode = await runExplicitRequest({ args, projectRoot: typeof args['project-root'] === 'string' ? path.resolve(args['project-root']) : detected.projectRoot,
+        frameworkRoot: typeof args['framework-root'] === 'string' ? path.resolve(args['framework-root']) : detected.frameworkRoot });
+    } catch (error) { console.error(String(error)); process.exitCode = 1; }
+    return;
+  }
   const layout = detectRepoLayout(harnessRoot);
   const { projectRoot, frameworkRoot: resolvedFrameworkRoot, frameworkRel, kind: layoutKind } = layout;
   try {

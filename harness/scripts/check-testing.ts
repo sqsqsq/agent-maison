@@ -5927,8 +5927,10 @@ function regenerateTestReport(
 
 const checker: PhaseChecker = {
   phase: 'testing',
+  subjects: ['feature', 'request'],
 
-  async check(ctx: CheckContext): Promise<CheckResult[]> {
+  async check(ctx: CheckContext<'feature' | 'request'>): Promise<CheckResult[]> {
+    if (ctx.subject === 'request') return require('./utils/request-phase').checkRequestTests(ctx);
     const plan = loadDoc(ctx, 'test-plan.md');
     // plan 07a41ec6 T5：test-report.md 由 harness 生成（device run 之后 / report-only 之前重写），故为 let
     let report = loadDoc(ctx, 'test-report.md');

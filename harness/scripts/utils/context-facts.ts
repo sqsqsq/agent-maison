@@ -15,7 +15,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import type { ResolutionDependency } from './capability-resolution';
-import { isInsideProjectRoot, validateProjectRelativePath } from './project-relative-path';
+import { isInsideProjectRoot } from './project-relative-path';
 import { extractTables } from './markdown-parser';
 
 import { featuresDirPath } from '../../config';
@@ -27,6 +27,7 @@ import {
   isContextExplorationPhase,
   parseContextExploration,
   runQuantitativeChecks,
+  assertFactsSourceReadable,
   type ContextExplorationCheckOptions,
   type ContextExplorationPhase,
 } from './context-exploration';
@@ -55,13 +56,14 @@ export function isFactsEstablishingPhase(phase: string, context?: FactsInvocatio
   return FACTS_ESTABLISHING_PHASES.has(phase);
 }
 
-export function resolveFactsAbsPath(projectRoot: string, feature: string, context?: FactsInvocationContext): string {
+export function resolveFactsAbsPath(projectRoot: string, feature: string | undefined, context?: FactsInvocationContext): string {
   if (context && 'request_sha256' in context.subject) {
     const reportDir = path.resolve(projectRoot, context.subject.report_dir);
     const relative = path.relative(projectRoot, reportDir);
     if (!relative || !isInsideProjectRoot(projectRoot, reportDir)) throw new Error('request facts report_dir must be inside project');
     return path.join(reportDir, 'context', 'facts.md');
   }
+  if (feature === undefined) throw new Error('Feature subject required for Feature facts');
   return path.join(featuresDirPath(projectRoot), ...featureRelativePath(feature).split('/'), 'context', 'facts.md');
 }
 
@@ -90,7 +92,7 @@ export function factsPhaseFingerprint(raw: string, phase: string): string {
 
 function checkEstablishingFacts(
   projectRoot: string,
-  feature: string,
+  feature: string | undefined,
   phase: string,
   fm: ReturnType<typeof parseContextExploration>['fm'],
   body: string,
@@ -149,7 +151,7 @@ function checkFactsFile(
   absPath: string,
   relPath: string,
   projectRoot: string,
-  feature: string,
+  feature: string | undefined,
   phase: string,
   options?: ContextExplorationCheckOptions,
 ): CheckResult[] {
@@ -213,10 +215,7 @@ function checkFactsFile(
     for (const source of invocation.source_paths) {
       if (!declared.includes(source) && !deltaPaths.includes(source)) issue('context_exploration_facts_scope_coverage', `当前目标未覆盖：${source}`);
       try {
-        const safe = validateProjectRelativePath(projectRoot, source, 'facts source');
-        const abs = path.resolve(projectRoot, safe);
-        if (!fs.statSync(abs).isFile()) throw new Error('not a file');
-        fs.accessSync(abs, fs.constants.R_OK);
+        assertFactsSourceReadable(projectRoot, source, options);
       } catch { issue('context_exploration_facts_scope_coverage', `当前来源不可读或越界：${source}`); }
     }
   } else if (schemaVersion !== '1.0') {
@@ -267,7 +266,7 @@ function checkFactsFile(
     // 若沿用早年 lite 阶段建立的 facts.md（established_by: change），delta 阶段（plan/coding/...）
     // 只查 phase_delta 节，不会发现"这份事实基线其实是按 lite 更轻的门槛建立的"。
     // 按 feature.yaml 声明的 track（缺省 full）推导期望值：full→spec，lite→change，不一致即 FAIL。
-    const track = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature));
+    const track = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature!));
     const expectedEstablishedBy = track === 'lite' ? 'change' : 'spec';
     if (establishedBy !== expectedEstablishedBy) {
       results.push({
@@ -326,7 +325,7 @@ function checkFactsFile(
  */
 export function checkFactsArtifact(
   projectRoot: string,
-  feature: string,
+  feature: string | undefined,
   phase: string,
   options?: ContextExplorationCheckOptions,
 ): CheckResult[] {
@@ -337,7 +336,7 @@ export function checkFactsArtifact(
     return checkFactsFile(factsAbs, factsRel, projectRoot, feature, phase, options);
   }
 
-  if (!options?.factsContext && isContextExplorationPhase(phase)) {
+  if (feature !== undefined && !options?.factsContext && isContextExplorationPhase(phase)) {
     const legacyResults = checkContextExplorationArtifact(
       projectRoot,
       feature,

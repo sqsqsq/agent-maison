@@ -4305,8 +4305,10 @@ function buildUtRunStatusResult(
 
 const checker: PhaseChecker = {
   phase: 'ut',
+  subjects: ['feature', 'request'],
 
-  async check(ctx: CheckContext): Promise<CheckResult[]> {
+  async check(ctx: CheckContext<'feature' | 'request'>): Promise<CheckResult[]> {
+    if (ctx.subject === 'request') return require('./utils/request-phase').checkRequestTests(ctx);
     const utHost = tryLoadUtHostImpl(ctx.resolvedProfile.profileDir);
     if (!utHost) {
       const loadError = getLastProfileHarnessLoadError();

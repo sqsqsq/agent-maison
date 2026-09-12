@@ -40,13 +40,14 @@ import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { checkFactsArtifact } from './utils/context-facts';
 import { checkUpstreamVerdictGate } from './utils/upstream-verdict-gate';
 import { checkChangeUnitFeatureProjection } from './utils/change-unit-feature-projection';
+import { resolveRequestInputs } from './utils/capability-resolution';
 
 // --------------------------------------------------------------------------
 // Helpers
 // --------------------------------------------------------------------------
 
 function ruleDesc(
-  ctx: CheckContext,
+  ctx: CheckContext<'feature' | 'request'>,
   section: 'structure_checks' | 'semantic_checks' | 'traceability_checks',
   id: string,
 ): string {
@@ -54,7 +55,11 @@ function ruleDesc(
   return checks?.[id]?.description?.trim() ?? id;
 }
 
-function loadReviewReport(ctx: CheckContext): string | null {
+function loadReviewReport(ctx: CheckContext<'feature' | 'request'>): string | null {
+  if (ctx.subject === 'request') {
+    const value = ctx.resolvedInputs.values.review_report;
+    return value?.state === 'resolved' && typeof value.value === 'string' ? value.value : null;
+  }
   return new SpecLoader(ctx.projectRoot, undefined, undefined, ctx.frameworkRoot)
     .loadFeatureDoc(ctx.projectRoot, ctx.feature, 'review-report.md');
 }
@@ -89,7 +94,7 @@ function checkReviewContext(ctx: CheckContext): CheckResult[] {
 // Structure Checks
 // --------------------------------------------------------------------------
 
-function checkRequiredChapters(ctx: CheckContext, report: string): CheckResult[] {
+function checkRequiredChapters(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
   const expectedPairs = [
     ['审查范围'],
     ['审查方法', '审查维度'],
@@ -126,7 +131,7 @@ function checkRequiredChapters(ctx: CheckContext, report: string): CheckResult[]
   }];
 }
 
-function checkIssueTableFormat(ctx: CheckContext, report: string): CheckResult[] {
+function checkIssueTableFormat(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
   const section = getSectionContent(report, '问题清单');
   if (!section) {
     return [{
@@ -202,7 +207,7 @@ function getIssueTable(report: string): ReturnType<typeof extractTables>[0] | nu
   return tables.length > 0 ? tables[0] : null;
 }
 
-function checkSeverityValues(ctx: CheckContext, report: string): CheckResult[] {
+function checkSeverityValues(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
   const table = getIssueTable(report);
   if (!table) {
     return [{
@@ -245,7 +250,7 @@ function checkSeverityValues(ctx: CheckContext, report: string): CheckResult[] {
   }];
 }
 
-function checkIssueCategoryValues(ctx: CheckContext, report: string): CheckResult[] {
+function checkIssueCategoryValues(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
   const table = getIssueTable(report);
   if (!table) {
     return [{
@@ -290,7 +295,7 @@ function checkIssueCategoryValues(ctx: CheckContext, report: string): CheckResul
   }];
 }
 
-function checkStatisticsSummary(ctx: CheckContext, report: string): CheckResult[] {
+function checkStatisticsSummary(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
   const section = getSectionContent(report, '问题统计');
   if (!section) {
     return [{
@@ -405,8 +410,9 @@ function rewriteStatisticsTable(report: string, counts: Record<string, number>):
   return lines.join('\n');
 }
 
-function writeReviewReport(ctx: CheckContext, content: string): boolean {
+function writeReviewReport(ctx: CheckContext<'feature' | 'request'>, content: string): boolean {
   try {
+    if (ctx.subject === 'request') { fs.writeFileSync(ctx.request.inputs.review_report, content, 'utf8'); return true; }
     const resolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'review-report.md');
     const target = resolved.exists ? resolved.actualPath : resolved.canonicalPath;
     fs.writeFileSync(target, content, 'utf-8');
@@ -422,7 +428,7 @@ function writeReviewReport(ctx: CheckContext, content: string): boolean {
  *   · 计数自洽：问题清单行数 vs 统计表合计 vs 正文"共 N 条"。
  * 新报告优先引用「文件 + symbol」；行号需要时由 renderer 生成。
  */
-function checkReviewReferenceLint(ctx: CheckContext, report: string): CheckResult[] {
+function checkReviewReferenceLint(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
   const id = 'review_reference_lint';
   const description = 'review 报告引用新鲜度与计数自洽（WARN 提示：path:line 存在/范围、问题数三方一致）';
   const findings: string[] = [];
@@ -433,7 +439,9 @@ function checkReviewReferenceLint(ctx: CheckContext, report: string): CheckResul
     if (lineCountCache.has(abs)) return lineCountCache.get(abs)!;
     let n: number | null = null;
     try {
-      if (fs.existsSync(abs) && fs.statSync(abs).isFile()) n = fs.readFileSync(abs, 'utf-8').split('\n').length;
+      const bound = ctx.subject === 'request' ? ctx.request.sourceContents.find(file => path.resolve(ctx.projectRoot, file.path) === abs) : undefined;
+      if (bound) n = bound.content.split('\n').length;
+      else if (fs.existsSync(abs) && fs.statSync(abs).isFile()) n = fs.readFileSync(abs, 'utf-8').split('\n').length;
     } catch { n = null; }
     lineCountCache.set(abs, n);
     return n;
@@ -512,7 +520,7 @@ function checkScopeDeclaration(ctx: CheckContext, report: string): CheckResult[]
   }];
 }
 
-function checkConclusionWithVerdict(ctx: CheckContext, report: string): CheckResult[] {
+function checkConclusionWithVerdict(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
   const section = getSectionContent(report, '结论') ?? getSectionContent(report, '审查结论');
   if (!section) {
     return [{
@@ -577,7 +585,7 @@ function checkConclusionWithVerdict(ctx: CheckContext, report: string): CheckRes
   }];
 }
 
-function checkMetadataHeader(ctx: CheckContext, report: string): CheckResult[] {
+function checkMetadataHeader(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
   const metadata = extractMetadata(report);
   const required = ['模块标识', '审查日期', '审查版本', '保证等级'];
   const missing = required.filter(f => !metadata[f]);
@@ -602,7 +610,7 @@ function checkMetadataHeader(ctx: CheckContext, report: string): CheckResult[] {
 // Traceability Checks
 // --------------------------------------------------------------------------
 
-function checkIssueToFile(ctx: CheckContext, report: string): CheckResult[] {
+function checkIssueToFile(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
   const table = getIssueTable(report);
   if (!table) {
     return [{
@@ -628,7 +636,8 @@ function checkIssueToFile(ctx: CheckContext, report: string): CheckResult[] {
     const cell = (row[fileCol] || '').trim();
     cell.split(/[,，\n]/)
       .map(f => f.replace(/`/g, '').trim())
-      .filter(f => f.endsWith('.ets') || f.endsWith('.json') || f.endsWith('.json5'))
+      .map(f => f.replace(/:\d+(?:-\d+)?$/, ''))
+      .filter(f => /\.(?:ets|tsx?|m?js|json5?|py|java|kt|swift)$/.test(f))
       .forEach(f => allFiles.add(f));
   }
 
@@ -644,7 +653,8 @@ function checkIssueToFile(ctx: CheckContext, report: string): CheckResult[] {
   const missing: string[] = [];
   for (const filePath of allFiles) {
     const fullPath = path.join(ctx.projectRoot, filePath);
-    if (!fs.existsSync(fullPath)) missing.push(filePath);
+    const bound = ctx.subject === 'request' && ctx.request.sourceContents.some(file => path.resolve(ctx.projectRoot, file.path) === fullPath);
+    if (!bound && !fs.existsSync(fullPath)) missing.push(filePath);
   }
 
   if (missing.length === 0) {
@@ -666,7 +676,7 @@ function checkIssueToFile(ctx: CheckContext, report: string): CheckResult[] {
   }];
 }
 
-function checkIssueToCodingRule(ctx: CheckContext, report: string): CheckResult[] {
+function checkIssueToCodingRule(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
   const table = getIssueTable(report);
   if (!table) {
     return [{
@@ -1011,8 +1021,23 @@ function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
 
 const checker: PhaseChecker = {
   phase: 'review',
+  subjects: ['feature', 'request'],
 
-  async check(ctx: CheckContext): Promise<CheckResult[]> {
+  async check(ctx: CheckContext<'feature' | 'request'>): Promise<CheckResult[]> {
+    if (ctx.subject === 'request') {
+      let report = loadReviewReport(ctx);
+      if (!report) return [{ id: 'review_report_exists', category: 'structure', severity: 'BLOCKER', status: 'FAIL', description: '专项审查报告缺失', details: ctx.request.inputs.review_report, suggestion: '完成真实审查并写入本次 review_report，再运行同一请求。' }];
+      const results = [...checkRequiredChapters(ctx, report), ...checkIssueTableFormat(ctx, report), ...checkSeverityValues(ctx, report), ...checkIssueCategoryValues(ctx, report), ...checkStatisticsSummary(ctx, report)];
+      ctx.resolvedInputs = resolveRequestInputs(ctx.projectRoot, ctx.frameworkRoot, ctx.request);
+      report = fs.readFileSync(ctx.request.inputs.review_report, 'utf8');
+      const issueChecks = [...checkIssueToFile(ctx, report), ...checkIssueToCodingRule(ctx, report)];
+      if (!getIssueTable(report) && !results.some(check => check.id === 'issue_table_format' && check.status === 'FAIL')) for (const check of [...results, ...issueChecks]) if (check.status === 'SKIP') check.structured = { applicability: 'not_applicable' };
+      results.push(...checkReviewReferenceLint(ctx, report), ...checkConclusionWithVerdict(ctx, report), ...checkMetadataHeader(ctx, report), ...issueChecks, ...checkNegativeVerdictClosure(report), ...checkConditionalPassClosure(ctx, report));
+      const scope = getSectionContent(report, '审查范围') ?? '';
+      const missing = ctx.request.targets.files.filter(file => !scope.includes(file));
+      if (missing.length) results.push({ id: 'review_request_scope', category: 'traceability', severity: 'BLOCKER', status: 'FAIL', description: '审查范围未覆盖请求目标', details: missing.join(', '), suggestion: '按本次目标与基线审查全部指定文件，并在范围中列出真实目标。' });
+      return results;
+    }
     const loadedReport = loadReviewReport(ctx);
     if (!loadedReport) {
       const reportRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'review-report.md');
@@ -1128,7 +1153,7 @@ export function checkNegativeVerdictClosure(report: string): CheckResult[] {
  * 机器化：有条件通过且存在未关闭 MAJOR → BLOCKER FAIL。人工授权不得把已知缺陷
  * 降级为可推进状态；LLM verifier 的 PASS 只证"报告可信"，不再被消费为"产品 PASS"。
  */
-function checkConditionalPassClosure(ctx: CheckContext, report: string): CheckResult[] {
+function checkConditionalPassClosure(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
   const id = 'conditional_pass_closure';
   const description = '「有条件通过」闭环门禁（未闭环 MAJOR 不得推进）';
   const section = getSectionContent(report, '结论') ?? getSectionContent(report, '审查结论') ?? '';

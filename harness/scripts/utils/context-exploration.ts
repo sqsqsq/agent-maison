@@ -118,11 +118,24 @@ export interface ContextExplorationFrontmatter {
 }
 
 export interface ContextExplorationCheckOptions {
+  request?: import('./capability-resolution-entry-input').PreparedRequest;
   factsContext?: import('./context-facts').FactsInvocationContext;
   resolvedInputs?: import('./capability-resolution').ResolvedPhaseInputs;
   phaseRule?: PhaseRuleSpec;
   profileName?: string;
   frameworkRoot?: string;
+}
+
+/** Historical review consumes the selected commit; all other invocations consume disk. */
+export function assertFactsSourceReadable(projectRoot: string, source: string, options?: ContextExplorationCheckOptions): void {
+  const safe = validateProjectRelativePath(projectRoot, source, 'facts source');
+  const request = options?.request;
+  if (request?.phase === 'review' && request.baseline.head !== 'WORKTREE'
+    && request.sourceContents.some(file => file.path === safe)
+    && request.bindings.some(binding => binding.path === safe && binding.exists && binding.sha256)) return;
+  const absolute = path.resolve(projectRoot, safe);
+  if (!fs.statSync(absolute).isFile()) throw new Error('not a file');
+  fs.accessSync(absolute, fs.constants.R_OK);
 }
 
 interface ProfileExplorationSnippetsFile {
@@ -330,7 +343,7 @@ function countCodeFactsRows(body: string): number {
 /** 导出供 context-facts.ts（C4）复用于 facts.md 建立阶段全量检查（无需 fm.phase）。 */
 export function runQuantitativeChecks(
   projectRoot: string,
-  feature: string,
+  feature: string | undefined,
   phase: ContextExplorationPhase,
   fm: ContextExplorationFrontmatter,
   body: string,
@@ -360,6 +373,11 @@ export function runQuantitativeChecks(
   }
 
   if (options?.factsContext?.baseline) thresholds = { ...thresholds, min_source_code_paths: 0, min_files_inspected: 0, min_searches: 0, min_code_facts: 1 };
+  const requestSubject = options?.factsContext && 'request_sha256' in options.factsContext.subject;
+  if (requestSubject) {
+    const count = options!.factsContext!.source_paths.length;
+    thresholds = { ...thresholds, min_source_code_paths: Math.min(thresholds.min_source_code_paths ?? 0, count), min_files_inspected: Math.min(thresholds.min_files_inspected ?? 0, count), min_searches: Math.min(thresholds.min_searches ?? 0, Math.max(1, count)), min_code_facts: Math.min(thresholds.min_code_facts ?? 0, Math.max(1, count)) };
+  }
 
   const sourcePaths = dedupeNormalizedPaths(normalizeStringArray(fm.source_code_paths));
   const decisions = normalizeStringArray(fm.decisions_unlocked);
@@ -390,10 +408,8 @@ export function runQuantitativeChecks(
     const abs = path.isAbsolute(rel) ? rel : path.join(projectRoot, rel);
     try {
       if (options?.factsContext) {
-        validateProjectRelativePath(projectRoot, rel, 'source_code_paths');
-        if (!fs.statSync(abs).isFile()) throw new Error('invalid source path');
-      }
-      fs.accessSync(abs, fs.constants.R_OK);
+        assertFactsSourceReadable(projectRoot, rel, options);
+      } else fs.accessSync(abs, fs.constants.R_OK);
     } catch { missingOnDisk.push(rel); }
   }
   if (missingOnDisk.length > 0) {
@@ -524,7 +540,7 @@ export function runQuantitativeChecks(
   }
 
   const requiredSnippets = options?.factsContext
-    ? [...options.factsContext.required_input_snippets, ...loadProfileExplorationSnippets(profileName, phase), ...(options.phaseRule?.exploration_thresholds?.phase_input_snippets_extra ?? [])]
+    ? [...options.factsContext.required_input_snippets, ...(requestSubject ? [] : loadProfileExplorationSnippets(profileName, phase)), ...(options.phaseRule?.exploration_thresholds?.phase_input_snippets_extra ?? [])]
     : resolvePhaseInputSnippets(phase, profileName, options?.phaseRule);
   const haystack = [
     flattenKeyInputs(fm.key_inputs_read),

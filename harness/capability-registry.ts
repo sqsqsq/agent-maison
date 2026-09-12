@@ -185,6 +185,13 @@ export function dispatchUtRun(
   return fn(options);
 }
 
+/** Request transport on the same installed test capability; no caller-supplied commands. */
+export function dispatchRequestTests(ctx: CheckContext<'request'>): unknown | Promise<unknown> {
+  const key = ctx.phase === 'ut' ? 'ut.run' : 'device_test.run';
+  const fn = requireProviderFunction(ctx.resolvedProfile, key, 'runRequestTests');
+  return fn(ctx);
+}
+
 export function probeUtRunDevices(ctx: CheckContext): any {
   const fn = requireProviderFunction(ctx.resolvedProfile, 'ut.run', 'probeDevices');
   return fn();

@@ -23,8 +23,8 @@ export type { CapabilityKey, ProfileCapabilitySpec } from './scripts/utils/types
 
 const FRAMEWORK_DIR = path.resolve(__dirname, '..');
 
-function profileDir(name: string): string {
-  return path.join(FRAMEWORK_DIR, 'profiles', name);
+function profileDir(name: string, frameworkRoot = FRAMEWORK_DIR): string {
+  return path.join(frameworkRoot, 'profiles', name);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -103,8 +103,8 @@ export function mergePhaseRuleSpec(base: PhaseRuleSpec, overlay: Partial<PhaseRu
   return merged;
 }
 
-function readProfileYaml(name: string): ProfileYamlStub {
-  const dir = profileDir(name);
+function readProfileYaml(name: string, frameworkRoot = FRAMEWORK_DIR): ProfileYamlStub {
+  const dir = profileDir(name, frameworkRoot);
   const filePath = path.join(dir, 'profile.yaml');
   if (!fs.existsSync(filePath)) {
     throw new Error(`[profile-loader] 缺少 ${filePath}`);
@@ -192,19 +192,19 @@ function mergeOverlayFromDir(current: PhaseRuleSpec, overlayPath: string): Phase
   }
 }
 
-export function loadResolvedProfile(projectRoot: string, cfg: FrameworkConfig): HarnessResolvedProfile {
+export function loadResolvedProfile(projectRoot: string, cfg: FrameworkConfig, frameworkRoot = FRAMEWORK_DIR): HarnessResolvedProfile {
   const name = cfg.project_profile.name;
   const sub = cfg.project_profile.sub_variant?.trim();
 
   let yaml: ProfileYamlStub;
   try {
-    yaml = readProfileYaml(name);
+    yaml = readProfileYaml(name, frameworkRoot);
   } catch {
     console.warn(`[profile-loader] 无法加载 profile "${name}"，回退 hmos-app`);
-    yaml = readProfileYaml('hmos-app');
+    yaml = readProfileYaml('hmos-app', frameworkRoot);
   }
 
-  const profileDirPath = profileDir(yaml.name);
+  const profileDirPath = profileDir(yaml.name, frameworkRoot);
 
   const capabilities = normalizeCapabilitiesMap(
     yaml.capabilities as Partial<Record<string, ProfileCapabilitySpec>>,

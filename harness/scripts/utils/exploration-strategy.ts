@@ -250,17 +250,19 @@ export function resolveExplorationStrategy(
   return phaseRule?.exploration_strategy;
 }
 
-function countInScopeModules(projectRoot: string, feature: string, frameworkRoot?: string, inputs?: ResolvedPhaseInputs): number {
+function countInScopeModules(projectRoot: string, feature: string | undefined, frameworkRoot?: string, inputs?: ResolvedPhaseInputs): number {
   const loader = new SpecLoader(projectRoot, undefined, undefined, frameworkRoot);
-  const prd = loader.loadFeatureDoc(projectRoot, feature, 'spec.md', inputs);
+  const prd = inputs ? inputs.artifacts['spec@1'] : feature === undefined ? undefined : loader.loadFeatureDoc(projectRoot, feature, 'spec.md');
+  if (typeof prd !== 'string') return 0;
   if (!prd) return 0;
   const { scope } = parseScope(prd);
   return scope?.in_scope_modules?.length ?? 0;
 }
 
-function countContractFiles(projectRoot: string, feature: string, frameworkRoot?: string, inputs?: ResolvedPhaseInputs): number {
+function countContractFiles(projectRoot: string, feature: string | undefined, frameworkRoot?: string, inputs?: ResolvedPhaseInputs): number {
   const loader = new SpecLoader(projectRoot, undefined, undefined, frameworkRoot);
   if (inputs) { const value = inputs.artifacts['contracts@1'] as { files?: unknown[] } | undefined; return value?.files?.length ?? 0; }
+  if (feature === undefined) return 0;
   const raw = loader.loadFeatureDoc(projectRoot, feature, 'contracts.yaml');
   if (!raw) return 0;
   try {
@@ -271,9 +273,10 @@ function countContractFiles(projectRoot: string, feature: string, frameworkRoot?
   }
 }
 
-function countUseCases(projectRoot: string, feature: string, frameworkRoot?: string, inputs?: ResolvedPhaseInputs): number {
+function countUseCases(projectRoot: string, feature: string | undefined, frameworkRoot?: string, inputs?: ResolvedPhaseInputs): number {
   const loader = new SpecLoader(projectRoot, undefined, undefined, frameworkRoot);
   if (inputs) { const value = inputs.artifacts['use-cases@1'] as { use_cases?: unknown[] } | undefined; return value?.use_cases?.length ?? 0; }
+  if (feature === undefined) return 0;
   const raw = loader.loadFeatureDoc(projectRoot, feature, 'use-cases.yaml');
   if (!raw) return 0;
   try {
@@ -288,7 +291,7 @@ function countUseCases(projectRoot: string, feature: string, frameworkRoot?: str
 export function legacyRequiresSubagent(
   phase: ContextExplorationPhase,
   projectRoot: string,
-  feature: string,
+  feature: string | undefined,
   thresholds: ExplorationThresholds,
   frameworkRoot?: string,
   inputs?: ResolvedPhaseInputs,
@@ -360,11 +363,12 @@ function scoreFromTiers(value: number, tiers: ScoringTier[] | undefined, cap?: n
 function resolveDimensionValue(
   dim: ScoringDimension,
   projectRoot: string,
-  feature: string,
+  feature: string | undefined,
   signals: ExplorationChangeSignals,
   frameworkRoot?: string,
   inputs?: ResolvedPhaseInputs,
 ): number {
+  if (feature === undefined) return 0;
   switch (dim.id) {
     case 'module_loc':
       return computeMaxInScopeModuleLoc(projectRoot, feature, frameworkRoot, inputs ? parseScope(String(inputs.artifacts['spec@1'] ?? '')).scope?.in_scope_modules ?? [] : undefined);
@@ -395,7 +399,7 @@ function resolveSignalScore(
 export function computeExplorationScore(
   scoring: ExplorationScoringConfig,
   projectRoot: string,
-  feature: string,
+  feature: string | undefined,
   signals: ExplorationChangeSignals,
   frameworkRoot?: string,
   inputs?: ResolvedPhaseInputs,
@@ -457,7 +461,7 @@ export function applySequentialMultiplier(
 export function determineExplorationMode(
   phase: ContextExplorationPhase,
   projectRoot: string,
-  feature: string,
+  feature: string | undefined,
   fm: ExplorationFrontmatterInput,
   thresholds: ExplorationThresholds,
   phaseRule?: PhaseRuleSpec,

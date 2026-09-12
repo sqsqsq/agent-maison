@@ -133,12 +133,12 @@ export class SpecLoader {
   // 阶段级规约
   // --------------------------------------------------------------------------
 
-  loadPhaseRule(phase: Phase): PhaseRuleSpec {
+  loadPhaseRule(phase: Phase, explicitPath?: string): PhaseRuleSpec {
     // 已知 phase 用显式映射；其余按 `<phase>-rules.yaml` 约定派生（C0 判定单点化：
     // workflow 1.1 起 phase 集由 workflow 声明，loader 不再持有封闭枚举——lite 的
     // change/exit 与未来新 phase 一等公民）。约定文件不存在才视为未知 phase。
     const filename = PHASE_RULE_FILENAMES[phase] ?? `${phase}-rules.yaml`;
-    const filePath = path.join(this.phaseRulesDir, filename);
+    const filePath = explicitPath ?? path.join(this.phaseRulesDir, filename);
     if (!PHASE_RULE_FILENAMES[phase] && !fs.existsSync(filePath)) {
       throw new Error(`Unknown phase: ${phase}（约定规则文件 ${filename} 不存在于 ${this.phaseRulesDir}）`);
     }
@@ -170,10 +170,19 @@ export class SpecLoader {
   // --------------------------------------------------------------------------
 
   loadFeatureSpec(feature: string, resolved?: ResolvedPhaseInputs): FeatureSpec {
+    return this.loadArtifacts(feature, resolved) as FeatureSpec;
+  }
+
+  loadRequestArtifacts(resolved: ResolvedPhaseInputs): Omit<FeatureSpec, 'feature'> {
+    if (!('request_sha256' in resolved.context.subject)) throw new Error('request input subject required');
+    return this.loadArtifacts(undefined, resolved);
+  }
+
+  private loadArtifacts(feature: string | undefined, resolved?: ResolvedPhaseInputs): Omit<FeatureSpec, 'feature'> & { feature?: string } {
     if (resolved && ('feature' in resolved.context.subject ? resolved.context.subject.feature !== feature : !!feature)) {
       throw new Error('[spec-loader] resolved input subject mismatch');
     }
-    const featureDir = resolved && !feature ? this.projectRoot : this.featureDirAbs(feature);
+    const featureDir = feature === undefined || (resolved && !feature) ? this.projectRoot : this.featureDirAbs(feature);
     const read = <T>(name: string, artifact: string, issues: string[]): T | null => {
       if (!resolved) {
         const file = path.join(featureDir, name);
@@ -181,13 +190,14 @@ export class SpecLoader {
       }
       const value = resolved.artifacts[artifact];
       if (value !== undefined) return structuredClone(value) as T;
+      if (feature === undefined) return null;
       // A phase's own outputs are checked as outputs, not frozen upstream inputs.
       const file = path.join(featureDir, name);
       return resolved.context.required_outputs.includes(name) && fs.existsSync(file)
         ? this.loadYamlMappingOrNull<T>(file, issues) : null;
     };
 
-    const spec: FeatureSpec = { feature };
+    const spec: Omit<FeatureSpec, 'feature'> & { feature?: string } = feature === undefined ? {} : { feature };
     // P0-2（plan d9b4f7e2 复审）：形状偏差留痕——由 harness-runner 产出结构化 FAIL
     // （feature_spec_shape），归一化只防崩溃，不许静默洗形状（warn 只写 console，
     // headless 下没人看，等于洗）。

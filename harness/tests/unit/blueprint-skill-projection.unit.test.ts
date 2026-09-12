@@ -28,7 +28,7 @@ import type { UnitCaseResult } from '../run-unit';
 
 const frameworkRoot = path.resolve(__dirname, '../../..');
 const sha = (file: string) => 'sha256:' + createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-function fixture(): { root: string; feature: string; blueprintFile: string; cuFile: string; bind(): void } {
+export function fixture(): { root: string; feature: string; blueprintFile: string; cuFile: string; bind(): void } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'blueprint-skill-'));
   fs.cpSync(path.join(__dirname, '../fixtures/component-blueprint/valid'), root, { recursive: true });
   const read = (name: string) => YAML.parse(fs.readFileSync(path.join(__dirname, '../fixtures/blueprint-design-inputs', name + '.yaml'), 'utf8'));

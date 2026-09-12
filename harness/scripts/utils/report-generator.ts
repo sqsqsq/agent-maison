@@ -13,6 +13,7 @@ import type { ImageInputMode } from './multimodal-probe';
 import { formatReadImageEvidenceInstructions } from './read-image-evidence';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
 
 import { featurePhaseReportsDir, relFeaturesDir } from '../../config';
 import {
@@ -28,6 +29,7 @@ import {
   ScriptReportCompatApplied,
   ScriptReportCompatExpired,
   ContextFileEntry,
+  RequestCheckContext,
 } from './types';
 import { applyCompatDowngrade } from '../../compat-loader';
 import { fillCompatMessage, SUGGESTION_COMPAT_APPLIED, SUGGESTION_COMPAT_EXPIRED } from '../../compat-messages';
@@ -148,6 +150,24 @@ export function generateScriptReport(
   fs.writeFileSync(reportPath, JSON.stringify(report, null, 2), 'utf-8');
 
   return report;
+}
+
+/** Request reports reuse checks/summary serializers without Feature compatibility or closure writes. */
+export function generateRequestScriptReport(ctx: RequestCheckContext, checks: CheckResult[]): { verdict: Verdict; reportPath: string } {
+  const finalized = checks.map(check => ({ ...check, suggestion: resolveEffectiveSuggestion(check, ctx.phase) }));
+  const summary = computeSummary(finalized);
+  if (finalized.some(check => check.status === 'FAIL' || (check.status === 'SKIP' && check.severity === 'BLOCKER' && (check.structured as { applicability?: unknown } | undefined)?.applicability !== 'not_applicable'))) summary.verdict = summary.verdict === 'INCOMPLETE' ? 'INCOMPLETE' : 'FAIL';
+  const common = { subject: 'request', completion_target: 'request', request_sha256: ctx.request.request_sha256, phase: ctx.phase,
+    requested_result: ctx.request.requested_result, baseline: ctx.request.baseline, targets: ctx.request.bindings,
+    timestamp: new Date().toISOString(), project_root: ctx.projectRoot };
+  const inputBindings = Object.fromEntries(Object.entries(ctx.resolvedInputs.values).filter(([, value]) => value.state === 'resolved').map(([id, value]) => [id, value.state === 'resolved' ? value.binding : null]));
+  const report = { ...common, checks: finalized, summary, input_bindings: inputBindings };
+  fs.mkdirSync(ctx.reportDir, { recursive: true });
+  const reportPath = path.join(ctx.reportDir, 'script-report.json');
+  fs.writeFileSync(reportPath, JSON.stringify(report, null, 2) + '\n');
+  const native = finalized.flatMap(check => (check.structured as { request_evidence?: unknown[] } | undefined)?.request_evidence ?? []);
+  fs.writeFileSync(path.join(ctx.reportDir, 'summary.json'), JSON.stringify({ ...common, ...summary, input_bindings: inputBindings, evidence: { script_report: path.relative(ctx.projectRoot, reportPath).replace(/\\/g, '/'), script_report_sha256: crypto.createHash('sha256').update(fs.readFileSync(reportPath)).digest('hex'), native } }, null, 2) + '\n');
+  return { verdict: summary.verdict, reportPath };
 }
 
 /**

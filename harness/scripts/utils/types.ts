@@ -984,11 +984,23 @@ export interface HarnessResolvedProfile {
 /** 每个阶段的检查器必须实现此接口 */
 export interface PhaseChecker {
   phase: Phase;
-  check(context: CheckContext): Promise<CheckResult[]>;
+  subjects?: readonly ('feature' | 'request')[];
+  check(context: CheckContext<'feature' | 'request'>): Promise<CheckResult[]>;
 }
 
 /** 传入检查器的上下文 */
-export interface CheckContext {
+export type CheckContext<S extends 'feature' | 'request' = 'feature'> = S extends 'request' ? RequestCheckContext : FeatureCheckContext;
+
+export interface RequestCheckContext extends Pick<FeatureCheckContext, 'phase' | 'projectRoot' | 'frameworkRoot' | 'frameworkRel' | 'harnessRoot' | 'phaseRule' | 'resolvedProfile'> {
+  subject: 'request';
+  request: import('./capability-resolution-entry-input').PreparedRequest;
+  reportDir: string;
+  resolvedInputs: import('./capability-resolution').ResolvedPhaseInputs;
+  factsContext: import('./context-facts').FactsInvocationContext;
+}
+
+export interface FeatureCheckContext {
+  subject?: 'feature';
   resolvedInputs?: import('./capability-resolution').ResolvedPhaseInputs;
   factsContext?: import('./context-facts').FactsInvocationContext;
   phase: Phase;

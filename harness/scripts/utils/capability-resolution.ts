@@ -123,7 +123,7 @@ export interface CapabilityResolutionReport {
 export interface CapabilityResolutionOptions {
   frameworkRoot: string;
   projectRoot: string;
-  feature: string;
+  feature?: string;
   phase: string;
   track: FeatureTrackName;
   /** Goal/entry input is normalized before resolution; resolver never asks interactively. */
@@ -135,6 +135,8 @@ export interface CapabilityResolutionOptions {
   inputContext?: PhaseInputContext;
   /** Explicit bounded source targets from the normalized P6 request. */
   testTargets?: string[];
+  /** Only populated by the explicit request parser, never copied from request JSON. */
+  request?: import('./capability-resolution-entry-input').PreparedRequest;
 }
 
 interface ProviderResult {
@@ -178,14 +180,16 @@ function dedupeDependencies(entries: ResolutionDependency[]): ResolutionDependen
 function resolveArtifact(
   frameworkRoot: string,
   projectRoot: string,
-  feature: string,
+  feature: string | undefined,
   source: Extract<ContractInputSource, { kind: 'artifact' }>,
   modern = false,
+  explicitPath?: string,
+  subject?: PhaseInputContext['subject'],
 ): ProviderResult {
   const inventory = loadArtifactInventory(frameworkRoot);
   const registered = inventory.artifacts.find((artifact) => artifact.id === source.artifact);
   if (!registered) return { state: 'invalid', dependencies: [], detail: `unregistered artifact ${source.artifact}` };
-  const candidates = registered.paths.flatMap((relativePath) => {
+  const candidates = explicitPath ? [explicitPath] : feature === undefined ? [] : registered.paths.flatMap((relativePath) => {
     const fromRegistry = artifactReadCandidatePaths(projectRoot, feature, relativePath);
     const direct = featureFilePath(projectRoot, feature, relativePath);
     return [...new Set([...fromRegistry, direct])];
@@ -208,8 +212,10 @@ function resolveArtifact(
       let artifacts: Record<string, unknown> | undefined;
       let value = /\.ya?ml$|\.json$/i.test(selected.path) ? YAML.parse(raw) : raw;
       if (typeof value?.source === 'string' && /^derive\.blueprint-(acceptance|contracts):/.test(value.source)) {
+        const sourceFeature = feature ?? (typeof value.feature === 'string' ? value.feature : undefined);
+        if (sourceFeature === undefined) return { state: 'invalid', dependencies, detail: 'blueprint projection requires its explicit source subject' };
         const kind = value.source.startsWith('derive.blueprint-acceptance:') ? 'acceptance' : 'contracts';
-        const projected = deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, kind);
+        const projected = deriveBlueprintSkillInput(projectRoot, sourceFeature, frameworkRoot, kind);
         dependencies.push(...projected.dependencies);
         if (projected.state !== 'resolved' || stableStringify(value) !== stableStringify(projected.artifacts?.[source.artifact])) return { state: 'invalid', dependencies, detail: projected.detail ?? 'blueprint projection stale; return to design owner' };
         artifacts = projected.artifacts;
@@ -222,10 +228,13 @@ function resolveArtifact(
         return { state: 'invalid', dependencies, detail: JSON.stringify(issues.length ? issues : ['empty content']) };
       }
       if (['acceptance@1', 'contracts@1', 'use-cases@1'].includes(source.artifact)) {
-        const parsed = new SpecLoader(projectRoot, undefined, undefined, frameworkRoot).loadFeatureSpec(feature, {
-          context: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] },
+        if (feature === undefined && !subject) throw new Error('request subject required');
+        const resolved: ResolvedPhaseInputs = {
+          context: { schema_version: '1.1', subject: subject ?? { feature: feature! }, obligations: {}, required_outputs: [] },
           phase: '', values: {}, artifacts: { [source.artifact]: value },
-        });
+        };
+        const loader = new SpecLoader(projectRoot, undefined, undefined, frameworkRoot);
+        const parsed = feature === undefined ? loader.loadRequestArtifacts(resolved) : loader.loadFeatureSpec(feature, resolved);
         if (parsed.shape_issues?.length) return { state: 'invalid', dependencies, detail: parsed.shape_issues.join('; ') };
         value = source.artifact === 'acceptance@1' ? parsed.acceptance : source.artifact === 'contracts@1' ? parsed.contracts : parsed.useCases;
       }
@@ -243,11 +252,18 @@ function sourceTreeDependency(projectRoot: string): ResolutionDependency[] {
 
 function resolveDerive(
   projectRoot: string,
-  feature: string,
+  feature: string | undefined,
   source: Extract<ContractInputSource, { kind: 'derive' }>,
   options: CapabilityResolutionOptions,
 ): ProviderResult {
+  if (options.request && (source.provider_id === 'derive.codebase' || source.provider_id === 'derive.test-targets')) {
+    const names = source.provider_id === 'derive.test-targets' ? options.request.targets.tests : options.request.targets.files;
+    const value = options.request.sourceContents.filter(file => names.includes(file.path));
+    const dependencies = options.request.baseline.head === 'WORKTREE' ? value.map(file => dependency(path.resolve(projectRoot, file.path), 'derive')) : [];
+    return value.length ? { state: 'resolved', dependencies, value } : { state: 'absent', dependencies, detail: 'requested source targets absent' };
+  }
   if (source.provider_id === 'derive.blueprint-acceptance' || source.provider_id === 'derive.blueprint-contracts') {
+    if (feature === undefined) return { state: 'absent', dependencies: [], detail: 'request has no blueprint Feature' };
     return deriveBlueprintSkillInput(projectRoot, feature, options.frameworkRoot, source.provider_id === 'derive.blueprint-acceptance' ? 'acceptance' : 'contracts');
   }
   if (options.inputContext) {
@@ -274,6 +290,44 @@ function resolveDerive(
     }
     if (source.provider_id === 'derive.visual-reference' && !options.requirement?.trim()) return { state: 'absent', dependencies: [], detail: 'explicit visual requirement missing' };
   }
+  if (source.provider_id === 'derive.adhoc-cases') {
+      const deps: ResolutionDependency[] = [];
+      const raw = options.adhocCases?.trim();
+      if (!raw) {
+        return { state: 'absent', dependencies: deps, detail: 'normalized adhoc cases unavailable' };
+      }
+      // The phase resolver and ad-hoc driver share one deterministic case boundary.
+      // Never treat arbitrary non-empty text as an executable device-test input.
+      const normalized = normalizeDeviceTestCases({ mode: 'adhoc', natural_language: raw });
+      const onlyCase = normalized.cases[0];
+      // Capability fallback accepts only a minimally actionable explicit adhoc input.
+      // Keep this guard here: the shared kernel also serves the direct adhoc tool,
+      // whose single TC-001/no-expected representation remains valid for that flow.
+      if (
+        normalized.cases.length === 0
+        || (normalized.cases.length === 1 && onlyCase.steps.length < 2 && !onlyCase.expected.trim())
+      ) {
+        return {
+          state: 'absent',
+          dependencies: deps,
+          detail: `adhoc_cases_insufficient:${stableFingerprint(normalized).slice(0, 16)}`,
+        };
+      }
+      if (normalized.issues.length > 0) {
+        return {
+          state: 'invalid',
+          dependencies: deps,
+          detail: `adhoc_cases_invalid:${stableFingerprint(normalized).slice(0, 16)}`,
+        };
+      }
+      return {
+        state: 'resolved',
+        dependencies: deps,
+        value: normalized.cases,
+        detail: `adhoc_cases:${stableFingerprint(normalized.cases).slice(0, 16)}`,
+      };
+    }
+  if (feature === undefined) return { state: 'absent', dependencies: [], detail: 'derive source requires Feature context' };
   switch (source.provider_id) {
     case 'derive.codebase': {
       const deps = sourceTreeDependency(projectRoot);
@@ -421,50 +475,14 @@ function resolveDerive(
         ? { state: 'resolved', dependencies: deps, detail: 'module catalog target derivation' }
         : { state: 'absent', dependencies: deps, detail: 'module catalog missing' };
     }
-    case 'derive.adhoc-cases': {
-      const deps: ResolutionDependency[] = [];
-      const raw = options.adhocCases?.trim();
-      if (!raw) {
-        return { state: 'absent', dependencies: deps, detail: 'normalized adhoc cases unavailable' };
-      }
-      // The phase resolver and ad-hoc driver share one deterministic case boundary.
-      // Never treat arbitrary non-empty text as an executable device-test input.
-      const normalized = normalizeDeviceTestCases({ mode: 'adhoc', natural_language: raw });
-      const onlyCase = normalized.cases[0];
-      // Capability fallback accepts only a minimally actionable explicit adhoc input.
-      // Keep this guard here: the shared kernel also serves the direct adhoc tool,
-      // whose single TC-001/no-expected representation remains valid for that flow.
-      if (
-        normalized.cases.length === 0
-        || (normalized.cases.length === 1 && onlyCase.steps.length < 2 && !onlyCase.expected.trim())
-      ) {
-        return {
-          state: 'absent',
-          dependencies: deps,
-          detail: `adhoc_cases_insufficient:${stableFingerprint(normalized).slice(0, 16)}`,
-        };
-      }
-      if (normalized.issues.length > 0) {
-        return {
-          state: 'invalid',
-          dependencies: deps,
-          detail: `adhoc_cases_invalid:${stableFingerprint(normalized).slice(0, 16)}`,
-        };
-      }
-      return {
-        state: 'resolved',
-        dependencies: deps,
-        value: normalized.cases,
-        detail: `adhoc_cases:${stableFingerprint(normalized.cases).slice(0, 16)}`,
-      };
-    }
+
   }
 }
 
 /** Re-read a selected source using the same P1 parsers/providers and binding contract. */
 export function readBoundInput(options: CapabilityResolutionOptions, binding: InputBinding): unknown {
   const result = binding.source.kind === 'derive' ? resolveDerive(options.projectRoot, options.feature, binding.source, options)
-    : resolveArtifact(options.frameworkRoot, options.projectRoot, options.feature, binding.source, true);
+    : resolveArtifact(options.frameworkRoot, options.projectRoot, options.feature, binding.source, true, options.request?.inputs[binding.input_id], options.inputContext?.subject);
   const matches = (left: ResolutionDependency, right: ResolutionDependency): boolean => stableStringify(left) === stableStringify(right);
   if (result.state !== 'resolved' || result.value === undefined
     || binding.dependencies.some(dep => !matches(dep, dependency(dep.path, dep.role)))
@@ -485,6 +503,7 @@ function resolveApplicability(
     if (states.length) return { applicable: states.includes('required'), dependencies: [] };
     if (!capability.applicability_provider_id) return { applicable: true, dependencies: [] };
   }
+  if (options.feature === undefined) return { applicable: false, dependencies: [], detail: 'request applicability is selected at the explicit entry' };
   if (!options.inputContext && !capability.tracks.includes(options.track)) return { applicable: false, dependencies: [], detail: 'track excluded' };
   const provider = capability.applicability_provider_id ?? 'applicability.always';
   if (provider === 'applicability.always') return { applicable: true, dependencies: [] };
@@ -538,8 +557,8 @@ function resolveInput(
     const invalidation = options.inputContext?.invalidated_sources?.[sourceId];
     let result: ProviderResult = invalidation ? { state: 'invalid', dependencies: [], detail: invalidation }
       : source.kind === 'artifact'
-        ? !options.feature && resolved ? { state: 'absent', dependencies: [], detail: 'request has no Feature artifact' }
-          : resolveArtifact(options.frameworkRoot, options.projectRoot, options.feature, source, !!resolved)
+        ? !options.feature && resolved && !options.request?.inputs[input.id] ? { state: 'absent', dependencies: [], detail: 'request has no Feature artifact' }
+          : resolveArtifact(options.frameworkRoot, options.projectRoot, options.feature, source, !!resolved, options.request?.inputs[input.id], options.inputContext?.subject)
         : resolveDerive(options.projectRoot, options.feature, source, options);
     if (resolved && result.state === 'resolved' && result.value === undefined) {
       result = { ...result, state: 'invalid', detail: 'provider returned no consumable content' };
@@ -676,7 +695,36 @@ export function resolveCapabilityReport(options: CapabilityResolutionOptions): C
   return resolveCapabilityInputs(options).report;
 }
 
+/** P6 selects explicit inputs from the existing phase catalog; P4/P5 own professional applicability. */
+export function resolveRequestInputs(projectRoot: string, frameworkRoot: string, request: import('./capability-resolution-entry-input').PreparedRequest): ResolvedPhaseInputs {
+  const phase = phaseContractIndex(loadFeatureContracts(frameworkRoot)).get(request.phase)!.phase;
+  const inputContext: PhaseInputContext = { schema_version: '1.1', subject: { request_sha256: request.request_sha256 }, obligations: {}, required_outputs: [] };
+  const resolved: ResolvedPhaseInputs = { phase: request.phase, context: inputContext, values: {}, artifacts: {} };
+  const selected = phase.inputs.filter(input => request.inputs[input.id] !== undefined
+    || (request.targets.files.length > 0 && input.sources.some(source => source.kind === 'derive' && source.provider_id === 'derive.codebase'))
+    || (request.targets.tests.length > 0 && input.sources.some(source => source.kind === 'derive' && source.provider_id === 'derive.test-targets')));
+  if (request.phase === 'review') selected.push({ id: 'review_report', sources: [{ kind: 'artifact', artifact: 'review-report@1' }] });
+  for (const item of selected) {
+    let input = item;
+    let adhocCases: string | undefined;
+    if (request.phase === 'testing' && item.id === 'cases') {
+      input = { ...item, sources: item.sources.filter(source => source.kind === 'derive' && source.provider_id === 'derive.adhoc-cases') };
+      if (request.inputs.cases && fs.existsSync(request.inputs.cases)) adhocCases = fs.readFileSync(request.inputs.cases, 'utf8');
+    }
+    resolveInput(input, { projectRoot, frameworkRoot, phase: request.phase, track: 'full', inputContext, request, requirement: request.requested_result, adhocCases }, new Map(), resolved);
+    if (adhocCases && resolved.values[item.id]?.state === 'resolved') {
+      const value = resolved.values[item.id];
+      if (value.state === 'resolved') {
+        value.binding.dependencies.push(dependency(request.inputs.cases, 'artifact'));
+        value.binding.source_refs.push(path.relative(projectRoot, request.inputs.cases).replace(/\\/g, '/'));
+      }
+    }
+  }
+  return resolved;
+}
+
 export function resolveCapabilityInputs(options: CapabilityResolutionOptions): { report: CapabilityResolutionReport; inputs?: ResolvedPhaseInputs } {
+  if (options.feature === undefined) throw new Error('use resolveRequestInputs for a request subject');
   const contracts = loadFeatureContracts(options.frameworkRoot);
   const indexed = phaseContractIndex(contracts).get(options.phase);
   if (!indexed) throw new Error(`[capability-resolution] phase 无 contract：${options.phase}`);
