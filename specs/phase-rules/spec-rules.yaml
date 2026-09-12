@@ -1,3 +1,4 @@
+# P3: 显式 1.1 调用按 required_outputs 检查叙述格式；typed 内容、来源、授权和实际义务仍须校验。
 # ============================================================================
 # spec 阶段规约 (Phase Rules)
 # ============================================================================
@@ -17,6 +18,12 @@ applies_to: "doc/features/{module}/spec/spec.md"
 # 结构约束 — 脚本 Harness 可自动检测
 # --------------------------------------------------------------------------
 structure_checks:
+  acceptance_content_complete:
+    severity: BLOCKER
+    description: 显式 typed 验收须含可执行步骤、精确预期、合法 ID 与分层关注点。
+  design_scope_facts:
+    severity: BLOCKER
+    description: 新设计事实只经既有 P2 报告提议重签，不删除冻结 required 义务。
 
   fidelity_capability_pregate:
     description: >

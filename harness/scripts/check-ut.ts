@@ -1507,7 +1507,7 @@ function countUnitOrBothAc(ctx: CheckContext): number {
   );
 }
 
-function checkUseCaseSpecSchema(ctx: CheckContext): CheckResult[] {
+export function checkUseCaseSpecSchema(ctx: CheckContext): CheckResult[] {
   const spec = loadUseCaseSpec(ctx);
   if (!spec) {
     return [{

@@ -9081,7 +9081,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               } else if (!existing) input.facts.push({ ...obligation });
             }
             if (!input.facts.some(fact => fact.basis.some(binding => !old.obligations.some(obligation => obligation.basis.some(prior => executionScopeFingerprint(prior) === executionScopeFingerprint(binding)))))) throw new Error('[execution-scope] revision requires new sourced facts');
-            pendingScopeRevision = resolveExecutionScope(input, workflow, readScopeAcceptance(projectRoot, input));
+            pendingScopeRevision = resolveExecutionScope(input, workflow, readScopeAcceptance(projectRoot, input, { feature: manifest.feature, frameworkRoot }));
             reconcileObservation.scope_revision = pendingScopeRevision;
           }
         }

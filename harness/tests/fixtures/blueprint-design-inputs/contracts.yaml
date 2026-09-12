@@ -1,0 +1,126 @@
+feature: cu-bGVkZ2VyLWFwcC1ibHVlcHJpbnQAbGVkZ2VyLXJlZnJlc2g
+source: P2 fixture
+version: "1"
+modules: []
+module_dependencies: {}
+data_models: []
+interfaces: []
+components: []
+files:
+  - src/ledger/LedgerFeature.ets
+  - test/ledger/LedgerFeature.test.ets
+change_unit:
+  predicate_mappings:
+    - predicate_id: refresh-behavior
+      implementation_refs:
+        - planned:src/ledger/LedgerFeature.ets
+      test_refs:
+        - planned:test/ledger/LedgerFeature.test.ets
+    - predicate_id: runtime-owner
+      implementation_refs:
+        - planned:src/ledger/LedgerFeature.ets
+      test_refs:
+        - planned:test/ledger/LedgerFeature.test.ets
+    - predicate_id: page-consumer
+      implementation_refs:
+        - planned:src/ledger/LedgerFeature.ets
+      test_refs:
+        - planned:test/ledger/LedgerFeature.test.ets
+    - predicate_id: source-contract
+      implementation_refs:
+        - planned:src/ledger/LedgerFeature.ets
+      test_refs:
+        - planned:test/ledger/LedgerFeature.test.ets
+    - predicate_id: repository-provider
+      implementation_refs:
+        - planned:src/ledger/LedgerFeature.ets
+      test_refs:
+        - planned:test/ledger/LedgerFeature.test.ets
+    - predicate_id: lifecycle-recovery
+      implementation_refs:
+        - planned:src/ledger/LedgerFeature.ets
+      test_refs:
+        - planned:test/ledger/LedgerFeature.test.ets
+  provide_mappings:
+    - provide_id: ledger-refresh-vertical-slice
+      implementation_refs:
+        - planned:src/ledger/LedgerFeature.ets
+      test_refs:
+        - planned:test/ledger/LedgerFeature.test.ets
+  design_ref_mappings:
+    - design_ref:
+        kind: node
+        view_id: logical
+        id: ledger-domain
+      implementation_refs:
+        - planned:src/ledger/LedgerFeature.ets
+      verification_refs:
+        - planned:test/ledger/LedgerFeature.test.ets
+    - design_ref:
+        kind: node
+        view_id: runtime
+        id: ledger-repository
+      implementation_refs:
+        - planned:src/ledger/LedgerFeature.ets
+      verification_refs:
+        - planned:test/ledger/LedgerFeature.test.ets
+    - design_ref:
+        kind: node
+        view_id: runtime
+        id: ledger-store
+      implementation_refs:
+        - planned:src/ledger/LedgerFeature.ets
+      verification_refs:
+        - planned:test/ledger/LedgerFeature.test.ets
+    - design_ref:
+        kind: flow
+        view_id: runtime
+        id: ledger-refresh-flow
+      implementation_refs:
+        - planned:src/ledger/LedgerFeature.ets
+      verification_refs:
+        - planned:test/ledger/LedgerFeature.test.ets
+    - design_ref:
+        kind: node
+        view_id: development
+        id: ledger-module
+      implementation_refs:
+        - planned:src/ledger/LedgerFeature.ets
+      verification_refs:
+        - planned:test/ledger/LedgerFeature.test.ets
+    - design_ref:
+        kind: node
+        view_id: scenarios
+        id: add-entry-scenario
+      implementation_refs:
+        - planned:src/ledger/LedgerFeature.ets
+      verification_refs:
+        - planned:test/ledger/LedgerFeature.test.ets
+    - design_ref:
+        kind: relation
+        id: repository-publishes-store
+      implementation_refs:
+        - planned:src/ledger/LedgerFeature.ets
+      verification_refs:
+        - planned:test/ledger/LedgerFeature.test.ets
+    - design_ref:
+        kind: relation
+        id: domain-owned-by-module
+      implementation_refs:
+        - planned:src/ledger/LedgerFeature.ets
+      verification_refs:
+        - planned:test/ledger/LedgerFeature.test.ets
+    - design_ref:
+        kind: contract
+        id: create-entry-v1
+      implementation_refs:
+        - planned:src/ledger/LedgerFeature.ets
+      verification_refs:
+        - planned:test/ledger/LedgerFeature.test.ets
+    - design_ref:
+        kind: decision
+        id: seam-shape
+      implementation_refs:
+        - planned:src/ledger/LedgerFeature.ets
+      verification_refs:
+        - planned:test/ledger/LedgerFeature.test.ets

@@ -528,6 +528,7 @@ export interface UseCaseDef {
 export interface UseCasesSpec {
   schema_version: string;
   feature: string;
+  source?: string;
   use_cases: UseCaseDef[];
 }
 

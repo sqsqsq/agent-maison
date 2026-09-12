@@ -1,11 +1,12 @@
 ---
+
 name: component-design
 description: Create or continue a component design from the user's request and existing artifacts. Use for formal requirements, Story Design, blueprint inspection, questioning and reconciliation. Complete only the requested work; full handoff requires an admitted blueprint and canonical Change Units with readiness. Never enter the P2 selector, Goal Mode or P3 closure.
 ---
 
 # Component design（创建或继续部件设计）
 
-> **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `design.formality_routing`
+> **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `design.formality_routing` **P3 设计输入与职责边界**：见 [蓝图设计输入](../../../docs/concepts/blueprint-design-inputs.md)，只完成请求指定的设计工作，不自动进入施工。
 > —— 正式性判定信息不足时以该确认点提问并停等（选项文案从 confirmation-registry.yaml 逐字引用）；
 > 其余步骤沿用被调用 Skill 各自的确认点。
 

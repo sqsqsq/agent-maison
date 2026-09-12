@@ -1,0 +1,34 @@
+state_management:
+  - data: ledger
+    scope: component
+    decorator: none
+    holder: LedgerStore
+    module: ledger
+    owner_ref: view:runtime/node:ledger-repository
+    contract_refs:
+      - contract:create-entry-v1
+    ordered_steps:
+      - persist mutation
+      - publish snapshot
+      - refresh consumer
+    lifecycle_triggers:
+      - process_recreation
+    failure_recovery:
+      strategy: reload repository snapshot
+    mutations:
+      - mutation_id: add-entry
+        kind: user
+        publication_ref: publication:ledger-changed
+        recovery_ref: recovery:reload-ledger
+    publications:
+      - publication_id: ledger-changed
+    subscriptions:
+      - subscription_id: ledger-page-subscription
+        consumer_ref: consumer:ledger-page
+        publication_ref: publication:ledger-changed
+        replay_or_snapshot: latest
+        cleanup: detach observer
+    consumers:
+      - consumer_id: ledger-page
+        initial_load_ref: initial-load:repository-snapshot
+        update_ref: publication:ledger-changed

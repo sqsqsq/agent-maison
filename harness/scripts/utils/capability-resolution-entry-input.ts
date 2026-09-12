@@ -13,6 +13,7 @@ import { loadFeatureContracts, phaseContractIndex, loadArtifactInventory } from 
 import { resolveFactsAbsPath, factsBaselineFingerprint } from './context-facts';
 import { parseContextExploration } from './context-exploration';
 import { loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness } from './phase-evidence-manifest';
+import { resolveFeatureArtifact } from '../../config';
 
 export interface CapabilityResolutionEntryInputOptions {
   projectRoot: string;
@@ -77,6 +78,9 @@ export function resolveCapabilityResolutionEntryInput(
       const indexed = phaseContractIndex(loadFeatureContracts(frameworkRoot)).get(options.phase);
       if (indexed?.contract.schema_version !== '1.1') throw new Error('execution scope requires phase contract 1.1');
       const bindings = scope.obligations.flatMap(obligation => obligation.basis);
+      const ownsDesignOutput = (binding: import('./capability-resolution').InputBinding): boolean => ['spec', 'plan'].includes(options.phase)
+        && binding.source.kind === 'artifact' && indexed.phase.produces.some(output => output.artifact === (binding.source as { artifact: string }).artifact)
+        && scope.obligations.some(obligation => obligation.owner_phase === options.phase && obligation.applicability === 'required' && !obligation.satisfied_by?.length);
       const expectedBindings = scope.obligations.flatMap(obligation => [
         ...obligation.basis.filter(binding => !binding.dependencies.length || !binding.dependencies.every(dep => isExecutionSourceBasis(options.projectRoot, scope, obligation, dep))),
         ...(obligation.satisfied_by ?? []).filter(ref => 'input_id' in ref),
@@ -103,6 +107,14 @@ export function resolveCapabilityResolutionEntryInput(
         }
       }
       const inventory = loadArtifactInventory(frameworkRoot);
+      const requiredOutputs = indexed.phase.produces.flatMap(output => inventory.artifacts.find(artifact => artifact.id === output.artifact)?.paths ?? []).filter(name => {
+        if (!['spec', 'plan'].includes(options.phase)) return true;
+        const base = path.basename(name);
+        if (base === 'spec.md' || base === 'plan.md') return scope.requested_results.includes(name) || scope.requested_results.includes(base);
+        if (base === 'use-cases.yaml') return resolveFeatureArtifact(options.projectRoot, options.feature, name).exists;
+        if (['ui-spec.yaml', 'ref-elements.yaml', 'asset-manifest.yaml', 'visual-parity.yaml'].includes(base)) return scope.obligations.some(obligation => obligation.kind === 'visual-evidence' && obligation.applicability === 'required');
+        return true;
+      });
       const obligations: PhaseInputContext['obligations'] = {};
       for (const obligation of scope.obligations) {
         const previous = obligations[obligation.kind];
@@ -112,8 +124,8 @@ export function resolveCapabilityResolutionEntryInput(
       return { requirement, requirementSourceFiles, testTargets: sourcePaths, factsContext,
         inputContext: { schema_version: '1.1', subject: { feature: options.feature },
           obligations,
-          expected_bindings: expectedBindings.filter(binding => indexed.phase.inputs.some(input => input.id === binding.input_id)),
-          required_outputs: indexed.phase.produces.flatMap(output => inventory.artifacts.find(artifact => artifact.id === output.artifact)?.paths ?? []),
+          expected_bindings: expectedBindings.filter(binding => !ownsDesignOutput(binding) && indexed.phase.inputs.some(input => input.id === binding.input_id)),
+          required_outputs: requiredOutputs,
         } };
     }
   }

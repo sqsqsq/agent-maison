@@ -4,6 +4,7 @@ title: Feature acceptance criteria
 x-artifact-id: acceptance@1
 x-version: 1
 x-authority: "Compatibility shape; semantic and coverage truth remains check-acceptance.ts."
+x-blueprint-projection: "Blueprint-derived source identities are checked by blueprint-skill-projection.ts; manual source labels remain supported."
 type: object
 required: [criteria]
 properties:

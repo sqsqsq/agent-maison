@@ -10,6 +10,8 @@ import { auditSchemaSupport, validateLiteSchema } from './lite-json-schema';
 import { stableStringify } from './phase-evidence-manifest';
 import { validateProjectRelativePath } from './project-relative-path';
 import { SpecLoader } from './spec-loader';
+import { loadWorkflowSpec } from '../../workflow-loader';
+import { deriveBlueprintSkillInput } from './blueprint-skill-projection';
 import { artifactReadCandidatePaths, catalogPath, featureFilePath, loadFrameworkConfig } from '../../config';
 import type { CheckResult } from './types';
 import { normalizeDeviceTestCases } from './device-test-case-kernel';
@@ -140,6 +142,7 @@ interface ProviderResult {
   dependencies: ResolutionDependency[];
   detail?: string;
   value?: unknown;
+  artifacts?: Record<string, unknown>;
 }
 
 interface ApplicabilityResult {
@@ -202,7 +205,15 @@ function resolveArtifact(
   if (modern) {
     try {
       const raw = fs.readFileSync(selected.path, 'utf8');
+      let artifacts: Record<string, unknown> | undefined;
       let value = /\.ya?ml$|\.json$/i.test(selected.path) ? YAML.parse(raw) : raw;
+      if (typeof value?.source === 'string' && /^derive\.blueprint-(acceptance|contracts):/.test(value.source)) {
+        const kind = value.source.startsWith('derive.blueprint-acceptance:') ? 'acceptance' : 'contracts';
+        const projected = deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, kind);
+        dependencies.push(...projected.dependencies);
+        if (projected.state !== 'resolved' || stableStringify(value) !== stableStringify(projected.artifacts?.[source.artifact])) return { state: 'invalid', dependencies, detail: projected.detail ?? 'blueprint projection stale; return to design owner' };
+        artifacts = projected.artifacts;
+      }
       const schema = YAML.parse(fs.readFileSync(path.join(frameworkRoot, 'specs/artifact-schemas', registered.schema), 'utf8'));
       const supported = auditSchemaSupport(Object.fromEntries(Object.entries(schema).filter(([key]) => !key.startsWith('x-'))));
       if (supported.length) throw new Error(`unsupported artifact schema: ${JSON.stringify(supported)}`);
@@ -218,7 +229,7 @@ function resolveArtifact(
         if (parsed.shape_issues?.length) return { state: 'invalid', dependencies, detail: parsed.shape_issues.join('; ') };
         value = source.artifact === 'acceptance@1' ? parsed.acceptance : source.artifact === 'contracts@1' ? parsed.contracts : parsed.useCases;
       }
-      return { state: 'resolved', dependencies, value, detail: selected.path };
+      return { state: 'resolved', dependencies, value, artifacts, detail: selected.path };
     } catch (error) { return { state: 'invalid', dependencies, detail: String(error) }; }
   }
   return { state: 'resolved', dependencies, detail: selected.path };
@@ -236,6 +247,9 @@ function resolveDerive(
   source: Extract<ContractInputSource, { kind: 'derive' }>,
   options: CapabilityResolutionOptions,
 ): ProviderResult {
+  if (source.provider_id === 'derive.blueprint-acceptance' || source.provider_id === 'derive.blueprint-contracts') {
+    return deriveBlueprintSkillInput(projectRoot, feature, options.frameworkRoot, source.provider_id === 'derive.blueprint-acceptance' ? 'acceptance' : 'contracts');
+  }
   if (options.inputContext) {
     if (source.provider_id === 'derive.requirement') {
       return options.requirement?.trim()
@@ -447,6 +461,20 @@ function resolveDerive(
   }
 }
 
+/** Re-read a selected source using the same P1 parsers/providers and binding contract. */
+export function readBoundInput(options: CapabilityResolutionOptions, binding: InputBinding): unknown {
+  const result = binding.source.kind === 'derive' ? resolveDerive(options.projectRoot, options.feature, binding.source, options)
+    : resolveArtifact(options.frameworkRoot, options.projectRoot, options.feature, binding.source, true);
+  const matches = (left: ResolutionDependency, right: ResolutionDependency): boolean => stableStringify(left) === stableStringify(right);
+  if (result.state !== 'resolved' || result.value === undefined
+    || binding.dependencies.some(dep => !matches(dep, dependency(dep.path, dep.role)))
+    || result.dependencies.some(dep => !binding.dependencies.some(bound => matches(dep, bound)))
+    || crypto.createHash('sha256').update(stableStringify(result.value)).digest('hex') !== binding.content_fingerprint) {
+    throw new Error(`input binding stale; return to scope owner: ${result.detail ?? binding.input_id}`);
+  }
+  return result.value;
+}
+
 function resolveApplicability(
   capability: ContractCapability,
   options: CapabilityResolutionOptions,
@@ -455,9 +483,9 @@ function resolveApplicability(
     const states = (capability.obligation_kinds ?? []).map(kind => options.inputContext!.obligations[kind] ?? 'unknown');
     if (states.includes('unknown')) return { applicable: true, invalid: true, dependencies: [], detail: 'obligation applicability unknown: ' + capability.obligation_kinds?.filter((_, i) => states[i] === 'unknown').join(', ') };
     if (states.length) return { applicable: states.includes('required'), dependencies: [] };
-    return { applicable: true, dependencies: [] };
+    if (!capability.applicability_provider_id) return { applicable: true, dependencies: [] };
   }
-  if (!capability.tracks.includes(options.track)) return { applicable: false, dependencies: [], detail: 'track excluded' };
+  if (!options.inputContext && !capability.tracks.includes(options.track)) return { applicable: false, dependencies: [], detail: 'track excluded' };
   const provider = capability.applicability_provider_id ?? 'applicability.always';
   if (provider === 'applicability.always') return { applicable: true, dependencies: [] };
   // plan f3a8c6d2 t5a：仅当 fidelity SSOT 已定档 pixel_1to1 时才要求参考图基准。
@@ -539,6 +567,11 @@ function resolveInput(
       } else {
         resolved.values[input.id] = { state: 'resolved', value: result.value, binding };
         if (source.kind === 'artifact') resolved.artifacts[source.artifact] = result.value;
+        if (source.kind === 'derive' && source.provider_id.startsWith('derive.blueprint-')) {
+          const artifact = source.provider_id === 'derive.blueprint-acceptance' ? 'acceptance@1' : 'contracts@1';
+          resolved.artifacts[artifact] = result.value;
+        }
+        if (result.artifacts?.['use-cases@1']) resolved.artifacts['use-cases@1'] = result.artifacts['use-cases@1'];
       }
     }
     if (result.state === 'resolved') {
@@ -647,7 +680,13 @@ export function resolveCapabilityInputs(options: CapabilityResolutionOptions): {
   const contracts = loadFeatureContracts(options.frameworkRoot);
   const indexed = phaseContractIndex(contracts).get(options.phase);
   if (!indexed) throw new Error(`[capability-resolution] phase 无 contract：${options.phase}`);
-  if ((indexed.contract.schema_version === '1.1') !== !!options.inputContext) {
+  // P3 migrates design contracts before P7 switches the default workflow. Legacy
+  // workflow callers retain the old untyped execution path; scoped calls still
+  // require their explicit P1 invocation and cannot fall back here.
+  const legacyDesign = !options.inputContext && ['spec', 'plan'].includes(options.phase)
+    && indexed.contract.schema_version === '1.1'
+    && loadWorkflowSpec(options.frameworkRoot, loadFrameworkConfig(options.projectRoot).active_workflow ?? 'spec-driven').schema_version !== '1.2';
+  if (!legacyDesign && (indexed.contract.schema_version === '1.1') !== !!options.inputContext) {
     throw new Error('[capability-resolution] contract/invocation schema mismatch');
   }
   const inputs: ResolvedPhaseInputs | undefined = options.inputContext
@@ -664,8 +703,8 @@ export function resolveCapabilityInputs(options: CapabilityResolutionOptions): {
     if (!cache.has(input.id)) cache.set(input.id, resolveInput(input, options, artifactProducers, inputs));
     return cache.get(input.id)!;
   };
-  const capabilities = indexed.phase.capabilities.map((capability) =>
-    resolveCapability(capability, indexed.phase, options, artifactProducers, resolve));
+  const capabilities = indexed.phase.capabilities.filter(capability => !legacyDesign || !['capability_plan_existing_design', 'capability_spec_existing_acceptance'].includes(capability.id)).map((capability) =>
+    resolveCapability(legacyDesign ? { ...capability, tracks: ['full'] } : capability, indexed.phase, options, artifactProducers, resolve));
   if (inputs && options.feature) {
     const inventory = loadArtifactInventory(options.frameworkRoot);
     for (const name of inputs.context.required_outputs) {

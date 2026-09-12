@@ -1,5 +1,7 @@
 # Plan 阶段语义验证 — {feature_name}
 
+**P3 显式 1.1 调用**：以已解析验收与施工内容为准，不要求未列入 required_outputs 的 spec.md/plan.md。仍审查精确文件写集、类型/接口、外部 DTO 映射、runtime 生命周期、CU sidecar 与用例；不得用缺叙述为由跳过这些责任。共同决策冲突回蓝图/外部 owner，职责修订沿既有 P2 successor，不在原 run 改写范围。
+
 > 自动生成于 {timestamp}
 > 本文件为 AI Harness 的 prompt，可发送给任意 AI 模型执行语义级验证。
 >

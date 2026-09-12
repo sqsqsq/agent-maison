@@ -3119,6 +3119,11 @@ export function collectContextFiles(
       if (value.state !== 'resolved') continue;
       files.push({ label: '(resolved input ' + id + ')', content: typeof value.value === 'string' ? value.value : YAML.stringify(value.value) });
     }
+    for (const [id, content] of Object.entries(opts.resolvedInputs.artifacts)) {
+      if (!Object.values(opts.resolvedInputs.values).some(value => value.state === 'resolved' && value.value === content)) {
+        files.push({ label: '(resolved artifact ' + id + ')', content: typeof content === 'string' ? content : YAML.stringify(content) });
+      }
+    }
     for (const name of feature ? opts.resolvedInputs.context.required_outputs : []) {
       const content = specLoader.loadFeatureDoc(projectRoot, feature, name);
       if (content !== null) files.push({ label: relFeatureArtifact(projectRoot, feature, name), content });

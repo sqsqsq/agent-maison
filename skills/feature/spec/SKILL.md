@@ -1,5 +1,7 @@
 # Spec 阶段 Skill (`spec`)
 
+**P3 设计调用优先规则**：收到显式 1.1 调用时，先消费已绑定验收，只补本次未明确的行为、预期、边界与分层；叙述格式仅检查 required_outputs 中指定的 spec.md，无视觉义务不补 UI 占位件。产品共同决策缺口回 component-design，外部契约回原 owner；只请求设计时止步，不追加 plan/coding。完整规则见 [蓝图设计输入](../../../docs/concepts/blueprint-design-inputs.md)。
+
 > **输入协议边界**：以下 full=spec / lite=change 的 facts 建立与固定上游阅读口径仅适用于 1.0。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。默认入口尚未切换，不能自行补造调用上下文。
 
 > **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `spec.terminology` / `spec.feature_path` / `spec.freeze` / `phase.next_step`。

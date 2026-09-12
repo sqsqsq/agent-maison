@@ -1,0 +1,18 @@
+schema_version: "2"
+feature: cu-bGVkZ2VyLWFwcC1ibHVlcHJpbnQAbGVkZ2VyLXJlZnJlc2g
+use_cases:
+  - id: ledger-refresh
+    coordinator: LedgerFeature.run
+    ui_bindings: []
+    state_model:
+      phases:
+        - start
+        - done
+    branches:
+      - id: success
+        scenario: persisted ledger snapshot is published to the consumer
+        expected_phase_seq:
+          - start
+          - done
+        linked_acceptance:
+          - AC-1

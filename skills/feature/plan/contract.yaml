@@ -1,17 +1,18 @@
-schema_version: "1.0"
+schema_version: "1.1"
 skill: plan
 skill_doc: SKILL.md
 phases:
   plan:
-    tracks: [full]
     inputs:
-      - { id: spec, sources: [{ kind: artifact, artifact: spec@1 }] }
-      - { id: acceptance, sources: [{ kind: artifact, artifact: acceptance@1 }] }
+      - { id: acceptance, sources: [{ kind: artifact, artifact: acceptance@1 }, { kind: derive, provider_id: derive.blueprint-acceptance }] }
       - { id: codebase, sources: [{ kind: derive, provider_id: derive.codebase }] }
       - { id: ui_spec, sources: [{ kind: artifact, artifact: ui-spec@1 }] }
+      - { id: contracts, sources: [{ kind: artifact, artifact: contracts@1 }, { kind: derive, provider_id: derive.blueprint-contracts }] }
     capabilities:
-      - { id: capability_plan_context, axis: functional, inputs: [spec, acceptance, codebase], tracks: [full], on_missing: fail }
-      - { id: capability_plan_visual_context, axis: visual, inputs: [ui_spec], tracks: [full], applicability_provider_id: applicability.ui, on_missing: prune }
+      - { id: capability_plan_context, axis: functional, inputs: [acceptance], input_role: base, on_missing: fail }
+      - { id: capability_plan_codebase, axis: functional, inputs: [codebase], input_role: enhancement, on_missing: prune }
+      - { id: capability_plan_existing_design, axis: functional, inputs: [contracts], input_role: enhancement, on_missing: prune }
+      - { id: capability_plan_visual_context, axis: visual, inputs: [ui_spec], input_role: enhancement, applicability_provider_id: applicability.ui, on_missing: prune }
     produces:
       - { artifact: plan@1 }
       - { artifact: contracts@1 }

@@ -4,6 +4,7 @@ title: Business use cases
 x-artifact-id: use-cases@1
 x-version: 1
 x-authority: "Compatibility identity; profile schemas and ut-artifact-validate.ts remain semantic authorities."
+x-blueprint-projection: "Blueprint-derived source identities are checked by blueprint-skill-projection.ts; manual source labels remain supported."
 type: object
 required: [use_cases]
 properties:

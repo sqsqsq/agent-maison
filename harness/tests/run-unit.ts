@@ -51,6 +51,7 @@ function discoverProfileUnitSuites(): Array<{ id: string; modulePath: string }> 
 }
 
 const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
+  { id: 'blueprint-skill-projection', modulePath: './unit/blueprint-skill-projection.unit.test' },
   { id: 'execution-scope', modulePath: './unit/execution-scope.unit.test' },
   { id: 'component-assets', modulePath: './unit/component-assets.unit.test' },
   { id: 'conventions', modulePath: './unit/conventions.unit.test' },

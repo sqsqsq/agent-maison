@@ -151,6 +151,10 @@ export function resolvePhaseWriteBoundary(
   const phaseOrder = [...options.phaseOrder].map(String);
   const phaseSet = new Set(phaseOrder);
   const contracts = phaseContractIndex(loadFeatureContracts(options.frameworkRoot));
+  const active = (phase: string): boolean => {
+    const indexed = contracts.get(phase);
+    return !!indexed && (indexed.contract.schema_version === '1.1' || indexed.phase.tracks.includes(options.track));
+  };
   const inventory = new Map(loadArtifactInventory(options.frameworkRoot).artifacts.map((a) => [a.id, a]));
   const domains: PhaseWriteDomain[] = [];
   const seen = new Set<string>();
@@ -163,7 +167,7 @@ export function resolvePhaseWriteBoundary(
       diagnostics.push(`phase ${phase} has no registered skill contract; read-only`);
       continue;
     }
-    if (!indexed.phase.tracks.includes(options.track)) continue;
+    if (!active(phase)) continue;
     for (const output of indexed.phase.produces) {
       if (output.artifact) {
         const registered = inventory.get(output.artifact);
@@ -203,14 +207,14 @@ export function resolvePhaseWriteBoundary(
   const codingContract = contracts.get('coding')?.phase;
   const codingProducesSource =
     phaseSet.has('coding') &&
-    codingContract?.tracks.includes(options.track) === true &&
-    codingContract.produces.some((o) => o.kind === 'source');
+    active('coding') &&
+    codingContract?.produces.some((o) => o.kind === 'source') === true;
 
   const utContract = contracts.get('ut')?.phase;
   const utProducesSource =
     phaseSet.has('ut') &&
-    utContract?.tracks.includes(options.track) === true &&
-    utContract.produces.some((o) => o.kind === 'source');
+    active('ut') &&
+    utContract?.produces.some((o) => o.kind === 'source') === true;
   const utRoots = utProducesSource && options.resolveUtSourceRoots
     ? options.resolveUtSourceRoots(options.projectRoot, codingScope.modules)
     : [];

@@ -1,0 +1,15 @@
+feature: cu-bGVkZ2VyLWFwcC1ibHVlcHJpbnQAbGVkZ2VyLXJlZnJlc2g
+source: P2 fixture
+version: "1"
+boundaries: []
+criteria:
+  - id: AC-1
+    prd_function: null
+    priority: P0
+    description: refresh and recover
+    testable: true
+    verification_steps:
+      - 新增一笔账目后观察账页与重启后的余额
+    expected_result: consumer refreshed
+    ut_layer: unit
+    ut_focus: flow

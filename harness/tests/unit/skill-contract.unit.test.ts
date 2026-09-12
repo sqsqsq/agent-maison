@@ -106,7 +106,7 @@ const cases: Case[] = [
       const workflow = loadWorkflowSpec(FRAMEWORK_ROOT, 'spec-driven');
       const contracts = loadFeatureContracts(FRAMEWORK_ROOT);
       const plan = contracts.find((contract) => contract.skill === 'plan')!;
-      const source = plan.phases.plan.inputs.find((input) => input.id === 'spec')!.sources[0];
+      const source = plan.phases.plan.inputs.find((input) => input.id === 'acceptance')!.sources[0];
       if (source.kind !== 'artifact') throw new Error('fixture assumption');
       source.artifact = 'orphan@1';
       const registered = new Set([...loadArtifactInventory(FRAMEWORK_ROOT).artifacts.map((artifact) => artifact.id), 'orphan@1']);

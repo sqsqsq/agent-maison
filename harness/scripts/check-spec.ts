@@ -76,6 +76,7 @@ import { isGoalOrchestrationEnv } from './utils/phase-state';
 import { evaluateAcceptanceFlowStructure, evaluateFlowContract } from './utils/p0-semantic-gates';
 import { checkFactsArtifact } from './utils/context-facts';
 import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
+import { designScopeRevisionChecks } from './utils/blueprint-skill-projection';
 export { dispatchSpecVisualHandoff as checkVisualHandoff };
 export { dispatchSpecUiSpec as checkUiSpecStructureBundle };
 
@@ -1481,6 +1482,17 @@ const checker: PhaseChecker = {
   phase: 'spec',
 
   async check(ctx: CheckContext): Promise<CheckResult[]> {
+    if (ctx.resolvedInputs && !ctx.resolvedInputs.context.required_outputs.some(name => path.basename(name) === 'spec.md')) {
+      const results = [...runAcceptanceYamlStructureChecks(ctx, (_c, _s, id) => id),
+        ...evaluateAcceptanceFlowStructure(ctx.projectRoot, ctx.feature, ctx.featureSpec.acceptance), ...evaluateFlowContract(ctx.projectRoot, ctx.feature, '', ctx.featureSpec.acceptance),
+        ...checkFactsArtifact(ctx.projectRoot, ctx.feature, 'spec', { factsContext: ctx.factsContext, resolvedInputs: ctx.resolvedInputs, phaseRule: ctx.phaseRule, profileName: ctx.resolvedProfile.name, frameworkRoot: ctx.frameworkRoot })];
+      if (ctx.resolvedInputs.context.required_outputs.some(name => path.basename(name) === 'ui-spec.yaml')) {
+        const input = ctx.resolvedInputs.values.requirement;
+        const requirement = input?.state === 'resolved' && typeof input.value === 'string' ? input.value : '';
+        results.push(...checkFidelityCapabilityPregate(ctx), ...dispatchSpecVisualHandoff(ctx, requirement), ...dispatchSpecUiSpec(ctx, requirement), ...dispatchSpecAssetAcquisition(ctx));
+      }
+      return [...results, ...designScopeRevisionChecks(ctx, results)];
+    }
     const prd = loadPrd(ctx);
     if (!prd) {
       const prdRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'spec.md');
@@ -1605,7 +1617,7 @@ const checker: PhaseChecker = {
     // --- goal-fakepass-hardening t7：ux-reference 逐图建模对账（out-of-scope 加界）---
     results.push(...safeRun(() => checkUxReferenceMapping(ctx), 'ux_reference_mapping'));
 
-    return results;
+    return [...results, ...designScopeRevisionChecks(ctx, results)];
   },
 };
 

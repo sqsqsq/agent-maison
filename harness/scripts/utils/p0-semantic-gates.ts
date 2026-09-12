@@ -74,11 +74,11 @@ export interface AcceptanceFlowsDoc {
   criteria: AcceptanceCriterion[];
 }
 
-export function loadAcceptanceFlowsDoc(projectRoot: string, feature: string): AcceptanceFlowsDoc | null {
+export function loadAcceptanceFlowsDoc(projectRoot: string, feature: string, supplied?: unknown): AcceptanceFlowsDoc | null {
   const res = resolveFeatureArtifact(projectRoot, feature, 'acceptance.yaml');
-  if (!res.exists) return null;
+  if (supplied === undefined && !res.exists) return null;
   try {
-    const doc = YAML.parse(fs.readFileSync(res.actualPath, 'utf-8')) as {
+    const doc = (supplied ?? YAML.parse(fs.readFileSync(res.actualPath, 'utf-8'))) as {
       flows?: Record<string, { screens?: string[] } | string[]>;
       criteria?: AcceptanceCriterion[];
     };
@@ -115,10 +115,10 @@ export function checkpointComplete(cp: AcCheckpoint | undefined): boolean {
 // t4a：check-spec 侧——结构化 checkpoint + 三约束 + requirement_ref 验存
 // ----------------------------------------------------------------------------
 
-export function evaluateAcceptanceFlowStructure(projectRoot: string, feature: string): CheckResult[] {
+export function evaluateAcceptanceFlowStructure(projectRoot: string, feature: string, supplied?: unknown): CheckResult[] {
   const id = 'acceptance_flow_structure';
   const description = 'P0 交互 AC 结构化 checkpoint + flows 三约束 + requirement_ref 验存';
-  const doc = loadAcceptanceFlowsDoc(projectRoot, feature);
+  const doc = loadAcceptanceFlowsDoc(projectRoot, feature, supplied);
   if (!doc) {
     return [{ id, category: 'structure', description, severity: 'MINOR', status: 'SKIP', details: 'acceptance.yaml 不存在/不可解析。' }];
   }
@@ -233,10 +233,11 @@ export function evaluateFlowContract(
   projectRoot: string,
   feature: string,
   _requirementText: string,
+  supplied?: unknown,
 ): CheckResult[] {
   const id = 'acceptance_flow_contract';
   const description = '结构化流程模型机器契约（spec-owned + phase-evidence freshness）';
-  const doc = loadAcceptanceFlowsDoc(projectRoot, feature);
+  const doc = loadAcceptanceFlowsDoc(projectRoot, feature, supplied);
   const applicable = doc && doc.criteria.some(isP0DeviceInteractive) && Object.keys(doc.flows).length > 0;
   if (!applicable) {
     return [{ id, category: 'structure', description, severity: 'MINOR', status: 'SKIP', details: '无 P0 device flow，flow_contract 不适用。' }];

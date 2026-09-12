@@ -19,6 +19,7 @@ x-file-reference-fields:
   - resource_keys.<module>.<category>[].media
   - navigation.config_files[]
   - prd_to_code_traceability[].key_files[]
+x-blueprint-projection: "Blueprint-derived source identities are checked by blueprint-skill-projection.ts; manual source labels remain supported."
 type: object
 additionalProperties: true
 properties:

@@ -1,8 +1,7 @@
 import { resolveExecutionScope, type ExecutionScope, type ExecutionScopeInput } from './execution-scope';
 import type { WorkflowSpec } from '../../workflow-loader';
-import * as crypto from 'crypto';
 import type { AcceptanceSpec } from './types';
-import type { InputBinding } from './capability-resolution';
+import { readBoundInput, type InputBinding } from './capability-resolution';
 import { isInsideProjectRoot } from './project-relative-path';
 import { loadFrozenExecutionScope } from './goal-run-creation';
 import { loadFeatureContracts, contractFingerprint } from './skill-contract';
@@ -78,22 +77,16 @@ export function resolveFeatureExecutionScope(projectRoot: string, feature: strin
   const raw = YAML.parse(fs.readFileSync(featureTrackDeclPath(projectRoot, feature), 'utf8')) as { execution_scope?: ExecutionScopeInput };
   if (!raw?.execution_scope) throw new Error('[execution-scope] workflow 1.2 缺少运行前范围输入');
   raw.execution_scope.contract_fingerprints = loadFeatureContracts(frameworkRoot ?? inferRepoLayout(projectRoot).frameworkRoot).map(contractFingerprint);
-  return resolveExecutionScope(raw.execution_scope, workflow, readScopeAcceptance(projectRoot, raw.execution_scope));
+  return resolveExecutionScope(raw.execution_scope, workflow, readScopeAcceptance(projectRoot, raw.execution_scope, { feature, frameworkRoot: frameworkRoot ?? inferRepoLayout(projectRoot).frameworkRoot }));
 }
 
-/** Materialize only the acceptance binding selected by the normalized request, never scan history. */
-export function readScopeAcceptance(projectRoot: string, input: ExecutionScopeInput): { value: AcceptanceSpec; binding: InputBinding } | undefined {
-  const binding = input.facts.flatMap(fact => fact.basis).find(binding => binding.source.kind === 'artifact' && binding.source.artifact === 'acceptance@1');
+/** Re-read the selected acceptance source through P1; never scan history or write artifacts. */
+export function readScopeAcceptance(projectRoot: string, input: ExecutionScopeInput, context: { feature: string; frameworkRoot: string }): { value: AcceptanceSpec; binding: InputBinding } | undefined {
+  const bindings = input.facts.flatMap(fact => fact.basis);
+  const binding = bindings.find(binding => binding.source.kind === 'artifact' && binding.source.artifact === 'acceptance@1')
+    ?? bindings.find(binding => binding.source.kind === 'derive' && binding.source.provider_id === 'derive.blueprint-acceptance');
   if (!binding) return undefined;
-  for (const dep of binding.dependencies) {
-    if (!isInsideProjectRoot(projectRoot, dep.path)) throw new Error('[execution-scope] acceptance source outside project');
-    const exists = fs.existsSync(dep.path);
-    const hash = exists ? crypto.createHash('sha256').update(fs.readFileSync(dep.path)).digest('hex') : null;
-    if (exists !== dep.exists || hash !== dep.sha256) throw new Error(`[execution-scope] acceptance binding stale: ${dep.path}`);
-  }
-  const source = binding.dependencies.find(dep => dep.exists && dep.role === 'artifact');
-  if (!source) throw new Error('[execution-scope] acceptance binding has no content');
-  const value = YAML.parse(fs.readFileSync(source.path, 'utf8')) as AcceptanceSpec;
-  if (!value || !Array.isArray(value.criteria) || (value.boundaries !== undefined && !Array.isArray(value.boundaries))) throw new Error('[execution-scope] acceptance structure invalid');
+  if (binding.dependencies.some(dep => !isInsideProjectRoot(projectRoot, dep.path))) throw new Error('[execution-scope] acceptance source outside project');
+  const value = readBoundInput({ ...context, projectRoot, phase: 'spec', track: 'full' }, binding) as AcceptanceSpec;
   return { value, binding };
 }

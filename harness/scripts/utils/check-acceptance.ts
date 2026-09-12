@@ -63,7 +63,7 @@ export function checkAcceptanceYamlPresent(
       suggestion: '按 spec §6 从 spec 提取 acceptance.yaml（含 ut_layer / ut_focus / device_focus）。',
     }];
   }
-  if (!fs.existsSync(acceptanceYamlPath(ctx.projectRoot, ctx.feature))) {
+  if (!ctx.resolvedInputs?.artifacts['acceptance@1'] && !fs.existsSync(acceptanceYamlPath(ctx.projectRoot, ctx.feature))) {
     return [{
       id,
       category: 'structure',
@@ -277,6 +277,42 @@ export function checkLegacyDeviceTestingTodoDeprecation(
   }];
 }
 
+/** Shared content checks for typed design inputs and their projected counterparts. */
+export function checkAcceptanceLinkedUseCases(ctx: CheckContext): CheckResult[] {
+  const issues: string[] = [];
+  for (const item of [...(ctx.featureSpec.acceptance?.criteria ?? []), ...(ctx.featureSpec.acceptance?.boundaries ?? [])]) {
+    if (item.linked_flow && isUnitUtLayer(item.ut_layer)) {
+      const flow = ctx.featureSpec.useCases?.use_cases.find(flow => flow.id === item.linked_flow);
+      if (!flow || (item.linked_branch && !flow.branches.some(branch => branch.id === item.linked_branch))) issues.push(`${item.id}: linked_flow/linked_branch 无法解析`);
+    }
+  }
+  return [{ id: 'acceptance_use_cases_resolvable', description: '验收指向真实用例与分支', category: 'structure', severity: 'BLOCKER', status: issues.length ? 'FAIL' : 'PASS', details: issues.join('; ') || '验收用例引用可解析' }];
+}
+
+export function checkAcceptanceContent(ctx: CheckContext): CheckResult[] {
+  const acceptance = ctx.featureSpec.acceptance;
+  const issues: string[] = [];
+  if (!acceptance?.criteria?.length) issues.push('criteria 缺少真实验收条目');
+  const ids = new Set<string>();
+  for (const { item, criterion } of [...(acceptance?.criteria ?? []).map(item => ({ item, criterion: true })), ...(acceptance?.boundaries ?? []).map(item => ({ item, criterion: false }))]) {
+    if (!item || typeof item !== 'object') { issues.push('AC/BD 条目必须是对象'); continue; }
+    const id = typeof item.id === 'string' ? item.id.toUpperCase() : '';
+    if (!ACCEPTANCE_ID_PATTERN.test(id) || ids.has(id)) issues.push(`${item.id}: 验收 ID 非法或重复`);
+    ids.add(id);
+    if (!['P0', 'P1', 'P2'].includes(item.priority) || !nonEmptyString(item.description)) issues.push(`${item.id}: 缺 priority/description`);
+    if (isUnitUtLayer(item.ut_layer) && !hasNonEmptyFocus(item.ut_focus)) issues.push(`${item.id}: 缺 ut_focus`);
+    if (criterion) {
+      const ac = item as NonNullable<typeof acceptance>['criteria'][number];
+      if (ac.testable !== true || !Array.isArray(ac.verification_steps) || !ac.verification_steps.length || ac.verification_steps.some(step => !nonEmptyString(step)) || !nonEmptyString(ac.expected_result)) issues.push(`${item.id}: 缺可执行步骤或精确预期`);
+    } else {
+      const bd = item as NonNullable<typeof acceptance>['boundaries'][number];
+      if (!nonEmptyString(bd.scenario) || !nonEmptyString(bd.handling) || !nonEmptyString(bd.expected_behavior)) issues.push(`${item.id}: 缺边界条件、处理或预期`);
+    }
+  }
+  for (const item of acceptance?.performance ?? []) if (![item.id, item.metric, item.threshold, item.unit, item.description].every(nonEmptyString)) issues.push('performance 缺指标、阈值、单位或描述');
+  return [{ id: 'acceptance_content_complete', category: 'structure', severity: 'BLOCKER', description: '验收内容可执行且有精确预期', status: issues.length ? 'FAIL' : 'PASS', details: issues.join('; ') || '验收内容完整' }];
+}
+
 export function runAcceptanceYamlStructureChecks(
   ctx: CheckContext,
   ruleDesc: RuleDescFn,
@@ -284,6 +320,10 @@ export function runAcceptanceYamlStructureChecks(
   const results: CheckResult[] = [];
   results.push(...checkAcceptanceYamlPresent(ctx, ruleDesc));
   if (!ctx.featureSpec.acceptance) return results;
+  if (ctx.resolvedInputs) {
+    results.push(...checkAcceptanceContent(ctx));
+    if (results.some(check => check.status === 'FAIL')) return results;
+  }
   results.push(...checkAcceptanceUtLayerComplete(ctx, ruleDesc));
   results.push(...checkAcceptanceDeviceFocusPresent(ctx, ruleDesc));
   results.push(...checkLegacyDeviceTestingTodoDeprecation(ctx, ruleDesc));

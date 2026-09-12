@@ -1,3 +1,4 @@
+# P3: 显式 1.1 调用按 required_outputs 检查叙述格式；typed 内容、来源、授权和实际义务仍须校验。
 # ============================================================================
 # Plan 阶段规约 — profile 中立骨架（无 toolchain 细则）
 # ============================================================================
@@ -13,7 +14,23 @@ phase: plan
 version: "1.0"
 applies_to: "doc/features/{module}/plan/plan.md"
 
-structure_checks: {}
+structure_checks:
+  acceptance_content_complete:
+    severity: BLOCKER
+    description: 显式 typed 验收须含可执行步骤、精确预期、合法 ID 与分层关注点。
+  design_scope_facts:
+    severity: BLOCKER
+    description: 新设计事实只经既有 P2 报告提议重签，不删除冻结 required 义务。
+  acceptance_use_cases_resolvable:
+    severity: BLOCKER
+    description: typed 验收的 linked_flow/linked_branch 必须指向真实用例。
+  construction_content_complete:
+    severity: BLOCKER
+    description: 施工文件、类型和接口签名须完整，不能用叙述省略减弱内容检查。
+  usecase_spec_schema:
+    severity: BLOCKER
+    description: 复用 UT 的 UseCasesSpec schema 检查，必要用例不能使用占位条目。
+
 
 semantic_checks: {}
 

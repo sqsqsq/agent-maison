@@ -1,5 +1,7 @@
 # spec 阶段语义验证 — {feature_name}
 
+**P3 显式 1.1 调用**：以 ResolvedPhaseInputs 的实际验收内容、来源与 required_outputs 为审查边界。未要求 spec.md 时不按章节格式拒绝，但仍审查行为、精确预期、分层、来源和视觉适用性；refs 存在不等于内容完整。发现共同决策或外部权威缺口须指出 owner 与解除条件，不自行猜补。
+
 > 自动生成于 {timestamp}
 > 本文件为 AI Harness 的 prompt，可发送给任意 AI 模型执行语义级验证。
 >

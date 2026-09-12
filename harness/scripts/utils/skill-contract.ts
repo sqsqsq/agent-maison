@@ -25,6 +25,8 @@ export const DERIVE_PROVIDER_IDS = [
   'derive.test-targets',
   'derive.adhoc-cases',
   'derive.visual-reference',
+  'derive.blueprint-acceptance',
+  'derive.blueprint-contracts',
 ] as const;
 export type DeriveProviderId = typeof DERIVE_PROVIDER_IDS[number];
 export const DERIVE_PROVIDER_TYPES: Readonly<Record<DeriveProviderId, string>> = {
@@ -33,6 +35,8 @@ export const DERIVE_PROVIDER_TYPES: Readonly<Record<DeriveProviderId, string>> =
   'derive.test-targets': 'source-targets',
   'derive.adhoc-cases': 'device-cases',
   'derive.visual-reference': 'reference-images',
+  'derive.blueprint-acceptance': 'acceptance@1',
+  'derive.blueprint-contracts': 'contracts@1',
 };
 
 export const APPLICABILITY_PROVIDER_IDS = [
