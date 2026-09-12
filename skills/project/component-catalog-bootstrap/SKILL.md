@@ -5,6 +5,8 @@ description: Discover shared UI components and curate their intent and selection
 
 # 组件索引与台账自举
 
+本次输入与停止点见 [project-entry](../../../docs/operations/project-entry.md)；只交付请求的索引/策展结果。
+
 先读取有效 framework.config.json、module-catalog 与 [组件资产 SSOT](../../../docs/concepts/component-assets.md)。资产路径从 `paths.component_index/component_catalog` 解析，缺省使用框架默认值；不改宿主初始化配置。profile 必须有组件 extractor，当前仅 hmos-app。
 
 执行前完整读取 [组件策展流程](../../reference/component-catalog-bootstrap-workflow.md) 与其中引用的 catalog-bootstrap 确认规则。**用户确认 UX**：复用 [user-confirmation-ux.md](../../reference/user-confirmation-ux.md) 的 `catalog.staging_module` 逐卡交互纪律。

@@ -342,13 +342,13 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'catalog corrupt 仅 required 修复项',
+    name: 'catalog corrupt 仅提供 optional 修复建议',
     run: () => {
       const root = mkProject();
       writeMinimalConfig(root);
       fs.writeFileSync(path.join(root, 'doc', 'module-catalog.yaml'), ':\n- bad\n', 'utf-8');
       const steps = deriveInitNextSteps(baseLog([]), phase1Ctx(root));
-      assert(steps.every(s => s.kind === 'required'), JSON.stringify(steps));
+      assert(steps.every(s => s.kind === 'optional'), JSON.stringify(steps));
       assert(steps.some(s => s.when === 'catalog_corrupt'), JSON.stringify(steps));
       assert(!steps.some(s => s.when === 'graph_gap'), 'no graph');
     },
@@ -814,7 +814,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: '损坏 code-graph.yaml 时 harness required 修复，无 graph_gap / feature / goal-mode',
+    name: '损坏 code-graph.yaml 时 harness optional 修复，无 graph_gap / feature / goal-mode',
     run: () => {
       const root = mkProject();
       writeGraphGatedProject(root);
@@ -828,7 +828,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       });
       const repair = steps.find(s => s.when === 'module-graph_corrupt');
       assert(Boolean(repair), JSON.stringify(steps));
-      assert(repair!.source === 'harness' && repair!.kind === 'required', JSON.stringify(repair));
+      assert(repair!.source === 'harness' && repair!.kind === 'optional', JSON.stringify(repair));
       assert((repair!.message.includes('nodes 须为数组') || repair!.message.includes('无效')), repair!.message);
       assertModuleGraphRepairCopy(repair!);
       assert(!steps.some(s => s.when === 'graph_gap'), JSON.stringify(steps));
@@ -871,7 +871,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'probe 异常时 harness required 修复，文案不含 framework-init，无 goal-mode',
+    name: 'probe 异常时 harness optional 修复，文案不含 framework-init，无 goal-mode',
     run: () => {
       const root = mkProject();
       writeGraphProbeFailureProject(root);
@@ -883,7 +883,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       });
       const repair = steps.find(s => s.when === 'module-graph_corrupt');
       assert(Boolean(repair), JSON.stringify(steps));
-      assert(repair!.source === 'harness' && repair!.kind === 'required', JSON.stringify(repair));
+      assert(repair!.source === 'harness' && repair!.kind === 'optional', JSON.stringify(repair));
       assertModuleGraphRepairCopy(repair!);
       assert((repair!.message.includes('探测失败') || repair!.message.includes('无效')), repair!.message);
       assert(!steps.some(s => s.skill_id === 'goal-mode'), JSON.stringify(steps));
@@ -898,7 +898,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       fs.writeFileSync(path.join(root, 'doc', 'module-catalog.yaml'), ':\n- bad\n', 'utf-8');
       writeCursorSkillStub(root, 'goal-mode');
       const steps = deriveInitNextSteps(baseLog([]), phase1Ctx(root));
-      assert(steps.every(s => s.kind === 'required'), JSON.stringify(steps));
+      assert(steps.every(s => s.kind === 'optional'), JSON.stringify(steps));
       assert(!steps.some(s => s.skill_id === 'goal-mode'), JSON.stringify(steps));
     },
   },

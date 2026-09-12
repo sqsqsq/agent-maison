@@ -1,7 +1,7 @@
 # 术语映射推断 Prompt
 
 > 当 AI 需要为**一批种子术语**生成 glossary 条目草稿时，按本 prompt 执行。
-> 前置：`doc/module-catalog.yaml` 已建好（覆盖率 ≥ 80%）。
+> 前置：本次词条所需的 canonical_module 已有可靠 catalog 来源（不要求全仓覆盖率）。
 
 ---
 

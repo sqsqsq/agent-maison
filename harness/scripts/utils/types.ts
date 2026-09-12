@@ -1003,6 +1003,11 @@ export interface RequestCheckContext extends Pick<FeatureCheckContext, 'phase' |
 }
 
 export interface FeatureCheckContext {
+  /** Native global-phase selection; no Feature birth or persisted request state. */
+  module?: string;
+  term?: string;
+  packagePath?: string;
+  docPath?: string;
   subject?: 'feature';
   resolvedInputs?: import('./capability-resolution').ResolvedPhaseInputs;
   factsContext?: import('./context-facts').FactsInvocationContext;

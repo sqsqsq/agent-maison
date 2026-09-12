@@ -126,6 +126,11 @@ const cases: Array<{ name: string; run: () => void }> = [
 
         const cursor = renderFor('cursor');
         const opencode = renderFor('opencode');
+        for (const adapter of ['cursor', 'claude', 'codeagent', 'codex', 'opencode', 'chrys', 'generic']) {
+          const output = renderFor(adapter); assert.equal(output, cursor);
+          assert(output.includes('请求终点') && output.includes('真实 attended Goal'));
+          assert(!output.includes('拿不准一律进 lite') && !output.includes('档位经 `feature.track` 确认'));
+        }
         assert.strictEqual(cursor, opencode, '共享 AGENTS.md 不得因 active adapter 不同而变化');
         assert(!cursor.includes('激活的 agent adapter'), '共享 AGENTS.md 不应声明个人 active adapter');
         // plan 33714d0c：L0 行恢复通用 direct 描述；Git/SCM 专用枚举与 framework-init
@@ -138,7 +143,7 @@ const cases: Array<{ name: string; run: () => void }> = [
           !cursor.includes('Git status/diff/add/stage/commit/push') && !cursor.includes('Git-only'),
           '共享 AGENTS.md 不得恢复 Git 专用枚举/优先级',
         );
-        assert(cursor.includes('仅出现 framework、Framework 产物或衍生物名词不构成 init 意图'));
+        assert(cursor.includes('产物提及 framework 不构成 init 意图'));
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

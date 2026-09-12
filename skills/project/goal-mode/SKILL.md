@@ -2,6 +2,8 @@
 
 > **BLOCKER**：本 Skill 只选择运行方式并启动/接入唯一 `GoalPhaseRuntime`。阶段事实来自既有 summary / closure / evidence，跨阶段建议只来自 `assess@1`；本 Skill 与宿主都不维护 next-phase 表，不执行私有 assess/gate/advance 循环，也不复制 runtime 裁决。
 
+项目请求的输入、原生入口与停止点见 [project-entry](../../../docs/operations/project-entry.md)；仅执行本次授权职责，不由本 Skill 自行启动后继。
+
 ## 何时使用
 
 用户要求以目标模式持续推进一个 feature 时使用。对用户只暴露两种模式：

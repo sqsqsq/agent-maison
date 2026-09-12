@@ -319,3 +319,10 @@ docs:
       - backfill:context CLI 或退出码语义变更
 
 # 未在 docs[] 中出现的 `framework/docs/**/*.md`（若存在）应在补写 inventory 或移出目录，避免 doc_files_exist MAJOR。
+
+  - path: framework/docs/operations/project-entry.md
+    role: 项目请求原生入口与职责终点
+    sources:
+      - framework/skills/skills.index.yaml
+      - framework/workflows/spec-driven.workflow.yaml
+      - framework/harness/scripts/utils/execution-scope.ts

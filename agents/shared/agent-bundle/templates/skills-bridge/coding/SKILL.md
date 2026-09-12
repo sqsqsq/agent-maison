@@ -1,6 +1,6 @@
 ---
 name: coding
-description: 按 plan / contracts 落地实现代码
+description: 按冻结写集与解析后的契约实现本次义务
 ---
 
 > **BLOCKER — Personal setup**：`check-personal-setup.ts --json --ensure`（见 [personal-setup-gate](../../../framework/skills/reference/personal-setup-gate.md)）。

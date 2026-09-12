@@ -19,6 +19,8 @@ Use this Skill when a blueprint has an admitted canonical artifact. Canonical `c
 > 真实宿主场景：选中 CU 前的准入与缺失输入三级路由见
 > [真实宿主准入与回灌契约](../../reference/real-host-admission-and-feedback.md)。
 
+项目请求的输入、原生入口与停止点见 [project-entry](../../../docs/operations/project-entry.md)；仅执行本次授权职责，不由本 Skill 自行启动后继。
+
 ## Authority and entry
 
 - Run `check:change-unit`（`--blueprint <blueprint_id> --unit <change_unit_id>`）for each candidate before deriving readiness. A decomposition Provider may propose only temporary/in-memory candidates; only the consumer validator may accept a provenance-bearing canonical CU. Accepting a batch is atomic: any candidate failing schema, identity, design closure, provenance or source authority rejects the whole batch and writes nothing. Accepting a candidate whose canonical path already exists fails closed — correct an accepted unit with a new revising/superseding CU, never by re-accepting.

@@ -425,8 +425,8 @@ function checkTypicalVsNotResponsibleConflict(
 // Traceability Checks
 // --------------------------------------------------------------------------
 
-function checkEasilyConfusedReferencesExist(ctx: CheckContext, catalog: ModuleCatalog): CheckResult[] {
-  const known = new Set(catalog.modules.map(m => m.name));
+function checkEasilyConfusedReferencesExist(ctx: CheckContext, catalog: ModuleCatalog, universe = catalog): CheckResult[] {
+  const known = new Set(universe.modules.map(m => m.name));
   const broken: string[] = [];
 
   for (const m of catalog.modules) {
@@ -497,8 +497,9 @@ function checkEasilyConfusedNoSelfReference(
 function checkEasilyConfusedSymmetric(
   ctx: CheckContext,
   catalog: ModuleCatalog,
+  universe = catalog,
 ): CheckResult[] {
-  const byName = new Map<string, ModuleCard>(catalog.modules.map(m => [m.name, m]));
+  const byName = new Map<string, ModuleCard>(universe.modules.map(m => [m.name, m]));
   const unidirectionalMarker = 'unidirectional';
   const asymmetric: string[] = [];
 
@@ -789,7 +790,8 @@ const checker: PhaseChecker = {
       }];
     }
 
-    const catalog = result.catalog;
+    const catalog = ctx.module ? { ...result.catalog, modules: result.catalog.modules.filter(m => m.name === ctx.module) } : result.catalog;
+    if (ctx.module && !catalog.modules.length) return [{ id: 'requested_module_present', category: 'structure', description: '请求模块存在', severity: 'BLOCKER', status: 'FAIL', details: ctx.module, suggestion: '确认 --module 名称；若是本次要新增的模块，只补该模块画像后重跑。' }];
     const results: CheckResult[] = [];
 
     // Structure
@@ -807,15 +809,17 @@ const checker: PhaseChecker = {
     ));
 
     // Traceability
-    results.push(...safeRun(() => checkEasilyConfusedReferencesExist(ctx, catalog), 'easily_confused_references_exist'));
+    results.push(...safeRun(() => checkEasilyConfusedReferencesExist(ctx, catalog, result.catalog), 'easily_confused_references_exist'));
     results.push(...safeRun(() => checkEasilyConfusedNoSelfReference(ctx, catalog), 'easily_confused_no_self_reference'));
-    results.push(...safeRun(() => checkEasilyConfusedSymmetric(ctx, catalog), 'easily_confused_symmetric'));
+    results.push(...safeRun(() => checkEasilyConfusedSymmetric(ctx, catalog, result.catalog), 'easily_confused_symmetric'));
     results.push(...safeRun(() => checkEntryFileOnDisk(ctx, catalog), 'entry_file_on_disk'));
     results.push(...safeRun(() => checkLayerMatchesPath(ctx, catalog), 'layer_matches_path'));
     results.push(...safeRun(() => runEntryFileMatchesOhPackageMain(ctx, catalog), 'entry_file_matches_oh_package_main'));
     results.push(...safeRun(() => runKeyExportsFreshVsIndex(ctx, catalog), 'key_exports_fresh_vs_index'));
-    results.push(...safeRun(() => checkFeatureScopeIntegrity(ctx, catalog), 'feature_scope_integrity'));
-    results.push(...checkComponentCatalog(ctx.projectRoot));
+    if (!ctx.module) {
+      results.push(...safeRun(() => checkFeatureScopeIntegrity(ctx, catalog), 'feature_scope_integrity'));
+      results.push(...checkComponentCatalog(ctx.projectRoot));
+    }
 
     return results;
   },

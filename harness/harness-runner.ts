@@ -329,6 +329,7 @@ export function resolveHarnessFidelityContextFields(input: {
     ),
   };
 }
+import { resolveExecutionScope } from './scripts/utils/execution-scope';
 import { resolveAuthoritativePath } from './scripts/utils/visual-source-resolver';
 import { parseUiChangeFromSpecMarkdown, UI_CHANGE_REQUIRES_UI_SPEC, uiSpecRelPath, uiSpecAbsPath } from './scripts/utils/ui-spec-shared';
 
@@ -341,7 +342,7 @@ const args = minimist(process.argv.slice(2), {
     'phase', 'feature', 'ai-report', 'adapter', 'workflow', 'adhoc-cases', 'correction-request',
     'q-requirement', 'q-contract', 'q-code', 'goal-run-id', 'goal-attempt-id',
     'goal-owner-id', 'goal-owner-epoch', 'from', 'screen',
-    'request-file', 'report-dir', 'project-root', 'framework-root',
+    'request-file', 'report-dir', 'project-root', 'framework-root', 'module', 'term', 'package-path', 'path',
   ],
   boolean: ['list', 'help', 'verbose', 'clear-state', 'sync-closure', 'report-reconcile-only', 'force-device', 'revalidate', 'measure', 'summary', 'failures-only', 'skip-visual-handoff', 'skip-ui-spec', 'skip-visual-parity', 'correction-init', 'adhoc-correction', 'prepare-request'],
   alias: {
@@ -408,6 +409,9 @@ export function bindAttendedGoalContext(input: {
 
 function printHelp(): void {
   console.log(`
+全局局部范围：catalog --module <name>；glossary --term <term> / --module <name>；
+module-graph --module <name> [--package-path <path>]；docs --path <inventory-path-or-directory>。
+--project-root 可显式指定宿主根；未提供局部选择参数时执行该 phase 的项目级校验。
 Harness — Spec/Harness 验证工具
 
 用法（需先 cd framework/harness）:
@@ -533,7 +537,8 @@ async function main(): Promise<void> {
     } catch (error) { console.error(String(error)); process.exitCode = 1; }
     return;
   }
-  const layout = detectRepoLayout(harnessRoot);
+  const layout = typeof args['project-root'] === 'string' ? inferRepoLayout(path.resolve(args['project-root'])) : detectRepoLayout(harnessRoot);
+  if (args['framework-root'] && fs.realpathSync(path.resolve(args['framework-root'])) !== fs.realpathSync(layout.frameworkRoot)) throw new Error('--framework-root 与项目 layout 不一致');
   const { projectRoot, frameworkRoot: resolvedFrameworkRoot, frameworkRel, kind: layoutKind } = layout;
   if (args['report-reconcile-only'] && args.phase === 'testing' && typeof args.feature === 'string' && !args['sync-closure'] && !args['clear-state'] && !args.list && (args['goal-run-id'] || process.env.MAISON_GOAL_RUN_ID)) {
     const feature = args.feature; const phase = 'testing';
@@ -728,6 +733,12 @@ async function main(): Promise<void> {
   // 若用户显式传了 --feature 也尊重其值（便于在不同 staging 轮次下分别归档报告），
   // 否则使用哨兵值 GLOBAL_FEATURE_SENTINEL（= "_global"）。
   const phaseIsGlobal = isPhaseGlobalInWorkflow(workflowSpec, phase);
+  for (const [flag, allowed] of Object.entries({ module: ['catalog', 'glossary', 'module-graph'], term: ['glossary'], 'package-path': ['module-graph'], path: ['docs'] })) {
+    if (args[flag] !== undefined && (!phaseIsGlobal || !allowed.includes(phase) || typeof args[flag] !== 'string' || !args[flag].trim())) {
+      console.error('错误: --' + flag + ' 不适用于本次阶段或值为空'); process.exit(1);
+    }
+  }
+  if (args['package-path'] && !args.module) { console.error('错误: --package-path 需要 --module'); process.exit(1); }
   if (phaseIsGlobal) {
     if (!feature) {
       feature = GLOBAL_FEATURE_SENTINEL;
@@ -765,7 +776,7 @@ async function main(): Promise<void> {
   const skipPersonalGateForInitInternal =
     initInternalGlobalRun && (phase === 'catalog' || phase === 'glossary');
   if (!reportReconcileOnly && !personalSetupExemptPhases.has(phase) && !skipPersonalGateForInitInternal) {
-    const resolvedForGate = loadResolvedProfile(projectRoot, fwConfigEarly);
+    const resolvedForGate = loadResolvedProfile(projectRoot, fwConfigEarly, resolvedFrameworkRoot);
     const placement = evaluateConfigPlacementGate(projectRoot);
     if (!placement.ok) {
       console.error(`   ✗ ${placement.message.replace(/\n/g, '\n     ')}`);
@@ -803,7 +814,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const resolvedProfile = loadResolvedProfile(projectRoot, fwConfigEarly);
+  const resolvedProfile = loadResolvedProfile(projectRoot, fwConfigEarly, resolvedFrameworkRoot);
 
   // ---------------------------------------------------------------------------
   // verifier 适用性解析（plan a9d4e7c2 T1 / d2f7a9c4）——**一次解析，全员消费**
@@ -986,6 +997,12 @@ async function main(): Promise<void> {
     }
   }
 
+  let projectScope: ReturnType<typeof resolveExecutionScope> | undefined;
+  if (phaseIsGlobal) {
+    projectScope = resolveExecutionScope({ request: { completion_target: 'request', requested_results: [phase + ':' + (args.module ?? args.term ?? args.path ?? 'project')], requested_phases: [phase] }, facts: [], contract_fingerprints: [] }, workflowSpec);
+    console.log('本次项目请求范围: ' + JSON.stringify(projectScope));
+  }
+
   // Step 2: 运行脚本 Harness
   console.log('\n🔧 Step 2: 运行脚本 Harness...');
   const fwConfig = fwConfigEarly;
@@ -1014,6 +1031,7 @@ async function main(): Promise<void> {
     phaseIsGlobal,
   });
   const context: CheckContext = {
+    module: args.module, term: args.term, packagePath: args['package-path'], docPath: args.path,
     resolvedInputs,
     factsContext,
     phase,
@@ -1088,6 +1106,7 @@ async function main(): Promise<void> {
   }
 
   let checks: CheckResult[] = [...capabilityInputChecks];
+  if (projectScope) checks.push({ id: 'project_request_scope', category: 'structure', severity: 'MINOR', status: 'PASS', description: '本次项目请求范围（不代表校验通过）', details: JSON.stringify(projectScope), structured: { execution_scope: projectScope } });
   // P0-7②：进程预加载注入自检（file-drift 对进程注入无感，须独立防线）。
   checks.push(...runProcessIntegrityPreflight({ projectRoot, harnessDir: harnessRoot }));
   checks.push(...(await emitLifecycle('pre_phase')));

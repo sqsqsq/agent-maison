@@ -48,7 +48,7 @@ canonical 设计产物是**部件演进蓝图**（Component Evolution Blueprint�
 ②**信息不足由人确认**——判据不足时问人并等待确认，不猜测、不默认按任一侧处理；③**不加机器门**
 ——不新增 `track_scoring` 条目、不新增档位、不加机器 BLOCKER，判定结果不是可手改的持久状态字段。
 
-判定为**非正式维护动作** → 不建蓝图，走既有 L0（直接改）或 L1 lite 轨，本 Skill 到此结束。
+判定为**非正式维护动作** → 不建蓝图，按本次维护范围执行适用原生校验，本 Skill 到此结束。
 
 ## 支持范围（诚实声明）
 
@@ -119,7 +119,7 @@ consumer validator 接受候选，`deriveDesignPreparationReadiness` 派生交�
 - 闭环：[`/component-closure`](../component-closure/SKILL.md)
 
 **边界（BLOCKER）**：本 Skill **停在设计交接**——不进入 P2 selector、不进入 Goal Mode 施工
-循环、不进入 P3 closure、不选择任何 CU、不启动任何 run。
+循环、不进入 P3 closure、不选择任何 CU、不启动任何 run。用户已授权完整实现时，外层接收 readiness 后在已有授权内创建真实 attended Goal；设计专项到此结束（[入口边界](../../../docs/operations/project-entry.md)）。
 
 ### 5.（可选）评审投影与反馈回灌
 

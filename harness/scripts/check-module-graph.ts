@@ -10,13 +10,14 @@ import * as path from 'path';
 
 import { evaluateCodeGraphDrift, type DriftFinding } from '../code-graph/drift';
 import { parseCodeGraphFile, validateCodeGraphFileSchema } from '../code-graph/file-schema';
-import { moduleGraphPath, relCatalog } from '../config';
+import { relCatalog } from '../config';
 import {
   PhaseChecker,
   CheckContext,
   CheckResult,
 } from './utils/types';
 import { loadCatalog, describeCatalogError } from './utils/catalog-parser';
+import { resolveGraphModule } from '../code-graph/module-graph-probe';
 
 function ruleDesc(
   ctx: CheckContext,
@@ -25,10 +26,6 @@ function ruleDesc(
 ): string {
   const checks = ctx.phaseRule[section] as Record<string, { description?: string }>;
   return checks?.[id]?.description?.trim() ?? id;
-}
-
-function resolvePackagePath(layer: string, name: string): string {
-  return `${layer}/${name}`.replace(/\\/g, '/');
 }
 
 function driftToCheckResults(
@@ -86,7 +83,7 @@ const checker: PhaseChecker = {
 
   async check(ctx: CheckContext): Promise<CheckResult[]> {
     const catalogResult = loadCatalog(ctx.projectRoot);
-    if (!catalogResult.ok) {
+    if (!catalogResult.ok && !ctx.module) {
       return [{
         id: 'catalog_required',
         category: 'structure',
@@ -100,9 +97,11 @@ const checker: PhaseChecker = {
     }
 
     const graphPaths: Array<{ rel: string; abs: string; moduleName: string }> = [];
-    for (const card of catalogResult.catalog.modules) {
-      const pkg = resolvePackagePath(card.layer, card.name);
-      const abs = moduleGraphPath(ctx.projectRoot, pkg);
+    for (const card of ctx.module ? [{ name: ctx.module }] : catalogResult.ok ? catalogResult.catalog.modules : []) {
+      let abs: string;
+      try { abs = resolveGraphModule(ctx.projectRoot, card.name, ctx.packagePath, catalogResult).graphPath; }
+      catch (error) { return [{ id: 'module_source_resolved', category: 'structure', description: '模块来源可解析', severity: 'BLOCKER', status: 'FAIL', details: (error as Error).message, suggestion: '修复 details 指明的来源，或提供该模块真实 --package-path；不要补全无关模块。' }]; }
+      if (ctx.module && !fs.existsSync(abs)) return [{ id: 'requested_graph_present', category: 'structure', description: '请求图谱存在', severity: 'BLOCKER', status: 'FAIL', details: abs, suggestion: '使用同一 --module/--package-path 运行 bootstrap:code-graph，再校验该图谱。' }];
       if (fs.existsSync(abs)) {
         graphPaths.push({
           rel: path.relative(ctx.projectRoot, abs).replace(/\\/g, '/'),
@@ -143,6 +142,7 @@ const checker: PhaseChecker = {
       }
 
       const schemaErrors = validateCodeGraphFileSchema(graph);
+      if (graph.module !== moduleName) schemaErrors.push('图谱模块身份与请求不符');
       if (schemaErrors.length > 0) {
         results.push({
           id: 'code_graph_schema_valid',

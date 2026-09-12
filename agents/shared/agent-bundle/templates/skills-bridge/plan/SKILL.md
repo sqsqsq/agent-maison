@@ -1,6 +1,6 @@
 ---
 name: plan
-description: spec → plan（plan.md）
+description: 按已有输入补齐施工设计；叙述文档按请求提供
 ---
 
 > **BLOCKER — Personal setup**：`check-personal-setup.ts --json --ensure`（见 [personal-setup-gate](../../../framework/skills/reference/personal-setup-gate.md)）。

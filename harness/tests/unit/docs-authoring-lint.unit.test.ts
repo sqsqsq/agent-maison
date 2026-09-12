@@ -282,7 +282,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       const layout = inferRepoLayout(repoRoot);
       const report = checkEntryTemplateBudget(layout, {
         max_lines: 120,
-        required_markers: ['L0', 'L1', 'L2', '修正三问', '红线清单'],
+        required_markers: ['请求终点', '完整实现交付', 'execution_scope', '修正三问', '红线清单'],
       });
       assert(report.exists, 'AGENTS.md.template should exist');
       assert(report.lines <= report.maxLines, `lines=${report.lines} > max=${report.maxLines}`);

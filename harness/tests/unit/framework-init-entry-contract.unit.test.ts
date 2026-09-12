@@ -291,9 +291,9 @@ const cases: Array<{ name: string; run: () => void }> = [
       const template = read('templates/AGENTS.md.template');
       for (const token of [
         '**普通请求由主 Agent 负责**',
-        '不是**全局请求路由、preflight 或 public gate',
-        '仅出现 framework、Framework 产物或衍生物名词不构成 init 意图',
-        '先完成 X，到明确 init 动作时才调用',
+        'framework-init 仅用于明确安装、更新、配置或 adapter 物化意图',
+        '产物提及 framework 不构成 init 意图',
+        'init-next-steps 是可选建议',
       ]) {
         assert(template.includes(token), `AGENTS 模板缺: ${token}`);
       }

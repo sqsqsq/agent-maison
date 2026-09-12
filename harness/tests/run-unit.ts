@@ -137,6 +137,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'path-governance', modulePath: './unit/path-governance.unit.test' },
   { id: 'code-graph-drift', modulePath: './unit/code-graph-drift.unit.test' },
   { id: 'code-graph-anchor-hash', modulePath: './unit/code-graph-anchor-hash.unit.test' },
+  { id: 'project-entry', modulePath: './unit/project-entry.unit.test' },
   { id: 'bootstrap-code-graph', modulePath: './unit/bootstrap-code-graph.unit.test' },
   { id: 'check-module-graph', modulePath: './unit/check-module-graph.unit.test' },
   { id: 'module-graph-probe', modulePath: './unit/module-graph-probe.unit.test' },

@@ -4,12 +4,12 @@
 
 ## Phase A：模块画像自举（`/catalog-bootstrap`）
 
-### Step 0. 初始化骨架（**首次移植到新工程必做**）
+### Step 0. 读取本次模块来源（仅创建请求且文件不存在时初始化）
 
-先跑一次 harness，看 `module-catalog.yaml` 当前状态：
+先按请求模块读取已有 catalog；已有条目校验如下，未登记的请求模块进入 CREATE：
 
 ```bash
-cd framework/harness && npx ts-node harness-runner.ts --phase catalog
+cd framework/harness && npx ts-node harness-runner.ts --phase catalog --module <M>
 ```
 
 **读报告并按下表动作（AI 自主执行，不要问用户"要不要建"）：**
@@ -18,9 +18,10 @@ cd framework/harness && npx ts-node harness-runner.ts --phase catalog
 |-------------|---------------|
 | `catalog_file_exists` FAIL：文件不存在 | **你自己**创建 `doc/module-catalog.yaml`，只写骨架（见下方骨架模板），**不加任何模块**。然后再跑一次 harness 确认变为 `modules_is_list` WARN（这是合法中间态）。 |
 | `modules_is_list` WARN：已有骨架、`modules: []` | 骨架已就绪，进入 Step 1。 |
+| `requested_module_present` FAIL | 本次目标尚未登记，进入 CREATE；不扩为全仓建档。 |
 | 其它 FAIL | 把报告原文贴给用户、停下来问，不要试图"修复"。 |
 
-**同时建好 staging 目录**（空目录也要建，让后续 Step 3 写入不会因为目录缺失报错）：`doc/catalog-staging/`
+**写入本次草稿时创建 staging 目录**：`doc/catalog-staging/`
 
 > 本 Skill **不使用** `_merged/` 归档目录——合并成功即删 staging 文件，审计走 git 历史。若你在旧版仓库里看到 `doc/catalog-staging/_merged/`，请删掉它。
 
@@ -187,21 +188,21 @@ CREATE 下 `y`=追加到 catalog，`q`=删 staging 模块继续缺档；UPDATE �
 
 只维护极简模块清单（模块名 + 所属外层 + 一句话职责 + 链到 catalog），不复制 catalog 完整字段——`doc/module-catalog.yaml` 是唯一 SSOT。准入条件与触发时机以 [plan · Step 12](../feature/plan/SKILL.md) 为准；事件格式：`| YYYY-MM-DD | module_set_change \| responsibility_rewrite | <具体变化> |`。若变化由某 feature 的 design 驱动且已声明 `architecture_impact != none`，在 plan · Step 12 统一处理，本 Skill 不重复追加。
 
-### Step 7. 第二轮补全 `easily_confused_with`（所有模块建完后）
+### Step 7. 按请求补全 `easily_confused_with`
 
-catalog 覆盖 ≥ 80% 模块时，提议跑第二轮：扫描字面相似的模块对（如 XxxManager vs XxxCenter），提示用户考虑加 `easily_confused_with`；每条仍走 staging → 确认流程。
+仅用户请求扩大画像范围时，才提议第二轮：扫描字面相似的模块对（如 XxxManager vs XxxCenter），提示用户考虑加 `easily_confused_with`；每条仍走 staging → 确认流程。
 
 ## Phase B：术语表自举（`/glossary-bootstrap`）
 
-**前置**：Phase A 已建好 ≥ 80% 模块的 catalog（否则"反向查 canonical_module"没法做）。
+**输入**：本次词条与可验证的 canonical_module；复用现有 catalog，不要求任何全仓覆盖率。模块身份缺失只补对应模块。
 
 ### Step 0. 初始化骨架（首次必做）
 
-`harness-runner.ts --phase glossary`，按报告动作：文件不存在→创建骨架（`schema_version: "1.0"` + `terms: []`）；`terms_is_list` WARN→进 Step 1；依赖 catalog 的 check 报错→停下提示先跑完 `/catalog-bootstrap`。同建 `doc/glossary-staging/`（同 Phase A，不用 `_merged/`）。
+`harness-runner.ts --phase glossary --term <T>`，未登记的目标进入本词条 CREATE；按报告动作：文件不存在→创建骨架（`schema_version: "1.0"` + `terms: []`）；`terms_is_list` WARN→进 Step 1；依赖 catalog 的 check 报错→报告本词条所需的模块来源缺口。写入本词条草稿时才建 `doc/glossary-staging/`（同 Phase A，不用 `_merged/`）。
 
 ### Step 1. 收集种子术语清单
 
-种子文件固定 `doc/glossary-seed.txt`（纯文本每行一个业务名词，`#` 为注释）。
+用户已明确给出词条时直接使用该词条，不创建 seed 文件。否则使用配置的 glossary_seed（默认 `doc/glossary-seed.txt`，每行一个业务名词，`#` 为注释）。
 
 | 情况 | AI 动作 |
 |------|---------|
@@ -236,10 +237,10 @@ catalog 覆盖 ≥ 80% 模块时，提议跑第二轮：扫描字面相似的模
 | `s`/跳过 | 保留 staging，下一条 |
 | `q`/作废 | 删除 staging，下一条 |
 
-收尾汇报合并/修改/跳过/作废计数，提示跑 `harness-runner.ts --phase glossary`，然后**停止**（不自动跑）。
+收尾汇报合并/修改/跳过/作废计数，自行运行 `harness-runner.ts --phase glossary --term <term>` 校验本次合并，然后停止，不自动调用其他 Skill。
 
 **硬约束**：**禁止**一次打包问"这批都 y 吗"——每条独立展示易混项再问；**禁止**未 `y` 前写入 glossary.yaml；**禁止**折叠 `easily_confused_with`（哪怕 high 置信度）；异步批量 fallback 同 Phase A。
 
 ### Step 4. 合并到 glossary.yaml
 
-`term` 子树追加/替换到 `terms[]`（元数据不进主 glossary）→ 删除 staging（commit message 带 `via catalog-bootstrap from <term>.yaml`）→ 提示跑 harness。**禁止**保留 staging 不删或移到 `_merged/`。
+`term` 子树追加/替换到 `terms[]`（元数据不进主 glossary）→ 删除 staging（commit message 带 `via catalog-bootstrap from <term>.yaml`）→ 自行运行本次范围的 harness。**禁止**保留 staging 不删或移到 `_merged/`。

@@ -1,8 +1,10 @@
 # Code Graph 建图与维护 Skill (`code-graph`)
 
-## 前置（依赖 catalog 与 framework-init）
+项目请求的输入、原生入口与停止点见 [project-entry](../../../docs/operations/project-entry.md)；仅执行本次授权职责，不由本 Skill 自行启动后继。
 
-本工程须先完成 [`framework-init`](../../project/framework-init/SKILL.md) 与 [`catalog-bootstrap`](../../project/catalog-bootstrap/SKILL.md) Phase A：实例根下已有有效的 `framework.config.json` 与 `doc/module-catalog.yaml`（目标模块已建档）。
+## 输入（复用现有配置与源码）
+
+使用现有配置与目标模块源码。有效 catalog 可提供路径；没有可选 catalog 时，显式 `--module` 与 `--package-path` 同样提供模块来源。已配置来源失效须修复该路径，身份未知才补对应模块 catalog，不要求全项目自举。
 
 **Harness 运行时前置**：执行本 Skill 中任意 `harness-runner` / `bootstrap:code-graph` 前，须满足 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md)。
 
@@ -26,7 +28,7 @@
 
 ## 核心设计原则
 
-1. **一次一个模块**：与 catalog-bootstrap 对齐，每轮只处理 1 个 catalog 模块。
+1. **一次一个模块**：与 catalog-bootstrap 对齐，每轮只处理 1 个请求模块。
 2. **图谱只作索引**：Code Graph 不是 spec/plan/coding 真源；用时必须反查源码 anchor。
 3. **派生层可重建**：`derived` 由 `bootstrap:code-graph` 自动生成；`nodes` 策展层须用户确认后写入。
 4. **与 flow DAG 边界**：本 Skill **不**生成、不验证 business-ut 的 flow DAG 连续性；`module-graph` phase 只验锚点与漂移。
@@ -38,7 +40,7 @@
 
 ### Step 1. 选定模块
 
-用户传入 `/code-graph <ModuleName>` 或对话指定模块名。须在 `doc/module-catalog.yaml` 的 `modules[].name` 中存在；否则 FAIL 并提示先跑 catalog-bootstrap。
+用户传入 `/code-graph <ModuleName>` 或对话指定模块名。复用 catalog 的模块映射或用户明确的源码 package-path；二者都没有时报告该模块身份缺口。
 
 记录 `package_path = <layer>/<name>`（catalog 卡片）与落盘路径 `paths.module_graphs_dir`（默认 `<module>/code-graph.yaml`）。
 
@@ -48,17 +50,17 @@
 
 ```bash
 cd framework/harness
-npm run bootstrap:code-graph -- --project-root <宿主根> --module <ModuleName> [--seed-from-catalog] [--dry-run]
+npm run bootstrap:code-graph -- --project-root <宿主根> --module <ModuleName> [--package-path <源码目录>] [--seed-from-catalog] [--dry-run]
 ```
 
 - 首次建图且 `nodes` 为空：建议加 `--seed-from-catalog` 生成草稿节点（`core: false`）。
 - 已存在 YAML：**只刷新 `derived`**，保留已有 `nodes[]`。
 - 非 hmos profile 或无 GraphExtractor：脚本会清晰报错退出；可仅跑 Step 5 的 drift 门禁。
-- **`--package-path` 覆盖**：落盘路径按覆盖后的 package 解析；`module-graph` 门禁只扫 catalog 的 `layer/name` 默认路径。若 package 与 catalog 不一致，须同步 catalog 或接受门禁扫不到该文件。
+- **`--package-path` 覆盖**：生成与校验传同一模块和路径；两者共用解析器。没有 catalog 不使用 `--seed-from-catalog`。
 
 **停等 `code-graph.derive_confirm`**：向用户展示 dry-run 或写入摘要（签名数、import/call 边、nodes 数），确认后再正式写盘（若已 `--dry-run` 预览则确认后去掉该 flag 重跑）。
 
-### Step 3. 策展 core 节点（人工薄层）
+### Step 3. 策展 core 节点（仅本次要求策展时）
 
 读取 `` `profile-skill-asset:code-graph/code_graph_template` `` 与 `` `profile-skill-asset:code-graph/curate_core_prompt` ``：
 
@@ -73,10 +75,10 @@ npm run bootstrap:code-graph -- --project-root <宿主根> --module <ModuleName>
 ### Step 4. Harness 验证门禁
 
 ```bash
-cd framework/harness && npx ts-node harness-runner.ts --phase module-graph
+cd framework/harness && npx ts-node harness-runner.ts --phase module-graph --module <ModuleName> [--package-path <源码目录>]
 ```
 
-> **无需 `--feature`**（全局 phase）。零图谱时 PASS 并提示建图。
+> **无需 `--feature`**（全局 phase）。选定模块缺图谱时报告缺口；生成完成不自动执行 UT。
 
 ## 门禁清单表
 

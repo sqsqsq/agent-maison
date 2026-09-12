@@ -5,6 +5,8 @@ description: Create or maintain project conventions with evidence-based curation
 
 # 工程惯例策展 Skill（`conventions-bootstrap`）
 
+项目请求的输入、原生入口与停止点见 [project-entry](../../../docs/operations/project-entry.md)；仅执行本次授权职责，不由本 Skill 自行启动后继。
+
 ## 前置与触发
 
 实例根必须已有有效 `framework.config.json`。用户显式调用 `/conventions-bootstrap`，或明确要求创建/维护工程惯例时进入；普通 review 只能建议升格，不能代为写入。

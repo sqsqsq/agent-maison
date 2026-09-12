@@ -148,12 +148,12 @@ function checkTermRequiredFields(ctx: CheckContext, glossary: Glossary): CheckRe
   }];
 }
 
-function checkTermUnique(ctx: CheckContext, glossary: Glossary): CheckResult[] {
+function checkTermUnique(ctx: CheckContext, glossary: Glossary, universe = glossary): CheckResult[] {
   const seen = new Map<string, number>();
-  for (const t of glossary.terms) {
+  for (const t of universe.terms) {
     seen.set(t.term, (seen.get(t.term) ?? 0) + 1);
   }
-  const dupes = Array.from(seen.entries()).filter(([, c]) => c > 1).map(([term]) => term);
+  const dupes = Array.from(seen.entries()).filter(([term, c]) => c > 1 && glossary.terms.some(t => t.term === term)).map(([term]) => term);
   if (dupes.length === 0) {
     return [{
       id: 'term_unique', category: 'structure',
@@ -172,15 +172,15 @@ function checkTermUnique(ctx: CheckContext, glossary: Glossary): CheckResult[] {
   }];
 }
 
-function checkAliasUniqueAcrossTerms(ctx: CheckContext, glossary: Glossary): CheckResult[] {
+function checkAliasUniqueAcrossTerms(ctx: CheckContext, glossary: Glossary, universe = glossary): CheckResult[] {
   const aliasToTerm = new Map<string, string[]>();
-  for (const t of glossary.terms) {
+  for (const t of universe.terms) {
     for (const a of t.aliases) {
       if (!aliasToTerm.has(a)) aliasToTerm.set(a, []);
       aliasToTerm.get(a)!.push(t.term);
     }
   }
-  const shared = Array.from(aliasToTerm.entries()).filter(([, terms]) => terms.length > 1);
+  const shared = Array.from(aliasToTerm.entries()).filter(([alias, terms]) => terms.length > 1 && glossary.terms.some(t => t.aliases.includes(alias)));
 
   if (shared.length === 0) {
     return [{
@@ -248,6 +248,7 @@ const CAMEL_CASE_REGEX = /^[A-Z][a-zA-Z0-9]+$/;
 function checkSeedNoTechnicalWords(
   ctx: CheckContext,
   catalog: ModuleCatalog,
+  selectedTerms?: string[],
 ): CheckResult[] {
   const seedPath = glossarySeedPath(ctx.projectRoot);
   // allowlist 与 seed 并存同目录；沿用同名前缀 -allowlist.txt。
@@ -256,7 +257,7 @@ function checkSeedNoTechnicalWords(
   const seedRel = relGlossarySeed(ctx.projectRoot);
   const allowlistRel = seedRel.replace(/\.txt$/, '-allowlist.txt');
 
-  if (!fs.existsSync(seedPath)) {
+  if (!selectedTerms && !fs.existsSync(seedPath)) {
     return [{
       id: 'seed_no_technical_words', category: 'structure',
       description: ruleDesc(ctx, 'structure_checks', 'seed_no_technical_words'),
@@ -266,7 +267,7 @@ function checkSeedNoTechnicalWords(
     }];
   }
 
-  const seedTerms = readSeedLikeFile(seedPath);
+  const seedTerms = selectedTerms ?? readSeedLikeFile(seedPath);
   if (seedTerms.length === 0) {
     return [{
       id: 'seed_no_technical_words', category: 'structure',
@@ -493,7 +494,8 @@ const checker: PhaseChecker = {
         suggestion: '最小骨架：\n```yaml\nschema_version: "1.0"\nterms: []\n```\n之后 /glossary-bootstrap 逐条落入。',
       }];
     }
-    const glossary = gResult.glossary;
+    const glossary = ctx.term || ctx.module ? { ...gResult.glossary, terms: gResult.glossary.terms.filter(t => (!ctx.term || t.term === ctx.term) && (!ctx.module || t.canonical_module === ctx.module)) } : gResult.glossary;
+    if ((ctx.term || ctx.module) && !glossary.terms.length) return [{ id: 'requested_terms_present', category: 'structure', description: '请求术语存在', severity: 'BLOCKER', status: 'FAIL', details: ctx.term ?? ctx.module!, suggestion: '核对 --term/--module；新词条经本次策展确认合并后重跑。' }];
 
     // 再加载 catalog（交叉校验依赖）
     const cResult = loadCatalog(ctx.projectRoot);
@@ -515,10 +517,10 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkSchemaVersionPresent(ctx, glossary), 'schema_version_present'));
     results.push(...safeRun(() => checkTermsIsList(ctx, glossary), 'terms_is_list'));
     results.push(...safeRun(() => checkTermRequiredFields(ctx, glossary), 'term_required_fields'));
-    results.push(...safeRun(() => checkTermUnique(ctx, glossary), 'term_unique'));
-    results.push(...safeRun(() => checkAliasUniqueAcrossTerms(ctx, glossary), 'alias_unique_across_terms'));
+    results.push(...safeRun(() => checkTermUnique(ctx, glossary, gResult.glossary), 'term_unique'));
+    results.push(...safeRun(() => checkAliasUniqueAcrossTerms(ctx, glossary, gResult.glossary), 'alias_unique_across_terms'));
     results.push(...safeRun(() => checkOwnerLayerValueValid(ctx, glossary), 'owner_layer_value_valid'));
-    results.push(...safeRun(() => checkSeedNoTechnicalWords(ctx, catalog), 'seed_no_technical_words'));
+    results.push(...safeRun(() => checkSeedNoTechnicalWords(ctx, catalog, ctx.term || ctx.module ? glossary.terms.map(t => t.term) : undefined), 'seed_no_technical_words'));
 
     // Traceability
     results.push(...safeRun(() => checkCanonicalModuleExistsInCatalog(ctx, glossary, catalog), 'canonical_module_exists_in_catalog'));

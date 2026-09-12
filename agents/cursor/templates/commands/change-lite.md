@@ -1,5 +1,5 @@
 ---
-description: 进入 lite 轨单文档链（change → coding → exit）
+description: 旧 lite run 兼容恢复；新请求由主 Agent 按职责计算范围
 argument-hint: <feature-name> [requirement]
 ---
 

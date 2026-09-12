@@ -2,7 +2,7 @@
 
 ## 适用性（先于任何 init 指令）
 
-**进入条件**——只在下列事实之一成立时开始或继续 init：
+**进入条件**（[项目请求边界](../../../docs/operations/project-entry.md)）——只在下列事实之一成立时开始或继续 init：
 
 1. 用户明确选择或调用 framework-init；
 2. 用户明确要求首次接入 Maison 发布件；

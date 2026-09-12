@@ -1,6 +1,6 @@
 ---
 name: code-graph
-description: 模块级 Code Graph 建图、策展 core 节点与 module-graph 漂移门禁
+description: 选定模块 Code Graph 派生或策展与漂移校验；完成后结束
 ---
 
 > **BLOCKER — Personal setup**：`check-personal-setup.ts --json --ensure`（见 [personal-setup-gate](../../../framework/skills/reference/personal-setup-gate.md)）。

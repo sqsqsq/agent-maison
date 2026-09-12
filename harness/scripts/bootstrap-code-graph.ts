@@ -17,13 +17,12 @@ import * as YAML from 'yaml';
 import minimist from 'minimist';
 import { computeAnchorContentHash } from '../code-graph/anchor-hash';
 import type { CodeGraphDerived, CodeGraphFile, CodeGraphNode } from '../code-graph/types';
-import { loadFrameworkConfig, moduleGraphPath } from '../config';
+import { loadFrameworkConfig } from '../config';
 import { loadResolvedProfile } from '../profile-loader';
 import { tryLoadGraphExtractor } from '../profile-host-loader';
-import { findModule, loadCatalog } from './utils/catalog-parser';
 import type { ModuleCard } from './utils/catalog-parser';
 import type { GraphExtractResult, GraphSymbolSignature } from '../graph-extractor/types';
-import { validateProjectRelativePath } from './utils/project-relative-path';
+import { resolveGraphModule } from '../code-graph/module-graph-probe';
 
 function usage(): void {
   console.error(`用法:
@@ -34,12 +33,6 @@ function usage(): void {
   - derived（签名/import/模块内 call）由 GraphExtractor 自动生成，可随时重跑本命令刷新。
   - nodes（intent / core / anchor）为策展层：默认保留已有 YAML；首次可用 --seed-from-catalog 生成草稿。
   - 试点请把 3–5 个真正要守住的入口标为 core: true 并补 intent，勿整模块符号全标 core。`);
-}
-
-function resolvePackagePath(card: ModuleCard, override?: string): string {
-  const trimmed = override?.trim();
-  if (trimmed) return trimmed.replace(/\\/g, '/').replace(/\/+$/, '');
-  return `${card.layer}/${card.name}`.replace(/\\/g, '/');
 }
 
 function toDerived(result: GraphExtractResult): CodeGraphDerived {
@@ -119,10 +112,10 @@ function loadExistingGraph(outPath: string, moduleName: string): CodeGraphFile |
   if (!fs.existsSync(outPath)) return null;
   try {
     const parsed = YAML.parse(fs.readFileSync(outPath, 'utf-8')) as CodeGraphFile;
-    if (!parsed || typeof parsed !== 'object') return null;
+    if (!parsed || parsed.module !== moduleName || !Array.isArray(parsed.nodes)) throw new Error('已有图谱身份或 nodes 非法');
     return parsed;
-  } catch {
-    return null;
+  } catch (error) {
+    throw new Error('不能覆盖已有图谱：' + (error as Error).message);
   }
 }
 
@@ -155,44 +148,22 @@ function main(): void {
     process.exit(1);
   }
 
-  const catalogResult = loadCatalog(projectRoot);
-  if (!catalogResult.ok) {
-    console.error(`[bootstrap-code-graph] 无法加载 module catalog: ${catalogResult.error.kind}`);
-    process.exit(1);
-  }
-
-  const card = findModule(catalogResult.catalog, moduleName);
-  if (!card) {
-    console.error(`[bootstrap-code-graph] catalog 中无模块 ${moduleName}`);
-    process.exit(1);
-  }
-
-  let packagePath: string;
+  let selected: ReturnType<typeof resolveGraphModule>;
   try {
-    packagePath = validateProjectRelativePath(
-      projectRoot,
-      resolvePackagePath(card, packagePathOverride),
-      '--package-path',
-    );
-  } catch (e) {
-    console.error((e as Error).message);
-    process.exit(1);
-  }
-  const absPkg = path.join(projectRoot, packagePath);
-  if (!fs.existsSync(absPkg)) {
-    console.error(`[bootstrap-code-graph] 包目录不存在: ${absPkg}`);
-    process.exit(1);
-  }
-
+    selected = resolveGraphModule(projectRoot, moduleName, packagePathOverride);
+    if (!fs.existsSync(path.join(projectRoot, selected.packagePath))) throw new Error('模块源码目录不存在：' + selected.packagePath);
+    if (seedFromCatalog && !selected.card) throw new Error('--seed-from-catalog 缺少该模块 catalog；可不加该参数只生成 derived');
+  } catch (error) { console.error((error as Error).message); process.exit(1); }
+  const { card, packagePath } = selected;
   const extracted = graphExtractor.extractModule(projectRoot, packagePath, moduleName);
-  const outPath = moduleGraphPath(projectRoot, packagePath);
+  const outPath = selected.graphPath;
   const existing = loadExistingGraph(outPath, moduleName);
 
   let nodes = existing?.nodes ?? [];
   const warnings: string[] = [];
 
   if (seedFromCatalog && nodes.length === 0) {
-    const seeded = seedNodesFromCatalog(projectRoot, card, extracted.signatures);
+    const seeded = seedNodesFromCatalog(projectRoot, card!, extracted.signatures);
     nodes = seeded.nodes;
     warnings.push(...seeded.warnings);
   } else if (seedFromCatalog && nodes.length > 0) {
@@ -233,7 +204,7 @@ function main(): void {
     for (const w of warnings) console.log(`    - ${w}`);
   }
   if (nodes.filter(n => n.core).length === 0) {
-    console.log('  下一步: 在 nodes 里为 3–5 个入口设 core: true 并写清 intent，再跑 business-ut Step 8.0 练闭环。');
+    console.log('  可选: 按本次策展授权补充 core 与 intent；建图完成不会自动启动 UT。');
   }
 }
 

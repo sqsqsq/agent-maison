@@ -19,6 +19,8 @@ description: 管理实例侧 doc/extensions：初始化、检视、添加声明�
 
 强度只认三档：`available`（声明与入口可用）、`scheduled`（已绑定时机）、`evidenced`（有可验证产物或检查结果）。`trace.tool_calls` 仅是审计线索，不单独证明完成。
 
+项目请求的输入、原生入口与停止点见 [project-entry](../../../docs/operations/project-entry.md)；仅执行本次授权职责，不由本 Skill 自行启动后继。
+
 ## 入口与意图
 
 `/extension` 不暴露一组需要记忆的子命令。先根据用户原话归入一个意图，再调用同一确定性 CLI：

@@ -91,15 +91,15 @@ structure_checks:
   entry_template_budget:
     description: >
       templates/AGENTS.md.template（实例根入口模板）不得超过 120 行，
-      且须含 L0/L1/L2 分流路由表、修正三问、红线清单三项骨架内容；
+      且须含 请求终点路由表、修正三问、红线清单三项骨架内容；
       行为细则须由 framework 内 skills/reference/ 承载。
     severity: BLOCKER
     rule:
       max_lines: 120
       required_markers:
-        - "L0"
-        - "L1"
-        - "L2"
+        - "请求终点"
+        - "完整实现交付"
+        - "execution_scope"
         - "修正三问"
         - "红线清单"
 

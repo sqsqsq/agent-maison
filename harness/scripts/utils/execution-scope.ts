@@ -117,7 +117,13 @@ export function validateExecutionScope(value: unknown): ExecutionScope {
 
 /** One pure resolver shared by interactive entry and Goal birth. Execution results are not inputs. */
 export function resolveExecutionScope(input: ExecutionScopeInput, workflow: WorkflowSpec, acceptance?: { value: AcceptanceSpec; binding: InputBinding }): ExecutionScope {
-  if (workflow.schema_version !== '1.2') fail('动态范围要求 workflow 1.2');
+  const projectRequest = input.request.completion_target === 'request' && input.request.requested_phases.length > 0
+    && input.request.requested_phases.every(id => workflow.artifacts.some(a => a.id === id && a.scope === 'global'));
+  if (workflow.schema_version !== '1.2' && !projectRequest) fail('动态范围要求 workflow 1.2');
+  if (projectRequest) {
+    // Native project phases have request endpoints; requires is information, not auto-execution.
+    workflow = { ...workflow, artifacts: workflow.artifacts.filter(a => input.request.requested_phases.includes(a.id)).map(a => ({ ...a, obligation_provider_id: a.obligation_provider_id ?? 'obligations.project' })) };
+  }
   input = structuredClone(input);
   const request = input.request;
   if (acceptance) {

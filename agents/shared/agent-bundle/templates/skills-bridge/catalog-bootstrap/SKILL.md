@@ -1,6 +1,6 @@
 ---
 name: catalog-bootstrap
-description: 模块画像 catalog 与业务术语表 glossary 自举
+description: 按请求模块或术语维护 catalog / glossary；各自独立结束
 ---
 
 > **BLOCKER — Personal setup**：`check-personal-setup.ts --json --ensure`（见 [personal-setup-gate](../../../framework/skills/reference/personal-setup-gate.md)）。

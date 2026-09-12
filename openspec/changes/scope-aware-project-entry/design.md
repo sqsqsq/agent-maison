@@ -1,6 +1,6 @@
 ## Context
 
-本批只交付 P6 §3.1–3.2，P4/P5 依赖其真实请求入口。旧 Feature 路径、P6 项目盘点与整体意图迁移不在本批。
+P6 §3.1–3.2 与 P4/P5 已交付；本批补齐 P6 的项目级入口及意图迁移。旧运行恢复读取保持兼容，默认工作流与公开旧入口退役由 P7 处理。
 
 ## Goals / Non-Goals
 
@@ -25,3 +25,10 @@
 ## Migration Plan
 
 先解析和准备，再接 checker/报告，最后真实 CLI 正反例。旧命令不变；默认 workflow 与发布迁移留 P7，正式发布须 release:verify。
+
+## P6 剩余范围
+
+- 项目盘点以 skills.index 与活动 workflow 为入口真源；文档仅说明各自输入、输出与停止点，不增加执行 registry。
+- 全局阶段沿现有 `_global` 报告与原生 checker；CLI 的 module/term/package-path/path 收窄实际检查集合。同一 P2 resolver 计算 request 终点，不创建 Goal 或 Feature 身份。非 phase 项目操作继续使用原生 validator。
+- Graph 生成/校验共用来源解析：有效 catalog 或显式源码路径；显式配置失效不当作可选缺失，保留策展节点。
+- 主 Agent 按正式性与已授权终点组织职责；子 Skill 完成即交还结果，完整交付由外层基于真实 attended Goal 继续。继续读取冻结范围，不询问新任务 lite/full。

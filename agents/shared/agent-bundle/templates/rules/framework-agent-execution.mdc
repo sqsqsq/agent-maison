@@ -29,6 +29,8 @@ alwaysApply: true
 
 ## 2. 自然语言 = 调起 Framework 的入口
 
+主 Agent 先遵守 AGENTS.md 的请求终点与正式性路由，入口身份查 skills.index；细则见 framework/docs/operations/project-entry.md。显式 Skill 只履行本次职责；无 Feature 的 review/UT/testing 走 request CLI 并在结果处结束。设计 Skill 到 readiness 交还结果；完整交付由外层在已有授权内使用真实 attended Goal 继续。用户说继续时先读 active run / execution_scope / successor，不重新展示 lite/full 菜单。以下 Feature 四件套只适用于真实 Feature 上下文，不应用于 project/request。
+
 用户说「对 `<feature>` 做真机测试」「重跑 testing」「补齐 testing 闭环」「设备已连上继续」等，等价于进入 **device-testing（device-testing）** 或继续该阶段未竟步骤：
 
 1. 读 `framework/skills/feature/device-testing/SKILL.md`（及 profile addendum）

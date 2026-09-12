@@ -101,7 +101,7 @@ export interface InitRunLogLike {
 
 const RERUN_FRAMEWORK_INIT = '修复后重新执行 `/framework-init`';
 const MODULE_GRAPH_REPAIR_FOOTER =
-  '请修复 code-graph 产物或重新执行 code-graph，随后重新运行受阻的后续 phase 校验。';
+  '若后续请求需要该图谱，请修复 code-graph 产物或重新执行 code-graph，随后重新运行受阻的后续 phase 校验；初始化本身已完成，不自动启动后继。';
 
 function renderMessageAsListItemLines(message: string): string[] {
   const out: string[] = [];
@@ -216,9 +216,9 @@ function synthesizeCorruptStep(
     step_id: when,
     source: 'harness',
     when,
-    kind: 'required',
+    kind: 'optional',
     priority: 5,
-    message: `${describe}\n\n须先修复文件后再继续；${RERUN_FRAMEWORK_INIT}`,
+    message: `${describe}\n\n当后续请求实际消费该文件时先修复；不阻断已完成的初始化，也不自动调用后继`,
   };
 }
 
@@ -233,7 +233,7 @@ function synthesizeModuleGraphRepairStep(mg: ModuleGraphReadiness): InitNextStep
     step_id: when,
     source: 'harness',
     when,
-    kind: 'required',
+    kind: 'optional',
     priority: 5,
     message: `${subject} ${qualifier}：${mg.error ?? '未知错误'}。\n\n${MODULE_GRAPH_REPAIR_FOOTER}`,
   };

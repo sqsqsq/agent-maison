@@ -43,34 +43,29 @@
 
 ## 四、工作流与 Skill 路由
 
-### 4.0 需求路由（先判正式性，再判施工分档）
-
-**第一步：这是正式需求吗？**
+### 4.0 需求路由（正式性与请求终点）
 
 > **正式需求**＝有明确交付或验收责任，且拟改变**部件行为、外部契约、数据/NFR、运行语义或架构责任**的事项；不改变这些语义的**纯文档和机械维护**除外。
 
-**是** → 先走 [`/component-design`](framework/skills/project/component-design/SKILL.md)（部件内设计阶段，组织侧称 Story Design）：需求源物化 → 正式性判定 → 部件演进蓝图 admitted → 拆出 1..N 个 Change Unit → 各 CU 按下面的施工分档落地 → 部件闭环；**否**（非正式维护动作：纯文档、机械重命名、依赖版本例行升级等） → 直接进 L0 / L1 施工分档，不建蓝图。
+正式需求进入 [component-design](framework/skills/project/component-design/SKILL.md)，沿已有需求源、蓝图与 CU 设计继续；上游明确的正式分类不得降级。只缺影响事实时补该事实，确需用户决定的语义或授权才询问。非正式维护按本次范围直接完成并运行适用原生校验，不创建蓝图。
 
-三条判定纪律：**上游显式**标为正式需求时该分类具有权威性（不得用本地判断降级）；**信息不足问人、不猜测**；**不加机器门**——这是路由指引，不新增 `track_scoring` 条目、不新增档位、不加 BLOCKER。`/spec` 与 `/change-lite` 在首次冻结施工意图处各兜底复核一次，命中即指回 `/component-design`，成本只是一份草稿。蓝图只有一种协议（**无档位、无升级状态机**），深度由真实影响面派生；宿主准入见 [真实宿主准入契约](framework/skills/reference/real-host-admission-and-feedback.md) §1。
+| 请求终点 | 主 Agent 的职责 |
+|---|---|
+| 显式 Skill / 局部维护 | 仅执行该职责；project 原生 CLI 或 review/UT/testing 的 request CLI；产出请求结果后结束 |
+| 查看 / 局部设计 / 完整设计 | 复用已有产物，按缺口继续；component-design 到本次设计终点或 CU readiness 即交还结果，不启动施工 |
+| 完整实现交付 | 主 Agent 将请求、P1 来源与适用义务交 P2 计算；设计完成后在已有授权内创建真实 attended Goal，按冻结 execution_scope 推进到完成终点 |
+| 继续 | 先读取已有 active run、冻结范围和 successor/revision；恢复该运行，不重新判档或询问 lite/full |
 
-**第二步：施工分档（L0 / L1 lite / L2 full）**——不是路线选择，正式需求的每个 CU 同样按这里分档。判档评分 SSOT：`framework/specs/phase-rules/change-rules.yaml > track_scoring`；档位经 `feature.track` 确认。拿不准一律进 lite。
+阶段不是固定套餐：有可复用输入不补物理文档；unknown 交既有责任方补依据；仅 review 不自动安排 UT/testing。新任务不用 feature.track；旧 run 按原记录恢复，旧协议公开入口退役由发布迁移处理。
 
-| 档 | 触发 | 管线 | 门禁 |
-|---|---|---|---|
-| L0 direct | 小修小改/文案/单文件 bug（非正式维护动作）；其它无需框架管线的日常任务 | 不进 Skill 管线，直接完成主动作 | 无框架门禁，仍须原生 test/lint/build + 第三节红线 |
-| L1 lite | 单模块 feature、无像素级 UI 保真 | change → coding → exit（[change-lite](framework/skills/feature/change-lite/SKILL.md)） | 编译+lint+`diff_within_scope`+验收 checkbox+条件 UT |
-| L2 full | 跨模块/pixel_1to1/goal 模式 | spec→plan→coding→review→ut→testing 全链 | 每阶段四重闭环 |
-
-**一票升 full**（命中任一）：pixel_1to1 意图；明确跨模块信号；goal 模式运行。lite 实施中出现 scope 越界/跨模块信号→停下走升档确认（`feature.track`）。CU-bound 的 lite Feature 与 full 共用同一 `contracts.yaml.change_unit` sidecar 承载机器映射——lite 轻在施工阶段与文档规模，不免除 CU 闭环所需机器契约。
-
-**普通请求由主 Agent 负责**：分档与执行都在主 Agent，`framework-init` **不是**全局请求路由、preflight 或 public gate。只有明确的 init 动作（显式选择/调用、首次接入发布件、创建/补齐/迁移 `framework.config.json`、集成新发布件后刷新 config/adapters/物化产物）才进入该 Skill；仅出现 framework、Framework 产物或衍生物名词不构成 init 意图。「先完成 X，再执行 `/framework-init`」由主 Agent 按顺序处理：先完成 X，到明确 init 动作时才调用。
+**普通请求由主 Agent 负责**：framework-init 仅用于明确安装、更新、配置或 adapter 物化意图；产物提及 framework 不构成 init 意图。init-next-steps 是可选建议，不授权 catalog、glossary、Graph 或 Feature 全链。入口与独立动作见 [项目请求入口](framework/docs/operations/project-entry.md)。
 
 **修正三问**（中途 NL 修正必答，先分层再动手）：
 
 | 问 | 是 → 落点层 |
 |---|---|
-| Q1 需求/验收本身变了？ | spec（spec.md/acceptance.yaml；lite=change.md 意图/验收清单） |
-| Q2 需求没变，接口/契约/设计要变？ | plan（plan.md/contracts.yaml；lite=change.md Scope/关键契约） |
+| Q1 需求/验收本身变了？ | spec（spec.md/acceptance.yaml；旧 lite run=change.md 意图/验收清单） |
+| Q2 需求没变，接口/契约/设计要变？ | plan（plan.md/contracts.yaml；旧 lite run=change.md Scope/关键契约） |
 | Q3 上游都没错——要改产品代码？ | 是→coding；否（纯补验证）→ut/testing |
 
 `--correction-init` 按上述事实自动路由责任阶段，不要求人签、不写状态、没有收口命令。只改根因层 SSOT 产物、代码与测试输入，再跑一次 `--revalidate --feature <feature> [--from <phase>]`：落点层及下游已闭环 phase 只重跑脚本门禁并按既有闭环路径收口（语义 verifier 不重审——材料未变复用既有报告，材料变了但历史有 PASS 标 `completed_with_prior_review`，差异登记在 `summary.verifier_closure`）；重验 ≠ 重做，不重新进入六阶段、不重写 spec/plan/review 全文（相应产物追加"修正记录"小节即可），不为修正另建 feature 或状态。
@@ -89,7 +84,7 @@
 | 0. 实例扩展管理 | [framework/skills/project/extension/SKILL.md](framework/skills/project/extension/SKILL.md) |
 | **创建或继续部件设计（Story Design，唯一设计入口）** | [framework/skills/project/component-design/SKILL.md](framework/skills/project/component-design/SKILL.md) |
 | CU 推进 / 部件闭环 | [change-unit-progression](framework/skills/project/change-unit-progression/SKILL.md) · [component-closure](framework/skills/project/component-closure/SKILL.md) |
-| L1. Lite 轨 | [framework/skills/feature/change-lite/SKILL.md](framework/skills/feature/change-lite/SKILL.md) |
+| 旧 run 兼容恢复 | [framework/skills/feature/change-lite/SKILL.md](framework/skills/feature/change-lite/SKILL.md) |
 | 1-6. Spec/Plan/编码/审查/业务级UT/真机测试 | [framework/skills/feature/{spec,plan,coding,code-review,business-ut,device-testing}/SKILL.md](framework/skills/README.md) |
 
 {{EXTENSION_SKILL_SECTION}}

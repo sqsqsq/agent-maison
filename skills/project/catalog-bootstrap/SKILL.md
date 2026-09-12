@@ -1,8 +1,10 @@
 # 模块画像与术语表自举 Skill (`catalog-bootstrap`)
 
+项目请求的输入、原生入口与停止点见 [project-entry](../../../docs/operations/project-entry.md)；仅执行本次授权职责，不由本 Skill 自行启动后继。
+
 ## 前置（依赖初始化 Skill 产物）
 
-本工程须先完成 [`framework-init`](../../project/framework-init/SKILL.md)：实例根下已有有效的 `framework.config.json`，且本 skill 将读写的 catalog、glossary、架构说明等 **paths** 与 **`architecture` 段**已由初始化落地或与之一致。未完成 `/framework-init` 前请勿执行本 skill。
+复用现有工程配置（只有实际缺少安装/配置时才进入 [`framework-init`](../../project/framework-init/SKILL.md)）：实例根下已有有效的 `framework.config.json`，且本 skill 将读写的 catalog、glossary、架构说明等 **paths** 与 **`architecture` 段**已由初始化落地或与之一致。不得仅因未执行过 init 而要求重跑。
 
 **Harness 运行时前置**：执行 `harness-runner.ts` 前须满足 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md)。
 
@@ -12,7 +14,7 @@
 
 ## 概述
 
-在**已有真实代码工程**上，为之建立两份"单一事实源"：`doc/module-catalog.yaml`（每个模块的画像卡）与 `doc/glossary.yaml`（业务自然语言 ↔ 权威模块映射表）。本 Skill 是所有后续六篇 feature 阶段 Skill 的**前置**——只有这两个文件建好，spec 阶段的「术语消歧」和「Scope 声明」才有可校验的基准。
+在**已有真实代码工程**上，为之建立两份"单一事实源"：`doc/module-catalog.yaml`（每个模块的画像卡）与 `doc/glossary.yaml`（业务自然语言 ↔ 权威模块映射表）。两份资料按本次请求独立维护；下游按实际需要复用，不要求全仓补齐，也不自动进入 Feature 链。
 
 ## 触发条件
 
@@ -36,15 +38,15 @@
 
 ## 流程骨架
 
-**Phase A**（每轮一个模块）：Step 0 初始化骨架 → Step 1 列候选清单 → Step 1.5 判别 CREATE/UPDATE → Step 2 采集输入信号 → Step 3 填草稿到 staging → Step 4 自检清单 → Step 5 对话确认（y/e/s/q）→ Step 6 合并主 catalog → Step 6.5 视情况同步 architecture.md → Step 7（覆盖 ≥80% 后）第二轮补全易混项。
+**Phase A**（每轮一个模块）：Step 0 初始化骨架 → Step 1 列候选清单 → Step 1.5 判别 CREATE/UPDATE → Step 2 采集输入信号 → Step 3 填草稿到 staging → Step 4 自检清单 → Step 5 对话确认（y/e/s/q）→ Step 6 合并主 catalog → Step 6.5 视情况同步 architecture.md → Step 7（仅当本次请求需要）补全该模块易混项。
 
-**Phase B**（前置：Phase A 已覆盖 ≥80%）：Step 0 初始化骨架 → Step 1 收集种子术语清单（`doc/glossary-seed.txt`，**用户自己填，AI 不代编**）→ Step 2 逐条术语匹配建议（6 步管线）→ Step 3 对话确认（同 A，不批量 dump）→ Step 4 合并 glossary.yaml。
+**Phase B**（相关模块来源足够即可执行，不要求全仓覆盖率）：Step 0 初始化骨架 → Step 1 直接使用用户指定词条；仅需要种子清单时采用配置的 glossary_seed（默认 `doc/glossary-seed.txt`，**用户自己填，AI 不代编**）→ Step 2 逐条术语匹配建议（6 步管线）→ Step 3 对话确认（同 A，不批量 dump）→ Step 4 合并 glossary.yaml。
 
 ## Harness 验证门禁
 
 ```bash
-cd framework/harness && npx ts-node harness-runner.ts --phase catalog
-cd framework/harness && npx ts-node harness-runner.ts --phase glossary
+cd framework/harness && npx ts-node harness-runner.ts --phase catalog --module <ModuleName>
+cd framework/harness && npx ts-node harness-runner.ts --phase glossary --term <term>
 ```
 
 > 两个 phase **无需 `--feature`**（全局文件，不归属任何 feature）。

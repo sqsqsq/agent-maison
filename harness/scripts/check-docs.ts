@@ -463,7 +463,7 @@ function checkEntryTemplateBudgetGate(ctx: CheckContext): CheckResult[] {
     status: 'FAIL',
     details: `${rel}：${problems.join('；')}`,
     affected_files: [rel],
-    suggestion: '把行为细则移到 skills/reference/ 承载，正文只留 L0/L1/L2 分流路由表、修正三问、红线清单与短链入口。',
+    suggestion: '把行为细则移到 skills/reference/ 承载，正文只留 请求终点路由表、修正三问、红线清单与短链入口。',
   }];
 }
 
@@ -480,10 +480,12 @@ const checker: PhaseChecker = {
       return inv.results;
     }
     const results: CheckResult[] = [...inv.results];
-    const docs = inv.docs;
+    const docs = ctx.docPath ? inv.docs.filter(d => d.path === ctx.docPath || d.path.startsWith(ctx.docPath!.replace(/\/$/, '') + '/')) : inv.docs;
+    if (ctx.docPath && !docs.length) return [{ id: 'requested_docs_present', category: 'structure', description: '请求文档已登记', severity: 'BLOCKER', status: 'FAIL', details: ctx.docPath, suggestion: '按 DOC_INVENTORY 的 path 指定本次文档；新增文档先登记真实路径，不扩为全仓补文档。' }];
 
     results.push(...checkDocFilesExist(ctx, docs));
     results.push(...checkSourcePathsResolvable(ctx, docs));
+    if (!ctx.docPath) {
     results.push(...checkProfileSkillAssetsResolvable(ctx));
     results.push(...runConfirmationUxChecks(ctx));
     results.push(...runNoNumberedSkillPathsChecks(ctx));
@@ -492,6 +494,7 @@ const checker: PhaseChecker = {
     results.push(...checkForcedFullReadBlacklist(ctx));
     results.push(...checkCorrectionLayerConditionalConfirm(ctx));
     results.push(...checkEntryTemplateBudgetGate(ctx));
+    }
 
     const gitProbe = probeGit(ctx.projectRoot);
     results.push(...checkDocFreshness(ctx, docs, gitProbe));

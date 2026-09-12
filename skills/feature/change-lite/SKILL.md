@@ -1,5 +1,4 @@
 # Change-Lite 阶段 Skill (`change-lite`)
-
 > **输入协议边界**：以下 full=spec / lite=change 的 facts 建立与固定上游阅读口径仅适用于 1.0。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。默认入口尚未切换，不能自行补造调用上下文。
 
 > **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `feature.track` / `phase.next_step`。
@@ -24,6 +23,7 @@ lite 轨（L1）：单模块小需求的轻量链——单文档 `change.md` 承
 | change.md（单文档契约） | `<features_dir>/<f>/change.md` | 长期归档 |
 | feature.yaml（track 声明） | `<features_dir>/<f>/feature.yaml` | 长期 |
 
+> **兼容入口**：仅恢复已有旧 lite run；新任务交主 Agent 计算 execution_scope，不展示 feature.track。
 ## Step 1. 判档（track 评分 → `feature.track` gate）
 
 1. 依评分 SSOT [`change-rules.yaml > track_scoring`](../../../specs/phase-rules/change-rules.yaml) 估分：维度与 full 轨 exploration_strategy 同源（module_loc / scope_breadth / cross_layer / new_api_surface / dependency_fan_out），`score ≥ threshold_full` → 建议 full，否则建议 lite。
