@@ -18,9 +18,9 @@ export async function checkRequestTests(ctx: RequestCheckContext): Promise<Check
   if (ctx.phase === 'testing' && ctx.resolvedInputs.values.cases?.state !== 'resolved') return [requestFailure('request_cases_missing', 'device cases must resolve through the existing cases provider')];
   try {
     const result = await dispatchRequestTests(ctx) as { executed?: boolean; total?: number; failed?: number; checks?: CheckResult[]; evidence_paths?: string[] };
+    if (Array.isArray(result?.checks) && result.checks.some(check => !check || !['PASS', 'FAIL', 'WARN', 'SKIP'].includes(check.status) || !['BLOCKER', 'MAJOR', 'MINOR'].includes(check.severity) || typeof check.id !== 'string' || typeof check.details !== 'string')) return [requestFailure('request_provider_result_invalid', 'provider returned malformed checks')];
     if (!result || result.executed !== true || !Number.isInteger(result.total) || result.total! < 1 || !Number.isInteger(result.failed) || result.failed! < 0 || result.failed! > result.total!
-      || !Array.isArray(result.checks) || !result.evidence_paths?.length) return [requestFailure('request_test_not_executed', 'provider did not return actual case results and evidence')];
-    if (result.checks.some(check => !check || !['PASS', 'FAIL', 'WARN', 'SKIP'].includes(check.status) || !['BLOCKER', 'MAJOR', 'MINOR'].includes(check.severity) || typeof check.id !== 'string' || typeof check.details !== 'string')) return [requestFailure('request_provider_result_invalid', 'provider returned malformed checks')];
+      || !Array.isArray(result.checks) || !result.evidence_paths?.length) return [...(Array.isArray(result?.checks) ? result.checks : []), requestFailure('request_test_not_executed', 'provider did not return actual case results and evidence')];
     const protectedPaths = requestProtectedPaths(ctx.projectRoot, ctx.frameworkRoot);
     const evidence: Array<{ path: string; sha256: string }> = [];
     for (const file of result.evidence_paths) {

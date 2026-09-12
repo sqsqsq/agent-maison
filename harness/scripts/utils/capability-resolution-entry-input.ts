@@ -278,8 +278,9 @@ export function resolveCapabilityResolutionEntryInput(
       }
       const inventory = loadArtifactInventory(frameworkRoot);
       const requiredOutputs = indexed.phase.produces.flatMap(output => inventory.artifacts.find(artifact => artifact.id === output.artifact)?.paths ?? []).filter(name => {
-        if (!['spec', 'plan'].includes(options.phase)) return true;
         const base = path.basename(name);
+        if (options.phase === 'ut' && base === 'mock-plan.yaml') return resolveFeatureArtifact(options.projectRoot, options.feature, name).exists;
+        if (!['spec', 'plan'].includes(options.phase)) return true;
         if (base === 'spec.md' || base === 'plan.md') return scope.requested_results.includes(name) || scope.requested_results.includes(base);
         if (base === 'use-cases.yaml') return resolveFeatureArtifact(options.projectRoot, options.feature, name).exists;
         if (['ui-spec.yaml', 'ref-elements.yaml', 'asset-manifest.yaml', 'visual-parity.yaml'].includes(base)) return scope.obligations.some(obligation => obligation.kind === 'visual-evidence' && obligation.applicability === 'required');
@@ -294,7 +295,7 @@ export function resolveCapabilityResolutionEntryInput(
       return { requirement, requirementSourceFiles, testTargets: sourcePaths, factsContext,
         inputContext: { schema_version: '1.1', subject: { feature: options.feature },
           obligations,
-          expected_bindings: expectedBindings.filter(binding => !ownsDesignOutput(binding) && indexed.phase.inputs.some(input => input.id === binding.input_id)),
+          expected_bindings: expectedBindings.map(binding => options.phase === 'testing' && binding.input_id === 'acceptance' ? { ...binding, input_id: 'cases' } : binding).filter(binding => !ownsDesignOutput(binding) && indexed.phase.inputs.some(input => input.id === binding.input_id)),
           required_outputs: requiredOutputs,
         } };
     }

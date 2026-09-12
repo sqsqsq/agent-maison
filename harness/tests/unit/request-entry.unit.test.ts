@@ -12,12 +12,12 @@ import { materializeBlueprintSkillInputs } from '../../scripts/utils/blueprint-s
 import { resolveRequestInputs } from '../../scripts/utils/capability-resolution';
 
 const repo = path.resolve(__dirname, '../../..');
-function tree(root: string): Record<string, string> {
+export function tree(root: string): Record<string, string> {
   const result: Record<string, string> = {};
   const visit = (dir: string): void => { for (const item of fs.readdirSync(dir, { withFileTypes: true })) { const file = path.join(dir, item.name); result[path.relative(root, file)] = item.isDirectory() ? 'directory' : fs.readFileSync(file).toString('base64'); if (item.isDirectory()) visit(file); } };
   visit(root); return result;
 }
-function fixture(phase = 'review') {
+export function fixture(phase = 'review') {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-request-'));
   const framework = path.join(root, 'framework'); fs.mkdirSync(framework);
   for (const folder of ['harness', 'skills', 'specs', 'docs', 'agents']) fs.symlinkSync(path.join(repo, folder), path.join(framework, folder), process.platform === 'win32' ? 'junction' : 'dir');
@@ -50,7 +50,7 @@ exports.runRequestTests = ctx => {
 function cli(f: ReturnType<typeof fixture>, extra: string[] = []) {
   return spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(repo, 'harness/harness-runner.ts'), '--project-root', f.root, '--framework-root', f.framework, '--phase', f.options.phase, '--request-file', f.options.requestFile, '--report-dir', f.options.reportDir, ...extra], { cwd: path.join(f.framework, 'harness'), encoding: 'utf8', timeout: 60000, env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json'), MAISON_GOAL_RUN_ID: 'ambient-run', MAISON_GOAL_RUNNER: '1', MAISON_GOAL_ATTEMPT: 'ambient-attempt', MAISON_FEATURE: 'live' } });
 }
-function facts(p: PreparedRequest, root: string) {
+export function facts(p: PreparedRequest, root: string) {
   fs.mkdirSync(path.dirname(p.factsPath), { recursive: true });
   const files = [...new Set([...p.bindings.filter(binding => binding.exists).map(binding => binding.path), ...Object.entries(p.inputs).filter(([id, file]) => id !== 'review_report' && fs.existsSync(file)).map(([, file]) => path.relative(root, file).replace(/\\/g, '/'))])];
   fs.writeFileSync(p.factsPath, '---\n' + YAML.stringify({ schema_version: '1.1', request_sha256: p.request_sha256, established_by: p.phase, ready_to_produce: true, has_blocker_coverage_risk: false, source_code_paths: files, key_inputs_read: files, files_inspected_count: files.length, searches_performed_estimate: Math.max(1, files.length), decisions_unlocked: ['checked selected behavior'], exploration_mode: 'sequential', change_intent: 'read_only', estimated_loc_delta: 0, single_function_scope: true }) + '---\n## Code Facts\n| 路径 | 事实 | 影响 |\n|---|---|---|\n' + files.map(file => `| ${file} | bound request input was read | inspect requested behavior |`).join('\n'));

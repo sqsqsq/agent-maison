@@ -31,10 +31,10 @@ export const ACCEPTANCE_ID_PATTERN = /^(AC|BD)-(G\d+|\d+)$/i;
  */
 export function extractAcceptanceIdRefs(text: string): string[] {
   const out: string[] = [];
-  const re = /(AC|BD)-[A-Z]*\d+/gi;
+  const re = /(?:AC|BD)-[A-Z]*\d+|NFR-[A-Z0-9]+(?:[-_][A-Z0-9]+)*/gi;
   for (const m of text.matchAll(re)) {
     const token = m[0].toUpperCase();
-    if (ACCEPTANCE_ID_PATTERN.test(token)) out.push(token);
+    if (ACCEPTANCE_ID_PATTERN.test(token) || /^NFR-[A-Z0-9]+(?:[-_][A-Z0-9]+)*$/.test(token)) out.push(token);
   }
   return [...new Set(out)];
 }
@@ -112,6 +112,10 @@ export function checkAcceptanceUtLayerComplete(
     if (!layer) {
       issues.push(`${b.id}: ut_layer 非法或缺失（允许：${VALID_UT_LAYERS.join(', ')}）`);
     }
+  }
+  for (const item of acceptance.performance ?? []) {
+    if (item.ut_layer !== undefined && !normalizeUtLayer(item.ut_layer)) issues.push(`${item.id}: performance ut_layer 非法`);
+    if (isDeviceUtLayer(item.ut_layer) && !nonEmptyString(item.device_focus)) issues.push(`${item.id}: device/both performance 缺 device_focus`);
   }
 
   if (issues.length > 0) {

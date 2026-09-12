@@ -143,6 +143,7 @@ import {
 } from './utils/acceptance-layering';
 import { runAcceptanceYamlStructureChecks, ACCEPTANCE_ID_PATTERN } from './utils/check-acceptance';
 import { checkUpstreamVerdictGate, readUpstreamPhaseView } from './utils/upstream-verdict-gate';
+import { SpecLoader } from './utils/spec-loader';
 import { countBlockingDebt, loadVisualDebtEx } from './utils/visual-debt';
 import {
   formatRootPollutionWarnDetails,
@@ -278,6 +279,7 @@ function loadTestEnvironmentKeywordGroups(ctx: CheckContext): string[][] {
 }
 
 function loadDoc(ctx: CheckContext, docName: string): string | null {
+  if (ctx.resolvedInputs && ['spec.md', 'plan.md'].includes(docName)) return new SpecLoader(ctx.projectRoot, undefined, undefined, ctx.frameworkRoot).loadFeatureDoc(ctx.projectRoot, ctx.feature, docName, ctx.resolvedInputs);
   const resolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, docName);
   if (!resolved.exists) return null;
   return fs.readFileSync(resolved.actualPath, 'utf-8');
@@ -1427,6 +1429,7 @@ export function checkAcceptanceToTestCase(ctx: CheckContext, plan: string | null
 
   const acRefs = extractTestCaseACRefs(plan);
   const allCoveredACs = new Set<string>();
+  for (const refs of extractTcNfrRefs(plan).values()) for (const ref of refs) allCoveredACs.add(ref.toUpperCase());
   for (const refs of acRefs.values()) {
     for (const ref of refs) {
       allCoveredACs.add(ref.toUpperCase().replace(/\s/g, ''));
@@ -2296,7 +2299,7 @@ function checkReportReconcileOnlyPipeline(
     manifestRecord.value && typeof manifestRecord.value.hylyre_version === 'string'
       ? manifestRecord.value.hylyre_version
       : null;
-  const acceptance = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature);
+  const acceptance = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature, ctx.resolvedInputs ? ctx.featureSpec.acceptance ?? null : undefined);
   const nativeEvidenceApplicable = Boolean(acceptance?.criteria.some(isP0DeviceInteractive));
   const evidenceGate = nativeEvidenceApplicable
     ? evaluateHylyreNativeEvidenceGate({
@@ -3698,7 +3701,7 @@ function checkP0RuntimeStepEvidenceGate(
 ): CheckResult[] {
   const id = 'p0_runtime_step_evidence';
   const description = 'P0 device flow 原生 CaseResult.steps[] 证据';
-  const acceptance = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature);
+  const acceptance = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature, ctx.resolvedInputs ? ctx.featureSpec.acceptance ?? null : undefined);
   if (!acceptance?.criteria.some(isP0DeviceInteractive)) {
     return [{ id, category: 'structure', description, severity: 'MINOR', status: 'SKIP', details: '无 P0 device flow，native StepResult evidence 不适用。' }];
   }
@@ -3998,7 +4001,7 @@ function runP0IdentityInjection(ctx: CheckContext, derivedMd: string, topPlanMd:
   return injectP0IdentityAssertions({
     derivedMd,
     topPlanMd,
-    acceptance: loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature),
+    acceptance: loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature, ctx.resolvedInputs ? ctx.featureSpec.acceptance ?? null : undefined),
     canonical: buildCanonicalIndexForFeature(ctx),
   });
 }
@@ -4053,7 +4056,7 @@ function checkP0IdentityInjectionStatic(ctx: CheckContext, plan: string | null):
  * 不解析 description/precondition/expected，也不把它当第二套 canonical selector 真源。
  */
 function collectAcceptanceActionBindings(ctx: CheckContext): AcceptanceActionBinding[] {
-  const doc = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature);
+  const doc = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature, ctx.resolvedInputs ? ctx.featureSpec.acceptance ?? null : undefined);
   if (!doc) return [];
   return doc.criteria.flatMap(ac => {
     const target = ac.checkpoint?.action?.target_element_id;
@@ -4453,7 +4456,7 @@ function checkDeviceTestRunGate(
     // T6 pre-run evidence capability: native CaseResult.steps[] is independent
     // of the legacy runtime telemetry bridge. Only an old provider may enter
     // the bounded bridge path; native 0.4.0 must never be monkey-patched.
-    const acceptanceFlows = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature);
+    const acceptanceFlows = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature, ctx.resolvedInputs ? ctx.featureSpec.acceptance ?? null : undefined);
     const runtimeEvidenceRequired = Boolean(
       acceptanceFlows?.criteria.some(isP0DeviceInteractive),
     );
@@ -5536,7 +5539,7 @@ function checkChannelEvidenceObligation(
   const visualGate = [...priorResults].reverse().find(r => r.id === 'visual_diff');
   const bindings = bindChannelEvidence({
     planMd: plan,
-    acceptance: loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature),
+    acceptance: loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature, ctx.resolvedInputs ? ctx.featureSpec.acceptance ?? null : undefined),
     visual: loadVisualScreenVerdicts({
       projectRoot: ctx.projectRoot,
       feature: ctx.feature,
@@ -6074,7 +6077,7 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkVisualDebtDisclosure(ctx, report), 'visual_debt_disclosure'));
     results.push(
       ...safeRun(
-        () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'testing' }),
+        () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'testing', runId: ctx.resolvedInputs ? process.env.MAISON_GOAL_RUN_ID : undefined }),
         'upstream_verdict_gate',
       ),
     );
@@ -6174,6 +6177,7 @@ const checker: PhaseChecker = {
         const inputs = {
           projectRoot: ctx.projectRoot,
           feature: ctx.feature,
+          acceptance: ctx.resolvedInputs ? ctx.featureSpec.acceptance ?? null : undefined,
           planMd: plan ?? '',
           reportMd: report ?? '',
           trace,

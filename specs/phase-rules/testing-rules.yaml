@@ -10,6 +10,8 @@
 # ============================================================================
 
 phase: testing
+# 现代调用先服从冻结设备/视觉义务；零义务 reconcile-only 在报告/设备前只读退出。
+# NFR 复用 ut_layer，缺层级保持 unknown；R8 不把 NFR 或未知引用错当纯 unit AC/BD。
 version: "1.0"
 applies_to:
   test_plan: "doc/features/{module}/testing/test-plan.md"

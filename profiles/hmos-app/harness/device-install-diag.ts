@@ -123,14 +123,16 @@ export function diagnoseInstallBlocking(projectRoot: string): InstallBlockingDia
 
 export function writeInstallDiagJson(
   projectRoot: string,
-  feature: string,
+  feature: string | undefined,
   phase: string,
   frameworkRoot: string | undefined,
   diag: InstallBlockingDiagnosis,
   fileName: 'ut-install-diag.json' | 'testing-install-diag.json' = 'ut-install-diag.json',
+  explicitReportDir?: string,
 ): string | null {
   try {
-    const reportDir = featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot);
+    if (!explicitReportDir && !feature) throw new Error('reportDir or Feature is required');
+    const reportDir = explicitReportDir ?? featurePhaseReportsDir(projectRoot, feature!, phase, frameworkRoot);
     fs.mkdirSync(reportDir, { recursive: true });
     const outPath = path.join(reportDir, fileName);
     fs.writeFileSync(outPath, JSON.stringify(diag, null, 2), 'utf-8');
@@ -143,12 +145,13 @@ export function writeInstallDiagJson(
 /** @deprecated use writeInstallDiagJson */
 export function writeUtInstallDiagJson(
   projectRoot: string,
-  feature: string,
+  feature: string | undefined,
   phase: string,
   frameworkRoot: string | undefined,
   diag: InstallBlockingDiagnosis,
+  reportDir?: string,
 ): string | null {
-  return writeInstallDiagJson(projectRoot, feature, phase, frameworkRoot, diag, 'ut-install-diag.json');
+  return writeInstallDiagJson(projectRoot, feature, phase, frameworkRoot, diag, 'ut-install-diag.json', reportDir);
 }
 
 /** 将 diagnoseInstallBlocking 结果映射为 ut_hvigor_test CheckResult 机器可读字段 */

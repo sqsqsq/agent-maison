@@ -1113,7 +1113,7 @@ export function installHap(hapPath: string): HdcInstallResult {
  * `hdc shell aa test -b <bundle> -m <module> -s unittest <runner> -w <ms>`。
  * 触发 OpenHarmonyTestRunner 在设备上执行 hypium 测试，stdout 同步回流。
  */
-export function runAaTest(meta: OhosTestMetadata): AaTestResult {
+export function runAaTest(meta: OhosTestMetadata, testClasses?: string[]): AaTestResult {
   const t0 = Date.now();
   const cmdParts = [
     'shell', 'aa', 'test',
@@ -1122,6 +1122,10 @@ export function runAaTest(meta: OhosTestMetadata): AaTestResult {
     '-s', 'unittest', meta.testRunner,
     '-w', String(meta.testTimeoutMs),
   ];
+  if (testClasses?.length) {
+    if (testClasses.some(name => !/^[A-Za-z0-9_.-]+$/.test(name))) throw new Error('unsupported Hypium class selector');
+    cmdParts.push('-s', 'class', testClasses.join(','));
+  }
   // aa test 的整体 walltime 上界：每条用例 timeoutMs * 估算（最少 5 分钟）
   const walltimeMs = Math.max(5 * 60_000, meta.testTimeoutMs * 10);
   const ret = runHdc(cmdParts, walltimeMs);
@@ -1240,7 +1244,9 @@ export interface OnDeviceUtOptions {
   projectRoot: string;
   harnessRoot: string;
   frameworkRoot?: string;
-  feature: string;
+  feature?: string;
+  reportDir?: string;
+  testClasses?: string[];
   phase: string;
   /** 模块名（contracts.modules[].name，对应 build-profile.json5 modules[].name） */
   srcModuleName: string;
@@ -1262,11 +1268,13 @@ export interface OnDeviceUtOptions {
 
 function ensureHdcLogReportDir(
   projectRoot: string,
-  feature: string,
+  feature: string | undefined,
   phase: string,
   frameworkRoot?: string,
+  reportDir?: string,
 ): string {
-  const dir = featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot);
+  if (!reportDir && !feature) throw new Error('reportDir or Feature is required');
+  const dir = reportDir ?? featurePhaseReportsDir(projectRoot, feature!, phase, frameworkRoot);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -1435,11 +1443,11 @@ export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
   // 用户场景是"鸿蒙无法常亮 + 长时间无人值守"——invoke 前就绪门放行，跑到这里手机
   // 已自动锁屏。锁屏信号恰恰只在这一步才暴露（aa test 启动 Ability 失败）。
   // 授权边界与门完全一致：只用登记凭据、同 serial、失败即机器级锁死；未登记则零输入。
-  let aa = runAaTest(metadata);
+  let aa = runAaTest(metadata, opts.testClasses);
   if (!aa.ok && aa.diagnosis?.kind === 'device_locked') {
     const rec = recoverFromRuntimeLock(opts);
     append(`[device-recovery] ${rec.note}`);
-    if (rec.recovered) aa = runAaTest(metadata); // 同 serial 重试原操作**一次**
+    if (rec.recovered) aa = runAaTest(metadata, opts.testClasses); // 同 serial 重试原操作**一次**
   }
   append(aa.output);
   if (!aa.ok) {
@@ -1483,7 +1491,7 @@ function finalize(
 ): OnDeviceUtRunResult {
   // 落盘日志
   try {
-    const dir = ensureHdcLogReportDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot);
+    const dir = ensureHdcLogReportDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot, opts.reportDir);
     // plan 5e1c7a93 D2：按模块命名——两个 ohosTest 模块时旧的固定 hdc-test.log 会被
     // 第二个模块覆盖，逐模块冻结件（frozen.hdc-test.<module>.log）的前提是先按模块落盘。
     const file = path.join(dir, `hdc-test.${opts.srcModuleName}.log`);

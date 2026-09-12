@@ -72,8 +72,11 @@ export const provider: CapabilityProvider = {
     'parseHylyreTrace',
     'evaluateHylyreNativeEvidenceGate',
     'composeDeviceTestEvidence',
+    'runRequestTests',
   ],
 };
+
+export { runRequestTests } from './device-test-request';
 
 // plan a6c4e9f2 T7a/T7b（inventory §一 G10）：最低版本/trace 门随 Step Outcome v1 一并提升。
 // 这两条常量与 `hylyre-result-protocol.ts` 的 dispatch 判别键必须同步——M1 的 typed consumer
@@ -305,7 +308,8 @@ export interface HylyreReadyOptions {
   projectRoot: string;
   harnessRoot: string;
   frameworkRoot?: string;
-  feature: string;
+  feature?: string;
+  reportDir?: string;
   phase: 'testing';
 }
 
@@ -325,7 +329,8 @@ export interface HylyreRunOptions {
   projectRoot: string;
   harnessRoot: string;
   frameworkRoot?: string;
-  feature: string;
+  feature?: string;
+  reportDir?: string;
   phase: 'testing';
   pythonPath: string;
   derivedPlanPath: string;
@@ -813,6 +818,7 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
     opts.feature,
     opts.phase,
     opts.frameworkRoot,
+    opts.reportDir,
   );
   fs.mkdirSync(reportsBase, { recursive: true });
   const logPath = path.join(reportsBase, 'hylyre-doctor.log');
@@ -1621,7 +1627,7 @@ function tryHylyreAppPageSaveAfterRun(args: {
 /** Build minimal trace/report after `hylyre run --steps-file` (no native report contract). */
 export function synthesizeTraceFromStepsBatchRun(args: {
   runOut: string;
-  feature: string;
+  feature?: string;
   tracePath: string;
   reportPath: string;
 }): { lastStepIndex: number | null; uiResetHint: string | null } {
@@ -1680,12 +1686,14 @@ export function synthesizeTraceFromStepsBatchRun(args: {
 }
 
 export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
+  if (!opts.feature && (!opts.reportDir || !opts.stepsFilePath || !fs.existsSync(opts.stepsFilePath))) throw new Error('request requires reportDir and a real steps file');
   const errors: HylyreRunResult['errors'] = [];
   const { reportsBase, hypiumWorkDir } = resolveHylyreRuntimeWorkDir(
     opts.projectRoot,
     opts.feature,
     opts.phase,
     opts.frameworkRoot,
+    opts.reportDir,
   );
   fs.mkdirSync(reportsBase, { recursive: true });
   const pollutionBefore = beginHylyrePhasePollutionGuard(opts.projectRoot);
@@ -1853,7 +1861,7 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
       '--plan',
       path.resolve(opts.derivedPlanPath),
       '--feature',
-      opts.feature,
+      opts.feature!,
       '--report-out',
       path.resolve(opts.reportOutPath),
       '--trace-out',

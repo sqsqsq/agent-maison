@@ -33,6 +33,10 @@ flowchart LR
 
 ## 2. 字段契约（acceptance.yaml）
 
+现代范围消费已验证的 acceptance 内容（含 P3 等价投影），不以物理文件存在性代替语义。performance 可选 `ut_layer: unit|device|both`，复用 `ut_focus` / `device_focus`：unit 的描述、负载、指标和阈值须足以确定基准证明；device/both 必须明确 device_focus。旧 performance 缺层级保持 unknown，不默认算 unit，也不因运行失败改层级。NFR ID 进入原 UT/device 覆盖集合；R8 仍只对纯 unit AC/BD、无 NFR 引用的 TC 在设备前阻断。
+
+验证层不等于执行环境：UT 经 ohosTest HAP 使用设备不意味着还需 testing。只有有效验收、影响事实与全部相关缺口均支持零设备义务时才省略 testing；零义务 reconcile-only 不生成报告或设备动作，不能据此声称测试 PASS。
+
 | 字段 | 何时必填 | 说明 |
 |------|----------|------|
 | `ut_layer` | 每条 criterion / boundary **必填** | `unit` / `device` / `both` |

@@ -2,6 +2,7 @@
 
 > 自动生成于 {timestamp}
 > 本文件为 AI Harness 的 prompt，可发送给任意 AI 模型执行语义级验证。
+> 现代调用按冻结 scope 与有效解析验收（含 P3 投影）核验 device/both AC、BD、NFR 和视觉义务，不因缺 spec/plan 跳过 P0 runtime 机器证据。manual、离线、缺 provider/图片、trace failed 都是未完成，不得改 N/A；纯 unit TC 仍遵守设备前 R8。request 只对本次明确目标及原生断言负责；零设备范围的 reconcile-only 是只读诊断，不是测试 PASS。
 >
 > **Profile 语义补充**：实例若存在 `framework/profiles/<project_profile>/harness/prompts/verify-testing.overlay.md`，须与本正文**合并阅读**（设备/自动化 toolchain 与验收形式以 profile 为准）。
 

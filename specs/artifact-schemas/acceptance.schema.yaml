@@ -10,6 +10,14 @@ required: [criteria]
 properties:
   criteria: { type: array }
   boundaries: { type: array }
-  performance: {}
+  performance:
+    type: array
+    items:
+      type: object
+      properties:
+        ut_layer: { type: string, enum: [unit, device, both] }
+        ut_focus: { type: string }
+        device_focus: { type: string }
+      additionalProperties: true
   coverage_summary: {}
 additionalProperties: true

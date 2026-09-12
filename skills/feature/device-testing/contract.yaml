@@ -1,29 +1,27 @@
-schema_version: "1.0"
+schema_version: "1.1"
 skill: device-testing
 skill_doc: SKILL.md
 phases:
   testing:
-    tracks: [full]
     inputs:
       - id: cases
         sources:
           - { kind: artifact, artifact: acceptance@1 }
-          - { kind: derive, provider_id: derive.adhoc-cases }
+          - { kind: derive, provider_id: derive.blueprint-acceptance }
       - { id: tested_code, sources: [{ kind: derive, provider_id: derive.codebase }] }
       - { id: spec, sources: [{ kind: artifact, artifact: spec@1 }] }
-      - { id: plan, sources: [{ kind: artifact, artifact: plan@1 }, { kind: derive, provider_id: derive.test-targets }] }
-      - { id: contracts, sources: [{ kind: artifact, artifact: contracts@1 }] }
+      - { id: plan, sources: [{ kind: artifact, artifact: plan@1 }] }
+      - { id: test_plan, sources: [{ kind: artifact, artifact: test-plan@1 }] }
+      - { id: contracts, sources: [{ kind: artifact, artifact: contracts@1 }, { kind: derive, provider_id: derive.blueprint-contracts }] }
       - { id: use_cases, sources: [{ kind: artifact, artifact: use-cases@1 }] }
       - { id: review_report, sources: [{ kind: artifact, artifact: review-report@1 }] }
     capabilities:
-      - { id: capability_testing_cases, axis: evidence, inputs: [cases], tracks: [full], on_missing: fail }
-      - { id: capability_testing_code_context, axis: functional, inputs: [tested_code], tracks: [full], on_missing: fail }
+      - { id: capability_testing_cases, axis: evidence, inputs: [cases], input_role: base, on_missing: fail }
+      - { id: capability_testing_code_context, axis: functional, inputs: [tested_code], input_role: base, on_missing: fail }
       # The static derived-plan gates consume the declared top-level test plan before
       # the runtime build/install/run DAG; the derived plan itself is a phase output.
-      - { id: capability_testing_static_plan_context, axis: evidence, inputs: [plan], tracks: [full], on_missing: prune }
-      - { id: capability_testing_design_context, axis: evidence, inputs: [spec, contracts, use_cases, review_report], tracks: [full], on_missing: prune }
+      - { id: capability_testing_design_context, axis: evidence, inputs: [contracts, use_cases], input_role: enhancement, on_missing: prune }
     produces:
       - { artifact: test-plan@1 }
       - { artifact: test-report@1 }
     verifies: { check: check-testing.ts }
-    control_dependencies: [ut]

@@ -16,11 +16,13 @@ export interface HylyreRuntimeWorkDir {
 
 export function resolveHylyreRuntimeWorkDir(
   projectRoot: string,
-  feature: string,
+  feature: string | undefined,
   phase: string,
   frameworkRoot?: string,
+  reportDir?: string,
 ): HylyreRuntimeWorkDir {
-  const reportsBase = featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot);
+  if (!reportDir && !feature) throw new Error('reportDir or Feature is required');
+  const reportsBase = reportDir ?? featurePhaseReportsDir(projectRoot, feature!, phase, frameworkRoot);
   const hypiumWorkDir = ensureHypiumWorkDir(reportsBase);
   return { reportsBase, hypiumWorkDir };
 }

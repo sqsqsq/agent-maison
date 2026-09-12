@@ -391,7 +391,15 @@ export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[]
   // Hylyre trace + device-test-evidence artifact can satisfy this obligation.
   // The legacy runtime_fidelity_attestation receipt is intentionally inert.
   {
-    const doc = loadAcceptanceFlowsDoc(projectRoot, feature);
+    let suppliedAcceptance: unknown = undefined;
+    if (opts.executionScope) {
+      try {
+        const { readScopeAcceptance } = require('./feature-track') as typeof import('./feature-track');
+        const { inferRepoLayout } = require('../../repo-layout') as typeof import('../../repo-layout');
+        suppliedAcceptance = readScopeAcceptance(projectRoot, { facts: opts.executionScope.obligations }, { feature, frameworkRoot: opts.frameworkRoot ?? inferRepoLayout(projectRoot).frameworkRoot })?.value ?? null;
+      } catch (error) { issues.push({ phase: 'testing', condition: 'acceptance_binding', detail: String(error), kind: 'needs_fix' }); suppliedAcceptance = null; }
+    }
+    const doc = loadAcceptanceFlowsDoc(projectRoot, feature, suppliedAcceptance);
     const hasP0DeviceFlow = doc && doc.criteria.some(isP0DeviceInteractive);
     if (hasP0DeviceFlow) {
       let expectedRunId: string | null = null;

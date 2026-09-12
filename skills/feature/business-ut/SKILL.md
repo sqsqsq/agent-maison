@@ -6,6 +6,10 @@
 
 ## 前置
 
+**现代独立与组合调用**：完整 Feature/CU 使用 P1/P3 的有效 unit/both AC、BD、NFR、契约与实际源码；无 spec.md/plan.md 不补空文档。用户只运行/补指定测试时，按 request CLI 的 targets.tests 与已有断言/明确行为目标执行，只报告本次请求，不强制整份 acceptance、testability-audit 或 mock-plan。新增断言必须有授权预期，characterization 仅证明现状。首个实际阶段按入口 factsContext 建立事实，已有基线才追加 delta。
+
+**验证层与环境分开**：unit 性能项的指标与证明方法来自有效 acceptance，计入实际单元证据；ohosTest HAP 的 build/install/device 是 UT toolchain 的一部分，不自动安排 testing。现代调用明确依赖均为 pure 时不强造 mock-plan；真实外部依赖、分支和 testability 缺口继续按原专业检查处理。完成与复用由冻结 scope 和现有证据决定，不因末段为 UT 自报 Feature 完成。
+
 本工程须先完成 [`framework-init`](../../project/framework-init/SKILL.md)：`framework.config.json` 与 **paths**/**`architecture` 段**已由初始化写入或与之一致。
 
 **Harness 运行时前置**：满足 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md) 与 [Shell cwd 契约](../../reference/harness-cli-cwd.md)（harness 之后用 `cd framework/harness && npx ts-node scripts/check-receipt.ts`）。**Personal setup（BLOCKER）**：[personal-setup-gate](../../reference/personal-setup-gate.md)：`check-personal-setup.ts --json --ensure`；仅解析 JSON。

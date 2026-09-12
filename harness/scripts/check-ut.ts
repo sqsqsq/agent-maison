@@ -77,6 +77,7 @@ import {
   type UtHostImpl,
 } from '../profile-host-loader';
 import { resolveUtTemplateRef, type UtTemplateKey } from './utils/ut-template-paths';
+import { isUnitUtLayer, collectUnitScopeIds } from './utils/acceptance-layering';
 import { isSuiteEntryShimContent } from '../ut-suite-entry-shim';
 import {
   buildMockPlanPresetIndex,
@@ -2164,8 +2165,8 @@ export function checkItNameHasAcOrBranchTag(
       // [REG-*]：仅 repair/cover_existing 工作模式合法（回归网标签，不绑定 feature AC），
       // cover_feature_change 不放行——plan 423e5d0f。
       const tagRe = opts?.allowRegTag
-        ? /^\s*\[(AC|BD|BRANCH|CHAR|REG)-/i
-        : /^\s*\[(AC|BD|BRANCH|CHAR)-/i;
+        ? /^\s*\[(AC|BD|NFR|BRANCH|CHAR|REG)-/i
+        : /^\s*\[(AC|BD|NFR|BRANCH|CHAR)-/i;
       if (!tagRe.test(b.name)) {
         untagged.push(`${p}: "${b.name}"`);
         affected.push(p);
@@ -2383,7 +2384,7 @@ function checkDagToAcceptance(
         } else {
           for (const ac of node.linked_acceptance) {
             const exists = acceptance.criteria.some(c => c.id === ac) ||
-              acceptance.boundaries?.some(b => b.id === ac);
+              acceptance.boundaries?.some(b => b.id === ac) || acceptance.performance?.some(item => item.id === ac);
             if (!exists) {
               unlinkedAssertions.push(`${dagPath} > ${node.id}: ${ac} 不在 acceptance.yaml 中`);
             }
@@ -2465,10 +2466,10 @@ export function checkAcceptanceCoverage(
     }
   }
 
-  // v2 修订：分母只计 ut_layer in [unit, both]（未声明 ut_layer 的按 unit 兜底，保持向后兼容）
-  const isUnitLayer = (layer?: string) => layer === 'unit' || layer === 'both' || layer === undefined;
+  // 分母使用共享的显式 unit/both 判据；缺层级交原验收校验处理。
+  const isUnitLayer = isUnitUtLayer;
 
-  const p0p1Criteria = acceptance.criteria.filter(c =>
+  const p0p1Criteria = [...acceptance.criteria, ...(acceptance.performance ?? []).map(item => ({ ...item, priority: 'P1' }))].filter(c =>
     (c.priority === 'P0' || c.priority === 'P1') && isUnitLayer(c.ut_layer),
   );
   const uncoveredP0P1 = p0p1Criteria.filter(c => !coveredACs.has(c.id));
@@ -2796,7 +2797,7 @@ function acHasUtTagOrBranchCoverage(
 }
 
 function collectTargetUnitBothP0P1(acceptance: AcceptanceSpec) {
-  const isUnit = (layer?: string) => layer === 'unit' || layer === 'both' || layer === undefined;
+  const isUnit = isUnitUtLayer;
   return [
     ...(acceptance.criteria ?? [])
       .filter(c => (c.priority === 'P0' || c.priority === 'P1') && isUnit(c.ut_layer))
@@ -2804,6 +2805,7 @@ function collectTargetUnitBothP0P1(acceptance: AcceptanceSpec) {
     ...(acceptance.boundaries ?? [])
       .filter(b => (b.priority === 'P0' || b.priority === 'P1') && isUnit(b.ut_layer))
       .map(b => ({ id: b.id, priority: b.priority, ut_layer: b.ut_layer, description: b.description, linked_branch: (b as { linked_branch?: string }).linked_branch, kind: 'boundary' as const })),
+    ...(acceptance.performance ?? []).filter(item => isUnit(item.ut_layer)).map(item => ({ id: item.id, priority: 'P1', ut_layer: item.ut_layer, description: item.description, linked_branch: undefined, kind: 'performance' as const })),
   ];
 }
 
@@ -3225,7 +3227,7 @@ function checkBoundaryCoverage(
     }];
   }
 
-  const isUnit = (layer?: string) => layer === 'unit' || layer === 'both' || layer === undefined;
+  const isUnit = isUnitUtLayer;
   const targetBds = bds.filter(b => isUnit(b.ut_layer));
 
   if (targetBds.length === 0) {
@@ -3300,22 +3302,10 @@ function checkBoundaryCoverage(
 // Testability audit + mock-plan (v2.3)
 // --------------------------------------------------------------------------
 
-function isUnitUtLayer(layer?: string): boolean {
-  return layer === 'unit' || layer === 'both' || layer === undefined;
-}
-
 /** AC/BD id 须被 testability-audit 覆盖 */
 function collectUnitScopeAcceptanceIds(ctx: CheckContext): string[] {
   const acceptance = ctx.featureSpec.acceptance;
-  if (!acceptance) return [];
-  const ids: string[] = [];
-  for (const c of acceptance.criteria ?? []) {
-    if (isUnitUtLayer(c.ut_layer)) ids.push(c.id);
-  }
-  for (const b of acceptance.boundaries ?? []) {
-    if (isUnitUtLayer(b.ut_layer)) ids.push(b.id);
-  }
-  return ids;
+  return acceptance ? collectUnitScopeIds(acceptance) : [];
 }
 
 function testabilityAuditPath(ctx: CheckContext): string {
@@ -3474,8 +3464,9 @@ function auditLevelNorm(level?: string): string {
   return (level ?? '').trim().toUpperCase();
 }
 
-function auditRecordsNeedMockPlan(records: TestabilityAuditRecord[]): TestabilityAuditRecord[] {
+function auditRecordsNeedMockPlan(records: TestabilityAuditRecord[], resolved = false): TestabilityAuditRecord[] {
   return records.filter(r => {
+    if (resolved && r.dependencies?.length && r.dependencies.every(dependency => dependency.kind === 'pure')) return false;
     const L = auditLevelNorm(r.testability_level);
     return L === 'L0' || L === 'L1' || L === 'L2';
   });
@@ -3658,15 +3649,16 @@ export function checkUtMockPlanPresent(
   observed: UtMachineArtifactObservation<MockPlanSpec>,
 ): CheckResult[] {
   const id = 'ut_mock_plan_present';
-  const need = auditRecordsNeedMockPlan(records);
+  const need = auditRecordsNeedMockPlan(records, !!ctx.resolvedInputs);
   if (need.length === 0) {
     return [{
       id,
       category: 'structure',
       description: ruleDesc(ctx, 'structure_checks', id),
-      severity: 'BLOCKER',
-      status: 'SKIP',
-      details: '无 L0/L1/L2 可测性记录，跳过 mock-plan 门禁。',
+        severity: ctx.resolvedInputs ? 'MINOR' : 'BLOCKER',
+        status: 'SKIP',
+        details: '无需要 test double 的可测性记录（现代调用包含明确 pure 的依赖）。',
+        ...(ctx.resolvedInputs ? { structured: { applicability: 'not_applicable' } } : {}),
     }];
   }
 
@@ -4303,6 +4295,24 @@ function buildUtRunStatusResult(
   };
 }
 
+/** One applicability decision for the complete mock-plan check group. Existing files are always checked. */
+export function checkUtMockPlanRequirements(ctx: CheckContext, audit: UtMachineArtifactObservation<TestabilityAuditRecord[]>, observed: UtMachineArtifactObservation<MockPlanSpec>): CheckResult[] {
+  const presence = checkUtMockPlanPresent(ctx, audit.status === 'loaded' ? audit.value : [], observed);
+  const plan = observed.status === 'loaded' ? observed.value : null;
+  const checks = [
+    ...checkUtMachineArtifactParseable(ctx, 'ut_mock_plan_parseable', 'mock-plan.yaml', observed),
+    ...presence,
+    ...(observed.status === 'invalid' ? skipBecauseArtifactInvalid(ctx, 'ut_mock_plan_typed', 'structure', observed.relPath) : checkUtMockPlanTyped(ctx, plan)),
+    ...(observed.status === 'invalid' ? skipBecauseArtifactInvalid(ctx, 'ut_mock_plan_contracts_consistent', 'structure', observed.relPath) : checkUtMockPlanContractsConsistent(ctx, plan)),
+  ];
+  const notApplicable = !!ctx.resolvedInputs && audit.status === 'loaded' && observed.status !== 'invalid'
+    && presence.some(check => (check.structured as { applicability?: string } | undefined)?.applicability === 'not_applicable');
+  if (notApplicable) for (const check of checks) if (check.status === 'SKIP') {
+    check.severity = 'MINOR'; check.structured = { applicability: 'not_applicable' };
+  }
+  return checks;
+}
+
 const checker: PhaseChecker = {
   phase: 'ut',
   subjects: ['feature', 'request'],
@@ -4438,8 +4448,6 @@ const checker: PhaseChecker = {
 
     featureGate('ut_testability_audit_parseable', () =>
       checkUtMachineArtifactParseable(ctx, 'ut_testability_audit_parseable', 'testability-audit.md', auditObservation));
-    featureGate('ut_mock_plan_parseable', () =>
-      checkUtMachineArtifactParseable(ctx, 'ut_mock_plan_parseable', 'mock-plan.yaml', mockPlanObservation));
 
     featureGate('context_exploration_gate', () =>
       checkFactsArtifact(ctx.projectRoot, ctx.feature, 'ut', {
@@ -4452,7 +4460,7 @@ const checker: PhaseChecker = {
 
     // --- blind-visual-hardening d1 切片一：上游裁决传播（review 不通过不得进 ut）---
     featureGate('upstream_verdict_gate', () =>
-      checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'ut' }));
+      checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'ut', runId: ctx.resolvedInputs ? process.env.MAISON_GOAL_RUN_ID : undefined }));
 
     if (featureGatesActive) {
       results.push(
@@ -4478,15 +4486,8 @@ const checker: PhaseChecker = {
     // v2.3：可测性预检 + mock-plan（先于 DAG 拓扑之后的 trace，但逻辑上属于 UT 规约门禁）
     featureGate('ut_testability_audit_present', () => checkUtTestabilityAuditPresent(ctx, auditObservation));
     featureGate('ut_unsupported_targets_handled', () => checkUtUnsupportedTargetsHandled(ctx, auditObservation));
-    featureGate('ut_mock_plan_present', () => checkUtMockPlanPresent(ctx, auditRecordsEarly, mockPlanObservation));
-    featureGate('ut_mock_plan_typed', () =>
-      mockPlanObservation.status === 'invalid'
-        ? skipBecauseArtifactInvalid(ctx, 'ut_mock_plan_typed', 'structure', mockPlanObservation.relPath)
-        : checkUtMockPlanTyped(ctx, mockPlanDoc));
-    featureGate('ut_mock_plan_contracts_consistent', () =>
-      mockPlanObservation.status === 'invalid'
-        ? skipBecauseArtifactInvalid(ctx, 'ut_mock_plan_contracts_consistent', 'structure', mockPlanObservation.relPath)
-        : checkUtMockPlanContractsConsistent(ctx, mockPlanDoc));
+    if (featureGatesActive) featureGate('ut_mock_plan_present', () => checkUtMockPlanRequirements(ctx, auditObservation, mockPlanObservation));
+    else for (const id of ['ut_mock_plan_parseable', 'ut_mock_plan_present', 'ut_mock_plan_typed', 'ut_mock_plan_contracts_consistent']) featureGate(id, () => []);
 
     // v1 保留 + v2 修订：DAG 结构
     featureGate('dag_schema_compliance', () => checkDagSchemaCompliance(ctx, dags));

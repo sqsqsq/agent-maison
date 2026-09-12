@@ -81,7 +81,7 @@ export function resolveFeatureExecutionScope(projectRoot: string, feature: strin
 }
 
 /** Re-read the selected acceptance source through P1; never scan history or write artifacts. */
-export function readScopeAcceptance(projectRoot: string, input: ExecutionScopeInput, context: { feature: string; frameworkRoot: string }): { value: AcceptanceSpec; binding: InputBinding } | undefined {
+export function readScopeAcceptance(projectRoot: string, input: Pick<ExecutionScopeInput, 'facts'>, context: { feature: string; frameworkRoot: string }): { value: AcceptanceSpec; binding: InputBinding } | undefined {
   const bindings = input.facts.flatMap(fact => fact.basis);
   const binding = bindings.find(binding => binding.source.kind === 'artifact' && binding.source.artifact === 'acceptance@1')
     ?? bindings.find(binding => binding.source.kind === 'derive' && binding.source.provider_id === 'derive.blueprint-acceptance');

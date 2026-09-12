@@ -117,12 +117,8 @@ export function extractTcAcceptanceRefs(planMd: string): Map<string, string[]> {
 }
 
 /**
- * 从同一张表的同一列读出 TC → 关联的性能 AC（`NFR-N`）。
- *
- * plan 5e1c7a93 D3：`extractAcceptanceIdRefs` 的 `ACCEPTANCE_ID_PATTERN`（`^(AC|BD)-…`）
- * 永不产生 `NFR-*`，而改它会破坏另外四个消费者的契约——所以这里是它的**兄弟导出**，
- * 同表同列、词法只把 `AC|BD` 换成 `NFR`。识别不到（列里没写 NFR）是已知边界，
- * 该 TC 的 timing 缺口按 soft 处理，不误伤成 FAIL。
+ * 从同一张表的同一列读出 TC → 性能 NFR 引用；复用通用验收 ID 解析，支持命名 NFR。
+ * 列里没有 NFR 时该 TC 不进入性能 timing 判据；未知/混合引用仍由原计划门禁处理。
  */
 export function extractTcNfrRefs(planMd: string): Map<string, string[]> {
   const out = new Map<string, string[]>();
@@ -137,11 +133,7 @@ export function extractTcNfrRefs(planMd: string): Map<string, string[]> {
     const tcRaw = (idCol >= 0 ? row[idCol] : row[0] || '').trim();
     const matched = tcRaw.match(/TC-\d+/i);
     if (!matched) continue;
-    const refs = [...new Set(
-      (row[acCol] ?? '').split(/[,，、;；\s]+/)
-        .map(t => t.trim().toUpperCase())
-        .filter(t => /^NFR-(?:G\d+|\d+)$/.test(t)),
-    )];
+    const refs = extractAcceptanceIdRefs(row[acCol] ?? '').filter(id => id.startsWith('NFR-'));
     if (refs.length > 0) out.set(matched[0].toUpperCase(), refs);
   }
   return out;

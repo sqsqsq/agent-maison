@@ -2,6 +2,7 @@
 
 > 自动生成于 {timestamp}
 > 本文件为 AI Harness 的 prompt，可发送给任意 AI 模型执行语义级验证。
+> 现代调用消费绑定的 acceptance/contracts 与实际测试目标，P3 等价内容不因缺物理 spec/plan 降级。unit/both 的 AC、BD、NFR 都核对真实覆盖；性能基准必须有授权负载、指标和预期。request 只证明指定断言，不冒充 CU 完成；characterization 不自动成为正式期望。mock/testability 按真实依赖与目标核验，已明确 pure 的依赖不强造 mock-plan。UT 使用设备环境不自动产生 testing 义务。
 >
 > **Profile 语义补充**：实例若存在 `framework/profiles/<project_profile>/harness/prompts/verify-ut.overlay.md`，须与本正文**合并阅读**。
 

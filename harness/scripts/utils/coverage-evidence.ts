@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { acCoverageCoversScope, type AcCoverageReport } from './ac-coverage-report';
 import { featureFilePath, relFeatureFile } from '../../config';
+import { isUnitUtLayer } from './acceptance-layering';
 export type EvidenceSourceKind =
   | 'dag_archived'
   | 'dag_ephemeral'
@@ -134,7 +135,7 @@ export function highestEvidenceSource(
 
 export interface UnitBothScopeItem {
   id: string;
-  kind: 'criterion' | 'boundary';
+  kind: 'criterion' | 'boundary' | 'performance';
   priority?: string;
   ut_layer?: string;
 }
@@ -142,10 +143,10 @@ export interface UnitBothScopeItem {
 export function listUnitBothScopeItems(acceptance: {
   criteria?: Array<{ id: string; priority?: string; ut_layer?: string }>;
   boundaries?: Array<{ id: string; priority?: string; ut_layer?: string }>;
+  performance?: Array<{ id: string; ut_layer?: string }>;
 } | null | undefined): UnitBothScopeItem[] {
   if (!acceptance) return [];
-  const isUnit = (layer?: string) =>
-    layer === 'unit' || layer === 'both' || layer === undefined;
+  const isUnit = isUnitUtLayer;
   const out: UnitBothScopeItem[] = [];
   for (const c of acceptance.criteria ?? []) {
     if (isUnit(c.ut_layer)) {
@@ -157,6 +158,7 @@ export function listUnitBothScopeItems(acceptance: {
       out.push({ id: b.id, kind: 'boundary', priority: b.priority, ut_layer: b.ut_layer });
     }
   }
+  for (const item of acceptance.performance ?? []) if (isUnit(item.ut_layer)) out.push({ id: item.id, kind: 'performance', priority: 'P1', ut_layer: item.ut_layer });
   return out;
 }
 

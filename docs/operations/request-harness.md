@@ -46,8 +46,12 @@ report-dir 已有其他请求/基线的机器输出时拒绝复用。目标或�
 
 ## P4/P5 接线合同
 
+hmos 原生 UT 已接入请求入口：targets.tests 指向配置模块中的 ohosTest 文件，按真实 Hypium 类筛选，复用 hvigor→安装→aa test，并核对实际数量与失败/跳过。它只证明所选断言，不自动证明完整 CU 验收。
+
+hmos 设备专项须额外提供 `inputs.test_plan`，内容采用既有 Hylyre 派生计划格式，TC 与 cases 一致，每条有明确预期和原生断言。每个用例先执行 steps-file，再用既有 `hylyre ai assert` 验证该行预期；两者的原生 v1 证据共同参与归约。元素出现不等于全部预期已验证，VLM 不可用、manual、skipped 或缺预期证据都不能签发成功。request 仍不支持 report-reconcile-only；零设备对账属于真实 Feature 冻结范围入口。
+
 公共 checker 边界接受 `CheckContext<'feature' | 'request'>`；request 分支没有 feature/FeatureSpec，旧 Feature helper 保持 Feature 默认类型。
 
 review 复用现有章节、问题、计数、引用、负面结论等检查。UT/testing 通过原 profile 的 ut.run / device_test.run capability 查找 `runRequestTests(ctx)`，不新增 provider registry。该导出须列入原 provider metadata.exports，接收明确目标、基线、P1 输入与 reportDir，返回实际 `{executed, total, failed, checks, evidence_paths}`；原生日志/coverage/trace 放本目录或宿主内独立 provider 目录，不能借 Feature 报告。
 
-本段交付入口与传参/报告闭环；P4/P5 继续迁移专业职责及 HarmonyOS 原生 provider 的 request 支持。**未实现该导出的现有 provider 会明确 BLOCKED/FAIL，不能回落到假 Feature 或用未执行结果签发成功。**本批真实 CLI 测试使用按上述既有 metadata 安装的 Node 测试 provider 验证实际执行；不代表 HarmonyOS/真机专项已通过，真实宿主验收仍由 P7 汇总。
+P6 交付入口与传参/报告闭环，P4/P5 接通专业消费和 hmos 原生 request provider。**未实现该导出的现有 provider 会明确 BLOCKED/FAIL，不能回落到假 Feature 或用未执行结果签发成功。**机械验收包含 Node 实际执行与 hmos provider 接线夹具；不代表 HarmonyOS/真机专项已通过，真实宿主验收仍由 P7 汇总。

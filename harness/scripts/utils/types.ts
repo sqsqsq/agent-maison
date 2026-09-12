@@ -465,6 +465,9 @@ export interface AcceptanceSpec {
     threshold: string;
     unit: string;
     description: string;
+    ut_layer?: UtLayer;
+    ut_focus?: string;
+    device_focus?: string;
   }>;
 }
 

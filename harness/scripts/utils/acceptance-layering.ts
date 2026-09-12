@@ -17,9 +17,9 @@ export function normalizeUtLayer(layer?: string): UtLayer | undefined {
   return undefined;
 }
 
-/** UT 覆盖率分母：unit / both；未声明 ut_layer 按 unit 兜底（向后兼容） */
+/** UT 覆盖率分母：显式 unit / both；缺失层级交原分层校验处理。 */
 export function isUnitUtLayer(layer?: string): boolean {
-  return layer === 'unit' || layer === 'both' || layer === undefined;
+  return layer === 'unit' || layer === 'both';
 }
 
 /** 真机 test-plan 追溯分母：device / both */
@@ -64,6 +64,7 @@ export function collectDeviceScopeP0P1(acceptance: AcceptanceSpec): {
   const criteria = (acceptance.criteria ?? []).filter(
     c => isP0P1Priority(c.priority) && isDeviceUtLayer(c.ut_layer),
   ) as AcLike[];
+  criteria.push(...(acceptance.performance ?? []).filter(item => isDeviceUtLayer(item.ut_layer)).map(item => ({ ...item, priority: 'P1' })));
   const boundaries = (acceptance.boundaries ?? []).filter(b => {
     if (!isDeviceUtLayer(b.ut_layer)) return false;
     if (!b.priority || b.priority.trim() === '') return true;
@@ -80,6 +81,7 @@ export function collectUnitScopeIds(acceptance: AcceptanceSpec): string[] {
   for (const b of acceptance.boundaries ?? []) {
     if (isUnitUtLayer(b.ut_layer)) ids.push(b.id);
   }
+  for (const item of acceptance.performance ?? []) if (isUnitUtLayer(item.ut_layer)) ids.push(item.id);
   return ids;
 }
 
@@ -103,7 +105,14 @@ export function collectDeviceScopeIds(acceptance: AcceptanceSpec): string[] {
   for (const b of acceptance.boundaries ?? []) {
     if (isDeviceUtLayer(b.ut_layer)) ids.push(b.id);
   }
+  for (const item of acceptance.performance ?? []) if (isDeviceUtLayer(item.ut_layer)) ids.push(item.id);
   return ids;
+}
+
+export function hasUnknownPerformanceLayer(acceptance: AcceptanceSpec): boolean {
+  return (acceptance.performance ?? []).some(item => !normalizeUtLayer(item.ut_layer)
+    || ![item.id, item.metric, item.threshold, item.unit, item.description].every(hasNonEmptyFocus)
+    || (isDeviceUtLayer(item.ut_layer) && !hasNonEmptyFocus(item.device_focus)));
 }
 
 export function acceptanceFileExists(projectRoot: string, feature: string): boolean {

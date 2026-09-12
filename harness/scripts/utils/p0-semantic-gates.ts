@@ -78,7 +78,7 @@ export function loadAcceptanceFlowsDoc(projectRoot: string, feature: string, sup
   const res = resolveFeatureArtifact(projectRoot, feature, 'acceptance.yaml');
   if (supplied === undefined && !res.exists) return null;
   try {
-    const doc = (supplied ?? YAML.parse(fs.readFileSync(res.actualPath, 'utf-8'))) as {
+    const doc = (supplied === undefined ? YAML.parse(fs.readFileSync(res.actualPath, 'utf-8')) : supplied) as {
       flows?: Record<string, { screens?: string[] } | string[]>;
       criteria?: AcceptanceCriterion[];
     };
@@ -306,6 +306,7 @@ export function isBareIdentityAssertion(step: unknown, kind: 'wait_for' | 'wait_
 export interface P0GateInputs {
   projectRoot: string;
   feature: string;
+  acceptance?: unknown;
   planMd: string;
   reportMd: string;
   /** Native trace is the only accepted execution evidence for production P0 gates. */
@@ -681,7 +682,7 @@ function evaluateNativeP0(inp: P0GateInputs): NativeP0Evaluation {
       gateFailure: 'authoritative trace 缺失，无法消费 CaseResult.steps[]',
     };
   }
-  const acceptance = loadAcceptanceFlowsDoc(inp.projectRoot, inp.feature);
+  const acceptance = loadAcceptanceFlowsDoc(inp.projectRoot, inp.feature, inp.acceptance);
   const p0Acs = (acceptance?.criteria ?? []).filter(isP0DeviceInteractive);
   const reportsBase = path.join(receiptDirPath(inp.projectRoot, inp.feature, 'testing'), 'reports');
   const selected = inp.derivedPlanPath

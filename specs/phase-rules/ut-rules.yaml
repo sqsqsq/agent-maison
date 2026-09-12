@@ -15,6 +15,8 @@
 # ============================================================================
 
 phase: ut
+# 现代输入来自 P1/P3；unit/both AC、BD、NFR 均进入原覆盖/真实执行检查。
+# request 只覆盖明确测试目标；纯运行不要求新建 acceptance/mock-plan，不改变 Feature 完成真源。
 version: "2.3"
 applies_to:
   use_cases_spec: "doc/features/{feature}/use-cases.yaml"

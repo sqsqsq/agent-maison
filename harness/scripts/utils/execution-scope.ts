@@ -4,7 +4,7 @@ import type { InputBinding, ResolutionDependency } from './capability-resolution
 import { isInsideProjectRoot } from './project-relative-path';
 import type { AcceptanceSpec, CheckContext } from './types';
 import { checkAcceptanceUtLayerComplete } from './check-acceptance';
-import { collectDeviceScopeIds, collectUnitScopeIds } from './acceptance-layering';
+import { collectDeviceScopeIds, collectUnitScopeIds, hasUnknownPerformanceLayer } from './acceptance-layering';
 
 export type ObligationApplicability = 'required' | 'not_applicable' | 'unknown';
 export interface ScopeEvidenceRef {
@@ -63,6 +63,14 @@ export function executionScopeFingerprint(value: unknown): string {
   return crypto.createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 }
 
+/** A scoped no-op is not a test PASS; legacy callers have no scope and use their old path. */
+export function hasNoTestingObligation(scope: ExecutionScope): boolean {
+  if (scope.unresolved.length || scope.phase_chain.includes('testing')) return false;
+  const obligations = scope.obligations.filter(item => item.owner_phase === 'testing' || ['device-evidence', 'visual-evidence'].includes(item.kind));
+  return obligations.every(item => item.applicability === 'not_applicable')
+    && (scope.completion_target === 'request' || obligations.some(item => item.kind === 'device-evidence'));
+}
+
 /** Birth-only code observations; current outputs remain bound by phase evidence. */
 export function isExecutionSourceBasis(projectRoot: string, scope: ExecutionScope, obligation: ExecutionObligation, dependency: ResolutionDependency): boolean {
   return isInsideProjectRoot(projectRoot, dependency.path) && dependency.role === 'derive'
@@ -119,7 +127,7 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
       if (request.completion_target !== 'feature' && !workflow.artifacts.some(a => a.obligation_provider_id === provider && request.requested_phases.includes(a.id))) continue;
       const id = `${kind}:acceptance`;
       const previous = input.facts.find(fact => fact.id === id);
-      const unknownNfr = kind === 'device-evidence' && !!acceptance.value.performance?.length && !input.facts.some(fact => fact.kind === kind && fact.id !== id && fact.basis.length);
+      const unknownNfr = kind === 'device-evidence' && hasUnknownPerformanceLayer(acceptance.value);
       const applicability: ObligationApplicability = invalid || unknownNfr ? 'unknown' : ids.length ? 'required' : 'not_applicable';
       const fact = { id, kind, applicability, reason: invalid ? '验收分层尚不可用' : unknownNfr ? '性能义务所需验证层待确定' : `${kind}: ${ids.join(',') || '无该层验收'}`, basis: [acceptance.binding] };
       if (previous) Object.assign(previous, fact); else input.facts.push(fact);

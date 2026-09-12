@@ -535,6 +535,20 @@ async function main(): Promise<void> {
   }
   const layout = detectRepoLayout(harnessRoot);
   const { projectRoot, frameworkRoot: resolvedFrameworkRoot, frameworkRel, kind: layoutKind } = layout;
+  if (args['report-reconcile-only'] && args.phase === 'testing' && typeof args.feature === 'string' && !args['sync-closure'] && !args['clear-state'] && !args.list && (args['goal-run-id'] || process.env.MAISON_GOAL_RUN_ID)) {
+    const feature = args.feature; const phase = 'testing';
+    const goalRunId = String(args['goal-run-id'] || process.env.MAISON_GOAL_RUN_ID);
+    const { loadFrozenExecutionScope } = require('./scripts/utils/goal-run-creation') as typeof import('./scripts/utils/goal-run-creation');
+    const { hasNoTestingObligation } = require('./scripts/utils/execution-scope') as typeof import('./scripts/utils/execution-scope');
+    const scope = loadFrozenExecutionScope(projectRoot, feature, goalRunId);
+    if (scope && hasNoTestingObligation(scope)) {
+      const { executionScopeEvidenceIssues } = require('./scripts/utils/verify-feature-completion') as typeof import('./scripts/utils/verify-feature-completion');
+      const issues = executionScopeEvidenceIssues(projectRoot, feature, scope);
+      console.log(JSON.stringify({ subject: 'feature', feature, phase, report_reconcile_only: true, applicability: issues.length ? 'unknown' : 'not_applicable', issues }));
+      process.exit(issues.length ? 1 : 0);
+    }
+  }
+
   try {
     bindAttendedGoalContext({
       projectRoot,
@@ -728,6 +742,7 @@ async function main(): Promise<void> {
     console.error('错误: --report-reconcile-only 仅适用于带 feature 的 testing 阶段');
     process.exit(1);
   }
+
 
   // C1 feature-track：按 feature 声明的 track 过滤合法 phase（缺省 full = 现状零变化；
   // lite feature 误跑 full-only phase 明确报错而非静默跑——OpenSpec feature-track）
@@ -3144,6 +3159,20 @@ export function collectContextFiles(
     if (opts.factsContext) {
       const factsPath = resolveFactsAbsPath(projectRoot, feature, opts.factsContext);
       if (fs.existsSync(factsPath)) files.push({ label: path.relative(projectRoot, factsPath).replace(/\\/g, '/'), content: fs.readFileSync(factsPath, 'utf8') });
+    }
+    if (phase === 'ut' && featureSpec.contracts?.modules?.length) {
+      const { tryLoadUtSourceRootResolver } = require('./profile-host-loader') as typeof import('./profile-host-loader');
+      const profile = loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot), layout.frameworkRoot);
+      const roots = tryLoadUtSourceRootResolver(profile.profileDir)?.(projectRoot, featureSpec.contracts.modules) ?? [];
+      for (const root of roots) if (fs.existsSync(root)) collectFilesFromDir(root, projectRoot, /\.(ets|ts)$/, files, 20, true);
+      for (const module of featureSpec.contracts.modules) {
+        const dagDir = path.join(projectRoot, module.package_path, 'test', 'dag');
+        if (fs.existsSync(dagDir)) collectFilesFromDir(dagDir, projectRoot, /\.dag\.yaml$/, files, 10);
+      }
+    }
+    if (phase === 'testing') {
+      const trace = resolveAuthoritativeHylyreTracePath(featurePhaseReportsDir(projectRoot, feature, phase, layout.frameworkRoot));
+      if (trace) files.push({ label: path.relative(projectRoot, trace).replace(/\\/g, '/'), kind: 'path', content: `${fs.statSync(trace).size} bytes; authoritative native trace` });
     }
     return files;
   }

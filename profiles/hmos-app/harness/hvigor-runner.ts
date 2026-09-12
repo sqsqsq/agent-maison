@@ -786,11 +786,13 @@ function safeResolveFromConfig(
 
 function ensureHvigorLogReportDir(
   projectRoot: string,
-  feature: string,
+  feature: string | undefined,
   phase: string,
   frameworkRoot?: string,
+  reportDir?: string,
 ): string {
-  const dir = featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot);
+  if (!reportDir && !feature) throw new Error('reportDir or Feature is required');
+  const dir = reportDir ?? featurePhaseReportsDir(projectRoot, feature!, phase, frameworkRoot);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -1598,7 +1600,9 @@ export interface HvigorInvokeOpts {
   /** framework 资产根；缺省时从 projectRoot infer */
   frameworkRoot?: string;
   /** feature 名（reports 子目录） */
-  feature: string;
+  feature?: string;
+  reportDir?: string;
+  testClasses?: string[];
   /** phase（reports 子目录） */
   phase: string;
   /** 日志文件名（相对 reports/<feature>/<phase>/），如 'hvigor-build.log' */
@@ -1677,7 +1681,7 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
     spawnPlan = buildSpawnPlanFromResolved(resolved, hvigorArgs, 'hvigorw_wrapper');
   }
 
-  const dir = ensureHvigorLogReportDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot);
+  const dir = ensureHvigorLogReportDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot, opts.reportDir);
   const logAbs = path.join(dir, opts.logBasename);
   const commandDisplay = spawnPlan.commandDisplay;
   const header = `$ ${commandDisplay}\n\n`;
@@ -2255,6 +2259,7 @@ export function runHvigorTest(
     opts.phase,
     opts.frameworkRoot ?? inferRepoLayout(opts.projectRoot).frameworkRoot,
     installDiag,
+    opts.reportDir,
   );
   if (installDiag.kind !== 'clear') {
     return {
@@ -2285,6 +2290,8 @@ export function runHvigorTest(
     harnessRoot: opts.harnessRoot,
     frameworkRoot: opts.frameworkRoot,
     feature: opts.feature,
+    reportDir: opts.reportDir,
+    testClasses: opts.testClasses,
     phase: opts.phase,
     srcModuleName: opts.moduleName,
     srcPath: opts.moduleSrcPath,

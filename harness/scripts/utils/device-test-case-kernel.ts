@@ -83,7 +83,11 @@ export function normalizeDeviceTestCases(input: DeviceCaseInput): DeviceCaseNorm
         steps: [boundary.scenario, boundary.handling].filter(Boolean),
         expected: boundary.expected_behavior,
       }));
-    cases = [...criteria, ...boundaries];
+    const performance = (input.acceptance.performance ?? []).filter(item => criteriaIds.has(item.id)).map((item, index): NormalizedDeviceTestCase => ({
+      id: `TC-NFR-${String(index + 1).padStart(3, '0')}`, name: item.description, priority: 'P1', source_ref: item.id,
+      steps: item.device_focus?.trim() ? [item.device_focus.trim()] : [], expected: `${item.metric}: ${item.threshold} ${item.unit}`,
+    }));
+    cases = [...criteria, ...boundaries, ...performance];
   }
 
   return {

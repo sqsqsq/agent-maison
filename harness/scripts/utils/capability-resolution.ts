@@ -726,7 +726,7 @@ export function resolveRequestInputs(projectRoot: string, frameworkRoot: string,
     let input = item;
     let adhocCases: string | undefined;
     if (request.phase === 'testing' && item.id === 'cases') {
-      input = { ...item, sources: item.sources.filter(source => source.kind === 'derive' && source.provider_id === 'derive.adhoc-cases') };
+      input = { ...item, sources: [{ kind: 'derive', provider_id: 'derive.adhoc-cases' }] };
       if (request.inputs.cases && fs.existsSync(request.inputs.cases)) adhocCases = fs.readFileSync(request.inputs.cases, 'utf8');
     }
     resolveInput(input, { projectRoot, frameworkRoot, phase: request.phase, track: 'full', inputContext, request, requirement: request.requested_result, adhocCases }, new Map(), resolved);
@@ -749,7 +749,7 @@ export function resolveCapabilityInputs(options: CapabilityResolutionOptions): {
   // P3 migrates design contracts before P7 switches the default workflow. Legacy
   // workflow callers retain the old untyped execution path; scoped calls still
   // require their explicit P1 invocation and cannot fall back here.
-  const legacyDesign = !options.inputContext && ['spec', 'plan', 'coding', 'review'].includes(options.phase)
+  const legacyDesign = !options.inputContext && ['spec', 'plan', 'coding', 'review', 'ut', 'testing'].includes(options.phase)
     && indexed.contract.schema_version === '1.1'
     && loadWorkflowSpec(options.frameworkRoot, loadFrameworkConfig(options.projectRoot).active_workflow ?? 'spec-driven').schema_version !== '1.2';
   if (!legacyDesign && (indexed.contract.schema_version === '1.1') !== !!options.inputContext) {
@@ -777,6 +777,13 @@ export function resolveCapabilityInputs(options: CapabilityResolutionOptions): {
     ...indexed.phase.capabilities.filter(capability => ['capability_coding_spec_context', 'capability_coding_visual_context'].includes(capability.id)).map(capability => ({ ...capability, tracks: ['full'] as FeatureTrackName[] })),
   ];
   if (legacyDesign && options.phase === 'review') declaredCapabilities = indexed.phase.capabilities.filter(capability => !['capability_review_narrative_context', 'capability_review_use_cases'].includes(capability.id)).map(capability => capability.id === 'capability_review_design_context' ? { ...capability, inputs: ['spec', 'plan', 'contracts'] } : capability);
+  if (legacyDesign && options.phase === 'ut') declaredCapabilities = indexed.phase.capabilities.map(capability => capability.id === 'capability_ut_design_context' ? { ...capability, inputs: ['plan', 'contracts', 'test_targets'], on_missing: 'prune' } : capability);
+  if (legacyDesign && options.phase === 'testing') {
+    indexed.phase = { ...indexed.phase, inputs: indexed.phase.inputs.map(input => input.id === 'cases' ? { ...input, sources: [{ kind: 'artifact', artifact: 'acceptance@1' }, { kind: 'derive', provider_id: 'derive.adhoc-cases' }] } : input.id === 'plan' ? { ...input, sources: [{ kind: 'artifact', artifact: 'plan@1' }, { kind: 'derive', provider_id: 'derive.test-targets' }] } : input) };
+    declaredCapabilities = [...indexed.phase.capabilities.filter(capability => capability.id !== 'capability_testing_design_context'),
+      { id: 'capability_testing_static_plan_context', axis: 'evidence', inputs: ['plan'], tracks: ['full'], on_missing: 'prune' },
+      { id: 'capability_testing_design_context', axis: 'evidence', inputs: ['spec', 'contracts', 'use_cases', 'review_report'], tracks: ['full'], on_missing: 'prune' }];
+  }
   const capabilities = declaredCapabilities.filter(capability => !legacyDesign || !['capability_plan_existing_design', 'capability_spec_existing_acceptance'].includes(capability.id)).map((capability) =>
     resolveCapability(legacyDesign && options.phase !== 'coding' ? { ...capability, tracks: ['full'] } : capability, indexed.phase, options, artifactProducers, resolve));
   if (inputs && options.feature) {
