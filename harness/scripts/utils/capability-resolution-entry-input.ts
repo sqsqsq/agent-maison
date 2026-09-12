@@ -19,6 +19,9 @@ import { validateProjectRelativePath, isInsideProjectRoot } from './project-rela
 import { execFileSync } from 'child_process';
 import * as crypto from 'crypto';
 import { stableStringify } from './phase-evidence-manifest';
+import { readRunBoundContracts } from './capability-resolution';
+import { resolveGoalRunBaseline } from './goal-run-baseline';
+import { diffChangedFilesWithStatus } from './git-diff';
 
 export interface PreparedRequest {
   schema_version: '1.0';
@@ -245,6 +248,14 @@ export function resolveCapabilityResolutionEntryInput(
         ...(obligation.satisfied_by ?? []).filter(ref => 'input_id' in ref),
       ]);
       const sourcePaths = [...new Set(bindings.flatMap(binding => binding.dependencies.filter(dep => dep.role === 'derive' && dep.exists).map(dep => path.relative(options.projectRoot, dep.path).replace(/\\/g, '/'))))];
+      if (options.phase === 'review' && scope.obligations.some(obligation => obligation.kind === 'implementation' && obligation.applicability === 'required')) {
+        const contracts = readRunBoundContracts(options.projectRoot, frameworkRoot, options.feature, goalRunId);
+        const baseline = resolveGoalRunBaseline(options.projectRoot, options.feature, goalRunId);
+        if (!baseline.available) throw new Error(baseline.reason);
+        const diff = diffChangedFilesWithStatus({ projectRoot: options.projectRoot, baseRef: baseline.baseSha });
+        if (!diff.executed) throw new Error(diff.error ?? 'review diff unavailable');
+        for (const entry of diff.entries) if (entry.status !== 'D' && contracts.files?.includes(entry.path) && !sourcePaths.includes(entry.path)) sourcePaths.push(entry.path);
+      }
       const factsContext: FactsInvocationContext = {
         subject: { feature: options.feature, run_id: goalRunId }, first_phase: scope.phase_chain[0],
         source_paths: sourcePaths, required_input_snippets: [],

@@ -31,7 +31,10 @@ import { checkUpstreamVerdictGate } from './utils/upstream-verdict-gate';
 import { probeConsumerBinding } from './utils/integration-scope';
 import { parseScope, describeScopeError } from './utils/scope-parser';
 import { scanNamedBusinessHandler } from './utils/named-handler';
-import { diffChangedFiles, analyzeDiffStaleness } from './utils/git-diff';
+import { diffChangedFiles, diffChangedFilesWithStatus, analyzeDiffStaleness } from './utils/git-diff';
+import { readRunBoundContracts } from './utils/capability-resolution';
+import { resolveGoalRunBaseline } from './utils/goal-run-baseline';
+import { resolveContractFileReferences } from './utils/contract-reference-closure';
 import { runUiDiffWithinDeclaredFiles } from './utils/ui-scope-gate';
 import { classifyChangedFiles, layerDirPrefixes, resolveModulePathPrefixes } from './utils/diff-scope';
 import { relFeaturesDir } from '../config';
@@ -181,6 +184,9 @@ function checkInterModuleDependency(ctx: CheckContext, analyses: FileAnalysis[])
 // 第五轮复审起导出：空集假 PASS（0 key_files）行为需单测钉死。
 export function checkDesignToCode(ctx: CheckContext): CheckResult[] {
   const traceability = ctx.featureSpec.contracts?.prd_to_code_traceability;
+  if (!traceability?.length && ctx.resolvedInputs && ctx.featureSpec.contracts?.change_unit) return [{
+    id: 'plan_to_code', category: 'traceability', severity: 'MINOR', status: 'SKIP', description: '旧 PRD 文件映射不适用 CU 输入', details: 'CU 的 predicate/provide/design-ref 到真实实现由 change_unit_feature_projection 检查；不要求再复制一份 prd_to_code_traceability。', structured: { applicability: 'not_applicable' },
+  }];
   if (!traceability?.length) {
     return [{ id: 'plan_to_code', category: 'traceability', description: ruleDesc(ctx, 'traceability_checks', 'plan_to_code'), severity: 'BLOCKER', status: 'SKIP', details: 'contracts.yaml 无 prd_to_code_traceability 映射。' }];
   }
@@ -312,6 +318,27 @@ function diffWithinScopeDocsNote(ctx: CheckContext): string {
 }
 
 function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
+  if (ctx.resolvedInputs) {
+    const result = (status: 'PASS' | 'FAIL', details: string, files?: string[]): CheckResult[] => [{ id: 'diff_within_scope', category: 'traceability', severity: 'BLOCKER', status, description: '实现须符合已绑定施工契约的模块与写集', details, affected_files: files, ...(status === 'FAIL' ? { failure_kind: 'scope_violation', suggestion: '回 plan/蓝图责任方补齐或重签设计；不要在 coding 扩大 contracts.files。' } : {}) }];
+    const runId = process.env.MAISON_GOAL_RUN_ID?.trim();
+    if (!runId) return result('FAIL', '现代 Feature coding 缺少真实 run 身份');
+    try {
+      const contracts = readRunBoundContracts(ctx.projectRoot, ctx.frameworkRoot, ctx.feature, runId);
+      if (!contracts.files?.length || !contracts.modules?.length) return result('FAIL', '施工契约缺少 files/modules');
+      const closure = resolveContractFileReferences(ctx.projectRoot, contracts);
+      if (closure.invalid_paths.length) return result('FAIL', '施工契约包含非法文件引用');
+      const baseline = resolveGoalRunBaseline(ctx.projectRoot, ctx.feature, runId);
+      if (!baseline.available) return result('FAIL', baseline.reason);
+      const diff = diffChangedFilesWithStatus({ projectRoot: ctx.projectRoot, baseRef: baseline.baseSha });
+      if (!diff.executed) return result('FAIL', diff.error ?? '无法读取 run baseline diff');
+      const files = [...new Set(diff.entries.flatMap(entry => [entry.path, ...(entry.oldPath ? [entry.oldPath] : [])]))];
+      const modules = resolveModulePathPrefixes(ctx.projectRoot, contracts.modules.map(module => module.name), contracts.modules);
+      const classified = classifyChangedFiles(files, modules.allowedPrefixes, layerDirPrefixes(ctx.projectRoot));
+      const violations = [...classified.violations, ...classified.inScopeHits.filter(file => !closure.authorized_files.includes(file))];
+      return violations.length ? result('FAIL', '本次实现超出冻结模块或文件授权：\n' + violations.join('\n'), violations)
+        : result('PASS', `已核验 run baseline、绑定契约与 ${files.length} 个变更路径。`);
+    } catch (error) { return result('FAIL', String(error)); }
+  }
   const designResolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'plan.md');
   if (!designResolved.exists) {
     return [{
@@ -452,6 +479,8 @@ function checkUiDiffWithinDeclaredFiles(ctx: CheckContext): CheckResult[] {
     projectRoot: ctx.projectRoot,
     feature: ctx.feature,
     runId,
+    frameworkRoot: ctx.frameworkRoot,
+    resolvedInputs: ctx.resolvedInputs,
   });
   // round 19 P1：goal run 内本门**永不 SKIP**（任何不可判都是 FAIL）；唯一合法 SKIP =
   // 非 goal 起跑（无 run 级锚，设计内），降 MINOR 使其不进 critical-skip 判定；
@@ -705,7 +734,7 @@ const checker: PhaseChecker = {
     // --- blind-visual-hardening d1 切片一：上游裁决传播 ---
     results.push(
       ...safeRun(
-        () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'coding' }),
+        () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'coding', runId: ctx.resolvedInputs ? process.env.MAISON_GOAL_RUN_ID : undefined }),
         'upstream_verdict_gate',
       ),
     );
@@ -725,14 +754,14 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkChangeUnitFeatureProjection(ctx, 'coding'), 'change_unit_feature_projection'));
     results.push(...safeRun(() => host.checkCodingCompile(ctx), 'coding_compile'));
 
-    if (isCodingVisualParitySkipped(ctx.resolvedProfile)) {
+    if (ctx.resolvedInputs?.context.obligations['visual-evidence'] === 'not_applicable' || isCodingVisualParitySkipped(ctx.resolvedProfile)) {
       results.push({
         id: 'visual_parity',
         category: 'structure',
         description: ruleDesc(ctx, 'structure_checks', 'visual_parity'),
         severity: 'MINOR',
         status: 'SKIP',
-        details: `project_profile=${ctx.resolvedProfile.name} 未启用 coding.visual_parity`,
+        details: ctx.resolvedInputs?.context.obligations['visual-evidence'] === 'not_applicable' ? '本次已确认无视觉义务，UI 越界仍由写集门禁检查。' : `project_profile=${ctx.resolvedProfile.name} 未启用 coding.visual_parity`,
       });
     } else {
       results.push(...safeRun(() => dispatchCodingVisualParity(ctx), 'visual_parity', { failClosed: true }));

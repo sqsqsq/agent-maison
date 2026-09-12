@@ -33,7 +33,7 @@
 
 纯设计请求（"修正 plan"、"对齐 spec 改 plan"）不得入境：未激活本 Skill，不得新增/修改实现层产物。**plan 刚修订须先有 harness 顺位**：本会话若刚写入/更新过 plan.md，须已对该 feature 跑 `harness-runner.ts --phase plan` 零 BLOCKER，才可落笔任何实现层产物——禁止"实现先改、plan.harness 后补"。与人审闸门对齐时须取得用户明示可编码，不得把"设计文档已保存"默认等同批准实现；连续执行须用户在指令中同时表达设计定稿与编码开工。中途修正按 AGENTS §4.0 修正三问分层。
 
-**Scope 守门**：编码 git diff 不得越界到 plan.md `in_scope_modules` 之外（`diff_within_scope` 会在 Step 7 阻断）；发现要改 scope 外模块**立刻停下**（`coding.scope_stop`：`1=回 plan 走扩展` `2=收窄实现`）。**逐文件 Lint 门禁**：单文件 Lint 不过不得进入下一文件，严禁批量生成后统一 lint。
+**Scope 守门**：现代调用以 run 绑定的 typed contracts 模块、文件引用闭包及 run baseline 核验写集，不要求先执行 plan 或生成 plan.md；旧 run 保留原 scope 读取。发现新接口或越界模块，向已有修正流程提交具体发现，由 plan/蓝图责任方裁决并经 P2 重签后继范围，不能自行扩大授权。**逐文件 Lint 门禁**：单文件 Lint 不过不得进入下一文件，严禁批量生成后统一 lint。
 
 **CU-bound Feature**：`contracts.change_unit` 全程只读。实现必须覆盖每个 canonical predicate/provide/design-ref mapping，并保持 Feature id 与 `change_unit_ref` 一致；运行时事实只实现 `contracts.state_management`，禁止复制 CU/蓝图或新增 `runtime_flow_slices`。若代码事实证明蓝图 owner、主链、contract 或当前决策失效，停止编码并路由 P1 调和，不在 Feature 内改写 CU 定义。
 
@@ -44,15 +44,15 @@
 ## 输入
 
 > **`contracts.yaml` 在本阶段只读（BLOCKER 纪律）。** 它是 plan 的产出、coding 的权威输入；
-> UI scope 白名单取自 **plan PASS 时冻结的快照**（`fail-closed 禁退 live`），改 live 文件
-> 不会放宽任何门禁，只会让 plan 的证据链判 stale。
+> 现代 UI scope 白名单取自 **run 已绑定的施工契约**；旧 run 仍读 plan closure。
+> 改 live 文件不会放宽授权，只会使原输入绑定失效。
 > 撞 `ui_scope_violation` 时只有两条合法出路：**收回越界文件**，或**把控制权交还 driver**
-> 由它回退到 plan 重新裁决 scope（plan 重新 PASS 后 runner 会签发新快照）。
+> 由它回到 plan/蓝图责任方重新裁决 scope，并经既有后继函数签发新范围。
 > **自行扩写 contracts.yaml、或自行重取 pass snapshot，都是自我授权，一律无效且会被拦。**
 
 | 输入项 | 必需 |
 |--------|------|
-| plan.md / contracts.yaml / acceptance.yaml | ✅（**只读**，见上） |
+| resolved contracts / acceptance / 明确实现目标 | ✅（**只读**，见上）；plan.md 仅在实际消费时读取 |
 | ui-spec.yaml + 原始需求截图 | `ui_change=new_or_changed` 时必填 |
 | use-cases.yaml | 仅复杂 feature（多 UI 共享状态/多步云调用/含回滚分支）存在 |
 | doc/architecture.md / 当前工程代码 | ✅ |
@@ -60,9 +60,9 @@
 
 ## 流程骨架
 
-1. **读取解析 plan.md + Spec 契约**：以 `contracts.yaml` 为权威来源（modules/files/data_models/interfaces/components/navigation/resource_keys），plan.md 为补充上下文；acceptance.yaml 提取验收标准和边界用例。输出模块×层实现清单（`coding.module_batch`：`1=下一模块` `2=修改本模块`）。
+1. **读取解析施工输入**：消费 P1 resolved requirement、代码、contracts 与 acceptance；蓝图来源须经 P3 校验，CU 使用真实 sidecar/写集。plan.md/spec.md 仅作实际需要的补充，不为补齐名称创建空文档。按 modules/files/data_models/interfaces/components/navigation/resource_keys 输出模块×层实现清单（`coding.module_batch`：`1=下一模块` `2=修改本模块`）。
 2. **确定实现顺序**：双重自底向上——模块间按 `outer_layers`/`intra_layer_deps` 声明（被依赖方先落地）；模块内按 profile 声明的层顺序（常见 shared→data→domain→presentation）。
-3. **Research Sub-Phase**（Context Facts Gate·BLOCKER，写第一个实现层源文件前完成，C4）：**UI 需求先做 Step 2.5a 视觉真源 Read**（详见 reference，8 项 pixel_1to1 BLOCKER）。必读 plan/contracts/acceptance/use-cases（若有）/architecture DSL/跨模块出口 + 已有源码；追加 `<features_dir>/<feature>/context/facts.md` 的 `## phase_delta: coding` 节（无新增事实写 "none"，不得留空）。**coding 是 delta 阶段**：`source_code_paths` 数量下限与 subagent 强制只在**建立阶段**（full=spec / lite=change）和旧 `context-exploration.md` 兼容路径生效（`harness/scripts/utils/context-facts.ts`），本阶段不重做全量探索、也不按数量硬判——但必要的实际阅读与复杂问题的子代理探索不因此免除。
+3. **Research Sub-Phase**（写第一个源码前完成）：UI 需求先做 Step 2.5a 视觉真源 Read。阅读已解析契约/验收、适用 use-cases、architecture DSL、跨模块出口和实际源码。以运行入口返回的 factsContext 为准：coding 为首个实际阶段且无有效基线时建立 schema 1.1 facts，绑定真实 Feature/run、established_by=coding 与来源；承接有效基线时才追加 `## phase_delta: coding`（无新增写 "none"）。不得先写源码再补造 facts，也不回补 spec/change 产物。量化阈值与 subagent 强制只在实际建立阶段及旧 context-exploration.md 兼容路径生效；delta 不重做数量检查，必要的实际阅读仍须完成。
 4. **逐模块逐层生成代码**（强制逐文件 Lint 门禁）：开文件前自检（重读易错手册相关条 + 确认路径在 in_scope 内）→ 按 contracts.yaml 强契约生成 → 只写当前一个文件 → 立即 `ReadLints` 零 error 才能开下一文件 → 对照易错手册自校对 → 检查层间依赖 → 展示给用户确认。
 5. **业务编排**（详见 reference，仅 use-cases.yaml 存在时）：三形态（Page 命名方法/协调类/导出命名函数）按复杂度自选，`named_business_handler` 强制校验命名符号、禁匿名 lambda、禁新造 Port。
 6. **模块配置与资源文件**：模块包描述/构建配置/module.json5/根级模块清单/依赖清单；资源文件按 profile 目录布局；路由配置按 profile 约定注册。

@@ -55,6 +55,7 @@ export interface ResolvePhaseWriteBoundaryOptions {
   projectRoot: string;
   frameworkRoot: string;
   feature: string;
+  runId?: string;
   phaseOrder: readonly string[];
   track: FeatureTrack;
   profileDir: string;
@@ -110,6 +111,13 @@ function loadCodingScope(
   modules: Array<{ name: string; package_path: string }>;
   diagnostics: string[];
 } {
+  if (options.runId) {
+    const { readRunBoundContracts } = require('./capability-resolution') as typeof import('./capability-resolution');
+    const contracts = readRunBoundContracts(options.projectRoot, options.frameworkRoot, options.feature, options.runId);
+    const modules = (contracts.modules ?? []).map(module => ({ name: module.name, package_path: module.package_path }));
+    const resolution = resolveModulePathPrefixes(options.projectRoot, modules.map(module => module.name), modules);
+    return { prefixes: resolution.allowedPrefixes, modules, diagnostics: resolution.unmapped.map(name => `bound module has no path: ${name}`) };
+  }
   const loader = new SpecLoader(options.projectRoot, undefined, undefined, options.frameworkRoot);
   const featureSpec = loader.loadFeatureSpec(options.feature);
   const scopeDocName = options.track === 'lite' ? 'change.md' : 'plan.md';

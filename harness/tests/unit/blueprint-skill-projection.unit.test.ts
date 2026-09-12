@@ -9,10 +9,12 @@ import { resolveBlueprintTarget } from '../../scripts/utils/blueprint-addressing
 import { asRecord, type BlueprintRecord, type ComponentBlueprintRef } from '../../scripts/utils/component-blueprint-model';
 import { resolveFeatureArtifact, clearFrameworkConfigCache, loadFrameworkConfig } from '../../config';
 import { loadResolvedProfile } from '../../profile-loader';
-import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
+import { resolveCapabilityInputs, readBoundInput } from '../../scripts/utils/capability-resolution';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import checkSpec from '../../scripts/check-spec';
 import checkPlan from '../../scripts/check-plan';
+import { checkChangeUnitFeatureProjection } from '../../scripts/utils/change-unit-feature-projection';
+import { checkDesignToCode } from '../../scripts/check-coding';
 import type { CheckContext } from '../../scripts/utils/types';
 import { resolveExecutionScope } from '../../scripts/utils/execution-scope';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
@@ -64,6 +66,38 @@ export function fixture(): { root: string; feature: string; blueprintFile: strin
   return { root, feature, blueprintFile, cuFile, bind };
 }
 const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Promise<void> }> = [
+  { name: 'coding and review consume blueprint runtime with real planned targets and no narrative documents', run(f) {
+    const source = path.join(f.root, 'src/ledger/LedgerFeature.ets');
+    fs.mkdirSync(path.dirname(source), { recursive: true }); fs.writeFileSync(source, 'export class LedgerFeature { run(): number { return 42; } }\n');
+    for (const materialized of [false, true]) {
+      if (materialized) materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot);
+      for (const phase of ['coding', 'review']) {
+        const result = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase, track: 'full', requirement: 'implement approved ledger refresh', testTargets: ['src/ledger/LedgerFeature.ets'], inputContext: { schema_version: '1.1', subject: { feature: f.feature }, obligations: { implementation: 'required', 'visual-evidence': 'not_applicable' }, required_outputs: [] } });
+        assert.notEqual(result.report.assurance, 'blocked', JSON.stringify(result.report));
+        assert.equal(result.report.capabilities.find(capability => capability.id === `capability_${phase}_visual_context`)?.state, 'not_applicable');
+        const useCases = result.inputs!.values.use_cases;
+        assert.equal(useCases.state, 'resolved', JSON.stringify(useCases));
+        if (useCases.state === 'resolved') assert.deepStrictEqual(readBoundInput({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase, track: 'full' }, useCases.binding), useCases.value);
+        const loader = new SpecLoader(f.root, undefined, undefined, frameworkRoot);
+        const spec = loader.loadFeatureSpec(f.feature, result.inputs);
+        assert(spec.contracts?.state_management?.length); assert(spec.useCases?.use_cases.length);
+        const ctx = { projectRoot: f.root, frameworkRoot, feature: f.feature, phase, featureSpec: spec, resolvedInputs: result.inputs, phaseRule: {} } as CheckContext;
+        const checks = checkChangeUnitFeatureProjection(ctx, phase as 'coding' | 'review');
+        assert(!checks.some(check => check.status === 'FAIL'), JSON.stringify(checks));
+        assert(!checkDesignToCode(ctx).some(check => check.severity === 'BLOCKER' && check.status === 'SKIP'));
+        const context = collectContextFiles(loader, { kind: 'standalone', projectRoot: f.root, frameworkRoot, frameworkRel: '' }, phase, f.feature, spec, { resolvedInputs: result.inputs });
+        assert(context.some(file => file.content.includes('publish snapshot')));
+        const missing = { ...ctx, featureSpec: { ...spec, contracts: { ...spec.contracts!, change_unit: undefined } } };
+        assert(checkChangeUnitFeatureProjection(missing, phase as 'coding' | 'review').some(check => check.status === 'FAIL'));
+      }
+    }
+    fs.unlinkSync(source);
+    const loader = new SpecLoader(f.root, undefined, undefined, frameworkRoot);
+    const spec = loader.loadFeatureSpec(f.feature);
+    assert(checkChangeUnitFeatureProjection({ projectRoot: f.root, frameworkRoot, feature: f.feature, featureSpec: spec, phaseRule: {} } as CheckContext, 'coding').some(check => check.status === 'FAIL'));
+    assert(!resolveFeatureArtifact(f.root, f.feature, 'plan.md').exists);
+    assert(!resolveFeatureArtifact(f.root, f.feature, 'spec.md').exists);
+  } },
   { name: 'AC and BD validate by their collection, never by whichever fields happen to exist', run(f) {
     const projected = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'acceptance');
     assert.equal(projected.state, 'resolved', projected.detail);

@@ -13,6 +13,9 @@ phase: coding
 version: "1.0"
 applies_to: "**"
 
+# 现代输入由 coding contract 1.1 / P1/P3 解析；模块、写集和 UI 范围以
+# run 绑定的施工契约与既有 run baseline 为准。没有 plan.md 不免除真实设计检查。
+
 structure_checks:
 
   host_entry_reachability:

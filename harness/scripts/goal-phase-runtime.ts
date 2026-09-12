@@ -6749,6 +6749,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             projectRoot,
             frameworkRoot,
             feature: manifest.feature,
+            runId: manifest.execution_scope ? manifest.run_id : undefined,
             phaseOrder: fullWorkflowChain.map(String),
             track: goalTrack,
             profileDir: resolvedProfile.profileDir,

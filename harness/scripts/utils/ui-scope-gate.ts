@@ -28,6 +28,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { resolveGoalRunBaseline } from './goal-run-baseline';
+import { readRunBoundContracts, type ResolvedPhaseInputs } from './capability-resolution';
 import {
   loadPhaseEvidenceManifest,
 } from './phase-evidence-manifest';
@@ -87,6 +88,8 @@ export interface UiScopeGateInput {
   feature: string;
   /** goal run 身份（MAISON_GOAL_RUN_ID）；null = 非 goal 起跑 */
   runId: string | null;
+  frameworkRoot?: string;
+  resolvedInputs?: ResolvedPhaseInputs;
 }
 
 export interface UiScopeGateResult {
@@ -186,6 +189,16 @@ export function runUiDiffWithinDeclaredFiles(input: UiScopeGateInput): UiScopeGa
         `本次 diff 无 UI 文件变更（base=${baseShort}，diff 条目 ${diff.entries.length} 个）` +
         '——UI scope 门按定义 PASS（冻结白名单未咨询）。',
     };
+  }
+
+  if (input.resolvedInputs) {
+    try {
+      const contracts = readRunBoundContracts(projectRoot, input.frameworkRoot!, feature, runId);
+      const declared = new Set((contracts.files ?? []).map(normalizeRel));
+      const violations = [...uiChanged].filter(file => !declared.has(file));
+      return { status: violations.length ? 'FAIL' : 'PASS', details: `已对照 run 绑定的 contracts.files 核验 ${uiChanged.size} 个 UI 变更；越界 ${violations.length} 个。`, affectedFiles: violations,
+        ...(violations.length ? { failureKind: 'ui_scope_violation', suggestion: '回 plan/蓝图重新裁决写集并签发后继范围，不能在 coding 扩大 live contracts。' } : {}) };
+    } catch (error) { return { status: 'FAIL', failureKind: 'ui_scope_frozen_contract_missing', details: String(error), suggestion: '恢复绑定契约或回设计责任方重签施工范围。' }; }
   }
 
   // ④ 有 UI 变更 → 冻结白名单必须可用（fail-closed，禁退未经核对的 live contracts）

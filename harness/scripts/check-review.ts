@@ -69,10 +69,22 @@ function loadDesign(ctx: CheckContext): string | null {
     .loadFeatureDoc(ctx.projectRoot, ctx.feature, 'plan.md', ctx.resolvedInputs);
 }
 
+function reviewTargetFiles(ctx: CheckContext<'feature' | 'request'>): string[] {
+  if (ctx.subject === 'request') return ctx.request.targets.files;
+  if (!ctx.resolvedInputs) return ctx.featureSpec.contracts?.files ?? [];
+  const code = ctx.resolvedInputs.values.code;
+  return code?.state === 'resolved' && Array.isArray(code.value) ? code.value.map((file: { path: string }) => file.path) : [];
+}
+
 function checkReviewContext(ctx: CheckContext): CheckResult[] {
   const results: CheckResult[] = [];
-  const files = ctx.featureSpec.contracts?.files ?? [];
-  const missingSources = files.filter(f => f.endsWith('.ets') && !fs.existsSync(path.join(ctx.projectRoot, f)));
+  if (ctx.resolvedInputs?.context.obligations.implementation === 'required') {
+    for (const id of ['contracts', 'acceptance']) if (ctx.resolvedInputs.values[id]?.state !== 'resolved') results.push({
+      id: 'review_required_design', category: 'structure', severity: 'BLOCKER', status: 'FAIL', description: '组合实现审查必须有有效设计与验收', details: `required comparison missing: ${id}`, suggestion: '回设计责任方补齐真实对照输入，不能以独立代码审查替代实现验收。',
+    });
+  }
+  const files = reviewTargetFiles(ctx);
+  const missingSources = files.filter(f => (ctx.resolvedInputs || f.endsWith('.ets')) && !fs.existsSync(path.join(ctx.projectRoot, f)));
   if (missingSources.length > 0) {
     results.push({
       id: 'review_context_source_files',
@@ -740,7 +752,16 @@ function checkIssueToCodingRule(ctx: CheckContext<'feature' | 'request'>, report
   }];
 }
 
-function checkReviewScopeToDesign(ctx: CheckContext, report: string): CheckResult[] {
+function checkReviewScopeToDesign(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
+  if (ctx.resolvedInputs) {
+    const contracts = ctx.subject === 'request' ? new SpecLoader(ctx.projectRoot, undefined, undefined, ctx.frameworkRoot).loadRequestArtifacts(ctx.resolvedInputs).contracts : ctx.featureSpec.contracts;
+    if (!contracts) return [];
+    const scope = getSectionContent(report, '审查范围') ?? '';
+    const targets = reviewTargetFiles(ctx);
+    const missing = targets.filter(file => !scope.includes(file));
+    return [{ id: 'review_scope_to_design', category: 'traceability', severity: 'BLOCKER', status: missing.length ? 'FAIL' : 'PASS', description: '审查范围覆盖实际施工输入', details: missing.length ? missing.join('\n') : `已覆盖 ${targets.length} 个实际目标；契约与蓝图语义由独立审查逐项对照。`, ...(missing.length ? { suggestion: '读取并审查绑定契约的目标文件，在报告中列明实际覆盖范围。' } : {}) }];
+  }
+  if (ctx.subject === 'request') return [];
   const design = loadDesign(ctx);
   if (!design) {
     return [{
@@ -825,14 +846,15 @@ const VISUAL_REVIEW_EVIDENCE: ReadonlyArray<{ label: string; re: RegExp }> = [
 export function checkVisualFidelityReview(ctx: CheckContext, report: string): CheckResult[] {
   // 仅 UI 需求需要视觉维度：以 spec.md 的 ui_change 判定（与 spec/coding 视觉门禁同 gate）
   const specPath = featureFilePath(ctx.projectRoot, ctx.feature, path.join('spec', 'spec.md'));
-  if (!fs.existsSync(specPath)) return [];
-  let requiresUiSpec = false;
-  try {
+  if (!ctx.resolvedInputs && !fs.existsSync(specPath)) return [];
+  let requiresUiSpec = ctx.resolvedInputs?.context.obligations['visual-evidence'] === 'required' || ctx.resolvedInputs?.values.ui_spec?.state === 'resolved';
+  try { if (!ctx.resolvedInputs) {
     // 延迟 require 避免为非 UI 项目引入依赖面
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const shared = require('./utils/ui-spec-shared') as typeof import('./utils/ui-spec-shared');
     const uiChange = shared.parseUiChangeFromSpecMarkdown(fs.readFileSync(specPath, 'utf-8'));
     requiresUiSpec = Boolean(uiChange && shared.UI_CHANGE_REQUIRES_UI_SPEC.has(uiChange));
+  }
   } catch {
     return [];
   }
@@ -887,14 +909,16 @@ export function checkVisualFidelityReview(ctx: CheckContext, report: string): Ch
 // --------------------------------------------------------------------------
 
 /** 惯例只解析标题和 gate 两字段；contracts 只消费 SpecLoader 的归一化结果。 */
-export function checkConventionsCoverage(ctx: CheckContext, report: string): CheckResult[] {
+export function checkConventionsCoverage(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
   const id = 'conventions_coverage';
-  const declared = ctx.featureSpec.contracts?.conventions_applied ?? [];
+  const contracts = ctx.subject === 'request' ? new SpecLoader(ctx.projectRoot, undefined, undefined, ctx.frameworkRoot).loadRequestArtifacts(ctx.resolvedInputs).contracts : ctx.featureSpec.contracts;
+  const declared = contracts?.conventions_applied ?? [];
   const assetPath = conventionsPath(ctx.projectRoot);
   const result = (status: CheckResult['status'], details: string): CheckResult[] => [{
     id, category: 'traceability', severity: 'MAJOR', status,
     description: ruleDesc(ctx, 'traceability_checks', id), details,
-    affected_files: [relConventions(ctx.projectRoot), relFeatureArtifact(ctx.projectRoot, ctx.feature, 'review-report.md')],
+    affected_files: [relConventions(ctx.projectRoot), ctx.subject === 'request' ? path.relative(ctx.projectRoot, ctx.request.inputs.review_report) : relFeatureArtifact(ctx.projectRoot, ctx.feature, 'review-report.md')],
+    ...(ctx.subject === 'request' && status === 'SKIP' ? { structured: { applicability: 'not_applicable' } } : {}),
     ...(status === 'FAIL' ? { suggestion: '按 details 补齐惯例覆盖台账或回 plan 修正 conventions_applied；不要复制 gate 判定结果。' } : {}),
   }];
   if (!fs.existsSync(assetPath)) {
@@ -963,14 +987,14 @@ export function checkConventionsCoverage(ctx: CheckContext, report: string): Che
     const row = ledger.find(entry => entry.id === card.id);
     if (row && (row.verdict === 'GATE_DELEGATED') !== gate) errors.push(`${card.id} GATE_DELEGATED 与 gate 卡必须双向对应。`);
   }
-  const targets = ctx.featureSpec.contracts?.files ?? [];
+  const targets = ctx.subject === 'request' ? ctx.request.targets.files : contracts?.files ?? [];
   for (const entry of declared) {
     if (!cardIds.has(entry.id)) errors.push(`conventions_applied 引用不存在的惯例：${entry.id}`);
     for (const location of entry.planned_locations) {
       if (!targets.some(file => file === location || file.startsWith(`${location}/`))) errors.push(`${entry.id} planned_location 未命中目标文件集合：${location}`);
     }
   }
-  const cuRef = ctx.featureSpec.contracts?.change_unit?.change_unit_ref;
+  const cuRef = contracts?.change_unit?.change_unit_ref;
   if (cuRef) {
     try {
       const cu = resolveChangeUnitRef(ctx.projectRoot, cuRef).changeUnit;
@@ -1036,6 +1060,7 @@ const checker: PhaseChecker = {
       const scope = getSectionContent(report, '审查范围') ?? '';
       const missing = ctx.request.targets.files.filter(file => !scope.includes(file));
       if (missing.length) results.push({ id: 'review_request_scope', category: 'traceability', severity: 'BLOCKER', status: 'FAIL', description: '审查范围未覆盖请求目标', details: missing.join(', '), suggestion: '按本次目标与基线审查全部指定文件，并在范围中列出真实目标。' });
+      results.push(...checkReviewScopeToDesign(ctx, report), ...checkConventionsCoverage(ctx, report));
       return results;
     }
     const loadedReport = loadReviewReport(ctx);
@@ -1103,7 +1128,7 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkNegativeVerdictClosure(report), 'negative_verdict_closure'));
     results.push(
       ...safeRun(
-        () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'review' }),
+        () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'review', runId: ctx.resolvedInputs ? process.env.MAISON_GOAL_RUN_ID : undefined }),
         'upstream_verdict_gate',
       ),
     );

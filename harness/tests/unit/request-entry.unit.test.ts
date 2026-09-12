@@ -121,9 +121,11 @@ const cases: Array<{ name: string; phase?: string; run(f: ReturnType<typeof fixt
     } finally { fs.rmSync(b.root, { recursive: true, force: true }); }
   } },
   { name: 'real prepare/run review ignores ambient Goal and preserves active Feature bytes', run(f) {
+    fs.writeFileSync(path.join(f.root, 'src/outside-request.js'), 'exports.other = 1;');
     const before = tree(path.join(f.root, 'doc/features'));
     const prepared = cli(f, ['--prepare-request']); assert.equal(prepared.status, 0, prepared.stderr + prepared.stdout);
     const p = JSON.parse(prepared.stdout) as PreparedRequest; assert(p.request_sha256); assert(!fs.existsSync(p.reportDir));
+    assert.deepStrictEqual(p.targets.files, ['src/value.js']); assert(!p.bindings.some(binding => binding.path === 'src/outside-request.js'));
     facts(p, f.root); review(p); const result = cli(f); assert.equal(result.status, 0, result.stderr + result.stdout);
     const summary = JSON.parse(fs.readFileSync(path.join(p.reportDir, 'summary.json'), 'utf8'));
     assert.equal(summary.subject, 'request'); assert.equal(summary.completion_target, 'request'); assert(!('feature' in summary)); assert(!('closed' in summary));

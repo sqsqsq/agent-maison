@@ -185,6 +185,7 @@ function resolveArtifact(
   modern = false,
   explicitPath?: string,
   subject?: PhaseInputContext['subject'],
+  supplied?: { value: unknown; dependencies: ResolutionDependency[] },
 ): ProviderResult {
   const inventory = loadArtifactInventory(frameworkRoot);
   const registered = inventory.artifacts.find((artifact) => artifact.id === source.artifact);
@@ -202,7 +203,7 @@ function resolveArtifact(
   }
   if (!modern) dependencies.splice(0, dependencies.length, ...dedupeDependencies(dependencies));
   const selected = dependencies.find((entry) => entry.exists);
-  if (!selected) return { state: 'absent', dependencies, detail: `${source.artifact} missing` };
+  if (!selected) return supplied ? { state: 'resolved', value: supplied.value, dependencies: dedupeDependencies([...dependencies, ...supplied.dependencies]), detail: 'resolved blueprint artifact' } : { state: 'absent', dependencies, detail: `${source.artifact} missing` };
   if (selected.sha256 === null) {
     return { state: 'invalid', dependencies, detail: `${source.artifact} is not a readable file: ${selected.path}` };
   }
@@ -481,8 +482,11 @@ function resolveDerive(
 
 /** Re-read a selected source using the same P1 parsers/providers and binding contract. */
 export function readBoundInput(options: CapabilityResolutionOptions, binding: InputBinding): unknown {
+  const supplied = binding.source.kind === 'artifact' && binding.source.artifact === 'use-cases@1' && options.feature && !options.request
+    ? deriveBlueprintSkillInput(options.projectRoot, options.feature, options.frameworkRoot, 'contracts') : undefined;
   const result = binding.source.kind === 'derive' ? resolveDerive(options.projectRoot, options.feature, binding.source, options)
-    : resolveArtifact(options.frameworkRoot, options.projectRoot, options.feature, binding.source, true, options.request?.inputs[binding.input_id], options.inputContext?.subject);
+    : resolveArtifact(options.frameworkRoot, options.projectRoot, options.feature, binding.source, true, options.request?.inputs[binding.input_id], options.inputContext?.subject,
+      supplied?.state === 'resolved' && supplied.artifacts?.['use-cases@1'] !== undefined ? { value: supplied.artifacts['use-cases@1'], dependencies: supplied.dependencies } : undefined);
   const matches = (left: ResolutionDependency, right: ResolutionDependency): boolean => stableStringify(left) === stableStringify(right);
   if (result.state !== 'resolved' || result.value === undefined
     || binding.dependencies.some(dep => !matches(dep, dependency(dep.path, dep.role)))
@@ -493,11 +497,22 @@ export function readBoundInput(options: CapabilityResolutionOptions, binding: In
   return result.value;
 }
 
+/** Reuse the run's existing design binding as construction authority, even without a plan phase. */
+export function readRunBoundContracts(projectRoot: string, frameworkRoot: string, feature: string, runId: string): import('./types').ContractsSpec {
+  const { loadFrozenExecutionScope } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+  const scope = loadFrozenExecutionScope(projectRoot, feature, runId);
+  const binding = scope?.obligations.flatMap(obligation => [...obligation.basis, ...(obligation.satisfied_by ?? []).filter((ref): ref is InputBinding => 'input_id' in ref)])
+    .find(binding => binding.source.kind === 'artifact' ? binding.source.artifact === 'contracts@1' : binding.source.provider_id === 'derive.blueprint-contracts');
+  if (!binding) throw new Error('frozen construction contract missing; return to design owner');
+  return readBoundInput({ projectRoot, frameworkRoot, feature, phase: 'coding', track: 'full' }, binding) as import('./types').ContractsSpec;
+}
+
 function resolveApplicability(
   capability: ContractCapability,
   options: CapabilityResolutionOptions,
 ): ApplicabilityResult {
   if (options.inputContext) {
+    if (capability.applicability_provider_id === 'applicability.ui' && options.inputContext.obligations['visual-evidence'] === 'not_applicable') return { applicable: false, dependencies: [], detail: 'visual-evidence explicitly not applicable' };
     const states = (capability.obligation_kinds ?? []).map(kind => options.inputContext!.obligations[kind] ?? 'unknown');
     if (states.includes('unknown')) return { applicable: true, invalid: true, dependencies: [], detail: 'obligation applicability unknown: ' + capability.obligation_kinds?.filter((_, i) => states[i] === 'unknown').join(', ') };
     if (states.length) return { applicable: states.includes('required'), dependencies: [] };
@@ -555,10 +570,13 @@ function resolveInput(
   for (const source of input.sources) {
     const sourceId = source.kind === 'artifact' ? source.artifact : source.provider_id;
     const invalidation = options.inputContext?.invalidated_sources?.[sourceId];
+    const suppliedValue = source.kind === 'artifact' && source.artifact === 'use-cases@1' && !options.request ? resolved?.artifacts[source.artifact] : undefined;
+    const suppliedInputs = suppliedValue === undefined ? [] : Object.values(resolved?.values ?? {}).filter(value => value.state === 'resolved' && (value.binding.source.kind === 'derive' && value.binding.source.provider_id.startsWith('derive.blueprint-') || value.binding.source.kind === 'artifact' && ['contracts@1', 'acceptance@1'].includes(value.binding.source.artifact)));
     let result: ProviderResult = invalidation ? { state: 'invalid', dependencies: [], detail: invalidation }
       : source.kind === 'artifact'
         ? !options.feature && resolved && !options.request?.inputs[input.id] ? { state: 'absent', dependencies: [], detail: 'request has no Feature artifact' }
-          : resolveArtifact(options.frameworkRoot, options.projectRoot, options.feature, source, !!resolved, options.request?.inputs[input.id], options.inputContext?.subject)
+          : resolveArtifact(options.frameworkRoot, options.projectRoot, options.feature, source, !!resolved, options.request?.inputs[input.id], options.inputContext?.subject,
+            suppliedValue !== undefined ? { value: suppliedValue, dependencies: suppliedInputs.flatMap(value => value.state === 'resolved' ? value.binding.dependencies : []) } : undefined)
         : resolveDerive(options.projectRoot, options.feature, source, options);
     if (resolved && result.state === 'resolved' && result.value === undefined) {
       result = { ...result, state: 'invalid', detail: 'provider returned no consumable content' };
@@ -731,7 +749,7 @@ export function resolveCapabilityInputs(options: CapabilityResolutionOptions): {
   // P3 migrates design contracts before P7 switches the default workflow. Legacy
   // workflow callers retain the old untyped execution path; scoped calls still
   // require their explicit P1 invocation and cannot fall back here.
-  const legacyDesign = !options.inputContext && ['spec', 'plan'].includes(options.phase)
+  const legacyDesign = !options.inputContext && ['spec', 'plan', 'coding', 'review'].includes(options.phase)
     && indexed.contract.schema_version === '1.1'
     && loadWorkflowSpec(options.frameworkRoot, loadFrameworkConfig(options.projectRoot).active_workflow ?? 'spec-driven').schema_version !== '1.2';
   if (!legacyDesign && (indexed.contract.schema_version === '1.1') !== !!options.inputContext) {
@@ -751,8 +769,16 @@ export function resolveCapabilityInputs(options: CapabilityResolutionOptions): {
     if (!cache.has(input.id)) cache.set(input.id, resolveInput(input, options, artifactProducers, inputs));
     return cache.get(input.id)!;
   };
-  const capabilities = indexed.phase.capabilities.filter(capability => !legacyDesign || !['capability_plan_existing_design', 'capability_spec_existing_acceptance'].includes(capability.id)).map((capability) =>
-    resolveCapability(legacyDesign ? { ...capability, tracks: ['full'] } : capability, indexed.phase, options, artifactProducers, resolve));
+  let declaredCapabilities = indexed.phase.capabilities;
+  // Only old workflow invocations retain the former track contract until P7 migration.
+  if (legacyDesign && options.phase === 'coding') declaredCapabilities = [
+    { id: 'capability_coding_full_context', axis: 'functional', inputs: ['codebase', 'plan', 'contracts', 'acceptance'], tracks: ['full'], on_missing: 'fail' },
+    { id: 'capability_coding_lite_context', axis: 'functional', inputs: ['codebase', 'change'], tracks: ['lite'], on_missing: 'fail' },
+    ...indexed.phase.capabilities.filter(capability => ['capability_coding_spec_context', 'capability_coding_visual_context'].includes(capability.id)).map(capability => ({ ...capability, tracks: ['full'] as FeatureTrackName[] })),
+  ];
+  if (legacyDesign && options.phase === 'review') declaredCapabilities = indexed.phase.capabilities.filter(capability => !['capability_review_narrative_context', 'capability_review_use_cases'].includes(capability.id)).map(capability => capability.id === 'capability_review_design_context' ? { ...capability, inputs: ['spec', 'plan', 'contracts'] } : capability);
+  const capabilities = declaredCapabilities.filter(capability => !legacyDesign || !['capability_plan_existing_design', 'capability_spec_existing_acceptance'].includes(capability.id)).map((capability) =>
+    resolveCapability(legacyDesign && options.phase !== 'coding' ? { ...capability, tracks: ['full'] } : capability, indexed.phase, options, artifactProducers, resolve));
   if (inputs && options.feature) {
     const inventory = loadArtifactInventory(options.frameworkRoot);
     for (const name of inputs.context.required_outputs) {

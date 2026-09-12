@@ -34,7 +34,14 @@ export interface UpstreamChainResolution {
   degradedReason?: string;
 }
 
-export function resolveUpstreamPhaseChain(projectRoot: string, feature: string): UpstreamChainResolution {
+export function resolveUpstreamPhaseChain(projectRoot: string, feature: string, runId?: string): UpstreamChainResolution {
+  if (runId) {
+    try {
+      const { loadFrozenExecutionScope } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+      const scope = loadFrozenExecutionScope(projectRoot, feature, runId);
+      if (scope) return { chain: scope.phase_chain, degraded: false };
+    } catch (error) { return { chain: [], degraded: true, degradedReason: String(error) }; }
+  }
   try {
     /* eslint-disable @typescript-eslint/no-require-imports */
     const { loadFrameworkConfig } = require('../../config') as typeof import('../../config');
@@ -231,11 +238,12 @@ export function checkUpstreamVerdictGate(opts: {
   projectRoot: string;
   feature: string;
   phase: string;
+  runId?: string;
 }): CheckResult[] {
   const id = 'upstream_verdict_gate';
   const description =
     '跨阶段负面裁决传播门禁（上游机器裁决非 PASS / blocker 未清 / 证据链不新鲜 → 下游不得启动）';
-  const resolution = resolveUpstreamPhaseChain(opts.projectRoot, opts.feature);
+  const resolution = resolveUpstreamPhaseChain(opts.projectRoot, opts.feature, opts.runId);
   const order = resolution.chain;
   const idx = order.indexOf(opts.phase);
   if (idx < 0) {

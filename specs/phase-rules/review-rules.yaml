@@ -11,7 +11,10 @@
 
 phase: review
 version: "1.0"
-applies_to: "doc/features/{module}/review/review-report.md"
+applies_to: "**/review-report.md"
+
+# Feature 消费当前 run 的实现/设计基线；request 消费 prepare 返回的目标与报告目录。
+# 组合交付的契约、验收与蓝图 runtime 对照不因缺少叙述 spec/plan 而降级。
 
 # --------------------------------------------------------------------------
 # 结构约束 — 脚本 Harness 可自动检测

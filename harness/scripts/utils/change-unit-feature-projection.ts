@@ -122,14 +122,12 @@ function checkConstructionRefs(
       out.push(issue('change_unit_mapping_path_invalid', (error as Error).message));
       continue;
     }
-    if (planned && !plannedAllowed) {
-      out.push(issue(
-        'change_unit_mapping_planned_ref_not_allowed',
-        `${owner} 的 ${role} ref=${rawRef} 在 ${phase} 阶段必须已有真实消费落点。`,
-      ));
+    if (planned && !plannedAllowed && phase !== 'coding' && phase !== 'review') {
+      out.push(issue('change_unit_mapping_planned_ref_not_allowed', `${owner} 的 ${role} ref=${rawRef} 在 ${phase} 阶段必须已有真实消费落点。`));
       continue;
     }
-    if (planned) continue;
+    // A frozen planned path becomes checkable through its real file/symbol, not a contract rewrite.
+    if (planned && plannedAllowed) continue;
     const absolute = path.resolve(projectRoot, normalized);
     if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) {
       out.push(issue('change_unit_mapping_file_missing', `${owner} 的 ${role} 文件不存在：${normalized}`));

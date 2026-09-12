@@ -54,8 +54,10 @@ review 阶段不执行宿主包管理器依赖安装命令，也不使用 `HARNE
 
 | 输入项 | 必需 |
 |--------|------|
-| 功能模块名 / plan.md / contracts.yaml / acceptance.yaml / coding-rules.yaml | ✅ |
-| doc/architecture.md / 源代码（contracts.yaml files 列表） | ✅ |
+| 明确审查目标、代码/diff 基线与适用项目规则 | ✅；专项使用 request CLI，组合使用真实 Feature/run |
+| contracts / acceptance / 蓝图 runtime 与 design_refs | 组合交付或用户要求按设计验收时必需；来源由 P1/P3 解析 |
+| plan.md / spec.md | 仅本次有实际文档消费时读取；不得强造空文档 |
+| doc/architecture.md / 实际目标源码 | ✅，按请求范围及项目适用规则 |
 | spec.md | 可选，验证功能覆盖完整性 |
 | `paths.conventions`（缺失键用框架默认值） | 文件存在时独立必读全文，不依赖 plan 是否声明 |
 
@@ -65,13 +67,13 @@ review 阶段不执行宿主包管理器依赖安装命令，也不使用 `HARNE
 
 ## 流程骨架
 
-1. **收集审查上下文**：确认模块名（`review.module_name`：`1=确认` `2=修改`）；读 plan.md/spec.md（若存在）/architecture.md/coding-rules.yaml/contracts.yaml/acceptance.yaml；按 `contracts.yaml > files` 读全部源代码；展示审查范围摘要。
-2. **Research Sub-Phase**（Context Facts Gate·BLOCKER，Step 3 审查清单前完成，C4）：必读 Step 1 全部待审源文件 + plan/contracts/acceptance/coding-rules；复合评分 ≥60 或 L4 架构级变更 MUST subagent；追加 `<features_dir>/<feature>/context/facts.md` 的 `## phase_delta: review` 节（全部读完才置该节非空，无新增事实写 "none"）。
+1. **收集审查上下文**：先确定请求终点和基线。专项按 [request CLI](../../../docs/operations/request-harness.md) prepare→Research→报告→同一 checker 执行，不要求本次 coding。组合交付消费 P1/P3 的契约/验收及全部声明源码，逐项对照 CU design_refs、runtime flow、组件资产与惯例；缺必需对照资料仍失败。叙述文档仅在实际需要时读取。
+2. **Research Sub-Phase**（审查前完成）：读取全部目标源码及适用对照。入口指定 review 为首阶段且无有效 facts 时建立绑定本次身份/基线的 facts；有有效基线时才追加 `## phase_delta: review`（无新增写 "none"）。专项使用 request facts/reportDir，不触碰活跃 Feature 的 facts、attestation、receipt 或 events。复杂问题的独立质询仍按既有要求执行。
 3. **系统化审查**（5 子维度，详见 reference）：架构合规性（BLOCKER）→ 接口一致性（BLOCKER）→ 编码规范（MAJOR）→ 业务逻辑（MAJOR）→ 数据层（MAJOR/MINOR）；UI 需求另做视觉保真维度（详见 reference，pixel_1to1 P0 全覆盖不许抽查）。
    惯例文件存在时还须执行 reference「工程惯例核对」：以目标文件集合核对全部条目，输出全量台账；适用条目打开范例，存量违反降为 advisory。重复意见只能建议 `/conventions-bootstrap` 升格，不直接写惯例文件。
 4. **生成审查报告**：模板 `templates/review-report-template.md`，**必须包含 6 章节**：审查范围 / 审查方法 / 问题清单（编号+严重程度+分类+描述+涉及文件+修复建议）/ 问题统计 / 修复建议摘要 / 结论。问题分类用预定义类别（分层违规/接口不一致/资源引用/命名规范/硬编码/逻辑错误/异常处理/性能/安全/其他）。严重程度：BLOCKER（架构分层违规/接口签名不一致/文件缺失/资源引用缺失）/ MAJOR（命名/硬编码/异常处理/逻辑错误）/ MINOR（模拟数据隔离/风格/注释）/ INFO（改进建议）。结论：BLOCKER>0→不通过；BLOCKER=0 且 MAJOR>0→有条件通过；均 0→通过。
 5. **质量门禁自检**（10 项：审查范围明确/问题清单六列格式/严重程度四级值域/分类值域/统计一致/修复建议可操作/结论一致性/涉及文件真实存在/问题有代码证据/元数据齐全）：不通过定位问题自动修正重检。
-6. **输出与归档**：展示报告确认（`review.report_save`：`1=确认落盘` `2=修改后再落盘`）→ 保存 `<features_dir>/{module-name}/review/review-report.md`。
+6. **输出与归档**：Feature 使用既有报告与 attestation 路径及单写者规则；专项只写 prepare 返回的 reportDir/review_report。两者均记录实际覆盖与基线，review 完成不代表未完成的实现/测试义务已完成；新实现须审查其当前基线，旧 PASS 不得代替。根因归设计时沿原归因回退，不统一塞给 coding。
 
 ## 门禁清单表
 
