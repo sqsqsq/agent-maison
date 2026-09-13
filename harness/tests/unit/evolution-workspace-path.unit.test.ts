@@ -829,7 +829,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
         path.join(temp2, 'framework.config.json'),
         JSON.stringify({
           schema_version: '1.0',
-          project_name: 'proof13',
+          project_name: 'proof13', active_workflow: 'spec-driven',
           project_type: 'app',
           agent_adapter: 'claude',
           // 3.0.0 统一运行时：attach 前 reconcileRunAdapter 要求 run 的 adapter 已物化（候选 + 入口文件）

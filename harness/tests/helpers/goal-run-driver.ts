@@ -200,6 +200,7 @@ export function provisionHmosGoalFixture(root: string, feature: string): void {
   w(root, 'framework.config.json', JSON.stringify({
     schema_version: '1.1',
     project_name: 'GoalDriverHost',
+    active_workflow: 'spec-driven', // These historical recovery scenarios retain their original protocol.
     project_profile: { name: 'hmos-app' },
     paths: { features_dir: 'doc/features', docs_committed: false },
     materialized_adapters: ['cursor'],
@@ -264,6 +265,7 @@ export function setupMinimalHost(feature: string, profile: 'generic' | 'hmos-app
   w(root, 'framework.config.json', JSON.stringify({
     schema_version: '1.1',
     project_name: 'GoalDriverHost',
+    active_workflow: 'spec-driven',
     project_profile: { name: 'generic' },
     paths: { features_dir: 'doc/features', docs_committed: false },
     materialized_adapters: ['cursor'],

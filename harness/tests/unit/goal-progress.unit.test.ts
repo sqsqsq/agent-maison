@@ -86,6 +86,7 @@ function runGoalCli(
 
 function mkGoalCliProjectRoot(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'goal-progress-cli-'));
+  fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({ active_workflow: 'spec-driven' }));
   const workflowDir = path.join(root, 'framework', 'workflows');
   fs.mkdirSync(workflowDir, { recursive: true });
   fs.copyFileSync(

@@ -351,7 +351,7 @@ export function tryValidateReceipt(
   // C2：lite track 的 receipt 机制架构性不适用——短路避免无谓 subprocess spawn，
   // 且绝不能把「没有 receipt」误判为 status:'missing'（那会被上游当作待补齐的
   // 未闭环凭证反复提示；lite 本就不产生这份凭证）。
-  const track = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature));
+  const track = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature, opts?.goalIdentity?.runId));
   if (track === 'lite') {
     return {
       status: 'not_applicable',

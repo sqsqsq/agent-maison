@@ -797,8 +797,8 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
   const eventsPath = relPath(projectRoot, path.join(projectRoot, reportDir, 'events.jsonl'));
 
   // C1：链投影按 feature track（lite 走显式 lite 链）；事件链过滤放宽到 workflow 全部 feature phase
-  const progressTrack = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, manifest.feature));
-  const fallbackChain = resolveAutoChain(
+  const progressTrack = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, manifest.feature, manifest.run_id));
+  const fallbackChain = manifest.execution_scope?.phase_chain ?? manifest.phase_chain ?? resolveAutoChain(
     workflow,
     manifest.start_phase,
     manifest.end_phase,
@@ -806,7 +806,7 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     progressTrack,
   );
   const allowedPhases = [
-    ...new Set([...workflowFeaturePhases(workflow, 'full'), ...workflowFeaturePhases(workflow, 'lite')]),
+    ...new Set([...fallbackChain, ...workflowFeaturePhases(workflow, 'full'), ...workflowFeaturePhases(workflow, 'lite')]),
   ];
   const chain = resolveChainFromEvents(events, fallbackChain, allowedPhases);
 

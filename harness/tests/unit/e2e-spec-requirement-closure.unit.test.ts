@@ -120,7 +120,7 @@ function git(root: string, args: string[]): void {
 function scaffoldFeature(root: string, adapter = 'codeagent'): void {
   fs.mkdirSync(path.join(root, 'doc', 'features', 'demo', 'spec'), { recursive: true });
   fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({
-    schema_version: '1.0', project_name: 'e2e', project_profile: { name: 'generic' },
+    schema_version: '1.0', project_name: 'e2e', active_workflow: 'spec-driven', project_profile: { name: 'generic' },
     paths: { features_dir: 'doc/features', module_catalog: 'doc/module-catalog.yaml', glossary: 'doc/glossary.yaml', glossary_seed: 'doc/glossary-seed.txt', architecture_md: 'doc/architecture.md', docs_committed: false },
     materialized_adapters: [adapter],
   }), 'utf-8');

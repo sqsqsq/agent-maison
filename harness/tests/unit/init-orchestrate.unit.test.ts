@@ -1714,7 +1714,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         (written.architecture as { cross_module_exports_file: string }).cross_module_exports_file,
         'index.ets',
       );
-      assert.strictEqual(written.active_workflow, 'spec-driven');
+      assert.strictEqual(written.active_workflow, 'obligation-driven');
       assert.strictEqual(written.lifecycle_hooks_enabled, true);
       fs.rmSync(root, { recursive: true, force: true });
     },

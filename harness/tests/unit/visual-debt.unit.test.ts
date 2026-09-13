@@ -65,6 +65,7 @@ function assertEq(actual: unknown, expected: unknown, label: string): void {
 async function withTmpProject<T>(fn: (root: string) => T | Promise<T>): Promise<T> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vdebt-'));
   ensureConsumerFrameworkTree(dir);
+  fs.writeFileSync(path.join(dir, 'framework.config.json'), JSON.stringify({ active_workflow: 'spec-driven' }));
   clearFrameworkConfigCache();
   try {
     return await fn(dir);

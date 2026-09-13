@@ -396,7 +396,7 @@ function fullDiskConfig(): Record<string, unknown> {
 
 const t2a2bCases: Array<{ name: string; run: () => void }> = [
   {
-    // t2a (a)：UPDATE 走完整链路后 active_workflow / lifecycle_hooks_enabled / schema_version 逐字保留
+    // t2a (a)：UPDATE 走完整链路后 旧内置 workflow 迁移，其余配置保留
     name: 't2a(a) UPDATE 完整链路：active_workflow / lifecycle_hooks_enabled / schema_version 逐字保留',
     run: () => {
       const root = mkTmp();
@@ -407,7 +407,7 @@ const t2a2bCases: Array<{ name: string; run: () => void }> = [
         { projectRoot: root, configWritePayload: payload! },
         'overwrite',
       );
-      assert.strictEqual(out.active_workflow, 'spec-driven');
+      assert.strictEqual(out.active_workflow, 'obligation-driven');
       assert.strictEqual(out.lifecycle_hooks_enabled, true);
       assert.strictEqual(out.schema_version, '1.1');
       fs.rmSync(root, { recursive: true, force: true });
@@ -496,7 +496,7 @@ const t2a2bCases: Array<{ name: string; run: () => void }> = [
       );
       assert.strictEqual(out.project_name, 'Wallet-renamed');
       assert.strictEqual((out.paths as Record<string, unknown>).features_dir, 'custom/docs');
-      assert.strictEqual(out.active_workflow, 'spec-driven');
+      assert.strictEqual(out.active_workflow, 'obligation-driven');
       assert.strictEqual(out.schema_version, '1.1');
       // toolchain：未变更内容从磁盘基底保留；BACKFILL 只补缺失键（analyze/incremental），
       // 不覆盖磁盘已有值（daemon/parallel 与 x_vendor_ext 原样）。

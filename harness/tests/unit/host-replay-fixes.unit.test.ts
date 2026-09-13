@@ -800,7 +800,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         // 项目侧种子
         fs.writeFileSync(path.join(temp, 'framework.config.json'), JSON.stringify({
           schema_version: '1.1',
-          project_name: 'drybyte',
+          project_name: 'drybyte', active_workflow: 'spec-driven',
           materialized_adapters: ['cursor'],
           architecture: {
             outer_layers: [{ id: 'L1', can_depend_on: [], intra_layer_deps: 'forbid' }],

@@ -22,6 +22,7 @@ import {
   ChangeUnitCompletionAdapterOptions,
   ChangeUnitCompletionObservation,
   observeChangeUnitCompletion,
+  readCompletedFeatureDesign,
 } from './change-unit-completion';
 import { ChangeUnitArtifact, ChangeUnitRef, sameBlueprintIdentity } from './change-unit-model';
 import {
@@ -34,7 +35,6 @@ import {
   inspectDerivedFeatureBinding,
 } from './change-unit-path';
 import { ChangeUnitCarryForwardVerdict, evaluateChangeUnitCarryForward } from './change-unit-reconciliation';
-import { SpecLoader } from './spec-loader';
 import { validateChangeUnitFeatureProjection } from './change-unit-feature-projection';
 import { loadPhaseEvidenceManifest } from './phase-evidence-manifest';
 import { blockerChangeUnitIssues, validateChangeUnit } from './change-unit-validator';
@@ -78,7 +78,7 @@ function featureInput(
 ): ClosureFeatureInput {
   // M5A §4.3：新编码 = base64url(blueprint_id \0 change_unit_id)；物理路径经 featureFilePath SSOT。
   const featureId = deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id);
-  const spec = new SpecLoader(projectRoot).loadFeatureSpec(featureId);
+  const { spec } = readCompletedFeatureDesign(projectRoot, featureId, completion);
   const historical = !sameBlueprintIdentity(unit.component_blueprint_ref, currentBlueprintRef);
   const projectionContracts = historical
     ? normalizeHistoricalContracts(spec.contracts, currentBlueprintRef)

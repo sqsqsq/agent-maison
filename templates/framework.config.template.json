@@ -8,7 +8,7 @@
     ],
     "field_notes": {
       "schema_version": "模板顶层 schema_version；与 framework/specs/framework.config.schema.json 对齐，当前为 \"1.1\"；由 config-builder 写盘时注入，勿在 S2 configWritePayload 手写。",
-      "active_workflow": "workflow id，指向 framework/workflows/<id>.workflow.yaml；默认 \"spec-driven\"。",
+      "active_workflow": "workflow id，指向 framework/workflows/<id>.workflow.yaml；默认 \"obligation-driven\"。",
       "lifecycle_hooks_enabled": "布尔；false 时 harness-runner 跳过 lifecycle hook 派发（框架/profile/extension 三层均不执行）。",
       "project_name": "项目名；初始化 Skill 从 oh-package.json5 的 name 字段推断，缺失时回退到仓库目录名。",
       "project_type": "枚举：\"app\" | \"atomic_service\"。阶段 7 仅作扩展位预留——\"atomic_service\" 合法但不触发差异化规则；未来议题（首包大小、分包、免安装入口等）落地路线见 framework/docs/atomic-service-roadmap.md。",
@@ -59,7 +59,7 @@
 
   "schema_version": "1.1",
   "project_name": "<project_name>",
-  "active_workflow": "spec-driven",
+  "active_workflow": "obligation-driven",
   "lifecycle_hooks_enabled": true,
   "project_profile": {
     "name": "hmos-app",

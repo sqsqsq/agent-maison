@@ -8,13 +8,19 @@ import { stableStringify, loadPhaseEvidenceManifest } from '../../scripts/utils/
 import { setupGoalRuntimeHost, runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
 import { clearFrameworkConfigCache, featureFilePath } from '../../config';
 import { deriveChangeUnitFeatureId, loadCanonicalChangeUnit, asChangeUnitArtifact } from '../../scripts/utils/change-unit-path';
+import { configureFeature } from './component-closure.unit.test';
+import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
+import { prepareGoalModeRun } from '../../scripts/goal-mode-entry';
+import { resolveComponentClosureInputs } from '../../scripts/utils/component-closure-inputs';
+import { deriveComponentClosureObligations } from '../../scripts/utils/component-closure-obligations';
+import { buildChangeUnitGoalHandoff } from '../../scripts/utils/change-unit-progress-loop';
 import { observeChangeUnitCompletion } from '../../scripts/utils/change-unit-completion';
 import { verifyFeatureCompletion, verifyReusedExecutionScope, executionScopeEvidenceIssues } from '../../scripts/utils/verify-feature-completion';
 import { loadFrozenExecutionScope } from '../../scripts/utils/goal-run-creation';
 import { codingBasePath } from '../../scripts/utils/pass-snapshot';
 import * as os from 'os';
 import type { AcceptanceSpec } from '../../scripts/utils/types';
-import { resolveExecutionScope, validateExecutionScope, type ExecutionScopeInput } from '../../scripts/utils/execution-scope';
+import { resolveExecutionScope, validateExecutionScope, executionScopeFingerprint, type ExecutionScopeInput } from '../../scripts/utils/execution-scope';
 import type { WorkflowSpec } from '../../workflow-loader';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -102,7 +108,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
     for (const value of [null, {}, { schema_version: '9' }]) assert.throws(() => validateExecutionScope(value));
   } },
 ];
-async function runScopeScenario(mode: 'direct' | 'successor' | 'intent' | 'released' | 'born' | 'design-gap' | 'detached' | 'detached-harness' | 'detached-explicit' | 'request-ut' | 'testing-fail' | 'unresolved'): Promise<void> {
+async function runScopeScenario(mode: 'direct' | 'successor' | 'intent' | 'released' | 'born' | 'design-gap' | 'detached' | 'detached-harness' | 'detached-explicit' | 'request-ut' | 'testing-fail' | 'unresolved', useDefault = false, missingMapping = false): Promise<void> {
   const repo = path.resolve(__dirname, '../../..');
   const { root } = setupGoalRuntimeHost('codex');
   const frameworkRoot = path.join(root, 'framework');
@@ -115,19 +121,26 @@ async function runScopeScenario(mode: 'direct' | 'successor' | 'intent' | 'relea
     source.artifacts = source.artifacts.filter((a: { id: string }) => !['change', 'exit'].includes(a.id));
     for (const artifact of source.artifacts) { delete artifact.tracks; delete artifact.requires_by_track; artifact.obligation_provider_id = artifact.scope === 'global' ? 'obligations.project' : `obligations.${artifact.id}`; }
     fs.writeFileSync(path.join(frameworkRoot, 'workflows/scoped.workflow.yaml'), YAML.stringify(source));
+    if (useDefault) fs.copyFileSync(path.join(repo, 'workflows/obligation-driven.workflow.yaml'), path.join(frameworkRoot, 'workflows/obligation-driven.workflow.yaml'));
     const configPath = path.join(root, 'framework.config.json');
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')); config.active_workflow = 'scoped';
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')); config.active_workflow = useDefault ? 'obligation-driven' : 'scoped';
     fs.writeFileSync(configPath, JSON.stringify(config)); clearFrameworkConfigCache();
     const fixture = path.join(repo, 'harness/tests/fixtures/component-blueprint/valid');
-    fs.cpSync(path.join(fixture, 'doc/features/ledger-app-blueprint'), path.join(root, 'doc/features/ledger-app-blueprint'), { recursive: true });
+    fs.cpSync(fixture, root, { recursive: true });
     const feature = deriveChangeUnitFeatureId('ledger-app-blueprint', 'ledger-refresh');
+    configureFeature(root, loadCanonicalChangeUnit(root, 'ledger-app-blueprint', 'ledger-refresh'));
+    if (missingMapping) {
+      const file = featureFilePath(root, feature, 'contracts.yaml');
+      const contract = YAML.parse(fs.readFileSync(file, 'utf8')); contract.change_unit.predicate_mappings = [];
+      fs.writeFileSync(file, YAML.stringify(contract));
+    }
     if (mode === 'direct') {
       fs.rmSync(featureFilePath(root, feature, 'spec/spec.md'), { force: true });
       fs.rmSync(featureFilePath(root, feature, 'plan/plan.md'), { force: true });
     }
     const input = request(mode === 'request-ut' ? ['ut'] : mode === 'testing-fail' ? ['testing'] : ['direct', 'design-gap'].includes(mode) ? ['coding', 'review', 'ut'] : ['spec'], mode === 'request-ut' ? 'request' : 'feature');
     const contractsFile = featureFilePath(root, feature, 'contracts.yaml');
-    const binding = { input_id: 'contracts', source: { kind: 'artifact' as const, artifact: 'contracts@1' }, source_refs: [path.relative(root, contractsFile)], dependencies: [{ path: contractsFile, exists: true, sha256: createHash('sha256').update(fs.readFileSync(contractsFile)).digest('hex'), role: 'artifact' as const }], content_fingerprint: createHash('sha256').update(stableStringify(YAML.parse(fs.readFileSync(contractsFile, 'utf8')))).digest('hex') };
+    const binding = { input_id: 'contracts', source: { kind: 'artifact' as const, artifact: 'contracts@1' }, source_refs: [path.relative(root, contractsFile).replace(/\\/g, '/')], dependencies: [{ path: contractsFile, exists: true, sha256: createHash('sha256').update(fs.readFileSync(contractsFile)).digest('hex'), role: 'artifact' as const }], content_fingerprint: createHash('sha256').update(stableStringify(YAML.parse(fs.readFileSync(contractsFile, 'utf8')))).digest('hex') };
     input.facts.push({ id: 'design:cu', kind: 'design-context', applicability: 'required', reason: 'existing admitted CU construction projection', basis: [binding], satisfied_by: [binding] });
     const codeFile = path.join(root, '02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets');
     if (mode === 'direct') {
@@ -138,6 +151,7 @@ async function runScopeScenario(mode: 'direct' | 'successor' | 'intent' | 'relea
     if (mode === 'testing-fail') input.facts.push({ id: 'unit:impact', kind: 'unit-evidence', applicability: 'not_applicable', reason: 'fixture requests device result only', basis: [binding] });
     if (!['direct', 'design-gap', 'request-ut', 'testing-fail'].includes(mode)) input.facts.push({ id: 'device:pending', kind: 'device-evidence', applicability: 'unknown', reason: 'spec will determine device acceptance', basis: [] });
     fs.writeFileSync(featureFilePath(root, feature, 'feature.yaml'), YAML.stringify({ execution_scope: input }));
+    if (mode === 'direct') assert.deepStrictEqual(buildChangeUnitGoalHandoff(root, asChangeUnitArtifact(loadCanonicalChangeUnit(root, 'ledger-app-blueprint', 'ledger-refresh').changeUnit)).expectedChain, ['coding', 'review', 'ut']);
     if (!mode.startsWith('detached')) {
     const cli = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(repo, 'harness/scripts/goal-mode-entry.ts'), '--prepare-run', '--run-mode', 'attended', '--adapter', 'codex', '--feature', feature, '--run-id', 'p2-attended', '--requirement', 'fixture delivery', '--project-root', root, '--framework-root', frameworkRoot], { cwd: root, encoding: 'utf8', timeout: 30000, env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json') } });
     assert.equal(cli.status, 0, cli.stderr + cli.stdout);
@@ -160,7 +174,7 @@ async function runScopeScenario(mode: 'direct' | 'successor' | 'intent' | 'relea
         if (mode !== 'design-gap' || phase !== 'coding' || designGap) return null;
         designGap = true;
         const file = path.join(root, '02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets');
-        const fresh = { ...binding, input_id: 'code', source: { kind: 'derive' as const, provider_id: 'derive.codebase' as const }, source_refs: [path.relative(root, file)], dependencies: [{ path: file, exists: true, sha256: createHash('sha256').update(fs.readFileSync(file)).digest('hex'), role: 'derive' as const }] };
+        const fresh = { ...binding, input_id: 'code', source: { kind: 'derive' as const, provider_id: 'derive.codebase' as const }, source_refs: [path.relative(root, file).replace(/\\/g, '/')], dependencies: [{ path: file, exists: true, sha256: createHash('sha256').update(fs.readFileSync(file)).digest('hex'), role: 'derive' as const }] };
         const revision = request(['plan', 'coding', 'review', 'ut'], 'feature');
         revision.facts.push(...input.facts, { id: 'design:new-api', kind: 'design-decision', applicability: 'required', reason: 'new public interface requires design owner', basis: [fresh] });
         return { checks: [{ id: 'scope_design_gap', category: 'structure', description: 'new design fact', severity: 'BLOCKER', status: 'FAIL', details: 'public interface decision is missing', suggestion: 'return to plan owner', scope_revision_input: revision }] };
@@ -171,7 +185,7 @@ async function runScopeScenario(mode: 'direct' | 'successor' | 'intent' | 'relea
       afterHarnessPass: ({ phase, runId }) => {
         if (phase !== 'spec' || ['direct', 'design-gap', 'unresolved'].includes(mode)) return;
         const file = featureFilePath(root, feature, 'acceptance.yaml');
-        const fresh = { ...binding, source_refs: [path.relative(root, file)], content_fingerprint: createHash('sha256').update(stableStringify(YAML.parse(fs.readFileSync(file, 'utf8')))).digest('hex'), input_id: 'acceptance', source: { kind: 'artifact' as const, artifact: 'acceptance@1' }, dependencies: [{ path: file, exists: true, sha256: createHash('sha256').update(fs.readFileSync(file)).digest('hex'), role: 'artifact' as const }] };
+        const fresh = { ...binding, source_refs: [path.relative(root, file).replace(/\\/g, '/')], content_fingerprint: createHash('sha256').update(stableStringify(YAML.parse(fs.readFileSync(file, 'utf8')))).digest('hex'), input_id: 'acceptance', source: { kind: 'artifact' as const, artifact: 'acceptance@1' }, dependencies: [{ path: file, exists: true, sha256: createHash('sha256').update(fs.readFileSync(file)).digest('hex'), role: 'artifact' as const }] };
         const revision = request(['coding', 'review', 'ut', 'testing'], 'feature');
         revision.facts.push(...input.facts.filter(fact => fact.kind === 'design-context'), { id: 'device:pending', kind: 'device-evidence', applicability: 'required', reason: 'spec produced device acceptance', basis: [fresh] });
         fs.writeFileSync(featureFilePath(root, feature, 'spec/reports/script-report.json'), JSON.stringify({ checks: [{ id: 'spec_scope_facts', status: 'PASS', scope_revision_input: revision }] }));
@@ -236,7 +250,8 @@ async function runScopeScenario(mode: 'direct' | 'successor' | 'intent' | 'relea
     assert.equal(verified.verdict, 'VALID', JSON.stringify(verified));
     const cu = loadCanonicalChangeUnit(root, 'ledger-app-blueprint', 'ledger-refresh');
     const cuCompletion = observeChangeUnitCompletion(root, asChangeUnitArtifact(cu.changeUnit));
-    assert.equal(cuCompletion.state, 'VALID');
+    if (missingMapping) { assert.equal(cuCompletion.state, 'INVALID'); assert(cuCompletion.reasons.some(reason => reason.includes('mapping'))); return; }
+    assert.equal(cuCompletion.state, 'VALID', JSON.stringify(cuCompletion));
     assert.deepStrictEqual(cuCompletion.expectedChain, mode === 'direct' ? ['coding', 'review', 'ut'] : mode === 'design-gap' ? ['plan', 'coding', 'review', 'ut'] : ['spec', 'coding', 'review', 'ut', 'testing']);
     if (mode === 'direct') {
       const previous = loadFrozenExecutionScope(root, feature, 'p2-attended')!;
@@ -259,6 +274,15 @@ async function runScopeScenario(mode: 'direct' | 'successor' | 'intent' | 'relea
       const projection = JSON.parse(fs.readFileSync(projectionFile, 'utf8'));
       const original = path.join(root, projection.original_path);
       const record = JSON.parse(fs.readFileSync(original, 'utf8'));
+      assert.equal(record.schema_version, '1.2');
+      assert.equal(record.execution_scope_fingerprint, executionScopeFingerprint(previous));
+      const originalBytes = fs.readFileSync(original, 'utf8');
+      for (const field of [{ execution_scope_fingerprint: '0'.repeat(64) }, { schema_version: '1.1' }]) {
+        const changed = JSON.stringify({ ...record, ...field }); fs.writeFileSync(original, changed);
+        fs.writeFileSync(projectionFile, JSON.stringify({ ...projection, schema_version: field.schema_version ?? record.schema_version, original_sha256: createHash('sha256').update(changed).digest('hex') }));
+        assert.equal(verifyFeatureCompletion({ projectRoot: root, feature, expectedChain: previous.phase_chain, expectedTrack: 'full' }).verdict, 'INVALID');
+      }
+      fs.writeFileSync(original, originalBytes); fs.writeFileSync(projectionFile, JSON.stringify(projection));
       record.chain = ['ut']; record.phases = record.phases.filter((phase: { phase: string }) => phase.phase === 'ut');
       const bytes = JSON.stringify(record); fs.writeFileSync(original, bytes);
       fs.writeFileSync(projectionFile, JSON.stringify({ ...projection, original_sha256: createHash('sha256').update(bytes).digest('hex') }));
@@ -271,6 +295,50 @@ async function runScopeScenario(mode: 'direct' | 'successor' | 'intent' | 'relea
   } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
 }
 for (const mode of ['direct', 'successor', 'intent', 'released', 'born', 'design-gap', 'detached', 'detached-harness', 'detached-explicit', 'request-ut', 'testing-fail', 'unresolved'] as const) cases.push({ name: 'real prepare CLI / bridge scope lifecycle: ' + mode, run: () => runScopeScenario(mode) });
+cases.push({ name: 'P7 Feature evidence cannot credit an unmapped CU goal', run: () => runScopeScenario('direct', false, true) });
+cases.push({ name: 'P7 new default creates real attended completion and CU credit without testing', run: () => runScopeScenario('direct', true) });
+
+cases.push({ name: 'P7 two real CU runs retain distinct scopes and Component combination duties', async run() {
+  const repo = path.resolve(__dirname, '../../..');
+  const { root } = setupGoalRuntimeHost('codex');
+  const frameworkRoot = path.join(root, 'framework');
+  try {
+    for (const folder of ['harness', 'profiles', 'agents', 'skills', 'specs', 'templates', 'docs']) fs.symlinkSync(path.join(repo, folder), path.join(frameworkRoot, folder), process.platform === 'win32' ? 'junction' : 'dir');
+    fs.cpSync(path.join(repo, 'workflows'), path.join(frameworkRoot, 'workflows'), { recursive: true });
+    fs.copyFileSync(path.join(repo, 'package.json'), path.join(frameworkRoot, 'package.json'));
+    fs.cpSync(path.join(repo, 'harness/tests/fixtures/component-blueprint/valid'), root, { recursive: true });
+    const configFile = path.join(root, 'framework.config.json');
+    const config = JSON.parse(fs.readFileSync(configFile, 'utf8')); config.active_workflow = 'obligation-driven';
+    fs.writeFileSync(configFile, JSON.stringify(config)); clearFrameworkConfigCache();
+    const units = ['ledger-refresh', 'ledger-consumer'];
+    for (const [index, id] of units.entries()) {
+      const loaded = loadCanonicalChangeUnit(root, 'ledger-app-blueprint', id);
+      configureFeature(root, loaded);
+      const feature = deriveChangeUnitFeatureId('ledger-app-blueprint', id);
+      const phases = index === 0 ? ['coding', 'review', 'ut'] : ['coding', 'review', 'ut', 'testing'];
+      const design = resolveCapabilityInputs({ projectRoot: root, frameworkRoot, feature, phase: 'plan', track: 'full', inputContext: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] } }).inputs!.values.contracts;
+      assert.equal(design.state, 'resolved'); if (design.state !== 'resolved') return;
+      const candidate = request(phases, 'feature');
+      candidate.facts.push({ id: 'design', kind: 'design-context', applicability: 'required', reason: 'approved construction', basis: [design.binding], satisfied_by: [design.binding] });
+      if (index === 0) candidate.facts.push({ id: 'device', kind: 'device-evidence', applicability: 'not_applicable', reason: 'unit validation covers this unit', basis: [design.binding] });
+      fs.writeFileSync(featureFilePath(root, feature, 'feature.yaml'), YAML.stringify({ execution_scope: candidate }));
+      const runId = 'p7-' + id;
+      prepareGoalModeRun({ projectRoot: root, frameworkRoot, feature, runId, adapter: 'codex', requirement: id });
+      const result = await runGoalRuntimeChain(root, { frameworkRoot, featureId: feature, resume: runId, skipLegacySeal: true, viaHostBridge: true, adapter: 'codex' });
+      assert.equal(result.exitCode, 0, JSON.stringify(result.events.slice(-3)));
+      assert.deepStrictEqual(result.invokedPhases, phases);
+    }
+    for (const [index, id] of units.entries()) {
+      const observation = observeChangeUnitCompletion(root, asChangeUnitArtifact(loadCanonicalChangeUnit(root, 'ledger-app-blueprint', id).changeUnit));
+      assert.equal(observation.state, 'VALID', JSON.stringify(observation));
+      assert.equal(observation.expectedChain?.includes('testing'), index === 1);
+    }
+    const inputs = resolveComponentClosureInputs(root, 'ledger-app-blueprint');
+    assert(deriveComponentClosureObligations(root, inputs).some(o => o.required && o.evidence_level === 'integration_combination'), 'CU completion removed combination evidence');
+    assert(!fs.existsSync(featureFilePath(root, deriveChangeUnitFeatureId('ledger-app-blueprint', units[0]), 'testing/reports/summary.json')));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+} });
+
 export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
   for (const test of cases) { try { await test.run(); results.push({ name: test.name, ok: true }); } catch (error) { results.push({ name: test.name, ok: false, error: String(error) }); } }

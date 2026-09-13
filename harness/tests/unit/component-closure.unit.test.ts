@@ -114,7 +114,7 @@ export function prepareCompleteProject(projectRoot: string, mutateBlueprint?: (b
   }
 }
 
-function configureFeature(
+export function configureFeature(
   projectRoot: string,
   loaded: ReturnType<typeof enumerateCanonicalChangeUnits>[number],
 ): void {

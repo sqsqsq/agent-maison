@@ -10,9 +10,10 @@ import { auditSchemaSupport, validateLiteSchema } from './lite-json-schema';
 import { stableStringify } from './phase-evidence-manifest';
 import { validateProjectRelativePath } from './project-relative-path';
 import { SpecLoader } from './spec-loader';
-import { loadWorkflowSpec } from '../../workflow-loader';
+import { loadWorkflowSpec, workflowForExistingRun } from '../../workflow-loader';
+import { loadGoalManifestFromRun } from './goal-manifest';
 import { deriveBlueprintSkillInput } from './blueprint-skill-projection';
-import { artifactReadCandidatePaths, catalogPath, featureFilePath, loadFrameworkConfig } from '../../config';
+import { artifactReadCandidatePaths, catalogPath, featureFilePath, loadFrameworkConfig, relFeaturesDir } from '../../config';
 import type { CheckResult } from './types';
 import { normalizeDeviceTestCases } from './device-test-case-kernel';
 import {
@@ -126,6 +127,7 @@ export interface CapabilityResolutionOptions {
   feature?: string;
   phase: string;
   track: FeatureTrackName;
+  goalRunId?: string;
   /** Goal/entry input is normalized before resolution; resolver never asks interactively. */
   requirement?: string;
   /** plan c4e8a1f7 T2：需求来源列表（goal manifest 冻结值；derive.visual-reference 的
@@ -751,7 +753,12 @@ export function resolveCapabilityInputs(options: CapabilityResolutionOptions): {
   // require their explicit P1 invocation and cannot fall back here.
   const legacyDesign = !options.inputContext && ['spec', 'plan', 'coding', 'review', 'ut', 'testing'].includes(options.phase)
     && indexed.contract.schema_version === '1.1'
-    && loadWorkflowSpec(options.frameworkRoot, loadFrameworkConfig(options.projectRoot).active_workflow ?? 'spec-driven').schema_version !== '1.2';
+    && (() => {
+      const workflow = loadWorkflowSpec(options.frameworkRoot, loadFrameworkConfig(options.projectRoot).active_workflow ?? 'spec-driven');
+      return (options.goalRunId
+        ? workflowForExistingRun(workflow, loadGoalManifestFromRun(options.projectRoot, options.goalRunId, { feature: options.feature, featuresDir: relFeaturesDir(options.projectRoot) }), options.frameworkRoot)
+        : workflow).schema_version !== '1.2';
+    })();
   if (!legacyDesign && (indexed.contract.schema_version === '1.1') !== !!options.inputContext) {
     throw new Error('[capability-resolution] contract/invocation schema mismatch');
   }

@@ -395,13 +395,13 @@ const cases: Case[] = [
     },
   },
   {
-    name: 'manifest 1.1：active workflow 的 full/lite 并集与自定义 Feature phase',
+    name: 'manifest 1.1：active workflow 的现代默认与自定义 Feature phase',
     run: () => {
       const defaults = mkTmp();
       const defaultRoot = path.join(defaults, 'doc', 'extensions');
       write(path.join(defaultRoot, 'manifest.yaml'), 'schema_version: "1.1"\nname: default-phases\nprovides: {}\n');
       const defaultBundle = loadInstanceExtensions(defaults);
-      for (const phase of ['spec', 'plan', 'coding', 'review', 'ut', 'testing', 'change', 'exit']) {
+      for (const phase of ['spec', 'plan', 'coding', 'review', 'ut', 'testing']) {
         assert(defaultBundle.featurePhases.includes(phase), `default phase missing: ${phase}`);
       }
 

@@ -7,7 +7,7 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 import { OBLIGATION_PROVIDERS } from './scripts/utils/execution-scope';
 import type { FrameworkConfig } from './config';
-import { loadFrameworkConfig } from './config';
+import { loadFrameworkConfig, DEFAULT_ACTIVE_WORKFLOW } from './config';
 import { inferRepoLayout } from './repo-layout';
 
 export interface WorkflowArtifact {
@@ -58,11 +58,17 @@ export function resolveWorkflowSpec(
   const name =
     (opts?.workflowOverride && opts.workflowOverride.trim()) ||
     cfg.active_workflow?.trim() ||
-    'spec-driven';
+    DEFAULT_ACTIVE_WORKFLOW;
   const frameworkRoot =
     (opts?.frameworkRoot && opts.frameworkRoot.trim()) ||
     inferRepoLayout(projectRoot).frameworkRoot;
   return loadWorkflowSpec(frameworkRoot, name);
+}
+
+/** Only the historical built-in protocol falls back; custom workflow upgrades need their own compatible definition. */
+export function workflowForExistingRun(spec: WorkflowSpec, manifest: { execution_scope?: unknown }, frameworkRoot: string): WorkflowSpec {
+  if (spec.name === DEFAULT_ACTIVE_WORKFLOW && spec.schema_version === '1.2' && !Object.prototype.hasOwnProperty.call(manifest, 'execution_scope')) return loadWorkflowSpec(frameworkRoot, 'spec-driven');
+  return spec;
 }
 
 export function listWorkflowPhases(spec: WorkflowSpec): string[] {

@@ -12,6 +12,7 @@ import { isInsideProjectRoot } from './project-relative-path';
 import type { CleanupResult } from './init-sync-telemetry';
 
 export const LEGACY_SKILL_BRIDGE_IDS = [
+  'change-lite',
   // 设计入口已收敛至 component-design；P1 仅作内部工作流。
   'app-component-blueprint',
   // 00 / 0 前缀

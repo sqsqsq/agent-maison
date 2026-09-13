@@ -11,7 +11,8 @@ import {
   featureFilePath,
   featurePhaseReportsDir,
 } from '../../config';
-import { resolveWorkflowSpec } from '../../workflow-loader';
+import { loadGoalManifestFromRun } from './goal-manifest';
+import { resolveWorkflowSpec, workflowForExistingRun } from '../../workflow-loader';
 import {
   recomputePhaseEvidenceStaleness,
   phaseEvidenceManifestPath,
@@ -443,12 +444,14 @@ function collectPrunedPropagations(
       .localeCompare([b.producer_phase, b.producer_capability, b.downstream_phase, b.downstream_capability, b.input_id].join('|')));
 }
 export function observeFeatureState(options: AssessFeatureOptions): AssessObservation {
-  const workflow = resolveWorkflowSpec(options.projectRoot, {
+  let workflow = resolveWorkflowSpec(options.projectRoot, {
     frameworkRoot: options.frameworkRoot,
   });
   const scope = options.runId ? loadFrozenExecutionScope(options.projectRoot, options.feature, options.runId) : undefined;
-  const track = scope ? 'full' : resolveFeatureTrack(loadFeatureTrackDecl(options.projectRoot, options.feature));
-  const allPhases = scope ? executionCompletionPhases(scope) : resolvePhaseChain(workflow, track).featureOrdered.map(String);
+  const run = options.runId && fs.existsSync(featureFilePath(options.projectRoot, options.feature, 'goal-runs/' + options.runId + '/manifest.json')) ? loadGoalManifestFromRun(options.projectRoot, options.runId, { feature: options.feature }) : undefined;
+  if (run) workflow = workflowForExistingRun(workflow, run, options.frameworkRoot ?? path.resolve(__dirname, '../../..'));
+  const track = scope ? 'full' : resolveFeatureTrack(loadFeatureTrackDecl(options.projectRoot, options.feature, options.runId));
+  const allPhases = scope ? executionCompletionPhases(scope) : run?.phase_chain ?? resolvePhaseChain(workflow, track).featureOrdered.map(String);
   if (allPhases.length === 0) throw new Error(`[assess] workflow=${workflow.name} track=${track} 无 feature phase`);
   const goalEnd = scope ? allPhases[allPhases.length - 1] : options.goalEnd ?? allPhases[allPhases.length - 1];
   const phases = sliceThrough(allPhases, goalEnd);

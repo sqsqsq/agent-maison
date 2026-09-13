@@ -116,6 +116,7 @@ async function withChainProject(
   const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-mg-'));
   try {
     fs.cpSync(FIXTURE_PROJECT, projectRoot, { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'framework.config.json'), JSON.stringify({ active_workflow: 'spec-driven' }));
     fs.cpSync(path.join(REPO_ROOT, 'workflows'), path.join(projectRoot, 'framework', 'workflows'), { recursive: true });
     if (options.prepared !== false) prepareCompleteProject(projectRoot, options.mutateBlueprint);
     options.mutateProject?.(projectRoot);

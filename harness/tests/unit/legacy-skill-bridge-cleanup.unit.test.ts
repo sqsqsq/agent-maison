@@ -41,6 +41,25 @@ function baseConfig(paths?: Partial<FrameworkConfig['paths']>): FrameworkConfig 
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
+  { name: 'P7 UPDATE backs up retired change-lite for all adapters without touching run history', run() {
+    const root = mkTmp();
+    try {
+      const adapters = ['cursor','claude','codeagent','codex','opencode','chrys','generic'];
+      const config = baseConfig();
+      const entries = collectLegacySkillBridgePaths({ projectRoot: root, materializedAdapters: adapters, config, mode: 'update' }).filter(item => item.legacyId === 'change-lite');
+      assert(entries.length >= 7, JSON.stringify(entries));
+      for (const entry of entries) {
+        const file = path.join(root, entry.relPosix, ...(entry.relPosix.endsWith('.md') ? [] : ['SKILL.md']));
+        fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, 'old public entry');
+      }
+      const history = path.join(root, 'doc/features/live/goal-runs/old/manifest.json');
+      fs.mkdirSync(path.dirname(history), { recursive: true }); fs.writeFileSync(history, 'historical bytes');
+      const result = applyLegacySkillBridgeCleanup({ projectRoot: root, materializedAdapters: adapters, config, mode: 'update' });
+      assert(result.backupRelDir);
+      for (const entry of entries) { assert(!fs.existsSync(path.join(root, entry.relPosix))); assert(fs.existsSync(path.join(root, result.backupRelDir!, entry.relPosix))); }
+      assert.equal(fs.readFileSync(history, 'utf8'), 'historical bytes');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  } },
   {
     name: 'collectLegacySkillBridgePaths：cursor+generic 不含 claude',
     run: () => {

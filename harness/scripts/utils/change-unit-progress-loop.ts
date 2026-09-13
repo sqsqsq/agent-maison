@@ -138,7 +138,7 @@ export function deriveChangeUnitProgressionDecision(
 export function buildChangeUnitGoalHandoff(projectRoot: string, unit: ChangeUnitArtifact): ChangeUnitGoalHandoff {
   const loaded = loadCanonicalChangeUnit(projectRoot, unit.blueprint_id, unit.change_unit_id);
   const featureId = deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id);
-  const expected = resolveChangeUnitExpectedExecution(projectRoot, featureId);
+  const expected = resolveChangeUnitExpectedExecution(projectRoot, featureId, true);
   const ref = createChangeUnitRef(loaded);
   return {
     featureId,

@@ -100,9 +100,9 @@ flowchart LR
 - **生成与验证分离**：生成者和验证者**可以是不同模型**（甚至不同厂商），消除"考生自己批改试卷"的偏差
 - **机制 > 文字**：文字里的"应该 / 禁止"靠不住，要落到 `check-*.ts` + `verify-*.md` 可执行的硬门禁
 
-### 1.3.1 默认 workflow：Harness phase DAG（spec-driven）
+### 1.3.1 默认 workflow：按义务选择阶段（obligation-driven）
 
-以下与 **[`spec-driven.workflow.yaml`](../workflows/spec-driven.workflow.yaml)** 一致：**圆圈**表示全局 phase（不要求 `--feature`）；**方框**为功能 phase（必须 `--feature`）。边标注 `requires` 依赖。
+默认定义见 **[obligation-driven.workflow.yaml](../workflows/obligation-driven.workflow.yaml)**；下图仅表示资料关联，实际执行由 P2 冻结范围选择，不自动执行上游生产者。**圆圈**表示全局 phase（不要求 `--feature`）；**方框**为功能 phase（必须 `--feature`）。边标注 `requires` 依赖。
 
 ```mermaid
 flowchart LR
@@ -148,7 +148,7 @@ framework 默认 → project_profile → active_workflow YAML → doc/extensions
 |----|----------|------|
 | **framework 核心** | `skills/`、`specs/`、`harness/` | 通用阶段流程与脚本门禁 |
 | **profile** | `profiles/<name>/` | 宿主 toolchain（如 hmos-app 的 hvigor/hdc/Hylyre）、phase-rules overlay、Skill addendum |
-| **workflow** | `workflows/*.yaml` | phase DAG 与 `requires` 依赖（默认 `spec-driven`） |
+| **workflow** | `workflows/*.yaml` | 阶段声明与输入依赖（默认 obligation-driven；旧定义仅供恢复） |
 | **instance extension** | 实例根 `doc/extensions/` | 业务 Skill、audience knowledge、lifecycle hooks、MCP produces 与 Feature phase bindings |
 
 实现入口：`profile-loader.ts`、`extension-loader.ts`、`capability-registry.ts`。协议 SSOT 见 [`concepts/extensibility.md`](concepts/extensibility.md)。

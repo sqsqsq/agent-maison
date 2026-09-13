@@ -47,7 +47,7 @@ function setupMultiCandidateHost(): { root: string } {
   git(root, ['config', 'commit.gpgsign', 'false']);
   writeFile(root, 'framework.config.json', JSON.stringify({
     schema_version: '1.1',
-    project_name: 'PSInt',
+    project_name: 'PSInt', active_workflow: 'spec-driven',
     project_profile: { name: 'hmos-app', sub_variant: 'app' },
     architecture: {
       outer_layers: [{ id: '02-Feature', can_depend_on: [], intra_layer_deps: 'dag' }],

@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { loadWorkflowSpec } from '../../workflow-loader';
 import {
   AttendedGoalPhaseExecutor,
   createPhaseExecutionContext,
@@ -78,6 +79,35 @@ function canonicalOf(probe: RunProbe): ReturnType<typeof projectCanonicalLifecyc
 }
 
 const cases: Case[] = [
+  { name: 'P7 old lite run resumes its frozen chain after default upgrade and candidate track changes', run: async () => {
+    const root = setupGoalRuntimeHost('codex').root;
+    try {
+      const featureDir = path.join(root, 'doc/features/bc-openCard');
+      fs.writeFileSync(path.join(featureDir, 'feature.yaml'), 'track: lite\n');
+      fs.writeFileSync(path.join(featureDir, 'change.md'), '# Change\n## 意图\n维护\n## Scope\n```yaml\nin_scope_modules: [FinancialCard]\nout_of_scope_modules: []\nrationale: legacy fixture\n```\n## 验收清单\n- [x] 完成\n## 任务\n- [x] 实现\n');
+      const first = await runGoalRuntimeChain(root, { adapter: 'codex', runId: 'legacy-lite-upgrade', freshStartPhase: 'change', freshEndPhase: 'exit', onHarnessSummary: ({phase}) => phase === 'coding' ? { blockers: [{ id: 'repair', severity: 'BLOCKER', status: 'FAIL', classification: 'code_regression', details_excerpt: 'pause before upgrade', actionability: 'agent_fixable' }] } : null });
+      assert(first.exitCode !== 0, 'fixture did not pause');
+      const before = loadGoalManifestFromRun(root, 'legacy-lite-upgrade', {feature:'bc-openCard'});
+      assert(before.phase_chain?.join(',') === 'change,coding,exit', JSON.stringify(before.phase_chain));
+      const eventsFile = path.join(first.reportDir, 'events.jsonl');
+      fs.writeFileSync(eventsFile, fs.readFileSync(eventsFile, 'utf8').split('\n').map(line => {
+        if (!line.trim()) return line;
+        const event = JSON.parse(line);
+        if (event.type === 'run_end') event.ts = new Date(Date.parse(event.ts) - 10 * 60_000).toISOString();
+        return JSON.stringify(event);
+      }).join('\n'));
+      fs.writeFileSync(path.join(featureDir, 'feature.yaml'), 'track: full\n');
+      const configFile = path.join(root, 'framework.config.json');
+      const config = JSON.parse(fs.readFileSync(configFile, 'utf8')); config.active_workflow = 'obligation-driven';
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      const resumed = await runGoalRuntimeChain(root, { adapter:'codex', resume:'legacy-lite-upgrade', forceResume:true, workflowTransform: () => loadWorkflowSpec(path.resolve(__dirname,'../../..'), 'obligation-driven') });
+      assert(resumed.invokedPhases.includes('exit'), JSON.stringify(resumed));
+      assert(!resumed.invokedPhases.some(phase => ['spec','plan','review','ut','testing'].includes(phase)), 'legacy chain expanded');
+      const after = loadGoalManifestFromRun(root, 'legacy-lite-upgrade', {feature:'bc-openCard'});
+      assert(JSON.stringify(after.phase_chain) === JSON.stringify(before.phase_chain), 'birth chain changed');
+      assert(resumed.events.filter(e=>e.type==='agent_invoke_start').length >= first.events.filter(e=>e.type==='agent_invoke_start').length, 'budget reset');
+    } finally { fs.rmSync(root,{recursive:true,force:true}); }
+  } },
   {
     // V7（plan 3a7f9c12 D2.5）：goal 失败回喂必须把"写完报告即回传"讲清楚——
     // 少了这段，agent 只看到一串 blocker 就去改产品（这些失败恰恰要先由 verifier

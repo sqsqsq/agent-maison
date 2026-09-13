@@ -64,7 +64,7 @@ import { tryLoadUtSourceRootResolver } from '../profile-host-loader';
 import { runCapabilityPreflight, emitHarnessPreflightGap } from './utils/capability-preflight';
 import { preflightDeviceTestEvidenceCapability } from '../capability-registry';
 import type { HarnessResolvedProfile, ProviderRef, VisionMode } from './utils/types';
-import { resolveWorkflowSpec } from '../workflow-loader';
+import { workflowForExistingRun, resolveWorkflowSpec } from '../workflow-loader';
 import { resolveContextAdapterImageInput, isFreshCanaryForExecution } from './utils/multimodal-probe';
 import { loadLocalConfig as loadFrameworkLocalConfig } from './utils/framework-local-config';
 import {
@@ -467,14 +467,12 @@ function productLayerDirsOf(projectRoot: string): string[] {
   }
 }
 
-const PHASE_SKILL_REL: Record<FeaturePhase, string> = {
-  spec: 'skills/feature/spec/SKILL.md',
-  plan: 'skills/feature/plan/SKILL.md',
-  coding: 'skills/feature/coding/SKILL.md',
-  review: 'skills/feature/code-review/SKILL.md',
-  ut: 'skills/feature/business-ut/SKILL.md',
-  testing: 'skills/feature/device-testing/SKILL.md',
-};
+function phaseSkillPath(frameworkRoot: string, phase: FeaturePhase): string {
+  const { phaseContractIndex, loadFeatureContracts } = require('./utils/skill-contract') as typeof import('./utils/skill-contract');
+  const entry = phaseContractIndex(loadFeatureContracts(frameworkRoot)).get(phase);
+  if (!entry) throw new Error('phase has no Skill contract: ' + phase);
+  return path.join(path.dirname(entry.contract.source_path), entry.contract.skill_doc);
+}
 
 const LOCK_HEARTBEAT_MS = 60_000;
 const RESUME_COOLDOWN_MINUTES = 5;
@@ -3535,7 +3533,7 @@ export function buildPhasePrompt(
    */
   attended?: boolean,
 ): string {
-  const skillAbs = path.join(frameworkRoot, PHASE_SKILL_REL[phase]);
+  const skillAbs = phaseSkillPath(frameworkRoot, phase);
   const parts = [
     `# Goal run phase: ${phase}`,
     '',
@@ -3554,7 +3552,7 @@ export function buildPhasePrompt(
       ? ['', ...renderPhaseWriteBoundaryGuidance(phaseWriteBoundary, String(phase))]
       : []),
     '',
-    `Read and follow the phase skill: ${PHASE_SKILL_REL[phase]}`,
+    `Read and follow the phase skill: ${path.relative(frameworkRoot, skillAbs).replace(/\\/g, '/')}`,
     `Skill absolute path: ${skillAbs}`,
     // plan a7c3e9d2：作者动笔前的实例扩展输入（d8f4b7e2 自陈的"通用注入"由此落地）；读取指令放这里，formatter 只负责索引与绑定块。
     ...(extensionInputs
@@ -4486,7 +4484,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
   }
 
   const cfg = loadFrameworkConfig(projectRoot);
-  const workflow = (injectedWorkflowResolver ?? resolveWorkflowSpec)(
+  let workflow = (injectedWorkflowResolver ?? resolveWorkflowSpec)(
     projectRoot,
     { config: cfg, frameworkRoot },
   );
@@ -4571,6 +4569,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     );
   }
 
+  if (argv.resume || attachCreatedRunId) workflow = workflowForExistingRun(workflow, manifest, frameworkRoot);
   const requestedExecutionScope = !argv.resume && !attachCreatedRunId
     ? manifest.execution_scope ?? (workflow.schema_version === '1.2' ? resolveFeatureExecutionScope(projectRoot, manifest.feature, workflow, frameworkRoot) : undefined)
     : undefined;
@@ -4842,7 +4841,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
   const dryRun = dryRunMode;
   if (dryRun) setAppendEventBaseFields({ dry_run: true }); // T1b：dry 事件全量打标
   const forceResume = Boolean(argv['force-resume']);
-  const goalTrack = manifest.execution_scope || workflow.schema_version === '1.2' ? 'full' : resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, manifest.feature));
+  const goalTrack = manifest.execution_scope || workflow.schema_version === '1.2' ? 'full' : resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, manifest.feature, manifest.run_id));
   if (Object.keys(process.env).some(key => key.toUpperCase() === 'HARNESS_DIFF_BASE_REF')) {
     console.warn(
       '[goal-runner] 已忽略并从 goal 子进程环境剥离 HARNESS_DIFF_BASE_REF；' +
@@ -6636,7 +6635,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // 两个边界共用同一实现（codex P1：不另建检测器）。返回 true = 已处置（回退或
         // halt），调用方须 `phaseDone = true; continue;`。
         const runPlanAuthorityGate = (boundary: 'pre_spawn' | 'post_agent'): boolean => {
-          if (dryRun || phase !== ('coding' as FeaturePhase)) return false;
+          if (dryRun || phase !== ('coding' as FeaturePhase) || (!manifest.execution_scope && goalTrack === 'lite')) return false;
+          // Legacy lite authorization remains with change scope and its original checks; it never owned plan closure.
           // runner-owned-machine-facts 裁剪（codex 定案）：授权=仓内 fresh 的 plan
           // closure（recomputePhaseEvidenceStaleness 同一把尺），跨 run 稳定——fresh
           // --start coding 无需本 run 快照即可开工；pass snapshot 只承担同阶段
@@ -6891,7 +6891,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const vars: InvokeTemplateVars = {
           PROMPT_FILE: promptPath,
           PROMPT: prompt,
-          SKILL_PATH: path.join(frameworkRoot, PHASE_SKILL_REL[phase]),
+          SKILL_PATH: phaseSkillPath(frameworkRoot, phase),
           PROJECT_ROOT: projectRoot,
           FRAMEWORK_ROOT: frameworkRoot,
           FEATURE: manifest.feature,

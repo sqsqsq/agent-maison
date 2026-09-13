@@ -7,6 +7,7 @@ import * as os from 'os';
 import * as path from 'path';
 import {
   loadWorkflowSpec,
+  workflowForExistingRun,
   resolveWorkflowSpec,
   listWorkflowPhases,
   isPhaseGlobalInWorkflow,
@@ -32,6 +33,14 @@ interface Case {
 }
 
 const cases: Case[] = [
+  { name: 'new default excludes retired phases; old runs retain their built-in protocol', run() {
+    const modern = loadWorkflowSpec(FRAMEWORK_ROOT, 'obligation-driven');
+    assert(modern.schema_version === '1.2', 'modern schema');
+    assert(!modern.artifacts.some(a => ['change','exit'].includes(a.id)), 'retired phase exposed');
+    const legacy = workflowForExistingRun(modern, {}, FRAMEWORK_ROOT);
+    assert(legacy.schema_version === '1.1' && legacy.artifacts.some(a => a.id === 'exit'), 'legacy definition missing');
+    assert(workflowForExistingRun(modern, { execution_scope: null }, FRAMEWORK_ROOT) === modern, 'corrupt new field downgraded');
+  } },
   {
     name: 'loadWorkflowSpec(spec-driven): schema / name / artifact 数量',
     run: () => {
@@ -78,16 +87,16 @@ const cases: Case[] = [
     },
   },
   {
-    name: 'resolveWorkflowSpec: 默认回落 spec-driven',
+    name: 'resolveWorkflowSpec: 默认回落 obligation-driven',
     run: () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-resolve-'));
       fs.mkdirSync(path.join(dir, 'framework', 'workflows'), { recursive: true });
       fs.copyFileSync(
-        path.join(FRAMEWORK_ROOT, 'workflows', 'spec-driven.workflow.yaml'),
-        path.join(dir, 'framework', 'workflows', 'spec-driven.workflow.yaml'),
+        path.join(FRAMEWORK_ROOT, 'workflows', 'obligation-driven.workflow.yaml'),
+        path.join(dir, 'framework', 'workflows', 'obligation-driven.workflow.yaml'),
       );
       const spec = resolveWorkflowSpec(dir, {});
-      assert(spec.name === 'spec-driven', 'fallback name');
+      assert(spec.name === 'obligation-driven', 'fallback name');
     },
   },
   {

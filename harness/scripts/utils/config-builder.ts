@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import {
+  DEFAULT_ACTIVE_WORKFLOW,
   type FrameworkConfig,
   validateFrameworkConfigWriteCandidate,
 } from '../../config';
@@ -273,6 +274,7 @@ function applyUpdateCanonicalization(
   merged: Record<string, unknown>,
   profileName: string,
 ): void {
+  if (merged.active_workflow === 'spec-driven') merged.active_workflow = DEFAULT_ACTIVE_WORKFLOW;
   const arch = merged.architecture;
   if (isPlainObject(arch)) {
     // cross_module_exports_file 已知大小写变体归一（旧 derive 的既有行为，写盘单点收口）

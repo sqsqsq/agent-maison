@@ -26,6 +26,7 @@ import { initializeFidelityRouting } from '../../scripts/utils/goal-preflight';
 import { spawnSync } from 'child_process';
 import { readScopeAcceptance } from '../../scripts/utils/feature-track';
 import { checkAcceptanceContent } from '../../scripts/utils/check-acceptance';
+import { collectCleanPassIssues } from '../../scripts/utils/verify-feature-completion';
 import type { UnitCaseResult } from '../run-unit';
 
 const frameworkRoot = path.resolve(__dirname, '../../..');
@@ -66,6 +67,25 @@ export function fixture(): { root: string; feature: string; blueprintFile: strin
   return { root, feature, blueprintFile, cuFile, bind };
 }
 const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Promise<void> }> = [
+  { name: 'P7 completion retains derived P0 device responsibility without materialized acceptance', run(f) {
+    const blueprint = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    const unit = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));
+    const target = asRecord(resolveBlueprintTarget(blueprint, unit.design_refs[0].target))!;
+    const acceptance = target.acceptance as import('../../scripts/utils/types').AcceptanceSpec;
+    fs.writeFileSync(path.join(f.root, 'request.md'), '刷新后显示余额');
+    Object.assign(acceptance.criteria[0], { ut_layer: 'device', device_focus: '余额显示', linked_flow: 'refresh', requirement_ref: { source_path: 'request.md', snippet: '刷新后显示余额' }, checkpoint: { pre_screen: 'before', action: { type: 'touch', target_element_id: 'refresh' }, post_screen: 'after', required_element_ids: ['balance'] } });
+    Object.assign(acceptance, { flows: { refresh: { screens: ['before', 'after'] } } });
+    fs.writeFileSync(f.blueprintFile, YAML.stringify(blueprint)); f.bind();
+    for (const materialized of [false, true]) {
+      if (materialized) materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot);
+      const resolved = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'spec', track: 'full', requirement: '刷新后显示余额', inputContext: { schema_version: '1.1', subject: { feature: f.feature }, obligations: {}, required_outputs: [] } }).inputs!.values.acceptance;
+      assert.equal(resolved.state, 'resolved', JSON.stringify(resolved)); if (resolved.state !== 'resolved') return;
+      const workflow: WorkflowSpec = { schema_version: '1.2', name: 'p7', artifacts: ['spec','plan','coding','review','ut','testing'].map(id => ({ id, scope: 'feature', requires: [], obligation_provider_id: 'obligations.' + id })) };
+      const scope = resolveExecutionScope({ request: { completion_target: 'feature', requested_results: ['balance'], requested_phases: ['testing'] }, facts: [], contract_fingerprints: [] }, workflow, { value: acceptance, binding: resolved.binding });
+      const checks = collectCleanPassIssues({ projectRoot: f.root, feature: f.feature, frameworkRoot, chain: scope.phase_chain, executionScope: scope });
+      assert(checks.some(check => check.condition === 'runtime_step_evidence'), JSON.stringify(checks));
+    }
+  } },
   { name: 'coding and review consume blueprint runtime with real planned targets and no narrative documents', run(f) {
     const source = path.join(f.root, 'src/ledger/LedgerFeature.ets');
     fs.mkdirSync(path.dirname(source), { recursive: true }); fs.writeFileSync(source, 'export class LedgerFeature { run(): number { return 42; } }\n');

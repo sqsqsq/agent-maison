@@ -1,3 +1,4 @@
+export const DEFAULT_ACTIVE_WORKFLOW = 'obligation-driven';
 // ============================================================================
 // Framework Config 加载器（架构 DSL + 可覆盖路径的统一入口）
 // ============================================================================
@@ -448,7 +449,7 @@ export interface FrameworkConfig {
   coding?: CodingHarnessConfig;
   /**
    * Harness workflow 名称（无后缀），对应 `framework/workflows/<name>.workflow.yaml`。
-   * 默认 `spec-driven`。
+   * 默认 `obligation-driven`。
    */
   active_workflow?: string;
   /**
@@ -863,7 +864,7 @@ function buildDefaultConfig(profileName = 'hmos-app'): FrameworkConfig {
     architecture: architectureDefault,
     paths: mergeAgentBundlePathDefaults({ ...pathsDefault }, agentAdapter),
     state_machine: { ...DEFAULT_STATE_MACHINE },
-    active_workflow: 'spec-driven',
+    active_workflow: DEFAULT_ACTIVE_WORKFLOW,
     lifecycle_hooks_enabled: true,
   };
 }
@@ -1090,7 +1091,7 @@ export function normalizeConfig(raw: Partial<FrameworkConfig>): FrameworkConfig 
     active_workflow:
       typeof raw.active_workflow === 'string' && raw.active_workflow.trim().length > 0
         ? raw.active_workflow.trim()
-        : fallback.active_workflow ?? 'spec-driven',
+        : fallback.active_workflow ?? DEFAULT_ACTIVE_WORKFLOW,
     lifecycle_hooks_enabled: raw.lifecycle_hooks_enabled !== false,
     evidence_profile: raw.evidence_profile === 'balanced' ? 'balanced' : undefined,
     project_scale: raw.project_scale === 'small' ? 'small' : undefined,

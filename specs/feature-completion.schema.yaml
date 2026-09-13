@@ -1,0 +1,45 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: Runner-owned Feature completion
+x-authority: "Writer and versioned validation: harness/scripts/utils/verify-feature-completion.ts. Shape does not prove completion."
+type: object
+required: [schema_version, feature, generated_at, run_id, workflow_track, chain, artifact_hashes, requirement_sha256, review_attestation_aggregate, testing_source_aggregate, phases, parent_run_id, supersedes]
+properties:
+  schema_version: { enum: ["1.1", "1.2"] }
+  feature: { type: string, minLength: 1 }
+  generated_at: { type: string }
+  run_id: { type: string, minLength: 1 }
+  workflow_track: { type: string, minLength: 1 }
+  execution_scope_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+  chain:
+    type: array
+    minItems: 1
+    items: { type: string }
+  artifact_hashes:
+    type: object
+    required: [spec_md, acceptance_yaml, contracts_yaml]
+    properties:
+      spec_md: { type: [string, "null"] }
+      acceptance_yaml: { type: [string, "null"] }
+      contracts_yaml: { type: [string, "null"] }
+  requirement_sha256: { type: [string, "null"] }
+  review_attestation_aggregate: { type: [string, "null"] }
+  testing_source_aggregate: { type: [string, "null"] }
+  phases:
+    type: array
+    items:
+      type: object
+      required: [phase, run_id, attempt, gate_fingerprint, receipt_sha256, evidence_manifest_aggregate]
+      properties:
+        phase: { type: string }
+        run_id: { type: string }
+        attempt: { type: [string, "null"] }
+        gate_fingerprint: { type: [string, "null"] }
+        receipt_sha256: { type: [string, "null"] }
+        evidence_manifest_aggregate: { type: [string, "null"] }
+  parent_run_id: { type: [string, "null"] }
+  supersedes: { type: array, items: { type: string } }
+allOf:
+  - if:
+      properties: { schema_version: { const: "1.2" } }
+    then:
+      required: [execution_scope_fingerprint]

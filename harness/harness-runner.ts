@@ -329,6 +329,7 @@ export function resolveHarnessFidelityContextFields(input: {
     ),
   };
 }
+import { workflowForExistingRun } from './workflow-loader';
 import { resolveExecutionScope } from './scripts/utils/execution-scope';
 import { resolveAuthoritativePath } from './scripts/utils/visual-source-resolver';
 import { parseUiChangeFromSpecMarkdown, UI_CHANGE_REQUIRES_UI_SPEC, uiSpecRelPath, uiSpecAbsPath } from './scripts/utils/ui-spec-shared';
@@ -722,6 +723,11 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  const existingRunId = process.env.MAISON_GOAL_RUN_ID?.trim();
+  if (existingRunId && feature) {
+    const { loadGoalManifestFromRun } = require('./scripts/utils/goal-manifest') as typeof import('./scripts/utils/goal-manifest');
+    workflowSpec = workflowForExistingRun(workflowSpec, loadGoalManifestFromRun(projectRoot, existingRunId, { feature }), resolvedFrameworkRoot);
+  }
   const phaseIds = workflowPhaseIdSet(workflowSpec);
   if (!phaseIds.has(phase)) {
     const hint = listWorkflowPhases(workflowSpec).join(', ');

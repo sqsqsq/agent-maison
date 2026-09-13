@@ -2,6 +2,18 @@
 
 本文描述**实例工程**集成新版 Maison 发布件或配置演进时的预期做法。详细操作以 Skill 正文为准。
 
+## 3.1.0：按义务执行与旧运行恢复
+
+新请求默认使用 obligation-driven workflow 1.2。完整实现由主 Agent 按实际输入、目标和义务建立 Feature 候选，使用现有 prepare-run/attach 产生真实运行身份；不选择轨道、不为了流水线补齐叙述文档。仅审查、UT、设备请求使用独立 request CLI，项目维护保持原生入口和请求终点。
+
+- 集成的是 Maison 发布件，宿主 framework/ 不是 submodule；依赖仅在 framework/harness 安装。
+- framework-init UPDATE 将旧内置 active_workflow=spec-driven 更新为 obligation-driven；自定义 workflow 保留。UPDATE 沿既有 .framework-backup 备份并清理 change-lite 公共桥接，不删除任何 Feature、CU、run 或报告。
+- 已有运行优先恢复原 run：旧内置定义与内部 skills/legacy/change-lite 仍可读取，冻结链与预算不重新计算。新 scope 损坏不降级；跨不兼容自定义 workflow/发布件时使用匹配的旧定义/发布件，或按既有 correction/successor 创建新运行，不批量重写历史。
+- 新 completion 1.2 必须绑定实际出生 execution_scope_fingerprint；旧 1.1 仍用原完整链合同。request 结果不是 Feature/CU 完成凭证。CU 与 Component 继续核对各自目标及组合证据。
+- 设备、RDB 与组合场景须以真实宿主证据验收；框架 fixture 和临时 consumer 成功不代表真实设备通过。
+
+入口细则见 [项目请求](docs/operations/project-entry.md)、[专项 CLI](docs/operations/request-harness.md) 和 [输入协议](docs/concepts/skill-contracts.md)。本节描述迁移行为，不表示当前候选已经正式发布。
+
 ## 3.1.0：Extension manifest 1.1 与 `/extension`
 
 3.1.0 新增 `/extension` 单一管理入口，manifest 1.1 支持 knowledge audience、宿主执行的

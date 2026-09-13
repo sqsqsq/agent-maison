@@ -22,13 +22,13 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import { validateExecutionScope, executionCompletionPhases, isExecutionSourceBasis, type ExecutionScope } from './execution-scope';
+import { validateExecutionScope, executionScopeFingerprint, executionCompletionPhases, isExecutionSourceBasis, type ExecutionScope } from './execution-scope';
 import { loadGoalManifestFromRun } from './goal-manifest';
 import { assertGoalRunAttachable, loadFrozenExecutionScope } from './goal-run-creation';
 import { isInsideProjectRoot } from './project-relative-path';
 import { loadEventsJsonl, resolveEffectiveRunEnd } from './goal-runner-phase';
 
-import { featureFilePath, receiptDirPath, resolveFeatureArtifact } from '../../config';
+import { featureFilePath, receiptDirPath, resolveFeatureArtifact, relFeaturesDir } from '../../config';
 import {
   loadReviewClosureAttestation,
 } from './closure-attestation';
@@ -53,7 +53,8 @@ import {
 export const FEATURE_COMPLETION_FILENAME = 'feature-completion.json';
 // 1.1（codex 八轮 P2）：新增 requirement_sha256/testing_source_aggregate/per-phase attempt
 // 等必需绑定字段——旧 1.0 completion 结构不同，schema_version 不匹配即 INVALID。
-export const FEATURE_COMPLETION_SCHEMA_VERSION = '1.1';
+export const FEATURE_COMPLETION_SCHEMA_VERSION = '1.2';
+const LEGACY_COMPLETION_SCHEMA_VERSION = '1.1';
 
 /** Recheck P1 bindings and real phase evidence; scope declarations never count as PASS. */
 export function executionScopeEvidenceIssues(projectRoot: string, feature: string, scope: ExecutionScope, obligationIds?: ReadonlySet<string>): string[] {
@@ -123,6 +124,8 @@ export interface FeatureCompletion {
   /** 生成本凭证的 run（原件必须位于该 run 的 runner-owned 目录内） */
   run_id: string;
   workflow_track: string;
+  /** Required for 1.2; independently verified against the run-created scope. */
+  execution_scope_fingerprint?: string;
   chain: string[];
   artifact_hashes: {
     spec_md: string | null;
@@ -527,7 +530,17 @@ export interface GenerateCompletionOptions extends CleanPassOptions {
 }
 
 /** 需求 SSOT 聚合哈希（内联 manifest.requirement + 解引用文档 + ux-reference 的稳定摘要） */
-export function computeRequirementSsotAggregate(projectRoot: string, feature: string): string | null {
+export function computeRequirementSsotAggregate(projectRoot: string, feature: string, runId?: string): string | null {
+  const scope = runId ? loadFrozenExecutionScope(projectRoot, feature, runId) : undefined;
+  if (scope) {
+    const { readBoundInput } = require('./capability-resolution') as typeof import('./capability-resolution');
+    const { inferRepoLayout } = require('../../repo-layout') as typeof import('../../repo-layout');
+    const frameworkRoot = inferRepoLayout(projectRoot).frameworkRoot;
+    const contents = scope.obligations.flatMap(obligation => obligation.basis
+      .filter(binding => binding.source.kind === 'artifact' || ['derive.blueprint-acceptance', 'derive.blueprint-contracts'].includes(binding.source.provider_id))
+      .map(binding => ({ input_id: binding.input_id, source: binding.source, value: readBoundInput({ projectRoot, frameworkRoot, feature, phase: obligation.owner_phase, track: 'full' }, binding) })));
+    return executionScopeFingerprint({ requirement: computeRunRequirementSha(projectRoot, feature, runId, relFeaturesDir(projectRoot)), contents });
+  }
   const paths = collectRequirementSsotPaths(projectRoot, feature);
   if (paths.length === 0) return null;
   const parts: string[] = [];
@@ -545,6 +558,7 @@ export function generateFeatureCompletion(opts: GenerateCompletionOptions): {
   completion: FeatureCompletion;
 } {
   const scope = loadFrozenExecutionScope(opts.projectRoot, opts.feature, opts.runId);
+  if (!scope && opts.executionScope) throw new Error('[feature-completion] 调用期候选不能替代真实出生范围');
   if (scope) opts = { ...opts, executionScope: scope };
   const issues = collectCleanPassIssues({
     ...opts,
@@ -575,18 +589,19 @@ export function generateFeatureCompletion(opts: GenerateCompletionOptions): {
   const attestation = loadReviewClosureAttestation(projectRoot, feature);
 
   const completion: FeatureCompletion = {
-    schema_version: FEATURE_COMPLETION_SCHEMA_VERSION,
+    schema_version: scope ? FEATURE_COMPLETION_SCHEMA_VERSION : LEGACY_COMPLETION_SCHEMA_VERSION,
     feature,
     generated_at: (opts.now ? opts.now() : new Date()).toISOString(),
     run_id: opts.runId,
     workflow_track: opts.workflowTrack,
+    ...(scope ? { execution_scope_fingerprint: executionScopeFingerprint(scope) } : {}),
     chain: [...opts.chain],
     artifact_hashes: {
       spec_md: art('spec.md'),
       acceptance_yaml: art('acceptance.yaml'),
       contracts_yaml: art('contracts.yaml'),
     },
-    requirement_sha256: computeRequirementSsotAggregate(projectRoot, feature),
+    requirement_sha256: computeRequirementSsotAggregate(projectRoot, feature, opts.runId),
     review_attestation_aggregate: attestation?.inventory.aggregate_sha256 ?? null,
     testing_source_aggregate: buildSourceInventory(projectRoot, { expectProductSources: false }).aggregate_sha256,
     phases,
@@ -602,7 +617,7 @@ export function generateFeatureCompletion(opts: GenerateCompletionOptions): {
   fs.renameSync(tmp, originalAbs);
 
   const projection: CompletionProjection = {
-    schema_version: FEATURE_COMPLETION_SCHEMA_VERSION,
+    schema_version: completion.schema_version,
     original_path: path.relative(projectRoot, originalAbs).split(path.sep).join('/'),
     original_sha256: crypto.createHash('sha256').update(text, 'utf-8').digest('hex'),
   };
@@ -801,9 +816,11 @@ export function verifyFeatureCompletion(opts: VerifyCompletionOptions): Completi
     return { verdict: 'INVALID', reasons: ['原件 JSON 解析失败'] };
   }
   // codex 八轮 P2：完整结构校验——畸形/旧版应 INVALID 而非 .map 抛异常。
-  if (completion.schema_version !== FEATURE_COMPLETION_SCHEMA_VERSION) {
+  if (![FEATURE_COMPLETION_SCHEMA_VERSION, LEGACY_COMPLETION_SCHEMA_VERSION].includes(completion.schema_version)) {
     return { verdict: 'INVALID', reasons: [`schema_version 非法/旧版：${String(completion.schema_version)}（要求 ${FEATURE_COMPLETION_SCHEMA_VERSION}）`] };
   }
+  if (completion.schema_version === FEATURE_COMPLETION_SCHEMA_VERSION && projection.schema_version !== completion.schema_version) return { verdict: 'INVALID', reasons: ['投影与原件 schema_version 失配'] };
+  if (completion.schema_version === FEATURE_COMPLETION_SCHEMA_VERSION && !/^[0-9a-f]{64}$/.test(completion.execution_scope_fingerprint ?? '')) return { verdict: 'INVALID', reasons: ['新完成记录缺少合法 execution_scope_fingerprint'] };
   if (!Array.isArray(completion.chain) || completion.chain.length === 0 || !completion.chain.every((p) => typeof p === 'string')) {
     return { verdict: 'INVALID', reasons: ['chain 非法（须非空字符串数组）'] };
   }
@@ -857,7 +874,9 @@ export function verifyFeatureCompletion(opts: VerifyCompletionOptions): Completi
   let frozenScope: ExecutionScope | undefined;
   try {
     frozenScope = loadFrozenExecutionScope(projectRoot, feature, completion.run_id);
+    if (completion.schema_version === FEATURE_COMPLETION_SCHEMA_VERSION && !frozenScope) return { verdict: 'INVALID', reasons: ['新完成记录缺少出生范围'] };
     if (frozenScope) {
+      if (completion.schema_version !== FEATURE_COMPLETION_SCHEMA_VERSION || completion.execution_scope_fingerprint !== executionScopeFingerprint(frozenScope)) return { verdict: 'INVALID', reasons: ['execution_scope_fingerprint 与出生范围失配'] };
       const gaps = executionScopeEvidenceIssues(projectRoot, feature, frozenScope);
       if (frozenScope.completion_target !== 'feature' || gaps.length) return { verdict: 'INVALID', reasons: ['冻结范围尚未完成', ...gaps] };
       opts = { ...opts, expectedChain: executionCompletionPhases(frozenScope) };
@@ -980,9 +999,9 @@ export function verifyFeatureCompletion(opts: VerifyCompletionOptions): Completi
   if (artChanged.length > 0) reasons.push(`顶层 artifact 变更：${artChanged.join(', ')}`);
 
   // codex 七轮 P1-3：需求 SSOT/testing 源码/review attestation 绑定字段重算对账
-  if (computeRequirementSsotAggregate(projectRoot, feature) !== completion.requirement_sha256) {
-    reasons.push('requirement_sha256 与凭证记录失配（需求 SSOT 变更）');
-  }
+  try {
+    if (computeRequirementSsotAggregate(projectRoot, feature, completion.run_id) !== completion.requirement_sha256) reasons.push('requirement_sha256 与凭证记录失配（需求 SSOT 变更）');
+  } catch (error) { reasons.push('需求绑定失效：' + String(error)); }
   const attNow = loadReviewClosureAttestation(projectRoot, feature);
   if ((attNow?.inventory.aggregate_sha256 ?? null) !== completion.review_attestation_aggregate) {
     reasons.push('review_attestation_aggregate 与凭证记录失配');
@@ -994,7 +1013,7 @@ export function verifyFeatureCompletion(opts: VerifyCompletionOptions): Completi
   // clean_pass 全量重算（血缘 fresh / attestation / must-review / waiver / verdict / 运行时证据）
   // ——currentRequirementSha 用生成 run 的 requirement（P0-2：换需求复用旧 closure 在此判 stale）。
   const issues = collectCleanPassIssues({
-    projectRoot, feature, chain: completion.chain, fidelityCapped: opts.fidelityCapped,
+    projectRoot, feature, chain: completion.chain, fidelityCapped: opts.fidelityCapped, executionScope: frozenScope,
     currentRequirementSha: computeRunRequirementSha(projectRoot, feature, completion.run_id),
   });
   for (const i of issues) reasons.push(`[${i.phase}] ${i.condition}(${i.kind}): ${i.detail}`);

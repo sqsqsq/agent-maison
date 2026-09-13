@@ -30,6 +30,7 @@
 // ============================================================================
 
 import {
+  DEFAULT_ACTIVE_WORKFLOW,
   DEFAULT_PATHS,
   DEFAULT_STATE_MACHINE,
 } from '../../config';
@@ -66,8 +67,8 @@ export const FRAMEWORK_GENERIC_BACKFILL_FIELDS: ReadonlyArray<BackfillField> = [
   },
   {
     path: 'active_workflow',
-    defaultValue: 'spec-driven',
-    note: 'workflow 未声明：回填 spec-driven（对应 framework/workflows/spec-driven.workflow.yaml）',
+    defaultValue: DEFAULT_ACTIVE_WORKFLOW,
+    note: 'workflow 未声明：回填 obligation-driven（旧记录由版本化 reader 恢复）',
   },
   {
     path: 'lifecycle_hooks_enabled',

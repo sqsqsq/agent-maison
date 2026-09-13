@@ -16,7 +16,7 @@ import { inferRepoLayout } from '../../repo-layout';
 import * as fs from 'fs';
 import * as YAML from 'yaml';
 import { featureArtifactPath } from '../../config';
-import type { FeatureTrackDecl } from './runtime-policy';
+import { resolveFeatureTrack, type FeatureTrackDecl } from './runtime-policy';
 
 export const FEATURE_DECL_FILENAME = 'feature.yaml';
 
@@ -24,9 +24,13 @@ export function featureTrackDeclPath(projectRoot: string, feature: string): stri
   return featureArtifactPath(projectRoot, feature, FEATURE_DECL_FILENAME);
 }
 
-export function loadFeatureTrackDecl(projectRoot: string, feature: string): FeatureTrackDecl | null {
-  const runId = process.env.MAISON_GOAL_RUN_ID?.trim();
+export function loadFeatureTrackDecl(projectRoot: string, feature: string, existingRunId?: string): FeatureTrackDecl | null {
+  const runId = existingRunId ?? process.env.MAISON_GOAL_RUN_ID?.trim();
   if (runId && loadFrozenExecutionScope(projectRoot, feature, runId)) return { track: 'full' };
+  if (runId && fs.existsSync(featureArtifactPath(projectRoot, feature, 'goal-runs/' + runId + '/manifest.json'))) {
+    const legacy = JSON.parse(fs.readFileSync(featureArtifactPath(projectRoot, feature, 'goal-runs/' + runId + '/manifest.json'), 'utf8')) as { phase_chain?: string[] };
+    if (Array.isArray(legacy.phase_chain) && legacy.phase_chain.length) return { track: resolveFeatureTrack(undefined, legacy.phase_chain) };
+  }
   try {
     const abs = featureTrackDeclPath(projectRoot, feature);
     if (!fs.existsSync(abs)) return null;

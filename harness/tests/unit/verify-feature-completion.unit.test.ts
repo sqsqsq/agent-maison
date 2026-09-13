@@ -153,6 +153,10 @@ function verify(root: string, over?: Partial<Parameters<typeof verifyFeatureComp
 interface Case { name: string; run: () => void }
 
 const cases: Case[] = [
+  { name: 'candidate execution scope cannot mint a legacy completion without frozen birth', run() {
+    const root = mkProject(); seedCleanChain(root);
+    assert.throws(() => generate(root, { executionScope: {} as import('../../scripts/utils/execution-scope').ExecutionScope }), /候选不能替代真实出生范围/);
+  } },
   {
     name: 'clean_pass：verdict/档位钳制拒生成；legacy waiver 与账本待复核均只留审计',
     run: () => {

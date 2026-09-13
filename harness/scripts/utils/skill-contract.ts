@@ -307,10 +307,10 @@ export function loadSkillContract(filePath: string): SkillContract {
 }
 
 export function loadFeatureContracts(frameworkRoot: string): SkillContract[] {
-  const featureRoot = path.join(frameworkRoot, 'skills', 'feature');
-  const files = fs.readdirSync(featureRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => path.join(featureRoot, entry.name, 'contract.yaml'))
+  const files = ['feature', 'legacy'].flatMap(folder => {
+    const root = path.join(frameworkRoot, 'skills', folder);
+    return fs.existsSync(root) ? fs.readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => path.join(root, entry.name, 'contract.yaml')) : [];
+  })
     .filter((filePath) => fs.existsSync(filePath))
     .sort();
   const contracts = files.map(loadSkillContract);

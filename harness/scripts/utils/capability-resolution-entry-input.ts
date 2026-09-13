@@ -180,6 +180,7 @@ export interface CapabilityResolutionEntryInputOptions {
 }
 
 export interface CapabilityResolutionEntryInput {
+  goalRunId?: string;
   inputContext?: PhaseInputContext;
   factsContext?: FactsInvocationContext;
   testTargets?: string[];
@@ -293,6 +294,7 @@ export function resolveCapabilityResolutionEntryInput(
   }
   const explicitAdhocCases = options.explicitAdhocCases?.trim() || '';
   return {
+    ...(goalRunId ? { goalRunId } : {}),
     ...(requirement ? { requirement } : {}),
     ...(requirementSourceFiles && requirementSourceFiles.length > 0
       ? { requirementSourceFiles }

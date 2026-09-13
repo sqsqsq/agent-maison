@@ -48,6 +48,7 @@ function assert(cond: unknown, msg: string): void {
 
 function mkProject(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-spec-prov-'));
+  fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({ active_workflow: 'spec-driven' }));
   fs.mkdirSync(path.join(root, 'doc', 'features'), { recursive: true });
   return root;
 }

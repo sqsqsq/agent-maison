@@ -29,6 +29,7 @@ function assertTrue(cond: boolean, label: string): void {
 async function withTmpProject<T>(fn: (root: string) => T | Promise<T>): Promise<T> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'review-context-'));
   ensureConsumerFrameworkTree(dir);
+  fs.writeFileSync(path.join(dir, 'framework.config.json'), JSON.stringify({ active_workflow: 'spec-driven' }));
   try {
     return await fn(dir);
   } finally {

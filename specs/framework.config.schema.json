@@ -139,7 +139,7 @@
     },
     "active_workflow": {
       "type": "string",
-      "description": "framework/workflows/<name>.workflow.yaml 的 stem；默认 spec-driven。"
+      "description": "framework/workflows/<name>.workflow.yaml 的 stem；默认 obligation-driven。"
     },
     "lifecycle_hooks_enabled": {
       "type": "boolean",

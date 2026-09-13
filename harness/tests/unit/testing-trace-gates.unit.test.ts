@@ -71,6 +71,7 @@ function makeReportOnlyFixture(): ReportOnlyFixture {
   const os = require('os') as typeof import('os');
   const path = require('path') as typeof import('path');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'report-reconcile-only-'));
+  fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({ active_workflow: 'spec-driven' }));
   const featureDir = path.join(root, 'doc', 'features', 'demo', 'testing');
   const reportsDir = path.join(featureDir, 'reports');
   const runDir = path.join(reportsDir, '20260830T010000Z-001', 'hylyre');
@@ -1150,7 +1151,7 @@ test('B08-V3 同一 HAP：一次真装、一次装机复用 → 两条记录 inp
     delete process.env.HARNESS_SKIP_DEVICE_TEST_INSTALL;
     delete process.env.HARNESS_DEVICE_TEST_UNINSTALL_BEFORE_INSTALL;
     fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({
-      schema_version: '1.1', project_name: 'T', project_profile: { name: 'hmos-app', sub_variant: 'app' },
+      schema_version: '1.1', project_name: 'T', active_workflow: 'spec-driven', project_profile: { name: 'hmos-app', sub_variant: 'app' },
       architecture: { outer_layers: [{ id: '02-Feature', can_depend_on: [], intra_layer_deps: 'dag' }], module_inner_layers: ['shared'], inner_dependency_direction: 'upward', cross_module_exports_file: 'index.ets' },
       paths: { features_dir: 'doc/features', docs_committed: false, reports_dir_pattern: 'doc/features/<feature>/<phase>/reports' },
       materialized_adapters: ['cursor'],

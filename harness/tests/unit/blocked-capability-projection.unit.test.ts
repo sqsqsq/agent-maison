@@ -133,6 +133,7 @@ const cases: Case[] = [
     name: 't2 契约零变化：blocked 能力产 0 条 CheckResult，assertCapabilityConsumption 行为不变',
     run: () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 't2-contract-'));
+      fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({ active_workflow: 'spec-driven' }));
       try {
         fs.mkdirSync(path.join(root, 'doc', 'features'), { recursive: true });
         // spec 无 requirement → capability_spec_requirement blocked；capability_spec_codebase resolved

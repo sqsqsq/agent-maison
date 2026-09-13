@@ -226,7 +226,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       );
       assert.strictEqual(
         (merged as { active_workflow?: string }).active_workflow,
-        'spec-driven',
+        'obligation-driven',
         'active_workflow 应被回填',
       );
       // 部分字段在 user.toolchain.hvigor 已有时，其它姐妹字段仍要回填
@@ -522,7 +522,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     run: () => {
       const { merged } = mergeBackfillFields(null);
       assert.strictEqual((merged as { schema_version: string }).schema_version, '1.1');
-      assert.strictEqual((merged as { active_workflow: string }).active_workflow, 'spec-driven');
+      assert.strictEqual((merged as { active_workflow: string }).active_workflow, 'obligation-driven');
     },
   },
   {

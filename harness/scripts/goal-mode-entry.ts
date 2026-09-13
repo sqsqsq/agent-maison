@@ -36,6 +36,7 @@ import {
 } from './utils/visual-provider-identity';
 import { resolveWorkflowSpec } from '../workflow-loader';
 import { relFeaturesDir } from '../config';
+import { executionCompletionPhases } from './utils/execution-scope';
 import { featurePhasesFromWorkflow, resolveAutoChain } from './utils/phase-transition-policy';
 import { loadFeatureTrackDecl, resolveFeatureExecutionScope } from './utils/feature-track';
 import { resolveFeatureTrack } from './utils/runtime-policy';
@@ -157,7 +158,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
   );
   const actualChain = resolveActualGoalPhaseChainAtBirth({
     requestedChain: chain,
-    fullWorkflowChain: featurePhasesFromWorkflow(workflow, track),
+    fullWorkflowChain: executionScope ? executionCompletionPhases(executionScope) : featurePhasesFromWorkflow(workflow, track),
     requiresLegacyFidelityRecovery:
       !executionScope && loadInertLegacyFidelityIntentSsot(options.projectRoot, feature) !== null,
   });

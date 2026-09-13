@@ -10,7 +10,7 @@ import { blueprintRefAddress } from './change-unit-model';
 import { isApplicableView, isChangedView, nodeDeclaresChange } from './blueprint-views';
 import { ResolvedComponentClosureInputs } from './component-closure-inputs';
 import { ClosureEvidenceLevel, compareCodePoint, stableSortStrings } from './component-closure-model';
-import { SpecLoader } from './spec-loader';
+import { readCompletedFeatureDesign } from './change-unit-completion';
 
 export interface ComponentClosureObligation {
   obligation_id: string;
@@ -404,7 +404,7 @@ function addFeatureObligations(
 ): void {
   for (const unit of inputs.currentUnits) {
     const featureId = unit.input.feature_id;
-    const spec = new SpecLoader(projectRoot).loadFeatureSpec(featureId);
+    const { spec } = readCompletedFeatureDesign(projectRoot, featureId, unit.completionObservation);
     for (const item of [...(spec.acceptance?.criteria ?? []), ...(spec.acceptance?.boundaries ?? [])]) {
       const id = String(item.id ?? '');
       if (!id) continue;

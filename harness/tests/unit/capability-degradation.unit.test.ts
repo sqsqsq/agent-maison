@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
+import { execFileSync } from 'child_process';
 import { resolveCapabilityInputs, type PhaseInputContext } from '../../scripts/utils/capability-resolution';
 import { collectContextFiles } from '../../harness-runner';
 import { buildVerifierMaterialView } from '../../scripts/utils/verifier-material';
@@ -28,15 +29,42 @@ import { createGoalRun, loadFrozenExecutionScope } from '../../scripts/utils/goa
 import { resolveExecutionScope, type ObligationApplicability } from '../../scripts/utils/execution-scope';
 import { applyCapabilityResolutionProjection, deriveSummaryVerdictLattice } from '../../scripts/utils/quality-axes';
 import { normalizeDeviceTestCases } from '../../scripts/utils/device-test-case-kernel';
+import { loadFeatureTrackDecl } from '../../scripts/utils/feature-track';
+import { resolveFeatureTrack } from '../../scripts/utils/runtime-policy';
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '..', '..', '..');
 function assert(condition: unknown, message: string): void { if (!condition) throw new Error(message); }
 function expectThrow(fn: () => void, text: string): void { let actual = ''; try { fn(); } catch (error) { actual = (error as Error).message; } assert(actual.includes(text), `expected ${text}, got ${actual}`); }
 function write(root: string, rel: string, text = 'fixture\n'): void { const file = path.join(root, rel); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text, 'utf8'); }
-function project(run: (root: string) => void): void { const root = fs.mkdtempSync(path.join(os.tmpdir(), 'capability-degradation-')); try { fs.mkdirSync(path.join(root, 'doc', 'features'), { recursive: true }); run(root); } finally { fs.rmSync(root, { recursive: true, force: true }); } }
+function project(run: (root: string) => void): void { const root = fs.mkdtempSync(path.join(os.tmpdir(), 'capability-degradation-')); write(root, 'framework.config.json', JSON.stringify({ active_workflow: 'spec-driven' })); try { fs.mkdirSync(path.join(root, 'doc', 'features'), { recursive: true }); run(root); } finally { fs.rmSync(root, { recursive: true, force: true }); } }
 interface TestCase { name: string; run: () => void }
 
 const fallbackAndInvalidCases: TestCase[] = [
+  {
+    name: 'upgraded legacy lite/full birth reaches real coding resolver while new calls still require context',
+    run: () => project(root => {
+      write(root, 'doc/features/demo/change.md', '# Change\n- [ ] implement');
+      write(root, 'doc/features/demo/plan.md', '# Plan');
+      write(root, 'doc/features/demo/contracts.yaml', 'files: []');
+      write(root, 'doc/features/demo/acceptance.yaml', 'criteria: []');
+      execFileSync('git', ['init', '-q'], { cwd: root });
+      execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-qm', 'baseline'], { cwd: root });
+      for (const track of ['lite', 'full'] as const) {
+        const chain = track === 'lite' ? ['change', 'coding', 'exit'] : ['coding', 'review'];
+        const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: `legacy-${track}`, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: root });
+        createGoalRun({ projectRoot: root, manifest, chain });
+        write(root, 'framework.config.json', JSON.stringify({ active_workflow: 'obligation-driven' }));
+        write(root, 'doc/features/demo/feature.yaml', 'track: full');
+        clearFrameworkConfigCache();
+        const entry = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: manifest.run_id });
+        const options = { projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', phase: 'coding', track: resolveFeatureTrack(loadFeatureTrackDecl(root, 'demo', manifest.run_id)) };
+        const { report } = resolveCapabilityInputs({ ...options, ...entry });
+        const core = report.capabilities.find(capability => capability.id === `capability_coding_${track}_context`);
+        assert(core?.state === 'resolved' && core.inputs.every(input => input.state === 'resolved'), JSON.stringify(report));
+        expectThrow(() => resolveCapabilityInputs(options), 'contract/invocation schema mismatch');
+      }
+    }),
+  },
   {
     name: 'ordered derive fallback retains absent artifact attempt and normalizes adhoc cases with the shared kernel',
     run: () => project((root) => {
@@ -171,7 +199,7 @@ const cases: TestCase[] = [...fallbackAndInvalidCases,
     run: () => project((root) => {
       write(root, 'framework.config.json', JSON.stringify({
         schema_version: '1.1',
-        project_name: 'capability-test',
+        project_name: 'capability-test', active_workflow: 'spec-driven',
         project_profile: { name: 'hmos-app', sub_variant: 'app' },
         agent_adapter: 'generic',
         architecture: {
@@ -252,10 +280,10 @@ const cases: TestCase[] = [...fallbackAndInvalidCases,
 
 function modernFixture(root: string, artifact = 'contracts@1', policy = 'fail'): { framework: string; context: PhaseInputContext; resolve: (context?: PhaseInputContext) => ReturnType<typeof resolveCapabilityInputs> } {
   const framework = path.join(root, 'maison');
-  for (const relative of ['skills/feature', 'workflows', 'specs/artifact-schemas']) {
+  for (const relative of ['skills/feature', 'skills/legacy', 'workflows', 'specs/artifact-schemas']) {
     fs.cpSync(path.join(FRAMEWORK_ROOT, relative), path.join(framework, relative), { recursive: true });
   }
-  write(root, 'framework.config.json', JSON.stringify({ paths: { features_dir: 'doc/features' }, project_profile: { name: 'generic' } }));
+  write(root, 'framework.config.json', JSON.stringify({ active_workflow: 'spec-driven', paths: { features_dir: 'doc/features' }, project_profile: { name: 'generic' } }));
   write(framework, 'skills/feature/code-review/contract.yaml', YAML.stringify({
     schema_version: '1.1', skill: 'code-review', skill_doc: 'SKILL.md', phases: { review: {
       inputs: [{ id: 'payload', sources: [{ kind: 'artifact', artifact }] }],

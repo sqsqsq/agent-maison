@@ -92,7 +92,7 @@ function buildSlimProject(opts: SlimOpts): { root: string } {
     JSON.stringify(
       {
         schema_version: '1.1',
-        project_name: 'receipt-slim-test',
+        project_name: 'receipt-slim-test', active_workflow: 'spec-driven',
         project_profile: { name: 'generic' },
         // plan a9d4e7c2：full×interactive 的 verifier=required 需要一个**已登记
         // verifier 能力**的 adapter（generic 没有 SubagentStop 发布链路，恒 blocked）。

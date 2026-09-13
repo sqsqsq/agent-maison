@@ -28,6 +28,9 @@ import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixtu
 import { SUMMARY_SCHEMA_VERSION_CURRENT } from '../../scripts/utils/quality-axes';
 import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
 import { computeProductWorktreeDigest } from '../../scripts/utils/worktree-digest';
+import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
+import { createGoalRun } from '../../scripts/utils/goal-run-creation';
+import { resolveExecutionScope } from '../../scripts/utils/execution-scope';
 
 export interface UnitCaseResult {
   name: string;
@@ -101,7 +104,7 @@ function buildProject(phase: string, opts: ReceiptOpts): { root: string; sha: st
     JSON.stringify(
       {
         schema_version: '1.1',
-        project_name: 'receipt-policy-test',
+        project_name: 'receipt-policy-test', active_workflow: 'spec-driven',
         project_profile: { name: 'generic' },
         // plan a9d4e7c2：full×interactive 的 verifier=required 需要一个**已登记
         // verifier 能力**的 adapter（generic 没有 SubagentStop 发布链路，恒 blocked）。
@@ -479,6 +482,39 @@ function phaseOutputRelPath(root: string, phase: string, basename: string): stri
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
+  {
+    name: 'upgraded receipt probe and real CLI use frozen legacy track; modern scope ignores candidate lite',
+    run: () => {
+      const { root } = buildProject('review', { omitVerifier: true });
+      try {
+        const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'legacy-lite', unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: root });
+        createGoalRun({ projectRoot: root, manifest, chain: ['change', 'coding', 'exit'] });
+        fs.copyFileSync(path.join(HARNESS_ROOT, '../workflows/obligation-driven.workflow.yaml'), path.join(root, 'framework/workflows/obligation-driven.workflow.yaml'));
+        const configPath = path.join(root, 'framework.config.json');
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        config.active_workflow = 'obligation-driven';
+        fs.writeFileSync(configPath, JSON.stringify(config));
+        clearFrameworkConfigCache();
+        const featurePath = path.join(root, 'doc/features/demo/feature.yaml');
+        const goalIdentity = { runId: manifest.run_id, attemptId: 'exit-1', attemptPhase: 'exit' };
+        for (const candidate of ['track: full\n', '{}\n']) {
+          fs.writeFileSync(featurePath, candidate);
+          const probe = tryValidateReceipt(HARNESS_ROOT, root, 'exit', 'demo', { goalIdentity });
+          assert(probe.status === 'not_applicable', JSON.stringify(probe));
+        }
+        const cli = spawnCheckReceipt(root, 'exit', goalIdentity);
+        assert(cli.status === 0 && cli.stdout.includes('receipt 机制不适用'), JSON.stringify(cli));
+        const scope = resolveExecutionScope({ request: { completion_target: 'request', requested_results: ['review'], requested_phases: ['review'] }, contract_fingerprints: [], facts: [] }, loadWorkflowSpec(path.dirname(HARNESS_ROOT), 'obligation-driven'));
+        const modern = buildGoalManifestFromInput({ feature: 'demo', run_id: 'modern-review', execution_scope: scope, chain_override: scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: root });
+        createGoalRun({ projectRoot: root, manifest: modern, chain: scope.phase_chain });
+        fs.writeFileSync(featurePath, 'track: lite\n');
+        const probe = tryValidateReceipt(HARNESS_ROOT, root, 'review', 'demo', { goalIdentity: { runId: modern.run_id, attemptId: 'review-1', attemptPhase: 'review' } });
+        assert(probe.status === 'failed', JSON.stringify(probe));
+        const invalid = spawnCheckReceipt(root, 'exit', { ...goalIdentity, runId: modern.run_id });
+        assert(invalid.status === 2, JSON.stringify(invalid));
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
   {
     name: 'tryValidateReceipt：lite track → not_applicable，架构性短路（无 subprocess）',
     run: () => {

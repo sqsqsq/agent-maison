@@ -27,8 +27,9 @@ import * as path from 'path';
 import { spawnSync } from 'child_process';
 import * as YAML from 'yaml';
 import minimist from 'minimist';
-import { loadFrameworkConfig, resolveReceiptFilePath, featurePhaseReportsDir } from '../config';
-import { resolveWorkflowSpec } from '../workflow-loader';
+import { loadFrameworkConfig, resolveReceiptFilePath, featurePhaseReportsDir, relFeaturesDir } from '../config';
+import { resolveWorkflowSpec, workflowForExistingRun } from '../workflow-loader';
+import { loadGoalManifestFromRun } from './utils/goal-manifest';
 import {
   assertWorkflowFeaturePhase,
   buildEvidencePolicySnapshot,
@@ -254,20 +255,19 @@ function main(): void {
   const inGoalReceiptContext = isGoalOrchestrationEnv() || isAgentSideGoalHarness();
 
   const fw = loadFrameworkConfig(projectRoot);
+  const runId = process.env.MAISON_GOAL_RUN_ID?.trim();
+  let workflowSpecForPlan: ReturnType<typeof resolveWorkflowSpec>;
   // phase 合法性按 active workflow feature phase 集校验（C0 收编：不再持有硬编码枚举）
   try {
-    assertWorkflowFeaturePhase(resolveWorkflowSpec(projectRoot, { config: fw }), phase);
+    workflowSpecForPlan = resolveWorkflowSpec(projectRoot, { config: fw });
+    if (runId && workflowSpecForPlan.schema_version === '1.2') {
+      workflowSpecForPlan = workflowForExistingRun(workflowSpecForPlan, loadGoalManifestFromRun(projectRoot, runId, { feature, featuresDir: relFeaturesDir(projectRoot) }), frameworkRoot);
+    }
+    assertWorkflowFeaturePhase(workflowSpecForPlan, phase);
   } catch (err) {
     console.error(`错误：${(err as Error).message}`);
     process.exit(2);
   }
-  const workflowSpecForPlan = (() => {
-    try {
-      return resolveWorkflowSpec(projectRoot, { config: fw });
-    } catch {
-      return null;
-    }
-  })();
   const resolvedProfile = loadResolvedProfile(projectRoot, fw);
   if (isPhaseDisabledByProfile(phase, resolvedProfile)) {
     console.log(
@@ -278,12 +278,12 @@ function main(): void {
   }
 
   // C2 verification-matrix：track/mode/config → evidence policy 求解。
-  const track = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature));
+  const track = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature, runId));
   const runtimeCtx: RuntimeContext = {
     mode: inGoalReceiptContext ? 'goal' : 'interactive',
     adapter: fw.agent_adapter ?? 'generic',
     phase,
-    workflow: fw.active_workflow ?? 'spec-driven',
+    workflow: workflowSpecForPlan.name,
     // plan a5f9c3e2 t1：能否问人取决于**当前 run owner**（session=会话内驱动、真人在旁；
     // process=脱离会话），不是「是不是 goal」——旧式 `!isGoalOrchestrationEnv()` 把
     // goal「有人在场」误判成无人。owner 动态可 handoff，故按 run-control 现值解析。

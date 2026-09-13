@@ -27,6 +27,6 @@
 
 无 Feature 的局部 review/UT/testing 使用已交付的 [request CLI](request-harness.md)，结果隔离在显式报告目录，不能伪造 Feature 或借用活跃 Feature 证据。完整实现根据实际义务安排验证，未知责任保留 unresolved，不因输入可解析就宣称验收通过。
 
-完整交付的机器接线复用 [P2 输入协议](../concepts/skill-contracts.md)：已有 CU 对应 Feature 的 `feature.yaml.execution_scope` 只承载出生前请求与来源事实候选；1.2 workflow 下，`goal-mode-entry --prepare-run --run-mode attended` 经现有 resolver 计算并冻结范围，再按返回的真实 run 身份 attach。不得手写已满足义务或运行结果，也不为已全部复用的空范围创建 run。旧 run 直接恢复，不重新读取候选；新默认的发布切换仍由 P7 负责。
+完整交付的机器接线复用 [P2 输入协议](../concepts/skill-contracts.md)：已有 CU 对应 Feature 的 `feature.yaml.execution_scope` 只承载出生前请求与来源事实候选；1.2 workflow 下，`goal-mode-entry --prepare-run --run-mode attended` 经现有 resolver 计算并冻结范围，再按返回的真实 run 身份 attach。不得手写已满足义务或运行结果，也不为已全部复用的空范围创建 run。旧 run 直接恢复，不重新读取候选；默认使用 obligation-driven 1.2；旧内置定义仅供兼容恢复。
 
-“继续”先读当前 active run、冻结 execution_scope 和 successor/revision，不重新提问 lite/full。新请求不消费 feature.track 菜单；旧 run 保留原读取兼容，公开旧入口与默认 workflow 切换由迁移批次处理。真实授权、策展语义、预算和外部不可逆动作继续使用既有确认点；已有授权不重复询问。init-next-steps 不授予任何后继执行权。
+“继续”先读当前 active run、冻结 execution_scope 和 successor/revision，不重新选择流程。新请求使用 obligation-driven；旧 run 通过内部兼容定义恢复，旧公共跳板由 UPDATE 备份清理。真实授权、策展语义、预算和外部不可逆动作继续使用既有确认点；已有授权不重复询问。init-next-steps 不授予任何后继执行权。

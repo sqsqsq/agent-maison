@@ -11,20 +11,20 @@ Harness **不是**开发流水线；阶段闭环（closed）只证明**当前 ph
 
 | `transition_policy` | 含义 | 典型来源 |
 |---------------------|------|----------|
-| `manual` | **默认**。闭环后须 `phase.next_step` 或 `*.ok_to_*` 停等 | 无 batch / goal 声明 |
+| `manual` | 独立请求到本次终点；推进需已有范围授权或相应确认，不重复询问已有授权 | 无 batch / goal 声明 |
 | `batch_authorized` | 用户一条指令声明多阶段范围 | 「coding 并 review」「全链路交付」 |
 | `goal_mode` | `goal-runner` 确定性编排 | `goal-runner.ts` + manifest |
 
 ## workflow manifest 字段
 
-[`spec-driven.workflow.yaml`](../../workflows/spec-driven.workflow.yaml) 已支持：
+[`obligation-driven.workflow.yaml`](../../workflows/obligation-driven.workflow.yaml) 已支持：
 
 ```yaml
 transition_policy: manual
 auto_chain: [spec, plan, coding, review, ut, testing]
 ```
 
-`auto_chain` 可省略；`goal-runner` 从 DAG 推导，manifest `chain_override` 可覆盖。
+现代 workflow 的 auto_chain 仅是候选排序；实际执行由 P2 execution_scope 决定，chain_override/start/end 必须同值投影。已有有效信息不自动安排生产阶段，unknown 不当作不适用。旧 spec-driven run 仍按冻结旧链恢复。
 
 ## goal_mode：推荐与授权分离
 

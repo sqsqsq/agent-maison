@@ -1,7 +1,7 @@
 # Change-Lite 阶段 Skill (`change-lite`)
-> **输入协议边界**：以下 full=spec / lite=change 的 facts 建立与固定上游阅读口径仅适用于 1.0。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。默认入口尚未切换，不能自行补造调用上下文。
+> **输入协议边界**：旧版固定上游阅读口径仅适用于历史 1.0 输入。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。新默认使用 1.1 输入，调用上下文必须由入口解析，不得自行补造。
 
-> **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `feature.track` / `phase.next_step`。
+> **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `phase.next_step`。
 
 ## 前置
 
@@ -23,23 +23,9 @@ lite 轨（L1）：单模块小需求的轻量链——单文档 `change.md` 承
 | change.md（单文档契约） | `<features_dir>/<f>/change.md` | 长期归档 |
 | feature.yaml（track 声明） | `<features_dir>/<f>/feature.yaml` | 长期 |
 
-> **兼容入口**：仅恢复已有旧 lite run；新任务交主 Agent 计算 execution_scope，不展示 feature.track。
-## Step 1. 判档（track 评分 → `feature.track` gate）
+## Step 1. 恢复已有运行
 
-1. 依评分 SSOT [`change-rules.yaml > track_scoring`](../../../specs/phase-rules/change-rules.yaml) 估分：维度与 full 轨 exploration_strategy 同源（module_loc / scope_breadth / cross_layer / new_api_surface / dependency_fan_out），`score ≥ threshold_full` → 建议 full，否则建议 lite。
-2. **一票升 full（veto，无视评分）**：需求含 pixel_1to1 / 像素级还原意图；明确跨模块信号（≥2 个 in_scope 模块）；goal 模式运行。命中任一不得提议 lite。
-3. 向用户提议档位并停等 **`feature.track`** 确认：`1=接受建议档 / 2=升 full / 3=保持 lite`。**拿不准一律建议 lite**（L0 无 gate 兜底，误降不对称；L0/L1/L2 分流表见工程入口 AGENTS 指令第四节）。
-4. 确认后写 `<features_dir>/<feature>/feature.yaml`：
-
-```yaml
-schema_version: "1.0"
-track: lite            # lite | full；缺失文件 = full（消费端 SSOT：harness resolveFeatureTrack）
-score_snapshot: { estimated_loc: 300, modules: 1, cross_layer: false, ui_fidelity: none, score: 22 }
-selection_source: user_input
-history: []            # 升档事件 append（见「中途升档」）
-```
-
-选升 full → 不再走本 Skill，转 [spec SKILL](../spec/SKILL.md)（feature.yaml 写 `track: full`）。
+只读取原 run 的冻结链、已有 change.md 与历史 track；不重新评分、不展示轨道选择、不创建新任务。新事实改变范围时交外层按现有 correction/successor 处理。
 
 ## Step 2. change.md 单文档
 
@@ -128,23 +114,6 @@ cd framework/harness && npx ts-node harness-runner.ts --phase exit --feature <fe
 
 exit PASS 只证明 lite feature 闭环。**收尾 / 闭环停等（BLOCKER）**：只呈现 harness 的 `NEXT_STEP` 段落；recommendation 由 `assess@1` 生成，执行授权仍由 driver 按 `phase.next_step` / `transition_policy` 裁决。
 
-## 中途升档（BLOCKER）
+## 新事实超出旧范围
 
-实施中出现以下任一信号，**立即停下**，禁止越界继续写码：
-
-- exit / 自查发现改动越出 `in_scope_modules`（跨模块信号）；
-- 需求膨胀出 pixel_1to1 / 多模块 / 契约设计诉求。
-
-处置：走 **`feature.track`** 升档确认（2=升 full）→ 通过后：
-
-1. `feature.yaml`：`track: full`，`history` append 一条 `{ at: <ISO 8601>, from: lite, to: full, reason: <信号> }`；
-2. `change.md` 作 spec/plan 的种子输入（意图→spec 背景，Scope/关键契约→plan 输入），转 [spec SKILL](../spec/SKILL.md) 起 full 链；
-3. 若用户拒绝升档：收窄需求回 in_scope 内，或经用户同意扩 `in_scope_modules` 后重过 change 门禁。
-
-## 修正路由（中途 NL 修正）
-
-对本 feature 的修正请求，先跑 `harness-runner.ts --correction-init`（内部按**修正三问**分层：需求变→意图/验收清单；契约变→关键契约/Scope；纯实现→coding；纯验证→UT/验收自证）。分类后直接按声明层实施，不再停等人签；只改根因层，再重跑受影响门禁（**重验 ≠ 重做**）。用户反馈是 successor/correction 输入，不改写上一 run 的完成证据。分层表与禁令见工程入口 AGENTS 指令第四节。
-
-## 收尾
-
-阶段结束时只呈现 Harness 输出的「下一步」段落，不自行推导或补写跨阶段建议。
+停止当前写入，把影响与依据交外层现有 correction/successor 路径；保留原 run、预算和已验证事实，不修改旧 track 或重走轨道菜单。

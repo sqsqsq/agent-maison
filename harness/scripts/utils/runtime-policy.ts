@@ -314,7 +314,8 @@ export interface FeatureTrackDecl {
 }
 
 /** feature.yaml 缺失或未声明 → full（默认零变化不变式）。 */
-export function resolveFeatureTrack(decl?: FeatureTrackDecl | null): FeatureTrack {
+export function resolveFeatureTrack(decl?: FeatureTrackDecl | null, frozenChain?: readonly string[]): FeatureTrack {
+  if (frozenChain?.length) return frozenChain.some(phase => phase === 'change' || phase === 'exit') ? 'lite' : 'full';
   if (decl && decl.track === 'lite') return 'lite';
   return 'full';
 }

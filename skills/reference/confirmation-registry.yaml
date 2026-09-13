@@ -473,27 +473,6 @@ entries:
         label: "继续改 spec — 本轮不冻结"
         portable: "2=继续改 spec"
 
-  # --- change-lite（lite 轨） ---
-  - id: feature.track
-    skill: "change-lite"
-    class: gate
-    ssot_anchor: "user-confirmation-ux.md §3.1"
-    skill_step: "旧 run 兼容：S1 判档 / 中途升档（新任务不调用）"
-    portable_menu: "1=接受建议档 2=升 full 3=保持 lite"
-    notes: "仅供旧 run 恢复；新任务不展示本菜单。agent 依 change-rules.yaml track_scoring 提议档位；一票升 full 项（pixel_1to1 / 跨模块 / goal 模式）命中时不得提议 lite。中途升档复用本 gate：确认后 feature.yaml history append，change.md 作 spec/plan 种子。"
-    options:
-      - value: accept_suggested
-        label: "接受建议档 — 按评分建议的 track 进入对应链"
-        portable: "1=接受建议档"
-        side_effect: "写 feature.yaml track/score_snapshot/selection_source"
-      - value: upgrade_full
-        label: "升 full — 走 spec→plan→coding→review→ut→testing 全链"
-        portable: "2=升 full"
-        side_effect: "feature.yaml track: full；升档时 history append + change.md 作种子"
-      - value: keep_lite
-        label: "保持 lite — 走 change→coding→exit 单文档链"
-        portable: "3=保持 lite"
-
   # --- plan ---
   - id: plan.scope_expansion
     skill: "plan"

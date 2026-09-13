@@ -1,7 +1,7 @@
 schema_version: "1.1"
 name: spec-driven
 description: >
-  Default harness workflow — mirrors legacy VALID_PHASES / phase DAG before optional
+  Legacy built-in restoration workflow — mirrors legacy VALID_PHASES / phase DAG before optional
   instance extensions phase. Global phases have independent request endpoints; feature phases follow
   catalog+glossary → spec → plan → coding → (review | UT parallel) → testing.
 
@@ -113,7 +113,7 @@ artifacts:
     rule: phase-rules/change-rules.yaml
     requires: []
     tracks: ["lite"]
-    skill_doc: ../skills/feature/change-lite/SKILL.md
+    skill_doc: ../skills/legacy/change-lite/SKILL.md
 
   - id: exit
     scope: feature
@@ -121,4 +121,4 @@ artifacts:
     rule: phase-rules/exit-rules.yaml
     requires: [coding]
     tracks: ["lite"]
-    skill_doc: ../skills/feature/change-lite/SKILL.md
+    skill_doc: ../skills/legacy/change-lite/SKILL.md

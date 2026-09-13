@@ -44,6 +44,8 @@ artifact 内容先通过注册 schema 与 SpecLoader 既有字段校验。derive
 
 SpecLoader、CheckContext、verifier 上下文与材料指纹消费同一解析结果。新协议的输入读取面来自实际 attempts/bindings，输出来自本次 required_outputs；旧 REQUIRED/OPTIONAL 文件表只用于未提供新协议上下文的 1.0 路径。evidence 生成时来源已经变化必须报 stale，不能把重新读取的新字节绑定到旧内容。framework 文件不作为 consumer evidence 输入；contract 使用已有 fingerprint。
 
+新请求默认使用 obligation-driven 1.2 与输入 1.1；旧 Skill 仅在内部 legacy 路径恢复，公共入口不再提供轨道选择。
+
 ## Facts 1.1
 
 首个实际 Skill 的 Research 在写代码、审查、UT 规划或设备动作之前建立 `context/facts.md`，`established_by` 记录真实 phase。Feature facts 绑定 feature/run_id；request facts 只绑定 request_sha256，位置为调用方指定的 report-dir/context/facts.md。`FactsInvocationContext` 来自 P2/P6，不能从 facts 自报内容反推建立资格。

@@ -103,6 +103,7 @@ export function setupGoalRuntimeHost(adapter = 'cursor'): { root: string } {
   writeFile(root, 'framework.config.json', JSON.stringify({
     schema_version: '1.1',
     project_name: 'IntTest',
+    active_workflow: 'spec-driven',
     project_profile: { name: 'hmos-app', sub_variant: 'app' },
     architecture: {
       outer_layers: [{ id: '02-Feature', can_depend_on: [], intra_layer_deps: 'dag' }],
@@ -328,7 +329,7 @@ export async function runGoalRuntimeChain(
     /** e9d4b7a3 t1（入口测试）：--manifest 完整 YAML 内容（覆盖 budget-manifest 场景） */
     freshManifestContent?: string;
     /** 复现下游截断起点；缺省仍从 spec 跑完整链。 */
-    freshStartPhase?: 'spec' | 'plan' | 'coding' | 'review' | 'ut' | 'testing';
+    freshStartPhase?: 'change' | 'exit' | 'spec' | 'plan' | 'coding' | 'review' | 'ut' | 'testing';
     /** 为兼容共用测试驱动保留 HMAC 注入；视觉链已不再消费它。 */
     hmacKey?: string;
     /** device-readiness t3：覆盖设备就绪门（默认注入 READY(physical)；传入可验三态行为） */
