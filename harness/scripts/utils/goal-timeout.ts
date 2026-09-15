@@ -274,7 +274,14 @@ const FEATURE_PHASE_SET = new Set<string>(FEATURE_PHASE_ORDER);
  * 优先 chain_override；否则取 FEATURE_PHASE_ORDER 中 start..end 闭区间。
  * 对 wall 派生取"上界即安全"——宁可略大、由 max 兜底，绝不低估导致提前截断。
  */
-export function resolveChainPhasesForBudget(manifest: PhaseTimeoutManifestView): FeaturePhase[] {
+export function resolveChainPhasesForBudget(
+  manifest: PhaseTimeoutManifestView,
+  /** D2: the chain actually in force (birth + applied revisions). Wins over the birth projection,
+   *  which a revision must not rewrite — without it a phase a revision added has no budget. */
+  effectiveChain?: readonly string[],
+): FeaturePhase[] {
+  const effective = effectiveChain?.filter((p): p is FeaturePhase => FEATURE_PHASE_SET.has(p));
+  if (effective && effective.length > 0) return [...effective];
   const override = manifest.chain_override?.filter((p): p is FeaturePhase =>
     FEATURE_PHASE_SET.has(p as string),
   );
@@ -295,14 +302,14 @@ export function resolveChainPhasesForBudget(manifest: PhaseTimeoutManifestView):
  *   返回 max(已配置 wall, ceil(Σ链路 per-phase 秒 / 60) + 缓冲)
  * 只增不减——绝不缩小用户显式配置的 wall。
  */
-export function resolveWallClockMinutes(manifest: PhaseTimeoutManifestView): number {
+export function resolveWallClockMinutes(manifest: PhaseTimeoutManifestView, effectiveChain?: readonly string[]): number {
   const configured = manifest.budget?.wall_clock_minutes ?? 0;
-  const chain = resolveChainPhasesForBudget(manifest);
+  const chain = resolveChainPhasesForBudget(manifest, effectiveChain);
   const sumSeconds = chain.reduce((acc, p) => acc + resolvePhaseTimeoutSeconds(p, manifest), 0);
   const floorMinutes = Math.ceil(sumSeconds / 60) + WALL_CLOCK_BUFFER_MINUTES;
   return Math.max(configured, floorMinutes);
 }
 
-export function resolveWallClockMs(manifest: PhaseTimeoutManifestView): number {
-  return resolveWallClockMinutes(manifest) * 60 * 1000;
+export function resolveWallClockMs(manifest: PhaseTimeoutManifestView, effectiveChain?: readonly string[]): number {
+  return resolveWallClockMinutes(manifest, effectiveChain) * 60 * 1000;
 }

@@ -99,7 +99,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
     throw new Error('--prepare-run requires --feature, --adapter, and --requirement');
   }
   const workflow = resolveWorkflowSpec(options.projectRoot, { frameworkRoot: options.frameworkRoot });
-  const executionScope = resolveFeatureExecutionScope(options.projectRoot, feature, workflow, options.frameworkRoot);
+  const executionScope = resolveFeatureExecutionScope(options.projectRoot, feature, workflow, options.frameworkRoot, requirement);
   if (executionScope && !executionScope.phase_chain.length) throw new Error('[goal-mode-entry] empty scope: verify existing results without creating a run');
   const manifest = buildGoalManifestFromInput(
     {
@@ -169,7 +169,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
 }
 
 export interface GoalModeHostBridgeOptions {
-  onScopeHandoff?: import('./goal-phase-runtime').GoalPhaseRuntimeLaunchOptions['onScopeHandoff'];
+  onScopeRevision?: import('./goal-phase-runtime').GoalPhaseRuntimeLaunchOptions['onScopeRevision'];
   projectRoot: string;
   frameworkRoot: string;
   feature: string;
@@ -268,7 +268,7 @@ export async function runGoalModeHostBridge(
     return outcome;
   });
   const runtime = new GoalPhaseRuntime({
-    onScopeHandoff: options.onScopeHandoff,
+    onScopeRevision: options.onScopeRevision,
     args: [
       hasExecutionStart ? '--resume' : '--attach-created', manifest.run_id,
       '--feature', manifest.feature,

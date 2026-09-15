@@ -299,7 +299,8 @@ export async function runGoalRuntimeChain(
   root: string,
   opts: {
     frameworkRoot?: string;
-    onScopeHandoff?: (boundary: 'intent' | 'released' | 'born') => void;
+    /** D2: one run-internal boundary — fires right after the scope_revised append. */
+    onScopeRevision?: (boundary: 'applied') => void;
     featureId?: string;
     freshEndPhase?: string;
     onTesting?: (ctx: AgentCtx) => void;
@@ -913,7 +914,7 @@ export async function runGoalRuntimeChain(
             ...(opts.hostAuthorization ? { authorization: opts.hostAuthorization } : {}),
             ...(opts.hostLeaseMs !== undefined ? { leaseMs: opts.hostLeaseMs } : {}),
             ...(opts.hostMaxRounds !== undefined ? { maxRounds: opts.hostMaxRounds } : {}),
-            onScopeHandoff: opts.onScopeHandoff,
+            onScopeRevision: opts.onScopeRevision,
             executePhase: async (phase, recommendation, context) => recordAttendedPhase(
               phase,
               typeof recommendation === 'object' && recommendation && 'instruction' in recommendation
@@ -931,7 +932,7 @@ export async function runGoalRuntimeChain(
               : 1;
         })()
       : opts.viaRuntimeClass
-      ? await new (require('../../scripts/goal-phase-runtime').GoalPhaseRuntime)({ args: process.argv.slice(2), onScopeHandoff: opts.onScopeHandoff }).run()
+      ? await new (require('../../scripts/goal-phase-runtime').GoalPhaseRuntime)({ args: process.argv.slice(2), onScopeRevision: opts.onScopeRevision }).run()
       : opts.executorMode === 'attended'
       ? await goalMain({
           args: [

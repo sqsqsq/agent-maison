@@ -1,5 +1,5 @@
 import { executionCompletionPhases, type ExecutionScope } from './execution-scope';
-import { loadFrozenExecutionScope } from './goal-run-creation';
+import { loadEffectiveExecutionScope } from './goal-run-creation';
 // ============================================================================
 // assess.ts — deterministic, level-triggered feature reconciliation (assess@1)
 // ============================================================================
@@ -447,7 +447,7 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
   let workflow = resolveWorkflowSpec(options.projectRoot, {
     frameworkRoot: options.frameworkRoot,
   });
-  const scope = options.runId ? loadFrozenExecutionScope(options.projectRoot, options.feature, options.runId) : undefined;
+  const scope = options.runId ? loadEffectiveExecutionScope(options.projectRoot, options.feature, options.runId) : undefined;
   const run = options.runId && fs.existsSync(featureFilePath(options.projectRoot, options.feature, 'goal-runs/' + options.runId + '/manifest.json')) ? loadGoalManifestFromRun(options.projectRoot, options.runId, { feature: options.feature }) : undefined;
   if (run) workflow = workflowForExistingRun(workflow, run, options.frameworkRoot ?? path.resolve(__dirname, '../../..'));
   const track = scope ? 'full' : resolveFeatureTrack(loadFeatureTrackDecl(options.projectRoot, options.feature, options.runId));
@@ -893,7 +893,7 @@ export function assessObservation(
   const recommendation = recommendationForObservation(observation, gaps, fused);
   if (!fused && observation.reconcile?.scope_revision) {
     recommendation.action = 'revise_scope'; recommendation.phase = null;
-    recommendation.reason = 'new sourced facts require a successor scope';
+    recommendation.reason = 'new sourced facts require a scope revision in this run';
     delete recommendation.runner_action;
   } else if (!gaps.length && observation.execution_scope?.unresolved.length) {
     const gap = observation.execution_scope.unresolved[0];

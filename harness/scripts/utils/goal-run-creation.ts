@@ -1,4 +1,4 @@
-import { validateExecutionScope } from './execution-scope';
+import { validateExecutionScope, assertRevisionKeepsRequiredObligations } from './execution-scope';
 /**
  * Fresh goal-run birth contract.
  *
@@ -17,7 +17,6 @@ import {
   normalizeGoalPhaseChain,
   writeGoalManifest,
   loadGoalManifestFromRun,
-  inheritSuccessorManifest,
   buildGoalManifestFromInput,
   SCOPE_REVISION_FIELDS,
   type GoalManifest,
@@ -26,61 +25,170 @@ import { loadEventsJsonlStrict, type GoalRunEvent } from './goal-runner-phase';
 import { featureFilePath } from '../../config';
 import type { ExecutionScope } from './execution-scope';
 import { executionScopeFingerprint } from './execution-scope';
-import { readRunControl, ensureRunControl } from './goal-run-control';
-import { executionScopeEvidenceIssues } from './verify-feature-completion';
-import { resolveEffectiveRunEnd } from './goal-runner-phase';
 
-export interface ScopeRevisionRequested {
-  type: 'scope_revision_requested';
-  successor_run_id: string;
-  source_scope_fingerprint: string;
+/**
+ * D2: a legal revision of a frozen scope, appended to the SAME run's events.jsonl.
+ *
+ * There is deliberately no successor run, no sealing and no lock release — the run keeps
+ * executing. events.jsonl has no per-line hash chain (only `run_created` carries `event_hash`),
+ * so what this structure can and cannot detect is stated plainly:
+ *  - detects: reordering, a deleted middle entry, tampered scope content, and any edit after a
+ *    completion record — via `previous_scope_fingerprint` chaining back to the birth fingerprint,
+ *    a gap-free `revision_index`, `validateExecutionScope` per entry, and reconciliation against
+ *    phase evidence / completion `scope_revision_count`;
+ *  - does NOT claim to detect: deleting the last revision before any completion exists, or edits
+ *    to `trigger` / `revision_input`, which are outside the scope fingerprint.
+ * No signing or external state system is introduced to close that gap.
+ */
+export interface ScopeRevisedEvent {
+  type: 'scope_revised';
+  /** 1-based, gap-free. */
+  revision_index: number;
+  /** Fingerprint of the previous effective scope; the first entry chains to the birth scope. */
+  previous_scope_fingerprint: string;
   execution_scope: ExecutionScope;
+  revision_input: unknown;
+  trigger: { phase: string; check_id: string };
   allowed_fields: readonly string[];
+  /** Only the first coding/ut-bearing revision may carry it — see resolveRunBaseline. */
+  run_base_sha?: string;
 }
 
-/** Called only after the source runtime's finally releases owner and Feature locks. */
-export function createScopeSuccessor(projectRoot: string, feature: string, sourceRunId: string): GoalManifest | undefined {
-  if (!loadFrozenExecutionScope(projectRoot, feature, sourceRunId)) return undefined;
-  const source = loadGoalManifestFromRun(projectRoot, sourceRunId, { feature });
-  const sourceDir = path.join(projectRoot, source.report_dir);
-  const loaded = loadEventsJsonlStrict(path.join(sourceDir, 'events.jsonl'));
-  if (loaded.corruptLines.length) throw new Error('[execution-scope] corrupt handoff events');
-  const requests = loaded.events.filter(event => event.type === 'scope_revision_requested') as unknown as ScopeRevisionRequested[];
-  if (!requests.length) return undefined;
-  if (new Set(requests.map(request => executionScopeFingerprint({ successor_run_id: request.successor_run_id, source_scope_fingerprint: request.source_scope_fingerprint, execution_scope: request.execution_scope, allowed_fields: request.allowed_fields }))).size !== 1) throw new Error('[execution-scope] conflicting handoff intents');
-  const request = requests[0];
-  if (JSON.stringify(request.allowed_fields) !== JSON.stringify(SCOPE_REVISION_FIELDS)) throw new Error('[execution-scope] invalid revision field boundary');
-  if (!source.execution_scope || executionScopeFingerprint(source.execution_scope) !== request.source_scope_fingerprint) throw new Error('[execution-scope] source scope mismatch');
-  const terminal = resolveEffectiveRunEnd(loaded.events);
-  if (!terminal || !['CHAIN_SLICE_COMPLETED', 'PARTIAL', 'HALTED'].includes(String(terminal.status))) return undefined;
-  const owner = readRunControl(sourceDir, source.run_id)?.owner;
-  if (owner && owner.state !== 'released') return undefined;
-  assertGoalRunAttachable(projectRoot, source);
-  const scope = validateExecutionScope(request.execution_scope);
-  if (!scope.phase_chain.length || scope.completion_target !== source.execution_scope.completion_target || JSON.stringify(scope.requested_results) !== JSON.stringify(source.execution_scope.requested_results)) throw new Error('[execution-scope] successor changed request boundary');
-  const template = buildGoalManifestFromInput({ feature, run_id: request.successor_run_id }, { projectRoot });
-  const records = loaded.events as unknown as Array<{ round_fingerprint?: string; drift_fingerprint?: string }>;
-  const successor = inheritSuccessorManifest(template, source, {
-    round: records.flatMap(event => typeof event.round_fingerprint === 'string' ? [event.round_fingerprint] : []),
-    drift: records.flatMap(event => typeof event.drift_fingerprint === 'string' ? [event.drift_fingerprint] : []),
-  }, scope);
-  const successorDir = path.join(projectRoot, successor.report_dir);
-  const state = inspectGoalRunCreationFiles(path.join(successorDir, 'manifest.json'), path.join(successorDir, 'events.jsonl'));
-  if (state.state === 'complete') {
-    const existing = loadGoalManifestFromRun(projectRoot, successor.run_id, { feature });
-    if (existing.successor_of !== sourceRunId || executionScopeFingerprint(existing.execution_scope) !== executionScopeFingerprint(scope)) throw new Error('[execution-scope] successor lineage/scope mismatch');
-    return existing;
-  }
-  if (state.state !== 'absent') throw new Error('[execution-scope] successor creation_incomplete; repair this birth, do not allocate another id: ' + (state.state === 'creation_incomplete' ? state.reason : state.state));
-  const unresolved = new Set(scope.unresolved.map(gap => `${gap.obligation_id}: ${gap.reason}`));
-  const evidenceIssues = executionScopeEvidenceIssues(projectRoot, feature, scope).filter(issue => !unresolved.has(issue));
-  if (evidenceIssues.length) throw new Error('[execution-scope] successor evidence stale: ' + evidenceIssues.join('; '));
-  const creation = createGoalRun({ projectRoot, manifest: successor, chain: scope.phase_chain,
-    firstImplementationSuccessor: !source.run_base_sha && !source.phase_chain?.some(phase => phase === 'coding' || phase === 'ut') });
-  fs.appendFileSync(creation.eventsPath, JSON.stringify({ ...buildSupersedeAuditEvent({ targetRunId: source.run_id, supersedingRunId: successor.run_id, creation }), ts: new Date().toISOString() }) + '\n');
-  ensureRunControl(path.join(projectRoot, successor.report_dir), successor.run_id);
-  return successor;
+const SCOPE_REVISION_EVENT = 'scope_revised';
+
+/**
+ * Ordered, validated revisions of one run. Corruption throws — it never degrades to birth scope.
+ *
+ * Read in PHYSICAL event order, deliberately not sorted: sorting by `revision_index` would repair
+ * a swapped pair and hide exactly the reordering `previous_scope_fingerprint` exists to detect.
+ * The same before/after constraints the writer enforces are re-applied here, so an entry that is
+ * merely well-formed cannot become the effective scope (review B8).
+ */
+export function loadScopeRevisions(events: readonly GoalRunEvent[], birth: ExecutionScope): ScopeRevisedEvent[] {
+  const revisions = events.filter(event => event.type === SCOPE_REVISION_EVENT) as unknown as ScopeRevisedEvent[];
+  if (!revisions.length) return [];
+  let previousScope = birth;
+  let previous = executionScopeFingerprint(birth);
+  revisions.forEach((revision, index) => {
+    if (revision.revision_index !== index + 1) throw new Error(`[execution-scope] revision index 不连续：期望 ${index + 1}，实得 ${revision.revision_index}`);
+    if (revision.previous_scope_fingerprint !== previous) throw new Error(`[execution-scope] 修订链断裂于 #${revision.revision_index}`);
+    const next = validateExecutionScope(revision.execution_scope);
+    if (JSON.stringify(revision.allowed_fields) !== JSON.stringify(SCOPE_REVISION_FIELDS)) throw new Error(`[execution-scope] 修订 #${revision.revision_index} 的可改字段边界非法`);
+    // D2.3 constraints, shared with the writer: the request boundary is immutable and no required
+    // obligation may be deleted or downgraded.
+    if (next.completion_target !== previousScope.completion_target || JSON.stringify(next.requested_results) !== JSON.stringify(previousScope.requested_results)) {
+      throw new Error(`[execution-scope] 修订 #${revision.revision_index} 改写了请求边界`);
+    }
+    assertRevisionKeepsRequiredObligations(previousScope, next);
+    previousScope = next;
+    previous = executionScopeFingerprint(next);
+  });
+  return revisions;
 }
+
+/** Effective scope = birth scope + revisions applied in `revision_index` order. */
+export function applyScopeRevisions(birth: ExecutionScope, events: readonly GoalRunEvent[]): ExecutionScope {
+  const revisions = loadScopeRevisions(events, birth);
+  return revisions.length ? revisions[revisions.length - 1].execution_scope : birth;
+}
+
+/**
+ * Phases whose reuse a revision WITHDREW, derived from the revision's own content: an obligation
+ * that carried phase-closure evidence in the previous effective scope and no longer carries it.
+ *
+ * Deriving it (instead of writing a second event next to `scope_revised`) is what makes a revision
+ * atomic: there is no window in which the new scope is readable but the revocation is not, so an
+ * interrupt between two writes cannot resurrect a pre-revision PASS (review B1/2).
+ */
+export function revokedPhasesByRevision(birth: ExecutionScope, events: readonly GoalRunEvent[]): Map<number, string[]> {
+  const out = new Map<number, string[]>();
+  const revisions = loadScopeRevisions(events, birth);
+  revisions.forEach((revision, index) => {
+    const previous = index === 0 ? birth : revisions[index - 1].execution_scope;
+    const phases = new Set<string>();
+    for (const before of previous.obligations) {
+      const proof = (before.satisfied_by ?? []).filter(ref => 'run_id' in ref);
+      if (!proof.length) continue;
+      const after = revision.execution_scope.obligations.find(obligation => obligation.id === before.id);
+      const kept = (after?.satisfied_by ?? []).filter(ref => 'run_id' in ref);
+      // Only a duty left with NO phase evidence at all is revoked: dropping one of several proofs
+      // while keeping another still leaves the duty satisfied, so its phase must not be re-run.
+      if (!kept.length) phases.add(String(before.owner_phase));
+    }
+    if (phases.size) out.set(revision.revision_index, [...phases]);
+  });
+  return out;
+}
+
+/**
+ * The event stream as the invalidation machinery should see it: each revision that withdrew a proof
+ * is followed by the per-phase invalidation it implies. Pure projection — nothing is persisted, so
+ * the recovery path and the in-run path read the same truth from the same single event.
+ */
+export function eventsWithScopeRevocations(birth: ExecutionScope | undefined, events: readonly GoalRunEvent[]): GoalRunEvent[] {
+  if (!birth) return [...events];
+  const revoked = revokedPhasesByRevision(birth, events);
+  if (!revoked.size) return [...events];
+  const out: GoalRunEvent[] = [];
+  for (const event of events) {
+    out.push(event);
+    if (event.type !== SCOPE_REVISION_EVENT) continue;
+    for (const phase of revoked.get((event as unknown as ScopeRevisedEvent).revision_index) ?? []) {
+      out.push({ type: 'phase_invalidated', phase, reason: 'scope_revised' } as unknown as GoalRunEvent);
+    }
+  }
+  return out;
+}
+
+/**
+ * The ONE entry every runtime consumer uses. `loadFrozenExecutionScope` stays, but now means
+ * strictly "read the birth scope" and is only for birth/identity checks.
+ */
+export function loadEffectiveExecutionScope(projectRoot: string, feature: string, runId: string): ExecutionScope | undefined {
+  const birth = loadFrozenExecutionScope(projectRoot, feature, runId);
+  if (!birth) return undefined;
+  return applyScopeRevisions(birth, loadAuthoritativeRunEvents(projectRoot, feature, runId));
+}
+
+/**
+ * Baseline for diffs. `manifest.run_base_sha` is a birth identity field with a write-once defence,
+ * so a run born as `[spec]` can never have it back-filled into the manifest. Instead the first
+ * coding/ut-bearing revision carries it, and write-once is preserved at the event layer.
+ */
+export function resolveRunBaseline(manifest: { run_base_sha?: string }, events: readonly GoalRunEvent[]): { baseSha?: string; source: 'birth' | 'revision' } {
+  const revisions = events.filter(event => event.type === SCOPE_REVISION_EVENT) as unknown as ScopeRevisedEvent[];
+  const carriers = revisions.filter(revision => typeof revision.run_base_sha === 'string' && revision.run_base_sha);
+  // The three conditions the writer must satisfy are re-checked here, in full. An illegal extra
+  // carrier is chain corruption, never something the birth value may silently override (review B9).
+  if (manifest.run_base_sha && carriers.length) throw new Error('[execution-scope] 出生已有基线，修订事件不得再携带 run_base_sha——链损坏');
+  if (manifest.run_base_sha) return { baseSha: manifest.run_base_sha, source: 'birth' };
+  if (!carriers.length) return { source: 'birth' };
+  if (carriers.length > 1) throw new Error('[execution-scope] 基线在事件层被重复冻结——链损坏');
+  const carrier = carriers[0];
+  const bearing = (revision: ScopeRevisedEvent): boolean => (revision.execution_scope?.phase_chain ?? []).some(phase => phase === 'coding' || phase === 'ut');
+  if (!bearing(carrier)) throw new Error('[execution-scope] 携带基线的修订不含 coding/ut——链损坏');
+  const first = revisions.find(bearing);
+  if (first !== carrier) throw new Error('[execution-scope] 基线未由首条含 coding/ut 的修订冻结——链损坏');
+  return { baseSha: validateExactSha(carrier.run_base_sha!, 'scope_revised run_base_sha'), source: 'revision' };
+}
+
+/** Shared events read so effective scope and baseline resolve off one on-disk read. */
+export function loadAuthoritativeRunEvents(projectRoot: string, feature: string, runId: string): GoalRunEvent[] {
+  const manifest = loadGoalManifestFromRun(projectRoot, runId, { feature });
+  const eventsPath = path.join(projectRoot, manifest.report_dir, 'events.jsonl');
+  if (!fs.existsSync(eventsPath)) return [];
+  const loaded = loadEventsJsonlStrict(eventsPath);
+  if (loaded.corruptLines.length) throw new Error('[execution-scope] events.jsonl 损坏，无法求有效范围');
+  return loaded.events;
+}
+
+/**
+ * D2.5: `createScopeSuccessor` (the normal scope-successor birth path) is deleted, together with
+ * the `scope_revision_requested` protocol it consumed. Legal revisions now append `scope_revised`
+ * inside the same run. successor stays only for failure-repair supersede, an explicit user
+ * requirement change, and creation-incomplete repair — all of which go through the supersede
+ * path, not through this function. 3.1.0 is unreleased, so no compatibility reader is kept.
+ */
 
 /** Birth metadata distinguishes legacy absence from a damaged/stripped modern scope. */
 export function loadFrozenExecutionScope(projectRoot: string, feature: string, runId: string): ExecutionScope | undefined {
@@ -176,7 +284,7 @@ function chainRequiresRunBase(chain: readonly string[]): boolean {
   return chain.some(phase => phase === 'coding' || phase === 'ut');
 }
 
-function validateExactSha(value: string | undefined, label: string): string {
+export function validateExactSha(value: string | undefined, label: string): string {
   const normalized = value?.trim().toLowerCase() ?? '';
   if (!/^[0-9a-f]{40}$/.test(normalized)) {
     throw new Error(`[goal-run-creation] ${label} 必须为 exact 40-hex Git SHA`);
@@ -219,7 +327,6 @@ export function createGoalRun(options: {
   rebaselineFromRunId?: string;
   /** Tests only: deterministic HEAD resolver. */
   resolveHead?: () => string;
-  firstImplementationSuccessor?: boolean;
 }): GoalRunCreationResult {
   const manifestPath = path.join(options.projectRoot, options.manifest.report_dir, 'manifest.json');
   const eventsPath = path.join(options.projectRoot, options.manifest.report_dir, 'events.jsonl');
@@ -236,7 +343,7 @@ export function createGoalRun(options: {
   options.manifest.phase_chain = phaseChain;
 
   if (chainRequiresRunBase(phaseChain)) {
-    if (options.manifest.successor_of && !options.firstImplementationSuccessor) {
+    if (options.manifest.successor_of) {
       if (!options.manifest.run_base_sha) {
         throw new Error(
           '[goal-run-creation] successor 缺少可信 lineage run_base_sha；须人工 rebaseline supersede',

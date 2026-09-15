@@ -8,7 +8,7 @@ import type { FactsInvocationContext } from './context-facts';
 import { loadGoalManifestFromRun } from './goal-manifest';
 import * as fs from 'fs';
 import * as path from 'path';
-import { loadFrozenExecutionScope } from './goal-run-creation';
+import { loadEffectiveExecutionScope } from './goal-run-creation';
 import { loadFeatureContracts, phaseContractIndex, loadArtifactInventory } from './skill-contract';
 import { resolveFactsAbsPath, factsBaselineFingerprint } from './context-facts';
 import { parseContextExploration } from './context-exploration';
@@ -22,6 +22,9 @@ import { stableStringify } from './phase-evidence-manifest';
 import { readRunBoundContracts } from './capability-resolution';
 import { resolveGoalRunBaseline } from './goal-run-baseline';
 import { diffChangedFilesWithStatus } from './git-diff';
+
+/** Revision-trigger kinds: historical evidence for why a revision happened, never a current target. */
+const REVISION_TRIGGER_KINDS = new Set(['design-decision', 'acceptance-definition']);
 
 export interface PreparedRequest {
   schema_version: '1.0';
@@ -226,12 +229,11 @@ export function resolveCapabilityResolutionEntryInput(
     });
     requirement = manifest.requirement?.trim() || undefined;
     requirementSourceFiles = manifest.requirement_source_files;
-    const scope = loadFrozenExecutionScope(options.projectRoot, options.feature, goalRunId);
+    const scope = loadEffectiveExecutionScope(options.projectRoot, options.feature, goalRunId);
     if (scope) {
       const frameworkRoot = options.frameworkRoot ?? path.resolve(__dirname, '../../..');
       const indexed = phaseContractIndex(loadFeatureContracts(frameworkRoot)).get(options.phase);
       if (indexed?.contract.schema_version !== '1.1') throw new Error('execution scope requires phase contract 1.1');
-      const bindings = scope.obligations.flatMap(obligation => obligation.basis);
       const ownsDesignOutput = (binding: import('./capability-resolution').InputBinding): boolean => ['spec', 'plan'].includes(options.phase)
         && binding.source.kind === 'artifact' && indexed.phase.produces.some(output => output.artifact === (binding.source as { artifact: string }).artifact)
         && scope.obligations.some(obligation => obligation.owner_phase === options.phase && obligation.applicability === 'required' && !obligation.satisfied_by?.length);
@@ -239,7 +241,16 @@ export function resolveCapabilityResolutionEntryInput(
         ...obligation.basis.filter(binding => !binding.dependencies.length || !binding.dependencies.every(dep => isExecutionSourceBasis(options.projectRoot, scope, obligation, dep))),
         ...(obligation.satisfied_by ?? []).filter(ref => 'input_id' in ref),
       ]);
-      const sourcePaths = [...new Set(bindings.flatMap(binding => binding.dependencies.filter(dep => dep.role === 'derive' && dep.exists).map(dep => path.relative(options.projectRoot, dep.path).replace(/\\/g, '/'))))];
+      // §5.1.1a R-target collection: a `design-decision` / `acceptance-definition` derive basis is
+      // the historical file that TRIGGERED a revision, not a current target of any phase. Collecting
+      // it here re-enters it into `factsContext.source_paths` / `testTargets` and the phase evidence,
+      // so withdrawing that edit would make the responsible phase stale again (review B4). Every
+      // other kind's derive basis stays — those ARE the current review / UT / implementation targets.
+      const sourcePaths = [...new Set(scope.obligations
+        .filter(obligation => !REVISION_TRIGGER_KINDS.has(obligation.kind))
+        .flatMap(obligation => obligation.basis.flatMap(binding => binding.dependencies
+          .filter(dep => dep.role === 'derive' && dep.exists)
+          .map(dep => path.relative(options.projectRoot, dep.path).replace(/\\/g, '/')))))];
       if (options.phase === 'review' && scope.obligations.some(obligation => obligation.kind === 'implementation' && obligation.applicability === 'required')) {
         const contracts = readRunBoundContracts(options.projectRoot, frameworkRoot, options.feature, goalRunId);
         const baseline = resolveGoalRunBaseline(options.projectRoot, options.feature, goalRunId);

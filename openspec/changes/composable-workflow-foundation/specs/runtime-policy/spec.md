@@ -101,9 +101,9 @@ harness-runner MUST 将 policy 快照（含 `policy_schema_version`、evidence �
 
 新协议 SHALL 区分 required / not_applicable / unknown、已有满足依据、执行可用性与完成证据；失败、manual、超时或设备离线 MUST NOT 消除义务或生成 PASS。零设备义务 SHALL 根据有效验收内容的同一分层规则判定，不强制物理 acceptance.yaml；performance 只有确需设备证明时才触发设备义务。
 
-feature.yaml.execution_scope MUST 仅为运行前候选。完整 Feature 交付在首阶段前 MUST 经现有 goal-mode-entry prepare/attended attach 或 detached 入口建立真实 run；manifest.execution_scope MUST 是运行权威，phase_chain 为同值投影并绑定出生事实。恢复 MUST 读取冻结范围；显式 runId 的 manifest 缺失/损坏 MUST NOT 回退候选。全复用只核验真实既有完成记录，不造空链假 run。
+feature.yaml.execution_scope MUST 仅为运行前候选。完整 Feature 交付 MUST 有唯一的冻结范围权威：本次关联的 run 存在时以该 run 的**有效范围**（出生 + 已应用 scope_revised）为权威。首次执行任一 feature phase 且无任何权威时，MUST 由机器从候选冻结一次；权威缺失或损坏（有阶段报告却无任一权威，或记录声明已转入某 run 而该 run 不存在/损坏）MUST 明确报错，MUST NOT 回退候选或选边。manifest.execution_scope 与 phase_chain MUST 保持出生值并绑定出生事实，运行期消费方 MUST 读有效范围。恢复 MUST 读取有效范围；显式 runId 的 manifest 缺失/损坏 MUST NOT 回退候选。全复用只核验真实既有完成记录，不造空链假 run。
 
-范围变更 MUST 回责任方，沿既有 correction/backtrack/successor 重新签发；前驱封卷、释放 owner/锁后由同一 runtime 创建后继并记录恢复关系，MUST NOT 原地修改 manifest 或清空预算/失败历史。未受影响证据只在 freshness/closure 校验通过后复用。
+合法范围修订 MUST 在同一 run 内追加 scope_revised 完成，MUST NOT 封卷、MUST NOT 释放 owner/锁、MUST NOT 生成后继；出生记录 MUST NOT 被改写，预算与失败历史 MUST NOT 被清空。successor 只保留给失败修复型 supersede、用户显式改需求与 creation-incomplete 修复。未受影响证据只在 freshness/closure 校验通过后复用。
 
 新协议证据策略 MUST 在有效范围内求解，strict/balanced 继续按显式配置，模式不自动降档；未知输入先补足，本次无 testing 不要求 testing trace。已有有效负面结论与真实控制约束仍有效。MUST NOT 新建 execution-scope.json、第二 run 目录、场外状态或平行完成协议。
 
@@ -113,11 +113,11 @@ feature.yaml.execution_scope MUST 仅为运行前候选。完整 Feature 交付�
 
 #### Scenario: Resume ignores changed workflow defaults
 - **WHEN** 新协议 run 出生后 workflow 或候选范围改变
-- **THEN** 恢复 MUST 使用原冻结范围；需要变更时经责任方重签后继
+- **THEN** 恢复 MUST 使用有效范围（出生 + 已应用 scope_revised），MUST NOT 重算候选；需要变更时由责任方在同一 run 内追加合法修订
 
 #### Scenario: Spec discovers a new device obligation
 - **WHEN** spec 的有效新验收要求新增设备验证
-- **THEN** 先封卷交接再创建绑定新范围的后继，普通继续沿既有后继关系恢复，不重写原 run
+- **THEN** 同一 run 追加 scope_revised 并继续派发，MUST NOT 产生第二个 run_created，出生范围不被改写
 
 #### Scenario: Request-only review cannot create feature completion
 - **WHEN** 用户只要求审查指定代码

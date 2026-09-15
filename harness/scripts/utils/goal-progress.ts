@@ -8,7 +8,8 @@ import * as path from 'path';
 // M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT（锁/run 路径必须经它展开）
 import { featureRelativePath } from './feature-identity';
 import { isDryReportDir, type GoalManifest } from './goal-manifest';
-import { inspectGoalRunCreationFiles } from './goal-run-creation';
+import { inspectGoalRunCreationFiles, applyScopeRevisions } from './goal-run-creation';
+import { validateExecutionScope } from './execution-scope';
 import {
   LEGACY_FEATURE_PHASE_ORDER,
   resolveFeatureTrack,
@@ -808,7 +809,23 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
   const allowedPhases = [
     ...new Set([...fallbackChain, ...workflowFeaturePhases(workflow, 'full'), ...workflowFeaturePhases(workflow, 'lite')]),
   ];
-  const chain = resolveChainFromEvents(events, fallbackChain, allowedPhases);
+  // D2: the effective scope is the current truth about which phases this run must run — the first
+  // `run_start.chain` is the birth projection and must not override it (review M3). Resolved through
+  // the same `applyScopeRevisions` every other consumer uses, not a second hand-rolled reader
+  // (review 建议 2). A corrupt chain must not blank the progress panel: the runtime is the component
+  // that fails on corruption, this one keeps rendering what the events do show.
+  let revisedChain: FeaturePhase[] | undefined;
+  try {
+    if (manifest.execution_scope) {
+      const effective = applyScopeRevisions(validateExecutionScope(manifest.execution_scope), events);
+      if (effective !== manifest.execution_scope) {
+        revisedChain = effective.phase_chain.map(p => normalizePhaseId(p, p)).filter((p): p is FeaturePhase => allowedPhases.includes(p));
+      }
+    }
+  } catch { revisedChain = undefined; }
+  // `!== undefined`, not `?.length`: a legally empty effective chain (everything already reused)
+  // must stay empty rather than silently fall back to the birth projection.
+  const chain = revisedChain !== undefined ? revisedChain : resolveChainFromEvents(events, fallbackChain, allowedPhases);
 
   const hasRunStart = events.some((e) => e.type === 'run_start');
   const lastRunEnd = resolveEffectiveRunEnd(events);
@@ -854,7 +871,9 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     }
   }
   // 与 goal-runner 共用同一 resolver，杜绝"runner 等 90min 但 progress 按 60min 报 STALLED"脑裂。
-  const wallLimitMs = resolveWallClockMs(manifest);
+  // 同源包括**链**：runtime 在修订后按有效链重算 wall（goal-phase-runtime 的 revise_scope 分支），
+  // 这里不传 chain 就会按出生链报一个更小的上限（review M3）。
+  const wallLimitMs = resolveWallClockMs(manifest, chain);
   const stallPhase: FeaturePhase = currentPhase ?? chain[0] ?? 'review';
   // P0-4（plan d9b4f7e2）：timeout 单一事实源——优先读最近 agent_invoke_start 的
   // effective_timeout_ms（钳制/升档后的真值；runner 升档而 progress 静态解析 manifest

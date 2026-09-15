@@ -197,11 +197,16 @@ export function checkPlanAuthority(input: {
   feature: string;
   /** framework 根（gate 指纹重算口径）；缺省由 recompute 侧从 projectRoot 推导 */
   frameworkRoot?: string;
+  /**
+   * D2: the run executing right now. Evidence this very run just closed is necessarily unsealed
+   * (D2 never seals), so its terminal check is skipped for that run and only that run.
+   */
+  currentRunId?: string;
 }): PlanAuthorityOutcome {
   if (input.executionScope) {
     const design = input.executionScope.obligations.filter(o => o.kind === 'design-context' && o.applicability === 'required');
     if (design.length && design.every(o => o.satisfied_by?.length) && !input.executionScope.obligations.some(o => o.kind === 'design-decision' && o.applicability !== 'not_applicable' && !o.satisfied_by?.length)) {
-      const issues = executionScopeEvidenceIssues(input.projectRoot, input.feature, input.executionScope, new Set(design.map(o => o.id)));
+      const issues = executionScopeEvidenceIssues(input.projectRoot, input.feature, input.executionScope, new Set(design.map(o => o.id)), input.currentRunId);
       return issues.length ? { kind: 'replan', reason: 'live_drift', detail: issues.join('; '), affectedFiles: [] } : { kind: 'ok' };
     }
   }

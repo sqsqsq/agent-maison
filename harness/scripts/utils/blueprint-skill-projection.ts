@@ -4,8 +4,10 @@ import * as crypto from 'crypto';
 import * as YAML from 'yaml';
 import { resolveFeatureArtifact, loadFrameworkConfig } from '../../config';
 import { loadWorkflowSpec } from '../../workflow-loader';
-import { loadFrozenExecutionScope } from './goal-run-creation';
-import { resolveExecutionScope, type ExecutionScopeInput } from './execution-scope';
+import { loadEffectiveExecutionScope } from './goal-run-creation';
+import { resolveExecutionScope, findSubtractedRequiredObligations, type ExecutionScope, type ExecutionScopeInput } from './execution-scope';
+import { readScopeAcceptance, collectResolvedScopeFacts } from './feature-track';
+import { loadGoalManifestFromRun } from './goal-manifest';
 import { asRecord, asRecords, type BlueprintRecord } from './component-blueprint-model';
 import { resolveComponentBlueprintRef } from './component-blueprint-path';
 import { parseChangeUnitFeatureId, loadCanonicalChangeUnit, asChangeUnitArtifact } from './change-unit-path';
@@ -34,7 +36,7 @@ export interface BlueprintSkillProjection {
 export function designScopeRevisionChecks(ctx: CheckContext, checks: CheckResult[]): CheckResult[] {
   const subject = ctx.factsContext?.subject;
   if (!subject || !('run_id' in subject) || !subject.run_id || !ctx.resolvedInputs || checks.some(check => check.status === 'FAIL')) return [];
-  const scope = loadFrozenExecutionScope(ctx.projectRoot, ctx.feature, subject.run_id);
+  const scope = loadEffectiveExecutionScope(ctx.projectRoot, ctx.feature, subject.run_id);
   if (!scope || scope.completion_target !== 'feature') return [];
   const kind = ctx.phase === 'spec' ? 'acceptance-context' : 'design-context';
   const inputId = ctx.phase === 'spec' ? 'acceptance' : 'contracts';
@@ -49,11 +51,27 @@ export function designScopeRevisionChecks(ctx: CheckContext, checks: CheckResult
     return { ...obligation, applicability: 'required' as const, reason: `${ctx.phase} produced validated design content`, basis: [...basis, resolved.binding], satisfied_by: [resolved.binding] };
   });
   if (!facts.some(fact => fact.kind === kind)) facts.push({ id: `${kind}:design-output`, kind, owner_phase: ctx.phase, applicability: 'required', reason: `${ctx.phase} produced validated design content`, basis: [resolved.binding], satisfied_by: [resolved.binding] });
-  const proposal: ExecutionScopeInput = { request: { completion_target: scope.completion_target, requested_results: scope.requested_results, requested_phases: remaining }, facts, contract_fingerprints: [], control_edges: scope.control_edges };
-  const acceptance = ctx.phase === 'spec' && ctx.featureSpec.acceptance ? { value: ctx.featureSpec.acceptance, binding: resolved.binding } : undefined;
+  const proposal: ExecutionScopeInput = { request: { completion_target: scope.completion_target, requested_results: scope.requested_results, requested_phases: remaining,
+    // D0.1: inherit the sourced impact judgement — dropping it sends device back to `unknown`
+    // on every revision, so a legal zero-device scope would regress one step each time.
+    ...(scope.request_impact ? { impact: scope.request_impact } : {}) },
+    facts, contract_fingerprints: [], control_edges: scope.control_edges };
+  // This round's freshly produced acceptance wins; otherwise re-read the proposal's own binding.
+  // NOT `readScopeAcceptance(...) ?? fallback`: it calls readBoundInput directly, which *throws*
+  // on a stale binding, so `??` would never reach the right-hand side. A stale-binding error is
+  // deliberately propagated — "source went stale" must not be laundered into "no acceptance".
+  const acceptance = ctx.phase === 'spec' && ctx.featureSpec.acceptance
+    ? { value: ctx.featureSpec.acceptance, binding: resolved.binding }
+    : readScopeAcceptance(ctx.projectRoot, proposal, { feature: ctx.feature, frameworkRoot: ctx.frameworkRoot });
   const workflow = loadWorkflowSpec(ctx.frameworkRoot, loadFrameworkConfig(ctx.projectRoot).active_workflow ?? 'spec-driven');
-  const next = resolveExecutionScope(proposal, workflow, acceptance);
-  if (scope.obligations.some(old => old.applicability === 'required' && !next.obligations.some(fact => fact.id === old.id && fact.applicability === 'required'))) {
+  const next = resolveExecutionScope(proposal, workflow, acceptance,
+    // requirement source (checker-side revision budget): the run's frozen manifest.requirement —
+    // this checker only runs inside a real run, so the manifest is always the authority here.
+    collectResolvedScopeFacts(proposal, { projectRoot: ctx.projectRoot, feature: ctx.feature, frameworkRoot: ctx.frameworkRoot, currentRunId: subject.run_id,
+      requirement: loadGoalManifestFromRun(ctx.projectRoot, subject.run_id, { feature: ctx.feature }).requirement,
+      // This budget always inherits the frozen scope impact; it never authors a new one.
+      impactInherited: true }));
+  if (findSubtractedRequiredObligations(scope, next).length) {
     return [{ id: 'design_scope_facts', category: 'structure', severity: 'BLOCKER', status: 'FAIL', description: '设计修订不得静默删除冻结义务', details: '新验收与既有 required 义务冲突；返回 scope owner 澄清，不缩减本 run 责任', suggestion: '回到 scope owner 澄清验收变化，保留已冻结义务；正式需求变化沿既有 correction/successor 处理。' }];
   }
   if (!next.phase_chain.length) return [];

@@ -27,7 +27,20 @@ const frameworkRoot = path.resolve(__dirname, '../../..');
 const workflow: WorkflowSpec = { schema_version: '1.2', name: 'p5', auto_chain: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'], artifacts: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'].map(id => ({ id, scope: 'feature', requires: [], obligation_provider_id: `obligations.${id}` })) };
 const acceptance = (): AcceptanceSpec => ({ feature: 'live', source: 'approved', version: '1', criteria: [{ id: 'AC-1', prd_function: null, description: 'value is correct', priority: 'P1', testable: true, verification_steps: ['read value'], expected_result: '42', ut_layer: 'unit', ut_focus: 'value' }], boundaries: [] });
 const binding = { input_id: 'acceptance', source: { kind: 'artifact' as const, artifact: 'acceptance@1' }, dependencies: [], source_refs: [], content_fingerprint: 'a'.repeat(64) };
-const scopeFor = (value: AcceptanceSpec) => resolveExecutionScope({ request: { completion_target: 'feature', requested_results: ['delivery'], requested_phases: ['coding'] }, facts: [], contract_fingerprints: [] }, workflow, { value, binding });
+// D0.1: these cases assert acceptance-layering semantics, so they supply the sourced impact the
+// resolver now requires before device verification may be pruned. An impact judgement with an EMPTY
+// basis is rejected outright (a claim with no source must never prune a duty), so the fixture names
+// a source and supplies the reading layer's verdict for it — the resolved facts are the pure
+// function's own input type, not a forged production artifact.
+const impactSource = { input_id: 'impact-source', source: { kind: 'derive' as const, provider_id: 'derive.codebase' as const }, dependencies: [], source_refs: ['src/value.ts'], content_fingerprint: 'b'.repeat(64) };
+const scopeFor = (value: AcceptanceSpec) => resolveExecutionScope(
+  { request: { completion_target: 'feature', requested_results: ['delivery'], requested_phases: ['coding'],
+    impact: { user_visible_behavior_change: false, reason: 'fixture: unit verification only', basis: [impactSource] } },
+    facts: [], contract_fingerprints: [] },
+  workflow, { value, binding },
+  { fidelity: { state: 'missing', visual_requested: false }, impact_basis: [{ input_id: 'impact-source', ok: true, related: true, detail: 'fixture reading-layer verdict' }], basis: [], satisfied_by: [],
+    targets: { implementation_files: ['src/value.ts'], contracts_files: [], review_targets: [], ut_targets: [] },
+    impact_targets_available: true });
 
 function nativeProfile(f: ReturnType<typeof requestFixture>) {
   fs.symlinkSync(path.join(frameworkRoot, 'profiles/hmos-app'), path.join(f.framework, 'profiles/hmos-app'), process.platform === 'win32' ? 'junction' : 'dir');

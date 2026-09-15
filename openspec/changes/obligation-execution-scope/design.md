@@ -14,8 +14,10 @@
 2. workflow 1.2 的 `obligation_provider_id` 使用静态注册集合；auto_chain 只提供稳定默认顺序。真实条件控制边携带 P1 basis，并随既有 scope 的可选 `control_edges` 保留，以便恢复和后继继续验证真实顺序；没有第二张图或文件。1.0/1.1 继续旧轨道读取。
 3. `feature.yaml.execution_scope` 是运行前规范化候选；已出生 run 只读 manifest。契约指纹由安装的 contracts 计算，不以候选自报值为准。`execution_scope`、phase_chain 与起止/chain_override 同源；出生摘要绑定范围，且范围身份按 JSON 可持久化语义计算，避免 YAML 共享引用导致读写摘要不同。
 4. P1 的调用接口从实际 run 注入义务、输入绑定、真实 facts 首阶段与继承上下文；运行内的 full 标签仅兼容证据策略，不再决定阶段集合。已验证施工输入可满足信息要求；未满足设计决策或真实控制前置仍回责任方。
-5. owning checker 在既有 CheckResult 中可提出 `scope_revision_input`，不是授权状态。runtime 验证新来源与不缩减的请求/义务，assess 推荐 revise_scope，再写一次 scope_revision_requested。成功切片保留成功；失败发现保留 PARTIAL/HALTED，不复用失败 run 的裸 PASS。所有源记录原样保留。
-6. main 的 finally 先释放既有 Feature/run 锁和 owner，外层同一 runtime 才调用 createScopeSuccessor；后继沿 inheritSuccessorManifest/createGoalRun/ensureRunControl 出生。已登记 ID 保持唯一，partial birth 诊断沿既有 creation_incomplete；已完成后继只验证并返回。三个测试切点仅是故障注入回调，不是新模式或状态文件。
+5. owning checker 在既有 CheckResult 中可提出 `scope_revision_input`，不是授权状态。runtime 验证新来源与不缩减的请求/义务，assess 推荐 revise_scope。成功切片保留成功；失败发现保留 PARTIAL/HALTED，不复用失败 run 的裸 PASS。所有源记录原样保留。
+   **已被 P8（用户裁决 2026-09-14）改判**：决策末段原写「再写一次 `scope_revision_requested`」，该事件类型连同后继交接一并删除；合法修订改为在同一 run 追加一条 `scope_revised`，语义以本 change 的 goal-runner spec「Scope revisions are appended inside the same run」为准。
+6. ~~main 的 finally 先释放既有 Feature/run 锁和 owner，外层同一 runtime 才调用 createScopeSuccessor；后继沿 inheritSuccessorManifest/createGoalRun/ensureRunControl 出生。~~
+   **整条已被 P8 改判**：合法范围修订不封卷、不释放 owner/锁、不生成后继；`createScopeSuccessor` 已删除，successor 只保留给失败修复型 supersede、用户显式改需求与 creation-incomplete 修复（仍沿 inheritSuccessorManifest/createGoalRun/ensureRunControl，已登记 ID 唯一、partial birth 诊断沿既有 creation_incomplete）。测试切点仍只是故障注入回调，不是新模式或状态文件。
 7. 后继默认继承需求、adapter/provider pin、权限、预算与失败指纹。仅源链从未实施/UT 且没有基线时，在后继首次实施前沿既有出生规则取得 HEAD。祖先预算复用原 reducer；修复其 CU 逻辑 identity 到物理路径的旧拼接断点，确保消耗轮次不清零。
 8. completion 从独立出生范围验证 executed/reused/unresolved；request 不生成 Feature completion。全复用入口只验证现有结果，不创建空 run。CU 继续使用同一 verifyFeatureCompletion，其 expected chain 对新协议由出生范围确定。
 

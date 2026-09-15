@@ -41,3 +41,16 @@
 - 提取完成检查已有的出生源码依据判定，桥接共用；仅作出生判断的源码不再传为当前输入不可变绑定，仍保留来源目标供 P1 重新解析和绑定。设计契约、验收、满足依据与复用阶段证据约束保留，P1 resolver 未修改。
 - 在既有 capability-degradation 测试中串通真实出生、源码修改、P2 桥接、P1 resolver：解析当前代码成功且获得新绑定，出生记录不变；直接传旧源码绑定、修改契约或验收均 blocked，恢复契约后正常解析。
 - 定向 18/18；冻结后 `cd harness && npm test`：typecheck、4419 单测、46 fixtures 全通过。OpenSpec 40/40、plan、diff/LF 检查通过。第 2–6 项不扩面，未进行真实业务宿主验收。
+
+## 4. P8 批次 1（run 内修订与 resolver 护栏）
+
+- [x] 4.1 D0.1：证据类义务的候选自报一律重算（unit/device 走验收分层、visual 走 fidelity SSOT）；无来源一律 `unknown`；device 裁剪须有**结构完整且有来源**的 impact 判断；`satisfied_by` 与 `obligation.basis` 冻结时经读取层核验。
+- [x] 4.2 D2：合法修订在**同一 run** 追加 `scope_revised`，不封卷、不释放锁、不生成后继；`createScopeSuccessor` 与 `scope_revision_requested` 删除；有效范围 = 出生 + 按 index 应用；读取侧与写入侧共用同一组前后约束（请求边界、不得删除/降级 required）。
+- [x] 4.3 全部运行期消费点改读有效范围（链、游标、终点判定、完成资格、预算、提示语与进度投影）；manifest 三字段与 run_created 身份保持出生值。
+- [x] 4.4 `run_base_sha` 事件层 write-once：仅首条含 coding/ut 的修订可携带，读取侧校验三条充要条件与 40-hex。
+
+### 批次 1 代码 review 第一轮返修记录
+
+- 收紧点：impact 判断须有布尔/理由/非空来源；`obligation.basis` 与 `request.impact.basis` 共用同一核验函数（来源存在、项目内、摘要有效）；字节例外收成 `derive.codebase` / `derive.test-targets` 白名单；修订读取器按事件物理顺序校验（不排序）并复跑写入侧约束；基线读取器执行三条充要条件。
+- 语义修正：修订可**撤销失效的 `satisfied_by`**（对应阶段回链重跑），不再被无条件补回；required 保护按 `id + kind` 判定；重算前不再因候选自报 applicability 拒绝；impact 的「继承 vs 更正」按与有效范围的实际差异判定，更正须自带新来源。
+- 目标收集：`design-decision` / `acceptance-definition` 的 derive basis 不再进入 `source_paths` / `testTargets`（§5.1.1a R-目标收集），其余 kind 照收。

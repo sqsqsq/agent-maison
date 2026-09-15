@@ -37,8 +37,8 @@ export interface UpstreamChainResolution {
 export function resolveUpstreamPhaseChain(projectRoot: string, feature: string, runId?: string): UpstreamChainResolution {
   if (runId) {
     try {
-      const { loadFrozenExecutionScope } = require('./goal-run-creation') as typeof import('./goal-run-creation');
-      const scope = loadFrozenExecutionScope(projectRoot, feature, runId);
+      const { loadEffectiveExecutionScope } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+      const scope = loadEffectiveExecutionScope(projectRoot, feature, runId);
       if (scope) return { chain: scope.phase_chain, degraded: false };
     } catch (error) { return { chain: [], degraded: true, degradedReason: String(error) }; }
   }

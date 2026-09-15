@@ -197,7 +197,7 @@ export function runUiDiffWithinDeclaredFiles(input: UiScopeGateInput): UiScopeGa
       const declared = new Set((contracts.files ?? []).map(normalizeRel));
       const violations = [...uiChanged].filter(file => !declared.has(file));
       return { status: violations.length ? 'FAIL' : 'PASS', details: `已对照 run 绑定的 contracts.files 核验 ${uiChanged.size} 个 UI 变更；越界 ${violations.length} 个。`, affectedFiles: violations,
-        ...(violations.length ? { failureKind: 'ui_scope_violation', suggestion: '回 plan/蓝图重新裁决写集并签发后继范围，不能在 coding 扩大 live contracts。' } : {}) };
+        ...(violations.length ? { failureKind: 'ui_scope_violation', suggestion: '回 plan/蓝图重新裁决写集，由责任方在本 run 内追加范围修订，不能在 coding 扩大 live contracts。' } : {}) };
     } catch (error) { return { status: 'FAIL', failureKind: 'ui_scope_frozen_contract_missing', details: String(error), suggestion: '恢复绑定契约或回设计责任方重签施工范围。' }; }
   }
 

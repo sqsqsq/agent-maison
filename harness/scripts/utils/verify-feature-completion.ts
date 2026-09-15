@@ -24,7 +24,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { validateExecutionScope, executionScopeFingerprint, executionCompletionPhases, isExecutionSourceBasis, type ExecutionScope } from './execution-scope';
 import { loadGoalManifestFromRun } from './goal-manifest';
-import { assertGoalRunAttachable, loadFrozenExecutionScope } from './goal-run-creation';
+import { assertGoalRunAttachable, loadFrozenExecutionScope, loadEffectiveExecutionScope, loadScopeRevisions, loadAuthoritativeRunEvents } from './goal-run-creation';
 import { isInsideProjectRoot } from './project-relative-path';
 import { loadEventsJsonl, resolveEffectiveRunEnd } from './goal-runner-phase';
 
@@ -57,7 +57,12 @@ export const FEATURE_COMPLETION_SCHEMA_VERSION = '1.2';
 const LEGACY_COMPLETION_SCHEMA_VERSION = '1.1';
 
 /** Recheck P1 bindings and real phase evidence; scope declarations never count as PASS. */
-export function executionScopeEvidenceIssues(projectRoot: string, feature: string, scope: ExecutionScope, obligationIds?: ReadonlySet<string>): string[] {
+/**
+ * `currentRunId` (D2): the run that is executing right now. Evidence produced by *that* run is
+ * necessarily not sealed yet — D2 revisions never seal — so the terminal `run_end` check is
+ * skipped for it and only for it. Every other check, and every historical run, is unchanged.
+ */
+export function executionScopeEvidenceIssues(projectRoot: string, feature: string, scope: ExecutionScope, obligationIds?: ReadonlySet<string>, currentRunId?: string): string[] {
   validateExecutionScope(scope);
   const issues = scope.unresolved.filter(gap => !obligationIds || obligationIds.has(gap.obligation_id)).map(gap => `${gap.obligation_id}: ${gap.reason}`);
   for (const obligation of scope.obligations.filter(o => !obligationIds || obligationIds.has(o.id))) {
@@ -74,11 +79,13 @@ export function executionScopeEvidenceIssues(projectRoot: string, feature: strin
         try {
           const source = loadGoalManifestFromRun(projectRoot, ref.run_id, { feature });
           assertGoalRunAttachable(projectRoot, source);
+          const isCurrentRun = currentRunId !== undefined && ref.run_id === currentRunId;
           const terminal = resolveEffectiveRunEnd(loadEventsJsonl(path.join(projectRoot, source.report_dir, 'events.jsonl')));
+          const terminalOk = isCurrentRun || (!!terminal && ['CHAIN_SLICE_COMPLETED', 'COMPLETED'].includes(String(terminal.status)));
           const evidence = loadPhaseEvidenceManifest(projectRoot, feature, ref.phase);
           const fresh = recomputePhaseEvidenceStaleness(projectRoot, feature, [ref.phase])[0];
           const identity = resolvePhaseRunIds(projectRoot, feature, [ref.phase]);
-          if (!terminal || !['CHAIN_SLICE_COMPLETED', 'COMPLETED'].includes(String(terminal.status)) || identity.runIds[ref.phase] !== ref.run_id || !evidence?.integrityOk || evidence.manifest.aggregate_sha256 !== ref.evidence_manifest_aggregate || fresh.verdict !== 'fresh') issues.push(`${obligation.id}: reused evidence invalid`);
+          if (!terminalOk || identity.runIds[ref.phase] !== ref.run_id || !evidence?.integrityOk || evidence.manifest.aggregate_sha256 !== ref.evidence_manifest_aggregate || fresh.verdict !== 'fresh') issues.push(`${obligation.id}: reused evidence invalid`);
         } catch { issues.push(`${obligation.id}: reused run missing/corrupt`); }
       }
     }
@@ -97,7 +104,7 @@ export function verifyReusedExecutionScope(projectRoot: string, feature: string,
     else {
       const projection = JSON.parse(fs.readFileSync(featureFilePath(projectRoot, feature, FEATURE_COMPLETION_FILENAME), 'utf8')) as CompletionProjection;
       const original = JSON.parse(fs.readFileSync(path.join(projectRoot, projection.original_path), 'utf8')) as FeatureCompletion;
-      const prior = loadFrozenExecutionScope(projectRoot, feature, original.run_id);
+      const prior = loadEffectiveExecutionScope(projectRoot, feature, original.run_id);
       if (!prior || JSON.stringify(prior.requested_results) !== JSON.stringify(scope.requested_results)) reasons.push('既有完成记录未证明当前请求目标覆盖');
     }
   }
@@ -126,6 +133,8 @@ export interface FeatureCompletion {
   workflow_track: string;
   /** Required for 1.2; independently verified against the run-created scope. */
   execution_scope_fingerprint?: string;
+  /** D2.6: number of scope_revised entries behind the effective scope this record was cut from. */
+  scope_revision_count?: number;
   chain: string[];
   artifact_hashes: {
     spec_md: string | null;
@@ -234,6 +243,12 @@ export interface CleanPassOptions {
   currentRequirementSha?: string | null;
   /** 与 closure writer 相同的 framework 身份；省略时由 repo layout 推导。 */
   frameworkRoot?: string;
+  /**
+   * D2: the run executing right now. Evidence this run just closed is necessarily unsealed
+   * (a D2 revision never seals the run), so its terminal `run_end` check is skipped for that run
+   * and only that run; every other check and every historical run is unchanged.
+   */
+  runId?: string;
 }
 
 /** 六条件逐一检测；返回全部违例（空数组=全链 clean_pass） */
@@ -241,7 +256,7 @@ export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[]
   const { projectRoot, feature, chain } = opts;
   const issues: CleanPassIssue[] = [];
   if (opts.executionScope) {
-    for (const detail of executionScopeEvidenceIssues(projectRoot, feature, opts.executionScope)) issues.push({ phase: chain[0] ?? 'scope', condition: 'execution_scope', detail, kind: 'needs_fix' });
+    for (const detail of executionScopeEvidenceIssues(projectRoot, feature, opts.executionScope, undefined, opts.runId)) issues.push({ phase: chain[0] ?? 'scope', condition: 'execution_scope', detail, kind: 'needs_fix' });
     if (opts.executionScope.completion_target !== 'feature') issues.push({ phase: chain[0] ?? 'scope', condition: 'execution_scope', detail: 'request-only 不能签发 Feature completion', kind: 'needs_fix' });
     if (JSON.stringify(chain) !== JSON.stringify(executionCompletionPhases(opts.executionScope))) issues.push({ phase: chain[0] ?? 'scope', condition: 'execution_scope', detail: '完成链与冻结范围失配', kind: 'needs_fix' });
   }
@@ -531,7 +546,7 @@ export interface GenerateCompletionOptions extends CleanPassOptions {
 
 /** 需求 SSOT 聚合哈希（内联 manifest.requirement + 解引用文档 + ux-reference 的稳定摘要） */
 export function computeRequirementSsotAggregate(projectRoot: string, feature: string, runId?: string): string | null {
-  const scope = runId ? loadFrozenExecutionScope(projectRoot, feature, runId) : undefined;
+  const scope = runId ? loadEffectiveExecutionScope(projectRoot, feature, runId) : undefined;
   if (scope) {
     const { readBoundInput } = require('./capability-resolution') as typeof import('./capability-resolution');
     const { inferRepoLayout } = require('../../repo-layout') as typeof import('../../repo-layout');
@@ -557,7 +572,7 @@ export function generateFeatureCompletion(opts: GenerateCompletionOptions): {
   projectionAbs: string;
   completion: FeatureCompletion;
 } {
-  const scope = loadFrozenExecutionScope(opts.projectRoot, opts.feature, opts.runId);
+  const scope = loadEffectiveExecutionScope(opts.projectRoot, opts.feature, opts.runId);
   if (!scope && opts.executionScope) throw new Error('[feature-completion] 调用期候选不能替代真实出生范围');
   if (scope) opts = { ...opts, executionScope: scope };
   const issues = collectCleanPassIssues({
@@ -594,7 +609,9 @@ export function generateFeatureCompletion(opts: GenerateCompletionOptions): {
     generated_at: (opts.now ? opts.now() : new Date()).toISOString(),
     run_id: opts.runId,
     workflow_track: opts.workflowTrack,
-    ...(scope ? { execution_scope_fingerprint: executionScopeFingerprint(scope) } : {}),
+    ...(scope ? { execution_scope_fingerprint: executionScopeFingerprint(scope),
+      // D2.6: how many revisions produced this effective scope — reconciled on verify.
+      scope_revision_count: loadScopeRevisions(loadAuthoritativeRunEvents(opts.projectRoot, opts.feature, opts.runId), loadFrozenExecutionScope(opts.projectRoot, opts.feature, opts.runId)!).length } : {}),
     chain: [...opts.chain],
     artifact_hashes: {
       spec_md: art('spec.md'),
@@ -873,11 +890,25 @@ export function verifyFeatureCompletion(opts: VerifyCompletionOptions): Completi
   // 十轮 P2 后 expectedTrack 必填，此处无条件比对）
   let frozenScope: ExecutionScope | undefined;
   try {
-    frozenScope = loadFrozenExecutionScope(projectRoot, feature, completion.run_id);
-    if (completion.schema_version === FEATURE_COMPLETION_SCHEMA_VERSION && !frozenScope) return { verdict: 'INVALID', reasons: ['新完成记录缺少出生范围'] };
+    // D2.6: the completion was cut from the EFFECTIVE scope (birth + applied revisions), so the
+    // fingerprint, the expected chain and the evidence check all reconcile against that — while the
+    // birth scope is still loaded first, because a missing birth record is still INVALID.
+    const birthScope = loadFrozenExecutionScope(projectRoot, feature, completion.run_id);
+    if (completion.schema_version === FEATURE_COMPLETION_SCHEMA_VERSION && !birthScope) return { verdict: 'INVALID', reasons: ['新完成记录缺少出生范围'] };
+    frozenScope = birthScope ? loadEffectiveExecutionScope(projectRoot, feature, completion.run_id) : undefined;
+    if (birthScope && frozenScope) {
+      const revisions = loadScopeRevisions(loadAuthoritativeRunEvents(projectRoot, feature, completion.run_id), birthScope).length;
+      // D2.6: a 1.2 record MUST carry the count. `?? 0` would accept a stripped field as "no
+      // revisions", i.e. a damaged certificate reading as a clean zero-revision run.
+      const declared = completion.scope_revision_count;
+      if (completion.schema_version === FEATURE_COMPLETION_SCHEMA_VERSION && (typeof declared !== 'number' || !Number.isInteger(declared) || declared < 0)) {
+        return { verdict: 'INVALID', reasons: ['完成记录缺少合法的 scope_revision_count'] };
+      }
+      if ((declared ?? 0) !== revisions) return { verdict: 'INVALID', reasons: [`scope_revision_count 与事件失配：凭证=${declared ?? 0} ≠ 事件=${revisions}`] };
+    }
     if (frozenScope) {
-      if (completion.schema_version !== FEATURE_COMPLETION_SCHEMA_VERSION || completion.execution_scope_fingerprint !== executionScopeFingerprint(frozenScope)) return { verdict: 'INVALID', reasons: ['execution_scope_fingerprint 与出生范围失配'] };
-      const gaps = executionScopeEvidenceIssues(projectRoot, feature, frozenScope);
+      if (completion.schema_version !== FEATURE_COMPLETION_SCHEMA_VERSION || completion.execution_scope_fingerprint !== executionScopeFingerprint(frozenScope)) return { verdict: 'INVALID', reasons: ['execution_scope_fingerprint 与有效范围失配'] };
+      const gaps = executionScopeEvidenceIssues(projectRoot, feature, frozenScope, undefined, completion.run_id);
       if (frozenScope.completion_target !== 'feature' || gaps.length) return { verdict: 'INVALID', reasons: ['冻结范围尚未完成', ...gaps] };
       opts = { ...opts, expectedChain: executionCompletionPhases(frozenScope) };
     }
@@ -1015,6 +1046,9 @@ export function verifyFeatureCompletion(opts: VerifyCompletionOptions): Completi
   const issues = collectCleanPassIssues({
     projectRoot, feature, chain: completion.chain, fidelityCapped: opts.fidelityCapped, executionScope: frozenScope,
     currentRequirementSha: computeRunRequirementSha(projectRoot, feature, completion.run_id),
+    // D2: the generating run never seals itself before cutting the certificate, so its own closed
+    // phases must not be judged by the terminal run_end check; historical runs stay strict.
+    runId: completion.run_id,
   });
   for (const i of issues) reasons.push(`[${i.phase}] ${i.condition}(${i.kind}): ${i.detail}`);
 

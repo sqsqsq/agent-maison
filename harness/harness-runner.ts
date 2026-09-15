@@ -544,12 +544,14 @@ async function main(): Promise<void> {
   if (args['report-reconcile-only'] && args.phase === 'testing' && typeof args.feature === 'string' && !args['sync-closure'] && !args['clear-state'] && !args.list && (args['goal-run-id'] || process.env.MAISON_GOAL_RUN_ID)) {
     const feature = args.feature; const phase = 'testing';
     const goalRunId = String(args['goal-run-id'] || process.env.MAISON_GOAL_RUN_ID);
-    const { loadFrozenExecutionScope } = require('./scripts/utils/goal-run-creation') as typeof import('./scripts/utils/goal-run-creation');
+    const { loadEffectiveExecutionScope } = require('./scripts/utils/goal-run-creation') as typeof import('./scripts/utils/goal-run-creation');
     const { hasNoTestingObligation } = require('./scripts/utils/execution-scope') as typeof import('./scripts/utils/execution-scope');
-    const scope = loadFrozenExecutionScope(projectRoot, feature, goalRunId);
+    const scope = loadEffectiveExecutionScope(projectRoot, feature, goalRunId);
     if (scope && hasNoTestingObligation(scope)) {
       const { executionScopeEvidenceIssues } = require('./scripts/utils/verify-feature-completion') as typeof import('./scripts/utils/verify-feature-completion');
-      const issues = executionScopeEvidenceIssues(projectRoot, feature, scope);
+      // D2: same-run evidence is not sealed yet (a revision never seals), so the terminal check is
+      // skipped for THIS run only — cross-run references keep it.
+      const issues = executionScopeEvidenceIssues(projectRoot, feature, scope, undefined, goalRunId);
       console.log(JSON.stringify({ subject: 'feature', feature, phase, report_reconcile_only: true, applicability: issues.length ? 'unknown' : 'not_applicable', issues }));
       process.exit(issues.length ? 1 : 0);
     }

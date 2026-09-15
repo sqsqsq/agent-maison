@@ -7,7 +7,8 @@ import { execFileSync } from 'child_process';
 import { clearFrameworkConfigCache, resolveFeatureArtifact } from '../../config';
 import { resolveCapabilityInputs, readRunBoundContracts } from '../../scripts/utils/capability-resolution';
 import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
-import { resolveExecutionScope } from '../../scripts/utils/execution-scope';
+import { resolveExecutionScope, type ExecutionScopeInput } from '../../scripts/utils/execution-scope';
+import { collectResolvedScopeFacts } from '../../scripts/utils/feature-track';
 import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 import { resolvePhaseWriteBoundary } from '../../scripts/utils/phase-write-boundary';
@@ -37,12 +38,18 @@ function fixture(newFile = false) {
   const initial = resolveCapabilityInputs(options);
   assert.notEqual(initial.report.assurance, 'blocked', JSON.stringify(initial.report));
   const bound = (id: string) => { const value = initial.inputs!.values[id]; assert(value.state === 'resolved', id); return value.binding; };
-  const scope = resolveExecutionScope({ request: { completion_target: 'feature', requested_results: ['delivery'], requested_phases: ['coding'] }, facts: [
+  // D0.1: a Feature-target candidate needs a sourced impact judgement before device verification
+  // can be pruned, and `resolved` facts so visual derives from the fidelity SSOT rather than
+  // defaulting to unknown. Both come from the production reading layer.
+  const scopeInput: ExecutionScopeInput = { request: { completion_target: 'feature', requested_results: ['delivery'], requested_phases: ['coding'],
+    impact: { user_visible_behavior_change: false, reason: 'fixture: unit verification only', basis: [bound('codebase')] } }, facts: [
     { id: 'implementation', kind: 'implementation', applicability: 'required', reason: 'authorized change', basis: [bound('codebase')] },
     { id: 'design', kind: 'design-context', applicability: 'required', reason: 'approved contract', basis: [bound('contracts')], satisfied_by: [bound('contracts')] },
     { id: 'acceptance', kind: 'acceptance-context', applicability: 'required', reason: 'approved behavior', basis: [bound('acceptance')], satisfied_by: [bound('acceptance')] },
     { id: 'visual', kind: 'visual-evidence', applicability: 'not_applicable', reason: 'no UI change', basis: [bound('acceptance')] },
-  ], contract_fingerprints: [] }, workflow, { value: initial.inputs!.artifacts['acceptance@1'] as any, binding: bound('acceptance') });
+  ], contract_fingerprints: [] };
+  const scope = resolveExecutionScope(scopeInput, workflow, { value: initial.inputs!.artifacts['acceptance@1'] as any, binding: bound('acceptance') },
+    collectResolvedScopeFacts(scopeInput, { projectRoot: root, feature: 'demo', frameworkRoot, requirement: options.requirement }));
   const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'p4-coding', requirement: options.requirement, execution_scope: scope, chain_override: scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: root });
   createGoalRun({ projectRoot: root, manifest, chain: scope.phase_chain });
   const profileDir = path.join(root, 'test-profile');
@@ -100,6 +107,49 @@ const cases: Array<{ name: string; newFile?: boolean; run(f: ReturnType<typeof f
     f.write('doc/features/demo/contracts.yaml', YAML.stringify({ ...f.contracts, files: [...f.contracts.files, 'src/demo/new.ts'] }));
     assert.throws(() => readRunBoundContracts(f.root, frameworkRoot, 'demo', f.manifest.run_id), /stale/);
     assert.throws(() => f.context('coding'));
+  } },
+  { name: 'D0.1 review-only and ut-only requests keep their code targets while revision triggers stay out', run(f) {
+    // §5.1.1a R-target collection, with its regression guard (§4.4): the historical file that
+    // TRIGGERED a revision must not re-enter the phase's current targets, while the real review /
+    // UT code targets must still resolve — if the filter over-reaches, `code` (input_role base,
+    // on_missing fail for both skills) goes absent and the capability assurance turns `blocked`.
+    f.write('src/demo/trigger.ts', 'export const triggered = 1;\n');
+    const bound = (id: string, targets: string[]) => {
+      const resolved = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'plan', track: 'full', testTargets: targets,
+        inputContext: { schema_version: '1.1', subject: { feature: 'demo' }, obligations: {}, required_outputs: [] } });
+      const value = resolved.inputs!.values[id];
+      assert(value.state === 'resolved', id + ': ' + JSON.stringify(value));
+      return value.binding;
+    };
+    const codeTarget = bound('codebase', ['src/demo/value.ts']);
+    const triggerSource = bound('codebase', ['src/demo/trigger.ts']);
+    const scopeInput: ExecutionScopeInput = { request: { completion_target: 'feature', requested_results: ['delivery'], requested_phases: ['review'],
+      impact: { user_visible_behavior_change: false, reason: 'fixture: unit verification only', basis: [codeTarget] } }, facts: [
+      { id: 'design', kind: 'design-context', applicability: 'required', reason: 'approved contract', basis: [bound('contracts', ['src/demo/value.ts'])], satisfied_by: [bound('contracts', ['src/demo/value.ts'])] },
+      { id: 'acceptance', kind: 'acceptance-context', applicability: 'required', reason: 'approved behavior', basis: [bound('acceptance', ['src/demo/value.ts'])], satisfied_by: [bound('acceptance', ['src/demo/value.ts'])] },
+      { id: 'code-review:target', kind: 'code-review', applicability: 'required', reason: 'review the delivered change', basis: [codeTarget] },
+      { id: 'unit-evidence:target', kind: 'unit-evidence', applicability: 'required', reason: 'unit layer acceptance', basis: [codeTarget] },
+      // The revision trigger: spec/plan observed this file when it asked for the revision. It is
+      // evidence for WHY the scope changed, never a current target of review or UT.
+      // (No `satisfied_by`: a `derive.codebase` binding has no parsed value, and §4.1.4 keeps the
+      // strict re-resolve for proofs — a code observation is a basis, never a proof of completion.)
+      { id: 'design-decision:trigger', kind: 'design-decision', applicability: 'required', reason: 'new interface decision', basis: [triggerSource] },
+    ], contract_fingerprints: [] };
+    const scope = resolveExecutionScope(scopeInput, workflow, undefined,
+      collectResolvedScopeFacts(scopeInput, { projectRoot: f.root, feature: 'demo', frameworkRoot, requirement: 'make value 42' }));
+    const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'p4-review-only', requirement: 'make value 42', execution_scope: scope, chain_override: scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root });
+    createGoalRun({ projectRoot: f.root, manifest, chain: scope.phase_chain });
+    for (const phase of ['review', 'ut'] as const) {
+      const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase, featuresDir: 'doc/features', goalRunId: manifest.run_id });
+      assert(bridge.testTargets!.includes('src/demo/value.ts'), phase + ' lost its real code target');
+      assert(!bridge.testTargets!.includes('src/demo/trigger.ts'), phase + ' collected the revision trigger as a current target');
+      assert(!bridge.factsContext!.source_paths.includes('src/demo/trigger.ts'), phase + ' put the revision trigger into the phase evidence');
+      const resolved = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase, track: 'full', requirement: 'make value 42', ...bridge });
+      const code = resolved.inputs!.values.code;
+      assert(code.state === 'resolved', phase + ' code unresolved: ' + JSON.stringify(code));
+      assert(code.binding.dependencies.some(dep => dep.path.replace(/\\/g, '/').endsWith('src/demo/value.ts')), phase + ' code binding lost the expected target');
+      assert.notEqual(resolved.report.assurance, 'blocked', phase + ' assurance blocked: ' + JSON.stringify(resolved.report));
+    }
   } },
   { name: 'combined review reads typed design and rejects missing required comparisons', async run(f) {
     const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', featuresDir: 'doc/features', goalRunId: f.manifest.run_id });

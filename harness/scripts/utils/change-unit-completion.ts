@@ -7,7 +7,7 @@ import { filterAuthoritativeEvents, loadEventsJsonl, resolveEffectiveRunEnd } fr
 import { featurePhasesFromWorkflow } from './phase-transition-policy';
 import { loadFeatureTrackDecl, resolveFeatureExecutionScope } from './feature-track';
 import { resolveFeatureTrack } from './runtime-policy';
-import { loadFrozenExecutionScope } from './goal-run-creation';
+import { loadEffectiveExecutionScope } from './goal-run-creation';
 import { inferRepoLayout } from '../../repo-layout';
 import { executionCompletionPhases } from './execution-scope';
 import { isInsideProjectRoot } from './project-relative-path';
@@ -77,7 +77,7 @@ export function resolveChangeUnitExpectedExecution(
       if (!isInsideProjectRoot(featureFilePath(projectRoot, featureId, 'goal-runs'), original)) throw new Error('completion 原件不在该 Feature 的 run 目录');
       const record = JSON.parse(fs.readFileSync(original, 'utf8')) as { run_id?: string };
       if (record.run_id) {
-        const scope = loadFrozenExecutionScope(projectRoot, featureId, record.run_id);
+        const scope = loadEffectiveExecutionScope(projectRoot, featureId, record.run_id);
         if (scope) return { expectedTrack: 'full', expectedChain: executionCompletionPhases(scope) };
         const manifestFile = featureFilePath(projectRoot, featureId, 'goal-runs/' + record.run_id + '/manifest.json');
         const legacy = fs.existsSync(manifestFile) ? JSON.parse(fs.readFileSync(manifestFile, 'utf8')) : {};
@@ -93,7 +93,7 @@ export function resolveChangeUnitExpectedExecution(
 function scopedCompletionRunId(projectRoot: string, feature: string, chain?: string[]): string | undefined {
   const phase = chain?.at(-1);
   const runId = phase ? resolvePhaseRunIds(projectRoot, feature, [phase]).runIds[phase] : undefined;
-  return runId && loadFrozenExecutionScope(projectRoot, feature, runId) ? runId : undefined;
+  return runId && loadEffectiveExecutionScope(projectRoot, feature, runId) ? runId : undefined;
 }
 
 export function readCompletedFeatureDesign(projectRoot: string, feature: string, completion: ChangeUnitCompletionObservation) {

@@ -26,13 +26,18 @@ export function resolveGoalRunBaseline(
 
   const creation = inspectGoalRunCreation(projectRoot, manifest);
   if (creation.state === 'complete') {
-    if (!manifest.run_base_sha) {
+    // D2 §3 问题 9: a run born as [spec] has no manifest.run_base_sha (birth identity field,
+    // write-once), so the first coding/ut-bearing scope_revised carries it instead. Read both
+    // through one resolver; legacy/env fallback stays forbidden.
+    const { resolveRunBaseline, loadAuthoritativeRunEvents } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+    const resolved = resolveRunBaseline(manifest, loadAuthoritativeRunEvents(projectRoot, feature, runId));
+    if (!resolved.baseSha) {
       return {
         available: false,
-        reason: '现代 run（run_created 在场）缺少 manifest.run_base_sha；禁止回退 legacy/env 基线',
+        reason: '现代 run（run_created 在场）既无 manifest.run_base_sha 也无携带基线的 scope_revised；禁止回退 legacy/env 基线',
       };
     }
-    return { available: true, baseSha: manifest.run_base_sha, source: 'run_base_sha' };
+    return { available: true, baseSha: resolved.baseSha, source: 'run_base_sha' };
   }
   if (creation.state !== 'legacy') {
     return {

@@ -17,6 +17,7 @@ import { checkChangeUnitFeatureProjection } from '../../scripts/utils/change-uni
 import { checkDesignToCode } from '../../scripts/check-coding';
 import type { CheckContext } from '../../scripts/utils/types';
 import { resolveExecutionScope } from '../../scripts/utils/execution-scope';
+import type { ResolvedScopeFacts } from '../../scripts/utils/execution-scope';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
 import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
@@ -147,12 +148,38 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     const workflow: WorkflowSpec = { schema_version: '1.2', name: 'p3-scoped', auto_chain: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'], artifacts: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'].map(id => ({ id, scope: 'feature', requires: [], obligation_provider_id: `obligations.${id}` })) };
     const localFramework = path.join(f.root, 'projection-framework');
     fs.mkdirSync(path.join(localFramework, 'workflows'), { recursive: true }); fs.writeFileSync(path.join(localFramework, 'workflows/p3-scoped.workflow.yaml'), YAML.stringify(workflow));
+    // The revision budget re-resolves bindings through P1, which reads the artifact inventory from
+    // the framework root it is given — so this stub framework must expose the real specs/ too,
+    // otherwise it is a framework root that cannot resolve any artifact.
+    fs.symlinkSync(path.join(frameworkRoot, 'specs'), path.join(localFramework, 'specs'), process.platform === 'win32' ? 'junction' : 'dir');
     const configFile = path.join(f.root, 'framework.config.json');
     const config = { schema_version: '1.1', project_name: 'P3 design fixture', project_profile: { name: 'generic' }, paths: { features_dir: 'doc/features' }, active_workflow: 'p3-scoped' }; fs.writeFileSync(configFile, JSON.stringify(config)); clearFrameworkConfigCache();
-    const scope = resolveExecutionScope({ request: { completion_target: 'feature', requested_results: ['delivery'], requested_phases: ['spec'] }, facts: [
+    // D0.1: a Feature-target scope needs the sourced impact before device verification can be
+    // pruned; resolved facts are the pure function's own input type (no forged production artifact).
+    // The blueprint fixture declares no contracts.files, so the write set comes from the
+    // implementation duty's own source binding (D0.1 rule (a): an implementation duty must name a
+    // verifiable write set). Both bindings come from the production resolver.
+    const srcRel = 'src/demo-implementation.ts';
+    fs.mkdirSync(path.join(f.root, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(f.root, srcRel), 'export const demo = 1;\n');
+    const contractsProbe = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'plan', track: 'full', testTargets: [srcRel],
+      inputContext: { schema_version: '1.1', subject: { feature: f.feature }, obligations: {}, required_outputs: [] } });
+    const codebaseValue = contractsProbe.inputs?.values?.codebase;
+    assert(codebaseValue && codebaseValue.state === 'resolved', 'plan codebase unresolved: ' + JSON.stringify(codebaseValue));
+    const implementationSource = codebaseValue.binding;
+    // The impact judgement is sourced on the very file the implementation duty names (an empty
+    // basis is rejected: a claim with no source must never prune a duty). The reading layer's
+    // verdict for it is supplied directly — resolved facts are the pure function's own input type.
+    const resolvedStub: ResolvedScopeFacts = { fidelity: { state: 'missing', visual_requested: false },
+      impact_basis: [{ input_id: implementationSource.input_id, ok: true, related: true, detail: 'fixture reading-layer verdict' }],
+      basis: [], satisfied_by: [], targets: { implementation_files: [srcRel], contracts_files: [], review_targets: [], ut_targets: [] }, impact_targets_available: true };
+    const impact = { user_visible_behavior_change: false, reason: 'fixture: unit verification only', basis: [implementationSource] };
+    const scope = resolveExecutionScope({ request: { completion_target: 'feature', requested_results: ['delivery'], requested_phases: ['spec'], impact }, facts: [
       { id: 'acceptance:pending', kind: 'acceptance-context', applicability: 'unknown', reason: 'spec must establish acceptance', basis: [] },
-      { id: 'implementation:request', kind: 'implementation', applicability: 'required', reason: 'requested implementation', basis: [] },
-    ], contract_fingerprints: [] }, workflow);
+      // D0.1 rule (a): the implementation duty names its write set through `implementationSource`
+      // below; the blueprint fixture declares no contracts.files, so that binding IS the target set.
+      { id: 'implementation:request', kind: 'implementation', applicability: 'required', reason: 'requested implementation', basis: [implementationSource] },
+    ], contract_fingerprints: [] }, workflow, undefined, resolvedStub);
     const manifest = buildGoalManifestFromInput({ feature: f.feature, run_id: 'p3-design', unattended: { write_mode: 'full-access', approval_mode: 'never' }, requirement: 'deliver ledger refresh', execution_scope: scope, chain_override: scope.phase_chain }, { projectRoot: f.root });
     const born = createGoalRun({ projectRoot: f.root, manifest, chain: scope.phase_chain });
     const before = fs.readFileSync(born.manifestPath, 'utf8');
@@ -164,7 +191,7 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert.equal(checks.length, 1); assert(checks[0].scope_revision_input);
     const binding = inputs.values.acceptance; assert.equal(binding.state, 'resolved');
     if (binding.state !== 'resolved') return;
-    const next = resolveExecutionScope(checks[0].scope_revision_input!, workflow, readScopeAcceptance(f.root, checks[0].scope_revision_input!, { feature: f.feature, frameworkRoot }));
+    const next = resolveExecutionScope(checks[0].scope_revision_input!, workflow, readScopeAcceptance(f.root, checks[0].scope_revision_input!, { feature: f.feature, frameworkRoot }), resolvedStub);
     assert(!next.unresolved.length, JSON.stringify(next.unresolved));
     assert(next.phase_chain.includes('coding') && next.phase_chain.includes('ut') && !next.phase_chain.includes('testing'));
     assert(!resolveFeatureArtifact(f.root, f.feature, 'acceptance.yaml').exists, 'derived path forced materialization');
@@ -176,7 +203,7 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     const physicalInputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'spec', track: 'full', ...bridge }).inputs!;
     const physicalCtx = { ...ctx, resolvedInputs: physicalInputs, featureSpec: new SpecLoader(f.root, undefined, undefined, frameworkRoot).loadFeatureSpec(f.feature, physicalInputs) };
     const physicalChecks = designScopeRevisionChecks(physicalCtx, []);
-    const physicalNext = resolveExecutionScope(physicalChecks[0].scope_revision_input!, workflow, readScopeAcceptance(f.root, physicalChecks[0].scope_revision_input!, { feature: f.feature, frameworkRoot }));
+    const physicalNext = resolveExecutionScope(physicalChecks[0].scope_revision_input!, workflow, readScopeAcceptance(f.root, physicalChecks[0].scope_revision_input!, { feature: f.feature, frameworkRoot }), resolvedStub);
     assert.deepStrictEqual(physicalNext.phase_chain, next.phase_chain);
     assert.deepStrictEqual(physicalNext.unresolved, next.unresolved);
     assert.deepStrictEqual(physicalNext.obligations.map(o => [o.id, o.applicability]), next.obligations.map(o => [o.id, o.applicability]));
@@ -188,11 +215,13 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     const acceptanceInput = physicalInputs.values.acceptance;
     assert.equal(acceptanceInput.state, 'resolved');
     if (acceptanceInput.state !== 'resolved') return;
-    const planScope = resolveExecutionScope({ request: { completion_target: 'feature', requested_results: ['delivery'], requested_phases: ['plan'] }, facts: [
+    // Same D0.1 requirements as the spec-phase branch: sourced impact + resolved facts, and an
+    // implementation duty that names its write set.
+    const planScope = resolveExecutionScope({ request: { completion_target: 'feature', requested_results: ['delivery'], requested_phases: ['plan'], impact }, facts: [
       { id: 'design:pending', kind: 'design-context', applicability: 'unknown', reason: 'plan must establish construction', basis: [] },
       { id: 'acceptance:known', kind: 'acceptance-context', applicability: 'required', reason: 'approved acceptance', basis: [acceptanceInput.binding], satisfied_by: [acceptanceInput.binding] },
-      { id: 'implementation:request', kind: 'implementation', applicability: 'required', reason: 'requested implementation', basis: [] },
-    ], contract_fingerprints: [] }, workflow, { value: physicalCtx.featureSpec.acceptance!, binding: acceptanceInput.binding });
+      { id: 'implementation:request', kind: 'implementation', applicability: 'required', reason: 'requested implementation', basis: [implementationSource] },
+    ], contract_fingerprints: [] }, workflow, { value: physicalCtx.featureSpec.acceptance!, binding: acceptanceInput.binding }, resolvedStub);
     const planRun = buildGoalManifestFromInput({ feature: f.feature, run_id: 'p3-plan-design', unattended: { write_mode: 'full-access', approval_mode: 'never' }, execution_scope: planScope, chain_override: planScope.phase_chain }, { projectRoot: f.root });
     createGoalRun({ projectRoot: f.root, manifest: planRun, chain: planScope.phase_chain });
     const planBridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'plan', featuresDir: 'doc/features', goalRunId: planRun.run_id });
@@ -201,7 +230,7 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
       const planCtx = { ...ctx, phase: 'plan', factsContext: planBridge.factsContext, featureSpec: new SpecLoader(f.root, undefined, undefined, frameworkRoot).loadFeatureSpec(f.feature, planInputs), resolvedInputs: { ...planInputs, context: { ...planInputs.context, required_outputs } } } as CheckContext;
       const proposal = designScopeRevisionChecks(planCtx, [{ id: 'design_pass', status: 'PASS', severity: 'MINOR', category: 'structure', description: 'validated design', details: 'passed' }])[0].scope_revision_input!;
       assert(proposal);
-      const nextPlan = resolveExecutionScope(proposal, workflow, readScopeAcceptance(f.root, proposal, { feature: f.feature, frameworkRoot }));
+      const nextPlan = resolveExecutionScope(proposal, workflow, readScopeAcceptance(f.root, proposal, { feature: f.feature, frameworkRoot }), resolvedStub);
       assert(!nextPlan.unresolved.length && nextPlan.phase_chain.includes('coding'));
       assert.deepStrictEqual(designScopeRevisionChecks(planCtx, [{ id: 'design_fail', status: 'FAIL', severity: 'BLOCKER', category: 'structure', description: 'invalid design', details: 'failed' }]), []);
     }
@@ -211,10 +240,13 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     const requestRun = buildGoalManifestFromInput({ feature: f.feature, run_id: 'p3-design-only', unattended: { write_mode: 'full-access', approval_mode: 'never' }, execution_scope: requestScope, chain_override: requestScope.phase_chain }, { projectRoot: f.root });
     createGoalRun({ projectRoot: f.root, manifest: requestRun, chain: requestScope.phase_chain });
     assert.deepStrictEqual(designScopeRevisionChecks({ ...ctx, factsContext: { ...bridge.factsContext!, subject: { feature: f.feature, run_id: requestRun.run_id } } }, []), []);
+    // The device duty has to be *genuinely* required for this case to mean anything: D0.1 no longer
+    // trusts a self-declared `required`, so it is derived from a device-layer acceptance here.
+    const deviceAcceptance = { criteria: [{ id: 'AC-DEVICE', priority: 'P1', ut_layer: 'device', device_focus: 'on-device check' }] } as import('../../scripts/utils/types').AcceptanceSpec;
     const protectedScope = resolveExecutionScope({ request: { completion_target: 'feature', requested_results: ['delivery'], requested_phases: ['spec'] }, facts: [
       { id: 'acceptance:pending', kind: 'acceptance-context', applicability: 'unknown', reason: 'spec must establish acceptance', basis: [] },
-      { id: 'device-evidence:acceptance', kind: 'device-evidence', applicability: 'required', reason: 'previously required device evidence', basis: [] },
-    ], contract_fingerprints: [] }, workflow);
+    ], contract_fingerprints: [] }, workflow, { value: deviceAcceptance, binding: acceptanceInput.binding }, resolvedStub);
+    assert.equal(protectedScope.obligations.find(o => o.kind === 'device-evidence')?.applicability, 'required', 'device duty must be genuinely required');
     const protectedRun = buildGoalManifestFromInput({ feature: f.feature, run_id: 'p3-keep-verification', unattended: { write_mode: 'full-access', approval_mode: 'never' }, execution_scope: protectedScope, chain_override: protectedScope.phase_chain }, { projectRoot: f.root });
     createGoalRun({ projectRoot: f.root, manifest: protectedRun, chain: protectedScope.phase_chain });
     const rejected = designScopeRevisionChecks({ ...ctx, factsContext: { ...bridge.factsContext!, subject: { feature: f.feature, run_id: protectedRun.run_id } } }, []);
