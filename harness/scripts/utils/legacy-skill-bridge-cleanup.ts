@@ -214,6 +214,11 @@ export function applyLegacySkillBridgeCleanup(
 
   const session = opts.backupSession;
   let backupRelDir: string | null = session?.backupRelDir ?? null;
+  // 时间戳只算**一次**：它是秒级的，放在逐条循环里会让一轮清理跨秒时落进两个
+  // `.framework-backup/<stamp>` 目录，而本函数只返回最后一个——调用方据此认为「这一轮的
+  // 备份都在这里」就会漏看前半截（逐条 `cleaned[].backup_path` 仍是对的）。
+  // 记忆化写法与 `check-init.ts` 的 backup session 一致。
+  const fallbackBackupRelDir = '.framework-backup/' + new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
 
   for (const entry of collectLegacySkillBridgePaths(opts)) {
     const absPath = assertSafeProjectRelativePath(opts.projectRoot, entry.relPosix);
@@ -224,8 +229,7 @@ export function applyLegacySkillBridgeCleanup(
       const backupAbs = assertSafeProjectRelativePath(opts.projectRoot, `${backupRelDir}/${entry.relPosix}`);
       copyPathRecursive(absPath, backupAbs);
     } else {
-      const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
-      backupRelDir = `.framework-backup/${stamp}`;
+      backupRelDir = fallbackBackupRelDir;
       const backupAbs = assertSafeProjectRelativePath(opts.projectRoot, `${backupRelDir}/${entry.relPosix}`);
       copyPathRecursive(absPath, backupAbs);
     }

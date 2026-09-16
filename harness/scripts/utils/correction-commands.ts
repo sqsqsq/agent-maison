@@ -49,6 +49,7 @@ import {
 } from './correction-state';
 import { inferRepoLayout } from '../../repo-layout';
 import { loadFeatureTrackDecl, appendFeatureCorrectionHistory } from './feature-track';
+import { loadEffectiveExecutionScope } from './goal-run-creation';
 import {
   resolveEnforcementTier,
   resolveFeatureTrack,
@@ -169,7 +170,16 @@ export function runCorrectionInit(projectRoot: string, opts: CorrectionInitOpts)
     console.log(`   root_layer: ${routing.root_layer} | touched: ${routing.touched_layers.join(', ')}`);
     console.log(`   revalidate: ${routing.revalidate.map((r) => r.phase).join(' → ') || '(无已闭环下游)'}`);
     console.log(`   enforcement_tier: ${tier}（只描述阶段闭环的物理拦截，与修正无关）`);
-    console.log(`   实施后：npx ts-node harness-runner.ts --revalidate --feature ${target.feature} --from ${routing.root_layer}`);
+    // D0.3 裁决（批次 2）：修正命令**不**产出范围修订输入——它没有新来源事实，runtime 的
+    // 「修订必须由新事实驱动」判据会拒绝它。责任阶段在本 run 有效范围外时，只说清事实与两条
+    // 合法入口；**不再打印通用 --revalidate 指引**——那条指向的正是一个本 run 到不了的阶段。
+    if (routing.in_scope) {
+      console.log(`   实施后：npx ts-node harness-runner.ts --revalidate --feature ${target.feature} --from ${routing.root_layer}`);
+    } else {
+      console.log(`   ⤴ 责任阶段 ${routing.root_layer} 不在本 run 的有效范围内（本 run 不会自动回到它）。两条合法入口：`);
+      console.log(`      (a) 若这次修正暴露的是设计/验收缺口：由责任阶段的真实 checker 产出候选，经既有归属链在**本 run 内**追加范围修订；`);
+      console.log(`      (b) 若是用户改需求：走既有 correction / successor 签发新 run（D2.5 保留的显式路径）。`);
+    }
     return 0;
   }
 
@@ -205,21 +215,35 @@ export interface FeatureCorrectionRouting {
   root_layer: string;
   touched_layers: string[];
   revalidate: RevalidateEntry[];
+  /** D0.3：责任阶段是否在本 run 的**有效范围**内（无 run / 无范围时为 true，行为不变）。 */
+  in_scope: boolean;
 }
 
-/** feature 修正的责任阶段路由（纯计算，不写任何状态；供 --correction-init 打印与单测）。 */
+/** feature 修正的责任阶段路由（不写任何状态；供 --correction-init 打印与单测）。 */
 export function resolveFeatureCorrectionRouting(
   projectRoot: string,
   feature: string,
   answers: CorrectionAnswers,
   frameworkRoot?: string,
+  /** 本 run 身份（缺省取 MAISON_GOAL_RUN_ID）：有 run 才谈得上「范围外」。 */
+  runId?: string,
 ): FeatureCorrectionRouting {
   const fw = loadFrameworkConfig(projectRoot);
   const spec = resolveWorkflowSpec(projectRoot, { config: fw, frameworkRoot });
-  const track = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature));
+  // track 必须按**本 run** 解析：有效 run 是 full 而 feature.yaml 仍声明 lite 时，
+  // 不带 run id 会把 spec/plan 映射成 change，root_layer 与 in_scope 一起判错。
+  const effectiveRunId = runId ?? process.env.MAISON_GOAL_RUN_ID?.trim();
+  const track = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature, effectiveRunId));
   const closed = closedPhasesFor(projectRoot, feature, workflowFeaturePhases(spec, track), track, frameworkRoot);
   const cls = classifyCorrection({ answers, spec, track, closedPhases: closed });
-  return { feature, root_layer: cls.root_layer, touched_layers: cls.touched_layers, revalidate: cls.revalidate };
+  const base = { feature, root_layer: cls.root_layer, touched_layers: cls.touched_layers, revalidate: cls.revalidate };
+  // 责任阶段落在**有效范围**之外时只如实呈现（见上：不产提议、不落 backtrack_target_absent）。
+  if (!effectiveRunId) return { ...base, in_scope: true };
+  const scope = loadEffectiveExecutionScope(projectRoot, feature, effectiveRunId);
+  if (!scope) return { ...base, in_scope: true };
+  const executable = new Set([...scope.phase_chain, ...scope.reused_phases.map(reuse => reuse.phase)]);
+  if (executable.has(cls.root_layer)) return { ...base, in_scope: true };
+  return { ...base, in_scope: false };
 }
 
 export function adhocReportsRoot(harnessRoot: string): string {

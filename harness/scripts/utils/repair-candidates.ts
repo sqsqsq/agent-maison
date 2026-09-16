@@ -25,6 +25,7 @@ import * as fs from 'fs';
 import { createHash } from 'crypto';
 import { extractTables, getSectionContent, extractDeclaredVerdict } from './markdown-parser';
 import { mapCategoryToChainPhase, type CorrectionCategory } from './correction-routing';
+import type { ExecutionScopeInput } from './execution-scope';
 
 /** 可产回退候选的责任类别（verification 无回退语义） */
 export type RepairOwnerCategory = Exclude<CorrectionCategory, 'verification'>;
@@ -881,4 +882,141 @@ export function validateRepairCandidatesShape(value: unknown): string[] {
     }
   });
   return errors;
+}
+
+// ---------------------------------------------------------------------------
+// D0.3 — 已归属的 spec / plan 候选 → 同 run 范围修订输入
+// ---------------------------------------------------------------------------
+// 单向数据流：**输入 = 既有归属层产出的候选，输出 = 设计事实**。这里不新增 check id、
+// 不动 CHECK_ID_OWNER_REGISTRY、不判断意图——机器分不出「获准目标确有设计缺口」与
+// 「coding 改错了文件」，那一步由 plan 的独立裁决兜底（D0.3 原文：修订提议不预设结论）。
+// 触发条件只有一条：候选 category ∈ {spec, plan} 且 source_phase ∈ {coding, review}。
+
+/** 允许产出修订输入的来源阶段（写集越界类未注册归属，结构上到不了这里）。 */
+const SCOPE_REVISION_SOURCE_PHASES: ReadonlySet<string> = new Set(['coding', 'review']);
+
+/** 候选类别 → 它要求的设计事实种类（review 归因 spec 时是验收定义）。 */
+const SCOPE_REVISION_FACT_KIND: Readonly<Record<'spec' | 'plan', string>> = Object.freeze({
+  plan: 'design-decision',
+  spec: 'acceptance-definition',
+});
+
+export interface ScopeRevisionInputContext {
+  projectRoot: string;
+  frameworkRoot: string;
+  feature: string;
+  /** 缺省取 MAISON_GOAL_RUN_ID；无 run（普通 harness 调用）→ 不产出。 */
+  runId?: string;
+}
+
+/**
+ * 由已归属候选生成一条范围修订输入；无合格候选、无 run、无有效范围或无可核验绑定时返回 null。
+ *
+ * 幂等：提议里的设计事实按 id（`<kind>:<candidate.id>`）去重，全部已在有效范围内 → 返回 null，
+ * 重跑同一阶段不会反复产出同一条提议。
+ */
+export function scopeRevisionInputFromRepairCandidates(
+  candidates: readonly RepairCandidate[],
+  ctx: ScopeRevisionInputContext,
+): { input: ExecutionScopeInput; candidateIds: string[] } | null {
+  const owned = candidates.filter(candidate =>
+    (candidate.category === 'spec' || candidate.category === 'plan')
+    && SCOPE_REVISION_SOURCE_PHASES.has(candidate.source_phase)
+    && candidate.files.length > 0);
+  if (!owned.length) return null;
+  const runId = ctx.runId ?? process.env.MAISON_GOAL_RUN_ID?.trim();
+  if (!runId) return null;
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const { loadEffectiveExecutionScope } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+  const { OBLIGATION_PROVIDERS } = require('./execution-scope') as typeof import('./execution-scope');
+  const { resolveCapabilityInputs } = require('./capability-resolution') as typeof import('./capability-resolution');
+  /* eslint-enable @typescript-eslint/no-require-imports */
+  const scope = loadEffectiveExecutionScope(ctx.projectRoot, ctx.feature, runId);
+  if (!scope) return null;
+  // 责任阶段取自**本 run 的有效范围**：同一 provider 家族里已有义务的 owner_phase 就是这一轮
+  // 解析出来的责任映射。不重读当前 active workflow——workflow 漂移时那会选错阶段甚至选不到；
+  // 范围里证明不了责任阶段就不产提议（fail-closed），不猜。
+  const ownerPhase = (kind: string): string | undefined => {
+    const family = Object.values(OBLIGATION_PROVIDERS).find(kinds => kinds.includes(kind)) ?? [];
+    return scope.obligations.find(obligation => family.includes(obligation.kind))?.owner_phase;
+  };
+
+  const facts = scope.obligations.map(obligation => structuredClone(obligation) as ExecutionScopeInput['facts'][number]);
+  const responsible: string[] = [];
+  const candidateIds: string[] = [];
+  for (const candidate of owned) {
+    const kind = SCOPE_REVISION_FACT_KIND[candidate.category as 'spec' | 'plan'];
+    const phase = ownerPhase(kind);
+    if (!phase) continue;
+    const id = `${kind}:${candidate.id}`;
+    if (facts.some(fact => fact.id === id)) continue;
+    // 触发文件绑定走生产解析器，指纹与 §4.1.0 的核验同源（不自行拼 InputBinding）。
+    const resolved = resolveCapabilityInputs({
+      projectRoot: ctx.projectRoot, frameworkRoot: ctx.frameworkRoot, feature: ctx.feature, phase, track: 'full',
+      testTargets: [...candidate.files],
+      inputContext: { schema_version: '1.1', subject: { feature: ctx.feature }, obligations: {}, required_outputs: [] },
+    }).inputs?.values?.codebase;
+    if (!resolved || resolved.state !== 'resolved') continue;
+    facts.push({
+      id, kind, applicability: 'required',
+      // 语义是「这项发现需要责任阶段裁决」，不是「机器已证明该扩展合理」——
+      // OpenSpec 的 scenario 要求 reason 本身说清这一点，不能只转述候选摘要。
+      reason: `需要 ${phase} 裁决：${candidate.summary}`,
+      basis: [resolved.binding],
+    });
+    responsible.push(phase);
+    candidateIds.push(candidate.id);
+  }
+  if (!candidateIds.length) return null;
+  const remaining = scope.obligations
+    .filter(obligation => obligation.applicability === 'required' && !obligation.satisfied_by?.length)
+    .map(obligation => String(obligation.owner_phase));
+  return {
+    input: {
+      request: {
+        completion_target: scope.completion_target,
+        requested_results: [...scope.requested_results],
+        requested_phases: [...new Set([...responsible, ...remaining])],
+        ...(scope.request_impact ? { impact: structuredClone(scope.request_impact) } : {}),
+      },
+      facts,
+      contract_fingerprints: [],
+      ...(scope.control_edges ? { control_edges: structuredClone(scope.control_edges) } : {}),
+    },
+    candidateIds,
+  };
+}
+
+/**
+ * 把修订输入回写进**磁盘** script-report.json —— runtime 只从那里读
+ * （`goal-phase-runtime.ts` 的 `checks[].scope_revision_input`），内存 CheckResult 到不了消费方。
+ *
+ * 载体 check 取**产出该候选的那条 check**：机器归属候选的 id 是注册表键（如 `ui_scope_violation`），
+ * 而产出它的 check id 是 `ui_diff_within_declared_files`，所以同时按 id 与 failure_kind 匹配；
+ * 都匹配不上才退到首条（它只决定事件里的 `trigger.check_id`）。
+ *
+ * **失败即抛**：回写不成 = 载体不可确认 = runtime 看不到修订输入。调用方据此 fail-closed
+ * （writer 让本次 summary 写入失败、finalizer 让闭环停在 open），不得静默吞掉。
+ * 返回值区分 `written` 与 `unchanged`（内容已相同，字节不动）。
+ */
+export function writeScopeRevisionInputToScriptReport(
+  scriptReportPath: string,
+  input: ExecutionScopeInput,
+  candidateIds: readonly string[],
+): 'written' | 'unchanged' {
+  if (!fs.existsSync(scriptReportPath)) throw new Error(`[scope-revision] script-report 不存在，修订输入无处落盘：${scriptReportPath}`);
+  let report: { checks?: Array<Record<string, unknown>> };
+  try {
+    report = JSON.parse(fs.readFileSync(scriptReportPath, 'utf8')) as { checks?: Array<Record<string, unknown>> };
+  } catch (error) {
+    throw new Error(`[scope-revision] script-report 不可解析，修订输入无处落盘：${scriptReportPath}（${(error as Error).message}）`);
+  }
+  const checks = Array.isArray(report.checks) ? report.checks : [];
+  if (!checks.length) throw new Error(`[scope-revision] script-report 无 checks，修订输入无处挂载：${scriptReportPath}`);
+  const carrier = checks.find(check => candidateIds.includes(String(check.id)) || candidateIds.includes(String(check.failure_kind))) ?? checks[0];
+  if (JSON.stringify(carrier.scope_revision_input) === JSON.stringify(input)) return 'unchanged';
+  for (const check of checks) if (check !== carrier) delete check.scope_revision_input;
+  carrier.scope_revision_input = input;
+  fs.writeFileSync(scriptReportPath, JSON.stringify(report, null, 2), 'utf-8');
+  return 'written';
 }

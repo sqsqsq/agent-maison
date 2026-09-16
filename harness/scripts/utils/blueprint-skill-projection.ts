@@ -6,7 +6,7 @@ import { resolveFeatureArtifact, loadFrameworkConfig } from '../../config';
 import { loadWorkflowSpec } from '../../workflow-loader';
 import { loadEffectiveExecutionScope } from './goal-run-creation';
 import { resolveExecutionScope, findSubtractedRequiredObligations, type ExecutionScope, type ExecutionScopeInput } from './execution-scope';
-import { readScopeAcceptance, collectResolvedScopeFacts } from './feature-track';
+import { readScopeAcceptance, collectResolvedScopeFacts, recomputeDefinitionFacts } from './feature-track';
 import { loadGoalManifestFromRun } from './goal-manifest';
 import { asRecord, asRecords, type BlueprintRecord } from './component-blueprint-model';
 import { resolveComponentBlueprintRef } from './component-blueprint-path';
@@ -64,6 +64,10 @@ export function designScopeRevisionChecks(ctx: CheckContext, checks: CheckResult
     ? { value: ctx.featureSpec.acceptance, binding: resolved.binding }
     : readScopeAcceptance(ctx.projectRoot, proposal, { feature: ctx.feature, frameworkRoot: ctx.frameworkRoot });
   const workflow = loadWorkflowSpec(ctx.frameworkRoot, loadFrameworkConfig(ctx.projectRoot).active_workflow ?? 'spec-driven');
+  // D0.1「不采信自报」同样适用于修订输入：在**提案副本**上按来源重算两条定义类事实，
+  // 否则一条手写的 unknown 能在修订里把 §4.1.3 子情形 (a) 的 definitionGapPending 伪造出来。
+  // 只动 proposal，不读也不写已冻结的 manifest / 出生范围。
+  recomputeDefinitionFacts(proposal, { projectRoot: ctx.projectRoot, feature: ctx.feature, frameworkRoot: ctx.frameworkRoot }, workflow, true);
   const next = resolveExecutionScope(proposal, workflow, acceptance,
     // requirement source (checker-side revision budget): the run's frozen manifest.requirement —
     // this checker only runs inside a real run, so the manifest is always the authority here.

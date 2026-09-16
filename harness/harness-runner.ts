@@ -129,6 +129,8 @@ import {
 import {
   buildSummaryRepairCandidates,
   findUnreadableDiagnosisChecks,
+  scopeRevisionInputFromRepairCandidates,
+  writeScopeRevisionInputToScriptReport,
 } from './scripts/utils/repair-candidates';
 import { evaluateConfigPlacementGate } from './scripts/utils/config-placement-gate';
 import { resolvePhasePersonalPrerequisites } from './scripts/utils/phase-personal-prerequisites';
@@ -2123,6 +2125,16 @@ export function writeRunSummaryBase(
   } catch (e) {
     // best-effort 事实层：组装失败不阻断 summary（无 candidate=落回既有 retry/halt 行为）
     console.warn(`   ⚠ [repair-candidates] 组装失败（零候选继续）：${(e as Error).message}`);
+  }
+  // D0.3：已归属 spec/plan 的候选 → 同 run 范围修订输入，回写进**磁盘** script-report.json。
+  // 位置不动（本轮 verifier subject 已锚定），因此 PASS / FAIL 两轮都到得了这里。
+  // **刻意在上面的 best-effort catch 之外**：载体写不成 = runtime 看不到修订输入，
+  // 静默吞掉会让「summary 有候选、范围却永远不修订」这种半截状态活下来。
+  if (summary.repair_candidates?.length) {
+    const revision = scopeRevisionInputFromRepairCandidates(summary.repair_candidates, {
+      projectRoot, frameworkRoot, feature: report.feature,
+    });
+    if (revision) writeScopeRevisionInputToScriptReport(path.join(dir, 'script-report.json'), revision.input, revision.candidateIds);
   }
   // Writer fail-fast：1.2/1.3 extend the quality lattice with assurance provenance and closure state.
   const v11Errors = validateSummaryV11(summary);

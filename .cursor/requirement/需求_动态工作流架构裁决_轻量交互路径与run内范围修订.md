@@ -90,9 +90,9 @@
 
 - **触发条件收窄为"已归属 spec / plan 的真实责任缺口"，不是任何越界。** 写集越界（`diff_within_scope`、contract-reference-closure 未授权引用）大多数是 coding 改错文件或误引依赖，应留在 coding 修复。只有经既有根因归属（`repair-candidates.ts` 的 repair_owner / 责任阶段路由，plan b6e4c9f2 的统一路由）判定 repair_owner 为 spec / plan 的发现，才产出 `scope_revision_input`：新增 `design-decision`（或 `acceptance-definition`）required，basis 为触发的 diff / 文件绑定，requested_phases = [责任阶段, 剩余未执行阶段]，其余义务原样继承。D2 在同一 run 内修订，plan 执行后回 coding。plan 对是否扩展契约仍独立裁决，修订提议不预设结论。
 - `check-coding` / `check-review`：沿上述归属产出，不各自新造判定；plan 列出现有哪些 check id 已带 repair_owner 归属可直接接线（§9 问题 8）。
-- correction 流程（`--correction-init`、correction-routing、scope-replan）读取有效范围（D1.3 / D2.2 的统一入口）；路由到范围外阶段时产出同一 `scope_revision_input`，不再直接落 `backtrack_target_absent`。scope-replan 已消费 `ExecutionScope`（`scope-replan.ts:195-204`），缺的是链外责任的修订出口，不是范围本身。
+- correction 流程（`--correction-init`、correction-routing、scope-replan）读取有效范围（D1.3 / D2.2 的统一入口）；路由到范围外阶段时**不产出** `scope_revision_input`（用户裁决 2026-09-16 修订：这类提议没有任何新来源绑定，会被 D2 的"修订须由新事实驱动"护栏拒绝并打断 run，实测证实），也不落 `backtrack_target_absent`，而是如实说明"责任阶段 X 不在本 run 有效范围内"并指向两条合法入口：(a) 修正暴露的是设计/验收缺口时，由责任阶段的真实 checker 产出候选走上面的 D0.3 触发（同 run 修订）；(b) 用户改需求时走 D2.5 保留的 correction/successor 签发新 run。scope-replan 已消费 `ExecutionScope`（`scope-replan.ts:195-204`），`upstream_closure_gap` 停等语义不变，只把"范围外"说清。
 - 不改 assess 的 `revise_scope` 判定；不新增第二条回退动作；不放宽 R8。
-- 验收：`execution-scope.unit.test.ts` design-gap 场景现在靠 `onHarnessSummary` 注入，属于"注入测试未覆盖生产触发"——保留该 runtime 单测，另补真实入口验收：真实 check-coding 夹具中，获准目标确实需要新公共接口且归属 plan → 同 run 修订为 [plan, coding, review, ut]；误改写集外文件且归属 coding → 留在 coding 修复，无修订事件；review 归因 spec 的用例同理；`--correction-init` 在范围外阶段产出修订而非 halt；testing FAIL 仍不产生修订。
+- 验收：`execution-scope.unit.test.ts` design-gap 场景现在靠 `onHarnessSummary` 注入，属于"注入测试未覆盖生产触发"——保留该 runtime 单测，另补真实入口验收：真实 check-coding 夹具中，获准目标确实需要新公共接口且归属 plan → 同 run 修订为 [plan, coding, review, ut]；误改写集外文件且归属 coding → 留在 coding 修复，无修订事件；review 归因 spec 的用例同理；`--correction-init` 在范围外阶段不落 backtrack_target_absent，输出范围外说明与两条合法入口，不产出修订事件、范围指纹不变；testing FAIL 仍不产生修订。
 
 ---
 

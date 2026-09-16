@@ -66,7 +66,15 @@ npx ts-node scripts/goal-runner.ts --resume <run-id> --feature <feature> --adapt
 npx ts-node scripts/goal-runner.ts --resume <run-id> --feature <feature> --adapter <activeAdapter> --adapter-source <adapterSource> --force-resume --detach
 ```
 
-新起 attended UI run 先按 [interactive-vision-canary.md](interactive-vision-canary.md) 完成实测；若 primary 仍 blind，可配置合法 provider，也可保持未配置并由后续 requirement/capability 门禁按严格度裁决。随后由同一入口准备 manifest 与 run-control（不会启动无人值守 runner），再 attach host bridge：
+新起 attended run 一律**两步走：先生成范围候选，再创建 run**（两个旗标互斥，须分两次调用）。候选由机器算——主 Agent 只提供四项输入（完成终点、请求结果、明确的请求动作、影响判断及其来源路径），绑定与指纹一律由同一份 `resolveCapabilityInputs` 计算，不接受人工填写；同输入重跑字节不变，候选被手改后重跑只报差异字段，须显式 `--overwrite` 才覆盖：
+
+```powershell
+npx ts-node scripts/goal-mode-entry.ts --prepare-scope --feature <feature> --completion-target feature --requested-results "<result>" --requested-phases coding,review,ut --requirement "<requirement>" [--impact-behavior-change true|false --impact-reason "<why>" --impact-basis <project-relative-path>] [--overwrite] --project-root <repo-root> --framework-root <repo-root>/framework
+```
+
+stdout 返回 `scope_candidate_prepared` JSON：核对其中的 `phase_chain`、每条义务的 `applicability` / `reason`、`unresolved` 与一句 `explanation` 之后再继续。请求动作不明确时命令会拒绝并打印每个阶段的既有证据体检——机器不猜动作。
+
+UI 相关的新 run 另需先按 [interactive-vision-canary.md](interactive-vision-canary.md) 完成实测；若 primary 仍 blind，可配置合法 provider，也可保持未配置并由后续 requirement/capability 门禁按严格度裁决。随后由同一入口准备 manifest 与 run-control（不会启动无人值守 runner），再 attach host bridge。**`--requirement` 必须与上一步 `--prepare-scope` 用的是同一份文本**——两处分叉时候选的需求绑定会在冻结时判 `input binding stale` 并拒绝出生：
 
 ```powershell
 npx ts-node scripts/goal-mode-entry.ts --prepare-run --run-mode attended --feature <feature> --requirement "<requirement>" --adapter <activeAdapter> --adapter-source <adapterSource> --project-root <repo-root> --framework-root <repo-root>/framework [--run-id <run-id>] [--start <phase>] [--end <phase>]

@@ -78,6 +78,13 @@ export interface ExecutionScopeInput {
     requested_results: string[];
     requested_phases: string[];
     impact?: ScopeImpactJudgement;
+    /**
+     * D0.2 provenance：这份候选是**为哪句需求**算出来的。由 `--prepare-scope` 经既有
+     * `derive.requirement` 解析得到（不是手写），冻结时与当次 `--requirement` /
+     * `manifest.requirement` 重解析比对——两者分叉即 `input binding stale`，不得静默换需求。
+     * 校验走 §4.1.0 既有的 `resolved.basis` 通道，不另建第二套。
+     */
+    requirement_basis?: InputBinding;
   };
   facts: Array<Omit<ExecutionObligation, 'owner_phase'>>;
   /** Conditional control facts; an information producer is not automatically a predecessor. */
@@ -266,6 +273,12 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
   for (const { kind } of DERIVED_EVIDENCE_KINDS) {
     derivations.set(kind, kind === 'visual-evidence' ? deriveVisual() : deriveFromAcceptance(kind as 'unit-evidence' | 'device-evidence'));
   }
+  // Which kinds count as a *definition* gap comes from the provider registry — one source of
+  // truth, so `acceptance-definition` / `design-decision` are covered without a second literal list.
+  const definitionKinds = new Set<string>([...OBLIGATION_PROVIDERS['obligations.spec'], ...OBLIGATION_PROVIDERS['obligations.plan']]);
+  // 判定顺序：**definition-gap 先于 impact 目标相关性**。设计缺口还在时，写集本来就还没确定，
+  // 把「拿不出写集」算到范围声明头上是错的——那条缺口马上就会把实现阶段挡在链外。
+  const definitionGapPending = input.facts.some(fact => fact.applicability === 'unknown' && definitionKinds.has(fact.kind));
   // `completion_target=feature` additionally requires a sourced impact judgement before
   // device verification may be pruned. Missing impact => unknown (testing is NOT pruned).
   if (request.completion_target === 'feature') {
@@ -299,7 +312,10 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
         // (a) There *is* an implementation duty, so a declared write set must exist. Blame the
         // scope declaration, not the impact basis — same verdict check-coding.ts:326 already makes
         // at coding time ("施工契约缺少 files/modules"), just moved forward to freeze time.
-        if (implementationDuty) fail('范围未声明可核验的写集（contracts.files 为空且 implementation 无写集来源），责任方 plan');
+        // 它不该拦住谁：**请求里带着设计阶段**的那条合法入口——设计缺口（design-context /
+        // acceptance-context unknown）会把 coding 挡进 `needed_by`，写集要等 plan 产出 contracts
+        // 之后才由 D2 同 run 修订重判。此时按 (b) 处理，而不是当场判范围声明有错。
+        if (implementationDuty && !definitionGapPending) fail('范围未声明可核验的写集（contracts.files 为空且 implementation 无写集来源），责任方 plan');
         // (b) No implementation duty and no review/UT target (e.g. a [spec]/[plan] birth chain):
         // relevance is simply not checkable, so the impact judgement cannot be relied on. Falls
         // onto the existing "impact missing" path — device unknown, testing NOT pruned.
@@ -408,9 +424,6 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
   const needed = new Set(obligations.filter(o => o.applicability === 'required' && !o.satisfied_by?.length).map(o => o.owner_phase));
   const unresolved: ExecutionScope['unresolved'] = obligations.filter(o => o.applicability === 'unknown').map(o => ({ obligation_id: o.id, owner: o.owner_phase, reason: o.reason, needed_by: [o.owner_phase] }));
   const investigation = new Set(workflow.artifacts.filter(a => ['obligations.spec', 'obligations.plan'].includes(a.obligation_provider_id ?? '')).map(a => a.id));
-  // Which kinds count as a *definition* gap comes from the provider registry — one source of
-  // truth, so `acceptance-definition` / `design-decision` are covered without a second literal list.
-  const definitionKinds = new Set<string>([...OBLIGATION_PROVIDERS['obligations.spec'], ...OBLIGATION_PROVIDERS['obligations.plan']]);
   // A definition gap must stay executable by its own owner: the investigation phase is the one
   // that fills it, so put the owner back into `needed` even though unknown duties never do.
   for (const gap of unresolved) {

@@ -45,13 +45,13 @@ todos:
       批次 2 第一步（D0.3，一笔）：coding / review / correction 中经既有 repair_owner 归属判定为
       spec / plan 的真实责任缺口产出 scope_revision_input，由 D2 在同一 run 内回补；
       写集越界类留在 coding。补真实 check 入口验收，保留既有注入单测。见 §5.1。
-    status: pending
+    status: completed
   - id: p8-b2-scope-candidate-cli
     content: >
       批次 2 第二步（D0.2，一笔）：goal-mode-entry 新增 --prepare-scope 生成 feature.yaml 的
       execution_scope 候选并投影 resolver 结果与模板化说明；主 Agent 职责缩为四项；
       同步 AGENTS 模板与三份 Skill / 文档，删除暗示手写指纹与手写 basis 的表述。见 §5.2。
-    status: pending
+    status: completed
   - id: p8-b3-feature-scope-carrier
     content: >
       批次 3（D1，一至两笔）：新增 feature 级冻结记录与无 run 完成原件，统一有效范围入口按
@@ -440,7 +440,7 @@ A1 / A2 两个运行期读点与 B 类（manifest identity 的 drift / replay �
 | 调用点 | `requirement` 来源 |
 |---|---|
 | 出生路径（`--prepare-run` / fresh runtime 出生） | prepare-run 的 `--requirement` / `manifest.requirement` |
-| feature.yaml 候选路径（`resolveFeatureExecutionScope`） | `request.requested_results.join('\n')`（候选无 run manifest 可读） |
+| feature.yaml 候选路径（`resolveFeatureExecutionScope`） | 调用方传入的 `--requirement` / `manifest.requirement`；**传不进来时留空，不编替代文本**（批次 2 review 第三轮更正：原写的 `request.requested_results.join('\n')` 已删除——编出来的文本对不上候选指纹，会让每条 `derive.requirement` 绑定恒判 stale）。唯一不传需求的调用方是 CU 交接预期链投影，它不冻结任何东西 |
 | runtime 修订（R4）与 checker 修订预算（R3） | `manifest.requirement` |
 
 | SSOT 状态 | 请求 / 蓝图是否含视觉要求（`resolveUiRelevanceForRun`） | applicability | reason |
@@ -667,6 +667,22 @@ const acceptance = ctx.phase === 'spec' && ctx.featureSpec.acceptance
 
 现有 `:129-141` 只在 `acceptance` 存在时写入 `<kind>:acceptance` 事实，且用 `Object.assign(previous, fact)` 覆盖同 id 候选——覆盖机制已在；本次要做的是把覆盖面从「同 id」扩到「同 kind 的全部候选事实」，并补上 visual 这条从来没有的派生逻辑（`:56`、`:69`、`:78` 只在常量与过滤中出现，resolve 内无计算）。
 
+**适用面扩到两个定义类 kind（批次 2 代码 review 第六轮，调度者裁决 2026-09-16）**：`design-context` / `acceptance-context` 的候选 applicability **同样不采信**。只重核绑定、不重算判定，等于把攻击面从「伪造一条绑定」平移到「伪造一条结论」——手写一条 `acceptance-context: unknown` 就能让 §4.1.3 子情形 (a) 的 `definitionGapPending` 为真，把那条 fail-closed 顶掉。
+
+| kind | 来源（与 D0.2 生成器**同一个**函数 `deriveDefinitionContext`） | unknown 条件 |
+|---|---|---|
+| `design-context` | `contracts@1` 绑定是否解析得到；请求含实现阶段时还要拿得出**可核验写集**，而写集授权**只认受信设计来源 `contracts.files`** | 无契约；或请求含实现阶段而 `contracts.files` 给不出可解析写集 |
+| `acceptance-context` | `acceptance@1` 绑定是否解析得到 | 无可解析验收来源 |
+
+重算只覆盖候选里**已有**的这两类事实，且**出生路径与修订路径的力度不同**：
+
+| 路径 | 来源可用 | 来源不可用 |
+|---|---|---|
+| 出生（`resolveFeatureExecutionScope`） | `required` + 机器绑定（`basis` 换成机器解析那一条；`satisfied_by` 不代写） | 降为 `unknown` + 清掉 `satisfied_by` + 更新 reason |
+| 修订（R3 提案 / R4 runtime，`onlyTighten`） | 同上 | **只清 `satisfied_by`，不降级**——修订发生在真实阶段上下文里（蓝图投影、run-bound 快照、本轮刚产出的产物），按独立探针降级会凭空造出缺口、把已兑现的责任判成被删除；而「留着一份自报的满足证明」会让责任阶段被跳过，所以清证明在任何路径上都必须做 |
+
+两条路径都**不做整份候选重算比对**——那会把 `impact` / `requested_phases` 这类合法人工补充也判成篡改，与 D0.2 的幂等规则（手改报差异、显式 `--overwrite`）职责重叠。视觉缺口 `acceptance-definition:visual` 是另一个 kind、本来就是机器派生，不受影响。落点：`feature-track.ts` 的 `deriveDefinitionContext()` / `recomputeDefinitionFacts()`（读取层，resolver 仍是纯函数）。
+
 #### 4.1.2 visual 派生
 
 见 §3 问题 10。派生事实 id 用 `visual-evidence:fidelity`，`basis` 为 `fidelityIntentSsotPath` 的 dependency。**不从 acceptance 分层推 visual。**
@@ -702,10 +718,12 @@ const acceptance = ctx.phase === 'spec' && ctx.featureSpec.acceptance
 
 | 子情形 | 判定 | 处置 |
 |---|---|---|
-| (a) 本次**含 implementation 义务**（`requested_phases` 含 implementation provider 的阶段，或候选有 `implementation` 事实），但 `contracts.files` 为空且 implementation 事实无写集 basis | 范围声明本身有问题 | **拒绝**，文案指向声明面：「范围未声明可核验的写集（contracts.files 为空且 implementation 无写集来源），责任方 plan」。与 `check-coding.ts:326` 既有 `diff_within_scope` FAIL「施工契约缺少 files/modules」**同一口径**，只是前移到冻结时 |
+| (a) 本次**含 implementation 义务**（`requested_phases` 含 implementation provider 的阶段，或候选有 `implementation` 事实），但 `contracts.files` 为空且 implementation 事实无写集 basis，**且本次没有待填的定义缺口**（见下方收窄） | 范围声明本身有问题 | **拒绝**，文案指向声明面：「范围未声明可核验的写集（contracts.files 为空且 implementation 无写集来源），责任方 plan」。与 `check-coding.ts:326` 既有 `diff_within_scope` FAIL「施工契约缺少 files/modules」**同一口径**，只是前移到冻结时 |
 | (b) 本次**无 implementation 义务**且无 review / UT 目标（如出生链只有 spec / plan） | 相关性无法核验 | 按**既有的「影响依据缺失」同一条路**：`device-evidence` 落 `unknown`，reason 记「影响依据无可核验范围」，**testing 不裁**。不新增状态 |
 
 实现分工照 §4.1.0：读取层只多给一个布尔 `impact_targets_available`（目标集合是否非空）；「是否含 implementation 义务」由 resolver 用既有 `OBLIGATION_PROVIDERS` 注册表算（不硬编码 `coding` 这个 phase id）。两条子情形各在 §4.4 补一行用例。
+
+**子情形 (a) 的收窄（调度者裁决 2026-09-16，批次 2 代码 review 第五轮）**：**判定顺序是 definition-gap 先于 impact 目标相关性**。本次范围里只要还有待填的定义缺口（`design-context` / `acceptance-context` / `design-decision` / `acceptance-definition` 等 spec / plan 家族的 `unknown` 事实），写集本来就还没确定——此时**不走 (a)**，按 (b) 处理（device `unknown`、reason「影响依据无可核验范围」、testing 不裁），由既有 definition-gap 通路把实现阶段挡进 `needed_by`，等 plan 产出 contracts 后由 D2 同 run 修订重判。(a) 只在**没有定义缺口**（等价于「请求跳过设计阶段还要改代码」）时生效。这与批次 2 第四轮对必修 1 的取向一致，不是新语义。`definitionKinds` 与下游 definition-gap pass **共用同一份** `OBLIGATION_PROVIDERS` 派生集合，不另列字面量。
 
 #### 4.1.4 `satisfied_by` 冻结时核验
 
@@ -1110,7 +1128,11 @@ const sourcePaths = [...new Set(scope.obligations
 
 #### 5.1.3 correction 流程
 
-`harness-runner.ts:664`（`--correction-init`）、`harness/scripts/utils/correction-routing.ts`、`correction-commands.ts:210`（feature 修正的责任阶段路由）改为读有效范围（§4.2.3 的统一入口）。路由到范围外阶段时产出同一 `scope_revision_input`，不再直接落 `backtrack_target_absent`（`goal-phase-runtime.ts:9418-9424`）。
+`harness-runner.ts:664`（`--correction-init`）、`harness/scripts/utils/correction-routing.ts`、`correction-commands.ts:210`（feature 修正的责任阶段路由）改为读有效范围（§4.2.3 的统一入口）。
+
+**调度者裁决（批次 2，2026-09-15）：范围外阶段**不**产出 `scope_revision_input`。** 这两条出口的提议形状是「义务原样继承 + 只多请求一个范围外阶段」，没有任何新来源绑定；批次 1 第三轮阻断 3 定的 `hasNewSourcedFact`（新 basis 绑定，或本 run 新产出的阶段闭环证据）对它返回 false（已实测探针），runtime 会抛 `revision requires new sourced facts` 打断 run——比不修订更糟。给它伪造「当前字节」基据违反 §5 的输入原则，为「非候选驱动」放宽判据等于重开批次 1 刚关掉的口子，而 D2.5 本就明文保留「用户显式改需求走 correction / successor 签发新 run」。
+
+因此：**不落 `backtrack_target_absent`，也不产出提议**，如实打印「责任阶段 X 不在本 run 有效范围内」并指向两条合法入口——(a) 若修正暴露的是设计/验收缺口，由责任阶段的真实 checker 产出候选走 D0.3 触发（同 run 修订）；(b) 若是用户改需求，走既有 correction / successor 签发新 run。`scope-replan` 的 `chain_lacks_plan` 同理：`upstream_closure_gap` 停等语义**不变**，只把「范围外」与两条入口说清。
 `scope-replan.ts:194-204`（`checkPlanAuthority`）已消费 `ExecutionScope`，缺的是链外责任的修订出口——补出口即可，不改它的授权判据。
 
 #### 5.1.4 不动的面
@@ -1127,9 +1149,9 @@ const sourcePaths = [...new Set(scope.obligations
 | `harness/scripts/utils/capability-resolution-entry-input.ts:242` | §5.1.1a 的 **R-目标收集**：`sourcePaths` **只跳过** `design-decision` / `acceptance-definition` 两个 kind（修订历史触发依据），`implementation` / `code-review` / `unit-evidence` / `device-evidence` / `visual-evidence` 的 derive basis **照收为当前目标**。**不得**套用 `isExecutionSourceBasis`——那条是 R-摘要豁免，只管字节比对（第六轮的「逐 dep 套豁免」写法已于第七轮撤销，因会清空 UT / 纯 review 的代码目标致 `blocked`）。配套护栏见 §4.4 的「仅 review」「仅 UT」两行 |
 | `harness/harness-runner.ts:2106` | 在既有 `buildSummaryRepairCandidates` 调用处（位置不动）追加：调 `scopeRevisionInputFromRepairCandidates` 并把 `scope_revision_input` 回写进磁盘 **script-report.json**；PASS/FAIL 两轮都到得了 |
 | `harness/scripts/utils/phase-closure-finalizer.ts:644` | 闭环重算侧同上，产物**回写 script-report.json**（只 PASS 支；覆盖晚到的 verifier confirmed 候选与 `--sync-closure` 出口） |
-| `harness/scripts/utils/correction-routing.ts`、`correction-commands.ts` | 读有效范围；范围外阶段产出 `scope_revision_input` |
-| `harness/scripts/utils/scope-replan.ts:194-205` | §5.1.3 的链外责任修订出口（`checkPlanAuthority` 已消费 `ExecutionScope`，补出口即可，不改授权判据）。第七轮 review M3 补列 |
-| `harness/scripts/goal-phase-runtime.ts` | `backtrack_target_absent` 分支：先看是否有 spec/plan 归属的修订输入，有则走修订 |
+| `harness/scripts/utils/correction-routing.ts`、`correction-commands.ts` | 读有效范围（track 按**本 run** 解析）；范围外阶段**不产出** `scope_revision_input`，如实说明 + 两条合法入口，且不再打印通用 `--revalidate` 指引（调度者裁决 2026-09-15，见 §5.1.3） |
+| `harness/scripts/utils/scope-replan.ts` | `chain_lacks_plan` 文案改为「不在有效范围内」+ 两条入口；`upstream_closure_gap` 停等语义**不变**，不新增修订出口（同上裁决） |
+| `harness/scripts/goal-phase-runtime.ts` | **不改**。核实：`assess.ts` 在回退路由之后无条件用 `reconcile.scope_revision` 覆盖成 `revise_scope`，修订输入一旦落盘就走不到 `backtrack_target_absent`；§5.1.4 本就写明不改 assess 判定、不新增第二条回退动作 |
 | `harness/tests/unit/execution-scope.unit.test.ts` + 真实 check 夹具 | §5.4 验收 |
 
 删除清单：无（D0.3 是接线，`backtrack_target_absent` 路径本身保留给真正无处可回的情形）。
@@ -1196,30 +1218,31 @@ D0.3（需求 §3 D0.3 末段逐行）：
 | 需求验收行 | 用例 |
 |---|---|
 | 保留现有靠 `onHarnessSummary` 注入的 design-gap runtime 单测 | `real prepare CLI / bridge scope lifecycle: design-gap`（原样保留） |
-| 真实 check-coding 夹具：获准目标确实需要一个契约未覆盖的 UI 文件 → `ui_scope_violation` 经既有注册表归属 plan（满足 `category`/`source_phase` 唯一条件）→ **生成** `design-decision` 事实 → 同 run 修订为 `[plan, coding, review, ut]` | `D0.3 real check-coding plan-owned gap triggers an in-run revision`（**必须经 `buildSummaryRepairCandidates` 真实归属链**，不得手拼候选对象；断言的是**生成结果**——事实的 `basis` 逐条对应候选 `files`、链变成 `[plan, coding, review, ut]`——触发者是候选本身） |
-| 需求 D0.3 点名的写集越界（`diff_within_scope` / contract-reference-closure 未授权引用）→ 留在 coding 修复，无 spec/plan 候选、无修订事件 | `D0.3 named write-set violations stay in coding`。**断言到 assess 的输出**：summary 无 `category='plan'` 候选、assess 推荐**不是** `rerun_phase(plan)`、也不是 `backtrack_target_absent`、无修订事件（锁 `repair-candidates.ts:395` 的「未注册 id → null」） |
-| `ui_scope_violation` 归属 plan → 由候选自身的 `files` 生成 `design-decision` 修订输入，`reason` 语义是「需要 plan 裁决」而非「已证明扩展合理」 | `D0.3 plan-owned ui violation yields a design-decision for plan to adjudicate`（断言生成事实的 `basis` 逐条对应候选 `files` 且经绑定核验；断言 `reason` 取自候选 `summary`）。**第三轮的「不带设计事实则不修订」反例随第四轮阻断 1 删除**——`RepairCandidate`（`repair-candidates.ts:32-52`）无该字段，那条反例在生产上造不出输入区别 |
-| plan 收到误改型提议后拒绝扩展契约 → 打回 coding → **coding 实际撤回误改文件 → 责任阶段证据仍 fresh 且 completion VALID** | `D0.3 plan declines an unjustified extension and the reverted file still completes`（第五轮阻断 1 + 第六轮阻断 1）。用例必须跑到**完整闭环终点**，断言：① plan 不扩大 `contracts.files`；② coding 把文件改回原字节；③ `executionScopeEvidenceIssues` **不**报 `input binding stale`（白名单那一路）；④ **`recomputePhaseEvidenceStaleness(.., ['plan'])` 判 `fresh`**、plan 的 evidence manifest inputs **不含**该触发文件（`sourcePaths` 那一路）；⑤ `verifyFeatureCompletion` 判 VALID 且无 `lineage_fresh` issue。**既有注入用例覆盖不了它**——`execution-scope.unit.test.ts:171` 的 `onCoding` 只在 `direct` 模式改文件，须为本用例单建撤回动作 |
-| **review 归因 spec 同理**（需求 D0.3；第六轮建议 1 + 第七轮 review M2 更正断言） | `D0.3 spec-owned finding completes after the trigger file is fixed`。**触发路径必须是真实的 review→spec 归属**：`deriveCategoryFromFiles`（`repair-candidates.ts:86-101`）按路径域判定，只有 `spec.md` / `acceptance.yaml` / `spec/` 下的文件才归 spec，且**全部文件同域**才产候选——夹具的 finding 必须指向 `spec/acceptance.yaml` 这类路径，**不能拿任意产品源码冒充**。断言：① 历史触发摘要不再阻断完成（`executionScopeEvidenceIssues` 不报 stale）；② **修复后的正式设计输入 / 输出仍被当前证据绑定**——`acceptance.yaml` 既是 spec 的输入也是它的产出（`skills/feature/spec/contract.yaml:10`、`:20`），经 `phase-evidence-manifest.ts:426` 读解析绑定登记，同路径 input/output 合并为 both 后仍列入 inputs（`:492-494`），**因此不得断言「spec manifest inputs 不含触发文件」**（那会误拒正确实现）；③ `verifyFeatureCompletion` 判 VALID。**反例保留两条**：spec 缺口未处理 → 不能完成；闭环后真实设计输入变化 → 仍判 stale、不能完成（锁「豁免只对历史触发摘要生效，不整体关闭 freshness」）。**不机械继承** plan 专用断言（「不扩大 `contracts.files`」「coding 撤回原字节」） |
-| 晚到候选（PASS 支）：首次 writer 无 verifier、闭环重算才出现 spec 归属的 review 候选 → 仍产出同一修订，且不重复 | `D0.3 late verifier-confirmed candidate still revises exactly once`。**必须断言 `script-report.json` 上出现了 `scope_revision_input`**（runtime 的实际读取面），不能只看 summary |
+| 真实 check-coding 夹具：获准目标确实需要一个契约未覆盖的 UI 文件 → `ui_scope_violation` 经既有注册表归属 plan（满足 `category`/`source_phase` 唯一条件）→ **生成** `design-decision` 事实 → 同 run 修订为 `[plan, coding, review, ut]` | **两条用例合起来覆盖**：`D0.3 real check-coding plan-owned gap triggers an in-run revision`（跑**真实** `coding.check` 得到 `ui_diff_within_declared_files(ui_scope_violation)` → `buildSummaryRepairCandidates` 注册表归 plan → 生成器产出 `design-decision`；断言事实的 `basis` 逐条对应候选 `files`、`reason` 语义、修订后链为 `[plan, coding, review, ut]`）＋ `real prepare CLI / bridge scope lifecycle: design-gap` / `design-gap-revert`（**同一条归属链经 runtime 走完修订与完成判定**：第八轮把这两个 e2e 模式的触发从手拼 revision 改为真实归属——`ui_scope_violation` → `buildSummaryRepairCandidates` → `scopeRevisionInputFromRepairCandidates`，修订的 request / facts / 绑定 / impact 继承全部由生产函数算） |
+| 需求 D0.3 点名的写集越界（`diff_within_scope` / contract-reference-closure 未授权引用）→ 留在 coding 修复，无 spec/plan 候选、无修订事件 | `D0.3 named write-set violations stay in coding`。**断言到 assess 的输出**（该用例确实跑到 `assessFeature`）：summary 无 `category='plan'` 候选、assess 推荐**不是** `rerun_phase(plan)`、也不是 `backtrack_target_absent`、无修订事件（锁 `repair-candidates.ts:395` 的「未注册 id → null」） |
+| `ui_scope_violation` 归属 plan → 由候选自身的 `files` 生成 `design-decision` 修订输入，`reason` 语义是「需要 plan 裁决」而非「已证明扩展合理」 | `D0.3 real check-coding plan-owned gap triggers an in-run revision`（与上一行同一条用例；断言生成事实的 `basis` 逐条对应候选 `files` 且经绑定核验；断言 `reason` 取自候选 `summary`）。**第三轮的「不带设计事实则不修订」反例随第四轮阻断 1 删除**——`RepairCandidate`（`repair-candidates.ts:32-52`）无该字段，那条反例在生产上造不出输入区别 |
+| plan 收到误改型提议后拒绝扩展契约 → 打回 coding → **coding 实际撤回误改文件 → 责任阶段证据仍 fresh 且 completion VALID** | **实际用例名 `real prepare CLI / bridge scope lifecycle: design-gap-revert`**（`execution-scope.unit.test.ts`；第五轮阻断 1 + 第六轮阻断 1；名称已按批次 2 代码 review 第七轮建议同步）。用例必须跑到**完整闭环终点**，断言：① plan 不扩大 `contracts.files`；② coding 把文件改回原字节；③ `executionScopeEvidenceIssues` **不**报 `input binding stale`（白名单那一路）；④ **`recomputePhaseEvidenceStaleness(.., ['plan'])` 判 `fresh`**、plan 的 evidence manifest inputs **不含**该触发文件（`sourcePaths` 那一路）；⑤ `verifyFeatureCompletion` 判 VALID 且无 `lineage_fresh` issue。**既有注入用例覆盖不了它**——`execution-scope.unit.test.ts:171` 的 `onCoding` 只在 `direct` 模式改文件，须为本用例单建撤回动作 |
+| **review 归因 spec 同理**（需求 D0.3；第六轮建议 1 + 第七轮 review M2 更正断言） | **两条用例合起来覆盖**：端到端闭环走 `real prepare CLI / bridge scope lifecycle: spec-gap-revert`（批次 2 第七轮补，与 `design-gap-revert` 同构：真实 review→spec 归属 → 生产函数产出 `acceptance-definition` 修订 → spec 重跑修复触发文件 → 完成 VALID）；豁免按 kind 的正反例仍由 `D0.3 spec-owned trigger stops blocking once fixed, and only that kind is exempt` 覆盖。**触发路径必须是真实的 review→spec 归属**：`deriveCategoryFromFiles`（`repair-candidates.ts:86-101`）按路径域判定，只有 `spec.md` / `acceptance.yaml` / `spec/` 下的文件才归 spec，且**全部文件同域**才产候选——夹具的 finding 必须指向 `spec/acceptance.yaml` 这类路径，**不能拿任意产品源码冒充**。断言：① 历史触发摘要不再阻断完成（`executionScopeEvidenceIssues` 不报 stale）；② **修复后的正式设计输入 / 输出仍被当前证据绑定**——`acceptance.yaml` 既是 spec 的输入也是它的产出（`skills/feature/spec/contract.yaml:10`、`:20`），经 `phase-evidence-manifest.ts:426` 读解析绑定登记，同路径 input/output 合并为 both 后仍列入 inputs（`:492-494`），**因此不得断言「spec manifest inputs 不含触发文件」**（那会误拒正确实现）；③ `verifyFeatureCompletion` 判 VALID。**反例保留两条**：spec 缺口未处理 → 不能完成；闭环后真实设计输入变化 → 仍判 stale、不能完成（锁「豁免只对历史触发摘要生效，不整体关闭 freshness」）。**不机械继承** plan 专用断言（「不扩大 `contracts.files`」「coding 撤回原字节」） |
+| 晚到候选（PASS 支）：首次 writer 无 verifier、闭环重算才出现 spec 归属的 review 候选 → 仍产出同一修订，且不重复 | `D0.3 late verifier-confirmed candidate still writes the revision input to script-report`。**必须断言 `script-report.json` 上出现了 `scope_revision_input`**（runtime 的实际读取面），不能只看 summary；「不重复」由同一条用例的 `carriers.length === 1` 断言，不另造用例 |
 | **晚到候选（FAIL 支）**：本轮 verifier 确认了一个导致 FAIL 的缺陷 → 该轮 writer（`harness-runner.ts:1315` 无 verdict 门控）即写出修订输入；后续按重跑指引（`harness-runner.ts:2522` / `goal-phase-runtime.ts:8017`）再次进 writer 时不重复追加 | `D0.3 failing round writes the revision input and rerun does not duplicate it`（锁 §5.1.2 ① 的 PASS/FAIL 均可达，与 `revision_input` 指纹去重） |
-| `--sync-closure` 出口的晚到候选同样进入消费链 | `D0.3 sync-closure exit still writes the revision input to script-report` |
-| review 归因 spec 的用例同理 | `D0.3 real check-review spec-owned finding triggers an in-run revision` |
-| `--correction-init` 在范围外阶段产出修订而非 halt | `D0.3 correction to an out-of-scope phase revises instead of halting` |
+| `--sync-closure` 出口的晚到候选同样进入消费链 | `D0.3 the real --sync-closure entry writes the revision input too`（第九轮补：走**真实** `runSyncClosureDetailed` 入口——独立进程形态，删 `MAISON_GOAL_RUN_ID`、不传 goalIdentity，经真实 check-receipt 通过后由生产 `finalizePhaseClosure` 落盘） |
+| review 归因 spec 的用例同理 | `D0.3 late verifier-confirmed candidate still writes the revision input to script-report`（**载体**：`script-report.json` 上出现 `scope_revision_input`）+ `real prepare CLI / bridge scope lifecycle: spec-gap-revert`（**链路**：同一条真实归属经 runtime 走完修订与完成判定） |
+| `--correction-init` 在范围外阶段**不落 `backtrack_target_absent`**，输出范围外说明与两条合法入口；**不产出修订事件、有效范围指纹不变** | `D0.3 correction to an out-of-scope phase explains instead of proposing`（调度者裁决改判，原行「产出修订而非 halt」作废） |
 | testing FAIL 仍不产生修订 | `real prepare CLI / bridge scope lifecycle: testing-fail`（保留） |
 
 D0.2（需求 §3 D0.2 末段逐行）：
 
 | 需求验收行 | 用例 |
 |---|---|
-| 对 `harness/tests/fixtures/component-blueprint/valid` 的 CU 生成候选 → prepare-run 与 D1 首次冻结直接可用 | `D0.2 generated candidate is directly usable by prepare-run`（D1 首次冻结部分在批次 3 补断言） |
+| 对 `harness/tests/fixtures/component-blueprint/valid` 的 CU 生成候选 → prepare-run 可用 | `D0.2 a real CU candidate comes from the generator, and an undeclared write set is a plan gap`（批次 2 第七轮新增，走**真实** `prepareFeatureScopeCandidate` → `prepareGoalModeRun`）。**「直接可用」这句已更正**：这份共享夹具的 `contracts.yaml` 不声明 `files`、也没有可解析验收，所以生成结果是出生链 `['spec','plan']` + coding 挂 `needed_by` 的**设计/验收缺口**——这是正确结果，不是缺陷。补上写集与验收之后，同一条生成路径的候选被真实 `--prepare-run` 冻结，链含 coding。D1 首次冻结部分仍在批次 3 补断言 |
 | 生成的绑定与 `resolveCapabilityInputs` 的绑定指纹一致 | **批次 1 已交付**（§4.3 的夹具改造把所有绑定改走 `resolveCapabilityInputs`，指纹同源已被 §4.1.4 的重解析护栏实跑锁住）；批次 2 **复用**该结论，只补「生成器产出的候选与同一函数指纹一致」这一条增量断言 |
-| 同输入重跑文件字节不变 | `D0.2 regeneration is byte-identical` |
-| 候选被手改后重跑报差异不覆盖 | `D0.2 hand-edited candidate is reported, not overwritten` |
+| 同输入重跑文件字节不变 / 候选被手改后重跑报差异不覆盖 | `D0.2 generated candidate is directly usable by prepare-run and is byte-identical on regeneration`（两条断言在同一用例里：重跑字节不变、手改后报差异且不覆盖，显式 `--overwrite` 才写） |
 | 已有有效实现、仅缺 review / UT 的请求生成的候选不含 implementation，链为 `[review, ut]` | `D0.2 verification-only request yields no implementation obligation` |
-| 明确要求改代码的请求必含 implementation | `D0.2 explicit code-change request includes implementation` |
-| AGENTS 模板 smoke 无 lite/full、无「手写指纹」字样 | `D0.2 AGENTS template smoke has no lite/full or hand-written fingerprint wording` |
+| 明确要求改代码的请求必含 implementation | `D0.2 missing acceptance becomes an unknown duty, and a code change without a write set is refused`（同一用例内断言「请求含 coding → 候选带 implementation 且 basis 是契约写集」与反例「跳过设计且无写集 → 拒绝」） |
+| AGENTS 模板 smoke：四项职责要素在场、四份入口文本无「手写」来源/指纹、入口文档指向 `--prepare-scope` | `D0.2 AGENTS template and entry docs hand the candidate to the machine, not to hand-written bindings`（`framework-init-entry-contract.unit.test.ts`）。**「无 lite/full」按 §11 批次 2 的记录收窄**：`AGENTS.md.template` 的 Context Facts Gate 行用 `full=spec/lite=change` 描述 track 机制，与候选生成无关，保留 |
 | NEXT_STEP 消费新的有效范围，不出现范围外义务 | `D0.2 NEXT_STEP projects only in-scope obligations`（复用 `formatAssessNextStep`，不新建 renderer） |
+| **候选必须能证明「它是为哪句需求算的」**：任何候选都带机器解析的需求绑定；冻结时与本 run 出生的需求重解析比对，分叉 / 删除 / 替换一律经既有绑定校验拒绝（第三轮阻断 1） | `D0.2 the candidate proves which requirement it was computed for, and a fork or a deleted binding is refused`。前提断言**有** contracts / acceptance 的正常 feature（否则退化成第二轮那条无蓝图用例）；四条出口：同文本通过 / 换需求 `stale` / 删绑定 `requirement_basis` / 捏一条假绑定 `stale` |
+| `--prepare-scope` 与 `--prepare-run` 单次调用互斥，候选步骤不会顺带建 run（第三轮必修 1） | `D0.2 the CLI accepts --prepare-scope without a run mode and rejects half inputs`（同一条 CLI 用例扩充：断言拒绝 + **不生成 manifest**） |
 
 ## 6. 批次 3：D1 轻量交互路径
 
@@ -2284,14 +2307,508 @@ git diff --check                    退出 0；32 个改动文件全 LF（CR=0�
 
 ### 批次 2（D0.3 + D0.2）
 
-（待填）
+#### D0.3 第一笔 — 进行中（§5.1.2 载体已接，§5.1.3 的 correction / scope-replan 出口停下待裁决）
 
-- 日期：
-- 提交：
-- 改动摘要：
-- 验证输出：
-- 与 plan 的偏差与放弃的准确性：
-- 未决项 / 交接：
+**已落地（§5.1.2 两个载体，生产链真实接线）**
+
+| 位置 | 改动 |
+|---|---|
+| `harness/scripts/utils/repair-candidates.ts` | 新增 `scopeRevisionInputFromRepairCandidates(candidates, ctx)`：单向数据流——输入=既有归属层产出的候选，输出=设计事实。触发条件只有一条（`category ∈ {spec,plan}` 且 `source_phase ∈ {coding,review}`）；`plan → design-decision`、`spec → acceptance-definition`；责任阶段由既有 `OBLIGATION_PROVIDERS` 注册表反查（不硬编码阶段名）；触发文件绑定走 `resolveCapabilityInputs` 的 `derive.codebase`（指纹与 §4.1.0 的核验同源，不自拼 InputBinding）；其余义务原样继承；`requested_phases = [责任阶段, 剩余 required 未满足义务的 owner]`。**幂等**：设计事实 id 为 `<kind>:<candidate.id>`，已在有效范围内即返回 null，重跑同阶段不反复产出。不新增 check id、不动 `CHECK_ID_OWNER_REGISTRY`、不判断意图 |
+| 同文件 | 新增 `writeScopeRevisionInputToScriptReport(path, input, candidateIds)`：回写**磁盘** script-report.json（runtime 的唯一读取面），载体 check 取同名候选的 check、取不到取首条（只决定事件里的 `trigger.check_id`）；与现有输入相同即不重写（字节不变）；best-effort 不阻断阶段产出 |（**历史中途快照**：最后一句「best-effort 不阻断」已在批次 2 代码 review 第一轮被推翻——载体写不出去就等于修订没发生，现状是 `repair-candidates.ts` 直接抛、`harness-runner.ts` 把该调用移出 best-effort catch，见下文第一轮分段）
+| `harness/harness-runner.ts`（`writeRunSummaryBase` 内既有 `buildSummaryRepairCandidates` 调用处，**位置不动**） | 追加上述两步。位置在本轮 verifier subject 锚定之后、且该函数被无条件调用，因此 **PASS / FAIL 两轮都到得了** |
+| `harness/scripts/utils/phase-closure-finalizer.ts`（`recomputeClosureRepairCandidates` 之后、staged rename 之前） | 晚到候选（首次 writer 时 verifier 无产物、`--sync-closure` 出口）同样回写 script-report；只覆盖 PASS 闭环这一支 |
+
+**核实后不需要改动的两处（plan 列了，代码事实否定了必要性）**
+
+- `goal-phase-runtime.ts` 的 `backtrack_target_absent` 分支**不用加判断**：`assess.ts` 在 `recommendationForObservation` 之后无条件检查 `reconcile.scope_revision`，有修订输入时把 action 覆盖成 `revise_scope`（`assess.ts:893-897`）。即修订输入一旦落盘，根本走不到回退路由，更走不到 `backtrack_target_absent`。这正是 §5.1.4「不改 assess 判定、不新增第二条回退动作」的口径，故本笔不动 runtime。
+- `execution-scope.ts` 的白名单与 `capability-resolution-entry-input.ts` 的 R-目标收集**批次 1 已交付**，本笔复核在位。
+
+**未决项（阻断 §5.1.3 的 correction / scope-replan 出口，需裁决）**
+
+§5.1.3 要求「correction-init / correction-routing / scope-replan 路由到范围外阶段时**产出同一 `scope_revision_input`**，不再直接落 `backtrack_target_absent`」。按写实施会被批次 1 的护栏当场拒绝：
+
+- 这两条出口的提议形状是「义务原样继承 + 只多请求一个范围外阶段」，**没有任何新来源绑定**；
+- runtime 在应用修订前要求 `hasNewSourcedFact(old, facts, runId)`（批次 1 第三轮阻断 3 定的判据：新 basis 绑定，或**本 run** 新产出的阶段闭环证据）；
+- 实测探针（`hasNewSourcedFact` 直调，义务原样克隆）返回 **false** → runtime 抛 `revision requires new sourced facts` → run 被打断。比不修订更糟。
+
+三条可能的出路，都需要裁决（我不自行选）：
+1. **给出口配真实文件基据**：例如责任阶段的设计/验收产物当前字节。风险：该文件常常**已在**冻结范围的 basis 里（正因为 plan 已满足，它才不在链上），于是仍不算「新来源」；
+2. **为「非候选驱动」的修订放宽新来源判据**（用户发起的 correction、机器判定的授权缺口属另一类驱动）——等于改批次 1 刚收紧的护栏，须显式裁决；
+3. **这两条出口不走修订通道**：correction 仍按既有 `--revalidate` 指引、scope-replan 仍走 `upstream_closure_gap` 停等，只把「责任阶段在有效范围外」如实说清。
+
+本笔当前落的是第 3 条的**只读半边**：`resolveFeatureCorrectionRouting` 增读**有效范围**并返回 `in_scope`，`--correction-init` 在范围外时如实打印一行说明，**不产出会被拒绝的提议**。等裁决后再补正式出口。
+
+**验证（本笔中途，非收口）**：`cd harness && npm test` → unit 4515 passed / 0 failed、fixtures 46 passed / 0 failed、DONE=0（含 typecheck）。既有端到端场景不产 spec/plan 候选，因此新接线不改变它们的行为（无重复提议）。
+
+#### D0.3 第一笔 — 完成（含调度者裁决后的 correction 出口）
+
+**裁决落地（批次 2 第一条，选第 3 条）**：correction / scope-replan 路由到范围外阶段时**不产出** `scope_revision_input`——它没有新来源事实，`hasNewSourcedFact` 对它返回 false（实测探针），runtime 会抛错打断 run。改为如实打印「责任阶段 X 不在本 run 有效范围内」+ 两条合法入口：(a) 设计/验收缺口由责任阶段的真实 checker 产出候选走 D0.3 触发（同 run 修订）；(b) 用户改需求走既有 correction / successor 签发新 run。`scope-replan` 的 `chain_lacks_plan` 同理，`upstream_closure_gap` 停等语义不变，只把范围外与两条入口说清。§5.1.3 / §5.4 已同步改写。
+
+**放弃的准确性（需求 D0.3 第三点的明确偏离）**：需求原文写「correction 路由到范围外阶段时产出同一 `scope_revision_input`」。本批不产出。理由见上（与 D2.3「是否修订由新事实决定」直接冲突；D2.5 本就保留「用户显式改需求走 correction/successor 签发新 run」）。**需求 D0.3 第三点须由用户确认修订**——调度者将在批次 2 收口时向用户报这条，需求文档本轮不动。
+
+**改动（D0.3）**
+
+| 文件 | 改动 |
+|---|---|
+| `harness/scripts/utils/repair-candidates.ts` | 新增 `scopeRevisionInputFromRepairCandidates`（候选 → 设计事实，单向；责任阶段由 `OBLIGATION_PROVIDERS` 反查；触发绑定走 `resolveCapabilityInputs`；按事实 id 幂等）与 `writeScopeRevisionInputToScriptReport`（回写磁盘 script-report，内容相同不重写） |
+| `harness/harness-runner.ts` | `writeRunSummaryBase` 内既有 `buildSummaryRepairCandidates` 调用处（位置不动）追加两步——PASS/FAIL 两轮可达 |
+| `harness/scripts/utils/phase-closure-finalizer.ts` | 闭环重算后、staged rename 前同样回写（晚到候选与 `--sync-closure` 出口） |
+| `harness/scripts/utils/correction-commands.ts` | 修正路由读有效范围、返回 `in_scope`；范围外时打印说明与两条入口（不产提议） |
+| `harness/scripts/utils/scope-replan.ts` | `chain_lacks_plan` 文案改为「不在有效范围内」+ 两条入口（停等语义不变） |
+
+**核实后不需要改的两处**：`goal-phase-runtime` 的 `backtrack_target_absent` 分支——`assess.ts` 在路由之后无条件用 `reconcile.scope_revision` 覆盖成 `revise_scope`，修订输入一旦落盘就走不到回退路由（§5.1.4 的口径）；§5.1.1a 的白名单与 R-目标收集批次 1 已交付，复核在位。
+
+#### D0.2 第二笔 — 完成
+
+| 文件 | 改动 |
+|---|---|
+| `harness/scripts/utils/feature-track.ts` | 新增 `prepareFeatureScopeCandidate`（候选生成 + 同一 resolver 投影 + 幂等写入）与 `featureScopePhaseHealth`（动作缺失时的机器体检）。**证据类义务不写进候选**——由 resolver 从验收分层与 fidelity SSOT 派生（写了也会被 D0.1 覆盖），`code-review` 由义务闭包补齐 |
+| `harness/scripts/goal-mode-entry.ts` | `--prepare-scope` 旗标与入参（`--completion-target` / `--requested-results` / `--requested-phases` / `--impact-behavior-change` / `--impact-reason` / `--impact-basis` / `--overwrite`）、投影与说明打印；动作不明确时拒绝并打印阶段证据体检 |
+| `templates/AGENTS.md.template`、`skills/project/goal-mode/SKILL.md`、`skills/project/change-unit-progression/SKILL.md`、`docs/operations/project-entry.md` | 四项职责 + `--prepare-scope`；清除「手写来源/指纹」表述 |
+
+**§5.4 逐行用例**
+
+| 验收行 | 用例（文件） |
+|---|---|
+| 保留 design-gap 注入单测 | `real prepare CLI / bridge scope lifecycle: design-gap`（原样保留） |
+| 真实 check-coding plan 归属 → 同 run 修订 | `D0.3 real check-coding plan-owned gap triggers an in-run revision`（`standalone-coding-review`，经真实 `buildSummaryRepairCandidates`；断言 basis 逐条对应候选 files、reason 取候选 summary、链 `[plan, coding, review, ut]`） |
+| 点名写集越界留在 coding | `D0.3 named write-set violations stay in coding`（真实 `diff_within_scope` FAIL → 无 spec/plan 候选 → 无修订输入；并锁「未注册 id → null」） |
+| plan 拒绝扩展后撤回文件仍完成 | `real prepare CLI / bridge scope lifecycle: design-gap-revert`（端到端五条断言：不扩写集 / 改回原字节 / 无 `input binding stale` / plan 证据 `fresh` 且 manifest inputs 不含触发文件 / completion VALID） |
+| review 归因 spec 同理 | **（第八轮更正旧名）**`D0.3 late verifier-confirmed candidate still writes the revision input to script-report`（真实路径域归属 → `acceptance-definition`，断言载体）、`real prepare CLI / bridge scope lifecycle: spec-gap-revert`（同一归属经 runtime 走完修订与完成判定）与 `D0.3 spec-owned trigger stops blocking once fixed, and only that kind is exempt`（豁免按 kind：非触发 kind 与真实设计输入变化仍判 stale） |
+| 晚到候选（PASS 支）不重复 | `D0.3 late verifier-confirmed candidate still writes the revision input to script-report`（经真实 `finalizePhaseClosure`；`--sync-closure` 走同一函数） |
+| 晚到候选（FAIL 支）+ 重跑不重复 | `D0.3 failing round writes the revision input and rerun does not duplicate it`（真实 writer；第二次写字节不变） |
+| correction 范围外 | `D0.3 correction to an out-of-scope phase explains instead of proposing`（裁决改判后的行：无提议、无修订事件、范围指纹不变） |
+| testing FAIL 不产生修订 | `real prepare CLI / bridge scope lifecycle: testing-fail`（保留） |
+| 候选可直接被 prepare-run 使用 / 指纹同源 / 重跑字节不变 / 手改不覆盖 | `D0.2 generated candidate is directly usable by prepare-run and is byte-identical on regeneration` |
+| 仅验证请求无 implementation、链 `[review, ut]` | `D0.2 verification-only request yields no implementation obligation` |
+| 明确改代码的请求含 implementation | 同上第一条（断言 `implementation` 在场且链含 coding） |
+| AGENTS 模板 smoke | `D0.2 AGENTS template and entry docs hand the candidate to the machine, not to hand-written bindings`（`framework-init-entry-contract`） |
+| NEXT_STEP 只呈现范围内义务 | `D0.2 NEXT_STEP projects only in-scope obligations`（复用 `formatAssessNextStep`，未新建 renderer） |
+| 动作不明确不猜 | `D0.2 machine refuses to guess the request action`（拒绝 + 机器体检三元结果） |
+
+**与 plan 的其它偏离（均记此处）**
+
+1. §5.2.6 的删除清单写「清除三份文档里所有 lite/full 残留表述」。**只清了与候选生成有关的表述**：`templates/AGENTS.md.template:39` 的 `full=spec/lite=change` 是 Context Facts Gate 对 track 机制的事实描述，与候选无关，删掉会让该行失真——保留。smoke 断言因此锁的是「四项职责要素在场 + 无『手写』表述 + 入口文档指向 `--prepare-scope`」。
+2. §5.4 的「D0.2 正常生成的零设备候选可冻结且裁掉 testing」行，由 `D0.2 generated candidate...` 的 `impact=false` 路径覆盖（该夹具验收无 device 层，链不含 testing）；未单列同名用例。
+3. 晚到候选的 `--sync-closure` 行与 PASS 支行由同一条用例覆盖（两者调用的就是同一个 `finalizePhaseClosure` → `recomputeClosureRepairCandidates`）；CLI 出口本身未再单跑一次。
+
+**三条验证（批次 2 收口，原始结果行）**
+
+~~~
+cd harness && npm test              结果：4528 passed, 0 failed (共 4528)   ← unit（批次 1 收口时 4515，本批 +13）
+                                    结果：46 passed, 0 failed (共 46)       ← fixtures
+                                    DONE=0（含 typecheck）
+npm run openspec:validate           Totals: 45 passed, 0 failed (45 items)
+                                    [openspec-enforcement] PASS
+node scripts/check-plan-version.mjs [check-plan-version] PASS
+git diff --check                    退出 0；17 个改动文件全 LF（CR=0）
+~~~
+
+**批次 2 教训（第 11 条）**
+
+11. **「按需求原文接线」之前先问它与已落地的护栏是否相容**。§5.1.3 的 correction 出口按字面实现会被批次 1 的「修订须由新事实驱动」当场拒绝——比不实现更糟（run 被打断）。这类冲突在纸面上看不出来，只有把提议的**实际形状**喂给判据（一条三行探针）才暴露。**新接线落地前，先用最小探针把它喂给下游判据**，再决定是实现、改判据还是停下请裁决。
+
+#### 批次 2 代码 review 第一轮（codex，3 阻断 8 必修 3 建议）——逐条处置
+
+三条阻断、八条必修、三条建议全部属实并修复；无驳回。
+
+| # | 处置 |
+|---|---|
+| 阻断 1 `--sync-closure` 丢 run identity | 属实。**修法与 codex 建议的不同，理由如下**：先按建议把 `goalIdentity.runId` 透传成 `finalizePhaseClosure` 的 `goalRunId`，全量跑出两条既有用例回归（`check-receipt-policy` 的两条 T4：`goal 环境闭环无法计算 requirement 血缘哈希（run=run-X）`）——`goalRunId` 同时是 `phase-closure-finalizer.ts:301` 的 **requirement 血缘严格性开关**，借它回填会顺带改掉与 D0.3 无关的闭环判据。改为：finalizer 取 `opts.goalRunId` 或**本阶段 summary 自己记的 `run_id`**（`harness-runner.ts:2090` 在 phase harness 跑的时候写下的）。sync-closure 是独立进程、没有环境变量，靠的就是这一条；`goalRunId` 的既有语义一行不动 |
+| 阻断 2 `--prepare-scope` 被 attended 门拦 | `assertAttendedRunMode` 改为 `if (!prepareScope)`：候选生成既不创建 run 也不 attach，没有 run mode 可言；attach / `--prepare-run` 的 attended 契约一行不放宽 |
+| 阻断 3 缺验收被静默省略 | 缺可解析验收来源时落一条 `acceptance-context:pending`（`unknown`），由 resolver 送进 `unresolved`、owner=spec；不伪造蓝图 |
+| 必修 1 范围外仍打印 `--revalidate` | `in_scope` 为真才打印该指引；范围外只打两条合法入口。矛盾注释一并清理 |
+| 必修 2 无写集的 implementation | 请求含实现阶段但契约没有可核验写集（缺失 / files 空 / 绑定解析不出）→ **生成阶段 fail-closed**，不再把空 basis 的请求标记推到 coding |
+| 必修 3 correction 未按 run 解析 track | 先解析 `effectiveRunId` 再 `loadFeatureTrackDecl(projectRoot, feature, effectiveRunId)` |
+| 必修 4 责任阶段读了当前 workflow | 改为**从本 run 的有效范围**推导（同 provider 家族里已有义务的 `owner_phase` 就是这一轮的责任映射）；范围里证明不了就不产提议。`loadWorkflowSpec` / `loadFrameworkConfig` 两个 require 一并删除——workflow 漂移这条路根本不存在了 |
+| 必修 5 reason 未说明需裁决 | 改为 `需要 ${phase} 裁决：${候选摘要}`，不预设扩展结论 |
+| 必修 6 回写失败被吞 | `writeScopeRevisionInputToScriptReport` 改为**失败即抛**（返回值只区分 `written` / `unchanged`），并把 writer 侧的调用移出既有 best-effort catch；finalizer 侧因为在 staged rename 之前抛，阶段停在 `open` |
+| 必修 7 用例未走真实路径 | 见下方用例表：CLI 子进程、真实 `runCorrectionInit` stdout、真实 `finalizePhaseClosure`（显式 `goalRunId` + 环境变量缺席）全部补上；两条「手写 markdown 直调解析」的 review 用例**合并删除**，其断言并进走真实闭环的那条 |
+| 必修 8 plan §5.1.5 旧清单 | 三行按裁决改写（correction 不产提议、scope-replan 停等语义不变、runtime 分支不改并给出理由） |
+| 建议 1 载体 check 失真 | 载体按 `id` **或** `failure_kind` 匹配（`ui_scope_violation` 候选挂回 `ui_diff_within_declared_files`），都匹配不上才退首条 |
+| 建议 2 requirement 不同源 | `--prepare-scope` 接受 `--requirement` / `--requirement-file`（与 `--prepare-run` 同一个 `resolveRequirementInput`），缺省才回落 `requested_results` |
+| 建议 3 半份影响判断被忽略 | `--impact-behavior-change` / `--impact-reason` / `--impact-basis` 三件缺一即拒绝（含只给来源或只给理由） |
+
+**本轮用例（全部走生产路径）**
+
+| 用例 | 覆盖 |
+|---|---|
+| `D0.2 the CLI accepts --prepare-scope without a run mode and rejects half inputs` | 阻断 2 + 建议 3：真实 CLI 子进程（不带 `--run-mode`）成功；动作缺席 → 拒绝并打印 `phase_evidence_health`；半份影响判断 → 拒绝 |
+| `D0.3 correction-init prints the two legal routes and no revalidate path for an out-of-scope phase` | 必修 1：真实 `runCorrectionInit` + 捕获 stdout，断言无 `--revalidate`、无 `backtrack_target_absent`、无提议、范围指纹不变 |
+| `D0.2 missing acceptance becomes an unknown duty, and a code change without a write set is refused` | 阻断 3 + 必修 2 |
+| `D0.3 the responsible phase comes from the run scope, not from the current active workflow` | 必修 4：把 `active_workflow` 改成不存在的名字后仍产出正确责任阶段（旧实现在这里会选不到） |
+| `D0.3 an unwritable carrier keeps the closure open instead of committing a half state` | 必修 6：script-report 不可解析 → 闭环抛错且 `closure_status` 仍为 `open` |
+| `D0.3 late verifier-confirmed candidate still writes the revision input to script-report`（加强） | 阻断 1 的消费面（显式 `goalRunId` + 删除 `MAISON_GOAL_RUN_ID`）＋ 必修 5 / 必修 7 的 review→spec 真实路径：断言真实归属（`[CR, spec, review]`）、`acceptance-definition` 事实、reason 措辞、basis 逐条对应候选 files、`requested_phases` 含 spec |
+| `D0.3 real check-coding plan-owned gap...`（更新断言） | 必修 5 的 plan 侧措辞 |
+
+**覆盖边界（如实记录）**
+
+改用 summary 的 `run_id` 之后，`--sync-closure` 这条出口**不再需要任何新的参数透传**——`runSyncClosureDetailed` 一行未改。用例按真实形态跑：删掉 `MAISON_GOAL_RUN_ID`、不传 `goalRunId`，先断言「阶段 summary 记着本 run 身份」这个前提，再让真实 `finalizePhaseClosure` 把晚到候选的修订输入写进 script-report。**（第九轮更新：这条自记边界已删除）**——`D0.3 the real --sync-closure entry writes the revision input too` 已经走真实 `runSyncClosureDetailed` 全程，含 spawn 一次通过的 check-receipt。补齐它需要的三件真实前提也一并记下：canonical `trace.json`、projectRoot 下的 framework tree（check-receipt 子进程自行探测）、以及**非空**的产品源码 inventory（closure attestation 只认「含 `src/main` 的模块目录」，且必须在生成 summary 之前落盘，否则 `slim_summary_worktree_stale` 会正确判 summary 属旧状态）。
+
+**三条验证（批次 2 review 第一轮返修后重跑，原始结果行）**
+
+~~~
+cd harness && npm test              结果：4532 passed, 0 failed (共 4532)   ← unit
+                                    结果：46 passed, 0 failed (共 46)       ← fixtures
+                                    DONE=0（含 typecheck）
+npm run openspec:validate           Totals: 45 passed, 0 failed (45 items)
+                                    [openspec-enforcement] PASS
+node scripts/check-plan-version.mjs [check-plan-version] PASS
+git diff --check                    退出 0；17 个改动文件全 LF（CR=0）
+~~~
+
+**本轮教训（第 12 条）**
+
+12. **复用一个既有字段前，先查清它还管着什么**。阻断 1 的建议修法是「把 run id 透传成 `goalRunId`」——字段名对、注释也对，但它同时是 requirement 血缘严格性的开关，接上去当场打挂两条与 D0.3 毫无关系的既有用例。改用「阶段 summary 自己记的 `run_id`」后，不但零回归，连那个透传都不需要了。**字段复用的正确顺序是：先 grep 它的全部读取方，再决定借不借**——名字合适不等于语义合适。
+
+#### 批次 2 代码 review 第二轮（codex，1 P1 + 1 建议残留）——逐条处置
+
+| # | 结论 | 处置 |
+|---|---|---|
+| P1 无蓝图入口未实现 | 接受（属实：生成器只读 contracts / acceptance，无 contracts 的合法非蓝图请求会被必修 2 的 fail-closed 直接拒） | 按调度者口径实现，**核实后确认既有 resolver 够用、未自造 provider**：`derive.requirement` 在带 `inputContext` 时返回需求文本作解析值（`capability-resolution.ts:273-276`），因此能经 `resolveCapabilityInputs` 得到真绑定与真指纹。缺 contracts → `design-context: unknown`（owner plan）；缺 acceptance → `acceptance-context: unknown`（owner spec）；两者的 basis 都是该需求绑定。必修 2 的 fail-closed **收窄**为「请求跳过设计阶段（spec/plan 家族都不在 `requested_phases` 里）且无可核验写集」——请求包含设计阶段时，implementation 由既有 definition-gap 通路经 `needed_by` 挡住，出生链落 `[spec, plan]`，等设计产出 contracts 后由 D0.3/D2 同 run 补链 |
+| 建议 3 残留 | 接受 | `--impact-behavior-change` 改用 `hasOwnProperty` 区分「未传」与「传了空值」，裸传即拒 |
+
+**核实中发现并一并修掉的一处连带缺陷**：需求绑定的 `dependencies` 为空，冻结时走的是 `readBoundInput` 重解析那一路；而 `verifyBasisBinding` 此前不给 `readBoundInput` 传需求文本，`derive.requirement` 会落到 feature 分支——那条只返回摘要、**不返回解析值**，`readBoundInput` 必判 stale。修法：只对 `derive.requirement` 形态的绑定把**同一份需求文本**（`ctx.requirement`）交回重解析。副作用是需要的：`--prepare-scope` 与 `--prepare-run` 的需求文本不一致时，冻结会以 `input binding stale` 当场拒绝，而不是悄悄换一份需求继续。
+
+**本轮用例**
+
+| 用例 | 覆盖 |
+|---|---|
+| `D0.2 a feature with only a requirement still gets a candidate that freezes into [spec, plan]` | 无 CU、无 contracts.yaml、无 acceptance.yaml 的真实夹具：候选两条 unknown 且 basis 是**经生产 resolver 解析的需求绑定**（断言 provider 与 64-hex 指纹）、出生链 `[spec, plan]`、unresolved 含两个缺口且 owner 正确、`coding` 在 `needed_by` 里、候选可被真实 `--prepare-run` 冻结；附边界反例「跳过设计直接 coding 且无写集 → 拒绝」 |
+| `D0.2 the CLI accepts --prepare-scope without a run mode and rejects half inputs`（既有，覆盖面自动扩大） | 建议 3 残留由同一条 CLI 用例的半份影响判断分支覆盖 |
+
+**三条验证（批次 2 review 第二轮返修后重跑，原始结果行）**
+
+~~~
+cd harness && npm test              结果：4533 passed, 0 failed (共 4533)   ← unit
+                                    结果：46 passed, 0 failed (共 46)       ← fixtures
+                                    DONE=0（含 typecheck）
+npm run openspec:validate           Totals: 45 passed, 0 failed (45 items)
+                                    [openspec-enforcement] PASS
+node scripts/check-plan-version.mjs [check-plan-version] PASS
+git diff --check                    退出 0；17 个改动文件全 LF（CR=0）
+~~~
+
+**本轮教训（第 13 条）**
+
+13. **一条 fail-closed 写窄一点，不然它会替你砍掉合法入口**。必修 2 的「无写集即拒」看起来只是收紧，实际上把「无蓝图 feature 请求完整交付」这条需求明写的合法入口整条堵死了——因为那种请求本来就应该先跑设计、写集由设计产出。正确的边界是「**跳过**设计阶段还要改代码」。**给每条 fail-closed 配一句「它不该拦住谁」**，写进注释与用例，否则下一个人只能靠线上事故发现。
+
+#### 批次 2 代码 review 第三轮（codex，1 阻断 2 必修 3 建议）——逐条处置
+
+| # | 结论 | 处置 |
+|---|---|---|
+| 阻断 1 需求绑定校验可绕过 | **接受**（两条绕过路径都开代码核实属实：① 第二轮的需求绑定只在「缺 contracts / 缺 acceptance」时作为 unknown 事实的 basis 出现，有设计产物的正常 feature 生成的候选**根本不含任何需求绑定**，`--prepare-run` 换一句需求照样冻结；② 把候选里 `facts[].basis` 清空后，`collectResolvedScopeFacts` 无可核之物，同样放行） | 按调度者口径，**不新增 registry、不新增签名**：`ExecutionScopeInput.request` 增 `requirement_basis`（本批唯一新增字段，落在既有结构里，`execution-scope.ts:87`）；`--prepare-scope` **无条件**经既有 `derive.requirement` 生成它（`feature-track.ts:452`，解析不出即生成期抛错）；`collectResolvedScopeFacts` 用**同一个** `verifyBasisBinding` 核验并把结论推进**同一条** `resolved.basis` 通道（`obligation_id: 'request:requirement'`，`feature-track.ts:283-285`），resolver 对任一 not-ok 拒绝冻结，不新建第二套校验；`resolveFeatureExecutionScope` 在调用方带需求时**强制**候选自带该绑定（`feature-track.ts:89-90`），删掉即 fail-closed |
+| 必修 1 `--prepare-scope` / `--prepare-run` 未互斥 | 接受 | 在任何分支执行之前立即抛错；CLI 反例除断言报错外**断言不生成 manifest**（否则「顺带建了 run 再报错」会被漏过） |
+| 必修 2 Goal Mode 运维文档未覆盖通用候选路径 | 接受（`goal-mode/SKILL.md` 原文只在无蓝图语境下提 `--prepare-scope`，读者会以为它是特例入口） | `skills/project/goal-mode/SKILL.md` 把 `--prepare-scope → --prepare-run → attach` 写成**通用**三步；`skills/reference/goal-mode-operations.md` 补可执行的候选生成命令段、`scope_candidate_prepared` 的核对项、以及「两步的 `--requirement` 必须同源，分叉即 `input binding stale`」这句警告 |
+| 建议 1 精确边界用例 | 采纳 |
+| 建议 2 验收矩阵旧 smoke 名 | 采纳：§5.4 该行改为现用例名，并把「无 lite/full」按第一轮已记录的保留事实收窄 |
+| 建议 3 `--help` 与 differs 输出 | 采纳：`--help` 补 `--prepare-scope` 全部参数、一条示例与互斥说明；`differs` 改为逐条列出差异字段（磁盘 vs 本次生成，扁平路径，至多 20 条），不再只说「不一致」 |
+
+**本轮用例**
+
+| 用例 | 覆盖 |
+|---|---|
+| `D0.2 the candidate proves which requirement it was computed for, and a fork or a deleted binding is refused` | 阻断 1 的全部出口：前提断言**有** contracts / acceptance 的正常 feature（避免退化成第二轮那条无蓝图用例）→ 候选仍带 `derive.requirement` provenance；同文本冻结通过；换一句需求 → `stale` 拒绝；删掉绑定 → `requirement_basis` 拒绝；替换成自己捏的绑定 → `stale` 拒绝 |
+| `D0.2 a design-bearing request without design or acceptance still lands on the investigating phases` | 建议 1 的精确边界：`requested_phases=[plan, coding]`（**连 spec 都没点名**）且 contracts / acceptance 都不存在 → 出生链仍是 `[spec, plan]`、`coding` 落 `needed_by` |
+| `D0.2 the CLI accepts --prepare-scope without a run mode and rejects half inputs`（扩充） | 必修 1（互斥 + 不生成 manifest）与建议 3 的裸传旗标分支 |
+| `real prepare CLI / bridge scope lifecycle: *`（夹具升级） | 端到端场景的候选改为**自带 provenance 绑定**（经生产 resolver 取得）且与 `--prepare-run` 的需求同源——不改就会被新护栏拦住，这本身是护栏真的接在冻结路径上的证明 |
+
+**护栏接上后由全量 unit 抓出的两处连带问题（本轮一并修掉）**
+
+1. **凭空编一份需求文本 = 把自己的校验变成恒判 stale**。`resolveFeatureExecutionScope` 此前在调用方不带需求时回退用 `request.requested_results.join('\n')` 冒充需求文本。护栏接上后，只读投影 `resolveChangeUnitExpectedExecution`（`change-unit-completion.ts:68`，CU 施工交接预判，**唯一不带需求的生产调用方**）拿这份假文本重解析 `derive.requirement`，必然与候选指纹不符 → 三个真实 CU 用例被误拒。修法：**删掉这个回退**，`ctx.requirement` 老实留空；`verifyBasisBinding` 对 `derive.requirement` 形态的绑定在**没有需求文本可比对**时只做「项目内 + 存在性一致」，不做内容重解析，并在 detail 里如实写明。
+2. detached 分支的端到端夹具不经 `--prepare-run` CLI，run 由测试驱动直接创建，需求文本是 runner 缺省值——与候选 provenance 不同源，被新护栏正确拦下。夹具改为显式 `freshRequirement: 'fixture delivery'`（**不是**放宽护栏，而是让夹具遵守「两步的 `--requirement` 必须同源」这条生产规则）。
+
+**放弃的准确性（本轮新增两条，均已写进代码注释）**
+
+- **手上没有需求文本时不比对 provenance**：CU 交接预判只投影期望链、不冻结任何东西，真正的出生冻结（`goal-mode-entry.ts:103` / `goal-phase-runtime.ts:4564`）一定带需求。代价是：若将来有人新增一个**会冻结**却不传需求的调用方，这条 provenance 就在那条路上静默失效——因此 `resolveFeatureExecutionScope` 的需求参数必须继续被视为「出生入口的必填项」。
+- **run 本身不带 `--requirement` 时无从比对**：`manifest.requirement` 为空的 run（既有合法入口）没有可比对的一方，provenance 只剩「绑定存在且依据一致」。需求血缘本身由既有 receipt-policy 的 requirement lineage 一路管，这里不重复造门。
+
+**与 plan 的偏离**：无新增。`request.requirement_basis` 是本批唯一新增字段，校验复用 §4.1.0 的 `basis` 通道；未新增 check id、未新增 registry、未新增签名。
+
+**三条验证（批次 2 review 第三轮返修后重跑，原始结果行）**
+
+~~~
+cd harness && npm test              结果：4535 passed, 0 failed (共 4535)   ← unit
+                                    结果：46 passed, 0 failed (共 46)       ← fixtures
+                                    EXIT=0（含 typecheck: tsc --noEmit -p tsconfig.typecheck.json）
+npm run openspec:validate           Totals: 45 passed, 0 failed (45 items)
+                                    [openspec-enforcement] PASS
+node scripts/check-plan-version.mjs [check-plan-version] PASS
+git diff --check                    退出 0；20 个改动文件全 LF（CR=0）
+~~~
+
+（**第一次全量跑出 7 红**：`execution-scope` 套件的 3 个 detached 场景 + `direct` + 3 个 P7 CU 用例，全部是新护栏接上后暴露的上面两处连带问题；修掉后本表为第二次全量结果。）
+
+**本轮教训（第 14 条）**
+
+14. **只在某条分支上才有输入的校验，等于没有校验**。需求绑定第二轮是作为「缺产物时 unknown 事实的 basis」引进的，于是它只出现在无蓝图那条支路上；正常 feature 走的是主路，主路上根本没有可核之物，护栏形同虚设。provenance 的语义不是「兜底」而是「这份候选是为哪句需求算的」——**它必须无条件存在**。写校验时先问一句「不走这条分支的输入由谁管」，再决定绑定挂在哪一层。
+
+15. **缺输入时不要凭空编一份替代品**。`requested_results.join('\n')` 冒充需求文本这行回退，在护栏接上之前只是「没人用到」，接上之后立刻变成三个真实用例的误拒——因为编出来的文本永远对不上候选的指纹。缺输入的正确处理是**如实缺着**，然后明确写下「这一路谁也不比对、为什么安全、什么情况下会不安全」。**另：目标套件全绿不等于没事** —— 本轮 `standalone-coding-review` 23/23 全绿，误拒是全量 unit 的 `execution-scope` 套件抓出来的；新接线碰到的是共用读取层时，必须跑全量再下判断。
+
+#### 批次 2 代码 review 第四轮（codex，1 阻断 1 必修 2 建议）——逐条处置
+
+| # | 结论 | 处置 |
+|---|---|---|
+| 阻断 1 provenance 可被「合法的其他绑定」替换绕过 | **接受**（核实属实：`verifyBasisBinding` 只回答「这条绑定还成立吗」，把 `requirement_basis` 换成**同一 feature 的合法 `contracts@1` 绑定**，`readBoundInput` 会成功重解析——换需求也不 stale。第三轮的用例只测了伪造 `content_fingerprint`，测不到这一条） | **先认形态再核内容**：`collectResolvedScopeFacts` 在调用 `verifyBasisBinding` 之前判 `input_id === 'requirement' && source.kind === 'derive' && provider_id === 'derive.requirement'`，形态不对直接 `ok:false`。**不另建校验通道**——结论仍进同一条 `resolved.basis`，由 resolver 统一拒绝冻结 |
+| 必修 1 契约在但无写集 → implementation 被静默降成空 basis | **接受**（核实属实：`contracts.files: []` 是 `contracts.schema.yaml:51-53` 允许的；请求含 `plan,coding` 时 `requestsDesign=true`，两个分支都不加 implementation 事实，而 `execution-scope.ts:397` 仍为「用户点名的阶段」补一条 basis 为空的请求标记；旧行为里 design-context 是 `required`、**没有缺口**，coding 照样进链） | 按调度者取向 **转为 design-context unknown（owner plan）**，不拒绝：`prepareFeatureScopeCandidate` 把写集解析提到事实生成之前，`contracts` 在但拿不出**可核验写集**（`files: []` 或绑定解析不出来）时，design-context 落 `unknown`，走与「压根没有契约」**同一条** definition-gap 通路。跳过设计阶段的那条请求仍然当场拒（原 fail-closed 不动）。**写集声明了却绑不出来**与「没声明」合并为同一缺陷，不再一个走缺口一个被静默省略 |
+| 建议 1 `scope-replan` 用例断言太浅 | 采纳：B1 补断言「不在本 run 的有效范围内」「chain=…」与两条合法入口 |
+| 建议 2 plan 问题 10 来源表旧表述 | 采纳：`plan:443` 该行改为「调用方传入的需求；传不进来就留空，不编替代文本」，并注明是第三轮的更正 |
+
+**关于「resolver 仍留一条 basis 为空的请求标记」**：这条标记是既有机制（`execution-scope.ts:397`「用户明确请求 X」），**无蓝图那条已验证的合法路径也有同一条**。所以本轮的判据不是「消灭这条标记」，而是**缺口有没有挡住它**——用例断言 `coding` 不在 `phase_chain`、且出现在某个 gap 的 `needed_by` 里。（我第一版把「不得存在空 basis 标记」写成断言，实跑当场红——它会连合法路径一起否掉。）
+
+**本轮用例**
+
+| 用例 | 覆盖 |
+|---|---|
+| `D0.2 the candidate proves which requirement it was computed for, and a fork or a deleted binding is refused`（扩充） | 阻断 1：把 `requirement_basis` 换成候选自己那条**合法** `contracts` 绑定 → 拒绝（报 `derive.requirement`）；并断言**换需求时同样拒**，证明不是靠内容比对偶然挡住的 |
+| `D0.2 declared design without a verifiable write set becomes a plan gap, not an empty implementation duty` | 必修 1：`contracts.files: []` + 请求 `[plan, coding]` → design-context `unknown`、候选无 implementation 事实、`coding` 不进链且进 `needed_by`；反向边界：请求跳过设计阶段仍然当场拒 |
+| `B1 chain 缺 plan → unavailable 且零事件`（扩充） | 建议 1 |
+
+**与 plan 的偏离**：无新增。
+
+**三条验证（批次 2 review 第四轮返修后重跑，原始结果行）**
+
+~~~
+cd harness && npm test              结果：4536 passed, 0 failed (共 4536)   ← unit
+                                    结果：46 passed, 0 failed (共 46)       ← fixtures
+                                    EXIT=0（含 typecheck）
+npm run openspec:validate           Totals: 45 passed, 0 failed (45 items)
+                                    [openspec-enforcement] PASS
+node scripts/check-plan-version.mjs [check-plan-version] PASS
+git diff --check                    退出 0；21 个改动文件全 LF（CR=0）
+~~~
+
+（第一次全量在 typecheck 就停了：新加的三条断言把 `result.detail` 写在 `&&` 之外，TS 不收窄 → TS2339 三条。先取一次 `detail` 局部变量再断言。）
+
+**本轮教训（第 16 条）**
+
+16. **「这条绑定还成立吗」回答不了「这是不是那条绑定」**。provenance 校验复用既有函数是对的，但复用的是**内容核验**，形态判定必须自己补——否则任何一条能重解析成功的合法绑定都能冒充证据。凡是把一条通用校验用作「身份证明」时，先问一句：**换一份同样合法的东西进去，它会不会照样通过？**
+
+#### 批次 2 代码 review 第五轮（codex，1 阻断 1 建议）——逐条处置
+
+| # | 结论 | 处置 |
+|---|---|---|
+| 阻断 1 完整 impact 输入绕过「设计缺口」路径直接失败 | **接受**（核实属实：同一场景只要**再传一份完整 impact**，`execution-scope.ts` 的子情形 (a) 就先于 definition-gap 触发——`implementationDuty` 仅因请求含 coding 就为真，目标集合又因 `contracts.files: []` 为空 → 当场抛「范围未声明可核验的写集」。第四轮的用例没传 impact，所以没覆盖到） | 按调度者裁决收窄 (a)：**判定顺序改为 definition-gap 先于 impact 目标相关性**。resolver 在 impact 段之前算一个 `definitionGapPending`（本次事实里是否还有 spec / plan 家族的 `unknown`），`definitionGapPending` 为真时不走 (a)、按 (b) 处理（device `unknown`、reason「影响依据无可核验范围」、testing 不裁）。`definitionKinds` 与下游 definition-gap pass **共用同一份** `OBLIGATION_PROVIDERS` 派生集合（把原来在 pass 里声明的那一行上移，不复制字面量）。「请求跳过设计阶段且无写集」那条 fail-closed 不动 |
+| 建议 1 plan:2300 早期记录与现状不符 | 采纳：就地标注为**历史中途快照**，并指向第一轮分段（载体写不出去＝修订没发生，现状是直接抛 + 调用点移出 best-effort catch） |
+
+**落点**：§4.1.3 子情形表 (a) 行补了收窄条件，并在表后新增「子情形 (a) 的收窄（调度者裁决 2026-09-16）」一段；OpenSpec `runtime-policy` 补了同一条顺序规则与一条 scenario。
+
+**本轮用例**
+
+| 用例 | 覆盖 |
+|---|---|
+| `D0.2 declared design without a verifiable write set becomes a plan gap, not an empty implementation duty`（扩充） | 同一场景**带完整 impact**：design-context `unknown`、`coding` 不进链且进 `needed_by`、**device 落 `unknown` 且 reason 含「无可核验范围」**（即影响判断没有被采信去裁剪设备验证）；原有的「跳过设计阶段仍当场拒」反例保留在同一用例里 |
+
+**与 plan 的偏离**：无新增；§4.1.3 的 (a) 是**收窄**（调度者裁决），已就地写进 plan 正文而非只记在实施记录里。
+
+**三条验证（批次 2 review 第五轮返修后重跑，原始结果行）**
+
+~~~
+cd harness && npm test              结果：4536 passed, 0 failed (共 4536)   ← unit
+                                    结果：46 passed, 0 failed (共 46)       ← fixtures
+                                    EXIT=0（含 typecheck）
+npm run openspec:validate           Totals: 45 passed, 0 failed (45 items)
+                                    [openspec-enforcement] PASS
+node scripts/check-plan-version.mjs [check-plan-version] PASS
+git diff --check                    退出 0；21 个改动文件全 LF（CR=0）
+~~~
+
+**本轮全量跑出一条与本批无关的偶发红（如实记录，未在本批修）**：`legacy-skill-bridge-cleanup` / `P7 UPDATE backs up retired change-lite for all adapters without touching run history`。单跑该套件 16/16 绿，重跑全量也绿。查到的真因不是夹具抖动而是**生产代码**：`legacy-skill-bridge-cleanup.ts:207-249` 在没有 `backupSession` 时**在逐条循环内**各算一次秒级时间戳当备份目录名，而函数只返回**最后一个** `backupRelDir`——循环跨秒时同一轮备份被分到两个 `.framework-backup/<stamp>` 目录，返回值只覆盖其中一部分（逐条 `cleaned[].backup_path` 仍正确）。修法是把时间戳提到循环外（`check-init.ts:559-571` 已经是这种记忆化写法）。**不在批次 2 diff 里动它**（与 P8 无关，混进来会干扰 review），已开独立任务跟踪。
+
+**本轮教训（第 17 条）**
+
+17. **一条判据被绕过，往往不是判据错，而是它排在了错误的位置**。(a) 的内容没有问题（无写集就该指向 plan），错的是它跑在 definition-gap 之前——于是「缺口还没填，所以还没有写集」被读成了「范围声明有错」。**给任何「当场拒」的判据补一句前置条件：它所依赖的事实，此刻确定了吗？** 另：同一场景**多给一个可选输入**就能翻转结论，说明用例矩阵漏了「可选输入在场」这一维——第四轮的用例只跑了不传 impact 的那一半。
+
+#### 批次 2 代码 review 第六轮（codex，1 阻断 1 建议）——逐条处置
+
+| # | 结论 | 处置 |
+|---|---|---|
+| 阻断 1 候选可伪造 definition gap，绕过 (a) 的 fail-closed | **接受**（核实属实：`definitionGapPending` 直接扫磁盘候选的 `input.facts`，冻结入口只重核**绑定**、不重算**判定**；保留合法 `requirement_basis`、手写一条 `acceptance-context: unknown`，`!definitionGapPending` 即为假，空写集不再触发 (a)） | 按调度者取向做，**不做整份候选重算比对**：把 D0.1「不采信候选自报、按来源重算」从 unit/device/visual **扩到两个定义类 kind**。新增 `deriveDefinitionContext()` 为**唯一**派生点，`prepareFeatureScopeCandidate` 与冻结读取层 `recomputeDefinitionFacts()` 共用同一份判定；冻结时候选里**已有**的 `design-context` / `acceptance-context` 一律按来源重算 applicability（可用 → `required` + 机器绑定；不可用 → `unknown` 并清掉 `satisfied_by`）。视觉缺口 `acceptance-definition:visual` 是另一个 kind、本来就是机器派生，不受影响 |
+| 建议 1 device gap 未断言进 unresolved | 采纳：`D0.1 unverifiable impact scope keeps device unknown without pruning testing` 补断言 |
+
+**为什么不做「整份候选重算比对」**（调度者理由，核实后采纳）：候选里合法的人工补充（`impact`、`requested_phases`）会被整份比对判成篡改，与 D0.2 的幂等规则（手改报差异、显式 `--overwrite`）职责重叠；而两条定义类事实本来就是机器从「验收/契约是否存在且给得出写集」派生的，复用同一函数重算即可，零新机制。
+
+**实现中比取向多想到的一点（第七轮已撤销，保留作复盘）**：~~写集来源有两条——契约声明的 `contracts.files`，或候选里已有 `implementation` 义务自带的写集 basis~~。**这条放宽在第七轮被判为阻断并删除**：候选自带的 basis 是自报，还会被算进 impact 目标集合造成相关性自证。现状只认 `contracts.files`；当时担心的「CU 夹具会被判成设计缺口」按裁决改夹具解决（临时 root 声明真实 files），改完 56 条 e2e 断言一条未动。
+
+**本轮用例**
+
+| 用例 | 覆盖 |
+|---|---|
+| `D0.2 a hand-written definition gap is recomputed from its sources, not believed` | 阻断 1 正反两面：① 生成合法候选 → 手改把 `acceptance-context` 改成 `unknown`（验收**确实在场**）、删掉 design-context、只请求 `coding`、补完整 impact → `--prepare-run` 路径重算回 `required` → **(a) 照常拒绝**并报「范围未声明可核验的写集」；② 验收**确实不存在**时重算结果与 `unknown` 一致，照常进 definition-gap 且进 `unresolved`（重算不会把真缺口抹平） |
+| `D0.1 unverifiable impact scope keeps device unknown without pruning testing`（扩充） | 建议 1 |
+
+**与 plan 的偏离**：无新增。§4.1.0「不采信自报」的适用面由三类证据 kind 扩到含两类定义 kind，属**收紧**，已写进 §4.1.0。
+
+**三条验证（批次 2 review 第六轮返修后重跑，原始结果行）**
+
+~~~
+cd harness && npm test              结果：4537 passed, 0 failed (共 4537)   ← unit
+                                    结果：46 passed, 0 failed (共 46)       ← fixtures
+                                    EXIT=0（含 typecheck）
+npm run openspec:validate           Totals: 45 passed, 0 failed (45 items)
+                                    [openspec-enforcement] PASS
+node scripts/check-plan-version.mjs [check-plan-version] PASS
+git diff --check                    退出 0；22 个改动文件全 LF（CR=0）
+~~~
+
+**本轮教训（第 18 条）**
+
+18. **「重核绑定」不等于「重算判定」**。前五轮把每条绑定都验到了，却把**由这些绑定推出的结论**（applicability）原样从磁盘读进来用——于是攻击面从「伪造一条绑定」平移到「伪造一条结论」。凡是 fail-closed 依赖的谓词，**它读的每一个输入都要能追到来源重算**；只要有一个是候选自报的，这条 fail-closed 就有一扇后门。
+
+#### 批次 2 代码 review 第七轮（codex，2 阻断 3 必修 1 建议）——逐条处置
+
+| # | 结论 | 处置 |
+|---|---|---|
+| 阻断 1 备用写集来源可被候选自报操纵 | **接受**（核实属实：`hasWriteSet` 认「候选自带 implementation 事实的 basis 非空」，而那条绑定可以指向**任意项目内文件**，`verifyBasisBinding` 只验路径 / 存在性 / 摘要；同一条绑定随后又被算进 impact 的目标集合 → 相关性自证通过。第六轮是我在实现时自作主张加的第二条来源，理由是「不改夹具」，代价没看清） | 按调度者裁决**删除该备用来源**：写集授权只认受信设计来源 `contracts.files`。夹具代价按裁决处理——两处 e2e 夹具改为**在测试临时 root 里**给 `contracts.yaml` 声明真实 `files`（共享夹具不动），候选的 implementation basis 与契约授权因此有交集，**既有链形状全部不变**（`execution-scope` 56 条重跑无断言改动） |
+| 阻断 2 重算只接在出生路径，R3/R4 未接 | **接受**（核实属实：`recomputeDefinitionFacts` 只有出生一个调用点） | R3（`blueprint-skill-projection.ts` 的设计事实提案）与 R4（`goal-phase-runtime.ts` 的 runtime 修订）各在**自己的 proposal / input 副本**上调用**同一个**函数，位置都在 `collectResolvedScopeFacts` 之前；不读也不写已冻结的 manifest / 出生范围。两条反例用例都做了**变异探针**：注释掉对应调用 → 对应用例当场红 |
+| 必修 1 不可用来源未总是清 `satisfied_by` | 接受 | 不可用分支改为**无条件** `delete fact.satisfied_by`，并补用例（候选自己写着 unknown 却留着满足证明） |
+| 必修 2 新增用例只覆盖 acceptance-context、未验机器绑定替换 | 接受 | 新增用例把**两个 kind 各自**改成 unknown，并把 basis 换成**对方那条合法绑定**（自身能重解析成功），断言冻结结果的 basis 被换回各自的机器绑定（`contracts` / `acceptance`）且都不在 `unresolved` |
+| 必修 3 §5.4 三行没有对应完整实现 | **部分接受、部分更正**（见下「未闭环项」） | ① CU 行：新增**真实** `prepareFeatureScopeCandidate` → `prepareGoalModeRun` 用例，并把「直接可用」这句更正为夹具的真实结果；② 另两行：用例名在仓库里根本不存在，已按实际名同步，并如实标注它们**没有**驱动 runtime 跑完一次 in-run revision |
+| 建议 1 §5.4 用例名不一致 | 采纳：改为 `real prepare CLI / bridge scope lifecycle: design-gap-revert` |
+
+**接上 R3/R4 后被全量抓出的一条真缺陷（重要，已修）**：重算在修订路径上**不得降级**。`recomputeDefinitionFacts` 自己的探针走的是 `candidateBinding(ctx, 'ut'|'plan', ...)` 这条**独立解析路径**；而修订发生在真实阶段上下文里（蓝图投影、run-bound 快照、本轮刚产出的产物），那里的解析面比探针更全。按探针的「解析不出来」去降级，会把**已经兑现**的责任判成 unknown → `findSubtractedRequiredObligations` 当场报「设计修订不得静默删除冻结义务」（实测：`blueprint-skill-projection` 的「validated spec facts reach actual P2 acceptance reader」用例整条失败）。修法：给重算加 `onlyTighten`，**修订路径固定为 true——只把假缺口收紧成真责任，不做降级**；降级留在出生路径，因为那里生成与冻结走的是**同一个** `deriveDefinitionContext`，两者必然一致。攻击面不受影响：伪造的是「缺口」，收紧方向正是堵它的方向。
+
+**实现中比裁决多想到的一点（第六轮的一处返工）**：第六轮我把 `satisfied_by` 也一并替换成机器绑定，实跑当场打出 8 条红——`revision` / `detached` 等场景里，修订给 spec 的「acceptance-context 必须重做」责任被我代写了一份满足证明，责任阶段直接从链上消失。**「产物在场」不等于「责任已了结」**：现在可用分支只重算 `applicability` 与 `basis`（结论及其来源），`satisfied_by` 保持原样；不可用分支才无条件清掉它（必修 1）。
+
+**本轮用例**
+
+| 用例 | 覆盖 |
+|---|---|
+| `real prepare CLI / bridge scope lifecycle: revision`（扩充） | **R4 反例**：修订输入里夹一条手写的 `acceptance-context: unknown`（验收此刻在场）→ 必须被重算回 `required`、不进 `unresolved`、不造出 spec 缺口把下游挂进 `needed_by`。变异探针：注释掉 R4 的重算 → 本用例红 |
+| `D0.2 the R3 design-fact proposal recomputes its definition duties too` | **R3 反例**：冻结范围带一条 `acceptance-context: unknown`（验收在场且合法），plan 本轮产出新设计内容 → `designScopeRevisionChecks` 返回的 `scope_revision_input` 里该责任被重算回 `required`、basis 换成机器解析的 acceptance 绑定。变异探针：注释掉 R3 的重算 → 本用例红 |
+| `D0.2 both definition kinds are recomputed, and a foreign binding does not survive as their source` | 必修 2 |
+| `D0.2 an unavailable definition source always drops its satisfaction proof` | 必修 1 |
+| `D0.2 a real CU candidate comes from the generator, and an undeclared write set is a plan gap` | 必修 3 的 CU 行：真实 CU 夹具 → 生成器 → `prepareGoalModeRun` |
+
+**原「未闭环项」已按调度者裁决在本轮补完**
+
+新增 e2e 模式 `real prepare CLI / bridge scope lifecycle: spec-gap-revert`（与 `design-gap-revert` 同构），断言分支**只加不改**（既有模式的预期一处未动，只在三处多分支表达式上追加新模式的分支并注明理由）：
+
+- **触发用的是生产函数，不是手拼修订**：review 的 finding 指向 feature 自己的 `acceptance.yaml`（`deriveCategoryFromFiles` 按路径域判 spec），verifier 逐条 confirmed，然后 `buildSummaryRepairCandidates` → `scopeRevisionInputFromRepairCandidates` 产出修订输入；用例先断言归属结果是 `[[CR-SPEC-001, 'spec', 'review']]`、再断言修订里有 `acceptance-definition:CR-SPEC-001`。这一条比 `design-gap-revert`（手拼 `design-decision` 事实）更接近生产。
+- **spec 重跑修复触发文件**，随后经 spec 的 `script-report.json` 发布第二条修订，把**真实验收输入**重绑到新内容——这正是生产里 R3 `designScopeRevisionChecks` 干的事。不重绑就会（正确地）判 `input binding stale`：§5.1.1a 的豁免只对**触发依据**那两个 kind 生效，真实设计输入一行不放宽。这条在实跑里被当场验证过（第一版没重绑，`acceptance:cu` / `unit-evidence:acceptance` 全判 stale）。
+- **断言**：① 修订后 spec 确实重跑；② 触发文件确实被修复（含新增的验收条目）；③ 历史触发摘要不再阻断（`executionScopeEvidenceIssues` 无 stale）；④ 修订事实是 `acceptance-definition` 且 owner 为 spec；⑤ **反例（时序）**：终局 `CHAIN_SLICE_COMPLETED` 必须发生在 spec 重跑**之后**——缺口未处理时完不成；⑥ **反例（结构）**：责任阶段确实进了链；⑦ 有效链 `['spec','coding','review','ut']`、CU 期望链同值、完成判定 VALID（沿用既有公共断言尾）。
+- **一个被当场抓住的空反例**：我最初写的反例是「把触发义务的 `satisfied_by` 去掉 → `verifyReusedExecutionScope` 判不可完成」。加上正对照（「未改动的有效范围**应当**可完成」）后，正对照当场失败——说明那条反例从头到尾都成立在错误的前提上（`verifyReusedExecutionScope` 吃的是带显式满足证明的复用输入，不是活跃 run 的有效范围）。已换成上面的时序 + 结构两条。**教训沿用第 12 条**：反例必须配正对照，否则「它失败了」可能只是因为它本来就不该成功。
+
+**三条验证（批次 2 review 第七轮返修后重跑，原始结果行）**
+
+~~~
+cd harness && npm test              结果：4542 passed, 0 failed (共 4542)   ← unit
+                                    结果：46 passed, 0 failed (共 46)       ← fixtures
+                                    EXIT=0（含 typecheck）
+npm run openspec:validate           Totals: 45 passed, 0 failed (45 items)
+                                    [openspec-enforcement] PASS
+node scripts/check-plan-version.mjs [check-plan-version] PASS
+git diff --check                    退出 0；24 个改动文件全 LF（CR=0）
+~~~
+
+（本表为补完 `spec-gap-revert` 之后的**最终**全量；补之前那一轮是 4541/0。第一次全量 4540/1：`blueprint-skill-projection` 的「validated spec facts reach actual P2 acceptance reader」被 R3 重算的**降级**打成「设计修订静默删除冻结义务」——即上文那条真缺陷；加 `onlyTighten` 后第二次全量全绿。）
+
+**本轮教训（第 19 条）**
+
+19. **给一条 fail-closed 放宽条件时，要问的不是「谁会被误伤」，而是「谁能自己满足这个条件」**。我在第六轮为了不改夹具，给写集授权加了第二条来源——它恰好是候选自己写的那条绑定，于是这条 fail-closed 变成了「候选说有写集就算有」。**授权只能来自受信来源**；夹具不方便，就改夹具，不要改判据。（代价核对：改夹具后 56 条 e2e 断言一条没动，说明这条放宽从一开始就是多余的。）
+
+#### 批次 2 代码 review 第八轮（codex，1 阻断 3 必修）——逐条处置
+
+| # | 结论 | 处置 |
+|---|---|---|
+| 阻断 1 来源不可用时 `satisfied_by` 在修订路径上没被清掉 | **接受**（核实属实：第七轮把降级整段放进 `else if (!onlyTighten)`，于是修订路径上「来源不可用」这条分支**整段不执行**——旧的 `required + satisfied_by` 被完整保留，`execution-scope.ts` 只把 `unknown` 当定义缺口、只把无满足证明的义务放进链，责任阶段就被跳过了。`contracts.files: []` 是 schema 合法形状，能触发） | 拆开两件事：**清满足证明无条件做**（含 `onlyTighten`），**降级仍只在出生路径做**。修完 `execution-scope` 58 条与 `blueprint-skill-projection` 22 条都绿——第七轮那条「修订路径按探针降级会造假缺口」的约束没有被破坏 |
+| 必修 1 plan §4.1.1 内部矛盾 | 接受 | §4.1.1 活跃表格只留 `contracts.files` 这一条受信来源；第六轮那段「来源有两条」改为删除线 + 「第七轮已撤销」的复盘说明 |
+| 必修 2 coding→plan 缺真实 runtime 链路 | 接受（核实属实：`design-gap` / `design-gap-revert` 这两个 e2e 模式虽然跑真实 runtime，但**触发**是手拼 revision；纯函数那条用例又到不了 runtime） | 按调度者裁决**补真实链路**：把这两个 e2e 模式的触发改为**真实归属链**——`ui_diff_within_declared_files(ui_scope_violation)` → `buildSummaryRepairCandidates`（既有注册表归 plan）→ `scopeRevisionInputFromRepairCandidates`，修订的 request / facts / 绑定 / impact 继承全部由生产函数算，用例先断言归属结果 `[['plan','coding',[codeRel]]]` 再断言修订里有 `design-decision`。断言分支只加不改（既有断言一条未动，全绿）。另：`D0.3 named write-set violations stay in coding` 补上**真的调用 `assessFeature`** 的断言（推荐不是 plan、不是 `backtrack_target_absent`、无 `scope_revised` 事件）——§5.4 原文说「断言到 assess 的输出」，此前并没有 |
+| 必修 3 `spec-gap-revert` 未断言 spec 证据 inputs 含 acceptance.yaml | 接受 | 补断言：`loadPhaseEvidenceManifest(root, feature, 'spec')` 的 `inputs` 含规范化后的 `acceptance.yaml` 路径。**注意方向**：spec 侧断言的是「**含**」（它既是 spec 的输入也是产出，合并为 both 后仍列入 inputs），不能照抄 plan 侧的「**不含**触发文件」 |
+
+**§5.4 / §11 的名称与范围同步**：coding 行改为「纯函数用例 + 两个 e2e 模式」两条并列；review 行的旧名 `D0.3 real check-review spec-owned finding triggers an in-run revision`（仓库里不存在）改为实际的载体用例 + `spec-gap-revert`。
+
+**三条验证（批次 2 review 第八轮返修后重跑，原始结果行）**
+
+~~~
+cd harness && npm test              结果：4542 passed, 0 failed (共 4542)   ← unit
+                                    结果：46 passed, 0 failed (共 46)       ← fixtures
+                                    EXIT=0（含 typecheck）
+npm run openspec:validate           Totals: 45 passed, 0 failed (45 items)
+                                    [openspec-enforcement] PASS
+node scripts/check-plan-version.mjs [check-plan-version] PASS
+git diff --check                    退出 0；24 个改动文件全 LF（CR=0）
+~~~
+
+**本轮教训（第 20 条）**
+
+20. **「条件 + 动作」写在同一个 `else if` 里，等于把两件事绑成一件**。第七轮我要表达的是「降级只在出生路径做」，顺手把「清掉满足证明」也关进了同一个 `!onlyTighten` 门里——而后者在任何路径上都必须做。**一个分支里若有两个语义不同的效果，就先问它们的生效条件是不是同一个**；不是就拆开写，哪怕多两行。
+
+#### 批次 2 代码 review 第九轮（codex，生产代码无阻断；1 必修 2 建议）——逐条处置
+
+| # | 结论 | 处置 |
+|---|---|---|
+| 必修 1 §5.4 多处用例名与注册名不一致、部分行覆盖描述超出实际断言 | 接受（逐条开文件核实，五处全属实） | 名称一律同步为真实注册名；「exactly once」不另造用例，合并到 `D0.3 late verifier-confirmed candidate still writes the revision input to script-report` 并写明它由同一条用例的 `carriers.length === 1` 断言；regeneration / hand-edit 两行合并到实际的那一条用例；`explicit code-change` 行指向实际承载它的用例 |
+| 必修 1（第二半）真实 `runSyncClosureDetailed` 未覆盖 | 接受 | 新增 `D0.3 the real --sync-closure entry writes the revision input too`：走**真实入口**（独立进程形态——删 `MAISON_GOAL_RUN_ID`、不传 goalIdentity），经真实 check-receipt 通过后由**生产** `finalizePhaseClosure`（而不是测试传的 `prepareEvidence` 桩）把修订输入写进 script-report。plan §11 里那条「仍未覆盖真实 `runSyncClosureDetailed`」的自记边界随之删除 |
+| 建议 1 `onlyTighten` 缺回归用例 | 采纳：新增 `D0.2 on a revision proposal an unavailable source drops the proof but never invents a gap` |
+| 建议 2 §4.1.1 措辞未区分出生 / 修订 | 采纳：§4.1.1 改为两行表格，出生路径「降级 + 清证明」、修订路径「只清证明、不降级」，各自写明理由 |
+
+**补这条真实 sync-closure 用例时踩到的三层真实前提（已写进用例注释与 §11，供后来者省时间）**：① canonical `trace.json` 必须在场（`trace_json_file_not_found`）；② check-receipt 以**子进程**跑：它的 frameworkRoot 由**自身 `__dirname`** 解析（`check-receipt.ts:241`），命令行不传；而它随后的 workflow 解析是从 projectRoot 起找 framework tree 的，所以夹具要在 `<projectRoot>/framework/workflows/` 备一份；③ 生产 `prepareEvidence` 会做 review closure attestation，产品源码 inventory **空集即 fail-closed**，而它只认「含 `src/main` 的模块目录」——并且这个文件必须在生成 summary **之前**落盘，否则 `slim_summary_worktree_stale` 会正确判 summary 属旧状态。三条都是既有生产判据，不是为测试放宽的东西。
+
+**批次 2 附带修复（非 P8 范围）**：`harness/scripts/utils/legacy-skill-bridge-cleanup.ts` 在没有 `backupSession` 时**在逐条循环内**各算一次秒级时间戳当备份目录名，而函数只返回最后一个 `backupRelDir`——一轮清理跨秒时备份被分到两个 `.framework-backup/<stamp>`，返回值只覆盖其中一部分（逐条 `cleaned[].backup_path` 仍正确）。时间戳提到循环外（与 `check-init.ts` 的 backup session 记忆化写法一致）。它是第五轮全量里那条偶发红的真因，调度者在独立环境复现后指示一并修掉；**与 P8 无关，改动只限该文件**，是否与批次 2 同一提交由用户决定。
+
+**三条验证（批次 2 review 第九轮返修后重跑，原始结果行）**
+
+~~~
+cd harness && npm test              结果：4544 passed, 0 failed (共 4544)   ← unit
+                                    结果：46 passed, 0 failed (共 46)       ← fixtures
+                                    EXIT=0（含 typecheck）
+npm run openspec:validate           Totals: 45 passed, 0 failed (45 items)
+                                    [openspec-enforcement] PASS
+node scripts/check-plan-version.mjs [check-plan-version] PASS
+git diff --check                    退出 0；25 个改动文件全 LF（CR=0）
+~~~
+
+**本轮教训（第 21 条）**
+
+21. **验收矩阵里的用例名会腐烂，而且腐烂得悄无声息**。九轮里改名、合并、重写用例都发生过，§5.4 的名字却是当初一次性写下的——没有任何门禁会因为「plan 里写的用例名在仓库里不存在」而失败。**收口前把矩阵里的每个名字 grep 一遍**，是十分钟的事；不做，就等于把「已验收」这三个字押在记忆上。
+
+#### 批次 2 收口（停点，交用户 review；未 commit）
+
+**最终三条验证（原始结果行）**
+
+~~~
+cd harness && npm test              结果：4544 passed, 0 failed (共 4544)   ← unit
+                                    结果：46 passed, 0 failed (共 46)       ← fixtures
+                                    EXIT=0（含 typecheck：tsc --noEmit -p tsconfig.typecheck.json）
+npm run openspec:validate           Totals: 45 passed, 0 failed (45 items)
+                                    [openspec-enforcement] PASS
+node scripts/check-plan-version.mjs [check-plan-version] PASS
+git diff --check                    退出 0；25 个改动文件全 LF（CR=0）
+~~~
+
+**改动文件清单（按 D0.3 / D0.2 / 测试 / OpenSpec / 文档 / 附带修复 分组）**
+
+| 组 | 文件 | 要点 |
+|---|---|---|
+| D0.3 生产 | `harness/scripts/utils/repair-candidates.ts` | `scopeRevisionInputFromRepairCandidates` + `writeScopeRevisionInputToScriptReport`（载体写不出即抛） |
+| D0.3 生产 | `harness/harness-runner.ts` | summary writer 出口接线，移出 best-effort catch |
+| D0.3 生产 | `harness/scripts/utils/phase-closure-finalizer.ts` | 闭环重算出口接线；run 身份取自阶段 summary 的 `run_id` |
+| D0.3 生产 | `harness/scripts/utils/correction-commands.ts` | 范围外阶段如实打印 + 两条合法入口（不落 `backtrack_target_absent`） |
+| D0.3 生产 | `harness/scripts/utils/scope-replan.ts` | `chain_lacks_plan` detail 改写（停等语义不变） |
+| D0.2 生产 | `harness/scripts/goal-mode-entry.ts` | `--prepare-scope` 分支、与 `--prepare-run` 互斥、`--help`、`describeCandidateDifference` |
+| D0.2 生产 | `harness/scripts/utils/feature-track.ts` | 候选生成器、需求 provenance、`deriveDefinitionContext` / `recomputeDefinitionFacts`、`verifyBasisBinding` 的需求上下文 |
+| D0.1/D0.2 生产 | `harness/scripts/utils/execution-scope.ts` | `request.requirement_basis` 字段；definition-gap 先于 impact 目标相关性 |
+| 修订路径接线 | `harness/scripts/utils/blueprint-skill-projection.ts`、`harness/scripts/goal-phase-runtime.ts` | R3 / R4 在各自 proposal 副本上复用同一重算（`onlyTighten`） |
+| 测试 | `harness/tests/unit/standalone-coding-review.unit.test.ts` | D0.3 真实归属链、载体、sync-closure 真实入口、D0.2 生成器 / provenance / CLI / 重算回归 |
+| 测试 | `harness/tests/unit/execution-scope.unit.test.ts` | e2e 模式 `spec-gap-revert` 新增；`design-gap*` 触发改真实归属；CU 生成器用例；夹具写集声明 |
+| 测试 | `harness/tests/unit/scope-replan.unit.test.ts`、`harness/tests/unit/framework-init-entry-contract.unit.test.ts` | 范围外说明断言、入口文档 smoke |
+| OpenSpec | `specs/reconcile-assessment/spec.md`、`specs/runtime-policy/spec.md`、`specs/skill-contracts/spec.md`（新增）、`tasks.md` | D0.3 条款与 3 scenario；D0.1 不采信自报扩到定义类 kind、判定顺序、provenance；D0.2 候选契约与 6 scenario |
+| 文档 | `templates/AGENTS.md.template`、`docs/operations/project-entry.md`、`skills/project/goal-mode/SKILL.md`、`skills/project/change-unit-progression/SKILL.md`、`skills/reference/goal-mode-operations.md` | `--prepare-scope → --prepare-run → attach` 通用三步、四项职责、同源需求文本警告 |
+| 附带修复（非 P8） | `harness/scripts/utils/legacy-skill-bridge-cleanup.ts` | 秒级时间戳提到循环外（跨秒会把一轮备份分到两个目录） |
+| plan | `.cursor/plans/动态工作流_P8_...plan.md` | §4.1.1 / §4.1.3 / §5.1 / §5.4 与本节实施记录 |
+
+**偏离汇总**
+
+1. **需求 D0.3 第三点的明确偏离（调度者裁决，需用户确认修订需求文档）**：`--correction-init` 路由到**范围外**阶段时，**不产出 `scope_revision_input`**，而是如实打印「责任阶段 X 不在本 run 有效范围内」并指向两条合法入口（真实 checker 归属在 run 内追加修订 / correction·successor 签发新 run）。需求原文要求这种情形「须由用户确认修订」。本批次按裁决实现，需求文档**未改**。
+2. **放弃的准确性①**：手上没有需求文本的只读投影（CU 交接预期链）不比对 provenance，只核「项目内 + 存在性一致」。代价：将来若新增一个**会冻结**却不传需求的调用方，这条 provenance 会在那条路上静默失效——`resolveFeatureExecutionScope` 的需求参数必须继续当作出生入口必填项。
+3. **放弃的准确性②**：`manifest.requirement` 为空的 run（既有合法入口）没有可比对的一方，provenance 只剩「绑定存在且依据一致」。需求血缘本身由既有 receipt-policy 的 requirement lineage 管，这里不重复造门。
+4. **修订路径的重算只收紧不降级**（第七轮实测得出）：修订发生在比重算探针更全的解析上下文里，按探针降级会凭空造缺口。代价：修订路径上「来源真的不可用」不会被降级为 unknown——但满足证明一律清掉，责任阶段因此不会被跳过（第八轮阻断 1 的修法）。
+5. **写集授权只认 `contracts.files`**（第七轮裁决，撤销第六轮我加的第二条来源）。代价：契约不声明 `files` 的 feature 会落在设计缺口上——这是正确结果；相应 e2e 夹具在**临时 root** 里声明真实写集，共享夹具未动。
+
+**第十轮（通过）**：codex 判**无阻断，可进入通过状态**；唯一一条措辞建议已改——`check-receipt` 子进程的 frameworkRoot 由**自身 `__dirname`** 解析（`check-receipt.ts:241`），原写的「在 projectRoot 下自行探测 / submodule 布局」不准确；夹具仍要在 `<projectRoot>/framework/workflows/` 备一份是因为它随后的 **workflow 解析**从 projectRoot 起找。两处（plan 本节 + 用例注释）已同步；仅注释改动，未重跑全量，`check-plan-version` 与 `git diff --check` 已重跑通过。
+
+**停点**：按需求 §0.5，批次 2 到此交用户 review。批次 3（D1）未开工。
 
 ### 批次 3（D1）
 

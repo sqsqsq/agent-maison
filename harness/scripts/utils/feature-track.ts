@@ -1,4 +1,4 @@
-import { resolveExecutionScope, EXECUTION_SOURCE_KINDS, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from './execution-scope';
+import { resolveExecutionScope, EXECUTION_SOURCE_KINDS, OBLIGATION_PROVIDERS, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from './execution-scope';
 import { createHash } from 'crypto';
 import * as path from 'path';
 import type { WorkflowSpec } from '../../workflow-loader';
@@ -7,6 +7,8 @@ import { readBoundInput, type InputBinding } from './capability-resolution';
 import { isInsideProjectRoot } from './project-relative-path';
 import { loadEffectiveExecutionScope } from './goal-run-creation';
 import { loadFeatureContracts, contractFingerprint } from './skill-contract';
+import { loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness } from './phase-evidence-manifest';
+import { resolveWorkflowSpec } from '../../workflow-loader';
 import { inferRepoLayout } from '../../repo-layout';
 // ============================================================================
 // feature-track.ts — feature.yaml 的 track 声明读取（C1 feature-track，plan d4a7c1e8）
@@ -17,7 +19,7 @@ import { inferRepoLayout } from '../../repo-layout';
 
 import * as fs from 'fs';
 import * as YAML from 'yaml';
-import { featureArtifactPath } from '../../config';
+import { featureArtifactPath, featurePhaseReportsDir } from '../../config';
 import { resolveFeatureTrack, type FeatureTrackDecl } from './runtime-policy';
 
 export const FEATURE_DECL_FILENAME = 'feature.yaml';
@@ -82,17 +84,25 @@ export function resolveFeatureExecutionScope(projectRoot: string, feature: strin
   if (workflow.schema_version !== '1.2') return undefined;
   const raw = YAML.parse(fs.readFileSync(featureTrackDeclPath(projectRoot, feature), 'utf8')) as { execution_scope?: ExecutionScopeInput };
   if (!raw?.execution_scope) throw new Error('[execution-scope] workflow 1.2 缺少运行前范围输入');
+  // 出生入口都带着本次需求：候选必须自带 provenance 绑定（`--prepare-scope` 生成的一定有）。
+  // 被删或被换 = 这份候选证明不了自己是为这句需求算的 → fail-closed，不猜、不放行。
+  if (requirement?.trim() && !raw.execution_scope.request.requirement_basis) {
+    throw new Error('[execution-scope] 候选缺少需求 provenance 绑定（request.requirement_basis）——请用 goal-mode-entry --prepare-scope 重新生成，不要手写候选');
+  }
   const resolvedFrameworkRoot = frameworkRoot ?? inferRepoLayout(projectRoot).frameworkRoot;
   raw.execution_scope.contract_fingerprints = loadFeatureContracts(resolvedFrameworkRoot).map(contractFingerprint);
   const ctx = { projectRoot, feature, frameworkRoot: resolvedFrameworkRoot };
+  // D0.1「不采信自报」扩到两个定义类 kind：候选里的 design-context / acceptance-context
+  // 一律按来源重算，否则手写一条 unknown 就能伪造缺口、顶掉 §4.1.3 子情形 (a) 的 fail-closed。
+  recomputeDefinitionFacts(raw.execution_scope, ctx, workflow);
   return resolveExecutionScope(
     raw.execution_scope,
     workflow,
     readScopeAcceptance(projectRoot, raw.execution_scope, ctx),
-    // requirement source: the real `--requirement` / `manifest.requirement` whenever the caller
-    // has one (both birth entries do). Only a candidate resolved with NO run (the change-unit
-    // projection) falls back to the request's own declared results.
-    collectResolvedScopeFacts(raw.execution_scope, { ...ctx, requirement: requirement?.trim() || raw.execution_scope.request.requested_results.join('\n') }),
+    // requirement source: the real `--requirement` / `manifest.requirement`. Both birth entries
+    // have one; the change-unit handoff projection has none, and **不编一份**——凭空拿
+    // `requested_results` 当需求文本只会让每条 `derive.requirement` 绑定恒判 stale。
+    collectResolvedScopeFacts(raw.execution_scope, { ...ctx, requirement: requirement?.trim() || undefined }),
   );
 }
 
@@ -124,7 +134,14 @@ const relPosix = (projectRoot: string, abs: string): string => path.relative(pro
  *
  * This exemption is for `basis` (and `request.impact.basis`) ONLY — never for `satisfied_by`.
  */
-function verifyBasisBinding(projectRoot: string, frameworkRoot: string, feature: string, binding: InputBinding, skipContentCheck = false): { ok: boolean; detail: string } {
+function verifyBasisBinding(projectRoot: string, frameworkRoot: string, feature: string, binding: InputBinding, skipContentCheck = false, requirement?: string | null): { ok: boolean; detail: string } {
+  // `derive.requirement` 的解析值就是需求文本本身（`capability-resolution.ts:273-276`），
+  // 所以重解析时必须把**同一份**需求文本交回去；否则该 provider 落到 feature 分支，
+  // 只返回摘要不返回 value，`readBoundInput` 必判 stale。两处文本不同 = 候选与出生请求
+  // 不是一回事，这时判 stale 正是想要的行为。
+  const requirementContext = binding.source.kind === 'derive' && binding.source.provider_id === 'derive.requirement' && requirement?.trim()
+    ? { requirement: requirement.trim(), inputContext: { schema_version: '1.1' as const, subject: { feature }, obligations: {}, required_outputs: [] } }
+    : {};
   const byDependencies = binding.source.kind === 'derive' && DEPENDENCY_ONLY_PROVIDERS.has(binding.source.provider_id);
   // Project containment is checked for EVERY shape, including the artifact branch: `readBoundInput`
   // re-resolves content but accepts an extra out-of-project dependency that matches its own digest
@@ -136,12 +153,19 @@ function verifyBasisBinding(projectRoot: string, frameworkRoot: string, feature:
     if (!isInsideProjectRoot(projectRoot, dep.path)) return { ok: false, detail: `${binding.input_id}: 依据不在项目内 ${dep.path}` };
     if (fs.existsSync(dep.path) !== dep.exists) return { ok: false, detail: `${binding.input_id}: 依据存在性变化 ${dep.path}` };
   }
+  // 它不该拦住谁：**手上没有需求文本**的只读投影（`resolveChangeUnitExpectedExecution` 的 CU
+  // 交接预判）。`derive.requirement` 的解析值就是那段文本，没有对照物就无从比对——依赖项的
+  // 项目内与存在性一致性上面已经查过，内容比对留给真正带 `--requirement` 的出生冻结（两个
+  // 出生入口都带，见 `goal-mode-entry.ts:103` / `goal-phase-runtime.ts:4564`）。
+  if (binding.source.kind === 'derive' && binding.source.provider_id === 'derive.requirement' && !requirement?.trim()) {
+    return { ok: true, detail: `${binding.input_id}: 无需求文本可比对（只读投影，不做内容重解析）` };
+  }
   try {
     // The content exemption never crosses the provider boundary: a source that HAS a parsed value
     // is always re-resolved through P1 (review B7). Only the no-parsed-value providers can be
     // judged by their dependencies, and even then the source must be real and digest-verifiable.
     if (!byDependencies) {
-      readBoundInput({ projectRoot, frameworkRoot, feature, phase: 'spec', track: 'full' }, binding);
+      readBoundInput({ projectRoot, frameworkRoot, feature, phase: 'spec', track: 'full', ...requirementContext }, binding);
       return { ok: true, detail: `${binding.input_id}: re-resolved` };
     }
     const present = binding.dependencies.filter(dep => dep.exists);
@@ -252,7 +276,7 @@ export function collectResolvedScopeFacts(
   ]);
 
   const impact_basis = (input.request.impact?.basis ?? []).map(binding => {
-    const verdict = verifyBasisBinding(projectRoot, frameworkRoot, feature, binding, ctx.impactInherited === true);
+    const verdict = verifyBasisBinding(projectRoot, frameworkRoot, feature, binding, ctx.impactInherited === true, ctx.requirement);
     // Relevance is computed here (not in the resolver) because it needs projectRoot to normalise
     // paths; `targets` above is carried through so the decision stays inspectable.
     const paths = binding.dependencies.map(dep => relPosix(projectRoot, dep.path));
@@ -264,10 +288,24 @@ export function collectResolvedScopeFacts(
   // the completion side already exempts keep their path / containment checks but are not
   // byte-compared: the responsible phase is about to rewrite exactly those files.
   const basis: ResolvedScopeFacts['basis'] = [];
+  // 请求级 provenance：候选声称自己是为这句需求算的——用**同一个**核验函数重解析，结论走
+  // 同一个 `basis` 通道（resolver 对任一 not-ok 拒绝冻结），不另建第二套校验。
+  const provenance = input.request.requirement_basis;
+  if (provenance) {
+    // 先认形态再核内容：`verifyBasisBinding` 只问「这条绑定还成立吗」，同一 feature 的
+    // **合法** contracts@1 绑定放在这里也能重解析成功，于是换需求也不 stale。需求 provenance
+    // 只能是需求那条绑定本身，形态不对直接判不通过（不另建校验通道，结论仍走 basis）。
+    const canonical = provenance.input_id === 'requirement'
+      && provenance.source.kind === 'derive' && provenance.source.provider_id === 'derive.requirement';
+    basis.push({ obligation_id: 'request:requirement', input_id: provenance.input_id,
+      ...(canonical
+        ? verifyBasisBinding(projectRoot, frameworkRoot, feature, provenance, false, ctx.requirement)
+        : { ok: false, detail: `${provenance.input_id}: 需求 provenance 必须是 derive.requirement 解析出的 requirement 绑定` }) });
+  }
   for (const fact of input.facts) {
     for (const binding of fact.basis) {
       const birthObservation = EXECUTION_SOURCE_KINDS.has(fact.kind) && binding.dependencies.every(dep => dep.role === 'derive');
-      basis.push({ obligation_id: fact.id, input_id: binding.input_id, ...verifyBasisBinding(projectRoot, frameworkRoot, feature, binding, birthObservation) });
+      basis.push({ obligation_id: fact.id, input_id: binding.input_id, ...verifyBasisBinding(projectRoot, frameworkRoot, feature, binding, birthObservation, ctx.requirement) });
     }
   }
 
@@ -301,4 +339,317 @@ export function readScopeAcceptance(projectRoot: string, input: Pick<ExecutionSc
   if (binding.dependencies.some(dep => !isInsideProjectRoot(projectRoot, dep.path))) throw new Error('[execution-scope] acceptance source outside project');
   const value = readBoundInput({ ...context, projectRoot, phase: 'spec', track: 'full' }, binding) as AcceptanceSpec;
   return { value, binding };
+}
+
+// ---------------------------------------------------------------------------
+// D0.2 — 候选范围生成入口（机器负责绑定 / 指纹 / 派生；主 Agent 只给四项输入）
+// ---------------------------------------------------------------------------
+
+export interface PrepareScopeCandidateInput {
+  projectRoot: string;
+  frameworkRoot: string;
+  feature: string;
+  /** 主 Agent 四项职责之一：完成终点。 */
+  completionTarget: 'request' | 'feature';
+  /** 之二：请求结果（要交付什么）。 */
+  requestedResults: string[];
+  /** 之三：明确的请求动作（改代码 / 只验证 / 完整交付），落为 requested_phases。 */
+  requestedPhases: string[];
+  /** 之四：影响判断（含来源路径）；缺省 = 不给判断（device 义务保持 unknown）。 */
+  impact?: { userVisibleBehaviorChange: boolean; reason: string; basisPaths: string[] };
+  /**
+   * 需求文本：与 `--prepare-run` 用的是同一份（视觉相关性由它判定）。缺省才回落
+   * `requestedResults`——两处不同源会让候选与出生时的 visual 结论对不上。
+   */
+  requirement?: string;
+  /** 候选已存在且内容不同时，显式覆盖。 */
+  overwrite?: boolean;
+}
+
+export interface PrepareScopeCandidateResult {
+  path: string;
+  written: boolean;
+  /** created 新建 / unchanged 同输入字节不变 / differs 与磁盘不一致且未给 --overwrite。 */
+  state: 'created' | 'unchanged' | 'differs';
+  candidate: ExecutionScopeInput;
+  scope: ExecutionScope;
+  /** 模板化说明（用户可见输出；纯投影，不调模型）。 */
+  explanation: string;
+}
+
+/** 候选里的每一条绑定都来自生产解析器——没有任何手写指纹、手写 basis 的余地。 */
+/**
+ * 两个定义类 kind（`design-context` / `acceptance-context`）的**唯一**派生点：生成器与冻结
+ * 读取层共用同一份判定，把 D0.1「不采信候选自报、按来源重算」从 unit/device/visual 扩到它们。
+ *
+ * 写集授权**只认 `contracts.files`** 这一条受信设计来源。候选自带的 `implementation` basis 是
+ * **自报**：它能指向任意项目内文件，而 `verifyBasisBinding` 只验路径 / 存在性 / 摘要，同一条绑定
+ * 随后又被算进 impact 的目标集合——用它当写集授权等于让候选自证相关性（第七轮阻断 1）。
+ */
+function deriveDefinitionContext(
+  ctx: { projectRoot: string; frameworkRoot: string; feature: string },
+  workflow: WorkflowSpec,
+  requestedPhases: string[],
+): {
+  contracts?: InputBinding; acceptance?: InputBinding; writeSet: string[]; writeSetBinding?: InputBinding;
+  wantsImplementation: boolean; designAvailable: boolean; acceptanceAvailable: boolean;
+} {
+  const contracts = candidateBinding(ctx, 'plan', 'contracts');
+  const acceptance = candidateBinding(ctx, 'ut', 'acceptance');
+  const implementationPhases = workflow.artifacts
+    .filter(artifact => (OBLIGATION_PROVIDERS[artifact.obligation_provider_id ?? ''] ?? []).includes('implementation'))
+    .map(artifact => artifact.id);
+  const wantsImplementation = requestedPhases.some(phase => implementationPhases.includes(phase));
+  const writeSet = wantsImplementation ? readCandidateWriteSet(ctx, contracts) : [];
+  const writeSetBinding = writeSet.length ? candidateBinding(ctx, 'plan', 'codebase', writeSet) : undefined;
+  return {
+    contracts, acceptance, writeSet, writeSetBinding, wantsImplementation,
+    designAvailable: !!contracts && (!wantsImplementation || !!writeSetBinding),
+    acceptanceAvailable: !!acceptance,
+  };
+}
+
+/**
+ * 冻结时按来源重算候选里**已有**的两条定义类事实。手写一条 `acceptance-context: unknown`
+ * 伪造缺口、借此把 §4.1.3 子情形 (a) 的 fail-closed 顶掉，这里当场被重算回 `required`。
+ *
+ * 它不该拦住谁：① 验收/设计**确实不存在**时，手写结果与机器派生一致，照常进 definition-gap；
+ * ② 视觉缺口 `acceptance-definition:visual` 是另一个 kind、本来就是机器派生，不受影响；
+ * ③ 候选里合法的人工补充（impact、requested_phases）不在重算范围内——那是 D0.2 幂等规则
+ * （手改报差异、显式覆盖）的职责，这里不做整份候选比对。
+ *
+ * 出生（`resolveFeatureExecutionScope`）与两条修订路径（R3 设计事实提案、R4 runtime 修订）
+ * 都在**各自的 proposal 副本**上调用它——否则修订输入照样能携带自报的 unknown 把
+ * `definitionGapPending` 伪造出来。它只改这两个 kind，不读也不写已冻结的 manifest / 出生范围。
+ *
+ * `onlyTighten`（修订路径固定为 true）：**只把假缺口收紧成真责任，不做降级**。降级是出生
+ * 路径的职责——那里生成与冻结走的是同一个 `deriveDefinitionContext`，两者必然一致；而修订
+ * 发生在真实阶段上下文里（蓝图投影、run-bound 快照、本轮刚产出的产物），它们的解析面比这里
+ * 的独立探针更全，按探针的「解析不出来」去降级会凭空造出假缺口、把已兑现的责任判成被删除
+ * （实测：`blueprint-skill-projection` 的 P2 验收用例当场变成「设计修订静默删除冻结义务」）。
+ */
+export function recomputeDefinitionFacts(
+  input: ExecutionScopeInput,
+  ctx: { projectRoot: string; frameworkRoot: string; feature: string },
+  workflow: WorkflowSpec,
+  onlyTighten = false,
+): void {
+  const derived = deriveDefinitionContext(ctx, workflow, input.request.requested_phases);
+  for (const fact of input.facts) {
+    if (fact.kind !== 'design-context' && fact.kind !== 'acceptance-context') continue;
+    const design = fact.kind === 'design-context';
+    const available = design ? derived.designAvailable : derived.acceptanceAvailable;
+    const binding = design ? derived.contracts : derived.acceptance;
+    if (available && binding) {
+      // 只重算**结论**与它的来源。`satisfied_by`（这条责任已被谁兑现）不在重算范围内：
+      // 「产物在场」不等于「责任已了结」——修订里由 spec/plan 重新产出的定义责任正是
+      // 「产物在场但必须重做」，代它写一份满足证明会把责任阶段直接从链上抹掉。
+      fact.applicability = 'required';
+      fact.basis = [binding];
+      fact.reason = design ? '已有设计可用' : '已有验收可用';
+    } else {
+      // 来源不可用 → **无条件**清掉满足证明（含 `onlyTighten` 的修订路径）：那份「证明」
+      // 同样是自报，留着会让 `execution-scope.ts` 把这条责任当成「已兑现」而跳过责任阶段。
+      delete fact.satisfied_by;
+      // 降级本身只在出生路径做：修订路径的解析面比这里的探针更全，按探针降级会造出假缺口。
+      if (!onlyTighten) {
+        fact.applicability = 'unknown';
+        fact.reason = design
+          ? (derived.contracts ? '设计已存在但未声明可核验写集（contracts.files 为空或不可解析）' : '本 feature 尚无可解析的设计来源')
+          : '本 feature 尚无可解析的验收来源';
+      }
+    }
+  }
+}
+
+function candidateBinding(
+  ctx: { projectRoot: string; frameworkRoot: string; feature: string; requirement?: string },
+  phase: string,
+  inputId: string,
+  testTargets: string[] = [],
+): InputBinding | undefined {
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const { resolveCapabilityInputs } = require('./capability-resolution') as typeof import('./capability-resolution');
+  /* eslint-enable @typescript-eslint/no-require-imports */
+  try {
+    const value = resolveCapabilityInputs({
+      projectRoot: ctx.projectRoot, frameworkRoot: ctx.frameworkRoot, feature: ctx.feature, phase, track: 'full',
+      ...(testTargets.length ? { testTargets } : {}),
+      ...(ctx.requirement ? { requirement: ctx.requirement } : {}),
+      inputContext: { schema_version: '1.1', subject: { feature: ctx.feature }, obligations: {}, required_outputs: [] },
+    }).inputs?.values?.[inputId];
+    return value && value.state === 'resolved' ? value.binding : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * 生成 feature.yaml 的 execution_scope 候选，并用**同一个** resolver 投影结果。
+ *
+ * 机器负责：设计 / 验收绑定与 satisfied_by、写集来源、影响判断的来源绑定、全部指纹
+ * （复用 resolveCapabilityInputs，与冻结时的重解析同源）；unit / device / visual 三类
+ * 证据义务**不写进候选**——它们由 resolver 从验收分层与 fidelity SSOT 派生（D0.1：候选
+ * 自报一律不采信，写了也会被原样覆盖）。code-review 同理由 resolver 的义务闭包补齐。
+ */
+export function prepareFeatureScopeCandidate(input: PrepareScopeCandidateInput): PrepareScopeCandidateResult {
+  const { projectRoot, frameworkRoot, feature } = input;
+  if (!input.requestedResults.length) throw new Error('[prepare-scope] --requested-results 必填（请求结果是主 Agent 的职责之一）');
+  if (!input.requestedPhases.length) {
+    throw new Error('[prepare-scope] 请求动作须由 --requested-phases 显式给出（改代码 → 含 coding；只补验证 → 只列验证阶段）——机器不猜动作');
+  }
+  const ctx = { projectRoot, frameworkRoot, feature };
+  const workflow = resolveWorkflowSpecForCandidate(projectRoot, frameworkRoot);
+  // 两个定义类事实的派生与冻结时**同一个函数**（`deriveDefinitionContext`）——生成的与
+  // 冻结重算的必然一致，手写的那份则会被重算覆盖。
+  const derived = deriveDefinitionContext(ctx, workflow, input.requestedPhases);
+  const contracts = derived.contracts;
+  const acceptance = derived.acceptance;
+  // 无蓝图合法入口（非 CU feature）：设计 / 验收产物都还不存在时，来源就只有需求本身。
+  // 需求绑定同样走既有 resolver（`derive.requirement`，带 inputContext 时返回需求文本作解析值），
+  // **不自造 provider**、不伪造蓝图。
+  // provenance：**始终**生成需求绑定——它是「这份候选为哪句需求而算」的机器凭据，
+  // 不只在缺产物时才有意义。缺设计 / 验收时它同时充当那两条缺口事实的来源。
+  const requirementText = input.requirement?.trim() || input.requestedResults.join('\n');
+  const requirementBinding = candidateBinding({ ...ctx, requirement: requirementText }, 'spec', 'requirement');
+  if (!requirementBinding) throw new Error('[prepare-scope] 需求无法经 derive.requirement 解析为绑定——候选缺少 provenance，不生成');
+  const gapBasis = [requirementBinding];
+  const facts: ExecutionScopeInput['facts'] = [];
+  // implementation **由请求动作决定**，不由 completion_target 决定：只有当请求里含实现
+  // provider 的阶段时才产出，写集来源取契约声明的文件（D0.1 规则 (a) 要求可核验写集）。
+  // 「声明了文件却绑不出来」与「没声明」是同一种缺陷（都拿不出可核验写集），由
+  // `deriveDefinitionContext` 一并判掉，不能一个走缺口、另一个被静默省略。
+  const wantsImplementation = derived.wantsImplementation;
+  const writeSet = derived.writeSet;
+  const writeSetBinding = derived.writeSetBinding;
+  // 契约在、却拿不出可核验写集（`contracts.files: []` 是 schema 允许的）＝**设计没给出写集**，
+  // 这正是 plan 的责任缺口。此时不能把 design-context 当「已有设计可用」记成 required——否则
+  // 既没有缺口挡住 coding，resolver 又会自动补一条 basis 为空的 implementation 请求标记，
+  // 等于放一条无来源的实现义务进链。降成 unknown 走既有 definition-gap 通路（与「压根没有
+  // 契约」同一条路），只在**请求跳过设计阶段**时才拒绝（见下方 fail-closed）。
+  if (derived.designAvailable) facts.push({ id: 'design-context:candidate', kind: 'design-context', applicability: 'required', reason: '已有设计可用', basis: [contracts!], satisfied_by: [contracts!] });
+  else if (contracts) facts.push({ id: 'design-context:pending', kind: 'design-context', applicability: 'unknown', reason: '设计已存在但未声明可核验写集（contracts.files 为空或不可解析）', basis: [contracts] });
+  // 缺设计 ≠ 没有设计责任：落一条 unknown 的 design-context（owner=plan），由既有 definition-gap
+  // 通路把下游（含 coding）挂进 needed_by，等设计阶段产出 contracts 后再由 D0.3/D2 同 run 补链。
+  else facts.push({ id: 'design-context:pending', kind: 'design-context', applicability: 'unknown', reason: '本 feature 尚无可解析的设计来源（仅有需求）', basis: gapBasis });
+  if (acceptance) facts.push({ id: 'acceptance-context:candidate', kind: 'acceptance-context', applicability: 'required', reason: '已有验收可用', basis: [acceptance], satisfied_by: [acceptance] });
+  // 缺验收 ≠ 没有验收责任：落一条 unknown 的 acceptance-context（resolver 会把它送进
+  // unresolved、owner=spec），不静默省略、也不伪造蓝图（需求 D0.2 原文）。
+  else facts.push({ id: 'acceptance-context:pending', kind: 'acceptance-context', applicability: 'unknown', reason: '本 feature 尚无可解析的验收来源', basis: gapBasis });
+  // 请求里是否**同时**含产出设计的阶段（spec / plan 家族）：含 → 写集本来就该由本次设计产出，
+  // 交给 definition-gap 通路挡住 coding；不含 → 这是「跳过设计直接改代码却没有写集」，当场拒。
+  const designPhases = workflow.artifacts
+    .filter(artifact => ['obligations.spec', 'obligations.plan'].includes(artifact.obligation_provider_id ?? ''))
+    .map(artifact => artifact.id);
+  const requestsDesign = input.requestedPhases.some(phase => designPhases.includes(phase));
+  if (wantsImplementation && !requestsDesign) {
+    // 跳过设计阶段就必须拿得出**可核验的写集**：契约缺失 / files 为空 / 绑定解析不出来时
+    // 在这里 fail-closed，而不是让 resolver 事后补一条空 basis 的请求标记，把问题推到 coding。
+    if (!writeSet.length) throw new Error('[prepare-scope] 请求跳过设计阶段直接改代码，但契约没有声明可核验的写集（contracts.files 为空或不可解析）——责任方 plan');
+    if (!writeSetBinding) throw new Error('[prepare-scope] 写集无法解析为项目内绑定：' + writeSet.join(', '));
+    facts.push({ id: 'implementation:request', kind: 'implementation', applicability: 'required', reason: '本次请求包含改代码', basis: [writeSetBinding] });
+  } else if (wantsImplementation && writeSetBinding) {
+    facts.push({ id: 'implementation:request', kind: 'implementation', applicability: 'required', reason: '本次请求包含改代码', basis: [writeSetBinding] });
+  }
+  const impactBasis = input.impact?.basisPaths.length ? candidateBinding(ctx, 'plan', 'codebase', input.impact.basisPaths) : undefined;
+  if (input.impact && !impactBasis) throw new Error('[prepare-scope] --impact-basis 无法解析为项目内绑定（影响判断必须有可核验来源）');
+  const candidate: ExecutionScopeInput = {
+    request: {
+      completion_target: input.completionTarget,
+      requested_results: [...input.requestedResults],
+      requested_phases: [...input.requestedPhases],
+      requirement_basis: requirementBinding,
+      ...(input.impact && impactBasis
+        ? { impact: { user_visible_behavior_change: input.impact.userVisibleBehaviorChange, reason: input.impact.reason, basis: [impactBasis] } }
+        : {}),
+    },
+    facts,
+    contract_fingerprints: loadFeatureContracts(frameworkRoot).map(contractFingerprint),
+  };
+  // 同一个 resolver、同一份已解析事实——投影出来的就是冻结时会得到的结果。
+  const scope = resolveExecutionScope(candidate, workflow,
+    readScopeAcceptance(projectRoot, candidate, { feature, frameworkRoot }),
+    collectResolvedScopeFacts(candidate, { projectRoot, feature, frameworkRoot, requirement: input.requirement?.trim() || input.requestedResults.join('\n') }));
+
+  const abs = featureTrackDeclPath(projectRoot, feature);
+  const existing = fs.existsSync(abs) ? (YAML.parse(fs.readFileSync(abs, 'utf-8')) as Record<string, unknown> | null) ?? {} : {};
+  const next = { ...existing, execution_scope: JSON.parse(JSON.stringify(candidate)) as unknown };
+  const bytes = YAML.stringify(next);
+  const current = fs.existsSync(abs) ? fs.readFileSync(abs, 'utf-8') : null;
+  const explanation = explainScope(scope);
+  if (current === bytes) return { path: abs, written: false, state: 'unchanged', candidate, scope, explanation };
+  if (current !== null && existing.execution_scope !== undefined && !input.overwrite) {
+    return { path: abs, written: false, state: 'differs', candidate, scope, explanation };
+  }
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, bytes, 'utf-8');
+  return { path: abs, written: true, state: 'created', candidate, scope, explanation };
+}
+
+/** 写集来源：契约声明的文件（contracts@1 的 files）——不猜、不扫描。 */
+function readCandidateWriteSet(
+  ctx: { projectRoot: string; frameworkRoot: string; feature: string },
+  contracts: InputBinding | undefined,
+): string[] {
+  if (!contracts) return [];
+  try {
+    const value = readBoundInput({ projectRoot: ctx.projectRoot, frameworkRoot: ctx.frameworkRoot, feature: ctx.feature, phase: 'plan', track: 'full' }, contracts) as { files?: unknown };
+    return Array.isArray(value?.files) ? value.files.filter((file): file is string => typeof file === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function resolveWorkflowSpecForCandidate(projectRoot: string, frameworkRoot: string): WorkflowSpec {
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const { loadWorkflowSpec } = require('../../workflow-loader') as typeof import('../../workflow-loader');
+  const { loadFrameworkConfig } = require('../../config') as typeof import('../../config');
+  /* eslint-enable @typescript-eslint/no-require-imports */
+  return loadWorkflowSpec(frameworkRoot, loadFrameworkConfig(projectRoot).active_workflow ?? 'spec-driven');
+}
+
+/** 模板化说明：纯投影，不调模型（需求 R2 的用户可见输出）。 */
+function explainScope(scope: ExecutionScope): string {
+  const reused = scope.reused_phases.map(reuse => reuse.phase);
+  const device = scope.obligations.filter(obligation => obligation.kind === 'device-evidence');
+  const deviceNote = device.some(obligation => obligation.applicability === 'required') ? '需要设备验证'
+    : device.some(obligation => obligation.applicability === 'unknown') ? '设备义务待定（缺有来源的影响判断）'
+    : '无设备义务';
+  const parts = [
+    reused.length ? '已有可复用的 ' + reused.join(' / ') + ' 结果' : '无可复用的既有结果',
+    scope.phase_chain.length ? '本次执行 ' + scope.phase_chain.join(' → ') : '本次无需执行任何阶段（现有结果已覆盖请求）',
+    deviceNote,
+  ];
+  if (scope.unresolved.length) {
+    parts.push('待澄清：' + scope.unresolved.map(gap => gap.obligation_id + '（' + gap.owner + '）').join('、'));
+  }
+  return parts.join('；') + '。';
+}
+
+/**
+ * D0.2 的机器体检：`--requested-phases` 缺席时，机器只呈现**既有阶段证据检查**的事实
+ * （证据完整性 / 新鲜度 / 阶段 summary 的裁决与闭环态），不猜请求动作。
+ */
+export function featureScopePhaseHealth(
+  projectRoot: string,
+  frameworkRoot: string,
+  feature: string,
+): Array<{ phase: string; evidence_ok: boolean; freshness: string; verdict: string | null; closure_status: string | null }> {
+  const workflow = resolveWorkflowSpec(projectRoot, { frameworkRoot });
+  const phases = workflow.artifacts.filter(artifact => artifact.scope === 'feature').map(artifact => artifact.id);
+  return phases.map(phase => {
+    const evidence = loadPhaseEvidenceManifest(projectRoot, feature, phase);
+    const fresh = recomputePhaseEvidenceStaleness(projectRoot, feature, [phase], { frameworkRoot })[0];
+    let verdict: string | null = null;
+    let closure: string | null = null;
+    try {
+      const summaryPath = path.join(featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot), 'summary.json');
+      if (fs.existsSync(summaryPath)) {
+        const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf-8')) as { verdict?: string; closure_status?: string };
+        verdict = summary.verdict ?? null;
+        closure = summary.closure_status ?? null;
+      }
+    } catch { /* 读不出就是读不出，如实报 null */ }
+    return { phase, evidence_ok: evidence?.integrityOk === true, freshness: fresh?.verdict ?? 'unresolved', verdict, closure_status: closure };
+  });
 }

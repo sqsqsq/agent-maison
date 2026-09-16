@@ -286,6 +286,29 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: 'D0.2 AGENTS template and entry docs hand the candidate to the machine, not to hand-written bindings',
+    run: () => {
+      // 主 Agent 的职责收到四项；候选由 --prepare-scope 生成。四份入口文本里不得再出现
+      // 任何「手写」来源 / 指纹的表述——那正是 D0.2 要消除的东西。
+      const template = read('templates/AGENTS.md.template');
+      for (const token of ['--prepare-scope', '完成终点', '请求结果', '--requested-phases', '影响判断']) {
+        assert(template.includes(token), `AGENTS 模板缺 D0.2 四项职责要素: ${token}`);
+      }
+      const entryTexts = [
+        template,
+        read('docs/operations/project-entry.md'),
+        read('skills/project/goal-mode/SKILL.md'),
+        read('skills/project/change-unit-progression/SKILL.md'),
+      ];
+      for (const text of entryTexts) {
+        assert(!text.includes('手写'), '入口文本仍在提「手写」来源/指纹');
+      }
+      for (const text of entryTexts.slice(1)) {
+        assert(text.includes('--prepare-scope'), '入口文档未指向候选生成入口');
+      }
+    },
+  },
+  {
     name: 'AGENTS 模板：普通请求由主 Agent 负责，framework-init 不是全局 preflight/public gate',
     run: () => {
       const template = read('templates/AGENTS.md.template');

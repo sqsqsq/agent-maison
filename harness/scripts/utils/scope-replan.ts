@@ -116,7 +116,11 @@ export function tryScopeReplan(input: ScopeReplanInput): ScopeReplanOutcome {
     return {
       kind: 'unavailable',
       reason: 'chain_lacks_plan',
-      detail: `执行链不含 plan（chain=${input.chain.join('→')}），无处回退——需另起含 plan 的 run`,
+      // chain 是本 run 的**有效**范围链（出生 + 已应用修订）。停等语义不变
+      // （upstream_closure_gap → 等人），这里只把「责任阶段在范围外」与两条合法入口说清。
+      detail: `plan 不在本 run 的有效范围内（chain=${input.chain.join('→')}），run 内无处回退。`
+        + `两条合法入口：(a) 设计缺口由责任阶段的真实 checker 产出候选，经既有归属链在本 run 内追加范围修订；`
+        + `(b) 用户改需求走既有 correction / successor 签发新 run`,
     };
   }
   if (input.backtracksUsed >= input.maxBacktracks) {

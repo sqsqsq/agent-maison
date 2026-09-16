@@ -53,7 +53,7 @@
 |---|---|
 | 显式 Skill / 局部维护 | 仅执行该职责；project 原生 CLI 或 review/UT/testing 的 request CLI；产出请求结果后结束 |
 | 查看 / 局部设计 / 完整设计 | 复用已有产物，按缺口继续；component-design 到本次设计终点或 CU readiness 即交还结果，不启动施工 |
-| 完整实现交付 | 主 Agent 将请求、P1 来源与适用义务交 P2 计算；设计完成后在已有授权内创建真实 attended Goal，按冻结 execution_scope 推进到完成终点 |
+| 完整实现交付 | 主 Agent 只提供四项输入：**完成终点**、**请求结果**、**明确的请求动作**（改代码 / 只验证 / 完整交付 → `--requested-phases`）、**影响判断及其来源路径**；候选由 `goal-mode-entry --prepare-scope` 生成（绑定、指纹、unit/device/visual 派生、code-review 补齐全部由机器完成），核对它打印的范围投影后再 `--prepare-run` 创建真实 attended Goal，按冻结 execution_scope 推进到完成终点 |
 | 继续 | 先读取已有 active run、冻结范围和 successor/revision；恢复该运行，不重新选择流程 |
 
 阶段不是固定套餐：有可复用输入不补物理文档；unknown 交既有责任方补依据；仅 review 不自动安排 UT/testing。新任务按义务计算范围；旧运行恢复见 MIGRATION。

@@ -151,6 +151,11 @@ export function runAll(): UnitCaseResult[] {
     });
     assert(result.kind === 'unavailable' && result.reason === 'chain_lacks_plan', '应返回 chain_lacks_plan');
     assert(events.length === 0, '不可落副作用事件');
+    // D0.3 裁决：范围外不造新 halt 分类，如实说明 + 指出两条合法入口（停等语义不变）。
+    const detail = result.kind === 'unavailable' ? result.detail : '';
+    assert(/不在本 run 的有效范围内/.test(detail), detail);
+    assert(/chain=coding→review/.test(detail), detail);
+    assert(/范围修订/.test(detail) && /correction \/ successor/.test(detail), detail);
   });
 
   run(results, 'B2 回退预算耗尽 → unavailable 且零事件', () => {

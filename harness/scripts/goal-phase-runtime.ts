@@ -2,7 +2,7 @@
 import { executionCompletionPhases, resolveExecutionScope, executionScopeFingerprint, validateExecutionScope, assertRevisionKeepsRequiredObligations, hasNewSourcedFact, type ExecutionScope, type ExecutionScopeInput } from './utils/execution-scope';
 import { loadFeatureContracts, contractFingerprint } from './utils/skill-contract';
 import { loadPhaseEvidenceManifest } from './utils/phase-evidence-manifest';
-import { resolveFeatureExecutionScope, readScopeAcceptance, collectResolvedScopeFacts } from './utils/feature-track';
+import { resolveFeatureExecutionScope, readScopeAcceptance, collectResolvedScopeFacts, recomputeDefinitionFacts } from './utils/feature-track';
 import { featureFilePath } from '../config';
 // ============================================================================
 // Goal phase runtime (fenced session/process owner) — deterministic multi-phase orchestrator
@@ -9156,6 +9156,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
             // §3 问题 11: phase evidence that no longer verifies is REVOKED — the phase returns to
             // the chain and re-runs. Only `ScopeEvidenceRef`s get this treatment; a `satisfied_by`
             // InputBinding that cannot be re-resolved still rejects the freeze (§4.1.4).
+            // 同上：修订输入的两条定义类事实按来源重算（只动本次 input 副本，不碰已冻结范围）。
+            recomputeDefinitionFacts(input, { projectRoot, feature: manifest.feature, frameworkRoot }, workflow, true);
             let facts = collectResolvedScopeFacts(input, revisionCtx);
             const stale = facts.satisfied_by.filter(entry => !entry.ok
               && !('input_id' in (input.facts.find(fact => fact.id === entry.obligation_id)?.satisfied_by?.[entry.ref_index] ?? { input_id: '' })));

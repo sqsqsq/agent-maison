@@ -54,3 +54,17 @@
 - 收紧点：impact 判断须有布尔/理由/非空来源；`obligation.basis` 与 `request.impact.basis` 共用同一核验函数（来源存在、项目内、摘要有效）；字节例外收成 `derive.codebase` / `derive.test-targets` 白名单；修订读取器按事件物理顺序校验（不排序）并复跑写入侧约束；基线读取器执行三条充要条件。
 - 语义修正：修订可**撤销失效的 `satisfied_by`**（对应阶段回链重跑），不再被无条件补回；required 保护按 `id + kind` 判定；重算前不再因候选自报 applicability 拒绝；impact 的「继承 vs 更正」按与有效范围的实际差异判定，更正须自带新来源。
 - 目标收集：`design-decision` / `acceptance-definition` 的 derive basis 不再进入 `source_paths` / `testTargets`（§5.1.1a R-目标收集），其余 kind 照收。
+
+## 5. P8 批次 2（D0.3 生产触发 + D0.2 候选生成入口）
+
+- [x] 5.1 D0.3：已归属 spec/plan 的候选（`category ∈ {spec,plan}` 且 `source_phase ∈ {coding,review}`）经**既有**归属链产出范围修订输入，写进磁盘 script-report.json；summary writer（PASS/FAIL 两轮可达）与闭环重算（晚到候选、`--sync-closure`）两处各接一次。不新增 check id、不动 `CHECK_ID_OWNER_REGISTRY`、不判断意图。
+- [x] 5.2 D0.3 correction 出口：修正路由读**有效范围**；责任阶段在范围外时如实说明并指向两条合法入口，**不**产出会被「修订须由新事实驱动」判据拒绝的提议，也不落 `backtrack_target_absent`。
+- [x] 5.3 D0.2：`goal-mode-entry --prepare-scope` 生成候选——主 Agent 只给四项输入；绑定/指纹经 `resolveCapabilityInputs` 同源计算，证据类义务由 resolver 派生；implementation 由请求动作决定；幂等（同输入字节不变、手改报差异不覆盖）；投影 + 模板化说明；动作不明确时打印既有阶段证据体检并拒绝猜测。
+- [x] 5.4 AGENTS 模板与三份 Skill/文档改为四项职责 + `--prepare-scope`，清除「手写来源/指纹」表述。
+
+### 批次 2 验收记录
+
+- 真实归属链正反例（`standalone-coding-review.unit.test.ts`）：真实 check-coding 的 `ui_scope_violation` → plan 候选 → `design-decision` 事实（basis 逐条对应候选 files、reason 取候选 summary）→ 链变 `[plan, coding, review, ut]`；`diff_within_scope` 等点名越界产不出 spec/plan 候选、也产不出修订输入。
+- 真实 review→spec 路径（路径域归属）→ `acceptance-definition` 事实；晚到候选经真实 `finalizePhaseClosure` 落进 script-report；FAIL 轮由 writer 落盘且重跑不重复。
+- 撤回闭环（`execution-scope.unit.test.ts` 的 `design-gap-revert` 端到端）：plan 不扩写集 → coding 改回原字节 → 无 `input binding stale`、plan 证据仍 `fresh` 且其 manifest inputs 不含触发文件 → completion VALID。
+- D0.2：候选可直接被 `--prepare-run` 冻结；绑定与 `resolveCapabilityInputs` 逐字相同；同输入重跑字节不变；手改报差异不覆盖、`--overwrite` 才写；仅验证请求无 implementation 且链为 `[review, ut]`；动作缺失时拒绝并打印阶段证据体检；NEXT_STEP 只呈现范围内义务。
