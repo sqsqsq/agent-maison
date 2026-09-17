@@ -1,4 +1,4 @@
-import { resolveExecutionScope, EXECUTION_SOURCE_KINDS, OBLIGATION_PROVIDERS, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from './execution-scope';
+import { resolveExecutionScope, executionScopeFingerprint, EXECUTION_SOURCE_KINDS, OBLIGATION_PROVIDERS, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from './execution-scope';
 import { createHash } from 'crypto';
 import * as path from 'path';
 import type { WorkflowSpec } from '../../workflow-loader';
@@ -8,6 +8,7 @@ import { isInsideProjectRoot } from './project-relative-path';
 import { loadEffectiveExecutionScope } from './goal-run-creation';
 import { loadFeatureContracts, contractFingerprint } from './skill-contract';
 import { loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness } from './phase-evidence-manifest';
+import { hasNewSourcedFact } from './execution-scope';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import { inferRepoLayout } from '../../repo-layout';
 // ============================================================================
@@ -30,7 +31,15 @@ export function featureTrackDeclPath(projectRoot: string, feature: string): stri
 
 export function loadFeatureTrackDecl(projectRoot: string, feature: string, existingRunId?: string): FeatureTrackDecl | null {
   const runId = existingRunId ?? process.env.MAISON_GOAL_RUN_ID?.trim();
-  if (runId && loadEffectiveExecutionScope(projectRoot, feature, runId)) return { track: 'full' };
+  // D1.6 / 批次 3 阻断 1：**现代有效范围在场即 full**，两个载体同口径。
+  // 否则 feature.yaml 里残留的 `track: lite` 会在冻结入口之前把 review/ut 判成非法 phase，
+  // 闭环出口也会按 lite 口径走——那正是「现代路径被旧 track 门控」的事故形状。
+  try {
+    if (loadEffectiveExecutionScope(projectRoot, feature, runId)) return { track: 'full' };
+  } catch {
+    // 权威说不清时（例如记录已转交而本次无 run 身份）不在这里裁决 track——
+    // 交给冻结入口 / 统一入口给出明确报错。
+  }
   if (runId && fs.existsSync(featureArtifactPath(projectRoot, feature, 'goal-runs/' + runId + '/manifest.json'))) {
     const legacy = JSON.parse(fs.readFileSync(featureArtifactPath(projectRoot, feature, 'goal-runs/' + runId + '/manifest.json'), 'utf8')) as { phase_chain?: string[] };
     if (Array.isArray(legacy.phase_chain) && legacy.phase_chain.length) return { track: resolveFeatureTrack(undefined, legacy.phase_chain) };
@@ -77,6 +86,17 @@ export function appendFeatureCorrectionHistory(
   } catch {
     // 写入失败不阻断修正闭环——历史记录是可追溯性增强，非红线契约
   }
+}
+
+/**
+ * 磁盘候选（`feature.yaml` 的 `execution_scope`）**原样**指纹——在 resolver 的任何改写之前取，
+ * 否则 `contract_fingerprints` 回填与定义类事实重算会让同一份候选每次都得到不同指纹。
+ * D1.2 的「候选被改动而冻结记录未经修订」就是比这一个值。
+ */
+export function featureScopeCandidateFingerprint(projectRoot: string, feature: string): string {
+  const raw = YAML.parse(fs.readFileSync(featureTrackDeclPath(projectRoot, feature), 'utf8')) as { execution_scope?: unknown };
+  if (!raw?.execution_scope) throw new Error('[execution-scope] workflow 1.2 缺少运行前范围输入');
+  return executionScopeFingerprint(raw.execution_scope);
 }
 
 /** Only fresh 1.2 runs read the candidate; resume never consults this mutable file. */
@@ -652,4 +672,89 @@ export function featureScopePhaseHealth(
     } catch { /* 读不出就是读不出，如实报 null */ }
     return { phase, evidence_ok: evidence?.integrityOk === true, freshness: fresh?.verdict ?? 'unresolved', verdict, closure_status: closure };
   });
+}
+
+/**
+ * 范围修订**提案校验的唯一实现**——run 路径（goal runtime）与 feature 路径（无 run 收尾）
+ * 都调它，不各写一套（批次 3 第一轮阻断 6）。
+ *
+ * 它做的每一件事都来自 D2.3 / §4.1.0，顺序与原 runtime 内联实现逐行一致：
+ *  ① 一次只允许一个提案（同一份报告里两条即拒）；
+ *  ② 请求边界（completion_target / requested_results）不可改；
+ *  ③ 已完成阶段的既有满足证明按当前证据补齐，**被主动撤销的不补**；
+ *  ④ impact：`null` 即错、缺省即继承、修正必须自带新来源；
+ *  ⑤ 定义类事实按来源重算（只收紧）、`satisfied_by` 失效项剔除后重解析；
+ *  ⑥ 结果与当前有效范围**完全相同** → no-op（返回 null）；不同 → 必须站在新来源上，否则抛错。
+ *
+ * 载体差异只有一处：`currentRunId`（run 载体有、feature 载体没有）——它只影响
+ * 「本轮新产生的阶段闭环证据算不算新事实」与补证明时写不写 run 身份，**不放宽任何判据**。
+ */
+export function resolveScopeRevisionProposal(input: {
+  projectRoot: string;
+  frameworkRoot: string;
+  feature: string;
+  workflow: WorkflowSpec;
+  proposals: readonly ExecutionScopeInput[];
+  previous: ExecutionScope;
+  completedPhases?: ReadonlySet<string>;
+  currentRunId?: string;
+  requirement?: string;
+}): { scope: ExecutionScope; input: ExecutionScopeInput } | null {
+  if (input.proposals.length > 1) throw new Error('[execution-scope] multiple revision proposals');
+  if (!input.proposals.length) return null;
+  const { projectRoot, frameworkRoot, feature, workflow, previous } = input;
+  const proposal = structuredClone(input.proposals[0]) as ExecutionScopeInput;
+  proposal.contract_fingerprints = loadFeatureContracts(frameworkRoot).map(contractFingerprint);
+  proposal.control_edges ??= structuredClone(previous.control_edges);
+  if (proposal.request.completion_target !== previous.completion_target
+    || JSON.stringify(proposal.request.requested_results) !== JSON.stringify(previous.requested_results)) {
+    throw new Error('[execution-scope] revision changes request boundary');
+  }
+  const completed = input.completedPhases ?? new Set<string>();
+  const revoked = new Set(previous.obligations
+    .filter(obligation => obligation.satisfied_by?.length
+      && proposal.facts.some(fact => fact.id === obligation.id && !fact.satisfied_by?.length))
+    .map(obligation => obligation.id));
+  for (const obligation of previous.obligations) {
+    if (obligation.applicability !== 'required') continue;
+    const existing = proposal.facts.find(fact => fact.id === obligation.id);
+    if (completed.has(obligation.owner_phase) && !revoked.has(obligation.id)) {
+      const evidence = loadPhaseEvidenceManifest(projectRoot, feature, obligation.owner_phase);
+      if (!evidence?.integrityOk) throw new Error('[execution-scope] completed phase has no valid closure evidence');
+      const proof = {
+        phase: obligation.owner_phase,
+        ...(input.currentRunId ? { run_id: input.currentRunId } : {}),
+        evidence_manifest_aggregate: evidence.manifest.aggregate_sha256,
+      };
+      const fact = { ...(existing ?? obligation), satisfied_by: [proof] };
+      if (existing) Object.assign(existing, fact); else proposal.facts.push(fact);
+    } else if (!existing) proposal.facts.push({ ...obligation });
+  }
+  if (proposal.request.impact === null) throw new Error('[execution-scope] 影响判断为 null——请给出判断或不要携带该字段');
+  if (proposal.request.impact === undefined) proposal.request.impact = previous.request_impact;
+  const impactInherited = proposal.request.impact === undefined
+    || (previous.request_impact !== undefined
+      && executionScopeFingerprint(proposal.request.impact) === executionScopeFingerprint(previous.request_impact));
+  if (!impactInherited && !(proposal.request.impact?.basis ?? []).some(binding => !previous.obligations.some(obligation => obligation.basis.some(prior => executionScopeFingerprint(prior) === executionScopeFingerprint(binding)))
+    && !(previous.request_impact?.basis ?? []).some(prior => executionScopeFingerprint(prior) === executionScopeFingerprint(binding)))) {
+    throw new Error('[execution-scope] impact correction requires its own new sourced basis');
+  }
+  const ctx = { projectRoot, feature, frameworkRoot, ...(input.currentRunId ? { currentRunId: input.currentRunId } : {}), ...(input.requirement ? { requirement: input.requirement } : {}), impactInherited };
+  recomputeDefinitionFacts(proposal, { projectRoot, feature, frameworkRoot }, workflow, true);
+  let facts = collectResolvedScopeFacts(proposal, ctx);
+  const stale = facts.satisfied_by.filter(entry => !entry.ok
+    && !('input_id' in (proposal.facts.find(fact => fact.id === entry.obligation_id)?.satisfied_by?.[entry.ref_index] ?? { input_id: '' })));
+  if (stale.length) {
+    for (const fact of proposal.facts) {
+      const drop = stale.filter(entry => entry.obligation_id === fact.id).map(entry => entry.ref_index);
+      if (!drop.length || !fact.satisfied_by) continue;
+      const kept = fact.satisfied_by.filter((_, index) => !drop.includes(index));
+      if (kept.length) fact.satisfied_by = kept; else delete fact.satisfied_by;
+    }
+    facts = collectResolvedScopeFacts(proposal, ctx);
+  }
+  const resolved = resolveExecutionScope(proposal, workflow, readScopeAcceptance(projectRoot, proposal, { feature, frameworkRoot }), facts);
+  if (executionScopeFingerprint(resolved) === executionScopeFingerprint(previous)) return null;
+  if (!hasNewSourcedFact(previous, proposal.facts, input.currentRunId ?? '')) throw new Error('[execution-scope] revision requires new sourced facts');
+  return { scope: resolved, input: proposal };
 }

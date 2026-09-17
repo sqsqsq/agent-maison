@@ -4,7 +4,7 @@
 
 ## 3.1.0：按义务执行与旧运行恢复
 
-新请求默认使用 obligation-driven workflow 1.2。完整实现由主 Agent 按实际输入、目标和义务建立 Feature 候选，使用现有 prepare-run/attach 产生真实运行身份；不选择轨道、不为了流水线补齐叙述文档。仅审查、UT、设备请求使用独立 request CLI，项目维护保持原生入口和请求终点。
+新请求默认使用 obligation-driven workflow 1.2。完整实现由主 Agent 按实际输入、目标和义务建立 Feature 候选，随后两个载体二选一：交互路径直接逐阶段跑 harness，首次调用由机器把范围冻结进 `doc/features/<feature>/execution-scope.json`；需要无人值守或 run 级预算/恢复时用现有 prepare-run/attach 产生真实运行身份（有 run 时以 run 为权威）。不选择轨道、不为了流水线补齐叙述文档。仅审查、UT、设备请求使用独立 request CLI，项目维护保持原生入口和请求终点。
 
 - 集成的是 Maison 发布件，宿主 framework/ 不是 submodule；依赖仅在 framework/harness 安装。
 - framework-init UPDATE 将旧内置 active_workflow=spec-driven 更新为 obligation-driven；自定义 workflow 保留。UPDATE 沿既有 .framework-backup 备份并清理 change-lite 公共桥接，不删除任何 Feature、CU、run 或报告。

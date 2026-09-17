@@ -37,9 +37,10 @@ import {
 } from './utils/visual-provider-identity';
 import { resolveWorkflowSpec } from '../workflow-loader';
 import { relFeaturesDir } from '../config';
-import { executionCompletionPhases } from './utils/execution-scope';
+import { executionCompletionPhases, executionScopeFingerprint } from './utils/execution-scope';
 import { featurePhasesFromWorkflow, resolveAutoChain } from './utils/phase-transition-policy';
-import { loadFeatureTrackDecl, resolveFeatureExecutionScope, prepareFeatureScopeCandidate, featureScopePhaseHealth } from './utils/feature-track';
+import { loadFeatureTrackDecl, prepareFeatureScopeCandidate, featureScopePhaseHealth } from './utils/feature-track';
+import { resolveBirthExecutionScope, registerFeatureScopeTransfer } from './utils/feature-execution-scope';
 import { resolveFeatureTrack } from './utils/runtime-policy';
 import { validateMinimumAssurance } from './utils/skill-contract';
 import { loadGoalCapability, routeGoalCapability } from './utils/goal-adapter-capability';
@@ -100,7 +101,9 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
     throw new Error('--prepare-run requires --feature, --adapter, and --requirement');
   }
   const workflow = resolveWorkflowSpec(options.projectRoot, { frameworkRoot: options.frameworkRoot });
-  const executionScope = resolveFeatureExecutionScope(options.projectRoot, feature, workflow, options.frameworkRoot, requirement);
+  // D1.3：出生范围 = 转交时 feature 的**有效**范围（有记录时不重算候选）。
+  const birth = resolveBirthExecutionScope(options.projectRoot, feature, workflow, options.frameworkRoot, requirement);
+  const executionScope = birth.scope;
   if (executionScope && !executionScope.phase_chain.length) throw new Error('[goal-mode-entry] empty scope: verify existing results without creating a run');
   const manifest = buildGoalManifestFromInput(
     {
@@ -164,6 +167,14 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
       !executionScope && loadInertLegacyFidelityIntentSsot(options.projectRoot, feature) !== null,
   });
   createGoalRun({ projectRoot: options.projectRoot, manifest, chain: actualChain });
+  // D1.3 转交登记：**createGoalRun 成功之后、ensureRunControl 之前**。出生未完成时 feature 侧
+  // 绝不能留下指向不存在 run 的指针；反向残留（记录指向不存在的 run）才是 D1.3 第三行的报错。
+  if (executionScope) {
+    registerFeatureScopeTransfer({
+      projectRoot: options.projectRoot, feature, runId: manifest.run_id,
+      transferredScopeFingerprint: executionScopeFingerprint(executionScope),
+    });
+  }
   let runDir = path.resolve(options.projectRoot, ...manifest.report_dir.split('/'));
   ensureRunControl(runDir, manifest.run_id);
   return { manifest, manifestPath, runDir };

@@ -200,6 +200,7 @@ import {
 } from './scripts/utils/runtime-policy';
 import { loadFeatureTrackDecl } from './scripts/utils/feature-track';
 import { resolveCapabilityResolutionEntryInput } from './scripts/utils/capability-resolution-entry-input';
+import { ensureFeatureExecutionScopeFrozen, applyFeatureScopeRevisionsThenMaybeComplete } from './scripts/utils/feature-execution-scope';
 import { runExplicitRequest } from './scripts/utils/request-phase';
 import { finalizePhaseClosure } from './scripts/utils/phase-closure-finalizer';
 import {
@@ -543,9 +544,23 @@ async function main(): Promise<void> {
   const layout = typeof args['project-root'] === 'string' ? inferRepoLayout(path.resolve(args['project-root'])) : detectRepoLayout(harnessRoot);
   if (args['framework-root'] && fs.realpathSync(path.resolve(args['framework-root'])) !== fs.realpathSync(layout.frameworkRoot)) throw new Error('--framework-root 与项目 layout 不一致');
   const { projectRoot, frameworkRoot: resolvedFrameworkRoot, frameworkRel, kind: layoutKind } = layout;
-  if (args['report-reconcile-only'] && args.phase === 'testing' && typeof args.feature === 'string' && !args['sync-closure'] && !args['clear-state'] && !args.list && (args['goal-run-id'] || process.env.MAISON_GOAL_RUN_ID)) {
+  // D1 §6.4：前置条件从「必须有 run 身份」放开为「有 run 或有 feature 冻结记录」——
+  // 无 run 的零设备 feature 同样不该被要求交 trace。
+  if (args['report-reconcile-only'] && args.phase === 'testing' && typeof args.feature === 'string' && !args['sync-closure'] && !args['clear-state'] && !args.list) {
     const feature = args.feature; const phase = 'testing';
-    const goalRunId = String(args['goal-run-id'] || process.env.MAISON_GOAL_RUN_ID);
+    const goalRunId = String(args['goal-run-id'] || process.env.MAISON_GOAL_RUN_ID || '') || undefined;
+    // D1.2/D1.4：无 run 的 reconcile-only 与普通 phase 走**同一个冻结入口**——锁前置、
+    // 首次冻结、候选漂移核对一次做完。绕过它就等于多一条读旧冻结范围的入口。
+    const reconcileFrozen = ensureFeatureExecutionScopeFrozen({
+      projectRoot, frameworkRoot: resolvedFrameworkRoot, feature, runId: goalRunId,
+    });
+    if (reconcileFrozen.checks.length) {
+      for (const check of reconcileFrozen.checks) {
+        console.error(`[harness] BLOCKER: ${check.details}`);
+        if (check.suggestion) console.error(`   ↳ ${check.suggestion}`);
+      }
+      process.exit(1);
+    }
     const { loadEffectiveExecutionScope } = require('./scripts/utils/goal-run-creation') as typeof import('./scripts/utils/goal-run-creation');
     const { hasNoTestingObligation } = require('./scripts/utils/execution-scope') as typeof import('./scripts/utils/execution-scope');
     const scope = loadEffectiveExecutionScope(projectRoot, feature, goalRunId);
@@ -612,7 +627,57 @@ async function main(): Promise<void> {
       printHelp();
       process.exit(1);
     }
+    // D1.2/D1.4：`--sync-closure` 同样是**无 run 入口**——在 receipt 校验与任何早退之前，
+    // 走与普通 phase 同一个冻结入口（锁前置 + 首次冻结 + 候选漂移核对）。
+    const syncFrozen = ensureFeatureExecutionScopeFrozen({
+      projectRoot, frameworkRoot: resolvedFrameworkRoot, feature: syncFeature,
+      runId: process.env.MAISON_GOAL_RUN_ID?.trim(),
+    });
+    if (syncFrozen.checks.length) {
+      for (const check of syncFrozen.checks) {
+        console.error(`[harness] BLOCKER: ${check.details}`);
+        if (check.suggestion) console.error(`   ↳ ${check.suggestion}`);
+      }
+      process.exit(1);
+    }
     const exitCode = runSyncClosure(harnessRoot, projectRoot, syncFeature, syncPhase, resolvedFrameworkRoot);
+    // D1 §6.5 出口②：同一条三步顺序。晚到候选（§5.1.2 ②）正是在这条路上才成立，
+    // 所以这里**同样要先应用修订再判完成**，不能只接生成函数。
+    if (exitCode === 0) {
+      try {
+        const outcome = applyFeatureScopeRevisionsThenMaybeComplete({
+          projectRoot,
+          frameworkRoot: resolvedFrameworkRoot,
+          feature: syncFeature,
+          phase: syncPhase,
+          workflowTrack: resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, syncFeature)),
+          runId: process.env.MAISON_GOAL_RUN_ID?.trim(),
+        });
+        if (outcome.revisionApplied) console.log('   ✓ feature 范围修订已应用（无 run 载体）');
+        if (outcome.completionPath) console.log(`   ✓ feature 完成原件已生成: ${path.relative(projectRoot, outcome.completionPath).replace(/\\/g, '/')}`);
+      } catch (error) {
+        // 第四轮阻断 4：`--sync-closure` 出口同样「写 BLOCKER 进失败报告 + 非零退出」。
+        // 这条出口的报告面就是本阶段的 script-report，用既有 writer 追加一条 BLOCKER。
+        const message = (error as Error).message;
+        console.error(`   ✗ feature 范围收尾失败: ${message}`);
+        try {
+          const reportAbs = path.join(featurePhaseReportsDir(projectRoot, syncFeature, syncPhase, resolvedFrameworkRoot), 'script-report.json');
+          if (fs.existsSync(reportAbs)) {
+            const report = JSON.parse(fs.readFileSync(reportAbs, 'utf8')) as { checks?: unknown[]; summary?: { verdict?: string; blockers?: number } };
+            report.checks = [...(report.checks ?? []), {
+              id: 'execution_scope_frozen', category: 'structure', severity: 'BLOCKER', status: 'FAIL',
+              description: 'feature 级冻结范围可用且与候选一致', details: message,
+              suggestion: '候选已变更而冻结范围未经修订：走既有 stale/correction 路径（harness-runner --correction-init）；不要手改冻结记录。',
+            }];
+            if (report.summary) { report.summary.verdict = 'FAIL'; report.summary.blockers = (report.summary.blockers ?? 0) + 1; }
+            fs.writeFileSync(reportAbs, JSON.stringify(report, null, 2) + String.fromCharCode(10), 'utf-8');
+          }
+        } catch (writeError) {
+          console.error(`   ✗ 失败报告写入失败: ${(writeError as Error).message}`);
+        }
+        process.exit(1);
+      }
+    }
     process.exit(exitCode);
   }
 
@@ -765,9 +830,21 @@ async function main(): Promise<void> {
   }
 
 
-  // C1 feature-track：按 feature 声明的 track 过滤合法 phase（缺省 full = 现状零变化；
-  // lite feature 误跑 full-only phase 明确报错而非静默跑——OpenSpec feature-track）
+  // D1.2（第三轮阻断 3）：**首次冻结必须早于 track 过滤**——否则 feature.yaml 里残留的
+  // `track: lite` 会在还没有冻结记录时把候选已请求的 review/ut 判成非法 phase。
+  // 冻结记录仍是唯一权威：这里不看候选自报，只是把「确立权威」这一步放到它该在的位置。
+  const featureScopeFreezeChecks: CheckResult[] = [];
   if (!phaseIsGlobal && feature && feature !== GLOBAL_FEATURE_SENTINEL) {
+    featureScopeFreezeChecks.push(...ensureFeatureExecutionScopeFrozen({
+      projectRoot, frameworkRoot: resolvedFrameworkRoot, feature,
+      runId: process.env.MAISON_GOAL_RUN_ID?.trim(),
+    }).checks);
+  }
+  // C1 feature-track：按 feature 声明的 track 过滤合法 phase（缺省 full = 现状零变化；
+  // lite feature 误跑 full-only phase 明确报错而非静默跑——OpenSpec feature-track）。
+  // D1.2：权威说不清（冻结入口已给出 BLOCKER）时**跳过这一步**——那时的 track 声明不可信，
+  // 真正的失败会由下方 `capabilityInputChecks` 以 execution_scope_frozen 报出来。
+  if (!phaseIsGlobal && feature && feature !== GLOBAL_FEATURE_SENTINEL && !featureScopeFreezeChecks.length) {
     const featureTrack = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature));
     const trackChain = resolvePhaseChain(workflowSpec, featureTrack);
     if (!trackChain.idSet.has(phase)) {
@@ -880,6 +957,9 @@ async function main(): Promise<void> {
   let factsContext: import('./scripts/utils/context-facts').FactsInvocationContext | undefined;
   if (!phaseIsGlobal) {
     try {
+      // D1.2：冻结 / 核对已在 track 过滤**之前**做过（第三轮阻断 3），这里只把它的结论
+      // 按 §3 问题 2 的既定形状报进本阶段的 capability 输入检查——不重复执行冻结。
+      capabilityInputChecks.push(...featureScopeFreezeChecks);
       const capabilityInput = resolveCapabilityResolutionEntryInput({
         frameworkRoot: resolvedFrameworkRoot,
         projectRoot,
@@ -1405,6 +1485,43 @@ async function main(): Promise<void> {
       resolvedFrameworkRoot,
     );
   }
+  // D1 §6.5/§6.7 出口①（普通阶段尾部）：**先应用修订、再重读有效范围、最后判完成并生成原件**。
+  // 有 run 身份时整段是 no-op（run 有自己的 runtime 收尾）。三步顺序与判据与 `--sync-closure`
+  // 出口**同一个函数**，不复制。
+  let featureScopeClosingFailure: Error | undefined;
+  if (!phaseIsGlobal && feature !== GLOBAL_FEATURE_SENTINEL) {
+    try {
+      const outcome = applyFeatureScopeRevisionsThenMaybeComplete({
+        projectRoot,
+        frameworkRoot: resolvedFrameworkRoot,
+        feature,
+        phase,
+        workflowTrack: closureTrack,
+        runId: process.env.MAISON_GOAL_RUN_ID?.trim(),
+      });
+      if (outcome.revisionApplied) console.log('   ✓ feature 范围修订已应用（无 run 载体）');
+      if (outcome.completionPath) console.log(`   ✓ feature 完成原件已生成: ${path.relative(projectRoot, outcome.completionPath).replace(/\\/g, '/')}`);
+    } catch (error) {
+      // D1.2（第四轮阻断 4）：收尾失败**两件事都要做**——把 BLOCKER 写进既有失败报告路径
+      //（宿主 agent 才看得到原因），并让进程非零退出（脚本调用方才拦得住）。
+      featureScopeClosingFailure = error as Error;
+      console.error(`   ✗ feature 范围收尾失败: ${featureScopeClosingFailure.message}`);
+      // 复用既有致命失败写入器（stage 取 `closure_finalization`——收尾同属闭环阶段，
+      // 它的 failure_kind 就是 `closure_finalization_failed`），不为此新增 stage 枚举。
+      finalReport = failScriptReportWithFatalError(
+        finalReport,
+        'closure_finalization',
+        featureScopeClosingFailure,
+        resolvedFrameworkRoot,
+      );
+      runSummary = writeRunSummaryBase(projectRoot, finalReport, resolvedFrameworkRoot, {
+        resolvedInputs,
+        factsContext,
+        verifierPlan,
+        verifierMaterial,
+      });
+    }
+  }
   if (args.summary || args['failures-only']) {
     printStableSummary(runSummary);
   }
@@ -1460,7 +1577,9 @@ async function main(): Promise<void> {
   );
   console.log('='.repeat(60) + '\n');
 
-  process.exit(finalReport.summary.verdict === 'PASS' ? 0 : 1);
+  // D1.2（第四轮阻断 4）：收尾失败已写进失败报告，退出码也必须非零——只打印会让
+  // 脚本调用方以 exit 0 溜过去。
+  process.exit(featureScopeClosingFailure || finalReport.summary.verdict !== 'PASS' ? 1 : 0);
 }
 
 /**

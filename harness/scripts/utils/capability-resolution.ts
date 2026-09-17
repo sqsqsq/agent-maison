@@ -499,8 +499,12 @@ export function readBoundInput(options: CapabilityResolutionOptions, binding: In
   return result.value;
 }
 
-/** Reuse the run's existing design binding as construction authority, even without a plan phase. */
-export function readRunBoundContracts(projectRoot: string, frameworkRoot: string, feature: string, runId: string): import('./types').ContractsSpec {
+/**
+ * Reuse the **effective scope**'s existing design binding as construction authority, even without
+ * a plan phase. D1：`runId` 可缺省——无 run 时统一入口读 feature 冻结记录的有效范围，
+ * 其余判据（找 `contracts@1` / `derive.blueprint-contracts` 绑定后 `readBoundInput`）一行不改。
+ */
+export function readRunBoundContracts(projectRoot: string, frameworkRoot: string, feature: string, runId?: string): import('./types').ContractsSpec {
   const { loadEffectiveExecutionScope } = require('./goal-run-creation') as typeof import('./goal-run-creation');
   const scope = loadEffectiveExecutionScope(projectRoot, feature, runId);
   const binding = scope?.obligations.flatMap(obligation => [...obligation.basis, ...(obligation.satisfied_by ?? []).filter((ref): ref is InputBinding => 'input_id' in ref)])

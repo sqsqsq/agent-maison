@@ -192,7 +192,7 @@ performance 项按是否真实需要设备证明判定；只有“含 performanc
 
 ## 7. 存储、权威与恢复
 
-不新增 execution-scope.json 或第二 run 目录。完整 Feature 交付统一使用真实 Goal 身份：
+不新增第二 run 目录。**「不新增 execution-scope.json」按 P8 D1.1 裁决删除**——feature 级冻结记录是轻量交互路径的范围载体（机器单 writer、与 feature.yaml 并列、不混入候选），见 P8 plan §6.1。完整 Feature 交付可使用真实 Goal 身份，也可使用 feature 级冻结记录（权威优先级见 P8 §6.3）：
 
 - feature.yaml.execution_scope 只保存运行前候选输入；它与阶段报告不能独立生成 Feature completion。
 - completion_target=feature 在执行首个阶段前，交互方式也经现有 goal-mode-entry 的

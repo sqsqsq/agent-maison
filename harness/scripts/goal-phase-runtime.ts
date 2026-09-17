@@ -2,7 +2,8 @@
 import { executionCompletionPhases, resolveExecutionScope, executionScopeFingerprint, validateExecutionScope, assertRevisionKeepsRequiredObligations, hasNewSourcedFact, type ExecutionScope, type ExecutionScopeInput } from './utils/execution-scope';
 import { loadFeatureContracts, contractFingerprint } from './utils/skill-contract';
 import { loadPhaseEvidenceManifest } from './utils/phase-evidence-manifest';
-import { resolveFeatureExecutionScope, readScopeAcceptance, collectResolvedScopeFacts, recomputeDefinitionFacts } from './utils/feature-track';
+import { readScopeAcceptance, collectResolvedScopeFacts, recomputeDefinitionFacts, resolveScopeRevisionProposal } from './utils/feature-track';
+import { resolveBirthScopeForManifest, registerFeatureScopeTransfer } from './utils/feature-execution-scope';
 import { featureFilePath } from '../config';
 // ============================================================================
 // Goal phase runtime (fenced session/process owner) — deterministic multi-phase orchestrator
@@ -107,6 +108,7 @@ import {
   classifyCleanPassIssues,
   collectCleanPassIssues,
   generateFeatureCompletion,
+  shouldGenerateFeatureCompletion,
   verifyFeatureCompletion,
   resolvePhaseRunIds,
 } from './utils/verify-feature-completion';
@@ -4560,8 +4562,21 @@ Goal runner — tool-agnostic multi-phase orchestrator
   }
 
   if (argv.resume || attachCreatedRunId) workflow = workflowForExistingRun(workflow, manifest, frameworkRoot);
-  const requestedExecutionScope = !argv.resume && !attachCreatedRunId
-    ? manifest.execution_scope ?? (workflow.schema_version === '1.2' ? resolveFeatureExecutionScope(projectRoot, manifest.feature, workflow, frameworkRoot, manifest.requirement) : undefined)
+  const requestedSupersedeTargets =
+    Array.isArray(argv.supersede)
+      ? argv.supersede.filter((value): value is string => typeof value === 'string')
+      : typeof argv.supersede === 'string'
+        ? [argv.supersede]
+        : [];
+  const requestedExecutionScope = !argv.resume && !attachCreatedRunId && !requestedSupersedeTargets.length
+    // D1.3：出生范围 = 转交时 feature 的**有效**范围（有冻结记录时不重算候选）——
+    // 与 `--prepare-run` 入口**同一个** `resolveBirthExecutionScope`，不是第三条路径。
+    // D1.3：出生范围**一律**过统一解析——`manifest.execution_scope ?? ...` 的写法会让
+    // 「manifest 自带范围」跳过 feature 记录的转交 / 候选漂移 / provenance 检查（第一轮阻断 3）。
+    // 第五轮阻断 1：successor（--supersede / --rebaseline-to）是 **run→run 血缘**，不经 feature 载体——
+    // 它的范围在下方从源 run 的有效范围继承。这里再调一次出生解析只会被源 run 自己
+    // 的转交记录抦住，把既有 supersede 路径整条堵死。
+    ? resolveBirthScopeForManifest(projectRoot, manifest, workflow, frameworkRoot)
     : undefined;
   if (requestedExecutionScope && workflow.schema_version !== '1.2') throw new Error('[execution-scope] fresh scoped run requires workflow 1.2');
 
@@ -4575,12 +4590,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
   let supersedeSourceRequirement: string | undefined;
   // plan c4e8a1f7 T2（评审 P1 三轮修复）：源 run 的需求来源列表（successor 来源重设用）
   let supersedeSourceSourceFiles: string[] | undefined;
-  const requestedSupersedeTargets =
-    Array.isArray(argv.supersede)
-      ? argv.supersede.filter((value): value is string => typeof value === 'string')
-      : typeof argv.supersede === 'string'
-        ? [argv.supersede]
-        : [];
   // A resumed run that supersedes itself must fail before locks, run_start, progress,
   // or any other event-producing startup work. The later loop keeps the same check as
   // defence in depth, while the resumed source remains strictly read-only here.
@@ -4632,9 +4641,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
           if (typeof record.round_fingerprint === 'string') round.push(record.round_fingerprint);
           if (typeof record.drift_fingerprint === 'string') drift.push(record.drift_fingerprint);
         }
-        if (requestedExecutionScope && source.execution_scope && !explicitRequirementIncrementText &&
-          (requestedExecutionScope.completion_target !== source.execution_scope.completion_target || JSON.stringify(requestedExecutionScope.requested_results) !== JSON.stringify(source.execution_scope.requested_results))) throw new Error('[execution-scope] changing request results requires the existing explicit requirement correction path');
-        manifest = inheritSuccessorManifest(manifest, source, { round, drift }, requestedExecutionScope);
+        // 第五轮阻断 1：successor 的范围 = **源 run 的有效范围**（出生 + 已应用 scope_revised）。
+        // 原来传的是 `requestedExecutionScope`（从 feature 载体解析），而源 run 出生时已经把 feature
+        // 记录登记为已转交——那条解析只会报「已转交」并把整条 supersede 路径堵死。
+        // 源 run 没有 1.2 范围（legacy）时为 undefined = 现状「整份继承源 manifest」。
+        const sourceEffectiveScope = loadEffectiveExecutionScope(projectRoot, manifest.feature, sourceRunId);
+        manifest = inheritSuccessorManifest(manifest, source, { round, drift }, sourceEffectiveScope);
       } catch (error) {
         // 后继 manifest 是新 run 唯一写入点的启动合同；继承失败不能静默退回默认
         // manifest，否则 --supersede 会悄悄刷新 end/预算/能力门。目标审计事件仍由
@@ -4849,7 +4861,16 @@ Goal runner — tool-agnostic multi-phase orchestrator
     }
   }
   if (!argv.resume && !attachCreatedRunId && workflow.schema_version === '1.2') {
-    manifest.execution_scope ??= requestedExecutionScope;
+    // D1.3（第二轮阻断 1）：现代 fresh/detached 路径**无条件采用**统一出生解析的结果。
+    // `??=` 会让 `--manifest` 自带的旧范围留下来，随后用错误的出生范围建 run，而转交登记
+    // 要到 `createGoalRun` 之后才因指纹失配报错——顺序已经晚了。自带范围与解析结果不同即拒。
+    if (requestedExecutionScope) {
+      if (manifest.execution_scope
+        && executionScopeFingerprint(validateExecutionScope(manifest.execution_scope)) !== executionScopeFingerprint(requestedExecutionScope)) {
+        throw new Error('[execution-scope] manifest 自带的出生范围与统一出生解析结果不一致——请去掉 --manifest 里的 execution_scope，或按 correction / successor 路径处理');
+      }
+      manifest.execution_scope = requestedExecutionScope;
+    }
     if (!manifest.execution_scope?.phase_chain.length) throw new Error('[execution-scope] empty scope: validate existing completion without a new run');
     if ((typeof argv.start === 'string' && argv.start !== manifest.execution_scope.phase_chain[0]) || (typeof argv.end === 'string' && argv.end !== manifest.execution_scope.phase_chain.at(-1))) throw new Error('[execution-scope] start/end must match the resolved scope');
     manifest.start_phase = manifest.execution_scope.phase_chain[0];
@@ -4955,6 +4976,21 @@ Goal runner — tool-agnostic multi-phase orchestrator
       chain: actualBirthChain,
       ...(rebaselineRequest ? { rebaselineFromRunId: rebaselineRequest.sourceRunId } : {}),
     });
+    // D1.3 转交登记：createGoalRun 成功之后立刻写，理由同 `--prepare-run` 入口
+    //（出生未完成时 feature 侧不得留下指向不存在 run 的指针）。
+    // 第五轮阻断 1：**只有首次 feature→run 出生登记转交**。successor 是 run→run 血缘（血缘写在
+    // manifest.successor_of 与 supersede 事件里），feature 记录已经指向源 run，再登记一次只会报
+    //「不能再转交给」并把既有 supersede 路径堵死。
+    if (manifest.execution_scope && !manifest.successor_of) {
+      try {
+        registerFeatureScopeTransfer({
+          projectRoot, feature: manifest.feature, runId: manifest.run_id,
+          transferredScopeFingerprint: executionScopeFingerprint(validateExecutionScope(manifest.execution_scope)),
+        });
+      } catch (error) {
+        throw new Error(`[execution-scope] feature 范围转交登记失败：${(error as Error).message}`);
+      }
+    }
   }
   if (runControl) {
     const recordHandoffMailboxQuarantine = (notice: HandoffMailboxQuarantine): void => {
@@ -9097,97 +9133,27 @@ Goal runner — tool-agnostic multi-phase orchestrator
           const proposalChecks = (report.checks ?? []).filter(check => check.scope_revision_input);
           const proposals = proposalChecks.map(check => check.scope_revision_input!);
           pendingScopeRevisionCheckId = proposalChecks[0]?.id;
-          if (proposals.length > 1) throw new Error('[execution-scope] multiple revision proposals');
-          if (proposals.length) {
-            const input = structuredClone(proposals[0]);
-            input.contract_fingerprints = loadFeatureContracts(frameworkRoot).map(contractFingerprint);
-            // D2 §4.2.3: a second revision must be compared against the scope as it stands now,
-            // not against the birth scope — otherwise a legal follow-up revision reads as boundary drift.
-            const old = applyScopeRevisions(validateExecutionScope(manifest.execution_scope), loadAuthoritativeEvents(eventsPath));
-            input.control_edges ??= structuredClone(old.control_edges);
-            if (input.request.completion_target !== old.completion_target || JSON.stringify(input.request.requested_results) !== JSON.stringify(old.requested_results)) throw new Error('[execution-scope] revision changes request boundary');
-            const completed = new Set(verdict === 'PASS' && !resolved.advance_blocked && outcomes.every(outcome => outcome.verdict === 'PASS' && !outcome.halted)
-              ? [...outcomes.map(outcome => String(outcome.phase)), String(phase)] : []);
-            // D2.3 "撤销已失效的 satisfied_by": a proposal that carries the obligation but drops its
-            // proof is revoking the reuse on purpose. Re-attaching evidence here would make the
-            // revocation unrepresentable — and the freeze would then reject the whole revision as
-            // stale instead of returning that phase to the chain (review B1).
-            const revoked = new Set(old.obligations
-              .filter(obligation => obligation.satisfied_by?.length
-                && input.facts.some(fact => fact.id === obligation.id && !fact.satisfied_by?.length))
-              .map(obligation => obligation.id));
-            for (const obligation of old.obligations) {
-              if (obligation.applicability !== 'required') continue;
-              const existing = input.facts.find(fact => fact.id === obligation.id);
-              // A self-declared applicability is never a rejection reason (D0.1 §4.1.1) — the
-              // resolver recomputes evidence duties from their real sources, and the post-resolution
-              // `assertRevisionKeepsRequiredObligations` below judges the RESULT for every kind.
-              if (completed.has(obligation.owner_phase) && !revoked.has(obligation.id)) {
-                const evidence = loadPhaseEvidenceManifest(projectRoot, manifest.feature, obligation.owner_phase);
-                if (!evidence?.integrityOk) throw new Error('[execution-scope] completed phase has no valid closure evidence');
-                const fact = { ...(existing ?? obligation), satisfied_by: [{ phase: obligation.owner_phase, run_id: manifest.run_id, evidence_manifest_aggregate: evidence.manifest.aggregate_sha256 }] };
-                if (existing) Object.assign(existing, fact); else input.facts.push(fact);
-              } else if (!existing) input.facts.push({ ...obligation });
-            }
-            // D0.1 R4: the revision rebuild consumes the same resolved facts as birth, otherwise
-            // a legal revision would push already-derived evidence duties back to `unknown` and
-            // trip the "cannot subtract required obligations" guard just above.
-            // Inherited unless this proposal supplied its own sourced correction (D2 B2).
-            // Inheritance is decided by the actual DIFFERENCE from the effective scope, not by the
-            // field being present: the checker-side proposal explicitly carries the inherited value
-            // forward (blueprint-skill-projection.ts), so "field exists" would classify every such
-            // proposal as a correction and re-compare bytes coding has legitimately rewritten.
-            // `??=` would treat an explicit `null` as "not supplied" and silently inherit the old
-            // judgement, skipping every structural check. Only an absent field inherits.
-            if (input.request.impact === null) throw new Error('[execution-scope] 影响判断为 null——请给出判断或不要携带该字段');
-            if (input.request.impact === undefined) input.request.impact = old.request_impact;
-            // Only two values can be compared: supplying an impact where the effective scope had
-            // none is a correction by definition (fingerprinting `undefined` throws — review B2).
-            const impactInherited = input.request.impact === undefined
-              || (old.request_impact !== undefined
-                && executionScopeFingerprint(input.request.impact) === executionScopeFingerprint(old.request_impact));
-            // A correction must stand on its OWN new source, not inherit the credibility of some
-            // other new fact in the same proposal (§4.1.0 rule 2).
-            if (!impactInherited && !(input.request.impact?.basis ?? []).some(binding => !old.obligations.some(obligation => obligation.basis.some(prior => executionScopeFingerprint(prior) === executionScopeFingerprint(binding)))
-              && !(old.request_impact?.basis ?? []).some(prior => executionScopeFingerprint(prior) === executionScopeFingerprint(binding)))) {
-              throw new Error('[execution-scope] impact correction requires its own new sourced basis');
-            }
-            const revisionCtx = { projectRoot, feature: manifest.feature, frameworkRoot, currentRunId: manifest.run_id, requirement: manifest.requirement, impactInherited };
-            // §3 问题 11: phase evidence that no longer verifies is REVOKED — the phase returns to
-            // the chain and re-runs. Only `ScopeEvidenceRef`s get this treatment; a `satisfied_by`
-            // InputBinding that cannot be re-resolved still rejects the freeze (§4.1.4).
-            // 同上：修订输入的两条定义类事实按来源重算（只动本次 input 副本，不碰已冻结范围）。
-            recomputeDefinitionFacts(input, { projectRoot, feature: manifest.feature, frameworkRoot }, workflow, true);
-            let facts = collectResolvedScopeFacts(input, revisionCtx);
-            const stale = facts.satisfied_by.filter(entry => !entry.ok
-              && !('input_id' in (input.facts.find(fact => fact.id === entry.obligation_id)?.satisfied_by?.[entry.ref_index] ?? { input_id: '' })));
-            if (stale.length) {
-              for (const fact of input.facts) {
-                const drop = stale.filter(entry => entry.obligation_id === fact.id).map(entry => entry.ref_index);
-                if (!drop.length || !fact.satisfied_by) continue;
-                const kept = fact.satisfied_by.filter((_, index) => !drop.includes(index));
-                if (kept.length) fact.satisfied_by = kept; else delete fact.satisfied_by;
-              }
-              facts = collectResolvedScopeFacts(input, revisionCtx);
-            }
-            const proposed = resolveExecutionScope(input, workflow,
-              readScopeAcceptance(projectRoot, input, { feature: manifest.feature, frameworkRoot }),
-              // requirement source (runtime revision): the run's frozen manifest.requirement.
-              facts);
-            // A proposal that resolves to the scope already in force is a NO-OP, not an error: a
-            // phase re-dispatched after a revision re-publishes its own report, and re-proposing
-            // what is already true must not blow up the run. Only a proposal that really changes
-            // the scope has to be driven by a new sourced fact.
-            if (executionScopeFingerprint(proposed) !== executionScopeFingerprint(old)) {
-              // "New sourced fact" = a basis binding the frozen scope does not already carry, OR a
-              // phase-closure reference this run just produced (a phase that re-ran after its reuse
-              // was revoked publishes exactly that and nothing else — its verified closure evidence
-              // IS the new fact, and rejecting it would strand the run it was asked to repair).
-              if (!hasNewSourcedFact(old, input.facts, manifest.run_id)) throw new Error('[execution-scope] revision requires new sourced facts');
-              pendingScopeRevisionInput = input;
-              pendingScopeRevision = proposed;
-              reconcileObservation.scope_revision = pendingScopeRevision;
-            }
+          // D2.7 / 批次 3 阻断 6：提案校验走**与 feature 路径同一个**
+          // `resolveScopeRevisionProposal`——单提案、请求边界、已完成阶段补证明、impact
+          // 继承与修正、失效 satisfied_by 剔除、「范围变了必须有新来源」全部同源实现。
+          const old = applyScopeRevisions(validateExecutionScope(manifest.execution_scope), loadAuthoritativeEvents(eventsPath));
+          const completed = new Set(verdict === 'PASS' && !resolved.advance_blocked && outcomes.every(outcome => outcome.verdict === 'PASS' && !outcome.halted)
+            ? [...outcomes.map(outcome => String(outcome.phase)), String(phase)] : []);
+          const revisionOutcome = resolveScopeRevisionProposal({
+            projectRoot,
+            frameworkRoot,
+            feature: manifest.feature,
+            workflow,
+            proposals,
+            previous: old,
+            completedPhases: completed,
+            currentRunId: manifest.run_id,
+            requirement: manifest.requirement,
+          });
+          if (revisionOutcome) {
+            pendingScopeRevisionInput = revisionOutcome.input;
+            pendingScopeRevision = revisionOutcome.scope;
+            reconcileObservation.scope_revision = pendingScopeRevision;
           }
         }
         const runAssess = (): ReturnType<typeof assessFeature> => assessFeature({
@@ -9939,21 +9905,20 @@ Goal runner — tool-agnostic multi-phase orchestrator
       ? applyScopeRevisions(validateExecutionScope(manifest.execution_scope), loadAuthoritativeEvents(eventsPath))
       : undefined;
     const completionChain = (completionScope ? executionCompletionPhases(completionScope) : fullWorkflowChain).map(String);
-    if (!finalizeDeadlineExceeded && status === 'CHAIN_SLICE_COMPLETED' && (!completionScope || (completionScope.completion_target === 'feature' && !completionScope.unresolved.length))) {
+    if (!finalizeDeadlineExceeded && status === 'CHAIN_SLICE_COMPLETED') {
       try {
-        const issues = collectCleanPassIssues({
+        // D1 §6.5：生成资格判据与无 run 出口**同一个函数**（范围终点 / unresolved / clean-pass），
+        // 这里只保留本路径独有的前置条件（run 终局为 CHAIN_SLICE_COMPLETED）。
+        const { eligible, issues } = shouldGenerateFeatureCompletion(completionScope, {
           projectRoot,
           feature: manifest.feature,
           // Recomputed here, not reused from startup: a revision may have changed the chain since.
           chain: completionChain,
-          // Must be the SAME scope the chain was derived from, or the `chain === executionCompletionPhases(scope)`
-          // reconciliation at verify-feature-completion.ts:246 fails by construction after any revision.
-          executionScope: completionScope,
           // D2: evidence this very run just closed is unsealed by design; historical runs unchanged.
           runId: manifest.run_id,
           frameworkRoot,
         });
-        if (issues.length === 0) {
+        if (eligible) {
           const { runIds: phaseRunIds, attempts: phaseAttempts } = resolvePhaseRunIds(
             projectRoot, manifest.feature, completionChain,
           );
@@ -9977,7 +9942,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           emitMilestone(
             // 'pending=N' alone forces every reader to guess which duty blocked the certificate;
             // name the issues (same lesson as the stale changed_paths projection).
-            `GOAL_RUN event=feature_completion_skipped reason=non_clean_pass pending=${issues.length} run_id=${manifest.run_id} issues=${issues.slice(0, 6).map(issue => `[${issue.phase}] ${issue.condition}: ${issue.detail}`).join(' | ')}`,
+            `GOAL_RUN event=feature_completion_skipped reason=${issues.length ? 'non_clean_pass' : 'scope_not_complete'} pending=${issues.length} run_id=${manifest.run_id} issues=${issues.slice(0, 6).map(issue => `[${issue.phase}] ${issue.condition}: ${issue.detail}`).join(' | ')}`,
           );
         }
       } catch (err) {

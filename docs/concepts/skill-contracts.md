@@ -48,7 +48,7 @@ SpecLoader、CheckContext、verifier 上下文与材料指纹消费同一解析�
 
 ## Facts 1.1
 
-首个实际 Skill 的 Research 在写代码、审查、UT 规划或设备动作之前建立 `context/facts.md`，`established_by` 记录真实 phase。Feature facts 绑定 feature/run_id；request facts 只绑定 request_sha256，位置为调用方指定的 report-dir/context/facts.md。`FactsInvocationContext` 来自 P2/P6，不能从 facts 自报内容反推建立资格。
+首个实际 Skill 的 Research 在写代码、审查、UT 规划或设备动作之前建立 `context/facts.md`，`established_by` 记录真实 phase。Feature facts 的身份位**按载体二分**：run 载体绑 `feature` + `run_id`；无 run 的 feature 载体绑 `feature` + `frozen_scope_fingerprint`（当前冻结范围指纹），两者互斥，同时出现即判身份混淆。request facts 只绑定 request_sha256，位置为调用方指定的 report-dir/context/facts.md。`FactsInvocationContext` 来自 P2/P6，不能从 facts 自报内容反推建立资格。
 
 后续或成功前驱的基线通过 baseline fingerprint 与来源 dependencies 核验，保留真实 established_by/run 来源，只追加当前 phase_delta。已有 1.0 facts 可经显式 baseline 承接，不能因文件存在自动满足。继续检查 Code Facts、当前目标覆盖、源码可读性、ready_to_produce 和覆盖风险；复用基线不重施后续阶段的全量探索阈值。新建立阶段使用实际 phase 的规则/profile snippets，不冒充 spec。
 
@@ -62,11 +62,11 @@ Feature evidence/恢复/verifier 使用同一 facts 路径；request 不调用 F
 
 workflow 1.2 用静态 `obligation_provider_id` 表达职责，`resolveExecutionScope` 统一计算执行范围；auto_chain 只提供稳定默认次序。P3/P6 提供规范化请求与有来源的业务事实，验收分层复用既有检查，未知保持具体缺口。候选中的契约指纹由出生入口从安装的 contracts 重算。
 
-完整交付在现有 Goal manifest/run_created 冻结 execution_scope，phase_chain、chain_override、start/end 必须同值投影。恢复只读出生范围，Feature 候选和后来的 track/默认排序不覆盖它。Scope 的控制边与依据仍在同一 manifest 内，不建立平行图。
+完整交付有**两个载体**：① 交互路径把 execution_scope 冻结在 feature 级记录（`<features_dir>/<feature>/execution-scope.json`，机器单 writer，与候选文件分开）；② Goal 路径在 manifest/run_created 冻结，phase_chain、chain_override、start/end 必须同值投影。权威优先级是「本次关联的 run > feature 冻结记录」，说不清时明确报错、不选边。两条路都只读出生范围，Feature 候选和后来的 track/默认排序不覆盖它；同一 feature 后起 run 以**转交时 feature 的有效范围**出生并登记转交指纹。Scope 的控制边与依据仍在同一载体内，不建立平行图。
 
-P1 调用上下文、阶段指令、assess、完成验证和 CU expected execution 都沿实际 run 身份读取该范围。有效施工输入可承接信息要求，真正未完成的设计决策/控制前置仍回责任方；request-only 及 unknown 不签 Feature completion，全复用只验证现有结果，不造空 run。
+P1 调用上下文、阶段指令、assess、完成验证和 CU expected execution 都经**同一个统一入口**读取该范围（有 run 身份读 run，无身份读 feature 冻结记录），消费方不自行判断载体。有效施工输入可承接信息要求，真正未完成的设计决策/控制前置仍回责任方；request-only 及 unknown 不签 Feature completion，全复用只验证现有结果，不造空 run。
 
-责任 checker 可在既有 CheckResult 中提出 `scope_revision_input`。runtime 只在真实边界记录一次交接意图，封卷并释放旧 owner/锁后，用同一出生函数创建或恢复固定 ID 的后继。预算、权限和 pin 继承；失败来源保持 PARTIAL/HALTED，其裸 PASS 不变成复用证据。前驱临时恢复状态保留到后继完成后，沿既有 GC 清理。默认 spec-driven 尚未切换，P3–P6 的具体 Skill 迁移和 P7 的公开切换继续按计划推进。
+责任 checker 可在既有 CheckResult 中提出 `scope_revision_input`；两个载体的提案校验是**同一个函数**，feature 载体把修订记在冻结记录的 `revisions[]` 里（形状与 `scope_revised` 一致，无 run 字段）。合法修订在**同一 run / 同一条冻结记录**内追加一条即完成：不封卷、不释放 owner/锁、不生成后继，出生范围与失败历史不被改写，有效范围 = 出生 + 按 index 应用的修订。后继只留给失败修复型 supersede、用户显式改需求与建 run 未完成的修复；那条路上预算、权限和 pin 继承，前驱临时恢复状态保留到后继完成后沿既有 GC 清理。失败来源保持 PARTIAL/HALTED，其裸 PASS 不变成复用证据。默认 spec-driven 尚未切换，P3–P6 的具体 Skill 迁移和 P7 的公开切换继续按计划推进。
 
 ## 输入读取矩阵与迁移责任（P1）
 

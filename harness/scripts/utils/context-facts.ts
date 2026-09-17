@@ -39,12 +39,18 @@ export const FACTS_ESTABLISHING_PHASES: ReadonlySet<string> = new Set(['spec', '
 
 /** Supplied by the invoking runtime/request entry, never read from authored facts. */
 export interface FactsInvocationContext {
-  subject: { feature: string; run_id: string } | { request_sha256: string; report_dir: string };
+  /**
+   * D1 §6.4 G3：Feature 事实的身份位有两种载体——run 载体绑 `run_id`；**无 run 的 feature
+   * 载体绑冻结范围指纹**（frontmatter 用 `frozen_scope_fingerprint`，与 `run_id` 互斥）。
+   */
+  subject: { feature: string; run_id: string } | { feature: string } | { request_sha256: string; report_dir: string };
   first_phase: string;
   source_paths: string[];
   required_input_snippets: string[];
   /** Validated predecessor/current baseline: preserve its real establishing phase. */
   baseline?: { established_by: string; fingerprint: string; dependencies: ResolutionDependency[] };
+  /** D1 G3：feature 载体的身份位（`executionScopeFingerprint(有效范围)`），run 载体不设。 */
+  frozen_scope_fingerprint?: string;
 }
 
 export function factsBaselineFingerprint(raw: string): string {
@@ -185,7 +191,19 @@ function checkFactsFile(
     if (schemaVersion !== '1.1' && !(schemaVersion === '1.0' && invocation.baseline)) issue('context_exploration_facts_schema_version', '新事实须使用 1.1；旧 1.0 仅可经显式 baseline 承接');
     if ('feature' in subject) {
       if (subject.feature !== feature || fm.feature !== feature || record.request_sha256 !== undefined) issue('context_exploration_facts_feature_match', 'Feature subject 不匹配或混入 request 身份');
-      if (!subject.run_id || (!invocation.baseline && record.run_id !== subject.run_id)) issue('context_exploration_facts_run_match', '建立事实必须绑定真实调用 run_id');
+      // G3：按 subject 形态二分。run 载体沿现状；feature 载体改绑**冻结范围指纹**，
+      // 两个身份位互斥——同时出现即身份混淆，直接判 issue。
+      if ('run_id' in subject) {
+        if (!subject.run_id || (!invocation.baseline && record.run_id !== subject.run_id)) issue('context_exploration_facts_run_match', '建立事实必须绑定真实调用 run_id');
+      } else {
+        const fingerprint = invocation.frozen_scope_fingerprint;
+        if (record.run_id !== undefined) issue('context_exploration_facts_run_match', '无 run 的事实不得声明 run_id（身份位与冻结范围指纹互斥）');
+        else if (!fingerprint) issue('context_exploration_facts_run_match', '无 run 的事实必须由调用方给出冻结范围指纹');
+        // 身份位**与 baseline 无关**：baseline 只管「来源是否新鲜」，不能替代「这份事实属于
+        // 哪一份冻结范围」。run 载体那侧的 `!invocation.baseline` 豁免是历史形状，feature
+        // 载体不继承（第一轮阻断 5）。
+        else if (record.frozen_scope_fingerprint !== fingerprint) issue('context_exploration_facts_run_match', '建立事实必须绑定当前 feature 冻结范围指纹');
+      }
     } else if (feature || fm.feature !== undefined || record.run_id !== undefined || !/^[0-9a-f]{64}$/.test(subject.request_sha256) || record.request_sha256 !== subject.request_sha256) {
       issue('context_exploration_facts_request_match', 'request subject 不匹配或混入 Feature/run 身份');
     }

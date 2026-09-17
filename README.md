@@ -7,7 +7,7 @@
 ## 能做什么
 
 - **架构可配置**：外层/内层模块依赖、路径根目录等由实例根的 `framework.config.json` 声明，harness 从配置读取，不绑死某一种层数或层名。
-- **按义务执行**：新请求默认 [obligation-driven](workflows/obligation-driven.workflow.yaml)，按请求终点、真实输入与未满足义务冻结阶段范围。项目维护和专项 review/UT/testing 独立结束，完整交付使用真实 Goal 身份；已有设计可复用，不强制补齐物理文档。旧运行见 [迁移说明](MIGRATION.md)。
+- **按义务执行**：新请求默认 [obligation-driven](workflows/obligation-driven.workflow.yaml)，按请求终点、真实输入与未满足义务冻结阶段范围。项目维护和专项 review/UT/testing 独立结束；完整交付有两个载体——交互路径由机器把范围冻结进 `doc/features/<feature>/execution-scope.json` 逐阶段跑，需要无人值守或 run 级预算/恢复时用真实 Goal 身份（权威优先级：本次关联的 run > feature 冻结记录）。已有设计可复用，不强制补齐物理文档。旧运行见 [迁移说明](MIGRATION.md)。
 - **框架升级兼容（compat）**：存量 feature 遇新版本 BLOCKER 时，可在 `doc/features/<feature>/compat.yaml` 做**可过期**临时降级；推荐用 `cd framework/harness && npm run backfill:context` 正规化。详见 [docs/evolution/compat-protocol-v1.md](docs/evolution/compat-protocol-v1.md) 与 [MIGRATION.md §v2.6](MIGRATION.md)。
 - **多 agent 入口**：通过 `framework/agents/<adapter>/` 插件，把同一套 Skill 按所选客户端约定暴露出来（slash、跳板、全局说明文件等）；**产品与路径对照仅限** [agents/README.md](agents/README.md)。
 - **工程类型 profile（project_profile）**：与 adapter 正交，声明在实例根 `framework.config.json` 的 `project_profile`（默认 `hmos-app`）。每套模板位于 [profiles/](profiles/README.md)，可禁用整阶段 harness 或声明能力档位。

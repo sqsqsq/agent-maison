@@ -39,3 +39,11 @@
 ## 未完成的真实宿主与交接条件
 
 本轮已询问真实 App 工程和可复用材料，尚未收到路径/材料/设备信息。因此真实 RDB、页面交互、性能分层、多 CU 组合及设备验证未执行；临时 consumer 和模拟原生边界均不计真实宿主通过。需提供宿主路径、原请求、适用的蓝图/CU/acceptance、代码/测试目标、已有报告以及设备条件，才能继续 p7-real-host。p7-release-handoff 与父总纲最终整合复核保持未完成；当前候选不是正式发布件。
+## P8 批次 3（D1 轻量交互路径，2026-09-16）
+
+- feature 级冻结记录落在 `<features_dir>/<feature>/execution-scope.json`（与 feature.yaml 并列，机器单 writer，不混入候选）。修订链校验、可改字段常量与有效范围计算全部复用 run 载体的同一批函数，不另造签名或校验。
+- 权威优先级由**一个**入口决定（`resolveEffectiveScopeSource`）：显式 run 身份 > feature 冻结记录；两者皆无时调用方按既有回落处理。无身份调用发现活着的 `.feature.lock` 时明确报错、不选边（活锁识别实验结论：锁记录回答不了「本次关联哪个 run」，故 D1.3 第一行收窄为只认显式身份）。
+- 消费者接线（G1–G6 + 七个读点）与 run 门禁同批放开：coding 的判据从「有 run 身份」改为「有有效范围权威」，diff 基线三态归一统一到 `resolveEffectiveDiffBaseline`，UI scope 门在有 feature 冻结记录时不再走历史 SKIP，facts 身份位按载体二分（feature 载体绑冻结范围指纹，与 run_id 互斥）。
+- 完成判定按 `scope_source` 选出生范围来源：feature 载体的 `run_id` 为 null、原件落在 `<feature>/completion/`、逐阶段证明换成 summary verdict/closure_status/closure_commit + evidence manifest 完整性 + freshness 五项，attempt 与 run 终局两维显式豁免（不伪造 run 身份）；其余判据不放松，只有候选或裸报告一律 INVALID。
+- 两个生成出口（普通阶段尾部、`--sync-closure`）共用同一条「应用修订 → 重读有效范围 → 判完成并生成」的顺序与判据。
+- 定向验证：execution-scope 100/100（五轮 codex review 返修后，数字取 run-unit 输出行「结果：100 passed, 0 failed」；`cases.push` 语句 71 条里有循环注册，逐条 PASS 行可数。D1 用例 42 条，含 14 条主干场景：无 run 三阶段完成 VALID、候选漂移 BLOCKER 且记录字节不变、活锁报错不选边、转交与 S0→S1、转交后 run 内修订不冲突、转交指纹冲突、裸报告/篡改/伪造身份 INVALID、基线三态含有 run 缺基线仍 FAIL 的反例、无 run UI 门正反例、`--sync-closure` 出口经真实 CLI 生成完成原件、detached 出生用 S1）。

@@ -5,7 +5,8 @@ import { resolveWorkflowSpec, workflowForExistingRun } from '../../workflow-load
 import { classifyGoalRunsDir } from './fidelity-shared';
 import { filterAuthoritativeEvents, loadEventsJsonl, resolveEffectiveRunEnd } from './goal-runner-phase';
 import { featurePhasesFromWorkflow } from './phase-transition-policy';
-import { loadFeatureTrackDecl, resolveFeatureExecutionScope } from './feature-track';
+import { loadFeatureTrackDecl } from './feature-track';
+import { resolveBirthExecutionScope } from './feature-execution-scope';
 import { resolveFeatureTrack } from './runtime-policy';
 import { loadEffectiveExecutionScope } from './goal-run-creation';
 import { inferRepoLayout } from '../../repo-layout';
@@ -65,7 +66,9 @@ export function resolveChangeUnitExpectedExecution(
   let workflow = resolveWorkflowSpec(projectRoot);
   let frozenTrack: string | undefined;
   if (forNewRun && workflow.schema_version === '1.2') {
-    const scope = resolveFeatureExecutionScope(projectRoot, featureId, workflow)!;
+    // 第五轮阻断 2：新 run 的交接期望链必须与**出生入口**同源。原来直接从候选算
+    //（`resolveFeatureExecutionScope`），feature 已 S0→S1 时交接给的是 S0、出生用的是 S1。
+    const scope = resolveBirthExecutionScope(projectRoot, featureId, workflow).scope!;
     if (scope.completion_target !== 'feature') throw new Error('CU 施工交接需要 Feature 完成目标');
     return { expectedTrack: 'full', expectedChain: [...scope.phase_chain] };
   }
@@ -74,8 +77,18 @@ export function resolveChangeUnitExpectedExecution(
     const projection = JSON.parse(fs.readFileSync(projectionFile, 'utf8')) as { original_path?: string };
     if (projection.original_path) {
       const original = path.resolve(projectRoot, projection.original_path);
-      if (!isInsideProjectRoot(featureFilePath(projectRoot, featureId, 'goal-runs'), original)) throw new Error('completion 原件不在该 Feature 的 run 目录');
-      const record = JSON.parse(fs.readFileSync(original, 'utf8')) as { run_id?: string };
+      // D1 §6.5 H4：原件落点**按目录二分**，且必须先于读 `record.run_id`——
+      // `goal-runs/` 内 = run 载体（现状）；`<feature>/completion/` 内 = feature 载体（无 run）。
+      // 两者都不是才是「原件不在 runner 拥有的落点」。
+      const inRunDir = isInsideProjectRoot(featureFilePath(projectRoot, featureId, 'goal-runs'), original);
+      const inFeatureCompletionDir = isInsideProjectRoot(featureFilePath(projectRoot, featureId, 'completion'), original);
+      if (!inRunDir && !inFeatureCompletionDir) throw new Error('completion 原件不在该 Feature 的 run 目录或 completion 目录');
+      const record = JSON.parse(fs.readFileSync(original, 'utf8')) as { run_id?: string | null; scope_source?: string };
+      if (record.scope_source === 'feature' || (inFeatureCompletionDir && !record.run_id)) {
+        // feature 载体：统一入口在无 run 时读冻结记录；CU 消费**不区分** scope_source。
+        const scope = loadEffectiveExecutionScope(projectRoot, featureId);
+        if (scope) return { expectedTrack: 'full', expectedChain: executionCompletionPhases(scope) };
+      }
       if (record.run_id) {
         const scope = loadEffectiveExecutionScope(projectRoot, featureId, record.run_id);
         if (scope) return { expectedTrack: 'full', expectedChain: executionCompletionPhases(scope) };
@@ -90,16 +103,24 @@ export function resolveChangeUnitExpectedExecution(
   return { expectedTrack: track, expectedChain: featurePhasesFromWorkflow(workflow, track) };
 }
 
-function scopedCompletionRunId(projectRoot: string, feature: string, chain?: string[]): string | undefined {
+/**
+ * 完成原件所属 run 的 id。D1：feature 载体**没有** run（返回 null 而不是放弃）——
+ * `undefined` = 「没找到范围载体」，`null` = 「找到了，但它是 feature 载体」。
+ */
+function scopedCompletionRunId(projectRoot: string, feature: string, chain?: string[]): string | null | undefined {
   const phase = chain?.at(-1);
   const runId = phase ? resolvePhaseRunIds(projectRoot, feature, [phase]).runIds[phase] : undefined;
-  return runId && loadEffectiveExecutionScope(projectRoot, feature, runId) ? runId : undefined;
+  if (runId && loadEffectiveExecutionScope(projectRoot, feature, runId)) return runId;
+  return loadEffectiveExecutionScope(projectRoot, feature) ? null : undefined;
 }
 
 export function readCompletedFeatureDesign(projectRoot: string, feature: string, completion: ChangeUnitCompletionObservation) {
   let inputs: ResolvedPhaseInputs | undefined;
-  const runId = completion.state === 'VALID' ? scopedCompletionRunId(projectRoot, feature, completion.expectedChain) : undefined;
-  if (runId) {
+  // D1：`undefined` = 没有范围载体；`null` = feature 载体（无 run）。CU 消费**不区分** scope_source，
+  // 所以这里认「有载体」而不是「有 run」。
+  const carrier = completion.state === 'VALID' ? scopedCompletionRunId(projectRoot, feature, completion.expectedChain) : undefined;
+  if (carrier !== undefined) {
+    const runId = carrier ?? undefined;
     const frameworkRoot = inferRepoLayout(projectRoot).frameworkRoot;
     const entry = resolveCapabilityResolutionEntryInput({ projectRoot, frameworkRoot, feature: feature, phase: 'review', goalRunId: runId, featuresDir: relFeaturesDir(projectRoot) });
     inputs = resolveCapabilityInputs({ projectRoot, frameworkRoot, feature: feature, phase: 'review', track: 'full', ...entry }).inputs;
@@ -164,7 +185,7 @@ export function observeChangeUnitCompletion(
   });
   if (verdict.verdict === 'VALID') {
     try {
-      if (scopedCompletionRunId(projectRoot, featureId, expected.expectedChain)) {
+      if (scopedCompletionRunId(projectRoot, featureId, expected.expectedChain) !== undefined) {
         const { spec } = readCompletedFeatureDesign(projectRoot, featureId, { state: 'VALID', featureId, ...expected, reasons: [] });
         const projection = validateChangeUnitFeatureProjection(projectRoot, featureId, spec.contracts, spec.acceptance, !!spec.useCases, 'review', []);
         if (projection.issues.length) return { state: 'INVALID', featureId, ...expected, reasons: projection.issues.map(issue => issue.id + ': ' + issue.message) };

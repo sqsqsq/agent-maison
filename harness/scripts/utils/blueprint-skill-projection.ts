@@ -35,8 +35,12 @@ export interface BlueprintSkillProjection {
 /** Publish new design facts through P2's existing report field, never mutate the born scope. */
 export function designScopeRevisionChecks(ctx: CheckContext, checks: CheckResult[]): CheckResult[] {
   const subject = ctx.factsContext?.subject;
-  if (!subject || !('run_id' in subject) || !subject.run_id || !ctx.resolvedInputs || checks.some(check => check.status === 'FAIL')) return [];
-  const scope = loadEffectiveExecutionScope(ctx.projectRoot, ctx.feature, subject.run_id);
+  // D1 §6.4：无 run 不再直接放弃修订提议——feature 载体也要能发布新设计事实。
+  // 身份位按载体二分：run 载体取 `run_id`，feature 载体（`{ feature }`）走统一入口的 feature 分支。
+  if (!subject || !('feature' in subject) || !ctx.resolvedInputs || checks.some(check => check.status === 'FAIL')) return [];
+  const runId = 'run_id' in subject ? subject.run_id : undefined;
+  if ('run_id' in subject && !runId) return [];
+  const scope = loadEffectiveExecutionScope(ctx.projectRoot, ctx.feature, runId);
   if (!scope || scope.completion_target !== 'feature') return [];
   const kind = ctx.phase === 'spec' ? 'acceptance-context' : 'design-context';
   const inputId = ctx.phase === 'spec' ? 'acceptance' : 'contracts';
@@ -71,8 +75,10 @@ export function designScopeRevisionChecks(ctx: CheckContext, checks: CheckResult
   const next = resolveExecutionScope(proposal, workflow, acceptance,
     // requirement source (checker-side revision budget): the run's frozen manifest.requirement —
     // this checker only runs inside a real run, so the manifest is always the authority here.
-    collectResolvedScopeFacts(proposal, { projectRoot: ctx.projectRoot, feature: ctx.feature, frameworkRoot: ctx.frameworkRoot, currentRunId: subject.run_id,
-      requirement: loadGoalManifestFromRun(ctx.projectRoot, subject.run_id, { feature: ctx.feature }).requirement,
+    collectResolvedScopeFacts(proposal, { projectRoot: ctx.projectRoot, feature: ctx.feature, frameworkRoot: ctx.frameworkRoot, ...(runId ? { currentRunId: runId } : {}),
+      // requirement source：run 载体取冻结 manifest；feature 载体没有 run manifest，
+      // 需求文本留空（provenance 比对由出生冻结时做过，这里不编一份，见批次 2 教训 #15）。
+      requirement: runId ? loadGoalManifestFromRun(ctx.projectRoot, runId, { feature: ctx.feature }).requirement : undefined,
       // This budget always inherits the frozen scope impact; it never authors a new one.
       impactInherited: true }));
   if (findSubtractedRequiredObligations(scope, next).length) {

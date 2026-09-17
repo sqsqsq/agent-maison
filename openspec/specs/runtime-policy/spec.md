@@ -161,7 +161,7 @@ feature.yaml.execution_scope MUST 仅为运行前候选。完整 Feature 交付 
 
 合法范围修订 MUST 在同一 run 内追加 scope_revised 完成，MUST NOT 封卷、MUST NOT 释放 owner/锁、MUST NOT 生成后继；出生记录 MUST NOT 被改写，预算与失败历史 MUST NOT 被清空。successor 只保留给失败修复型 supersede、用户显式改需求与 creation-incomplete 修复。未受影响证据只在 freshness/closure 校验通过后复用。
 
-新协议证据策略 MUST 在有效范围内求解，strict/balanced 继续按显式配置，模式不自动降档；未知输入先补足，本次无 testing 不要求 testing trace。已有有效负面结论与真实控制约束仍有效。MUST NOT 新建 execution-scope.json、第二 run 目录、场外状态或平行完成协议。
+新协议证据策略 MUST 在有效范围内求解，strict/balanced 继续按显式配置，模式不自动降档；未知输入先补足，本次无 testing 不要求 testing trace。已有有效负面结论与真实控制约束仍有效。MUST NOT 新建第二 run 目录、场外状态或平行完成协议。feature 级冻结记录（`<features_dir>/<feature>/execution-scope.json`）是 P8 裁决的**第二载体**，MUST 由机器单 writer 写入，MUST NOT 混入 feature.yaml。
 
 #### Scenario: Device failure preserves responsibility
 - **WHEN** 当前 device-evidence 为 required 但设备离线

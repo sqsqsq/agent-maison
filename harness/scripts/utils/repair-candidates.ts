@@ -905,12 +905,12 @@ export interface ScopeRevisionInputContext {
   projectRoot: string;
   frameworkRoot: string;
   feature: string;
-  /** 缺省取 MAISON_GOAL_RUN_ID；无 run（普通 harness 调用）→ 不产出。 */
+  /** 缺省取 MAISON_GOAL_RUN_ID；无 run（交互路径）时由统一入口读 feature 冻结记录。 */
   runId?: string;
 }
 
 /**
- * 由已归属候选生成一条范围修订输入；无合格候选、无 run、无有效范围或无可核验绑定时返回 null。
+ * 由已归属候选生成一条范围修订输入；无合格候选、无有效范围或无可核验绑定时返回 null。
  *
  * 幂等：提议里的设计事实按 id（`<kind>:<candidate.id>`）去重，全部已在有效范围内 → 返回 null，
  * 重跑同一阶段不会反复产出同一条提议。
@@ -925,12 +925,14 @@ export function scopeRevisionInputFromRepairCandidates(
     && candidate.files.length > 0);
   if (!owned.length) return null;
   const runId = ctx.runId ?? process.env.MAISON_GOAL_RUN_ID?.trim();
-  if (!runId) return null;
   /* eslint-disable @typescript-eslint/no-require-imports */
   const { loadEffectiveExecutionScope } = require('./goal-run-creation') as typeof import('./goal-run-creation');
   const { OBLIGATION_PROVIDERS } = require('./execution-scope') as typeof import('./execution-scope');
   const { resolveCapabilityInputs } = require('./capability-resolution') as typeof import('./capability-resolution');
   /* eslint-enable @typescript-eslint/no-require-imports */
+  // 第五轮必修 1：无 run 时**不能**直接返回 null——那样 D0.3 的修订触发在交互路径上整条失效
+  //（无 run 出口读到的提案永远是空）。统一入口自己按载体选来源：有 run 读 run 的有效范围，
+  // 无 run 读 feature 冻结记录；两者皆无才不产提议。不新增第二套校验。
   const scope = loadEffectiveExecutionScope(ctx.projectRoot, ctx.feature, runId);
   if (!scope) return null;
   // 责任阶段取自**本 run 的有效范围**：同一 provider 家族里已有义务的 owner_phase 就是这一轮

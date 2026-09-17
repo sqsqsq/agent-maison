@@ -102,6 +102,50 @@ export interface GitDiffOpts {
  *
  * 若传入非 working 的 baseRef 不存在，再失败则视为空初始库，只比较 HEAD vs 工作区。
  */
+/**
+ * D1 §6.4 G5：diff 基线的**统一来源选择**（三个消费方——check-coding、review 的施工输入分支、
+ * UI scope 门——原位换成它，不再各自直调 `resolveGoalRunBaseline`）。
+ *
+ * 三态（plan §6.4 G5 表，逐条对着既有代码事实写的）：
+ *  · 有 run                          → `resolveGoalRunBaseline` 原样，一行不改；
+ *  · 无 run 且未设 `HARNESS_DIFF_BASE_REF`，或值就是 `'working'`
+ *                                    → 走 `normalizeDiffBaseRef` 的既有归一（`HEAD` + 工作区语义），
+ *                                      **不 FAIL**——既有非 goal 消费者本来就是「与工作区比」；
+ *  · 无 run 且是显式 commit-ish      → 原义透传，可达性由 `diffChangedFilesWithStatus` 的
+ *                                      `rev-parse --verify` 照旧判；
+ *  · 无 run、显式值但 rev-parse 不通过 → `available:false`，只有这一种才 FAIL。
+ */
+export type EffectiveDiffBaseline =
+  | { available: true; baseSha: string; source: 'run_base_sha' | 'legacy_coding_base_sha' | 'working_tree' }
+  | { available: false; reason: string };
+
+export function resolveEffectiveDiffBaseline(projectRoot: string, feature: string, runId?: string): EffectiveDiffBaseline {
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const { resolveGoalRunBaseline } = require('./goal-run-baseline') as typeof import('./goal-run-baseline');
+  const { resolveHarnessDiffBaseRef } = require('./phase-state') as typeof import('./phase-state');
+  /* eslint-enable @typescript-eslint/no-require-imports */
+  // 有 run 时**第一件事**就是交给 goal 基线 SSOT——它不可用即 FAIL，绝不退化成工作区比较。
+  if (runId?.trim()) return resolveGoalRunBaseline(projectRoot, feature, runId.trim());
+  const normalized = normalizeDiffBaseRef(resolveHarnessDiffBaseRef());
+  if (normalized.workingOnly) return { available: true, baseSha: normalized.baseRef, source: 'working_tree' };
+  const verify = spawnSync('git', ['rev-parse', '--verify', `${normalized.baseRef}^{commit}`], { cwd: projectRoot, encoding: 'utf-8', shell: false });
+  if (verify.status !== 0) {
+    return { available: false, reason: `HARNESS_DIFF_BASE_REF 指定的基线不可达（不存在的 commit）：${normalized.baseRef}` };
+  }
+  return { available: true, baseSha: normalized.baseRef, source: 'run_base_sha' };
+}
+
+/**
+ * baseRef 归一的**唯一实现**：空串 / `'working'` → `HEAD` + 工作区语义（与 `git status` 一致），
+ * 其余原样。`diffChangedFiles` 与 `diffChangedFilesWithStatus` 共用它——D1 的无 run 基线
+ * （§6.4 G5）也复用同一条归一，不自己发明默认值。
+ */
+export function normalizeDiffBaseRef(baseRef?: string): { baseRef: string; workingOnly: boolean; fallback: boolean } {
+  const raw = (baseRef ?? '').trim();
+  if (!raw || raw === 'working') return { baseRef: 'HEAD', workingOnly: true, fallback: true };
+  return { baseRef: raw, workingOnly: false, fallback: false };
+}
+
 export function diffChangedFiles(opts: GitDiffOpts): GitDiffResult {
   const cwd = opts.projectRoot;
   const pathspecs = opts.pathspecs ?? [];
@@ -127,16 +171,10 @@ export function diffChangedFiles(opts: GitDiffOpts): GitDiffResult {
   }
 
   // 解析 baseRef：显式传入优先；未传入时默认 working（与「git status / 本地改动」感知一致）
-  let baseRef = (opts.baseRef ?? '').trim();
-  let baseIsFallback = false;
-  if (!baseRef) {
-    baseRef = 'working';
-    baseIsFallback = true;
-  }
-  const workingOnly = baseRef === 'working';
-  if (workingOnly) {
-    baseRef = 'HEAD';
-  }
+  const normalized = normalizeDiffBaseRef(opts.baseRef);
+  let baseRef = normalized.baseRef;
+  let baseIsFallback = normalized.fallback;
+  const workingOnly = normalized.workingOnly;
   if (!workingOnly) {
     // `^{commit}` 后缀是关键（codex review 采纳）：裸 `git rev-parse --verify <40位hex>`
     // 只校验字符串**格式**合法，即便对象在仓库里根本不存在也会 exit 0（实测坐实）——
@@ -289,14 +327,16 @@ function parseNameStatusZ(stdout: Buffer): StatusDiffEntry[] {
 
 export function diffChangedFilesWithStatus(opts: {
   projectRoot: string;
-  /** 必须是真实存在的 commit（如 runner 锚定的 coding_base_sha）——不存在即 executed=false */
+  /**
+   * 真实存在的 commit（如 runner 锚定的 coding_base_sha）——不存在即 executed=false。
+   * 空串 / `'working'` 与 `diffChangedFiles` **同义**：经 `normalizeDiffBaseRef` 归一为 `HEAD`
+   * 的工作区比较（本函数的 `git diff <base>` 本来就是 base ↔ worktree，再补 untracked）。
+   * 两处归一共用同一个函数，不各写一份。
+   */
   baseRef: string;
 }): StatusDiffResult {
   const cwd = opts.projectRoot;
-  const baseRef = opts.baseRef.trim();
-  if (!baseRef) {
-    return { executed: false, baseRef: '', entries: [], error: 'baseRef 为空' };
-  }
+  const baseRef = normalizeDiffBaseRef(opts.baseRef).baseRef;
   const probe = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], {
     cwd, encoding: 'utf-8', shell: false,
   });

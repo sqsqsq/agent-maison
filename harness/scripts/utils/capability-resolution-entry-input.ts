@@ -8,7 +8,8 @@ import type { FactsInvocationContext } from './context-facts';
 import { loadGoalManifestFromRun } from './goal-manifest';
 import * as fs from 'fs';
 import * as path from 'path';
-import { loadEffectiveExecutionScope } from './goal-run-creation';
+import { resolveEffectiveScopeSource } from './goal-run-creation';
+import { executionScopeFingerprint } from './execution-scope';
 import { loadFeatureContracts, phaseContractIndex, loadArtifactInventory } from './skill-contract';
 import { resolveFactsAbsPath, factsBaselineFingerprint } from './context-facts';
 import { parseContextExploration } from './context-exploration';
@@ -20,7 +21,7 @@ import { execFileSync } from 'child_process';
 import * as crypto from 'crypto';
 import { stableStringify } from './phase-evidence-manifest';
 import { readRunBoundContracts } from './capability-resolution';
-import { resolveGoalRunBaseline } from './goal-run-baseline';
+import { resolveEffectiveDiffBaseline } from './git-diff';
 import { diffChangedFilesWithStatus } from './git-diff';
 
 /** Revision-trigger kinds: historical evidence for why a revision happened, never a current target. */
@@ -222,14 +223,19 @@ export function resolveCapabilityResolutionEntryInput(
   let requirement: string | undefined;
   let requirementSourceFiles: string[] | undefined;
   const goalRunId = options.goalRunId?.trim();
-  if (goalRunId) {
-    const manifest = loadGoalManifestFromRun(options.projectRoot, goalRunId, {
-      feature: options.feature,
-      featuresDir: options.featuresDir,
-    });
-    requirement = manifest.requirement?.trim() || undefined;
-    requirementSourceFiles = manifest.requirement_source_files;
-    const scope = loadEffectiveExecutionScope(options.projectRoot, options.feature, goalRunId);
+  // D1 §6.4：外层条件从「有 run」放开为「有 run 或有 feature 冻结记录」。来源由**统一入口**选，
+  // 这里不自己判断 run/feature。requirement 只有 run 载体才有（它来自 manifest）。
+  const authority = resolveEffectiveScopeSource(options.projectRoot, options.feature, goalRunId);
+  if (goalRunId || authority?.source === 'feature') {
+    if (goalRunId) {
+      const manifest = loadGoalManifestFromRun(options.projectRoot, goalRunId, {
+        feature: options.feature,
+        featuresDir: options.featuresDir,
+      });
+      requirement = manifest.requirement?.trim() || undefined;
+      requirementSourceFiles = manifest.requirement_source_files;
+    }
+    const scope = authority?.scope;
     if (scope) {
       const frameworkRoot = options.frameworkRoot ?? path.resolve(__dirname, '../../..');
       const indexed = phaseContractIndex(loadFeatureContracts(frameworkRoot)).get(options.phase);
@@ -253,14 +259,18 @@ export function resolveCapabilityResolutionEntryInput(
           .map(dep => path.relative(options.projectRoot, dep.path).replace(/\\/g, '/')))))];
       if (options.phase === 'review' && scope.obligations.some(obligation => obligation.kind === 'implementation' && obligation.applicability === 'required')) {
         const contracts = readRunBoundContracts(options.projectRoot, frameworkRoot, options.feature, goalRunId);
-        const baseline = resolveGoalRunBaseline(options.projectRoot, options.feature, goalRunId);
+        // G5：基线走统一来源选择（无 run 时是既有 HARNESS_DIFF_BASE_REF 三态，不是 FAIL）
+        const baseline = resolveEffectiveDiffBaseline(options.projectRoot, options.feature, goalRunId);
         if (!baseline.available) throw new Error(baseline.reason);
         const diff = diffChangedFilesWithStatus({ projectRoot: options.projectRoot, baseRef: baseline.baseSha });
         if (!diff.executed) throw new Error(diff.error ?? 'review diff unavailable');
         for (const entry of diff.entries) if (entry.status !== 'D' && contracts.files?.includes(entry.path) && !sourcePaths.includes(entry.path)) sourcePaths.push(entry.path);
       }
       const factsContext: FactsInvocationContext = {
-        subject: { feature: options.feature, run_id: goalRunId }, first_phase: scope.phase_chain[0],
+        // G3：facts 身份位按载体二分——run 载体绑 run_id，feature 载体绑 feature（指纹在 facts 侧校验）。
+        subject: goalRunId ? { feature: options.feature, run_id: goalRunId } : { feature: options.feature },
+        ...(goalRunId ? {} : { frozen_scope_fingerprint: executionScopeFingerprint(scope) }),
+        first_phase: scope.phase_chain[0],
         source_paths: sourcePaths, required_input_snippets: [],
       };
       const factsPath = resolveFactsAbsPath(options.projectRoot, options.feature);

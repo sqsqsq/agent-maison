@@ -11,7 +11,7 @@
 - **有人在场**：自动执行已授权工作；出现必须由人决定或补充的信息时，立即列出等待项并询问。
 - **无人值守**：自动执行已授权工作；把必须由人处理的事项停放为等待项，并确保 run 可脱离当前会话继续或稍后恢复。
 
-明确说“我会看着、需要时问我”按有人在场处理；明确说“我先离开、后台继续、`--detach`”按无人值守处理，不重复确认。**当前存在对话不等于用户选择了有人在场**。意图不明确时必须使用 [confirmation-registry.yaml](../../reference/confirmation-registry.yaml) 的 `goal.run_mode`，只问“有人在场 / 无人值守”，不向用户暴露 `in-session`、`headless`、tier 等内部术语。选择有人在场后只走 `goal-mode-entry --prepare-scope` → `--prepare-run` → attach（后两次调用都显式传 `--run-mode attended`，`--prepare-scope` 不传也不接受该参数）；选择无人值守后只走 `goal-runner --detach`。**候选生成是通用前置步骤**，与需求是否涉及 UI 无关。
+明确说“我会看着、需要时问我”按有人在场处理；明确说“我先离开、后台继续、`--detach`”按无人值守处理，不重复确认。**当前存在对话不等于用户选择了有人在场**。意图不明确时必须使用 [confirmation-registry.yaml](../../reference/confirmation-registry.yaml) 的 `goal.run_mode`，只问“有人在场 / 无人值守”，不向用户暴露 `in-session`、`headless`、tier 等内部术语。选择有人在场后先走 `goal-mode-entry --prepare-scope` 生成范围候选，然后**两个载体二选一**：① 不建 run 的交互完整交付——直接 `harness-runner --phase <p> --feature <f>` 逐阶段跑，首次调用由机器把范围冻结进 `<features_dir>/<feature>/execution-scope.json`；② 需要 run 级预算 / 恢复时走 `--prepare-run` → attach（两次调用都显式传 `--run-mode attended`，`--prepare-scope` 不传也不接受该参数），run 以**转交时 feature 的有效范围**出生。权威优先级：本次关联的 run > feature 冻结记录；说不清时工具明确报错，不替你选边。选择无人值守后只走 `goal-runner --detach`。**候选生成是通用前置步骤**，与需求是否涉及 UI 无关。
 
 ## 输入
 

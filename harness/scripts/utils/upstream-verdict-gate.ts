@@ -35,13 +35,13 @@ export interface UpstreamChainResolution {
 }
 
 export function resolveUpstreamPhaseChain(projectRoot: string, feature: string, runId?: string): UpstreamChainResolution {
-  if (runId) {
-    try {
-      const { loadEffectiveExecutionScope } = require('./goal-run-creation') as typeof import('./goal-run-creation');
-      const scope = loadEffectiveExecutionScope(projectRoot, feature, runId);
-      if (scope) return { chain: scope.phase_chain, degraded: false };
-    } catch (error) { return { chain: [], degraded: true, degradedReason: String(error) }; }
-  }
+  // D1 §6.4 G4：条件从「有 run」放开为「有 run 或有 feature 冻结记录」——统一入口自己选来源；
+  // 两者皆无时才落到下面既有的 workflow 默认链回落（那条分支一行不动）。
+  try {
+    const { loadEffectiveExecutionScope } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+    const scope = loadEffectiveExecutionScope(projectRoot, feature, runId);
+    if (scope) return { chain: scope.phase_chain, degraded: false };
+  } catch (error) { return { chain: [], degraded: true, degradedReason: String(error) }; }
   try {
     /* eslint-disable @typescript-eslint/no-require-imports */
     const { loadFrameworkConfig } = require('../../config') as typeof import('../../config');

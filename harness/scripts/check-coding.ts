@@ -33,7 +33,8 @@ import { parseScope, describeScopeError } from './utils/scope-parser';
 import { scanNamedBusinessHandler } from './utils/named-handler';
 import { diffChangedFiles, diffChangedFilesWithStatus, analyzeDiffStaleness } from './utils/git-diff';
 import { readRunBoundContracts } from './utils/capability-resolution';
-import { resolveGoalRunBaseline } from './utils/goal-run-baseline';
+import { resolveEffectiveDiffBaseline } from './utils/git-diff';
+import { resolveEffectiveScopeSource } from './utils/goal-run-creation';
 import { resolveContractFileReferences } from './utils/contract-reference-closure';
 import { runUiDiffWithinDeclaredFiles } from './utils/ui-scope-gate';
 import { classifyChangedFiles, layerDirPrefixes, resolveModulePathPrefixes } from './utils/diff-scope';
@@ -321,13 +322,17 @@ function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
   if (ctx.resolvedInputs) {
     const result = (status: 'PASS' | 'FAIL', details: string, files?: string[]): CheckResult[] => [{ id: 'diff_within_scope', category: 'traceability', severity: 'BLOCKER', status, description: '实现须符合已绑定施工契约的模块与写集', details, affected_files: files, ...(status === 'FAIL' ? { failure_kind: 'scope_violation', suggestion: '回 plan/蓝图责任方补齐或重签设计；不要在 coding 扩大 contracts.files。' } : {}) }];
     const runId = process.env.MAISON_GOAL_RUN_ID?.trim();
-    if (!runId) return result('FAIL', '现代 Feature coding 缺少真实 run 身份');
+    // D1 §6.4 G1：判据从「有 run 身份」改为「有**有效范围权威**」——run 或 feature 冻结记录。
+    // 两者都没有才是「说不清本次施工由哪份设计授权」，那时才 FAIL。
+    const authority = resolveEffectiveScopeSource(ctx.projectRoot, ctx.feature, runId);
+    if (!authority) return result('FAIL', '现代 Feature coding 缺少有效范围权威（既无 run 身份，也无 feature 冻结记录）');
     try {
       const contracts = readRunBoundContracts(ctx.projectRoot, ctx.frameworkRoot, ctx.feature, runId);
       if (!contracts.files?.length || !contracts.modules?.length) return result('FAIL', '施工契约缺少 files/modules');
       const closure = resolveContractFileReferences(ctx.projectRoot, contracts);
       if (closure.invalid_paths.length) return result('FAIL', '施工契约包含非法文件引用');
-      const baseline = resolveGoalRunBaseline(ctx.projectRoot, ctx.feature, runId);
+      // G5：基线走统一来源选择（有 run → run 基线；无 run → 既有 HARNESS_DIFF_BASE_REF 三态）
+      const baseline = resolveEffectiveDiffBaseline(ctx.projectRoot, ctx.feature, runId);
       if (!baseline.available) return result('FAIL', baseline.reason);
       const diff = diffChangedFilesWithStatus({ projectRoot: ctx.projectRoot, baseRef: baseline.baseSha });
       if (!diff.executed) return result('FAIL', diff.error ?? '无法读取 run baseline diff');
@@ -336,7 +341,7 @@ function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
       const classified = classifyChangedFiles(files, modules.allowedPrefixes, layerDirPrefixes(ctx.projectRoot));
       const violations = [...classified.violations, ...classified.inScopeHits.filter(file => !closure.authorized_files.includes(file))];
       return violations.length ? result('FAIL', '本次实现超出冻结模块或文件授权：\n' + violations.join('\n'), violations)
-        : result('PASS', `已核验 run baseline、绑定契约与 ${files.length} 个变更路径。`);
+        : result('PASS', `已核验 ${authority.source === 'run' ? 'run' : 'feature'} baseline、绑定契约与 ${files.length} 个变更路径。`);
     } catch (error) { return result('FAIL', String(error)); }
   }
   const designResolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'plan.md');
@@ -485,7 +490,13 @@ function checkUiDiffWithinDeclaredFiles(ctx: CheckContext): CheckResult[] {
   // round 19 P1：goal run 内本门**永不 SKIP**（任何不可判都是 FAIL）；唯一合法 SKIP =
   // 非 goal 起跑（无 run 级锚，设计内），降 MINOR 使其不进 critical-skip 判定；
   // 除此之外出现的 BLOCKER 级 SKIP（如未来回归）由 CODING_CRITICAL_SKIP_IDS 拦 claim done。
-  const designedSkip = r.status === 'SKIP' && runId === null;
+  //
+  // D1 §6.4 G6：判据改为**按本门返回的 SKIP 语义**——本门只在「既无 run 也无 feature 冻结
+  // 记录」时才返回设计内 SKIP。有 feature 权威却 SKIP 说明本门没按新语义执行，那是回归，
+  // 必须留在 BLOCKER，不能因为 `runId === null` 就降成 MINOR。
+  const designedSkip = r.status === 'SKIP'
+    && runId === null
+    && !resolveEffectiveScopeSource(ctx.projectRoot, ctx.feature, undefined);
   return [{
     id: 'ui_diff_within_declared_files',
     category: 'traceability',

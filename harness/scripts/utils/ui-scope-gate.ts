@@ -27,7 +27,8 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
-import { resolveGoalRunBaseline } from './goal-run-baseline';
+import { resolveEffectiveDiffBaseline } from './git-diff';
+import { resolveEffectiveScopeSource } from './goal-run-creation';
 import { readRunBoundContracts, type ResolvedPhaseInputs } from './capability-resolution';
 import {
   loadPhaseEvidenceManifest,
@@ -118,9 +119,16 @@ export function uiClassificationTargets(e: StatusDiffEntry): Array<{ rel: string
 }
 
 export function runUiDiffWithinDeclaredFiles(input: UiScopeGateInput): UiScopeGateResult {
-  const { projectRoot, feature, runId } = input;
+  const { projectRoot, feature } = input;
+  // 本门的 runId 形状是 `string | null`（无 run 显式写 null）；统一入口与基线取 `string | undefined`。
+  const runId = input.runId ?? undefined;
 
-  if (!runId) {
+  // D1 §6.4 G6：**现代 feature 权威在场时不得再走这条历史 SKIP**。
+  // 条件从「无 run」收窄为「既无 run、也无 feature 冻结记录」——旧 normal 模式（两者皆无）
+  // 保持原文 SKIP 不动；有 feature 冻结记录时继续执行，白名单取有效范围绑定的 contracts.files，
+  // 基线走 G5 的统一来源选择。
+  const authority = resolveEffectiveScopeSource(projectRoot, feature, runId);
+  if (!runId && !authority) {
     return {
       status: 'SKIP',
       details:
@@ -134,13 +142,17 @@ export function runUiDiffWithinDeclaredFiles(input: UiScopeGateInput): UiScopeGa
   // 注意顺序（round 19 P1）：**不做任何 live 文件前置探测**（曾按 live ui-spec 存在性
   // 决定适用面——agent 删掉 ui-spec 即可让门禁 SKIP，绕过成本为零）。适用面只由
   // 「diff 里有没有 UI 文件变更」决定：没有 → PASS；有 → 必须过冻结白名单。
-  const base = resolveGoalRunBaseline(projectRoot, feature, runId);
+  const base = resolveEffectiveDiffBaseline(projectRoot, feature, runId);
   if (!base.available) {
     return {
       status: 'FAIL',
       failureKind: 'ui_scope_base_missing',
-      details: `本 run（${runId}）无可信 run_base_sha：${base.reason}。`,
-      suggestion: '请从 goal-runner 创建带出生基线的新 run；现代 run 不回退 env、trace 或 legacy coding-base。',
+      details: runId
+        ? `本 run（${runId}）无可信 run_base_sha：${base.reason}。`
+        : `无 run 路径的 diff 基线不可用：${base.reason}。`,
+      suggestion: runId
+        ? '请从 goal-runner 创建带出生基线的新 run；现代 run 不回退 env、trace 或 legacy coding-base。'
+        : '修正 HARNESS_DIFF_BASE_REF（指向真实存在的 commit），或不设它按工作区比较。',
     };
   }
 
@@ -196,7 +208,7 @@ export function runUiDiffWithinDeclaredFiles(input: UiScopeGateInput): UiScopeGa
       const contracts = readRunBoundContracts(projectRoot, input.frameworkRoot!, feature, runId);
       const declared = new Set((contracts.files ?? []).map(normalizeRel));
       const violations = [...uiChanged].filter(file => !declared.has(file));
-      return { status: violations.length ? 'FAIL' : 'PASS', details: `已对照 run 绑定的 contracts.files 核验 ${uiChanged.size} 个 UI 变更；越界 ${violations.length} 个。`, affectedFiles: violations,
+      return { status: violations.length ? 'FAIL' : 'PASS', details: `已对照${authority?.source === 'feature' ? ' feature 冻结范围' : ' run'}绑定的 contracts.files 核验 ${uiChanged.size} 个 UI 变更；越界 ${violations.length} 个。`, affectedFiles: violations,
         ...(violations.length ? { failureKind: 'ui_scope_violation', suggestion: '回 plan/蓝图重新裁决写集，由责任方在本 run 内追加范围修订，不能在 coding 扩大 live contracts。' } : {}) };
     } catch (error) { return { status: 'FAIL', failureKind: 'ui_scope_frozen_contract_missing', details: String(error), suggestion: '恢复绑定契约或回设计责任方重签施工范围。' }; }
   }

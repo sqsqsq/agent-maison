@@ -447,7 +447,8 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
   let workflow = resolveWorkflowSpec(options.projectRoot, {
     frameworkRoot: options.frameworkRoot,
   });
-  const scope = options.runId ? loadEffectiveExecutionScope(options.projectRoot, options.feature, options.runId) : undefined;
+  // D1 §6.4：删掉「有 runId 才读范围」的三元——统一入口在无 run 时读 feature 冻结记录。
+  const scope = loadEffectiveExecutionScope(options.projectRoot, options.feature, options.runId);
   const run = options.runId && fs.existsSync(featureFilePath(options.projectRoot, options.feature, 'goal-runs/' + options.runId + '/manifest.json')) ? loadGoalManifestFromRun(options.projectRoot, options.runId, { feature: options.feature }) : undefined;
   if (run) workflow = workflowForExistingRun(workflow, run, options.frameworkRoot ?? path.resolve(__dirname, '../../..'));
   const track = scope ? 'full' : resolveFeatureTrack(loadFeatureTrackDecl(options.projectRoot, options.feature, options.runId));

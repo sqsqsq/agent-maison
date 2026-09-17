@@ -9,7 +9,8 @@ import { collectDeviceScopeIds, collectUnitScopeIds, hasUnknownPerformanceLayer 
 export type ObligationApplicability = 'required' | 'not_applicable' | 'unknown';
 export interface ScopeEvidenceRef {
   phase: string;
-  run_id: string;
+  /** D1 §4.2.4：feature 载体（无 run）没有 run 身份——**不伪造**，此处缺省。 */
+  run_id?: string;
   evidence_manifest_aggregate: string;
 }
 export type EvidenceOrInputRef = InputBinding | ScopeEvidenceRef;
@@ -148,7 +149,7 @@ export function hasNewSourcedFact(previous: ExecutionScope, facts: ExecutionScop
   const carried = [...previous.obligations.flatMap(obligation => obligation.basis), ...(previous.request_impact?.basis ?? [])];
   return facts.some(fact =>
     fact.basis.some(binding => !carried.some(prior => same(prior, binding)))
-    || (fact.satisfied_by ?? []).some(ref => 'run_id' in ref && ref.run_id === currentRunId
+    || (fact.satisfied_by ?? []).some(ref => 'evidence_manifest_aggregate' in ref && ref.run_id === currentRunId
       && !previous.obligations.some(obligation => obligation.id === fact.id && obligation.satisfied_by?.some(prior => same(prior, ref)))));
 }
 
@@ -173,7 +174,7 @@ export const EXECUTION_SOURCE_KINDS: ReadonlySet<string> = new Set([
 /** Birth-only code observations; current outputs remain bound by phase evidence. */
 export function isExecutionSourceBasis(projectRoot: string, scope: ExecutionScope, obligation: ExecutionObligation, dependency: ResolutionDependency): boolean {
   return isInsideProjectRoot(projectRoot, dependency.path) && dependency.role === 'derive'
-    && (scope.phase_chain.includes(obligation.owner_phase) || !!obligation.satisfied_by?.some(proof => 'run_id' in proof))
+    && (scope.phase_chain.includes(obligation.owner_phase) || !!obligation.satisfied_by?.some(proof => 'evidence_manifest_aggregate' in proof))
     && EXECUTION_SOURCE_KINDS.has(obligation.kind);
 }
 
@@ -209,7 +210,7 @@ export function validateExecutionScope(value: unknown): ExecutionScope {
   for (const edge of scope.control_edges ?? []) {
     if (!edge.before || !edge.after || !Array.isArray(edge.basis) || !edge.basis.length) fail('控制前置记录非法');
     const after = scope.phase_chain.indexOf(edge.after), before = scope.phase_chain.indexOf(edge.before);
-    if (after >= 0 && (before >= after || (before < 0 && !scope.obligations.some(o => o.owner_phase === edge.before && o.satisfied_by?.some(ref => 'run_id' in ref && ref.phase === edge.before))))) fail('冻结范围违反真实控制顺序');
+    if (after >= 0 && (before >= after || (before < 0 && !scope.obligations.some(o => o.owner_phase === edge.before && o.satisfied_by?.some(ref => 'evidence_manifest_aggregate' in ref && ref.phase === edge.before))))) fail('冻结范围违反真实控制顺序');
   }
   return scope;
 }
@@ -448,7 +449,7 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
   }
   const edges = (input.control_edges ?? []).filter(edge => needed.has(edge.after));
   for (const edge of edges) if (!phases.has(edge.before) || !phases.has(edge.after) || !edge.basis.length) fail('控制边缺少合法阶段或真实依据');
-  for (const edge of edges) if (!needed.has(edge.before) && !obligations.some(o => o.owner_phase === edge.before && o.satisfied_by?.some(ref => 'run_id' in ref && ref.phase === edge.before))) fail(`真实控制前置尚未满足：${edge.before} → ${edge.after}`);
+  for (const edge of edges) if (!needed.has(edge.before) && !obligations.some(o => o.owner_phase === edge.before && o.satisfied_by?.some(ref => 'evidence_manifest_aggregate' in ref && ref.phase === edge.before))) fail(`真实控制前置尚未满足：${edge.before} → ${edge.after}`);
   for (const edge of edges) for (const obligation of obligations.filter(o => o.owner_phase === edge.after && o.applicability === 'required')) obligation.basis.push(...edge.basis);
   const defaults = [...new Set([...(workflow.auto_chain ?? []), ...phases.keys()])];
   const chain: string[] = [];
@@ -461,7 +462,7 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
   for (const phase of phases.keys()) {
     const obligationsForPhase = obligations.filter(o => o.owner_phase === phase && o.applicability === 'required');
     if (!chain.includes(phase) && obligationsForPhase.length && obligationsForPhase.every(o => o.satisfied_by?.length)) {
-      const refs = obligationsForPhase.flatMap(o => o.satisfied_by ?? []).filter((ref): ref is ScopeEvidenceRef => 'run_id' in ref);
+      const refs = obligationsForPhase.flatMap(o => o.satisfied_by ?? []).filter((ref): ref is ScopeEvidenceRef => 'evidence_manifest_aggregate' in ref);
       if (refs.length) reused.push({ phase, obligation_ids: obligationsForPhase.map(o => o.id), evidence_refs: refs });
     }
   }

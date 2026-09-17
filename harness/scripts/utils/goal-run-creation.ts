@@ -107,10 +107,10 @@ export function revokedPhasesByRevision(birth: ExecutionScope, events: readonly 
     const previous = index === 0 ? birth : revisions[index - 1].execution_scope;
     const phases = new Set<string>();
     for (const before of previous.obligations) {
-      const proof = (before.satisfied_by ?? []).filter(ref => 'run_id' in ref);
+      const proof = (before.satisfied_by ?? []).filter(ref => 'evidence_manifest_aggregate' in ref);
       if (!proof.length) continue;
       const after = revision.execution_scope.obligations.find(obligation => obligation.id === before.id);
-      const kept = (after?.satisfied_by ?? []).filter(ref => 'run_id' in ref);
+      const kept = (after?.satisfied_by ?? []).filter(ref => 'evidence_manifest_aggregate' in ref);
       // Only a duty left with NO phase evidence at all is revoked: dropping one of several proofs
       // while keeping another still leaves the duty satisfied, so its phase must not be re-run.
       if (!kept.length) phases.add(String(before.owner_phase));
@@ -144,10 +144,54 @@ export function eventsWithScopeRevocations(birth: ExecutionScope | undefined, ev
  * The ONE entry every runtime consumer uses. `loadFrozenExecutionScope` stays, but now means
  * strictly "read the birth scope" and is only for birth/identity checks.
  */
-export function loadEffectiveExecutionScope(projectRoot: string, feature: string, runId: string): ExecutionScope | undefined {
-  const birth = loadFrozenExecutionScope(projectRoot, feature, runId);
-  if (!birth) return undefined;
-  return applyScopeRevisions(birth, loadAuthoritativeRunEvents(projectRoot, feature, runId));
+/**
+ * D1.3 的**统一入口**：当前有效范围由这一个函数选来源，消费者不得自己判断 run / feature。
+ *
+ * `runId` 有值 → run 权威（出生范围 + `scope_revised` 事件）；无值 → feature 冻结记录
+ * （出生段 + `revisions[]`）。两者都无 → undefined，调用方按各自的既有回落处理。
+ *
+ * 载体来源需要被点名时（完成原件的 `scope_source`、报错文案）用 `resolveEffectiveScopeSource`，
+ * 它是同一段判定的详细返回形态——**不是第二条路径**。
+ */
+export function resolveEffectiveScopeSource(
+  projectRoot: string,
+  feature: string,
+  runId?: string,
+): { scope: ExecutionScope; source: 'run' | 'feature'; run_id: string | null } | undefined {
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const { readFeatureFrozenScope, featureEffectiveScope } = require('./feature-execution-scope') as typeof import('./feature-execution-scope');
+  /* eslint-enable @typescript-eslint/no-require-imports */
+  const record = readFeatureFrozenScope(projectRoot, feature);
+  if (runId?.trim()) {
+    const birth = loadFrozenExecutionScope(projectRoot, feature, runId);
+    if (!birth) {
+      // D1.3 第三行（第四轮阻断 3）：feature 记录声明**已转交给这个 run**，而该 run 的出生
+      // 范围不在——`undefined` 会让调用方（upstream gate 等）回落 workflow/track 默认链，
+      // 等于用一条与权威无关的链继续跑。这里必须明确报错。
+      if (record?.transferred_to === runId.trim()) {
+        throw new Error(`[execution-scope] feature 范围已转交给 run ${runId.trim()}，但该 run 的出生范围缺失或损坏——无法确定权威；恢复该 run 的记录，或按既有 correction / successor 路径重新确立权威`);
+      }
+      return undefined;
+    }
+    // D1.3：转交对账在**这一处**集中做——run 的出生范围指纹必须等于 feature 记录登记的
+    // 转交指纹。不等就是损坏（不是「run 内合法修订」——那只改有效范围，不改出生段）。
+    if (record?.transferred_to === runId
+      && record.transferred_scope_fingerprint
+      && record.transferred_scope_fingerprint !== executionScopeFingerprint(birth)) {
+      throw new Error(`[execution-scope] run ${runId} 的出生范围与 feature 记录登记的转交指纹失配：run 出生=${executionScopeFingerprint(birth).slice(0, 16)} feature 登记=${record.transferred_scope_fingerprint.slice(0, 16)}`);
+    }
+    return { scope: applyScopeRevisions(birth, loadAuthoritativeRunEvents(projectRoot, feature, runId)), source: 'run', run_id: runId };
+  }
+  if (!record) return undefined;
+  // 无 run 身份而记录声明已转交：权威在那个 run 上，这里不得返回 feature 范围。
+  if (record.transferred_to) {
+    throw new Error(`[execution-scope] feature 范围已转交给 run ${record.transferred_to}——本次调用没有 run 身份，无法确定权威；带上该 run 身份再跑`);
+  }
+  return { scope: featureEffectiveScope(record), source: 'feature', run_id: null };
+}
+
+export function loadEffectiveExecutionScope(projectRoot: string, feature: string, runId?: string): ExecutionScope | undefined {
+  return resolveEffectiveScopeSource(projectRoot, feature, runId)?.scope;
 }
 
 /**

@@ -57,7 +57,7 @@ todos:
       批次 3（D1，一至两笔）：新增 feature 级冻结记录与无 run 完成原件，统一有效范围入口按
       D1.3 优先级选来源，接线七个消费者，完成判定按 scope_source 选出生范围来源；
       转入 run 时以 feature 有效范围出生并登记 transferred_to。见 §6。
-    status: pending
+    status: completed
 ---
 
 # P8：轻量交互路径与 run 内范围修订
@@ -156,7 +156,7 @@ D1/D2 是已定裁决，不因批次实跑结果重新批准。
 ① 冻结 —— `ensureFeatureExecutionScopeFrozen` 从 harness-runner 已解析的 features 目录取绝对值并转成 `{ featuresDirAbs }` 传给每个 `featureFilePath`；
 ② 读取 —— `readFeatureFrozenScope` / `loadEffectiveExecutionScope` 的可选参数同形，缺省时才回落 `featuresDirPath(projectRoot)`；
 ③ 转交 —— `goal-mode-entry --prepare-run` 与 `goal-phase-runtime` 出生路径已各自持有 `featuresDir`（见 §3 问题 12 的两个入口），写 `transferred_to` 时按同一 `featuresDirAbs` 解析，禁止重新从 config 推；
-④ 完成验证 —— `verify-feature-completion` 现有 `featureFilePath` 调用点（`:913`、`:920`、`:973`）均未传 opts，D1 的 feature 载体分支必须与它们同源：要么整条链都不传（默认/config 两通道），要么同批把 opts 透传下去。**批次 3 实施第一步先跑一次「自定义 `featuresDirAbs` 下无 run 完成」夹具，确认四段一致**；若发现 verify 侧无法接收 opts，本 plan 的取舍是把第三通道的无 run 完成判定显式记为不支持并在文档写明，而不是让四段各自推路径。
+④ 完成验证 —— `verify-feature-completion` 现有 `featureFilePath` 调用点（`:913`、`:920`、`:973`）均未传 opts，D1 的 feature 载体分支必须与它们同源：要么整条链都不传（默认/config 两通道），要么同批把 opts 透传下去。**已核实（批次 3 实施第一步，结论见 §11）**：生产上不存在第三通道——harness-runner 的 features 目录取自 `resolvePaths().featuresDir`（`config.ts:1650`）与 `featuresDirPath`（`config.ts:1731-1733`）同源，`SpecLoader.featurePathOpts`（`spec-loader.ts:118-124`）只在构造值与配置值不同时才产出 `featuresDirAbs`（harness-runner 传的正是配置值，恒 undefined），而 `verifyFeatureCompletion` 的 options 不接受 `FeaturePathOptions`。因此四段天然同源；**自定义绝对 features 目录下的无 run 完成判定按本 plan 取舍记为不支持**（与 verify 侧现状一致），不为它单独铺传递链。
 
 **不用 `resolveFeatureArtifact`（`config.ts:1948`）**：该函数的职责是 canonical / legacy 双候选读回退，服务的是 `PHASE_SCOPED_ARTIFACTS`（`config.ts:1772-1780`）里有历史扁平形态的阶段产物。`execution-scope.json` 与 `completion/feature-completion.json` 是全新文件、从无 legacy 形态，走双候选只会引入一个永远不存在的回退路径。需求 D1.1 的「经 `featureFilePath` / `resolveFeatureArtifact` 解析」在本 plan 落为「经 `featureFilePath` 解析」，二者同源（`resolveFeatureArtifact` 的候选也由同一 `featureDirResolved` 产生），禁止硬编码这一条约束不变。
 
@@ -521,18 +521,19 @@ A 的已知改动面（批次 1 实施时**验证**、不再作为选型条件�
 2. 可核实的候选来源已点名（第二轮 review M2 给出，已逐行核实）：
    - `goal-run-lock.ts:10-14`（`FEATURE_LOCK_NAME='.feature.lock'`、`STALE_LOCK_MS`）、`:16-31`（`LockRecord` 带 `run_id` / `pid` / `hostname` / `updated_at` / `epoch`）、`:45-52`（`readLockRecord`）、`:54-72`（`isLockStale`：同机 pid 活着→永不 stale，跨机只看 TTL）；
    - `goal-run-control.ts:114-117`（`readRunControl(runDir, expectedRunId?)`，fencing epoch / owner）。
-   批次 3 实施第一步**先落一条读取实验**：读该 feature 的 `.feature.lock`，用 `readLockRecord` + `isLockStale` 判断是否存在活着的持柄者及其 `run_id`，再用 `readRunControl` 核该 run 的 owner。实验结论（可用性、误判面）写进实施记录，**在结论落地前不得声称已有识别机制**。
+   **实验结论：不成立（批次 3 实施第一步已做，详见 §11）**。`LockRecord.run_id` 是**可选**字段（`goal-run-lock.ts:22`）；`isLockStale`（`:54-72`）同机靠 pid（自带复用窗口）、跨机只看 90 分钟 TTL；且锁由 Goal runtime 获取（`goal-phase-runtime.ts:3900`），无身份的 harness 调用不参与那场竞争。它只能回答「是否可能有人正持有这个 feature」，**回答不了「本次调用关联哪个 run」**——因此按下面第 4 步收窄，**不声称已有识别机制**。
 3. **这条读取检查必须前置到「冻结 / 选择 feature 权威之前」**（M2 要求），即 §3 问题 2 的 `ensureFeatureExecutionScopeFrozen` 入口第一步：发现活着的持柄者 → 按 D1.3 第一行以该 run 为权威（或按第三行报错），**不得先冻结 feature 记录再补救**。
 4. 实验若证明锁记录不足以安全判定活性（残留锁 / 跨机 / pid 复用），则 D1.3 第一行的「本次关联的 run」**收窄为只认显式 `--goal-run-id` / `--run-id`**，并且**在收窄之下，读取检查发现任何非 stale 的 `.feature.lock` 记录时一律明确报错**（走 D1.3 第三行「不选边」），不静默走 feature 载体。
    **放弃的准确性（第一版的兜底依据已删除）**：第一版写「该情形下无身份调用本就拿不到 Feature 锁」——**这是错的**：`harness-runner.ts:370-372` 无 `--goal-run-id` 直接返回未绑定，Feature 锁由 `goal-phase-runtime.ts:3887-3899` 的 Goal runtime 获取，无身份 harness 调用**根本不参与那场锁竞争**。因此真正的保证只能是第 3 步的主动读取检查，而不是锁竞争。
    **实验失败不得自动授权两套有效范围并行**（M2 原话）：第 4 步的收窄以「发现活锁即报错」为代价换取单一权威，不以「走 feature 载体」为默认。验收改为 `D1 runless call under a live feature lock reports instead of choosing a side`。
 
-因此 D1.3 的统一入口签名是：
+因此 D1.3 的统一入口是（**批次 3 实施更正**：三元组落在新函数 `resolveEffectiveScopeSource` 上，`loadEffectiveExecutionScope` 保持返回 `ExecutionScope | undefined` 并成为它的取值投影——判定只有一份实现，理由见 §11 批次 3 的偏离记录）：
 
 ~~~ts
-loadEffectiveExecutionScope(projectRoot, feature, runId?: string): {
+resolveEffectiveScopeSource(projectRoot, feature, runId?: string): {
   scope: ExecutionScope; source: 'run' | 'feature'; run_id: string | null;
-}
+} | undefined;
+loadEffectiveExecutionScope(projectRoot, feature, runId?: string): ExecutionScope | undefined;
 ~~~
 
 `runId` 有值 → run 权威（出生范围 + `scope_revised` 事件）；无值 → feature 冻结记录（出生段 + `revisions[]`）；两者都无但存在阶段报告 → 抛错并列出已查来源与缺失项（D1.3 第三行）；两者都无且无阶段报告 → 调用方按 D1.2 首次冻结。
@@ -1439,7 +1440,7 @@ OpenSpec delta（批次 3）：
 | 无 run，harness-runner 三次调用完成 coding→review→ut → completion VALID、CU VALID；无 goal-runs 目录；无 spec/plan/testing 空报告 | `D1 runless interactive delivery reaches VALID completion` |
 | 同上，中途改候选删掉 testing 义务 → 下一阶段 BLOCKER 指向 stale/correction；冻结记录不变 | `D1 candidate drift blocks the next phase and leaves the frozen record intact` |
 | 同 feature 随后起 attended run → run 出生范围 = 转交时 feature 有效范围；不重算；feature 记录写入 `transferred_to` 与转交指纹 | `D1 goal run is born from the transferred feature effective scope` |
-| feature 记录先经一次合法修订（S0→S1）再转入 run → run 以 S1 出生，不判损坏；feature 的 S0 与修订历史保留 | `D1 transfer after a feature-level revision uses S1 and keeps history` |
+| feature 记录先经一次合法修订（S0→S1）再转入 run → run 以 S1 出生，不判损坏；feature 的 S0 与修订历史保留 | `D1 goal run is born from the transferred feature effective scope`（同一条用例内覆盖 S0→S1 后转入；第三轮必修 1 更正旧名） |
 | 转入 run 后发生 D2 合法修订 → 继续执行，不报冲突；feature 记录不改 | `D1 in-run revision after transfer is not a conflict` |
 | run 出生范围指纹与 feature 记录登记的转交指纹不同 → 明确报错，两个指纹与来源都在输出里 | `D1 transfer fingerprint mismatch reports both fingerprints` |
 | 只有 feature.yaml + 裸报告；冻结记录范围内容被非法改动、绑定失配或 revisions 链断裂 → INVALID | `D1 runless completion rejects bare reports and tampered frozen scope`（四个子断言；纯格式变化不作硬门禁） |
@@ -1449,7 +1450,7 @@ OpenSpec delta（批次 3）：
 | 同上：改契约外 UI 文件 → FAIL（BLOCKER，**不是** SKIP、**不是** MINOR） | `D1 runless ui scope gate blocks an undeclared ui file` |
 | 无 run 的 coding diff 基线经 G5 三态归一：未设 env / `HARNESS_DIFF_BASE_REF=working` → 与工作区比（**不 FAIL**）；显式 commit → 原义；显式值 rev-parse 不通过 → FAIL | `D1 runless diff baseline normalizes working and fails only on a bad explicit ref`（三个子断言，锁 §6.4 G5 三态表） |
 | 无身份调用遇到活着的 `.feature.lock` → 明确报错，不选边、不静默走 feature 载体 | `D1 runless call under a live feature lock reports instead of choosing a side`（§3 问题 12 第 4 步） |
-| 无 run 完成原件由普通闭环出口生成 | `D1 runless completion is generated at the normal phase closure exit` |
+| 无 run 完成原件由普通闭环出口生成 | **函数级** `D1 runless interactive delivery reaches VALID completion`（直接驱动两个出口共用的 `applyFeatureScopeRevisionsThenMaybeComplete`）＋ **CLI 级** `D1 three real runless harness-runner phase calls freeze once and stay run-free`（真实 CLI 走到阶段尾部）。**CLI 级「生成完成原件」这一步只在 `--sync-closure` 出口有真实用例**——理由与补法见 §11 批次 3 第二轮 |
 | 无 run 完成原件由 `--sync-closure` 出口生成（同一函数） | `D1 runless completion is generated at the sync-closure exit` |
 | D2.8 最后一行「D1 路径同场景」：feature 记录 revisions 追加一条，行为等价 | `D1 feature-level revision is behaviorally equivalent to scope_revised` |
 
@@ -2812,14 +2813,324 @@ git diff --check                    退出 0；25 个改动文件全 LF（CR=0�
 
 ### 批次 3（D1）
 
-（待填）
+#### 两项实施验证项（plan 指定「第一步先做」）——结果
 
-- 日期：
-- 提交：
-- 改动摘要：
-- 验证输出：
-- 与 plan 的偏差与放弃的准确性：
-- 未决项 / 交接：
+**① 第三通道 `featuresDirAbs` 的四段一致性（§3 问题 1 ④）——结论：生产上不存在第三通道，四段自然同源；无 run 完成判定在自定义 `featuresDirAbs` 下记为不支持。**
+
+逐段核实：
+- `harness-runner.ts:584-585` 的 features 目录取自 `resolvePaths(projectRoot, frameworkRoot).featuresDir`（`config.ts:1650`：`path.resolve(projectRoot, cfg.paths.features_dir)`），与 `featuresDirPath`（`config.ts:1731-1733`）**同源**；
+- `SpecLoader.featurePathOpts`（`spec-loader.ts:118-124`）只在构造参数与配置值**不同**时才返回 `{ featuresDirAbs }`，而 harness-runner 传的正是配置值 → 恒返回 `undefined`；
+- 全仓 `featuresDirAbs` 的生产写入点只有这一处（其余都在 `config.ts` 内部与单测），**没有任何生产调用方**会让四段之一走第三通道；
+- `verifyFeatureCompletion` 的 `VerifyCompletionOptions` 不接受 `FeaturePathOptions`，其 11 处 `featureFilePath` 调用均不传 opts。
+
+因此：D1 新增代码一律用 `featureFilePath`（可选 `featuresDirAbs` 只保留给单测夹具），与 verify 侧的默认/config 两通道**天然一致**；**自定义绝对 features 目录下的无 run 完成判定按 plan 的既定取舍记为不支持**（与 verify 侧现状相同，不为它单独铺一条传递链）。
+
+**② `.feature.lock` 的「无身份调用识别 active run」读取实验（§3 问题 12 第 2 步）——结论：不成立，按第 4 步收窄。**
+
+逐行核实（`goal-run-lock.ts`）：
+- `LockRecord.run_id` 是**可选**字段（`:22`）——锁存在不等于能说出是哪个 run；
+- `isLockStale`（`:54-72`）同机靠 `isPidAlive`（自带 pid 复用窗口，注释里已承认「在冻结威胁模型内接受」），**跨机只看 TTL**（`STALE_LOCK_MS` = 90 分钟）——跨机崩溃的持柄者会被判「活着」长达 90 分钟；
+- 锁本身由 Goal runtime 获取（`goal-phase-runtime.ts:3900`），**无身份的 harness 调用根本不参与那场锁竞争**（第一版写的「拿不到锁」兜底已在 plan 里更正）。
+
+所以这条读取**回答不了「本次调用关联的是哪个 run」**，只能回答「是否可能有人正持有这个 feature」。按 §3 问题 12 第 4 步收窄：**D1.3 第一行只认显式 run 身份**（`--goal-run-id` / `MAISON_GOAL_RUN_ID`）；`ensureFeatureExecutionScopeFrozen` 的第一步做这条读取检查，**发现任何非 stale 的 `.feature.lock` 一律明确报错**（D1.3 第三行「不选边」），不静默走 feature 载体。**不宣称已有 active run 发现机制。**
+
+#### §6.1 feature 级冻结记录 — 已落地
+
+新文件 `harness/scripts/utils/feature-execution-scope.ts`（批次 3 唯一新文件）：`FeatureFrozenScope` 类型、`readFeatureFrozenScope` / `validateFeatureFrozenScope` / `featureEffectiveScope` / `freezeFeatureExecutionScope` / `appendFeatureScopeRevision` / `registerFeatureScopeTransfer` / `detectLiveFeatureLock`。
+
+**复用而非另造**：
+- 修订链校验直接调 run 侧的 `loadScopeRevisions(revisions, birth)`——index 连续、指纹接续、可改字段边界、请求边界不变、required 义务不得删改，**一条判据都不重写**；
+- `allowed_fields` 用 run 侧**同一个常量** `SCOPE_REVISION_FIELDS`；
+- 有效范围用 run 侧**同一个** `applyScopeRevisions`；
+- 路径一律 `featureFilePath(..., 'execution-scope.json')`，与 `feature.yaml` 并列，**不写进 feature.yaml**；
+- 写入口只有两个（首次冻结、追加修订）＋ 一个转交登记，均在本文件内（单 writer）。
+
+#### §6.2 冻结时机与不重算 — 已落地
+
+`ensureFeatureExecutionScopeFrozen({ projectRoot, frameworkRoot, feature, featuresDirAbs?, runId? })` 接在 `harness-runner.ts` 的 `if (!phaseIsGlobal) { try {` 块第一步（`resolveCapabilityResolutionEntryInput` 之前），失败推入既有 `capabilityInputChecks` 的一条 `execution_scope_frozen` BLOCKER（形状按 §3 问题 2 的模板）。
+
+顺序：**锁读取检查 → run 身份 → 记录存在性 → 候选指纹核对**。有记录且候选指纹一致 → 沿用；不一致 → BLOCKER 指向 stale/correction，**不静默重算、不静默沿用**；无记录 → 用**同一个** `resolveFeatureExecutionScope` 计算并冻结；候选缺失 → 沿用现状 BLOCKER 文案（不回落 track）；workflow 非 1.2 → not-applicable（旧协议不受影响）。
+
+候选指纹取**磁盘原样**的 `execution_scope`（新增 `featureScopeCandidateFingerprint`）——不能在 resolver 之后取：`contract_fingerprints` 回填与定义类事实重算会让同一份候选每次得到不同指纹。
+
+#### §6.3 权威优先级 — 统一入口已落地（消费者接线见 §6.4，进行中）
+
+`goal-run-creation.ts` 新增 `resolveEffectiveScopeSource(projectRoot, feature, runId?)` → `{ scope, source: 'run' | 'feature', run_id }`，`loadEffectiveExecutionScope(projectRoot, feature, runId?)` 变成它的取值投影（`runId` 改可选）。
+
+**与 plan 的偏离（signature）**：§3 问题 12 写的是「`loadEffectiveExecutionScope` 返回三元组」。实际做法是**保留** `loadEffectiveExecutionScope` 返回 `ExecutionScope | undefined`、新增同源的 `resolveEffectiveScopeSource` 返回三元组。理由：前者在仓库里有 26 个调用点（16 生产 + 10 测试），改返回形状会把一次语义扩展变成 26 处机械改写，而「来源」只有完成原件写入与报错文案两处真正需要。**判定仍只有一份**（后者实现、前者取 `.scope`），没有出现第二条选来源的路径。放弃的准确性：调用方若想知道来源必须显式改调 `resolveEffectiveScopeSource`，而不是被类型强制——已在函数注释里点名。
+
+循环依赖处置：`goal-run-creation` 用**惰性 `require`** 读 `feature-execution-scope`（仓库既有做法，`repair-candidates.ts:930` 同款），避免与该文件对 `applyScopeRevisions` 的静态依赖成环。
+
+#### §6.4 消费者接线（G1–G6 + 七个读点）— 已落地
+
+**G5（先做，G1/G2/G6 都依赖它）**：`git-diff.ts` 抽出 `normalizeDiffBaseRef`（空 / `'working'` → `HEAD` + 工作区语义）为唯一实现，`diffChangedFiles` 与 `diffChangedFilesWithStatus` 共用；`goal-run-baseline.ts` 新增 `resolveEffectiveDiffBaseline(projectRoot, feature, runId?)` 严格按三态表。**有 run 时第一行就返回 `resolveGoalRunBaseline`，根本不经过归一**——基线缺失仍是 FAIL，不会退化成工作区比较（§6.9 有反例）。
+
+| 门 | 处置 |
+|---|---|
+| G1 `check-coding.ts` | 判据从「有 runId」改为「有**有效范围权威**」（`resolveEffectiveScopeSource`）；基线换 G5；`readRunBoundContracts` 的 `runId` 改可选，内部统一入口在无 run 时读 feature 记录（其余判据一行未动） |
+| G2 `capability-resolution-entry-input.ts` | 外层 `if (goalRunId)` 放开为「有 run 或有 feature 记录」；`requirement` 仍只有 run 载体取（来自 manifest）；review 施工输入分支基线换 G5 |
+| G3 `context-facts.ts` | `subject` 联合类型加 `{ feature }`；`:186-191` 块内按形态二分——run 载体沿现状，feature 载体绑 `frozen_scope_fingerprint`，**两个身份位互斥**（同时出现即 issue） |
+| G4 `upstream-verdict-gate.ts` | 去掉 `if (runId)`，统一入口自己选来源；两者皆无才落到既有 workflow 默认链回落 |
+| G6 `ui-scope-gate.ts` | SKIP 条件由 `!runId` 收窄为「既无 run **也无** feature 冻结记录」（旧 normal 模式原文 SKIP 不动）；基线换 G5；白名单取有效范围绑定的 `contracts.files`。`check-coding` 的 `designedSkip` 同步改为「按本门返回的 SKIP 语义」——有 feature 权威却 SKIP 属回归，留在 BLOCKER。**「diff 无 UI 文件 → PASS」不受影响**：那条路返回 PASS 而非 SKIP，`designedSkip` 不参与 |
+
+七个读点：`assess.ts` 删三元；`harness-runner.ts` reconcile-only 前置条件放开；`blueprint-skill-projection.ts` 无 run 不再直接放弃修订提议（feature 载体的 requirement 留空，不编一份）；`change-unit-completion.ts` 的 H4 原件落点二分（**先于**读 `record.run_id`）+ `scopedCompletionRunId` 在 feature 载体返回 `null` 而非放弃，两个消费方改判「有载体」而不是「有 run」（CU 消费不区分 `scope_source`）。
+
+#### §6.5 完成判定（H1–H4 + 两个生成出口）— 已落地
+
+写入器：`FeatureCompletion.run_id` → `string | null` + 新增 `scope_source`；`CompletionPhaseRecord.run_id` 同；`GenerateCompletionOptions.runId` → `string | null`；载体与范围由 `resolveEffectiveScopeSource` 取；`scope_revision_count` 在 feature 载体数冻结记录的 `revisions[]`。
+
+验证器：**H1** 逐阶段与顶层 `run_id` 形状与 `scope_source` 联动（feature 载体必 null，伪造 run 身份即 INVALID）；原件落点按载体二分且同样锁目录；**H2** 新增 `featureCarrierPhaseLineageIssues`——summary `verdict=PASS` + `closure_status=closed` + `closure_commit.schema_version='1.0'`（与 assess 同一把尺）+ `manifest.integrityOk` + `staleness='fresh'`，外加「feature 载体不得声明 attempt」；**attempt 与 run 终局两维按 D1.5 显式豁免**；**H3** 生成 run 的 events 检查换成「冻结记录存在 + 有效范围指纹与凭证一致」；**H4** 见上。
+
+生成侧：`shouldGenerateFeatureCompletion(scope, opts)` 提取为**唯一判据**，goal runtime 与无 run 出口共用（goal 侧只保留自己的 `CHAIN_SLICE_COMPLETED` 前置条件）；`applyFeatureScopeRevisionsThenMaybeComplete` 是两个无 run 出口的**唯一**实现，顺序固定为「消费修订 → 重读有效范围 → 四条件判完成并生成」，普通阶段尾部与 `--sync-closure` 各调它一次。
+
+#### §6.7 与 D2 的衔接 — 已落地
+
+feature 载体的修订与 run 的 `scope_revised` **共用** `loadScopeRevisions` / `applyScopeRevisions` / `SCOPE_REVISION_FIELDS`，元素形状一致（无 run 字段）。触发面相同（checker 的 `scope_revision_input`，从阶段 script-report 读），应用边界是「写完本阶段结果、退出前」，**不以 closure 成功为条件**。修订提案上的定义类事实按 R3/R4 同款 `recomputeDefinitionFacts(..., onlyTighten=true)` 重算。
+
+#### §6.6「继续」 — 无需新代码
+
+`assess.ts` 的 `observeFeatureState` 换入口后，无 run 的「继续」= 读 feature 冻结记录 + 各阶段既有闭环状态，天然成立（plan 原文即如此判断，本轮核实无额外改动）。
+
+#### §6.3 出生入口与转交 — 已落地
+
+`resolveBirthExecutionScope` 为两个出生入口（`goal-mode-entry --prepare-run`、fresh/detached runtime）的**唯一**取法：有 feature 冻结记录（未转交）→ 返回其**有效**范围，不重算候选；否则沿现状。两处在 `createGoalRun` 成功之后、`ensureRunControl` 之前调 `registerFeatureScopeTransfer` 登记 `transferred_to` 与转交指纹。
+
+#### §6.8 文档与 OpenSpec — 已落地
+
+| 落点 | 改动 |
+|---|---|
+| `docs/operations/project-entry.md`、`templates/AGENTS.md.template`、`skills/project/goal-mode/SKILL.md` | 交互完整交付不再强制 `--prepare-run + attach`：写明两个载体与权威优先级，以及「说不清时工具明确报错，不替你选边」 |
+| 总纲 `91c4e7a2:195` | 删「不新增 execution-scope.json」并指向 P8 §6.1；「不新增第二 run 目录」保留 |
+| `openspec/changes/composable-workflow-foundation/.../runtime-policy/spec.md`、`openspec/specs/runtime-policy/spec.md` | 同一条禁令的另两处：删 execution-scope.json 一项，改为「feature 级冻结记录是第二载体，MUST 机器单 writer、MUST NOT 混入 feature.yaml」 |
+| `dynamic-workflow-closure-migration/.../workflow-tracks/spec.md` | 补 D1：权威优先级四行、转交以**转交时有效范围**出生并登记指纹、转入后不做持续等值比较；新增 scenario |
+| `dynamic-workflow-closure-migration/.../harness-gates/spec.md` | **原句改写**（不是追加）：`run/attempt/event lineage` 限定为 run 载体；feature 载体以 receipt / evidence manifest / `gate_fingerprint` / freshness / 义务覆盖 / 冻结记录完整性替代，MUST NOT 伪造 run_id；补 D1.5 与 scenario |
+| `dynamic-workflow-closure-migration/tasks.md` | 追加 P8 批次 3 小节与验收记录 |
+
+#### §6.9 验收矩阵逐行（全部实跑，落 `execution-scope.unit.test.ts`）
+
+| 需求验收行 | 用例 | 结果 |
+|---|---|---|
+| 无 run 三阶段 → completion VALID、无 goal-runs 目录、无空报告 | `D1 runless interactive delivery reaches VALID completion` | PASS |
+| 候选漂移 → 下一阶段 BLOCKER 指向 stale/correction；冻结记录不变 | `D1 candidate drift blocks the next phase and leaves the frozen record intact`（断言记录**字节**不变） | PASS |
+| 随后起 run → 出生范围 = 转交时有效范围；登记 `transferred_to` 与指纹 | `D1 goal run is born from the transferred feature effective scope`（同一用例覆盖 S0→S1 后转入） | PASS |
+| 转入后 run 内修订不冲突；feature 记录不改 | `D1 in-run revision after transfer is not a conflict` | PASS |
+| 转交指纹冲突 → 明确报错 | `D1 transfer fingerprint mismatch reports both fingerprints` | PASS |
+| 裸报告 / 篡改冻结范围 / 伪造 run 身份 → INVALID | `D1 runless completion rejects bare reports and tampered frozen scope`（四个子断言 + H1 逐阶段身份位） | PASS |
+| 现有 attended / detached 场景保持通过 | `real prepare CLI / bridge scope lifecycle: *` 全组（回归） | PASS（58 条不变） |
+| `--report-reconcile-only` 对无 run 零设备 feature 不要 trace | `D1 reconcile-only needs no trace for a runless zero-device feature` | PASS |
+| 无 run + 冻结记录下 UI 门真实生效：契约内 → PASS | `D1 runless ui scope gate passes for a declared ui file`（并断言**不是** SKIP） | PASS |
+| 同上：契约外 → FAIL（BLOCKER，非 SKIP 非 MINOR） | `D1 runless ui scope gate blocks an undeclared ui file` | PASS |
+| G5 三态：未设 env / `working` → 与工作区比；显式 commit → 原义；显式值不可达 → FAIL | `D1 runless diff baseline normalizes working and fails only on a bad explicit ref`（四个子断言 **+ 第五条反例：有 run 且基线缺失仍 FAIL**，锁住「不退化成工作区比较」） | PASS |
+| 无身份调用遇活 `.feature.lock` → 报错不选边 | `D1 runless call under a live feature lock reports instead of choosing a side`（并断言**没有**冻结 feature 记录） | PASS |
+| 无 run 完成原件由 `--sync-closure` 出口生成 | `D1 runless completion is generated at the sync-closure exit`（**真实 harness-runner CLI**，经真实 check-receipt 与生产 finalize） | PASS |
+| feature 记录 revisions 追加一条，行为等价 | `D1 feature-level revision is behaviorally equivalent to scope_revised`（含链断裂即拒） | PASS |
+| detached 出生用 S1 并登记转交 | `D1 detached birth after a feature-level revision uses S1 and registers transferred_to` | PASS |
+
+**未按矩阵原样覆盖的一行（如实记录）**：「无 run 完成原件由**普通闭环出口**生成」只做到**函数级**覆盖——两个出口调的是同一个 `applyFeatureScopeRevisionsThenMaybeComplete`（`D1 runless interactive delivery reaches VALID completion` 直接驱动它），`--sync-closure` 出口另有真实 CLI 用例。普通阶段尾部的 CLI 级用例需要在最小夹具里跑通完整 ut checker 链（profile / 测试产物 / receipt 全套），成本远高于它能锁住的「调用位置」这一件事。**差异只在调用位置，判据与顺序是同一份实现**；若要补，路径是给 `harness-runner --phase ut` 造一套可过的 ut 夹具。
+
+#### 批次 3 的偏离与放弃的准确性
+
+1. **统一入口 signature**（已获调度者确认）：`loadEffectiveExecutionScope` 保持返回 `ExecutionScope | undefined`，三元组放在同源的 `resolveEffectiveScopeSource`，前者是后者的投影。判定只有一份实现。
+2. **第三通道 `featuresDirAbs`**：生产上不存在（结论见上），自定义绝对 features 目录下的无 run 完成判定按 plan 既定取舍**记为不支持**。
+3. **活锁识别**：实验不成立 → D1.3 第一行收窄为只认显式 run 身份；发现任何非 stale 锁一律报错。代价：真有陈旧锁残留时，无身份调用需要人工清锁或显式带 run 身份，**不会**自动走 feature 载体。
+4. **H2 的两维豁免**：feature 载体没有 attempt 与 run 终局的等价事实，显式豁免并禁止伪造 run_id；其余五项一项不减。
+5. **`resolveEffectiveDiffBaseline` 的落点**：最初放在 `goal-run-baseline.ts`，被既有结构验收 `structural 04/13` 正确抓住（该文件禁止出现 `process.env` / `rev-parse` 等补锚痕迹）。**没有放宽那条守卫**，而是把统一入口移到 `git-diff.ts`（baseRef 归一本来就在那里），`goal-run-baseline.ts` 保持纯净。
+
+#### 批次 3 代码 review 第一轮（codex，8 阻断 3 必修 2 建议）——逐条处置
+
+**全部接受**（八条阻断逐条开代码核实属实，无驳回）。
+
+| # | 核实到的事实 | 处置 |
+|---|---|---|
+| 阻断 1 现代无 run 路径被 `feature.yaml.track` 门控 | `harness-runner.ts:791` 在冻结入口（`:906`）**之前**按 track 过滤合法 phase，`:1357` 的 `closureTrack` 也取自 track；而 `--prepare-scope` 会原样保留 feature.yaml 里既有的 `track: lite` | `loadFeatureTrackDecl` 里那条「有 run 冻结范围即 full」的既有先例（`feature-track.ts:33`）换成**统一入口**——两个载体同口径。phase 合法集、closure 口径、completion track 因此一起对齐；无权威时仍读声明（旧行为一行不改） |
+| 阻断 2 转交只写不验 | `resolveEffectiveScopeSource` 无 run 时不看 `transferred_to`；有 run 时不比对出生指纹；`registerFeatureScopeTransfer(r1,A)` 后再 `(r1,B)` 直接覆盖 | 转交校验**集中到统一入口与登记函数**：① 登记时指纹由**记录自己的有效范围**计算，调用方传的值只用来对账，不符即拒；② 同 run 重试要求指纹一致，不一致＝转交记录损坏；③ 换 run 一律拒；④ 无 run 身份而记录已转交 → 统一入口明确报错，不返回 feature 范围；⑤ 有 run 时比对 run 出生范围指纹与登记值，失配即报错 |
+| 阻断 3 两个出生入口绕过候选漂移 / provenance，已转交仍静默回算 | `resolveBirthExecutionScope` 既不核候选指纹也不核需求 provenance；有 `transferred_to` 时回落 `resolveFeatureExecutionScope` 重算 | 出生前跑**与冻结入口同一套**检查：候选指纹一致、需求 provenance 经既有 `resolveFeatureExecutionScope` 通道重解析；已转交直接报错（不回算）。`goal-phase-runtime` 的 `manifest.execution_scope ?? …` 绕过写法删掉，改走 `resolveBirthScopeForManifest` |
+| 阻断 4 `--sync-closure` / reconcile-only 绕过活锁；损坏锁当作无锁 | 两个分支都没调冻结入口；`readLockRecord` 对非法 JSON 返回 null 被读成「没有锁」 | 提取 `featureAuthorityLockBlocker`，**三个无 run 入口共用**（普通 phase、`--sync-closure`、reconcile-only），无 run 收尾函数也先过它；`detectLiveFeatureLock` 区分「无锁」与「锁在但读不出来」，后者是**未知权威 BLOCKER** |
+| 阻断 5 facts 在有 baseline 时跳过指纹核对 | `record.frozen_scope_fingerprint !== fingerprint` 被 `!invocation.baseline` 包住 | 身份位**与 baseline 无关**，永远比对；baseline 只管来源新鲜度。run 载体那侧的历史豁免不被 feature 载体继承 |
+| 阻断 6 feature 修订路径与 run 路径不等价 | feature 路径对「无新来源但范围变化」直接 `continue`（run 路径抛错）；多提案逐个追加（run 路径拒绝） | 把 runtime 内联的提案校验**整段提取**为 `resolveScopeRevisionProposal`，两条路径调**同一个**函数：单提案、请求边界、已完成阶段补证明、impact 继承/修正、失效 `satisfied_by` 剔除后重解析、「范围变了必须有新来源」。载体差异只有 `currentRunId` 一个参数，不放宽任何判据；**只有范围完全相同才 no-op** |
+| 阻断 7 三个写入口非原子、无并发幂等 | 直接 `writeFileSync`；`existsSync` 后写是 TOCTOU；两次 append 同读同写 | 写入改 temp + rename（与 `harness-runner.ts:2441` 同款）；首次冻结改 `openSync(..., 'wx')` 排他创建，输的一方读回既有记录、同内容即幂等；append / 转交走「读入字节 → 写前再比 → 不同即拒」的 CAS，同内容重试 no-op。**不新增租约或 registry** |
+| 阻断 8 H2 不核 `gate_fingerprint` | 逐阶段重算只比 receipt 与 manifest aggregate | 逐阶段补 `gate_fingerprint` 与同一份 evidence manifest 的 `environment.gate_fingerprint` 对账（**两个载体都查**）；feature 载体另加 `closure_fingerprint` 对账 |
+
+| 必修 | 处置 |
+|---|---|
+| 1 H2 结构与发布 schema 未同步 | `CompletionPhaseRecord` 增 `closure_fingerprint`（feature 载体写、verify 侧与已闭环 summary 的内容哈希对账——与生产 `finalizePhaseClosure` 返回的 `closure_fingerprint` 同义）；`specs/feature-completion.schema.yaml` 的 `run_id` 放开为 `string|null`、新增 `scope_source` 与 `closure_fingerprint`，并用 `allOf/if-then-else` 做**载体条件约束**（feature 载体 run_id 必 null、逐阶段 attempt 必 null 且必须有 closure_fingerprint；run 载体反之） |
+| 2 §6.9「普通闭环出口」未做真实 CLI 验收 | 新增 `D1 three real runless harness-runner phase calls freeze once and stay run-free`：**真实 harness-runner CLI** 连跑 coding/review/ut，断言首次冻结由 CLI 落盘、review/ut 不再被旧 track 拒、后续只读复用、全程无 goal-runs、候选漂移在真实 script-report 里出现 `execution_scope_frozen` BLOCKER。另加 `D1 real createGoalRun birth transfers the feature effective scope`（真实 `resolveBirthScopeForManifest` → `buildGoalManifestFromInput` → `createGoalRun` → `registerFeatureScopeTransfer` 四步，与 runtime 内联顺序一致）。函数级用例全部保留 |
+| 3 计划机器状态与实施记录未收口 | 按调度者口径：todo 在 codex 判「通过」之前保持 pending（第八轮通过后已置 completed，见下方「批次 3 收口」）；§11 宿主实跑表保持空并注明「由用户触发」 |
+
+| 建议 | 处置 |
+|---|---|
+| 1 | 冻结记录校验补 `transferred_scope_fingerprint` 格式与 `policy_fingerprint` 一致性；feature 修订持久化 `revision_input`（与 run 侧 `scope_revised` 同形） |
+| 2 | `docs/concepts/skill-contracts.md` 三处改写：完整交付**两个载体**与权威优先级、统一入口读取、两载体共用同一提案校验 |
+
+**本轮新增用例**（全部实跑）：真实 CLI 三阶段链路、真实 createGoalRun 出生、旧 track 不再门控、损坏锁＝未知权威、出生候选漂移即拒、已转交拒绝二次出生、`gate_fingerprint` 篡改 INVALID、写入排他/原子/幂等、facts 身份位在有 baseline 时仍核对、转交指纹五条出口（不信调用方 / 正常登记 / 换 run 拒 / 记录损坏拒 / 无身份读取报错）。
+
+#### 批次 3 代码 review 第二轮（codex，3 阻断 1 必修 3 建议）——逐条处置
+
+| # | 核实到的事实 | 处置 |
+|---|---|---|
+| 阻断 1 出生统一入口结果仍被 manifest 覆盖 | 属实：`goal-phase-runtime.ts:4858` 是 `manifest.execution_scope ??= requestedExecutionScope`——`--manifest` 自带旧范围时旧值原样留下，随后用它建 run；转交登记要到 `createGoalRun` 之后才因指纹失配报错，顺序已经晚了 | 现代 fresh/detached 路径**无条件采用**统一解析结果；manifest 自带范围与解析结果指纹不同 → **直接拒绝**并指向去掉 `--manifest` 里的 `execution_scope` 或走 correction/successor |
+| 阻断 2 有阶段报告却直接首次冻结 | 属实：冻结入口只看 `execution-scope.json` 是否存在，不看既有阶段产物——历史 run 或遗留报告会被静默归属到一份新的 feature 载体 | 冻结前复用**既有**读取器（`loadPhaseEvidenceManifest` + 阶段 `summary.json` 存在性，不新造扫描规则）：无 run 身份、无冻结记录、却有任一阶段产物 → `execution_scope_frozen` BLOCKER，文案指向 correction 或显式 run 身份，**不选边** |
+| 阻断 3 CAS 不是原子 CAS | 属实：两个 writer 都可能在对方 rename 之前完成「再读一次」的比较，然后各自 rename，后者覆盖前者；`wx` 只保护首次创建；首次冻结还直接写目标文件（崩溃留半截） | 按调度者口径换成**写事务**：记录同目录的排他临时锁（`openSync(lock,'wx')`）串行化，持锁期内读-比-写再 temp+rename，`finally` 删锁。抢不到锁**不抢占**：读锁内的 pid/时间戳，同机 pid 存活或未超既有 `STALE_LOCK_MS` → 报「记录正被写入」；只有过期锁才清理后重试一次。首次冻结同样进写事务 + temp/rename。**不跨调用持有、不登记、不续期——是写事务不是租约** |
+| 必修 4 `closure_fingerprint` 未进 runtime 结构校验 | 属实：schema 有约束但 `structOk` 不查，run 载体可放非法类型继续往下走 | `structOk` 按 `scope_source` 显式校验：feature 载体必须是非空 string；run 载体（含缺省 `scope_source` 的旧 1.2 记录）允许缺省但不允许非法类型 |
+
+| 建议 | 处置 |
+|---|---|
+| 删未使用的 `recordFingerprint` | 已删 |
+| 补「同 run、同指纹重复转交」幂等用例 | 新增 `D1 re-registering the same transfer is idempotent`（断言**字节不变**） |
+| §6.9 普通阶段闭环仍函数级 | 见下「仍未闭环的一行」——本轮按调度者给的第二个选项处置（矩阵措辞写实），并写明补法 |
+
+**本轮新增用例**：`D1 freezing refuses when phase reports exist without an authority`、`D1 interleaved writers never lose an update`（两条修订串行化后**都在**，出生段不动）、`D1 a held write lock blocks instead of overwriting`（活锁拒写 + 过期锁可清理后继续 + 锁不残留）、`D1 a manifest-carried scope cannot override the unified birth resolution`、`D1 re-registering the same transfer is idempotent`。
+
+**仍未闭环的一行（如实报告，请裁决是否本批补）**：§6.9 的「无 run 完成原件由**普通闭环出口**生成」仍只有函数级 + 「真实 CLI 走到阶段尾部」两层覆盖，**没有** CLI 级的「由普通出口生成完成原件」。原因是可核实的：普通出口只在**完成链每个阶段都 clean-pass** 时才生成，而真实 CLI 跑一个 phase 必然用它自己的裁决重写该 phase 的 summary——最小夹具里没有任何 phase 能跑过完整 checker 套件（profile / 编译 / facts / receipt / verifier 全链）。要补它必须先造一套「能真跑通的 ut 夹具」，那是与本批判据无关的夹具工程。**这一步的判据与顺序与 `--sync-closure` 出口是同一份实现**（`applyFeatureScopeRevisionsThenMaybeComplete`），后者已有真实 CLI 用例；差异只剩调用位置。§6.9 该行措辞已按实际覆盖改写。
+
+#### 批次 3 代码 review 第三轮（codex，4 阻断 2 必修 1 建议）——逐条处置
+
+| # | 核实到的事实 | 处置 |
+|---|---|---|
+| 阻断 1 `--sync-closure` / `--report-reconcile-only` 绕过候选漂移 | 属实：两个分支只过了锁前置，没走冻结入口；无 run 收尾函数也不核候选指纹——冻结后改候选，sync 仍可能基于旧冻结范围闭环并生成 completion；首次直接 sync 更是不冻结 | 两个特殊入口在 receipt / 任何早退**之前**走**同一个** `ensureFeatureExecutionScopeFrozen`（锁前置 + 首次冻结 + 候选漂移一次做完），失败按 BLOCKER 退出；无 run 收尾函数同样核候选指纹，不一致即拒。补真实 CLI 用例：首次 sync 会冻结、漂移后 sync 与 reconcile-only 双双被拦 |
+| 阻断 2 写锁崩溃恢复不闭环 | 属实：`openSync(wx)` 与写 pid/at 之间崩溃留下空锁，`at=NaN` 被判「永不过期」，锁永久阻塞 | 元数据读不出来时用锁文件 **mtime 兜底**判陈旧：新鲜空锁仍阻塞（可能真有 writer 在临界区），超 `STALE_LOCK_MS` 才清理并重试一次。补空锁 / 半写锁（坏 JSON）两组新鲜-陈旧用例 |
+| 阻断 3 首个 phase 仍被旧 `track: lite` 提前拦截 | 属实：track 过滤（`:804`）早于首次冻结（`:921`），无记录时 `loadFeatureTrackDecl` 仍返回 feature.yaml 的 lite | 按调度者口径：**把首次冻结前置到 track 过滤之前**（冻结入口本来就该是无 run 路径的第一步），不走「候选存在即 full 判档」的旁路。冻结失败时**跳过** track 过滤（那时的 track 声明不可信），失败仍按 §3 问题 2 的既定形状由 `capabilityInputChecks` 报 `execution_scope_frozen`——不改失败形状、不多一次冻结 |
+| 阻断 4 interleaved 用例不是真交错 | 属实：旧用例是「A 完成 → 重读 → B」，没有共享旧快照与屏障 | 加**临界区注入缝**（仓库既有做法，参照 `scope-replan.ts` 的 `__testing_*`）：A 持锁期间，B 带着**同一份旧快照**进来 → B 必须被明确挡住（`正被其他写者写入`）、A 的修订完整落盘、锁释放；随后 B 重试 → 串行化后两条都在，不丢更新 |
+
+| 必修 | 处置 |
+|---|---|
+| 1 §6.9 用例名不存在 | 更正为实际用例名 `D1 goal run is born from the transferred feature effective scope`（S0→S1 后转入由同一条用例覆盖），**不新增测试**。收口前又把 §6.9 里 14 个 `D1 …` 名字对测试文件逐个 grep 过一遍（missing=0） |
+| 2 A1 只在 resolver 层断言 | 新增 `D1 the real runtime refuses a manifest-carried scope that differs from the birth resolution`：**真实 goal-phase-runtime CLI** 带 `--manifest`（自带 S0）启动，断言非零退出、报「manifest 自带的出生范围与统一出生解析结果不一致」、**拒绝发生在建 run 之前**（无 run 目录、feature 记录未登记转交） |
+
+| 建议 | 处置 |
+|---|---|
+| `docs/concepts/skill-contracts.md:53` facts 身份位 | 改成按两载体分别说明（run 载体绑 `run_id`；feature 载体绑 `frozen_scope_fingerprint`，两者互斥），与 `context-facts.ts` 的实现一致 |
+
+**本轮新增用例**：`D1 sync-closure and reconcile-only go through the same freeze entry`、`D1 an empty or half-written write lock recovers instead of blocking forever`、`D1 a genuinely interleaved writer is blocked, never silently overwritten`、`D1 the real runtime refuses a manifest-carried scope that differs from the birth resolution`。`execution-scope` 套件 90/90。
+
+#### 批次 3 代码 review 第四轮（codex，4 阻断 2 必修 1 建议）——逐条处置
+
+四条阻断都是 **fail-open 口子**（出错时继续往下走，而不是停下来），逐条先打开引用位置核实再处置：
+
+| # | 核实到的事实 | 处置 |
+|---|---|---|
+| 阻断 1 存活 pid 的半写锁永久阻塞 | 属实：`{"pid": <存活 pid>}`（崩溃在写 `at` 之前）会命中 `alive = typeof holder.pid === 'number' && isPidAlive(holder.pid)`，与 mtime 兜底无关，锁永远清不掉；`JSON.parse('null')` 还会让随后的属性读取抛异常 | 按调度者口径统一规则：**pid 只在元数据完整（pid 与 at 都合法）时参与判断，否则只看 mtime**。解析结果非对象（`null`/数组）一律按「元数据缺失」处理，不抛 |
+| 阻断 2 被篡改 type 的修订条目被静默跳过 | 属实：`loadScopeRevisions` 按 `type === 'scope_revised'` **过滤**，把一条改名的修订丢掉之后记录照样「合法」，有效范围悄悄退回上一版 | 记录校验里补 `revisions[]` 逐项 type 检查（在共用校验之前），不合法即报错；权威读不出来时冻结入口照既有形状给 `execution_scope_frozen` BLOCKER |
+| 阻断 3 已转交 run 缺失时回落默认链 | 属实：`resolveEffectiveScopeSource` 在 `loadFrozenExecutionScope` 返回空时一律 `return undefined`，调用方（`resolveUpstreamPhaseChain` 等）据此回落 workflow/track 默认链——等于换了一条与权威无关的链继续跑 | 记录 `transferred_to === runId` 而该 run 出生范围缺失/损坏时**抛错**（文案指向恢复该 run 或走既有 correction / successor），只有「记录没声明转交给它」才继续返回 undefined |
+| 阻断 4 收尾失败只打印 | 属实：两个出口的 catch 只 `console.error`，普通阶段随后按 `verdict` 退出（可能是 0），`--sync-closure` 更是接着 `process.exit(exitCode)` 用 0 收场 | 按调度者口径**两者都要**：普通阶段出口复用既有致命失败写入器 `failScriptReportWithFatalError(finalReport, 'closure_finalization', …)` + `writeRunSummaryBase` 写进失败报告，并让退出码取 `featureScopeClosingFailure ？1：…`；`--sync-closure` 出口把同形状的 `execution_scope_frozen` BLOCKER 追加进本阶段 script-report 并 `exit 1`。**不新增 stage 枚举**——`closure_finalization` 就是收尾阶段（其 failure_kind 为 `closure_finalization_failed`） |
+
+| 必修 | 处置 |
+|---|---|
+| 1 `tasks.md:51` 仍记 `execution-scope 72/72` | 同步为 `94/94`（四轮返修后的真实数），并标明 D1 用例 36 条 |
+| 2 `docs/concepts/skill-contracts.md` 仍写「封卷 → 释放 owner/锁 → 创建后继」 | 改为当前语义：合法修订在**同一 run / 同一条冻结记录**内追加一条即完成，不封卷、不释放锁、不生成后继，有效范围 = 出生 + 按 index 应用；后继只留给失败修复型 supersede / 用户显式改需求 / 建 run 未完成的修复，预算与 pin 继承、前驱临时状态 GC 等描述随之收进那一句 |
+
+**本轮新增用例**（全部实跑）：`D1 a half-written lock never blocks on a live pid alone`（存活 pid 缺 at：新鲜阻塞 / 过期可清；`null` 锁同理）、`D1 a revision entry with a foreign type is rejected, not silently skipped`、`D1 a missing transferred run refuses instead of falling back to the default chain`（顺带断言 `resolveUpstreamPhaseChain` 返回 degraded 且链为空，不是默认链）、`D1 a closing-time scope failure lands in the report and exits non-zero`。`execution-scope` 套件 **94/94**。
+
+**阻断 4 用例的触发面选择（如实记录）**：候选漂移**到不了**收尾——冻结入口在 `capabilityInputChecks` 处就早退了（实跑验证：普通阶段 CLI 在漂移下退出 1，报告里只有入口那条 `execution_scope_frozen`，没有收尾那条）。收尾独有的失败面是**非法修订提案**：提案由阶段 summary 写入器写进 script-report（`writeScopeRevisionInputToScriptReport`），正是收尾才读的东西。用例因此在 `--sync-closure` 出口注入一条改了请求边界的提案，断言：非零退出 + 报告里带 `revision changes request boundary` 的 BLOCKER + summary 判 FAIL + 不生成完成原件 + 非法提案没被记进冻结记录。正对照是同夹具的 `D1 runless completion is generated at the sync-closure exit`（无提案时同一出口 exit 0 且生成原件），所以「非零退出」不是「反正都失败」。
+
+**放弃的准确性**：普通阶段出口的收尾失败分支（`failScriptReportWithFatalError` + 退出码）只有该函数与写入器各自的既有覆盖，没有 CLI 级用例——原因同上：单次 CLI 调用里入口检查与收尾之间没有可确定性制造失败的时机（要么入口就拦住，要么得靠计时竞态）。两个出口的收尾调用是**同一个函数**，差异只剩调用位置与失败报告的写入器；`--sync-closure` 出口已有真实 CLI 用例。
+
+#### 批次 3 代码 review 第五轮（codex，5 阻断 4 必修 2 建议）——逐条处置
+
+| # | 核实到的事实 | 处置 |
+|---|---|---|
+| 阻断 1 转交后 successor 路径被自身拦截（回归） | 属实且优先级最高：`goal-phase-runtime.ts` 在解析 `--supersede` **之前**就算 `requestedExecutionScope`，而源 run 出生时已把 feature 记录登记为已转交 → `resolveBirthExecutionScope` 无条件抛「已转交给 run …」；即使绕过，`createGoalRun` 之后还会**再登记一次**转交并报「不能再转交给」。既有 `--supersede` / `--rebaseline-to` 整条路不可用 | 按调度者口径：successor 是 **run→run 血缘**，不经 feature 载体。① `requestedSupersedeTargets` 上移到出生解析之前，有 supersede 目标时**不调**出生解析；② 后继范围改为继承**源 run 的有效范围**（`loadEffectiveExecutionScope(projectRoot, feature, sourceRunId)`，legacy 无范围时为 undefined = 现状整份继承）；③ 转交登记加 `!manifest.successor_of`——只有首次 feature→run 出生登记。顺带删掉因此永不成立的「requestedExecutionScope vs source.execution_scope 请求边界」死分支（successor 不再读候选，边界由继承本身保证） |
+| 阻断 2 CU 新 run handoff 绕过有效范围 | 属实：`resolveChangeUnitExpectedExecution(..., forNewRun=true)` 直接 `resolveFeatureExecutionScope`（候选），feature 已 S0→S1 时交接给的是 S0、出生入口用的是 S1 | 该分支换成 `resolveBirthExecutionScope`，与两个 Goal 出生入口同源 |
+| 阻断 3 过期写锁清理有竞态 | 属实：两个 writer 都判过期时 `fs.rmSync(lockPath)` 会删掉对方刚建的新锁，两者一起进临界区 | 抢占改成 **rename 到同目录唯一临时名**（内核裁决谁抢到，输的一方 ENOENT），抢到后再核一次身份（mtime 与判过期时看到的一致）；身份不符 = 这期间有人重建了锁 → 原样 rename 回去并报「正被其他写者写入」，不硬闯。加 `__testing_setBeforeStaleLockReclaim` 缝把这条竞态做成确定性用例 |
+| 阻断 4 结构损坏的 `.feature.lock` 被当 stale 放行 | 属实：`readLockRecord` 只 JSON.parse，`{}` / `[]` 会被当 LockRecord；`isLockStale` 因 `updated_at` 缺失算出 NaN 返回 true → `detectLiveFeatureLock` 报「无锁」 | 在 `detectLiveFeatureLock` 内先校验对象及 `pid` / `hostname` / `updated_at` 必要字段，结构非法统一 `unreadable: true`，**不进** stale 判断（`readLockRecord` 的其它调用方不动） |
+| 阻断 5 只剩 `script-report.json` 的阶段被漏查 | 属实：`phasesWithExistingEvidence` 只看 summary 或 evidence manifest，而 `generateScriptReport` 写 script-report **在两者之前**——崩在中间时下次无 run 调用会把已跑过的阶段静默归入新冻结记录 | 同一 `featurePhaseReportsDir` 下补查 `script-report.json`（同一读取面，不新造扫描规则） |
+
+| 必修 | 处置 |
+|---|---|
+| 1 无 run 的 D0.3 修订触发被生产侧丢弃 | 属实：`scopeRevisionInputFromRepairCandidates` 里 `if (!runId) return null`。删掉这一行即可——`loadEffectiveExecutionScope` 本身就是统一入口（无 run 读 feature 冻结记录），不新增第二套校验 |
+| 2 发布 schema 比 runtime 宽松 | 属实：`allOf` 的 run 载体分支没约束 `closure_fingerprint`，string 能过 schema 却被 runtime 判非法 | run 载体分支补 `closure_fingerprint: { type: "null" }`（缺省仍合法，与 runtime `structOk` 同口径） |
+| 3 `execution-scope 94/94` 与 runner 统计口径冲突 | **不属实**：`cases.push` 是 71 条**语句**，其中含循环注册（`:657` 一条语句注册 19 个场景），runAll 按 case 返回结果。实跑输出行为 `结果：100 passed, 0 failed (共 100)`，且 `PASS` 行逐条可数（`grep -c "  PASS  "` = 100，其中 D1 42 条）。tasks.md 已按这条输出行改为 100/100 并写明统计规则 |
+| 4 README/MIGRATION 仍宣称完整交付必须用 Goal run | 属实 | 两处改为「两个载体」：交互路径由机器冻结进 `doc/features/<feature>/execution-scope.json` 逐阶段跑；需要无人值守或 run 级预算/恢复时用真实 Goal 身份（权威优先级：本次关联的 run > feature 冻结记录） |
+
+| 建议 | 处置 |
+|---|---|
+| 1 普通出口 CLI 级收尾失败用例 | 按既定裁决接受（第四轮已记原因） |
+| 2 `completedPhases` 定义了却没接 | 两个无 run 出口共用的收尾函数里给出缺省值：修订前链上**没有 clean-pass issue** 的阶段即「本次可自证闭环」的阶段，判据复用**同一个** `collectCleanPassIssues`，不另造完成判定 |
+
+**本轮新增用例**（全部实跑）：`D1 a superseding successor is born from the source run, not blocked by the transfer`（真实 `goal-phase-runtime --supersede` CLI：不报转交错误、后继 manifest 带 `successor_of`、范围指纹等于源 run、feature 记录仍指向源 run）、`D1 the CU handoff for a new run uses the revised feature scope`（S0→S1 后交接链跟着变）、`D1 reclaiming a stale write lock never deletes another writer new lock`（抢占期间对方的新锁必须完好、记录不变、临时名不残留）、`D1 a structurally broken feature lock is unknown authority, not a stale one`（`{}` / `[]` / 缺字段三种形态 + 结构完整活锁的正对照）、`D1 a phase that only left a script-report still blocks the first freeze`、`D1 a runless phase produces a revision proposal and keeps closed phases proven`（无 run 经生产函数产出提案 → 经生产落盘面交给收尾 → 修订应用成功，且已闭环阶段的义务带上 `{phase, evidence_manifest_aggregate}` 形状的闭环证明——这种形状只可能由 completedPhases 分支补出）。
+
+**定向验证输出行（原文）**：`结果：100 passed, 0 failed (共 100)`（`npx ts-node --transpile-only tests/run-unit.ts --filter "execution-scope"`）。
+
+#### 批次 3 代码 review 第六轮（codex，1 阻断）——逐条处置
+
+| # | 核实到的事实 | 处置 |
+|---|---|---|
+| 阻断 1 第五轮阻断 4 未完全闭环 | 属实：上一轮只校验**字段类型**，值非法的锁照样进 `isLockStale`——`updated_at: "invalid"` 会命中 `goal-run-lock.ts` 的 `Number.isNaN(updated) → return true`（判 stale 放行），`pid: 0 / -1` 会让同机分支的 `isPidAlive` 恒 false 同样判 stale。两者都是「值非法（未知权威）」而不是「锁过期」 | `detectLiveFeatureLock` 改为按**值**校验：`pid` 正整数、`hostname` 非空、`updated_at` 可解析；任一不成立统一 `unreadable: true`，**不进** stale 判断（`readLockRecord` 与 `isLockStale` 本身不动，其它调用方的语义不受影响） |
+
+| 建议 | 处置 |
+|---|---|
+| 普通阶段尾部收尾失败 CLI 级用例 | 按既定裁决留作后续增强（第四轮已记原因与替代覆盖） |
+
+**本轮用例**：扩充既有的 `D1 a structurally broken feature lock is unknown authority, not a stale one`——损坏形态从 3 种（`{}` / `[]` / 缺字段）加到 8 种，新增 `updated_at: "invalid"`、`pid: 0`、`pid: -1`、`pid: 1.5`、`hostname: "   "`；每种都断言 `unreadable` + 冻结入口 BLOCKER + **没有**落下冻结记录，并保留「结构完整活锁仍按活锁报错」的正对照（证明不是把所有锁一律判未知）。不新增 case，套件仍 100 条。
+
+**定向验证输出行（原文）**：`结果：100 passed, 0 failed (共 100)`。
+
+#### 批次 3 代码 review 第七轮（codex，1 条用例级阻断）——逐条处置
+
+| # | 核实到的事实 | 处置 |
+|---|---|---|
+| 阻断 1 正对照不够，证不了「没把所有锁一律判未知」 | 属实：上一轮的正对照只有「结构完整且未过期」的活锁，没有一例**结构完整的过期锁**走 stale 分支 | 同一用例补两例（两条既有 stale 判据各一）：同机死 pid（`isLockStale` 同机分支只看 pid 活性，与 `updated_at` 无关）、跨机 TTL 超时。每例断言：① `detectLiveFeatureLock` 返回 **null**（既不是 unreadable、也不是 live）；② 冻结入口照常 `frozen`（陈旧锁不挡活）；③ 经**既有**获取路径 `tryAcquireLock` 能真回收旧锁（锁文件换成新 owner），再 `releaseLock` 清干净 |
+
+**本轮用例**：扩充 `D1 a structurally broken feature lock is unknown authority, not a stale one`——现在一条用例覆盖三类：8 种值/结构非法（unreadable，不进 stale）、1 种活锁（live，报错不选边）、2 种完整过期锁（stale，放行并可被既有路径回收）。不新增 case，套件仍 100 条。
+
+**定向验证输出行（原文）**：`结果：100 passed, 0 failed (共 100)`。
+
+#### 批次 3 代码 review 第八轮（codex）——**无阻断，通过**
+
+仅一条精度建议：`execution-scope.unit.test.ts` 里陈旧锁那条 `assert.equal(..., null)` 改 `assert.strictEqual`（已改，套件仍 100/100）。frontmatter `p8-b3-feature-scope-carrier` 随之置 `completed`。
+
+#### 批次 3 收口
+
+**最终三条验证（原始输出行）**
+
+```
+cd harness && npx tsc --noEmit -p tsconfig.typecheck.json   → 无输出（clean）
+cd harness && npx ts-node --transpile-only tests/run-unit.ts --filter "execution-scope"
+结果：100 passed, 0 failed (共 100)
+cd harness && npm test
+结果：4586 passed, 0 failed (共 4586)
+结果：46 passed, 0 failed (共 46)
+NPMTEST_EXIT=0
+npm run openspec:validate
+Totals: 45 passed, 0 failed (45 items)
+[openspec-enforcement] PASS: canonical Enforcement 路径与 glob 均可解析。
+node scripts/check-plan-version.mjs
+[check-plan-version] mode=default current=3.1.0
+[check-plan-version] PASS
+git diff --check → 无输出；node 扫改动文件行尾 → 全 LF
+```
+
+**改动文件清单（按 §6 子节分组）**
+
+| 子节 | 文件 | 这一节改了什么 |
+|---|---|---|
+| §6.1 冻结记录 | `harness/scripts/utils/feature-execution-scope.ts`（**本批唯一新文件**） | 记录读写与校验、写事务（排他临时锁 + rename 抢占 + temp/rename 提交）、首次冻结入口、修订追加、转交登记、活锁前置、出生范围解析、无 run 收尾 |
+| §6.2 冻结时机 | `harness/harness-runner.ts` | 首次冻结前置到 track 过滤之前；`--sync-closure` / `--report-reconcile-only` 走同一入口；两个收尾出口（普通阶段尾部、sync）写 BLOCKER + 非零退出 |
+| §6.3 权威优先级 | `harness/scripts/utils/goal-run-creation.ts`、`feature-track.ts`、`execution-scope.ts` | `resolveEffectiveScopeSource` 三元组与 `loadEffectiveExecutionScope` 投影、转交对账、候选指纹、共用提案校验 `resolveScopeRevisionProposal`、`recomputeDefinitionFacts(onlyTighten)` |
+| §6.4 消费者接线 G1–G6 与读点 | `check-coding.ts`、`ui-scope-gate.ts`、`git-diff.ts`、`upstream-verdict-gate.ts`、`context-facts.ts`、`capability-resolution.ts`、`capability-resolution-entry-input.ts`、`assess.ts`、`blueprint-skill-projection.ts`、`change-unit-completion.ts`、`goal-mode-entry.ts`、`repair-candidates.ts` | 判据从「有 run 身份」改为「有有效范围权威」；diff 基线三态归一到 `resolveEffectiveDiffBaseline`；UI 门不再走历史 SKIP；facts 身份位按载体二分；CU 新 run 交接与修订提案都走统一入口 |
+| §6.5 完成判定与两个生成出口 | `verify-feature-completion.ts`、`specs/feature-completion.schema.yaml`、`harness-runner.ts`、`goal-phase-runtime.ts` | `run_id: string\|null` + `scope_source` + `closure_fingerprint`、载体条件化 `structOk` 与 schema `allOf`、`shouldGenerateFeatureCompletion` 两出口共用 |
+| §6.7 与 D2 衔接 | `goal-phase-runtime.ts` | 出生一律过统一解析；successor（`--supersede` / `--rebaseline-to`）走 run→run 血缘，继承源 run 有效范围且不再登记转交 |
+| §6.8 文档与 OpenSpec delta | `docs/operations/project-entry.md`、`docs/concepts/skill-contracts.md`、`skills/project/goal-mode/SKILL.md`、`templates/AGENTS.md.template`、`README.md`、`MIGRATION.md`、`openspec/changes/dynamic-workflow-closure-migration/{specs/workflow-tracks,specs/harness-gates,tasks.md}`、`openspec/changes/composable-workflow-foundation/specs/runtime-policy/spec.md`、`openspec/specs/runtime-policy/spec.md`、总纲 plan `91c4e7a2` | 两载体语义、权威优先级、统一入口读取、同一 run 内追加修订（不造后继）；唯一 delta 仍是 `dynamic-workflow-closure-migration` |
+| §6.9 验收矩阵 | `harness/tests/unit/execution-scope.unit.test.ts` | D1 用例 42 条（套件 100 条） |
+
+**偏离汇总（七条，全部已在正文写明「放弃的准确性」）**
+
+| # | 偏离 | 放弃的准确性 |
+|---|---|---|
+| 1 | 统一入口 signature：`loadEffectiveExecutionScope` 保持 `ExecutionScope \| undefined`，三元组放同源的 `resolveEffectiveScopeSource` | 调用方想知道来源必须显式改调后者，不被类型强制（判定仍只有一份实现） |
+| 2 | 第三通道 `featuresDirAbs` 生产上不存在 → 自定义绝对 features 目录下的**无 run 完成判定记为不支持** | 该形态没有生产调用方，实施验证结论见下 |
+| 3 | 活锁识别实验不成立 → D1.3 第一行收窄为只认显式 run 身份 | 真有陈旧锁残留时无身份调用需人工清锁或带 run 身份，不会自动走 feature 载体 |
+| 4 | H2 两维豁免（attempt 与 run 终局） | feature 载体没有这两维事实；其余五项一项不减，禁止伪造 `run_id` |
+| 5 | `resolveEffectiveDiffBaseline` 落点从 `goal-run-baseline.ts` 移到 `git-diff.ts` | 没有放宽 `structural 04/13` 守卫，改的是落点 |
+| 6 | 普通阶段尾部出口的**收尾失败**分支无 CLI 级用例 | 单次 CLI 调用里入口检查与收尾之间没有可确定性制造失败的时机；两个出口调同一个函数，`--sync-closure` 出口已有真实 CLI 用例 |
+| 7 | 普通阶段尾部出口**生成完成原件**无 CLI 级用例 | 生成要求完成链每阶段 clean-pass，而真实 CLI 跑一个 phase 必然用自己的裁决重写该 phase 的 summary；判据与顺序与 `--sync-closure` 出口是同一份实现，后者已有真实 CLI 用例 |
+
+**两项实施验证项结论**
+
+1. **第三通道（`featuresDirAbs`）**：生产上没有任何调用方在自定义绝对 features 目录下走无 run 完成判定——记为**不支持**，不为此新增第三条路径（调度者已确认）。
+2. **活锁识别（`.feature.lock` → 本次关联哪个 run）**：实验**不成立**——`LockRecord.run_id` 是可选字段、跨机活性只有 TTL、同机靠 pid（自带复用窗口），它只能回答「是否可能有人正持有这个 feature」。因此 D1.3 第一行收窄为只认显式 run 身份；发现任何非 stale 锁一律报错不选边，结构/值非法的锁按**未知权威**处理（第五、六、七轮加固并有正反对照用例）。
+
+**宿主实跑**：下表保持空——宿主实跑由**用户触发**，在用户提供宿主路径与材料之前不以临时夹具冒充宿主验收。
 
 ### 宿主实跑记录
 
@@ -2830,3 +3141,5 @@ git diff --check                    退出 0；25 个改动文件全 LF（CR=0�
 | 批次 1 后 | | codex / RDB attended | | |
 | 批次 2 后 | | codex / RDB attended（用户入口） | | |
 | 批次 3 后 | | codex / RDB 无 run 交互 | | |
+
+（宿主实跑由**用户触发**；在用户提供宿主路径与材料之前本表保持空——不以临时夹具冒充宿主验收。）
