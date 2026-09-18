@@ -12,7 +12,7 @@ Use this Skill when a blueprint has an admitted canonical artifact. Canonical `c
 | 段 | 入口前提 | 出口 |
 |---|---|---|
 | **设计准备段** | admitted blueprint；**canonical CU 数量为 0 合法** | decomposition provider 提临时候选 → consumer validator 校验后**原子**写出 1..N canonical CU → design gate/readiness。停在 selector 之前，不启动 Goal Mode |
-| **施工段** | admitted blueprint **且 ≥1 canonical CU** | selector 选一个 ready CU → `goal-mode-entry --prepare-scope` 生成范围候选（主 Agent 只给完成终点、请求结果、明确的请求动作、影响判断及其来源路径；绑定与指纹由机器算）→ 既有 Goal Mode 单并发推进 → `ready_for_component_closure` |
+| **施工段** | admitted blueprint **且 ≥1 canonical CU** | selector 选一个 ready CU → `goal-mode-entry --prepare-scope` 生成范围候选（**在任何产品源码改动之前**；主 Agent 只给完成终点、请求结果、明确的请求动作、影响判断及其来源路径；绑定与指纹由机器算；该入口**只生成候选、不冻结范围**，冻结在**首次阶段调用**或 run 出生时）→ 既有 Goal Mode 单并发推进 → `ready_for_component_closure` |
 
 设计准备段的入口放宽**不传导到施工段**：没有任何 canonical CU 时，selector 不选择、Goal Mode 不启动，推进决策返回 `design_preparation_required`（这是合法入口提示，不是故障）。设计准备段通常由 `/component-design` 编排入口调用；直接进入本 Skill 时同样适用。
 

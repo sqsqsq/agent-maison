@@ -44,7 +44,7 @@ import { observeChangeUnitCompletion } from '../../scripts/utils/change-unit-com
 import { verifyFeatureCompletion, verifyReusedExecutionScope, executionScopeEvidenceIssues } from '../../scripts/utils/verify-feature-completion';
 import { loadFrozenExecutionScope, loadEffectiveExecutionScope } from '../../scripts/utils/goal-run-creation';
 import { resolveUpstreamPhaseChain } from '../../scripts/utils/upstream-verdict-gate';
-import { readScopeAcceptance, collectResolvedScopeFacts, prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
+import { readScopeAcceptance, collectResolvedScopeFacts, prepareFeatureScopeCandidate, featureScopeCandidateFingerprint } from '../../scripts/utils/feature-track';
 import { codingBasePath } from '../../scripts/utils/pass-snapshot';
 import { recomputePhaseEvidenceStaleness } from '../../scripts/utils/phase-evidence-manifest';
 import * as os from 'os';
@@ -1962,6 +1962,117 @@ cases.push({ name: 'D1 three real runless harness-runner phase calls freeze once
     assert.equal(blocker!.status, 'FAIL');
     assert.equal(blocker!.severity, 'BLOCKER');
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+} });
+
+cases.push({ name: 'D1 a coding-only runless request is managed through the candidate, and freezing does not prove it predates the edit', run() {
+  // plan 7e1d4b93 · R3 的生产路径用例。回答的是需求 §8 问题 1：coding-only 的不建 run
+  // 请求里，「候选 → 首次阶段调用冻结 → 候选指纹核对」这条路真实成立到什么程度。
+  //
+  // **三个独立 root**，不在同一个 root 里串（plan §3 问题 4）：场景 B 的冻结失败检查会被
+  // `harness-runner.ts:996-1000` 经 `generateScriptReport` 写进 `script-report.json`
+  // （`report-generator.ts:148-150`），而 `phasesWithExistingEvidence`
+  // （`feature-execution-scope.ts:665`）把它算作「这个阶段跑过」，同 root 的后续首次冻结
+  // 必撞 `:480-486` 的 D1.3 第三行。
+  const repo = path.resolve(__dirname, '../../..');
+  const runlessCodingOnly = () => setupRunlessProject({ chain: ['coding'], completionTarget: 'request' });
+  /** `execution_scope` 是 feature.yaml 里的**字段**，不是文件——解析后删字段再写回。 */
+  const dropCandidate = (root: string, feature: string): void => {
+    const declPath = featureTrackDeclPath(root, feature);
+    const raw = YAML.parse(fs.readFileSync(declPath, 'utf8')) as Record<string, unknown>;
+    delete raw.execution_scope;
+    fs.writeFileSync(declPath, YAML.stringify(raw));
+  };
+  const seedGit = (root: string): void => {
+    execFileSync('git', ['init', '-q'], { cwd: root });
+    fs.writeFileSync(path.join(root, '.gitignore'), 'framework\n');
+    execFileSync('git', ['add', '.'], { cwd: root });
+    execFileSync('git', ['-c', 'user.name=F', '-c', 'user.email=f@e.test', 'commit', '-qm', 'base'], { cwd: root });
+  };
+  const runPhase = (root: string, frameworkRoot: string, feature: string, phase: string) => spawnSync(
+    process.execPath,
+    ['-r', require.resolve('ts-node/register/transpile-only'), path.join(repo, 'harness/harness-runner.ts'),
+      '--phase', phase, '--feature', feature, '--project-root', root, '--framework-root', frameworkRoot],
+    { cwd: root, encoding: 'utf8', timeout: 300000, env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json'), MAISON_GOAL_RUN_ID: '' } },
+  );
+  const combined = (r: ReturnType<typeof runPhase>) => (r.stdout ?? '') + (r.stderr ?? '');
+
+  // ---- 场景 A：候选在场 → 首次阶段调用冻结、之后只读复用、全程不造 run ----
+  {
+    const { root, frameworkRoot, feature } = runlessCodingOnly();
+    try {
+      seedGit(root);
+      // ① 候选形状：coding-only + request 终点 ⇒ 单阶段链
+      const declared = YAML.parse(fs.readFileSync(featureTrackDeclPath(root, feature), 'utf8')) as { execution_scope?: unknown };
+      assert(declared.execution_scope, '前提：夹具应已由生产 prepareFeatureScopeCandidate 写出候选');
+      const first = runPhase(root, frameworkRoot, feature, 'coding');
+      // ③ 首次冻结由**真实 CLI** 落盘，且记录的候选指纹＝磁盘候选指纹
+      assert(fs.existsSync(featureFrozenScopePath(root, feature)), '真实 CLI 首次调用没有冻结 feature 范围：' + combined(first));
+      const record = readFeatureFrozenScope(root, feature)!;
+      assert.deepStrictEqual(record.execution_scope.phase_chain, ['coding'], JSON.stringify(record.execution_scope.phase_chain));
+      assert.equal(record.execution_scope.completion_target, 'request', JSON.stringify(record.execution_scope.completion_target));
+      assert.equal(record.candidate_fingerprint, featureScopeCandidateFingerprint(root, feature), '冻结记录的候选指纹与磁盘候选不一致');
+      // 之后只读复用，不重写记录
+      const frozenAt = record.frozen_at;
+      runPhase(root, frameworkRoot, feature, 'coding');
+      assert.equal(readFeatureFrozenScope(root, feature)!.frozen_at, frozenAt, '后续阶段调用重写了冻结记录');
+      // ④ 全程不造 run
+      assert(!fs.existsSync(featureFilePath(root, feature, 'goal-runs')), '无 run 路径造出了 goal-runs 目录');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  }
+
+  // ---- 场景 B：没有候选 → 阶段根本跑不起来（「必须先经候选入口」的机器面）----
+  // 这个 root 用完即弃：失败检查已落盘成 script-report.json，再冻结会撞 D1.3 第三行。
+  {
+    const { root, frameworkRoot, feature } = runlessCodingOnly();
+    try {
+      seedGit(root);
+      dropCandidate(root, feature);
+      const blocked = runPhase(root, frameworkRoot, feature, 'coding');
+      // 报告确实落盘（`harness-runner.ts:996-1000` → `generateScriptReport`）——实跑确认，
+      // 不留「未落盘」的兜底分支（那条分支实测走不到，留着就是死代码）。
+      const reportPath = path.join(featurePhaseReportsDir(root, feature, 'coding', frameworkRoot), 'script-report.json');
+      assert(fs.existsSync(reportPath), '候选缺失时 harness 未写出 script-report.json：' + combined(blocked));
+      const report = JSON.parse(fs.readFileSync(reportPath, 'utf8')) as { checks: Array<{ id: string; status: string; severity: string; suggestion?: string }> };
+      const check = report.checks.find(c => c.id === 'execution_scope_frozen');
+      assert(check, '候选缺失时没有 execution_scope_frozen 检查项：' + JSON.stringify(report.checks.map(c => c.id)));
+      assert.equal(check!.status, 'FAIL', JSON.stringify(check));
+      assert.equal(check!.severity, 'BLOCKER', JSON.stringify(check));
+      assert(check!.suggestion?.includes('--prepare-scope'), '候选缺失的 suggestion 未指向 --prepare-scope：' + JSON.stringify(check));
+      assert(!fs.existsSync(featureFrozenScopePath(root, feature)), '没有候选却冻结了范围');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  }
+
+  // ---- 场景 C：**真正制造「候选晚于代码」** —— 删候选 → 改源码 → 生成候选 → 首次冻结 ----
+  // 这条的价值是把上限钉死：冻结记录里没有任何代码基线（feature-execution-scope.ts 的
+  // FeatureFrozenScope 只有 frozen_at / candidate_fingerprint 等，没有 base_sha），无 run 的
+  // diff 基线默认就是工作区，所以这个历史顺序在冻结入口处**完全不可见**。
+  // 断言口径限定为「该冻结入口不拒绝这个历史顺序」——本场景没有跑任何 checker，
+  // **不**证明整条阶段链会通过。
+  {
+    const { root, frameworkRoot, feature } = runlessCodingOnly();
+    try {
+      seedGit(root);
+      // ① 先把预生成的候选删掉，并确认它真的不在了
+      dropCandidate(root, feature);
+      assert.throws(() => featureScopeCandidateFingerprint(root, feature), '前提：候选应已被删除，否则这条用例证明不了「候选晚于代码」');
+      // ② 再改产品源码（这一步在候选之前发生 —— 正是事故的顺序）
+      const sourceFile = path.join(root, 'src/demo/value.ts');
+      fs.writeFileSync(sourceFile, 'export const value: number = 42;\n');
+      // ③ 事后才经**生产入口**生成候选
+      prepareFeatureScopeCandidate({
+        projectRoot: root, frameworkRoot, feature, completionTarget: 'request',
+        requestedResults: ['value is 42'], requestedPhases: ['coding'], requirement: '把 value 改成 42', overwrite: true,
+        impact: { userVisibleBehaviorChange: false, reason: '仅内部取值变化', basisPaths: ['src/demo/value.ts'] },
+      });
+      // ④ 首次冻结：入口照常接受，一条检查项都不发
+      const frozen = ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature });
+      assert.equal(frozen.status, 'frozen', JSON.stringify(frozen.checks));
+      assert.deepStrictEqual(frozen.checks, [], '冻结入口对「候选晚于代码」发出了检查项——本用例的上限声明需要更新');
+      // 记录里确实没有任何代码基线可供比对先后
+      const record = readFeatureFrozenScope(root, feature)!;
+      assert(!Object.keys(record).some(key => /base_sha|base_commit/.test(key)), '冻结记录出现了代码基线字段——§5.3 #2 的上限声明需要更新');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  }
 } });
 
 cases.push({ name: 'D1 real createGoalRun birth transfers the feature effective scope', run() {

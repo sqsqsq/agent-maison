@@ -579,6 +579,132 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(ut.includes('应当失败的断言保留失败与原因'), 'business-ut 缺「保留真实失败」承诺（需求 R2 第二条）');
     },
   },
+  // ==========================================================================
+  // plan 7e1d4b93（主 Agent 前置责任与交付授权延续）——**十条整句常量**
+  // --------------------------------------------------------------------------
+  // 为什么全部整句、不用短锚：短锚挡不住**句内反转**（codex 第一轮 B3 实证——把
+  // 「可以并行」改成「不可以并行」、「不强迫建蓝图或 Feature」改成「必须建蓝图和
+  // Feature」，短锚版照绿）。故本批每条必要承诺都用整句 `includes` 比对，沿用上方
+  // `R4_EXECUTOR_SENTENCE` 的做法。**改这些措辞必须同步改本文件常量。**
+  //
+  // 射程：只证明「这十条常量还逐字在文档里、常量**内部**没被删改或反转」。常量之外
+  // 的文字改动、以及 S6 两个标记串所在句子的语义，都不在射程内（留人工审 diff / 宿主
+  // 观察点 H1–H5）。
+  // 需求：.cursor/requirement/需求_主Agent前置责任与交付授权延续_宿主开卡回灌.md
+  // ==========================================================================
+  {
+    name: 'the entry states the principal agent precondition duty',
+    run: () => {
+      // R1：主责任**含首句**。codex 第二轮阻断：常量若从「同一交付单元……」起笔，
+      // 把首句改成「不必把本次请求接入对应执行路径。」全部常量仍匹配——核心责任被
+      // 反转而 smoke 不红。故首句必须在常量里。
+      const PRINCIPAL_DUTY_SENTENCE =
+        '**主 Agent 的前置责任**：把本次请求接入对应执行路径。同一交付单元的下游产出必须以**已具备的上游依据和有效范围**为输入——不得边补前置边提前施工，不得要求设计追认已写好的实现。';
+      const REUSE_HANDBACK_SENTENCE = '已有有效输入与证据按规则复用，缺口交回责任方。';
+      for (const rel of ['templates/AGENTS.md.template', 'docs/operations/project-entry.md']) {
+        const text = read(rel);
+        assert(text.includes(PRINCIPAL_DUTY_SENTENCE), `${rel} 缺主 Agent 前置责任原句（需求 R1 第一条）。期望逐字包含：\n${PRINCIPAL_DUTY_SENTENCE}`);
+        assert(text.includes(REUSE_HANDBACK_SENTENCE), `${rel} 缺「复用 / 交回责任方」原句（需求 R1 第一条）。期望逐字包含：\n${REUSE_HANDBACK_SENTENCE}`);
+      }
+    },
+  },
+  {
+    name: 'delegation does not exempt the principal agent',
+    run: () => {
+      // R5 与 R1 分成两条常量、两条用例：合并成一条同样挡得住删改（整句 includes 一样会红），
+      // 分开是为了**定位**——红的时候直接看出是 R1 的责任句还是 R5 的委派句被动了。
+      const DELEGATION_SENTENCE =
+        '**委派不豁免你**：子 Agent 的边界是它那个 Skill 的边界，不解除你自己的前置责任。';
+      for (const rel of ['templates/AGENTS.md.template', 'docs/operations/project-entry.md']) {
+        assert(read(rel).includes(DELEGATION_SENTENCE), `${rel} 缺「委派不豁免」原句（需求 R5）。期望逐字包含：\n${DELEGATION_SENTENCE}`);
+      }
+    },
+  },
+  {
+    name: 'the entry separates the scope candidate from the freeze',
+    run: () => {
+      // R2：三个关键承诺必须同时在 §4.0 节内。要把入口写成「prepare-scope 冻结范围」，
+      // 必须先删掉其中一句 → 红。
+      // **不锁**「候选写入 feature.yaml」「核对范围投影」「完整命令行」这些步骤细节——
+      // 完整步骤由模板正文承载、由宿主观察点 H1 核验。
+      const template = read('templates/AGENTS.md.template');
+      const section = template.slice(template.indexOf('### 4.0 需求路由'), template.indexOf('### 4.0.1'));
+      assert(section.length > 0, '模板缺 §4.0 需求路由节');
+      const DESIGN_HANDOFF_SENTENCE =
+        '**设计交接**（admitted blueprint + ready CU）是范围候选的输入——蓝图与 CU 不是可并行赶的文书，是范围的来源';
+      const CANDIDATE_NOT_FREEZE_SENTENCE = '**`--prepare-scope` 只生成候选、不冻结范围**';
+      const FIRST_PHASE_FREEZE_SENTENCE = '**首次阶段调用**冻结 feature 级范围记录并核对候选指纹';
+      for (const [why, sentence] of [
+        ['设计交接是候选的输入（需求 R2 第二条）', DESIGN_HANDOFF_SENTENCE],
+        ['候选与冻结分清，不得写成 prepare-scope 冻结范围（需求 R2 第一条）', CANDIDATE_NOT_FREEZE_SENTENCE],
+        ['冻结发生在首次阶段调用（需求 R2 第一条）', FIRST_PHASE_FREEZE_SENTENCE],
+      ] as const) {
+        assert(section.includes(sentence), `AGENTS 模板 §4.0 缺原句：${why}。期望逐字包含：\n${sentence}`);
+      }
+    },
+  },
+  {
+    name: 'the entry states the three preparation boundaries',
+    run: () => {
+      // R1 第二条：三条边界各自独立成句，逐句锁定——避免制造「任何事都必须先跑六阶段」，
+      // 也避免单处句内反转绕过。
+      const template = read('templates/AGENTS.md.template');
+      const section = template.slice(template.indexOf('### 4.0 需求路由'), template.indexOf('### 4.0.1'));
+      const BOUNDARY_PARALLEL_SENTENCE =
+        '**准备工作（读代码、看截图、查依据）可以并行**，禁的只是依赖未满足就提前施工。';
+      const BOUNDARY_LOCAL_REQUEST_SENTENCE =
+        '**局部 review / UT / testing 请求**走各自的 request 准备路径，不强迫建蓝图或 Feature；**无 Feature 的独立测试请求，落笔写测试之前先跑 `--prepare-request` 确认落点与载体**；**已有 Feature/CU 上下文的测试沿其有效范围和阶段入口执行**，不得把正式交付中的测试拆成独立请求。';
+      const BOUNDARY_RESUME_SENTENCE =
+        '**恢复已有任务**复用既有有效范围与证据，不因本节重跑完整链。';
+      for (const [why, sentence] of [
+        ['准备工作可并行（需求 R1 边界①）', BOUNDARY_PARALLEL_SENTENCE],
+        ['局部请求走各自准备路径 + 写测试前先 --prepare-request（需求 R1 边界② / task_d09f8f18）', BOUNDARY_LOCAL_REQUEST_SENTENCE],
+        ['恢复已有任务复用有效范围（需求 R1 边界③）', BOUNDARY_RESUME_SENTENCE],
+      ] as const) {
+        assert(section.includes(sentence), `AGENTS 模板 §4.0 缺边界原句：${why}。期望逐字包含：\n${sentence}`);
+      }
+      // project-entry 侧锁的是**时点半句**，不只是命令名。
+      // 措辞用「落笔写测试之前」而非「动手写之前」：后者含子串「手写」，会踩中既有
+      // `D0.2 …` 用例对「手写来源/指纹」的全文禁词断言（:304）。语义时点不变，
+      // 不去削弱那条既有断言（偏离登记见 plan §10）。
+      const PREPARE_REQUEST_TIMING = '**落笔写测试之前先跑 `--prepare-request` 确认落点与载体**';
+      assert(
+        read('docs/operations/project-entry.md').includes(PREPARE_REQUEST_TIMING),
+        `project-entry 缺「写之前先跑 --prepare-request」时点半句（需求 R1 边界②）。期望逐字包含：\n${PREPARE_REQUEST_TIMING}`,
+      );
+    },
+  },
+  {
+    name: 'full delivery authority continues to the endpoint',
+    run: () => {
+      // R4：整句含「既有确认点」五项枚举——删掉枚举或反转前半句都会失配。
+      // **只锁「授权延续到终点」这一句**；「建 run 具体怎么做」由模板 §4.0 的上下文说明承载。
+      const AUTHORITY_CONTINUATION_SENTENCE =
+        '**用户已授权完整交付时，走完这条链到完成终点是主 Agent 自己的事**——不把正式闭环当收尾时可再问一次的可选项，仍须询问的只有既有确认点（真实授权、策展语义、预算、外部不可逆动作、设计缺口澄清）。';
+      const template = read('templates/AGENTS.md.template');
+      const section = template.slice(template.indexOf('### 4.0 需求路由'), template.indexOf('### 4.0.1'));
+      assert(section.includes(AUTHORITY_CONTINUATION_SENTENCE), `AGENTS 模板 §4.0 缺交付授权延续原句（需求 R4）。期望逐字包含：\n${AUTHORITY_CONTINUATION_SENTENCE}`);
+      assert(read('docs/operations/project-entry.md').includes(AUTHORITY_CONTINUATION_SENTENCE), `project-entry 缺交付授权延续原句（需求 R4）。期望逐字包含：\n${AUTHORITY_CONTINUATION_SENTENCE}`);
+    },
+  },
+  {
+    name: 'the freeze wording is mirrored in the downstream docs',
+    run: () => {
+      // R2 第三条：三份下游文档同步。**结构性断言，措辞如实**——只防这两个标记串被删，
+      // **不证明**三处口径一致、也不证明这些句子的语义正确（句式随各文件上下文，
+      // 无法整句同源；语义一致留人工审 diff）。
+      for (const rel of [
+        'docs/operations/project-entry.md',
+        'MIGRATION.md',
+        'skills/project/change-unit-progression/SKILL.md',
+      ]) {
+        const text = read(rel);
+        for (const marker of ['首次阶段调用', '只生成候选、不冻结范围']) {
+          assert(text.includes(marker), `${rel} 未与入口同步冻结口径标记: ${marker}（需求 R2 第三条）`);
+        }
+      }
+    },
+  },
   {
     name: 'standalone request skills add no verifier round',
     run: () => {
