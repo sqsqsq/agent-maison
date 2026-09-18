@@ -4884,7 +4884,16 @@ Goal runner — tool-agnostic multi-phase orchestrator
   const effectiveBirthScope = manifest.execution_scope
     ? applyScopeRevisions(validateExecutionScope(manifest.execution_scope), loadAuthoritativeEvents(path.join(projectRoot, manifest.report_dir, 'events.jsonl')))
     : undefined;
-  const requestedChain = effectiveBirthScope ? [...effectiveBirthScope.phase_chain] : attachedCreation?.state === 'complete'
+  // plan a9f3c7d2 第二笔（R5）：单职责请求关掉自己的定义缺口后，有效链**本来就是空的**。
+  // 空链不是合法的执行目标——它既过不了 `resolveActualGoalPhaseChainAtBirth` 的非空校验，
+  // 又会让 `resolveResumeFromEvents` / `applyInvalidationsToResume` 按空链重建出 `outcomes=[]`，
+  // 把上一段真实的 PASS 整个丢掉，resume 的终态落回 PARTIAL。此时退回**出生冻结链**（授权边界，
+  // 也正是完成证据所在的那条链）：本阶段的 PASS 照常从事件重建，起点推导随之落在链尾，
+  // 不会重新派发；失效/撤销规则一行不放宽。只对 request 终点二分，feature 终点一字不动。
+  const requestedChain = effectiveBirthScope
+    ? [...(effectiveBirthScope.phase_chain.length === 0 && effectiveBirthScope.completion_target === 'request'
+        ? validateExecutionScope(manifest.execution_scope!).phase_chain : effectiveBirthScope.phase_chain)]
+    : attachedCreation?.state === 'complete'
     ? [...attachedCreation.event.phase_chain]
     : resolveAutoChain(
         workflow,
@@ -9146,6 +9155,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
             workflow,
             proposals,
             previous: old,
+            // 授权边界取**出生冻结链**（`old` 是应用过修订的有效链，会缩短）。
+            authorizedPhases: validateExecutionScope(manifest.execution_scope).phase_chain,
             completedPhases: completed,
             currentRunId: manifest.run_id,
             requirement: manifest.requirement,
@@ -9758,10 +9769,16 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // `outcomes` stays what it always was — a current-effective projection, pruned on backtrack
     // (:6677 / :9509); execution history lives in events, not here (third-round M1).
     const latestOutcome = (phase: string) => [...outcomes].reverse().find(outcome => String(outcome.phase) === phase);
-    const reachedEnd = !halted && chain.length > 0 && chain.every(phase => {
+    // plan a9f3c7d2 第二笔（R5）：单职责（`completion_target=request`）请求跑完本阶段、修订把出生
+    // 时的定义缺口关掉之后，有效链**本来就该是空的**——「没有下一步」正是它的成功终局。空链在这里
+    // 被原判「未达链尾」→ PARTIAL，单职责请求于是永远到不了成功终局。只对 request 终点二分，
+    // feature 终点一字不变；`outcomes` 里至少有一条干净 PASS 才算数（本阶段没跑或失败时链不会空）。
+    const requestSliceDone = birthScope?.completion_target === 'request' && chain.length === 0
+      && outcomes.some(outcome => outcome.verdict === 'PASS' && !outcome.advance_blocked);
+    const reachedEnd = !halted && (requestSliceDone || (chain.length > 0 && chain.every(phase => {
       const latest = latestOutcome(String(phase));
       return latest?.verdict === 'PASS' && !latest.advance_blocked;
-    });
+    })));
     const terminalChain = chain.map(String);
 
     // 全链跑完时消费与 completion 同源的 issue 集。legacy needs_human 会在 collector 中

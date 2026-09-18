@@ -54,7 +54,7 @@ review 阶段不执行宿主包管理器依赖安装命令，也不使用 `HARNE
 
 | 输入项 | 必需 |
 |--------|------|
-| 明确审查目标、代码/diff 基线与适用项目规则 | ✅；专项使用 request CLI，组合使用真实 Feature/run |
+| 明确审查目标、代码/diff 基线与适用项目规则 | ✅；专项使用 request CLI，组合使用真实 Feature/run。**专项独立调用**：输入=明确审查目标 + `targets.files` + 基线；报告落点=请求 `report-dir` 内的 `review-report.md`（不得写进 Feature 树）；当前 profile 能机器执行的是章节/问题表/引用/结论一致性等结构检查，**语义结论由你写**；`--prepare-request` 报出的能力缺口如实呈现，不改投其它落点 |
 | contracts / acceptance / 蓝图 runtime 与 design_refs | 组合交付或用户要求按设计验收时必需；来源由 P1/P3 解析 |
 | plan.md / spec.md | 仅本次有实际文档消费时读取；不得强造空文档 |
 | doc/architecture.md / 实际目标源码 | ✅，按请求范围及项目适用规则 |

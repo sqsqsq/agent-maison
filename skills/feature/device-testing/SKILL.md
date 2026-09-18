@@ -1,6 +1,6 @@
 # 真机测试 Skill (`device-testing`)
 
-> **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `testing.module_name` / `testing.packaging` / `testing.plan_confirm` / `phase.next_step`。 **输入协议边界**：旧版固定上游阅读口径仅适用于历史 1.0 输入。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。新默认使用 1.1 输入，调用上下文必须由入口解析，不得自行补造。 无 Feature 专项按[请求 CLI](../../../docs/operations/request-harness.md)由 Agent 执行准备、Research 和实际检查；完成只代表本次请求，不继续 Feature 链。
+> **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `testing.module_name` / `testing.packaging` / `testing.plan_confirm` / `phase.next_step`。 **输入协议边界**：旧版固定上游阅读口径仅适用于历史 1.0 输入。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。新默认使用 1.1 输入，调用上下文必须由入口解析，不得自行补造。 无 Feature 专项按[请求 CLI](../../../docs/operations/request-harness.md)由 Agent 执行准备、Research 和实际检查；完成只代表本次请求，不继续 Feature 链。**专项独立调用的能力边界**：testing 专项须提供 `inputs.test_plan` 与 cases，**每条用例含可执行步骤与明确预期结果**，缺一即不可执行；`--prepare-request` 报出的能力缺口如实呈现，不改投其它落点、不用其它用例的通过代替。
 
 ## 请求分流（先判后进，BLOCKER）
 

@@ -41,21 +41,27 @@ export function designScopeRevisionChecks(ctx: CheckContext, checks: CheckResult
   const runId = 'run_id' in subject ? subject.run_id : undefined;
   if ('run_id' in subject && !runId) return [];
   const scope = loadEffectiveExecutionScope(ctx.projectRoot, ctx.feature, runId);
-  if (!scope || scope.completion_target !== 'feature') return [];
+  // plan a9f3c7d2 第二笔（R5）：request 终点原先被整个排除在定义事实修订之外，于是单职责 spec/plan
+  // 即使产出合法 acceptance/contracts、检查全 PASS，出生时的 unknown 也永远关不掉，run 恒判
+  // `execution_scope_unresolved`。两种终点都进；下面三处按 completion_target 二分，feature 分支一字不变。
+  if (!scope) return [];
   const kind = ctx.phase === 'spec' ? 'acceptance-context' : 'design-context';
   const inputId = ctx.phase === 'spec' ? 'acceptance' : 'contracts';
   const resolved = ctx.resolvedInputs.values[inputId];
   if (resolved?.state !== 'resolved') return [];
   if (scope.obligations.some(obligation => obligation.kind === kind && obligation.basis.some(binding => canonical(binding) === canonical(resolved.binding)))) return [];
   const remaining = [...new Set(scope.obligations.filter(obligation => obligation.applicability === 'required' && !obligation.satisfied_by?.length && obligation.owner_phase !== ctx.phase).map(obligation => obligation.owner_phase))];
-  if (!remaining.length) return [];
+  // 请求动作按终点二分：feature 终点仍是「除本阶段外还剩哪些责任阶段」；request 终点是单职责请求，
+  // 请求动作**就是它自己**——结构上不可能新增阶段（`feature-track.ts` 另有一道 fail-closed 校验兜底）。
+  const requestedPhases = scope.completion_target === 'feature' ? remaining : [ctx.phase];
+  if (!requestedPhases.length) return [];
   const facts = scope.obligations.filter(obligation => ctx.phase !== 'spec' || obligation.applicability !== 'unknown' || !['unit-evidence:pending', 'device-evidence:pending', 'unit-evidence:acceptance', 'device-evidence:acceptance'].includes(obligation.id)).map(obligation => {
     if (obligation.kind !== kind) return structuredClone(obligation);
     const basis = obligation.basis.filter(binding => !(binding.source.kind === 'artifact' && binding.source.artifact === `${inputId}@1`));
     return { ...obligation, applicability: 'required' as const, reason: `${ctx.phase} produced validated design content`, basis: [...basis, resolved.binding], satisfied_by: [resolved.binding] };
   });
   if (!facts.some(fact => fact.kind === kind)) facts.push({ id: `${kind}:design-output`, kind, owner_phase: ctx.phase, applicability: 'required', reason: `${ctx.phase} produced validated design content`, basis: [resolved.binding], satisfied_by: [resolved.binding] });
-  const proposal: ExecutionScopeInput = { request: { completion_target: scope.completion_target, requested_results: scope.requested_results, requested_phases: remaining,
+  const proposal: ExecutionScopeInput = { request: { completion_target: scope.completion_target, requested_results: scope.requested_results, requested_phases: requestedPhases,
     // D0.1: inherit the sourced impact judgement — dropping it sends device back to `unknown`
     // on every revision, so a legal zero-device scope would regress one step each time.
     ...(scope.request_impact ? { impact: scope.request_impact } : {}) },
@@ -84,7 +90,10 @@ export function designScopeRevisionChecks(ctx: CheckContext, checks: CheckResult
   if (findSubtractedRequiredObligations(scope, next).length) {
     return [{ id: 'design_scope_facts', category: 'structure', severity: 'BLOCKER', status: 'FAIL', description: '设计修订不得静默删除冻结义务', details: '新验收与既有 required 义务冲突；返回 scope owner 澄清，不缩减本 run 责任', suggestion: '回到 scope owner 澄清验收变化，保留已冻结义务；正式需求变化沿既有 correction/successor 处理。' }];
   }
-  if (!next.phase_chain.length) return [];
+  // feature 终点：空链＝没有可交接的下一步，不必发提案（既有语义）。
+  // request 终点：空链**正是**「本阶段定义义务已满足、没有下一步」——这条修订必须发出去，
+  // 否则出生时的 unknown 关不掉，单职责请求永远到不了成功终局。
+  if (!next.phase_chain.length && scope.completion_target === 'feature') return [];
   return [{ id: 'design_scope_facts', category: 'structure', severity: 'MINOR', status: 'PASS', description: '新设计事实交由既有 P2 边界重签', details: `${ctx.phase}: ${inputId} 已产生新的真实绑定`, scope_revision_input: proposal }];
 }
 const digest = (file: string): string => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');

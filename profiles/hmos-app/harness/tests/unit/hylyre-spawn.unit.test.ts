@@ -186,6 +186,73 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(log.includes('-m hylyre doctor'), 'log must record command');
     },
   },
+  // ==========================================================================
+  // 工具链环境派生（plan a9f3c7d2 第一笔 · R4）
+  // 事故归因：agent 裸调 hvigor 撞 `Invalid value of 'DEVECO_SDK_HOME'` 后判「本机环境问题」。
+  // 事实是执行器一直从 framework.local.json 的 installPath 派生该变量——本用例把它锁住。
+  // 既有覆盖（本文件上方）只证明信任锚三键不外泄，不覆盖 installPath → SDK_HOME 这条派生。
+  // ==========================================================================
+  {
+    name: 'hvigor child env derives DEVECO_SDK_HOME from installPath when the variable is absent',
+    run: () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const hv = require('../../hvigor-runner') as { buildChildEnv: (projectRoot: string) => NodeJS.ProcessEnv };
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { spawnSync } = require('child_process') as typeof import('child_process');
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'deveco-derive-'));
+      const previous = process.env.DEVECO_SDK_HOME;
+      try {
+        const installPath = path.join(root, 'DevEco Studio');
+        fs.mkdirSync(path.join(installPath, 'sdk'), { recursive: true });
+        fs.writeFileSync(
+          path.join(root, 'framework.local.json'),
+          JSON.stringify({ schema_version: '1.0', toolchain: { devEcoStudio: { installPath } } }),
+        );
+        delete process.env.DEVECO_SDK_HOME;
+        const derived = hv.buildChildEnv(root);
+        assert(
+          typeof derived.DEVECO_SDK_HOME === 'string' && fs.existsSync(derived.DEVECO_SDK_HOME),
+          `未设该变量时应从 installPath 派生出存在的 SDK 目录，实得 ${String(derived.DEVECO_SDK_HOME)}`,
+        );
+        // 真实子进程确认这份 env 确实被子进程看到（本文件上方那条子进程用例查的是信任锚剥离，
+        // 不覆盖这条派生；第一轮代码 review 建议 1）。
+        const seen = spawnSync(process.execPath, ['-e', 'console.log(process.env.DEVECO_SDK_HOME ?? "")'], {
+          env: derived,
+          encoding: 'utf-8',
+          shell: false,
+          timeout: 15000,
+        });
+        assert(
+          (seen.stdout ?? '').trim() === derived.DEVECO_SDK_HOME,
+          `子进程未拿到派生的 DEVECO_SDK_HOME：${JSON.stringify(seen.stdout)}`,
+        );
+        // 用户已显式设置时不得覆盖（派生只补缺，不抢）。
+        process.env.DEVECO_SDK_HOME = path.join(root, 'explicit-sdk');
+        assert(
+          hv.buildChildEnv(root).DEVECO_SDK_HOME === path.join(root, 'explicit-sdk'),
+          '已显式设置 DEVECO_SDK_HOME 时不得被派生值覆盖',
+        );
+      } finally {
+        if (previous === undefined) delete process.env.DEVECO_SDK_HOME;
+        else process.env.DEVECO_SDK_HOME = previous;
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    // **源码 smoke**（如实命名，第一轮代码 review 建议 1）：这条不读实际生成的 metadata 文件——
+    // 生成它需要真跑 hvigor。它只证明 envProbe 的装配点声明了本次 childEnv 的 SDK 路径字段。
+    name: 'build metadata source declares the resolved sdk home path',
+    run: () => {
+      // A12：既有布尔只说明变量是否设置，诊断要回答「这次用的哪个 SDK」就得有路径本身。
+      const source = fs.readFileSync(path.join(__dirname, '../../hvigor-runner.ts'), 'utf-8');
+      const probe = source.slice(source.indexOf('envProbe: {'), source.indexOf('logFile: path.basename(logAbs)'));
+      assert(/DEVECO_SDK_HOME:\s*Boolean\(childEnv\.DEVECO_SDK_HOME\)/.test(probe), '既有布尔字段不得被改写');
+      // 只要求「新增路径字段 + 取自 childEnv」，不锁具体表达式（等价实现同样合法）。
+      assert(/DEVECO_SDK_HOME_PATH\s*:[^\n]*childEnv\.DEVECO_SDK_HOME/.test(probe),
+        'metadata 未补记本次 childEnv 的 SDK 路径，A4/A6/A7 的诊断口径就没有可读证据');
+    },
+  },
 ];
 
 export function runAll(): UnitCaseResult[] {

@@ -25,3 +25,17 @@ Project Skills and global phases SHALL consume the selected module, term, docume
 #### Scenario: Graph without optional catalog
 - **WHEN** a real module source directory is explicitly selected without catalog
 - **THEN** generation and checking SHALL work with that directory without creating catalog or starting testing
+
+### Requirement: Entry routing answers scope and acceptance semantics
+
+The root entry SHALL route a request by answering two questions in order: what this round changes (scope) and by which standard it is judged correct (acceptance semantics). "Implementation unchanged" answers only the first and MUST NOT excuse the second. Before classifying, the agent SHALL consult existing basis (acceptance, blueprint, module catalog, constraint knowledge) and reuse what it finds; only a new or changed expectation SHALL enter design responsibility. The agent SHALL ask the user only about a semantic gap that survives that lookup, and SHALL NOT create a blueprint merely because tests are being added.
+
+Enforcement: `templates/AGENTS.md.template`, `docs/operations/project-entry.md`, `harness/tests/unit/framework-init-entry-contract.unit.test.ts`.
+
+#### Scenario: Test-only request still needs an acceptance basis
+- **WHEN** a user asks only to add tests and explicitly keeps the implementation unchanged
+- **THEN** the entry SHALL still require the acceptance-semantics question to be answered from existing basis before assertions are written, instead of treating the request as informal maintenance that needs no judgement
+
+#### Scenario: Existing basis is reused rather than rebuilt
+- **WHEN** the requested expectation is already recorded in existing acceptance, blueprint or constraint knowledge
+- **THEN** the entry SHALL reuse that basis with an explicit reference and SHALL NOT require a new blueprint

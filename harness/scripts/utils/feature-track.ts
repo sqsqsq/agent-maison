@@ -696,6 +696,12 @@ export function resolveScopeRevisionProposal(input: {
   workflow: WorkflowSpec;
   proposals: readonly ExecutionScopeInput[];
   previous: ExecutionScope;
+  /**
+   * 请求动作的**授权边界＝出生／冻结链**（不是 `previous.phase_chain`——后者是已应用修订后的
+   * 有效链，会随义务被满足而缩短甚至变空，拿它当边界会把「同一份合法提案再收一次尾」判成越权）。
+   * `ExecutionScope` 没有 `requested_phases` 字段，故由调用方把冻结那一份链传进来。
+   */
+  authorizedPhases: readonly string[];
   completedPhases?: ReadonlySet<string>;
   currentRunId?: string;
   requirement?: string;
@@ -709,6 +715,11 @@ export function resolveScopeRevisionProposal(input: {
   if (proposal.request.completion_target !== previous.completion_target
     || JSON.stringify(proposal.request.requested_results) !== JSON.stringify(previous.requested_results)) {
     throw new Error('[execution-scope] revision changes request boundary');
+  }
+  // plan a9f3c7d2 第二笔：request 终点是单职责请求——修订只能关闭本阶段的定义缺口，
+  // **不得把新阶段塞进请求动作**。边界取**冻结授权链**（见 `authorizedPhases` 注释）。
+  if (previous.completion_target === 'request' && proposal.request.requested_phases.some(phase => !input.authorizedPhases.includes(phase))) {
+    throw new Error('[execution-scope] request-scope revision cannot add phases');
   }
   const completed = input.completedPhases ?? new Set<string>();
   const revoked = new Set(previous.obligations

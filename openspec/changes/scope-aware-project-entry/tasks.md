@@ -48,3 +48,18 @@
 - 定向验证：project-entry 7/7（含真实 Graph 生成/校验、两个 cwd、Feature 树零变更、可选/坏来源、局部 catalog/glossary/docs）、Graph 11/11、init-next-steps 30/30、framework-init-entry-contract 5/5（七类 adapter 真实物化）、template-renderer 5/5、docs-authoring-lint 18/18；typecheck 通过。
 - 仓库门禁首轮 cd harness && npm test：typecheck 通过，4472/4474 单测通过；两项失败是 checked-in bridge 描述同步与新增诊断缺 suggestion。仅修正文案后 resolve-skill-path 4/4、blocker-suggestion-ratchet 3/3 通过，单独补跑 fixtures 46/46；复用首轮其余有效结果，不重复全量。日志：harness/reports/p6-remaining-harness-validation.log 与 p6-remaining-fixtures.log。OpenSpec 44/44、plan、diff/LF 检查通过。
 - P6 todo 5/5、本 change 任务 9/9 完成；P6 本轮代码未提交、未发布。后续交 P7：分层完成、在途兼容、默认切换与公开旧入口退役、候选发布件消费及真实宿主验收。本轮原生 Graph 边界使用测试 profile；不宣称真实 HarmonyOS/RDB/真机通过。
+
+## 3. 单职责路径入口指引（plan a9f3c7d2 第一笔）
+
+- [x] 3.1 AGENTS 模板 §4.0 原位重写为「范围 / 验收语义」两问 + 先查依据 + 校验经框架执行器；`project-entry.md` 同步。
+- [x] 3.2 coding / business-ut 技能写明编译与测试经框架执行器、工具链确认入口与三层诊断口径；`request-harness.md` 同步并标注 SDK 路径需脱敏。
+- [x] 3.3 补 smoke（追加进既有 `framework-init-entry-contract.unit.test.ts`，不新建套件）：两问、先查依据、框架执行器、范围外改动先说明与获认可、无新增 verifier。
+
+## 4. 单职责终点（plan a9f3c7d2 第二笔）
+
+- [x] 4.1 spec / plan / coding 三份技能补单职责终点表述（统一措辞，smoke 整句锁定）。
+- [x] 4.2 补 spec-only / plan-only / coding-only 三条验收：经 `--prepare-scope --completion-target request` 生成候选 → 单阶段链 + `completion_target=request` + 不生成 Feature completion。
+- [x] 4.3 代码 review 第一轮：修复 request 终点到不了成功终局的生产缺口——既有设计事实修订对 `completion_target=request` 同样生效（请求动作恒为本阶段）、空有效链视为已达链尾，正向走 `CHAIN_SLICE_COMPLETED`、无 `unresolved`、无 Feature completion。
+- [x] 4.4 代码 review 第一轮：单职责修订不得新增阶段（fail-closed）；补两条反向用例——本阶段产出不合法时如实 HALTED，不宣告成功。
+- [x] 4.5 代码 review 第二轮：修订后空有效链不是合法执行目标——出生冻结链兜底，resume 仍能判出本阶段已 PASS、不重派发、终局不变。
+- [x] 4.6 代码 review 第二轮：新增阶段校验改用**冻结授权链**（两个调用点都传），当前有效范围继续只用于义务重算。

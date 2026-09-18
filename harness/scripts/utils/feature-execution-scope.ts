@@ -561,6 +561,9 @@ export function applyFeatureScopeRevisionsThenMaybeComplete(input: {
     projectRoot, frameworkRoot, feature, workflow,
     proposals,
     previous,
+    // 授权边界取**出生段的链**（`previous` 是应用过修订的有效范围，链会随义务满足而缩短/变空——
+    // 拿它当边界时，重复收尾会把同一份合法提案判成越权、连后面的 no-op 判断都到不了）。
+    authorizedPhases: record!.execution_scope.phase_chain,
     completedPhases,
   });
   if (outcome) {

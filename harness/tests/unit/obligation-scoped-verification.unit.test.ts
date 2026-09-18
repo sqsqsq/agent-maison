@@ -1,5 +1,6 @@
 import assert from 'assert';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { execFileSync, spawnSync } from 'child_process';
 import * as YAML from 'yaml';
@@ -159,6 +160,8 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       nativeProfile(f); const testFile = 'entry/src/ohosTest/ets/test/Value.test.ets'; fs.mkdirSync(path.dirname(path.join(f.root, testFile)), { recursive: true });
       fs.writeFileSync(path.join(f.root, testFile), "describe('ValueSuite',()=>{it('value',0,()=>{expect(42).assertEqual(42);});});");
       fs.writeFileSync(path.join(f.root, 'build-profile.json5'), JSON.stringify({ modules: [{ name: 'entry', srcPath: './entry' }] }));
+      // 正常载体：此前这里缺 `module.json5`，只因 hvigor 被打桩才没被真实执行链拦住（第一轮代码 review 建议）。
+      fs.writeFileSync(path.join(f.root, 'entry/src/ohosTest/module.json5'), '{"module":{"name":"entry_test"}}');
       fs.writeFileSync(path.join(f.root, f.options.requestFile), JSON.stringify({ ...f.request, targets: { ...f.request.targets, tests: [testFile] } }));
       const before = tree(path.join(f.root, 'doc/features')); let calls = 0; let fail = false;
       gate.applyPhaseEntryDeviceGate = async () => ({ ok: true });
@@ -198,6 +201,141 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       fs.writeFileSync(path.join(f.root, f.options.requestFile), JSON.stringify(raw)); f.options.reportDir = 'doc/reports/visual-request';
       assert.equal(await runRequest(f), 1); assert.equal(calls, beforeVisual);
     } finally { hylyre.spawnHylyre = oldSpawn; native.ensureHylyreReady = oldReady; native.runHylyreDeviceTest = oldRun; gate.applyPhaseEntryDeviceGate = oldGate; fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  } },
+  // ==========================================================================
+  // 准备期只读探测的判据（plan a9f3c7d2 第一笔 · R3）
+  // 判据只有两条：模块归属（唯一命中 `<srcPath>/src/ohosTest/`）与载体在场（`module.json5`）。
+  // **源码与 describe/it 数量校验留在执行期**——准备期的关键正例是「载体在场、授权测试文件尚不存在」。
+  // ==========================================================================
+  { name: 'hmos UT target probe rejects a non-ohosTest landing and a module without a test carrier', run() {
+    const { inspectRequestTargets } = require('../../../profiles/hmos-app/harness/providers/ut-run') as {
+      inspectRequestTargets: (root: string, tests: readonly string[]) => { groups: Map<string, unknown>; gaps: string[]; typedGaps: Array<{ kind: string; message: string }> };
+    };
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ut-probe-'));
+    try {
+      // 根 build-profile 里 CommFunc **没有 targets**（宿主真实形态，§2.2 D4）：判据不得改用它。
+      fs.writeFileSync(path.join(root, 'build-profile.json5'), JSON.stringify({ modules: [
+        { name: 'CommFunc', srcPath: './lib/CommFunc' },
+        { name: 'NoCarrier', srcPath: './lib/NoCarrier' },
+      ] }));
+      fs.mkdirSync(path.join(root, 'lib/CommFunc/src/ohosTest/ets/test'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'lib/CommFunc/src/ohosTest/module.json5'), '{"module":{"name":"CommFunc_test"}}');
+      fs.mkdirSync(path.join(root, 'lib/NoCarrier/src/ohosTest/ets/test'), { recursive: true }); // 有目录、缺 module.json5
+      const target = 'lib/CommFunc/src/ohosTest/ets/test/MaskUtil.test.ets';
+
+      // ① 关键正例：载体在场、**授权写入的测试文件尚不存在** → 无 gap（agent 写测试前的真实时点）。
+      assert(!fs.existsSync(path.join(root, target)), '正例必须在测试文件尚不存在时判定');
+      const pending = inspectRequestTargets(root, [target]);
+      assert.deepStrictEqual(pending.gaps, [], `载体在场时不应报 gap: ${JSON.stringify(pending.gaps)}`);
+      assert(pending.groups.has('CommFunc'), '合法目标应归组到其模块');
+
+      // ④ 同一目标：根 build-profile 该模块无 `targets` 也照样无 gap（锁住不得改用根 targets 语义）。
+      const rootProfile = JSON.parse(fs.readFileSync(path.join(root, 'build-profile.json5'), 'utf8')) as { modules: Array<{ name: string; targets?: unknown }> };
+      assert(rootProfile.modules.every(module => module.targets === undefined), '夹具须保持「根条目无 targets」这一宿主形态');
+
+      // ② 落点不兼容：`src/test/` 下的目标。
+      const landing = inspectRequestTargets(root, ['lib/CommFunc/src/test/MaskUtil.test.ets']);
+      assert.equal(landing.gaps.length, 1, JSON.stringify(landing.gaps));
+      assert(landing.gaps[0].startsWith('capability:ut.run:'), landing.gaps[0]);
+      assert(landing.gaps[0].includes('src/ohosTest/'), '落点 gap 须说明合法落点');
+
+      // ③ 无测试载体：目录在、`module.json5` 缺 → 载体 gap，且文案带「先向用户说明」这句范围约定。
+      const carrier = inspectRequestTargets(root, ['lib/NoCarrier/src/ohosTest/ets/test/X.test.ets']) as
+        { gaps: string[]; typedGaps: Array<{ kind: string; message: string }> };
+      assert.equal(carrier.gaps.length, 1, JSON.stringify(carrier.gaps));
+      assert(carrier.gaps[0].includes('module.json5'), carrier.gaps[0]);
+      assert(carrier.gaps[0].includes('先向用户说明'), '载体 gap 须带范围外改动约定（需求 R3 第三条的准备期落点）');
+      // 载体缺口是**准备期事前告知**，不得升级成新的执行期拒绝（执行语义一行不变）。
+      assert.equal(carrier.typedGaps[0].kind, 'carrier', JSON.stringify(carrier.typedGaps));
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  } },
+  { name: 'probe and executor share one predicate', async run() {
+    const utRun = require('../../../profiles/hmos-app/harness/providers/ut-run') as {
+      inspectRequestTargets: (root: string, tests: readonly string[]) => { gaps: string[] };
+      runRequestTests: (ctx: unknown) => Promise<unknown>;
+    };
+    // 共用面只有「模块归属 / 载体」：源码内容校验（describe/it 数量、类名）不在其中，
+    // 所以探测对「文件不存在」必须不报错——这正是准备期唯一能成立的时点。
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ut-probe-share-'));
+    try {
+      fs.writeFileSync(path.join(root, 'build-profile.json5'), JSON.stringify({ modules: [{ name: 'entry', srcPath: './entry' }] }));
+      fs.mkdirSync(path.join(root, 'entry/src/ohosTest/ets/test'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'entry/src/ohosTest/module.json5'), '{"module":{"name":"entry_test"}}');
+      const missing = 'entry/src/ohosTest/ets/test/NotWrittenYet.test.ets';
+      assert.deepStrictEqual(utRun.inspectRequestTargets(root, [missing]).gaps, [], '探测不得因文件不存在而报错或报 gap');
+
+      // **行为断言**（不只看源码串）：同一个落点非法的目标，探测报 landing gap，执行器**用同一条文案拒绝**。
+      const illegal = 'entry/src/test/Illegal.test.ets';
+      const probeGaps = utRun.inspectRequestTargets(root, [illegal]).gaps;
+      assert.equal(probeGaps.length, 1, JSON.stringify(probeGaps));
+      const ctx = {
+        projectRoot: root, frameworkRoot, harnessRoot: frameworkRoot, reportDir: root,
+        resolvedProfile: { name: 'hmos-app', profileDir: '', capabilities: {}, phasesDisabled: new Set<string>() },
+        request: { targets: { tests: [illegal] }, sourceContents: [], request_sha256: 'x'.repeat(64) },
+      };
+      const saved = { a: process.env.HARNESS_SKIP_HVIGOR, b: process.env.HARNESS_SKIP_HVIGOR_TEST };
+      delete process.env.HARNESS_SKIP_HVIGOR; delete process.env.HARNESS_SKIP_HVIGOR_TEST;
+      try {
+        await assert.rejects(() => utRun.runRequestTests(ctx), (error: Error) => {
+          assert.equal(error.message, probeGaps[0], '执行器的拒绝文案与探测不同源（谓词被复制了）');
+          return true;
+        });
+      } finally {
+        if (saved.a === undefined) delete process.env.HARNESS_SKIP_HVIGOR; else process.env.HARNESS_SKIP_HVIGOR = saved.a;
+        if (saved.b === undefined) delete process.env.HARNESS_SKIP_HVIGOR_TEST; else process.env.HARNESS_SKIP_HVIGOR_TEST = saved.b;
+      }
+
+      // 接线形态的补充断言（源码串，只证明边界没被搬动，不替代上面的行为断言）。
+      const source = fs.readFileSync(path.join(frameworkRoot, 'profiles/hmos-app/harness/providers/ut-run.ts'), 'utf8');
+      const probeBody = source.slice(source.indexOf('export function inspectRequestTargets'), source.indexOf('export async function runRequestTests'));
+      assert(!probeBody.includes('extractUtItBlocks'), '探测不得把执行期的源码校验搬到准备期');
+      assert(!probeBody.includes('sourceContents'), '探测不得依赖测试文件字节（准备期它可能还不存在）');
+      assert(source.slice(source.indexOf('export async function runRequestTests')).includes('extractUtItBlocks'), '源码内容校验应仍留在执行期');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  } },
+  { name: 'feature-body UT behavior is unchanged by the request-only expectation check', run() {
+    // R2 的零影响论证（plan §3 问题 2）：新检查只活在 request 分支。
+    // ① **行为面**：既有提取器对同一输入的结果一字不变（含「同一行两条 it(」这种它本来就数 2 的形态），
+    //    新分类器与它并列存在、互不影响；
+    // ② **接线面**：新 check id 在两个 checker 源码里零出现——feature 主体路径不可能产出它。
+    const { extractUtItBlocks, classifyUtExpectations } = require('../../scripts/utils/ut-it-blocks') as {
+      extractUtItBlocks: (content: string) => Array<{ name: string; body: string }>;
+      classifyUtExpectations: (content: string) => { entries: Array<{ name: string; class: string }>; parsed: number; itFormCount: number };
+    };
+    const sample = [
+      "describe('Suite', () => {",
+      "  it('[AC-1] alpha', 0, () => { expect(1).assertEqual(1); });",
+      "  it('[CHAR-b] beta', 0, () => {}); it('gamma', 0, () => {});",
+      '});',
+      '',
+    ].join('\n');
+    const before = extractUtItBlocks(sample);
+    assert.deepStrictEqual(before.map(block => block.name), ['[AC-1] alpha', '[CHAR-b] beta', 'gamma'], '既有提取器行为被改动');
+    classifyUtExpectations(sample);
+    assert.deepStrictEqual(extractUtItBlocks(sample), before, '调用新分类器后既有提取器结果发生变化');
+    for (const rel of ['harness/scripts/check-ut.ts', 'harness/scripts/check-testing.ts']) {
+      const source = fs.readFileSync(path.join(frameworkRoot, rel), 'utf8');
+      assert(!source.includes('request_expectation_source'), `${rel} 引用了 request 专属检查，feature 主体可能被波及`);
+    }
+  } },
+  { name: 'compile check refuses to run without contracts modules', run() {
+    // 保护性用例（plan §3 问题 4）：adhoc 修正链给的 ctx 没有 contracts，编译项在读 modules 时就拒绝执行。
+    // **只锁这条谓词**，不承诺能发现 adhoc 链被修好——手工入参永远缺 modules。
+    const { profileCodingHost } = require('../../../profiles/hmos-app/harness/coding-host-rules') as {
+      profileCodingHost: { checkCodingCompile: (ctx: unknown) => Array<{ id: string; status: string; severity: string; details?: string }> };
+    };
+    const ctx = {
+      phase: 'coding', feature: '_adhoc', projectRoot: frameworkRoot, phaseRule: {}, featureSpec: { feature: '_adhoc' },
+      resolvedProfile: { name: 'hmos-app', profileDir: '', capabilities: { 'coding.compile': { provider: 'hvigor', severity: 'BLOCKER' } }, phasesDisabled: new Set<string>() },
+      frameworkRoot, harnessRoot: frameworkRoot,
+    };
+    const results = profileCodingHost.checkCodingCompile(ctx);
+    assert(results.length >= 1, '编译检查应返回结论');
+    for (const result of results) {
+      assert.equal(result.status, 'FAIL', JSON.stringify(result));
+      assert.equal(result.severity, 'BLOCKER', JSON.stringify(result));
+      assert(result.details?.includes('contracts.yaml > modules 为空'), JSON.stringify(result));
+    }
   } },
 ];
 

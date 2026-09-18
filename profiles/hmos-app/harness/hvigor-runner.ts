@@ -1772,6 +1772,10 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
     invocationDriver: spawnPlan.invocationDriver,
     envProbe: {
       DEVECO_SDK_HOME: Boolean(childEnv.DEVECO_SDK_HOME),
+      // plan a9f3c7d2 A12：既有布尔只说明**变量是否非空**（用户已设时 buildChildEnv 会保留原值，不等于框架派生成功），
+      // 诊断要回答「这次到底用的哪个 SDK」就得有路径本身。
+      // 布尔字段保留不动（既有消费面不变）；路径是本机绝对路径，报告对外共享前须脱敏。
+      DEVECO_SDK_HOME_PATH: typeof childEnv.DEVECO_SDK_HOME === 'string' ? childEnv.DEVECO_SDK_HOME : null,
       JAVA_HOME: typeof childEnv.JAVA_HOME === 'string' ? childEnv.JAVA_HOME : null,
       DEVECO_STUDIO_HOME: Boolean(process.env.DEVECO_STUDIO_HOME),
       HUAWEI_DEVECO_STUDIO_HOME: Boolean(process.env.HUAWEI_DEVECO_STUDIO_HOME),

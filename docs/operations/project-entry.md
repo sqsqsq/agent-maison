@@ -23,7 +23,7 @@
 
 ## 主 Agent 与子 Skill
 
-自然语言由主 Agent 按根入口的正式性判据解释。显式 Skill 只授权本次职责；查看、局部设计、完整设计分别到对应终点。只读请求不因存在可补资料而写盘。设计 Skill 返回 readiness/缺口；只有用户已授权完整实现，外层才沿既有 CU 入口创建或恢复真实 attended Goal，复用 P2 范围计算、P4 coding/review 与 P5 验证。
+自然语言由主 Agent 按根入口的正式性判据解释：判类先答两问（本轮**范围** / **验收语义**），并**先查已有依据**（既有 acceptance、蓝图、catalog 与约束知识）；查到即复用，查完仍缺才只就该缺口询问。需要编译或跑测试的校验经框架执行器，不裸调工具链。显式 Skill 只授权本次职责；查看、局部设计、完整设计分别到对应终点。只读请求不因存在可补资料而写盘。设计 Skill 返回 readiness/缺口；只有用户已授权完整实现，外层才沿既有 CU 入口创建或恢复真实 attended Goal，复用 P2 范围计算、P4 coding/review 与 P5 验证。
 
 无 Feature 的局部 review/UT/testing 使用已交付的 [request CLI](request-harness.md)，结果隔离在显式报告目录，不能伪造 Feature 或借用活跃 Feature 证据。完整实现根据实际义务安排验证，未知责任保留 unresolved，不因输入可解析就宣称验收通过。
 

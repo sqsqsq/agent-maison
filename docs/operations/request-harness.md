@@ -7,7 +7,7 @@
 1. 根据用户已授权目标，写入请求 JSON，选择项目内、framework/.git/features_dir 外的独立报告目录。不要将操作命令字符串写入请求。
 2. Agent 自行执行准备命令，读取输出的 request_sha256、已解析基线、目标哈希、facts 路径与 gaps；不要把命令清单转交用户代跑。
 3. 执行 Research，阅读实际目标和明确输入。有 base 时使用输出的具体 commit 审查差异；非 WORKTREE 的 review 输入来自该 commit。生成 P1 `schema_version: "1.1"` facts，subject 只含 request_sha256，established_by 为本次 phase，不写 feature/run_id。
-4. review 写出真实 review-report；UT/testing 完成其已授权输入准备。新增测试只写 allowed_test_writes，必须有实际行为来源。必要输入变化后重新准备并更新 facts 绑定，不能沿用旧哈希。
+4. review 写出真实 review-report；UT/testing 完成其已授权输入准备。新增测试只写 allowed_test_writes，必须有实际行为来源：**每条断言自带预期来源登记**——用例名前加 `[CHAR-…]`（只记录现状）或 `[AC-…]` / `[BD-…]` / `[BRANCH-…]`（有来源标签），或在**紧邻该行上方**加 `// characterization` / `// expectation: <项目内相对路径>`；写在 `describe(` 上或文件头的总括注释**不算登记**（无作用域继承，`/* */` 块注释也不算），每条断言须单独成行、以 `it(` 或 `test(` 起行、名字用字符串字面量。`request_expectation_source` 把结果按「已登记来源 / 现状记录 / 历史未登记」三栏**分列**呈现，**不按类写「通过 M 条」**（provider 只给聚合结果，没有逐用例归属）；标注清楚的 characterization **不判 FAIL**，只有本次授权写入里「既无来源又未标注」的断言才是 BLOCKER。分类按行扫描、不解析字符串与模板字符串，把假的用例声明藏进字符串/模板字符串仍能骗过它与两道数量对账——**这条上限如实登记、不靠加机制堵**，登记是否诚实由写测试的人负责。必要输入变化后重新准备并更新 facts 绑定，不能沿用旧哈希。
 5. Agent 运行不带 prepare-request 的同一命令，读取实际 summary/checks。只有请求结果通过才结束；有失败/缺口不声称通过，也不自动追加下一阶段。
 
 ```powershell
@@ -47,6 +47,10 @@ report-dir 已有其他请求/基线的机器输出时拒绝复用。目标或�
 ## P4/P5 接线合同
 
 hmos 原生 UT 已接入请求入口：targets.tests 指向配置模块中的 ohosTest 文件，按真实 Hypium 类筛选，复用 hvigor→安装→aa test，并核对实际数量与失败/跳过。它只证明所选断言，不自动证明完整 CU 验收。
+
+**落点与载体缺口在准备期就报**：`--prepare-request` 的 `gaps` 除既有缺失路径外，还会给出 `capability:` 前缀的能力缺口——目标不在任何已配置模块的 `src/ohosTest/` 下、目标模块缺 `src/ohosTest/module.json5`（无测试载体）、该 phase 被 profile 关闭、对应 capability 声明为 SKIP。准备期探测只判**模块归属与载体在场**，源码与 describe/it 数量校验仍在执行期（授权写入的测试文件此刻可以还不存在）。报出载体缺口时如实停在该处：**新建测试载体或改模块构建配置属于本次请求范围外的工程改动，须先向用户说明并获认可**，不得静默完成，也不得改投其它目录或用其它模块的通过代替。未适配该探测的 provider 不产生此类 gap，现状不变。
+
+**编译与测试经框架执行器**：任何需要编译或跑测试的校验都走专项 request CLI 或 `harness-runner --phase`，不裸调 hvigor 或宿主自带脚本——执行器会从 `framework.local.json` 的 DevEco 安装路径派生工具链环境（`DEVECO_SDK_HOME` / JBR），裸调不会执行框架的环境补齐逻辑。确认工具链本身用 `check-personal-setup.ts --json --ensure`。失败诊断按三层证据：① 同次 `hvigor-*.meta.json` 的 `envProbe`（`DEVECO_SDK_HOME` **是否设置**、`DEVECO_SDK_HOME_PATH` 本次实际取值、`JAVA_HOME`；布尔为 true 只说明变量非空——可能来自用户已设的值，不等于框架派生成功）与 `command`/`exitCode`；② 同次构建日志正文（日志头只有命令，不含环境快照）；③ 重新解析出来的值只作辅助且须标为「当前值」，安装目录扫描是第三顺位。**`DEVECO_SDK_HOME_PATH` 是本机绝对路径，仅用于本机诊断，报告对外共享前须脱敏。**
 
 hmos 设备专项须额外提供 `inputs.test_plan`，内容采用既有 Hylyre 派生计划格式，TC 与 cases 一致，每条有明确预期和原生断言。每个用例先执行 steps-file，再用既有 `hylyre ai assert` 验证该行预期；两者的原生 v1 证据共同参与归约。元素出现不等于全部预期已验证，VLM 不可用、manual、skipped 或缺预期证据都不能签发成功。request 仍不支持 report-reconcile-only；零设备对账属于真实 Feature 冻结范围入口。
 

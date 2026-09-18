@@ -30,3 +30,18 @@
 - mock-plan 的 presence、parseable、typed、contracts_consistent 收编为现有 checker 调用的同一检查组，复用 presence 的适用性结论；只标记实际 SKIP 为 N/A，缺失隔离信息不跳过，已有损坏文件仍 FAIL。修正输入投影的提前 return，让 UT mock-plan 输出裁剪实际可达。
 - 现有 P5 用例增加“详情出现但余额未验证”失败与原生预期通过正例；mock-plan 使用真实解析、报告与 summary writer，加上实际 Node 断言执行，验证纯依赖缺文件/合法空文件不会进入 blocking_skips，未知依赖与损坏文件仍不通过；输入桥接同时验证缺失和已有文件的 required_outputs。
 - 定向 P5 8/8、UT 契约 15/15、request CLI 15/15、typecheck、OpenSpec 44/44、plan/diff/LF 通过。本轮 `cd harness && npm test` 全通过：4467 单测、46 fixtures，日志为 `harness/reports/p5-repair-harness-validation.log`。两项返修与直接回归已收口；未提交代码，未扩大修复范围。
+
+## 3. 准备期落点与能力缺口（plan a9f3c7d2 第一笔）
+
+- [x] 3.1 `--prepare-request` 前移 profile 解析，输出合并 `capability:` 前缀的能力缺口（phases_disabled 与 capability SKIP 两条来源都判）。
+- [x] 3.2 hmos `ut.run` provider 提取只读 `inspectRequestTargets`（模块归属 + 载体在场），执行期改调同一函数；源码与声明计数校验仍留执行期。
+- [x] 3.3 review / UT / testing 三份技能写清输入、合法落点与当前 profile 能执行什么；补真实 generic profile 与 hmos 探测四态用例。
+
+## 4. 预期来源登记（plan a9f3c7d2 第二笔）
+
+- [x] 4.1 `ut-it-blocks` 增补按行扫描的 `classifyUtExpectations`（每条断言自带标注、无继承），既有提取器行为不变。
+- [x] 4.2 UT 专项分支产出 `request_expectation_source`：三栏分列、两道数量对账、characterization 合法不判 FAIL、只报登记数不报通过数。
+- [x] 4.3 business-ut 技能写清四步核对与判别句；补真实 CLI 用例（含只读面 WARN、失败/未执行分支、来源不可核验）。
+- [x] 4.4 代码 review 第一轮：块注释内容既不充当标注也不充当声明；名字不在同一行的真实声明记为无法分类（授权侧阻断、只读侧告警），两件事同夹具证明不互相抵消。
+- [x] 4.5 代码 review 第一轮：死引用的问责面按身份二分（授权写入阻断、只读历史目标只呈现），同一份内容两种身份各跑一次。
+- [x] 4.6 代码 review 第二轮：注释开闭按「最后一个 token 为准」，同行先关后开不再误判；可疑边界且同行带声明 → 不解析，走 unclassifiable。字符串/模板字符串伪装为**已知上限**登记（`ponytail:` 注释 + 文档一句话），不加代码。

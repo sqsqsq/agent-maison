@@ -1,6 +1,6 @@
 # Plan 阶段 Skill (`plan`)
 
-> **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `plan.scope_expansion` / `plan.ok_to_code` / `plan.arch_impact` / `plan.split_table` / `phase.next_step`。 **输入协议边界**：旧版固定上游阅读口径仅适用于历史 1.0 输入。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。新默认使用 1.1 输入，调用上下文必须由入口解析，不得自行补造。 **P3 设计输入与职责边界**：见 [蓝图设计输入](../../../docs/concepts/blueprint-design-inputs.md)，只完成请求指定的设计工作，不自动进入施工。
+> **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `plan.scope_expansion` / `plan.ok_to_code` / `plan.arch_impact` / `plan.split_table` / `phase.next_step`。 **输入协议边界**：旧版固定上游阅读口径仅适用于历史 1.0 输入。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。新默认使用 1.1 输入，调用上下文必须由入口解析，不得自行补造。 **P3 设计输入与职责边界**：见 [蓝图设计输入](../../../docs/concepts/blueprint-design-inputs.md)，只完成请求指定的设计工作，不自动进入施工。**单职责终点**：入口只请求本阶段时，只做本职责、在请求终点停止；不冒充 Feature 整体完成，也不自动追加后续阶段（完成判定由冻结范围决定）。
 
 ## 前置
 

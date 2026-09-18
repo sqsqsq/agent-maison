@@ -239,7 +239,17 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     const requestScope = resolveExecutionScope({ request: { completion_target: 'request', requested_results: ['design'], requested_phases: ['spec'] }, facts: [], contract_fingerprints: [] }, workflow);
     const requestRun = buildGoalManifestFromInput({ feature: f.feature, run_id: 'p3-design-only', unattended: { write_mode: 'full-access', approval_mode: 'never' }, execution_scope: requestScope, chain_override: requestScope.phase_chain }, { projectRoot: f.root });
     createGoalRun({ projectRoot: f.root, manifest: requestRun, chain: requestScope.phase_chain });
-    assert.deepStrictEqual(designScopeRevisionChecks({ ...ctx, factsContext: { ...bridge.factsContext!, subject: { feature: f.feature, run_id: requestRun.run_id } } }, []), []);
+    // plan a9f3c7d2 第二笔（R5）**行为变更**：request 终点原先在这里被整个排除（断言恒 `[]`），
+    // 于是单职责 spec/plan 出生时的定义缺口永远关不掉、生产上到不了成功终局。现在它也发提案，
+    // 但请求动作**只能是本阶段自己**——单职责请求结构上不得借修订新增阶段。
+    const requestProposal = designScopeRevisionChecks({ ...ctx, factsContext: { ...bridge.factsContext!, subject: { feature: f.feature, run_id: requestRun.run_id } } }, []);
+    assert.equal(requestProposal.length, 1, JSON.stringify(requestProposal));
+    const requestInput = requestProposal[0].scope_revision_input!;
+    assert.equal(requestInput.request.completion_target, 'request');
+    assert.deepStrictEqual(requestInput.request.requested_phases, ['spec'], JSON.stringify(requestInput.request.requested_phases));
+    const requestNext = resolveExecutionScope(requestInput, workflow, readScopeAcceptance(f.root, requestInput, { feature: f.feature, frameworkRoot }), resolvedStub);
+    assert.deepStrictEqual(requestNext.unresolved, [], JSON.stringify(requestNext.unresolved));
+    assert(requestNext.phase_chain.every(phase => requestScope.phase_chain.includes(phase)), JSON.stringify(requestNext.phase_chain));
     // The device duty has to be *genuinely* required for this case to mean anything: D0.1 no longer
     // trusts a self-declared `required`, so it is derived from a device-layer acceptance here.
     const deviceAcceptance = { criteria: [{ id: 'AC-DEVICE', priority: 'P1', ut_layer: 'device', device_focus: 'on-device check' }] } as import('../../scripts/utils/types').AcceptanceSpec;

@@ -425,6 +425,174 @@ const cases: Array<{ name: string; run: () => void }> = [
       }
     },
   },
+  // ==========================================================================
+  // 单职责路径入口指引（plan a9f3c7d2 第一笔 · R1/R3/R4/R6）
+  // --------------------------------------------------------------------------
+  // 锚词选取规则（改文档时先读这段，别直接删断言）：
+  //   · 默认只锁**语义承诺**的最短可辨识词，不锁整句、不锁标点、不锁段落顺序——换句式不该红，删承诺才该红；
+  //   · **两处例外（R4 禁止语、R3 能力缺口停止承诺）改为整句逐字锁定**：这两条是「禁止 / 停止」语义，
+  //     短词锚被连续三种语义反转绕过（不要停在该处 / 不能不裸调 / 不建议用户避免运行），
+  //     故按裁决改成 `includes` 原句比对——**改这两句措辞必须同步改本文件的常量**；
+  //   · 每条锚附 why，指明它在锁需求哪一条；后人要删时先回答「这条需求还成立吗」；
+  //   · 结构性断言优先于文字断言。
+  // 需求：.cursor/requirement/需求_单职责路径从入口到执行的衔接_宿主验收回灌.md
+  // ==========================================================================
+  {
+    name: 'entry routing states both the scope question and the acceptance-semantics question',
+    run: () => {
+      const template = read('templates/AGENTS.md.template');
+      const section = template.slice(template.indexOf('### 4.0 需求路由'), template.indexOf('### 4.0.1'));
+      assert(section.length > 0, '模板缺 §4.0 需求路由节');
+      // R1：判类必须先后回答「范围」与「验收语义」两问；缺任一即回到事故当时的单判据。
+      for (const anchor of ['范围', '验收语义', '不改实现']) {
+        assert(section.includes(anchor), `AGENTS 模板 §4.0 缺两问锚词: ${anchor}（需求 R1 第一条）`);
+      }
+      // R1：project-entry 与模板同源，不能只改一处。
+      const entry = read('docs/operations/project-entry.md');
+      for (const anchor of ['范围', '验收语义']) {
+        assert(entry.includes(anchor), `project-entry 未与模板同步两问: ${anchor}（需求 R1 验收第二条）`);
+      }
+    },
+  },
+  {
+    name: 'entry routing tells the agent to check existing basis before asking',
+    run: () => {
+      const template = read('templates/AGENTS.md.template');
+      const section = template.slice(template.indexOf('### 4.0 需求路由'), template.indexOf('### 4.0.1'));
+      // R1：先查已有依据（acceptance / 蓝图 / catalog / 约束知识），查完仍缺才只就该缺口问。
+      for (const anchor of ['先查已有依据', 'acceptance', '只就该缺口']) {
+        assert(section.includes(anchor), `AGENTS 模板 §4.0 缺「先查依据再问」锚词: ${anchor}（需求 R1 第二、三条）`);
+      }
+      const entry = read('docs/operations/project-entry.md');
+      assert(entry.includes('先查已有依据'), 'project-entry 缺「先查已有依据」（需求 R1 验收第二条）');
+    },
+  },
+  {
+    name: 'compile and test verification is routed to the framework executor in the entry and the skills',
+    run: () => {
+      const template = read('templates/AGENTS.md.template');
+      const coding = read('skills/feature/coding/SKILL.md');
+      const ut = read('skills/feature/business-ut/SKILL.md');
+      // R4：入口与两份技能都要说「经框架执行器、不裸调 hvigor、不引导用户跑宿主脚本」。
+      // **整句逐字锁定**（第二轮代码 review 裁决）：正则版被连续三种语义反转绕过——
+      // 「不要停在该处」被通配区吞掉、「不能不裸调」从内层起匹配、「不建议用户避免运行」把禁止关系反转。
+      // 跟正则打地鼠是打不完的；这里改成从原文取整个分句 includes 比对。
+      // **能保证的**：锁定句内部字节一旦改变（前插「不能不…」、改词、删字）即失配。
+      // **不保证的**：在锁定句之外另起一句推翻它（例如后面补「以下情形不适用」），本断言看不出来——
+      // 那属于全文语义的人工 review 范围，不在 smoke 射程内（第三轮代码 review 的已知上限）。
+      // 三份文件的这句话已统一为完全相同的措辞，故只需一条常量。
+      const R4_EXECUTOR_SENTENCE =
+        '任何需要编译或跑测试的校验一律经框架执行器（专项 request CLI 或 `harness-runner --phase`）；不裸调 hvigor，也不引导用户去运行宿主自带脚本。';
+      for (const [label, text] of [['AGENTS 模板', template], ['coding SKILL', coding], ['business-ut SKILL', ut]] as const) {
+        assert(
+          text.includes(R4_EXECUTOR_SENTENCE),
+          `${label} 缺 R4 禁止语原句（需求 R4 第一、二条）。期望逐字包含：\n${R4_EXECUTOR_SENTENCE}`,
+        );
+      }
+      assert(template.includes('framework.local.json'), 'AGENTS 模板未写明执行器派生工具链环境的理由（需求 R4 第一条）');
+      // R4 裁决：工具链确认是「执行入口」，诊断是它之后的事——两者不得互换。
+      for (const [label, text] of [['coding SKILL', coding], ['business-ut SKILL', ut]] as const) {
+        assert(text.includes('check-personal-setup.ts --json --ensure'), `${label} 缺工具链确认的执行入口（需求 R4 裁决第二段）`);
+        assert(text.includes('envProbe'), `${label} 缺同次 metadata 诊断口径（需求 R4 第二条）`);
+        assert(text.includes('当前值'), `${label} 未把重新解析出来的值标为「当前值」（需求 R4 第二条）`);
+      }
+      assert(coding.includes('框架当前不提供即时编译校验'), 'coding SKILL 缺第三段路径的如实报告措辞（需求 R4 裁决）');
+      // 「不引导用户去运行宿主自带脚本」已并进上面那条整句常量里，不再单独用正则锁（正则版被
+      // 「不建议用户避免运行宿主自带脚本」这种反转绕过，第二轮代码 review 反例 3）。
+    },
+  },
+  {
+    name: 'review / UT / testing standalone sections state inputs, landing points and profile capability',
+    run: () => {
+      const review = read('skills/feature/code-review/SKILL.md');
+      const ut = read('skills/feature/business-ut/SKILL.md');
+      const testing = read('skills/feature/device-testing/SKILL.md');
+      // 结构性断言优先：三份专项技能都必须链到同一份 request CLI 文档。
+      for (const [label, text] of [['code-review', review], ['business-ut', ut], ['device-testing', testing]] as const) {
+        assert(text.includes('docs/operations/request-harness.md'), `${label} 未链到 request CLI 文档（需求 R3 第一条）`);
+        assert(text.includes('--prepare-request'), `${label} 未告知准备期入口（需求 R3 第三条）`);
+      }
+      // R3：hmos UT 只执行已配置模块 src/ohosTest/ 下的 Hypium 用例；能力缺口如实停在该处。
+      assert(ut.includes('src/ohosTest/'), 'business-ut 未写明合法落点（需求 R3 第一条）');
+      assert(ut.includes('Hypium'), 'business-ut 未写明当前 profile 实际执行什么（需求 R3 第一条）');
+      // R3 第二条的核心是**停止**语义。同样**整句逐字锁定**：正则版的通配区会把
+      // 「不要停在该处」这种反转吞掉（第二轮代码 review 反例 1）。这一句同时覆盖
+      // 「不改投其它目录」「不用其它模块的通过代替」两条承诺，故不再单独断言。
+      const UT_CAPABILITY_STOP_SENTENCE = '报 profile 能力缺口时**如实停在该处**，不改投其它目录、不用其它模块的通过代替。';
+      assert(
+        ut.includes(UT_CAPABILITY_STOP_SENTENCE),
+        `business-ut 缺「能力缺口 → 停在该处」原句（需求 R3 第二条）。期望逐字包含：\n${UT_CAPABILITY_STOP_SENTENCE}`,
+      );
+      // R3：testing 写明用例须含可执行步骤与预期结果。
+      assert(testing.includes('可执行步骤'), 'device-testing 缺「可执行步骤」（需求 R3 第一条）');
+      assert(testing.includes('预期结果'), 'device-testing 缺「明确预期结果」（需求 R3 第一条）');
+      // R3：review 的输入与报告落点。
+      assert(review.includes('report-dir'), 'code-review 未写明报告落点（需求 R3 第一条）');
+      assert(review.includes('targets.files'), 'code-review 未写明专项输入（需求 R3 第一条）');
+    },
+  },
+  {
+    name: 'ut skill requires announcing a test-carrier or build-config change before making it',
+    run: () => {
+      const ut = read('skills/feature/business-ut/SKILL.md');
+      // R3 新增条款：补测试载体 / 改模块构建配置属范围外改动——「先说明」与「得到认可」两句都要在，
+      // 只锁前者的话，删掉「得到认可后再做」仍能通过（第一轮 codex 必修 3）。
+      for (const anchor of ['测试载体', 'build-profile', '先向用户说明', '得到认可']) {
+        assert(ut.includes(anchor), `business-ut 缺范围外改动约定锚词: ${anchor}（需求 R3 第三条）`);
+      }
+      // 反向锚：这条沿用既有「范围外改动先说明」约定，不得新增确认点 id。
+      assert(!/ut\.carrier_confirm|ut\.scope_confirm/.test(ut), 'business-ut 新增了确认点 id（需求 R3 第三条明确不新增确认点机制）');
+    },
+  },
+  {
+    name: 'single-duty skills declare the request endpoint',
+    run: () => {
+      // R5：spec / plan / coding 三份技能都要写明「只做本职责、在请求终点停止、不冒充 Feature 整体完成、
+      // 不自动追加后续阶段」。三处措辞统一，故同样**整句逐字锁定**（与 R4 同一口径）。
+      const SINGLE_DUTY_SENTENCE =
+        '**单职责终点**：入口只请求本阶段时，只做本职责、在请求终点停止；不冒充 Feature 整体完成，也不自动追加后续阶段（完成判定由冻结范围决定）。';
+      for (const rel of ['skills/feature/spec/SKILL.md', 'skills/feature/plan/SKILL.md', 'skills/feature/coding/SKILL.md']) {
+        assert(read(rel).includes(SINGLE_DUTY_SENTENCE), `${rel} 缺单职责终点原句（需求 R5 第一条）。期望逐字包含：\n${SINGLE_DUTY_SENTENCE}`);
+      }
+    },
+  },
+  {
+    name: 'ut skill states the expectation-provenance step',
+    run: () => {
+      const ut = read('skills/feature/business-ut/SKILL.md');
+      // R2：四步可执行动作 + **判别句**（现状记载不构成来源依据）+ 逐条标注位置。
+      for (const anchor of [
+        '读具体条目', '区分现状描述与授权要求', '逐类核对', '逐条登记或标注',
+        '不构成来源依据', 'characterization', '// expectation:',
+      ]) {
+        assert(ut.includes(anchor), `business-ut 缺预期来源步骤锚词: ${anchor}（需求 R2 第一条）`);
+      }
+      // 判别句是这一段的要害：现状记载类条目不得当授权预期——整句逐字锁定。
+      const PROVENANCE_RULE =
+        '**catalog / 源码注释 / 既有测试 / 实现代码这类「记载当前是什么」的条目不构成来源依据**';
+      assert(ut.includes(PROVENANCE_RULE), `business-ut 缺判别句原句（需求 R2 裁决）。期望逐字包含：\n${PROVENANCE_RULE}`);
+      // 「标注写在每条断言自己身上、文件头/describe 不算」同样是承诺，不是措辞。
+      const NO_INHERIT =
+        '**写在 `describe(` 上或文件头的总括注释不算登记**（框架不做作用域继承，`/* */` 块注释也不算）';
+      assert(ut.includes(NO_INHERIT), `business-ut 缺「无作用域继承」原句（需求 R2）。期望逐字包含：\n${NO_INHERIT}`);
+      // 应当失败的断言必须保留失败——这条是「不为跑绿改期望」的文字面。
+      assert(ut.includes('应当失败的断言保留失败与原因'), 'business-ut 缺「保留真实失败」承诺（需求 R2 第二条）');
+    },
+  },
+  {
+    name: 'standalone request skills add no verifier round',
+    run: () => {
+      // 需求 R2 末条 / §4 第 4 条：不给专项测试新增 verifier 环节。
+      for (const rel of [
+        'skills/feature/code-review/SKILL.md',
+        'skills/feature/business-ut/SKILL.md',
+        'skills/feature/device-testing/SKILL.md',
+      ]) {
+        const text = read(rel);
+        assert(!/专项.{0,12}新增.{0,6}verifier|为专项测试.{0,10}verifier/.test(text), `${rel} 出现为专项测试新增 verifier 的表述`);
+      }
+    },
+  },
 ];
 
 export function runAll(): UnitCaseResult[] {

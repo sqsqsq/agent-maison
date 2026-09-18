@@ -1,6 +1,6 @@
 # 编码 Skill (`coding`)
 
-> **输入协议边界**：旧版固定上游阅读口径仅适用于历史 1.0 输入。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。新默认使用 1.1 输入，调用上下文必须由入口解析，不得自行补造。
+> **输入协议边界**：旧版固定上游阅读口径仅适用于历史 1.0 输入。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。新默认使用 1.1 输入，调用上下文必须由入口解析，不得自行补造。任何需要编译或跑测试的校验一律经框架执行器（专项 request CLI 或 `harness-runner --phase`）；不裸调 hvigor，也不引导用户去运行宿主自带脚本。确认工具链本身跑 `check-personal-setup.ts --json --ensure`（执行入口，会真 reprobe）；失败诊断读同次 `hvigor-*.meta.json` 的 `envProbe`（`DEVECO_SDK_HOME_PATH` 本次实际取值 / `JAVA_HOME`；布尔位只说明变量**是否设置**，不等于框架派生成功）与 `command`、`exitCode`，再读构建日志正文，重新解析出来的只能称「当前值」，安装目录扫描第三顺位；**本阶段（有 Feature 的 coding）编译出口不变**，仍按第 9 条跑到真实 PASS；只有**无 Feature 的非正式纯代码维护**（既没有可用 Feature 契约、目标模块也没有测试载体）才如实报告「框架当前不提供即时编译校验」并停下；确有外部阻塞时准确列出哪些步骤未执行。**单职责终点**：入口只请求本阶段时，只做本职责、在请求终点停止；不冒充 Feature 整体完成，也不自动追加后续阶段（完成判定由冻结范围决定）。
 
 > **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `coding.scope_stop` / `coding.module_batch` / `coding.deps_abc` / `coding.ok_to_review` / `phase.next_step`。
 
