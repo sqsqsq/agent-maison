@@ -103,7 +103,7 @@ npx ts-node scripts/goal-status.ts --feature <feature> --run-id <run-id>
 
 goal-runner 是**长任务**（逐 phase 拉起 headless agent，每个数分钟，含重试可达数十分钟），goal 模式的承诺是**无人值守过夜跑完**。**必须纠正的概念错误**：宿主的"后台启动"（Cursor `is_background` / Claude Code `run_in_background`）只让你**立即拿回控制权**，但进程仍是**会话内子进程**——宿主会话结束 / 活跃 agent 轮次收尾时会被宿主回收（实测：用 `is_background` 直挂的 run 在轮次收尾即被杀，留下"显示运行中的尸体"）。**"拿回控制权" ≠ "进程能活过我的会话"。**
 
-`--detach` 是**真正的 OS 脱离**（`detached:true` + `unref()` + stdio 落 `report_dir/detach.log`）：launcher 秒级 fork 到后台、打印 `{run_id, report_dir, log, pid}` JSON 后 exit 0，真正的 run 在后台独立跑、**活过宿主会话 / 轮次空闲**（实测：Cursor 完全关闭再重开，`--detach` 的 run 毫发无损）。宿主若支持后台模式，可再叠加它让 launcher 那一下也不阻塞，但**存活由 `--detach` 保证，不靠 `is_background`**。launcher 的 stdout 只有那行 JSON；后台进程输出全部进 `report_dir/detach.log`。**解析 JSON 取 `run_id`**。
+`--detach` 是**真正的 OS 脱离**（`detached:true` + `unref()` + stdio 落 `report_dir/detach.log`）：launcher fork 后立即释放日志句柄，再用最多 10 秒核对 manifest、本次新增 events、liveness 与 progress，打印 `{run_id, report_dir, log, pid, startup}` JSON 后退出；它不等待整个任务，也不因握手超时杀仍活跃的 child。`startup.state=failed` 时 launcher 非零退出并保留 `detach.log` 尾部原因；`ready`、快速 `terminal`、`alive_timeout` 分别表示已见权威 `run_start`、已见可信终态、超窗但 child 仍活。宿主若支持后台模式，可再叠加它让 launcher 那一下也不阻塞，但**存活由 `--detach` 保证，不靠 `is_background`**。**解析同一行 JSON 取 `run_id` 和 `startup`；pid/目录单独不算健康。**
 
 **机制级护栏**：`goal-runner` 会**阻断**前台启动的无人值守真跑（`approval_mode=never` 且无 `--detach`，非 dry-run/detached-child）→ BLOCKER 退出，提示改用 `--detach`。确为人工前台 / 短任务时，显式加 `--foreground-ok` 放行（降为警告）。这把"一律 `--detach`"从文档约定升为代码约束。
 
@@ -113,9 +113,9 @@ goal-runner 是**长任务**（逐 phase 拉起 headless agent，每个数分钟
 
 **新默认：启动即交还。** 无人值守（`--detach`）run 启动后，执行**有界启动握手**，确认就绪后汇报并**立即结束当前轮次**；不需要用户开口「后台跑」，也不进入 monitor。用户在不在看对话框都不影响 run 独立存活。
 
-- **有界启动握手（唯一合法等待，硬上限 30s）**：launcher 打印 JSON 后秒级退出时，manifest 由后台子进程稍后才写（detach 竞态的正常窗口）。在 30s 内以 2–5s 间隔**只检查三件事**：①`manifest.json` 已落盘；②`detach.log` 增长；③liveness 存活。握手按**结果分类**汇报：已有可信终态/等待态证据（如 30s 内就 `COMPLETED` / `HALTED` / 进入可信等待——终态 run 的 liveness 返回 `DONE` 而非 healthy，进程退出、日志停增长是合法结果）→ 按真实状态汇报；非终态且进程健康 → 报「已启动」；超窗但进程仍活着 → 报「尚未就绪，进程仍存活」+ `detach.log` 路径；**仅当进程确实死亡且无可信结束证据时才报「未存活」**。`detach.log` 增长是启动证据，**不是必须持续满足的终局门禁**。这段等待不得延长、不得夹带等待任何阶段事件。
+- **有界启动握手（唯一合法等待，硬上限 30s）**：由 launcher 自己完成；调用者只消费返回的 `startup`，不得再 sleep/grep events。`terminal` 按真实 status 汇报；`ready` 报已启动；`alive_timeout` 报尚未就绪、进程仍存活并给出 log；仅 `failed` 报启动失败。超时不杀活跃 child，句柄已在等待前释放。
 - **汇报模板（启动即用；亦为 P1-8 熔断后的转出话术，从「熔断后才用」提为「启动即用」）**：①`run_id` 与当前 phase；②预计耗时与依据（阶段超时预算）；③续查指令 `goal-status --feature <f> --run-id <id>`；④说明「后台继续跑，要看进度或让我盯着随时说」→ **结束当前轮次**。
-- **禁事件轮询（BLOCKER）**：禁止**等待 phase / verdict / run_end 的轮询**——不得用 `sleep` / `for` / `grep events.jsonl` 等手搓循环替代 monitor 绕回前台占用（08-14~15 宿主实锤：agent 意识到 monitor 空转后改写手搓轮询，占用反而更失控——多次 monitor + 数十处自制 sleep 轮询，工具等待累计 ≈3.5h）。等待阶段事件的唯一合法途径是下列 **opt-in 盯守**；不盯守就交还轮次。上述 ≤30s 启动握手是**唯一例外**，且它只查就绪三件事、不等任何阶段事件。
+- **禁事件轮询（BLOCKER）**：禁止**等待 phase / verdict / run_end 的轮询**——不得用 `sleep` / `for` / `grep events.jsonl` 等手搓循环替代 monitor 绕回前台占用（08-14~15 宿主实锤：agent 意识到 monitor 空转后改写手搓轮询，占用反而更失控——多次 monitor + 数十处自制 sleep 轮询，工具等待累计 ≈3.5h）。等待阶段事件的唯一合法途径是下列 **opt-in 盯守**；不盯守就交还轮次。launcher 内部的一次性启动确认是实现细节，不授权调用方追加任何等待。
 
 ## 查进度（状态查询唯一入口）
 
@@ -210,6 +210,8 @@ npx ts-node scripts/goal-monitor.ts --feature <feature> --run-id <run-id> --sinc
 | `harness-runner.ts --measure --feature <f> [--screen <id>]` | 视觉量测：bounds/间距/重叠/与参考图差值/取色 → `device-screenshots/measure-<screen>.json`，并补 visual-diff.json 的 defects[].note | 不裁决、不改 ui-spec、不改 verdict；geometry PASS 不解除 visual/release block |
 
 配套纪律：
+
+- **恢复归属与复用**：优先 `--resume` 原 run；只有既有 successor 条件成立时才创建关联 successor。下游缺口携带 `upstream_producer` 时回该 owner，未知 owner 时停止猜测并报告缺失来源；不得把普通 absent 叫 framework bug。相同检查 ID 若材料指纹真实变化可继续修复，无新事实则沿既有无进展结论停止，不用同输入 fresh run 重置。UT 自身返修保留 fresh 的 plan/coding/review；源码、契约变化或用户明确要求重跑时不得复用遮盖。
 
 - **phase executor**：Claude 原生 `/goal` 路径下主会话是薄 driver，每个阶段最多派发一个 `subagent_type: phase-executor`（模板 `agents/claude/templates/agents/phase-executor.md`），只投递最小输入、收回 summary 路径与终态块；与本 Skill 的 GoalPhaseRuntime 互斥，不同时推进同一任务。
 - **子代理等待**：同步等待或先做无关工作；禁止 sleep / 轮询 / 后台等待器；verifier 未返回前不改其输入材料。

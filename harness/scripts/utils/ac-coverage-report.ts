@@ -47,6 +47,8 @@ export function buildAcCoverageReport(
   feature: string,
   acceptance: AcceptanceSpec,
   itNames: string[],
+  // Real runner integration tests need distinct deterministic clocks without sleeping.
+  now: () => Date = () => new Date((process.env.NODE_ENV === 'test' && process.env.MAISON_TEST_AC_COVERAGE_NOW) || Date.now()),
 ): AcCoverageReport {
   const criteria: AcCoverageEntry[] = [];
   const boundaries: AcCoverageEntry[] = [];
@@ -84,7 +86,7 @@ export function buildAcCoverageReport(
   return {
     schema_version: '1.0',
     feature,
-    generated_at: new Date().toISOString(),
+    generated_at: now().toISOString(),
     harness_phase: 'ut',
     criteria,
     boundaries,
@@ -136,6 +138,11 @@ export function writeAcCoverageReport(
   const outDir = featureFilePath(projectRoot, feature, path.join('ut', 'reports'));
   fs.mkdirSync(outDir, { recursive: true });
   const outPath = path.join(outDir, 'ac-coverage.json');
+  const existing = loadAcCoverageReport(projectRoot, feature);
+  if (existing && typeof existing.generated_at === 'string' && JSON.stringify({ ...existing, generated_at: undefined }) === JSON.stringify({ ...report, generated_at: undefined })) {
+    report.generated_at = existing.generated_at;
+    return outPath;
+  }
   fs.writeFileSync(outPath, `${JSON.stringify(report, null, 2)}\n`, 'utf-8');
   return outPath;
 }

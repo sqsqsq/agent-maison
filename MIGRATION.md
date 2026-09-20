@@ -11,6 +11,9 @@
 - 已有运行优先恢复原 run：旧内置定义与内部 skills/legacy/change-lite 仍可读取，冻结链与预算不重新计算。新 scope 损坏不降级；跨不兼容自定义 workflow/发布件时使用匹配的旧定义/发布件，或按既有 correction/successor 创建新运行，不批量重写历史。
 - 新 completion 1.2 必须绑定实际出生 execution_scope_fingerprint；旧 1.1 仍用原完整链合同。request 结果不是 Feature/CU 完成凭证。CU 与 Component 继续核对各自目标及组合证据。
 - 设备、RDB 与组合场景须以真实宿主证据验收；框架 fixture 和临时 consumer 成功不代表真实设备通过。
+- 阶段 evidence 现在区分源码责任：合法 coding/UT 产出可推进此前 Research 观察，测试文件变化不再反向作废 coding/review；未归属源码、需求或 contracts 漂移仍照常 stale。旧 manifest 没有责任字段时不会被猜测洗绿，重跑责任阶段即可生成新证据。相同 UT 覆盖结论重复生成时，`ac-coverage.json` 保持原字节与时间，verifier subject 不因时钟单独换代。
+- 下游 capability 缺少由上游阶段生产的输入时，恢复现在读取既有 `SourceAttempt.upstream_producer` 并回实际 owner；没有链内 owner 的 absent 继续作为可诊断输入缺口，不冒充 framework bug。测试自有返修只重跑受影响阶段，真实产品/契约变化与显式重跑仍会扩大必要重验范围。
+- `goal-runner --detach` 返回前会做一次最长 10 秒的启动确认，JSON 新增 `startup`：区分 `ready`、快速 `terminal`、`alive_timeout` 与 `failed`。仅 pid/目录不再冒充健康；确认超时不会杀仍活跃 child，早退保留当前日志尾并非零退出。detached `--attach-created` 现在与 `--resume` 一样由共享输入解析锁定既有 run_id，不再生成第二个随机身份。
 
 入口细则见 [项目请求](docs/operations/project-entry.md)、[专项 CLI](docs/operations/request-harness.md) 和 [输入协议](docs/concepts/skill-contracts.md)。本节描述迁移行为，不表示当前候选已经正式发布。
 
@@ -156,6 +159,8 @@ Chrys 的 `.agents/skills/app-component-blueprint/`、OpenCode 的 `.opencode/sk
   语义是"导航注册/配置文件清单"，由真实消费者（hmos-app `page_registration`）塑形；每条路径同样必须列入 `contracts.files`。其它承载文件路径的 navigation 键——含嵌套在 `pages[]`/`routes[]` 之类容器里的形态——一律判 `unconsumed_file_field` BLOCKER。
 - **删除 `registration_points`**：该字段全仓无任何消费者，不是旧形态、不做别名归一。请从 contracts.yaml 删除；若确需声明注册文件，改写为 `navigation.config_files`。
 - 阶段归属：plan 闭包只裁决路径安全/规范化与 `contracts.files` 授权，**允许**声明 coding 将新建的文件；物理存在性由 coding `file_completeness` 裁决（已授权但未建 → plan PASS、coding FAIL）。同一轮里 hmos-app `page_registration` 也会如实 FAIL（不再以 SKIP 冒充成功）。
+- 阶段输入：源码读取目标、profile 测试目标与写入许可现在分别投影。只做 review/UT 不需要伪造 implementation 义务；现存源码仍从冻结 contracts/CU 读取。plan/coding/UT 自己负责创建的已授权文件可在生产者运行前缺席，但后继阶段若仍缺失会 BLOCKER；不要预建空文件或手工补 target/binding。
+- 无 run 的 spec 不再从候选猜需求正文：文件需求可由候选绑定的原文件恢复；inline 或旧候选须在 harness 重传同文的 `--requirement` / `--requirement-file`。Goal run 仍只读冻结 manifest，拒绝 CLI 覆盖。
 
 ### 无人值守恢复与人签质量通行证退役（Breaking）
 

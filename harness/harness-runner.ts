@@ -198,7 +198,7 @@ import {
   resolvePhaseClosureSource,
   type RuntimeContext,
 } from './scripts/utils/runtime-policy';
-import { loadFeatureTrackDecl } from './scripts/utils/feature-track';
+import { featureRequirementBinding, loadFeatureTrackDecl } from './scripts/utils/feature-track';
 import { resolveCapabilityResolutionEntryInput } from './scripts/utils/capability-resolution-entry-input';
 import { ensureFeatureExecutionScopeFrozen, applyFeatureScopeRevisionsThenMaybeComplete } from './scripts/utils/feature-execution-scope';
 import { runExplicitRequest } from './scripts/utils/request-phase';
@@ -207,9 +207,11 @@ import {
   assertCapabilityConsumption,
   capabilityResolutionChecks,
   collectBlockedCapabilityFacts,
+  readBoundInput,
   resolveCapabilityInputs,
   type CapabilityResolutionReport,
 } from './scripts/utils/capability-resolution';
+import { resolveRequirementInput } from './scripts/utils/goal-manifest';
 import { assessAndRenderNextStep } from './scripts/utils/assess-renderer';
 import {
   dispatchLifecycleHooks,
@@ -347,6 +349,7 @@ const args = minimist(process.argv.slice(2), {
     'q-requirement', 'q-contract', 'q-code', 'goal-run-id', 'goal-attempt-id',
     'goal-owner-id', 'goal-owner-epoch', 'from', 'screen',
     'request-file', 'report-dir', 'project-root', 'framework-root', 'module', 'term', 'package-path', 'path',
+    'requirement', 'requirement-file',
   ],
   boolean: ['list', 'help', 'verbose', 'clear-state', 'sync-closure', 'report-reconcile-only', 'force-device', 'revalidate', 'measure', 'summary', 'failures-only', 'skip-visual-handoff', 'skip-ui-spec', 'skip-visual-parity', 'correction-init', 'adhoc-correction', 'prepare-request'],
   alias: {
@@ -834,17 +837,33 @@ async function main(): Promise<void> {
   // `track: lite` 会在还没有冻结记录时把候选已请求的 review/ut 判成非法 phase。
   // 冻结记录仍是唯一权威：这里不看候选自报，只是把「确立权威」这一步放到它该在的位置。
   const featureScopeFreezeChecks: CheckResult[] = [];
+  const capabilityInputChecks: CheckResult[] = [];
   if (!phaseIsGlobal && feature && feature !== GLOBAL_FEATURE_SENTINEL) {
-    featureScopeFreezeChecks.push(...ensureFeatureExecutionScopeFrozen({
-      projectRoot, frameworkRoot: resolvedFrameworkRoot, feature,
-      runId: process.env.MAISON_GOAL_RUN_ID?.trim(),
-    }).checks);
+    try {
+      featureScopeFreezeChecks.push(...ensureFeatureExecutionScopeFrozen({
+        projectRoot, frameworkRoot: resolvedFrameworkRoot, feature,
+        runId: process.env.MAISON_GOAL_RUN_ID?.trim(),
+      }).checks);
+    } catch (error) {
+      capabilityInputChecks.push({
+        id: 'execution_scope_frozen',
+        category: 'structure',
+        description: 'feature execution scope resolves before checker execution',
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details: (error as Error).message,
+        suggestion: '修复当前范围绑定或由其 owner 完成合法修订后重跑。',
+      });
+    }
   }
   // C1 feature-track：按 feature 声明的 track 过滤合法 phase（缺省 full = 现状零变化；
   // lite feature 误跑 full-only phase 明确报错而非静默跑——OpenSpec feature-track）。
   // D1.2：权威说不清（冻结入口已给出 BLOCKER）时**跳过这一步**——那时的 track 声明不可信，
   // 真正的失败会由下方 `capabilityInputChecks` 以 execution_scope_frozen 报出来。
-  if (!phaseIsGlobal && feature && feature !== GLOBAL_FEATURE_SENTINEL && !featureScopeFreezeChecks.length) {
+  if (
+    !phaseIsGlobal && feature && feature !== GLOBAL_FEATURE_SENTINEL &&
+    !featureScopeFreezeChecks.length && !capabilityInputChecks.length
+  ) {
     const featureTrack = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature));
     const trackChain = resolvePhaseChain(workflowSpec, featureTrack);
     if (!trackChain.idSet.has(phase)) {
@@ -951,15 +970,42 @@ async function main(): Promise<void> {
   // Contract capability resolution is the one immutable pre-check report. It is
   // intentionally computed before checker execution and never receives runtime
   // build/install/run outcomes.
-  const capabilityInputChecks: CheckResult[] = [];
   let capabilityReport: CapabilityResolutionReport | undefined;
   let resolvedInputs: import('./scripts/utils/capability-resolution').ResolvedPhaseInputs | undefined;
   let factsContext: import('./scripts/utils/context-facts').FactsInvocationContext | undefined;
-  if (!phaseIsGlobal) {
+  if (!phaseIsGlobal && capabilityInputChecks.length === 0) {
     try {
       // D1.2：冻结 / 核对已在 track 过滤**之前**做过（第三轮阻断 3），这里只把它的结论
       // 按 §3 问题 2 的既定形状报进本阶段的 capability 输入检查——不重复执行冻结。
       capabilityInputChecks.push(...featureScopeFreezeChecks);
+      const explicitRequirement = Object.prototype.hasOwnProperty.call(args, 'requirement')
+        || Object.prototype.hasOwnProperty.call(args, 'requirement-file');
+      if (process.env.MAISON_GOAL_RUN_ID?.trim() && explicitRequirement) {
+        throw new Error('Goal harness 的需求权威是已冻结 manifest；不得用 --requirement/--requirement-file 覆盖');
+      }
+      let runlessRequirement: ReturnType<typeof resolveRequirementInput> | undefined;
+      if (!process.env.MAISON_GOAL_RUN_ID?.trim() && phase === 'spec' && workflowSpec.schema_version === '1.2') {
+        const binding = featureRequirementBinding(projectRoot, feature);
+        if (explicitRequirement) {
+          runlessRequirement = resolveRequirementInput({ requirement: args.requirement, requirementFile: args['requirement-file'], projectRoot });
+        } else {
+          const sources = binding.dependencies.filter(dep => dep.exists).map(dep => dep.path);
+          if (sources.length !== 1) {
+            throw new Error('无 run inline/旧候选无法恢复原始需求正文；请用 --requirement 或 --requirement-file 重跑当前 spec harness');
+          }
+          runlessRequirement = resolveRequirementInput({ requirementFile: sources[0], projectRoot });
+        }
+        if (!runlessRequirement.text?.trim()) throw new Error('spec 阶段缺少原始需求正文');
+        readBoundInput({
+          frameworkRoot: resolvedFrameworkRoot, projectRoot, feature, phase: 'spec', track: 'full',
+          requirement: runlessRequirement.text,
+          // Legacy/inline candidates bind text only. An explicit file is still a valid way to
+          // re-supply that text; source provenance applies to this invocation, not retroactively
+          // to the frozen candidate.
+          requirementSourceFiles: binding.dependencies.length ? runlessRequirement.sources : [],
+          inputContext: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] },
+        }, binding);
+      }
       const capabilityInput = resolveCapabilityResolutionEntryInput({
         frameworkRoot: resolvedFrameworkRoot,
         projectRoot,
@@ -968,6 +1014,7 @@ async function main(): Promise<void> {
         featuresDir: featuresRel,
         goalRunId: process.env.MAISON_GOAL_RUN_ID,
         explicitAdhocCases: typeof args['adhoc-cases'] === 'string' ? args['adhoc-cases'] : undefined,
+        ...(runlessRequirement?.text ? { requirement: runlessRequirement.text, requirementSourceFiles: runlessRequirement.sources } : {}),
       });
       const resolution = resolveCapabilityInputs({
         frameworkRoot: resolvedFrameworkRoot,
@@ -997,6 +1044,7 @@ async function main(): Promise<void> {
 
   if (capabilityInputChecks.length) {
     const quickReport = generateScriptReport(harnessRoot, phase, feature, projectRoot, capabilityInputChecks, resolvedFrameworkRoot);
+    writeRunSummaryBase(projectRoot, quickReport, resolvedFrameworkRoot);
     printReportToConsole(quickReport, { failuresOnly: true });
     process.exit(1);
   }
@@ -1006,6 +1054,7 @@ async function main(): Promise<void> {
     if (artifactInspection.verdict === 'missing_directory' || artifactInspection.verdict === 'path_not_directory') {
       const blocker = featureArtifactBlocker(projectRoot, artifactInspection, paths.frameworkRoot);
       const quickReport = generateScriptReport(harnessRoot, phase, feature, projectRoot, [blocker], resolvedFrameworkRoot);
+      writeRunSummaryBase(projectRoot, quickReport, resolvedFrameworkRoot);
       printReportToConsole(quickReport, {
         failuresOnly: Boolean(args['failures-only']) || !Boolean(args.verbose),
       });

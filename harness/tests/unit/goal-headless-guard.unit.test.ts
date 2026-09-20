@@ -169,6 +169,21 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
+      name: 'legal early-exit checks classify as deterministic execution failures',
+      run: () => {
+        for (const id of [
+          'capability_resolution_contract',
+          'execution_scope_frozen',
+          'feature_artifact_resolution',
+        ]) {
+          const k = classifyFailureKind({ verdict: 'FAIL', blockers: [{ id }] }, undefined, {
+            staleSummary: false,
+          });
+          assert(k === 'deterministic_gate_or_artifact_missing', `${id}: ${k}`);
+        }
+      },
+    },
+    {
       name: 'classifyFailureKind: ghost acceptance_yaml_exists → code_regression',
       run: () => {
         const k = classifyFailureKind({
@@ -484,6 +499,30 @@ export function runAll(): UnitCaseResult[] {
           'legacy-only 当前签名为空时不得进入 no-progress halt',
         );
 
+        const staleCompile = { verdict: 'FAIL' as const, blockers: [{ id: 'ut_hvigor_build' }] };
+        assert(
+          classifyFailureKind(staleCompile, undefined, { staleSummary: true }) === 'agent_timeout',
+          '普通非超时分支也不得读取 stale blocker',
+        );
+        assert(
+          classifyFailureKind(staleCompile, undefined, {
+            staleSummary: true, harnessFailedWithoutFreshSummary: true,
+          }) === 'deterministic_gate_or_artifact_missing',
+          '当前 harness 非零退出须覆盖旧编译归因',
+        );
+        assert(
+          classifyFailureKind(staleCompile, undefined, {
+            staleSummary: true, harnessFailedWithoutFreshSummary: true, agentApiError: true,
+          }) === 'transient_api_error',
+          'API 断流优先级不得被当前 harness failure 改写',
+        );
+        assert(
+          classifyFailureKind(staleCompile, undefined, {
+            staleSummary: true, harnessFailedWithoutFreshSummary: true, operatorInterrupt: true,
+          }) === 'operator_interrupt',
+          '操作者中断优先级不得被当前 harness failure 改写',
+        );
+
         const currentIntegrity = stripRetiredFrameworkIntegrityForCurrentRun({
           verdict: 'FAIL' as const,
           blocking_class: 'integrity',
@@ -571,13 +610,14 @@ export function runAll(): UnitCaseResult[] {
       name: 'current attempt 接线：decisionSummary 是 meta/signature/repair/reconcile/event 的唯一 summary 输入',
       run: () => {
         const source = fs.readFileSync(path.resolve(__dirname, '../../scripts/goal-phase-runtime.ts'), 'utf-8');
-        const decisionDeclaration = 'const decisionSummary = stripRetiredFrameworkIntegrityForCurrentRun(summary)';
+        const decisionDeclaration = 'const decisionSummary = resolved.stale_summary';
         const decisionAt = source.indexOf(decisionDeclaration);
         assert(decisionAt >= 0, 'current attempt 必须只生成一次 decisionSummary');
         assert(
-          (source.match(/const decisionSummary = stripRetiredFrameworkIntegrityForCurrentRun\(summary\)/g) ?? []).length === 1,
+          (source.match(/const decisionSummary = resolved\.stale_summary/g) ?? []).length === 1,
           'current attempt 不得重复生成分叉 decisionSummary',
         );
+        assert(source.slice(decisionAt, decisionAt + 180).includes('? null'), 'stale summary 必须在公共投影入口失去决策资格');
         for (const required of [
           'classifyFailureKind(decisionSummary',
           'extractIntegritySubtypes(decisionSummary)',
@@ -591,6 +631,9 @@ export function runAll(): UnitCaseResult[] {
           'blockers: (decisionSummary?.blockers ?? []).map',
           'failure_kind_classified: currentFailureProjection.failureKindForEvent',
           'blocker_signature: currentBlockerSignature || undefined',
+          'currentSummaryFresh: !resolved.stale_summary',
+          'freshSummary && summaryAbsPath',
+          'harnessFailedWithoutFreshSummary: !dryRun && !freshSummary && harnessExit !== 0',
         ]) {
           assert(source.includes(required), `current attempt 缺少 decisionSummary 接线：${required}`);
         }

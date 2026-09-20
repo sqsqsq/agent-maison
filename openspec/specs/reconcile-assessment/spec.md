@@ -81,6 +81,11 @@ emit the existing `pruned` propagation gap with producer guidance.
 
 A blocked capability SHALL be observed through the summary's existing non-PASS and
 closure facts; assess MUST NOT create a parallel blocked gap type.
+When an unresolved source attempt names an `upstream_producer` that exists in the
+active chain, the existing failed gap and recommendation SHALL target that producer
+before same-phase retry classification. An unresolved attempt without a chain-valid
+producer SHALL remain a diagnostic input gap; absence alone MUST NOT classify it as a
+framework defect.
 
 > **Enforced by:** `harness/scripts/utils/assess.ts`, goal-manifest handling, summary
 > readers, and assess unit tests.
@@ -92,6 +97,11 @@ closure facts; assess MUST NOT create a parallel blocked gap type.
 #### Scenario: Blocked visual capability is persisted
 - **WHEN** a blocked visual capability clamps the projected summary verdict to INCOMPLETE
 - **THEN** assess SHALL use the existing non-PASS path and MUST NOT recommend downstream completion
+
+#### Scenario: A blocked consumer names its producer
+
+- **WHEN** a downstream capability is non-PASS and its unresolved source attempt names an earlier active-chain producer
+- **THEN** assess SHALL recommend the existing owner backtrack to that producer, preserving the downstream capability/input/source detail
 
 ### Requirement: Assessment freshness includes capability-resolution provenance
 Assess SHALL treat capability-resolution contract and source-attempt fingerprints as

@@ -75,7 +75,7 @@ export function isOperatorInterruptSignal(
  * 优先级：operator_interrupt（控制台中断类退出，压过一切）> agent_timeout（runner tree-kill
  * 确定性事实）>
  * transient_api_error（断流串可能是被杀连带产生，故 timed_out 时不判断流）>
- * agent_no_output > blocker 归因。
+ * agent_no_output > current harness failure without a fresh summary > blocker 归因。
  */
 export interface AgentInvokeSignals {
   /** invoke.timed_out === true（maison 自己的预算 tree-kill） */
@@ -84,14 +84,16 @@ export interface AgentInvokeSignals {
   agentApiError?: boolean;
   /** 0 字节输出保守兜底（preflight 已过 + 无 spawn error + 极短时长 + exit≠0） */
   agentNoOutput?: boolean;
+  /** 当前 harness 非零退出且没有刷新 summary；只能消费本次执行诊断，不能借旧 blocker 归因。 */
+  harnessFailedWithoutFreshSummary?: boolean;
   /** isOperatorInterruptSignal(exitCode, signal) 命中——控制台中断类退出，非任何一种"内容失败"。 */
   operatorInterrupt?: boolean;
   /**
    * P0-5/P0-3 freshness（plan d9b4f7e2 决策表）：resolved.stale_summary——本轮 harness 是否
    * **没有**产出新 summary（mtime 未更新）。fresh（false）时超时轮的确定性 integrity/
    * framework_bug 证据可信（harness 在 tree-kill agent 之后新鲜跑出），优先于 agent_timeout；
-   * stale（true）时旧 summary 的此类证据不可信，一律归 agent_timeout。未传视同 stale
-   * （fail-safe：宁可多续作一轮，不凭旧证据 halt）。
+   * stale（true）时旧 summary 的此类证据不可信；若本轮 harness 明确非零退出，按当前
+   * harness failure 归确定性执行失败，否则回落 agent_timeout。未传视同 stale。
    */
   staleSummary?: boolean;
 }
@@ -245,6 +247,10 @@ export const ADVANCE_BLOCKED_HALT_THRESHOLD = 2;
  * Coverage: spec/plan/review artifact gates + receipt trace/context gates.
  */
 export const DETERMINISTIC_GATE_BLOCKER_IDS = new Set<string>([
+  // harness-runner legal early exits
+  'capability_resolution_contract',
+  'execution_scope_frozen',
+  'feature_artifact_resolution',
   // check-spec.ts
   'spec_file_exists',
   'terminology_mapping_table',
@@ -584,6 +590,8 @@ export function classifyFailureKind(
   }
   if (signals?.agentApiError) return 'transient_api_error';
   if (signals?.agentNoOutput) return 'agent_no_output';
+  if (signals?.harnessFailedWithoutFreshSummary) return 'deterministic_gate_or_artifact_missing';
+  if (signals?.staleSummary === true) return 'agent_timeout';
   // 历史 framework-only summary 没有当前失败事实。返回中性 continuation kind，且
   // goal-phase-runtime 会在调用 classifier 前直接剥离，不把该值写入 prompt/halt/retry。
   if (!currentSummary) return 'agent_timeout';

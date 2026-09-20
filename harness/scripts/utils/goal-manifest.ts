@@ -885,9 +885,16 @@ export function resolveRawRunInput(
   projectRoot: string,
 ): RawRunInput {
   const dryRun = Boolean(argv['dry-run']);
-  const isResume = Boolean(argv.resume);
+  const resumeRunId = typeof argv.resume === 'string' && argv.resume.trim() ? argv.resume.trim() : undefined;
+  const attachCreatedRunId = typeof argv['attach-created'] === 'string' && argv['attach-created'].trim()
+    ? argv['attach-created'].trim()
+    : undefined;
+  if (resumeRunId && attachCreatedRunId) {
+    throw new Error('[goal-manifest] --resume 与 --attach-created 互斥');
+  }
+  const isResume = Boolean(resumeRunId || attachCreatedRunId);
   if (dryRun && isResume) {
-    throw new Error('[goal-manifest] --dry-run 与 --resume 互斥（dry-run 无 resume 语义）');
+    throw new Error('[goal-manifest] --dry-run 与 --resume/--attach-created 互斥（dry-run 无既有 run 语义）');
   }
   const cliFeature = typeof argv.feature === 'string' && argv.feature.trim() ? argv.feature.trim() : undefined;
   const cliRunId =
@@ -928,7 +935,6 @@ export function resolveRawRunInput(
   }
   // 实施 round2 P1：--resume <id> 也入身份冲突面——否则 resume id 与 manifest.run_id
   // 分裂时 parent 按 resume id 打印/加锁，随后 manifest 加载又换身份（report_dir 分裂）。
-  const resumeRunId = isResume ? String(argv.resume).trim() : undefined;
   if (resumeRunId && manifestRunId && resumeRunId !== manifestRunId) {
     throw new Error(
       `[goal-manifest] --resume（${resumeRunId}）与 manifest.run_id（${manifestRunId}）冲突——fail-closed（resume 身份不得被 manifest 静默改写）`,
@@ -939,7 +945,17 @@ export function resolveRawRunInput(
       `[goal-manifest] --resume（${resumeRunId}）与 --run-id（${cliRunId}）冲突——fail-closed`,
     );
   }
-  const runId = resumeRunId ?? cliRunId ?? manifestRunId;
+  if (attachCreatedRunId && manifestRunId && attachCreatedRunId !== manifestRunId) {
+    throw new Error(
+      `[goal-manifest] --attach-created（${attachCreatedRunId}）与 manifest.run_id（${manifestRunId}）冲突——fail-closed`,
+    );
+  }
+  if (attachCreatedRunId && cliRunId && attachCreatedRunId !== cliRunId) {
+    throw new Error(
+      `[goal-manifest] --attach-created（${attachCreatedRunId}）与 --run-id（${cliRunId}）冲突——fail-closed`,
+    );
+  }
+  const runId = attachCreatedRunId ?? resumeRunId ?? cliRunId ?? manifestRunId;
   return { feature, runId, isResume, dryRun };
 }
 

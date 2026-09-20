@@ -57,7 +57,7 @@ import {
   withRunDisposition,
   type Decision,
 } from './utils/adjudication';
-import { writeLivenessBeacon } from './utils/liveness-beacon';
+import { assessLivenessBeacon, readLivenessBeacon, writeLivenessBeacon } from './utils/liveness-beacon';
 import { loadResolvedProfile } from '../profile-loader';
 // plan a7c3e9d2：作者前置输入 formatter（文件路径 / 函数名 / 签名 / 标题与主干 extension-runtime.ts 对齐）
 import { formatExtensionPhasePrompt } from './utils/extension-runtime';
@@ -296,6 +296,7 @@ import { finalizePhaseClosure } from './utils/phase-closure-finalizer';
 import {
   awaitGuardianGone,
   identifyWithRetry,
+  pidExists,
   reconcileGuardianOwnership,
   terminateGuardianProcessOnly,
 } from './utils/goal-containment-reconcile';
@@ -4118,7 +4119,67 @@ export function buildDetachedChildArgv(
  *    blocking host (chrys `communicate()`) sees EOF and the launcher "completes";
  *  - launcher exits 0 fast → host's clean-exit path does not tree-kill the child.
  */
-function runDetachLauncher(argv: minimist.ParsedArgs): number {
+export type DetachedStartupResult =
+  | { state: 'ready'; event: 'run_start' }
+  | { state: 'terminal'; status: string }
+  | { state: 'alive_timeout'; detail: string }
+  | { state: 'failed'; detail: string };
+
+export async function waitForDetachedStartup(input: {
+  projectRoot: string;
+  reportDirRel: string;
+  runId: string;
+  baselineEventCount: number;
+  childExitCode: () => number | null;
+  childAlive?: () => boolean;
+  childError?: () => string | undefined;
+  timeoutMs?: number;
+  pollMs?: number;
+}): Promise<DetachedStartupResult> {
+  const deadline = Date.now() + Math.min(30_000, Math.max(1, input.timeoutMs ?? 10_000));
+  const pollMs = Math.max(1, input.pollMs ?? 50);
+  const runDir = path.resolve(input.projectRoot, ...input.reportDirRel.split('/'));
+  const eventsPath = path.join(runDir, 'events.jsonl');
+  const manifestPath = path.join(runDir, 'manifest.json');
+  const progressPath = path.join(runDir, 'progress.json');
+  const logPath = path.join(runDir, 'detach.log');
+  const logTail = (): string => {
+    try { return fs.readFileSync(logPath, 'utf8').slice(-400).replace(/\s+/g, ' ').trim(); } catch { return ''; }
+  };
+  while (Date.now() < deadline) {
+    const spawnError = input.childError?.();
+    if (spawnError) return { state: 'failed', detail: `child spawn failed: ${spawnError}` };
+    let manifestMatches = false;
+    try {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as { run_id?: unknown };
+      manifestMatches = manifest.run_id === input.runId;
+    } catch { /* child may not have published manifest yet */ }
+    const events = fs.existsSync(eventsPath) ? loadEventsJsonl(eventsPath).slice(input.baselineEventCount) : [];
+    const terminal = [...events].reverse().find(event => event.type === 'run_end');
+    if (manifestMatches && terminal) return { state: 'terminal', status: String(terminal.status ?? 'unknown') };
+    if (manifestMatches && events.some(event => event.type === 'run_start')) return { state: 'ready', event: 'run_start' };
+    const exitCode = input.childExitCode();
+    if (exitCode !== null) {
+      return { state: 'failed', detail: `child exited before authoritative run_start (exit=${exitCode})${logTail() ? `: ${logTail()}` : ''}` };
+    }
+    await new Promise<void>(resolve => setTimeout(resolve, pollMs));
+  }
+  const beacon = assessLivenessBeacon({
+    beacon: readLivenessBeacon(input.projectRoot, input.reportDirRel),
+    runId: input.runId,
+  });
+  let progress = '';
+  try {
+    const snapshot = JSON.parse(fs.readFileSync(progressPath, 'utf8')) as { run_id?: unknown; status?: unknown; next_action?: unknown };
+    if (snapshot.run_id === input.runId) progress = `; status=${String(snapshot.status ?? 'unknown')}; next=${String(snapshot.next_action ?? 'unknown')}`;
+  } catch { /* optional projection */ }
+  if ((input.childAlive?.() ?? input.childExitCode() === null) || beacon.state === 'alive') {
+    return { state: 'alive_timeout', detail: `child still active but authoritative run_start not observed within startup window${progress}` };
+  }
+  return { state: 'failed', detail: `child exited during startup confirmation${logTail() ? `: ${logTail()}` : ''}` };
+}
+
+async function runDetachLauncher(argv: minimist.ParsedArgs): Promise<number> {
   const layout = detectRepoLayout(__dirname);
   const projectRoot = layout.projectRoot;
   const cfg = loadFrameworkConfig(projectRoot);
@@ -4151,6 +4212,8 @@ function runDetachLauncher(argv: minimist.ParsedArgs): number {
   fs.mkdirSync(reportDirAbs, { recursive: true });
   const logPathAbs = path.join(reportDirAbs, 'detach.log');
   const logFd = fs.openSync(logPathAbs, 'a');
+  const eventsPathAbs = path.join(reportDirAbs, 'events.jsonl');
+  const baselineEventCount = fs.existsSync(eventsPathAbs) ? loadEventsJsonl(eventsPathAbs).length : 0;
 
   const childArgs = buildDetachedChildArgv(process.argv.slice(2), runId, { resume: isResume });
   const preloadPath = resolveDetachedPreloadPath();
@@ -4167,10 +4230,22 @@ function runDetachLauncher(argv: minimist.ParsedArgs): number {
       env: sanitizeSpawnEnv(process.env).env,
     },
   );
+  let spawnError: string | undefined;
+  child.once('error', error => { spawnError = error.message; });
   // Parent must release the fd and the child reference: keeps no handle on the log
   // (so the host's pipe wait can't be extended) and lets the parent exit cleanly.
   child.unref();
   fs.closeSync(logFd);
+
+  const startup = await waitForDetachedStartup({
+    projectRoot,
+    reportDirRel,
+    runId,
+    baselineEventCount,
+    childExitCode: () => child.exitCode,
+    childAlive: () => typeof child.pid === 'number' && pidExists(child.pid),
+    childError: () => spawnError,
+  });
 
   console.log(
     JSON.stringify({
@@ -4180,9 +4255,10 @@ function runDetachLauncher(argv: minimist.ParsedArgs): number {
       report_dir: reportDirRel,
       log: path.relative(projectRoot, logPathAbs).replace(/\\/g, '/'),
       pid: child.pid ?? null,
+      startup,
     }),
   );
-  return 0;
+  return startup.state === 'failed' ? 1 : 0;
 }
 
 /** Resolve in the framework process; the detached child may start from a dependency-free consumer cwd. */
@@ -4372,7 +4448,7 @@ export async function main(options: GoalPhaseRuntimeLaunchOptions = {}): Promise
   // blocking host shell (e.g. chrys TUI shell tool) is not held for the whole run.
   // The spawned child carries `--detached-child` and runs this same main() normally.
   if (argv.detach && !argv['detached-child']) {
-    return runDetachLauncher(argv);
+    return await runDetachLauncher(argv);
   }
 
   if (argv.help) {
@@ -6317,6 +6393,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       let priorAttemptTimedOut = false;
       // 上一轮 gate 未能产出可读 summary 时，保留其真实末尾输出给下一轮修复。
       let priorHarnessFailure: string | undefined;
+      let priorHarnessSummaryWasStale = false;
       // P0-D：transient 计数与"上轮断流"语义都从 events.jsonl 派生（跨 continue/--resume
       // 不清零/不丢——内存变量在新进程必然归零，codex P1）。
       const phaseStartEvents = loadAuthoritativeEvents(
@@ -6468,6 +6545,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // Same projection as recovery: `isClosureOnlyRetryPending` below must not treat a revoked
         // phase's pre-revision PASS+retry as "only closure left".
         const attemptHistory = eventsWithScopeRevocations(birthScope, loadAuthoritativeEvents(eventsPath));
+        const latestPhaseVerdict = [...attemptHistory].reverse().find(
+          (event) => event.type === 'phase_verdict' && event.phase === phase,
+        );
+        const previousSummaryWasStale =
+          priorHarnessSummaryWasStale || latestPhaseVerdict?.stale_summary === true;
+        const previousHarnessFailure =
+          priorHarnessFailure ?? latestPhaseVerdict?.harness_error_excerpt;
         const persistedContinuation = deriveContinuationFromEvents(attemptHistory, phase);
         let continuation: { cause: ContinuationCause; process_resumed: boolean } | null = null;
         if (priorAttemptApiError) {
@@ -6493,7 +6577,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // 被残留旧 summary 污染。
         let priorFailure: string | undefined;
         let priorFailureKind: FailureKind | undefined;
-        if (isPhaseContinuation && priorSummaryRead.summary) {
+        if (isPhaseContinuation && priorSummaryRead.summary && !previousSummaryWasStale) {
           const v = priorSummaryRead.summary.verdict;
           if (v === 'FAIL' || v === 'INCOMPLETE') {
             // 旧 framework_integrity/manifest/foreign/dirty 只供历史 renderer，不能重新
@@ -6507,7 +6591,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
         }
         if (isPhaseContinuation && !priorFailure) {
-          const fatal = priorHarnessFailure ?? readHarnessFailureFromDetachLog(
+          const fatal = previousHarnessFailure ?? readHarnessFailureFromDetachLog(
             path.join(projectRoot, manifest.report_dir, 'detach.log'),
           );
           if (fatal) {
@@ -8113,7 +8197,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const harnessEndedAtMs = Date.now();
         priorHarnessFailure = harnessExit === 0
           ? undefined
-          : formatHarnessFailureTail(harnessRun.outputTail);
+          : formatHarnessFailureTail(harnessRun.outputTail) ??
+            `Harness exited with code ${harnessExit} without producing a current readable summary.`;
 
         goalEvents.emit({
           type: 'harness_end',
@@ -8412,7 +8497,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // framework-identity-boundary 2.4：当前 attempt 的所有裁决面只消费这一份投影。
         // 原始 summary 仍可供 verdict/closure/visual receipt 与历史报告展示，但旧
         // framework integrity blocker 不得再进入 meta/signature/repair/reconcile/event。
-        const decisionSummary = stripRetiredFrameworkIntegrityForCurrentRun(summary);
+        const decisionSummary = resolved.stale_summary
+          ? null
+          : stripRetiredFrameworkIntegrityForCurrentRun(summary);
+        priorHarnessSummaryWasStale = resolved.stale_summary;
         // P0-D：API 断流哨兵（adapter 感知信封锚定）。B/D 并存取 agent_timeout 优先
         // （runner tree-kill 是确定性事实，断流串可能是被杀连带产生）→ timed_out 时不扫。
         const apiErrorSentinel =
@@ -8439,6 +8527,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           agentApiError: apiErrorSentinel !== null,
           agentNoOutput,
           operatorInterrupt,
+          harnessFailedWithoutFreshSummary: !dryRun && !freshSummary && harnessExit !== 0,
           // P0-5/P0-3 freshness（决策表 SSOT）：fresh 超时轮的 integrity/framework_bug
           // 确定性证据优先于 agent_timeout（harness 在 tree-kill 之后新鲜跑出，可信）。
           staleSummary: resolved.stale_summary,
@@ -8510,7 +8599,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // fail-closed：候选写不回 summary（唯一真源）＝assess 看不见缺陷＝回退链断
           // ——不得静默降级为 advance，也不得落回任何旧路由（旧路由已删除）。
           // summary 路径缺失同样计入（codex 二轮：缺 summaryAbsPath 时不得绕过契约）。
-          if (!summaryAbsPath) {
+          if (!freshSummary || !summaryAbsPath) {
             repairCandidatesUnwritable = '本轮 summary.json 路径不可用（缺失/解析失败），可信缺陷无处落盘';
           } else {
             try {
@@ -9077,6 +9166,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           phase,
           verdict,
           legacyAction: driverGuardAction,
+          currentSummaryFresh: !resolved.stale_summary,
           failureKind: meta.failure_kind ?? currentFailureProjection.failureKindForEvent,
           blockingClass: meta.blocking_class,
           propagateToDownstream: manifest.dependency_policy.propagate_to_downstream,
@@ -9136,7 +9226,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // Kept alongside the resolved scope so the appended event records what triggered it.
         let pendingScopeRevisionInput: ExecutionScopeInput | undefined;
         let pendingScopeRevisionCheckId: string | undefined;
-        if (manifest.execution_scope && !invoke.timed_out && summaryAbsPath) {
+        if (manifest.execution_scope && !invoke.timed_out && freshSummary && summaryAbsPath) {
           const reportFile = path.join(path.dirname(summaryAbsPath), 'script-report.json');
           const report = fs.existsSync(reportFile) ? JSON.parse(fs.readFileSync(reportFile, 'utf8')) as { checks?: Array<{ id?: string; scope_revision_input?: ExecutionScopeInput }> } : {};
           const proposalChecks = (report.checks ?? []).filter(check => check.scope_revision_input);
@@ -9285,6 +9375,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
           agent_stderr_excerpt:
             invoke.exitCode !== 0 && invoke.stderr.trim()
               ? truncateOneLine(invoke.stderr.trim(), 400)
+              : undefined,
+          harness_error_excerpt:
+            harnessExit !== 0 && priorHarnessFailure
+              ? truncateOneLine(priorHarnessFailure.slice(-400), 400)
               : undefined,
           },
         });
@@ -9744,6 +9838,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
           agent_stderr_excerpt:
             invoke.exitCode !== 0 && invoke.stderr.trim()
               ? truncateOneLine(invoke.stderr.trim(), 400)
+              : undefined,
+          harness_error_excerpt:
+            harnessExit !== 0 && priorHarnessFailure
+              ? truncateOneLine(priorHarnessFailure.slice(-400), 400)
               : undefined,
         });
         halted = true;

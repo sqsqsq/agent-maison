@@ -501,7 +501,7 @@ async function main(): Promise<void> {
       // 与 --prepare-run 同一份需求文本（视觉相关性由它判定）；两处不同源会让候选与出生结论分叉。
       ...(() => {
         const resolved = resolveRequirementInput({ requirement: argv.requirement, requirementFile: argv['requirement-file'], projectRoot });
-        return resolved.text ? { requirement: resolved.text } : {};
+        return resolved.text ? { requirement: resolved.text, ...(resolved.sources.length ? { requirementSourceFiles: resolved.sources } : {}) } : {};
       })(),
       ...(impactFlag
         ? { impact: { userVisibleBehaviorChange: impactFlag === 'true', reason: impactReason, basisPaths: impactBasis } }

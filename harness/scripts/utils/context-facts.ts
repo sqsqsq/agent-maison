@@ -46,6 +46,8 @@ export interface FactsInvocationContext {
   subject: { feature: string; run_id: string } | { feature: string } | { request_sha256: string; report_dir: string };
   first_phase: string;
   source_paths: string[];
+  /** Effective-scope owner for a source target; runtime provenance, never authored in facts.md. */
+  source_owners?: Record<string, string>;
   required_input_snippets: string[];
   /** Validated predecessor/current baseline: preserve its real establishing phase. */
   baseline?: { established_by: string; fingerprint: string; dependencies: ResolutionDependency[] };

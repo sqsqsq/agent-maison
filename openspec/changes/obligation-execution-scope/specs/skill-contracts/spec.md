@@ -16,6 +16,18 @@ Enforcement: `harness/scripts/goal-mode-entry.ts`, `harness/scripts/utils/featur
 - **WHEN** the requested action lists only verification phases for an existing implementation
 - **THEN** the generated candidate SHALL contain no `implementation` duty and the resolved chain SHALL contain only those verification phases
 
+The absence of an implementation duty SHALL NOT erase source-read inputs. Goal and runless entry SHALL project existing production sources from the frozen construction contract into a distinct code-target set, project profile-owned test paths separately, and leave write authority unchanged. A current establishing facts file MAY add bounded read-only Research sources only after invocation identity, containment, readability and duplicate-normalization checks; the resulting binding SHALL flow through the existing phase evidence manifest to downstream phases.
+
+The phase evidence manifest SHALL annotate only write-authorized source targets: non-test construction files use the implementation owner, while profile-recognized test paths use the unit-evidence owner. A current owner gate MAY treat its authorized paths as pending outputs; after closure, that owner's current output MAY advance an earlier Research observation in both single-phase and whole-chain freshness checks. An already-consuming phase SHALL not retain an earlier owner's waiver. Unattributed Research and drift in requirements, contracts, or other inputs remain strict. Test targets SHALL enter only phases that consume `derive.test-targets`, so a UT-owned test edit does not invalidate coding or review, while a UT edit to product source still invalidates coding and review evidence.
+
+#### Scenario: Verification-only UT reads code without implementation or impact
+- **WHEN** a request asks only for UT, carries neither implementation nor impact, and its frozen contracts identify existing product source
+- **THEN** UT SHALL resolve the product source through the production entry and SHALL gain no product write authority
+
+#### Scenario: Plan output refreshes implementation and planned targets
+- **WHEN** a plan-first request begins without contracts and plan later produces a non-empty contracts write set containing existing and not-yet-created files
+- **THEN** the existing revision path SHALL add or refresh the implementation source; coding SHALL read existing files without requiring planned bytes, while downstream phases SHALL require files after their responsible producer has run
+
 #### Scenario: A missing acceptance source stays a visible gap
 - **WHEN** the feature has no resolvable acceptance artifact or blueprint acceptance
 - **THEN** the candidate SHALL carry an `unknown` acceptance duty that resolves into the unresolved list owned by spec, instead of omitting the duty

@@ -3,14 +3,16 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { spawnSync } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import {
   buildDetachedChildArgv,
   evaluateForegroundSurvival,
+  main as runGoalRuntime,
   resolveDetachedPreloadPath,
   resolveOrphanedIncompleteRun,
+  waitForDetachedStartup,
 } from '../../scripts/goal-runner';
-import { newRunId } from '../../scripts/utils/goal-manifest';
+import { newRunId, resolveRawRunInput } from '../../scripts/utils/goal-manifest';
 import { FEATURE_LOCK_NAME } from '../../scripts/utils/goal-run-lock';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -57,7 +59,7 @@ function staleLock(runId: string): Record<string, unknown> {
   };
 }
 
-const cases: Array<{ name: string; run: () => void }> = [
+const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   {
     name: 'detach preload is absolute and loads from a dependency-free consumer cwd',
     run: () => {
@@ -113,6 +115,85 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(occurrences === 1, `exactly one --run-id expected: ${out.join(' ')}`);
       assert(!out.includes('STALE'), `stale run-id value must be dropped: ${out.join(' ')}`);
       assert(out[out.indexOf('--run-id') + 1] === 'CANON', out.join(' '));
+    },
+  },
+  {
+    name: 'P2-T9 detach startup handshake distinguishes early exit, ready, terminal, and alive timeout',
+    run: async () => {
+      const script = `
+        const fs=require('fs'),path=require('path');
+        const [dir,id,mode]=process.argv.slice(1);
+        if(mode==='early') process.exit(7);
+        else if(mode==='timeout') setTimeout(()=>process.exit(0),1000);
+        else setTimeout(()=>{
+            fs.mkdirSync(dir,{recursive:true});
+            fs.writeFileSync(path.join(dir,'manifest.json'),JSON.stringify({run_id:id}));
+            const events=[{type:'run_start',run_id:id}];
+            if(mode==='terminal') events.push({type:'run_end',status:'CHAIN_SLICE_COMPLETED'});
+            fs.writeFileSync(path.join(dir,'events.jsonl'),events.map(JSON.stringify).join('\\n')+'\\n');
+            setTimeout(()=>process.exit(0),200);
+          },20);
+      `;
+      const run = async (mode: string) => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), `goal-detach-startup-${mode}-`));
+        const rel = 'doc/features/demo/goal-runs/run-1';
+        const dir = path.join(root, ...rel.split('/'));
+        fs.mkdirSync(dir, { recursive: true });
+        const child = spawn(process.execPath, ['-e', script, dir, 'run-1', mode], { stdio: 'ignore', windowsHide: true });
+        let childError: string | undefined;
+        child.once('error', error => { childError = error.message; });
+        try {
+          const result = await waitForDetachedStartup({
+            projectRoot: root, reportDirRel: rel, runId: 'run-1', baselineEventCount: 0,
+            childExitCode: () => child.exitCode, childError: () => childError,
+            childAlive: () => child.exitCode === null,
+            timeoutMs: mode === 'timeout' ? 60 : 2_000, pollMs: 5,
+          });
+          if (mode === 'early') assert(result.state === 'failed' && result.detail.includes('exit=7'), JSON.stringify(result));
+          if (mode === 'ready') assert(result.state === 'ready', JSON.stringify(result));
+          if (mode === 'terminal') assert(result.state === 'terminal' && result.status === 'CHAIN_SLICE_COMPLETED', JSON.stringify(result));
+          if (mode === 'timeout') {
+            assert(result.state === 'alive_timeout', JSON.stringify(result));
+            assert(child.exitCode === null, 'startup timeout must not kill an active child');
+          }
+        } finally {
+          if (child.exitCode === null) child.kill();
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      };
+      for (const mode of ['early', 'ready', 'terminal', 'timeout']) await run(mode);
+    },
+  },
+  {
+    name: 'P2-T12 attach-created keeps one run identity through parent parsing and child argv',
+    run: async () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'goal-attach-created-'));
+      try {
+        fs.writeFileSync(path.join(root, 'same.yaml'), 'feature: demo\nrun_id: existing\n');
+        fs.writeFileSync(path.join(root, 'other.yaml'), 'feature: demo\nrun_id: other\n');
+        for (const args of [
+          { feature: 'demo', 'attach-created': 'existing' },
+          { feature: 'demo', 'attach-created': 'existing', 'run-id': 'existing' },
+          { manifest: 'same.yaml', 'attach-created': 'existing' },
+        ]) {
+          const raw = resolveRawRunInput(args, root);
+          assert(raw.isResume && raw.runId === 'existing', JSON.stringify(raw));
+          const child = buildDetachedChildArgv(['--feature', 'demo', '--attach-created', 'existing', '--detach'], raw.runId!, { resume: raw.isResume });
+          assert(child.includes('--attach-created') && child[child.indexOf('--attach-created') + 1] === 'existing', child.join(' '));
+          assert(!child.includes('--run-id'), `attach child must not gain a second identity: ${child.join(' ')}`);
+        }
+        for (const bad of [
+          { feature: 'demo', 'attach-created': 'existing', resume: 'existing' },
+          { feature: 'demo', 'attach-created': 'existing', 'run-id': 'other' },
+          { manifest: 'other.yaml', 'attach-created': 'existing' },
+        ]) {
+          let threw = false;
+          try { resolveRawRunInput(bad, root); } catch { threw = true; }
+          assert(threw, `identity conflict accepted: ${JSON.stringify(bad)}`);
+        }
+        const wrongOwner = await runGoalRuntime({ args: ['--attach-created', 'existing', '--feature', 'demo', '--runtime-executor', 'detached', '--runtime-owner', 'session'] });
+        assert(wrongOwner === 1, `wrong owner/transport accepted: ${wrongOwner}`);
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
     },
   },
   {
@@ -225,13 +306,15 @@ const cases: Array<{ name: string; run: () => void }> = [
   },
 ];
 
-export function runAll(): UnitCaseResult[] {
-  return cases.map((c) => {
+export async function runAll(): Promise<UnitCaseResult[]> {
+  const results: UnitCaseResult[] = [];
+  for (const c of cases) {
     try {
-      c.run();
-      return { name: c.name, ok: true };
+      await c.run();
+      results.push({ name: c.name, ok: true });
     } catch (e) {
-      return { name: c.name, ok: false, error: (e as Error).message };
+      results.push({ name: c.name, ok: false, error: (e as Error).message });
     }
-  });
+  }
+  return results;
 }

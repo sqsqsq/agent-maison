@@ -42,6 +42,10 @@ capabilities:
 
 artifact 内容先通过注册 schema 与 SpecLoader 既有字段校验。derive 返回实际内容而不是“project_root 可用”标志：requirement 只读当前调用文本，test-targets/codebase 只读显式且项目内的目标文件，adhoc-cases 使用既有用例归一化内核。静态 `DERIVE_PROVIDER_TYPES` 声明返回类型，1.1 每个 fallback 分支必须同类型；文本需求不能作为 acceptance 的等价替代。`derive.blueprint-acceptance/contracts` 的实际字段映射由 P3 实现，不在 P1 注册假 provider。
 
+Feature 调用把读取面拆成 `codeTargets` 与 `testTargets`：前者来自冻结 contracts/CU、当前有效义务及已核实 Research，后者再按 profile 的 UT 根识别；两者都只是调用期输入，不授予写权限。verification-only review/UT 不需要 implementation 义务也能读取 contracts 指定的现存产品源码。`contracts.files` 中由本阶段或后继阶段负责创建的缺失文件保留为授权产出，不拖垮同组现存输入；到了下游仍缺失时照常 blocked。
+
+无 run 的 spec 从候选 `requirement_basis` 校验原始需求。文件输入只绑定来源路径与字节，不复制正文；inline/旧候选没有可恢复来源时，入口要求调用者以 `--requirement` 或 `--requirement-file` 重给原文，并核对既有文本指纹。Goal 调用继续以冻结 manifest 为唯一需求权威，CLI 不得覆盖。
+
 SpecLoader、CheckContext、verifier 上下文与材料指纹消费同一解析结果。新协议的输入读取面来自实际 attempts/bindings，输出来自本次 required_outputs；旧 REQUIRED/OPTIONAL 文件表只用于未提供新协议上下文的 1.0 路径。evidence 生成时来源已经变化必须报 stale，不能把重新读取的新字节绑定到旧内容。framework 文件不作为 consumer evidence 输入；contract 使用已有 fingerprint。
 
 新请求默认使用 obligation-driven 1.2 与输入 1.1；旧 Skill 仅在内部 legacy 路径恢复，公共入口不再提供轨道选择。
@@ -49,6 +53,8 @@ SpecLoader、CheckContext、verifier 上下文与材料指纹消费同一解析�
 ## Facts 1.1
 
 首个实际 Skill 的 Research 在写代码、审查、UT 规划或设备动作之前建立 `context/facts.md`，`established_by` 记录真实 phase。Feature facts 的身份位**按载体二分**：run 载体绑 `feature` + `run_id`；无 run 的 feature 载体绑 `feature` + `frozen_scope_fingerprint`（当前冻结范围指纹），两者互斥，同时出现即判身份混淆。request facts 只绑定 request_sha256，位置为调用方指定的 report-dir/context/facts.md。`FactsInvocationContext` 来自 P2/P6，不能从 facts 自报内容反推建立资格。
+
+建立阶段的 `source_code_paths` 在统一 entry 内先做 subject、项目内路径、真实文件可读性与规范化去重校验，再进入 `derive.codebase` 绑定和 evidence；后继阶段只从完整性有效且 fresh 的既有 evidence 承接这些路径。缺失、越界、错误身份或重复变体都显式失败，不用全仓扫描替代。
 
 后续或成功前驱的基线通过 baseline fingerprint 与来源 dependencies 核验，保留真实 established_by/run 来源，只追加当前 phase_delta。已有 1.0 facts 可经显式 baseline 承接，不能因文件存在自动满足。继续检查 Code Facts、当前目标覆盖、源码可读性、ready_to_produce 和覆盖风险；复用基线不重施后续阶段的全量探索阈值。新建立阶段使用实际 phase 的规则/profile snippets，不冒充 spec。
 
@@ -152,6 +158,8 @@ phase runner 在 checker 之前只生成一次不可变 `CapabilityResolutionRep
 报告据 capability 状态机械计算全局保证等级：`blocked < degraded < full`。`summary.json` 1.2 持久化 `assurance`、`capability_resolutions` 及 `capability_resolution_contract_fingerprint`；不再输出 `summary.depth` 或 quality-depth/missing-input 镜像字段。
 
 为保证 fallback 可审计，evidence manifest 只绑定项目内的 applicability 输入，以及从第一个 source 到 resolved/invalid 终止 source 的每一次实际尝试；framework contract 不以文件路径进入 consumer manifest，而以 `capability_resolution_contract_fingerprint` 留在 summary/closure provenance。缺失的高优先级文件按 `exists:false` 绑定，因此随后出现文件也会使旧 closure stale；未尝试的低优先级 source 不进入绑定。
+
+源码 evidence 只为真实写权限携带责任阶段：contracts 非测试写集归 implementation owner，profile 测试根归 unit-evidence owner；写集外 Research/配置仍是普通只读输入。Research 阶段继续绑定实际读取字节，当前责任阶段 gate 可把自己的授权路径视为待产出，闭环后则由该 owner 的当前 output 承接；已消费 owner 的 review 等阶段不继承豁免。测试目标只进入声明 `derive.test-targets` 的阶段，因此 UT 改自己的测试不会反向作废 coding/review，UT 改产品源码仍使 coding/review 失效。需求、contracts 与其它真实输入漂移没有豁免。
 
 ## 质量轴、closure 和 assess
 

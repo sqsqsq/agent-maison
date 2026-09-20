@@ -60,7 +60,7 @@
 - 等待项（没有则省略）
 - `run_id` 与进度文件
 
-无人值守（`--detach`）启动后：先执行**有界启动握手**（≤30s，确认 manifest 与唯一 `run_created` 双落，再查 `detach.log` 增长 / liveness；manifest-only 须报 `CREATION_INCOMPLETE`，不得 resume；其余按结果分类汇报——有可信终态/等待态证据就报真实状态，非终态且进程健康报「已启动」，超窗但进程仍活报「尚未就绪，进程仍存活」，仅进程确实死亡且无结束证据才报「未存活」），汇报 `run_id` 与续查入口后**立即结束当前轮次**；不进入 monitor，除非用户明确要求盯守。查进度唯一入口是 `goal-status`。
+无人值守（`--detach`）启动后：launcher 已用 manifest / 本次新增 events / liveness / progress 做一次**有界启动握手**（≤30s），stdout 的 `startup.state` 区分 `ready`、快速 `terminal`、`alive_timeout` 与 `failed`；不得把 pid/目录单独当健康，也不得在 launcher 返回后再手搓轮询。`failed` 立即准确通知，`alive_timeout` 只表示尚未就绪且进程仍活，不能杀进程；其余汇报 `run_id` 与续查入口后**立即结束当前轮次**。不进入 monitor，除非用户明确要求盯守；查进度唯一入口是 `goal-status`。
 
 遇到 human-only recommendation 时不得启动 phase：有人在场立即询问；无人值守写入等待项并安全停放。`DEFERRED` / `PARTIAL` 不得宣称完成。
 

@@ -349,9 +349,10 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
     const existing = input.facts.filter(fact => fact.kind === kind);
     if (existing.length) {
       // Override every candidate fact of this kind — not just the same-id one. Original basis is
-      // kept (it may carry real sources); the derivation's own basis is appended.
+      // kept (it may carry real sources), except the acceptance binding that this derivation owns:
+      // a spec revision must replace that generation rather than retain old+new acceptance truth.
       for (const fact of existing) {
-        const merged = [...fact.basis];
+        const merged = fact.basis.filter(binding => binding.input_id !== 'acceptance');
         for (const binding of derivation.basis) if (!merged.some(b => b.input_id === binding.input_id)) merged.push(binding);
         Object.assign(fact, { applicability: derivation.applicability, reason: derivation.reason, basis: merged });
       }

@@ -44,7 +44,7 @@ import { observeChangeUnitCompletion } from '../../scripts/utils/change-unit-com
 import { verifyFeatureCompletion, verifyReusedExecutionScope, executionScopeEvidenceIssues } from '../../scripts/utils/verify-feature-completion';
 import { loadFrozenExecutionScope, loadEffectiveExecutionScope } from '../../scripts/utils/goal-run-creation';
 import { resolveUpstreamPhaseChain } from '../../scripts/utils/upstream-verdict-gate';
-import { readScopeAcceptance, collectResolvedScopeFacts, prepareFeatureScopeCandidate, featureScopeCandidateFingerprint } from '../../scripts/utils/feature-track';
+import { featureRequirementBinding, readScopeAcceptance, collectResolvedScopeFacts, prepareFeatureScopeCandidate, featureScopeCandidateFingerprint } from '../../scripts/utils/feature-track';
 import { codingBasePath } from '../../scripts/utils/pass-snapshot';
 import { recomputePhaseEvidenceStaleness } from '../../scripts/utils/phase-evidence-manifest';
 import * as os from 'os';
@@ -136,6 +136,14 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
     const input = request(['testing']);
     const expected = resolveExecutionScope(input, workflow);
     for (const verdict of ['FAIL', 'offline', 'manual', 'report_failed']) assert.deepStrictEqual(resolveExecutionScope({ ...input, verdict } as ExecutionScopeInput, workflow), expected);
+  } },
+  { name: 'P2-T7/T8 test-only recovery preserves fresh upstream phases while real product invalidation expands', run() {
+    const chain = ['plan', 'coding', 'review', 'ut'];
+    const outcomes = chain.map(phase => ({ phase, verdict: 'PASS' })) as never[];
+    const testOnly = applyInvalidationsToResume(chain as never[], outcomes, [{ type: 'phase_backtrack_requested', invalidated_phases: ['ut'] }] as never[]);
+    assert.deepStrictEqual(testOnly.outcomes.map((item: { phase: string }) => item.phase), ['plan', 'coding', 'review']);
+    const productChanged = applyInvalidationsToResume(chain as never[], outcomes, [{ type: 'phase_backtrack_requested', invalidated_phases: ['coding', 'review', 'ut'] }] as never[]);
+    assert.deepStrictEqual(productChanged.outcomes.map((item: { phase: string }) => item.phase), ['plan']);
   } },
   { name: 'corrupt new scope cannot become legacy full', run() {
     for (const value of [null, {}, { schema_version: '9' }]) assert.throws(() => validateExecutionScope(value));
@@ -1316,7 +1324,7 @@ function setupRunlessProject(options?: { chain?: string[]; uiFile?: boolean; com
   }));
   fs.writeFileSync(featureFilePath(root, feature, 'acceptance.yaml'), YAML.stringify({
     feature, source: 'approved behavior', version: '1',
-    criteria: [{ id: 'AC-1', description: 'value is 42', priority: 'P1', testable: true, verification_steps: ['read value'], expected_result: '42', ut_layer: 'unit', ut_focus: ['value is 42'] }], boundaries: [],
+    criteria: [{ id: 'AC-1', description: 'value is 42', priority: 'P1', testable: true, verification_steps: ['read value'], expected_result: '42', ut_layer: 'unit', ut_focus: 'value is 42' }], boundaries: [],
   }));
   fs.writeFileSync(featureFilePath(root, feature, 'spec.md'), '# spec\n');
   fs.writeFileSync(featureFilePath(root, feature, 'plan.md'), '# plan\n');
@@ -1346,7 +1354,7 @@ cases.push({ name: 'D1 a repeated runless closure of a single-duty request is a 
     // spec 的真实产出：合法验收（`setupRunlessProject` 为制造缺口先删掉了它）。
     fs.writeFileSync(featureFilePath(root, feature, 'acceptance.yaml'), YAML.stringify({
       feature, source: 'approved behavior', version: '1',
-      criteria: [{ id: 'AC-1', description: 'value is 42', priority: 'P1', testable: true, verification_steps: ['read value'], expected_result: '42', ut_layer: 'unit', ut_focus: ['value is 42'] }], boundaries: [],
+      criteria: [{ id: 'AC-1', description: 'value is 42', priority: 'P1', testable: true, verification_steps: ['read value'], expected_result: '42', ut_layer: 'unit', ut_focus: 'value is 42' }], boundaries: [],
     }));
     // 提案由**生产的** `designScopeRevisionChecks` 发布（feature 载体分支：factsContext.subject 无 run_id）。
     const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot, feature, phase: 'spec', featuresDir: relFeaturesDir(root) });
@@ -1961,6 +1969,9 @@ cases.push({ name: 'D1 three real runless harness-runner phase calls freeze once
     assert(blocker, '候选漂移后真实 CLI 没有报 execution_scope_frozen：' + JSON.stringify(report.checks.map(check => check.id)));
     assert.equal(blocker!.status, 'FAIL');
     assert.equal(blocker!.severity, 'BLOCKER');
+    const summary = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(root, feature, 'coding', frameworkRoot), 'summary.json'), 'utf8')) as { verdict?: string; blockers?: Array<{ id?: string }> };
+    assert.equal(summary.verdict, 'FAIL');
+    assert(summary.blockers?.some(item => item.id === 'execution_scope_frozen'), '当前 scope 失败未刷新 base summary');
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 
@@ -2038,6 +2049,11 @@ cases.push({ name: 'D1 a coding-only runless request is managed through the cand
       assert.equal(check!.status, 'FAIL', JSON.stringify(check));
       assert.equal(check!.severity, 'BLOCKER', JSON.stringify(check));
       assert(check!.suggestion?.includes('--prepare-scope'), '候选缺失的 suggestion 未指向 --prepare-scope：' + JSON.stringify(check));
+      const summaryPath = path.join(featurePhaseReportsDir(root, feature, 'coding', frameworkRoot), 'summary.json');
+      assert(fs.existsSync(summaryPath), '候选缺失时 harness 未写出当前 base summary：' + combined(blocked));
+      const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8')) as { verdict?: string; blockers?: Array<{ id?: string }> };
+      assert.equal(summary.verdict, 'FAIL');
+      assert(summary.blockers?.some(item => item.id === 'execution_scope_frozen'), JSON.stringify(summary));
       assert(!fs.existsSync(featureFrozenScopePath(root, feature)), '没有候选却冻结了范围');
     } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   }
@@ -2633,6 +2649,138 @@ cases.push({ name: 'D1 a runless phase produces a revision proposal and keeps cl
     const proven = revised.obligations.filter(ob => closedOwners.has(String(ob.owner_phase))
       && (ob.satisfied_by ?? []).some(ref => 'evidence_manifest_aggregate' in (ref as object)));
     assert(proven.length > 0, '已闭环阶段没有被补上闭环证明：' + JSON.stringify(revised.obligations.map(ob => [ob.id, ob.owner_phase, ob.satisfied_by])));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+} });
+
+cases.push({ name: 'P1-T8 runless file and inline requirements reach the real spec harness without a text snapshot', run() {
+  const repo = path.resolve(__dirname, '../../..');
+  const invoke = (root: string, argv: string[]) => spawnSync(process.execPath, [require.resolve('ts-node/dist/bin.js'), ...argv], {
+    cwd: root, encoding: 'utf8', timeout: 120000,
+    env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json'), MAISON_GOAL_RUN_ID: '' },
+  });
+  const prepare = (root: string, frameworkRoot: string, feature: string, requirementArgs: string[]) => invoke(root, [
+    path.join(repo, 'harness/scripts/goal-mode-entry.ts'), '--prepare-scope', '--completion-target', 'request',
+    '--requested-phases', 'spec', '--requested-results', 'verify requirement', '--feature', feature,
+    '--project-root', root, '--framework-root', frameworkRoot, '--overwrite', ...requirementArgs,
+  ]);
+  const harness = (root: string, frameworkRoot: string, feature: string, requirementArgs: string[] = []) => invoke(root, [
+    path.join(repo, 'harness/harness-runner.ts'), '--phase', 'spec', '--feature', feature,
+    '--project-root', root, '--framework-root', frameworkRoot, ...requirementArgs,
+  ]);
+  const capabilityState = (root: string, feature: string) => {
+    const summary = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(root, feature, 'spec'), 'summary.json'), 'utf8')) as { capability_resolutions?: Array<{ id: string; state: string }> };
+    return summary.capability_resolutions?.find(item => item.id === 'capability_spec_requirement')?.state;
+  };
+
+  {
+    const { root, frameworkRoot, feature } = setupRunlessProject({ chain: ['spec'], completionTarget: 'request' });
+    try {
+      const req = path.join(root, 'requirements', 'request.md'); fs.mkdirSync(path.dirname(req), { recursive: true });
+      fs.writeFileSync(req, '原始文件需求：验证 value。\n');
+      const made = prepare(root, frameworkRoot, feature, ['--requirement-file', 'requirements/request.md']);
+      assert.equal(made.status, 0, made.stderr + made.stdout);
+      const binding = featureRequirementBinding(root, feature);
+      assert.equal(binding.dependencies.length, 1, JSON.stringify(binding));
+      assert(binding.source_refs.includes('requirements/request.md'), JSON.stringify(binding));
+      harness(root, frameworkRoot, feature);
+      assert.equal(capabilityState(root, feature), 'resolved', '文件需求应从冻结 binding 的原始 source 恢复');
+      fs.writeFileSync(req, '被换掉的需求\n');
+      const stale = harness(root, frameworkRoot, feature);
+      const report = fs.readFileSync(path.join(featurePhaseReportsDir(root, feature, 'spec'), 'script-report.json'), 'utf8');
+      assert.notEqual(stale.status, 0);
+      assert(/input binding stale|scope owner/.test(report), report);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  }
+
+  {
+    const { root, frameworkRoot, feature } = setupRunlessProject({ chain: ['spec'], completionTarget: 'request' });
+    try {
+      const inline = '原始 inline 需求：验证 value';
+      const made = prepare(root, frameworkRoot, feature, ['--requirement', inline]);
+      assert.equal(made.status, 0, made.stderr + made.stdout);
+      assert.equal(featureRequirementBinding(root, feature).dependencies.length, 0);
+      const missing = harness(root, frameworkRoot, feature);
+      assert.notEqual(missing.status, 0);
+      assert((missing.stdout + missing.stderr).includes('请用 --requirement 或 --requirement-file'), missing.stdout + missing.stderr);
+      const legacyFile = path.join(root, 'requirements', 'legacy-inline.md'); fs.mkdirSync(path.dirname(legacyFile), { recursive: true });
+      fs.writeFileSync(legacyFile, inline);
+      harness(root, frameworkRoot, feature, ['--requirement-file', 'requirements/legacy-inline.md']);
+      assert.equal(capabilityState(root, feature), 'resolved');
+      const changed = harness(root, frameworkRoot, feature, ['--requirement', '另一句需求']);
+      assert.notEqual(changed.status, 0);
+      assert(/input binding stale|scope owner/.test(fs.readFileSync(path.join(featurePhaseReportsDir(root, feature, 'spec'), 'script-report.json'), 'utf8')));
+    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  }
+
+  {
+    const { root, frameworkRoot, feature } = setupRunlessProject({ chain: ['spec'], completionTarget: 'request' });
+    const externalRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'runless-external-requirement-'));
+    const externalFile = path.join(externalRoot, 'request.md');
+    try {
+      fs.writeFileSync(externalFile, '项目外原始需求：验证 value。\n');
+      const made = prepare(root, frameworkRoot, feature, ['--requirement-file', externalFile]);
+      assert.equal(made.status, 0, made.stderr + made.stdout);
+      assert.equal(featureRequirementBinding(root, feature).dependencies.length, 0, '项目外来源不得进入项目内冻结 dependency');
+      const missing = harness(root, frameworkRoot, feature);
+      assert.notEqual(missing.status, 0);
+      assert((missing.stdout + missing.stderr).includes('请用 --requirement 或 --requirement-file'), missing.stdout + missing.stderr);
+      const supplied = harness(root, frameworkRoot, feature, ['--requirement-file', externalFile]);
+      assert.equal(capabilityState(root, feature), 'resolved', supplied.stderr + supplied.stdout);
+      fs.writeFileSync(externalFile, '项目外另一句需求\n');
+      const changed = harness(root, frameworkRoot, feature, ['--requirement-file', externalFile]);
+      assert.notEqual(changed.status, 0);
+      assert(/input binding stale|scope owner/.test(fs.readFileSync(path.join(featurePhaseReportsDir(root, feature, 'spec'), 'script-report.json'), 'utf8')));
+    } finally {
+      fs.rmSync(externalRoot, { recursive: true, force: true });
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    }
+  }
+} });
+
+cases.push({ name: 'P1-T9 spec owner revises an in-place acceptance through the real runless harness', run() {
+  const repo = path.resolve(__dirname, '../../..');
+  const { root, frameworkRoot, feature } = setupRunlessProject({ chain: ['spec'], completionTarget: 'feature' });
+  const runSpec = () => spawnSync(process.execPath, [require.resolve('ts-node/dist/bin.js'), path.join(repo, 'harness/harness-runner.ts'),
+    '--phase', 'spec', '--feature', feature, '--project-root', root, '--framework-root', frameworkRoot,
+    '--requirement', '把 value 改成 42'], { cwd: root, encoding: 'utf8', timeout: 120000,
+    env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json'), MAISON_GOAL_RUN_ID: '' } });
+  try {
+    const acceptancePath = featureFilePath(root, feature, 'acceptance.yaml');
+    const initialAcceptance = YAML.parse(fs.readFileSync(acceptancePath, 'utf8')); initialAcceptance.criteria[0].expected_result = '1';
+    fs.writeFileSync(acceptancePath, 'criteria: [\n');
+    const candidate = prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot, feature, completionTarget: 'feature', requestedResults: ['value is 42'], requestedPhases: ['spec'], requirement: '把 value 改成 42', overwrite: true,
+      impact: { userVisibleBehaviorChange: false, reason: 'unit-only correction', basisPaths: ['src/demo/value.ts'] } });
+    assert(candidate.scope.phase_chain.includes('spec'), JSON.stringify(candidate.scope.phase_chain));
+    fs.writeFileSync(acceptancePath, YAML.stringify(initialAcceptance));
+    assert(!fs.existsSync(featureFrozenScopePath(root, feature)), '前提：首次 harness 尚未冻结');
+    runSpec();
+    assert(fs.existsSync(featureFrozenScopePath(root, feature)), '真实 harness 首次调用没有在 acceptance 已在场时冻结');
+    const record = readFeatureFrozenScope(root, feature)!;
+    const fingerprint = executionScopeFingerprint(featureEffectiveScope(record));
+    const facts = featureFilePath(root, feature, path.join('context', 'facts.md')); fs.mkdirSync(path.dirname(facts), { recursive: true });
+    fs.writeFileSync(facts, '---\n' + YAML.stringify({ schema_version: '1.1', feature, frozen_scope_fingerprint: fingerprint, established_by: 'spec', ready_to_produce: true,
+      has_blocker_coverage_risk: false, source_code_paths: ['src/demo/value.ts', 'framework.config.json'], key_inputs_read: ['src/demo/value.ts', 'framework.config.json'], files_inspected_count: 5,
+      searches_performed_estimate: 4, decisions_unlocked: ['correct acceptance'], exploration_mode: 'sequential' }) + '---\n## Code Facts\n| 路径 | 事实 | 影响 |\n|---|---|---|\n| src/demo/value.ts | value exists | acceptance correction |\n| framework.config.json | profile configured | preserve project context |\n\n## phase_delta: spec\nacceptance corrected\n');
+    const acceptance = YAML.parse(fs.readFileSync(acceptancePath, 'utf8')); acceptance.criteria[0].expected_result = '42';
+    fs.writeFileSync(acceptancePath, YAML.stringify(acceptance));
+    const corrected = runSpec();
+    assert.equal(corrected.status, 0, corrected.stderr + corrected.stdout);
+    const after = readFeatureFrozenScope(root, feature)!;
+    assert.equal(after.revisions.length, 1, JSON.stringify(after.revisions));
+    const effective = featureEffectiveScope(after);
+    const acceptanceObligation = effective.obligations.find(item => item.kind === 'acceptance-context')!;
+    const unit = effective.obligations.find(item => item.kind === 'unit-evidence')!;
+    const currentSha = createHash('sha256').update(fs.readFileSync(acceptancePath)).digest('hex');
+    for (const obligation of [acceptanceObligation, unit]) {
+      assert(obligation.basis.some(binding => binding.input_id === 'acceptance' && binding.dependencies.some(dep => dep.sha256 === currentSha)), `${obligation.kind} 未同步当前 acceptance binding: ${JSON.stringify(obligation)}`);
+      assert(!obligation.basis.some(binding => binding.input_id === 'acceptance' && binding.dependencies.some(dep => dep.sha256 !== currentSha)), `${obligation.kind} 仍保留旧 acceptance generation`);
+    }
+    acceptance.criteria = [];
+    fs.writeFileSync(acceptancePath, YAML.stringify(acceptance));
+    const invalid = runSpec();
+    assert.notEqual(invalid.status, 0, '非法减空验收不得形成第二条修订');
+    assert.equal(readFeatureFrozenScope(root, feature)!.revisions.length, 1, '非法验收仍推进了范围修订');
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 

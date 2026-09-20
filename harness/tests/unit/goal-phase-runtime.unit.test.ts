@@ -78,6 +78,18 @@ function canonicalOf(probe: RunProbe): ReturnType<typeof projectCanonicalLifecyc
   return projectCanonicalLifecycle(probe.events);
 }
 
+function seedUtFailureSummary(root: string, blockers: Array<Record<string, unknown>>): void {
+  const reports = path.join(root, 'doc/features/bc-openCard/ut/reports');
+  fs.mkdirSync(reports, { recursive: true });
+  fs.writeFileSync(path.join(reports, 'summary.json'), JSON.stringify({
+    schema_version: '1.2', assurance: 'full', verdict: 'FAIL', blocker_count: blockers.length,
+    receipt_status: 'missing', closure_status: 'open', next_action: 'fix_blockers',
+    report_validity: 'PASS', release_readiness: 'BLOCKED', completion_status: 'complete',
+    capability_resolutions: [], capability_resolution_contract_fingerprint: null,
+    blockers, checks: [],
+  }, null, 2));
+}
+
 const cases: Case[] = [
   { name: 'P7 old lite run resumes its frozen chain after default upgrade and candidate track changes', run: async () => {
     const root = setupGoalRuntimeHost('codex').root;
@@ -137,6 +149,125 @@ const cases: Case[] = [
         blockers: [{ id: 'demo_fail', details_excerpt: 'x' }],
       });
       assert(!plain.includes('run_verifier_for_repair'), plain);
+    },
+  },
+  {
+    name: 'P2-T1 fresh facts-baseline early summary uses deterministic guidance, never code-regression revert',
+    run: async () => {
+      const root = setupGoalRuntimeHost('codex').root;
+      try {
+        const probe = await runGoalRuntimeChain(root, {
+          adapter: 'codex', runId: 'fresh-facts-baseline-ut', freshEndPhase: 'ut',
+          onHarnessSummary: ({ phase }) => phase === 'ut'
+            ? { checks: [{
+                id: 'capability_resolution_contract', category: 'structure' as const,
+                description: 'feature capability contract resolves before checker execution',
+                severity: 'BLOCKER' as const, status: 'FAIL' as const,
+                details: 'facts baseline stale: return to plan before UT',
+                suggestion: 'return to the establishing phase and rebuild current facts',
+              }] }
+            : null,
+        });
+        const verdict = probe.events.find(event => event.type === 'phase_verdict' && event.phase === 'ut');
+        assert(verdict?.stale_summary === false, JSON.stringify(verdict));
+        assert(verdict?.failure_kind_classified === 'deterministic_gate_or_artifact_missing', JSON.stringify(verdict));
+        assert(verdict?.blocker_signature === 'capability_resolution_contract', JSON.stringify(verdict));
+        assert(probe.utPrompts.length >= 2, `expected retry prompt: ${probe.utPrompts.length}`);
+        assert(probe.utPrompts[1].includes('facts baseline stale'), probe.utPrompts[1]);
+        assert(!probe.utPrompts[1].includes('revert that change first'), probe.utPrompts[1]);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'P2-T2 first nonzero harness exit without any summary is current execution failure, not timeout',
+    run: async () => {
+      const root = setupGoalRuntimeHost('codex').root;
+      try {
+        const probe = await runGoalRuntimeChain(root, {
+          adapter: 'codex', runId: 'absent-summary-ut', freshEndPhase: 'ut',
+          onHarnessFailureWithoutSummary: ({ phase, attempt }) => phase === 'ut'
+            ? `${'progress before fatal '.repeat(30)}\nCURRENT_NO_SUMMARY_${attempt}: writer failed`
+            : null,
+        });
+        const verdict = probe.events.find(event => event.type === 'phase_verdict' && event.phase === 'ut');
+        assert(verdict?.stale_summary === false, JSON.stringify(verdict));
+        assert(verdict?.failure_kind_classified === 'deterministic_gate_or_artifact_missing', JSON.stringify(verdict));
+        assert(verdict?.blocker_signature !== 'agent_timeout@ut', JSON.stringify(verdict));
+        assert(String(verdict?.harness_error_excerpt).includes('CURRENT_NO_SUMMARY_1'), JSON.stringify(verdict));
+        assert(!String(verdict?.harness_error_excerpt).includes('\n'), 'event diagnostic must remain one line');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'P2-T1/T4 stale content report never drives three current UT preflight failures',
+    run: async () => {
+      const root = setupGoalRuntimeHost('codex').root;
+      try {
+        seedUtFailureSummary(root, [{
+          id: 'ut_hvigor_build', severity: 'BLOCKER', status: 'FAIL',
+          classification: 'code_regression', details_excerpt: 'OLD_COMPILE_ERROR',
+        }]);
+        const probe = await runGoalRuntimeChain(root, {
+          adapter: 'codex', runId: 'stale-ut-three', freshEndPhase: 'ut',
+          onHarnessFailureWithoutSummary: ({ phase, attempt }) =>
+            phase === 'ut' ? `CURRENT_PREFLIGHT_${attempt}: facts baseline stale` : null,
+        });
+        const verdicts = probe.events.filter(event => event.type === 'phase_verdict' && event.phase === 'ut');
+        assert(verdicts.length === 3, `expected three stale UT attempts: ${JSON.stringify(verdicts)}`);
+        for (const [index, event] of verdicts.entries()) {
+          assert(event.stale_summary === true, `attempt ${index + 1} not stale`);
+          assert(event.failure_kind_classified === 'deterministic_gate_or_artifact_missing', JSON.stringify(event));
+          assert(!event.blocker_signature, `old signature leaked: ${JSON.stringify(event)}`);
+          assert(String(event.harness_error_excerpt).includes(`CURRENT_PREFLIGHT_${index + 1}`), JSON.stringify(event));
+          assert(!JSON.stringify(event).includes('ut_hvigor_build'), `old blocker leaked: ${JSON.stringify(event)}`);
+        }
+        for (const prompt of probe.utPrompts.slice(1)) {
+          assert(prompt.includes('CURRENT_PREFLIGHT_'), `current failure missing from retry prompt: ${prompt}`);
+          assert(!prompt.includes('OLD_COMPILE_ERROR') && !prompt.includes('ut_hvigor_build'), `old summary drove retry: ${prompt}`);
+        }
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'P2-T2/T4 fresh UT failure stays actionable while two later stale failures use current diagnostics',
+    run: async () => {
+      const root = setupGoalRuntimeHost('codex').root;
+      try {
+        const oldIds = ['boundaries_all_stubbed', 'ut_hvigor_build', 'ut_hvigor_test'];
+        const probe = await runGoalRuntimeChain(root, {
+          adapter: 'codex', runId: 'fresh-then-stale-ut', freshEndPhase: 'ut',
+          onHarnessSummary: ({ phase, attempt }) => phase === 'ut' && attempt === 1
+            ? { blockers: oldIds.map(id => ({
+                id, severity: 'BLOCKER', status: 'FAIL', classification: 'code_regression',
+                details_excerpt: `FRESH_COMPILE_${id}`,
+              })) }
+            : null,
+          onHarnessFailureWithoutSummary: ({ phase, attempt }) =>
+            phase === 'ut' && attempt > 1 ? `CURRENT_BINDING_${attempt}: input binding stale` : null,
+        });
+        const verdicts = probe.events.filter(event => event.type === 'phase_verdict' && event.phase === 'ut');
+        assert(verdicts.length === 3, `expected fresh + two stale attempts: ${JSON.stringify(verdicts)}`);
+        assert(verdicts[0].stale_summary === false, JSON.stringify(verdicts[0]));
+        assert(verdicts[0].failure_kind_classified === 'code_regression', JSON.stringify(verdicts[0]));
+        assert(oldIds.every(id => String(verdicts[0].blocker_signature).includes(id)), JSON.stringify(verdicts[0]));
+        for (const [offset, event] of verdicts.slice(1).entries()) {
+          assert(event.stale_summary === true, JSON.stringify(event));
+          assert(event.failure_kind_classified === 'deterministic_gate_or_artifact_missing', JSON.stringify(event));
+          assert(!event.blocker_signature, `fresh signature leaked into stale attempt: ${JSON.stringify(event)}`);
+          assert(String(event.harness_error_excerpt).includes(`CURRENT_BINDING_${offset + 2}`), JSON.stringify(event));
+        }
+        assert(probe.utPrompts[1].includes('FRESH_COMPILE_'), 'first retry must consume the fresh failure');
+        assert(probe.utPrompts[2].includes('CURRENT_BINDING_2'), 'second retry must consume the current stale-attempt diagnostic');
+        assert(!oldIds.some(id => probe.utPrompts[2].includes(id)), `old signature drove later retry: ${probe.utPrompts[2]}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
     },
   },
   {

@@ -61,6 +61,11 @@ export function designScopeRevisionChecks(ctx: CheckContext, checks: CheckResult
     return { ...obligation, applicability: 'required' as const, reason: `${ctx.phase} produced validated design content`, basis: [...basis, resolved.binding], satisfied_by: [resolved.binding] };
   });
   if (!facts.some(fact => fact.kind === kind)) facts.push({ id: `${kind}:design-output`, kind, owner_phase: ctx.phase, applicability: 'required', reason: `${ctx.phase} produced validated design content`, basis: [resolved.binding], satisfied_by: [resolved.binding] });
+  if (ctx.phase === 'spec') {
+    for (const fact of facts.filter(fact => fact.kind === 'unit-evidence' || fact.kind === 'device-evidence')) {
+      fact.basis = [...fact.basis.filter(binding => binding.input_id !== 'acceptance'), resolved.binding];
+    }
+  }
   const proposal: ExecutionScopeInput = { request: { completion_target: scope.completion_target, requested_results: scope.requested_results, requested_phases: requestedPhases,
     // D0.1: inherit the sourced impact judgement — dropping it sends device back to `unknown`
     // on every revision, so a legal zero-device scope would regress one step each time.

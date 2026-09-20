@@ -948,12 +948,26 @@ Enforcement: `harness/scripts/goal-supervise.ts`, `harness/scripts/utils/goal-su
 
 The detached goal launcher SHALL resolve its TypeScript preload module to an absolute framework-owned path before starting the child with the consumer project as its working directory. Consumer project roots MUST NOT be required to install framework runtime dependencies.
 
+After spawning, the launcher SHALL close its parent-owned log descriptor and unref the child, then perform one bounded startup confirmation of at most 30 seconds using the canonical manifest, only events appended after the launch baseline, the existing liveness beacon, and progress status. It SHALL distinguish authoritative `run_start`, a fast terminal `run_end`, child exit/spawn failure, and timeout while the child remains active. A pid or created directory alone SHALL NOT be reported as healthy; timeout SHALL NOT terminate an active child; early failure SHALL preserve the current `detach.log` tail and return non-zero.
+
+`--attach-created` SHALL enter the shared raw run-input resolver as an existing-run identity. The detach parent SHALL reuse that exact run id and SHALL NOT inject a second `--run-id`; conflicts with `--resume`, CLI `--run-id`, manifest `run_id`, feature identity, owner transport, or attachability SHALL fail before phase work.
+
 Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/goal-supervise.ts`
 
 #### Scenario: Supervisor resume starts from project root
 
 - **WHEN** the supervisor spawns a detached resume with `cwd` equal to the consumer project root
 - **THEN** the detached child SHALL load the framework TypeScript runtime and remain alive without resolving `ts-node/register/transpile-only` from the consumer root
+
+#### Scenario: Detached startup times out while the child is alive
+
+- **WHEN** the bounded launcher window ends without a new authoritative `run_start` but the child or matching liveness beacon is still alive
+- **THEN** the launcher SHALL return `alive_timeout` without killing the child and SHALL provide the log/status diagnostic
+
+#### Scenario: Detached attach preserves one identity
+
+- **WHEN** a complete created run is launched with `--detach --attach-created <run-id>`
+- **THEN** parent parsing, child argv, manifest, new run-start event, and owner acquisition SHALL all use `<run-id>`; no random second run directory or `--run-id` SHALL be created
 
 ### Requirement: Adapter terminal contracts close FAIL turns; absent contracts fall back to timeout honestly
 
@@ -1880,7 +1894,9 @@ Framework Git state SHALL NOT produce an integrity blocker in a new run. New run
 
 Current integrity classification SHALL recognize only the current producer `node_options_injection` with `process_injection` (including its top-level summary projection). Before a continuation reads a stored summary, retired framework integrity blockers SHALL be removed from the current-decision view. If nothing current remains, no prior failure context SHALL be injected; the phase SHALL revalidate with the current release. A stale/fresh historical framework summary SHALL never classify as `framework_integrity_block` and SHALL not fall through to code-regression guidance.
 
-For every current attempt, the runner SHALL derive exactly one filtered `decisionSummary` from the raw summary. Classification, blocking meta, affected files, effective blocker signature, no-progress/actionability, repair candidates, reconcile observation, and newly emitted phase event fields SHALL consume `decisionSummary` only. The raw summary MAY be retained for verdict/closure/visual receipt and historical rendering, but retired framework integrity rows SHALL NOT appear in a current signature, meta, repair/reconcile input, event field, or no-progress halt. Mixed historical+content summaries SHALL retain only the content decision inputs.
+For every current attempt, the runner SHALL derive exactly one filtered `decisionSummary` from the raw summary. A summary not refreshed by that attempt SHALL have no current decision eligibility. Classification, blocking meta, affected files, effective blocker signature, no-progress/actionability, repair candidates, reconcile observation, retry prompt, and newly emitted phase event fields SHALL consume `decisionSummary` only. The raw summary MAY be retained for verdict/closure/visual receipt and historical rendering, but stale or retired rows SHALL NOT appear in a current signature, meta, repair/reconcile input, prompt, event field, or no-progress halt. Mixed historical+content summaries SHALL retain only the current content decision inputs.
+
+When the current harness exits non-zero without a fresh summary, the runner SHALL preserve its current output diagnostic in the verdict/event/report and use that fact for the next retry prompt. It SHALL NOT reuse an earlier content failure or signature. Operator interruption, timeout, API disconnect, and no-output signals retain their existing priority; an otherwise unclassified current harness failure SHALL use the existing deterministic execution-failure route rather than being relabeled wholesale as a framework bug.
 
 Guidance and goal reports SHALL be source-sensitive: current process integrity guidance SHALL describe the current blocker; historical subtype text MAY be shown as legacy provenance. Generic guidance SHALL NOT claim that a framework file list exists, require a host commit, or advertise allowlist/restore/redeploy as a universal resolution.
 
@@ -1905,6 +1921,16 @@ Enforcement: `harness/scripts/utils/goal-failure-classifier.ts`, `harness/script
 
 - **WHEN** a current attempt reads a legacy-only or legacy-plus-content summary
 - **THEN** legacy integrity SHALL contribute no blocker signature, blocking meta, affected file, repair/reconcile input, phase event field, or no-progress halt; a mixed summary SHALL retain only the content contribution
+
+#### Scenario: Stale content summary cannot direct a current failure
+
+- **WHEN** the preceding attempt left a compilation-failure summary and the current harness exits non-zero without refreshing it
+- **THEN** the old blocker ids, affected files, repair candidates, signature, reconcile input, and retry guidance SHALL be absent from the current decision; the current harness diagnostic SHALL appear in the event/report and subsequent retry prompt
+
+#### Scenario: Runtime signals retain priority over a stale report
+
+- **WHEN** a stale content summary coexists with a current operator interrupt, timeout, API disconnect, or no-output signal
+- **THEN** the current runtime signal SHALL retain its established classification priority
 
 #### Scenario: Downstream feature write recovers
 

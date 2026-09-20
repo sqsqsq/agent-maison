@@ -77,6 +77,8 @@ export interface EvidenceEntry {
   exists: boolean;
   /** Only new facts entries use a phase projection; legacy entries retain byte hashes. */
   facts_phase?: string;
+  /** Phase authorized by the frozen execution scope to advance this source path. */
+  owner_phase?: string;
 }
 
 export interface EvidenceEnvironment {
@@ -397,7 +399,7 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
 
   const entryMap = new Map<string, EvidenceEntry>();
   const factsPath = opts.factsContext ? resolveFactsAbsPath(projectRoot, feature, opts.factsContext) : undefined;
-  const addEntry = (absPath: string, role: 'input' | 'output'): void => {
+  const addEntry = (absPath: string, role: 'input' | 'output', ownerPhase?: string): void => {
     const rel = toPosixRel(projectRoot, absPath);
     const base = path.basename(rel);
     if (base === 'phase-completion-receipt.md' || base === PHASE_EVIDENCE_MANIFEST_FILENAME) {
@@ -408,15 +410,22 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
     const prev = entryMap.get(rel);
     if (prev) {
       if (prev.role !== role) prev.role = 'both';
+      if (ownerPhase) prev.owner_phase = ownerPhase;
       return;
     }
     const isFacts = factsPath !== undefined && path.resolve(absPath) === path.resolve(factsPath);
     const hash = isFacts ? factsEvidenceHash(absPath, String(phase)) : stagedHashes.get(rel) ?? sha256File(absPath);
-    entryMap.set(rel, { path: rel, role, sha256: hash, exists: hash !== null, ...(isFacts ? { facts_phase: String(phase) } : {}) });
+    entryMap.set(rel, { path: rel, role, sha256: hash, exists: hash !== null, ...(isFacts ? { facts_phase: String(phase) } : {}), ...(ownerPhase ? { owner_phase: ownerPhase } : {}) });
   };
   const addBoundInput = (dep: import('./capability-resolution').ResolutionDependency): void => {
+    const rel = toPosixRel(projectRoot, dep.path);
+    const owner = opts.factsContext?.source_owners?.[rel];
+    if (owner === String(phase)) {
+      addEntry(dep.path, 'output', String(phase));
+      return;
+    }
     if (sha256File(dep.path) !== dep.sha256 || fs.existsSync(dep.path) !== dep.exists) throw new Error(`input binding stale: ${dep.path}`);
-    addEntry(dep.path, 'input');
+    addEntry(dep.path, 'input', owner);
   };
 
   if (opts.resolvedInputs) {
@@ -434,8 +443,20 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
   if (opts.factsContext) {
     const factsPath = resolveFactsAbsPath(projectRoot, feature, opts.factsContext);
     addEntry(factsPath, isFactsEstablishingPhase(String(phase), opts.factsContext) ? 'output' : 'input');
-    for (const source of opts.factsContext.source_paths) addEntry(path.resolve(projectRoot, source), 'input');
-    if (opts.factsContext.baseline) for (const dep of opts.factsContext.baseline.dependencies) addBoundInput(dep);
+    for (const source of opts.factsContext.source_paths) {
+      const owner = opts.factsContext.source_owners?.[source];
+      addEntry(path.resolve(projectRoot, source), owner === String(phase) ? 'output' : 'input', owner);
+    }
+    for (const [source, owner] of Object.entries(opts.factsContext.source_owners ?? {})) {
+      if (owner === String(phase) && !opts.factsContext.source_paths.includes(source) && fs.existsSync(path.resolve(projectRoot, source))) {
+        addEntry(path.resolve(projectRoot, source), 'output', owner);
+      }
+    }
+    if (opts.factsContext.baseline) for (const dep of opts.factsContext.baseline.dependencies) {
+      const rel = toPosixRel(projectRoot, dep.path);
+      if (opts.factsContext.source_owners?.[rel] === String(phase)) addEntry(dep.path, 'output', String(phase));
+      else addBoundInput(dep);
+    }
   }
   for (const name of inputNames) {
     addEntry(resolveFeatureArtifact(projectRoot, feature, name, opts.featurePathOpts).actualPath, 'input');
@@ -549,6 +570,7 @@ export function phaseEvidenceManifestCandidatePaths(opts: {
     if (opts.factsContext) {
       add(toPosixRel(projectRoot, resolveFactsAbsPath(projectRoot, feature, opts.factsContext)));
       for (const source of opts.factsContext.source_paths) add(toPosixRel(projectRoot, path.resolve(projectRoot, source)));
+      for (const source of Object.keys(opts.factsContext.source_owners ?? {})) add(toPosixRel(projectRoot, path.resolve(projectRoot, source)));
       for (const dep of opts.factsContext.baseline?.dependencies ?? []) add(toPosixRel(projectRoot, dep.path));
     }
     return out;
@@ -635,7 +657,8 @@ function isValidEntry(e: unknown): e is EvidenceEntry {
     && (o.role === 'input' || o.role === 'output' || o.role === 'both')
     && (o.sha256 === null || typeof o.sha256 === 'string')
     && typeof o.exists === 'boolean'
-    && (o.facts_phase === undefined || (typeof o.facts_phase === 'string' && o.facts_phase.length > 0));
+    && (o.facts_phase === undefined || (typeof o.facts_phase === 'string' && o.facts_phase.length > 0))
+    && (o.owner_phase === undefined || (typeof o.owner_phase === 'string' && o.owner_phase.length > 0));
 }
 
 export interface LoadedManifest {
@@ -831,10 +854,26 @@ export function recomputePhaseEvidenceStaleness(
   projectRoot: string,
   feature: string,
   chain: string[],
-  opts?: { currentRequirementSha?: string | null; frameworkRoot?: string },
+  opts?: { currentRequirementSha?: string | null; frameworkRoot?: string; pendingOwnerPhase?: string; pendingOwnerPaths?: string[] },
 ): PhaseStalenessResult[] {
   const results: PhaseStalenessResult[] = [];
   let upstreamBad: string | null = null;
+  const pendingOwnerPaths = new Set(opts?.pendingOwnerPaths ?? []);
+  const ownerFreshness = new Map<string, boolean>();
+  const ownedOutputIsCurrent = (entry: EvidenceEntry, manifestPhase: string): boolean => {
+    if (pendingOwnerPaths.has(entry.path)) return true;
+    if (!entry.owner_phase || entry.owner_phase === manifestPhase) return false;
+    if (entry.owner_phase === opts?.pendingOwnerPhase) return true;
+    const owner = loadPhaseEvidenceManifest(projectRoot, feature, entry.owner_phase);
+    let fresh = ownerFreshness.get(entry.owner_phase);
+    if (fresh === undefined) {
+      fresh = recomputePhaseEvidenceStaleness(projectRoot, feature, [entry.owner_phase], { ...opts, pendingOwnerPaths: [...pendingOwnerPaths] })[0]?.verdict === 'fresh';
+      ownerFreshness.set(entry.owner_phase, fresh);
+    }
+    return fresh && !!owner?.integrityOk && owner.manifest.outputs.some(output =>
+      output.path === entry.path && output.owner_phase === entry.owner_phase
+      && evidenceEntryMatchesCurrentFile(projectRoot, output));
+  };
 
   for (const phase of chain) {
     if (upstreamBad) {
@@ -864,6 +903,9 @@ export function recomputePhaseEvidenceStaleness(
       });
       upstreamBad = phase;
       continue;
+    }
+    if (opts?.pendingOwnerPhase) for (const entry of [...loaded.manifest.inputs, ...loaded.manifest.outputs]) {
+      if (entry.owner_phase === opts.pendingOwnerPhase) pendingOwnerPaths.add(entry.path);
     }
     // ② plan 07a41ec6（codex review P0）：回执指针退出证据链——manifest 的 schema/aggregate/条目哈希已自证完整性，
     //    回执是闭环后的人读投影（可被 harness 随时重生成），不再作为 freshness 锚。
@@ -901,7 +943,7 @@ export function recomputePhaseEvidenceStaleness(
     const { manifest } = loaded;
     const changed = new Set<string>();
     for (const entry of [...manifest.inputs, ...manifest.outputs]) {
-      if (!evidenceEntryMatchesCurrentFile(projectRoot, entry)) changed.add(entry.path);
+      if (!evidenceEntryMatchesCurrentFile(projectRoot, entry) && !ownedOutputIsCurrent(entry, phase)) changed.add(entry.path);
     }
     // plan 07a41ec6 T4：回执不再参与 freshness（receipt_changed 恒 false）
     const receiptChanged = false;

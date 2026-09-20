@@ -202,6 +202,7 @@ export interface GoalRunEvent {
   /** defer verdict 的精确原因；缺省兼容旧事件为 external_blocked。 */
   deferred_reason?: string;
   failure_kind_classified?: string;
+  stale_summary?: boolean;
   /** E4：跨 attempt 累计统计（events.jsonl 回放，非内存计数）用——phase_verdict 已带的字段。 */
   blocker_signature?: string;
   halt_reason?: string;
@@ -243,6 +244,8 @@ export interface GoalRunEvent {
    * error 事件）。**纯诊断**——不进任何 settle / classifier / retry 判据。
    */
   terminal_error_excerpt?: string;
+  /** 本次 harness 非零退出的末尾诊断；stale summary 时这是当前 attempt 的可消费事实。 */
+  harness_error_excerpt?: string;
   lingering_pipe?: boolean;
   recovered?: boolean;
   /** agent_invoke_end 既有字段（dry-run invoke 写 true；"证据齐全即跳过"机制已删）。 */

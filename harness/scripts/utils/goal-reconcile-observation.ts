@@ -16,6 +16,7 @@ export interface GoalReconcileObservationInput {
   phase: string;
   verdict: string;
   legacyAction: string;
+  currentSummaryFresh?: boolean;
   failureKind?: string;
   blockingClass?: string;
   propagateToDownstream?: boolean;
@@ -87,6 +88,9 @@ export function deriveReconcileObservation(
     schema_version: '1.0',
     state: input.fused ? 'fused' : 'active',
     ...(input.fuseReason ? { reason: input.fuseReason } : {}),
+    ...(input.currentSummaryFresh !== undefined
+      ? { current_summary_fresh: input.currentSummaryFresh }
+      : {}),
     residual_fingerprints: input.residualFingerprints ?? [fingerprint],
     phase_outcome: {
       phase: input.phase,

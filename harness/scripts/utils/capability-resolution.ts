@@ -8,7 +8,7 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 import { auditSchemaSupport, validateLiteSchema } from './lite-json-schema';
 import { stableStringify } from './phase-evidence-manifest';
-import { validateProjectRelativePath } from './project-relative-path';
+import { isInsideProjectRoot, validateProjectRelativePath } from './project-relative-path';
 import { SpecLoader } from './spec-loader';
 import { loadWorkflowSpec, workflowForExistingRun } from '../../workflow-loader';
 import { loadGoalManifestFromRun } from './goal-manifest';
@@ -135,6 +135,8 @@ export interface CapabilityResolutionOptions {
   requirementSourceFiles?: string[];
   adhocCases?: string;
   inputContext?: PhaseInputContext;
+  /** Production source files the phase reads; independent from test targets and write authority. */
+  codeTargets?: string[];
   /** Explicit bounded source targets from the normalized P6 request. */
   testTargets?: string[];
   /** Only populated by the explicit request parser, never copied from request JSON. */
@@ -167,6 +169,13 @@ function sha256File(filePath: string): string | null {
 function dependency(filePath: string, role: ResolutionDependency['role']): ResolutionDependency {
   const exists = fs.existsSync(filePath);
   return { path: path.resolve(filePath), exists, sha256: exists ? sha256File(filePath) : null, role };
+}
+
+function requirementSourceDependencies(projectRoot: string, sources: string[] | undefined): ResolutionDependency[] {
+  return (sources ?? []).flatMap(sourcePath => {
+    const absolute = path.resolve(projectRoot, sourcePath);
+    return isInsideProjectRoot(projectRoot, absolute) ? [dependency(absolute, 'derive')] : [];
+  });
 }
 
 function stableFingerprint(value: unknown): string {
@@ -272,11 +281,14 @@ function resolveDerive(
   if (options.inputContext) {
     if (source.provider_id === 'derive.requirement') {
       return options.requirement?.trim()
-        ? { state: 'resolved', dependencies: [], value: options.requirement.trim() }
+        ? { state: 'resolved', dependencies: requirementSourceDependencies(projectRoot, options.requirementSourceFiles),
+          value: options.requirement.trim() }
         : { state: 'absent', dependencies: [], detail: 'explicit invocation requirement missing' };
     }
     if (source.provider_id === 'derive.test-targets' || source.provider_id === 'derive.codebase') {
-      const targets = options.testTargets;
+      const targets = source.provider_id === 'derive.codebase'
+        ? options.codeTargets ?? options.testTargets
+        : options.testTargets;
       if (!targets?.length) return { state: 'absent', dependencies: [], detail: 'explicit source targets missing' };
       let safeTargets: string[];
       try { safeTargets = targets.map(target => validateProjectRelativePath(projectRoot, target, 'source target')); }
@@ -341,10 +353,12 @@ function resolveDerive(
     case 'derive.requirement': {
       if (options.requirement?.trim()) {
         // Goal requirement is separately identity- and closure-bound by its canonical
-        // manifest. Do not fingerprint an unrelated change.md fallback candidate.
+        // manifest/candidate. File-backed runless requirements bind their original source;
+        // inline requirements intentionally have no recoverable file dependency.
+        const dependencies = requirementSourceDependencies(projectRoot, options.requirementSourceFiles);
         return {
           state: 'resolved',
-          dependencies: [],
+          dependencies,
           detail: `goal_requirement:${stableFingerprint(options.requirement.trim()).slice(0, 16)}`,
         };
       }
@@ -604,7 +618,10 @@ function resolveInput(
         source_refs: result.dependencies.filter(d => d.exists).map(d => path.relative(options.projectRoot, d.path).replace(/\\/g, '/')),
         content_fingerprint: crypto.createHash('sha256').update(stableStringify(result.value)).digest('hex') };
       const expected = options.inputContext?.expected_bindings?.find(b => b.input_id === input.id);
-      if (expected && stableStringify(expected) !== stableStringify(binding)) {
+      const legacyRequirementResupply = expected?.input_id === 'requirement'
+        && expected.dependencies.length === 0 && expected.source_refs.length === 0
+        && stableStringify({ ...binding, dependencies: [], source_refs: [] }) === stableStringify(expected);
+      if (expected && stableStringify(expected) !== stableStringify(binding) && !legacyRequirementResupply) {
         result = { ...result, state: 'invalid', detail: 'input binding stale; return to scope owner' };
         attempt.state = 'invalid'; attempt.detail = result.detail;
       } else {

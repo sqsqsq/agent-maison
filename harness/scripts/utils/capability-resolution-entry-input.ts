@@ -12,9 +12,9 @@ import { resolveEffectiveScopeSource } from './goal-run-creation';
 import { executionScopeFingerprint } from './execution-scope';
 import { loadFeatureContracts, phaseContractIndex, loadArtifactInventory } from './skill-contract';
 import { resolveFactsAbsPath, factsBaselineFingerprint } from './context-facts';
-import { parseContextExploration } from './context-exploration';
-import { loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness } from './phase-evidence-manifest';
-import { resolveFeatureArtifact } from '../../config';
+import { assertFactsSourceReadable, parseContextExploration } from './context-exploration';
+import { loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness, sha256File } from './phase-evidence-manifest';
+import { loadFrameworkConfig, resolveFeatureArtifact } from '../../config';
 import { featuresDirPath, enumerateFeatures, featureFilePath, receiptDirPath, featurePhaseReportsDir } from '../../config';
 import { validateProjectRelativePath, isInsideProjectRoot } from './project-relative-path';
 import { execFileSync } from 'child_process';
@@ -23,6 +23,9 @@ import { stableStringify } from './phase-evidence-manifest';
 import { readRunBoundContracts } from './capability-resolution';
 import { resolveEffectiveDiffBaseline } from './git-diff';
 import { diffChangedFilesWithStatus } from './git-diff';
+import { loadResolvedProfile } from '../../profile-loader';
+import { tryLoadDiffExcludeTestPathRegexes, tryLoadUtSourceRootResolver } from '../../profile-host-loader';
+import { SpecLoader } from './spec-loader';
 
 /** Revision-trigger kinds: historical evidence for why a revision happened, never a current target. */
 const REVISION_TRIGGER_KINDS = new Set(['design-decision', 'acceptance-definition']);
@@ -180,13 +183,16 @@ export interface CapabilityResolutionEntryInputOptions {
   goalRunId?: string;
   frameworkRoot?: string;
   explicitAdhocCases?: string;
-  invocation?: { inputContext: PhaseInputContext; factsContext: FactsInvocationContext; requirement?: string; testTargets?: string[] };
+  requirement?: string;
+  requirementSourceFiles?: string[];
+  invocation?: { inputContext: PhaseInputContext; factsContext: FactsInvocationContext; requirement?: string; codeTargets?: string[]; testTargets?: string[] };
 }
 
 export interface CapabilityResolutionEntryInput {
   goalRunId?: string;
   inputContext?: PhaseInputContext;
   factsContext?: FactsInvocationContext;
+  codeTargets?: string[];
   testTargets?: string[];
   requirement?: string;
   /** plan c4e8a1f7 T2：goal manifest 冻结的 requirement source 列表（共享发现集合输入）。 */
@@ -202,7 +208,7 @@ export function resolveCapabilityResolutionEntryInput(
   options: CapabilityResolutionEntryInputOptions,
 ): CapabilityResolutionEntryInput {
   if (options.invocation) {
-    const { inputContext, factsContext, requirement, testTargets } = options.invocation;
+    const { inputContext, factsContext, requirement, codeTargets, testTargets } = options.invocation;
     const subject = inputContext.subject;
     if ('feature' in subject ? subject.feature !== options.feature : !!options.feature || !/^[0-9a-f]{64}$/.test(subject.request_sha256)) {
       throw new Error('capability entry subject mismatch');
@@ -211,17 +217,17 @@ export function resolveCapabilityResolutionEntryInput(
     if ('feature' in subject
       ? !('feature' in factsSubject) || factsSubject.feature !== subject.feature
       : !('request_sha256' in factsSubject) || factsSubject.request_sha256 !== subject.request_sha256) throw new Error('capability/facts subject mismatch');
-    if (testTargets?.some(target => !factsContext.source_paths.includes(target))) throw new Error('facts do not cover explicit request targets');
+    if ([...(codeTargets ?? []), ...(testTargets ?? [])].some(target => !factsContext.source_paths.includes(target))) throw new Error('facts do not cover explicit request targets');
     if (options.goalRunId) {
       const manifest = loadGoalManifestFromRun(options.projectRoot, options.goalRunId, { feature: options.feature, featuresDir: options.featuresDir });
       if (!('run_id' in factsSubject) || factsSubject.run_id !== options.goalRunId) throw new Error('facts run identity mismatch');
       if (!factsContext.baseline && manifest.phase_chain?.[0] !== factsContext.first_phase) throw new Error('facts establishing phase differs from frozen run');
       if (requirement !== undefined && requirement.trim() !== manifest.requirement?.trim()) throw new Error('explicit requirement differs from frozen run');
     }
-    return { inputContext, factsContext, requirement, testTargets, adhocCases: options.explicitAdhocCases };
+    return { inputContext, factsContext, requirement, codeTargets, testTargets, adhocCases: options.explicitAdhocCases };
   }
-  let requirement: string | undefined;
-  let requirementSourceFiles: string[] | undefined;
+  let requirement = options.requirement;
+  let requirementSourceFiles = options.requirementSourceFiles;
   const goalRunId = options.goalRunId?.trim();
   // D1 §6.4：外层条件从「有 run」放开为「有 run 或有 feature 冻结记录」。来源由**统一入口**选，
   // 这里不自己判断 run/feature。requirement 只有 run 载体才有（它来自 manifest）。
@@ -238,7 +244,8 @@ export function resolveCapabilityResolutionEntryInput(
     const scope = authority?.scope;
     if (scope) {
       const frameworkRoot = options.frameworkRoot ?? path.resolve(__dirname, '../../..');
-      const indexed = phaseContractIndex(loadFeatureContracts(frameworkRoot)).get(options.phase);
+      const contractIndex = phaseContractIndex(loadFeatureContracts(frameworkRoot));
+      const indexed = contractIndex.get(options.phase);
       if (indexed?.contract.schema_version !== '1.1') throw new Error('execution scope requires phase contract 1.1');
       const ownsDesignOutput = (binding: import('./capability-resolution').InputBinding): boolean => ['spec', 'plan'].includes(options.phase)
         && binding.source.kind === 'artifact' && indexed.phase.produces.some(output => output.artifact === (binding.source as { artifact: string }).artifact)
@@ -277,18 +284,106 @@ export function resolveCapabilityResolutionEntryInput(
       if (fs.existsSync(factsPath)) {
         const raw = fs.readFileSync(factsPath, 'utf8');
         const { fm, error } = parseContextExploration(raw);
+        if (error) throw new Error(`facts input invalid: ${error}`);
+        if (fm.feature !== options.feature) throw new Error('facts input identity mismatch: feature');
         const establishing = (fm as Record<string, unknown>).established_by;
-        if (!error && typeof establishing === 'string' && establishing !== options.phase) {
-          const fresh = recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, [establishing], { frameworkRoot })[0];
+        if (establishing === options.phase && options.phase === scope.phase_chain[0] && fm.schema_version !== '1.1') {
+          throw new Error('facts input invalid: current establishing facts require schema 1.1');
+        }
+        if (typeof establishing === 'string' && establishing !== options.phase) {
+          const evidenceChain = [establishing, ...scope.phase_chain.filter(phase => phase !== establishing)];
+          const fresh = recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, evidenceChain, { frameworkRoot, pendingOwnerPhase: options.phase })
+            .find(result => result.phase === establishing);
           const evidence = loadPhaseEvidenceManifest(options.projectRoot, options.feature, establishing);
-          if (fresh.verdict !== 'fresh' || !evidence?.integrityOk) {
+          if (fresh?.verdict !== 'fresh' || !evidence?.integrityOk) {
             if (options.phase !== scope.phase_chain[0]) throw new Error(`facts baseline stale: return to ${scope.phase_chain[0]} to establish current facts`);
           } else {
             const paths = Array.isArray(fm.source_code_paths) ? fm.source_code_paths.filter((p): p is string => typeof p === 'string') : [];
-            factsContext.baseline = { established_by: establishing, fingerprint: factsBaselineFingerprint(raw), dependencies: [...evidence.manifest.inputs, ...evidence.manifest.outputs].filter(entry => paths.includes(entry.path)).map(entry => ({ path: path.join(options.projectRoot, entry.path), exists: entry.exists, sha256: entry.sha256, role: 'derive' })) };
+            factsContext.baseline = { established_by: establishing, fingerprint: factsBaselineFingerprint(raw), dependencies: [...evidence.manifest.inputs, ...evidence.manifest.outputs].filter(entry => paths.includes(entry.path)).map(entry => {
+              const ownedNow = entry.owner_phase === options.phase;
+              const owner = !ownedNow && entry.owner_phase
+                ? loadPhaseEvidenceManifest(options.projectRoot, options.feature, entry.owner_phase)?.manifest.outputs.find(output => output.path === entry.path && output.owner_phase === entry.owner_phase)
+                : undefined;
+              const abs = path.join(options.projectRoot, entry.path);
+              return ownedNow
+                ? { path: abs, exists: fs.existsSync(abs), sha256: sha256File(abs), role: 'derive' }
+                : { path: abs, exists: owner?.exists ?? entry.exists, sha256: owner?.sha256 ?? entry.sha256, role: 'derive' };
+            }) };
+            for (const source of paths) {
+              const safe = validateProjectRelativePath(options.projectRoot, source, 'facts source');
+              if (!factsContext.baseline.dependencies.some(dep => dep.exists && dep.sha256 && path.resolve(dep.path) === path.resolve(options.projectRoot, safe))) {
+                throw new Error(`facts baseline does not bind source: ${safe}`);
+              }
+              if (!sourcePaths.includes(safe)) sourcePaths.push(safe);
+            }
+          }
+        } else if (establishing === options.phase && options.phase === scope.phase_chain[0]) {
+          const record = fm as Record<string, unknown>;
+          if (goalRunId ? record.run_id !== goalRunId : record.frozen_scope_fingerprint !== executionScopeFingerprint(scope)) {
+            throw new Error('facts input identity mismatch: invocation');
+          }
+          const declared = Array.isArray(fm.source_code_paths) ? fm.source_code_paths.filter((p): p is string => typeof p === 'string') : [];
+          const normalized = declared.map(source => path.posix.normalize(validateProjectRelativePath(options.projectRoot, source, 'facts source')));
+          if (new Set(normalized).size !== normalized.length) throw new Error('facts source paths contain duplicates');
+          for (const source of normalized) {
+            assertFactsSourceReadable(options.projectRoot, source);
+            if (!sourcePaths.includes(source)) sourcePaths.push(source);
           }
         }
       }
+      let contractFiles: string[] = [];
+      let contractModules: Array<{ name: string; package_path: string }> = [];
+      const producesContracts = indexed.phase.produces.some(output => output.artifact === 'contracts@1');
+      const currentContracts = new SpecLoader(options.projectRoot, undefined, undefined, frameworkRoot).loadFeatureSpec(options.feature).contracts;
+      try {
+        let contracts: import('./types').ContractsSpec;
+        try {
+          contracts = readRunBoundContracts(options.projectRoot, frameworkRoot, options.feature, goalRunId);
+        } catch (error) {
+          if (!producesContracts) throw error;
+          if (!currentContracts) throw error;
+          contracts = currentContracts;
+        }
+        contractFiles = (contracts.files ?? []).map(file => validateProjectRelativePath(options.projectRoot, file, 'contracts.files'));
+        contractModules = (contracts.modules ?? []).map(module => ({ name: module.name, package_path: module.package_path }));
+      } catch {
+        // A missing construction binding is the plan-owned definition gap already carried by scope.
+      }
+      if (contractModules.length === 0 && currentContracts) {
+        contractModules = (currentContracts.modules ?? []).map(module => ({ name: module.name, package_path: module.package_path }));
+      }
+      let testRoots: string[] = [];
+      let testPathPatterns: RegExp[] = [];
+      try {
+        const profile = loadResolvedProfile(options.projectRoot, loadFrameworkConfig(options.projectRoot), frameworkRoot);
+        testRoots = (tryLoadUtSourceRootResolver(profile.profileDir)?.(options.projectRoot, contractModules) ?? []).map(root => path.resolve(root));
+        testPathPatterns = tryLoadDiffExcludeTestPathRegexes(profile.profileDir) ?? [];
+      } catch {
+        // Minimal/custom framework fixtures without profile modules have no profile-owned UT roots.
+      }
+      const isTestPath = (relative: string): boolean => testRoots.some(root => isInsideProjectRoot(root, path.resolve(options.projectRoot, relative)))
+        || testPathPatterns.some(pattern => pattern.test(`/${relative.replace(/\\/g, '/')}`));
+      const usesConstructionTargets = indexed.phase.inputs.some(input => input.id === 'contracts') && !producesContracts;
+      const consumes = (providerId: string): boolean => indexed.phase.inputs.some(input => input.sources.some(source => source.kind === 'derive' && source.provider_id === providerId));
+      const codeTargets = [...new Set([
+        ...sourcePaths.filter(source => !isTestPath(source)),
+        ...(usesConstructionTargets ? contractFiles.filter(file => !isTestPath(file) && (fs.existsSync(path.resolve(options.projectRoot, file)) || !['spec', 'plan', 'coding'].includes(options.phase))) : []),
+      ])];
+      const partitionedTestTargets = [...new Set([
+        ...sourcePaths.filter(isTestPath),
+        ...(usesConstructionTargets ? contractFiles.filter(file => isTestPath(file) && (fs.existsSync(path.resolve(options.projectRoot, file)) || !['spec', 'plan', 'coding', 'ut'].includes(options.phase))) : []),
+      ])];
+      const testTargets = consumes('derive.test-targets') ? partitionedTestTargets : [];
+      const ownerOf = (kind: string, sourceId: string): string | undefined => scope.obligations.find(obligation => obligation.kind === kind)?.owner_phase
+        ?? [...contractIndex].find(([, value]) => value.phase.produces.some(output => output.kind === 'source' && output.id === sourceId))?.[0];
+      const codeOwner = ownerOf('implementation', 'implementation');
+      const testOwner = ownerOf('unit-evidence', 'ut_source_and_dag');
+      const phaseIndex = scope.phase_chain.indexOf(options.phase);
+      const mayAdvance = (owner: string | undefined): owner is string => !!owner && (
+        owner === options.phase
+        || (phaseIndex >= 0 && scope.phase_chain.indexOf(owner) > phaseIndex)
+        || producesContracts
+      );
       const inventory = loadArtifactInventory(frameworkRoot);
       const requiredOutputs = indexed.phase.produces.flatMap(output => inventory.artifacts.find(artifact => artifact.id === output.artifact)?.paths ?? []).filter(name => {
         const base = path.basename(name);
@@ -305,7 +400,22 @@ export function resolveCapabilityResolutionEntryInput(
         obligations[obligation.kind] = previous === 'required' || obligation.applicability === 'required' ? 'required'
           : previous === 'unknown' || obligation.applicability === 'unknown' ? 'unknown' : 'not_applicable';
       }
-      return { requirement, requirementSourceFiles, testTargets: sourcePaths, factsContext,
+      const establishingResearch = !factsContext.baseline && factsContext.first_phase === options.phase ? sourcePaths : [];
+      factsContext.source_paths = [...new Set([
+        ...establishingResearch.filter(file => fs.existsSync(path.resolve(options.projectRoot, file))),
+        ...(consumes('derive.codebase') ? codeTargets : []).filter(file => fs.existsSync(path.resolve(options.projectRoot, file))),
+        ...(consumes('derive.test-targets') ? testTargets : []).filter(file => fs.existsSync(path.resolve(options.projectRoot, file))),
+      ])];
+      const historical = new Set(sourcePaths);
+      const owners: Array<readonly [string, string]> = [];
+      if (mayAdvance(codeOwner)) for (const file of contractFiles.filter(file => !isTestPath(file))) {
+        if (codeOwner === options.phase || historical.has(file)) owners.push([file, codeOwner]);
+      }
+      if (mayAdvance(testOwner)) for (const file of [...new Set([...contractFiles.filter(isTestPath), ...sourcePaths.filter(isTestPath)])]) {
+        if (testOwner === options.phase || historical.has(file)) owners.push([file, testOwner]);
+      }
+      factsContext.source_owners = Object.fromEntries(owners);
+      return { requirement, requirementSourceFiles, codeTargets, testTargets, factsContext,
         inputContext: { schema_version: '1.1', subject: { feature: options.feature },
           obligations,
           expected_bindings: expectedBindings.map(binding => options.phase === 'testing' && binding.input_id === 'acceptance' ? { ...binding, input_id: 'cases' } : binding).filter(binding => !ownsDesignOutput(binding) && indexed.phase.inputs.some(input => input.id === binding.input_id)),

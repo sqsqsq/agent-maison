@@ -270,6 +270,7 @@ export interface RunProbe {
   codingPrompts: string[];
   /** b3e8d4c7 t5②：plan 各轮 prompt——断言未受信上下文真进了 plan 提示词 */
   planPrompts: string[];
+  utPrompts: string[];
   testingPrompts: string[];
   /** d9e4b7c1 T1：testing 各 attempt 收到的 extraEnv（断言冻结配置注入三方同源） */
   testingExtraEnvs: Array<Record<string, string>>;
@@ -352,6 +353,8 @@ export async function runGoalRuntimeChain(
       | { blockers: Array<Record<string, unknown>> }
       | { checks: CheckResult[] }
       | null;
+    /** 真实 runtime 接缝：harness 非零退出但不改报告，用于复现盘上 summary 仍是上一轮。 */
+    onHarnessFailureWithoutSummary?: (ctx: { phase: string; attempt: number }) => string | null;
     /** e9d4b7a3 t5 负向：按 (attemptId, phase) 强制 receipt 复验 failed（模拟旧回执身份
      * 损坏等真实失败路径——桩默认已 identity-aware，此选项只做注入，不改变默认语义） */
     failReceiptFor?: (attemptId: string, phase: string) => boolean;
@@ -414,6 +417,7 @@ export async function runGoalRuntimeChain(
   const deviceGatePhases: string[] = [];
   const codingPrompts: string[] = [];
   const planPrompts: string[] = [];
+  const utPrompts: string[] = [];
   const testingPrompts: string[] = [];
   const testingExtraEnvs: Array<Record<string, string>> = [];
   const harnessDeviceEnvs: Array<{ phase: string; env: Record<string, string> | undefined }> = [];
@@ -441,6 +445,7 @@ export async function runGoalRuntimeChain(
       const prompt = [...(pl.argv ?? []), pl.stdin ?? ''].join('\n');
       if (phase === 'coding') codingPrompts.push(prompt);
       if (phase === 'plan') planPrompts.push(prompt);
+      if (phase === 'ut') utPrompts.push(prompt);
       if (phase === 'testing') testingPrompts.push(prompt);
       const extraEnv = (o as { extraEnv?: Record<string, string> })?.extraEnv ?? {};
       if (phase === 'testing') testingExtraEnvs.push(extraEnv);
@@ -529,10 +534,14 @@ export async function runGoalRuntimeChain(
       });
       // b3e8d4c7 t5：FAIL 覆写**先于**默认 PASS 产出——FAIL 轮不写回执（回执=闭环凭证，
       // FAIL 却有回执会让下游判据错乱），只落 FAIL summary 并以非零退出返回。
-      let failOverride = opts.onHarnessSummary?.({
-        phase: String(ph),
-        attempt: harnessPhases.filter(p => p === String(ph)).length,
+      const harnessAttempt = harnessPhases.filter(p => p === String(ph)).length;
+      const currentFailure = opts.onHarnessFailureWithoutSummary?.({
+        phase: String(ph), attempt: harnessAttempt,
       });
+      if (currentFailure) {
+        return { exitCode: 1, timedOut: false, outputTail: currentFailure };
+      }
+      let failOverride = opts.onHarnessSummary?.({ phase: String(ph), attempt: harnessAttempt });
       // plan 2f8a6d40：本轮真实 gate 的 CheckResult（PASS 出口交给真实 writer 用）。
       let specGateChecks: CheckResult[] | null = null;
       // plan 8d2b4f60 §6：真实 gate 在 runtime 内决定推进/重跑（不是事后补一次直调）。
@@ -776,6 +785,7 @@ export async function runGoalRuntimeChain(
       attempts.set(phase, n);
       if (phase === 'coding') codingPrompts.push(prompt);
       if (phase === 'plan') planPrompts.push(prompt);
+      if (phase === 'ut') utPrompts.push(prompt);
       if (phase === 'testing') {
         testingPrompts.push(prompt);
         testingExtraEnvs.push({ ...childEnv });
@@ -963,7 +973,7 @@ export async function runGoalRuntimeChain(
           )
         : '');
     return {
-      invokedPhases, harnessPhases, deviceGatePhases, codingPrompts, planPrompts, testingPrompts, testingExtraEnvs,
+      invokedPhases, harnessPhases, deviceGatePhases, codingPrompts, planPrompts, utPrompts, testingPrompts, testingExtraEnvs,
       harnessDeviceEnvs,
       harnessFidelityContexts,
       receiptValidationCalls,

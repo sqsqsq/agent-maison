@@ -17,6 +17,7 @@ const cases: TestCase[] = [
         phase: 'testing',
         verdict: 'FAIL',
         legacyAction: 'backtrack_to_coding',
+        currentSummaryFresh: false,
         failureKind: 'visual_defect',
         blockers: [
           { id: 'visual_diff', blocking_class: 'code_quality' },
@@ -31,6 +32,7 @@ const cases: TestCase[] = [
         apiDisconnected: true,
       });
       assert(observation.phase_outcome?.legacy_action === 'backtrack_to_coding', 'action');
+      assert(observation.current_summary_fresh === false, 'summary freshness');
       assert(observation.blockers?.[0].actionability === 'automatic', 'automatic blocker');
       assert(observation.blockers?.[1].actionability === 'external', 'external blocker');
       assert(observation.deterministic_defects?.length === 1, 'dedupe defects');

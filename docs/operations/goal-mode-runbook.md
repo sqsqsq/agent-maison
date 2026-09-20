@@ -274,7 +274,7 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
 
 宿主的"后台启动"（Cursor `is_background` / Claude Code `run_in_background`）只让 agent **立即拿回控制权**，进程仍是**会话内子进程**——宿主会话结束 / 活跃 agent 轮次收尾即被回收（2026-06 实测：`is_background` 直挂的 run 在轮次收尾被杀，`progress.json` 长期显示"运行中的尸体"）。**"拿回控制权" ≠ "活过我的会话"。**
 
-故**无人值守一律用真 `--detach`**（真 OS 脱离：`detached:true`+`unref()`+stdio 落 `detach.log`），实测能**活过 Cursor 完全关闭再重开**。宿主有后台模式可叠加用来不阻塞 launcher，但**存活靠 `--detach`，不靠 `is_background`**。启动后须**存活自校验**（`detach.log` 增长 + `goal-status` 活性正常），没起就如实报"启动未存活"，不要假报"已在后台跑"。
+故**无人值守一律用真 `--detach`**（真 OS 脱离：`detached:true`+`unref()`+stdio 落 `detach.log`），实测能**活过 Cursor 完全关闭再重开**。宿主有后台模式可叠加用来不阻塞 launcher，但**存活靠 `--detach`，不靠 `is_background`**。启动与存活结果以 launcher 返回的 `startup` 为准，调用方不追加握手：`failed` 报启动失败，其余三态按真实状态汇报。
 
 **存活是环境属性**：会**整组/整树杀**进程的敌对宿主（部分公司沙箱 / CI；Node `detached:true` 不设 `CREATE_BREAKAWAY_FROM_JOB`，挡不住 `taskkill /T` / kill-on-close Job）下 `--detach` 也保不住，须用 OS 调度任务（cron / Windows Task Scheduler）托管 run。下面 chrys / opencode 是"阻塞型宿主"的具体落地。
 
@@ -298,9 +298,9 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
   --feature <feature-slug> --requirement "需求" --adapter chrys --detach
 ```
 
-- launcher **秒级 fork 后台 child 并打印一行 JSON**（`{detached, run_id, report_dir, log, pid}`）后 `exit 0`；宿主 shell 拿到干净 0 退出码立即返回，**不触发超时杀树**。
+- launcher fork 后台 child，完成自身有界启动确认后打印一行 JSON（`{detached, run_id, report_dir, log, pid, startup}`）；`startup=failed` 时非零退出，其余状态干净返回，**不等待任务终局**。
 - child 的 stdio 重定向到 `report_dir/detach.log`，**不继承宿主 shell 的管道**（否则宿主 `communicate()`/阻塞读会一直等到 child 关 pipe，反而拖到超时杀树）。
-- 解析 launcher JSON 取 `run_id`，随后按下文执行启动握手、汇报并交还轮次；`--detach` 同样兼容 `--resume <run-id> --feature <f> --detach`。
+- 解析 launcher JSON 取 `run_id` 与 `startup`，按 `ready` / `terminal` / `alive_timeout` / `failed` 准确汇报后交还轮次；调用方不再重复握手。`--detach` 同样兼容 `--resume <run-id> --feature <f> --detach`。
 - 适用前提（实测，chrys `foundation/platform/process.py`）：宿主 shell 用 `CREATE_NEW_CONSOLE` 而非 kill-on-close Job Object，且**仅在超时/取消时杀树**——故 launcher 干净退出即可让 detach 存活。
 
 **监控口径（chrys/opencode 无流式）**：`phases/<phase>/agent-output.log` 在 phase 结束前**恒为空**——活性**只**看 `goal-status` / `progress.json` / events 心跳（每 ~60s 一拍），**禁止** tail `agent-output.log` 判断卡死。
@@ -314,7 +314,7 @@ cd framework/harness && npx ts-node scripts/goal-status.ts \
   --feature <feature-slug> --run-id latest --json
 ```
 
-主 agent 启动 runner 后，默认执行**有界启动握手**（硬上限 ≤30s，间隔 2–5s，只检查 manifest 落盘 / `detach.log` 增长 / liveness；按结果分类汇报——有可信终态/等待态证据就报真实状态，非终态且进程健康报「已启动」，超窗但进程仍活着报「尚未就绪，进程仍存活」，仅进程确实死亡且无结束证据才报「未存活」），就绪后汇报 `run_id`、进度路径、续查命令并**结束当前轮次**——这是默认，不需要用户开口「后台跑」，也不进入 monitor（禁止用 `sleep`/`for`/`grep events.jsonl` 等自制循环等待 phase/verdict/run_end 事件；启动握手是唯一例外）。仅当用户明确要求盯守时才进入 bounded monitor：
+launcher 已使用 manifest、本次新增 events、liveness 与 progress 完成**有界启动确认**；主 agent 只消费返回 JSON 的 `startup` 四态并汇报 `run_id`、进度路径和续查命令，然后**结束当前轮次**。不得再用 `sleep` / `for` / `grep events.jsonl` 重复握手或等待 phase/verdict/run_end；仅当用户明确要求盯守时才进入 bounded monitor：
 
 ```bash
 cd framework/harness && npx ts-node scripts/goal-monitor.ts \

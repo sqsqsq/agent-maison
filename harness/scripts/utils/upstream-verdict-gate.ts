@@ -138,7 +138,7 @@ function summaryJsonPath(projectRoot: string, feature: string, phase: string): s
 }
 
 /** I/O：读取单个上游阶段视图 */
-export function readUpstreamPhaseView(projectRoot: string, feature: string, phase: string): UpstreamPhaseView {
+export function readUpstreamPhaseView(projectRoot: string, feature: string, phase: string, pendingOwnerPhase?: string): UpstreamPhaseView {
   const p = summaryJsonPath(projectRoot, feature, phase);
   if (!fs.existsSync(p)) {
     return { phase, summaryExists: false, verdictReadable: false, verdict: null, blockerIds: [], freshness: 'no_manifest' };
@@ -196,7 +196,7 @@ export function readUpstreamPhaseView(projectRoot: string, feature: string, phas
   let freshness: UpstreamFreshness = 'no_manifest';
   let freshnessDetail: string | undefined;
   try {
-    const [res] = recomputePhaseEvidenceStaleness(projectRoot, feature, [phase]);
+    const [res] = recomputePhaseEvidenceStaleness(projectRoot, feature, [phase], { pendingOwnerPhase });
     if (res) {
       if (res.verdict === 'fresh') freshness = 'fresh';
       else if (res.verdict === 'missing') freshness = 'no_manifest';
@@ -269,7 +269,7 @@ export function checkUpstreamVerdictGate(opts: {
     return []; // 链首：无上游可消费
   }
   const upstream = order.slice(0, idx);
-  const views = upstream.map(p => readUpstreamPhaseView(opts.projectRoot, opts.feature, p));
+  const views = upstream.map(p => readUpstreamPhaseView(opts.projectRoot, opts.feature, p, opts.phase));
   const violations = evaluateUpstreamViews(views);
   const consumed = views.filter(v => v.summaryExists).map(v => v.phase);
   const skipped = views.filter(v => !v.summaryExists).map(v => v.phase);

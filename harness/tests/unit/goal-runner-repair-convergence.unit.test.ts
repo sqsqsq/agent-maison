@@ -106,6 +106,18 @@ export function runAll(): UnitCaseResult[] {
       '只有从未 attempted 的 D 可回退');
   });
 
+  run('P2-T6 相同检查 ID 的真实新指纹可继续，原指纹无新事实仍停止', () => {
+    const attempted = replayAttemptedSignalIdentities(events(
+      { type: 'phase_backtrack_requested', to_phase: 'coding', candidates: [signalCandidate(FP_A)] },
+      { type: 'agent_process_settled', phase: 'coding' },
+    ));
+    assert(computeEligibleSignalIdentities([signalCandidate(FP_A)], attempted).length === 0,
+      '相同 ID + 相同事实不得借新一轮重试');
+    const repaired = computeEligibleSignalIdentities([signalCandidate(FP_B)], attempted);
+    assert(repaired.length === 1 && repaired[0].id === 'visual_diff:screen',
+      '相同 ID 但真实信号指纹变化必须保留修复资格');
+  });
+
   run('crash 场景 1：request 后目标 phase 未执行 → 候选仍 eligible（resume 收到）', () => {
     // request → crash（无 settled/verdict）→ resume
     const evs = events(

@@ -123,6 +123,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
     try {
       execFileSync('git', ['init', '-q'], { cwd: f.root }); execFileSync('git', ['add', 'src/value.js'], { cwd: f.root }); execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'baseline'], { cwd: f.root });
       const scope = scopeFor(acceptance());
+      fs.rmSync(path.join(f.root, 'doc/features/live/context/facts.md'));
       const manifest = buildGoalManifestFromInput({ feature: 'live', run_id: 'p5-no-device', execution_scope: scope, chain_override: scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root });
       createGoalRun({ projectRoot: f.root, manifest, chain: scope.phase_chain });
       const utInputs = () => resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'live', phase: 'ut', featuresDir: 'doc/features', goalRunId: manifest.run_id });
@@ -146,6 +147,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       const initial = resolveCapabilityInputs(options); assert.notEqual(initial.report.assurance, 'blocked');
       const casesInput = initial.inputs!.values.cases; const code = initial.inputs!.values.tested_code; assert(casesInput.state === 'resolved' && code.state === 'resolved');
       const scope = resolveExecutionScope({ request: { completion_target: 'feature', requested_results: ['verify'], requested_phases: ['testing'] }, facts: [{ id: 'device-target', kind: 'device-evidence', applicability: 'required', reason: 'explicit target', basis: [code.binding] }], contract_fingerprints: [] }, workflow, { value, binding: { ...casesInput.binding, input_id: 'acceptance' } });
+      fs.rmSync(path.join(f.root, 'doc/features/live/context/facts.md'));
       const manifest = buildGoalManifestFromInput({ feature: 'live', run_id: 'p5-binding', execution_scope: scope, chain_override: scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root }); createGoalRun({ projectRoot: f.root, manifest, chain: scope.phase_chain });
       const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'live', phase: 'testing', featuresDir: 'doc/features', goalRunId: manifest.run_id });
       assert.notEqual(resolveCapabilityInputs({ ...options, ...bridge }).report.assurance, 'blocked');

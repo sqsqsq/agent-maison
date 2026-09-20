@@ -996,6 +996,23 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: 'P2-T10 blockingCleared does not bypass cooldown and only applies after the wait',
+    run: () => {
+      const recent = checkTerminalResumeGuard({
+        priorStatus: 'HALTED', lastRunEndTs: new Date().toISOString(),
+        cooldownMinutes: 5, blockingCleared: true,
+      });
+      if (recent.allowed || !recent.reason?.includes('resume cooldown: wait')) {
+        throw new Error(`blockingCleared 绕过冷却：${JSON.stringify(recent)}`);
+      }
+      const elapsed = checkTerminalResumeGuard({
+        priorStatus: 'HALTED', lastRunEndTs: new Date(Date.now() - 6 * 60_000).toISOString(),
+        cooldownMinutes: 5, blockingCleared: true,
+      });
+      if (!elapsed.allowed) throw new Error(`冷却后可信恢复仍被拒：${JSON.stringify(elapsed)}`);
+    },
+  },
+  {
     name: 't1: events 重建的 halt outcome 携带 run_disposition/run_wait_kind 投影（WAITING 停放语义）',
     run: () => {
       const T = Date.parse('2026-08-10T08:00:00.000Z');

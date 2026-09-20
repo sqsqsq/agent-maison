@@ -371,6 +371,7 @@ A blocked capability SHALL remain a pre-check fact that produces no `CheckResult
 - `readiness_signals` SHALL include `capability_input_unresolved` (status `incomplete`) naming the capability, input, attempt source, and bound dependency paths when present; wider claim text SHALL NOT be hardcoded into the generic projection (repair language, e.g. requirement-specific advice, lives only in the provider's own attempt detail).
 - `next_action` SHALL return `resolve_capability_inputs_then_rerun` only when `blockers.length === 0`, `blockingSkips.length === 0`, no run status claims-done `false`, and at least one capability is blocked; real blockers/SKIPs/run-statuses take precedence.
 - The assess `failed` gap for a locally-blocked phase (unresolved attempts without an `upstream_producer`) SHALL carry capability/input/attempt detail and keep recommendation `rerun_phase`; explicit external/device/deferred blockers SHALL keep `deferred`/`resolve_deferred`.
+- When a blocked input attempt names an `upstream_producer` that is present in the active workflow chain, assess SHALL target that producer rather than retrying the downstream consumer. An absent/invalid attempt without a chain-resolvable producer SHALL remain a diagnostic input gap and SHALL NOT be promoted to `framework_bug` merely because it is absent.
 - `merged-report.md` SHALL include a blocked-capability section (human-facing, non-gating) and SHALL NOT claim PASS while a capability is blocked.
 - A capability-projection difference where `pre === legacy` and `post !== legacy` SHALL NOT be reported as `quality_axes_projection_mismatch`; an independent real mismatch (`pre !== legacy`) SHALL still be reported. Projection SHALL preserve an existing deterministic axis `FAIL` (never downgrade to `INCOMPLETE`).
 
@@ -390,6 +391,11 @@ Enforcement: `harness/harness-runner.ts`, `harness/scripts/utils/quality-axes.ts
 
 - **WHEN** a summary carries an explicit external/device blocker or `completion_status: deferred` alongside a locally-blocked capability
 - **THEN** the phase SHALL stay `deferred` and the recommendation SHALL remain `resolve_deferred` (local blocked reclassification must not swallow explicit external deferral)
+
+#### Scenario: downstream missing input returns to its producer
+
+- **WHEN** a failed downstream capability carries an unresolved `SourceAttempt.upstream_producer` that names an earlier phase in the active chain
+- **THEN** assess SHALL recommend `backtrack_to_phase` for that producer and preserve the capability/input/source diagnostic
 
 ### Requirement: Formal goal testing gate force-installs and writes the sole evidence
 
@@ -753,6 +759,22 @@ writeRunSummary MUST 拆为 base 与 closure patch 两段：base summary MUST �
 - **THEN** summary.json 通过 schema 校验且 closure_status=open，不残留旧 closed 态
 
 > **Enforced by:** `harness/harness-runner.ts`
+
+### Requirement: Legal early failures publish the current base summary
+
+After phase and Feature identity are valid and a safe report directory is available, scope-freeze, capability-input, and feature-artifact precheck failures SHALL use the existing script-report and base-summary writers before exiting non-zero. A thrown baseline or input-binding error SHALL become a current structured BLOCKER result; it SHALL NOT leave an earlier summary as the newest apparent phase result. Invalid invocation identity or an unsafe/unresolvable report location remains a direct non-zero diagnostic and MUST NOT force a report write.
+
+#### Scenario: Capability input resolution throws after identity validation
+
+- **WHEN** current facts-baseline or bound-input validation throws during a legal phase invocation
+- **THEN** the harness SHALL write a current failing script report and open base summary containing that diagnostic, then exit non-zero
+
+#### Scenario: Scope freeze resolution throws after identity validation
+
+- **WHEN** the current Feature scope cannot be parsed or legally revised
+- **THEN** the harness SHALL write a current `execution_scope_frozen` failure summary rather than leaving the preceding phase summary current-looking
+
+> **Enforced by:** `harness/harness-runner.ts`, `harness/scripts/utils/report-generator.ts`
 
 ### Requirement: check-receipt reads current-run base summary
 
@@ -2331,6 +2353,22 @@ Enforcement: `harness/scripts/utils/phase-evidence-manifest.ts`
 
 - **WHEN** a closed phase's `summary.json` is edited
 - **THEN** manifest recomputation SHALL report the phase stale
+
+### Requirement: UT coverage reports are semantically idempotent
+
+The UT harness SHALL compare a newly derived `ac-coverage.json` with the existing report excluding only `generated_at`. When every coverage field is equal, it SHALL preserve the existing bytes and timestamp and SHALL use that preserved timestamp in the in-memory report. A real coverage change SHALL write the new report and timestamp. This rule SHALL NOT remove the report from phase evidence or globally ignore timestamps in verifier material.
+
+Enforcement: `harness/scripts/utils/ac-coverage-report.ts`, `harness/scripts/check-ut.ts`
+
+#### Scenario: An identical UT rerun preserves verifier material identity
+
+- **WHEN** UT derives the same criteria, boundaries, tags and summary at a later clock time
+- **THEN** `ac-coverage.json` SHALL remain byte-identical and SHALL NOT by itself change the verifier subject
+
+#### Scenario: A coverage change advances verifier material identity
+
+- **WHEN** a covered criterion, boundary or backing test tag changes
+- **THEN** the report SHALL be rewritten and the verifier material SHALL observe the changed bytes
 
 ### Requirement: A diagnosable product failure still issues a verifier request
 

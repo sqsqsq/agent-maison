@@ -67,6 +67,8 @@ export interface ReconcileObservationV1 {
   schema_version: '1.0';
   state: 'active' | 'fused';
   reason?: string;
+  /** 当前 attempt 是否刷新了 summary；false 时历史 summary 仅展示，不提供 repair candidates。 */
+  current_summary_fresh?: boolean;
   residual_fingerprints?: string[];
   phase_outcome?: {
     phase: string;
@@ -328,14 +330,11 @@ function isDeferredSummary(summary: Record<string, unknown>): boolean {
 }
 
 /**
- * plan c8e5b3f1 t2 D：summary 是否含**本地** blocked capability（相关 unresolved attempts 均无
- * upstream_producer）。真 device/external/deferred 场景（verdict=INCOMPLETE 且 blockers 为
- * external/device）会命中 isDeferredSummary 的 blockers 分支，本函数不覆盖——只有"verdict=INCOMPLETE
- * 且无 external blocker、且确有本地 blocked capability"时返回 true，从而让该 phase 走 failed 而非
- * 被 isDeferredSummary 一律标成 deferred。（与 collectPrunedPropagations 的 upstream_producer 语义
- * 一致：带 producer 的 unresolved attempt 交给上游 pruned 传播，不在此当本地失败。）
+ * summary 是否含非外部的 blocked capability。显式 external/device blocker 或
+ * completion_status=deferred 优先；否则 unresolved attempt 无论由当前 phase 补齐还是携带
+ * upstream_producer，都属于可路由输入缺口，不能被 verdict=INCOMPLETE 泛化成外部 defer。
  */
-function hasLocalBlockedCapability(summary: Record<string, unknown>): boolean {
+function hasInputBlockedCapability(summary: Record<string, unknown>): boolean {
   // review P2：显式 external/device blocker **或** completion_status==='deferred' 都**优先**保持
   // deferred——本地 blocked 不得吞掉真实外部/显式延迟（含 completion_status 显式置 deferred 的场景）。
   const hasExternalBlocker = (summary.blockers as Array<Record<string, unknown>> | undefined)?.some((blocker) =>
@@ -357,7 +356,7 @@ function hasLocalBlockedCapability(summary: Record<string, unknown>): boolean {
         const rec = attempt as Record<string, unknown>;
         const state = rec.state;
         if (state === 'absent' || state === 'invalid' || state === 'not_applicable') {
-          if (typeof rec.upstream_producer === 'string' && rec.upstream_producer) return false;
+          return true;
         }
       }
     }
@@ -563,9 +562,9 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
       ...(readRepairCandidatesFromSummary(summary).length > 0
         ? { repair_candidates: readRepairCandidatesFromSummary(summary) }
         : {}),
-      // plan c8e5b3f1 t2 D：不把 verdict=INCOMPLETE 一律当 deferred——本地 blocked capability
-      //（unresolved attempts 均无 upstream_producer）应走 failed；真 device/external 仍 deferred。
-      deferred: isDeferredSummary(summary) && !hasLocalBlockedCapability(summary),
+      // capability 输入缺口（本地或有 upstream producer）走 failed/owner route；
+      // 显式 device/external/completion deferred 仍保持 deferred。
+      deferred: isDeferredSummary(summary) && !hasInputBlockedCapability(summary),
       blocked_capabilities: blockedCapabilityFactsFor(summary),
       summary_fingerprint: fileHash(summaryPath),
       evidence_fingerprint: fileHash(evidencePath),
@@ -655,7 +654,26 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
   };
 }
 
+function producerOwnedInputGap(
+  phase: AssessPhaseObservation,
+  phaseOrder: ReadonlyMap<string, number>,
+): AssessGap | null {
+  const currentIndex = phaseOrder.get(phase.phase);
+  if (phase.verdict === 'PASS' || phase.deferred || currentIndex === undefined) return null;
+  const owned = (phase.blocked_capabilities ?? []).flatMap(capability =>
+    capability.unresolved.flatMap(unresolved => {
+      const owner = unresolved.upstream_producer;
+      const ownerIndex = owner ? phaseOrder.get(owner) : undefined;
+      if (!owner || ownerIndex === undefined || ownerIndex >= currentIndex) return [];
+      const paths = unresolved.dependencies.filter(dep => dep.path).map(dep => `${dep.path}${dep.exists ? '' : '(missing)'}`).join(', ');
+      return [{ owner, ownerIndex, detail: `downstream=${phase.phase} capability=${capability.capability} input=${unresolved.input} source=${unresolved.source}${unresolved.detail ? `: ${unresolved.detail}` : ''}${paths ? ` path=[${paths}]` : ''}` }];
+    }),
+  ).sort((a, b) => a.ownerIndex - b.ownerIndex)[0];
+  return owned ? { phase: owned.owner, kind: 'failed', detail: `上游输入缺口：${owned.detail}` } : null;
+}
+
 function gapsFromObservation(observation: AssessObservation): AssessGap[] {
+  const phaseOrder = new Map(observation.phases.map((phase, index) => [phase.phase, index]));
   const gaps: AssessGap[] = (observation.pruned_propagations ?? []).map((item) => ({
     phase: item.producer_phase,
     kind: 'pruned',
@@ -676,6 +694,11 @@ function gapsFromObservation(observation: AssessObservation): AssessGap[] {
         kind: 'legacy_unverified',
         detail: `summary schema=${phase.schema_version ?? 'unknown'}；须重跑 harness 生成 ${SUMMARY_SCHEMA_VERSION_CURRENT}`,
       });
+      continue;
+    }
+    const ownedInputGap = producerOwnedInputGap(phase, phaseOrder);
+    if (ownedInputGap) {
+      if (!gaps.some(gap => gap.phase === ownedInputGap.phase)) gaps.push(ownedInputGap);
       continue;
     }
     if (phase.deferred) {
@@ -818,7 +841,7 @@ function recommendationForObservation(
     const currentPhase = reconcile?.phase_outcome?.phase;
     // 候选唯一真源=phase summary（assess 直读，不经 reconcile 复制）——goal 的 detached
     // runner、in-session/batch driver、manual 渲染因此共用同一事实与同一裁决。
-    const candidates = currentPhase
+    const candidates = currentPhase && reconcile?.current_summary_fresh !== false
       ? observation.phases.find((p) => p.phase === currentPhase)?.repair_candidates ?? []
       : [];
     if (reconcile?.state === 'active' && currentPhase && candidates.length > 0) {
@@ -854,6 +877,12 @@ function recommendationForObservation(
     // 「summary 写不进去就悄悄走旧路」的绕过口（codex 二轮冻结项①）。
   }
   const phaseOutcome = observation.reconcile?.phase_outcome;
+  if (!fused && phaseOutcome && observation.reconcile?.current_summary_fresh !== false) {
+    const phaseOrder = new Map(observation.phases.map((phase, index) => [phase.phase, index]));
+    const currentObservation = observation.phases.find(phase => phase.phase === phaseOutcome.phase);
+    const currentOwnerGap = currentObservation ? producerOwnedInputGap(currentObservation, phaseOrder) : null;
+    if (currentOwnerGap) return recommendationForGap(observation, currentOwnerGap, false);
+  }
   if (!fused && phaseOutcome && ['PASS', 'FAIL', 'INCOMPLETE'].includes(phaseOutcome.verdict)) {
     const decision = classifyPhaseAssessment({
       verdict: phaseOutcome.verdict as HarnessVerdict,

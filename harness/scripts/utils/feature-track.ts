@@ -99,6 +99,16 @@ export function featureScopeCandidateFingerprint(projectRoot: string, feature: s
   return executionScopeFingerprint(raw.execution_scope);
 }
 
+/** Frozen runless candidate's requirement provenance; text remains at its original CLI/file source. */
+export function featureRequirementBinding(projectRoot: string, feature: string): InputBinding {
+  const raw = YAML.parse(fs.readFileSync(featureTrackDeclPath(projectRoot, feature), 'utf8')) as { execution_scope?: ExecutionScopeInput };
+  const binding = raw?.execution_scope?.request.requirement_basis;
+  if (!binding || binding.input_id !== 'requirement' || binding.source.kind !== 'derive' || binding.source.provider_id !== 'derive.requirement') {
+    throw new Error('[execution-scope] 候选缺少可核验 requirement_basis；请用 --prepare-scope 重新生成');
+  }
+  return binding;
+}
+
 /** Only fresh 1.2 runs read the candidate; resume never consults this mutable file. */
 export function resolveFeatureExecutionScope(projectRoot: string, feature: string, workflow: WorkflowSpec, frameworkRoot?: string, requirement?: string): ExecutionScope | undefined {
   if (workflow.schema_version !== '1.2') return undefined;
@@ -382,6 +392,8 @@ export interface PrepareScopeCandidateInput {
    * `requestedResults`——两处不同源会让候选与出生时的 visual 结论对不上。
    */
   requirement?: string;
+  /** `resolveRequirementInput().sources`; provenance only, never a second text snapshot. */
+  requirementSourceFiles?: string[];
   /** 候选已存在且内容不同时，显式覆盖。 */
   overwrite?: boolean;
 }
@@ -421,10 +433,13 @@ function deriveDefinitionContext(
     .map(artifact => artifact.id);
   const wantsImplementation = requestedPhases.some(phase => implementationPhases.includes(phase));
   const writeSet = wantsImplementation ? readCandidateWriteSet(ctx, contracts) : [];
-  const writeSetBinding = writeSet.length ? candidateBinding(ctx, 'plan', 'codebase', writeSet) : undefined;
+  const existingWriteSet = writeSet.filter(file => {
+    try { return fs.statSync(path.resolve(ctx.projectRoot, file)).isFile(); } catch { return false; }
+  });
+  const writeSetBinding = existingWriteSet.length ? candidateBinding(ctx, 'plan', 'codebase', existingWriteSet) : undefined;
   return {
     contracts, acceptance, writeSet, writeSetBinding, wantsImplementation,
-    designAvailable: !!contracts && (!wantsImplementation || !!writeSetBinding),
+    designAvailable: !!contracts && (!wantsImplementation || writeSet.length > 0),
     acceptanceAvailable: !!acceptance,
   };
 }
@@ -480,10 +495,23 @@ export function recomputeDefinitionFacts(
       }
     }
   }
+  const implementationBasis = derived.writeSet.length > 0
+    ? derived.writeSetBinding ?? derived.contracts
+    : undefined;
+  if (derived.wantsImplementation && implementationBasis) {
+    const implementation = input.facts.find(fact => fact.kind === 'implementation');
+    const update = {
+      applicability: 'required' as const,
+      reason: '本次请求包含改代码',
+      basis: [implementationBasis],
+    };
+    if (implementation) Object.assign(implementation, update);
+    else input.facts.push({ id: 'implementation:request', kind: 'implementation', ...update });
+  }
 }
 
 function candidateBinding(
-  ctx: { projectRoot: string; frameworkRoot: string; feature: string; requirement?: string },
+  ctx: { projectRoot: string; frameworkRoot: string; feature: string; requirement?: string; requirementSourceFiles?: string[] },
   phase: string,
   inputId: string,
   testTargets: string[] = [],
@@ -496,6 +524,7 @@ function candidateBinding(
       projectRoot: ctx.projectRoot, frameworkRoot: ctx.frameworkRoot, feature: ctx.feature, phase, track: 'full',
       ...(testTargets.length ? { testTargets } : {}),
       ...(ctx.requirement ? { requirement: ctx.requirement } : {}),
+      ...(ctx.requirementSourceFiles?.length ? { requirementSourceFiles: ctx.requirementSourceFiles } : {}),
       inputContext: { schema_version: '1.1', subject: { feature: ctx.feature }, obligations: {}, required_outputs: [] },
     }).inputs?.values?.[inputId];
     return value && value.state === 'resolved' ? value.binding : undefined;
@@ -531,7 +560,7 @@ export function prepareFeatureScopeCandidate(input: PrepareScopeCandidateInput):
   // provenance：**始终**生成需求绑定——它是「这份候选为哪句需求而算」的机器凭据，
   // 不只在缺产物时才有意义。缺设计 / 验收时它同时充当那两条缺口事实的来源。
   const requirementText = input.requirement?.trim() || input.requestedResults.join('\n');
-  const requirementBinding = candidateBinding({ ...ctx, requirement: requirementText }, 'spec', 'requirement');
+  const requirementBinding = candidateBinding({ ...ctx, requirement: requirementText, requirementSourceFiles: input.requirementSourceFiles }, 'spec', 'requirement');
   if (!requirementBinding) throw new Error('[prepare-scope] 需求无法经 derive.requirement 解析为绑定——候选缺少 provenance，不生成');
   const gapBasis = [requirementBinding];
   const facts: ExecutionScopeInput['facts'] = [];
@@ -542,6 +571,7 @@ export function prepareFeatureScopeCandidate(input: PrepareScopeCandidateInput):
   const wantsImplementation = derived.wantsImplementation;
   const writeSet = derived.writeSet;
   const writeSetBinding = derived.writeSetBinding;
+  const implementationBasis = writeSet.length > 0 ? writeSetBinding ?? contracts : undefined;
   // 契约在、却拿不出可核验写集（`contracts.files: []` 是 schema 允许的）＝**设计没给出写集**，
   // 这正是 plan 的责任缺口。此时不能把 design-context 当「已有设计可用」记成 required——否则
   // 既没有缺口挡住 coding，resolver 又会自动补一条 basis 为空的 implementation 请求标记，
@@ -566,10 +596,10 @@ export function prepareFeatureScopeCandidate(input: PrepareScopeCandidateInput):
     // 跳过设计阶段就必须拿得出**可核验的写集**：契约缺失 / files 为空 / 绑定解析不出来时
     // 在这里 fail-closed，而不是让 resolver 事后补一条空 basis 的请求标记，把问题推到 coding。
     if (!writeSet.length) throw new Error('[prepare-scope] 请求跳过设计阶段直接改代码，但契约没有声明可核验的写集（contracts.files 为空或不可解析）——责任方 plan');
-    if (!writeSetBinding) throw new Error('[prepare-scope] 写集无法解析为项目内绑定：' + writeSet.join(', '));
-    facts.push({ id: 'implementation:request', kind: 'implementation', applicability: 'required', reason: '本次请求包含改代码', basis: [writeSetBinding] });
-  } else if (wantsImplementation && writeSetBinding) {
-    facts.push({ id: 'implementation:request', kind: 'implementation', applicability: 'required', reason: '本次请求包含改代码', basis: [writeSetBinding] });
+    if (!implementationBasis) throw new Error('[prepare-scope] 写集无法解析为项目内绑定：' + writeSet.join(', '));
+    facts.push({ id: 'implementation:request', kind: 'implementation', applicability: 'required', reason: '本次请求包含改代码', basis: [implementationBasis] });
+  } else if (wantsImplementation && implementationBasis) {
+    facts.push({ id: 'implementation:request', kind: 'implementation', applicability: 'required', reason: '本次请求包含改代码', basis: [implementationBasis] });
   }
   const impactBasis = input.impact?.basisPaths.length ? candidateBinding(ctx, 'plan', 'codebase', input.impact.basisPaths) : undefined;
   if (input.impact && !impactBasis) throw new Error('[prepare-scope] --impact-basis 无法解析为项目内绑定（影响判断必须有可核验来源）');

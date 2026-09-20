@@ -138,6 +138,8 @@ export interface GoalPhaseOutcome {
   agent_duration_ms?: number;
   /** agent 非零退出时的 stderr 摘要（binary 不可 spawn 的 preflight 诊断在此）。 */
   agent_stderr_excerpt?: string;
+  /** harness 非零退出时的当前执行诊断（不得由历史 summary 替代）。 */
+  harness_error_excerpt?: string;
 }
 
 export interface GoalReportFidelityRouting {
@@ -480,6 +482,9 @@ export function generateGoalReportMarkdown(
     }
     if (p.agent_stderr_excerpt) {
       lines.push(`| ↳ agent stderr | — | — | — | — | ${p.agent_stderr_excerpt.replace(/\|/g, '\\|')} | — |`);
+    }
+    if (p.harness_error_excerpt) {
+      lines.push(`| ↳ harness error | — | — | — | — | ${p.harness_error_excerpt.replace(/\|/g, '\\|')} | — |`);
     }
     // P2#9（post-impl review）：显式超时预算过小 advisory 入报告（仅 console 会在 detach 后蒸发）
     if (options.events?.length) {

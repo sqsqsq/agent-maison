@@ -172,9 +172,124 @@ const prunedPropagationCase: Case = {
     }
   },
 };
+const producerOwnedInputGapCase: Case = {
+  name: 'P2-T5 a blocked downstream SourceAttempt returns to its frozen upstream producer',
+  run: () => {
+    const root = mkProject();
+    try {
+      const reports = path.join(root, 'doc', 'features', 'demo', 'plan', 'reports');
+      fs.mkdirSync(reports, { recursive: true });
+      fs.writeFileSync(path.join(reports, 'summary.json'), JSON.stringify({
+        schema_version: '1.2', verdict: 'INCOMPLETE', assurance: 'blocked',
+        capability_resolutions: [{
+          id: 'capability_plan_core', axis: 'functional', active: true, state: 'blocked', on_missing: 'fail',
+          inputs: [{ id: 'acceptance', attempts: [{ kind: 'artifact', source: 'acceptance@1', state: 'absent', dependencies: [], upstream_producer: 'spec' }] }],
+        }],
+      }));
+      const observed = observeFeatureState({ projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', goalEnd: 'plan' });
+      const plan = observed.phases.find(item => item.phase === 'plan')!;
+      assert(plan.deferred === false, JSON.stringify(plan));
+      assert(plan.blocked_capabilities?.[0]?.unresolved[0]?.upstream_producer === 'spec', JSON.stringify(plan));
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+
+    const phases: AssessObservation['phases'] = [
+      phase({ phase: 'spec' }),
+      phase({
+        phase: 'plan', verdict: 'FAIL', closure: 'open', deferred: false,
+        blocked_capabilities: [{
+          capability: 'capability_plan_core', axis: 'functional', applicability_provider: null,
+          applicability_dependencies: [],
+          unresolved: [{ input: 'acceptance', source: 'acceptance@1',
+            upstream_producer: 'spec', detail: 'acceptance@1 missing', dependencies: [] }],
+        }],
+      }),
+    ];
+    const reconcile: AssessObservation['reconcile'] = {
+      schema_version: '1.0', state: 'active',
+      phase_outcome: { phase: 'plan', verdict: 'FAIL', legacy_action: 'retry' },
+      budgets: { retries_used: 0, max_retries_per_phase: 2, backtracks_used: 0 },
+      residual_fingerprints: [], invalidatable_phases: ['spec', 'plan'],
+    };
+    const assessed = assessObservation({
+      schema_version: '1.0', feature: 'demo', workflow: 'spec-driven', track: 'full', goal_end: 'plan', phases,
+      fingerprints: { workflow: H, track: H, goal: H, run_attempt: H, summaries: H, evidence: H, reconcile: H, observed: H },
+      reconcile,
+    }, { mode: 'goal_mode' });
+    assert(assessed.gaps[0]?.phase === 'spec' && assessed.gaps[0]?.detail.includes('acceptance@1'), JSON.stringify(assessed.gaps));
+    assert(assessed.recommendation.phase === 'spec' && assessed.recommendation.runner_action === 'backtrack_to_phase', JSON.stringify(assessed.recommendation));
+  },
+};
 const cases: Case[] = [
   authorizedDegradationCase,
   prunedPropagationCase,
+  producerOwnedInputGapCase,
+  {
+    name: 'P2-T5 fresh coding regression wins over unrelated stale plan observation',
+    run: () => {
+      const phases = [
+        phase({ phase: 'plan', closure: 'stale', closure_stale_detail: 'src/demo/value.ts' }),
+        phase({ phase: 'coding', verdict: 'FAIL', closure: 'open' }),
+      ];
+      const result = assessObservation({
+        schema_version: '1.0', feature: 'demo', workflow: 'spec-driven', track: 'full', goal_end: 'coding', phases,
+        fingerprints: { workflow: H, track: H, goal: H, run_attempt: H, summaries: H, evidence: H, reconcile: H, observed: H },
+        reconcile: {
+          schema_version: '1.0', state: 'active',
+          phase_outcome: { phase: 'coding', verdict: 'FAIL', legacy_action: 'retry', failure_kind: 'code_regression' },
+          budgets: { retries_used: 0, max_retries_per_phase: 2, backtracks_used: 0 },
+          residual_fingerprints: [], invalidatable_phases: ['plan', 'coding'],
+        },
+      }, { mode: 'goal_mode' });
+      assert(result.recommendation.phase === 'coding' && result.recommendation.runner_action === 'retry', JSON.stringify(result.recommendation));
+    },
+  },
+  {
+    name: 'P2-T5 external defer wins over a simultaneous upstream producer input',
+    run: () => {
+      const phases = [phase({ phase: 'spec' }), phase({
+        phase: 'plan', verdict: 'INCOMPLETE', closure: 'open', deferred: true,
+        blocked_capabilities: [{
+          capability: 'capability_plan_core', axis: 'functional', applicability_provider: null,
+          applicability_dependencies: [], unresolved: [{ input: 'acceptance', source: 'acceptance@1', upstream_producer: 'spec', dependencies: [] }],
+        }],
+      })];
+      const result = assessObservation({
+        schema_version: '1.0', feature: 'demo', workflow: 'spec-driven', track: 'full', goal_end: 'plan', phases,
+        fingerprints: { workflow: H, track: H, goal: H, run_attempt: H, summaries: H, evidence: H, reconcile: H, observed: H },
+        reconcile: {
+          schema_version: '1.0', state: 'active',
+          phase_outcome: { phase: 'plan', verdict: 'INCOMPLETE', legacy_action: 'none', failure_kind: 'device_blocked', blocking_class: 'externalBlocked', dependency_policy: { deferrable_blocking_classes: ['externalBlocked'], deferrable_failure_kinds: ['device_blocked'], propagate_to_downstream: false } },
+          budgets: { retries_used: 0, max_retries_per_phase: 2, backtracks_used: 0 }, residual_fingerprints: [],
+        },
+      }, { mode: 'goal_mode' });
+      assert(result.recommendation.action === 'resolve_deferred' && result.recommendation.runner_action === 'defer_external_and_halt', JSON.stringify(result.recommendation));
+    },
+  },
+  {
+    name: 'P2-T5 stale owner input is display-only while the current harness failure decides',
+    run: () => {
+      const phases = [phase({ phase: 'spec' }), phase({
+        phase: 'plan', verdict: 'FAIL', closure: 'open', deferred: false,
+        blocked_capabilities: [{
+          capability: 'capability_plan_core', axis: 'functional', applicability_provider: null,
+          applicability_dependencies: [], unresolved: [{ input: 'acceptance', source: 'acceptance@1', upstream_producer: 'spec', dependencies: [] }],
+        }],
+      })];
+      const assess = (fresh: boolean) => assessObservation({
+        schema_version: '1.0', feature: 'demo', workflow: 'spec-driven', track: 'full', goal_end: 'plan', phases,
+        fingerprints: { workflow: H, track: H, goal: H, run_attempt: H, summaries: H, evidence: H, reconcile: H, observed: H },
+        reconcile: {
+          schema_version: '1.0', state: 'active', current_summary_fresh: fresh,
+          phase_outcome: { phase: 'plan', verdict: 'FAIL', legacy_action: 'halt', failure_kind: 'deterministic_gate_or_artifact_missing' },
+          budgets: { retries_used: 2, max_retries_per_phase: 2, backtracks_used: 0 }, residual_fingerprints: [],
+        },
+      }, { mode: 'goal_mode' });
+      const stale = assess(false);
+      assert(stale.recommendation.phase !== 'spec' && stale.recommendation.runner_action === 'halt', JSON.stringify(stale.recommendation));
+      const fresh = assess(true);
+      assert(fresh.recommendation.phase === 'spec' && fresh.recommendation.runner_action === 'backtrack_to_phase', JSON.stringify(fresh.recommendation));
+    },
+  },
   {
     name: 'no-reconcile multi-phase gaps choose the first workflow gap',
     run: () => {
