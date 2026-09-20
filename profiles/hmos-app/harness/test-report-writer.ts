@@ -27,10 +27,13 @@ import {
   parsePlanTcEntries,
 } from '../../../harness/scripts/utils/p0-semantic-gates';
 import type { ExecutionChannelDeclarationResult } from '../../../harness/scripts/utils/execution-channel';
+import type { ChannelEvidenceBinding } from '../../../harness/scripts/utils/execution-channel-evidence';
 import { countBlockingDebt, loadVisualDebtEx } from '../../../harness/scripts/utils/visual-debt';
 import { parseHylyreTrace, type HylyreTrace, type HylyreTraceCase } from './providers/device-test-run';
 import type { DeviceTestTimingDocument } from './device-test-timings';
 import { validateVisualDiffJson } from './visual-diff-check';
+import { collectP0VisualTargetIds } from './visual-diff-targets';
+import { loadUiSpecFile, uiSpecAbsPath } from '../../../harness/scripts/utils/ui-spec-shared';
 
 export const TEST_REPORT_GENERATED_MARKER = '<!-- maison:generated:test-report v1 -->';
 
@@ -44,6 +47,8 @@ export interface TestReportWriterInput {
   /** 顶层 test-plan.md 全文 */
   planMd: string;
   channelDecl: ExecutionChannelDeclarationResult;
+  /** visual/channel/P0 共用的逐 TC 机器裁决；不在 writer 内重算。 */
+  channelEvidenceBindings?: readonly ChannelEvidenceBinding[];
   now?: () => Date;
 }
 
@@ -280,6 +285,9 @@ export function generateTestReport(input: TestReportWriterInput): GeneratedTestR
   const invalidByTc = new Map(decl.invalid_test.map(g => [g.tc_id.toUpperCase(), g]));
   const hylyreSet = new Set(decl.hylyre_tc_ids.map(id => id.toUpperCase()));
   const visualSet = new Set(decl.visual_tc_ids.map(id => id.toUpperCase()));
+  const channelBindingByTc = new Map(
+    (input.channelEvidenceBindings ?? []).map(binding => [binding.tc_id.toUpperCase(), binding] as const),
+  );
   const traceByTc = new Map((trace?.cases ?? []).map(c => [c.id.toUpperCase(), c]));
   const timingByTc = new Map((timing?.cases ?? []).map(c => [c.id.toUpperCase(), c]));
   const command = typeof runMeta?.command === 'string' ? runMeta.command : '';
@@ -292,8 +300,6 @@ export function generateTestReport(input: TestReportWriterInput): GeneratedTestR
     const screens = [cp?.pre_screen, cp?.post_screen].filter((s): s is string => typeof s === 'string' && s.trim().length > 0);
     if (screens.length > 0) screensByAc.set(ac.id.toUpperCase(), screens);
   }
-  const screenVerdict = new Map(visual.screens.map(s => [s.screen_id, s.verdict]));
-
   const exec: ExecRow[] = [];
   for (const row of planRows) {
     const gap = gapByTc.get(row.id);
@@ -306,14 +312,13 @@ export function generateTestReport(input: TestReportWriterInput): GeneratedTestR
       continue;
     }
     if (visualSet.has(row.id)) {
-      const screens = [...new Set(row.acRefs.flatMap(ac => screensByAc.get(ac.toUpperCase()) ?? []))];
-      const verdicts = screens.map(s => screenVerdict.get(s) ?? 'missing');
+      const binding = channelBindingByTc.get(row.id);
       const status: RowStatus =
-        screens.length > 0 && verdicts.every(v => v === 'pass') ? '通过'
-          : verdicts.some(v => v === 'fail') ? '失败' : '阻塞';
+        binding?.verdict.kind === 'covered' ? '通过'
+          : binding?.verdict.kind === 'failed' ? '失败' : '阻塞';
       exec.push({
         ...row, status, duration: '—',
-        note: `visual 通道：屏 ${screens.join('、') || '（未声明 checkpoint 屏）'} → ${verdicts.join('/') || '无'}`,
+        note: `visual 通道：${binding?.verdict.detail ?? '缺逐 TC 机器裁决'}`,
         source: 'visual',
       });
       continue;
@@ -341,7 +346,7 @@ export function generateTestReport(input: TestReportWriterInput): GeneratedTestR
   const defects: DefectRow[] = [];
   let n = 0;
   for (const r of exec) {
-    if (r.source === 'hylyre' && (r.status === '失败' || r.status === '阻塞')) {
+    if ((r.source === 'hylyre' || r.source === 'visual') && (r.status === '失败' || r.status === '阻塞')) {
       n += 1;
       defects.push({ id: `DEF-${String(n).padStart(3, '0')}`, cases: r.id, severity: severityFor(r.priority), description: `${r.status}：${r.note}`, status: '待修复' });
     }
@@ -394,13 +399,17 @@ export function generateTestReport(input: TestReportWriterInput): GeneratedTestR
   const hylyreRows = exec.filter(r => r.source === 'hylyre');
   const functional: AxisStatus =
     !trace ? 'UNKNOWN'
-      : hylyreRows.some(r => r.status === '失败' || r.status === '阻塞') || exec.some(r => r.source === 'absent' && hylyreSet.has(r.id)) || trace.outcome !== 'success'
+      : hylyreRows.some(r => r.status === '失败' || r.status === '阻塞') ||
+          exec.some(r => r.source === 'absent' && hylyreSet.has(r.id)) ||
+          exec.some(r => r.priority.toUpperCase() === 'P0' && r.source !== 'gap' && r.status !== '通过') ||
+          trace.outcome !== 'success'
         ? 'FAIL'
         : 'PASS';
   const stabilityAxis: AxisStatus = !stability.available || !stability.min_rounds_met ? 'UNKNOWN' : stability.consistent_all ? 'PASS' : 'FAIL';
   const p0Screens = new Set(
     (acceptance?.criteria ?? []).filter(isP0DeviceInteractive).flatMap(ac => screensByAc.get(ac.id.toUpperCase()) ?? []),
   );
+  const canonicalP0Targets = new Set(collectP0VisualTargetIds(loadUiSpecFile(uiSpecAbsPath(projectRoot, feature))));
   // 视觉轴只在 feature 确有视觉面（有 visual-diff.json 或 P0 checkpoint 屏）时才计入缺口
   const visualApplicable = visual.available || p0Screens.size > 0;
   let visualGeometry: AxisStatus = visualApplicable ? 'UNKNOWN' : 'NOT_APPLICABLE';
@@ -410,7 +419,8 @@ export function generateTestReport(input: TestReportWriterInput): GeneratedTestR
     const statuses = [...visual.measure.values()].map(m => m.geometry);
     visualGeometry = statuses.some(s => s === 'FAIL') ? 'FAIL' : statuses.every(s => s === 'PASS') ? 'PASS' : 'UNKNOWN';
   } else if (visual.available && visual.screens.length > 0) {
-    const relevant = visual.screens.filter(s => p0Screens.size === 0 || p0Screens.has(s.screen_id));
+    const relevant = visual.screens.filter(s =>
+      canonicalP0Targets.size > 0 ? canonicalP0Targets.has(s.screen_id) : p0Screens.size === 0 || p0Screens.has(s.screen_id));
     visualGeometry = relevant.some(s => s.verdict === 'fail') ? 'FAIL'
       : relevant.length > 0 && relevant.every(s => s.verdict === 'pass') ? 'PASS' : 'UNKNOWN';
   }

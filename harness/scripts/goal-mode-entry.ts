@@ -81,6 +81,7 @@ export interface PrepareGoalModeRunOptions {
   requirementSourceFiles?: string[];
   startPhase?: string;
   endPhase?: string;
+  forceFresh?: boolean;
 }
 
 /** harness/scripts → framework root；standalone 与 consumer 的目录层级一致。 */
@@ -166,7 +167,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
     requiresLegacyFidelityRecovery:
       !executionScope && loadInertLegacyFidelityIntentSsot(options.projectRoot, feature) !== null,
   });
-  createGoalRun({ projectRoot: options.projectRoot, manifest, chain: actualChain });
+  createGoalRun({ projectRoot: options.projectRoot, manifest, chain: actualChain, forceFresh: options.forceFresh });
   // D1.3 转交登记：**createGoalRun 成功之后、ensureRunControl 之前**。出生未完成时 feature 侧
   // 绝不能留下指向不存在 run 的指针；反向残留（记录指向不存在的 run）才是 D1.3 第三行的报错。
   if (executionScope) {
@@ -381,13 +382,13 @@ async function main(): Promise<void> {
       // f9c2e6b4 t4：与 goal-runner 同名同义，共用同一读取函数（相对路径按 projectRoot 解析）
       'requirement-file',
     ],
-    boolean: ['force-takeover', 'prepare-run', 'prepare-scope', 'overwrite', 'help'],
+    boolean: ['force', 'force-takeover', 'prepare-run', 'prepare-scope', 'overwrite', 'help'],
   });
   if (argv.help) {
     console.log(
       'Usage: goal-mode-entry.ts --feature <f> --run-id <id> --adapter <name> ' +
       '--run-mode attended [--project-root <root>] [--framework-root <framework>] [--force-takeover]\n' +
-      'Fresh attended run: add --prepare-run --requirement "<text>" (optionally --run-id/--start/--end).\n' +
+      'Fresh attended run: add --prepare-run --requirement "<text>" (optionally --run-id/--start/--end; --force records an operator override).\n' +
       'Scope candidate (run this BEFORE --prepare-run; the two flags are mutually exclusive):\n' +
       '  --prepare-scope --feature <f> --completion-target <request|feature>\n' +
       '    --requested-results "<text>" (repeatable) --requested-phases spec,plan,coding,review,ut\n' +
@@ -448,6 +449,7 @@ async function main(): Promise<void> {
       })(),
       startPhase: typeof argv.start === 'string' ? argv.start : undefined,
       endPhase: typeof argv.end === 'string' ? argv.end : undefined,
+      forceFresh: Boolean(argv.force),
     });
     console.log(JSON.stringify({
       type: 'goal_run_prepared',

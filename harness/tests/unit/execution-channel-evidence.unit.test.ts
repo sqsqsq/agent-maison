@@ -25,6 +25,7 @@ import {
   extractTcAcceptanceRefs,
   loadVisualScreenVerdicts,
   PROVIDER_EVIDENCE_CONTRACT,
+  visualGateAllowsEvidence,
   type ChannelEvidenceInput,
 } from '../../scripts/utils/execution-channel-evidence';
 import type { AcceptanceFlowsDoc } from '../../scripts/utils/p0-semantic-gates';
@@ -111,12 +112,18 @@ function makeFeatureRoot(screens: ScreenFixture[], opts: { rawOverride?: unknown
   return root;
 }
 
+function writeUiSpec(root: string, screens: unknown[]): void {
+  const file = path.join(root, 'doc', 'features', FEATURE, 'spec', 'ui-spec.yaml');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ schema_version: '1.0', screens, assets: [] }), 'utf-8');
+}
+
 function visualFrom(root: string, over: Partial<Parameters<typeof loadVisualScreenVerdicts>[0]> = {}) {
   return loadVisualScreenVerdicts({
     projectRoot: root,
     feature: FEATURE,
     currentBuildFingerprint: BUILD_FP,
-    visualGateStatus: 'PASS',
+    visualGate: { id: 'visual_diff', status: 'PASS', severity: 'MAJOR', structured: { kind: 'visual_diff' } },
     ...over,
   });
 }
@@ -168,6 +175,82 @@ test('正例走生产 loader：真实 feature 目录 + 合规 visual-diff.json �
   });
 });
 
+test('overlay checkpoint 复用 ui-spec canonical target：base id 绑定真实 capture id', () => {
+  withRoot(
+    () => makeFeatureRoot([{ screen_id: 'card_front__overlay__front_root' }, { screen_id: 'card_back' }]),
+    root => {
+      writeUiSpec(root, [
+        { id: 'card_front', priority: 'P0', root: { id: 'front_root', type: 'overlay_panel', order: 0 } },
+        { id: 'card_back', priority: 'P0', root: { id: 'back_root', type: 'navigation_frame', order: 0 } },
+      ]);
+      const visual = visualFrom(root);
+      const [binding] = bindChannelEvidence(input(root, { visual }));
+      assert.strictEqual(binding.verdict.kind, 'covered', binding.verdict.detail);
+      assert.ok(binding.verdict.detail.includes('card_front__overlay__front_root'), binding.verdict.detail);
+    },
+  );
+});
+
+test('overlay canonical 条目缺失仍 fail closed，不回退匹配 base id', () => {
+  withRoot(
+    () => makeFeatureRoot([{ screen_id: 'card_front' }, { screen_id: 'card_back' }]),
+    root => {
+      writeUiSpec(root, [
+        { id: 'card_front', priority: 'P0', root: { id: 'front_root', type: 'overlay_panel', order: 0 } },
+        { id: 'card_back', priority: 'P0', root: { id: 'back_root', type: 'navigation_frame', order: 0 } },
+      ]);
+      const [binding] = bindChannelEvidence(input(root, { visual: visualFrom(root) }));
+      assert.strictEqual(binding.verdict.kind, 'unbound');
+      assert.ok(binding.verdict.detail.includes('card_front__overlay__front_root'), binding.verdict.detail);
+    },
+  );
+});
+
+test('普通 page 的 child overlay 不替代 checkpoint base screen', () => {
+  withRoot(
+    () => makeFeatureRoot([{ screen_id: 'card_front' }, { screen_id: 'card_front__overlay__dialog' }, { screen_id: 'card_back' }]),
+    root => {
+      writeUiSpec(root, [
+        { id: 'card_front', priority: 'P0', root: { id: 'front_root', type: 'navigation_frame', order: 0, children: [{ id: 'dialog', type: 'dialog', order: 0 }] } },
+        { id: 'card_back', priority: 'P0', root: { id: 'back_root', type: 'navigation_frame', order: 0 } },
+      ]);
+      const visual = visualFrom(root);
+      visual.byScreen.get('card_front__overlay__dialog')!.usable = false;
+      visual.byScreen.get('card_front__overlay__dialog')!.reason = 'verdict=fail';
+      const [binding] = bindChannelEvidence(input(root, { visual }));
+      assert.strictEqual(binding.verdict.kind, 'covered', binding.verdict.detail);
+
+      visual.byScreen.get('card_front')!.usable = false;
+      visual.byScreen.get('card_front')!.reason = 'verdict=fail';
+      assert.strictEqual(bindChannelEvidence(input(root, { visual }))[0].verdict.kind, 'failed');
+    },
+  );
+});
+
+test('visual aggregate WARN 仅 producer 明示 advisory 时可消费；普通 WARN/缺证拒绝', () => {
+  const advisory = {
+    id: 'visual_diff', status: 'WARN', severity: 'MAJOR',
+    structured: { kind: 'visual_diff', channel_evidence_usable: true },
+  } as const;
+  assert.strictEqual(visualGateAllowsEvidence(advisory), true);
+  assert.strictEqual(visualGateAllowsEvidence({ ...advisory, structured: { kind: 'visual_diff', channel_evidence_usable: false } }), false);
+  assert.strictEqual(visualGateAllowsEvidence({ ...advisory, structured: undefined }), false);
+  assert.strictEqual(visualGateAllowsEvidence({ ...advisory, status: 'FAIL' }), false);
+  withRoot(healthyRoot, root => {
+    const visual = visualFrom(root, { visualGate: advisory });
+    assert.strictEqual(visual.available, true, visual.detail);
+    assert.strictEqual(bindChannelEvidence(input(root, { visual }))[0].verdict.kind, 'covered');
+  });
+});
+
+test('同 build/hash 的上一 attempt 结论可复用；身份不含 run/attempt', () => {
+  withRoot(healthyRoot, root => {
+    const visual = visualFrom(root);
+    assert.strictEqual(bindChannelEvidence(input(root, { visual }))[0].verdict.kind, 'covered');
+    assert.ok(!visual.detail.includes('attempt') && !visual.detail.includes('run_id'));
+  });
+});
+
 test('路径必须是 feature 目录：产物只放在 phase reports 目录时不得被采信', () => {
   withRoot(healthyRoot, root => {
     // 把权威产物挪走，改放到**曾经写错的那条路径**下。
@@ -188,7 +271,11 @@ test('路径必须是 feature 目录：产物只放在 phase reports 目录时�
 test('证据义务不得早于 visual 门：本轮 visual 未 PASS 时无证据可消费', () => {
   withRoot(healthyRoot, root => {
     for (const status of [null, 'FAIL', 'SKIP', 'PENDING']) {
-      const visual = visualFrom(root, { visualGateStatus: status });
+      const visual = visualFrom(root, {
+        visualGate: status
+          ? { id: 'visual_diff', status: status as 'FAIL' | 'SKIP', severity: 'MAJOR', structured: { kind: 'visual_diff' } }
+          : null,
+      });
       assert.strictEqual(visual.available, false, `status=${status}`);
       assert.ok(visual.detail.includes('visual_diff 门未通过'), visual.detail);
       const [binding] = bindChannelEvidence(input(root, { visual }));

@@ -25,6 +25,7 @@ import { loadEventsJsonlStrict, type GoalRunEvent } from './goal-runner-phase';
 import { featureFilePath } from '../../config';
 import type { ExecutionScope } from './execution-scope';
 import { executionScopeFingerprint } from './execution-scope';
+import { loadReviewClosureAttestation } from './closure-attestation';
 
 /**
  * D2: a legal revision of a frozen scope, appended to the SAME run's events.jsonl.
@@ -324,6 +325,211 @@ export function resolveGoalRunHeadSha(projectRoot: string): string {
   return value;
 }
 
+export interface FreshRunContinuationInput {
+  projectRoot: string;
+  manifest: Pick<GoalManifest, 'feature' | 'run_id' | 'report_dir' | 'requirement' | 'requirement_source_files' | 'successor_of'>;
+  forceFresh?: boolean;
+}
+
+export interface FreshRunContinuationDecision {
+  allowed: boolean;
+  overrideUsed: boolean;
+  priorRunId?: string;
+  reason: string;
+}
+
+const CONTINUATION_REQUIRED_HALTS = new Set([
+  'content_retry_exhausted', 'framework_bug', 'repair_not_converging',
+  'backtrack_fingerprint_repeat', 'no_progress_guard', 'no_progress_visual_gap', 'no_progress_fuse',
+]);
+
+interface SiblingRun {
+  runId: string;
+  runDir: string;
+  ts: number;
+  status: string;
+  haltReason: string;
+  manifest: GoalManifest;
+  events: GoalRunEvent[];
+}
+
+function normalizeRelatedPath(projectRoot: string, value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const rel = value.trim().replace(/\\/g, '/').replace(/^\.\//, '');
+  if (path.isAbsolute(rel) || rel === '..' || rel.startsWith('../')) return null;
+  const abs = path.resolve(projectRoot, rel);
+  const root = path.resolve(projectRoot);
+  if (abs !== root && !abs.startsWith(`${root}${path.sep}`)) return null;
+  return rel;
+}
+
+function currentFileHash(projectRoot: string, rel: string): string | null {
+  try {
+    const abs = path.join(projectRoot, rel);
+    if (!fs.statSync(abs).isFile()) return null;
+    return crypto.createHash('sha256').update(fs.readFileSync(abs)).digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+/** Prove a repair with existing terminal summary + an already-recorded source hash. */
+function findChangedRelatedRepair(projectRoot: string, prior: SiblingRun): string | null {
+  const lastVerdict = [...prior.events].reverse().find(event =>
+    event.type === 'phase_verdict' && typeof event.phase === 'string',
+  );
+  const phase = typeof lastVerdict?.phase === 'string' ? lastVerdict.phase : null;
+  if (!phase) return null;
+  let summary: {
+    repair_candidates?: Array<{ files?: unknown }>;
+    blockers?: Array<{ affected_files?: unknown }>;
+  };
+  try {
+    summary = JSON.parse(fs.readFileSync(path.join(prior.runDir, 'phases', phase, 'harness', 'summary.json'), 'utf8'));
+  } catch {
+    return null;
+  }
+  const related = new Set<string>();
+  for (const candidate of summary.repair_candidates ?? []) {
+    if (!Array.isArray(candidate.files)) continue;
+    for (const file of candidate.files) {
+      const rel = normalizeRelatedPath(projectRoot, file);
+      if (rel) related.add(rel);
+    }
+  }
+  for (const blocker of summary.blockers ?? []) {
+    if (!Array.isArray(blocker.affected_files)) continue;
+    for (const file of blocker.affected_files) {
+      const rel = normalizeRelatedPath(projectRoot, file);
+      if (rel) related.add(rel);
+    }
+  }
+  if (!related.size) return null;
+
+  const baseline = new Map<string, string | null>();
+  const attestation = loadReviewClosureAttestation(projectRoot, prior.manifest.feature);
+  for (const entry of attestation?.inventory.files ?? []) {
+    const rel = normalizeRelatedPath(projectRoot, entry.path);
+    if (rel && related.has(rel) && /^[0-9a-f]{64}$/i.test(entry.sha256)) baseline.set(rel, entry.sha256.toLowerCase());
+  }
+  for (const event of prior.events) {
+    if (event.type !== 'phase_write_observed') continue;
+    const observations = (event as GoalRunEvent & { observations?: unknown }).observations;
+    if (!Array.isArray(observations)) continue;
+    for (const raw of observations) {
+      if (!raw || typeof raw !== 'object') continue;
+      const observation = raw as { path?: unknown; post_sha256?: unknown };
+      const rel = normalizeRelatedPath(projectRoot, observation.path);
+      if (!rel || !related.has(rel)) continue;
+      if (observation.post_sha256 === null) baseline.set(rel, null);
+      else if (typeof observation.post_sha256 === 'string' && /^[0-9a-f]{64}$/i.test(observation.post_sha256)) {
+        baseline.set(rel, observation.post_sha256.toLowerCase());
+      }
+    }
+  }
+  for (const rel of [...related].sort()) {
+    if (baseline.has(rel) && currentFileHash(projectRoot, rel) !== baseline.get(rel)) return rel;
+  }
+  return null;
+}
+
+function normalizeSourcePath(projectRoot: string, source: string): string | null {
+  const root = path.resolve(projectRoot);
+  const abs = path.resolve(root, source);
+  if (abs !== root && !abs.startsWith(`${root}${path.sep}`)) return null;
+  return path.relative(root, abs).replace(/\\/g, '/').toLowerCase();
+}
+
+function requirementIsBoundToChangedSource(
+  projectRoot: string,
+  manifest: FreshRunContinuationInput['manifest'],
+  prior: GoalManifest,
+): boolean {
+  const requirement = manifest.requirement?.trim();
+  if (!requirement || requirement === prior.requirement?.trim() || !manifest.requirement_source_files?.length) return false;
+  const priorSources = new Set((prior.requirement_source_files ?? [])
+    .map(source => normalizeSourcePath(projectRoot, source))
+    .filter((source): source is string => source !== null));
+  return manifest.requirement_source_files.some(source => {
+    try {
+      const normalized = normalizeSourcePath(projectRoot, source);
+      if (!normalized || !priorSources.has(normalized)) return false;
+      const abs = path.isAbsolute(source) ? source : path.join(projectRoot, source);
+      return fs.readFileSync(abs, 'utf8').trim() === requirement;
+    } catch {
+      return false;
+    }
+  });
+}
+
+/** Read-only birth guard shared by foreground, detach parent and attended prepare-run. */
+export function evaluateFreshRunContinuation(input: FreshRunContinuationInput): FreshRunContinuationDecision {
+  if (input.manifest.successor_of) return { allowed: true, overrideUsed: false, reason: 'audited successor lineage' };
+  const runsDir = path.dirname(path.join(input.projectRoot, input.manifest.report_dir));
+  if (!fs.existsSync(runsDir)) return { allowed: true, overrideUsed: false, reason: 'no prior run' };
+  const siblings: SiblingRun[] = [];
+  for (const entry of fs.readdirSync(runsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name.startsWith('.') || entry.name === input.manifest.run_id) continue;
+    const runDir = path.join(runsDir, entry.name);
+    const manifestPath = path.join(runDir, 'manifest.json');
+    const eventsPath = path.join(runDir, 'events.jsonl');
+    if (!fs.existsSync(manifestPath)) continue;
+    const creation = inspectGoalRunCreationFiles(manifestPath, eventsPath);
+    if (creation.state !== 'complete' && creation.state !== 'legacy') continue;
+    const loaded = loadEventsJsonlStrict(eventsPath);
+    if (loaded.missing || loaded.corruptLines.length > 0) continue;
+    const end = [...loaded.events].reverse().find(event => event.type === 'run_end') as { status?: unknown; halt_reason?: unknown; ts?: unknown } | undefined;
+    const status = typeof end?.status === 'string' ? end.status : '';
+    const haltReason = typeof end?.halt_reason === 'string' ? end.halt_reason : '';
+    try {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as GoalManifest;
+      const ts = typeof end?.ts === 'string' && Number.isFinite(Date.parse(end.ts)) ? Date.parse(end.ts) : 0;
+      siblings.push({ runId: entry.name, runDir, ts, status, haltReason, manifest, events: loaded.events });
+    } catch { /* malformed prior run is handled by existing integrity gates */ }
+  }
+  const terminalStatuses = new Set(['HALTED', 'COMPLETED', 'CHAIN_SLICE_COMPLETED']);
+  const superseded = new Set<string>();
+  for (const sibling of siblings) {
+    const target = sibling.manifest.successor_of;
+    if (!target || !terminalStatuses.has(sibling.status)) continue;
+    const audited = sibling.events.some(event => event.type === 'supersede' &&
+      (event as GoalRunEvent & { target_run_id?: unknown; superseding_run_id?: unknown }).target_run_id === target &&
+      (event as GoalRunEvent & { target_run_id?: unknown; superseding_run_id?: unknown }).superseding_run_id === sibling.runId);
+    if (audited) superseded.add(target);
+  }
+  const latestCompletedTs = siblings
+    .filter(sibling => sibling.status === 'COMPLETED' || sibling.status === 'CHAIN_SLICE_COMPLETED')
+    .reduce((latest, sibling) => Math.max(latest, sibling.ts), -1);
+  const candidates = siblings.filter(sibling =>
+    sibling.status === 'HALTED' && CONTINUATION_REQUIRED_HALTS.has(sibling.haltReason) &&
+    !superseded.has(sibling.runId) && sibling.ts >= latestCompletedTs,
+  );
+  candidates.sort((a, b) => b.ts - a.ts || b.runId.localeCompare(a.runId));
+  const prior = candidates[0];
+  if (!prior) return { allowed: true, overrideUsed: false, reason: 'no failed terminal run' };
+
+  const requirementChanged = input.manifest.requirement?.trim() !== prior.manifest.requirement?.trim();
+  if (requirementChanged && requirementIsBoundToChangedSource(input.projectRoot, input.manifest, prior.manifest)) {
+    return { allowed: true, overrideUsed: false, priorRunId: prior.runId, reason: 'bound requirement source changed' };
+  }
+  const changedRepair = findChangedRelatedRepair(input.projectRoot, prior);
+  if (changedRepair) {
+    return { allowed: true, overrideUsed: false, priorRunId: prior.runId, reason: `related repair changed: ${changedRepair}` };
+  }
+  if (input.forceFresh) {
+    return { allowed: true, overrideUsed: true, priorRunId: prior.runId, reason: 'operator --force override' };
+  }
+  return {
+    allowed: false,
+    overrideUsed: false,
+    priorRunId: prior.runId,
+    reason:
+      `feature 已有失败终态 run ${prior.runId}（${prior.status}/${prior.haltReason}），且没有机器可证的新 requirement source 或相关修复。` +
+      `请按原 run 允许的恢复路径处理：可恢复时 --resume ${prior.runId}；` +
+      '结构终态使用既有 --supersede 创建 successor；确认放弃旧结论才使用 --force。request_impact、HEAD、notes 或改写 CLI 散文均不构成新事实。',
+  };
+}
+
 function chainRequiresRunBase(chain: readonly string[]): boolean {
   return chain.some(phase => phase === 'coding' || phase === 'ut');
 }
@@ -371,6 +577,7 @@ export function createGoalRun(options: {
   rebaselineFromRunId?: string;
   /** Tests only: deterministic HEAD resolver. */
   resolveHead?: () => string;
+  forceFresh?: boolean;
 }): GoalRunCreationResult {
   const manifestPath = path.join(options.projectRoot, options.manifest.report_dir, 'manifest.json');
   const eventsPath = path.join(options.projectRoot, options.manifest.report_dir, 'events.jsonl');
@@ -380,6 +587,13 @@ export function createGoalRun(options: {
   if (fs.existsSync(eventsPath) && fs.readFileSync(eventsPath, 'utf8').trim()) {
     throw new Error(`[goal-run-creation] fresh run events 已存在：${eventsPath}`);
   }
+
+  const continuation = evaluateFreshRunContinuation({
+    projectRoot: options.projectRoot,
+    manifest: options.manifest,
+    forceFresh: options.forceFresh,
+  });
+  if (!continuation.allowed) throw new Error(`[goal-run-creation] fresh run refused: ${continuation.reason}`);
 
   const phaseChain = normalizeGoalPhaseChain(options.chain, 'resolved phase chain');
   if (options.manifest.execution_scope && JSON.stringify(validateExecutionScope(options.manifest.execution_scope).phase_chain) !== JSON.stringify(phaseChain)) throw new Error('[goal-run-creation] scope/chain mismatch');
@@ -431,6 +645,16 @@ export function createGoalRun(options: {
 
   writeGoalManifest(options.manifest, options.projectRoot);
   fs.appendFileSync(eventsPath, `${JSON.stringify(event)}\n`, 'utf8');
+  if (continuation.overrideUsed) {
+    fs.appendFileSync(eventsPath, `${JSON.stringify({
+      ts: new Date().toISOString(),
+      type: 'fresh_run_override',
+      source: '--force',
+      prior_run_id: continuation.priorRunId ?? null,
+      verified_grant: false,
+      reason: 'operator override declaration; not a verified authority grant',
+    })}\n`, 'utf8');
+  }
   return { manifestPath, eventsPath, runCreated: event };
 }
 

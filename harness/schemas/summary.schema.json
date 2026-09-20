@@ -295,7 +295,7 @@
         "loop_id": { "type": "string", "minLength": 1 },
         "attempt": { "type": "string" },
         "row_hash": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
-        "disposition": { "type": "string", "enum": ["appended", "duplicate", "append_failed"] },
+        "disposition": { "type": "string", "enum": ["appended", "duplicate", "append_failed", "journaled"] },
         "decision": {
           "type": "object",
           "additionalProperties": false,
@@ -365,7 +365,7 @@
         },
         "actionability": {
           "type": "string",
-          "enum": ["agent_fixable", "human_only", "toolchain_blocked"],
+          "enum": ["agent_fixable", "human_only", "toolchain_blocked", "framework_blocked"],
           "description": "注册表解析后的可修性：toolchain_blocked 投影 await_operator_toolchain；legacy human_only 不再产生人签放行或 await_human_gate_deferral。回喂过滤与 no-progress 签名剔除共同消费。"
         },
         "operator_note": {

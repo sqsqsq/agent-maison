@@ -143,6 +143,7 @@ import {
   assertGoalRunAttachable,
   buildSupersedeAuditEvent,
   createGoalRun,
+  evaluateFreshRunContinuation,
   loadEffectiveExecutionScope,
   applyScopeRevisions,
   eventsWithScopeRevocations,
@@ -417,6 +418,7 @@ import {
   classifyTimedOutWithFreshBlockers,
   resolveBlockerActionability,
   extractDeterministicAffectedFiles,
+  extractContentRelatedFiles,
   extractIntegritySubtypes,
   stripRetiredFrameworkIntegrityForCurrentRun,
   isOperatorInterruptSignal,
@@ -1027,6 +1029,7 @@ export function extractPriorFailureContext(summary: SummaryJson): string {
   // post-impl review P2#8：严格 === 'agent_fixable'——toolchain_blocked 回喂只会诱导
   // agent「修环境」（它修不了）；toolchain 走 operator 队列单列。
   const toolchainParked = all.filter(b => resolveBlockerActionability(b) === 'toolchain_blocked');
+  const frameworkParked = all.filter(b => resolveBlockerActionability(b) === 'framework_blocked');
   const feedable = all.filter(b => resolveBlockerActionability(b) === 'agent_fixable').slice(0, 4);
   const lines: string[] = [];
   for (const b of feedable) {
@@ -1053,6 +1056,12 @@ export function extractPriorFailureContext(summary: SummaryJson): string {
     lines.push(
       `- (parked, environment/toolchain — do NOT attempt) ${toolchainParked.map(b => b.id ?? '?').join(', ')}: ` +
       'these are environment failures queued for the operator; do not modify product code or artifacts to work around them.',
+    );
+  }
+  if (frameworkParked.length > 0) {
+    lines.push(
+      `- (parked, framework — do NOT attempt) ${frameworkParked.map(b => b.id ?? '?').join(', ')}: ` +
+      'framework implementation failed; product/artifact edits cannot repair it. Preserve the failure for source-framework repair.',
     );
   }
   if (lines.length === 0) {
@@ -4179,6 +4188,13 @@ export async function waitForDetachedStartup(input: {
   return { state: 'failed', detail: `child exited during startup confirmation${logTail() ? `: ${logTail()}` : ''}` };
 }
 
+function normalizeSupersedeTargets(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : value === undefined ? [] : [value];
+  return values
+    .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    .map(item => item.trim());
+}
+
 async function runDetachLauncher(argv: minimist.ParsedArgs): Promise<number> {
   const layout = detectRepoLayout(__dirname);
   const projectRoot = layout.projectRoot;
@@ -4197,17 +4213,42 @@ async function runDetachLauncher(argv: minimist.ParsedArgs): Promise<number> {
   }
   const feature = raw.feature;
   const isResume = raw.isResume;
+  const runId = raw.runId ?? newRunId();
+  const reportDirRel = resolveGoalReportDir({ featuresDir, feature, runId, dryRun: raw.dryRun });
+  const supersedeTargets = normalizeSupersedeTargets(argv.supersede);
 
   // Same orphan guard as the foreground path — refuse a stillborn new run_id when an
   // orphaned-but-incomplete run exists (so --detach doesn't print run_id then die).
   // dry-run 隔离命名空间，不受真实 run 孤儿阻挡。
   if (!isResume && !raw.dryRun) {
     guardOrphanedFeatureRun(projectRoot, featuresDir, feature, Boolean(argv.force));
+    try {
+      const requirement = resolveRequirementInput({
+        requirement: argv.requirement,
+        requirementFile: argv['requirement-file'],
+        projectRoot,
+      });
+      const continuation = evaluateFreshRunContinuation({
+        projectRoot,
+        manifest: {
+          feature,
+          run_id: runId,
+          report_dir: reportDirRel,
+          requirement: requirement.text,
+          ...(requirement.sources.length > 0 ? { requirement_source_files: requirement.sources } : {}),
+          ...(supersedeTargets[0] ? { successor_of: supersedeTargets[0] } : {}),
+        },
+        forceFresh: Boolean(argv.force),
+      });
+      if (!continuation.allowed) {
+        console.error(`[goal-runner] BLOCKER: ${continuation.reason}`);
+        return 1;
+      }
+    } catch (error) {
+      console.error(`[goal-runner] BLOCKER: ${(error as Error).message}`);
+      return 1;
+    }
   }
-
-  const runId = raw.runId ?? newRunId();
-
-  const reportDirRel = resolveGoalReportDir({ featuresDir, feature, runId, dryRun: raw.dryRun });
   const reportDirAbs = path.join(projectRoot, ...reportDirRel.split('/'));
   fs.mkdirSync(reportDirAbs, { recursive: true });
   const logPathAbs = path.join(reportDirAbs, 'detach.log');
@@ -4638,12 +4679,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
   }
 
   if (argv.resume || attachCreatedRunId) workflow = workflowForExistingRun(workflow, manifest, frameworkRoot);
-  const requestedSupersedeTargets =
-    Array.isArray(argv.supersede)
-      ? argv.supersede.filter((value): value is string => typeof value === 'string')
-      : typeof argv.supersede === 'string'
-        ? [argv.supersede]
-        : [];
+  const requestedSupersedeTargets = normalizeSupersedeTargets(argv.supersede);
   const requestedExecutionScope = !argv.resume && !attachCreatedRunId && !requestedSupersedeTargets.length
     // D1.3：出生范围 = 转交时 feature 的**有效**范围（有冻结记录时不重算候选）——
     // 与 `--prepare-run` 入口**同一个** `resolveBirthExecutionScope`，不是第三条路径。
@@ -5026,6 +5062,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
   // dry-run 隔离命名空间不受真实 run 孤儿阻挡（T1b）。
   if (!argv.resume && !attachCreatedRunId && !dryRun) {
     guardOrphanedFeatureRun(projectRoot, featuresDir, manifest.feature, Boolean(argv.force));
+    const continuation = evaluateFreshRunContinuation({
+      projectRoot,
+      manifest,
+      forceFresh: Boolean(argv.force),
+    });
+    if (!continuation.allowed) {
+      console.error(`[goal-runner] BLOCKER: ${continuation.reason}`);
+      return 1;
+    }
   }
 
   acquireGoalLocks(projectRoot, featuresDir, manifest.feature, {
@@ -5060,6 +5105,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       manifest,
       chain: actualBirthChain,
       ...(rebaselineRequest ? { rebaselineFromRunId: rebaselineRequest.sourceRunId } : {}),
+      forceFresh: Boolean(argv.force),
     });
     // D1.3 转交登记：createGoalRun 成功之后立刻写，理由同 `--prepare-run` 入口
     //（出生未完成时 feature 侧不得留下指向不存在 run 的指针）。
@@ -8537,6 +8583,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const integritySubtypes =
           baseFailureKind === 'framework_integrity_block' ? extractIntegritySubtypes(decisionSummary) : [];
         const affectedFiles = extractDeterministicAffectedFiles(decisionSummary);
+        const contentRelatedFiles = extractContentRelatedFiles(decisionSummary);
         // P0-B：agent_timeout 无 deterministic affected_files 时监控 phase 主产物
         // （spec.md 等 + context-exploration.md）——产物内容变化=有进展，guard 放行续作。
         const watchedFiles =
@@ -8544,7 +8591,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
             ? affectedFiles
             : baseFailureKind === 'agent_timeout'
               ? timeoutWatchArtifactPaths(projectRoot, manifest.feature, phase)
-              : [];
+              : baseFailureKind === 'code_regression'
+                ? contentRelatedFiles
+                : [];
         const currentArtifactSnapshot =
           watchedFiles.length > 0 ? snapshotArtifacts(projectRoot, watchedFiles) : {};
 
@@ -8898,6 +8947,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             currentBlockerSignature,
             priorArtifactSnapshot,
             currentArtifactSnapshot,
+            relevantEvidenceKnown: failureKind === 'code_regression' && contentRelatedFiles.length > 0,
           })
         ) {
           driverGuardAction = 'halt';
@@ -9174,6 +9224,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           blockers: (decisionSummary?.blockers ?? []).map((blocker) => ({
             id: String((blocker as { id?: string }).id ?? 'unknown'),
             blocking_class: (blocker as { blocking_class?: string }).blocking_class,
+            classification: (blocker as { classification?: string }).classification,
+            actionability: (blocker as { actionability?: import('./utils/goal-failure-classifier').BlockerActionability }).actionability,
           })),
           deterministicDefects: driverActionableDefects.map((defect) => defect.fingerprint),
           retriesUsed: retries,

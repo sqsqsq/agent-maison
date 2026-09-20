@@ -591,7 +591,7 @@ export interface CheckResult {
   blocking_class?: string;
   /** P0-4（plan 7c4f2e9b）：显式 actionability（agent_fixable/human_only/toolchain_blocked）——
    * 缺省走 goal-failure-classifier 注册表映射（优先级链：显式→映射→缺省 agent_fixable）。 */
-  actionability?: 'agent_fixable' | 'human_only' | 'toolchain_blocked';
+  actionability?: 'agent_fixable' | 'human_only' | 'toolchain_blocked' | 'framework_blocked';
   /** P1-7（plan 7c4f2e9b）：operator/人类专用补充说明（framework 内部机制话术落此）——
    * goal-report 渲染，**不进 agent 重试 prompt 失败回喂块**。 */
   operator_note?: string;

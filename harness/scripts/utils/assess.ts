@@ -81,7 +81,7 @@ export interface ReconcileObservationV1 {
   };
   blockers?: Array<{
     id: string;
-    actionability: 'automatic' | 'human' | 'external' | 'unknown';
+    actionability: 'automatic' | 'human' | 'external' | 'framework' | 'unknown';
     blocking_class?: string;
   }>;
   deterministic_defects?: string[];

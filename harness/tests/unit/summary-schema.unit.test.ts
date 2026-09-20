@@ -222,6 +222,22 @@ function testSchemaV12ClosureFields(): void {
   assert(!serialized.includes('closure_commit'), 'open summary 不应强制 closure_commit');
 }
 
+function testVisualRoundJournaledDisposition(): void {
+  const schema = loadSchema();
+  const defs = schema.$defs as Record<string, Record<string, unknown>>;
+  const visualRound = defs.visual_round;
+  const properties = visualRound.properties as Record<string, { enum?: string[] }>;
+  assert(properties.disposition.enum?.includes('journaled') === true, 'visual_round.disposition 须接受 runner 真实产出的 journaled');
+}
+
+function testFrameworkBlockedActionability(): void {
+  const schema = loadSchema();
+  const defs = schema.$defs as Record<string, Record<string, unknown>>;
+  const blocker = defs.blocker;
+  const properties = blocker.properties as Record<string, { enum?: string[] }>;
+  assert(properties.actionability.enum?.includes('framework_blocked') === true, 'blocker.actionability 须表达 framework_blocked');
+}
+
 function runCase(name: string, fn: () => void): UnitCaseResult {
   try {
     fn();
@@ -240,5 +256,7 @@ export function runAll(): UnitCaseResult[] {
     runCase('summary schema: 缺少 next_action 会被拒绝', testInvalidSampleRejectedByUnitGuard),
     runCase('summary schema: soft_advisories 可选且形状合法', testSchemaAllowsSoftAdvisories),
     runCase('summary schema: 1.2 assurance 与 closure_commit 条件稳定', testSchemaV12ClosureFields),
+    runCase('summary schema: visual_round 接受 journaled', testVisualRoundJournaledDisposition),
+    runCase('summary schema: blocker actionability 接受 framework_blocked', testFrameworkBlockedActionability),
   ];
 }

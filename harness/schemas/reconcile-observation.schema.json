@@ -41,7 +41,7 @@
         "required": ["id", "actionability"],
         "properties": {
           "id": { "type": "string" },
-          "actionability": { "enum": ["automatic", "human", "external", "unknown"] },
+          "actionability": { "enum": ["automatic", "human", "external", "framework", "unknown"] },
           "blocking_class": { "type": "string" }
         }
       }

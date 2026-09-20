@@ -1,4 +1,5 @@
 import assert from 'assert';
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -358,6 +359,180 @@ const cases: Array<{ name: string; run: () => void }> = [
           const source = fs.readFileSync(path.resolve(__dirname, '../../..', rel), 'utf8');
           assert(!source.includes('--rebaseline-to'), `${rel} must never construct --rebaseline-to`);
         }
+      } finally { fs.rmSync(old.root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: 'fresh continuation guard: same/rewritten inline request cannot erase failed terminal; --force audits override',
+    run: () => {
+      const old = fixture('plan');
+      try {
+        old.manifest.requirement = '完成开卡需求';
+        const oldCreation = createGoalRun({ projectRoot: old.root, manifest: old.manifest, chain: ['plan'] });
+        fs.appendFileSync(oldCreation.eventsPath, `${JSON.stringify({
+          ts: '2026-09-20T10:00:00.000Z', type: 'run_end', status: 'HALTED', halt_reason: 'content_retry_exhausted',
+        })}\n`, 'utf8');
+        const next = buildGoalManifestFromInput({
+          feature: 'demo', run_id: `${old.manifest.run_id}-fresh`, start_phase: 'plan', end_phase: 'plan',
+          requirement: '完成开卡需求（已有代码与截图）', unattended,
+        }, { projectRoot: old.root });
+        assert.throws(
+          () => createGoalRun({ projectRoot: old.root, manifest: next, chain: ['plan'] }),
+          /fresh run refused.*可恢复时 --resume.*结构终态使用既有 --supersede.*request_impact、HEAD、notes 或改写 CLI 散文均不构成新事实/,
+        );
+        assert(!fs.existsSync(path.join(old.root, next.report_dir, 'manifest.json')), '拒绝必须发生在出生写盘前');
+
+        const forced = buildGoalManifestFromInput({
+          feature: 'demo', run_id: `${old.manifest.run_id}-forced`, start_phase: 'plan', end_phase: 'plan',
+          requirement: '完成开卡需求', unattended,
+        }, { projectRoot: old.root });
+        const forcedCreation = createGoalRun({ projectRoot: old.root, manifest: forced, chain: ['plan'], forceFresh: true });
+        const events = fs.readFileSync(forcedCreation.eventsPath, 'utf8').trim().split(/\r?\n/).map(line => JSON.parse(line));
+        assert.deepStrictEqual(events.map(event => event.type), ['run_created', 'fresh_run_override']);
+        assert.strictEqual(events[1].source, '--force');
+        assert.strictEqual(events[1].verified_grant, false);
+      } finally { fs.rmSync(old.root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: 'fresh continuation guard: bound requirement source content change is a real new fact',
+    run: () => {
+      const old = fixture('plan');
+      try {
+        const sourceRel = 'requirements/task.md';
+        fs.mkdirSync(path.join(old.root, 'requirements'), { recursive: true });
+        fs.writeFileSync(path.join(old.root, sourceRel), '旧需求', 'utf8');
+        old.manifest.requirement = '旧需求';
+        old.manifest.requirement_source_files = [sourceRel];
+        const oldCreation = createGoalRun({ projectRoot: old.root, manifest: old.manifest, chain: ['plan'] });
+        fs.appendFileSync(oldCreation.eventsPath, `${JSON.stringify({
+          ts: '2026-09-20T10:00:00.000Z', type: 'run_end', status: 'HALTED', halt_reason: 'framework_bug',
+        })}\n`, 'utf8');
+        const newSourceRel = 'requirements/task2.md';
+        fs.writeFileSync(path.join(old.root, newSourceRel), '新需求', 'utf8');
+        const unbound = buildGoalManifestFromInput({
+          feature: 'demo', run_id: `${old.manifest.run_id}-unbound-source`, start_phase: 'plan', end_phase: 'plan',
+          requirement: '新需求', requirement_source_files: [newSourceRel], unattended,
+        }, { projectRoot: old.root });
+        assert.throws(
+          () => createGoalRun({ projectRoot: old.root, manifest: unbound, chain: ['plan'] }),
+          /fresh run refused/,
+          '新增未与 prior 绑定的 source 不能把 CLI 散文变成机器新事实',
+        );
+        fs.writeFileSync(path.join(old.root, sourceRel), '新需求', 'utf8');
+        const next = buildGoalManifestFromInput({
+          feature: 'demo', run_id: `${old.manifest.run_id}-new-source`, start_phase: 'plan', end_phase: 'plan',
+          requirement: '新需求', requirement_source_files: [`requirements/./task.md`], unattended,
+        }, { projectRoot: old.root });
+        createGoalRun({ projectRoot: old.root, manifest: next, chain: ['plan'] });
+        assert(fs.existsSync(path.join(old.root, next.report_dir, 'manifest.json')));
+      } finally { fs.rmSync(old.root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: 'fresh continuation guard: authoritative terminal successor replaces its halted ancestor',
+    run: () => {
+      const old = fixture('plan');
+      try {
+        old.manifest.requirement = '完成开卡需求';
+        const oldCreation = createGoalRun({ projectRoot: old.root, manifest: old.manifest, chain: ['plan'] });
+        fs.appendFileSync(oldCreation.eventsPath, `${JSON.stringify({
+          ts: '2026-09-20T10:00:00.000Z', type: 'run_end', status: 'HALTED', halt_reason: 'framework_bug',
+        })}\n`, 'utf8');
+        const successor = buildGoalManifestFromInput({
+          feature: 'demo', run_id: `${old.manifest.run_id}-successor-done`, start_phase: 'plan', end_phase: 'plan',
+          requirement: old.manifest.requirement, unattended,
+        }, { projectRoot: old.root });
+        successor.successor_of = old.manifest.run_id;
+        const successorCreation = createGoalRun({ projectRoot: old.root, manifest: successor, chain: ['plan'] });
+        const premature = buildGoalManifestFromInput({
+          feature: 'demo', run_id: `${old.manifest.run_id}-before-successor-terminal`, start_phase: 'plan', end_phase: 'plan', unattended,
+        }, { projectRoot: old.root });
+        assert.throws(
+          () => createGoalRun({ projectRoot: old.root, manifest: premature, chain: ['plan'] }),
+          new RegExp(`fresh run refused:.*${old.manifest.run_id}.*framework_bug`),
+          '只有 successor manifest/run_created、尚无终态审计时不得覆盖祖先失败',
+        );
+        fs.appendFileSync(successorCreation.eventsPath, `${JSON.stringify(buildSupersedeAuditEvent({
+          targetRunId: old.manifest.run_id, supersedingRunId: successor.run_id,
+        }))}\n${JSON.stringify({
+          ts: '2026-09-20T11:00:00.000Z', type: 'run_end', status: 'CHAIN_SLICE_COMPLETED',
+        })}\n`, 'utf8');
+        const fresh = buildGoalManifestFromInput({
+          feature: 'demo', run_id: `${old.manifest.run_id}-after-done`, start_phase: 'plan', end_phase: 'plan',
+          requirement: old.manifest.requirement, unattended,
+        }, { projectRoot: old.root });
+        createGoalRun({ projectRoot: old.root, manifest: fresh, chain: ['plan'] });
+        assert(fs.existsSync(path.join(old.root, fresh.report_dir, 'manifest.json')));
+      } finally { fs.rmSync(old.root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: 'fresh continuation guard: a failed terminal successor is judged instead of its ancestor',
+    run: () => {
+      const old = fixture('plan');
+      try {
+        const oldCreation = createGoalRun({ projectRoot: old.root, manifest: old.manifest, chain: ['plan'] });
+        fs.appendFileSync(oldCreation.eventsPath, `${JSON.stringify({
+          ts: '2026-09-20T10:00:00.000Z', type: 'run_end', status: 'HALTED', halt_reason: 'framework_bug',
+        })}\n`, 'utf8');
+        const successor = buildGoalManifestFromInput({
+          feature: 'demo', run_id: `${old.manifest.run_id}-successor-failed`, start_phase: 'plan', end_phase: 'plan', unattended,
+        }, { projectRoot: old.root });
+        successor.successor_of = old.manifest.run_id;
+        const successorCreation = createGoalRun({ projectRoot: old.root, manifest: successor, chain: ['plan'] });
+        fs.appendFileSync(successorCreation.eventsPath, `${JSON.stringify(buildSupersedeAuditEvent({
+          targetRunId: old.manifest.run_id, supersedingRunId: successor.run_id,
+        }))}\n${JSON.stringify({
+          ts: '2026-09-20T11:00:00.000Z', type: 'run_end', status: 'HALTED', halt_reason: 'no_progress_fuse',
+        })}\n`, 'utf8');
+        const fresh = buildGoalManifestFromInput({
+          feature: 'demo', run_id: `${old.manifest.run_id}-after-failed`, start_phase: 'plan', end_phase: 'plan', unattended,
+        }, { projectRoot: old.root });
+        assert.throws(
+          () => createGoalRun({ projectRoot: old.root, manifest: fresh, chain: ['plan'] }),
+          new RegExp(`fresh run refused:.*${successor.run_id}.*no_progress_fuse`),
+        );
+      } finally { fs.rmSync(old.root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: 'fresh continuation guard: only a hash-proven prior repair file change is a new fact',
+    run: () => {
+      const old = fixture('testing');
+      try {
+        old.manifest.requirement = '完成开卡需求';
+        const sourceRel = 'entry/src/main/ets/OpenCard.ets';
+        const sourceAbs = path.join(old.root, sourceRel);
+        fs.mkdirSync(path.dirname(sourceAbs), { recursive: true });
+        fs.writeFileSync(sourceAbs, 'old implementation', 'utf8');
+        const oldHash = crypto.createHash('sha256').update(fs.readFileSync(sourceAbs)).digest('hex');
+        const oldCreation = createGoalRun({ projectRoot: old.root, manifest: old.manifest, chain: ['testing'] });
+        const summaryPath = path.join(old.root, old.manifest.report_dir, 'phases/testing/harness/summary.json');
+        fs.mkdirSync(path.dirname(summaryPath), { recursive: true });
+        fs.writeFileSync(summaryPath, JSON.stringify({
+          verdict: 'FAIL', repair_candidates: [{ id: 'visual_fix', files: [sourceRel] }],
+        }), 'utf8');
+        for (const event of [
+          { ts: '2026-09-20T09:59:00.000Z', type: 'phase_write_observed', phase: 'testing', observations: [{ path: sourceRel, post_sha256: oldHash }] },
+          { ts: '2026-09-20T09:59:30.000Z', type: 'phase_verdict', phase: 'testing', verdict: 'FAIL', action: 'halt' },
+          { ts: '2026-09-20T10:00:00.000Z', type: 'run_end', status: 'HALTED', halt_reason: 'content_retry_exhausted' },
+        ]) fs.appendFileSync(oldCreation.eventsPath, `${JSON.stringify(event)}\n`, 'utf8');
+
+        fs.writeFileSync(path.join(old.root, 'notes.md'), 'agent rewrote notes', 'utf8');
+        const unrelated = buildGoalManifestFromInput({
+          feature: 'demo', run_id: `${old.manifest.run_id}-notes`, start_phase: 'testing', end_phase: 'testing',
+          requirement: old.manifest.requirement, unattended,
+        }, { projectRoot: old.root });
+        assert.throws(() => createGoalRun({ projectRoot: old.root, manifest: unrelated, chain: ['testing'] }), /fresh run refused/);
+
+        fs.writeFileSync(sourceAbs, 'fixed implementation', 'utf8');
+        const repaired = buildGoalManifestFromInput({
+          feature: 'demo', run_id: `${old.manifest.run_id}-repair`, start_phase: 'testing', end_phase: 'testing',
+          requirement: old.manifest.requirement, unattended,
+        }, { projectRoot: old.root });
+        createGoalRun({ projectRoot: old.root, manifest: repaired, chain: ['testing'] });
+        assert(fs.existsSync(path.join(old.root, repaired.report_dir, 'manifest.json')));
       } finally { fs.rmSync(old.root, { recursive: true, force: true }); }
     },
   },

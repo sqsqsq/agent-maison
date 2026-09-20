@@ -17,6 +17,7 @@ import {
   type GoalSummaryLike,
 } from '../../scripts/utils/goal-failure-classifier';
 import { extractPriorFailureContext } from '../../scripts/goal-runner';
+import { buildSummaryBlockers } from '../../scripts/utils/summary-blockers';
 import { resolveClosureSyncOutcome, shouldHaltClosureTimeout } from '../../scripts/utils/goal-runner-phase';
 
 export interface UnitCaseResult {
@@ -39,6 +40,8 @@ const cases: Array<{ name: string; run: () => void }> = [
       if (resolveBlockerActionability({ id: 'ui_scope_base_missing' }) !== 'toolchain_blocked') throw new Error('runtime-owned baseline 缺失不得回喂 agent');
       if (resolveBlockerActionability({ id: 'x', classification: 'run_created_missing' }) !== 'toolchain_blocked') throw new Error('run_created 缺失不得回喂 agent');
       if (resolveBlockerActionability({ id: 'x', blocking_class: 'device_toolchain' }) !== 'toolchain_blocked') throw new Error('device_toolchain 类映射失败');
+      if (resolveBlockerActionability({ id: 'x', classification: 'framework_bug' }) !== 'framework_blocked') throw new Error('framework_bug 不得回喂 agent');
+      if (resolveBlockerActionability({ id: 'x', blocking_class: 'framework_internal' }) !== 'framework_blocked') throw new Error('framework_internal blocking class 不得回喂 agent');
       if (resolveBlockerActionability({ id: 'capture_completeness_external' }) !== 'agent_fixable') throw new Error('external 应 agent_fixable（生命周期起点）');
       if (resolveBlockerActionability({ id: 'totally_unknown_gate' }) !== 'agent_fixable') throw new Error('未登记缺省应 agent_fixable（行为不变）');
     },
@@ -55,6 +58,19 @@ const cases: Array<{ name: string; run: () => void }> = [
       if (mixed.allHumanOnly) throw new Error('仍有 agent_fixable 不得判全 human_only');
       const pureHuman = aggregateBlockerActionability(S([{ id: 'fidelity_deferrals_human_sign' }]));
       if (!pureHuman.allHumanOnly) throw new Error('全 human_only 未判出');
+      const framework = aggregateBlockerActionability(S([{ id: 'x', classification: 'framework_bug' }]));
+      if (!framework.hasFramework || framework.agentFixableIds.length > 0 || framework.frameworkIds[0] !== 'x') throw new Error('framework 聚合不得落 default agent_fixable');
+    },
+  },
+  {
+    name: 'framework producer→summary actionability→classifier 同源，不落 default agent_fixable',
+    run: () => {
+      const blockers = buildSummaryBlockers([{
+        id: 'safe_run_crash', category: 'structure', description: 'crash', severity: 'BLOCKER', status: 'FAIL',
+        details: 'TypeError', failure_kind: 'framework_bug', blocking_class: 'framework_internal',
+      }], text => text, () => undefined);
+      if (blockers[0]?.actionability !== 'framework_blocked') throw new Error(JSON.stringify(blockers[0]));
+      if (classifyFailureKind({ verdict: 'FAIL', blockers }) !== 'framework_bug') throw new Error('framework_bug halt 分类丢失');
     },
   },
   {
@@ -163,7 +179,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: '回喂过滤: 严格 ===agent_fixable——human_only/toolchain 各自 parked，不进正文',
+    name: '回喂过滤: 严格 ===agent_fixable——human/toolchain/framework 各自 parked，不进正文',
     run: () => {
       const text = extractPriorFailureContext({
         verdict: 'FAIL',
@@ -171,6 +187,7 @@ const cases: Array<{ name: string; run: () => void }> = [
           { id: 'capture_completeness_external', details_excerpt: 'OCR 未覆盖行……', suggestion: '补建模' },
           { id: 'fidelity_deferrals_human_sign', details_excerpt: '须真人签字', suggestion: '人签' },
           { id: 'capture_completeness_external_ocr_unavailable', details_excerpt: 'OCR 引擎缺失', suggestion: '修环境' },
+          { id: 'checker_crash', classification: 'framework_bug', blocking_class: 'framework_internal', details_excerpt: 'TypeError secret', suggestion: '改产品绕过' },
         ],
       } as never);
       if (!text.includes('capture_completeness_external')) throw new Error('agent_fixable 丢失');
@@ -183,6 +200,8 @@ const cases: Array<{ name: string; run: () => void }> = [
       if (text.includes('OCR 引擎缺失') || text.includes('修环境')) {
         throw new Error('toolchain 详情不得进入回喂正文');
       }
+      if (!/parked, framework/.test(text)) throw new Error('framework 未标注 parked');
+      if (text.includes('TypeError secret') || text.includes('改产品绕过')) throw new Error('framework 详情不得回喂 agent');
     },
   },
   {

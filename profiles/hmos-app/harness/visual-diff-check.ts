@@ -853,6 +853,8 @@ export function computeScreensHash(screens: VisualDiffScreenEntry[]): string {
 /** t0③：check → runner 的进程内结构化 payload（不进 summary.json，持久化走账本侧车） */
 export interface VisualDiffStructuredPayload {
   kind: 'visual_diff';
+  /** true 仅表示聚合命中全是 producer 明示的 advisory，不含缺证/能力降级/真实失败。 */
+  channel_evidence_usable: boolean;
   loop_id: string;
   attempt_id: string | null;
   goal_run_id: string | null;
@@ -951,6 +953,8 @@ interface VisualDiffHit {
   line: string;
   suggestion?: string;
   rank: number;
+  /** 仅 producer 能标；默认 false，避免把任意 MAJOR/WARN 当成可消费证据。 */
+  advisory?: boolean;
 }
 
 function visualDiffHitRank(severity: 'BLOCKER' | 'MAJOR', status: 'FAIL' | 'WARN'): number {
@@ -996,9 +1000,8 @@ function finalizeVisualDiffHits(
   }
   hits.sort((a, b) => b.rank - a.rank || a.id.localeCompare(b.id));
   const top = hits[0];
-  const resultId = hits.some(h => h.rank >= 3) ? 'visual_diff' : top.id;
   return {
-    id: resultId,
+    id: 'visual_diff',
     category: 'structure',
     description: desc,
     severity: top.severity,
@@ -2349,6 +2352,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
         id: 'visual_diff_layout_invariants',
         severity: 'MAJOR',
         status: 'WARN',
+        advisory: true,
         line:
           `【T8 布局结构观测（WARN 档，档位见 layout-oracle-calibration.md）】` +
           warnLines.slice(0, 6).join(' | ') + (warnLines.length > 6 ? ` …共 ${warnLines.length} 处` : ''),
@@ -2626,6 +2630,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
         id: 'visual_diff_finding_transcription',
         severity: 'MAJOR',
         status: 'WARN',
+        advisory: true,
         line:
           `【t2 落账提醒】T8 warn 命中未转录 defects（终判前须落账或以 defect 记录处置结论）：` +
           `${unloggedWarn.slice(0, 6).join(', ')}${unloggedWarn.length > 6 ? `…共 ${unloggedWarn.length} 处` : ''}`,
@@ -2878,6 +2883,10 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   // blocker schema）。持久化侧车=账本本身。
   const structuredPayload: VisualDiffStructuredPayload = {
     kind: 'visual_diff',
+    channel_evidence_usable:
+      (hits.length === 0 || hits.every(hit => hit.advisory === true)) &&
+      contentActionableMissing.length === 0 &&
+      !rep.screens.some(screen => screen.verdict === 'fail' || (screen.must_fix?.length ?? 0) > 0),
     loop_id: loopId,
     attempt_id: goalRunId ? attemptId : null,
     goal_run_id: goalRunId,

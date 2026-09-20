@@ -285,7 +285,7 @@ export interface GoalSummaryBlocker {
 // 兼容映射 → 缺省 agent_fixable（未登记 blocker 行为不变）。
 // ============================================================================
 
-export type BlockerActionability = 'agent_fixable' | 'human_only' | 'toolchain_blocked';
+export type BlockerActionability = 'agent_fixable' | 'human_only' | 'toolchain_blocked' | 'framework_blocked';
 
 /** human_only 兼容映射：仅剩已退役的历史门禁 id。当前 blocker 不得进入人签队列。 */
 const HUMAN_ONLY_BLOCKER_IDS: ReadonlySet<string> = new Set<string>([
@@ -311,6 +311,7 @@ export function resolveBlockerActionability(b: GoalSummaryBlocker): BlockerActio
   const id = b.id ?? '';
   if (HUMAN_ONLY_BLOCKER_IDS.has(id)) return 'human_only';
   if (b.classification && HUMAN_ONLY_CLASSIFICATIONS.has(b.classification)) return 'human_only';
+  if (b.classification === 'framework_bug' || b.blocking_class === 'framework_internal') return 'framework_blocked';
   if (
     RUNTIME_OWNED_BASELINE_BLOCKERS.has(id) ||
     (b.classification && RUNTIME_OWNED_BASELINE_BLOCKERS.has(b.classification))
@@ -322,11 +323,13 @@ export function resolveBlockerActionability(b: GoalSummaryBlocker): BlockerActio
 
 export interface ActionabilityAggregate {
   hasToolchain: boolean;
+  hasFramework: boolean;
   /** blockers 非空且全部 human_only（求人谓词 ¬∃agent_fixable ∧ ∃human_only） */
   allHumanOnly: boolean;
   agentFixableIds: string[];
   humanOnlyIds: string[];
   toolchainIds: string[];
+  frameworkIds: string[];
 }
 
 export function aggregateBlockerActionability(
@@ -336,20 +339,24 @@ export function aggregateBlockerActionability(
   const agentFixableIds: string[] = [];
   const humanOnlyIds: string[] = [];
   const toolchainIds: string[] = [];
+  const frameworkIds: string[] = [];
   for (const b of blockers) {
     const id = b.id ?? '(unnamed)';
     switch (resolveBlockerActionability(b)) {
       case 'toolchain_blocked': toolchainIds.push(id); break;
       case 'human_only': humanOnlyIds.push(id); break;
-      default: agentFixableIds.push(id);
+      case 'framework_blocked': frameworkIds.push(id); break;
+      case 'agent_fixable': agentFixableIds.push(id); break;
     }
   }
   return {
     hasToolchain: toolchainIds.length > 0,
-    allHumanOnly: blockers.length > 0 && agentFixableIds.length === 0 && toolchainIds.length === 0 && humanOnlyIds.length > 0,
+    hasFramework: frameworkIds.length > 0,
+    allHumanOnly: blockers.length > 0 && agentFixableIds.length === 0 && toolchainIds.length === 0 && frameworkIds.length === 0 && humanOnlyIds.length > 0,
     agentFixableIds,
     humanOnlyIds,
     toolchainIds,
+    frameworkIds,
   };
 }
 
@@ -385,6 +392,15 @@ export interface GoalSummaryLike {
   blocking_class?: string;
   failure_kind?: string;
   blockers?: GoalSummaryBlocker[];
+  repair_candidates?: Array<{ id?: string; files?: string[] }>;
+}
+
+/** Machine-related content paths only; prose/notes/HEAD are deliberately absent. */
+export function extractContentRelatedFiles(summary: GoalSummaryLike | null | undefined): string[] {
+  return [...new Set([
+    ...(summary?.repair_candidates ?? []).flatMap(candidate => candidate.files ?? []),
+    ...(summary?.blockers ?? []).flatMap(blocker => blocker.affected_files ?? []),
+  ].map(file => file.trim().replace(/\\/g, '/')).filter(Boolean))];
 }
 
 const CURRENT_INTEGRITY_ID = 'node_options_injection';
@@ -730,6 +746,8 @@ export interface NoProgressGuardInput {
   currentBlockerSignature: string;
   priorArtifactSnapshot: ArtifactSnapshot | null;
   currentArtifactSnapshot: ArtifactSnapshot;
+  /** content 失败只有相关文件集合已由机器证据解析且非空时才可提前收敛。 */
+  relevantEvidenceKnown?: boolean;
 }
 
 /**
@@ -740,10 +758,16 @@ export interface NoProgressGuardInput {
  *      达成"工具链/采集反复失败不吃视觉迭代预算"的预算分流）。
  *   - visual_gap：同一组视觉门禁 signature 重复（coding 上一轮"修"未改变任何失败门禁）= 无改善 → 熔断求人，
  *     避免 homepage 那种"3 轮把卡包瞎挪、视觉门禁原样复现"的空转。
- *   - code_regression：仍永不 guard-halt（偏好重试，可能是自引入回归）。
+ *   - code_regression：仅在结构化相关文件集合非空时参与；未知集合保留既有有界重试。
  */
 export function shouldHaltNoProgress(input: NoProgressGuardInput): boolean {
-  if (!SIGNATURE_HALT_KINDS.has(input.failureKind)) return false;
+  const priorKeys = Object.keys(input.priorArtifactSnapshot ?? {}).sort();
+  const currentKeys = Object.keys(input.currentArtifactSnapshot).sort();
+  const comparableContentBaseline = priorKeys.length > 0 && currentKeys.length > 0 &&
+    JSON.stringify(priorKeys) === JSON.stringify(currentKeys);
+  const eligible = SIGNATURE_HALT_KINDS.has(input.failureKind) ||
+    (input.failureKind === 'code_regression' && input.relevantEvidenceKnown === true && comparableContentBaseline);
+  if (!eligible) return false;
   if (!input.priorBlockerSignature || input.priorBlockerSignature.length === 0) return false;
   if (input.priorBlockerSignature !== input.currentBlockerSignature) return false;
   return !artifactsProgressed(input.priorArtifactSnapshot, input.currentArtifactSnapshot);

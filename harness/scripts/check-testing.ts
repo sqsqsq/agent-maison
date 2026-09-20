@@ -219,6 +219,7 @@ import {
   extractTcNfrRefs,
   loadVisualScreenVerdicts,
   PROVIDER_EVIDENCE_CONTRACT,
+  type ChannelEvidenceBinding,
 } from './utils/execution-channel-evidence';
 import { injectP0IdentityAssertions } from './utils/p0-identity-injection';
 import { buildCanonicalSelectorIndex, type CanonicalSelectorIndex } from './utils/planned-step-normalizer';
@@ -5525,26 +5526,22 @@ function checkExecutionChannelDeclaration(ctx: CheckContext, plan: string | null
  *
  * 另外两处返修见 `execution-channel-evidence.ts` 头注：读错路径、自造弱解析器。
  */
-function checkChannelEvidenceObligation(
+function resolveChannelEvidenceBindings(
   ctx: CheckContext,
   plan: string | null,
+  decl: ExecutionChannelDeclarationResult,
   priorResults: readonly CheckResult[],
   hapPath?: string | null,
-): CheckResult[] {
-  const decl = loadExecutionChannelDeclaration(ctx, plan);
-  const nonHylyreCount =
-    decl.manual_tc_ids.length + decl.visual_tc_ids.length + decl.provider_tc_ids.length;
-  if (nonHylyreCount === 0) return [];
-
+): ChannelEvidenceBinding[] {
   const visualGate = [...priorResults].reverse().find(r => r.id === 'visual_diff');
-  const bindings = bindChannelEvidence({
+  return bindChannelEvidence({
     planMd: plan,
     acceptance: loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature, ctx.resolvedInputs ? ctx.featureSpec.acceptance ?? null : undefined),
     visual: loadVisualScreenVerdicts({
       projectRoot: ctx.projectRoot,
       feature: ctx.feature,
       currentBuildFingerprint: hapPath ? computeHapBuildFingerprint(hapPath) : null,
-      visualGateStatus: visualGate?.status ?? null,
+      visualGate: visualGate ?? null,
     }),
     visualTcIds: decl.visual_tc_ids,
     providerTcIds: decl.provider_tc_ids,
@@ -5552,6 +5549,21 @@ function checkChannelEvidenceObligation(
     manualTcIds: decl.manual_tc_ids,
     gaps: decl.unsupported_gap,
   });
+}
+
+function checkChannelEvidenceObligation(
+  ctx: CheckContext,
+  plan: string | null,
+  priorResults: readonly CheckResult[],
+  hapPath?: string | null,
+  resolvedBindings?: readonly ChannelEvidenceBinding[],
+): CheckResult[] {
+  const decl = loadExecutionChannelDeclaration(ctx, plan);
+  const nonHylyreCount =
+    decl.manual_tc_ids.length + decl.visual_tc_ids.length + decl.provider_tc_ids.length;
+  if (nonHylyreCount === 0) return [];
+
+  const bindings = resolvedBindings ?? resolveChannelEvidenceBindings(ctx, plan, decl, priorResults, hapPath);
   // plan 07a41ec6 T2：unsupported_gap 不阻断——留分母、不算 PASS，只披露
   const blocking = bindings.filter(b => b.verdict.kind !== 'covered' && b.verdict.kind !== 'unsupported_gap');
   const covered = bindings.filter(b => b.verdict.kind === 'covered');
@@ -5880,6 +5892,7 @@ function regenerateTestReport(
   plan: string | null,
   channelDecl: ExecutionChannelDeclarationResult,
   results: CheckResult[],
+  channelEvidenceBindings?: readonly ChannelEvidenceBinding[],
 ): string | null {
   const id = 'test_report_generated';
   const description = 'test-report.md 由 harness 从权威 run 整份生成（plan 07a41ec6 T5）';
@@ -5901,6 +5914,7 @@ function regenerateTestReport(
     tracePath,
     planMd: plan,
     channelDecl,
+    channelEvidenceBindings,
   });
   if (!written.written) {
     results.push({
@@ -6004,13 +6018,9 @@ const checker: PhaseChecker = {
       { ok: channelDeclaration.ok && !unitOnlyTcBlocked },
       Boolean(ctx.reportReconcileOnly),
     );
+    const reportBeforeRebuild = pipelinePlan.reportOnly ? report : null;
     if (pipelinePlan.reportOnly) {
-      // plan 07a41ec6 T5：report-only 先按权威 run 重写机器报告，再做对账（报告永不落后 run）
-      // codex review 第 1 轮 #2：重写前的盘上正文必须原样传给对账——性能类 AC 的耗时缺口
-      // 只在这一份里可见，重写之后差异已被抹平，hard 缺口会凭空消失。
-      const reportBeforeRebuild = report;
-      report = regenerateTestReport(ctx, deviceTestHapHolder, plan, channelDeclaration, results) ?? report;
-      results.push(...checkReportReconcileOnlyPipeline(ctx, deviceTestHapHolder, plan, report, reportBeforeRebuild));
+      // 最终报告延后到 visual/channel 裁决之后生成；report-only 的旧正文保留用于差异对账。
     } else if (!pipelinePlan.device) {
       results.push({
         id: 'device_test_run',
@@ -6043,15 +6053,7 @@ const checker: PhaseChecker = {
         () => writeDeviceTestEvidenceIfEligible(ctx, deviceTestHapHolder),
         'device_test_evidence_write',
       ));
-      // plan 07a41ec6 T5：真机跑完即从本轮 trace/timing/meta 整份生成报告（agent 零手写）
-      report = regenerateTestReport(ctx, deviceTestHapHolder, plan, channelDeclaration, results) ?? report;
     }
-    results.push(
-      ...safeRun(
-        () => checkReportTraceReconciliation(ctx, report, deviceTestHapHolder),
-        'report_trace_reconciliation',
-      ),
-    );
     results.push(...safeRun(() => checkUiEntryCoverage(ctx), 'ui_entry_coverage'));
 
     // --- Structure checks: Test Plan ---
@@ -6064,17 +6066,6 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkPassCriteriaDefined(ctx, plan), 'pass_criteria_defined'));
     results.push(...safeRun(() => checkPlanMetadata(ctx, plan), 'plan_metadata_header'));
 
-    // --- Structure checks: Test Report ---
-    results.push(...safeRun(() => checkReportRequiredChapters(ctx, report), 'report_required_chapters'));
-    results.push(...safeRun(() => checkExecutionResultTable(ctx, report), 'execution_result_table'));
-    results.push(...safeRun(() => checkPassRateCalculated(ctx, report), 'pass_rate_calculated'));
-    results.push(...safeRun(() => checkDefectTableFormat(ctx, report), 'defect_table_format'));
-    results.push(...safeRun(() => checkReportConclusionWithVerdict(ctx, report), 'report_conclusion_with_verdict'));
-
-    // --- blind-visual-hardening d1 切片一：负面裁决闭环 + 上游裁决传播 ---
-    results.push(...safeRun(() => checkNegativeTestingVerdictClosure(report), 'negative_verdict_closure'));
-    // --- blind-visual-hardening d5：视觉债务披露 ---
-    results.push(...safeRun(() => checkVisualDebtDisclosure(ctx, report), 'visual_debt_disclosure'));
     results.push(
       ...safeRun(
         () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'testing', runId: ctx.resolvedInputs ? process.env.MAISON_GOAL_RUN_ID : undefined }),
@@ -6095,8 +6086,6 @@ const checker: PhaseChecker = {
     // plan_references_unit_layer_ac 已在设备流水线之前裁决（见上），此处不重算。
     results.push(...safeRun(() => checkTestCaseToAcceptance(ctx, plan), 'test_case_to_acceptance'));
     results.push(...safeRun(() => checkBoundaryCoverage(ctx, plan), 'boundary_coverage'));
-    results.push(...safeRun(() => checkPlanToReportConsistency(ctx, plan, report), 'plan_to_report_consistency'));
-    results.push(...safeRun(() => checkDefectToTestCase(ctx, plan, report), 'defect_to_test_case'));
 
     if (isDeviceVisualDiffSkipped(ctx.resolvedProfile)) {
       results.push({
@@ -6157,6 +6146,43 @@ const checker: PhaseChecker = {
       }
     }
 
+    if (pipelinePlan.reportOnly) {
+      results.push(...checkReportReconcileOnlyPipeline(ctx, deviceTestHapHolder, plan, report, reportBeforeRebuild));
+    }
+    // visual 之后只算一次逐 TC channel binding；报告、P0/AC 与义务门共享同一结果。
+    const channelEvidenceBindings = resolveChannelEvidenceBindings(
+      ctx,
+      plan,
+      channelDeclaration,
+      results,
+      deviceTestHapHolder.hapPath ?? null,
+    );
+    if (pipelinePlan.device || pipelinePlan.reportOnly) {
+      report = regenerateTestReport(
+        ctx,
+        deviceTestHapHolder,
+        plan,
+        channelDeclaration,
+        results,
+        channelEvidenceBindings,
+      ) ?? report;
+    }
+    results.push(
+      ...safeRun(
+        () => checkReportTraceReconciliation(ctx, report, deviceTestHapHolder),
+        'report_trace_reconciliation',
+      ),
+    );
+    results.push(...safeRun(() => checkReportRequiredChapters(ctx, report), 'report_required_chapters'));
+    results.push(...safeRun(() => checkExecutionResultTable(ctx, report), 'execution_result_table'));
+    results.push(...safeRun(() => checkPassRateCalculated(ctx, report), 'pass_rate_calculated'));
+    results.push(...safeRun(() => checkDefectTableFormat(ctx, report), 'defect_table_format'));
+    results.push(...safeRun(() => checkReportConclusionWithVerdict(ctx, report), 'report_conclusion_with_verdict'));
+    results.push(...safeRun(() => checkNegativeTestingVerdictClosure(report), 'negative_verdict_closure'));
+    results.push(...safeRun(() => checkVisualDebtDisclosure(ctx, report), 'visual_debt_disclosure'));
+    results.push(...safeRun(() => checkPlanToReportConsistency(ctx, plan, report), 'plan_to_report_consistency'));
+    results.push(...safeRun(() => checkDefectToTestCase(ctx, plan, report), 'defect_to_test_case'));
+
     // --- goal-fakepass-hardening t2：review 闭环源码快照对账（BLOCKER，无 grace window）---
     results.push(...safeRun(() => checkReviewClosureAttestationGate(ctx), 'review_closure_attestation'));
 
@@ -6186,6 +6212,7 @@ const checker: PhaseChecker = {
           reportConclusion: report ? parseReportConclusionVerdict(report) : null,
           // plan 07a41ec6 T2：unsupported_gap 留分母、不算 PASS/FAIL（五数口径）
           unsupportedGapTcIds: loadExecutionChannelDeclaration(ctx, plan ?? null).unsupported_gap_tc_ids,
+          channelEvidenceBindings,
         };
         return [...evaluateP0CoverageIntegrity(inputs), ...evaluateP0SemanticCoverage(inputs)];
       }, 'p0_semantic_gates'),
@@ -6220,7 +6247,13 @@ const checker: PhaseChecker = {
     ));
     // 6.5b：证据义务必须晚于 visual 产出与 visual 门本身。
     results.push(...safeRun(
-      () => checkChannelEvidenceObligation(ctx, plan, results, deviceTestHapHolder.hapPath ?? null),
+      () => checkChannelEvidenceObligation(
+        ctx,
+        plan,
+        results,
+        deviceTestHapHolder.hapPath ?? null,
+        channelEvidenceBindings,
+      ),
       'testing_channel_evidence_obligation',
     ));
     results.push(...checkP0RuntimeStepEvidenceGate(ctx, results, deviceTestHapHolder));

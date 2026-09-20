@@ -304,6 +304,21 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assert(ev({ detachedChild: false, dryRun: false, foregroundOk: false, approvalMode: undefined }) === 'ok', 'undefined approval → ok');
     },
   },
+  {
+    name: 'detach parent runs shared fresh continuation preflight before creating report dir/log',
+    run: () => {
+      const source = fs.readFileSync(path.resolve(__dirname, '../../scripts/goal-phase-runtime.ts'), 'utf8');
+      const start = source.indexOf('async function runDetachLauncher');
+      const normalized = source.indexOf('normalizeSupersedeTargets(argv.supersede)', start);
+      const preflight = source.indexOf('evaluateFreshRunContinuation({', start);
+      const mkdir = source.indexOf('fs.mkdirSync(reportDirAbs', start);
+      assert(start >= 0 && normalized > start && preflight > normalized && mkdir > preflight, 'detach parent 必须归一化重复 supersede 并先判 continuation，再创建空 run 目录/log');
+      assert(source.indexOf('successor_of: supersedeTargets[0]', start) > normalized, 'detach parent 必须把数组 supersede 的规范首项传给共享 guard');
+      const foregroundGuard = source.indexOf('const continuation = evaluateFreshRunContinuation({', mkdir);
+      const acquire = source.indexOf('acquireGoalLocks(', foregroundGuard);
+      assert(foregroundGuard > mkdir && acquire > foregroundGuard, 'foreground fresh 必须在 acquireGoalLocks 前运行共享只读 guard');
+    },
+  },
 ];
 
 export async function runAll(): Promise<UnitCaseResult[]> {

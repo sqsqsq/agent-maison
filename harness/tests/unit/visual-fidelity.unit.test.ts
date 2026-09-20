@@ -80,6 +80,7 @@ import type { OcrResult } from '../../../profiles/hmos-app/harness/ocr-toolkit';
 import type { CheckContext, PhaseRuleSpec } from '../../scripts/utils/types';
 import { MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV, MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV } from '../../scripts/utils/phase-state';
 import { DEFAULT_LAYOUT } from '../utils/layout-test-helper';
+import { bindChannelEvidence, loadVisualScreenVerdicts } from '../../scripts/utils/execution-channel-evidence';
 
 export interface UnitCaseResult {
   name: string;
@@ -3789,6 +3790,93 @@ export function runAll(): UnitCaseResult[] {
   // ==========================================================================
   // t1/t2/t6b（plan f7a3d9c2）：指纹熔断 e2e + must_fix 锚定 + 低档守恒
   // ==========================================================================
+
+  run('batchA producer: pixel 四屏仅 T8 advisory WARN 保持 stable id 并可绑定，非 advisory 残差拒绝', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    const prevProvider = process.env[MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV];
+    const prevModel = process.env[MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV];
+    try {
+      delete process.env[MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV];
+      delete process.env[MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV];
+      const featureRoot = path.join(root, 'doc', 'features', 'bank-card');
+      const specDir = path.join(featureRoot, 'spec');
+      const shotsDir = path.join(featureRoot, 'device-testing', 'device-screenshots');
+      fs.mkdirSync(shotsDir, { recursive: true });
+      fs.mkdirSync(path.join(featureRoot, 'device-testing'), { recursive: true });
+      fs.writeFileSync(path.join(specDir, 'spec.md'), '```yaml\nui_change: new_or_changed\n```\n');
+      fs.writeFileSync(path.join(featureRoot, 'device-testing', 'visual-diff.md'), '# diff\n');
+      const ids = ['card_type_sheet', 'bank_card_selection', 'sms_verification_sheet', 'add_card_result'];
+      fs.writeFileSync(uiSpecAbsPath(root, 'bank-card'), JSON.stringify({
+        schema_version: '1.0', verified: 'unverified', assets: [], tokens: {},
+        screens: ids.map((id, index) => ({
+          id, priority: 'P0',
+          ...(index === 0 ? { forbidden_overlap: [['missing_a', 'missing_b']] } : {}),
+          root: { id: `${id}_root`, type: 'navigation_frame', order: 0, children: [{ id: `${id}_title`, type: 'content_display', order: 0 }] },
+        })),
+      }));
+      const colors = [0xff0000ff, 0x00ff00ff, 0x0000ffff, 0xffff00ff];
+      const screens = ids.map((id, index) => {
+        const shot = path.join(shotsDir, `shot-${id}.png`);
+        writeMinimalColorPng(shot, 20, 20, colors[index]);
+        const hash = hashScreenshotFile(shot)!;
+        fs.writeFileSync(path.join(shotsDir, `layout-${id}.json`), JSON.stringify({
+          schema_version: 'hylyre-hypium-ui-dump-v1',
+          tree: { attributes: { bounds: '[0,0][100,200]', type: 'Screen', id: '' }, children: [{
+            attributes: { bounds: '[0,0][100,200]', type: 'root', id: `${id}_root` }, children: [{
+              attributes: { bounds: '[10,10][90,40]', type: 'Text', id: `${id}_title`, text: '' }, children: [],
+            }],
+          }] },
+        }));
+        return {
+          screen_id: id, verdict: 'pass',
+          screenshot_path: path.relative(root, shot).replace(/\\/g, '/'),
+          ref_path: path.relative(root, shot).replace(/\\/g, '/'),
+          evaluated_screenshot_hash: hash, screenshot_hash: hash,
+          must_fix: [], defects: [], reverse_missing: [],
+        };
+      });
+      const jsonPath = path.join(shotsDir, 'visual-diff.json');
+      fs.writeFileSync(jsonPath, JSON.stringify({ schema_version: '1.1', feature: 'bank-card', screens }));
+
+      const result = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }))[0] as {
+        id: string; status: string; details?: string; structured?: VisualDiffStructuredPayload;
+      };
+      if (result.id !== 'visual_diff' || result.status !== 'WARN' || result.structured?.channel_evidence_usable !== true) {
+        throw new Error(`only-advisory 应 stable WARN+usable：${JSON.stringify({ id: result.id, status: result.status, payload: result.structured, details: result.details })}`);
+      }
+      const visual = loadVisualScreenVerdicts({ projectRoot: root, feature: 'bank-card', currentBuildFingerprint: null, visualGate: result as never });
+      const [binding] = bindChannelEvidence({
+        planMd: '## 测试用例\n\n| 用例编号 | 关联 AC |\n|---|---|\n| TC-007 | AC-8 |',
+        acceptance: { flows: {}, criteria: [{ id: 'AC-8', priority: 'P0', checkpoint: { pre_screen: 'card_type_sheet', post_screen: 'bank_card_selection' } }] },
+        visual, visualTcIds: ['TC-007'], providerTcIds: [], manualTcIds: [],
+      });
+      if (binding.verdict.kind !== 'covered') throw new Error(`真实 producer WARN 应可绑定：${binding.verdict.detail}`);
+
+      const doc = JSON.parse(fs.readFileSync(jsonPath, 'utf-8')) as { screens: Array<Record<string, unknown>> };
+      doc.screens[0].verdict = 'fail';
+      doc.screens[0].must_fix = ['真实失败'];
+      fs.writeFileSync(jsonPath, JSON.stringify(doc));
+      const failed = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }))[0] as { structured?: VisualDiffStructuredPayload };
+      if (failed.structured?.channel_evidence_usable !== false) throw new Error('screen fail/must_fix 不得获得 channel 资格');
+
+      doc.screens[0].verdict = 'pass';
+      doc.screens[0].must_fix = [];
+      fs.rmSync(path.join(shotsDir, 'layout-bank_card_selection.json'));
+      fs.writeFileSync(jsonPath, JSON.stringify(doc));
+      const degraded = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }))[0] as { structured?: VisualDiffStructuredPayload; details?: string };
+      if (degraded.structured?.channel_evidence_usable !== false || !/layout.*missing|布局树 dump/i.test(degraded.details ?? '')) {
+        throw new Error(`能力降级 WARN 不得获得 channel 资格：${degraded.details}`);
+      }
+    } finally {
+      if (prevProvider === undefined) delete process.env[MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV];
+      else process.env[MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV] = prevProvider;
+      if (prevModel === undefined) delete process.env[MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV];
+      else process.env[MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV] = prevModel;
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   /** f7a3d9c2 e2e 夹具：单 fail 屏（must_fix 1 条 + 锚定 defect）——可指纹、有 actionable 残差 */
   function writeFuseFixture(root: string, opts: { anchored?: boolean } = {}): void {

@@ -488,7 +488,7 @@ const metaGateCases: TestCase[] = [
       assert(projectToObservedActionability('recoverable') === 'automatic', 'recoverable');
       assert(projectToObservedActionability('operator') === 'human', 'operator');
       assert(projectToObservedActionability('external') === 'external', 'external');
-      assert(projectToObservedActionability('framework_fault') === 'unknown', 'framework_fault');
+      assert(projectToObservedActionability('framework_fault') === 'framework', 'framework_fault');
       assert(projectToObservedActionability('unknown') === 'unknown', 'unknown');
     },
   },

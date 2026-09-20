@@ -14,10 +14,12 @@ import {
   buildEntryUiPriorityMap,
 } from '../../scripts/utils/testing-trace-gates';
 import { __testing_checkReportReconcileOnlyPipeline } from '../../scripts/check-testing';
-import { resolveFeatureArtifact } from '../../config';
+import { clearFrameworkConfigCache, resolveFeatureArtifact } from '../../config';
+import { loadResolvedProfile } from '../../profile-loader';
 import { extractTables, getSectionContent } from '../../scripts/utils/markdown-parser';
 import type { HylyreTrace } from '../../../profiles/hmos-app/harness/providers/device-test-run';
 import { computeHapBuildFingerprint, computeHapSha256Full } from '../../../profiles/hmos-app/harness/build-fingerprint';
+import { checkVisualDiff } from '../../../profiles/hmos-app/harness/visual-diff-check';
 import { parseCaseDurationsFromLogAndTrace } from '../../../profiles/hmos-app/harness/device-test-timings';
 import type { UseCasesSpec } from '../../scripts/utils/types';
 
@@ -823,6 +825,161 @@ test('V9 完整 checker：性能类 TC 的耗时缺口在首次重建前被扣�
     } finally {
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }
+  }
+});
+
+test('批次A完整 checker：6 Hylyre + visual overlay + advisory WARN 共享 binding 贯通 P0/AC/report/channel', async () => {
+  const fs = require('fs') as typeof import('fs');
+  const path = require('path') as typeof import('path');
+  const crypto = require('crypto') as typeof import('crypto');
+  const checker = require('../../scripts/check-testing').default as {
+    check: (ctx: import('../../scripts/utils/types').CheckContext) => Promise<Array<import('../../scripts/utils/types').CheckResult>>;
+  };
+  const registry = require('../../capability-registry') as Record<string, unknown>;
+  const savedDispatch = registry.dispatchVisualDiffDeterministicOnly;
+  const fixture = makeReportOnlyFixture();
+  try {
+    const featureRoot = path.join(fixture.root, 'doc', 'features', 'demo');
+    const testingDir = path.join(featureRoot, 'testing');
+    const ids = Array.from({ length: 6 }, (_, i) => `TC-${String(i + 1).padStart(3, '0')}`);
+    fs.writeFileSync(path.join(testingDir, 'test-plan.md'), [
+      '# 测试计划', '', '## 测试用例', '',
+      '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC | 执行通道 |',
+      '| --- | --- | --- | --- | --- | --- | --- | --- |',
+      ...ids.map(id => `| ${id} | native | app | tap | pass | P0 | AC-1 | hylyre |`),
+      '| TC-007 | visual | app | capture | pass | P0 | AC-8 | visual |', '',
+    ].join('\n'));
+    fs.writeFileSync(path.join(featureRoot, 'acceptance.yaml'), [
+      'flows:', '  main:', '    screens: [home, success]', 'criteria:',
+      '  - id: AC-1', '    priority: P0', '    ut_layer: device', '    linked_flow: main',
+      '    checkpoint:', '      pre_screen: home', '      action: { type: touch, target_element_id: tab_wallet }',
+      '      post_screen: success', '      required_element_ids: [success_title]',
+      '  - id: AC-8', '    priority: P0', '    ut_layer: device', '    linked_flow: main',
+      '    checkpoint:', '      pre_screen: card_type_sheet', '      action: { type: touch, target_element_id: cts_continue }',
+      '      post_screen: bank_card_selection', '      required_element_ids: [bcs_title]', '',
+    ].join('\n'));
+    fs.mkdirSync(path.join(featureRoot, 'spec'), { recursive: true });
+    fs.writeFileSync(path.join(featureRoot, 'spec', 'ui-spec.yaml'), JSON.stringify({
+      schema_version: '1.0', assets: [], screens: [
+        { id: 'home', priority: 'P1', root: { id: 'home_root', type: 'navigation_frame', order: 0, children: [{ id: 'tab_wallet', type: 'action_button', order: 0 }] } },
+        { id: 'success', priority: 'P1', root: { id: 'success_root', type: 'navigation_frame', order: 0, children: [{ id: 'success_title', type: 'content_display', order: 0 }] } },
+        { id: 'card_type_sheet', priority: 'P0', root: { id: 'cts_root', type: 'overlay_panel', order: 0, children: [{ id: 'cts_continue', type: 'action_button', order: 0 }] } },
+        { id: 'bank_card_selection', priority: 'P0', forbidden_overlap: [['missing_a', 'missing_b']], root: { id: 'bcs_root', type: 'navigation_frame', order: 0, children: [{ id: 'bcs_title', type: 'content_display', order: 0 }] } },
+        { id: 'sms_verification_sheet', priority: 'P0', root: { id: 'sms_root', type: 'overlay_panel', order: 0 } },
+        { id: 'add_card_result', priority: 'P0', root: { id: 'result_root', type: 'navigation_frame', order: 0 } },
+      ],
+    }));
+
+    const trace = reportOnlyGoldenTrace();
+    const baseCase = trace.cases[0];
+    const baseCalls = trace.tool_calls as Array<Record<string, unknown>>;
+    trace.cases = ids.map(id => {
+      const cloned = { ...JSON.parse(JSON.stringify(baseCase)), id } as Record<string, any>;
+      cloned.steps[1].selector = {
+        request: { kind: 'by_id', value: 'success_title', match: null, constraints: {} },
+        resolution: {
+          state: 'unique', candidate_count: 1,
+          selected: { id: 'success_title', bounds: null },
+          candidates: [{ id: 'success_title', bounds: null }],
+        },
+      };
+      return cloned;
+    });
+    trace.tool_calls = ids.flatMap(id => baseCalls.map(call => ({ ...JSON.parse(JSON.stringify(call)), case: id })));
+    fs.writeFileSync(fixture.tracePath, JSON.stringify(trace));
+    const derivedPath = path.join(fixture.reportsDir, '20260830T010000Z-001', 'hylyre', 'test-plan.hylyre.md');
+    fs.writeFileSync(derivedPath, [
+      '## 测试用例清单', '', '| 用例编号 | 用例名称 | 测试步骤 | 优先级 | 关联 AC |',
+      '| --- | --- | --- | --- | --- |',
+      ...ids.map(id => `| ${id} | native | {"touch":{"by_id":"tab_wallet"}}; {"wait_for":{"by_id":"success_title"}} | P0 | AC-1 |`),
+    ].join('\n'));
+    const timing = JSON.parse(fs.readFileSync(fixture.timingPath, 'utf8')) as Record<string, any>;
+    timing.cases = ids.map((id, i) => ({ id, duration_ms: 250 + i, step_count: 2 }));
+    fs.writeFileSync(fixture.timingPath, JSON.stringify(timing));
+
+    trace.artifacts.plan = derivedPath;
+    fs.writeFileSync(fixture.tracePath, JSON.stringify(trace));
+    const sha256 = (file: string): string => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+    const topPlanPath = path.join(testingDir, 'test-plan.md');
+    const runMetaPath = path.join(fixture.reportsDir, 'device-test-run.meta.json');
+    const runMeta = JSON.parse(fs.readFileSync(runMetaPath, 'utf8')) as Record<string, unknown>;
+    runMeta.artifact_binding = {
+      test_plan_path: topPlanPath, test_plan_sha256: sha256(topPlanPath),
+      derived_plan_path: derivedPath, derived_plan_sha256: sha256(derivedPath),
+      trace_path: fixture.tracePath, trace_sha256: sha256(fixture.tracePath),
+    };
+    fs.writeFileSync(runMetaPath, JSON.stringify(runMeta));
+    const vendorDir = path.join(fixture.root, 'framework', 'profiles', 'hmos-app', 'vendor', 'hylyre');
+    fs.mkdirSync(vendorDir, { recursive: true });
+    fs.writeFileSync(path.join(vendorDir, 'release.manifest.json'), JSON.stringify({ hylyre_version: '0.5.0' }));
+    fs.writeFileSync(path.join(fixture.reportsDir, 'hylyre-ready.meta.json'), JSON.stringify({
+      ok: true, doctorOk: true, installed_version: '0.5.0', manifest_version: '0.5.0', version_consistent: true,
+    }));
+
+    const shotsDir = path.join(featureRoot, 'device-testing', 'device-screenshots');
+    fs.mkdirSync(shotsDir, { recursive: true });
+    const screenIds = ['card_type_sheet__overlay__cts_root', 'bank_card_selection', 'sms_verification_sheet__overlay__sms_root', 'add_card_result'];
+    const screens = screenIds.map(screenId => {
+      const shot = path.join(shotsDir, `${screenId}.png`);
+      fs.writeFileSync(shot, `shot-${screenId}`);
+      return {
+        screen_id: screenId, verdict: 'pass',
+        screenshot_path: path.relative(fixture.root, shot).replace(/\\/g, '/'),
+        ref_path: path.relative(fixture.root, shot).replace(/\\/g, '/'),
+        evaluated_screenshot_hash: crypto.createHash('sha256').update(fs.readFileSync(shot)).digest('hex').slice(0, 16),
+        evaluated_build_fingerprint: computeHapBuildFingerprint(fixture.hapPath), defects: [], must_fix: [], reverse_missing: [],
+      };
+    });
+    fs.writeFileSync(path.join(shotsDir, 'visual-diff.json'), JSON.stringify({ schema_version: '1.1', feature: 'demo', screens }));
+    fs.mkdirSync(path.join(featureRoot, 'device-testing'), { recursive: true });
+    fs.writeFileSync(path.join(featureRoot, 'device-testing', 'visual-diff.md'), '# diff\n');
+    fs.writeFileSync(path.join(featureRoot, 'spec', 'spec.md'), '```yaml\nui_change: new_or_changed\n```\n');
+    for (const screenId of screenIds) {
+      const baseId = screenId.split('__overlay__')[0];
+      const rootId = screenId.includes('card_type') ? 'cts_root' : screenId.includes('sms_') ? 'sms_root' : screenId === 'bank_card_selection' ? 'bcs_root' : 'result_root';
+      const titleId = screenId === 'bank_card_selection' ? 'bcs_title' : `${baseId}_title`;
+      fs.writeFileSync(path.join(shotsDir, `layout-${screenId}.json`), JSON.stringify({
+        schema_version: 'hylyre-hypium-ui-dump-v1',
+        tree: { attributes: { bounds: '[0,0][100,200]', id: '' }, children: [{ attributes: { bounds: '[0,0][100,200]', id: rootId }, children: [{ attributes: { bounds: '[10,10][90,40]', id: titleId, text: '' }, children: [] }] }] },
+      }));
+    }
+    clearFrameworkConfigCache();
+    const producerResult = checkVisualDiff({
+      ...reportOnlyContext(fixture.root),
+      phase: 'testing', feature: 'demo', projectRoot: fixture.root,
+      frameworkRoot: path.resolve(__dirname, '../../..'), frameworkRel: '', harnessRoot: path.resolve(__dirname, '../..'), layoutKind: 'standalone',
+      phaseRule: { phase: 'testing', structure_checks: { visual_diff: { description: 'visual' } } },
+      featureSpec: { feature: 'demo' }, resolvedProfile: loadResolvedProfile(fixture.root, { project_profile: { name: 'hmos-app' } } as never, path.resolve(__dirname, '../../..')),
+      fidelityTarget: 'pixel_1to1', acceptanceStrictness: 'hard',
+    } as never)[0]!;
+    assert.strictEqual(producerResult.id, 'visual_diff');
+    assert.strictEqual(producerResult.status, 'WARN', JSON.stringify(producerResult));
+    assert.strictEqual((producerResult.structured as { channel_evidence_usable?: boolean }).channel_evidence_usable, true);
+    registry.dispatchVisualDiffDeterministicOnly = () => [producerResult];
+
+    const ctx = reportOnlyContext(fixture.root) as unknown as Record<string, unknown>;
+    ctx.reportReconcileOnly = true;
+    ctx.featureSpec = {
+      acceptance: {
+        flows: { main: { screens: ['home', 'success'] } },
+        criteria: [
+          { id: 'AC-1', priority: 'P0', ut_layer: 'device', checkpoint: { pre_screen: 'home', action: { type: 'touch', target_element_id: 'tab_wallet' }, post_screen: 'success', required_element_ids: ['success_title'] } },
+          { id: 'AC-8', priority: 'P0', ut_layer: 'device', checkpoint: { pre_screen: 'card_type_sheet', action: { type: 'touch', target_element_id: 'cts_continue' }, post_screen: 'bank_card_selection', required_element_ids: ['bcs_title'] } },
+        ],
+      },
+    };
+    const all = await checker.check(ctx as unknown as import('../../scripts/utils/types').CheckContext);
+    assert.strictEqual(all.find(r => r.id === 'testing_channel_evidence_obligation')?.status, 'PASS');
+    const coverage = all.find(r => r.id === 'p0_coverage_integrity');
+    assert.strictEqual(coverage?.status, 'PASS', coverage?.details);
+    assert.strictEqual((coverage?.structured as Record<string, unknown>)?.verified_pass, 7);
+    assert.strictEqual(all.find(r => r.id === 'p0_semantic_coverage_integrity')?.status, 'PASS');
+    const report = fs.readFileSync(path.join(testingDir, 'test-report.md'), 'utf8');
+    assert.strictEqual(parseReportExecutionRows(report).filter(row => row.status === '通过').length, 7, report);
+    assert.match(report, /\| P0 \| 7 \| 7 \| 0 \| 0 \| 0 \| 100%/);
+  } finally {
+    registry.dispatchVisualDiffDeterministicOnly = savedDispatch;
+    fs.rmSync(fixture.root, { recursive: true, force: true });
   }
 });
 

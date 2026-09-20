@@ -9,6 +9,7 @@ import {
   classifyFailureKind,
   extractBlockerSignature,
   extractDeterministicAffectedFiles,
+  extractContentRelatedFiles,
   extractIntegritySubtypes,
   hasIntegrityBlocker,
   isAllFrameworkBugBlockers,
@@ -954,7 +955,7 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
-      name: 'shouldHaltNoProgress: code_regression never halts via guard',
+      name: 'shouldHaltNoProgress: code_regression 相关集合未知时保持有界重试',
       run: () => {
         assert(
           !shouldHaltNoProgress({
@@ -966,6 +967,51 @@ export function runAll(): UnitCaseResult[] {
           }),
           'code_regression should not guard-halt',
         );
+      },
+    },
+    {
+      name: 'shouldHaltNoProgress: code_regression 仅在相关集合已知且未变化时 halt，真实修复放行',
+      run: () => {
+        const before = { 'src/a.ts': { exists: true, contentHash: 'a' } };
+        for (const prior of [null, {}]) {
+          assert(!shouldHaltNoProgress({
+            failureKind: 'code_regression', priorBlockerSignature: 'case-fail', currentBlockerSignature: 'case-fail',
+            priorArtifactSnapshot: prior, currentArtifactSnapshot: before, relevantEvidenceKnown: true,
+          }), '缺少可比 prior baseline 时必须保留有界重试');
+        }
+        assert(shouldHaltNoProgress({
+          failureKind: 'code_regression', priorBlockerSignature: 'case-fail', currentBlockerSignature: 'case-fail',
+          priorArtifactSnapshot: before, currentArtifactSnapshot: before, relevantEvidenceKnown: true,
+        }), '已知相关文件未变应提前收敛');
+        assert(!shouldHaltNoProgress({
+          failureKind: 'code_regression', priorBlockerSignature: 'case-fail', currentBlockerSignature: 'case-fail',
+          priorArtifactSnapshot: before,
+          currentArtifactSnapshot: { 'src/a.ts': { exists: true, contentHash: 'b' } },
+          relevantEvidenceKnown: true,
+        }), '相关文件真实变化应保留复验');
+        assert(!shouldHaltNoProgress({
+          failureKind: 'code_regression', priorBlockerSignature: 'case-fail', currentBlockerSignature: 'case-fail',
+          priorArtifactSnapshot: before,
+          currentArtifactSnapshot: { ...before, 'src/new.ts': { exists: true, contentHash: 'new' } },
+          relevantEvidenceKnown: true,
+        }), '相关集合新增路径时基线不可比，不得证明无进展');
+        assert(!shouldHaltNoProgress({
+          failureKind: 'code_regression', priorBlockerSignature: 'case-fail', currentBlockerSignature: 'case-fail',
+          priorArtifactSnapshot: { ...before, 'src/old.ts': { exists: true, contentHash: 'old' } },
+          currentArtifactSnapshot: before,
+          relevantEvidenceKnown: true,
+        }), '相关集合缩小时基线不可比，不得证明无进展');
+      },
+    },
+    {
+      name: 'content progress files only consume machine repair/blocker paths, never notes or HEAD',
+      run: () => {
+        const files = extractContentRelatedFiles({
+          repair_candidates: [{ files: ['src/a.ts', 'src/a.ts'] }],
+          blockers: [{ id: 'case', affected_files: ['tests/a.test.ts'] }],
+        });
+        assert(JSON.stringify(files) === JSON.stringify(['src/a.ts', 'tests/a.test.ts']), JSON.stringify(files));
+        assert(extractContentRelatedFiles({ blockers: [{ id: 'case' }] }).length === 0, '未知相关集合必须保持 unknown');
       },
     },
     {

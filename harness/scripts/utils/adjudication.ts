@@ -132,8 +132,8 @@ export const NO_AUTHORITY: AuthorityFacts = { grants: [] };
 // ---------------------------------------------------------------------------
 // IncidentClass —— canonical 分类维度，SSOT 归本内核
 // ---------------------------------------------------------------------------
-// 与 BlockerActionability（agent_fixable|human_only|toolchain_blocked）**不是同一
-// 维度**：那个回答「谁能修 blocker」，且被回喂过滤/停车/报告广泛消费，不扩展它。
+// 与 BlockerActionability（agent_fixable|human_only|toolchain_blocked|framework_blocked）**不是同一
+// 维度**：那个回答「谁能修 blocker」，且被回喂过滤/停车/报告广泛消费。
 // 观测层 assess.ts 的 'automatic'|'human'|'external'|'unknown' 原由 goal-reconcile-
 // observation.ts 的私有正则猜 blocking_class 生成——改为消费本注册表的投影。
 // ---------------------------------------------------------------------------
@@ -146,16 +146,14 @@ export type IncidentClass =
   | 'unknown';         // fail-safe：未识别，保守停放
 
 /** 观测层兼容投影（assess.ts blockers[].actionability 的既有词汇）。 */
-export type ObservedActionability = 'automatic' | 'human' | 'external' | 'unknown';
+export type ObservedActionability = 'automatic' | 'human' | 'external' | 'framework' | 'unknown';
 
 export function projectToObservedActionability(c: IncidentClass): ObservedActionability {
   switch (c) {
     case 'recoverable': return 'automatic';
     case 'operator': return 'human';
     case 'external': return 'external';
-    // 框架缺陷不是「自动可修」，投影到 unknown 与既有正则口径最接近（该族原本
-    // 落不进三个正则分支，本就返回 unknown）——保持既有观测行为不变。
-    case 'framework_fault': return 'unknown';
+    case 'framework_fault': return 'framework';
     default: return 'unknown';
   }
 }

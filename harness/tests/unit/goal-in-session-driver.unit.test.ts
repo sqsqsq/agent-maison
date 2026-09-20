@@ -143,6 +143,38 @@ const cases: TestCase[] = [
     },
   },
   {
+    name: 'prepare-run shares fresh continuation guard and existing --force override audit',
+    run: () => {
+      const root = setupGoalRuntimeHost('codex').root;
+      try {
+        const prior = prepareGoalModeRun({
+          projectRoot: root, frameworkRoot: FRAMEWORK_ROOT,
+          feature: 'bc-openCard', runId: 'attended-failed', adapter: 'codex',
+          requirement: 'same inline request', endPhase: 'spec',
+        });
+        fs.appendFileSync(path.join(prior.runDir, 'events.jsonl'), `${JSON.stringify({
+          ts: '2026-09-20T10:00:00.000Z', type: 'run_end', status: 'HALTED', halt_reason: 'framework_bug',
+        })}\n`);
+        let refused = '';
+        try {
+          prepareGoalModeRun({
+            projectRoot: root, frameworkRoot: FRAMEWORK_ROOT,
+            feature: 'bc-openCard', runId: 'attended-refused', adapter: 'codex',
+            requirement: 'rewritten inline request', endPhase: 'spec',
+          });
+        } catch (error) { refused = (error as Error).message; }
+        assert(/fresh run refused/.test(refused), `prepare-run 未走 continuation guard：${refused}`);
+        const forced = prepareGoalModeRun({
+          projectRoot: root, frameworkRoot: FRAMEWORK_ROOT,
+          feature: 'bc-openCard', runId: 'attended-forced', adapter: 'codex',
+          requirement: 'same inline request', endPhase: 'spec', forceFresh: true,
+        });
+        const events = fs.readFileSync(path.join(forced.runDir, 'events.jsonl'), 'utf8');
+        assert(events.includes('"type":"fresh_run_override"') && events.includes('"verified_grant":false'), 'force override audit missing');
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  {
     name: 'production host bridge executes the canonical runtime and real gate sequence',
     run: async () => {
       const root = setupGoalRuntimeHost('codex').root;

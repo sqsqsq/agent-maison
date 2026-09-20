@@ -12,6 +12,7 @@ import * as path from 'path';
 
 import { clearFrameworkConfigCache, featurePhaseReportsDir, resolveFeatureArtifact } from '../../config';
 import { evaluateExecutionChannelDeclaration } from '../../scripts/utils/execution-channel';
+import { classifyPhaseAssessment } from '../../scripts/utils/phase-transition-policy';
 import {
   parseReportConclusionVerdict,
   parseReportExecutionRows,
@@ -87,11 +88,12 @@ function seed(root: string, opts: { tc002Failed?: boolean } = {}): { reportsDir:
   return { reportsDir, tracePath, timing };
 }
 
-function input(root: string, seeded: ReturnType<typeof seed>) {
+function input(root: string, seeded: ReturnType<typeof seed>, overrides: Record<string, unknown> = {}) {
   return {
     projectRoot: root, feature: FEATURE, reportsDir: seeded.reportsDir, tracePath: seeded.tracePath, planMd: PLAN_MD,
     channelDecl: evaluateExecutionChannelDeclaration(PLAN_MD),
     now: () => new Date('2026-09-03T00:03:00.000Z'),
+    ...overrides,
   };
 }
 
@@ -162,6 +164,78 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert.ok(gen.content.includes('--skip-assert-expected'), '披露旗标');
         assert.ok(/执行完成/.test(gen.content) && /非验收通过/.test(gen.content), '区分口径');
         assert.notStrictEqual(parseReportConclusionVerdict(gen.content), '达标');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'P1 hylyre 未进 trace：保留 absent 兜底，functional/overall 均 FAIL',
+    run: () => {
+      const root = mkProject();
+      try {
+        const seeded = seed(root);
+        const trace = JSON.parse(fs.readFileSync(seeded.tracePath, 'utf-8')) as Record<string, any>;
+        trace.cases = trace.cases.filter((row: { id: string }) => row.id !== 'TC-002');
+        trace.outcome = 'success';
+        writeJson(seeded.tracePath, trace);
+        const generated = generateTestReport(input(root, seeded));
+        assert.strictEqual(parseReportExecutionRows(generated.content).find(row => row.id === 'TC-002')?.status, '跳过');
+        assert.strictEqual(generated.conclusion.functional, 'FAIL');
+        assert.strictEqual(generated.conclusion.overall, 'FAILED');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: '组合链：6 Hylyre + visual P0 binding 贯通 report/assess；visual failed 同向阻断',
+    run: () => {
+      const root = mkProject();
+      try {
+        const seeded = seed(root);
+        const nativeRows = Array.from({ length: 6 }, (_, i) => {
+          const id = `TC-${String(i + 1).padStart(3, '0')}`;
+          return `| ${id} | native ${i + 1} | 首页 | 执行 | 通过 | P0 | AC-1 | hylyre |`;
+        });
+        const visualPlan = [
+          '# 测试计划', '', '## 测试用例、测试用例清单', '',
+          '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC | 执行通道 |',
+          '| --- | --- | --- | --- | --- | --- | --- | --- |',
+          ...nativeRows,
+          '| TC-007 | 四屏视觉 | 最新构建 | 视觉检查 | 通过 | P0 | AC-8 | visual |', '',
+        ].join('\n');
+        const trace = JSON.parse(fs.readFileSync(seeded.tracePath, 'utf-8')) as Record<string, any>;
+        const baseCase = trace.cases[0];
+        trace.cases = Array.from({ length: 6 }, (_, i) => ({
+          ...JSON.parse(JSON.stringify(baseCase)), id: `TC-${String(i + 1).padStart(3, '0')}`,
+        }));
+        writeJson(seeded.tracePath, trace);
+        const timingPath = path.join(seeded.reportsDir, 'device-test-timing.json');
+        const timing = JSON.parse(fs.readFileSync(timingPath, 'utf-8')) as Record<string, any>;
+        timing.cases = Array.from({ length: 6 }, (_, i) => ({ id: `TC-${String(i + 1).padStart(3, '0')}`, duration_ms: 100 + i, step_count: 2 }));
+        writeJson(timingPath, timing);
+        const channelDecl = evaluateExecutionChannelDeclaration(visualPlan);
+        const covered = generateTestReport(input(root, seeded, {
+          planMd: visualPlan,
+          channelDecl,
+          channelEvidenceBindings: [{ tc_id: 'TC-007', channel: 'visual', verdict: { kind: 'covered', detail: 'AC-8 两个 canonical overlay/screens 证据通过（phase 四屏门 PASS）' } }],
+        }));
+        assert.strictEqual(parseReportExecutionRows(covered.content).filter(r => r.status === '通过').length, 7);
+        assert.ok(/\| P0 \| 7 \| 7 \| 0 \| 0 \| 0 \| 100%/.test(covered.content), covered.content);
+        assert.strictEqual(covered.conclusion.functional, 'PASS');
+        assert.strictEqual(classifyPhaseAssessment({ verdict: 'PASS', phase: 'testing', retries_used: 0, max_retries_per_phase: 2 }).runner_action, 'advance');
+
+        const failed = generateTestReport(input(root, seeded, {
+          planMd: visualPlan,
+          channelDecl,
+          channelEvidenceBindings: [{ tc_id: 'TC-007', channel: 'visual', verdict: { kind: 'failed', detail: 'overlay 截图 build 已过期' } }],
+        }));
+        assert.strictEqual(parseReportExecutionRows(failed.content).find(r => r.id === 'TC-007')?.status, '失败');
+        assert.strictEqual(failed.conclusion.functional, 'FAIL');
+        assert.strictEqual(failed.conclusion.overall, 'FAILED');
+        assert.ok(/\| DEF-\d+ \| TC-007 \| BLOCKER \| 失败：visual 通道：overlay 截图 build 已过期/.test(failed.content));
+        assert.strictEqual(classifyPhaseAssessment({ verdict: 'FAIL', phase: 'testing', failure_kind: 'code_regression', retries_used: 0, max_retries_per_phase: 2 }).runner_action, 'retry');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

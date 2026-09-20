@@ -553,6 +553,63 @@ test('native P0 acceptance: required/forbidden complete → PASS; old status can
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test('mixed P0: 6 Hylyre + visual TC 共用 channel binding，并同时闭合 TC/AC', () => {
+  const root = projectRoot();
+  try {
+    const planPath = path.join(root, 'doc', 'features', FEATURE, 'testing', 'test-plan.md');
+    const nativeRows = Array.from({ length: 6 }, (_, i) =>
+      `| TC-${String(i + 1).padStart(3, '0')} | checkout ${i + 1} | P0 | AC-1 | hylyre |`).join('\n');
+    fs.writeFileSync(planPath, [
+      '# 测试计划', '', '## 测试用例', '',
+      '| 用例编号 | 用例名称 | 优先级 | 关联 AC | 执行通道 |',
+      '| --- | --- | --- | --- | --- |', nativeRows,
+      '| TC-007 | visual | P0 | AC-8 | visual |', '',
+    ].join('\n'), 'utf-8');
+
+    const acceptancePath = path.join(root, 'doc', 'features', FEATURE, 'acceptance.yaml');
+    fs.appendFileSync(acceptancePath, [
+      '  - id: AC-8', '    priority: P0', '    ut_layer: device', '    linked_flow: checkout',
+      '    checkpoint:', '      pre_screen: home', '      action: { type: touch, target_element_id: pay_button }',
+      '      post_screen: success', '      required_element_ids: [success_title]', '',
+    ].join('\n'), 'utf-8');
+
+    const derivedPath = path.join(root, 'doc', 'features', FEATURE, 'testing', 'reports', '20260830T000000Z', 'hylyre', 'test-plan.hylyre.md');
+    const derivedRows = Array.from({ length: 6 }, (_, i) =>
+      `| TC-${String(i + 1).padStart(3, '0')} | {"touch":{"by_id":"pay_button"}}; {"wait_for":{"by_id":"success_title"}}; {"wait_gone":{"by_id":"error_banner"}} | P0 | AC-1 |`).join('\n');
+    fs.writeFileSync(derivedPath, [
+      '# 派生 Hylyre 计划', '', '| 用例编号 | 测试步骤 | 优先级 | 关联 AC |',
+      '| --- | --- | --- | --- |', derivedRows, '',
+    ].join('\n'), 'utf-8');
+
+    const baseCase = traceObject().cases[0];
+    const cases = Array.from({ length: 6 }, (_, i) => ({
+      ...JSON.parse(JSON.stringify(baseCase)),
+      id: `TC-${String(i + 1).padStart(3, '0')}`,
+    }));
+    const trace = traceObject({ cases });
+    const coveredBinding = [{
+      tc_id: 'TC-007', channel: 'visual' as const,
+      verdict: { kind: 'covered' as const, detail: 'AC-8 canonical overlay/screens pass' },
+    }];
+    const coveredInput = { ...nativeInput(root, trace, '达标'), channelEvidenceBindings: coveredBinding };
+    const coverage = evaluateP0CoverageIntegrity(coveredInput);
+    const semantic = evaluateP0SemanticCoverage(coveredInput);
+    assert.strictEqual(coverage[0].status, 'PASS', coverage[0].details);
+    assert.strictEqual((coverage[0].structured as Record<string, unknown>).verified_pass, 7);
+    assert.strictEqual(semantic[0].status, 'PASS', semantic[0].details);
+
+    const failedBinding = [{
+      tc_id: 'TC-007', channel: 'visual' as const,
+      verdict: { kind: 'failed' as const, detail: 'overlay screenshot/build stale' },
+    }];
+    const failedInput = { ...nativeInput(root, trace, '不达标'), channelEvidenceBindings: failedBinding };
+    assert.strictEqual(evaluateP0CoverageIntegrity(failedInput)[0].status, 'FAIL');
+    const failedSemantic = evaluateP0SemanticCoverage(failedInput)[0];
+    assert.strictEqual(failedSemantic.status, 'FAIL');
+    assert.ok(failedSemantic.details.includes('AC-8'), failedSemantic.details);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('shared planned-step normalizer: action wrapper 与 all[] match inheritance 保持 Hylyre kind/selector 语义', () => {
   const wrapped = normalizePlannedStep({ action: { type: 'touch', by_text: 'Pay', match: 'exact' } }, 0);
   assert.strictEqual(wrapped.kind, 'touch');

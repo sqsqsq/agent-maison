@@ -22,7 +22,7 @@ export interface SummaryBlockerEntry {
   /** t1d（plan e6a3c9f4）：产出来源（safeRun origin / profile dispatch / check-<phase>.ts 回退） */
   source?: string;
   /** P0-4（plan 7c4f2e9b）：注册表解析后的 actionability（runner 决策梯③层/回喂过滤/报告共同消费） */
-  actionability?: 'agent_fixable' | 'human_only' | 'toolchain_blocked';
+  actionability?: 'agent_fixable' | 'human_only' | 'toolchain_blocked' | 'framework_blocked';
   /** P1-7（plan 7c4f2e9b）：operator 专用说明——goal-report 渲染，不进 agent 重试回喂 */
   operator_note?: string;
 }

@@ -21,7 +21,9 @@ const cases: TestCase[] = [
         failureKind: 'visual_defect',
         blockers: [
           { id: 'visual_diff', blocking_class: 'code_quality' },
-          { id: 'device_missing', blocking_class: 'external_device' },
+          { id: 'device_missing', blocking_class: 'externalBlocked', actionability: 'agent_fixable' },
+          { id: 'unregistered', actionability: 'agent_fixable' },
+          { id: 'framework_crash', blocking_class: 'framework_internal', classification: 'framework_bug', actionability: 'framework_blocked' },
         ],
         deterministicDefects: ['layout-overlap', 'layout-overlap'],
         retriesUsed: 2,
@@ -35,6 +37,8 @@ const cases: TestCase[] = [
       assert(observation.current_summary_fresh === false, 'summary freshness');
       assert(observation.blockers?.[0].actionability === 'automatic', 'automatic blocker');
       assert(observation.blockers?.[1].actionability === 'external', 'external blocker');
+      assert(observation.blockers?.[2].actionability === 'unknown', 'unregistered blocker must stay unknown');
+      assert(observation.blockers?.[3].actionability === 'framework', 'framework blocker');
       assert(observation.deterministic_defects?.length === 1, 'dedupe defects');
       assert(observation.budgets?.retries_used === 2, 'budget');
       assert(observation.signals?.timed_out === true, 'signal');
