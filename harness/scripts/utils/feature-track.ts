@@ -3,7 +3,7 @@ import { createHash } from 'crypto';
 import * as path from 'path';
 import type { WorkflowSpec } from '../../workflow-loader';
 import type { AcceptanceSpec } from './types';
-import { readBoundInput, type InputBinding } from './capability-resolution';
+import { readBoundInput, DEPENDENCY_ONLY_PROVIDER_IDS, type InputBinding } from './capability-resolution';
 import { isInsideProjectRoot } from './project-relative-path';
 import { loadEffectiveExecutionScope } from './goal-run-creation';
 import { loadFeatureContracts, contractFingerprint } from './skill-contract';
@@ -141,14 +141,10 @@ export function resolveFeatureExecutionScope(projectRoot: string, feature: strin
 // itself keeps zero `fs` / `projectRoot` (plan §4.1.0).
 // ---------------------------------------------------------------------------
 
-/**
- * The ONLY providers whose bindings may be verified by `dependencies[]` bytes alone: they have no
- * parsed value in a freeze context (`capability-resolution.ts:335-339`), so `content_fingerprint`
- * cannot be recomputed. An allow-list, not "everything that is not a parsed-value provider" — a
- * new derive provider must not inherit the weaker check by default (review B7).
- */
-const DEPENDENCY_ONLY_PROVIDERS = new Set(['derive.codebase', 'derive.test-targets']);
-
+// The ONLY providers whose bindings may be verified by `dependencies[]` bytes alone (no parsed
+// value in a freeze context, so `content_fingerprint` cannot be recomputed) live in
+// `DEPENDENCY_ONLY_PROVIDER_IDS` (capability-resolution.ts) — an allow-list shared with the
+// completion side, not "everything that is not a parsed-value provider" (review B7).
 const relPosix = (projectRoot: string, abs: string): string => path.relative(projectRoot, abs).replace(/\\/g, '/');
 
 /**
@@ -172,7 +168,7 @@ function verifyBasisBinding(projectRoot: string, frameworkRoot: string, feature:
   const requirementContext = binding.source.kind === 'derive' && binding.source.provider_id === 'derive.requirement' && requirement?.trim()
     ? { requirement: requirement.trim(), inputContext: { schema_version: '1.1' as const, subject: { feature }, obligations: {}, required_outputs: [] } }
     : {};
-  const byDependencies = binding.source.kind === 'derive' && DEPENDENCY_ONLY_PROVIDERS.has(binding.source.provider_id);
+  const byDependencies = binding.source.kind === 'derive' && DEPENDENCY_ONLY_PROVIDER_IDS.has(binding.source.provider_id);
   // Project containment is checked for EVERY shape, including the artifact branch: `readBoundInput`
   // re-resolves content but accepts an extra out-of-project dependency that matches its own digest
   // (review B7). Existence is checked as CONSISTENCY, not as "every dependency must exist": a
@@ -252,7 +248,7 @@ export function collectResolvedScopeFacts(
   const { projectRoot, feature, frameworkRoot } = ctx;
   /* eslint-disable @typescript-eslint/no-require-imports */
   const { loadFidelityIntentSsotState, resolveUiRelevanceForRun } = require('./fidelity-shared') as typeof import('./fidelity-shared');
-  const { uiSpecAbsPath } = require('./ui-spec-shared') as typeof import('./ui-spec-shared');
+  const { uiSpecAbsPath, loadUiSpecFile } = require('./ui-spec-shared') as typeof import('./ui-spec-shared');
   const { executionScopeEvidenceIssues } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
   /* eslint-enable @typescript-eslint/no-require-imports */
 
@@ -270,7 +266,11 @@ export function collectResolvedScopeFacts(
     // Existing single read point for the visual acceptance artifact (`ui-spec-shared.ts`), so a
     // `pixel_1to1` decision without it becomes a spec-owned definition gap instead of silently
     // leaving the visual duty undefined.
-    visual_acceptance_present: fs.existsSync(uiSpecAbsPath(projectRoot, feature)),
+    // plan e7a2c4f1 §3.4（G30）：判据是"在场**且可读**"，不是 `fs.existsSync`。一份坏掉/空的
+    // ui-spec.yaml 让视觉义务的**定义**悬空，与文件缺失同类——沿同一条 definition-gap 出口
+    // （`execution-scope.ts` 的 `acceptance-definition:visual`，applicability=unknown，spec 可
+    // 执行去填），不降成 WARN、不新开出口。解析复用既有唯一 loader（含形状归一化）。
+    visual_acceptance_present: loadUiSpecFile(uiSpecAbsPath(projectRoot, feature)) !== null,
   };
 
   // Target sets the impact relevance check runs against (§4.1.3). Paths stay project-relative.

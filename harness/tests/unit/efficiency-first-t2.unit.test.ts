@@ -27,10 +27,14 @@ import { extractTopPlanTestCasesForDeriveHint } from '../../scripts/utils/test-p
 import { derivedPlanStaleByTcTable } from '../../scripts/check-testing';
 import { buildCanonicalSelectorIndex, normalizePlannedStep } from '../../scripts/utils/planned-step-normalizer';
 import {
+  deriveQualityAxes,
   extractCompletionGaps,
   projectCompletionStatus,
+  projectPhaseAdvanceVerdict,
+  projectReleaseReadiness,
   type QualityAxes,
 } from '../../scripts/utils/quality-axes';
+import type { CheckResult } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
 
 const FEATURE = 'eff-fixture';
@@ -443,6 +447,89 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert.strictEqual(noGap[0].status, 'FAIL');
         assert.strictEqual((noGap[0].structured as Record<string, unknown>).failed, 1, '未声明 gap 的未执行 P0 仍是 failed');
         assert.ok(/TC-009/.test(noGap[0].details));
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    // plan e7a2c4f1 §3.4（G15–G17）的**硬前提实测**（§9 风险表第三行）：本用例先量出
+    // 「全部 P0 都是 gap 时发布链拦不拦得住」，再据此决定要不要做"证据不可消费 → 三档"
+    // 这一步转换。实测结论 = **拦不住**（见下方第 ② 段），所以该转换按 §9 撤回：
+    // 证据不可消费（unbound / failed 的 visual 绑定）**仍然计 `failed`**，不进 gap 分母。
+    // 第 ② 段是**特征化锚**：它一旦变红，说明发布链已经能拦住全 gap，届时可以重新评估
+    // G15–G17；在那之前不得把三档转换加回来。
+    name: 'P3-T8 unconsumable visual evidence still counts as failed, and an all-gap P0 set reaches a releasable state (measured: why the tier-3 conversion is withdrawn)',
+    run: () => {
+      const root = mkProject();
+      try {
+        writeAcceptanceYaml(root);
+        const derivedRel = `doc/features/${FEATURE}/testing/reports/20260713-010000/hylyre/test-plan.hylyre.md`;
+        writeFile(root, derivedRel, derivedMd('{"touch":{"by_id":"bank_row_cmb"}} ; {"wait_for":{"by_id":"card_type_agree_btn","timeout":10}}'));
+        const trace = nativeTrace([{
+          id: 'TC-006', status: '通过', priority: 'P0', ac_ref: 'AC-5', notes: '',
+          execution: 'completed', verification: 'passed', evidence: 'complete', expected_check_mode: 'empty',
+          steps: [passedAction(0, 'touch', 'bank_row_cmb'), passedPresence(1, 'card_type_agree_btn')],
+        }]);
+        const base = {
+          projectRoot: root, feature: FEATURE, planMd: PLAN_MD, reportMd: '', trace, evidenceGate: NATIVE_GATE,
+          derivedPlanPath: path.join(root, derivedRel), reportConclusion: null as string | null,
+        };
+        // ① 证据不可消费（视觉绑定 unbound——本轮没有可消费的视觉证据）仍然是 failed，
+        //    不被改判成 unsupported_gap：gap 分母只来自静态通道声明（manual:<class> /
+        //    inactive provider），运行期的"这轮测不了"不得自动进分母。
+        const unconsumable = evaluateP0CoverageIntegrity({
+          ...base,
+          channelEvidenceBindings: [{
+            tc_id: 'TC-009', channel: 'visual' as const,
+            verdict: { kind: 'unbound' as const, detail: '本轮视觉证据资格不成立：OCR 不可用且该屏无 region_attest' },
+          }],
+        });
+        const unconsumableStructured = unconsumable[0].structured as Record<string, unknown>;
+        assert.strictEqual(unconsumable[0].status, 'FAIL', unconsumable[0].details);
+        assert.strictEqual(unconsumableStructured.failed, 1, '证据不可消费必须计 failed（三档转换已撤回）');
+        assert.deepStrictEqual(unconsumableStructured.gap_case_ids, [], '运行期不可消费不得自动进 gap 分母');
+        // 真实可消费则照常通过（同一条路径的正例，确认上面拒的是"不可消费"而不是"有绑定"）
+        const covered = evaluateP0CoverageIntegrity({
+          ...base,
+          channelEvidenceBindings: [{
+            tc_id: 'TC-009', channel: 'visual' as const,
+            verdict: { kind: 'covered' as const, detail: 'TC-009 → AC-9 → 屏逐屏 verdict=pass' },
+          }],
+        });
+        assert.strictEqual(covered[0].status, 'PASS', covered[0].details);
+        assert.strictEqual((covered[0].structured as Record<string, unknown>).failed, 0);
+
+        // ② 实测：全部 P0 都是 gap（verified_pass=0 / verified_coverage=0%）时，
+        //    p0_* 全 PASS、质量四轴全 PASS、release_readiness=READY——发布链**拦不住**。
+        const allGap = { ...base, unsupportedGapTcIds: ['TC-006', 'TC-009'] };
+        const cov = evaluateP0CoverageIntegrity(allGap);
+        const sem = evaluateP0SemanticCoverage(allGap);
+        assert.strictEqual(cov[0].status, 'PASS', cov[0].details);
+        assert.deepStrictEqual(
+          cov[0].structured,
+          { p0_total: 2, verified_pass: 0, unsupported_gap: 2, failed: 0, verified_coverage: 0, gap_case_ids: ['TC-006', 'TC-009'], gap_ac_ids: ['AC-5', 'AC-9'] },
+        );
+        assert.strictEqual(sem[0].status, 'PASS', sem[0].details);
+        const obligation = {
+          id: 'testing_channel_evidence_obligation', category: 'structure', description: '非 Hylyre 通道 TC 的机器证据义务',
+          severity: 'BLOCKER', status: 'PASS', details: '', structured: { unsupported_gap_count: 2, unsupported_gap: [] },
+        } as unknown as CheckResult;
+        const visualGate = {
+          id: 'visual_diff', category: 'structure', description: 'visual diff', severity: 'MAJOR', status: 'WARN', details: '',
+        } as unknown as CheckResult;
+        const checks = [...cov, ...sem, obligation, visualGate];
+        const projected = deriveQualityAxes(checks, { phase: 'testing', visualApplicable: true, assetApplicable: false });
+        const gaps = extractCompletionGaps(checks);
+        assert.deepStrictEqual(gaps, { p0: 2, total: 2 });
+        assert.strictEqual(projectCompletionStatus(projected, gaps), 'COMPLETE_WITH_P0_GAPS');
+        assert.strictEqual(projectPhaseAdvanceVerdict(projected, 'testing'), 'PASS');
+        assert.strictEqual(
+          projectReleaseReadiness(projected), 'READY',
+          '实测锚：全 P0 为 gap 时发布链仍判 READY（质量轴只吃 BLOCKER FAIL，gap 让 failed 归零）——'
+          + '这正是 G15–G17「证据不可消费→三档」被撤回的理由。此断言变红 = 发布链已能拦住全 gap，'
+          + '届时才可重新评估该转换。',
+        );
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

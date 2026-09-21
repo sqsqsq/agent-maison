@@ -5386,8 +5386,9 @@ export function __testing_checkChannelEvidenceObligation(
   plan: string | null,
   priorResults: readonly CheckResult[] = [],
   hapPath?: string | null,
+  resolvedBindings?: readonly ChannelEvidenceBinding[],
 ): CheckResult[] {
-  return checkChannelEvidenceObligation(ctx, plan, priorResults, hapPath);
+  return checkChannelEvidenceObligation(ctx, plan, priorResults, hapPath, resolvedBindings);
 }
 
 export function __testing_checkExecutionChannelDeclaration(
@@ -5575,6 +5576,12 @@ function checkChannelEvidenceObligation(
         ...gaps.map(b => `  - [${b.channel}] ${b.tc_id}：${b.verdict.detail}`),
       ]
     : [];
+  // plan e7a2c4f1 §3.4（G28）：把绑定上携带的责任方提到本 check 上，走既有
+  // `repair_candidates`（testing 期只认显式 owner）与失败归因通道。产品真值优先于
+  // spec，spec 优先于能力缺口——三者同时出现时先修能让用户拿到正确产品的那一个。
+  const ownerRank = ['coding', 'spec', 'capability'] as const;
+  const blockingOwner = ownerRank.find(owner => blocking.some(b => b.repair_owner === owner));
+  const blockingFiles = [...new Set(blocking.filter(b => b.repair_owner === blockingOwner).flatMap(b => b.affected_files ?? []))];
   return [{
     id: 'testing_channel_evidence_obligation',
     category: 'structure',
@@ -5582,6 +5589,8 @@ function checkChannelEvidenceObligation(
     severity: 'BLOCKER',
     status: blocking.length === 0 ? 'PASS' : 'FAIL',
     ...(blocking.length === 0 ? {} : { failure_kind: 'testing_channel_unverified' as const }),
+    ...(blocking.length > 0 && blockingOwner ? { repair_owner: blockingOwner } : {}),
+    ...(blockingFiles.length > 0 ? { affected_files: blockingFiles } : {}),
     structured: {
       unsupported_gap_count: gaps.length,
       unsupported_gap: gaps.map(b => ({ tc_id: b.tc_id, channel: b.channel, detail: b.verdict.detail })),

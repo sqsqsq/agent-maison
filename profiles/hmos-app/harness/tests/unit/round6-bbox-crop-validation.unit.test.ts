@@ -1317,8 +1317,23 @@ test('p1c_placement_degraded_not_silent', () => {
   const rShotFail = runPlacement(null);
   assert.deepStrictEqual(rShotFail.perScreen, []);
   assert.deepStrictEqual(rShotFail.ocrUnavailable, ['card_pack']);
+  // plan e7a2c4f1 §3.3：参考图侧的 ok:false **按 error 分流**——说不清的错误串（这里是夹具的
+  // 'canned fail'）只证明没测量成，归 OCR 能力缺口；只有 worker 真正产出的解码错误串才算图有问题。
   const rRefFail = runPlacement(REF_WORDS, null);
-  assert.deepStrictEqual(rRefFail.refUnavailable, ['card_pack']);
+  assert.deepStrictEqual(rRefFail.refUnavailable, []);
+  assert.deepStrictEqual(rRefFail.ocrUnavailable, ['card_pack']);
+  assert.deepStrictEqual(rRefFail.degradedReasons.map(d => d.cause), ['ocr_capability']);
+  const rRefDecode = collectTextPlacementSignals(
+    new Map([['card_pack', PLACEMENT_TEXTS]]),
+    [{ screen_id: 'card_pack', verdict: 'pass', ref_id: 'card_pack', screenshot_path: 'shots/card_pack.png' } as VisualDiffScreenEntry],
+    rel => rel,
+    () => 'refs/card_pack.jpg',
+    (abs: string): OcrResult => (abs.includes('refs/')
+      ? { ok: false, error: 'jimp read failed: Unsupported MIME type' }
+      : { ok: true, width: 1080, height: 2400, words: REF_WORDS }),
+  );
+  assert.deepStrictEqual(rRefDecode.refUnavailable, ['card_pack']);
+  assert.deepStrictEqual(rRefDecode.degradedReasons.map(d => d.cause), ['ref_decode_failed']);
 });
 
 export function runAll(): UnitCaseResult[] {

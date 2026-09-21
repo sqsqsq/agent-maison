@@ -8,6 +8,7 @@
 import type { UiSpecGlobalElement } from '../../../harness/scripts/utils/ui-spec-shared';
 import type { VisualDiffScreenEntry } from './visual-diff-check';
 import { canonicalOverlayBase } from './visual-diff-nav';
+import { REF_NOTE_MISSING_FILE } from './authoritative-ref-images';
 import { referenceViewportIncompatible } from './image-toolkit';
 import {
   clusterOcrLines,
@@ -171,6 +172,20 @@ export interface TextPlacementResult {
   /** 参考原图缺失/OCR 失败的屏（无 ground truth，可比性缺失） */
   refUnavailable: string[];
   /**
+   * plan e7a2c4f1 §3.3（G12）：逐屏降级**原因**（五类里属 producer 能判的四类）。
+   * 旧实现只有两个 id 清单，于是"OCR 没装"被说成"参考原图缺失/不可读"、
+   * "已声明但文件丢了"被说成"引用未声明"——agent 三轮都在找图片文件，没人去看命名。
+   * 只作详情成文与责任文件用，走既有 `CheckResult.details` / `affected_files`，不新建通道。
+   */
+  degradedReasons: Array<{
+    screen_id: string;
+    /** ref_undeclared / ref_missing_file：回 spec（二档）；ref_decode_failed：回 spec（二档）；ocr_capability：三档，不回 spec */
+    cause: 'ref_undeclared' | 'ref_missing_file' | 'ref_decode_failed' | 'ocr_capability';
+    detail: string;
+    /** 责任文件（三档无责任文件，为空数组） */
+    files: string[];
+  }>;
+  /**
    * adjudicated-repair-loop M2：producer 归类的 uncertain 信号（逐条 target + 原因）。
    * 消费方（visual-diff-check）将其物化为 `VisualDiffStructuredPayload.uncertain_signals[]`
    * 随 script-report.json 落盘——不回写 visual-diff.json。
@@ -325,14 +340,27 @@ function sameLine(cyA: number, cyB: number, hA: number, hB: number, factor: numb
 }
 
 /**
+ * plan e7a2c4f1 §3.3：`OcrResult.error` 是否属**执行能力**类（worker 超时/无输出/坏 json/未安装）。
+ * 这类失败**不能证明图片损坏**——把它们说成"图坏了"会让 spec owner 去换一张好图，而真问题在工具链。
+ * 判不准一律归这边（三档：承认没测量），只有 worker 真正产出的解码错误串才算图片问题。
+ */
+export function isOcrCapabilityFailure(error: string | undefined): boolean {
+  const e = (error ?? '').trim();
+  if (!e) return true;
+  // ocr-worker.cjs 的解码类错误（jimp read failed / image has zero dimensions）才是图片问题
+  return !/jimp read failed|image has zero dimensions/i.test(e);
+}
+
+/**
  * P1-C 主收集器。screenTexts：screen_id → 该屏 ui-spec 声明文本（text+subtitle，len≥2）。
- * resolveRefAbs：屏 → 参考原图绝对路径（authoritative_refs 解析，缺→refUnavailable）。
+ * resolveRefAbs：屏 → 参考原图（`{path, note}`，note 来自 resolveRefSourceImage 的诊断；
+ * 兼容旧的裸路径返回）。
  */
 export function collectTextPlacementSignals(
   screenTexts: Map<string, string[]>,
   screens: VisualDiffScreenEntry[],
   resolveShotAbs: (rel: string) => string,
-  resolveRefAbs: (screen: VisualDiffScreenEntry) => string | null,
+  resolveRefAbs: (screen: VisualDiffScreenEntry) => string | null | { path: string | null; note?: string },
   ocrFn: OcrFn = ocrImageWords,
 ): TextPlacementResult {
   const perScreen: TextPlacementScreenSignals[] = [];
@@ -340,6 +368,7 @@ export function collectTextPlacementSignals(
   const ocrUnavailable = new Set<string>();
   const refUnavailable = new Set<string>();
   const verifiedScreens = new Set<string>();
+  const degradedReasons: TextPlacementResult['degradedReasons'] = [];
   const refOcrCache = new Map<string, OcrResult>();
 
   for (const s of screens) {
@@ -355,16 +384,54 @@ export function collectTextPlacementSignals(
     const shot = s.screenshot_path;
     if (typeof shot !== 'string' || !shot.trim()) continue;
 
-    const refAbs = resolveRefAbs(s);
-    if (!refAbs) { refUnavailable.add(s.screen_id); continue; }
+    const refPick = resolveRefAbs(s);
+    const refAbs = typeof refPick === 'string' || refPick === null ? refPick : refPick.path;
+    const refNote = typeof refPick === 'object' && refPick !== null ? refPick.note : undefined;
+    if (!refAbs) {
+      // 引用不可解析：**未声明** 与 **已声明但文件丢了** 是两类不同责任，note 已把它们分开。
+      refUnavailable.add(s.screen_id);
+      degradedReasons.push({
+        screen_id: s.screen_id,
+        cause: refNote?.startsWith(REF_NOTE_MISSING_FILE) ? 'ref_missing_file' : 'ref_undeclared',
+        detail: refNote ?? '无可达参考图（未声明 ref_id，且无 authoritative_refs 可回退）',
+        files: ['spec/ui-spec.yaml', 'spec/spec.md'],
+      });
+      continue;
+    }
     let refRes = refOcrCache.get(refAbs);
     if (!refRes) {
       refRes = ocrFn(refAbs);
       refOcrCache.set(refAbs, refRes);
     }
-    if (!refRes.ok || !Array.isArray(refRes.words)) { refUnavailable.add(s.screen_id); continue; }
+    if (!refRes.ok || !Array.isArray(refRes.words)) {
+      // plan e7a2c4f1 §3.3（G12）：旧实现对参考图 OCR 失败一律记 refUnavailable——
+      // tesseract 没装/worker 超时被说成"参考原图缺失或不可读"，责任方完全指错。
+      if (isOcrCapabilityFailure(refRes.error)) {
+        ocrUnavailable.add(s.screen_id);
+        degradedReasons.push({
+          screen_id: s.screen_id, cause: 'ocr_capability', files: [],
+          detail: `参考图 OCR 未能执行（环境/工具能力，非图片问题）：${refRes.error ?? '(无错误串)'}`,
+        });
+      } else {
+        refUnavailable.add(s.screen_id);
+        degradedReasons.push({
+          screen_id: s.screen_id, cause: 'ref_decode_failed', files: [`ref:${refAbs}`],
+          detail: `参考图无法解码：${refRes.error}（换一张可读的图或修 spec.md 里该 id 的 path）`,
+        });
+      }
+      continue;
+    }
     const shotRes = ocrFn(resolveShotAbs(shot));
-    if (!shotRes.ok || !Array.isArray(shotRes.words)) { ocrUnavailable.add(s.screen_id); continue; }
+    if (!shotRes.ok || !Array.isArray(shotRes.words)) {
+      ocrUnavailable.add(s.screen_id);
+      degradedReasons.push({
+        screen_id: s.screen_id,
+        cause: isOcrCapabilityFailure(shotRes.error) ? 'ocr_capability' : 'ref_decode_failed',
+        files: isOcrCapabilityFailure(shotRes.error) ? [] : [`shot:${shot}`],
+        detail: `截图 OCR 失败：${shotRes.error ?? '(无错误串)'}`,
+      });
+      continue;
+    }
     // plan e7a2c4f1 §3.1：两侧 OCR 都 ok = 本屏 placement 核对真的跑完了（登记在进入行聚类比对之前，
     // 与比对结果无关）。channel_evidence_usable 的"覆盖"条件读它，不读 unavailable 集合取反（那会把
     // 上面三条 continue 跳过的"根本没核过"当成"核过没问题"）。
@@ -555,6 +622,7 @@ export function collectTextPlacementSignals(
     verifiedScreens: [...verifiedScreens],
     ocrUnavailable: [...ocrUnavailable],
     refUnavailable: [...refUnavailable],
+    degradedReasons,
     // uncertainSignals 的 target = 稳定候选锚（回修与机器重验可精确引用）：
     // 混淆场景=候选文本 t；整页缺口='whole-page'（屏级缺口）。
     uncertainSignals: perScreen.flatMap((p) => {

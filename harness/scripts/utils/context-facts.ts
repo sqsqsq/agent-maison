@@ -182,6 +182,11 @@ function checkFactsFile(
   const invocation = options?.factsContext;
   if (invocation) {
     const issue = (id: string, details: string): void => { results.push({ id, category: 'structure', description: 'facts 调用身份、来源与范围一致', severity: 'BLOCKER', status: 'FAIL', details, suggestion: '按实际调用身份与目标补齐 facts；来源或基线已变化时回责任方重新验证，不伪造建立阶段。', affected_files: [relPath] }); };
+    // plan e7a2c4f1 §3.4（G01）：账本类缺口的披露出口——同一 check id，只降档不改名。
+    // 「声明的来源没进基线登记」不影响产品，能补登记的已由入口补齐（见
+    // capability-resolution-entry-input 的 facts baseline 组装），补不了的在这里如实
+    // 披露，不单独阻断阶段。
+    const ledgerWarn = (id: string, details: string): void => { results.push({ id, category: 'structure', description: 'facts 调用身份、来源与范围一致', severity: 'MAJOR', status: 'WARN', details, suggestion: '来源不可读或不在项目内时无法自动补登记：确认该来源是否仍属本次探索面；仍需要就把它放回项目内并重跑建立阶段，否则从 facts 的 source_code_paths 去掉。追溯弱一级，不阻断本阶段。', affected_files: [relPath] }); };
     const subject = invocation.subject;
     if (!options?.resolvedInputs || options.resolvedInputs.phase !== phase) issue('context_exploration_facts_input_context', '须由当前调用提供同一 resolvedInputs，不能回退读取旧 Feature 文件');
     const inputSubject = options?.resolvedInputs?.context.subject;
@@ -220,7 +225,7 @@ function checkFactsFile(
         if (hash !== dep.sha256 || fs.existsSync(dep.path) !== dep.exists) issue('context_exploration_facts_source_stale', dep.path);
       }
       for (const source of declared) {
-        if (!invocation.baseline.dependencies.some(dep => path.resolve(dep.path) === path.resolve(projectRoot, source) && dep.exists && dep.sha256)) issue('context_exploration_facts_source_stale', `基线未绑定原有来源：${source}`);
+        if (!invocation.baseline.dependencies.some(dep => path.resolve(dep.path) === path.resolve(projectRoot, source) && dep.exists && dep.sha256)) ledgerWarn('context_exploration_facts_source_stale', `基线未绑定原有来源：${source}（该来源不在项目内或不可读，无法自动补登记；追溯弱一级，不阻断本阶段）`);
       }
     }
     const deltaPaths = extractTables(findPhaseDeltaSection(body, phase).content)

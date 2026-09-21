@@ -81,6 +81,10 @@ import type { CheckContext, PhaseRuleSpec } from '../../scripts/utils/types';
 import { MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV, MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV } from '../../scripts/utils/phase-state';
 import { DEFAULT_LAYOUT } from '../utils/layout-test-helper';
 import { bindChannelEvidence, loadVisualScreenVerdicts, visualGateAllowsEvidence } from '../../scripts/utils/execution-channel-evidence';
+import { __testing_checkChannelEvidenceObligation } from '../../scripts/check-testing';
+import { buildSummaryBlockers } from '../../scripts/utils/summary-blockers';
+import { classifyFailureKind } from '../../scripts/utils/goal-failure-classifier';
+import { buildSummaryRepairCandidates } from '../../scripts/utils/repair-candidates';
 import { checkRenderVisibilityCalibrate } from '../../../profiles/hmos-app/harness/render-visibility';
 // P3-T5：三条 3.0.0 假 PASS 向量各自的既有责任门（复用既有判据与反例形态，不新造门）
 import { evaluateChannelDerivedCoverage } from '../../scripts/utils/derived-hylyre-plan';
@@ -4043,7 +4047,8 @@ export function runAll(): UnitCaseResult[] {
       const { root } = seedTieringProject({ regionAttest: true });
       try {
         const gate = runTieringCheck(root);
-        if (!/参考原图缺失\/不可读/.test(gate.details ?? '')) {
+        // §3.3 起降级详情按原因成文（不再是"参考原图缺失/不可读"一句）——仍须命中降级本身
+        if (!/文本块观测降级/.test(gate.details ?? '') || !/\[ref_undeclared\]/.test(gate.details ?? '')) {
           throw new Error(`夹具须仍命中 placement degraded（否则测的不是本条）：${gate.details}`);
         }
         if (gate.status !== 'WARN') throw new Error(`辅助信号缺席应止于 WARN：${gate.status} / ${gate.details}`);
@@ -4161,6 +4166,243 @@ export function runAll(): UnitCaseResult[] {
         } finally {
           clearFrameworkConfigCache();
           fs.rmSync(root, { recursive: true, force: true });
+        }
+      }
+    });
+  });
+
+  run('P3-T6 undeclared ref, declared-but-missing file, decode failure, ocr-capability failure and real diff are reported as five distinct causes', () => {
+    if (!isJimpAvailable()) return;
+    withoutVisualProvider(() => {
+      const details = (root: string, ocr: typeof jdgOcrOk): string => runTieringCheck(root, ocr).details ?? '';
+      // ① 引用未声明（宿主现场：ui-spec ref_id 与 spec.md id 两套命名）——须点名两个文件与具体 id 对
+      {
+        const { root } = seedTieringProject({ regionAttest: true });
+        try {
+          const d = details(root, jdgOcrOk);
+          for (const must of ['[ref_undeclared]', 'card_type_sheet_ref', 'spec/ui-spec.yaml', 'spec/spec.md', 'card_selection']) {
+            if (!d.includes(must)) throw new Error(`未声明诊断须含「${must}」：${d}`);
+          }
+          if (/\[ref_missing_file\]/.test(d)) throw new Error('未声明不得被说成"已声明但缺文件"');
+          const gate = runTieringCheck(root, jdgOcrOk);
+          const affected = (gate as unknown as { affected_files?: string[] }).affected_files ?? [];
+          if (!affected.includes('spec/ui-spec.yaml') || !affected.includes('spec/spec.md')) {
+            throw new Error(`责任文件须进 affected_files：${JSON.stringify(affected)}`);
+          }
+        } finally {
+          clearFrameworkConfigCache();
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      }
+      // ② 已声明但文件丢失：id 对得上、图片被删 → 不得落进"未声明"分支
+      {
+        const { root } = seedTieringProject({ alignRefIds: true, regionAttest: true });
+        try {
+          fs.rmSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'assets', 'ref-card_type_sheet.png'));
+          const d = details(root, jdgOcrOk);
+          if (!/\[ref_missing_file\]/.test(d) || !/card_type_sheet/.test(d)) {
+            throw new Error(`"已声明但缺文件"须单独成类并点名 id：${d}`);
+          }
+          if (/\[ref_undeclared\] ref_id=card_type_sheet\b/.test(d)) throw new Error('缺文件不得被说成未声明');
+        } finally {
+          clearFrameworkConfigCache();
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      }
+      // ③④ OCR 侧两类：解码失败（worker 真实解码错误串）回 spec；执行类失败（超时/无输出/坏 json/未安装）归能力档
+      {
+        const { root } = seedTieringProject({ alignRefIds: true, regionAttest: true });
+        try {
+          const decodeFail = (): OcrResult => ({ ok: false, error: 'jimp read failed: Unsupported MIME type' } as unknown as OcrResult);
+          const d3 = details(root, decodeFail as never);
+          if (!/图片解码失败/.test(d3)) throw new Error(`worker 解码错误串须归"图片解码失败"：${d3}`);
+          if (/OCR 执行能力缺失/.test(d3)) throw new Error('解码失败不得被归成能力缺口');
+          for (const err of ['ocr worker produced no output', 'ocr worker returned ok:false', 'invalid worker json: <html>', 'ocr unavailable (tesseract.js 未安装或 chi_sim 未物化)']) {
+            const capFail = (): OcrResult => ({ ok: false, error: err } as unknown as OcrResult);
+            const d4 = details(root, capFail as never);
+            if (!/OCR 执行能力缺失/.test(d4)) throw new Error(`「${err}」须归能力缺口：${d4}`);
+            if (/图片解码失败/.test(d4)) throw new Error(`「${err}」不得被指控成图片损坏：${d4}`);
+          }
+        } finally {
+          clearFrameworkConfigCache();
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      }
+      // ⑤ 真实视觉差异：由屏自身 fail/must_fix 承载，不混进降级分类
+      {
+        const { root } = seedTieringProject({
+          alignRefIds: true, regionAttest: true,
+          patch: (_id, i) => (i === 0 ? { verdict: 'fail', must_fix: ['半模态几何缺陷'] } : {}),
+        });
+        try {
+          const d = details(root, jdgOcrOk);
+          if (/文本块观测降级/.test(d)) throw new Error(`参考图可解析、OCR 正常时不得产降级分类：${d}`);
+          if (!/fail=1|must_fix=1/.test(d)) throw new Error(`真实视觉差异须按屏真值呈现：${d}`);
+        } finally {
+          clearFrameworkConfigCache();
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      }
+    });
+  });
+
+  /**
+   * plan e7a2c4f1 §3.4（G28）：责任路由必须走到**实际消费点**，不能只查报告文本里出现过路径。
+   * 链路全部是生产函数：`checkVisualDiff`（gate + `evidence_block_owner`）→
+   * `loadVisualScreenVerdicts` → `bindChannelEvidence` → `testing_channel_evidence_obligation`
+   * → `buildSummaryBlockers` → `classifyFailureKind` / `buildSummaryRepairCandidates`。
+   */
+  const JDG_ROUTE_PLAN = [
+    '# 测试计划', '', '## 三、测试用例清单', '',
+    '| 用例编号 | 用例名称 | 优先级 | 关联 AC | 执行通道 |',
+    '| --- | --- | --- | --- | --- |',
+    '| TC-007 | 选卡半模态视觉 | P0 | AC-8 | visual |',
+    '',
+  ].join('\n');
+  const JDG_ROUTE_ACCEPTANCE = {
+    flows: {},
+    criteria: [{ id: 'AC-8', priority: 'P0', checkpoint: { pre_screen: 'card_type_sheet', post_screen: 'bank_card_selection' } }],
+  };
+  /**
+   * `acceptance` 缺省用 JDG_ROUTE_ACCEPTANCE（TC-007 有完整 checkpoint）；传 `null` 复刻
+   * "TC 关联的 AC 没有 checkpoint"的计划侧绑定断裂。
+   * **blockers / repair 候选按生产口径喂全部 checks**（harness-runner 传的是 `report.checks`，
+   * 不是只传 obligation 一条）——只传一条会把同轮 gate 排除在归因之外，与生产分叉。
+   */
+  const routeOf = (root: string, gate: JdgGate, acceptance: unknown = JDG_ROUTE_ACCEPTANCE): {
+    owner?: string; files: string[]; kind: string; categories: string[]; obligationStatus?: string;
+    bindingOwner?: string; detail: string;
+  } => {
+    const visual = loadVisualScreenVerdicts({ projectRoot: root, feature: 'bank-card', currentBuildFingerprint: null, visualGate: gate as never });
+    const bindings = bindChannelEvidence({
+      planMd: JDG_ROUTE_PLAN, acceptance: acceptance as never, visual,
+      visualTcIds: ['TC-007'], providerTcIds: [], manualTcIds: [],
+    });
+    const obligation = __testing_checkChannelEvidenceObligation(
+      { projectRoot: root, feature: 'bank-card', phase: 'testing' } as unknown as CheckContext,
+      JDG_ROUTE_PLAN, [gate as never], null, bindings,
+    ).find(r => r.id === 'testing_channel_evidence_obligation');
+    const checks = [gate as never, ...(obligation ? [obligation] : [])];
+    const blockers = buildSummaryBlockers(checks, (t, n) => t.slice(0, n), () => undefined);
+    const candidates = buildSummaryRepairCandidates({
+      phase: 'testing', reportValidity: 'PASS', reviewReportText: null, verifierReportText: null, checks,
+    });
+    return {
+      owner: obligation?.repair_owner,
+      files: obligation?.affected_files ?? [],
+      kind: classifyFailureKind({ blockers } as never),
+      categories: candidates.map(c => c.category),
+      obligationStatus: obligation?.status,
+      bindingOwner: bindings[0]?.repair_owner,
+      detail: `${obligation?.status}/${JSON.stringify(blockers)}`,
+    };
+  };
+
+  run('P3-T7 ref naming and missing-file causes route to the spec owner; an ocr-environment gap does not', () => {
+    if (!isJimpAvailable()) return;
+    withoutVisualProvider(() => {
+      // 责任路由走既有 affected_files：前两类点到 spec 这一对文件；OCR 能力缺口不指控任何文件
+      const { root } = seedTieringProject({ regionAttest: true });
+      try {
+        const specOwned = runTieringCheck(root, jdgOcrOk) as unknown as { affected_files?: string[]; details?: string };
+        if (!(specOwned.affected_files ?? []).includes('spec/spec.md')) {
+          throw new Error(`ref 命名问题须回 spec owner：${JSON.stringify(specOwned.affected_files)}`);
+        }
+      } finally {
+        clearFrameworkConfigCache();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+      const { root: ocrRoot } = seedTieringProject({ alignRefIds: true, regionAttest: true });
+      try {
+        const gap = runTieringCheck(ocrRoot, jdgOcrDown) as unknown as { affected_files?: string[]; details?: string };
+        if ((gap.affected_files ?? []).some(f => f.startsWith('spec/'))) {
+          throw new Error(`OCR 环境缺口不得把 spec 拉进责任方：${JSON.stringify(gap.affected_files)}`);
+        }
+        if (!/OCR 执行能力缺失/.test(gap.details ?? '')) throw new Error(`能力缺口须如实成文：${gap.details}`);
+      } finally {
+        clearFrameworkConfigCache();
+        fs.rmSync(ocrRoot, { recursive: true, force: true });
+      }
+
+      // ① ref 命名不一致 + 无覆盖证据 → 证据不可消费，责任方 spec：obligation 带 repair_owner/
+      //    affected_files，归因不再落 code_regression，repair 候选是 spec（不回 coding）。
+      {
+        const { root: specRoot } = seedTieringProject({});
+        try {
+          const gate = runTieringCheck(specRoot, jdgOcrOk);
+          if (gate.structured?.channel_evidence_usable !== false) throw new Error('本段前提：本轮证据须不可消费');
+          const route = routeOf(specRoot, gate);
+          if (route.obligationStatus !== 'FAIL') throw new Error(`证据不可消费须产 BLOCKER：${route.detail}`);
+          if (route.owner !== 'spec') throw new Error(`ref 命名问题须归 spec owner：${route.owner}（${route.detail}）`);
+          if (!route.files.includes('spec/spec.md') || !route.files.includes('spec/ui-spec.yaml')) {
+            throw new Error(`责任文件须点到两个文件：${JSON.stringify(route.files)}`);
+          }
+          if (route.kind === 'code_regression') throw new Error('证据通道断裂不得被归成 code_regression');
+          if (route.kind !== 'spec_capture_gap') throw new Error(`期望 spec_capture_gap，实得 ${route.kind}`);
+          if (!route.categories.includes('spec')) throw new Error(`repair 候选须归 spec：${JSON.stringify(route.categories)}`);
+          if (route.categories.includes('coding')) throw new Error('spec 责任不得产 coding 候选');
+        } finally {
+          clearFrameworkConfigCache();
+          fs.rmSync(specRoot, { recursive: true, force: true });
+        }
+      }
+      // ② OCR 环境缺口 + 无覆盖证据 → 责任方 capability：归因走 toolchain（盲重试无益），
+      //    且**不产生任何 repair 候选**（三档不回 coding，也不冤枉 spec）。
+      {
+        const { root: capRoot } = seedTieringProject({ alignRefIds: true });
+        try {
+          const gate = runTieringCheck(capRoot, jdgOcrDown);
+          if (gate.structured?.channel_evidence_usable !== false) throw new Error('本段前提：本轮证据须不可消费');
+          const route = routeOf(capRoot, gate);
+          if (route.owner !== 'capability') throw new Error(`OCR 能力缺口须归 capability：${route.owner}（${route.detail}）`);
+          if (route.files.some(f => f.startsWith('spec/'))) throw new Error(`能力缺口不得拉 spec 下水：${JSON.stringify(route.files)}`);
+          if (route.kind !== 'toolchain') throw new Error(`期望 toolchain，实得 ${route.kind}`);
+          if (route.categories.length > 0) throw new Error(`能力缺口不得产回退候选：${JSON.stringify(route.categories)}`);
+        } finally {
+          clearFrameworkConfigCache();
+          fs.rmSync(capRoot, { recursive: true, force: true });
+        }
+      }
+      // ③ 反例：真实产品缺陷（屏 fail + must_fix）仍归 coding——本条路由不得把产品真值洗成
+      //    spec/capability，即使同轮还带着 ref 命名降级。
+      {
+        const { root: codingRoot } = seedTieringProject({
+          patch: (_id, i) => (i === 0 ? { verdict: 'fail', must_fix: ['半模态高度与参考图不符'] } : {}),
+        });
+        try {
+          const gate = runTieringCheck(codingRoot, jdgOcrOk);
+          const route = routeOf(codingRoot, gate);
+          if (route.owner !== 'coding') throw new Error(`真实产品缺陷须归 coding：${route.owner}（${route.detail}）`);
+          // 完整 summary（gate + obligation）下，屏 fail 让 hard-pixel gate 自己 FAIL，
+          // 归因先命中既有 `visual_gap` 优先级（classifier 的 visual_diff* 前缀）——这是**既有**
+          // 分类，本笔不为过测试去改它；要锁的是"产品真值不得被洗成 spec/capability"。
+          if (route.kind !== 'visual_gap') throw new Error(`产品真值须走既有视觉分类：${route.kind}`);
+          // coding 候选仍受既有 T3 约束（只由已执行 StepResult 的冻结 pair 产生，须 coding_candidate）——
+          // 本条不放宽它；这里锁的是"产品真值不得被洗成 spec/capability 候选"。
+          if (route.categories.some(c => c === 'spec' || c === 'plan')) {
+            throw new Error(`产品缺陷不得被洗成 spec/plan 候选：${JSON.stringify(route.categories)}`);
+          }
+        } finally {
+          clearFrameworkConfigCache();
+          fs.rmSync(codingRoot, { recursive: true, force: true });
+        }
+      }
+      // ④ 反例（codex 二轮阻断）：**计划侧绑定断裂**（TC 关联的 AC 没有 checkpoint）即使同轮
+      //    视觉证据也不可消费，也不得冒领 visual gate 的责任方——那是计划问题，不是 spec 引用
+      //    或 OCR 能力问题。错附之后会被提成 obligation owner，进而错判 toolchain / 错开 spec 候选。
+      {
+        const { root: unboundRoot } = seedTieringProject({ alignRefIds: true });
+        try {
+          const gate = runTieringCheck(unboundRoot, jdgOcrDown);
+          if (gate.structured?.evidence_block_owner !== 'capability') throw new Error('本段前提：gate 须判 capability');
+          const route = routeOf(unboundRoot, gate, { flows: {}, criteria: [{ id: 'AC-8', priority: 'P0' }] });
+          if (route.bindingOwner !== undefined) throw new Error(`绑定断裂不得附着视觉责任方：${route.bindingOwner}`);
+          if (route.owner !== undefined) throw new Error(`绑定断裂不得被提成 obligation owner：${route.owner}（${route.detail}）`);
+          if (route.categories.length > 0) throw new Error(`绑定断裂不得产回退候选：${JSON.stringify(route.categories)}`);
+          if (route.obligationStatus !== 'FAIL') throw new Error('绑定断裂仍须是 BLOCKER');
+        } finally {
+          clearFrameworkConfigCache();
+          fs.rmSync(unboundRoot, { recursive: true, force: true });
         }
       }
     });

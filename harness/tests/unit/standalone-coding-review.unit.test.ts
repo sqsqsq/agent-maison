@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
+import { createHash } from 'crypto';
 import { execFileSync, spawnSync } from 'child_process';
 import { clearFrameworkConfigCache, resolveFeatureArtifact, featurePhaseReportsDir, resolveReceiptFilePath } from '../../config';
 import { resolveCapabilityInputs, readRunBoundContracts } from '../../scripts/utils/capability-resolution';
@@ -86,6 +87,78 @@ function fixture(newFile = false) {
 }
 
 const cases: Array<{ name: string; newFile?: boolean; run(f: ReturnType<typeof fixture>): Promise<void> | void }> = [
+  /**
+   * plan e7a2c4f1 §3.4（G01）：facts 声明的来源没进建立阶段的证据登记，是**账本类**缺口——
+   * 旧行为是整轮 `facts baseline does not bind source` 抛错（宿主一晚 24 次、约 90 分钟）。
+   * 现在：在项目内且可读 → 按既有 dependency 形状**补登记**；不可读 → 不登记、也不抛错，
+   * 交给 `context_exploration_facts_source_stale` 以 WARN 披露。
+   * 本用例直接对生产入口 `resolveCapabilityResolutionEntryInput` 构造"建立阶段已登记 1 条 +
+   * facts 多声明 1 条可读来源"的真实盘面（建立阶段 manifest 由生产 resolver 生成后落盘）。
+   */
+  { name: 'P3-T9 the entry bridge registers a readable declared source the establishing manifest never bound, and never rewrites a bound one', run(f) {
+    const boundRel = 'src/demo/value.ts';
+    const extraRel = 'src/demo/research-note.ts';
+    f.write(boundRel, 'export const value: number = 42;\n');
+    f.write(extraRel, 'export const note = 1;\n');
+    const declared = [boundRel, extraRel];
+    const factsPath = path.join(f.root, 'doc/features/demo/context/facts.md');
+    fs.mkdirSync(path.dirname(factsPath), { recursive: true });
+    fs.writeFileSync(factsPath, ['---', YAML.stringify({
+      schema_version: '1.1', feature: 'demo', run_id: f.manifest.run_id, established_by: 'coding', ready_to_produce: true,
+      has_blocker_coverage_risk: false, source_code_paths: declared, key_inputs_read: declared, files_inspected_count: 6,
+      searches_performed_estimate: 4, decisions_unlocked: ['value is 42'], exploration_mode: 'sequential',
+    }).trimEnd(), '---', '## Code Facts', '| 路径 | 事实 | 影响 |', '|---|---|---|',
+      ...declared.map(p => `| ${p} | readable current input | verification |`), ''].join('\n'));
+    // 已绑定那条由**上游 plan** 拥有并登记（owner_phase=plan）。先落 plan 登记，再改它的字节，
+    // 这样"账本里的摘要"与"盘上的字节"确定性地不同——只有这样"不重新哈希"才锁得住：
+    // 若实现改成 `sha256File(abs)`，断言立刻看见的是新字节。
+    const ownersToPlan = { [boundRel]: 'plan' };
+    writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({
+      projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'plan',
+      factsContext: { subject: { feature: 'demo', run_id: f.manifest.run_id }, first_phase: 'coding', source_paths: [boundRel], source_owners: ownersToPlan, required_input_snippets: [] },
+    }));
+    const planLedger = loadPhaseEvidenceManifest(f.root, 'demo', 'plan')!.manifest;
+    const ledgerSha = planLedger.outputs.find(entry => entry.path === boundRel && entry.owner_phase === 'plan')?.sha256;
+    assert(ledgerSha, '前提：plan 必须真的把该来源登记成自己的产出');
+    f.write(boundRel, 'export const value: number = 43;\n');
+    const diskSha = createHash('sha256').update(fs.readFileSync(path.join(f.root, boundRel))).digest('hex');
+    assert.notEqual(ledgerSha, diskSha, '前提：账本摘要必须与盘上字节不同，否则本用例锁不住任何东西');
+    // 建立阶段（coding）的证据登记**只登记了其中一条**：另一条是 facts 自述的探索来源，
+    // 从未成为该阶段解析出的 code target——这正是宿主现场的形态。
+    writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({
+      projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding',
+      factsContext: { subject: { feature: 'demo', run_id: f.manifest.run_id }, first_phase: 'coding', source_paths: [boundRel], source_owners: ownersToPlan, required_input_snippets: [] },
+    }));
+    const ledger = loadPhaseEvidenceManifest(f.root, 'demo', 'coding')!.manifest;
+    const ledgerBound = [...ledger.inputs, ...ledger.outputs].find(entry => entry.path === boundRel);
+    assert(ledgerBound?.sha256, '前提：建立阶段必须真的登记了第一条来源');
+    assert(![...ledger.inputs, ...ledger.outputs].some(entry => entry.path === extraRel), '前提：第二条来源必须未被登记');
+
+    const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', featuresDir: 'doc/features', goalRunId: f.manifest.run_id });
+    const deps = bridge.factsContext!.baseline!.dependencies;
+    const norm = (p: string) => p.replace(/\\/g, '/');
+    const added = deps.find(dep => norm(dep.path).endsWith(extraRel));
+    assert(added?.exists && /^[0-9a-f]{64}$/.test(String(added.sha256)), `可读的声明来源必须被补登记：${JSON.stringify(deps.map(d => norm(d.path)))}`);
+    assert.equal(added!.role, 'derive', '补登记须沿既有 dependency 形状');
+    // 只加登记、不改已绑定内容：原有那条仍用**账本里的**摘要（plan 登记的旧字节），
+    // 既不被重新哈希成盘上的新字节，也不被重复登记。
+    const kept = deps.filter(dep => norm(dep.path).endsWith(boundRel));
+    assert.equal(kept.length, 1, `已绑定来源不得被重复登记：${JSON.stringify(kept)}`);
+    assert.equal(kept[0].sha256, ledgerSha, '已绑定条目取的不是账本摘要');
+    assert.notEqual(kept[0].sha256, diskSha, '已绑定条目被重新哈希成了盘上的当前字节');
+    // 补登记后 facts gate 不再为**那条来源**报账本项；而"已绑定来源字节真变了"仍是 BLOCKER
+    // （本夹具刻意造了这个变化）——降档只对"没登记"，不对"登记了但变了"。
+    const inputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', track: 'full', ...bridge }).inputs!;
+    const checks = checkFactsArtifact(f.root, 'demo', 'review', { factsContext: bridge.factsContext, resolvedInputs: inputs, frameworkRoot });
+    const ledgerItems = checks.filter(c => c.id === 'context_exploration_facts_source_stale');
+    assert(!ledgerItems.some(c => c.details.includes(extraRel)), `补登记后不该再为该来源报账本项：${JSON.stringify(ledgerItems)}`);
+    assert(!ledgerItems.some(c => c.details.includes('基线未绑定原有来源')), `可补登记的来源不该落到 WARN 披露：${JSON.stringify(ledgerItems)}`);
+    assert(ledgerItems.some(c => c.status === 'FAIL' && norm(c.details).includes(boundRel)), `已绑定来源字节真变了仍须 BLOCKER：${JSON.stringify(ledgerItems)}`);
+    // 反例：来源不可读（文件没了）→ 不补登记、也不抛错，由检查侧 WARN 披露，不阻断阶段。
+    fs.rmSync(path.join(f.root, extraRel));
+    const missing = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', featuresDir: 'doc/features', goalRunId: f.manifest.run_id });
+    assert(!missing.factsContext!.baseline!.dependencies.some(dep => norm(dep.path).endsWith(extraRel)), '不可读来源不得被补登记');
+  } },
   { name: 'combined review shares new authorized implementation targets across inputs facts and report coverage', newFile: true, async run(f) {
     f.write('src/demo/new.ts', 'export const created = 42;');
     f.git('add', 'src/demo/new.ts'); f.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'new implementation');

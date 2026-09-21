@@ -496,6 +496,38 @@ function resolveDerive(
   }
 }
 
+/**
+ * 冻结期解析**没有解析值**的 provider（只产依赖清单）。这类绑定比 `content_fingerprint`
+ * 没有意义（`readBoundInput` 必抛），只能按依赖字节判定——`feature-track` 的 basis 校验与
+ * `verify-feature-completion` 的完成侧复核共用本表，两边不得各写一份。
+ */
+export const DEPENDENCY_ONLY_PROVIDER_IDS: ReadonlySet<string> = new Set(['derive.codebase', 'derive.test-targets']);
+
+/** 该绑定的来源在冻结期是否产出可比对的解析值（决定能不能用内容等价判据）。 */
+export function bindingHasParsedValue(binding: InputBinding): boolean {
+  return !(binding.source.kind === 'derive' && DEPENDENCY_ONLY_PROVIDER_IDS.has(binding.source.provider_id));
+}
+
+/**
+ * plan e7a2c4f1 §3.4（G02/G04）：冻结绑定与本轮重算绑定的差异**只在账本形状上**——
+ * 同一 input_id、同一 source、解析值指纹逐字节相等，差的是 `dependencies` 聚合或
+ * `source_refs` 列表。这类差异自动对齐（采用本轮重算的 binding），不判 stale。
+ * source 或 `content_fingerprint` 任一不等 = 身份或内容真变了，照旧回 scope owner。
+ */
+function isLedgerOnlyBindingDrift(expected: InputBinding, actual: InputBinding): boolean {
+  // `role` 与 `readBoundInput` 同口径：同一路径两侧登记的 role 必须一致——放开的只有
+  // 依赖清单的增删与字节，不含"这条依赖是什么性质"（codex 二轮建议 2）。
+  const actualRoleByPath = new Map(actual.dependencies.map(dep => [dep.path, dep.role]));
+  const roleAgrees = expected.dependencies.every(dep => {
+    const role = actualRoleByPath.get(dep.path);
+    return role === undefined || role === dep.role;
+  });
+  return expected.input_id === actual.input_id
+    && stableStringify(expected.source) === stableStringify(actual.source)
+    && expected.content_fingerprint === actual.content_fingerprint
+    && roleAgrees;
+}
+
 /** Re-read a selected source using the same P1 parsers/providers and binding contract. */
 export function readBoundInput(options: CapabilityResolutionOptions, binding: InputBinding): unknown {
   const supplied = binding.source.kind === 'artifact' && binding.source.artifact === 'use-cases@1' && options.feature && !options.request
@@ -503,10 +535,24 @@ export function readBoundInput(options: CapabilityResolutionOptions, binding: In
   const result = binding.source.kind === 'derive' ? resolveDerive(options.projectRoot, options.feature, binding.source, options)
     : resolveArtifact(options.frameworkRoot, options.projectRoot, options.feature, binding.source, true, options.request?.inputs[binding.input_id], options.inputContext?.subject,
       supplied?.state === 'resolved' && supplied.artifacts?.['use-cases@1'] !== undefined ? { value: supplied.artifacts['use-cases@1'], dependencies: supplied.dependencies } : undefined);
-  const matches = (left: ResolutionDependency, right: ResolutionDependency): boolean => stableStringify(left) === stableStringify(right);
+  // plan e7a2c4f1 §3.4（G02/G04）：「确定性对齐」的边界写死为**身份明确 + 内容指纹相等**。
+  // 放开的只有**账本形状**：依赖项字节漂移、以及依赖聚合清单的增删——解析值逐字节相同时
+  // 那是同一份内容（换了注释/空白、多走了一次 attempt），不是内容变化。
+  // 不放开的两条：
+  //  · `content_fingerprint` 一个字不放宽——改了条件的 acceptance.yaml 仍然叫 acceptance.yaml，
+  //    指纹不等即内容真变，抛回 scope owner 走既有 correction / 重验，绝不"同名即换绑"；
+  //  · 依赖项的**存在性**仍须逐条一致——绑定时记着"该 artifact 不在场、值由 derive 得出"，
+  //    事后物化出一个同名文件就是换了来源，不是账本漂移（blueprint 物化反例即锁此条）；
+  //  · 依赖项的 **`role`** 仍须逐条一致——`role` 有下游语义（`execution-scope` 出生时按
+  //    `role==='derive'` 认源码观察、`verify-feature-completion` 据此跳过完成侧复核、
+  //    entry-input 按 role 过滤 `expected_bindings`），同路径同存在性同指纹下把
+  //    `artifact` 改成 `derive` 就是换了这条依赖的性质，不是账本漂移。
+  const existenceDrift = (dep: ResolutionDependency): boolean => fs.existsSync(dep.path) !== dep.exists;
+  const boundSame = (dep: ResolutionDependency): boolean =>
+    binding.dependencies.some(bound => bound.path === dep.path && bound.exists === dep.exists && bound.role === dep.role);
   if (result.state !== 'resolved' || result.value === undefined
-    || binding.dependencies.some(dep => !matches(dep, dependency(dep.path, dep.role)))
-    || result.dependencies.some(dep => !binding.dependencies.some(bound => matches(dep, bound)))
+    || binding.dependencies.some(existenceDrift)
+    || result.dependencies.some(dep => !boundSame(dep))
     || crypto.createHash('sha256').update(stableStringify(result.value)).digest('hex') !== binding.content_fingerprint) {
     throw new Error(`input binding stale; return to scope owner: ${result.detail ?? binding.input_id}`);
   }
@@ -621,7 +667,8 @@ function resolveInput(
       const legacyRequirementResupply = expected?.input_id === 'requirement'
         && expected.dependencies.length === 0 && expected.source_refs.length === 0
         && stableStringify({ ...binding, dependencies: [], source_refs: [] }) === stableStringify(expected);
-      if (expected && stableStringify(expected) !== stableStringify(binding) && !legacyRequirementResupply) {
+      if (expected && stableStringify(expected) !== stableStringify(binding)
+        && !legacyRequirementResupply && !isLedgerOnlyBindingDrift(expected, binding)) {
         result = { ...result, state: 'invalid', detail: 'input binding stale; return to scope owner' };
         attempt.state = 'invalid'; attempt.detail = result.detail;
       } else {

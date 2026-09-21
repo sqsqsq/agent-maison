@@ -542,9 +542,63 @@ function modernFactsCase(request: boolean): void {
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }
 
+/**
+ * plan e7a2c4f1 §3.4（G01）：「基线未绑定原有来源」是**账本类**缺口——声明的来源没进阶段
+ * 证据登记，事后追溯弱一级，产品不受影响。可补登记的已由入口（`resolveCapabilityResolutionEntryInput`
+ * 组装 facts baseline 时）补齐；补不了的在这里**以 WARN 如实披露、不单独阻断阶段**。
+ * 同时钉住：来源字节真变了（基线绑定的 sha256 对不上）仍然是 BLOCKER——降的只有"没登记"，
+ * 不是"登记了但变了"。
+ */
+function unboundDeclaredSourceIsLedgerWarn(): void {
+  const dir = mkProject();
+  try {
+    const sourcePaths = Array.from({ length: 6 }, (_, i) => 'src/file' + i + '.ts');
+    for (const source of sourcePaths) {
+      const file = path.join(dir, source);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, 'export const value = 1;\n');
+    }
+    const fm = {
+      schema_version: '1.1', feature: 'demo', run_id: 'real-run', established_by: 'coding',
+      ready_to_produce: true, has_blocker_coverage_risk: false,
+      source_code_paths: sourcePaths, key_inputs_read: sourcePaths, files_inspected_count: 12,
+      searches_performed_estimate: 10, decisions_unlocked: ['verified target implementation'],
+      exploration_mode: 'sequential', change_intent: 'typo_fix', estimated_loc_delta: 1, single_function_scope: true,
+    };
+    const body = '\n## Code Facts\n| 路径 | 事实 | 影响 |\n|---|---|---|\n'
+      + sourcePaths.map(p => '| ' + p + ' | exports current value | review existing behavior |').join('\n');
+    const raw = '---\n' + YAML.stringify(fm) + '---\n' + body + '\n## phase_delta: testing\nnone\n';
+    const context: FactsInvocationContext = { subject: { feature: 'demo', run_id: 'real-run' }, first_phase: 'coding', source_paths: sourcePaths, required_input_snippets: [] };
+    const file = resolveFactsAbsPath(dir, 'demo', context);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, raw);
+    const shaOf = (source: string): string => crypto.createHash('sha256').update(fs.readFileSync(path.join(dir, source))).digest('hex');
+    const dependenciesFor = (sources: string[]) => sources.map(source => ({ path: path.join(dir, source), exists: true, sha256: shaOf(source), role: 'derive' as const }));
+    const inputContext = { schema_version: '1.1' as const, subject: { feature: 'demo' }, obligations: {}, required_outputs: [] };
+    const resolvedInputs: ResolvedPhaseInputs = { context: inputContext, phase: 'testing', values: {}, artifacts: {} };
+    const run = (dependencies: ReturnType<typeof dependenciesFor>) => checkFactsArtifact(dir, 'demo', 'testing', {
+      factsContext: { ...context, first_phase: 'testing', subject: { feature: 'demo', run_id: 'successor-run' }, baseline: { established_by: 'coding', fingerprint: factsBaselineFingerprint(raw), dependencies } },
+      resolvedInputs, profileName: 'generic',
+    });
+    eq(run(dependenciesFor(sourcePaths)).filter(r => r.status === 'FAIL'), [], '全部来源已登记时不得有 FAIL');
+    // 基线少登记了一条声明来源（补不了的那种）→ WARN，不 FAIL。
+    const partial = run(dependenciesFor(sourcePaths.slice(1)));
+    eq(partial.filter(r => r.status === 'FAIL'), [], '未登记的声明来源不得再阻断阶段');
+    const warned = partial.filter(r => r.id === 'context_exploration_facts_source_stale' && r.status === 'WARN');
+    eq(warned.length, 1, '未登记的声明来源必须留 WARN 披露（不得静默）');
+    eq(warned[0].severity, 'MAJOR', '账本类披露不占 BLOCKER 档');
+    eq(warned[0].details.includes(sourcePaths[0]), true, 'WARN 必须点名具体来源');
+    // 反例：登记了但字节真变了 —— 仍是 BLOCKER，本条降档不得外溢。
+    const tampered = dependenciesFor(sourcePaths).map((dep, i) => (i === 0 ? { ...dep, sha256: '0'.repeat(64) } : dep));
+    eq(run(tampered).some(r => r.id === 'context_exploration_facts_source_stale' && r.status === 'FAIL'), true,
+      '来源内容变化仍须阻断（降档只对"没登记"）');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+}
+
 cases.push(
   { name: 'facts 1.1: coding establishes real baseline and successor preserves provenance', run: () => modernFactsCase(false) },
   { name: 'facts 1.1: request review uses explicit report directory and exclusive subject', run: () => modernFactsCase(true) },
+  { name: 'P3-T9 an unregistered declared source is disclosed as a ledger WARN, while a changed source still blocks', run: unboundDeclaredSourceIsLedgerWarn },
 );
 
 export function runAll(): UnitCaseResult[] {

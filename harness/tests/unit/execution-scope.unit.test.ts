@@ -45,6 +45,7 @@ import { verifyFeatureCompletion, verifyReusedExecutionScope, executionScopeEvid
 import { loadFrozenExecutionScope, loadEffectiveExecutionScope } from '../../scripts/utils/goal-run-creation';
 import { resolveUpstreamPhaseChain } from '../../scripts/utils/upstream-verdict-gate';
 import { featureRequirementBinding, readScopeAcceptance, collectResolvedScopeFacts, prepareFeatureScopeCandidate, featureScopeCandidateFingerprint } from '../../scripts/utils/feature-track';
+import { uiSpecAbsPath } from '../../scripts/utils/ui-spec-shared';
 import { codingBasePath } from '../../scripts/utils/pass-snapshot';
 import { recomputePhaseEvidenceStaleness } from '../../scripts/utils/phase-evidence-manifest';
 import * as os from 'os';
@@ -885,6 +886,39 @@ cases.push({ name: 'D0.1 pixel_1to1 without visual acceptance opens a spec defin
   assert(!gap.phase_chain.includes('testing'), 'testing must not be executable before the gap is filled');
   assert(!pixel(true).unresolved.some(u => u.obligation_id === 'acceptance-definition:visual'), 'an existing visual acceptance is not a gap');
 } });
+// plan e7a2c4f1 §3.4（G30）：`visual_acceptance_present` 的判据是"在场**且可读**"。
+// 上一条用的是手填的 boolean；这一条走**生产路径** `collectResolvedScopeFacts`（唯一写点），
+// 把"文件在但解析不出来"的 ui-spec 真正喂进同一条 definition-gap 出口——不是降成 WARN。
+cases.push({ name: 'P3-T10 an unreadable ui-spec opens the existing acceptance-definition:visual gap owned by spec, not a warn', run() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'p3t10-uispec-'));
+  try {
+    clearFrameworkConfigCache();
+    const feature = 'demo';
+    const ctx = { projectRoot: root, feature, frameworkRoot: path.resolve(__dirname, '../../..') };
+    const probe = (): boolean => collectResolvedScopeFacts(request(['coding'], 'feature'), ctx).fidelity.visual_acceptance_present!;
+    const uiSpec = uiSpecAbsPath(root, feature);
+    fs.mkdirSync(path.dirname(uiSpec), { recursive: true });
+    assert.equal(probe(), false, '文件缺失仍是缺口（既有行为不变）');
+    // 坏 YAML：旧判据 fs.existsSync 会判 true，视觉义务的定义就此悬空。
+    fs.writeFileSync(uiSpec, 'screens: [\n  - id: a\n   bad indent: {{\n');
+    assert.equal(probe(), false, '解析不出来的 ui-spec 不算"在场"');
+    // 能解析但不是映射（如整份写成一个列表）同样不构成验收定义。
+    fs.writeFileSync(uiSpec, '- not-a-mapping\n');
+    assert.equal(probe(), false, '非映射根节点不算"在场"');
+    fs.writeFileSync(uiSpec, 'schema_version: "1.0"\nscreens: []\nassets: []\n');
+    assert.equal(probe(), true, '可读的 ui-spec 必须算在场，否则缺口永不关闭');
+    // 生产事实 → 既有 resolver：缺口按 spec-owned definition gap 开出，视觉义务不被取消。
+    fs.writeFileSync(uiSpec, 'screens: [\n  - id: a\n   bad indent: {{\n');
+    const scope = resolveExecutionScope(req(['coding'], 'feature'), wf, acc('unit'), facts({
+      fidelity: { state: 'valid', selected_fidelity: 'pixel_1to1', visual_requested: true, visual_acceptance_present: probe() },
+    }));
+    const gap = scope.unresolved.find(u => u.obligation_id === 'acceptance-definition:visual');
+    assert(gap && gap.owner === 'spec', JSON.stringify(scope.unresolved));
+    assert.equal(scope.obligations.find(o => o.id === 'acceptance-definition:visual')!.applicability, 'unknown', '定义缺口是 unknown，不是 WARN 后照跑');
+    assert.equal(scope.obligations.find(o => o.kind === 'visual-evidence')!.applicability, 'required', '定义缺口不得取消视觉义务');
+    assert(scope.phase_chain.includes('spec'), 'spec 必须可执行去填它自己拥有的缺口');
+  } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+} });
 cases.push({ name: 'D0.1 the visual definition gap is cleared once the artifact exists', run() {
   const pixel = (present: boolean) => ({ state: 'valid' as const, selected_fidelity: 'pixel_1to1', visual_requested: true, visual_acceptance_present: present });
   // A sourced impact keeps the device duty decided, so the gap is the ONLY thing that can block
@@ -1686,6 +1720,40 @@ cases.push({ name: 'D1 reconcile-only needs no trace for a runless zero-device f
     // 统一入口在无 run 时读得到范围——这正是 `--report-reconcile-only` 前置条件放开后依赖的事实
     assert(loadEffectiveExecutionScope(root, feature), '无 run 时统一入口读不到有效范围');
     assert.deepStrictEqual(executionScopeEvidenceIssues(root, feature, scope), []);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+} });
+
+// plan e7a2c4f1 §3.4（G02/G04）：内容等价判据**两侧必须同一个**。resolver 侧自动对齐了账本
+// 形状（依赖字节漂移而解析值相同），完成侧若还逐字节比旧 sha256，就会出现「resolver 过了、
+// 完成检查照样 input binding stale」的分裂——冻结的 acceptance.yaml 只加一行注释就永远完不成。
+cases.push({ name: 'P3-T9 a frozen input whose bytes drifted with identical parsed content still completes; a real content change still blocks', run() {
+  const { root, frameworkRoot, feature } = setupRunlessProject();
+  try {
+    ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature });
+    const scope = featureEffectiveScope(readFeatureFrozenScope(root, feature)!);
+    assert.deepStrictEqual(executionScopeEvidenceIssues(root, feature, scope), [], '前提：刚冻结时完成侧须干净');
+    const acceptancePath = featureFilePath(root, feature, 'acceptance.yaml');
+    const frozenBytes = fs.readFileSync(acceptancePath, 'utf8');
+    // ① 只加注释：字节变了、YAML 解析值逐字节相同 → 完成侧与 resolver 同判，不拦完成。
+    fs.writeFileSync(acceptancePath, `${frozenBytes}\n# 只改注释，解析值不变\n`);
+    assert.deepStrictEqual(
+      executionScopeEvidenceIssues(root, feature, scope), [],
+      '字节漂移而解析值相同：完成侧仍逐字节比旧 sha256 → 与 resolver 分裂',
+    );
+    // ② 内容真变（多一个验收条目）→ 仍然拒绝完成，判据一个字没放宽。
+    const changed = YAML.parse(frozenBytes) as { criteria: Array<Record<string, unknown>> };
+    changed.criteria.push({ id: 'AC-2', description: 'new behavior', priority: 'P1', testable: true, verification_steps: ['read'], expected_result: 'x', ut_layer: 'unit', ut_focus: 'new' });
+    fs.writeFileSync(acceptancePath, YAML.stringify(changed));
+    assert(
+      executionScopeEvidenceIssues(root, feature, scope).some(issue => /input binding stale/.test(issue)),
+      '内容真变仍须拒绝完成（同名即换绑是 §7 明列的不做项）',
+    );
+    // ③ 文件没了：存在性变化不属账本漂移，照旧拒绝。
+    fs.rmSync(acceptancePath);
+    assert(
+      executionScopeEvidenceIssues(root, feature, scope).some(issue => /input binding stale/.test(issue)),
+      '依赖存在性变化不得被当成账本漂移',
+    );
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 

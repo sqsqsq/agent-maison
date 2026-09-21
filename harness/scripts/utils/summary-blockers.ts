@@ -25,6 +25,11 @@ export interface SummaryBlockerEntry {
   actionability?: 'agent_fixable' | 'human_only' | 'toolchain_blocked' | 'framework_blocked';
   /** P1-7（plan 7c4f2e9b）：operator 专用说明——goal-report 渲染，不进 agent 重试回喂 */
   operator_note?: string;
+  /**
+   * plan e7a2c4f1 §3.4（G28）：check 层已判出的责任方须保真传到 goal-runner 的失败分类——
+   * 与 `blocking_class` 同一病灶（review#3：漏传即误落 code_regression 盲重试）。
+   */
+  repair_owner?: string;
 }
 
 /**
@@ -59,6 +64,7 @@ export function buildSummaryBlockers(
         ...(c.source ? { source: c.source } : {}),
         actionability,
         ...(c.operator_note ? { operator_note: c.operator_note } : {}),
+        ...(c.repair_owner ? { repair_owner: c.repair_owner } : {}),
       };
     });
 }

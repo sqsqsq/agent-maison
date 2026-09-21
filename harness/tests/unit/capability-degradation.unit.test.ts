@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { execFileSync } from 'child_process';
-import { resolveCapabilityInputs, type PhaseInputContext } from '../../scripts/utils/capability-resolution';
+import { readBoundInput, resolveCapabilityInputs, type PhaseInputContext } from '../../scripts/utils/capability-resolution';
 import { collectContextFiles } from '../../harness-runner';
 import { buildVerifierMaterialView } from '../../scripts/utils/verifier-material';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
@@ -392,6 +392,49 @@ cases.push(
       assert(prompt.some(entry => entry.content.includes('must-review')), 'verifier did not consume resolved content');
       assert(loader.inspectFeatureArtifacts('demo', 'coding', resolution.inputs).missingRequiredFiles.length === 0, 'legacy fixed files still required');
       assert(!fs.existsSync(path.join(root, 'doc/features/demo/spec')), 'invented spec stage');
+    }),
+  },
+  {
+    // plan e7a2c4f1 §3.4（G02/G04）：「确定性对齐」的边界 = 身份明确 + 内容指纹相等。
+    // 账本形状差异（依赖清单/source_refs 漂移）自动对齐；同名但内容变了必须回 correction，
+    // 「同名即换绑」是 §7 明列的不做项。
+    name: 'P3-T9 a ledger-only binding drift auto-aligns; a same-named input whose content fingerprint changed returns to correction instead of rebinding',
+    run: () => project(root => {
+      const fixture = modernFixture(root, 'acceptance@1');
+      write(root, 'doc/features/demo/acceptance.yaml', 'criteria: []');
+      const first = fixture.resolve();
+      assert(first.report.assurance === 'full', JSON.stringify(first.report));
+      const binding = first.report.capabilities[0].inputs[0].binding!;
+      assert(binding.dependencies.length > 0 && binding.source_refs.length > 0, 'fixture 必须真有依赖登记，否则第 ① 段是空跑');
+      const options = { frameworkRoot: fixture.framework, projectRoot: root, feature: 'demo', phase: 'review', track: 'full' as const };
+      assert(readBoundInput(options, binding) !== undefined, '未漂移时就该读得出来');
+      // ① 账本形状漂移：文件字节变了（加了一行注释）而解析值逐字节相同 → 依赖 sha256 与
+      //    冻结记录对不上，但内容没变。自动对齐，不判 stale（宿主 runless spec 的
+      //    "冻结自冲突"就是这一类）。
+      write(root, 'doc/features/demo/acceptance.yaml', 'criteria: []\n# 只改注释，解析值不变\n');
+      assert(fixture.resolve({ ...fixture.context, expected_bindings: [binding] }).report.assurance === 'full',
+        '账本形状漂移（依赖字节/引用清单）被当成内容变化阻断了');
+      assert(readBoundInput(options, binding) !== undefined, 'readBoundInput 仍因依赖字节漂移抛错');
+      // ①b 反例：**只改 role** 必须拒绝。role 有下游语义（出生时按 derive 认源码观察、
+      //     完成侧据此跳过复核、entry-input 按 role 过滤 expected_bindings），同路径同存在性
+      //     同指纹下把 artifact 改成 derive 就是换了这条依赖的性质，不是账本漂移。
+      const roleFlipped = {
+        ...binding,
+        dependencies: binding.dependencies.map(d => ({ ...d, role: (d.role === 'artifact' ? 'derive' : 'artifact') as typeof d.role })),
+      };
+      expectThrow(() => readBoundInput(options, roleFlipped), 'input binding stale');
+      assert(fixture.resolve({ ...fixture.context, expected_bindings: [roleFlipped] }).report.assurance === 'blocked',
+        'expected_bindings 侧只改 role 也不得被当成账本漂移自动对齐');
+      // ② 内容真变了（改了条件的 acceptance.yaml 仍然叫 acceptance.yaml）→ 回 correction。
+      write(root, 'doc/features/demo/acceptance.yaml', 'criteria: [{ id: AC-1, priority: P0, ut_layer: unit }]');
+      assert(fixture.resolve({ ...fixture.context, expected_bindings: [binding] }).report.assurance === 'blocked',
+        '同名即换绑：内容指纹已变仍被自动对齐');
+      expectThrow(() => readBoundInput(options, binding), 'input binding stale');
+      // ③ 身份不同（同名但换了 source）也不得自动对齐。
+      write(root, 'doc/features/demo/acceptance.yaml', 'criteria: []');
+      const otherSource = { ...binding, source: { kind: 'artifact' as const, artifact: 'contracts@1' } };
+      assert(fixture.resolve({ ...fixture.context, expected_bindings: [otherSource] }).report.assurance === 'blocked',
+        '换了 source 仍被当成同一条绑定');
     }),
   },
   {

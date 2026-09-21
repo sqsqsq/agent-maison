@@ -311,8 +311,17 @@ export function resolveCapabilityResolutionEntryInput(
             }) };
             for (const source of paths) {
               const safe = validateProjectRelativePath(options.projectRoot, source, 'facts source');
-              if (!factsContext.baseline.dependencies.some(dep => dep.exists && dep.sha256 && path.resolve(dep.path) === path.resolve(options.projectRoot, safe))) {
-                throw new Error(`facts baseline does not bind source: ${safe}`);
+              const abs = path.join(options.projectRoot, safe);
+              if (!factsContext.baseline.dependencies.some(dep => dep.exists && dep.sha256 && path.resolve(dep.path) === path.resolve(abs))) {
+                // plan e7a2c4f1 §3.4（G01）：这是账本类缺口——facts 声明的来源没进阶段证据
+                // 登记，事后追溯弱一级，产品不受影响。声明来源在项目内且可读 → **补登记**
+                // （只加一条 dependency，不改任何已绑定条目的内容）；补不了（不可读）就什么
+                // 都不做，交给 context-facts 的既有 `context_exploration_facts_source_stale`
+                // 以 WARN 披露，不再整轮抛错。
+                let readable = true;
+                try { assertFactsSourceReadable(options.projectRoot, safe); } catch { readable = false; }
+                const sha = readable ? sha256File(abs) : null;
+                if (sha) factsContext.baseline.dependencies.push({ path: abs, exists: true, sha256: sha, role: 'derive' });
               }
               if (!sourcePaths.includes(safe)) sourcePaths.push(safe);
             }

@@ -276,6 +276,13 @@ export interface GoalSummaryBlocker {
   affected_files?: string[];
   /** P0-4（plan 7c4f2e9b）：check 侧显式 actionability（优先级链第一环；缺省走注册表映射） */
   actionability?: BlockerActionability;
+  /**
+   * plan e7a2c4f1 §3.4（G28）：check 侧已判出的责任方（`repair_candidates` 的同一字段）。
+   * 归因据此避开"证据通道断裂被说成 code_regression"——`spec` 归 `spec_capture_gap`
+   * （与 `ui_spec_fidelity_gate` 同族：验读证据没建立起来，没有一支指向产品源码），
+   * `capability` 归 `toolchain`（盲重试无益、早 halt）。`coding` 沿既有兜底不改。
+   */
+  repair_owner?: string;
 }
 
 // ============================================================================
@@ -660,6 +667,15 @@ export function classifyFailureKind(
   // 不落 code_regression（事故 i3/i4 即被误标）、不复用 capture 桶（其语义=修采集导航）、
   // 不入 SIGNATURE_HALT_KINDS（主出口=actionability 聚合层即时求人，不靠粗熔断兜底）。
   if (ids.some(isSpecCaptureGapBlockerId)) return 'spec_capture_gap';
+  // plan e7a2c4f1 §3.4（G28）：check 层已判出责任方时不再落兜底 code_regression——
+  // 宿主 7 次 testing 失败里 6 次就是这么被说成"改码"的。`repair_owner` 是
+  // `repair_candidates` 既有字段，这里只是让归因读同一份事实，不新增分类。
+  // 产品真值（`coding`）仍走兜底，不改。
+  const owners = new Set((currentSummary.blockers ?? []).map((b) => b.repair_owner).filter(Boolean));
+  if (!owners.has('coding')) {
+    if (owners.has('capability')) return 'toolchain';
+    if (owners.has('spec')) return 'spec_capture_gap';
+  }
   return 'code_regression';
 }
 
