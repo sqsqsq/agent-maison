@@ -928,6 +928,9 @@ test('批次A完整 checker：6 Hylyre + visual overlay + advisory WARN 共享 b
         ref_path: path.relative(fixture.root, shot).replace(/\\/g, '/'),
         evaluated_screenshot_hash: crypto.createHash('sha256').update(fs.readFileSync(shot)).digest('hex').slice(0, 16),
         evaluated_build_fingerprint: computeHapBuildFingerprint(fixture.hapPath), defects: [], must_fix: [], reverse_missing: [],
+        // plan e7a2c4f1 §3.1：证据资格 = 逐 P0 屏"屏真值 + 采集完成 + 目标被覆盖"。本夹具无文本锚
+        // （placement 核对不跑），覆盖由逐屏 vl_screening region_attest 承担——与宿主真实轮次同形态。
+        region_attest: [{ region: screenId.split('__overlay__')[0], verdict: 'no_diff', method: 'vl_screening' }],
       };
     });
     fs.writeFileSync(path.join(shotsDir, 'visual-diff.json'), JSON.stringify({ schema_version: '1.1', feature: 'demo', screens }));

@@ -853,8 +853,17 @@ export function computeScreensHash(screens: VisualDiffScreenEntry[]): string {
 /** t0③：check → runner 的进程内结构化 payload（不进 summary.json，持久化走账本侧车） */
 export interface VisualDiffStructuredPayload {
   kind: 'visual_diff';
-  /** true 仅表示聚合命中全是 producer 明示的 advisory，不含缺证/能力降级/真实失败。 */
+  /**
+   * plan e7a2c4f1 §3.1：true 表示**每个 P0 屏**都满足"屏本身没问题 + 采集完成 + 目标被至少
+   * 一路证据覆盖（placement 核对跑完 或 vl_screening region_attest）"；不再表示"聚合命中全是
+   * advisory"。辅助核对缺席不整轮否定，真实 fail / must_fix / 缺采 / 零覆盖仍然否定。
+   */
   channel_evidence_usable: boolean;
+  /**
+   * 本轮真的跑完文本 placement 核对的屏（`TextPlacementResult.verifiedScreens` 物化）。
+   * 随 checks[].structured → script-report.json 落盘供事后取证，判据的实际通路是进程内传递。
+   */
+  placement_verified_screens: string[];
   loop_id: string;
   attempt_id: string | null;
   goal_run_id: string | null;
@@ -953,7 +962,11 @@ interface VisualDiffHit {
   line: string;
   suggestion?: string;
   rank: number;
-  /** 仅 producer 能标；默认 false，避免把任意 MAJOR/WARN 当成可消费证据。 */
+  /**
+   * producer 对本条命中的定性：true=只是"这轮少了一路观测"，不是关于屏的真值。
+   * plan e7a2c4f1 §3.1 起 `channel_evidence_usable` 改按逐屏真值 + 覆盖条件求值，**不再读本字段**；
+   * 它现在只是 producer 的语义标注（保留供人读与后续清理），不构成任何放行/否决权。
+   */
   advisory?: boolean;
 }
 
@@ -1152,6 +1165,11 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   // （OCR 混淆 / 整页参考图 vs 单视口口径缺口）——最终物化为 structuredPayload
   // .uncertain_signals[] 随 script-report.json 落盘；不回写 visual-diff.json。
   let collectedUncertainSignals: Array<{ screen_id: string; target: string; reason: string }> = [];
+  // plan e7a2c4f1 §3.1：文本 placement 核对真的跑完的屏（同一外层收集变量模式）——
+  // 物化为 structuredPayload.placement_verified_screens，并供 channel_evidence_usable 求值。
+  let collectedPlacementVerifiedScreens: string[] = [];
+  // 同一模式：P0 屏上的确定性 placement fail_signals（产品事实，低档位只 WARN 也不得放行）。
+  let collectedPlacementFailScreens: string[] = [];
 
   const specMd = loadSpecMarkdown(ctx);
   const uiChange = specMd ? parseUiChangeFromSpecMarkdown(specMd) : null;
@@ -1756,11 +1774,15 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     );
     // M2：producer 归类的 uncertain 信号（OCR 混淆 / 口径缺口）——留下供 structuredPayload 物化
     collectedUncertainSignals = placement.uncertainSignals;
+    collectedPlacementVerifiedScreens = placement.verifiedScreens;
     const p0BaseSet = new Set(p0Ids.map(canonicalOverlayBase));
     const failScreensPlacement = placement.perScreen.filter(
       p => p.fail_signals.length > 0 && p0BaseSet.has(canonicalOverlayBase(p.screen_id)),
     );
     const warnScreensPlacement = placement.perScreen.filter(p => !failScreensPlacement.includes(p));
+    // plan e7a2c4f1 §3.1（codex review 返修）：确定性 fail_signals 是**产品事实**（一档），
+    // 非 hard-pixel 档位下它只出 WARN（下方 ratchet），不能因此被当成可消费证据。
+    collectedPlacementFailScreens = failScreensPlacement.map(p => p.screen_id);
     if (failScreensPlacement.length > 0) {
       const ratchet = pixel1to1
         ? fidelityRatchetFailOrWarn(ctx, false)
@@ -1816,6 +1838,10 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
         id: 'visual_diff_text_placement_degraded',
         severity: 'MAJOR',
         status: 'WARN',
+        // plan e7a2c4f1 §3.1（G11）：这条描述的是"这轮少了一路辅助核对"，不是"屏有问题"——
+        // 与 T8 观测（visual_diff_layout_invariants）同级标 advisory；对结论的影响改由
+        // channel_evidence_usable 的逐屏覆盖条件承担，不再靠"hit 列表干净"整轮否定。
+        advisory: true,
         line:
           `文本块观测降级：` +
           (placement.ocrUnavailable.length ? `截图 OCR 不可用（${placement.ocrUnavailable.join(', ')}）` : '') +
@@ -2881,12 +2907,37 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
 
   // t0③：进程内结构化 payload（runner 消费追加账本 + summary.visual_round；不进 summary
   // blocker schema）。持久化侧车=账本本身。
+  //
+  // plan e7a2c4f1 §3.1（G13）：证据资格判据 = **关于屏的真值 + 逐屏覆盖条件**，不再用 hit 列表
+  // 形状（"所有命中都 advisory"）。旧判据让任何一条未标 advisory 的 WARN——哪怕只是"这轮少了
+  // 一路辅助核对"——把四屏 pass/fail=0/must_fix=0 的整轮视觉证据判死（宿主三轮全中）。
+  //   ① 屏本身没问题：verdict≠fail 且 must_fix 为空（既有判据，按全部屏求值，强于逐 P0 屏）；
+  //      **外加已证实的产品事实**（codex review 返修）：pass 屏登记的 blocker/major `defects`
+  //      （`blockingDefectPass`）与 P0 屏的确定性 placement `fail_signals`。低档位（非 hard
+  //      pixel）下既有 ratchet 只把这两类降成 WARN，不在此否决就等于把"已知渲染缺陷 + 屏 pass"
+  //      绑成 covered——这正是 harness-gates 里 major/blocker 缺陷必须拒绝的那条。
+  //   ② 采集确实完成：该屏有 evaluated_screenshot_hash；
+  //   ③ 目标被至少一路证据覆盖：placement 核对跑完，或该屏有 vl_screening 的 region_attest。
+  // 不读 hit 列表、不用 contentActionableMissing（熔断不合格时被清空）、不用 unavailable 集合取反；
+  // 能力缺口类 WARN（OCR 降级、dump 缺失）照旧可消费。
+  const placementVerifiedScreens = new Set(collectedPlacementVerifiedScreens);
+  const p0ScreenEvidenceCovered = (targetId: string): boolean => {
+    const entry = resolveP0Entry(targetId);
+    if (!entry) return false;
+    if (isMissingEvaluatedScreenshotHash(entry) || isCaptureMutableVerdict(entry.verdict)) return false;
+    return (
+      placementVerifiedScreens.has(entry.screen_id) ||
+      machineRegionAttest(entry).some(a => a.method === 'vl_screening')
+    );
+  };
   const structuredPayload: VisualDiffStructuredPayload = {
     kind: 'visual_diff',
     channel_evidence_usable:
-      (hits.length === 0 || hits.every(hit => hit.advisory === true)) &&
-      contentActionableMissing.length === 0 &&
-      !rep.screens.some(screen => screen.verdict === 'fail' || (screen.must_fix?.length ?? 0) > 0),
+      !rep.screens.some(screen => screen.verdict === 'fail' || (screen.must_fix?.length ?? 0) > 0) &&
+      blockingDefectPass.length === 0 &&
+      collectedPlacementFailScreens.length === 0 &&
+      p0Ids.every(p0ScreenEvidenceCovered),
+    placement_verified_screens: [...placementVerifiedScreens],
     loop_id: loopId,
     attempt_id: goalRunId ? attemptId : null,
     goal_run_id: goalRunId,

@@ -177,14 +177,20 @@ export interface VisualEvidenceOptions {
   visualGate: Pick<CheckResult, 'id' | 'status' | 'severity' | 'structured'> | null;
 }
 
-/** 稳定 visual aggregate 的证据资格；WARN 只信 producer 明示 advisory 的结构化判据。 */
+/**
+ * 稳定 visual aggregate 的证据资格：PASS 与 WARN **读同一个** `channel_evidence_usable` 布尔。
+ *
+ * plan e7a2c4f1 §3.1：判据改成逐屏真值 + 覆盖条件之后，PASS 不再蕴含"逐屏覆盖成立"——
+ * 全屏 pass、hits 为空、但 OCR 不可用且无 region_attest 的轮次照样能产出 PASS 聚合，却不该
+ * 被绑定消费。gate 缺席 / id 不是 visual_diff 仍直接拒（那是身份，不是档位）。
+ */
 export function visualGateAllowsEvidence(
   gate: Pick<CheckResult, 'id' | 'status' | 'severity' | 'structured'> | null | undefined,
 ): boolean {
   if (!gate || gate.id !== 'visual_diff') return false;
-  if (gate.status === 'PASS') return true;
+  if (gate.status !== 'PASS' && gate.status !== 'WARN') return false;
   const payload = gate.structured as { kind?: string; channel_evidence_usable?: unknown } | undefined;
-  return gate.status === 'WARN' && payload?.kind === 'visual_diff' && payload.channel_evidence_usable === true;
+  return payload?.kind === 'visual_diff' && payload.channel_evidence_usable === true;
 }
 
 /**
@@ -201,7 +207,15 @@ export function loadVisualScreenVerdicts(opts: VisualEvidenceOptions): VisualScr
   // 证据义务必须晚于证据产生：visual 门没跑通就没有"本轮结论"可消费。
   const gatePass = visualGateAllowsEvidence(opts.visualGate);
   if (!gatePass) {
-    return empty(`本轮 visual_diff 门未通过（status=${opts.visualGate?.status ?? '(未执行)'}），无本轮视觉证据可消费`);
+    // plan e7a2c4f1 §3.1：判据是逐屏覆盖而不是门的状态，所以拒绝理由必须说清是哪一种——
+    // "status=PASS 却说门未通过"曾是现场最费解的一句。
+    const gate = opts.visualGate;
+    const status = gate?.status ?? '(未执行)';
+    const aggregateUsableStatus = gate?.id === 'visual_diff' && (status === 'PASS' || status === 'WARN');
+    const why = aggregateUsableStatus
+      ? `本轮视觉证据资格不成立（status=${status}）：需「屏无 fail/must_fix、无 blocker/major defects 与确定性 placement 背离 + evaluated_screenshot_hash + 文本 placement 核对已跑完或 vl_screening region_attest」`
+      : `本轮 visual_diff 门未通过（status=${status}：门缺席、id 不符或状态本身不可消费）`;
+    return empty(`${why}，无本轮视觉证据可消费`);
   }
 
   const file = path.join(

@@ -80,7 +80,11 @@ import type { OcrResult } from '../../../profiles/hmos-app/harness/ocr-toolkit';
 import type { CheckContext, PhaseRuleSpec } from '../../scripts/utils/types';
 import { MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV, MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV } from '../../scripts/utils/phase-state';
 import { DEFAULT_LAYOUT } from '../utils/layout-test-helper';
-import { bindChannelEvidence, loadVisualScreenVerdicts } from '../../scripts/utils/execution-channel-evidence';
+import { bindChannelEvidence, loadVisualScreenVerdicts, visualGateAllowsEvidence } from '../../scripts/utils/execution-channel-evidence';
+import { checkRenderVisibilityCalibrate } from '../../../profiles/hmos-app/harness/render-visibility';
+// P3-T5：三条 3.0.0 假 PASS 向量各自的既有责任门（复用既有判据与反例形态，不新造门）
+import { evaluateChannelDerivedCoverage } from '../../scripts/utils/derived-hylyre-plan';
+import { scanBehaviorSwitches } from '../../scripts/utils/behavior-switch-scan';
 
 export interface UnitCaseResult {
   name: string;
@@ -3791,7 +3795,7 @@ export function runAll(): UnitCaseResult[] {
   // t1/t2/t6b（plan f7a3d9c2）：指纹熔断 e2e + must_fix 锚定 + 低档守恒
   // ==========================================================================
 
-  run('batchA producer: pixel 四屏仅 T8 advisory WARN 保持 stable id 并可绑定，非 advisory 残差拒绝', () => {
+  run('batchA producer: pixel 四屏覆盖成立时保持 stable id 并可绑定；能力降级（dump 缺失）仍可消费，真实 fail/must_fix 与零覆盖证据一律拒绝', () => {
     if (!isJimpAvailable()) return;
     const root = mkProject();
     const prevProvider = process.env[MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV];
@@ -3834,6 +3838,9 @@ export function runAll(): UnitCaseResult[] {
           ref_path: path.relative(root, shot).replace(/\\/g, '/'),
           evaluated_screenshot_hash: hash, screenshot_hash: hash,
           must_fix: [], defects: [], reverse_missing: [],
+          // plan e7a2c4f1 §3.1：证据资格改为逐 P0 屏"屏真值 + 采集完成 + 目标被覆盖"——
+          // 本夹具无文本锚（placement 核对不跑），覆盖由逐屏 vl_screening region_attest 承担。
+          region_attest: [{ region: `${id}_root`, verdict: 'no_diff', method: 'vl_screening' }],
         };
       });
       const jsonPath = path.join(shotsDir, 'visual-diff.json');
@@ -3864,9 +3871,21 @@ export function runAll(): UnitCaseResult[] {
       doc.screens[0].must_fix = [];
       fs.rmSync(path.join(shotsDir, 'layout-bank_card_selection.json'));
       fs.writeFileSync(jsonPath, JSON.stringify(doc));
+      // plan e7a2c4f1 §3.1：辅助信号缺席（T8 几何未跑）如实披露，但不再整轮否定——该屏的目标
+      // 仍被 region_attest 覆盖。取消资格的是"缺覆盖/缺 hash/真失败"，不是 hit 列表的形状。
       const degraded = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }))[0] as { structured?: VisualDiffStructuredPayload; details?: string };
-      if (degraded.structured?.channel_evidence_usable !== false || !/layout.*missing|布局树 dump/i.test(degraded.details ?? '')) {
-        throw new Error(`能力降级 WARN 不得获得 channel 资格：${degraded.details}`);
+      if (!/layout.*missing|布局树 dump/i.test(degraded.details ?? '')) {
+        throw new Error(`能力降级须如实披露：${degraded.details}`);
+      }
+      if (degraded.structured?.channel_evidence_usable !== true) {
+        throw new Error(`覆盖仍成立时能力降级不得取消证据资格：${degraded.details}`);
+      }
+      // 反例对照：同一轮去掉该屏的覆盖证据（无 placement 核对、无 region_attest）→ 立即不可用
+      delete doc.screens[1].region_attest;
+      fs.writeFileSync(jsonPath, JSON.stringify(doc));
+      const uncovered = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }))[0] as { structured?: VisualDiffStructuredPayload; details?: string };
+      if (uncovered.structured?.channel_evidence_usable !== false) {
+        throw new Error(`零覆盖证据的 P0 屏不得获得 channel 资格：${uncovered.details}`);
       }
     } finally {
       if (prevProvider === undefined) delete process.env[MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV];
@@ -3876,6 +3895,496 @@ export function runAll(): UnitCaseResult[] {
       clearFrameworkConfigCache();
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  // ==========================================================================
+  // plan e7a2c4f1 第一笔（§3.1 / §3.2）：证据资格判据 = 逐 P0 屏真值 + 覆盖条件；
+  // overlay 屏遮挡误报。P3-T1 / T2 / T3 / T4 / T5。
+  // ==========================================================================
+
+  /** 宿主 bc-openCard-2 现场形态：ui-spec ref_id 与 spec.md authoritative_refs.id 四个全不一致 */
+  const JDG_SCREENS = [
+    { id: 'card_type_sheet', refId: 'card_type_sheet_ref', specId: 'card_type_sheet' },
+    { id: 'bank_card_selection', refId: 'bank_card_selection_ref', specId: 'card_selection' },
+    { id: 'sms_verification_sheet', refId: 'sms_sheet_ref', specId: 'sms_sheet' },
+    { id: 'add_card_result', refId: 'result_ref', specId: 'add_result' },
+  ];
+  const JDG_ANCHORS = ['添加卡片', '中信银行', '短信验证码'];
+
+  /**
+   * plan e7a2c4f1 §5 夹具硬要求：ui-spec 节点带真实文本锚；spec.md 写
+   * `visual_handoff.authoritative_refs`；权威参考图落成真实 PNG；ref_id 与 authoritative_refs.id
+   * 默认**故意不一致**（复刻宿主两种形态）；一律走 checkVisualDiff → loadVisualScreenVerdicts →
+   * bindChannelEvidence 的生产路径，不手填绑定 / 哈希 / channel_evidence_usable。
+   */
+  const seedTieringProject = (opts: {
+    alignRefIds?: boolean;
+    regionAttest?: boolean;
+    anchorCount?: number;
+    patch?: (id: string, index: number) => Record<string, unknown>;
+  } = {}): { root: string } => {
+    const anchorCount = opts.anchorCount ?? 2;
+    const root = mkProject();
+    const featureRoot = path.join(root, 'doc', 'features', 'bank-card');
+    const specDir = path.join(featureRoot, 'spec');
+    const assetsDir = path.join(specDir, 'assets');
+    const shotsDir = path.join(featureRoot, 'device-testing', 'device-screenshots');
+    fs.mkdirSync(assetsDir, { recursive: true });
+    fs.mkdirSync(shotsDir, { recursive: true });
+    fs.writeFileSync(path.join(specDir, 'spec.md'), [
+      '```yaml', 'ui_change: new_or_changed', 'visual_handoff:',
+      '  kind: authoritative_refs', '  authoritative_refs:',
+      ...JDG_SCREENS.flatMap(s => [
+        `    - id: ${s.specId}`,
+        `      path: doc/features/bank-card/spec/assets/ref-${s.specId}.png`,
+      ]),
+      '```', '',
+    ].join('\n'));
+    fs.writeFileSync(path.join(featureRoot, 'device-testing', 'visual-diff.md'), '# diff\n');
+    fs.writeFileSync(uiSpecAbsPath(root, 'bank-card'), JSON.stringify({
+      schema_version: '1.0', verified: 'unverified', assets: [], tokens: {},
+      screens: JDG_SCREENS.map(s => ({
+        id: s.id, priority: 'P0', ref_id: opts.alignRefIds ? s.specId : s.refId,
+        root: {
+          id: `${s.id}_root`, type: 'navigation_frame', order: 0,
+          children: JDG_ANCHORS.slice(0, anchorCount).map((text, i) => ({
+            id: `${s.id}_t${i}`, type: 'content_display', order: i, text,
+          })),
+        },
+      })),
+    }));
+    const colors = [0xff0000ff, 0x00ff00ff, 0x0000ffff, 0xffff00ff];
+    const screens = JDG_SCREENS.map((s, index) => {
+      const shot = path.join(shotsDir, `shot-${s.id}.png`);
+      writeMinimalColorPng(shot, 40, 40, colors[index]);
+      writeMinimalColorPng(path.join(assetsDir, `ref-${s.specId}.png`), 40, 40, colors[index]);
+      const hash = hashScreenshotFile(shot)!;
+      fs.writeFileSync(path.join(shotsDir, `layout-${s.id}.json`), JSON.stringify({
+        schema_version: 'hylyre-hypium-ui-dump-v1',
+        tree: { attributes: { bounds: '[0,0][100,200]', type: 'Screen', id: '' }, children: [{
+          attributes: { bounds: '[0,0][100,200]', type: 'root', id: `${s.id}_root` }, children: [{
+            attributes: { bounds: '[10,10][90,40]', type: 'Text', id: `${s.id}_t0`, text: JDG_ANCHORS[0] }, children: [],
+          }],
+        }] },
+      }));
+      return {
+        // visual-diff.json 的 ref_id 在 refIdFor 里永远输给 ui-spec 的 screens[].ref_id
+        // （宿主实测：改这一列不起作用）——这里只为满足既有 schema 要求。
+        screen_id: s.id, verdict: 'pass', ref_id: s.specId,
+        screenshot_path: path.relative(root, shot).replace(/\\/g, '/'),
+        evaluated_screenshot_hash: hash, screenshot_hash: hash,
+        must_fix: [], defects: [], reverse_missing: [],
+        ...(opts.regionAttest
+          ? { region_attest: [{ region: `${s.id}_root`, verdict: 'no_diff', method: 'vl_screening' }] }
+          : {}),
+        ...(opts.patch ? opts.patch(s.id, index) : {}),
+      };
+    });
+    fs.writeFileSync(path.join(shotsDir, 'visual-diff.json'), JSON.stringify({ schema_version: '1.1', feature: 'bank-card', screens }));
+    return { root };
+  };
+
+  /** 两侧同文本、纵向同序的 OCR 桩（core 判定用注入缝，不依赖本机 tesseract） */
+  const jdgOcrOk = (imgPath: string): OcrResult => ({
+    ok: true, width: 40, height: 40,
+    words: JDG_ANCHORS.map((text, i) => ({ text, conf: 90, bbox: [0.1, 0.1 + i * 0.3, 0.4, 0.08] })),
+    path: imgPath,
+  } as unknown as OcrResult);
+  /** 截图侧纵向顺序整体颠倒 → 确定性 fail_signals（纵向乱序 ≥2 对） */
+  const jdgOcrInvertedShot = (imgPath: string): OcrResult => {
+    const isRef = /[\\/]ref-/.test(String(imgPath));
+    const order = isRef ? JDG_ANCHORS : [...JDG_ANCHORS].reverse();
+    return {
+      ok: true, width: 40, height: 40,
+      words: order.map((text, i) => ({ text, conf: 90, bbox: [0.1, 0.1 + i * 0.3, 0.4, 0.08] })),
+      path: imgPath,
+    } as unknown as OcrResult;
+  };
+  /** OCR 执行能力缺失（worker 无输出）——两侧都拿不到词 */
+  const jdgOcrDown = (): OcrResult => ({ ok: false, error: 'ocr worker produced no output' } as unknown as OcrResult);
+
+  /** 无 delegated provider 场景（region_attest / critic 回执类证明按既有 T10 SKIP） */
+  const withoutVisualProvider = (fn: () => void): void => {
+    const prevAdapter = process.env[MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV];
+    const prevModel = process.env[MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV];
+    delete process.env[MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV];
+    delete process.env[MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV];
+    try {
+      fn();
+    } finally {
+      if (prevAdapter === undefined) delete process.env[MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV];
+      else process.env[MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV] = prevAdapter;
+      if (prevModel === undefined) delete process.env[MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV];
+      else process.env[MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV] = prevModel;
+    }
+  };
+
+  type JdgGate = { id: string; status: string; severity: string; details?: string; structured?: VisualDiffStructuredPayload };
+  const runTieringCheck = (
+    root: string,
+    ocr: typeof jdgOcrOk | typeof jdgOcrDown = jdgOcrOk,
+    /** 缺省 pixel_1to1；给 false 走低档位（既有 ratchet 把产品事实降成 WARN 的那条路） */
+    hardPixel = true,
+  ): JdgGate => {
+    __testing_setVisualDiffOcrFn(ocr as never);
+    try {
+      return checkVisualDiff(baseCtx(root, hardPixel ? { fidelityTarget: 'pixel_1to1' } : {}))
+        .find((r: { id: string }) => r.id === 'visual_diff') as JdgGate;
+    } finally {
+      __testing_setVisualDiffOcrFn(null);
+    }
+  };
+
+  run('P3-T1 placement degradation with per-screen region attest keeps channel evidence usable', () => {
+    if (!isJimpAvailable()) return;
+    withoutVisualProvider(() => {
+      // 复刻第三轮现场：四屏 ref_id 与 authoritative_refs.id 全不一致 → 四屏 refUnavailable，
+      // 但四屏 pass / fail=0 / must_fix=0、采集完成、逐屏有 vl_screening region_attest。
+      const { root } = seedTieringProject({ regionAttest: true });
+      try {
+        const gate = runTieringCheck(root);
+        if (!/参考原图缺失\/不可读/.test(gate.details ?? '')) {
+          throw new Error(`夹具须仍命中 placement degraded（否则测的不是本条）：${gate.details}`);
+        }
+        if (gate.status !== 'WARN') throw new Error(`辅助信号缺席应止于 WARN：${gate.status} / ${gate.details}`);
+        if (gate.structured?.channel_evidence_usable !== true) {
+          throw new Error(`逐屏覆盖成立时整轮证据须可用：${JSON.stringify(gate.structured)}`);
+        }
+        if ((gate.structured?.placement_verified_screens ?? []).length !== 0) {
+          throw new Error('参考图不可解析时不得冒充 placement 已核');
+        }
+        const visual = loadVisualScreenVerdicts({
+          projectRoot: root, feature: 'bank-card', currentBuildFingerprint: null, visualGate: gate as never,
+        });
+        const [binding] = bindChannelEvidence({
+          planMd: '## 测试用例\n\n| 用例编号 | 关联 AC |\n|---|---|\n| TC-007 | AC-8 |',
+          acceptance: { flows: {}, criteria: [{ id: 'AC-8', priority: 'P0', checkpoint: { pre_screen: 'card_type_sheet', post_screen: 'bank_card_selection' } }] },
+          visual, visualTcIds: ['TC-007'], providerTcIds: [], manualTcIds: [],
+        });
+        if (binding.verdict.kind !== 'covered') throw new Error(`TC-007 应可绑定：${binding.verdict.detail}`);
+      } finally {
+        clearFrameworkConfigCache();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
+
+  run('P3-T2 real screen fail, must_fix, or missing evaluated_screenshot_hash still refuses channel evidence', () => {
+    if (!isJimpAvailable()) return;
+    withoutVisualProvider(() => {
+      // 判据改后 PASS 不再蕴含"逐屏覆盖成立"，故每条反例在聚合 PASS 与 WARN 两态下各跑一遍：
+      // execution-channel-evidence 的 PASS 直通分支已并入同一布尔，两路径结论必须一致。
+      const bothStates = (gate: JdgGate, expected: boolean, label: string): void => {
+        for (const status of ['PASS', 'WARN'] as const) {
+          const allowed = visualGateAllowsEvidence({ ...gate, status } as never);
+          if (allowed !== expected) throw new Error(`${label}（聚合 ${status}）应 ${expected}，实得 ${allowed}`);
+        }
+      };
+      const cases: Array<{ label: string; patch: (id: string, i: number) => Record<string, unknown> }> = [
+        { label: '真实 fail 屏', patch: (_id, i) => (i === 0 ? { verdict: 'fail', must_fix: ['半模态几何缺陷'] } : {}) },
+        { label: 'pass 但有 must_fix', patch: (_id, i) => (i === 0 ? { must_fix: ['标题与关闭按钮顺序颠倒'] } : {}) },
+        { label: '缺 evaluated_screenshot_hash', patch: (_id, i) => (i === 0 ? { evaluated_screenshot_hash: undefined } : {}) },
+      ];
+      for (const c of cases) {
+        const { root } = seedTieringProject({ alignRefIds: true, regionAttest: true, patch: c.patch });
+        try {
+          const gate = runTieringCheck(root);
+          if (gate.structured?.channel_evidence_usable !== false) {
+            throw new Error(`${c.label} 不得获得 channel 资格：${JSON.stringify(gate.structured)}`);
+          }
+          bothStates(gate, false, c.label);
+        } finally {
+          clearFrameworkConfigCache();
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      }
+      // 正例对照：同一夹具无篡改时 PASS 与 WARN 两态都允许（PASS 未被并入后一刀切拒绝）
+      const { root } = seedTieringProject({ alignRefIds: true, regionAttest: true });
+      try {
+        bothStates(runTieringCheck(root), true, '干净四屏');
+      } finally {
+        clearFrameworkConfigCache();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
+
+  run('P3-T2b registered blocker/major defects and deterministic placement divergence refuse channel evidence even where the ratchet only warns', () => {
+    if (!isJimpAvailable()) return;
+    withoutVisualProvider(() => {
+      // codex review 反例：低档位（非 hard pixel）下既有 ratchet 把这两类**产品事实**降成 WARN，
+      // 屏仍 verdict=pass / must_fix=[] / hash 新鲜 / 有 vl_screening——只看 verdict 的判据会放行。
+      // ① pass 屏登记 severity=major 渲染缺陷
+      {
+        const { root } = seedTieringProject({
+          alignRefIds: true, regionAttest: true, anchorCount: 3,
+          patch: (_id, i) => (i === 0
+            ? { defects: [{ class: 'overlap', element: 'cts_title', bbox: [0.1, 0.1, 0.3, 0.2], severity: 'major', note: '标题与关闭按钮重叠' }] }
+            : {}),
+        });
+        try {
+          const gate = runTieringCheck(root, jdgOcrOk, false);
+          if (gate.status === 'FAIL') throw new Error(`夹具须复刻"低档位只 WARN"的形态，否则测的不是本条：${gate.details}`);
+          if (gate.structured?.channel_evidence_usable !== false) {
+            throw new Error(`已登记的 major 渲染缺陷不得被绑定消费：${gate.details}`);
+          }
+          if (visualGateAllowsEvidence({ ...gate, status: 'PASS' } as never)) throw new Error('聚合 PASS 态同样不得放行');
+        } finally {
+          clearFrameworkConfigCache();
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      }
+      // ② P0 屏确定性 placement 背离（纵向乱序 ≥2 对，VL pass 不可推翻）
+      {
+        const { root } = seedTieringProject({ alignRefIds: true, regionAttest: true, anchorCount: 3 });
+        try {
+          const gate = runTieringCheck(root, jdgOcrInvertedShot, false);
+          if (!/文本块结构背离/.test(gate.details ?? '')) {
+            throw new Error(`夹具须真的命中确定性 fail_signals：${gate.details}`);
+          }
+          if (gate.structured?.channel_evidence_usable !== false) {
+            throw new Error(`确定性结构背离不得被绑定消费：${gate.details}`);
+          }
+        } finally {
+          clearFrameworkConfigCache();
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      }
+      // ③ 干净对照：同档位、同夹具、无缺陷无背离 → 仍可消费（证明否决来自上面两条，不是低档位本身）
+      {
+        const { root } = seedTieringProject({ alignRefIds: true, regionAttest: true, anchorCount: 3 });
+        try {
+          const gate = runTieringCheck(root, jdgOcrOk, false);
+          if (gate.structured?.channel_evidence_usable !== true) {
+            throw new Error(`干净低档位轮次须可消费：${gate.details}`);
+          }
+        } finally {
+          clearFrameworkConfigCache();
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      }
+    });
+  });
+
+  run('P3-T3 coverage judgement must not err in either direction (ocr down / skipped screen / clean check)', () => {
+    if (!isJimpAvailable()) return;
+    withoutVisualProvider(() => {
+      // ① 截图在、屏 pass、无 must_fix，但 OCR 不可用且无 region_attest → 仍不可用
+      {
+        const { root } = seedTieringProject({ alignRefIds: true });
+        try {
+          const gate = runTieringCheck(root, jdgOcrDown);
+          if ((gate.structured?.placement_verified_screens ?? []).length !== 0) throw new Error('OCR 不可用不得算已核');
+          if (gate.structured?.channel_evidence_usable !== false) {
+            throw new Error(`OCR 不可用且无 region_attest 时不得可用：${JSON.stringify(gate.structured)}`);
+          }
+        } finally {
+          clearFrameworkConfigCache();
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      }
+      // ② 有效文本锚不足 2 个的屏被 collectTextPlacementSignals 直接跳过 → 绝不算 placement-verified
+      {
+        const { root } = seedTieringProject({ alignRefIds: true, anchorCount: 1 });
+        try {
+          const gate = runTieringCheck(root);
+          if ((gate.structured?.placement_verified_screens ?? []).length !== 0) {
+            throw new Error(`锚点不足被跳过的屏不得算已核：${JSON.stringify(gate.structured?.placement_verified_screens)}`);
+          }
+          if (gate.structured?.channel_evidence_usable !== false) throw new Error('"根本没核过"不得当成"核过没问题"');
+        } finally {
+          clearFrameworkConfigCache();
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      }
+      // ③ 核对成功、零异常、无 region_attest → 仍算 verified 且可用（干净屏不进 perScreen，判据不得因此判它不可用）
+      {
+        const { root } = seedTieringProject({ alignRefIds: true });
+        try {
+          const gate = runTieringCheck(root);
+          const verified = gate.structured?.placement_verified_screens ?? [];
+          for (const s of JDG_SCREENS) {
+            if (!verified.includes(s.id)) throw new Error(`核对跑完的屏须登记：缺 ${s.id}（${JSON.stringify(verified)}）`);
+          }
+          if (gate.structured?.channel_evidence_usable !== true) {
+            throw new Error(`干净核对须可用：${gate.details}`);
+          }
+        } finally {
+          clearFrameworkConfigCache();
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      }
+    });
+  });
+
+  run('P3-T4 overlay screens judge only inside the overlay root subtree; non-overlay screens unchanged; skipped nodes reported as unknowns in BOTH pass and fail branches', () => {
+    if (!isJimpAvailable()) return;
+    /** 全白截图=每个 Image 区域都"无结构、与背景不可区分"；差别只来自判定范围 */
+    const seedVisibilityProject = (
+      overlayHasImage: boolean,
+      withNonOverlay: boolean,
+      skipCause?: 'overlay_root_missing' | 'slug_conflict',
+    ): string => {
+      const root = mkProject();
+      const dir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots');
+      fs.mkdirSync(dir, { recursive: true });
+      const overlayLogicalId = 'card_type_sheet__overlay__cts_root';
+      // 文件名走既有 slug 归一（双下划线压成单下划线）——宿主实际就是这个形态
+      const overlaySlug = sanitizeVisualDiffScreenSlug(overlayLogicalId)!;
+      if (overlaySlug !== 'card_type_sheet_overlay_cts_root') throw new Error(`slug 口径变了：${overlaySlug}`);
+      const node = (id: string, type: string, bounds: string, children: unknown[] = []): unknown =>
+        ({ attributes: { bounds, type, id, key: '', text: '', clickable: 'false' }, children });
+      const writeLayout = (slug: string, children: unknown[]): void => {
+        fs.writeFileSync(path.join(dir, `layout-${slug}.json`), JSON.stringify({
+          schema_version: 'hylyre-hypium-ui-dump-v1',
+          tree: node('', 'Screen', '[0,0][100,200]', [node('', 'root', '[0,0][100,200]', children)]),
+        }));
+        writeMinimalColorPng(path.join(dir, `shot-${slug}.png`), 100, 200, 0xffffffff);
+      };
+      writeLayout(overlaySlug, [
+        // 底页图标：overlay 根子树之外，被半模态盖住——不得参与判定
+        node('bg_icon', 'Image', '[5,5][25,25]'),
+        node(skipCause === 'overlay_root_missing' ? 'some_other_root' : 'cts_root', 'overlay_panel', '[0,100][100,200]',
+          overlayHasImage ? [node('cts_icon', 'Image', '[10,110][30,130]')] : [node('cts_title', 'Text', '[10,110][30,130]')]),
+      ]);
+      const screens: Array<Record<string, unknown>> = [{ screen_id: overlayLogicalId }];
+      // 归一冲突：两个逻辑 id 压成同一 slug（采集侧已 fail-closed，读侧只能如实披露不判定）
+      if (skipCause === 'slug_conflict') screens.push({ screen_id: 'card_type_sheet_overlay_cts_root' });
+      if (withNonOverlay) {
+        writeLayout('bank_card_selection', [
+          node('bcs_icon_a', 'Image', '[5,5][25,25]'),
+          node('bcs_icon_b', 'Image', '[40,40][60,60]'),
+        ]);
+        screens.push({ screen_id: 'bank_card_selection' });
+      }
+      fs.writeFileSync(path.join(dir, 'visual-diff.json'), JSON.stringify({ schema_version: '1.1', screens }));
+      return root;
+    };
+    // (a) FAIL 分支：overlay 子树内的空白 Image 照常命中；子树外的底页节点不参与，计入 unknowns
+    const failRoot = seedVisibilityProject(true, true);
+    try {
+      const [r] = checkRenderVisibilityCalibrate(baseCtx(failRoot)) as Array<{ status: string; details?: string; structured?: { findings?: Array<{ screen: string; nodeIndex: number }> } }>;
+      if (!r || r.status !== 'FAIL') throw new Error(`overlay 子树内真命中须照常 FAIL：${JSON.stringify(r)}`);
+      const findings = r.structured?.findings ?? [];
+      const overlayHits = findings.filter(f => f.screen === 'card_type_sheet_overlay_cts_root');
+      if (overlayHits.length !== 1) throw new Error(`overlay 屏只应判子树内 1 个节点，实得 ${overlayHits.length}：${r.details}`);
+      if (findings.filter(f => f.screen === 'bank_card_selection').length !== 2) {
+        throw new Error(`非 overlay 屏行为不得改变（应全树判定 2 个）：${r.details}`);
+      }
+      if (!/未核 1 个 overlay 根子树外节点/.test(r.details ?? '')) {
+        throw new Error(`FAIL 分支也须报 unknowns：${r.details}`);
+      }
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(failRoot, { recursive: true, force: true });
+    }
+    // (b) PASS 分支：overlay 子树内无 Image → 零命中，跳过数同样如实披露
+    const passRoot = seedVisibilityProject(false, false);
+    try {
+      const [r] = checkRenderVisibilityCalibrate(baseCtx(passRoot)) as Array<{ status: string; details?: string }>;
+      if (!r || r.status !== 'PASS') throw new Error(`子树内无命中应 PASS：${JSON.stringify(r)}`);
+      if (!/未核 1 个 overlay 根子树外节点/.test(r.details ?? '')) {
+        throw new Error(`PASS 分支须报 unknowns：${r.details}`);
+      }
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(passRoot, { recursive: true, force: true });
+    }
+    // (c)(d) 整屏被跳过时"未核"必须出声：唯一屏的 overlay 根不在树里 / 全部屏 slug 归一冲突
+    for (const [cause, pattern] of [
+      ['overlay_root_missing', /overlay 根 cts_root 未定位到布局树节点/],
+      ['slug_conflict', /对应多个逻辑 screen_id/],
+    ] as Array<['overlay_root_missing' | 'slug_conflict', RegExp]>) {
+      const skipRoot = seedVisibilityProject(true, false, cause);
+      try {
+        const out = checkRenderVisibilityCalibrate(baseCtx(skipRoot)) as Array<{ status: string; details?: string }>;
+        if (out.length !== 1) throw new Error(`${cause}：整屏未核不得静默返回空结果（实得 ${out.length} 条）`);
+        if (out[0]!.status !== 'PASS' || !/已核 0 屏/.test(out[0]!.details ?? '')) {
+          throw new Error(`${cause}：须以"已核 0 屏 + unknowns"披露：${JSON.stringify(out[0])}`);
+        }
+        if (!pattern.test(out[0]!.details ?? '')) throw new Error(`${cause}：unknown 文案须点明原因：${out[0]!.details}`);
+      } finally {
+        clearFrameworkConfigCache();
+        fs.rmSync(skipRoot, { recursive: true, force: true });
+      }
+    }
+  });
+
+  run('P3-T5 the new degradation exit is not a new entrance for the three 3.0.0 fake-pass vectors', () => {
+    if (!isJimpAvailable()) return;
+    withoutVisualProvider(() => {
+      // 先证明"新出口确实开着"：四屏 refUnavailable（advisory 降级）+ 逐屏 region_attest → 可消费。
+      const { root } = seedTieringProject({ regionAttest: true });
+      try {
+        const relaxed = runTieringCheck(root);
+        if (relaxed.structured?.channel_evidence_usable !== true) {
+          throw new Error(`前提不成立：降级出口应已放行本轮视觉证据：${relaxed.details}`);
+        }
+        // 出口开着的同时，三条历史假 PASS 向量的**责任门**必须各自照旧拒绝（复用既有反例夹具）。
+        // ① explicit_skip 无界（派生器自行 skip 掉 channel=hylyre 的 P0）——既有派生覆盖判据
+        const skipCoverage = evaluateChannelDerivedCoverage({
+          hylyreTcIds: ['TC-001', 'TC-002'],
+          derivedTcIds: ['TC-001'],
+          legacyExplicitSkipTcIds: ['TC-002'],
+        });
+        if (skipCoverage.ok || !skipCoverage.laundered_skips.includes('TC-002')) {
+          throw new Error(`explicit_skip 不得洗白未派生的 P0：${JSON.stringify(skipCoverage)}`);
+        }
+        // ② semantic_layout 自声明绕视觉硬门禁（homepage 组合：原始需求"完全参考" + spec 降档 + headless）
+        const prevHeadless = process.env.MAISON_GOAL_HEADLESS;
+        process.env.MAISON_GOAL_HEADLESS = '1';
+        try {
+          const reqDir = path.join(root, 'doc', 'features', '原始需求');
+          fs.mkdirSync(reqDir, { recursive: true });
+          fs.writeFileSync(path.join(reqDir, '原始需求.md'), '本需求页面布局完全参考 1.首页-无卡.jpg，数据全部 mock。');
+          const downgraded = [
+            '```yaml', 'ui_change: new_or_changed', 'fidelity_target: semantic_layout',
+            'visual_handoff:', '  kind: screenshot_pack', '  authoritative_refs:',
+            '    - id: home', '      path: doc/features/原始需求/1.png', '```',
+          ].join('\n');
+          const gov = checkFidelityGovernance(baseCtx(root), downgraded);
+          const blocker = gov.find(x => x.id === 'fidelity_target_intent_nudge' && x.severity === 'BLOCKER' && x.status === 'FAIL');
+          if (!blocker) throw new Error(`semantic_layout 自声明仍须 BLOCKER：${JSON.stringify(gov)}`);
+        } finally {
+          if (prevHeadless === undefined) delete process.env.MAISON_GOAL_HEADLESS;
+          else process.env.MAISON_GOAL_HEADLESS = prevHeadless;
+        }
+        // ③ testing 期产品 fast path（BankAddConstants 事故形态）——既有行为开关扫描
+        const switchFile = path.join(root, 'mod', 'src', 'main', 'ets', 'constant', 'BankAddConstants.ets');
+        fs.mkdirSync(path.dirname(switchFile), { recursive: true });
+        fs.writeFileSync(switchFile, [
+          'export class BankAddConstants {',
+          '  static readonly DEVICE_TEST_FAST_PATH: boolean = true;',
+          '}',
+        ].join('\n'), 'utf-8');
+        const hits = scanBehaviorSwitches({ projectRoot: root, feature: 'bank-card', phase: 'testing' });
+        if (!hits.some(h => h.symbol === 'DEVICE_TEST_FAST_PATH')) {
+          throw new Error(`testing 期 fast path 仍须命中：${JSON.stringify(hits)}`);
+        }
+      } finally {
+        clearFrameworkConfigCache();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+      // legacy 人签 + explicit skip 屏叠加降级出口，同样不构成可消费证据（视觉侧自守）
+      const { root: signedRoot } = seedTieringProject({
+        alignRefIds: true,
+        patch: (_id, i) => (i === 0
+          ? { verdict: 'skipped', confirmed_by: 'user_requirement' }
+          : { confirmed_by: 'user_requirement' }),
+      });
+      try {
+        const gate = runTieringCheck(signedRoot, jdgOcrDown);
+        if (gate.structured?.channel_evidence_usable !== false) {
+          throw new Error(`人签与 explicit skip 不构成覆盖证据：${JSON.stringify(gate.structured)}`);
+        }
+        for (const status of ['PASS', 'WARN'] as const) {
+          if (visualGateAllowsEvidence({ ...gate, status } as never)) throw new Error(`聚合 ${status} 也不得放行`);
+        }
+      } finally {
+        clearFrameworkConfigCache();
+        fs.rmSync(signedRoot, { recursive: true, force: true });
+      }
+    });
   });
 
   /** f7a3d9c2 e2e 夹具：单 fail 屏（must_fix 1 条 + 锚定 defect）——可指纹、有 actionable 残差 */

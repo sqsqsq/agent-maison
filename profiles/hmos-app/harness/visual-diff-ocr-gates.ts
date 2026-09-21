@@ -160,6 +160,12 @@ export interface TextPlacementScreenSignals {
 
 export interface TextPlacementResult {
   perScreen: TextPlacementScreenSignals[];
+  /**
+   * plan e7a2c4f1 §3.1：**文本 placement 核对确实跑完**的屏（参考图与截图两次 OCR 均 ok）。
+   * 与 `perScreen` 无关——`perScreen` 只收有异常的屏，核对干净的屏根本不入表，
+   * 拿它判"核过没问题"方向是反的。语义只有一条：这屏核对跑完了，不管结果干不干净。
+   */
+  verifiedScreens: string[];
   /** 截图 OCR 不可用/失败的屏（降级复核，不静默） */
   ocrUnavailable: string[];
   /** 参考原图缺失/OCR 失败的屏（无 ground truth，可比性缺失） */
@@ -333,6 +339,7 @@ export function collectTextPlacementSignals(
   const perScreenTargets = new Map<string, string[]>(); // screen_id → uncertain 稳定候选锚
   const ocrUnavailable = new Set<string>();
   const refUnavailable = new Set<string>();
+  const verifiedScreens = new Set<string>();
   const refOcrCache = new Map<string, OcrResult>();
 
   for (const s of screens) {
@@ -358,6 +365,10 @@ export function collectTextPlacementSignals(
     if (!refRes.ok || !Array.isArray(refRes.words)) { refUnavailable.add(s.screen_id); continue; }
     const shotRes = ocrFn(resolveShotAbs(shot));
     if (!shotRes.ok || !Array.isArray(shotRes.words)) { ocrUnavailable.add(s.screen_id); continue; }
+    // plan e7a2c4f1 §3.1：两侧 OCR 都 ok = 本屏 placement 核对真的跑完了（登记在进入行聚类比对之前，
+    // 与比对结果无关）。channel_evidence_usable 的"覆盖"条件读它，不读 unavailable 集合取反（那会把
+    // 上面三条 continue 跳过的"根本没核过"当成"核过没问题"）。
+    verifiedScreens.add(s.screen_id);
 
     const refLines = clusterOcrLines(refRes.words.filter(w => w.text.replace(/\s+/g, '').length > 0));
     const shotLines = clusterOcrLines(shotRes.words.filter(w => w.text.replace(/\s+/g, '').length > 0));
@@ -541,6 +552,7 @@ export function collectTextPlacementSignals(
   }
   return {
     perScreen,
+    verifiedScreens: [...verifiedScreens],
     ocrUnavailable: [...ocrUnavailable],
     refUnavailable: [...refUnavailable],
     // uncertainSignals 的 target = 稳定候选锚（回修与机器重验可精确引用）：

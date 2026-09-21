@@ -123,7 +123,12 @@ function visualFrom(root: string, over: Partial<Parameters<typeof loadVisualScre
     projectRoot: root,
     feature: FEATURE,
     currentBuildFingerprint: BUILD_FP,
-    visualGate: { id: 'visual_diff', status: 'PASS', severity: 'MAJOR', structured: { kind: 'visual_diff' } },
+    // plan e7a2c4f1 §3.1：PASS 也读 channel_evidence_usable（producer 的逐屏覆盖结论），
+    // 不再有"状态是 PASS 就直通"的分支——夹具的缺省门必须如实带上该布尔。
+    visualGate: {
+      id: 'visual_diff', status: 'PASS', severity: 'MAJOR',
+      structured: { kind: 'visual_diff', channel_evidence_usable: true },
+    },
     ...over,
   });
 }
@@ -227,7 +232,7 @@ test('普通 page 的 child overlay 不替代 checkpoint base screen', () => {
   );
 });
 
-test('visual aggregate WARN 仅 producer 明示 advisory 时可消费；普通 WARN/缺证拒绝', () => {
+test('visual aggregate 的证据资格只认 channel_evidence_usable；PASS 与 WARN 同一判据，缺证拒绝', () => {
   const advisory = {
     id: 'visual_diff', status: 'WARN', severity: 'MAJOR',
     structured: { kind: 'visual_diff', channel_evidence_usable: true },
@@ -236,6 +241,14 @@ test('visual aggregate WARN 仅 producer 明示 advisory 时可消费；普通 W
   assert.strictEqual(visualGateAllowsEvidence({ ...advisory, structured: { kind: 'visual_diff', channel_evidence_usable: false } }), false);
   assert.strictEqual(visualGateAllowsEvidence({ ...advisory, structured: undefined }), false);
   assert.strictEqual(visualGateAllowsEvidence({ ...advisory, status: 'FAIL' }), false);
+  // plan e7a2c4f1 §3.1：PASS 直通分支已并入同一布尔——全屏 pass、hits 为空、但逐屏覆盖不成立的
+  // 轮次能产出 PASS 聚合，不得因为状态是 PASS 就被绑定消费。
+  assert.strictEqual(visualGateAllowsEvidence({ ...advisory, status: 'PASS' }), true);
+  assert.strictEqual(
+    visualGateAllowsEvidence({ ...advisory, status: 'PASS', structured: { kind: 'visual_diff', channel_evidence_usable: false } }),
+    false,
+  );
+  assert.strictEqual(visualGateAllowsEvidence({ ...advisory, status: 'PASS', structured: undefined }), false);
   withRoot(healthyRoot, root => {
     const visual = visualFrom(root, { visualGate: advisory });
     assert.strictEqual(visual.available, true, visual.detail);
