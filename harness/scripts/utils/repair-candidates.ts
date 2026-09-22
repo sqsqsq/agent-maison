@@ -634,26 +634,35 @@ export function collectPhaseRepairCandidates(input: PhaseCandidateInput): Repair
   if (input.phase === 'testing') {
     // T3：coding candidate 只允许由已执行 StepResult 的冻结 pair 产生。
     // explicit skip/unexecuted 没有 failure_kind/code，不能通过 check id 或 status 猜测 coding。
+    //
+    // plan e7a2c4f1 §3.5（G26）：**第二档（账本/形状）失败不产生回退交接。**
+    // 原先还有一条 `repair_owner === 'spec' | 'plan'` 分支。testing 期真正能落这两个值的
+    // 只有一个生产点——`testing_channel_evidence_obligation` 把视觉 gate 的
+    // `evidence_block_owner` 提上来（commit 8868988d）；Step Outcome v1 的路由只会给出
+    // `coding`（`hylyre-failure-routing-v1.ts` 的 `repairCategory`）或 capability/external/testing。
+    // 也就是说这条分支的唯一实际含义是"本轮视觉证据不可消费、责任在 spec"——账本/形状缺口，
+    // 它没有上游产物需要作废，要的是对齐或披露。
+    // **删掉的只是"生成回退交接候选"这一件事**：责任方与责任文件仍由该 check 的
+    // `repair_owner` / `affected_files` → summary blocker → `classifyFailureKind`
+    // （`spec_capture_gap`）如实披露，一个字未少。
+    // 落在生产点而不是 runner 的回退调用点，是因为 assess 读的是**盘上 summary** 的
+    // `repair_candidates`，在 runner 内存里过滤挡不住它的责任阶段推荐（实测：过滤后仍
+    // `backtrack_to_phase → spec`）。`resolveInvalidatablePhases` 未动。
     for (const failure of input.checks.filter(
       c => c.status === 'FAIL' && (
         (c.failure_kind === 'assertion' &&
           c.failure_code === 'assertion_mismatch' &&
           c.coding_candidate === true) ||
-        (c.coding_candidate === true && c.repair_owner === 'coding') ||
-        c.repair_owner === 'spec' ||
-        c.repair_owner === 'plan'
+        (c.coding_candidate === true && c.repair_owner === 'coding')
       ),
     )) {
       const files = normalizeFiles(failure.affected_files ?? []);
       const summary = normalizeSummary(
         failure.details ?? '已执行 StepResult assertion_mismatch——默认回 coding/product 修复',
       );
-      const category = failure.repair_owner === 'spec' || failure.repair_owner === 'plan'
-        ? failure.repair_owner
-        : 'coding';
       out.push({
         id: failure.id,
-        category,
+        category: 'coding',
         files,
         summary,
         item_fingerprint: itemFingerprintOf(failure.id, files, summary),

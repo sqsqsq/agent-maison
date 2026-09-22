@@ -4053,6 +4053,163 @@ test('B08-V10(d) 可信真机根失败（test_contract，走 unverified 通路�
   });
 });
 
+// ============================================================================
+// plan e7a2c4f1 §3.5 / §3.6 的**真实 runtime 接线**（codex review 阻断 4）
+// ----------------------------------------------------------------------------
+// 纯函数判据的用例在 goal-runner-repair-convergence；这里走 runGoalRuntimeChain：
+// 注入 checks（夹具只提供 CheckResult，不代表真实 gate 跑过）→ 生产 writer
+// writeRunSummaryBase（自派生 blockers/repair_candidates）→ 真实 goal runtime
+// → 读回 events.jsonl。禁止手搓 summary/候选，也不加生产接缝。
+// ============================================================================
+
+/** 宿主第三轮实形：视觉证据不可消费且责任方=spec（ref 引用不可解析）→ 账本/形状档。 */
+const LEDGER_OBLIGATION_CHECK: CheckResult = {
+  id: 'testing_channel_evidence_obligation',
+  category: 'structure',
+  description: '非 Hylyre 通道 TC 的机器证据义务',
+  severity: 'BLOCKER',
+  status: 'FAIL',
+  failure_kind: 'testing_channel_unverified',
+  repair_owner: 'spec',
+  affected_files: [`doc/features/${FEATURE}/spec/spec.md`, `doc/features/${FEATURE}/spec/ui-spec.yaml`],
+  details: '[visual/unbound] TC-007：参考图引用不可解析（[ref_undeclared] ui-spec ref_id 与 spec.md authoritative_refs.id 不一致）',
+};
+
+/** 已执行 StepResult 的 assertion mismatch —— 一档产品真值（a70eb7 events:101 同形）。 */
+const PRODUCT_ASSERTION_CHECK: CheckResult = {
+  id: 'testing_failure_routing_TC-005_s24',
+  category: 'structure',
+  description: 'Step Outcome v1 责任路由',
+  severity: 'BLOCKER',
+  status: 'FAIL',
+  failure_kind: 'assertion',
+  failure_code: 'assertion_mismatch',
+  repair_owner: 'coding',
+  coding_candidate: true,
+  details: 'TC-005 step 24：已执行 assertion 失败，且同 case 较小 index 有已通过 action',
+};
+
+test('P3-T14 纯账本轮（repair_owner=spec 的证据义务）零回退：不发 phase_backtrack_requested，也不扩大失效范围', async () => {
+  const { root } = setupHost();
+  const probe = await runChain(root, {
+    onTesting: ({ root: r }) => writeCleanTesting(r),
+    onHarnessSummary: ({ phase }) =>
+      phase === 'testing' ? { checks: [LEDGER_OBLIGATION_CHECK] } : null,
+  });
+  // 前置：账本事实确实落到了生产 writer 的 summary 上（否则本用例是空跑）——
+  // blocker 带 repair_owner=spec 与两个 spec 责任文件；**同时**不得有回退交接候选。
+  const summaryPath = path.join(root, 'doc/features', FEATURE, 'testing', 'reports', 'summary.json');
+  assert(fs.existsSync(summaryPath), `前置：writer 须落盘 summary.json：${summaryPath}`);
+  const written = JSON.parse(fs.readFileSync(summaryPath, 'utf-8')) as {
+    blockers?: Array<{ id?: string; repair_owner?: string; affected_files?: string[] }>;
+    repair_candidates?: Array<{ id?: string }>;
+  };
+  const ledgerBlocker = (written.blockers ?? []).find(b => b.id === 'testing_channel_evidence_obligation');
+  assert(ledgerBlocker?.repair_owner === 'spec',
+    `前置：账本责任方须由生产 writer 落到 blocker 上：${JSON.stringify(written.blockers)}`);
+  assert((ledgerBlocker?.affected_files ?? []).length === 2,
+    `前置：责任文件须随 blocker 披露：${JSON.stringify(ledgerBlocker)}`);
+  assert(
+    !(written.repair_candidates ?? []).some(c => c.id === 'testing_channel_evidence_obligation'),
+    `账本/形状档不得产出回退交接候选：${JSON.stringify(written.repair_candidates)}`,
+  );
+  assert(
+    !probe.events.some(e => e.type === 'phase_backtrack_requested'),
+    `账本/形状档候选不得触发任何回退：${JSON.stringify(
+      probe.events.filter(e => e.type === 'phase_backtrack_requested').map(e => ({ to: e.to_phase, reason: e.reason })))}`,
+  );
+  // 失效不扩散：上游阶段不得被重新拉起
+  assert(
+    probe.invokedPhases.filter(p => p === 'spec').length <= 1,
+    `spec 不得因账本类失败被重走：${probe.invokedPhases.join('→')}`,
+  );
+});
+
+test('P3-T14b 账本 + 产品缺陷混合轮：仍回退 coding，且回退目标不被账本候选拖到 spec', async () => {
+  const { root } = setupHost();
+  const probe = await runChain(root, {
+    onTesting: ({ root: r }) => writeCleanTesting(r),
+    onHarnessSummary: ({ phase, attempt }) =>
+      phase === 'testing' && attempt === 1
+        ? { checks: [LEDGER_OBLIGATION_CHECK, PRODUCT_ASSERTION_CHECK] }
+        : null,
+    onCoding: ({ root: r, attempt }) => {
+      if (attempt > 1) writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("fixed") } }');
+    },
+  });
+  const bt = probe.events.filter(e => e.type === 'phase_backtrack_requested');
+  assert(bt.length === 1, `混合轮须恰好一次回退，实得 ${bt.length}`);
+  assert(bt[0].to_phase === 'coding',
+    `回退目标须是产品真值候选的 coding（不得被账本 spec 候选拖到最上游）：${bt[0].to_phase}`);
+  const cands = (bt[0].candidates ?? []) as Array<{ id?: string; category?: string }>;
+  assert(cands.some(c => c.id === 'testing_failure_routing_TC-005_s24'),
+    `产品真值候选须进入回退交接：${JSON.stringify(cands)}`);
+  assert(!cands.some(c => c.id === 'testing_channel_evidence_obligation'),
+    `账本候选不得混进回退交接：${JSON.stringify(cands)}`);
+  assert(!(bt[0].invalidated_phases as string[]).includes('spec'),
+    `失效范围不得因账本候选扩到 spec：${JSON.stringify(bt[0].invalidated_phases)}`);
+});
+
+test('P3-T14c 账本 blocker 每轮复现且不产候选：由既有阶段重试预算收口，不得无限调 agent', async () => {
+  const { root } = setupHost();
+  const probe = await runChain(root, {
+    onTesting: ({ root: r }) => writeCleanTesting(r),
+    // 每一轮都产出同一条账本 blocker：blocker 恒在、恒不变，而按 §3.5 它不产候选——
+    // 于是本轮由既有阶段重试预算裁决，不是靠"候选耗尽"停。
+    onHarnessSummary: ({ phase }) =>
+      phase === 'testing' ? { checks: [LEDGER_OBLIGATION_CHECK] } : null,
+  });
+  const manifest = loadGoalManifestFromRun(root, path.basename(probe.reportDir), { feature: FEATURE });
+  const maxRetries = manifest.budget.max_retries_per_phase;
+  const testingInvokes = probe.invokedPhases.filter(p => p === 'testing').length;
+  assert(
+    testingInvokes <= maxRetries + 1,
+    `账本候选恒在时 testing agent 调用须受既有阶段预算约束（max_retries_per_phase=${maxRetries}），实得 ${testingInvokes} 次：${probe.invokedPhases.join('→')}`,
+  );
+  assert(probe.exitCode !== 0, '账本类 BLOCKER 未消除时 run 不得成功收尾');
+});
+
+test('P3-T13 no-progress halt 的理由与指引必须在 events-only 重建里存活（phase_halt 须晚于 phase_verdict）', async () => {
+  const { root } = setupHost();
+  // 相关集合未知：BLOCKER 无 affected_files、无候选 → contentRelatedFiles 为空
+  const unresolvable: CheckResult = {
+    id: 'file_completeness',
+    category: 'structure',
+    description: '契约声明文件完整性',
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    failure_kind: 'code_regression',
+    details: '契约声明文件缺失（夹具：不给 affected_files，相关集合因此未知）',
+  };
+  const probe = await runChain(root, {
+    onHarnessSummary: ({ phase }) => (phase === 'coding' ? { checks: [unresolvable] } : null),
+  });
+  const halts = probe.events.filter(e => e.type === 'phase_halt' && e.phase === 'coding');
+  assert(halts.length >= 1, `相关集合未知的同签名重复须落 phase_halt 事件：${haltReasons(probe.events).join(',')}`);
+  const halt = halts[halts.length - 1];
+  assert(halt.halt_reason === 'no_progress_guard',
+    `须沿既有 no_progress_guard 停止（不新增 halt reason）：${String(halt.halt_reason)}`);
+  assert(String(halt.halt_guidance ?? '').includes('相关目标未知'),
+    `halt_guidance 须写「相关目标未知」：${String(halt.halt_guidance)}`);
+  // 关键：events-only 重建（goal-report.json 缺失时的路径）必须保住理由/指引/投影
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { rebuildOutcomesFromEvents } = require('../../scripts/utils/goal-runner-phase') as
+    typeof import('../../scripts/utils/goal-runner-phase');
+  const rebuilt = rebuildOutcomesFromEvents(
+    probe.events as never,
+    ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] as never,
+  );
+  const codingOutcome = rebuilt.find(o => o.phase === 'coding');
+  assert(!!codingOutcome && codingOutcome.halted === true,
+    `events-only 重建须把 coding 还原成 halted：${JSON.stringify(codingOutcome)}`);
+  assert(codingOutcome!.halt_reason === 'no_progress_guard',
+    `重建须保住 halt_reason：${JSON.stringify(codingOutcome)}`);
+  assert(String(codingOutcome!.halt_guidance ?? '').includes('相关目标未知'),
+    `重建须保住「相关目标未知」指引：${String(codingOutcome!.halt_guidance).slice(0, 200)}`);
+  assert(typeof codingOutcome!.run_disposition === 'string' && codingOutcome!.run_disposition.length > 0,
+    `重建须保住 run_disposition 投影：${JSON.stringify(codingOutcome)}`);
+});
+
 export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
   for (const c of cases) {

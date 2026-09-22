@@ -24,7 +24,14 @@ import {
   replayAttemptedSignalIdentities,
   type BacktrackWindowEvent,
 } from '../../scripts/goal-runner';
-import { actionableDefectsToCandidates, validateRepairCandidatesShape } from '../../scripts/utils/repair-candidates';
+import {
+  actionableDefectsToCandidates,
+  buildSummaryRepairCandidates,
+  resolveInvalidatablePhases,
+  validateRepairCandidatesShape,
+} from '../../scripts/utils/repair-candidates';
+import { buildSummaryBlockers } from '../../scripts/utils/summary-blockers';
+import { classifyFailureKind } from '../../scripts/utils/goal-failure-classifier';
 import { assessObservation, type AssessObservation, type AssessPhaseObservation } from '../../scripts/utils/assess';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -453,6 +460,99 @@ export function runAll(): UnitCaseResult[] {
       `不得再 rerun_phase：${JSON.stringify(after.recommendation)}`);
     assert(after.recommendation.runner_action !== 'backtrack_to_phase',
       `不得再 backtrack_to_phase：${JSON.stringify(after.recommendation)}`);
+  });
+
+  // ------------------------------------------------------------------------
+  // plan e7a2c4f1 §3.5（G26）：第二档（账本/形状）失败不得触发 phase_backtrack_requested。
+  // 档位在**候选生产点**收口：证据不可消费（obligation 的 repair_owner ≠ coding）不再
+  // 产出回退交接候选；责任方与责任文件仍由 repair_owner / affected_files → blocker →
+  // classifyFailureKind 如实披露。真实 runtime 接线（发不发 phase_backtrack_requested /
+  // 回退目标 / 阶段预算）另见 goal-runner-testing-integrity 的 P3-T14/T14b/T14c。
+  // ------------------------------------------------------------------------
+  const excerpt = (text: string, max: number): string => (text ?? '').slice(0, max);
+  const noClassification = (): string | undefined => undefined;
+  const summaryFromChecks = (checks: Parameters<typeof buildSummaryBlockers>[0]) => ({
+    verdict: 'FAIL',
+    blockers: buildSummaryBlockers(checks, excerpt, noClassification),
+  });
+  const candidatesOf = (checks: Parameters<typeof buildSummaryRepairCandidates>[0]['checks']) =>
+    buildSummaryRepairCandidates({
+      phase: 'testing', checks, reportValidity: 'PASS',
+      reviewReportText: null, verifierReportText: null,
+    });
+  const obligation = (owner: string, extra: Record<string, unknown> = {}) => ({
+    id: 'testing_channel_evidence_obligation',
+    category: 'structure', description: '非 Hylyre 通道 TC 的机器证据义务',
+    severity: 'BLOCKER' as const, status: 'FAIL',
+    failure_kind: 'testing_channel_unverified',
+    repair_owner: owner as 'spec',
+    details: `[visual/unbound] TC-007：owner=${owner}`,
+    ...extra,
+  });
+
+  run('P3-T14 a ledger-class evidence block is disclosed but never becomes a backtrack candidate', () => {
+    // 宿主第三轮实形：四屏 ref_id 命名与 spec.md authoritative_refs.id 全不一致 →
+    // visual gate 的 evidence_block_owner='spec' → obligation 的 repair_owner='spec'。
+    const specFiles = ['doc/features/bc-openCard-2/open-card-flow-v2/spec/spec.md',
+      'doc/features/bc-openCard-2/open-card-flow-v2/spec/ui-spec.yaml'];
+    const ledgerCheck = obligation('spec', { affected_files: specFiles });
+    assert(candidatesOf([ledgerCheck] as never).length === 0,
+      '证据不可消费（repair_owner=spec）不得产出回退交接候选');
+    assert(candidatesOf([obligation('capability')] as never).length === 0,
+      '能力缺口同样不得产出回退交接候选');
+    // 披露一个字未少：责任方与责任文件仍在 blocker 上，归因仍是 spec_capture_gap
+    const ledgerSummary = summaryFromChecks([ledgerCheck] as never);
+    const blocker = (ledgerSummary.blockers ?? [])[0] as { repair_owner?: string; affected_files?: string[] };
+    assert(blocker?.repair_owner === 'spec', `责任方须仍在 blocker 上：${JSON.stringify(blocker)}`);
+    assert((blocker?.affected_files ?? []).length === specFiles.length,
+      `责任文件须仍在 blocker 上：${JSON.stringify(blocker)}`);
+    assert(classifyFailureKind(ledgerSummary as never, undefined) === 'spec_capture_gap',
+      '归因侧仍按 repair_owner 给出 spec_capture_gap（第二笔行为不变）');
+    // 一档对照：同一条 check 判出产品真值责任方且带 coding_candidate → 照旧产出候选
+    const productCands = candidatesOf([obligation('coding', { coding_candidate: true })] as never);
+    assert(productCands.length === 1 && productCands[0].category === 'coding',
+      `产品真值责任方的回退资格不得被裁掉：${JSON.stringify(productCands)}`);
+  });
+
+  run('P3-T15 a product-truth failure (TC-005 assertion / overlay geometry defect) still backtracks to coding and invalidates the existing chain suffix', () => {
+    const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
+    // 重放 a70eb7 events:101 —— TC-005 step 24 已执行 assertion 失败（真机断言）
+    const assertionSummary = summaryFromChecks([{
+      id: 'testing_failure_routing_TC-005_s24',
+      category: 'structure', description: 'Step Outcome v1 责任路由',
+      severity: 'BLOCKER', status: 'FAIL',
+      failure_kind: 'assertion', failure_code: 'assertion_mismatch',
+      coding_candidate: true, repair_owner: 'coding',
+      details: 'TC-005 step 24：已执行 assertion 失败，且同 case 较小 index 有已通过 action',
+    }] as never);
+    const assertionKind = classifyFailureKind(assertionSummary as never, undefined);
+    assert(assertionKind === 'code_regression', `TC-005 断言失败须归 code_regression，实际 ${assertionKind}`);
+    assert(candidatesOf([{ id: 'testing_failure_routing_TC-005_s24', category: 'structure', description: 'r', severity: 'BLOCKER', status: 'FAIL', failure_kind: 'assertion', failure_code: 'assertion_mismatch', coding_candidate: true, repair_owner: 'coding', details: 'TC-005 step 24' }] as never).length === 1,
+      'TC-005 断言失败是一档产品真值，回退候选不得被裁掉');
+
+    // 重放 a70eb7 events:188 —— 半模态几何 / cts_title 与 cts_close 顺序颠倒
+    const geometrySummary = summaryFromChecks([{
+      id: 'visual_diff_layout_divergence',
+      category: 'ui', description: '视觉布局不变量',
+      severity: 'BLOCKER', status: 'FAIL',
+      details: 'card_type_sheet__overlay__cts_root：半模态覆盖近乎全屏（参考图约 38% 起）；'
+        + 'cts_title(order=0) 与 cts_close(order=1) 纵向顺序颠倒',
+    }] as never);
+    const geometryKind = classifyFailureKind(geometrySummary as never, undefined);
+    assert(geometryKind === 'visual_gap', `半模态几何缺陷须归 visual_gap，实际 ${geometryKind}`);
+    assert(!(geometrySummary.blockers ?? []).some(b => (b as { repair_owner?: string }).repair_owner),
+      '半模态几何缺陷是一档产品真值：没有 evidence-block 责任方，回退资格不得被裁掉');
+
+    // 失效范围算法一字未动：两个真实候选都映射 coding，失效面仍是既有链后缀
+    const invalidated = resolveInvalidatablePhases({
+      chain, hasActionable: true, candidateCategories: ['coding'], track: 'full',
+    });
+    assert(JSON.stringify(invalidated) === JSON.stringify(['coding', 'review', 'ut', 'testing']),
+      `一档回退须仍作废既有链后缀：${JSON.stringify(invalidated)}`);
+    // 二档对照：即便 category 落到 spec，失效范围算法本身也不改（裁的是"是否触发"这一条）
+    assert(JSON.stringify(resolveInvalidatablePhases({
+      chain, hasActionable: false, candidateCategories: ['spec'], track: 'full',
+    })) === JSON.stringify(chain), 'resolveInvalidatablePhases 不得被本笔改动');
   });
 
   // 标准执行模式：逐条执行并捕获异常（不可只登记 ok:true——那是假 PASS）

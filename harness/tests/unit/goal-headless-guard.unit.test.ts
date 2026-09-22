@@ -61,7 +61,9 @@ import {
   buildClosureWallGuidance,
   buildFrameworkBugGuidance,
   buildFrameworkIntegrityGuidance,
+  buildNoRelevantTargetGuidance,
 } from '../../scripts/utils/await-confirm-guidance';
+import { lookupIncident } from '../../scripts/utils/adjudication';
 import { clearFrameworkConfigCache } from '../../config';
 import { loadResolvedProfile } from '../../profile-loader';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
@@ -955,17 +957,17 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
-      name: 'shouldHaltNoProgress: code_regression 相关集合未知时保持有界重试',
+      name: 'shouldHaltNoProgress: code_regression 相关集合未知时同签名重复即停（plan e7a2c4f1 §3.6 覆盖 1f3d7a92 §3.3 的有界重试出路）',
       run: () => {
         assert(
-          !shouldHaltNoProgress({
+          shouldHaltNoProgress({
             failureKind: 'code_regression',
             priorBlockerSignature: 'x',
             currentBlockerSignature: 'x',
             priorArtifactSnapshot: {},
             currentArtifactSnapshot: {},
           }),
-          'code_regression should not guard-halt',
+          '相关集合未知＝没解析出可修目标＝本阶段无路可走，不得再烧满 max_retries_per_phase',
         );
       },
     },
@@ -2631,6 +2633,149 @@ export function runAll(): UnitCaseResult[] {
         assert(pure.includes('TIMED OUT — resume from partial work (NOT a content failure)'),
           '纯超时块头须与既有一致');
         assert(!pure.includes('two independent facts'), '纯超时不得并陈不存在的质量事实');
+      },
+    },
+    // ------------------------------------------------------------------
+    // plan e7a2c4f1 §3.6（G27）：重试必须有获得新结果的理由
+    // ------------------------------------------------------------------
+    {
+      name: 'P3-T11 a known relevant set with a real corrective change still allows another attempt',
+      run: () => {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jdg-t11-'));
+        try {
+          const rel = 'entry/src/main/ets/pages/AddCard.ets';
+          const abs = path.join(tmp, rel);
+          fs.mkdirSync(path.dirname(abs), { recursive: true });
+          fs.writeFileSync(abs, 'before-fix', 'utf-8');
+          // 相关集合来自**生产解析器**：repair_candidates[].files ∪ blockers[].affected_files
+          const summary = {
+            verdict: 'FAIL',
+            blockers: [{ id: 'testing_failure_routing_TC-005_s24', affected_files: [rel] }],
+            repair_candidates: [{ id: 'testing_failure_routing_TC-005_s24', files: [rel] }],
+          };
+          const related = extractContentRelatedFiles(summary);
+          assert(related.length === 1 && related[0] === rel, `相关集合须已知：${JSON.stringify(related)}`);
+          const priorSnap = snapshotArtifacts(tmp, related);
+          fs.writeFileSync(abs, 'after-real-fix', 'utf-8');
+          const currentSnap = snapshotArtifacts(tmp, related);
+          const sig = 'testing::TC-005::assertion_mismatch';
+          assert(
+            !shouldHaltNoProgress({
+              failureKind: 'code_regression',
+              priorBlockerSignature: sig,
+              currentBlockerSignature: sig,
+              priorArtifactSnapshot: priorSnap,
+              currentArtifactSnapshot: currentSnap,
+              relevantEvidenceKnown: related.length > 0,
+            }),
+            '相关集合已知且产物内容真变了——必须还有重试资格（防这条收紧误停真实修复）',
+          );
+        } finally {
+          fs.rmSync(tmp, { recursive: true, force: true });
+        }
+      },
+    },
+    {
+      name: 'P3-T12 identical signature with a known but unchanged relevant set halts on the second attempt; notes and timestamps are not progress',
+      run: () => {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jdg-t12-'));
+        try {
+          const rel = 'entry/src/main/ets/pages/AddCard.ets';
+          const notesRel = 'doc/features/demo/testing/notes.md';
+          const abs = path.join(tmp, rel);
+          fs.mkdirSync(path.dirname(abs), { recursive: true });
+          fs.writeFileSync(abs, 'unchanged-body', 'utf-8');
+          const summary = {
+            verdict: 'FAIL',
+            blockers: [{ id: 'testing_failure_routing_TC-005_s24', affected_files: [rel] }],
+            repair_candidates: [],
+          };
+          const related = extractContentRelatedFiles(summary);
+          const priorSnap = snapshotArtifacts(tmp, related);
+          // 仅刷新 mtime + 另写一份散文 notes：都不是新事实
+          fs.utimesSync(abs, new Date(Date.now() + 60_000), new Date(Date.now() + 60_000));
+          fs.mkdirSync(path.join(tmp, path.dirname(notesRel)), { recursive: true });
+          fs.writeFileSync(path.join(tmp, notesRel), '第三次重试：仍然失败，已追加说明\n', 'utf-8');
+          const currentSnap = snapshotArtifacts(tmp, related);
+          assert(!artifactsProgressed(priorSnap, currentSnap), 'mtime 刷新不得算进展');
+          const sig = 'testing::TC-005::assertion_mismatch';
+          assert(
+            shouldHaltNoProgress({
+              failureKind: 'code_regression',
+              priorBlockerSignature: sig,
+              currentBlockerSignature: sig,
+              priorArtifactSnapshot: priorSnap,
+              currentArtifactSnapshot: currentSnap,
+              relevantEvidenceKnown: related.length > 0,
+            }),
+            '相关集合已知但零变化——第二次同签名即停（现状正确，本 plan 不放宽）',
+          );
+        } finally {
+          fs.rmSync(tmp, { recursive: true, force: true });
+        }
+      },
+    },
+    {
+      name: 'P3-T13 an empty or unknown relevant set stops via the existing no_progress_guard with a "relevant targets unknown" reason instead of exhausting max_retries',
+      run: () => {
+        // 重放 a70eb7（i12/i13/i14）与 f829b8 的同签名序列形态：产品已修完，
+        // 剩下的 3 次 testing 失败 signature 逐字相同、产物零变化、相关集合为空。
+        const hostShapedSummary = {
+          verdict: 'FAIL',
+          blockers: [
+            { id: 'testing_channel_evidence_obligation', classification: 'testing_channel_unverified' },
+            { id: 'p0_coverage_integrity' },
+            { id: 'negative_verdict_closure' },
+          ],
+          repair_candidates: [],
+        };
+        const related = extractContentRelatedFiles(hostShapedSummary);
+        assert(related.length === 0, `本形态的相关集合必须为空：${JSON.stringify(related)}`);
+        const sig = 'testing::channel_evidence::TC-007';
+        for (const [label, prior, current] of [
+          ['无 watched 产物（宿主实形）', {}, {}],
+          ['prior 为 null（首次可比基线缺失）', null, {}],
+        ] as const) {
+          assert(
+            shouldHaltNoProgress({
+              failureKind: 'code_regression',
+              priorBlockerSignature: sig,
+              currentBlockerSignature: sig,
+              priorArtifactSnapshot: prior as never,
+              currentArtifactSnapshot: current,
+              relevantEvidenceKnown: related.length > 0,
+            }),
+            `${label}：相关集合未知/为空＝无可修目标，同签名重复即停，不得再烧满 max_retries_per_phase`,
+          );
+        }
+        // 首次失败（无 prior signature）不得被这条收紧提前判死
+        assert(
+          !shouldHaltNoProgress({
+            failureKind: 'code_regression',
+            priorBlockerSignature: null,
+            currentBlockerSignature: sig,
+            priorArtifactSnapshot: {},
+            currentArtifactSnapshot: {},
+            relevantEvidenceKnown: false,
+          }),
+          '第一次失败没有同签名重复事实，不得停',
+        );
+        // 不新增 halt reason：仍走既有 no_progress_guard，且 no_fix_attempt 未被扩成终态
+        assert(!!lookupIncident('no_progress_guard'), 'no_progress_guard 须是既有已注册 incident');
+        assert(!lookupIncident('no_fix_attempt'), 'no_fix_attempt 不得被扩成新的 halt reason');
+        // 话术守住「相关目标未知」这条线，不得说成「未做修复尝试」
+        const guidance = buildNoRelevantTargetGuidance({
+          feature: 'bc-openCard-2', runId: '20260920T074445Z-a70eb7', phase: 'testing',
+          blockerIds: hostShapedSummary.blockers.map((b) => b.id),
+          harnessPrefixRel: 'framework/harness',
+        }).join('\n');
+        assert(guidance.includes('相关目标未知'), `话术须点明「相关目标未知」：${guidance}`);
+        assert(/不是.{0,6}已证明没做修复尝试|没有解析出任何相关目标/.test(guidance),
+          `话术不得把空集说成"证明了没修"：${guidance}`);
+        assert(!/未做修复尝试(?!」)/.test(guidance.replace('「已证明没做修复尝试」', '')),
+          `话术不得断言 agent 未做修复尝试：${guidance}`);
+        assert(guidance.includes('testing_channel_evidence_obligation'), '话术须列出本轮 blocker');
+        assert(!/--force-resume/.test(guidance), '相关目标未知不是终态覆盖场景，不得引导 --force-resume');
       },
     },
 

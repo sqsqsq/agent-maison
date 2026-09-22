@@ -21,7 +21,7 @@ description: 单阶段执行者。Claude 原生 /goal 路径下由薄 driver 主
 
 1. 读 Skill 主干 + 上一阶段 summary。
 2. 按 Skill 产出本阶段产物。
-3. 自跑 harness：`cd framework/harness && npx ts-node harness-runner.ts --phase <phase> --feature <feature>`；不得从宿主根裸跑或另设 TS_NODE_PROJECT。若请求携带 Goal 身份，须把同一 `run_id/phase/attempt_id/owner_id/owner_epoch` 显式追加给 harness 与 closure sync，不靠环境继承、不换身份。
+3. 自跑 harness：`cd framework/harness && npx ts-node harness-runner.ts --phase <phase> --feature <feature>`；不得从宿主根裸跑或另设 TS_NODE_PROJECT。**按当前模式选调用形式**：attended（请求里带 Goal 身份）须把同一 `run_id/phase/attempt_id/owner_id/owner_epoch` 显式追加给 harness 与 closure sync，不靠环境继承、不换身份；detached（无人值守）上下文由 runner 注入的 env 继承，**就用上面那条不带参数的命令**——追加 `--goal-*` 会被判「模式不匹配」当场拒绝，等租约也不会变。两句边界：**部分检查通过 ≠ 完整上游验证**；**入口拒绝 ≠ 执行了测试**（拒绝就是一次都没跑，不得按"跑了但失败"汇报）。
    看输出末尾的 `NEXT:` 行照做，直到脚本 PASS——**一轮处理全部已知阻断再重跑**（NEXT 会列出本轮全部 blocker），不要修一个跑一次；
    判词与改法以 harness 输出和 `script-report.json` 的 `details/suggestion` 为准，**不读 framework TS 源码反推门禁**。
    **例外**：`next_action=run_verifier_for_repair` 表示本轮产品 FAIL 但失败可诊断（review 负面裁决 / UT 真实断言失败），

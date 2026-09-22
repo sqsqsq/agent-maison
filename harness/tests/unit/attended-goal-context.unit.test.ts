@@ -241,6 +241,62 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(env.MAISON_GOAL_RUNNER === undefined, 'manual call injected goal runner marker');
     }),
   },
+  {
+    // plan e7a2c4f1 §3.7（G29）：身份判据不动，只把"模式误用"从租约话术里分出来。
+    name: 'P3-T16 attended arguments in detached mode report a mode mismatch, not an expired lease',
+    run: () => withRun(({ root, runId, runDir, token }) => {
+      releaseRunOwner(runDir, token);
+      // detached run：持柄者是 process，而不是 session
+      const detached = casAcquireRunOwner(runDir, runId, token.epoch, {
+        kind: 'process', owner_id: 'detached-runner-1', lease_ms: 60_000,
+      });
+      assert(detached.ok, 'detached owner acquisition failed');
+      if (!detached.ok) throw new Error('detached owner acquisition failed');
+      let message = '';
+      try {
+        validateAttendedGoalContext({
+          projectRoot: root, feature: 'demo', runId, phase: 'spec', attemptId: 'session-e1-round-1',
+          ownerId: detached.token.owner_id, ownerEpoch: detached.token.epoch,
+        });
+      } catch (error) { message = (error as Error).message; }
+      assert(message.includes('模式不匹配'), `detached 下传 attended 参数须报模式不匹配：${message}`);
+      assert(message.includes('detached'), `须点名当前模式：${message}`);
+      assert(!/lease 已过期|租约.{0,4}过期|有效 lease/.test(message),
+        `不得再把模式误用说成时效问题：${message}`);
+      assert(message.includes('等待租约不会改变结果'),
+        `须显式否掉"等一会儿租约就好了"这条误读：${message}`);
+      for (const flag of ['--goal-attempt-id', '--goal-owner-id', '--goal-owner-epoch']) {
+        assert(message.includes(flag), `须点名不该传的 attended 专用参数 ${flag}：${message}`);
+      }
+      // 判据本身没被放宽：仍然拒绝，绝不返回上下文
+      let refused = false;
+      try {
+        validateAttendedGoalContext({
+          projectRoot: root, feature: 'demo', runId, phase: 'spec', attemptId: 'session-e1-round-1',
+          ownerId: detached.token.owner_id, ownerEpoch: detached.token.epoch,
+        });
+      } catch { refused = true; }
+      assert(refused, 'detached 越权接管仍必须 fail-closed');
+    }),
+  },
+  {
+    name: 'P3-T16 反例：真正的 session 租约过期仍报租约，不被模式话术吞掉',
+    run: () => withRun(({ root, runId, runDir, token }) => {
+      const filePath = path.join(runDir, 'run-control.json');
+      const control = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as Record<string, any>;
+      control.owner.lease_expires_at = new Date(Date.now() - 1).toISOString();
+      fs.writeFileSync(filePath, JSON.stringify(control, null, 2) + '\n', 'utf-8');
+      let message = '';
+      try {
+        validateAttendedGoalContext({
+          projectRoot: root, feature: 'demo', runId, phase: 'spec', attemptId: 'session-e1-round-1',
+          ownerId: token.owner_id, ownerEpoch: token.epoch,
+        });
+      } catch (error) { message = (error as Error).message; }
+      assert(/lease 已过期或非法/.test(message), `session 租约过期须保留原判据与原文案：${message}`);
+      assert(!message.includes('模式不匹配'), `session 模式不得被说成模式误用：${message}`);
+    }),
+  },
 ];
 
 export function runAll(): UnitCaseResult[] {

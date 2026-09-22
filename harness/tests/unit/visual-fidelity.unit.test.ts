@@ -4325,7 +4325,8 @@ export function runAll(): UnitCaseResult[] {
       }
 
       // ① ref 命名不一致 + 无覆盖证据 → 证据不可消费，责任方 spec：obligation 带 repair_owner/
-      //    affected_files，归因不再落 code_regression，repair 候选是 spec（不回 coding）。
+      //    affected_files，归因不再落 code_regression（spec_capture_gap）。
+      //    plan e7a2c4f1 §3.5 起**不产任何回退候选**——账本/形状档只披露不交接。
       {
         const { root: specRoot } = seedTieringProject({});
         try {
@@ -4339,8 +4340,12 @@ export function runAll(): UnitCaseResult[] {
           }
           if (route.kind === 'code_regression') throw new Error('证据通道断裂不得被归成 code_regression');
           if (route.kind !== 'spec_capture_gap') throw new Error(`期望 spec_capture_gap，实得 ${route.kind}`);
-          if (!route.categories.includes('spec')) throw new Error(`repair 候选须归 spec：${JSON.stringify(route.categories)}`);
-          if (route.categories.includes('coding')) throw new Error('spec 责任不得产 coding 候选');
+          // plan e7a2c4f1 §3.5（G26，本条较第二笔收紧）：账本/形状档**只披露不交接**——
+          // 责任方与责任文件仍在 obligation 上（上面四条断言），但不再产出回退候选，
+          // 因为没有上游产物需要作废。零候选同时排除了"冤枉 coding"。
+          if (route.categories.length !== 0) {
+            throw new Error(`账本/形状档不得产出任何回退候选：${JSON.stringify(route.categories)}`);
+          }
         } finally {
           clearFrameworkConfigCache();
           fs.rmSync(specRoot, { recursive: true, force: true });

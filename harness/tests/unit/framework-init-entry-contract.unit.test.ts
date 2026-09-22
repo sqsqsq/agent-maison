@@ -719,6 +719,47 @@ const cases: Array<{ name: string; run: () => void }> = [
       }
     },
   },
+  {
+    // plan e7a2c4f1 §3.7（G29）：模式正确的 harness 调用指引须在三处已发布文本同时在场
+    // （Skill / operations / phase-executor 模板）——少一处，agent 就会在另一条路径上照旧误传。
+    name: 'P3-T16 published guidance gives the mode-correct harness call and the two boundary sentences',
+    run: () => {
+      const carriers = [
+        'skills/project/goal-mode/SKILL.md',
+        'skills/reference/goal-mode-operations.md',
+        'agents/claude/templates/agents/phase-executor.md',
+      ] as const;
+      for (const rel of carriers) {
+        const text = read(rel);
+        assert(text.includes('模式不匹配'), `${rel} 缺「模式不匹配」这条模式误用判词`);
+        assert(/detach/i.test(text), `${rel} 未点名 detached 模式`);
+        assert(text.includes('入口拒绝 ≠ 执行了测试'), `${rel} 缺「入口拒绝 ≠ 执行了测试」边界句`);
+      }
+      // 两句边界至少在 operations 与模板两处完整在场（Skill 主干受行数预算约束，只承载模式判词）
+      for (const rel of ['skills/reference/goal-mode-operations.md',
+        'agents/claude/templates/agents/phase-executor.md'] as const) {
+        assert(read(rel).includes('部分检查通过 ≠ 完整上游验证'),
+          `${rel} 缺「部分检查通过 ≠ 完整上游验证」边界句`);
+      }
+      // detached 的可执行命令形式必须写出来，且写明不带 --goal-* 参数
+      const ops = read('skills/reference/goal-mode-operations.md');
+      assert(ops.includes('npx ts-node harness-runner.ts --phase <phase> --feature <feature>'),
+        'operations 缺 detached 模式可直接执行的 harness 命令');
+      assert(ops.includes('这组参数是 attended 专用'),
+        'operations 未写明 --goal-* 是 attended 专用（detached 不带）');
+      // codex review 建议 6：`docs-authoring-lint` 只给 SKILL.md 通用 150 行预算，
+      // reference/ 与 agent 模板没有机器预算。§3.7 要求"原位改句、不加长"，用既有
+      // lineCount 把两处钉在当前基线上（要加长须连同这里一起裁决）。
+      const docBudget: ReadonlyArray<readonly [string, number]> = [
+        ['skills/reference/goal-mode-operations.md', 225],
+        ['agents/claude/templates/agents/phase-executor.md', 50],
+      ];
+      for (const [rel, budget] of docBudget) {
+        const lines = lineCount(read(rel));
+        assert(lines <= budget, `${rel} 行数 ${lines} 超出预算 ${budget}——§3.7 要求原位改句不加长`);
+      }
+    },
+  },
 ];
 
 export function runAll(): UnitCaseResult[] {

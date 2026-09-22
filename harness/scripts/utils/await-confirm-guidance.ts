@@ -272,3 +272,37 @@ export function buildFrameworkBugGuidance(opts: FrameworkBugGuidanceOpts): strin
     `处置完后续跑：${resumeCmd}`,
   ];
 }
+
+export interface NoRelevantTargetGuidanceOpts {
+  feature: string;
+  runId: string;
+  phase: string;
+  /** 本轮 blocker id（人一眼看出卡在哪些门上）。 */
+  blockerIds: string[];
+  harnessPrefixRel: string;
+}
+
+/**
+ * plan e7a2c4f1 §3.6（G27）：同签名重复 + **相关集合未知或为空** 的停止话术。
+ *
+ * 相关集合来自 `extractContentRelatedFiles` = `repair_candidates[].files` ∪
+ * `blockers[].affected_files`。空集只说明**没解析出可修目标**——不是"证明了没做修复尝试"，
+ * 措辞必须守住这条线（宿主 `a70eb7` i12/i13/i14 与 `f829b8` 各烧满重试后以
+ * `content_retry_exhausted` 收场，把账本问题说成了内容问题）。
+ * 沿既有 `no_progress_guard` 停止，不新增 halt reason。
+ */
+export function buildNoRelevantTargetGuidance(opts: NoRelevantTargetGuidanceOpts): string[] {
+  const { feature, runId, phase, blockerIds, harnessPrefixRel } = opts;
+  const resumeCmd = `npm --prefix ${harnessPrefixRel} run goal -- --feature ${feature} --resume ${runId}`;
+  return [
+    `【${feature} · run ${runId} · ${phase}】同一 blocker_signature 重复出现，且本轮机器证据`
+      + '**没有解析出任何相关目标**：repair_candidates[].files 与 blockers[].affected_files 都为空。',
+    `  本轮 blocker：${blockerIds.join(', ') || '（无记录）'}`,
+    '',
+    '这是「相关目标未知」，**不是**「已证明没做修复尝试」——框架没能指出该改哪里，',
+    '继续重试不会获得新结果（报告时间、追加 notes、重写散文都不算新事实）。',
+    '',
+    '处置：按 blocker details 指出责任产物，或走既有 correction / 范围修订补齐来源，再续跑：',
+    `  ${resumeCmd}`,
+  ];
+}

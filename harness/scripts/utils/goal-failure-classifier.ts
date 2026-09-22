@@ -762,7 +762,10 @@ export interface NoProgressGuardInput {
   currentBlockerSignature: string;
   priorArtifactSnapshot: ArtifactSnapshot | null;
   currentArtifactSnapshot: ArtifactSnapshot;
-  /** content 失败只有相关文件集合已由机器证据解析且非空时才可提前收敛。 */
+  /**
+   * content 失败的相关文件集合是否已由机器证据解析且非空
+   * （`extractContentRelatedFiles` = `repair_candidates[].files` ∪ `blockers[].affected_files`）。
+   */
   relevantEvidenceKnown?: boolean;
 }
 
@@ -774,7 +777,13 @@ export interface NoProgressGuardInput {
  *      达成"工具链/采集反复失败不吃视觉迭代预算"的预算分流）。
  *   - visual_gap：同一组视觉门禁 signature 重复（coding 上一轮"修"未改变任何失败门禁）= 无改善 → 熔断求人，
  *     避免 homepage 那种"3 轮把卡包瞎挪、视觉门禁原样复现"的空转。
- *   - code_regression：仅在结构化相关文件集合非空时参与；未知集合保留既有有界重试。
+ *   - code_regression：相关集合**已知**时仍要求可比内容基线（不得用空快照冒充"无改动"）；
+ *     相关集合**未知或为空**时（无 repair candidate、无 blocker affected_files）意味着
+ *     没解析出可修目标＝本阶段无路可走，同签名重复即停（plan e7a2c4f1 §3.6，覆盖
+ *     1f3d7a92 §3.3 顺带选的"退回有界重试烧满 max_retries_per_phase"出路——那条路在三轮
+ *     宿主实测里 8 次同签名零进展、且终态理由 `content_retry_exhausted` 把账本问题说成
+ *     内容问题）。**空集只说明"没解析出目标"，不能说成"证明了没修"**，调用点的文案因此
+ *     必须写「相关目标未知」。不新增 halt reason，仍走既有 `no_progress_guard`。
  */
 export function shouldHaltNoProgress(input: NoProgressGuardInput): boolean {
   const priorKeys = Object.keys(input.priorArtifactSnapshot ?? {}).sort();
@@ -782,7 +791,8 @@ export function shouldHaltNoProgress(input: NoProgressGuardInput): boolean {
   const comparableContentBaseline = priorKeys.length > 0 && currentKeys.length > 0 &&
     JSON.stringify(priorKeys) === JSON.stringify(currentKeys);
   const eligible = SIGNATURE_HALT_KINDS.has(input.failureKind) ||
-    (input.failureKind === 'code_regression' && input.relevantEvidenceKnown === true && comparableContentBaseline);
+    (input.failureKind === 'code_regression' &&
+      (input.relevantEvidenceKnown === true ? comparableContentBaseline : true));
   if (!eligible) return false;
   if (!input.priorBlockerSignature || input.priorBlockerSignature.length === 0) return false;
   if (input.priorBlockerSignature !== input.currentBlockerSignature) return false;

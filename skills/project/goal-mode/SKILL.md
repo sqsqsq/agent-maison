@@ -30,7 +30,7 @@
 
 1. **Assess**：读取 `assess@1` 结构化结果；不得凭聊天上下文猜当前阶段。
 2. **Authorize**：runtime 校验预算、权限、preflight、device policy、write guard、trust、lease/fencing 与 adapter capability。`assess` 推荐不等于越权许可。
-3. **Execute one phase**：runtime 冻结 phase-scoped context，再调用薄 executor。attended 请求中的 `run_id/phase/attempt_id/owner_id/owner_epoch` 必须原样传给 initializer、harness 与 `--sync-closure`，不得靠兄弟 shell 继承 env。只有 receipt 正式 closed 后才可回传 `passed`。
+3. **Execute one phase**：runtime 冻结 phase-scoped context，再调用薄 executor。attended 请求中的 `run_id/phase/attempt_id/owner_id/owner_epoch` 必须原样传给 initializer、harness 与 `--sync-closure`，不得靠兄弟 shell 继承 env；**无人值守（`--detach`）相反**——上下文由 runner 注入的 env 继承，harness 与闭环命令不带这组 `--goal-*` 参数，传了会被判「模式不匹配」当场拒绝（入口拒绝 ≠ 执行了测试，也不是租约过期）。只有 receipt 正式 closed 后才可回传 `passed`。
 4. **Gate / verdict / reassess**：runtime 独占 gate、verdict、重试/回退、closure 与下一轮；不得根据上一轮宿主内存直接决定下一 phase。
 
 若 adapter 未声明 `in_session_reconcile + phase_context_isolation`，回退为“agent 自跑单 phase harness，再 assess”的手动编排；不得伪装为自治循环。无人值守需要 adapter 的 resume/handoff 能力，缺失时停止并明确说明能力缺口。

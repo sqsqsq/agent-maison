@@ -48,6 +48,7 @@ import {
   buildClosureWallGuidance,
   buildFrameworkBugGuidance,
   buildFrameworkIntegrityGuidance,
+  buildNoRelevantTargetGuidance,
 } from './utils/await-confirm-guidance';
 import {
   decide,
@@ -8694,6 +8695,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
 
         let haltReason: string | undefined;
         let awaitConfirmGuidance: string | undefined;
+        // plan e7a2c4f1 §3.6：no-progress guard 的 `phase_halt` 在 `decideAndEmit` 之后才发
+        //（顺序见下方赋值处注释），这里只暂存事件体。
+        let noProgressHaltEvent: Record<string, unknown> | undefined;
         // 责任阶段统一路由 fail-closed（codex 冻结项⑦）：验真器已判可信缺陷，但候选
         // 写不回 summary（唯一真源）→ assess 看不见缺陷，回退链断；停下求人，不 advance。
         if (repairCandidatesUnwritable) {
@@ -8966,6 +8970,48 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   : failureKind === 'agent_timeout'
                     ? 'no_progress_agent_timeout'
                     : 'no_progress_guard';
+          // plan e7a2c4f1 §3.6（G27）：相关集合未知/为空＝没解析出可修目标，本阶段无路
+          // 可走——沿**既有** `no_progress_guard` 停下交回（不新增 halt reason），只把
+          // 理由说准。措辞守住一条线：`extractContentRelatedFiles` 的集合只来自
+          // `repair_candidates[].files` 与 `blockers[].affected_files`，空集说明「相关目标
+          // 未知」，**不是**「证明了没做修复尝试」。
+          if (failureKind === 'code_regression' && contentRelatedFiles.length === 0) {
+            awaitConfirmGuidance = buildNoRelevantTargetGuidance({
+              feature: manifest.feature,
+              runId: manifest.run_id,
+              phase: String(phase),
+              blockerIds: (decisionSummary?.blockers ?? [])
+                .map((blocker) => String((blocker as { id?: string }).id ?? ''))
+                .filter(Boolean)
+                .slice(0, 8),
+              harnessPrefixRel: layout.frameworkRel
+                ? path.posix.join(layout.frameworkRel, 'harness')
+                : 'harness',
+            }).join('\n');
+            console.log(`\n===== ${haltReason} =====\n${awaitConfirmGuidance}\n`);
+          }
+          // b3f7d9a2 三处可见契约：halt 文案与终态的承载处 = phase_halt 事件 / outcome /
+          // console。本分支原先只写后两处——detach 停机后只读 events 的消费者（resume 资格
+          // 派生、run_disposition 投影、`rebuildOutcomesFromEvents`）拿不到停止理由与指引。
+          // §3.6 让普通 content 失败（相关集合未知）也能走到这里，必须补齐。
+          // **发射点在 `decideAndEmit` 之后**：`rebuildOutcomesFromEvents`（`goal-runner-phase.ts`）
+          // 遇到更新的 `phase_verdict` 会丢弃在它之前的 `lastHalt`，先发就等于没发。
+          noProgressHaltEvent = {
+            type: 'phase_halt',
+            phase,
+            halt_reason: haltReason,
+            reason: `blocker_signature 重复且 watched 产物零变化（failure_kind=${failureKind}）`,
+            ...(awaitConfirmGuidance ? { halt_guidance: awaitConfirmGuidance } : {}),
+            ...runDispositionFields(decide(
+              { incident: haltReason, phase: String(phase) },
+              NO_AUTHORITY,
+              {
+                orchestration: 'goal', owner_kind: runtimeOwnerKind,
+                can_prompt_now: runtimeOwnerKind === 'session',
+                invocation: argv.resume ? 'resume' : 'fresh',
+              },
+            )),
+          };
         } else if (
           // E4：CUMULATIVE（非仅连续）家族重复熔断——上面 shouldHaltNoProgress 只比"紧邻上一次"，
           // 会被 FAIL(真 blocker 串)↔PASS(合成 agent_timeout@phase signature) 边界打断
@@ -9486,6 +9532,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
               { orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session', invocation: argv.resume ? 'resume' : 'fresh' },
             )) : {}),
           });
+        }
+        // §3.6：guard 驱动的 no-progress halt 在 verdict 之后落事件——`rebuildOutcomesFromEvents`
+        // 按"最后一条 phase_halt 覆盖更早的 terminal phase_verdict"重建，先发会被丢掉。
+        if (noProgressHaltEvent && action === 'halt') {
+          goalEvents.emit(noProgressHaltEvent);
         }
         emitMilestone(`GOAL_PHASE phase=${phase} event=verdict result=${action}`);
         flushProgress();

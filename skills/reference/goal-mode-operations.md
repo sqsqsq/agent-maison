@@ -94,6 +94,8 @@ npx ts-node scripts/goal-mode-entry.ts --run-mode attended --feature <feature> -
 --goal-run-id <run_id> --goal-attempt-id <attempt_id> --goal-owner-id <owner_id> --goal-owner-epoch <owner_epoch>
 ```
 
+**这组参数是 attended 专用。** 无人值守（`--detach`）的 phase 上下文由 runner 注入的 env 与 manifest/events 继承，harness 与闭环命令**不带**它们直接跑（`npx ts-node harness-runner.ts --phase <phase> --feature <feature>`）；detached 下传了这组参数会被判「模式不匹配」当场拒绝——那是**入口拒绝，不是租约过期**，等待不会改变结果。两句边界同样适用：**部分检查通过 ≠ 完整上游验证**；**入口拒绝 ≠ 执行了测试**。
+
 读取状态（**唯一入口 `goal-status`**；`goal-monitor` 是 opt-in 盯守工具，**不得**当状态查询，见「查进度」与「opt-in 盯守细则」）：
 
 ```bash
