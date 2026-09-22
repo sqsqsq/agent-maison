@@ -308,6 +308,19 @@ export async function runGoalRuntimeChain(
     onCoding?: (ctx: AgentCtx) => void;
     onSpec?: (ctx: AgentCtx) => void;
     onPlan?: (ctx: AgentCtx) => void;
+    /** plan d4a1f7c3 §5 末：RC-3 要求 UT 在链上真写测试，故补齐 ut / review 两个产物回调。 */
+    onUt?: (ctx: AgentCtx) => void;
+    onReview?: (ctx: AgentCtx) => void;
+    /**
+     * plan d4a1f7c3 §4.2：本 plan 允许的唯一新开关，语义只有一句——**不安装
+     * `__testing_setRunHarnessPhase` 与 `__testing_setValidateReceipt` 两个桩**。
+     * 开时 `runHarnessPhase`（goal-phase-runtime.ts `if (injectedRunHarness)` 早退不成立）
+     * 走真实子进程，receipt 校验走真实 `check-receipt`。它不新增任何分支逻辑。
+     * 关（默认）时既有全部用例逐字不变。
+     * 注意：开时 `probe.harnessPhases` / `harnessDeviceEnvs` / `harnessFidelityContexts` /
+     * `receiptValidationCalls` 恒为空——它们是桩体内的记录面，真跑时没有记录者。
+     */
+    realHarness?: boolean;
     resume?: string;
     forceResume?: boolean;
     /** plan c6a9e4d2：sealed 拒绝等「不达 resume 恢复流程」用例跳过 legacy bound 追补
@@ -458,6 +471,8 @@ export async function runGoalRuntimeChain(
       if (phase === 'coding') opts.onCoding?.(ctx);
       if (phase === 'spec') opts.onSpec?.(ctx);
       if (phase === 'plan') opts.onPlan?.(ctx);
+      if (phase === 'ut') opts.onUt?.(ctx);
+      if (phase === 'review') opts.onReview?.(ctx);
       const failed = opts.failExecutorFor?.(phase, n) ?? false;
       return {
         exitCode: failed ? 1 : 0,
@@ -486,7 +501,8 @@ export async function runGoalRuntimeChain(
           };
         })) as never,
     );
-    __testing_setValidateReceipt(((_hr: string, _pr: string, ph: string, feat: string, validateOpts?: {
+    // plan d4a1f7c3 §3.1：realHarness 下 receipt 校验走真实 check-receipt 子进程。
+    if (!opts.realHarness) __testing_setValidateReceipt(((_hr: string, _pr: string, ph: string, feat: string, validateOpts?: {
       goalIdentity?: { runId?: string; attemptId?: string; attemptPhase?: string };
     }) => {
       receiptValidationCalls.push({ phase: String(ph) });
@@ -518,7 +534,8 @@ export async function runGoalRuntimeChain(
         exit_code: 0,
       };
     }) as never);
-    __testing_setRunHarnessPhase(async (pr, _fr, ph, feat, _dry, gm, roundIdentity, _timeout, deviceTargetEnv) => {
+    // plan d4a1f7c3 §3.1/§4.2：realHarness 下不装本桩，runHarnessPhase 走生产真子进程。
+    if (!opts.realHarness) __testing_setRunHarnessPhase(async (pr, _fr, ph, feat, _dry, gm, roundIdentity, _timeout, deviceTargetEnv) => {
       harnessPhases.push(String(ph));
       harnessDeviceEnvs.push({ phase: String(ph), env: deviceTargetEnv });
       harnessFidelityContexts.push({
@@ -803,6 +820,8 @@ export async function runGoalRuntimeChain(
       if (phase === 'coding') opts.onCoding?.(ctx);
       if (phase === 'spec') opts.onSpec?.(ctx);
       if (phase === 'plan') opts.onPlan?.(ctx);
+      if (phase === 'ut') opts.onUt?.(ctx);
+      if (phase === 'review') opts.onReview?.(ctx);
       return {
         status: opts.failExecutorFor?.(phase, n) ? 'failed' : 'passed',
         phase,

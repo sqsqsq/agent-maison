@@ -133,7 +133,9 @@ function main() {
   run(process.execPath, [TSC, '--noEmit', '-p', 'tsconfig.typecheck.json'], HARNESS);
 
   // 3. 单测 + fixtures（transpile-only；不再各自重复 typecheck）
-  run(process.execPath, [TSNODE, '--transpile-only', 'tests/run-unit.ts'], HARNESS);
+  //    --release：连 release-only 套件（真链回归 real-chain）一起跑——日常 npm test 不跑它们，
+  //    发布件出厂前必须跑（plan d4a1f7c3 §6.2，用户 2026-09-22 裁决）。
+  run(process.execPath, [TSNODE, '--transpile-only', 'tests/run-unit.ts', '--release'], HARNESS);
   run(process.execPath, [TSNODE, '--transpile-only', 'tests/run-tests.ts'], HARNESS);
 
   // 4–6. pack→verify→promote：staging 生命周期用 try/finally 兜住，任一步失败都清 staging（不留残留产物）

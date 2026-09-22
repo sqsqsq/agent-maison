@@ -57,5 +57,48 @@ export function runAll(): UnitCaseResult[] {
     ));
   }
 
+  // ── release-only（plan d4a1f7c3，用户 2026-09-22 裁决）──────────────────────
+  // 语义两条，缺一条就有假绿：默认运行**不执行**它，但它**仍留在 toRun 里**
+  //（run-unit 的"显式注册套件文件缺失即 FAIL"必须照常对它生效）。
+  const WITH_RELEASE_ONLY = [
+    { id: 'goal-progress' },
+    { id: 'real-chain', releaseOnly: true },
+  ] as const;
+
+  {
+    const r = selectSuites(undefined, WITH_RELEASE_ONLY);
+    out.push(assert(
+      '默认运行：release-only 套件不执行，但仍进 toRun（缺文件仍 FAIL）',
+      r.toRun.length === 2 &&
+        r.skipExecution.has('real-chain') &&
+        !r.skipExecution.has('goal-progress'),
+      `toRun=${JSON.stringify(r.toRun.map(s => s.id))} skip=${JSON.stringify([...r.skipExecution])}`,
+    ));
+  }
+
+  {
+    // 反假绿：run-unit 的"显式注册套件文件缺失即 FAIL"是在**遍历 toRun 时**做的
+    //（run-unit.ts 的 `fs.existsSync(fullPath)` → `EXPLICIT_SUITE_IDS.has` → FAIL，
+    // 之后才轮到 skipExecution）。所以 release-only 套件必须**留在 toRun 里**：
+    // 一旦有人"优化"成在选择阶段就剔除它，删掉套件文件将不再变红。
+    const r = selectSuites(undefined, WITH_RELEASE_ONLY);
+    out.push(assert(
+      'release-only 不得被提前剔除：缺文件仍走 missing-suite FAIL 路径',
+      r.toRun.some(s => s.id === 'real-chain') && r.skipExecution.has('real-chain'),
+      `toRun=${JSON.stringify(r.toRun.map(s => s.id))}`,
+    ));
+  }
+
+  {
+    const r = selectSuites(undefined, WITH_RELEASE_ONLY, { release: true });
+    const byId = selectSuites('real-chain', WITH_RELEASE_ONLY);
+    out.push(assert(
+      '--release 全量执行；--filter <id> 单跑同样执行',
+      r.skipExecution.size === 0 &&
+        byId.toRun.length === 1 && byId.toRun[0].id === 'real-chain' && byId.skipExecution.size === 0,
+      `release.skip=${JSON.stringify([...r.skipExecution])} byId.skip=${JSON.stringify([...byId.skipExecution])}`,
+    ));
+  }
+
   return out;
 }

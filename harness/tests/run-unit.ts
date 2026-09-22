@@ -50,7 +50,13 @@ function discoverProfileUnitSuites(): Array<{ id: string; modulePath: string }> 
   return out;
 }
 
-const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
+/**
+ * `releaseOnly`（plan d4a1f7c3，用户 2026-09-22 裁决）：默认运行**只校验文件存在、不执行**，
+ * 只有 `--release`（发布门与 candidate 打包传它）或 `--filter <id>` 单跑时才执行。
+ * 理由：真链回归一条 ~63 s，负例套件落地后合计可能到 2–3 分钟，与日常 4700 用例不成比例；
+ * 而它是唯一能抓"夹具手喂生产本不会给的东西"那类 bug 的测试，所以发布前必跑。
+ */
+const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean }> = [
   { id: 'request-entry', modulePath: './unit/request-entry.unit.test' },
   { id: 'standalone-coding-review', modulePath: './unit/standalone-coding-review.unit.test' },
   { id: 'obligation-scoped-verification', modulePath: './unit/obligation-scoped-verification.unit.test' },
@@ -402,9 +408,13 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'blocker-actionability', modulePath: './unit/blocker-actionability.unit.test' },
   { id: 'timeout-ratchet-closure', modulePath: './unit/timeout-ratchet-closure.unit.test' },
   { id: 'attempt-axes-timeline', modulePath: './unit/attempt-axes-timeline.unit.test' },
+  // plan d4a1f7c3：确定性输入下的生产验证链集成回归（spec→testing 六阶段真 harness 全链）。
+  // release-only：日常 npm test 不跑，`release:all` / `candidate:build` 与 `--filter real-chain` 跑。
+  { id: 'real-chain', modulePath: './unit/real-chain.unit.test', releaseOnly: true },
 ];
 
-const SUITES: Array<{ id: string; modulePath: string }> = [...CORE_SUITES, ...discoverProfileUnitSuites()];
+const SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean }> =
+  [...CORE_SUITES, ...discoverProfileUnitSuites()];
 /** 显式注册的 CORE 套件（review P1：缺失必须 FAIL——静默 SKIP 会让"真实行为测试"假绿） */
 const EXPLICIT_SUITE_IDS = new Set(CORE_SUITES.map(s => s.id));
 interface SuiteSummary {
@@ -415,7 +425,9 @@ interface SuiteSummary {
 async function main(): Promise<void> {
   const filterIdx = process.argv.indexOf('--filter');
   const filter = filterIdx >= 0 ? process.argv[filterIdx + 1] : undefined;
-  const { toRun, caseNameFilter } = selectSuites(filter, SUITES);
+  // `--release`：发布门（release-all / candidate-release）与手动全量跑传它，含 release-only 套件。
+  const release = process.argv.includes('--release');
+  const { toRun, caseNameFilter, skipExecution } = selectSuites(filter, SUITES, { release });
 
   console.log('\nFramework Harness Unit Tests\n');
   console.log('='.repeat(72));
@@ -436,6 +448,11 @@ async function main(): Promise<void> {
       } else {
         console.log(`  [SKIP] suite ${suite.id} 不存在：${fullPath}`);
       }
+      continue;
+    }
+    // release-only：文件存在性已在上面校验过（缺失仍 FAIL），这里只跳过执行。
+    if (skipExecution.has(suite.id)) {
+      console.log(`  [SKIP] suite ${suite.id}：release-only（加 --release 或 --filter ${suite.id} 执行）`);
       continue;
     }
     // eslint-disable-next-line @typescript-eslint/no-require-imports
