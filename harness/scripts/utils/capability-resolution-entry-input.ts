@@ -24,7 +24,7 @@ import { readRunBoundContracts } from './capability-resolution';
 import { resolveEffectiveDiffBaseline } from './git-diff';
 import { diffChangedFilesWithStatus } from './git-diff';
 import { loadResolvedProfile } from '../../profile-loader';
-import { tryLoadDiffExcludeTestPathRegexes, tryLoadUtSourceRootResolver } from '../../profile-host-loader';
+import { tryLoadDiffExcludeTestPathRegexes, tryLoadProfileCodingHost, tryLoadUtSourceRootResolver } from '../../profile-host-loader';
 import { SpecLoader } from './spec-loader';
 
 /** Revision-trigger kinds: historical evidence for why a revision happened, never a current target. */
@@ -363,13 +363,29 @@ export function resolveCapabilityResolutionEntryInput(
       }
       let testRoots: string[] = [];
       let testPathPatterns: RegExp[] = [];
+      // 宿主自己声明的「什么算源码」——与 check-coding.ts:718 / correction-commands.ts:483 同一个
+      // 判据，不另立路径表。未声明（generic 等无 coding host 的 profile）即空集：那种工程没法
+      // 区分源码与文档，归属侧按 fail-safe 处理——不盖 owner，漂移照旧 stale。
+      let sourceFileSuffixes: readonly string[] = [];
       try {
         const profile = loadResolvedProfile(options.projectRoot, loadFrameworkConfig(options.projectRoot), frameworkRoot);
         testRoots = (tryLoadUtSourceRootResolver(profile.profileDir)?.(options.projectRoot, contractModules) ?? []).map(root => path.resolve(root));
         testPathPatterns = tryLoadDiffExcludeTestPathRegexes(profile.profileDir) ?? [];
+        sourceFileSuffixes = tryLoadProfileCodingHost(profile.profileDir)?.sourceFileSuffixes ?? [];
       } catch {
         // Minimal/custom framework fixtures without profile modules have no profile-owned UT roots.
       }
+      // 源码判据只有一条，且不是新表：profile 声明的源码后缀，与 `check-coding.ts:718` /
+      // `correction-commands.ts:483` **逐字同法**（同样的 `.` 归一 + 大小写敏感 `endsWith`）。
+      // **不以「落在模块包路径内」兜底**：模块根下本来就常驻非源码文件（生产检查直接读
+      // `<package_path>/oh-package.json5`，见 `profiles/hmos-app/harness/coding-host-rules.ts` 与
+      // `profile-path-conventions.ts`），拿目录当源码判据会把 README / 清单一并归给实现阶段。
+      // 后缀不认的路径就不是源码：`contracts.files` 只被 schema 约束为非空字符串
+      //（`contracts.schema.yaml:49`）、`contract-reference-closure.ts:36` 只做路径规范化，
+      // 所以写集里**同样可能**出现文档/清单，它们不得拿到实现阶段归属。
+      const normalizedSuffixes = sourceFileSuffixes.map(suffix => (suffix.startsWith('.') ? suffix : `.${suffix}`));
+      const isHostSourceFile = (relative: string): boolean =>
+        normalizedSuffixes.some(suffix => relative.endsWith(suffix));
       const isTestPath = (relative: string): boolean => testRoots.some(root => isInsideProjectRoot(root, path.resolve(options.projectRoot, relative)))
         || testPathPatterns.some(pattern => pattern.test(`/${relative.replace(/\\/g, '/')}`));
       const usesConstructionTargets = indexed.phase.inputs.some(input => input.id === 'contracts') && !producesContracts;
@@ -392,6 +408,17 @@ export function resolveCapabilityResolutionEntryInput(
         owner === options.phase
         || (phaseIndex >= 0 && scope.phase_chain.indexOf(owner) > phaseIndex)
         || producesContracts
+        // 观察期（出生链只有 spec/plan）：owner 阶段**还没进链**，`indexOf` 恒为 -1，上面三条
+        // 全不成立 → 研究源码一个 owner 都盖不上，coding 一改就把 spec/plan 判 stale
+        // （plan b5c1e9d7 §2 C）。资格只取冻结范围自己的字段，两个条件缺一不可：
+        //   · owner 不在链里——**方向约束的替代品**。缺了它，coding 已闭环而此后无范围修订时
+        //     `satisfied_by` 仍为空，review 会拿到上游 coding owner（P1-T12 断言此时必须无 owner）。
+        //   · 范围里确有该 owner 的未兑现 required 义务——即「阶段暂被定义缺口挡住」的既有表示。
+        //     **不是**「owner 非空」：无实现义务时 `ownerOf` 回落契约 producer 恒非空，那等于全放行。
+        || (!scope.phase_chain.includes(owner) && scope.obligations.some(obligation =>
+          obligation.owner_phase === owner
+          && obligation.applicability === 'required'
+          && !obligation.satisfied_by?.length))
       );
       const inventory = loadArtifactInventory(frameworkRoot);
       const requiredOutputs = indexed.phase.produces.flatMap(output => inventory.artifacts.find(artifact => artifact.id === output.artifact)?.paths ?? []).filter(name => {
@@ -417,7 +444,15 @@ export function resolveCapabilityResolutionEntryInput(
       ])];
       const historical = new Set(sourcePaths);
       const owners: Array<readonly [string, string]> = [];
-      if (mayAdvance(codeOwner)) for (const file of contractFiles.filter(file => !isTestPath(file))) {
+      // 集合与紧邻的测试分支同形（`contractFiles ∪ sourcePaths`）：spec 跑在 contracts 产出之前，
+      // 只遍历 contractFiles 时它是空集，研究源码于是一条都盖不上归属（plan b5c1e9d7 §2 C）。
+      // 内层判据不动——`sourcePaths ⊆ historical`，契约文件的原条件逐字保留。
+      // **并集两半都要过同一个源码判据**：合格 facts 的 `source_code_paths` 允许含
+      // `doc/module-catalog.yaml` / `framework.config.json` 这类非源码研究来源，写集
+      // （`contracts.files`）同样只被约束为字符串路径——任一侧混进非源码路径，盖上实现阶段
+      // owner 就会让它的字节漂移在施工期被整批豁免跳过（消费点 `phase-evidence-manifest.ts:907`），
+      // 与「需求、contracts 与其它非源码输入不适用此承接规则」相悖。
+      if (mayAdvance(codeOwner)) for (const file of [...new Set([...contractFiles, ...sourcePaths])].filter(file => !isTestPath(file) && isHostSourceFile(file))) {
         if (codeOwner === options.phase || historical.has(file)) owners.push([file, codeOwner]);
       }
       if (mayAdvance(testOwner)) for (const file of [...new Set([...contractFiles.filter(isTestPath), ...sourcePaths.filter(isTestPath)])]) {

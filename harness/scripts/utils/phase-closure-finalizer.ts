@@ -9,9 +9,11 @@ import {
   featurePhaseReportsDir,
   loadFrameworkConfig,
   receiptFilePath,
+  relFeaturesDir,
   resolveFeatureArtifact,
   resolveReceiptFilePath,
 } from '../../config';
+import { resolveCapabilityResolutionEntryInput } from './capability-resolution-entry-input';
 import { writeReviewClosureAttestation } from './closure-attestation';
 import {
   collectRequirementSsotPaths,
@@ -369,6 +371,49 @@ function withClosureMutex<T>(summaryPath: string, fn: () => T): T {
   }
 }
 
+/**
+ * goal 的最终闭环拿不到子进程那份 `factsContext`（summary 不落它），源码条目因此没有
+ * `source_owners` 可盖 → `owner_phase` 全空（plan b5c1e9d7 §2 A）。这里用**既有**入口按仓内
+ * 冻结事实重建：同一个函数、同一份冻结范围 / phase contract 1.1 / `context/facts.md`，
+ * 与 `harness-runner.ts` 那条已正确的非 goal 路径收敛为同一种 manifest 形状。
+ *
+ * **run 身份取自正在闭环的这份 summary**（`opts.goalRunId` 优先，缺省回落 `summary.run_id`）：
+ * 范围一旦转交给某个 run，没有 run 身份时 `resolveEffectiveScopeSource` 直接抛
+ * 「已转交……带上该 run 身份再跑」，重建必然落空。
+ *
+ * 为什么不改成让调用方一律透传 `goalRunId`：该字段不只是「run 是谁」——`productionEvidence`
+ * 用 `Boolean(opts.goalRunId?.trim()) || isGoalEnvironment()` 决定要不要**强制** requirement
+ * 血缘哈希，而那道门在本函数的 try/catch 之外。让 `--sync-closure` 这类调用方补传 `goalRunId`，
+ * 会顺带第一次为它打开那道强制门（既有 `check-receipt-policy` 两条 T4 实测变红）。
+ *
+ * 身份取的是**正在闭环的这份 canonical summary 的 `run_id`**——它由产出该 summary 的 harness
+ * 轮次写下，就是这份证据自己的 run 身份。它与 `recoverPartialPublication` 不是同一件事：
+ * 后者校验的是 **staged** summary，且只有在调用方给了 `goalRunId` 时才约束 run 等值；
+ * 而恢复闭环这条路进本函数之前，receipt 已在 `phase-state.ts` 的 `tryValidateReceipt` 带
+ * `goalIdentity` 校验过身份。这里只把这个 run 号喂给重建，不碰任何判据。
+ *
+ * 重建只允许**恢复既有行为**——任何失败都退回 `undefined`（今天的路径）并披露一行，不新增失败面。
+ */
+function rebuildFactsContext(
+  opts: FinalizePhaseClosureOptions,
+  summaryPath: string,
+): import('./context-facts').FactsInvocationContext | undefined {
+  try {
+    const runId = opts.goalRunId?.trim() || readSummary(summaryPath).parsed.run_id?.trim();
+    return resolveCapabilityResolutionEntryInput({
+      projectRoot: opts.projectRoot,
+      frameworkRoot: opts.frameworkRoot,
+      feature: opts.feature,
+      phase: opts.phase,
+      featuresDir: relFeaturesDir(opts.projectRoot),
+      ...(runId ? { goalRunId: runId } : {}),
+    }).factsContext;
+  } catch (error) {
+    console.warn(`⚠ 闭环归属上下文重建失败（按无归属继续）：${(error as Error).message}`);
+    return undefined;
+  }
+}
+
 function publishEvidenceBinding(
   opts: FinalizePhaseClosureOptions,
   summaryPath: string,
@@ -379,7 +424,7 @@ function publishEvidenceBinding(
   const evidence = opts.prepareEvidence ? opts.prepareEvidence() : productionEvidence(opts, summaryPath);
   const manifest = resolvePhaseEvidenceManifest({
     resolvedInputs: opts.resolvedInputs,
-    factsContext: opts.factsContext,
+    factsContext: opts.factsContext ?? rebuildFactsContext(opts, summaryPath),
     projectRoot: opts.projectRoot,
     feature: opts.feature,
     phase: opts.phase as Phase,

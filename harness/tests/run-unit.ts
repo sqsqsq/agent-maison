@@ -408,9 +408,22 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'blocker-actionability', modulePath: './unit/blocker-actionability.unit.test' },
   { id: 'timeout-ratchet-closure', modulePath: './unit/timeout-ratchet-closure.unit.test' },
   { id: 'attempt-axes-timeline', modulePath: './unit/attempt-axes-timeline.unit.test' },
-  // plan d4a1f7c3：确定性输入下的生产验证链集成回归（spec→testing 六阶段真 harness 全链）。
-  // release-only：日常 npm test 不跑，`release:all` / `candidate:build` 与 `--filter real-chain` 跑。
+  // plan d4a1f7c3：确定性输入下的生产验证链集成回归（spec→testing 六阶段真 harness 全链）
+  // 与 §5 的接缝负例（real-chain-seams）。两者都跑真 harness 子进程，**release-only**：
+  // 日常 `npm test` 跳过，`release:all` / `candidate:build`（`--release`）与按 id 单跑时执行。
+  //
+  // 2026-09-22：正例在 workflow 1.2（`obligation-driven`，与真实宿主同模式）下六阶段
+  // PASS + closed 后重新登记；挡住它的那处生产缺口（goal 闭环不传 factsContext → 源码条目
+  // 无 `owner_phase` → coding 按写集改源码即被 `post_agent` 门判 plan 漂移）已由
+  // plan b5c1e9d7 修复。**不得靠改回 1.1 让它变绿。**
   { id: 'real-chain', modulePath: './unit/real-chain.unit.test', releaseOnly: true },
+  // `real-chain-seams` **仍不登记**（§8：不登记必红套件）。1.2 打通后它从 2/4 变成 4/2，
+  // 剩下两条红各有独立根因、都不在 plan b5c1e9d7 的范围里：
+  //   · RC-8a「真修改仍被判无进展停机」——d4a1f7c3 §10.12 已单独记账，与本缺陷无关；
+  //   · RC-4 前提②——链跑到 UT 之后首次到达该断言，`ut/reports/ac-coverage.json` 出现在
+  //     verifier subject 材料里（`createRuntimeArtifactPredicate` 只过 manifest 那一路，
+  //     contextFiles 那一路没过）。是断言前提写错还是材料面真漏，须单独定位。
+  // 两条定位清楚后与本行一起按 `releaseOnly: true` 登记回来。
 ];
 
 const SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean }> =

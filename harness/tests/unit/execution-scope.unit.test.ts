@@ -682,11 +682,19 @@ async function runScopeScenario(mode: 'direct' | 'revision' | 'revision-cut' | '
         // ③ 历史触发摘要不再阻断（R-摘要豁免那一路）
         const issues = executionScopeEvidenceIssues(root, feature, effective, undefined, 'p2-attended');
         assert(!issues.some(issue => issue.includes('input binding stale')), issues.join('; '));
-        // ④ 责任阶段证据仍 fresh，且触发文件没有作为当前输入进过 plan 的证据（R-目标收集那一路）
+        // ④ 责任阶段证据仍 fresh（R-目标收集那一路要防的后果）
         assert.equal(recomputePhaseEvidenceStaleness(root, feature, ['plan'], { frameworkRoot })[0].verdict, 'fresh');
         const planEvidence = loadPhaseEvidenceManifest(root, feature, 'plan');
         assert(planEvidence?.integrityOk, 'plan evidence missing');
-        assert(!planEvidence!.manifest.inputs.some(entry => entry.path === codeRel), 'the revision trigger entered plan evidence as a current input');
+        // 本行原为「触发文件不得作为当前输入进 plan 证据」。plan b5c1e9d7 §3.1 让 goal 的最终闭环
+        // 也按仓内冻结事实重建调用上下文之后，plan 的证据**确实**登记了它按实现义务读到的写集源码
+        // ——非 goal 路径（`harness-runner.ts`）本来就登记，原断言之所以成立，只是因为 goal 闭环
+        // 当时什么源码都不登记。本夹具里触发文件与写集文件是**同一个**，"没被当作当前目标"因此
+        // 不再可观测；R-摘要豁免那一路仍由 ③ 锁住，B4 要防的后果由上一行（撤回后仍 fresh）锁住。
+        // 这里改锁归属：登记进来就必须带责任阶段，否则实现阶段一动它上游又要 stale。
+        const triggerEntry = planEvidence!.manifest.inputs.find(entry => entry.path === codeRel);
+        assert(!triggerEntry || triggerEntry.owner_phase === 'coding',
+          `写集源码进了 plan 证据却没有责任归属：${JSON.stringify(triggerEntry)}`);
       }
       if (specGap) {
         // §5.1.1a 的 spec 侧闭环：review 归因 spec → 同 run 修订 → spec 重跑修复触发文件 → 完成 VALID。

@@ -1206,6 +1206,9 @@ function main(): void {
           frameworkRoot,
           feature,
           phase,
+          // 闭环归属重建按 run 身份取冻结范围（plan b5c1e9d7 §3.1）：范围已转交给某 run 时，
+          // 不带身份的重建必然抛「已转交」并被吞掉，于是照样落下无 owner 的证据。
+          ...(runId ? { goalRunId: runId } : {}),
           blockerCount:
             isSlim
               ? slimSummary?.blocker_count ?? 0

@@ -15,6 +15,7 @@ import {
   provisionRealChainProject,
   scaffoldRealChainHost,
   writeHostFile,
+  REAL_CHAIN_REQUIREMENT,
   REAL_CHAIN_SOURCE,
   REAL_CHAIN_SOURCE_2,
   REAL_CHAIN_MODEL,
@@ -56,13 +57,13 @@ interface Summary {
   next_action?: string;
 }
 
-function readSummary(p: RealChainProject, phase: string): Summary | null {
+export function readSummary(p: RealChainProject, phase: string): Summary | null {
   const abs = path.join(p.root, 'doc/features', p.feature, phase, 'reports', 'summary.json');
   if (!fs.existsSync(abs)) return null;
   return JSON.parse(fs.readFileSync(abs, 'utf-8')) as Summary;
 }
 
-function dumpPhase(p: RealChainProject, phase: string): string {
+export function dumpPhase(p: RealChainProject, phase: string): string {
   const s = readSummary(p, phase);
   if (!s) return `${phase}: <no summary>`;
   const reportPath = path.join(p.root, 'doc/features', p.feature, phase, 'reports', 'script-report.json');
@@ -83,7 +84,7 @@ function dumpPhase(p: RealChainProject, phase: string): string {
  * verifier 的回复本身也是确定性替身，报告须含**恰好一个**终态块
  * （verifier-evidence.ts:246-252）。subject 从盘上真 summary 读，**不改 summary 字节**（§4.4 第 5 条）。
  */
-function publishVerifier(p: RealChainProject, phase: string): void {
+export function publishVerifier(p: RealChainProject, phase: string): void {
   const reportsDir = path.join(p.root, 'doc/features', p.feature, phase, 'reports');
   const s = readSummary(p, phase);
   const subjectId = s?.verifier_subject_id;
@@ -115,7 +116,7 @@ function publishVerifier(p: RealChainProject, phase: string): void {
 // check-plan.ts:909-914 的 `plan_to_architecture` 直接 SKIP，**架构变更分支不覆盖**。
 // ---------------------------------------------------------------------------
 
-function writeSpecMaterials(p: RealChainProject): void {
+export function writeSpecMaterials(p: RealChainProject): void {
   const f = p.feature;
   // spec.md：check-spec 的 required_chapters / feature_table_format(:674-681) /
   // scope_declaration / terminology_mapping_table / mermaid_flowchart 五门的正文载体。
@@ -223,8 +224,13 @@ function writeSpecMaterials(p: RealChainProject): void {
     '    verification_steps:',
     '      - 在全部银行页点击银行条目',
     '    expected_result: 进入开卡流程页',
-    '    ut_layer: both',
-    '    ut_focus: AllBanksPage 点击回调',
+    // **device 而不是 both**（1.2 下的实测约束）：`checkAcceptanceLinkedUseCases`
+    //（check-acceptance.ts:286-292，经 `checkTypedConstructionContent` 在 plan 期执行）
+    // 要求带 `linked_flow` 的 **unit 层** AC 必须能在 `use-cases.yaml` 里解析到同名 flow。
+    // 本链不产出 use-cases.yaml（见文件头「档位与材料表态」），故 AC-1 只留 device 层：
+    // `isP0DeviceInteractive`（p0-semantic-gates.ts:99-102）认 `device|both`，P0 三道重门不受影响；
+    // unit 侧的 testability-audit / coverage-evidence / mock-plan 由 AC-2（both）继续驱动。
+    '    ut_layer: device',
     // acceptance_device_focus_present（BLOCKER）：ut_layer=both 须同时给 device_focus。
     '    device_focus: 真机点击银行条目核对跳转开卡流程',
     '    linked_flow: open_card',
@@ -299,6 +305,14 @@ function writeSpecMaterials(p: RealChainProject): void {
  * **不写 `frozen_scope_fingerprint`**——指纹属 §4.4 第 1 条禁止手填项，由生产冻结链产出。
  */
 function writeFacts(p: RealChainProject, phase: string): void {
+  // coding 落盘之后，`BankListItem.ets` 成为**当前**解析目标（它在 contracts.files 里且已存在），
+  // 于是从 coding 起每个阶段的 facts 都必须承接它。它不能进 frontmatter 的 source_code_paths：
+  // 那是 baseline 段，改了就让 spec/plan 已闭环的 facts 证据真失效（`factsBaselineFingerprint`）。
+  // 正解与真实 agent 一致——写进**本阶段的 delta 表**（`context_exploration_facts_scope_coverage`
+  // 认 `declared ∪ 本阶段 delta 表的「路径」列`，context-facts.ts:231-241）。
+  const deltaRows: Array<[string, string, string]> = fs.existsSync(path.join(p.root, REAL_CHAIN_NEW_SOURCE))
+    ? [[REAL_CHAIN_NEW_SOURCE, 'coding 新建的列表条目组件', '本阶段按它继续']]
+    : [];
   const rows: Array<[string, string, string]> = [
     [REAL_CHAIN_SOURCE, 'AllBanksPage 目前只渲染标题文本', '列表需新增'],
     [REAL_CHAIN_SOURCE_2, 'BankRepository.list 返回空数组', '列表数据源需接入'],
@@ -306,10 +320,34 @@ function writeFacts(p: RealChainProject, phase: string): void {
     [REAL_CHAIN_SERVICE, 'BankService 暴露 openCard 入口', '点击回调接它'],
     [REAL_CHAIN_INDEX, 'index.ets 已导出 AllBanksPage', '新增组件需同步导出'],
   ];
-  writeHostFile(p.root, `doc/features/${p.feature}/context/facts.md`, [
+  // workflow 1.2（obligation-driven，与真实宿主同模式）对建立事实有两条硬要求：
+  //   · `schema_version: "1.1"`——capability-resolution-entry-input.ts:290 在
+  //     「本阶段即建立阶段且是链首」时直接抛 `current establishing facts require schema 1.1`；
+  //     context-facts.ts:198 同判据以 BLOCKER 复核。
+  //   · run 载体的**身份位** `run_id`——context-facts.ts:203-205 /
+  //     capability-resolution-entry-input.ts:329-332（`record.run_id !== goalRunId` 即
+  //     `facts input identity mismatch: invocation`）。它是 agent 手上的调用身份，不是指纹。
+  // 无 run 时**不写** run_id：那条路的身份位是冻结范围指纹（context-facts.ts:206-210），
+  // 而指纹属 §4.4 第 1 条禁止手填项——所以本夹具不产出 runless 的 facts，
+  // runless 用例（RC-2）在造完材料后直接删掉这份文件。
+  // phase_delta 段**累积**，不是每阶段重写一份。真实 agent 是追加一节（P1-T12
+  // `standalone-coding-review.unit.test.ts` 同形：`appendFileSync('## phase_delta: coding …')`），
+  // 生产的 facts 证据哈希正是按这个形状分段的：`factsPhaseFingerprint`（context-facts.ts:93）
+  // = [baseline（首个 `## phase_delta:` 之前的全部）, 本阶段 delta 段]。删掉上游阶段的 delta 段
+  // 会让上游那条 facts 证据**真的**失效（spec 闭环记的是 spec 段），本夹具此前整文件重写、
+  // 把 spec 段替换成 plan 段，于是 plan 期 spec 证据判 stale。这是夹具与真实 agent 的行为差，
+  // 不是生产缺陷：写法改对后上游段原样保留，baseline 段逐字不变。
+  const factsRel = `doc/features/${p.feature}/context/facts.md`;
+  const factsAbs = path.join(p.root, factsRel);
+  const priorDeltas = fs.existsSync(factsAbs)
+    ? fs.readFileSync(factsAbs, 'utf-8').split(/(?=^##\s*phase_delta:)/m).slice(1)
+      .filter(section => !new RegExp(`^##\\s*phase_delta:\\s*${phase}\\b`).test(section))
+    : [];
+  writeHostFile(p.root, factsRel, [
     '---',
-    'schema_version: "1.0"',
+    'schema_version: "1.1"',
     `feature: ${p.feature}`,
+    ...(p.runId ? [`run_id: ${p.runId}`] : []),
     // context_exploration_facts_established_by_invalid（BLOCKER）：full track 恒为 "spec"。
     'established_by: spec',
     'ready_to_produce: true',
@@ -337,14 +375,21 @@ function writeFacts(p: RealChainProject, phase: string): void {
     '|------|------|--------------|',
     ...rows.map(r => `| ${r[0]} | ${r[1]} | ${r[2]} |`),
     '',
+    ...priorDeltas.map(section => section.replace(/\s*$/, '\n')),
     `## phase_delta: ${phase}`,
     '',
     '本阶段研究结论已确认。',
     '',
+    ...(deltaRows.length ? [
+      '| 路径 | 事实 | 对本阶段影响 |',
+      '|------|------|--------------|',
+      ...deltaRows.map(r => `| ${r[0]} | ${r[1]} | ${r[2]} |`),
+      '',
+    ] : []),
   ].join('\n'));
 }
 
-function writePlanMaterials(p: RealChainProject): void {
+export function writePlanMaterials(p: RealChainProject): void {
   const f = p.feature;
   writeFacts(p, 'plan');
   // contracts.yaml：W1 的正例面——`files` **同时**含既有文件与待创建文件
@@ -520,8 +565,7 @@ function writePlanMaterials(p: RealChainProject): void {
 }
 
 /** coding 阶段产出物本体：新增列表条目组件并在页面里接上（真实写盘，供下游新鲜度消费）。 */
-function writeCodingMaterials(p: RealChainProject): void {
-  writeFacts(p, 'coding');
+export function writeCodingMaterials(p: RealChainProject): void {
   writeHostFile(p.root, REAL_CHAIN_NEW_SOURCE, [
     "import { BankModel } from './BankModel';",
     '',
@@ -557,6 +601,8 @@ function writeCodingMaterials(p: RealChainProject): void {
     "export { BankListItem } from './src/main/ets/BankListItem';",
     '',
   ].join('\n'));
+  // facts 放在产物之后写：本阶段的 delta 表要承接刚落盘的新目标（见 writeFacts）。
+  writeFacts(p, 'coding');
 }
 
 /**
@@ -570,7 +616,7 @@ function writeCodingMaterials(p: RealChainProject): void {
  *   非 pixel 档至少命中 1 类）——本链是 `semantic_layout`（需求文本无强 1:1 措辞），
  *   故四类全引只是为了稳，pixel 专属硬地板不适用。
  */
-function writeReviewMaterials(p: RealChainProject): void {
+export function writeReviewMaterials(p: RealChainProject): void {
   writeFacts(p, 'review');
   // canonical 路径是 `review/review-report.md`；写旧路径会得到 legacy_read_… MAJOR WARN。
   writeHostFile(p.root, `doc/features/${p.feature}/review/review-report.md`, [
@@ -585,7 +631,13 @@ function writeReviewMaterials(p: RealChainProject): void {
     '',
     `模块：${p.module}。文件范围：`,
     '',
+    // `review_scope_to_design`（check-review.ts:755-762）比对的是**解析后的 code 输入全量**
+    // （`reviewTargetFiles` → `resolvedInputs.values.code`），1.2 下它就是冻结范围的源码读集
+    // ——不是"agent 觉得自己改了哪几个"。全部列出。
     `- ${REAL_CHAIN_SOURCE}`,
+    `- ${REAL_CHAIN_SOURCE_2}`,
+    `- ${REAL_CHAIN_MODEL}`,
+    `- ${REAL_CHAIN_SERVICE}`,
     `- ${REAL_CHAIN_NEW_SOURCE}`,
     `- ${REAL_CHAIN_INDEX}`,
     '',
@@ -635,7 +687,7 @@ function writeReviewMaterials(p: RealChainProject): void {
  *   并由 :3670-3675 判 BLOCKER）。故为 AC-2 的非 pure 依赖 `BankRepository` 声明一个 spy
  *   （:3694-3699 要求每个非 pure 依赖都有同名 `target_class`）。
  */
-function writeUtMaterials(p: RealChainProject): void {
+export function writeUtMaterials(p: RealChainProject): void {
   writeFacts(p, 'ut');
   // 每个 it() 至少两次 expect：无 use-cases.yaml 时 `checkItDrivesFlow`（check-ut.ts:2236-2243）
   // 退化为"≥2 expect"的基础健康度，一次 expect 会吃 MAJOR WARN（空壳用例）。
@@ -908,31 +960,45 @@ test('real-chain 判据解析：逐阶段配对子进程打印的 project_profil
 test('real-chain 正例：spec→testing 六阶段真实 harness 全链 PASS + closed', async () => {
   const project = provisionRealChainProject();
   try {
-    scaffoldRealChainHost(project);
+    const birthChain = scaffoldRealChainHost(project);
     clearFrameworkConfigCache();
     const captured = captureStdout();
+    const pendingPhases = (): string[] =>
+      PHASES.filter(ph => readSummary(project, ph)?.closure_status !== 'closed');
+    // 1.2 的六阶段**在同一个 run 内**跑完：出生链只含当下算得出的阶段（[spec, plan]），
+    // spec/plan 各自 PASS 后 `assessment.recommendation.action === 'revise_scope'` 把修订
+    // 追加进本 run（`goal-phase-runtime.ts:9619-9670`）——`chain` 被整体换成修订后的
+    // `phase_chain`，游标按「第一个还没有有效 PASS 的阶段」重新推导，循环继续派发。
+    // 既不 seal、不换 run、也不需要 `--resume`（plan §10.12：宿主 events 同构，
+    // `…/bc-openCard-2/open-card-flow-v2/goal-runs/20260918T165234Z-c7689f/events.jsonl`
+    // 第 21–22 行＝`scope_revised rev1` 紧接同 run 的 `phase_start coding 1/4`）。
     const probe = await runGoalRuntimeChain(project.root, {
       frameworkRoot: project.frameworkRoot,
       featureId: project.feature,
       realHarness: true,
       adapter: 'codex',
-      freshStartPhase: 'spec',
-      freshEndPhase: 'testing',
-      freshRequirement: '实现全部银行页的银行列表展示与开卡入口',
-      onSpec: ctx => { writeSpecMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'spec'); },
-      onPlan: ctx => { writePlanMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'plan'); },
-      onCoding: ctx => { writeCodingMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'coding'); },
-      onReview: ctx => { writeReviewMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'review'); },
-      onUt: ctx => { writeUtMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'ut'); },
-      onTesting: ctx => { writeTestPlan(project); if (ctx.attempt > 1) publishVerifier(project, 'testing'); },
+      // 1.2：范围是权威，--start/--end 必须与出生链首尾逐字相等（goal-phase-runtime.ts:4988）。
+      // 出生链天然短，随 spec/plan 的范围修订自行延长到 testing。
+      freshStartPhase: birthChain[0] as 'spec',
+      freshEndPhase: birthChain[birthChain.length - 1],
+      freshRequirement: REAL_CHAIN_REQUIREMENT,
+      onSpec: ctx => { project.runId = ctx.runId; writeSpecMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'spec'); },
+      onPlan: ctx => { project.runId = ctx.runId; writePlanMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'plan'); },
+      onCoding: ctx => { project.runId = ctx.runId; writeCodingMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'coding'); },
+      onReview: ctx => { project.runId = ctx.runId; writeReviewMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'review'); },
+      onUt: ctx => { project.runId = ctx.runId; writeUtMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'ut'); },
+      onTesting: ctx => { project.runId = ctx.runId; writeTestPlan(project); if (ctx.attempt > 1) publishVerifier(project, 'testing'); },
     }).finally(() => captured.stop());
+    const events = probe.events;
     const resolvedByPhase = parseResolvedProfiles(captured.text());
     if (DEBUG) {
       console.log('--- exitCode', probe.exitCode);
-      console.log('--- events', probe.events.map(e => String(e.type)).join(','));
+      console.log('--- events', events.map(e => String(e.type)).join(','));
       for (const ph of PHASES) console.log(dumpPhase(project, ph));
     }
-    assert(probe.exitCode === 0, `goal run 未正常收尾：exit=${probe.exitCode}\n${PHASES.map(ph => dumpPhase(project, ph)).join('\n')}`);
+    // 退出码不是判据：范围修订延长链后，终局态由逐阶段 verdict/closure 说了算。
+    assert(pendingPhases().length === 0,
+      `仍有未闭环阶段 ${JSON.stringify(pendingPhases())}（exit=${probe.exitCode}）\n${PHASES.map(ph => dumpPhase(project, ph)).join('\n')}`);
 
     for (const phase of PHASES) {
       const s = readSummary(project, phase);
@@ -975,8 +1041,8 @@ test('real-chain 正例：spec→testing 六阶段真实 harness 全链 PASS + c
 
     // 真 harness 子进程确实为每个阶段跑过（`realHarness` 下 probe.harnessPhases 恒空，
     // 判据只能建在 events 上——plan §10.1 O）。
-    const harnessStarts = probe.events.filter(e => e.type === 'harness_start').map(e => String(e.phase));
-    const harnessEnds = probe.events.filter(e => e.type === 'harness_end').map(e => String(e.phase));
+    const harnessStarts = events.filter(e => e.type === 'harness_start').map(e => String(e.phase));
+    const harnessEnds = events.filter(e => e.type === 'harness_end').map(e => String(e.phase));
     for (const phase of PHASES) {
       assert(harnessStarts.includes(phase), `events 缺 harness_start@${phase}`);
       assert(harnessEnds.includes(phase), `events 缺 harness_end@${phase}`);

@@ -63,7 +63,14 @@ const LEGACY_COMPLETION_SCHEMA_VERSION = '1.1';
  * necessarily not sealed yet — D2 revisions never seal — so the terminal `run_end` check is
  * skipped for it and only for it. Every other check, and every historical run, is unchanged.
  */
-export function executionScopeEvidenceIssues(projectRoot: string, feature: string, scope: ExecutionScope, obligationIds?: ReadonlySet<string>, currentRunId?: string): string[] {
+/**
+ * `pendingOwnerPhase`: the phase executing RIGHT NOW. Its owned outputs are mid-flight by
+ * definition, so the existing `ownedOutputIsCurrent` exemption applies to them and only to them
+ * (plan b5c1e9d7 §3.2). Callers that are not "some owner is building right now" omit it and keep
+ * today's behavior; terminal completion (:412 below) must never claim it.
+ */
+export function executionScopeEvidenceIssues(projectRoot: string, feature: string, scope: ExecutionScope, obligationIds?: ReadonlySet<string>, currentRunId?: string, pendingOwnerPhase?: string): string[] {
+  const freshnessOpts = pendingOwnerPhase ? { pendingOwnerPhase } : undefined;
   validateExecutionScope(scope);
   const issues = scope.unresolved.filter(gap => !obligationIds || obligationIds.has(gap.obligation_id)).map(gap => `${gap.obligation_id}: ${gap.reason}`);
   for (const obligation of scope.obligations.filter(o => !obligationIds || obligationIds.has(o.id))) {
@@ -104,7 +111,7 @@ export function executionScopeEvidenceIssues(projectRoot: string, feature: strin
         // 本地事实：证据 manifest 完整、aggregate 与引用一致、freshness fresh。run 终局与
         // run 身份两项在无 run 路径上没有等价物，按 D1.5 的同一条豁免处理。
         const evidence = loadPhaseEvidenceManifest(projectRoot, feature, ref.phase);
-        const fresh = recomputePhaseEvidenceStaleness(projectRoot, feature, [ref.phase])[0];
+        const fresh = recomputePhaseEvidenceStaleness(projectRoot, feature, [ref.phase], freshnessOpts)[0];
         if (!evidence?.integrityOk || evidence.manifest.aggregate_sha256 !== ref.evidence_manifest_aggregate || fresh.verdict !== 'fresh') {
           issues.push(`${obligation.id}: reused evidence invalid`);
         }
@@ -116,7 +123,7 @@ export function executionScopeEvidenceIssues(projectRoot: string, feature: strin
           const terminal = resolveEffectiveRunEnd(loadEventsJsonl(path.join(projectRoot, source.report_dir, 'events.jsonl')));
           const terminalOk = isCurrentRun || (!!terminal && ['CHAIN_SLICE_COMPLETED', 'COMPLETED'].includes(String(terminal.status)));
           const evidence = loadPhaseEvidenceManifest(projectRoot, feature, ref.phase);
-          const fresh = recomputePhaseEvidenceStaleness(projectRoot, feature, [ref.phase])[0];
+          const fresh = recomputePhaseEvidenceStaleness(projectRoot, feature, [ref.phase], freshnessOpts)[0];
           const identity = resolvePhaseRunIds(projectRoot, feature, [ref.phase]);
           if (!terminalOk || identity.runIds[ref.phase] !== ref.run_id || !evidence?.integrityOk || evidence.manifest.aggregate_sha256 !== ref.evidence_manifest_aggregate || fresh.verdict !== 'fresh') issues.push(`${obligation.id}: reused evidence invalid`);
         } catch { issues.push(`${obligation.id}: reused run missing/corrupt`); }

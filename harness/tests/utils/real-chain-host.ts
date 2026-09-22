@@ -20,6 +20,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
+import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
 
 export const SOURCE_REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 
@@ -189,6 +190,12 @@ export function synthesizeTestChainProfile(frameworkRoot: string): void {
 
 export interface RealChainProject {
   root: string;
+  /**
+   * 本次 goal run 的 id。workflow 1.2 下 `context/facts.md` 的**身份位**必须是它
+   * （context-facts.ts:203-205：run 载体的建立事实须绑真实 run_id；无 run 才绑冻结范围指纹）。
+   * 由各阶段的 agent 回调从 `ctx.runId` 填——它是 agent 本来就拿得到的调用身份，不是指纹。
+   */
+  runId?: string;
   frameworkRoot: string;
   harnessDir: string;
   feature: string;
@@ -197,6 +204,11 @@ export interface RealChainProject {
 }
 
 export const REAL_CHAIN_FEATURE = 'demo-card';
+/**
+ * 需求正文的**唯一**出处：候选（`--prepare-scope`）与 goal run 的 `--requirement`
+ * 必须逐字相同，否则 `assertCandidateRequirementProvenance` 判 `input binding stale`。
+ */
+export const REAL_CHAIN_REQUIREMENT = '实现全部银行页的银行列表展示与开卡入口';
 const MODULE = 'FinancialCard';
 const MODULE_PATH = `02-Feature/${MODULE}`;
 export const REAL_CHAIN_SOURCE = `${MODULE_PATH}/src/main/ets/AllBanksPage.ets`;
@@ -211,12 +223,19 @@ export const REAL_CHAIN_TEST = `${MODULE_PATH}/src/ohosTest/ets/test/AllBanksPag
  * 宿主前置（**不是**作者材料）：工程骨架 + git 基线。
  * `module-catalog.yaml` 在此写——`check-spec.ts:1009` → `catalog-parser.ts:69` 把它当工程级前置。
  */
-export function scaffoldRealChainHost(project: RealChainProject, adapter = 'codex'): void {
+export function scaffoldRealChainHost(project: RealChainProject, adapter = 'codex'): string[] {
   const { root } = project;
   writeHostFile(root, 'framework.config.json', JSON.stringify({
     schema_version: '1.1',
     project_name: 'RealChain',
-    active_workflow: 'spec-driven',
+    // **必须与真实宿主/模板默认一致**：`templates/framework.config.template.json:62` 与
+    // `D:\1.code\SimulatedWalletForHmos\framework.config.json:122` 都是 `obligation-driven`
+    //（workflow schema **1.2**）。夹具早先写死 `spec-driven`（1.1），
+    // 而 1.1 下 `resolveEffectiveScopeSource` 取不到冻结范围，
+    // `capability-resolution-entry-input.ts` 的整段冻结范围分支（codeTargets / testTargets /
+    // factsContext 源码读集）**根本不执行**——W1/W3 要回归的正是那条 1.2 路径，
+    // 在 1.1 下跑绿等于没测。**不得改回 1.1。**
+    active_workflow: 'obligation-driven',
     project_profile: { name: 'test-chain' },
     architecture: {
       outer_layers: [{ id: '02-Feature', can_depend_on: [], intra_layer_deps: 'dag' }],
@@ -314,12 +333,51 @@ export function scaffoldRealChainHost(project: RealChainProject, adapter = 'code
   // P（plan §10.1）：framework/ 必须 ignore，否则 git add -A 把整份框架纳入基线。
   // `build/` 是 device_test.build 替身落 .hap 的地方（真工程同样不入库）。
   writeHostFile(root, '.gitignore', 'framework/\nbuild/\n');
+  // workflow 1.2 的运行前责任：先有候选，首次阶段调用才冻结得出 `execution-scope.json`。
+  // 放在 git 基线之前，使工程开跑时工作树干净（真实宿主也是先 prepare-scope 再起 run）。
+  const prepared = prepareRealChainScopeCandidate(project, {
+    requirement: REAL_CHAIN_REQUIREMENT,
+    requestedResults: ['银行列表展示与开卡入口'],
+    requestedPhases: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'],
+  });
   git(root, ['init', '-q', '-b', 'main']);
   git(root, ['config', 'user.email', 'real-chain@test']);
   git(root, ['config', 'user.name', 'real-chain']);
   git(root, ['config', 'commit.gpgsign', 'false']);
   git(root, ['add', '-A']);
   git(root, ['commit', '-qm', 'baseline']);
+  // 1.2 下**范围是权威**：`goal-phase-runtime.ts:4988` 要求 `--start/--end` 与解析出的
+  // 出生链首尾逐字相等（不匹配即抛 `start/end must match the resolved scope`）。
+  // 出生链天然是短的（验收/契约都还没产出），随 spec/plan 的范围修订自行延长——
+  // 调用方据此起 run，**不得**再用 --end 去截断链。
+  return prepared.scope.phase_chain.map(String);
+}
+
+/**
+ * workflow 1.2 的运行前入口：用**生产函数** `prepareFeatureScopeCandidate` 生成
+ * `doc/features/<f>/feature.yaml` 候选（`--prepare-scope` CLI 走的是同一个函数，
+ * `goal-mode-entry.ts:498`）。冻结记录 `doc/features/<f>/execution-scope.json`
+ * 由**首次阶段调用**的生产链自己落（`ensureFeatureExecutionScopeFrozen`），夹具不碰。
+ *
+ * `requirement` 必须与 goal run 的 `--requirement` **逐字相同**：
+ * `resolveFeatureExecutionScope`（feature-track.ts:119-121）与
+ * `assertCandidateRequirementProvenance` 都按它核 provenance，分叉即 `input binding stale`。
+ * 候选本身一个字段都不手写（§4.4）——只给四项输入：完成终点、请求结果、请求阶段、需求。
+ */
+export function prepareRealChainScopeCandidate(
+  project: RealChainProject,
+  input: { requirement: string; requestedPhases: string[]; requestedResults: string[]; completionTarget?: 'feature' | 'request' },
+): ReturnType<typeof prepareFeatureScopeCandidate> {
+  return prepareFeatureScopeCandidate({
+    projectRoot: project.root,
+    frameworkRoot: project.frameworkRoot,
+    feature: project.feature,
+    completionTarget: input.completionTarget ?? 'feature',
+    requestedResults: input.requestedResults,
+    requestedPhases: input.requestedPhases,
+    requirement: input.requirement,
+    overwrite: true,
+  });
 }
 
 /** 造一个空壳宿主 + 框架 + test-chain profile（作者材料由调用方按阶段写）。 */

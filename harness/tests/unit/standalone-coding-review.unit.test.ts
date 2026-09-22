@@ -40,6 +40,58 @@ import { writePhaseSummary } from '../utils/completion-chain-seed';
 
 const frameworkRoot = path.resolve(__dirname, '../../..');
 const workflow: WorkflowSpec = { schema_version: '1.2', name: 'p4', auto_chain: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'], artifacts: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'].map(id => ({ id, scope: 'feature', requires: [], obligation_provider_id: `obligations.${id}` })) };
+/**
+ * 造一个**只改 profile 源码后缀声明**的 framework 根：除 `profiles/` 外全部 junction 回仓，
+ * `profiles/hmos-app` 里只放 `profile.yaml`（原样拷贝）与两个 shim ——
+ * `coding-host-rules` 复用仓内真实 host、仅把 `sourceFileSuffixes` 换成 `['.ts']`，
+ * `profile-path-conventions`（UT 源根 / 测试路径约定）整份转发。
+ * 只服务于"本夹具写的是 .ts 源码"这一件事，生产 profile 一个字不动。
+ */
+function frameworkDeclaringTsSources(): string {
+  const fw = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'p4-fw-ts-')));
+  for (const entry of fs.readdirSync(frameworkRoot, { withFileTypes: true })) {
+    if (entry.name === 'profiles') continue;
+    const from = path.join(frameworkRoot, entry.name);
+    const to = path.join(fw, entry.name);
+    if (entry.isDirectory()) fs.symlinkSync(from, to, process.platform === 'win32' ? 'junction' : 'dir');
+    else fs.copyFileSync(from, to);
+  }
+  const realHarness = path.join(frameworkRoot, 'profiles', 'hmos-app', 'harness').replace(/\\/g, '/');
+  const shimDir = path.join(fw, 'profiles', 'hmos-app', 'harness');
+  fs.mkdirSync(shimDir, { recursive: true });
+  fs.copyFileSync(
+    path.join(frameworkRoot, 'profiles', 'hmos-app', 'profile.yaml'),
+    path.join(fw, 'profiles', 'hmos-app', 'profile.yaml'),
+  );
+  fs.writeFileSync(path.join(shimDir, 'coding-host-rules.js'),
+    `const real = require(${JSON.stringify(`${realHarness}/coding-host-rules.ts`)}).profileCodingHost;\n`
+    + "exports.profileCodingHost = { ...real, sourceFileSuffixes: ['.ts'] };\n");
+  fs.writeFileSync(path.join(shimDir, 'profile-path-conventions.js'),
+    `module.exports = require(${JSON.stringify(`${realHarness}/profile-path-conventions.ts`)});\n`);
+  return fw;
+}
+
+/**
+ * 清掉上面那套 shim framework：**先摘 junction 再删目录**——`fs.rmSync(recursive)` 不跟进链接，
+ * 但先把链接单独摘掉最稳，也保证任何一步失败都不可能误删仓内的真目标。
+ * 清理自身的失败一律吞掉：它不能盖过用例本身的结论。
+ */
+function removeShimFramework(fw: string): void {
+  try {
+    for (const entry of fs.readdirSync(fw, { withFileTypes: true })) {
+      const abs = path.join(fw, entry.name);
+      if (entry.isSymbolicLink()) {
+        try { fs.unlinkSync(abs); } catch { fs.rmdirSync(abs); }
+        continue;
+      }
+      fs.rmSync(abs, { recursive: true, force: true });
+    }
+    fs.rmSync(fw, { recursive: true, force: true });
+  } catch {
+    // 清理是尽力而为，不改变用例结论。
+  }
+}
+
 function fixture(newFile = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'p4-coding-review-'));
   const write = (file: string, value: string) => { const abs = path.join(root, file); fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, value); };
@@ -365,6 +417,43 @@ const cases: Array<{ name: string; newFile?: boolean; run(f: ReturnType<typeof f
     f.write('doc/features/demo/contracts.yaml', YAML.stringify({ ...f.contracts, version: '2' }));
     assert(executionScopeEvidenceIssues(f.root, 'demo', design).some(issue => issue.includes('input binding stale')), '真实设计输入变化被放行了');
   } },
+  { name: 'D0.3b 纯修订触发文件不进阶段证据读集（R-目标收集，按 kind 单变量）', run(f) {
+    // 独立锁：`REVISION_TRIGGER_KINDS`（capability-resolution-entry-input.ts:31）把
+    // design-decision / acceptance-definition 的 derive basis 排除在**当前读取目标**之外——
+    // 它只是"当初为什么发生修订"的历史观察。`execution-scope.unit.test.ts` 的
+    // `design-gap-revert` 里触发文件同时是 implementation 写集文件，这条规则在那里不可观测
+    // （plan b5c1e9d7 §8.5 偏差 1），所以在这里用一个**只当触发依据**的文件单独锁住。
+    // 单变量：同一条绑定、同一份范围，只换 obligation 的 kind。
+    const triggerRel = 'src/demo/trigger.ts';
+    f.write(triggerRel, 'export const trigger = 1;\n');
+    const bound = (id: string, targets: string[]) => {
+      const resolved = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'plan', track: 'full', testTargets: targets,
+        inputContext: { schema_version: '1.1', subject: { feature: 'demo' }, obligations: {}, required_outputs: [] } });
+      const value = resolved.inputs!.values[id];
+      assert(value.state === 'resolved', id + ': ' + JSON.stringify(value));
+      return value.binding;
+    };
+    const trigger = bound('codebase', [triggerRel]);
+    const scopeOf = (kind: string) => ({
+      schema_version: '1.0' as const, completion_target: 'feature' as const, requested_results: ['delivery'],
+      phase_chain: ['plan'], reused_phases: [], unresolved: [], policy_fingerprint: '0'.repeat(64),
+      obligations: [{ id: `${kind}:trigger`, kind, owner_phase: 'plan', applicability: 'required' as const, reason: '触发修订的历史观察', basis: [trigger] }],
+    });
+    const codeTargetsFor = (kind: string, runId: string): string[] => {
+      const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: runId, requirement: 'trigger kind probe',
+        execution_scope: scopeOf(kind) as unknown as ExecutionScope, chain_override: ['plan'],
+        unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root });
+      createGoalRun({ projectRoot: f.root, manifest, chain: ['plan'] });
+      return resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'plan', featuresDir: 'doc/features', goalRunId: runId }).codeTargets ?? [];
+    };
+    // 对照：非触发 kind 的同一条 basis **是**当前读取目标——证明下面那条不是"恒为空"。
+    assert(codeTargetsFor('design-context', 'trigger-kind-context').includes(triggerRel),
+      '非触发 kind 的 derive basis 没进读取目标，对照组不成立');
+    assert(!codeTargetsFor('design-decision', 'trigger-kind-decision').includes(triggerRel),
+      '纯修订触发文件被当成当前读取目标（会随之进阶段证据，撤回触发编辑即让责任阶段再次 stale）');
+    assert(!codeTargetsFor('acceptance-definition', 'trigger-kind-acceptance').includes(triggerRel),
+      'acceptance-definition 触发文件被当成当前读取目标');
+  } },
   { name: 'D0.3 late verifier-confirmed candidate still writes the revision input to script-report', run(f) {
     // §5.1.2 ②：首次 writer 跑时 verifier 还没有产物，review 候选只有到**闭环重算**才成立。
     // `--sync-closure` 出口（harness-runner.ts 的 sync 分支）调用的就是同一个
@@ -617,102 +706,113 @@ const cases: Array<{ name: string; newFile?: boolean; run(f: ReturnType<typeof f
     }
   } },
   { name: 'P1-T12 plan-first delivery refreshes implementation sources and separates planned outputs', run(f) {
-    fs.rmSync(path.join(f.root, 'doc/features/demo/contracts.yaml'));
-    const config = JSON.parse(fs.readFileSync(path.join(f.root, 'framework.config.json'), 'utf8'));
-    config.project_profile = { name: 'hmos-app', sub_variant: 'app' };
-    fs.writeFileSync(path.join(f.root, 'framework.config.json'), JSON.stringify(config)); clearFrameworkConfigCache();
-    const prepared = prepareFeatureScopeCandidate({ projectRoot: f.root, frameworkRoot, feature: 'demo', completionTarget: 'feature',
-      requestedResults: ['deliver planned page and UT'], requestedPhases: ['plan', 'coding', 'review', 'ut'], requirement: 'deliver planned page and UT', overwrite: true });
-    assert(!prepared.candidate.facts.some(fact => fact.kind === 'implementation'), 'plan 前伪造了 implementation 来源');
-    const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'p1-plan-first', requirement: 'deliver planned page and UT', run_base_sha: f.git('rev-parse', 'HEAD'), execution_scope: prepared.scope,
-      chain_override: prepared.scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root });
-    const born = createGoalRun({ projectRoot: f.root, manifest, chain: prepared.scope.phase_chain });
-    const testRel = 'src/demo/src/ohosTest/ets/test/Value.test.ets';
-    fs.mkdirSync(path.dirname(path.join(f.root, testRel)), { recursive: true });
-    fs.writeFileSync(path.join(f.root, testRel), 'export const test = true;\n');
-    fs.writeFileSync(path.join(f.root, 'build-profile.json5'), '{}\n');
-    const factsPath = path.join(f.root, 'doc/features/demo/context/facts.md'); fs.mkdirSync(path.dirname(factsPath), { recursive: true });
-    fs.writeFileSync(factsPath, ['---', YAML.stringify({ schema_version: '1.1', feature: 'demo', run_id: manifest.run_id, established_by: 'plan', ready_to_produce: true,
-      has_blocker_coverage_risk: false, source_code_paths: ['src/demo/value.ts', testRel], key_inputs_read: ['src/demo/value.ts', testRel, 'build-profile.json5'], files_inspected_count: 2,
-      searches_performed_estimate: 1, decisions_unlocked: ['planned page location'], exploration_mode: 'sequential' }).trimEnd(), '---',
-      '## Code Facts', '| 路径 | 事实 | 影响 |', '|---|---|---|', '| src/demo/value.ts | existing source | extend safely |', `| ${testRel} | existing UT | preserve UT ownership |`, ''].join('\n'));
-    const beforePlan = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'plan', featuresDir: 'doc/features', goalRunId: manifest.run_id });
-    assert(beforePlan.codeTargets!.includes('src/demo/value.ts'));
+    // 本用例的工程写的是 `.ts` 源码，而它声明的 profile 是 hmos-app（`sourceFileSuffixes: ['.ets']`）
+    // ——夹具与 profile 错配。源码归属按生产口径**只认 profile 声明的后缀**，所以这里给夹具自己的
+    // profile 声明：除 `profiles/` 外整套 framework 目录 junction 回仓，`profiles/hmos-app` 换成
+    // 一份只改 `sourceFileSuffixes` 的 shim（其余行为仍 require 仓内真实实现）。
+    // **不改生产 profile、不改本用例的任何断言。**
+    const frameworkRoot = frameworkDeclaringTsSources();
+    // 这套 shim framework 落在独立 tmp 下、且带 junction，成功失败都必须清掉（:1264 的清理只管 f.root）。
+    try {
+      fs.rmSync(path.join(f.root, 'doc/features/demo/contracts.yaml'));
+      const config = JSON.parse(fs.readFileSync(path.join(f.root, 'framework.config.json'), 'utf8'));
+      config.project_profile = { name: 'hmos-app', sub_variant: 'app' };
+      fs.writeFileSync(path.join(f.root, 'framework.config.json'), JSON.stringify(config)); clearFrameworkConfigCache();
+      const prepared = prepareFeatureScopeCandidate({ projectRoot: f.root, frameworkRoot, feature: 'demo', completionTarget: 'feature',
+        requestedResults: ['deliver planned page and UT'], requestedPhases: ['plan', 'coding', 'review', 'ut'], requirement: 'deliver planned page and UT', overwrite: true });
+      assert(!prepared.candidate.facts.some(fact => fact.kind === 'implementation'), 'plan 前伪造了 implementation 来源');
+      const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'p1-plan-first', requirement: 'deliver planned page and UT', run_base_sha: f.git('rev-parse', 'HEAD'), execution_scope: prepared.scope,
+        chain_override: prepared.scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root });
+      const born = createGoalRun({ projectRoot: f.root, manifest, chain: prepared.scope.phase_chain });
+      const testRel = 'src/demo/src/ohosTest/ets/test/Value.test.ets';
+      fs.mkdirSync(path.dirname(path.join(f.root, testRel)), { recursive: true });
+      fs.writeFileSync(path.join(f.root, testRel), 'export const test = true;\n');
+      fs.writeFileSync(path.join(f.root, 'build-profile.json5'), '{}\n');
+      const factsPath = path.join(f.root, 'doc/features/demo/context/facts.md'); fs.mkdirSync(path.dirname(factsPath), { recursive: true });
+      fs.writeFileSync(factsPath, ['---', YAML.stringify({ schema_version: '1.1', feature: 'demo', run_id: manifest.run_id, established_by: 'plan', ready_to_produce: true,
+        has_blocker_coverage_risk: false, source_code_paths: ['src/demo/value.ts', testRel], key_inputs_read: ['src/demo/value.ts', testRel, 'build-profile.json5'], files_inspected_count: 2,
+        searches_performed_estimate: 1, decisions_unlocked: ['planned page location'], exploration_mode: 'sequential' }).trimEnd(), '---',
+        '## Code Facts', '| 路径 | 事实 | 影响 |', '|---|---|---|', '| src/demo/value.ts | existing source | extend safely |', `| ${testRel} | existing UT | preserve UT ownership |`, ''].join('\n'));
+      const beforePlan = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'plan', featuresDir: 'doc/features', goalRunId: manifest.run_id });
+      assert(beforePlan.codeTargets!.includes('src/demo/value.ts'));
 
-    const nextContracts = { ...f.contracts, files: ['src/demo/value.ts', 'src/demo/NewPage.ts', testRel] };
-    fs.writeFileSync(path.join(f.root, 'doc/features/demo/contracts.yaml'), YAML.stringify(nextContracts));
-    const planBridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'plan', featuresDir: 'doc/features', goalRunId: manifest.run_id });
-    const planInputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'plan', track: 'full', ...planBridge }).inputs!;
-    const planCtx = { projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'plan', featureSpec: new SpecLoader(f.root, undefined, undefined, frameworkRoot).loadFeatureSpec('demo', planInputs),
-      resolvedInputs: planInputs, factsContext: planBridge.factsContext } as CheckContext;
-    const check = designScopeRevisionChecks(planCtx, []).find(item => item.scope_revision_input);
-    assert(check?.scope_revision_input, 'plan output did not publish a revision');
-    const proposal = check!.scope_revision_input!;
-    const implementation = proposal.facts.find(fact => fact.kind === 'implementation');
-    assert(implementation?.basis.length, JSON.stringify(proposal.facts));
-    const implementationDeps = implementation!.basis.flatMap(binding => binding.dependencies.filter(dep => dep.exists).map(dep => path.relative(f.root, dep.path).replace(/\\/g, '/')));
-    assert(implementationDeps.includes('src/demo/value.ts'), JSON.stringify({ implementationDeps, planBridge }));
-    assert.deepStrictEqual(planBridge.codeTargets, ['src/demo/value.ts']);
-    assert.deepStrictEqual(planBridge.testTargets, []);
-    const revised = resolveScopeRevisionProposal({ projectRoot: f.root, frameworkRoot, feature: 'demo', workflow: resolveWorkflowSpec(f.root, { frameworkRoot }), proposals: [proposal],
-      previous: prepared.scope, authorizedPhases: prepared.scope.phase_chain, currentRunId: manifest.run_id, requirement: manifest.requirement });
-    assert(revised?.scope.phase_chain.includes('coding'), JSON.stringify(revised?.scope));
-    writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'plan', resolvedInputs: planInputs, factsContext: planBridge.factsContext }));
-    assert.equal(planBridge.factsContext!.source_owners?.['src/demo/value.ts'], 'coding', 'plan Research 源码 owner 必须由 contract 生产者派生');
-    assert.equal(planBridge.factsContext!.source_owners?.[testRel], 'ut', 'plan Research 测试必须按 profile 测试根归 UT');
-    assert.equal(loadPhaseEvidenceManifest(f.root, 'demo', 'plan')!.manifest.inputs.find(entry => entry.path === 'src/demo/value.ts')?.owner_phase, 'coding');
-    writePhaseSummary(f.root, 'demo', 'plan', 'PASS');
-    fs.appendFileSync(born.eventsPath, JSON.stringify({ ts: new Date().toISOString(), type: 'scope_revised', revision_index: 1,
-      previous_scope_fingerprint: executionScopeFingerprint(prepared.scope), execution_scope: revised!.scope, revision_input: proposal,
-      trigger: { phase: 'plan', check_id: check!.id }, allowed_fields: [...SCOPE_REVISION_FIELDS] }) + '\n');
-    fs.writeFileSync(path.join(f.root, 'src/demo/value.ts'), 'export const value = 2;\n');
-    fs.writeFileSync(path.join(f.root, 'src/demo/NewPage.ts'), 'export const page = true;\n');
-    fs.appendFileSync(factsPath, '\n## phase_delta: coding\n| 路径 | 事实 | 影响 |\n|---|---|---|\n| src/demo/NewPage.ts | planned page created | implementation output |\n\nbuild-profile inspected: not applicable to this fixture\n');
-    const codingBridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: manifest.run_id });
-    assert.deepStrictEqual(codingBridge.codeTargets, ['src/demo/value.ts', 'src/demo/NewPage.ts']);
-    assert.deepStrictEqual(codingBridge.testTargets, []);
-    assert(codingBridge.factsContext!.baseline!.dependencies.some(dep => dep.path.replace(/\\/g, '/').endsWith('src/demo/value.ts')), 'coding 必须承接 plan 的真实 Research dependency');
-    const codingInputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', track: 'full', ...codingBridge }).inputs!;
-    const codingFactsChecks = checkFactsArtifact(f.root, 'demo', 'coding', { factsContext: codingBridge.factsContext, resolvedInputs: codingInputs, frameworkRoot });
-    assert(!codingFactsChecks.some(check => check.status === 'FAIL'), 'coding 改动后的 facts gate 不得要求旧源码 hash: ' + JSON.stringify(codingFactsChecks.filter(check => check.status === 'FAIL')));
-    assert(!checkUpstreamVerdictGate({ projectRoot: f.root, feature: 'demo', phase: 'coding', runId: manifest.run_id }).some(check => check.status === 'FAIL'), 'coding 改动后的 upstream gate 不得要求预先存在 coding manifest');
-    assert.doesNotThrow(() => writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', resolvedInputs: codingInputs, factsContext: codingBridge.factsContext })), '责任阶段须能按真实 gate 顺序收口自己刚写的新字节');
-    const codingFreshness = recomputePhaseEvidenceStaleness(f.root, 'demo', ['plan', 'coding'], { frameworkRoot });
-    assert.deepStrictEqual(codingFreshness.map(item => item.verdict), ['fresh', 'fresh'], JSON.stringify(codingFreshness));
-    const reviewBridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', featuresDir: 'doc/features', goalRunId: manifest.run_id });
-    assert.equal(reviewBridge.factsContext!.source_owners?.['src/demo/value.ts'], undefined, 'review 已消费的 coding 输入不得再携带可豁免 owner');
-    const reviewInputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', track: 'full', ...reviewBridge }).inputs!;
-    writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', resolvedInputs: reviewInputs, factsContext: reviewBridge.factsContext }));
-    const beforeUtFreshness = recomputePhaseEvidenceStaleness(f.root, 'demo', ['plan', 'coding', 'review', 'ut'], { frameworkRoot });
-    assert.deepStrictEqual(beforeUtFreshness.slice(0, 3).map(item => item.verdict), ['fresh', 'fresh', 'fresh'], JSON.stringify(beforeUtFreshness));
-    fs.writeFileSync(path.join(f.root, testRel), 'export const test = false;\n');
-    const utBridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'ut', featuresDir: 'doc/features', goalRunId: manifest.run_id });
-    assert(utBridge.codeTargets!.includes('src/demo/NewPage.ts') && !utBridge.codeTargets!.includes(testRel), JSON.stringify(utBridge));
-    assert.deepStrictEqual(utBridge.testTargets, [testRel]);
-    const utInputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'ut', track: 'full', ...utBridge });
-    assert.notEqual(utInputs.report.assurance, 'blocked', JSON.stringify(utInputs.report));
-    assert.equal(utBridge.factsContext!.source_owners?.[testRel], 'ut');
-    writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'ut', resolvedInputs: utInputs.inputs, factsContext: utBridge.factsContext }));
-    const reviewFreshness = recomputePhaseEvidenceStaleness(f.root, 'demo', ['coding', 'review'], { frameworkRoot });
-    assert.deepStrictEqual(reviewFreshness.map(item => item.verdict), ['fresh', 'fresh'], JSON.stringify(reviewFreshness));
-    assert.equal(recomputePhaseEvidenceStaleness(f.root, 'demo', ['plan'], { frameworkRoot })[0].verdict, 'fresh', '单阶段消费也必须承接 UT owner output');
-    fs.writeFileSync(path.join(f.root, 'src/demo/value.ts'), 'export const value = 3;\n');
-    const pendingPlan = recomputePhaseEvidenceStaleness(f.root, 'demo', ['plan'], { frameworkRoot, pendingOwnerPhase: 'coding' });
-    assert.equal(pendingPlan[0].verdict, 'fresh', JSON.stringify(pendingPlan));
-    const repairBridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: manifest.run_id });
-    assert(repairBridge.factsContext!.baseline, JSON.stringify(repairBridge));
-    const repairInputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', track: 'full', ...repairBridge }).inputs!;
-    const repairFactsChecks = checkFactsArtifact(f.root, 'demo', 'coding', { factsContext: repairBridge.factsContext, resolvedInputs: repairInputs, frameworkRoot });
-    assert(!repairFactsChecks.some(check => check.status === 'FAIL'), JSON.stringify(repairFactsChecks.filter(check => check.status === 'FAIL')));
-    assert(!checkUpstreamVerdictGate({ projectRoot: f.root, feature: 'demo', phase: 'coding', runId: manifest.run_id }).some(check => check.status === 'FAIL'));
-    writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', resolvedInputs: repairInputs, factsContext: repairBridge.factsContext }));
-    const staleReview = recomputePhaseEvidenceStaleness(f.root, 'demo', ['review'], { frameworkRoot });
-    assert.equal(staleReview[0].verdict, 'stale', 'coding 返修后已闭环 review 必须 stale: ' + JSON.stringify({ staleReview, current: fs.readFileSync(path.join(f.root, 'src/demo/value.ts'), 'utf8'), manifest: loadPhaseEvidenceManifest(f.root, 'demo', 'review')?.manifest }));
-    fs.appendFileSync(path.join(f.root, 'doc/features/demo/contracts.yaml'), '\n# drift\n');
-    assert.equal(recomputePhaseEvidenceStaleness(f.root, 'demo', ['plan', 'coding', 'review', 'ut'], { frameworkRoot })[0].verdict, 'stale');
-    fs.writeFileSync(path.join(f.root, 'doc/features/demo/contracts.yaml'), YAML.stringify(nextContracts));
-    fs.rmSync(path.join(f.root, 'src/demo/NewPage.ts'));
-    assert.throws(() => resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'ut', featuresDir: 'doc/features', goalRunId: manifest.run_id }), /facts baseline stale/);
+      const nextContracts = { ...f.contracts, files: ['src/demo/value.ts', 'src/demo/NewPage.ts', testRel] };
+      fs.writeFileSync(path.join(f.root, 'doc/features/demo/contracts.yaml'), YAML.stringify(nextContracts));
+      const planBridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'plan', featuresDir: 'doc/features', goalRunId: manifest.run_id });
+      const planInputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'plan', track: 'full', ...planBridge }).inputs!;
+      const planCtx = { projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'plan', featureSpec: new SpecLoader(f.root, undefined, undefined, frameworkRoot).loadFeatureSpec('demo', planInputs),
+        resolvedInputs: planInputs, factsContext: planBridge.factsContext } as CheckContext;
+      const check = designScopeRevisionChecks(planCtx, []).find(item => item.scope_revision_input);
+      assert(check?.scope_revision_input, 'plan output did not publish a revision');
+      const proposal = check!.scope_revision_input!;
+      const implementation = proposal.facts.find(fact => fact.kind === 'implementation');
+      assert(implementation?.basis.length, JSON.stringify(proposal.facts));
+      const implementationDeps = implementation!.basis.flatMap(binding => binding.dependencies.filter(dep => dep.exists).map(dep => path.relative(f.root, dep.path).replace(/\\/g, '/')));
+      assert(implementationDeps.includes('src/demo/value.ts'), JSON.stringify({ implementationDeps, planBridge }));
+      assert.deepStrictEqual(planBridge.codeTargets, ['src/demo/value.ts']);
+      assert.deepStrictEqual(planBridge.testTargets, []);
+      const revised = resolveScopeRevisionProposal({ projectRoot: f.root, frameworkRoot, feature: 'demo', workflow: resolveWorkflowSpec(f.root, { frameworkRoot }), proposals: [proposal],
+        previous: prepared.scope, authorizedPhases: prepared.scope.phase_chain, currentRunId: manifest.run_id, requirement: manifest.requirement });
+      assert(revised?.scope.phase_chain.includes('coding'), JSON.stringify(revised?.scope));
+      writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'plan', resolvedInputs: planInputs, factsContext: planBridge.factsContext }));
+      assert.equal(planBridge.factsContext!.source_owners?.['src/demo/value.ts'], 'coding', 'plan Research 源码 owner 必须由 contract 生产者派生');
+      assert.equal(planBridge.factsContext!.source_owners?.[testRel], 'ut', 'plan Research 测试必须按 profile 测试根归 UT');
+      assert.equal(loadPhaseEvidenceManifest(f.root, 'demo', 'plan')!.manifest.inputs.find(entry => entry.path === 'src/demo/value.ts')?.owner_phase, 'coding');
+      writePhaseSummary(f.root, 'demo', 'plan', 'PASS');
+      fs.appendFileSync(born.eventsPath, JSON.stringify({ ts: new Date().toISOString(), type: 'scope_revised', revision_index: 1,
+        previous_scope_fingerprint: executionScopeFingerprint(prepared.scope), execution_scope: revised!.scope, revision_input: proposal,
+        trigger: { phase: 'plan', check_id: check!.id }, allowed_fields: [...SCOPE_REVISION_FIELDS] }) + '\n');
+      fs.writeFileSync(path.join(f.root, 'src/demo/value.ts'), 'export const value = 2;\n');
+      fs.writeFileSync(path.join(f.root, 'src/demo/NewPage.ts'), 'export const page = true;\n');
+      fs.appendFileSync(factsPath, '\n## phase_delta: coding\n| 路径 | 事实 | 影响 |\n|---|---|---|\n| src/demo/NewPage.ts | planned page created | implementation output |\n\nbuild-profile inspected: not applicable to this fixture\n');
+      const codingBridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: manifest.run_id });
+      assert.deepStrictEqual(codingBridge.codeTargets, ['src/demo/value.ts', 'src/demo/NewPage.ts']);
+      assert.deepStrictEqual(codingBridge.testTargets, []);
+      assert(codingBridge.factsContext!.baseline!.dependencies.some(dep => dep.path.replace(/\\/g, '/').endsWith('src/demo/value.ts')), 'coding 必须承接 plan 的真实 Research dependency');
+      const codingInputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', track: 'full', ...codingBridge }).inputs!;
+      const codingFactsChecks = checkFactsArtifact(f.root, 'demo', 'coding', { factsContext: codingBridge.factsContext, resolvedInputs: codingInputs, frameworkRoot });
+      assert(!codingFactsChecks.some(check => check.status === 'FAIL'), 'coding 改动后的 facts gate 不得要求旧源码 hash: ' + JSON.stringify(codingFactsChecks.filter(check => check.status === 'FAIL')));
+      assert(!checkUpstreamVerdictGate({ projectRoot: f.root, feature: 'demo', phase: 'coding', runId: manifest.run_id }).some(check => check.status === 'FAIL'), 'coding 改动后的 upstream gate 不得要求预先存在 coding manifest');
+      assert.doesNotThrow(() => writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', resolvedInputs: codingInputs, factsContext: codingBridge.factsContext })), '责任阶段须能按真实 gate 顺序收口自己刚写的新字节');
+      const codingFreshness = recomputePhaseEvidenceStaleness(f.root, 'demo', ['plan', 'coding'], { frameworkRoot });
+      assert.deepStrictEqual(codingFreshness.map(item => item.verdict), ['fresh', 'fresh'], JSON.stringify(codingFreshness));
+      const reviewBridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', featuresDir: 'doc/features', goalRunId: manifest.run_id });
+      assert.equal(reviewBridge.factsContext!.source_owners?.['src/demo/value.ts'], undefined, 'review 已消费的 coding 输入不得再携带可豁免 owner');
+      const reviewInputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', track: 'full', ...reviewBridge }).inputs!;
+      writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', resolvedInputs: reviewInputs, factsContext: reviewBridge.factsContext }));
+      const beforeUtFreshness = recomputePhaseEvidenceStaleness(f.root, 'demo', ['plan', 'coding', 'review', 'ut'], { frameworkRoot });
+      assert.deepStrictEqual(beforeUtFreshness.slice(0, 3).map(item => item.verdict), ['fresh', 'fresh', 'fresh'], JSON.stringify(beforeUtFreshness));
+      fs.writeFileSync(path.join(f.root, testRel), 'export const test = false;\n');
+      const utBridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'ut', featuresDir: 'doc/features', goalRunId: manifest.run_id });
+      assert(utBridge.codeTargets!.includes('src/demo/NewPage.ts') && !utBridge.codeTargets!.includes(testRel), JSON.stringify(utBridge));
+      assert.deepStrictEqual(utBridge.testTargets, [testRel]);
+      const utInputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'ut', track: 'full', ...utBridge });
+      assert.notEqual(utInputs.report.assurance, 'blocked', JSON.stringify(utInputs.report));
+      assert.equal(utBridge.factsContext!.source_owners?.[testRel], 'ut');
+      writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'ut', resolvedInputs: utInputs.inputs, factsContext: utBridge.factsContext }));
+      const reviewFreshness = recomputePhaseEvidenceStaleness(f.root, 'demo', ['coding', 'review'], { frameworkRoot });
+      assert.deepStrictEqual(reviewFreshness.map(item => item.verdict), ['fresh', 'fresh'], JSON.stringify(reviewFreshness));
+      assert.equal(recomputePhaseEvidenceStaleness(f.root, 'demo', ['plan'], { frameworkRoot })[0].verdict, 'fresh', '单阶段消费也必须承接 UT owner output');
+      fs.writeFileSync(path.join(f.root, 'src/demo/value.ts'), 'export const value = 3;\n');
+      const pendingPlan = recomputePhaseEvidenceStaleness(f.root, 'demo', ['plan'], { frameworkRoot, pendingOwnerPhase: 'coding' });
+      assert.equal(pendingPlan[0].verdict, 'fresh', JSON.stringify(pendingPlan));
+      const repairBridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: manifest.run_id });
+      assert(repairBridge.factsContext!.baseline, JSON.stringify(repairBridge));
+      const repairInputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', track: 'full', ...repairBridge }).inputs!;
+      const repairFactsChecks = checkFactsArtifact(f.root, 'demo', 'coding', { factsContext: repairBridge.factsContext, resolvedInputs: repairInputs, frameworkRoot });
+      assert(!repairFactsChecks.some(check => check.status === 'FAIL'), JSON.stringify(repairFactsChecks.filter(check => check.status === 'FAIL')));
+      assert(!checkUpstreamVerdictGate({ projectRoot: f.root, feature: 'demo', phase: 'coding', runId: manifest.run_id }).some(check => check.status === 'FAIL'));
+      writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', resolvedInputs: repairInputs, factsContext: repairBridge.factsContext }));
+      const staleReview = recomputePhaseEvidenceStaleness(f.root, 'demo', ['review'], { frameworkRoot });
+      assert.equal(staleReview[0].verdict, 'stale', 'coding 返修后已闭环 review 必须 stale: ' + JSON.stringify({ staleReview, current: fs.readFileSync(path.join(f.root, 'src/demo/value.ts'), 'utf8'), manifest: loadPhaseEvidenceManifest(f.root, 'demo', 'review')?.manifest }));
+      fs.appendFileSync(path.join(f.root, 'doc/features/demo/contracts.yaml'), '\n# drift\n');
+      assert.equal(recomputePhaseEvidenceStaleness(f.root, 'demo', ['plan', 'coding', 'review', 'ut'], { frameworkRoot })[0].verdict, 'stale');
+      fs.writeFileSync(path.join(f.root, 'doc/features/demo/contracts.yaml'), YAML.stringify(nextContracts));
+      fs.rmSync(path.join(f.root, 'src/demo/NewPage.ts'));
+      assert.throws(() => resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'ut', featuresDir: 'doc/features', goalRunId: manifest.run_id }), /facts baseline stale/);
+    } finally {
+      removeShimFramework(frameworkRoot);
+    }
   } },
   { name: 'D0.2 machine refuses to guess the request action', run(f) {
     // 动作不明确一律要求显式 --requested-phases（不引入任何动作分类器）；

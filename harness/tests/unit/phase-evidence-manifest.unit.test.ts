@@ -120,6 +120,39 @@ const cases: Case[] = [
     },
   },
   {
+    // OWN-T5 反例（plan b5c1e9d7 §4）：归属登记扩大之后，"正在施工"这把豁免**只**属于条目上
+    // 写着的那个 owner。落点是本次修复真正接线的那个消费点——`recomputePhaseEvidenceStaleness`
+    // （授权门与 `capability-resolution-entry-input` 的 facts 基线都经它）。终局 completion 的
+    // ⑤ 血缘不在其列：`verify-feature-completion.ts` 那处 recompute 本笔一行未改，只给
+    // requirement/frameworkRoot，**没有**入口能声明"某阶段正在施工"。
+    name: 'OWN-T5 反例：pendingOwner 只豁免条目自己的 owner，非 owner 阶段改 coding 源码仍 stale',
+    run: () => {
+      const root = mkProject();
+      const source = path.join(root, 'src/value.ts');
+      fs.mkdirSync(path.dirname(source), { recursive: true });
+      fs.writeFileSync(source, 'source\n');
+      // 观察期 plan 闭环后的真实形状（本笔修复的产物）：产品源码以 `owner_phase=coding` 进 plan 证据，
+      // 而 coding 还没有自己的 manifest。
+      writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({
+        projectRoot: root, feature: FEATURE, phase: 'plan',
+        factsContext: { subject: { feature: FEATURE, run_id: 'run' }, first_phase: 'plan', required_input_snippets: [], source_paths: ['src/value.ts'], source_owners: { 'src/value.ts': 'coding' } },
+      }));
+      assert.strictEqual(recomputePhaseEvidenceStaleness(root, FEATURE, ['plan'])[0].verdict, 'fresh', '前提：闭环后须 fresh');
+      fs.writeFileSync(source, 'edited\n');
+      // 反例：改的是 **coding 负责**的源码，review/ut/testing 声称"自己在施工"不得因此洗绿；
+      // 不声明任何 pending owner 同样必须 stale。
+      for (const claimant of [undefined, 'review', 'ut', 'testing']) {
+        const verdict = recomputePhaseEvidenceStaleness(root, FEATURE, ['plan'],
+          claimant ? { pendingOwnerPhase: claimant } : undefined)[0].verdict;
+        assert.strictEqual(verdict, 'stale',
+          `pendingOwnerPhase=${claimant ?? '<none>'} 洗绿了非本人负责的漂移`);
+      }
+      // 单变量对照：换成条目上真正写着的那个 owner 才承接——证明上面几条不是"恒 stale"。
+      assert.strictEqual(recomputePhaseEvidenceStaleness(root, FEATURE, ['plan'], { pendingOwnerPhase: 'coding' })[0].verdict, 'fresh',
+        'owner 施工期上游被判漂移——本次修复的正向效果没了');
+    },
+  },
+  {
     name: '写集外 Research 漂移没有 owner 豁免',
     run: () => {
       const root = mkProject();

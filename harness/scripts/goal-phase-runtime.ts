@@ -6848,6 +6848,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
             feature: manifest.feature,
             frameworkRoot,
             currentRunId: manifest.run_id,
+            // B（plan b5c1e9d7 §3.2）：本门只在 phase==='coding' 时进入（:6834 早退），
+            // 传的就是「当前正在施工的 owner」——归属为它的条目此刻本就在变，不算上游漂移。
+            pendingOwnerPhase: String(phase),
           });
           if (authority.kind === 'ok') {
             return false;

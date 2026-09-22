@@ -6,19 +6,27 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as YAML from 'yaml';
+import { execFileSync } from 'child_process';
 import {
   featurePhaseReportsDir,
   resolveReceiptFilePath,
 } from '../../config';
+import { clearFrameworkConfigCache } from '../../config';
 import { finalizePhaseClosure } from '../../scripts/utils/phase-closure-finalizer';
 import { syncPhaseStateOnReceiptPassStrict } from '../../scripts/utils/phase-state';
 import { patchSummarySoftAdvisory } from '../../scripts/check-receipt';
 import {
   loadPhaseEvidenceManifest,
   readReceiptManifestPointer,
+  recomputePhaseEvidenceStaleness,
   resolvePhaseEvidenceManifest,
   sha256File,
 } from '../../scripts/utils/phase-evidence-manifest';
+import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
+import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
+import { createGoalRun, loadEffectiveExecutionScope } from '../../scripts/utils/goal-run-creation';
+import { checkPlanAuthority } from '../../scripts/utils/scope-replan';
 import type { HarnessRunSummary } from '../../scripts/utils/types';
 
 export interface UnitCaseResult {
@@ -152,7 +160,340 @@ function seedOldClosureBinding(fixture: ReturnType<typeof mkProject>): {
   fs.writeFileSync(fixture.summaryPath, JSON.stringify(reopened, null, 2), 'utf8');
   return { manifestSha: oldManifest!.fileSha256, pointerSha: oldPointer! };
 }
+// ============================================================================
+// OWN-T1..T6（plan b5c1e9d7 §4 + codex review 返修）——闭环归属必须经**生产的最终闭环入口**产生。
+// 既有 P1-T5 / P1-T12 只手工调 manifest writer 并手喂 `factsContext`，锁不住本缺陷：
+// goal 的 `finalizePhaseClosure` 根本没有那个入参。这几条一律不喂 `factsContext`，
+// 由 finalizer 自己按 `goalRunId`（goal 主路径）或 `summary.run_id`（恢复闭环）重建上下文。
+// ============================================================================
+
+const OWN_FEATURE = 'demo-own';
+// 产品源码 inventory 只认 <模块根>/src/main（closure-attestation.ts:77）；后缀还必须落在
+// profile 声明的 `sourceFileSuffixes` 里（hmos-app = `.ets`），否则归属侧按非源码处理。
+const OWN_SOURCE = 'src/demo/src/main/BankPage.ets';
+/** 合格 facts 允许声明的**非源码**研究来源（`context-facts.unit.test.ts:72` 同形）。 */
+const OWN_NON_SOURCE = 'doc/research-notes.md';
+/** **模块包路径内**的非源码文件：模块根下本就常驻这类文件，目录位置不是源码判据。 */
+const OWN_MODULE_DOC = 'src/demo/src/main/README.md';
+const OWN_REQUIREMENT = '把银行列表页接上真实数据源';
+
+interface OwnershipProject {
+  root: string;
+  runId: string;
+  chain: string[];
+}
+
+/**
+ * 1.2（obligation-driven，与真实宿主 `framework.config.json:122` 同模式）的最小工程：
+ * 候选与出生范围都走**生产函数**（`prepareFeatureScopeCandidate` = `--prepare-scope` CLI 的同一个
+ * 函数），`context/facts.md` 是链首阶段的建立事实。不手写任何冻结字段。
+ */
+function mkOwnershipProject(requestedPhases: string[], approvedDesign = false): OwnershipProject {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'own-closure-')));
+  const write = (rel: string, value: string): void => {
+    const abs = path.join(root, rel);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, value, 'utf8');
+  };
+  write('framework.config.json', JSON.stringify({
+    schema_version: '1.1',
+    project_name: 'own-closure',
+    // 必须是声明了 `sourceFileSuffixes` 的 profile——归属侧用它区分源码与文档研究来源
+    // （`profiles/hmos-app/harness/coding-host-rules` = `['.ets']`；generic 没有该声明）。
+    project_profile: { name: 'hmos-app', sub_variant: 'app' },
+    active_workflow: 'obligation-driven',
+    paths: { features_dir: 'doc/features' },
+    architecture: {
+      outer_layers: [{ id: 'src', can_depend_on: [] }],
+      module_inner_layers: ['shared', 'data', 'domain', 'presentation'],
+    },
+  }));
+  clearFrameworkConfigCache();
+  write(OWN_SOURCE, 'export const banks: string[] = [];\n');
+  write(OWN_NON_SOURCE, '# 研究笔记\n\n列表数据源现状。\n');
+  write(OWN_MODULE_DOC, '# 模块说明\n\n本模块的对外说明。\n');
+  // 纯验证范围（OWN-T3）：设计与验收都已批准在盘，spec/plan 没有未兑现义务、也没有
+  // implementation 义务——链就只剩 review 自己。
+  if (approvedDesign) {
+    write(`doc/features/${OWN_FEATURE}/contracts.yaml`, YAML.stringify({
+      feature: OWN_FEATURE, source: 'approved design', version: '1',
+      modules: [{ name: 'demo', layer: 'src', package_path: 'src/demo' }],
+      // 写集里**故意**混一个非源码路径：`contracts.schema.yaml` 只要求非空字符串，
+      // 生产里确实可能出现（OWN-T7 的对象）。
+      files: [OWN_SOURCE, OWN_NON_SOURCE, OWN_MODULE_DOC], module_dependencies: {}, data_models: [], interfaces: [], components: [],
+      prd_to_code_traceability: [{ prd_id: 'AC-1', key_files: [OWN_SOURCE] }],
+    }));
+    write(`doc/features/${OWN_FEATURE}/acceptance.yaml`, YAML.stringify({
+      feature: OWN_FEATURE, source: 'approved behavior', version: '1', boundaries: [],
+      criteria: [{ id: 'AC-1', description: '银行列表展示', priority: 'P1', testable: true,
+        verification_steps: ['打开页面'], expected_result: '列表可见', ut_layer: 'unit', ut_focus: ['列表渲染'] }],
+    }));
+  }
+  // review 起链时生产链要算真实 diff 基线（`resolveEffectiveDiffBaseline`），所以工程必须是
+  // 一个真 git 仓——不是为了造 diff，是为了让"基线可用"这个前提成立。
+  const git = (...args: string[]): void => {
+    execFileSync('git', args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+  };
+  git('init', '-q', '-b', 'main');
+  git('config', 'user.email', 'own@test');
+  git('config', 'user.name', 'own');
+  git('config', 'commit.gpgsign', 'false');
+  git('add', '-A');
+  git('commit', '-qm', 'baseline');
+  const prepared = prepareFeatureScopeCandidate({
+    projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: OWN_FEATURE,
+    completionTarget: 'feature', requestedResults: ['银行列表展示'],
+    requestedPhases, requirement: OWN_REQUIREMENT, overwrite: true,
+  });
+  const chain = prepared.scope.phase_chain.map(String);
+  const runId = `own-${chain[0]}`;
+  const manifest = buildGoalManifestFromInput({
+    feature: OWN_FEATURE, run_id: runId, requirement: OWN_REQUIREMENT,
+    execution_scope: prepared.scope, chain_override: prepared.scope.phase_chain,
+    unattended: { write_mode: 'full-access', approval_mode: 'never' },
+  }, { projectRoot: root });
+  createGoalRun({ projectRoot: root, manifest, chain: prepared.scope.phase_chain });
+  // 建立事实：schema 1.1 + run 载体身份位 run_id（capability-resolution-entry-input.ts:290/:331）。
+  write(`doc/features/${OWN_FEATURE}/context/facts.md`, [
+    '---', 'schema_version: "1.1"', `feature: ${OWN_FEATURE}`, `run_id: ${runId}`,
+    `established_by: ${chain[0]}`, 'ready_to_produce: true', 'has_blocker_coverage_risk: false',
+    'exploration_mode: sequential', 'source_code_paths:', `  - ${OWN_SOURCE}`, `  - ${OWN_NON_SOURCE}`, `  - ${OWN_MODULE_DOC}`, '---', '',
+    '## Code Facts', '', '| 路径 | 事实 | 对本阶段影响 |', '|------|------|--------------|',
+    `| ${OWN_SOURCE} | 列表数据源为空 | 需要接入 |`, `| ${OWN_NON_SOURCE} | 现状记录 | 只读参考 |`, `| ${OWN_MODULE_DOC} | 模块说明 | 只读参考 |`, '',
+  ].join('\n'));
+  return { root, runId, chain };
+}
+
+/**
+ * 落一份可闭环的 PASS summary（形状与 mkProject 同源），随后走生产最终闭环。
+ *
+ * `identity` 分两种，对应生产里真实存在的两类调用方：
+ * - `'param'`：goal 主路径（`goal-phase-runtime.ts` 两处）——显式给 `goalRunId`；
+ * - `'summary'`：`--sync-closure` / 恢复闭环（`utils/phase-state.ts`）——**不给** `goalRunId`
+ *   （给了会顺带打开 requirement 血缘强制门，见 finalizer 里 `rebuildFactsContext` 的注释），
+ *   身份只能从正在闭环的这份 summary 的 `run_id` 取。两种都不喂 `factsContext`。
+ */
+function closeOwnershipPhase(
+  project: OwnershipProject, phase: string, identity: 'param' | 'summary' = 'param',
+): void {
+  const summaryPath = path.join(
+    featurePhaseReportsDir(project.root, OWN_FEATURE, phase, FRAMEWORK_ROOT), 'summary.json',
+  );
+  fs.mkdirSync(path.dirname(summaryPath), { recursive: true });
+  fs.writeFileSync(summaryPath, JSON.stringify({
+    schema_version: '1.2', phase, feature: OWN_FEATURE, verdict: 'PASS',
+    run_id: project.runId,
+    blocker_count: 0, fail_count: 0, warn_count: 0,
+    script_report: 'script-report.json', merged_report: 'merged-report.md',
+    ai_prompt: 'ai-prompt.md', summary_json: 'summary.json',
+    run_statuses: [], readiness_signals: [], blocking_warnings: [], blocking_skips: [],
+    blockers: [], next_action: 'run_receipt', closure_status: 'open', assurance: 'full',
+  } as HarnessRunSummary, null, 2), 'utf8');
+  finalizePhaseClosure({
+    projectRoot: project.root, frameworkRoot: FRAMEWORK_ROOT, feature: OWN_FEATURE,
+    phase, persistPhaseState: () => undefined,
+    ...(identity === 'param' ? { goalRunId: project.runId } : {}),
+  });
+}
+
+function ownerOfPath(project: OwnershipProject, phase: string, rel: string): string | undefined {
+  const loaded = loadPhaseEvidenceManifest(project.root, OWN_FEATURE, phase);
+  assert(Boolean(loaded?.integrityOk), `${phase}: manifest missing/tampered`);
+  const entry = [...loaded!.manifest.inputs, ...loaded!.manifest.outputs]
+    .find((item) => item.path === rel);
+  assert(Boolean(entry), `${phase}: ${rel} 没进证据面——归属断言会空过（entries=${
+    [...loaded!.manifest.inputs, ...loaded!.manifest.outputs].map((i) => i.path).join(',')})`);
+  return entry!.owner_phase;
+}
+
+function ownerOfSource(project: OwnershipProject, phase: string): string | undefined {
+  return ownerOfPath(project, phase, OWN_SOURCE);
+}
+
 const cases: Case[] = [
+  {
+    // OWN-T2：观察期起链。出生链只有 [spec, plan]，coding **不在链里**，spec 期也还没有
+    // contracts——旧 `mayAdvance` 三条分支在这一态全不成立，源码一个 owner 都盖不上。
+    name: 'OWN-T2 观察期 spec 闭环：coding 未进链时研究源码仍按实现义务盖 owner',
+    run: () => {
+      const project = mkOwnershipProject(['spec', 'plan', 'coding', 'review', 'ut', 'testing']);
+      try {
+        assert(!project.chain.includes('coding'),
+          `前提失败：出生链已含 coding（${project.chain.join(',')}），本用例的反例性质不成立`);
+        closeOwnershipPhase(project, 'spec');
+        const owner = ownerOfSource(project, 'spec');
+        assert(owner === 'coding', `spec manifest 的产品源码条目 owner_phase=${owner}，期望 coding`);
+        // 反例（同一份 facts、同一次闭环）：合格 facts 允许声明的**非源码**研究来源不得被
+        // 一起归给实现阶段——归给了，它的漂移就会在 owner 施工期被豁免跳过。
+        const docOwner = ownerOfPath(project, 'spec', OWN_NON_SOURCE);
+        assert(docOwner === undefined,
+          `非源码研究来源拿到了 owner=${docOwner}——并集没过宿主的源码判据`);
+        fs.writeFileSync(path.join(project.root, OWN_NON_SOURCE), '# 研究笔记\n\n改了一行。\n');
+        const docDrift = recomputePhaseEvidenceStaleness(project.root, OWN_FEATURE, ['spec'],
+          { frameworkRoot: FRAMEWORK_ROOT, pendingOwnerPhase: 'coding' });
+        assert(docDrift[0].verdict === 'stale',
+          `非源码研究来源的漂移被施工豁免洗绿了：${JSON.stringify(docDrift)}`);
+      } finally {
+        fs.rmSync(project.root, { recursive: true, force: true });
+        clearFrameworkConfigCache();
+      }
+    },
+  },
+  {
+    // OWN-T1：同一条链继续闭环 plan，并直接锁住这次修复要的**产品效果**——
+    // coding 按写集改产品源码后，上游 spec/plan 的证据不因账本归属而变 stale。
+    name: 'OWN-T1 goal 最终闭环后 spec/plan 源码条目带 owner，且 owner 施工不使上游 stale',
+    run: () => {
+      const project = mkOwnershipProject(['spec', 'plan', 'coding', 'review', 'ut', 'testing']);
+      try {
+        closeOwnershipPhase(project, 'spec');
+        closeOwnershipPhase(project, 'plan');
+        const owner = ownerOfSource(project, 'plan');
+        assert(owner === 'coding', `plan manifest 的产品源码条目 owner_phase=${owner}，期望 coding`);
+        const before = recomputePhaseEvidenceStaleness(project.root, OWN_FEATURE, ['spec', 'plan'],
+          { frameworkRoot: FRAMEWORK_ROOT });
+        assert(before.every((r) => r.verdict === 'fresh'), JSON.stringify(before));
+        // owner（coding）正在施工：改自己负责的源码，上游不得因此 stale。
+        fs.writeFileSync(path.join(project.root, OWN_SOURCE), 'export const banks: string[] = ["a"];\n');
+        const pending = recomputePhaseEvidenceStaleness(project.root, OWN_FEATURE, ['spec', 'plan'],
+          { frameworkRoot: FRAMEWORK_ROOT, pendingOwnerPhase: 'coding' });
+        assert(pending.every((r) => r.verdict === 'fresh'),
+          `owner 施工期上游被判漂移：${JSON.stringify(pending)}`);
+        // 反向单变量：同一字节、同一份 manifest，只是不再声明 owner 在施工 → 必须 stale。
+        const unowned = recomputePhaseEvidenceStaleness(project.root, OWN_FEATURE, ['spec', 'plan'],
+          { frameworkRoot: FRAMEWORK_ROOT });
+        assert(unowned[0].verdict === 'stale', JSON.stringify(unowned));
+      } finally {
+        fs.rmSync(project.root, { recursive: true, force: true });
+        clearFrameworkConfigCache();
+      }
+    },
+  },
+  {
+    // OWN-T6：`--sync-closure` / 恢复闭环那条入口（`utils/phase-state.ts` → finalizer，
+    // **不传 `goalRunId`**）同样要产出归属。身份从**正在闭环的那份 canonical summary 的
+    // `run_id`** 取（由产出它的 harness 轮次写下，就是这份证据自己的 run 身份；goal 恢复路径
+    // 进 finalizer 之前，receipt 已在 `phase-state.ts` 的 `tryValidateReceipt` 带 `goalIdentity`
+    // 校验过身份）。它只喂重建、不碰任何判据。
+    // 单变量：与 OWN-T2 唯一的差别是身份从哪来。
+    name: 'OWN-T6 恢复闭环（不传 goalRunId）同样按 summary.run_id 重建归属',
+    run: () => {
+      const project = mkOwnershipProject(['spec', 'plan', 'coding', 'review', 'ut', 'testing']);
+      try {
+        closeOwnershipPhase(project, 'spec', 'summary');
+        const owner = ownerOfSource(project, 'spec');
+        assert(owner === 'coding',
+          `不传 goalRunId 的闭环没重建出归属（owner=${owner}）——恢复闭环这条路上缺陷残留`);
+        assert(ownerOfPath(project, 'spec', OWN_NON_SOURCE) === undefined, '非源码来源不得带 owner');
+      } finally {
+        fs.rmSync(project.root, { recursive: true, force: true });
+        clearFrameworkConfigCache();
+      }
+    },
+  },
+  {
+    // OWN-T4：授权门。入参形状与生产的 `runPlanAuthorityGate('post_agent')`
+    // （goal-phase-runtime.ts:6843）逐字段一致——该门只在 phase==='coding' 时进入，
+    // 所以 `pendingOwnerPhase` 就是 `String(phase)`。**唯一变量是这一个入参**：
+    // 同一份 manifest、同一批字节，带它必须放行，不带它必须判 live_drift。
+    //
+    // 覆盖面如实说明：这里走的是 `scope-replan.ts:226` 的 recompute 分支（本范围的
+    // design-context 还没被 satisfied，:211 的 1.2 分支不成立）。:213 那条
+    // （design 已满足 → `executionScopeEvidenceIssues`）的端到端覆盖在 release-only 的
+    // `real-chain` 正例上——缺陷本身就是在那条链上出的。
+    name: 'OWN-T4 授权门：owner 正在施工时改自己负责的源码不判漂移（单变量）',
+    run: () => {
+      const project = mkOwnershipProject(['spec', 'plan', 'coding', 'review', 'ut', 'testing']);
+      try {
+        closeOwnershipPhase(project, 'spec');
+        closeOwnershipPhase(project, 'plan');
+        const gateInput = {
+          projectRoot: project.root, feature: OWN_FEATURE,
+          frameworkRoot: FRAMEWORK_ROOT, currentRunId: project.runId,
+        };
+        assert(checkPlanAuthority(gateInput).kind === 'ok', '前提失败：未动源码时授权门就不放行');
+        fs.writeFileSync(path.join(project.root, OWN_SOURCE), 'export const banks: string[] = ["a"];\n');
+        const withOwner = checkPlanAuthority({ ...gateInput, pendingOwnerPhase: 'coding' });
+        assert(withOwner.kind === 'ok', `coding 改自己负责的源码被判漂移：${JSON.stringify(withOwner)}`);
+        const withoutOwner = checkPlanAuthority(gateInput);
+        assert(withoutOwner.kind === 'replan' && withoutOwner.reason === 'live_drift',
+          `不声明 owner 在施工时必须仍判漂移（否则豁免被放宽成无条件）：${JSON.stringify(withoutOwner)}`);
+        // 生产的门**一定带 executionScope**（:6843 把有效范围算出来再传）。同一对单变量在
+        // 带范围的调用形态下必须给出同一结论——否则范围一在场就绕开了本次修复。
+        // 本范围的 design-context 还没被 satisfied，:211 的 1.2 分支不成立，仍落到 recompute 那支；
+        // design 已满足且由**阶段证据**承接的那一格（:213 → executionScopeEvidenceIssues）
+        // 需要一次真实范围修订才产生，覆盖在 release-only 的 `real-chain` 正例上（M5/M6 两次变异均在其上复现）。
+        const executionScope = loadEffectiveExecutionScope(project.root, OWN_FEATURE, project.runId);
+        assert(Boolean(executionScope), '有效范围取不到，带范围的对照不成立');
+        const scopedWithOwner = checkPlanAuthority({ ...gateInput, executionScope, pendingOwnerPhase: 'coding' });
+        assert(scopedWithOwner.kind === 'ok', `带范围时 owner 施工被判漂移：${JSON.stringify(scopedWithOwner)}`);
+        const scopedWithoutOwner = checkPlanAuthority({ ...gateInput, executionScope });
+        assert(scopedWithoutOwner.kind === 'replan' && scopedWithoutOwner.reason === 'live_drift',
+          `带范围时反例失效：${JSON.stringify(scopedWithoutOwner)}`);
+      } finally {
+        fs.rmSync(project.root, { recursive: true, force: true });
+        clearFrameworkConfigCache();
+      }
+    },
+  },
+  {
+    // OWN-T7 反例（codex 二轮阻断）：并集的**写集那一半**同样要过源码判据。
+    // `contracts.files` 只被 schema 约束为非空字符串，非源码路径若同时落在写集与研究读集里，
+    // `historical.has(file)` 会照样给它实现阶段 owner，其字节漂移随即在施工期被整批豁免。
+    // 单变量：同一次闭环、同一份 facts、同一个写集，只有「是不是源码」不同。
+    name: 'OWN-T7 反例：非源码路径同时在 contracts.files 与 source_code_paths 也不得拿 owner',
+    run: () => {
+      const project = mkOwnershipProject(['coding', 'review', 'ut'], true);
+      try {
+        assert(project.chain[0] === 'coding', `前提失败：链首不是 coding（${project.chain.join(',')}）`);
+        closeOwnershipPhase(project, 'coding');
+        const sourceOwner = ownerOfSource(project, 'coding');
+        assert(sourceOwner === 'coding',
+          `对照组不成立：写集里的源码没拿到 owner（${sourceOwner}）`);
+        // 两条都在写集与研究读集里，差别只有「在不在模块包路径内」——**目录位置不是源码判据**：
+        // 模块根下本就常驻 `oh-package.json5` / README 这类文件（生产检查直接读前者，
+        // `profiles/hmos-app/harness/coding-host-rules.ts` / `profile-path-conventions.ts`）。
+        for (const rel of [OWN_NON_SOURCE, OWN_MODULE_DOC]) {
+          const docOwner = ownerOfPath(project, 'coding', rel);
+          assert(docOwner === undefined,
+            `写集里的非源码路径 ${rel} 拿到了 owner=${docOwner}——源码判据被放宽`);
+          const before = fs.readFileSync(path.join(project.root, rel), 'utf8');
+          fs.writeFileSync(path.join(project.root, rel), `${before}\n改了一行。\n`);
+          const drift = recomputePhaseEvidenceStaleness(project.root, OWN_FEATURE, ['coding'],
+            { frameworkRoot: FRAMEWORK_ROOT, pendingOwnerPhase: 'coding' });
+          assert(drift[0].verdict === 'stale',
+            `${rel} 的漂移被施工豁免洗绿了：${JSON.stringify(drift)}`);
+          fs.writeFileSync(path.join(project.root, rel), before); // 还原，下一轮仍是单变量
+        }
+      } finally {
+        fs.rmSync(project.root, { recursive: true, force: true });
+        clearFrameworkConfigCache();
+      }
+    },
+  },
+  {
+    // OWN-T3 反例：纯验证范围（无实现义务、本阶段也不产 contracts）。`ownerOf` 在没有实现义务时
+    // 回落契约 producer，**恒非空**——只验"owner 非空"等于全放行，这条用例就是那个证伪面。
+    name: 'OWN-T3 反例：纯验证范围（review 起链、无实现义务）源码不得拿到 owner，改动仍 stale',
+    run: () => {
+      const project = mkOwnershipProject(['review'], true);
+      try {
+        // 前提：链从 review 起，且 coding **不在链里**——与 OWN-T2 同一态。
+        // 唯一变量是「范围里有没有未兑现的实现义务」，新分支的两个条件里只有它不同。
+        assert(project.chain[0] === 'review' && !project.chain.includes('coding'), JSON.stringify(project.chain));
+        closeOwnershipPhase(project, 'review');
+        const owner = ownerOfSource(project, 'review');
+        assert(owner === undefined, `纯验证范围的源码条目拿到了 owner=${owner}——归属资格被放宽到"owner 非空"`);
+        fs.writeFileSync(path.join(project.root, OWN_SOURCE), 'export const banks: string[] = ["a"];\n');
+        const after = recomputePhaseEvidenceStaleness(project.root, OWN_FEATURE, ['review'],
+          { frameworkRoot: FRAMEWORK_ROOT });
+        assert(after[0].verdict === 'stale', JSON.stringify(after));
+      } finally {
+        fs.rmSync(project.root, { recursive: true, force: true });
+        clearFrameworkConfigCache();
+      }
+    },
+  },
   {
     name: 'facts 来源绑定经 closure finalizer 同样校验，变化或删除不得提交',
     run: () => {

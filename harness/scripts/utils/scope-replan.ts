@@ -206,11 +206,19 @@ export function checkPlanAuthority(input: {
    * (D2 never seals), so its terminal check is skipped for that run and only that run.
    */
   currentRunId?: string;
+  /**
+   * The phase executing right now (this gate only runs for `coding`). Without it the
+   * freshness recompute cannot know that the entries owned by the phase under way are
+   * mid-flight, and any source edit the current owner is authorized to make reads as
+   * upstream drift (plan b5c1e9d7 §3.2). Semantics stay exactly `pendingOwnerPhase`:
+   * only entries whose owner IS this phase are exempted.
+   */
+  pendingOwnerPhase?: string;
 }): PlanAuthorityOutcome {
   if (input.executionScope) {
     const design = input.executionScope.obligations.filter(o => o.kind === 'design-context' && o.applicability === 'required');
     if (design.length && design.every(o => o.satisfied_by?.length) && !input.executionScope.obligations.some(o => o.kind === 'design-decision' && o.applicability !== 'not_applicable' && !o.satisfied_by?.length)) {
-      const issues = executionScopeEvidenceIssues(input.projectRoot, input.feature, input.executionScope, new Set(design.map(o => o.id)), input.currentRunId);
+      const issues = executionScopeEvidenceIssues(input.projectRoot, input.feature, input.executionScope, new Set(design.map(o => o.id)), input.currentRunId, input.pendingOwnerPhase);
       return issues.length ? { kind: 'replan', reason: 'live_drift', detail: issues.join('; '), affectedFiles: [] } : { kind: 'ok' };
     }
   }
@@ -225,6 +233,7 @@ export function checkPlanAuthority(input: {
   //   missing/tampered → closure_untrusted replan。
   const plan = recomputePhaseEvidenceStaleness(input.projectRoot, input.feature, ['plan'], {
     ...(input.frameworkRoot ? { frameworkRoot: input.frameworkRoot } : {}),
+    ...(input.pendingOwnerPhase ? { pendingOwnerPhase: input.pendingOwnerPhase } : {}),
   })[0];
   if (!plan || plan.verdict === 'missing' || plan.verdict === 'tampered') {
     return {
