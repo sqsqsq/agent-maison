@@ -51,7 +51,7 @@ interface Summary {
   closure_status?: string;
   receipt_status?: string;
   source_commit_sha?: string;
-  blockers?: Array<{ id?: string; check_id?: string; detail?: string; details?: string }>;
+  blockers?: Array<{ id?: string; check_id?: string; detail?: string; details?: string; affected_files?: string[] }>;
   checks?: Array<{ id?: string; status?: string; severity?: string; details?: string }>;
   verifier_subject_id?: string;
   next_action?: string;

@@ -206,20 +206,23 @@ goalRunId, frameworkRoot })` 重建，把返回的 `factsContext` 交给 `resolv
 - 笔二（own-authority-owner）：`scope-replan.ts` + `verify-feature-completion.ts` + `goal-phase-runtime.ts` + OWN-T4–T6。
 
 以下命令在 **`harness/` 工作目录**执行（`npm run release:check-plans` 在仓库根，见 `package.json:19`）。
-`run-unit` 只读**第一个** `--filter`（`harness/tests/run-unit.ts:435`），所以一条命令一个过滤器：
+过滤器只能交给 **unit runner**：`npm test` 是 `typecheck && test:unit && test:fixtures`
+（`harness/package.json:24`），`npm test -- --filter X` 的 `--filter X` 落在最外层脚本上、**到不了**
+`run-unit`，于是全量照跑一遍。`run-unit` 又只读**第一个** `--filter`（`harness/tests/run-unit.ts:435`），
+所以一条命令一个过滤器：
 
 ```
 npm run typecheck
-npm test -- --filter phase-closure-finalizer
-npm test -- --filter phase-evidence-manifest
-npm test -- --filter capability-resolution
-npm test -- --filter standalone-coding-review   # 含 P1-T12 原断言
-npm test -- --filter real-chain                 # 最终验收；须先完成下面的登记，否则等于没跑
-npm test && npm run test:fixtures               # 收口各一次
+npm run test:unit -- --filter phase-closure-finalizer
+npm run test:unit -- --filter phase-evidence-manifest
+npm run test:unit -- --filter capability-resolution
+npm run test:unit -- --filter standalone-coding-review   # 含 P1-T12 原断言
+npm run test:unit -- --filter real-chain                 # 最终验收；须先完成下面的登记，否则等于没跑
+npm test                                                 # 收口一次（自带 typecheck + unit + fixtures，不再另跑 test:fixtures）
 cd .. && npm run release:check-plans
 ```
 
-**`--filter real-chain` 的前提**：该套件当前**未登记**（`run-unit.ts:414` 整段被注释）。未登记时
+**`--filter real-chain` 的前提**：该套件在本 plan 开工时**未登记**（`run-unit.ts:414` 整段被注释）。未登记时
 `selectSuites`（`harness/tests/utils/select-suites.ts:24`）找不到匹配 id，会退化成 case-name 过滤并照跑
 其它全部套件，real-chain 一个用例都不执行——看着绿其实没跑。收口条件因此含：把 `real-chain` / `real-chain-seams`
 按 `releaseOnly: true` 恢复登记进 `CORE_SUITES`（按 id 单跑时 release-only 会执行）。登记之前只能用既有 `runAll()` 直调该模块，不得用 `--filter` 的结果下判断。
@@ -666,3 +669,10 @@ goal 恢复路径进闭环之前 receipt 已带 goal 身份校验过。
 
 按指令**未跑全量**（本笔只动这一个测试文件的清理与缩进，生产代码一字未动；上一轮全量收口
 `NPM_TEST_EXIT=0 / 4715 passed / fixtures 46` 仍是该生产快照的收口数）。不提交。
+
+### 8.12 提交
+
+**已提交 e128e07f**（codex 四轮 review 判可提交；收口数：unit **4715 passed / 0 failed**、
+fixtures **46 / 0**、release-only 正例 `real-chain` **PASS=2 FAIL=0**）。
+宿主验收（frontmatter `real_host_validation`：bc-openCard-2/open-card-flow-v2 同 feature 重跑 1.2 出生链）
+**未做**，留宿主侧执行。

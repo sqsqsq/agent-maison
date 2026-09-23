@@ -417,13 +417,14 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   // 无 `owner_phase` → coding 按写集改源码即被 `post_agent` 门判 plan 漂移）已由
   // plan b5c1e9d7 修复。**不得靠改回 1.1 让它变绿。**
   { id: 'real-chain', modulePath: './unit/real-chain.unit.test', releaseOnly: true },
-  // `real-chain-seams` **仍不登记**（§8：不登记必红套件）。1.2 打通后它从 2/4 变成 4/2，
-  // 剩下两条红各有独立根因、都不在 plan b5c1e9d7 的范围里：
-  //   · RC-8a「真修改仍被判无进展停机」——d4a1f7c3 §10.12 已单独记账，与本缺陷无关；
-  //   · RC-4 前提②——链跑到 UT 之后首次到达该断言，`ut/reports/ac-coverage.json` 出现在
-  //     verifier subject 材料里（`createRuntimeArtifactPredicate` 只过 manifest 那一路，
-  //     contextFiles 那一路没过）。是断言前提写错还是材料面真漏，须单独定位。
-  // 两条定位清楚后与本行一起按 `releaseOnly: true` 登记回来。
+  // `real-chain-seams`（§5 的接缝负例六条）2026-09-22 重新登记：此前两条红都**不是生产缺陷**，
+  // 是夹具把失败点造错了地方（定位与改法见 d4a1f7c3 §10.14）——
+  //   · RC-8a/8b 原先删 spec.md 的术语章节，而 1.2 的范围里 spec 的 required_outputs 不含
+  //     spec.md（`check-spec.ts:1484` 早退），那组检查根本不执行；真正停机的是随后缺契约的 plan。
+  //     已改为把失败点显式落在 plan 真会执行的 `context_exploration_facts_phase_delta_missing` 上。
+  //   · RC-4 前提②把「`ac-coverage.json` 进审核材料」当成回归，而 `verifier-material.ts:145-148`
+  //     明确允许经 contextFiles 送入的运行期证据进材料。已改为断真实 subject 等值。
+  { id: 'real-chain-seams', modulePath: './unit/real-chain-seams.unit.test', releaseOnly: true },
 ];
 
 const SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean }> =

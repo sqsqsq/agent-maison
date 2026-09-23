@@ -7,12 +7,13 @@
 // 断言口径统一为 plan §5 那一句：**链走得通；失败时 `owner` 与 `reason` 正确**。
 // 不断言"结论正确"——本套件不冒充宿主验收，口径上限见 plan §1.1 / §8。
 //
-// **当前状态（2026-09-22）：本套件与正例一并从 `CORE_SUITES` 暂时退登记，未进发布门。**
-// 夹具已从 `spec-driven`（1.1）纠偏到与真实宿主一致的 `obligation-driven`（1.2）——
-// W1/W3 要回归的冻结范围分支只在 1.2 下存在，1.1 下跑绿等于没测。1.2 上 spec/plan 已
-// PASS+closed，coding 起不来——`post_agent` 的 plan 授权门把 coding 自己改源码判成
-// 「plan 冻结面漂移」（生产缺口，复现与行号见 plan §10.12），故六条用例当前 RED。
-// 进度、逐轮 BLOCKER 演进、codex 五条待修阻断：plan §10.11 / §10.12。**不得靠改回 1.1 让它变绿。**
+// **当前状态（2026-09-22）：六条全绿，按 `releaseOnly: true` 登记进 `CORE_SUITES`。**
+// 夹具跑的是与真实宿主一致的 `obligation-driven`（workflow **1.2**）——W1/W3 要回归的冻结范围
+// 分支只在 1.2 下存在，**不得靠改回 `spec-driven`（1.1）让它变绿**（1.1 下跑绿等于没测）。
+// 曾挡住 coding 的那处生产缺口（goal 闭环不传 factsContext → 源码条目无 owner_phase →
+// coding 按写集改源码即被 `post_agent` 门判 plan 漂移）已由 plan b5c1e9d7 修复（e128e07f）。
+// 此后剩的两条红（RC-8a / RC-4 前提②）经复核**都是夹具把判据造错了地方，不是生产缺陷**，
+// 改法与证据见 plan d4a1f7c3 §10.14；codex 五条阻断同笔落地。
 //
 // 已写出的六条：RC-1 / RC-2 / RC-3 / RC-4 / RC-8a / RC-8b。
 // RC-5 / RC-6a / RC-6b 未做——三条共用同一个前置：testing 必须真正驱动视觉采集链
@@ -24,6 +25,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
 import * as YAML from 'yaml';
 import type { UnitCaseResult } from '../run-unit';
 import {
@@ -32,6 +34,7 @@ import {
   writeHostFile,
   REAL_CHAIN_REQUIREMENT,
   REAL_CHAIN_NEW_SOURCE,
+  REAL_CHAIN_SOURCE,
   REAL_CHAIN_TEST,
   type RealChainProject,
 } from '../utils/real-chain-host';
@@ -47,7 +50,7 @@ import {
 } from './real-chain.unit.test';
 import { runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
 import { clearFrameworkConfigCache, featureFilePath, featurePhaseReportsDir, relFeaturesDir } from '../../config';
-import { recomputePhaseEvidenceStaleness } from '../../scripts/utils/phase-evidence-manifest';
+import { recomputePhaseEvidenceStaleness, loadPhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
 import {
   ensureFeatureExecutionScopeFrozen,
   readFeatureFrozenScope,
@@ -60,6 +63,16 @@ import { resolveCapabilityInputs } from '../../scripts/utils/capability-resoluti
 import { designScopeRevisionChecks } from '../../scripts/utils/blueprint-skill-projection';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { sha256File } from '../../scripts/utils/effective-vision-context';
+import { generateScriptReport } from '../../scripts/utils/report-generator';
+import {
+  MAISON_GOAL_RUNNER_ENV,
+  applyGoalModelPinEnv,
+  applyGoalVisualProviderEnv,
+} from '../../scripts/utils/phase-state';
+import { sanitizeSpawnEnv, deleteEnvKeyCaseInsensitive } from '../../scripts/utils/process-integrity';
+import { computeRequestSubjectId, type VerifierRequest } from '../../scripts/utils/verifier-request';
+import type { VerifierMaterialView } from '../../scripts/utils/verifier-material';
+import type { CheckResult, Phase } from '../../scripts/utils/types';
 
 const cases: Array<{ name: string; run: () => Promise<void> }> = [];
 function test(name: string, run: () => Promise<void>): void { cases.push({ name, run }); }
@@ -93,7 +106,7 @@ function haltEvents(events: Array<Record<string, unknown>>): Array<Record<string
   return events.filter(e => e.type === 'phase_halt');
 }
 
-interface MaterialView { files: Array<{ path: string; sha256: string | null }> }
+type MaterialView = VerifierMaterialView;
 
 /**
  * 「本阶段实际审了哪些材料」的生产记录：`verifier.material.<subject>.json`
@@ -114,15 +127,90 @@ function materialFiles(p: RealChainProject, phase: string): MaterialView['files'
 }
 
 /** 该阶段 reports 目录下所有材料视图（一份 = 一代材料）。 */
-function materialGenerations(p: RealChainProject, phase: string): Array<{ subject: string; files: MaterialView['files'] }> {
+function materialGenerations(p: RealChainProject, phase: string): Array<{ subject: string; view: MaterialView }> {
   const dir = featurePhaseReportsDir(p.root, p.feature, phase, p.frameworkRoot);
   return fs.readdirSync(dir)
     .filter(f => /^verifier\.material\.[0-9a-f]{64}\.json$/.test(f))
     .sort()
     .map(f => ({
       subject: f.slice('verifier.material.'.length, -'.json'.length),
-      files: (JSON.parse(fs.readFileSync(path.join(dir, f), 'utf-8')) as MaterialView).files,
+      view: JSON.parse(fs.readFileSync(path.join(dir, f), 'utf-8')) as MaterialView,
     }));
+}
+
+/**
+ * 本阶段**真实的轮次身份**：回执里的 `claimed_attempt_id`（`receipt-scaffold.ts:179/202` 写，
+ * 值取自上一轮 gate harness 的 `MAISON_GOAL_ATTEMPT`）。
+ * **不能从 events 的 `phase_start` 取**——默认 detached 路径发的 `phase_start` 不带
+ * `attempt_id`，只有 attended 的视觉分支写（`goal-phase-runtime.ts:7472`），
+ * 据此取值会静默漏注这一键（codex 2026-09-22 二轮）。
+ */
+function phaseAttemptIdFromReceipt(p: RealChainProject, phase: string): string {
+  const abs = featureFilePath(p.root, p.feature, `${phase}/phase-completion-receipt.md`);
+  assert(fs.existsSync(abs), `${phase}：回执不存在，取不到真实轮次身份 ${abs}`);
+  const m = /^claimed_attempt_id:\s*"([^"]*)"/m.exec(fs.readFileSync(abs, 'utf-8'));
+  assert(m && m[1], `${phase}：回执没有 claimed_attempt_id，取不到真实轮次身份`);
+  return m![1];
+}
+
+/**
+ * 再跑一轮**真实 gate harness**。命令行 / cwd / shell 与 `goal-phase-runtime.ts:1272` 一致；
+ * 子进程环境按 `:1227-1269` **逐键重建**——那一段内联在 `runHarnessPhase` 里、提不出函数，
+ * 所以这里逐键对照，并且**全部复用生产导出的常量与执行器**
+ *（`sanitizeSpawnEnv` / `MAISON_GOAL_RUNNER_ENV` / `applyGoalModelPinEnv` /
+ * `applyGoalVisualProviderEnv` / `deleteEnvKeyCaseInsensitive`）。
+ *
+ * **有生产导出常量的键一律复用常量，不写字面**：`MAISON_GOAL_RUNNER_ENV` 这个标识符的**值**是
+ * `MAISON_GOAL_RUNNER`（`phase-state.ts:83`），照标识符名写成字面键会让子进程
+ * `isGoalOrchestrationEnv()` 判 false，整轮落到 interactive/manual 分支
+ *（`harness-runner.ts:934` / `:1589`）——测的就不是生产分支了（codex 2026-09-22 二轮实锤，
+ * 本 helper 初版正是这个错）。没有导出常量的三个轮次身份键与 `MAISON_GOAL_GATE_HARNESS`，
+ * 生产那段本身就是字面量（`goal-phase-runtime.ts:1238-1242` / `:1268`），逐字对照。
+ *
+ * `deviceEnv` 是就绪门冻结的设备目标，生产在 `goal-phase-runtime.ts:8244` 原样传给 gate
+ *（父进程 profile 回落 hmos-app 后 `ut.run` 属设备能力，桩会给 `HARNESS_HDC_TARGET` /
+ * `MAISON_DEVICE_TARGET_KIND`）。调用方经 `deviceGate` 注入点返回并复用同一个
+ * `RC4_DEVICE_ENV` 常量（`probe.harnessDeviceEnvs` 是注入桩的记录，`realHarness` 下取不到），
+ * 不另造一份，否则乙段跑的是与甲段不同的环境（codex 2026-09-22 三轮）。
+ *
+ * 唯一由调用方变的是 `MAISON_TEST_AC_COVERAGE_NOW`，即"只换时钟"。
+ */
+function runGateHarness(
+  p: RealChainProject, phase: string, clock: string, attemptId: string,
+  deviceEnv: Record<string, string>,
+): { status: number | null; output: string } {
+  const sanitized = sanitizeSpawnEnv({ ...process.env, MAISON_TEST_AC_COVERAGE_NOW: clock });
+  const childEnv: NodeJS.ProcessEnv = { ...sanitized.env, [MAISON_GOAL_RUNNER_ENV]: '1' };
+  // 夹具无 model pin / 无 visual provider pin——生产此时同样是"只清不写"。
+  applyGoalModelPinEnv(childEnv, undefined);
+  applyGoalVisualProviderEnv(childEnv, undefined);
+  deleteEnvKeyCaseInsensitive(childEnv, 'HARNESS_DIFF_BASE_REF');
+  // 与生产同一个 `gateInjectedEnv`（`goal-phase-runtime.ts:1234-1249`）：轮次身份三键 + 设备目标，
+  // 统一走"先清大小写变体再写唯一键"。
+  for (const [k, v] of Object.entries({
+    MAISON_GOAL_RUN_ID: p.runId ?? '',
+    MAISON_GOAL_ATTEMPT: attemptId,
+    MAISON_GOAL_ATTEMPT_PHASE: phase,
+    ...deviceEnv,
+  })) {
+    deleteEnvKeyCaseInsensitive(childEnv, k);
+    childEnv[k] = v;
+  }
+  deleteEnvKeyCaseInsensitive(childEnv, 'MAISON_GOAL_GATE_HARNESS');
+  childEnv.MAISON_GOAL_GATE_HARNESS = '1';
+  const r = spawnSync(
+    process.platform === 'win32' ? 'npx.cmd' : 'npx',
+    ['ts-node', 'harness-runner.ts', '--phase', phase, '--feature', p.feature, '--summary'],
+    { cwd: p.harnessDir, shell: process.platform === 'win32', encoding: 'utf-8', env: childEnv },
+  );
+  return { status: r.status, output: `${r.stdout ?? ''}\n${r.stderr ?? ''}` };
+}
+
+/** 该 subject 的 verifier 调用凭证（subject 由它的字段派生，verifier-request.ts:77）。 */
+function verifierRequestOf(p: RealChainProject, phase: string, subject: string): VerifierRequest {
+  const abs = path.join(featurePhaseReportsDir(p.root, p.feature, phase, p.frameworkRoot), `verifier.request.${subject}.json`);
+  assert(fs.existsSync(abs), `${phase}：subject ${subject.slice(0, 12)} 的 request 未落盘 ${abs}`);
+  return JSON.parse(fs.readFileSync(abs, 'utf-8')) as VerifierRequest;
 }
 
 // ===========================================================================
@@ -154,6 +242,8 @@ function addNeverCreatedContractFile(p: RealChainProject): void {
 }
 
 test('RC-1 plan 起步：待创建文件不拖垮绑定，真缺失文件在 coding 仍判 absent', withProject(async (project, birthChain) => {
+  /** plan 跑的那一刻盘上既有源码的字节——coding 随后会改写它，事后再读取就对不上了。 */
+  let planTimeSourceSha: string | null = null;
   const probe = await runGoalRuntimeChain(project.root, {
     frameworkRoot: project.frameworkRoot,
     featureId: project.feature,
@@ -167,6 +257,7 @@ test('RC-1 plan 起步：待创建文件不拖垮绑定，真缺失文件在 cod
       project.runId = ctx.runId;
       writePlanMaterials(project);
       addNeverCreatedContractFile(project);
+      planTimeSourceSha = sha256File(path.join(project.root, REAL_CHAIN_SOURCE));
       if (ctx.attempt > 1) publishVerifier(project, 'plan');
     },
     // coding 只创建两个待创建文件里的一个——另一个是"真缺失"。
@@ -178,32 +269,45 @@ test('RC-1 plan 起步：待创建文件不拖垮绑定，真缺失文件在 cod
   assert(plan?.verdict === 'PASS', `plan 未 PASS：${dumpChain(project, ['spec', 'plan'])}`);
   assert(plan?.closure_status === 'closed', `plan closure_status=${plan?.closure_status}`);
 
-  // ② 待创建文件**一个都不进** plan 的读集材料，也不以 `sha256: null` 的 absent 形态混进来
-  //    ——W1 的根因正是把它们判 absent 后拖垮同组绑定；正确形态是「不存在就不进读集」。
-  //
-  //    **覆盖上限（plan §10.9 偏差 2，如实记）**：本夹具与正例链同跑 `spec-driven`（workflow
-  //    schema **1.1**），`resolveCapabilityResolutionEntryInput` 的冻结范围分支只在 1.2 下进
-  //    （`resolveEffectiveScopeSource` 无记录 → 整段跳过），所以 `codeTargets` / `factsContext`
-  //    这条 1.2 的源码读集链在本链上根本没被行使，plan 材料里因此没有源码条目。
-  //    "既有文件被读到"这一半改由 RC-2 的 runless 1.2 路径承担。
+  // ② 读集的**正反两面**都要成立，缺任何一面这条都会在源码集合全空时照样绿
+  //    （codex 2026-09-22 阻断 1）：
+  //    正面——1.2 的源码读集链真被行使：既有源码在 plan 材料里**存在且 sha 与盘上字节相等**；
+  //    反面——待创建文件**一个都不进**读集，也不以 `sha256: null` 的 absent 形态混进来
+  //          （W1 的根因正是把它们判 absent 后拖垮同组绑定；正确形态是「不存在就不进读集」）。
   const planMaterial = materialFiles(project, 'plan');
   const dump = JSON.stringify(planMaterial.map(f => `${f.path}:${f.sha256 ? 'sha' : 'null'}`));
+  const existing = planMaterial.find(f => f.path === REAL_CHAIN_SOURCE);
+  // 对的是 **plan 跑那一刻**的字节，不是现在盘上的——coding 已经按写集改写过这份源码，
+  // 拿当下的盘面去比只会证明"coding 改过它"。
+  assert(
+    !!planTimeSourceSha && existing?.sha256 === planTimeSourceSha,
+    `既有源码没进 plan 读集或 sha 不符（1.2 的 codeTargets 链没被行使）：${JSON.stringify(existing)}；`
+    + `plan 期字节=${String(planTimeSourceSha).slice(0, 12)}；材料=${dump}`,
+  );
   for (const pending of [REAL_CHAIN_NEW_SOURCE, RC1_NEVER_CREATED]) {
     const hit = planMaterial.find(f => f.path === pending);
     assert(!hit, `待创建文件混进 plan 读集（W1 的 absent 形态）：${JSON.stringify(hit)}；材料=${dump}`);
   }
   assert(planMaterial.every(f => !!f.sha256), `plan 读集里出现 absent 条目：${dump}`);
 
-  // ③ 真缺失文件在 coding 仍 absent：coding 不得 PASS，且失败点须**点名**那一个文件，
-  //    不得把已创建的 BankListItem.ets 一起拖下水（owner 正确、reason 正确）。
+  // ③ 真缺失文件在 coding 仍 absent：coding 不得 PASS，失败须落在**生产的缺失文件判据**
+  //    （`check-coding.ts:107` 的 `file_completeness`，`affected_files` 即缺失清单）上，
+  //    且清单**恰好**点名那一个文件——不得把已创建的 BankListItem.ets 一起拖下水。
+  //    按 check id + affected_files 断言，而不是对整条 blocker 做 `JSON.stringify().includes()`
+  //    ——后者被任意一处提到文件名的散文（suggestion / details 诊断行）满足（codex 阻断 1）。
   const coding = readSummary(project, 'coding');
   assert(coding?.verdict !== 'PASS', `coding 不该 PASS（真缺失文件被放过）：${dumpPhase(project, 'coding')}`);
   const blockers = coding?.blockers ?? [];
-  const named = blockers.filter(b => JSON.stringify(b).includes('BankBadge.ets'));
-  assert(named.length > 0, `coding blockers 没点名真缺失文件：${JSON.stringify(blockers).slice(0, 800)}`);
+  const completeness = blockers.find(b => (b.id ?? b.check_id) === 'file_completeness');
+  assert(completeness, `coding 没落在生产的 file_completeness 判据上：${JSON.stringify(blockers).slice(0, 800)}`);
+  const missing = completeness!.affected_files ?? [];
   assert(
-    !blockers.some(b => JSON.stringify(b).includes('BankListItem.ets')),
-    `coding 把已创建的待创建文件也判缺失：${JSON.stringify(blockers).slice(0, 800)}`,
+    missing.includes(RC1_NEVER_CREATED),
+    `file_completeness 的缺失清单没点名真缺失文件：${JSON.stringify(completeness)}`,
+  );
+  assert(
+    !missing.includes(REAL_CHAIN_NEW_SOURCE),
+    `file_completeness 把已创建的待创建文件也判缺失：${JSON.stringify(completeness)}`,
   );
   assert(probe.exitCode !== 0, `coding 缺文件却整条 run 正常收尾：exit=${probe.exitCode}`);
 }));
@@ -286,9 +390,10 @@ test('RC-2 runless：修订后 implementation basis 随新契约刷新、重解�
     contracts: resolvedInputs.values.contracts,
     born: dumpObligations(born),
   }).slice(0, 1800));
-  const reportsDir = featurePhaseReportsDir(root, feature, 'plan', frameworkRoot);
-  fs.mkdirSync(reportsDir, { recursive: true });
-  fs.writeFileSync(path.join(reportsDir, 'script-report.json'), JSON.stringify({ checks: [revisionCheck] }), 'utf-8');
+  // 落盘走**生产 writer**（`report-generator.ts:116`），不是手拼 `{checks:[…]}`——手拼会绕开
+  // `finalizeChecksForScriptReport` 的兼容降级/来源回填，于是修订在一份真实链上不会产生的
+  // 报告形态里被消费（codex 2026-09-22 阻断 2）。
+  generateScriptReport('', 'plan' as Phase, feature, root, [revisionCheck as CheckResult], frameworkRoot);
 
   const applied = applyFeatureScopeRevisionsThenMaybeComplete({ projectRoot: root, frameworkRoot, feature, phase: 'plan', workflowTrack: 'full' });
   assert(applied.revisionApplied === true, `修订未被应用：${JSON.stringify(applied)}`);
@@ -316,9 +421,32 @@ test('RC-2 runless：修订后 implementation basis 随新契约刷新、重解�
     const acceptanceBindings = o.basis.filter((b: { input_id?: string }) => b.input_id === 'acceptance');
     assert(acceptanceBindings.length <= 1, `acceptance 旧世代未被替换：${JSON.stringify(acceptanceBindings)}`);
   }
-  // ③ 重解析不抛 stale（W2 里这一步直接异常）。
-  const reResolved = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot, feature, phase: 'coding', featuresDir: relFeaturesDir(root) });
-  assert(reResolved.inputContext !== undefined, `coding 重解析没拿到 inputContext：${JSON.stringify(reResolved).slice(0, 400)}`);
+  // ③ 重解析不抛 stale（W2 里这一步直接异常）。判据不能停在入口对象上——真正判
+  //    `input binding stale` 的是后续 `resolveCapabilityInputs`（`capability-resolution.ts:666`
+  //    把 expected_bindings 不符的输入改判 invalid），所以这里把 coding 的输入真解析一遍，
+  //    逐项断**状态 / 绑定路径 / 内容**（codex 2026-09-22 阻断 2）。
+  const codingBridge = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot, feature, phase: 'coding', featuresDir: relFeaturesDir(root) });
+  assert(codingBridge.inputContext !== undefined, `coding 重解析没拿到 inputContext：${JSON.stringify(codingBridge).slice(0, 400)}`);
+  const codingInputs = resolveCapabilityInputs({ projectRoot: root, frameworkRoot, feature, phase: 'coding', track: 'full', ...codingBridge }).inputs!;
+  const codingStates = JSON.stringify(Object.fromEntries(
+    Object.entries(codingInputs.values).map(([id, v]) => [id, `${v.state}${v.state === 'resolved' ? '' : `/${(v as { detail?: string }).detail ?? ''}`}`]),
+  ));
+  const contractsValue = codingInputs.values.contracts;
+  assert(contractsValue?.state === 'resolved',
+    `修订后 coding 的 contracts 输入仍不可解析（W2 这一步当年直接抛 stale）：${codingStates}`);
+  const contractsRefs = (contractsValue as { binding?: { source_refs?: string[] } }).binding?.source_refs ?? [];
+  assert(contractsRefs.includes(`doc/features/${feature}/contracts.yaml`),
+    `contracts 绑定没指向 plan 刚产出的契约文件：${JSON.stringify(contractsRefs)}`);
+  assert(
+    JSON.stringify((contractsValue as { value?: { files?: string[] } }).value?.files ?? []).includes(REAL_CHAIN_SOURCE),
+    `contracts 解析出的内容里没有本轮写集：${JSON.stringify((contractsValue as { value?: unknown }).value).slice(0, 600)}`,
+  );
+  // W2 的失败形态是 `input binding stale`，逐个输入都不得出现它。（本条是 runless 单变量夹具，
+  // 造材料时已删掉 `context/facts.md`——见本条开头；因此不做"任何 invalid 都不许有"的全称断言，
+  // 只锁 stale 这一格。）
+  const staleInputs = Object.entries(codingInputs.values)
+    .filter(([, v]) => v.state === 'invalid' && /stale/.test((v as { detail?: string }).detail ?? ''));
+  assert(staleInputs.length === 0, `coding 重解析出现 stale 绑定（W2 的失败形态）：${codingStates}`);
 
   // ④ 另一半真实行为（见本条头部偏离说明）：**已满足**的验收被 spec 再改时，
   //    重解析不抛异常，而是优雅判 invalid 并指回 scope owner。W2 当年是直接抛。
@@ -333,18 +461,23 @@ test('RC-2 runless：修订后 implementation basis 随新契约刷新、重解�
   const specBridge = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot, feature, phase: 'spec', featuresDir: relFeaturesDir(root) });
   const specInputs = resolveCapabilityInputs({ projectRoot: root, frameworkRoot, feature, phase: 'spec', track: 'full', ...specBridge }).inputs!;
   const acceptanceValue = specInputs.values.acceptance;
-  assert(acceptanceValue?.state === 'invalid' && /stale/.test((acceptanceValue as { detail?: string }).detail ?? ''),
-    `改已满足的验收后重解析的结论变了：${JSON.stringify(acceptanceValue)}`);
+  // 判据核**原因**而不只是 `/stale/` 二字：这条锁的是「指回 scope owner」这条出路
+  //（`capability-resolution.ts:666` 的原文），换成别的 stale 文案即归因换了人（codex 阻断 2）。
+  assert(
+    acceptanceValue?.state === 'invalid'
+      && (acceptanceValue as { detail?: string }).detail === 'input binding stale; return to scope owner',
+    `改已满足的验收后重解析的结论变了：${JSON.stringify(acceptanceValue)}`,
+  );
 }));
 
 // ===========================================================================
 // RC-3（墙 W3）：UT 改自己负责的测试不作废 coding
 // ---------------------------------------------------------------------------
 // 构造：ut 阶段经 `onUt` 回调在链上**真写一次**测试文件（不是夹具事前塞好）。
-// 判据：coding 不被判 stale；产品源码真变化时 coding 仍须复核。
+// 判据：coding 不被判 stale；产品源码在上游读集里带施工归属，且施工豁免只给归属阶段。
 // ===========================================================================
 
-test('RC-3 UT 在链上真写测试：coding 不 stale；产品源码变化时 coding 仍须复核', withProject(async (project, birthChain) => {
+test('RC-3 UT 在链上真写测试：coding 不 stale；上游源码带施工归属且豁免只给 coding', withProject(async (project, birthChain) => {
   const probe = await runGoalRuntimeChain(project.root, {
     frameworkRoot: project.frameworkRoot,
     featureId: project.feature,
@@ -395,26 +528,59 @@ test('RC-3 UT 在链上真写测试：coding 不 stale；产品源码变化时 c
     `UT 之后又回退重跑了 coding：${probe.invokedPhases.join(',')}`,
   );
 
-  // ③ **待补（codex 2026-09-22 裁定）**：原先这里锁的是「产品源码变了 coding 仍 fresh」
-  //    并标 known-bug——该命题**已被推翻**：`phase-closure-finalizer.ts:164/306` 另有
-  //    `capabilityResolutionEvidenceInputs` / `executedEvidenceInputs` 两条 extraInputs 登记通道，
-  //    真实宿主 bc-openCard-2 的 coding/review/ut manifest 都登记了源码；我在 1.1 夹具上看到的
-  //    「改源码仍 fresh」是 1.1 `legacyDesign` 回落 module catalog 的既定行为。
-  //    反向哨兵已删（它锁的是一个不成立的命题）。
-  //    **W3 的正向验收**改为：在 1.2 链上先证明 coding manifest 确实登记了源码，
-  //    再断言源码变化使 coding stale 并向下游传播——等 1.2 的 coding→testing 跑通后落地
-  //    （plan §10.11）。在那之前本条只验 ① ②，不对第三件事下任何结论。
+  // ③ W3 的正向验收（codex 2026-09-22 裁定后重写；原先那条「改源码仍 fresh」的 known-bug
+  //    反向哨兵锁的是**已被推翻**的命题，已删）。三步，都在 1.2 链上：
+  //    (a) **plan** 的 manifest 确实登记了产品源码，且条目带 `owner_phase='coding'`
+  //        ——归属由 goal 闭环透传 factsContext 得出（plan b5c1e9d7 缺口 A，e128e07f 修；
+  //        在那之前 spec/plan manifest 的源码条目 `owner_phase` 全是 undefined）；
+  //    (b) 施工豁免：源码变化时，**归属阶段正在跑**（pendingOwnerPhase='coding'）plan 不算漂移
+  //        ——`phase-evidence-manifest.ts:866`。这正是 coding 能改 plan 读集里源码的那条出路；
+  //    (c) 反面：同一份变化换成 review/ut 在跑（pendingOwnerPhase='ut'）时 plan **仍 stale**
+  //        ——豁免只给归属阶段，不是给所有人。(b)/(c) 唯一变量是 pendingOwnerPhase。
+  const planManifest = loadPhaseEvidenceManifest(project.root, project.feature, 'plan');
+  const sourceEntry = (planManifest?.manifest.inputs ?? []).find(e => e.path === REAL_CHAIN_SOURCE);
+  assert(sourceEntry, `plan manifest 未登记产品源码：${JSON.stringify((planManifest?.manifest.inputs ?? []).map(e => e.path))}`);
+  assert(sourceEntry!.owner_phase === 'coding',
+    `plan manifest 的源码条目没有施工归属（b5c1e9d7 缺口 A 复发）：${JSON.stringify(sourceEntry)}`);
+
+  const sourceAbs = path.join(project.root, REAL_CHAIN_SOURCE);
+  fs.writeFileSync(sourceAbs, `${fs.readFileSync(sourceAbs, 'utf-8')}\n// W3 probe\n`, 'utf-8');
+  const planVerdict = (pendingOwnerPhase: string): string | undefined =>
+    recomputePhaseEvidenceStaleness(project.root, project.feature, ['plan'], { frameworkRoot: project.frameworkRoot, pendingOwnerPhase })
+      .find(r => r.phase === 'plan')?.verdict;
+  assert(planVerdict('coding') === 'fresh',
+    `源码变化时 coding 正在施工却仍判 plan 漂移（施工豁免失效）：${JSON.stringify(planVerdict('coding'))}`);
+  assert(planVerdict('ut') === 'stale',
+    `源码变化时 ut 在跑也拿到了施工豁免（豁免泄漏给非归属阶段）：${JSON.stringify(planVerdict('ut'))}`);
 }));
 
 // ===========================================================================
 // RC-4（墙 W4）：同一产物连跑两次，verifier subject 稳定
 // ---------------------------------------------------------------------------
-// 构造：同一条链里 ut 跑三轮，每轮换一个 `MAISON_TEST_AC_COVERAGE_NOW` 时钟；
-// 第 2 轮同时改一次**真实业务内容**（UT 测试正文）。
-// 判据：时钟变化不得换 subject（W4 的墙）；业务内容变化必须换 subject（反洗白）。
+// 构造两段，各自单变量：
+//   (甲) 链内：ut 第 2 轮改一次**真实业务内容**（UT 测试正文）→ 反洗白，必须换代；
+//   (乙) 链后：**材料字节一个都不动**，只换 `MAISON_TEST_AC_COVERAGE_NOW`，把**真实 gate
+//        harness** 再跑两轮（与 `goal-phase-runtime.ts:1272` 同一条命令与同一组注入键）
+//        → W4 的墙：两轮落盘的 `verifier.request.*.json` 的 subject_id 必须逐字相同，
+//        整份逐字段对账里**唯一**允许不等的是审计字段 `prompt_sha256`（按设计不进 subject）。
+// 甲段里时钟与正文一起变，**证不了**时钟不变量；乙段才是那一条（codex 2026-09-22 阻断）。
 // ===========================================================================
 
 const RC4_CLOCKS = ['2026-01-01T00:00:00.000Z', '2026-02-02T00:00:00.000Z', '2026-03-03T00:00:00.000Z'];
+
+/**
+ * 甲乙两段**共用的同一个**设备环境对象。取值与 `goal-runner-testing-integrity.unit.test.ts:497`
+ * 的默认就绪门桩逐字相同（本条只是把它显式化好让乙段拿到同一份，不改任何行为）。
+ * 为什么必须共用：父进程 profile 回落 hmos-app（`profile-loader.ts:195`）后 `ut.run` 属设备能力，
+ * 就绪门会冻结 HDC 目标，生产在 `goal-phase-runtime.ts:8244` 把它传给 gate harness；
+ * 乙段若不带，跑的就是与甲段不同的环境（codex 2026-09-22 三轮）。
+ * `probe.harnessDeviceEnvs` 取不到——那是**注入桩**的记录，`realHarness` 下不装桩
+ * （`goal-runner-testing-integrity.unit.test.ts:538`），故改从就绪门注入点共享。
+ */
+const RC4_DEVICE_ENV: Record<string, string> = {
+  HARNESS_HDC_TARGET: 'fake-device',
+  MAISON_DEVICE_TARGET_KIND: 'physical',
+};
 
 test('RC-4 verifier subject：时钟漂移不换代，业务内容变化必须换代', withProject(async (project, birthChain) => {
   const prevClock = process.env.MAISON_TEST_AC_COVERAGE_NOW;
@@ -422,12 +588,23 @@ test('RC-4 verifier subject：时钟漂移不换代，业务内容变化必须�
   process.env.NODE_ENV = 'test';
   /** 每轮 ut 开始时盘上 summary 的 subject = **上一轮** harness 算出来的那个。 */
   const subjectBefore: Array<string | undefined> = [];
+  /** 就绪门实际被调用的阶段（本条自备——显式 deviceGate 覆盖后 probe 的那份不再记录）。 */
+  const gatedPhases: string[] = [];
   try {
     const probe = await runGoalRuntimeChain(project.root, {
       frameworkRoot: project.frameworkRoot,
       featureId: project.feature,
       realHarness: true,
       adapter: 'codex',
+      // 甲段的设备环境从这里出，乙段直接复用**同一个对象**（见 RC4_DEVICE_ENV 注释）。
+      deviceGate: (gateOpts: { phase: string }) => {
+        gatedPhases.push(String(gateOpts.phase));
+        return {
+          env: RC4_DEVICE_ENV,
+          target: { serial: 'fake-device', targetKind: 'physical' as const },
+          notes: ['test seam'],
+        };
+      },
       freshStartPhase: birthChain[0] as 'spec',
       freshEndPhase: birthChain[birthChain.length - 1],
       freshRequirement: REAL_CHAIN_REQUIREMENT,
@@ -471,14 +648,17 @@ test('RC-4 verifier subject：时钟漂移不换代，业务内容变化必须�
       `UT 测试正文不在 subject 材料里，反洗白那一半失去对象：${JSON.stringify(material.files.map(f => f.path))}`,
     );
 
-    // 前提②：W4 的那份时间戳产物**没有**进 subject 材料（`createRuntimeArtifactPredicate`
-    // 把 `<phase>/reports/` 整片排除，见 verifier-material.ts:116-132）。这条是"时钟不换代"
-    // 的第一道防线，写成断言是为了让它被删掉时当场红，而不是靠下面 ③ 间接发现。
+    // 前提②：`ac-coverage.json` **在** subject 材料里，这是**契约不是缺陷**
+    //（codex 2026-09-22 裁定，撤回本条早先那句"进材料即 W4 复发"）：
+    // `createRuntimeArtifactPredicate` 只作用在 `buildVerifierMaterialView` 的 manifest 那一路
+    //（verifier-material.ts:129），显式经 `contextFiles` 送进来的运行期证据不受 `reports/`
+    // 排除规则限制（`:145-148` 原文：那是 verifier 的实际读取面）。因此"时钟不换代"不靠
+    // 把它挡在材料外，而靠它的内容本身对时钟稳定——即下面的前提③。
     assert(
-      !material.files.some(f => /\/ut\/reports\/ac-coverage\.json$/.test(f.path)),
-      `ac-coverage.json 进了 subject 材料（W4 的时间戳漂移面重新打开）：${JSON.stringify(material.files.map(f => f.path))}`,
+      material.files.some(f => /\/ut\/reports\/ac-coverage\.json$/.test(f.path)),
+      `ac-coverage.json 不在 subject 材料里，前提③锁的那一格失去对象：${JSON.stringify(material.files.map(f => f.path))}`,
     );
-    // 前提③：第二道防线——`writeAcCoverageReport` 在语义未变时**沿用旧 generated_at**
+    // 前提③：时钟不换代的**真防线**——`writeAcCoverageReport` 在语义未变时沿用旧 generated_at
     //（ac-coverage-report.ts:143-147）。三轮各给一个不同时钟，盘上必须还是第一轮那个。
     const acCoverage = JSON.parse(fs.readFileSync(path.join(utReportsDir, 'ac-coverage.json'), 'utf-8')) as { generated_at?: string };
     assert(
@@ -490,8 +670,8 @@ test('RC-4 verifier subject：时钟漂移不换代，业务内容变化必须�
     // `verifier.material.<subject>.json`。harness 实际跑了几轮由 events 的 harness_start 数。
     const harnessRounds = probe.events.filter(e => e.type === 'harness_start' && e.phase === 'ut').length;
     const generations = materialGenerations(project, 'ut');
-    const shaOf = (g: { files: MaterialView['files'] }): string | null =>
-      g.files.find(f => f.path === REAL_CHAIN_TEST)?.sha256 ?? null;
+    const shaOf = (g: { view: MaterialView }): string | null =>
+      g.view.files.find(f => f.path === REAL_CHAIN_TEST)?.sha256 ?? null;
     const dump = JSON.stringify({
       harnessRounds, agentAttempts: utPhases, clocksUsed: utPhases,
       generations: generations.map(g => ({ subject: g.subject.slice(0, 12), utTestSha: (shaOf(g) ?? '(none)').slice(0, 12) })),
@@ -515,15 +695,94 @@ test('RC-4 verifier subject：时钟漂移不换代，业务内容变化必须�
     assert(generations.length === 2, `本条按两代材料对账，实际 ${generations.length} 代：${dump}`);
     const [genA, genB] = generations;
     assert(
-      JSON.stringify(genA.files.map(f => f.path)) === JSON.stringify(genB.files.map(f => f.path)),
+      JSON.stringify(genA.view.files.map(f => f.path)) === JSON.stringify(genB.view.files.map(f => f.path)),
       `两代材料的文件集合不同，无法单变量对账：${dump}`,
     );
-    const drifted = genA.files
-      .filter((f, i) => f.sha256 !== genB.files[i].sha256)
+    const drifted = genA.view.files
+      .filter((f, i) => f.sha256 !== genB.view.files[i].sha256)
       .map(f => f.path);
     assert(
       JSON.stringify(drifted) === JSON.stringify([REAL_CHAIN_TEST]),
       `时钟漂移带进了材料（除 UT 正文外还有文件换 sha）：${JSON.stringify(drifted)}；${dump}`,
+    );
+    // 材料的**非文件字段**同样不得随时钟漂移——subject 经 material_sha256 把它们一起吃进去
+    //（`computeMaterialSha256`，verifier-material.ts:74），只对 `files` 逐文件对账会漏掉这一格。
+    for (const key of ['schema', 'input_bindings_sha256', 'gate_fingerprint', 'phase_rule_sha256',
+      'template_sha256', 'lifecycle_sha256', 'extension_sha256', 'script_checks'] as const) {
+      assert(
+        JSON.stringify(genA.view[key]) === JSON.stringify(genB.view[key]),
+        `两代材料的 ${key} 随时钟变了：${JSON.stringify([genA.view[key], genB.view[key]])}`,
+      );
+    }
+
+    // ③ 换代确实由**材料**驱动，且盘上凭证与生产派生自洽
+    //    （subject = sha256(schema, feature, phase, prompt_path, material_sha256, gate_fingerprint)，
+    //    `canonicalRequestInput`，verifier-request.ts:65-79）。
+    const reqA = verifierRequestOf(project, 'ut', genA.subject);
+    const reqB = verifierRequestOf(project, 'ut', genB.subject);
+    assert(computeRequestSubjectId(reqB) === reqB.subject_id,
+      `request 的 subject 与生产派生不符（凭证被改过）：${reqB.subject_id}`);
+    assert(reqA.material_sha256 !== reqB.material_sha256, `两代 request 的 material_sha256 相同，换代与材料无关：${dump}`);
+
+    // ④ **W4 的墙本身**（codex 2026-09-22 阻断：甲段里时钟与正文一起变，证不了时钟不变量）。
+    //    材料字节一个都不动，只换时钟，把真实 gate harness 再跑两轮——整条 subject 派生链
+    //    （输入解析 → 材料视图 → material_sha256 → request）都由生产代码重走一遍。
+    //    判据：两轮落盘的 request 整份逐字段对账、**唯一允许差异 `prompt_sha256`**，
+    //    不是只比挑出来的几个字段，也不是拿确定性函数自我印证。
+    //    设备目标用甲段就绪门交出去的**同一个对象** `RC4_DEVICE_ENV`，不另造——否则乙段跑的
+    //    是与甲段不同的环境（父进程回落 hmos-app 后 `ut.run` 属设备能力，就绪门会冻结 HDC 目标，
+    //    生产在 `goal-phase-runtime.ts:8244` 把它传给 gate harness）。
+    const utAttemptId = phaseAttemptIdFromReceipt(project, 'ut');
+    assert(gatedPhases.includes('ut'),
+      `ut 没过就绪门，乙段带设备环境就失去依据：${JSON.stringify(gatedPhases)}`);
+    const clockRound = (clock: string): { subject: string; request: VerifierRequest } => {
+      // 每轮先清掉旧凭证：轮末只要"该 subject 的 request 在盘上"即证明是本轮写的，
+      // 不依赖时钟/文件系统 mtime 精度（codex 2026-09-22 三轮建议）。
+      for (const fn of fs.readdirSync(utReportsDir).filter(x => /^verifier\.request\..*\.json$/.test(x))) {
+        fs.rmSync(path.join(utReportsDir, fn), { force: true });
+      }
+      const r = runGateHarness(project, 'ut', clock, utAttemptId, RC4_DEVICE_ENV);
+      // 子进程必须真的跑成功——非 0 退出下面读到的全是上一轮的旧产物。
+      assert(r.status === 0, `只换时钟重跑 gate harness 未 exit 0（exit=${r.status}）：${r.output.slice(-2000)}`);
+      // 且必须真的**走了 goal 分支**：注入键名写错时子进程会静默落 interactive/manual
+      //（`harness-runner.ts:1589` 据 `isGoalOrchestrationEnv()` 渲染 `mode=goal_mode|manual`），
+      // 门禁照跑、断言照过，测的却不是生产路径。这一条就是那个错的哨兵。
+      assert(/\bmode=goal_mode\b/.test(r.output),
+        `重跑的 gate harness 没走 goal 分支（注入键名/常量对不上）：${r.output.slice(-2000)}`);
+      const subject = readSummary(project, 'ut')?.verifier_subject_id;
+      assert(subject && /^[0-9a-f]{64}$/.test(subject),
+        `只换时钟重跑 gate harness 后 summary 无合法 subject：${r.output.slice(-1500)}`);
+      // 且必须是**本轮**落的盘：进轮前整片删过，凭证写入是无条件 `writeFileSync`
+      //（harness-runner.ts:2524），文件重新出现即证明本轮真写了，没写就无从冒充。
+      const abs = path.join(utReportsDir, `verifier.request.${subject}.json`);
+      assert(fs.existsSync(abs), `本轮没有重新落盘 request（进轮前已清空该目录的凭证）：${abs}`);
+      return { subject: subject!, request: verifierRequestOf(project, 'ut', subject!) };
+    };
+    const clockX = clockRound(RC4_CLOCKS[1]);
+    const clockY = clockRound(RC4_CLOCKS[2]);
+    assert(clockX.subject === clockY.subject,
+      `材料不变、只换时钟，subject 却换代了：${clockX.subject.slice(0, 12)} vs ${clockY.subject.slice(0, 12)}；${dump}`);
+    //    整份逐字段对账，**唯一允许差异 `prompt_sha256`**：ai-prompt.md 每轮带运行时间戳，
+    //    它按设计只作审计记录、不进 subject 派生——依据三处：文件头裁决
+    //    （verifier-request.ts:22-23）、字段注释（:41）、派生串本身不含该字段
+    //    （`canonicalRequestInput`，:65-79）。实测两轮正是它漂移（其余含 material_sha256 /
+    //    gate_fingerprint / source_commit_sha / worktree_digest 全部逐字相同）——
+    //    这条同时证明了「时间确实在动」，本轮对照不是空转；漂移的那一格没有到达 subject。
+    const xr = clockX.request as unknown as Record<string, unknown>;
+    const yr = clockY.request as unknown as Record<string, unknown>;
+    const diffKeys = [...new Set([...Object.keys(xr), ...Object.keys(yr)])]
+      .filter(k => JSON.stringify(xr[k]) !== JSON.stringify(yr[k]))
+      .sort();
+    assert(
+      JSON.stringify(diffKeys) === JSON.stringify(['prompt_sha256']),
+      `材料不变、只换时钟，request 的差异不止审计字段：${JSON.stringify(diffKeys)}\n`
+      + `${JSON.stringify(clockX.request)}\n${JSON.stringify(clockY.request)}`,
+    );
+    //    两份凭证各自用**生产派生函数**重算，都落回同一个 subject（漂移的审计字段不参与）。
+    assert(
+      computeRequestSubjectId(clockX.request) === clockX.subject
+      && computeRequestSubjectId(clockY.request) === clockX.subject,
+      `两份凭证的 subject 与生产派生不一致：${JSON.stringify([computeRequestSubjectId(clockX.request), computeRequestSubjectId(clockY.request), clockX.subject])}`,
     );
   } finally {
     if (prevClock === undefined) delete process.env.MAISON_TEST_AC_COVERAGE_NOW;
@@ -538,22 +797,42 @@ test('RC-4 verifier subject：时钟漂移不换代，业务内容变化必须�
 // ---------------------------------------------------------------------------
 // 在真 harness 链上制造同签名重复失败，两个分支各跑一条独立的链：
 //   (a) 相关文件**真修改** → 允许继续（第 3 轮仍在跑）；
-//   (b) 仅 notes/无关文件变化 → 走既有 no-progress 停机。
+//   (b) 只改无关文件 → 走既有 no-progress 停机。
 // 判据是"停或不停 + 理由正确"，不是"结论正确"。
+//
+// **失败点为什么在 plan 而不是 spec**（codex 2026-09-22 裁定，撤回本条早先的 spec.md 构造）：
+// 1.2 的范围里 spec 的 required_outputs **不含 `spec.md`**，于是 `check-spec.ts:1484` 走
+// 早退分支——`checkTerminologyMappingTable` 那一整组以 spec.md 为载体的检查**根本不执行**。
+// 早先"删掉术语映射表整章"因此是空动作：实跑里 spec 照常 PASS，真正停机的是随后**没有
+// 契约**的 plan。也就是说 (a) 报的"生产误熔断"与 (b) 的"通过"都不是它们各自声称的东西。
+// 改法：把失败点显式落在 1.2 下**真会执行**的那格，并先证明它确实到达了失败结果（见
+// `assertPlanFailedOnFactsDelta`），再做单变量对照。**不动生产熔断。**
 // ===========================================================================
 
+/** plan 期确定性失败点的 check id（`context-facts.ts:123`，BLOCKER，带 affected_files）。 */
+const RC8_CHECK_ID = 'context_exploration_facts_phase_delta_missing';
+
+/** 两条共用：无关文件每轮都变（把"无关变化"这一项在 (a)/(b) 之间拉平）。 */
+function writeUnrelatedNote(p: RealChainProject, attempt: number): void {
+  writeHostFile(p.root, 'doc/notes.md', `# notes\n\nattempt ${attempt}\n`);
+}
+
 /**
- * 把共用 spec 材料改成确定性失败：删掉「术语映射表」整章。
- * 取这一章而不是「功能清单」，是因为 `checkTerminologyMappingTable`（check-spec.ts:888-900）
- * 会把 `affected_files: spec.md` 带出来——**相关文件集合因此是"已知"的**，
- * (a)/(b) 两条才是单变量对照（唯一差别＝那个已知的相关文件到底有没有真变）。
+ * 先证明失败触发到了预期契约：plan 因 `RC8_CHECK_ID` 失败，且**相关文件集合**里确实有
+ * `context/facts.md`——熔断的 watched 集合正来自 `blockers[].affected_files`
+ * （`extractContentRelatedFiles`，goal-failure-classifier.ts:406）。这一格不成立时，
+ * (a)/(b) 的结论各自都无从谈起。
  */
-function breakSpecMaterials(p: RealChainProject): void {
-  const abs = featureFilePath(p.root, p.feature, 'spec/spec.md');
-  const text = fs.readFileSync(abs, 'utf-8');
-  const stripped = text.replace(/## 0\. 术语映射表[\s\S]*?(?=## 1\. )/, '');
-  assert(stripped !== text, 'spec.md 章节形状已变，RC-8 的破坏点失效');
-  fs.writeFileSync(abs, stripped, 'utf-8');
+function assertPlanFailedOnFactsDelta(p: RealChainProject): void {
+  const factsRel = `doc/features/${p.feature}/context/facts.md`;
+  const plan = readSummary(p, 'plan');
+  assert(plan?.verdict === 'FAIL', `plan 没按预期失败：${dumpPhase(p, 'plan')}`);
+  const hit = (plan?.blockers ?? []).find(b => (b.id ?? b.check_id) === RC8_CHECK_ID);
+  assert(hit, `plan 的失败不在目标检查 ${RC8_CHECK_ID} 上：${dumpPhase(p, 'plan')}`);
+  assert(
+    (hit!.affected_files ?? []).includes(factsRel),
+    `目标检查没把相关文件带进失败结果，熔断的 watched 集合失去对象：${JSON.stringify(hit)}`,
+  );
 }
 
 test('RC-8a 同签名重复失败但相关文件真修改：不停机，继续下一轮', withProject(async (project, birthChain) => {
@@ -565,25 +844,26 @@ test('RC-8a 同签名重复失败但相关文件真修改：不停机，继续�
     freshStartPhase: birthChain[0] as 'spec',
     freshEndPhase: birthChain[birthChain.length - 1],
     freshRequirement: REAL_CHAIN_REQUIREMENT,
-    onSpec: ctx => {
+    onSpec: ctx => { project.runId = ctx.runId; writeSpecMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'spec'); },
+    onPlan: ctx => {
       project.runId = ctx.runId;
-      writeSpecMaterials(project);
-      // 前两轮同一组门禁失败；第 2 轮**相关文件本身确实被改了**（真修复尝试的形态），
-      // 第 3 轮起给出合法材料让链收敛，避免把用例变成重试预算耗尽测试。
-      if (ctx.attempt <= 2) {
-        breakSpecMaterials(project);
-        if (ctx.attempt === 2) {
-          const abs = featureFilePath(project.root, project.feature, 'spec/spec.md');
-          fs.writeFileSync(abs, `${fs.readFileSync(abs, 'utf-8')}\n<!-- attempt 2 real edit -->\n`, 'utf-8');
-        }
-      }
-      if (ctx.attempt > 1) publishVerifier(project, 'spec');
+      // 与 RC-8b 的**唯一**差别：相关文件（facts.md）每轮真换一次字节，但那一格仍没修好
+      //——追加一个新的 `##` 标题节：`factsBaselineFingerprint`（首个 `## phase_delta:`
+      // 之前的全部）不变，已闭环的 spec delta 段被下一个 `##` 截断因而也不变
+      //（`findPhaseDeltaSection` 的 `(?=\n##\s|$)`），plan 自己的 delta 段依旧缺失 → 同一组 blocker。
+      // 这正是"agent 动了被点名的文件、但没解决问题"那种真修复尝试的形态。
+      const factsAbs = featureFilePath(project.root, project.feature, 'context/facts.md');
+      fs.appendFileSync(factsAbs, `\n## attempt marker\n\nplan attempt ${ctx.attempt}\n`, 'utf-8');
+      writeUnrelatedNote(project, ctx.attempt);
     },
   });
-  const specAttempts = probe.invokedPhases.filter(x => x === 'spec').length;
-  const noProgress = haltEvents(probe.events).filter(e => /^no_progress/.test(String(e.halt_reason ?? '')));
+  assertPlanFailedOnFactsDelta(project);
+  const planAttempts = probe.invokedPhases.filter(x => x === 'plan').length;
+  // 判据只对 plan 说话：spec 已 PASS 推进，plan 之后没有别的阶段跑起来。
+  const noProgress = haltEvents(probe.events)
+    .filter(e => e.phase === 'plan' && /^no_progress/.test(String(e.halt_reason ?? '')));
   assert(noProgress.length === 0, `真修改仍被判无进展停机：${JSON.stringify(noProgress)}`);
-  assert(specAttempts >= 3, `相关文件真修改却只跑了 ${specAttempts} 轮：${JSON.stringify(haltEvents(probe.events))}`);
+  assert(planAttempts >= 3, `相关文件真修改却只跑了 ${planAttempts} 轮：${JSON.stringify(haltEvents(probe.events))}`);
 }));
 
 test('RC-8b 同签名重复失败且只改无关文件：走既有 no-progress 停机并说清理由', withProject(async (project, birthChain) => {
@@ -595,38 +875,37 @@ test('RC-8b 同签名重复失败且只改无关文件：走既有 no-progress �
     freshStartPhase: birthChain[0] as 'spec',
     freshEndPhase: birthChain[birthChain.length - 1],
     freshRequirement: REAL_CHAIN_REQUIREMENT,
-    onSpec: ctx => {
+    onSpec: ctx => { project.runId = ctx.runId; writeSpecMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'spec'); },
+    onPlan: ctx => {
       project.runId = ctx.runId;
-      writeSpecMaterials(project);
-      breakSpecMaterials(project);
-      // 与 RC-8a 的唯一差别：相关文件（spec.md）字节恒定，只有无关的 notes 每轮不同。
-      writeHostFile(project.root, 'doc/notes.md', `# notes
-
-attempt ${ctx.attempt}
-`);
-      if (ctx.attempt > 1) publishVerifier(project, 'spec');
+      // 与 RC-8a 的唯一差别：相关文件（facts.md）字节恒定；无关的 notes 变化两边一模一样。
+      writeUnrelatedNote(project, ctx.attempt);
     },
   });
+  assertPlanFailedOnFactsDelta(project);
   const halts = haltEvents(probe.events);
-  const specAttempts = probe.invokedPhases.filter(x => x === 'spec').length;
-  const noProgress = halts.filter(e => /^no_progress/.test(String(e.halt_reason ?? '')));
+  const planAttempts = probe.invokedPhases.filter(x => x === 'plan').length;
+  const noProgress = halts.filter(e => e.phase === 'plan' && /^no_progress/.test(String(e.halt_reason ?? '')));
   assert(
     noProgress.length > 0,
-    `无进展却没走 no-progress 停机（spec 跑了 ${specAttempts} 轮）：${JSON.stringify(halts)}
-${dumpPhase(project, 'spec')}`,
+    `无进展却没走 no-progress 停机（plan 跑了 ${planAttempts} 轮）：${JSON.stringify(halts)}
+${dumpPhase(project, 'plan')}`,
   );
-  // reason 必须说清"停在哪一类事实上"：同签名 + watched 产物零变化。
+  // halt_reason 要落**这一支**：`no_progress_toolchain/capture/agent_timeout` 与它共用同一句
+  //「零变化」模板（goal-phase-runtime.ts:9004），只匹配 `/^no_progress/` + `/零变化/` 认不出走错支。
+  const halt = noProgress[0];
+  assert(halt.halt_reason === 'no_progress_guard', `停机走的不是内容失败那一支：${JSON.stringify(halt.halt_reason)}`);
   assert(
-    /零变化/.test(String(noProgress[0].reason ?? '')),
-    `停机理由没说清无进展事实：${JSON.stringify(noProgress[0])}`,
+    /零变化/.test(String(halt.reason ?? '')) && /failure_kind=code_regression/.test(String(halt.reason ?? '')),
+    `停机理由没说清无进展事实或失败分类不是内容失败：${JSON.stringify(halt.reason)}`,
   );
-  // 相关集合在本条里是**已知**的（spec.md），故不得走 d84cd6de 的「相关目标未知」话术
-  //——那条是相关集合为空时的另一支，混用即归因错位。
+  // 相关集合在本条里是**已知**的（facts.md，由 assertPlanFailedOnFactsDelta 坐实），
+  // 故不得走 d84cd6de 的「相关目标未知」话术——那条是相关集合为空时的另一支，混用即归因错位。
   assert(
-    !/没能解析出任何相关目标|相关目标未知/.test(String(noProgress[0].halt_guidance ?? '')),
-    `相关集合已知却报「相关目标未知」：${JSON.stringify(noProgress[0].halt_guidance)}`,
+    !/没能解析出任何相关目标|相关目标未知/.test(String(halt.halt_guidance ?? '')),
+    `相关集合已知却报「相关目标未知」：${JSON.stringify(halt.halt_guidance)}`,
   );
-  assert(specAttempts <= 3, `无进展停机太晚：spec 跑了 ${specAttempts} 轮`);
+  assert(planAttempts <= 3, `无进展停机太晚：plan 跑了 ${planAttempts} 轮`);
   assert(probe.exitCode !== 0, '停机后整条 run 仍报成功');
 }));
 
