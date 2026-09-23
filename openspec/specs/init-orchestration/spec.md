@@ -248,6 +248,16 @@ Capability recommendations MUST come from `skills/skills.index.yaml`
 `feature_ready`). Recovery/corrupt steps MUST be harness-synthesized and MUST
 NOT masquerade as Skills.
 
+The formal-requirement entry uses `when: design_entry_ready` (kind optional, no
+`workflow_artifact`). It MUST hold only when the catalog is ready and the
+configured `project_profile.name` has a design lens per `profileHasDesignLens`,
+the same predicate the P1 blueprint checker uses for its unsupported result.
+The harness MUST append one disclosure line stating whether the files at
+`paths.conventions` and `paths.component_index` exist; the disclosure MUST NOT
+create required steps, block init, or add a readiness type. `feature_ready`
+entries for spec/plan remain and are worded as legacy flat Feature /
+non-formal maintenance.
+
 The framework-init Skill MUST verbatim replay harness「必须处理」/「可选下一步」
 sections; it MUST NOT list static downstream phase bullets.
 
@@ -309,16 +319,47 @@ state applies.
 - **THEN** probe MUST return `corrupt` with an error message (not `missing`)
 - **AND** derive MUST emit harness required repair without optional goal-mode
 
+#### Scenario: design lens profile with ready catalog recommends component-design
+- **WHEN** `project_profile.name` is `hmos-app` and the catalog is ready
+- **THEN** optional next_steps MUST include the `component-design` index entry
+  (`when: design_entry_ready`, priority 34, ordered between code-graph 30 and
+  plan 35)
+- **AND** its message MUST end with one line disclosing whether the
+  `paths.conventions` and `paths.component_index` files exist
+- **AND** a missing conventions or component index file MUST NOT produce a
+  required step
+
+#### Scenario: profile without design lens gets no component-design entry
+- **WHEN** `project_profile.name` is `generic` and the catalog is ready
+- **THEN** next_steps MUST NOT include `component-design`
+- **AND** a `feature_ready` plan entry, when present, MUST be worded as
+  legacy flat Feature / non-formal maintenance
+- **AND** the P1 blueprint checker MUST report
+  `blueprint_design_lens_unsupported` for that profile
+
+#### Scenario: catalog not ready gets no component-design entry
+- **WHEN** the catalog is missing or empty
+- **THEN** next_steps MUST NOT include `component-design`
+
+#### Scenario: design_entry_ready rejects workflow_artifact
+- **WHEN** an index entry declares `when: design_entry_ready` with a
+  `workflow_artifact`
+- **THEN** the skills.index lint MUST report `unexpected_workflow_artifact`
+
 > **Enforced by:** `harness/scripts/utils/init-next-steps.ts`,
 > `harness/scripts/utils/finalize-init-run-log.ts`,
 > `harness/scripts/init-orchestrate.ts`,
 > `harness/scripts/check-skills-index-init-steps.ts`,
+> `harness/scripts/utils/skills-index-init-steps.ts`,
+> `harness/scripts/utils/blueprint-provider-boundary.ts`,
+> `harness/scripts/check-component-blueprint.ts`,
 > `harness/code-graph/module-graph-probe.ts`,
 > `skills/skills.index.yaml`,
 > `skills/project/framework-init/SKILL.md`,
 > `harness/tests/unit/init-next-steps.unit.test.ts`,
 > `harness/tests/unit/module-graph-probe.unit.test.ts`,
-> `harness/tests/unit/skills-index-init-steps.unit.test.ts`
+> `harness/tests/unit/skills-index-init-steps.unit.test.ts`,
+> `harness/tests/unit/component-blueprint.unit.test.ts`
 
 ### Requirement: Init proposes project_scale with user confirmation
 
@@ -751,3 +792,4 @@ Enforcement: `skills/project/framework-init/SKILL.md`, `agents/{claude,codeagent
 
 - **WHEN** an unfinished real S1 is approved in a later turn
 - **THEN** a new S4 MAY only be reported after that turn actually executes a new S3 run producing a new run-log
+

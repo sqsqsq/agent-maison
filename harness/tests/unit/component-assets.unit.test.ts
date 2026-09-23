@@ -5,7 +5,10 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 import { execFileSync } from 'child_process';
 import { clearFrameworkConfigCache, componentIndexPath, componentCatalogPath, loadFrameworkConfig, relComponentIndex } from '../../config';
-import { scanComponentIndex, serializeComponentIndex, readComponentIndex, mergeComponentCatalog, selectionShapeIssues, AssetSelection } from '../../scripts/utils/component-assets';
+import { scanComponentIndex, serializeComponentIndex, readComponentIndex, mergeComponentCatalog, selectionShapeIssues, AssetSelection, resolveAdmittedModules, componentDependencyAllowed } from '../../scripts/utils/component-assets';
+import { fingerprintDiscoverySources } from '../../scripts/utils/blueprint-discovery';
+import { currentScopeItems } from '../../scripts/utils/blueprint-requirement-traceability';
+import { validateComponentClosureKnowledge } from '../../scripts/utils/component-closure-knowledge';
 import { componentStaticChecks } from '../../../profiles/hmos-app/harness/component-extractor';
 import { checkComponentCatalog, componentResult } from '../../scripts/utils/component-catalog-check';
 import { checkComponentSelections, componentProjectionErrors } from '../../scripts/utils/component-selection-check';
@@ -21,7 +24,7 @@ import { validateComponentBlueprint } from '../../scripts/utils/component-bluepr
 import { validateEvolutionDecisions } from '../../scripts/utils/blueprint-evolution-decisions';
 import { validateBlueprintProviders } from '../../scripts/utils/blueprint-provider-boundary';
 import { validateBlueprintAdmission } from '../../scripts/utils/blueprint-admission';
-import { componentBlueprintPath, loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-path';
+import { componentBlueprintPath, loadCanonicalBlueprint, resolveComponentBlueprintRef } from '../../scripts/utils/component-blueprint-path';
 import { renderBlueprintReviewMarkdown } from '../../scripts/utils/blueprint-review-projection';
 import { checkCanonicalComponentBlueprint, checkHostSeamMaterials } from '../../scripts/check-component-blueprint';
 import { loadCanonicalChangeUnit, createChangeUnitRef, deriveChangeUnitFeatureId } from '../../scripts/utils/change-unit-path';
@@ -426,6 +429,165 @@ test('R5 直接回归：空生命周期声明加 Divider 不产生新共享组�
     assert.equal(report.summary.verdict, 'PASS');
     assert.equal(report.summary.blockers, 0);
   }
+}));
+
+// ---- plan a3c7e9d1 t2/t3：获准模块 / 术语事实 / architecture_impact（P1 侧）----
+function refingerprint(bp: any) {
+  const fp = fingerprintDiscoverySources(bp.discovery.facts, currentScopeItems(bp));
+  bp.discovery.source_fingerprint = fp; bp.source_fingerprint = fp;
+  for (const result of bp.derived_results ?? []) result.source_fingerprint = fp;
+}
+function termFact(term: string, module: string, confidence: string, method: string, sourceKind = 'catalog') {
+  return { fact_id: `term-${confidence}-${method}`, subject: `term:${term}`, value: { canonical_module: module, confidence, easily_confused_with: [] },
+    provenance: { source_kind: sourceKind, source_ref: sourceKind === 'glossary' ? 'doc/glossary.yaml' : 'doc/module-catalog.yaml', observed_at: '2026-09-23T10:00:00+08:00', evidence_strength: 'observed', extraction_method: method } };
+}
+function architectureDecision(id: string, fields: Record<string, unknown>, status = 'decided_with_authority', bp?: any) {
+  return { decision_id: id, kind: 'architecture_impact', rationale: '本次演进需要', status, owner: 'architecture-owner', verification_refs: [`verify:${id}`], provenance: bp?.provenance, ...fields };
+}
+const blockerIds = (bp: any, root: string) => validateComponentBlueprint(bp, { projectRoot: root }).filter(i => i.severity === 'BLOCKER').map(i => i.id);
+
+test('a3c7e9d1 正例：add_module 声明的新模块同源放行节点 module、术语 canonical_module 与组件复用依赖，并生成 closure 归位义务', () => setup(root => {
+  generate(root); const { bp, view } = blueprintFixture(root);
+  view.nodes[0].module = 'NewFeature';
+  let ids = blockerIds(bp, root);
+  assert(ids.includes('blueprint_node_module_unadmitted'), ids.join(','));
+  assert(ids.includes('blueprint_asset_dependency_illegal'), '未声明的新模块作 consumer 不得通过依赖判定');
+  bp.decisions_and_gaps.decisions.push(architectureDecision('add-new-feature', { change: 'add_module', module: 'NewFeature', layer: '02-Feature' }, 'decided_with_authority', bp));
+  bp.discovery.facts.push(termFact('卡包', 'NewFeature', 'medium', 'user_confirmed'));
+  refingerprint(bp);
+  ids = blockerIds(bp, root);
+  assert.deepEqual(ids, []);
+  const admitted = resolveAdmittedModules(root, bp);
+  assert.equal(admitted.declared.get('NewFeature'), '02-Feature');
+  assert(componentDependencyAllowed(root, 'NewFeature', 'SharedUi', admitted.declared));
+  assert(!componentDependencyAllowed(root, 'NewFeature', 'SharedUi'), 'catalog 外 consumer 未传声明时仍按旧语义拒绝');
+  const closure = validateComponentClosureKnowledge(root, { blueprint: { blueprint: bp } } as any);
+  assert(closure.issues.some(i => i.id === 'component_closure_knowledge_conclusion_unplaced' && i.path === 'decision:add-new-feature'), JSON.stringify(closure.issues));
+}));
+
+test('a3c7e9d1 反例：changed development 节点缺 module / 术语 canonical_module 不是获准模块 → P1 BLOCKER', () => setup(root => {
+  generate(root); const { bp, view } = blueprintFixture(root);
+  delete view.nodes[0].module;
+  assert(blockerIds(bp, root).includes('blueprint_node_module_missing'));
+  view.nodes[0].module = 'Feature';
+  bp.discovery.facts.push(termFact('卡包', 'Ghost', 'medium', 'user_confirmed')); refingerprint(bp);
+  const issues = validateComponentBlueprint(bp, { projectRoot: root }).filter(i => i.id === 'terminology_facts_confirmed');
+  assert(issues.some(i => i.severity === 'BLOCKER' && i.message.includes('Ghost')), JSON.stringify(issues));
+}));
+
+test('a3c7e9d1 术语确认：medium 未确认 → admission blocker；headless_assumed → WARN 入 must-review 不停步、不回写 glossary', () => setup(root => {
+  generate(root); const { bp } = blueprintFixture(root);
+  write(root, 'doc/glossary.yaml', 'schema_version: "1.0"\nterms: []\n');
+  const glossaryBefore = fs.readFileSync(path.join(root, 'doc/glossary.yaml'), 'utf8');
+  bp.discovery.facts.push(termFact('卡包', 'Feature', 'medium', 'model_inference')); refingerprint(bp);
+  let issues = validateComponentBlueprint(bp, { projectRoot: root });
+  assert(issues.some(i => i.id === 'terminology_facts_confirmed' && i.severity === 'BLOCKER'));
+  assert(issues.some(i => i.id === 'blueprint_admission_false_pass'), '未确认术语必须让 admission 派生为 blocker');
+  bp.discovery.facts[bp.discovery.facts.length - 1] = termFact('卡包', 'Feature', 'medium', 'headless_assumed'); refingerprint(bp);
+  issues = validateComponentBlueprint(bp, { projectRoot: root });
+  assert(!issues.some(i => i.severity === 'BLOCKER'), JSON.stringify(issues));
+  const warn = issues.find(i => i.id === 'terminology_facts_confirmed');
+  assert(warn?.severity === 'WARN' && warn.message.includes('must-review'), JSON.stringify(warn));
+  const glossaryAfter = fs.readFileSync(path.join(root, 'doc/glossary.yaml'), 'utf8');
+  assert.equal(glossaryAfter, glossaryBefore); assert(!glossaryAfter.includes('user-approved'));
+}));
+
+test('a3c7e9d1 术语 high：非 glossary 精确命中不得直确认；glossary 精确命中则通过', () => setup(root => {
+  generate(root); const { bp } = blueprintFixture(root);
+  bp.discovery.facts.push(termFact('设置行', 'Feature', 'high', 'glossary_exact', 'catalog')); refingerprint(bp);
+  assert(blockerIds(bp, root).includes('terminology_facts_confirmed'));
+  bp.discovery.facts[bp.discovery.facts.length - 1] = termFact('设置行', 'Feature', 'high', 'glossary_exact', 'glossary'); refingerprint(bp);
+  assert(blockerIds(bp, root).includes('terminology_facts_confirmed'), 'glossary 未命中不得 high 直确认');
+  write(root, 'doc/glossary.yaml', 'schema_version: "1.0"\nterms:\n  - term: 设置行\n    canonical_module: Feature\n    owner_layer: 02-Feature\n    aliases: []\n    easily_confused_with: []\n');
+  assert.deepEqual(blockerIds(bp, root), []);
+}));
+
+test('a3c7e9d1 architecture_impact：字段按 change 校验；verified_unchanged development 不得有架构影响决策；质询须覆盖术语 scope', () => setup(root => {
+  generate(root); const { bp, view } = blueprintFixture(root);
+  const decisions = bp.decisions_and_gaps.decisions;
+  decisions.push(architectureDecision('edge', { change: 'dependency_edge', from: 'Feature', to: 'SharedUi' }, 'decided_with_authority', bp));
+  assert(validateEvolutionDecisions(bp, root).some(i => i.id === 'blueprint_architecture_impact_invalid' && i.message.includes('direction')));
+  decisions[decisions.length - 1] = architectureDecision('add', { change: 'add_module', module: 'X', layer: '09-Nowhere' }, 'decided_with_authority', bp);
+  assert(validateEvolutionDecisions(bp, root).some(i => i.id === 'blueprint_architecture_impact_invalid' && i.message.includes('09-Nowhere')));
+  decisions[decisions.length - 1] = architectureDecision('other', { change: 'dsl_other', affected_items: ['module_inner_layers'] }, 'decided_with_authority', bp);
+  assert(!validateEvolutionDecisions(bp, root).some(i => i.id === 'blueprint_architecture_impact_invalid'));
+  view.evolution_impact = 'verified_unchanged';
+  assert(validateEvolutionDecisions(bp, root).some(i => i.id === 'blueprint_view_unchanged_masks_change' && i.message.includes('architecture_impact')));
+  // §7：经完整 P1 validator 同样是 BLOCKER（不只是 helper 报出）。
+  assert(validateComponentBlueprint(bp, { projectRoot: root }).some(i => i.severity === 'BLOCKER' && i.id === 'blueprint_view_unchanged_masks_change' && i.message.includes('architecture_impact')));
+  view.evolution_impact = 'changed';
+  bp.review_summary.questioning.items = bp.review_summary.questioning.items.filter((item: any) => item.scope_kind !== 'terminology');
+  assert(validateComponentBlueprint(bp, { projectRoot: root }).some(i => i.id === 'blueprint_questioning_coverage_missing' && i.message.includes('terminology:current_scope_items')));
+}));
+
+// ---- a3c7e9d1 t2+t3 一轮返修 ----
+const CATALOG = [{ name: 'SharedUi', layer: '04-BusinessBase', format: 'HAR' }, { name: 'Feature', layer: '02-Feature', format: 'HAP' }, { name: 'OtherUi', layer: '04-BusinessBase', format: 'HSP' }];
+function writeCatalog(root: string, modules: unknown[]) { write(root, 'doc/module-catalog.yaml', YAML.stringify({ schema_version: '1.0', modules })); }
+/** 蓝图落盘后把 ledger-refresh CU 的蓝图 sha 同步到盘上（生产 resolver 按字节校验）。 */
+function bindCuToBlueprint(root: string, bp: any, file: string) {
+  write(root, path.relative(root, file), YAML.stringify(bp));
+  const cu = cuForCurrentBlueprint(root);
+  write(root, path.relative(root, loadCanonicalChangeUnit(root, 'ledger-app-blueprint', 'ledger-refresh').canonicalPath), YAML.stringify(cu));
+  return cu;
+}
+
+test('a3c7e9d1 返修1 retire_module：退役前合法；closure 归位删 catalog 后 P1 与 closure 复核（resolveComponentBlueprintRef）仍通过', () => setup(root => {
+  generate(root); const { bp, file, view } = blueprintFixture(root);
+  const retiredNode = { ...view.nodes[0], node_id: 'retired-ui', module: 'OtherUi' }; delete retiredNode.kind; view.nodes.push(retiredNode);
+  bp.decisions_and_gaps.decisions.push(architectureDecision('retire-other', { change: 'retire_module', module: 'OtherUi' }, 'decided_with_authority', bp));
+  assert.deepEqual(blockerIds(bp, root), []);
+  writeCatalog(root, CATALOG.filter(m => m.name !== 'OtherUi')); generate(root);
+  assert.deepEqual(blockerIds(bp, root), []);
+  const warn = validateEvolutionDecisions(bp, root).find(i => i.id === 'blueprint_architecture_impact_invalid');
+  assert(warn?.severity === 'WARN' && warn.message.includes('OtherUi'), JSON.stringify(warn));
+  const cu = bindCuToBlueprint(root, bp, file);
+  assert.doesNotThrow(() => resolveComponentBlueprintRef(root, cu.component_blueprint_ref), 'closure 复核走同一完整校验，退役归位后不得判蓝图非法');
+  assert(!componentDependencyAllowed(root, 'Feature', 'OtherUi', resolveAdmittedModules(root, bp).declared), '已退役模块不参与依赖许可');
+}));
+
+test('a3c7e9d1 返修2 CU-bound plan 组件检查消费蓝图获准层级：已批准 move 放行；未获准改层 / contracts 层级不一致仍拒绝', () => setup(root => {
+  writeCatalog(root, [...CATALOG, { name: 'Mover', layer: '05-SystemBase', format: 'HAP' }]);
+  generate(root); const { bp, file } = blueprintFixture(root);
+  bindCuToBlueprint(root, bp, file);
+  const value = contracts(); value.feature = deriveChangeUnitFeatureId('ledger-app-blueprint', 'ledger-refresh');
+  value.components[0].module = 'Mover';
+  value.modules = [{ name: 'Mover', layer: '02-Feature', format: 'HAP', change_type: 'modify', package_path: '02-Feature/Mover' }] as ContractsSpec['modules'];
+  let checks = checkComponentSelections(context(root, value));
+  assert(checks.some(r => r.status === 'FAIL' && r.details?.includes('依赖非法')), `未获准改层按 catalog 旧层判定：${JSON.stringify(checks)}`);
+  assert(checks.some(r => r.status === 'FAIL' && r.details?.includes('不一致')), 'plan 手写层级与蓝图授权不一致必须拒绝');
+  bp.decisions_and_gaps.decisions.push(architectureDecision('move-mover', { change: 'move_module', module: 'Mover', from_layer: '05-SystemBase', to_layer: '02-Feature' }, 'decided_with_authority', bp));
+  assert.deepEqual(blockerIds(bp, root), []);
+  bindCuToBlueprint(root, bp, file);
+  checks = checkComponentSelections(context(root, value));
+  assert(!checks.some(r => r.status === 'FAIL'), `已批准 move 的新层与 P1 同源放行：${JSON.stringify(checks)}`);
+  value.modules[0].layer = '05-SystemBase';
+  checks = checkComponentSelections(context(root, value));
+  assert(checks.some(r => r.status === 'FAIL' && r.details?.includes('不一致')), JSON.stringify(checks));
+}));
+
+test('a3c7e9d1 返修3 未确认术语：当前切片依赖 → BLOCKER；远期受控 open_decision gap 停放 → WARN 且 admission 可过', () => setup(root => {
+  generate(root); const { bp } = blueprintFixture(root);
+  bp.discovery.facts.push(termFact('卡包', 'Feature', 'medium', 'model_inference')); refingerprint(bp);
+  const gap: any = { gap_id: 'term-later', knowledge_state: 'unknown', status: 'open_decision', owner: 'product-owner', needed_by: 'later-slice', unlock_condition: '进入 later-slice 前确认术语', verification_refs: ['term:卡包'], provenance: bp.provenance };
+  bp.decisions_and_gaps.gaps.push(gap);
+  let issues = validateComponentBlueprint(bp, { projectRoot: root });
+  assert(!issues.some(i => i.severity === 'BLOCKER'), JSON.stringify(issues.filter(i => i.severity === 'BLOCKER')));
+  assert(issues.some(i => i.id === 'terminology_facts_confirmed' && i.severity === 'WARN' && i.message.includes('later-slice')));
+  gap.needed_by = bp.review_summary.admission.current_slice.slice_id; gap.status = 'blocker';
+  issues = validateComponentBlueprint(bp, { projectRoot: root });
+  assert(issues.some(i => i.id === 'terminology_facts_confirmed' && i.severity === 'BLOCKER'), '当前切片依赖的未确认术语仍是 blocker');
+  assert(issues.some(i => i.id === 'blueprint_admission_false_pass'));
+  gap.status = 'open_decision';
+  issues = validateComponentBlueprint(bp, { projectRoot: root });
+  assert(issues.some(i => i.id === 'terminology_facts_confirmed' && i.severity === 'BLOCKER'));
+  assert(issues.some(i => i.id === 'blueprint_current_unknown_not_blocking'));
+  gap.needed_by = 'later-slice'; gap.verification_refs = ['term:别的术语'];
+  assert(validateComponentBlueprint(bp, { projectRoot: root }).some(i => i.id === 'terminology_facts_confirmed' && i.severity === 'BLOCKER'), 'gap 未引用该术语不得停放');
+  gap.verification_refs = ['term:卡包'];
+  bp.decisions_and_gaps.gaps.push({ ...gap, gap_id: 'term-now', status: 'blocker', needed_by: bp.review_summary.admission.current_slice.slice_id });
+  issues = validateComponentBlueprint(bp, { projectRoot: root });
+  assert(issues.some(i => i.id === 'terminology_facts_confirmed' && i.severity === 'BLOCKER'), '同一术语另有当前 blocker gap 时远期 gap 不得停放');
+  assert(issues.some(i => i.id === 'blueprint_admission_false_pass'), 'admission 不得 pass');
 }));
 
 if (process.platform === 'win32') test('R7 Windows fallback 与 Git 大小写一致识别存量，仍发现新导出', () => setup(root => {

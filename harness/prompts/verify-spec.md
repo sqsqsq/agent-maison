@@ -2,6 +2,8 @@
 
 **P3 显式 1.1 调用**：以 ResolvedPhaseInputs 的实际验收内容、来源与 required_outputs 为审查边界。未要求 spec.md 时不按章节格式拒绝，但仍审查行为、精确预期、分层、来源和视觉适用性；refs 存在不等于内容完整。发现共同决策或外部权威缺口须指出 owner 与解除条件，不自行猜补。
 
+**CU-bound（Feature 名以 `cu-` 开头）**：术语映射与 Scope 模块范围已由部件演进蓝图裁决，spec 只投影（术语事实 `term:<术语>`、CU touches 派生的可修改模块）。涉及术语与范围的判断（含检查 R 的术语 ↔ catalog/glossary）只核对与蓝图投影一致，不重新裁决术语归属或模块范围，也不因映射表 `[x]` 未经 spec 阶段问人而判 FAIL；不一致指回 `/component-design` 调和。
+
 > 自动生成于 {timestamp}
 > 本文件为 AI Harness 的 prompt，可发送给任意 AI 模型执行语义级验证。
 >

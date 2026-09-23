@@ -1,6 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { featureFilePath } from '../../config';
+import { featureFilePath, loadArchitectureDsl } from '../../config';
+import { AdmittedModules, componentDependencyAllowed, resolveAdmittedModules } from './component-assets';
+import { TermFact, terminologyFacts } from './blueprint-discovery';
 import {
   BlueprintRecord,
   ComponentBlueprintRef,
@@ -54,6 +56,8 @@ export interface ChangeUnitProjectionResult {
   issues: ChangeUnitProjectionIssue[];
   useCasesRequired: boolean;
   dagRequired: boolean;
+  /** 只登记不机检的提示（dsl_other），由 checkChangeUnitFeatureProjection 投为 WARN；不进 issues。 */
+  warnings?: string[];
 }
 
 export interface DagProjectionLike {
@@ -469,6 +473,91 @@ function requireSidecarForChangeUnitFeature(
   };
 }
 
+/**
+ * plan a3c7e9d1 t2：「可修改模块集合」**只从 CU touches[].design_ref** 经既有 addressing resolver
+ * 解析到 development 节点取 `module` 去重（design_refs 只是设计依赖闭包）；resolver 同一 stale 语义，失败即抛。
+ */
+export function deriveModifiableModules(projectRoot: string, cu: ChangeUnitArtifact): string[] {
+  const modules = new Set<string>();
+  for (const touch of cu.touches ?? []) {
+    const node = asRecord(resolveComponentBlueprintRef(projectRoot, touch.design_ref).target);
+    if (!nonEmptyString(node?.module)) throw new Error(`${blueprintRefAddress(touch.design_ref)} 缺 module，无法派生可修改模块集合；回 /component-design 补齐。`);
+    modules.add(node!.module as string);
+  }
+  return [...modules].sort();
+}
+
+/**
+ * plan a3c7e9d1 t3：与本 CU 相关的 architecture_impact 决策在施工前必须已生效——
+ * add_module / move_module / dependency_edge 已裁决（decided_with_authority）且与当前 DSL 一致；
+ * dependency_edge 按操作核对当前许可（add 须已允许、remove 须已不允许）；dsl_other 只登记，返回 WARN 文案。
+ * 相关 = 在 CU design_refs 中，或模块/端点落在可修改模块（或其所在层）上。
+ */
+export function architectureImpactIssues(
+  projectRoot: string,
+  blueprint: BlueprintRecord,
+  modifiable: string[],
+  designDecisionIds: string[] = [],
+): { issues: ChangeUnitProjectionIssue[]; warnings: string[] } {
+  const issues: ChangeUnitProjectionIssue[] = [];
+  const warnings: string[] = [];
+  const admitted = resolveAdmittedModules(projectRoot, blueprint);
+  const layers = new Set(loadArchitectureDsl(projectRoot).outer_layers.map(layer => layer.id));
+  const touched = new Set([...modifiable, ...modifiable.map(name => admitted.modules.get(name)).filter((l): l is string => Boolean(l))]);
+  const fail = (id: string, message: string) => issues.push(issue('cu_architecture_impact_not_effective', `decision:${id} ${message}`, 'reconcile_blueprint'));
+  for (const decision of asRecords(asRecord(blueprint.decisions_and_gaps)?.decisions)) {
+    if (decision.kind !== 'architecture_impact') continue;
+    const id = String(decision.decision_id ?? '?');
+    const change = String(decision.change ?? '');
+    if (change === 'dsl_other') {
+      warnings.push(`decision:${id} dsl_other（${asStrings(decision.affected_items).join('、')}）不机检：请人工核对该 DSL 变更已经权威批准并经 framework-init 获准路径落盘。`);
+      continue;
+    }
+    if (!['add_module', 'move_module', 'dependency_edge'].includes(change)) continue;
+    const endpoints = change === 'dependency_edge' ? [String(decision.from), String(decision.to)] : [String(decision.module)];
+    if (!designDecisionIds.includes(id) && !endpoints.some(name => touched.has(name))) continue;
+    if (decision.status !== 'decided_with_authority') {
+      fail(id, `status=${String(decision.status)}：架构影响未裁决（open_decision），当前 CU 不得施工；回 /component-design 取得权威裁决。`);
+      continue;
+    }
+    if (change === 'add_module' && !layers.has(String(decision.layer))) fail(id, `layer=${String(decision.layer)} 不在当前 DSL outer_layers。`);
+    if (change === 'move_module' && (!layers.has(String(decision.from_layer)) || !layers.has(String(decision.to_layer)))) fail(id, 'from_layer/to_layer 不在当前 DSL outer_layers。');
+    if (change !== 'dependency_edge') continue;
+    const unresolved = endpoints.filter(name => !admitted.modules.has(name) && !layers.has(name));
+    if (unresolved.length > 0) { fail(id, `端点无法解析为获准模块或外层 id：${unresolved.join('、')}。`); continue; }
+    const allowed = componentDependencyAllowed(projectRoot, endpoints[0], endpoints[1], admitted.declared);
+    if (decision.direction === 'add' && !allowed) fail(id, `${endpoints[0]} → ${endpoints[1]} 当前 DSL 不允许；先经 framework-init 获准路径（init 预设 / 手工编辑 config 后重跑 UPDATE）改 DSL，plan 不是 DSL writer。`);
+    if (decision.direction === 'remove' && allowed) fail(id, `${endpoints[0]} → ${endpoints[1]} 已批准删除但当前 DSL 仍允许（删除未生效）；先经 framework-init 获准路径改 DSL。`);
+  }
+  return { issues, warnings };
+}
+
+export interface ChangeUnitBlueprintScope {
+  changeUnit: ChangeUnitArtifact;
+  blueprint: BlueprintRecord;
+  modifiable: string[];
+  terms: TermFact[];
+  admitted: AdmittedModules;
+}
+
+/**
+ * 叙述路径（spec.md / plan.md required）的 CU-bound 投影源：普通 Feature 返回 null（既有门禁原样）；
+ * `cu-` identity 时返回蓝图派生的可修改模块集合 / 术语事实 / 获准模块；解析失败（含 stale）抛错。
+ */
+export function loadChangeUnitBlueprintScope(projectRoot: string, feature: string): ChangeUnitBlueprintScope | null {
+  if (!feature.startsWith('cu-')) return null;
+  const identity = parseChangeUnitFeatureId(feature);
+  const changeUnit = asChangeUnitArtifact(loadCanonicalChangeUnit(projectRoot, identity.blueprintId, identity.changeUnitId).changeUnit);
+  const blueprint = resolveComponentBlueprintRef(projectRoot, changeUnit.component_blueprint_ref).blueprint;
+  return {
+    changeUnit,
+    blueprint,
+    modifiable: deriveModifiableModules(projectRoot, changeUnit),
+    terms: terminologyFacts(blueprint),
+    admitted: resolveAdmittedModules(projectRoot, blueprint),
+  };
+}
+
 export function validateChangeUnitFeatureProjection(
   projectRoot: string,
   feature: string,
@@ -537,6 +626,20 @@ export function validateChangeUnitFeatureProjection(
   ));
   issues.push(...checkDesignMappings(cu, records(section.design_ref_mappings), phase, projectRoot));
   issues.push(...componentProjectionErrors(projectRoot, contracts!, cu).map(message => issue('component_asset_projection', message)));
+  const warnings: string[] = [];
+  try {
+    const modifiable = deriveModifiableModules(projectRoot, cu);
+    const outside = [...new Set((contracts!.modules ?? []).map(item => item.name))].filter(name => !modifiable.includes(name)).sort();
+    if (outside.length > 0) {
+      issues.push(issue('cu_scope_matches_blueprint', `contracts.modules 越出蓝图派生的可修改模块集合 [${modifiable.join(', ')}]（只来自 CU touches）：${outside.join(', ')}；回 /component-design 调和蓝图 touches / development 节点，plan 内无扩展出口。`, 'reconcile_blueprint'));
+    }
+    const designDecisionIds = cu.design_refs.filter(ref => ref.target.kind === 'decision').map(ref => ref.target.id);
+    const architecture = architectureImpactIssues(projectRoot, resolveComponentBlueprintRef(projectRoot, cu.component_blueprint_ref).blueprint, modifiable, designDecisionIds);
+    issues.push(...architecture.issues);
+    warnings.push(...architecture.warnings);
+  } catch (error) {
+    issues.push(issue('cu_scope_matches_blueprint', `无法从蓝图派生可修改模块集合：${(error as Error).message}`, 'reconcile_blueprint'));
+  }
   const runtime = runtimeFacts(contracts!);
   issues.push(...runtime.issues);
   issues.push(...checkVerticalSlice(projectRoot, cu, contracts!));
@@ -555,7 +658,7 @@ export function validateChangeUnitFeatureProjection(
       }
     }
   }
-  return { applicable: true, changeUnit: cu, issues, useCasesRequired, dagRequired };
+  return { applicable: true, changeUnit: cu, issues, useCasesRequired, dagRequired, warnings };
 }
 
 export function checkChangeUnitFeatureProjection(
@@ -574,8 +677,12 @@ export function checkChangeUnitFeatureProjection(
     dags,
   );
   if (!result.applicable) return componentChecks;
+  const dslWarnings: CheckResult[] = (result.warnings ?? []).map(details => ({
+    id: 'cu_architecture_dsl_other', category: 'traceability' as const, description: 'architecture_impact dsl_other 只登记不机检',
+    severity: 'MAJOR' as const, status: 'WARN' as const, details,
+  }));
   if (result.issues.length > 0) {
-    return [...componentChecks, ...result.issues.map(item => ({
+    return [...componentChecks, ...dslWarnings, ...result.issues.map(item => ({
       id: item.id,
       category: 'traceability' as const,
       description: 'Change Unit → Feature ID-only 施工投影',
@@ -589,7 +696,7 @@ export function checkChangeUnitFeatureProjection(
           : '修正 contracts.change_unit ID-only 映射或既有 state_management 施工事实。',
     }))];
   }
-  return [...componentChecks, {
+  return [...componentChecks, ...dslWarnings, {
     id: 'change_unit_feature_projection',
     category: 'traceability',
     description: 'Change Unit → Feature ID-only 施工投影',

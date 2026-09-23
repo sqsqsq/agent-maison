@@ -41,7 +41,8 @@ import { checkFactsArtifact } from './utils/context-facts';
 import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
 import { checkTypedConstructionContent, designScopeRevisionChecks } from './utils/blueprint-skill-projection';
 import * as path from 'path';
-import { checkChangeUnitFeatureProjection } from './utils/change-unit-feature-projection';
+import { architectureImpactIssues, checkChangeUnitFeatureProjection, loadChangeUnitBlueprintScope } from './utils/change-unit-feature-projection';
+import { asRecord, asRecords } from './utils/component-blueprint-model';
 import {
   extractHeadings,
   getSectionContent,
@@ -969,6 +970,64 @@ function checkDesignToArchitecture(ctx: CheckContext, design: string): CheckResu
 }
 
 // --------------------------------------------------------------------------
+// plan a3c7e9d1 t2/t3：CU-bound 叙述 plan —— Scope / 架构影响只核对蓝图投影
+// --------------------------------------------------------------------------
+
+/**
+ * 普通 Feature 返回 null（scope_declaration / architecture_impact_declared / plan_to_architecture 原样执行）。
+ * CU-bound：in_scope_modules 集合等于蓝图可修改模块且无 expansions；架构影响段 `decisions:` 集合等于蓝图
+ * architecture_impact 决策 id（无决策写 impact: none）；plan_to_architecture = 决策已裁决 + 当前 DSL 现值核对。
+ */
+export function checkChangeUnitBoundPlanScope(ctx: CheckContext, design: string): CheckResult[] | null {
+  if (!ctx.feature.startsWith('cu-')) return null;
+  const result = (id: string, category: CheckResult['category'], failures: string[], pass: string): CheckResult => ({
+    id, category, description: ruleDesc(ctx, category === 'traceability' ? 'traceability_checks' : 'structure_checks', id), severity: 'BLOCKER',
+    status: failures.length ? 'FAIL' : 'PASS',
+    details: `${failures.length ? failures.join('；') : pass}（来源=蓝图）`,
+    ...(failures.length ? { suggestion: 'CU-bound plan 不再判定范围与架构影响：回 /component-design 做蓝图 revision；DSL 改写走 framework-init 获准路径（init 预设 / 手工编辑 config 后重跑 UPDATE），plan 不是 DSL writer。' } : {}),
+  });
+  let projection: NonNullable<ReturnType<typeof loadChangeUnitBlueprintScope>>;
+  try {
+    projection = loadChangeUnitBlueprintScope(ctx.projectRoot, ctx.feature)!;
+  } catch (error) {
+    const failure = [`无法解析 CU 蓝图投影：${(error as Error).message}`];
+    return [result('scope_declaration', 'structure', failure, ''), result('architecture_impact_declared', 'structure', failure, ''), result('plan_to_architecture', 'traceability', failure, '')];
+  }
+  const { scope, error } = parseScope(design);
+  const scopeFailures: string[] = [];
+  if (!scope) scopeFailures.push(error ? describeScopeError(error) : 'Scope 声明无法解析');
+  else {
+    const inScope = new Set(scope.in_scope_modules);
+    if (inScope.size !== projection.modifiable.length || projection.modifiable.some(name => !inScope.has(name))) {
+      scopeFailures.push(`in_scope_modules [${[...inScope].join(', ')}] 必须集合等于蓝图可修改模块 [${projection.modifiable.join(', ')}]`);
+    }
+    if ((scope.expansions_with_user_approval ?? []).length > 0) scopeFailures.push('CU-bound 不适用 plan.scope_expansion，expansions_with_user_approval 必须为空；范围扩大走蓝图 revision');
+  }
+  const decisions = asRecords(asRecord(projection.blueprint.decisions_and_gaps)?.decisions).filter(d => d.kind === 'architecture_impact');
+  const expected = decisions.map(d => String(d.decision_id)).sort();
+  const impactFailures: string[] = [];
+  const block = extractCodeBlocks(getSectionContent(design, '架构影响声明') ?? '', 'yaml')[0];
+  let declared: Record<string, unknown> | null = null;
+  try { declared = block ? asRecord(YAML.parse(block.content)) ?? null : null; } catch { declared = null; }
+  const inner = asRecord(declared?.architecture_impact) ?? declared;
+  if (!inner) impactFailures.push('「架构影响声明」须含 yaml 块');
+  else {
+    const actual = normalizeToStringArray(inner.decisions).sort();
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) impactFailures.push(`decisions [${actual.join(', ')}] 必须等于蓝图 architecture_impact 决策 [${expected.join(', ')}]`);
+    if ((String(inner.impact ?? '') === 'none') !== (expected.length === 0)) impactFailures.push(`impact 须${expected.length ? '不为' : '为'} none`);
+  }
+  const architecture = architectureImpactIssues(ctx.projectRoot, projection.blueprint, projection.modifiable,
+    projection.changeUnit.design_refs.filter(ref => ref.target.kind === 'decision').map(ref => ref.target.id));
+  return [
+    result('scope_declaration', 'structure', scopeFailures, `in_scope_modules = 蓝图可修改模块 [${projection.modifiable.join(', ')}]`),
+    result('architecture_impact_declared', 'structure', impactFailures, `架构影响段 = 蓝图决策投影 [${expected.join(', ') || 'none'}]`),
+    result('plan_to_architecture', 'traceability', architecture.issues.map(item => item.message),
+      `相关架构影响决策已裁决且与当前 DSL 一致${architecture.warnings.length ? `；待人工核对：${architecture.warnings.join('；')}` : ''}`),
+  ];
+}
+
+
+// --------------------------------------------------------------------------
 // Main Checker
 // --------------------------------------------------------------------------
 
@@ -1181,11 +1240,13 @@ const checker: PhaseChecker = {
 
     results.push(...safeRun(() => checkContractFileReferenceClosure(ctx), 'contract_file_reference_closure'));
     results.push(...safeRun(() => checkRequiredChapters(ctx, design), 'required_chapters'));
-    results.push(...safeRun(() => checkScopeDeclaration(ctx, design), 'scope_declaration'));
+    const cuBoundScope = ctx.feature.startsWith('cu-') ? safeRun(() => checkChangeUnitBoundPlanScope(ctx, design) ?? [], 'scope_declaration') : null;
+    if (cuBoundScope) results.push(...cuBoundScope.filter(item => item.id !== 'plan_to_architecture'));
+    else results.push(...safeRun(() => checkScopeDeclaration(ctx, design), 'scope_declaration'));
     results.push(...safeRun(() => checkScopeConsistencyWithPrd(ctx, design, prd), 'scope_consistency_with_spec'));
     // visual-capability-truth S6（P1-F）：集成契约 vs scope 一致性（机器真源=integration_points）
     results.push(...safeRun(() => checkIntegrationScopeConsistency(ctx, design), 'integration_scope_consistency'));
-    results.push(...safeRun(() => checkArchitectureImpactDeclared(ctx, design), 'architecture_impact_declared'));
+    if (!cuBoundScope) results.push(...safeRun(() => checkArchitectureImpactDeclared(ctx, design), 'architecture_impact_declared'));
     results.push(...safeRun(() => checkArchitectureDiagram(ctx, design), 'architecture_diagram'));
     results.push(...safeRun(() => checkModuleChangeTable(ctx, design), 'module_change_table'));
     results.push(...safeRun(() => checkFileStructurePerModule(ctx, design), 'file_structure_per_module'));
@@ -1221,7 +1282,8 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkPrdCoverage(ctx, design, prd, 'P1', 'spec_p1_coverage'), 'spec_p1_coverage'));
     results.push(...safeRun(() => checkMappingToFile(ctx, design), 'mapping_to_file'));
     results.push(...safeRun(() => checkSpecConstraintTraceability(ctx, design), 'spec_constraint_traceability'));
-    results.push(...safeRun(() => checkDesignToArchitecture(ctx, design), 'plan_to_architecture'));
+    if (cuBoundScope) results.push(...cuBoundScope.filter(item => item.id === 'plan_to_architecture'));
+    else results.push(...safeRun(() => checkDesignToArchitecture(ctx, design), 'plan_to_architecture'));
     results.push(
       ...safeRun(
         () => checkFactsArtifact(ctx.projectRoot, ctx.feature, 'plan', {

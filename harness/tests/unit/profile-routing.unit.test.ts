@@ -209,6 +209,30 @@ const cases: Case[] = [
     },
   },
   {
+    // e7a2c4f1 §10.4④：内联内容里的 `$\``/`$'`/`$&`/`$$` 与占位符字样必须逐字保留
+    //（宿主实锤：PNG 字节里的 `$\`` 让 prompt 自我复制 9 份，ArkTS `$$this` 被改成 `$this`）。
+    name: 'verify prompt: inlined content keeps $-patterns and placeholder text verbatim',
+    run: () => {
+      const projectRoot = mkTmp('prompt-dollar-proj-');
+      ensureConsumerFrameworkTree(projectRoot);
+      const harnessRoot = path.join(projectRoot, 'framework', 'harness');
+      const profileDir = mkTmp('prompt-dollar-profile-');
+      fs.mkdirSync(path.join(harnessRoot, 'prompts'), { recursive: true });
+      writeFile(path.join(harnessRoot, 'prompts', 'verify-coding.md'), 'HEAD {phase}\n{spec_content}\nMID\n{context_files}\nEND');
+      const spec = "a $` b $' c $& d $$this {phase} {timestamp}";
+      const src = '.bindSheet($$this.smsVisible) `${v}` $&';
+      const assembled = assembleAIPrompt(
+        harnessRoot, projectRoot, 'coding', 'demo', [{ label: 'Src', content: src }], '{}', spec, resolvedProfile(profileDir, {}),
+      );
+      const count = (needle: string): number => assembled.split(needle).length - 1;
+      assert(count(spec) === 1, `spec_content 须逐字出现一次，实得 ${count(spec)}`);
+      assert(count(src) === 1, `context 源码须逐字出现一次，实得 ${count(src)}`);
+      assert(count('HEAD coding') === 1 && count('MID') === 1 && count('END') === 1, `模板正文只出现一次：${assembled}`);
+      fs.rmSync(projectRoot, { recursive: true, force: true });
+      fs.rmSync(profileDir, { recursive: true, force: true });
+    },
+  },
+  {
     name: 'config defaults: missing project_profile falls back to hmos-app with advisory',
     run: () => {
       const root = mkTmp('profile-config-missing-');

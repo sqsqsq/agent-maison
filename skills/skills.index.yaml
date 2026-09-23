@@ -73,6 +73,15 @@ skills:
     order: 4
     description: >
       创建或继续部件设计（Story Design）：按请求与已有产物继续，完整交接至 CU readiness，局部操作按需结束
+    init_next_steps:
+      - step_id: design-entry
+        when: design_entry_ready
+        kind: optional
+        priority: 34
+        invoke:
+          neutral: "部件设计（正式需求统一入口）"
+          command_id: component-design
+          param_hint: "<blueprint-id>"
 
   - id: change-unit-progression
     scope: project
@@ -126,7 +135,7 @@ skills:
         priority: 40
         workflow_artifact: spec
         invoke:
-          neutral: "Feature Spec"
+          neutral: "Feature Spec（存量平铺 Feature / 非正式维护动作）"
           command_id: spec
 
   - id: plan
@@ -142,7 +151,7 @@ skills:
         priority: 35
         workflow_artifact: plan
         invoke:
-          neutral: "Feature Plan"
+          neutral: "Feature Plan（存量平铺 Feature / 非正式维护动作）"
           command_id: plan
 
   - id: coding

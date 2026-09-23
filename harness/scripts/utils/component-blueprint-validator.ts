@@ -21,7 +21,7 @@ import { validateGeneratedBlueprintGraphs } from './blueprint-graph-generator';
 import { validateBlueprintReconciliation } from './blueprint-reconciliation';
 import { validateEvolutionDecisions } from './blueprint-evolution-decisions';
 import { validateBlueprintProviders } from './blueprint-provider-boundary';
-import { fingerprintDiscoverySources } from './blueprint-discovery';
+import { fingerprintDiscoverySources, validateTerminologyFacts } from './blueprint-discovery';
 import { currentScopeItems, validateRequirementTraceability } from './blueprint-requirement-traceability';
 
 export interface ComponentBlueprintValidationContext {
@@ -71,6 +71,7 @@ export function validateComponentBlueprint(
     ...validateGeneratedBlueprintGraphs(blueprint),
     ...validateBlueprintReconciliation(blueprint),
     ...validateEvolutionDecisions(blueprint, context.projectRoot),
+    ...validateTerminologyFacts(blueprint, context.projectRoot),
     ...validateBlueprintProviders(blueprint, { projectRoot: context.projectRoot }),
   ];
   out.push(...upstream);

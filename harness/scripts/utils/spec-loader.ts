@@ -101,6 +101,13 @@ export const OPTIONAL_FEATURE_FILES_BY_PHASE: Partial<Record<Phase, string[]>> =
   testing: ['spec.md', 'plan.md', 'contracts.yaml', 'use-cases.yaml', 'review-report.md'],
 };
 
+/** 文本文件按 UTF-8 解码；含 NUL 或非法 UTF-8（PNG/HAP/字体等二进制资源）返回 null——调用方只留路径引用。 */
+export function decodeTextFile(bytes: Buffer): string | null {
+  if (bytes.includes(0)) return null;
+  try { return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); }
+  catch { return null; }
+}
+
 export class SpecLoader {
   private projectRoot: string;
   private phaseRulesDir: string;
@@ -498,13 +505,7 @@ export class SpecLoader {
         if (filterExt) {
           result.set(relativePath, fs.readFileSync(fullPath, 'utf-8'));
         } else {
-          const bytes = fs.readFileSync(fullPath);
-          let content = '二进制资源：仅保留本文件路径引用，不作为源码文本注入。';
-          if (!bytes.includes(0)) {
-            try { content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); }
-            catch { /* 非 UTF-8 字节保留路径引用。 */ }
-          }
-          result.set(relativePath, content);
+          result.set(relativePath, decodeTextFile(fs.readFileSync(fullPath)) ?? '二进制资源：仅保留本文件路径引用，不作为源码文本注入。');
         }
       }
     }

@@ -1,3 +1,4 @@
 modules:
-  - id: ledger
+  - name: ledger
+    layer: 02-Feature
     owner: ledger-team

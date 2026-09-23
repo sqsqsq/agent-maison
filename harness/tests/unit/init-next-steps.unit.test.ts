@@ -23,6 +23,7 @@ import {
 } from '../../scripts/utils/finalize-init-run-log';
 import type { InitRunLog } from '../../scripts/init-orchestrate';
 import { loadDefaultWorkflowSpec } from '../../scripts/utils/skills-index-init-steps';
+import { profileHasDesignLens } from '../../scripts/utils/blueprint-provider-boundary';
 import { computeAnchorContentHash } from '../../code-graph/anchor-hash';
 import type { WorkflowSpec } from '../../workflow-loader';
 
@@ -42,14 +43,14 @@ function mkProject(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'init-next-steps-'));
 }
 
-function writeMinimalConfig(root: string, opts?: { agentBundleRoot?: string }): void {
+function writeMinimalConfig(root: string, opts?: { agentBundleRoot?: string; profile?: string }): void {
   fs.mkdirSync(path.join(root, 'doc'), { recursive: true });
   fs.writeFileSync(
     path.join(root, 'framework.config.json'),
     JSON.stringify(
       {
         schema_version: '1.0',
-        project_profile: { name: 'generic-app' },
+        project_profile: { name: opts?.profile ?? 'generic-app' },
         paths: {
           module_catalog: 'doc/module-catalog.yaml',
           glossary: 'doc/glossary.yaml',
@@ -900,6 +901,83 @@ const cases: Array<{ name: string; run: () => void }> = [
       const steps = deriveInitNextSteps(baseLog([]), phase1Ctx(root));
       assert(steps.every(s => s.kind === 'optional'), JSON.stringify(steps));
       assert(!steps.some(s => s.skill_id === 'goal-mode'), JSON.stringify(steps));
+    },
+  },
+  {
+    name: 'design_entry_ready: hmos-app + catalog ready → component-design(34) 位于 graph(30) 与 plan(35) 之间并披露知识资产',
+    run: () => {
+      assert(profileHasDesignLens('hmos-app') && !profileHasDesignLens('generic'), 'design lens 谓词');
+      const root = mkProject();
+      writeMinimalConfig(root, { profile: 'hmos-app' });
+      fs.writeFileSync(path.join(root, 'doc', 'module-catalog.yaml'), CATALOG_MODULE_YAML('Wallet'), 'utf-8');
+      fs.writeFileSync(path.join(root, 'doc', 'glossary.yaml'), GLOSSARY_YAML('Wallet'), 'utf-8');
+      for (const id of ['code-graph', 'component-design', 'plan', 'goal-mode']) writeCursorSkillStub(root, id);
+      const customSpec: WorkflowSpec = {
+        schema_version: '1.0',
+        name: 'custom',
+        artifacts: [
+          { id: 'catalog', scope: 'global', requires: [] },
+          { id: 'glossary', scope: 'global', requires: ['catalog'] },
+          { id: 'plan', scope: 'feature', requires: ['catalog', 'glossary'] },
+        ],
+      };
+      const derive = () => deriveInitNextSteps(baseLog([]), { ...phase1Ctx(root), workflowSpec: customSpec });
+      let steps = derive();
+      const ids = steps.map(s => s.skill_id);
+      const design = steps.find(s => s.when === 'design_entry_ready')!;
+      assert(design?.skill_id === 'component-design' && design.priority === 34, JSON.stringify(steps));
+      assert(design.invoke?.command_id === 'component-design', JSON.stringify(design));
+      assert(
+        ids.indexOf('code-graph') < ids.indexOf('component-design') &&
+          ids.indexOf('component-design') < ids.indexOf('plan'),
+        ids.join(','),
+      );
+      assert(steps.find(s => s.skill_id === 'plan')!.message.includes('存量平铺 Feature'), JSON.stringify(steps));
+      assert(
+        design.message.includes('可选知识资产：conventions `doc/conventions.md` 不存在；组件索引 `doc/component-index.yaml` 不存在'),
+        design.message,
+      );
+      assert(!steps.some(s => s.kind === 'required'), '披露不得生成 required 步骤');
+      fs.writeFileSync(path.join(root, 'doc', 'conventions.md'), '# 工程惯例\n', 'utf-8');
+      fs.writeFileSync(path.join(root, 'doc', 'component-index.yaml'), 'components: []\n', 'utf-8');
+      steps = derive();
+      const md = renderNextStepsMarkdown(steps);
+      assert(
+        md.includes('  可选知识资产：conventions `doc/conventions.md` 已存在；组件索引 `doc/component-index.yaml` 已存在'),
+        md,
+      );
+    },
+  },
+  {
+    name: 'design_entry_ready: generic profile 或 catalog missing 不出现 component-design',
+    run: () => {
+      const generic = mkProject();
+      writeMinimalConfig(generic, { profile: 'generic' });
+      fs.writeFileSync(path.join(generic, 'doc', 'module-catalog.yaml'), CATALOG_MODULE_YAML('Wallet'), 'utf-8');
+      fs.writeFileSync(path.join(generic, 'doc', 'glossary.yaml'), GLOSSARY_YAML('Wallet'), 'utf-8');
+      writeCursorSkillStub(generic, 'component-design');
+      writeCursorSkillStub(generic, 'plan');
+      const planReady: WorkflowSpec = {
+        schema_version: '1.0',
+        name: 'custom',
+        artifacts: [
+          { id: 'catalog', scope: 'global', requires: [] },
+          { id: 'glossary', scope: 'global', requires: ['catalog'] },
+          { id: 'plan', scope: 'feature', requires: ['catalog', 'glossary'] },
+        ],
+      };
+      let steps = deriveInitNextSteps(baseLog([]), { ...phase1Ctx(generic), workflowSpec: planReady });
+      assert(!steps.some(s => s.skill_id === 'component-design'), JSON.stringify(steps));
+      // §7：generic 下 feature_ready 仍给出 plan，但措辞限定为存量平铺 / 非正式维护动作。
+      const planStep = steps.find(s => s.skill_id === 'plan');
+      assert(!!planStep && planStep.message.includes('存量平铺 Feature') && planStep.message.includes('非正式维护动作'), JSON.stringify(steps));
+      const missing = mkProject();
+      writeMinimalConfig(missing, { profile: 'hmos-app' });
+      writeCursorSkillStub(missing, 'catalog-bootstrap');
+      writeCursorSkillStub(missing, 'component-design');
+      steps = deriveInitNextSteps(baseLog([]), phase1Ctx(missing));
+      assert(!steps.some(s => s.skill_id === 'component-design'), JSON.stringify(steps));
+      assert(steps.some(s => s.when === 'catalog_empty'), JSON.stringify(steps));
     },
   },
   {

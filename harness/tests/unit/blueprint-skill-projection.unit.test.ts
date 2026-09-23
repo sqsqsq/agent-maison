@@ -32,8 +32,7 @@ import type { UnitCaseResult } from '../run-unit';
 
 const frameworkRoot = path.resolve(__dirname, '../../..');
 const sha = (file: string) => 'sha256:' + createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-export function fixture(): { root: string; feature: string; blueprintFile: string; cuFile: string; bind(): void } {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'blueprint-skill-'));
+export function fixture(root = fs.mkdtempSync(path.join(os.tmpdir(), 'blueprint-skill-'))): { root: string; feature: string; blueprintFile: string; cuFile: string; bind(): void } {
   fs.cpSync(path.join(__dirname, '../fixtures/component-blueprint/valid'), root, { recursive: true });
   const read = (name: string) => YAML.parse(fs.readFileSync(path.join(__dirname, '../fixtures/blueprint-design-inputs', name + '.yaml'), 'utf8'));
   const acceptance = read('acceptance');
@@ -327,6 +326,19 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert.equal(files.length, 3);
     assert.deepStrictEqual(materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot), []);
     for (const name of ['spec.md', 'plan.md', 'spec/reports/summary.json', 'plan/reports/summary.json']) assert(!resolveFeatureArtifact(f.root, f.feature, name).exists);
+  } },
+  { name: 'a3c7e9d1 不执行 plan：蓝图直接投影的 contracts.modules 越出 touches 派生集合即 invalid（同一共享校验）', run(f) {
+    const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    const cu = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));
+    const node = asRecord(resolveBlueprintTarget(doc, cu.design_refs[0].target))!;
+    const module = (name: string) => ({ name, layer: '02-Feature', format: 'HAR', change_type: 'modify', package_path: `02-Feature/${name}` });
+    (node.contracts as BlueprintRecord).modules = [module('ledger')];
+    fs.writeFileSync(f.blueprintFile, YAML.stringify(doc)); f.bind();
+    assert.equal(deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts').state, 'resolved', '可修改集合内的模块应放行');
+    (node.contracts as BlueprintRecord).modules = [module('ledger'), module('SharedState')];
+    fs.writeFileSync(f.blueprintFile, YAML.stringify(doc)); f.bind();
+    const result = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts');
+    assert.equal(result.state, 'invalid'); assert(result.detail?.includes('可修改模块集合') && result.detail.includes('SharedState'), result.detail);
   } },
   { name: 'revision bytes mismatch invalidates projection', run(f) {
     fs.appendFileSync(f.blueprintFile, '\n# revision changed\n');

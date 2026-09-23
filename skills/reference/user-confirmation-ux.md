@@ -66,10 +66,10 @@
 
 ### 3.4 Artifact + portable（registry: `spec.terminology`）
 
-对话 gate 后 **必须写回** spec `## 0. 术语映射表` 的 `[x]` 列；口头 OK 无效。
+对话 gate 后 **必须写回** artifact；口头 OK 无效。正式需求在 `/component-design` 确认，写回蓝图 `discovery.facts` 的 `term:<术语>` 事实（`provenance.extraction_method: user_confirmed`，由 `check-component-blueprint terminology_facts_confirmed` 校验）；CU-bound spec 的术语映射表只投影蓝图、不再用本确认点。spec 只在非 CU-bound（存量平铺 Feature）使用本确认点，写回 spec `## 0. 术语映射表` 的 `[x]` 列。
 
 ```text
-1. 全部确认 confidence=high 的行（写回 spec [x]）
+1. 全部确认 confidence=high 的行（写回蓝图 term: 事实 user_confirmed；非 CU-bound：spec [x]）
 2. 逐行确认
 3. 逐行修改映射
 ```
@@ -78,7 +78,7 @@
 
 ### 3.5 Freeform + portable（registry: `plan.scope_expansion`）
 
-**不得省略**提议正文。该交互只表示需求 scope 输入，不降低任何阶段质量门禁。
+**不得省略**提议正文。该交互只表示需求 scope 输入，不降低任何阶段质量门禁。CU-bound（`cu-` Feature）**不适用**：模块范围由蓝图 CU `touches` 派生，plan 内无扩展出口，范围扩大回 `/component-design` 做蓝图 revision。
 
 ```text
 （完整提议或变更描述已展示于上）
@@ -124,7 +124,7 @@ S1 **`InitTaskPlan.adapter_catalog[]`** 为唯一程序化候选源；registry `
 | `init.intra_layer_deps` | 全部维持 / 调整 / 讨论 | `1`/`2`/`3` | 每层 `按默认` 或具体 enum |
 | `init.task_decision` | 覆盖 / 保留 | `1`/`2` | overwrite / keep |
 | `catalog.staging` | y / e / s / q | `1`/`2`/`3`/`4` | 同左 |
-| `spec.terminology` | 全部 high / 逐行 / 修改 | `1`/`2`/`3` | spec 表 `[x]` |
+| `spec.terminology` | 全部 high / 逐行 / 修改 | `1`/`2`/`3` | 蓝图 `term:` 事实 `user_confirmed`（非 CU-bound：spec 表 `[x]`） |
 
 完整列表见 [confirmation-registry.yaml](./confirmation-registry.yaml)。
 
@@ -181,6 +181,7 @@ S1 **`InitTaskPlan.adapter_catalog[]`** 为唯一程序化候选源；registry `
 - **glossary 命中**（含 aliases）：**逐字采用** glossary 的 `canonical_module`，**不许自行改判** → 标 `high`、自动 `[x]`、**不入** must-review。
 - **新术语（非 glossary 命中）**：强制 `medium`/`low` → 自动 `[x]` 但 **必入 must-review**；标 `high` 须有 glossary 背书（`check-spec` 对假 high 出 WARN）。
 - **medium / low**：按确定性默认继续；兼容写入 legacy `must_review` 审计标记，goal-report **顶部**逐条列出（术语、模块、置信度、易混项），但不暂停 run、不阻止完成，也不改变机器门禁。
+- **蓝图术语事实（`/component-design`）**：headless 自动继续的术语事实记 `provenance.extraction_method: headless_assumed` 并入 must-review（`terminology_facts_confirmed` 报 WARN、不停步）；**不得**记成 `user_confirmed`，**不**回写 glossary（不出现 `user-approved`），留给人工复核后再确认与回写。glossary 精确命中的 `high` 仍按第一条直确认。
 
 ### 9.3 留痕契约（goal-fakepass-hardening：JSONL 为机器 SSOT）
 

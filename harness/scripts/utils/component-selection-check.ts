@@ -2,7 +2,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { componentIndexPath, featurePhaseReportsDir, resolveFeatureArtifact, relComponentIndex, relComponentCatalog } from '../../config';
 import { CheckContext, CheckResult, ContractsSpec } from './types';
-import { componentDependencyAllowed, isUiComponent, readComponentIndex, readComponentCatalog, scanComponentIndex, selectionShapeIssues } from './component-assets';
+import { componentDependencyAllowed, isUiComponent, readComponentIndex, readComponentCatalog, resolveAdmittedModules, scanComponentIndex, selectionShapeIssues } from './component-assets';
+import { asChangeUnitArtifact, loadCanonicalChangeUnit, parseChangeUnitFeatureId } from './change-unit-path';
 import { componentResult } from './component-catalog-check';
 import { listFilesAtRef, readFileAtRef, readTraceStartCommit } from './git-diff';
 import { resolveHarnessDiffBaseRef } from './phase-state';
@@ -57,6 +58,25 @@ export function checkComponentSelections(ctx: CheckContext): CheckResult[] {
     const fail = (message: string) => result.push(componentResult('component_asset_selection', 'FAIL', message));
     const planFile = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'plan.md');
     const scope = planFile.exists ? parseScope(fs.readFileSync(planFile.actualPath, 'utf8')).scope : null;
+    let declared: Map<string, string> | undefined;
+    const layerDeclarations = (): Map<string, string> => {
+      if (declared) return declared;
+      if (ctx.feature.startsWith('cu-')) {
+        // CU-bound：层级只认 canonical 蓝图获准模块（同 P1 的 resolveAdmittedModules，含已批准 move 的新层）；contracts 手写层级与之不一致即拒。
+        const { blueprintId, changeUnitId } = parseChangeUnitFeatureId(ctx.feature);
+        const cu = asChangeUnitArtifact(loadCanonicalChangeUnit(ctx.projectRoot, blueprintId, changeUnitId).changeUnit);
+        const admitted = resolveAdmittedModules(ctx.projectRoot, resolveComponentBlueprintRef(ctx.projectRoot, cu.component_blueprint_ref).blueprint);
+        for (const m of contracts.modules ?? []) {
+          const layer = admitted.modules.get(m.name);
+          if (layer && layer !== m.layer) fail(`contracts.modules ${m.name} layer=${m.layer} 与蓝图获准层级 ${layer} 不一致；改层只经蓝图 architecture_impact move_module 决策授权`);
+        }
+        return (declared = admitted.declared);
+      }
+      // 非 CU-bound：只让 catalog 外的新模块按 contracts.modules 声明 layer 判定；既有模块层级仍以 catalog 为准，不给 plan 改层绕过 DSL 的口子。
+      const catalog = loadCatalog(ctx.projectRoot);
+      return (declared = new Map((contracts.modules ?? []).filter(m => !(catalog.ok && catalog.catalog.modules.some(c => c.name === m.name)))
+        .map(m => [m.name, m.layer] as [string, string])));
+    };
     for (const component of contracts.components ?? []) {
       const selection = component.asset_selection;
       if (!selection) { if (isUiComponent(component)) fail(`${component.name}: 已启用 index，页面/UI 组件必须有 asset_selection`); continue; }
@@ -65,7 +85,7 @@ export function checkComponentSelections(ctx: CheckContext): CheckResult[] {
       if (selection.component_ref) {
         const asset = index.components.find(c => c.id === selection.component_ref);
         if (!asset) { fail(`${component.name}: component_ref 不存在：${selection.component_ref}`); continue; }
-        if (!componentDependencyAllowed(ctx.projectRoot, component.module, asset.module)) fail(`${component.name}: ${component.module} → ${asset.module} 依赖非法；换合法候选 > plan 声明组件下沉 > 请求用户批准新边（goal: await-confirm 后 resume）`);
+        if (!componentDependencyAllowed(ctx.projectRoot, component.module, asset.module, layerDeclarations())) fail(`${component.name}: ${component.module} → ${asset.module} 依赖非法；换合法候选 > plan 声明组件下沉 > 请求用户批准新边（goal: await-confirm 后 resume）`);
         if (selection.resolution === 'evolve' && !scope?.in_scope_modules.includes(asset.module)) fail(`${component.name}: evolve 共享模块 ${asset.module} 必须进入 plan in_scope_modules`);
       }
     }

@@ -9,6 +9,8 @@ import {
   validateComponentBlueprintRefShape,
 } from './utils/component-blueprint-path';
 import { validateComponentBlueprint } from './utils/component-blueprint-validator';
+import { profileHasDesignLens } from './utils/blueprint-provider-boundary';
+import { loadFrameworkConfig } from '../config';
 import {
   validateBlueprintReviewFeedback,
   validateBlueprintReviewPublication,
@@ -29,6 +31,13 @@ interface CliArgs {
 }
 
 export function checkCanonicalComponentBlueprint(projectRoot: string, blueprintId: string) {
+  const profile = loadFrameworkConfig(projectRoot).project_profile.name;
+  if (!profileHasDesignLens(profile)) {
+    throw new ComponentBlueprintResolutionError(
+      'blueprint_design_lens_unsupported',
+      `project_profile=${profile} 缺少 design lens（当前仅 hmos-app 支持 App 部件蓝图）；需由该 profile 的独立变更补齐 lens。`,
+    );
+  }
   // M5A：身份失败（path↔yaml blueprint_id 不一致等）原样抛 ComponentBlueprintResolutionError，
   // 由 CLI catch 出口统一报错码/诊断；不构造伪造的成功形状（review 2026-08-22）。
   const loaded = loadCanonicalBlueprint(projectRoot, blueprintId);

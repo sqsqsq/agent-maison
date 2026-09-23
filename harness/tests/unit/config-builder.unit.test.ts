@@ -515,6 +515,24 @@ const t2a2bCases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    // plan a3c7e9d1 §7：维护者手工编辑 config 的 can_depend_on 后重跑 UPDATE（keep_existing）——
+    // 沿既有 UPDATE 写盘链（白名单授权 + validateArchitectureDsl 影子校验）通过，手工 DSL 原样保留。
+    name: 'a3c7e9d1 手工编辑 architecture.can_depend_on 后 UPDATE → 接受且 DSL 原样保留',
+    run: () => {
+      const root = mkTmp();
+      const disk = fullDiskConfig();
+      (disk.architecture as Record<string, unknown>).outer_layers = [
+        { id: '01-Product', can_depend_on: ['02-Feature'], intra_layer_deps: 'dag' },
+        { id: '02-Feature', can_depend_on: [], intra_layer_deps: 'forbid' },
+      ];
+      writeDiskConfig(root, disk);
+      const payload = deriveUpdateConfigWritePayload(root, [])!;
+      const out = prepareConfigWriteForTask({ projectRoot: root, configWritePayload: payload }, 'overwrite');
+      assert.deepStrictEqual(out.architecture, disk.architecture, '手工编辑的 DSL 必须原样落盘');
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
     // t2b (c)：UPDATE + payload 原样等于磁盘 baseline → 接受（防 UPDATE 回归）
     name: 't2b(c) UPDATE payload 原样等于磁盘 baseline → 接受',
     run: () => {

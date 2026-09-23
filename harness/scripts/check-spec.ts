@@ -77,6 +77,7 @@ import { evaluateAcceptanceFlowStructure, evaluateFlowContract } from './utils/p
 import { checkFactsArtifact } from './utils/context-facts';
 import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
 import { designScopeRevisionChecks } from './utils/blueprint-skill-projection';
+import { loadChangeUnitBlueprintScope } from './utils/change-unit-feature-projection';
 export { dispatchSpecVisualHandoff as checkVisualHandoff };
 export { dispatchSpecUiSpec as checkUiSpecStructureBundle };
 
@@ -1251,6 +1252,82 @@ function checkTerminologyModulesWithinScope(ctx: CheckContext, prd: string): Che
 }
 
 // --------------------------------------------------------------------------
+// plan a3c7e9d1 t2：CU-bound 叙述 spec —— 术语映射表与 Scope 声明只核对蓝图投影，不再二次问人
+// --------------------------------------------------------------------------
+
+/** 普通 Feature 返回 null（四项门禁原样执行）；CU-bound 时同 id 核对蓝图投影，details 注明来源=蓝图。 */
+export function checkChangeUnitBoundSpecScope(ctx: CheckContext, prd: string): CheckResult[] | null {
+  if (!ctx.feature.startsWith('cu-')) return null;
+  const result = (id: string, failures: string[], pass: string): CheckResult => ({
+    id, category: 'structure', description: ruleDesc(ctx, 'structure_checks', id), severity: 'BLOCKER',
+    status: failures.length ? 'FAIL' : 'PASS',
+    details: `${failures.length ? failures.join('；') : pass}（来源=蓝图）`,
+    ...(failures.length ? { suggestion: 'CU-bound spec 只投影蓝图裁决：回 /component-design 调和蓝图（术语事实 / touches / development 节点 module）后重新投影，不在 spec 内改范围或问人。', affected_files: specMdAffected(ctx) } : {}),
+  });
+  let projection: NonNullable<ReturnType<typeof loadChangeUnitBlueprintScope>>;
+  try {
+    projection = loadChangeUnitBlueprintScope(ctx.projectRoot, ctx.feature)!;
+  } catch (error) {
+    const failure = [`无法解析 CU 蓝图投影：${(error as Error).message}`];
+    return ['terminology_mapping_table', 'scope_declaration', 'scope_matches_catalog', 'terminology_modules_within_scope'].map(id => result(id, failure, ''));
+  }
+  const out: CheckResult[] = [];
+  const table = extractTables(getSectionContent(prd, '术语映射表') ?? '')[0];
+  const termFailures: string[] = [];
+  if (!table || !tableHasColumns(table, TERMINOLOGY_REQUIRED_COLUMNS).hasAll) {
+    termFailures.push(`「术语映射表」须为含 ${TERMINOLOGY_REQUIRED_COLUMNS.join('/')} 列的表格`);
+  } else {
+    const moduleIdx = table.headers.findIndex(h => h.includes('权威模块'));
+    const confirmIdx = table.headers.findIndex(h => h.includes('用户确认'));
+    const confidenceIdx = table.headers.findIndex(h => h.includes('置信度'));
+    const confusedIdx = table.headers.findIndex(h => h.includes('易混项'));
+    const rows = table.rows.filter(row => (row[0] || '').trim() && !/^\{.*\}$/.test((row[0] || '').trim()));
+    const expected = new Map(projection.terms.map(term => [term.term, term]));
+    const names = rows.map(row => (row[0] || '').trim());
+    const duplicated = [...new Set(names.filter((name, i) => names.indexOf(name) !== i))];
+    const missing = [...expected.keys()].filter(term => !names.includes(term));
+    const extra = [...new Set(names)].filter(term => !expected.has(term));
+    // 逐行逐字段核对投影（canonical_module / confidence / easily_confused_with 每项都须出现在易混项列）。
+    const drifted = rows.flatMap(row => {
+      const fact = expected.get((row[0] || '').trim());
+      if (!fact) return [];
+      const cell = (i: number) => (row[i] || '').trim();
+      const diffs = [
+        ...(cell(moduleIdx) !== fact.canonical_module ? [`权威模块 ${cell(moduleIdx)}≠${fact.canonical_module}`] : []),
+        ...(cell(confidenceIdx).toLowerCase() !== fact.confidence ? [`置信度 ${cell(confidenceIdx)}≠${fact.confidence}`] : []),
+        ...fact.easily_confused_with.filter(item => !cell(confusedIdx).includes(item)).map(item => `易混项缺 ${item}`),
+      ];
+      return diffs.length ? [`${fact.term}：${diffs.join('，')}`] : [];
+    });
+    const unticked = rows.filter(row => !/\[[xX]\]/.test(row[confirmIdx] || '')).map(row => (row[0] || '').trim());
+    if (duplicated.length) termFailures.push(`术语行重复（每个术语只能投影一行）：${duplicated.join('、')}`);
+    if (missing.length) termFailures.push(`缺蓝图术语事实行：${missing.join('、')}`);
+    if (extra.length) termFailures.push(`多出蓝图没有的术语行：${extra.join('、')}`);
+    if (drifted.length) termFailures.push(`与蓝图术语事实投影不一致：${drifted.join('；')}`);
+    if (unticked.length) termFailures.push(`投影行用户确认列须为 [x]：${unticked.join('、')}`);
+  }
+  out.push(result('terminology_mapping_table', termFailures, `术语映射表 ${projection.terms.length} 行与蓝图术语事实一致`));
+  const { scope, error } = parseScope(prd);
+  const modifiable = new Set(projection.modifiable);
+  const scopeFailures: string[] = [];
+  if (!scope) scopeFailures.push(error ? describeScopeError(error) : 'Scope 声明无法解析');
+  else {
+    const inScope = new Set(scope.in_scope_modules);
+    if (inScope.size !== modifiable.size || [...inScope].some(name => !modifiable.has(name))) {
+      scopeFailures.push(`in_scope_modules [${[...inScope].join(', ')}] 必须集合等于蓝图可修改模块 [${projection.modifiable.join(', ')}]`);
+    }
+    if ((scope.expansions_with_user_approval ?? []).length > 0) scopeFailures.push('CU-bound 不允许 expansions_with_user_approval；范围扩大走蓝图 revision');
+  }
+  out.push(result('scope_declaration', scopeFailures, `in_scope_modules = 蓝图可修改模块 [${projection.modifiable.join(', ')}]`));
+  const unknownModules = scope ? [...scope.in_scope_modules, ...scope.out_of_scope_modules].filter(name => !projection.admitted.modules.has(name)) : [];
+  out.push(result('scope_matches_catalog',
+    !projection.admitted.catalogOk ? [`${relCatalog(ctx.projectRoot)} 不可读`] : unknownModules.length ? [`Scope 模块不是获准模块（catalog ∪ 蓝图 add_module/move_module 声明）：${unknownModules.join('、')}`] : [],
+    'Scope 模块均为获准模块'));
+  out.push(...checkTerminologyModulesWithinScope(ctx, prd).map(item => ({ ...item, details: `${item.details}（来源=蓝图）` })));
+  return out;
+}
+
+// --------------------------------------------------------------------------
 // C1b: glossary 术语在正文出现但未进术语映射表 → WARN（兜底网）
 // --------------------------------------------------------------------------
 
@@ -1510,11 +1587,17 @@ const checker: PhaseChecker = {
     ];
 
     results.push(...safeRun(() => checkRequiredChapters(ctx, prd), 'required_chapters'));
-    results.push(...safeRun(() => checkTerminologyMappingTable(ctx, prd), 'terminology_mapping_table'));
-    results.push(...safeRun(() => checkHeadlessAssumptionsTrace(ctx), 'headless_assumptions_review'));
-    results.push(...safeRun(() => checkScopeDeclaration(ctx, prd), 'scope_declaration'));
-    results.push(...safeRun(() => checkScopeMatchesCatalog(ctx, prd), 'scope_matches_catalog'));
-    results.push(...safeRun(() => checkTerminologyModulesWithinScope(ctx, prd), 'terminology_modules_within_scope'));
+    const cuBoundScope = ctx.feature.startsWith('cu-') ? safeRun(() => checkChangeUnitBoundSpecScope(ctx, prd) ?? [], 'terminology_mapping_table') : null;
+    if (cuBoundScope) {
+      results.push(...cuBoundScope);
+      results.push(...safeRun(() => checkHeadlessAssumptionsTrace(ctx), 'headless_assumptions_review'));
+    } else {
+      results.push(...safeRun(() => checkTerminologyMappingTable(ctx, prd), 'terminology_mapping_table'));
+      results.push(...safeRun(() => checkHeadlessAssumptionsTrace(ctx), 'headless_assumptions_review'));
+      results.push(...safeRun(() => checkScopeDeclaration(ctx, prd), 'scope_declaration'));
+      results.push(...safeRun(() => checkScopeMatchesCatalog(ctx, prd), 'scope_matches_catalog'));
+      results.push(...safeRun(() => checkTerminologyModulesWithinScope(ctx, prd), 'terminology_modules_within_scope'));
+    }
     if (isSpecVisualHandoffSkipped(ctx.resolvedProfile)) {
       results.push({
         id: 'visual_handoff',

@@ -432,18 +432,19 @@ entries:
         portable: "2=清理/恢复路径"
 
   - id: spec.terminology
-    skill: "spec"
+    skill: "component-design"
     class: artifact_checkbox
     ssot_anchor: "user-confirmation-ux.md §3.4"
-    skill_step: "Step 1.5"
+    skill_step: "component-design 第 2 步 / spec Step 1.5（非 CU-bound）"
     portable_menu: "1=全部确认high行 2=逐行确认 3=逐行修改"
-    artifact: "spec.md ## 0. 术语映射表 [x]"
-    harness: check-spec terminology_mapping_table
+    artifact: "蓝图 discovery.facts term:<术语>（extraction_method: user_confirmed）；非 CU-bound：spec 术语映射表 [x] 列"
+    harness: check-component-blueprint terminology_facts_confirmed
+    notes: "正式需求在 /component-design 一次确认（headless 记 headless_assumed、入 must-review、不回写 glossary）；CU-bound spec 术语映射表只投影不再问人。非 CU-bound 平铺 Feature 仍在 spec Step 1.5 确认并写回 spec.md 术语映射表 [x]（check-spec terminology_mapping_table）。"
     options:
       - value: all_confirm
-        label: "全部确认 — 所有行写回 spec [x]，进入后续 spec 步骤"
+        label: "全部确认 — 所有行写回蓝图 term: 事实 user_confirmed（非 CU-bound：spec [x]），继续后续步骤"
         portable: "1=全部确认 high 行"
-        side_effect: "写回 spec 术语映射表 [x] 列"
+        side_effect: "写回蓝图 term: 事实 extraction_method: user_confirmed（非 CU-bound：spec 术语映射表 [x] 列）"
       - value: row_by_row
         label: "逐行确认 — 逐条确认，有问题可修改"
         portable: "2=逐行确认"
@@ -452,9 +453,9 @@ entries:
         portable: "3=逐行修改"
     matrix_options:
       - value: confirm_row
-        label: "确认该行 — 写回本行 [x]"
+        label: "确认该行 — 写回本行 term: 事实 user_confirmed（非 CU-bound：本行 [x]）"
         portable: "1=确认该行"
-        side_effect: "写回 spec 术语映射表本行 [x]"
+        side_effect: "写回蓝图本行 term: 事实 extraction_method: user_confirmed（非 CU-bound：spec 术语映射表本行 [x]）"
       - value: edit_row
         label: "改映射 — 修改本行权威模块或消歧"
         portable: "2=改映射"
@@ -481,6 +482,7 @@ entries:
     skill_step: "Step 2.5"
     portable_menu: "1=已读并同意 2=拒绝 3=修改提议"
     requires_preamble: "须先展示完整 Scope 扩展提议正文"
+    notes: "CU-bound 不适用：模块范围由蓝图 touches 派生，范围扩大回 /component-design 做蓝图 revision。"
     options:
       - value: approve
         label: "已读并同意扩展 — 记录用户原话到 expansions_with_user_approval"
@@ -512,6 +514,7 @@ entries:
     class: enum
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "架构影响声明"
+    notes: "CU-bound 不适用：架构影响由蓝图 architecture_impact 决策裁决，plan 段只投影决策 id，变化回蓝图 revision；plan 不是 DSL writer。"
     portable_menu: "1=impact=none 2=dsl_change 3=其他(说明)"
     options:
       - value: none

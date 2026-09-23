@@ -9,14 +9,69 @@ import {
   issue,
   nonEmptyString,
 } from './component-blueprint-model';
-import { isUiComponent, selectionShapeIssues, readComponentIndex, componentDependencyAllowed } from './component-assets';
-import { relComponentIndex, relComponentCatalog } from '../../config';
+import { isUiComponent, selectionShapeIssues, readComponentIndex, componentDependencyAllowed, resolveAdmittedModules, AdmittedModules } from './component-assets';
+import { relComponentIndex, relComponentCatalog, loadArchitectureDsl } from '../../config';
+import { isChangedView } from './blueprint-views';
+
+/** plan a3c7e9d1 t3：architecture_impact 一条决策一个变化项；change → 条件字段。 */
+export const ARCHITECTURE_IMPACT_FIELDS: Record<string, string[]> = {
+  add_module: ['module', 'layer'],
+  retire_module: ['module'],
+  move_module: ['module', 'from_layer', 'to_layer'],
+  responsibility_rewrite: ['module'],
+  dependency_edge: ['from', 'to', 'direction'],
+  dsl_other: [],
+};
+
+function validateArchitectureImpacts(
+  blueprint: BlueprintRecord,
+  development: BlueprintRecord | undefined,
+  projectRoot: string | undefined,
+  admitted: AdmittedModules | undefined,
+): BlueprintIssue[] {
+  const out: BlueprintIssue[] = [];
+  const decisions = asRecords(asRecord(blueprint.decisions_and_gaps)?.decisions);
+  const layers = projectRoot ? new Set(loadArchitectureDsl(projectRoot).outer_layers.map(l => l.id)) : undefined;
+  decisions.forEach((decision, index) => {
+    if (decision.kind !== 'architecture_impact') return;
+    const base = `$.decisions_and_gaps.decisions[${index}]`;
+    const bad = (message: string) => out.push(issue('blueprint_architecture_impact_invalid', base, message));
+    const change = String(decision.change ?? '');
+    const fields = ARCHITECTURE_IMPACT_FIELDS[change];
+    if (!fields) bad(`change 必须是 ${Object.keys(ARCHITECTURE_IMPACT_FIELDS).join('|')}；一条决策只表达一个变化项。`);
+    for (const field of fields ?? []) if (!nonEmptyString(decision[field])) bad(`${change} 必须有 ${field}。`);
+    if (change === 'dependency_edge' && !['add', 'remove'].includes(String(decision.direction))) bad('dependency_edge.direction 只能是 add|remove。');
+    if (change === 'dsl_other' && asStrings(decision.affected_items).length === 0) bad('dsl_other 必须列出 affected_items。');
+    if (!nonEmptyString(decision.rationale)) bad('architecture_impact 必须有 rationale。');
+    if (!nonEmptyString(decision.owner) || asStrings(decision.verification_refs).length === 0) bad('architecture_impact 必须有 owner 与 verification_refs。');
+    if (development?.evolution_impact === 'verified_unchanged') out.push(issue('blueprint_view_unchanged_masks_change', base, 'verified_unchanged development 不得产生 architecture_impact 决策。'));
+    if (!layers) return;
+    for (const field of change === 'add_module' ? ['layer'] : change === 'move_module' ? ['from_layer', 'to_layer'] : []) {
+      if (nonEmptyString(decision[field]) && !layers.has(decision[field])) bad(`${field}=${decision[field]} 不在当前 DSL outer_layers。`);
+    }
+    // 退役归位（closure 后从 catalog 删除）是合法终态，只提示核对拼写，不阻断蓝图 / closure 复核。
+    if (change === 'retire_module' && admitted?.catalogOk && nonEmptyString(decision.module) && admitted.modules.get(decision.module) === '') out.push(issue('blueprint_architecture_impact_invalid', base, `retire_module 的 ${decision.module} 已不在 module-catalog：若已按 closure 归位则无需处理，否则核对模块名。`, 'WARN'));
+    if (change === 'responsibility_rewrite' && admitted && nonEmptyString(decision.module) && !admitted.modules.has(decision.module)) bad(`responsibility_rewrite 的 ${decision.module} 不是获准模块。`);
+  });
+  if (projectRoot && admitted && development && isChangedView(development)) {
+    if (!admitted.catalogOk) out.push(issue('blueprint_node_module_unresolved', '$.design_views', 'module-catalog 不可读，changed development 节点的模块归属为 unknown；当前切片不得施工，先修复 catalog（catalog-bootstrap）。'));
+    // module 缺失由 validateBlueprintViews 报；此处只判获准。
+    asRecords(development.nodes).forEach((node, nodeIndex) => {
+      if (admitted.catalogOk && nonEmptyString(node.module) && !admitted.modules.has(node.module)) {
+        out.push(issue('blueprint_node_module_unadmitted', `$.design_views[development].nodes[${nodeIndex}].module`, `${node.module} 既不在 module-catalog，也没有本蓝图 add_module/move_module/retire_module 决策声明。`));
+      }
+    });
+  }
+  return out;
+}
 
 export function validateEvolutionDecisions(blueprint: BlueprintRecord, projectRoot?: string): BlueprintIssue[] {
   const out: BlueprintIssue[] = [];
   const decisions = asRecords(asRecord(blueprint.decisions_and_gaps)?.decisions);
   const development = asRecords(blueprint.design_views).find(v => v.view_id === 'development');
   const selections = decisions.filter(d => d.kind === 'component_asset_selection');
+  const admitted = projectRoot ? resolveAdmittedModules(projectRoot, blueprint) : undefined;
+  out.push(...validateArchitectureImpacts(blueprint, development, projectRoot, admitted));
   let index;
   if (projectRoot) {
     try { index = readComponentIndex(projectRoot); }
@@ -44,7 +99,7 @@ export function validateEvolutionDecisions(blueprint: BlueprintRecord, projectRo
       }
       const asset = index?.components.find(c => c.id === decision.component_ref);
       if (decision.component_ref !== undefined && !asset) out.push(issue('blueprint_asset_ref_missing', `${base}.component_ref`, 'component_ref 不在索引内。'));
-      if (asset && node && !componentDependencyAllowed(projectRoot, String(node.module ?? ''), asset.module)) {
+      if (asset && node && !componentDependencyAllowed(projectRoot, String(node.module ?? ''), asset.module, admitted?.declared)) {
         if (!['open_decision', 'blocker'].includes(String(decision.status))) out.push(issue('blueprint_asset_dependency_illegal', base, '依赖不合法：换选 > plan 声明下沉 > 请求用户批准新边；未批准不得施工。'));
         const gap = asRecords(asRecord(blueprint.decisions_and_gaps)?.gaps).find(g => asStrings(g.verification_refs).includes(`decision:${decision.decision_id}`));
         if (!gap) out.push(issue('blueprint_asset_dependency_gap_missing', base, '非法依赖必须有带 owner/needed_by 的 gap，verification_refs 引用该 decision。'));

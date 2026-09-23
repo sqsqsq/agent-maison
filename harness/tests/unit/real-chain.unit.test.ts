@@ -28,6 +28,15 @@ import {
 import { runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
 import { clearFrameworkConfigCache } from '../../config';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
+import * as YAML from 'yaml';
+import { fixture as seedChangeUnitBlueprint } from './blueprint-skill-projection.unit.test';
+import { rewriteBlueprint } from './change-unit-progression.unit.test';
+import { validateComponentBlueprint } from '../../scripts/utils/component-blueprint-validator';
+import { deriveBlueprintSkillInput } from '../../scripts/utils/blueprint-skill-projection';
+import { validateChangeUnitFeatureProjection } from '../../scripts/utils/change-unit-feature-projection';
+import { resolveBlueprintTarget } from '../../scripts/utils/blueprint-addressing';
+import { asRecord, type BlueprintRecord } from '../../scripts/utils/component-blueprint-model';
+import type { ContractsSpec } from '../../scripts/utils/types';
 
 const cases: Array<{ name: string; run: () => Promise<void> }> = [];
 function test(name: string, run: () => Promise<void>): void { cases.push({ name, run }); }
@@ -956,6 +965,82 @@ test('real-chain 判据解析：逐阶段配对子进程打印的 project_profil
     `coding 归属错（应只取 harness 起始行，且 subVariant 后缀不入名）：${JSON.stringify(byPhase.get('coding'))}`);
   assert(byPhase.get('ut') === undefined, 'ut 未出现却被凭空配出值');
 });
+
+/**
+ * plan a3c7e9d1 t5：CU-bound spec/plan 消费蓝图派生范围——**同一合成宿主**上的接缝。
+ *
+ * 六阶段链本身仍是平铺 Feature（`demo-card`）：它跑通即证明非 CU-bound 的术语/scope/架构影响门禁未回归。
+ * CU-bound 不进 goal 链：合成宿主的 `test-chain` profile 无 design lens（`profileHasDesignLens` 仅 hmos-app），
+ * P1 CLI 会按设计判 unsupported；本仓也从未有过 CU-bound 六阶段 goal 链。故这里在同一宿主（真实
+ * framework.config DSL / catalog / glossary，provision 出来的框架根）上直调生产判据：
+ * P1 `validateComponentBlueprint`、typed plan 的蓝图投影 `deriveBlueprintSkillInput`、共享
+ * `validateChangeUnitFeatureProjection`。
+ */
+export async function cuBoundBlueprintScopeSeam(): Promise<void> {
+  const project = provisionRealChainProject();
+  try {
+    scaffoldRealChainHost(project);
+    const f = seedChangeUnitBlueprint(project.root);
+    // 宿主 catalog 保留真实模块 FinancialCard，再登记蓝图 development 节点的 `ledger`。
+    writeHostFile(project.root, 'doc/module-catalog.yaml', [
+      'schema_version: "1.0"',
+      'modules:',
+      ...[[project.module, `${project.modulePath}/index.ets`], ['ledger', '02-Feature/ledger/index.ets']].flatMap(([name, entry]) => [
+        `  - name: "${name}"`, '    layer: "02-Feature"', '    sub_layer: null', '    format: "HAR"', `    one_liner: "${name}"`,
+        '    responsibilities: []', '    NOT_responsible_for: []', '    typical_business_terms: []', '    easily_confused_with: []',
+        '    key_exports: []', `    entry_file: "${entry}"`,
+      ]),
+      '',
+    ].join('\n'));
+    clearFrameworkConfigCache();
+    const blockers = (): string[] => {
+      const bp = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf-8'));
+      return validateComponentBlueprint(bp, { projectRoot: project.root }).filter(i => i.severity === 'BLOCKER').map(i => `${i.id}: ${i.message}`);
+    };
+    // ① changed development 节点带 `module`，解析为宿主 catalog 获准模块。
+    let ids = blockers();
+    assert(ids.length === 0, `合成宿主上的蓝图应无 BLOCKER：\n${ids.join('\n')}`);
+    // ② 术语事实：medium 未确认 → terminology_facts_confirmed 挡；user_confirmed 后放行。
+    const termFact = (method: string) => ({
+      fact_id: 'term-ledger', subject: 'term:账本', value: { canonical_module: 'ledger', confidence: 'medium', easily_confused_with: [project.module] },
+      provenance: { source_kind: 'catalog', source_ref: 'doc/module-catalog.yaml', observed_at: '2026-09-23T10:00:00+08:00', evidence_strength: 'observed', extraction_method: method },
+    });
+    rewriteBlueprint(project.root, bp => { bp.discovery.facts.push(termFact('model_inference')); });
+    ids = blockers();
+    assert(ids.some(id => id.startsWith('terminology_facts_confirmed')), `medium 未确认术语应被挡：${ids.join(' | ')}`);
+    rewriteBlueprint(project.root, bp => { bp.discovery.facts = bp.discovery.facts.filter((x: BlueprintRecord) => x.fact_id !== 'term-ledger'); bp.discovery.facts.push(termFact('user_confirmed')); });
+    ids = blockers();
+    assert(ids.length === 0, `user_confirmed 后不应再挡：\n${ids.join('\n')}`);
+    // ③ typed plan 投影消费 touches 派生的可修改集合：集合内 resolved，越界（宿主真实模块 FinancialCard）invalid。
+    const setModules = (names: string[]): void => rewriteBlueprint(project.root, bp => {
+      const cu = YAML.parse(fs.readFileSync(f.cuFile, 'utf-8'));
+      const node = asRecord(resolveBlueprintTarget(bp, cu.design_refs[0].target))!;
+      (node.contracts as BlueprintRecord).modules = names.map(name => ({ name, layer: '02-Feature', format: 'HAR', change_type: 'modify', package_path: `02-Feature/${name}` }));
+    });
+    const plan = () => deriveBlueprintSkillInput(project.root, f.feature, project.frameworkRoot, 'contracts');
+    setModules(['ledger']);
+    const inside = plan();
+    assert(inside.state === 'resolved', `可修改集合内应放行：${inside.detail}`);
+    const shared = validateChangeUnitFeatureProjection(project.root, f.feature, inside.value as ContractsSpec, undefined, true, 'plan');
+    assert(!shared.issues.some(i => i.id === 'cu_scope_matches_blueprint'), `共享校验不应报越界：${JSON.stringify(shared.issues)}`);
+    const overflow = validateChangeUnitFeatureProjection(project.root, f.feature,
+      { ...(inside.value as ContractsSpec), modules: [...(inside.value as ContractsSpec).modules, { name: project.module, layer: '02-Feature', package_path: project.modulePath }] } as ContractsSpec,
+      undefined, true, 'plan');
+    assert(overflow.issues.some(i => i.id === 'cu_scope_matches_blueprint' && i.route === 'reconcile_blueprint'), `共享校验应报 cu_scope_matches_blueprint：${JSON.stringify(overflow.issues)}`);
+    setModules(['ledger', project.module]);
+    const outside = plan();
+    assert(outside.state === 'invalid' && outside.detail!.includes('可修改模块集合') && outside.detail!.includes(project.module),
+      `越出 touches 派生集合应 invalid：${outside.state} ${outside.detail}`);
+    // 调和回集合内后投影恢复（链可继续）。
+    setModules(['ledger']);
+    assert(plan().state === 'resolved', '调和回可修改集合后投影应恢复 resolved');
+  } finally {
+    if (!DEBUG) fs.rmSync(project.root, { recursive: true, force: true });
+    clearFrameworkConfigCache();
+  }
+}
+
+test('real-chain CU-bound 接缝：合成宿主上蓝图节点 module / 术语确认 / touches 派生范围被 typed plan 投影消费', cuBoundBlueprintScopeSeam);
 
 test('real-chain 正例：spec→testing 六阶段真实 harness 全链 PASS + closed', async () => {
   const project = provisionRealChainProject();

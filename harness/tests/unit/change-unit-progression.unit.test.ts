@@ -3,7 +3,17 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
-import { featureDir } from '../../config';
+import { ArchitectureDsl, LEGACY_DEFAULT_DSL, clearFrameworkConfigCache, featureDir } from '../../config';
+import { checkChangeUnitFeatureProjection, deriveModifiableModules } from '../../scripts/utils/change-unit-feature-projection';
+import checkSpecPhase, { checkChangeUnitBoundSpecScope } from '../../scripts/check-spec';
+import checkPlanPhase, { checkChangeUnitBoundPlanScope } from '../../scripts/check-plan';
+import { loadFrameworkConfig, resolveFeatureArtifact } from '../../config';
+import { loadResolvedProfile } from '../../profile-loader';
+import { fingerprintDiscoverySources } from '../../scripts/utils/blueprint-discovery';
+import { currentScopeItems } from '../../scripts/utils/blueprint-requirement-traceability';
+import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-path';
+import { validateComponentClosureKnowledge } from '../../scripts/utils/component-closure-knowledge';
+import type { CheckContext, CheckResult } from '../../scripts/utils/types';
 import { BlueprintRecord, ComponentBlueprintRef, asRecord } from '../../scripts/utils/component-blueprint-model';
 import { resolveComponentBlueprintRef } from '../../scripts/utils/component-blueprint-path';
 import { checkCanonicalChangeUnit } from '../../scripts/check-change-unit';
@@ -1364,6 +1374,229 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     }));
   }
 
+  // ---- plan a3c7e9d1 t2/t3：可修改模块集合与架构影响落在共享投影校验链；叙述路径核对投影 ----
+  const planCtx = (projectRoot: string, feature: string, phase: 'spec' | 'plan') => ({
+    projectRoot, feature, phase, phaseRule: { phase, structure_checks: {}, traceability_checks: {}, semantic_checks: {} },
+  }) as unknown as CheckContext;
+  const moduleSpec = (name: string, layer: string) => ({ name, layer, format: 'HAR', change_type: 'modify', package_path: `${layer}/${name}` });
+  const findResult = (checks: CheckResult[], id: string) => checks.find(item => item.id === id);
+
+  results.push(test('a3c7e9d1 可修改模块集合只来自 touches：design_refs 引用共享模块但不修改时 contracts.modules 不得带入', () => {
+    withTempProject(projectRoot => {
+      fs.writeFileSync(path.join(projectRoot, 'doc', 'module-catalog.yaml'), 'modules:\n  - { name: ledger, layer: 02-Feature }\n  - { name: SharedState, layer: 04-BusinessBase }\n', 'utf8');
+      rewriteBlueprint(projectRoot, bp => {
+        const development = bp.design_views.find((view: BlueprintRecord) => view.view_id === 'development');
+        development.nodes.push({ node_id: 'shared-state', label: 'Shared state', owner: 'app-state-team', module: 'SharedState', current_state: 'Shared state holder', target_state: 'Shared state holder', design_basis_refs: ['view:logical/node:ledger-domain'], provenance: bp.provenance, verification_refs: ['verify:shared-state'] });
+      }, cu => { if (cu.change_unit_id === 'ledger-refresh') cu.design_refs.push({ ...cu.component_blueprint_ref, target: { kind: 'node', view_id: 'development', id: 'shared-state' } }); });
+      const fixture = projectionContracts(projectRoot);
+      fixture.contracts.modules = [moduleSpec('SharedState', '04-BusinessBase')] as ContractsSpec['modules'];
+      let result = validateChangeUnitFeatureProjection(projectRoot, fixture.feature, fixture.contracts, fixture.acceptance, true, 'plan');
+      const scopeIssue = result.issues.find(item => item.id === 'cu_scope_matches_blueprint');
+      assert(scopeIssue?.message.includes('SharedState') && scopeIssue.message.includes('/component-design'), JSON.stringify(result.issues));
+      const checks = checkChangeUnitFeatureProjection({ projectRoot, feature: fixture.feature, phase: 'plan', featureSpec: { feature: fixture.feature, contracts: fixture.contracts, acceptance: fixture.acceptance, useCases: {} } } as unknown as CheckContext, 'plan');
+      assert(checks.some(item => item.id === 'cu_scope_matches_blueprint' && item.status === 'FAIL' && item.severity === 'BLOCKER'), 'typed plan 必须 BLOCKER');
+      fixture.contracts.modules = [moduleSpec('ledger', '02-Feature')] as ContractsSpec['modules'];
+      result = validateChangeUnitFeatureProjection(projectRoot, fixture.feature, fixture.contracts, fixture.acceptance, true, 'plan');
+      assert(!result.issues.some(item => item.id === 'cu_scope_matches_blueprint'), JSON.stringify(result.issues));
+      fs.appendFileSync(path.join(projectRoot, 'doc', 'features', 'ledger-app-blueprint', 'blueprint', 'component-blueprint.yaml'), '\n# revision changed\n');
+      result = validateChangeUnitFeatureProjection(projectRoot, fixture.feature, fixture.contracts, fixture.acceptance, true, 'plan');
+      // 同一 resolver 同一 stale 语义：CU 绑定的蓝图字节变化即 fail-closed，不沿用旧派生集合的 PASS。
+      assert(result.issues.length > 0, `蓝图 revision 变化后旧派生集合必须 stale：${JSON.stringify(result.issues)}`);
+      assert(deriveModifiableModulesThrows(projectRoot), 'touches 派生必须经同一 stale resolver');
+    });
+  }));
+
+  results.push(test('a3c7e9d1 dependency_edge 按操作核对当前 DSL；open_decision 挡施工；dsl_other 只 WARN；手工编辑 config 后通过', () => {
+    withTempProject(projectRoot => {
+      const edge = (id: string, direction: string, to: string, status = 'decided_with_authority') => (bp: BlueprintRecord) => ({
+        decision_id: id, kind: 'architecture_impact', change: 'dependency_edge', from: 'ledger', to, direction, rationale: 'fixture', status, owner: 'architecture-owner', provenance: bp.provenance, verification_refs: [`verify:${id}`],
+      });
+      const issuesWith = (make: (bp: BlueprintRecord) => BlueprintRecord, arch?: (dsl: ArchitectureDsl) => void) => {
+        writeArchitecture(projectRoot, arch);
+        rewriteBlueprint(projectRoot, bp => { bp.decisions_and_gaps.decisions = [...bp.decisions_and_gaps.decisions.filter((d: BlueprintRecord) => d.kind !== 'architecture_impact'), make(bp)]; });
+        const fixture = projectionContracts(projectRoot);
+        return validateChangeUnitFeatureProjection(projectRoot, fixture.feature, fixture.contracts, fixture.acceptance, true, 'plan');
+      };
+      fs.writeFileSync(path.join(projectRoot, 'doc', 'module-catalog.yaml'), 'modules:\n  - { name: ledger, layer: 02-Feature }\n  - { name: OtherFeature, layer: 02-Feature }\n', 'utf8');
+      let result = issuesWith(edge('edge-add', 'add', 'OtherFeature'));
+      let issue = result.issues.find(item => item.id === 'cu_architecture_impact_not_effective');
+      assert(issue?.message.includes('framework-init'), JSON.stringify(result.issues));
+      result = issuesWith(edge('edge-add', 'add', 'OtherFeature'), dsl => { dsl.outer_layers.find(layer => layer.id === '02-Feature')!.intra_layer_deps = 'dag'; });
+      assert(!result.issues.some(item => item.id === 'cu_architecture_impact_not_effective'), `手工编辑 config 后应通过：${JSON.stringify(result.issues)}`);
+      result = issuesWith(edge('edge-remove', 'remove', '04-BusinessBase'));
+      issue = result.issues.find(item => item.id === 'cu_architecture_impact_not_effective');
+      assert(issue?.message.includes('删除未生效'), JSON.stringify(result.issues));
+      result = issuesWith(edge('edge-remove', 'remove', '04-BusinessBase'), dsl => {
+        const feature = dsl.outer_layers.find(layer => layer.id === '02-Feature')!;
+        feature.can_depend_on = feature.can_depend_on.filter(layer => layer !== '04-BusinessBase');
+      });
+      assert(!result.issues.some(item => item.id === 'cu_architecture_impact_not_effective'), JSON.stringify(result.issues));
+      result = issuesWith(edge('edge-open', 'add', '04-BusinessBase', 'open_decision'));
+      assert(result.issues.some(item => item.id === 'cu_architecture_impact_not_effective' && item.message.includes('open_decision')), JSON.stringify(result.issues));
+      result = issuesWith(bp => ({ decision_id: 'inner-order', kind: 'architecture_impact', change: 'dsl_other', affected_items: ['module_inner_layers'], rationale: 'fixture', status: 'decided_with_authority', owner: 'architecture-owner', provenance: bp.provenance, verification_refs: ['verify:inner'] }));
+      assert(result.issues.length === 0, JSON.stringify(result.issues));
+      const fixture = projectionContracts(projectRoot);
+      const checks = checkChangeUnitFeatureProjection({ projectRoot, feature: fixture.feature, phase: 'plan', featureSpec: { feature: fixture.feature, contracts: fixture.contracts, acceptance: fixture.acceptance, useCases: {} } } as unknown as CheckContext, 'plan');
+      assert(checks.some(item => item.id === 'cu_architecture_dsl_other' && item.status === 'WARN') && !checks.some(item => item.status === 'FAIL'), JSON.stringify(checks));
+    });
+  }));
+
+  results.push(test('a3c7e9d1 复合变化：add_module + dependency_edge + responsibility_rewrite 各自核对与归位', () => {
+    withTempProject(projectRoot => {
+      writeArchitecture(projectRoot);
+      const base = (bp: BlueprintRecord, id: string, fields: BlueprintRecord) => ({ decision_id: id, kind: 'architecture_impact', rationale: 'fixture', status: 'decided_with_authority', owner: 'architecture-owner', provenance: bp.provenance, verification_refs: [`verify:${id}`], ...fields });
+      rewriteBlueprint(projectRoot, bp => {
+        bp.decisions_and_gaps.decisions.push(
+          base(bp, 'add-ledger-ui', { change: 'add_module', module: 'LedgerUi', layer: '04-BusinessBase' }),
+          base(bp, 'edge-ledger-ui', { change: 'dependency_edge', from: 'ledger', to: 'LedgerUi', direction: 'add' }),
+          base(bp, 'rewrite-ledger', { change: 'responsibility_rewrite', module: 'ledger' }),
+        );
+      });
+      const fixture = projectionContracts(projectRoot);
+      let result = validateChangeUnitFeatureProjection(projectRoot, fixture.feature, fixture.contracts, fixture.acceptance, true, 'plan');
+      assert(!result.issues.some(item => item.id.startsWith('cu_')), JSON.stringify(result.issues));
+      const blueprint = loadCanonicalBlueprint(projectRoot, 'ledger-app-blueprint');
+      const closure = validateComponentClosureKnowledge(projectRoot, { blueprint } as never);
+      for (const id of ['add-ledger-ui', 'edge-ledger-ui', 'rewrite-ledger']) {
+        assert(closure.issues.some(item => item.path === `decision:${id}`), `${id} 缺归位义务：${JSON.stringify(closure.issues)}`);
+      }
+      writeArchitecture(projectRoot, dsl => { dsl.outer_layers.find(layer => layer.id === '02-Feature')!.can_depend_on = ['05-SystemBase']; });
+      result = validateChangeUnitFeatureProjection(projectRoot, fixture.feature, fixture.contracts, fixture.acceptance, true, 'plan');
+      assert(result.issues.some(item => item.id === 'cu_architecture_impact_not_effective' && item.message.includes('edge-ledger-ui')), JSON.stringify(result.issues));
+    });
+  }));
+
+  results.push(test('a3c7e9d1 CU-bound 叙述 spec/plan 核对蓝图投影；非 CU-bound 返回 null 走原门禁；plan-workflow-detail 不再写 DSL', () => {
+    withTempProject(projectRoot => {
+      rewriteBlueprint(projectRoot, bp => {
+        bp.discovery.facts.push({ fact_id: 'term-ledger', subject: 'term:账本', value: { canonical_module: 'ledger', confidence: 'medium', easily_confused_with: [] },
+          provenance: { source_kind: 'catalog', source_ref: 'doc/module-catalog.yaml', observed_at: '2026-09-23T10:00:00+08:00', evidence_strength: 'observed', extraction_method: 'user_confirmed' } });
+      });
+      const feature = deriveChangeUnitFeatureId('ledger-app-blueprint', 'ledger-refresh');
+      const scopeBlock = (inScope: string, extra = '') => `## Scope 声明\n\n\`\`\`yaml\nin_scope_modules: [${inScope}]\nout_of_scope_modules: []\nrationale: 蓝图派生\n${extra}\`\`\`\n`;
+      const table = (module: string, tick = '[x]') => `## 0. 术语映射表\n\n| 原始术语 | 权威模块 | 所属层 | 置信度 | 易混项 | 用户确认 |\n|---|---|---|---|---|---|\n| 账本 | ${module} | 02-Feature | medium | — | ${tick} |\n\n`;
+      let spec = checkChangeUnitBoundSpecScope(planCtx(projectRoot, feature, 'spec'), table('ledger') + scopeBlock('ledger'))!;
+      for (const id of ['terminology_mapping_table', 'scope_declaration', 'scope_matches_catalog', 'terminology_modules_within_scope']) {
+        assert(findResult(spec, id)?.status === 'PASS' && findResult(spec, id)!.details!.includes('来源=蓝图'), `${id}: ${JSON.stringify(spec)}`);
+      }
+      spec = checkChangeUnitBoundSpecScope(planCtx(projectRoot, feature, 'spec'), table('OtherModule', '[ ]') + scopeBlock('ledger'))!;
+      const term = findResult(spec, 'terminology_mapping_table')!;
+      assert(term.status === 'FAIL' && term.severity === 'BLOCKER' && term.details!.includes('来源=蓝图') && term.details!.includes('OtherModule'), JSON.stringify(term));
+      assert(findResult(checkChangeUnitBoundSpecScope(planCtx(projectRoot, feature, 'spec'), scopeBlock('ledger'))!, 'terminology_mapping_table')?.status === 'FAIL', '缺术语映射表必须 FAIL');
+      const planDoc = (inScope: string, extra = '', impact = 'impact: none\ndecisions: []\n') => `${scopeBlock(inScope, extra)}\n### 架构影响声明 (architecture_impact)\n\n\`\`\`yaml\n${impact}\`\`\`\n`;
+      let plan = checkChangeUnitBoundPlanScope(planCtx(projectRoot, feature, 'plan'), planDoc('ledger'))!;
+      assert(plan.every(item => item.status === 'PASS'), JSON.stringify(plan));
+      plan = checkChangeUnitBoundPlanScope(planCtx(projectRoot, feature, 'plan'), planDoc('ledger, SharedState'))!;
+      assert(findResult(plan, 'scope_declaration')?.status === 'FAIL', JSON.stringify(plan));
+      plan = checkChangeUnitBoundPlanScope(planCtx(projectRoot, feature, 'plan'), planDoc('ledger', 'expansions_with_user_approval:\n  - modules: [SharedState]\n    reason: x\n    approved_by: user\n'))!;
+      assert(findResult(plan, 'scope_declaration')?.details?.includes('expansions_with_user_approval'), JSON.stringify(plan));
+      rewriteBlueprint(projectRoot, bp => {
+        bp.decisions_and_gaps.decisions.push({ decision_id: 'rewrite-ledger', kind: 'architecture_impact', change: 'responsibility_rewrite', module: 'ledger', rationale: 'fixture', status: 'decided_with_authority', owner: 'architecture-owner', provenance: bp.provenance, verification_refs: ['verify:rewrite'] });
+      });
+      plan = checkChangeUnitBoundPlanScope(planCtx(projectRoot, feature, 'plan'), planDoc('ledger'))!;
+      assert(findResult(plan, 'architecture_impact_declared')?.status === 'FAIL', JSON.stringify(plan));
+      plan = checkChangeUnitBoundPlanScope(planCtx(projectRoot, feature, 'plan'), planDoc('ledger', '', 'impact: responsibility_rewrite\ndecisions: [rewrite-ledger]\n'))!;
+      assert(plan.every(item => item.status === 'PASS'), JSON.stringify(plan));
+      assert(checkChangeUnitBoundSpecScope(planCtx(projectRoot, 'flat-feature', 'spec'), '') === null, '非 CU-bound spec 必须走原门禁');
+      assert(checkChangeUnitBoundPlanScope(planCtx(projectRoot, 'flat-feature', 'plan'), '') === null, '非 CU-bound plan 必须走原门禁');
+    });
+    const detail = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'skills', 'reference', 'plan-workflow-detail.md'), 'utf8');
+    assert(!detail.includes('同步改 framework.config.json') && detail.includes('framework-init'), 'plan 不再是 DSL writer');
+  }));
+
+  results.push(test('a3c7e9d1 返修4 CU-bound 术语映射表：重复冲突行、置信度 / 易混项被改写均 FAIL', () => {
+    withTempProject(projectRoot => {
+      rewriteBlueprint(projectRoot, bp => {
+        bp.discovery.facts.push({ fact_id: 'term-ledger', subject: 'term:账本', value: { canonical_module: 'ledger', confidence: 'medium', easily_confused_with: ['SharedState'] },
+          provenance: { source_kind: 'catalog', source_ref: 'doc/module-catalog.yaml', observed_at: '2026-09-23T10:00:00+08:00', evidence_strength: 'observed', extraction_method: 'user_confirmed' } });
+      });
+      const feature = deriveChangeUnitFeatureId('ledger-app-blueprint', 'ledger-refresh');
+      const header = '## 0. 术语映射表\n\n| 原始术语 | 权威模块 | 所属层 | 置信度 | 易混项 | 用户确认 |\n|---|---|---|---|---|---|\n';
+      const row = (module: string, confidence: string, confused: string) => `| 账本 | ${module} | 02-Feature | ${confidence} | ${confused} | [x] |\n`;
+      const scope = '\n## Scope 声明\n\n```yaml\nin_scope_modules: [ledger]\nout_of_scope_modules: [SharedState]\nrationale: 蓝图派生\n```\n';
+      const term = (rows: string) => findResult(checkChangeUnitBoundSpecScope(planCtx(projectRoot, feature, 'spec'), header + rows + scope)!, 'terminology_mapping_table')!;
+      const ok = term(row('ledger', 'medium', 'SharedState — 共享状态'));
+      assert(ok.status === 'PASS', JSON.stringify(ok));
+      let hit = term(row('SharedState', 'medium', 'SharedState') + row('ledger', 'medium', 'SharedState'));
+      assert(hit.status === 'FAIL' && hit.details!.includes('重复'), `重复冲突行不得被最后一行吞掉：${JSON.stringify(hit)}`);
+      hit = term(row('ledger', 'high', 'SharedState'));
+      assert(hit.status === 'FAIL' && hit.details!.includes('置信度'), JSON.stringify(hit));
+      hit = term(row('ledger', 'medium', '—'));
+      assert(hit.status === 'FAIL' && hit.details!.includes('易混项缺 SharedState'), JSON.stringify(hit));
+    });
+  }));
+
+  asynchronous.push(asyncTest('a3c7e9d1 生产 checker 接线：cu- Feature 的叙述 spec/plan 走蓝图投影分支', async () => {
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-a3c7-'));
+    try {
+      fs.cpSync(VALID_PROJECT, temp, { recursive: true });
+      const feature = deriveChangeUnitFeatureId('ledger-app-blueprint', 'ledger-refresh');
+      const frameworkRoot = path.resolve(__dirname, '..', '..', '..');
+      const scope = '## Scope 声明\n\n```yaml\nin_scope_modules: [ledger]\nout_of_scope_modules: []\nrationale: 蓝图派生\n```\n';
+      const table = '## 0. 术语映射表\n\n| 原始术语 | 权威模块 | 所属层 | 置信度 | 易混项 | 用户确认 |\n|---|---|---|---|---|---|\n\n';
+      for (const [name, text] of [['spec.md', table + scope], ['plan.md', scope + '\n### 架构影响声明\n\n```yaml\nimpact: none\ndecisions: []\n```\n']]) {
+        const file = resolveFeatureArtifact(temp, feature, name).canonicalPath;
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, text, 'utf8');
+      }
+      const ctx = (phase: 'spec' | 'plan') => ({
+        projectRoot: temp, frameworkRoot, feature, phase, featureSpec: { feature },
+        phaseRule: new SpecLoader(temp, undefined, undefined, frameworkRoot).loadPhaseRule(phase),
+        resolvedProfile: loadResolvedProfile(temp, loadFrameworkConfig(temp)),
+      }) as unknown as CheckContext;
+      const spec = await checkSpecPhase.check(ctx('spec'));
+      const plan = await checkPlanPhase.check(ctx('plan'));
+      for (const [checks, id] of [[spec, 'terminology_mapping_table'], [spec, 'scope_declaration'], [plan, 'scope_declaration'], [plan, 'architecture_impact_declared'], [plan, 'plan_to_architecture']] as const) {
+        const hit = checks.filter(item => item.id === id);
+        assert(hit.length === 1 && hit[0].status === 'PASS' && hit[0].details?.includes('来源=蓝图'), `${id}: ${JSON.stringify(hit)}`);
+      }
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(temp, { recursive: true, force: true });
+    }
+  }));
+
   results.push(...await Promise.all(asynchronous));
   return results;
+}
+
+export function rewriteBlueprint(projectRoot: string, mutate: (bp: BlueprintRecord & Record<string, any>) => void, mutateCu?: (cu: Record<string, any>) => void): void {
+  const workspace = path.join(projectRoot, 'doc', 'features', 'ledger-app-blueprint');
+  const file = path.join(workspace, 'blueprint', 'component-blueprint.yaml');
+  const bp = YAML.parse(fs.readFileSync(file, 'utf8'));
+  mutate(bp);
+  const fingerprint = fingerprintDiscoverySources(bp.discovery.facts, currentScopeItems(bp));
+  bp.discovery.source_fingerprint = fingerprint; bp.source_fingerprint = fingerprint;
+  for (const result of bp.derived_results ?? []) result.source_fingerprint = fingerprint;
+  fs.writeFileSync(file, YAML.stringify(bp), 'utf8');
+  const artifact = sha256(file);
+  for (const id of ['ledger-refresh', 'ledger-consumer', 'ledger-recovery', 'ledger-summary']) {
+    const cuFile = path.join(workspace, id, 'change-unit.yaml');
+    const cu = YAML.parse(fs.readFileSync(cuFile, 'utf8'));
+    mutateCu?.(cu);
+    const walk = (value: unknown): void => {
+      if (!value || typeof value !== 'object') return;
+      const record = value as Record<string, unknown>;
+      if (record.artifact === 'component-blueprint@1') { record.artifact_sha256 = artifact; record.source_fingerprint = fingerprint; }
+      Object.values(record).forEach(walk);
+    };
+    walk(cu);
+    fs.writeFileSync(cuFile, YAML.stringify(cu), 'utf8');
+  }
+}
+
+function deriveModifiableModulesThrows(projectRoot: string): boolean {
+  try {
+    deriveModifiableModules(projectRoot, asChangeUnitArtifact(loadCanonicalChangeUnit(projectRoot, 'ledger-app-blueprint', 'ledger-refresh').changeUnit));
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+function writeArchitecture(projectRoot: string, mutate?: (dsl: ArchitectureDsl) => void): void {
+  const architecture = clone(LEGACY_DEFAULT_DSL);
+  mutate?.(architecture);
+  fs.writeFileSync(path.join(projectRoot, 'framework.config.json'), JSON.stringify({ project_profile: { name: 'hmos-app' }, architecture }), 'utf8');
+  clearFrameworkConfigCache();
 }

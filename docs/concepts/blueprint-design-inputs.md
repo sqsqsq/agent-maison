@@ -7,6 +7,9 @@ P3 使用 `derive.blueprint-acceptance` 和 `derive.blueprint-contracts`，返�
 仅读取当前 canonical CU 的 `design_refs` 选中目标。目标可携带明确的 `acceptance`、`contracts`、`use_cases` 机器内容；这些内容沿现有类型和 checker 校验，承载目标的 provenance 必须为 authoritative。缺字段、含混文字、纯 decisions/verification_refs 都不能成为默认值或占位产物。
 
 - 蓝图负责共同决策、部件边界、外部契约；新事实改变这些内容时回 component-design 或外部 owner。
+- 术语映射归蓝图：`discovery.facts` 的 `term:<术语>` 事实（`source_kind: glossary|catalog`，`canonical_module` 为获准模块）在 component-design 一次确认；spec 术语映射表只投影、不再问人。
+- 模块范围归蓝图：可修改模块集合只由 CU `touches` 解析到的 development 节点 `module` 派生；spec/plan 的 Scope 只投影，`contracts.modules` 越出即 `cu_scope_matches_blueprint` 失败，范围扩大回 component-design。
+- 架构影响项归蓝图：每项一条 `architecture_impact` 决策（`add_module` / `retire_module` / `move_module` / `responsibility_rewrite` / `dependency_edge` / `dsl_other`）；`dependency_edge` 施工前须已裁决且当前 DSL 已达目标许可，模块增删迁与职责改写由 closure 归位到 catalog，`dsl_other` 只登记。plan 只投影决策 id，不判定、不写 DSL。
 - spec 负责补清行为、预期、边界和验收分层。验收 ID 必须为稳定 AC/BD ID，并在 canonical CU predicate 的 `verification_refs` 明确引用，例如 `acceptance:AC-1`。引用只建立映射；步骤、预期、关注点仍必须是真实内容。
 - plan 负责当前切片精确文件、类型、接口、runtime 生命周期和用例。不得从 touches 扩张写集、猜测事务边界或 DTO 映射。
 

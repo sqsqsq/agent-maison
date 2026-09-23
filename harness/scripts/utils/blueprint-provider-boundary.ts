@@ -22,7 +22,15 @@ export const STATIC_BLUEPRINT_PROVIDERS = [
   'component-assets',
 ] as const;
 
-const FORBIDDEN_WRITES = ['goal_events', 'goal_receipt', 'goal_evidence', 'p2_ready_set', 'p3_closure'];
+/**
+ * profile 是否具备 app-design-lens（当前仅 hmos-app）。唯一判定源：P1 checker 的
+ * unsupported 判定与 init next-steps 的 `design_entry_ready` 同源读取。
+ */
+export function profileHasDesignLens(profileName: string): boolean {
+  return profileName === 'hmos-app';
+}
+
+const FORBIDDEN_WRITES =['goal_events', 'goal_receipt', 'goal_evidence', 'p2_ready_set', 'p3_closure'];
 
 const STATIC_PROVIDER_SOURCE_RULES: Record<string, { authority_rule: string; source_rule: string }> = {
   'current-facts-discovery': {

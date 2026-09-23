@@ -37,6 +37,7 @@ provider 固定内置并消费同一协议；id 必须唯一，requirement 只�
 
 - 当前事实优先引用代码/schema/接口/配置/测试；知识资产提供稳定背景，不覆盖本次事实。当前范围的 requirement/goal/invariant/high-risk 必须在 `discovery.inputs.current_scope_items` 形成带稳定 id、可解析 source ref、provenance 和项目内来源实际原始字节 hash 的闭集；revision 可附加但不能替代 hash，并由 `discovery.requirement_traceability` 双向一一映射到真实蓝图稳定地址。
 - 惯例文件存在时完整读取，只把适用条目写入 `discovery.facts`：`provenance.source_kind: convention`、`source_ref: <配置路径>#<id>`、`evidence_strength: authoritative`。视图节点与 decision 继续用既有 `provenance` / `verification_refs` 引用同一 source ref；禁止新增 conventions 专用字段。
+- **术语事实**（替代 CU-bound spec 的二次术语确认）：从当前范围抽出的业务名词逐条写入 `discovery.facts`：`subject: term:<原始术语>`，`value: {canonical_module, confidence: high|medium|low, easily_confused_with: []}`，`provenance.source_kind: glossary|catalog`。`canonical_module` 须为获准模块（catalog ∪ 本蓝图 add_module / move_module / retire_module 声明）；`high` 只能由 glossary 精确命中且模块一致时直确认；`medium|low` 须按 `spec.terminology`（[用户确认 UX](./user-confirmation-ux.md) §3.4）当场确认并记 `extraction_method: user_confirmed`，headless 自动继续记 `headless_assumed`（WARN、入 must-review、不得记 `user_confirmed`、不回写 glossary，见 §9.2）。未确认且只被远期切片使用的术语，可登记 `open_decision` gap（`needed_by` = 远期切片，`verification_refs` 含该 `term:` subject）停放；同一术语仍被当前切片需要（有当前切片或 `status: blocker` 的 gap 引用）时不得停放。检查 id `terminology_facts_confirmed`。`user_confirmed` 事实 admitted 后按 spec Step 1.5 第 6 条回写 glossary。
 - 同一语义冲突时保留双方 source ref 与 owner，禁止 last-write-wins。
 - 外部契约按 `contract_id` 建 operation→request/response DTO→mapping→error/idempotency/NFR 链；逐段解析项目内 `source_ref` 指向的权威文件/fragment 并真实比对，来源缺失或语义不同即 blocker。
 - mapping 只验证权威 wire 字段和显式转换/派生边；禁止将 wire DTO 与领域模型逐字段同形比较。
@@ -64,6 +65,22 @@ canonical YAML 根对象含 `component_id`、`blueprint_id`、`revision`、`sour
 | 共享部件级设计决策 | 只在蓝图裁决一次，各 CU 经 `design_refs` 消费；不在多个 Feature plan 各裁一次 |
 | “单独绿 ≠ 整体完成” | Component closure 追加真实组装与组合证据义务 |
 | （通用，单/多 CU 都适用） | 每个 CU 的 `safe_intermediate_state` |
+
+**模块归属与架构影响（spec/plan 只投影）**：
+
+- `applicable` + `changed` 的 development 视图，每个节点**必须**填 `module`（缺失 `blueprint_node_module_missing`），且须为获准模块 = module-catalog 当前模块 ∪ 本蓝图 `add_module` / `move_module` / `retire_module` 决策声明的模块（否则 `blueprint_node_module_unadmitted`；catalog 不可读 `blueprint_node_module_unresolved`）。`owner` 仍是责任方，不承载模块身份。CU `touches[].design_ref` 指向的节点 `module` 去重即该 CU 的可修改模块集合。
+- 架构变化用 `kind: architecture_impact` 决策表达，**一条决策一个变化项**，复合变化拆多条；每条带 `change`、条件字段、`rationale` 及既有 `owner` / `provenance` / `verification_refs` / `status`（change 非法、条件字段 / rationale / owner / verification_refs 缺失或层不在 DSL 即 `blueprint_architecture_impact_invalid`）：
+
+  | `change` | 条件字段 | 生效与归位 |
+  |---|---|---|
+  | `add_module` | `module`、`layer`（∈ 当前 DSL `outer_layers`） | 施工期作获准目标模块；CU 落地后 closure 归位 catalog |
+  | `retire_module` | `module` | catalog 不提前退役；CU 落地后 closure 归位（已移出 catalog 只 WARN 核对拼写） |
+  | `move_module` | `module`、`from_layer`、`to_layer`（均 ∈ DSL） | 施工期按 `to_layer` 判依赖；closure 归位 |
+  | `responsibility_rewrite` | `module`（获准模块） | 实现验证后 closure 归位 catalog 职责 |
+  | `dependency_edge` | `from`、`to`（模块名或外层 id）、`direction: add\|remove` | 施工前 DSL 须已达目标许可（add 已允许、remove 已不允许）且决策 `decided_with_authority`，否则相关 CU 不得施工 |
+  | `dsl_other` | `affected_items[]` | 只登记不机检，施工前须经权威批准落盘 |
+
+  `verified_unchanged` 的 development 不得有该类决策（`blueprint_view_unchanged_masks_change`）。蓝图期不改 catalog 与 DSL；DSL 只经 framework-init 既有获准路径（预设 / 手工编辑 config 后重跑 UPDATE）改写。
 
 ### 3. 运行时流与跨视图检查
 

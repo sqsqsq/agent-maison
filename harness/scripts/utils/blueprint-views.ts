@@ -197,6 +197,14 @@ export function validateBlueprintViews(blueprint: BlueprintRecord): BlueprintIss
         if (asRecords(view.nodes).length === 0) {
           out.push(issue('blueprint_view_nodes_empty', `$.design_views[${index}].nodes`, `适用视图 ${viewId} 必须有可寻址节点。`));
         }
+        // plan a3c7e9d1 t2：changed development 节点以既有 `module` 承载模块归属（owner 仍是责任方）。
+        if (viewId === 'development') {
+          asRecords(view.nodes).forEach((node, nodeIndex) => {
+            if (!nonEmptyString(node.module)) {
+              out.push(issue('blueprint_node_module_missing', `$.design_views[${index}].nodes[${nodeIndex}].module`, `changed development 节点 ${String(node.node_id)} 必须声明 module（catalog 模块或本蓝图 add_module/move_module 声明的模块）。`));
+            }
+          });
+        }
       }
       if (asStrings(view.verification_refs).length === 0) {
         out.push(issue('blueprint_view_verification_empty', `$.design_views[${index}].verification_refs`, `适用视图 ${viewId} 必须有 verification_refs。`));

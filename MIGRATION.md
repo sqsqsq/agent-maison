@@ -82,6 +82,11 @@ hash、authority、失败语义、两条最小接入流程、Story 类扩展职�
    agent 读 `framework/skills/project/component-design/SKILL.md` 正文进入。
 2. 进行中的普通 Feature 无需任何操作。下一项正式需求开始前，先走 `/component-design`；已归属
    某个 `blueprint_id` 的继续原演进工作区。
+3. 在途蓝图补 development 节点 `module`（行为变化）：`applicable` + `changed` 的 development
+   视图中每个节点都须填 `module`（module-catalog 模块，或本蓝图 `architecture_impact` 决策声明的
+   add/move/retire 模块），否则 `check:component-blueprint` 报 `blueprint_node_module_missing`。
+   术语确认、模块范围与架构影响改为在蓝图一次裁决（`term:` 事实、touches 派生模块、
+   `architecture_impact` 决策），CU-bound spec/plan 只投影、不再二次提问；plan 不再改写 DSL。
 
 **设计入口收敛**：`/app-component-blueprint` 已撤下，创建、继续、查看、质询或调和蓝图统一使用
 `/component-design`。P1 协议/checker 与三条接缝不变，内部流程位于

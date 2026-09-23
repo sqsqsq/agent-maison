@@ -9,6 +9,7 @@ import * as path from 'path';
 import {
   lintSkillsIndexInitNextSteps,
   parseSkillsIndexRaw,
+  type SkillIndexEntryWithInitSteps,
 } from '../../scripts/utils/skills-index-init-steps';
 
 export interface UnitCaseResult {
@@ -103,6 +104,23 @@ const cases: Array<{ name: string; run: () => void }> = [
       fs.writeFileSync(indexPath, stringifyIndex(parsed), 'utf-8');
       const hits = lintSkillsIndexInitNextSteps(dir);
       assert(hits.some(h => h.id === 'ambiguous_workflow_artifact'), hits.map(h => h.id).join(','));
+    },
+  },
+  {
+    name: 'design_entry_ready 带 workflow_artifact → FAIL；正式 index 已登记 component-design',
+    run: () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'skills-index-lint-'));
+      copyTree(path.join(FRAMEWORK_DIR, 'skills'), path.join(dir, 'skills'));
+      copyTree(path.join(FRAMEWORK_DIR, 'workflows'), path.join(dir, 'workflows'));
+      const indexPath = path.join(dir, 'skills', 'skills.index.yaml');
+      const parsed = parseSkillsIndexRaw(fs.readFileSync(indexPath, 'utf-8'));
+      const entry = parsed.skills.find(s => s.id === 'component-design') as SkillIndexEntryWithInitSteps;
+      const design = entry.init_next_steps![0]!;
+      assert(design?.when === 'design_entry_ready' && design.priority === 34 && !design.workflow_artifact, JSON.stringify(design));
+      design.workflow_artifact = 'spec';
+      fs.writeFileSync(indexPath, stringifyIndex(parsed), 'utf-8');
+      const hits = lintSkillsIndexInitNextSteps(dir);
+      assert(hits.some(h => h.id === 'unexpected_workflow_artifact'), hits.map(h => h.id).join(','));
     },
   },
   {

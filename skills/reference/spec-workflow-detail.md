@@ -34,6 +34,15 @@
 
 **反模式**：口语术语直接等同错误 canonical_module；置信度一律标 high 图省事；口头"OK"未落 `[x]`；Step 2 冒出新业务名词却不回补映射表；映射表某行权威模块与 Scope in/out 均无关（自相矛盾）。
 
+### CU-bound（`cu-` Feature，正式需求）：只投影蓝图，不再问人
+
+术语确认（`spec.terminology`）与模块范围已在 [`/component-design`](../project/component-design/SKILL.md) 蓝图一次裁决，上面 1–6 步与 Scope 扩展不在 spec 重做：
+
+- **投影来源**：术语映射表的行集合 = 蓝图 `discovery.facts` 中 `subject: term:<原始术语>` 的事实；每行「权威模块 / 置信度 / 易混项」逐字段取自 `value.canonical_module` / `value.confidence` / `value.easily_confused_with`（易混项列须出现蓝图的每个易混模块，可附说明），「用户确认」列由投影直接写 `[x]`，不问人、不回写 glossary。确认状态以蓝图 `provenance.extraction_method` 为准（`user_confirmed`；headless 为 `headless_assumed` 并入 must-review），由 `check-component-blueprint terminology_facts_confirmed` 判定；远期切片的未确认术语沿蓝图受控 gap（`open_decision`、`needed_by` 为远期切片、`verification_refs` 含该 `term:` subject）停放，spec 不补确认。
+- **Scope**：`in_scope_modules` 必须集合等于蓝图可修改模块集合——只由 CU `touches[].design_ref` 解析到的 development 节点 `module` 去重派生（`design_refs` 只是设计依赖，不带入）；`expansions_with_user_approval` 必须为空。
+- **检查 id 沿用**：`terminology_mapping_table`（缺行 / 多行 / 重复术语行 / 字段不一致 / 未 `[x]` 均 FAIL）、`scope_declaration`（集合相等 + 无 expansions）、`scope_matches_catalog`（Scope 模块须为获准模块 = catalog ∪ 本蓝图 `architecture_impact` 的 add_module / move_module / retire_module 声明）、`terminology_modules_within_scope`（判据不变）；details 均注明「来源=蓝图」。非 CU-bound 平铺 Feature 原判据不变。
+- **失败出口**：投影解析失败（含蓝图 revision 变化致 CU 引用 stale）或任何不一致，一律回 `/component-design` 调和蓝图后重新投影，不在 spec 内改范围、改映射或问人。
+
 ## Step 2：截图分析 → ui-spec.yaml（pixel_1to1 相关，UI 需求必读）
 
 产出 `<features_dir>/<feature>/spec/ui-spec.yaml`（规范见 [reference/ui-spec.md](../feature/spec/reference/ui-spec.md)）：

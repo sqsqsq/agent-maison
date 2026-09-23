@@ -52,6 +52,7 @@ review_summary:
       - { question_id: q-lens-pub-sub, scope_kind: app_lens, scope_ref: 'app_lens:publication_subscription', question: Are publication and subscription closed?, answer: Publication references and subscription cleanup are explicit., disposition: answered_with_evidence, frontier_fingerprint: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', owner: architecture-owner, evidence_refs: ['verify:ledger-flow'], verification_refs: ['verify:lens-publication-subscription'], provenance: *repo_provenance }
       - { question_id: q-lens-ui-refresh, scope_kind: app_lens, scope_ref: 'app_lens:ui_refresh', question: Is UI refresh freshness explicit?, answer: Refresh occurs within one publication turn., disposition: answered_with_evidence, frontier_fingerprint: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', owner: architecture-owner, evidence_refs: ['verify:ledger-flow'], verification_refs: ['verify:lens-ui-refresh'], provenance: *repo_provenance }
       - { question_id: q-lens-process-recovery, scope_kind: app_lens, scope_ref: 'app_lens:process_recovery', question: Is process recovery explicit?, answer: The store rebuilds from the repository snapshot., disposition: answered_with_evidence, frontier_fingerprint: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', owner: architecture-owner, evidence_refs: ['verify:process-recreation'], verification_refs: ['verify:lens-process-recovery'], provenance: *repo_provenance }
+      - { question_id: q-terminology-scope, scope_kind: terminology, scope_ref: 'terminology:current_scope_items', question: Do business nouns in current scope items have terminology facts?, answer: Ledger nouns map to the existing ledger module; no new or ambiguous term needs a terminology fact., disposition: answered_with_evidence, frontier_fingerprint: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', owner: architecture-owner, evidence_refs: [requirements/ledger.md, doc/module-catalog.yaml], verification_refs: ['verify:terminology-question'], provenance: *repo_provenance }
   admission:
     status: pass
     root_questions_complete: true
@@ -201,6 +202,7 @@ design_views:
       - node_id: ledger-module
         label: Ledger module
         owner: ledger-team
+        module: ledger
         current_state: Existing source package
         target_state: Host-owned ledger seam
         design_basis_refs: [view:logical/node:ledger-domain]

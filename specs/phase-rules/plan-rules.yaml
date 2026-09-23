@@ -54,6 +54,15 @@ traceability_checks:
   change_unit_feature_projection:
     description: CU-bound Feature 必须以 canonical change_unit_ref 和完整 ID-only mappings 施工，且机械派生 use-case/DAG 义务
     severity: BLOCKER
+  cu_scope_matches_blueprint:
+    description: CU-bound contracts.modules 必须 ⊆ 蓝图可修改模块集合（只由 CU touches 解析到 development 节点 module）；越界回 /component-design 调和
+    severity: BLOCKER
+  cu_architecture_impact_not_effective:
+    description: 相关 architecture_impact（add_module/move_module/dependency_edge）须已裁决且与当前 DSL 一致；dependency_edge 按 add/remove 核对目标许可
+    severity: BLOCKER
+  cu_architecture_dsl_other:
+    description: architecture_impact dsl_other 只登记不机检，提示人工核对已经权威批准落盘
+    severity: MAJOR
   contract_file_reference_closure:
     description: >
       contracts.yaml 中所有 schema 声明的文件引用必须属于规范化 contracts.files；

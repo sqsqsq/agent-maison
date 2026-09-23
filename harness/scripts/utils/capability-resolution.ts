@@ -9,7 +9,7 @@ import * as YAML from 'yaml';
 import { auditSchemaSupport, validateLiteSchema } from './lite-json-schema';
 import { stableStringify } from './phase-evidence-manifest';
 import { isInsideProjectRoot, validateProjectRelativePath } from './project-relative-path';
-import { SpecLoader } from './spec-loader';
+import { decodeTextFile, SpecLoader } from './spec-loader';
 import { loadWorkflowSpec, workflowForExistingRun } from '../../workflow-loader';
 import { loadGoalManifestFromRun } from './goal-manifest';
 import { deriveBlueprintSkillInput } from './blueprint-skill-projection';
@@ -298,7 +298,11 @@ function resolveDerive(
       if (unreadable) return { state: 'invalid', dependencies: deps, detail: 'source target unreadable: ' + unreadable.path };
       const missing = deps.find(dep => !dep.exists);
       if (missing) return { state: 'absent', dependencies: deps, detail: 'source target missing: ' + missing.path };
-      return { state: 'resolved', dependencies: deps, value: targets.map((target, i) => ({ path: target, content: fs.readFileSync(deps[i].path, 'utf8') })) };
+      // e7a2c4f1 §10.4④：二进制资源（PNG 等）只给路径 + sha256，不按 UTF-8 解码内联进 prompt。
+      return { state: 'resolved', dependencies: deps, value: targets.map((target, i) => {
+        const content = decodeTextFile(fs.readFileSync(deps[i].path));
+        return content === null ? { path: target, sha256: deps[i].sha256, binary: true } : { path: target, content };
+      }) };
     }
     if (source.provider_id === 'derive.visual-reference' && !feature) {
       return { state: 'absent', dependencies: [], detail: 'request visual references require an explicit provider input' };

@@ -428,16 +428,23 @@ export function assembleAIPrompt(
   // 而是在格式化之前就精确知道哪两段是易变量。
   // round7 skills/文案批（plan a9c4e7f1）：{features_dir} 解析实例配置的 paths.features_dir，
   // custom 宿主下 verifier 读/引用真实路径，不再硬编码 doc/features。
+  // e7a2c4f1 §10.4④：一次扫描 + 函数替换值——内联内容逐字保留。字符串替换值会把
+  // `$\``/`$'`/`$&`/`$$` 当特殊模式（宿主 prompt 自我复制 9 份、ArkTS `$$this` 被改成 `$this`），
+  // 逐段顺序替换还会把内联内容里的 `{phase}`/`{timestamp}` 等字样二次改写。
   const fill = (scriptReportValue: string, timestampValue: string): string => {
-    let out = template;
-    out = out.replace(/\{spec_content\}/g, specContent);
-    out = out.replace(/\{script_report\}/g, scriptReportValue);
-    out = out.replace(/\{feature_name\}/g, feature);
-    out = out.replace(/\{phase\}/g, phase);
-    out = out.replace(/\{timestamp\}/g, timestampValue);
-    out = out.replace(/\{features_dir\}/g, relFeaturesDir(projectRoot));
-    out = out.replace(/\{context_files\}/g, contextSection);
-    return out + tail;
+    const values: Record<string, string> = {
+      spec_content: specContent,
+      script_report: scriptReportValue,
+      feature_name: feature,
+      phase,
+      timestamp: timestampValue,
+      features_dir: relFeaturesDir(projectRoot),
+      context_files: contextSection,
+    };
+    return template.replace(
+      /\{(spec_content|script_report|feature_name|phase|timestamp|features_dir|context_files)\}/g,
+      (_match, key: string) => values[key],
+    ) + tail;
   };
 
   // plan a9d4e7c2 T4：这里曾经额外产出一份「规范化摘要」（把 {timestamp} 与

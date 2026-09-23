@@ -418,3 +418,5 @@ npm run check:component-closure -- --project-root <root> --blueprint <id>
   实现由宿主自己按语言与工程习惯完成。
 
 组件库存接入沿 [组件资产 SSOT](../concepts/component-assets.md)：所有蓝图增加静态 optional component-assets Seam Card，changed development 的 UI 节点经五级选型 decision 接入原 CU design_refs。宿主只提供可选 index/catalog 输入，不另建 provider registry；无资产时按 UI 维度和 needed_by 如实保留 unknown/gap。
+
+development 节点的模块身份：3.1.0 起 `applicable` + `changed` 的 development 视图中每个节点都须填 `module`（module-catalog 模块，或本蓝图 `architecture_impact` 的 add_module / move_module / retire_module 决策声明的模块；`owner` 仍只表示责任方）。宿主在途蓝图升级后须补该字段，否则 P1 报 `blueprint_node_module_missing`（填了但不是获准模块报 `blueprint_node_module_unadmitted`）。CU 的可修改模块集合由 `touches` 指向节点的 `module` 派生，spec/plan 只投影。

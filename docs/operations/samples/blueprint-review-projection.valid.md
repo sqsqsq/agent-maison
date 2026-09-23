@@ -5,7 +5,7 @@ derived_from:
   blueprint_id: ledger-app-blueprint
   revision: 2
   source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
-  artifact_sha256: sha256:fb02055d9aecdca572c43c58becfbd58874b7552dffe470c2c23a477337c15b6
+  artifact_sha256: sha256:6f453f5f1e30479830e27b4981d584544738ffa39db0784ae23f6cd12b2897a6
 projection: component-blueprint-review@1
 ---
 
@@ -177,6 +177,7 @@ Subscriptions and consumers:
 - app_lens:publication_subscription [answered_with_evidence]: Are publication and subscription closed? — Publication references and subscription cleanup are explicit.; owner=architecture-owner; evidence=verify:ledger-flow; verification=verify:lens-publication-subscription
 - app_lens:ui_refresh [answered_with_evidence]: Is UI refresh freshness explicit? — Refresh occurs within one publication turn.; owner=architecture-owner; evidence=verify:ledger-flow; verification=verify:lens-ui-refresh
 - app_lens:process_recovery [answered_with_evidence]: Is process recovery explicit? — The store rebuilds from the repository snapshot.; owner=architecture-owner; evidence=verify:process-recreation; verification=verify:lens-process-recovery
+- terminology:current_scope_items [answered_with_evidence]: Do business nouns in current scope items have terminology facts? — Ledger nouns map to the existing ledger module; no new or ambiguous term needs a terminology fact.; owner=architecture-owner; evidence=requirements/ledger.md, doc/module-catalog.yaml; verification=verify:terminology-question
 
 ## Admission
 

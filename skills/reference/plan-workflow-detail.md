@@ -1,6 +1,14 @@
 # plan 阶段详细流程（条件加载：执行对应 Step 时读）
 
-> SSOT 索引见 [`skills/feature/plan/SKILL.md`](../feature/plan/SKILL.md)。本文承载 Scope 扩展提议全流程、UseCase 复杂度判定与 schema、contracts.yaml 提取字段表、架构影响判定五分支的完整机制；触发/门禁清单/闭环判定仍以主文档为准。
+> SSOT 索引见 [`skills/feature/plan/SKILL.md`](../feature/plan/SKILL.md)。本文承载核心架构认知、Scope 扩展提议全流程、UseCase 复杂度判定与 schema、contracts.yaml 提取字段表、架构影响判定五分支的完整机制；触发/门禁清单/闭环判定仍以主文档为准。
+
+## 核心架构认知
+
+开始设计前必须读 `doc/architecture.md`（模块架构唯一事实来源），以 `framework.config.json > architecture` 为机器可读依赖规则：①外层依赖只按 `outer_layers[].can_depend_on` 放行；②同层依赖按 `intra_layer_deps`（forbid/dag/sublayer）裁决；③模块内依赖顺序按 `module_inner_layers`+`inner_dependency_direction`；④跨模块访问经 `cross_module_exports_file` 出口；⑤profile 专属目录/语言/格式以 Step 0 addendum 为准。
+
+**功能拆分核心任务**（非 CU-bound）：把 spec 功能点分配到 catalog/architecture 已声明的模块，跨模块依赖不超过 `can_depend_on`；页面/UI→业务模块 presentation；应用壳→壳模块；细分子域→独立业务模块；横切能力→catalog 权威模块；通用 UI/工具→公共模块或 sublayer；无需求不新增模块。
+
+**CU-bound**：模块归属已由蓝图 development 节点 `module` 裁决，plan 不重新分配模块，只在这些模块内按上述五条规则做文件、符号与内层级落点。
 
 ## Scope 继承与扩展提议（Scope 守门机制核心，在任何模块设计动作前完成）
 
@@ -36,6 +44,12 @@ expansions_with_user_approval:
 ```
 
 未同意的提议**不得**写入 plan.md，退回就地实现。本 Step 结束时 `in_scope_modules`（= spec 继承 ∪ 已批准扩展）冻结，后续所有 Step 的模块选择必须在此集合内。
+
+### CU-bound（`cu-` Feature，正式需求）：Scope 只投影蓝图
+
+- **投影来源**：可修改模块集合只由 CU `touches[].design_ref` 经既有 addressing resolver 解析到 development 节点、取 `module` 去重派生；`design_refs` 只是设计依赖闭包，引用共享模块但不修改它的 CU 不得把它带进来。蓝图 revision 变化后旧派生 stale，不用旧 PASS。
+- **plan.md 叙述路径**：`in_scope_modules` 必须集合等于可修改集合，`expansions_with_user_approval` 必须为空；`plan.scope_expansion` 不适用（无 plan 内扩展出口），范围扩大回 [`/component-design`](../project/component-design/SKILL.md) 做蓝图 revision。沿用 `scope_declaration` 同 id 核对，details 注明「来源=蓝图」。
+- **`cu_scope_matches_blueprint`**（BLOCKER）：`contracts.modules[].name` ⊆ 可修改集合；越出或无法派生（节点缺 `module`、引用不可解析）即 FAIL 并指回 `/component-design`。它位于共享投影校验 `validateChangeUnitFeatureProjection`，typed plan、蓝图直接投影进 coding（不执行 plan）、completion、ready-set、closure 同一判据。`contracts.files` 仍是唯一精确写集授权，模块集合不替代它。
 
 ## UseCase 复杂度判定与 use-cases.yaml（条件式产出）
 
@@ -99,12 +113,22 @@ architecture_impact:
 > **判定原则**：从严判 `none`。不确定就按 `impact != none` 处理并停下确认。
 
 - **`none`**：`affected_items`等全部 `[]`；不修改 architecture.md/catalog/config；不追加变更记录；跳到 Step 13。
-- **`dsl_change`**：同步改 [framework.config.json](../../framework.config.json) 的 `architecture` 段 + [doc/architecture.md](../../../doc/architecture.md) 对应小节；末尾「架构级变更记录」追加一行 `| YYYY-MM-DD | dsl_change | <具体变化> |`；回填 `architecture_md_updates`。
+- **`dsl_change`**：plan 不是 DSL writer。DSL 改写走 framework-init 既有获准路径（`init.architecture_preset` 预设，或[手工编辑 config 后本地校验并重跑 UPDATE](../project/framework-init/templates/custom-architecture-questionnaire.md)），落盘后过 `validateArchitectureDsl`；需要刷新物化产物时再跑 UPDATE。plan 只同步 [doc/architecture.md](../../../doc/architecture.md) 对应小节；末尾「架构级变更记录」追加一行 `| YYYY-MM-DD | dsl_change | <具体变化> |`；回填 `architecture_md_updates`。
 - **`module_set_change`**：更新 [doc/module-catalog.yaml](../../../doc/module-catalog.yaml)（新增/删除/迁层，见 catalog-bootstrap Phase A 增量流程）+ architecture.md 极简模块清单（只增删一行，不扩展完整画像）；可能同时触发 `dsl_change`；追加变更记录；回填两个 updates 数组。
 - **`responsibility_rewrite`**：只改 module-catalog.yaml 的 `primary_responsibility`/`NOT_responsible_for`/`easily_confused_with`；同步 architecture.md 那一行"一句话职责"；**不要**在 architecture.md 粘贴完整职责描述；追加变更记录；`catalog_updates` 必填。
 - **Feature 级变更禁入 architecture.md**：既有模块内新增/修改页面组件接口数据模型、修 bug/样式/文案、in_scope 完全落在已有模块内、仅 `exposed_capabilities_public` 新增而职责未变——一律不算架构级。
 
 > **为什么这样设计**：architecture.md 负责分层/模块集合/依赖边/出口约定；module-catalog.yaml 负责模块细粒度职责与能力；git history + `<features_dir>/<feature>/` 负责 feature 级变更日志——三者各司其职。
+
+### CU-bound（`cu-` Feature，正式需求）：架构影响只投影蓝图决策
+
+架构影响已在蓝图以 `kind: architecture_impact` 决策裁决（一条决策一个变化项：`add_module` / `retire_module` / `move_module` / `responsibility_rewrite` / `dependency_edge` / `dsl_other`），上面五分支判定与 `plan.arch_impact` 不适用，plan 不手填、不改 architecture.md / catalog / DSL：
+
+- **plan.md 叙述路径**：`### 架构影响声明` 的 yaml 写 `architecture_impact: { decisions: [<蓝图全部 architecture_impact 决策 id>] }`；蓝图无此类决策时写 `impact: none`（有决策时不得写 none）。沿用 `architecture_impact_declared` 同 id 核对集合相等，`plan_to_architecture` 做与投影相同的相关决策核对，details 注明「来源=蓝图」。typed 路径（plan.md 非 required）无此段。
+- **`cu_architecture_impact_not_effective`**（BLOCKER，共享 `validateChangeUnitFeatureProjection`，与 `cu_scope_matches_blueprint` 同点）：与本 CU 相关（在 CU `design_refs` 中，或模块/端点落在可修改模块或其所在外层）的 `add_module` / `move_module` / `dependency_edge` 必须已 `decided_with_authority`（`open_decision` 即当前 CU 不得施工），`add_module` 的 `layer`、`move_module` 的 `from_layer`/`to_layer` 须在当前 DSL `outer_layers`；`dependency_edge` 端点须解析为获准模块或外层 id，并用既有 DSL 许可判定按操作核对——`direction: add` 要求当前 DSL **已允许**该边，`direction: remove` 要求当前 DSL **已不允许**（仍允许 = 删除未生效），不符即 FAIL。
+- **`cu_architecture_dsl_other`**（WARN）：`dsl_other`（内层顺序、出口文件名等 `affected_items`）只登记不机检，提示人工核对已经权威批准并落盘。
+- **归位**：`add_module` / `retire_module` / `move_module` / `responsibility_rewrite` 在蓝图期不改 catalog，对应 CU 落地后由 component closure 知识归位承接。
+- **DSL 写路径**：plan 不是 writer。DSL 只经 framework-init 既有获准路径改写——`init.architecture_preset` 预设，或手工编辑 config 后本地校验并重跑 UPDATE（见上 `dsl_change` 条），统一要求权威批准（蓝图决策 `decided_with_authority` 或用户在 init registry 确认）且落盘后过 `validateArchitectureDsl`。范围或架构变化回 `/component-design` 做蓝图 revision。
 
 ## 组件选型施工投影（index 文件存在时）
 

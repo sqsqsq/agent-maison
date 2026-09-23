@@ -14,6 +14,7 @@ export const INDEX_CAPABILITY_WHEN = [
   'glossary_empty',
   'graph_gap',
   'feature_ready',
+  'design_entry_ready',
   'always_optional',
 ] as const;
 
@@ -60,10 +61,13 @@ const WHEN_KIND_MAP: Record<IndexCapabilityWhen, InitNextStepKind> = {
   glossary_empty: 'optional',
   graph_gap: 'optional',
   feature_ready: 'optional',
+  design_entry_ready: 'optional',
   always_optional: 'optional',
 };
 
 const MUST_WORKFLOW_ARTIFACT_WHEN = new Set<IndexCapabilityWhen>(['graph_gap', 'feature_ready']);
+/** 正式需求入口不是 workflow phase，不参与 artifact 解析。 */
+const FORBID_WORKFLOW_ARTIFACT_WHEN = new Set<IndexCapabilityWhen>(['design_entry_ready']);
 
 export function parseSkillsIndexRaw(text: string): SkillIndex & { skills: SkillIndexEntryWithInitSteps[] } {
   return YAML.parse(text) as SkillIndex & { skills: SkillIndexEntryWithInitSteps[] };
@@ -150,6 +154,15 @@ export function lintSkillsIndexInitNextSteps(frameworkDir: string): SkillsIndexL
         hits.push({
           id: 'missing_workflow_artifact',
           message: `when=${step.when} 必须带 workflow_artifact`,
+          skillId: entry.id,
+          stepId: step.step_id,
+        });
+      }
+
+      if (FORBID_WORKFLOW_ARTIFACT_WHEN.has(step.when as IndexCapabilityWhen) && step.workflow_artifact) {
+        hits.push({
+          id: 'unexpected_workflow_artifact',
+          message: `when=${step.when} 不得带 workflow_artifact`,
           skillId: entry.id,
           stepId: step.step_id,
         });

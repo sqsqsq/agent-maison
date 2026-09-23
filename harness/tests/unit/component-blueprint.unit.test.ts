@@ -26,6 +26,7 @@ import { validateRuntimeDataFlows } from '../../scripts/utils/runtime-data-flow-
 import { checkCanonicalComponentBlueprint, resolveCliRefTarget } from '../../scripts/check-component-blueprint';
 import { clearSkillsIndexCache, listBuiltinSkillIds, resolveSkillPath } from '../../scripts/utils/resolve-skill-path';
 import { clearFrameworkConfigCache } from '../../config';
+import { profileHasDesignLens } from '../../scripts/utils/blueprint-provider-boundary';
 
 interface UnitCaseResult {
   name: string;
@@ -738,6 +739,17 @@ export function runAll(): UnitCaseResult[] {
     const downstream = { revision: 1, source_fingerprint: oldResults[0].source_fingerprint, artifact_sha256: 'sha256:old' };
     assert(downstreamRefNeedsRecompute(downstream, { revision: 2, source_fingerprint: 'sha256:new', artifact_sha256: 'sha256:new-artifact' }), '下游 mismatch 应自行重派生');
     assert(!reconciled.some(result => ['p2_ready_set', 'p3_closure'].includes(String(result.kind))), 'P1 不得生成下游状态');
+  }));
+
+  results.push(test('P1 checker returns unsupported for a profile without design lens (a3c7e9d1 t1)', () => {
+    assert(profileHasDesignLens('hmos-app') && !profileHasDesignLens('generic'), 'design lens 谓词');
+    withTempProject(projectRoot => {
+      fs.writeFileSync(path.join(projectRoot, 'framework.config.json'), JSON.stringify({ project_profile: { name: 'generic' } }), 'utf8');
+      let code = '';
+      try { checkCanonicalComponentBlueprint(projectRoot, 'ledger-app-blueprint'); }
+      catch (error) { code = (error as ComponentBlueprintResolutionError).code; }
+      assert(code === 'blueprint_design_lens_unsupported', `generic 应 unsupported，实际 ${code}`);
+    });
   }));
 
   results.push(test('P1 release semantics fixture keeps whole-repo release gates delegated', () => {

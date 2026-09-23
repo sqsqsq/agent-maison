@@ -33,6 +33,10 @@ export function requiredQuestioningScopes(blueprint: BlueprintRecord): Map<strin
     if (nonEmptyString(relation.relation_id)) scopes.set(`relation:${relation.relation_id}`, 'relation');
   }
   for (const question of APP_LENS_QUESTIONS) scopes.set(`app_lens:${question}`, 'app_lens');
+  // plan a3c7e9d1 t2：current_scope_items 引用的业务名词是否都有术语事实——只要求质询给 disposition，机器不做全覆盖判定。
+  if (asRecords(asRecord(asRecord(blueprint.discovery)?.inputs)?.current_scope_items).length > 0) {
+    scopes.set('terminology:current_scope_items', 'terminology');
+  }
   return scopes;
 }
 
@@ -97,7 +101,7 @@ export function validateBlueprintQuestioning(blueprint: BlueprintRecord): Bluepr
     }
     const scopeKind = String(item.scope_kind ?? '');
     const scopeRef = String(item.scope_ref ?? '');
-    if (!['view', 'relation', 'flow', 'app_lens'].includes(scopeKind) || requiredScopes.get(scopeRef) !== scopeKind) {
+    if (!['view', 'relation', 'flow', 'app_lens', 'terminology'].includes(scopeKind) || requiredScopes.get(scopeRef) !== scopeKind) {
       out.push(issue('blueprint_questioning_scope_invalid', `${base}.scope_ref`, `质询 scope 无法映射到当前蓝图：kind=${scopeKind}, ref=${scopeRef}。`));
     } else if (covered.has(scopeRef)) {
       out.push(issue('blueprint_questioning_scope_duplicate', `${base}.scope_ref`, `质询 scope 重复：${scopeRef}。`));

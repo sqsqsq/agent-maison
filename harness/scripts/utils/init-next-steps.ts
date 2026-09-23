@@ -2,8 +2,10 @@
 // init-next-steps.ts — deriveInitNextSteps + renderNextStepsMarkdown
 // ============================================================================
 
+import * as fs from 'fs';
 import * as path from 'path';
 
+import { loadFrameworkConfig, relComponentIndex, relConventions } from '../../config';
 import {
   probeModuleGraphReadiness as probeModuleGraphReadinessByCatalogState,
   type ModuleGraphReadiness,
@@ -32,6 +34,7 @@ import {
 import { loadSkillsIndex } from './resolve-skill-path';
 import { resolveMaterializedBuiltinSkillEntryRel } from './instance-skill-bridge';
 import { isClaudeKernelAdapter } from './types';
+import { profileHasDesignLens } from './blueprint-provider-boundary';
 
 export type InitNextStepSource = 'index' | 'harness';
 
@@ -279,6 +282,13 @@ function indexStepToInitNextStep(
   };
 }
 
+/** 只披露可选知识资产文件是否存在；不生成步骤、不阻断。 */
+function describeDesignKnowledgeAssets(projectRoot: string): string {
+  const state = (rel: string) =>
+    `\`${rel}\` ${fs.existsSync(path.join(projectRoot, rel)) ? '已存在' : '不存在'}`;
+  return `可选知识资产：conventions ${state(relConventions(projectRoot))}；组件索引 ${state(relComponentIndex(projectRoot))}`;
+}
+
 function globalArtifactReady(
   artifactId: string,
   catalog: CatalogReadiness,
@@ -420,6 +430,15 @@ function evaluateIndexSteps(ctx: InitNextStepsContext): InitNextStep[] {
     } else if (step.when === 'graph_gap') {
       if (moduleGraph.state === 'gap' && moduleGraph.module) {
         out.push(indexStepToInitNextStep(def, moduleGraph.module));
+      }
+    } else if (step.when === 'design_entry_ready') {
+      if (
+        catalog.state === 'ready' &&
+        profileHasDesignLens(loadFrameworkConfig(ctx.projectRoot).project_profile.name)
+      ) {
+        const next = indexStepToInitNextStep(def);
+        next.message += `\n${describeDesignKnowledgeAssets(ctx.projectRoot)}`;
+        out.push(next);
       }
     } else if (step.when === 'feature_ready') {
       // handled after loop via workflow artifact lookup

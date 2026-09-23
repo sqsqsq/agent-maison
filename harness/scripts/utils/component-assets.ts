@@ -145,17 +145,57 @@ export function serializeComponentIndex(index: ComponentIndex): string {
   return '# 机器生成，勿手编。重跑：npm run bootstrap:component-index -- --project-root <root>\n' + YAML.stringify(index);
 }
 
-export function componentDependencyAllowed(root: string, consumer: string, provider: string): boolean {
+export interface AdmittedModules {
+  /** module-catalog 可读；不可读时 modules 只含本蓝图声明的新模块。 */
+  catalogOk: boolean;
+  /**
+   * 获准模块 name → layer：catalog 当前模块 ∪ declared（declared 覆盖 move 的新层）∪ 本蓝图 retire_module
+   * 声明的模块（退役中沿用 catalog 层；已按 closure 归位移出 catalog 的层为 ''，仍是获准身份但不参与依赖判定）。
+   */
+  modules: Map<string, string>;
+  /** 本蓝图 architecture_impact add_module / move_module 声明的目标模块 name → layer（layer ∈ 当前 DSL）。 */
+  declared: Map<string, string>;
+}
+
+/**
+ * plan a3c7e9d1 t2：获准模块唯一解析（P1 节点 module、术语 canonical_module、componentDependencyAllowed
+ * 三处同源）。catalog 保持当前态语义（蓝图期不改），声明的新模块只作施工期获准目标。
+ */
+export function resolveAdmittedModules(root: string, blueprint: Record<string, unknown>): AdmittedModules {
+  const layers = new Set(loadArchitectureDsl(root).outer_layers.map(l => l.id));
+  const gaps = isRecord(blueprint.decisions_and_gaps) ? blueprint.decisions_and_gaps : {};
+  const declared = new Map<string, string>();
+  const retired: string[] = [];
+  for (const d of Array.isArray(gaps.decisions) ? gaps.decisions.filter(isRecord) : []) {
+    if (d.kind !== 'architecture_impact') continue;
+    if (d.change === 'retire_module' && nonempty(d.module)) retired.push(d.module);
+    const layer = d.change === 'add_module' ? d.layer : d.change === 'move_module' ? d.to_layer : undefined;
+    if (nonempty(d.module) && nonempty(layer) && layers.has(layer)) declared.set(d.module, layer);
+  }
   const catalog = loadCatalog(root);
-  if (!catalog.ok) return false;
-  const from = catalog.catalog.modules.find(m => m.name === consumer);
-  const to = catalog.catalog.modules.find(m => m.name === provider);
-  if (!from || !to) return false;
+  const modules = new Map(catalog.ok ? catalog.catalog.modules.map(m => [m.name, m.layer] as [string, string]) : []);
+  for (const [name, layer] of declared) modules.set(name, layer);
+  for (const name of retired) if (!modules.has(name)) modules.set(name, '');
+  return { catalogOk: catalog.ok, modules, declared };
+}
+
+/**
+ * 依赖许可按当前 DSL 判定。端点为模块名（catalog 或 declared 覆盖）或外层 id；`declared` 由调用方传入
+ * （蓝图侧=architecture_impact 声明，plan 侧=contracts.modules name→layer），新模块作 consumer 时按声明 layer 判定。
+ */
+export function componentDependencyAllowed(root: string, consumer: string, provider: string, declared?: Map<string, string>): boolean {
+  const catalog = loadCatalog(root);
   const arch = loadArchitectureDsl(root);
-  if (!arch.outer_layers.some(l => l.id === from.layer) || !arch.outer_layers.some(l => l.id === to.layer)) return false;
-  return from.layer === to.layer
-    ? isIntraLayerDepAllowed(arch, from.layer, consumer, provider)
-    : isOuterDepAllowed(arch, from.layer, to.layer);
+  const layerOf = (name: string): string | undefined => declared?.get(name)
+    ?? (catalog.ok ? catalog.catalog.modules.find(m => m.name === name)?.layer : undefined)
+    ?? (arch.outer_layers.some(l => l.id === name) ? name : undefined);
+  const from = layerOf(consumer);
+  const to = layerOf(provider);
+  if (!from || !to) return false;
+  if (!arch.outer_layers.some(l => l.id === from) || !arch.outer_layers.some(l => l.id === to)) return false;
+  return from === to
+    ? isIntraLayerDepAllowed(arch, from, consumer, provider)
+    : isOuterDepAllowed(arch, from, to);
 }
 
 /** staging 不携带确认状态；confirmedIds 来自调用者本轮逐条 y，检查成功前不写盘。 */

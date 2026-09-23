@@ -341,6 +341,33 @@ cases.push(
     }),
   },
   {
+    // e7a2c4f1 §10.4④：contracts.files 里的 PNG 只列路径 + sha256，不按 UTF-8 解码内联进 prompt；.ets 照旧内联。
+    name: 'derive.codebase lists binary targets by path and sha256 without inlining bytes',
+    run: () => project(root => {
+      const fixture = modernFixture(root);
+      const contractFile = path.join(fixture.framework, 'skills/feature/code-review/contract.yaml');
+      const contract = YAML.parse(fs.readFileSync(contractFile, 'utf8'));
+      contract.phases.review.inputs = [{ id: 'payload', sources: [{ kind: 'derive', provider_id: 'derive.codebase' }] }];
+      fs.writeFileSync(contractFile, YAML.stringify(contract));
+      const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d]), Buffer.from('IHDR $` $$ IDATx')]);
+      fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'src/logo.png'), png);
+      write(root, 'src/Page.ets', '.bindSheet($$this.smsVisible)\n');
+      const resolution = resolveCapabilityInputs({ frameworkRoot: fixture.framework, projectRoot: root, feature: 'demo', phase: 'review', track: 'full', testTargets: ['src/logo.png', 'src/Page.ets'], inputContext: fixture.context });
+      const payload = resolution.inputs!.values.payload;
+      assert(payload.state === 'resolved', JSON.stringify(payload));
+      const sha = crypto.createHash('sha256').update(png).digest('hex');
+      assert(JSON.stringify(payload.state === 'resolved' && payload.value) === JSON.stringify([
+        { path: 'src/logo.png', sha256: sha, binary: true },
+        { path: 'src/Page.ets', content: '.bindSheet($$this.smsVisible)\n' },
+      ]), JSON.stringify(payload));
+      const loader = new SpecLoader(root, undefined, undefined, fixture.framework);
+      const entry = collectContextFiles(loader, { kind: 'standalone', projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, frameworkRel: '' }, 'review', 'demo', {} as never, { resolvedInputs: resolution.inputs })
+        .find(file => file.label === '(resolved input payload)');
+      assert(entry && entry.content.includes(sha) && entry.content.includes('src/logo.png') && !entry.content.includes('IHDR') && entry.content.includes('$$this.smsVisible'), JSON.stringify(entry));
+    }),
+  },
+  {
     name: 'frozen obligations aggregate required and unknown without order-dependent capability pruning',
     run: () => project(root => {
       const fixture = modernFixture(root, 'acceptance@1');
