@@ -50,10 +50,22 @@ import { buildSummaryBlockers } from '../../scripts/utils/summary-blockers';
 import { evaluateP0CoverageIntegrity } from '../../scripts/utils/p0-semantic-gates';
 import { checkPassRateCalculated } from '../../scripts/check-testing';
 import {
+  bindAttendedGoalContext,
   resolveHarnessFidelityContextFields,
   writeRunSummaryBase,
   type HarnessFidelityContextFields,
 } from '../../harness-runner';
+import {
+  intermediateRoundsJournalPath,
+  journalRowsToLogicalHistory,
+  readJournalProposals,
+} from '../../scripts/utils/intermediate-rounds-journal';
+import {
+  computeRowHash,
+  evaluateVisualRound,
+  readVisualRoundsLedger,
+  visualRoundsLedgerPath,
+} from '../../scripts/utils/visual-rounds-ledger';
 import type { CheckContext, CheckResult, Phase, ScriptReport } from '../../scripts/utils/types';
 import {
   computeRequirementShaFromText,
@@ -260,6 +272,11 @@ interface AgentCtx {
   runId: string;
   /** phases/<phase>/agent-output.log 绝对路径——agent-events.jsonl 由它派生（plan 8d2b4f60 V1/V2） */
   outputLogPath: string;
+  /**
+   * plan 6279fcd7 T1：viaHostBridge 下 bridge 签发的 phase_execute_request 身份原样透传
+   *（goal-mode-entry.ts executePhase 第三参）；`attempt` 只是调用计数，不是签发 id。
+   */
+  issued?: { runId: string; phase: string; attemptId: string; ownerId: string; ownerEpoch: number };
 }
 
 export interface RunProbe {
@@ -796,6 +813,7 @@ export async function runGoalRuntimeChain(
       prompt: string,
       runId: string,
       childEnv: Readonly<Record<string, string>> = {},
+      issued?: AgentCtx['issued'],
     ): Promise<{ status: 'passed' | 'failed'; phase: string }> => {
       invokedPhases.push(phase);
       const n = (attempts.get(phase) ?? 0) + 1;
@@ -815,6 +833,7 @@ export async function runGoalRuntimeChain(
         runId,
         // attended 走 phase_execute_request，本轮**不产生**任何 invoke 日志（plan 8d2b4f60 D2）
         outputLogPath: '',
+        ...(issued ? { issued } : {}),
       };
       if (phase === 'testing') opts.onTesting?.(ctx);
       if (phase === 'coding') opts.onCoding?.(ctx);
@@ -950,6 +969,8 @@ export async function runGoalRuntimeChain(
                 ? String((recommendation as { instruction?: unknown }).instruction ?? '')
                 : '',
               context?.runId ?? bridgeManifest.run_id,
+              {},
+              context,
             ),
             forceTakeover: opts.forceResume,
           });
@@ -4227,6 +4248,264 @@ test('P3-T13 no-progress halt 的理由与指引必须在 events-only 重建里�
     `重建须保住「相关目标未知」指引：${String(codingOutcome!.halt_guidance).slice(0, 200)}`);
   assert(typeof codingOutcome!.run_disposition === 'string' && codingOutcome!.run_disposition.length > 0,
     `重建须保住 run_disposition 投影：${JSON.stringify(codingOutcome)}`);
+});
+
+// ---------------------------------------------------------------------------
+// plan 6279fcd7 T1：attended 执行者自检回到 agent 侧角色（宿主 run 20260920T100035Z-f829b8
+// 问题三）。真实 host bridge 签发身份 → bindAttendedGoalContext → 真实 summary writer：
+// 三次不同状态自检只写 journal proposal；runtime 自己重放收编（三个 intermediate 事件）→ gate
+// 同状态得 duplicate、不加第四行 → 回退 coding→review→ut → 再入 testing 启动对账不 HALT。
+
+const GOAL_ENV_KEYS = [
+  'MAISON_GOAL_RUN_ID', 'MAISON_GOAL_RUNNER', 'MAISON_GOAL_ATTEMPT',
+  'MAISON_GOAL_ATTEMPT_PHASE', 'MAISON_GOAL_GATE_HARNESS',
+] as const;
+
+function withGoalEnv<T>(fn: () => T): T {
+  const before = new Map(GOAL_ENV_KEYS.map(k => [k, process.env[k]]));
+  try { return fn(); } finally {
+    for (const k of GOAL_ENV_KEYS) {
+      const v = before.get(k);
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  }
+}
+
+/**
+ * 一次视觉 harness 轮：check 侧评估（与 visual-diff-check.ts 同一组生产函数：无 GATE 标才拼
+ * 本 attempt journal 作逻辑历史）→ 真实 `writeRunSummaryBase`（其内 consumeVisualRoundPayload
+ * 按单写者谓词分流 journal / 正式账本）。返回 writer 产出的 summary.visual_round 回执。
+ */
+function runVisualHarnessRound(root: string, fingerprint: string): Record<string, unknown> {
+  const runId = process.env.MAISON_GOAL_RUN_ID!;
+  const attemptId = process.env.MAISON_GOAL_ATTEMPT!;
+  const extraRows = process.env.MAISON_GOAL_GATE_HARNESS !== '1'
+    ? journalRowsToLogicalHistory(
+      readJournalProposals(intermediateRoundsJournalPath(root, FEATURE, runId)).rows, attemptId)
+    : [];
+  const round = evaluateVisualRound(visualRoundsLedgerPath(root, FEATURE), {
+    loopId: `goal:${runId}`, attemptId, goalRunId: runId,
+    buildFingerprint: 'bf-self-check', screensHash: `sh-${fingerprint}`,
+    defectFingerprints: [fingerprint], sourceFailHitIds: [], sourceWarnIds: [],
+    fingerprintable: true, awaitHumanOnly: false, actionableResidual: true,
+  }, { extraRows });
+  const checks: CheckResult[] = [{
+    id: 'visual_diff', category: 'structure', description: '', severity: 'MAJOR', status: 'WARN',
+    details: 'self-check round', structured: { kind: 'visual_diff', round } as never,
+  }];
+  const report: ScriptReport = {
+    phase: 'testing' as Phase, feature: FEATURE, timestamp: new Date().toISOString(),
+    project_root: root, assurance: 'full', capability_resolutions: [],
+    capability_resolution_contract_fingerprint: null, checks,
+    summary: { total: 1, pass: 0, fail: 0, warn: 1, skip: 0, blockers: 0, verdict: 'PASS' },
+  };
+  const summary = writeRunSummaryBase(root, report, REPO_ROOT) as { visual_round?: Record<string, unknown> };
+  return summary.visual_round ?? {};
+}
+
+/** 执行者自检：在 bridge 签发身份下经生产 `bindAttendedGoalContext` 绑定后跑一轮（env 用后还原）。 */
+function attendedSelfCheck(
+  root: string, issued: NonNullable<AgentCtx['issued']>, fingerprint: string,
+): Record<string, unknown> {
+  return withGoalEnv(() => {
+    bindAttendedGoalContext({
+      projectRoot: root, feature: FEATURE, phase: 'testing', goalRunId: issued.runId,
+      goalAttemptId: issued.attemptId, goalOwnerId: issued.ownerId,
+      goalOwnerEpoch: issued.ownerEpoch, env: process.env,
+    });
+    return runVisualHarnessRound(root, fingerprint);
+  });
+}
+
+test('6279fcd7 T1 attended 自检三轮只写 journal → runtime 收编三个 intermediate 事件 → gate duplicate 不加行 → 回退再入 testing 不 HALT', async () => {
+  const { root } = setupHost('codex');
+  const selfCheckReceipts: Array<Record<string, unknown>> = [];
+  let issuedAttempt = '';
+  let ledgerRowsAfterSelfChecks = -1;
+  const gateExtras: Record<string, unknown> = {};
+  const probe = await runChain(root, {
+    viaHostBridge: true, adapter: 'codex', runId: '20260923T000000Z-selfcheck',
+    testingSummaryExtras: gateExtras,
+    onTesting: ({ root: r, attempt, issued }) => {
+      if (attempt !== 1) { writeCleanTesting(r); return; }
+      assert(!!issued && issued.phase === 'testing', `bridge 须透传签发身份：${JSON.stringify(issued)}`);
+      issuedAttempt = issued!.attemptId;
+      for (const fp of ['fp:a', 'fp:b', 'fp:c']) selfCheckReceipts.push(attendedSelfCheck(r, issued!, fp));
+      ledgerRowsAfterSelfChecks = readVisualRoundsLedger(visualRoundsLedgerPath(r, FEATURE)).rows.length;
+      // 回退驱动（E2E-3 同形）：PASS + 新鲜 must_fix → 回 coding
+      writeVisualDiff(r, [{ id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT] }]);
+      writeConfirmedReview(r, [MUST_FIX_TEXT]);
+    },
+    // runtime gate：同形 env（goal-phase-runtime.ts runHarnessPhase：身份 + RUNNER + GATE=1），
+    // 与第三次自检同状态；回执经真实 writer 产出后由桩 summary 带出（runtime 据此发 gate 事件）。
+    onTestingHarness: ({ root: r, runId, attemptId, attempt }) => {
+      delete gateExtras.visual_round;
+      if (attempt !== 1) return;
+      withGoalEnv(() => {
+        Object.assign(process.env, {
+          MAISON_GOAL_RUN_ID: runId, MAISON_GOAL_ATTEMPT: attemptId,
+          MAISON_GOAL_ATTEMPT_PHASE: 'testing', MAISON_GOAL_RUNNER: '1', MAISON_GOAL_GATE_HARNESS: '1',
+        });
+        gateExtras.visual_round = runVisualHarnessRound(r, 'fp:c');
+      });
+    },
+    onCoding: ({ root: r, attempt }) => {
+      if (attempt > 1) writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("fixed") } }');
+    },
+  });
+  // 先断宿主现象（变异 :404 置标还原时本条红：再入 testing 启动对账 orphan_pending_stale HALT）
+  assert(!probe.events.some(e => e.type === 'phase_halt'),
+    `再入 testing 启动对账不得 HALT：${JSON.stringify(probe.events.filter(e => e.type === 'phase_halt'))}`);
+  assert(selfCheckReceipts.length === 3 && selfCheckReceipts.every(v => v.disposition === 'journaled'),
+    `三次自检须走 journal proposal：${JSON.stringify(selfCheckReceipts)}`);
+  assert(ledgerRowsAfterSelfChecks === 0, `自检不得直写正式账本：rows=${ledgerRowsAfterSelfChecks}`);
+  const rounds = probe.events.filter(e => e.type === 'visual_round');
+  const intermediate = rounds.filter(e => e.intermediate === true);
+  assert(intermediate.length === 3 && intermediate.every(e => e.visual_attempt === issuedAttempt),
+    `runtime 须收编三行（同签发 attempt=${issuedAttempt}）：${JSON.stringify(rounds)}`);
+  const gate = rounds.filter(e => e.intermediate !== true && e.disposition !== 'recovered');
+  assert(gate.length === 1 && gate[0].disposition === 'duplicate' && gate[0].row_hash === intermediate[2].row_hash,
+    `gate 须与第三次自检同键 duplicate：${JSON.stringify(gate)}`);
+  const rows = readVisualRoundsLedger(visualRoundsLedgerPath(root, FEATURE)).rows;
+  assert(rows.length === 3, `gate duplicate 不得加第四行：${rows.length}`);
+  assert(hasEvent(probe.events, 'phase_backtrack_requested'), '须回退 coding');
+  assert(probe.invokedPhases.filter(p => p === 'testing').length === 2, `须再入 testing：${probe.invokedPhases.join(',')}`);
+  assertRunReachedEnd(probe, '6279fcd7 T1');
+});
+
+// ---------------------------------------------------------------------------
+// plan 6279fcd7 T4（runtime 正例）/ T5（红线）：全部经 runtime 造出两个已提交 testing attempt
+//（A：自检 fp:a 收编后 gate FAIL 走阶段内重试；B：自检 fp:b/fp:c 收编后 must_fix 回 coding），
+// coding 回修轮改账本，再入 testing 由启动对账裁决。HALT 出自 runtime（phase_halt），诊断种类从
+// runtime stderr 取——防止别的完整性错误让用例假通过。
+
+type LedgerRow = ReturnType<typeof readVisualRoundsLedger>['rows'][number];
+
+/** 按公开算法重算 row_hash（伪造者也做得到——非密码学边界，见 plan §8）。 */
+function resealRow(row: LedgerRow, patch: Partial<LedgerRow>): LedgerRow {
+  const { row_hash: _old, ...rest } = { ...row, ...patch };
+  return { ...rest, row_hash: computeRowHash(rest) };
+}
+
+async function runLedgerTamperChain(
+  tamper: (ctx: { rows: LedgerRow[]; attemptA: string; attemptB: string; ledgerPath: string }) => void,
+): Promise<{ probe: RunProbe; stderr: string }> {
+  const { root } = setupHost('codex');
+  const testingAttempts: string[] = [];
+  const stderr: string[] = [];
+  const prevError = console.error;
+  console.error = (...args: unknown[]) => { stderr.push(args.map(String).join(' ')); prevError(...args); };
+  try {
+    const probe = await runChain(root, {
+      viaHostBridge: true, adapter: 'codex', runId: '20260923T000000Z-tamper',
+      onTesting: ({ root: r, attempt, issued }) => {
+        testingAttempts.push(issued!.attemptId);
+        if (attempt === 1) {
+          attendedSelfCheck(r, issued!, 'fp:a');
+          writeCleanTesting(r);
+        } else if (attempt === 2) {
+          attendedSelfCheck(r, issued!, 'fp:b');
+          attendedSelfCheck(r, issued!, 'fp:c');
+          writeVisualDiff(r, [{ id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT] }]);
+          writeConfirmedReview(r, [MUST_FIX_TEXT]);
+        } else {
+          writeCleanTesting(r);
+        }
+      },
+      // A 的 gate：不产候选的 BLOCKER → testing 阶段内重试（P3-T14c 同形），A 已由收编事件提交
+      onHarnessSummary: ({ phase, attempt }) =>
+        phase === 'testing' && attempt === 1 ? { checks: [LEDGER_OBLIGATION_CHECK] } : null,
+      onCoding: ({ root: r, attempt }) => {
+        if (attempt < 2) return;
+        writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("fixed") } }');
+        const ledgerPath = visualRoundsLedgerPath(r, FEATURE);
+        assert(testingAttempts.length === 2, `回修前须有两个已提交 testing attempt：${testingAttempts.join(',')}`);
+        tamper({
+          rows: readVisualRoundsLedger(ledgerPath).rows, ledgerPath,
+          attemptA: testingAttempts[0], attemptB: testingAttempts[1],
+        });
+      },
+    });
+    return { probe, stderr: stderr.join('\n') };
+  } finally {
+    console.error = prevError;
+  }
+}
+
+function writeLedgerRows(ledgerPath: string, rows: LedgerRow[]): void {
+  fs.writeFileSync(ledgerPath, rows.map(r => JSON.stringify(r)).join('\n') + '\n', 'utf-8');
+}
+
+const INTEGRITY_KINDS = /\b(missing_row|modified_row|orphan_pending_stale|corrupt_lines|duplicate_row_hash):/g;
+
+function assertLedgerIntegrityHalt(run: { probe: RunProbe; stderr: string }, kind: string, label: string): void {
+  assert(run.probe.events.some(e => e.type === 'phase_halt' && e.halt_reason === 'visual_ledger_integrity'),
+    `${label}：须 phase_halt visual_ledger_integrity：${haltReasons(run.probe.events).join(',')}`);
+  const block = run.stderr.split('===== visual_ledger_integrity =====')[1] ?? '';
+  const kinds = [...new Set([...block.matchAll(INTEGRITY_KINDS)].map(m => m[1]))];
+  assert(kinds.length === 1 && kinds[0] === kind, `${label}：诊断种类须恰为 ${kind}，实得 ${JSON.stringify(kinds)}`);
+}
+
+test('6279fcd7 T4 runtime：最后已提交 attempt 窗口内 hash 自洽的存量行 → 收养 + recovered 事件，不 HALT', async () => {
+  let forged = '';
+  const run = await runLedgerTamperChain(({ rows, attemptB, ledgerPath }) => {
+    const b = rows.filter(r => r.attempt_id === attemptB);
+    const extra = resealRow(b[b.length - 1], { screens_hash: 'legacy-direct-write' });
+    forged = extra.row_hash;
+    writeLedgerRows(ledgerPath, [...rows, extra]);
+  });
+  const recovered = run.probe.events.filter(e => e.type === 'visual_round' && e.disposition === 'recovered');
+  assert(recovered.length === 1 && recovered[0].row_hash === forged,
+    `须补写一条 recovered 事件：${JSON.stringify(recovered)}`);
+  assert(!run.probe.events.some(e => e.type === 'phase_halt'), `不得 HALT：${haltReasons(run.probe.events).join(',')}`);
+  assertRunReachedEnd(run.probe, '6279fcd7 T4 runtime');
+});
+
+test('6279fcd7 T5① 删一条期望行 → missing_row HALT', async () => {
+  const run = await runLedgerTamperChain(({ rows, ledgerPath }) => writeLedgerRows(ledgerPath, rows.slice(1)));
+  assertLedgerIntegrityHalt(run, 'missing_row', 'T5①');
+});
+
+test('6279fcd7 T5② 改一行字段不重算 hash → modified_row HALT', async () => {
+  const run = await runLedgerTamperChain(({ rows, ledgerPath }) =>
+    writeLedgerRows(ledgerPath, [{ ...rows[0], decision: { fused: true } }, ...rows.slice(1)]));
+  assertLedgerIntegrityHalt(run, 'modified_row', 'T5②');
+});
+
+test('6279fcd7 T5③ 最后已提交 attempt 的非期望行改 attempt_id=i99（重算 hash）→ orphan HALT', async () => {
+  const run = await runLedgerTamperChain(({ rows, attemptB, ledgerPath }) => {
+    const b = rows.filter(r => r.attempt_id === attemptB);
+    writeLedgerRows(ledgerPath, [...rows, resealRow(b[b.length - 1], { attempt_id: 'i99' })]);
+  });
+  assertLedgerIntegrityHalt(run, 'orphan_pending_stale', 'T5③');
+});
+
+test('6279fcd7 T5④ 最后已提交 attempt 的非期望行 at 移到窗口外（重算 hash）→ orphan HALT', async () => {
+  const run = await runLedgerTamperChain(({ rows, attemptB, ledgerPath }) => {
+    const b = rows.filter(r => r.attempt_id === attemptB);
+    writeLedgerRows(ledgerPath, [...rows, resealRow(b[b.length - 1], { at: '2020-01-01T00:00:00.000Z' })]);
+  });
+  assertLedgerIntegrityHalt(run, 'orphan_pending_stale', 'T5④');
+});
+
+test('6279fcd7 T5⑤ 更早已提交 attempt 窗口内 hash 自洽的行 → 仍 orphan HALT', async () => {
+  const run = await runLedgerTamperChain(({ rows, attemptA, ledgerPath }) => {
+    const a = rows.filter(r => r.attempt_id === attemptA);
+    assert(a.length === 1, `A 须恰有一条收编行：${a.length}`);
+    writeLedgerRows(ledgerPath, [...rows, resealRow(a[0], { screens_hash: 'earlier-attempt-forged' })]);
+  });
+  assertLedgerIntegrityHalt(run, 'orphan_pending_stale', 'T5⑤');
+});
+
+test('6279fcd7 T5⑥ 旧 attempt A 的 id + 最新 attempt B 窗口内时间戳（重算 hash）→ 仍 orphan HALT', async () => {
+  // 单独检验 attempt 等值条件：at 落在 B 窗口内，只有 attempt_id 指向更早的 A。
+  const run = await runLedgerTamperChain(({ rows, attemptA, attemptB, ledgerPath }) => {
+    const b = rows.filter(r => r.attempt_id === attemptB);
+    writeLedgerRows(ledgerPath, [...rows, resealRow(b[b.length - 1], {
+      attempt_id: attemptA, screens_hash: 'earlier-id-in-latest-window',
+    })]);
+  });
+  assertLedgerIntegrityHalt(run, 'orphan_pending_stale', 'T5⑥');
 });
 
 export async function runAll(): Promise<UnitCaseResult[]> {

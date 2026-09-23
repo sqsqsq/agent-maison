@@ -340,6 +340,14 @@ const cases: Case[] = [
             const closed = readJson(root, 'doc/features/demo/spec/reports/summary.json');
             assert(closed.receipt_status === 'passed' && closed.closure_status === 'closed',
               `attended closure 未闭合：${JSON.stringify(closed)}`);
+            // plan 6279fcd7 T3（D1）：attended harness 不再带 GATE 标（与 detached agent 侧同角色、
+            // 自己试验回执），同一组参数的 sync-closure 仍按签发 attempt 收口——回执声明的
+            // attempt 须经 check-receipt 同阶段等值校验，closure_commit 指向该回执。
+            const commit = closed.closure_commit as { receipt_path?: string } | undefined;
+            assert(typeof commit?.receipt_path === 'string' && commit.receipt_path.endsWith('spec/phase-completion-receipt.md'),
+              `closure_commit 须绑定本阶段回执：${JSON.stringify(commit)}`);
+            assert(fs.readFileSync(path.join(root, 'doc/features/demo/spec/phase-completion-receipt.md'), 'utf-8')
+              .includes(`claimed_attempt_id: "${context.attemptId}"`), 'closure 身份须是签发 attempt');
             assert(!fs.existsSync(path.join(harnessDir, 'state', '.current-phase.json')),
               'attended harness 不得产生 .current-phase.json');
             assert(crypto.createHash('sha256').update(fs.readFileSync(ssotPath)).digest('hex') === fidelityHash,

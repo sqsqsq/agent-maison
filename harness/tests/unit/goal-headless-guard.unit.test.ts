@@ -31,6 +31,7 @@ import {
   parseHeadlessInteractionSentinel,
 } from '../../scripts/utils/goal-headless-sentinel';
 import {
+  collectLastCommittedVisualAttemptWindow,
   collectUncommittedVisualAttemptIds,
   collectVisualRoundRowHashes,
   countConsecutiveAgentTimeouts,
@@ -1964,6 +1965,28 @@ export function runAll(): UnitCaseResult[] {
         assert(expected.includes('aaaa000000000000') && expected.includes('bbbb000000000000'), JSON.stringify(expected));
         const afterRecovery = collectUncommittedVisualAttemptIds(withRecovery as never);
         assert(afterRecovery.length === 1 && afterRecovery[0] === 'i4', 'recovery event 关闭旧 pending 身份');
+      },
+    },
+    {
+      name: '6279fcd7 T4：最后一个已提交 testing attempt 的 invoke 窗口（agent_invoke_start → 同 invoke_id 最后事件）',
+      run: () => {
+        const events = [
+          { type: 'agent_invoke_start', phase: 'testing', invoke_id: 'testing-i10', ts: '2026-09-20T03:50:00.000Z' },
+          { type: 'visual_round', phase: 'testing', invoke_id: 'testing-i10', visual_attempt: 'i10', row_hash: 'a', ts: '2026-09-20T03:55:00.000Z' },
+          { type: 'agent_invoke_start', phase: 'coding', invoke_id: 'coding-i10b', ts: '2026-09-20T04:00:00.000Z' },
+          { type: 'agent_invoke_start', phase: 'testing', invoke_id: 'testing-i11', ts: '2026-09-20T04:05:50.657Z' },
+          { type: 'phase_start', phase: 'testing', attempt_id: 'i11', ts: '2026-09-20T04:05:50.700Z' },
+          { type: 'visual_round', phase: 'testing', invoke_id: 'testing-i11', visual_attempt: 'i11', row_hash: 'f4f2', disposition: 'duplicate', ts: '2026-09-20T04:16:47.000Z' },
+          { type: 'phase_backtrack_requested', phase: 'testing', invoke_id: 'testing-i11', ts: '2026-09-20T04:16:47.458Z' },
+          { type: 'agent_invoke_start', phase: 'coding', invoke_id: 'coding-i12', ts: '2026-09-20T04:17:00.000Z' },
+        ];
+        const w = collectLastCommittedVisualAttemptWindow(events as never);
+        assert(w?.attemptId === 'i11' && w.startMs === Date.parse('2026-09-20T04:05:50.657Z')
+          && w.endMs === Date.parse('2026-09-20T04:16:47.458Z'), JSON.stringify(w));
+        // 最后启动的 testing attempt 未提交：窗口仍取最后一个**已提交**的
+        const withPending = [...events, { type: 'agent_invoke_start', phase: 'testing', invoke_id: 'testing-i13', ts: '2026-09-20T04:30:00.000Z' }];
+        assert(collectLastCommittedVisualAttemptWindow(withPending as never)?.attemptId === 'i11', '未提交 attempt 不算');
+        assert(collectLastCommittedVisualAttemptWindow(events.slice(0, 1) as never) === null, '无已提交 attempt → null');
       },
     },
     // ======================================================================

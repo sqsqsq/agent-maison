@@ -28,6 +28,12 @@ import {
   type VisualRoundInput,
   type VisualRoundRow,
 } from '../../scripts/utils/visual-rounds-ledger';
+import {
+  collectLastCommittedVisualAttemptWindow,
+  collectUncommittedVisualAttemptIds,
+  collectVisualRoundRowHashes,
+  type GoalRunEvent,
+} from '../../scripts/utils/goal-runner-phase';
 import type { UnitCaseResult } from '../run-unit';
 
 const cases: Array<{ name: string; run: () => void }> = [];
@@ -306,6 +312,65 @@ ${JSON.stringify(r2.row)}
     pendingAttemptIds: [],
   });
   assert.ok(!gone.ok && gone.issues.every(i => i.kind === 'missing_row'));
+});
+
+test('6279fcd7 T4 last committed attempt window adopts hash-consistent orphan rows only', () => {
+  // 宿主 i11 形态：gate 以 duplicate 命中 r1，同 attempt 另两行 r2/r3 不在期望集、attempt 已提交。
+  const ledger = tmpLedger();
+  const at = (s: string) => () => `2026-09-20T04:${s}.000Z`;
+  const r1 = evaluateVisualRound(ledger, baseInput({ attemptId: 'i11', now: at('06:28') }));
+  appendVisualRound(ledger, r1.row);
+  const r2 = evaluateVisualRound(ledger, baseInput({ attemptId: 'i11', screensHash: 's2', now: at('08:30') }));
+  appendVisualRound(ledger, r2.row);
+  const r3 = evaluateVisualRound(ledger, baseInput({ attemptId: 'i11', screensHash: 's3', now: at('15:52') }));
+  appendVisualRound(ledger, r3.row);
+  const window = {
+    attemptId: 'i11',
+    startMs: Date.parse('2026-09-20T04:05:50.657Z'),
+    endMs: Date.parse('2026-09-20T04:16:47.458Z'),
+  };
+  const recon = (w: typeof window | null) => reconcileLedgerWithEvents({
+    ledgerPath: ledger, loopId: 'goal:run-1', expectedRowHashes: [r1.row.row_hash],
+    pendingAttemptIds: [], committedAttemptWindow: w,
+  });
+  const adopted = recon(window);
+  assert.ok(adopted.ok, `窗口内 hash 自洽行须收养：${JSON.stringify(adopted.issues)}`);
+  assert.deepStrictEqual(adopted.adopted.map(a => a.row_hash).sort(), [r2.row.row_hash, r3.row.row_hash].sort());
+  assert.ok(adopted.adopted.every(a => a.attempt_id === 'i11'));
+  // 调用方补写 recovered 事件后（进期望集）下一次对账 ok、零收养
+  const next = reconcileLedgerWithEvents({
+    ledgerPath: ledger, loopId: 'goal:run-1',
+    expectedRowHashes: [r1.row.row_hash, ...adopted.adopted.map(a => a.row_hash)],
+    pendingAttemptIds: [], committedAttemptWindow: window,
+  });
+  assert.ok(next.ok && next.adopted.length === 0, JSON.stringify(next));
+  // 无窗口 / 窗口是别的 attempt / 窗口不含 at → 仍是陈旧孤儿
+  for (const w of [null, { ...window, attemptId: 'i10' }, { ...window, endMs: Date.parse('2026-09-20T04:08:00.000Z') }]) {
+    const res = recon(w);
+    assert.ok(!res.ok && res.issues.some(i => i.kind === 'orphan_pending_stale'), `须 HALT：${JSON.stringify(w)}`);
+  }
+});
+
+test('6279fcd7 T6 host replay f829b8: re-entry reconciliation adopts i11 e75c/29fd instead of halting', () => {
+  // 宿主 run 20260920T100035Z-f829b8 只读拷贝裁剪（本 loop 14 行账本 + 截至 04:31:25 HALT 前的
+  // testing 相关事件；生成方式见 plan 6279fcd7 §9）。
+  const dir = path.join(__dirname, 'fixtures', 'host-f829b8-visual-ledger');
+  const events = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf-8')
+    .split('\n').filter(Boolean).map(l => JSON.parse(l) as GoalRunEvent);
+  const base = {
+    ledgerPath: path.join(dir, 'visual-rounds.ledger.jsonl'),
+    loopId: 'goal:20260920T100035Z-f829b8',
+    expectedRowHashes: collectVisualRoundRowHashes(events),
+    pendingAttemptIds: collectUncommittedVisualAttemptIds(events),
+  };
+  const before = reconcileLedgerWithEvents(base);
+  assert.deepStrictEqual(before.issues.map(i => i.kind), ['orphan_pending_stale', 'orphan_pending_stale'], '修前：宿主现场两条孤儿');
+  const after = reconcileLedgerWithEvents({
+    ...base, committedAttemptWindow: collectLastCommittedVisualAttemptWindow(events),
+  });
+  assert.ok(after.ok, JSON.stringify(after.issues));
+  assert.deepStrictEqual(after.adopted.map(a => `${a.attempt_id}:${a.row_hash}`).sort(),
+    ['i11:29fd29e04d7ff6f4', 'i11:e75cbdee307e0633']);
 });
 
 export function runAll(): UnitCaseResult[] {

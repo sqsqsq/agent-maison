@@ -263,6 +263,7 @@ import {
   buildHalfPhaseRecoveryEvents,
   checkRunBudget,
   checkTerminalResumeGuard,
+  collectLastCommittedVisualAttemptWindow,
   collectUncommittedVisualAttemptIds,
   collectVisualRoundRowHashes,
   countAgentInvokeStarts,
@@ -6525,7 +6526,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // events↔ledger integrity 对账——**无条件执行**（期望集恒空正是主路径失效形态：
         // agent 先写→gate 恒 duplicate；期望集现已含 duplicate 的 row_hash）。缺行/改行/
         // 损坏行/重复行/陈旧孤儿行 → halt 求人（删账本行=绕 fuse；损坏不解释成空历史）。
-        // pending 收养仅限"已 start、未 commit"的 invocation。诚实边界：运行时一致性防护，
+        // 收养仅限"已 start、未 commit"的 invocation，以及最后一个已提交 testing attempt
+        // invoke 窗口内 hash 自洽的行（plan 6279fcd7）。诚实边界：运行时一致性防护，
         // 非协同篡改双文件的密码学防护。
         if (!dryRun && phase === 'testing') {
           const eventsForIntegrity = loadAuthoritativeEvents(eventsPath);
@@ -6534,6 +6536,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
             loopId: `goal:${manifest.run_id}`,
             expectedRowHashes: collectVisualRoundRowHashes(eventsForIntegrity),
             pendingAttemptIds: collectUncommittedVisualAttemptIds(eventsForIntegrity),
+            // plan 6279fcd7 修法二：最后一个已提交 testing attempt 窗口内的存量自检行
+            committedAttemptWindow: collectLastCommittedVisualAttemptWindow(eventsForIntegrity),
           });
           if (!recon.ok) {
             halted = true;

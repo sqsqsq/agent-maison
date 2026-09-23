@@ -3,7 +3,8 @@
  * 熔断的 SSOT 纯逻辑层。
  *
  * 定位：telemetry/标注侧车（非判定文件，不含 verdict/分数/签字——tamper-scan 红线外）。
- * 账本行由 harness-runner 在 check 之后追加（runner 写、check 只读判定）；goal-runner
+ * 账本行由 harness-runner 在 check 之后追加（runner 写、check 只读判定；goal 态只有 runtime
+ * 自己 spawn 的 gate 直写，执行者自检写 journal 由 runtime 收编——plan 6279fcd7）；goal-runner
  * 在 gate/resume 时反向对账（events.jsonl ↔ ledger 的 row_hash，运行时一致性防护——
  * events 与 ledger 均在 agent 可写工作区，本模块不宣称对协同篡改双文件的密码学防护）。
  *
@@ -316,11 +317,13 @@ export interface LedgerIntegrityIssue {
  * review-fix（codex P1-1 / cursor Critical）后语义：
  * - **无条件执行**（不再以期望集非空为前置——期望恒空正是主路径的失效形态）；
  * - 期望集=events 所有携带 row_hash 的 visual_round（**含 duplicate**——row_hash 即账本
- *   行 hash，agent 先写→gate duplicate 的主路径也把行纳入期望）；
+ *   行 hash，runtime 收编自检行→gate duplicate 的主路径也把行纳入期望）；
  * - events 有、ledger 无 → missing_row（删账本行=绕 fuse）；
  * - ledger 行 row_hash 重算不符 → modified_row（改行/改 decision）；
- * - ledger 有、events 无 → 仅当 attempt_id ∈ pendingAttemptIds（**已 start、未 commit**
- *   的 invocation——由事件回放收窄，不是本 run 全部历史）才收养；否则 orphan_pending_stale；
+ * - ledger 有、events 无 → 两类才收养：① attempt_id ∈ pendingAttemptIds（**已 start、未
+ *   commit** 的 invocation——由事件回放收窄，不是本 run 全部历史）；② plan 6279fcd7：
+ *   attempt_id = 本 run **最后一个已提交** testing attempt 且 `at` 落在其 invoke 窗口内
+ *   （hash 自洽在前判定；更早的已提交 attempt 不收）。其余 orphan_pending_stale；
  * - goal loop 内出现**损坏行**（崩溃半行/坏 JSON）→ corrupt_lines（fail-closed：损坏
  *   不解释成空历史；交互态读取仍容忍 WARN，本函数只用于 goal 对账）；
  * - 同 loop 内**重复 row_hash** → duplicate_row_hash（复制行充数）。
@@ -331,11 +334,14 @@ export function reconcileLedgerWithEvents(input: {
   loopId: string;
   expectedRowHashes: string[];
   pendingAttemptIds: string[];
+  /** plan 6279fcd7：本 run 最后一个已提交 testing attempt 的 invoke 窗口（缺省=不收养） */
+  committedAttemptWindow?: { attemptId: string; startMs: number; endMs: number } | null;
 }): {
   ok: boolean;
   issues: LedgerIntegrityIssue[];
-  /** review-fix 轮2（codex P1-1）：被收养的 pending 行——调用方须补写 recovery event
-   * 使其进入下次期望集（否则 pending attempt 永久存活、孤儿行可借其名义永续） */
+  /** review-fix 轮2（codex P1-1）+ plan 6279fcd7：被收养的行（pending attempt 的行，或最后
+   * 已提交 attempt 窗口内的行）——调用方须补写 recovery event 使其进入下次期望集
+   *（否则 pending attempt 永久存活、孤儿行可借其名义永续） */
   adopted: Array<{ attempt_id: string; row_hash: string }>;
 } {
   const issues: LedgerIntegrityIssue[] = [];
@@ -376,10 +382,13 @@ export function reconcileLedgerWithEvents(input: {
     }
     if (!expectedSet.has(declared)) {
       const pendingOk = r.attempt_id !== undefined && input.pendingAttemptIds.includes(r.attempt_id);
-      if (!pendingOk) {
+      const w = input.committedAttemptWindow;
+      const atMs = Date.parse(r.at);
+      const windowOk = !!w && r.attempt_id === w.attemptId && atMs >= w.startMs && atMs <= w.endMs;
+      if (!pendingOk && !windowOk) {
         issues.push({
           kind: 'orphan_pending_stale',
-          detail: `账本行 ${declared}（attempt=${r.attempt_id ?? 'n/a'}）不在 events 期望集且非未提交 invocation 的 pending 行`,
+          detail: `账本行 ${declared}（attempt=${r.attempt_id ?? 'n/a'}）不在 events 期望集，且既非未提交 invocation 的 pending 行、也不在最后一个已提交 testing attempt 的 invoke 窗口内`,
         });
       } else {
         adopted.push({ attempt_id: r.attempt_id!, row_hash: declared });

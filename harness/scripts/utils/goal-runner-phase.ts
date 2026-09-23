@@ -398,8 +398,8 @@ export function partitionExecutionSessions(
 
 /**
  * t1/rev6（f7a3d9c2）+ review-fix（cursor Critical）：events 回放——账本行期望 hash 集。
- * **含 duplicate**：主路径是"agent 自跑 harness append → 外层 gate 撞同 round_key 得
- * duplicate"，events 里只会出现 duplicate 事件，但其 row_hash 就是那条账本行——只收
+ * **含 duplicate**：主路径是"执行者自检写 journal → runtime 收编 → 外层 gate 撞同 round_key
+ * 得 duplicate"，gate 事件是 duplicate，但其 row_hash 就是那条收编行——只收
  * appended 会让期望集恒空、整段 integrity 空转（删账本绕 fuse 不再被拦）。
  * append_failed 无 row_hash，天然不入期望。
  */
@@ -435,6 +435,37 @@ export function collectUncommittedVisualAttemptIds(events: GoalRunEvent[]): stri
   }
   const uncommitted = startedTesting.filter(id => !committed.has(id));
   return uncommitted.length > 0 ? [uncommitted[uncommitted.length - 1]] : [];
+}
+
+/**
+ * plan 6279fcd7 修法二：本 run **最后一个已提交**的 testing attempt 及其 invoke 窗口——
+ * 启动对账据此收养该窗口内 hash 自洽的孤儿行（修法一之前 attended 自检直写的存量行）。
+ * 与上面同口径回放：启动过（agent_invoke_start）且有带 visual_attempt 的 visual_round。
+ * 窗口 = [该 invoke 的 agent_invoke_start.ts, 同 invoke_id 最后一条事件.ts]（终点覆盖 gate 结算）。
+ * 只取最后一个：每次 testing 入口都先对账，更早 attempt 的孤儿行不可能合法遗留。
+ */
+export function collectLastCommittedVisualAttemptWindow(
+  events: GoalRunEvent[],
+): { attemptId: string; startMs: number; endMs: number } | null {
+  const starts: Array<{ attemptId: string; invokeId: string; ts?: string }> = [];
+  const committed = new Set<string>();
+  for (const e of events) {
+    if (e.type === 'agent_invoke_start' && e.phase === 'testing' && typeof e.invoke_id === 'string') {
+      const m = e.invoke_id.match(/-(i\d+)$/);
+      if (m) starts.push({ attemptId: m[1], invokeId: e.invoke_id, ts: e.ts });
+    }
+    if (e.type === 'visual_round' && typeof e.visual_attempt === 'string' && e.visual_attempt) {
+      committed.add(e.visual_attempt);
+    }
+  }
+  const last = [...starts].reverse().find(s => committed.has(s.attemptId));
+  if (!last) return null;
+  const endTs = [...events].reverse().find(e => e.invoke_id === last.invokeId)?.ts;
+  const startMs = Date.parse(last.ts ?? '');
+  const endMs = Date.parse(endTs ?? '');
+  return Number.isFinite(startMs) && Number.isFinite(endMs)
+    ? { attemptId: last.attemptId, startMs, endMs }
+    : null;
 }
 
 /**

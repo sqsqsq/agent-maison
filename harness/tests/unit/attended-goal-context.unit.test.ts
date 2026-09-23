@@ -143,13 +143,15 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(env.MAISON_GOAL_RUNNER === '1', 'runner env not injected');
       assert(env.MAISON_GOAL_ATTEMPT === 'session-e1-round-1', 'attempt env not injected');
       assert(env.MAISON_GOAL_ATTEMPT_PHASE === 'spec', 'attempt phase env not injected');
-      assert(env.MAISON_GOAL_GATE_HARNESS === '1', 'formal gate authority not injected');
+      // plan 6279fcd7 修法一：attended 执行者自检不是正式 gate——绑定只清残留、不置标。
+      assert(!Object.keys(env).some((key) => key.toUpperCase() === 'MAISON_GOAL_GATE_HARNESS'),
+        'attended binding must not grant formal gate authority');
       assert(!Object.prototype.hasOwnProperty.call(env, 'maison_goal_run_id'), 'mixed-case stale key retained');
       assert(!Object.prototype.hasOwnProperty.call(env, 'maison_goal_gate_harness'), 'mixed-case gate key retained');
     }),
   },
   {
-    name: 'formal attended binding is orchestration but not agent-side harness',
+    name: 'attended binding is orchestration and agent-side (executor self-check, like detached)',
     run: () => withRun(({ root, runId, token }) => {
       const keys = [
         'MAISON_GOAL_RUN_ID', 'MAISON_GOAL_RUNNER', 'MAISON_GOAL_ATTEMPT',
@@ -163,7 +165,7 @@ const cases: Array<{ name: string; run: () => void }> = [
           goalOwnerEpoch: token.epoch, env: process.env,
         });
         assert(isGoalOrchestrationEnv(), 'attended harness must be goal orchestration');
-        assert(!isAgentSideGoalHarness(), 'formal attended gate must not be agent-side');
+        assert(isAgentSideGoalHarness(), 'attended executor self-check must be agent-side (journal writer)');
       } finally {
         for (const key of keys) {
           const value = before.get(key);
@@ -173,7 +175,9 @@ const cases: Array<{ name: string; run: () => void }> = [
     }),
   },
   {
-    name: 'formal attended binding reaches the canonical device evidence writer',
+    // plan 6279fcd7 T2：attended 自检不写 device 证据（唯一写者=runtime gate）；同一身份再加
+    // runtime gate 那一个标（goal-phase-runtime.ts runHarnessPhase 同形 env）仍写。
+    name: 'attended self-check skips the device evidence writer; runtime-gate-shaped env still writes it',
     run: () => withRun(({ root, runId, token, issuePhase }) => {
       const keys = [
         'MAISON_GOAL_RUN_ID', 'MAISON_GOAL_RUNNER', 'MAISON_GOAL_ATTEMPT',
@@ -188,19 +192,25 @@ const cases: Array<{ name: string; run: () => void }> = [
           goalOwnerEpoch: token.epoch, env: process.env,
         });
         const reportsDir = path.join(root, 'doc', 'features', 'demo', 'testing', 'reports');
-        const results = writeDeviceTestEvidenceIfEligible(
+        const write = () => writeDeviceTestEvidenceIfEligible(
           {
             projectRoot: root, frameworkRoot: path.resolve(__dirname, '..', '..', '..'),
             feature: 'demo', phase: 'testing',
           } as any,
           {
             hapPath: path.join(root, 'demo.hap'), installPassed: true,
+            installExecuted: true, installOk: true, hapSha256Full: 'a'.repeat(64),
             installExternallyBlocked: false, buildReused: false,
             hylyreTracePath: path.join(root, 'trace.json'), deviceTestRunExecuted: true,
-            installExecuted: true, installOk: true, hapSha256Full: 'a'.repeat(64),
           },
           () => ({ ok: true, doc: { cases: [], goal_run_id: runId } }),
         );
+        const selfCheck = write();
+        assert(selfCheck.length === 0, `attended self-check must not write device evidence: ${JSON.stringify(selfCheck)}`);
+        assert(!fs.existsSync(path.join(reportsDir, 'device-test-evidence.json')),
+          'attended self-check wrote device evidence');
+        process.env.MAISON_GOAL_GATE_HARNESS = '1';
+        const results = write();
         assert(results.length === 1 && results[0].status === 'PASS',
           `formal device writer did not run: ${JSON.stringify(results)}`);
         assert(fs.existsSync(path.join(reportsDir, 'device-test-evidence.json')),
