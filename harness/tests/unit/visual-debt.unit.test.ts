@@ -674,6 +674,28 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       const skippedClaimedPass = checkPassRateCalculated(ctxT, RATE + execTable('通过'))[0];
       assertEq(skippedClaimedPass.status, 'FAIL', 'trace=跳过的用例不得被报告成通过');
       assertTrue(/blocked=0、skipped=1/.test(skippedClaimedPass.details), skippedClaimedPass.details);
+
+      // ⑫ 宿主回灌 09-23（e7a2c4f1）：多通道分子。trace_summary 只数 hylyre；visual TC 的通过
+      //    由同一次 harness 的 channel binding 证明——上限 = trace 可通过 + covered 数。
+      const twoRows = RATE +
+        '## 测试执行结果\n\n| 用例编号 | 执行状态 |\n|---|---|\n| TC-001 | 通过 |\n| TC-007 | 通过 |\n\n';
+      const visualBinding = (kind: 'covered' | 'failed' | 'unbound') =>
+        [{ tc_id: 'TC-007', channel: 'visual' as const, verdict: { kind, detail: 'd' } }];
+      writeMeta('python -m hylyre run --plan p.md --feature demo', { cases_count: 1, failed_count: 0 });
+      assertEq(
+        checkPassRateCalculated(ctxT, twoRows, visualBinding('covered'))[0].status, 'PASS',
+        '1 hylyre 通过 + 1 visual covered 通过须 PASS',
+      );
+      for (const kind of ['failed', 'unbound'] as const) {
+        const r = checkPassRateCalculated(ctxT, twoRows, visualBinding(kind))[0];
+        assertEq(r.status, 'FAIL', `visual 未 covered（${kind}）却写通过须 FAIL`);
+        assertTrue(/covered）的 0 条/.test(r.details), r.details);
+      }
+      writeMeta('python -m hylyre run --plan p.md --feature demo', { cases_count: 1, failed_count: 1 });
+      assertEq(
+        checkPassRateCalculated(ctxT, twoRows, visualBinding('covered'))[0].status, 'FAIL',
+        'hylyre 实际 failed 却写通过：visual covered 不得替它顶账',
+      );
     }),
   },
   {

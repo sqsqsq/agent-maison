@@ -225,6 +225,63 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
+  // plan e7a2c4f1 宿主回灌 09-23：ui-spec screens[].ref_id 与 authoritative_refs[].id 错位（宿主两种形态：
+  // 加 _ref 后缀 / 换了名字）→ spec 期 MAJOR WARN 披露两侧 id，不阻断；对齐后不再出现。
+  run('ui_spec_ref_id_misaligned_with_authoritative_refs_warns_not_blocks', () => {
+    const root = mkTmp();
+    try {
+      fs.mkdirSync(path.join(root, 'ref'), { recursive: true });
+      for (const f of ['cts.png', 'bcs.png', 'sms.png']) fs.writeFileSync(path.join(root, 'ref', f), 'x');
+      const prd = prdWithHandoff('screenshot_pack', [
+        '    - id: card_type_sheet', '      path: ref/cts.png',
+        '    - id: card_selection', '      path: ref/bcs.png',
+        '    - id: sms_sheet', '      path: ref/sms.png',
+      ].join('\n'));
+      const uiSpecDir = path.join(root, 'doc', 'features', 'demo', 'spec');
+      fs.mkdirSync(uiSpecDir, { recursive: true });
+      const writeUiSpec = (refIds: string[]) => fs.writeFileSync(path.join(uiSpecDir, 'ui-spec.yaml'), [
+        'schema_version: "1.0"', 'assets: []', 'screens:',
+        ...refIds.map((ref, i) => `  - id: s${i}\n    ref_id: ${ref}\n    root: { id: r${i}, type: navigation_frame, order: 0 }`),
+      ].join('\n'));
+
+      writeUiSpec(['card_type_sheet_ref', 'bank_card_selection_ref', 'sms_sheet']);
+      const r = checkVisualHandoff(baseCtx(root, { visualHandoffEnforcement: 'strict' }), prd);
+      if (!r.some(x => x.id === 'visual_handoff' && x.status === 'PASS')) throw new Error(`base 须仍 PASS：${JSON.stringify(r)}`);
+      const warn = r.find(x => x.id === 'visual_handoff_refs');
+      if (!warn || warn.status !== 'WARN' || warn.severity !== 'MAJOR') throw new Error(`expected MAJOR WARN：${JSON.stringify(r)}`);
+      for (const id of ['card_type_sheet_ref', 'bank_card_selection_ref', 'card_type_sheet', 'card_selection', '[ref_undeclared]', '2/3']) {
+        if (!warn.details.includes(id)) throw new Error(`details 缺 ${id}：${warn.details}`);
+      }
+      if (/ref_id=sms_sheet /.test(warn.details)) throw new Error(`已对齐的 sms_sheet 不得被点名：${warn.details}`);
+      if (!warn.affected_files?.some(f => f.endsWith('spec/ui-spec.yaml'))) throw new Error(JSON.stringify(warn.affected_files));
+
+      writeUiSpec(['card_type_sheet', 'card_selection', 'sms_sheet']);
+      const aligned = checkVisualHandoff(baseCtx(root, { visualHandoffEnforcement: 'strict' }), prd);
+      if (aligned.some(x => x.id === 'visual_handoff_refs')) throw new Error(`对齐后不得再报：${JSON.stringify(aligned)}`);
+
+      // codex review P2 反例：非位图引用（URL / 仅 URL 的 bundle / 目录 path）不进位图索引，
+      // id 两侧一致时不得误报"未声明"；同形态下真错位仍须报（证明对账确实跑了）。
+      fs.mkdirSync(path.join(root, 'ref', 'pack'), { recursive: true });
+      const nonRaster: Array<[string, string]> = [
+        ['design_tool_link', '    - id: card_type_sheet\n      url: https://design.example.com/a\n    - id: card_selection\n      url: https://design.example.com/b'],
+        ['figma_export_bundle', '    - id: card_type_sheet\n      url: https://figma.example.com/a\n    - id: card_selection\n      url: https://figma.example.com/b'],
+        ['repo_assets', '    - id: card_type_sheet\n      path: ref/pack\n    - id: card_selection\n      path: ref'],
+      ];
+      for (const [kind, refsYaml] of nonRaster) {
+        const nonRasterPrd = prdWithHandoff(kind, refsYaml);
+        writeUiSpec(['card_type_sheet', 'card_selection']);
+        const ok = checkVisualHandoff(baseCtx(root, { visualHandoffEnforcement: 'strict' }), nonRasterPrd);
+        if (!ok.some(x => x.id === 'visual_handoff' && x.status === 'PASS')) throw new Error(`${kind} 前置 base PASS：${JSON.stringify(ok)}`);
+        if (ok.some(x => x.id === 'visual_handoff_refs')) throw new Error(`${kind} id 对齐不得告警：${JSON.stringify(ok)}`);
+        writeUiSpec(['card_type_sheet', 'card_selection_ref']);
+        const bad = checkVisualHandoff(baseCtx(root, { visualHandoffEnforcement: 'strict' }), nonRasterPrd).find(x => x.id === 'visual_handoff_refs');
+        if (!bad || !bad.details.includes('card_selection_ref') || !bad.details.includes('1/2')) throw new Error(`${kind} 真错位须报：${JSON.stringify(bad)}`);
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   run('resolver_plain_relative_not_env_substitution', () => {
     const root = mkTmp();
     try {

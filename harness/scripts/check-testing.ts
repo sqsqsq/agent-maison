@@ -890,7 +890,11 @@ function extractDeclaredOverallRate(section: string | null): number | null {
   return null;
 }
 
-export function checkSkipFlagDisclosure(ctx: CheckContext, report: string): string[] {
+export function checkSkipFlagDisclosure(
+  ctx: CheckContext,
+  report: string,
+  channelEvidenceBindings: readonly ChannelEvidenceBinding[] = [],
+): string[] {
   let command = '';
   let traceSummary: {
     cases_count?: unknown;
@@ -950,11 +954,15 @@ export function checkSkipFlagDisclosure(ctx: CheckContext, report: string): stri
   const skippedCount = typeof traceSummary?.skipped_count === 'number' ? traceSummary.skipped_count : 0;
   if (casesCount !== null && failedCount !== null) {
     const tracePassCeiling = Math.max(0, casesCount - failedCount - blockedCount - skippedCount);
-    if (reportedPass > tracePassCeiling) {
+    // plan e7a2c4f1 宿主回灌 09-23：trace_summary 只数 hylyre trace；非 hylyre 通道 TC 的通过
+    // 由同一次 harness 的逐 TC channel binding（p0_coverage_integrity / 证据义务门同源）证明。
+    const channelCovered = channelEvidenceBindings.filter(b => b.verdict.kind === 'covered').length;
+    if (reportedPass > tracePassCeiling + channelCovered) {
       issues.push(
         `报告自称"通过" ${reportedPass} 条，超过 trace 证明可通过的 ${tracePassCeiling} 条` +
+        `与非 hylyre 通道机器闭合（covered）的 ${channelCovered} 条之和` +
         `（cases=${casesCount}、failed=${failedCount}、blocked=${blockedCount}、skipped=${skippedCount}）` +
-        '——失败、阻塞与跳过均不得计入通过分子。',
+        '——失败、阻塞、跳过与未闭合的通道证据均不得计入通过分子。',
       );
     }
   }
@@ -1011,7 +1019,11 @@ export function checkSkipFlagDisclosure(ctx: CheckContext, report: string): stri
   return issues;
 }
 
-export function checkPassRateCalculated(ctx: CheckContext, report: string | null): CheckResult[] {
+export function checkPassRateCalculated(
+  ctx: CheckContext,
+  report: string | null,
+  channelEvidenceBindings: readonly ChannelEvidenceBinding[] = [],
+): CheckResult[] {
   const id = 'pass_rate_calculated';
   if (!report) {
     return [{
@@ -1048,7 +1060,7 @@ export function checkPassRateCalculated(ctx: CheckContext, report: string | null
   // 判据取既有产物（device-test-run.meta.json 的真实命令 + trace_summary + 报告正文），零新协议。
   // **只做追加约束**：不早退、不短路原有 P0/P1/总体通过率检查（早退会让"加一句免责声明就过门"，
   // 正是本条要堵的假通过）。
-  const disclosureIssues = checkSkipFlagDisclosure(ctx, report);
+  const disclosureIssues = checkSkipFlagDisclosure(ctx, report, channelEvidenceBindings);
 
   const issues: string[] = [];
   // 既有门禁条件保持原样（overall 仅进文案、不参与判定），本 todo 只追加约束、不改既有语义
@@ -6184,7 +6196,7 @@ const checker: PhaseChecker = {
     );
     results.push(...safeRun(() => checkReportRequiredChapters(ctx, report), 'report_required_chapters'));
     results.push(...safeRun(() => checkExecutionResultTable(ctx, report), 'execution_result_table'));
-    results.push(...safeRun(() => checkPassRateCalculated(ctx, report), 'pass_rate_calculated'));
+    results.push(...safeRun(() => checkPassRateCalculated(ctx, report, channelEvidenceBindings), 'pass_rate_calculated'));
     results.push(...safeRun(() => checkDefectTableFormat(ctx, report), 'defect_table_format'));
     results.push(...safeRun(() => checkReportConclusionWithVerdict(ctx, report), 'report_conclusion_with_verdict'));
     results.push(...safeRun(() => checkNegativeTestingVerdictClosure(report), 'negative_verdict_closure'));

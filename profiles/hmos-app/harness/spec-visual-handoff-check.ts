@@ -14,8 +14,15 @@ import { createRequire } from 'module';
 import * as path from 'path';
 import { resolveAuthoritativePath } from '../../../harness/scripts/utils/visual-source-resolver';
 import { resolveRequirementReferenceImages } from '../../../harness/scripts/utils/fidelity-shared';
-import { FIDELITY_SNAPSHOT_KIND, parseOnlineVisualHandoff } from '../../../harness/scripts/utils/fidelity-lock-shared';
+import {
+  FIDELITY_SNAPSHOT_KIND,
+  fidelityLockAbsPath,
+  loadFidelityLock,
+  parseOnlineVisualHandoff,
+} from '../../../harness/scripts/utils/fidelity-lock-shared';
 import { relFeatureArtifact, VisualHandoffEnforcementMode, featureDir } from '../../../harness/config';
+import { loadUiSpecFile, uiSpecAbsPath, uiSpecRelPath } from '../../../harness/scripts/utils/ui-spec-shared';
+import { undeclaredRefNote } from './authoritative-ref-images';
 import type { CheckContext, CheckResult, VisualHandoffResolutionRow } from '../../../harness/scripts/utils/types';
 
 /** `yaml` 安装于 `framework/harness/node_modules`；本文件在 profile 树内，须从 harness 根解析依赖 */
@@ -505,7 +512,46 @@ export function checkVisualHandoff(ctx: CheckContext, prd: string): CheckResult[
   // 只在此分支（authoritative_refs 形态合法、通过既有 applicability/--skip-
   // visual-handoff/enforcement=off 处理）后追加，不构成平行门禁。
   const denominatorResults = visualReferenceDenominatorCoverage(ctx, prd);
-  return denominatorResults.length > 0 ? [...baseResults, ...denominatorResults] : baseResults;
+  // refs 结构本身已报 visual_handoff_refs 时不再对账（先修结构；也保持同 id 唯一）
+  const refIdResults = baseResults.some(r => r.id === 'visual_handoff_refs')
+    ? []
+    : uiSpecRefIdAlignment(ctx, vhObj.authoritative_refs, desc, prdRel);
+  return [...baseResults, ...denominatorResults, ...refIdResults];
+}
+
+/**
+ * plan e7a2c4f1 宿主回灌 09-23：ui-spec `screens[].ref_id` ↔ `authoritative_refs[].id`（或 lock）对账。
+ * 两边须是同一字符串（fidelity-lock-shared 契约）；错位时 testing 期文本 placement 核对整屏降级。
+ * §7「不做前置硬门禁」→ 只 MAJOR WARN 披露，文案复用 `undeclaredRefNote`。
+ * **对照的是声明的 id 集合，不是位图索引**：位图索引只收 png/jpg/webp，URL 类 ref、目录 path
+ * 不进索引——拿索引缺席判 id 错位会对两侧一致的 id 误报（codex review P2）。
+ * lock 屏 id 沿既有 `buildAuthoritativeRefImageIndex` 在非 snapshot 分支的读法（默认 cache lock）。
+ */
+function uiSpecRefIdAlignment(ctx: CheckContext, refs: unknown, desc: string, prdRel: string): CheckResult[] {
+  const ui = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
+  const refIds = [...new Set((ui?.screens ?? []).map(s => s?.ref_id?.trim()).filter((id): id is string => !!id))];
+  if (refIds.length === 0) return [];
+  const declaredIds = [...new Set([
+    ...(Array.isArray(refs) ? refs : [])
+      .map(r => (r && typeof r === 'object' && typeof (r as { id?: unknown }).id === 'string' ? (r as { id: string }).id.trim() : ''))
+      .filter(Boolean),
+    ...(loadFidelityLock(fidelityLockAbsPath(ctx.projectRoot, ctx.feature)).doc?.screens ?? []).map(s => s.id),
+  ])];
+  const declared = new Set(declaredIds);
+  const undeclared = refIds.filter(id => !declared.has(id)).map(id => undeclaredRefNote(id, declaredIds));
+  if (undeclared.length === 0) return [];
+  return [{
+    id: 'visual_handoff_refs',
+    category: 'structure',
+    description: desc,
+    severity: 'MAJOR',
+    status: 'WARN',
+    details:
+      `ui-spec 有 ${undeclared.length}/${refIds.length} 个 screens[].ref_id 未在 authoritative_refs[].id（或 lock）精确命中` +
+      '——不阻断；testing 期该屏参考图文本核对会降级：\n' + undeclared.map(n => `  - ${n}`).join('\n'),
+    suggestion: '由 spec owner 把 spec/ui-spec.yaml 的 screens[].ref_id 与 spec/spec.md 的 authoritative_refs[].id 统一为同一套 id。',
+    affected_files: [uiSpecRelPath(ctx.projectRoot, ctx.feature), prdRel],
+  }];
 }
 
 /**

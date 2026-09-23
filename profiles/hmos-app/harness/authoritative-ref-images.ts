@@ -159,6 +159,16 @@ export function checkAuthoritativeRefLockConflicts(ctx: CheckContext, specMd: st
 export const REF_NOTE_MISSING_FILE = '[ref_missing_file]';
 export const REF_NOTE_UNDECLARED = '[ref_undeclared]';
 
+/** `[ref_undeclared]` 文案唯一出处（testing 期参考图解析与 spec 期 ref_id 对账共用） */
+export function undeclaredRefNote(ref: string, declaredIds: readonly string[]): string {
+  return (
+    `${REF_NOTE_UNDECLARED} ref_id=${ref} 未在 spec.md 的 visual_handoff.authoritative_refs 声明` +
+    `（spec.md 现有 id：${declaredIds.length > 0 ? declaredIds.slice(0, 8).join(', ') : '(无)'}）` +
+    `——spec/ui-spec.yaml 的 screens[].ref_id 与 spec/spec.md 的 authoritative_refs[].id 须统一为同一套；` +
+    '两边由 spec owner 改，框架不猜字符串对齐'
+  );
+}
+
 /**
  * plan e7a2c4f1 §3.3：参考图引用解析。返回契约 `{path, note}` **冻结**（多处调用方依赖），
  * 只把 `note` 从一句"无 reachable 图片映射"升级成能定位责任文件与具体 id 的话：
@@ -184,15 +194,7 @@ export function resolveRefSourceImage(
     };
   }
   if (ref) {
-    const declared = [...index.byId.keys(), ...index.unreachableById.keys()];
-    return {
-      path: null,
-      note:
-        `${REF_NOTE_UNDECLARED} ref_id=${ref} 未在 spec.md 的 visual_handoff.authoritative_refs 声明` +
-        `（spec.md 现有 id：${declared.length > 0 ? declared.slice(0, 8).join(', ') : '(无)'}）` +
-        `——spec/ui-spec.yaml 的 screens[].ref_id 与 spec/spec.md 的 authoritative_refs[].id 须统一为同一套；` +
-        '两边由 spec owner 改，框架不猜字符串对齐',
-    };
+    return { path: null, note: undeclaredRefNote(ref, [...index.byId.keys(), ...index.unreachableById.keys()]) };
   }
   if (index.firstReachable) {
     return {

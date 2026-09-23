@@ -847,7 +847,10 @@ test('批次A完整 checker：6 Hylyre + visual overlay + advisory WARN 共享 b
       '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC | 执行通道 |',
       '| --- | --- | --- | --- | --- | --- | --- | --- |',
       ...ids.map(id => `| ${id} | native | app | tap | pass | P0 | AC-1 | hylyre |`),
-      '| TC-007 | visual | app | capture | pass | P0 | AC-8 | visual |', '',
+      '| TC-007 | visual | app | capture | pass | P0 | AC-8 | visual |',
+      // 宿主回灌 09-23：宿主形态还带两条 P1 unsupported_gap（留分母、不算通过）
+      '| TC-008 | perf | app | sample | pass | P1 | AC-1 | manual:perf_sampling |',
+      '| TC-009 | perf | app | sample | pass | P1 | AC-1 | manual:perf_sampling |', '',
     ].join('\n'));
     fs.writeFileSync(path.join(featureRoot, 'acceptance.yaml'), [
       'flows:', '  main:', '    screens: [home, success]', 'criteria:',
@@ -908,6 +911,8 @@ test('批次A完整 checker：6 Hylyre + visual overlay + advisory WARN 共享 b
       derived_plan_path: derivedPath, derived_plan_sha256: sha256(derivedPath),
       trace_path: fixture.tracePath, trace_sha256: sha256(fixture.tracePath),
     };
+    // 与 device-test-run.ts 生产 writer 同形：trace_summary 只数 hylyre trace（6 条）。
+    runMeta.trace_summary = { outcome: 'success', cases_count: 6, failed_count: 0, blocked_count: 0, skipped_count: 0 };
     fs.writeFileSync(runMetaPath, JSON.stringify(runMeta));
     const vendorDir = path.join(fixture.root, 'framework', 'profiles', 'hmos-app', 'vendor', 'hylyre');
     fs.mkdirSync(vendorDir, { recursive: true });
@@ -979,7 +984,12 @@ test('批次A完整 checker：6 Hylyre + visual overlay + advisory WARN 共享 b
     assert.strictEqual(all.find(r => r.id === 'p0_semantic_coverage_integrity')?.status, 'PASS');
     const report = fs.readFileSync(path.join(testingDir, 'test-report.md'), 'utf8');
     assert.strictEqual(parseReportExecutionRows(report).filter(row => row.status === '通过').length, 7, report);
+    assert.strictEqual(parseReportExecutionRows(report).filter(row => row.status === '跳过').length, 2, report);
     assert.match(report, /\| P0 \| 7 \| 7 \| 0 \| 0 \| 0 \| 100%/);
+    // 宿主回灌 09-23：6 hylyre + 1 visual covered + 2 gap —— 分子上限须与 channel binding 同源，
+    // 不得拿 hylyre-only 的 trace_summary（6）否定 harness 自己生成的 7 条通过。
+    const passRate = all.find(r => r.id === 'pass_rate_calculated');
+    assert.strictEqual(passRate?.status, 'PASS', passRate?.details);
   } finally {
     registry.dispatchVisualDiffDeterministicOnly = savedDispatch;
     fs.rmSync(fixture.root, { recursive: true, force: true });
