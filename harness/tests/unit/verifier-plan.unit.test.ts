@@ -21,7 +21,7 @@ import { canProduceVerifierRequest, resolveVerifierPlan, workflowVerifierPrompt 
 import { writeRunSummaryBase } from '../../harness-runner';
 import { assembleAIPrompt } from '../../scripts/utils/report-generator';
 import { makeVerifierProject, reportsDirOf, rmDir } from '../utils/verifier-project-fixture';
-import type { CheckResult, Phase, ScriptReport } from '../../scripts/utils/types';
+import { CHECK_NOT_APPLICABLE_MARKER, type CheckResult, type Phase, type ScriptReport } from '../../scripts/utils/types';
 // D1 归因回退用**生产实现**（runner 唯一的"失败归因：xxx"解析器），不在测试里复刻正则。
 import { extractFailureClassification as parseFailureClassificationFromDetails } from '../../harness-runner';
 import { resolveVerifierSubagentDeclared } from '../../scripts/utils/adapter-catalog';
@@ -250,7 +250,7 @@ function case6_reviewerDeclarationIsTheOnlyTruth(): void {
 // ⑦ D1（plan 3a7f9c12）：request 生产资格——脚本非 PASS 时的窄放行
 // ---------------------------------------------------------------------------
 
-type EligibilityCheck = { id: string; status: string; severity?: string; failure_kind?: string; details?: string };
+type EligibilityCheck = { id: string; status: string; severity?: string; failure_kind?: string; details?: string; structured?: unknown };
 
 const BLOCKER_FAIL = (id: string, extra: Partial<EligibilityCheck> = {}): EligibilityCheck =>
   ({ id, status: 'FAIL', severity: 'BLOCKER', ...extra });
@@ -387,6 +387,40 @@ function case7_d1RequestEligibility(): void {
       checks: [BLOCKER_PASS('ut_hvigor_build'), BLOCKER_FAIL('ut_hvigor_test', { failure_kind: 'code_regression' })],
     }).allowed,
     'ut report_validity=FAIL 时先修报告工件',
+  );
+
+  // plan d7e3b9a4 §5 ①：已确认不适用（CHECK_NOT_APPLICABLE_MARKER）的 BLOCKER SKIP 不是"门禁没跑完"。
+  // 宿主 run f829b8 UT 报告恒带的三条原形；标注写法与生产 check-ut 出口同源。
+  const naSkip = (id: string): EligibilityCheck =>
+    ({ id, status: 'SKIP', severity: 'BLOCKER', structured: { applicability: CHECK_NOT_APPLICABLE_MARKER } });
+  const plainSkip = (id: string): EligibilityCheck => ({ id, status: 'SKIP', severity: 'BLOCKER' });
+  const HOST_NA_IDS = ['ut_unsupported_targets_handled', 'ut_hypium_mockkit_policy', 'origin_tag_required'];
+  const utRegression = [BLOCKER_PASS('ut_hvigor_build'), BLOCKER_FAIL('ut_hvigor_test', { failure_kind: 'code_regression' })];
+  const markedUt = eligibility({ phase: 'ut', reportValidity: 'UNVERIFIED', checks: [...utRegression, ...HOST_NA_IDS.map(naSkip)] });
+  assert(
+    markedUt.allowed && markedUt.kind === 'repair_diagnosis' && markedUt.diagnosticCheckIds.includes('ut_hvigor_test'),
+    `标注不适用的 BLOCKER SKIP + code_regression 应放行诊断，实得 ${JSON.stringify(markedUt)}`,
+  );
+  const unmarkedUt = eligibility({ phase: 'ut', reportValidity: 'UNVERIFIED', checks: [...utRegression, ...HOST_NA_IDS.map(plainSkip)] });
+  assert(
+    !unmarkedUt.allowed && unmarkedUt.kind === 'none',
+    `同形未标注的 BLOCKER SKIP 仍须挡诊断（门禁没跑完），实得 ${JSON.stringify(unmarkedUt)}`,
+  );
+  const mixedUt = eligibility({
+    phase: 'ut', reportValidity: 'UNVERIFIED',
+    checks: [...utRegression, naSkip('origin_tag_required'), plainSkip('dag_files_parseable')],
+  });
+  assert(!mixedUt.allowed, `标注只豁免自身，同报告未标注 SKIP 照挡：${JSON.stringify(mixedUt)}`);
+  // 标注不改变 BLOCKER FAIL 的判定：带标注的 FAIL 仍按"其它 BLOCKER FAIL"挡。
+  const markedFail = eligibility({
+    phase: 'ut', reportValidity: 'UNVERIFIED',
+    checks: [...utRegression, { ...BLOCKER_FAIL('test_registration'), structured: { applicability: CHECK_NOT_APPLICABLE_MARKER } }],
+  });
+  assert(!markedFail.allowed, `标注不得豁免 BLOCKER FAIL：${JSON.stringify(markedFail)}`);
+  const markedReview = eligibility({ checks: [BLOCKER_FAIL('negative_verdict_closure'), naSkip('coding_rules_present')] });
+  assert(
+    markedReview.allowed && markedReview.kind === 'repair_diagnosis',
+    `review 负面裁决 + 标注不适用 SKIP 应放行，实得 ${JSON.stringify(markedReview)}`,
   );
 
   // 其它 phase 没有已复现的可诊断形态——不得顺带开口子。

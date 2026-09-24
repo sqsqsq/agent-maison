@@ -26,6 +26,7 @@ import {
   AcceptanceSpec,
   UseCasesSpec,
   UseCaseDef,
+  CHECK_NOT_APPLICABLE_MARKER,
 } from './utils/types';
 import { scanNamedBusinessHandler } from './utils/named-handler';
 import { takeArray } from './utils/shape-guards';
@@ -1518,6 +1519,7 @@ export function checkUseCaseSpecSchema(ctx: CheckContext): CheckResult[] {
       severity: 'BLOCKER',
       status: 'SKIP',
       details: 'use-cases.yaml 不存在，跳过 Schema 校验。',
+      structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
     }];
   }
 
@@ -1600,7 +1602,7 @@ export function checkUseCaseSpecSchema(ctx: CheckContext): CheckResult[] {
   }];
 }
 
-function checkNamedBusinessHandler(ctx: CheckContext): CheckResult[] {
+export function checkNamedBusinessHandler(ctx: CheckContext): CheckResult[] {
   const scan = scanNamedBusinessHandler(ctx);
   if (scan.skip) {
     return [{
@@ -1610,6 +1612,8 @@ function checkNamedBusinessHandler(ctx: CheckContext): CheckResult[] {
       severity: 'BLOCKER',
       status: 'SKIP',
       details: 'use-cases.yaml 不存在，跳过。',
+      // scan.skip 也覆盖 profile named-handler 加载失败/未导出（检查没执行）：只在 use-cases 确认缺席时打标。
+      ...(loadUseCaseSpec(ctx) ? {} : { structured: { applicability: CHECK_NOT_APPLICABLE_MARKER } }),
     }];
   }
 
@@ -1645,6 +1649,7 @@ function checkUseCaseUiBindingsNonempty(ctx: CheckContext): CheckResult[] {
       severity: 'BLOCKER',
       status: 'SKIP',
       details: 'use-cases.yaml 不存在，跳过。',
+      structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
     }];
   }
   const issues: string[] = [];
@@ -1756,6 +1761,7 @@ function checkDagLinkedUseCase(
       severity: 'BLOCKER',
       status: 'SKIP',
       details: 'use-cases.yaml 不存在，跳过。',
+      structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
     }];
   }
   if (dags.length === 0) {
@@ -1986,6 +1992,7 @@ function checkUtImportWhitelist(
       severity: 'BLOCKER',
       status: 'SKIP',
       details: '当前合并后的 phase-rules 未声明 ut_import_whitelist，跳过。',
+      structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
     }];
   }
 
@@ -2061,6 +2068,7 @@ function checkBoundariesAllStubbed(
       severity: 'BLOCKER',
       status: 'SKIP',
       details: 'use-cases.yaml 不存在，跳过。',
+      structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
     }];
   }
   if (utFiles.length === 0) {
@@ -2429,6 +2437,7 @@ export function checkAcceptanceCoverage(
       severity: 'BLOCKER',
       status: 'SKIP',
       details: '全部 flow_type=characterization，跳过 acceptance_coverage。',
+      structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
     }];
   }
   const acceptance = ctx.featureSpec.acceptance;
@@ -2626,7 +2635,7 @@ function dagsAreCharacterization(dags: Array<{ dag: DagFile }>): boolean {
   return dagsAllCharacterization(dags);
 }
 
-function checkOriginTagRequired(
+export function checkOriginTagRequired(
   dags: Array<{ path: string; dag: DagFile }>,
   ctx: CheckContext,
 ): CheckResult[] {
@@ -2639,6 +2648,7 @@ function checkOriginTagRequired(
       severity: 'BLOCKER',
       status: 'SKIP',
       details: '无 flow_type=characterization 的 DAG，跳过。',
+      structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
     }];
   }
   const missing: string[] = [];
@@ -2721,6 +2731,7 @@ function checkBranchCoverageFull(
       severity: 'BLOCKER',
       status: 'SKIP',
       details: '全部 flow_type=characterization，跳过 branch_coverage_full。',
+      structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
     }];
   }
   const spec = loadUseCaseSpec(ctx);
@@ -2732,6 +2743,7 @@ function checkBranchCoverageFull(
       severity: 'BLOCKER',
       status: 'SKIP',
       details: 'use-cases.yaml 不存在，跳过。',
+      structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
     }];
   }
   if (utFiles.length === 0) {
@@ -2889,6 +2901,7 @@ export function checkUtCoverageEvidencePresent(
       severity: 'BLOCKER',
       status: 'SKIP',
       details: '无 unit/both UT 范围，跳过 coverage-evidence.json 强制。',
+      structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
     }];
   }
   const acceptance = ctx.featureSpec.acceptance;
@@ -2956,6 +2969,7 @@ export function checkUtCoverageEvidenceMappingsComplete(
       severity: 'BLOCKER',
       status: 'SKIP',
       details: '无 unit/both P0/P1 范围，跳过 mapping 完整性。',
+      structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
     }];
   }
   if (observed.status !== 'loaded') {
@@ -3047,6 +3061,7 @@ export function checkUtCoverageEvidenceResolves(
       severity: 'BLOCKER',
       status: 'SKIP',
       details: '无 unit/both P0/P1 范围，跳过。',
+      structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
     }];
   }
   const evidence = observed.status === 'loaded' ? observed.evidence : undefined;
@@ -3118,6 +3133,7 @@ export function checkUtCasePerUnitAc(
       severity: 'BLOCKER',
       status: 'SKIP',
       details: '全部 flow_type=characterization，跳过 ut_case_per_unit_ac。',
+      structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
     }];
   }
   const acceptance = ctx.featureSpec.acceptance;
@@ -3140,6 +3156,7 @@ export function checkUtCasePerUnitAc(
       severity: 'BLOCKER',
       status: 'SKIP',
       details: '无 unit/both P0/P1 范围（allowlist：无 UT scope）。',
+      structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
     }];
   }
   if (utFiles.length === 0) {
@@ -3516,6 +3533,7 @@ function checkUtTestabilityAuditPresent(
       severity: 'BLOCKER',
       status: 'SKIP',
       details: 'acceptance.yaml 无 ut_layer∈{unit,both} 的 AC/BD，跳过 testability-audit 门禁。',
+      structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
     }];
   }
 
@@ -3562,7 +3580,7 @@ function checkUtTestabilityAuditPresent(
   }];
 }
 
-function checkUtUnsupportedTargetsHandled(
+export function checkUtUnsupportedTargetsHandled(
   ctx: CheckContext,
   observed: UtMachineArtifactObservation<TestabilityAuditRecord[]>,
 ): CheckResult[] {
@@ -3592,6 +3610,7 @@ function checkUtUnsupportedTargetsHandled(
       severity: 'BLOCKER',
       status: 'SKIP',
       details: '无 L3（不可测）记录，跳过 option_a/b 处置检查。',
+      structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
     }];
   }
 
@@ -3775,6 +3794,7 @@ export function checkUtHypiumMockkitPolicy(
       severity: 'BLOCKER',
       status: 'SKIP',
       details: `本 feature 责任域内的 UT 未从 @ohos/hypium 导入 MockKit/when（或存量文件无新增 mock 用法），跳过 mock 策略门禁。${noteSuffix}`,
+      structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
     }];
   }
 
@@ -4375,6 +4395,7 @@ const checker: PhaseChecker = {
       severity: 'BLOCKER',
       status: 'SKIP',
       details: `工作模式=${targetResolution.mode}：需求工件门禁不适用（repair_existing_ut / cover_existing_code 不强制 use-cases/AC/DAG/mock-plan——plan 423e5d0f P2）。`,
+      structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
     }];
 
     const results: CheckResult[] = [

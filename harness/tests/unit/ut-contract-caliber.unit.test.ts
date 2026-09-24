@@ -13,13 +13,20 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import {
   checkDagBoundaryMatchesSpec,
+  checkDagFilesParseable,
   checkDagSpyPresetResolvable,
+  checkNamedBusinessHandler,
+  checkOriginTagRequired,
+  checkUseCaseSpecSchema,
+  checkUtHypiumMockkitPolicy,
   checkUtMachineArtifactParseable,
   checkUtMockPlanContractsConsistent,
   checkUtMockPlanPresent,
+  checkUtUnsupportedTargetsHandled,
   type DagFile,
   type UtMachineArtifactObservation,
 } from '../../scripts/check-ut';
@@ -33,7 +40,7 @@ import {
   resolveUtTemplateRef,
   type UtTemplateKey,
 } from '../../scripts/utils/ut-template-paths';
-import type { CheckContext } from '../../scripts/utils/types';
+import { isCheckNotApplicable, type CheckContext, type CheckResult } from '../../scripts/utils/types';
 
 export interface UnitCaseResult {
   name: string;
@@ -345,6 +352,64 @@ function testGoalRunnerInjectsUtOnly(): void {
 }
 
 // ---------------------------------------------------------------------------
+// plan d7e3b9a4 §5 ②：已确认不适用的 BLOCKER SKIP 出口带机读标注（真实 checker 函数）
+// ---------------------------------------------------------------------------
+
+function assertBlockerSkip(r: CheckResult | undefined, marked: boolean, label: string): void {
+  assert(!!r && r.status === 'SKIP' && r.severity === 'BLOCKER', `${label} 应为 BLOCKER SKIP：${JSON.stringify(r)}`);
+  assert(
+    isCheckNotApplicable(r!) === marked,
+    `${label} ${marked ? '须' : '不得'}带 structured.applicability=not_applicable：${JSON.stringify(r!.structured)}`,
+  );
+}
+
+function testHostNotApplicableSkipsAreMarked(): void {
+  const ctx = makeCtx();
+  const loadedAudit: UtMachineArtifactObservation<TestabilityAuditRecord[]> = {
+    status: 'loaded', absPath: '/x/testability-audit.md', relPath: 'testability-audit.md',
+    value: [{ acceptance_id: 'AC-1', testability_level: 'L1' }], warnings: [],
+  };
+  // 宿主 run f829b8 三条：无 L3 记录 / 未导入 MockKit / 无 characterization DAG。
+  assertBlockerSkip(checkUtUnsupportedTargetsHandled(ctx, loadedAudit)[0], true, 'ut_unsupported_targets_handled（无 L3）');
+  assertBlockerSkip(
+    checkUtHypiumMockkitPolicy(ctx, null, [{ path: 'test/Demo.test.ets', content: "import { describe, it, expect } from '@ohos/hypium';\n" }], [])[0],
+    true, 'ut_hypium_mockkit_policy（未导入 MockKit）',
+  );
+  assertBlockerSkip(checkOriginTagRequired(dagWith(OBJECT_NODE), ctx)[0], true, 'origin_tag_required（无 characterization DAG）');
+  assertBlockerSkip(checkUseCaseSpecSchema(ctx)[0], true, 'usecase_spec_schema（use-cases 缺席）');
+}
+
+function testArtifactMissingSkipsStayUnmarked(): void {
+  const ctx = makeCtx();
+  const missingAudit: UtMachineArtifactObservation<TestabilityAuditRecord[]> = {
+    status: 'missing', absPath: '/x/testability-audit.md', relPath: 'testability-audit.md',
+  };
+  assertBlockerSkip(checkUtUnsupportedTargetsHandled(ctx, missingAudit)[0], false, 'ut_unsupported_targets_handled（audit 缺席）');
+  assertBlockerSkip(
+    checkDagFilesParseable(ctx, { files: [], candidatePaths: [], probedDirs: [], issues: [] })[0],
+    false, 'dag_files_parseable（无 DAG）',
+  );
+}
+
+// codex review P2：scan.skip 同时覆盖"profile named-handler 加载失败"——检查没执行，不得标不适用。
+function testNamedHandlerLoadFailureStaysUnmarked(): void {
+  const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'named-handler-broken-'));
+  try {
+    fs.mkdirSync(path.join(profileDir, 'harness'), { recursive: true });
+    fs.writeFileSync(path.join(profileDir, 'harness', 'named-handler.js'), "throw new Error('broken named-handler');\n");
+    const withProfile = (useCases?: unknown): CheckContext => {
+      const c = makeCtx({ useCases });
+      (c.resolvedProfile as { profileDir: string }).profileDir = profileDir;
+      return c;
+    };
+    assertBlockerSkip(checkNamedBusinessHandler(withProfile(USE_CASES))[0], false, 'named_business_handler（use-cases 在场、模块加载失败）');
+    assertBlockerSkip(checkNamedBusinessHandler(withProfile())[0], true, 'named_business_handler（use-cases 缺席）');
+  } finally {
+    fs.rmSync(profileDir, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
 
 export function runAll(): UnitCaseResult[] {
   const cases: Array<{ name: string; fn: () => void }> = [
@@ -363,6 +428,9 @@ export function runAll(): UnitCaseResult[] {
     { name: 't5 清单不可用回落占位符', fn: testSsotFallbackPlaceholder },
     { name: 't6 ut prompt 契约块含真实路径', fn: testUtPromptContractLines },
     { name: 't6 goal-runner 仅 ut 阶段注入(源级钉)', fn: testGoalRunnerInjectsUtOnly },
+    { name: 'd7e3b9a4 宿主三条不适用 SKIP 带 not_applicable 标注', fn: testHostNotApplicableSkipsAreMarked },
+    { name: 'd7e3b9a4 反例：工件缺失 SKIP 不打标', fn: testArtifactMissingSkipsStayUnmarked },
+    { name: 'd7e3b9a4 反例：named-handler 加载失败（use-cases 在场）SKIP 不打标', fn: testNamedHandlerLoadFailureStaysUnmarked },
   ];
   return cases.map(({ name, fn }) => {
     try {

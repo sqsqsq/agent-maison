@@ -1097,6 +1097,14 @@ function caseH_diagnosisEligibilityAndPromptNotice(): void {
       assert(withNotice.includes('negative_verdict_closure'), '必须列出已放行的失败 check');
       assert(withNotice.includes('test-reason-sentinel'), '必须转述放行理由');
       assert(/blocker_count/.test(withNotice), '必须明确终态计数口径（D3）');
+      // plan d7e3b9a4 §2.6/§5 ⑤：资格已放行"已标注不适用"的 BLOCKER SKIP，诊断说明与 verify-ut.md
+      // 例外句（同一事实的两处承载）不得再断言"无 BLOCKER SKIP"，须用同一新短语。
+      const NA_SKIP_PHRASE = '也没有未标注为已确认不适用的 BLOCKER SKIP';
+      assert(!withNotice.includes('没有**其它 BLOCKER 级 FAIL/SKIP'), '诊断说明不得残留旧句"无 BLOCKER SKIP"');
+      assert(withNotice.includes(NA_SKIP_PHRASE), `诊断说明须含新短语：${NA_SKIP_PHRASE}`);
+      const verifyUtTpl = fs.readFileSync(path.join(HARNESS_ROOT, 'prompts', 'verify-ut.md'), 'utf-8');
+      assert(!verifyUtTpl.includes('且没有其它 BLOCKER FAIL/SKIP'), 'verify-ut.md 例外句不得残留旧句');
+      assert(verifyUtTpl.includes(NA_SKIP_PHRASE), `verify-ut.md 例外句须含新短语：${NA_SKIP_PHRASE}`);
       const onDisk = fs.readFileSync(path.join(reportsDirOf(root, 'demo', 'review'), 'ai-prompt.md'), 'utf-8');
       assert(onDisk.includes('本轮为产品失败诊断'), '落盘的 ai-prompt.md 同样带说明（verifier 读的是磁盘原件）');
 

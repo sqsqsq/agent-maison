@@ -292,7 +292,8 @@ export function projectScriptReportForPrompt(report: ScriptReport): Record<strin
  * D1/D2（plan 3a7f9c12）：产品失败诊断的 prompt 正文段。
  *
  * 只说三件事，且每件都必须说：①本轮脚本是 FAIL 而不是 PASS，你被叫来是**因为**它 FAIL；
- * ②哪几条失败是被放行的（其余 BLOCKER 一条都不存在，否则本轮根本不会有 request）；
+ * ②哪几条失败是被放行的（其余 BLOCKER FAIL 一条都不存在、BLOCKER SKIP 只剩已标注为已确认不适用的，
+ *   否则本轮根本不会有 request）；
  * ③报告终态 = 本轮**语义检查**的结论，与产品是否合格是两件事——不得为了"和产品一致"
  * 就把终态改成 FAIL 并跳过检查项（D3 的终态口径：blocker_count 只数本轮语义 BLOCKER FAIL）。
  */
@@ -306,7 +307,8 @@ function formatRepairDiagnosisNotice(
     '本轮脚本门禁**未通过**，request 仍被签发——这是框架对已复现的两类可诊断产品失败开的窄例外：',
     `**${diagnosis.reason}**`,
     '',
-    `- 已被放行的失败检查项：\`${ids}\`。除它们之外本轮**没有**其它 BLOCKER 级 FAIL/SKIP，也没有未解析的 capability——`,
+    `- 已被放行的失败检查项：\`${ids}\`。除它们之外本轮没有其它 BLOCKER 级 FAIL，也没有未标注为已确认不适用的 BLOCKER SKIP` +
+      '（报告里带 `structured.applicability=not_applicable` 的 SKIP 是判据不适用，不是没跑完），也没有未解析的 capability——',
     '  否则不会有这份 request（材料/环境问题的出路是先修材料/环境，不是叫审查员来看半份材料）。',
     '- 上方内嵌的脚本报告是**原始 FAIL 报告**，没有被投影成 PASS。产品的 FAIL 与 open 闭环状态本轮不变，',
     '  你的结论也**不会**改变它们：修好产品才能 PASS。',

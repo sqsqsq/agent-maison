@@ -20,7 +20,7 @@ import { loadResolvedProfile } from '../../profile-loader';
 import { tryLoadProfileCodingHost } from '../../profile-host-loader';
 import { checkContractFileReferenceClosure } from '../../scripts/check-plan';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
-import type { CheckContext, CheckResult, FeatureSpec } from '../../scripts/utils/types';
+import { isCheckNotApplicable, type CheckContext, type CheckResult, type FeatureSpec } from '../../scripts/utils/types';
 import { ensureConsumerFrameworkTree, DEFAULT_LAYOUT } from '../utils/layout-test-helper';
 
 export interface UnitCaseResult {
@@ -59,6 +59,10 @@ interface HostShape {
   authorized?: string[];
   /** 追加进 **navigation 段内**的原始片段（缩进两格；宿主 registration_points 即此层级） */
   navigationExtraYaml?: string[];
+  /** 组件是否带 nav_destination（默认 true；false = 宿主 coding "无 NavDestination 页面"形态） */
+  navDestination?: boolean;
+  /** 是否落盘 build-profile.json5（默认否） */
+  buildProfile?: boolean;
 }
 
 /**
@@ -80,7 +84,7 @@ function hostContractsYaml(shape: HostShape): string {
     '    change_type: modify',
     '    package_path: 02-Feature/CardFeature',
     'components:',
-    `  - { name: CardPage, module: CardFeature, file: ${COMPONENT_FILE}, kind: page, nav_destination: CardPage }`,
+    `  - { name: CardPage, module: CardFeature, file: ${COMPONENT_FILE}, kind: page${shape.navDestination === false ? '' : ', nav_destination: CardPage'} }`,
     'navigation:',
     ...(configFiles.length > 0
       ? ['  config_files:', ...configFiles.map(file => `    - ${file}`)]
@@ -135,6 +139,7 @@ function withHostProject<T>(shape: HostShape, fn: (root: string, spec: FeatureSp
     for (const dir of shape.materializeAsDir ?? []) {
       fs.mkdirSync(path.join(root, dir), { recursive: true });
     }
+    if (shape.buildProfile) writeFile(path.join(root, 'build-profile.json5'), '{ "modules": [{ "name": "CardFeature" }] }\n');
 
     writeFile(
       path.join(root, 'doc', 'features', FEATURE, 'contracts.yaml'),
@@ -165,7 +170,7 @@ function planClosure(root: string, spec: FeatureSpec): CheckResult {
 }
 
 /** 消费者②：profile coding host 结构检查入口（经生产 loader 取得，不硬 import profile）。 */
-function pageRegistration(root: string, spec: FeatureSpec): CheckResult {
+function pageRegistration(root: string, spec: FeatureSpec, id = 'page_registration'): CheckResult {
   const host = tryLoadProfileCodingHost(HMOS_PROFILE_DIR);
   assert(host, 'hmos-app profile coding host 必须可加载');
   clearFrameworkConfigCache();
@@ -189,8 +194,8 @@ function pageRegistration(root: string, spec: FeatureSpec): CheckResult {
     resolvedProfile: loadResolvedProfile(root, cfg),
   } as unknown as CheckContext;
   const results = host.runStructureChecks(ctx, []);
-  const hit = results.find(result => result.id === 'page_registration');
-  assert(hit, `profile 结构检查未产出 page_registration：${JSON.stringify(results.map(r => r.id))}`);
+  const hit = results.find(result => result.id === id);
+  assert(hit, `profile 结构检查未产出 ${id}：${JSON.stringify(results.map(r => r.id))}`);
   return hit;
 }
 
@@ -312,6 +317,26 @@ const cases: Case[] = [
       const closure = planClosure(root, spec);
       assert(closure.status === 'FAIL' && closure.severity === 'BLOCKER', JSON.stringify(closure));
       assert(/registration_points/.test(closure.details ?? ''), closure.details ?? '');
+    }),
+  },
+  {
+    // plan d7e3b9a4 §2.3：宿主 coding 两处"已确认不适用"的 BLOCKER SKIP 须带机读标注，
+    // 否则 writer 收进 blocking_skips、next_action 落 review_blocking_skips_then_verifier。
+    name: 'd7e3b9a4 §2.3 宿主形态：无 NavDestination / 无新增模块 → 两处 SKIP 带 not_applicable 标注（status/severity 不变）',
+    run: () => withHostProject({ navDestination: false, buildProfile: true }, (root, spec) => {
+      for (const id of ['page_registration', 'module_config_registered']) {
+        const r = pageRegistration(root, spec, id);
+        assert(r.status === 'SKIP' && r.severity === 'BLOCKER', `${id} 应为 BLOCKER SKIP：${JSON.stringify(r)}`);
+        assert(isCheckNotApplicable(r), `${id} 须带 structured.applicability=not_applicable：${JSON.stringify(r)}`);
+      }
+    }),
+  },
+  {
+    name: 'd7e3b9a4 §2.3 反例：build-profile.json5 缺席 → module_config_registered SKIP 不打标（工件缺失不是不适用）',
+    run: () => withHostProject({ navDestination: false }, (root, spec) => {
+      const r = pageRegistration(root, spec, 'module_config_registered');
+      assert(r.status === 'SKIP' && r.severity === 'BLOCKER', JSON.stringify(r));
+      assert(!isCheckNotApplicable(r), `工件缺失出口不得打标：${JSON.stringify(r)}`);
     }),
   },
 ];

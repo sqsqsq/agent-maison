@@ -38,6 +38,7 @@
 
 import type { WorkflowSpec } from '../../workflow-loader';
 import type { EvidenceLevel, EvidencePolicy, FeatureTrack, RuntimeMode } from './runtime-policy';
+import { isCheckNotApplicable } from './types';
 
 export type VerifierPlanMode = 'disabled' | 'enabled';
 
@@ -180,7 +181,7 @@ export const REVIEW_NEGATIVE_CLOSURE_CHECK_IDS: ReadonlySet<string> = new Set([
   'conditional_pass_closure',
 ]);
 
-/** CheckResult 的最小只读形状（避免 verifier-plan 反向依赖 types.ts / capability-registry）。 */
+/** CheckResult 的最小只读形状（只取形状与一个纯谓词 isCheckNotApplicable；不依赖 capability-registry）。 */
 export interface VerifierEligibilityCheck {
   id: string;
   status: string;
@@ -188,6 +189,8 @@ export interface VerifierEligibilityCheck {
   /** 机器归因（优先）；缺失才用 details 文本回退。 */
   failure_kind?: string;
   details?: string;
+  /** 结构化附加信息；`applicability=not_applicable` 表示已确认不适用（CHECK_NOT_APPLICABLE_MARKER）。 */
+  structured?: unknown;
 }
 
 export interface CanProduceVerifierRequestInput {
@@ -247,10 +250,12 @@ function classificationOf(
  * | enabled ∧ 脚本 PASS                                          | 是（原成功路径，资格不变） |
  * | review 脚本 FAIL ∧ report_validity=PASS ∧ BLOCKER FAIL 全为   | 是（诊断负面产品） |
  * |   negative_verdict_closure/conditional_pass_closure ∧ 无      |    |
- * |   BLOCKER SKIP ∧ 无 blocked capability                       |    |
+ * |   未标注不适用的 BLOCKER SKIP ∧ 无 blocked capability        |    |
  * | ut 脚本 FAIL ∧ ut 编译 PASS ∧ ut 运行 FAIL 且归因            | 是（核对测试语义） |
- * |   code_regression ∧ 无其它 BLOCKER FAIL/SKIP ∧ 无 blocked    |    |
- * |   ∧ report_validity ≠ FAIL                                   |    |
+ * |   code_regression ∧ 无其它 BLOCKER FAIL ∧ 无未标注不适用的   |    |
+ * |   BLOCKER SKIP ∧ 无 blocked ∧ report_validity ≠ FAIL         |    |
+ * 已确认不适用（structured.applicability=not_applicable）的 SKIP 不是"门禁没跑完"，不挡诊断；
+ * 标注只豁免 SKIP，不改变 BLOCKER FAIL 的判定。
  * | 其它 FAIL/INCOMPLETE、缺源码、坏格式、编译/设备/工具失败      | 否（保留先修输入/环境的出路） |
  */
 export function canProduceVerifierRequest(
@@ -271,7 +276,9 @@ export function canProduceVerifierRequest(
   }
 
   const blockerFails = input.checks.filter(c => c.status === 'FAIL' && c.severity === 'BLOCKER');
-  const blockerSkips = input.checks.filter(c => c.status === 'SKIP' && c.severity === 'BLOCKER');
+  const blockerSkips = input.checks.filter(
+    c => c.status === 'SKIP' && c.severity === 'BLOCKER' && !isCheckNotApplicable(c),
+  );
   if (blockerSkips.length > 0) {
     return NOT_ALLOWED(
       `存在 BLOCKER SKIP（${blockerSkips.map(c => c.id).join('、')}）：门禁未跑完，不进入失败诊断。`,

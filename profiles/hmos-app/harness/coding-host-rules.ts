@@ -3,6 +3,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { CheckContext, CheckResult, ContractsSpec } from '../../../harness/scripts/utils/types';
+import { CHECK_NOT_APPLICABLE_MARKER } from '../../../harness/scripts/utils/types';
 import { AstAnalyzer, type FileAnalysis } from '../../../harness/scripts/utils/ast-analyzer';
 import { diffChangedFiles } from '../../../harness/scripts/utils/git-diff';
 import type { ProfileCodingHost } from '../../../harness/profile-host-loader';
@@ -318,6 +319,7 @@ function checkModuleConfigRegistered(ctx: CheckContext): CheckResult[] {
           newModules.length > 0
             ? `全部 ${newModules.length} 个新增模块已在 build-profile.json5 注册。`
             : '无新增模块需要注册。',
+        ...(newModules.length > 0 ? {} : { structured: { applicability: CHECK_NOT_APPLICABLE_MARKER } }),
       },
     ];
   }
@@ -520,6 +522,7 @@ function checkPageRegistration(ctx: CheckContext): CheckResult[] {
         severity: 'BLOCKER',
         status: 'SKIP',
         details: '无 NavDestination 页面需要检查。',
+        structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
       },
     ];
   }

@@ -363,7 +363,7 @@ generic 未登记（共享规则被物化不等于运行时会读取）。未登
 回修候选依赖 verifier 逐条确认，而 verifier request 此前只在脚本 `verdict=PASS` 时签发——于是 review 的负面裁决（`negative_verdict_closure` / `conditional_pass_closure`）与 UT 的真实用例断言失败这两类产品失败，永远拿不到能驱动回修的证据，只能原地重试到预算耗尽。3.0.x 起 harness 对这两类**已复现**的失败照样装配 `ai-prompt.md` 并签发 request。
 
 - **产品裁决一字不改**：`verdict=FAIL`、exit 1、`closure_status=open` 全部保持。verifier 的 PASS 只证明"这份报告可信"，不构成产品通过；失败的 phase 也不要求先闭环。
-- **只开两扇门**：review 需 `report_validity=PASS`、BLOCKER FAIL 全为上述两条、无 BLOCKER SKIP、无未解析 capability；UT 需编译 PASS、执行 FAIL 且归因 `code_regression`、无其它 BLOCKER FAIL/SKIP。缺源码、坏表、编译/设备/工具链失败、混合失败与 `INCOMPLETE` 一律保持原样（先修输入或环境）。
+- **只开两扇门**：review 需 `report_validity=PASS`、BLOCKER FAIL 全为上述两条、无未标注为已确认不适用的 BLOCKER SKIP、无未解析 capability；UT 需编译 PASS、执行 FAIL 且归因 `code_regression`、无其它 BLOCKER FAIL，也无未标注为已确认不适用的 BLOCKER SKIP（3.1.0 起：checker 已确认判据对象不存在的 SKIP 带 `structured.applicability=not_applicable`，不再当"门禁未跑完"阻断诊断；工件缺失/无效、上游阻断、未执行的 SKIP 照旧阻断）。缺源码、坏表、编译/设备/工具链失败、混合失败与 `INCOMPLETE` 一律保持原样（先修输入或环境）。
 - **新的 `next_action` 取值 `run_verifier_for_repair`**：不是新阶段、不是新状态机。控制台 `NEXT` 行会给齐 request 路径、报告落盘路径与后续命令。goal 编排下写完报告即回传本轮（外层 runner 会重跑 gate harness 并重算候选，agent **不要**自己再跑一次）；非 goal 才由调用方自己重跑一次本阶段 harness。
 - **报告终态口径不变，但现在写明了**：`blocker_count` 只数**本轮 verifier 自己的语义检查**中 severity=BLOCKER 且 status=FAIL 的项数，`verdict=PASS` 当且仅当为 0。确认了 N 条产品缺陷但审查自身无 BLOCKER FAIL 时，正确终态是 `PASS / 0`——不要把产品 FAIL 抄进终态，那会让逐条 confirmed 派生的回修候选整批消失。
 - **verifier 报告的机器解析改读正式汇总表**：`verify-*.md` §7.1 的 `| id | status | ... |` 表现在可被机器读取（此前只认 §7.2 的 YAML，而 YAML 按契约只列非 PASS 项，于是所有 PASS 对机器不可见）。旧 YAML 形态继续兼容；同条一致重复去重，**冲突或坏状态一律不采信**（不会选择有利的 PASS），落回既有"未确认/修格式"通道。宿主无需改写历史报告。
