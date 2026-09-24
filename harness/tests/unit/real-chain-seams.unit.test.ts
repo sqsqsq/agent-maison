@@ -21,7 +21,8 @@
 // `visual-diff.json`），而那条链在本仓从未被真实 harness 跑通过（正例链自述"视觉采集与 OCR
 // 全链未驱动"）。RC-7 未做——四态各自给真实原因要真 goal-runner 子进程，成因依赖本机是否装了
 // adapter CLI，按 §8「不许 SKIP 出包」这类环境依赖不得进发布门套件。理由与偏差全文见 plan §10.9。
-// RC-9（plan 14771034 路径 1）2026-09-24 在 plan f3b8d261 生产修复上七条全过后登记，共七条。
+// RC-9（plan 14771034 路径 1）2026-09-24 在 plan f3b8d261 生产修复上七条全过后登记；RC-9b（UT→coding）
+// 2026-09-24 在 plan d7e3b9a4 生产修复上登记，共八条。
 // ============================================================================
 
 import * as fs from 'fs';
@@ -36,9 +37,12 @@ import {
   REAL_CHAIN_REQUIREMENT,
   REAL_CHAIN_NEW_SOURCE,
   REAL_CHAIN_SOURCE,
+  REAL_CHAIN_SOURCE_2,
+  REAL_CHAIN_SERVICE,
   REAL_CHAIN_TEST,
   type RealChainProject,
 } from '../utils/real-chain-host';
+import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 import {
   readSummary,
   dumpPhase,
@@ -75,7 +79,7 @@ import {
 import { sanitizeSpawnEnv, deleteEnvKeyCaseInsensitive } from '../../scripts/utils/process-integrity';
 import { computeRequestSubjectId, type VerifierRequest } from '../../scripts/utils/verifier-request';
 import type { VerifierMaterialView } from '../../scripts/utils/verifier-material';
-import type { CheckResult, Phase } from '../../scripts/utils/types';
+import { isCheckNotApplicable, type CheckResult, type Phase } from '../../scripts/utils/types';
 
 const cases: Array<{ name: string; run: () => Promise<void> }> = [];
 function test(name: string, run: () => Promise<void>): void { cases.push({ name, run }); }
@@ -177,12 +181,15 @@ function phaseAttemptIdFromReceipt(p: RealChainProject, phase: string): string {
  * 不另造一份，否则乙段跑的是与甲段不同的环境（codex 2026-09-22 三轮）。
  *
  * 唯一由调用方变的是 `MAISON_TEST_AC_COVERAGE_NOW`，即"只换时钟"。
+ *
+ * `role='agent'`（RC-9b）：agent 会话内自跑的 harness——同一组轮次身份键，**不带** gate 标
+ * （`phase-state.ts:184` `isAgentSideGoalHarness` 的判据），时钟不注入（沿用进程环境）。
  */
 function runGateHarness(
-  p: RealChainProject, phase: string, clock: string, attemptId: string,
-  deviceEnv: Record<string, string>,
+  p: RealChainProject, phase: string, clock: string | undefined, attemptId: string,
+  deviceEnv: Record<string, string>, role: 'gate' | 'agent' = 'gate',
 ): { status: number | null; output: string } {
-  const sanitized = sanitizeSpawnEnv({ ...process.env, MAISON_TEST_AC_COVERAGE_NOW: clock });
+  const sanitized = sanitizeSpawnEnv(clock === undefined ? { ...process.env } : { ...process.env, MAISON_TEST_AC_COVERAGE_NOW: clock });
   const childEnv: NodeJS.ProcessEnv = { ...sanitized.env, [MAISON_GOAL_RUNNER_ENV]: '1' };
   // 夹具无 model pin / 无 visual provider pin——生产此时同样是"只清不写"。
   applyGoalModelPinEnv(childEnv, undefined);
@@ -200,7 +207,7 @@ function runGateHarness(
     childEnv[k] = v;
   }
   deleteEnvKeyCaseInsensitive(childEnv, 'MAISON_GOAL_GATE_HARNESS');
-  childEnv.MAISON_GOAL_GATE_HARNESS = '1';
+  if (role === 'gate') childEnv.MAISON_GOAL_GATE_HARNESS = '1';
   const r = spawnSync(
     process.platform === 'win32' ? 'npx.cmd' : 'npx',
     ['ts-node', 'harness-runner.ts', '--phase', phase, '--feature', p.feature, '--summary'],
@@ -932,7 +939,7 @@ ${dumpPhase(project, 'plan')}`,
 // （run 基线累计 diff）判越界，越界项恰是 ut 阶段本 run 新建的 UT 测试文件（plan 14771034 §10.1）。
 // 修复见 plan f3b8d261（UT 调用的自有源码写随 `phase_write_observed.owned` 落盘，check-coding 只扣除
 // 字节未变、无他阶段改写的那份）。末尾另断「承接不免 UT 重验」。
-// UT→coding 回退（RC-9b）在本链不可达、未覆盖，原因见 real-chain-host.ts 文件尾「已知上限」3。
+// UT→coding 回退见下方 RC-9b（plan d7e3b9a4 修复后登记）。
 // ===========================================================================
 
 function codingBacktrackRequested(p: RealChainProject): boolean {
@@ -1044,6 +1051,239 @@ export async function rc9TestingBacktrackThroughCoding(): Promise<void> {
 }
 
 test('RC-9 testing 回退 coding：review/ut 重验、再进 testing（coding 承接 ut 本 run 产出的测试文件）', rc9TestingBacktrackThroughCoding);
+
+// ===========================================================================
+// RC-9b（plan d7e3b9a4 笔二，f3b8d261 §4.2）：UT 产品断言失败回退 coding
+// ---------------------------------------------------------------------------
+// **唯一变量**：真实回退之前 coding 把 BankService 写成恒放行（`!!id` → `true`），本 run 权威事件里
+// 已有 `phase_backtrack_requested to_phase=coding` 后写回 `!!id`。UT 执行替身按源码字面判
+// （real-chain-host.ts `checkUtHvigorTest`）：UT 调 `openCard(` 而源码缺 `!!id` → FAIL/code_regression。
+// ut 同轮内（agent 自检取得 subject 后）发布的 verifier 报告给 `end_to_end_driving` / `business_assertion_value` 两项 PASS
+// （verify-ut.md 诊断口径）。于是 `ut_product_assertion_failure`（repair-candidates.ts:600-632）的
+// 三条合取全部来自生产产物：执行 FAIL/code_regression + 无其它 BLOCKER FAIL + verifier 语义 PASS。
+// 前提是诊断 verifier 能签发（verifier-plan.ts `canProduceVerifierRequest`）——ut 报告里只剩已确认
+// 不适用（带标注）的 BLOCKER SKIP；DAG 类九项未打标 SKIP 由本条 UT 回调写的最小 DAG 消除，
+// `ut_mock_plan_contracts_consistent` 由本条 plan 回调补的 contracts 接口声明消除（见下）。
+//
+// **诊断在 ut 同一轮内完成**：UT 回调像宿主 agent 那样自跑一次 harness（agent 侧，无 gate 标）拿到本轮
+// subject、发布 verifier 报告，外层 gate 以同一 subject 读到它 → 候选 → 第 1 轮即回退。
+// 放弃的准确性（plan d7e3b9a4 §8.3 实测）：报告留到**下一轮**才发布的两轮形态不覆盖——第 2 轮
+// blocker 签名不变、watched 集（候选文件=BankService，UT 无权改）零变化，`shouldHaltNoProgress`
+// （goal-phase-runtime.ts:9006）先于回退路由停机 `no_progress_guard`。
+// ===========================================================================
+
+const RC9B_SERVICE_OK = 'Promise.resolve(!!id)';
+const RC9B_SERVICE_DEFECT = 'Promise.resolve(true)';
+
+function writeRc9bService(p: RealChainProject, fixed: boolean): void {
+  const abs = path.join(p.root, REAL_CHAIN_SERVICE);
+  const src = fs.readFileSync(abs, 'utf-8');
+  const [from, to] = fixed ? [RC9B_SERVICE_DEFECT, RC9B_SERVICE_OK] : [RC9B_SERVICE_OK, RC9B_SERVICE_DEFECT];
+  assert(src.includes(from) || src.includes(to), `BankService 形状已变，RC-9b 的缺陷注入点失效：${src}`);
+  fs.writeFileSync(abs, src.replace(from, to), 'utf-8');
+}
+
+/** verify-ut.md 诊断口径的 verifier 报告：测试真在驱动业务、断言有业务价值。 */
+function publishRc9bUtVerifier(p: RealChainProject): void {
+  const subjectId = readSummary(p, 'ut')?.verifier_subject_id;
+  if (!subjectId) return;
+  publishFixtureVerifierEvidence({
+    projectRoot: p.root,
+    reportsDir: featurePhaseReportsDir(p.root, p.feature, 'ut', p.frameworkRoot),
+    feature: p.feature, phase: 'ut', subjectId,
+    reportText: [
+      `# verifier — ${p.feature} / ut`,
+      '',
+      '| id | status | severity | 证据 |',
+      '| --- | --- | --- | --- |',
+      `| end_to_end_driving | PASS | BLOCKER | [AC-1] 经 BankService.openCard 真实驱动开卡业务 |`,
+      `| business_assertion_value | PASS | BLOCKER | 空 id 不得开卡是业务规则断言，失败即产品缺陷 |`,
+      '',
+    ].join('\n'),
+    skipSummaryPatch: true,
+  });
+}
+
+/**
+ * 最小 flow DAG（UT 自有目录 `ut/reports/flow-dag/`，ephemeral 默认落点）：消除正例链 ut 报告里九项
+ * 「无 DAG 文件」的**未标注** BLOCKER SKIP（DAG 是 UT 自产工件，缺它属工件缺失，不属不适用，
+ * plan d7e3b9a4 §2.2 M1）。节点源码指 BankRepository.list / BankService.openCard，AC-2（P1 both）
+ * 是 acceptance_coverage 的唯一 UT 分母，spy preset 引 mock-plan 已声明的 `empty`。
+ * 只在 RC-9b 写，正例链 `writeUtMaterials` 不变。
+ */
+function writeRc9bDag(p: RealChainProject): void {
+  writeHostFile(p.root, `doc/features/${p.feature}/ut/reports/flow-dag/open_card.dag.yaml`, [
+    'flow_id: rc9b_open_card',
+    'flow_name: 开卡服务与银行列表',
+    `module: ${p.module}`,
+    'linked_acceptance:',
+    '  - AC-2',
+    'entry_point:',
+    `  module: ${p.module}`,
+    `  file: ${REAL_CHAIN_SERVICE}`,
+    '  function: openCard',
+    'nodes:',
+    '  - id: n_list',
+    '    type: async_call',
+    '    description: 读取银行列表（spy preset empty）',
+    '    source:',
+    `      file: ${REAL_CHAIN_SOURCE_2}`,
+    '      class: BankRepository',
+    '      function: list',
+    '    stub_strategy: spy',
+    '    spy_preset: empty',
+    '    next:',
+    '      - n_open',
+    '  - id: n_open',
+    '    type: code_execution',
+    '    description: 开卡服务校验银行 id',
+    '    source:',
+    `      file: ${REAL_CHAIN_SERVICE}`,
+    '      function: openCard',
+    '    next:',
+    '      - n_assert',
+    '  - id: n_assert',
+    '    type: assertion',
+    '    description: 空列表与空 id 的业务结论',
+    '    linked_acceptance:',
+    '      - AC-2',
+    '    assertions:',
+    '      - type: state_check',
+    '        target: banks.length',
+    "        expected: '0'",
+    '    next: []',
+    '',
+  ].join('\n'));
+}
+
+/**
+ * 第 20 项 `ut_mock_plan_contracts_consistent`（check-ut.ts:3962，§2.2 M4 工件无效、不打标）：
+ * 正例材料的 mock-plan 为 BankRepository 声明 spy，而 contracts.yaml `interfaces: []`。
+ * 在 plan 产出上补一条 BankRepository.list 接口声明（写法同 RC-1 `addNeverCreatedContractFile`，
+ * 只在 RC-9b；签名须过 `construction_content_complete` 的精确签名判据）。
+ */
+function addRc9bRepositoryInterface(p: RealChainProject): void {
+  const contractsAbs = featureFilePath(p.root, p.feature, 'contracts.yaml');
+  const contracts = fs.readFileSync(contractsAbs, 'utf-8');
+  assert(contracts.includes('interfaces: []\n'), 'contracts.interfaces 形状已变，RC-9b 的追加点失效');
+  fs.writeFileSync(contractsAbs, contracts.replace('interfaces: []\n', [
+    'interfaces:',
+    `  - module: ${p.module}`,
+    '    layer: 02-Feature',
+    `    file: ${REAL_CHAIN_SOURCE_2}`,
+    '    class: BankRepository',
+    '    methods:',
+    '      - name: list',
+    '        params: []',
+    "        return: 'string[]'",
+    '',
+  ].join('\n')), 'utf-8');
+}
+
+/** ut 落盘报告里**未标注不适用**的 BLOCKER SKIP（诊断资格的阻断面，verifier-plan.ts:279）。 */
+function unmarkedUtBlockerSkips(p: RealChainProject): string[] {
+  const abs = path.join(featurePhaseReportsDir(p.root, p.feature, 'ut', p.frameworkRoot), 'script-report.json');
+  if (!fs.existsSync(abs)) return ['<no ut script-report>'];
+  const checks = (JSON.parse(fs.readFileSync(abs, 'utf-8')) as { checks?: CheckResult[] }).checks ?? [];
+  return checks
+    .filter(c => c.status === 'SKIP' && c.severity === 'BLOCKER' && !isCheckNotApplicable(c))
+    .map(c => `${c.id}: ${String(c.details ?? '').slice(0, 160)}`);
+}
+
+export async function rc9bUtBacktrackThroughCoding(): Promise<void> {
+  await withProject(async (project, birthChain) => {
+    /** 回退发生后 coding 首次被调用时盘上的 ut summary / 未标注 SKIP——驱动回退的那一轮。 */
+    let utAtBacktrack: (ReturnType<typeof readSummary> & { repair_candidates?: Array<Record<string, unknown>> }) | null = null;
+    let skipsAtBacktrack: string[] = [];
+    const probe = await runGoalRuntimeChain(project.root, {
+      frameworkRoot: project.frameworkRoot,
+      featureId: project.feature,
+      realHarness: true,
+      adapter: 'codex',
+      freshStartPhase: birthChain[0] as 'spec',
+      freshEndPhase: birthChain[birthChain.length - 1],
+      freshRequirement: REAL_CHAIN_REQUIREMENT,
+      onSpec: ctx => { project.runId = ctx.runId; writeSpecMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'spec'); },
+      onPlan: ctx => {
+        project.runId = ctx.runId;
+        writePlanMaterials(project);
+        addRc9bRepositoryInterface(project);
+        if (ctx.attempt > 1) publishVerifier(project, 'plan');
+      },
+      onCoding: ctx => {
+        project.runId = ctx.runId;
+        const backtracked = codingBacktrackRequested(project);
+        if (backtracked && !utAtBacktrack) {
+          utAtBacktrack = readSummary(project, 'ut');
+          skipsAtBacktrack = unmarkedUtBlockerSkips(project);
+        }
+        writeCodingMaterials(project);
+        writeRc9bService(project, backtracked);
+        if (ctx.attempt > 1) publishVerifier(project, 'coding');
+      },
+      onReview: ctx => { project.runId = ctx.runId; writeReviewMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'review'); },
+      onUt: ctx => {
+        project.runId = ctx.runId;
+        writeUtMaterials(project);
+        writeRc9bDag(project);
+        // 本轮内按 harness NEXT 指引完成诊断：自跑 harness 拿到本轮 subject → 发布 verifier 报告，
+        // 外层 gate 以同一 subject 读到它（见段首「放弃的准确性」：报告留到下一轮才发布的两轮形态不覆盖）。
+        runGateHarness(project, 'ut', undefined, ctx.goalAttemptId ?? '', RC4_DEVICE_ENV, 'agent');
+        publishRc9bUtVerifier(project);
+      },
+    });
+    const events = probe.events;
+    const chain = ['spec', 'plan', 'coding', 'review', 'ut'];
+    const dump = (): string => `${dumpChain(project, chain)}\nunmarked BLOCKER SKIP=${JSON.stringify(skipsAtBacktrack.length ? skipsAtBacktrack : unmarkedUtBlockerSkips(project), null, 1)}`
+      + `\nevents=${events.map(e => `${String(e.type)}${e.phase ? '@' + String(e.phase) : ''}`).join(',')}`;
+
+    const btIdx = events.findIndex(e => e.type === 'phase_backtrack_requested');
+    assert(btIdx >= 0, `没有发生回退：\n${dump()}`);
+    const bt = events[btIdx] as Record<string, unknown>;
+    if (DEBUG) console.log('RC-9b backtrack', JSON.stringify(bt).slice(0, 1500), '\nskips', JSON.stringify(skipsAtBacktrack));
+    assert(bt.from_phase === 'ut' && bt.to_phase === 'coding' && bt.reason === 'repair_candidates',
+      `回退事件形态不对：${JSON.stringify(bt).slice(0, 800)}`);
+    for (const ph of ['coding', 'review', 'ut'] as const) {
+      assert(events.slice(btIdx).some(e => e.type === 'phase_start' && e.phase === ph), `${ph} 回退后没有重新开始：\n${dump()}`);
+    }
+
+    // ② 驱动回退的那份 ut summary：诊断 verifier 已签发（subject 在场），候选由 UT 产品断言合取产出；
+    //    落盘报告里已无未标注不适用的 BLOCKER SKIP（诊断资格的前提）。
+    const isUtProductCandidate = (c: Record<string, unknown>): boolean =>
+      c.id === 'ut_product_assertion_failure' && c.category === 'coding' && c.source_phase === 'ut'
+      && Array.isArray(c.files) && (c.files as string[]).includes(REAL_CHAIN_SERVICE);
+    const utBt = utAtBacktrack as (ReturnType<typeof readSummary> & { repair_candidates?: Array<Record<string, unknown>> }) | null;
+    assert(utBt?.verdict === 'FAIL' && /^[0-9a-f]{64}$/.test(utBt.verifier_subject_id ?? ''),
+      `回退时 ut summary 无诊断 verifier subject：${JSON.stringify({ verdict: utBt?.verdict, subject: utBt?.verifier_subject_id })}`);
+    assert((utBt?.repair_candidates ?? []).some(isUtProductCandidate),
+      `回退时 ut summary 无 ut_product_assertion_failure 候选：${JSON.stringify(utBt?.repair_candidates)}`);
+    assert(((bt.candidates as Array<Record<string, unknown>> | undefined) ?? []).some(isUtProductCandidate),
+      `回退事件未携带 ut_product_assertion_failure 候选：${JSON.stringify(bt.candidates)}`);
+    // 同一候选身份：summary 与回退事件里的 item_fingerprint 必须相等（不是只看固定 id/类别/文件）。
+    const fpOf = (list: Array<Record<string, unknown>> | undefined): unknown => list?.find(isUtProductCandidate)?.item_fingerprint;
+    const summaryFp = fpOf(utBt?.repair_candidates);
+    const eventFp = fpOf(bt.candidates as Array<Record<string, unknown>> | undefined);
+    assert(typeof summaryFp === 'string' && summaryFp.length > 0 && summaryFp === eventFp,
+      `回退事件携带的候选与 ut summary 不是同一身份：summary=${String(summaryFp)} event=${String(eventFp)}`);
+    assert(skipsAtBacktrack.length === 0, `回退时 ut 报告仍有未标注的 BLOCKER SKIP：${JSON.stringify(skipsAtBacktrack)}`);
+
+    // ③ 回退注入到达 coding，coding 次轮 PASS；UT 在其后重验 PASS，终局 coding/review/ut PASS+closed。
+    const codingAfterBt = probe.codingPrompts[probe.invokedPhases.slice(0, probe.invokedPhases.indexOf('ut')).filter(x => x === 'coding').length];
+    assert(codingAfterBt?.includes('ut_product_assertion_failure'), `回退后 coding 指令不含候选 id：${probe.invokedPhases.join(',')}`);
+    const firstVerdictAfter = (ph: string, from: number): number =>
+      events.findIndex((e, i) => i > from && e.type === 'phase_verdict' && e.phase === ph);
+    const codingIdx = firstVerdictAfter('coding', btIdx);
+    assert(codingIdx > btIdx && events[codingIdx].verdict === 'PASS', `coding 次轮不是 PASS：${JSON.stringify(events[codingIdx])}\n${dump()}`);
+    const utIdx = events.findIndex((e, i) => i > codingIdx && e.type === 'phase_verdict' && e.phase === 'ut' && e.verdict === 'PASS');
+    assert(utIdx > codingIdx, `coding 次轮后 ut 没有重验 PASS：\n${dump()}`);
+    for (const ph of ['coding', 'review', 'ut'] as const) {
+      const s = readSummary(project, ph);
+      assert(s?.verdict === 'PASS' && s.closure_status === 'closed', `${ph} 终局未 PASS+closed：\n${dump()}`);
+    }
+  })();
+}
+
+test('RC-9b ut 产品断言失败回退 coding：诊断 verifier 签发、coding 次轮 PASS、ut 重验', rc9bUtBacktrackThroughCoding);
 
 export async function runAll(): Promise<UnitCaseResult[]> {
   const out: UnitCaseResult[] = [];

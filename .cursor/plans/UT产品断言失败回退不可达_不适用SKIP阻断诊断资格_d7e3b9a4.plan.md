@@ -13,7 +13,7 @@ todos:
     status: completed
   - id: nas-real-chain
     content: 笔二——按 §5 ③ 在笔一之上重做 RC-9b（UT→coding）：核对夹具剩余未打标 BLOCKER SKIP、只在 RC-9b 场景补 DAG 材料；跑通则登记（release-only，耗时以实测为准）并做反向变异，跑不通如实记未覆盖；结果记 §8。
-    status: pending
+    status: completed
 ---
 
 # UT 产品断言失败回退不可达（不适用 SKIP 阻断诊断资格）
@@ -155,3 +155,36 @@ review / ut 两形态的"BLOCKER SKIP"改为"BLOCKER SKIP not carrying the confi
 - 验证：`npm run typecheck` EXIT=0；ut-contract-caliber 18/18、verifier-plan 8/8；按协调方指示本轮不跑全量（8.1 的全量结果不含本返修）。
 - `MIGRATION.md:366` 由协调方同步为新口径（本笔不改）。
 - 表述精确化（偏差记录，不改设计正文）：§2.2 表 N2 的口径准确说法是"所有**声明了** flow_type 的 DAG 都是 characterization"（`coverage-evidence.ts:206` `dagsAllCharacterization`：未声明 flow_type 的 DAG 不参与判定，全部未声明时为 false）。
+
+### 8.3 笔二 nas-real-chain（2026-09-24，基线 main 29bc55bd；只改测试，未 commit）
+
+**改动**（零生产改动）
+- `harness/tests/utils/real-chain-host.ts`：UT 执行替身 `checkUtHvigorTest` 加唯一渲染规则（执行的 UT 正文含 `openCard(` 且 BankService 源码缺 `!!id` → FAIL `failure_kind=code_regression`、`affected_files=[BankService.ets]`，details 带「失败归因：code_regression」；否则 PASS，正例材料不触发）；文件尾「已知上限」3 改写为 RC-9b 已驱动 + 剩余上限。
+- `harness/tests/unit/real-chain-seams.unit.test.ts`：新增并登记 `rc9bUtBacktrackThroughCoding`（第 8 条）；`runGateHarness` 加可选 `role='agent'`（不写 gate 标）与可缺省时钟；头注释 / RC-9 段注释同步。
+- `harness/tests/run-unit.ts`：仅注释（seams 条目含 RC-9b），登记方式不变，仍 releaseOnly。
+
+**§6.1 剩余未打标 BLOCKER SKIP**（笔一之上、无 DAG 的首跑落盘 `ut/reports/script-report.json`，共 10 项，其余 10 项已带标注）：
+DAG 类 9 项——`dag_files_parseable`、`dag_schema_compliance`、`dag_node_type_valid`、`dag_acyclic`、`dag_source_file_exists`、`dag_spy_preset_resolvable`、`mock_stub_for_async`、`acceptance_coverage`、`dag_to_source`（与 §6.2 预计一致）；
+第 20 项 = `ut_mock_plan_contracts_consistent`（check-ut.ts:3962「feature 缺少 contracts.yaml interfaces[]」，§2.2 M4 工件无效、不打标）：正例材料 mock-plan 为 BankRepository 声明 spy 而 contracts `interfaces: []`。
+
+**补料**（只在 RC-9b，正例链 `writeUtMaterials` / `writePlanMaterials` 不变）
+- UT 回调写 `doc/features/<f>/ut/reports/flow-dag/open_card.dag.yaml`：顶层与 assertion 节点 `linked_acceptance: [AC-2]`；`n_list` async_call → BankRepository.list（`class: BankRepository`、`stub_strategy: spy`、`spy_preset: empty`）；`n_open` → BankService.openCard；`n_assert` assertion。
+- plan 回调在 contracts.yaml 补 `interfaces: [BankRepository.list(): string[]]`（写法同 RC-1 `addNeverCreatedContractFile`）。补后回退时刻 ut 报告未标注 BLOCKER SKIP = 0，DAG 未引出新 BLOCKER FAIL，唯一 BLOCKER FAIL 即 `ut_hvigor_test`。
+
+**实跑中新发现（未改生产，交调度者裁决）**：按 §6.1 原构造（ut 第 2 轮起才发布 verifier 报告），笔一修复生效——第 2 轮 ut summary 已有 `verifier_subject_id` 与 `ut_product_assertion_failure` 候选——但**仍无回退**：第 2 轮 blocker 签名不变（`ut_hvigor_test`）、watched 集（候选/affected 文件 = BankService，UT 无权改）零变化，`shouldHaltNoProgress`（goal-phase-runtime.ts:9006，位于回退路由之前）判 `no_progress_guard` HALTED，`artifact_delta=unchanged`。而第 1 轮 gate 的 NEXT 指引正是让 agent「投 verifier、写报告、重跑 harness」——若 agent 把这步留到 runtime 的下一轮，宿主同样会在第 2 轮被停机。
+- 因此 RC-9b 的构造改为**诊断在 ut 同一轮内完成**：UT 回调像宿主 agent 那样自跑一次 harness（agent 侧：轮次身份三键 + 设备目标，无 `MAISON_GOAL_GATE_HARNESS`），读本轮 subject、发布 verifier 报告，外层 gate 以同一 subject 读到 → 第 1 轮即回退。
+- **放弃的准确性**：「报告留到下一轮才发布」的两轮形态未覆盖，且实测不可达（上段）。这是生产侧 runtime 判停顺序问题，超出本 plan 范围，未修、未登记为测试；是否另立 plan 由调度者定。
+
+**RC-9b 判据（顺序仿 RC-9）与结果**：① `phase_backtrack_requested` from=ut、to=coding、reason=`repair_candidates`（生产实值；invalidated_phases=[coding, review]），coding/review/ut 回退后各有新 `phase_start`；② 回退时 ut summary verdict=FAIL、`verifier_subject_id` 为 64 位 hex、`repair_candidates` 含 `ut_product_assertion_failure`（category=coding、source_phase=ut、files ∋ BankService），回退事件携带同一候选，回退时刻未标注 BLOCKER SKIP 为空；③ 回退后首次 coding 指令含候选 id，coding 次轮首个 verdict=PASS，其后 ut 重验 PASS，终局 coding/review/ut PASS+closed。链随范围延伸进 testing（本条不写 test-plan，testing halt，不断言）。
+
+**耗时**：单独进程 134.2 s；套件内 76.8 s；`--release --filter real-chain-seams` 8/0，墙钟 353 s。
+
+**反向变异**：去掉 `verifier-plan.ts` `blockerSkips` 过滤里的 `&& !isCheckNotApplicable(c)` → RC-9b 红于「没有发生回退」（101.2 s）；`git checkout -- harness/scripts/utils/verifier-plan.ts` 还原，`git status` 中 verifier-plan.ts 不在改动列表。
+
+**验证**：`npm run typecheck` EXIT=0；`npm run test:unit -- --release --filter real-chain-seams` 8 passed / 0 failed；`git diff --check` 无输出；node 逐字节扫 3 个测试文件 + 本 plan 无 CR。按调度要求未跑全量。
+
+**不确定点**
+- 迭代与套件实跑时工作树含他人在制品 `harness/scripts/utils/revalidate.ts`（provision 整拷 harness，故被一并带入）；结论未单独在不含该改动的树上复跑。
+- agent 侧自跑 harness 的环境按 `runGateHarness` 逐键重建、只去掉 gate 标；runtime 注入给 agent 的完整 `extraEnv` 夹具拿不到（`AgentCtx` 只暴露 runId / goalAttemptId），设备目标沿用与默认就绪门桩同值的 `RC4_DEVICE_ENV`。
+
+**调度者追补（codex code review 两条 P3，2026-09-24）**：RC-9b 段注释"ut 第 2 轮起发布"改为"同轮内（agent 自检取得 subject 后）发布"；候选身份断言追加 summary 与回退事件的 `item_fingerprint` 相等（不再只比固定 id/类别/文件）。复跑 `--release --filter real-chain-seams` 8/0（RC-9b 73.0 s）。codex 判定：agent 同轮自检取得 subject 对准生产（MIGRATION.md:367 口径，subject 经 harness-runner.ts:2515 生产签发、`skipSummaryPatch` 不伪造 identity）；跨轮才补齐 verifier 证据时 `shouldHaltNoProgress`（goal-phase-runtime.ts:9007）早于回退执行（:9782）会吞掉迟到候选，建议单独立小 plan——**本 plan 不扩面，是否立项由用户定**。

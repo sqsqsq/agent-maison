@@ -169,8 +169,12 @@ export function synthesizeTestChainProfile(frameworkRoot: string): void {
   );
 
   // UT 执行替身（plan §8 第 2 条：命名/导入/注册三项同样返定值，覆盖面如实记账）。
+  // `checkUtHvigorTest` 唯一的渲染规则（plan d7e3b9a4 笔二，与 device-test-run.js 同法读产品源码字面）：
+  // 执行的 UT 正文调 `openCard(` 而 BankService 源码缺 `!!id`（空 id 被放行）→ FAIL/code_regression。
+  // 正例材料不改 BankService，恒 PASS；失败形态只由 seams 的 RC-9b 驱动。不证明任何真实执行语义。
   fs.writeFileSync(path.join(dir, 'harness', 'ut-host-impl.js'), [
     "const fs=require('fs'),path=require('path');",
+    `const SVC=${JSON.stringify(REAL_CHAIN_SERVICE)};`,
     "const pass=id=>[{id,category:'structure',severity:'BLOCKER',status:'PASS',description:id,details:'real-chain seam'}];",
     "const walk=d=>fs.existsSync(d)?fs.readdirSync(d,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(d,e.name)):/\\.test\\.ets$/.test(e.name)?[path.join(d,e.name)]:[]):[];",
     'exports.utHostImpl={',
@@ -180,7 +184,11 @@ export function synthesizeTestChainProfile(frameworkRoot: string): void {
     "  checkUtFrameworkImport:()=>pass('ut_framework_import'),",
     "  checkUtTscCompiles:()=>pass('ut_tsc_compiles'),",
     "  checkUtHvigorBuild:()=>pass('ut_hvigor_build'),",
-    "  checkUtHvigorTest:()=>pass('ut_hvigor_test'),",
+    "  checkUtHvigorTest:(c,files)=>{const svc=path.join(c.projectRoot,SVC);"
+      + "const bad=(files||[]).some(f=>/openCard\\(/.test(f.content))&&fs.existsSync(svc)&&!/!!id/.test(fs.readFileSync(svc,'utf8'));"
+      + "return bad?[{id:'ut_hvigor_test',category:'structure',severity:'BLOCKER',status:'FAIL',failure_kind:'code_regression',"
+      + "affected_files:[SVC],description:'ut_hvigor_test',details:'real-chain seam: [AC-1] openCard 空 id 期望 false 实得 true；失败归因：code_regression'}]"
+      + ":pass('ut_hvigor_test');},",
     "  checkTestRegistration:()=>pass('test_registration'),",
     '  isSuiteEntryShim:()=>false,',
     '};',
@@ -444,8 +452,10 @@ export function provisionRealChainProject(): RealChainProject {
 //    `<pythonPath> -m hylyre screenshot` 而失败——采集传输面没有 profile 级替换缝。
 // 3. UT 执行（含命名/框架导入/测试注册）与编译是返定值替身；`coding-host-rules` 只覆盖
 //    `checkCodingCompile`，结构与溯源两组检查留在 hmos-app 的真实实现上。
-//    **UT→coding 回退（`ut_product_assertion_failure`）不可达**（plan f3b8d261 §8.3 RC-9b 实验）：
-//    替身即使按源码判 `ut_hvigor_test` FAIL/code_regression，本链 ut 报告里另有 20 项「不适用」的
-//    BLOCKER SKIP（DAG / use-cases / L3 / MockKit 等），`canProduceVerifierRequest` 因此不签发
-//    诊断 verifier、不产候选，ut 同签名二轮 no_progress_guard 停机。
+//    **UT→coding 回退（`ut_product_assertion_failure`）由 seams RC-9b 驱动**（plan d7e3b9a4 修复后登记）：
+//    UT 替身按源码字面判 `ut_hvigor_test` FAIL/code_regression；正例链 ut 报告的 20 项 BLOCKER SKIP 里
+//    10 项已由生产打「已确认不适用」标注，其余 10 项（九项 DAG + `ut_mock_plan_contracts_consistent`）
+//    是工件缺失/无效，只在 RC-9b 补最小 DAG 与 contracts 接口声明消除——**正例链 ut 形态不变**。
+//    上限：诊断须在 ut 同一轮内完成（agent 自跑 harness 后发布 verifier 报告）；报告留到下一轮才发布时，
+//    `no_progress_guard` 先于回退路由停机（watched 集=产品源码，UT 无权改），该形态未覆盖。
 // ============================================================================

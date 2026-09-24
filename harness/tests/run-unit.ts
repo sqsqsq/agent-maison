@@ -417,7 +417,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   // 无 `owner_phase` → coding 按写集改源码即被 `post_agent` 门判 plan 漂移）已由
   // plan b5c1e9d7 修复。**不得靠改回 1.1 让它变绿。**
   { id: 'real-chain', modulePath: './unit/real-chain.unit.test', releaseOnly: true },
-  // `real-chain-seams`（§5 的接缝负例六条 + 2026-09-24 登记的 RC-9，见 plan f3b8d261）2026-09-22 重新登记：此前两条红都**不是生产缺陷**，
+  // `real-chain-seams`（§5 的接缝负例六条 + 2026-09-24 登记的 RC-9 / RC-9b，见 plan f3b8d261 / d7e3b9a4）2026-09-22 重新登记：此前两条红都**不是生产缺陷**，
   // 是夹具把失败点造错了地方（定位与改法见 d4a1f7c3 §10.14）——
   //   · RC-8a/8b 原先删 spec.md 的术语章节，而 1.2 的范围里 spec 的 required_outputs 不含
   //     spec.md（`check-spec.ts:1484` 早退），那组检查根本不执行；真正停机的是随后缺契约的 plan。
