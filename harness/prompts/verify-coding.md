@@ -163,7 +163,7 @@
 
 ### 检查 14: 视觉背板语义 (visual_parity_backstop)
 
-- **严重等级**: BLOCKER（`fidelity_target: pixel_1to1` 时）/ MAJOR
+- **严重等级**: BLOCKER（硬像素契约：`fidelity_target: pixel_1to1` **且** `acceptance_strictness: hard`，以 `spec/reports/fidelity-intent.json` 的 `effective_fidelity` / `acceptance_strictness` 为准）/ 否则 MAJOR（**软档**下自报的样式残差走视觉债务披露、不驱动回退，但仍阻断发布；不要因这类残差把本项判 BLOCKER 或要求回退）
 - **评估方法**:
   1. ui-spec 带 `color_ref`/`semantic_role` 的节点是否在 **visual-parity.yaml 有 ui_spec_node_id→contract_component 映射**
   2. 映射 struct 源码是否引用对应 `$r('app.color.*')`（组件级，非 feature 全局有一处即可）
@@ -208,7 +208,7 @@ PASS 项不写论证，证据一行即可；证据不足时给 WARN 并说明缺
 | simulation_data_isolation | MINOR |
 | spec_acceptance_to_code | MAJOR |
 | reference_crosscheck | MAJOR |
-| visual_parity_backstop | BLOCKER |
+| visual_parity_backstop | BLOCKER（硬像素契约 pixel_1to1 ∧ hard）/ MAJOR（其余档位） |
 | visual_multimodal_parity | MAJOR |
 
 ### 7.1 汇总表

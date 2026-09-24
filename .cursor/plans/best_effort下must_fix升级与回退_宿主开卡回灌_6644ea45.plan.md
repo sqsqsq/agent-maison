@@ -238,3 +238,24 @@ todos:
 
 Review：codex 第一轮 D1–D5 认可、1 阻断 + 3 建议 + 事实修正，已逐条实读核实后改——§4.6 补齐被直接改写的条款（`visual-diff:532`、`feature-artifact-layout:288/298-302`、`goal-runner:885` Requirement），`downgraded_screens` 写成只对降级屏的窄例外（§4.3、§4.6）；§4.5 静态提示写明「不阻断推进、仍阻断发布」并保留「未锚定 must_fix 不降级」，hard 档统一按 `pixel_1to1 ∧ hard` 描述（§3）；§8 补操作性出路与「人工确认不能清债」；§5 T2 实施注（真实 gate + 债务投影 + runtime 读真实报告）、T4 用合法 T8 来源对象；行号改 `:1449/:2819/:1944/:1945`；§1 事实 3 限定受 ratchet 包装的命中、事实 4 改「整轮消费资格被否决」、§2 债务行补非 MINOR SKIP；§8 D1 前提改为旧用例「拒绝证据」、降级对象精确化、T1 受硬像素谓词守卫不作 best_effort 兜底。
 codex 第二轮 2 阻断 + 1 校正，已实读核实后改——§4.6 表补 `visual-diff:417/534/547-549`、`goal-runner:883` 四条窄例外；§3 条件 4 收紧为「至少一条自报 major」，纯 minor 屏不入降级、不开阻断债务（与 `goal-runner:899-903` 一致），§8 降级对象定义与之统一，§5 补 T5b（复用 B07 夹具）、§6 登记纯 minor 屏否决证据却零候选的既有缺口；§4.4 行号改 `:8375` / `:9334-9336`，§2 回退行改 `:8373-8393`。
+
+已提交 844606b3（codex 三轮 review 判可提交；unit 4761/0、fixtures 46/0、real-chain 3/0 + seams 6/0）。宿主验收（`real_host_validation`）仍未做。
+
+### 9.4 codex 复审 844606b3 追补（2026-09-24，小改动不另写 plan，未 commit）
+
+- **必改：verifier 模板与软档降级不一致**（属实）：`harness/prompts/verify-testing.md` 检查 8 严重等级写「BLOCKER（pixel_1to1 时）」、G3 要求样式不符一律写 `must_fix`、严重度表 `visual_diff_bidirectional | BLOCKER`，无软档例外——宿主上一轮执行者正引用此条把关闭按钮圆底差异判 BLOCKER 触发整链回退。修（原位改句，不加字段/状态/门禁）：
+  - `:144` 严重等级改为「BLOCKER（硬像素契约：pixel_1to1 **且** acceptance_strictness: hard，以 fidelity-intent.json 的 effective_fidelity / acceptance_strictness 为准）/ 否则 MAJOR」，与 `isHardPixelContract`（`fidelity-shared.ts:682`）同定义。
+  - `:149-152` G3 拆三条：硬像素契约写 must_fix、一档回退；软档自报样式不符记 `defects[]`（major，`must_fix_refs` 引用）并在 must_fix 写清，gate 按档位降级为视觉债务（`downgraded_screens`），不阻断推进/不驱动回退、仍阻断发布；确定性失败（T8、缺 by_id、verdict=fail、blocker、未锚定 must_fix）与 verifier 新发现的核心问题两档都不降级。措辞与 `goal-phase-runtime.ts:1449/1944/1945`、`device-testing-workflow-detail.md:63/74`、`visual-diff` 规格 `:10/:425/:542` 同口径。
+  - `:193` 严重度表同步分档。模板内其它 `pixel_1to1`/`must_fix` 提及（`:148`「must_fix/verdict=fail 须逐元素说明；脚本 FAIL/BLOCKER 时本项 FAIL」）无档位矛盾，不改。
+  - 与 `device-testing-workflow-detail.md:63`「best_effort 下…不写 must_fix」的措辞差已按调度裁决统一取模板写法（must_fix 文本是后续 slice 回修依据，gate 按 `must_fix_refs` 全引用才降级）：`:63` 原位改为「非硬像素契约下自报样式不符另记 defects（major/minor）并以 `must_fix_refs` 引用该 must_fix，全引用才由 gate 降级记视觉债务：不回退、仍阻断发布」，行数不变；`skills/feature/device-testing/SKILL.md:67` 无「不写 must_fix」写法，不改。§4.5 原设计句（:113）作历史保留，以此为准。
+  - 调度裁决追加：`harness/prompts/verify-coding.md:166` 检查 14 `visual_parity_backstop` 严重等级同步为硬像素契约 BLOCKER / 否则 MAJOR，并加半句「软档下自报的样式残差走视觉债务披露、不驱动回退，但仍阻断发布」；严重度表 `:211` 同步分档。`verify-spec.md:114`（档位声明治理）、`verify-review.md:69`（覆盖面要求）按裁决不改。
+- **测试**：`execution-channel.unit.test.ts` 新增「verifier prompt：视觉 G3 按档位分支…」——经生产 `loadVerifierPromptTemplate`（`assembleAIPrompt` 共用）读模板，断言硬档 must_fix 约束、软档 `defects[]`/`must_fix_refs`/`downgraded_screens`/仍阻断发布、确定性失败不降级、旧「一律 must_fix」句不存在、严重等级与严重度表分档；同用例追加 verify-coding 检查 14 严重等级（含软档债务披露）与表 `:211` 分档断言。变异：G3 改回旧单句 → 该用例红（17/1，「G3 缺硬像素契约下写 must_fix 的约束」）；verify-coding 检查 14 严重等级改回「BLOCKER（pixel_1to1 时）/ MAJOR」→ 该用例红（17/1，「verify-coding 检查 14 严重等级未按硬像素契约分档或缺软档债务披露」）；均已还原。
+- **其它 verify 模板同类条款（首轮只列不改；裁决后 verify-coding 已改，见上）**：`verify-coding.md:166` 检查 14 `visual_parity_backstop`「BLOCKER（pixel_1to1 时）/ MAJOR」与表 `:211` BLOCKER；`verify-spec.md:114` 检查 15 `fidelity_capture_governance`「BLOCKER（pixel_1to1 时）」与表 `:157` BLOCKER（spec 期声明治理，非残差）；`verify-review.md:69`「pixel_1to1 全覆盖不许抽查」（覆盖面要求，非严重度）。hmos-app 无 `verify-testing.overlay.md`。
+- **codex 复核模板对齐（1 阻断 + 1 建议，实读核实属实）**：
+  - 阻断：上一版 `:63` 把 major/minor 都写成「写 must_fix + 全引用后降级」——纯 minor 不满足降级第四条件（`visual-diff-check.ts:137`），非空 must_fix 又否决证据（`:3027` `productTruthIntact`），runtime 跳过 minor 候选（`goal-phase-runtime.ts:2464`），等于主动制造「证据不可用又无回修候选」。修：`skills/reference/device-testing-workflow-detail.md:63` 原位改为只有**自报 major** 记 defects（major）+ `must_fix_refs` 引用写清修法的 must_fix → gate 降级记债务；纯 minor 只记 defects（minor）披露、不因此新写 must_fix；硬档不变，行数不变。`harness/prompts/verify-testing.md:151` G3 软档句同口径：改为「自报的 **major** 样式不符」并补「纯 minor 残差只记 `defects[]`（severity=minor）披露，不因此新写 must_fix」。
+  - 建议：`execution-channel.unit.test.ts:458-469` 补断言——软档句含「不阻断阶段推进 / 不驱动回退 / 不要因这类自报样式残差把本项判 BLOCKER / 纯 minor 残差只记 / 不因此新写 must_fix」；「两档都不降级」句含「未被 defect 锚定的 must_fix」与「你新发现的核心操作走不通…（记 blocker）」。
+  - 变异（按调度）：skill `:63` 改回「major/minor 都写」→ 模板测试仍绿（39/0），已还原。**放弃的准确性**：skill 这句没有测试守护，将来再漂回只能靠 review 抓。
+- **非阻断后续项（codex 原文要点，登记不做）**：
+  1. 混合场景下同屏自报 major + 机器确认的文本布局错误仍整屏降级、回修候选由 1 变 0（`channel_evidence_usable` 仍 false 未放行）；若宿主因此反复重试，再让确定性观测参与降级名单计算。
+  2. `e2e-spec-requirement-closure.unit.test.ts:308` 回调异常可能被 runtime 吞成中断、外层未检查成功完成、夹具复制开发仓旧运行态——后续维护时补外层失败传播与排除旧运行态。
+- **验证**：`--filter execution-channel` 39/0（含 execution-channel-evidence 21/0）；`npx tsc --noEmit -p tsconfig.typecheck.json` PASS；`check-plan-version` PASS；`git diff --check` 空；改动文件 node 扫 CR=0。裁决追补后复跑：`--filter execution-channel` 39/0、typecheck PASS。codex 复核返修后复跑：`--filter execution-channel` 39/0、typecheck PASS。未跑全量与 real-chain（另一代理在同工作树实施 14771034）。

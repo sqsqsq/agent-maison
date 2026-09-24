@@ -141,12 +141,15 @@
 
 ### 检查 8: 视觉 diff 双向残差 (visual_diff_bidirectional)
 
-- **严重等级**: BLOCKER（`fidelity_target: pixel_1to1` 时）/ MAJOR
+- **严重等级**: BLOCKER（硬像素契约：`fidelity_target: pixel_1to1` **且** `acceptance_strictness: hard`，以 `spec/reports/fidelity-intent.json` 的 `effective_fidelity` / `acceptance_strictness` 为准）/ 否则 MAJOR
 - **评估方法**:
   1. 读取 `device-testing/device-screenshots/visual-diff.json`：每屏须含 `reverse_missing[]`（逐元素枚举，可为 `[]`）
   2. 对照 `spec/ref-elements.yaml`：`disposition: implement` 的元素须在 ui-spec 覆盖，或出现在某屏 `reverse_missing`
   3. `must_fix` / `verdict=fail` 须逐元素说明；脚本 FAIL/BLOCKER 时本项 FAIL
-  4. **G3 样式/布局逐项核对（pixel_1to1）**：对 ui-spec 声明了 `variant` / `layout_group` / `align` / `width_ratio` / `bg_color` 的节点，逐一在真机截图上核对——按钮填充形态是否匹配 `variant`（实心/tonal/描边/幽灵/纯文字）、同 `layout_group` 元素是否真同行、`align`/`width_ratio` 是否一致（治"全宽 vs 右侧药丸"）、区域 `bg_color` 是否匹配（治灰底 vs 蓝底）；不符须写入对应屏 `must_fix`，pixel_1to1 下视为保真残差
+  4. **G3 样式/布局逐项核对（pixel_1to1）**：对 ui-spec 声明了 `variant` / `layout_group` / `align` / `width_ratio` / `bg_color` 的节点，逐一在真机截图上核对——按钮填充形态是否匹配 `variant`（实心/tonal/描边/幽灵/纯文字）、同 `layout_group` 元素是否真同行、`align`/`width_ratio` 是否一致（治"全宽 vs 右侧药丸"）、区域 `bg_color` 是否匹配（治灰底 vs 蓝底）。不符按档位处理：
+     - **硬像素契约**（pixel_1to1 ∧ hard）：不符写入对应屏 `must_fix`，视为保真残差，任何非空 must_fix 一档回退 coding
+     - **软档**（其余档位，含 pixel_1to1 ∧ best_effort）：执行者/VL 自报的 **major** 样式不符记为该屏 `defects[]`（severity=major，以 `must_fix_refs` 引用对应 must_fix），并在 `must_fix` 里写清修法；harness gate 会按档位把该屏降级为视觉债务并披露在 `downgraded_screens`——不阻断阶段推进、不驱动回退，但**仍阻断发布**直到修复重验。纯 minor 残差只记 `defects[]`（severity=minor）披露，不因此新写 must_fix。不要因这类自报样式残差把本项判 BLOCKER 或要求整链回退
+     - 两档都不降级、照现有规则 FAIL 并回退 coding：确定性失败（T8 布局检测命中、缺 `by_id` 锚点、`verdict=fail`、blocker 缺陷、未被 defect 锚定的 must_fix）以及你新发现的核心操作走不通/结果错/关键信息缺失或不可读类问题（记 blocker）
   5. A/B/C 边界：C 类动态交互不在静态参考图承诺内
 
 ### 检查 R: 跨产物引用核对 (reference_crosscheck)
@@ -187,7 +190,7 @@ PASS 项不写论证，证据一行即可；证据不足时给 WARN 并说明缺
 | defect_severity_consistency | MINOR |
 | pass_criteria_met | BLOCKER |
 | reference_crosscheck | MAJOR |
-| visual_diff_bidirectional | BLOCKER |
+| visual_diff_bidirectional | BLOCKER（硬像素契约 pixel_1to1 ∧ hard）/ MAJOR（其余档位） |
 
 ### 7.1 汇总表
 

@@ -30,6 +30,7 @@ import {
   __testing_checkExecutionChannelDeclaration,
   shouldRunDevicePipeline,
 } from '../../scripts/check-testing';
+import { loadVerifierPromptTemplate } from '../../scripts/utils/report-generator';
 import type { UnitCaseResult } from '../run-unit';
 
 const cases: Array<{ name: string; run: () => void }> = [];
@@ -443,6 +444,38 @@ test('verifier prompt：TC 一致性按 execution_channel 精确相等，不再�
   assert.ok(!/派生表\s*∪/.test(text), 'verify-testing.md 仍要求「派生表 ∪ explicit_skip_tc_ids」覆盖顶层 TC');
   assert.ok(text.includes('execution_channel'), 'verify-testing.md 未按 execution_channel 对账');
   assert.ok(text.includes('channel=hylyre'), 'verify-testing.md 未写明派生集合等于 channel=hylyre');
+});
+
+test('verifier prompt：视觉 G3 按档位分支（硬像素契约回退、软档自报样式残差记债务），与 6644ea45 gate 同口径', () => {
+  // 生产装配入口（assembleAIPrompt 与审前材料视图共用）读出的模板，不是裸读文件。
+  const text = loadVerifierPromptTemplate(path.join(REPO_ROOT, 'harness'), 'testing');
+  const g3 = text.slice(text.indexOf('G3 样式/布局逐项核对'), text.indexOf('A/B/C 边界'));
+  assert.ok(g3.length > 0, '检查 8 的 G3 条款缺失');
+  // 硬档约束
+  assert.ok(/硬像素契约[^\n]*pixel_1to1 ∧ hard[^\n]*must_fix/.test(g3), 'G3 缺硬像素契约下写 must_fix 的约束');
+  // 软档例外：defects[] + must_fix_refs + downgraded_screens + 仍阻断发布
+  const soft = g3.split('\n').find(l => l.includes('**软档**')) ?? '';
+  for (const token of [
+    'defects[]', 'must_fix_refs', 'downgraded_screens', '仍阻断发布',
+    '不阻断阶段推进', '不驱动回退', '不要因这类自报样式残差把本项判 BLOCKER',
+    '纯 minor 残差只记', '不因此新写 must_fix', // 纯 minor 不满足降级第四条件，新写 must_fix 会否决证据却零候选
+  ]) {
+    assert.ok(soft.includes(token), `G3 软档例外缺「${token}」`);
+  }
+  // 确定性失败两档都不降级（含未锚定 must_fix）；verifier 新发现核心问题记 blocker
+  const both = g3.split('\n').find(l => l.includes('两档都不降级')) ?? '';
+  assert.ok(/T8[^\n]*by_id[^\n]*verdict=fail[^\n]*blocker/.test(both), 'G3 缺确定性失败不降级条款');
+  assert.ok(both.includes('未被 defect 锚定的 must_fix'), 'G3 缺「未锚定 must_fix 不降级」');
+  assert.ok(/你新发现的核心操作走不通[^\n]*（记 blocker）/.test(both), 'G3 缺「verifier 新发现核心问题记 blocker」');
+  assert.ok(!/不符须写入对应屏 `must_fix`，pixel_1to1 下视为保真残差/.test(text), '仍残留「一律 must_fix」旧句');
+  // 严重等级与汇总表同样按硬像素契约分档
+  assert.ok(/\*\*严重等级\*\*: BLOCKER（硬像素契约[^\n]*acceptance_strictness: hard[^\n]*否则 MAJOR/.test(text), '检查 8 严重等级未按硬像素契约分档');
+  assert.ok(/\| visual_diff_bidirectional \| BLOCKER（硬像素契约 pixel_1to1 ∧ hard）\/ MAJOR/.test(text), '严重度表未按硬像素契约分档');
+  // verify-coding 检查 14 同形条款同口径分档
+  const coding = loadVerifierPromptTemplate(path.join(REPO_ROOT, 'harness'), 'coding');
+  const c14 = coding.slice(coding.indexOf('(visual_parity_backstop)'), coding.indexOf('- **评估方法**', coding.indexOf('(visual_parity_backstop)')));
+  assert.ok(/BLOCKER（硬像素契约[^\n]*acceptance_strictness: hard[^\n]*否则 MAJOR[^\n]*软档[^\n]*视觉债务[^\n]*仍阻断发布/.test(c14), 'verify-coding 检查 14 严重等级未按硬像素契约分档或缺软档债务披露');
+  assert.ok(/\| visual_parity_backstop \| BLOCKER（硬像素契约 pixel_1to1 ∧ hard）\/ MAJOR/.test(coding), 'verify-coding 严重度表未按硬像素契约分档');
 });
 
 test('发布指引：flat failure_kind/failure_code 只出现在禁令语境（不做全仓粗暴禁字符串）', () => {
