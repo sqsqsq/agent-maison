@@ -27,13 +27,13 @@ overview: >
 todos:
   - id: cso-fix
     content: 按 §3 落生产修复（分类带出 UT 自有源码写 → 随既有事件落盘 → check-coding 扣除；observations 落盘不截断），补 §4 单测 U1–U6/R1/W1 与 phase-write-boundary 规格。
-    status: pending
+    status: completed
   - id: cso-real-chain
     content: 按 §4.2 在正式修复上登记 RC-9、补 RC-9b（UT→coding），重跑 14771034 C2 变异 ③④，结果回写 14771034 §9 与本 plan §8。
     status: pending
   - id: cso-validation
     content: 按 §6 迭代目标套件、全量收口一次，结果记 §8。
-    status: pending
+    status: in_progress
 ---
 
 # coding 越界集合承接 UT 产出（真实链路回灌）
@@ -192,7 +192,84 @@ UT 事实，否则证明不了模块外保护），改成按 profile 测试正�
 
 ## 8. 实施记录
 
-（待开工。顺序：§3.1 必改 → 生产修复 + 单测 + 规格 → RC-9/RC-9b/C2 变异 ③④ 归 14771034 C2。）
+（顺序：§3.1 必改 → 生产修复 + 单测 + 规格 → RC-9/RC-9b/C2 变异 ③④ 归 14771034 C2。）
+
+### 8.1 笔一（2026-09-24，基线 main 0f10dd56，未 commit）
+
+**生产**
+- `harness/scripts/utils/phase-write-boundary.ts`：`classifyPhaseInvocationChanges` 的 `allowed` 条目带 ownership（与 `observed`
+  同形，判据不变）；新增纯函数 `replayUtOwnedWrites(events)`——按序回放 `phase_write_observed`：`phase==='ut'` 的 `owned` 置
+  `path → post_sha256`（removed 为 `null`，只收 64 位 hex/null）；任何事件的 `observations` 及 `phase_write_violation.violations`
+  命中已有事实即标 `voidedBy=<该事件 phase>`；之后 UT 再写同路径则重置为新事实。
+- `harness/scripts/goal-phase-runtime.ts`（原 :7869）：`phase==='ut'` 时取 `allowed` 中带 `source` 角色的写，以
+  `owned:[{path,how,pre_sha256,post_sha256}]` 挂进同一 `phase_write_observed`；发出条件放宽为 `observed` 或 `owned` 非空
+  （`owned` 为空时不写该键，其余阶段事件字节不变）；`observations` 取消 `.slice(0, 50)`，`observed_count` 保留。
+- `harness/scripts/check-coding.ts` `diff_within_scope` 现代分支：`runId && authority.source==='run'` 时
+  `replayUtOwnedWrites(loadAuthoritativeRunEvents(...))`；只对 `inScopeHits` 中未授权的那一半，扣除「有事实 ∧ 未作废 ∧ 当前字节
+  （不存在=null）=== 事实」的路径；`classified.violations`（模块外）原样；重命名两端本就各自进 `files`，逐端判。FAIL details 对有事实
+  却未承接的路径追加「UT 产出后字节已变 / UT 产出后被 <phase> 改写」，`affected_files` 与判定不变。
+- `harness/scripts/utils/goal-run-creation.ts`：`currentFileHash` 改为 export（复用 :415 先例的同一「当前字节」口径）。
+
+**规格**：`openspec/specs/phase-write-boundary/spec.md` 第二条 Requirement 补说明（禁令指持久 PASS 快照/场外归属状态，不含 run 内
+按调用记录；observations 完整落盘；UT `owned` 不授写权，coding 门只据此扣除字节未变且无后续观测/越权的 UT 产出；模块外/基线/契约不动）
++ Enforcement 补 `harness/scripts/check-coding.ts` + 新 Scenario「UT 新建测试回 coding 原字节承接；后续调用改写即使恢复字节也不承接，
+直到 UT 再记」。
+
+**测试映射**
+| id | 落点 | 说明 |
+|---|---|---|
+| W1 | `phase-write-boundary.unit.test.ts` 新 case | UT 调用写 UT 根 → `allowed` 带 source 角色与 post hash；同一 diff 按 coding 分类 → observed/deferred；`:165` 原 case 未改 |
+| U1 | `standalone-coding-review.unit.test.ts` | 对照：无事实同文件 FAIL；UT 调用产出后 PASS；`contracts.files` 未扩、`file_completeness` PASS；coding 调用改产品后仍 PASS（不要求旧 UT manifest fresh） |
+| U2 | 同上 | UT 产出后直接改字节 → FAIL 列路径，details 含「字节已变」 |
+| U3 | 同上 | coding 调用改写（落盘 observed）→ 下一次 coding 调用恢复 UT 原字节 → 仍 FAIL（details「被 coding 改写」）；UT 再写新字节 → PASS |
+| U4 | 同上 | coding 调用自写测试（只有 observed）→ FAIL；事实只在别的 run 目录 events → FAIL |
+| U5 | 同上 | UT 事实在场 + 模块内未授权产品源码 → FAIL 且 `affected_files` 恰为该文件；模块外 `src/other/outside.ts` 带手写字节匹配 `owned` → FAIL 且恰为该文件 |
+| U6①②③ | 同上（夹具新增 `baselineTest` 选项把 `Base.test.ets` 放进基线提交） | UT 改写基线测试后被删 → FAIL；移出测试根 → 两端 FAIL；UT 在根内改名 → PASS |
+| U6④ | 同上（**新增**，plan 未列） | UT 改写后由 coding 调用改名（旧端删除+新端新增）→ 两端 FAIL，details「被 coding 改写」——锁「coding 自删/自改名测试不豁免」 |
+| R1 | `goal-runner-testing-integrity.unit.test.ts` | 经 `runGoalRuntimeChain` 生产事件序列化：UT#1 新建 `z-target.test.ets` → testing#1 must_fix 回 coding → coding#2 在同一 UT 目录写 `a000…a049` + 改 target（gate 桩 FAIL）→ coding#3 恢复 UT 原字节。断：UT 事件 `owned` 含 target；首个 `observed_count>50` 的 coding 事件 `observations.length===observed_count` 且 target 索引 ≥50；盘上字节=UT 原字节；`replayUtOwnedWrites` 判 `voidedBy==='coding'` |
+| — | 同文件 :1797/:1828/:2492/:2520 | `.find(type==='phase_write_observed')` 收窄为 `&& e.phase==='testing'`，断言内容不变 |
+
+**反例清单对照**：模块内未授权产品源码/模块外业务文件仍 FAIL=U5；首轮 coding 不列 UT 文件不失败、UT 新建后回 coding 原字节承接=U1；
+coding 自增/改/删/改名测试不豁免=U4(增)/U2·U3(改)/U6④(删+改名)，首轮与回退轮在判定上同一路径（只看事件序列，不看轮次）；测试根内不属本 run
+的文件不承接=U4 跨 run + U1 对照；UT 产出被删/改/移出=U6①/U2/U6②；coding 修产品后承接不要求整份旧 UT manifest fresh=U1 末段，
+「承接仍要 UT 重验」属 RC-9 判据（笔二）。
+
+**变异（改生产文件→跑目标套件→cp 备份还原并 cmp 确认）**
+| id | 改动 | 结果 |
+|---|---|---|
+| M1 | check-coding 去字节比较（`!fact.voidedBy` 即扣除） | standalone 41/3：U2、U6①、U6② 红 |
+| M2 | replay 不消费 `observations` 作废 | standalone 42/2：U3、U6④ 红 |
+| M3 | runtime 不发 `owned`（`phase==='ut'` 条件恒假） | integrity 83/1：R1 红于「UT 调用须随事件落 owned」；U1 不经 runtime，按 plan 校准不期望被杀；RC-9/RC-9b 部分归笔二 |
+| M4a | 扣除扩到 `classified.violations` | standalone 43/1：U5 红 |
+| M4b | 改为按 `/src/ohosTest/` 正则扣除 | standalone 37/7：U4 红（U1 对照、U2/U3/U6①②④ 同红） |
+| M5 | 恢复 `observations.slice(0, 50)` | integrity 83/1：R1 红于「observations 须完整落盘：50 vs 51」（其后 target 缺席→回放未作废亦红，首断言先触发） |
+
+**验证（迭代期，日志先落盘再 grep）**：typecheck exit 0；phase-write-boundary 9/0；standalone-coding-review 44/0；
+goal-runner-testing-integrity 84/0；goal-run-birth-contract 20/0；adjudication 55/0；`npm run openspec:validate` 47 passed +
+enforcement PASS；`--release --filter real-chain` 9/0（real-chain 3 + seams 6，正例全链 PASS+closed 不受影响）。全量收口见 8.2。
+
+**与 plan 不同的取舍（放弃的准确性）**
+1. 回放返回 `Map<path, {sha256, voidedBy?}>` 而非 `Map<path, sha|null>`：作废条目保留并标 `voidedBy`，供 FAIL details 写「被 <phase>
+   改写」；「Map 有该路径」相应读作「有且未作废」。不放弃准确性。
+2. 作废侧除 `observations` 外也消费 `phase_write_violation.violations`（调度 prompt 口径「observation/violation」）；violations 的落盘
+   仍按既有 `.slice(0, 50)`（未改）。放弃的准确性：UT 根路径只有在同时落进某阶段 artifact 域时才会成为 violation，结构上几乎不发生；
+   若单次调用 >50 条 violation 且其中含 UT 根路径排在 50 以后，该作废会丢失。按当前注册结构（分类要求唯一 owner 且有 artifact 角色，普通 UT 源码跨阶段修改走完整 observations，与其它 owner 的 artifact 重叠则成为多归属 observation；artifact 清单见 specs/artifact-schemas/inventory.yaml）未发现可达的第 51 条逃逸路径——该限定只对当前注册结构成立，不以"回退重验兜底"泛化。
+3. 作废不区分作废者阶段（plan 写「其它阶段」）：UT 自己调用中的 observed（多归属）同样作废。更严，不放宽。
+4. 当前字节复用 `currentFileHash`（跟随符号链接），快照对符号链接记链接文本哈希：UT 产出的符号链接**不保证承接**（实现未过滤 symlink——通常不匹配而回到今天的 FAIL；目标内容恰等于链接文本时可匹配，删除链接也可能以 null 承接）。
+   放弃的准确性：不提供符号链接形态 UT 产出的承接保证，也不显式排除。
+5. `owned` 仅在非空时写键（plan 未规定）；其余阶段事件字节与改前一致。
+6. U6④ 为补反例清单「coding 删/改名测试」新增；U1 末段为补「不要求旧 UT manifest fresh」新增。夹具 `fixture()` 新增第二参 `baselineTest`，
+   test-profile 照先例补 `profile-path-conventions.js`，经生产 `tryLoadUtSourceRootResolver` 加载。
+7. U 系列的事件序列化在测试侧按 runtime 形状手写（plan 已接受）；runtime 序列化只由 R1 锁。
+
+**登记（本笔不修）**：§7.2 `contracts.files` 预列 UT 文件时 `check-coding.ts:82` 无条件要求存在的既有缺陷，仍未修。
+
+**未做（笔二）**：RC-9 登记 / RC-9b 实验 / 14771034 C2 变异 ③④。
+
+### 8.2 笔一收口
+`cd harness && npm test` 一次：typecheck + unit 4773/0 + fixtures 46/0，exit 0；`node scripts/check-plan-version.mjs` exit 0；
+`git diff --check` 无输出；node 逐字节扫 9 个改动文件均 LF。todo：`cso-fix` → completed；`cso-validation` → in_progress（笔二的
+real-chain 验证未跑）；`cso-real-chain` 保持 pending。
 
 Review：codex 第一轮 1 阻断 + 4 建议，已改——observations 落盘不截断（§3.1、R1、M5）；U3 写明净差异边界（§4.1）；M3/M4 预期校准、
 U5 模块外路径带匹配事实（§4.1、§4.3）；预列 UT 文件登记为既有独立缺陷、不跳过测试根（§3.4、§7.2）；RC-9b 不阻塞开工（§4.2）。

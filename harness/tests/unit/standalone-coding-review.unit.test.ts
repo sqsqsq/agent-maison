@@ -15,7 +15,8 @@ import { collectResolvedScopeFacts, readScopeAcceptance, prepareFeatureScopeCand
 import { ensureFeatureExecutionScopeFrozen } from '../../scripts/utils/feature-execution-scope';
 import { buildGoalManifestFromInput, SCOPE_REVISION_FIELDS } from '../../scripts/utils/goal-manifest';
 import { createGoalRun, loadEffectiveExecutionScope } from '../../scripts/utils/goal-run-creation';
-import { resolvePhaseWriteBoundary } from '../../scripts/utils/phase-write-boundary';
+import { resolvePhaseWriteBoundary, capturePhaseInvocationSnapshot, diffPhaseInvocationSnapshots, classifyPhaseInvocationChanges } from '../../scripts/utils/phase-write-boundary';
+import { tryLoadUtSourceRootResolver } from '../../profile-host-loader';
 import { runSyncClosureDetailed } from '../../scripts/utils/phase-state';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { prepareGoalModeRun } from '../../scripts/goal-mode-entry';
@@ -92,17 +93,22 @@ function removeShimFramework(fw: string): void {
   }
 }
 
-function fixture(newFile = false) {
+/** plan f3b8d261：夹具 UT 根（照 real-chain-host.ts:163-169 先例由 test-profile 声明）。 */
+const UT_TEST = 'src/demo/src/ohosTest/ets/test/Value.test.ets';
+const UT_BASELINE_TEST = 'src/demo/src/ohosTest/ets/test/Base.test.ets';
+
+function fixture(newFile = false, baselineTest = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'p4-coding-review-'));
   const write = (file: string, value: string) => { const abs = path.join(root, file); fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, value); };
   const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   write('framework.config.json', JSON.stringify({ schema_version: '1.1', project_name: 'P4', project_profile: { name: 'generic' }, paths: { features_dir: 'doc/features' }, architecture: { outer_layers: [{ id: 'src', can_depend_on: [] }], module_inner_layers: ['shared', 'data', 'domain', 'presentation'] } }));
   write('src/demo/value.ts', 'export const value: number = 1;\n');
+  if (baselineTest) write(UT_BASELINE_TEST, 'export default function baseTest() {}\n');
   const contracts = { feature: 'demo', source: 'approved design', version: '1', modules: [{ name: 'demo', layer: 'src', package_path: 'src/demo' }], files: ['src/demo/value.ts'], module_dependencies: {}, data_models: [], interfaces: [], components: [], prd_to_code_traceability: [{ prd_id: 'AC-1', key_files: ['src/demo/value.ts'] }] };
   if (newFile) contracts.files.push('src/demo/new.ts');
   write('doc/features/demo/contracts.yaml', YAML.stringify(contracts));
   write('doc/features/demo/acceptance.yaml', YAML.stringify({ feature: 'demo', source: 'approved behavior', version: '1', criteria: [{ id: 'AC-1', description: 'value is 42', priority: 'P1', testable: true, verification_steps: ['read value'], expected_result: '42', ut_layer: 'unit', ut_focus: ['value is 42'] }], boundaries: [] }));
-  git('init', '-q'); git('add', 'src/demo/value.ts'); git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'baseline');
+  git('init', '-q'); git('add', 'src/demo/value.ts', ...(baselineTest ? [UT_BASELINE_TEST] : [])); git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'baseline');
   const options = { projectRoot: root, frameworkRoot, feature: 'demo', phase: 'coding', track: 'full' as const, requirement: 'make value 42', testTargets: ['src/demo/value.ts'], inputContext: { schema_version: '1.1' as const, subject: { feature: 'demo' }, obligations: { implementation: 'required' as const, 'visual-evidence': 'not_applicable' as const }, required_outputs: [] } };
   const initial = resolveCapabilityInputs(options);
   assert.notEqual(initial.report.assurance, 'blocked', JSON.stringify(initial.report));
@@ -122,6 +128,7 @@ function fixture(newFile = false) {
   const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'p4-coding', requirement: options.requirement, execution_scope: scope, chain_override: scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: root });
   createGoalRun({ projectRoot: root, manifest, chain: scope.phase_chain });
   const profileDir = path.join(root, 'test-profile');
+  write('test-profile/harness/profile-path-conventions.js', "exports.resolveUtSourceRoots=(root,modules)=>modules.map(m=>require('path').join(root,m.package_path,'src','ohosTest'));\n");
   write('test-profile/harness/coding-host-rules.js', `const cp=require('child_process'); exports.profileCodingHost={sourceFileSuffixes:['.ts'],runStructureChecks:()=>[],runTraceabilityChecks:()=>[],checkCodingCompile:ctx=>{let details='TypeScript compilation completed',status='PASS';try{cp.execFileSync(process.execPath,[${JSON.stringify(require.resolve('typescript/bin/tsc'))},'--noEmit','--skipLibCheck','--target','ES2022',...ctx.featureSpec.contracts.files],{cwd:ctx.projectRoot,stdio:'pipe'});}catch(e){status='FAIL';details=String(e.stdout||e);}return [{id:'coding_compile',category:'structure',severity:'BLOCKER',status,description:'native TypeScript compile',details}];}};`);
   const context = (phase: 'coding' | 'review'): CheckContext => {
     const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot, feature: 'demo', phase, featuresDir: 'doc/features', goalRunId: manifest.run_id });
@@ -138,7 +145,38 @@ function fixture(newFile = false) {
   return { root, write, git, contracts, manifest, context, facts, profileDir };
 }
 
-const cases: Array<{ name: string; newFile?: boolean; run(f: ReturnType<typeof fixture>): Promise<void> | void }> = [
+/**
+ * plan f3b8d261 §4.1：一次受控调用的写归因——与 runtime 同一套生产函数（边界解析 / 前后快照 /
+ * 分类）从真实写入产出事实，按 runtime 事件形状追加进 run 的 events.jsonl（UT 的 source 角色
+ * allowed 写 → `owned`，observed → `observations`）。事件序列化本身由 goal-runner R1 经 runtime 锁。
+ */
+function recordInvocation(f: ReturnType<typeof fixture>, phase: 'ut' | 'coding', mutate: () => void, eventsPath?: string): void {
+  const boundary = resolvePhaseWriteBoundary({ projectRoot: f.root, frameworkRoot, feature: 'demo', runId: f.manifest.run_id, phaseOrder: workflow.auto_chain!, track: 'full', profileDir: f.profileDir, productLayerDirs: ['src'], resolveUtSourceRoots: tryLoadUtSourceRootResolver(f.profileDir) ?? undefined });
+  assert(!boundary.unresolvedSourcePhases.includes('ut'), boundary.diagnostics.join(' | '));
+  const pre = capturePhaseInvocationSnapshot(boundary);
+  mutate();
+  const diff = diffPhaseInvocationSnapshots(pre, capturePhaseInvocationSnapshot(boundary));
+  assert.equal(diff.kind, 'changed', JSON.stringify(diff));
+  if (diff.kind !== 'changed') return;
+  const classified = classifyPhaseInvocationChanges(boundary, phase, diff.changes);
+  const owned = phase === 'ut' ? classified.allowed.filter(write => write.roles.some(role => role.kind === 'source')) : [];
+  appendRunEvent(f, { type: 'phase_write_observed', phase, invoke_id: `${phase}-${Date.now()}`,
+    ...(owned.length ? { owned: owned.map(write => ({ path: write.path, how: write.how, pre_sha256: write.preSha256, post_sha256: write.postSha256 })) } : {}),
+    observations: classified.observed.map(item => ({ path: item.path, how: item.how, disposition: item.disposition, owner: item.owner, pre_sha256: item.preSha256, post_sha256: item.postSha256 })),
+    observed_count: classified.observed.length }, eventsPath);
+}
+function appendRunEvent(f: ReturnType<typeof fixture>, event: Record<string, unknown>, eventsPath?: string): void {
+  const target = eventsPath ?? path.join(f.root, f.manifest.report_dir, 'events.jsonl');
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.appendFileSync(target, JSON.stringify({ ts: new Date().toISOString(), ...event }) + '\n');
+}
+async function scopeCheck(f: ReturnType<typeof fixture>) {
+  const check = (await coding.check(f.context('coding'))).find(item => item.id === 'diff_within_scope');
+  assert(check, 'diff_within_scope missing');
+  return check!;
+}
+
+const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; run(f: ReturnType<typeof fixture>): Promise<void> | void }> = [
   /**
    * plan e7a2c4f1 §3.4（G01）：facts 声明的来源没进建立阶段的证据登记，是**账本类**缺口——
    * 旧行为是整轮 `facts baseline does not bind source` 抛错（宿主一晚 24 次、约 90 分钟）。
@@ -240,6 +278,110 @@ const cases: Array<{ name: string; newFile?: boolean; run(f: ReturnType<typeof f
     assert.equal((await coding.check(f.context('coding'))).find(check => check.id === 'diff_within_scope')?.status, 'FAIL');
     f.write('src/demo/value.ts', 'export const value: number = "wrong";');
     assert.equal((await coding.check(f.context('coding'))).find(check => check.id === 'coding_compile')?.status, 'FAIL');
+  } },
+  // ---- plan f3b8d261 §4.1：coding 越界集合承接本 run UT 产出（经生产 coding.check） ----
+  { name: 'f3b8d261 U1 a test file UT created in this run stays UT-owned while its bytes are unchanged', async run(f) {
+    const body = 'export default function valueTest() {}\n';
+    // 对照：同一文件没有 UT 事实时今天就判越界——否则下面的 PASS 证明不了承接。
+    f.write(UT_TEST, body);
+    const before = await scopeCheck(f);
+    assert.equal(before.status, 'FAIL', before.details);
+    assert(before.affected_files?.includes(UT_TEST), JSON.stringify(before));
+    fs.rmSync(path.join(f.root, UT_TEST));
+    recordInvocation(f, 'ut', () => f.write(UT_TEST, body));
+    const after = await scopeCheck(f);
+    assert.equal(after.status, 'PASS', after.details);
+    // 首轮 coding 不列 UT 文件：contracts.files 不扩，file_completeness 不受影响。
+    assert.deepStrictEqual(readRunBoundContracts(f.root, frameworkRoot, 'demo', f.manifest.run_id).files, ['src/demo/value.ts']);
+    assert.equal((await coding.check(f.context('coding'))).find(check => check.id === 'file_completeness')?.status, 'PASS');
+    // coding 修产品让 UT 旧输入失效，但测试字节没变：承接照常，不要求旧 UT manifest fresh（重验归 UT 自己）。
+    recordInvocation(f, 'coding', () => f.write('src/demo/value.ts', 'export const value: number = 42;\n'));
+    assert.equal((await scopeCheck(f)).status, 'PASS');
+  } },
+  { name: 'f3b8d261 U2 byte lock: a UT output whose bytes changed afterwards is coding drift again', async run(f) {
+    recordInvocation(f, 'ut', () => f.write(UT_TEST, 'export default function valueTest() {}\n'));
+    f.write(UT_TEST, 'export default function valueTest() { /* edited */ }\n');
+    const check = await scopeCheck(f);
+    assert.equal(check.status, 'FAIL', check.details);
+    assert(check.affected_files?.includes(UT_TEST), JSON.stringify(check));
+    assert(check.details.includes('字节已变'), check.details);
+  } },
+  { name: 'f3b8d261 U3 ownership lock: coding rewriting a UT output voids it even after restoring the UT bytes', async run(f) {
+    const body = 'export default function valueTest() {}\n';
+    recordInvocation(f, 'ut', () => f.write(UT_TEST, body));
+    recordInvocation(f, 'coding', () => f.write(UT_TEST, 'export default function valueTest() { /* coding */ }\n'));
+    // 上一次调用已落盘 observation；下一次调用恢复 UT 原字节——字节锁满足，归属锁仍须 FAIL。
+    recordInvocation(f, 'coding', () => f.write(UT_TEST, body));
+    const check = await scopeCheck(f);
+    assert.equal(check.status, 'FAIL', check.details);
+    assert(check.affected_files?.includes(UT_TEST), JSON.stringify(check));
+    assert(check.details.includes('被 coding 改写'), check.details);
+    // 直到 UT 再次调用产出新事实。
+    recordInvocation(f, 'ut', () => f.write(UT_TEST, 'export default function valueTest() { /* ut v2 */ }\n'));
+    assert.equal((await scopeCheck(f)).status, 'PASS');
+  } },
+  { name: 'f3b8d261 U4 a test-root file without a UT fact of this run is not handed over', async run(f) {
+    // coding 首轮自写测试：只有 observed，没有 owned。
+    recordInvocation(f, 'coding', () => f.write(UT_TEST, 'export default function codingTest() {}\n'));
+    const own = await scopeCheck(f);
+    assert.equal(own.status, 'FAIL', own.details);
+    assert(own.affected_files?.includes(UT_TEST), JSON.stringify(own));
+    // 事实只在别的 run 的 events 里：不跨 run 承接。
+    const other = 'src/demo/src/ohosTest/ets/test/Other.test.ets';
+    recordInvocation(f, 'ut', () => f.write(other, 'export default function otherTest() {}\n'),
+      path.join(f.root, path.dirname(f.manifest.report_dir), 'p4-other-run', 'events.jsonl'));
+    const cross = await scopeCheck(f);
+    assert.equal(cross.status, 'FAIL', cross.details);
+    assert(cross.affected_files?.includes(other), JSON.stringify(cross));
+  } },
+  { name: 'f3b8d261 U5 a UT fact never excuses unauthorized product source or an out-of-module file', async run(f) {
+    recordInvocation(f, 'ut', () => f.write(UT_TEST, 'export default function valueTest() {}\n'));
+    f.write('src/demo/unapproved.ts', 'export const extra = 1;');
+    const inModule = await scopeCheck(f);
+    assert.equal(inModule.status, 'FAIL', inModule.details);
+    assert.deepStrictEqual(inModule.affected_files, ['src/demo/unapproved.ts'], JSON.stringify(inModule));
+    fs.rmSync(path.join(f.root, 'src/demo/unapproved.ts'));
+    // 模块外业务文件**带**字节匹配的 UT `owned` 事实（生产分类器不会对模块外产 owned，按事件形状手写，
+    // 只为证明扣除不碰模块外那一半）。
+    const outside = 'src/other/outside.ts';
+    const bytes = 'export const outside = 1;\n';
+    f.write(outside, bytes);
+    appendRunEvent(f, { type: 'phase_write_observed', phase: 'ut', invoke_id: 'ut-forged', observations: [], observed_count: 0,
+      owned: [{ path: outside, how: 'added', pre_sha256: null, post_sha256: createHash('sha256').update(bytes).digest('hex') }] });
+    const outOfModule = await scopeCheck(f);
+    assert.equal(outOfModule.status, 'FAIL', outOfModule.details);
+    assert.deepStrictEqual(outOfModule.affected_files, [outside], JSON.stringify(outOfModule));
+  } },
+  { name: 'f3b8d261 U6① a baseline test UT rewrote and that is then deleted is not handed over', baselineTest: true, async run(f) {
+    recordInvocation(f, 'ut', () => f.write(UT_BASELINE_TEST, 'export default function baseTest() { /* ut */ }\n'));
+    assert.equal((await scopeCheck(f)).status, 'PASS', '前提：UT 改写的基线测试先被承接');
+    fs.rmSync(path.join(f.root, UT_BASELINE_TEST));
+    const check = await scopeCheck(f);
+    assert.equal(check.status, 'FAIL', check.details);
+    assert(check.affected_files?.includes(UT_BASELINE_TEST), JSON.stringify(check));
+  } },
+  { name: 'f3b8d261 U6② a UT output moved out of the test root fails on both ends', baselineTest: true, async run(f) {
+    recordInvocation(f, 'ut', () => f.write(UT_BASELINE_TEST, 'export default function baseTest() { /* ut */ }\n'));
+    const moved = 'src/demo/moved.ts';
+    fs.renameSync(path.join(f.root, UT_BASELINE_TEST), path.join(f.root, moved));
+    const check = await scopeCheck(f);
+    assert.equal(check.status, 'FAIL', check.details);
+    assert(check.affected_files?.includes(UT_BASELINE_TEST) && check.affected_files.includes(moved), JSON.stringify(check));
+  } },
+  { name: 'f3b8d261 U6③ UT renaming inside its own root is judged end by end and handed over', baselineTest: true, async run(f) {
+    const renamed = 'src/demo/src/ohosTest/ets/test/Renamed.test.ets';
+    recordInvocation(f, 'ut', () => fs.renameSync(path.join(f.root, UT_BASELINE_TEST), path.join(f.root, renamed)));
+    const check = await scopeCheck(f);
+    assert.equal(check.status, 'PASS', check.details);
+  } },
+  { name: 'f3b8d261 U6④ coding deleting or renaming a UT output is never exempt', baselineTest: true, async run(f) {
+    recordInvocation(f, 'ut', () => f.write(UT_BASELINE_TEST, 'export default function baseTest() { /* ut */ }\n'));
+    const renamed = 'src/demo/src/ohosTest/ets/test/CodingRenamed.test.ets';
+    recordInvocation(f, 'coding', () => fs.renameSync(path.join(f.root, UT_BASELINE_TEST), path.join(f.root, renamed)));
+    const rename = await scopeCheck(f);
+    assert.equal(rename.status, 'FAIL', rename.details);
+    assert(rename.affected_files?.includes(UT_BASELINE_TEST) && rename.affected_files.includes(renamed), JSON.stringify(rename));
+    assert(rename.details.includes('被 coding 改写'), rename.details);
   } },
   { name: 'bound contracts cannot expand after birth and independent scope ignores unrelated old design verdicts', run(f) {
     f.write('doc/features/demo/plan/reports/summary.json', JSON.stringify({ verdict: 'FAIL', blockers: [{ id: 'old-plan' }] }));
@@ -1285,7 +1427,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
   const prior = process.env.MAISON_GOAL_RUN_ID;
   for (const test of cases) {
     let f: ReturnType<typeof fixture> | undefined;
-    try { f = fixture(test.newFile); process.env.MAISON_GOAL_RUN_ID = f.manifest.run_id; await test.run(f); results.push({ name: test.name, ok: true }); }
+    try { f = fixture(test.newFile, test.baselineTest); process.env.MAISON_GOAL_RUN_ID = f.manifest.run_id; await test.run(f); results.push({ name: test.name, ok: true }); }
     catch (error) { results.push({ name: test.name, ok: false, error: String(error) }); }
     finally { if (prior === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = prior; clearFrameworkConfigCache(); if (f) fs.rmSync(f.root, { recursive: true, force: true }); }
   }

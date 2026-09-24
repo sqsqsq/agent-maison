@@ -34,7 +34,8 @@ import { scanNamedBusinessHandler } from './utils/named-handler';
 import { diffChangedFiles, diffChangedFilesWithStatus, analyzeDiffStaleness } from './utils/git-diff';
 import { readRunBoundContracts } from './utils/capability-resolution';
 import { resolveEffectiveDiffBaseline } from './utils/git-diff';
-import { resolveEffectiveScopeSource } from './utils/goal-run-creation';
+import { resolveEffectiveScopeSource, loadAuthoritativeRunEvents, currentFileHash } from './utils/goal-run-creation';
+import { replayUtOwnedWrites } from './utils/phase-write-boundary';
 import { resolveContractFileReferences } from './utils/contract-reference-closure';
 import { runUiDiffWithinDeclaredFiles } from './utils/ui-scope-gate';
 import { classifyChangedFiles, layerDirPrefixes, resolveModulePathPrefixes } from './utils/diff-scope';
@@ -339,8 +340,22 @@ function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
       const files = [...new Set(diff.entries.flatMap(entry => [entry.path, ...(entry.oldPath ? [entry.oldPath] : [])]))];
       const modules = resolveModulePathPrefixes(ctx.projectRoot, contracts.modules.map(module => module.name), contracts.modules);
       const classified = classifyChangedFiles(files, modules.allowedPrefixes, layerDirPrefixes(ctx.projectRoot));
-      const violations = [...classified.violations, ...classified.inScopeHits.filter(file => !closure.authorized_files.includes(file))];
-      return violations.length ? result('FAIL', '本次实现超出冻结模块或文件授权：\n' + violations.join('\n'), violations)
+      // plan f3b8d261 §3.2：模块内未授权的那一半里，本 run UT 调用产出、此后无他阶段改写、字节未变的
+      // 具体文件归 UT，不算 coding 越界；模块外照拦。无 run 事件 → 空 Map → 行为不变。
+      const utOwned = runId && authority.source === 'run'
+        ? replayUtOwnedWrites(loadAuthoritativeRunEvents(ctx.projectRoot, ctx.feature, runId))
+        : new Map<string, { sha256: string | null; voidedBy?: string }>();
+      const utNotes: string[] = [];
+      const unauthorized = classified.inScopeHits.filter(file => {
+        if (closure.authorized_files.includes(file)) return false;
+        const fact = utOwned.get(file);
+        if (!fact) return true;
+        if (!fact.voidedBy && currentFileHash(ctx.projectRoot, file) === fact.sha256) return false;
+        utNotes.push(`${file}：${fact.voidedBy ? `UT 产出后被 ${fact.voidedBy} 改写` : 'UT 产出后字节已变'}，不再归 UT`);
+        return true;
+      });
+      const violations = [...classified.violations, ...unauthorized];
+      return violations.length ? result('FAIL', '本次实现超出冻结模块或文件授权：\n' + violations.join('\n') + (utNotes.length ? '\n' + utNotes.join('\n') : ''), violations)
         : result('PASS', `已核验 ${authority.source === 'run' ? 'run' : 'feature'} baseline、绑定契约与 ${files.length} 个变更路径。`);
     } catch (error) { return result('FAIL', String(error)); }
   }

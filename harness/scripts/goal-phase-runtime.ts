@@ -7866,7 +7866,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
               String(phase),
               attributableChanges,
             );
-            if (classifiedWrites.observed.length > 0) {
+            // plan f3b8d261 §3.1: UT's own source writes ride the same event so check-coding can
+            // tell a UT output from a coding write.  Observations are persisted in full — a
+            // truncated tail would hide the very rewrite that voids such a fact.
+            const utOwned = phase === 'ut'
+              ? classifiedWrites.allowed.filter((write) => write.roles.some((role) => role.kind === 'source'))
+              : [];
+            if (classifiedWrites.observed.length > 0 || utOwned.length > 0) {
               // Attribution without adjudication: unresolved ownership is a gap in the
               // artifact registry (which describes skill narratives only), and a
               // source/workspace cross-phase write is already graded once by its checker.
@@ -7875,7 +7881,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 type: 'phase_write_observed',
                 phase,
                 invoke_id: invokeId,
-                observations: classifiedWrites.observed.slice(0, 50).map((observation) => ({
+                ...(utOwned.length > 0 ? {
+                  owned: utOwned.map((write) => ({
+                    path: write.path,
+                    how: write.how,
+                    pre_sha256: write.preSha256,
+                    post_sha256: write.postSha256,
+                  })),
+                } : {}),
+                observations: classifiedWrites.observed.map((observation) => ({
                   path: observation.path,
                   how: observation.how,
                   disposition: observation.disposition,

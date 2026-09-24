@@ -363,7 +363,7 @@ function normalizeRelatedPath(projectRoot: string, value: unknown): string | nul
   return rel;
 }
 
-function currentFileHash(projectRoot: string, rel: string): string | null {
+export function currentFileHash(projectRoot: string, rel: string): string | null {
   try {
     const abs = path.join(projectRoot, rel);
     if (!fs.statSync(abs).isFile()) return null;

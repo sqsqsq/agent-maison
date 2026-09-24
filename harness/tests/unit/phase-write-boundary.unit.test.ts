@@ -183,6 +183,28 @@ export function runAll(): UnitCaseResult[] {
       'a source-role cross-phase write must not raise a write violation');
   });
 
+  // plan f3b8d261 W1：UT 承接事实只可能来自 UT 调用——UT 写自己的测试根被分类为 allowed 且带
+  // source 角色（runtime 据此落 `owned`）；同一路径由 coding 写，仍是 observed/deferred（上一条不改）。
+  run(results, 'W1 a UT invocation writing its test root is allowed with a source role; coding writing it stays observed', () => {
+    const root = makeHost();
+    const boundary = resolve(root);
+    const rel = '02-Feature/Card/src/ohosTest/ets/test/New.test.ets';
+    const pre = capturePhaseInvocationSnapshot(boundary);
+    write(root, rel, 'export default function testNew() {}\n');
+    const diff = diffPhaseInvocationSnapshots(pre, capturePhaseInvocationSnapshot(boundary));
+    assert(diff.kind === 'changed', 'UT addition must be visible');
+    if (diff.kind !== 'changed') return;
+    const asUt = classifyPhaseInvocationChanges(boundary, 'ut', diff.changes);
+    const owned = asUt.allowed.find((item) => item.path === rel);
+    assert(owned?.owner === 'ut' && owned.roles.some((role) => role.kind === 'source'),
+      `UT write must be allowed with a source role: ${JSON.stringify(asUt)}`);
+    assert(/^[0-9a-f]{64}$/.test(owned?.postSha256 ?? ''), 'allowed UT write must keep its post hash');
+    const asCoding = classifyPhaseInvocationChanges(boundary, 'coding', diff.changes);
+    assert(!asCoding.allowed.some((item) => item.path === rel), 'coding must never be allowed the UT root');
+    assert(asCoding.observed.find((item) => item.path === rel)?.disposition === 'deferred_to_checker',
+      `coding writing the UT root must stay observed/deferred: ${JSON.stringify(asCoding)}`);
+  });
+
   run(results, 'harness-written feature-root records are observed as unattributed, never violations', () => {
     const root = makeHost();
     const boundary = resolve(root);

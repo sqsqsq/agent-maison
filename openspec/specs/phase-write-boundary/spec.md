@@ -26,9 +26,9 @@ Enforcement: `harness/scripts/utils/phase-write-boundary.ts`, `harness/scripts/u
 
 ### Requirement: Invocation attribution excludes pre-existing and runner-owned writes
 
-The runner SHALL snapshot normalized paths and content hashes immediately before and after the agent process boundary and attribute only the delta introduced by that invocation. Pre-existing dirty files SHALL not be blamed on the phase. Runner-authored events, summaries, manifests, pointers, phase state, and evidence refreshes SHALL be tagged/handled as runner-owned facts; where a phase skill runs the harness inside the agent process, harness-derived writes that fall inside the window SHALL be handled as unattributed observations rather than agent violations. Paths with multiple roles SHALL be deduplicated by normalized path while preserving the role set in diagnostics. When the boundary cannot be resolved, or either snapshot cannot be taken, the runner SHALL record the failure, skip attribution for that invocation, and continue to the phase verdict; missing attribution SHALL NOT be treated as evidence of a violation and SHALL NOT terminate the run. No persistent pass snapshot or off-repository attribution state SHALL be introduced.
+The runner SHALL snapshot normalized paths and content hashes immediately before and after the agent process boundary and attribute only the delta introduced by that invocation. Pre-existing dirty files SHALL not be blamed on the phase. Runner-authored events, summaries, manifests, pointers, phase state, and evidence refreshes SHALL be tagged/handled as runner-owned facts; where a phase skill runs the harness inside the agent process, harness-derived writes that fall inside the window SHALL be handled as unattributed observations rather than agent violations. Paths with multiple roles SHALL be deduplicated by normalized path while preserving the role set in diagnostics. When the boundary cannot be resolved, or either snapshot cannot be taken, the runner SHALL record the failure, skip attribution for that invocation, and continue to the phase verdict; missing attribution SHALL NOT be treated as evidence of a violation and SHALL NOT terminate the run. No persistent pass snapshot or off-repository attribution state SHALL be introduced. This prohibition covers persisted PASS snapshots and attribution state kept outside the run; it does not cover facts recorded per invocation inside the run's own events. The observed event SHALL persist every observation (`observed_count` equals the persisted rows; truncation is for display only), and for a UT invocation it SHALL also carry the UT-owned source writes with their pre/post hashes. That record grants no write permission: the coding scope gate SHALL only use it to stop counting, among in-module paths absent from `contracts.files`, a file whose last known UT-produced bytes still equal the current bytes and which no later invocation of any phase observed or violated; out-of-module paths, the run baseline and the bound contracts are unaffected, and without run events the gate behaves as before.
 
-Enforcement: `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/phase-write-boundary.ts`, `harness/scripts/utils/diff-scope.ts`, `harness/scripts/utils/testing-write-boundary.ts`
+Enforcement: `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/phase-write-boundary.ts`, `harness/scripts/utils/diff-scope.ts`, `harness/scripts/utils/testing-write-boundary.ts`, `harness/scripts/check-coding.ts`
 
 #### Scenario: a dirty acceptance file is unchanged by plan
 
@@ -44,6 +44,11 @@ Enforcement: `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/pha
 
 - **WHEN** the pre-invocation or post-invocation snapshot fails on storage or permission grounds
 - **THEN** the runner SHALL record the failure as a diagnostic, mark this invocation as unattributed, and let the phase produce its ordinary verdict
+
+#### Scenario: a test file UT created is handed back to coding only while untouched
+
+- **WHEN** a UT invocation creates a test file under its profile UT root that is absent from the run baseline, and the run later backtracks to coding without listing that file in `contracts.files`
+- **THEN** the coding scope gate SHALL NOT report the file while its bytes equal the recorded UT output, and SHALL report it once coding or any other phase rewrites it in a later invocation, even if the UT bytes are restored afterwards, until a UT invocation records it again
 
 ### Requirement: A downstream write invalidates trust and backtracks to the owner
 

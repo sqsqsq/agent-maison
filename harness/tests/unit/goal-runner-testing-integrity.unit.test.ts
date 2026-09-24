@@ -50,6 +50,7 @@ import {
   projectIdentityHash,
 } from '../../scripts/utils/pass-snapshot';
 import { buildSummaryRepairCandidates } from '../../scripts/utils/repair-candidates';
+import { replayUtOwnedWrites } from '../../scripts/utils/phase-write-boundary';
 import { buildSummaryBlockers } from '../../scripts/utils/summary-blockers';
 import { evaluateP0CoverageIntegrity } from '../../scripts/utils/p0-semantic-gates';
 import { checkPassRateCalculated } from '../../scripts/check-testing';
@@ -1794,7 +1795,7 @@ test('E2E-2a testing 改产品源码 → 记录观测事实并交 checker，不�
   });
   assert(!hasEvent(probe.events, 'phase_write_violation'),
     `产品源码域不得判 violation：${JSON.stringify(probe.events.filter(e => e.type === 'phase_write_violation'))}`);
-  const observed = probe.events.find(e => e.type === 'phase_write_observed') as
+  const observed = probe.events.find(e => e.type === 'phase_write_observed' && e.phase === 'testing') as
     { observations?: Array<{ path?: string; owner?: string; disposition?: string; pre_sha256?: string; post_sha256?: string }> } | undefined;
   assert(!!observed, `须落 phase_write_observed：${probe.events.map(e => e.type).join(',')}`);
   const item = (observed!.observations ?? []).find(c => c.path?.includes('AllBanksPage.ets'));
@@ -1825,10 +1826,54 @@ test('E2E-2a-neg 漂移 + 真实门禁 FAIL → 仍然 FAIL，不因写归因放
     && runEndStatus(probe.events) !== 'COMPLETED',
   `真实 BLOCKER 在场时不得宣称完成：${runEndStatus(probe.events)}`);
   assert(probe.exitCode !== 0, '真实失败须以非零退出');
-  const observed = probe.events.find(e => e.type === 'phase_write_observed') as
+  const observed = probe.events.find(e => e.type === 'phase_write_observed' && e.phase === 'testing') as
     { observations?: Array<{ path?: string }> } | undefined;
   assert((observed?.observations ?? []).some(c => c.path?.includes(PRODUCT_FILE)),
     '漂移仍须留痕（放宽的是裁决，不是留痕）');
+});
+
+// plan f3b8d261 R1：作废侧必须经 runtime 生产序列化**完整**落盘。coding 在第 51 条以后改写 UT 产出、
+// 下一次调用再恢复 UT 原字节——若 observations 仍按 50 截断，作废事实丢失而字节又匹配，承接就被骗过。
+test('f3b8d261 R1 runtime persists every observation, so a coding rewrite past row 50 still voids the UT fact', async () => {
+  const { root } = setupHost();
+  const utDir = '02-Feature/FinancialCard/src/ohosTest/ets/test';
+  const target = `${utDir}/z-target.test.ets`;
+  const utBody = 'export default function zTarget() {}\n';
+  const probe = await runChain(root, {
+    onUt: ({ root: r, attempt }) => { if (attempt === 1) writeFile(r, target, utBody); },
+    onTesting: ({ root: r, attempt }) => {
+      if (attempt === 1) {
+        writeVisualDiff(r, [{ id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT] }]);
+        writeConfirmedReview(r, [MUST_FIX_TEXT]);
+      } else {
+        writeCleanTesting(r);
+      }
+    },
+    onCoding: ({ root: r, attempt }) => {
+      if (attempt === 2) {
+        for (let i = 0; i < 50; i++) writeFile(r, `${utDir}/a${String(i).padStart(3, '0')}.test.ets`, `// filler ${i}\n`);
+        writeFile(r, target, 'export default function zTarget() { /* coding */ }\n');
+        writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("fixed") } }');
+      }
+      if (attempt === 3) writeFile(r, target, utBody);
+    },
+    onHarnessSummary: ({ phase, attempt }) => (phase === 'coding' && attempt === 2 ? { blockers: [GENERIC_BLOCKER] } : null),
+  });
+  assert(probe.codingPrompts.length >= 3, `coding 须被调 ≥3 次（首轮/回退轮/同阶段重试），实得 ${probe.invokedPhases.join('→')}`);
+  const utFact = probe.events.find(e => e.type === 'phase_write_observed' && e.phase === 'ut') as
+    { owned?: Array<{ path?: string; post_sha256?: string }> } | undefined;
+  assert((utFact?.owned ?? []).some(o => o.path === target && /^[0-9a-f]{64}$/.test(o.post_sha256 ?? '')),
+    `UT 调用须随事件落 owned 事实：${JSON.stringify(utFact)}`);
+  const overflow = probe.events.find(e => e.type === 'phase_write_observed' && e.phase === 'coding'
+    && Number(e.observed_count) > 50) as { observations?: Array<{ path?: string }>; observed_count?: number } | undefined;
+  assert(!!overflow, `须有一条超 50 条观测的 coding 事件：${probe.events.filter(e => e.type === 'phase_write_observed').map(e => `${e.phase}:${e.observed_count}`).join(',')}`);
+  assert(overflow!.observations!.length === overflow!.observed_count,
+    `observations 须完整落盘：${overflow!.observations!.length} vs ${overflow!.observed_count}`);
+  const at = overflow!.observations!.findIndex(o => o.path === target);
+  assert(at >= 50, `目标路径须排在第 50 条以后（否则本用例证明不了不截断），实得 ${at}`);
+  assert(fs.readFileSync(path.join(root, target), 'utf-8') === utBody, '前提：目标文件已恢复 UT 原字节');
+  const facts = replayUtOwnedWrites(probe.events);
+  assert(facts.get(target)?.voidedBy === 'coding', `回放须判 UT 事实已被 coding 作废：${JSON.stringify(facts.get(target))}`);
 });
 
 test('E2E-2b testing 改 spec-owned acceptance → 自动回 spec，不落 display-only rerun 建议', async () => {
@@ -2489,7 +2534,7 @@ test('T1-2 混合场景（生成物 + 真源码改动）→ 生成物单列、�
         writeCleanTesting(r);
       },
     });
-    const observed = probe.events.find(e => e.type === 'phase_write_observed') as
+    const observed = probe.events.find(e => e.type === 'phase_write_observed' && e.phase === 'testing') as
       { observations?: Array<{ path?: string; disposition?: string }> } | undefined;
     assert(!!observed, `混合场景须留痕：${probe.events.map(e => e.type).join(',')}`);
     assert((observed!.observations ?? []).some(c => c.path?.includes(PRODUCT_FILE) && c.disposition === 'deferred_to_checker'),
@@ -2517,7 +2562,7 @@ test('T1-3 篡改的生成物（常量与冻结配置不符）→ 不得降级�
     // 防假 PASS 的关键性质不变：篡改不得被当成"只是构建产物"洗掉。它现在按源码域漂移
     // 留痕并由 review_closure_attestation 分级，而不是静默通过。
     assert(!hasEvent(probe.events, 'testing_generated_file_change'), '篡改不得降级为合法生成物');
-    const observed = probe.events.find(e => e.type === 'phase_write_observed') as
+    const observed = probe.events.find(e => e.type === 'phase_write_observed' && e.phase === 'testing') as
       { observations?: Array<{ path?: string; disposition?: string }> } | undefined;
     assert((observed?.observations ?? []).some(c => c.path?.includes('BuildProfile.ets')
       && c.disposition === 'deferred_to_checker'),
