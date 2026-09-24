@@ -25,13 +25,13 @@ overview: >
 todos:
   - id: rcp-t0
     content: 按 §1.5 做 T0 三个实验（A attended×realHarness / B 渲染规则 / V 视觉链驱动），结论写 §9，未实证项标待核。
-    status: pending
+    status: completed
   - id: rcp-binary-dollar
     content: C1：按 §2.3/§2.4/§3 把 PNG 与 $$ 语料并入正例链、补 prompt 四条不变量（正例 + 两个普通套件）及变异。
-    status: pending
+    status: completed
   - id: rcp-testing-backtrack
     content: C2：按 §2.1 新增 RC-9（testing→coding→review→ut→testing），替身按产品源码渲染；判据与变异见 §2.1。
-    status: pending
+    status: in_progress
   - id: rcp-selfcheck-journal
     content: C3：6279fcd7 两笔提交且 T0-V 走 (a)（或走 (b) 时 C0 已提交）后，按 §2.2 在 RC-9 内加执行者多次自检；此前保持未完成。
     status: pending
@@ -197,4 +197,60 @@ C3 若并入 RC-9 ≈ +15 s（3 次自检 harness），另起用例则 ≈ +110 
 
 ## 9. 实施记录
 
-（未开工）codex 第一轮：1 阻断 + 2 建议，已改——RC-9 修复触发由调用次数改为既有回退事件（§2.1）；T0-V 改为先补 P0 目标/nav 再判断缺口，确需生产缝时走 C0 例外且路径 2 保持未完成（§1.5、§2.2）；`fill()` 变异只要求不变量 2 红（§7）。顺序：T0→C1→C2 不等 6279fcd7，C3 等其两笔提交。
+codex 第一轮：1 阻断 + 2 建议，已改——RC-9 修复触发由调用次数改为既有回退事件（§2.1）；T0-V 改为先补 P0 目标/nav 再判断缺口，确需生产缝时走 C0 例外且路径 2 保持未完成（§1.5、§2.2）；`fill()` 变异只要求不变量 2 红（§7）。顺序：T0→C1→C2 不等 6279fcd7，C3 等其两笔提交。
+
+### 9.1 T0（2026-09-24，基线 main 844606b3，实验脚本在会话 scratchpad，不入仓）
+
+- **A（attended × realHarness）成立**：正例材料原样、只加 `viaHostBridge:true`，六阶段 PASS + closed（`next=phase_closed_wait_user`），`phase_start` 带 `attempt_id/owner_id/driver=session`，118 s。→ RC-9 一开始就走 attended。
+- **B（渲染规则）成立**：`device-test-run.js` 按 §2.1 渲染后，正例（补 id）仍六阶段 PASS + closed；coding 恒不写 `open_card_title` 时 testing FAIL，`testing_failure_routing_TC-001_s1`（`repair_owner=coding`），summary `repair_candidates=[{id:testing_failure_routing_TC-001_s1, category:coding, source_phase:testing}]`，事件 `phase_backtrack_requested from_phase=testing to_phase=coding reason=repair_candidates invalidated_phases=[coding,review,ut]`（与宿主同形，不含 testing）。**同时撞出一处生产角色不一致**，见 §10.1。
+- **V（视觉链驱动）→ 走 (b)，需生产缝**：按 plan:91 先补齐——spec.md 声明 `ui_change: new_or_changed`、`all_banks` 升 P0、testing 写 `device-testing/visual-diff-nav.json`（spec/plan/coding/review/ut 仍全 PASS，未另触发门禁）。首次非复用 testing 运行确实进入 `runDeviceVisualDiffCapture → captureVisualDiff`：① nav 带 identity 时因 semantic_layout 不装配 `layoutDumpFn`，报「identity 已确认但无 layoutDumpFn」；② 去掉 identity 后进入 `check-testing.ts:4865` 写死的 `buildHylyreVisualDiffScreenshotFn`，日志 `$ real-chain-seam-python -m hylyre screenshot --out …shot-all_banks.png` → `spawnSync real-chain-seam-python ENOENT`，`visual_diff_capture` WARN `no_captures`，未产出 `visual-diff.json`、账本/journal 仍空。可换的只有替身交出的 `pythonPath`，而 `spawnHylyre` 不经 shell、固定 `-m hylyre` 前缀，替身只能换成真 Python（环境依赖，§8/RC-7 口径不得进发布门）或覆写整拷的 hmos-app 模块（§2.2(b) 明令禁止）。结论与 §2.2(b) 一致：**C3 前须先有 C0**，交裁决（§10.2）。
+
+### 9.2 C1（路径 3 + 4 + prompt 不变量）——已完成，未 commit
+
+- `harness/tests/utils/real-chain-host.ts`：两张合成 1×1 PNG（各 100 B，tEXt 含 `` $` `` `$'` `$&` `$$`，仅像素不同）以 base64 常量落在本文件；`writeHostBytes`；scaffold 在基线里落 `logo_demo.png`；文件尾「已知上限」补渲染规则与 T0-V 结论。
+- `harness/tests/unit/real-chain.unit.test.ts`：`contracts.files` 加两张 PNG；coding 新建 `result_demo.png`，页面按宿主同构改为 `.bindSheet($$this.sheetVisible, this.openCardSheet(), {` + `` `${phase}` `` + sheet 标题 `.id('open_card_title')`，`BankListItem` 加 `.id('bank_row_cmb')`；`writeCodingMaterials` 增 `entryTitleId` 选项（RC-9 用）；review 审查范围列两张 PNG；facts 从 coding 起的 delta 表承接两张 PNG（实跑 coding 期 `context_exploration_facts_scope_coverage` 对二进制目标同样报「当前目标未覆盖」）；正例尾部 `assertPngProvenance` + 四阶段 `assertPromptInvariants`；`writeTestPlan` 改 export。
+- 不变量落点（T0 实测 spec/plan prompt 不内联源码，取 coding/review/ut/testing 四份）：1 模板首个 `## ` 行（从 provision 出来的 `verify-<phase>.md` 读）恰 1 次；2 `$$this.sheetVisible` ≥1、无单 `$` 版本、`` `${phase}` `` 原样；3 无 `IHDR`/PNG 签名字节/U+FFFD；4 每张 PNG 有 `path: <工程相对路径> sha256: <sha> binary: true` 条目且 sha 等于盘上字节。
+- 普通套件：`profile-routing` 的内联源码样本换成宿主语料（`.bindSheet($$this.sheetVisible, …` + `` `${phase}` ``）并补单 `$` 断言；`capability-degradation` 的伪 PNG 换成合成 PNG、源码换成宿主行，并补「同一解析结果经 `assembleAIPrompt` 拼整份 prompt 后断 1/3/4 与 `$$`」（连接处）。
+- 变异（改源仓生产文件、实跑后 `git checkout` 还原）：M1 `fill()` 退回逐键顺序字符串替换 → 正例红于「coding：不变量 2 没有逐字的 $$this.sheetVisible」，profile-routing 10/1、capability-degradation 20/1（整份 prompt 里 `$$` 被改写）；M2 `decodeTextFile` 恒判文本 → 正例红于「coding：不变量 3 内联了 PNG 块（IHDR）」，capability-degradation 20/1。
+
+### 9.3 C2（路径 1）——停在裁决点，RC-9 已写、未登记
+
+- `harness/tests/utils/real-chain-providers/device-test-run.js`：渲染规则（`renderedIds` 扫工程内 `src/main/ets/**/*.ets` 的字面 `.id('X')`；缺 id 的断言步骤克隆 `failed-assertion-mismatch-presence`，`failureDump` 在 trace 目录落 ui_dump 并回填 sha，满足失败边界义务）。动作步骤不变，三轴仍由生产 reducer 反推。
+- `harness/tests/unit/real-chain-seams.unit.test.ts`：`rc9TestingBacktrackThroughCoding`（attended；coding 替身经 `loadAuthoritativeEvents` 读本 run 事件，只在已有 `phase_backtrack_requested to_phase=coding` 后写 id，补 verifier 那次重试同样缺 id）。七条判据按 §2.1 实现；④ 的「回退后 coding/review/ut 各有新 phase_start」放在 ② 事件形状之前断。**未登记进 `cases`**：现行生产上确定性红（§10.1），不登记必红用例。
+- 现行生产实跑（REAL_CHAIN_DEBUG）：①②③ 过（`invalidated_phases=[coding,review,ut]`；回退后首次 coding 指令含 `testing_failure_routing_TC-001_s1`，即 attended 下注入也到达）；回退后 coding 写了 id 仍 FAIL `diff_within_scope`，同签名二轮 `no_progress_guard` halt，④⑤⑥ 均未到达。
+- 单变量实验（临时生产补丁，实跑后已还原，工作树无生产改动）：只在 `check-coding.ts:342` 把 profile 声明的测试路径（`tryLoadDiffExcludeTestPathRegexes`）从越界集合剔除 → RC-9 **七条全过**，141.6 s / 148.5 s（两次）。在此补丁上跑 §7 的 C2 变异：③ `invalidatedBt` 只留目标阶段 → RC-9 红于 ②（`invalidated_phases 缺中段阶段：["coding"]`），**④ 仍绿**——review/ut 在回退后照样重跑（coding 改码后游标按新鲜度重推下游），§7「→ RC-9 ④ 红」不成立，改记为 ② 红；④ b5c1e9d7 的「owner 已闭环且输出新鲜」承接去掉 → RC-9 在回退**之前**就红（「没有发生回退」，57 s）：同一承接在首轮 review 时已被消费，隔离不到 ⑤。
+
+### 9.4 验证（本批）
+
+- `npm run typecheck` exit 0；`--filter profile-routing` 11/0；`--filter capability-degradation` 21/0。
+- `--filter real-chain`（两套件）：real-chain 3/0 + real-chain-seams 6/0，墙钟 274 s（基线 247.5 s；RC-1 29.8 s / RC-2 3.0 s / RC-3 62.7 s / RC-4 65.6 s / RC-8a 21.0 s / RC-8b 18.2 s）。增量来自正例多两张 PNG 与断言、seams 共用材料。RC-9 登记后按实测再加 ≈140–150 s，合计 ≈415–425 s，高于 §6 的 365–390 s 预估。两套件仍 `releaseOnly`。
+- 全量 `cd harness && npm test` 与 LF/`git diff --check`/`check-plan-version` 结果见 §10.4。
+
+## 10. 偏差与待裁决（单列）
+
+### 10.1 待裁决：RC-9 撞出的生产角色不一致（阻塞 C2 登记）
+
+- **现象**：testing→coding 回退后，coding 的 `diff_within_scope`（`check-coding.ts:321-345` 现代分支：run 基线累计 diff，在模块内但不在 `contracts.files` 的一律越界）把 **ut 阶段自己写的 UT 测试文件** `…/src/ohosTest/ets/test/AllBanksPage.test.ets` 判成 coding 越界。首轮 coding 时该文件还不存在，所以正例链从未撞到；只要 ut 跑过再回到 coding 必撞。detached（T0-B）与 attended（RC-9）同样复现，越界清单恰好只有这一个文件。
+- **为什么是生产缺陷而非夹具**：UT 测试文件列进 `contracts.files` 会让首轮 coding 的 `file_completeness` 判缺（ut 尚未写），不列又让回退后的 coding 判越界——作者无论怎么写都有一轮过不去。宿主 `contracts.yaml:369-370` 把测试文件列进了 `files`，能过是因为宿主那两份测试文件在基线里已存在（历史 run 留下），不是正确用法。生产侧早有「测试路径」判据（`capability-resolution-entry-input.ts:389` 的 `isTestPath` = UT 根 ∪ `diffExcludeTestPathRegexes`，源码读集据此剔除测试文件），唯独 coding 的写集核对没用它。
+- **候选最小修法（未落地）**：`check-coding.ts:342` 越界集合剔除 profile 声明的测试路径，复用 `isTestPath` 同一判据（UT 根 + `tryLoadDiffExcludeTestPathRegexes`），最好把该判据提成一处共用。预期不放宽写保护：coding 若真写了 UT 目录，runtime 的逐次写归因（`phaseWriteBoundary`，`goal-phase-runtime.ts:7002` 传入 UT 根解析器）应另判 `phase_write_violation`——**只读代码得出、未实跑**，须在修复笔里用反例锁住。单变量实验已证此修法下 RC-9 七条全过（§9.3）。
+- **需要调度者裁决**：是否按 b5c1e9d7 范式另起一笔生产修复（含变异：去掉测试路径剔除 → RC-9 红于 ④ 之前的 coding 停机；以及「coding 真写 UT 目录仍被写归因拦下」的反例）。裁决落地后 RC-9 只需在 seams `runAll` 前登记一行。
+
+### 10.2 待裁决：T0-V 走 (b)，C3 前须 C0
+
+见 §9.1 V。缺的是采集传输面（截图 / layout dump / nav 执行器）的 profile 级替换缝：`check-testing.ts:169` 静态 import、`:4862-4890` 写死装配 hylyre 构建器；`runDeviceVisualDiffCapture` 自己的 `devices` 参数是现成的接缝，但只有这一个调用方且不经 profile。现有缝为什么不够：`pythonPath` 只能换成真 Python（环境依赖），`isDeviceVisualDiffSkipped` 只能整体跳过、产不出 visual round。最小改动方向（供 C0 立项参考，本批未做）：让 `captureIfUiChanged` 的三个传输函数经 `device_test.run` provider 取（缺省仍是 hylyre 构建器），real-chain 替身随 device-test-run.js 一起提供。`rcp-selfcheck-journal` 保持未完成。
+
+### 10.3 与 plan 原文不同的取舍（放弃的准确性）
+
+1. **PNG 归属判据改按实测写**（§2.3 原文「spec/plan manifest 里 `logo_demo.png` 有 sha、无 owner_phase；coding manifest 含 `result_demo.png` 产出」）：实测 spec/plan manifest **不含任何 PNG**（二者的源码读集来自 facts baseline 的 source_code_paths，不含资源图）；PNG 从 coding 起以 `role=input`、有 sha、无 `owner_phase` 进 manifest，coding 新建的那张也不记产出（`addBoundInput` 只对 `source_owners` 里的路径记 output，非源码不进归属——b5c1e9d7 §8.9 既定 fail-safe）。断言改为：凡出现在 manifest 的 PNG 条目 sha 等于盘上字节且无 `owner_phase`，coding 起两张都在。放弃的准确性：不锁「plan 期已读过既有 PNG」这一格（生产本来就不记）。
+2. **不变量 4 只断 binary 条目**：prompt 里另有带盘符的绝对路径形态（script_report 的 capability 解析 dependencies JSON，含 PNG 的 `C:\…\logo_demo.png` + sha），属既有行为、不在本 plan 修；断言落在 agent 按需读取用的那条 `path: <相对路径> … binary: true` 上。放弃的准确性：没有断「prompt 全文不出现绝对路径」。
+3. **facts delta 表承接 PNG**：属作者材料补齐（与 BankListItem.ets 同法），不是放宽判据；记在这里是因为 plan 未预见 `context_exploration_facts_scope_coverage` 对二进制目标同样要求承接。
+4. **C2 变异预期改写**：③ 实为 ② 红、④ 仍绿；④ 在回退前就红、隔离不到 ⑤（§9.3）。两条都只在临时修法上实跑，正式修复笔须重跑。
+5. **RC-9 以函数形式留在 seams、未登记**：不登记必红用例；裁决前它不在任何发布门里运行。
+6. **耗时预估偏高**：见 §9.4，登记 RC-9 后约 415–425 s。
+7. 观察（未处理，不在本 plan 范围）：T0-V 中 testing 第二轮按执行键复用时，`visual_diff_capture` 报 PASS「设备截图沿用被复用 run 的产物」，而被复用的那轮实际零截图（`no_captures`）；semantic_layout 下 `visual_diff` 仍 WARN「报告尚未产出」，未形成视觉假 PASS，但该 PASS 文案与事实不符。
+
+### 10.4 收口验证
+
+- 全量 `cd harness && npm test` 一次：exit 0（typecheck + unit 4762 passed / 0 failed，real-chain 两套件按 release-only 跳过 + fixtures 46 / 0）。
+- `git diff --check` 0；`node scripts/check-plan-version.mjs` PASS；node 逐字节扫本批全部改动文件均无 CR。
+- 本批不含生产文件改动（M1/M2/实验补丁/C2 变异均已 `git checkout` 还原）。**注意**：全量跑期间（本地 11:16–11:25）工作树里出现了非本批的改动——`harness/prompts/verify-coding.md`、`verify-testing.md`、`harness/tests/unit/execution-channel.unit.test.ts`、`skills/reference/device-testing-workflow-detail.md`（另一写者），本批未触碰；上面的全量结果可能混入了它们的中间态，提交时须按归属分拣。

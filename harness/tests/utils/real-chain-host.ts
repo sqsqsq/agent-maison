@@ -218,6 +218,29 @@ export const REAL_CHAIN_SERVICE = `${MODULE_PATH}/src/main/ets/BankService.ets`;
 export const REAL_CHAIN_INDEX = `${MODULE_PATH}/index.ets`;
 export const REAL_CHAIN_NEW_SOURCE = `${MODULE_PATH}/src/main/ets/BankListItem.ets`;
 export const REAL_CHAIN_TEST = `${MODULE_PATH}/src/ohosTest/ets/test/AllBanksPage.test.ets`;
+/** plan 14771034 §2.3：宿主「一张既有、一张 run 中新建」的 PNG 形态（两张都进 contracts.files）。 */
+export const REAL_CHAIN_PNG_EXISTING = `${MODULE_PATH}/src/main/resources/base/media/logo_demo.png`;
+export const REAL_CHAIN_PNG_NEW = `${MODULE_PATH}/src/main/resources/base/media/result_demo.png`;
+/**
+ * 合成 1×1 PNG（100 B，**不取宿主字节**，plan 14771034 §8.1）：tEXt 块里塞宿主统计到的
+ * 替换触发序列 `` $` `` / `$'` / `$&` / `$$`——它们一旦被当 UTF-8 内联进 prompt，
+ * 顺序字符串替换就会自我复制正文、吞掉 `$$`。两张仅像素不同，sha 可区分。
+ * 仓内不落二进制文件：scaffold/coding 时才解码写进 tmp 工程。
+ */
+export const REAL_CHAIN_PNG_EXISTING_BYTES = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAAE3RFWHRDb21tZW50ACRgICQnICQmICQkXdEAKQAAAAxJREFUeJxj+P//PwAF/gL+De9GuAAAAABJRU5ErkJggg==',
+  'base64',
+);
+export const REAL_CHAIN_PNG_NEW_BYTES = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAAE3RFWHRDb21tZW50ACRgICQnICQmICQkXdEAKQAAAAxJREFUeJxjYGBgAAAABAAB9hc4VQAAAABJRU5ErkJggg==',
+  'base64',
+);
+
+export function writeHostBytes(root: string, rel: string, bytes: Buffer): void {
+  const abs = path.join(root, rel);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, bytes);
+}
 
 /**
  * 宿主前置（**不是**作者材料）：工程骨架 + git 基线。
@@ -330,6 +353,8 @@ export function scaffoldRealChainHost(project: RealChainProject, adapter = 'code
     'export interface BankModel {\n  id: string;\n  name: string;\n}\n');
   writeHostFile(root, REAL_CHAIN_SERVICE,
     'export class BankService {\n  openCard(id: string): Promise<boolean> { return Promise.resolve(!!id); }\n}\n');
+  // plan 14771034 §2.3：基线里既有、coding 不改的资源图（宿主 bank_logo 同形）。
+  writeHostBytes(root, REAL_CHAIN_PNG_EXISTING, REAL_CHAIN_PNG_EXISTING_BYTES);
   // P（plan §10.1）：framework/ 必须 ignore，否则 git add -A 把整份框架纳入基线。
   // `build/` 是 device_test.build 替身落 .hap 的地方（真工程同样不入库）。
   writeHostFile(root, '.gitignore', 'framework/\nbuild/\n');
@@ -408,7 +433,15 @@ export function provisionRealChainProject(): RealChainProject {
 //    一份合冻结契约的 native trace）。被真实覆盖的是 trace→evidence→P0 五数→报告这条消费链
 //    ——`parseHylyreTrace` / `evaluateHylyreNativeEvidenceGate` / `composeDeviceTestEvidence`
 //    全部 shim 回 hmos-app 生产实现，trace 三轴与 tool_calls 由生产 reducer 反推。
-//    失败/阻塞形态的 StepResult 与责任路由分支**未覆盖**（trace 恒全通过），归 plan §5 的负例。
+//    **渲染规则**（plan 14771034 §2.1）：断言步骤 `by_id X` 只有产品源码（`src/main/ets/**`）含字面
+//    `.id('X')` 才克隆 passed golden，否则克隆 `failed-assertion-mismatch-presence` 并落一份 ui_dump
+//    失败边界证据。它让假设备**读源码字面**——只证明「断言失败 → 责任路由 → 回退 → 重验」这条
+//    消费链，不证明任何设备真值（元素是否真渲染、是否可见、布局是否正确一概不知）；规则只在
+//    `real-chain-providers/` 内，生产零感知。正例材料写全 id，trace 仍全通过；失败形态目前只由
+//    seams 的 RC-9 驱动，而 RC-9 待生产修复裁决、**尚未登记**（见该条注释）——登记前失败路由仍未覆盖。
+//    **视觉采集链仍未驱动**（plan 14771034 T0-V）：spec 声明 `ui_change` + P0 屏 + nav 配置后，
+//    首次非复用运行进 `check-testing.ts:4862-4890` 写死的 hylyre 截图构建器，实际 spawn
+//    `<pythonPath> -m hylyre screenshot` 而失败——采集传输面没有 profile 级替换缝。
 // 3. UT 执行（含命名/框架导入/测试注册）与编译是返定值替身；`coding-host-rules` 只覆盖
 //    `checkCodingCompile`，结构与溯源两组检查留在 hmos-app 的真实实现上。
 // ============================================================================

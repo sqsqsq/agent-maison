@@ -7,6 +7,7 @@
 // 回执由生产 `projectReceiptAfterClosure` 投影生成。
 // ============================================================================
 
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
@@ -23,6 +24,10 @@ import {
   REAL_CHAIN_INDEX,
   REAL_CHAIN_NEW_SOURCE,
   REAL_CHAIN_TEST,
+  REAL_CHAIN_PNG_EXISTING,
+  REAL_CHAIN_PNG_NEW,
+  REAL_CHAIN_PNG_NEW_BYTES,
+  writeHostBytes,
   type RealChainProject,
 } from '../utils/real-chain-host';
 import { runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
@@ -319,8 +324,14 @@ function writeFacts(p: RealChainProject, phase: string): void {
   // 那是 baseline 段，改了就让 spec/plan 已闭环的 facts 证据真失效（`factsBaselineFingerprint`）。
   // 正解与真实 agent 一致——写进**本阶段的 delta 表**（`context_exploration_facts_scope_coverage`
   // 认 `declared ∪ 本阶段 delta 表的「路径」列`，context-facts.ts:231-241）。
+  // plan 14771034 §2.3：contracts.files 里的两张 PNG 同理（`context_exploration_facts_scope_coverage`
+  // 对二进制目标一视同仁，实跑 coding 期两张都报「当前目标未覆盖」）。
   const deltaRows: Array<[string, string, string]> = fs.existsSync(path.join(p.root, REAL_CHAIN_NEW_SOURCE))
-    ? [[REAL_CHAIN_NEW_SOURCE, 'coding 新建的列表条目组件', '本阶段按它继续']]
+    ? [
+        [REAL_CHAIN_NEW_SOURCE, 'coding 新建的列表条目组件', '本阶段按它继续'],
+        [REAL_CHAIN_PNG_EXISTING, '既有银行标识图（二进制，按路径引用）', '不改'],
+        [REAL_CHAIN_PNG_NEW, 'coding 新建的开卡结果图（二进制，按路径引用）', '本阶段按它继续'],
+      ]
     : [];
   const rows: Array<[string, string, string]> = [
     [REAL_CHAIN_SOURCE, 'AllBanksPage 目前只渲染标题文本', '列表需新增'],
@@ -422,6 +433,9 @@ export function writePlanMaterials(p: RealChainProject): void {
     // `plan_file_to_code` 要求 contracts 里每个文件在 coding 收尾时就在盘上，
     // 而测试文件按阶段归属由 ut 阶段写。
     `  - ${REAL_CHAIN_NEW_SOURCE}`,
+    // plan 14771034 §2.3：宿主 contracts.files 同时列源码与 PNG（一张既有、一张 coding 新建）。
+    `  - ${REAL_CHAIN_PNG_EXISTING}`,
+    `  - ${REAL_CHAIN_PNG_NEW}`,
     'module_dependencies: {}',
     'data_models: []',
     'interfaces: []',
@@ -573,8 +587,15 @@ export function writePlanMaterials(p: RealChainProject): void {
 
 }
 
-/** coding 阶段产出物本体：新增列表条目组件并在页面里接上（真实写盘，供下游新鲜度消费）。 */
-export function writeCodingMaterials(p: RealChainProject): void {
+/**
+ * coding 阶段产出物本体：新增列表条目组件并在页面里接上（真实写盘，供下游新鲜度消费）。
+ *
+ * plan 14771034 §2.3/§2.4：页面按宿主「点银行弹开卡 sheet」同构——`.bindSheet($$this.sheetVisible, …)`
+ * 是宿主 `AllBanksPage.ets` 那一行去业务名后的原形（`$$` 双向绑定），`` `${phase}` `` 是 ④ 记的占位符级联形态；
+ * 另新建一张资源图（宿主「run 中新建」那张）。`.id(...)` 是 device_test.run 替身的渲染依据（§2.1）。
+ * `entryTitleId=false`：sheet 标题不写 `.id('open_card_title')`——RC-9 在真实回退之前的 coding 形态。
+ */
+export function writeCodingMaterials(p: RealChainProject, opts: { entryTitleId?: boolean } = {}): void {
   writeHostFile(p.root, REAL_CHAIN_NEW_SOURCE, [
     "import { BankModel } from './BankModel';",
     '',
@@ -582,7 +603,7 @@ export function writeCodingMaterials(p: RealChainProject): void {
     'export struct BankListItem {',
     '  @Prop bank: BankModel;',
     '  build() {',
-    '    Text(this.bank.name)',
+    `    Text(this.bank.name).id('${EL_BANK_ROW}')`,
     '  }',
     '}',
     '',
@@ -594,17 +615,35 @@ export function writeCodingMaterials(p: RealChainProject): void {
     '@Component',
     'export struct AllBanksPage {',
     '  @State banks: string[] = new BankRepository().list();',
+    '  @State sheetVisible: boolean = false;',
+    '',
+    '  @Builder',
+    '  openCardSheet() {',
+    '    Column() {',
+    `      Text('开卡申请')${opts.entryTitleId === false ? '' : `.id('${EL_ENTRY_TITLE}')`}`,
+    '    }',
+    '  }',
+    '',
+    '  sheetTag(phase: string): string {',
+    '    return `${phase}`;',
+    '  }',
+    '',
     '  build() {',
     '    Column() {',
     '      Text("全部银行")',
     '      ForEach(this.banks, (b: string) => {',
     '        BankListItem({ bank: { id: b, name: b } })',
+    '          .onClick(() => { this.sheetVisible = true; })',
     '      })',
     '    }',
+    '    .bindSheet($$this.sheetVisible, this.openCardSheet(), {',
+    "      title: { title: this.sheetTag('open_card') },",
+    '    })',
     '  }',
     '}',
     '',
   ].join('\n'));
+  writeHostBytes(p.root, REAL_CHAIN_PNG_NEW, REAL_CHAIN_PNG_NEW_BYTES);
   writeHostFile(p.root, REAL_CHAIN_INDEX, [
     "export { AllBanksPage } from './src/main/ets/AllBanksPage';",
     "export { BankListItem } from './src/main/ets/BankListItem';",
@@ -649,6 +688,8 @@ export function writeReviewMaterials(p: RealChainProject): void {
     `- ${REAL_CHAIN_SERVICE}`,
     `- ${REAL_CHAIN_NEW_SOURCE}`,
     `- ${REAL_CHAIN_INDEX}`,
+    `- ${REAL_CHAIN_PNG_EXISTING}`,
+    `- ${REAL_CHAIN_PNG_NEW}`,
     '',
     '## 2. 审查维度',
     '',
@@ -777,7 +818,7 @@ export function writeUtMaterials(p: RealChainProject): void {
  * 会被生产写边界判 `phase_write_violation: doc/.../testing/test-plan.md:wrong_phase:testing`
  * 并直接 halt。归属以生产写边界为准，改在 testing 阶段写。
  */
-function writeTestPlan(p: RealChainProject): void {
+export function writeTestPlan(p: RealChainProject): void {
   writeFacts(p, 'testing');
   writeHostFile(p.root, `doc/features/${p.feature}/testing/test-plan.md`, [
     '# 测试计划',
@@ -899,6 +940,72 @@ function writeDerivedHylyrePlan(p: RealChainProject): void {
       '',
     ].join('\n'),
   );
+}
+
+// ---------------------------------------------------------------------------
+// plan 14771034 §2.3 / §3：PNG 归属与 prompt 四条不变量（普通回归断言，不是「重复即失败」门禁）。
+// ---------------------------------------------------------------------------
+
+/** T0 实测：解析输入里含源码与 contracts.files 的阶段（spec/plan 的 prompt 不内联源码）。 */
+const PROMPT_PHASES = ['coding', 'review', 'ut', 'testing'] as const;
+const REAL_CHAIN_PNGS = [REAL_CHAIN_PNG_EXISTING, REAL_CHAIN_PNG_NEW] as const;
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+
+function diskSha(p: RealChainProject, rel: string): string {
+  return crypto.createHash('sha256').update(fs.readFileSync(path.join(p.root, rel))).digest('hex');
+}
+
+function escapeRegExp(s: string): string { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+/**
+ * PNG 走过冻结 → 解析 → 归属整条链（b5c1e9d7 §8.9：非源码不盖施工归属）。
+ * 实测口径（与 plan §2.3 原文不同处见 plan §10）：PNG 从 coding 起进 manifest（spec/plan 的源码读集来自
+ * facts baseline，不含它们）；coding 新建的那张也记 `role=input`、不记产出——非源码不进写集归属。
+ * 断言：出现在 manifest 的每条 PNG 条目 sha 与盘上字节一致且**无** `owner_phase`；coding 起两张都在。
+ */
+function assertPngProvenance(p: RealChainProject): void {
+  for (const phase of PHASES) {
+    const abs = path.join(p.root, 'doc/features', p.feature, phase, 'reports', 'phase-evidence-manifest.json');
+    const m = JSON.parse(fs.readFileSync(abs, 'utf-8')) as { inputs?: Array<Record<string, unknown>>; outputs?: Array<Record<string, unknown>> };
+    const entries = [...(m.inputs ?? []), ...(m.outputs ?? [])].filter(e => /\.png$/.test(String(e.path)));
+    for (const e of entries) {
+      assert(e.owner_phase === undefined, `${phase}：PNG 条目带了施工归属（非源码不得盖 owner）：${JSON.stringify(e)}`);
+      assert(e.sha256 === diskSha(p, String(e.path)), `${phase}：PNG 条目 sha 与盘上字节不符：${JSON.stringify(e)}`);
+    }
+    if (phase === 'spec' || phase === 'plan') continue;
+    for (const rel of REAL_CHAIN_PNGS) {
+      assert(entries.some(e => e.path === rel), `${phase}：manifest 未登记 ${rel}：${JSON.stringify(entries)}`);
+    }
+  }
+}
+
+/**
+ * §3 四条不变量，对象是该阶段盘上真实 `ai-prompt.md`（harness 子进程写的最后一轮）：
+ * 1 模板主结构不复制（模板首个 `## ` 行恰 1 次，从 provision 出来的模板文件读）；
+ * 2 `$$` 逐字（`$$this.sheetVisible` 在、没有单 `$` 版本、`` `${phase}` `` 原样）；
+ * 3 二进制不内联（无 `IHDR`、无 PNG 签名字节、无 U+FFFD）；
+ * 4 按需读取路径正确（每张 PNG 的 binary 条目是工程相对路径，sha 等于盘上字节）。
+ */
+function assertPromptInvariants(p: RealChainProject, phase: string): void {
+  const abs = path.join(p.root, 'doc/features', p.feature, phase, 'reports', 'ai-prompt.md');
+  const bytes = fs.readFileSync(abs);
+  const prompt = bytes.toString('utf-8');
+  const count = (needle: string): number => prompt.split(needle).length - 1;
+  const template = fs.readFileSync(path.join(p.harnessDir, 'prompts', `verify-${phase}.md`), 'utf-8');
+  const heading = template.split('\n').find(line => line.startsWith('## '));
+  assert(heading, `${phase}：模板无 \`## \` 行，不变量 1 失去对象`);
+  assert(count(heading!) === 1, `${phase}：不变量 1 模板主结构出现 ${count(heading!)} 次（应 1）：${heading}`);
+  assert(count('$$this.sheetVisible') >= 1, `${phase}：不变量 2 prompt 里没有逐字的 $$this.sheetVisible`);
+  assert(!/(^|[^$])\$this\.sheetVisible/.test(prompt), `${phase}：不变量 2 出现被改写成单 $ 的 $this.sheetVisible`);
+  assert(count('`${phase}`') >= 1, `${phase}：不变量 2 模板串 \`\${phase}\` 未原样保留`);
+  assert(!prompt.includes('IHDR'), `${phase}：不变量 3 prompt 内联了 PNG 块（IHDR）`);
+  assert(!bytes.includes(PNG_SIGNATURE), `${phase}：不变量 3 prompt 含 PNG 签名字节`);
+  assert(!prompt.includes('�'), `${phase}：不变量 3 prompt 含 U+FFFD（二进制被按 UTF-8 解码）`);
+  for (const rel of REAL_CHAIN_PNGS) {
+    const m = new RegExp(`path:\\s*${escapeRegExp(rel)}\\s+sha256:\\s*([0-9a-f]{64})\\s+binary:\\s*true`).exec(prompt);
+    assert(m, `${phase}：不变量 4 没有 ${rel} 的工程相对路径 binary 条目`);
+    assert(m![1] === diskSha(p, rel), `${phase}：不变量 4 ${rel} 的 sha 与盘上字节不符`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1132,6 +1239,9 @@ test('real-chain 正例：spec→testing 六阶段真实 harness 全链 PASS + c
       assert(harnessStarts.includes(phase), `events 缺 harness_start@${phase}`);
       assert(harnessEnds.includes(phase), `events 缺 harness_end@${phase}`);
     }
+
+    assertPngProvenance(project);
+    for (const phase of PROMPT_PHASES) assertPromptInvariants(project, phase);
   } finally {
     // 工程里有指向**源仓**的 junction（`harness/node_modules`、`skills` 等）。已实测
     // `fs.rmSync(recursive)` 只删链接本身、不跟进目标：清理后源仓 node_modules/profiles/skills 完好。

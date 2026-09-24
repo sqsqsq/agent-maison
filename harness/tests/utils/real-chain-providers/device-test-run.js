@@ -7,9 +7,11 @@
 //     ——它们是纯读盘逻辑，替掉就等于把 testing 的判据也替掉了。
 //
 // trace 的形状不由本文件自拟：逐步骤克隆冻结契约自带的 golden step
-// （contracts/golden/step/valid/passed-*.json），case 的三轴与 tool_calls 由**生产 reducer**
+// （contracts/golden/step/valid/passed-*.json；断言元素在产品源码里没有字面 `.id(...)` 时克隆
+// failed-assertion-mismatch-presence，见 `renderedIds`），case 的三轴与 tool_calls 由**生产 reducer**
 // （hylyre-crossrow-verifier 的 reduceCase / toolCallsProjection）反推——本替身写不出
 // 一份"自洽但不合契约"的 trace，schema + 跨行 oracle 仍然是真门。
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -98,8 +100,48 @@ exports.ensureHylyreReady = function ensureHylyreReady(opts) {
   };
 };
 
+/**
+ * 渲染规则（plan 14771034 §2.1）：断言步骤 `by_id X` 只有当产品源码
+ * （工程内 `src/main/ets/**` 的 .ets）含字面 `.id('X')` 时才判"出现"。
+ * 只读源码字面、不证明任何设备真值——它让"断言失败 → 责任路由 → 回退 → 重验"
+ * 这条消费链由产品源码的真实变化驱动，而不是由替身自报。
+ */
+function renderedIds(projectRoot) {
+  const ids = new Set();
+  const skip = new Set(['framework', 'node_modules', '.git', 'build', 'doc']);
+  const walk = dir => {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      const abs = path.join(dir, ent.name);
+      if (ent.isDirectory()) { if (!skip.has(ent.name)) walk(abs); continue; }
+      if (!/\.ets$/.test(ent.name) || !/[\\/]src[\\/]main[\\/]ets[\\/]/.test(abs)) continue;
+      for (const m of fs.readFileSync(abs, 'utf-8').matchAll(/\.id\(\s*['"]([^'"]+)['"]\s*\)/g)) ids.add(m[1]);
+    }
+  };
+  walk(projectRoot);
+  return ids;
+}
+
+/** 失败断言的失败边界义务：落一份 ui_dump（路径相对 trace 目录，sha256 与字节一致）。 */
+function failureDump(traceDir, caseId, index, missingId) {
+  const rel = `failures/${caseId}-step-${index}.json`;
+  const bytes = Buffer.from(`${JSON.stringify({ seam: 'real-chain', missing_id: missingId })}\n`, 'utf-8');
+  fs.mkdirSync(path.join(traceDir, 'failures'), { recursive: true });
+  fs.writeFileSync(path.join(traceDir, rel), bytes);
+  return { kind: 'ui_dump', path: rel, sha256: crypto.createHash('sha256').update(bytes).digest('hex') };
+}
+
 /** 一条计划步骤 → 一行 StepResult（克隆 golden 后只改身份字段）。 */
-function stepResultFor(planned, index) {
+function stepResultFor(planned, index, rendered, traceDir, caseId) {
+  if (planned.role === 'assertion' && planned.selector && planned.selector.kind === 'by_id'
+    && !rendered.has(planned.selector.value)) {
+    const step = goldenStep('failed-assertion-mismatch-presence');
+    step.index = index;
+    step.kind = planned.kind;
+    step.duration_ms = 10;
+    step.selector.request = { kind: 'by_id', value: planned.selector.value, match: planned.selector.match ?? null, constraints: {} };
+    step.artifacts = [failureDump(traceDir, caseId, index, planned.selector.value)];
+    return step;
+  }
   const selector = planned.selector
     ? {
         request: { kind: planned.selector.kind, value: planned.selector.value, match: planned.selector.match ?? null, constraints: {} },
@@ -129,10 +171,11 @@ function stepResultFor(planned, index) {
   return step;
 }
 
-function caseResultFor(row) {
+function caseResultFor(row, rendered, traceDir) {
   const parsed = parsePlannedStepsFromCell(normalizePlannedStepsCell(row.steps_raw));
   if (!parsed.ok) throw new Error(`real-chain seam: 派生计划步骤不可解析（${row.tc_id}）：${parsed.error}`);
-  const steps = parsed.steps.map((step, index) => stepResultFor(normalizePlannedStep(step, index), index));
+  const steps = parsed.steps.map((step, index) =>
+    stepResultFor(normalizePlannedStep(step, index), index, rendered, traceDir, row.tc_id));
   const shell = {
     id: row.tc_id,
     name: row.name,
@@ -151,7 +194,8 @@ exports.runHylyreDeviceTest = function runHylyreDeviceTest(opts) {
   const derivedMd = fs.readFileSync(opts.derivedPlanPath, 'utf-8');
   const rows = extractDerivedPlanCases(derivedMd);
   if (rows.length === 0) throw new Error('real-chain seam: 派生计划无用例行');
-  const cases = rows.map(caseResultFor);
+  const rendered = renderedIds(opts.projectRoot);
+  const cases = rows.map(row => caseResultFor(row, rendered, path.dirname(opts.traceOutPath)));
   const version = vendorManifestVersion(opts.projectRoot);
   const allPassed = cases.every(c => c.execution === 'completed' && c.verification === 'passed' && c.evidence === 'complete');
   const trace = {

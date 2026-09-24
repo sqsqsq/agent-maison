@@ -220,13 +220,16 @@ const cases: Case[] = [
       fs.mkdirSync(path.join(harnessRoot, 'prompts'), { recursive: true });
       writeFile(path.join(harnessRoot, 'prompts', 'verify-coding.md'), 'HEAD {phase}\n{spec_content}\nMID\n{context_files}\nEND');
       const spec = "a $` b $' c $& d $$this {phase} {timestamp}";
-      const src = '.bindSheet($$this.smsVisible) `${v}` $&';
+      // plan 14771034 §2.4：宿主 AllBanksPage.ets 那一行去业务名后的原形 + ④ 记的占位符级联形态
+      //（`${phase}` 内含模板占位符 `{phase}`，顺序替换会二次改写它）。
+      const src = '    .bindSheet($$this.sheetVisible, this.openCardSheet(), {\n    return `${phase}`; $&';
       const assembled = assembleAIPrompt(
         harnessRoot, projectRoot, 'coding', 'demo', [{ label: 'Src', content: src }], '{}', spec, resolvedProfile(profileDir, {}),
       );
       const count = (needle: string): number => assembled.split(needle).length - 1;
       assert(count(spec) === 1, `spec_content 须逐字出现一次，实得 ${count(spec)}`);
       assert(count(src) === 1, `context 源码须逐字出现一次，实得 ${count(src)}`);
+      assert(!/(^|[^$])\$this\.sheetVisible/.test(assembled), `$$this 被改写成单 $：${assembled}`);
       assert(count('HEAD coding') === 1 && count('MID') === 1 && count('END') === 1, `模板正文只出现一次：${assembled}`);
       fs.rmSync(projectRoot, { recursive: true, force: true });
       fs.rmSync(profileDir, { recursive: true, force: true });

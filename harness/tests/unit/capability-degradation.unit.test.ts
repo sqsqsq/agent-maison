@@ -6,6 +6,8 @@ import * as YAML from 'yaml';
 import { execFileSync } from 'child_process';
 import { readBoundInput, resolveCapabilityInputs, type PhaseInputContext } from '../../scripts/utils/capability-resolution';
 import { collectContextFiles } from '../../harness-runner';
+import { assembleAIPrompt } from '../../scripts/utils/report-generator';
+import { REAL_CHAIN_PNG_EXISTING_BYTES } from '../utils/real-chain-host';
 import { buildVerifierMaterialView } from '../../scripts/utils/verifier-material';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { checkConventionsCoverage } from '../../scripts/check-review';
@@ -349,22 +351,33 @@ cases.push(
       const contract = YAML.parse(fs.readFileSync(contractFile, 'utf8'));
       contract.phases.review.inputs = [{ id: 'payload', sources: [{ kind: 'derive', provider_id: 'derive.codebase' }] }];
       fs.writeFileSync(contractFile, YAML.stringify(contract));
-      const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d]), Buffer.from('IHDR $` $$ IDATx')]);
+      // plan 14771034 §3/§8.1：合成 PNG（tEXt 塞宿主统计的 `$\``/`$'`/`$&`/`$$`）与宿主 `$$` 源码行同进一次解析。
+      const png = REAL_CHAIN_PNG_EXISTING_BYTES;
+      const source = '.bindSheet($$this.sheetVisible, this.openCardSheet(), {\n';
       fs.mkdirSync(path.join(root, 'src'), { recursive: true });
       fs.writeFileSync(path.join(root, 'src/logo.png'), png);
-      write(root, 'src/Page.ets', '.bindSheet($$this.smsVisible)\n');
+      write(root, 'src/Page.ets', source);
       const resolution = resolveCapabilityInputs({ frameworkRoot: fixture.framework, projectRoot: root, feature: 'demo', phase: 'review', track: 'full', testTargets: ['src/logo.png', 'src/Page.ets'], inputContext: fixture.context });
       const payload = resolution.inputs!.values.payload;
       assert(payload.state === 'resolved', JSON.stringify(payload));
       const sha = crypto.createHash('sha256').update(png).digest('hex');
       assert(JSON.stringify(payload.state === 'resolved' && payload.value) === JSON.stringify([
         { path: 'src/logo.png', sha256: sha, binary: true },
-        { path: 'src/Page.ets', content: '.bindSheet($$this.smsVisible)\n' },
+        { path: 'src/Page.ets', content: source },
       ]), JSON.stringify(payload));
       const loader = new SpecLoader(root, undefined, undefined, fixture.framework);
       const entry = collectContextFiles(loader, { kind: 'standalone', projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, frameworkRel: '' }, 'review', 'demo', {} as never, { resolvedInputs: resolution.inputs })
         .find(file => file.label === '(resolved input payload)');
-      assert(entry && entry.content.includes(sha) && entry.content.includes('src/logo.png') && !entry.content.includes('IHDR') && entry.content.includes('$$this.smsVisible'), JSON.stringify(entry));
+      assert(entry && entry.content.includes(sha) && entry.content.includes('src/logo.png') && !entry.content.includes('IHDR') && entry.content.includes('$$this.sheetVisible'), JSON.stringify(entry));
+      // 宿主事故出在「二进制内联 × `$` 替换」的**连接处**：同一解析结果经生产 `assembleAIPrompt`
+      // 拼成整份 prompt 后再断不变量 3/4（上面两步各锁一半）。
+      const harnessRoot = path.join(FRAMEWORK_ROOT, 'harness');
+      const prompt = assembleAIPrompt(harnessRoot, root, 'review', 'demo', [entry!], '{}', 'spec', undefined, undefined, FRAMEWORK_ROOT);
+      const heading = fs.readFileSync(path.join(harnessRoot, 'prompts', 'verify-review.md'), 'utf8').split('\n').find(line => line.startsWith('## '))!;
+      assert(prompt.split(heading).length - 1 === 1, `模板主结构被复制：${heading}`);
+      assert(!prompt.includes('IHDR') && !prompt.includes('�') && !Buffer.from(prompt, 'utf8').includes(png.subarray(0, 4)), '二进制被内联进整份 prompt');
+      assert(new RegExp(`path:\\s*src/logo\\.png\\s+sha256:\\s*${sha}\\s+binary:\\s*true`).test(prompt), '整份 prompt 缺 PNG 的相对路径 + sha 条目');
+      assert(prompt.includes('$$this.sheetVisible') && !/(^|[^$])\$this\.sheetVisible/.test(prompt), '整份 prompt 里 $$ 被改写');
     }),
   },
   {

@@ -21,6 +21,7 @@
 // `visual-diff.json`），而那条链在本仓从未被真实 harness 跑通过（正例链自述"视觉采集与 OCR
 // 全链未驱动"）。RC-7 未做——四态各自给真实原因要真 goal-runner 子进程，成因依赖本机是否装了
 // adapter CLI，按 §8「不许 SKIP 出包」这类环境依赖不得进发布门套件。理由与偏差全文见 plan §10.9。
+// RC-9（plan 14771034 路径 1）已写成 `rc9TestingBacktrackThroughCoding`，待生产修复裁决、**暂不登记**。
 // ============================================================================
 
 import * as fs from 'fs';
@@ -47,7 +48,9 @@ import {
   writeCodingMaterials,
   writeReviewMaterials,
   writeUtMaterials,
+  writeTestPlan,
 } from './real-chain.unit.test';
+import { loadAuthoritativeEvents } from '../../scripts/utils/goal-runner-phase';
 import { runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
 import { clearFrameworkConfigCache, featureFilePath, featurePhaseReportsDir, relFeaturesDir } from '../../config';
 import { recomputePhaseEvidenceStaleness, loadPhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
@@ -908,6 +911,114 @@ ${dumpPhase(project, 'plan')}`,
   assert(planAttempts <= 3, `无进展停机太晚：plan 跑了 ${planAttempts} 轮`);
   assert(probe.exitCode !== 0, '停机后整条 run 仍报成功');
 }));
+
+// ===========================================================================
+// RC-9（plan 14771034 §2.1 路径 1）：testing 回退 coding 后 review/ut 重验、再进 testing
+// ---------------------------------------------------------------------------
+// 宿主 run 的形态（ev:362-442）：testing FAIL → `phase_backtrack_requested from=testing to=coding
+// reason=repair_candidates invalidated=[coding,review,ut]` → coding/review/ut 各重跑一次 PASS → 再进 testing。
+// 走 attended（`viaHostBridge`，宿主同构 driver=session；T0-A 实测六阶段可跑完）。
+//
+// **唯一变量**：真实回退发生之前，coding 每次调用（含补 verifier 的那次重试）都不写
+// `.id('open_card_title')`；只有本 run 权威事件里已有 `phase_backtrack_requested to_phase=coding`
+// 时才写全。触发只读既有事件、不按调用次数。device_test.run 替身按产品源码字面渲染
+// （`real-chain-providers/device-test-run.js`），故缺 id → 断言 StepResult 失败 → 生产责任路由 →
+// `testing_failure_routing_*` coding 候选 → 生产回退。
+//
+// 放弃的准确性：宿主回退由 visual_diff 候选驱动，本条由 hylyre 断言路由驱动——两个生产者
+// 汇入同一 backtrack_to_phase，视觉候选分流不在本条（plan §2.1 末）。
+//
+// **暂不登记进 `cases`（2026-09-24）**：本条在现行生产上确定性红——回退后的 coding 被
+// `diff_within_scope`（check-coding.ts:342，run 基线累计 diff）判越界，越界项恰是 ut 阶段自己写的
+// UT 测试文件（不在 contracts.files）。这是本路径撞出的生产角色不一致，修复须单独一笔、待裁决；
+// 证据、单变量实验与候选修法见 plan 14771034 §10。裁决落地后在 `runAll` 前加一行
+// `test('RC-9 …', rc9TestingBacktrackThroughCoding)` 登记。
+// ===========================================================================
+
+function codingBacktrackRequested(p: RealChainProject): boolean {
+  if (!p.runId) return false;
+  const eventsAbs = path.join(featureFilePath(p.root, p.feature, 'goal-runs'), p.runId, 'events.jsonl');
+  return fs.existsSync(eventsAbs) && loadAuthoritativeEvents(eventsAbs)
+    .some(e => e.type === 'phase_backtrack_requested' && (e as { to_phase?: string }).to_phase === 'coding');
+}
+
+export async function rc9TestingBacktrackThroughCoding(): Promise<void> {
+  await withProject(async (project, birthChain) => {
+    const probe = await runGoalRuntimeChain(project.root, {
+      frameworkRoot: project.frameworkRoot,
+      featureId: project.feature,
+      realHarness: true,
+      viaHostBridge: true,
+      adapter: 'codex',
+      freshStartPhase: birthChain[0] as 'spec',
+      freshEndPhase: birthChain[birthChain.length - 1],
+      freshRequirement: REAL_CHAIN_REQUIREMENT,
+      onSpec: ctx => { project.runId = ctx.runId; writeSpecMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'spec'); },
+      onPlan: ctx => { project.runId = ctx.runId; writePlanMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'plan'); },
+      onCoding: ctx => {
+        project.runId = ctx.runId;
+        writeCodingMaterials(project, { entryTitleId: codingBacktrackRequested(project) });
+        if (ctx.attempt > 1) publishVerifier(project, 'coding');
+      },
+      onReview: ctx => { project.runId = ctx.runId; writeReviewMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'review'); },
+      onUt: ctx => { project.runId = ctx.runId; writeUtMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'ut'); },
+      onTesting: ctx => { project.runId = ctx.runId; writeTestPlan(project); if (ctx.attempt > 1) publishVerifier(project, 'testing'); },
+    });
+    const events = probe.events;
+    const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
+    const dump = (): string => `${dumpChain(project, chain)}\nevents=${events.map(e => `${String(e.type)}${e.phase ? '@' + String(e.phase) : ''}`).join(',')}`;
+
+    const btIdx = events.findIndex(e => e.type === 'phase_backtrack_requested');
+    assert(btIdx >= 0, `没有发生回退：\n${dump()}`);
+    // ④（先于事件形状断）：coding / review / ut 在回退后各有新的 phase_start——重验是**真跑了**，
+    // 不只是事件里声称作废（变异「invalidated 去掉中段阶段」须在这里红，而不是只在 ② 的字段上红）。
+    for (const ph of ['coding', 'review', 'ut'] as const) {
+      assert(events.slice(btIdx).some(e => e.type === 'phase_start' && e.phase === ph), `${ph} 回退后没有重新开始：\n${dump()}`);
+    }
+    // ② 回退事件：宿主同形（from/to/reason，invalidated ⊇ {coding,review,ut}）。
+    const bt = events[btIdx] as Record<string, unknown>;
+    assert(bt.from_phase === 'testing' && bt.to_phase === 'coding' && bt.reason === 'repair_candidates',
+      `回退事件形态不对：${JSON.stringify(bt).slice(0, 800)}`);
+    const invalidated = (bt.invalidated_phases as string[] | undefined) ?? [];
+    assert(['coding', 'review', 'ut'].every(ph => invalidated.includes(ph)), `invalidated_phases 缺中段阶段：${JSON.stringify(invalidated)}`);
+    // 是否含 testing 如实记录、不断言（plan §2.1 ②）。
+    if (DEBUG) console.log('RC-9 invalidated_phases', JSON.stringify(invalidated));
+
+    // ① testing 首轮 FAIL，候选由 hylyre 断言路由产出（事件携带的是 summary 同一份候选）。
+    const candidates = (bt.candidates as Array<Record<string, unknown>> | undefined) ?? [];
+    const routed = candidates.filter(c => /^testing_failure_routing_/.test(String(c.id)));
+    assert(routed.length > 0 && routed.every(c => c.category === 'coding' && c.source_phase === 'testing'),
+      `回退候选不是 testing 责任路由产出的 coding 候选：${JSON.stringify(candidates)}`);
+    const firstTestingVerdict = events.find(e => e.type === 'phase_verdict' && e.phase === 'testing');
+    assert(firstTestingVerdict && events.indexOf(firstTestingVerdict) < btIdx && firstTestingVerdict.verdict === 'FAIL',
+      `testing 首轮不是 FAIL：${JSON.stringify(firstTestingVerdict)}`);
+
+    // ③ 回退注入真的到达：回退后首次 coding 调用的指令含该候选 id。
+    const codingCallsBeforeTesting = probe.invokedPhases
+      .slice(0, probe.invokedPhases.indexOf('testing')).filter(x => x === 'coding').length;
+    const codingAfterFirst = probe.codingPrompts[codingCallsBeforeTesting];
+    assert(codingAfterFirst !== undefined, `回退后 coding 未被调用：${probe.invokedPhases.join(',')}`);
+    assert(routed.every(c => codingAfterFirst.includes(String(c.id))),
+      `回退后首次 coding 指令不含候选 id：${routed.map(c => c.id).join(',')}`);
+
+    // ⑤ spec/plan 不重跑、仍 closed，链尾二者 fresh，全程无 live_drift / upstream_closure_gap。
+    for (const ph of ['spec', 'plan'] as const) {
+      assert(!events.slice(btIdx).some(e => e.type === 'phase_start' && e.phase === ph), `${ph} 在回退后被重跑：\n${dump()}`);
+    }
+    const upstream = recomputePhaseEvidenceStaleness(project.root, project.feature, ['spec', 'plan'], { frameworkRoot: project.frameworkRoot });
+    assert(upstream.every(r => r.verdict === 'fresh'), `链尾 spec/plan 证据不新鲜：${JSON.stringify(upstream)}`);
+    const flat = JSON.stringify(events);
+    assert(!/live_drift|upstream_closure_gap/.test(flat), `出现 live_drift / upstream_closure_gap：\n${dump()}`);
+    // ④⑤⑥ 终局：六阶段 PASS + closed（testing 次轮）。
+    for (const ph of chain) {
+      const s = readSummary(project, ph);
+      assert(s?.verdict === 'PASS' && s.closure_status === 'closed', `${ph} 终局未 PASS+closed：\n${dump()}`);
+    }
+    assert(events.filter(e => e.type === 'phase_verdict' && e.phase === 'testing').length >= 2, `testing 没有第二轮：\n${dump()}`);
+    // ⑦ 哨兵：本路径无视觉行，不得出现账本完整性停机（C3 才有意义）。
+    assert(!/visual_ledger_integrity/.test(flat), `出现 visual_ledger_integrity：\n${dump()}`);
+  })();
+}
 
 export async function runAll(): Promise<UnitCaseResult[]> {
   const out: UnitCaseResult[] = [];
