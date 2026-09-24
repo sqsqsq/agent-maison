@@ -4027,12 +4027,13 @@ export function runAll(): UnitCaseResult[] {
   const runTieringCheck = (
     root: string,
     ocr: typeof jdgOcrOk | typeof jdgOcrDown = jdgOcrOk,
-    /** 缺省 pixel_1to1；给 false 走低档位（既有 ratchet 把产品事实降成 WARN 的那条路） */
-    hardPixel = true,
+    /** 缺省 pixel_1to1（hard）；给 false 走低档位（既有 ratchet 把产品事实降成 WARN 的那条路）；给对象=显式档位 */
+    hardPixel: boolean | Partial<CheckContext> = true,
   ): JdgGate => {
     __testing_setVisualDiffOcrFn(ocr as never);
     try {
-      return checkVisualDiff(baseCtx(root, hardPixel ? { fidelityTarget: 'pixel_1to1' } : {}))
+      const tier = typeof hardPixel === 'object' ? hardPixel : hardPixel ? { fidelityTarget: 'pixel_1to1' as const } : {};
+      return checkVisualDiff(baseCtx(root, tier))
         .find((r: { id: string }) => r.id === 'visual_diff') as JdgGate;
     } finally {
       __testing_setVisualDiffOcrFn(null);
@@ -4114,24 +4115,51 @@ export function runAll(): UnitCaseResult[] {
     });
   });
 
-  run('P3-T2b registered blocker/major defects and deterministic placement divergence refuse channel evidence even where the ratchet only warns', () => {
+  run('P3-T2b registered blocker defects and deterministic placement divergence refuse channel evidence even where the ratchet only warns; soft self-reported major is carried by debt (6644ea45 T6)', () => {
     if (!isJimpAvailable()) return;
     withoutVisualProvider(() => {
       // codex review 反例：低档位（非 hard pixel）下既有 ratchet 把这两类**产品事实**降成 WARN，
       // 屏仍 verdict=pass / must_fix=[] / hash 新鲜 / 有 vl_screening——只看 verdict 的判据会放行。
-      // ① pass 屏登记 severity=major 渲染缺陷
+      // ① pass 屏登记渲染缺陷。改判（plan 6644ea45 §3 / §8 D1）：原断言"major 一律拒绝证据"；soft 档下
+      // **自报** major（无 blocker、无 T8 源）是质量残差——证据可用、同时逐屏入账阻断发布（证据可用 ≠ 视觉已验证）；
+      // blocker 仍拒；同夹具 hard 档仍拒。
+      const passDefect = (severity: 'major' | 'blocker') => seedTieringProject({
+        alignRefIds: true, regionAttest: true, anchorCount: 3,
+        patch: (_id, i) => (i === 0
+          ? { defects: [{ class: 'overlap', element: 'cts_title', bbox: [0.1, 0.1, 0.3, 0.2], severity, note: '标题与关闭按钮重叠' }] }
+          : {}),
+      });
       {
-        const { root } = seedTieringProject({
-          alignRefIds: true, regionAttest: true, anchorCount: 3,
-          patch: (_id, i) => (i === 0
-            ? { defects: [{ class: 'overlap', element: 'cts_title', bbox: [0.1, 0.1, 0.3, 0.2], severity: 'major', note: '标题与关闭按钮重叠' }] }
-            : {}),
-        });
+        const { root } = passDefect('major');
         try {
           const gate = runTieringCheck(root, jdgOcrOk, false);
           if (gate.status === 'FAIL') throw new Error(`夹具须复刻"低档位只 WARN"的形态，否则测的不是本条：${gate.details}`);
-          if (gate.structured?.channel_evidence_usable !== false) {
-            throw new Error(`已登记的 major 渲染缺陷不得被绑定消费：${gate.details}`);
+          if (gate.structured?.channel_evidence_usable !== true) {
+            throw new Error(`soft 档自报 major 应由债务承载、证据可用：${gate.details}`);
+          }
+          if (JSON.stringify(gate.structured?.downgraded_screens) !== JSON.stringify(['card_type_sheet'])) {
+            throw new Error(`降级屏须物化：${JSON.stringify(gate.structured?.downgraded_screens)}`);
+          }
+          const debt = deriveVisualDebt('bank-card', [gate as never], null);
+          const entry = debt.entries.find(e => e.id === 'debt:visual_diff:card_type_sheet');
+          if (!entry || entry.status !== 'open') throw new Error(`降级屏须逐屏开账：${JSON.stringify(debt.entries)}`);
+          // hard 档同夹具：仍拒绝、不降级
+          const hard = runTieringCheck(root, jdgOcrOk);
+          if (hard.structured?.channel_evidence_usable !== false || (hard.structured?.downgraded_screens ?? []).length !== 0) {
+            throw new Error(`hard 档已登记 major 仍须拒绝证据：${JSON.stringify(hard.structured)}`);
+          }
+        } finally {
+          clearFrameworkConfigCache();
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      }
+      {
+        const { root } = passDefect('blocker');
+        try {
+          const gate = runTieringCheck(root, jdgOcrOk, false);
+          if (gate.status === 'FAIL') throw new Error(`夹具须复刻"低档位只 WARN"的形态，否则测的不是本条：${gate.details}`);
+          if (gate.structured?.channel_evidence_usable !== false || (gate.structured?.downgraded_screens ?? []).length !== 0) {
+            throw new Error(`已登记的 blocker 渲染缺陷不得被绑定消费、不得降级：${gate.details}`);
           }
           if (visualGateAllowsEvidence({ ...gate, status: 'PASS' } as never)) throw new Error('聚合 PASS 态同样不得放行');
         } finally {
@@ -4167,6 +4195,138 @@ export function runAll(): UnitCaseResult[] {
           clearFrameworkConfigCache();
           fs.rmSync(root, { recursive: true, force: true });
         }
+      }
+    });
+  });
+
+  // ==========================================================================
+  // plan 6644ea45：best_effort 下自报样式残差按档位降级（宿主 run f829b8 testing i11 形态）。
+  // 全部走 checkVisualDiff → loadVisualScreenVerdicts / deriveVisualDebt 生产路径。
+  // ==========================================================================
+  const I11_SOFT = { fidelityTarget: 'pixel_1to1' as const, acceptanceStrictness: 'best_effort' as const };
+  const I11_HARD = { fidelityTarget: 'pixel_1to1' as const, acceptanceStrictness: 'hard' as const };
+  /** i11 两屏（card_type_sheet=cts、sms_verification_sheet=sms）：warn + 锚定 must_fix + 自报 major；cts 另 4 条 minor */
+  const i11Patch = (override: (i: number) => Record<string, unknown> = () => ({})) =>
+    (_id: string, i: number): Record<string, unknown> => {
+      if (i !== 0 && i !== 2) return {};
+      const close = i === 0 ? 'cts_close' : 'sms_close';
+      const minor = (element: string, note: string, n: number) => ({
+        class: 'other', element, bbox: [0.1, 0.1 * n, 0.3, 0.05], severity: 'minor', note, must_fix_refs: [] as number[],
+      });
+      return {
+        verdict: 'warn',
+        must_fix: [`${close} 改为 tonal 圆形按钮：约 40vp 正圆浅灰底；当前真机为无底的裸 ×`],
+        defects: [
+          { class: 'shape_mismatch', element: close, bbox: [0.85, 0.02, 0.1, 0.05], severity: 'major', note: '关闭按钮应为 tonal 圆底', must_fix_refs: [0] },
+          ...(i === 0 ? [
+            minor('cts_protocol', '协议色偏', 3), minor('cts_title', '文案差', 4),
+            minor('cts_confirm', '按钮宽差', 5), minor('cts_logo', 'logo 差', 6),
+          ] : []),
+        ],
+        region_attest: [{ region: close, verdict: 'diff_logged', method: 'vl_screening' }],
+        ...override(i),
+      };
+    };
+  const withI11 = (override: Parameters<typeof i11Patch>[0], fn: (root: string) => void): void => {
+    const { root } = seedTieringProject({ alignRefIds: true, regionAttest: true, anchorCount: 3, patch: i11Patch(override) });
+    try { fn(root); } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  };
+  const I11_IDS = ['card_type_sheet', 'sms_verification_sheet'];
+
+  run('6644ea45 T2 soft (pixel_1to1 + best_effort) i11 shape: downgraded, evidence usable, per-screen debt, warn screens usable', () => {
+    if (!isJimpAvailable()) return;
+    withoutVisualProvider(() => withI11(undefined, (root) => {
+      const gate = runTieringCheck(root, jdgOcrOk, I11_SOFT);
+      if (gate.status !== 'WARN') throw new Error(`soft 档须止于 WARN：${gate.status} / ${gate.details}`);
+      if (JSON.stringify(gate.structured?.downgraded_screens) !== JSON.stringify(I11_IDS)) {
+        throw new Error(`两屏须降级：${JSON.stringify(gate.structured?.downgraded_screens)}`);
+      }
+      if (gate.structured?.channel_evidence_usable !== true || gate.structured?.evidence_block_owner !== null) {
+        throw new Error(`降级残差不得否决整轮证据：${JSON.stringify(gate.structured)} / ${gate.details}`);
+      }
+      if (!/按档位降级/.test(gate.details ?? '') || !/shape_mismatch@cts_close/.test(gate.details ?? '')) {
+        throw new Error(`details 须披露按档位降级：${gate.details}`);
+      }
+      if (/must-fix：/.test(gate.details ?? '')) throw new Error(`降级屏 must_fix 不得再进 must-fix 命中：${gate.details}`);
+      const debt = deriveVisualDebt('bank-card', [gate as never], null);
+      const open = debt.entries.filter(e => e.status === 'open').map(e => e.id).sort();
+      if (JSON.stringify(open) !== JSON.stringify(I11_IDS.map(s => `debt:visual_diff:${s}`))) {
+        throw new Error(`须逐屏开 2 条债务（minor 随屏、不单独开账）：${JSON.stringify(debt.entries)}`);
+      }
+      const visual = loadVisualScreenVerdicts({
+        projectRoot: root, feature: 'bank-card', currentBuildFingerprint: null, visualGate: gate as never,
+      });
+      for (const id of I11_IDS) {
+        const v = visual.byScreen.get(id);
+        if (!v || v.verdict !== 'warn' || v.usable !== true) throw new Error(`降级 warn 屏须可用：${id} ${JSON.stringify(v)}`);
+      }
+      // §4.2 只读物化字段：同一 gate 去掉 downgraded_screens → warn 屏回到不可用（现状）
+      const stripped = { ...gate, structured: { ...gate.structured, downgraded_screens: undefined } };
+      const legacy = loadVisualScreenVerdicts({
+        projectRoot: root, feature: 'bank-card', currentBuildFingerprint: null, visualGate: stripped as never,
+      });
+      if (legacy.byScreen.get(I11_IDS[0])?.usable !== false) throw new Error('缺字段须等于现状（warn 不可用）');
+    }));
+  });
+
+  run('6644ea45 T1 hard (pixel_1to1 + hard) i11 shape is untouched: nothing downgraded, evidence refused', () => {
+    if (!isJimpAvailable()) return;
+    withoutVisualProvider(() => withI11(undefined, (root) => {
+      const gate = runTieringCheck(root, jdgOcrOk, I11_HARD);
+      if ((gate.structured?.downgraded_screens ?? []).length !== 0) throw new Error(`hard 档不得降级：${JSON.stringify(gate.structured)}`);
+      if (gate.structured?.channel_evidence_usable !== false) throw new Error('hard 档 must_fix 仍须否决证据');
+      if (/按档位降级/.test(gate.details ?? '')) throw new Error(`hard 档不得出现降级披露：${gate.details}`);
+      if (gate.status !== 'FAIL') throw new Error(`hard 档 must_fix 仍 FAIL：${gate.status}`);
+    }));
+  });
+
+  run('6644ea45 T3/T4/T5 soft: missing anchor, blocker, T8-sourced major, verdict=fail all stay tier one', () => {
+    if (!isJimpAvailable()) return;
+    withoutVisualProvider(() => {
+      const cases: Array<{ label: string; override: (i: number) => Record<string, unknown> }> = [
+        // T3a：未锚定纯文本 must_fix（缺 by_id 锚点）与锚定 major 并存——纯文本条目读不出 severity，保守不降
+        { label: 'T3a 未锚定 must_fix', override: (i) => (i === 0 ? {
+          must_fix: ['cts_close 改为 tonal 圆形按钮', '缺 by_id 锚点 cts_close'],
+        } : {}) },
+        // T3b：缺锚点写成 blocker defect 并锚定
+        { label: 'T3b blocker 锚定', override: (i) => (i === 0 ? {
+          must_fix: ['缺 by_id 锚点 cts_close'],
+          defects: [{ class: 'missing_render', element: 'cts_close', severity: 'blocker', note: '缺 by_id 锚点', must_fix_refs: [0] }],
+        } : {}) },
+        // T3c：自报 major 与 blocker 并存（只有 blocker 条件能挡住这一屏）
+        { label: 'T3c blocker+自报 major', override: (i) => (i === 0 ? {
+          defects: [
+            { class: 'shape_mismatch', element: 'cts_close', bbox: [0.85, 0.02, 0.1, 0.05], severity: 'major', note: 'tonal 圆底缺失', must_fix_refs: [0] },
+            { class: 'missing_render', element: 'cts_confirm', severity: 'blocker', note: '确认按钮缺测试锚点', must_fix_refs: [0] },
+          ],
+        } : {}) },
+        // T4：合法 T8 来源对象的 major（finding_id / signal 非空）
+        { label: 'T4 T8 源 major', override: (i) => (i === 0 ? {
+          defects: [{
+            class: 'shape_mismatch', element: 'cts_close', bbox: [0.85, 0.02, 0.1, 0.05], severity: 'major', note: 'T8 转录',
+            must_fix_refs: [0], source: { producer: 'T8', finding_id: 'fb1cts', signal: 'B1_layout_group_divergent' },
+          }],
+        } : {}) },
+        // T5：verdict=fail 且只有自报 major
+        { label: 'T5 verdict=fail', override: (i) => (i === 0 ? { verdict: 'fail' } : {}) },
+      ];
+      for (const c of cases) {
+        withI11(c.override, (root) => {
+          const gate = runTieringCheck(root, jdgOcrOk, I11_SOFT);
+          const downgraded = gate.structured?.downgraded_screens ?? [];
+          if (downgraded.includes('card_type_sheet')) throw new Error(`${c.label}：不得降级：${JSON.stringify(downgraded)}`);
+          if (!downgraded.includes('sms_verification_sheet')) throw new Error(`${c.label}：对照屏仍须降级（证明否决来自本条）`);
+          if (gate.structured?.channel_evidence_usable !== false || gate.structured?.evidence_block_owner !== 'coding') {
+            throw new Error(`${c.label}：证据须拒绝、责任 coding：${JSON.stringify(gate.structured)}`);
+          }
+          const debt = deriveVisualDebt('bank-card', [gate as never], null);
+          if (debt.entries.some(e => e.id === 'debt:visual_diff:card_type_sheet')) {
+            throw new Error(`${c.label}：一档屏不走降级入账：${JSON.stringify(debt.entries)}`);
+          }
+        });
       }
     });
   });

@@ -119,6 +119,25 @@ export function t8FindingIdOf(source: VisualDiffDefectSource | undefined): strin
 }
 
 /**
+ * plan 6644ea45 §3：soft 档（非硬像素契约）下「按档位降级的残差屏」——**唯一**判定点，
+ * 其余消费者只读 gate 物化的 `downgraded_screens`。同时满足才降级：
+ *  ① verdict ∈ {pass, warn}（fail 是执行者显式声明的产品失败）；
+ *  ② 无 blocker defect、无 T8 来源的 major（确定性信号不受档位影响）；
+ *  ③ 每条 must_fix 都被某条 defect 以 must_fix_refs 锚定（纯文本 must_fix 读不出 severity，保守不降）；
+ *  ④ 至少一条自报 major（纯 minor 屏沿 B07 minor 规则，不入降级、不开阻断债务）。
+ * 降级 ≠ 通过：该屏记视觉债务、不否决证据、不产回修候选，release 仍被债务阻断。
+ */
+export function isTierDowngradedResidual(screen: VisualDiffScreenEntry, hardPixel: boolean): boolean {
+  if (hardPixel) return false;
+  if (screen.verdict !== 'pass' && screen.verdict !== 'warn') return false;
+  const defects = screen.defects ?? [];
+  const deterministic = (d: VisualDiffDefect): boolean => t8FindingIdOf(d.source) !== undefined;
+  if (defects.some(d => d.severity === 'blocker' || (d.severity === 'major' && deterministic(d)))) return false;
+  if (!(screen.must_fix ?? []).every((_, i) => defects.some(d => d.must_fix_refs?.includes(i)))) return false;
+  return defects.some(d => d.severity === 'major');
+}
+
+/**
  * plan ab072691 t5⑦：critic 回执证据路径的绑定判定（**纯路径判定，无 IO**）。
  *
  * 两条互斥期望路径：
@@ -865,6 +884,11 @@ export interface VisualDiffStructuredPayload {
    */
   placement_verified_screens: string[];
   /**
+   * plan 6644ea45 §4.1：`isTierDowngradedResidual` 判定的降级屏（soft 档自报非 blocker 残差）。
+   * 同一落盘通道；消费方（逐屏证据资格 / 视觉债务 / runtime 候选）只读本字段，不自行推导档位。
+   */
+  downgraded_screens: string[];
+  /**
    * plan e7a2c4f1 §3.3/§3.4（G28）：`channel_evidence_usable=false` 时**责任归属**在这里定，
    * 因为只有这里同时看得见三个合取项。消费方（`execution-channel-evidence` →
    * `testing_channel_evidence_obligation` → `repair_candidates` / 失败归因）据此给
@@ -1455,8 +1479,17 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     return !entry || entry.verdict === 'skipped' || entry.verdict === 'pending';
   });
 
+  const pixel1to1 = isHardPixelContract(ctx);
+  // plan 6644ea45 §4.1：soft 档自报残差屏——不否决证据、不进 must_fix / blockingDefectPass 命中，另行披露。
+  // 按 screen_id 保守汇总：解析器接受重复 ID，同 ID 任一记录不满足四条件则整个 ID 不降级
+  //（否则合格记录会替同名 fail/blocker 记录豁免证据否决与回修候选）。
+  const downgradedIds = new Set(rep.screens.filter(s => isTierDowngradedResidual(s, pixel1to1)).map(s => s.screen_id));
+  for (const s of rep.screens) if (!isTierDowngradedResidual(s, pixel1to1)) downgradedIds.delete(s.screen_id);
+  const downgradedScreens = rep.screens.filter(s => downgradedIds.has(s.screen_id));
+
   // --- pass 屏不得登记 blocker/major 渲染缺陷（裁切/重叠/形态/缺渲染）---
   const blockingDefectPass = passScreens.filter(s =>
+    !downgradedIds.has(s.screen_id) &&
     (s.defects ?? []).some(d => d.severity === 'blocker' || d.severity === 'major'),
   );
 
@@ -1486,7 +1519,6 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     .filter(([, ids]) => ids.length >= 2)
     .map(([h, ids]) => `${h}:${ids.join('+')}`);
 
-  const pixel1to1 = isHardPixelContract(ctx);
   const refElementsPath = refElementsAbsPath(ctx.projectRoot, ctx.feature);
   const refElementsDoc = fs.existsSync(refElementsPath)
     ? loadRefElementsFile(refElementsPath)
@@ -2583,7 +2615,8 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     }
   }
 
-  if (failScreens.length > 0 || mustFix.length > 0) {
+  const actionableMustFix = rep.screens.filter(s => !downgradedIds.has(s.screen_id)).flatMap(s => s.must_fix ?? []);
+  if (failScreens.length > 0 || actionableMustFix.length > 0) {
     const ratchet = pixel1to1
       ? fidelityRatchetFailOrWarn(ctx, false)
       : { severity: 'MAJOR' as const, status: 'WARN' as const };
@@ -2591,7 +2624,21 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       id: 'visual_diff',
       severity: ratchet.severity,
       status: ratchet.status,
-      line: `must-fix：${mustFix.slice(0, 5).join('；')}${failScreens.length > 0 ? `；fail 屏：${failScreens.map(s => s.screen_id).join(', ')}` : ''}`,
+      line: `must-fix：${actionableMustFix.slice(0, 5).join('；')}${failScreens.length > 0 ? `；fail 屏：${failScreens.map(s => s.screen_id).join(', ')}` : ''}`,
+    });
+  }
+  if (downgradedScreens.length > 0) {
+    // 只在非硬像素契约下出现，档位与原 must_fix / blockingDefectPass 命中相同（MAJOR/WARN）。
+    pushVisualDiffHit(hits, {
+      id: 'visual_diff',
+      severity: 'MAJOR',
+      status: 'WARN',
+      line:
+        `【按档位降级（fidelity=${ctx.fidelityTarget ?? '未定'}、acceptance_strictness=${ctx.acceptanceStrictness ?? '未定'}，非硬像素契约）】` +
+        `以下屏的 must_fix / major 缺陷为自报样式残差，记视觉债务、不驱动回退（仍阻断发布）：` +
+        downgradedScreens
+          .map(s => `${s.screen_id}(${(s.defects ?? []).filter(d => d.severity === 'major').map(d => `${d.class}@${d.element?.trim() || 'unknown'}`).join(',')})`)
+          .join(', '),
     });
   }
 
@@ -2976,8 +3023,11 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     );
   };
   // plan e7a2c4f1 §3.4（G28）：三个合取项拆成具名值，既是判据本身，也是责任归属的唯一依据。
+  // plan 6644ea45 §4.1：降级屏（soft 档自报非 blocker 残差）不否决；fail、blocker、确定性信号照旧否决。
   const productTruthIntact =
-    !rep.screens.some(screen => screen.verdict === 'fail' || (screen.must_fix?.length ?? 0) > 0) &&
+    !rep.screens.some(screen =>
+      !downgradedIds.has(screen.screen_id) &&
+      (screen.verdict === 'fail' || (screen.must_fix?.length ?? 0) > 0)) &&
     blockingDefectPass.length === 0 &&
     collectedPlacementFailScreens.length === 0;
   const coverageIntact = p0Ids.every(p0ScreenEvidenceCovered);
@@ -2995,6 +3045,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
             ? 'capability'
             : null,
     placement_verified_screens: [...placementVerifiedScreens],
+    downgraded_screens: [...downgradedIds],
     loop_id: loopId,
     attempt_id: goalRunId ? attemptId : null,
     goal_run_id: goalRunId,

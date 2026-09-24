@@ -839,6 +839,38 @@ cases.push({
 });
 
 cases.push({
+  name: '6644ea45 窄例外：visual_diff WARN 的 downgraded_screens 逐屏开账阻断发布；同轮其余历史条目照旧按 WARN 关账；下一轮不再降级即关账；FAIL 并存保留 check 级；legacy accepted 不能清债',
+  run: () => {
+    const downgradedWarn = (ids: string[]) => ({ ...chk('visual_diff', 'WARN'), structured: { kind: 'visual_diff', downgraded_screens: ids } });
+    const r1 = deriveVisualDebt('demo', [downgradedWarn(['cts', 'sms'])], openHistory('visual_diff'));
+    assertEq(r1.entries.find(e => e.id === 'debt:visual_diff')!.status, 'closed', '同轮非降级历史条目照旧按 WARN 关账');
+    for (const sc of ['cts', 'sms']) {
+      const e = r1.entries.find(x => x.id === `debt:visual_diff:${sc}`);
+      assertTrue(e !== undefined && e.status === 'open' && e.screen_id === sc && e.resolution_class === 'needs_fix', `降级屏 ${sc} 开账`);
+      assertTrue(/按档位降级/.test(e!.summary), `摘要标明按档位降级：${e!.summary}`);
+    }
+    assertEq(countBlockingDebt(r1).open, 2, '降级屏债务阻断发布');
+    // 下一轮 cts 修好（不再降级）、sms 仍降级 → cts 关账、sms 续账
+    const r2 = deriveVisualDebt('demo', [downgradedWarn(['sms'])], r1);
+    assertEq(r2.entries.find(e => e.id === 'debt:visual_diff:cts')!.status, 'closed', '不再降级 → 关账');
+    assertEq(r2.entries.find(e => e.id === 'debt:visual_diff:sms')!.status, 'open', '仍降级 → 续账');
+    // 字段为空 = 现状（WARN 关账）
+    assertEq(countBlockingDebt(deriveVisualDebt('demo', [downgradedWarn([])], r2)).open, 0, '空降级集 WARN 全部关账');
+    // FAIL 与降级并存：check 级 + 逐屏
+    const both = deriveVisualDebt('demo', [chk('visual_diff', 'FAIL', 'BLOCKER'), downgradedWarn(['sms'])], null);
+    assertEq(both.entries.map(e => e.id).sort().join(','), 'debt:visual_diff,debt:visual_diff:sms', 'FAIL 保留 check 级、降级屏逐屏');
+    // 人工确认不能清债：legacy accepted 重投影 open，且本轮仍降级则保持 open
+    const accepted: VisualDebtDoc = {
+      schema_version: '1.0', feature: 'demo',
+      entries: [{ ...r2.entries.find(e => e.id === 'debt:visual_diff:sms')!, status: 'accepted', accepted_by: 'user', acceptance_receipt: 'r.json' }],
+    };
+    const r3 = deriveVisualDebt('demo', [downgradedWarn(['sms'])], accepted);
+    const sms = r3.entries.find(e => e.id === 'debt:visual_diff:sms')!;
+    assertTrue(sms.status === 'open' && sms.accepted_by === undefined, `accepted 不得清偿降级债务：${JSON.stringify(sms)}`);
+  },
+});
+
+cases.push({
   name: 'V10 reference_viewport 走通用规则（codex R2 #3）：历史 open + 本轮 visual_reference_viewport WARN → closed；特殊清偿分支已删；来源登记仍在表内',
   run: () => {
     // 宿主现有那条 open 条目在下一轮 visual_reference_viewport WARN 时按 settled 关账

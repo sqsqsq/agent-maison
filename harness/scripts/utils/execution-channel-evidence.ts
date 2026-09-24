@@ -268,12 +268,16 @@ export function loadVisualScreenVerdicts(opts: VisualEvidenceOptions): VisualScr
     return empty(`visual-diff.json 结构性错误：${validated.errors.slice(0, 4).join('；')}`);
   }
 
+  // plan 6644ea45 §4.2：gate 物化的降级屏（soft 档自报残差）——其 warn 也算可用，结论由视觉债务披露。
+  // 缺字段 = 空集 = 现状。
+  const downgradedRaw = (opts.visualGate?.structured as { downgraded_screens?: unknown } | undefined)?.downgraded_screens;
+  const downgraded = new Set(Array.isArray(downgradedRaw) ? downgradedRaw.filter((s): s is string => typeof s === 'string') : []);
   const byScreen = new Map<string, ScreenEvidence>();
   for (const screen of validated.report.screens ?? []) {
     const id = typeof screen.screen_id === 'string' ? screen.screen_id.trim() : '';
     if (!id) continue;
     const verdict = String(screen.verdict ?? '');
-    let usable = verdict === 'pass';
+    let usable = verdict === 'pass' || (verdict === 'warn' && downgraded.has(id));
     let reason: string | undefined;
     if (!usable) {
       reason = `verdict=${verdict || '(空)'}`;

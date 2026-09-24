@@ -26,10 +26,10 @@ overview: >
 todos:
   - id: ber-gate
     content: 按 §4.1–§4.4 落判定函数、gate 披露与 payload 字段、证据资格、债务账本、runtime 候选跳过；补 §5 T1–T7。
-    status: pending
+    status: completed
   - id: ber-text
     content: 按 §4.5 改 prompt / skill 措辞与 §4.6 规格；验证与实施记录按 §7 / §9。
-    status: pending
+    status: completed
 ---
 
 # best_effort 下 must_fix 升级与回退（宿主开卡回灌）
@@ -165,7 +165,76 @@ todos:
 
 ## 9. 实施记录
 
-（未开工）实施顺序：6279fcd7 收口 → 本 plan → 14771034 C3。
+实施顺序：6279fcd7 收口 → 本 plan → 14771034 C3。
+
+### 9.1 本轮实施（2026-09-24，基线 main 48673094，未 commit）
+
+**生产**
+- `profiles/hmos-app/harness/visual-diff-check.ts`：新增导出 `isTierDowngradedResidual(screen, hardPixel)`（§3 四条，唯一判定点）；`checkVisualDiffCore` 把 `pixel1to1` 上移到 `blockingDefectPass` 之前，算 `downgradedScreens`；`blockingDefectPass`、must_fix 命中行、`productTruthIntact` 第一合取项剔除降级屏；降级屏另写一行 `visual_diff` MAJOR/WARN「【按档位降级（fidelity=…、acceptance_strictness=…，非硬像素契约）】…<screen>(<class@element>…)」；`VisualDiffStructuredPayload.downgraded_screens` 随 `checks[].structured` 落盘。
+- `harness/scripts/utils/execution-channel-evidence.ts`：`loadVisualScreenVerdicts` 逐屏 `usable = pass || (warn && downgraded.has(id))`，降级集取自 `opts.visualGate.structured.downgraded_screens`（缺字段=空集）。
+- `harness/scripts/utils/visual-debt.ts`：`deriveVisualDebt` 对 `visual_diff` 读 kind 归集结果的 `downgraded_screens`，逐屏 `debt:visual_diff:<screen>`（summary 追加「按档位降级的自报残差」）；有 FAIL/非 MINOR SKIP 时保留 check 级条目；其余四态规则不动。
+- `harness/scripts/goal-phase-runtime.ts`：`collectActionableDefects` 第 5 个可选入参 `downgradedVisualScreens`，在 must_fix 非空之后、身份校验之前命中即 `continue` + 一行日志；调用点经新增的私有 `readFreshDowngradedVisualScreens(freshSummary ? summaryAbsPath : null)` 从 fresh summary 同目录 `script-report.json` 读取（不 fresh / 缺文件 / 缺字段 / 解析失败=空集）。
+
+**文案**：`goal-phase-runtime.ts` capability 块 best_effort 行、`VISUAL_GAP_RETRY_GUIDANCE_TESTING` 第 3 条末句与第 4 条（§4.5）；`skills/reference/device-testing-workflow-detail.md:63`（G3 句尾 + severity 定义内联在 severity 枚举后）、`:74`（限定硬像素契约）；`skills/feature/device-testing/SKILL.md:67` 半句。均原位改句，行数不变。
+
+**规格**（直接改 `openspec/specs`，与 48673094 同一范式）：`visual-diff`（:8 Requirement 补降级规则 + 新 Scenario；:417 critic loop 窄例外；:532 债务窄例外，含「minor 不独立开账或延续债务」；:534 defect/disclosure 窄例外；:547-549 Scenario 补一句 + 新 Scenario「降级屏开账、其余历史照旧 WARN 关账、accepted 不能清债」）；`feature-artifact-layout`（:288 窄例外半句、:298 Scenario 限定）；`goal-runner`（:883 provider 窄例外、:885 限定 + 零候选一行日志、:905 Scenario 前提限定 T8 源 + 新 Scenario soft 零候选/不回退/hard 回退）。`visual-diff` 第一条 Requirement 的 Enforcement 补 `execution-channel-evidence.ts`、`visual-debt.ts`。
+
+**测试映射**
+- T1：`visual-fidelity`「6644ea45 T1 hard」+ `device-test-backtrack`「6644ea45 T1 hard」+ `goal-runner-testing-integrity`「6644ea45 T1 runtime hard」（需求 hard 措辞 → 冻结 SSOT hard → 不降级 → repair_candidates 回退）。
+- T2：`visual-fidelity`「6644ea45 T2 soft」（gate / details / 债务 / 逐屏证据 + 去字段回到现状）+ `device-test-backtrack`「6644ea45 T2 soft」（零候选 + 逐屏日志）+ `goal-runner-testing-integrity`「6644ea45 T2/T7 runtime soft」（runChain 新增 `testingGateChecks` 选项：真实 `checkVisualDiff` 以生产 `resolveHarnessFidelityContextFields` 档位跑，结论原样写 `script-report.json`，再交真实 `writeRunSummaryBase`/`applyVisualDebtPipeline`；runtime 读这份报告）。
+- T3/T4/T5：`visual-fidelity`「6644ea45 T3/T4/T5」（T3a 未锚定、T3b blocker 锚定、T4 合法 T8 源对象、T5 verdict=fail；同轮 sms 屏仍降级作对照）。
+- T5b：`device-test-backtrack`「6644ea45 T5b」（B07 i13 夹具原样：不降级、零债务、零候选；加一条自报 major 才降级、开账、零候选；不传降级集=1 条候选）。
+- T6：`visual-fidelity` P3-T2b 改判（用例名写明 6644ea45 T6）：soft pass+自报 major → 可用+降级+开账；同夹具 hard → 仍拒；soft pass+blocker → 仍拒。
+- T7：P3-T5 原样重跑；runtime soft 用例断言 visual 轴 UNVERIFIED、release BLOCKED、completion FUNCTIONALLY_COMPLETE_VISUAL_PENDING。
+- 债务 reducer：`visual-debt`「6644ea45 窄例外」（开账 / 同轮历史 WARN 关账 / 下一轮不再降级关账 / FAIL 并存 / legacy accepted 不能清债）。
+
+**假 PASS 防线反例（§8）**
+- 档位来自需求文本冻结：runtime「T1 runtime hard」——同一 visual-diff，只改需求措辞 → 生产 `resolveHarnessFidelityContextFields` 读到 hard → 不降级、repair_candidates 回退；soft 用例断言解析值为 pixel_1to1 + best_effort。
+- 只降自报条目：T4（合法 T8 源 major 不降级）、T3c（blocker 与自报 major 并存不降级）、T5b（纯 minor 不降级）。
+- 确定性信号不走此规则：T4；P3-T2b② placement fail_signals 原样仍拒。
+- 降级后非 PASS：runtime soft 断言 visual 轴 UNVERIFIED、release BLOCKED、completion FUNCTIONALLY_COMPLETE_VISUAL_PENDING、`visual-debt.json` 逐屏 open；P3-T5 三向量原样通过。
+- 人工确认不能清债：`visual-debt`「6644ea45 窄例外」legacy `accepted` 条目仍降级 → 重投影 open、`accepted_by` 被剥离。
+
+**变异**（单变量，脚本改后即还原，`git diff` 与 grep 复核已还原）：M1 去 `hardPixel` 守卫 → visual-fidelity T1 + P3-T2b、device-test-backtrack T1 红；M2 去 T8 源条件 → T4 红；M3 去锚定条件 → T3a 红；M4 去 verdict 条件 → T5 红；M5 去 blocker 条件 → T3c 红；M6 条件 4 恒真 → T5b 红；M7 `productTruthIntact` 不剔降级屏 → T2 红；M8 `blockingDefectPass` 不剔 → P3-T2b 红；M9 must_fix 命中行不剔 → T2 红；M10 §4.2 不读降级集 → T2 证据断言红；M11 §4.3 分支失效 → visual-debt 窄例外 + T2 + P3-T2b 红；M12 runtime 跳过分支失效 → device-test-backtrack T2 + T5b 红；M13 调用点不读 fresh 报告 → runtime soft 用例红（79/1）。13/13 全红。
+
+**验证**（完整输出先落 scratchpad 日志再 grep）
+| 命令 | 结果 |
+|---|---|
+| `cd harness && npm run typecheck` | PASS |
+| `--filter visual-fidelity` / `device-test-backtrack` / `visual-debt` / `execution-channel-evidence` / `goal-runner-repair-convergence` / `goal-runner-testing-integrity` / `testing-trace-gates` / `goal-headless-guard` | 144/0、25/0、35/0、21/0、27/0、80/0、32/0、133/0 |
+| `npm run openspec:validate`（含 enforcement 路径） | 47/47 PASS，enforcement PASS |
+| `cd harness && npm test`（收口一次） | unit **4758/0**，fixtures **46/0**，exit 0 |
+| `npm run test:unit -- --release --filter real-chain` | real-chain 3/0、real-chain-seams 6/0 |
+| `node scripts/check-plan-version.mjs` / `git diff --check` / node 扫 CR 字节 | PASS / 空 / 15 个改动文件 CR=0 |
+
+**与 plan 的偏差（放弃的准确性）**
+1. §4.4「读法照搬 :9334-9336」：抽成私有 `readFreshDowngradedVisualScreens` 并加 try/catch——解析失败按空集（现状，多回退），原写法会抛。放弃的准确性：无；报告损坏时不再中断 runtime，而是退回多回退。
+2. §3 条件 2「`t8FindingIdOf` 非空」实现为 `!== undefined`（producer=T8 即算确定性，含 finding_id 为空的畸形源）。放弃的准确性：畸形 T8 源的 major 也留一档（只会多回退）。
+3. §4.1 披露行文字：plan 写「acceptance_strictness=best_effort」，实现打印本轮实际 `fidelity=…、acceptance_strictness=…`（soft 档还含 hard 的非 pixel 目标，写死 best_effort 会说错）。
+4. §4.5 severity 定义：plan 写「补一行」，实现内联到 `:63` 的 severity 枚举后（不增行，规避行数预算）；`:1449` 措辞按 codex 第三轮收窄为「带自报 major 的屏记债、仅 minor 只披露」。
+5. §4.6 额外：`visual-diff` 第一条 Requirement 的 Enforcement 补两文件（该条款现在约束证据资格与债务两处消费点）。
+6. §5 T2 runtime：runChain 新增测试选项 `testingGateChecks`；testing 报告只含真实 `visual_diff` 结论 + 一条假的 functional PASS（`test_plan_exists`，让 lattice 有功能轴执行事实）；OCR 桩为「能力缺失」，覆盖由 vl_screening region_attest 承担。放弃的准确性：没有跑真实 testing harness 的其余检查（设备/trace/报告类），只证明视觉通道 → 债务 → runtime 候选这条链。
+7. §5 T1 额外加了 runtime hard 用例（plan 只列 visual-fidelity / device-test-backtrack），用于锁「档位来自需求文本冻结」。
+
+### 9.2 codex code review 返修（2026-09-24，1 阻断 + 2 建议，均实读核实属实）
+
+- **P1 同名屏互相豁免**：解析器接受重复 `screen_id`，原实现按记录判定、按 ID 豁免 → 同 ID「fail/blocker 记录 + 合格残差记录」时整个 ID 进降级集，fail 记录丢失证据否决、runtime 两条记录都跳过、回修候选丢失。修：gate 物化降级集**按 ID 保守汇总**（同 ID 任一记录不满足四条件则整 ID 不降级，`visual-diff-check.ts` 降级集计算处多一行 delete）；payload 改输出去重 ID 集；消费者不变。反例：`goal-runner-testing-integrity`「6644ea45 同名屏」——生产 `checkVisualDiff` → `collectActionableDefects`，fail / blocker × 同 ID 两种记录顺序共 4 组：该 ID 不降级、证据否决、候选保留、对照屏 sms 仍降级零候选。规格 `visual-diff` 降级条款补「按 id 保守汇总」一句。
+- **建议 1 新鲜度描述**（已被 §9.3 取代，改为实质修复）：原采纳收窄——runtime 以 `freshSummary` 代理 `script-report.json` 新鲜度，不对报告单独做身份校验（harness 同轮先写报告再写 summary）。helper 注释与 `goal-runner` 规格同步改为「fresh phase summary 旁的 script-report.json，summary 新鲜度为代理」；上文 §9.1「本次 fresh `script-report.json`」一律按此理解。放弃的准确性：若报告与 summary 被分别篡改/残留（新 summary + 陈旧报告），runtime 会信陈旧报告的降级集；未加身份机制。
+- **建议 2 措辞**：`visual-diff` 旧 Scenario「pass with blocking defect」THEN 改为「硬像素契约 FAIL、否则 WARN，且拒绝证据，降级残差除外」；`goal-phase-runtime.ts` 重试指引第 4 条补「minor-only residuals are disclosure only, no debt」。
+- **变异 M14**：删按 ID 汇总那一行 → `goal-runner-testing-integrity` 80/1，恰为新反例红；已还原。
+- **返修验证**（按调度不跑全量）：typecheck PASS；`--filter visual-fidelity` 144/0、`device-test-backtrack` 25/0、`goal-runner-testing-integrity` 81/0；`openspec:validate` 47/47 + enforcement PASS。
+
+### 9.3 codex 第二轮返修（2026-09-24，同名屏核实闭合；建议 1 升为阻断）
+
+- **P1 陈旧降级名单吞掉本轮 fail/blocker 候选**（属实）：`--sync-closure` 或报告生成前的失败出口只重写 summary、不重写 `script-report.json`，而 runtime 只凭 summary mtime 判 fresh → 旧报告的 `downgraded_screens` 被读、本轮 fail 屏在 collector 直接跳过。§9.2 的「以 freshSummary 代理」收窄作废。修（不加身份机制、复用既有字段）：`readFreshDowngradedVisualScreens` 另收本轮 gate 身份 `{runId, attemptId, startedAtMs}`，名单只在「报告 mtime ≥ 本 attempt gate 起点（`harnessStartedAtMs`）」且「payload 既有 `goal_run_id` / `attempt_id` 等于 `manifest.run_id` / `visualAttemptId`」时采信；否则空集（回旧行为、多回退）。调用点与 `collectActionableDefects` 入参注释、helper 注释（限定「完整检查链才同轮重写报告，`--sync-closure` / 报告前失败出口不覆盖」）、`goal-runner` 规格同步。
+- **反例**（经 `runGoalRuntimeChain`，`goal-runner-testing-integrity`「6644ea45 旧报告降级名单」两例）：首轮 testing 执行者把 card_type_sheet 写成 fail（身份齐备、must_fix 锚定），gate 走真实 writer 写 LEDGER 类 BLOCKER summary、不写报告；盘上旧报告列两屏降级。① 本 attempt 身份、mtime 早于 gate 起点（锁 mtime 判据）；② 上一 attempt 身份（i1）、mtime 被刷进 gate 窗口（锁身份判据）。两例均断言盘上仍是旧报告，且出现 `reason=repair_candidates` 的回退。放弃的准确性：用例②用 `utimesSync` 模拟「复制/还原刷新 mtime」；AgentCtx 新增 `goalAttemptId`（取 invoke 注入的 `MAISON_GOAL_ATTEMPT`）。
+- 同一 attempt 内 gate 起点之后、由非 gate 进程写出的报告仍会被采信（身份与时间都对得上）；本 plan 不再加身份机制。
+- **变异**（脚本改后即还原）：M15 去身份比对 → `goal-runner-testing-integrity` 82/1，恰为反例②红；M16 去 mtime 比对 → 82/1，恰为反例①红。
+- **返修验证**（按调度不跑全量）：typecheck PASS；`--filter visual-fidelity` 144/0、`goal-runner-testing-integrity` 83/0；`openspec:validate` 47/47 + enforcement PASS。
+
+**不确定点**
+- 宿主验收（plan 头 `real_host_validation`）未做；本会话不碰宿主。
+- runtime soft 用例的 run_end 状态未断言（只断言无回退、无 halt、testing 一次、summary 投影与债务）；release BLOCKED 下 run 终局标签沿既有逻辑。
 
 Review：codex 第一轮 D1–D5 认可、1 阻断 + 3 建议 + 事实修正，已逐条实读核实后改——§4.6 补齐被直接改写的条款（`visual-diff:532`、`feature-artifact-layout:288/298-302`、`goal-runner:885` Requirement），`downgraded_screens` 写成只对降级屏的窄例外（§4.3、§4.6）；§4.5 静态提示写明「不阻断推进、仍阻断发布」并保留「未锚定 must_fix 不降级」，hard 档统一按 `pixel_1to1 ∧ hard` 描述（§3）；§8 补操作性出路与「人工确认不能清债」；§5 T2 实施注（真实 gate + 债务投影 + runtime 读真实报告）、T4 用合法 T8 来源对象；行号改 `:1449/:2819/:1944/:1945`；§1 事实 3 限定受 ratchet 包装的命中、事实 4 改「整轮消费资格被否决」、§2 债务行补非 MINOR SKIP；§8 D1 前提改为旧用例「拒绝证据」、降级对象精确化、T1 受硬像素谓词守卫不作 best_effort 兜底。
 codex 第二轮 2 阻断 + 1 校正，已实读核实后改——§4.6 表补 `visual-diff:417/534/547-549`、`goal-runner:883` 四条窄例外；§3 条件 4 收紧为「至少一条自报 major」，纯 minor 屏不入降级、不开阻断债务（与 `goal-runner:899-903` 一致），§8 降级对象定义与之统一，§5 补 T5b（复用 B07 夹具）、§6 登记纯 minor 屏否决证据却零候选的既有缺口；§4.4 行号改 `:8375` / `:9334-9336`，§2 回退行改 `:8373-8393`。

@@ -19,7 +19,8 @@ import {
   parseFailureArtifactsClause,
 } from '../../../profiles/hmos-app/harness/device-test-evidence';
 import { computeHapSha256Full, resolveCurrentBuildFingerprint } from '../../../profiles/hmos-app/harness/build-fingerprint';
-import { computeDefectFingerprint, hashScreenshotFile } from '../../../profiles/hmos-app/harness/visual-diff-check';
+import { computeDefectFingerprint, hashScreenshotFile, isTierDowngradedResidual } from '../../../profiles/hmos-app/harness/visual-diff-check';
+import { deriveVisualDebt } from '../../scripts/utils/visual-debt';
 import { actionableDefectsToCandidates } from '../../scripts/utils/repair-candidates';
 import {
   collectActionableDefects,
@@ -745,7 +746,11 @@ export function runAll(): UnitCaseResult[] {
     ];
   }
   /** 写 install meta + 截图 + visual-diff.json（身份齐全），返回写盘的屏 */
-  function writeHostI13VisualDiff(f: Fixture, screens: Array<{ id: string; defects: HostDefect[] }>): void {
+  function writeHostI13VisualDiff(
+    f: Fixture,
+    screens: Array<{ id: string; defects: HostDefect[] }>,
+    mustFix = ['[owner=spec] 声明的同行关系未实现：ui-spec 行高口径与参考图不一致', '[owner=spec] 声明的分组容器缺失：需求未定义分组'],
+  ): Array<Record<string, unknown>> {
     w(f.root, `doc/features/${FEATURE}/testing/reports/device-test-install.meta.json`,
       JSON.stringify({ hapPath: 'build/app.hap' }));
     const buildFp = resolveCurrentBuildFingerprint(f.root, FEATURE, 'testing');
@@ -757,13 +762,21 @@ export function runAll(): UnitCaseResult[] {
       return {
         screen_id: sc.id, verdict: 'warn', screenshot_path: shotRel,
         screenshot_hash: h, evaluated_screenshot_hash: h, evaluated_build_fingerprint: buildFp,
-        must_fix: ['[owner=spec] 声明的同行关系未实现：ui-spec 行高口径与参考图不一致', '[owner=spec] 声明的分组容器缺失：需求未定义分组'],
+        must_fix: mustFix,
         defects: sc.defects,
       };
     });
     w(f.root, `doc/features/${FEATURE}/device-testing/device-screenshots/visual-diff.json`,
       JSON.stringify({ schema_version: '1.1', screens: rows }, null, 2));
+    return rows;
   }
+  /** plan 6644ea45：gate 物化 downgraded_screens 的同一判定（唯一判定点，这里直接复用） */
+  const downgradedOf = (rows: Array<Record<string, unknown>>, hardPixel: boolean): Set<string> =>
+    new Set(rows.filter(r => isTierDowngradedResidual(r as never, hardPixel)).map(r => String(r.screen_id)));
+  const selfMajor = (element: string, refs: number[]): HostDefect => ({
+    class: 'shape_mismatch', element, bbox: [0.85, 0.02, 0.1, 0.05], severity: 'major',
+    note: '关闭按钮应为 tonal 圆底，真机为裸 ×', must_fix_refs: refs,
+  });
   function captureWarn<T>(fn: () => T): { value: T; warns: string[] } {
     const warns: string[] = [];
     const orig = console.warn;
@@ -821,6 +834,82 @@ export function runAll(): UnitCaseResult[] {
       nodeAssert.strictEqual(cands[0].category, 'coding');
       nodeAssert.strictEqual(cands[0].identity_schema, 'signal@1');
       nodeAssert.deepStrictEqual(res.unverified, []);
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    }
+  });
+
+  // ==========================================================================
+  // plan 6644ea45 T1 / T2（runtime 侧）/ T5b：collectActionableDefects 只消费 gate 物化的降级集
+  // ==========================================================================
+  const i11Screens = (): Array<{ id: string; defects: HostDefect[] }> => [
+    { id: 'card_type_sheet', defects: [
+      selfMajor('cts_close', [0]),
+      { class: 'other', element: 'cts_protocol', bbox: [0.1, 0.3, 0.3, 0.05], severity: 'minor', note: '协议色偏', must_fix_refs: [] },
+    ] },
+    { id: 'sms_verification_sheet', defects: [selfMajor('sms_close', [0])] },
+  ];
+  const I11_MUST_FIX = ['关闭按钮改为 tonal 圆形按钮：约 40vp 正圆浅灰底'];
+
+  t('6644ea45 T1 hard：i11 两屏不降级 → 两个 coding 候选（与现状一致）', () => {
+    const f = setupFixture();
+    try {
+      const rows = writeHostI13VisualDiff(f, i11Screens(), I11_MUST_FIX);
+      const set = downgradedOf(rows, true);
+      nodeAssert.strictEqual(set.size, 0, 'hard 档不得降级');
+      const res = collectActionableDefects(f.root, FEATURE, 'run-1', undefined, set);
+      const visual = res.defects.filter(d => d.source === 'visual_diff');
+      nodeAssert.deepStrictEqual(visual.map(d => d.screen_or_case_id).sort(), ['card_type_sheet', 'sms_verification_sheet']);
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    }
+  });
+
+  t('6644ea45 T2 soft：i11 两屏降级 → 零候选、零 unverified、逐屏一行日志', () => {
+    const f = setupFixture();
+    try {
+      const rows = writeHostI13VisualDiff(f, i11Screens(), I11_MUST_FIX);
+      const set = downgradedOf(rows, false);
+      nodeAssert.deepStrictEqual([...set].sort(), ['card_type_sheet', 'sms_verification_sheet']);
+      const { value: res, warns } = captureWarn(() => collectActionableDefects(f.root, FEATURE, 'run-1', undefined, set));
+      nodeAssert.deepStrictEqual(res.defects.filter(d => d.source === 'visual_diff'), [], '降级屏不得产回修候选');
+      nodeAssert.deepStrictEqual(res.unverified, []);
+      nodeAssert.strictEqual(warns.filter(l => l.includes('按档位降级')).length, 2, `逐屏一行：${JSON.stringify(warns)}`);
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    }
+  });
+
+  t('6644ea45 T5b 纯 minor（B07 夹具）soft 不降级、不开阻断债务、零候选；加一条自报 major 才降级并开账', () => {
+    const f = setupFixture();
+    try {
+      const pure = writeHostI13VisualDiff(f, hostI13Screens());
+      const pureSet = downgradedOf(pure, false);
+      nodeAssert.strictEqual(pureSet.size, 0, `纯 minor 屏不入降级：${[...pureSet].join(',')}`);
+      const warnGate = (ids: string[]) => ({
+        id: 'visual_diff', status: 'WARN' as const, severity: 'MAJOR' as const, details: 'w',
+        structured: { kind: 'visual_diff', downgraded_screens: ids },
+      });
+      nodeAssert.deepStrictEqual(deriveVisualDebt(FEATURE, [warnGate([...pureSet])], null).entries, [],
+        '纯 minor 不开阻断债务（B07 minor 规则原样成立）');
+      const pureRes = collectActionableDefects(f.root, FEATURE, 'run-1', undefined, pureSet);
+      nodeAssert.deepStrictEqual(pureRes.defects.filter(d => d.source === 'visual_diff'), []);
+
+      const screens = hostI13Screens();
+      screens[0].defects.push(selfMajor('hc_more_entry', [0]));
+      const mixed = writeHostI13VisualDiff(f, screens);
+      const set = downgradedOf(mixed, false);
+      nodeAssert.deepStrictEqual([...set], ['add_card_home_collapsed'], '加自报 major 的屏才降级');
+      const debt = deriveVisualDebt(FEATURE, [warnGate([...set])], null);
+      nodeAssert.deepStrictEqual(debt.entries.map(e => `${e.id}:${e.status}`), ['debt:visual_diff:add_card_home_collapsed:open']);
+      nodeAssert.deepStrictEqual(
+        collectActionableDefects(f.root, FEATURE, 'run-1', undefined, set).defects.filter(d => d.source === 'visual_diff'), [],
+        '降级屏零候选');
+      const without = collectActionableDefects(f.root, FEATURE, 'run-1').defects.filter(d => d.source === 'visual_diff');
+      nodeAssert.strictEqual(without.length, 1, `不传降级集=现状：恰 1 条 major 候选：${JSON.stringify(without)}`);
     } finally {
       fs.rmSync(f.root, { recursive: true, force: true });
       clearFrameworkConfigCache();

@@ -285,7 +285,7 @@ Enforcement: `harness/scripts/utils/phase-evidence-manifest.ts`, `harness/script
 
 ### Requirement: Visual debt lives in a harness-derived JSON ledger with a markdown projection
 
-`doc/features/<feature>/visual-debt.json` SHALL be the machine truth for visual debt, derived by the harness from current asset, ui-spec, deterministic visual, provider, materialization, and render-visibility evidence — never agent-authored. Entries carry stable identity, source check, optional asset/screen identity, severity, status `open|closed`, and a machine resolution class. `closed` means the source check settled in the current round: PASS (fixed and reverified) or WARN (the finding is now disclosure, not debt — plan a3f7c1d9 D3(b)); a FAIL or a non-`MINOR` SKIP of the source keeps or opens the entry, and a round with only `MINOR` SKIP hits or no hit for the source leaves history unchanged. There is no `accepted` quality-bypass state and new entries MUST NOT carry `accepted_by` or `acceptance_receipt`. `visual-debt.md` is a human projection only. Open required debt maps to the existing quality axes and blocks release at the testing release point; optional unverified debt remains advisory only where existing release policy permits it.
+`doc/features/<feature>/visual-debt.json` SHALL be the machine truth for visual debt, derived by the harness from current asset, ui-spec, deterministic visual, provider, materialization, and render-visibility evidence — never agent-authored. Entries carry stable identity, source check, optional asset/screen identity, severity, status `open|closed`, and a machine resolution class. `closed` means the source check settled in the current round: PASS (fixed and reverified) or WARN (the finding is now disclosure, not debt — plan a3f7c1d9 D3(b)), except that a screen listed in the `visual_diff` result's `structured.downgraded_screens` (a self-reported major residual outside the hard pixel contract, plan 6644ea45) opens or keeps its own `debt:visual_diff:<screen>` entry while listed; a FAIL or a non-`MINOR` SKIP of the source keeps or opens the entry, and a round with only `MINOR` SKIP hits or no hit for the source leaves history unchanged. There is no `accepted` quality-bypass state and new entries MUST NOT carry `accepted_by` or `acceptance_receipt`. `visual-debt.md` is a human projection only. Open required debt maps to the existing quality axes and blocks release at the testing release point; optional unverified debt remains advisory only where existing release policy permits it.
 
 Enforcement: `harness/scripts/utils/visual-debt.ts`, `harness/harness-runner.ts`, `harness/scripts/check-testing.ts`
 
@@ -297,7 +297,7 @@ Enforcement: `harness/scripts/utils/visual-debt.ts`, `harness/harness-runner.ts`
 
 #### Scenario: a WARN settles the entry, a non-MINOR SKIP does not
 
-- **WHEN** an open entry's source check reports WARN in the current round
+- **WHEN** an open entry's source check reports WARN in the current round, unless the entry is a `debt:visual_diff:<screen>` whose screen is listed in that round's `downgraded_screens`
 - **THEN** the entry SHALL be `closed` and SHALL NOT count toward blocking debt
 - **AND** when the same source instead reports SKIP with severity `BLOCKER`, the entry SHALL stay or become `open` with `needs_fix`
 

@@ -166,12 +166,20 @@ export function deriveVisualDebt(
     const worst = hits.find(c => c.status === 'FAIL')
       ?? hits.find(c => c.status === 'SKIP' && c.severity !== 'MINOR');
     const settled = hits.some(c => c.status === 'PASS' || c.status === 'WARN');
+    // plan 6644ea45 §4.3 窄例外：gate 物化的降级屏（soft 档自报 major 残差，aggregate 仍 WARN）逐屏开账，
+    // 阻断发布；同屏 minor 随屏 scope 入账。其余 WARN 仍按四态关账。
+    const downgraded = checkId === 'visual_diff'
+      ? [...new Set(hits.flatMap(c => {
+          const list = (c.structured as { downgraded_screens?: unknown } | undefined)?.downgraded_screens;
+          return Array.isArray(list) ? list.filter((s): s is string => typeof s === 'string' && s.length > 0) : [];
+        }))]
+      : [];
     if (!worst && !settled) {
       // 本轮缺席 / 仅 MINOR SKIP：历史条目单调保留（含该 check 的全部 scope 子条目）
       for (const pe of prevEntries.filter(e => e.source_check_id === checkId)) emit(pe);
       continue;
     }
-    if (!worst) {
+    if (!worst && downgraded.length === 0) {
       // 本轮 PASS / WARN（无 FAIL、无非 MINOR SKIP）→ 该 check 全部历史条目闭账 closed（审计保留）
       for (const pe of prevEntries.filter(e => e.source_check_id === checkId)) {
         emit(pe.status === 'closed' ? pe : { ...pe, status: 'closed' });
@@ -179,7 +187,13 @@ export function deriveVisualDebt(
       continue;
     }
     const resolutionClass: DebtResolutionClass = 'needs_fix';
-    const currentScopes = scopesOf(checkId, worst);
+    const currentScopes: ReturnType<typeof scopesOf> = [
+      ...(worst ? scopesOf(checkId, worst) : []),
+      ...downgraded.map(sc => ({
+        id: `debt:${checkId}:${sc}`, screen_id: sc, summaryExtra: `（屏 ${sc}，按档位降级的自报残差）`,
+      })),
+    ];
+    const severity = worst?.severity ?? 'MAJOR';
     const currentIds = new Set(currentScopes.map(s => s.id));
     for (const scope of currentScopes) {
       const prevEntry = prevById.get(scope.id);
@@ -187,7 +201,7 @@ export function deriveVisualDebt(
       emit({
         id: scope.id,
         source_check_id: checkId,
-        severity: worst.severity,
+        severity,
         summary: `${meta.label}${scope.summaryExtra ?? ''}`,
         status,
         resolution_class: resolutionClass,

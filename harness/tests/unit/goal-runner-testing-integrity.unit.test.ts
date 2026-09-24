@@ -24,6 +24,7 @@ import * as path from 'path';
 import { createHash } from 'crypto';
 import { spawnSync } from 'child_process';
 import {
+  collectActionableDefects,
   __testing_resetGoalRunnerSeams,
   __testing_setInvokeAgent,
   __testing_setDeviceReadinessGate,
@@ -41,7 +42,10 @@ import {
   writePhaseEvidenceManifest,
 } from '../../scripts/utils/phase-evidence-manifest';
 import { writeReceiptManifestPointer } from '../../scripts/utils/phase-evidence-manifest';
-import { hashScreenshotFile } from '../../../profiles/hmos-app/harness/visual-diff-check';
+import { __testing_setVisualDiffOcrFn, checkVisualDiff, hashScreenshotFile } from '../../../profiles/hmos-app/harness/visual-diff-check';
+import { loadResolvedProfile } from '../../profile-loader';
+import { loadFrameworkConfig } from '../../config';
+import { uiSpecAbsPath } from '../../scripts/utils/ui-spec-shared';
 import {
   projectIdentityHash,
 } from '../../scripts/utils/pass-snapshot';
@@ -270,6 +274,8 @@ interface AgentCtx {
   attempt: number;
   prompt: string;
   runId: string;
+  /** plan 6644ea45：headless invoke 注入的 MAISON_GOAL_ATTEMPT（本 attempt 身份） */
+  goalAttemptId?: string;
   /** phases/<phase>/agent-output.log 绝对路径——agent-events.jsonl 由它派生（plan 8d2b4f60 V1/V2） */
   outputLogPath: string;
   /**
@@ -437,6 +443,15 @@ export async function runGoalRuntimeChain(
      * 需与 `realSpecFidelityGate` 同开（PASS 出口的 checks 来源就是真实 gate）。
      */
     realPassSummaryWriter?: boolean;
+    /**
+     * plan 6644ea45 T2：testing 出口接**真实 gate 结论 + 真实 writer**。回调在 fake harness 内以
+     * 生产 `resolveHarnessFidelityContextFields` 解析出的档位跑真实 check，返回的 CheckResult[]
+     * 原样写进 script-report.json（runtime 从这里读 downgraded_screens），再交 `writeRunSummaryBase`
+     *（真实 lattice + applyVisualDebtPipeline）。返回 null = 沿用默认 PASS 桩。
+     */
+    testingGateChecks?: (ctx: {
+      root: string; feature: string; runId: string; attemptId: string; fields: HarnessFidelityContextFields;
+    }) => CheckResult[] | null;
   } = {},
 ): Promise<RunProbe> {
   const frameworkRoot = opts.frameworkRoot ?? REPO_ROOT;
@@ -482,6 +497,7 @@ export async function runGoalRuntimeChain(
       const ctx: AgentCtx = {
         root, phase, attempt: n, prompt,
         runId: extraEnv.MAISON_GOAL_RUN_ID ?? '',
+        goalAttemptId: extraEnv.MAISON_GOAL_ATTEMPT ?? '',
         outputLogPath: String((o as { outputLogPath?: string })?.outputLogPath ?? ''),
       };
       if (phase === 'testing') opts.onTesting?.(ctx);
@@ -776,6 +792,44 @@ export async function runGoalRuntimeChain(
           runId: gm?.run_id ?? '', attemptId: roundIdentity?.attemptId ?? '',
         });
         return { exitCode: 0, timedOut: false };
+      }
+      // 生产 gate harness 子进程的身份 env（goal-phase-runtime.ts runHarnessPhase：身份 + RUNNER + GATE=1）
+      const gateRunId = roundIdentity?.runId ?? gm?.run_id ?? '';
+      const gateAttemptId = roundIdentity?.attemptId ?? '';
+      const inGateEnv = <T>(fn: () => T): T => withGoalEnv(() => {
+        Object.assign(process.env, {
+          MAISON_GOAL_RUN_ID: gateRunId, MAISON_GOAL_ATTEMPT: gateAttemptId,
+          MAISON_GOAL_ATTEMPT_PHASE: 'testing', MAISON_GOAL_RUNNER: '1', MAISON_GOAL_GATE_HARNESS: '1',
+        });
+        return fn();
+      });
+      const realTestingChecks = String(ph) === 'testing' && opts.testingGateChecks
+        ? inGateEnv(() => opts.testingGateChecks!({
+            root: pr, feature: feat, runId: gateRunId, attemptId: gateAttemptId,
+            fields: harnessFidelityContexts[harnessFidelityContexts.length - 1].fields,
+          }))
+        : null;
+      if (realTestingChecks) {
+        const failed = realTestingChecks.some(c => c.status === 'FAIL' && c.severity === 'BLOCKER');
+        const testingReport: ScriptReport = {
+          phase: 'testing' as Phase, feature: feat, timestamp: new Date().toISOString(), project_root: pr,
+          assurance: 'full', capability_resolutions: [], capability_resolution_contract_fingerprint: null,
+          checks: realTestingChecks,
+          summary: {
+            total: realTestingChecks.length,
+            pass: realTestingChecks.filter(c => c.status === 'PASS').length,
+            fail: realTestingChecks.filter(c => c.status === 'FAIL').length,
+            warn: realTestingChecks.filter(c => c.status === 'WARN').length,
+            skip: realTestingChecks.filter(c => c.status === 'SKIP').length,
+            blockers: realTestingChecks.filter(c => c.status === 'FAIL' && c.severity === 'BLOCKER').length,
+            verdict: failed ? 'FAIL' : 'PASS',
+          },
+        };
+        // 生产 harness 同序：先落 script-report.json（checks[].structured 随之落盘），再由 writer 派生 summary
+        fs.writeFileSync(path.join(dir, 'script-report.json'), JSON.stringify(testingReport, null, 2));
+        inGateEnv(() => writeRunSummaryBase(pr, testingReport, _fr));
+        writeManifestAndPointer();
+        return { exitCode: failed ? 1 : 0, timedOut: false };
       }
       // v1.2 完整契约 open summary（goal-runner 通过共享 finalizer 提交 closure；
       // 手搓半 summary 会被判 needs_fix → PARTIAL，链到不了 clean completion）
@@ -4507,6 +4561,245 @@ test('6279fcd7 T5⑥ 旧 attempt A 的 id + 最新 attempt B 窗口内时间戳�
   });
   assertLedgerIntegrityHalt(run, 'orphan_pending_stale', 'T5⑥');
 });
+
+// ---------------------------------------------------------------------------
+// plan 6644ea45 T2 / T7（runtime 链）：宿主 f829b8 testing i11 形态。档位由生产
+// resolveHarnessFidelityContextFields 从本 run 冻结的 fidelity SSOT 解析（需求文本 → spec 期 SSOT）；
+// script-report.json 由真实 checkVisualDiff 结论写出，债务由真实 applyVisualDebtPipeline 投影，
+// runtime 从这份 fresh 报告读 downgraded_screens。
+// ---------------------------------------------------------------------------
+
+const I11_HOST_SCREENS = [
+  { id: 'card_type_sheet', close: 'cts_close' },
+  { id: 'sms_verification_sheet', close: 'sms_close' },
+];
+
+function seedI11Host(root: string): void {
+  writeFile(root, `doc/features/${FEATURE}/spec/spec.md`, ['# spec', '', '```yaml', 'ui_change: new_or_changed', '```', ''].join('\n'));
+  fs.writeFileSync(uiSpecAbsPath(root, FEATURE), JSON.stringify({
+    schema_version: '1.0', verified: 'unverified', assets: [], tokens: {},
+    screens: I11_HOST_SCREENS.map(s => ({
+      id: s.id, priority: 'P0', ref_id: s.id,
+      root: { id: `${s.id}_root`, type: 'navigation_frame', order: 0, children: [
+        { id: s.close, type: 'interactive', order: 0 },
+      ] },
+    })),
+  }), 'utf-8');
+}
+
+/** testing 执行者写的 visual-diff.json：两屏 warn + 锚定 must_fix + 自报 major shape_mismatch（无 source） */
+function writeI11VisualDiff(root: string, verdictOf: (id: string) => string = () => 'warn'): void {
+  const fp = currentBuildFpOf(root);
+  const rows = I11_HOST_SCREENS.map(s => {
+    const shotRel = `doc/features/${FEATURE}/device-testing/device-screenshots/shot-${s.id}.png`;
+    writeFile(root, shotRel, `png-bytes-${s.id}`);
+    const h = hashScreenshotFile(path.join(root, shotRel));
+    return {
+      screen_id: s.id, verdict: verdictOf(s.id), ref_id: s.id, screenshot_path: shotRel,
+      screenshot_hash: h, evaluated_screenshot_hash: h, evaluated_build_fingerprint: fp,
+      must_fix: [`${s.close} 改为 tonal 圆形按钮：约 40vp 正圆浅灰底；当前真机为无底的裸 ×`],
+      defects: [{
+        class: 'shape_mismatch', element: s.close, bbox: [0.85, 0.02, 0.1, 0.05], severity: 'major',
+        note: '关闭按钮应为 tonal 圆底', must_fix_refs: [0],
+      }],
+      reverse_missing: [],
+      region_attest: [{ region: s.close, verdict: 'diff_logged', method: 'vl_screening' }],
+    };
+  });
+  writeFile(root, `doc/features/${FEATURE}/device-testing/device-screenshots/visual-diff.json`,
+    JSON.stringify({ schema_version: '1.1', feature: FEATURE, screens: rows }, null, 2));
+}
+
+async function runI11Chain(requirement: string): Promise<{
+  probe: RunProbe; gates: CheckResult[]; fields: HarnessFidelityContextFields[]; root: string;
+}> {
+  const { root } = setupHost();
+  seedI11Host(root);
+  const gates: CheckResult[] = [];
+  const fields: HarnessFidelityContextFields[] = [];
+  const probe = await runChain(root, {
+    freshRequirement: requirement,
+    onTesting: ({ root: r, attempt }) => (attempt === 1 ? writeI11VisualDiff(r) : writeCleanTesting(r)),
+    onCoding: ({ root: r, attempt }) => {
+      if (attempt > 1) writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("fixed") } }');
+    },
+    testingGateChecks: ({ root: r, feature, fields: f }) => {
+      if (gates.length > 0) return null; // 只有首轮 testing 走真实 gate（回退后的收尾轮沿用默认桩）
+      fields.push(f);
+      const gate = runRealVisualGate(r, feature, f);
+      gates.push(gate);
+      return [
+        { id: 'test_plan_exists', category: 'structure', description: 'fake functional fact', severity: 'BLOCKER', status: 'PASS', details: 'fake' },
+        gate,
+      ];
+    },
+  });
+  return { probe, gates, fields, root };
+}
+
+/** 真实 checkVisualDiff（档位字段由调用方给：链上=生产解析值）；OCR 桩=执行能力缺失，覆盖由 vl_screening 承担 */
+function runRealVisualGate(root: string, feature: string, fields: Partial<HarnessFidelityContextFields>): CheckResult {
+  const ctx = {
+    phase: 'testing', feature, projectRoot: root, frameworkRoot: REPO_ROOT,
+    phaseRule: { phase: 'testing', structure_checks: { visual_diff: { description: 'visual diff' } } },
+    featureSpec: { feature },
+    resolvedProfile: loadResolvedProfile(root, loadFrameworkConfig(root)),
+    ...fields,
+  } as unknown as CheckContext;
+  __testing_setVisualDiffOcrFn((() => ({ ok: false, error: 'ocr worker produced no output' })) as never);
+  let gate: CheckResult | undefined;
+  try {
+    gate = checkVisualDiff(ctx).find(c => (c.structured as { kind?: string } | undefined)?.kind === 'visual_diff');
+  } finally {
+    __testing_setVisualDiffOcrFn(null);
+  }
+  assert(!!gate, '真实 gate 须产出 visual_diff 结论');
+  return gate!;
+}
+
+function testingSummaryOf(root: string): Record<string, unknown> {
+  return JSON.parse(fs.readFileSync(featureFilePath(root, FEATURE, 'testing/reports/summary.json'), 'utf-8')) as Record<string, unknown>;
+}
+
+test('6644ea45 T2/T7 runtime soft：真实 gate 降级 → 不回退、visual 轴 UNVERIFIED、release BLOCKED、FUNCTIONALLY_COMPLETE_VISUAL_PENDING、逐屏债务', async () => {
+  const { probe, gates, fields, root } = await runI11Chain('添卡流程页面按参考截图 1:1 还原。');
+  assert(fields.length === 1 && fields[0].fidelityTarget === 'pixel_1to1' && fields[0].acceptanceStrictness === 'best_effort',
+    `档位须由冻结 SSOT 解析为 pixel_1to1 + best_effort：${JSON.stringify(fields)}`);
+  const s = gates[0].structured as { downgraded_screens?: string[]; channel_evidence_usable?: boolean };
+  assert(gates[0].status === 'WARN', `gate 须 WARN：${gates[0].status} / ${gates[0].details}`);
+  assert(JSON.stringify(s.downgraded_screens) === JSON.stringify(I11_HOST_SCREENS.map(x => x.id)),
+    `真实 gate 须物化两屏降级：${JSON.stringify(s)}`);
+  assert(s.channel_evidence_usable === true, `证据须可用：${gates[0].details}`);
+  const backtracks = probe.events.filter(e => e.type === 'phase_backtrack_requested');
+  assert(backtracks.length === 0, `降级残差不得驱动回退：${JSON.stringify(backtracks)}`);
+  assert(!probe.events.some(e => e.type === 'phase_halt'), `不得 HALT：${haltReasons(probe.events).join(',')}`);
+  assert(probe.invokedPhases.filter(p => p === 'testing').length === 1, `testing 只跑一次：${probe.invokedPhases.join(',')}`);
+  const summary = testingSummaryOf(root) as {
+    verdict?: string; release_readiness?: string; completion_status?: string;
+    quality_axes?: { visual?: { verdict?: string } };
+  };
+  assert(summary.verdict === 'PASS', `testing 推进不受阻：${summary.verdict}`);
+  assert(summary.quality_axes?.visual?.verdict === 'UNVERIFIED', `visual 轴不得 PASS：${JSON.stringify(summary.quality_axes?.visual)}`);
+  assert(summary.release_readiness === 'BLOCKED', `release 须 BLOCKED：${summary.release_readiness}`);
+  assert(summary.completion_status === 'FUNCTIONALLY_COMPLETE_VISUAL_PENDING', `completion：${summary.completion_status}`);
+  const debt = JSON.parse(fs.readFileSync(path.join(root, 'doc', 'features', FEATURE, 'visual-debt.json'), 'utf-8')) as {
+    entries: Array<{ id: string; status: string }>;
+  };
+  const open = debt.entries.filter(e => e.status === 'open').map(e => e.id).sort();
+  assert(JSON.stringify(open) === JSON.stringify(I11_HOST_SCREENS.map(x => `debt:visual_diff:${x.id}`)),
+    `逐屏开债：${JSON.stringify(debt.entries)}`);
+});
+
+test('6644ea45 T1 runtime hard：同一 visual-diff、需求带 hard 措辞 → 冻结 SSOT=hard，不降级、repair_candidates 回退', async () => {
+  const { probe, gates, fields } = await runI11Chain('添卡流程页面必须像素级还原参考截图，不接受降级。');
+  assert(fields[0]?.acceptanceStrictness === 'hard', `hard 措辞须冻结为 hard：${JSON.stringify(fields)}`);
+  const s = gates[0].structured as { downgraded_screens?: string[] };
+  assert((s.downgraded_screens ?? []).length === 0, `hard 档不得降级：${JSON.stringify(s)}`);
+  const backtrack = probe.events.find(e => e.type === 'phase_backtrack_requested' && e.reason === 'repair_candidates');
+  assert(!!backtrack, `hard 档 must_fix 须回退：${JSON.stringify(probe.events.filter(e => e.type === 'phase_backtrack_requested'))}`);
+});
+
+test('6644ea45 同名屏（codex review P1）：同 ID 合格残差 + fail/blocker 记录（两种顺序）→ 该 ID 不降级、证据否决、collector 保留回修候选', async () => {
+  for (const bad of ['fail', 'blocker'] as const) {
+    for (const order of ['bad-first', 'good-first'] as const) {
+      const label = `${bad}/${order}`;
+      const { root } = setupHost();
+      try {
+        seedI11Host(root);
+        const fp = currentBuildFpOf(root);
+        const rec = (id: string, close: string, n: number, isBad: boolean): Record<string, unknown> => {
+          const shotRel = `doc/features/${FEATURE}/device-testing/device-screenshots/shot-${id}-${n}.png`;
+          writeFile(root, shotRel, `png-bytes-${id}-${n}`);
+          const h = hashScreenshotFile(path.join(root, shotRel));
+          return {
+            screen_id: id, verdict: isBad && bad === 'fail' ? 'fail' : 'warn', ref_id: id, screenshot_path: shotRel,
+            screenshot_hash: h, evaluated_screenshot_hash: h, evaluated_build_fingerprint: fp,
+            must_fix: [`${close} 改为 tonal 圆形按钮`],
+            defects: isBad && bad === 'blocker'
+              ? [{ class: 'missing_render', element: close, bbox: [0.85, 0.02, 0.1, 0.05], severity: 'blocker', note: '缺测试锚点', must_fix_refs: [0] }]
+              : [{ class: 'shape_mismatch', element: close, bbox: [0.85, 0.02, 0.1, 0.05], severity: 'major', note: 'tonal 圆底缺失', must_fix_refs: [0] }],
+            reverse_missing: [],
+            region_attest: [{ region: close, verdict: 'diff_logged', method: 'vl_screening' }],
+          };
+        };
+        const cts = [rec('card_type_sheet', 'cts_close', 1, true), rec('card_type_sheet', 'cts_close', 2, false)];
+        const rows = [...(order === 'bad-first' ? cts : cts.reverse()), rec('sms_verification_sheet', 'sms_close', 1, false)];
+        writeFile(root, `doc/features/${FEATURE}/device-testing/device-screenshots/visual-diff.json`,
+          JSON.stringify({ schema_version: '1.1', feature: FEATURE, screens: rows }, null, 2));
+        const gate = runRealVisualGate(root, FEATURE, { fidelityTarget: 'pixel_1to1', acceptanceStrictness: 'best_effort' });
+        const s = gate.structured as { downgraded_screens?: string[]; channel_evidence_usable?: boolean };
+        assert(JSON.stringify(s.downgraded_screens) === JSON.stringify(['sms_verification_sheet']),
+          `${label}：同 ID 有一档记录则整个 ID 不降级：${JSON.stringify(s.downgraded_screens)}`);
+        assert(s.channel_evidence_usable === false, `${label}：${bad} 记录须仍否决证据：${gate.details}`);
+        const res = collectActionableDefects(root, FEATURE, 'run-dup', undefined, new Set(s.downgraded_screens ?? []));
+        const visual = res.defects.filter(d => d.source === 'visual_diff');
+        assert(visual.some(d => d.screen_or_case_id === 'card_type_sheet'),
+          `${label}：同名屏回修候选不得丢失：${JSON.stringify(visual)}`);
+        assert(!visual.some(d => d.screen_or_case_id === 'sms_verification_sheet'), `${label}：对照屏仍降级零候选`);
+      } finally {
+        clearFrameworkConfigCache();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    }
+  }
+});
+
+// codex 第二轮 P1：旧 script-report 的降级名单不得吞掉本轮 fail 候选。正式 summary 由真实 writer
+// 重写（LEDGER 类 BLOCKER、不产候选）、报告生成前失败出口不重写 script-report → 盘上留着带
+// downgraded_screens 的旧报告。两种旧报告各锁一条判据：
+//   ① 本 attempt 自检早先写的（身份相同、mtime 早于 gate 起点）→ 锁 mtime 判据；
+//   ② 上一 attempt 的（身份不同），mtime 被刷进 gate 窗口（复制/还原会刷新 mtime）→ 锁身份判据。
+for (const variant of ['same-attempt-before-gate', 'previous-attempt-touched'] as const) {
+  test(`6644ea45 旧报告降级名单（codex 第二轮 P1，${variant}）：正式 summary patch + 旧 report + 报告生成前失败 → 本轮 fail 屏候选保留并回退`, async () => {
+    const { root } = setupHost();
+    seedI11Host(root);
+    const reportRel = `doc/features/${FEATURE}/testing/reports/script-report.json`;
+    const writeStaleReport = (runId: string, attemptId: string): void => writeFile(root, reportRel, JSON.stringify({
+      phase: 'testing', feature: FEATURE,
+      checks: [{
+        id: 'visual_diff', category: 'structure', description: '', severity: 'MAJOR', status: 'WARN', details: 'earlier round',
+        structured: {
+          kind: 'visual_diff', downgraded_screens: I11_HOST_SCREENS.map(s => s.id),
+          goal_run_id: runId, attempt_id: attemptId, loop_id: `goal:${runId}`,
+        },
+      }],
+      summary: { verdict: 'PASS', total: 1, pass: 0, fail: 0, warn: 1, skip: 0, blockers: 0 },
+    }));
+    const probe = await runChain(root, {
+      freshRequirement: '添卡流程页面按参考截图 1:1 还原。',
+      onTesting: ({ root: r, attempt, runId, goalAttemptId }) => {
+        if (attempt !== 1) { writeCleanTesting(r); return; }
+        // 本轮：card_type_sheet 已变 fail（身份齐备、must_fix 锚定自报 major）
+        writeI11VisualDiff(r, id => (id === 'card_type_sheet' ? 'fail' : 'warn'));
+        if (variant === 'same-attempt-before-gate') {
+          writeStaleReport(runId, goalAttemptId ?? '');
+          // 早先自检写的：mtime 明确落在 gate 起点之前（避免同毫秒抖动）
+          const past = new Date(Date.now() - 5000);
+          fs.utimesSync(path.join(r, reportRel), past, past);
+        } else {
+          writeStaleReport(runId, 'i1');
+        }
+      },
+      onHarnessSummary: ({ phase, attempt }) => {
+        if (phase !== 'testing' || attempt !== 1) return null;
+        if (variant === 'previous-attempt-touched') {
+          const abs = path.join(root, reportRel);
+          const now = new Date(Date.now() + 1000);
+          fs.utimesSync(abs, now, now);
+        }
+        return { checks: [LEDGER_OBLIGATION_CHECK] };
+      },
+      onCoding: ({ root: r, attempt }) => {
+        if (attempt > 1) writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("fixed") } }');
+      },
+    });
+    const stale = JSON.parse(fs.readFileSync(path.join(root, reportRel), 'utf-8')) as { checks: Array<{ details: string }> };
+    assert(stale.checks[0].details === 'earlier round', '前提：失败出口不得重写 script-report（盘上仍是旧报告）');
+    const backtrack = probe.events.find(e => e.type === 'phase_backtrack_requested' && e.reason === 'repair_candidates');
+    assert(!!backtrack, `本轮 fail 屏须产候选并回退（旧降级名单不得生效）：${JSON.stringify(probe.events.filter(e =>
+      e.type === 'phase_backtrack_requested' || e.type === 'phase_verdict'))}`);
+  });
+}
 
 export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
