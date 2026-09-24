@@ -18,6 +18,7 @@ import * as path from 'path';
 import { spawnSync } from 'child_process';
 
 import { featureDir, featurePhaseReportsDir } from '../../config';
+import { ensureFeatureExecutionScopeFrozen } from './feature-execution-scope';
 import { recomputePhaseEvidenceStaleness, type PhaseStalenessResult } from './phase-evidence-manifest';
 import { runSyncClosureDetailed } from './phase-state';
 import { resolveUpstreamPhaseChain } from './upstream-verdict-gate';
@@ -140,7 +141,14 @@ export function runRevalidate(
   from?: string,
 ): number {
   const startedAt = new Date().toISOString();
-  const resolution = resolveUpstreamPhaseChain(projectRoot, feature);
+  // plan 6c22ae8b：与 --sync-closure / --report-reconcile-only 同源取 run 身份；有身份时链 = run 有效范围。
+  const runId = process.env.MAISON_GOAL_RUN_ID?.trim() || undefined;
+  const resolution = resolveUpstreamPhaseChain(projectRoot, feature, runId);
+  // 权威解析失败（已转交却无身份 / run 范围记录损坏）返回空链：不能当成"无需重验"写成功账本。
+  if (resolution.degraded && resolution.chain.length === 0) {
+    console.error(`错误: 无法确定 feature ${feature} 的执行范围权威：${resolution.degradedReason ?? '未知原因'}`);
+    return 1;
+  }
   const chain = [...resolution.chain];
   const hasSummary = (phase: string): boolean =>
     fs.existsSync(path.join(featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot), 'summary.json'));
@@ -192,6 +200,17 @@ export function runRevalidate(
   }
   console.log(`   重验目标：${plan.targets.map(t => `${t.phase}(${t.reason})`).join('、')}`);
   for (const s of plan.skipped) console.log(`   跳过 ${s.phase}：${s.reason}`);
+
+  // plan 6c22ae8b：第一次 spawn 前走与 --sync-closure 同一个冻结入口；确认不了权威就拒绝，不覆盖任何 summary。
+  const frozen = ensureFeatureExecutionScopeFrozen({ projectRoot, frameworkRoot, feature, runId });
+  if (frozen.checks.length) {
+    for (const check of frozen.checks) {
+      console.error(`   ✗ ${check.id}：${check.details ?? ''}`);
+      if (check.suggestion) console.error(`     改法：${check.suggestion}`);
+    }
+    console.error('   该 feature 的权威在 goal run 上时，恢复该 run 即可重验，runner 会自己重算新鲜度。');
+    return 1;
+  }
 
   const isWin = process.platform === 'win32';
   for (const target of plan.targets) {

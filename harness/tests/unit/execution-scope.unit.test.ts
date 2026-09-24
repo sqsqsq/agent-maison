@@ -37,6 +37,7 @@ import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capab
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { buildSummaryRepairCandidates, scopeRevisionInputFromRepairCandidates } from '../../scripts/utils/repair-candidates';
 import { prepareGoalModeRun } from '../../scripts/goal-mode-entry';
+import { runRevalidate, REVALIDATION_RECORD_FILE } from '../../scripts/utils/revalidate';
 import { resolveComponentClosureInputs } from '../../scripts/utils/component-closure-inputs';
 import { deriveComponentClosureObligations } from '../../scripts/utils/component-closure-obligations';
 import { buildChangeUnitGoalHandoff } from '../../scripts/utils/change-unit-progress-loop';
@@ -1562,6 +1563,93 @@ cases.push({ name: 'D1 goal run is born from the transferred feature effective s
     const afterTransfer = ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature });
     assert.equal(afterTransfer.status, 'not-applicable');
     assert(afterTransfer.checks[0]?.details?.includes('已转交给 run d1-run'), JSON.stringify(afterTransfer.checks));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+} });
+
+/** plan 6c22ae8b：进程内走真实 `runRevalidate`，捕获输出；`runId` 为调用环境的 MAISON_GOAL_RUN_ID（空=无身份）。 */
+function revalidateCaptured(root: string, frameworkRoot: string, feature: string, runId: string, from?: string): { code: number; out: string } {
+  const lines: string[] = [];
+  const log = console.log; const error = console.error;
+  const envBefore = { run: process.env.MAISON_GOAL_RUN_ID, nodeOptions: process.env.NODE_OPTIONS };
+  const restore = (key: string, value: string | undefined): void => { if (value === undefined) delete process.env[key]; else process.env[key] = value; };
+  console.log = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
+  console.error = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
+  process.env.MAISON_GOAL_RUN_ID = runId;
+  // 夹具的 framework/harness 是 junction：若子进程真被 spawn，保留链接路径才会按 consumer 布局落回本夹具
+  //（否则 realpath 落到开发仓，反向变异看不到 summary 被覆盖）。
+  process.env.NODE_OPTIONS = [envBefore.nodeOptions, '--preserve-symlinks', '--preserve-symlinks-main'].filter(Boolean).join(' ');
+  try {
+    const code = runRevalidate(path.join(frameworkRoot, 'harness'), root, frameworkRoot, feature, from);
+    return { code, out: lines.join(String.fromCharCode(10)) };
+  } finally {
+    console.log = log; console.error = error;
+    restore('MAISON_GOAL_RUN_ID', envBefore.run); restore('NODE_OPTIONS', envBefore.nodeOptions);
+  }
+}
+
+cases.push({ name: 'revalidate without authority refuses before spawning and leaves closed summaries byte-identical', run() {
+  // ①：1.2 feature，无 run 身份、无冻结记录，已有闭环阶段；显式 --from 让确实有目标。
+  const { root, frameworkRoot, feature } = setupRunlessProject();
+  try {
+    seedRunlessChain(root, feature, ['coding', 'review', 'ut']);
+    const reportsDir = featurePhaseReportsDir(root, feature, 'coding', frameworkRoot);
+    fs.writeFileSync(path.join(reportsDir, 'script-report.json'), JSON.stringify({ checks: [], summary: { verdict: 'PASS' } }));
+    const summaryBefore = fs.readFileSync(path.join(reportsDir, 'summary.json'));
+    const reportBefore = fs.readFileSync(path.join(reportsDir, 'script-report.json'));
+    assert(!fs.existsSync(featureFrozenScopePath(root, feature)), '前提：无冻结记录');
+    const { code, out } = revalidateCaptured(root, frameworkRoot, feature, '', 'coding');
+    assert.equal(code, 1, out);
+    assert(out.includes('重验目标：coding(from)'), '前提：确实有目标——' + out);
+    assert(out.includes('execution_scope_frozen') && out.includes('没有 run 身份、也没有 feature 冻结记录'), out);
+    assert(fs.readFileSync(path.join(reportsDir, 'summary.json')).equals(summaryBefore), 'summary.json 被覆盖');
+    assert(fs.readFileSync(path.join(reportsDir, 'script-report.json')).equals(reportBefore), 'script-report.json 被覆盖');
+    assert(!fs.existsSync(featureFrozenScopePath(root, feature)), '拒绝路径不得首次冻结');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+} });
+
+cases.push({ name: 'revalidate under a run identity keeps out-of-scope phases out of the target set', run() {
+  // ②：run 权威（范围 = coding 起）、feature 目录无冻结记录（宿主 f829b8 形态）；范围外 plan 有 stale summary。
+  const { root, frameworkRoot, feature } = setupRunlessProject();
+  try {
+    execFileSync('git', ['init', '-q'], { cwd: root });
+    fs.writeFileSync(path.join(root, '.gitignore'), 'framework\n');
+    execFileSync('git', ['add', '.'], { cwd: root });
+    execFileSync('git', ['-c', 'user.name=F', '-c', 'user.email=f@e.test', 'commit', '-qm', 'base'], { cwd: root });
+    const prepared = prepareGoalModeRun({ projectRoot: root, frameworkRoot, feature, runId: 'rv-run', adapter: 'codex', requirement: '把 value 改成 42' });
+    const runChain = [...prepared.manifest.execution_scope!.phase_chain];
+    assert.deepStrictEqual(runChain, ['coding', 'review', 'ut']);
+    seedRunlessChain(root, feature, ['plan', ...runChain]);
+    // 范围外 plan 的 summary 在闭环后被改 → stale
+    const planSummary = path.join(featurePhaseReportsDir(root, feature, 'plan', frameworkRoot), 'summary.json');
+    fs.writeFileSync(planSummary, JSON.stringify({ ...JSON.parse(fs.readFileSync(planSummary, 'utf8')), note: 'edited' }));
+    assert.equal(recomputePhaseEvidenceStaleness(root, feature, ['plan'], { frameworkRoot })[0].verdict, 'stale', '前提：plan stale');
+    assert(recomputePhaseEvidenceStaleness(root, feature, runChain, { frameworkRoot }).every(s => s.verdict === 'fresh'), '前提：范围内 fresh');
+    const { code, out } = revalidateCaptured(root, frameworkRoot, feature, 'rv-run');
+    assert.equal(code, 0, out);
+    const record = JSON.parse(fs.readFileSync(featureFilePath(root, feature, REVALIDATION_RECORD_FILE), 'utf8'));
+    assert.deepStrictEqual(record.chain, runChain, JSON.stringify(record.chain));
+    assert.deepStrictEqual(record.targets, [], JSON.stringify(record.targets));
+    assert.equal(record.exit_code, 0);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+} });
+
+cases.push({ name: 'revalidate without identity on a transferred feature fails instead of reporting nothing to do', run() {
+  // ③：沿 `D1 goal run is born from the transferred feature effective scope`：冻结 → 建 run 登记转交 → 无身份调用、不传 --from。
+  const { root, frameworkRoot, feature } = setupRunlessProject();
+  try {
+    execFileSync('git', ['init', '-q'], { cwd: root });
+    fs.writeFileSync(path.join(root, '.gitignore'), 'framework\n');
+    execFileSync('git', ['add', '.'], { cwd: root });
+    execFileSync('git', ['-c', 'user.name=F', '-c', 'user.email=f@e.test', 'commit', '-qm', 'base'], { cwd: root });
+    ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature });
+    prepareGoalModeRun({ projectRoot: root, frameworkRoot, feature, runId: 'rv-transfer', adapter: 'codex', requirement: '把 value 改成 42' });
+    assert.equal(readFeatureFrozenScope(root, feature)!.transferred_to, 'rv-transfer');
+    const { code, out } = revalidateCaptured(root, frameworkRoot, feature, '');
+    assert.equal(code, 1, out);
+    assert(out.includes('已转交给 run rv-transfer'), out);
+    assert(!out.includes('重验目标'), '不得进入 spawn 段：' + out);
+    const recordAbs = featureFilePath(root, feature, REVALIDATION_RECORD_FILE);
+    assert(!fs.existsSync(recordAbs) || JSON.parse(fs.readFileSync(recordAbs, 'utf8')).exit_code !== 0, '写了 exit_code:0 的账本');
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 
