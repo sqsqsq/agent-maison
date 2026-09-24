@@ -31,13 +31,13 @@ todos:
     status: completed
   - id: rcp-testing-backtrack
     content: C2：按 §2.1 新增 RC-9（testing→coding→review→ut→testing），替身按产品源码渲染；判据与变异见 §2.1。
-    status: in_progress
+    status: completed
   - id: rcp-selfcheck-journal
     content: C3：6279fcd7 两笔提交且 T0-V 走 (a)（或走 (b) 时 C0 已提交）后，按 §2.2 在 RC-9 内加执行者多次自检；此前保持未完成。
-    status: pending
+    status: cancelled
   - id: rcp-validation
     content: 按 §7 目标套件迭代、全量收口一次，结果记 §9。
-    status: pending
+    status: completed
 ---
 
 # 宿主语料四条真实路径进 real-chain
@@ -172,6 +172,11 @@ d4a1f7c3 §5——**链走得通 + owner/reason 正确，凡要求 PASS/closed �
 C1 ≈ +0–5 s（不增 run，只多读盘断言）；C2 RC-9 ≈ +100–120 s（spec→testing ≈ 65 s + coding→testing 二轮 ≈ 45 s）；
 C3 若并入 RC-9 ≈ +15 s（3 次自检 harness），另起用例则 ≈ +110 s。合计约 **365–390 s**。两套件仍 `releaseOnly`，日常 `npm test` 零增量。
 
+**实测（2026-09-24，HEAD 815cd996 + C2 登记，C3 取消）**：`npm run test:unit -- --release --filter real-chain` 两套件合计墙钟 **330 s**
+（real-chain 3 条 + seams 7 条，10/0；seams 逐条 RC-1 27.2 / RC-2 1.9 / RC-3 56.0 / RC-4 61.1 / RC-8a 18.6 / RC-8b 16.1 / **RC-9 80.5 s**，
+seams 合计 261.4 s）。RC-9 单独进程跑为 141–145 s，差额是单进程首次加载/转译整条 import 图的冷启动，套件里由前面的用例摊掉。
+低于 §9.4 登记前的 415–425 s 预估。
+
 ## 7. 验证与提交划分
 
 - 迭代（`harness/` 下；`run-unit` 只读第一个 `--filter`，一条命令一个）：`npm run typecheck`；`npm run test:unit -- --filter profile-routing`；
@@ -254,3 +259,17 @@ codex 第一轮：1 阻断 + 2 建议，已改——RC-9 修复触发由调用�
 - 全量 `cd harness && npm test` 一次：exit 0（typecheck + unit 4762 passed / 0 failed，real-chain 两套件按 release-only 跳过 + fixtures 46 / 0）。
 - `git diff --check` 0；`node scripts/check-plan-version.mjs` PASS；node 逐字节扫本批全部改动文件均无 CR。
 - 本批不含生产文件改动（M1/M2/实验补丁/C2 变异均已 `git checkout` 还原）。**注意**：全量跑期间（本地 11:16–11:25）工作树里出现了非本批的改动——`harness/prompts/verify-coding.md`、`verify-testing.md`、`harness/tests/unit/execution-channel.unit.test.ts`、`skills/reference/device-testing-workflow-detail.md`（另一写者），本批未触碰；上面的全量结果可能混入了它们的中间态，提交时须按归属分拣。
+
+### 10.5 C2 收口（2026-09-24，基线 HEAD 815cd996 = plan f3b8d261 笔一；本批只改测试，未 commit）
+
+- **§10.1 已裁决并修复**：调度者按 b5c1e9d7 范式另起 plan [f3b8d261](coding越界集合承接UT产出_真实链路回灌_f3b8d261.plan.md)，笔一（UT 调用自有源码写随 `phase_write_observed.owned` 落盘 + check-coding 只扣字节未变、无他阶段改写的 UT 产出）已提交 815cd996。§10.1 的候选修法（按 profile 测试正则剔除）被否决，未采用。
+- **RC-9 登记**：`real-chain-seams.unit.test.ts` 在 `runAll` 前登记 `RC-9`（releaseOnly 随套件）。七条判据原样；另补「承接不免 UT 重验」（f3b8d261 §4.2）：回退后 ut 最后一次 PASS 的事件下标 > coding 次轮 PASS，且 ut `summary.json` 的 mtime 晚于 testing 首次调用时的快照（不要求旧 UT 证据 fresh）。实跑：单独 145.1 s 全过（补新断言前一次 141.2 s）；套件内 80.5 s 全过（§6 实测）。
+- **C2 变异在正式修复上重跑**（改源仓生产文件 → 只跑 RC-9 → `git checkout` 还原，`git status` 只剩两份测试文件）：
+  - ③ `invalidatedBt` 改为 `.slice(targetIdxBt, targetIdxBt + 1)`（只作废目标阶段）→ RC-9 **红于 ②**：`invalidated_phases 缺中段阶段：["coding"]`（137.8 s）。与 §9.3 临时补丁上的结果一致；§7 原文「→ RC-9 ④ 红」不成立（review/ut 仍按新鲜度重跑），维持 §10.3-4 改记。
+  - ④ `recomputePhaseEvidenceStaleness` 的 `ownedOutputIsCurrent` 在 pendingOwnerPhase 判断之后恒返回 false（去掉 b5c1e9d7「owner 已闭环且输出新鲜」承接）→ RC-9 **红于回退之前**（「没有发生回退」，52.3 s）：首轮 coding 闭环时 NEXT_STEP 判 spec manifest stale（changed: index.ets、AllBanksPage.ets），`recommendation=rerun_phase:spec` → `backtrack_target_absent` HALTED，review/ut/testing 从未开始。隔离不到 ⑤，与 §9.3 一致。对「回退后 b5c1e9d7 承接」的隔离记**未验证 / 不适用**（前置链失败，不算 ⑤ 被杀）。
+  - 附（f3b8d261 §4.3 M3，笔一时归笔二）：runtime 不发 `owned`（`phase === ut` 条件恒假）→ RC-9 **红于 ④**（「review 回退后没有重新开始」，101.7 s），日志里回退后 coding FAIL `diff_within_scope`（scope_violation）——RC-9 确实锁住 f3b8d261 的修复。
+- **RC-9b（UT→coding）未覆盖**：可行性实验结论见 f3b8d261 §8.3。一句话：UT 执行替身按源码判 `ut_hvigor_test` FAIL/`code_regression` 能落到真实 ut 报告，但同一份报告另有 20 项「不适用」BLOCKER SKIP（DAG / use-cases / L3 / MockKit / import 白名单等），`canProduceVerifierRequest`（verifier-plan.ts:273-279）因 BLOCKER SKIP 不签发诊断 verifier，候选 `ut_product_assertion_failure` 不产，ut 同签名二轮 `no_progress_guard` 停机。替身与 RC-9b 函数均已撤回，不登记。
+- **路径 2 / C3 取消**（用户裁决）：T0-V 走 (b) 需要给采集传输面开生产缝（§10.2），用户裁定**不开生产缝**，路径 2（同 attempt 执行者多次自检、journal 多条）在 real-chain 记为**未覆盖**；`rcp-selfcheck-journal` 置 cancelled，不以 6279fcd7 T1/T5 或 goal-runner-testing-integrity 的覆盖冒充。
+- **todo**：`rcp-testing-backtrack` → completed；`rcp-selfcheck-journal` → cancelled（上条原因）；`rcp-validation` → completed（依据：C1 批全量 `npm test` 见 §10.4；本批只动两个 release-only 套件的测试代码与 `real-chain-host.ts` 注释，全量跑对它们只做存在性校验，故本批只跑 typecheck + `--release --filter real-chain`；调度者随后在笔二树上补跑全量 `cd harness && npm test`：4773/0 + fixtures 46/0，EXIT=0）。
+- 验证：`npm run typecheck` exit 0；`--release --filter real-chain` 10/0（330 s）；`git diff --check` 无输出；node 逐字节扫本批改动文件无 CR。
+- **放弃的准确性**：「UT 报告刷新」按 summary.json mtime 判（文件系统时间戳，非内容）；同一毫秒内重写或 mtime 精度不足的文件系统上可能误红；mtime 只证明文件被重写过（重写旧内容也会变大），重验真实性由事件序断言（回退后 ut PASS 晚于 coding 次轮 PASS）承担，两者合用。

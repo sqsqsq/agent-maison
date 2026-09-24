@@ -15,13 +15,13 @@
 // 此后剩的两条红（RC-8a / RC-4 前提②）经复核**都是夹具把判据造错了地方，不是生产缺陷**，
 // 改法与证据见 plan d4a1f7c3 §10.14；codex 五条阻断同笔落地。
 //
-// 已写出的六条：RC-1 / RC-2 / RC-3 / RC-4 / RC-8a / RC-8b。
+// 已写出的六条：RC-1 / RC-2 / RC-3 / RC-4 / RC-8a / RC-8b（另 RC-9 见下）。
 // RC-5 / RC-6a / RC-6b 未做——三条共用同一个前置：testing 必须真正驱动视觉采集链
 //（`ui_change=new_or_changed` → `captureIfUiChanged` → nav 配置 → 截图/layout dump →
 // `visual-diff.json`），而那条链在本仓从未被真实 harness 跑通过（正例链自述"视觉采集与 OCR
 // 全链未驱动"）。RC-7 未做——四态各自给真实原因要真 goal-runner 子进程，成因依赖本机是否装了
 // adapter CLI，按 §8「不许 SKIP 出包」这类环境依赖不得进发布门套件。理由与偏差全文见 plan §10.9。
-// RC-9（plan 14771034 路径 1）已写成 `rc9TestingBacktrackThroughCoding`，待生产修复裁决、**暂不登记**。
+// RC-9（plan 14771034 路径 1）2026-09-24 在 plan f3b8d261 生产修复上七条全过后登记，共七条。
 // ============================================================================
 
 import * as fs from 'fs';
@@ -928,11 +928,11 @@ ${dumpPhase(project, 'plan')}`,
 // 放弃的准确性：宿主回退由 visual_diff 候选驱动，本条由 hylyre 断言路由驱动——两个生产者
 // 汇入同一 backtrack_to_phase，视觉候选分流不在本条（plan §2.1 末）。
 //
-// **暂不登记进 `cases`（2026-09-24）**：本条在现行生产上确定性红——回退后的 coding 被
-// `diff_within_scope`（check-coding.ts:342，run 基线累计 diff）判越界，越界项恰是 ut 阶段自己写的
-// UT 测试文件（不在 contracts.files）。这是本路径撞出的生产角色不一致，修复须单独一笔、待裁决；
-// 证据、单变量实验与候选修法见 plan 14771034 §10。裁决落地后在 `runAll` 前加一行
-// `test('RC-9 …', rc9TestingBacktrackThroughCoding)` 登记。
+// **已登记（2026-09-24）**：本条首次实跑撞出生产角色不一致——回退后的 coding 被 `diff_within_scope`
+// （run 基线累计 diff）判越界，越界项恰是 ut 阶段本 run 新建的 UT 测试文件（plan 14771034 §10.1）。
+// 修复见 plan f3b8d261（UT 调用的自有源码写随 `phase_write_observed.owned` 落盘，check-coding 只扣除
+// 字节未变、无他阶段改写的那份）。末尾另断「承接不免 UT 重验」。
+// UT→coding 回退（RC-9b）在本链不可达、未覆盖，原因见 real-chain-host.ts 文件尾「已知上限」3。
 // ===========================================================================
 
 function codingBacktrackRequested(p: RealChainProject): boolean {
@@ -944,6 +944,9 @@ function codingBacktrackRequested(p: RealChainProject): boolean {
 
 export async function rc9TestingBacktrackThroughCoding(): Promise<void> {
   await withProject(async (project, birthChain) => {
+    /** testing 首次调用时 ut summary 的 mtime——回退前那份 ut 报告（「承接不免 UT 重验」的对照）。 */
+    let utSummaryMtimeBeforeTesting: number | undefined;
+    const utSummaryAbs = path.join(featurePhaseReportsDir(project.root, project.feature, 'ut', project.frameworkRoot), 'summary.json');
     const probe = await runGoalRuntimeChain(project.root, {
       frameworkRoot: project.frameworkRoot,
       featureId: project.feature,
@@ -962,7 +965,12 @@ export async function rc9TestingBacktrackThroughCoding(): Promise<void> {
       },
       onReview: ctx => { project.runId = ctx.runId; writeReviewMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'review'); },
       onUt: ctx => { project.runId = ctx.runId; writeUtMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'ut'); },
-      onTesting: ctx => { project.runId = ctx.runId; writeTestPlan(project); if (ctx.attempt > 1) publishVerifier(project, 'testing'); },
+      onTesting: ctx => {
+        project.runId = ctx.runId;
+        if (utSummaryMtimeBeforeTesting === undefined && fs.existsSync(utSummaryAbs)) utSummaryMtimeBeforeTesting = fs.statSync(utSummaryAbs).mtimeMs;
+        writeTestPlan(project);
+        if (ctx.attempt > 1) publishVerifier(project, 'testing');
+      },
     });
     const events = probe.events;
     const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
@@ -1015,10 +1023,27 @@ export async function rc9TestingBacktrackThroughCoding(): Promise<void> {
       assert(s?.verdict === 'PASS' && s.closure_status === 'closed', `${ph} 终局未 PASS+closed：\n${dump()}`);
     }
     assert(events.filter(e => e.type === 'phase_verdict' && e.phase === 'testing').length >= 2, `testing 没有第二轮：\n${dump()}`);
+    // 承接不免 UT 重验（plan f3b8d261 §4.2）：coding 次轮之所以不被 UT 测试文件判越界，是扣除了
+    // 「本 run UT 产出、字节未变」的那份文件——这只是归属，不等于 UT 结论仍然成立。回退后 ut 的
+    // PASS 须晚于 coding 次轮的 PASS，且 ut 报告在回退后重写过（不要求旧 UT 证据 fresh）。
+    const lastVerdictIdx = (ph: string): number => {
+      for (let i = events.length - 1; i > btIdx; i--) {
+        if (events[i].type === 'phase_verdict' && events[i].phase === ph && events[i].verdict === 'PASS') return i;
+      }
+      return -1;
+    };
+    const codingPassIdx = lastVerdictIdx('coding');
+    const utPassIdx = lastVerdictIdx('ut');
+    assert(codingPassIdx > btIdx && utPassIdx > codingPassIdx,
+      `回退后 ut 的 PASS 不晚于 coding 次轮 PASS（coding=${codingPassIdx} ut=${utPassIdx} bt=${btIdx}）：\n${dump()}`);
+    assert(utSummaryMtimeBeforeTesting !== undefined && fs.statSync(utSummaryAbs).mtimeMs > utSummaryMtimeBeforeTesting,
+      `回退后 ut 报告没有重写（summary mtime ${utSummaryMtimeBeforeTesting} → ${fs.statSync(utSummaryAbs).mtimeMs}）`);
     // ⑦ 哨兵：本路径无视觉行，不得出现账本完整性停机（C3 才有意义）。
     assert(!/visual_ledger_integrity/.test(flat), `出现 visual_ledger_integrity：\n${dump()}`);
   })();
 }
+
+test('RC-9 testing 回退 coding：review/ut 重验、再进 testing（coding 承接 ut 本 run 产出的测试文件）', rc9TestingBacktrackThroughCoding);
 
 export async function runAll(): Promise<UnitCaseResult[]> {
   const out: UnitCaseResult[] = [];

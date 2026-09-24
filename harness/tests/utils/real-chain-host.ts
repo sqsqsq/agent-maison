@@ -437,11 +437,15 @@ export function provisionRealChainProject(): RealChainProject {
 //    `.id('X')` 才克隆 passed golden，否则克隆 `failed-assertion-mismatch-presence` 并落一份 ui_dump
 //    失败边界证据。它让假设备**读源码字面**——只证明「断言失败 → 责任路由 → 回退 → 重验」这条
 //    消费链，不证明任何设备真值（元素是否真渲染、是否可见、布局是否正确一概不知）；规则只在
-//    `real-chain-providers/` 内，生产零感知。正例材料写全 id，trace 仍全通过；失败形态目前只由
-//    seams 的 RC-9 驱动，而 RC-9 待生产修复裁决、**尚未登记**（见该条注释）——登记前失败路由仍未覆盖。
+//    `real-chain-providers/` 内，生产零感知。正例材料写全 id，trace 仍全通过；失败形态只由
+//    seams 的 RC-9 驱动（plan f3b8d261 修复后已登记）。
 //    **视觉采集链仍未驱动**（plan 14771034 T0-V）：spec 声明 `ui_change` + P0 屏 + nav 配置后，
 //    首次非复用运行进 `check-testing.ts:4862-4890` 写死的 hylyre 截图构建器，实际 spawn
 //    `<pythonPath> -m hylyre screenshot` 而失败——采集传输面没有 profile 级替换缝。
 // 3. UT 执行（含命名/框架导入/测试注册）与编译是返定值替身；`coding-host-rules` 只覆盖
 //    `checkCodingCompile`，结构与溯源两组检查留在 hmos-app 的真实实现上。
+//    **UT→coding 回退（`ut_product_assertion_failure`）不可达**（plan f3b8d261 §8.3 RC-9b 实验）：
+//    替身即使按源码判 `ut_hvigor_test` FAIL/code_regression，本链 ut 报告里另有 20 项「不适用」的
+//    BLOCKER SKIP（DAG / use-cases / L3 / MockKit 等），`canProduceVerifierRequest` 因此不签发
+//    诊断 verifier、不产候选，ut 同签名二轮 no_progress_guard 停机。
 // ============================================================================

@@ -30,10 +30,10 @@ todos:
     status: completed
   - id: cso-real-chain
     content: 按 §4.2 在正式修复上登记 RC-9、补 RC-9b（UT→coding），重跑 14771034 C2 变异 ③④，结果回写 14771034 §9 与本 plan §8。
-    status: pending
+    status: completed
   - id: cso-validation
     content: 按 §6 迭代目标套件、全量收口一次，结果记 §8。
-    status: in_progress
+    status: completed
 ---
 
 # coding 越界集合承接 UT 产出（真实链路回灌）
@@ -275,3 +275,45 @@ Review：codex 第一轮 1 阻断 + 4 建议，已改——observations 落盘�
 U5 模块外路径带匹配事实（§4.1、§4.3）；预列 UT 文件登记为既有独立缺陷、不跳过测试根（§3.4、§7.2）；RC-9b 不阻塞开工（§4.2）。
 裁定成立：事实产出点、复用 `phase_write_observed` 加独立 `owned`、只记 UT、`spec.md:29` 补说明而非改禁令、扣除位置、伪造面接受、
 resume 复用已有事实、四处取首条断言收窄到 testing。
+
+### 8.3 笔二（2026-09-24，基线 HEAD 815cd996 = 笔一已提交；只改测试，未 commit）
+
+**改动**（零生产改动）
+- `harness/tests/unit/real-chain-seams.unit.test.ts`：RC-9 在 `runAll` 前登记；补「承接不免 UT 重验」断言——回退后 ut 最后一次 PASS 的
+  事件下标 > coding 次轮 PASS，且 ut `summary.json` mtime 晚于 testing 首次调用时的快照；头注释与 RC-9 段注释改为已登记。
+- `harness/tests/utils/real-chain-host.ts`：仅文件尾「已知上限」——2 删「RC-9 尚未登记」；3 补 RC-9b 不可达的原因。UT 执行替身保持返定值（实验用的按源码判规则已撤回）。
+- `harness/tests/run-unit.ts`：仅一行注释（套件条数加 RC-9），登记方式不变，seams 仍 releaseOnly。
+
+**RC-9**：七条判据 + 新断言全过——单独进程 145.1 s（补新断言前一次 141.2 s）；套件内 80.5 s（`--release --filter real-chain` 10/0，两套件合计 330 s，
+明细见 14771034 §6 实测）。笔二收口全量 `cd harness && npm test`（笔二树）：4773/0 + fixtures 46/0，EXIT=0（release-only 两套件按设计 SKIP）。
+
+**RC-9b（UT→coding）可行性实验 → 未覆盖、不登记**
+- 构造（实验代码已撤回）：UT 执行替身 `checkUtHvigorTest` 按产品源码字面判（执行的 UT 正文含 `openCard()` 而 `BankService.ets` 缺 `!!id`
+  → FAIL `failure_kind=code_regression`、`affected_files=[BankService.ets]`）；coding 在本 run 无 `phase_backtrack_requested to_phase=coding`
+  时把 BankService 写成恒放行；ut 第 2 轮起发布含 `end_to_end_driving` / `business_assertion_value` 两项 PASS 表格、终态 `PASS / 0` 的 verifier 报告（verify-ut.md:41 诊断口径）。
+- 实跑（93.6 s）：spec→plan→coding→review 全 PASS；ut 两轮 FAIL，唯一 BLOCKER FAIL 即 `ut_hvigor_test`（code_regression，替身生效），
+  第二轮 `no_progress_guard` HALTED，无回退、testing 未开始；ut summary 无 `verifier_subject_id`、无 `repair_candidates`。
+- 单变量定位（对该次实跑落盘的真实 `ut/reports/script-report.json` 直接调生产 `canProduceVerifierRequest`）：原样 → `allowed:false`，原因
+  「存在 BLOCKER SKIP（dag_files_parseable、usecase_spec_schema、…共 20 项）：门禁未跑完，不进入失败诊断」（verifier-plan.ts:273-279）；
+  只去掉这 20 项 BLOCKER SKIP → `allowed:true, kind:repair_diagnosis, diagnosticCheckIds:[ut_hvigor_test]`。即：诊断 verifier 不签发 →
+  `ut_product_assertion_failure`（repair-candidates.ts:600-632）无从产生，与替身、verifier 文本无关。
+- 为何不硬凑：这 20 项 BLOCKER SKIP 分两类——一类是夹具材料缺失（DAG / use-cases 文件不存在等），补材料可消除；另一类是生产的**正常不适用分支**
+  （如无 L3 记录 check-ut.ts:3586、未用 MockKit :3771、无 characterization DAG :2635），补齐材料也不会消失，只有生产资格判定认得「已确认不适用」才能过。
+  前者远超路径范围且会改变正例链 ut 形态，后者违反零生产改动。按 §4.2「替身不足以触发时如实记为未覆盖」处理；生产缺口另立 plan d7e3b9a4。
+- 放弃的准确性：UT→coding 这条同根路径（最早撞的一条）在 real-chain 没有端到端锁；承接本身由 U1–U6/R1 与 RC-9（testing→coding，同一事件回放、
+  同一扣除）覆盖，差别只在回退入口。**已核实的生产缺口（不在本 plan 范围，另立 plan d7e3b9a4）**：宿主 run f829b8 的 ut 报告（PASS，62 checks）恒带 3 项
+  「已确认不适用」的 BLOCKER SKIP（`ut_unsupported_targets_handled` / `ut_hypium_mockkit_policy` / `origin_tag_required`），`canProduceVerifierRequest`
+  一律当「门禁未跑完」拒绝诊断——宿主上 `ut_product_assertion_failure` 结构性不可达，ut 产品断言失败只会同签名停机。既有缝 `CHECK_NOT_APPLICABLE_MARKER`
+  /`isCheckNotApplicable`（types.ts:618-630，B05 D2）尚未被资格判定消费、check-ut 出口也未打标。
+
+**变异**（改源仓生产文件 → 只跑 RC-9 → `git checkout` 还原；每条后 `git status` 只剩两份测试文件）
+| id | 改动 | 结果 |
+|---|---|---|
+| M3 | `goal-phase-runtime.ts` `utOwned` 的 `phase === ut` 恒假（不发 owned） | RC-9 红于 ④「review 回退后没有重新开始」（101.7 s）；日志中回退后 coding FAIL `diff_within_scope`（scope_violation）。§4.3「M3 → RC-9 红」成立；RC-9b 部分因未覆盖不适用 |
+| 14771034 ③ | `invalidatedBt` 只留目标阶段 | RC-9 红于 ②「invalidated_phases 缺中段阶段：["coding"]」（137.8 s） |
+| 14771034 ④ | `ownedOutputIsCurrent` 去掉「owner 已闭环且输出新鲜」承接 | RC-9 回退前即红「没有发生回退」（52.3 s）：首轮 coding 闭环判 spec manifest stale → `backtrack_target_absent` HALTED |
+
+**验证**：`npm run typecheck` exit 0；`npm run test:unit -- --release --filter real-chain` 10/0（real-chain 3 + seams 7），墙钟 330 s；
+`git diff --check` 无输出；node 逐字节扫本批改动文件无 CR。未跑全量（笔一收口已跑；本批只动 release-only 套件测试与注释）。
+
+**todo**：`cso-real-chain` → completed（RC-9 登记 + 新断言、RC-9b 实验并记未覆盖、C2 变异 ③④ 与 M3 重跑）；`cso-validation` → completed。
