@@ -1,0 +1,42 @@
+feature: demo-card
+source: approved
+version: '1'
+flows:
+  open_card: [all_banks, open_card_entry]
+criteria:
+  - id: AC-1
+    feature: F2
+    description: 点击银行条目进入开卡流程
+    target: 银行条目
+    priority: P0
+    testable: true
+    verification_steps:
+      - 在全部银行页点击银行条目
+    expected_result: 进入开卡流程页
+    ut_layer: device
+    device_focus: 真机点击银行条目核对跳转开卡流程
+    linked_flow: open_card
+    checkpoint:
+      pre_screen: all_banks
+      action:
+        type: touch
+        target_element_id: bank_row_cmb
+      post_screen: open_card_entry
+      required_element_ids:
+        - open_card_title
+    requirement_ref:
+      source_path: doc/features/demo-card/requirements/requirement.md
+      snippet: 点击银行条目进入开卡流程
+  - id: AC-2
+    feature: F1
+    description: 银行列表展示
+    target: 银行列表
+    priority: P1
+    testable: true
+    verification_steps:
+      - 打开全部银行页
+    expected_result: 列表展示银行条目
+    ut_layer: both
+    ut_focus: AllBanksPage 列表渲染
+    device_focus: 真机打开全部银行页核对列表渲染
+boundaries: []

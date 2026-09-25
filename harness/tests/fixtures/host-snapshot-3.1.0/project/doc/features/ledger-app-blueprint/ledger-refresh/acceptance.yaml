@@ -1,0 +1,15 @@
+feature: cu-bGVkZ2VyLWFwcC1ibHVlcHJpbnQAbGVkZ2VyLXJlZnJlc2g
+source: derive.blueprint-acceptance:sha256:fe345106ba3e8501f59c180ed060d7a542e874db951d4b1a4e3324cc7862a66d:sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439
+version: "1"
+boundaries: []
+criteria:
+  - id: AC-1
+    prd_function: null
+    priority: P0
+    description: refresh and recover
+    testable: true
+    verification_steps:
+      - 新增一笔账目后观察账页与重启后的余额
+    expected_result: consumer refreshed
+    ut_layer: unit
+    ut_focus: flow

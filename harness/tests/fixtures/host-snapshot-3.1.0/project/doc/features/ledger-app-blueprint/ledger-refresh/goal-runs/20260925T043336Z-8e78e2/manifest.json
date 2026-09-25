@@ -1,0 +1,535 @@
+{
+  "schema_version": "1.0",
+  "start_phase": "coding",
+  "end_phase": "ut",
+  "feature": "cu-bGVkZ2VyLWFwcC1ibHVlcHJpbnQAbGVkZ2VyLXJlZnJlc2g",
+  "requirement": "新增一笔账目后刷新账页并在重启后恢复余额",
+  "adapter": "codex",
+  "adapter_provenance": "local_config",
+  "chain_override": [
+    "coding",
+    "review",
+    "ut"
+  ],
+  "budget": {
+    "max_retries_per_phase": 2,
+    "max_total_turns": 30,
+    "wall_clock_minutes": 480,
+    "max_transient_api_retries": 3
+  },
+  "dependency_policy": {
+    "deferrable_blocking_classes": [
+      "externalBlocked"
+    ],
+    "deferrable_failure_kinds": [
+      "device_blocked"
+    ],
+    "propagate_to_downstream": true
+  },
+  "unattended": {
+    "write_mode": "full-access",
+    "approval_mode": "never",
+    "max_turns": 20
+  },
+  "run_id": "20260925T043336Z-8e78e2",
+  "report_dir": "doc/features/ledger-app-blueprint/ledger-refresh/goal-runs/20260925T043336Z-8e78e2",
+  "created_at": "2026-09-25T04:33:36.609Z",
+  "execution_scope": {
+    "schema_version": "1.0",
+    "completion_target": "feature",
+    "requested_results": [
+      "账目刷新与恢复"
+    ],
+    "obligations": [
+      {
+        "id": "acceptance-context:candidate",
+        "kind": "acceptance-context",
+        "applicability": "required",
+        "reason": "已有验收可用",
+        "basis": [
+          {
+            "input_id": "acceptance",
+            "source": {
+              "kind": "artifact",
+              "artifact": "acceptance@1"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\contracts\\ledger-api.yaml",
+                "exists": true,
+                "sha256": "6ba6f2f6de504f784319419444d92a50332f736a2d824c934d6f1fefcef584d2",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\ledger-app-blueprint\\blueprint\\component-blueprint.yaml",
+                "exists": true,
+                "sha256": "339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\acceptance.yaml",
+                "exists": true,
+                "sha256": "2a8b257571d1b6b8e7b1b589374f132cf0ec52429c1c4165a9362c55227270de",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\change-unit.yaml",
+                "exists": true,
+                "sha256": "fe345106ba3e8501f59c180ed060d7a542e874db951d4b1a4e3324cc7862a66d",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\use-cases.yaml",
+                "exists": true,
+                "sha256": "40c6e782288c023909c9c04213a7a692ab94861a01f1416f23b43555bc890f5d",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\mappings\\create-entry.yaml",
+                "exists": true,
+                "sha256": "984f318a52562578587ef8bf06db9e345255407390a12f9a0ac22bfc2ebc56b7",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\requirements\\ledger.md",
+                "exists": true,
+                "sha256": "1cb261b1d7fa9e60c5a113c6f1a8029a9101809ee206836d6ca8a885123cc988",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/ledger-app-blueprint/ledger-refresh/acceptance.yaml",
+              "doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml",
+              "doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml",
+              "contracts/ledger-api.yaml",
+              "mappings/create-entry.yaml",
+              "requirements/ledger.md",
+              "doc/features/ledger-app-blueprint/ledger-refresh/use-cases.yaml"
+            ],
+            "content_fingerprint": "0dc9fdaefb26fc585bea8857d34f22839c9834c2ef15f7034f1a63170e1158bf"
+          }
+        ],
+        "satisfied_by": [
+          {
+            "input_id": "acceptance",
+            "source": {
+              "kind": "artifact",
+              "artifact": "acceptance@1"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\contracts\\ledger-api.yaml",
+                "exists": true,
+                "sha256": "6ba6f2f6de504f784319419444d92a50332f736a2d824c934d6f1fefcef584d2",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\ledger-app-blueprint\\blueprint\\component-blueprint.yaml",
+                "exists": true,
+                "sha256": "339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\acceptance.yaml",
+                "exists": true,
+                "sha256": "2a8b257571d1b6b8e7b1b589374f132cf0ec52429c1c4165a9362c55227270de",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\change-unit.yaml",
+                "exists": true,
+                "sha256": "fe345106ba3e8501f59c180ed060d7a542e874db951d4b1a4e3324cc7862a66d",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\use-cases.yaml",
+                "exists": true,
+                "sha256": "40c6e782288c023909c9c04213a7a692ab94861a01f1416f23b43555bc890f5d",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\mappings\\create-entry.yaml",
+                "exists": true,
+                "sha256": "984f318a52562578587ef8bf06db9e345255407390a12f9a0ac22bfc2ebc56b7",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\requirements\\ledger.md",
+                "exists": true,
+                "sha256": "1cb261b1d7fa9e60c5a113c6f1a8029a9101809ee206836d6ca8a885123cc988",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/ledger-app-blueprint/ledger-refresh/acceptance.yaml",
+              "doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml",
+              "doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml",
+              "contracts/ledger-api.yaml",
+              "mappings/create-entry.yaml",
+              "requirements/ledger.md",
+              "doc/features/ledger-app-blueprint/ledger-refresh/use-cases.yaml"
+            ],
+            "content_fingerprint": "0dc9fdaefb26fc585bea8857d34f22839c9834c2ef15f7034f1a63170e1158bf"
+          }
+        ],
+        "owner_phase": "spec"
+      },
+      {
+        "id": "design-context:candidate",
+        "kind": "design-context",
+        "applicability": "required",
+        "reason": "已有设计可用",
+        "basis": [
+          {
+            "input_id": "contracts",
+            "source": {
+              "kind": "artifact",
+              "artifact": "contracts@1"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\contracts\\ledger-api.yaml",
+                "exists": true,
+                "sha256": "6ba6f2f6de504f784319419444d92a50332f736a2d824c934d6f1fefcef584d2",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\ledger-app-blueprint\\blueprint\\component-blueprint.yaml",
+                "exists": true,
+                "sha256": "339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\change-unit.yaml",
+                "exists": true,
+                "sha256": "fe345106ba3e8501f59c180ed060d7a542e874db951d4b1a4e3324cc7862a66d",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\contracts.yaml",
+                "exists": true,
+                "sha256": "3499e70fb614809fb58bcc5d016df794739d83c40d74e3eb47e403c65fffd440",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\use-cases.yaml",
+                "exists": true,
+                "sha256": "40c6e782288c023909c9c04213a7a692ab94861a01f1416f23b43555bc890f5d",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\mappings\\create-entry.yaml",
+                "exists": true,
+                "sha256": "984f318a52562578587ef8bf06db9e345255407390a12f9a0ac22bfc2ebc56b7",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\requirements\\ledger.md",
+                "exists": true,
+                "sha256": "1cb261b1d7fa9e60c5a113c6f1a8029a9101809ee206836d6ca8a885123cc988",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/ledger-app-blueprint/ledger-refresh/contracts.yaml",
+              "doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml",
+              "doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml",
+              "contracts/ledger-api.yaml",
+              "mappings/create-entry.yaml",
+              "requirements/ledger.md",
+              "doc/features/ledger-app-blueprint/ledger-refresh/use-cases.yaml"
+            ],
+            "content_fingerprint": "04a515fc0c34d8968cf3c647189137d27da189ed70d0ceeff10d7d0449da865c"
+          }
+        ],
+        "satisfied_by": [
+          {
+            "input_id": "contracts",
+            "source": {
+              "kind": "artifact",
+              "artifact": "contracts@1"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\contracts\\ledger-api.yaml",
+                "exists": true,
+                "sha256": "6ba6f2f6de504f784319419444d92a50332f736a2d824c934d6f1fefcef584d2",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\ledger-app-blueprint\\blueprint\\component-blueprint.yaml",
+                "exists": true,
+                "sha256": "339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\change-unit.yaml",
+                "exists": true,
+                "sha256": "fe345106ba3e8501f59c180ed060d7a542e874db951d4b1a4e3324cc7862a66d",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\contracts.yaml",
+                "exists": true,
+                "sha256": "3499e70fb614809fb58bcc5d016df794739d83c40d74e3eb47e403c65fffd440",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\use-cases.yaml",
+                "exists": true,
+                "sha256": "40c6e782288c023909c9c04213a7a692ab94861a01f1416f23b43555bc890f5d",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\mappings\\create-entry.yaml",
+                "exists": true,
+                "sha256": "984f318a52562578587ef8bf06db9e345255407390a12f9a0ac22bfc2ebc56b7",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\requirements\\ledger.md",
+                "exists": true,
+                "sha256": "1cb261b1d7fa9e60c5a113c6f1a8029a9101809ee206836d6ca8a885123cc988",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/ledger-app-blueprint/ledger-refresh/contracts.yaml",
+              "doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml",
+              "doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml",
+              "contracts/ledger-api.yaml",
+              "mappings/create-entry.yaml",
+              "requirements/ledger.md",
+              "doc/features/ledger-app-blueprint/ledger-refresh/use-cases.yaml"
+            ],
+            "content_fingerprint": "04a515fc0c34d8968cf3c647189137d27da189ed70d0ceeff10d7d0449da865c"
+          }
+        ],
+        "owner_phase": "plan"
+      },
+      {
+        "id": "implementation:request",
+        "kind": "implementation",
+        "applicability": "required",
+        "reason": "本次请求包含改代码",
+        "basis": [
+          {
+            "input_id": "codebase",
+            "source": {
+              "kind": "derive",
+              "provider_id": "derive.codebase"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\src\\ledger\\LedgerFeature.ets",
+                "exists": true,
+                "sha256": "60bd727bec6bd25bf5ed8eca02dccdae1cf7fbd628abe74aed23c465a4613bf1",
+                "role": "derive"
+              }
+            ],
+            "source_refs": [
+              "src/ledger/LedgerFeature.ets"
+            ],
+            "content_fingerprint": "b83875df5fcb0aee80d258a6639208288a03b29102b699552b4d737534037732"
+          }
+        ],
+        "owner_phase": "coding"
+      },
+      {
+        "id": "code-review:request:review",
+        "kind": "code-review",
+        "owner_phase": "review",
+        "applicability": "required",
+        "reason": "用户明确请求 review",
+        "basis": []
+      },
+      {
+        "id": "unit-evidence:acceptance",
+        "kind": "unit-evidence",
+        "applicability": "required",
+        "reason": "unit-evidence: AC-1",
+        "basis": [
+          {
+            "input_id": "acceptance",
+            "source": {
+              "kind": "artifact",
+              "artifact": "acceptance@1"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\contracts\\ledger-api.yaml",
+                "exists": true,
+                "sha256": "6ba6f2f6de504f784319419444d92a50332f736a2d824c934d6f1fefcef584d2",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\ledger-app-blueprint\\blueprint\\component-blueprint.yaml",
+                "exists": true,
+                "sha256": "339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\acceptance.yaml",
+                "exists": true,
+                "sha256": "2a8b257571d1b6b8e7b1b589374f132cf0ec52429c1c4165a9362c55227270de",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\change-unit.yaml",
+                "exists": true,
+                "sha256": "fe345106ba3e8501f59c180ed060d7a542e874db951d4b1a4e3324cc7862a66d",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\use-cases.yaml",
+                "exists": true,
+                "sha256": "40c6e782288c023909c9c04213a7a692ab94861a01f1416f23b43555bc890f5d",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\mappings\\create-entry.yaml",
+                "exists": true,
+                "sha256": "984f318a52562578587ef8bf06db9e345255407390a12f9a0ac22bfc2ebc56b7",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\requirements\\ledger.md",
+                "exists": true,
+                "sha256": "1cb261b1d7fa9e60c5a113c6f1a8029a9101809ee206836d6ca8a885123cc988",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/ledger-app-blueprint/ledger-refresh/acceptance.yaml",
+              "doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml",
+              "doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml",
+              "contracts/ledger-api.yaml",
+              "mappings/create-entry.yaml",
+              "requirements/ledger.md",
+              "doc/features/ledger-app-blueprint/ledger-refresh/use-cases.yaml"
+            ],
+            "content_fingerprint": "0dc9fdaefb26fc585bea8857d34f22839c9834c2ef15f7034f1a63170e1158bf"
+          }
+        ],
+        "owner_phase": "ut"
+      },
+      {
+        "id": "device-evidence:acceptance",
+        "kind": "device-evidence",
+        "applicability": "not_applicable",
+        "reason": "影响判断：无用户可见行为变化",
+        "basis": [
+          {
+            "input_id": "acceptance",
+            "source": {
+              "kind": "artifact",
+              "artifact": "acceptance@1"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\contracts\\ledger-api.yaml",
+                "exists": true,
+                "sha256": "6ba6f2f6de504f784319419444d92a50332f736a2d824c934d6f1fefcef584d2",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\ledger-app-blueprint\\blueprint\\component-blueprint.yaml",
+                "exists": true,
+                "sha256": "339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\acceptance.yaml",
+                "exists": true,
+                "sha256": "2a8b257571d1b6b8e7b1b589374f132cf0ec52429c1c4165a9362c55227270de",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\change-unit.yaml",
+                "exists": true,
+                "sha256": "fe345106ba3e8501f59c180ed060d7a542e874db951d4b1a4e3324cc7862a66d",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\use-cases.yaml",
+                "exists": true,
+                "sha256": "40c6e782288c023909c9c04213a7a692ab94861a01f1416f23b43555bc890f5d",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\mappings\\create-entry.yaml",
+                "exists": true,
+                "sha256": "984f318a52562578587ef8bf06db9e345255407390a12f9a0ac22bfc2ebc56b7",
+                "role": "artifact"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\requirements\\ledger.md",
+                "exists": true,
+                "sha256": "1cb261b1d7fa9e60c5a113c6f1a8029a9101809ee206836d6ca8a885123cc988",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/ledger-app-blueprint/ledger-refresh/acceptance.yaml",
+              "doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml",
+              "doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml",
+              "contracts/ledger-api.yaml",
+              "mappings/create-entry.yaml",
+              "requirements/ledger.md",
+              "doc/features/ledger-app-blueprint/ledger-refresh/use-cases.yaml"
+            ],
+            "content_fingerprint": "0dc9fdaefb26fc585bea8857d34f22839c9834c2ef15f7034f1a63170e1158bf"
+          }
+        ],
+        "owner_phase": "testing"
+      },
+      {
+        "id": "visual-evidence:fidelity",
+        "kind": "visual-evidence",
+        "applicability": "not_applicable",
+        "reason": "fidelity 未定档且请求无视觉要求",
+        "basis": [],
+        "owner_phase": "testing"
+      }
+    ],
+    "phase_chain": [
+      "coding",
+      "review",
+      "ut"
+    ],
+    "reused_phases": [],
+    "unresolved": [],
+    "policy_fingerprint": "e4b8b3b4f42f824faeebc561d2a99c74e9bccf59ae5e5f941b156673b76047d8",
+    "request_impact": {
+      "user_visible_behavior_change": false,
+      "reason": "只改账本领域服务，不改任何界面",
+      "basis": [
+        {
+          "input_id": "codebase",
+          "source": {
+            "kind": "derive",
+            "provider_id": "derive.codebase"
+          },
+          "dependencies": [
+            {
+              "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\src\\ledger\\LedgerFeature.ets",
+              "exists": true,
+              "sha256": "60bd727bec6bd25bf5ed8eca02dccdae1cf7fbd628abe74aed23c465a4613bf1",
+              "role": "derive"
+            }
+          ],
+          "source_refs": [
+            "src/ledger/LedgerFeature.ets"
+          ],
+          "content_fingerprint": "b83875df5fcb0aee80d258a6639208288a03b29102b699552b4d737534037732"
+        }
+      ]
+    }
+  },
+  "phase_chain": [
+    "coding",
+    "review",
+    "ut"
+  ],
+  "run_base_sha": "72b5c922ef424577e6148cedf7ade849b7655534"
+}

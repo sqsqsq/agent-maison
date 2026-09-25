@@ -12,19 +12,19 @@ import { loadEffectiveExecutionScope } from './goal-run-creation';
 import { inferRepoLayout } from '../../repo-layout';
 import { executionCompletionPhases } from './execution-scope';
 import { isInsideProjectRoot } from './project-relative-path';
-import { CompletionVerdict, verifyFeatureCompletion, resolvePhaseRunIds } from './verify-feature-completion';
+import { resolvePhaseRunIds } from './verify-feature-completion';
+import { assessFeature, assessmentReasons, type FeatureAssessment } from './feature-assessment';
 import { SpecLoader } from './spec-loader';
 import { resolveCapabilityResolutionEntryInput } from './capability-resolution-entry-input';
 import { resolveCapabilityInputs, type ResolvedPhaseInputs } from './capability-resolution';
-import { validateChangeUnitFeatureProjection } from './change-unit-feature-projection';
 import { ChangeUnitArtifact } from './change-unit-model';
 import {
   deriveChangeUnitFeatureId,
   inspectDerivedFeatureBinding,
-  loadCanonicalChangeUnit,
 } from './change-unit-path';
 
-export type ChangeUnitCompletionState = 'ABSENT' | 'VALID' | 'STALE' | 'INVALID';
+/** plan b2d7f4e9 §3.5：记录不可信 → INVALID；记录可信但仍有 uncovered / blocking → INCOMPLETE。 */
+export type ChangeUnitCompletionState = 'ABSENT' | 'VALID' | 'INCOMPLETE' | 'INVALID';
 
 export interface ChangeUnitCompletionObservation {
   state: ChangeUnitCompletionState;
@@ -37,12 +37,13 @@ export interface ChangeUnitCompletionObservation {
 export interface ChangeUnitCompletionAdapterOptions {
   projectionExists?: (projectRoot: string, featureId: string) => boolean;
   resolveExpected?: (projectRoot: string, featureId: string) => { expectedTrack: string; expectedChain: string[] };
-  verify?: (input: {
+  /** 单元级注入接缝（只限局部单测，§6 #14）；生产走 assessFeature。 */
+  assess?: (input: {
     projectRoot: string;
     feature: string;
     expectedTrack: string;
     expectedChain: string[];
-  }) => CompletionVerdict;
+  }) => FeatureAssessment;
   successfulTerminalRunExists?: (projectRoot: string, featureId: string) => boolean;
 }
 
@@ -141,11 +142,8 @@ export function observeChangeUnitCompletion(
   if (binding.status === 'conflict') {
     return { state: 'INVALID', featureId, reasons: [binding.reason] };
   }
-  if (binding.status === 'matched'
-    && (binding.ref.revision !== changeUnit.revision
-      || binding.ref.artifact_sha256 !== changeUnitRefHash(projectRoot, changeUnit))) {
-    return { state: 'STALE', featureId, reasons: ['Feature contracts 绑定的是不同 CU revision/artifact hash。'] };
-  }
+  // CU revision / artifact hash 失配与 ID-only 映射完整性由 assessFeature 的 Feature↔CU 绑定核对判为 plan
+  // 义务 uncovered/binding（plan b2d7f4e9 §3.1），不在这里另判一次。
   const projectionExists = options.projectionExists
     ?? ((root: string, feature: string) => fs.existsSync(featureFilePath(root, feature, 'feature-completion.json')));
   if (!projectionExists(projectRoot, featureId)) {
@@ -177,34 +175,19 @@ export function observeChangeUnitCompletion(
   } catch (error) {
     return { state: 'INVALID', featureId, reasons: [`workflow/track SSOT 无法解析：${(error as Error).message}`] };
   }
-  const verdict = (options.verify ?? verifyFeatureCompletion)({
+  const assessment = (options.assess ?? (input => assessFeature(input.projectRoot, input.feature, input)))({
     projectRoot,
     feature: featureId,
     expectedTrack: expected.expectedTrack,
     expectedChain: expected.expectedChain,
   });
-  if (verdict.verdict === 'VALID') {
-    try {
-      if (scopedCompletionRunId(projectRoot, featureId, expected.expectedChain) !== undefined) {
-        const { spec } = readCompletedFeatureDesign(projectRoot, featureId, { state: 'VALID', featureId, ...expected, reasons: [] });
-        const projection = validateChangeUnitFeatureProjection(projectRoot, featureId, spec.contracts, spec.acceptance, !!spec.useCases, 'review', []);
-        if (projection.issues.length) return { state: 'INVALID', featureId, ...expected, reasons: projection.issues.map(issue => issue.id + ': ' + issue.message) };
-      }
-    } catch (error) { return { state: 'INVALID', featureId, ...expected, reasons: ['完成目标输入不可验证：' + String(error)] }; }
-  }
   return {
-    state: verdict.verdict,
+    state: assessment.record.state === 'absent' ? 'ABSENT'
+      : assessment.record.state === 'broken' ? 'INVALID'
+      : assessment.complete ? 'VALID' : 'INCOMPLETE',
     featureId,
     expectedTrack: expected.expectedTrack,
     expectedChain: expected.expectedChain,
-    reasons: verdict.reasons,
+    reasons: assessment.complete ? [] : assessmentReasons(assessment),
   };
-}
-
-function changeUnitRefHash(projectRoot: string, changeUnit: ChangeUnitArtifact): string {
-  try {
-    return loadCanonicalChangeUnit(projectRoot, changeUnit.blueprint_id, changeUnit.change_unit_id).artifactSha256;
-  } catch {
-    return '';
-  }
 }

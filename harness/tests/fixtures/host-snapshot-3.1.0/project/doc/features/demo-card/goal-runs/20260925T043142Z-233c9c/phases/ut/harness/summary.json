@@ -1,0 +1,468 @@
+{
+  "schema_version": "1.3",
+  "phase": "ut",
+  "feature": "demo-card",
+  "verdict": "PASS",
+  "report_validity": "UNVERIFIED",
+  "quality_axes": {
+    "functional": {
+      "applicable": true,
+      "required_for_release": true,
+      "verdict": "PASS",
+      "blocking_class": null,
+      "source_checks": [
+        "acceptance_content_complete",
+        "acceptance_coverage",
+        "acceptance_device_focus_present",
+        "acceptance_ut_layer_complete",
+        "acceptance_yaml_present",
+        "boundaries_all_stubbed",
+        "boundary_coverage",
+        "boundary_matches_contracts",
+        "branch_coverage_full",
+        "capability_ut_core_context",
+        "capability_ut_design_context",
+        "characterization_trace_matches",
+        "context_exploration_facts_phase_delta_present",
+        "dag_acyclic",
+        "dag_assertion_linked_branch",
+        "dag_boundary_matches_spec",
+        "dag_cohesion",
+        "dag_files_parseable",
+        "dag_linked_usecase",
+        "dag_node_type_valid",
+        "dag_schema_compliance",
+        "dag_source_file_exists",
+        "dag_spy_preset_resolvable",
+        "dag_to_acceptance",
+        "dag_to_source",
+        "harness_host_artifact_pollution",
+        "it_drives_flow",
+        "it_name_has_ac_or_branch_tag",
+        "legacy_device_testing_todo_deprecated",
+        "mock_stub_for_async",
+        "named_business_handler",
+        "node_options_injection",
+        "origin_tag_required",
+        "test_registration",
+        "upstream_verdict_gate",
+        "usecase_spec_recommended",
+        "usecase_spec_schema",
+        "usecase_ui_bindings_nonempty",
+        "ut_ac_coverage_report_written",
+        "ut_assertion_exists",
+        "ut_case_per_unit_ac",
+        "ut_coverage_evidence_mappings_complete",
+        "ut_coverage_evidence_present",
+        "ut_coverage_evidence_resolves",
+        "ut_file_naming",
+        "ut_framework_import",
+        "ut_hvigor_build",
+        "ut_hvigor_test",
+        "ut_hypium_mockkit_policy",
+        "ut_import_whitelist",
+        "ut_mock_plan_contracts_consistent",
+        "ut_mock_plan_parseable",
+        "ut_mock_plan_present",
+        "ut_mock_plan_typed",
+        "ut_no_src_mutation",
+        "ut_run_status",
+        "ut_testability_audit_parseable",
+        "ut_testability_audit_present",
+        "ut_tsc_compiles",
+        "ut_unsupported_targets_handled"
+      ],
+      "resolution": null
+    },
+    "visual": {
+      "applicable": false,
+      "required_for_release": false,
+      "verdict": "NOT_APPLICABLE",
+      "blocking_class": null,
+      "source_checks": [],
+      "resolution": null
+    },
+    "asset": {
+      "applicable": false,
+      "required_for_release": false,
+      "verdict": "NOT_APPLICABLE",
+      "blocking_class": null,
+      "source_checks": [],
+      "resolution": null
+    },
+    "evidence": {
+      "applicable": false,
+      "required_for_release": false,
+      "verdict": "NOT_APPLICABLE",
+      "blocking_class": null,
+      "source_checks": [],
+      "resolution": null
+    }
+  },
+  "release_readiness": "READY",
+  "completion_status": "COMPLETE",
+  "blocker_count": 0,
+  "fail_count": 0,
+  "warn_count": 0,
+  "gate_fingerprint": "3.1.0:07e8727860e1",
+  "asset_debt_revision": "no-debt",
+  "script_report": "doc/features/demo-card/ut/reports/script-report.json",
+  "merged_report": "doc/features/demo-card/ut/reports/merged-report.md",
+  "ai_prompt": "doc/features/demo-card/ut/reports/ai-prompt.md",
+  "summary_json": "doc/features/demo-card/ut/reports/summary.json",
+  "run_statuses": [
+    {
+      "id": "ut_run_status",
+      "status": "PASS",
+      "can_claim_done": true,
+      "details": "UT 阶段状态面板：\n- UT 文件范围：all=1, scoped=1\n- scope 来源：production-test-profile\n- scoped 文件：02-Feature/FinancialCard/src/ohosTest/ets/test/AllBanksPage.test.ets\nwork_mode: cover_feature_change\n- 责任域：新建文件 1 个 + 存量文件内新增用例 0 个\n- 需求门禁（use-cases/audit/mock-plan/DAG/AC 覆盖族）：已执行\n- 静态/结构规则：PASS\n- tsc 静态编译：PASS [BLOCKER]\n- 宿主测试模块编译：PASS [BLOCKER]\n- 真机/模拟器执行：PASS [BLOCKER]\n- 源码改动检查：PASS [BLOCKER]\nfeature_verdict: PASS\nsuite_health: UNKNOWN\n- 当前是否可以宣称 UT 完成：是\ncan_claim_done: YES"
+    }
+  ],
+  "ut_run_status": "UT 阶段状态面板：\n- UT 文件范围：all=1, scoped=1\n- scope 来源：production-test-profile\n- scoped 文件：02-Feature/FinancialCard/src/ohosTest/ets/test/AllBanksPage.test.ets\nwork_mode: cover_feature_change\n- 责任域：新建文件 1 个 + 存量文件内新增用例 0 个\n- 需求门禁（use-cases/audit/mock-plan/DAG/AC 覆盖族）：已执行\n- 静态/结构规则：PASS\n- tsc 静态编译：PASS [BLOCKER]\n- 宿主测试模块编译：PASS [BLOCKER]\n- 真机/模拟器执行：PASS [BLOCKER]\n- 源码改动检查：PASS [BLOCKER]\nfeature_verdict: PASS\nsuite_health: UNKNOWN\n- 当前是否可以宣称 UT 完成：是\ncan_claim_done: YES",
+  "readiness_signals": [],
+  "blocking_warnings": [],
+  "blocking_skips": [
+    {
+      "id": "dag_files_parseable",
+      "details_excerpt": "未发现 *.dag.yaml 候选；已探测目录：02-Feature/FinancialCard/test/dag, doc/features/demo-card/ut/reports/flow-dag",
+      "source": "dag_files_parseable"
+    },
+    {
+      "id": "ut_mock_plan_contracts_consistent",
+      "details_excerpt": "feature 缺少 contracts.yaml interfaces[]，跳过 mock-plan 与契约一致性检查。",
+      "source": "ut_mock_plan_present"
+    },
+    {
+      "id": "dag_schema_compliance",
+      "details_excerpt": "未找到 DAG 文件（*.dag.yaml）。可放在 doc/features/demo-card/ut/reports/flow-dag/（ephemeral，默认）或 {module}/test/dag/（归档）。",
+      "source": "dag_schema_compliance"
+    },
+    {
+      "id": "dag_node_type_valid",
+      "details_excerpt": "无 DAG 文件可分析。",
+      "source": "dag_node_type_valid"
+    },
+    {
+      "id": "dag_acyclic",
+      "details_excerpt": "无 DAG 文件可分析。",
+      "source": "dag_acyclic"
+    },
+    {
+      "id": "dag_source_file_exists",
+      "details_excerpt": "无 DAG 文件可分析。",
+      "source": "dag_source_file_exists"
+    },
+    {
+      "id": "dag_spy_preset_resolvable",
+      "details_excerpt": "无 DAG 文件，跳过 spy_preset 解析。",
+      "source": "dag_spy_preset_resolvable"
+    },
+    {
+      "id": "mock_stub_for_async",
+      "details_excerpt": "无 DAG 文件可分析。",
+      "source": "mock_stub_for_async"
+    },
+    {
+      "id": "acceptance_coverage",
+      "details_excerpt": "证据口径：acceptance_coverage 只读取 DAG 顶层/nodes[] 的 linked_acceptance / linked_boundaries，不读取 it() 名。\n无已成功解析的 DAG；候选=(无)；探测目录=02-Feature/FinancialCard/test/dag, doc/features/demo-card/ut/reports/flow-dag；解析失败=0。",
+      "source": "acceptance_coverage"
+    },
+    {
+      "id": "dag_to_source",
+      "details_excerpt": "无 DAG 文件可分析。",
+      "source": "dag_to_source"
+    }
+  ],
+  "blockers": [],
+  "next_action": "phase_closed_wait_user",
+  "closure_status": "closed",
+  "assurance": "degraded",
+  "capability_resolutions": [
+    {
+      "id": "capability_ut_core_context",
+      "axis": "functional",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "fail",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "code",
+          "state": "resolved",
+          "selected_source": "derive.codebase",
+          "selected_source_fingerprint": "6db8928e705ecd20f4e070aaf48cc0f312adaff61aef2b6fd1b8b6f6596a67b6",
+          "binding": {
+            "input_id": "code",
+            "source": {
+              "kind": "derive",
+              "provider_id": "derive.codebase"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\index.ets",
+                "exists": true,
+                "sha256": "c42372f3cbb70378e8050f918322ab85b85a706f5b51c303961ded13d16a51bb",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\AllBanksPage.ets",
+                "exists": true,
+                "sha256": "e9e1d7080d2bd7504115df6e88d94a4ed5eebe19aab033c2268927a5a6c61b95",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankListItem.ets",
+                "exists": true,
+                "sha256": "727e9a2af8334e09b414a53e04f94b7fea76875d30bd73af6307a957b58b9e5f",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankModel.ets",
+                "exists": true,
+                "sha256": "85bf14be522a0c0815a787be2b9e1f739e86be41fb8a25b9f83f47324996b1c4",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankRepository.ets",
+                "exists": true,
+                "sha256": "fa10a20e27b5fa016f02a0e0608747e1f892974bb0a6cf10f7f3021e3ac3c907",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankService.ets",
+                "exists": true,
+                "sha256": "bca6edbcaabe61fba6090d8f396f0105962a18d13dc2eacd88d0802d58045fb6",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\resources\\base\\media\\logo_demo.png",
+                "exists": true,
+                "sha256": "6d51ea2402770798273a2f11d1a64aa04eb290df7790eaaa38ad61420bfeeb1c",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\resources\\base\\media\\result_demo.png",
+                "exists": true,
+                "sha256": "0672172608dc6517fd62993f139ade74279b32c3a2e5ee63f425e40f23de9421",
+                "role": "derive"
+              }
+            ],
+            "source_refs": [
+              "02-Feature/FinancialCard/index.ets",
+              "02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets",
+              "02-Feature/FinancialCard/src/main/ets/BankModel.ets",
+              "02-Feature/FinancialCard/src/main/ets/BankRepository.ets",
+              "02-Feature/FinancialCard/src/main/ets/BankService.ets",
+              "02-Feature/FinancialCard/src/main/resources/base/media/logo_demo.png",
+              "02-Feature/FinancialCard/src/main/ets/BankListItem.ets",
+              "02-Feature/FinancialCard/src/main/resources/base/media/result_demo.png"
+            ],
+            "content_fingerprint": "6db8928e705ecd20f4e070aaf48cc0f312adaff61aef2b6fd1b8b6f6596a67b6"
+          },
+          "attempts": [
+            {
+              "kind": "derive",
+              "source": "derive.codebase",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\index.ets",
+                  "exists": true,
+                  "sha256": "c42372f3cbb70378e8050f918322ab85b85a706f5b51c303961ded13d16a51bb",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\AllBanksPage.ets",
+                  "exists": true,
+                  "sha256": "e9e1d7080d2bd7504115df6e88d94a4ed5eebe19aab033c2268927a5a6c61b95",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankModel.ets",
+                  "exists": true,
+                  "sha256": "85bf14be522a0c0815a787be2b9e1f739e86be41fb8a25b9f83f47324996b1c4",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankRepository.ets",
+                  "exists": true,
+                  "sha256": "fa10a20e27b5fa016f02a0e0608747e1f892974bb0a6cf10f7f3021e3ac3c907",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankService.ets",
+                  "exists": true,
+                  "sha256": "bca6edbcaabe61fba6090d8f396f0105962a18d13dc2eacd88d0802d58045fb6",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\resources\\base\\media\\logo_demo.png",
+                  "exists": true,
+                  "sha256": "6d51ea2402770798273a2f11d1a64aa04eb290df7790eaaa38ad61420bfeeb1c",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankListItem.ets",
+                  "exists": true,
+                  "sha256": "727e9a2af8334e09b414a53e04f94b7fea76875d30bd73af6307a957b58b9e5f",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\resources\\base\\media\\result_demo.png",
+                  "exists": true,
+                  "sha256": "0672172608dc6517fd62993f139ade74279b32c3a2e5ee63f425e40f23de9421",
+                  "role": "derive"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "acceptance",
+          "state": "resolved",
+          "selected_source": "acceptance@1",
+          "selected_source_fingerprint": "352b678a652cf596cc0cb311600a4590404c3d9ef08267470b868b529866a080",
+          "binding": {
+            "input_id": "acceptance",
+            "source": {
+              "kind": "artifact",
+              "artifact": "acceptance@1"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\acceptance.yaml",
+                "exists": true,
+                "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/demo-card/acceptance.yaml"
+            ],
+            "content_fingerprint": "352b678a652cf596cc0cb311600a4590404c3d9ef08267470b868b529866a080"
+          },
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "acceptance@1",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\acceptance.yaml",
+                  "exists": true,
+                  "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "spec",
+              "detail": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\acceptance.yaml"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability_ut_design_context",
+      "axis": "functional",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "fail",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "contracts",
+          "state": "resolved",
+          "selected_source": "contracts@1",
+          "selected_source_fingerprint": "93c49db2c4ed32f462a1dd1f4c29e576704f41b04f53b5f9b457dd86597fa8c1",
+          "binding": {
+            "input_id": "contracts",
+            "source": {
+              "kind": "artifact",
+              "artifact": "contracts@1"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\contracts.yaml",
+                "exists": true,
+                "sha256": "62d1104bc2c30d70e590280deb55788b3cca87b43442882ffc1635caa2931db0",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/demo-card/contracts.yaml"
+            ],
+            "content_fingerprint": "93c49db2c4ed32f462a1dd1f4c29e576704f41b04f53b5f9b457dd86597fa8c1"
+          },
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "contracts@1",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\contracts.yaml",
+                  "exists": true,
+                  "sha256": "62d1104bc2c30d70e590280deb55788b3cca87b43442882ffc1635caa2931db0",
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "plan",
+              "detail": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\contracts.yaml"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability_ut_use_case_context",
+      "axis": "evidence",
+      "active": true,
+      "state": "pruned",
+      "on_missing": "prune",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "use_cases",
+          "state": "absent",
+          "selected_source": null,
+          "selected_source_fingerprint": null,
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "use-cases@1",
+              "state": "absent",
+              "dependencies": [
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\use-cases.yaml",
+                  "exists": false,
+                  "sha256": null,
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "plan",
+              "detail": "use-cases@1 missing"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "capability_resolution_contract_fingerprint": "9c6d16fac9432e1ae83f6e9a510f14224c0806f83bd9ac29a7c8df44b153fad0",
+  "generated_at": "2026-09-25T04:33:09.681Z",
+  "source_commit_sha": "55b3e30416057ca96b85769b48c230fcecabf941",
+  "worktree_digest": "808c01daaf7008be",
+  "verifier_subject_id": "0c91ecc9e360fd8c4f1001f7c255fae09eb8a47049f7255117dd5ad9a362891e",
+  "verifier_request": "doc/features/demo-card/ut/reports/verifier.request.0c91ecc9e360fd8c4f1001f7c255fae09eb8a47049f7255117dd5ad9a362891e.json",
+  "verifier_report": "doc/features/demo-card/ut/reports/verifier.report.0c91ecc9e360fd8c4f1001f7c255fae09eb8a47049f7255117dd5ad9a362891e.md",
+  "run_id": "20260925T043142Z-233c9c",
+  "receipt_status": "passed",
+  "closure_commit": {
+    "schema_version": "1.0",
+    "committed_at": "2026-09-25T04:33:13.677Z",
+    "receipt_path": "doc/features/demo-card/ut/phase-completion-receipt.md",
+    "evidence_manifest_path": "doc/features/demo-card/ut/reports/phase-evidence-manifest.json"
+  }
+}

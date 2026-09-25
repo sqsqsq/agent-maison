@@ -1,0 +1,147 @@
+{
+  "schema": "maison-verifier-material@1",
+  "input_bindings_sha256": "4ad4cc4f9cc6df6ec8adf75fc7a5275f312e5d90a451eb367104ed234d5f492f",
+  "feature": "cu-bGVkZ2VyLWFwcC1ibHVlcHJpbnQAbGVkZ2VyLXJlZnJlc2g",
+  "phase": "review",
+  "gate_fingerprint": "3.1.0:094fc6a0127f",
+  "phase_rule_sha256": "dc1502697a67d2bd9319376779502f100766fec2213e1c39640cd256df579189",
+  "template_sha256": "ea8f23e3134f5c58f3cce163cb97acb42e534cefc99a102520d39e4487c6c189",
+  "lifecycle_sha256": "",
+  "extension_sha256": "",
+  "script_checks": [
+    "capability_review_acceptance_context=PASS/MINOR",
+    "capability_review_code_context=PASS/MINOR",
+    "capability_review_design_context=PASS/MINOR",
+    "capability_review_use_cases=PASS/MINOR",
+    "change_unit_feature_projection=PASS/BLOCKER",
+    "conclusion_with_verdict=PASS/BLOCKER",
+    "conditional_pass_closure=PASS/BLOCKER",
+    "context_exploration_facts_phase_delta_present=PASS/BLOCKER",
+    "conventions_coverage=SKIP/MAJOR",
+    "issue_category_values=WARN/MAJOR",
+    "issue_table_format=PASS/BLOCKER",
+    "issue_to_coding_rule=WARN/MINOR",
+    "issue_to_file=PASS/BLOCKER",
+    "metadata_header=PASS/MINOR",
+    "negative_verdict_closure=PASS/BLOCKER",
+    "node_options_injection=PASS/BLOCKER",
+    "required_chapters=PASS/BLOCKER",
+    "review_reference_lint=PASS/MAJOR",
+    "review_scope_to_design=PASS/BLOCKER",
+    "scope_declaration=PASS/MAJOR",
+    "severity_values=PASS/BLOCKER",
+    "statistics_summary=PASS/MAJOR",
+    "upstream_verdict_gate=PASS/BLOCKER"
+  ],
+  "files": [
+    {
+      "path": "contracts/ledger-api.yaml",
+      "sha256": "6ba6f2f6de504f784319419444d92a50332f736a2d824c934d6f1fefcef584d2"
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml",
+      "sha256": "339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439"
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/PRD.md",
+      "sha256": null
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/acceptance.yaml",
+      "sha256": "2a8b257571d1b6b8e7b1b589374f132cf0ec52429c1c4165a9362c55227270de"
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml",
+      "sha256": "fe345106ba3e8501f59c180ed060d7a542e874db951d4b1a4e3324cc7862a66d"
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/context/facts.md",
+      "sha256": "22523f6a72a78e3aaec864182645cd0f2c513303b75e6cd7124b8efd75a3512f"
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/contracts.yaml",
+      "sha256": "3499e70fb614809fb58bcc5d016df794739d83c40d74e3eb47e403c65fffd440"
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/design.md",
+      "sha256": null
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/design/design.md",
+      "sha256": null
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/design/plan.md",
+      "sha256": null
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/plan.md",
+      "sha256": null
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/plan/plan.md",
+      "sha256": null
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/prd/PRD.md",
+      "sha256": null
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/prd/spec.md",
+      "sha256": null
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/review/review-report.md",
+      "sha256": "4fb99f001897b05e9390218b5538b989faeb3991a48413119c067e07fa8126eb"
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/spec.md",
+      "sha256": null
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/spec/spec.md",
+      "sha256": null
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/use-cases.yaml",
+      "sha256": "40c6e782288c023909c9c04213a7a692ab94861a01f1416f23b43555bc890f5d"
+    },
+    {
+      "path": "mappings/create-entry.yaml",
+      "sha256": "984f318a52562578587ef8bf06db9e345255407390a12f9a0ac22bfc2ebc56b7"
+    },
+    {
+      "path": "requirements/ledger.md",
+      "sha256": "1cb261b1d7fa9e60c5a113c6f1a8029a9101809ee206836d6ca8a885123cc988"
+    },
+    {
+      "path": "src/ledger/ClosureFixture.ts",
+      "sha256": "3d9ce426b6a10261ea819bcb0866c214a204cb4771d389d99193be39fdeb6d3d"
+    },
+    {
+      "path": "src/ledger/LedgerFeature.ets",
+      "sha256": "438c43280a11f6c1ded9988f7ebe9ec4b96e6fae38140a92d481c5c409eba431"
+    },
+    {
+      "path": "src/ledger/LedgerIntakeBypass.ts",
+      "sha256": "266e45c659ba29f63892abecd7f5ac1766e6080a11874dc5dd0ff7f2095834cb"
+    },
+    {
+      "path": "src/ledger/LedgerIntakeConsumer.ts",
+      "sha256": "05e74157c1ebb27756b6c54ff3da21b9157c9cd6815b9670d806b592143ec6b7"
+    },
+    {
+      "path": "src/ledger/LedgerSourceSeam.ts",
+      "sha256": "70cd301f29ed47420f1790c182b8eef73fe27532c46a50c469e68e6fb173c762"
+    },
+    {
+      "path": "test/ledger/closure.test.ts",
+      "sha256": "24c2cd85fa29ca62fd6408410e0823394d79cf452649af48ba20e45642130943"
+    },
+    {
+      "path": "test/ledger/seam-bypass.case.ts",
+      "sha256": "4d329f5ccd0a2e2a9105d832f184d991406e1bb37579f833df16dcd3181205b2"
+    }
+  ],
+  "material_sha256": "a87ef41d2474d531af318fb2b39cb70cd3b7c01118824113cfe0cb9d288d8d18"
+}

@@ -35,7 +35,7 @@
 
 阶段证据按同一冻结范围记录源码责任：coding 的合法源码产出会推进 plan Research 的旧观察，UT 的合法测试产出不会反向污染 coding/review；越过责任边界的改动仍使原责任阶段失效。重复运行 UT 时，覆盖结论未变则保留既有 `ac-coverage.json` 字节和 `generated_at`，避免仅因运行时刻生成新的 verifier subject。
 
-恢复时，capability 的缺失来源若已携带链内 `upstream_producer`，既有 assess/回退事务直接返回该 owner，不让无权修复的下游原样重试；没有可解析 owner 的 absent 只如实列来源和补齐动作，不自动升级为 framework bug。仅 UT 自身返修时保留仍 fresh 的 plan/coding/review；产品、契约或用户明确要求重跑造成的失效仍按实际范围执行。无新输入、修复或外部状态变化时恢复原 run 的既有无进展结论，不以同输入 fresh run 绕开。
+恢复时，capability 的缺失来源若已携带链内 `upstream_producer`，既有 assess/回退事务直接返回该 owner，不让无权修复的下游原样重试；没有可解析 owner 的 absent 只如实列来源和补齐动作，不自动升级为 framework bug。仅 UT 自身返修时保留仍 fresh 的 plan/coding/review；产品、契约或用户明确要求重跑造成的失效仍按实际范围执行。无新输入、修复或外部状态变化时恢复原 run 的既有无进展结论，不以同输入 fresh run 绕开。在途修正仍用 `--revalidate` 做机械重验（它不签发完成）；**已完成后的修正**在同一 feature 上以 `goal-runner --supersede <完成 run>` 起后继：出生范围由框架按当前输入重派生、既往阶段证据经同一核验复用，只跑未覆盖义务的责任阶段，新完成落在后继 run 目录、旧完成原件保留；feature 载体（无 run 完成）没有 run 可 supersede，先追加范围修订再起新 run。改动已提交进仓库的，起后继时把基线重设为当前提交；未提交的沿用源 run 基线。测试用例一律由后继的 UT 阶段以新增测试文件或新增用例产出（同字节重写不算覆盖），框架不把基线里已有的测试算作本轮覆盖证据。
 
 “继续”先读当前 active run、冻结 execution_scope 和 successor/revision，不重新选择流程。新请求使用 obligation-driven；旧 run 通过内部兼容定义恢复，旧公共跳板由 UPDATE 备份清理。真实授权、策展语义、预算和外部不可逆动作继续使用既有确认点；已有授权不重复询问。**用户已授权完整交付时，走完这条链到完成终点是主 Agent 自己的事**——不把正式闭环当收尾时可再问一次的可选项，仍须询问的只有既有确认点（真实授权、策展语义、预算、外部不可逆动作、设计缺口澄清）。init-next-steps 不授予任何后继执行权。
 

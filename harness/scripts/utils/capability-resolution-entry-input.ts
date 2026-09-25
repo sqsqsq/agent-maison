@@ -16,7 +16,7 @@ import { assertFactsSourceReadable, parseContextExploration } from './context-ex
 import { loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness, sha256File } from './phase-evidence-manifest';
 import { loadFrameworkConfig, resolveFeatureArtifact } from '../../config';
 import { featuresDirPath, enumerateFeatures, featureFilePath, receiptDirPath, featurePhaseReportsDir } from '../../config';
-import { validateProjectRelativePath, isInsideProjectRoot } from './project-relative-path';
+import { validateProjectRelativePath, isInsideProjectRoot, inferLegacyProjectRoot, resolveDependencyPath } from './project-relative-path';
 import { execFileSync } from 'child_process';
 import * as crypto from 'crypto';
 import { stableStringify } from './phase-evidence-manifest';
@@ -263,7 +263,7 @@ export function resolveCapabilityResolutionEntryInput(
         .filter(obligation => !REVISION_TRIGGER_KINDS.has(obligation.kind))
         .flatMap(obligation => obligation.basis.flatMap(binding => binding.dependencies
           .filter(dep => dep.role === 'derive' && dep.exists)
-          .map(dep => path.relative(options.projectRoot, dep.path).replace(/\\/g, '/')))))];
+          .map(dep => path.relative(options.projectRoot, resolveDependencyPath(options.projectRoot, dep.path, inferLegacyProjectRoot(options.projectRoot, scope))).replace(/\\/g, '/')))))];
       if (options.phase === 'review' && scope.obligations.some(obligation => obligation.kind === 'implementation' && obligation.applicability === 'required')) {
         const contracts = readRunBoundContracts(options.projectRoot, frameworkRoot, options.feature, goalRunId);
         // G5：基线走统一来源选择（无 run 时是既有 HARNESS_DIFF_BASE_REF 三态，不是 FAIL）

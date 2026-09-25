@@ -37,7 +37,7 @@ import {
 import { ContractsSpec, AcceptanceSpec } from '../../scripts/utils/types';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { observeChangeUnitCompletion, ChangeUnitCompletionState } from '../../scripts/utils/change-unit-completion';
-import { CompletionVerdict } from '../../scripts/utils/verify-feature-completion';
+import { assessFeature, type FeatureAssessment } from '../../scripts/utils/feature-assessment';
 import { deriveChangeUnitBlockers } from '../../scripts/utils/change-unit-blockers';
 import { detectChangeUnitDependencyCycles, evaluateChangeUnitDependencies } from '../../scripts/utils/change-unit-dependencies';
 import { evaluateChangeUnitCarryForward } from '../../scripts/utils/change-unit-reconciliation';
@@ -225,9 +225,16 @@ function completionAdapter(state: Map<string, ChangeUnitCompletionState>) {
     projectionExists: (_root: string, feature: string) => (state.get(feature) ?? 'ABSENT') !== 'ABSENT',
     successfulTerminalRunExists: () => false,
     resolveExpected: () => ({ expectedTrack: 'full', expectedChain: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] }),
-    verify: (input: { feature: string }): CompletionVerdict => {
+    // 单元级注入（§6 #14：只限局部单测；lifecycle 类测试必须过真实 assessFeature）。
+    assess: (input: { feature: string }): FeatureAssessment => {
       const verdict = state.get(input.feature) ?? 'INVALID';
-      return { verdict: verdict === 'ABSENT' ? 'INVALID' : verdict, reasons: [`fixture=${verdict}`] };
+      const reasons = [`fixture=${verdict}`];
+      return {
+        record: verdict === 'VALID' || verdict === 'INCOMPLETE' ? { state: 'ok', run_id: null, generated_at: null, reasons: [] } : { state: 'broken', run_id: null, generated_at: null, reasons },
+        obligations: verdict === 'INCOMPLETE' ? [{ id: 'fixture-obligation', kind: 'fixture', owner_phase: 'plan', applicability: 'required', status: 'uncovered', class: 'binding', reason: reasons[0] }] : [],
+        blocking: [],
+        complete: verdict === 'VALID',
+      };
     },
   };
 }
@@ -637,10 +644,10 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     });
   }));
 
-  results.push(test('completion adapter distinguishes ABSENT, VALID, STALE and INVALID', () => {
+  results.push(test('completion adapter distinguishes ABSENT, VALID, INCOMPLETE and INVALID', () => {
     const unit = asChangeUnitArtifact(validChangeUnit());
     const feature = deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id);
-    for (const expected of ['ABSENT', 'VALID', 'STALE', 'INVALID'] as ChangeUnitCompletionState[]) {
+    for (const expected of ['ABSENT', 'VALID', 'INCOMPLETE', 'INVALID'] as ChangeUnitCompletionState[]) {
       const observation = observeChangeUnitCompletion(VALID_PROJECT, unit, completionAdapter(new Map([[feature, expected]])));
       assert(observation.state === expected, `completion ${expected} 被折叠为 ${observation.state}`);
     }
@@ -710,18 +717,18 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     assert(isolated.action === 'blocked' && isolated.reasons.some(reason => reason.includes('run-isolated') && reason.includes('人工核查该目录')), `决策级 corrupt 分支未独立生效：${isolated.action}:${isolated.reasons.join(';')}`);
   }));
 
-  results.push(test('STALE completion re-enters ready only after current design and Feature mapping revalidate', () => {
+  results.push(test('INCOMPLETE completion never re-enters ready; its uncovered obligations are legal blockers', () => {
     withTempProject(projectRoot => {
       const fixture = projectionContracts(projectRoot);
       bindFeatureContracts(projectRoot, fixture.feature, fixture.contracts);
       const unit = asChangeUnitArtifact(loadCanonicalChangeUnit(projectRoot, 'ledger-app-blueprint', 'ledger-refresh').changeUnit);
-      const state = new Map([[fixture.feature, 'STALE' as ChangeUnitCompletionState]]);
-      let ready = deriveChangeUnitReadySet(projectRoot, 'ledger-app-blueprint', { units: [unit], completion: completionAdapter(state) });
-      assert(ready.ready[0]?.change_unit_id === 'ledger-refresh', `已重验 STALE CU 无合法重执行路径：${ready.units[0].blockers.map(item => `${item.id}:${item.message}`).join(',')}`);
-      fixture.contracts.change_unit!.change_unit_ref.artifact_sha256 = `sha256:${'f'.repeat(64)}`;
-      bindFeatureContracts(projectRoot, fixture.feature, fixture.contracts);
-      ready = deriveChangeUnitReadySet(projectRoot, 'ledger-app-blueprint', { units: [unit], completion: completionAdapter(state) });
-      assert(ready.ready.length === 0 && ready.units[0].blockers.some(item => item.id === 'change_unit_identity_mismatch'), '未重绑 mapping 的 STALE CU 仍进入 ready');
+      const state = new Map([[fixture.feature, 'INCOMPLETE' as ChangeUnitCompletionState]]);
+      const ready = deriveChangeUnitReadySet(projectRoot, 'ledger-app-blueprint', { units: [unit], completion: completionAdapter(state) });
+      const blockers = ready.units[0].blockers.filter(item => item.id === 'change_unit_completion_incomplete');
+      assert(ready.ready.length === 0, 'INCOMPLETE CU 被当作可重开的新施工进入 ready');
+      assert(blockers.length > 0 && blockers.every(item => item.legal) && blockers.some(item => item.message.includes('fixture-obligation')),
+        `uncovered 义务未作 legal blocker：${ready.units[0].blockers.map(item => `${item.id}:${item.message}`).join(',')}`);
+      assert(!ready.silentProgressStall, 'INCOMPLETE 被报成静默停滞');
     });
   }));
 
@@ -806,10 +813,10 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       const next = clone(loaded.changeUnit);
       next.revision = 2;
       fs.writeFileSync(cuPath, YAML.stringify(next), 'utf8');
-      const observation = observeChangeUnitCompletion(projectRoot, asChangeUnitArtifact(next), {
-        ...completionAdapter(new Map([[feature, 'VALID']])), projectionExists: () => true,
-      });
-      assert(observation.state === 'STALE', `CU revision drift 未使未来 mapping stale：${observation.state}`);
+      // plan b2d7f4e9：CU 绑定失配由 assessFeature 的 Feature↔CU 核对判出（contracts.yaml 字节未变）。
+      const assessment = assessFeature(projectRoot, feature, { expectedTrack: 'full', expectedChain: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] });
+      const binding = assessment.obligations.find(item => item.status === 'uncovered' && item.class === 'binding' && (item.reason ?? '').includes('CU 绑定失配'));
+      assert(binding?.owner_phase === 'plan' && !assessment.complete, `CU revision drift 未使 plan 绑定 uncovered：${JSON.stringify(assessment.obligations)}`);
       assert(before.includes('revision: 1'), 'fixture 历史基线意外被改写');
     });
   }));

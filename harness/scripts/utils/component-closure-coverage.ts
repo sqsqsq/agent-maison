@@ -62,7 +62,7 @@ function loadMappings(projectRoot: string, inputs: ResolvedComponentClosureInput
 
 function completionObservation(states: string[]): ClosureObservation {
   if (states.includes('INVALID')) return 'invalid';
-  if (states.includes('STALE')) return 'stale';
+  if (states.includes('INCOMPLETE')) return 'stale';
   if (states.includes('ABSENT')) return 'uncovered';
   return 'covered';
 }

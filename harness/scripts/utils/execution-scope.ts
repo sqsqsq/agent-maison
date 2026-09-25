@@ -1,7 +1,7 @@
 import * as crypto from 'crypto';
 import type { WorkflowSpec } from '../../workflow-loader';
 import type { InputBinding, ResolutionDependency } from './capability-resolution';
-import { isInsideProjectRoot } from './project-relative-path';
+import { inferLegacyProjectRoot, isInsideProjectRoot, resolveDependencyPath } from './project-relative-path';
 import type { AcceptanceSpec, CheckContext } from './types';
 import { checkAcceptanceUtLayerComplete } from './check-acceptance';
 import { collectDeviceScopeIds, collectUnitScopeIds, hasUnknownPerformanceLayer } from './acceptance-layering';
@@ -173,7 +173,7 @@ export const EXECUTION_SOURCE_KINDS: ReadonlySet<string> = new Set([
 
 /** Birth-only code observations; current outputs remain bound by phase evidence. */
 export function isExecutionSourceBasis(projectRoot: string, scope: ExecutionScope, obligation: ExecutionObligation, dependency: ResolutionDependency): boolean {
-  return isInsideProjectRoot(projectRoot, dependency.path) && dependency.role === 'derive'
+  return isInsideProjectRoot(projectRoot, resolveDependencyPath(projectRoot, dependency.path, inferLegacyProjectRoot(projectRoot, scope))) && dependency.role === 'derive'
     && (scope.phase_chain.includes(obligation.owner_phase) || !!obligation.satisfied_by?.some(proof => 'evidence_manifest_aggregate' in proof))
     && EXECUTION_SOURCE_KINDS.has(obligation.kind);
 }

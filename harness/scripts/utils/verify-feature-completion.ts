@@ -4,8 +4,8 @@
 // ============================================================================
 // 事故背景：run1 HALTED 后 run2 截断链（ut→testing）报 COMPLETED，被读成"需求完成"；
 // 上游 PASS 仅是 manifest 文本断言。修复：feature 级完成只认 feature-completion——
-// 且消费方**禁止**看文件存在性/自报字段，一切经 verifyFeatureCompletion() 重算，
-// 返回 VALID | STALE | INVALID 三态。
+// 且消费方**禁止**看文件存在性/自报字段，一切经 `assessFeature()`（feature-assessment.ts）重算：
+// 本文件提供它的记录自洽段 `inspectCompletionRecord`（VALID | INVALID，只管记录本身）与 clean-pass。
 //
 // clean_pass（openspec design §3.3，六条件）：
 //   verdict PASS ∧ 无 pending must-review ∧ 无 P0/行为开关 waiver ∧ 无档位钳制封顶
@@ -16,7 +16,7 @@
 //
 // 原件落 runner-owned run 目录（goal-runs/<run_id>/feature-completion.json，原子写），
 // feature 根只放投影（路径+sha256 指针）。手工伪造：投影/原件哈希对不上、或重算
-// 血缘失配 → INVALID；源码/输入后改、出现更晚未终局 run → STALE。
+// 血缘失配 → 记录 INVALID；源码/输入后改 → 义务 uncovered；更晚未终局 run → blocking。
 // ============================================================================
 
 import * as crypto from 'crypto';
@@ -26,7 +26,7 @@ import { validateExecutionScope, executionScopeFingerprint, executionCompletionP
 import { loadGoalManifestFromRun } from './goal-manifest';
 import { assertGoalRunAttachable, loadFrozenExecutionScope, loadEffectiveExecutionScope, resolveEffectiveScopeSource, loadScopeRevisions, loadAuthoritativeRunEvents } from './goal-run-creation';
 import { readFeatureFrozenScope, featureEffectiveScope } from './feature-execution-scope';
-import { isInsideProjectRoot } from './project-relative-path';
+import { inferLegacyProjectRoot, isInsideProjectRoot, resolveDependencyPath } from './project-relative-path';
 import { loadEventsJsonl, resolveEffectiveRunEnd } from './goal-runner-phase';
 
 import { featureFilePath, featurePhaseReportsDir, receiptDirPath, resolveFeatureArtifact, relFeaturesDir } from '../../config';
@@ -70,13 +70,23 @@ const LEGACY_COMPLETION_SCHEMA_VERSION = '1.1';
  * today's behavior; terminal completion (:412 below) must never claim it.
  */
 export function executionScopeEvidenceIssues(projectRoot: string, feature: string, scope: ExecutionScope, obligationIds?: ReadonlySet<string>, currentRunId?: string, pendingOwnerPhase?: string): string[] {
+  return executionScopeEvidenceFindings(projectRoot, feature, scope, obligationIds, currentRunId, pendingOwnerPhase).map(item => `${item.obligation_id}: ${item.detail}`);
+}
+
+/** plan b2d7f4e9 §3.1：同一判据的逐义务结构化出口（assessFeature 消费）；字符串出口是它的投影。 */
+export interface ScopeEvidenceFinding { obligation_id: string; detail: string; class: 'binding' | 'evidence' | 'unknown' }
+
+export function executionScopeEvidenceFindings(projectRoot: string, feature: string, scope: ExecutionScope, obligationIds?: ReadonlySet<string>, currentRunId?: string, pendingOwnerPhase?: string): ScopeEvidenceFinding[] {
   const freshnessOpts = pendingOwnerPhase ? { pendingOwnerPhase } : undefined;
   validateExecutionScope(scope);
-  const issues = scope.unresolved.filter(gap => !obligationIds || obligationIds.has(gap.obligation_id)).map(gap => `${gap.obligation_id}: ${gap.reason}`);
+  // plan b2d7f4e9 t4：记录的依赖是写入时工程根下的绝对路径；换根加载按记录内一致前缀重定位（只读侧）。
+  const legacyRoot = inferLegacyProjectRoot(projectRoot, scope);
+  const issues: ScopeEvidenceFinding[] = scope.unresolved.filter(gap => !obligationIds || obligationIds.has(gap.obligation_id)).map(gap => ({ obligation_id: gap.obligation_id, detail: gap.reason, class: 'unknown' as const }));
+  const push = (obligation_id: string, detail: string, cls: ScopeEvidenceFinding['class']): void => { issues.push({ obligation_id, detail, class: cls }); };
   for (const obligation of scope.obligations.filter(o => !obligationIds || obligationIds.has(o.id))) {
     for (const { ref, basis } of [...obligation.basis.map(ref => ({ ref, basis: true })), ...(obligation.satisfied_by ?? []).map(ref => ({ ref, basis: false }))]) {
       if ('input_id' in ref) {
-        if (!Array.isArray(ref.dependencies) || !/^[0-9a-f]{64}$/.test(ref.content_fingerprint)) { issues.push(`${obligation.id}: invalid input binding`); continue; }
+        if (!Array.isArray(ref.dependencies) || !/^[0-9a-f]{64}$/.test(ref.content_fingerprint)) { push(obligation.id, 'invalid input binding', 'binding'); continue; }
         // plan e7a2c4f1 §3.4（G02/G04）：内容等价判据必须**两侧同一个**。resolver 侧自动对齐的
         // 只是账本形状（依赖字节漂移而解析值逐字节相同），若完成侧仍逐字节比旧 sha256，就会出现
         // 「resolver 过了、完成检查照样判 input binding stale」的分裂——冻结的 acceptance.yaml
@@ -92,7 +102,7 @@ export function executionScopeEvidenceIssues(projectRoot: string, feature: strin
             const { inferRepoLayout } = require('../../repo-layout') as typeof import('../../repo-layout');
             contentAligned = bindingHasParsedValue(ref) && (() => {
               try {
-                readBoundInput({ projectRoot, frameworkRoot: inferRepoLayout(projectRoot).frameworkRoot, feature, phase: obligation.owner_phase, track: 'full' }, ref);
+                readBoundInput({ projectRoot, frameworkRoot: inferRepoLayout(projectRoot).frameworkRoot, feature, phase: obligation.owner_phase, track: 'full' }, ref, legacyRoot);
                 return true;
               } catch { return false; }
             })();
@@ -103,8 +113,9 @@ export function executionScopeEvidenceIssues(projectRoot: string, feature: strin
           // Executed output duties describe the input code at birth; their result is
           // checked by the existing write-set/baseline and phase evidence chain.
           if (basis && isExecutionSourceBasis(projectRoot, scope, obligation, dep)) continue;
-          if (!isInsideProjectRoot(projectRoot, dep.path) || fs.existsSync(dep.path) !== dep.exists) { issues.push(`${obligation.id}: input binding stale ${dep.path}`); continue; }
-          if (sha256File(dep.path) !== dep.sha256 && !alignedByContent()) issues.push(`${obligation.id}: input binding stale ${dep.path}`);
+          const depPath = resolveDependencyPath(projectRoot, dep.path, legacyRoot);
+          if (!isInsideProjectRoot(projectRoot, depPath) || fs.existsSync(depPath) !== dep.exists) { push(obligation.id, `input binding stale ${dep.path}`, 'binding'); continue; }
+          if (sha256File(depPath) !== dep.sha256 && !alignedByContent()) push(obligation.id, `input binding stale ${dep.path}`, 'binding');
         }
       } else if (!ref.run_id) {
         // D1 §4.2.4：feature 载体的阶段证据引用没有 run 身份（**不伪造**）。判据换成同强度的
@@ -113,7 +124,7 @@ export function executionScopeEvidenceIssues(projectRoot: string, feature: strin
         const evidence = loadPhaseEvidenceManifest(projectRoot, feature, ref.phase);
         const fresh = recomputePhaseEvidenceStaleness(projectRoot, feature, [ref.phase], freshnessOpts)[0];
         if (!evidence?.integrityOk || evidence.manifest.aggregate_sha256 !== ref.evidence_manifest_aggregate || fresh.verdict !== 'fresh') {
-          issues.push(`${obligation.id}: reused evidence invalid`);
+          push(obligation.id, 'reused evidence invalid', 'evidence');
         }
       } else {
         try {
@@ -125,11 +136,11 @@ export function executionScopeEvidenceIssues(projectRoot: string, feature: strin
           const evidence = loadPhaseEvidenceManifest(projectRoot, feature, ref.phase);
           const fresh = recomputePhaseEvidenceStaleness(projectRoot, feature, [ref.phase], freshnessOpts)[0];
           const identity = resolvePhaseRunIds(projectRoot, feature, [ref.phase]);
-          if (!terminalOk || identity.runIds[ref.phase] !== ref.run_id || !evidence?.integrityOk || evidence.manifest.aggregate_sha256 !== ref.evidence_manifest_aggregate || fresh.verdict !== 'fresh') issues.push(`${obligation.id}: reused evidence invalid`);
-        } catch { issues.push(`${obligation.id}: reused run missing/corrupt`); }
+          if (!terminalOk || identity.runIds[ref.phase] !== ref.run_id || !evidence?.integrityOk || evidence.manifest.aggregate_sha256 !== ref.evidence_manifest_aggregate || fresh.verdict !== 'fresh') push(obligation.id, 'reused evidence invalid', 'evidence');
+        } catch { push(obligation.id, 'reused run missing/corrupt', 'evidence'); }
       }
     }
-    if (obligation.applicability === 'required' && obligation.satisfied_by?.some(ref => 'input_id' in ref) && !['acceptance-context', 'design-context'].includes(obligation.kind)) issues.push(`${obligation.id}: output obligation requires execution evidence`);
+    if (obligation.applicability === 'required' && obligation.satisfied_by?.some(ref => 'input_id' in ref) && !['acceptance-context', 'design-context'].includes(obligation.kind)) push(obligation.id, 'output obligation requires execution evidence', 'evidence');
   }
   return issues;
 }
@@ -139,8 +150,10 @@ export function verifyReusedExecutionScope(projectRoot: string, feature: string,
   const reasons = executionScopeEvidenceIssues(projectRoot, feature, scope);
   if (scope.phase_chain.length) reasons.push('范围仍有待执行阶段');
   if (scope.completion_target === 'feature' && !reasons.length) {
-    const result = verifyFeatureCompletion({ projectRoot, feature, expectedChain: executionCompletionPhases(scope), expectedTrack: 'full' });
-    if (result.verdict !== 'VALID') reasons.push(...result.reasons);
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { assessFeature, assessmentReasons } = require('./feature-assessment') as typeof import('./feature-assessment');
+    const result = assessFeature(projectRoot, feature, { expectedChain: executionCompletionPhases(scope), expectedTrack: 'full' });
+    if (!result.complete) reasons.push(...assessmentReasons(result));
     else {
       const projection = JSON.parse(fs.readFileSync(featureFilePath(projectRoot, feature, FEATURE_COMPLETION_FILENAME), 'utf8')) as CompletionProjection;
       const original = JSON.parse(fs.readFileSync(path.join(projectRoot, projection.original_path), 'utf8')) as FeatureCompletion;
@@ -151,7 +164,8 @@ export function verifyReusedExecutionScope(projectRoot: string, feature: string,
   return { complete: !reasons.length, reasons };
 }
 
-export type CompletionVerdictKind = 'VALID' | 'STALE' | 'INVALID';
+/** plan b2d7f4e9 §3.1：只描述**记录自身**是否自洽（仅供 assessFeature 的 record 使用）；完成与否只由 FeatureAssessment 回答。 */
+export type CompletionVerdictKind = 'VALID' | 'INVALID';
 
 export interface CompletionPhaseRecord {
   phase: string;
@@ -226,6 +240,8 @@ export interface CleanPassIssue {
   condition: string;
   detail: string;
   kind: CleanPassIssueKind;
+  /** lineage_fresh 且只是沿链传染（本阶段自身证据未核）：assessFeature 据此改为逐阶段直查，不把传染当本阶段结果失效。 */
+  propagated_from?: string;
 }
 
 function summaryVerdict(projectRoot: string, feature: string, phase: string): string | null {
@@ -428,6 +444,7 @@ export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[]
           ? '缺 phase-evidence-manifest（旧版产物/未闭环）'
           : `closure 后证据变更：${[...r.changed_paths, ...(r.receipt_changed ? ['<receipt>'] : [])].join(', ') || `传染自 ${r.propagated_from}`}`,
         kind: 'needs_fix',
+        ...(r.propagated_from ? { propagated_from: r.propagated_from } : {}),
       });
     }
   }
@@ -525,6 +542,8 @@ export function runtimeFidelityEvidenceIssue(
   // native 分支只确认"是 v1、身份对、artifact_binding 在、manifest 冻结未改"——schema/binding/
   // HAP 已由 testing 门禁闭环时验过并被 manifest 冻结、⑤ lineage_fresh 保证未改，完成侧不重算
   // （同一批事实只裁决一次）。
+  // plan b2d7f4e9 t4：trace_path 按写入时工程根记成绝对路径；换根加载按同一文档推出的旧根重定位（只读侧）。
+  if (typeof doc.trace_path === 'string') doc = { ...doc, trace_path: resolveDependencyPath(projectRoot, doc.trace_path, inferLegacyProjectRoot(projectRoot, doc)) };
   let raw: unknown;
   try {
     raw = JSON.parse(fs.readFileSync(doc.trace_path, 'utf-8'));
@@ -597,9 +616,10 @@ export function computeRequirementSsotAggregate(projectRoot: string, feature: st
     const { readBoundInput } = require('./capability-resolution') as typeof import('./capability-resolution');
     const { inferRepoLayout } = require('../../repo-layout') as typeof import('../../repo-layout');
     const frameworkRoot = inferRepoLayout(projectRoot).frameworkRoot;
+    const legacyRoot = inferLegacyProjectRoot(projectRoot, scope);
     const contents = scope.obligations.flatMap(obligation => obligation.basis
       .filter(binding => binding.source.kind === 'artifact' || ['derive.blueprint-acceptance', 'derive.blueprint-contracts'].includes(binding.source.provider_id))
-      .map(binding => ({ input_id: binding.input_id, source: binding.source, value: readBoundInput({ projectRoot, frameworkRoot, feature, phase: obligation.owner_phase, track: 'full' }, binding) })));
+      .map(binding => ({ input_id: binding.input_id, source: binding.source, value: readBoundInput({ projectRoot, frameworkRoot, feature, phase: obligation.owner_phase, track: 'full' }, binding, legacyRoot) })));
     return executionScopeFingerprint({ requirement: computeRunRequirementSha(projectRoot, feature, runId, relFeaturesDir(projectRoot)), contents });
   }
   const paths = collectRequirementSsotPaths(projectRoot, feature);
@@ -859,17 +879,10 @@ export interface VerifyCompletionOptions {
    * codex 十轮 P2：必填——可选参数=fail-open API，省略即绕过 track 对账。
    */
   expectedTrack: string;
-  fidelityCapped?: boolean;
   /** 与 closure writer 相同的 framework 身份；省略时由 repo layout 推导（与 CleanPassOptions 同义）。 */
   frameworkRoot?: string;
 }
 
-/**
- * 唯一消费入口：重算投影→原件→schema→**chain/feature/落点/run 存在性对账**→
- * clean_pass（血缘/attestation/must-review/waiver）→逐阶段 receipt/manifest 对账→
- * supersedes 审计事件核验→更晚未终局 run。
- * INVALID=凭证本身不可信（伪造/哈希断裂/schema 坏/自报失配）；STALE=凭证曾合法但世界变了。
- */
 /**
  * D1.5 H2：feature 载体的**阶段证明**。run 载体靠 events 的 phase_start / run_end / attempt 对账；
  * 无 run 路径上那三样不存在，于是判据换成 feature 侧同强度的五项事实——每一项都是既有机制，
@@ -901,15 +914,18 @@ function featureCarrierPhaseLineageIssues(
   feature: string,
   rec: CompletionPhaseRecord,
   frameworkRoot?: string,
-): string[] {
+): { record: string[]; evidence: string[] } {
+  // plan b2d7f4e9 §3.1：记录自报值（attempt、闭环指纹）失配 = 记录不可信；阶段 summary / manifest /
+  // freshness 是**当前证据**的状态，交义务侧按阶段判 evidence 缺口，不把世界变化判成记录伪造。
+  const record: string[] = [];
   const out: string[] = [];
-  if (rec.attempt !== null) out.push(`[${rec.phase}] feature 载体不得声明 attempt（无 run 路径没有 invocation 序数）`);
+  if (rec.attempt !== null) record.push(`[${rec.phase}] feature 载体不得声明 attempt（无 run 路径没有 invocation 序数）`);
   const summaryPath = path.join(featurePhaseReportsDir(projectRoot, feature, rec.phase, frameworkRoot), 'summary.json');
   let summary: { verdict?: unknown; closure_status?: unknown; closure_commit?: { schema_version?: unknown } } | null = null;
   try {
     summary = fs.existsSync(summaryPath) ? JSON.parse(fs.readFileSync(summaryPath, 'utf8')) : null;
   } catch { summary = null; }
-  if (!summary) { out.push(`[${rec.phase}] 缺少阶段 summary.json——无 run 路径的阶段证明不成立`); return out; }
+  if (!summary) { out.push(`[${rec.phase}] 缺少阶段 summary.json——无 run 路径的阶段证明不成立`); return { record, evidence: out }; }
   if (summary.verdict !== 'PASS') out.push(`[${rec.phase}] 阶段 verdict 非 PASS：${String(summary.verdict)}`);
   if (summary.closure_status !== 'closed') out.push(`[${rec.phase}] 阶段未闭环：closure_status=${String(summary.closure_status)}`);
   if (summary.closure_commit?.schema_version !== '1.0') out.push(`[${rec.phase}] closure_commit 版本非法或缺失`);
@@ -919,66 +935,78 @@ function featureCarrierPhaseLineageIssues(
   if (fresh?.verdict !== 'fresh') out.push(`[${rec.phase}] 阶段证据非 fresh：${String(fresh?.verdict)}`);
   const closure = readPhaseClosureFingerprint(projectRoot, feature, rec.phase, frameworkRoot);
   if (!closure) out.push(`[${rec.phase}] 阶段闭环指纹缺失`);
-  else if (rec.closure_fingerprint !== closure) out.push(`[${rec.phase}] closure_fingerprint 与阶段闭环记录失配`);
-  return out;
+  else if (rec.closure_fingerprint !== closure) record.push(`[${rec.phase}] closure_fingerprint 与阶段闭环记录失配`);
+  return { record, evidence: out };
 }
 
-export function verifyFeatureCompletion(opts: VerifyCompletionOptions): CompletionVerdict {
+/**
+ * plan b2d7f4e9 §3.1：`assessFeature` 的 record 部分——只回答「这份完成记录本身可不可信」。
+ * 投影/原件哈希、schema/字段守卫、chain↔workflow、phases↔chain、run_id 载体、run 事件血缘
+ * （phase_start / run_end / attempt / gate_fingerprint）、按记录**自己的** run 范围核指纹与修订计数、supersede 审计。
+ * 世界后变（输入/证据/源码变化、更晚未终局 run）不在这里裁决：以 `drift` / `laterRuns` 交给调用方按义务与 blocking 呈现。
+ */
+export interface CompletionRecordInspection extends CompletionVerdict {
+  completion?: FeatureCompletion;
+  /** 记录按自身 run 范围核验时的有效范围（1.2）；legacy 1.1 为 undefined。 */
+  scope?: ExecutionScope;
+  /** 记录值与当前阶段证据 / legacy 顶层绑定不符：交义务侧（按责任阶段），不是记录不可信。 */
+  drift: Array<{ phase: string; detail: string; class: 'binding' | 'evidence' }>;
+  /** 晚于凭证的未终局 run（经审计的 supersede 豁免）。 */
+  laterRuns: string[];
+}
+
+export function inspectCompletionRecord(opts: VerifyCompletionOptions): CompletionRecordInspection {
   const { projectRoot, feature } = opts;
   const reasons: string[] = [];
+  const drift: CompletionRecordInspection['drift'] = [];
+  const invalid = (reason: string, completion?: FeatureCompletion): CompletionRecordInspection => ({ verdict: 'INVALID', reasons: [reason], completion, drift: [], laterRuns: [] });
   if (!Array.isArray(opts.expectedChain) || opts.expectedChain.length === 0) {
-    return { verdict: 'INVALID', reasons: ['expectedChain 缺失——消费方必须独立解析 workflow 链，不得信凭证自报'] };
+    return invalid('expectedChain 缺失——消费方必须独立解析 workflow 链，不得信凭证自报');
   }
   // codex 十轮 P2：expectedTrack 与 expectedChain 同为消费方义务——缺失/空即 INVALID
   if (typeof opts.expectedTrack !== 'string' || opts.expectedTrack.length === 0) {
-    return { verdict: 'INVALID', reasons: ['expectedTrack 缺失——消费方必须独立解析 workflow track，不得信凭证自报'] };
+    return invalid('expectedTrack 缺失——消费方必须独立解析 workflow track，不得信凭证自报');
   }
 
   const projectionAbs = featureFilePath(projectRoot, feature, FEATURE_COMPLETION_FILENAME);
-  if (!fs.existsSync(projectionAbs)) {
-    return { verdict: 'INVALID', reasons: ['无 feature-completion 投影'] };
-  }
+  if (!fs.existsSync(projectionAbs)) return invalid('无 feature-completion 投影');
   let projection: CompletionProjection;
   try {
     projection = JSON.parse(fs.readFileSync(projectionAbs, 'utf-8')) as CompletionProjection;
   } catch {
-    return { verdict: 'INVALID', reasons: ['投影 JSON 解析失败'] };
+    return invalid('投影 JSON 解析失败');
   }
   if (!projection.original_path || !projection.original_sha256) {
-    return { verdict: 'INVALID', reasons: ['投影缺 original_path/original_sha256（禁止以文件存在性为完成依据）'] };
+    return invalid('投影缺 original_path/original_sha256（禁止以文件存在性为完成依据）');
   }
   const originalAbs = path.join(projectRoot, projection.original_path);
-  if (!fs.existsSync(originalAbs)) {
-    return { verdict: 'INVALID', reasons: [`原件缺失：${projection.original_path}`] };
-  }
+  if (!fs.existsSync(originalAbs)) return invalid(`原件缺失：${projection.original_path}`);
   const originalText = fs.readFileSync(originalAbs, 'utf-8');
   const originalSha = crypto.createHash('sha256').update(originalText, 'utf-8').digest('hex');
-  if (originalSha !== projection.original_sha256) {
-    return { verdict: 'INVALID', reasons: ['投影与原件哈希失配（疑似手工改写）'] };
-  }
+  if (originalSha !== projection.original_sha256) return invalid('投影与原件哈希失配（疑似手工改写）');
   let completion: FeatureCompletion;
   try {
     completion = JSON.parse(originalText) as FeatureCompletion;
   } catch {
-    return { verdict: 'INVALID', reasons: ['原件 JSON 解析失败'] };
+    return invalid('原件 JSON 解析失败');
   }
   // codex 八轮 P2：完整结构校验——畸形/旧版应 INVALID 而非 .map 抛异常。
   if (![FEATURE_COMPLETION_SCHEMA_VERSION, LEGACY_COMPLETION_SCHEMA_VERSION].includes(completion.schema_version)) {
-    return { verdict: 'INVALID', reasons: [`schema_version 非法/旧版：${String(completion.schema_version)}（要求 ${FEATURE_COMPLETION_SCHEMA_VERSION}）`] };
+    return invalid(`schema_version 非法/旧版：${String(completion.schema_version)}（要求 ${FEATURE_COMPLETION_SCHEMA_VERSION}）`);
   }
-  if (completion.schema_version === FEATURE_COMPLETION_SCHEMA_VERSION && projection.schema_version !== completion.schema_version) return { verdict: 'INVALID', reasons: ['投影与原件 schema_version 失配'] };
-  if (completion.schema_version === FEATURE_COMPLETION_SCHEMA_VERSION && !/^[0-9a-f]{64}$/.test(completion.execution_scope_fingerprint ?? '')) return { verdict: 'INVALID', reasons: ['新完成记录缺少合法 execution_scope_fingerprint'] };
+  if (completion.schema_version === FEATURE_COMPLETION_SCHEMA_VERSION && projection.schema_version !== completion.schema_version) return invalid('投影与原件 schema_version 失配');
+  if (completion.schema_version === FEATURE_COMPLETION_SCHEMA_VERSION && !/^[0-9a-f]{64}$/.test(completion.execution_scope_fingerprint ?? '')) return invalid('新完成记录缺少合法 execution_scope_fingerprint');
   if (!Array.isArray(completion.chain) || completion.chain.length === 0 || !completion.chain.every((p) => typeof p === 'string')) {
-    return { verdict: 'INVALID', reasons: ['chain 非法（须非空字符串数组）'] };
+    return invalid('chain 非法（须非空字符串数组）');
   }
-  if (!Array.isArray(completion.phases)) {
-    return { verdict: 'INVALID', reasons: ['phases 非数组'] };
-  }
+  // 以下失败时 chain 已可信地解析出来：随结果带回，供调用方按阶段核当前证据。
+  const invalidRecord = (reason: string): CompletionRecordInspection => invalid(reason, completion);
+  if (!Array.isArray(completion.phases)) return invalidRecord('phases 非数组');
   // D1.5 H1：`scope_source` 决定 run 身份位的形状——`'feature'` 载体下逐阶段 run_id **必为 null**，
   // `'run'`（含缺省的旧记录）下必为非空 string。两者不得混。
   const featureCarrier = completion.scope_source === 'feature';
   if (completion.scope_source !== undefined && completion.scope_source !== 'run' && completion.scope_source !== 'feature') {
-    return { verdict: 'INVALID', reasons: [`scope_source 非法：${String(completion.scope_source)}`] };
+    return invalidRecord(`scope_source 非法：${String(completion.scope_source)}`);
   }
   const structOk = completion.phases.every(
     (p) =>
@@ -995,17 +1023,13 @@ export function verifyFeatureCompletion(opts: VerifyCompletionOptions): Completi
         ? typeof p.closure_fingerprint === 'string' && !!p.closure_fingerprint
         : p.closure_fingerprint === undefined || p.closure_fingerprint === null),
   );
-  if (!structOk) {
-    return { verdict: 'INVALID', reasons: ['phases 记录字段类型非法'] };
-  }
+  if (!structOk) return invalidRecord('phases 记录字段类型非法');
   for (const [k, v] of [
     ['requirement_sha256', completion.requirement_sha256],
     ['review_attestation_aggregate', completion.review_attestation_aggregate],
     ['testing_source_aggregate', completion.testing_source_aggregate],
   ] as const) {
-    if (v !== null && typeof v !== 'string') {
-      return { verdict: 'INVALID', reasons: [`${k} 类型非法`] };
-    }
+    if (v !== null && typeof v !== 'string') return invalidRecord(`${k} 类型非法`);
   }
   // codex 九轮 P2：完整字段守卫——缺 artifact_hashes/supersedes 等应 INVALID 而非抛异常
   if (
@@ -1013,31 +1037,31 @@ export function verifyFeatureCompletion(opts: VerifyCompletionOptions): Completi
     ([completion.artifact_hashes.spec_md, completion.artifact_hashes.acceptance_yaml, completion.artifact_hashes.contracts_yaml]
       .some((v) => v !== null && typeof v !== 'string'))
   ) {
-    return { verdict: 'INVALID', reasons: ['artifact_hashes 缺失/类型非法'] };
+    return invalidRecord('artifact_hashes 缺失/类型非法');
   }
   if (!Array.isArray(completion.supersedes) || !completion.supersedes.every((s) => typeof s === 'string')) {
-    return { verdict: 'INVALID', reasons: ['supersedes 缺失/类型非法'] };
+    return invalidRecord('supersedes 缺失/类型非法');
   }
   if (typeof completion.generated_at !== 'string' || Number.isNaN(Date.parse(completion.generated_at))) {
-    return { verdict: 'INVALID', reasons: ['generated_at 缺失/非法时间戳'] };
+    return invalidRecord('generated_at 缺失/非法时间戳');
   }
   if (typeof completion.workflow_track !== 'string' || !completion.workflow_track) {
-    return { verdict: 'INVALID', reasons: ['workflow_track 缺失/类型非法'] };
+    return invalidRecord('workflow_track 缺失/类型非法');
   }
   if (completion.parent_run_id !== null && typeof completion.parent_run_id !== 'string') {
-    return { verdict: 'INVALID', reasons: ['parent_run_id 类型非法'] };
+    return invalidRecord('parent_run_id 类型非法');
   }
-  // workflow_track 与消费方独立解析的 track 对账（expectedChain 同哲学：不信自报；
-  // 十轮 P2 后 expectedTrack 必填，此处无条件比对）
+  // 记录按**它自己的** run 范围核验（plan b2d7f4e9 §3.1「两套范围不混用」）：指纹、修订计数、
+  // 完成目标与完成链都对自身有效范围对账；范围内证据是否仍覆盖义务由 assessFeature 另判，不在这里。
   let frozenScope: ExecutionScope | undefined;
   try {
     // D2.6: the completion was cut from the EFFECTIVE scope (birth + applied revisions), so the
-    // fingerprint, the expected chain and the evidence check all reconcile against that — while the
-    // birth scope is still loaded first, because a missing birth record is still INVALID.
+    // fingerprint and the expected chain reconcile against that — while the birth scope is still
+    // loaded first, because a missing birth record is still INVALID.
     const birthScope = completion.run_id
       ? loadFrozenExecutionScope(projectRoot, feature, completion.run_id)
       : readFeatureFrozenScope(projectRoot, feature)?.execution_scope;
-    if (completion.schema_version === FEATURE_COMPLETION_SCHEMA_VERSION && !birthScope) return { verdict: 'INVALID', reasons: ['新完成记录缺少出生范围'] };
+    if (completion.schema_version === FEATURE_COMPLETION_SCHEMA_VERSION && !birthScope) return invalidRecord('新完成记录缺少出生范围');
     frozenScope = birthScope ? loadEffectiveExecutionScope(projectRoot, feature, completion.run_id ?? undefined) : undefined;
     if (birthScope && frozenScope) {
       const revisions = completion.run_id
@@ -1047,60 +1071,51 @@ export function verifyFeatureCompletion(opts: VerifyCompletionOptions): Completi
       // revisions", i.e. a damaged certificate reading as a clean zero-revision run.
       const declared = completion.scope_revision_count;
       if (completion.schema_version === FEATURE_COMPLETION_SCHEMA_VERSION && (typeof declared !== 'number' || !Number.isInteger(declared) || declared < 0)) {
-        return { verdict: 'INVALID', reasons: ['完成记录缺少合法的 scope_revision_count'] };
+        return invalidRecord('完成记录缺少合法的 scope_revision_count');
       }
-      if ((declared ?? 0) !== revisions) return { verdict: 'INVALID', reasons: [`scope_revision_count 与事件失配：凭证=${declared ?? 0} ≠ 事件=${revisions}`] };
+      if ((declared ?? 0) !== revisions) return invalidRecord(`scope_revision_count 与事件失配：凭证=${declared ?? 0} ≠ 事件=${revisions}`);
     }
     if (frozenScope) {
-      if (completion.schema_version !== FEATURE_COMPLETION_SCHEMA_VERSION || completion.execution_scope_fingerprint !== executionScopeFingerprint(frozenScope)) return { verdict: 'INVALID', reasons: ['execution_scope_fingerprint 与有效范围失配'] };
-      const gaps = executionScopeEvidenceIssues(projectRoot, feature, frozenScope, undefined, completion.run_id ?? undefined);
-      if (frozenScope.completion_target !== 'feature' || gaps.length) return { verdict: 'INVALID', reasons: ['冻结范围尚未完成', ...gaps] };
+      if (completion.schema_version !== FEATURE_COMPLETION_SCHEMA_VERSION || completion.execution_scope_fingerprint !== executionScopeFingerprint(frozenScope)) return invalidRecord('execution_scope_fingerprint 与有效范围失配');
+      if (frozenScope.completion_target !== 'feature') return invalidRecord('完成记录的有效范围不是 Feature 完成目标');
       opts = { ...opts, expectedChain: executionCompletionPhases(frozenScope) };
     }
-  } catch (error) { return { verdict: 'INVALID', reasons: [`完成出生范围不可验证：${String(error)}`] }; }
+  } catch (error) { return invalidRecord(`完成出生范围不可验证：${String(error)}`); }
   if (!frozenScope && completion.workflow_track !== opts.expectedTrack) {
-    return {
-      verdict: 'INVALID',
-      reasons: [`workflow_track 与消费方解析失配：${completion.workflow_track} ≠ ${opts.expectedTrack}`],
-    };
+    return invalidRecord(`workflow_track 与消费方解析失配：${completion.workflow_track} ≠ ${opts.expectedTrack}`);
   }
 
   // ---- 自报字段对账（codex 五轮 P0：缩链/跨 feature/落点漂移全部在此拦） ----
-  if (completion.feature !== feature) {
-    return { verdict: 'INVALID', reasons: [`凭证 feature 失配：${completion.feature} ≠ ${feature}`] };
-  }
+  if (completion.feature !== feature) return invalidRecord(`凭证 feature 失配：${completion.feature} ≠ ${feature}`);
   if (
     completion.chain.length !== opts.expectedChain.length ||
     completion.chain.some((p, i) => p !== opts.expectedChain[i])
   ) {
-    return {
-      verdict: 'INVALID',
-      reasons: [`凭证 chain 与 workflow 解析链失配：[${completion.chain.join(',')}] ≠ [${opts.expectedChain.join(',')}]（缩链冒充全链即事故原形）`],
-    };
+    return invalidRecord(`凭证 chain 与 workflow 解析链失配：[${completion.chain.join(',')}] ≠ [${opts.expectedChain.join(',')}]（缩链冒充全链即事故原形）`);
   }
   const phaseList = completion.phases.map((p) => p.phase);
   if (phaseList.length !== completion.chain.length || phaseList.some((p, i) => p !== completion.chain[i])) {
-    return { verdict: 'INVALID', reasons: [`phases 与 chain 不一一对应：[${phaseList.join(',')}]`] };
+    return invalidRecord(`phases 与 chain 不一一对应：[${phaseList.join(',')}]`);
   }
   if (featureCarrier ? completion.run_id !== null : (typeof completion.run_id !== 'string' || !completion.run_id)) {
-    return { verdict: 'INVALID', reasons: [featureCarrier ? 'feature 载体的凭证 run_id 必须为 null（不允许伪造 run 身份）' : '凭证缺 run_id'] };
+    return invalidRecord(featureCarrier ? 'feature 载体的凭证 run_id 必须为 null（不允许伪造 run 身份）' : '凭证缺 run_id');
   }
   // 原件落点按载体二分；两者都锁在 runner 拥有的目录内，语义不放松。
   const expectedOriginalDir = path.resolve(featureCarrier
     ? featureFilePath(projectRoot, feature, 'completion')
     : featureFilePath(projectRoot, feature, path.join('goal-runs', completion.run_id!)));
   if (!path.resolve(originalAbs).startsWith(expectedOriginalDir + path.sep) && path.resolve(path.dirname(originalAbs)) !== expectedOriginalDir) {
-    return { verdict: 'INVALID', reasons: [`原件落点非法（须在 ${featureCarrier ? feature + '/completion/' : 'goal-runs/' + completion.run_id + '/'} 内）：${projection.original_path}`] };
+    return invalidRecord(`原件落点非法（须在 ${featureCarrier ? feature + '/completion/' : 'goal-runs/' + completion.run_id + '/'} 内）：${projection.original_path}`);
   }
   // run-event 血缘核验（codex 六轮 P0-4：只查 events.jsonl 存在=没验血缘）——
   // 每个 phase 引用的 run 必须真实执行过该 phase（phase_start 事件）且该 run 终局非失败态。
   for (const rec of completion.phases) {
     if (featureCarrier) {
-      // D1.5 H2：feature 载体没有 run events。判据换成 feature 侧**同强度**的阶段事实（与 assess
-      // 同一把尺）：summary verdict=PASS + closure_status=closed + closure_commit.schema_version=1.0
-      // + evidence manifest integrityOk + freshness=fresh。**attempt 与 run 终局两维在无 run 路径上
-      // 没有等价物，按 D1.5 显式豁免，不伪造 run_id 去凑**；其余五项一项不减。
-      reasons.push(...featureCarrierPhaseLineageIssues(projectRoot, feature, rec, opts.frameworkRoot));
+      // D1.5 H2：feature 载体没有 run events；记录自报的 attempt / 闭环指纹在这里核，
+      // 阶段 summary / manifest / freshness 是当前证据，交义务侧（drift）。
+      const lineage = featureCarrierPhaseLineageIssues(projectRoot, feature, rec, opts.frameworkRoot);
+      reasons.push(...lineage.record);
+      drift.push(...lineage.evidence.map(detail => ({ phase: rec.phase, detail, class: 'evidence' as const })));
       continue;
     }
     const evAbs = featureFilePath(projectRoot, feature, path.join('goal-runs', rec.run_id!, 'events.jsonl'));
@@ -1168,57 +1183,46 @@ export function verifyFeatureCompletion(opts: VerifyCompletionOptions): Completi
     if (!fs.existsSync(genEv)) reasons.push(`生成 run ${completion.run_id} 无 events.jsonl——自报失配`);
   }
 
-  // 逐阶段自报值 vs 当前重算（receipt 规范化哈希 + manifest aggregate）——失配即 INVALID
+  // 逐阶段自报值 vs 当前阶段证据。当前 manifest 与记录的 aggregate 相同 = 仍是记录切出时那份证据，
+  // 此时 gate_fingerprint 不等只能是记录被改写 → 记录不可信（第一轮阻断 8）；receipt / aggregate 不同 =
+  // 该阶段证据后变（重跑、删除、损坏）→ 交义务侧 evidence 缺口（plan b2d7f4e9 §6 #9：记录仍可信）。
   for (const rec of completion.phases) {
     const nowReceipt = computeCanonicalReceiptSha256(projectRoot, feature, rec.phase);
     if (nowReceipt !== rec.receipt_sha256) {
-      reasons.push(`[${rec.phase}] 回执规范化哈希与凭证记录失配`);
+      drift.push({ phase: rec.phase, detail: '回执规范化哈希与凭证记录失配（阶段证据后变）', class: 'evidence' });
     }
     const manifest = loadPhaseEvidenceManifest(projectRoot, feature, rec.phase);
     if ((manifest?.manifest.aggregate_sha256 ?? null) !== rec.evidence_manifest_aggregate) {
-      reasons.push(`[${rec.phase}] evidence manifest aggregate 与凭证记录失配`);
-    }
-    // 第一轮阻断 8：`gate_fingerprint` 此前只写不核——改一个再同步投影哈希即可蒙混过关。
-    // 与同一份 evidence manifest 的 environment.gate_fingerprint 对账；缺失同样失配。
-    if ((manifest?.manifest.environment.gate_fingerprint ?? null) !== rec.gate_fingerprint) {
+      drift.push({ phase: rec.phase, detail: 'evidence manifest aggregate 与凭证记录失配（阶段证据后变）', class: 'evidence' });
+    } else if ((manifest?.manifest.environment.gate_fingerprint ?? null) !== rec.gate_fingerprint) {
       reasons.push(`[${rec.phase}] gate_fingerprint 与阶段证据记录失配`);
     }
   }
-  // 顶层 artifact 自报 vs 重算
-  const artNow = (name: string): string | null => {
-    const r = resolveFeatureArtifact(projectRoot, feature, name);
-    return r.exists ? sha256File(r.actualPath) : null;
-  };
-  const artPairs: Array<[string, string | null]> = [
-    ['spec.md', completion.artifact_hashes.spec_md],
-    ['acceptance.yaml', completion.artifact_hashes.acceptance_yaml],
-    ['contracts.yaml', completion.artifact_hashes.contracts_yaml],
-  ];
-  const artChanged = artPairs.filter(([name, recorded]) => artNow(name) !== recorded).map(([n]) => n);
-  if (artChanged.length > 0) reasons.push(`顶层 artifact 变更：${artChanged.join(', ')}`);
-
-  // codex 七轮 P1-3：需求 SSOT/testing 源码/review attestation 绑定字段重算对账
-  try {
-    if (computeRequirementSsotAggregate(projectRoot, feature, completion.run_id ?? undefined) !== completion.requirement_sha256) reasons.push('requirement_sha256 与凭证记录失配（需求 SSOT 变更）');
-  } catch (error) { reasons.push('需求绑定失效：' + String(error)); }
-  const attNow = loadReviewClosureAttestation(projectRoot, feature);
-  if ((attNow?.inventory.aggregate_sha256 ?? null) !== completion.review_attestation_aggregate) {
-    reasons.push('review_attestation_aggregate 与凭证记录失配');
+  // legacy 1.1（无出生范围）保留顶层绑定比对，结果按责任阶段交义务侧；1.2 下这些输入已是义务绑定，不再单独比。
+  if (!frozenScope) {
+    const artNow = (name: string): string | null => {
+      const r = resolveFeatureArtifact(projectRoot, feature, name);
+      return r.exists ? sha256File(r.actualPath) : null;
+    };
+    for (const [name, recorded, phase] of [
+      ['spec.md', completion.artifact_hashes.spec_md, 'spec'],
+      ['acceptance.yaml', completion.artifact_hashes.acceptance_yaml, 'spec'],
+      ['contracts.yaml', completion.artifact_hashes.contracts_yaml, 'plan'],
+    ] as const) {
+      if (artNow(name) !== recorded) drift.push({ phase, detail: `顶层 artifact 变更：${name}`, class: 'binding' });
+    }
+    // codex 七轮 P1-3：需求 SSOT/testing 源码/review attestation 绑定字段重算对账
+    try {
+      if (computeRequirementSsotAggregate(projectRoot, feature, completion.run_id ?? undefined) !== completion.requirement_sha256) drift.push({ phase: 'spec', detail: 'requirement_sha256 与凭证记录失配（需求 SSOT 变更）', class: 'binding' });
+    } catch (error) { drift.push({ phase: 'spec', detail: '需求绑定失效：' + String(error), class: 'binding' }); }
+    const attNow = loadReviewClosureAttestation(projectRoot, feature);
+    if ((attNow?.inventory.aggregate_sha256 ?? null) !== completion.review_attestation_aggregate) {
+      drift.push({ phase: 'review', detail: 'review_attestation_aggregate 与凭证记录失配', class: 'evidence' });
+    }
+    if (buildSourceInventory(projectRoot, { expectProductSources: false }).aggregate_sha256 !== completion.testing_source_aggregate) {
+      drift.push({ phase: 'testing', detail: 'testing_source_aggregate 与凭证记录失配（产品源码树变更）', class: 'binding' });
+    }
   }
-  if (buildSourceInventory(projectRoot, { expectProductSources: false }).aggregate_sha256 !== completion.testing_source_aggregate) {
-    reasons.push('testing_source_aggregate 与凭证记录失配（产品源码树变更）');
-  }
-
-  // clean_pass 全量重算（血缘 fresh / attestation / must-review / waiver / verdict / 运行时证据）
-  // ——currentRequirementSha 用生成 run 的 requirement（P0-2：换需求复用旧 closure 在此判 stale）。
-  const issues = collectCleanPassIssues({
-    projectRoot, feature, chain: completion.chain, fidelityCapped: opts.fidelityCapped, executionScope: frozenScope,
-    currentRequirementSha: computeRunRequirementSha(projectRoot, feature, completion.run_id ?? undefined),
-    // D2: the generating run never seals itself before cutting the certificate, so its own closed
-    // phases must not be judged by the terminal run_end check; historical runs stay strict.
-    runId: completion.run_id ?? undefined,
-  });
-  for (const i of issues) reasons.push(`[${i.phase}] ${i.condition}(${i.kind}): ${i.detail}`);
 
   // supersedes 审计核验（codex 五轮 P1：自报 Set 直接豁免=把绕过固化）：
   // 每个被废弃 run 必须在生成 run 的 events.jsonl 里有 {type:'supersede', target_run_id}
@@ -1244,18 +1248,16 @@ export function verifyFeatureCompletion(opts: VerifyCompletionOptions): Completi
     }
   }
 
-  // 更晚未终局 run（仅经审计核验的 supersede 生效豁免）
+  // 更晚未终局 run（仅经审计核验的 supersede 生效豁免）——世界事实，交调用方 blocking。
+  const laterRuns: string[] = [];
   const gen = completion.generated_at;
   for (const run of scanRunTerminalStates(projectRoot, feature)) {
     if (auditedSupersedes.has(run.run_id) && completion.supersedes.includes(run.run_id)) continue;
     if (run.run_id === completion.run_id) continue;
     if (run.last_ts && run.last_ts > gen && !NON_TERMINAL_OK.has(run.status ?? '')) {
-      reasons.push(`存在晚于凭证的未终局 run：${run.run_id}（status=${run.status ?? '未知'}）`);
+      laterRuns.push(`存在晚于凭证的未终局 run：${run.run_id}（status=${run.status ?? '未知'}）`);
     }
   }
 
-  if (reasons.length === 0) return { verdict: 'VALID', reasons: [] };
-  // 凭证内部自报失配/血缘伪造=INVALID；其余（世界后变）=STALE
-  const invalid = reasons.some((r) => /失配|非法|缺失|伪造|血缘/.test(r));
-  return { verdict: invalid ? 'INVALID' : 'STALE', reasons };
+  return { verdict: reasons.length === 0 ? 'VALID' : 'INVALID', reasons, completion, scope: frozenScope, drift, laterRuns };
 }

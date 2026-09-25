@@ -1,0 +1,159 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-09-25T04:33:35.162Z",
+  "feature": "demo-card",
+  "phase": "testing",
+  "inputs": [
+    {
+      "path": "02-Feature/FinancialCard/index.ets",
+      "role": "input",
+      "sha256": "c42372f3cbb70378e8050f918322ab85b85a706f5b51c303961ded13d16a51bb",
+      "exists": true
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets",
+      "role": "input",
+      "sha256": "e9e1d7080d2bd7504115df6e88d94a4ed5eebe19aab033c2268927a5a6c61b95",
+      "exists": true
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankListItem.ets",
+      "role": "input",
+      "sha256": "727e9a2af8334e09b414a53e04f94b7fea76875d30bd73af6307a957b58b9e5f",
+      "exists": true
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankModel.ets",
+      "role": "input",
+      "sha256": "85bf14be522a0c0815a787be2b9e1f739e86be41fb8a25b9f83f47324996b1c4",
+      "exists": true
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankRepository.ets",
+      "role": "input",
+      "sha256": "fa10a20e27b5fa016f02a0e0608747e1f892974bb0a6cf10f7f3021e3ac3c907",
+      "exists": true
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankService.ets",
+      "role": "input",
+      "sha256": "bca6edbcaabe61fba6090d8f396f0105962a18d13dc2eacd88d0802d58045fb6",
+      "exists": true
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/resources/base/media/logo_demo.png",
+      "role": "input",
+      "sha256": "6d51ea2402770798273a2f11d1a64aa04eb290df7790eaaa38ad61420bfeeb1c",
+      "exists": true
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/resources/base/media/result_demo.png",
+      "role": "input",
+      "sha256": "0672172608dc6517fd62993f139ade74279b32c3a2e5ee63f425e40f23de9421",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/acceptance.yaml",
+      "role": "input",
+      "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/context/facts.md",
+      "role": "input",
+      "sha256": "c791ed42bb1b8ee2d080299bad9a382fda8824f3824a8be7bbf85d02f729a4d2",
+      "exists": true,
+      "facts_phase": "testing"
+    },
+    {
+      "path": "doc/features/demo-card/contracts.yaml",
+      "role": "input",
+      "sha256": "62d1104bc2c30d70e590280deb55788b3cca87b43442882ffc1635caa2931db0",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/manifest.json",
+      "role": "input",
+      "sha256": "40b72ebc00aa2d302fbc09603abef3b9c32feace3645e2bedfb4148c8f7d51ca",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/plan/plan.md",
+      "role": "input",
+      "sha256": "0c688dbfbd8bc782f7ac5bb40c7c14a1ef6c0f2f3e5fdd1a1e2ecc1ce4ba4c08",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/review/review-report.md",
+      "role": "input",
+      "sha256": "07cb850e8cd9617edfc88c52b22b6f14f16b2fe9efa05f222cbe71fc145a7f3d",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/spec/spec.md",
+      "role": "input",
+      "sha256": "95409507e3001e4973506d2d17618f27f5342415f4493ee388421b1f284e7d96",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/use-cases.yaml",
+      "role": "input",
+      "sha256": null,
+      "exists": false
+    }
+  ],
+  "outputs": [
+    {
+      "path": "doc/features/demo-card/testing/reports/20260925T043319Z-962/hylyre/trace.json",
+      "role": "output",
+      "sha256": "ef1149813a0fb8ca2d3fe3f641211da9d838c73acc649ece718229cf6bf02679",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/testing/reports/device-test-evidence.json",
+      "role": "output",
+      "sha256": "5d5c3ebb299b7bf2f02ab7d593c2544c71b87554724a46bc98f048f4678a7296",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/testing/reports/script-report.json",
+      "role": "output",
+      "sha256": "ac434bcb1e3d788a09050236e0792379e1308351d692060205bd01f55769a634",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/testing/reports/summary.json",
+      "role": "output",
+      "sha256": "be3aa8405bbfc05a0efc3565eee6d18bd37844e7c109bdc5bb8978aa0b8d7511",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/testing/reports/trace.json",
+      "role": "output",
+      "sha256": "f55e7df569dcdeec89bbc5eaa92257a1b39c9b3f8efed5174a38ff05de5ee5f5",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/testing/test-plan.md",
+      "role": "output",
+      "sha256": "b25ef5f6bab1cedceaf0bd1e6038a6cad57b87ed71394e1af59df6ab83769f5e",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/testing/test-report.md",
+      "role": "output",
+      "sha256": "c79ef09bc6efc63c8b68c7364db216c91f9157b3b6115ec1ef92d8995955da7e",
+      "exists": true
+    }
+  ],
+  "environment": {
+    "framework_version": "3.1.0",
+    "profile": "test-chain",
+    "gate_fingerprint": "3.1.0:bbe9dbfe6b6b",
+    "framework_config_sha256": "eb2aa515d5ff22b9d6ae2fa051b653d42ced579e64283800f976fe90486dd1ae",
+    "workflow_sha256": "1d65c4f3273b799cc5352c84839ca8b6333c26745d7b934e79841407c13c14e0",
+    "requirement_sha256": "25b23aa12607927a0923d987c0a6b039189178d3242992f4b3a78b677c08d00b"
+  },
+  "receipt_sha256": null,
+  "aggregate_sha256": "233af3a2b5184973302a1968aa044a87e93abe979a30924102019246fac7a6d1"
+}

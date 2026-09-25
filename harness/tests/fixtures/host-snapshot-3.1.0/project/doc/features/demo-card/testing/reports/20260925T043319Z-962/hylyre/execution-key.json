@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "execution_key": "02b6fee75b62a50c768ea2d9423d9fea14196d2ccfa8f4ba56d4ebac22c553f2",
+  "inputs": {
+    "hap_sha256_full": "6902f0725eabb4237b8bd8fae7394b8084c2a50fbb5c044729bc7336b80d1e11",
+    "derived_plan_sha256": "9e40a41759c6818716c9c111ba1d561af8ea755e7bbd4aabe7f494d7096960cf",
+    "device": "fake-device",
+    "display_env": "[Fail]Not match target founded, check connect-key please",
+    "reset_mode": "cold_restart",
+    "hylyre_version": "0.5.1",
+    "manifest_version": "0.5.1",
+    "profile": "test-chain",
+    "tool_config_sha256": "351c1718444d941020e1442c8d4160b3fc2ba97d1440241510d92a45eae39ba1",
+    "flags": [
+      "--skip-assert-expected"
+    ]
+  },
+  "trace_path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\testing\\reports\\20260925T043319Z-962\\hylyre\\trace.json",
+  "run_started_at": "2026-09-25T04:33:19.974Z",
+  "outcome": "success",
+  "trace_sha256": "ef1149813a0fb8ca2d3fe3f641211da9d838c73acc649ece718229cf6bf02679",
+  "timing_complete": true,
+  "frozen_files": [
+    "frozen.device-test-timing.json",
+    "frozen.device-test-run.meta.json"
+  ]
+}

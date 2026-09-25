@@ -1,0 +1,27 @@
+{
+  "phase": "plan",
+  "stage": "unknown",
+  "timed_out": false,
+  "inspected_file_count": 0,
+  "inspected_files": [],
+  "report_sections_done": [
+    "1. Scope 声明与继承",
+    "2. 架构影响声明",
+    "3. 模块架构图",
+    "4. 目录/文件结构规划",
+    "5. 数据模型定义",
+    "6. 页面组件树",
+    "7. 状态管理方案",
+    "8. 服务层接口定义",
+    "9. 路由/导航设计",
+    "10. 功能映射表"
+  ],
+  "artifacts": [
+    {
+      "path": "doc/features/demo-card/plan/plan.md",
+      "sha256": "0c688dbfbd8bc782f7ac5bb40c7c14a1ef6c0f2f3e5fdd1a1e2ecc1ce4ba4c08",
+      "mtime_ms": 1790310730471.9539
+    }
+  ],
+  "derived_at": "2026-09-25T04:32:15.558Z"
+}

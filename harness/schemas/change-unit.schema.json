@@ -72,7 +72,11 @@
       "type": "array",
       "items": { "$ref": "#/$defs/blocker" }
     },
-    "revises": { "$ref": "#/$defs/changeUnitRef" },
+    "revises": {
+      "$ref": "#/$defs/changeUnitRef",
+      "deprecated": true,
+      "$comment": "读兼容：旧 CU 可带此字段；不再生成、无消费者。契约变化用新 change_unit_id + supersedes，蓝图升版用指针原位升版（b2d7f4e9 §3.3）。"
+    },
     "supersedes": { "$ref": "#/$defs/changeUnitRef" }
   },
   "$defs": {

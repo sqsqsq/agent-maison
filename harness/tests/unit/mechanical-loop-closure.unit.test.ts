@@ -253,7 +253,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
         );
 
         // 这一步是本套件的存在理由：completion 走生产默认路径（真实 workflow 链 +
-        // 真实 verifyFeatureCompletion），不是任何桩喂进来的字符串。
+        // 真实 assessFeature），不是任何桩喂进来的字符串。
         for (const loaded of enumerateCanonicalChangeUnits(projectRoot, COMPONENT)) {
           const unit = asChangeUnitArtifact(loaded.changeUnit);
           const observation = observeChangeUnitCompletion(projectRoot, unit);

@@ -1,0 +1,27 @@
+feature: demo-card
+source: approved
+version: '1'
+modules:
+  - name: FinancialCard
+    layer: 02-Feature
+    package_path: 02-Feature/FinancialCard
+files:
+  - 02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets
+  - 02-Feature/FinancialCard/src/main/ets/BankRepository.ets
+  - 02-Feature/FinancialCard/src/main/ets/BankModel.ets
+  - 02-Feature/FinancialCard/src/main/ets/BankService.ets
+  - 02-Feature/FinancialCard/index.ets
+  - 02-Feature/FinancialCard/src/main/ets/BankListItem.ets
+  - 02-Feature/FinancialCard/src/main/resources/base/media/logo_demo.png
+  - 02-Feature/FinancialCard/src/main/resources/base/media/result_demo.png
+module_dependencies: {}
+data_models: []
+interfaces: []
+components: []
+prd_to_code_traceability:
+  - prd_id: AC-1
+    key_files:
+      - 02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets
+  - prd_id: AC-2
+    key_files:
+      - 02-Feature/FinancialCard/src/main/ets/BankService.ets

@@ -4,7 +4,7 @@ import * as path from 'path';
 import type { WorkflowSpec } from '../../workflow-loader';
 import type { AcceptanceSpec } from './types';
 import { readBoundInput, DEPENDENCY_ONLY_PROVIDER_IDS, type InputBinding } from './capability-resolution';
-import { isInsideProjectRoot } from './project-relative-path';
+import { inferLegacyProjectRoot, isInsideProjectRoot, resolveDependencyPath } from './project-relative-path';
 import { loadEffectiveExecutionScope } from './goal-run-creation';
 import { loadFeatureContracts, contractFingerprint } from './skill-contract';
 import { loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness } from './phase-evidence-manifest';
@@ -20,7 +20,8 @@ import { inferRepoLayout } from '../../repo-layout';
 
 import * as fs from 'fs';
 import * as YAML from 'yaml';
-import { featureArtifactPath, featurePhaseReportsDir } from '../../config';
+import { featureArtifactPath, featureFilePath, featurePhaseReportsDir } from '../../config';
+import type { FeatureCompletion } from './verify-feature-completion';
 import { resolveFeatureTrack, type FeatureTrackDecl } from './runtime-policy';
 
 export const FEATURE_DECL_FILENAME = 'feature.yaml';
@@ -136,6 +137,71 @@ export function resolveFeatureExecutionScope(projectRoot: string, feature: strin
   );
 }
 
+/**
+ * plan b2d7f4e9 §3.2：successor 出生按当前输入重生成的候选（`buildFeatureScopeCandidate`，由
+ * `resolveSuccessorExecutionScope` 在内存里生成、不写回 feature.yaml）走同一个 resolver、同一套核验：
+ *  ① 候选里失效的满足依据（含定义类的输入绑定）**剔除而不是整份拒绝**——失效即该义务未覆盖、责任阶段重做；
+ *  ② 按当前输入先解析一次得本次义务；每条 required 义务取上一份**可信**完成记录里其责任阶段的证据引用作
+ *     `satisfied_by`，核验走 `collectResolvedScopeFacts` 的阶段证据检查（`executionScopeEvidenceIssues`），核不过即剔除；
+ *  ③ 评估入口 `assessFeature` 对这份范围判 uncovered 的义务（CU 绑定失配、阶段结果失效等证据检查看不见的）撤回复用。
+ * 结果：无满足依据的 required 义务的责任阶段进 `phase_chain`，其余进 `reused_phases`。
+ * 已知上限：出生只排「此刻」uncovered 的阶段；上游重跑后下游证据才失效的，由完成判定暴露、再起 successor。
+ */
+export function resolveWithPriorEvidence(
+  input: ExecutionScopeInput,
+  workflow: WorkflowSpec,
+  ctx: { projectRoot: string; feature: string; frameworkRoot: string; requirement?: string; requirementSha?: string },
+): ExecutionScope {
+  const { projectRoot, feature, frameworkRoot } = ctx;
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const { assessFeature } = require('./feature-assessment') as typeof import('./feature-assessment');
+  const { resolveChangeUnitExpectedExecution } = require('./change-unit-completion') as typeof import('./change-unit-completion');
+  const { FEATURE_COMPLETION_FILENAME } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
+  /* eslint-enable @typescript-eslint/no-require-imports */
+  const resolve = (): ExecutionScope => {
+    let facts = collectResolvedScopeFacts(input, ctx);
+    const stale = facts.satisfied_by.filter(entry => !entry.ok);
+    if (stale.length) {
+      for (const fact of input.facts) {
+        const drop = stale.filter(entry => entry.obligation_id === fact.id).map(entry => entry.ref_index);
+        if (!drop.length || !fact.satisfied_by) continue;
+        const kept = fact.satisfied_by.filter((_, index) => !drop.includes(index));
+        if (kept.length) fact.satisfied_by = kept; else delete fact.satisfied_by;
+      }
+      facts = collectResolvedScopeFacts(input, ctx);
+    }
+    return resolveExecutionScope(input, workflow, readScopeAcceptance(projectRoot, input, { feature, frameworkRoot }), facts);
+  };
+  const expected = resolveChangeUnitExpectedExecution(projectRoot, feature);
+  const first = resolve();
+  if (assessFeature(projectRoot, feature, { ...expected, frameworkRoot }).record.state === 'ok') {
+    const projection = JSON.parse(fs.readFileSync(featureFilePath(projectRoot, feature, FEATURE_COMPLETION_FILENAME), 'utf8')) as { original_path: string };
+    const original = JSON.parse(fs.readFileSync(path.join(projectRoot, projection.original_path), 'utf8')) as FeatureCompletion;
+    const proofs = new Map(original.phases.filter(item => item.evidence_manifest_aggregate).map(item => [item.phase,
+      { phase: item.phase, ...(item.run_id ? { run_id: item.run_id } : {}), evidence_manifest_aggregate: item.evidence_manifest_aggregate! }]));
+    for (const obligation of first.obligations) {
+      const proof = proofs.get(obligation.owner_phase);
+      if (obligation.applicability !== 'required' || obligation.satisfied_by?.length || !proof) continue;
+      const fact = input.facts.find(item => item.id === obligation.id);
+      if (fact) fact.satisfied_by = [proof];
+      else {
+        const { owner_phase: _owner, ...rest } = structuredClone(obligation);
+        input.facts.push({ ...rest, satisfied_by: [proof] });
+      }
+    }
+  }
+  let scope = resolve();
+  // 覆盖按本次最终需求判：需求变了，按旧需求闭环的阶段结果 requirement lineage 即 stale → 撤回复用、责任阶段入链。
+  const uncovered = new Set(assessFeature(projectRoot, feature, { ...expected, frameworkRoot, scope, ...(ctx.requirementSha ? { requirementSha: ctx.requirementSha } : {}) })
+    .obligations.filter(item => item.status === 'uncovered').map(item => item.id));
+  const withdrawn = input.facts.filter(fact => fact.satisfied_by?.length && uncovered.has(fact.id));
+  if (withdrawn.length) {
+    for (const fact of withdrawn) delete fact.satisfied_by;
+    scope = resolve();
+  }
+  return scope;
+}
+
 // ---------------------------------------------------------------------------
 // D0.1 reading layer: resolve every fact the pure resolver needs, so the resolver
 // itself keeps zero `fs` / `projectRoot` (plan §4.1.0).
@@ -160,7 +226,8 @@ const relPosix = (projectRoot: string, abs: string): string => path.relative(pro
  *
  * This exemption is for `basis` (and `request.impact.basis`) ONLY — never for `satisfied_by`.
  */
-function verifyBasisBinding(projectRoot: string, frameworkRoot: string, feature: string, binding: InputBinding, skipContentCheck = false, requirement?: string | null): { ok: boolean; detail: string } {
+function verifyBasisBinding(projectRoot: string, frameworkRoot: string, feature: string, binding: InputBinding, skipContentCheck = false, requirement?: string | null, legacyRoot?: string): { ok: boolean; detail: string } {
+  const at = (dep: { path: string }): string => resolveDependencyPath(projectRoot, dep.path, legacyRoot);
   // `derive.requirement` 的解析值就是需求文本本身（`capability-resolution.ts:273-276`），
   // 所以重解析时必须把**同一份**需求文本交回去；否则该 provider 落到 feature 分支，
   // 只返回摘要不返回 value，`readBoundInput` 必判 stale。两处文本不同 = 候选与出生请求
@@ -176,8 +243,8 @@ function verifyBasisBinding(projectRoot: string, frameworkRoot: string, feature:
   // so a blueprint-derived binding legitimately records the absent physical artifact — demanding
   // existence there would reject every blueprint source, which D0.1 explicitly allows as a basis.
   for (const dep of binding.dependencies) {
-    if (!isInsideProjectRoot(projectRoot, dep.path)) return { ok: false, detail: `${binding.input_id}: 依据不在项目内 ${dep.path}` };
-    if (fs.existsSync(dep.path) !== dep.exists) return { ok: false, detail: `${binding.input_id}: 依据存在性变化 ${dep.path}` };
+    if (!isInsideProjectRoot(projectRoot, at(dep))) return { ok: false, detail: `${binding.input_id}: 依据不在项目内 ${dep.path}` };
+    if (fs.existsSync(at(dep)) !== dep.exists) return { ok: false, detail: `${binding.input_id}: 依据存在性变化 ${dep.path}` };
   }
   // 它不该拦住谁：**手上没有需求文本**的只读投影（`resolveChangeUnitExpectedExecution` 的 CU
   // 交接预判）。`derive.requirement` 的解析值就是那段文本，没有对照物就无从比对——依赖项的
@@ -191,7 +258,7 @@ function verifyBasisBinding(projectRoot: string, frameworkRoot: string, feature:
     // is always re-resolved through P1 (review B7). Only the no-parsed-value providers can be
     // judged by their dependencies, and even then the source must be real and digest-verifiable.
     if (!byDependencies) {
-      readBoundInput({ projectRoot, frameworkRoot, feature, phase: 'spec', track: 'full', ...requirementContext }, binding);
+      readBoundInput({ projectRoot, frameworkRoot, feature, phase: 'spec', track: 'full', ...requirementContext }, binding, legacyRoot);
       return { ok: true, detail: `${binding.input_id}: re-resolved` };
     }
     const present = binding.dependencies.filter(dep => dep.exists);
@@ -210,7 +277,7 @@ function verifyBasisBinding(projectRoot: string, frameworkRoot: string, feature:
       return { ok: true, detail: `${binding.input_id}: birth-time observation (content not re-compared)` };
     }
     for (const dep of present) {
-      if (createHash('sha256').update(fs.readFileSync(dep.path)).digest('hex') !== dep.sha256) {
+      if (createHash('sha256').update(fs.readFileSync(at(dep))).digest('hex') !== dep.sha256) {
         return { ok: false, detail: `${binding.input_id}: 依据字节已变化 ${dep.path}` };
       }
     }
@@ -221,12 +288,12 @@ function verifyBasisBinding(projectRoot: string, frameworkRoot: string, feature:
 }
 
 /** `satisfied_by` bindings are proof that a duty is already met — always fully re-resolved. */
-function verifySatisfiedByBinding(projectRoot: string, frameworkRoot: string, feature: string, phase: string, binding: InputBinding): { ok: boolean; detail: string } {
+function verifySatisfiedByBinding(projectRoot: string, frameworkRoot: string, feature: string, phase: string, binding: InputBinding, legacyRoot?: string): { ok: boolean; detail: string } {
   for (const dep of binding.dependencies) {
-    if (!isInsideProjectRoot(projectRoot, dep.path)) return { ok: false, detail: `${binding.input_id}: 依据不在项目内 ${dep.path}` };
+    if (!isInsideProjectRoot(projectRoot, resolveDependencyPath(projectRoot, dep.path, legacyRoot))) return { ok: false, detail: `${binding.input_id}: 依据不在项目内 ${dep.path}` };
   }
   try {
-    readBoundInput({ projectRoot, frameworkRoot, feature, phase, track: 'full' }, binding);
+    readBoundInput({ projectRoot, frameworkRoot, feature, phase, track: 'full' }, binding, legacyRoot);
     return { ok: true, detail: `${binding.input_id}: re-resolved` };
   } catch (error) {
     return { ok: false, detail: `${binding.input_id}: ${(error as Error).message}` };
@@ -246,6 +313,9 @@ export function collectResolvedScopeFacts(
     impactInherited?: boolean },
 ): ResolvedScopeFacts {
   const { projectRoot, feature, frameworkRoot } = ctx;
+  // plan b2d7f4e9 t4：候选/有效范围里的记录依赖可能写于另一个工程根，读侧按同一份记录推出的旧根重定位。
+  const legacyRoot = inferLegacyProjectRoot(projectRoot, input);
+  const relDep = (dep: { path: string }): string => relPosix(projectRoot, resolveDependencyPath(projectRoot, dep.path, legacyRoot));
   /* eslint-disable @typescript-eslint/no-require-imports */
   const { loadFidelityIntentSsotState, resolveUiRelevanceForRun } = require('./fidelity-shared') as typeof import('./fidelity-shared');
   const { uiSpecAbsPath, loadUiSpecFile } = require('./ui-spec-shared') as typeof import('./ui-spec-shared');
@@ -275,7 +345,7 @@ export function collectResolvedScopeFacts(
 
   // Target sets the impact relevance check runs against (§4.1.3). Paths stay project-relative.
   const derivePaths = (predicate: (fact: ExecutionScopeInput['facts'][number]) => boolean): string[] => [...new Set(input.facts.filter(predicate)
-    .flatMap(fact => fact.basis.flatMap(binding => binding.dependencies.filter(dep => dep.role === 'derive').map(dep => relPosix(projectRoot, dep.path)))))];
+    .flatMap(fact => fact.basis.flatMap(binding => binding.dependencies.filter(dep => dep.role === 'derive').map(relDep))))];
   let contractsFiles: string[] = [];
   let contractsDetail = 'no contracts binding in candidate';
   const contractsBinding = input.facts.flatMap(fact => fact.basis).find(binding => binding.source.kind === 'artifact'
@@ -283,7 +353,7 @@ export function collectResolvedScopeFacts(
     : binding.source.provider_id === 'derive.blueprint-contracts');
   if (contractsBinding) {
     try {
-      const value = readBoundInput({ projectRoot, frameworkRoot, feature, phase: 'plan', track: 'full' }, contractsBinding) as { files?: unknown };
+      const value = readBoundInput({ projectRoot, frameworkRoot, feature, phase: 'plan', track: 'full' }, contractsBinding, legacyRoot) as { files?: unknown };
       if (Array.isArray(value?.files)) contractsFiles = value.files.filter((f): f is string => typeof f === 'string').map(f => f.replace(/\\/g, '/'));
       contractsDetail = `contracts read ok, files=${contractsFiles.length}`;
     } catch (error) {
@@ -306,10 +376,10 @@ export function collectResolvedScopeFacts(
   ]);
 
   const impact_basis = (input.request.impact?.basis ?? []).map(binding => {
-    const verdict = verifyBasisBinding(projectRoot, frameworkRoot, feature, binding, ctx.impactInherited === true, ctx.requirement);
+    const verdict = verifyBasisBinding(projectRoot, frameworkRoot, feature, binding, ctx.impactInherited === true, ctx.requirement, legacyRoot);
     // Relevance is computed here (not in the resolver) because it needs projectRoot to normalise
     // paths; `targets` above is carried through so the decision stays inspectable.
-    const paths = binding.dependencies.map(dep => relPosix(projectRoot, dep.path));
+    const paths = binding.dependencies.map(relDep);
     const related = paths.some(p => allowed.has(p));
     return { input_id: binding.input_id, ok: verdict.ok, related, detail: `${verdict.detail}${related ? '' : ` | 目标集合=${[...allowed].join(',') || '空'} | ${contractsDetail}`}` };
   });
@@ -329,13 +399,13 @@ export function collectResolvedScopeFacts(
       && provenance.source.kind === 'derive' && provenance.source.provider_id === 'derive.requirement';
     basis.push({ obligation_id: 'request:requirement', input_id: provenance.input_id,
       ...(canonical
-        ? verifyBasisBinding(projectRoot, frameworkRoot, feature, provenance, false, ctx.requirement)
+        ? verifyBasisBinding(projectRoot, frameworkRoot, feature, provenance, false, ctx.requirement, legacyRoot)
         : { ok: false, detail: `${provenance.input_id}: 需求 provenance 必须是 derive.requirement 解析出的 requirement 绑定` }) });
   }
   for (const fact of input.facts) {
     for (const binding of fact.basis) {
       const birthObservation = EXECUTION_SOURCE_KINDS.has(fact.kind) && binding.dependencies.every(dep => dep.role === 'derive');
-      basis.push({ obligation_id: fact.id, input_id: binding.input_id, ...verifyBasisBinding(projectRoot, frameworkRoot, feature, binding, birthObservation, ctx.requirement) });
+      basis.push({ obligation_id: fact.id, input_id: binding.input_id, ...verifyBasisBinding(projectRoot, frameworkRoot, feature, binding, birthObservation, ctx.requirement, legacyRoot) });
     }
   }
 
@@ -343,7 +413,7 @@ export function collectResolvedScopeFacts(
   for (const fact of input.facts) {
     (fact.satisfied_by ?? []).forEach((ref, ref_index) => {
       if ('input_id' in ref) {
-        const verdict = verifySatisfiedByBinding(projectRoot, frameworkRoot, feature, 'spec', ref);
+        const verdict = verifySatisfiedByBinding(projectRoot, frameworkRoot, feature, 'spec', ref, legacyRoot);
         satisfied_by.push({ obligation_id: fact.id, ref_index, ...verdict });
         return;
       }
@@ -366,8 +436,9 @@ export function readScopeAcceptance(projectRoot: string, input: Pick<ExecutionSc
   const binding = bindings.find(binding => binding.source.kind === 'artifact' && binding.source.artifact === 'acceptance@1')
     ?? bindings.find(binding => binding.source.kind === 'derive' && binding.source.provider_id === 'derive.blueprint-acceptance');
   if (!binding) return undefined;
-  if (binding.dependencies.some(dep => !isInsideProjectRoot(projectRoot, dep.path))) throw new Error('[execution-scope] acceptance source outside project');
-  const value = readBoundInput({ ...context, projectRoot, phase: 'spec', track: 'full' }, binding) as AcceptanceSpec;
+  const legacyRoot = inferLegacyProjectRoot(projectRoot, input);
+  if (binding.dependencies.some(dep => !isInsideProjectRoot(projectRoot, resolveDependencyPath(projectRoot, dep.path, legacyRoot)))) throw new Error('[execution-scope] acceptance source outside project');
+  const value = readBoundInput({ ...context, projectRoot, phase: 'spec', track: 'full' }, binding, legacyRoot) as AcceptanceSpec;
   return { value, binding };
 }
 
@@ -543,6 +614,33 @@ function candidateBinding(
  */
 export function prepareFeatureScopeCandidate(input: PrepareScopeCandidateInput): PrepareScopeCandidateResult {
   const { projectRoot, frameworkRoot, feature } = input;
+  const candidate = buildFeatureScopeCandidate(input);
+  // 同一个 resolver、同一份已解析事实——投影出来的就是冻结时会得到的结果。
+  const scope = resolveExecutionScope(candidate, resolveWorkflowSpecForCandidate(projectRoot, frameworkRoot),
+    readScopeAcceptance(projectRoot, candidate, { feature, frameworkRoot }),
+    collectResolvedScopeFacts(candidate, { projectRoot, feature, frameworkRoot, requirement: input.requirement?.trim() || input.requestedResults.join('\n') }));
+
+  const abs = featureTrackDeclPath(projectRoot, feature);
+  const existing = fs.existsSync(abs) ? (YAML.parse(fs.readFileSync(abs, 'utf-8')) as Record<string, unknown> | null) ?? {} : {};
+  const next = { ...existing, execution_scope: JSON.parse(JSON.stringify(candidate)) as unknown };
+  const bytes = YAML.stringify(next);
+  const current = fs.existsSync(abs) ? fs.readFileSync(abs, 'utf-8') : null;
+  const explanation = explainScope(scope);
+  if (current === bytes) return { path: abs, written: false, state: 'unchanged', candidate, scope, explanation };
+  if (current !== null && existing.execution_scope !== undefined && !input.overwrite) {
+    return { path: abs, written: false, state: 'differs', candidate, scope, explanation };
+  }
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, bytes, 'utf-8');
+  return { path: abs, written: true, state: 'created', candidate, scope, explanation };
+}
+
+/**
+ * D0.2 候选生成（纯内存、不写盘）：`--prepare-scope` 与 successor 出生（plan b2d7f4e9 §3.2 第 2 步，
+ * `resolveSuccessorExecutionScope`）共用的唯一生成点。
+ */
+export function buildFeatureScopeCandidate(input: Omit<PrepareScopeCandidateInput, 'overwrite'>): ExecutionScopeInput {
+  const { projectRoot, frameworkRoot, feature } = input;
   if (!input.requestedResults.length) throw new Error('[prepare-scope] --requested-results 必填（请求结果是主 Agent 的职责之一）');
   if (!input.requestedPhases.length) {
     throw new Error('[prepare-scope] 请求动作须由 --requested-phases 显式给出（改代码 → 含 coding；只补验证 → 只列验证阶段）——机器不猜动作');
@@ -616,24 +714,7 @@ export function prepareFeatureScopeCandidate(input: PrepareScopeCandidateInput):
     facts,
     contract_fingerprints: loadFeatureContracts(frameworkRoot).map(contractFingerprint),
   };
-  // 同一个 resolver、同一份已解析事实——投影出来的就是冻结时会得到的结果。
-  const scope = resolveExecutionScope(candidate, workflow,
-    readScopeAcceptance(projectRoot, candidate, { feature, frameworkRoot }),
-    collectResolvedScopeFacts(candidate, { projectRoot, feature, frameworkRoot, requirement: input.requirement?.trim() || input.requestedResults.join('\n') }));
-
-  const abs = featureTrackDeclPath(projectRoot, feature);
-  const existing = fs.existsSync(abs) ? (YAML.parse(fs.readFileSync(abs, 'utf-8')) as Record<string, unknown> | null) ?? {} : {};
-  const next = { ...existing, execution_scope: JSON.parse(JSON.stringify(candidate)) as unknown };
-  const bytes = YAML.stringify(next);
-  const current = fs.existsSync(abs) ? fs.readFileSync(abs, 'utf-8') : null;
-  const explanation = explainScope(scope);
-  if (current === bytes) return { path: abs, written: false, state: 'unchanged', candidate, scope, explanation };
-  if (current !== null && existing.execution_scope !== undefined && !input.overwrite) {
-    return { path: abs, written: false, state: 'differs', candidate, scope, explanation };
-  }
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, bytes, 'utf-8');
-  return { path: abs, written: true, state: 'created', candidate, scope, explanation };
+  return candidate;
 }
 
 /** 写集来源：契约声明的文件（contracts@1 的 files）——不猜、不扫描。 */

@@ -13,7 +13,8 @@ import {
   enumerateCanonicalChangeUnits,
 } from '../../scripts/utils/change-unit-path';
 import { validateComponentBlueprint } from '../../scripts/utils/component-blueprint-validator';
-import { componentBlueprintPath, sha256Bytes } from '../../scripts/utils/component-blueprint-path';
+import { componentBlueprintPath, loadCanonicalBlueprint, sha256Bytes } from '../../scripts/utils/component-blueprint-path';
+import { deriveChangeUnitReadySet } from '../../scripts/utils/change-unit-ready-set';
 import { componentClosurePath, loadCanonicalComponentClosure } from '../../scripts/utils/component-closure-path';
 import {
   ComponentClosureEvaluationOptions,
@@ -34,6 +35,8 @@ import { generateScriptReport } from '../../scripts/utils/report-generator';
 import { CheckResult, Phase } from '../../scripts/utils/types';
 import { clearSkillsIndexCache, resolveSkillPath } from '../../scripts/utils/resolve-skill-path';
 import { checkCanonicalComponentClosure, writeCanonicalComponentClosure } from '../../scripts/check-component-closure';
+import { resolveComponentClosureInputs } from '../../scripts/utils/component-closure-inputs';
+import { reconcileChangeUnitBlueprintRefs } from '../../scripts/utils/change-unit-design-preparation';
 
 interface UnitCaseResult { name: string; ok: boolean; error?: string }
 
@@ -250,7 +253,7 @@ function provider(
   });
 }
 
-function evaluationOptions(state: 'VALID' | 'STALE' | 'INVALID' | 'ABSENT' = 'VALID'): ComponentClosureEvaluationOptions {
+function evaluationOptions(state: 'VALID' | 'INCOMPLETE' | 'INVALID' | 'ABSENT' = 'VALID'): ComponentClosureEvaluationOptions {
   return {
     evaluatedAt: FIXED_TIME,
     observeCompletion: (_root, unit) => ({
@@ -265,6 +268,16 @@ function evaluationOptions(state: 'VALID' | 'STALE' | 'INVALID' | 'ABSENT' = 'VA
 
 function expectIssue(issues: Array<{ id: string }>, id: string): void {
   assert(issues.some(issue => issue.id === id || issue.id.startsWith(`${id}:`)), `缺期望 issue=${id}；实际=${issues.map(issue => issue.id).join(', ')}`);
+}
+
+/** 蓝图升一个 admitted revision（同 component-design-handoff 的做法）。 */
+function bumpClosureBlueprint(projectRoot: string, mutate?: (blueprint: BlueprintRecord) => void): void {
+  const file = componentBlueprintPath(projectRoot, 'ledger-app-blueprint');
+  const blueprint = YAML.parse(fs.readFileSync(file, 'utf8')) as BlueprintRecord;
+  blueprint.revision = Number(blueprint.revision) + 1;
+  for (const result of asRecords(blueprint.derived_results)) result.input_revision = blueprint.revision;
+  mutate?.(blueprint);
+  fs.writeFileSync(file, YAML.stringify(blueprint), 'utf8');
 }
 
 function writeClosure(projectRoot: string, closure: ComponentClosureArtifact): void {
@@ -598,7 +611,7 @@ export function runAll(): UnitCaseResult[] {
     });
   }));
 
-  for (const state of ['STALE', 'INVALID', 'ABSENT'] as const) {
+  for (const state of ['INCOMPLETE', 'INVALID', 'ABSENT'] as const) {
     results.push(test(`${state} completion remains distinct and cannot close Component`, () => {
       withProject(projectRoot => {
         const evaluated = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions(state));
@@ -608,38 +621,126 @@ export function runAll(): UnitCaseResult[] {
     }));
   }
 
-  results.push(test('historical CU contributes only through exact VALID completion and P2 carry-forward', () => {
+  // b2d7f4e9 §3.4：closure inputs 单路。夹具经真实 writer：蓝图升 revision、reconcileChangeUnitBlueprintRefs 升指针；
+  // completion 走真实 assess（不注入 verdict）。
+  results.push(test('b2d7 single path: a CU re-pointed in place resolves exactly and carries forward', () => {
     withProject(projectRoot => {
-      const cuFile = path.join(projectRoot, 'doc', 'features', 'ledger-app-blueprint', 'ledger-summary', 'change-unit.yaml');
-      const cu = YAML.parse(fs.readFileSync(cuFile, 'utf8')) as BlueprintRecord;
-      const historicalHash = `sha256:${'1'.repeat(64)}`;
-      const rootRef = asRecord(cu.component_blueprint_ref)!;
-      rootRef.revision = 1;
-      rootRef.artifact_sha256 = historicalHash;
-      for (const ref of asRecords(cu.design_refs)) {
-        ref.revision = 1;
-        ref.artifact_sha256 = historicalHash;
+      bumpClosureBlueprint(projectRoot);
+      const reconciled = reconcileChangeUnitBlueprintRefs(projectRoot, 'ledger-app-blueprint');
+      assert(reconciled.skipped.length === 0 && reconciled.bumped.length === 4, `升版前提不成立：${JSON.stringify(reconciled)}`);
+      const inputs = resolveComponentClosureInputs(projectRoot, 'ledger-app-blueprint');
+      assert(!inputs.issues.some(issue => issue.id === 'component_closure_change_unit_invalid'), inputs.issues.map(issue => `${issue.id}:${issue.message}`).join('\n'));
+      assert(inputs.units.length === 4, `单路枚举丢 CU：${inputs.units.length}`);
+      for (const unit of inputs.manifest.change_units) {
+        assert(unit.carry_forward && unit.carry_forward_reasons.length === 0, `${unit.ref.change_unit_id} 已升版仍不贡献：${unit.carry_forward_reasons.join('；')}`);
       }
-      for (const touch of asRecords(cu.touches)) {
-        const ref = asRecord(touch.design_ref)!;
-        ref.revision = 1;
-        ref.artifact_sha256 = historicalHash;
-      }
-      fs.writeFileSync(cuFile, YAML.stringify(cu), 'utf8');
-      const loaded = enumerateCanonicalChangeUnits(projectRoot, 'ledger-app-blueprint').find(item => item.changeUnit.change_unit_id === 'ledger-summary')!;
-      configureFeature(projectRoot, loaded);
-      const carried = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
-      const summary = carried.closure.inputs.change_units.find(item => item.ref.change_unit_id === 'ledger-summary')!;
-      assert(summary.carry_forward && summary.completion === 'VALID', `历史 CU 未按 P2 carry-forward 贡献：${summary.carry_forward_reasons.join(',')}`);
+    });
+  }));
 
-      const broken = YAML.parse(fs.readFileSync(cuFile, 'utf8')) as BlueprintRecord;
-      const flow = asRecords(broken.design_refs).find(ref => asRecord(ref.target)?.kind === 'flow')!;
-      asRecord(flow.target)!.id = 'missing-flow';
-      fs.writeFileSync(cuFile, YAML.stringify(broken), 'utf8');
-      configureFeature(projectRoot, enumerateCanonicalChangeUnits(projectRoot, 'ledger-app-blueprint').find(item => item.changeUnit.change_unit_id === 'ledger-summary')!);
-      const rejected = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
-      expectIssue(rejected.issues, 'component_closure_carry_forward_rejected');
-      assert(rejected.closure.verdict === 'FAIL', '失效历史 stable id 被 carry-forward 放行');
+  results.push(test('b2d7 single path: a carry-forwardable CU not re-pointed yet is carry_forward=false with the repoint guidance, not invalid', () => {
+    withProject(projectRoot => {
+      bumpClosureBlueprint(projectRoot);
+      const inputs = resolveComponentClosureInputs(projectRoot, 'ledger-app-blueprint');
+      assert(!inputs.issues.some(issue => issue.id === 'component_closure_change_unit_invalid'), inputs.issues.map(issue => `${issue.id}:${issue.message}`).join('\n'));
+      assert(inputs.units.length === 4, `未升版 CU 被逐出输入集：${inputs.units.length}`);
+      for (const unit of inputs.manifest.change_units) {
+        assert(!unit.carry_forward, `${unit.ref.change_unit_id} 未升版却贡献`);
+        assert(unit.carry_forward_reasons.length === 1 && unit.carry_forward_reasons[0].includes('未原位升版')
+          && unit.carry_forward_reasons[0].includes('reconcileChangeUnitBlueprintRefs'), `${unit.ref.change_unit_id} 原因不对：${unit.carry_forward_reasons.join('；')}`);
+      }
+      const evaluated = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', { evaluatedAt: FIXED_TIME });
+      const rejected = evaluated.issues.filter(issue => issue.id === 'component_closure_carry_forward_rejected');
+      assert(rejected.length === 4 && rejected.every(issue => issue.route === 'reconcile_blueprint'), `未经 reconcile_blueprint 路由：${JSON.stringify(rejected)}`);
+      assert(!evaluated.issues.some(issue => issue.id.startsWith('component_closure_feature_projection_invalid:')), '未升版 CU 仍拿旧蓝图 ref 过施工投影');
+      assert(evaluated.closure.verdict === 'FAIL', '未升版 CU 让 closure 放行');
+    });
+  }));
+
+  results.push(test('b2d7 ★5 single path: a CU whose design_ref target was removed stays carry_forward=false with the unresolvable reason', () => {
+    withProject(projectRoot => {
+      bumpClosureBlueprint(projectRoot, bp => {
+        const drop = (value: unknown): unknown => Array.isArray(value)
+          ? value.filter(item => asRecord(item)?.relation_id !== 'domain-owned-by-module'
+            && asRecord(item)?.question_id !== 'q-relation-domain-module').map(drop)
+          : asRecord(value) ? Object.fromEntries(Object.entries(value as object).map(([key, item]) => [key, drop(item)])) : value;
+        Object.assign(bp, drop(bp));
+      });
+      assert(reconcileChangeUnitBlueprintRefs(projectRoot, 'ledger-app-blueprint').bumped.length === 0, '前提：carry-forward 失败时不升版');
+      const inputs = resolveComponentClosureInputs(projectRoot, 'ledger-app-blueprint');
+      assert(!inputs.issues.some(issue => issue.id === 'component_closure_change_unit_invalid'), inputs.issues.map(issue => `${issue.id}:${issue.message}`).join('\n'));
+      const refresh = inputs.manifest.change_units.find(unit => unit.ref.change_unit_id === 'ledger-refresh')!;
+      assert(!refresh.carry_forward, 'target 删除后仍贡献');
+      assert(refresh.carry_forward_reasons.some(reason => reason.includes('未原位升版')), refresh.carry_forward_reasons.join('；'));
+      assert(refresh.carry_forward_reasons.some(reason => reason.includes('relation:domain-owned-by-module') && reason.includes('不可解析')),
+        `缺 carry-forward 不通过原因：${refresh.carry_forward_reasons.join('；')}`);
+    });
+  }));
+
+  // codex r1 P1-2：原位升版改变被引用 CU 的 revision / artifact_sha256，supersedes 的精确引用须同批维护。
+  const setSupersedes = (projectRoot: string, id: string, targetId: string, edit?: (unit: BlueprintRecord) => void): void => {
+    const target = enumerateCanonicalChangeUnits(projectRoot, 'ledger-app-blueprint').find(item => item.changeUnit.change_unit_id === targetId)!;
+    const file = path.join(projectRoot, 'doc', 'features', 'ledger-app-blueprint', id, 'change-unit.yaml');
+    const unit = YAML.parse(fs.readFileSync(file, 'utf8')) as BlueprintRecord;
+    unit.supersedes = createChangeUnitRef(target);
+    edit?.(unit);
+    fs.writeFileSync(file, YAML.stringify(unit), 'utf8');
+  };
+  const unitsById = (projectRoot: string) => new Map(enumerateCanonicalChangeUnits(projectRoot, 'ledger-app-blueprint').map(item => [String(item.changeUnit.change_unit_id), item]));
+
+  results.push(test('b2d7 re-point keeps a supersedes chain (consumer → recovery → summary) exact across the bump', () => {
+    withProject(projectRoot => {
+      setSupersedes(projectRoot, 'ledger-recovery', 'ledger-summary');
+      setSupersedes(projectRoot, 'ledger-consumer', 'ledger-recovery');
+      assert(!resolveComponentClosureInputs(projectRoot, 'ledger-app-blueprint').issues.some(issue => issue.id === 'component_closure_supersedes_invalid'), '前提：升版前 supersedes 精确');
+      bumpClosureBlueprint(projectRoot);
+      const reconciled = reconcileChangeUnitBlueprintRefs(projectRoot, 'ledger-app-blueprint');
+      assert(reconciled.skipped.length === 0 && reconciled.bumped.length === 4, `升版前提不成立：${JSON.stringify(reconciled)}`);
+      const inputs = resolveComponentClosureInputs(projectRoot, 'ledger-app-blueprint');
+      assert(!inputs.issues.some(issue => issue.id.startsWith('component_closure_supersedes')), inputs.issues.map(issue => `${issue.id}:${issue.message}`).join('\n'));
+      const byId = unitsById(projectRoot);
+      for (const [id, target] of [['ledger-recovery', 'ledger-summary'], ['ledger-consumer', 'ledger-recovery']]) {
+        assert(JSON.stringify(byId.get(id)!.changeUnit.supersedes) === JSON.stringify(createChangeUnitRef(byId.get(target)!)), `${id}.supersedes 未指向 ${target} 升版后身份`);
+      }
+      const retired = new Map(inputs.manifest.change_units.map(unit => [unit.ref.change_unit_id, unit.retired_by]));
+      assert(retired.get('ledger-summary') === 'ledger-recovery' && retired.get('ledger-recovery') === 'ledger-consumer', `退役关系丢失：${JSON.stringify([...retired])}`);
+    });
+  }));
+
+  results.push(test('b2d7 active set: B on the current blueprint exactly supersedes A on the old one → A stays retired in closure and out of the ready set', () => {
+    withProject(projectRoot => {
+      bumpClosureBlueprint(projectRoot);
+      const current = loadCanonicalBlueprint(projectRoot, 'ledger-app-blueprint');
+      const identity = { revision: Number(current.blueprint.revision), source_fingerprint: String(current.blueprint.source_fingerprint), artifact_sha256: current.artifactSha256 };
+      setSupersedes(projectRoot, 'ledger-consumer', 'ledger-summary', unit => {
+        const refs = [unit.component_blueprint_ref, ...asRecords(unit.design_refs), ...asRecords(unit.touches).map(touch => touch.design_ref)];
+        for (const ref of refs) Object.assign(asRecord(ref)!, identity);
+        unit.revision = Number(unit.revision) + 1;
+      });
+      const reconciled = reconcileChangeUnitBlueprintRefs(projectRoot, 'ledger-app-blueprint');
+      assert(reconciled.skipped.some(item => item.change_unit_id === 'ledger-summary' && item.reasons[0].startsWith('superseded_by_unbumped')), JSON.stringify(reconciled));
+      const inputs = resolveComponentClosureInputs(projectRoot, 'ledger-app-blueprint');
+      const summary = inputs.manifest.change_units.find(unit => unit.ref.change_unit_id === 'ledger-summary');
+      assert(summary && !summary.current && summary.retired_by === 'ledger-consumer', `closure 未把 A 记为 retired：${JSON.stringify(summary)}`);
+      assert(!inputs.issues.some(issue => issue.id.startsWith('component_closure_supersedes')), inputs.issues.map(issue => issue.id).join(', '));
+      assert(!deriveChangeUnitReadySet(projectRoot, 'ledger-app-blueprint').units.some(unit => unit.changeUnit.change_unit_id === 'ledger-summary'), '退役 A 仍进推进');
+    });
+  }));
+
+  results.push(test('b2d7 re-point: a CU retired by a referrer that is not bumped in this batch is not bumped either', () => {
+    withProject(projectRoot => {
+      // consumer 三处指针身份不一致（契约变化，本批跳过）且 supersedes summary → summary 若升版，consumer 的精确引用即失效。
+      setSupersedes(projectRoot, 'ledger-consumer', 'ledger-summary', unit => {
+        asRecords(unit.design_refs)[0]!.artifact_sha256 = 'sha256:' + '1'.repeat(64);
+      });
+      bumpClosureBlueprint(projectRoot);
+      const summaryBytes = unitsById(projectRoot).get('ledger-summary')!.bytes;
+      const reconciled = reconcileChangeUnitBlueprintRefs(projectRoot, 'ledger-app-blueprint');
+      assert(reconciled.skipped.some(item => item.change_unit_id === 'ledger-consumer'), `前提：consumer 应跳过：${JSON.stringify(reconciled)}`);
+      const pinned = reconciled.skipped.find(item => item.change_unit_id === 'ledger-summary');
+      assert(pinned?.reasons.some(reason => reason.includes('ledger-consumer')), `被未升版 CU 精确引用的 summary 仍升版：${JSON.stringify(reconciled)}`);
+      assert(unitsById(projectRoot).get('ledger-summary')!.bytes.equals(summaryBytes), 'summary 字节被改写');
+      const inputs = resolveComponentClosureInputs(projectRoot, 'ledger-app-blueprint');
+      assert(!inputs.issues.some(issue => issue.id === 'component_closure_supersedes_invalid'), inputs.issues.map(issue => `${issue.id}:${issue.message}`).join('\n'));
     });
   }));
 

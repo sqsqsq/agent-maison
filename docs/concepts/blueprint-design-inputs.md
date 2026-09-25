@@ -31,7 +31,7 @@ npx ts-node scripts/prepare-blueprint-design.ts --feature <canonical-CU-feature-
 
 也可显式指定 `--project-root` 和 `--framework-root`。入口先解析并校验完整 bundle、来源和所有目标文件，再沿已有 artifact resolver 物化 acceptance/contracts 及必要 use-cases。已有内容冲突时停止，不能覆盖人工决策；已有等价结果不重复写入。不会生成 spec.md、plan.md、summary、receipt 或批准记录。
 
-派生文件使用已有 `source` 字段标识 provider 与 canonical CU/蓝图字节身份；P1 重新读取时对照当前投影。revision/hash、外部权威或内容变化会使旧投影失效，不用旧 PASS 顶替。
+派生文件使用已有 `source` 字段标识 provider 与 canonical CU/蓝图字节身份；P1 重新读取时对照当前投影。revision/hash、外部权威或内容变化会使旧投影失效，不用旧 PASS 顶替。蓝图升版经 component-design 调和、CU 指针原位升版时，来源戳指向升版前身份的派生文件即由同一入口同批刷新为新投影；带机器来源戳却指向别的身份（或只有部分文件带戳）的，该 CU 不升版并说明原因，没有机器来源戳的文件不归本入口、原样保留。
 
 ## 阶段消费
 

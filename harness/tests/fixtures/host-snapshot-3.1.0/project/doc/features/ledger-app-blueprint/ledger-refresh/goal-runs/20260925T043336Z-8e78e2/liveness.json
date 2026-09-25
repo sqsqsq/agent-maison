@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "run_id": "20260925T043336Z-8e78e2",
+  "proc": {
+    "pid": 50824,
+    "startedAtMs": 1790310691138,
+    "executable": "D:\\Program Files\\nodejs\\node.exe",
+    "profile": "20260925T043336Z-8e78e2"
+  },
+  "refreshed_at": "2026-09-25T04:34:43.078Z"
+}

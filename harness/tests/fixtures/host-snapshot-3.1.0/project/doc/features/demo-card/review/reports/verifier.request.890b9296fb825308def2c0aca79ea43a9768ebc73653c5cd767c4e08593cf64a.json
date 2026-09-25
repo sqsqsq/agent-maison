@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.1",
+  "kind": "maison_verifier_request",
+  "subject_id": "890b9296fb825308def2c0aca79ea43a9768ebc73653c5cd767c4e08593cf64a",
+  "feature": "demo-card",
+  "phase": "review",
+  "prompt_path": "doc/features/demo-card/review/reports/ai-prompt.md",
+  "prompt_sha256": "38c1791a759f5c8c2255643fc778a441444be1efd33611f6756626125805ac11",
+  "material_sha256": "0827dcca05ca55b8acc3993dfa56515ea56c613debd227eceedc5e8000d16101",
+  "gate_fingerprint": "3.1.0:094fc6a0127f",
+  "source_commit_sha": "55b3e30416057ca96b85769b48c230fcecabf941",
+  "worktree_digest": "d3fb70fa133b248d"
+}

@@ -13,18 +13,36 @@
 //
 // 不新增 CLI、状态、registry、跨单元 ledger，也不新增第二套 CU 写入机制。
 
+import * as fs from 'fs';
+import * as YAML from 'yaml';
+import { resolveFeatureArtifact } from '../../config';
+import { resolveProbeFrameworkRoot } from '../../repo-layout';
 import {
+  LoadedChangeUnit,
+  asChangeUnitArtifact,
+  deriveChangeUnitFeatureId,
   enumerateCanonicalChangeUnits,
   loadCanonicalChangeUnit,
 } from './change-unit-path';
+import {
+  BLUEPRINT_PROJECTION_FILES,
+  inspectProjectionStamps,
+  materializeBlueprintSkillInputs,
+  type ProjectionRefresh,
+} from './blueprint-skill-projection';
 import { validateChangeUnitDesign } from './change-unit-design-gate';
-import { loadCanonicalBlueprint } from './component-blueprint-path';
+import { loadCanonicalBlueprint, sha256Bytes } from './component-blueprint-path';
 import { blockerIssues, validateComponentBlueprint } from './component-blueprint-validator';
 import { asRecord } from './component-blueprint-model';
+import { ChangeUnitArtifact, ChangeUnitRecord, changeUnitRecords } from './change-unit-model';
+import { evaluateChangeUnitCarryForward } from './change-unit-reconciliation';
+import { retiredChangeUnitIds } from './component-closure-inputs';
+import { blockerChangeUnitIssues, validateChangeUnit } from './change-unit-validator';
 import {
   ChangeUnitCandidate,
   ChangeUnitCandidateRejected,
   acceptChangeUnitCandidates,
+  writeCanonicalChangeUnit,
 } from './change-unit-provider-boundary';
 
 export interface DesignPreparationEntry {
@@ -127,9 +145,196 @@ export function acceptChangeUnitDecomposition(
   };
 }
 
+export interface BlueprintRefReconciliation {
+  bumped: Array<{ change_unit_id: string; revision: number; blueprint_revision: number }>;
+  skipped: Array<{ change_unit_id: string; reasons: string[] }>;
+}
+
+/** CU 内全部蓝图身份指针：component_blueprint_ref、design_refs[]、touches[].design_ref。 */
+function blueprintIdentityPointers(cu: ChangeUnitRecord): Array<Record<string, unknown> | undefined> {
+  return [
+    asRecord(cu.component_blueprint_ref),
+    ...(Array.isArray(cu.design_refs) ? cu.design_refs.map(ref => asRecord(ref)) : []),
+    ...changeUnitRecords(cu.touches).map(touch => asRecord(touch.design_ref)),
+  ];
+}
+
+const IDENTITY_KEYS = ['revision', 'source_fingerprint', 'artifact_sha256'] as const;
+const DERIVED_PROJECTION_FILES = Object.values(BLUEPRINT_PROJECTION_FILES);
+const NOT_MACHINE_OWNED = 'derived_projection_not_machine_owned: 既有派生投影的来源戳不指向升版前 CU/蓝图，须人工处理（确认无人工决策后删除该 feature 的 acceptance/contracts/use-cases 三份派生文件，再重新调和）';
+
+function identityKey(ref: Record<string, unknown> | undefined): string {
+  return JSON.stringify(IDENTITY_KEYS.map(key => ref?.[key]));
+}
+
+/**
+ * b2d7f4e9 §3.3：蓝图升 admitted revision 后，把 canonical CU 的三处蓝图身份指针
+ * （revision / source_fingerprint / artifact_sha256）原位升到当前蓝图，CU `revision + 1`；
+ * change_unit_id 与契约字段（provides / requires / target_predicates / touches / preserved_invariants /
+ * design_refs 的 target 地址）不变。已完成与未完成 CU 同规则。
+ *
+ * 前提 = 既有 `evaluateChangeUnitCarryForward` 通过（判据不改），不通过进 `skipped` 带原因、不改写。
+ * 三处指针身份本就不一致的 CU（例如按新蓝图手工追加了 touch）不是指针漂移而是契约变化，同样跳过——
+ * 契约变化走新 change_unit_id + supersedes。待写 CU 先全量 `validateChangeUnit`，任一失败整批不落盘；
+ * 写入与 accept 同一原语，中途失败回滚本批。幂等：指针已指向当前蓝图的 CU 不在候选内。
+ * t2c：CU 派生 feature 目录已有机器投影（acceptance/contracts/use-cases）时，同批经同一个物化 writer
+ *（`materializeBlueprintSkillInputs` 的 refresh 模式）刷新为新投影；带机器来源戳却不指向升版前身份的，
+ * 该 CU 不升版、进 skipped。没有机器来源戳的文件不归本 writer，原样保留。
+ */
+export function reconcileChangeUnitBlueprintRefs(
+  projectRoot: string,
+  blueprintId: string,
+): BlueprintRefReconciliation {
+  const result: BlueprintRefReconciliation = { bumped: [], skipped: [] };
+  const units = enumerateCanonicalChangeUnits(projectRoot, blueprintId);
+  let current: ReturnType<typeof loadCanonicalBlueprint>;
+  try {
+    current = loadCanonicalBlueprint(projectRoot, blueprintId);
+  } catch (error) {
+    for (const loaded of units) {
+      result.skipped.push({ change_unit_id: String(loaded.changeUnit.change_unit_id), reasons: [(error as Error).message] });
+    }
+    return result;
+  }
+  const identity = {
+    revision: Number(current.blueprint.revision),
+    source_fingerprint: String(current.blueprint.source_fingerprint),
+    artifact_sha256: current.artifactSha256,
+  };
+  const pending: Array<{ loaded: LoadedChangeUnit; next: ChangeUnitRecord; feature: string; refresh?: ProjectionRefresh }> = [];
+  for (const loaded of units) {
+    const cu = loaded.changeUnit;
+    const changeUnitId = String(cu.change_unit_id);
+    const pointers = blueprintIdentityPointers(cu);
+    const owner = identityKey(pointers[0]);
+    if (owner === identityKey(identity)) continue;
+    const skip = (reasons: string[]) => result.skipped.push({ change_unit_id: changeUnitId, reasons });
+    if (pointers.some(ref => !ref || identityKey(ref) !== owner)) {
+      skip(['blueprint_ref_identity_inconsistent: 三处蓝图指针身份不一致，属契约变化，须新建 change_unit_id + supersedes']);
+      continue;
+    }
+    if (Number(pointers[0]?.revision) > identity.revision) {
+      skip([`blueprint_revision_regressed: CU 绑定 revision=${String(pointers[0]?.revision)} 高于当前 ${identity.revision}`]);
+      continue;
+    }
+    const verdict = evaluateChangeUnitCarryForward(projectRoot, asChangeUnitArtifact(cu));
+    if (!verdict.allowed) {
+      skip(verdict.reasons);
+      continue;
+    }
+    const next = YAML.parse(loaded.bytes.toString('utf8')) as ChangeUnitRecord;
+    for (const ref of blueprintIdentityPointers(next)) Object.assign(ref!, identity);
+    next.revision = Number(cu.revision) + 1;
+    // 派生 feature 目录里已有机器投影 → 升版必须同批刷新它们（否则该 feature 任何新 run 都被投影门拒绝）。
+    // 来源戳全部指向升版前身份 = 旧机器投影，刷新即修复；部分带戳 / 戳指向别的身份 → 写任何东西之前就跳过。
+    // 没有任何机器来源戳的文件（手写 / 阶段产出）不归本 writer：不刷新、不覆盖，指针照常升版（§3.3 由责任阶段重投影）。
+    const feature = deriveChangeUnitFeatureId(blueprintId, changeUnitId);
+    const refresh = { changeUnitSha: loaded.artifactSha256, blueprintSha: String(pointers[0]?.artifact_sha256) };
+    const stamps = inspectProjectionStamps(projectRoot, feature, refresh);
+    if (Array.isArray(stamps)) {
+      skip([`${NOT_MACHINE_OWNED}：来源戳不指向升版前 CU/蓝图 ${stamps.join(', ')}`]);
+      continue;
+    }
+    pending.push({ loaded, next, feature, ...(stamps === 'stamped' ? { refresh } : {}) });
+  }
+  // supersedes 是对被引用 CU 的精确引用（revision + artifact_sha256），升版会改变这两项。只维护升版前精确成立的引用：
+  //  · 引用方本批不升版 → 被引用者也不升版（退役 CU 本就不贡献，升了反而让引用失效）；按引用链收敛到不动点；
+  //  · 引用方本批升版 → 先定被引用者升版后的字节，再把引用改写为其新 ref（链式 C→B→A 递归按拓扑序）。
+  const exactRef = (ref: unknown, target: LoadedChangeUnit): boolean => {
+    const record = asRecord(ref);
+    return !!record && record.blueprint_id === blueprintId && record.change_unit_id === target.changeUnit.change_unit_id
+      && record.revision === target.changeUnit.revision && record.artifact_sha256 === target.artifactSha256;
+  };
+  for (let pinned = true; pinned;) {
+    pinned = false;
+    for (const item of [...pending]) {
+      const referrer = units.find(other => !pending.some(p => p.loaded === other) && exactRef(other.changeUnit.supersedes, item.loaded));
+      if (!referrer) continue;
+      pending.splice(pending.indexOf(item), 1);
+      result.skipped.push({ change_unit_id: String(item.loaded.changeUnit.change_unit_id), reasons: [`superseded_by_unbumped: 被 ${String(referrer.changeUnit.change_unit_id)} 以 supersedes 精确引用、且它本批不升版——为保持该引用精确，不升版`] });
+      pinned = true;
+    }
+  }
+  const pendingById = new Map(pending.map(item => [String(item.loaded.changeUnit.change_unit_id), item]));
+  const bumpedSha = new Map<string, string>();
+  // 精确引用不可能成环（互相包含对方字节哈希），递归必然终止。
+  const finalize = (item: typeof pending[number]): string => {
+    const id = String(item.next.change_unit_id);
+    const known = bumpedSha.get(id);
+    if (known) return known;
+    const target = pendingById.get(String(asRecord(item.next.supersedes)?.change_unit_id));
+    if (target && exactRef(item.loaded.changeUnit.supersedes, target.loaded)) {
+      Object.assign(item.next.supersedes!, { revision: Number(target.next.revision), artifact_sha256: finalize(target) });
+    }
+    const sha = sha256Bytes(Buffer.from(YAML.stringify(item.next), 'utf8'));
+    bumpedSha.set(id, sha);
+    return sha;
+  };
+  pending.forEach(finalize);
+  for (const { loaded, next } of pending) {
+    const issues = blockerChangeUnitIssues(validateChangeUnit(next, { projectRoot, canonicalPath: loaded.canonicalPath }));
+    if (issues.length > 0) {
+      throw new ChangeUnitCandidateRejected(
+        'change_unit_blueprint_ref_bump_rejected',
+        `CU ${String(next.change_unit_id)} 升版后未通过 canonical 校验（整批未落盘）：${issues.map(item => `${item.id}@${item.path}`).join(', ')}`,
+      );
+    }
+  }
+  const written: LoadedChangeUnit[] = [];
+  const refreshed: Array<{ file: string; bytes: Buffer | null }> = [];
+  const rollback = (): void => {
+    for (const loaded of written) fs.writeFileSync(loaded.canonicalPath, loaded.bytes);
+    for (const item of refreshed) {
+      if (item.bytes) fs.writeFileSync(item.file, item.bytes); else fs.rmSync(item.file, { force: true });
+    }
+  };
+  try {
+    pending.forEach(({ loaded, next }, index) => {
+      writeCanonicalChangeUnit(loaded.canonicalPath, next as unknown as ChangeUnitArtifact, `${process.pid}-bump-${index}`);
+      written.push(loaded);
+    });
+  } catch (error) {
+    rollback();
+    throw new ChangeUnitCandidateRejected(
+      'change_unit_blueprint_ref_bump_write_failed',
+      `指针升版写出失败并已回滚本批：${(error as Error).message}`,
+    );
+  }
+  // 新投影依赖落盘后的 CU，所以刷新排在指针写出之后；任一失败按原字节回滚整批（指针 + 已刷新文件）。
+  const frameworkRoot = pending.some(item => item.refresh) ? resolveProbeFrameworkRoot(projectRoot, __dirname) : '';
+  for (const { loaded, feature, refresh } of pending) {
+    if (!refresh) continue;
+    const before = DERIVED_PROJECTION_FILES.map(name => {
+      const location = resolveFeatureArtifact(projectRoot, feature, name);
+      return location.exists
+        ? { file: location.actualPath, bytes: fs.readFileSync(location.actualPath) }
+        : { file: location.canonicalPath, bytes: null };
+    });
+    // 本项自身失败时由 writer 内部回滚（逐文件 temp→rename，写到一半的那份不落盘）；这里只登记已成功的项。
+    try {
+      materializeBlueprintSkillInputs(projectRoot, feature, frameworkRoot, refresh);
+      refreshed.push(...before);
+    } catch (error) {
+      rollback();
+      throw new ChangeUnitCandidateRejected(
+        'change_unit_blueprint_ref_bump_rejected',
+        `CU ${String(loaded.changeUnit.change_unit_id)} 升版后派生投影刷新失败（整批未落盘）：${(error as Error).message}`,
+      );
+    }
+  }
+  result.bumped = pending.map(({ next }) => ({
+    change_unit_id: String(next.change_unit_id),
+    revision: Number(next.revision),
+    blueprint_revision: identity.revision,
+  }));
+  return result;
+}
+
 export interface DesignPreparationReadiness {
-  /** 设计准备段是否完成：≥1 canonical CU 且每个都过设计可施工门。 */
+  /** 设计准备段是否完成：≥1 活动（未被精确 supersede 退役）canonical CU 且每个都过设计可施工门。 */
   ready: boolean;
+  /** 派生前的蓝图指针原位升版结果（reconcileChangeUnitBlueprintRefs），供 agent 看见升了谁、跳过谁及原因。 */
+  blueprintRefs: BlueprintRefReconciliation;
   changeUnitIds: string[];
   perUnit: Array<{ changeUnitId: string; verdict: string; issueIds: string[] }>;
   /** 恒为 false —— 设计准备段不进入 selector、Goal Mode 施工循环与 P3 closure。 */
@@ -145,7 +350,11 @@ export function deriveDesignPreparationReadiness(
   projectRoot: string,
   blueprintId: string,
 ): DesignPreparationReadiness {
-  const units = enumerateCanonicalChangeUnits(projectRoot, blueprintId);
+  const blueprintRefs = reconcileChangeUnitBlueprintRefs(projectRoot, blueprintId);
+  // 只对活动 CU 要求可施工：被精确 supersede 的历史 CU 已退役，不重新施工（与 closure 同一退役判定）。
+  const retired = retiredChangeUnitIds(projectRoot, blueprintId);
+  const units = enumerateCanonicalChangeUnits(projectRoot, blueprintId)
+    .filter(loaded => !retired.has(String(loaded.changeUnit.change_unit_id)));
   const perUnit = units.map(loaded => {
     const design = validateChangeUnitDesign(projectRoot, loaded.changeUnit);
     return {
@@ -157,6 +366,7 @@ export function deriveDesignPreparationReadiness(
   const ready = perUnit.length > 0 && perUnit.every(item => item.verdict === 'constructable');
   return {
     ready,
+    blueprintRefs,
     changeUnitIds: perUnit.map(item => item.changeUnitId),
     perUnit,
     entersConstruction: false,

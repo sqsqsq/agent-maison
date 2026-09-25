@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.0",
+  "execution_key": "02b6fee75b62a50c768ea2d9423d9fea14196d2ccfa8f4ba56d4ebac22c553f2",
+  "generated_at": "2026-09-25T04:33:30.913Z",
+  "runs": [
+    {
+      "run_dir": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\testing\\reports\\20260925T043319Z-962\\hylyre",
+      "outcome": "success"
+    }
+  ],
+  "min_rounds_for_verdict": 2,
+  "rows": [
+    {
+      "tc_id": "TC-001",
+      "rounds": 1,
+      "consistent": 1,
+      "first_divergent_step": null,
+      "outcomes": [
+        "通过"
+      ]
+    },
+    {
+      "tc_id": "TC-002",
+      "rounds": 1,
+      "consistent": 1,
+      "first_divergent_step": null,
+      "outcomes": [
+        "通过"
+      ]
+    }
+  ]
+}

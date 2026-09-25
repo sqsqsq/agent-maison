@@ -1,0 +1,15 @@
+{
+  "app": {
+    "products": [
+      {
+        "name": "default"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "FinancialCard",
+      "srcPath": "./02-Feature/FinancialCard"
+    }
+  ]
+}

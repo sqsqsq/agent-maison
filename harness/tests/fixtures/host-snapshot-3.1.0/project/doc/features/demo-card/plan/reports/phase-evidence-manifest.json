@@ -1,0 +1,122 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-09-25T04:32:19.302Z",
+  "feature": "demo-card",
+  "phase": "plan",
+  "inputs": [
+    {
+      "path": "02-Feature/FinancialCard/index.ets",
+      "role": "input",
+      "sha256": "a9b0b1df1389f949c79b0b1f221244ba5f2301acca119841f4586d11a63f1e7d",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets",
+      "role": "input",
+      "sha256": "a2310641c4a15fe462df3c127583c97cb6b61392bd0437f13fa0783d23c2bcbb",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankModel.ets",
+      "role": "input",
+      "sha256": "85bf14be522a0c0815a787be2b9e1f739e86be41fb8a25b9f83f47324996b1c4",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankRepository.ets",
+      "role": "input",
+      "sha256": "fa10a20e27b5fa016f02a0e0608747e1f892974bb0a6cf10f7f3021e3ac3c907",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankService.ets",
+      "role": "input",
+      "sha256": "bca6edbcaabe61fba6090d8f396f0105962a18d13dc2eacd88d0802d58045fb6",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "doc/features/demo-card/acceptance.yaml",
+      "role": "input",
+      "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/context/facts.md",
+      "role": "input",
+      "sha256": "051155433b08fb1e568e27072916aa88c4129338acb94101f05f0fb31365bdf2",
+      "exists": true,
+      "facts_phase": "plan"
+    },
+    {
+      "path": "doc/features/demo-card/contracts.yaml",
+      "role": "both",
+      "sha256": "62d1104bc2c30d70e590280deb55788b3cca87b43442882ffc1635caa2931db0",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/manifest.json",
+      "role": "input",
+      "sha256": "40b72ebc00aa2d302fbc09603abef3b9c32feace3645e2bedfb4148c8f7d51ca",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/plan/plan.md",
+      "role": "both",
+      "sha256": "0c688dbfbd8bc782f7ac5bb40c7c14a1ef6c0f2f3e5fdd1a1e2ecc1ce4ba4c08",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/spec/spec.md",
+      "role": "input",
+      "sha256": "95409507e3001e4973506d2d17618f27f5342415f4493ee388421b1f284e7d96",
+      "exists": true
+    }
+  ],
+  "outputs": [
+    {
+      "path": "doc/features/demo-card/contracts.yaml",
+      "role": "both",
+      "sha256": "62d1104bc2c30d70e590280deb55788b3cca87b43442882ffc1635caa2931db0",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/plan/plan.md",
+      "role": "both",
+      "sha256": "0c688dbfbd8bc782f7ac5bb40c7c14a1ef6c0f2f3e5fdd1a1e2ecc1ce4ba4c08",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/plan/reports/script-report.json",
+      "role": "output",
+      "sha256": "bfaf894cd32fde9d7561e03545c7a7872d86766e83fc9f3676ecb064db537f6a",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/plan/reports/summary.json",
+      "role": "output",
+      "sha256": "b06703d4a5904f78f2413f34211a74bb8b0f9179aeb4059839d1dd9f6d4a285c",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/plan/reports/trace.json",
+      "role": "output",
+      "sha256": "433694b5d374cce52f220b21851e5e21b4264e0026606cda9e710035fde2fced",
+      "exists": true
+    }
+  ],
+  "environment": {
+    "framework_version": "3.1.0",
+    "profile": "test-chain",
+    "gate_fingerprint": "3.1.0:022730770c99",
+    "framework_config_sha256": "eb2aa515d5ff22b9d6ae2fa051b653d42ced579e64283800f976fe90486dd1ae",
+    "workflow_sha256": "1d65c4f3273b799cc5352c84839ca8b6333c26745d7b934e79841407c13c14e0",
+    "requirement_sha256": "25b23aa12607927a0923d987c0a6b039189178d3242992f4b3a78b677c08d00b"
+  },
+  "receipt_sha256": null,
+  "aggregate_sha256": "c54c7d82b016630dfd50dfc98d3d0a17e5202f1aa295dc3eb77e534fd8688537"
+}

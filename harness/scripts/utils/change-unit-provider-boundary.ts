@@ -75,7 +75,7 @@ function validateCandidateForAcceptance(projectRoot: string, candidate: ChangeUn
   if (fs.existsSync(target)) {
     throw new ChangeUnitCandidateRejected(
       'change_unit_candidate_already_exists',
-      `canonical CU 已存在，重复接受 fail-closed：${target}。修正已接受单元请新建修订/superseding CU。`,
+      `canonical CU 已存在，重复接受 fail-closed：${target}。契约变化请新建 change_unit_id 并以 supersedes 引用旧单元；蓝图升版只需指针原位升版（reconcileChangeUnitBlueprintRefs）。`,
     );
   }
   try {
@@ -96,8 +96,8 @@ function validateCandidateForAcceptance(projectRoot: string, candidate: ChangeUn
   return target;
 }
 
-/** 唯一写入原语：temp(wx) → rename。返回目标路径，供批量接受回滚。 */
-function writeCanonicalChangeUnit(target: string, artifact: ChangeUnitArtifact, suffix: string): void {
+/** 唯一写入原语：temp(wx) → rename。批量接受与蓝图指针原位升版（design-preparation）共用。 */
+export function writeCanonicalChangeUnit(target: string, artifact: ChangeUnitArtifact, suffix: string): void {
   fs.mkdirSync(path.dirname(target), { recursive: true });
   const temporary = `${target}.candidate-${suffix}`;
   fs.writeFileSync(temporary, YAML.stringify(artifact), { encoding: 'utf8', flag: 'wx' });

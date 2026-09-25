@@ -786,7 +786,6 @@ export function inheritSuccessorManifest(
     round: readonly string[];
     drift: readonly string[];
   },
-  scopeRevision?: ExecutionScope,
 ): GoalManifest {
   const unique = (values: readonly string[]): string[] =>
     [...new Set(values.map(value => value.trim()).filter(Boolean))];
@@ -819,8 +818,8 @@ export function inheritSuccessorManifest(
   const mergedSourceFiles = [...new Set([...sourceFiles, ...explicitFiles])];
   return {
     ...inherited,
-    start_phase: scopeRevision ? validateExecutionScope(scopeRevision).phase_chain[0] : manifest.start_phase,
-    ...(scopeRevision ? { execution_scope: structuredClone(scopeRevision), phase_chain: [...scopeRevision.phase_chain], chain_override: [...scopeRevision.phase_chain], end_phase: scopeRevision.phase_chain.at(-1)! } : {}),
+    // 1.2 successor 的出生范围由 goal-runner 在 supersede 上下文重解析后覆盖（plan b2d7f4e9 §3.2），这里不继承范围。
+    start_phase: manifest.start_phase,
     run_id: manifest.run_id,
     report_dir: manifest.report_dir,
     created_at: manifest.created_at,

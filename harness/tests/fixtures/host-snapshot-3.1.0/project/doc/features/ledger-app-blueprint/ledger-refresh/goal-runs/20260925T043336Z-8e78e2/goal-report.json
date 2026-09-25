@@ -1,0 +1,83 @@
+{
+  "schema_version": "1.0",
+  "run_id": "20260925T043336Z-8e78e2",
+  "feature": "cu-bGVkZ2VyLWFwcC1ibHVlcHJpbnQAbGVkZ2VyLXJlZnJlc2g",
+  "status": "CHAIN_SLICE_COMPLETED",
+  "phases": [
+    {
+      "phase": "coding",
+      "verdict": "PASS",
+      "summary_path": "doc/features/ledger-app-blueprint/ledger-refresh/goal-runs/20260925T043336Z-8e78e2/phases/coding/harness/summary.json",
+      "report_dir": "doc/features/ledger-app-blueprint/ledger-refresh/goal-runs/20260925T043336Z-8e78e2/phases/coding/harness",
+      "retries": 1,
+      "agent_exit_code": 0,
+      "snapshot_files": {
+        "summary.json": "doc/features/ledger-app-blueprint/ledger-refresh/goal-runs/20260925T043336Z-8e78e2/phases/coding/harness/summary.json",
+        "script-report.json": "doc/features/ledger-app-blueprint/ledger-refresh/goal-runs/20260925T043336Z-8e78e2/phases/coding/harness/script-report.json",
+        "merged-report.md": "doc/features/ledger-app-blueprint/ledger-refresh/goal-runs/20260925T043336Z-8e78e2/phases/coding/harness/merged-report.md",
+        "trace.json": "doc/features/ledger-app-blueprint/ledger-refresh/goal-runs/20260925T043336Z-8e78e2/phases/coding/harness/trace.json",
+        "verifier.report.md": "doc/features/ledger-app-blueprint/ledger-refresh/goal-runs/20260925T043336Z-8e78e2/phases/coding/harness/verifier.report.md"
+      },
+      "verifier_evidence": {
+        "subject_id": "a69ff2ae5b05820e61a00620ed5fcc9d9c252fd156b62df855246c3f39f882d6",
+        "verdict": "PASS",
+        "blocker_count": 0
+      },
+      "advance_blocked": false
+    },
+    {
+      "phase": "review",
+      "verdict": "PASS",
+      "summary_path": "doc/features/ledger-app-blueprint/ledger-refresh/goal-runs/20260925T043336Z-8e78e2/phases/review/harness/summary.json",
+      "report_dir": "doc/features/ledger-app-blueprint/ledger-refresh/goal-runs/20260925T043336Z-8e78e2/phases/review/harness",
+      "retries": 1,
+      "agent_exit_code": 0,
+      "snapshot_files": {
+        "summary.json": "doc/features/ledger-app-blueprint/ledger-refresh/goal-runs/20260925T043336Z-8e78e2/phases/review/harness/summary.json",
+        "script-report.json": "doc/features/ledger-app-blueprint/ledger-refresh/goal-runs/20260925T043336Z-8e78e2/phases/review/harness/script-report.json",
+        "merged-report.md": "doc/features/ledger-app-blueprint/ledger-refresh/goal-runs/20260925T043336Z-8e78e2/phases/review/harness/merged-report.md",
+        "trace.json": "doc/features/ledger-app-blueprint/ledger-refresh/goal-runs/20260925T043336Z-8e78e2/phases/review/harness/trace.json",
+        "verifier.report.md": "doc/features/ledger-app-blueprint/ledger-refresh/goal-runs/20260925T043336Z-8e78e2/phases/review/harness/verifier.report.md"
+      },
+      "verifier_evidence": {
+        "subject_id": "5f1ae911204d1f1229bca523dfa91ad232bba4ab6468c0ecd91e2dd5e24a3724",
+        "verdict": "PASS",
+        "blocker_count": 0
+      },
+      "advance_blocked": false
+    },
+    {
+      "phase": "ut",
+      "verdict": "PASS",
+      "summary_path": "doc/features/ledger-app-blueprint/ledger-refresh/goal-runs/20260925T043336Z-8e78e2/phases/ut/harness/summary.json",
+      "report_dir": "doc/features/ledger-app-blueprint/ledger-refresh/goal-runs/20260925T043336Z-8e78e2/phases/ut/harness",
+      "retries": 1,
+      "agent_exit_code": 0,
+      "snapshot_files": {
+        "summary.json": "doc/features/ledger-app-blueprint/ledger-refresh/goal-runs/20260925T043336Z-8e78e2/phases/ut/harness/summary.json",
+        "script-report.json": "doc/features/ledger-app-blueprint/ledger-refresh/goal-runs/20260925T043336Z-8e78e2/phases/ut/harness/script-report.json",
+        "merged-report.md": "doc/features/ledger-app-blueprint/ledger-refresh/goal-runs/20260925T043336Z-8e78e2/phases/ut/harness/merged-report.md",
+        "trace.json": "doc/features/ledger-app-blueprint/ledger-refresh/goal-runs/20260925T043336Z-8e78e2/phases/ut/harness/trace.json",
+        "verifier.report.md": "doc/features/ledger-app-blueprint/ledger-refresh/goal-runs/20260925T043336Z-8e78e2/phases/ut/harness/verifier.report.md"
+      },
+      "verifier_evidence": {
+        "subject_id": "fb12a158db7330d15bf2dd138653eb4468a3d746866ebb454f28652b83023d14",
+        "verdict": "PASS",
+        "blocker_count": 0
+      },
+      "advance_blocked": false
+    }
+  ],
+  "deferred_phases": [],
+  "generated_at": "2026-09-25T04:34:53.415Z",
+  "fidelity_routing": {
+    "inferred": "semantic_layout",
+    "selected": "semantic_layout",
+    "effective": "semantic_layout",
+    "strictness": "best_effort",
+    "asset_acquisition_mode": "approximate",
+    "clamped": false,
+    "source": "auto_default",
+    "decision_id": "4f7f4fe9edf13728"
+  }
+}

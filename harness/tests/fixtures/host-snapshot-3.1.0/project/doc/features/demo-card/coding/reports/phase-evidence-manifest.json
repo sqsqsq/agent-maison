@@ -1,0 +1,177 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-09-25T04:32:37.626Z",
+  "feature": "demo-card",
+  "phase": "coding",
+  "inputs": [
+    {
+      "path": "02-Feature/FinancialCard/index.ets",
+      "role": "both",
+      "sha256": "c42372f3cbb70378e8050f918322ab85b85a706f5b51c303961ded13d16a51bb",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets",
+      "role": "both",
+      "sha256": "e9e1d7080d2bd7504115df6e88d94a4ed5eebe19aab033c2268927a5a6c61b95",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankListItem.ets",
+      "role": "both",
+      "sha256": "727e9a2af8334e09b414a53e04f94b7fea76875d30bd73af6307a957b58b9e5f",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankModel.ets",
+      "role": "both",
+      "sha256": "85bf14be522a0c0815a787be2b9e1f739e86be41fb8a25b9f83f47324996b1c4",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankRepository.ets",
+      "role": "both",
+      "sha256": "fa10a20e27b5fa016f02a0e0608747e1f892974bb0a6cf10f7f3021e3ac3c907",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankService.ets",
+      "role": "both",
+      "sha256": "bca6edbcaabe61fba6090d8f396f0105962a18d13dc2eacd88d0802d58045fb6",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/resources/base/media/logo_demo.png",
+      "role": "input",
+      "sha256": "6d51ea2402770798273a2f11d1a64aa04eb290df7790eaaa38ad61420bfeeb1c",
+      "exists": true
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/resources/base/media/result_demo.png",
+      "role": "input",
+      "sha256": "0672172608dc6517fd62993f139ade74279b32c3a2e5ee63f425e40f23de9421",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/acceptance.yaml",
+      "role": "input",
+      "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/context/facts.md",
+      "role": "input",
+      "sha256": "c791ed42bb1b8ee2d080299bad9a382fda8824f3824a8be7bbf85d02f729a4d2",
+      "exists": true,
+      "facts_phase": "coding"
+    },
+    {
+      "path": "doc/features/demo-card/contracts.yaml",
+      "role": "input",
+      "sha256": "62d1104bc2c30d70e590280deb55788b3cca87b43442882ffc1635caa2931db0",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/manifest.json",
+      "role": "input",
+      "sha256": "40b72ebc00aa2d302fbc09603abef3b9c32feace3645e2bedfb4148c8f7d51ca",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/plan/plan.md",
+      "role": "input",
+      "sha256": "0c688dbfbd8bc782f7ac5bb40c7c14a1ef6c0f2f3e5fdd1a1e2ecc1ce4ba4c08",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/spec/spec.md",
+      "role": "input",
+      "sha256": "95409507e3001e4973506d2d17618f27f5342415f4493ee388421b1f284e7d96",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/use-cases.yaml",
+      "role": "input",
+      "sha256": null,
+      "exists": false
+    }
+  ],
+  "outputs": [
+    {
+      "path": "02-Feature/FinancialCard/index.ets",
+      "role": "both",
+      "sha256": "c42372f3cbb70378e8050f918322ab85b85a706f5b51c303961ded13d16a51bb",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets",
+      "role": "both",
+      "sha256": "e9e1d7080d2bd7504115df6e88d94a4ed5eebe19aab033c2268927a5a6c61b95",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankListItem.ets",
+      "role": "both",
+      "sha256": "727e9a2af8334e09b414a53e04f94b7fea76875d30bd73af6307a957b58b9e5f",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankModel.ets",
+      "role": "both",
+      "sha256": "85bf14be522a0c0815a787be2b9e1f739e86be41fb8a25b9f83f47324996b1c4",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankRepository.ets",
+      "role": "both",
+      "sha256": "fa10a20e27b5fa016f02a0e0608747e1f892974bb0a6cf10f7f3021e3ac3c907",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankService.ets",
+      "role": "both",
+      "sha256": "bca6edbcaabe61fba6090d8f396f0105962a18d13dc2eacd88d0802d58045fb6",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "doc/features/demo-card/coding/reports/script-report.json",
+      "role": "output",
+      "sha256": "87a6d42e23bc06c98069770775d2fbab6b6e1d535847751e08b71911ce93aaa7",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/coding/reports/summary.json",
+      "role": "output",
+      "sha256": "fce4238586e5b66a515ab84388b5919be0c7169dede131fa4d584611add8b687",
+      "exists": true
+    },
+    {
+      "path": "doc/features/demo-card/coding/reports/trace.json",
+      "role": "output",
+      "sha256": "a93c61093821a3e5e8d01c6c1220bc5c766f10f94a6ac2ae20c46a2998ccb4be",
+      "exists": true
+    }
+  ],
+  "environment": {
+    "framework_version": "3.1.0",
+    "profile": "test-chain",
+    "gate_fingerprint": "3.1.0:280c79bc193c",
+    "framework_config_sha256": "eb2aa515d5ff22b9d6ae2fa051b653d42ced579e64283800f976fe90486dd1ae",
+    "workflow_sha256": "1d65c4f3273b799cc5352c84839ca8b6333c26745d7b934e79841407c13c14e0",
+    "requirement_sha256": "25b23aa12607927a0923d987c0a6b039189178d3242992f4b3a78b677c08d00b"
+  },
+  "receipt_sha256": null,
+  "aggregate_sha256": "a9cfb7f28c89600ddccb9de5fe3ff39aba1ce163996344472851e5b6d147e2d0"
+}

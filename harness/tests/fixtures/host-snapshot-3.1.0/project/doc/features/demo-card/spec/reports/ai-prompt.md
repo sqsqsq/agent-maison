@@ -1,0 +1,1200 @@
+# spec 阶段语义验证 — demo-card
+
+**P3 显式 1.1 调用**：以 ResolvedPhaseInputs 的实际验收内容、来源与 required_outputs 为审查边界。未要求 spec.md 时不按章节格式拒绝，但仍审查行为、精确预期、分层、来源和视觉适用性；refs 存在不等于内容完整。发现共同决策或外部权威缺口须指出 owner 与解除条件，不自行猜补。
+
+**CU-bound（Feature 名以 `cu-` 开头）**：术语映射与 Scope 模块范围已由部件演进蓝图裁决，spec 只投影（术语事实 `term:<术语>`、CU touches 派生的可修改模块）。涉及术语与范围的判断（含检查 R 的术语 ↔ catalog/glossary）只核对与蓝图投影一致，不重新裁决术语归属或模块范围，也不因映射表 `[x]` 未经 spec 阶段问人而判 FAIL；不一致指回 `/component-design` 调和。
+
+> 自动生成于 2026-09-25T04:31:56.363Z
+> 本文件为 AI Harness 的 prompt，可发送给任意 AI 模型执行语义级验证。
+>
+> **Profile 语义补充**：实例若存在 `framework/profiles/<project_profile>/harness/prompts/verify-spec.overlay.md`，须与本正文**合并阅读**（宿主产品形态、UI/交付术语以 profile 为准）。
+
+---
+
+## 一、你的角色
+
+你是一名**独立的 spec 审查员**，专门负责**当前工程类型（由 `project_profile` 与实例 Spec 界定）**下的需求规格文档质量验证。你的任务是根据下方提供的 **Spec 规约**和 **spec 文档**，逐项评估 spec 是否满足语义约束。
+
+**关键原则：**
+- 你独立于文档编写者，避免"自己验自己"的偏差
+- 仅基于 Spec 规则给出客观判定，不做主观偏好评价
+- 脚本 Harness 已完成了确定性的结构检查（章节存在性、表格格式、优先级合法性等），你负责**脚本无法覆盖的语义级检查**
+- 若证据不足以判定，标注为 WARN 而非强行判定
+
+---
+
+## 二、功能模块
+
+- **模块名称**: demo-card
+- **阶段**: spec
+
+---
+
+## 三、Spec 规约内容
+
+以下是 `framework/specs/phase-rules/spec-rules.yaml` 的完整内容，定义了 spec 阶段的通用约束规则：
+
+```
+phase: spec
+version: "1.0"
+applies_to: doc/features/{module}/spec/spec.md
+structure_checks:
+  acceptance_content_complete:
+    severity: BLOCKER
+    description: 显式 typed 验收须含可执行步骤、精确预期、合法 ID 与分层关注点。
+  design_scope_facts:
+    severity: BLOCKER
+    description: 新设计事实只经既有 P2 报告提议重签，不删除冻结 required 义务。
+  fidelity_capability_pregate:
+    description: >
+      fidelity 意图三态前置闸（blind-visual-hardening d4）：goal-fakepass t6 三态检测扩面到
+      逐阶段驱动路径——强 pixel 意图+盲模型 → BLOCKER（DEFERRED_CAPABILITY_MISSING 语义，
+      禁静默降档）；含混意图不得由模型自行降档，须按冻结需求或确定性默认策略解析， 无可用视觉能力则同样投影 capability missing。旧
+      fidelity_downgrade receipt 只读且不 gate。 reference_intent/desired/effective
+      落盘 spec/reports/fidelity-intent.json，desired 永不被改写。
+  blind_crop_prohibition:
+    description: >
+      盲档 crop 左移禁令（blind-visual-hardening d2）：effective_image_input=none 时
+      acquisition:crop 资产须满足可信消费态：source_ref/source_bbox、源 hash、确定性算法/工具
+      provenance、输出 hash 与当前独立复验完整绑定；否则 BLOCKER。盲模型不能凭文字自证裁剪， 但 runner 可按冻结 bbox
+      自动裁剪并机器复验；工具能力缺失走 capability defer，无法取得素材时 可用显式
+      placeholder/asset-request。legacy human_crop_confirmed/crop_confirmed_by
+      只读且不 gate。
+  vision_output_counterevidence:
+    description: |
+      视觉产出确定性反证器（visual-capability-truth S3）：扫描 componentNode.text/ global_elements[].texts/source_ref/ref-elements——contradicted（U+FFFD/非法代理对/ 与高置信证据冲突）→ BLOCKER + attestation contradicted + blind-safe 策略降级； evidence_gap（无 source 映射/低置信 OCR 升 UI）→ MAJOR WARN + attestation unverified（缺证 ≠ 证伪，审计分立）；启发式（单字符碎片率等）observe-only 计数。 两态同样使 vl_multimodal 终签失效（fidelity gate 消费 attestation）。
+  acceptance_flow_structure:
+    description: >
+      P0 交互 AC 结构化流程模型（goal-fakepass-hardening t4a）：flows 有序屏链 +
+      checkpoint{pre/action.target_element_id/post/required_element_ids} 强制（P0 纯
+      自然语言锚点 FAIL）；三约束=每条边被 ≥1 P0 AC 拥有 / requirement_ref 源片段 sha256 验存 /
+      flow=checkpoint edges 有序合成（bank_list→add_success 型跳边 FAIL）。
+  acceptance_flow_contract:
+    description: >
+      结构化流程模型机器契约（t4b/codex 四轮 P0-3）：由 spec-owned acceptance/flows/ui-spec 及
+      requirement_ref hash 形成唯一真源，任一输入改动即 stale 并重跑 spec 门禁。 legacy
+      flow_contract receipt 可读但不参与 verdict；不得以人签补足缺失或不一致的流程证据。
+  ux_reference_mapping:
+    description: >
+      ux-reference 逐图建模对账（t7）：每张参考图映射 ui-spec 屏或 ref-elements.yaml out_of_scope
+      显式登记（crop_of 父图+reason 裁剪证明）；需求正文直接引用的图片 agent 无权自划 out-of-scope（FAIL）；多数
+      out-of-scope FAIL；未映射未登记 → pixel_1to1 FAIL / 其余档 WARN。
+  fidelity_intent_reconciliation:
+    description: >
+      保真档位声明 vs 需求 SSOT 强意图对账（goal-fakepass-hardening t6）：goal-run manifest
+      requirement（含解引用文档）命中强 1:1 意图（完全参考/像素级/1比1 等） 而 spec 声明更低档位 → BLOCKER
+      FAIL（「禁止的降级」机器化；bc-openCard/homepage 双事故同模式）。旧
+      fidelity_deferrals/human_signed 只保留兼容读取，不能把冻结需求 降级为 WARN；改变目标必须作为新
+      requirement/correction 输入开启 successor run。
+  required_chapters:
+    description: >
+      spec 必须包含以下 10 个一级或二级章节（按 Markdown heading 匹配）： 术语映射表、功能概述、Scope
+      声明、目标用户与使用场景、功能清单、 页面/界面描述、业务流程图、异常/边界场景处理、非功能性需求、验收标准
+    severity: BLOCKER
+    rule:
+      expected_headings:
+        - 术语映射表
+        - 功能概述
+        - Scope 声明
+        - 目标用户与使用场景
+        - 功能清单
+        - 页面/界面描述
+        - 业务流程图
+        - 异常/边界场景处理
+        - 非功能性需求
+        - 验收标准
+      match: heading_text_contains
+  terminology_mapping_table:
+    description: >
+      「术语映射表」章节必须存在且为 spec Step 1.5 产出的标准格式： (1) 至少包含一行业务术语； (2)
+      每行必须包含：原始术语、权威模块、所属层、置信度、易混项、用户确认； (3) 所有行的「用户确认」列必须为 `[x]`（本项目不启用
+      auto-approve）；
+          C4 exploration-scale：`project_scale=small` 时可用节末一行
+          "- [x] 已对照 architecture.md 模块清单一次性确认全部术语映射" 整体替代逐行确认；
+      (4) 每行的「权威模块」必须存在于 doc/module-catalog.yaml 的模块名集合内； (5)
+      空映射表不被允许（即便只有一个术语也要显式列出）。
+    severity: BLOCKER
+    rule:
+      section: 术语映射表
+      expect: markdown_table
+      required_columns:
+        - 原始术语
+        - 权威模块
+        - 所属层
+        - 置信度
+        - 易混项
+        - 用户确认
+      min_rows: 1
+      all_rows_confirmed: "[x]"
+      canonical_module_must_exist_in: doc/module-catalog.yaml
+  scope_matches_catalog:
+    description: >
+      「Scope 声明」章节的 `in_scope_modules` 和 `out_of_scope_modules` 列出的每一个模块名，都必须在
+      doc/module-catalog.yaml 里真实存在， 防止 AI 自造模块名或写错名称。
+    severity: BLOCKER
+    rule:
+      section: Scope 声明
+      validate_against: doc/module-catalog.yaml
+      fields:
+        - in_scope_modules
+        - out_of_scope_modules
+  terminology_modules_within_scope:
+    description: >
+      「术语映射表」里每一行的「权威模块」必须出现在 `in_scope_modules` 或 `out_of_scope_modules` 之一。 该
+      check 捕捉一类典型不一致：spec 作者列了某术语的消歧归属 （参考示例："卡中心 → CardManager"），却忘了把对应模块声明进
+      Scope。 未声明 → plan / coding 不知道该模块究竟是"本需求要改"还是 "只是消歧用"，后续极易跨模块改错或漏改。
+      合法的修法有两种：
+        (1) 把该模块加进 in_scope_modules（本需求确实要改它）
+            或 out_of_scope_modules（仅供消歧，不改）；
+        (2) 从术语映射表里删掉这一行（该术语本来就不在本需求语境里）。
+    severity: BLOCKER
+    rule:
+      source_section: 术语映射表
+      source_column: 权威模块
+      target_scope_fields:
+        - in_scope_modules
+        - out_of_scope_modules
+      coverage: all_source_rows_must_match_scope
+  scope_declaration:
+    description: >
+      「Scope 声明」章节必须包含一个 yaml 代码块，定义 in_scope_modules、
+      out_of_scope_modules、rationale 三个字段；in_scope_modules 至少一项。 这是 Scope
+      守门机制的起点：plan 阶段的模块范围必须是本字段的子集。
+    severity: BLOCKER
+    rule:
+      section: Scope 声明
+      expect: yaml_code_block
+      required_keys:
+        - in_scope_modules
+        - out_of_scope_modules
+        - rationale
+      min_items:
+        in_scope_modules: 1
+  feature_table_format:
+    description: |
+      「功能清单」章节必须包含一个 Markdown 表格，且表头至少包含 编号、功能名称、优先级、描述 四列
+    severity: BLOCKER
+    rule:
+      section: 功能清单
+      expect: markdown_table
+      required_columns:
+        - 编号
+        - 功能名称
+        - 优先级
+        - 描述
+  priority_values:
+    description: |
+      功能清单表格中「优先级」列的值必须为 P0/P1/P2/P3 之一
+    severity: BLOCKER
+    rule:
+      section: 功能清单
+      column: 优先级
+      allowed_values:
+        - P0
+        - P1
+        - P2
+        - P3
+  at_least_one_p0:
+    description: |
+      功能清单中必须包含至少一个 P0 功能项
+    severity: BLOCKER
+    rule:
+      section: 功能清单
+      column: 优先级
+      min_count:
+        P0: 1
+  acceptance_criteria_format:
+    description: |
+      「验收标准」章节中每条标准必须包含唯一编号（如 AC-1、AC-2）， 且编号需关联到功能清单中的功能编号
+    severity: BLOCKER
+    rule:
+      section: 验收标准
+      expect_pattern_per_item: AC-\d+
+      cross_ref: 功能清单.编号
+  mermaid_flowchart:
+    description: |
+      「业务流程图」章节必须包含至少一个 Mermaid 代码块 （```mermaid ... ```），且使用 flowchart 语法
+    severity: BLOCKER
+    rule:
+      section: 业务流程图
+      expect: mermaid_block
+      syntax: flowchart
+  exception_table_format:
+    description: |
+      「异常/边界场景处理」章节必须包含 Markdown 表格，且表头至少包含 编号、异常场景、处理方式 三列
+    severity: MAJOR
+    rule:
+      section: 异常/边界场景处理
+      expect: markdown_table
+      required_columns:
+        - 编号
+        - 异常场景
+        - 处理方式
+  minimum_exception_scenarios:
+    description: |
+      异常场景至少覆盖 3 种基本类型：网络异常、数据为空、功能暂不支持
+    severity: MAJOR
+    rule:
+      section: 异常/边界场景处理
+      min_rows: 3
+  nfr_quantified:
+    description: |
+      「非功能性需求」章节中的性能指标必须包含量化数值 （如 ≤ 1.5 秒、≥ 54 FPS），不允许仅有定性描述
+    severity: MAJOR
+    rule:
+      section: 非功能性需求
+      expect: numeric_metrics
+  page_description_completeness:
+    description: |
+      「页面/界面描述」章节中每个页面必须包含组件表格（至少含 组件、类型、交互行为 三列）
+    severity: MAJOR
+    rule:
+      section: 页面/界面描述
+      per_subsection:
+        expect: markdown_table
+        required_columns:
+          - 组件
+          - 类型
+          - 交互行为
+  metadata_header:
+    description: |
+      spec 文档顶部必须包含模块标识、版本、创建日期、状态等元数据
+    severity: MINOR
+    rule:
+      expect: blockquote_metadata
+      required_fields:
+        - 模块标识
+        - 版本
+        - 创建日期
+        - 状态
+  acceptance_yaml_present:
+    description: |
+      doc/features/{feature}/acceptance.yaml 必须存在（spec 从 spec 提取的验收 SSOT）
+    severity: BLOCKER
+    rule:
+      path: doc/features/{feature}/acceptance.yaml
+  acceptance_ut_layer_complete:
+    description: |
+      acceptance.yaml 中每条 criterion/boundary 必须声明合法 ut_layer（unit/device/both）
+    severity: BLOCKER
+    rule:
+      file: acceptance.yaml
+      field: ut_layer
+      allowed_values:
+        - unit
+        - device
+        - both
+  acceptance_device_focus_present:
+    description: |
+      ut_layer∈{device,both} 须填写 device_focus；both 须同时填写 ut_focus 与 device_focus
+    severity: BLOCKER
+    rule:
+      file: acceptance.yaml
+      fields:
+        device:
+          - device_focus
+        both:
+          - ut_focus
+          - device_focus
+  legacy_device_testing_todo_deprecated:
+    description: |
+      device-testing-todo.md 已废弃；若仍存在且缺 device_focus 则 WARN（过渡期）
+    severity: MINOR
+    rule:
+      deprecated_path: doc/features/{feature}/device-testing-todo.md
+  visual_handoff:
+    description: >
+      （spec 驱动 + opt-in：`spec` 段默认不在模板 skeleton；仅当配置了
+      spec.visual_handoff_enforcement 或对「缺 ui_change 整块」有特殊 FAIL/WARN 需求时参见
+      framework.config.json。 CLI --skip-visual-handoff 可跳过。） 若无含根字段 ui_change 的
+      ```yaml``` 代码块且无 spec.opt-in.strict/warn/reachable， check-spec
+      不产生此项（静默）。存在块时 ui_change ∈ {none, reuse_only, impl_out_of_band,
+      new_or_changed, copy_edits_only}； new_or_changed / copy_edits_only 必须提供
+      visual_handoff.kind 与 authoritative_refs； path 经由 resolveAuthoritativePath
+      解析后须在 agent 侧 existsSync（或按 enforcement reachable/warn 降级），
+      支持相对仓库根、${VAR}、获准的绝对路径/UNC；url 类 kind 校验 http(s) URL。 详见
+      framework/skills/feature/spec/reference/visual-handoff.md。
+    severity: MAJOR
+    rule:
+      expect: yaml_code_block_with_ui_change
+      enforcement_config: framework.config.json#spec.visual_handoff_enforcement
+  ui_spec_structure:
+    description: >
+      ui_change=new_or_changed / copy_edits_only 时须产出
+      doc/features/{feature}/spec/ui-spec.yaml： schema_version、非空
+      screens/tokens/assets；P0 屏须 root 组件树；每个 asset 须 resolved_path 或
+      placeholder+rationale；verified 字段驱动 DSL gate 与下游降级。 只查结构完整，非对图保真（保真由
+      fidelity gate + static_fidelity_score + visual_diff 承担）。 profile
+      分态：hmos-app 启用 / generic SKIP。详见 ui-spec.md。
+    severity: MAJOR
+    rule:
+      expect: ui_spec_yaml
+      enforcement_config: framework.config.json#spec.ui_spec_enforcement
+  ui_spec_fidelity_gate:
+    description: >
+      ui-spec 仅在 verified_method=vl_multimodal 且当前 hash-bound 机器证据链完整时，
+      方可作为保真基线进 plan；unverified 以及 legacy human_confirmed/human_gate 均按
+      未验真处理，WARN/FAIL（按 ui_spec_enforcement 档位）并触发 D/K 降级语义。
+    severity: MAJOR
+    rule:
+      expect: ui_spec_verified_or_gate
+      enforcement_config: framework.config.json#spec.ui_spec_enforcement
+  asset_acquisition:
+    description: >
+      crop 类 assets 由 runner 按 spec 冻结的 source_ref/source_bbox 确定性裁图并记录源、算法/工具、
+      参数和输出 hash；产物还必须通过 asset_crop_validation 独立复验。旧 human_crop_confirmed /
+      crop_confirmed_by 不构成授权或质量证明。依赖工具不可用时不得静默 SKIP，应走 capability 语义。
+    severity: MAJOR
+    rule:
+      provider: spec.asset_acquisition
+  ui_spec_bbox_semantic:
+    description: >
+      P0-A（plan f2d8c4a6）：bbox 坐标语义确定性门禁。SSOT=[x,y,w,h] 归一化，VL 产出曾系统性转置为
+      [y,x,h,w]（round6 真凶，一个转置同时污染素材裁剪/token 采色/布局 ground truth）。 第 0 层零依赖
+      orientation 预检：横排多字文本节点 w<h 系统性出现（≥60% 且 ≥5 个）→ 疑似转置； 第 1 层 OCR 交叉校验：原图
+      OCR 词框行聚类 × 文本节点 bbox 双语义 IoU，decisive ≥5 且转置占比 ≥80% → 系统性转置 BLOCKER（阈值来自
+      2026-07-02 OCR spike 实测：坏态 22:0 判转置、修正态 22:0 判正确）。 OCR 不可用/覆盖不足时
+      pixel_1to1 不得 PASS（toolchain 归因，不静默 SKIP）。 门禁只判不改：修复=全文档 bbox/source_bbox
+      统一换轴后重跑，不自动回写、不自签。
+    severity: BLOCKER
+    rule:
+      provider: spec.ui_spec
+  capture_completeness_external:
+    description: >
+      P0-D（plan f2d8c4a6）：spec 完整性**外部对照**——真分母=参考原图 OCR 全文清单（状态栏 band 剔除、
+      单字符/纯符号去噪、金额样式保留），替换"分母是 agent 自己抽的清单"的 RC4 自循环（round6 实证：
+      右置副标题×5/优化横幅/¥119.40 连续两轮漏抽而 capture 100% PASS）。OCR 行未被
+      ui-spec/ref-elements 文本集覆盖 → 逐条 disposition（补 implement 建模，或在真实能力缺失时
+      capability defer）才可收口， pixel_1to1 BLOCKER；人签不得补足缺失机器证据。 反向 diff（spec
+      有而原图无=疑似幻觉）仅低置信注记。OCR 不可用 → pixel_1to1 不得 PASS（toolchain）。
+      诚实边界：只保证"文本进了分母"，不保证"建模位置/分组正确"。
+    severity: BLOCKER
+    rule:
+      provider: spec.ui_spec
+  ui_spec_structure_lint:
+    description: >
+      P0-D（plan f2d8c4a6）：pixel_1to1 P0 屏结构声明必填 lint——(1) 节点有 subtitle 必须显式
+      subtitle_position（trailing|below，副标题右置 vs 题下 coding 不得猜）；(2) 连续 ≥3 个
+      list_selection 平铺且无 layout_group/父容器 bg_color → 须建分组容器（round6：5
+      行卡种应同卡）；(3) global_elements 声明的浮动 tab 容器节点须有
+      bg_color（胶囊容器建模）。诚实边界：只保证"有声明"不保证"声明对"， 门禁绿≠结构对（正确性归 review 视觉维度 + device
+      回环）。
+    severity: BLOCKER
+    rule:
+      provider: spec.ui_spec
+  asset_crop_validation:
+    description: >
+      P0-B（plan f2d8c4a6）：裁剪产物验真。对**全部** acquisition:crop 资产（新裁/历史已存在/已物化 一律重验，堵
+      existsSync→continue 的坏图复通过洞）：确定性 sanity（条状塌缩/icon 长宽比与面积占比/
+      纯色/空白，可一票否决），并按当前 source_ref/source_bbox 与冻结算法确定性重裁后比较输出 hash； 可用 VL
+      仅作为额外机器语义证据。旧 bbox_verified_by/human_crop_confirmed/crop_confirmed_by
+      只读且不豁免验真。源、hash、工具 provenance 缺失或重裁不一致时 pixel_1to1 不得静默 PASS。 机器裁决落
+      spec/reports/asset-crop-validation.json，coding 物化门禁消费（未 verified 不得进模块
+      media）。
+    severity: BLOCKER
+    rule:
+      provider: spec.asset_acquisition
+  fidelity_target:
+    description: >
+      Visual Handoff yaml 块可选 fidelity_target（pixel_1to1|semantic_layout，默认
+      semantic_layout） 与 asset_acquisition_mode；pixel_1to1 联动抬升 effective
+      user_dir 并贯穿 spec/coding/testing ratchet。
+    severity: MAJOR
+    rule:
+      expect: visual_handoff_fidelity_target
+  fidelity_deferrals:
+    description: >
+      pixel_1to1 下任何 P0 视觉元素 defer 都是未满足的 strict 质量义务并构成 BLOCKER； legacy
+      fidelity_deferrals/human_signed/signed_by 可读但没有放行权。非 strict、非
+      release-required defer 可按既有 optional UNVERIFIED/advisory 语义披露，不得制造人工等待态。
+    severity: BLOCKER
+    rule:
+      expect: fidelity_deferrals_strict_contract
+  fidelity_no_self_defer_verified:
+    description: >
+      禁止 ui-spec verified=verified 与任何 strict defer 并存（spec 自我 defer + 自我
+      verified）。
+    severity: BLOCKER
+    rule:
+      expect: no_self_defer_verified
+  capture_completeness:
+    description: >
+      ref-elements.yaml 为参考图侧独立枚举（分母不得取自 ui-spec/countMappableNodes）； pixel_1to1
+      覆盖不足 → BLOCKER。
+    severity: BLOCKER
+    rule:
+      expect: ref_elements_coverage
+  capture_style_fields:
+    description: >
+      G3 捕获保真（pixel_1to1）：P0 action_button 须声明 variant（治"实心蓝 vs 浅灰药丸/幽灵按钮"）； 未声明
+      → BLOCKER。布局关系（layout_group/align/width_ratio）由提示词驱动捕获 + coding parity 校验。
+    severity: BLOCKER
+    rule:
+      expect: capture_style_fields
+  asset_manifest:
+    description: |
+      pixel_1to1 联动 user_dir 须产出 spec/asset-manifest.yaml；占位资产须显式清单（拒绝 AI 山寨）。
+    severity: MAJOR
+    rule:
+      expect: asset_manifest_yaml
+  fidelity_snapshot_promise:
+    description: >
+      visual_handoff 含 source_link 且 ui_change∈{new_or_changed,copy_edits_only}
+      时视为在线高保真承诺； 纯离线校验 _fidelity-cache/fidelity.lock.yaml + 声明屏 PNG 齐；缺/不齐按
+      fidelity_target ratchet。 详见 specs/fidelity-lock.schema.yaml 与
+      docs/operations/fidelity-fetch-mcp-contract.md。
+    severity: BLOCKER
+    rule:
+      expect: fidelity_snapshot_offline_promise
+  visual_reference_viewport:
+    description: >
+      plan b3d7e5a1 T5：参考图与设备视口尺寸兼容性前置门。lock.viewport 在场时逐屏比对 ref_id 参考图 高宽比（阈值
+      ×1.15，与 ocr-gates 整页启发式同一常量）；不兼容 → pixel_1to1 BLOCKER FAIL / 低档 ratchet
+      WARN， 出路=作者建模：长页按锚点拆成多个 viewport 尺寸 screen（各自 ref_id + nav 末步
+      scroll_to）；lock 无 viewport → WARN 推迟到 testing；全部兼容 → 零结果。 不做
+      reference_region / 自动 crop / 分段 / 拼接。
+    severity: BLOCKER
+    rule:
+      expect: visual_reference_viewport_precheck
+  structured_ref_elements:
+    description: >
+      第二刀（可选）：lock.structured_bundle 存在时程序化推导 ref-elements 分母并注入 CheckContext 内存
+      manifest （capture-completeness 同 run 消费，verify 路径不写盘）；element_id 须归一化到
+      ui-spec 语义 id；VL 只增补不覆盖 structured 基线。
+    severity: MAJOR
+    rule:
+      expect: structured_ref_elements_derive
+  authoritative_ref_lock_conflict:
+    description: >
+      在线高保真 fidelity.lock 与 spec authoritative_refs 同 id 但路径不同时 WARN（lock 已胜出）；
+      提示移除重复 authoritative_refs 或改用不同 id，避免静默双 SSOT。
+    severity: MAJOR
+    rule:
+      expect: authoritative_ref_lock_id_conflict
+semantic_checks:
+  acceptance_testable:
+    description: |
+      每条验收标准必须是可测试、可量化的，包含明确的预期结果
+    severity: BLOCKER
+    ai_prompt_hint: |
+      逐条审查验收标准，判断：(1) 是否包含明确的操作步骤或前置条件； (2) 是否包含可观察的预期结果；(3) 是否可以通过手动或自动化方式验证
+  simulation_scope_awareness:
+    description: |
+      涉及真实后端（第三方结算网关、账务或金融类开放接口等）的功能点必须标注为"模拟数据"
+    severity: MAJOR
+    ai_prompt_hint: |
+      检查功能清单和界面描述中，是否有依赖真实后端的功能未标注模拟策略
+  business_flow_branch_coverage:
+    description: |
+      业务流程图必须覆盖主路径和关键分支（至少包含正常路径和异常路径）
+    severity: MAJOR
+    ai_prompt_hint: |
+      审查 Mermaid 流程图：(1) 是否涵盖了主路径； (2) 是否有至少一条异常/分支路径；(3) 节点是否与功能清单一致
+traceability_checks:
+  feature_to_acceptance:
+    description: |
+      每个 P0/P1 功能（功能清单中的编号）必须在「验收标准」中 有至少一条对应的 AC 项（通过 AC 项中的功能编号引用关联）
+    severity: BLOCKER
+    rule:
+      source: 功能清单
+      filter: priority in ["P0", "P1"]
+      target: 验收标准
+      link_field: 功能编号
+      coverage: 100%
+  acceptance_to_feature:
+    description: |
+      每条验收标准（AC 项）必须关联到至少一个功能编号
+    severity: BLOCKER
+    rule:
+      source: 验收标准
+      require_reference_to: 功能清单.编号
+  exception_to_feature:
+    description: |
+      异常场景表中的场景应能对应到功能清单中的某些功能点
+    severity: MAJOR
+    rule:
+      source: 异常/边界场景处理
+      expect_relevance_to: 功能清单
+  scenario_to_page:
+    description: |
+      使用场景中提到的操作应能在「页面/界面描述」中找到对应的交互组件
+    severity: MAJOR
+    ai_prompt_hint: |
+      交叉验证：使用场景表中描述的用户操作，是否都能在界面描述中找到承载的 UI 组件
+  glossary_terms_used_in_body:
+    description: >
+      若 doc/glossary.yaml 中的某术语（含 aliases）在 spec **正文**
+      （术语映射表章节之外的全部内容）出现，但**未**列在术语映射表里 → WARN（最后一道术语漏建档兜底网）。 该 check 防止"spec
+      作者把某业务词当作普通词写进正文， 实际它在 glossary 里有明确归属"导致 plan / 3 走偏。 处理方式：
+        (1) 若确实是业务术语 → 把它加进术语映射表（推荐）；
+        (2) 若只是在正文里偶然带过的非业务用词 → 可忽略本 WARN；
+        (3) 若该词在不同语境下含义不同 → 在 glossary 里补 alias 或
+            明确 disambiguation，让 lookup 命中精确语境。
+      命中规则：对 glossary.terms[].term 与 .aliases[] 做朴素子串扫描。 为避免重复触发，已在术语映射表中显式列出该
+      term / 其 aliases / 同 一 glossary 条目其它 alias 的，本 check 视为已覆盖。
+    severity: MAJOR
+    rule:
+      source: glossary.terms[].term + glossary.terms[].aliases[]
+      target_section_excluded: 术语映射表
+      coverage_via: spec 术语映射表第 1 列（含 glossary 同义传递）
+      severity_on_miss: WARN
+exploration_thresholds:
+  min_files_inspected: 4
+  min_source_code_paths: 2
+  min_searches: 3
+  min_code_facts: 2
+  require_subagent_when_scope_gte: 3
+  exploration_mode_allowed:
+    - subagent
+    - sequential
+    - minimal
+exploration_strategy:
+  default_mode: sequential
+  scoring:
+    threshold: 60
+    dimensions:
+      - id: module_loc
+        weight: 25
+        tiers:
+          - gte: 50000
+            score: 25
+          - gte: 20000
+            score: 15
+          - gte: 5000
+            score: 8
+      - id: scope_breadth
+        weight: 20
+        tiers:
+          - gte: 3
+            score: 20
+          - gte: 2
+            score: 12
+          - gte: 1
+            score: 5
+      - id: cross_layer
+        weight: 20
+        signal: touches_multiple_outer_layers
+        score_if_true: 20
+      - id: new_api_surface
+        weight: 15
+        signal: adds_exports_or_public_api
+        score_if_true: 15
+      - id: dependency_fan_out
+        weight: 20
+        tiers:
+          - gte: 10
+            score: 20
+          - gte: 5
+            score: 12
+          - gte: 2
+            score: 5
+  sequential_multiplier: 2
+  sequential_min_files_inspected_add: 5
+
+```
+
+---
+
+## 四、脚本 Harness 检查结果
+
+以下是脚本 Harness (`check-spec.ts`) 已完成的确定性检查报告。你无需重复检查这些项目，但应参考其结果辅助语义判断：
+
+```
+{
+  "phase": "spec",
+  "feature": "demo-card",
+  "timestamp": "2026-09-25T04:31:56.350Z",
+  "project_root": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur",
+  "assurance": "full",
+  "capability_resolutions": [
+    {
+      "id": "capability_spec_requirement",
+      "axis": "functional",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "fail",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "requirement",
+          "state": "resolved",
+          "selected_source": "derive.requirement",
+          "selected_source_fingerprint": "a669f8059b5a4734490385b526c37c0e5cfe2082ea65991c2df4b5ac2eb2b9c4",
+          "binding": {
+            "input_id": "requirement",
+            "source": {
+              "kind": "derive",
+              "provider_id": "derive.requirement"
+            },
+            "dependencies": [],
+            "source_refs": [],
+            "content_fingerprint": "a669f8059b5a4734490385b526c37c0e5cfe2082ea65991c2df4b5ac2eb2b9c4"
+          },
+          "attempts": [
+            {
+              "kind": "derive",
+              "source": "derive.requirement",
+              "state": "resolved",
+              "dependencies": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability_spec_codebase",
+      "axis": "functional",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "prune",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "codebase",
+          "state": "resolved",
+          "selected_source": "derive.codebase",
+          "selected_source_fingerprint": "56d19a72f750aae9bc0951705ac102fa51828b634b2d9d59717401e32651efe4",
+          "binding": {
+            "input_id": "codebase",
+            "source": {
+              "kind": "derive",
+              "provider_id": "derive.codebase"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\index.ets",
+                "exists": true,
+                "sha256": "a9b0b1df1389f949c79b0b1f221244ba5f2301acca119841f4586d11a63f1e7d",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\AllBanksPage.ets",
+                "exists": true,
+                "sha256": "a2310641c4a15fe462df3c127583c97cb6b61392bd0437f13fa0783d23c2bcbb",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankModel.ets",
+                "exists": true,
+                "sha256": "85bf14be522a0c0815a787be2b9e1f739e86be41fb8a25b9f83f47324996b1c4",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankRepository.ets",
+                "exists": true,
+                "sha256": "fa10a20e27b5fa016f02a0e0608747e1f892974bb0a6cf10f7f3021e3ac3c907",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankService.ets",
+                "exists": true,
+                "sha256": "bca6edbcaabe61fba6090d8f396f0105962a18d13dc2eacd88d0802d58045fb6",
+                "role": "derive"
+              }
+            ],
+            "source_refs": [
+              "02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets",
+              "02-Feature/FinancialCard/src/main/ets/BankRepository.ets",
+              "02-Feature/FinancialCard/src/main/ets/BankModel.ets",
+              "02-Feature/FinancialCard/src/main/ets/BankService.ets",
+              "02-Feature/FinancialCard/index.ets"
+            ],
+            "content_fingerprint": "56d19a72f750aae9bc0951705ac102fa51828b634b2d9d59717401e32651efe4"
+          },
+          "attempts": [
+            {
+              "kind": "derive",
+              "source": "derive.codebase",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\AllBanksPage.ets",
+                  "exists": true,
+                  "sha256": "a2310641c4a15fe462df3c127583c97cb6b61392bd0437f13fa0783d23c2bcbb",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankRepository.ets",
+                  "exists": true,
+                  "sha256": "fa10a20e27b5fa016f02a0e0608747e1f892974bb0a6cf10f7f3021e3ac3c907",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankModel.ets",
+                  "exists": true,
+                  "sha256": "85bf14be522a0c0815a787be2b9e1f739e86be41fb8a25b9f83f47324996b1c4",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankService.ets",
+                  "exists": true,
+                  "sha256": "bca6edbcaabe61fba6090d8f396f0105962a18d13dc2eacd88d0802d58045fb6",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\index.ets",
+                  "exists": true,
+                  "sha256": "a9b0b1df1389f949c79b0b1f221244ba5f2301acca119841f4586d11a63f1e7d",
+                  "role": "derive"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability_spec_existing_acceptance",
+      "axis": "functional",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "prune",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "acceptance",
+          "state": "resolved",
+          "selected_source": "acceptance@1",
+          "selected_source_fingerprint": "352b678a652cf596cc0cb311600a4590404c3d9ef08267470b868b529866a080",
+          "binding": {
+            "input_id": "acceptance",
+            "source": {
+              "kind": "artifact",
+              "artifact": "acceptance@1"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\acceptance.yaml",
+                "exists": true,
+                "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/demo-card/acceptance.yaml"
+            ],
+            "content_fingerprint": "352b678a652cf596cc0cb311600a4590404c3d9ef08267470b868b529866a080"
+          },
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "acceptance@1",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\acceptance.yaml",
+                  "exists": true,
+                  "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "spec",
+              "detail": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\acceptance.yaml"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability_spec_visual_reference",
+      "axis": "visual",
+      "active": false,
+      "state": "not_applicable",
+      "on_missing": "fail",
+      "applicability_provider_id": "applicability.pixel_fidelity",
+      "applicability_dependencies": [
+        {
+          "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\spec\\reports\\fidelity-intent.json",
+          "exists": true,
+          "sha256": "2737d013d6ce0d084c8ba0ae26f1b7b2ea5915c56ea3e74bd2fe1c20605450b5",
+          "role": "applicability"
+        }
+      ],
+      "applicability_detail": "selected_fidelity=semantic_layout",
+      "inputs": []
+    }
+  ],
+  "capability_resolution_contract_fingerprint": "37b30f21691a9c8fe3aa2a7112f6778bb53d15d47e59b8dc99e7ecf8fb2d38e5",
+  "checks": [],
+  "summary": {
+    "total": 12,
+    "pass": 12,
+    "fail": 0,
+    "warn": 0,
+    "skip": 0,
+    "blockers": 0,
+    "verdict": "PASS"
+  },
+  "passed_check_ids": [
+    "node_options_injection",
+    "acceptance_yaml_present",
+    "acceptance_content_complete",
+    "acceptance_ut_layer_complete",
+    "acceptance_device_focus_present",
+    "legacy_device_testing_todo_deprecated",
+    "acceptance_flow_structure",
+    "acceptance_flow_contract",
+    "design_scope_facts",
+    "capability_spec_requirement",
+    "capability_spec_codebase",
+    "capability_spec_existing_acceptance"
+  ]
+}
+```
+
+---
+
+## 五、语义检查项（你的核心任务）
+
+请逐一完成以下 **7** 项语义检查。每项都有具体的评估方法和判定标准（以 merged phase-rules 是否包含对应条目为准；overlay -only 项见 profile 的 `verify-spec.overlay.md`）。
+
+### 检查 4: 验收标准可测试性 (acceptance_testable)
+
+- **严重等级**: BLOCKER
+- **评估方法**:
+  1. 逐条审查验收标准中的每条 AC 项
+  2. 判断每条 AC 是否满足：
+     - 包含明确的操作步骤或前置条件
+     - 包含可观察的预期结果（如"显示xxx"、"跳转到xxx"）
+     - 可以通过手动或自动化方式验证
+  3. "暂不支持"类功能的 AC，只要指明"弹出 Toast"即视为可测试
+  4. 若 AC 仅有定性描述（如"用户体验好"）而无量化标准，判为 FAIL
+
+### 检查 6: 模拟范围意识 (simulation_scope_awareness)
+
+- **严重等级**: MAJOR
+- **评估方法**:
+  1. 阅读功能清单和界面描述，识别所有依赖真实后端的功能点
+     （如外部结算、金融机构开放接口、账号验证、数据存储等）
+  2. 检查每个此类功能点是否已标注为"模拟数据"或"写死数据"
+  3. 若存在未标注模拟策略的真实后端依赖，判为 FAIL
+  4. 若所有功能均已明确标注数据来源（本地写死/模拟/真实），判为 PASS
+
+### 检查 7: 业务流程分支覆盖 (business_flow_branch_coverage)
+
+- **严重等级**: MAJOR
+- **评估方法**:
+  1. 审查「业务流程图」中的 Mermaid 流程图
+  2. 检查：
+     - 是否涵盖了主路径（正常使用流程）
+     - 是否包含至少一条异常/分支路径（如操作失败、空状态等）
+     - 流程图节点是否与功能清单中的功能点对应
+  3. 对比功能清单 P0 功能，确认关键路径均在流程图中体现
+
+### 检查 8: 使用场景到页面追溯 (scenario_to_page)
+
+- **严重等级**: MAJOR
+- **评估方法**:
+  1. 阅读「目标用户与使用场景」中描述的每个用户操作
+  2. 在「页面/界面描述」中查找承载该操作的 UI 组件
+  3. 对每个场景给出追溯结果：
+     - 哪个用户操作对应哪个页面的哪个组件
+     - 是否存在场景中描述的操作在界面中找不到承载组件的情况
+
+### 检查 9: Visual Handoff 与版面权威 (visual_handoff_semantics)
+
+- **严重等级**: MAJOR（与脚本 `check-spec` 互补：脚本校验结构；你校验语义一致性）
+- **何时可跳过语义核对**：脚本报告已 SKIP Visual Handoff（`enforcement=off` 或 `--skip-visual-handoff`）时，本检查标注 SKIP。
+- **评估方法**:
+  1. 读取 spec 中带根字段 `ui_change` 的 yaml 块（若脚本已 PASS/WARN Visual Handoff，以此为准）。
+  2. 若 `ui_change` ∈ {`new_or_changed`, `copy_edits_only`}：
+     - `authoritative_refs` 是否与「页面/界面描述」的区域划分大致对应（可追溯）？
+     - 正文是否仍写「仅以当前实现为基线」等与 handoff 矛盾之语？若矛盾 → FAIL 或 WARN。
+  3. 若使用 `repo_assets` / `screenshot_pack`：对照脚本报告可能的 **Resolved Visual Sources**／`visual_resolution_rows`：`path` 是否为全分辨率真源或等价导出目录语义（而非聊天缩略图）？若 `agent_reachable=false`，正文是否给出**人工/NAS**可复验的批次、版本或与内门户截图的对照说明？
+  4. 若使用 URL 类 `kind`：是否仍说明版本/帧/归档批次，避免「只有一个泛链接」导致无法对齐？内网门户若不可直连，是否在正文声明**可达代理**或可下载快照的策略？
+
+### 检查 15: 保真档位与捕获完整性 (fidelity_capture_governance)
+
+- **严重等级**: BLOCKER（`fidelity_target: pixel_1to1` 时）
+- **评估方法**:
+  1. Visual Handoff yaml 是否声明 `fidelity_target` / `asset_acquisition_mode` / `fidelity_deferrals`（`pixel_1to1`/P0 的 defer 始终是未满足义务；legacy `human_signed`/`signed_by` 无 gate 权重，能力不足须走 capability defer）？
+  2. 是否产出 `spec/ref-elements.yaml`（参考图侧独立枚举）？`disposition: defer` 是否与 `fidelity_deferrals` 交叉一致？
+  3. 是否产出 `spec/asset-manifest.yaml`（`pixel_1to1` 联动 user_dir）？占位资产是否向用户显式说明？
+  4. ui-spec 是否含 `must_have_elements` / `semantic_role` / `color_ref` 等新字段？脚本 `capture_completeness` / `fidelity_deferrals` 若 FAIL → 本项 FAIL
+
+### 检查 R: 跨产物引用核对 (reference_crosscheck)
+
+- **严重等级**: MAJOR
+- **评估方法**: 逐条核对本阶段产物里的跨文件引用——requirement_ref / 页面 ID / 术语 ↔ catalog、glossary、ui-spec 的真实条目；「出范围」声明 ↔ 功能清单与验收标准不自相矛盾。每条引用都要打开被引用的原文核对，不凭记忆、不凭上下文摘要。
+- **判定标准**: 引用对象存在且含义一致 → PASS；个别引用漂移（行号/名称过期但对象仍可定位） → WARN；关键引用指向不存在或含义相反的对象 → FAIL
+- **证据**: 列出核对过的引用（`引用 → 原文位置`）与不一致项
+
+
+---
+
+## 六、上下文文件
+
+以下是本次验证的上下文：被审产物与直接依据内联；上游文档与源码只给**路径清单**，需要核对时用 Read 按路径读取，不要全量通读。
+
+被审 feature 根目录：`doc/features/demo-card/`（相对仓根；下方清单里的相对路径同样相对仓根）。
+
+### (resolved input requirement)
+
+```
+实现全部银行页的银行列表展示与开卡入口
+```
+
+### (resolved input codebase)
+
+```
+- path: 02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets
+  content: |
+    @Component
+    export struct AllBanksPage {
+      build() {
+        Text("全部银行")
+      }
+    }
+- path: 02-Feature/FinancialCard/src/main/ets/BankRepository.ets
+  content: |
+    export class BankRepository {
+      list(): string[] { return []; }
+    }
+- path: 02-Feature/FinancialCard/src/main/ets/BankModel.ets
+  content: |
+    export interface BankModel {
+      id: string;
+      name: string;
+    }
+- path: 02-Feature/FinancialCard/src/main/ets/BankService.ets
+  content: |
+    export class BankService {
+      openCard(id: string): Promise<boolean> { return Promise.resolve(!!id); }
+    }
+- path: 02-Feature/FinancialCard/index.ets
+  content: |
+    export { AllBanksPage } from './src/main/ets/AllBanksPage';
+
+```
+
+### (resolved input acceptance)
+
+```
+feature: demo-card
+source: approved
+version: "1"
+flows:
+  open_card:
+    - all_banks
+    - open_card_entry
+criteria:
+  - id: AC-1
+    feature: F2
+    description: 点击银行条目进入开卡流程
+    target: 银行条目
+    priority: P0
+    testable: true
+    verification_steps:
+      - 在全部银行页点击银行条目
+    expected_result: 进入开卡流程页
+    ut_layer: device
+    device_focus: 真机点击银行条目核对跳转开卡流程
+    linked_flow: open_card
+    checkpoint:
+      pre_screen: all_banks
+      action:
+        type: touch
+        target_element_id: bank_row_cmb
+      post_screen: open_card_entry
+      required_element_ids:
+        - open_card_title
+    requirement_ref:
+      source_path: doc/features/demo-card/requirements/requirement.md
+      snippet: 点击银行条目进入开卡流程
+  - id: AC-2
+    feature: F1
+    description: 银行列表展示
+    target: 银行列表
+    priority: P1
+    testable: true
+    verification_steps:
+      - 打开全部银行页
+    expected_result: 列表展示银行条目
+    ut_layer: both
+    ut_focus: AllBanksPage 列表渲染
+    device_focus: 真机打开全部银行页核对列表渲染
+boundaries: []
+
+```
+
+### doc/features/demo-card/acceptance.yaml
+
+```
+feature: demo-card
+source: approved
+version: '1'
+flows:
+  open_card: [all_banks, open_card_entry]
+criteria:
+  - id: AC-1
+    feature: F2
+    description: 点击银行条目进入开卡流程
+    target: 银行条目
+    priority: P0
+    testable: true
+    verification_steps:
+      - 在全部银行页点击银行条目
+    expected_result: 进入开卡流程页
+    ut_layer: device
+    device_focus: 真机点击银行条目核对跳转开卡流程
+    linked_flow: open_card
+    checkpoint:
+      pre_screen: all_banks
+      action:
+        type: touch
+        target_element_id: bank_row_cmb
+      post_screen: open_card_entry
+      required_element_ids:
+        - open_card_title
+    requirement_ref:
+      source_path: doc/features/demo-card/requirements/requirement.md
+      snippet: 点击银行条目进入开卡流程
+  - id: AC-2
+    feature: F1
+    description: 银行列表展示
+    target: 银行列表
+    priority: P1
+    testable: true
+    verification_steps:
+      - 打开全部银行页
+    expected_result: 列表展示银行条目
+    ut_layer: both
+    ut_focus: AllBanksPage 列表渲染
+    device_focus: 真机打开全部银行页核对列表渲染
+boundaries: []
+
+```
+
+### doc/features/demo-card/context/facts.md
+
+```
+---
+schema_version: "1.1"
+feature: demo-card
+run_id: 20260925T043142Z-233c9c
+established_by: spec
+ready_to_produce: true
+has_blocker_coverage_risk: false
+exploration_mode: sequential
+key_inputs_read:
+  - doc/glossary.yaml
+  - doc/module-catalog.yaml
+  - doc/architecture.md
+subagents_used: none
+decisions_unlocked:
+  - all_banks_page_list
+files_inspected_count: 9
+searches_performed_estimate: 6
+source_code_paths:
+  - 02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets
+  - 02-Feature/FinancialCard/src/main/ets/BankRepository.ets
+  - 02-Feature/FinancialCard/src/main/ets/BankModel.ets
+  - 02-Feature/FinancialCard/src/main/ets/BankService.ets
+  - 02-Feature/FinancialCard/index.ets
+---
+
+## Code Facts
+
+| 路径 | 事实 | 对本阶段影响 |
+|------|------|--------------|
+| 02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets | AllBanksPage 目前只渲染标题文本 | 列表需新增 |
+| 02-Feature/FinancialCard/src/main/ets/BankRepository.ets | BankRepository.list 返回空数组 | 列表数据源需接入 |
+| 02-Feature/FinancialCard/src/main/ets/BankModel.ets | BankModel 已定义银行字段 | 列表条目直接复用 |
+| 02-Feature/FinancialCard/src/main/ets/BankService.ets | BankService 暴露 openCard 入口 | 点击回调接它 |
+| 02-Feature/FinancialCard/index.ets | index.ets 已导出 AllBanksPage | 新增组件需同步导出 |
+
+## phase_delta: spec
+
+本阶段研究结论已确认。
+
+```
+
+---
+
+## 七、输出格式（必须严格遵循）
+
+先给**汇总表**（每个检查项一行，PASS 也要列），再只对 **status ≠ PASS** 的项写 YAML 明细。
+PASS 项不写论证，证据一行即可；证据不足时给 WARN 并说明缺什么，不要硬判 FAIL。
+不要复述脚本 Harness 已判定的结构项，不要输出本节之外的自由文本。
+
+本轮检查项与严重等级：
+
+| id | severity |
+|---|---|
+| acceptance_testable | BLOCKER |
+| simulation_scope_awareness | MAJOR |
+| business_flow_branch_coverage | MAJOR |
+| scenario_to_page | MAJOR |
+| visual_handoff_semantics | MAJOR |
+| reference_crosscheck | MAJOR |
+| fidelity_capture_governance | BLOCKER |
+
+### 7.1 汇总表
+
+| id | status | severity | 证据（一行：文件:行 / 引文 / 数值） |
+|---|---|---|---|
+| <check_id> | PASS / WARN / FAIL / SKIP | <severity> | <一行证据> |
+
+### 7.2 非 PASS 项明细
+
+```yaml
+verification_result:
+  phase: "spec"
+  feature: "demo-card"
+  timestamp: "2026-09-25T04:31:56.363Z"
+  checks:            # 只列 status ≠ PASS 的项；每项字段固定
+    - id: <check_id>
+      status: FAIL | WARN | SKIP
+      severity: <该项声明的 severity>
+      details: |
+        <证据：文件路径 + 行号/引文 + 判断依据>
+      suggestion: |
+        <修正建议：谁改、改哪个文件、改成什么>
+  summary:
+    total: 7
+    pass: <PASS 数>
+    fail: <FAIL 数>
+    warn: <WARN 数>
+    blockers: <severity=BLOCKER 且 status=FAIL 的数量>
+    verdict: PASS | FAIL
+    # verdict 规则：若存在任何 BLOCKER 级 FAIL → FAIL；否则 → PASS
+```
+
+---
+
+## 八、注意事项
+
+1. **不要重复脚本 Harness 已覆盖的检查**（章节存在性、表格格式、优先级值域等）
+2. 若 spec 文档缺少某个章节导致无法进行语义检查，将该检查标为 WARN 并说明原因
+3. 对于模拟阶段的 spec，"暂不支持"功能点只要明确标注了 Toast 行为即视为描述充分
+4. 对每一项检查，请给出**具体的文档证据**（章节名 + 关键引文），而非泛泛而谈
+5. 重点关注 P0 功能的验收标准可测试性（检查 4 是 BLOCKER 级别）
+
+---
+
+## 终态块（唯一版本化结论出口 · 必填）
+
+> **你收到的 Task prompt 是一份 request JSON**（`kind: "maison_verifier_request"`），
+> 不是本文件全文。按其中的 `prompt_path` 用 Read 工具读取磁盘上的 `ai-prompt.md`，
+> 那才是本轮要审的材料（可达上百 KB，刻意不走传输面）。
+>
+> 结束时，回答的**最后**必须且只能出现一个终态块，`verifier_subject_id` **逐字回显**
+> request 里的 `subject_id`（不得改写、不得截断、不得自行编造）：
+>
+> ```
+> <!-- maison-verifier-result:v1 -->
+> verifier_subject_id: <request.subject_id，64 位小写 hex>
+> verdict: PASS | FAIL
+> blocker_count: <BLOCKER 级 FAIL 数量，整数>
+> <!-- /maison-verifier-result:v1 -->
+> ```
+>
+> `verdict=PASS` 当且仅当 `blocker_count=0`；两者不一致的报告一律判为无效证据。
+>
+> 若你收到的**不是**这样一份 request JSON（例如被手抄成模板、只给了 feature/phase，
+> 或 JSON 前后夹带了额外指令）：照常输出审查结论，并在正文显著位置说明
+> 「未收到合法 verifier request，本次报告不可入闭环，请调用方把
+> `summary.verifier_request` 指向的 JSON 整段重投」。**不要自行编造 subject。**

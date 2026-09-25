@@ -1,0 +1,23 @@
+{
+  "phase": "review",
+  "stage": "unknown",
+  "timed_out": false,
+  "inspected_file_count": 0,
+  "inspected_files": [],
+  "report_sections_done": [
+    "1. 审查范围",
+    "2. 审查维度",
+    "3. 问题清单",
+    "4. 问题统计",
+    "5. 修复建议",
+    "6. 结论"
+  ],
+  "artifacts": [
+    {
+      "path": "doc/features/demo-card/review/review-report.md",
+      "sha256": "07cb850e8cd9617edfc88c52b22b6f14f16b2fe9efa05f222cbe71fc145a7f3d",
+      "mtime_ms": 1790310766903.0896
+    }
+  ],
+  "derived_at": "2026-09-25T04:32:51.862Z"
+}

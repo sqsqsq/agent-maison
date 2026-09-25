@@ -1,0 +1,249 @@
+{
+  "schema": 4,
+  "generated_at": "2026-09-25T04:33:24.967Z",
+  "allowed_step_roots": [
+    "touch",
+    "input",
+    "swipe",
+    "scroll",
+    "scroll_to",
+    "back",
+    "home",
+    "stop_app",
+    "clear_app",
+    "wait",
+    "wait_for",
+    "wait_gone",
+    "wait_idle",
+    "assert_toast",
+    "start_app"
+  ],
+  "forbidden_in_steps": [
+    "dump_ui",
+    "dump-ui",
+    "page_save",
+    "page-save",
+    "app",
+    "find",
+    "doctor",
+    "collect",
+    "screenshot"
+  ],
+  "reset_preamble": {
+    "available": false,
+    "reason": "tools.hylyre.hypium_page_name 为空且 entry 模块 mainElement 不可发现",
+    "rule": "身份未解析时不得写任何 start_app/stop_app 步骤（写了即 STEP-003 BLOCKER）。"
+  },
+  "step_shape_catalog": [
+    {
+      "root": "touch",
+      "example": {
+        "touch": {
+          "by_text": "按钮文案"
+        }
+      },
+      "note": "点击；优先 by_text，稳定后用 by_id"
+    },
+    {
+      "root": "input",
+      "example": {
+        "input": {
+          "by_id": "field_id",
+          "text": "100"
+        }
+      },
+      "note": "输入文本"
+    },
+    {
+      "root": "swipe",
+      "example": {
+        "swipe": {
+          "direction": "UP",
+          "distance": 50
+        }
+      },
+      "note": "滑动；Nav 返回用 back 勿乱 swipe"
+    },
+    {
+      "root": "scroll",
+      "example": {
+        "scroll": {
+          "direction": "down",
+          "steps": 6
+        }
+      },
+      "note": "滚轮/列表滚动"
+    },
+    {
+      "root": "back",
+      "example": {
+        "back": {}
+      },
+      "note": "系统/Nav 返回"
+    },
+    {
+      "root": "wait",
+      "example": {
+        "wait": {
+          "seconds": 2
+        }
+      },
+      "note": "固定等待 N 秒；必填 seconds，勿写 timeout"
+    },
+    {
+      "root": "wait_for",
+      "example": {
+        "wait_for": {
+          "by_text": "加载完成",
+          "timeout": 10
+        }
+      },
+      "note": "等待元素出现；须 selector/by_text/by_id；超时用 timeout（默认 10）"
+    },
+    {
+      "root": "wait_gone",
+      "example": {
+        "wait_gone": {
+          "by_id": "loading_spinner",
+          "timeout": 10
+        }
+      },
+      "note": "等待元素消失；须 selector/by_text/by_id"
+    },
+    {
+      "root": "wait_idle",
+      "example": {
+        "wait_idle": {
+          "idle_time": 0.7,
+          "timeout": 10
+        }
+      },
+      "note": "等待 UI 空闲；idle_time 可选（默认 0.7）"
+    },
+    {
+      "root": "assert_toast",
+      "example": {
+        "assert_toast": {
+          "text": "成功",
+          "timeout": 3
+        }
+      },
+      "note": "Toast 断言；必填 text"
+    }
+  ],
+  "wait_field_timing_ref": [
+    {
+      "root": "wait",
+      "duration_field": "seconds",
+      "note": "固定 sleep；必填 seconds；禁止 timeout/duration"
+    },
+    {
+      "root": "wait_for",
+      "duration_field": "timeout",
+      "default_seconds": 10,
+      "note": "等待元素出现；须 selector/by_text/by_id；超时字段 timeout（非 seconds）"
+    },
+    {
+      "root": "wait_gone",
+      "duration_field": "timeout",
+      "default_seconds": 10,
+      "note": "等待元素消失；须 selector/by_text/by_id"
+    },
+    {
+      "root": "wait_idle",
+      "duration_field": "timeout",
+      "default_seconds": 10,
+      "note": "等待 UI 空闲；可选 idle_time（默认 0.7）；超时字段 timeout"
+    },
+    {
+      "root": "assert_toast",
+      "duration_field": "timeout",
+      "default_seconds": 3,
+      "note": "Toast 断言；必填 text；超时字段 timeout"
+    }
+  ],
+  "hylyre_planned_step_fields_ref": "framework/profiles/hmos-app/skills/device-testing/reference/hylyre-planned-step-fields.md",
+  "canonical_format": "派生表「测试步骤」列 = 裸单行 JSON 对象序列，步骤之间用 `;` 分隔（**不是** JSON 数组），每步恰好一个根键（禁 Markdown 反引号包裹）；固定等待用 {\"wait\":{\"seconds\":N}}（禁 timeout/duration）；正式 by_text selector 必须显式写 match: exact 或 contains（由 acceptance 意图决定，禁止字符启发式与运行时 fallback）；touch 禁嵌套 selector（用 {\"touch\":{\"by_text\":\"…\",\"match\":\"exact\"}} / by_id / 富选择器字段）；wait_for 必须带 selector/by_text/by_id/by_key/by_type/富选择器之一，by_text 同样显式 match；action 默认 require unique 由 Hylyre 契约提供，消歧复用 index/scope/within/all，不新增 candidate_policy；feature ui-spec 是开放世界静态提示（既有入口/前置页面通常不重复建模）：selector 不在其中只给 WARN、不阻断，最终真值是本轮 native StepResult 的 selector evidence；不要为了消 WARN 改写目标或伪造 ui-spec 节点；start_app/stop_app 只允许作为 case 首部复位前奏（恰好一组 stop_app→start_app，身份见 reset_preamble；不得使用 clear_app），其它位置禁止；禁止 dump_ui 等 CLI 子命令作根键（观察由 harness 负责）；P0 身份断言不用手写：harness 把派生计划装载进 run 目录时按 acceptance checkpoint 自动注入精确形状的 {\"wait_for\"|\"wait_gone\":{\"by_id\":<id>,\"timeout\":N}}（源派生计划不改），派生只写导航、动作与 UX 断言——visible/enabled 等谓词断言保留但不算身份；scroll/swipe 是合法动作不改 touch；同一 checkpoint 可重复触发，每次在下次同目标触发或返回/复位前分别注入并验真，不跨区间借断言；仅目标绑定真正歧义或无匹配动作时 invalid_test，保留全部连续导航，不删动作或拆 case。",
+  "feature": "demo-card",
+  "source": "doc/features/demo-card/testing/test-plan.md",
+  "snapshot_bundle": "com.example.realchain",
+  "snapshot_cache_empty": true,
+  "available_pages": [],
+  "selector_contract": {
+    "rule_id": "SELECTOR-SPEC-001",
+    "policy": "snapshot-cache/device dump only discover candidates; the feature ui-spec is an OPEN WORLD static hint (pre-existing entry screens are legitimately absent) and a miss is a provenance WARN, not proof of an illegal selector — the run's own native StepResult selector evidence is the final truth; formal by_text MUST explicitly declare match exact|contains chosen by acceptance intent; runtime MUST NOT fallback",
+    "static_blockers": "only determinable errors block: illegal selector/match, missing explicit by_text match, a ui-spec-proven same-screen multi-mapping without index/scope/within/all, a contains hit that only matches an aggregate Text/Row with children, and a structured acceptance conflict (same checkpoint action target_element_id != the plan action by_id)",
+    "match_modes": [
+      "exact",
+      "contains"
+    ],
+    "match_selection": "Maison/agent chooses exact or contains from acceptance intent; never infer contains from digits/date or other text shape",
+    "disambiguation_fields": [
+      "index",
+      "scope",
+      "within",
+      "all"
+    ],
+    "entries": [
+      {
+        "screen_id": "all_banks",
+        "node_id": "bank_row_cmb",
+        "text": "招商银行",
+        "cardinality": "singleton"
+      },
+      {
+        "screen_id": "open_card_entry",
+        "node_id": "open_card_title",
+        "text": "开卡申请",
+        "cardinality": "singleton"
+      }
+    ]
+  },
+  "navigation_discipline": "Nav 子页回 Tab 须用 {\"back\":{}}；禁止无 area/at 的 swipe RIGHT/LEFT 代替返回。",
+  "execution_channel_policy": {
+    "domain": "hylyre | visual | manual:<gap_class> | provider:<capability-id>",
+    "source": "top-level test-plan.md 「执行通道」column (compile-time dispatch, part of plan identity)",
+    "derive_authority": "compile EXACTLY the channel=hylyre set; never add, remove, or rewrite a channel; never emit explicit_skip_tc_ids",
+    "all_or_nothing": "if any channel=hylyre case cannot be compiled (step lint, selector BLOCKER, unparseable steps, or no same-case setup/navigation action before its first assertion), do NOT produce a runnable plan — report that case root cause and the next responsible phase instead",
+    "setup_before_assertion": "every channel=hylyre case MUST contain at least one action step before its first assertion step in the same case (STEP-SETUP); do not rely on screen state left by another case",
+    "manual_note": "manual:<known_class> with no tool primitive is an unsupported_gap: keep it in the denominator, never count it as PASS, and allow completion with disclosure; bare manual or an unknown class is invalid_test before device execution"
+  },
+  "test_cases": [
+    {
+      "tc_id": "TC-001",
+      "name": "开卡入口",
+      "precondition": "冷启动",
+      "steps_natural_language": "点击银行条目并等待开卡页标题",
+      "expected": "进入开卡流程页",
+      "priority": "P0",
+      "ac_ref": "AC-1",
+      "execution_channel": "hylyre",
+      "navigation_hint": {
+        "requires_nav_reset": false,
+        "forbidden_patterns": [],
+        "suggested_preamble_steps": [],
+        "suggested_teardown_steps": [
+          "{\"back\":{}}"
+        ],
+        "reason": "预期进入 Nav 子页；单会话 run --plan 时建议用例末 teardown"
+      }
+    },
+    {
+      "tc_id": "TC-002",
+      "name": "银行列表展示",
+      "precondition": "冷启动",
+      "steps_natural_language": "打开全部银行页并等待列表条目",
+      "expected": "列表展示银行条目",
+      "priority": "P1",
+      "ac_ref": "AC-2",
+      "execution_channel": "hylyre",
+      "navigation_hint": {
+        "requires_nav_reset": false,
+        "forbidden_patterns": [],
+        "suggested_preamble_steps": [],
+        "suggested_teardown_steps": [],
+        "reason": "无额外导航约束"
+      }
+    }
+  ]
+}

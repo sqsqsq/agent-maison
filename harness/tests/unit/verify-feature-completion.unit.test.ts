@@ -2,7 +2,7 @@
 //
 // 覆盖面（openspec goal-runner delta + codex 终审剧本）：
 //   clean_pass 违例拒生成 / VALID roundtrip / 原件篡改 INVALID / 手工伪造(假 aggregate)
-//   INVALID / 世界后变(artifact 改动·更晚 HALTED run) STALE / supersedes 豁免。
+//   INVALID / 世界后变(artifact 改动 → 义务 uncovered·更晚 HALTED run → blocking) / supersedes 豁免。
 
 import assert from 'assert';
 import { computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
@@ -24,7 +24,6 @@ import {
   generateFeatureCompletion,
   hasPendingHumanReview,
   resolvePhaseRunIds,
-  verifyFeatureCompletion,
 } from '../../scripts/utils/verify-feature-completion';
 import {
   seedCleanCompletionChain,
@@ -33,7 +32,9 @@ import {
   writePhaseSummary,
   writeRunEvents as seedWriteRunEvents,
 } from '../utils/completion-chain-seed';
+import { assessFeature, assessmentReasons } from '../../scripts/utils/feature-assessment';
 import type { Phase } from '../../scripts/utils/types';
+import { inferLegacyProjectRoot, isInsideProjectRoot, resolveDependencyPath } from '../../scripts/utils/project-relative-path';
 import type { UnitCaseResult } from '../run-unit';
 
 const FEATURE = 'completion-fixture';
@@ -144,15 +145,56 @@ function generate(root: string, over?: Partial<Parameters<typeof generateFeature
   });
 }
 
-function verify(root: string, over?: Partial<Parameters<typeof verifyFeatureCompletion>[0]>) {
-  return verifyFeatureCompletion({
-    projectRoot: root, feature: FEATURE, expectedChain: CHAIN, expectedTrack: 'full', ...over,
+/** plan b2d7f4e9：唯一评估入口 assessFeature；VALID = complete，其余一律 INVALID（记录 / 义务 / blocking 由 assessment 细分）。 */
+function verify(root: string, over?: { expectedChain?: string[]; expectedTrack?: string; feature?: string }) {
+  const assessment = assessFeature(root, over?.feature ?? FEATURE, {
+    expectedChain: over?.expectedChain ?? CHAIN, expectedTrack: over?.expectedTrack ?? 'full',
   });
+  return { verdict: assessment.complete ? 'VALID' : 'INVALID', reasons: assessmentReasons(assessment), assessment };
 }
 
 interface Case { name: string; run: () => void }
 
 const cases: Case[] = [
+  { name: 'b2d7f4e9 t4: recorded dependency paths relocate by the recorded legacy root only (read side)', run() {
+    const root = mkProject();
+    const old = 'C:\\gen\\real-chain-X';
+    const scope = { obligations: [{ basis: [{ dependencies: [
+      { path: 'D:\\elsewhere\\src\\a.ets' },
+      { path: `${old}\\doc\\features\\demo\\acceptance.yaml` },
+    ] }] }] };
+    const legacy = inferLegacyProjectRoot(root, scope);
+    assert.equal(legacy, old, '旧根应取自含 features 段的记录路径');
+    assert.equal(inferLegacyProjectRoot(root, scope), legacy, '同一记录重复推断结果一致');
+    assert.equal(resolveDependencyPath(root, `${old}\\doc\\features\\demo\\acceptance.yaml`, legacy), path.resolve(root, 'doc/features/demo/acceptance.yaml'));
+    assert.equal(resolveDependencyPath(root, 'c:/GEN/real-chain-x/src/a.ets', legacy), path.resolve(root, 'src/a.ets'), '盘符路径大小写不敏感、两种分隔符都认');
+    assert.equal(resolveDependencyPath(root, 'D:\\elsewhere\\src\\a.ets', legacy), 'D:\\elsewhere\\src\\a.ets', '不在旧根下的路径原样返回（调用方照旧判越界 stale）');
+    assert.equal(resolveDependencyPath(root, `${old}\\..\\escape.ets`, legacy), path.resolve(root, '..', 'escape.ets'), '重定位不放行越界');
+    assert(!isInsideProjectRoot(root, resolveDependencyPath(root, `${old}\\..\\escape.ets`, legacy)));
+    const inside = path.join(root, 'doc', 'x.yaml');
+    assert.equal(resolveDependencyPath(root, inside, legacy), inside, '已在当前根内的路径原样');
+    assert.equal(resolveDependencyPath(root, 'doc/x.yaml'), path.resolve(root, 'doc/x.yaml'), '相对路径按当前根拼');
+    assert.equal(inferLegacyProjectRoot(root, { obligations: [{ basis: [{ dependencies: [{ path: 'D:\\elsewhere\\src\\a.ets' }] }] }] }), undefined, '没有 features 段就不猜');
+    fs.rmSync(root, { recursive: true, force: true });
+  } },
+  { name: 'b2d7f4e9 t4 (codex r1 P2-4): a legacy root that itself contains the features_dir segment is located by existence, not first match', run() {
+    const root = mkProject();
+    const old = 'D:\\archives\\doc\\features\\host';
+    fs.mkdirSync(path.join(root, 'doc', 'features', 'demo'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'doc', 'features', 'demo', 'acceptance.yaml'), 'x: 1\n');
+    fs.writeFileSync(path.join(root, 'doc', 'features', 'demo', 'contracts.yaml'), 'x: 1\n');
+    const scope = { obligations: [{ basis: [{ dependencies: [
+      { path: `${old}\\doc\\features\\demo\\acceptance.yaml` },
+      { path: `${old}\\doc\\features\\demo\\contracts.yaml` },
+    ] }] }] };
+    const legacy = inferLegacyProjectRoot(root, scope);
+    assert.equal(legacy, old, '重复 features 段：应取重定位后依赖在当前工程内存在最多的候选旧根');
+    assert.equal(resolveDependencyPath(root, `${old}\\doc\\features\\demo\\acceptance.yaml`, legacy), path.resolve(root, 'doc/features/demo/acceptance.yaml'));
+    // 候选都重定位不到存在文件 = 并列不可判 → 不猜（如实 stale）
+    const unknown = { obligations: [{ basis: [{ dependencies: [{ path: `${old}\\doc\\features\\gone\\acceptance.yaml` }] }] }] };
+    assert.equal(inferLegacyProjectRoot(root, unknown), undefined, '多个候选且不可判时不得取第一个');
+    fs.rmSync(root, { recursive: true, force: true });
+  } },
   { name: 'candidate execution scope cannot mint a legacy completion without frozen birth', run() {
     const root = mkProject(); seedCleanChain(root);
     assert.throws(() => generate(root, { executionScope: {} as import('../../scripts/utils/execution-scope').ExecutionScope }), /候选不能替代真实出生范围/);
@@ -513,10 +555,10 @@ const cases: Case[] = [
       assert.strictEqual(v.verdict, 'INVALID');
       assert.ok(v.reasons.some((r) => r.includes('缩链') || r.includes('chain')));
       // expectedChain 缺失=消费方违约 → 同样 INVALID（禁止退回信自报）
-      const v2 = verifyFeatureCompletion({ projectRoot: root, feature: FEATURE, expectedChain: [], expectedTrack: 'full' });
+      const v2 = verify(root, { expectedChain: [] });
       assert.strictEqual(v2.verdict, 'INVALID');
       // 凭证 feature 与待验 feature 失配
-      const v3 = verifyFeatureCompletion({ projectRoot: root, feature: 'other-feature', expectedChain: CHAIN, expectedTrack: 'full' });
+      const v3 = verify(root, { feature: 'other-feature' });
       assert.strictEqual(v3.verdict, 'INVALID');
     },
   },
@@ -569,7 +611,7 @@ const cases: Case[] = [
     },
   },
   {
-    name: '世界后变 → STALE：acceptance 改动；更晚 HALTED run',
+    name: '世界后变 ≠ 记录不可信（plan b2d7f4e9）：acceptance 改动 → record ok + spec 义务 uncovered/binding；更晚 HALTED run → blocking',
     run: () => {
       const root = mkProject();
       seedCleanChain(root);
@@ -578,7 +620,10 @@ const cases: Case[] = [
       const original = fs.readFileSync(acc, 'utf-8');
       fs.appendFileSync(acc, 'changed: true\n', 'utf-8');
       let v = verify(root);
-      assert.strictEqual(v.verdict, 'STALE', v.reasons.join('；'));
+      assert.strictEqual(v.verdict, 'INVALID', v.reasons.join('；'));
+      assert.strictEqual(v.assessment.record.state, 'ok', '世界变化不得判成记录不可信：' + v.reasons.join('；'));
+      assert.ok(v.assessment.obligations.some((o) => o.owner_phase === 'spec' && o.status === 'uncovered'
+        && (o.reason ?? '').includes('acceptance.yaml')), JSON.stringify(v.assessment.obligations));
       fs.writeFileSync(acc, original, 'utf-8');
       assert.strictEqual(verify(root).verdict, 'VALID');
 
@@ -586,12 +631,11 @@ const cases: Case[] = [
         { ts: '2026-07-14T00:00:00.000Z', type: 'run_end', status: 'HALTED' },
       ]);
       v = verify(root);
-      // plan e7c2a4d8 T1d 契约更正：真实 run 恒有 manifest（无 manifest+有 events=
-      // corrupt），而后建 run 的 manifest 本就进 requirement SSOT aggregate（七轮
-      // P1-3）→ 凭证按设计 INVALID（需求 SSOT 变更）且同时携「更晚未终局 run」
-      // 新鲜度理由。旧 STALE 期望依赖「RUN2 无 manifest」的不真实夹具。
-      assert.ok(v.verdict === 'INVALID' || v.verdict === 'STALE', v.verdict);
-      assert.ok(v.reasons.some((r) => r.includes('RUN2')), v.reasons.join('；'));
+      // 后建 run 的 manifest 进 legacy requirement SSOT aggregate（七轮 P1-3）→ spec 义务 uncovered；
+      // 「更晚未终局 run」是世界事实 → blocking，不路由阶段。
+      assert.strictEqual(v.verdict, 'INVALID', v.verdict);
+      assert.strictEqual(v.assessment.record.state, 'ok', v.reasons.join('；'));
+      assert.ok(v.assessment.blocking.some((r) => r.includes('RUN2')), v.reasons.join('；'));
     },
   },
   {

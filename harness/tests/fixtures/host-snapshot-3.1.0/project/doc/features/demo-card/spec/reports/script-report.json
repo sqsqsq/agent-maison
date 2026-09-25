@@ -1,0 +1,552 @@
+{
+  "phase": "spec",
+  "feature": "demo-card",
+  "timestamp": "2026-09-25T04:31:56.350Z",
+  "project_root": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur",
+  "assurance": "full",
+  "capability_resolutions": [
+    {
+      "id": "capability_spec_requirement",
+      "axis": "functional",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "fail",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "requirement",
+          "state": "resolved",
+          "selected_source": "derive.requirement",
+          "selected_source_fingerprint": "a669f8059b5a4734490385b526c37c0e5cfe2082ea65991c2df4b5ac2eb2b9c4",
+          "binding": {
+            "input_id": "requirement",
+            "source": {
+              "kind": "derive",
+              "provider_id": "derive.requirement"
+            },
+            "dependencies": [],
+            "source_refs": [],
+            "content_fingerprint": "a669f8059b5a4734490385b526c37c0e5cfe2082ea65991c2df4b5ac2eb2b9c4"
+          },
+          "attempts": [
+            {
+              "kind": "derive",
+              "source": "derive.requirement",
+              "state": "resolved",
+              "dependencies": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability_spec_codebase",
+      "axis": "functional",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "prune",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "codebase",
+          "state": "resolved",
+          "selected_source": "derive.codebase",
+          "selected_source_fingerprint": "56d19a72f750aae9bc0951705ac102fa51828b634b2d9d59717401e32651efe4",
+          "binding": {
+            "input_id": "codebase",
+            "source": {
+              "kind": "derive",
+              "provider_id": "derive.codebase"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\index.ets",
+                "exists": true,
+                "sha256": "a9b0b1df1389f949c79b0b1f221244ba5f2301acca119841f4586d11a63f1e7d",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\AllBanksPage.ets",
+                "exists": true,
+                "sha256": "a2310641c4a15fe462df3c127583c97cb6b61392bd0437f13fa0783d23c2bcbb",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankModel.ets",
+                "exists": true,
+                "sha256": "85bf14be522a0c0815a787be2b9e1f739e86be41fb8a25b9f83f47324996b1c4",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankRepository.ets",
+                "exists": true,
+                "sha256": "fa10a20e27b5fa016f02a0e0608747e1f892974bb0a6cf10f7f3021e3ac3c907",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankService.ets",
+                "exists": true,
+                "sha256": "bca6edbcaabe61fba6090d8f396f0105962a18d13dc2eacd88d0802d58045fb6",
+                "role": "derive"
+              }
+            ],
+            "source_refs": [
+              "02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets",
+              "02-Feature/FinancialCard/src/main/ets/BankRepository.ets",
+              "02-Feature/FinancialCard/src/main/ets/BankModel.ets",
+              "02-Feature/FinancialCard/src/main/ets/BankService.ets",
+              "02-Feature/FinancialCard/index.ets"
+            ],
+            "content_fingerprint": "56d19a72f750aae9bc0951705ac102fa51828b634b2d9d59717401e32651efe4"
+          },
+          "attempts": [
+            {
+              "kind": "derive",
+              "source": "derive.codebase",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\AllBanksPage.ets",
+                  "exists": true,
+                  "sha256": "a2310641c4a15fe462df3c127583c97cb6b61392bd0437f13fa0783d23c2bcbb",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankRepository.ets",
+                  "exists": true,
+                  "sha256": "fa10a20e27b5fa016f02a0e0608747e1f892974bb0a6cf10f7f3021e3ac3c907",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankModel.ets",
+                  "exists": true,
+                  "sha256": "85bf14be522a0c0815a787be2b9e1f739e86be41fb8a25b9f83f47324996b1c4",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankService.ets",
+                  "exists": true,
+                  "sha256": "bca6edbcaabe61fba6090d8f396f0105962a18d13dc2eacd88d0802d58045fb6",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\index.ets",
+                  "exists": true,
+                  "sha256": "a9b0b1df1389f949c79b0b1f221244ba5f2301acca119841f4586d11a63f1e7d",
+                  "role": "derive"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability_spec_existing_acceptance",
+      "axis": "functional",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "prune",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "acceptance",
+          "state": "resolved",
+          "selected_source": "acceptance@1",
+          "selected_source_fingerprint": "352b678a652cf596cc0cb311600a4590404c3d9ef08267470b868b529866a080",
+          "binding": {
+            "input_id": "acceptance",
+            "source": {
+              "kind": "artifact",
+              "artifact": "acceptance@1"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\acceptance.yaml",
+                "exists": true,
+                "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/demo-card/acceptance.yaml"
+            ],
+            "content_fingerprint": "352b678a652cf596cc0cb311600a4590404c3d9ef08267470b868b529866a080"
+          },
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "acceptance@1",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\acceptance.yaml",
+                  "exists": true,
+                  "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "spec",
+              "detail": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\acceptance.yaml"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability_spec_visual_reference",
+      "axis": "visual",
+      "active": false,
+      "state": "not_applicable",
+      "on_missing": "fail",
+      "applicability_provider_id": "applicability.pixel_fidelity",
+      "applicability_dependencies": [
+        {
+          "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\spec\\reports\\fidelity-intent.json",
+          "exists": true,
+          "sha256": "2737d013d6ce0d084c8ba0ae26f1b7b2ea5915c56ea3e74bd2fe1c20605450b5",
+          "role": "applicability"
+        }
+      ],
+      "applicability_detail": "selected_fidelity=semantic_layout",
+      "inputs": []
+    }
+  ],
+  "capability_resolution_contract_fingerprint": "37b30f21691a9c8fe3aa2a7112f6778bb53d15d47e59b8dc99e7ecf8fb2d38e5",
+  "checks": [
+    {
+      "id": "node_options_injection",
+      "category": "structure",
+      "description": "进程预加载注入自检（P0-7：门禁产物防篡改）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "NODE_OPTIONS/execArgv/.node-options/.npmrc 未检出预加载注入。"
+    },
+    {
+      "id": "acceptance_yaml_present",
+      "category": "structure",
+      "description": "acceptance_yaml_present",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "doc/features/demo-card/acceptance.yaml 已存在。"
+    },
+    {
+      "id": "acceptance_content_complete",
+      "category": "structure",
+      "severity": "BLOCKER",
+      "description": "验收内容可执行且有精确预期",
+      "status": "PASS",
+      "details": "验收内容完整"
+    },
+    {
+      "id": "acceptance_ut_layer_complete",
+      "category": "structure",
+      "description": "acceptance_ut_layer_complete",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "全部 2 条 AC/BD 均有合法 ut_layer。"
+    },
+    {
+      "id": "acceptance_device_focus_present",
+      "category": "structure",
+      "description": "acceptance_device_focus_present",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "device/both 共 2 条均已声明 device_focus（及 both 的 ut_focus）。"
+    },
+    {
+      "id": "legacy_device_testing_todo_deprecated",
+      "category": "structure",
+      "description": "legacy_device_testing_todo_deprecated",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "未检测到 legacy device-testing-todo.md。"
+    },
+    {
+      "id": "acceptance_flow_structure",
+      "category": "structure",
+      "description": "P0 交互 AC 结构化 checkpoint + flows 三约束 + requirement_ref 验存",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "P0 交互 AC 1 条 checkpoint/引文/flow 合成全部合法。"
+    },
+    {
+      "id": "acceptance_flow_contract",
+      "category": "structure",
+      "description": "结构化流程模型机器契约（spec-owned + phase-evidence freshness）",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "P0 flow/checkpoint 来自 spec-owned acceptance.yaml；结构由 acceptance_flow_model 校验，freshness 由当前 phase evidence manifest 绑定。"
+    },
+    {
+      "id": "design_scope_facts",
+      "category": "structure",
+      "severity": "MINOR",
+      "status": "PASS",
+      "description": "新设计事实交由既有 P2 边界重签",
+      "details": "spec: acceptance 已产生新的真实绑定",
+      "scope_revision_input": {
+        "request": {
+          "completion_target": "feature",
+          "requested_results": [
+            "银行列表展示与开卡入口"
+          ],
+          "requested_phases": [
+            "plan",
+            "coding",
+            "review",
+            "ut",
+            "testing"
+          ]
+        },
+        "facts": [
+          {
+            "id": "acceptance-context:pending",
+            "kind": "acceptance-context",
+            "applicability": "required",
+            "reason": "已有验收可用",
+            "basis": [
+              {
+                "input_id": "acceptance",
+                "source": {
+                  "kind": "artifact",
+                  "artifact": "acceptance@1"
+                },
+                "dependencies": [
+                  {
+                    "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\acceptance.yaml",
+                    "exists": true,
+                    "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+                    "role": "artifact"
+                  }
+                ],
+                "source_refs": [
+                  "doc/features/demo-card/acceptance.yaml"
+                ],
+                "content_fingerprint": "352b678a652cf596cc0cb311600a4590404c3d9ef08267470b868b529866a080"
+              }
+            ],
+            "owner_phase": "spec",
+            "satisfied_by": [
+              {
+                "input_id": "acceptance",
+                "source": {
+                  "kind": "artifact",
+                  "artifact": "acceptance@1"
+                },
+                "dependencies": [
+                  {
+                    "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\acceptance.yaml",
+                    "exists": true,
+                    "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+                    "role": "artifact"
+                  }
+                ],
+                "source_refs": [
+                  "doc/features/demo-card/acceptance.yaml"
+                ],
+                "content_fingerprint": "352b678a652cf596cc0cb311600a4590404c3d9ef08267470b868b529866a080"
+              }
+            ]
+          },
+          {
+            "id": "acceptance-context:request:spec",
+            "kind": "acceptance-context",
+            "owner_phase": "spec",
+            "applicability": "required",
+            "reason": "已有验收可用",
+            "basis": [
+              {
+                "input_id": "acceptance",
+                "source": {
+                  "kind": "artifact",
+                  "artifact": "acceptance@1"
+                },
+                "dependencies": [
+                  {
+                    "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\acceptance.yaml",
+                    "exists": true,
+                    "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+                    "role": "artifact"
+                  }
+                ],
+                "source_refs": [
+                  "doc/features/demo-card/acceptance.yaml"
+                ],
+                "content_fingerprint": "352b678a652cf596cc0cb311600a4590404c3d9ef08267470b868b529866a080"
+              }
+            ],
+            "satisfied_by": [
+              {
+                "input_id": "acceptance",
+                "source": {
+                  "kind": "artifact",
+                  "artifact": "acceptance@1"
+                },
+                "dependencies": [
+                  {
+                    "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\acceptance.yaml",
+                    "exists": true,
+                    "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+                    "role": "artifact"
+                  }
+                ],
+                "source_refs": [
+                  "doc/features/demo-card/acceptance.yaml"
+                ],
+                "content_fingerprint": "352b678a652cf596cc0cb311600a4590404c3d9ef08267470b868b529866a080"
+              }
+            ]
+          },
+          {
+            "id": "design-context:pending",
+            "kind": "design-context",
+            "applicability": "unknown",
+            "reason": "本 feature 尚无可解析的设计来源",
+            "basis": [
+              {
+                "input_id": "requirement",
+                "source": {
+                  "kind": "derive",
+                  "provider_id": "derive.requirement"
+                },
+                "dependencies": [],
+                "source_refs": [],
+                "content_fingerprint": "a669f8059b5a4734490385b526c37c0e5cfe2082ea65991c2df4b5ac2eb2b9c4"
+              }
+            ],
+            "owner_phase": "plan"
+          },
+          {
+            "id": "design-context:request:plan",
+            "kind": "design-context",
+            "owner_phase": "plan",
+            "applicability": "required",
+            "reason": "用户明确请求 plan",
+            "basis": []
+          },
+          {
+            "id": "implementation:request:coding",
+            "kind": "implementation",
+            "owner_phase": "coding",
+            "applicability": "required",
+            "reason": "用户明确请求 coding",
+            "basis": []
+          },
+          {
+            "id": "code-review:request:review",
+            "kind": "code-review",
+            "owner_phase": "review",
+            "applicability": "required",
+            "reason": "用户明确请求 review",
+            "basis": []
+          },
+          {
+            "id": "unit-evidence:request:ut",
+            "kind": "unit-evidence",
+            "owner_phase": "ut",
+            "applicability": "required",
+            "reason": "用户明确请求 ut",
+            "basis": [
+              {
+                "input_id": "acceptance",
+                "source": {
+                  "kind": "artifact",
+                  "artifact": "acceptance@1"
+                },
+                "dependencies": [
+                  {
+                    "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\acceptance.yaml",
+                    "exists": true,
+                    "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+                    "role": "artifact"
+                  }
+                ],
+                "source_refs": [
+                  "doc/features/demo-card/acceptance.yaml"
+                ],
+                "content_fingerprint": "352b678a652cf596cc0cb311600a4590404c3d9ef08267470b868b529866a080"
+              }
+            ]
+          },
+          {
+            "id": "visual-evidence:fidelity",
+            "kind": "visual-evidence",
+            "applicability": "not_applicable",
+            "reason": "fidelity 未定档且请求无视觉要求",
+            "basis": [],
+            "owner_phase": "testing"
+          },
+          {
+            "id": "device-evidence:request:testing",
+            "kind": "device-evidence",
+            "owner_phase": "testing",
+            "applicability": "required",
+            "reason": "用户明确请求 testing",
+            "basis": [
+              {
+                "input_id": "acceptance",
+                "source": {
+                  "kind": "artifact",
+                  "artifact": "acceptance@1"
+                },
+                "dependencies": [
+                  {
+                    "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\acceptance.yaml",
+                    "exists": true,
+                    "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+                    "role": "artifact"
+                  }
+                ],
+                "source_refs": [
+                  "doc/features/demo-card/acceptance.yaml"
+                ],
+                "content_fingerprint": "352b678a652cf596cc0cb311600a4590404c3d9ef08267470b868b529866a080"
+              }
+            ]
+          }
+        ],
+        "contract_fingerprints": []
+      }
+    },
+    {
+      "id": "capability_spec_requirement",
+      "category": "structure",
+      "description": "capability input contract resolved (capability_spec_requirement)",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "axis=functional; all declared pre-check inputs resolved",
+      "source": "capability-resolution.ts"
+    },
+    {
+      "id": "capability_spec_codebase",
+      "category": "structure",
+      "description": "capability input contract resolved (capability_spec_codebase)",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "axis=functional; all declared pre-check inputs resolved",
+      "source": "capability-resolution.ts"
+    },
+    {
+      "id": "capability_spec_existing_acceptance",
+      "category": "structure",
+      "description": "capability input contract resolved (capability_spec_existing_acceptance)",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "axis=functional; all declared pre-check inputs resolved",
+      "source": "capability-resolution.ts"
+    }
+  ],
+  "summary": {
+    "total": 12,
+    "pass": 12,
+    "fail": 0,
+    "warn": 0,
+    "skip": 0,
+    "blockers": 0,
+    "verdict": "PASS"
+  }
+}

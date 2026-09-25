@@ -1,0 +1,53 @@
+execution_scope:
+  request:
+    completion_target: feature
+    requested_results:
+      - 银行列表展示与开卡入口
+    requested_phases:
+      - spec
+      - plan
+      - coding
+      - review
+      - ut
+      - testing
+    requirement_basis:
+      input_id: requirement
+      source:
+        kind: derive
+        provider_id: derive.requirement
+      dependencies: []
+      source_refs: []
+      content_fingerprint: a669f8059b5a4734490385b526c37c0e5cfe2082ea65991c2df4b5ac2eb2b9c4
+  facts:
+    - id: design-context:pending
+      kind: design-context
+      applicability: unknown
+      reason: 本 feature 尚无可解析的设计来源（仅有需求）
+      basis:
+        - input_id: requirement
+          source:
+            kind: derive
+            provider_id: derive.requirement
+          dependencies: []
+          source_refs: []
+          content_fingerprint: a669f8059b5a4734490385b526c37c0e5cfe2082ea65991c2df4b5ac2eb2b9c4
+    - id: acceptance-context:pending
+      kind: acceptance-context
+      applicability: unknown
+      reason: 本 feature 尚无可解析的验收来源
+      basis:
+        - input_id: requirement
+          source:
+            kind: derive
+            provider_id: derive.requirement
+          dependencies: []
+          source_refs: []
+          content_fingerprint: a669f8059b5a4734490385b526c37c0e5cfe2082ea65991c2df4b5ac2eb2b9c4
+  contract_fingerprints:
+    - 9c6d16fac9432e1ae83f6e9a510f14224c0806f83bd9ac29a7c8df44b153fad0
+    - 1699c507921c59f201d8c31d95991c4e2834a65b3d6f61352050e1fd7faf7e47
+    - 68f724d624858bbfa30361fe65f98ccb0e52fd9d8ff5a04a248d7508b5132eae
+    - 4a58dc938b02f3120902bd2dd9a71c6b0c606528c37391d3a8d489c599a96930
+    - 7f14954ae8ce523af21a02485241f8ad2e7aa4e32a7d6acd993a9415b8fffd12
+    - 37b30f21691a9c8fe3aa2a7112f6778bb53d15d47e59b8dc99e7ecf8fb2d38e5
+    - f57eee7149fe747cf4ab9f2afb0eae815be3b49eaccb839c1e9b13c3d078ea13

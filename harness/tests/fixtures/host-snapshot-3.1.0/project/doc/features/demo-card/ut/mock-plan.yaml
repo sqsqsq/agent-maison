@@ -1,0 +1,11 @@
+schema_version: "1.0"
+feature: demo-card
+spies:
+  - target_class: BankRepository
+    target_file: 02-Feature/FinancialCard/src/main/ets/BankRepository.ets
+    strategy: spy
+    methods:
+      - name: list
+        presets:
+          - id: empty
+            returns: {ts_expr: "[] as string[]"}

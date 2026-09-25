@@ -1,6 +1,4 @@
-import * as path from 'path';
 import { validateChangeUnitDesign } from './change-unit-design-gate';
-import { validateChangeUnitFeatureProjection } from './change-unit-feature-projection';
 import { deriveChangeUnitBlockers, ChangeUnitBlockerProbeContext } from './change-unit-blockers';
 import {
   ChangeUnitCompletionAdapterOptions,
@@ -20,7 +18,7 @@ import {
 } from './change-unit-path';
 import { ChangeUnitCarryForwardVerdict, evaluateChangeUnitCarryForward } from './change-unit-reconciliation';
 import { blockerChangeUnitIssues, validateChangeUnit } from './change-unit-validator';
-import { SpecLoader } from './spec-loader';
+import { retiredChangeUnitIds } from './component-closure-inputs';
 
 export interface ChangeUnitReadyProjection {
   changeUnit: ChangeUnitArtifact;
@@ -56,46 +54,6 @@ export function isSilentProgressStall(input: {
     && input.legalBlockerCount === 0;
 }
 
-function validateStaleReexecution(
-  projectRoot: string,
-  unit: ChangeUnitArtifact,
-): Array<{ id: string; message: string; legal: boolean }> {
-  try {
-    const featureId = deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id);
-    const frameworkRoot = path.resolve(__dirname, '..', '..', '..');
-    const featureSpec = new SpecLoader(projectRoot, undefined, undefined, frameworkRoot).loadFeatureSpec(featureId);
-    if ((featureSpec.shape_issues ?? []).length > 0) {
-      return [{
-        id: 'change_unit_stale_reexecution_mapping_invalid',
-        message: featureSpec.shape_issues!.join('；'),
-        legal: true,
-      }];
-    }
-    const projection = validateChangeUnitFeatureProjection(
-      projectRoot,
-      featureId,
-      featureSpec.contracts,
-      featureSpec.acceptance,
-      Boolean(featureSpec.useCases),
-      'plan',
-    );
-    if (!projection.applicable) {
-      return [{
-        id: 'change_unit_stale_reexecution_mapping_missing',
-        message: 'STALE completion 只有在当前 Feature 重新绑定并通过 ID-only mapping/design gate 后才可重执行。',
-        legal: true,
-      }];
-    }
-    return projection.issues.map(item => ({ id: item.id, message: item.message, legal: true }));
-  } catch (error) {
-    return [{
-      id: 'change_unit_stale_reexecution_mapping_invalid',
-      message: (error as Error).message,
-      legal: true,
-    }];
-  }
-}
-
 export function deriveChangeUnitReadySet(
   projectRoot: string,
   blueprintId: string,
@@ -112,10 +70,13 @@ export function deriveChangeUnitReadySet(
       );
     }
   }
-  const entries = options.units
+  // 推进只看活动 CU：被精确 supersede 的历史 CU 已退役，不进 ready、不计 allCompleted（与 closure 同一退役判定）。
+  const retired = retiredChangeUnitIds(projectRoot, blueprintId);
+  const entries = (options.units
     ? options.units.map(changeUnit => ({ changeUnit, canonicalPath: undefined as string | undefined }))
     : enumerateCanonicalChangeUnits(projectRoot, blueprintId)
-      .map(item => ({ changeUnit: asChangeUnitArtifact(item.changeUnit), canonicalPath: item.canonicalPath }));
+      .map(item => ({ changeUnit: asChangeUnitArtifact(item.changeUnit), canonicalPath: item.canonicalPath })))
+    .filter(item => !retired.has(String(item.changeUnit.change_unit_id)));
   const units = entries.map(item => item.changeUnit);
   const artifactIssuesByUnit = new Map<ChangeUnitArtifact, ReturnType<typeof blockerChangeUnitIssues>>();
   for (const entry of entries) {
@@ -176,8 +137,9 @@ export function deriveChangeUnitReadySet(
       const design = validateChangeUnitDesign(projectRoot, unit as unknown as Record<string, unknown>);
       for (const item of design.issues) blockers.push({ id: item.id, message: item.message, legal: true });
     }
-    if (completion.state === 'STALE') {
-      blockers.push(...validateStaleReexecution(projectRoot, unit));
+    if (completion.state === 'INCOMPLETE') {
+      // plan b2d7f4e9 §3.5：记录可信但仍有 uncovered 义务 / blocking——逐条作 legal blocker（修正出口由 successor 承接）。
+      for (const reason of completion.reasons) blockers.push({ id: 'change_unit_completion_incomplete', message: reason, legal: true });
     }
     if (artifactIssues.length === 0) {
       const dependencies = evaluateChangeUnitDependencies(unit, validUnits, completionById, carryForwardById);
@@ -193,7 +155,7 @@ export function deriveChangeUnitReadySet(
     projections.push({
       changeUnit: unit,
       completion,
-      ready: (completion.state === 'ABSENT' || completion.state === 'STALE') && blockers.length === 0,
+      ready: completion.state === 'ABSENT' && blockers.length === 0,
       blockers,
     });
   }

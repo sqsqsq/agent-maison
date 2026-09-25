@@ -1,0 +1,33 @@
+{
+  "phase": "spec",
+  "stage": "reporting",
+  "timed_out": false,
+  "inspected_file_count": 5,
+  "inspected_files": [
+    "02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets",
+    "02-Feature/FinancialCard/src/main/ets/BankRepository.ets",
+    "02-Feature/FinancialCard/src/main/ets/BankModel.ets",
+    "02-Feature/FinancialCard/src/main/ets/BankService.ets",
+    "02-Feature/FinancialCard/index.ets"
+  ],
+  "report_sections_done": [
+    "0. 术语映射表",
+    "1. 功能概述",
+    "2. Scope 声明",
+    "3. 目标用户与使用场景",
+    "4. 功能清单",
+    "5. 页面/界面描述",
+    "6. 业务流程图",
+    "7. 异常/边界场景处理",
+    "8. 非功能性需求",
+    "9. 验收标准"
+  ],
+  "artifacts": [
+    {
+      "path": "doc/features/demo-card/spec/spec.md",
+      "sha256": "95409507e3001e4973506d2d17618f27f5342415f4493ee388421b1f284e7d96",
+      "mtime_ms": 1790310711808.3467
+    }
+  ],
+  "derived_at": "2026-09-25T04:31:56.565Z"
+}

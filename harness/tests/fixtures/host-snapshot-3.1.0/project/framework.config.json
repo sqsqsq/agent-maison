@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.1",
+  "project_name": "RealChain",
+  "active_workflow": "obligation-driven",
+  "project_profile": {
+    "name": "test-chain"
+  },
+  "architecture": {
+    "outer_layers": [
+      {
+        "id": "02-Feature",
+        "can_depend_on": [],
+        "intra_layer_deps": "dag"
+      }
+    ],
+    "module_inner_layers": [
+      "main"
+    ],
+    "inner_dependency_direction": "upward",
+    "cross_module_exports_file": "index.ets"
+  },
+  "paths": {
+    "features_dir": "doc/features",
+    "module_catalog": "doc/module-catalog.yaml",
+    "glossary": "doc/glossary.yaml",
+    "glossary_seed": "doc/glossary-seed.txt",
+    "architecture_md": "doc/architecture.md",
+    "docs_committed": false,
+    "reports_dir_pattern": "doc/features/<feature>/<phase>/reports"
+  },
+  "materialized_adapters": [
+    "codex"
+  ]
+}

@@ -1,0 +1,130 @@
+{
+  "schema": "maison-verifier-material@1",
+  "input_bindings_sha256": "0730ce8e7871b7f9ef30b802458c658f0b5a5fd3bee5113d0006e09f7925ccfe",
+  "feature": "demo-card",
+  "phase": "testing",
+  "gate_fingerprint": "3.1.0:bbe9dbfe6b6b",
+  "phase_rule_sha256": "1ef783c6a051aed3c72efefd8e7055ba6b4fa504c2313552db0dae3424ca4d15",
+  "template_sha256": "93a475f97107e993ffb8087357a7599c9ee7a2accc0ea71ae263ee2e01d68ace",
+  "lifecycle_sha256": "",
+  "extension_sha256": "",
+  "script_checks": [
+    "acceptance_content_complete=PASS/BLOCKER",
+    "acceptance_device_focus_present=PASS/BLOCKER",
+    "acceptance_to_test_case=PASS/BLOCKER",
+    "acceptance_ut_layer_complete=PASS/BLOCKER",
+    "acceptance_yaml_present=PASS/BLOCKER",
+    "boundary_coverage=SKIP/MAJOR",
+    "capability_testing_cases=PASS/MINOR",
+    "capability_testing_code_context=PASS/MINOR",
+    "context_exploration_facts_phase_delta_present=PASS/BLOCKER",
+    "defect_table_format=PASS/MAJOR",
+    "defect_to_test_case=PASS/MAJOR",
+    "device_case_contract=PASS/BLOCKER",
+    "device_test_build=PASS/BLOCKER",
+    "device_test_evidence=PASS/BLOCKER",
+    "device_test_install=PASS/BLOCKER",
+    "device_test_run=PASS/BLOCKER",
+    "execution_result_table=PASS/BLOCKER",
+    "hylyre_evidence_gate=PASS/BLOCKER",
+    "hylyre_selector_runtime_gate=PASS/BLOCKER",
+    "legacy_device_testing_todo_deprecated=PASS/MINOR",
+    "negative_verdict_closure=PASS/BLOCKER",
+    "node_options_injection=PASS/BLOCKER",
+    "p0_coverage_integrity=PASS/BLOCKER",
+    "p0_identity_injection=PASS/BLOCKER",
+    "p0_pass_rate_dual_metrics=PASS/BLOCKER",
+    "p0_runtime_step_evidence=PASS/BLOCKER",
+    "p0_runtime_step_evidence_boundary=PASS/MINOR",
+    "p0_semantic_coverage_integrity=PASS/BLOCKER",
+    "pass_criteria_defined=PASS/BLOCKER",
+    "pass_rate_calculated=PASS/BLOCKER",
+    "plan_metadata_header=PASS/MINOR",
+    "plan_references_unit_layer_ac=SKIP/MINOR",
+    "plan_required_chapters=PASS/BLOCKER",
+    "plan_to_report_consistency=PASS/BLOCKER",
+    "product_behavior_switch_scan=PASS/BLOCKER",
+    "report_conclusion_with_verdict=PASS/BLOCKER",
+    "report_required_chapters=PASS/BLOCKER",
+    "report_trace_reconciliation=PASS/BLOCKER",
+    "review_closure_attestation=PASS/MAJOR",
+    "runtime_mount_conformance=SKIP/MINOR",
+    "test_case_flow_consistency=PASS/BLOCKER",
+    "test_case_priority_values=PASS/MAJOR",
+    "test_case_table_format=PASS/BLOCKER",
+    "test_case_to_acceptance=PASS/MAJOR",
+    "test_environment_defined=PASS/MAJOR",
+    "test_plan_freshness_vs_acceptance=PASS/BLOCKER",
+    "test_report_generated=PASS/MINOR",
+    "testing_artifact_integrity=PASS/BLOCKER",
+    "testing_case_execution_completeness=PASS/BLOCKER",
+    "testing_execution_channel=PASS/BLOCKER",
+    "testing_run_status=PASS/BLOCKER",
+    "ui_entry_coverage=SKIP/MAJOR",
+    "upstream_verdict_gate=PASS/BLOCKER",
+    "visual_debt_disclosure=PASS/BLOCKER"
+  ],
+  "files": [
+    {
+      "path": "02-Feature/FinancialCard/index.ets",
+      "sha256": "c42372f3cbb70378e8050f918322ab85b85a706f5b51c303961ded13d16a51bb"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets",
+      "sha256": "e9e1d7080d2bd7504115df6e88d94a4ed5eebe19aab033c2268927a5a6c61b95"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankListItem.ets",
+      "sha256": "727e9a2af8334e09b414a53e04f94b7fea76875d30bd73af6307a957b58b9e5f"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankModel.ets",
+      "sha256": "85bf14be522a0c0815a787be2b9e1f739e86be41fb8a25b9f83f47324996b1c4"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankRepository.ets",
+      "sha256": "fa10a20e27b5fa016f02a0e0608747e1f892974bb0a6cf10f7f3021e3ac3c907"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankService.ets",
+      "sha256": "bca6edbcaabe61fba6090d8f396f0105962a18d13dc2eacd88d0802d58045fb6"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/resources/base/media/logo_demo.png",
+      "sha256": "6d51ea2402770798273a2f11d1a64aa04eb290df7790eaaa38ad61420bfeeb1c"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/resources/base/media/result_demo.png",
+      "sha256": "0672172608dc6517fd62993f139ade74279b32c3a2e5ee63f425e40f23de9421"
+    },
+    {
+      "path": "doc/features/demo-card/acceptance.yaml",
+      "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03"
+    },
+    {
+      "path": "doc/features/demo-card/context/facts.md",
+      "sha256": "c791ed42bb1b8ee2d080299bad9a382fda8824f3824a8be7bbf85d02f729a4d2"
+    },
+    {
+      "path": "doc/features/demo-card/contracts.yaml",
+      "sha256": "62d1104bc2c30d70e590280deb55788b3cca87b43442882ffc1635caa2931db0"
+    },
+    {
+      "path": "doc/features/demo-card/testing/reports/20260925T043319Z-962/hylyre/trace.json",
+      "sha256": "ef1149813a0fb8ca2d3fe3f641211da9d838c73acc649ece718229cf6bf02679"
+    },
+    {
+      "path": "doc/features/demo-card/testing/test-plan.md",
+      "sha256": "b25ef5f6bab1cedceaf0bd1e6038a6cad57b87ed71394e1af59df6ab83769f5e"
+    },
+    {
+      "path": "doc/features/demo-card/testing/test-report.md",
+      "sha256": "c79ef09bc6efc63c8b68c7364db216c91f9157b3b6115ec1ef92d8995955da7e"
+    },
+    {
+      "path": "doc/features/demo-card/use-cases.yaml",
+      "sha256": null
+    }
+  ],
+  "material_sha256": "b153f6969f121f9306504ad8bfe00eb3eadef5641998fe8d3b652120f795dde1"
+}

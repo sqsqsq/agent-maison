@@ -1,0 +1,24 @@
+schema_version: "1.0"
+modules:
+  - name: "FinancialCard"
+    layer: "02-Feature"
+    sub_layer: null
+    format: "HAR"
+    one_liner: "FinancialCard"
+    responsibilities: []
+    NOT_responsible_for: []
+    typical_business_terms: []
+    easily_confused_with: []
+    key_exports: []
+    entry_file: "02-Feature/FinancialCard/index.ets"
+  - name: "ledger"
+    layer: "02-Feature"
+    sub_layer: null
+    format: "HAR"
+    one_liner: "ledger"
+    responsibilities: []
+    NOT_responsible_for: []
+    typical_business_terms: []
+    easily_confused_with: []
+    key_exports: []
+    entry_file: "02-Feature/ledger/index.ets"

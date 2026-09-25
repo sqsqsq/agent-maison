@@ -121,8 +121,41 @@ function canonical(value: unknown): string {
   return JSON.stringify(sort(value));
 }
 
+/**
+ * plan b2d7f4e9 t2c/t2d：CU 指针原位升版时，来源戳指向升版前身份（`changeUnitSha` / `blueprintSha`）的派生文件
+ * 按定义就是升版前的机器投影，用新投影覆盖即修复（保戳手改在旧蓝图下本就被投影门拒绝，是非法态，不是人工决策）。
+ * 只有调和 writer（`reconcileChangeUnitBlueprintRefs`）传入。
+ */
+export interface ProjectionRefresh { changeUnitSha: string; blueprintSha: string }
+/** `materializeBlueprintSkillInputs` 写出的三份派生文件。 */
+export const BLUEPRINT_PROJECTION_FILES: Readonly<Record<string, string>> = { 'acceptance@1': 'acceptance.yaml', 'contracts@1': 'contracts.yaml', 'use-cases@1': 'use-cases.yaml' };
+function hasPreBumpStamp(artifact: string, existing: unknown, refresh: ProjectionRefresh): boolean {
+  const record = asRecord(existing);
+  const kind = artifact === 'acceptance@1' ? 'acceptance' : 'contracts';
+  if (record?.source !== `derive.blueprint-${kind}:${refresh.changeUnitSha}:${refresh.blueprintSha}`) return false;
+  return artifact !== 'contracts@1' || asRecord(asRecord(record.change_unit)?.change_unit_ref)?.artifact_sha256 === refresh.changeUnitSha;
+}
+/**
+ * 升版前只读核对既有派生文件的来源戳：
+ *  - `'none'`：没有任何文件带 `derive.blueprint-` 来源戳——不是本 writer 的产物（手写 / 阶段产出），不刷新也不覆盖；
+ *  - `'stamped'`：全部既有文件的来源戳都指向升版前身份，可交刷新 writer；
+ *  - 文件名数组：部分带戳、或戳不指向升版前身份——不能证明是机器投影。
+ */
+export function inspectProjectionStamps(projectRoot: string, feature: string, refresh: ProjectionRefresh): 'none' | 'stamped' | string[] {
+  const existing = Object.entries(BLUEPRINT_PROJECTION_FILES).flatMap(([artifact, name]) => {
+    const location = resolveFeatureArtifact(projectRoot, feature, name);
+    if (!location.exists) return [];
+    let doc: unknown;
+    try { doc = YAML.parse(fs.readFileSync(location.actualPath, 'utf8')); } catch { doc = undefined; }
+    return [{ artifact, name, doc }];
+  });
+  if (!existing.some(({ doc }) => String(asRecord(doc)?.source ?? '').startsWith('derive.blueprint-'))) return 'none';
+  const mismatched = existing.filter(({ artifact, doc }) => !hasPreBumpStamp(artifact, doc, refresh)).map(({ name }) => name);
+  return mismatched.length ? mismatched : 'stamped';
+}
+
 /** Copy only explicit machine content selected by the canonical CU; never infer from refs/touches. */
-export function deriveBlueprintSkillInput(projectRoot: string, feature: string, frameworkRoot: string, kind: BlueprintProjectionKind): BlueprintSkillProjection {
+export function deriveBlueprintSkillInput(projectRoot: string, feature: string, frameworkRoot: string, kind: BlueprintProjectionKind, refresh?: ProjectionRefresh): BlueprintSkillProjection {
   const dependencies: ResolutionDependency[] = [];
   const depend = (file: string): void => {
     if (!dependencies.some(dep => dep.path === file)) dependencies.push({ path: file, exists: fs.existsSync(file), sha256: fs.existsSync(file) ? digest(file) : null, role: 'artifact' });
@@ -234,29 +267,57 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
       const existing = resolveFeatureArtifact(projectRoot, feature, 'use-cases.yaml');
       if (existing.exists) {
         depend(existing.actualPath);
-        if (canonical(YAML.parse(fs.readFileSync(existing.actualPath, 'utf8'))) !== canonical(parsed.useCases)) throw new Error('plan: 既有 use-cases.yaml 与获准投影冲突');
+        // 刷新模式由唯一 writer 在覆盖前核对同一文件的来源戳（hasPreBumpStamp），此处不重复判。
+        if (!refresh && canonical(YAML.parse(fs.readFileSync(existing.actualPath, 'utf8'))) !== canonical(parsed.useCases)) throw new Error('plan: 既有 use-cases.yaml 与获准投影冲突');
       }
     }
     return { state: 'resolved', dependencies, value: kind === 'acceptance' ? parsed.acceptance : parsed.contracts, artifacts: normalized };
   } catch (error) { return { state: 'invalid', dependencies, detail: String(error) }; }
 }
 
-/** One writer: prepare and validate the complete bundle before touching any artifact. */
-export function materializeBlueprintSkillInputs(projectRoot: string, feature: string, frameworkRoot: string): string[] {
-  const acceptance = deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, 'acceptance');
-  const contracts = deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, 'contracts');
+/**
+ * One writer: prepare and validate the complete bundle before touching any artifact.
+ * `refresh`（只由 CU 指针原位升版传入）：既有文件与新投影不同时，仅当其来源戳指向升版前身份才覆盖；
+ * 否则一个字节不写。写出中途失败按原字节回滚本次已写文件。
+ */
+export function materializeBlueprintSkillInputs(projectRoot: string, feature: string, frameworkRoot: string, refresh?: ProjectionRefresh): string[] {
+  const acceptance = deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, 'acceptance', refresh);
+  const contracts = deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, 'contracts', refresh);
   for (const result of [acceptance, contracts]) if (result.state !== 'resolved') throw new Error(result.detail);
   const artifacts = { ...contracts.artifacts, 'acceptance@1': acceptance.value };
-  const names: Record<string, string> = { 'acceptance@1': 'acceptance.yaml', 'contracts@1': 'contracts.yaml', 'use-cases@1': 'use-cases.yaml' };
-  const writes: Array<{ file: string; text: string }> = [];
+  const names = BLUEPRINT_PROJECTION_FILES;
+  const writes: Array<{ file: string; text: string; previous?: Buffer }> = [];
   for (const [artifact, value] of Object.entries(artifacts)) {
     const location = resolveFeatureArtifact(projectRoot, feature, names[artifact]);
     if (location.exists) {
-      const existing = YAML.parse(fs.readFileSync(location.actualPath, 'utf8'));
-      if (canonical(existing) !== canonical(value)) throw new Error(`plan: 既有 ${names[artifact]} 与投影冲突，不覆盖人工决策`);
+      const previous = fs.readFileSync(location.actualPath);
+      const existing = YAML.parse(previous.toString('utf8'));
+      if (canonical(existing) === canonical(value)) continue;
+      if (!refresh) throw new Error(`plan: 既有 ${names[artifact]} 与投影冲突，不覆盖人工决策`);
+      if (!hasPreBumpStamp(artifact, existing, refresh)) throw new Error(`plan: 既有 ${names[artifact]} 来源戳不指向升版前身份，不覆盖人工决策`);
+      writes.push({ file: location.actualPath, text: YAML.stringify(value), previous });
     } else writes.push({ file: location.canonicalPath, text: YAML.stringify(value) });
   }
   for (const dep of [...acceptance.dependencies, ...contracts.dependencies]) if (fs.existsSync(dep.path) !== dep.exists || (dep.exists && digest(dep.path) !== dep.sha256)) throw new Error('blueprint projection stale; return to design owner');
-  for (const { file, text } of writes) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text, { flag: 'wx' }); }
+  const done: typeof writes = [];
+  try {
+    for (const write of writes) {
+      fs.mkdirSync(path.dirname(write.file), { recursive: true });
+      if (!write.previous && fs.existsSync(write.file)) throw new Error(`plan: ${write.file} 已存在，不覆盖`);
+      // temp → rename：写到一半失败只留临时文件，被覆盖的旧文件保持原字节（与 completion 原件同一写法）。
+      const tmp = `${write.file}.tmp-${process.pid}`;
+      try {
+        fs.writeFileSync(tmp, write.text);
+        fs.renameSync(tmp, write.file);
+      } catch (error) {
+        fs.rmSync(tmp, { force: true });
+        throw error;
+      }
+      done.push(write);
+    }
+  } catch (error) {
+    for (const write of done) if (write.previous) fs.writeFileSync(write.file, write.previous); else fs.rmSync(write.file, { force: true });
+    throw error;
+  }
   return writes.map(write => write.file);
 }

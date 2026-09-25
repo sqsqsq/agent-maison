@@ -370,6 +370,10 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'closure-attestation', modulePath: './unit/closure-attestation.unit.test' },
   { id: 'headless-assumptions', modulePath: './unit/headless-assumptions.unit.test' },
   { id: 'verify-feature-completion', modulePath: './unit/verify-feature-completion.unit.test' },
+  // plan b2d7f4e9 t1：唯一评估入口 assessFeature（上一版宿主快照 + 生产 writer 夹具，不注入 verdict）
+  { id: 'feature-assessment', modulePath: './unit/feature-assessment.unit.test' },
+  // plan b2d7f4e9 t3：完成后修正经 successor（快照 + 生产 writer，goal-runner 公开入口，假 agent 出生即停）
+  { id: 'successor-exit', modulePath: './unit/successor-exit.unit.test' },
   { id: 'behavior-switch-scan', modulePath: './unit/behavior-switch-scan.unit.test' },
   { id: 'p0-semantic-gates', modulePath: './unit/p0-semantic-gates.unit.test' },
   { id: 'efficiency-first-t2', modulePath: './unit/efficiency-first-t2.unit.test' },
@@ -425,6 +429,9 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   //   · RC-4 前提②把「`ac-coverage.json` 进审核材料」当成回归，而 `verifier-material.ts:145-148`
   //     明确允许经 contextFiles 送入的运行期证据进材料。已改为断真实 subject 等值。
   { id: 'real-chain-seams', modulePath: './unit/real-chain-seams.unit.test', releaseOnly: true },
+  // plan b2d7f4e9 §6 / t4b：完成后演进端到端（上一版宿主快照 → 调和 / 改动 → --supersede → 真 harness 跑完后继链
+  // → assessFeature 新完成结论）。同 real-chain 跑真 harness 子进程，release-only；其中 L0 是发布门基线。
+  { id: 'lifecycle-evolution', modulePath: './unit/lifecycle-evolution.unit.test', releaseOnly: true },
 ];
 
 const SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean }> =

@@ -1,0 +1,239 @@
+execution_scope:
+  request:
+    completion_target: feature
+    requested_results:
+      - 账目刷新与恢复
+    requested_phases:
+      - coding
+      - review
+      - ut
+    requirement_basis:
+      input_id: requirement
+      source:
+        kind: derive
+        provider_id: derive.requirement
+      dependencies: []
+      source_refs: []
+      content_fingerprint: df986d16b9ce9a3640abe349f76c7b7f147018cf52add9b22f2e44f20f0c4c10
+    impact:
+      user_visible_behavior_change: false
+      reason: 只改账本领域服务，不改任何界面
+      basis:
+        - input_id: codebase
+          source:
+            kind: derive
+            provider_id: derive.codebase
+          dependencies:
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\src\ledger\LedgerFeature.ets
+              exists: true
+              sha256: 60bd727bec6bd25bf5ed8eca02dccdae1cf7fbd628abe74aed23c465a4613bf1
+              role: derive
+          source_refs:
+            - src/ledger/LedgerFeature.ets
+          content_fingerprint: b83875df5fcb0aee80d258a6639208288a03b29102b699552b4d737534037732
+  facts:
+    - id: design-context:candidate
+      kind: design-context
+      applicability: required
+      reason: 已有设计可用
+      basis:
+        - input_id: contracts
+          source:
+            kind: artifact
+            artifact: contracts@1
+          dependencies:
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\contracts\ledger-api.yaml
+              exists: true
+              sha256: 6ba6f2f6de504f784319419444d92a50332f736a2d824c934d6f1fefcef584d2
+              role: artifact
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\doc\features\ledger-app-blueprint\blueprint\component-blueprint.yaml
+              exists: true
+              sha256: 339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439
+              role: artifact
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\doc\features\ledger-app-blueprint\ledger-refresh\change-unit.yaml
+              exists: true
+              sha256: fe345106ba3e8501f59c180ed060d7a542e874db951d4b1a4e3324cc7862a66d
+              role: artifact
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\doc\features\ledger-app-blueprint\ledger-refresh\contracts.yaml
+              exists: true
+              sha256: 3499e70fb614809fb58bcc5d016df794739d83c40d74e3eb47e403c65fffd440
+              role: artifact
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\doc\features\ledger-app-blueprint\ledger-refresh\use-cases.yaml
+              exists: true
+              sha256: 40c6e782288c023909c9c04213a7a692ab94861a01f1416f23b43555bc890f5d
+              role: artifact
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\mappings\create-entry.yaml
+              exists: true
+              sha256: 984f318a52562578587ef8bf06db9e345255407390a12f9a0ac22bfc2ebc56b7
+              role: artifact
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\requirements\ledger.md
+              exists: true
+              sha256: 1cb261b1d7fa9e60c5a113c6f1a8029a9101809ee206836d6ca8a885123cc988
+              role: artifact
+          source_refs:
+            - doc/features/ledger-app-blueprint/ledger-refresh/contracts.yaml
+            - doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml
+            - doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml
+            - contracts/ledger-api.yaml
+            - mappings/create-entry.yaml
+            - requirements/ledger.md
+            - doc/features/ledger-app-blueprint/ledger-refresh/use-cases.yaml
+          content_fingerprint: 04a515fc0c34d8968cf3c647189137d27da189ed70d0ceeff10d7d0449da865c
+      satisfied_by:
+        - input_id: contracts
+          source:
+            kind: artifact
+            artifact: contracts@1
+          dependencies:
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\contracts\ledger-api.yaml
+              exists: true
+              sha256: 6ba6f2f6de504f784319419444d92a50332f736a2d824c934d6f1fefcef584d2
+              role: artifact
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\doc\features\ledger-app-blueprint\blueprint\component-blueprint.yaml
+              exists: true
+              sha256: 339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439
+              role: artifact
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\doc\features\ledger-app-blueprint\ledger-refresh\change-unit.yaml
+              exists: true
+              sha256: fe345106ba3e8501f59c180ed060d7a542e874db951d4b1a4e3324cc7862a66d
+              role: artifact
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\doc\features\ledger-app-blueprint\ledger-refresh\contracts.yaml
+              exists: true
+              sha256: 3499e70fb614809fb58bcc5d016df794739d83c40d74e3eb47e403c65fffd440
+              role: artifact
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\doc\features\ledger-app-blueprint\ledger-refresh\use-cases.yaml
+              exists: true
+              sha256: 40c6e782288c023909c9c04213a7a692ab94861a01f1416f23b43555bc890f5d
+              role: artifact
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\mappings\create-entry.yaml
+              exists: true
+              sha256: 984f318a52562578587ef8bf06db9e345255407390a12f9a0ac22bfc2ebc56b7
+              role: artifact
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\requirements\ledger.md
+              exists: true
+              sha256: 1cb261b1d7fa9e60c5a113c6f1a8029a9101809ee206836d6ca8a885123cc988
+              role: artifact
+          source_refs:
+            - doc/features/ledger-app-blueprint/ledger-refresh/contracts.yaml
+            - doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml
+            - doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml
+            - contracts/ledger-api.yaml
+            - mappings/create-entry.yaml
+            - requirements/ledger.md
+            - doc/features/ledger-app-blueprint/ledger-refresh/use-cases.yaml
+          content_fingerprint: 04a515fc0c34d8968cf3c647189137d27da189ed70d0ceeff10d7d0449da865c
+    - id: acceptance-context:candidate
+      kind: acceptance-context
+      applicability: required
+      reason: 已有验收可用
+      basis:
+        - input_id: acceptance
+          source:
+            kind: artifact
+            artifact: acceptance@1
+          dependencies:
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\contracts\ledger-api.yaml
+              exists: true
+              sha256: 6ba6f2f6de504f784319419444d92a50332f736a2d824c934d6f1fefcef584d2
+              role: artifact
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\doc\features\ledger-app-blueprint\blueprint\component-blueprint.yaml
+              exists: true
+              sha256: 339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439
+              role: artifact
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\doc\features\ledger-app-blueprint\ledger-refresh\acceptance.yaml
+              exists: true
+              sha256: 2a8b257571d1b6b8e7b1b589374f132cf0ec52429c1c4165a9362c55227270de
+              role: artifact
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\doc\features\ledger-app-blueprint\ledger-refresh\change-unit.yaml
+              exists: true
+              sha256: fe345106ba3e8501f59c180ed060d7a542e874db951d4b1a4e3324cc7862a66d
+              role: artifact
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\doc\features\ledger-app-blueprint\ledger-refresh\use-cases.yaml
+              exists: true
+              sha256: 40c6e782288c023909c9c04213a7a692ab94861a01f1416f23b43555bc890f5d
+              role: artifact
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\mappings\create-entry.yaml
+              exists: true
+              sha256: 984f318a52562578587ef8bf06db9e345255407390a12f9a0ac22bfc2ebc56b7
+              role: artifact
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\requirements\ledger.md
+              exists: true
+              sha256: 1cb261b1d7fa9e60c5a113c6f1a8029a9101809ee206836d6ca8a885123cc988
+              role: artifact
+          source_refs:
+            - doc/features/ledger-app-blueprint/ledger-refresh/acceptance.yaml
+            - doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml
+            - doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml
+            - contracts/ledger-api.yaml
+            - mappings/create-entry.yaml
+            - requirements/ledger.md
+            - doc/features/ledger-app-blueprint/ledger-refresh/use-cases.yaml
+          content_fingerprint: 0dc9fdaefb26fc585bea8857d34f22839c9834c2ef15f7034f1a63170e1158bf
+      satisfied_by:
+        - input_id: acceptance
+          source:
+            kind: artifact
+            artifact: acceptance@1
+          dependencies:
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\contracts\ledger-api.yaml
+              exists: true
+              sha256: 6ba6f2f6de504f784319419444d92a50332f736a2d824c934d6f1fefcef584d2
+              role: artifact
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\doc\features\ledger-app-blueprint\blueprint\component-blueprint.yaml
+              exists: true
+              sha256: 339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439
+              role: artifact
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\doc\features\ledger-app-blueprint\ledger-refresh\acceptance.yaml
+              exists: true
+              sha256: 2a8b257571d1b6b8e7b1b589374f132cf0ec52429c1c4165a9362c55227270de
+              role: artifact
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\doc\features\ledger-app-blueprint\ledger-refresh\change-unit.yaml
+              exists: true
+              sha256: fe345106ba3e8501f59c180ed060d7a542e874db951d4b1a4e3324cc7862a66d
+              role: artifact
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\doc\features\ledger-app-blueprint\ledger-refresh\use-cases.yaml
+              exists: true
+              sha256: 40c6e782288c023909c9c04213a7a692ab94861a01f1416f23b43555bc890f5d
+              role: artifact
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\mappings\create-entry.yaml
+              exists: true
+              sha256: 984f318a52562578587ef8bf06db9e345255407390a12f9a0ac22bfc2ebc56b7
+              role: artifact
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\requirements\ledger.md
+              exists: true
+              sha256: 1cb261b1d7fa9e60c5a113c6f1a8029a9101809ee206836d6ca8a885123cc988
+              role: artifact
+          source_refs:
+            - doc/features/ledger-app-blueprint/ledger-refresh/acceptance.yaml
+            - doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml
+            - doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml
+            - contracts/ledger-api.yaml
+            - mappings/create-entry.yaml
+            - requirements/ledger.md
+            - doc/features/ledger-app-blueprint/ledger-refresh/use-cases.yaml
+          content_fingerprint: 0dc9fdaefb26fc585bea8857d34f22839c9834c2ef15f7034f1a63170e1158bf
+    - id: implementation:request
+      kind: implementation
+      applicability: required
+      reason: 本次请求包含改代码
+      basis:
+        - input_id: codebase
+          source:
+            kind: derive
+            provider_id: derive.codebase
+          dependencies:
+            - path: C:\Users\shengqsq\AppData\Local\Temp\real-chain-IojIur\src\ledger\LedgerFeature.ets
+              exists: true
+              sha256: 60bd727bec6bd25bf5ed8eca02dccdae1cf7fbd628abe74aed23c465a4613bf1
+              role: derive
+          source_refs:
+            - src/ledger/LedgerFeature.ets
+          content_fingerprint: b83875df5fcb0aee80d258a6639208288a03b29102b699552b4d737534037732
+  contract_fingerprints:
+    - 9c6d16fac9432e1ae83f6e9a510f14224c0806f83bd9ac29a7c8df44b153fad0
+    - 1699c507921c59f201d8c31d95991c4e2834a65b3d6f61352050e1fd7faf7e47
+    - 68f724d624858bbfa30361fe65f98ccb0e52fd9d8ff5a04a248d7508b5132eae
+    - 4a58dc938b02f3120902bd2dd9a71c6b0c606528c37391d3a8d489c599a96930
+    - 7f14954ae8ce523af21a02485241f8ad2e7aa4e32a7d6acd993a9415b8fffd12
+    - 37b30f21691a9c8fe3aa2a7112f6778bb53d15d47e59b8dc99e7ecf8fb2d38e5
+    - f57eee7149fe747cf4ab9f2afb0eae815be3b49eaccb839c1e9b13c3d078ea13

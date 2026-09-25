@@ -1,0 +1,23 @@
+{
+  "phase": "review",
+  "stage": "unknown",
+  "timed_out": false,
+  "inspected_file_count": 0,
+  "inspected_files": [],
+  "report_sections_done": [
+    "1. 审查范围",
+    "2. 审查维度",
+    "3. 问题清单",
+    "4. 问题统计",
+    "5. 修复建议",
+    "6. 结论"
+  ],
+  "artifacts": [
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/review/review-report.md",
+      "sha256": "4fb99f001897b05e9390218b5538b989faeb3991a48413119c067e07fa8126eb",
+      "mtime_ms": 1790310859067.0078
+    }
+  ],
+  "derived_at": "2026-09-25T04:34:26.298Z"
+}

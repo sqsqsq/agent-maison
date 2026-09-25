@@ -1,0 +1,705 @@
+{
+  "phase": "coding",
+  "feature": "demo-card",
+  "timestamp": "2026-09-25T04:32:33.564Z",
+  "project_root": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur",
+  "assurance": "degraded",
+  "capability_resolutions": [
+    {
+      "id": "capability_coding_context",
+      "axis": "functional",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "fail",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "requirement",
+          "state": "resolved",
+          "selected_source": "derive.requirement",
+          "selected_source_fingerprint": "a669f8059b5a4734490385b526c37c0e5cfe2082ea65991c2df4b5ac2eb2b9c4",
+          "binding": {
+            "input_id": "requirement",
+            "source": {
+              "kind": "derive",
+              "provider_id": "derive.requirement"
+            },
+            "dependencies": [],
+            "source_refs": [],
+            "content_fingerprint": "a669f8059b5a4734490385b526c37c0e5cfe2082ea65991c2df4b5ac2eb2b9c4"
+          },
+          "attempts": [
+            {
+              "kind": "derive",
+              "source": "derive.requirement",
+              "state": "resolved",
+              "dependencies": []
+            }
+          ]
+        },
+        {
+          "id": "codebase",
+          "state": "resolved",
+          "selected_source": "derive.codebase",
+          "selected_source_fingerprint": "6db8928e705ecd20f4e070aaf48cc0f312adaff61aef2b6fd1b8b6f6596a67b6",
+          "binding": {
+            "input_id": "codebase",
+            "source": {
+              "kind": "derive",
+              "provider_id": "derive.codebase"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\index.ets",
+                "exists": true,
+                "sha256": "c42372f3cbb70378e8050f918322ab85b85a706f5b51c303961ded13d16a51bb",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\AllBanksPage.ets",
+                "exists": true,
+                "sha256": "e9e1d7080d2bd7504115df6e88d94a4ed5eebe19aab033c2268927a5a6c61b95",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankListItem.ets",
+                "exists": true,
+                "sha256": "727e9a2af8334e09b414a53e04f94b7fea76875d30bd73af6307a957b58b9e5f",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankModel.ets",
+                "exists": true,
+                "sha256": "85bf14be522a0c0815a787be2b9e1f739e86be41fb8a25b9f83f47324996b1c4",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankRepository.ets",
+                "exists": true,
+                "sha256": "fa10a20e27b5fa016f02a0e0608747e1f892974bb0a6cf10f7f3021e3ac3c907",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankService.ets",
+                "exists": true,
+                "sha256": "bca6edbcaabe61fba6090d8f396f0105962a18d13dc2eacd88d0802d58045fb6",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\resources\\base\\media\\logo_demo.png",
+                "exists": true,
+                "sha256": "6d51ea2402770798273a2f11d1a64aa04eb290df7790eaaa38ad61420bfeeb1c",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\resources\\base\\media\\result_demo.png",
+                "exists": true,
+                "sha256": "0672172608dc6517fd62993f139ade74279b32c3a2e5ee63f425e40f23de9421",
+                "role": "derive"
+              }
+            ],
+            "source_refs": [
+              "02-Feature/FinancialCard/index.ets",
+              "02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets",
+              "02-Feature/FinancialCard/src/main/ets/BankModel.ets",
+              "02-Feature/FinancialCard/src/main/ets/BankRepository.ets",
+              "02-Feature/FinancialCard/src/main/ets/BankService.ets",
+              "02-Feature/FinancialCard/src/main/resources/base/media/logo_demo.png",
+              "02-Feature/FinancialCard/src/main/ets/BankListItem.ets",
+              "02-Feature/FinancialCard/src/main/resources/base/media/result_demo.png"
+            ],
+            "content_fingerprint": "6db8928e705ecd20f4e070aaf48cc0f312adaff61aef2b6fd1b8b6f6596a67b6"
+          },
+          "attempts": [
+            {
+              "kind": "derive",
+              "source": "derive.codebase",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\index.ets",
+                  "exists": true,
+                  "sha256": "c42372f3cbb70378e8050f918322ab85b85a706f5b51c303961ded13d16a51bb",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\AllBanksPage.ets",
+                  "exists": true,
+                  "sha256": "e9e1d7080d2bd7504115df6e88d94a4ed5eebe19aab033c2268927a5a6c61b95",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankModel.ets",
+                  "exists": true,
+                  "sha256": "85bf14be522a0c0815a787be2b9e1f739e86be41fb8a25b9f83f47324996b1c4",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankRepository.ets",
+                  "exists": true,
+                  "sha256": "fa10a20e27b5fa016f02a0e0608747e1f892974bb0a6cf10f7f3021e3ac3c907",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankService.ets",
+                  "exists": true,
+                  "sha256": "bca6edbcaabe61fba6090d8f396f0105962a18d13dc2eacd88d0802d58045fb6",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\resources\\base\\media\\logo_demo.png",
+                  "exists": true,
+                  "sha256": "6d51ea2402770798273a2f11d1a64aa04eb290df7790eaaa38ad61420bfeeb1c",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankListItem.ets",
+                  "exists": true,
+                  "sha256": "727e9a2af8334e09b414a53e04f94b7fea76875d30bd73af6307a957b58b9e5f",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\resources\\base\\media\\result_demo.png",
+                  "exists": true,
+                  "sha256": "0672172608dc6517fd62993f139ade74279b32c3a2e5ee63f425e40f23de9421",
+                  "role": "derive"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "contracts",
+          "state": "resolved",
+          "selected_source": "contracts@1",
+          "selected_source_fingerprint": "93c49db2c4ed32f462a1dd1f4c29e576704f41b04f53b5f9b457dd86597fa8c1",
+          "binding": {
+            "input_id": "contracts",
+            "source": {
+              "kind": "artifact",
+              "artifact": "contracts@1"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\contracts.yaml",
+                "exists": true,
+                "sha256": "62d1104bc2c30d70e590280deb55788b3cca87b43442882ffc1635caa2931db0",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/demo-card/contracts.yaml"
+            ],
+            "content_fingerprint": "93c49db2c4ed32f462a1dd1f4c29e576704f41b04f53b5f9b457dd86597fa8c1"
+          },
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "contracts@1",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\contracts.yaml",
+                  "exists": true,
+                  "sha256": "62d1104bc2c30d70e590280deb55788b3cca87b43442882ffc1635caa2931db0",
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "plan",
+              "detail": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\contracts.yaml"
+            }
+          ]
+        },
+        {
+          "id": "acceptance",
+          "state": "resolved",
+          "selected_source": "acceptance@1",
+          "selected_source_fingerprint": "352b678a652cf596cc0cb311600a4590404c3d9ef08267470b868b529866a080",
+          "binding": {
+            "input_id": "acceptance",
+            "source": {
+              "kind": "artifact",
+              "artifact": "acceptance@1"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\acceptance.yaml",
+                "exists": true,
+                "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/demo-card/acceptance.yaml"
+            ],
+            "content_fingerprint": "352b678a652cf596cc0cb311600a4590404c3d9ef08267470b868b529866a080"
+          },
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "acceptance@1",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\acceptance.yaml",
+                  "exists": true,
+                  "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "spec",
+              "detail": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\acceptance.yaml"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability_coding_plan_context",
+      "axis": "functional",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "prune",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "plan",
+          "state": "resolved",
+          "selected_source": "plan@1",
+          "selected_source_fingerprint": "80943594bea440e21b7596113d60d84541049fc88011b97255da396de5216eb2",
+          "binding": {
+            "input_id": "plan",
+            "source": {
+              "kind": "artifact",
+              "artifact": "plan@1"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\plan\\plan.md",
+                "exists": true,
+                "sha256": "0c688dbfbd8bc782f7ac5bb40c7c14a1ef6c0f2f3e5fdd1a1e2ecc1ce4ba4c08",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/demo-card/plan/plan.md"
+            ],
+            "content_fingerprint": "80943594bea440e21b7596113d60d84541049fc88011b97255da396de5216eb2"
+          },
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "plan@1",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\plan\\plan.md",
+                  "exists": true,
+                  "sha256": "0c688dbfbd8bc782f7ac5bb40c7c14a1ef6c0f2f3e5fdd1a1e2ecc1ce4ba4c08",
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "plan",
+              "detail": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\plan\\plan.md"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability_coding_spec_context",
+      "axis": "functional",
+      "active": true,
+      "state": "pruned",
+      "on_missing": "prune",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "spec",
+          "state": "resolved",
+          "selected_source": "spec@1",
+          "selected_source_fingerprint": "116ae5f45f28b7e3cfb0cbd6a9bf6508f3346f6ed77265335cc2a66758f3a773",
+          "binding": {
+            "input_id": "spec",
+            "source": {
+              "kind": "artifact",
+              "artifact": "spec@1"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\spec\\spec.md",
+                "exists": true,
+                "sha256": "95409507e3001e4973506d2d17618f27f5342415f4493ee388421b1f284e7d96",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/demo-card/spec/spec.md"
+            ],
+            "content_fingerprint": "116ae5f45f28b7e3cfb0cbd6a9bf6508f3346f6ed77265335cc2a66758f3a773"
+          },
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "spec@1",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\spec\\spec.md",
+                  "exists": true,
+                  "sha256": "95409507e3001e4973506d2d17618f27f5342415f4493ee388421b1f284e7d96",
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "spec",
+              "detail": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\spec\\spec.md"
+            }
+          ]
+        },
+        {
+          "id": "use_cases",
+          "state": "absent",
+          "selected_source": null,
+          "selected_source_fingerprint": null,
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "use-cases@1",
+              "state": "absent",
+              "dependencies": [
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\use-cases.yaml",
+                  "exists": false,
+                  "sha256": null,
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "plan",
+              "detail": "use-cases@1 missing"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability_coding_visual_context",
+      "axis": "visual",
+      "active": false,
+      "state": "not_applicable",
+      "on_missing": "prune",
+      "applicability_provider_id": "applicability.ui",
+      "applicability_dependencies": [],
+      "applicability_detail": "visual-evidence explicitly not applicable",
+      "inputs": []
+    }
+  ],
+  "capability_resolution_contract_fingerprint": "68f724d624858bbfa30361fe65f98ccb0e52fd9d8ff5a04a248d7508b5132eae",
+  "checks": [
+    {
+      "id": "node_options_injection",
+      "category": "structure",
+      "description": "进程预加载注入自检（P0-7：门禁产物防篡改）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "NODE_OPTIONS/execArgv/.node-options/.npmrc 未检出预加载注入。"
+    },
+    {
+      "id": "context_exploration_facts_phase_delta_present",
+      "category": "structure",
+      "description": "facts.md 本阶段 phase_delta 节已声明",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "\"## phase_delta: coding\" 节已声明（365 字符）。",
+      "source": "context_exploration_gate"
+    },
+    {
+      "id": "host_entry_reachability",
+      "category": "structure",
+      "description": "宿主入口→路由→页面静态可达性（integration_points 为真源）",
+      "severity": "MINOR",
+      "status": "SKIP",
+      "details": "contracts.integration_points 未声明——入口可达性无从机器校验。",
+      "source": "host_entry_reachability"
+    },
+    {
+      "id": "file_completeness",
+      "category": "structure",
+      "description": "file_completeness",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "全部 8 个文件均存在。",
+      "source": "file_completeness"
+    },
+    {
+      "id": "layer_compliance",
+      "category": "structure",
+      "description": "layer_compliance",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "6 个文件均符合模块内分层规则。",
+      "source": "layer_compliance"
+    },
+    {
+      "id": "inter_module_dependency",
+      "category": "structure",
+      "description": "inter_module_dependency",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "6 个文件均符合分层依赖规则。",
+      "source": "inter_module_dependency"
+    },
+    {
+      "id": "no_hardcoded_strings",
+      "category": "structure",
+      "description": "no_hardcoded_strings",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "未发现硬编码中文字符串。",
+      "source": "profile_coding_host_structure"
+    },
+    {
+      "id": "har_index_export",
+      "category": "structure",
+      "description": "har_index_export",
+      "severity": "BLOCKER",
+      "status": "SKIP",
+      "details": "当前合并后的 phase-rules 未声明 har_index_export，跳过。",
+      "source": "profile_coding_host_structure"
+    },
+    {
+      "id": "module_config_registered",
+      "category": "structure",
+      "description": "module_config_registered",
+      "severity": "BLOCKER",
+      "status": "SKIP",
+      "details": "无新增模块需要注册。",
+      "structured": {
+        "applicability": "not_applicable"
+      },
+      "source": "profile_coding_host_structure"
+    },
+    {
+      "id": "oh_package_dependencies",
+      "category": "structure",
+      "description": "oh_package_dependencies",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "已检查 1 个模块的 oh-package.json5 依赖声明，均符合要求。",
+      "source": "profile_coding_host_structure"
+    },
+    {
+      "id": "page_registration",
+      "category": "structure",
+      "description": "page_registration",
+      "severity": "BLOCKER",
+      "status": "SKIP",
+      "details": "无 NavDestination 页面需要检查。",
+      "structured": {
+        "applicability": "not_applicable"
+      },
+      "source": "profile_coding_host_structure"
+    },
+    {
+      "id": "naming_conventions",
+      "category": "structure",
+      "description": "naming_conventions",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "命名规范检查通过。",
+      "source": "profile_coding_host_structure"
+    },
+    {
+      "id": "no_any_type",
+      "category": "structure",
+      "description": "no_any_type",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "未发现 any 类型使用。",
+      "source": "profile_coding_host_structure"
+    },
+    {
+      "id": "async_await_pattern",
+      "category": "structure",
+      "description": "async_await_pattern",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "未发现 .then()/.catch() 回调链。",
+      "source": "profile_coding_host_structure"
+    },
+    {
+      "id": "arkui_bindsheet_double_close",
+      "category": "structure",
+      "description": "arkui_bindsheet_double_close",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "未发现 bindSheet 双关闭按钮风险。",
+      "source": "profile_coding_host_structure"
+    },
+    {
+      "id": "arkui_push_without_guard",
+      "category": "structure",
+      "description": "arkui_push_without_guard",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "未发现无 guard 的 pushPath 调用。",
+      "source": "profile_coding_host_structure"
+    },
+    {
+      "id": "arkui_singleton_flow_multi_subscriber",
+      "category": "structure",
+      "description": "arkui_singleton_flow_multi_subscriber",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "未发现多 NavDestination 重复订阅 Sheet 状态。",
+      "source": "profile_coding_host_structure"
+    },
+    {
+      "id": "arkui_clip_overlap_risk",
+      "category": "structure",
+      "description": "arkui_clip_overlap_risk",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "未发现 Swiper/Grid 裁切或叠帧/重叠风险。",
+      "source": "profile_coding_host_structure"
+    },
+    {
+      "id": "resource_string_interpolation",
+      "category": "structure",
+      "description": "模板字符串 Resource 插值 lint（`${$r(...)}` → [object Object]）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "未发现模板串 Resource 插值。",
+      "source": "profile_coding_host_structure"
+    },
+    {
+      "id": "named_business_handler",
+      "category": "structure",
+      "description": "named_business_handler",
+      "severity": "BLOCKER",
+      "status": "SKIP",
+      "details": "use-cases.yaml 不存在，跳过（简单 feature 由 acceptance.yaml + dag.yaml 主导）。",
+      "source": "named_business_handler"
+    },
+    {
+      "id": "coordinator_file_exists_if_declared",
+      "category": "structure",
+      "description": "coordinator_file_exists_if_declared",
+      "severity": "BLOCKER",
+      "status": "SKIP",
+      "details": "use-cases.yaml 不存在，跳过。",
+      "source": "coordinator_file_exists_if_declared"
+    },
+    {
+      "id": "coding_compile",
+      "category": "structure",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "description": "coding compile (real-chain seam)",
+      "details": "real-chain seam: 单测无 DevEco/hvigor",
+      "source": "coding_compile"
+    },
+    {
+      "id": "visual_parity",
+      "category": "structure",
+      "description": "visual_parity",
+      "severity": "MINOR",
+      "status": "SKIP",
+      "details": "本次已确认无视觉义务，UI 越界仍由写集门禁检查。",
+      "source": "check-coding.ts"
+    },
+    {
+      "id": "plan_to_code",
+      "category": "traceability",
+      "description": "plan_to_code",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "spec 映射的全部 2 个关键文件均存在。",
+      "source": "plan_to_code"
+    },
+    {
+      "id": "plan_file_to_code",
+      "category": "traceability",
+      "description": "plan_file_to_code",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "设计规划的全部 6 个 .ets 文件均已实现。",
+      "source": "profile_coding_host_trace"
+    },
+    {
+      "id": "code_to_plan",
+      "category": "traceability",
+      "description": "code_to_plan",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "所有 .ets 文件均在 contracts.yaml 的规划中。",
+      "source": "profile_coding_host_trace"
+    },
+    {
+      "id": "diff_within_scope",
+      "category": "traceability",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "description": "实现须符合已绑定施工契约的模块与写集",
+      "details": "已核验 run baseline、绑定契约与 64 个变更路径。",
+      "source": "diff_within_scope"
+    },
+    {
+      "id": "ui_diff_within_declared_files",
+      "category": "traceability",
+      "description": "UI 文件级 scope 门（plan c4e8b1d3 G1）：越界 UI 文件 = 本次 changed UI files − 冻结 contracts.files。白名单只来自**同 run plan PASS snapshot** 冻结的 contracts.yaml files（缺失/失效/损坏 fail-closed BLOCKER，禁止退回 live contracts——coding 期 agent 可写）；goal diff 基线 = createGoalRun 出生时冻结的 manifest.run_base_sha （chain 含 coding/ut 时必需；覆盖 committed/staged/unstaged/untracked 四态，agent 自行 commit 也检出；goal 内不读取 HARNESS_DIFF_BASE_REF，legacy reader 只认无 run_created 的旧 run）； 删除/重命名从 base 侧读旧内容做 UI 分类。UI 判据三类：pages/components/presentation 路径 .ets、ArkUI 结构标志（@Entry/@Component/build()/NavDestination/Tabs/bindSheet）、 resources media。未声明 UI 文件默认即受保护范围，任何 strictness 均 BLOCKER； expansion 唯一路径 = 更新 contracts.files 并重新通过 plan（重取 PASS snapshot）。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "已对照 run绑定的 contracts.files 核验 3 个 UI 变更；越界 0 个。",
+      "affected_files": [],
+      "source": "ui_diff_within_declared_files"
+    },
+    {
+      "id": "product_behavior_switch_scan",
+      "category": "structure",
+      "description": "产品行为开关扫描（测试性开关默认开启=BLOCKER）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "未发现默认开启的测试性行为开关。",
+      "source": "product_behavior_switch_scan"
+    },
+    {
+      "id": "coding_run_status",
+      "category": "structure",
+      "description": "Coding 阶段脚本门禁总体状态",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "can_claim_done: YES\ncontracts.files: 8\ncontracts.modules: 1\ncoding_compile: PASS\nblocker_fail_count: 0\ncritical_skip_count: 0\nblocking_warn_count: 0",
+      "suggestion": "脚本门禁可进入 verifier + receipt 闭环；注意 BLOCKER/WARN 仍需人工确认风险。"
+    },
+    {
+      "id": "capability_coding_context",
+      "category": "structure",
+      "description": "capability input contract resolved (capability_coding_context)",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "axis=functional; all declared pre-check inputs resolved",
+      "source": "capability-resolution.ts"
+    },
+    {
+      "id": "capability_coding_plan_context",
+      "category": "structure",
+      "description": "capability input contract resolved (capability_coding_plan_context)",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "axis=functional; all declared pre-check inputs resolved",
+      "source": "capability-resolution.ts"
+    }
+  ],
+  "summary": {
+    "total": 32,
+    "pass": 25,
+    "fail": 0,
+    "warn": 0,
+    "skip": 7,
+    "blockers": 0,
+    "verdict": "PASS"
+  }
+}

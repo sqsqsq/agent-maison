@@ -18,9 +18,13 @@ import * as path from 'path';
 import { featureFilePath, featurePhaseReportsDir, type FeaturePathOptions } from '../../config';
 import {
   applyScopeRevisions,
+  loadAuthoritativeRunEvents,
+  loadEffectiveExecutionScope,
+  loadFrozenExecutionScope,
   loadScopeRevisions,
 } from './goal-run-creation';
 import {
+  executionCompletionPhases,
   executionScopeFingerprint,
   validateExecutionScope,
   type ExecutionScope,
@@ -28,7 +32,11 @@ import {
 } from './execution-scope';
 import { FEATURE_LOCK_NAME, STALE_LOCK_MS, isLockStale, isPidAlive, readLockRecord, type LockRecord } from './goal-run-lock';
 import { SCOPE_REVISION_FIELDS } from './goal-manifest';
-import { featureScopeCandidateFingerprint, featureTrackDeclPath, resolveFeatureExecutionScope } from './feature-track';
+import {
+  buildFeatureScopeCandidate, featureScopeCandidateFingerprint, featureTrackDeclPath, resolveFeatureExecutionScope, resolveWithPriorEvidence,
+} from './feature-track';
+import { inferRepoLayout } from '../../repo-layout';
+import { computeRequirementShaFromText } from './fidelity-shared';
 import { resolveWorkflowSpec, type WorkflowSpec } from '../../workflow-loader';
 import type { CheckResult } from './types';
 
@@ -59,9 +67,23 @@ export interface FeatureFrozenScope {
   policy_fingerprint: string;
   execution_scope: ExecutionScope;
   revisions: FeatureScopeRevision[];
-  /** D1.3：已转交给某个 run 之后登记，feature 记录自此是来源历史。 */
-  transferred_to?: string;
-  transferred_scope_fingerprint?: string;
+  /**
+   * D1.3 / plan b2d7f4e9 §3.2：转交记录，追加式——最新一条是当前转交对象，更早的是历史（successor 再转交不覆盖）。
+   * feature 记录自首次转交起只是来源历史。读侧把旧单值 `transferred_to` 视为唯一一条（`at` 缺省）。
+   */
+  transfers?: FeatureScopeTransfer[];
+}
+
+export interface FeatureScopeTransfer {
+  run_id: string;
+  /** 首次转交 = feature 有效范围指纹；successor 再转交 = 后继 run 出生范围指纹。 */
+  scope_fingerprint: string;
+  at?: string;
+}
+
+/** 当前转交对象（最新一条）；未转交 → undefined。 */
+export function currentFeatureScopeTransfer(record: FeatureFrozenScope): FeatureScopeTransfer | undefined {
+  return record.transfers?.at(-1);
 }
 
 export function featureFrozenScopePath(projectRoot: string, feature: string, opts?: FeaturePathOptions): string {
@@ -102,12 +124,25 @@ export function validateFeatureFrozenScope(value: unknown): FeatureFrozenScope {
   if (typeof record.policy_fingerprint !== 'string' || record.policy_fingerprint !== record.execution_scope.policy_fingerprint) {
     throw new Error('[execution-scope] feature 冻结记录的 policy_fingerprint 与出生范围不一致');
   }
-  if (record.transferred_to !== undefined && (typeof record.transferred_to !== 'string' || !record.transferred_to)) throw new Error('[execution-scope] transferred_to 形状非法');
-  if (record.transferred_scope_fingerprint !== undefined && !/^[0-9a-f]{64}$/.test(String(record.transferred_scope_fingerprint))) {
-    throw new Error('[execution-scope] transferred_scope_fingerprint 形状非法');
+  // 读兼容：旧单值 `transferred_to` + `transferred_scope_fingerprint` 就是 transfers 的唯一一条（只在内存里换形，
+  // 不回写；下一次再转交时 writer 按新形状落盘）。两种形状并存 = 记录损坏。
+  const legacy = record as FeatureFrozenScope & { transferred_to?: unknown; transferred_scope_fingerprint?: unknown };
+  if (legacy.transferred_to !== undefined || legacy.transferred_scope_fingerprint !== undefined) {
+    if (record.transfers !== undefined) throw new Error('[execution-scope] 转交记录形状冲突：transfers 与旧单值 transferred_to 不得并存');
+    if ((legacy.transferred_to === undefined) !== (legacy.transferred_scope_fingerprint === undefined)) {
+      throw new Error('[execution-scope] 转交登记不完整：transferred_to 与 transferred_scope_fingerprint 必须同时在场');
+    }
+    record.transfers = [{ run_id: legacy.transferred_to as string, scope_fingerprint: legacy.transferred_scope_fingerprint as string }];
+    delete legacy.transferred_to;
+    delete legacy.transferred_scope_fingerprint;
   }
-  if ((record.transferred_to === undefined) !== (record.transferred_scope_fingerprint === undefined)) {
-    throw new Error('[execution-scope] 转交登记不完整：transferred_to 与 transferred_scope_fingerprint 必须同时在场');
+  if (record.transfers !== undefined) {
+    if (!Array.isArray(record.transfers) || !record.transfers.length) throw new Error('[execution-scope] transfers 形状非法');
+    for (const item of record.transfers) {
+      if (!item || typeof item.run_id !== 'string' || !item.run_id) throw new Error('[execution-scope] transfers[].run_id 形状非法');
+      if (!/^[0-9a-f]{64}$/.test(String(item.scope_fingerprint))) throw new Error('[execution-scope] transfers[].scope_fingerprint 形状非法');
+      if (item.at !== undefined && typeof item.at !== 'string') throw new Error('[execution-scope] transfers[].at 形状非法');
+    }
   }
   return record;
 }
@@ -291,7 +326,8 @@ export function appendFeatureScopeRevision(input: {
   const before = readRecordBytes(input.projectRoot, input.feature, opts);
   const record = readFeatureFrozenScope(input.projectRoot, input.feature, opts);
   if (!record) throw new Error('[execution-scope] 没有 feature 冻结记录，无法追加修订');
-  if (record.transferred_to) throw new Error(`[execution-scope] feature 范围已转交给 run ${record.transferred_to}——修订应在该 run 内进行`);
+  const transferred = currentFeatureScopeTransfer(record);
+  if (transferred) throw new Error(`[execution-scope] feature 范围已转交给 run ${transferred.run_id}——修订应在该 run 内进行`);
   const previous = featureEffectiveScope(record);
   // 幂等：目标范围与当前有效范围**完全相同** = 没有可修订的东西（与 run 路径的 no-op 同义），
   // 重试同一条修订因此不会追加第二条。
@@ -317,7 +353,11 @@ export function appendFeatureScopeRevision(input: {
   return { record: next, revision };
 }
 
-/** D1.3：出生成功后登记转交。只写一次；重复登记同一 run 视为幂等。 */
+/**
+ * D1.3：出生成功后登记转交；重复登记同一 run 视为幂等。
+ * plan b2d7f4e9 §3.2 第 4 步：已转交时只允许**以当前转交对象为已审计 supersede 源**的后继再转交——追加一条、旧的保留；
+ * 其余情形照旧拒绝。「已审计」读后继 run 自己的 events（`supersede` 审计事件），不信调用方声明。
+ */
 export function registerFeatureScopeTransfer(input: {
   projectRoot: string;
   feature: string;
@@ -329,23 +369,42 @@ export function registerFeatureScopeTransfer(input: {
   const before = readRecordBytes(input.projectRoot, input.feature, opts);
   const record = readFeatureFrozenScope(input.projectRoot, input.feature, opts);
   if (!record) return null;
-  // 转交指纹**由记录自己的有效范围算**，不信调用方传进来的值——调用方传错就是登记错。
-  const effective = executionScopeFingerprint(featureEffectiveScope(record));
-  if (input.transferredScopeFingerprint !== effective) {
-    throw new Error(`[execution-scope] 转交指纹与 feature 有效范围失配：调用方=${input.transferredScopeFingerprint.slice(0, 16)} 记录有效范围=${effective.slice(0, 16)}（run=${input.runId}）`);
-  }
-  if (record.transferred_to === input.runId) {
-    if (record.transferred_scope_fingerprint !== effective) {
-      throw new Error(`[execution-scope] 已登记的转交指纹与当前有效范围失配：记录=${String(record.transferred_scope_fingerprint).slice(0, 16)} 现算=${effective.slice(0, 16)}（run=${input.runId}）——转交记录损坏`);
+  const transfers = record.transfers ?? [];
+  const current = transfers.at(-1);
+  // 转交指纹不信调用方：首次转交由记录自己的有效范围算；successor 再转交取后继 run 自己的出生范围
+  //（后继范围是在 supersede 上下文重解析的，本就不等于记录的有效范围）。
+  let expected: string;
+  if (!current) {
+    expected = executionScopeFingerprint(featureEffectiveScope(record));
+  } else if (current.run_id === input.runId) {
+    if (current.scope_fingerprint !== input.transferredScopeFingerprint) {
+      throw new Error(`[execution-scope] 已登记的转交指纹与本次登记失配：记录=${current.scope_fingerprint.slice(0, 16)} 本次=${input.transferredScopeFingerprint.slice(0, 16)}（run=${input.runId}）——转交记录损坏`);
     }
     return record; // 幂等重试
+  } else {
+    if (!isAuditedSuccessor(input.projectRoot, input.feature, current.run_id, input.runId)) {
+      throw new Error(`[execution-scope] feature 范围已转交给 run ${current.run_id}，不能再转交给 ${input.runId}（只有以 ${current.run_id} 为已审计 supersede 源的后继可以）`);
+    }
+    const birth = loadFrozenExecutionScope(input.projectRoot, input.feature, input.runId);
+    if (!birth) throw new Error(`[execution-scope] 后继 run ${input.runId} 缺少出生范围，不能登记转交`);
+    expected = executionScopeFingerprint(birth);
   }
-  if (record.transferred_to) {
-    throw new Error(`[execution-scope] feature 范围已转交给 run ${record.transferred_to}，不能再转交给 ${input.runId}`);
+  if (input.transferredScopeFingerprint !== expected) {
+    throw new Error(`[execution-scope] 转交指纹与${current ? '后继出生范围' : ' feature 有效范围'}失配：调用方=${input.transferredScopeFingerprint.slice(0, 16)} 记录${current ? '后继出生' : '有效范围'}=${expected.slice(0, 16)}（run=${input.runId}）`);
   }
-  const next: FeatureFrozenScope = { ...record, transferred_to: input.runId, transferred_scope_fingerprint: effective };
+  const next: FeatureFrozenScope = { ...record, transfers: [...transfers, { run_id: input.runId, scope_fingerprint: expected, at: new Date().toISOString() }] };
   commitRecord(input.projectRoot, input.feature, before, next, opts);
   return next;
+}
+
+/** `successorRunId` 的 events 里有一条 `supersede`：target = `sourceRunId`、superseding = 自己（goal-runner 在出生后写入的审计事件）。 */
+function isAuditedSuccessor(projectRoot: string, feature: string, sourceRunId: string, successorRunId: string): boolean {
+  let events: ReturnType<typeof loadAuthoritativeRunEvents>;
+  try { events = loadAuthoritativeRunEvents(projectRoot, feature, successorRunId); } catch { return false; }
+  return events.some(event => {
+    const audit = event as unknown as { type?: string; target_run_id?: unknown; superseding_run_id?: unknown };
+    return audit.type === 'supersede' && audit.target_run_id === sourceRunId && audit.superseding_run_id === successorRunId;
+  });
 }
 
 /**
@@ -459,9 +518,10 @@ export function ensureFeatureExecutionScopeFrozen(input: {
   }
 
   if (existing) {
-    if (existing.transferred_to) {
+    const transferred = currentFeatureScopeTransfer(existing);
+    if (transferred) {
       return fail(
-        `feature 范围已转交给 run ${existing.transferred_to}，本次调用却没有 run 身份 | source=${relPosix(projectRoot, featureFrozenScopePath(projectRoot, feature, opts))}`,
+        `feature 范围已转交给 run ${transferred.run_id}，本次调用却没有 run 身份 | source=${relPosix(projectRoot, featureFrozenScopePath(projectRoot, feature, opts))}`,
         '带上该 run 的身份再跑（--goal-run-id），或按既有 correction / successor 路径开新 run。',
       );
     }
@@ -527,7 +587,7 @@ export function applyFeatureScopeRevisionsThenMaybeComplete(input: {
   if (lockBlocker) throw new Error(lockBlocker.details ?? '[execution-scope] 无法确定权威');
   let record = readFeatureFrozenScope(projectRoot, feature);
   if (!record) return { revisionApplied: false, skippedReason: 'no-frozen-record' };
-  if (record.transferred_to) return { revisionApplied: false, skippedReason: 'transferred' };
+  if (currentFeatureScopeTransfer(record)) return { revisionApplied: false, skippedReason: 'transferred' };
   // D1.2：收尾同样要核候选指纹——候选被改而记录未经修订时，不得基于旧冻结范围生成完成原件。
   const candidateFingerprint = featureScopeCandidateFingerprint(projectRoot, feature);
   if (candidateFingerprint !== record.candidate_fingerprint) {
@@ -623,10 +683,11 @@ export function resolveBirthExecutionScope(
 ): { scope: ExecutionScope | undefined; source: 'feature-record' | 'candidate' } {
   if (workflow.schema_version === '1.2') {
     const record = readFeatureFrozenScope(projectRoot, feature);
-    if (record?.transferred_to) {
+    const transferred = record && currentFeatureScopeTransfer(record);
+    if (transferred) {
       // 已转交的记录**不得**静默回算候选——那会让「同一 feature 第二次出生」拿到一份
       // 与在跑 run 无关的范围。这是 D1.3 第三行的明确报错场景。
-      throw new Error(`[execution-scope] feature 范围已转交给 run ${record.transferred_to}——请恢复该 run，或按既有 correction / successor 路径开新 run`);
+      throw new Error(`[execution-scope] feature 范围已转交给 run ${transferred.run_id}——请恢复该 run，或按既有 correction / successor 路径开新 run`);
     }
     if (record) {
       // 与冻结入口**同一套**候选漂移检查：候选变了而记录未经修订，出生同样不许放行。
@@ -640,6 +701,54 @@ export function resolveBirthExecutionScope(
     }
   }
   return { scope: resolveFeatureExecutionScope(projectRoot, feature, workflow, frameworkRoot, requirement), source: 'candidate' };
+}
+
+/**
+ * plan b2d7f4e9 §3.2 第 2 步：successor（`--supersede <源 run>`）的出生范围——调用方已核过源 run 合法（第 1 步），
+ * 这里在该 supersede 上下文里按**当前输入**重生成候选（与 `--prepare-scope` 同一个 `buildFeatureScopeCandidate`，
+ * 只在内存里、不写回 feature.yaml），再经 `resolveWithPriorEvidence` 复用既往阶段证据；不整份继承源 run 范围，
+ * 也不读 feature 既有候选（其定义类满足依据绑定在派生文件刷新后即过期，会把 spec/plan 误排成执行阶段）。
+ * 主 Agent 的四项输入从源 run 有效范围继承：完成终点、请求结果、请求动作（= 源 run 的完成链）、
+ * 影响判断（结论与理由原样，来源路径按当前字节重新绑定）；需求取合并增量后的最终文本。
+ * feature 冻结记录在此**不作范围来源、不做候选漂移检查**，只作血缘核对：
+ * 有记录时，当前转交对象必须就是本次 supersede 源，否则拒绝出生。
+ */
+export function resolveSuccessorExecutionScope(
+  projectRoot: string,
+  feature: string,
+  workflow: WorkflowSpec,
+  frameworkRoot: string | undefined,
+  requirement: string | undefined,
+  sourceRunId: string,
+): ExecutionScope | undefined {
+  if (workflow.schema_version !== '1.2') return undefined;
+  const record = readFeatureFrozenScope(projectRoot, feature);
+  if (record) {
+    const current = currentFeatureScopeTransfer(record)?.run_id;
+    if (current !== sourceRunId) {
+      throw new Error(current
+        ? `[execution-scope] feature 范围当前转交给 run ${current}，不是本次 supersede 的源 run ${sourceRunId}——完成后修正须以 ${current} 为源`
+        : `[execution-scope] feature 范围仍由 feature 载体持有（未转交任何 run），没有 run 可 supersede——完成后修正请先按当前输入追加 feature 范围修订，再起新 run（不带 --supersede）`);
+    }
+  }
+  const previous = loadEffectiveExecutionScope(projectRoot, feature, sourceRunId);
+  if (!previous) throw new Error(`[execution-scope] 源 run ${sourceRunId} 没有可读的有效执行范围，无法继承请求输入——请用 --prepare-scope 生成候选后起新 run`);
+  const root = frameworkRoot ?? inferRepoLayout(projectRoot).frameworkRoot;
+  const impact = previous.request_impact;
+  const basisPaths = [...new Set((impact?.basis ?? []).flatMap(binding => binding.source_refs ?? []))];
+  const candidate = buildFeatureScopeCandidate({
+    projectRoot, frameworkRoot: root, feature,
+    completionTarget: previous.completion_target,
+    requestedResults: [...previous.requested_results],
+    requestedPhases: executionCompletionPhases(previous),
+    ...(impact && basisPaths.length ? { impact: { userVisibleBehaviorChange: impact.user_visible_behavior_change, reason: impact.reason, basisPaths } } : {}),
+    ...(requirement?.trim() ? { requirement } : {}),
+  });
+  // 需求血缘按 manifest.requirement 原文算（与 computeRunRequirementSha 同口径，不 trim）：需求未变即与源 run 相同、复用不受影响。
+  return resolveWithPriorEvidence(candidate, workflow, {
+    projectRoot, feature, frameworkRoot: root, requirement: requirement?.trim() || undefined,
+    ...(requirement?.trim() ? { requirementSha: computeRequirementShaFromText(projectRoot, feature, requirement) } : {}),
+  });
 }
 
 /**

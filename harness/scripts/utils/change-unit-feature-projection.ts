@@ -558,6 +558,23 @@ export function loadChangeUnitBlueprintScope(projectRoot: string, feature: strin
   };
 }
 
+/**
+ * ID-only 映射完整性（predicate / provide / design_ref ↔ canonical CU）。只比对 canonical CU 与
+ * contracts 映射，不经精确引用解析器——plan b2d7f4e9 §3.1 的 Feature↔CU 绑定核对复用它。
+ */
+export function changeUnitMappingIssues(
+  projectRoot: string,
+  section: Record<string, unknown>,
+  cu: ChangeUnitArtifact,
+  phase: ProjectionPhase,
+): ChangeUnitProjectionIssue[] {
+  return [
+    ...checkIdMappings('predicate', cu.target_predicates as unknown as ChangeUnitRecord[], records(section.predicate_mappings), phase, projectRoot),
+    ...checkIdMappings('provide', cu.provides as unknown as ChangeUnitRecord[], records(section.provide_mappings), phase, projectRoot),
+    ...checkDesignMappings(cu, records(section.design_ref_mappings), phase, projectRoot),
+  ];
+}
+
 export function validateChangeUnitFeatureProjection(
   projectRoot: string,
   feature: string,
@@ -610,21 +627,7 @@ export function validateChangeUnitFeatureProjection(
       issues.push(issue('change_unit_definition_copied', `contracts.change_unit 不得复制 canonical ${forbidden}。`));
     }
   }
-  issues.push(...checkIdMappings(
-    'predicate',
-    cu.target_predicates as unknown as ChangeUnitRecord[],
-    records(section.predicate_mappings),
-    phase,
-    projectRoot,
-  ));
-  issues.push(...checkIdMappings(
-    'provide',
-    cu.provides as unknown as ChangeUnitRecord[],
-    records(section.provide_mappings),
-    phase,
-    projectRoot,
-  ));
-  issues.push(...checkDesignMappings(cu, records(section.design_ref_mappings), phase, projectRoot));
+  issues.push(...changeUnitMappingIssues(projectRoot, section, cu, phase));
   issues.push(...componentProjectionErrors(projectRoot, contracts!, cu).map(message => issue('component_asset_projection', message)));
   const warnings: string[] = [];
   try {

@@ -130,8 +130,8 @@ function fixture(newFile = false, baselineTest = false) {
   const profileDir = path.join(root, 'test-profile');
   write('test-profile/harness/profile-path-conventions.js', "exports.resolveUtSourceRoots=(root,modules)=>modules.map(m=>require('path').join(root,m.package_path,'src','ohosTest'));\n");
   write('test-profile/harness/coding-host-rules.js', `const cp=require('child_process'); exports.profileCodingHost={sourceFileSuffixes:['.ts'],runStructureChecks:()=>[],runTraceabilityChecks:()=>[],checkCodingCompile:ctx=>{let details='TypeScript compilation completed',status='PASS';try{cp.execFileSync(process.execPath,[${JSON.stringify(require.resolve('typescript/bin/tsc'))},'--noEmit','--skipLibCheck','--target','ES2022',...ctx.featureSpec.contracts.files],{cwd:ctx.projectRoot,stdio:'pipe'});}catch(e){status='FAIL';details=String(e.stdout||e);}return [{id:'coding_compile',category:'structure',severity:'BLOCKER',status,description:'native TypeScript compile',details}];}};`);
-  const context = (phase: 'coding' | 'review'): CheckContext => {
-    const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot, feature: 'demo', phase, featuresDir: 'doc/features', goalRunId: manifest.run_id });
+  const context = (phase: 'coding' | 'review', goalRunId = manifest.run_id): CheckContext => {
+    const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot, feature: 'demo', phase, featuresDir: 'doc/features', goalRunId });
     const resolved = resolveCapabilityInputs({ ...options, ...bridge, phase });
     assert.notEqual(resolved.report.assurance, 'blocked', JSON.stringify(resolved.report));
     const loader = new SpecLoader(root, undefined, undefined, frameworkRoot);
@@ -382,6 +382,30 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ru
     assert.equal(rename.status, 'FAIL', rename.details);
     assert(rename.affected_files?.includes(UT_BASELINE_TEST) && rename.affected_files.includes(renamed), JSON.stringify(rename));
     assert(rename.details.includes('被 coding 改写'), rename.details);
+  } },
+  // ---- plan b2d7f4e9 t3c：successor 继承源 run 基线，UT 产出沿 supersede 血缘回放 ----
+  { name: 'b2d7f4e9 t3c a successor inherits the source run UT output through the lineage, and a later source coding rewrite still voids it', async run(f) {
+    const body = 'export default function valueTest() {}\n';
+    recordInvocation(f, 'ut', () => f.write(UT_TEST, body));
+    const successor = () => {
+      const scope = f.manifest.execution_scope!;
+      const manifest = { ...buildGoalManifestFromInput({ feature: 'demo', run_id: `p4-successor-${Date.now()}`, requirement: f.manifest.requirement, execution_scope: scope, chain_override: scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root }),
+        successor_of: f.manifest.run_id, run_base_sha: f.manifest.run_base_sha };
+      createGoalRun({ projectRoot: f.root, manifest, chain: scope.phase_chain });
+      process.env.MAISON_GOAL_RUN_ID = manifest.run_id;
+      return manifest.run_id;
+    };
+    const check = async (runId: string) => (await coding.check(f.context('coding', runId))).find(item => item.id === 'diff_within_scope')!;
+    const inherited = await check(successor());
+    assert.equal(inherited.status, 'PASS', inherited.details);
+    // 反例：源 run 在 UT 之后由 coding 改写过（即便字节已恢复）→ 血缘回放照样作废，后继照判越界。
+    process.env.MAISON_GOAL_RUN_ID = f.manifest.run_id;
+    recordInvocation(f, 'coding', () => f.write(UT_TEST, 'export default function valueTest() { /* coding */ }\n'));
+    recordInvocation(f, 'coding', () => f.write(UT_TEST, body));
+    const voided = await check(successor());
+    assert.equal(voided.status, 'FAIL', voided.details);
+    assert(voided.affected_files?.includes(UT_TEST), JSON.stringify(voided));
+    assert(voided.details.includes('被 coding 改写'), voided.details);
   } },
   { name: 'bound contracts cannot expand after birth and independent scope ignores unrelated old design verdicts', run(f) {
     f.write('doc/features/demo/plan/reports/summary.json', JSON.stringify({ verdict: 'FAIL', blockers: [{ id: 'old-plan' }] }));

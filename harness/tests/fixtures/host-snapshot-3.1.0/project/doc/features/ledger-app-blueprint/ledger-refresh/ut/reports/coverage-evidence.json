@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "feature": "cu-bGVkZ2VyLWFwcC1ibHVlcHJpbnQAbGVkZ2VyLXJlZnJlc2g",
+  "primary_evidence_source": "ut_tags",
+  "sources": {
+    "ut_tags": [
+      "src/ledger/src/ohosTest/ets/test/LedgerFeature.test.ets"
+    ]
+  },
+  "mappings": [
+    {
+      "scope_id": "AC-1",
+      "scope_kind": "acceptance_criterion",
+      "evidence_source": "ut_tags"
+    }
+  ]
+}

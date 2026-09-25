@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "execution_identity": "20260925T043336Z-8e78e2",
+  "decision_id": "4f7f4fe9edf13728",
+  "vision": {
+    "verdict": true,
+    "source": "probe:tool_read"
+  },
+  "ocr": {
+    "verdict": true,
+    "source": "profile_probe_or_canary"
+  },
+  "vision_mode": "native",
+  "created_at": "2026-09-25T04:33:42.370Z"
+}

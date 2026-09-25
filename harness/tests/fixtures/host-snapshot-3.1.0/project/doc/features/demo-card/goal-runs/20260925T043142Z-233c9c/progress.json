@@ -1,0 +1,120 @@
+{
+  "schema_version": "1.0",
+  "run_id": "20260925T043142Z-233c9c",
+  "feature": "demo-card",
+  "status": "CHAIN_SLICE_COMPLETED",
+  "status_reason": null,
+  "run_disposition": "TERMINAL",
+  "generated_at": "2026-09-25T04:33:35.673Z",
+  "source": {
+    "events_path": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/events.jsonl",
+    "events_count": 107,
+    "last_event_at": "2026-09-25T04:33:35.311Z",
+    "last_event_type": "run_end"
+  },
+  "chain": {
+    "phases": [
+      "coding",
+      "review",
+      "ut",
+      "testing"
+    ],
+    "current_phase": "testing",
+    "current_index": 3,
+    "total": 4,
+    "estimated_percent": 100,
+    "percent_kind": "estimated"
+  },
+  "phase": {
+    "name": "testing",
+    "status": "PASSED",
+    "attempt": 2,
+    "started_at": "2026-09-25T04:33:13.835Z",
+    "elapsed_ms": 21838,
+    "substep": "verdict",
+    "recovered": false
+  },
+  "liveness": {
+    "state": "DONE",
+    "last_activity_at": "2026-09-25T04:33:35.311Z",
+    "seconds_since_activity": 0,
+    "agent_output_stalled_ms": null,
+    "signals": {
+      "feature_lock_heartbeat": "missing",
+      "runner_lock": "missing",
+      "agent_output_log": "missing",
+      "child_process": "unknown",
+      "lingering_pipe": false
+    }
+  },
+  "budget": {
+    "turns_used": 12,
+    "turns_limit": 30,
+    "wall_elapsed_ms": 112279,
+    "wall_limit_ms": 28800000,
+    "phase_timeout_ms": 7200000
+  },
+  "artifacts": {
+    "agent_output_log": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/testing/agent-output.log",
+    "summary_path": null,
+    "goal_report_path": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/goal-report.json",
+    "progress_path": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/progress.json"
+  },
+  "recent_events": [
+    {
+      "ts": "2026-09-25T04:33:24.986Z",
+      "type": "agent_process_settled",
+      "phase": "testing"
+    },
+    {
+      "ts": "2026-09-25T04:33:24.999Z",
+      "type": "harness_start",
+      "phase": "testing"
+    },
+    {
+      "ts": "2026-09-25T04:33:31.205Z",
+      "type": "harness_end",
+      "phase": "testing"
+    },
+    {
+      "ts": "2026-09-25T04:33:35.241Z",
+      "type": "phase_verdict",
+      "phase": "testing"
+    },
+    {
+      "ts": "2026-09-25T04:33:35.311Z",
+      "type": "run_end"
+    }
+  ],
+  "next_action": "read_goal_report",
+  "phases_summary": [
+    {
+      "phase": "coding",
+      "status": "PASSED",
+      "attempts": 2,
+      "duration_ms": 18007,
+      "evidence": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/coding/harness/summary.json"
+    },
+    {
+      "phase": "review",
+      "status": "PASSED",
+      "attempts": 2,
+      "duration_ms": 18304,
+      "evidence": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/review/harness/summary.json"
+    },
+    {
+      "phase": "ut",
+      "status": "PASSED",
+      "attempts": 2,
+      "duration_ms": 17817,
+      "evidence": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/ut/harness/summary.json"
+    },
+    {
+      "phase": "testing",
+      "status": "PASSED",
+      "attempts": 2,
+      "duration_ms": 21406,
+      "evidence": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/testing/harness/summary.json"
+    }
+  ]
+}

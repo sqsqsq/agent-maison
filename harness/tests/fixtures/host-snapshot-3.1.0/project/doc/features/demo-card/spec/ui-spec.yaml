@@ -1,0 +1,25 @@
+schema_version: "1.0"
+feature: demo-card
+screens:
+  - id: all_banks
+    priority: P1
+    root:
+      type: navigation_frame
+      order: 0
+      children:
+        - id: bank_row_cmb
+          type: list_item
+          order: 0
+          text: 招商银行
+  - id: open_card_entry
+    priority: P1
+    root:
+      type: navigation_frame
+      order: 0
+      children:
+        - id: open_card_title
+          type: text
+          order: 0
+          text: 开卡申请
+tokens: {}
+assets: []

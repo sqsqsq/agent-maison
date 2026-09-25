@@ -23,7 +23,7 @@ Use this Skill when a blueprint has an admitted canonical artifact. Canonical `c
 
 ## Authority and entry
 
-- Run `check:change-unit`（`--blueprint <blueprint_id> --unit <change_unit_id>`）for each candidate before deriving readiness. A decomposition Provider may propose only temporary/in-memory candidates; only the consumer validator may accept a provenance-bearing canonical CU. Accepting a batch is atomic: any candidate failing schema, identity, design closure, provenance or source authority rejects the whole batch and writes nothing. Accepting a candidate whose canonical path already exists fails closed — correct an accepted unit with a new revising/superseding CU, never by re-accepting.
+- Run `check:change-unit`（`--blueprint <blueprint_id> --unit <change_unit_id>`）for each candidate before deriving readiness. A decomposition Provider may propose only temporary/in-memory candidates; only the consumer validator may accept a provenance-bearing canonical CU. Accepting a batch is atomic: any candidate failing schema, identity, design closure, provenance or source authority rejects the whole batch and writes nothing. Accepting a candidate whose canonical path already exists fails closed — a contract change gets a new `change_unit_id` with `supersedes`, never a re-accept.
 - Read CU intent, predicates, provides and design targets from the canonical artifact. Read component design from `component_blueprint_ref`; never copy either definition into a Feature.
 - Derive the Feature identity from `(blueprint_id, change_unit_id)`：逻辑 id = `cu-` + base64url 编码，物理路径 = `<features_dir>/<blueprint_id>/<change_unit_id>`（经框架 SSOT 解析，不手工拼接）。`contracts.change_unit` contains only ID mappings; `contracts.state_management` remains the sole runtime-construction authority.
 - `blueprint_id` 是路径键；`component_id` 只做所有权/一致性核验。requires/provides、carry-forward 与 ready set 全部限定同一 `blueprint_id` 工作区，跨工作区 CU（含同部件早期演进）不满足依赖。
@@ -31,13 +31,13 @@ Use this Skill when a blueprint has an admitted canonical artifact. Canonical `c
 
 ## Progression
 
-1. Re-derive completion (`ABSENT|VALID|STALE|INVALID`), current blueprint target admission, exact requires/provides, blocker probes and ready candidates from formal artifacts.
+1. Re-derive completion (`ABSENT|VALID|INCOMPLETE|INVALID` from `assessFeature`; `INCOMPLETE` lists the uncovered obligations), current blueprint target admission, exact requires/provides, blocker probes and ready candidates from formal artifacts.
 2. If an existing Goal Mode run is active, resume it and do not start another CU.
 3. Otherwise select at most one ready CU by ascending numeric priority, then stable `change_unit_id`.
 4. Hand Goal Mode the canonical CU path/ref/hash, blueprint ref and derived Feature id. After it returns, reread all facts before selecting again.
 5. On failure, pause or awaiting-human, stop on that run. Do not create a P2 checkpoint or start a second CU.
 
-Blueprint/CU identity drift makes unimplemented mappings and readiness stale. Preserve completed CU artifacts and Goal Mode history; carry completed provides forward only when every historical stable target still resolves and remains admitted in the current blueprint. Otherwise return to P1 reconciliation. Corrections to completed work use a new revising/superseding CU id.
+Blueprint/CU identity drift makes mappings and readiness stale. Unchanged contract fields mean the same CU, completed or not: when every historical stable target still resolves and remains admitted in the current blueprint, design-preparation readiness re-points its blueprint pointers in place (CU revision + 1), Goal Mode history is preserved, and a successor covers only the uncovered obligations. Otherwise return to P1 reconciliation. Only a contract change uses a new `change_unit_id` with `supersedes`; `revises` is read-only legacy.
 
 ## Boundaries
 

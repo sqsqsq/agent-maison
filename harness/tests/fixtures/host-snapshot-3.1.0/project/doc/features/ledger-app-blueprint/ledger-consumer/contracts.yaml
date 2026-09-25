@@ -1,0 +1,21 @@
+feature: cu-bGVkZ2VyLWFwcC1ibHVlcHJpbnQAbGVkZ2VyLWNvbnN1bWVy
+source: P2 canonical fixture
+version: "1"
+modules: []
+module_dependencies: {}
+data_models: []
+interfaces: []
+components: []
+files: []
+change_unit:
+  change_unit_ref:
+    artifact: change-unit@1
+    component_id: ledger
+    change_unit_id: ledger-consumer
+    revision: 1
+    artifact_sha256: sha256:247d2f6056f9daaaeacb125fc89dd618578486be0908e6384c9110d33574cb27
+    blueprint_id: ledger-app-blueprint
+  predicate_mappings: []
+  provide_mappings: []
+  design_ref_mappings: []
+state_management: []

@@ -1,0 +1,14 @@
+{
+  "schema": "run-control@1",
+  "run_id": "20260925T043142Z-233c9c",
+  "current_epoch": 1,
+  "owner": {
+    "kind": "process",
+    "owner_id": "bd5542cf-31dc-4cbe-bf41-2112b8fbed36",
+    "epoch": 1,
+    "state": "released",
+    "pid": 50824,
+    "hostname": "DESKTOP-H56VQB0"
+  },
+  "updated_at": "2026-09-25T04:33:35.682Z"
+}

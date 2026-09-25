@@ -44,4 +44,4 @@ description: 单阶段执行者。Claude 原生 /goal 路径下由薄 driver 主
 - 一次派发只做一个阶段；闭环后停止，不自行进入下一阶段（推进由主会话 / 用户决定）。
 - 不手写脚本处理 trace / report / timing / 像素：这些由 harness 机器生成（test-report、receipt、stability、`--measure`）。
 - 框架 / vendor 事实以当前 profile-addendum 与契约为准，记忆只作线索，不作裁决依据。
-- 修正已闭环内容：直接改 SSOT / 代码 / 测试输入，然后 `harness-runner.ts --revalidate --feature <feature>`——它只是检查命令，不推进阶段。
+- 修正已闭环内容：直接改 SSOT / 代码 / 测试输入，然后 `harness-runner.ts --revalidate --feature <feature>`——它只是检查命令，不推进阶段、不签发完成。feature 已完成后的修正由主会话在同一 feature 上以 supersede 起后继 run（范围由框架算、只跑未覆盖的责任阶段），不在本阶段派发内处理。

@@ -32,19 +32,25 @@ import {
   deriveChangeUnitFeatureId,
   enumerateCanonicalChangeUnits,
   resolveChangeUnitRef,
-  inspectDerivedFeatureBinding,
 } from './change-unit-path';
-import { ChangeUnitCarryForwardVerdict, evaluateChangeUnitCarryForward } from './change-unit-reconciliation';
+import { evaluateChangeUnitCarryForward } from './change-unit-reconciliation';
 import { validateChangeUnitFeatureProjection } from './change-unit-feature-projection';
 import { loadPhaseEvidenceManifest } from './phase-evidence-manifest';
-import { blockerChangeUnitIssues, validateChangeUnit } from './change-unit-validator';
-import { ContractsSpec } from './types';
-import { ComponentBlueprintRef as BlueprintRef } from './component-blueprint-model';
 
 export interface ComponentClosureInputOptions {
   completion?: ChangeUnitCompletionAdapterOptions;
   observeCompletion?: (projectRoot: string, changeUnit: ChangeUnitArtifact) => ChangeUnitCompletionObservation;
-  evaluateCarryForward?: (projectRoot: string, changeUnit: ChangeUnitArtifact) => ChangeUnitCarryForwardVerdict;
+}
+
+/** owner ref 身份不等于当前蓝图的 CU 一律不贡献；升版出口唯一在设计交接（b2d7f4e9 §3.3）。 */
+const NOT_REPOINTED = '未原位升版：请经 /component-design 设计交接派生 readiness（reconcileChangeUnitBlueprintRefs）升版指针。';
+
+interface RawClosureUnit {
+  loaded: LoadedChangeUnit;
+  ref: ChangeUnitRef;
+  changeUnit: ChangeUnitArtifact;
+  /** 空 = 在当前蓝图上；非空 = 未升版原因 + carry-forward 不通过的原因（说明为何升不了）。 */
+  carryForwardReasons: string[];
 }
 
 export interface ResolvedClosureChangeUnit {
@@ -74,26 +80,16 @@ function featureInput(
   projectRoot: string,
   unit: ChangeUnitArtifact,
   completion: ChangeUnitCompletionObservation,
-  currentBlueprintRef: ComponentBlueprintRef,
+  onCurrentBlueprint: boolean,
 ): ClosureFeatureInput {
   // M5A §4.3：新编码 = base64url(blueprint_id \0 change_unit_id)；物理路径经 featureFilePath SSOT。
   const featureId = deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id);
   const { spec } = readCompletedFeatureDesign(projectRoot, featureId, completion);
-  const historical = !sameBlueprintIdentity(unit.component_blueprint_ref, currentBlueprintRef);
-  const projectionContracts = historical
-    ? normalizeHistoricalContracts(spec.contracts, currentBlueprintRef)
-    : spec.contracts;
-  const projectionUnit = historical ? normalizeHistoricalUnit(unit, currentBlueprintRef) : undefined;
-  const projection = validateChangeUnitFeatureProjection(
-    projectRoot,
-    featureId,
-    projectionContracts,
-    spec.acceptance,
-    Boolean(spec.useCases),
-    'review',
-    [],
-    { changeUnitOverride: projectionUnit },
-  );
+  // 未原位升版的 CU 已由 carry_forward:false 挡住并路由 reconcile_blueprint；其施工投影待升版后按当前蓝图再判，
+  // 不拿旧蓝图 ref 过精确解析器（b2d7f4e9 §3.3/§3.4）。
+  const projection = onCurrentBlueprint
+    ? validateChangeUnitFeatureProjection(projectRoot, featureId, spec.contracts, spec.acceptance, Boolean(spec.useCases), 'review')
+    : { issues: [], useCasesRequired: false, dagRequired: false };
   const evidenceHashes = stableSortStrings((completion.expectedChain ?? []).flatMap(phase => {
     const loaded = loadPhaseEvidenceManifest(projectRoot, featureId, phase);
     return loaded ? [loaded.fileSha256, loaded.manifest.aggregate_sha256] : [];
@@ -114,34 +110,8 @@ function featureInput(
   };
 }
 
-function currentRef(ref: BlueprintRef, owner: ComponentBlueprintRef): BlueprintRef {
-  return { ...owner, target: { ...ref.target } };
-}
-
-function normalizeHistoricalUnit(unit: ChangeUnitArtifact, owner: ComponentBlueprintRef): ChangeUnitArtifact {
-  return {
-    ...unit,
-    component_blueprint_ref: { ...owner, target: { ...owner.target } },
-    design_refs: unit.design_refs.map(ref => currentRef(ref, owner)),
-    touches: unit.touches.map(touch => ({ ...touch, design_ref: currentRef(touch.design_ref, owner) })),
-  };
-}
-
-function normalizeHistoricalContracts(
-  contracts: ContractsSpec | undefined,
-  owner: ComponentBlueprintRef,
-): ContractsSpec | undefined {
-  if (!contracts) return contracts;
-  const cloned = JSON.parse(JSON.stringify(contracts)) as ContractsSpec;
-  for (const mapping of cloned.change_unit?.design_ref_mappings ?? []) mapping.design_ref = currentRef(mapping.design_ref, owner);
-  for (const state of cloned.state_management ?? []) {
-    if (state.design_ref) state.design_ref = currentRef(state.design_ref, owner);
-  }
-  return cloned;
-}
-
 function inspectRetirement(
-  units: Array<{ loaded: LoadedChangeUnit; ref: ChangeUnitRef; changeUnit: ChangeUnitArtifact }>,
+  units: ReadonlyArray<Pick<RawClosureUnit, 'ref' | 'changeUnit'>>,
   issues: ComponentClosureIssue[],
 ): Map<string, string> {
   const byId = new Map(units.map(unit => [unit.changeUnit.change_unit_id, unit]));
@@ -199,6 +169,24 @@ function inspectRetirement(
   return retiredBy;
 }
 
+/**
+ * 活动 CU 集合的反面（b2d7f4e9 codex r2）：与 closure 同一个退役判定 `inspectRetirement`——被同部件 CU 以
+ * supersedes 精确引用（目标 revision + artifact_sha256 与 canonical 一致）者退役。卷入冲突 / 环的不算退役（照旧阻断）。
+ * 设计交接 readiness 与推进 ready set 只对活动 CU 要求可施工 / 计完成。
+ */
+export function retiredChangeUnitIds(projectRoot: string, blueprintId: string): Set<string> {
+  // 枚举/单个 CU 不可加载时不判退役（= 按活动 CU 照旧校验、照旧阻断），错误由各消费方自己的加载报出。
+  let loadedUnits: LoadedChangeUnit[];
+  try { loadedUnits = enumerateCanonicalChangeUnits(projectRoot, blueprintId); } catch { return new Set(); }
+  const units = loadedUnits.flatMap(loaded => {
+    try { return [{ ref: createChangeUnitRef(loaded), changeUnit: asChangeUnitArtifact(loaded.changeUnit) }]; } catch { return []; }
+  });
+  const issues: ComponentClosureIssue[] = [];
+  const retiredBy = inspectRetirement(units, issues);
+  const disputed = new Set(issues.map(issue => issue.path));
+  return new Set([...retiredBy.keys()].filter(id => !disputed.has(`change-unit:${id}`)));
+}
+
 export function resolveComponentClosureInputs(
   projectRoot: string,
   blueprintId: string,
@@ -241,28 +229,25 @@ export function resolveComponentClosureInputs(
     })
     .sort((a, b) => compareCodePoint(a.item_id, b.item_id));
 
-  const rawUnits: Array<{ loaded: LoadedChangeUnit; ref: ChangeUnitRef; changeUnit: ChangeUnitArtifact }> = [];
+  const rawUnits: RawClosureUnit[] = [];
   // M5A §8.2：输入枚举限定同一 <features_dir>/<blueprint_id>/ 工作区（enumerateCanonicalChangeUnits
   // 只枚举该工作区含 change-unit.yaml 的子目录）；跨工作区 CU（含同 component_id 的早期演进）
   // 既不进入输入集、也不为任何 row 计分（proof 5）。
+  // b2d7f4e9 §3.4 单路：owner ref = 当前蓝图者精确解析；其余 = 未原位升版，不贡献（carry_forward:false）。
   for (const loaded of enumerateCanonicalChangeUnits(projectRoot, blueprintId)) {
     try {
       const ref = createChangeUnitRef(loaded);
       const artifact = asChangeUnitArtifact(loaded.changeUnit);
       if (sameBlueprintIdentity(artifact.component_blueprint_ref, blueprintRef)) {
         const resolved = resolveChangeUnitRef(projectRoot, ref);
-        rawUnits.push({ loaded: resolved, ref, changeUnit: asChangeUnitArtifact(resolved.changeUnit) });
+        rawUnits.push({ loaded: resolved, ref, changeUnit: asChangeUnitArtifact(resolved.changeUnit), carryForwardReasons: [] });
       } else {
-        const artifactIssues = blockerChangeUnitIssues(validateChangeUnit(loaded.changeUnit, { canonicalPath: loaded.canonicalPath }))
-          .filter(item => item.id !== 'change_unit_provenance_context_missing');
-        if (artifactIssues.length > 0) throw new Error(artifactIssues.map(item => `${item.id}@${item.path}`).join(', '));
-        const binding = inspectDerivedFeatureBinding(projectRoot, artifact.blueprint_id, artifact.change_unit_id, artifact.component_id);
-        if (binding.status !== 'matched'
-          || binding.ref.revision !== ref.revision
-          || binding.ref.artifact_sha256 !== ref.artifact_sha256) {
-          throw new Error(`historical CU 的 deterministic Feature binding 不精确：${binding.status}`);
-        }
-        rawUnits.push({ loaded, ref, changeUnit: artifact });
+        rawUnits.push({
+          loaded,
+          ref,
+          changeUnit: artifact,
+          carryForwardReasons: [NOT_REPOINTED, ...evaluateChangeUnitCarryForward(projectRoot, artifact).reasons],
+        });
       }
     } catch (error) {
       issues.push(closureIssue(
@@ -278,11 +263,8 @@ export function resolveComponentClosureInputs(
   const retiredBy = inspectRetirement(rawUnits, issues);
   const observe = options.observeCompletion
     ?? ((root: string, unit: ChangeUnitArtifact) => observeChangeUnitCompletion(root, unit, options.completion));
-  const carry = options.evaluateCarryForward ?? evaluateChangeUnitCarryForward;
-  const units: ResolvedClosureChangeUnit[] = rawUnits.map(unit => {
+  const units: ResolvedClosureChangeUnit[] = rawUnits.map(({ carryForwardReasons, ...unit }) => {
     const completion = observe(projectRoot, unit.changeUnit);
-    const historicalBlueprint = !sameBlueprintIdentity(unit.changeUnit.component_blueprint_ref, blueprintRef);
-    const carryForward = historicalBlueprint ? carry(projectRoot, unit.changeUnit) : { allowed: true, reasons: [] };
     const input: ClosureChangeUnitInput = {
       ref: unit.ref,
       current: !retiredBy.has(unit.changeUnit.change_unit_id),
@@ -290,13 +272,13 @@ export function resolveComponentClosureInputs(
       feature_id: completion.featureId,
       completion: completion.state,
       completion_reasons: stableSortStrings(completion.reasons),
-      carry_forward: carryForward.allowed,
-      carry_forward_reasons: stableSortStrings(carryForward.reasons),
+      carry_forward: carryForwardReasons.length === 0,
+      carry_forward_reasons: stableSortStrings(carryForwardReasons),
     };
     return { ...unit, input, completionObservation: completion };
   });
   const features = units
-    .map(unit => featureInput(projectRoot, unit.changeUnit, unit.completionObservation, blueprintRef))
+    .map(unit => featureInput(projectRoot, unit.changeUnit, unit.completionObservation, unit.input.carry_forward))
     .sort((a, b) => compareCodePoint(a.feature_id, b.feature_id));
   return {
     blueprint,

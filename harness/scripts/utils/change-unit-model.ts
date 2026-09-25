@@ -95,6 +95,7 @@ export interface ChangeUnitArtifact {
     recovery_refs: string[];
   };
   blockers: ChangeUnitBlocker[];
+  /** 读兼容：旧 CU 可带此字段；不再生成、无消费者（契约变化用新 id + supersedes，蓝图升版用指针原位升版）。 */
   revises?: ChangeUnitRef;
   supersedes?: ChangeUnitRef;
 }

@@ -1,0 +1,789 @@
+{
+  "phase": "testing",
+  "feature": "demo-card",
+  "timestamp": "2026-09-25T04:33:30.946Z",
+  "project_root": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur",
+  "assurance": "degraded",
+  "capability_resolutions": [
+    {
+      "id": "capability_testing_cases",
+      "axis": "evidence",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "fail",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "cases",
+          "state": "resolved",
+          "selected_source": "acceptance@1",
+          "selected_source_fingerprint": "352b678a652cf596cc0cb311600a4590404c3d9ef08267470b868b529866a080",
+          "binding": {
+            "input_id": "cases",
+            "source": {
+              "kind": "artifact",
+              "artifact": "acceptance@1"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\acceptance.yaml",
+                "exists": true,
+                "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/demo-card/acceptance.yaml"
+            ],
+            "content_fingerprint": "352b678a652cf596cc0cb311600a4590404c3d9ef08267470b868b529866a080"
+          },
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "acceptance@1",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\acceptance.yaml",
+                  "exists": true,
+                  "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "spec",
+              "detail": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\acceptance.yaml"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability_testing_code_context",
+      "axis": "functional",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "fail",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "tested_code",
+          "state": "resolved",
+          "selected_source": "derive.codebase",
+          "selected_source_fingerprint": "6db8928e705ecd20f4e070aaf48cc0f312adaff61aef2b6fd1b8b6f6596a67b6",
+          "binding": {
+            "input_id": "tested_code",
+            "source": {
+              "kind": "derive",
+              "provider_id": "derive.codebase"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\index.ets",
+                "exists": true,
+                "sha256": "c42372f3cbb70378e8050f918322ab85b85a706f5b51c303961ded13d16a51bb",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\AllBanksPage.ets",
+                "exists": true,
+                "sha256": "e9e1d7080d2bd7504115df6e88d94a4ed5eebe19aab033c2268927a5a6c61b95",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankListItem.ets",
+                "exists": true,
+                "sha256": "727e9a2af8334e09b414a53e04f94b7fea76875d30bd73af6307a957b58b9e5f",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankModel.ets",
+                "exists": true,
+                "sha256": "85bf14be522a0c0815a787be2b9e1f739e86be41fb8a25b9f83f47324996b1c4",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankRepository.ets",
+                "exists": true,
+                "sha256": "fa10a20e27b5fa016f02a0e0608747e1f892974bb0a6cf10f7f3021e3ac3c907",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankService.ets",
+                "exists": true,
+                "sha256": "bca6edbcaabe61fba6090d8f396f0105962a18d13dc2eacd88d0802d58045fb6",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\resources\\base\\media\\logo_demo.png",
+                "exists": true,
+                "sha256": "6d51ea2402770798273a2f11d1a64aa04eb290df7790eaaa38ad61420bfeeb1c",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\resources\\base\\media\\result_demo.png",
+                "exists": true,
+                "sha256": "0672172608dc6517fd62993f139ade74279b32c3a2e5ee63f425e40f23de9421",
+                "role": "derive"
+              }
+            ],
+            "source_refs": [
+              "02-Feature/FinancialCard/index.ets",
+              "02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets",
+              "02-Feature/FinancialCard/src/main/ets/BankModel.ets",
+              "02-Feature/FinancialCard/src/main/ets/BankRepository.ets",
+              "02-Feature/FinancialCard/src/main/ets/BankService.ets",
+              "02-Feature/FinancialCard/src/main/resources/base/media/logo_demo.png",
+              "02-Feature/FinancialCard/src/main/ets/BankListItem.ets",
+              "02-Feature/FinancialCard/src/main/resources/base/media/result_demo.png"
+            ],
+            "content_fingerprint": "6db8928e705ecd20f4e070aaf48cc0f312adaff61aef2b6fd1b8b6f6596a67b6"
+          },
+          "attempts": [
+            {
+              "kind": "derive",
+              "source": "derive.codebase",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\index.ets",
+                  "exists": true,
+                  "sha256": "c42372f3cbb70378e8050f918322ab85b85a706f5b51c303961ded13d16a51bb",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\AllBanksPage.ets",
+                  "exists": true,
+                  "sha256": "e9e1d7080d2bd7504115df6e88d94a4ed5eebe19aab033c2268927a5a6c61b95",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankModel.ets",
+                  "exists": true,
+                  "sha256": "85bf14be522a0c0815a787be2b9e1f739e86be41fb8a25b9f83f47324996b1c4",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankRepository.ets",
+                  "exists": true,
+                  "sha256": "fa10a20e27b5fa016f02a0e0608747e1f892974bb0a6cf10f7f3021e3ac3c907",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankService.ets",
+                  "exists": true,
+                  "sha256": "bca6edbcaabe61fba6090d8f396f0105962a18d13dc2eacd88d0802d58045fb6",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\resources\\base\\media\\logo_demo.png",
+                  "exists": true,
+                  "sha256": "6d51ea2402770798273a2f11d1a64aa04eb290df7790eaaa38ad61420bfeeb1c",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\ets\\BankListItem.ets",
+                  "exists": true,
+                  "sha256": "727e9a2af8334e09b414a53e04f94b7fea76875d30bd73af6307a957b58b9e5f",
+                  "role": "derive"
+                },
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\02-Feature\\FinancialCard\\src\\main\\resources\\base\\media\\result_demo.png",
+                  "exists": true,
+                  "sha256": "0672172608dc6517fd62993f139ade74279b32c3a2e5ee63f425e40f23de9421",
+                  "role": "derive"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability_testing_design_context",
+      "axis": "evidence",
+      "active": true,
+      "state": "pruned",
+      "on_missing": "prune",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "contracts",
+          "state": "resolved",
+          "selected_source": "contracts@1",
+          "selected_source_fingerprint": "93c49db2c4ed32f462a1dd1f4c29e576704f41b04f53b5f9b457dd86597fa8c1",
+          "binding": {
+            "input_id": "contracts",
+            "source": {
+              "kind": "artifact",
+              "artifact": "contracts@1"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\contracts.yaml",
+                "exists": true,
+                "sha256": "62d1104bc2c30d70e590280deb55788b3cca87b43442882ffc1635caa2931db0",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/demo-card/contracts.yaml"
+            ],
+            "content_fingerprint": "93c49db2c4ed32f462a1dd1f4c29e576704f41b04f53b5f9b457dd86597fa8c1"
+          },
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "contracts@1",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\contracts.yaml",
+                  "exists": true,
+                  "sha256": "62d1104bc2c30d70e590280deb55788b3cca87b43442882ffc1635caa2931db0",
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "plan",
+              "detail": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\contracts.yaml"
+            }
+          ]
+        },
+        {
+          "id": "use_cases",
+          "state": "absent",
+          "selected_source": null,
+          "selected_source_fingerprint": null,
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "use-cases@1",
+              "state": "absent",
+              "dependencies": [
+                {
+                  "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\use-cases.yaml",
+                  "exists": false,
+                  "sha256": null,
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "plan",
+              "detail": "use-cases@1 missing"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "capability_resolution_contract_fingerprint": "4a58dc938b02f3120902bd2dd9a71c6b0c606528c37391d3a8d489c599a96930",
+  "checks": [
+    {
+      "id": "node_options_injection",
+      "category": "structure",
+      "description": "进程预加载注入自检（P0-7：门禁产物防篡改）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "NODE_OPTIONS/execArgv/.node-options/.npmrc 未检出预加载注入。"
+    },
+    {
+      "id": "context_exploration_facts_phase_delta_present",
+      "category": "structure",
+      "description": "facts.md 本阶段 phase_delta 节已声明",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "\"## phase_delta: testing\" 节已声明（365 字符）。"
+    },
+    {
+      "id": "testing_execution_channel",
+      "category": "structure",
+      "description": "顶层 test-plan 每 TC 唯一编译期 execution_channel",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "通道声明完整：hylyre=2、visual=0、provider=0、manual=0；三态：executable=2、unsupported_gap=0、invalid_test=0。派生器只编译 hylyre 集合，不得新增/删除/改写通道。",
+      "suggestion": "通道属计划 identity：修改必须经 test-plan review，不在 derive/回灌时静默重写。"
+    },
+    {
+      "id": "p0_identity_injection",
+      "category": "structure",
+      "description": "P0 身份断言可注入性（派生计划装载时由 harness 注入裸 by_id 断言）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "全部 P0 checkpoint 的身份断言已在派生计划中以精确形状存在，无需注入。",
+      "structured": {
+        "injected": []
+      }
+    },
+    {
+      "id": "plan_references_unit_layer_ac",
+      "category": "traceability",
+      "description": "按 TC 引用形态分档：某条 TC 仅关联 ut_layer=unit 的 AC/BD（且无 NFR 引用）时 BLOCKER （该 TC 应由 business-ut 覆盖，须从 test-plan 删除，不得改标 manual 通道）； 混合引用（unit + device/both 或 NFR）仅 WARN。 在任何 build/install/device 动作之前裁决，BLOCKER 时零设备调用。",
+      "severity": "MINOR",
+      "status": "SKIP",
+      "details": "无 ut_layer=unit 的 AC/BD。",
+      "source": "check-testing.ts"
+    },
+    {
+      "id": "device_test_build",
+      "category": "structure",
+      "description": "当 project_profile 将 device_test.build 声明为 BLOCKER 且未 SKIP 时， harness 必须产出可安装的主应用 signed HAP（执行 hvigor 或按源码 mtime 复用已有 HAP， `reused: true` 时门禁仍为 PASS）；并落盘编译日志/result.json； 声明 SKIP 时本检查 SKIP。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "product=default buildMode=debug\nHAP: C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\build\\default\\outputs\\default\\entry-default-signed.hap\nhvigor 已执行；日志: (无)"
+    },
+    {
+      "id": "device_test_install",
+      "category": "structure",
+      "description": "当 project_profile 将 device_test.install 声明为 BLOCKER 且未 SKIP 时， harness 必须将主应用 HAP 通过 hdc 安装到已连接设备；声明 SKIP 或上游 device_test.build SKIP 时本检查 SKIP。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "已安装: C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\build\\default\\outputs\\default\\entry-default-signed.hap"
+    },
+    {
+      "id": "hylyre_evidence_gate",
+      "category": "structure",
+      "description": "Hylyre native CaseResult/StepResult 三重判据与 legacy 划界",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "structured": {
+        "mode": "native",
+        "native": true,
+        "legacy": false,
+        "minimumVersion": "0.5.0",
+        "installedVersion": "0.5.1",
+        "manifestVersion": "0.5.1",
+        "traceVersion": "0.5.1",
+        "traceSchemaVersion": "0.4-p0",
+        "reasons": []
+      },
+      "details": "native evidence gate PASS：version=0.5.1, schema=0.4-p0，CaseResult/StepResult 必需字段完整。",
+      "suggestion": "P0/acceptance 仅消费当前 trace 的 CaseResult.steps[]。"
+    },
+    {
+      "id": "device_test_run",
+      "category": "structure",
+      "description": "当 project_profile 将 device_test.run 声明为 BLOCKER 且未 SKIP 时， harness 必须按 profile 指定的真机自动化能力消费派生测试用例并产出 report + trace； 脚本以 doc/features/<feature>/testing/test-plan.md「测试用例」表为 SSOT：每条 TC 声明唯一 execution_channel（hylyre | visual | manual | provider:<capability-id>），派生 hylyre 表须与 channel=hylyre 的集合完全相等（missing/extra 均 BLOCKER）。正式派生计划禁止写 explicit_skip_tc_ids（登记即 BLOCKER），历史产物中的该字段仅只读诊断、不减除缺口、不贡献 PASS； 烟测占位类派生无效；在多条派生产物间按 test-plan.hylyre.md 的 mtime 选取最新有效计划。 **门禁语义**：run.ok 仅表示 runner 未崩溃；本检查还须 trace.outcome=success 且无失败/阻塞 case， 否则 BLOCKER FAIL（partial/failed/aborted 不得 PASS）。 声明 SKIP 或上游 device_test.install SKIP 时本检查 SKIP。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "structured": {
+        "execution_key": "02b6fee75b62a50c768ea2d9423d9fea14196d2ccfa8f4ba56d4ebac22c553f2",
+        "reused_by_execution_key": true,
+        "reused_run_dir": "doc/features/demo-card/testing/reports/20260925T043319Z-962/hylyre",
+        "reuse_reason": "最近同键 run 20260925T043319Z-962 成功、证据完整（执行事实与派生副本均已冻结）"
+      },
+      "details": "真机执行复用：device_run=reused_by_execution_key（最近同键 run 20260925T043319Z-962 成功、证据完整（执行事实与派生副本均已冻结）；同键无需重新操作设备，--force-device 可强制真跑）\nexecution_key：02b6fee75b62a50c768ea2d9423d9fea14196d2ccfa8f4ba56d4ebac22c553f2（复用；决策：最近同键 run 20260925T043319Z-962 成功、证据完整（执行事实与派生副本均已冻结））\n报告：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\testing\\reports\\20260925T043319Z-962\\hylyre\\test-report.md\ntrace：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\testing\\reports\\20260925T043319Z-962\\hylyre\\trace.json",
+      "suggestion": "顶层 test-report.md 须与 hylyre trace 对账一致；失败用例须在报告与缺陷清单中如实登记。"
+    },
+    {
+      "id": "visual_diff_capture",
+      "category": "structure",
+      "description": "device_test.run 后 visual_diff 自动截图与骨架采集",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "同键复用：设备截图沿用被复用 run 的产物（visual-diff.json / device-screenshots），参考图或 ui-spec 变化时按现有截图重新比较，不重跑交互。\ngolden_contract=none"
+    },
+    {
+      "id": "device_test_evidence",
+      "category": "structure",
+      "description": "goal 正式 gate：device-test-evidence 统一写入",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "native CaseResult.steps[] 保持唯一证据源；device-test-evidence.json 仅写入既有 goal identity/HAP/trace binding。"
+    },
+    {
+      "id": "ui_entry_coverage",
+      "category": "structure",
+      "description": "当 use-cases.yaml 中同一 user_actions.calls 存在多个 ui_bindings.ui 入口时， 派生 Hylyre 计划须以 entry_ui / linked_flow / calls 结构化字段覆盖每个入口； P0 多入口缺派生覆盖 → BLOCKER FAIL；非 P0 → MAJOR FAIL；缺结构化字段 → MAJOR WARN。",
+      "severity": "MAJOR",
+      "status": "SKIP",
+      "details": "use-cases.yaml 不存在或无 use_cases，跳过 UI 入口覆盖检查。",
+      "source": "check-testing.ts"
+    },
+    {
+      "id": "plan_required_chapters",
+      "category": "structure",
+      "description": "测试计划必须包含以下章节： 测试范围、测试环境、测试用例清单、测试策略、通过标准、风险与依赖",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "测试计划包含全部 6 个必需章节。"
+    },
+    {
+      "id": "test_case_table_format",
+      "category": "structure",
+      "description": "「测试用例清单」必须包含 Markdown 表格，表头至少包含： 用例编号、用例名称、前置条件、测试步骤、预期结果、优先级、关联 AC",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "用例清单表格包含全部必需列，共 2 条用例。"
+    },
+    {
+      "id": "test_case_priority_values",
+      "category": "structure",
+      "description": "测试用例优先级必须为 P0/P1/P2/P3",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "全部 2 条用例的优先级值域合规。"
+    },
+    {
+      "id": "test_case_flow_consistency",
+      "category": "structure",
+      "description": "test_case_flow 结构化 DAG 与用例表一致性（级联归类 SSOT）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "test_case_flow 2 条与用例表一致（引用/环校验通过）。"
+    },
+    {
+      "id": "test_environment_defined",
+      "category": "structure",
+      "description": "「测试环境」必须明确列出：设备型号/模拟器、系统版本、API 版本、 特殊配置要求",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "测试环境章节包含设备、系统版本、API 版本信息。"
+    },
+    {
+      "id": "pass_criteria_defined",
+      "category": "structure",
+      "description": "「通过标准」必须定义量化的通过条件， 如 P0 用例 100% 通过、P1 用例 ≥ 95% 通过",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "通过标准章节包含量化阈值。"
+    },
+    {
+      "id": "plan_metadata_header",
+      "category": "structure",
+      "description": "测试计划和报告顶部必须包含模块标识、版本、日期、测试人员等元数据",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "测试计划包含元数据头部。"
+    },
+    {
+      "id": "upstream_verdict_gate",
+      "category": "structure",
+      "description": "跨阶段负面裁决传播门禁（上游机器裁决非 PASS / blocker 未清 / 证据链不新鲜 → 下游不得启动）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "上游机器裁决全部可消费且无负面结论。\n已消费：coding, review, ut"
+    },
+    {
+      "id": "acceptance_yaml_present",
+      "category": "structure",
+      "description": "acceptance_yaml_present",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "doc/features/demo-card/acceptance.yaml 已存在。"
+    },
+    {
+      "id": "acceptance_content_complete",
+      "category": "structure",
+      "severity": "BLOCKER",
+      "description": "验收内容可执行且有精确预期",
+      "status": "PASS",
+      "details": "验收内容完整"
+    },
+    {
+      "id": "acceptance_ut_layer_complete",
+      "category": "structure",
+      "description": "acceptance_ut_layer_complete",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "全部 2 条 AC/BD 均有合法 ut_layer。"
+    },
+    {
+      "id": "acceptance_device_focus_present",
+      "category": "structure",
+      "description": "acceptance_device_focus_present",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "device/both 共 2 条均已声明 device_focus（及 both 的 ut_focus）。"
+    },
+    {
+      "id": "legacy_device_testing_todo_deprecated",
+      "category": "structure",
+      "description": "legacy_device_testing_todo_deprecated",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "未检测到 legacy device-testing-todo.md。"
+    },
+    {
+      "id": "device_case_contract",
+      "category": "traceability",
+      "description": "Device testing cases 统一归一契约",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "mode=acceptance depth=full cases=2"
+    },
+    {
+      "id": "test_plan_freshness_vs_acceptance",
+      "category": "traceability",
+      "description": "acceptance.yaml 的 mtime 不得新于 test-plan.md（否则须按 acceptance 重派生 plan）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "test-plan.md 不早于 acceptance.yaml（按 mtime）。"
+    },
+    {
+      "id": "acceptance_to_test_case",
+      "category": "traceability",
+      "description": "acceptance.yaml 中 ut_layer∈{device,both} 的 P0/P1 criteria/boundaries 必须被 test-plan.md 至少一条用例覆盖（「关联 AC」列）；c7e4a2d9 增补 P0 优先级 对齐锚（同 check 原地断言，不新立 gate）：每个 device/both 的 P0 criterion 必须被 至少一条 priority=P0 的 TC 引用（复用 parsePlanTcEntries 既有解析）——TC 从 P0 降为 P2 不得令其退出 P0 全分母并假绿；缺口 BLOCKER FAIL，owner=testing 恢复对齐。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "追溯分母：ut_layer∈{device,both} 的 P0/P1（不含 unit 层 AC）\nP0 AC 覆盖率: 1/1\nP1 AC 覆盖率: 1/1\nBD 覆盖率: 0/0\nP0 优先级对齐覆盖率: 1/1（每个 device/both P0 AC 须被至少一条 priority=P0 的 TC 引用；TC P0→P2 降档即缺口）"
+    },
+    {
+      "id": "test_case_to_acceptance",
+      "category": "traceability",
+      "description": "每条测试用例必须关联到至少一个验收标准（AC 编号）",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "全部 2 条测试用例都关联了 AC/BD 编号。"
+    },
+    {
+      "id": "boundary_coverage",
+      "category": "traceability",
+      "description": "边界场景应被测试计划覆盖",
+      "severity": "MAJOR",
+      "status": "SKIP",
+      "details": "acceptance.yaml 无 boundaries 列表。",
+      "source": "check-testing.ts"
+    },
+    {
+      "id": "runtime_mount_conformance",
+      "category": "structure",
+      "description": "结构保真·运行时挂载轴（声明元素在设备 uitree 实际挂载；声明在而未挂载不计分）",
+      "severity": "MINOR",
+      "status": "SKIP",
+      "details": "无设备 uitree dump（layout-*.json）——运行时挂载轴不适用（无设备环境不装死；静态轴照常）。",
+      "source": "check-testing.ts"
+    },
+    {
+      "id": "test_report_generated",
+      "category": "structure",
+      "description": "test-report.md 由 harness 从权威 run 整份生成（plan 07a41ec6 T5）",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "已生成 doc/features/demo-card/testing/test-report.md（权威 run doc/features/demo-card/testing/reports/20260925T043319Z-962/hylyre/trace.json）\n按轴：功能=PASS 稳定性=UNKNOWN 视觉几何=UNKNOWN 内容=UNKNOWN 样式=UNKNOWN 总体=COMPLETE_WITH_GAPS（声明 有条件达标）\n已知缺口 3 项：视觉几何 UNKNOWN；视觉内容/样式 UNKNOWN（无 provider 复核）；交互稳定性 UNKNOWN（同执行键真实执行不足 2 轮，单轮不构成稳定性证据）",
+      "structured": {
+        "conclusion": {
+          "functional": "PASS",
+          "stability": "UNKNOWN",
+          "visual_geometry": "UNKNOWN",
+          "visual_content": "UNKNOWN",
+          "visual_style": "UNKNOWN",
+          "gaps": [
+            "视觉几何 UNKNOWN",
+            "视觉内容/样式 UNKNOWN（无 provider 复核）",
+            "交互稳定性 UNKNOWN（同执行键真实执行不足 2 轮，单轮不构成稳定性证据）"
+          ],
+          "overall": "COMPLETE_WITH_GAPS",
+          "declared_verdict": "有条件达标"
+        }
+      }
+    },
+    {
+      "id": "report_trace_reconciliation",
+      "category": "structure",
+      "description": "顶层 test-report.md「测试执行结果」须与 device_test_run 本轮选中的 testing/reports/<ts>/hylyre/trace.json 全量对账（禁止以顶层 reports/trace.json 回填件为 SSOT）。 报告写通过但 trace 失败/阻塞、结论达标但 trace.outcome≠success → BLOCKER FAIL。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "顶层报告与 Hylyre trace 全量对账一致\ntrace 来源：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\testing\\reports\\20260925T043319Z-962\\hylyre\\trace.json"
+    },
+    {
+      "id": "report_required_chapters",
+      "category": "structure",
+      "description": "测试报告必须包含以下章节： 测试概览、测试执行结果、缺陷清单（如有）、通过率统计、结论",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "测试报告包含全部必需章节。"
+    },
+    {
+      "id": "execution_result_table",
+      "category": "structure",
+      "description": "「测试执行结果」必须包含每条用例的执行状态表， 状态值限于：通过 / 失败 / 阻塞 / 跳过，并包含最终 run 的耗时列；耗时使用精确整数 毫秒 `Nms`（读取侧可兼容合法千分位）；已进入 trace/timing 的 skip/block case 使用 `0ms`， 未进入 trace/timing 的用例（非 hylyre 通道或历史 legacy skip）使用 `—`。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "执行结果表格格式合规，共 2 条记录。"
+    },
+    {
+      "id": "pass_rate_calculated",
+      "category": "structure",
+      "description": "「通过率统计」必须包含各优先级的通过率数值， 以及总体通过率",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "通过率统计章节包含各优先级通过率数值，且分子与机器证据/执行口径一致。"
+    },
+    {
+      "id": "defect_table_format",
+      "category": "structure",
+      "description": "如有失败用例，「缺陷清单」必须包含： 缺陷编号、关联用例、严重程度、描述、状态（待修复/已修复/已关闭）",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "缺陷清单标注为无缺陷。"
+    },
+    {
+      "id": "report_conclusion_with_verdict",
+      "category": "structure",
+      "description": "报告结论必须包含明确的判定：达标 / 有条件达标 / 不达标， 并引用通过率数据",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "结论章节包含可机读判定：有条件达标。"
+    },
+    {
+      "id": "negative_verdict_closure",
+      "category": "structure",
+      "description": "负面产品裁决闭环门禁（测试结论=不达标 → 阻断 phase 闭环，修复重跑后方可推进）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "测试结论=有条件达标，非负面裁决，本门禁不适用（缺声明行由 report_conclusion_with_verdict 拦）。"
+    },
+    {
+      "id": "visual_debt_disclosure",
+      "category": "structure",
+      "description": "视觉债务披露门禁（存在未清偿债务时结论必须引用视觉债务清单）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "无未清偿视觉债务，无披露义务。"
+    },
+    {
+      "id": "plan_to_report_consistency",
+      "category": "traceability",
+      "description": "测试报告中的用例编号必须与测试计划中的用例编号一一对应， 不允许报告中出现计划中未定义的用例",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "计划与报告的用例编号完全一致（2 条）。"
+    },
+    {
+      "id": "defect_to_test_case",
+      "category": "traceability",
+      "description": "缺陷清单中每个缺陷的「关联用例」必须指向测试用例清单中的有效编号",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "无缺陷。"
+    },
+    {
+      "id": "review_closure_attestation",
+      "category": "structure",
+      "description": "review 闭环源码快照与 testing 期产品源码对账（防测试期篡改产品行为）",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "产品源码与 review 闭环快照一致（inventory 7 文件，roots=1）。"
+    },
+    {
+      "id": "product_behavior_switch_scan",
+      "category": "structure",
+      "description": "产品行为开关扫描（测试性开关默认开启=BLOCKER）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "未发现默认开启的测试性行为开关。"
+    },
+    {
+      "id": "p0_coverage_integrity",
+      "category": "structure",
+      "description": "P0 用例覆盖（CaseResult 三轴 + StepResult required/forbidden 对账）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "structured": {
+        "p0_total": 1,
+        "verified_pass": 1,
+        "unsupported_gap": 0,
+        "failed": 0,
+        "verified_coverage": 100,
+        "gap_case_ids": [],
+        "gap_ac_ids": []
+      },
+      "details": "P0 total 1 / verified_pass 1 / unsupported_gap 0 / failed 0 / verified_coverage 100%",
+      "suggestion": "继续由当前 authoritative trace 驱动 report/summary/quality axes。"
+    },
+    {
+      "id": "p0_pass_rate_dual_metrics",
+      "category": "structure",
+      "description": "P0 通过率与全分母对账",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "native evidence 五数口径：P0 total 1 / verified_pass 1 / unsupported_gap 0 / failed 0 / verified_coverage 100%。"
+    },
+    {
+      "id": "p0_semantic_coverage_integrity",
+      "category": "structure",
+      "description": "P0 acceptance coverage（计划要求 × CaseResult.steps[] 实际证据）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "P0 acceptance coverage 已按 1 个 checkpoint 的 required/forbidden StepResult evidence 完整对账。"
+    },
+    {
+      "id": "p0_runtime_step_evidence_boundary",
+      "category": "structure",
+      "description": "P0 native StepResult 证据边界",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "CaseResult.execution/verification/evidence 与 CaseResult.steps[] 是唯一执行证据；不读取日志、tool_calls 或报告散文重建步骤。"
+    },
+    {
+      "id": "testing_case_execution_completeness",
+      "category": "structure",
+      "description": "顶层测试用例执行完整性",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "derived/trace 与 channel=hylyre TC 集合已精确闭合（2 个）；explicit skip 为 0，未执行 case 为 0；非 Hylyre 通道 0 个仍在报告总分母，由 testing_channel_evidence_obligation 裁决（per-TC 证据绑定建立前保持 FAIL/UNVERIFIED）。",
+      "suggestion": "继续消费同一 trace 的 CaseResult.steps[]。"
+    },
+    {
+      "id": "testing_artifact_integrity",
+      "category": "structure",
+      "description": "Hylyre artifact 定位/哈希与 failure-boundary 义务",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "artifact 全部可定位、哈希相符、停留在 trace 目录树内；根失败的失败边界义务已满足。"
+    },
+    {
+      "id": "hylyre_selector_runtime_gate",
+      "category": "structure",
+      "description": "Hylyre StepResult selector evidence 运行时门",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "native StepResult selector evidence 已通过 candidate_count/消歧/absence assertion 运行时门。"
+    },
+    {
+      "id": "p0_runtime_step_evidence",
+      "category": "structure",
+      "description": "P0 device flow 原生 CaseResult.steps[] 证据",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "native CaseResult.steps[] 已在场并通过三重判据（version=0.5.1, schema=0.4-p0）；goal identity binding 保留。"
+    },
+    {
+      "id": "testing_run_status",
+      "category": "structure",
+      "description": "Testing 阶段脚本门禁总体状态",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "Testing 阶段状态面板：\n- 文档结构规则：PASS\n- 主应用打包：PASS\n- 真机装机：PASS\n- 当前是否可以宣称 testing 完成：是\ncan_claim_done: YES\ntest_plan: PRESENT\ntest_report: PRESENT\nblocker_fail_count: 0\nblocker_skip_count: 0\nblocking_warn_count: 0",
+      "suggestion": "脚本门禁可进入 verifier + receipt 闭环；仍需确认真机测试证据与报告语义质量。"
+    },
+    {
+      "id": "capability_testing_cases",
+      "category": "structure",
+      "description": "capability input contract resolved (capability_testing_cases)",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "axis=evidence; all declared pre-check inputs resolved",
+      "source": "capability-resolution.ts"
+    },
+    {
+      "id": "capability_testing_code_context",
+      "category": "structure",
+      "description": "capability input contract resolved (capability_testing_code_context)",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "axis=functional; all declared pre-check inputs resolved",
+      "source": "capability-resolution.ts"
+    }
+  ],
+  "summary": {
+    "total": 55,
+    "pass": 51,
+    "fail": 0,
+    "warn": 0,
+    "skip": 4,
+    "blockers": 0,
+    "verdict": "PASS"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "feature": "cu-bGVkZ2VyLWFwcC1ibHVlcHJpbnQAbGVkZ2VyLXJlZnJlc2g",
+  "generated_at": "2026-09-25T04:34:38.127Z",
+  "harness_phase": "ut",
+  "criteria": [
+    {
+      "id": "AC-1",
+      "kind": "criterion",
+      "ut_layer": "unit",
+      "priority": "P0",
+      "ut_covered": true,
+      "it_tags": [
+        "[BRANCH-success][AC-1] LedgerFeature.add 刷新余额并可恢复"
+      ]
+    }
+  ],
+  "boundaries": [],
+  "summary": {
+    "unit_scope_total": 1,
+    "unit_covered": 1,
+    "device_delegated": 0
+  }
+}

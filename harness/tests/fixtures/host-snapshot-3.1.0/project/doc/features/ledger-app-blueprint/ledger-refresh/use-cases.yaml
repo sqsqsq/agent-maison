@@ -1,0 +1,24 @@
+schema_version: "2"
+feature: cu-bGVkZ2VyLWFwcC1ibHVlcHJpbnQAbGVkZ2VyLXJlZnJlc2g
+use_cases:
+  - id: ledger-refresh
+    coordinator: LedgerFeature.add
+    ui_bindings:
+      - ui: LedgerPage
+        role: entry
+        user_actions:
+          - trigger: 点击新增账目
+            calls: LedgerFeature.add
+    state_model:
+      phases:
+        - start
+        - done
+    branches:
+      - id: success
+        scenario: persisted ledger snapshot is published to the consumer
+        expected_phase_seq:
+          - start
+          - done
+        linked_acceptance:
+          - AC-1
+source: derive.blueprint-contracts:sha256:fe345106ba3e8501f59c180ed060d7a542e874db951d4b1a4e3324cc7862a66d:sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439

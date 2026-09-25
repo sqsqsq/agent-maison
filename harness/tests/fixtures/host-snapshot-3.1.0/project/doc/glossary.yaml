@@ -1,0 +1,6 @@
+schema_version: "1.0"
+terms:
+  - term: "银行卡"
+    canonical_module: "FinancialCard"
+    aliases: []
+    definition: "可开卡的银行卡产品"

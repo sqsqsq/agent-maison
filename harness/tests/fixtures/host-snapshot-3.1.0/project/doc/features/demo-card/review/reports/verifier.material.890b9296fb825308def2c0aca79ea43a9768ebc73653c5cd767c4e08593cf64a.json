@@ -1,0 +1,98 @@
+{
+  "schema": "maison-verifier-material@1",
+  "input_bindings_sha256": "a9bbab8eb7b08200652dbe263429c4400b58a8a3feb01fe755c53dee133ea8d6",
+  "feature": "demo-card",
+  "phase": "review",
+  "gate_fingerprint": "3.1.0:094fc6a0127f",
+  "phase_rule_sha256": "dc1502697a67d2bd9319376779502f100766fec2213e1c39640cd256df579189",
+  "template_sha256": "ea8f23e3134f5c58f3cce163cb97acb42e534cefc99a102520d39e4487c6c189",
+  "lifecycle_sha256": "",
+  "extension_sha256": "",
+  "script_checks": [
+    "capability_review_acceptance_context=PASS/MINOR",
+    "capability_review_code_context=PASS/MINOR",
+    "capability_review_design_context=PASS/MINOR",
+    "capability_review_narrative_context=PASS/MINOR",
+    "conclusion_with_verdict=PASS/BLOCKER",
+    "conditional_pass_closure=PASS/BLOCKER",
+    "context_exploration_facts_phase_delta_present=PASS/BLOCKER",
+    "conventions_coverage=SKIP/MAJOR",
+    "issue_category_values=WARN/MAJOR",
+    "issue_table_format=PASS/BLOCKER",
+    "issue_to_coding_rule=WARN/MINOR",
+    "issue_to_file=PASS/BLOCKER",
+    "metadata_header=PASS/MINOR",
+    "negative_verdict_closure=PASS/BLOCKER",
+    "node_options_injection=PASS/BLOCKER",
+    "required_chapters=PASS/BLOCKER",
+    "review_reference_lint=PASS/MAJOR",
+    "review_scope_to_design=PASS/BLOCKER",
+    "scope_declaration=PASS/MAJOR",
+    "severity_values=PASS/BLOCKER",
+    "statistics_summary=PASS/MAJOR",
+    "upstream_verdict_gate=PASS/BLOCKER"
+  ],
+  "files": [
+    {
+      "path": "02-Feature/FinancialCard/index.ets",
+      "sha256": "c42372f3cbb70378e8050f918322ab85b85a706f5b51c303961ded13d16a51bb"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets",
+      "sha256": "e9e1d7080d2bd7504115df6e88d94a4ed5eebe19aab033c2268927a5a6c61b95"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankListItem.ets",
+      "sha256": "727e9a2af8334e09b414a53e04f94b7fea76875d30bd73af6307a957b58b9e5f"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankModel.ets",
+      "sha256": "85bf14be522a0c0815a787be2b9e1f739e86be41fb8a25b9f83f47324996b1c4"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankRepository.ets",
+      "sha256": "fa10a20e27b5fa016f02a0e0608747e1f892974bb0a6cf10f7f3021e3ac3c907"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankService.ets",
+      "sha256": "bca6edbcaabe61fba6090d8f396f0105962a18d13dc2eacd88d0802d58045fb6"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/resources/base/media/logo_demo.png",
+      "sha256": "6d51ea2402770798273a2f11d1a64aa04eb290df7790eaaa38ad61420bfeeb1c"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/resources/base/media/result_demo.png",
+      "sha256": "0672172608dc6517fd62993f139ade74279b32c3a2e5ee63f425e40f23de9421"
+    },
+    {
+      "path": "doc/features/demo-card/acceptance.yaml",
+      "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03"
+    },
+    {
+      "path": "doc/features/demo-card/context/facts.md",
+      "sha256": "c791ed42bb1b8ee2d080299bad9a382fda8824f3824a8be7bbf85d02f729a4d2"
+    },
+    {
+      "path": "doc/features/demo-card/contracts.yaml",
+      "sha256": "62d1104bc2c30d70e590280deb55788b3cca87b43442882ffc1635caa2931db0"
+    },
+    {
+      "path": "doc/features/demo-card/plan/plan.md",
+      "sha256": "0c688dbfbd8bc782f7ac5bb40c7c14a1ef6c0f2f3e5fdd1a1e2ecc1ce4ba4c08"
+    },
+    {
+      "path": "doc/features/demo-card/review/review-report.md",
+      "sha256": "07cb850e8cd9617edfc88c52b22b6f14f16b2fe9efa05f222cbe71fc145a7f3d"
+    },
+    {
+      "path": "doc/features/demo-card/spec/spec.md",
+      "sha256": "95409507e3001e4973506d2d17618f27f5342415f4493ee388421b1f284e7d96"
+    },
+    {
+      "path": "doc/features/demo-card/use-cases.yaml",
+      "sha256": null
+    }
+  ],
+  "material_sha256": "0827dcca05ca55b8acc3993dfa56515ea56c613debd227eceedc5e8000d16101"
+}

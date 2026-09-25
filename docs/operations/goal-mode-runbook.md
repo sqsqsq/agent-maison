@@ -130,12 +130,12 @@ coding 后绕过 UI scope、按字节一致自动授权或另建 asset 豁免表
 | `HALTED` | 预算/收敛熔断、完整性持续不稳定、真正外部权限边界或 framework defect 等诚实终止；可修质量 FAIL 走责任阶段重跑，P0 skip/档位/视觉证据不得靠 waiver 放行 |
 | `COMPLETED` | legacy（旧 run 事件读取兼容），新 run 不再写出 |
 
-**任何 run 级状态 ≠ 需求完成**：feature 完成唯一判据 = `verify-feature-completion`
-返回 `VALID`（重算全链 clean_pass/血缘/attestation/supersede 审计；伪造/缩链/世界后变
-分别判 INVALID/STALE）。截断链 run（`--start` 非链首）启动前会机器核验上游各阶段
+**任何 run 级状态 ≠ 需求完成**：feature 完成唯一判据 = `assessFeature`（feature-assessment）
+返回 `complete`（记录可信 + 义务逐条覆盖 + 无 blocking；伪造/缩链判记录 broken，世界后变
+判对应义务 uncovered）。截断链 run（`--start` 非链首）启动前会机器核验上游各阶段
 closure（phase-evidence-manifest staleness + review attestation），manifest 文本断言不作数。
 废弃 HALTED 旧 run 用 `--supersede <run_id>`（写审计事件，completion 只认经审计的 supersede）；
-只有需要切断旧 diff lineage 时才同时使用上节的 `--rebaseline-to`。
+只有需要切断旧 diff lineage 时才同时使用上节的 `--rebaseline-to`。completed 源 run 的 successor 重算范围（只跑未覆盖义务的责任阶段）。
 
 **DEFERRED ≠ 完成**：不得宣称 UT/真机已闭环。
 

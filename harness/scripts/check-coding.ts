@@ -34,7 +34,7 @@ import { scanNamedBusinessHandler } from './utils/named-handler';
 import { diffChangedFiles, diffChangedFilesWithStatus, analyzeDiffStaleness } from './utils/git-diff';
 import { readRunBoundContracts } from './utils/capability-resolution';
 import { resolveEffectiveDiffBaseline } from './utils/git-diff';
-import { resolveEffectiveScopeSource, loadAuthoritativeRunEvents, currentFileHash } from './utils/goal-run-creation';
+import { resolveEffectiveScopeSource, loadLineageRunEvents, currentFileHash } from './utils/goal-run-creation';
 import { replayUtOwnedWrites } from './utils/phase-write-boundary';
 import { resolveContractFileReferences } from './utils/contract-reference-closure';
 import { runUiDiffWithinDeclaredFiles } from './utils/ui-scope-gate';
@@ -340,10 +340,11 @@ function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
       const files = [...new Set(diff.entries.flatMap(entry => [entry.path, ...(entry.oldPath ? [entry.oldPath] : [])]))];
       const modules = resolveModulePathPrefixes(ctx.projectRoot, contracts.modules.map(module => module.name), contracts.modules);
       const classified = classifyChangedFiles(files, modules.allowedPrefixes, layerDirPrefixes(ctx.projectRoot));
-      // plan f3b8d261 §3.2：模块内未授权的那一半里，本 run UT 调用产出、此后无他阶段改写、字节未变的
+      // plan f3b8d261 §3.2：模块内未授权的那一半里，UT 调用产出、此后无他阶段改写、字节未变的
       // 具体文件归 UT，不算 coding 越界；模块外照拦。无 run 事件 → 空 Map → 行为不变。
+      // plan b2d7f4e9 t3c：successor 的基线继承自源 run，回放范围随之是 supersede 血缘。
       const utOwned = runId && authority.source === 'run'
-        ? replayUtOwnedWrites(loadAuthoritativeRunEvents(ctx.projectRoot, ctx.feature, runId))
+        ? replayUtOwnedWrites(loadLineageRunEvents(ctx.projectRoot, ctx.feature, runId))
         : new Map<string, { sha256: string | null; voidedBy?: string }>();
       const utNotes: string[] = [];
       const unauthorized = classified.inScopeHits.filter(file => {

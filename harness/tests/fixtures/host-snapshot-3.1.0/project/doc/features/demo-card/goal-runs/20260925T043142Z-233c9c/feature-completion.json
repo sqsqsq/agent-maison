@@ -1,0 +1,78 @@
+{
+  "schema_version": "1.2",
+  "feature": "demo-card",
+  "generated_at": "2026-09-25T04:33:35.590Z",
+  "run_id": "20260925T043142Z-233c9c",
+  "scope_source": "run",
+  "workflow_track": "full",
+  "execution_scope_fingerprint": "37ba15a2df9365293fce9b0ac1173b72236c49aad48ae1012f4fdf8722ba00c6",
+  "scope_revision_count": 2,
+  "chain": [
+    "spec",
+    "plan",
+    "coding",
+    "review",
+    "ut",
+    "testing"
+  ],
+  "artifact_hashes": {
+    "spec_md": "95409507e3001e4973506d2d17618f27f5342415f4493ee388421b1f284e7d96",
+    "acceptance_yaml": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+    "contracts_yaml": "62d1104bc2c30d70e590280deb55788b3cca87b43442882ffc1635caa2931db0"
+  },
+  "requirement_sha256": "e9265755ebbe1d37f6092f234751bd9fde05e0251f329083fb4056aac41fafaf",
+  "review_attestation_aggregate": "a2f8929b1db522b412f87d1b6a64221f2dffc6bdd516864d73c55aa0e345f33a",
+  "testing_source_aggregate": "a2f8929b1db522b412f87d1b6a64221f2dffc6bdd516864d73c55aa0e345f33a",
+  "phases": [
+    {
+      "phase": "spec",
+      "run_id": "20260925T043142Z-233c9c",
+      "attempt": "i2",
+      "gate_fingerprint": "3.1.0:d7dc2d94bac4",
+      "receipt_sha256": null,
+      "evidence_manifest_aggregate": "a8b65e62133b976e772ab102f8c7be301544d7a210e5f4329c4ab60ff4a550d7"
+    },
+    {
+      "phase": "plan",
+      "run_id": "20260925T043142Z-233c9c",
+      "attempt": "i4",
+      "gate_fingerprint": "3.1.0:022730770c99",
+      "receipt_sha256": null,
+      "evidence_manifest_aggregate": "c54c7d82b016630dfd50dfc98d3d0a17e5202f1aa295dc3eb77e534fd8688537"
+    },
+    {
+      "phase": "coding",
+      "run_id": "20260925T043142Z-233c9c",
+      "attempt": "i6",
+      "gate_fingerprint": "3.1.0:280c79bc193c",
+      "receipt_sha256": null,
+      "evidence_manifest_aggregate": "a9cfb7f28c89600ddccb9de5fe3ff39aba1ce163996344472851e5b6d147e2d0"
+    },
+    {
+      "phase": "review",
+      "run_id": "20260925T043142Z-233c9c",
+      "attempt": "i8",
+      "gate_fingerprint": "3.1.0:094fc6a0127f",
+      "receipt_sha256": null,
+      "evidence_manifest_aggregate": "cc10deb0515a5332d8af290a9b95ea1185fca04791e5e0c805a3a0a2e5f718ef"
+    },
+    {
+      "phase": "ut",
+      "run_id": "20260925T043142Z-233c9c",
+      "attempt": "i10",
+      "gate_fingerprint": "3.1.0:07e8727860e1",
+      "receipt_sha256": null,
+      "evidence_manifest_aggregate": "465a0a4445e693c8398ab9a9ac8d51e2a6fecb89d18a385333613da6ced984e2"
+    },
+    {
+      "phase": "testing",
+      "run_id": "20260925T043142Z-233c9c",
+      "attempt": "i12",
+      "gate_fingerprint": "3.1.0:bbe9dbfe6b6b",
+      "receipt_sha256": null,
+      "evidence_manifest_aggregate": "233af3a2b5184973302a1968aa044a87e93abe979a30924102019246fac7a6d1"
+    }
+  ],
+  "parent_run_id": null,
+  "supersedes": []
+}

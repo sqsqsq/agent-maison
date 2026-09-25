@@ -1,0 +1,147 @@
+{
+  "schema_version": "1.0",
+  "run_id": "20260925T043142Z-233c9c",
+  "feature": "demo-card",
+  "status": "CHAIN_SLICE_COMPLETED",
+  "phases": [
+    {
+      "phase": "spec",
+      "verdict": "PASS",
+      "summary_path": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/spec/harness/summary.json",
+      "report_dir": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/spec/harness",
+      "retries": 1,
+      "agent_exit_code": 0,
+      "snapshot_files": {
+        "summary.json": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/spec/harness/summary.json",
+        "script-report.json": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/spec/harness/script-report.json",
+        "merged-report.md": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/spec/harness/merged-report.md",
+        "trace.json": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/spec/harness/trace.json",
+        "verifier.report.md": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/spec/harness/verifier.report.md"
+      },
+      "verifier_evidence": {
+        "subject_id": "a61803db1a4a594e5ad197435f6c2e20c15c6e0cb01fa0cfc40833917eebf981",
+        "verdict": "PASS",
+        "blocker_count": 0
+      },
+      "advance_blocked": false
+    },
+    {
+      "phase": "plan",
+      "verdict": "PASS",
+      "summary_path": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/plan/harness/summary.json",
+      "report_dir": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/plan/harness",
+      "retries": 1,
+      "agent_exit_code": 0,
+      "snapshot_files": {
+        "summary.json": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/plan/harness/summary.json",
+        "script-report.json": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/plan/harness/script-report.json",
+        "merged-report.md": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/plan/harness/merged-report.md",
+        "trace.json": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/plan/harness/trace.json",
+        "verifier.report.md": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/plan/harness/verifier.report.md"
+      },
+      "verifier_evidence": {
+        "subject_id": "483e9d1969f89ac0be469a69c98080d3344d0c183f52ad2cc7739ccaa3581c78",
+        "verdict": "PASS",
+        "blocker_count": 0
+      },
+      "advance_blocked": false
+    },
+    {
+      "phase": "coding",
+      "verdict": "PASS",
+      "summary_path": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/coding/harness/summary.json",
+      "report_dir": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/coding/harness",
+      "retries": 1,
+      "agent_exit_code": 0,
+      "snapshot_files": {
+        "summary.json": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/coding/harness/summary.json",
+        "script-report.json": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/coding/harness/script-report.json",
+        "merged-report.md": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/coding/harness/merged-report.md",
+        "trace.json": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/coding/harness/trace.json",
+        "verifier.report.md": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/coding/harness/verifier.report.md"
+      },
+      "verifier_evidence": {
+        "subject_id": "a6a811fbbcd08b208e809cbdfbdfee681e1a96f0925d93556dfdd77bc40a8adb",
+        "verdict": "PASS",
+        "blocker_count": 0
+      },
+      "advance_blocked": false
+    },
+    {
+      "phase": "review",
+      "verdict": "PASS",
+      "summary_path": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/review/harness/summary.json",
+      "report_dir": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/review/harness",
+      "retries": 1,
+      "agent_exit_code": 0,
+      "snapshot_files": {
+        "summary.json": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/review/harness/summary.json",
+        "script-report.json": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/review/harness/script-report.json",
+        "merged-report.md": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/review/harness/merged-report.md",
+        "trace.json": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/review/harness/trace.json",
+        "verifier.report.md": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/review/harness/verifier.report.md"
+      },
+      "verifier_evidence": {
+        "subject_id": "890b9296fb825308def2c0aca79ea43a9768ebc73653c5cd767c4e08593cf64a",
+        "verdict": "PASS",
+        "blocker_count": 0
+      },
+      "advance_blocked": false
+    },
+    {
+      "phase": "ut",
+      "verdict": "PASS",
+      "summary_path": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/ut/harness/summary.json",
+      "report_dir": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/ut/harness",
+      "retries": 1,
+      "agent_exit_code": 0,
+      "snapshot_files": {
+        "summary.json": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/ut/harness/summary.json",
+        "script-report.json": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/ut/harness/script-report.json",
+        "merged-report.md": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/ut/harness/merged-report.md",
+        "trace.json": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/ut/harness/trace.json",
+        "verifier.report.md": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/ut/harness/verifier.report.md"
+      },
+      "verifier_evidence": {
+        "subject_id": "0c91ecc9e360fd8c4f1001f7c255fae09eb8a47049f7255117dd5ad9a362891e",
+        "verdict": "PASS",
+        "blocker_count": 0
+      },
+      "advance_blocked": false
+    },
+    {
+      "phase": "testing",
+      "verdict": "PASS",
+      "summary_path": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/testing/harness/summary.json",
+      "report_dir": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/testing/harness",
+      "retries": 1,
+      "agent_exit_code": 0,
+      "snapshot_files": {
+        "summary.json": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/testing/harness/summary.json",
+        "script-report.json": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/testing/harness/script-report.json",
+        "merged-report.md": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/testing/harness/merged-report.md",
+        "trace.json": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/testing/harness/trace.json",
+        "verifier.report.md": "doc/features/demo-card/goal-runs/20260925T043142Z-233c9c/phases/testing/harness/verifier.report.md"
+      },
+      "verifier_evidence": {
+        "subject_id": "5156e27b1d9945d05e79740ce1fdedb136ff16e213339d06a52df20a91a3a41e",
+        "verdict": "PASS",
+        "blocker_count": 0,
+        "reused_from_prior_review": true
+      },
+      "advance_blocked": false
+    }
+  ],
+  "deferred_phases": [],
+  "generated_at": "2026-09-25T04:33:35.301Z",
+  "fidelity_routing": {
+    "inferred": "semantic_layout",
+    "selected": "semantic_layout",
+    "effective": "semantic_layout",
+    "strictness": "best_effort",
+    "asset_acquisition_mode": "approximate",
+    "clamped": false,
+    "source": "auto_default",
+    "decision_id": "e23e8ac9ed1cfacf"
+  }
+}

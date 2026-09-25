@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "feature": "demo-card",
+  "primary_evidence_source": "ut_tags",
+  "sources": {
+    "ut_tags": [
+      "02-Feature/FinancialCard/src/ohosTest/ets/test/AllBanksPage.test.ets"
+    ]
+  },
+  "mappings": [
+    {
+      "scope_id": "AC-1",
+      "scope_kind": "acceptance_criterion",
+      "evidence_source": "ut_tags"
+    },
+    {
+      "scope_id": "AC-2",
+      "scope_kind": "acceptance_criterion",
+      "evidence_source": "ut_tags"
+    }
+  ]
+}

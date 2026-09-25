@@ -1,0 +1,239 @@
+{
+  "schema_version": "0.4-p0",
+  "result_protocol": "hylyre.step-outcome/1",
+  "feature": "demo-card",
+  "phase": "testing",
+  "outcome": "success",
+  "model_backend": "none",
+  "tool_calls": [
+    {
+      "case": "TC-001",
+      "index": 0,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 1,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 0,
+      "kind": "back",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 1,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    }
+  ],
+  "retries": 0,
+  "artifacts": {
+    "plan": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\testing\\reports\\20260925T043319Z-962\\hylyre\\test-plan.hylyre.md",
+    "use_fakes": false
+  },
+  "environment": {
+    "hylyre_version": "0.5.1",
+    "hypium_version": "5.0.7.200",
+    "trace_schema_version": "0.4-p0",
+    "result_protocol": "hylyre.step-outcome/1",
+    "selector_engine": "mixed"
+  },
+  "cases": [
+    {
+      "id": "TC-001",
+      "name": "开卡入口",
+      "priority": "P0",
+      "ac_ref": "AC-1",
+      "notes": "",
+      "expected_check_mode": "empty",
+      "steps": [
+        {
+          "index": 0,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 10,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {}
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "bank_row_cmb",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "bank_row_cmb",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "bank_row_cmb",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 1,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 10,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "open_card_title",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "open_card_title",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "open_card_title",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        }
+      ],
+      "execution": "completed",
+      "verification": "passed",
+      "evidence": "complete",
+      "status": "通过"
+    },
+    {
+      "id": "TC-002",
+      "name": "银行列表展示",
+      "priority": "P1",
+      "ac_ref": "AC-2",
+      "notes": "",
+      "expected_check_mode": "empty",
+      "steps": [
+        {
+          "index": 0,
+          "kind": "back",
+          "role": "action",
+          "duration_ms": 10,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "back",
+              "performed": true,
+              "facts": {}
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 1,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 10,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "bank_row_cmb",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "bank_row_cmb",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "bank_row_cmb",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        }
+      ],
+      "execution": "completed",
+      "verification": "passed",
+      "evidence": "complete",
+      "status": "通过"
+    }
+  ]
+}

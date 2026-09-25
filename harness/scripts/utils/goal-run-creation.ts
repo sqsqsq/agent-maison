@@ -21,8 +21,8 @@ import {
   SCOPE_REVISION_FIELDS,
   type GoalManifest,
 } from './goal-manifest';
-import { loadEventsJsonlStrict, type GoalRunEvent } from './goal-runner-phase';
-import { featureFilePath } from '../../config';
+import { collectSupersededAncestorEvents, loadEventsJsonlStrict, type GoalRunEvent } from './goal-runner-phase';
+import { featureFilePath, relFeaturesDir } from '../../config';
 import type { ExecutionScope } from './execution-scope';
 import { executionScopeFingerprint } from './execution-scope';
 import { loadReviewClosureAttestation } from './closure-attestation';
@@ -169,24 +169,24 @@ export function resolveEffectiveScopeSource(
       // D1.3 第三行（第四轮阻断 3）：feature 记录声明**已转交给这个 run**，而该 run 的出生
       // 范围不在——`undefined` 会让调用方（upstream gate 等）回落 workflow/track 默认链，
       // 等于用一条与权威无关的链继续跑。这里必须明确报错。
-      if (record?.transferred_to === runId.trim()) {
+      if (record?.transfers?.some(item => item.run_id === runId.trim())) {
         throw new Error(`[execution-scope] feature 范围已转交给 run ${runId.trim()}，但该 run 的出生范围缺失或损坏——无法确定权威；恢复该 run 的记录，或按既有 correction / successor 路径重新确立权威`);
       }
       return undefined;
     }
-    // D1.3：转交对账在**这一处**集中做——run 的出生范围指纹必须等于 feature 记录登记的
-    // 转交指纹。不等就是损坏（不是「run 内合法修订」——那只改有效范围，不改出生段）。
-    if (record?.transferred_to === runId
-      && record.transferred_scope_fingerprint
-      && record.transferred_scope_fingerprint !== executionScopeFingerprint(birth)) {
-      throw new Error(`[execution-scope] run ${runId} 的出生范围与 feature 记录登记的转交指纹失配：run 出生=${executionScopeFingerprint(birth).slice(0, 16)} feature 登记=${record.transferred_scope_fingerprint.slice(0, 16)}`);
+    // D1.3：转交对账在**这一处**集中做——run 的出生范围指纹必须等于 feature 记录为它登记的
+    // 转交指纹（追加式记录里按 run 找那一条）。不等就是损坏（不是「run 内合法修订」——那只改有效范围，不改出生段）。
+    const transfer = record?.transfers?.find(item => item.run_id === runId);
+    if (transfer && transfer.scope_fingerprint !== executionScopeFingerprint(birth)) {
+      throw new Error(`[execution-scope] run ${runId} 的出生范围与 feature 记录登记的转交指纹失配：run 出生=${executionScopeFingerprint(birth).slice(0, 16)} feature 登记=${transfer.scope_fingerprint.slice(0, 16)}`);
     }
     return { scope: applyScopeRevisions(birth, loadAuthoritativeRunEvents(projectRoot, feature, runId)), source: 'run', run_id: runId };
   }
   if (!record) return undefined;
   // 无 run 身份而记录声明已转交：权威在那个 run 上，这里不得返回 feature 范围。
-  if (record.transferred_to) {
-    throw new Error(`[execution-scope] feature 范围已转交给 run ${record.transferred_to}——本次调用没有 run 身份，无法确定权威；带上该 run 身份再跑`);
+  const transferred = record.transfers?.at(-1);
+  if (transferred) {
+    throw new Error(`[execution-scope] feature 范围已转交给 run ${transferred.run_id}——本次调用没有 run 身份，无法确定权威；带上该 run 身份再跑`);
   }
   return { scope: featureEffectiveScope(record), source: 'feature', run_id: null };
 }
@@ -225,6 +225,18 @@ export function loadAuthoritativeRunEvents(projectRoot: string, feature: string,
   const loaded = loadEventsJsonlStrict(eventsPath);
   if (loaded.corruptLines.length) throw new Error('[execution-scope] events.jsonl 损坏，无法求有效范围');
   return loaded.events;
+}
+
+/**
+ * plan b2d7f4e9 t3c：本 run 的事件前面接上 supersede 血缘（`successor_of` 起、沿审计 supersede
+ * 递归，按时间由旧到新）。successor 的 diff 基线继承自源 run，所以凡是"按事件判这份 diff 里的
+ * 写入归谁"的消费方都必须看同一段血缘；无 `successor_of` 时恰为本 run 事件。
+ */
+export function loadLineageRunEvents(projectRoot: string, feature: string, runId: string): GoalRunEvent[] {
+  const current = loadAuthoritativeRunEvents(projectRoot, feature, runId);
+  const source = loadGoalManifestFromRun(projectRoot, runId, { feature }).successor_of;
+  if (!source) return current;
+  return [...collectSupersededAncestorEvents({ projectRoot, featuresDir: relFeaturesDir(projectRoot), feature, seedTargets: [source] }), ...current];
 }
 
 /**

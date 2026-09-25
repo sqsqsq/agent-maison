@@ -1,0 +1,22 @@
+{
+  "phase": "testing",
+  "stage": "unknown",
+  "timed_out": false,
+  "inspected_file_count": 0,
+  "inspected_files": [],
+  "report_sections_done": [
+    "一、测试概览",
+    "二、测试执行结果",
+    "三、缺陷清单",
+    "四、通过率统计",
+    "五、结论"
+  ],
+  "artifacts": [
+    {
+      "path": "doc/features/demo-card/testing/test-report.md",
+      "sha256": "c79ef09bc6efc63c8b68c7364db216c91f9157b3b6115ec1ef92d8995955da7e",
+      "mtime_ms": 1790310810920.4463
+    }
+  ],
+  "derived_at": "2026-09-25T04:33:31.212Z"
+}

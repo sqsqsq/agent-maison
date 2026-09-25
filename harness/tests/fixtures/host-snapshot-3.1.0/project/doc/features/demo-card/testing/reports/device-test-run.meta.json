@@ -1,0 +1,14 @@
+{
+  "ok": true,
+  "exit_code": 0,
+  "trace_path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\testing\\reports\\20260925T043319Z-962\\hylyre\\trace.json",
+  "report_path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\testing\\reports\\20260925T043319Z-962\\hylyre\\test-report.md",
+  "log_path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\testing\\reports\\20260925T043319Z-962\\hylyre\\device-test-run.log",
+  "run_started_at": "2026-09-25T04:33:18.969Z",
+  "run_ended_at": "2026-09-25T04:33:19.969Z",
+  "ran_at": "2026-09-25T04:33:19.969Z",
+  "run_duration_ms": 1000,
+  "omit_bundle_for_hylyre": true,
+  "hypium_page_name": null,
+  "aa_start_ok": true
+}

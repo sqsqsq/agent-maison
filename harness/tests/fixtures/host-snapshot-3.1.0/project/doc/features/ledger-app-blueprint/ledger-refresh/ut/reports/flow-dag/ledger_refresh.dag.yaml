@@ -1,0 +1,32 @@
+flow_id: ledger_refresh
+flow_name: 账目刷新与恢复
+module: ledger
+use_case: ledger-refresh
+branches:
+  - success
+linked_acceptance:
+  - AC-1
+entry_point:
+  module: ledger
+  file: src/ledger/LedgerFeature.ets
+  function: add
+nodes:
+  - id: n_add
+    type: code_execution
+    description: 新增一笔账目并返回余额
+    source:
+      file: src/ledger/LedgerFeature.ets
+      class: LedgerFeature
+      function: add
+    next:
+      - n_assert
+  - id: n_assert
+    type: assertion
+    description: 余额随账目刷新
+    linked_acceptance:
+      - AC-1
+    assertions:
+      - type: state_check
+        target: balance
+        expected: '120'
+    next: []

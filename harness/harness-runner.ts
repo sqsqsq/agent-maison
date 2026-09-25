@@ -199,6 +199,7 @@ import {
   type RuntimeContext,
 } from './scripts/utils/runtime-policy';
 import { featureRequirementBinding, loadFeatureTrackDecl } from './scripts/utils/feature-track';
+import { inferLegacyProjectRoot, resolveDependencyPath } from './scripts/utils/project-relative-path';
 import { resolveCapabilityResolutionEntryInput } from './scripts/utils/capability-resolution-entry-input';
 import { ensureFeatureExecutionScopeFrozen, applyFeatureScopeRevisionsThenMaybeComplete } from './scripts/utils/feature-execution-scope';
 import { runExplicitRequest } from './scripts/utils/request-phase';
@@ -989,10 +990,11 @@ async function main(): Promise<void> {
       let runlessRequirement: ReturnType<typeof resolveRequirementInput> | undefined;
       if (!process.env.MAISON_GOAL_RUN_ID?.trim() && phase === 'spec' && workflowSpec.schema_version === '1.2') {
         const binding = featureRequirementBinding(projectRoot, feature);
+        const legacyRoot = inferLegacyProjectRoot(projectRoot, binding);
         if (explicitRequirement) {
           runlessRequirement = resolveRequirementInput({ requirement: args.requirement, requirementFile: args['requirement-file'], projectRoot });
         } else {
-          const sources = binding.dependencies.filter(dep => dep.exists).map(dep => dep.path);
+          const sources = binding.dependencies.filter(dep => dep.exists).map(dep => resolveDependencyPath(projectRoot, dep.path, legacyRoot));
           if (sources.length !== 1) {
             throw new Error('无 run inline/旧候选无法恢复原始需求正文；请用 --requirement 或 --requirement-file 重跑当前 spec harness');
           }
@@ -1007,7 +1009,7 @@ async function main(): Promise<void> {
           // to the frozen candidate.
           requirementSourceFiles: binding.dependencies.length ? runlessRequirement.sources : [],
           inputContext: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] },
-        }, binding);
+        }, binding, legacyRoot);
       }
       const capabilityInput = resolveCapabilityResolutionEntryInput({
         frameworkRoot: resolvedFrameworkRoot,

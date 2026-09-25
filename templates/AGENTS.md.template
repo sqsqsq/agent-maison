@@ -71,6 +71,7 @@
 
 `--correction-init` 按上述事实自动路由责任阶段，不要求人签、不写状态、没有收口命令。只改根因层 SSOT 产物、代码与测试输入，再跑一次 `--revalidate --feature <feature> [--from <phase>]`：落点层及下游已闭环 phase 只重跑脚本门禁并按既有闭环路径收口（语义 verifier 不重审——材料未变复用既有报告，材料变了但历史有 PASS 标 `completed_with_prior_review`，差异登记在 `summary.verifier_closure`）；重验 ≠ 重做，不重新进入六阶段、不重写 spec/plan/review 全文（相应产物追加"修正记录"小节即可），不为修正另建 feature 或状态。
 重验后按**漂移分级**补一次复核，不无条件重走 review→UT→testing：文档/报告/备注变化不复审产品；测试代码变化只跑相关测试；导航/状态/业务交互变化做一次 scoped diff review；布局/字号/颜色/资源变化做一次真机截图或 `--measure` 几何量测复核；多类同时变化做一次最终合并 diff review（`review_closure_attestation` / `ut_no_src_mutation` 以 WARN 列出所需复核类型并如实标注，不再永久 BLOCKER）。用户反馈是 successor/correction 输入，不是对上一 run 的签名。
+**已完成后的修正**不走重验（重验只做在途的机械复检、不签发完成）：在同一 feature 上以 supersede 起一个后继 run，范围由框架按当前输入与既往证据算出，只跑未覆盖义务的责任阶段、其余复用；feature 载体（无 run 完成）先追加范围修订再起新 run。改动已提交进仓库的，起后继时把基线重设为当前提交；未提交的沿用源 run 基线。测试用例一律由后继的 UT 阶段以新增测试文件或新增用例产出（同字节重写不算覆盖），框架不把基线里已有的测试算作本轮覆盖证据。
 
 ### 4.0.1 阶段 Skill 总表
 

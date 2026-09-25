@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.1",
+  "goal_run_id": "20260925T043142Z-233c9c",
+  "attempt_id": "i12",
+  "device_target": {
+    "serial": "fake-device",
+    "target_kind": "physical",
+    "session_id": null
+  },
+  "hap_sha256_full": "6902f0725eabb4237b8bd8fae7394b8084c2a50fbb5c044729bc7336b80d1e11",
+  "install_executed": true,
+  "install_ok": true,
+  "trace_path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\testing\\reports\\20260925T043319Z-962\\hylyre\\trace.json",
+  "run_failure_kind": null,
+  "written_at": "2026-09-25T04:33:30.724Z",
+  "cases": [],
+  "artifact_binding": {
+    "test_plan_path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\testing\\test-plan.md",
+    "test_plan_sha256": "b25ef5f6bab1cedceaf0bd1e6038a6cad57b87ed71394e1af59df6ab83769f5e",
+    "derived_plan_path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\testing\\reports\\20260925T043319Z-962\\hylyre\\test-plan.hylyre.md",
+    "derived_plan_sha256": "9e40a41759c6818716c9c111ba1d561af8ea755e7bbd4aabe7f494d7096960cf",
+    "trace_path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\real-chain-IojIur\\doc\\features\\demo-card\\testing\\reports\\20260925T043319Z-962\\hylyre\\trace.json",
+    "trace_sha256": "ef1149813a0fb8ca2d3fe3f641211da9d838c73acc649ece718229cf6bf02679"
+  },
+  "install_reused": false,
+  "reused_by_execution_key": true,
+  "execution_key": "02b6fee75b62a50c768ea2d9423d9fea14196d2ccfa8f4ba56d4ebac22c553f2",
+  "reused_run_dir": "doc/features/demo-card/testing/reports/20260925T043319Z-962/hylyre"
+}

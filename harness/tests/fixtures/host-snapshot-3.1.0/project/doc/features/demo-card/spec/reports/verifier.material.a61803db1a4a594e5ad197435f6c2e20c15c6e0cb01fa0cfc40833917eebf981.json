@@ -1,0 +1,56 @@
+{
+  "schema": "maison-verifier-material@1",
+  "input_bindings_sha256": "81ce661d1046aafd4a4c3add2564e4d0b491af95d29fd0b9f341ab8d20564b43",
+  "feature": "demo-card",
+  "phase": "spec",
+  "gate_fingerprint": "3.1.0:d7dc2d94bac4",
+  "phase_rule_sha256": "2f370641a3efd5e1e62332eb4526c10450b032d199906f350290a3f300d0f530",
+  "template_sha256": "33bebd9900fc1b5b2e649e8813771672686f0e37254856d169181e31604e8dd7",
+  "lifecycle_sha256": "",
+  "extension_sha256": "",
+  "script_checks": [
+    "acceptance_content_complete=PASS/BLOCKER",
+    "acceptance_device_focus_present=PASS/BLOCKER",
+    "acceptance_flow_contract=PASS/MAJOR",
+    "acceptance_flow_structure=PASS/BLOCKER",
+    "acceptance_ut_layer_complete=PASS/BLOCKER",
+    "acceptance_yaml_present=PASS/BLOCKER",
+    "capability_spec_codebase=PASS/MINOR",
+    "capability_spec_existing_acceptance=PASS/MINOR",
+    "capability_spec_requirement=PASS/MINOR",
+    "design_scope_facts=PASS/MINOR",
+    "legacy_device_testing_todo_deprecated=PASS/MINOR",
+    "node_options_injection=PASS/BLOCKER"
+  ],
+  "files": [
+    {
+      "path": "02-Feature/FinancialCard/index.ets",
+      "sha256": "a9b0b1df1389f949c79b0b1f221244ba5f2301acca119841f4586d11a63f1e7d"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets",
+      "sha256": "a2310641c4a15fe462df3c127583c97cb6b61392bd0437f13fa0783d23c2bcbb"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankModel.ets",
+      "sha256": "85bf14be522a0c0815a787be2b9e1f739e86be41fb8a25b9f83f47324996b1c4"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankRepository.ets",
+      "sha256": "fa10a20e27b5fa016f02a0e0608747e1f892974bb0a6cf10f7f3021e3ac3c907"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankService.ets",
+      "sha256": "bca6edbcaabe61fba6090d8f396f0105962a18d13dc2eacd88d0802d58045fb6"
+    },
+    {
+      "path": "doc/features/demo-card/acceptance.yaml",
+      "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03"
+    },
+    {
+      "path": "doc/features/demo-card/context/facts.md",
+      "sha256": "051155433b08fb1e568e27072916aa88c4129338acb94101f05f0fb31365bdf2"
+    }
+  ],
+  "material_sha256": "28e6fa5ad84249160fbce1096f9128fb07aaab322c0c57742f44bbb9ba9e5734"
+}

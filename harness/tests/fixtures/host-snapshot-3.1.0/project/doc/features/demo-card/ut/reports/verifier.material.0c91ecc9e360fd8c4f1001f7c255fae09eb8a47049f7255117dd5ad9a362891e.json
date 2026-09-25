@@ -1,0 +1,140 @@
+{
+  "schema": "maison-verifier-material@1",
+  "input_bindings_sha256": "82563dcd679727a45610e2ca2bae5ae47ceb4f5fdc638bd4850a23f6e3500975",
+  "feature": "demo-card",
+  "phase": "ut",
+  "gate_fingerprint": "3.1.0:07e8727860e1",
+  "phase_rule_sha256": "a9a043124f27b272069e6c4164f424933623e0526e42d43702053cba7f22de36",
+  "template_sha256": "54a2e3de9a82979b7bd6bcb942f237bfa7442e253fab1f5baa659fbd95e2e50f",
+  "lifecycle_sha256": "",
+  "extension_sha256": "",
+  "script_checks": [
+    "acceptance_content_complete=PASS/BLOCKER",
+    "acceptance_coverage=SKIP/BLOCKER",
+    "acceptance_device_focus_present=PASS/BLOCKER",
+    "acceptance_ut_layer_complete=PASS/BLOCKER",
+    "acceptance_yaml_present=PASS/BLOCKER",
+    "boundaries_all_stubbed=SKIP/BLOCKER",
+    "boundary_coverage=SKIP/MAJOR",
+    "boundary_matches_contracts=SKIP/MAJOR",
+    "branch_coverage_full=SKIP/BLOCKER",
+    "capability_ut_core_context=PASS/MINOR",
+    "capability_ut_design_context=PASS/MINOR",
+    "characterization_trace_matches=SKIP/MAJOR",
+    "context_exploration_facts_phase_delta_present=PASS/BLOCKER",
+    "dag_acyclic=SKIP/BLOCKER",
+    "dag_assertion_linked_branch=SKIP/MAJOR",
+    "dag_boundary_matches_spec=SKIP/MAJOR",
+    "dag_cohesion=SKIP/MAJOR",
+    "dag_files_parseable=SKIP/BLOCKER",
+    "dag_linked_usecase=SKIP/BLOCKER",
+    "dag_node_type_valid=SKIP/BLOCKER",
+    "dag_schema_compliance=SKIP/BLOCKER",
+    "dag_source_file_exists=SKIP/BLOCKER",
+    "dag_spy_preset_resolvable=SKIP/BLOCKER",
+    "dag_to_acceptance=SKIP/MAJOR",
+    "dag_to_source=SKIP/BLOCKER",
+    "harness_host_artifact_pollution=PASS/BLOCKER",
+    "it_drives_flow=PASS/MAJOR",
+    "it_name_has_ac_or_branch_tag=PASS/BLOCKER",
+    "legacy_device_testing_todo_deprecated=PASS/MINOR",
+    "mock_stub_for_async=SKIP/BLOCKER",
+    "named_business_handler=SKIP/BLOCKER",
+    "node_options_injection=PASS/BLOCKER",
+    "origin_tag_required=SKIP/BLOCKER",
+    "test_registration=PASS/BLOCKER",
+    "upstream_verdict_gate=PASS/BLOCKER",
+    "usecase_spec_recommended=SKIP/MINOR",
+    "usecase_spec_schema=SKIP/BLOCKER",
+    "usecase_ui_bindings_nonempty=SKIP/BLOCKER",
+    "ut_ac_coverage_report_written=PASS/MINOR",
+    "ut_assertion_exists=PASS/BLOCKER",
+    "ut_case_per_unit_ac=PASS/BLOCKER",
+    "ut_coverage_evidence_mappings_complete=PASS/BLOCKER",
+    "ut_coverage_evidence_present=PASS/BLOCKER",
+    "ut_coverage_evidence_resolves=PASS/BLOCKER",
+    "ut_file_naming=PASS/BLOCKER",
+    "ut_framework_import=PASS/BLOCKER",
+    "ut_hvigor_build=PASS/BLOCKER",
+    "ut_hvigor_test=PASS/BLOCKER",
+    "ut_hypium_mockkit_policy=SKIP/BLOCKER",
+    "ut_import_whitelist=SKIP/BLOCKER",
+    "ut_mock_plan_contracts_consistent=SKIP/BLOCKER",
+    "ut_mock_plan_parseable=PASS/BLOCKER",
+    "ut_mock_plan_present=PASS/BLOCKER",
+    "ut_mock_plan_typed=PASS/BLOCKER",
+    "ut_no_src_mutation=PASS/BLOCKER",
+    "ut_run_status=PASS/MINOR",
+    "ut_testability_audit_parseable=PASS/BLOCKER",
+    "ut_testability_audit_present=PASS/BLOCKER",
+    "ut_tsc_compiles=PASS/BLOCKER",
+    "ut_unsupported_targets_handled=SKIP/BLOCKER"
+  ],
+  "files": [
+    {
+      "path": "02-Feature/FinancialCard/index.ets",
+      "sha256": "c42372f3cbb70378e8050f918322ab85b85a706f5b51c303961ded13d16a51bb"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets",
+      "sha256": "e9e1d7080d2bd7504115df6e88d94a4ed5eebe19aab033c2268927a5a6c61b95"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankListItem.ets",
+      "sha256": "727e9a2af8334e09b414a53e04f94b7fea76875d30bd73af6307a957b58b9e5f"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankModel.ets",
+      "sha256": "85bf14be522a0c0815a787be2b9e1f739e86be41fb8a25b9f83f47324996b1c4"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankRepository.ets",
+      "sha256": "fa10a20e27b5fa016f02a0e0608747e1f892974bb0a6cf10f7f3021e3ac3c907"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankService.ets",
+      "sha256": "bca6edbcaabe61fba6090d8f396f0105962a18d13dc2eacd88d0802d58045fb6"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/resources/base/media/logo_demo.png",
+      "sha256": "6d51ea2402770798273a2f11d1a64aa04eb290df7790eaaa38ad61420bfeeb1c"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/resources/base/media/result_demo.png",
+      "sha256": "0672172608dc6517fd62993f139ade74279b32c3a2e5ee63f425e40f23de9421"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/ohosTest/ets/test/AllBanksPage.test.ets",
+      "sha256": "fd778029a4d75e9d59d2bbb20ec4fb13232edb849a1aa621c53efa7a0ec48d78"
+    },
+    {
+      "path": "doc/features/demo-card/acceptance.yaml",
+      "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03"
+    },
+    {
+      "path": "doc/features/demo-card/context/facts.md",
+      "sha256": "c791ed42bb1b8ee2d080299bad9a382fda8824f3824a8be7bbf85d02f729a4d2"
+    },
+    {
+      "path": "doc/features/demo-card/contracts.yaml",
+      "sha256": "62d1104bc2c30d70e590280deb55788b3cca87b43442882ffc1635caa2931db0"
+    },
+    {
+      "path": "doc/features/demo-card/use-cases.yaml",
+      "sha256": null
+    },
+    {
+      "path": "doc/features/demo-card/ut/mock-plan.yaml",
+      "sha256": "0eaa12c25f3b53900869ca7077713c09711c686a2b0035bea367d4b0e95607eb"
+    },
+    {
+      "path": "doc/features/demo-card/ut/reports/ac-coverage.json",
+      "sha256": "7f35aa416ada9c4b4e3de9ee244f846cca62a5167fccbf9664b59c63cf9c2a35"
+    },
+    {
+      "path": "doc/features/demo-card/ut/testability-audit.md",
+      "sha256": "26e9c873e3b1b3272af5a82f394342f7d6fcbdb95369547833801d89c3ff9fd1"
+    }
+  ],
+  "material_sha256": "d1cbf107e083772c204da1a051e68650a5eb28b95f640df1a94208be3f6c4819"
+}

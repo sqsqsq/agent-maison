@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "agent_adapter": "codex",
+  "toolchain": {
+    "devEcoStudio": {
+      "installPath": "./fake-deveco"
+    }
+  },
+  "vision": {
+    "canary": {
+      "adapter": "codex",
+      "verdict": "tool_read",
+      "probed_at": "2026-09-25T04:31:34.072Z",
+      "probed_via": "interactive",
+      "probe_version": 2
+    }
+  }
+}

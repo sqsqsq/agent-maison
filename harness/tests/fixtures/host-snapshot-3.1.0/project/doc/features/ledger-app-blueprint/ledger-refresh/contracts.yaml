@@ -1,0 +1,252 @@
+feature: cu-bGVkZ2VyLWFwcC1ibHVlcHJpbnQAbGVkZ2VyLXJlZnJlc2g
+source: derive.blueprint-contracts:sha256:fe345106ba3e8501f59c180ed060d7a542e874db951d4b1a4e3324cc7862a66d:sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439
+version: "1"
+modules:
+  - name: ledger
+    layer: 02-Feature
+    format: HAR
+    change_type: modify
+    package_path: src/ledger
+module_dependencies: {}
+data_models: []
+interfaces: []
+components: []
+files:
+  - src/ledger/LedgerFeature.ets
+change_unit:
+  predicate_mappings:
+    - predicate_id: refresh-behavior
+      implementation_refs:
+        - src/ledger/LedgerFeature.ets
+      test_refs:
+        - src/ledger/src/ohosTest/ets/test/LedgerFeature.test.ets
+    - predicate_id: runtime-owner
+      implementation_refs:
+        - src/ledger/LedgerFeature.ets
+      test_refs:
+        - src/ledger/src/ohosTest/ets/test/LedgerFeature.test.ets
+    - predicate_id: page-consumer
+      implementation_refs:
+        - src/ledger/LedgerFeature.ets
+      test_refs:
+        - src/ledger/src/ohosTest/ets/test/LedgerFeature.test.ets
+    - predicate_id: source-contract
+      implementation_refs:
+        - src/ledger/LedgerFeature.ets
+      test_refs:
+        - src/ledger/src/ohosTest/ets/test/LedgerFeature.test.ets
+    - predicate_id: repository-provider
+      implementation_refs:
+        - src/ledger/LedgerFeature.ets
+      test_refs:
+        - src/ledger/src/ohosTest/ets/test/LedgerFeature.test.ets
+    - predicate_id: lifecycle-recovery
+      implementation_refs:
+        - src/ledger/LedgerFeature.ets
+      test_refs:
+        - src/ledger/src/ohosTest/ets/test/LedgerFeature.test.ets
+  provide_mappings:
+    - provide_id: ledger-refresh-vertical-slice
+      implementation_refs:
+        - src/ledger/LedgerFeature.ets
+      test_refs:
+        - src/ledger/src/ohosTest/ets/test/LedgerFeature.test.ets
+  design_ref_mappings:
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: ledger
+        blueprint_id: ledger-app-blueprint
+        revision: 2
+        source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
+        artifact_sha256: sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439
+        target:
+          kind: node
+          view_id: logical
+          id: ledger-domain
+      implementation_refs:
+        - src/ledger/LedgerFeature.ets
+      verification_refs:
+        - src/ledger/src/ohosTest/ets/test/LedgerFeature.test.ets
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: ledger
+        blueprint_id: ledger-app-blueprint
+        revision: 2
+        source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
+        artifact_sha256: sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439
+        target:
+          kind: node
+          view_id: runtime
+          id: ledger-repository
+      implementation_refs:
+        - src/ledger/LedgerFeature.ets
+      verification_refs:
+        - src/ledger/src/ohosTest/ets/test/LedgerFeature.test.ets
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: ledger
+        blueprint_id: ledger-app-blueprint
+        revision: 2
+        source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
+        artifact_sha256: sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439
+        target:
+          kind: node
+          view_id: runtime
+          id: ledger-store
+      implementation_refs:
+        - src/ledger/LedgerFeature.ets
+      verification_refs:
+        - src/ledger/src/ohosTest/ets/test/LedgerFeature.test.ets
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: ledger
+        blueprint_id: ledger-app-blueprint
+        revision: 2
+        source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
+        artifact_sha256: sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439
+        target:
+          kind: flow
+          view_id: runtime
+          id: ledger-refresh-flow
+      implementation_refs:
+        - src/ledger/LedgerFeature.ets
+      verification_refs:
+        - src/ledger/src/ohosTest/ets/test/LedgerFeature.test.ets
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: ledger
+        blueprint_id: ledger-app-blueprint
+        revision: 2
+        source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
+        artifact_sha256: sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439
+        target:
+          kind: node
+          view_id: development
+          id: ledger-module
+      implementation_refs:
+        - src/ledger/LedgerFeature.ets
+      verification_refs:
+        - src/ledger/src/ohosTest/ets/test/LedgerFeature.test.ets
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: ledger
+        blueprint_id: ledger-app-blueprint
+        revision: 2
+        source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
+        artifact_sha256: sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439
+        target:
+          kind: node
+          view_id: scenarios
+          id: add-entry-scenario
+      implementation_refs:
+        - src/ledger/LedgerFeature.ets
+      verification_refs:
+        - src/ledger/src/ohosTest/ets/test/LedgerFeature.test.ets
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: ledger
+        blueprint_id: ledger-app-blueprint
+        revision: 2
+        source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
+        artifact_sha256: sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439
+        target:
+          kind: relation
+          id: repository-publishes-store
+      implementation_refs:
+        - src/ledger/LedgerFeature.ets
+      verification_refs:
+        - src/ledger/src/ohosTest/ets/test/LedgerFeature.test.ets
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: ledger
+        blueprint_id: ledger-app-blueprint
+        revision: 2
+        source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
+        artifact_sha256: sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439
+        target:
+          kind: relation
+          id: domain-owned-by-module
+      implementation_refs:
+        - src/ledger/LedgerFeature.ets
+      verification_refs:
+        - src/ledger/src/ohosTest/ets/test/LedgerFeature.test.ets
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: ledger
+        blueprint_id: ledger-app-blueprint
+        revision: 2
+        source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
+        artifact_sha256: sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439
+        target:
+          kind: contract
+          id: create-entry-v1
+      implementation_refs:
+        - src/ledger/LedgerFeature.ets
+      verification_refs:
+        - src/ledger/src/ohosTest/ets/test/LedgerFeature.test.ets
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: ledger
+        blueprint_id: ledger-app-blueprint
+        revision: 2
+        source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
+        artifact_sha256: sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439
+        target:
+          kind: decision
+          id: seam-shape
+      implementation_refs:
+        - src/ledger/LedgerFeature.ets
+      verification_refs:
+        - src/ledger/src/ohosTest/ets/test/LedgerFeature.test.ets
+  change_unit_ref:
+    artifact: change-unit@1
+    component_id: ledger
+    blueprint_id: ledger-app-blueprint
+    change_unit_id: ledger-refresh
+    revision: 1
+    artifact_sha256: sha256:fe345106ba3e8501f59c180ed060d7a542e874db951d4b1a4e3324cc7862a66d
+state_management:
+  - data: ledger
+    scope: component
+    decorator: none
+    holder: LedgerStore
+    module: ledger
+    owner_ref: view:runtime/node:ledger-repository
+    contract_refs:
+      - contract:create-entry-v1
+    ordered_steps:
+      - persist mutation
+      - publish snapshot
+      - refresh consumer
+    lifecycle_triggers:
+      - process_recreation
+    failure_recovery:
+      strategy: reload repository snapshot
+    mutations:
+      - mutation_id: add-entry
+        kind: user
+        publication_ref: publication:ledger-changed
+        recovery_ref: recovery:reload-ledger
+    publications:
+      - publication_id: ledger-changed
+    subscriptions:
+      - subscription_id: ledger-page-subscription
+        consumer_ref: consumer:ledger-page
+        publication_ref: publication:ledger-changed
+        replay_or_snapshot: latest
+        cleanup: detach observer
+    consumers:
+      - consumer_id: ledger-page
+        initial_load_ref: initial-load:repository-snapshot
+        update_ref: publication:ledger-changed
+    design_ref:
+      artifact: component-blueprint@1
+      component_id: ledger
+      blueprint_id: ledger-app-blueprint
+      revision: 2
+      source_fingerprint: sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5
+      artifact_sha256: sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439
+      target:
+        kind: flow
+        view_id: runtime
+        id: ledger-refresh-flow

@@ -1,0 +1,52 @@
+{
+  "schema_version": "1.2",
+  "feature": "cu-bGVkZ2VyLWFwcC1ibHVlcHJpbnQAbGVkZ2VyLXJlZnJlc2g",
+  "generated_at": "2026-09-25T04:34:30.004Z",
+  "contracts_sha256": "3499e70fb614809fb58bcc5d016df794739d83c40d74e3eb47e403c65fffd440",
+  "contracts_files": [
+    "src/ledger/LedgerFeature.ets"
+  ],
+  "inventory": {
+    "roots": [
+      "02-Feature/FinancialCard"
+    ],
+    "files": [
+      {
+        "path": "02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets",
+        "sha256": "e9e1d7080d2bd7504115df6e88d94a4ed5eebe19aab033c2268927a5a6c61b95"
+      },
+      {
+        "path": "02-Feature/FinancialCard/src/main/ets/BankListItem.ets",
+        "sha256": "727e9a2af8334e09b414a53e04f94b7fea76875d30bd73af6307a957b58b9e5f"
+      },
+      {
+        "path": "02-Feature/FinancialCard/src/main/ets/BankModel.ets",
+        "sha256": "85bf14be522a0c0815a787be2b9e1f739e86be41fb8a25b9f83f47324996b1c4"
+      },
+      {
+        "path": "02-Feature/FinancialCard/src/main/ets/BankRepository.ets",
+        "sha256": "fa10a20e27b5fa016f02a0e0608747e1f892974bb0a6cf10f7f3021e3ac3c907"
+      },
+      {
+        "path": "02-Feature/FinancialCard/src/main/ets/BankService.ets",
+        "sha256": "bca6edbcaabe61fba6090d8f396f0105962a18d13dc2eacd88d0802d58045fb6"
+      },
+      {
+        "path": "02-Feature/FinancialCard/src/main/resources/base/media/logo_demo.png",
+        "sha256": "6d51ea2402770798273a2f11d1a64aa04eb290df7790eaaa38ad61420bfeeb1c"
+      },
+      {
+        "path": "02-Feature/FinancialCard/src/main/resources/base/media/result_demo.png",
+        "sha256": "0672172608dc6517fd62993f139ade74279b32c3a2e5ee63f425e40f23de9421"
+      }
+    ],
+    "file_count": 7,
+    "aggregate_sha256": "a2f8929b1db522b412f87d1b6a64221f2dffc6bdd516864d73c55aa0e345f33a"
+  },
+  "review_report_sha256": "4fb99f001897b05e9390218b5538b989faeb3991a48413119c067e07fa8126eb",
+  "verifier_subject_id": "5f1ae911204d1f1229bca523dfa91ad232bba4ab6468c0ecd91e2dd5e24a3724",
+  "gate_fingerprint": "3.1.0:094fc6a0127f",
+  "run_identity": {
+    "run_id": "20260925T043336Z-8e78e2"
+  }
+}

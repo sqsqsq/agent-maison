@@ -1,0 +1,153 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-09-25T04:34:53.348Z",
+  "feature": "cu-bGVkZ2VyLWFwcC1ibHVlcHJpbnQAbGVkZ2VyLXJlZnJlc2g",
+  "phase": "ut",
+  "inputs": [
+    {
+      "path": "contracts/ledger-api.yaml",
+      "role": "input",
+      "sha256": "6ba6f2f6de504f784319419444d92a50332f736a2d824c934d6f1fefcef584d2",
+      "exists": true
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml",
+      "role": "input",
+      "sha256": "339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439",
+      "exists": true
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/acceptance.yaml",
+      "role": "input",
+      "sha256": "2a8b257571d1b6b8e7b1b589374f132cf0ec52429c1c4165a9362c55227270de",
+      "exists": true
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml",
+      "role": "input",
+      "sha256": "fe345106ba3e8501f59c180ed060d7a542e874db951d4b1a4e3324cc7862a66d",
+      "exists": true
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/context/facts.md",
+      "role": "input",
+      "sha256": "22523f6a72a78e3aaec864182645cd0f2c513303b75e6cd7124b8efd75a3512f",
+      "exists": true,
+      "facts_phase": "ut"
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/contracts.yaml",
+      "role": "input",
+      "sha256": "3499e70fb614809fb58bcc5d016df794739d83c40d74e3eb47e403c65fffd440",
+      "exists": true
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/goal-runs/20260925T043336Z-8e78e2/manifest.json",
+      "role": "input",
+      "sha256": "5feb27e1ab93e7ba5653dcd34edcaac67aaa8eab94ea55aa5263ef06200ac5c2",
+      "exists": true
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/use-cases.yaml",
+      "role": "input",
+      "sha256": "40c6e782288c023909c9c04213a7a692ab94861a01f1416f23b43555bc890f5d",
+      "exists": true
+    },
+    {
+      "path": "mappings/create-entry.yaml",
+      "role": "input",
+      "sha256": "984f318a52562578587ef8bf06db9e345255407390a12f9a0ac22bfc2ebc56b7",
+      "exists": true
+    },
+    {
+      "path": "requirements/ledger.md",
+      "role": "input",
+      "sha256": "1cb261b1d7fa9e60c5a113c6f1a8029a9101809ee206836d6ca8a885123cc988",
+      "exists": true
+    },
+    {
+      "path": "src/ledger/ClosureFixture.ts",
+      "role": "input",
+      "sha256": "3d9ce426b6a10261ea819bcb0866c214a204cb4771d389d99193be39fdeb6d3d",
+      "exists": true
+    },
+    {
+      "path": "src/ledger/LedgerFeature.ets",
+      "role": "input",
+      "sha256": "438c43280a11f6c1ded9988f7ebe9ec4b96e6fae38140a92d481c5c409eba431",
+      "exists": true
+    },
+    {
+      "path": "src/ledger/LedgerIntakeBypass.ts",
+      "role": "input",
+      "sha256": "266e45c659ba29f63892abecd7f5ac1766e6080a11874dc5dd0ff7f2095834cb",
+      "exists": true
+    },
+    {
+      "path": "src/ledger/LedgerIntakeConsumer.ts",
+      "role": "input",
+      "sha256": "05e74157c1ebb27756b6c54ff3da21b9157c9cd6815b9670d806b592143ec6b7",
+      "exists": true
+    },
+    {
+      "path": "src/ledger/LedgerSourceSeam.ts",
+      "role": "input",
+      "sha256": "70cd301f29ed47420f1790c182b8eef73fe27532c46a50c469e68e6fb173c762",
+      "exists": true
+    },
+    {
+      "path": "test/ledger/closure.test.ts",
+      "role": "input",
+      "sha256": "24c2cd85fa29ca62fd6408410e0823394d79cf452649af48ba20e45642130943",
+      "exists": true
+    },
+    {
+      "path": "test/ledger/seam-bypass.case.ts",
+      "role": "input",
+      "sha256": "4d329f5ccd0a2e2a9105d832f184d991406e1bb37579f833df16dcd3181205b2",
+      "exists": true
+    }
+  ],
+  "outputs": [
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/ut/reports/ac-coverage.json",
+      "role": "output",
+      "sha256": "b6b4217e64f16741f8a002b184552cccf883762b28b55b494a2cb9735b33a86b",
+      "exists": true
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/ut/reports/script-report.json",
+      "role": "output",
+      "sha256": "9571b656fa7ec305c48d0feb9a512a641b009894cdaa2c86ef8138eb1f60219a",
+      "exists": true
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/ut/reports/summary.json",
+      "role": "output",
+      "sha256": "59e186ac35bb2b68a21ba661633439dbab804f2246ca285a2a6fdb60a84688ef",
+      "exists": true
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/ut/reports/trace.json",
+      "role": "output",
+      "sha256": "65182ad63c61445ada1431c28e6be16088f8614399ca91adcd263b6dbd2ea2fc",
+      "exists": true
+    },
+    {
+      "path": "doc/features/ledger-app-blueprint/ledger-refresh/ut/testability-audit.md",
+      "role": "output",
+      "sha256": "ee0208365d7293c6b3fc590cb68e4394cec2f5a13449c13fbad92400764563e0",
+      "exists": true
+    }
+  ],
+  "environment": {
+    "framework_version": "3.1.0",
+    "profile": "test-chain",
+    "gate_fingerprint": "3.1.0:07e8727860e1",
+    "framework_config_sha256": "eb2aa515d5ff22b9d6ae2fa051b653d42ced579e64283800f976fe90486dd1ae",
+    "workflow_sha256": "1d65c4f3273b799cc5352c84839ca8b6333c26745d7b934e79841407c13c14e0",
+    "requirement_sha256": "7c178134dd683f41d97099250025364331ab58a88aa22809d1cfd6f32cdd063d"
+  },
+  "receipt_sha256": null,
+  "aggregate_sha256": "bd226bd60b117f659fb00ae3926ca2a359b2707df9cf06c9d82dd67617d1d3be"
+}

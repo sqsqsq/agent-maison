@@ -27,7 +27,7 @@
 
 CU completion SHALL 先从 CU identity 派生 Feature identity，再独立验证真实 Goal run 的冻结执行范围、出生绑定与当前 CU 目标覆盖，解析 expected completion；MUST NOT 信任 completion artifact 自报的范围或按当前 workflow/track 重算新协议 expected chain。旧出生协议才沿既有 `resolveWorkflowSpec()`、`resolveFeatureTrack(loadFeatureTrackDecl())`、`featurePhasesFromWorkflow()` 兼容路径解析。
 
-P2 adapter SHALL 暴露 `ABSENT|VALID|STALE|INVALID`，但不持久化该 verdict。没有 completion projection，且既有 reducer/`run_end` 权威事实未表明成功跨过 completion 生成边界时，observation MUST 为 `ABSENT/not_completed`，覆盖从未启动、active、failed、paused 或 awaiting-human；若权威终局事实已声称完成但 projection/original 缺失，observation MUST 为 `INVALID`。projection 存在时，P2 MUST 以独立验证的 expected scope（旧协议为 chain/track）调用既有 `verifyFeatureCompletion()`，并原样保留其 `VALID|STALE|INVALID` 结果。
+P2 adapter SHALL 从唯一完成评估入口 `assessFeature` 投影 `ABSENT|VALID|INCOMPLETE|INVALID`，但不持久化该结果。评估入口给出记录三态（`absent` / `ok` / `broken`）与逐义务 `covered|uncovered`：没有 completion projection，且既有 reducer/`run_end` 权威事实未表明成功跨过 completion 生成边界时，observation MUST 为 `ABSENT/not_completed`，覆盖从未启动、active、failed、paused 或 awaiting-human；若权威终局事实已声称完成但 projection/original 缺失，或记录为 `broken`（凭证不可信），observation MUST 为 `INVALID`；记录 `ok` 且 `complete` 时为 `VALID`；记录 `ok` 但存在 uncovered 义务或 blocking 世界事实时为 `INCOMPLETE`，并原样附 uncovered 清单（义务、责任阶段、`binding|evidence|result|unknown` 类别与原因）。输入过期（绑定 stale、复用证据失效、Feature↔CU 精确绑定失配）只表现为 uncovered 义务，MUST NOT 判成 `INVALID`。projection 存在时，P2 MUST 以独立验证的 expected scope（旧协议为 chain/track）调用评估入口，不另跑第二道投影门。
 
 #### Scenario: Never-run Feature is absent, not corrupt
 
@@ -37,11 +37,16 @@ P2 adapter SHALL 暴露 `ABSENT|VALID|STALE|INVALID`，但不持久化该 verdic
 #### Scenario: Valid completion uses independently verified scope
 
 - **WHEN** a completion is valid for the real run's independently verified frozen scope and current CU target coverage
-- **THEN** the adapter reports `VALID` only after `verifyFeatureCompletion()` passes with those independently derived expectations
+- **THEN** the adapter reports `VALID` only after `assessFeature` finds the record `ok` and every required obligation `covered` under those independently derived expectations
 
 #### Scenario: Tampered or missing completed evidence is invalid
 
 - **WHEN** a completion projection is tampered, or an authoritative terminal run claims completion but the required projection/original is missing
 - **THEN** the adapter reports `INVALID`, not `ABSENT`, and the provider CU cannot satisfy downstream requires
 
-> **Enforced by (P2 implementation):** `harness/workflow-loader.ts`, `harness/scripts/utils/feature-track.ts`, `harness/scripts/utils/runtime-policy.ts`, `harness/scripts/utils/phase-transition-policy.ts`, `harness/scripts/utils/verify-feature-completion.ts`, `harness/scripts/utils/change-unit-completion.ts`
+#### Scenario: Changed inputs make obligations uncovered, not invalid
+
+- **WHEN** a completed CU's blueprint pointers were bumped in place, or its acceptance input changed, while the completion record itself is intact
+- **THEN** the adapter reports `INCOMPLETE` with the affected obligations `uncovered` (for example the plan obligation as `binding` when `contracts.yaml` `change_unit_ref` no longer matches the canonical CU), not `INVALID`
+
+> **Enforced by (P2 implementation):** `harness/workflow-loader.ts`, `harness/scripts/utils/feature-track.ts`, `harness/scripts/utils/runtime-policy.ts`, `harness/scripts/utils/phase-transition-policy.ts`, `harness/scripts/utils/feature-assessment.ts`, `harness/scripts/utils/verify-feature-completion.ts`, `harness/scripts/utils/change-unit-completion.ts`

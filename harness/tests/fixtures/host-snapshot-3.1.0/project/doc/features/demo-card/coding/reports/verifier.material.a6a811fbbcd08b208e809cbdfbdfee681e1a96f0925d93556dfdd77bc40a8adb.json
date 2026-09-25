@@ -1,0 +1,104 @@
+{
+  "schema": "maison-verifier-material@1",
+  "input_bindings_sha256": "08bb2172fa7cb96e853c64bdf6db9406242616af21a3acad66fd7ffe8337f04d",
+  "feature": "demo-card",
+  "phase": "coding",
+  "gate_fingerprint": "3.1.0:280c79bc193c",
+  "phase_rule_sha256": "1ad81cc4af1391ba9c1e54438911df652a7a43e3024556f0d48e96c655eeb809",
+  "template_sha256": "9135279dd85dee2396d58e83b6ddaf497c9b346f9244e7d739ff9e6d005a7532",
+  "lifecycle_sha256": "",
+  "extension_sha256": "",
+  "script_checks": [
+    "arkui_bindsheet_double_close=PASS/BLOCKER",
+    "arkui_clip_overlap_risk=PASS/MAJOR",
+    "arkui_push_without_guard=PASS/MAJOR",
+    "arkui_singleton_flow_multi_subscriber=PASS/MAJOR",
+    "async_await_pattern=PASS/MINOR",
+    "capability_coding_context=PASS/MINOR",
+    "capability_coding_plan_context=PASS/MINOR",
+    "code_to_plan=PASS/MAJOR",
+    "coding_compile=PASS/BLOCKER",
+    "coding_run_status=PASS/BLOCKER",
+    "context_exploration_facts_phase_delta_present=PASS/BLOCKER",
+    "coordinator_file_exists_if_declared=SKIP/BLOCKER",
+    "diff_within_scope=PASS/BLOCKER",
+    "file_completeness=PASS/BLOCKER",
+    "har_index_export=SKIP/BLOCKER",
+    "host_entry_reachability=SKIP/MINOR",
+    "inter_module_dependency=PASS/BLOCKER",
+    "layer_compliance=PASS/BLOCKER",
+    "module_config_registered=SKIP/BLOCKER",
+    "named_business_handler=SKIP/BLOCKER",
+    "naming_conventions=PASS/MAJOR",
+    "no_any_type=PASS/MAJOR",
+    "no_hardcoded_strings=PASS/MAJOR",
+    "node_options_injection=PASS/BLOCKER",
+    "oh_package_dependencies=PASS/BLOCKER",
+    "page_registration=SKIP/BLOCKER",
+    "plan_file_to_code=PASS/BLOCKER",
+    "plan_to_code=PASS/BLOCKER",
+    "product_behavior_switch_scan=PASS/BLOCKER",
+    "resource_string_interpolation=PASS/BLOCKER",
+    "ui_diff_within_declared_files=PASS/BLOCKER",
+    "visual_parity=SKIP/MINOR"
+  ],
+  "files": [
+    {
+      "path": "02-Feature/FinancialCard/index.ets",
+      "sha256": "c42372f3cbb70378e8050f918322ab85b85a706f5b51c303961ded13d16a51bb"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets",
+      "sha256": "e9e1d7080d2bd7504115df6e88d94a4ed5eebe19aab033c2268927a5a6c61b95"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankListItem.ets",
+      "sha256": "727e9a2af8334e09b414a53e04f94b7fea76875d30bd73af6307a957b58b9e5f"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankModel.ets",
+      "sha256": "85bf14be522a0c0815a787be2b9e1f739e86be41fb8a25b9f83f47324996b1c4"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankRepository.ets",
+      "sha256": "fa10a20e27b5fa016f02a0e0608747e1f892974bb0a6cf10f7f3021e3ac3c907"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/ets/BankService.ets",
+      "sha256": "bca6edbcaabe61fba6090d8f396f0105962a18d13dc2eacd88d0802d58045fb6"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/resources/base/media/logo_demo.png",
+      "sha256": "6d51ea2402770798273a2f11d1a64aa04eb290df7790eaaa38ad61420bfeeb1c"
+    },
+    {
+      "path": "02-Feature/FinancialCard/src/main/resources/base/media/result_demo.png",
+      "sha256": "0672172608dc6517fd62993f139ade74279b32c3a2e5ee63f425e40f23de9421"
+    },
+    {
+      "path": "doc/features/demo-card/acceptance.yaml",
+      "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03"
+    },
+    {
+      "path": "doc/features/demo-card/context/facts.md",
+      "sha256": "c791ed42bb1b8ee2d080299bad9a382fda8824f3824a8be7bbf85d02f729a4d2"
+    },
+    {
+      "path": "doc/features/demo-card/contracts.yaml",
+      "sha256": "62d1104bc2c30d70e590280deb55788b3cca87b43442882ffc1635caa2931db0"
+    },
+    {
+      "path": "doc/features/demo-card/plan/plan.md",
+      "sha256": "0c688dbfbd8bc782f7ac5bb40c7c14a1ef6c0f2f3e5fdd1a1e2ecc1ce4ba4c08"
+    },
+    {
+      "path": "doc/features/demo-card/spec/spec.md",
+      "sha256": "95409507e3001e4973506d2d17618f27f5342415f4493ee388421b1f284e7d96"
+    },
+    {
+      "path": "doc/features/demo-card/use-cases.yaml",
+      "sha256": null
+    }
+  ],
+  "material_sha256": "a42ac95c9d7c3e89957fe174466d79d26ad28d852dc81e2532f4d3ab4f3c1b5e"
+}

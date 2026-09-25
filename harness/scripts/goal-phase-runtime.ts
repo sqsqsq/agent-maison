@@ -3,7 +3,7 @@ import { executionCompletionPhases, resolveExecutionScope, executionScopeFingerp
 import { loadFeatureContracts, contractFingerprint } from './utils/skill-contract';
 import { loadPhaseEvidenceManifest } from './utils/phase-evidence-manifest';
 import { readScopeAcceptance, collectResolvedScopeFacts, recomputeDefinitionFacts, resolveScopeRevisionProposal } from './utils/feature-track';
-import { resolveBirthScopeForManifest, registerFeatureScopeTransfer } from './utils/feature-execution-scope';
+import { resolveBirthScopeForManifest, resolveSuccessorExecutionScope, registerFeatureScopeTransfer } from './utils/feature-execution-scope';
 import { featureFilePath } from '../config';
 // ============================================================================
 // Goal phase runtime (fenced session/process owner) — deterministic multi-phase orchestrator
@@ -110,9 +110,9 @@ import {
   collectCleanPassIssues,
   generateFeatureCompletion,
   shouldGenerateFeatureCompletion,
-  verifyFeatureCompletion,
   resolvePhaseRunIds,
 } from './utils/verify-feature-completion';
+import { assessFeature as assessFeatureCompletion } from './utils/feature-assessment';
 import { resolveFeatureTrack } from './utils/runtime-policy';
 import { loadAcceptanceFlowsDoc, isP0DeviceInteractive } from './utils/p0-semantic-gates';
 import { loadFeatureTrackDecl } from './utils/feature-track';
@@ -4400,7 +4400,7 @@ export class GoalPhaseRuntime {
           const terminal = [...events].reverse().find(event => event.type === 'run_end');
           if (terminal?.status === 'CHAIN_SLICE_COMPLETED' && !scope.unresolved.length) {
             const completed = scope.completion_target === 'feature'
-              ? verifyFeatureCompletion({ projectRoot: root, feature: prior.feature, expectedChain: executionCompletionPhases(scope), expectedTrack: 'full' }).verdict === 'VALID'
+              ? assessFeatureCompletion(root, prior.feature, { expectedChain: executionCompletionPhases(scope), expectedTrack: 'full' }).complete
               : collectCleanPassIssues({ projectRoot: root, feature: prior.feature, chain: executionCompletionPhases(scope), frameworkRoot }).length === 0;
             if (completed) { this.lastRunId = priorRunId; return 0; }
           }
@@ -4718,14 +4718,19 @@ Goal runner — tool-agnostic multi-phase orchestrator
 
   if (argv.resume || attachCreatedRunId) workflow = workflowForExistingRun(workflow, manifest, frameworkRoot);
   const requestedSupersedeTargets = normalizeSupersedeTargets(argv.supersede);
-  const requestedExecutionScope = !argv.resume && !attachCreatedRunId && !requestedSupersedeTargets.length
+  // plan b2d7f4e9 §3.2：`--supersede` 必须点名一个 run。feature 载体（无 run 的完成）没有 run 可 supersede——
+  // 它的完成后修正是追加 feature 范围修订后起新 run；空值不得被静默当成 fresh run。
+  if (Object.prototype.hasOwnProperty.call(argv, 'supersede') && !requestedSupersedeTargets.length) {
+    console.error('[goal-runner] BLOCKER: --supersede 必须指向一个已存在的 run；无 run 的 feature 完成后修正请先按当前输入追加 feature 范围修订，再起新 run（不带 --supersede）');
+    return 1;
+  }
+  let requestedExecutionScope = !argv.resume && !attachCreatedRunId && !requestedSupersedeTargets.length
     // D1.3：出生范围 = 转交时 feature 的**有效**范围（有冻结记录时不重算候选）——
     // 与 `--prepare-run` 入口**同一个** `resolveBirthExecutionScope`，不是第三条路径。
     // D1.3：出生范围**一律**过统一解析——`manifest.execution_scope ?? ...` 的写法会让
     // 「manifest 自带范围」跳过 feature 记录的转交 / 候选漂移 / provenance 检查（第一轮阻断 3）。
-    // 第五轮阻断 1：successor（--supersede / --rebaseline-to）是 **run→run 血缘**，不经 feature 载体——
-    // 它的范围在下方从源 run 的有效范围继承。这里再调一次出生解析只会被源 run 自己
-    // 的转交记录抦住，把既有 supersede 路径整条堵死。
+    // successor（--supersede / --rebaseline-to）不走这里：它要先核合法源 run、再在 supersede 上下文里
+    // 按最终需求重解析（plan b2d7f4e9 §3.2，见下方 requirement 合并之后的 `resolveSuccessorExecutionScope`）。
     ? resolveBirthScopeForManifest(projectRoot, manifest, workflow, frameworkRoot)
     : undefined;
   if (requestedExecutionScope && workflow.schema_version !== '1.2') throw new Error('[execution-scope] fresh scoped run requires workflow 1.2');
@@ -4791,19 +4796,17 @@ Goal runner — tool-agnostic multi-phase orchestrator
           if (typeof record.round_fingerprint === 'string') round.push(record.round_fingerprint);
           if (typeof record.drift_fingerprint === 'string') drift.push(record.drift_fingerprint);
         }
-        // 第五轮阻断 1：successor 的范围 = **源 run 的有效范围**（出生 + 已应用 scope_revised）。
-        // 原来传的是 `requestedExecutionScope`（从 feature 载体解析），而源 run 出生时已经把 feature
-        // 记录登记为已转交——那条解析只会报「已转交」并把整条 supersede 路径堵死。
-        // 源 run 没有 1.2 范围（legacy）时为 undefined = 现状「整份继承源 manifest」。
-        const sourceEffectiveScope = loadEffectiveExecutionScope(projectRoot, manifest.feature, sourceRunId);
-        manifest = inheritSuccessorManifest(manifest, source, { round, drift }, sourceEffectiveScope);
+        // plan b2d7f4e9 §3.2 第 1 步到此：源 run 可加载、出生记录 complete/legacy。范围不在这里继承——
+        // 1.2 workflow 在 requirement 合并之后于 supersede 上下文重解析（第 2 步）；非 1.2 沿用源 manifest。
+        manifest = inheritSuccessorManifest(manifest, source, { round, drift });
       } catch (error) {
         // 后继 manifest 是新 run 唯一写入点的启动合同；继承失败不能静默退回默认
         // manifest，否则 --supersede 会悄悄刷新 end/预算/能力门。目标审计事件仍由
         // 下方既有校验负责，但本次启动先 fail-closed，不制造合同不完整的后继。
         throw new Error(
           `[goal-runner] BLOCKER: 无法构造 supersede 后继 manifest（源=${sourceRunId}）：` +
-            `${(error as Error).message}`,
+            `${(error as Error).message}` +
+            '（--supersede 只接已存在的 run；无 run 的 feature 完成后修正请先追加 feature 范围修订，再起新 run）',
         );
       }
     }
@@ -5011,11 +5014,22 @@ Goal runner — tool-agnostic multi-phase orchestrator
     }
   }
   if (!argv.resume && !attachCreatedRunId && workflow.schema_version === '1.2') {
+    // plan b2d7f4e9 §3.2 第 2 步：successor 在已核合法的 supersede 上下文里按**最终**需求（上方合并之后）
+    // 重解析出生范围——义务按当前输入重派生、既往证据经同一核验复用；feature 记录只作血缘核对。
+    // 这一步在 createGoalRun 之前：拒绝即不建 run、不写审计、不动转交记录。
+    if (manifest.successor_of) {
+      try {
+        requestedExecutionScope = resolveSuccessorExecutionScope(projectRoot, manifest.feature, workflow, frameworkRoot, manifest.requirement, manifest.successor_of);
+      } catch (error) {
+        throw new Error(`[goal-runner] BLOCKER: successor 出生范围无法解析（源=${manifest.successor_of}）：${(error as Error).message}`);
+      }
+    }
     // D1.3（第二轮阻断 1）：现代 fresh/detached 路径**无条件采用**统一出生解析的结果。
     // `??=` 会让 `--manifest` 自带的旧范围留下来，随后用错误的出生范围建 run，而转交登记
     // 要到 `createGoalRun` 之后才因指纹失配报错——顺序已经晚了。自带范围与解析结果不同即拒。
+    // successor 的 manifest 带着从源 run 继承来的旧出生范围，被重解析结果替换是本意，不比对。
     if (requestedExecutionScope) {
-      if (manifest.execution_scope
+      if (!manifest.successor_of && manifest.execution_scope
         && executionScopeFingerprint(validateExecutionScope(manifest.execution_scope)) !== executionScopeFingerprint(requestedExecutionScope)) {
         throw new Error('[execution-scope] manifest 自带的出生范围与统一出生解析结果不一致——请去掉 --manifest 里的 execution_scope，或按 correction / successor 路径处理');
       }
@@ -5147,9 +5161,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
     });
     // D1.3 转交登记：createGoalRun 成功之后立刻写，理由同 `--prepare-run` 入口
     //（出生未完成时 feature 侧不得留下指向不存在 run 的指针）。
-    // 第五轮阻断 1：**只有首次 feature→run 出生登记转交**。successor 是 run→run 血缘（血缘写在
-    // manifest.successor_of 与 supersede 事件里），feature 记录已经指向源 run，再登记一次只会报
-    //「不能再转交给」并把既有 supersede 路径堵死。
+    // 这里只登记首次 feature→run 转交；successor 的再转交要以已写入的 supersede 审计为前提，
+    // 在下方审计事件之后登记（plan b2d7f4e9 §3.2 第 4 步）。
     if (manifest.execution_scope && !manifest.successor_of) {
       try {
         registerFeatureScopeTransfer({
@@ -6014,6 +6027,22 @@ Goal runner — tool-agnostic multi-phase orchestrator
           if (gc.diagnostics.length > 0) console.warn(`[trust-gc] supersede ${target}：${gc.diagnostics.join('；')}`);
           if (gc.deleted.length > 0) console.log(`[trust-gc] supersede ${target}：已回收（${gc.deleted.join('、')}）`);
         }
+      }
+    }
+    // plan b2d7f4e9 §3.2 第 4 步：审计事件已落，feature 冻结记录（若有）追加一条转交指向本后继，旧转交保留。
+    // 登记函数自己读本 run 的 supersede 审计与出生范围核对，不信这里的声明；无记录时是 no-op。
+    if (freshCreation && manifest.execution_scope && manifest.successor_of && !dryRun) {
+      try {
+        registerFeatureScopeTransfer({
+          projectRoot, feature: manifest.feature, runId: manifest.run_id,
+          transferredScopeFingerprint: executionScopeFingerprint(validateExecutionScope(manifest.execution_scope)),
+        });
+      } catch (error) {
+        const msg = `feature 范围转交登记失败：${(error as Error).message}`;
+        console.error(`[goal-runner] BLOCKER: ${msg}`);
+        // 出生前已核过血缘；到这里还失败只可能是记录被并发改写——按既有 supersede 参数类收口（操作者核对后重起）。
+        concludeStartupBlocker('supersede_target_invalid', msg);
+        return 1;
       }
     }
 

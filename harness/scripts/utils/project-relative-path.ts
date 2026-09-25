@@ -18,6 +18,77 @@ export function isInsideProjectRoot(root: string, abs: string): boolean {
   return rel !== '..' && !rel.startsWith(`..${path.sep}`);
 }
 
+const toSlash = (p: string): string => p.replace(/\\/g, '/');
+const isRecordedAbsolute = (p: string): boolean => /^(?:[A-Za-z]:)?\//.test(toSlash(p));
+
+/**
+ * plan b2d7f4e9 t4：绑定依赖 `dependencies[].path` 由 `capability-resolution.ts` 的 `dependency()`
+ * 按**写入时的工程根**记成绝对路径，并进入范围指纹与修订链——写入格式与指纹一律不动，只在读侧解析：
+ * 相对路径按 `projectRoot` 拼；绝对路径在 `projectRoot` 内原样；在外且给了 `legacyRoot`（写入时的根）
+ * 则把该前缀换成 `projectRoot`（`\` 与 `/` 都认，盘符路径按 Windows 规则大小写不敏感）。
+ * 返回值不做越界放行：调用方照旧用 `isInsideProjectRoot` 判定，重定位后仍在外即 stale。
+ */
+export function resolveDependencyPath(projectRoot: string, recordedPath: string, legacyRoot?: string): string {
+  if (!isRecordedAbsolute(recordedPath)) return path.resolve(projectRoot, recordedPath);
+  if (!legacyRoot || (path.isAbsolute(recordedPath) && isInsideProjectRoot(projectRoot, recordedPath))) return recordedPath;
+  const recorded = toSlash(recordedPath);
+  const base = toSlash(legacyRoot).replace(/\/+$/, '');
+  const windowsLike = /^[A-Za-z]:\//.test(base);
+  const hit = windowsLike ? recorded.toLowerCase().startsWith(base.toLowerCase() + '/') : recorded.startsWith(base + '/');
+  return hit ? path.resolve(projectRoot, ...recorded.slice(base.length + 1).split('/')) : recordedPath;
+}
+
+const legacyRootCache = new WeakMap<object, Map<string, string | undefined>>();
+
+/**
+ * 从一份已记录的范围（或任意含 `path` / `*_path` 路径字段的记录）推出写入时的工程根：落在
+ * `projectRoot` 外的绝对路径里 `/<features_dir>/` 段每处出现的前缀都是候选旧根；唯一候选即取，多个候选取
+ * 重定位后依赖在当前工程内存在最多者；无候选或并列返回 undefined（如实 stale，不猜）。每个记录对象只推一次。
+ */
+export function inferLegacyProjectRoot(projectRoot: string, recorded: unknown): string | undefined {
+  if (!recorded || typeof recorded !== 'object') return undefined;
+  const perRoot = legacyRootCache.get(recorded) ?? new Map<string, string | undefined>();
+  legacyRootCache.set(recorded, perRoot);
+  if (perRoot.has(projectRoot)) return perRoot.get(projectRoot);
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { loadFrameworkConfig } = require('../../config') as typeof import('../../config');
+  const marker = '/' + toSlash(loadFrameworkConfig(projectRoot).paths.features_dir).replace(/^\.?\/+|\/+$/g, '') + '/';
+  // 记录路径的字段约定：`dependencies[].path` 与证据文档里的 `*_path`（如 device-test-evidence 的 trace_path）。
+  const recordedPaths: string[] = [];
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== 'object') return;
+    if (Array.isArray(value)) { value.forEach(visit); return; }
+    for (const [key, p] of Object.entries(value)) {
+      if (typeof p !== 'string') { visit(p); continue; }
+      if ((key !== 'path' && !key.endsWith('_path')) || !isRecordedAbsolute(p) || (path.isAbsolute(p) && isInsideProjectRoot(projectRoot, p))) continue;
+      recordedPaths.push(p);
+    }
+  };
+  visit(recorded);
+  // 旧根本身可能含 features 段（如 `D:/archives/doc/features/host`）：marker 的每处出现都是候选旧根。
+  const candidates = new Map<string, string>();
+  for (const p of recordedPaths) {
+    const slashed = toSlash(p);
+    for (let idx = slashed.indexOf(marker); idx > 0; idx = slashed.indexOf(marker, idx + 1)) {
+      const root = p.slice(0, idx);
+      const key = /^[A-Za-z]:\//.test(slashed) ? toSlash(root).toLowerCase() : toSlash(root);
+      if (!candidates.has(key)) candidates.set(key, root);
+    }
+  }
+  let found: string | undefined;
+  if (candidates.size === 1) found = [...candidates.values()][0];
+  else if (candidates.size > 1) {
+    // 用已知依赖确认：重定位后在当前工程内存在者最多的候选胜出；并列（含全为 0）不可判 → undefined（如实 stale）。
+    const scored = [...candidates.values()].map(root => ({ root, hits: recordedPaths.filter(p => {
+      const moved = resolveDependencyPath(projectRoot, p, root);
+      return isInsideProjectRoot(projectRoot, moved) && fs.existsSync(moved);
+    }).length })).sort((a, b) => b.hits - a.hits);
+    if (scored[0].hits > scored[1].hits) found = scored[0].root;
+  }
+  perRoot.set(projectRoot, found);
+  return found;
+}
+
 /** 校验相对路径落在 projectRoot 内（拒绝绝对路径、盘符与 `..` 段）。 */
 export function validateProjectRelativePath(
   projectRoot: string,

@@ -16,6 +16,7 @@ import {
   provisionRealChainProject,
   scaffoldRealChainHost,
   writeHostFile,
+  git,
   REAL_CHAIN_REQUIREMENT,
   REAL_CHAIN_SOURCE,
   REAL_CHAIN_SOURCE_2,
@@ -42,6 +43,9 @@ import { validateChangeUnitFeatureProjection } from '../../scripts/utils/change-
 import { resolveBlueprintTarget } from '../../scripts/utils/blueprint-addressing';
 import { asRecord, type BlueprintRecord } from '../../scripts/utils/component-blueprint-model';
 import type { ContractsSpec } from '../../scripts/utils/types';
+import { featureRelativePath } from '../../scripts/utils/feature-identity';
+import { materializeBlueprintSkillInputs } from '../../scripts/utils/blueprint-skill-projection';
+import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
 
 const cases: Array<{ name: string; run: () => Promise<void> }> = [];
 function test(name: string, run: () => Promise<void>): void { cases.push({ name, run }); }
@@ -72,7 +76,7 @@ interface Summary {
 }
 
 export function readSummary(p: RealChainProject, phase: string): Summary | null {
-  const abs = path.join(p.root, 'doc/features', p.feature, phase, 'reports', 'summary.json');
+  const abs = path.join(p.root, 'doc/features', featureRelativePath(p.feature), phase, 'reports', 'summary.json');
   if (!fs.existsSync(abs)) return null;
   return JSON.parse(fs.readFileSync(abs, 'utf-8')) as Summary;
 }
@@ -80,7 +84,7 @@ export function readSummary(p: RealChainProject, phase: string): Summary | null 
 export function dumpPhase(p: RealChainProject, phase: string): string {
   const s = readSummary(p, phase);
   if (!s) return `${phase}: <no summary>`;
-  const reportPath = path.join(p.root, 'doc/features', p.feature, phase, 'reports', 'script-report.json');
+  const reportPath = path.join(p.root, 'doc/features', featureRelativePath(p.feature), phase, 'reports', 'script-report.json');
   let failing: string[] = [];
   if (fs.existsSync(reportPath)) {
     const rep = JSON.parse(fs.readFileSync(reportPath, 'utf-8')) as Summary;
@@ -99,7 +103,7 @@ export function dumpPhase(p: RealChainProject, phase: string): string {
  * （verifier-evidence.ts:246-252）。subject 从盘上真 summary 读，**不改 summary 字节**（§4.4 第 5 条）。
  */
 export function publishVerifier(p: RealChainProject, phase: string): void {
-  const reportsDir = path.join(p.root, 'doc/features', p.feature, phase, 'reports');
+  const reportsDir = path.join(p.root, 'doc/features', featureRelativePath(p.feature), phase, 'reports');
   const s = readSummary(p, phase);
   const subjectId = s?.verifier_subject_id;
   if (!subjectId) return;
@@ -965,7 +969,7 @@ function escapeRegExp(s: string): string { return s.replace(/[.*+?^${}()|[\]\\]/
  */
 function assertPngProvenance(p: RealChainProject): void {
   for (const phase of PHASES) {
-    const abs = path.join(p.root, 'doc/features', p.feature, phase, 'reports', 'phase-evidence-manifest.json');
+    const abs = path.join(p.root, 'doc/features', featureRelativePath(p.feature), phase, 'reports', 'phase-evidence-manifest.json');
     const m = JSON.parse(fs.readFileSync(abs, 'utf-8')) as { inputs?: Array<Record<string, unknown>>; outputs?: Array<Record<string, unknown>> };
     const entries = [...(m.inputs ?? []), ...(m.outputs ?? [])].filter(e => /\.png$/.test(String(e.path)));
     for (const e of entries) {
@@ -987,7 +991,7 @@ function assertPngProvenance(p: RealChainProject): void {
  * 4 按需读取路径正确（每张 PNG 的 binary 条目是工程相对路径，sha 等于盘上字节）。
  */
 function assertPromptInvariants(p: RealChainProject, phase: string): void {
-  const abs = path.join(p.root, 'doc/features', p.feature, phase, 'reports', 'ai-prompt.md');
+  const abs = path.join(p.root, 'doc/features', featureRelativePath(p.feature), phase, 'reports', 'ai-prompt.md');
   const bytes = fs.readFileSync(abs);
   const prompt = bytes.toString('utf-8');
   const count = (needle: string): number => prompt.split(needle).length - 1;
@@ -1149,6 +1153,221 @@ export async function cuBoundBlueprintScopeSeam(): Promise<void> {
 
 test('real-chain CU-bound 接缝：合成宿主上蓝图节点 module / 术语确认 / touches 派生范围被 typed plan 投影消费', cuBoundBlueprintScopeSeam);
 
+// ---------------------------------------------------------------------------
+// plan b2d7f4e9 t4：CU 绑定链变体——同一合成宿主上把一个 canonical CU 跑到 feature completion。
+//
+// 形状由实跑定（生产零改动）：
+//   · 蓝图 + CU 取 `component-blueprint/valid` 的 ledger-refresh（`seedChangeUnitBlueprint`），设计内容经
+//     生产 `materializeBlueprintSkillInputs`（= `prepare-blueprint-design` CLI）物化 acceptance/contracts/use-cases；
+//   · acceptance/design 义务由蓝图满足，出生链只剩 [coding, review, ut]（与宿主 open-card-flow-v2 同构：
+//     spec/plan 的职责已由 /component-design 承担）；
+//   · 影响判断 `user_visible_behavior_change=false`（纯领域服务）→ device 义务 not_applicable，不进 testing；
+//   · 施工落点 `src/ledger/**` 刻意不在任何产品源码根（`discoverProductSourceRoots` 只认含 `src/main` 的模块根）：
+//     同宿主的平铺 Feature 完成凭证绑定全量产品源码 inventory，CU 改动若落在模块根里，两份完成凭证互相作废；
+//   · implementation/test ref 在设计期就必须是已存在文件（物化拒绝缺失文件、ut 期拒绝 `planned:`），
+//     故基线预置两份空壳，coding / ut 各自改写。
+// ---------------------------------------------------------------------------
+
+export const CU_SOURCE = 'src/ledger/LedgerFeature.ets';
+export const CU_TEST = 'src/ledger/src/ohosTest/ets/test/LedgerFeature.test.ets';
+export const CU_REQUIREMENT = '新增一笔账目后刷新账页并在重启后恢复余额';
+const CU_READS = [CU_SOURCE, 'src/ledger/LedgerIntakeConsumer.ts', 'src/ledger/LedgerSourceSeam.ts', 'src/ledger/LedgerIntakeBypass.ts',
+  'src/ledger/ClosureFixture.ts', 'test/ledger/closure.test.ts', 'test/ledger/seam-bypass.case.ts'];
+
+function cuRel(p: RealChainProject): string { return `doc/features/${featureRelativePath(p.feature)}`; }
+
+/** CU 链首阶段是 coding，故 `established_by: coding`；coding 档下界要求 ≥6 条源码路径 / ≥8 次检索（sequential 加成后）。 */
+function writeCuFacts(p: RealChainProject, phase: string): void {
+  const factsRel = `${cuRel(p)}/context/facts.md`;
+  const abs = path.join(p.root, factsRel);
+  const prior = fs.existsSync(abs)
+    ? fs.readFileSync(abs, 'utf-8').split(/(?=^##\s*phase_delta:)/m).slice(1)
+      .filter(section => !new RegExp(`^##\\s*phase_delta:\\s*${phase}\\b`).test(section))
+    : [];
+  writeHostFile(p.root, factsRel, [
+    '---', 'schema_version: "1.1"', `feature: ${p.feature}`, ...(p.runId ? [`run_id: ${p.runId}`] : []), 'established_by: coding',
+    'ready_to_produce: true', 'has_blocker_coverage_risk: false', 'exploration_mode: sequential',
+    'key_inputs_read:', '  - doc/glossary.yaml', '  - doc/module-catalog.yaml', '  - doc/architecture.md',
+    'subagents_used: none', 'decisions_unlocked:', '  - ledger_refresh', 'files_inspected_count: 14', 'searches_performed_estimate: 10',
+    'source_code_paths:', ...CU_READS.map(r => `  - ${r}`), '---', '', '## Code Facts', '',
+    '| 路径 | 事实 | 对本阶段影响 |', '|------|------|--------------|',
+    ...CU_READS.map(r => `| ${r} | ${path.basename(r)} 已读 | 账目刷新沿用 |`), '',
+    ...prior.map(section => section.replace(/\s*$/, '\n')), `## phase_delta: ${phase}`, '', '本阶段研究结论已确认。', '',
+  ].join('\n'));
+}
+
+/**
+ * 宿主前置（在 `scaffoldRealChainHost` 之后、git 提交之前调用）：落蓝图与 canonical CU、登记 catalog、
+ * 物化设计输入、生成 CU 的范围候选。返回 CU 工程视图与出生链。
+ */
+export function seedCuBoundHost(project: RealChainProject): { cu: RealChainProject; birthChain: string[] } {
+  const f = seedChangeUnitBlueprint(project.root);
+  writeHostFile(project.root, 'doc/module-catalog.yaml', [
+    'schema_version: "1.0"', 'modules:',
+    ...[[project.module, `${project.modulePath}/index.ets`], ['ledger', '02-Feature/ledger/index.ets']].flatMap(([name, entry]) => [
+      `  - name: "${name}"`, '    layer: "02-Feature"', '    sub_layer: null', '    format: "HAR"', `    one_liner: "${name}"`,
+      '    responsibilities: []', '    NOT_responsible_for: []', '    typical_business_terms: []', '    easily_confused_with: []',
+      '    key_exports: []', `    entry_file: "${entry}"`,
+    ]),
+    '',
+  ].join('\n'));
+  clearFrameworkConfigCache();
+  rewriteBlueprint(project.root, bp => {
+    const unit = YAML.parse(fs.readFileSync(f.cuFile, 'utf-8'));
+    const node = asRecord(resolveBlueprintTarget(bp, unit.design_refs[0].target))!;
+    const contracts = JSON.parse(JSON.stringify(node.contracts)
+      .split('test/ledger/LedgerFeature.test.ets').join(CU_TEST).split('planned:').join('')) as BlueprintRecord;
+    contracts.modules = [{ name: 'ledger', layer: '02-Feature', format: 'HAR', change_type: 'modify', package_path: 'src/ledger' }];
+    contracts.files = [CU_SOURCE];
+    node.contracts = contracts;
+    for (const useCase of (node.use_cases as BlueprintRecord).use_cases as BlueprintRecord[]) {
+      useCase.coordinator = 'LedgerFeature.add';
+      useCase.ui_bindings = [{ ui: 'LedgerPage', role: 'entry', user_actions: [{ trigger: '点击新增账目', calls: 'LedgerFeature.add' }] }];
+    }
+  });
+  clearFrameworkConfigCache();
+  writeHostFile(project.root, CU_SOURCE, 'export class LedgerFeature {\n  balance(): number { return 0; }\n}\n');
+  writeHostFile(project.root, CU_TEST, "import { describe } from '@ohos/hypium';\n\ndescribe('LedgerFeature', () => {\n});\n");
+  const cu: RealChainProject = { ...project, feature: f.feature, module: 'ledger', modulePath: 'src/ledger', runId: undefined };
+  materializeBlueprintSkillInputs(project.root, cu.feature, project.frameworkRoot);
+  const prepared = prepareFeatureScopeCandidate({
+    projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: cu.feature, completionTarget: 'feature',
+    requestedResults: ['账目刷新与恢复'], requestedPhases: ['coding', 'review', 'ut'], requirement: CU_REQUIREMENT, overwrite: true,
+    impact: { userVisibleBehaviorChange: false, reason: '只改账本领域服务，不改任何界面', basisPaths: [CU_SOURCE] },
+  });
+  return { cu, birthChain: prepared.scope.phase_chain.map(String) };
+}
+
+export function writeCuCodingMaterials(p: RealChainProject): void {
+  writeHostFile(p.root, CU_SOURCE, [
+    'export class LedgerFeature {',
+    '  private entries: number[] = [];',
+    '  add(amount: number): number { this.entries.push(amount); return this.balance(); }',
+    '  balance(): number { return this.entries.reduce((a, b) => a + b, 0); }',
+    '  restore(saved: number[]): number { this.entries = [...saved]; return this.balance(); }',
+    '}',
+    '',
+  ].join('\n'));
+  writeCuFacts(p, 'coding');
+}
+
+export function writeCuReviewMaterials(p: RealChainProject): void {
+  writeCuFacts(p, 'review');
+  writeHostFile(p.root, `${cuRel(p)}/review/review-report.md`, [
+    '# 审查报告', '', '> **模块标识**: ledger', '> **审查日期**: 2026-01-01', '> **审查版本**: 1.0', '> **保证等级**: standard', '',
+    '## 1. 审查范围', '', '模块：ledger。文件范围：', '', ...CU_READS.map(r => `- ${r}`), '',
+    '## 2. 审查维度', '', '| 维度 | 结论 |', '|------|------|', '| 契约一致性 | 通过 |', '| 视觉保真 | 不适用（无界面变更） |', '',
+    '## 3. 问题清单', '',
+    '| 编号 | 分类 | 严重程度 | 问题描述 | 涉及文件 | 修复建议 |', '|------|------|----------|----------|----------|----------|',
+    `| R-1 | 可读性 | MINOR | 方法缺少用途注释 | ${CU_SOURCE} | 补充注释 |`, '',
+    '## 4. 问题统计', '', '| 严重程度 | 数量 |', '|----------|------|', '| BLOCKER | 0 |', '| MAJOR | 0 |', '| MINOR | 1 |', '',
+    '## 5. 修复建议', '', '- R-1：下一次迭代补充注释，不阻断本次交付。', '',
+    '## 6. 结论', '', '**审查结论**: 通过', '',
+  ].join('\n'));
+}
+
+/** use-cases 的 `ledger-refresh` 需 branch 用例（`[BRANCH-success]`）与链接 use_case/branches 的 ephemeral DAG。 */
+export function writeCuUtMaterials(p: RealChainProject): void {
+  writeCuFacts(p, 'ut');
+  writeHostFile(p.root, CU_TEST, [
+    "import { describe, it, expect } from '@ohos/hypium';",
+    "import { LedgerFeature } from '../../../../LedgerFeature';",
+    '',
+    "describe('ledger-refresh', () => {",
+    "  it('[BRANCH-success][AC-1] LedgerFeature.add 刷新余额并可恢复', 0, () => {",
+    '    const ledger: LedgerFeature = new LedgerFeature();',
+    '    expect(ledger.add(120)).assertEqual(120);',
+    '    expect(ledger.restore([45, 55])).assertEqual(100);',
+    '  });',
+    '});',
+    '',
+  ].join('\n'));
+  writeHostFile(p.root, `${cuRel(p)}/ut/testability-audit.md`, [
+    '# 可测性审计', '', '```yaml', 'records:', '  - acceptance_id: AC-1', `    entry_point: {file: ${CU_SOURCE}, symbol: add}`,
+    '    testability_level: L1', '    dependencies:', '      - {name: Array, kind: pure}', '    verdict: testable', '```', '',
+  ].join('\n'));
+  writeHostFile(p.root, `${cuRel(p)}/ut/reports/flow-dag/ledger_refresh.dag.yaml`, [
+    'flow_id: ledger_refresh', 'flow_name: 账目刷新与恢复', 'module: ledger', 'use_case: ledger-refresh', 'branches:', '  - success',
+    'linked_acceptance:', '  - AC-1', 'entry_point:', '  module: ledger', `  file: ${CU_SOURCE}`, '  function: add', 'nodes:',
+    '  - id: n_add', '    type: code_execution', '    description: 新增一笔账目并返回余额', '    source:', `      file: ${CU_SOURCE}`,
+    '      class: LedgerFeature', '      function: add', '    next:', '      - n_assert',
+    '  - id: n_assert', '    type: assertion', '    description: 余额随账目刷新', '    linked_acceptance:', '      - AC-1',
+    '    assertions:', '      - type: state_check', '        target: balance', "        expected: '120'", '    next: []', '',
+  ].join('\n'));
+  writeHostFile(p.root, `${cuRel(p)}/ut/reports/coverage-evidence.json`, JSON.stringify({
+    schema_version: '1.0', feature: p.feature, primary_evidence_source: 'ut_tags', sources: { ut_tags: [CU_TEST] },
+    mappings: [{ scope_id: 'AC-1', scope_kind: 'acceptance_criterion', evidence_source: 'ut_tags' }],
+  }, null, 2));
+}
+
+/** 平铺 `demo-card` 六阶段链（正例用例与快照生成器共用）。 */
+export function runDemoCardChain(project: RealChainProject, birthChain: string[]): ReturnType<typeof runGoalRuntimeChain> {
+  return runGoalRuntimeChain(project.root, {
+    frameworkRoot: project.frameworkRoot,
+    featureId: project.feature,
+    realHarness: true,
+    adapter: 'codex',
+    // 1.2：范围是权威，--start/--end 必须与出生链首尾逐字相等（goal-phase-runtime.ts:4988）。
+    // 出生链天然短，随 spec/plan 的范围修订自行延长到 testing。
+    freshStartPhase: birthChain[0] as 'spec',
+    freshEndPhase: birthChain[birthChain.length - 1],
+    freshRequirement: REAL_CHAIN_REQUIREMENT,
+    onSpec: ctx => { project.runId = ctx.runId; writeSpecMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'spec'); },
+    onPlan: ctx => { project.runId = ctx.runId; writePlanMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'plan'); },
+    onCoding: ctx => { project.runId = ctx.runId; writeCodingMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'coding'); },
+    onReview: ctx => { project.runId = ctx.runId; writeReviewMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'review'); },
+    onUt: ctx => { project.runId = ctx.runId; writeUtMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'ut'); },
+    onTesting: ctx => { project.runId = ctx.runId; writeTestPlan(project); if (ctx.attempt > 1) publishVerifier(project, 'testing'); },
+  });
+}
+
+export function runCuBoundChain(cu: RealChainProject, birthChain: string[]): ReturnType<typeof runGoalRuntimeChain> {
+  return runGoalRuntimeChain(cu.root, {
+    frameworkRoot: cu.frameworkRoot,
+    featureId: cu.feature,
+    realHarness: true,
+    adapter: 'codex',
+    freshStartPhase: birthChain[0] as 'coding',
+    freshEndPhase: birthChain[birthChain.length - 1],
+    freshRequirement: CU_REQUIREMENT,
+    onCoding: ctx => { cu.runId = ctx.runId; writeCuCodingMaterials(cu); if (ctx.attempt > 1) publishVerifier(cu, 'coding'); },
+    onReview: ctx => { cu.runId = ctx.runId; writeCuReviewMaterials(cu); if (ctx.attempt > 1) publishVerifier(cu, 'review'); },
+    onUt: ctx => { cu.runId = ctx.runId; writeCuUtMaterials(cu); if (ctx.attempt > 1) publishVerifier(cu, 'ut'); },
+  });
+}
+
+/** 公开入口 `goal-status` 在工程自己的框架根下子进程运行，返回 `feature_status=…` 行（生产 `assessFeature`）。 */
+export function goalStatusFeatureLine(project: { root: string; harnessDir: string }, feature: string): string {
+  const r = spawnSync(process.execPath, [
+    path.join(project.harnessDir, 'node_modules', 'ts-node', 'dist', 'bin.js'), '--transpile-only',
+    path.join(project.harnessDir, 'scripts', 'goal-status.ts'), '--feature', feature, '--project-root', project.root,
+  ], { cwd: project.harnessDir, encoding: 'utf-8' });
+  return (r.stdout ?? '').split('\n').find(line => line.startsWith('feature_status=')) ?? `<no feature_status; exit=${r.status}> ${r.stderr ?? ''}`;
+}
+
+test('real-chain CU 绑定链：canonical CU 经 coding→review→ut 真实 harness 到 feature completion', async () => {
+  const project = provisionRealChainProject();
+  try {
+    scaffoldRealChainHost(project);
+    const { cu, birthChain } = seedCuBoundHost(project);
+    assert(JSON.stringify(birthChain) === '["coding","review","ut"]', `CU 出生链应为 [coding,review,ut]：${JSON.stringify(birthChain)}`);
+    git(project.root, ['add', '-A']);
+    git(project.root, ['commit', '-qm', 'seed change unit']);
+    clearFrameworkConfigCache();
+    const probe = await runCuBoundChain(cu, birthChain);
+    for (const phase of birthChain) {
+      const s = readSummary(cu, phase);
+      assert(s?.verdict === 'PASS' && s.closure_status === 'closed', `${phase}：verdict=${s?.verdict} closure=${s?.closure_status}（exit=${probe.exitCode}）\n${dumpPhase(cu, phase)}`);
+    }
+    const line = goalStatusFeatureLine(project, cu.feature);
+    assert(line.startsWith('feature_status=FEATURE_COMPLETED (verify=VALID'), `CU 完成凭证未判 VALID：${line}`);
+  } finally {
+    if (!DEBUG) fs.rmSync(project.root, { recursive: true, force: true });
+    else console.log('--- kept root', project.root);
+    clearFrameworkConfigCache();
+  }
+});
+
 test('real-chain 正例：spec→testing 六阶段真实 harness 全链 PASS + closed', async () => {
   const project = provisionRealChainProject();
   try {
@@ -1164,23 +1383,7 @@ test('real-chain 正例：spec→testing 六阶段真实 harness 全链 PASS + c
     // 既不 seal、不换 run、也不需要 `--resume`（plan §10.12：宿主 events 同构，
     // `…/bc-openCard-2/open-card-flow-v2/goal-runs/20260918T165234Z-c7689f/events.jsonl`
     // 第 21–22 行＝`scope_revised rev1` 紧接同 run 的 `phase_start coding 1/4`）。
-    const probe = await runGoalRuntimeChain(project.root, {
-      frameworkRoot: project.frameworkRoot,
-      featureId: project.feature,
-      realHarness: true,
-      adapter: 'codex',
-      // 1.2：范围是权威，--start/--end 必须与出生链首尾逐字相等（goal-phase-runtime.ts:4988）。
-      // 出生链天然短，随 spec/plan 的范围修订自行延长到 testing。
-      freshStartPhase: birthChain[0] as 'spec',
-      freshEndPhase: birthChain[birthChain.length - 1],
-      freshRequirement: REAL_CHAIN_REQUIREMENT,
-      onSpec: ctx => { project.runId = ctx.runId; writeSpecMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'spec'); },
-      onPlan: ctx => { project.runId = ctx.runId; writePlanMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'plan'); },
-      onCoding: ctx => { project.runId = ctx.runId; writeCodingMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'coding'); },
-      onReview: ctx => { project.runId = ctx.runId; writeReviewMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'review'); },
-      onUt: ctx => { project.runId = ctx.runId; writeUtMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'ut'); },
-      onTesting: ctx => { project.runId = ctx.runId; writeTestPlan(project); if (ctx.attempt > 1) publishVerifier(project, 'testing'); },
-    }).finally(() => captured.stop());
+    const probe = await runDemoCardChain(project, birthChain).finally(() => captured.stop());
     const events = probe.events;
     const resolvedByPhase = parseResolvedProfiles(captured.text());
     if (DEBUG) {

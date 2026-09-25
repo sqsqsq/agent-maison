@@ -8,7 +8,7 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 import { auditSchemaSupport, validateLiteSchema } from './lite-json-schema';
 import { stableStringify } from './phase-evidence-manifest';
-import { isInsideProjectRoot, validateProjectRelativePath } from './project-relative-path';
+import { inferLegacyProjectRoot, isInsideProjectRoot, resolveDependencyPath, validateProjectRelativePath } from './project-relative-path';
 import { decodeTextFile, SpecLoader } from './spec-loader';
 import { loadWorkflowSpec, workflowForExistingRun } from '../../workflow-loader';
 import { loadGoalManifestFromRun } from './goal-manifest';
@@ -532,8 +532,12 @@ function isLedgerOnlyBindingDrift(expected: InputBinding, actual: InputBinding):
     && roleAgrees;
 }
 
-/** Re-read a selected source using the same P1 parsers/providers and binding contract. */
-export function readBoundInput(options: CapabilityResolutionOptions, binding: InputBinding): unknown {
+/**
+ * Re-read a selected source using the same P1 parsers/providers and binding contract.
+ * `legacyRoot`（plan b2d7f4e9 t4）：记录的绑定写于另一个工程根时，由调用方从同一份记录推出旧根，
+ * 记录侧依赖路径经 `resolveDependencyPath` 重定位后再比对；不传即按记录原样比对。
+ */
+export function readBoundInput(options: CapabilityResolutionOptions, binding: InputBinding, legacyRoot?: string): unknown {
   const supplied = binding.source.kind === 'artifact' && binding.source.artifact === 'use-cases@1' && options.feature && !options.request
     ? deriveBlueprintSkillInput(options.projectRoot, options.feature, options.frameworkRoot, 'contracts') : undefined;
   const result = binding.source.kind === 'derive' ? resolveDerive(options.projectRoot, options.feature, binding.source, options)
@@ -551,9 +555,10 @@ export function readBoundInput(options: CapabilityResolutionOptions, binding: In
   //    `role==='derive'` 认源码观察、`verify-feature-completion` 据此跳过完成侧复核、
   //    entry-input 按 role 过滤 `expected_bindings`），同路径同存在性同指纹下把
   //    `artifact` 改成 `derive` 就是换了这条依赖的性质，不是账本漂移。
-  const existenceDrift = (dep: ResolutionDependency): boolean => fs.existsSync(dep.path) !== dep.exists;
+  const boundPath = (dep: ResolutionDependency): string => resolveDependencyPath(options.projectRoot, dep.path, legacyRoot);
+  const existenceDrift = (dep: ResolutionDependency): boolean => fs.existsSync(boundPath(dep)) !== dep.exists;
   const boundSame = (dep: ResolutionDependency): boolean =>
-    binding.dependencies.some(bound => bound.path === dep.path && bound.exists === dep.exists && bound.role === dep.role);
+    binding.dependencies.some(bound => boundPath(bound) === dep.path && bound.exists === dep.exists && bound.role === dep.role);
   if (result.state !== 'resolved' || result.value === undefined
     || binding.dependencies.some(existenceDrift)
     || result.dependencies.some(dep => !boundSame(dep))
@@ -574,7 +579,7 @@ export function readRunBoundContracts(projectRoot: string, frameworkRoot: string
   const binding = scope?.obligations.flatMap(obligation => [...obligation.basis, ...(obligation.satisfied_by ?? []).filter((ref): ref is InputBinding => 'input_id' in ref)])
     .find(binding => binding.source.kind === 'artifact' ? binding.source.artifact === 'contracts@1' : binding.source.provider_id === 'derive.blueprint-contracts');
   if (!binding) throw new Error('frozen construction contract missing; return to design owner');
-  return readBoundInput({ projectRoot, frameworkRoot, feature, phase: 'coding', track: 'full' }, binding) as import('./types').ContractsSpec;
+  return readBoundInput({ projectRoot, frameworkRoot, feature, phase: 'coding', track: 'full' }, binding, inferLegacyProjectRoot(projectRoot, scope)) as import('./types').ContractsSpec;
 }
 
 function resolveApplicability(

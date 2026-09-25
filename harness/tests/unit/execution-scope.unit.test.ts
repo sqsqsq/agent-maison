@@ -42,7 +42,14 @@ import { resolveComponentClosureInputs } from '../../scripts/utils/component-clo
 import { deriveComponentClosureObligations } from '../../scripts/utils/component-closure-obligations';
 import { buildChangeUnitGoalHandoff } from '../../scripts/utils/change-unit-progress-loop';
 import { observeChangeUnitCompletion } from '../../scripts/utils/change-unit-completion';
-import { verifyFeatureCompletion, verifyReusedExecutionScope, executionScopeEvidenceIssues } from '../../scripts/utils/verify-feature-completion';
+import { verifyReusedExecutionScope, executionScopeEvidenceIssues } from '../../scripts/utils/verify-feature-completion';
+import { assessFeature, assessmentReasons } from '../../scripts/utils/feature-assessment';
+
+/** plan b2d7f4e9：唯一评估入口 assessFeature 的 VALID/INVALID 投影（complete ⇔ VALID）。 */
+function completionOf(opts: { projectRoot: string; feature: string; expectedChain: string[]; expectedTrack: string; frameworkRoot?: string }): { verdict: 'VALID' | 'INVALID'; reasons: string[] } {
+  const assessment = assessFeature(opts.projectRoot, opts.feature, opts);
+  return { verdict: assessment.complete ? 'VALID' : 'INVALID', reasons: assessmentReasons(assessment) };
+}
 import { loadFrozenExecutionScope, loadEffectiveExecutionScope } from '../../scripts/utils/goal-run-creation';
 import { resolveUpstreamPhaseChain } from '../../scripts/utils/upstream-verdict-gate';
 import { featureRequirementBinding, readScopeAcceptance, collectResolvedScopeFacts, prepareFeatureScopeCandidate, featureScopeCandidateFingerprint } from '../../scripts/utils/feature-track';
@@ -746,7 +753,7 @@ async function runScopeScenario(mode: 'direct' | 'revision' | 'revision-cut' | '
         fs.writeFileSync(completionFile, bytes);
         fs.writeFileSync(featureFilePath(root, feature, 'feature-completion.json'), JSON.stringify({ ...completionProjection, original_sha256: createHash('sha256').update(bytes).digest('hex') }));
       };
-      const completionVerdict = (): string => verifyFeatureCompletion({ projectRoot: root, feature, expectedChain: executionCompletionPhases(effective), expectedTrack: 'full' }).verdict;
+      const completionVerdict = (): string => completionOf({ projectRoot: root, feature, expectedChain: executionCompletionPhases(effective), expectedTrack: 'full' }).verdict;
       writeCompletion({ ...completionRecord, scope_revision_count: revisions.length - 1 });
       assert.equal(completionVerdict(), 'INVALID', 'a revision-count mismatch was accepted');
       // A 1.2 record MUST carry the count: a stripped field is a damaged certificate, not a zero.
@@ -756,11 +763,14 @@ async function runScopeScenario(mode: 'direct' | 'revision' | 'revision-cut' | '
       fs.writeFileSync(completionFile, completionBytes);
       fs.writeFileSync(featureFilePath(root, feature, 'feature-completion.json'), JSON.stringify(completionProjection));
     }
-    const verified = verifyFeatureCompletion({ projectRoot: root, feature, expectedChain: ['coding', 'review', 'ut'], expectedTrack: 'full' });
-    assert.equal(verified.verdict, 'VALID', JSON.stringify(verified));
+    const verified = completionOf({ projectRoot: root, feature, expectedChain: ['coding', 'review', 'ut'], expectedTrack: 'full' });
+    // plan b2d7f4e9：Feature↔CU 绑定核对是 cu- Feature 评估的一部分（不再是观察器的第二道门），
+    // 映射缺失时 Feature 本身也判未完成（plan 义务 uncovered/binding）。
+    assert.equal(verified.verdict, missingMapping ? 'INVALID' : 'VALID', JSON.stringify(verified));
     const cu = loadCanonicalChangeUnit(root, 'ledger-app-blueprint', 'ledger-refresh');
     const cuCompletion = observeChangeUnitCompletion(root, asChangeUnitArtifact(cu.changeUnit));
-    if (missingMapping) { assert.equal(cuCompletion.state, 'INVALID'); assert(cuCompletion.reasons.some(reason => reason.includes('mapping'))); return; }
+    // plan b2d7f4e9：记录可信、Feature↔CU 映射不完整 → 义务 uncovered/binding（INCOMPLETE），不是记录不可信。
+    if (missingMapping) { assert.equal(cuCompletion.state, 'INCOMPLETE'); assert(cuCompletion.reasons.some(reason => reason.includes('mapping'))); return; }
     assert.equal(cuCompletion.state, 'VALID', JSON.stringify(cuCompletion));
     assert.deepStrictEqual(cuCompletion.expectedChain, mode === 'direct' ? ['coding', 'review', 'ut']
       : designGapFamily ? ['plan', 'coding', 'review', 'ut']
@@ -788,7 +798,7 @@ async function runScopeScenario(mode: 'direct' | 'revision' | 'revision-cut' | '
       const staleFacts = collectResolvedScopeFacts(reuseInput, { projectRoot: root, feature, frameworkRoot, requirement: 'fixture delivery', impactInherited: true });
       assert(staleFacts.satisfied_by.some(entry => !entry.ok), JSON.stringify(staleFacts.satisfied_by));
       assert.throws(() => resolveExecutionScope(reuseInput, workflow, undefined, staleFacts), /冻结时核验失败/);
-      assert.notEqual(verifyFeatureCompletion({ projectRoot: root, feature, expectedChain: previous.phase_chain, expectedTrack: 'full' }).verdict, 'VALID', 'stale design contract accepted');
+      assert.notEqual(completionOf({ projectRoot: root, feature, expectedChain: previous.phase_chain, expectedTrack: 'full' }).verdict, 'VALID', 'stale design contract accepted');
       fs.writeFileSync(contractsFile, designBytes);
       const codeBytes = fs.readFileSync(codeFile);
       fs.appendFileSync(codeFile, '\n// changed after validated execution\n');
@@ -806,13 +816,13 @@ async function runScopeScenario(mode: 'direct' | 'revision' | 'revision-cut' | '
       for (const field of [{ execution_scope_fingerprint: '0'.repeat(64) }, { schema_version: '1.1' }]) {
         const changed = JSON.stringify({ ...record, ...field }); fs.writeFileSync(original, changed);
         fs.writeFileSync(projectionFile, JSON.stringify({ ...projection, schema_version: field.schema_version ?? record.schema_version, original_sha256: createHash('sha256').update(changed).digest('hex') }));
-        assert.equal(verifyFeatureCompletion({ projectRoot: root, feature, expectedChain: previous.phase_chain, expectedTrack: 'full' }).verdict, 'INVALID');
+        assert.equal(completionOf({ projectRoot: root, feature, expectedChain: previous.phase_chain, expectedTrack: 'full' }).verdict, 'INVALID');
       }
       fs.writeFileSync(original, originalBytes); fs.writeFileSync(projectionFile, JSON.stringify(projection));
       record.chain = ['ut']; record.phases = record.phases.filter((phase: { phase: string }) => phase.phase === 'ut');
       const bytes = JSON.stringify(record); fs.writeFileSync(original, bytes);
       fs.writeFileSync(projectionFile, JSON.stringify({ ...projection, original_sha256: createHash('sha256').update(bytes).digest('hex') }));
-      assert.equal(verifyFeatureCompletion({ projectRoot: root, feature, expectedChain: ['ut'], expectedTrack: 'full' }).verdict, 'INVALID', 'self-authored completion chain bypassed frozen scope');
+      assert.equal(completionOf({ projectRoot: root, feature, expectedChain: ['ut'], expectedTrack: 'full' }).verdict, 'INVALID', 'self-authored completion chain bypassed frozen scope');
       const manifestFile = featureFilePath(root, feature, 'goal-runs/p2-attended/manifest.json');
       const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8')); delete manifest.execution_scope;
       fs.writeFileSync(manifestFile, JSON.stringify(manifest));
@@ -1460,7 +1470,7 @@ cases.push({ name: 'D1 runless interactive delivery reaches VALID completion', r
     assert.equal(completion.run_id, null);
     assert.equal(completion.scope_source, 'feature');
     assert.deepStrictEqual(completion.phases.map((p: { run_id: unknown }) => p.run_id), chain.map(() => null));
-    const verdict = verifyFeatureCompletion({ projectRoot: root, feature, expectedChain: chain, expectedTrack: 'full', frameworkRoot });
+    const verdict = completionOf({ projectRoot: root, feature, expectedChain: chain, expectedTrack: 'full', frameworkRoot });
     assert.equal(verdict.verdict, 'VALID', JSON.stringify(verdict.reasons));
 
     // ⑤ 无 goal-runs 目录、无 spec/plan/testing 空报告
@@ -1555,8 +1565,8 @@ cases.push({ name: 'D1 goal run is born from the transferred feature effective s
     assert.notDeepStrictEqual(prepared.manifest.execution_scope!.phase_chain, birth.phase_chain);
     // feature 记录登记了转交与指纹，出生段与修订历史保留
     const after = readFeatureFrozenScope(root, feature)!;
-    assert.equal(after.transferred_to, 'd1-run');
-    assert.equal(after.transferred_scope_fingerprint, executionScopeFingerprint(effective));
+    assert.equal(after.transfers?.at(-1)?.run_id, 'd1-run');
+    assert.equal(after.transfers?.at(-1)?.scope_fingerprint, executionScopeFingerprint(effective));
     assert.equal(after.revisions.length, 1);
     assert.deepStrictEqual(after.execution_scope.phase_chain, birth.phase_chain);
     // 转入后无 run 调用不再选 feature 载体，而是明确报错（D1.3 第三行）
@@ -1643,7 +1653,7 @@ cases.push({ name: 'revalidate without identity on a transferred feature fails i
     execFileSync('git', ['-c', 'user.name=F', '-c', 'user.email=f@e.test', 'commit', '-qm', 'base'], { cwd: root });
     ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature });
     prepareGoalModeRun({ projectRoot: root, frameworkRoot, feature, runId: 'rv-transfer', adapter: 'codex', requirement: '把 value 改成 42' });
-    assert.equal(readFeatureFrozenScope(root, feature)!.transferred_to, 'rv-transfer');
+    assert.equal(readFeatureFrozenScope(root, feature)!.transfers?.at(-1)?.run_id, 'rv-transfer');
     const { code, out } = revalidateCaptured(root, frameworkRoot, feature, '');
     assert.equal(code, 1, out);
     assert(out.includes('已转交给 run rv-transfer'), out);
@@ -1663,13 +1673,13 @@ cases.push({ name: 'D1 transfer fingerprint mismatch reports both fingerprints',
       (error: Error) => /转交指纹与 feature 有效范围失配/.test(error.message) && error.message.includes(effective.slice(0, 16)));
     // ② 正常登记：指纹由记录的有效范围计算
     registerFeatureScopeTransfer({ projectRoot: root, feature, runId: 'r1', transferredScopeFingerprint: effective });
-    assert.equal(readFeatureFrozenScope(root, feature)!.transferred_scope_fingerprint, effective);
+    assert.equal(readFeatureFrozenScope(root, feature)!.transfers?.at(-1)?.scope_fingerprint, effective);
     // ③ 同一 feature 不得再转交给第二个 run——两个 run id 都在报错里
     assert.throws(() => registerFeatureScopeTransfer({ projectRoot: root, feature, runId: 'r2', transferredScopeFingerprint: effective }),
       (error: Error) => /已转交给 run r1/.test(error.message) && /r2/.test(error.message));
     // ④ 已登记的指纹被手改（转交记录损坏）→ 同一 run 重试也必须报错，不静默覆盖
     const doc = JSON.parse(fs.readFileSync(featureFrozenScopePath(root, feature), 'utf8'));
-    doc.transferred_scope_fingerprint = 'b'.repeat(64);
+    doc.transfers[0].scope_fingerprint = 'b'.repeat(64);
     fs.writeFileSync(featureFrozenScopePath(root, feature), JSON.stringify(doc));
     assert.throws(() => registerFeatureScopeTransfer({ projectRoot: root, feature, runId: 'r1', transferredScopeFingerprint: effective }), /转交记录损坏/);
     // ⑤ 无 run 身份而记录声明已转交 → 统一入口明确报错，不返回 feature 范围
@@ -1685,17 +1695,17 @@ cases.push({ name: 'D1 runless completion rejects bare reports and tampered froz
     const chain = executionCompletionPhases(featureEffectiveScope(record)).map(String);
     // ① 只有 feature.yaml + 裸报告（无冻结完成原件）→ 完成判定不成立
     seedRunlessChain(root, feature, chain);
-    const bare = verifyFeatureCompletion({ projectRoot: root, feature, expectedChain: chain, expectedTrack: 'full', frameworkRoot });
+    const bare = completionOf({ projectRoot: root, feature, expectedChain: chain, expectedTrack: 'full', frameworkRoot });
     assert.notEqual(bare.verdict, 'VALID', JSON.stringify(bare));
     // ② 正常生成后 VALID
     const outcome = applyFeatureScopeRevisionsThenMaybeComplete({ projectRoot: root, frameworkRoot, feature, phase: chain.at(-1)!, workflowTrack: 'full' });
     assert(outcome.completionPath, JSON.stringify(outcome));
-    assert.equal(verifyFeatureCompletion({ projectRoot: root, feature, expectedChain: chain, expectedTrack: 'full', frameworkRoot }).verdict, 'VALID');
+    assert.equal(completionOf({ projectRoot: root, feature, expectedChain: chain, expectedTrack: 'full', frameworkRoot }).verdict, 'VALID');
     // ③ 冻结记录的范围内容被非法改动 → INVALID（指纹失配）
     const doc = JSON.parse(fs.readFileSync(featureFrozenScopePath(root, feature), 'utf8'));
     doc.execution_scope.requested_results = ['tampered'];
     fs.writeFileSync(featureFrozenScopePath(root, feature), JSON.stringify(doc));
-    const tampered = verifyFeatureCompletion({ projectRoot: root, feature, expectedChain: chain, expectedTrack: 'full', frameworkRoot });
+    const tampered = completionOf({ projectRoot: root, feature, expectedChain: chain, expectedTrack: 'full', frameworkRoot });
     assert.equal(tampered.verdict, 'INVALID', JSON.stringify(tampered));
     // ④ 伪造 run 身份（feature 载体声明 run_id）→ INVALID
     fs.writeFileSync(featureFrozenScopePath(root, feature), JSON.stringify(JSON.parse(fs.readFileSync(featureFrozenScopePath(root, feature), 'utf8'))));
@@ -1709,7 +1719,7 @@ cases.push({ name: 'D1 runless completion rejects bare reports and tampered froz
       original_path: path.relative(root, originalAbs).split(path.sep).join('/'),
       original_sha256: createHash('sha256').update(text).digest('hex'),
     }));
-    const forgedVerdict = verifyFeatureCompletion({ projectRoot: root, feature, expectedChain: chain, expectedTrack: 'full', frameworkRoot });
+    const forgedVerdict = completionOf({ projectRoot: root, feature, expectedChain: chain, expectedTrack: 'full', frameworkRoot });
     // 顶层伪造 run 身份：先撞上「该 run 没有出生范围」这条既有判据（同样是拒绝，不必改判据顺序）
     assert.equal(forgedVerdict.verdict, 'INVALID', JSON.stringify(forgedVerdict));
     assert(forgedVerdict.reasons.length > 0, JSON.stringify(forgedVerdict));
@@ -1724,7 +1734,7 @@ cases.push({ name: 'D1 runless completion rejects bare reports and tampered froz
       original_path: path.relative(root, originalAbs).split(path.sep).join('/'),
       original_sha256: createHash('sha256').update(perPhaseText).digest('hex'),
     }));
-    const perPhaseVerdict = verifyFeatureCompletion({ projectRoot: root, feature, expectedChain: chain, expectedTrack: 'full', frameworkRoot });
+    const perPhaseVerdict = completionOf({ projectRoot: root, feature, expectedChain: chain, expectedTrack: 'full', frameworkRoot });
     assert.equal(perPhaseVerdict.verdict, 'INVALID', JSON.stringify(perPhaseVerdict));
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
@@ -1879,7 +1889,7 @@ cases.push({ name: 'D1 in-run revision after transfer is not a conflict', async 
     assert.equal(fs.readFileSync(featureFrozenScopePath(root, feature), 'utf8'), before);
     // 唯一的「损坏」判据仍成立：转交指纹 = run 出生范围指纹
     const record = readFeatureFrozenScope(root, feature)!;
-    assert.equal(record.transferred_scope_fingerprint, executionScopeFingerprint(validateExecutionScope(prepared.manifest.execution_scope!)));
+    assert.equal(record.transfers?.at(-1)?.scope_fingerprint, executionScopeFingerprint(validateExecutionScope(prepared.manifest.execution_scope!)));
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 
@@ -1918,7 +1928,7 @@ cases.push({ name: 'D1 runless completion is generated at the sync-closure exit'
     const completion = JSON.parse(fs.readFileSync(path.join(root, projection.original_path), 'utf8'));
     assert.equal(completion.run_id, null);
     assert.equal(completion.scope_source, 'feature');
-    assert.equal(verifyFeatureCompletion({ projectRoot: root, feature, expectedChain: chain, expectedTrack: 'full', frameworkRoot }).verdict, 'VALID');
+    assert.equal(completionOf({ projectRoot: root, feature, expectedChain: chain, expectedTrack: 'full', frameworkRoot }).verdict, 'VALID');
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 
@@ -1938,8 +1948,8 @@ cases.push({ name: 'D1 detached birth after a feature-level revision uses S1 and
     // 出生登记（runtime 在 createGoalRun 成功后调同一个函数）
     registerFeatureScopeTransfer({ projectRoot: root, feature, runId: 'd1-detached', transferredScopeFingerprint: executionScopeFingerprint(resolved.scope!) });
     const record = readFeatureFrozenScope(root, feature)!;
-    assert.equal(record.transferred_to, 'd1-detached');
-    assert.equal(record.transferred_scope_fingerprint, executionScopeFingerprint(resolved.scope!));
+    assert.equal(record.transfers?.at(-1)?.run_id, 'd1-detached');
+    assert.equal(record.transfers?.at(-1)?.scope_fingerprint, executionScopeFingerprint(resolved.scope!));
     // 出生段与修订历史保留
     assert.deepStrictEqual(record.execution_scope.phase_chain, birth.phase_chain);
     assert.equal(record.revisions.length, 1);
@@ -2015,7 +2025,7 @@ cases.push({ name: 'D1 completion rejects a tampered gate fingerprint', run() {
     seedRunlessChain(root, feature, chain);
     const outcome = applyFeatureScopeRevisionsThenMaybeComplete({ projectRoot: root, frameworkRoot, feature, phase: chain.at(-1)!, workflowTrack: 'full' });
     assert(outcome.completionPath, JSON.stringify(outcome));
-    assert.equal(verifyFeatureCompletion({ projectRoot: root, feature, expectedChain: chain, expectedTrack: 'full', frameworkRoot }).verdict, 'VALID');
+    assert.equal(completionOf({ projectRoot: root, feature, expectedChain: chain, expectedTrack: 'full', frameworkRoot }).verdict, 'VALID');
     // 改一个阶段的 gate_fingerprint 并同步投影哈希——仍必须 INVALID
     const originalAbs = outcome.completionPath!;
     const doc = JSON.parse(fs.readFileSync(originalAbs, 'utf8'));
@@ -2027,7 +2037,7 @@ cases.push({ name: 'D1 completion rejects a tampered gate fingerprint', run() {
       original_path: path.relative(root, originalAbs).split(path.sep).join('/'),
       original_sha256: createHash('sha256').update(text).digest('hex'),
     }));
-    const verdict = verifyFeatureCompletion({ projectRoot: root, feature, expectedChain: chain, expectedTrack: 'full', frameworkRoot });
+    const verdict = completionOf({ projectRoot: root, feature, expectedChain: chain, expectedTrack: 'full', frameworkRoot });
     assert.equal(verdict.verdict, 'INVALID', JSON.stringify(verdict));
     assert(verdict.reasons.some(reason => reason.includes('gate_fingerprint')), JSON.stringify(verdict.reasons));
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
@@ -2279,8 +2289,8 @@ cases.push({ name: 'D1 real createGoalRun birth transfers the feature effective 
     createGoalRun({ projectRoot: root, manifest, chain: [...scope.phase_chain] });
     registerFeatureScopeTransfer({ projectRoot: root, feature, runId: manifest.run_id, transferredScopeFingerprint: executionScopeFingerprint(scope) });
     const record = readFeatureFrozenScope(root, feature)!;
-    assert.equal(record.transferred_to, 'd1-detached-real');
-    assert.equal(record.transferred_scope_fingerprint, executionScopeFingerprint(scope));
+    assert.equal(record.transfers?.at(-1)?.run_id, 'd1-detached-real');
+    assert.equal(record.transfers?.at(-1)?.scope_fingerprint, executionScopeFingerprint(scope));
     // run 的有效范围由 run 载体给出；出生指纹与登记值一致（不一致即统一入口报错）
     assert.deepStrictEqual(loadEffectiveExecutionScope(root, feature, manifest.run_id)!.phase_chain, scope.phase_chain);
     // 出生段与修订历史保留
@@ -2376,7 +2386,7 @@ cases.push({ name: 'D1 re-registering the same transfer is idempotent', run() {
     const before = fs.readFileSync(featureFrozenScopePath(root, feature), 'utf8');
     // 同 run、同指纹重复登记 = 幂等：字节不变、不报错
     const again = registerFeatureScopeTransfer({ projectRoot: root, feature, runId: 'r1', transferredScopeFingerprint: effective });
-    assert.equal(again!.transferred_to, 'r1');
+    assert.equal(again!.transfers?.at(-1)?.run_id, 'r1');
     assert.equal(fs.readFileSync(featureFrozenScopePath(root, feature), 'utf8'), before, '幂等重复登记改写了记录');
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
@@ -2495,7 +2505,7 @@ cases.push({ name: 'D1 the real runtime refuses a manifest-carried scope that di
     assert(out.includes('manifest 自带的出生范围与统一出生解析结果不一致'), out);
     // 拒绝发生在建 run 之前：不留 run 目录、feature 记录未被登记转交
     assert(!fs.existsSync(featureFilePath(root, feature, path.join('goal-runs', 'd1-stale'))), '拒绝前已经建了 run');
-    assert.equal(readFeatureFrozenScope(root, feature)!.transferred_to, undefined);
+    assert.equal(readFeatureFrozenScope(root, feature)!.transfers?.at(-1)?.run_id, undefined);
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 
@@ -2559,7 +2569,7 @@ cases.push({ name: 'D1 a missing transferred run refuses instead of falling back
     execFileSync('git', ['-c', 'user.name=F', '-c', 'user.email=f@e.test', 'commit', '-qm', 'base'], { cwd: root });
     ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature });
     prepareGoalModeRun({ projectRoot: root, frameworkRoot, feature, runId: 'd1-gone', adapter: 'generic', requirement: '把 value 改成 42' });
-    assert.equal(readFeatureFrozenScope(root, feature)!.transferred_to, 'd1-gone');
+    assert.equal(readFeatureFrozenScope(root, feature)!.transfers?.at(-1)?.run_id, 'd1-gone');
     // 该 run 的目录被清理/损坏
     fs.rmSync(featureFilePath(root, feature, path.join('goal-runs', 'd1-gone')), { recursive: true, force: true });
     assert.throws(() => loadEffectiveExecutionScope(root, feature, 'd1-gone'), /出生范围缺失或损坏/);
@@ -2626,7 +2636,7 @@ cases.push({ name: 'D1 a closing-time scope failure lands in the report and exit
 
 cases.push({ name: 'D1 a superseding successor is born from the source run, not blocked by the transfer', run() {
   // 第五轮阻断 1：feature 记录已把范围转交给源 run 之后，`--supersede` 仍须能开后继——
-  // 后继是 **run→run 血缘**，不经 feature 载体（既不重新解析出生范围，也不再登记一次转交）。
+  // 转交记录在 supersede 上下文只作血缘核对（= 源 run），不抛「已转交」。
   const repo = path.resolve(__dirname, '../../..');
   const { root, frameworkRoot, feature } = setupRunlessProject();
   try {
@@ -2636,7 +2646,7 @@ cases.push({ name: 'D1 a superseding successor is born from the source run, not 
     execFileSync('git', ['-c', 'user.name=F', '-c', 'user.email=f@e.test', 'commit', '-qm', 'base'], { cwd: root });
     ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature });
     prepareGoalModeRun({ projectRoot: root, frameworkRoot, feature, runId: 'd1-src', adapter: 'generic', requirement: '把 value 改成 42' });
-    assert.equal(readFeatureFrozenScope(root, feature)!.transferred_to, 'd1-src');
+    assert.equal(readFeatureFrozenScope(root, feature)!.transfers?.at(-1)?.run_id, 'd1-src');
     const sourceBirth = loadFrozenExecutionScope(root, feature, 'd1-src')!;
     const cli = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'),
       path.join(repo, 'harness/scripts/goal-phase-runtime.ts'),
@@ -2650,13 +2660,84 @@ cases.push({ name: 'D1 a superseding successor is born from the source run, not 
     assert(fs.existsSync(succManifestPath), '后继 run 没有建起来：' + out);
     const succ = JSON.parse(fs.readFileSync(succManifestPath, 'utf8')) as { successor_of?: string; execution_scope?: unknown };
     assert.equal(succ.successor_of, 'd1-src');
-    // 范围继承自**源 run**（出生 + 已应用修订），不是从 feature 候选重算
+    // plan b2d7f4e9 §3.2：后继范围在 supersede 上下文从候选重解析；源 run 没有任何完成证据可复用，
+    // 所以重解析结果与源 run 出生范围一致（有证据时见 successor-exit 套件）
     assert.equal(
       executionScopeFingerprint(validateExecutionScope(succ.execution_scope)),
       executionScopeFingerprint(sourceBirth),
     );
-    // feature 记录只在首次 feature→run 出生时登记转交，后继不改写它
-    assert.equal(readFeatureFrozenScope(root, feature)!.transferred_to, 'd1-src');
+    // 转交记录追加式：旧转交保留，最新一条指向后继
+    assert.deepStrictEqual(readFeatureFrozenScope(root, feature)!.transfers?.map(item => item.run_id), ['d1-src', 'd1-succ'], out);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+} });
+
+cases.push({ name: 'b2d7 t3 legacy single-value transferred_to reads as the only transfer and keeps its semantics', run() {
+  // 读兼容：3.1.0 写的单值 `transferred_to` / `transferred_scope_fingerprint` = transfers 的唯一一条，语义不变。
+  const { root, frameworkRoot, feature } = setupRunlessProject();
+  try {
+    ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature });
+    const effective = executionScopeFingerprint(featureEffectiveScope(readFeatureFrozenScope(root, feature)!));
+    const file = featureFrozenScopePath(root, feature);
+    const legacy = { ...JSON.parse(fs.readFileSync(file, 'utf8')), transferred_to: 'r1', transferred_scope_fingerprint: effective };
+    fs.writeFileSync(file, JSON.stringify(legacy, null, 2) + '\n');
+    const bytes = fs.readFileSync(file, 'utf8');
+    assert.deepStrictEqual(readFeatureFrozenScope(root, feature)!.transfers, [{ run_id: 'r1', scope_fingerprint: effective }]);
+    assert.throws(() => loadEffectiveExecutionScope(root, feature), /已转交给 run r1/);
+    assert.throws(() => appendFeatureScopeRevision({ projectRoot: root, feature, nextScope: featureEffectiveScope(readFeatureFrozenScope(root, feature)!) as never }), /已转交给 run r1/);
+    registerFeatureScopeTransfer({ projectRoot: root, feature, runId: 'r1', transferredScopeFingerprint: effective });
+    assert.equal(fs.readFileSync(file, 'utf8'), bytes, '同 run 幂等登记不得改写旧记录');
+    assert.throws(() => registerFeatureScopeTransfer({ projectRoot: root, feature, runId: 'r2', transferredScopeFingerprint: effective }), /已转交给 run r1，不能再转交给 r2/);
+    fs.writeFileSync(file, JSON.stringify({ ...legacy, transfers: [{ run_id: 'r1', scope_fingerprint: effective }] }));
+    assert.throws(() => readFeatureFrozenScope(root, feature), /形状冲突/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+} });
+
+cases.push({ name: 'b2d7 t3 #15 runless completion: --supersede is refused toward revision; a revision then a fresh run is born from it', run() {
+  // feature 载体（record.run_id=null）没有 run 可 supersede：空值 / 不存在的 run 都拒绝并指向「先追加修订再起新 run」；
+  // 修订后新 run 出生读修订后的有效范围（既有 appendFeatureScopeRevision + resolveBirthExecutionScope，无生产改动）。
+  const repo = path.resolve(__dirname, '../../..');
+  const { root, frameworkRoot, feature } = setupRunlessProject();
+  try {
+    execFileSync('git', ['init', '-q'], { cwd: root });
+    fs.writeFileSync(path.join(root, '.gitignore'), 'framework\n');
+    fs.mkdirSync(path.join(root, 'src/demo/src/main'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'src/demo/src/main/value.ts'), 'export const value: number = 42;\n');
+    execFileSync('git', ['add', '.'], { cwd: root });
+    execFileSync('git', ['-c', 'user.name=F', '-c', 'user.email=f@e.test', 'commit', '-qm', 'base'], { cwd: root });
+    ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature });
+    const chain = executionCompletionPhases(featureEffectiveScope(readFeatureFrozenScope(root, feature)!)).map(String);
+    seedRunlessChain(root, feature, chain, 'ut');
+    const reportsDir = featurePhaseReportsDir(root, feature, 'ut', frameworkRoot);
+    fs.mkdirSync(reportsDir, { recursive: true });
+    fs.writeFileSync(path.join(reportsDir, 'trace.json'), JSON.stringify({ schema_version: '1.0.0', feature, phase: 'ut' }));
+    const env = { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json'), MAISON_GOAL_RUN_ID: '' };
+    const sync = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'),
+      path.join(repo, 'harness/harness-runner.ts'), '--sync-closure', '--phase', 'ut', '--feature', feature,
+      '--project-root', root, '--framework-root', frameworkRoot], { cwd: root, encoding: 'utf8', timeout: 180000, env });
+    assert.equal(sync.status, 0, (sync.stdout ?? '') + (sync.stderr ?? ''));
+    const projection = JSON.parse(fs.readFileSync(featureFilePath(root, feature, 'feature-completion.json'), 'utf8')) as { original_path: string };
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, projection.original_path), 'utf8')).run_id, null, '前提：feature 载体完成');
+    const recordBytes = fs.readFileSync(featureFrozenScopePath(root, feature), 'utf8');
+    for (const target of ['', '20260101T000000Z-9h0st9']) {
+      const cli = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'),
+        path.join(repo, 'harness/scripts/goal-phase-runtime.ts'),
+        '--feature', feature, '--adapter', 'generic', '--supersede', target, '--requirement', '把 value 改成 42',
+        '--project-root', root, '--framework-root', frameworkRoot, '--foreground-ok', '--force'],
+        { cwd: root, encoding: 'utf8', timeout: 180000, env });
+      const out = (cli.stdout ?? '') + (cli.stderr ?? '');
+      assert.notEqual(cli.status, 0, `--supersede ${JSON.stringify(target)} 未被拒绝：${out}`);
+      assert(out.includes('追加 feature 范围修订'), `拒绝未指向修订：${out}`);
+      const runsDir = featureFilePath(root, feature, 'goal-runs');
+      assert(!fs.existsSync(runsDir) || !fs.readdirSync(runsDir).some(id => fs.existsSync(path.join(runsDir, id, 'manifest.json'))), '拒绝后仍建了 run');
+    }
+    assert.equal(fs.readFileSync(featureFrozenScopePath(root, feature), 'utf8'), recordBytes);
+    // 完成后修正：按当前输入追加一条修订（这里把 plan 加回链上）→ 新 run 出生读修订后的有效范围
+    const effective = featureEffectiveScope(readFeatureFrozenScope(root, feature)!);
+    appendFeatureScopeRevision({ projectRoot: root, feature, nextScope: { ...effective, phase_chain: ['plan', ...effective.phase_chain] } as never, trigger: { phase: 'plan' } });
+    const revised = featureEffectiveScope(readFeatureFrozenScope(root, feature)!);
+    const prepared = prepareGoalModeRun({ projectRoot: root, frameworkRoot, feature, runId: 'b2d7-fresh', adapter: 'generic', requirement: '把 value 改成 42' });
+    assert.equal(executionScopeFingerprint(validateExecutionScope(prepared.manifest.execution_scope)), executionScopeFingerprint(revised));
+    assert.deepStrictEqual(readFeatureFrozenScope(root, feature)!.transfers?.map(item => item.run_id), ['b2d7-fresh']);
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 

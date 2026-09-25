@@ -1,0 +1,17 @@
+{
+  "schema_version": "2.0",
+  "inferred_fidelity": "semantic_layout",
+  "selected_fidelity": "semantic_layout",
+  "effective_fidelity": "semantic_layout",
+  "acceptance_strictness": "best_effort",
+  "asset_acquisition_mode": "approximate",
+  "clamped": false,
+  "decision": {
+    "source": "auto_default",
+    "rationale": "inferred=semantic_layout(default) selected=semantic_layout effective=semantic_layout strictness=best_effort asset=approximate(default)",
+    "decision_id": "4f7f4fe9edf13728"
+  },
+  "execution_identity": "20260925T043336Z-8e78e2",
+  "requirement_sha256": "7c178134dd683f41d97099250025364331ab58a88aa22809d1cfd6f32cdd063d",
+  "requirement_provenance": "goal_manifest"
+}

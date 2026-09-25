@@ -34,7 +34,7 @@ canonical 设计产物是**部件演进蓝图**（Component Evolution Blueprint�
 - 仅重入、查看或重跑 checker **不增加 revision**。新事实、被接受的权威裁决或冲突解决才按
   P1 调和规则形成正式修订；意见、建议与未接受反馈不自动升 revision。下游由各自权责重新派生。
 - 用户要求完成设计交接且蓝图已 admitted：0 CU 从第 3 步首次分解；已有 CU 复用并在第 4 步
-  派生 readiness，**不重复创建 CU**。需要改变已接受单元时走既有修订 / superseding 规则。
+  派生 readiness，**不重复创建 CU**。契约不变即同一 CU，蓝图升版时指针原位升版；契约变化才新建 id + supersedes。
 
 已有设计的局部请求不重走新需求判定或来源物化；涉及新增需求时仍执行对应正式性与来源检查。
 局部操作不强制跑完分解和交接，不选择 CU、不启动 Goal Mode/P3。
@@ -105,9 +105,9 @@ consumer validator 接受候选，`deriveDesignPreparationReadiness` 派生交�
 3. **只有 consumer validator** 可以接受候选：校验 schema、canonical identity、设计闭包、
    provenance 与来源权威后，**原子**写出 1..N canonical `change-unit@1`。任一候选不通过即
    整批拒绝、一个字节都不落盘；
-4. 重复接受 **fail-closed**：目标 canonical 路径已存在即拒绝，修正已接受单元走新的
-   修订 / superseding CU；
-5. 派生 design gate / readiness。
+4. 重复接受 **fail-closed**：目标 canonical 路径已存在即拒绝，契约变化走新 id + `supersedes`；
+5. 派生 design gate / readiness；派生前把 carry-forward 通过的 CU（已完成与未完成同规则）蓝图指针
+   原位升到当前 revision，输出 `blueprintRefs.bumped / skipped` 及跳过原因。
 
 一项正式需求只分解出**一个** CU 是正常正向路径，不是退化形态。
 

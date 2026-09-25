@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.1",
+  "kind": "maison_verifier_request",
+  "subject_id": "a69ff2ae5b05820e61a00620ed5fcc9d9c252fd156b62df855246c3f39f882d6",
+  "feature": "cu-bGVkZ2VyLWFwcC1ibHVlcHJpbnQAbGVkZ2VyLXJlZnJlc2g",
+  "phase": "coding",
+  "prompt_path": "doc/features/ledger-app-blueprint/ledger-refresh/coding/reports/ai-prompt.md",
+  "prompt_sha256": "ca45e221142a11684eeece5dde0d5912eb66262dee8e91fcb4b0aa5c9a9e38ef",
+  "material_sha256": "59cdce5452b22cbe65f79b01b39a4677532a14301db900132b7d3a9da1147433",
+  "gate_fingerprint": "3.1.0:280c79bc193c",
+  "source_commit_sha": "72b5c922ef424577e6148cedf7ade849b7655534",
+  "worktree_digest": "30cc8b7992bcd4c7"
+}

@@ -1,0 +1,13 @@
+{
+  "ok": true,
+  "pythonPath": "real-chain-seam-python",
+  "hylyreVersion": "0.5.1",
+  "manifestVersion": "0.5.1",
+  "installed_version": "0.5.1",
+  "manifest_version": "0.5.1",
+  "version_consistent": true,
+  "versionConsistent": true,
+  "source": "env_override",
+  "doctorOk": true,
+  "errors": []
+}
