@@ -168,6 +168,42 @@ function identityKey(ref: Record<string, unknown> | undefined): string {
 }
 
 /**
+ * 无来源戳（agent 手写 / 阶段产出）的 contracts.yaml 不归投影 writer，但其中的身份指针随 CU 升版：
+ * `change_unit.change_unit_ref` 精确指向升版前本 CU 时，把它的 revision / artifact_sha256 与全部仍指向升版前蓝图身份的
+ * `component-blueprint@1` 引用（design_ref_mappings[].design_ref 等）的三个身份字段改为升版后值——按原文位置替换标量，
+ * 其余字节一个不动（内容变化仍由 plan 义务绑定过期交责任阶段）。返回 null = 不归本批维护（无 ref / ref 不是升版前本 CU）。
+ */
+function repointHandWrittenContracts(
+  text: string,
+  cu: { blueprintId: string; changeUnitId: string; from: [number, string]; to: [number, string] },
+  blueprint: { from: Record<string, unknown>; to: Record<string, unknown> },
+): string | null {
+  const doc = YAML.parseDocument(text);
+  const ref = doc.getIn(['change_unit', 'change_unit_ref'], true);
+  if (!YAML.isMap(ref)) return null;
+  const same = (map: YAML.YAMLMap, values: Record<string, unknown>): boolean => Object.entries(values).every(([key, value]) => map.get(key) === value);
+  if (!same(ref, { blueprint_id: cu.blueprintId, change_unit_id: cu.changeUnitId, revision: cu.from[0], artifact_sha256: cu.from[1] })) return null;
+  const edits: Array<{ node: YAML.Scalar; value: unknown }> = [];
+  const edit = (map: YAML.YAMLMap, values: Record<string, unknown>): void => {
+    for (const [key, value] of Object.entries(values)) edits.push({ node: map.get(key, true) as YAML.Scalar, value });
+  };
+  edit(ref, { revision: cu.to[0], artifact_sha256: cu.to[1] });
+  YAML.visit(doc, { Map: (_key, map) => {
+    if (same(map, { artifact: 'component-blueprint@1', blueprint_id: cu.blueprintId, ...Object.fromEntries(IDENTITY_KEYS.map(key => [key, blueprint.from[key]])) })) {
+      edit(map, Object.fromEntries(IDENTITY_KEYS.map(key => [key, blueprint.to[key]])));
+    }
+  } });
+  let next = text;
+  for (const { node, value } of edits.sort((a, b) => b.node.range![0] - a.node.range![0])) {
+    const quoted = node.type === 'QUOTE_DOUBLE' ? JSON.stringify(String(value)) : node.type === 'QUOTE_SINGLE' ? `'${String(value)}'` : String(value);
+    next = next.slice(0, node.range![0]) + quoted + next.slice(node.range![1]);
+  }
+  const check = asRecord(asRecord(YAML.parse(next)?.change_unit)?.change_unit_ref);
+  if (check?.revision !== cu.to[0] || check?.artifact_sha256 !== cu.to[1]) throw new Error('contracts.yaml 身份指针原位替换后复核不一致');
+  return next;
+}
+
+/**
  * b2d7f4e9 §3.3：蓝图升 admitted revision 后，把 canonical CU 的三处蓝图身份指针
  * （revision / source_fingerprint / artifact_sha256）原位升到当前蓝图，CU `revision + 1`；
  * change_unit_id 与契约字段（provides / requires / target_predicates / touches / preserved_invariants /
@@ -179,7 +215,8 @@ function identityKey(ref: Record<string, unknown> | undefined): string {
  * 写入与 accept 同一原语，中途失败回滚本批。幂等：指针已指向当前蓝图的 CU 不在候选内。
  * t2c：CU 派生 feature 目录已有机器投影（acceptance/contracts/use-cases）时，同批经同一个物化 writer
  *（`materializeBlueprintSkillInputs` 的 refresh 模式）刷新为新投影；带机器来源戳却不指向升版前身份的，
- * 该 CU 不升版、进 skipped。没有机器来源戳的文件不归本 writer，原样保留。
+ * 该 CU 不升版、进 skipped。没有机器来源戳的文件不归本 writer，内容原样保留；只有 contracts.yaml 的身份指针
+ *（change_unit_ref 精确指向升版前本 CU 时）同批原位维护，ref 指向别处则一个字节不动。
  */
 export function reconcileChangeUnitBlueprintRefs(
   projectRoot: string,
@@ -201,7 +238,7 @@ export function reconcileChangeUnitBlueprintRefs(
     source_fingerprint: String(current.blueprint.source_fingerprint),
     artifact_sha256: current.artifactSha256,
   };
-  const pending: Array<{ loaded: LoadedChangeUnit; next: ChangeUnitRecord; feature: string; refresh?: ProjectionRefresh }> = [];
+  const pending: Array<{ loaded: LoadedChangeUnit; next: ChangeUnitRecord; feature: string; refresh?: ProjectionRefresh; contracts?: { file: string; bytes: Buffer; text?: string } }> = [];
   for (const loaded of units) {
     const cu = loaded.changeUnit;
     const changeUnitId = String(cu.change_unit_id);
@@ -227,7 +264,8 @@ export function reconcileChangeUnitBlueprintRefs(
     next.revision = Number(cu.revision) + 1;
     // 派生 feature 目录里已有机器投影 → 升版必须同批刷新它们（否则该 feature 任何新 run 都被投影门拒绝）。
     // 来源戳全部指向升版前身份 = 旧机器投影，刷新即修复；部分带戳 / 戳指向别的身份 → 写任何东西之前就跳过。
-    // 没有任何机器来源戳的文件（手写 / 阶段产出）不归本 writer：不刷新、不覆盖，指针照常升版（§3.3 由责任阶段重投影）。
+    // 没有任何机器来源戳的文件（手写 / 阶段产出）不归本 writer：内容不刷新、不覆盖，指针照常升版；
+    // 其中 contracts.yaml 的身份指针（change_unit_ref 精确指向升版前本 CU 时）同批原位维护（repointHandWrittenContracts）。
     const feature = deriveChangeUnitFeatureId(blueprintId, changeUnitId);
     const refresh = { changeUnitSha: loaded.artifactSha256, blueprintSha: String(pointers[0]?.artifact_sha256) };
     const stamps = inspectProjectionStamps(projectRoot, feature, refresh);
@@ -235,7 +273,9 @@ export function reconcileChangeUnitBlueprintRefs(
       skip([`${NOT_MACHINE_OWNED}：来源戳不指向升版前 CU/蓝图 ${stamps.join(', ')}`]);
       continue;
     }
-    pending.push({ loaded, next, feature, ...(stamps === 'stamped' ? { refresh } : {}) });
+    const contractsFile = resolveFeatureArtifact(projectRoot, feature, BLUEPRINT_PROJECTION_FILES['contracts@1']);
+    const contracts = stamps === 'none' && contractsFile.exists ? { file: contractsFile.actualPath, bytes: fs.readFileSync(contractsFile.actualPath) } : undefined;
+    pending.push({ loaded, next, feature, ...(stamps === 'stamped' ? { refresh } : {}), ...(contracts ? { contracts } : {}) });
   }
   // supersedes 是对被引用 CU 的精确引用（revision + artifact_sha256），升版会改变这两项。只维护升版前精确成立的引用：
   //  · 引用方本批不升版 → 被引用者也不升版（退役 CU 本就不贡献，升了反而让引用失效）；按引用链收敛到不动点；
@@ -280,6 +320,18 @@ export function reconcileChangeUnitBlueprintRefs(
       );
     }
   }
+  for (const { loaded, next, contracts } of pending) {
+    if (!contracts) continue;
+    const id = String(next.change_unit_id);
+    try {
+      const text = repointHandWrittenContracts(contracts.bytes.toString('utf8'),
+        { blueprintId, changeUnitId: id, from: [Number(loaded.changeUnit.revision), loaded.artifactSha256], to: [Number(next.revision), bumpedSha.get(id)!] },
+        { from: asRecord(loaded.changeUnit.component_blueprint_ref)!, to: identity });
+      if (text !== null) contracts.text = text;
+    } catch (error) {
+      throw new ChangeUnitCandidateRejected('change_unit_blueprint_ref_bump_rejected', `CU ${id} 的 contracts.yaml 身份指针无法原位维护（整批未落盘）：${(error as Error).message}`);
+    }
+  }
   const written: LoadedChangeUnit[] = [];
   const refreshed: Array<{ file: string; bytes: Buffer | null }> = [];
   const rollback = (): void => {
@@ -293,6 +345,16 @@ export function reconcileChangeUnitBlueprintRefs(
       writeCanonicalChangeUnit(loaded.canonicalPath, next as unknown as ChangeUnitArtifact, `${process.pid}-bump-${index}`);
       written.push(loaded);
     });
+    // 手写 contracts 的身份指针与 CU 指针同批：temp → rename，登记原字节供整批回滚。
+    for (const { contracts } of pending) {
+      if (contracts?.text === undefined) continue;
+      const tmp = `${contracts.file}.tmp-${process.pid}`;
+      try {
+        fs.writeFileSync(tmp, contracts.text);
+        fs.renameSync(tmp, contracts.file);
+      } finally { fs.rmSync(tmp, { force: true }); }
+      refreshed.push({ file: contracts.file, bytes: contracts.bytes });
+    }
   } catch (error) {
     rollback();
     throw new ChangeUnitCandidateRejected(

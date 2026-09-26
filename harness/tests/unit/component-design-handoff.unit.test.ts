@@ -873,7 +873,90 @@ export function runAll(): UnitCaseResult[] {
     });
   }));
 
+  // 宿主形状（2026-09-26 回灌）：三份派生文件由 plan 阶段 agent 手写、无 `derive.blueprint-*` 来源戳，contracts 仍带
+  // change_unit_ref + design_ref_mappings。升版不刷新内容（不归投影 writer），只把 contracts 的身份指针随 CU / 蓝图同批原位维护。
+  results.push(test('b2d7 host shape: unstamped hand-written contracts whose change_unit_ref is the pre-bump CU → only identity pointers follow the bump, every other byte kept', () => {
+    withSnapshotProject(({ root }) => {
+      handWriteProjections(root);
+      const before = snapshotFeatureBytes(root, PROJECTIONS);
+      const current = bumpBlueprint(root);
+      const result = reconcileChangeUnitBlueprintRefs(root, BLUEPRINT_ID);
+      assert(result.bumped.some(item => item.change_unit_id === 'ledger-refresh') && result.skipped.length === 0, JSON.stringify(result));
+      const after = snapshotFeatureBytes(root, PROJECTIONS);
+      for (const name of ['acceptance.yaml', 'use-cases.yaml']) assert(after[name] === before[name], `${name} 被改写`);
+      // 逐行：行数不变、注释保留，变化行只能是身份字段
+      const [oldLines, newLines] = [before['contracts.yaml'].split('\n'), after['contracts.yaml'].split('\n')];
+      assert(oldLines.length === newLines.length && newLines[0] === HAND_COMMENT, 'contracts 行结构 / 注释被改');
+      const changed = oldLines.flatMap((line, index) => line === newLines[index] ? [] : [newLines[index]!.trim()]);
+      assert(changed.length > 0 && changed.every(line => /^(revision|source_fingerprint|artifact_sha256): /.test(line)), `contracts 身份指针未维护或非身份行被改：${JSON.stringify(changed)}`);
+      const loaded = loadCanonicalChangeUnit(root, BLUEPRINT_ID, 'ledger-refresh');
+      const doc = YAML.parse(after['contracts.yaml']) as BlueprintRecord;
+      const ref = asRecord(asRecord(doc.change_unit)?.change_unit_ref);
+      assert(JSON.stringify(ref) === JSON.stringify(createChangeUnitRef(loaded)), `change_unit_ref 未跟随升版后 CU：${JSON.stringify(ref)}`);
+      resolveChangeUnitRef(root, ref);
+      const blueprintRefs: BlueprintRecord[] = [];
+      findRecord(doc, record => { if (record.artifact === 'component-blueprint@1') blueprintRefs.push(record); return false; });
+      assert(blueprintRefs.length > 0 && blueprintRefs.every(item => item.revision === current.revision && item.artifact_sha256 === current.artifact_sha256 && item.source_fingerprint === current.source_fingerprint),
+        'design_ref 身份未跟随升版后蓝图');
+      assert(JSON.stringify(contractsWithoutIdentity(doc)) === JSON.stringify(contractsWithoutIdentity(YAML.parse(before['contracts.yaml']))), '去掉身份字段后内容不等');
+      const again = reconcileChangeUnitBlueprintRefs(root, BLUEPRINT_ID);
+      assert(again.bumped.length === 0 && again.skipped.length === 0 && JSON.stringify(snapshotFeatureBytes(root, PROJECTIONS)) === JSON.stringify(after), `非幂等：${JSON.stringify(again)}`);
+    });
+  }));
+
+  results.push(test('b2d7 host shape: unstamped contracts whose change_unit_ref names another CU → its pointers are not ours, all three files byte-identical', () => {
+    withSnapshotProject(({ root }) => {
+      handWriteProjections(root, ref => { ref.change_unit_id = 'ledger-consumer'; });
+      const before = snapshotFeatureBytes(root, PROJECTIONS);
+      bumpBlueprint(root);
+      const result = reconcileChangeUnitBlueprintRefs(root, BLUEPRINT_ID);
+      assert(result.bumped.some(item => item.change_unit_id === 'ledger-refresh'), `无戳文件不归本 writer，CU 照常升版：${JSON.stringify(result)}`);
+      assert(JSON.stringify(snapshotFeatureBytes(root, PROJECTIONS)) === JSON.stringify(before), 'ref 指向别的 CU 仍被维护');
+    });
+  }));
+
+  results.push(test('b2d7 host shape atomicity: the hand-written contracts write failing rolls back every CU pointer', () => {
+    withSnapshotProject(({ root }) => {
+      handWriteProjections(root);
+      bumpBlueprint(root);
+      const bytes = unitBytes(root);
+      const projections = snapshotFeatureBytes(root, PROJECTIONS);
+      const contracts = featureFilePath(root, SNAPSHOT_CU_FEATURE, 'contracts.yaml');
+      fs.chmodSync(contracts, 0o444);
+      let code = '';
+      try { reconcileChangeUnitBlueprintRefs(root, BLUEPRINT_ID); }
+      catch (error) { code = (error as ChangeUnitDecompositionRejected).code; }
+      finally { fs.chmodSync(contracts, 0o666); }
+      assert(code === 'change_unit_blueprint_ref_bump_write_failed', `写出失败未整批拒绝：${code}`);
+      assert(unitBytes(root) === bytes, '整批拒绝后仍有 CU 指针落盘');
+      assert(JSON.stringify(snapshotFeatureBytes(root, PROJECTIONS)) === JSON.stringify(projections), 'contracts 未保持原字节');
+    });
+  }));
+
   return results;
+}
+
+const HAND_COMMENT = '# plan 阶段手写：沿用 CU 施工映射，补充读侧文件与通知步骤';
+
+/** 宿主形状：去掉三份派生文件的来源戳，contracts 保留 change_unit 映射并补 plan 会写的内容（含一行注释）。 */
+export function handWriteProjections(root: string, tamperRef?: (ref: BlueprintRecord) => void): void {
+  for (const name of PROJECTIONS) {
+    const file = featureFilePath(root, SNAPSHOT_CU_FEATURE, name);
+    const doc = YAML.parse(fs.readFileSync(file, 'utf8')) as BlueprintRecord;
+    delete doc.source;
+    let prefix = '';
+    if (name === 'contracts.yaml') {
+      (doc.files as string[]).push('src/ledger/LedgerIntakeConsumer.ts');
+      (asRecords(doc.state_management)[0]!.ordered_steps as string[]).push('notify observers');
+      tamperRef?.(asRecord(asRecord(doc.change_unit)?.change_unit_ref)!);
+      prefix = `${HAND_COMMENT}\n`;
+    }
+    fs.writeFileSync(file, prefix + YAML.stringify(doc));
+  }
+}
+
+function contractsWithoutIdentity(doc: unknown): unknown {
+  return JSON.parse(JSON.stringify(doc), (key, value) => ['revision', 'source_fingerprint', 'artifact_sha256'].includes(key) ? undefined : value);
 }
 
 const PROJECTIONS = ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml'];

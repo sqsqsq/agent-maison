@@ -1444,3 +1444,111 @@ L2b 的断言全部成立：
 **偏离**
 - 用例没有放进 feature-assessment / verify-feature-completion 套件，而是放在 execution-scope：runless 夹具与 §6 #15 既有用例都在该套件，跨套件导入测试模块会把它的整个依赖图带进来。放弃的准确性：无，只是换了位置；`--filter execution-scope` 本就在验收清单里。
 - 正例 B 用 `registerFeatureScopeTransfer` 直接转交，没有起真实 fresh run（§6 #15 既有用例已覆盖「修订后起新 run、出生读修订后范围」）。放弃的准确性：没有真实后继 run 目录时，B 的 `complete=false` 只来自新增义务 uncovered，没有经过「更晚未终局 run」这条 blocking。
+
+### 宿主形状回灌：无戳手写派生文件（2026-09-26，未提交）
+
+**结论：撞到框架缺陷，已按最小边界修复。** 宿主形状下，蓝图升版调和只升 CU 指针、不动手写 contracts.yaml，于是 contracts 的 `change_unit_ref` 仍指向旧 CU。后继的 plan 阶段被 `change_unit_identity_mismatch`（BLOCKER）挡住，同一 blocker 触发 `no_progress_guard` 后 HALTED。修复后调和在同一原子批里维护 contracts 的身份指针，其余字节不动；后继链 `[coding, review, ut]` 真 harness 跑完，得到新完成结论。
+
+**夹具（宿主形状）**
+- 起点：快照 CU feature（`ledger-refresh`）。
+- 手写化：三份派生文件去掉 `source` 来源戳。contracts 保留 `change_unit.change_unit_ref`（= 当前 CU rev1/sha）与 `design_ref_mappings`，再补两处 plan 会写的内容：`files` 加 `src/ledger/LedgerIntakeConsumer.ts`，`state_management[0].ordered_steps` 加 `notify observers`。handoff 用例在文件首行另加一行注释，用来证明字节保留。
+- 选源顺序核实：
+  - `skills/feature/plan/contract.yaml:10` 的 contracts 输入源顺序是先 `artifact contracts@1`、后 `derive.blueprint-contracts`；`resolveInput`（capability-resolution.ts:638-716）取第一个 resolved 的来源。
+  - 快照源 run 的出生范围本来就绑 `artifact: contracts@1` / `acceptance@1`。带戳文件走 artifact 路径时，额外做投影一致性核对（:226-233）；去戳后同一路径跳过这层核对。
+  - 所以不需要 `--prepare-scope` 重生成。successor 按同一生成点（feature-track.ts:642 `buildFeatureScopeCandidate` → :584 `candidateBinding`）得到 artifact 绑定。
+  - 任务书给的 capability-resolution.ts:575（现为 `readRunBoundContracts`）与 feature-track.ts:282（现为 `verifyBasisBinding` 的 catch 段）在当前 HEAD 上不是选源逻辑，实际位置以上面三处为准。
+- 宿主原始完成的替身：快照完成记录绑定的是带戳字节，去戳后绑定必然失效，不是宿主形状。因此先以真 harness `--supersede` 快照 run 跑一条 `[coding, review, ut]` 后继，让完成记录绑定手写文件。实测 `complete=true`，record.run_id = 该后继。下文称它「完成 run」。
+- 晚于完成：
+  - HALTED run：生产 `createGoalRun` 建出，再追加一行 `run_end{status:HALTED}`（id 尾缀 `97af3f`）；
+  - 一个无 manifest 的空目录 `20260918T010101Z-0dead0`；
+  - `.dry/20260918T020202Z-0d0d0d/manifest.json`。
+- 无 feature 冻结记录（与宿主一致，不调 `freezeAndTransfer`）。
+
+**四步实测原文**（修复前 = HEAD 生产代码，scratchpad 探针 `probe2.log`；修复后 = L1b 实跑 `g-lifecycle.log`）
+
+(a) `assessFeature`（无 run 身份），修复前后相同：
+- `record={state:ok, run_id:<完成 run>, reasons:[]}`，uncovered `[]`；
+- `blocking=["存在晚于凭证的未终局 run：…-97af3f（status=HALTED）"]`，`complete=false`；
+- 空目录与 `.dry` 不进 blocking：`classifyGoalRunsDir`（fidelity-shared.ts:366-395）对点前缀目录结构性跳过，对无 events/progress/phases 的目录按 bootstrap 残留静默排除；
+- 若宿主那 7 个目录里有 `events.jsonl` 或 `phases/`，会判 corrupt 并永久进 blocking，现有出口文案为「goal-run <id> 损坏：…——人工核查该目录（恢复 manifest 或确认废弃）后重验」（feature-assessment.ts:171-172）。判定未改；
+- HALTED run 按 `NON_TERMINAL_OK`（verify-feature-completion.ts:776，只含 CHAIN_SLICE_COMPLETED / COMPLETED）进 blocking。后继完成后它早于新凭证，不再阻断（L1b 断言 `final.blocking=[]`）。
+
+(b) 蓝图升版（`changeProjectedAcceptance`，含进投影的内容）→ `reconcileChangeUnitBlueprintRefs`：
+- 两侧都是 `{"bumped":[ledger-consumer/2, ledger-recovery/2, ledger-refresh/2, ledger-summary/2 → blueprint_revision 3],"skipped":[]}`；`inspectProjectionStamps` 判 `'none'`。
+- 修复前：三份文件全部 `unchanged`；contracts `change_unit_ref` 仍为 `revision:1, artifact_sha256: sha256:fe3451…`。
+- 修复后：acceptance / use-cases 字节不变。contracts 行数不变（254/254），只有身份行变化：
+  - `change_unit_ref` 的 `revision: 1→2`、`artifact_sha256 fe3451…→a8c750…`（= 升版后 CU）；
+  - 10 条 `design_ref_mappings[].design_ref` 与 `state_management[0].design_ref` 的 `revision: 2→3`、`artifact_sha256 339adc…→860fd0…`；
+  - `source_fingerprint` 未变（夹具升版不改它）。
+
+(c) 再评估：
+- 修复前：`design-context:candidate@plan/binding：CU 绑定失配：contracts.yaml change_unit_ref=rev1/sha256:fe3451… ≠ canonical CU rev2/sha256:a8c750…`，blocking 同 (a)。
+- 修复后：
+  - `design-context:candidate@plan/binding：input binding stale …/contracts.yaml`；
+  - `implementation:request@coding/evidence：[lineage_fresh] closure 后证据变更：…/contracts.yaml`；
+  - `code-review:request:review@review/evidence`、`unit-evidence:acceptance@ut/evidence`：`[lineage_fresh] stale：…/contracts.yaml`；
+  - blocking 同 (a)，不再出现「CU 绑定失配」。
+
+(d) `--supersede <完成 run>`：
+- 修复前：
+  - 出生成功，`phase_chain=["plan"]`，`reused=["coding","review","ut"]`；
+  - 真 harness 的 plan（作者只追加 facts 的 plan delta，不动 contracts，即「内容不变」的正确作法）两次都 FAIL：`✗ FAIL [BLOCKER] change_unit_identity_mismatch: revision yaml=2 ref=1；artifact_sha256 bytes=sha256:a8c750… ref=sha256:fe3451…`（Source: check-plan.ts，经 `validateChangeUnitFeatureProjection` → `resolveChangeUnitRef` 精确解析）；
+  - 随后 `no_progress_guard`：「repair_candidates[].files 与 blockers[].affected_files 都为空」，run HALTED；
+  - 这个 HALTED 后继本身又成为新的 blocking。要走通，agent 只能手抄新 CU 的 sha256。
+- 修复后：
+  - 出生成功，`phase_chain=["coding","review","ut"]`，`reused=[]`。plan 的定义义务由当前 contracts 的 artifact 绑定满足（t2c 偏离 2 的既有语义），不进链；
+  - 三阶段真 harness PASS，`CHAIN_SLICE_COMPLETED`；
+  - 新 completion 落后继 run 目录，`record.run_id=后继`，`complete=true`，`blocking=[]`；
+  - 旧 completion 原件字节不变，无新 CU 目录。
+
+**修法与落点**（只改 `harness/scripts/utils/change-unit-design-preparation.ts`）
+- 新增私有函数 `repointHandWrittenContracts(text, cu, blueprint)`：
+  - 用 `YAML.parseDocument` 定位 `change_unit.change_unit_ref`。只有它精确等于升版前本 CU（blueprint_id / change_unit_id / revision / artifact_sha256）时才维护，否则返回 null，一个字节不动；
+  - 维护对象：该 ref 的 `revision`、`artifact_sha256`，以及文档内全部 `artifact: component-blueprint@1`、同 blueprint_id、三身份字段等于升版前 owner 身份的引用的三身份字段；
+  - 按标量原文 `range` 拼接替换，保留引号风格，其余字节（注释、格式、手写内容）原样；
+  - 替换后重解析复核 ref，不一致即抛错。
+- `reconcileChangeUnitBlueprintRefs` 的接线：
+  - 在 `stamps === 'none'` 且 contracts.yaml 在场时登记原字节；
+  - 在 `finalize` 得到新 CU sha 且 `validateChangeUnit` 全通过之后算出新文本。算不出时抛 `change_unit_blueprint_ref_bump_rejected`，此时整批尚未落盘；
+  - 与 CU 指针写在同一个 try 里（temp → rename），原字节登记进既有 `refreshed`，写失败走既有 `rollback`，抛 `change_unit_blueprint_ref_bump_write_failed`。
+- 精确解析器、投影门、stamped 刷新规则（t2d）、`classifyGoalRunsDir`、`NON_TERMINAL_OK` 均未改。
+
+**测试**
+- `component-design-handoff` +3：
+  - 正例「无戳 + ref 指向升版前 CU」：acceptance / use-cases 字节不变。contracts 行数不变、首行注释在，变化行全是身份字段；`change_unit_ref` 等于 `createChangeUnitRef(升版后 CU)` 且 `resolveChangeUnitRef` 通过；全部 blueprint 引用指向新身份；去身份字段后逐字段相等；再调和幂等。
+  - 反例「无戳且 ref 指向别的 CU（change_unit_id=ledger-consumer）」：三份文件字节不变，CU 照常升版。
+  - 原子性：contracts.yaml 只读 → `change_unit_blueprint_ref_bump_write_failed`，全部 CU 指针与三份文件字节不变。
+  - `handWriteProjections` 导出供 L1b 复用。
+- `lifecycle-evolution` +L1b（release-only 套件内，38.4 s）：按上面四步逐步断言，终点走 `assertCompleted`。`evolve` 的逐阶段作者钩子抽成 `authorHooks` 与 L1b 共用，行为不变。
+- 先红：
+  - HEAD 生产代码跑新 handoff 用例 25/2（正例报「非身份行被改：[]」即 contracts 未维护，原子性报「写出失败未整批拒绝：」）；反例在 HEAD 本就绿；
+  - L1b 的红由探针（HEAD 代码，四步原文见上）与变异 M1 共同证明。
+- 反向变异（改生产文件后跑，结束后从备份写回并 cmp 一致）：
+
+| 变异 | 结果 |
+|---|---|
+| M1 `repointHandWrittenContracts` 恒返回 null | handoff 25/2（正例、原子性红）；lifecycle-evolution 11/1（L1b 红于 (b)：contracts 身份指针未维护） |
+| M2 去掉「ref 精确等于升版前本 CU」守卫 | handoff 26/1（反例红：「ref 指向别的 CU 仍被维护」） |
+
+**验证**（日志写 scratchpad 后 grep 结论）
+- `cd harness && npm run typecheck` EXIT=0。
+- 过滤套件：
+  - component-design：host-seams 18/0、handoff 27/0；
+  - successor-exit 7/0；feature-assessment 7/0；component-closure 45/0；change-unit-progression 97/0；
+  - lifecycle-evolution（显式）12/0；real-chain（显式）12/0（real-chain 4 + seams 8）。
+- 仓根 `node scripts/check-plan-version.mjs` PASS；三个改动文件 node 扫描 CR=0。
+- 未跑全量。lifecycle 全绿之后两份测试只改了一句断言文案，未重跑。
+
+**偏离与放弃的准确性**
+1. 「无戳且 ref 指向别的 CU → skip」按「不维护指针（文件字节不变）」实现，CU 本身照常升版，不进 `skipped`。
+   - 原因：快照与 base 夹具里另三个 CU 的 P2 手写 contracts，其 `change_unit_ref.artifact_sha256` 本就不等于自身 CU sha。若判 CU 级 skip，t2a / L1 / L8 / successor-exit ★2 的「skipped 为空」会全红，closure 也会以 `carry_forward:false` 挡住与蓝图无关的问题。
+   - 放弃的准确性：这类 feature 的 contracts 在升版前后都是错的，由 assess 的 CU 绑定核对照旧判 plan uncovered；升版没有让它变好，也没有让它变差。
+2. 维护范围比任务书列的两处宽一类：凡是精确指向升版前蓝图身份的 `component-blueprint@1` 引用都跟随，实测包括 `state_management[].design_ref`。它与 design_ref_mappings 同属身份指针，留着旧身份会让同一文件里出现两代身份。
+   - 放弃的准确性：无。消费方对它们只按 target 地址比对，身份字段跟随不改变任何判定。
+3. 宿主原始完成用「快照 run 的真 harness 后继」替身，不是 fresh run，也没有真跑 plan 阶段写 contracts（plan 内容由夹具直接写入后再完成）。
+   - 放弃的准确性：完成 run 带 `successor_of`；「plan 阶段 agent 亲手产出 contracts」这一步没有经过 check-plan。
+4. HALTED run 的 `run_end` 行是夹具直接追加的（生产 `createGoalRun` 只负责出生记录），字段与 goal-runner 的 run_end 同形。
+5. 修复后的出生链不含 plan（contracts 身份变了但施工内容没变，定义义务由当前绑定满足），与任务书「内容变化由 plan 义务绑定过期 → successor 重跑 plan」的预期不同。
+   - 宿主若在升版时真改了施工内容，由 plan 阶段作者自行改写 contracts，之后按同一消费关系让下游证据失效；
+   - 本用例 (c) 的 plan 义务 uncovered/binding 只来自身份行字节变化，后继出生时由当前绑定重新满足。
+6. 观察（未改）：修复前的 `no_progress_guard` 文案说「框架没能指出该改哪里」，`change_unit_identity_mismatch` 的 `affected_files` 为空；本修复消除了这个触发源，那条检查本身的 affected_files 缺失没有处理。

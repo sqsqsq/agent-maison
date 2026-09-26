@@ -22,7 +22,8 @@ import { readFeatureFrozenScope, resolveSuccessorExecutionScope } from '../../sc
 import { createGoalRun, loadFrozenExecutionScope } from '../../scripts/utils/goal-run-creation';
 import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
 import { reconcileChangeUnitBlueprintRefs } from '../../scripts/utils/change-unit-design-preparation';
-import { enumerateCanonicalChangeUnits, loadCanonicalChangeUnit, resolveChangeUnitRef } from '../../scripts/utils/change-unit-path';
+import { createChangeUnitRef, enumerateCanonicalChangeUnits, loadCanonicalChangeUnit, resolveChangeUnitRef } from '../../scripts/utils/change-unit-path';
+import { handWriteProjections } from './component-design-handoff.unit.test';
 import { validateChangeUnit } from '../../scripts/utils/change-unit-validator';
 import { resolveGoalRunBaseline } from '../../scripts/utils/goal-run-baseline';
 import { componentBlueprintPath } from '../../scripts/utils/component-blueprint-path';
@@ -158,17 +159,9 @@ async function evolve(s: Snapshot, ev: Evolution): Promise<Outcome> {
   assert(expected.length > 0, `前提：改动后应有 uncovered 义务：${brief(pre)}`);
   console.log(`[lifecycle-evolution] ${feature} pre-birth uncovered=${JSON.stringify(pre.obligations.filter(o => o.status === 'uncovered').map(o => `${o.id}@${o.owner_phase}/${o.class}`))}`);
 
-  const writers = feature === SNAPSHOT_CU_FEATURE ? CU_WRITERS : FLAT_WRITERS;
-  const hook = (phase: Phase) => (ctx: { runId: string; attempt: number }): void => {
-    p.runId = factsIdentity(p, phase, ctx.runId);
-    writers[phase]?.(p);
-    ev.after?.[phase]?.(p);
-    if (ctx.attempt > 1) publishVerifier(p, phase);
-  };
   const rebaselineTo = ev.rebaseline ? execFileSync('git', ['rev-parse', 'HEAD'], { cwd: s.root, encoding: 'utf8' }).trim() : undefined;
   const { successor, error } = await supersede(s, feature, source, expected, {
-    realHarness: true, failExecutorFor: undefined,
-    onSpec: hook('spec'), onPlan: hook('plan'), onCoding: hook('coding'), onReview: hook('review'), onUt: hook('ut'), onTesting: hook('testing'),
+    ...authorHooks(p, feature === SNAPSHOT_CU_FEATURE ? CU_WRITERS : FLAT_WRITERS, ev.after),
     ...(rebaselineTo ? { rebaselineTo } : {}),
   });
   assert(successor, `后继未出生：${error}`);
@@ -190,6 +183,20 @@ async function evolve(s: Snapshot, ev: Evolution): Promise<Outcome> {
   const out: Outcome = { source, successor: successor!, chain: scope.phase_chain.map(String), reused: scope.reused_phases.map(r => r.phase), final, ...(error ? { error } : {}) };
   console.log(`[lifecycle-evolution] ${feature} chain=${JSON.stringify(out.chain)} reused=${JSON.stringify(out.reused)} complete=${final.complete} exit=${error ?? 0}`);
   return out;
+}
+
+/** 真 harness 跑后继链的逐阶段作者材料（`supersede()` 的 extra）。 */
+function authorHooks(p: RealChainProject, writers: Partial<Record<Phase, Writer>>, after?: Partial<Record<Phase, Writer>>) {
+  const hook = (phase: Phase) => (ctx: { runId: string; attempt: number }): void => {
+    p.runId = factsIdentity(p, phase, ctx.runId);
+    writers[phase]?.(p);
+    after?.[phase]?.(p);
+    if (ctx.attempt > 1) publishVerifier(p, phase);
+  };
+  return {
+    realHarness: true, failExecutorFor: undefined,
+    onSpec: hook('spec'), onPlan: hook('plan'), onCoding: hook('coding'), onReview: hook('review'), onUt: hook('ut'), onTesting: hook('testing'),
+  };
 }
 
 /**
@@ -314,6 +321,84 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       assert(r.bumped.some(b => b.change_unit_id === 'ledger-refresh') && !r.skipped.length, JSON.stringify(r));
     } });
     assertCompleted(s, SNAPSHOT_CU_FEATURE, o);
+  }) },
+
+  /**
+   * L1b 宿主真实形状（bc-openCard-2 / open-card-flow-v2 盘点，2026-09-26 回灌）：三份派生文件由 plan 阶段 agent 手写、
+   * 无 `derive.blueprint-*` 来源戳，contracts 带 change_unit_ref + design_ref_mappings；feature 目录无冻结记录；
+   * 完成之后还有一个 HALTED run、一个无 manifest 的目录与 `.dry`。先以真 harness 跑一条后继让完成记录绑定这些手写文件
+   *（宿主原始完成的替身），再走 (a) 评估 → (b) 蓝图升版调和 → (c) 评估 → (d) `--supersede` 跑完。
+   */
+  { name: 'L1b 宿主形状：无戳手写派生文件 + 蓝图升版 + 后继 → 调和只维护 contracts 身份指针，后继跑完 → 新完成结论', run: () => withHost(async s => {
+    const feature = SNAPSHOT_CU_FEATURE;
+    const p = project(s, feature);
+    const requirement = (runId: string) => readJson<{ requirement: string }>(runFile(s.root, feature, runId, 'manifest.json')).requirement;
+    const predict = (source: string) => {
+      clearFrameworkConfigCache();
+      const born = resolveSuccessorExecutionScope(s.root, feature, resolveWorkflowSpec(s.root, { frameworkRoot: s.frameworkRoot }), s.frameworkRoot, requirement(source), source)!;
+      return uncoveredOwnerPhases(assessFeature(s.root, feature, { ...resolveChangeUnitExpectedExecution(s.root, feature), frameworkRoot: s.frameworkRoot, scope: born }));
+    };
+    const [snapshotRun] = runIds(s.root, feature);
+    handWriteProjections(s.root);
+    commit(s, 'plan-phase agent wrote the derived files by hand');
+    const original = await supersede(s, feature, snapshotRun, predict(snapshotRun), authorHooks(p, CU_WRITERS));
+    assert(original.successor && assess(s, feature).complete, `前提：手写文件下的完成记录（宿主原始完成替身）：${original.error} ${brief(assess(s, feature))}`);
+    const completed = original.successor!;
+    // 晚于完成：一个 HALTED run（生产 createGoalRun + run_end HALTED）、一个无 manifest 的空目录、一个 .dry 子树
+    const scope = loadFrozenExecutionScope(s.root, feature, completed)!;
+    const halted = `${new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z')}-97af3f`;
+    createGoalRun({ projectRoot: s.root, chain: scope.phase_chain, resolveHead: () => '0'.repeat(40), manifest: buildGoalManifestFromInput({
+      feature, run_id: halted, adapter: 'codex', requirement: 'later run', unattended: { write_mode: 'full-access', approval_mode: 'never' },
+      execution_scope: scope, chain_override: scope.phase_chain }, { projectRoot: s.root }) });
+    fs.appendFileSync(runFile(s.root, feature, halted, 'events.jsonl'), JSON.stringify({ ts: new Date().toISOString(), type: 'run_end', status: 'HALTED', halt_reason: 'change_unit_invalid' }) + '\n');
+    fs.mkdirSync(featureFilePath(s.root, feature, 'goal-runs/20260918T010101Z-0dead0'), { recursive: true });
+    writeHostFile(s.root, path.relative(s.root, featureFilePath(s.root, feature, 'goal-runs/.dry/20260918T020202Z-0d0d0d/manifest.json')), '{}\n');
+    commit(s, 'later runs');
+    const completionFile = completionOriginal(s, feature);
+    const completionBytes = fs.readFileSync(completionFile);
+    const dirs = blueprintDirs(s);
+
+    // (a) 无 run 身份评估：记录可信、义务全覆盖，只有晚到的 HALTED run 进 blocking（空目录与 .dry 不计）
+    const a = assess(s, feature);
+    console.log(`[lifecycle-evolution] L1b (a) ${brief(a)}`);
+    assert(a.record.state === 'ok' && a.record.run_id === completed && a.obligations.every(o => o.status === 'covered'), brief(a));
+    assert.deepStrictEqual(a.blocking, [`存在晚于凭证的未终局 run：${halted}（status=HALTED）`]);
+
+    // (b) 蓝图升版（含进投影的内容）→ 调和：CU 原位升版；手写 acceptance / use-cases 字节不变，contracts 只动身份行
+    const files = ['acceptance.yaml', 'use-cases.yaml', 'contracts.yaml'];
+    const before = files.map(name => fs.readFileSync(featureFilePath(s.root, feature, name), 'utf8'));
+    bumpBlueprint(s, changeProjectedAcceptance);
+    const r = reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID);
+    console.log(`[lifecycle-evolution] L1b (b) ${JSON.stringify(r)}`);
+    assert(r.bumped.some(b => b.change_unit_id === 'ledger-refresh') && !r.skipped.length, JSON.stringify(r));
+    const after = files.map(name => fs.readFileSync(featureFilePath(s.root, feature, name), 'utf8'));
+    assert(after[0] === before[0] && after[1] === before[1], '手写 acceptance / use-cases 被改写');
+    const changed = before[2].split('\n').flatMap((line, i) => line === after[2].split('\n')[i] ? [] : [after[2].split('\n')[i]!.trim()]);
+    assert(changed.length > 0 && changed.every(line => /^(revision|source_fingerprint|artifact_sha256): /.test(line)), `contracts 身份指针未维护或非身份行被改：${JSON.stringify(changed)}`);
+    const cu = loadCanonicalChangeUnit(s.root, BLUEPRINT_ID, 'ledger-refresh');
+    assert.deepStrictEqual(YAML.parse(after[2]).change_unit.change_unit_ref, createChangeUnitRef(cu), 'contracts change_unit_ref 未跟随升版后 CU');
+    commit(s, 'blueprint rev3 admitted');
+
+    // (c) 再评估：contracts 字节变了 → plan 设计义务绑定 stale，下游阶段证据按真实消费关系失效
+    const c = assess(s, feature);
+    console.log(`[lifecycle-evolution] L1b (c) ${brief(c)}`);
+    assert(c.record.state === 'ok' && c.obligations.some(o => o.owner_phase === 'plan' && o.status === 'uncovered' && o.class === 'binding'), brief(c));
+    assert(!c.obligations.some(o => (o.reason ?? '').includes('CU 绑定失配')), `身份指针已维护，不应再报 CU 绑定失配：${brief(c)}`);
+
+    // (d) --supersede 完成 run：出生链 = 预判 uncovered 责任阶段，真 harness 跑完 → 新完成结论
+    const expected = predict(completed);
+    const next = await supersede(s, feature, completed, expected, authorHooks(p, CU_WRITERS));
+    assert(next.successor, `后继未出生：${next.error}`);
+    const born = successorScope(s, feature, next.successor!);
+    console.log(`[lifecycle-evolution] L1b (d) chain=${JSON.stringify(born.phase_chain)} reused=${JSON.stringify(born.reused_phases.map(item => item.phase))} exit=${next.error ?? 0}`);
+    assert.strictEqual(born.successor_of, completed);
+    assert.deepStrictEqual(born.phase_chain, expected);
+    assert(auditedBy(s, feature, next.successor!, completed), '后继缺 supersede 审计事件');
+    assert(fs.readFileSync(completionFile).equals(completionBytes), '旧 completion 原件被改写');
+    assert.deepStrictEqual(blueprintDirs(s), dirs, '出现了新 CU 目录');
+    const final = assess(s, feature);
+    assertCompleted(s, feature, { source: completed, successor: next.successor!, chain: born.phase_chain.map(String), reused: [], final, ...(next.error ? { error: next.error } : {}) });
+    assert.deepStrictEqual(final.blocking, [], '晚到的 HALTED run 早于新完成，不再阻断');
   }) },
 
   { name: 'L2 #6 完成后补测试：宿主只在 acceptance 加一条 ut 层断言，测试交后继 ut 产出（沿用源 run 基线）→ 跑完 → 新完成结论', run: () => withHost(async s => {
