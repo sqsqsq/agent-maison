@@ -1481,6 +1481,79 @@ cases.push({ name: 'D1 runless interactive delivery reaches VALID completion', r
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 
+/**
+ * Codex 四轮 P1 现场：生产入口生成无 run 完成原件，再经生产 `appendFeatureScopeRevision` 追加一条新增义务的合法修订。
+ * 返回链、原件路径与修订前的原件字节。
+ */
+function runlessCompletionThenRevision(root: string, frameworkRoot: string, feature: string): { chain: string[]; originalAbs: string; originalBytes: string; newDuty: string } {
+  assert.equal(ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature }).status, 'frozen');
+  const chain = executionCompletionPhases(featureEffectiveScope(readFeatureFrozenScope(root, feature)!)).map(String);
+  seedRunlessChain(root, feature, chain);
+  const outcome = applyFeatureScopeRevisionsThenMaybeComplete({ projectRoot: root, frameworkRoot, feature, phase: chain.at(-1)!, workflowTrack: 'full' });
+  assert(outcome.completionPath, '无 run 完成原件未生成：' + JSON.stringify(outcome));
+  const originalBytes = fs.readFileSync(outcome.completionPath!, 'utf8');
+  assert.equal(JSON.parse(originalBytes).scope_revision_count, 0, '前提：完成时无修订');
+  // 正例 C：修订前评估完成（无回归）
+  const before = assessFeature(root, feature, { expectedTrack: 'full', expectedChain: chain, frameworkRoot });
+  assert.equal(before.record.state, 'ok', assessmentReasons(before).join('\n'));
+  assert.equal(before.complete, true, assessmentReasons(before).join('\n'));
+  // 完成后修正：新增一条 plan 责任义务（只增不删，合法修订）
+  const effective = featureEffectiveScope(readFeatureFrozenScope(root, feature)!);
+  const newDuty = 'codex-r4-post-completion-duty';
+  const extra = { ...effective.obligations.find(o => o.applicability === 'required')!, id: newDuty, owner_phase: 'plan', reason: '完成后修正新增', satisfied_by: undefined };
+  appendFeatureScopeRevision({ projectRoot: root, feature, trigger: { phase: 'plan' },
+    nextScope: { ...effective, phase_chain: ['plan', ...effective.phase_chain], obligations: [...effective.obligations, extra] } as never });
+  assert.equal(readFeatureFrozenScope(root, feature)!.revisions.length, 1);
+  return { chain, originalAbs: outcome.completionPath!, originalBytes, newDuty };
+}
+
+cases.push({ name: 'b2d7 codex-r4 runless completion stays a trusted record after a legal post-completion revision and after transfer', run() {
+  const { root, frameworkRoot, feature } = setupRunlessProject();
+  try {
+    const { chain, originalAbs, originalBytes, newDuty } = runlessCompletionThenRevision(root, frameworkRoot, feature);
+    // 正例 A：记录按凭证登记的修订位置（0）回放核验 → ok；覆盖读最新有效范围 → 新增义务 uncovered、未完成
+    const after = assessFeature(root, feature, { expectedTrack: 'full', expectedChain: chain, frameworkRoot });
+    assert.equal(after.record.state, 'ok', assessmentReasons(after).join('\n'));
+    const duty = after.obligations.find(o => o.id === newDuty);
+    assert.equal(duty?.status, 'uncovered', JSON.stringify(after.obligations));
+    assert.equal(after.complete, false);
+    assert.equal(fs.readFileSync(originalAbs, 'utf8'), originalBytes, '评估改写了完成原件');
+    // 正例 B：按 §6 #15 转交给新 run 之后，旧记录仍可核验
+    const record = readFeatureFrozenScope(root, feature)!;
+    registerFeatureScopeTransfer({ projectRoot: root, feature, runId: '20260926T000000Z-r4next', transferredScopeFingerprint: executionScopeFingerprint(featureEffectiveScope(record)) });
+    assert.equal(readFeatureFrozenScope(root, feature)!.transfers?.length, 1);
+    const transferred = assessFeature(root, feature, { expectedTrack: 'full', expectedChain: chain, frameworkRoot });
+    assert.equal(transferred.record.state, 'ok', assessmentReasons(transferred).join('\n'));
+    assert.equal(transferred.obligations.find(o => o.id === newDuty)?.status, 'uncovered', JSON.stringify(transferred.obligations));
+    assert.equal(transferred.complete, false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+} });
+
+cases.push({ name: 'b2d7 codex-r4 runless completion declaring a missing revision or a fingerprint off its replayed scope is broken', run() {
+  const { root, frameworkRoot, feature } = setupRunlessProject();
+  try {
+    const { chain, originalAbs, originalBytes } = runlessCompletionThenRevision(root, frameworkRoot, feature);
+    const projectionAbs = featureFilePath(root, feature, 'feature-completion.json');
+    const projectionBytes = fs.readFileSync(projectionAbs, 'utf8');
+    // 改原件并同步投影哈希，确保拦下它的是修订回放核验而不是投影哈希
+    const forge = (patch: Record<string, unknown>): string[] => {
+      const text = JSON.stringify({ ...JSON.parse(originalBytes), ...patch }, null, 2);
+      fs.writeFileSync(originalAbs, text);
+      fs.writeFileSync(projectionAbs, JSON.stringify({ ...JSON.parse(projectionBytes), original_sha256: createHash('sha256').update(text, 'utf-8').digest('hex') }));
+      const a = assessFeature(root, feature, { expectedTrack: 'full', expectedChain: chain, frameworkRoot });
+      assert.equal(a.record.state, 'broken', JSON.stringify(patch));
+      return a.record.state === 'broken' ? a.record.reasons : [];
+    };
+    const record = readFeatureFrozenScope(root, feature)!;
+    const revisedFingerprint = executionScopeFingerprint(featureEffectiveScope(record));
+    // 反例 D：声明不存在的修订
+    assert(forge({ scope_revision_count: 2 }).some(r => r.includes('声明了不存在的修订')), '多报修订数未被拦');
+    // 反例 E：修订位置与指纹不对应（两个方向）
+    assert(forge({ scope_revision_count: 0, execution_scope_fingerprint: revisedFingerprint }).some(r => r.includes('execution_scope_fingerprint')), '声明 0 却带修订 1 的指纹未被拦');
+    assert(forge({ scope_revision_count: 1 }).some(r => r.includes('execution_scope_fingerprint')), '声明 1 却带出生指纹未被拦');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+} });
+
 cases.push({ name: 'D1 candidate drift blocks the next phase and leaves the frozen record intact', run() {
   const { root, frameworkRoot, feature } = setupRunlessProject();
   try {

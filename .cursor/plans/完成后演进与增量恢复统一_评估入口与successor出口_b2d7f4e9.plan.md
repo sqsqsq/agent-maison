@@ -1407,3 +1407,40 @@ L2b 的断言全部成立：
 
 **偏离**
 - todo 正文写「`release:verify` 接入」；实际接入点是 `release:all` / `candidate:build` 的 `run-unit.ts --release`（批一已登记），`release:verify` 只校验发布包结构，未另加一道。放弃的准确性：单独运行 `npm run release:verify` 不执行 L0 基线；正式发版走 `release:all` 时执行。
+
+### Codex 四轮：runless 记录按修订位置回放（2026-09-26，未提交）
+
+**P1 runless 完成记录遇合法完成后修订即失去可信资格——成立**
+- 复现：生产入口生成 runless completion（`scope_revision_count=0`，record ok / complete=true）→ 生产 `appendFeatureScopeRevision` 追加一条新增义务的合法修订 → 原件字节不变，再评估 `record=broken`，理由逐字为 `scope_revision_count 与事件失配：凭证=0 ≠ 事件=1`（`es.m0.log`，HEAD 生产代码跑新用例）。
+- 根因：`inspectCompletionRecord` 对 feature 载体用**当前**冻结记录的修订总数做等值比较，并用 `loadEffectiveExecutionScope(feature, undefined)` 取**最新**有效范围核指纹 / 完成链；转交之后该调用直接抛「已转交给 run」，记录同样判坏（代码阅读：`goal-run-creation.ts:186-190`）。
+- 修复（`verify-feature-completion.ts:1056-1090`）：
+  - feature 载体：`scope_revision_count` 只要求 `≤ revisions.length`（声明不存在的修订才是坏记录）；记录核验范围 = `applyScopeRevisions(birth, revisions.slice(0, declared))`，与 `featureEffectiveScope` 同一个函数；fingerprint / completion_target / expectedChain 都对这份回放范围核。直接读冻结记录，不经 `loadEffectiveExecutionScope`，所以与转交无关。
+  - run 载体：逻辑不变（等值比较 + run 有效范围）。
+  - 返回给覆盖侧的 `scope`（`:1273`）拆成 `currentScope`：run 载体 = 原值；feature 载体 = `featureEffectiveScope(record)`（最新有效范围，与修复前未转交时取到的值相同，转交后也不再抛错）。`assessFeature` 的缺省逻辑未改。
+  - 删去 `:1173-1179` 处 feature 载体「冻结记录最新有效范围 vs 凭证指纹」的第二次比对：指纹已在上方对回放范围核过，这条会把合法修订重新判坏；冻结记录在场检查保留。
+- 转交后核验的核实结果：
+  - 转交后 `loadEffectiveExecutionScope(feature, undefined)` 抛错（上面已引）；修复后的记录核验只读 `readFeatureFrozenScope` 的 `execution_scope + revisions` 回放，不走该入口，转交不影响。
+  - 覆盖范围也改为直接由冻结记录算，转交后新增义务仍 uncovered、complete=false（用例 B 断言）。
+
+**测试**（`execution-scope` 套件，复用该套件既有 runless 夹具 `setupRunlessProject` / `seedRunlessChain` 与生产 writer，不注入 verdict）
+- 共用现场 `runlessCompletionThenRevision`：冻结 → 三阶段证据 → `applyFeatureScopeRevisionsThenMaybeComplete` 生成原件 → 断言正例 C（修订前 `record.ok`、`complete=true`）→ `appendFeatureScopeRevision` 新增 plan 责任义务 `codex-r4-post-completion-duty`。
+- 「b2d7 codex-r4 … stays a trusted record after a legal post-completion revision and after transfer」：
+  - 正例 A：`record.state==='ok'`，新增义务 `uncovered`，`complete=false`，原件字节不变；
+  - 正例 B：`registerFeatureScopeTransfer` 转交后仍 `ok`，新增义务仍 `uncovered`，`complete=false`。
+- 「b2d7 codex-r4 … declaring a missing revision or a fingerprint off its replayed scope is broken」（改原件并同步投影哈希，确保拦下它的是回放核验）：
+  - 反例 D：`scope_revision_count: 2`（实际 1）→ broken，理由含「声明了不存在的修订」；
+  - 反例 E：声明 0 带修订 1 的指纹 / 声明 1 带出生指纹 → 均 broken，理由含 `execution_scope_fingerprint`。
+- 先红：HEAD 生产代码跑新用例 119/2（A 报上面的失配原文；D 报「多报修订数未被拦」）。
+- 反向变异（跑完恢复，`git diff --stat` 确认只剩本批改动）：
+  - m1 计数改回等值（`>` → `!==`）：119/2，A 报 `声明了不存在的修订：凭证=0 > 冻结记录=1`，E 报「声明 0 却带修订 1 的指纹未被拦」；
+  - m2 核验范围改回最新（`featureEffectiveScope(record)`）：119/2，A 报 `execution_scope_fingerprint 与有效范围失配`，E 同上。
+
+**验证**（日志写 scratchpad 后 grep 结论）
+- `cd harness && npm run typecheck` EXIT=0。
+- 过滤套件：execution-scope 121/0；feature-assessment 7/0；verify-feature-completion 20/0；successor-exit 7/0；lifecycle-evolution（显式）11/0；real-chain（显式，含 seams）12/0；change-unit-progression 97/0；component-closure 45/0。
+- 仓根 `node scripts/check-plan-version.mjs` EXIT=0。
+- 两个改动文件 node 扫描 CR=0。未跑全量（调度者收口时跑）。
+
+**偏离**
+- 用例没有放进 feature-assessment / verify-feature-completion 套件，而是放在 execution-scope：runless 夹具与 §6 #15 既有用例都在该套件，跨套件导入测试模块会把它的整个依赖图带进来。放弃的准确性：无，只是换了位置；`--filter execution-scope` 本就在验收清单里。
+- 正例 B 用 `registerFeatureScopeTransfer` 直接转交，没有起真实 fresh run（§6 #15 既有用例已覆盖「修订后起新 run、出生读修订后范围」）。放弃的准确性：没有真实后继 run 目录时，B 的 `complete=false` 只来自新增义务 uncovered，没有经过「更晚未终局 run」这条 blocking。

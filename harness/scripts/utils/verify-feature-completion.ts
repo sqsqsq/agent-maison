@@ -24,7 +24,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { validateExecutionScope, executionScopeFingerprint, executionCompletionPhases, isExecutionSourceBasis, type ExecutionScope } from './execution-scope';
 import { loadGoalManifestFromRun } from './goal-manifest';
-import { assertGoalRunAttachable, loadFrozenExecutionScope, loadEffectiveExecutionScope, resolveEffectiveScopeSource, loadScopeRevisions, loadAuthoritativeRunEvents } from './goal-run-creation';
+import { assertGoalRunAttachable, loadFrozenExecutionScope, loadEffectiveExecutionScope, resolveEffectiveScopeSource, loadScopeRevisions, loadAuthoritativeRunEvents, applyScopeRevisions } from './goal-run-creation';
 import { readFeatureFrozenScope, featureEffectiveScope } from './feature-execution-scope';
 import { inferLegacyProjectRoot, isInsideProjectRoot, resolveDependencyPath } from './project-relative-path';
 import { loadEventsJsonl, resolveEffectiveRunEnd } from './goal-runner-phase';
@@ -947,7 +947,7 @@ function featureCarrierPhaseLineageIssues(
  */
 export interface CompletionRecordInspection extends CompletionVerdict {
   completion?: FeatureCompletion;
-  /** 记录按自身 run 范围核验时的有效范围（1.2）；legacy 1.1 为 undefined。 */
+  /** 覆盖用的当前有效范围（1.2）：run 载体 = 该 run 有效范围；feature 载体 = 冻结记录最新有效范围；legacy 1.1 为 undefined。 */
   scope?: ExecutionScope;
   /** 记录值与当前阶段证据 / legacy 顶层绑定不符：交义务侧（按责任阶段），不是记录不可信。 */
   drift: Array<{ phase: string; detail: string; class: 'binding' | 'evidence' }>;
@@ -1054,26 +1054,39 @@ export function inspectCompletionRecord(opts: VerifyCompletionOptions): Completi
   // 记录按**它自己的** run 范围核验（plan b2d7f4e9 §3.1「两套范围不混用」）：指纹、修订计数、
   // 完成目标与完成链都对自身有效范围对账；范围内证据是否仍覆盖义务由 assessFeature 另判，不在这里。
   let frozenScope: ExecutionScope | undefined;
+  /** 交给覆盖侧的当前有效范围：run 载体 = 记录核验范围；feature 载体 = 冻结记录的最新有效范围。 */
+  let currentScope: ExecutionScope | undefined;
   try {
     // D2.6: the completion was cut from the EFFECTIVE scope (birth + applied revisions), so the
     // fingerprint and the expected chain reconcile against that — while the birth scope is still
     // loaded first, because a missing birth record is still INVALID.
+    const featureRecord = completion.run_id ? null : readFeatureFrozenScope(projectRoot, feature);
     const birthScope = completion.run_id
       ? loadFrozenExecutionScope(projectRoot, feature, completion.run_id)
-      : readFeatureFrozenScope(projectRoot, feature)?.execution_scope;
+      : featureRecord?.execution_scope;
     if (completion.schema_version === FEATURE_COMPLETION_SCHEMA_VERSION && !birthScope) return invalidRecord('新完成记录缺少出生范围');
-    frozenScope = birthScope ? loadEffectiveExecutionScope(projectRoot, feature, completion.run_id ?? undefined) : undefined;
-    if (birthScope && frozenScope) {
-      const revisions = completion.run_id
-        ? loadScopeRevisions(loadAuthoritativeRunEvents(projectRoot, feature, completion.run_id), birthScope).length
-        : (readFeatureFrozenScope(projectRoot, feature)?.revisions.length ?? 0);
+    if (birthScope) {
       // D2.6: a 1.2 record MUST carry the count. `?? 0` would accept a stripped field as "no
       // revisions", i.e. a damaged certificate reading as a clean zero-revision run.
       const declared = completion.scope_revision_count;
       if (completion.schema_version === FEATURE_COMPLETION_SCHEMA_VERSION && (typeof declared !== 'number' || !Number.isInteger(declared) || declared < 0)) {
         return invalidRecord('完成记录缺少合法的 scope_revision_count');
       }
-      if ((declared ?? 0) !== revisions) return invalidRecord(`scope_revision_count 与事件失配：凭证=${declared ?? 0} ≠ 事件=${revisions}`);
+      if (completion.run_id) {
+        // run 载体：完成后的修订只发生在后继 run，本 run 的修订数必须与凭证相等。
+        frozenScope = loadEffectiveExecutionScope(projectRoot, feature, completion.run_id);
+        const revisions = loadScopeRevisions(loadAuthoritativeRunEvents(projectRoot, feature, completion.run_id), birthScope).length;
+        if ((declared ?? 0) !== revisions) return invalidRecord(`scope_revision_count 与事件失配：凭证=${declared ?? 0} ≠ 事件=${revisions}`);
+        currentScope = frozenScope;
+      } else {
+        // feature 载体（plan b2d7f4e9 §3.1 / §6 #15）：完成后的合法修订追加在同一份冻结记录上，
+        // 所以记录按**凭证登记的修订位置**回放历史范围核验（与 featureEffectiveScope 同一个 applyScopeRevisions），
+        // 与转交无关；只有声明了不存在的修订才是坏记录。覆盖仍读最新有效范围。
+        const revisions = featureRecord!.revisions;
+        if ((declared ?? 0) > revisions.length) return invalidRecord(`scope_revision_count 声明了不存在的修订：凭证=${declared ?? 0} > 冻结记录=${revisions.length}`);
+        frozenScope = applyScopeRevisions(birthScope, revisions.slice(0, declared ?? 0) as never);
+        currentScope = featureEffectiveScope(featureRecord!);
+      }
     }
     if (frozenScope) {
       if (completion.schema_version !== FEATURE_COMPLETION_SCHEMA_VERSION || completion.execution_scope_fingerprint !== executionScopeFingerprint(frozenScope)) return invalidRecord('execution_scope_fingerprint 与有效范围失配');
@@ -1173,10 +1186,8 @@ export function inspectCompletionRecord(opts: VerifyCompletionOptions): Completi
   if (featureCarrier) {
     try {
       const record = readFeatureFrozenScope(projectRoot, feature);
+      // 指纹已在上方对「按凭证修订位置回放的范围」核过；这里只要求冻结记录在场。
       if (!record) reasons.push('feature 载体的完成凭证缺少冻结记录——自报失配');
-      else if (executionScopeFingerprint(featureEffectiveScope(record)) !== completion.execution_scope_fingerprint) {
-        reasons.push('feature 冻结记录的有效范围与凭证指纹失配');
-      }
     } catch (error) { reasons.push(`feature 冻结记录不可验证：${String(error)}`); }
   } else {
     const genEv = featureFilePath(projectRoot, feature, path.join('goal-runs', completion.run_id!, 'events.jsonl'));
@@ -1259,5 +1270,5 @@ export function inspectCompletionRecord(opts: VerifyCompletionOptions): Completi
     }
   }
 
-  return { verdict: reasons.length === 0 ? 'VALID' : 'INVALID', reasons, completion, scope: frozenScope, drift, laterRuns };
+  return { verdict: reasons.length === 0 ? 'VALID' : 'INVALID', reasons, completion, scope: currentScope, drift, laterRuns };
 }
