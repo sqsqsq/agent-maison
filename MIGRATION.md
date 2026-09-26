@@ -15,6 +15,7 @@
 - 下游 capability 缺少由上游阶段生产的输入时，恢复现在读取既有 `SourceAttempt.upstream_producer` 并回实际 owner；没有链内 owner 的 absent 继续作为可诊断输入缺口，不冒充 framework bug。测试自有返修只重跑受影响阶段，真实产品/契约变化与显式重跑仍会扩大必要重验范围。
 - `goal-runner --detach` 返回前会做一次最长 10 秒的启动确认，JSON 新增 `startup`：区分 `ready`、快速 `terminal`、`alive_timeout` 与 `failed`。仅 pid/目录不再冒充健康；确认超时不会杀仍活跃 child，早退保留当前日志尾并非零退出。detached `--attach-created` 现在与 `--resume` 一样由共享输入解析锁定既有 run_id，不再生成第二个随机身份。
 - 完成后修正改走 successor：`goal-runner --supersede <完成 run>` 在该 supersede 上下文按当前输入重解析出生范围（既往阶段证据经同一核验复用，只跑未覆盖义务的责任阶段），不再整份继承源 run 范围；新 completion 落后继 run 目录，旧原件保留；feature 冻结记录的转交改为追加式 `transfers[]`（旧单值 `transferred_to` 照读）。`--revalidate` 仍只做在途机械重验、不签发 completion；无 run 的 feature 完成先追加范围修订再起新 run，`--supersede` 对它拒绝。已完成 CU 在蓝图升版后由 design-preparation readiness 原位升版指针（契约不变即同一 CU）；completion 的 STALE 裁决词改为评估入口 `assessFeature` 的 uncovered 义务清单。旧产物零迁移。
+- 框架发布前以上一版宿主产物为兼容基线：影响已完成产物的规则变更，会在本文件给出可执行的迁移步骤；没有对应条目即表示升级无需宿主动作。
 
 入口细则见 [项目请求](docs/operations/project-entry.md)、[专项 CLI](docs/operations/request-harness.md) 和 [输入协议](docs/concepts/skill-contracts.md)。本节描述迁移行为，不表示当前候选已经正式发布。
 

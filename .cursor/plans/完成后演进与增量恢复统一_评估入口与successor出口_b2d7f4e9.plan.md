@@ -62,7 +62,7 @@ todos:
     content: >
       §6 其余四条路径（补测试、改文案、改验收、证据损坏）从公开入口走到新完成结论并断言实际重跑范围；
       `release:verify` 接入：快照上已完成产物新增 BLOCKER 即发布失败，除非 MIGRATION 登记可验证迁移路径并重生成快照。
-    status: pending
+    status: completed
 ---
 
 # 完成后演进与增量恢复统一（评估入口 / successor 出口 / 快照回归）
@@ -251,7 +251,7 @@ successor 执行 → 新 completion；断言实际重跑阶段集合、旧 compl
 | # | 场景 | 预期 |
 |---|---|---|
 | ★1 | 快照原样，不动任何文件 | `assessFeature`：record ok、全部 covered、`complete: true`。**发布门基线**：本版任何规则让它变 false 即发布失败 |
-| ★2 | **本事故**：蓝图按新规则补 `module` 升 rev3 准入；CU v2 completed 绑 rev2 | 调和：carry-forward 通过 → v2 原位升版指向 rev3、change_unit_id 不变；assess：record ok，plan `uncovered/binding` 且原因为 CU 绑定失配（**contracts.yaml 字节未变仍须判出**）；successor 按 §3.2 顺序出生，`phase_chain` = uncovered 责任阶段，coding/review/ut/testing 证据复用；转交记录 `transfers[]` 两条；新 completion 落新 run 目录，旧的仍在；不出现 v3 |
+| ★2 | **本事故**：蓝图按新规则补 `module` 升 rev3 准入（含改进投影的内容）；CU v2 completed 绑 rev2 | **评估核心**（feature-assessment 单测）：只改 change-unit.yaml、contracts.yaml 不动 → record ok，plan `uncovered/binding` 且原因为 CU 绑定失配（**contracts.yaml 字节未变仍须判出**）。**端到端**（lifecycle L1，2026-09-26 按实测对齐）：调和 carry-forward 通过 → v2 三处指针原位升版指向 rev3、change_unit_id 不变，同批原子刷新旧机器投影（来源戳指向升版前身份）；successor 按 §3.2 顺序出生，候选按当前输入重生成，spec/plan 由刷新后的派生投影绑定覆盖、不进链；`phase_chain` = assess 判 uncovered 的责任阶段（快照实测 `[coding, review, ut]`，因这些阶段的证据清单登记了被刷新的派生文件为输入），`reused_phases` 为空；`transfers[]` 两条；新 completion 落新 run 目录，旧的仍在；不出现 v3 |
 | ★3 | 伪造：手改 completion 原件里的 phases[].run_id | record `broken`；不进 uncovered；successor 不得以它为复用证据 |
 | ★4 | 契约变化：CU `touches` 新增模块 | 调和拒绝原位升版，要求新 change_unit_id + supersedes；旧 CU 记录保留 |
 | ★5 | carry-forward 失败：蓝图升版删掉 v2 一个 design_ref target | 不升版；ready-set/closure `carry_forward: false` 带原因；路由 `reconcile_blueprint`；不判 record broken |
@@ -1381,3 +1381,29 @@ L2b 的断言全部成立：
 - 仓根 `node scripts/check-plan-version.mjs` PASS。
 - 8 个改动文件 node 扫描 CR=0。
 - 未跑全量（另一进程在跑）。
+
+### t5 发布门文档与 OpenSpec 归档（2026-09-26，未提交）
+
+**结论**：批二完成，t5 置 `completed`。发布门接线沿用既有 `release-all.mjs` / `candidate-release.mjs` 的 `run-unit.ts --release`（`lifecycle-evolution` 已登记 `releaseOnly: true`），本批只补文档与归档，未改生产代码、未动快照 `project/`、未重生成快照。
+
+**改动**
+- `docs/operations/release-checklist.md`：「自动（BLOCKER）」第 1 步下补 release-only 执行口径（日常 `npm test` 只校验存在；`release:all` / `candidate:build` 以 `--release` 执行 real-chain、real-chain-seams、lifecycle-evolution）、单跑命令、兼容基线规则（L0 转红只有「修回归」或「MIGRATION 登记迁移步骤 → 快照上按步骤迁移后 L0 为 true → 按 README 重生成并更新钉住提交」两种处置，不要求自动迁移器）。
+- `harness/tests/fixtures/host-snapshot-3.1.0/README.md`：新增「重生成规则」节（何时、禁止无迁移路径重生成、目标提交上跑 generate.ts、更新钉住产出、`--verify` 与 `--filter lifecycle-evolution` 复核）。
+- `MIGRATION.md`：3.1.0「按义务执行与旧运行恢复」列表末尾加一条消费者向说明（以上一版宿主产物为兼容基线；无条目即无需宿主动作）。
+- OpenSpec `tasks.md` 补 `3d.1`（t5）后归档。
+
+**归档**
+- `npm run openspec -- status --change post-completion-evolution-unification --json`：四个 artifact 全 `done`，`isComplete: true`；tasks.md 无 `- [ ]`。
+- delta 比对（scratchpad node 脚本按 `### Requirement:` 分块逐字比对）：三份 delta 共 8 条 Requirement 与主规格**逐字相同**（change-unit-continuous-progression 5、component-assembly-coverage-closure 1、correction-routing 2），主规格无缺失内容 → 用 `--skip-specs`，避免重复追加。
+- `npm run openspec -- archive post-completion-evolution-unification --skip-specs -y`：EXIT=0，`archived as '2026-09-26-post-completion-evolution-unification'`；目录移至 `openspec/changes/archive/2026-09-26-post-completion-evolution-unification/`。
+
+**验证**（日志写 scratchpad `t5-*.log` 后 grep 结论）
+- `npm run openspec:validate`：48 passed / 0 failed，enforcement PASS。
+- `node scripts/check-plan-version.mjs`（默认模式）：EXIT=0。
+- `npm run release:check-plans`（`--release`）：EXIT=1，但 FAIL 清单**不含本 plan**；列出的是 8 份其它 3.1.0 plan 仍有未完成 todo（7e1d4b93、e7a2c4f1、a3d9b5f7、91c4e7a2、c8b4e731、d4a1f7c3、1f3d7a92、6f2a9c41），不属本批范围。
+- `cd harness && npm run test:unit -- --filter docs`：docs-authoring-lint 18/0。
+- `cd harness && npm run test:unit -- --filter lifecycle-evolution`（显式）：11/0，未受文档改动影响。
+- 未跑全量：本批只改文档与 OpenSpec 归档，无生产 / 测试代码改动。
+
+**偏离**
+- todo 正文写「`release:verify` 接入」；实际接入点是 `release:all` / `candidate:build` 的 `run-unit.ts --release`（批一已登记），`release:verify` 只校验发布包结构，未另加一道。放弃的准确性：单独运行 `npm run release:verify` 不执行 L0 基线；正式发版走 `release:all` 时执行。

@@ -28,6 +28,17 @@ npx ts-node --transpile-only tests/fixtures/host-snapshot-3.1.0/generate.ts     
 - **生成根原址自检**：两个 Feature 都判 `verify=VALID` 后才捕获快照。
 - **`--verify`**：把快照复制到仓外 tmp 根，provision **当前**框架，再经公开入口 `goal-status`（生产 `assessFeature`）判两个 Feature。
 
+## 重生成规则
+
+快照是发布门的兼容基线（`lifecycle-evolution` L0，见 [发版清单](../../../../docs/operations/release-checklist.md)）。
+
+- **何时重生成**：只在有意的破坏性变更之后，且 `MIGRATION.md` 已登记宿主可执行的迁移步骤、在旧快照上按该步骤迁移后 L0 已重新为 true。
+- **不得**在没有迁移路径时为了让 L0 变绿而重生成——那是掩盖回归。L0 转红的默认处置是修回归。
+- **怎么做**：
+  1. 在**目标提交**（新基线对应的框架版本）的干净工作树上，于 `harness/` 下运行 `npx ts-node --transpile-only tests/fixtures/host-snapshot-3.1.0/generate.ts`；生成器在原址判两个 Feature 都 VALID 才捕获。
+  2. 更新本 README「钉住的产出」：产出提交号、生成时间、生成根、两个 Feature 的 completion run 与身份、规模。
+  3. 复核 ★1：`npx ts-node --transpile-only tests/fixtures/host-snapshot-3.1.0/generate.ts --verify` 输出两个 Feature 均 `FEATURE_COMPLETED` 且 `BASELINE_STAR1=PASS`；再跑 `npm run test:unit -- --filter lifecycle-evolution` 全绿。
+
 ## 排除项（宿主根下）
 
 | 项 | 理由 |

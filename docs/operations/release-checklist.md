@@ -10,6 +10,17 @@ AgentMaison 自身发 zip 发布件（`framework-<semver>.zip`）前的 BLOCKER 
    cd harness && npm test
    ```
 
+   **release-only 套件**：日常 `npm test` 只校验 release-only 套件文件存在、不执行；`release:all` / `candidate:build` 以 `--release` 执行 `real-chain`、`real-chain-seams`、`lifecycle-evolution`。单跑：
+
+   ```bash
+   cd harness && npm run test:unit -- --filter lifecycle-evolution
+   ```
+
+   **兼容基线**：`lifecycle-evolution` 的 L0 要求上一版宿主快照（[`host-snapshot-3.1.0`](../../harness/tests/fixtures/host-snapshot-3.1.0/README.md)）原样加载后 `assessFeature().complete === true`。L0 转红只有两种合法处置：
+
+   - 修回归；
+   - 有意的破坏性变更：(a) 在 `MIGRATION.md` 登记宿主可执行的迁移步骤；(b) 在快照上按该步骤迁移后 L0 重新为 true；(c) 按快照 README「重生成规则」重生成快照并更新钉住提交。不要求自动迁移器。
+
 2. **Plan 版本门禁 + 维护者 CHANGELOG（dev-only）**
 
    ```bash

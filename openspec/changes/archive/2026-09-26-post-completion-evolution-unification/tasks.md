@@ -26,6 +26,10 @@
 - [x] 3c.4 读侧旧根推断多候选按重定位后存在依赖数择优，并列如实 stale。
 - [x] 3c.5 上一版宿主快照（平铺 + CU 绑定两个已完成 feature）与 release-only 套件 `lifecycle-evolution`（★1 基线、★2 事故形状、补测试/改文案/改验收/证据损坏、未终局 run、在途 CU、`revises` 读兼容、伪造记录、rebaseline 立场断言）。
 
+## 3d. 发布门文档与归档（t5）
+
+- [x] 3d.1 发版清单写明 release-only 套件执行口径与 `lifecycle-evolution` L0 兼容基线的两种合法处置；快照 README 补重生成规则；MIGRATION 补消费者向兼容基线说明；本 change 归档。
+
 ## 4. 后续（plan b2d7f4e9 其它 todo）
 
 评估入口 `assessFeature`、closure 单路、successor 出口、其余规格同步与快照回归由 t1 / t2 余项 / t3–t5 承担；本 change 随 t5 归档。
