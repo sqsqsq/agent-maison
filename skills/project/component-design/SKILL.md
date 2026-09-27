@@ -107,7 +107,7 @@ consumer validator 接受候选，`deriveDesignPreparationReadiness` 派生交�
    整批拒绝、一个字节都不落盘；
 4. 重复接受 **fail-closed**：目标 canonical 路径已存在即拒绝，契约变化走新 id + `supersedes`；
 5. 派生 design gate / readiness；派生前把 carry-forward 通过的 CU（已完成与未完成同规则）蓝图指针
-   原位升到当前 revision，输出 `blueprintRefs.bumped / skipped` 及跳过原因。
+   原位升到当前 revision，输出 `blueprintRefs.bumped / skipped` 及跳过原因。既有 CU 不先跑 `check:change-unit`、直接派生；它报 `change_unit_blueprint_ref_stale` 即指这次框架自动升版，不是修 CU（不要手改 change-unit.yaml 或抄 sha256）。
 
 一项正式需求只分解出**一个** CU 是正常正向路径，不是退化形态。
 

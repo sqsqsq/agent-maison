@@ -114,6 +114,21 @@ const FULL_ANSWER =
 
 const AUTH_QUOTA_STDOUT = 'ActionRequiredError: You have hit your usage limit. Get Pro for more.';
 
+// 2026-09-26 宿主 run 0457a6：未钉 --adapter-model 时 codex 走 ~/.codex/config.toml 默认模型，
+// ChatGPT 账号下 400。invoke 边界产出 terminal_failure_observed + 解析后的 excerpt。
+const HOST_400_MESSAGE = "The 'gpt-6-sol' model is not supported when using Codex with a ChatGPT account.";
+function codexTurnFailedInvoke(message: string, status: number, errType: string) {
+  const inner = JSON.stringify({ type: 'error', status, error: { type: errType, message } });
+  return {
+    exitCode: 1,
+    stdout: `${JSON.stringify({ type: 'turn.failed', error: { message: inner } })}\n`,
+    stderr: '',
+    command: 'fake-codex',
+    terminal_failure_observed: true,
+    terminal_error_excerpt: `turn.failed: ${inner}`,
+  };
+}
+
 const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   // ==========================================================================
   // A. 纯函数排序正反例
@@ -332,9 +347,118 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
 
+  {
+    name: '0457a6 集成：默认模型 400 model is not supported → hard_cli_failure 带原文与 --adapter-model 指引；普通 turn.failed 失败行带原文；钉可用模型仍 valid_cached',
+    run: async () => {
+      const root = mkTmp();
+      try {
+        const fw = claudeFrameworkFixture(root);
+        writeLocalConfig(root, { schema_version: '1.0', agent_adapter: 'claude' });
+        // (b) 未钉模型（有效模型=adapter 默认/用户配置回落）→ 硬失败
+        let r = await runVisionCanaryProbe({
+          projectRoot: root, frameworkRoot: fw, manifest: baseManifest(),
+          invokeFn: (async () => codexTurnFailedInvoke(HOST_400_MESSAGE, 400, 'invalid_request_error')) as unknown as InvokeFnType,
+        });
+        assert.strictEqual(r.outcome, 'hard_cli_failure', JSON.stringify(r));
+        assert.ok((r.error ?? '').includes(HOST_400_MESSAGE), `须带原文：${r.error}`);
+        assert.ok((r.error ?? '').includes('--adapter-model'), `须给钉模型指引：${r.error}`);
+        assert.strictEqual(loadLocalConfig(root)?.vision?.canary, undefined, '硬失败不写盘');
+        // 非永久错误（500）仍是非阻断调用失败，但失败行须带 invoke 原文
+        r = await runVisionCanaryProbe({
+          projectRoot: root, frameworkRoot: fw, manifest: baseManifest(),
+          invokeFn: (async () => codexTurnFailedInvoke('upstream overloaded', 500, 'server_error')) as unknown as InvokeFnType,
+        });
+        assert.strictEqual(r.outcome, 'invoke_failed_not_cached', JSON.stringify(r));
+        assert.ok((r.error ?? '').includes('upstream overloaded'), `失败行须带原文：${r.error}`);
+        // (c) 钉了可用模型 → 与现状一致：valid_cached 且 receipt 记钉值
+        r = await runVisionCanaryProbe({
+          projectRoot: root, frameworkRoot: fw,
+          manifest: baseManifest({ adapter_model_pin: { adapter: 'claude', value: 'gpt-5.5' } }),
+          invokeFn: (async () => ({ exitCode: 0, stdout: FULL_ANSWER, stderr: '', command: 'fake' })) as InvokeFnType,
+          answerKeyFn: () => FIXTURE_CANARY_KEY,
+        });
+        assert.strictEqual(r.outcome, 'valid_cached', JSON.stringify(r));
+        assert.strictEqual(loadLocalConfig(root)?.vision?.canary?.model, 'gpt-5.5');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+
   // ==========================================================================
   // E. runner main() 真实路径终态（review P1：结构化 run 级 BLOCKER）
   // ==========================================================================
+  {
+    name: '0457a6 runner main()：默认模型金丝雀 400 → canary_cli_hard_failure 启动期停机；无正式 phase invoke；run_end 带原文',
+    run: async () => {
+      const feature = 'canary-model-400';
+      const root = setupMinimalHost(feature);
+      const specAbs = path.join(root, 'doc', 'features', feature, 'spec', 'spec.md');
+      fs.writeFileSync(specAbs, '```yaml\nui_change: new_or_changed\n```\n', 'utf-8');
+      const { spawnSync } = require('child_process') as typeof import('child_process');
+      spawnSync('git', ['add', '-A'], { cwd: root, encoding: 'utf-8' });
+      spawnSync('git', ['commit', '-qm', 'ui'], { cwd: root, encoding: 'utf-8' });
+      const invokedPhases: string[] = [];
+      const prevArgv = process.argv;
+      const prevCwd = process.cwd();
+      const prevTrustDir = process.env.MAISON_GOAL_CHECKPOINT_DIR;
+      process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'trust-cp');
+      try {
+        __testing_setCanaryProbeInvoke((async () =>
+          codexTurnFailedInvoke(HOST_400_MESSAGE, 400, 'invalid_request_error')) as never);
+        __testing_setInvokeAgent((async () => {
+          invokedPhases.push('formal');
+          return { exitCode: 0, stdout: 'done', stderr: '', command: 'fake-agent' };
+        }) as never);
+        __testing_setRunHarnessPhase((async () => ({ exitCode: 0, timedOut: false })) as never);
+        __testing_setRepoLayout({ kind: 'standalone', projectRoot: root, frameworkRoot: REPO_ROOT, frameworkRel: '' } as ReturnType<typeof inferRepoLayout>);
+        __testing_setDeviceReadinessGate((() => ({
+          env: { HARNESS_HDC_TARGET: 'fake-device', MAISON_DEVICE_TARGET_KIND: 'physical' },
+          target: { serial: 'fake-device', targetKind: 'physical' as const },
+          notes: ['test seam'],
+        })) as never);
+        __testing_setValidateReceipt(((_hr: string, _pr: string, ph: string, feat: string) => ({
+          status: 'passed' as const,
+          receipt_path: `doc/features/${feat}/${ph}/phase-completion-receipt.md`,
+          exit_code: 0,
+        })) as never);
+        process.argv = [
+          'node', 'goal-runner.ts',
+          '--feature', feature,
+          '--requirement', UI_REQ,
+          '--start', 'spec', '--end', 'spec',
+          '--adapter', 'cursor',
+          '--foreground-ok', '--force',
+        ];
+        process.chdir(root);
+        clearFrameworkConfigCache();
+        const exitCode = await goalMain();
+        const runsDir = path.join(root, 'doc/features', feature, 'goal-runs');
+        const runs = fs.existsSync(runsDir) ? fs.readdirSync(runsDir).filter(n => !n.startsWith('.')) : [];
+        const reportDir =
+          runs.length > 0
+            ? path.join(runsDir, runs.map(n => ({ n, t: fs.statSync(path.join(runsDir, n)).mtimeMs })).sort((a, b) => a.t - b.t).slice(-1)[0].n)
+            : '';
+        const events = readEvents(reportDir);
+        assert.strictEqual(exitCode, 1, 'run 应以 1 退出');
+        assert.deepStrictEqual(invokedPhases, [], '不得有任何正式 phase invoke');
+        assert(!events.some(e => e.type === 'run_start'), '启动期停机：run 不出生（无 run_start）');
+        const halt = events.find(e => e.type === 'phase_halt' && e.halt_reason === 'canary_cli_hard_failure') as Record<string, unknown> | undefined;
+        assert(halt, '须落 phase_halt(canary_cli_hard_failure)');
+        assert.ok(String(halt!.halt_guidance ?? '').includes('--adapter-model'), 'halt_guidance 须给钉模型指引');
+        const end = [...events].reverse().find(e => e.type === 'run_end') as Record<string, unknown> | undefined;
+        assert.strictEqual(end?.halt_reason, 'canary_cli_hard_failure');
+        assert.ok(String(end?.error ?? '').includes(HOST_400_MESSAGE), `run_end 须带原文：${String(end?.error)}`);
+      } finally {
+        __testing_resetGoalRunnerSeams();
+        process.argv = prevArgv;
+        if (prevTrustDir === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR;
+        else process.env.MAISON_GOAL_CHECKPOINT_DIR = prevTrustDir;
+        try { process.chdir(prevCwd); } catch { /* ignore */ }
+        try { fs.rmSync(root, { recursive: true, force: true }); } catch { /* ignore */ }
+      }
+    },
+  },
   {
     name: 't4 runner main()：hard_cli_failure → 落 phase_halt(canary_cli_hard_failure)+run_end(HALTED)+return 1；无正式 phase invoke',
     run: async () => {

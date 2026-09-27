@@ -1552,3 +1552,58 @@ L2b 的断言全部成立：
    - 宿主若在升版时真改了施工内容，由 plan 阶段作者自行改写 contracts，之后按同一消费关系让下游证据失效；
    - 本用例 (c) 的 plan 义务 uncovered/binding 只来自身份行字节变化，后继出生时由当前绑定重新满足。
 6. 观察（未改）：修复前的 `no_progress_guard` 文案说「框架没能指出该改哪里」，`change_unit_identity_mismatch` 的 `affected_files` 为空；本修复消除了这个触发源，那条检查本身的 affected_files 缺失没有处理。
+
+### 宿主回灌：指针过期的路由与技能措辞（2026-09-26，未提交）
+
+**现象**：宿主进 /component-design 后照 `change-unit-progression/SKILL.md:26`「for each candidate」对**既有** canonical CU 跑 `check:change-unit`，得 `change_unit_provenance_owner_unresolvable`（revision yaml=3 ref=2）+ `repair_change_unit`，停在升版（`deriveDesignPreparationReadiness` 先 reconcile）之前；该路由会把 agent 引向手改 CU / 抄 sha，与 §3.3 指针原位升版相反。
+
+**改动**
+- `harness/scripts/utils/change-unit-validator.ts` `validateProvenanceSource` 的 catch：失败码为 `component_blueprint_identity_mismatch`，且重新读到的 canonical 蓝图 `component_id` 与 owner ref 相同、`revision` 为整数且大于 ref.revision、`review_summary.admission.status === 'pass'` → 改发 `change_unit_blueprint_ref_stale`（BLOCKER，`route: reconcile_blueprint`，path `$.component_blueprint_ref`），message 写明「蓝图已升到 rev N（本 CU 指向 rev M）：经 /component-design 设计交接派生 readiness 原位升版指针（框架自动，不要手改 change-unit.yaml 或抄 sha256）」。其余原因（蓝图缺失/读不出、校验失败、revision 倒退或相等、admission 非 pass、component_id 不同）照旧 `change_unit_provenance_owner_unresolvable` + `repair_change_unit`。精确解析器、`check:change-unit` CLI 不动；全仓无按旧 id 字面消费的代码（ready-set / change-unit-path 只取 BLOCKER 与 id 拼原因文本）。
+- `skills/project/change-unit-progression/SKILL.md:26`：「for each candidate」→「for each **new decomposition candidate**」，同行补「既有 canonical CU 不预检、直接派生 readiness（先原位升版再判可施工）；`change_unit_blueprint_ref_stale` 即指此，不是修复」。
+- `skills/project/component-design/SKILL.md` 设计准备第 5 步同行补同义中文一句。两份技能原位改写，行数不变。
+- `harness/tests/unit/component-design-handoff.unit.test.ts`：新增 3 例「host feedback check:change-unit」——(a) `bumpBlueprint` 升 admitted rev → 新 id / BLOCKER / `reconcile_blueprint` / message 含「设计交接」「不要手改」，随后同一夹具 `deriveDesignPreparationReadiness` 把 `ledger-refresh` 升版、升版后 `validateChangeUnit` 零诊断；(b) 新 rev admission=blocked → 旧 id + `repair_change_unit`；(c) CU owner ref revision 高于蓝图（倒退）→ 旧 id + `repair_change_unit`。
+
+**验证**（日志在 scratchpad，grep 结论）
+- 先红：HEAD 版 validator 下 handoff 29/1，唯一红 = (a)，报的正是宿主原文 `change_unit_provenance_owner_unresolvable … revision yaml=3 ref=2 … route: repair_change_unit`；(b)(c) 本就绿。
+- 后绿：`npm run typecheck` EXIT=0；`--filter component-design-handoff` 30/0；`--filter change-unit` 97/0；`--filter component-design` 48/0（host-seams 18 + handoff 30）；`--filter docs` 18/0；component-closure 45/0；lifecycle-evolution 12/0；successor-exit 7/0。
+- 仓根 `node scripts/check-plan-version.mjs` EXIT=0；四个改动文件 + 本 plan node 扫描无 CR。未跑全量。
+
+**偏离与放弃的准确性**
+1. 判据比任务书多一条 `component_id` 相同：component_id 不同时 reconcile 升版后 CU 仍解析不过（整批被拒），不能指向设计交接。放弃的准确性：无。
+2. 新 issue 的 path 用 `$.component_blueprint_ref`（过期的是 owner 指针），不是原来的 `$.provenance.source_ref`。
+3. 「过期」只凭 revision/admission 判断，不预演 carry-forward：carry-forward 不通过的 CU 同样报 `change_unit_blueprint_ref_stale`，由派生 readiness 的 `blueprintRefs.skipped` 给出不升版原因（已是 `reconcile_blueprint` 路由）。放弃的准确性：check 阶段不提前告知「这次升不了」，读者需看 readiness 的 skipped。
+
+### 宿主回灌：适配器终端失败的归因与默认模型金丝雀（2026-09-26，未提交）
+
+**现象**：后继 run 20260926T134302Z-0457a6 coding-i17 `agent_invoke_end exit_code=1 terminal_failure_observed=true`，excerpt=`turn.failed: {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The 'gpt-6-sol' model is not supported when using Codex with a ChatGPT account."}}`；随后 i18/i19 `phase_verdict FAIL failure_kind_classified=code_regression`、blocker_signature 是两条 facts BLOCKER，`run_end HALTED no_progress_guard`（WAITING/human）。宿主 AI 据 merged-report 顶部报成「facts 断链」。启动期视觉金丝雀那行只有「invoke 非零退出（exitCode=1）」。根因：`~/.codex/config.toml` 默认 `model = "gpt-6-sol"`，本 run 未钉 `--adapter-model`。
+
+**真因（代码）**：正式 invoke 与金丝雀早已共用硬失败分类 `resolveInvokeHardCliFailure`（c4e8a1f7 T1a，命中即 `adapter_cli_hard_failure` / `canary_cli_hard_failure`，`failure_kind_classified=external`，不进门禁、不耗内容重试）。它的 ③ 只认「requires a newer version of Codex」，且只扫 stdout/stderr；codex `--json` 的 stdout 把信封放在 `turn.failed.error.message` 的 JSON 字符串里（`\"status\":400` 转义形态），`"status"\s*:\s*400` 永远命不中，解析后的正文只在 `terminal_error_excerpt`（e6b3f8d2 定为「纯诊断、不进分类」）。
+
+**改动**
+- `harness/scripts/utils/vision-canary.ts`：`CanaryHardCliFailureFacts` 加可选 `terminal_error_excerpt`（:460）；③ 改为「信封三键（`"type":"error"` + `"status":400` + `invalid_request_error`）+ 实采措辞表 `CODEX_400_PERMANENT_KINDS`（:499）」，措辞表两条：原 `requires a newer version of Codex`（文案不变）+ 新 `model is not supported`（文案给「用 --adapter-model <可用模型> 钉一个可用模型」）；扫描源 = excerpt + stderr + stdout（:566），返回文案后附命中行原文（≤500 字）。
+- `harness/scripts/goal-phase-runtime.ts`：正式 invoke 分类调用补传 excerpt（:7782）；启动期 `canary_cli_hard_failure` 的 run_end 带 `error`=失败原文（:5581），guidance 措辞补「模型不可用」；主收口 run_end 在 HALTED 时带 `error`=最后 halted outcome 的 halt_guidance 首行（:10177/:10184，与紧急收口 run_end{HALTED, error} 同键，仅诊断）。
+- `harness/scripts/utils/goal-preflight.ts:469`：金丝雀非硬失败的 `invoke_failed` 行附 excerpt 原文。
+
+**新旧分类条件**
+
+| 输入（exit≠0，非 timeout/skipped） | 旧 | 新 |
+|---|---|---|
+| excerpt/stderr/stdout 含 400 信封 + requires a newer version of Codex | adapter_cli_hard_failure（仅 stderr/stdout 明文时） | 同，另可从 excerpt 命中；文案附原文 |
+| 400 信封 + model is not supported（宿主形态，只在 excerpt 明文） | 不命中 → 进门禁 → code_regression → no_progress_guard | adapter_cli_hard_failure / canary_cli_hard_failure，external，WAITING/external，文案含原文与 --adapter-model 指引 |
+| 400 信封其他措辞（如 invalid model id） | 不命中 | 不命中（不变） |
+| 500 / overloaded / rate limit / 401 等 | 不命中 | 不命中（不变）；金丝雀失败行多带原文 |
+
+**金丝雀覆盖范围**：未新造探测。有效模型（钉值或未钉时的 adapter 默认/用户配置）本就由既有视觉金丝雀在 run_start 前实测——`decideVisionCanaryProbe` 对 UI 相关链每个新 run 都会探（缓存按 run_id 绑定，新 run 不采信旧缓存），与是否钉模型无关；宿主本次就是探了、失败、但分类器没认出 400。修分类后该路径即「run 不出生（无 run_start）+ canary_cli_hard_failure + 原文 + 指引」。resume/缓存语义未动。
+
+**测试**（日志在 scratchpad，grep 结论）
+- `host-runtime-truth` 新增 2 例：C 纯函数（宿主转义 stdout + 经真实 `createCodexTerminalScanner` 产出的 excerpt → 命中、含原文与 `--adapter-model`；只给 stdout 不命中——证明 excerpt 接线承重；exit0/timeout 不命中）；H 集成（`goalMain` 注入宿主形态 invoke → 1 次 invoke、0 harness、无 `code_regression`、无带 blocker_signature 的 phase_verdict、phase_halt/run_end 带原文与指引、goal-report.md spec 行 Reason 带原文）。
+- `goal-canary-hard-cli-d7f3a9c4` 新增 2 例：probe 集成（未钉 400 → hard_cli_failure 含原文/指引不写盘；500 turn.failed → invoke_failed 行带原文；钉 `gpt-5.5` 有效答卷 → valid_cached 且 receipt model=钉值，与现状一致）；runner `goalMain`（默认模型金丝雀 400 → 无 run_start、无正式 invoke、canary_cli_hard_failure、guidance 含 --adapter-model、run_end.error 含原文）。
+- 反向变异（node 脚本改生产代码，跑完还原）：M1 删 `model is not supported` 一条 → 新增 4 例全红（H 集成红在「只烧一次 invoke」、runner 红在「不得有正式 phase invoke」，即回到旧路径）；M2 正式 invoke 不传 excerpt + 金丝雀失败行不附原文 → H 集成红、probe 集成红在「失败行须带原文」；M3 删主 run_end 的 error → H 集成红在「run_end 须带原文」。
+- 绿：`npm run typecheck` EXIT=0；`--filter host-runtime-truth` 25/0；`--filter goal-canary-hard-cli` 14/0；`--filter goal-run` 9 套件全绿（testing-integrity 84、run-control 8、birth-contract 20、structural-acceptance 13、policy 26、phase 33、detach 14、hardening 29、repair-convergence 27）；`goal-phase-runtime` 22/0；`adjudication` 55/0；`visual-provider` 70/0；`real-chain`（显式）real-chain 4/0 + real-chain-seams 8/0；`component-design-handoff` 30/0（上一笔未提交改动）；仓根 `node scripts/check-plan-version.mjs` PASS。未跑全量。
+
+**偏离与放弃的准确性**
+1. 未新增「非 UI 链的 run_start 前最小模型探测」：非 UI 链不跑视觉金丝雀，默认模型不可用会在第一个正式 invoke（约 10s）以 `adapter_cli_hard_failure` 停机，不进门禁、不耗重试、带原文与指引。放弃的准确性：这类 run 会出生（有 run_start + 一次失败 invoke），不是启动期拒绝。要补需新造一种探测 invoke（每个 run 多一次真实模型调用），未做。
+2. 只收实采的 400「model is not supported」；任务书列的 unauthorized / rate limit 未收：401 无 codex 实采信封，rate limit/5xx 属瞬态，升为硬停会吃掉既有重试。放弃的准确性：codex 的 401/429/5xx `turn.failed` 仍走旧路径（门禁 → 可能 code_regression），但金丝雀失败行已带原文。codex 瞬态断流进 P0-D `transient_api_error` 需扩 `parseHeadlessApiError`，另议。
+3. halt_reason/run_wait_kind 沿用既有 `adapter_cli_hard_failure`（adjudication class external → WAITING/external），未改成宿主本次的 human；未新造分类枚举。
+4. run_end 的 `error` 对所有 HALTED 主收口生效（取 halt_guidance 首行），不只适配器类；仅诊断，不参与裁决。
+5. Codex review P2（已处理，只改注释）：`agent-invoke.ts`、`goal-runner-phase.ts`、`goal-phase-runtime.ts` 三处旧注释仍说 terminal_error_excerpt「纯诊断、不进 classifier」，与本笔接线矛盾；改为「不进 settle/retry/api_disconnected/failure classifier，唯一例外是 exit≠0 时 resolveInvokeHardCliFailure 的 400 信封 + 实采措辞表」，并注明 run_end.error 仅诊断。typecheck EXIT=0，host-runtime-truth 25/0。

@@ -36,6 +36,7 @@ import {
 import { validateChangeUnitFeatureProjection } from '../../scripts/utils/change-unit-feature-projection';
 import { ContractsSpec } from '../../scripts/utils/types';
 import { validateChangeUnitDesign } from '../../scripts/utils/change-unit-design-gate';
+import { validateChangeUnit } from '../../scripts/utils/change-unit-validator';
 import { evaluateChangeUnitDependencies } from '../../scripts/utils/change-unit-dependencies';
 import {
   ChangeUnitDecompositionRejected,
@@ -728,6 +729,41 @@ export function runAll(): UnitCaseResult[] {
       assert(unitBytes(projectRoot) === bytes, 'carry-forward 失败时改写了 CU 字节');
     });
   }));
+
+  // 宿主回灌：蓝图升 admitted 新 revision 后对既有 CU 跑 check:change-unit，报「指针过期、交设计交接升版」而非「修 CU」
+  for (const [label, arrange, stale] of [
+    ['admitted newer revision -> stale pointer routed to the design hand-off', (root: string) => { bumpBlueprint(root); }, true],
+    ['newer revision not admitted -> still owner unresolvable', (root: string) => {
+      bumpBlueprint(root, bp => { asRecord(asRecord(bp.review_summary)?.admission)!.status = 'blocked'; });
+    }, false],
+    ['CU points ahead of the blueprint (regressed) -> still owner unresolvable', (root: string) => {
+      const file = loadCanonicalChangeUnit(root, BLUEPRINT_ID, 'ledger-refresh').canonicalPath;
+      const cu = YAML.parse(fs.readFileSync(file, 'utf8'));
+      cu.component_blueprint_ref.revision = Number(cu.component_blueprint_ref.revision) + 1;
+      fs.writeFileSync(file, YAML.stringify(cu));
+    }, false],
+  ] as const) {
+    results.push(test(`host feedback check:change-unit: ${label}`, () => {
+      withProject(projectRoot => {
+        arrange(projectRoot);
+        const loaded = loadCanonicalChangeUnit(projectRoot, BLUEPRINT_ID, 'ledger-refresh');
+        const issues = validateChangeUnit(loaded.changeUnit, { projectRoot, canonicalPath: loaded.canonicalPath });
+        const owner = issues.filter(item => ['change_unit_blueprint_ref_stale', 'change_unit_provenance_owner_unresolvable'].includes(item.id));
+        assert(owner.length === 1, `应恰有一条 owner 指针诊断：${JSON.stringify(issues)}`);
+        const [issue] = owner;
+        if (stale) {
+          assert(issue.id === 'change_unit_blueprint_ref_stale' && issue.severity === 'BLOCKER' && issue.route === 'reconcile_blueprint'
+            && issue.message.includes('设计交接') && issue.message.includes('不要手改'), `过期指针未路由设计交接：${JSON.stringify(issue)}`);
+          const readiness = deriveDesignPreparationReadiness(projectRoot, BLUEPRINT_ID);
+          assert(readiness.blueprintRefs.bumped.some(item => item.change_unit_id === 'ledger-refresh'), `设计交接未原位升版：${JSON.stringify(readiness.blueprintRefs)}`);
+          const after = loadCanonicalChangeUnit(projectRoot, BLUEPRINT_ID, 'ledger-refresh');
+          assert(validateChangeUnit(after.changeUnit, { projectRoot, canonicalPath: after.canonicalPath }).length === 0, '升版后 check:change-unit 仍有诊断');
+        } else {
+          assert(issue.id === 'change_unit_provenance_owner_unresolvable' && issue.route === 'repair_change_unit', `非过期场景被误判为过期：${JSON.stringify(issue)}`);
+        }
+      });
+    }));
+  }
 
   results.push(test('b2d7 reconcile: one bump candidate failing canonical validation writes nothing for the whole batch', () => {
     withProject(projectRoot => {

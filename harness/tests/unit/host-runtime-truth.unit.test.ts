@@ -83,6 +83,35 @@ const CODEX_400_ENVELOPE = JSON.stringify({
 const FULL_ANSWER =
   'TOP_LEFT_COLOR=red\nTOP_RIGHT_COLOR=blue\nBOTTOM_LEFT_COLOR=green\nBOTTOM_RIGHT_COLOR=yellow\nTEXT_TOKEN=MAISON7X3Q';
 
+// 2026-09-26 宿主 run 0457a6 coding-i17 原文：codex `exec --json` 的 stdout 把 400 信封放在
+// turn.failed.error.message 的 JSON 字符串里（转义形态）；解析后的正文只在
+// terminal_error_excerpt。字段经真实 scanner 产出，拼接方式与 agent-invoke 边界一致。
+const HOST_MODEL_UNSUPPORTED_MESSAGE =
+  "The 'gpt-6-sol' model is not supported when using Codex with a ChatGPT account.";
+function hostModelUnsupportedInvoke(): { stdout: string; terminal_error_excerpt: string } {
+  const inner = JSON.stringify({
+    type: 'error', status: 400,
+    error: { type: 'invalid_request_error', message: HOST_MODEL_UNSUPPORTED_MESSAGE },
+  });
+  const stdout = [
+    JSON.stringify({ type: 'thread.started', thread_id: 'th-1' }),
+    JSON.stringify({ type: 'turn.started' }),
+    JSON.stringify({ type: 'error', message: inner }),
+    JSON.stringify({ type: 'turn.failed', error: { message: inner } }),
+  ].join('\n') + '\n';
+  const { createCodexTerminalScanner } = require('../../scripts/utils/codex-terminal-events') as typeof import('../../scripts/utils/codex-terminal-events');
+  const scanner = createCodexTerminalScanner();
+  scanner.push(stdout);
+  scanner.flush();
+  const st = scanner.state();
+  assert.ok(st.terminalFailureObserved && st.failureExcerpt, '夹具须经真实 scanner 判 turn.failed');
+  const excerpt = [
+    `turn.failed: ${st.failureExcerpt}`,
+    ...st.errorExcerpts.map((e) => `error: ${e}`),
+  ].join(' | ');
+  return { stdout, terminal_error_excerpt: excerpt };
+}
+
 const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   // ==========================================================================
   // A. Windows 解析真值（纯文件头探测 + 顺序语义）
@@ -251,6 +280,29 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       // 无 400 的普通模型错误不命中
       assert.strictEqual(resolveInvokeHardCliFailure({
         exitCode: 1, stdout: '', stderr: 'error: 500 Internal Server Error',
+      }), null);
+    },
+  },
+  {
+    name: 'C 宿主 400「model is not supported」（codex turn.failed 转义信封 + terminal_error_excerpt）→ 模型不可用硬失败，带原文与 --adapter-model 指引',
+    run: () => {
+      const host = hostModelUnsupportedInvoke();
+      const hard = resolveInvokeHardCliFailure({
+        exitCode: 1, stdout: host.stdout, stderr: '', terminal_error_excerpt: host.terminal_error_excerpt,
+      }, { formalInvoke: true });
+      assert.ok(hard && /Codex 模型不可用硬错误/.test(hard), `应命中模型不可用签名：${hard}`);
+      assert.ok(hard!.includes('--adapter-model'), `须给出钉模型指引：${hard}`);
+      assert.ok(hard!.includes(HOST_MODEL_UNSUPPORTED_MESSAGE), `须带 400 原文：${hard}`);
+      // 原文只在 excerpt：stdout 转义形态单独不命中（证明 excerpt 接线是承重的）
+      assert.strictEqual(resolveInvokeHardCliFailure({
+        exitCode: 1, stdout: host.stdout, stderr: '',
+      }, { formalInvoke: true }), null, 'stdout 转义信封单独不得命中');
+      // exit 0 / timeout 不命中
+      assert.strictEqual(resolveInvokeHardCliFailure({
+        exitCode: 0, stdout: host.stdout, stderr: '', terminal_error_excerpt: host.terminal_error_excerpt,
+      }), null);
+      assert.strictEqual(resolveInvokeHardCliFailure({
+        exitCode: 1, timed_out: true, stdout: host.stdout, stderr: '', terminal_error_excerpt: host.terminal_error_excerpt,
       }), null);
     },
   },
@@ -802,6 +854,104 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         assert.ok(String(halt!.reason ?? '').includes('Codex 模型兼容硬错误'), `reason 应定性 400：${String(halt!.reason)}`);
         // 无伪 spec_file_exists 归因
         assert.ok(!events.some((e) => e.type === 'phase_halt' && e.halt_reason === 'spec_file_exists'), '不得伪归因 spec_file_exists');
+      } finally {
+        __testing_resetGoalRunnerSeams();
+        process.argv = prevArgv;
+        if (prevTrustDir === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR;
+        else process.env.MAISON_GOAL_CHECKPOINT_DIR = prevTrustDir;
+        try { process.chdir(prevCwd); } catch { /* ignore */ }
+        try { fs.rmSync(root, { recursive: true, force: true }); } catch { /* ignore */ }
+      }
+    },
+  },
+  {
+    name: 'H 集成：宿主 0457a6 形态（codex turn.failed 400 model is not supported）→ adapter_cli_hard_failure 早停；不进门禁、无 code_regression；run_end 与 goal-report 首行带原文',
+    run: async () => {
+      const feature = 'hard-model-400';
+      const root = setupMinimalHost(feature);
+      const specAbs = path.join(root, 'doc', 'features', feature, 'spec', 'spec.md');
+      fs.writeFileSync(specAbs, '```yaml\nui_change: new_or_changed\n```\n', 'utf-8');
+      fs.mkdirSync(path.join(root, 'app'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'app', '.keep'), '', 'utf-8');
+      const { spawnSync } = require('child_process') as typeof import('child_process');
+      spawnSync('git', ['add', '-A'], { cwd: root, encoding: 'utf-8' });
+      spawnSync('git', ['commit', '-qm', 'ui'], { cwd: root, encoding: 'utf-8' });
+      writeLocalConfig(root, {
+        schema_version: '1.0',
+        agent_adapter: 'cursor',
+        vision: { image_input_override: 'none' },
+      });
+      const host = hostModelUnsupportedInvoke();
+      const harnessPhases: string[] = [];
+      const prevArgv = process.argv;
+      const prevCwd = process.cwd();
+      const prevTrustDir = process.env.MAISON_GOAL_CHECKPOINT_DIR;
+      process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'trust-cp');
+      try {
+        __testing_setInvokeAgent((async (_plan: unknown, _root: unknown, _o: unknown) => ({
+          exitCode: 1,
+          stdout: host.stdout,
+          stderr: '',
+          command: 'fake-codex',
+          terminal_failure_observed: true,
+          terminal_error_excerpt: host.terminal_error_excerpt,
+        })) as never);
+        __testing_setRunHarnessPhase((async (_pr: string, _fr: string, ph: string) => {
+          harnessPhases.push(String(ph));
+          return { exitCode: 0, timedOut: false };
+        }) as never);
+        __testing_setRepoLayout({ kind: 'standalone', projectRoot: root, frameworkRoot: REPO_ROOT, frameworkRel: '' } as ReturnType<typeof inferRepoLayout>);
+        __testing_setDeviceReadinessGate(((_o: { phase: string }) => ({
+          env: { HARNESS_HDC_TARGET: 'fake-device', MAISON_DEVICE_TARGET_KIND: 'physical' },
+          target: { serial: 'fake-device', targetKind: 'physical' as const },
+          notes: ['test seam'],
+        })) as never);
+        __testing_setValidateReceipt(((_hr: string, _pr: string, ph: string, feat: string) => ({
+          status: 'passed' as const,
+          receipt_path: `doc/features/${feat}/${ph}/phase-completion-receipt.md`,
+          exit_code: 0,
+        })) as never);
+        process.argv = [
+          'node', 'goal-runner.ts',
+          '--feature', feature,
+          '--requirement', '银行卡开卡需求，含7个页面，参考图还原布局。',
+          '--start', 'spec', '--end', 'spec',
+          '--adapter', 'cursor',
+          '--foreground-ok', '--force',
+        ];
+        process.chdir(root);
+        clearFrameworkConfigCache();
+        const exitCode = await goalMain();
+        assert.strictEqual(exitCode, 1, `run 应以 1 退出，实得 ${exitCode}`);
+        const runsDir = path.join(root, 'doc/features', feature, 'goal-runs');
+        const runs = fs.existsSync(runsDir) ? fs.readdirSync(runsDir).filter((n) => !n.startsWith('.')) : [];
+        const reportDir =
+          runs.length > 0
+            ? path.join(runsDir, runs.map((n) => ({ n, t: fs.statSync(path.join(runsDir, n)).mtimeMs })).sort((a, b) => a.t - b.t).slice(-1)[0].n)
+            : '';
+        const events = readEvents(reportDir);
+        assert.strictEqual(events.filter((e) => e.type === 'agent_invoke_start').length, 1, '只烧一次 invoke');
+        assert.strictEqual(events.filter((e) => e.type === 'harness_start').length, 0, '不得跑门禁');
+        assert.deepStrictEqual(harnessPhases, [], '不得有 gate harness spawn');
+        assert.ok(
+          !events.some((e) => e.failure_kind_classified === 'code_regression'),
+          '适配器终端失败不得归为 code_regression',
+        );
+        assert.ok(
+          !events.some((e) => e.type === 'phase_verdict' && typeof e.blocker_signature === 'string'),
+          '不得把门禁 BLOCKER 写成阶段失败原因',
+        );
+        const halt = events.find((e) => e.type === 'phase_halt' && e.halt_reason === 'adapter_cli_hard_failure') as Record<string, unknown> | undefined;
+        assert(halt, '须落 phase_halt(adapter_cli_hard_failure)');
+        assert.ok(String(halt!.reason ?? '').includes(HOST_MODEL_UNSUPPORTED_MESSAGE), `reason 须带原文：${String(halt!.reason)}`);
+        const end = [...events].reverse().find((e) => e.type === 'run_end') as Record<string, unknown> | undefined;
+        assert(end, '须落 run_end');
+        assert.strictEqual(end!.halt_reason, 'adapter_cli_hard_failure');
+        assert.ok(String(end!.error ?? '').includes(HOST_MODEL_UNSUPPORTED_MESSAGE), `run_end 须带原文：${String(end!.error)}`);
+        assert.ok(String(end!.error ?? '').includes('--adapter-model'), 'run_end 须带钉模型指引');
+        const md = fs.readFileSync(path.join(reportDir, 'goal-report.md'), 'utf-8');
+        const row = md.split('\n').find((l) => l.startsWith('| spec |')) ?? '';
+        assert.ok(row.includes(HOST_MODEL_UNSUPPORTED_MESSAGE), `goal-report 阶段行 Reason 须带原文：${row}`);
       } finally {
         __testing_resetGoalRunnerSeams();
         process.argv = prevArgv;

@@ -1447,8 +1447,10 @@ async function spawnHeadlessAsync(
     if (guardianProjection) spawnError = guardianProjection;
   }
 
-  // plan e6b3f8d2 t1：terminal 诊断摘要——`turn.failed` 正文 + 顶层 `error` 事件。
-  // **纯诊断**：只进 agent_invoke_end，不参与 settle / classifier / retry 任何判据。
+  // plan e6b3f8d2 t1：terminal 摘要——`turn.failed` 正文 + 顶层 `error` 事件（解析后明文）。
+  // 不参与 settle / retry / api_disconnected / failure classifier；唯一例外：exit≠0 时作为
+  // resolveInvokeHardCliFailure 的输入，只按 400 信封 + 实采措辞表（CODEX_400_PERMANENT_KINDS）
+  // 判适配器硬失败（stdout 里同一信封是转义形态，命不中）。删掉它会让 400 退回门禁误归因。
   const terminalDiagnostics = [
     ...(terminalState?.failureExcerpt ? [`turn.failed: ${terminalState.failureExcerpt}`] : []),
     ...(terminalState?.errorExcerpts ?? []).map((e) => `error: ${e}`),

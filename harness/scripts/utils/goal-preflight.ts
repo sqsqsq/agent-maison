@@ -465,10 +465,12 @@ export async function runVisionCanaryProbe(input: {
       ...(canaryStructuredStdout ? { structured_stdout_format: canaryEnvelope } : {}),
     }, answerKey);
     if (decision.kind !== 'valid') {
+      // 调用失败时带出 adapter terminal 原文（codex turn.failed 等），不让 400/401 只剩一个 exitCode。
+      const excerpt = decision.kind === 'invoke_failed' ? invoke.terminal_error_excerpt : undefined;
       return {
         ran: true,
         outcome: decision.kind === 'invoke_failed' ? 'invoke_failed_not_cached' : 'invalid_not_cached',
-        error: decision.detail,
+        error: excerpt ? `${decision.detail}：${excerpt.slice(0, 500)}` : decision.detail,
       };
     }
     const existing = loadLocalConfig(projectRoot) ?? { schema_version: LOCAL_SCHEMA_VERSION };

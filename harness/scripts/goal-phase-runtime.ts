@@ -5566,7 +5566,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     if (canaryHardCliFailure) {
       const guidance =
         `视觉金丝雀探测遇 CLI/adapter 兼容性问题（非需求代码）：${canaryHardCliFailure}\n` +
-        '这是 CLI/config 参数不兼容或 spawn race——请核对 adapter 版本/配置/环境后重跑' +
+        '这是 CLI/config 参数不兼容、模型不可用或 spawn race——请核对 adapter 版本/配置/模型/环境后重跑' +
         '（--refresh-vision-probe 触发重探）；不是需求或产品代码问题，不进入正式 phase。';
       goalEvents.emit({
         type: 'phase_halt',
@@ -5576,7 +5576,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
         reason: canaryHardCliFailure,
         halt_guidance: guidance,
       });
-      goalEvents.emit({ type: 'run_end', status: 'HALTED', halt_reason: 'canary_cli_hard_failure' });
+      goalEvents.emit({
+        type: 'run_end', status: 'HALTED', halt_reason: 'canary_cli_hard_failure',
+        error: canaryHardCliFailure.slice(0, 1000),
+      });
       runConcluded = true;
       console.error(`\n===== canary_cli_hard_failure =====\n${guidance}\n`);
       return 1;
@@ -7718,9 +7721,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // plan e6b3f8d2 t1：adapter terminal 契约事实。
           // · terminal_failure_observed —— codex `turn.failed`（失败终态，与
           //   completion_observed 互斥；exit 0 已在 invoke 边界规范化为非零）。
-          // · terminal_error_excerpt —— `turn.failed` 正文 + 顶层 `error` 事件的**纯诊断**
-          //   摘要。error 不是契约终态（error→重试成功→turn.completed 合法），因此它
-          //   **不进** api_disconnected / failure classifier / retry 任何判据，只在此留痕。
+          // · terminal_error_excerpt —— `turn.failed` 正文 + 顶层 `error` 事件的解析后摘要。
+          //   error 不是契约终态（error→重试成功→turn.completed 合法），因此它**不进**
+          //   api_disconnected / failure classifier / retry 判据；唯一例外是下方 exit≠0 时的
+          //   resolveInvokeHardCliFailure（400 信封 + 实采措辞表 → adapter_cli_hard_failure）。
+          //   run_end.error（halt 引导首行）另是纯诊断，不进任何裁决。
           terminal_failure_observed: invoke.terminal_failure_observed,
           terminal_error_excerpt: invoke.terminal_error_excerpt,
           lingering_pipe: invoke.lingering_pipe,
@@ -7776,6 +7781,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             stdout: invoke.stdout ?? '',
             stderr: invoke.stderr ?? '',
             ...(invoke.spawn_error ? { spawn_error: invoke.spawn_error } : {}),
+            ...(invoke.terminal_error_excerpt ? { terminal_error_excerpt: invoke.terminal_error_excerpt } : {}),
           }, { formalInvoke: true });
           if (hardCli) {
             const guidance =
@@ -10168,10 +10174,16 @@ Goal runner — tool-agnostic multi-phase orchestrator
       | undefined;
     const lastHaltedProjected =
       lastHalted && typeof lastHalted.run_disposition === 'string' ? lastHalted : undefined;
+    // 诊断保真：halt 引导首行（如适配器 400 原文）随终态事件带出，与 goal-report Reason 列同源；
+    // 与紧急收口 run_end{HALTED, error} 同键，不参与任何裁决。
+    const lastHaltDetail = typeof lastHalted?.halt_guidance === 'string'
+      ? lastHalted.halt_guidance.split(/\r?\n/).map((l) => l.trim()).find(Boolean)
+      : undefined;
     goalEvents.emit({
       type: 'run_end',
       status,
       ...(status === 'HALTED' && lastHaltReason ? { halt_reason: lastHaltReason } : {}),
+      ...(status === 'HALTED' && lastHaltDetail ? { error: lastHaltDetail.slice(0, 1000) } : {}),
       ...(status === 'HALTED' && lastHaltedProjected
         ? {
             run_disposition: lastHaltedProjected.run_disposition,

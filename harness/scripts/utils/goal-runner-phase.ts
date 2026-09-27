@@ -240,8 +240,9 @@ export interface GoalRunEvent {
    */
   terminal_failure_observed?: boolean;
   /**
-   * plan e6b3f8d2 t1（agent_invoke_end）：terminal 诊断摘要（turn.failed 正文 + 顶层
-   * error 事件）。**纯诊断**——不进任何 settle / classifier / retry 判据。
+   * plan e6b3f8d2 t1（agent_invoke_end）：terminal 摘要（turn.failed 正文 + 顶层 error 事件）。
+   * 不进 settle / retry / failure classifier 判据；例外：正式 invoke 与金丝雀的
+   * resolveInvokeHardCliFailure 用它按 400 信封 + 实采措辞表判适配器硬失败。
    */
   terminal_error_excerpt?: string;
   /** 本次 harness 非零退出的末尾诊断；stale summary 时这是当前 attempt 的可消费事实。 */

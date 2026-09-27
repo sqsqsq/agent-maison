@@ -3,9 +3,10 @@ import * as path from 'path';
 import {
   ComponentBlueprintRef,
   BlueprintRecord,
+  ComponentBlueprintResolutionError,
   asRecord,
 } from './component-blueprint-model';
-import { resolveComponentBlueprintRef, validateComponentBlueprintRefShape } from './component-blueprint-path';
+import { loadCanonicalBlueprint, resolveComponentBlueprintRef, validateComponentBlueprintRefShape } from './component-blueprint-path';
 import { validateLiteSchema } from './lite-json-schema';
 import {
   CHANGE_UNIT_ARTIFACT,
@@ -122,6 +123,24 @@ function validateProvenanceSource(
       ));
     }
   } catch (error) {
+    // 蓝图已升 admitted 新 revision 而 CU 仍指旧 revision：这是指针过期，不是 CU 坏了——
+    // 由 /component-design 设计交接（reconcileChangeUnitBlueprintRefs）原位升版，不引 agent 手改。
+    let current: BlueprintRecord | undefined;
+    if (error instanceof ComponentBlueprintResolutionError && error.code === 'component_blueprint_identity_mismatch') {
+      try { current = loadCanonicalBlueprint(context.projectRoot, ownerRef.blueprint_id).blueprint; } catch { /* 按原失败报告 */ }
+    }
+    if (current && current.component_id === ownerRef.component_id
+      && Number.isInteger(current.revision) && Number(current.revision) > ownerRef.revision
+      && asRecord(asRecord(current.review_summary)?.admission)?.status === 'pass') {
+      out.push(changeUnitIssue(
+        'change_unit_blueprint_ref_stale',
+        '$.component_blueprint_ref',
+        `蓝图已升到 rev ${String(current.revision)}（本 CU 指向 rev ${ownerRef.revision}）：经 /component-design 设计交接派生 readiness 原位升版指针（框架自动，不要手改 change-unit.yaml 或抄 sha256）。`,
+        'BLOCKER',
+        'reconcile_blueprint',
+      ));
+      return;
+    }
     out.push(changeUnitIssue(
       'change_unit_provenance_owner_unresolvable',
       '$.provenance.source_ref',

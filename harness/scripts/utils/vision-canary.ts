@@ -453,6 +453,11 @@ export interface CanaryHardCliFailureFacts {
   stdout: string;
   stderr: string;
   spawn_error?: { code?: string; message: string };
+  /**
+   * codex `turn.failed` / 顶层 `error` 事件的**解析后**正文（agent-invoke 边界产出）。
+   * stdout 里同一信封是 JSON 字符串转义形态（`\"status\":400`），签名只能在这里命中。
+   */
+  terminal_error_excerpt?: string;
 }
 
 /**
@@ -479,19 +484,41 @@ const HARD_CLI_LINE_CAP = 1024;
  * 判据=签名键值同时在场（stdout/stderr 皆扫）。生产判据**不维护 model→CLI 版本静态表**；
  * 只对实际调用返回的精确结构化永久错误 fail-fast，普通非零退出仍走原行为。
  */
-const CODEX_400_REQUIRES_NEWER_SIGNATURES: ReadonlyArray<RegExp> = [
+const CODEX_400_ENVELOPE_SIGNATURES: ReadonlyArray<RegExp> = [
   /"type"\s*:\s*"error"/,
   /"status"\s*:\s*400/,
   /"type"\s*:\s*"invalid_request_error"/,
-  /requires a newer version of Codex/i,
 ];
 
-function matchesCodex400RequiresNewer(allOutput: string): boolean {
+/**
+ * 400 信封内的永久错误措辞 → 定性文案。每条对应一份宿主实采样本，不做泛化：
+ *  - requires a newer version of Codex：c4e8a1f7 事故（CLI 过旧）；
+ *  - model is not supported：2026-09-26 宿主 run 0457a6（`~/.codex/config.toml` 默认
+ *    模型在 ChatGPT 账号下不可用，run 未钉 --adapter-model）。
+ */
+const CODEX_400_PERMANENT_KINDS: ReadonlyArray<{ re: RegExp; label: string }> = [
+  {
+    re: /requires a newer version of Codex/i,
+    label: 'Codex 模型兼容硬错误：当前 Codex CLI 版本过低，模型要求更新版本（status=400 + invalid_request_error + requires a newer version of Codex）——升级 Codex CLI 后重跑，非内容失败。',
+  },
+  {
+    re: /model is not supported/i,
+    label: 'Codex 模型不可用硬错误：本次生效的模型（--adapter-model 钉值，未钉时为 adapter 用户配置的默认模型）不被当前 Codex 账号/CLI 支持（status=400 + invalid_request_error + model is not supported）——用 --adapter-model <可用模型> 钉一个可用模型后重跑，非内容失败。',
+  },
+];
+
+function matchCodex400Permanent(allOutput: string): { label: string; line: string } | null {
   // 防御：只扫前 64KB（真实 400 信封体很小，签名在头部）。
   const bounded = allOutput.length > HARD_CLI_LINE_CAP * 64
     ? allOutput.slice(0, HARD_CLI_LINE_CAP * 64)
     : allOutput;
-  return CODEX_400_REQUIRES_NEWER_SIGNATURES.every((re) => re.test(bounded));
+  if (!CODEX_400_ENVELOPE_SIGNATURES.every((re) => re.test(bounded))) return null;
+  for (const kind of CODEX_400_PERMANENT_KINDS) {
+    if (!kind.re.test(bounded)) continue;
+    const line = bounded.split(/\r?\n/).find((l) => kind.re.test(l.slice(0, HARD_CLI_LINE_CAP))) ?? '';
+    return { label: kind.label, line: line.trim().slice(0, 500) };
+  }
+  return null;
 }
 
 /**
@@ -501,8 +528,8 @@ function matchesCodex400RequiresNewer(allOutput: string): boolean {
  *      （resolvedBinary 短路、真实 child error 与 guardian 投影同一种 shape）；
  *   ② CLI/config 参数不兼容：nonzero exit + 非 timeout/silent + 无有效答卷 +
  *      stderr 逐行命中显式枚举签名；
- *   ③ Codex 结构化模型兼容 400 信封（status=400 + invalid_request_error +
- *      requires a newer version of Codex，stdout/stderr 皆扫）。
+ *   ③ Codex 结构化 400 永久错误信封（status=400 + invalid_request_error + 实采措辞表
+ *      CODEX_400_PERMANENT_KINDS；terminal_error_excerpt/stderr/stdout 皆扫，定性后附原文）。
  * 未命中返回 null（维持现状语义：普通内容失败走既有 harness/retry）。
  */
 export function resolveInvokeHardCliFailure(
@@ -533,11 +560,11 @@ export function resolveInvokeHardCliFailure(
       : `child spawn error（${facts.spawn_error.code ?? 'spawn'}）：${facts.spawn_error.message}`;
   }
   // ③ Codex 结构化模型兼容 400（先于②判——它是 CLI 兼容类硬错误，run 必停机）。
+  // 解析后的 terminal 正文排最前：stdout 里的同一信封是转义形态，签名命不中。
   if (facts.exitCode !== 0) {
-    const combined = `${facts.stderr}\n${facts.stdout}`;
-    if (matchesCodex400RequiresNewer(combined)) {
-      return 'Codex 模型兼容硬错误：当前 Codex CLI 版本过低，模型要求更新版本（status=400 + invalid_request_error + requires a newer version of Codex）——升级 Codex CLI 后重跑，非内容失败。';
-    }
+    const combined = `${facts.terminal_error_excerpt ?? ''}\n${facts.stderr}\n${facts.stdout}`;
+    const hit = matchCodex400Permanent(combined);
+    if (hit) return hit.line ? `${hit.label}原文：${hit.line}` : hit.label;
   }
   // ② CLI/config 参数不兼容——必要条件缺一不可。
   if (facts.exitCode === 0) return null;
